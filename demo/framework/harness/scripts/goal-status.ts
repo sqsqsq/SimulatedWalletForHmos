@@ -6,7 +6,7 @@
 import minimist from 'minimist';
 import { detectRepoLayout, inferRepoLayout } from '../repo-layout';
 import { loadFrameworkConfig } from '../config';
-import { resolveWorkflowSpec } from '../workflow-loader';
+import { resolveWorkflowSpec, workflowForExistingRun } from '../workflow-loader';
 import { loadGoalManifestFromRun } from './utils/goal-manifest';
 import {
   buildLiveGoalStatusSnapshot,
@@ -16,10 +16,8 @@ import {
   resolveLatestRunId,
   runStatusWatchLoop,
 } from './utils/goal-progress';
-import { featurePhasesFromWorkflow } from './utils/phase-transition-policy';
-import { resolveFeatureTrack } from './utils/runtime-policy';
-import { loadFeatureTrackDecl } from './utils/feature-track';
-import { verifyFeatureCompletion } from './utils/verify-feature-completion';
+import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completion';
+import { assessFeature, assessmentReasons } from './utils/feature-assessment';
 
 async function main(): Promise<number> {
   const argv = minimist(process.argv.slice(2), {
@@ -52,7 +50,7 @@ Goal status — progress projection reader
   const frameworkRoot = layout.frameworkRoot;
   const cfg = loadFrameworkConfig(projectRoot);
   const featuresDir = cfg.paths.features_dir ?? 'doc/features';
-  const workflow = resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
+  let workflow = resolveWorkflowSpec(projectRoot, { config: cfg, frameworkRoot });
 
   let runId = String(argv['run-id'] ?? 'latest');
   if (runId === 'latest') {
@@ -67,6 +65,7 @@ Goal status — progress projection reader
   let manifest;
   try {
     manifest = loadGoalManifestFromRun(projectRoot, runId, { feature, featuresDir });
+    workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
   } catch (e) {
     console.error((e as Error).message);
     return 1;
@@ -101,19 +100,18 @@ Goal status — progress projection reader
 
     console.log(formatGoalStatusText(snapshot, feature, runId));
 
-    // goal-fakepass-hardening t8：feature 级完成状态——唯一入口 verify-feature-completion
+    // goal-fakepass-hardening t8 / plan b2d7f4e9 §3.5：feature 级完成状态——唯一入口 assessFeature
     // （expectedChain 由 workflow SSOT 独立解析；禁止消费文件存在性/自报字段）。
     try {
-      const workflow = resolveWorkflowSpec(projectRoot, { config: cfg });
-      const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
-      const expectedChain = featurePhasesFromWorkflow(workflow, track).map(String);
-      const v = verifyFeatureCompletion({ projectRoot, feature, expectedChain, expectedTrack: track });
-      if (v.verdict === 'VALID') {
+      const { expectedChain, expectedTrack: track } = resolveChangeUnitExpectedExecution(projectRoot, feature);
+      const a = assessFeature(projectRoot, feature, { expectedChain, expectedTrack: track });
+      if (a.complete) {
         console.log(`feature_status=FEATURE_COMPLETED (verify=VALID, chain=${expectedChain.join('→')})`);
       } else {
-        const brief = v.reasons.slice(0, 3).join('；');
+        const reasons = assessmentReasons(a);
+        const brief = reasons.slice(0, 3).join('；');
         console.log(
-          `feature_status=FEATURE_INCOMPLETE (verify=${v.verdict}${brief ? `; ${brief}${v.reasons.length > 3 ? '…' : ''}` : ''})`,
+          `feature_status=FEATURE_INCOMPLETE (record=${a.record.state}${brief ? `; ${brief}${reasons.length > 3 ? '…' : ''}` : ''})`,
         );
       }
     } catch (err) {

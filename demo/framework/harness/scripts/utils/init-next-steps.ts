@@ -2,8 +2,10 @@
 // init-next-steps.ts — deriveInitNextSteps + renderNextStepsMarkdown
 // ============================================================================
 
+import * as fs from 'fs';
 import * as path from 'path';
 
+import { loadFrameworkConfig, relComponentIndex, relConventions } from '../../config';
 import {
   probeModuleGraphReadiness as probeModuleGraphReadinessByCatalogState,
   type ModuleGraphReadiness,
@@ -32,6 +34,7 @@ import {
 import { loadSkillsIndex } from './resolve-skill-path';
 import { resolveMaterializedBuiltinSkillEntryRel } from './instance-skill-bridge';
 import { isClaudeKernelAdapter } from './types';
+import { profileHasDesignLens } from './blueprint-provider-boundary';
 
 export type InitNextStepSource = 'index' | 'harness';
 
@@ -101,7 +104,7 @@ export interface InitRunLogLike {
 
 const RERUN_FRAMEWORK_INIT = '修复后重新执行 `/framework-init`';
 const MODULE_GRAPH_REPAIR_FOOTER =
-  '请修复 code-graph 产物或重新执行 code-graph，随后重新运行受阻的后续 phase 校验。';
+  '若后续请求需要该图谱，请修复 code-graph 产物或重新执行 code-graph，随后重新运行受阻的后续 phase 校验；初始化本身已完成，不自动启动后继。';
 
 function renderMessageAsListItemLines(message: string): string[] {
   const out: string[] = [];
@@ -216,9 +219,9 @@ function synthesizeCorruptStep(
     step_id: when,
     source: 'harness',
     when,
-    kind: 'required',
+    kind: 'optional',
     priority: 5,
-    message: `${describe}\n\n须先修复文件后再继续；${RERUN_FRAMEWORK_INIT}`,
+    message: `${describe}\n\n当后续请求实际消费该文件时先修复；不阻断已完成的初始化，也不自动调用后继`,
   };
 }
 
@@ -233,7 +236,7 @@ function synthesizeModuleGraphRepairStep(mg: ModuleGraphReadiness): InitNextStep
     step_id: when,
     source: 'harness',
     when,
-    kind: 'required',
+    kind: 'optional',
     priority: 5,
     message: `${subject} ${qualifier}：${mg.error ?? '未知错误'}。\n\n${MODULE_GRAPH_REPAIR_FOOTER}`,
   };
@@ -277,6 +280,13 @@ function indexStepToInitNextStep(
     },
     workflow_artifact: step.workflow_artifact,
   };
+}
+
+/** 只披露可选知识资产文件是否存在；不生成步骤、不阻断。 */
+function describeDesignKnowledgeAssets(projectRoot: string): string {
+  const state = (rel: string) =>
+    `\`${rel}\` ${fs.existsSync(path.join(projectRoot, rel)) ? '已存在' : '不存在'}`;
+  return `可选知识资产：conventions ${state(relConventions(projectRoot))}；组件索引 ${state(relComponentIndex(projectRoot))}`;
 }
 
 function globalArtifactReady(
@@ -420,6 +430,15 @@ function evaluateIndexSteps(ctx: InitNextStepsContext): InitNextStep[] {
     } else if (step.when === 'graph_gap') {
       if (moduleGraph.state === 'gap' && moduleGraph.module) {
         out.push(indexStepToInitNextStep(def, moduleGraph.module));
+      }
+    } else if (step.when === 'design_entry_ready') {
+      if (
+        catalog.state === 'ready' &&
+        profileHasDesignLens(loadFrameworkConfig(ctx.projectRoot).project_profile.name)
+      ) {
+        const next = indexStepToInitNextStep(def);
+        next.message += `\n${describeDesignKnowledgeAssets(ctx.projectRoot)}`;
+        out.push(next);
       }
     } else if (step.when === 'feature_ready') {
       // handled after loop via workflow artifact lookup

@@ -31,6 +31,8 @@
 
 import { recomputePhaseEvidenceStaleness } from './phase-evidence-manifest';
 import { validateProjectRelativePath } from './project-relative-path';
+import type { ExecutionScope } from './execution-scope';
+import { executionScopeEvidenceIssues } from './verify-feature-completion';
 
 /** 触发面的**闭集**——跨 resume 回放时只认这三个值，未知一律不采信 */
 export const SCOPE_REPLAN_TRIGGERS = [
@@ -114,7 +116,11 @@ export function tryScopeReplan(input: ScopeReplanInput): ScopeReplanOutcome {
     return {
       kind: 'unavailable',
       reason: 'chain_lacks_plan',
-      detail: `执行链不含 plan（chain=${input.chain.join('→')}），无处回退——需另起含 plan 的 run`,
+      // chain 是本 run 的**有效**范围链（出生 + 已应用修订）。停等语义不变
+      // （upstream_closure_gap → 等人），这里只把「责任阶段在范围外」与两条合法入口说清。
+      detail: `plan 不在本 run 的有效范围内（chain=${input.chain.join('→')}），run 内无处回退。`
+        + `两条合法入口：(a) 设计缺口由责任阶段的真实 checker 产出候选，经既有归属链在本 run 内追加范围修订；`
+        + `(b) 用户改需求走既有 correction / successor 签发新 run`,
     };
   }
   if (input.backtracksUsed >= input.maxBacktracks) {
@@ -190,11 +196,32 @@ export type PlanAuthorityOutcome =
  * git history）。有 diff 时直接进入 replan：不把旧字节写回宿主，replan 重出 plan 产物。
  */
 export function checkPlanAuthority(input: {
+  executionScope?: ExecutionScope;
   projectRoot: string;
   feature: string;
   /** framework 根（gate 指纹重算口径）；缺省由 recompute 侧从 projectRoot 推导 */
   frameworkRoot?: string;
+  /**
+   * D2: the run executing right now. Evidence this very run just closed is necessarily unsealed
+   * (D2 never seals), so its terminal check is skipped for that run and only that run.
+   */
+  currentRunId?: string;
+  /**
+   * The phase executing right now (this gate only runs for `coding`). Without it the
+   * freshness recompute cannot know that the entries owned by the phase under way are
+   * mid-flight, and any source edit the current owner is authorized to make reads as
+   * upstream drift (plan b5c1e9d7 §3.2). Semantics stay exactly `pendingOwnerPhase`:
+   * only entries whose owner IS this phase are exempted.
+   */
+  pendingOwnerPhase?: string;
 }): PlanAuthorityOutcome {
+  if (input.executionScope) {
+    const design = input.executionScope.obligations.filter(o => o.kind === 'design-context' && o.applicability === 'required');
+    if (design.length && design.every(o => o.satisfied_by?.length) && !input.executionScope.obligations.some(o => o.kind === 'design-decision' && o.applicability !== 'not_applicable' && !o.satisfied_by?.length)) {
+      const issues = executionScopeEvidenceIssues(input.projectRoot, input.feature, input.executionScope, new Set(design.map(o => o.id)), input.currentRunId, input.pendingOwnerPhase);
+      return issues.length ? { kind: 'replan', reason: 'live_drift', detail: issues.join('; '), affectedFiles: [] } : { kind: 'ok' };
+    }
+  }
   // runner-owned-machine-facts 裁剪（codex 定案；宿主实锤 run 20260815T162931Z-3aa520）：
   // 授权唯一依据=仓内 fresh 的 **plan closure**（phase-evidence-manifest + 回执指针，
   // 跨 run 稳定）。per-run pass snapshot 只是同阶段 closure-retry 的 TOCTOU 缓存，
@@ -206,6 +233,7 @@ export function checkPlanAuthority(input: {
   //   missing/tampered → closure_untrusted replan。
   const plan = recomputePhaseEvidenceStaleness(input.projectRoot, input.feature, ['plan'], {
     ...(input.frameworkRoot ? { frameworkRoot: input.frameworkRoot } : {}),
+    ...(input.pendingOwnerPhase ? { pendingOwnerPhase: input.pendingOwnerPhase } : {}),
   })[0];
   if (!plan || plan.verdict === 'missing' || plan.verdict === 'tampered') {
     return {

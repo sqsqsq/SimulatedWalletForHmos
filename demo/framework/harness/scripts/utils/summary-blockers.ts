@@ -22,9 +22,14 @@ export interface SummaryBlockerEntry {
   /** t1d（plan e6a3c9f4）：产出来源（safeRun origin / profile dispatch / check-<phase>.ts 回退） */
   source?: string;
   /** P0-4（plan 7c4f2e9b）：注册表解析后的 actionability（runner 决策梯③层/回喂过滤/报告共同消费） */
-  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked' | 'framework_blocked';
   /** P1-7（plan 7c4f2e9b）：operator 专用说明——goal-report 渲染，不进 agent 重试回喂 */
   operator_note?: string;
+  /**
+   * plan e7a2c4f1 §3.4（G28）：check 层已判出的责任方须保真传到 goal-runner 的失败分类——
+   * 与 `blocking_class` 同一病灶（review#3：漏传即误落 code_regression 盲重试）。
+   */
+  repair_owner?: string;
 }
 
 /**
@@ -59,6 +64,7 @@ export function buildSummaryBlockers(
         ...(c.source ? { source: c.source } : {}),
         actionability,
         ...(c.operator_note ? { operator_note: c.operator_note } : {}),
+        ...(c.repair_owner ? { repair_owner: c.repair_owner } : {}),
       };
     });
 }

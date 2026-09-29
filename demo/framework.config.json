@@ -120,7 +120,7 @@
   "coding": {
     "visual_parity_enforcement": "warn"
   },
-  "active_workflow": "spec-driven",
+  "active_workflow": "obligation-driven",
   "lifecycle_hooks_enabled": true,
   "integrity": {
     "drift_allowlist": [

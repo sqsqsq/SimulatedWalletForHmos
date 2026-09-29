@@ -34,7 +34,14 @@ export interface UpstreamChainResolution {
   degradedReason?: string;
 }
 
-export function resolveUpstreamPhaseChain(projectRoot: string, feature: string): UpstreamChainResolution {
+export function resolveUpstreamPhaseChain(projectRoot: string, feature: string, runId?: string): UpstreamChainResolution {
+  // D1 §6.4 G4：条件从「有 run」放开为「有 run 或有 feature 冻结记录」——统一入口自己选来源；
+  // 两者皆无时才落到下面既有的 workflow 默认链回落（那条分支一行不动）。
+  try {
+    const { loadEffectiveExecutionScope } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    const scope = loadEffectiveExecutionScope(projectRoot, feature, runId);
+    if (scope) return { chain: scope.phase_chain, degraded: false };
+  } catch (error) { return { chain: [], degraded: true, degradedReason: String(error) }; }
   try {
     /* eslint-disable @typescript-eslint/no-require-imports */
     const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
@@ -131,7 +138,7 @@ function summaryJsonPath(projectRoot: string, feature: string, phase: string): s
 }
 
 /** I/O：读取单个上游阶段视图 */
-export function readUpstreamPhaseView(projectRoot: string, feature: string, phase: string): UpstreamPhaseView {
+export function readUpstreamPhaseView(projectRoot: string, feature: string, phase: string, pendingOwnerPhase?: string): UpstreamPhaseView {
   const p = summaryJsonPath(projectRoot, feature, phase);
   if (!fs.existsSync(p)) {
     return { phase, summaryExists: false, verdictReadable: false, verdict: null, blockerIds: [], freshness: 'no_manifest' };
@@ -189,7 +196,7 @@ export function readUpstreamPhaseView(projectRoot: string, feature: string, phas
   let freshness: UpstreamFreshness = 'no_manifest';
   let freshnessDetail: string | undefined;
   try {
-    const [res] = recomputePhaseEvidenceStaleness(projectRoot, feature, [phase]);
+    const [res] = recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], { pendingOwnerPhase });
     if (res) {
       if (res.verdict === 'fresh') freshness = 'fresh';
       else if (res.verdict === 'missing') freshness = 'no_manifest';
@@ -231,11 +238,12 @@ export function checkUpstreamVerdictGate(opts: {
   projectRoot: string;
   feature: string;
   phase: string;
+  runId?: string;
 }): CheckResult[] {
   const id = 'upstream_verdict_gate';
   const description =
     '跨阶段负面裁决传播门禁（上游机器裁决非 PASS / blocker 未清 / 证据链不新鲜 → 下游不得启动）';
-  const resolution = resolveUpstreamPhaseChain(opts.projectRoot, opts.feature);
+  const resolution = resolveUpstreamPhaseChain(opts.projectRoot, opts.feature, opts.runId);
   const order = resolution.chain;
   const idx = order.indexOf(opts.phase);
   if (idx < 0) {
@@ -261,7 +269,7 @@ export function checkUpstreamVerdictGate(opts: {
     return []; // 链首：无上游可消费
   }
   const upstream = order.slice(0, idx);
-  const views = upstream.map(p => readUpstreamPhaseView(opts.projectRoot, opts.feature, p));
+  const views = upstream.map(p => readUpstreamPhaseView(opts.projectRoot, opts.feature, p, opts.phase));
   const violations = evaluateUpstreamViews(views);
   const consumed = views.filter(v => v.summaryExists).map(v => v.phase);
   const skipped = views.filter(v => !v.summaryExists).map(v => v.phase);

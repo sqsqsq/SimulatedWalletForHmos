@@ -786,11 +786,13 @@ function safeResolveFromConfig(
 
 function ensureHvigorLogReportDir(
   projectRoot: string,
-  feature: string,
+  feature: string | undefined,
   phase: string,
   frameworkRoot?: string,
+  reportDir?: string,
 ): string {
-  const dir = featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
+  if (!reportDir && !feature) throw new Error('reportDir or Feature is required');
+  const dir = reportDir ?? featurePhaseReportsDir(projectRoot, feature!, phase, frameworkRoot);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -1598,7 +1600,9 @@ export interface HvigorInvokeOpts {
   /** framework 资产根；缺省时从 projectRoot infer */
   frameworkRoot?: string;
   /** feature 名（reports 子目录） */
-  feature: string;
+  feature?: string;
+  reportDir?: string;
+  testClasses?: string[];
   /** phase（reports 子目录） */
   phase: string;
   /** 日志文件名（相对 reports/<feature>/<phase>/），如 'hvigor-build.log' */
@@ -1677,7 +1681,7 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     spawnPlan = buildSpawnPlanFromResolved(resolved, hvigorArgs, 'hvigorw_wrapper');
   }
 
-  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot);
+  const dir = ensureHvigorLogReportDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot, opts.reportDir);
   const logAbs = path.join(dir, opts.logBasename);
   const commandDisplay = spawnPlan.commandDisplay;
   const header = `$ ${commandDisplay}\n\n`;
@@ -1768,6 +1772,10 @@ function invokeHvigor(opts: HvigorInvokeOpts): HvigorRunResult {
     invocationDriver: spawnPlan.invocationDriver,
     envProbe: {
       DEVECO_SDK_HOME: Boolean(childEnv.DEVECO_SDK_HOME),
+      // plan a9f3c7d2 A12：既有布尔只说明**变量是否非空**（用户已设时 buildChildEnv 会保留原值，不等于框架派生成功），
+      // 诊断要回答「这次到底用的哪个 SDK」就得有路径本身。
+      // 布尔字段保留不动（既有消费面不变）；路径是本机绝对路径，报告对外共享前须脱敏。
+      DEVECO_SDK_HOME_PATH: typeof childEnv.DEVECO_SDK_HOME === 'string' ? childEnv.DEVECO_SDK_HOME : null,
       JAVA_HOME: typeof childEnv.JAVA_HOME === 'string' ? childEnv.JAVA_HOME : null,
       DEVECO_STUDIO_HOME: Boolean(process.env.DEVECO_STUDIO_HOME),
       HUAWEI_DEVECO_STUDIO_HOME: Boolean(process.env.HUAWEI_DEVECO_STUDIO_HOME),
@@ -2222,14 +2230,20 @@ export function runHvigorTest(
     moduleSrcPath: string;
     /** t5（plan a7c3f9e2）：本次构建显式 product（由 ut-host 单次解析传入） */
     product?: string;
+    /**
+     * plan 5e1c7a93 D1：同次 harness 调用内 ut_hvigor_build 已经出过的同参数包。
+     * 在场即跳过 ① 的内建出包（调用方只在 isHvigorBuildSuccessful 时才传）；
+     * 缺席时行为逐字不变（check-exit 直调等无 collector 路径）。
+     */
+    prebuild?: HvigorRunResult;
   },
 ): HvigorRunResult {
   const t0 = Date.now();
 
-  // ① 出包：genOnDeviceTestHap（与 ut_hvigor_build 共享 task；hvigor 命中 cache 时只需毫秒）。
+  // ① 出包：genOnDeviceTestHap（与 ut_hvigor_build 共享 task）。
   //    ohosTest 模块的 task 入口必须用 hook task，不能用 `test`（要 TestAbility）也不能
   //    用 OhosTestCompileArkTS（CLI 拒收的内部 task）。
-  const buildRes = runHvigorBuild({
+  const buildRes = opts.prebuild ?? runHvigorBuild({
     ...opts,
     moduleName: opts.moduleName,
     target: 'ohosTest',
@@ -2249,6 +2263,7 @@ export function runHvigorTest(
     opts.phase,
     opts.frameworkRoot ?? inferRepoLayout(opts.projectRoot).frameworkRoot,
     installDiag,
+    opts.reportDir,
   );
   if (installDiag.kind !== 'clear') {
     return {
@@ -2279,6 +2294,8 @@ export function runHvigorTest(
     harnessRoot: opts.harnessRoot,
     frameworkRoot: opts.frameworkRoot,
     feature: opts.feature,
+    reportDir: opts.reportDir,
+    testClasses: opts.testClasses,
     phase: opts.phase,
     srcModuleName: opts.moduleName,
     srcPath: opts.moduleSrcPath,

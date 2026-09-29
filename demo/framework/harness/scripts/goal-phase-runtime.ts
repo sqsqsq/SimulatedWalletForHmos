@@ -1,4 +1,10 @@
 #!/usr/bin/env ts-node
+import { executionCompletionPhases, resolveExecutionScope, executionScopeFingerprint, validateExecutionScope, assertRevisionKeepsRequiredObligations, hasNewSourcedFact, type ExecutionScope, type ExecutionScopeInput } from './utils/execution-scope';
+import { loadFeatureContracts, contractFingerprint } from './utils/skill-contract';
+import { loadPhaseEvidenceManifest } from './utils/phase-evidence-manifest';
+import { readScopeAcceptance, collectResolvedScopeFacts, recomputeDefinitionFacts, resolveScopeRevisionProposal } from './utils/feature-track';
+import { resolveBirthScopeForManifest, resolveSuccessorExecutionScope, registerFeatureScopeTransfer } from './utils/feature-execution-scope';
+import { featureFilePath } from '../config';
 // ============================================================================
 // Goal phase runtime (fenced session/process owner) — deterministic multi-phase orchestrator
 // ============================================================================
@@ -20,10 +26,13 @@ import {
   featureArtifactPath,
   receiptDirPath,
   relFeatureFile,
+  relFeaturesDir,
   resolveFeatureArtifact,
 } from '../config';
 import { detectRepoLayout, type RepoLayout } from '../repo-layout';
 import { deleteEnvKeyCaseInsensitive, sanitizeSpawnEnv } from './utils/process-integrity';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（goal-runs 等路径必须经它展开）
+import { featureRelativePath } from './utils/feature-identity';
 // d9e4b7c1 T2：device_test 缺陷进回修环——evidence schema/路径、权威 trace 二次核验、根/级联三分
 import {
   deviceTestEvidencePath,
@@ -39,6 +48,7 @@ import {
   buildClosureWallGuidance,
   buildFrameworkBugGuidance,
   buildFrameworkIntegrityGuidance,
+  buildNoRelevantTargetGuidance,
 } from './utils/await-confirm-guidance';
 import {
   decide,
@@ -48,7 +58,7 @@ import {
   withRunDisposition,
   type Decision,
 } from './utils/adjudication';
-import { writeLivenessBeacon } from './utils/liveness-beacon';
+import { assessLivenessBeacon, readLivenessBeacon, writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 // plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
 import { formatExtensionPhasePrompt } from './utils/extension-runtime';
@@ -56,7 +66,7 @@ import { tryLoadUtSourceRootResolver } from '../profile-host-loader';
 import { runCapabilityPreflight, emitHarnessPreflightGap } from './utils/capability-preflight';
 import { preflightDeviceTestEvidenceCapability } from '../capability-registry';
 import type { HarnessResolvedProfile, ProviderRef, VisionMode } from './utils/types';
-import { resolveWorkflowSpec } from '../workflow-loader';
+import { workflowForExistingRun, resolveWorkflowSpec } from '../workflow-loader';
 import { resolveContextAdapterImageInput, isFreshCanaryForExecution } from './utils/multimodal-probe';
 import { loadLocalConfig as loadFrameworkLocalConfig } from './utils/framework-local-config';
 import {
@@ -99,8 +109,11 @@ import {
   classifyCleanPassIssues,
   collectCleanPassIssues,
   generateFeatureCompletion,
+  shouldGenerateFeatureCompletion,
   resolvePhaseRunIds,
 } from './utils/verify-feature-completion';
+import { assessFeature as assessFeatureCompletion } from './utils/feature-assessment';
+import { resolveChangeUnitExpectedExecution } from './utils/change-unit-completion';
 import { resolveFeatureTrack } from './utils/runtime-policy';
 import { loadAcceptanceFlowsDoc, isP0DeviceInteractive } from './utils/p0-semantic-gates';
 import { loadFeatureTrackDecl } from './utils/feature-track';
@@ -111,6 +124,7 @@ import {
   computeManifestIdentityHash,
   diffManifestIdentityFields,
   inheritSuccessorManifest,
+  SCOPE_REVISION_FIELDS,
   loadGoalManifestFile,
   loadGoalManifestFromRun,
   newRunId,
@@ -131,6 +145,13 @@ import {
   assertGoalRunAttachable,
   buildSupersedeAuditEvent,
   createGoalRun,
+  evaluateFreshRunContinuation,
+  loadEffectiveExecutionScope,
+  applyScopeRevisions,
+  eventsWithScopeRevocations,
+  resolveRunBaseline,
+  loadScopeRevisions,
+  validateExactSha,
   inspectGoalRunCreation,
   inspectGoalRunCreationFiles,
   resolveActualGoalPhaseChainAtBirth,
@@ -224,19 +245,9 @@ import {
 } from './utils/critic-receipt-producer';
 import { collectAuthoritativeImagePaths } from './utils/multimodal-probe';
 import {
-  buildInlineCanaryBlock,
-  generateRandomCanaryAnswerKey,
-  renderCanaryImage,
-  resolveCanaryCacheDecision,
-  resolveCanaryStdoutEnvelope,
   resolveInvokeHardCliFailure,
-  type CanaryAnswerKey,
 } from './utils/vision-canary';
 import * as os from 'os';
-import {
-  capabilityReceiptPath,
-  writeCapabilityReceipt,
-} from './utils/effective-vision-context';
 import { reconcileSourceTreeAgainstAttestation } from './utils/closure-attestation';
 import {
   classifySourceDrift,
@@ -253,6 +264,7 @@ import {
   buildHalfPhaseRecoveryEvents,
   checkRunBudget,
   checkTerminalResumeGuard,
+  collectLastCommittedVisualAttemptWindow,
   collectUncommittedVisualAttemptIds,
   collectVisualRoundRowHashes,
   countAgentInvokeStarts,
@@ -288,6 +300,7 @@ import { finalizePhaseClosure } from './utils/phase-closure-finalizer';
 import {
   awaitGuardianGone,
   identifyWithRetry,
+  pidExists,
   reconcileGuardianOwnership,
   terminateGuardianProcessOnly,
 } from './utils/goal-containment-reconcile';
@@ -408,6 +421,7 @@ import {
   classifyTimedOutWithFreshBlockers,
   resolveBlockerActionability,
   extractDeterministicAffectedFiles,
+  extractContentRelatedFiles,
   extractIntegritySubtypes,
   stripRetiredFrameworkIntegrityForCurrentRun,
   isOperatorInterruptSignal,
@@ -465,14 +479,12 @@ function productLayerDirsOf(projectRoot: string): string[] {
   }
 }
 
-const PHASE_SKILL_REL: Record<FeaturePhase, string> = {
-  spec: 'skills/feature/spec/SKILL.md',
-  plan: 'skills/feature/plan/SKILL.md',
-  coding: 'skills/feature/coding/SKILL.md',
-  review: 'skills/feature/code-review/SKILL.md',
-  ut: 'skills/feature/business-ut/SKILL.md',
-  testing: 'skills/feature/device-testing/SKILL.md',
-};
+function phaseSkillPath(frameworkRoot: string, phase: FeaturePhase): string {
+  const { phaseContractIndex, loadFeatureContracts } = require('./utils/skill-contract') as typeof import('./utils/skill-contract');
+  const entry = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(phase);
+  if (!entry) throw new Error('phase has no Skill contract: ' + phase);
+  return path.join(path.dirname(entry.contract.source_path), entry.contract.skill_doc);
+}
 
 const LOCK_HEARTBEAT_MS = 60_000;
 const RESUME_COOLDOWN_MINUTES = 5;
@@ -490,6 +502,9 @@ export interface SummaryJson {
     evidence_manifest_path?: string;
   };
   next_action?: string;
+  /** D2（plan 3a7f9c12）：诊断请求的两个路径——失败回喂据此给出可执行动作。 */
+  verifier_request?: string;
+  verifier_report?: string;
   blockers?: Array<{
     id?: string;
     blocking_class?: string;
@@ -828,7 +843,16 @@ export function buildCurrentAttemptFailureProjection(input: {
   blockerSignature: string;
   failureKindForEvent?: FailureKind;
 } {
-  const hasEvidence = input.decisionSummary !== null || input.hasRuntimeFailureEvidence;
+  // plan 2f8a6d40 D1：**有 summary ≠ 有失败**。收紧前 `decisionSummary !== null` 单独成立，
+  // 于是 `PASS + blockers:[] + advance_blocked=closure_open + retry` 这一支（宿主 run
+  // 20260905T103028Z-79d3fd 第 85 行）被 catch-all 打上 code_regression——closure 未闭环
+  // 是工作流状态，与产品代码无关。现在 summary 只有**自己表达了失败**（verdict 非 PASS，
+  // 或 blockers 非空）才算失败事实；`hasRuntimeFailureEvidence`（超时/agent 失败/非零退出/
+  // closure 定稿错误/可信缺陷等）逐字不动，仍单独充分。
+  const summaryStatesFailure =
+    input.decisionSummary !== null &&
+    (input.decisionSummary.verdict !== 'PASS' || (input.decisionSummary.blockers ?? []).length > 0);
+  const hasEvidence = summaryStatesFailure || input.hasRuntimeFailureEvidence;
   return {
     hasEvidence,
     blockingMeta: extractBlockingMeta(input.decisionSummary),
@@ -1008,6 +1032,7 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
   // post-impl review P2#8：严格 === 'agent_fixable'——toolchain_blocked 回喂只会诱导
   // agent「修环境」（它修不了）；toolchain 走 operator 队列单列。
   const toolchainParked = all.filter(b => resolveBlockerActionability(b) === 'toolchain_blocked');
+  const frameworkParked = all.filter(b => resolveBlockerActionability(b) === 'framework_blocked');
   const feedable = all.filter(b => resolveBlockerActionability(b) === 'agent_fixable').slice(0, 4);
   const lines: string[] = [];
   for (const b of feedable) {
@@ -1036,9 +1061,28 @@ export function extractPriorFailureContext(summary: SummaryJson): string {
       'these are environment failures queued for the operator; do not modify product code or artifacts to work around them.',
     );
   }
+  if (frameworkParked.length > 0) {
+    lines.push(
+      `- (parked, framework — do NOT attempt) ${frameworkParked.map(b => b.id ?? '?').join(', ')}: ` +
+      'framework implementation failed; product/artifact edits cannot repair it. Preserve the failure for source-framework repair.',
+    );
+  }
   if (lines.length === 0) {
     const meta = extractBlockingMeta(summary);
     if (meta.failure_kind) lines.push(`- failure_kind: ${meta.failure_kind}`);
+  }
+  // D2（plan 3a7f9c12）：产品失败诊断轮——回喂必须给出可执行动作，否则 agent 只看到一串
+  // blocker 就去改产品，而这些失败恰恰要先由 verifier 逐条确认才知道该改哪儿。
+  if (summary.next_action === 'run_verifier_for_repair') {
+    lines.push(
+      '- next_action: run_verifier_for_repair — this product FAIL is diagnosable, and the harness issued a verifier ' +
+        'request despite the script FAIL. Do NOT edit product code yet.',
+      `  1) deliver ${summary.verifier_request ?? 'summary.verifier_request'} verbatim as the Task prompt to subagent_type=verifier;`,
+      `  2) write its reply verbatim to ${summary.verifier_report ?? 'summary.verifier_report'};`,
+      '  3) end this invocation and report the current FAIL plus those two paths — the outer runner re-runs the gate ' +
+        'harness and recomputes repair candidates. Do NOT re-run the harness yourself, and do NOT wait for candidates ' +
+        'or closure before returning (the product is still FAIL; the phase cannot close yet).',
+    );
   }
   return [`Verdict: ${verdict}`, ...lines].join('\n');
 }
@@ -1403,7 +1447,7 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
     // plan f6b2d9a4：三轴 SSOT 下发——严格度与素材策略与门禁同源，agent 不得自行改判
     `- Acceptance strictness: **${advisory.acceptanceStrictness ?? 'best_effort'}**` +
       ((advisory.acceptanceStrictness ?? 'best_effort') === 'best_effort'
-        ? ' (quality gaps are recorded as visual debt and do NOT hard-block; do not stop to ask about them)'
+        ? ' (quality gaps are recorded as visual debt: write self-reported style/layout residuals as defects (major/minor); a screen with a self-reported major is recorded as visual debt that does NOT hard-block phase progress or drive backtrack but STILL blocks release until fixed and re-verified (minor-only residuals stay disclosure); fail, blocker, deterministic signals and missing test anchors still go back to coding; do not stop to ask about them)'
         : ' (hard contract: quality gaps escalate to BLOCKER until current machine evidence closes them)'),
     ...(advisory.assetAcquisitionMode
       ? [`- Asset acquisition mode (from fidelity-intent SSOT): **${advisory.assetAcquisitionMode}** — mirror this into ui-spec verbatim.`]
@@ -1525,11 +1569,20 @@ export function buildCapabilityBlock(advisory: CapabilityAdvisory): string[] {
   return lines;
 }
 
+/**
+ * plan 5e1c7a93 D4：本块拆两段，**正文一字不改，只改归属**——
+ * - 模式段（headless 声明 / approval_mode / MUST NOT stop to ask / 覆盖 phase SKILL 停等 /
+ *   逐门自动决议与 headless-assumptions 账本）：**只注入 detached**；
+ * - 红线段（gate-integrity 四条 + deterministicDetectorLines）：两种形态**照常注入**。
+ * attended 走 AttendedGoalPhaseExecutor 的 bridge，phase SKILL 的停等确认按原义执行——
+ * 不能再被同一份提示词同时要求「停下来问」和「停下来问 = 任务失败」。
+ */
 function buildUnattendedExecutionBlock(
   manifest: GoalManifest,
   phase: FeaturePhase,
   projectRoot: string,
   capabilityAdvisory?: CapabilityAdvisory,
+  attended = false,
 ): string[] {
   // plan a8e5c3f9 t6：prompt 用 effective 权限（恒 never）——不再随旧 manifest 摇摆。
   const approval = effectiveHeadlessUnattended(manifest.unattended).approval_mode;
@@ -1555,7 +1608,7 @@ function buildUnattendedExecutionBlock(
         '  per-screen signature path. Register genuinely undecidable items in the blind-review',
         '  pending list (see phase SKILL) instead of fabricating a verdict or endlessly re-attempting.',
       ];
-  return [
+  const modeLines = [
     '## Unattended execution (headless goal-mode) (BLOCKER — overrides phase SKILL stop-and-ask)',
     '',
     'This run is **headless / unattended**. There is **no interactive user** in this session.',
@@ -1569,8 +1622,8 @@ function buildUnattendedExecutionBlock(
     '',
     'For every **in-phase** confirmation gate (registry class gate/enum/matrix/artifact_checkbox):',
     '- Resolve automatically per `skills/reference/user-confirmation-ux.md` **§9 Goal/headless**.',
-    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; check-receipt`,
-    '  BLOCKER-validates schema and registry completeness — a gate without a ledger line fails the phase closure):',
+    `- Record **every** auto-decision as one JSON line in \`${assumptionsRel}\` (machine SSOT; the ledger is an`,
+    '  audit trail — it is not authorization, and a missing ledger line does not by itself veto phase closure):',
     '  `{"decision_id":"<unique>","run_id":"<this run id>","phase":"<phase>","gate_id":"<registry id>",' +
       '"class":"<gate|enum|matrix|artifact_checkbox|freeform>","decision":"<what you chose, or n/a: reason>",' +
       '"must_review":true|false,"source":"agent","ts":"<ISO 8601>"}`',
@@ -1585,12 +1638,25 @@ function buildUnattendedExecutionBlock(
     '  authorization: the runner three-source chain will still HALT on any protected-source change they',
     '  "approve". Even if a gap-note claims a seam was approved, do NOT (re-)implement it — log the request',
     '  as must_review and continue without the mutation.',
-    '- Product source under test phases is attestation-locked: any product-code change after review closure',
-    '  fails testing (`review_closure_attestation` BLOCKER). Test seams MUST NOT alter user-visible flows or',
-    '  default behavior — a `*_FAST_PATH`-style switch defaulting to true is a blocker, not a workaround.',
+    '- Product source after review closure is reconciled against the closure attestation: a drift is graded by',
+    '  risk and reported as a WARN naming the review it still owes (`review_closure_attestation` in testing,',
+    '  `ut_no_src_mutation` in ut) — it does not silently pass, and it is not a licence to keep editing.',
+    '  You still own the drift: fold it back into coding and re-close review, or do the graded review it names.',
+    '  Test seams MUST NOT alter user-visible flows or default behavior — a `*_FAST_PATH`-style switch',
+    '  defaulting to true is a blocker, not a workaround.',
     '',
     'After auto-resolving gates: **continue producing phase artifacts** and run harness. Do NOT halt at confirmation gates.',
     '',
+  ];
+  const attendedModeLines = [
+    '## Attended execution (session owner)',
+    '',
+    'This run is **attended**: a session owner is present and reachable through the executor bridge.',
+    "Phase SKILL stop-and-ask confirmations execute as written — stop, ask, and wait for the owner's reply;",
+    'the bridge relays it back. This is not a licence to widen scope or to ask instead of doing the work.',
+    '',
+  ];
+  const redLineLines = [
     '**Gate-integrity red lines (BLOCKER — violations are task failure, not a path to completion):**',
     '- NEVER write legacy quality-signature fields such as `confirmed_by`; current quality conclusions require machine evidence.',
     '- `bbox_verified_by` / `approved_by` / `user_requirement` may only carry their narrowly defined provenance or external-authority semantics; they never override quality FAIL.',
@@ -1601,6 +1667,7 @@ function buildUnattendedExecutionBlock(
     '  and allow_local_drift are retired and ignored on read. Found a framework bug? HALT and report it upstream.',
     ...deterministicDetectorLines,
   ];
+  return [...(attended ? attendedModeLines : modeLines), ...redLineLines];
 }
 
 /**
@@ -1875,8 +1942,8 @@ export const VISUAL_GAP_RETRY_GUIDANCE_TESTING: readonly string[] = [
   '**This is a visual-fidelity gap (the rendered UI does not match the reference).** In the TESTING phase your job is to make the gap MACHINE-ACTIONABLE — not to edit product code:',
   '1. Deterministic fail_signals mean the screen IS decidable headlessly: set that screen verdict=fail and copy the signals into screens[].must_fix — do NOT leave such screens pending;',
   '2. Record every defect as a structured entry (screen_id + observed vs expected + evidence path). These become the defect fingerprints that drive the fix.',
-  '3. **Do NOT modify product source code, requirement SSOT (acceptance/ui-spec/contracts/spec.md/plan.md), or root build config in this phase — not even to add test anchors.** The runner snapshots all of these around your invocation; a hand-made write is a run-terminating violation (receipt not issued, journal not merged, gate not run; the run halts and --resume is refused). Build artifacts regenerated by the framework harness itself (e.g. module-root BuildProfile.ets rewritten by device_test.build) are auto-classified by the runner as legitimate side effects — running harness self-checks is safe and expected. Do NOT override HARNESS_DEVICE_TEST_PRODUCT/HARNESS_DEVICE_TEST_BUILD_MODE in your shell — the runner froze them for this attempt; a mismatching build artifact is treated as a violation. Missing `by_id` anchors are themselves a defect: record them in screens[].must_fix so coding implements them after backtrack.',
-  '4. Every screen with non-empty must_fix (verdict warn/fail, fresh screenshot+build identity) is consumed by the runner as an actionable defect: it will backtrack to coding and inject your must_fix items into the coding prompt. Write them as concrete fix instructions.',
+  '3. **Do NOT modify product source code, requirement SSOT (acceptance/ui-spec/contracts/spec.md/plan.md), or root build config in this phase — not even to add test anchors.** The runner snapshots all of these around your invocation; a hand-made write is a run-terminating violation (receipt not issued, journal not merged, gate not run; the run halts and --resume is refused). Build artifacts regenerated by the framework harness itself (e.g. module-root BuildProfile.ets rewritten by device_test.build) are auto-classified by the runner as legitimate side effects — running harness self-checks is safe and expected. Do NOT override HARNESS_DEVICE_TEST_PRODUCT/HARNESS_DEVICE_TEST_BUILD_MODE in your shell — the runner froze them for this attempt; a mismatching build artifact is treated as a violation. Missing `by_id` anchors are themselves a defect: record them as a severity=blocker defect anchored to a screens[].must_fix item so coding implements them after backtrack.',
+  '4. Hard pixel contract (fidelity_target=pixel_1to1 AND acceptance_strictness=hard): every screen with non-empty must_fix (verdict warn/fail, fresh screenshot+build identity) is consumed by the runner as an actionable defect — it backtracks to coding and injects your must_fix items into the coding prompt. Otherwise (strictness: see spec/reports/fidelity-intent.json) only verdict=fail, blocker defects, deterministic signals and must_fix items NOT anchored by a defect (must_fix_refs) backtrack; the gate downgrades the rest to visual debt — it does not block phase progress but STILL blocks release (minor-only residuals are disclosure only, no debt). Either way write must_fix as concrete fix instructions.',
   '5. If the same set of visual gates keeps failing with no change, the convergence fuse will terminate this run honestly; a successor run needs new evidence or code changes.',
 ];
 
@@ -1888,8 +1955,6 @@ export const VISUAL_GAP_RETRY_GUIDANCE_TESTING: readonly string[] = [
  * reference_only 被实测证伪、blank_ratio 无区分力，那套只会打回好版本）：
  *   A) visual-diff.json 里**新鲜**的 must_fix（5 条谓词，见下）；
  *   B) 本轮导航**新增** faultlog 的 crash_suspected（F3 集合差归档，含 run_id）。
- * 结构性素材问题（悬空 $r / 物化缺失）不在此——F4 已做成 coding 侧确定性 FAIL，
- * coding 阶段就会失败，不需要绕到 testing 再发现一次。
  *
  * 【actionable 谓词（v23 冻结，5 条同时满足）】
  *   ① verdict ∈ {warn, fail}；② must_fix[] 非空；③ evaluated_screenshot_hash 与
@@ -2066,6 +2131,40 @@ export interface DeviceTestCollectContext {
   harnessWindow: { startMs: number; endMs: number };
   /** testing 阶段 reports 目录（evidence 与 run meta 所在） */
   reportsDir: string;
+  /** B08 D1（plan 9b2d5e7c）：工程根——复用 doc 的 reused_run_dir 相对它解析 */
+  projectRoot: string;
+  /**
+   * B08 D1：当前盘上 HAP 的完整 sha256（goal 运行时从 device-test-install.meta.json + 盘上 HAP
+   * 三核算出，见 resolveCurrentHapSha256Full）；null = 不可核验。只在 doc.install_reused 时消费。
+   */
+  currentHapSha256Full?: string | null;
+}
+
+/**
+ * B08 D1（codex 第 2 轮 #3）：装机复用轮的"当前 HAP 完整摘要"——采信端在 harness 之外拿不到
+ * holder，改从**既有装机产物**算：读 `reportsDir/device-test-install.meta.json` 的
+ * hapPath / hapMtimeMs / hapSizeBytes / hapSha256（12 位短指纹），对盘上文件核 mtime 与 size
+ * 一致后算 sha256 全量，并要求短指纹是其前缀；任一不符或 meta 缺失 → null。
+ * 不新增身份系统、不与 doc 自身字段比较。
+ */
+export function resolveCurrentHapSha256Full(projectRoot: string, reportsDir: string): string | null {
+  try {
+    const meta = JSON.parse(
+      fs.readFileSync(path.join(reportsDir, 'device-test-install.meta.json'), 'utf-8'),
+    ) as { hapPath?: unknown; hapMtimeMs?: unknown; hapSizeBytes?: unknown; hapSha256?: unknown };
+    if (
+      typeof meta.hapPath !== 'string' || !meta.hapPath.trim() ||
+      typeof meta.hapMtimeMs !== 'number' || typeof meta.hapSizeBytes !== 'number' ||
+      typeof meta.hapSha256 !== 'string' || !meta.hapSha256.trim()
+    ) return null;
+    const abs = path.isAbsolute(meta.hapPath) ? meta.hapPath : path.join(projectRoot, meta.hapPath);
+    const st = fs.statSync(abs);
+    if (st.mtimeMs !== meta.hapMtimeMs || st.size !== meta.hapSizeBytes) return null;
+    const full = createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+    return full.startsWith(meta.hapSha256.trim().toLowerCase()) ? full : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -2158,8 +2257,38 @@ export function validateDeviceTestEvidenceBinding(
   ) {
     return 'evidence 设备元组与当前 attempt 冻结元组不一致（比完整三元组，不只比 serial）';
   }
-  if (doc.install_executed !== true || doc.install_ok !== true) {
+  // B08 D1（plan 9b2d5e7c）：复用态按"记录身份"采信——装机复用核当前 HAP 完整摘要（不要求本轮真装）；
+  // 设备复用核被复用 run 的执行键记录（与 decideReuse 同一判据 isExecutionRecordReusable），跳过
+  // run meta 时间窗（复用回填的是冻结 meta，时间必在窗外）。非复用 doc 四项检查逐字不变。
+  const installReused = doc.install_reused === true;
+  const runReused = doc.reused_by_execution_key === true;
+  if (installReused) {
+    if (!ctx.currentHapSha256Full) return '当前 HAP 完整摘要不可核验（install meta 缺失或与盘上 HAP 不一致）';
+    if (doc.hap_sha256_full !== ctx.currentHapSha256Full) return '复用装机的 HAP 摘要与当前不一致';
+  } else if (doc.install_executed !== true || doc.install_ok !== true) {
     return 'evidence 无本轮真实安装成功事实（install reuse/失败不作数）';
+  }
+  if (runReused) {
+    const runDirRel = String(doc.reused_run_dir ?? '').trim();
+    const runDir = runDirRel ? path.resolve(ctx.projectRoot, runDirRel) : null;
+    let identity: { ok: boolean; reason: string };
+    try {
+      const profileDir = path.join(__dirname, '..', '..', 'profiles', 'hmos-app', 'harness');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const ek = require(path.join(profileDir, 'execution-key')) as {
+        EXECUTION_KEY_FILE: string;
+        isExecutionRecordReusable: (record: unknown, runDir: string, opts: { executionKey: string }) => { ok: boolean; reason: string };
+      };
+      if (!runDir || !doc.execution_key) {
+        identity = { ok: false, reason: 'doc 缺 reused_run_dir / execution_key' };
+      } else {
+        const record = JSON.parse(fs.readFileSync(path.join(runDir, ek.EXECUTION_KEY_FILE), 'utf-8')) as { execution_key?: unknown };
+        identity = ek.isExecutionRecordReusable(record, runDir, { executionKey: doc.execution_key });
+      }
+    } catch (e) {
+      identity = { ok: false, reason: `执行键记录不可读：${(e as Error).message}` };
+    }
+    if (!identity.ok) return `复用记录身份不匹配（${identity.reason}）`;
   }
   // trace 一致性：writer 直取本轮 holder；collector 以权威 resolver 二次核验两者一致
   const authoritative = resolveAuthoritativeHylyreTracePath(ctx.reportsDir);
@@ -2171,6 +2300,7 @@ export function validateDeviceTestEvidenceBinding(
   if (!Number.isFinite(writtenAt) || writtenAt < ctx.harnessWindow.startMs || writtenAt > ctx.harnessWindow.endMs) {
     return 'evidence written_at 不在本 attempt 的 harness 窗口内';
   }
+  if (runReused) return null; // 复用回填的是被复用 run 的冻结 meta，其时间窗由记录身份担保
   try {
     const meta = JSON.parse(
       fs.readFileSync(path.join(ctx.reportsDir, 'device-test-run.meta.json'), 'utf-8'),
@@ -2186,11 +2316,42 @@ export function validateDeviceTestEvidenceBinding(
   return null;
 }
 
+/**
+ * plan 6644ea45 §4.4：从 fresh summary 同目录的 `script-report.json` 读 gate 物化的
+ * `visual_diff.structured.downgraded_screens`（读法同 scope_revision_input）。summary fresh 只在完整
+ * 检查链下蕴含报告同轮重写；`--sync-closure` 或报告生成前失败出口会只重写 summary、留下旧报告，
+ * 故名单还须来自**本轮 gate 产物**：报告 mtime 不早于本轮 gate 起点，且 payload 既有身份字段
+ * goal_run_id / attempt_id 等于本 run / 本 attempt。任一不满足、summary 不 fresh / 缺文件 / 缺字段 /
+ * 解析失败 → 空集 = 现状（多回退，方向安全）。
+ */
+function readFreshDowngradedVisualScreens(
+  freshSummaryAbsPath: string | null,
+  gate: { runId: string; attemptId: string; startedAtMs: number },
+): ReadonlySet<string> {
+  if (!freshSummaryAbsPath) return new Set();
+  try {
+    const reportFile = path.join(path.dirname(freshSummaryAbsPath), 'script-report.json');
+    if (!fs.existsSync(reportFile) || fs.statSync(reportFile).mtimeMs < gate.startedAtMs) return new Set();
+    const report = JSON.parse(fs.readFileSync(reportFile, 'utf8')) as {
+      checks?: Array<{ structured?: { kind?: unknown; downgraded_screens?: unknown; goal_run_id?: unknown; attempt_id?: unknown } }>;
+    };
+    return new Set((report.checks ?? []).flatMap(check =>
+      check.structured?.kind === 'visual_diff' && Array.isArray(check.structured.downgraded_screens) &&
+      check.structured.goal_run_id === gate.runId && check.structured.attempt_id === gate.attemptId
+        ? check.structured.downgraded_screens.filter((s): s is string => typeof s === 'string')
+        : []));
+  } catch {
+    return new Set();
+  }
+}
+
 export function collectActionableDefects(
   projectRoot: string,
   feature: string,
   runId: string,
   deviceTest?: DeviceTestCollectContext,
+  /** plan 6644ea45 §4.4：本轮 gate 物化的降级屏（经 readFreshDowngradedVisualScreens 确认来自本 run / 本 attempt / 本轮 gate 起点之后的报告）。 */
+  downgradedVisualScreens?: ReadonlySet<string>,
 ): ActionableCollectResult {
   const out: ActionableDefect[] = [];
   const unverified: UnverifiedDefect[] = [];
@@ -2214,13 +2375,20 @@ export function collectActionableDefects(
       isStaleVisualDiffVerdict: (sc: unknown, root: string, o: { currentBuildFingerprint?: string | null }) => boolean;
       computeDefectFingerprint: (screenId: string, d: unknown) => string;
       hashScreenshotFile: (p: string) => string | null;
+      loadRepairAuthorityScope: (root: string, feature: string) => unknown;
+      defectRepairAuthority: (d: unknown, scope: unknown) => 'authorized' | 'excluded' | 'scope_unclear' | 'incomplete';
+      effectiveScreens: (rep: { screens: unknown[] }, scope: unknown) => {
+        screens: unknown[];
+        excluded: Array<{ screen_id: string; ref_element: string; requirement_quote?: string }>;
+        scopeUnclear: Array<{ screen_id: string; ref_element: string }>;
+      };
     };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const bf = require(path.join(profileDir, 'build-fingerprint')) as {
       resolveCurrentBuildFingerprint: (root: string, feature: string, phase?: string) => string | null;
     };
     const diffRel = path.posix.join(
-      featuresDirRelOf(projectRoot), feature, 'device-testing', 'device-screenshots', 'visual-diff.json',
+      featuresDirRelOf(projectRoot), featureRelativePath(feature), 'device-testing', 'device-screenshots', 'visual-diff.json',
     );
     const diffAbs = path.join(projectRoot, ...diffRel.split('/'));
     if (fs.existsSync(diffAbs)) {
@@ -2231,7 +2399,17 @@ export function collectActionableDefects(
         }>;
       };
       const currentFp = bf.resolveCurrentBuildFingerprint(projectRoot, feature, 'testing');
-      for (const sc of doc.screens ?? []) {
+      // plan c4e7a9b2 A2：候选只读授权过滤后的有效视图（与 gate 同一函数）——需求排除项与
+      // 范围不明（参考图元素未登记，gate 已 WARN 交 spec 澄清）都不产候选、不回退。
+      const authorityScope = vd.loadRepairAuthorityScope(projectRoot, feature);
+      const authorityView = vd.effectiveScreens({ screens: doc.screens ?? [] }, authorityScope);
+      for (const e of authorityView.excluded) {
+        console.warn(`[actionable] ${e.screen_id}: 需求排除项 ${e.ref_element}（引文「${e.requirement_quote ?? ''}」）不返修`);
+      }
+      for (const u of authorityView.scopeUnclear) {
+        console.warn(`[actionable] ${u.screen_id}: 元素 ${u.ref_element} 未在 ui-spec / ref-elements 登记，不作返修依据（待 spec 澄清）`);
+      }
+      for (const sc of authorityView.screens as NonNullable<typeof doc.screens>) {
         const id = typeof sc.screen_id === 'string' ? sc.screen_id.trim() : '';
         if (!id) continue;
         // ⑤ 前置（review 第 13 轮）：evaluation_invalidated 的语义是"该屏评估整体不可信、
@@ -2245,6 +2423,11 @@ export function collectActionableDefects(
         if (sc.verdict !== 'warn' && sc.verdict !== 'fail') continue;               // ①
         const mustFix = (sc.must_fix ?? []).filter((m): m is string => typeof m === 'string' && m.trim().length > 0);
         if (mustFix.length === 0) continue;                                          // ②
+        if (downgradedVisualScreens?.has(id)) {
+          // soft 档自报残差：gate 已记视觉债务（仍阻断发布），runtime 不自己推导档位、只消费物化结论。
+          console.warn(`[actionable] ${id}: 按档位降级（自报样式残差记视觉债务），不产回修候选`);
+          continue;
+        }
         // ③④ 显式判定（review 第 10 轮：isStaleVisualDiffVerdict 对**缺** evaluated hash
         // 返回"不 stale"、currentFp 算不出时跳过 build 校验——缺身份的旧结论会触发错误
         // 回退。actionable 要求**身份齐备且匹配**，缺=不 actionable（fail-closed）：
@@ -2291,7 +2474,16 @@ export function collectActionableDefects(
           .filter((x): x is { d: unknown; fp: string } => x !== null);
         if (structural.length > 0) {
           // 每信号一条候选；defect.must_fix_refs 反向解析到该屏 must_fix 原文作指令
+          // B07 D1（plan 6e4a2c8b）：结构化 defect 按 severity 分流——minor 不产回修候选
+          //（留视觉债务台账 / 报告 WARN），major/blocker 照旧；provider 源同规则。
+          // 宿主 i13：12 条 minor 声明差以 coding 候选身份吃掉最后一次回退。零文本解析。
+          let minorSkipped = 0;
+          let anchorMissing = 0;
           for (const { d, fp } of structural) {
+            if ((d as { severity?: unknown }).severity === 'minor') { minorSkipped++; continue; }
+            // plan c4e7a9b2 A2：missing_render 缺 ref_element / 其余类缺 element → 不说改的是
+            // 哪个元素，授权无从判定，走既有 unverified 通路（不回退、testing 重评补标识）。
+            if (vd.defectRepairAuthority(d, authorityScope) === 'incomplete') { anchorMissing++; continue; }
             // plan ab072691 t5⑤：**provider 评审缺陷是独立的 critic candidate 源**，
             // 不是 producer 感知信号。它结构上恒「未经 primary defect-review 复核」——
             // provider 后于 primary 运行，而且让**盲的** primary 去复核视觉缺陷是伪制衡。
@@ -2325,6 +2517,13 @@ export function collectActionableDefects(
               signal_identity: !fromVisualProvider,
             });
           }
+          if (minorSkipped > 0) {
+            console.warn(`[actionable] ${id}: ${minorSkipped} 条 minor 视觉信号不产回修候选（留视觉债务台账 / 报告 WARN）`);
+          }
+          if (anchorMissing > 0) {
+            pushVisualUnverified(id, 'ref_element_missing',
+              `${anchorMissing} 条缺陷未指明元素（missing_render 缺 ref_element / 其余类缺 element），返修授权无从判定——重评时补标识`);
+          }
         } else {
           // 纯文本 must_fix 保底：整屏文案 hash（legacy；信号级收敛不作用于其后代候选）
           const fingerprint = `${id}|text:${createHash('sha256')
@@ -2351,7 +2550,7 @@ export function collectActionableDefects(
   // ---- B) crash：本 run 的集合差归档 ----
   try {
     const diagRel = path.posix.join(
-      featuresDirRelOf(projectRoot), feature, 'device-testing', 'reports', 'crash-diagnostics',
+      featuresDirRelOf(projectRoot), featureRelativePath(feature), 'device-testing', 'reports', 'crash-diagnostics',
     );
     const diagAbs = path.join(projectRoot, ...diagRel.split('/'));
     if (fs.existsSync(diagAbs)) {
@@ -2694,7 +2893,7 @@ export function resolvePhaseCapabilityAdvisory(
     // t6：意图检测在解引用后的合并文本上做——manifest 摘要只写 SSOT 路径+弱措辞而
     // 原始需求.md「完全参考」×7 是强信号（bc-openCard 事故原形）。
     const deref = dereferenceRequirementDocs(projectRoot, manifest.requirement, {
-      excludePrefixes: [`doc/features/${manifest.feature}/`],
+      excludePrefixes: [`${relFeaturesDir(projectRoot)}/${featureRelativePath(manifest.feature)}/`],
     });
     isUiRelevant = detectUiRelevantRequirement(deref.combined);
     desired = detectPixel1to1Intent(deref.combined) ? 'pixel_1to1' : 'semantic_layout';
@@ -2814,6 +3013,8 @@ export function applyInvalidationsToResume(
     type?: string;
     phase?: string;
     verdict?: string;
+    action?: string;
+    advance_blocked?: boolean;
     invalidated_phases?: unknown;
   }>,
 ): { outcomes: GoalPhaseOutcome[]; startIndex: number; invalidatedPhases: string[]; postAgentPhases: string[]; postAgentAttemptIds: Record<string, string> } {
@@ -2849,8 +3050,14 @@ export function applyInvalidationsToResume(
         }
       }
       const later = events.slice(idx + 1, windowEnd);
+      // "Re-validated" must mean exactly what the events rebuild calls a terminal PASS. A
+      // `PASS + action:retry` (closure still pending) or an `advance_blocked` PASS is NOT one:
+      // `rebuildOutcomesFromEvents` skips retries, so accepting them here would clear the
+      // invalidation while the outcome list still holds the pre-invalidation PASS — and recovery
+      // would skip the very phase that was invalidated (review B1).
       const revalidated = later.some(
-        later => later.type === 'phase_verdict' && later.phase === phase && later.verdict === 'PASS',
+        later => later.type === 'phase_verdict' && later.phase === phase && later.verdict === 'PASS'
+          && later.action !== 'retry' && later.advance_blocked !== true,
       );
       // review 收口：**只看最新 request 窗口内该 target phase 的最后一条执行事件**——
       // 判据（与复用身份同一判据，消除「有 settled 即跳、却取最后一条」的不一致）：
@@ -3238,14 +3445,13 @@ export function resolveClosureReadRequirement(
 /** 回退后 review 的增量重点复审块（seam 变更不豁免——注入重审焦点而非跳过）。 */
 /**
  * runner-owned-machine-facts 追补（codex review）：spec closure-only 轮的只读取证指令。
- * 冻结的是产物，不是只读视觉取证——vl_multimodal 终签 invocation-bound，只认**本次
- * invoke** 的逐张验读回执；closure 轮不读图 → refs 回执 partial → 终签结构性拒收
- * （宿主实锤 run 20260815T070732Z-013297：i3 零读图，content_retry_exhausted 终局）。
+ * 冻结的是产物，不是只读视觉取证。plan 8d2b4f60 D3：终签已改材料寻址（本 run 内读过且
+ * 内容未变的图即可采信），closure 轮**不再被要求逐图重读**——原先"必须重读满"与 FROZEN
+ * 自相矛盾，且 20260815T070732Z-013297 的 content_retry_exhausted 正是它造成的。
  *
  * plan c4e8a1f7 T3（评审 P1 修复）：入参是 `resolveClosureReadRequirement` 归一后的
  * 二态值（'structured_events' | 'none'）——
- *  · 'structured_events'（hasVision ∧ 可审计）：本 invoke 逐图 Read 是**可达且被要求**的
- *    （本 invoke 的 Read 事件可签 refs receipt，争取 vl_multimodal 终签）；
+ *  · 'structured_events'（hasVision ∧ 可审计）：列出权威参考图，图变了要重读；
  *  · 'none'（无视觉 / none-provenance / 盲+structured）：要求"每张 Read"是结构性不可达
  *    的——图片照常可读可用，但产物必须诚实写 `verified: unverified`，不得宣称
  *    vl_multimodal（软档 WARN 可继续、hard contract 由既有 gate FAIL）。
@@ -3260,15 +3466,15 @@ export function buildClosureVisualEvidenceBlock(
   return [
     '',
     isStructured
-      ? '## Mandatory read-only visual evidencing for THIS invocation (spec closure — REQUIRED)'
-      : '## Visual evidencing for THIS invocation (spec closure — honest unverified exit)',
+      ? '## Read-only visual evidencing (spec closure)'
+      : '## Visual evidencing (spec closure — honest unverified exit)',
     '',
-    'FROZEN applies to artifacts, NOT to read-only evidencing. The vl_multimodal final sign-off is',
-    'invocation-bound: it only accepts reference images actually read during THIS invocation.',
+    'FROZEN applies to artifacts, NOT to read-only evidencing. Reference images already read earlier in',
+    'THIS run still count as long as their content has not changed; any image that changed must be re-read.',
     ...(isStructured
       ? [
-          'Before filling the receipt, read EVERY authoritative reference image below with your file-read',
-          'tool. Reading them is required and allowed; modifying any artifact remains forbidden:',
+          'The authoritative reference images for this feature are listed below. Reading them is allowed;',
+          'modifying any artifact remains forbidden:',
         ]
       : [
           'This invocation does not have both working vision and structured per-image Read auditing',
@@ -3281,9 +3487,6 @@ export function buildClosureVisualEvidenceBlock(
     '',
     ...refRelPaths.map(p => `- ${p}`),
     '',
-    ...(isStructured
-      ? ['Skipping any image leaves the refs receipt partial and fails ui_spec_fidelity_gate for this attempt.', '']
-      : []),
   ].join('\n');
 }
 
@@ -3412,8 +3615,13 @@ export function buildPhasePrompt(
   phaseWriteBoundary?: PhaseWriteBoundaryResolution,
   /** plan a7c3e9d2：实例扩展的作者前置输入段（extensionInputsForPhase 产出；空串 / 缺省 = 不注入）。 */
   extensionInputs?: string,
+  /**
+   * plan 5e1c7a93 D4：本轮是否 attended（session owner 在场）。true = 不注入无人值守模式段，
+   * 只注入完整性红线与确定性检测段。缺省 false，既有调用逐字不变。
+   */
+  attended?: boolean,
 ): string {
-  const skillAbs = path.join(frameworkRoot, PHASE_SKILL_REL[phase]);
+  const skillAbs = phaseSkillPath(frameworkRoot, phase);
   const parts = [
     `# Goal run phase: ${phase}`,
     '',
@@ -3422,7 +3630,7 @@ export function buildPhasePrompt(
     '',
     formatDeferredUpstreamNotice(deferredUpstream),
     ...(capabilityAdvisory ? buildCapabilityBlock(capabilityAdvisory) : []),
-    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined),
+    ...buildUnattendedExecutionBlock(manifest, phase, projectRoot, capabilityAdvisory ?? undefined, attended === true),
     '',
     '## Orchestrator constraints (BLOCKER)',
     '',
@@ -3432,9 +3640,9 @@ export function buildPhasePrompt(
       ? ['', ...renderPhaseWriteBoundaryGuidance(phaseWriteBoundary, String(phase))]
       : []),
     '',
-    `Read and follow the phase skill: ${PHASE_SKILL_REL[phase]}`,
+    `Read and follow the phase skill: ${path.relative(frameworkRoot, skillAbs).replace(/\\/g, '/')}`,
     `Skill absolute path: ${skillAbs}`,
-    // cp→main: 本块保留——主干 buildPhasePrompt 尚无扩展注入，d8f4b7e2 自陈的"通用注入"由此落地；读取指令放这里不放 formatter，formatter 被主干替换后指令仍在。
+    // plan a7c3e9d2：作者动笔前的实例扩展输入（d8f4b7e2 自陈的"通用注入"由此落地）；读取指令放这里，formatter 只负责索引与绑定块。
     ...(extensionInputs
       ? ['', "Before writing this phase's artifacts, read the instance extension inputs below that apply to this phase.", '', extensionInputs]
       : []),
@@ -3445,7 +3653,9 @@ export function buildPhasePrompt(
     '',
     'After producing artifacts, run harness for this phase and ensure summary.json is written.',
     'Do NOT claim phase complete if harness verdict is INCOMPLETE or FAIL.',
-    phase === 'coding'
+    manifest.execution_scope
+      ? `After this phase, only the frozen remaining chain applies: ${manifest.execution_scope.phase_chain.slice(manifest.execution_scope.phase_chain.indexOf(phase) + 1).join('→') || 'validate requested result'}.`
+      : phase === 'coding'
       ? 'If coding artifacts are ready: report "coding phase complete — goal continues to review→ut→testing" (not "goal run finished").'
       : '',
   ].filter(Boolean);
@@ -3645,6 +3855,16 @@ export function buildPhasePrompt(
       '**Red line: do NOT read or modify framework internals (harness/ sources, gate implementations, manifests) to get past a gate — that is task failure, not a fix path.**',
     );
   }
+  if (manifest.execution_scope) {
+    const scope = manifest.execution_scope;
+    parts.push('', '## Frozen execution scope / P1 input protocol 1.1',
+      `Completion target: ${scope.completion_target}; requested results: ${scope.requested_results.join(', ')}`,
+      `Frozen phase chain: ${scope.phase_chain.join('→')}; execute only ${phase} in this invocation.`,
+      `Before substantive work, establish or adopt real facts at ${featureFilePath(projectRoot, manifest.feature, 'context/facts.md')}. The first phase in this run is ${scope.phase_chain[0]}.`,
+      'Preserve a validated predecessor baseline and its actual established_by; append only this phase_delta. Never invent spec/change execution.',
+      'New facts belong to the responsible Skill/checker; do not edit the frozen manifest or cancel obligations because a check failed.',
+      ...scope.obligations.filter(o => o.owner_phase === phase).map(o => `${o.id}: ${o.applicability}; ${o.reason}`));
+  }
   return parts.join('\n');
 }
 
@@ -3718,7 +3938,7 @@ function guardOrphanedFeatureRun(
   force: boolean,
 ): void {
   if (force) return;
-  const featureRunsDirAbs = path.join(projectRoot, featuresDir, feature, 'goal-runs');
+  const featureRunsDirAbs = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs');
   const orphan = resolveOrphanedIncompleteRun(featureRunsDirAbs, projectRoot);
   if (!orphan) return;
   if (orphan.runMode === 'unknown') {
@@ -3752,7 +3972,7 @@ function acquireGoalLocks(
   },
 ): void {
   const { runId, reportDir, runMode } = run;
-  const featureRunsDir = path.join(projectRoot, featuresDir, feature, 'goal-runs');
+  const featureRunsDir = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs');
   const featureLockPath = path.join(featureRunsDir, FEATURE_LOCK_NAME);
   // plan e7c2a4d8 T1b''：per-run lock 从 canonical manifest.report_dir 派生
   //（dry 落 goal-runs/.dry/<run_id>/）；feature 串行锁继续共享（同 feature 串行）。
@@ -3972,7 +4192,74 @@ export function buildDetachedChildArgv(
  *    blocking host (chrys `communicate()`) sees EOF and the launcher "completes";
  *  - launcher exits 0 fast → host's clean-exit path does not tree-kill the child.
  */
-function runDetachLauncher(argv: minimist.ParsedArgs): number {
+export type DetachedStartupResult =
+  | { state: 'ready'; event: 'run_start' }
+  | { state: 'terminal'; status: string }
+  | { state: 'alive_timeout'; detail: string }
+  | { state: 'failed'; detail: string };
+
+export async function waitForDetachedStartup(input: {
+  projectRoot: string;
+  reportDirRel: string;
+  runId: string;
+  baselineEventCount: number;
+  childExitCode: () => number | null;
+  childAlive?: () => boolean;
+  childError?: () => string | undefined;
+  timeoutMs?: number;
+  pollMs?: number;
+}): Promise<DetachedStartupResult> {
+  const deadline = Date.now() + Math.min(30_000, Math.max(1, input.timeoutMs ?? 10_000));
+  const pollMs = Math.max(1, input.pollMs ?? 50);
+  const runDir = path.resolve(input.projectRoot, ...input.reportDirRel.split('/'));
+  const eventsPath = path.join(runDir, 'events.jsonl');
+  const manifestPath = path.join(runDir, 'manifest.json');
+  const progressPath = path.join(runDir, 'progress.json');
+  const logPath = path.join(runDir, 'detach.log');
+  const logTail = (): string => {
+    try { return fs.readFileSync(logPath, 'utf8').slice(-400).replace(/\s+/g, ' ').trim(); } catch { return ''; }
+  };
+  while (Date.now() < deadline) {
+    const spawnError = input.childError?.();
+    if (spawnError) return { state: 'failed', detail: `child spawn failed: ${spawnError}` };
+    let manifestMatches = false;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { run_id?: unknown };
+      manifestMatches = manifest.run_id === input.runId;
+    } catch { /* child may not have published manifest yet */ }
+    const events = fs.existsSync(eventsPath) ? loadEventsJsonl(eventsPath).slice(input.baselineEventCount) : [];
+    const terminal = [...events].reverse().find(event => event.type === 'run_end');
+    if (manifestMatches && terminal) return { state: 'terminal', status: String(terminal.status ?? 'unknown') };
+    if (manifestMatches && events.some(event => event.type === 'run_start')) return { state: 'ready', event: 'run_start' };
+    const exitCode = input.childExitCode();
+    if (exitCode !== null) {
+      return { state: 'failed', detail: `child exited before authoritative run_start (exit=${exitCode})${logTail() ? `: ${logTail()}` : ''}` };
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, pollMs));
+  }
+  const beacon = assessLivenessBeacon({
+    beacon: readLivenessBeacon(input.projectRoot, input.reportDirRel),
+    runId: input.runId,
+  });
+  let progress = '';
+  try {
+    const snapshot = JSON.parse(fs.readFileSync(progressPath, 'utf8')) as { run_id?: unknown; status?: unknown; next_action?: unknown };
+    if (snapshot.run_id === input.runId) progress = `; status=${String(snapshot.status ?? 'unknown')}; next=${String(snapshot.next_action ?? 'unknown')}`;
+  } catch { /* optional projection */ }
+  if ((input.childAlive?.() ?? input.childExitCode() === null) || beacon.state === 'alive') {
+    return { state: 'alive_timeout', detail: `child still active but authoritative run_start not observed within startup window${progress}` };
+  }
+  return { state: 'failed', detail: `child exited during startup confirmation${logTail() ? `: ${logTail()}` : ''}` };
+}
+
+function normalizeSupersedeTargets(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  return values
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+}
+
+async function runDetachLauncher(argv: minimist.ParsedArgs): Promise<number> {
   const layout = detectRepoLayout(__dirname);
   const projectRoot = layout.projectRoot;
   const cfg = loadFrameworkConfig(projectRoot);
@@ -3990,21 +4277,48 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
   }
   const feature = raw.feature;
   const isResume = raw.isResume;
+  const runId = raw.runId ?? newRunId();
+  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
+  const supersedeTargets = normalizeSupersedeTargets(argv.supersede);
 
   // Same orphan guard as the foreground path — refuse a stillborn new run_id when an
   // orphaned-but-incomplete run exists (so --detach doesn't print run_id then die).
   // dry-run 隔离命名空间，不受真实 run 孤儿阻挡。
   if (!isResume && !raw.dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, feature, Boolean(argv.force));
+    try {
+      const requirement = resolveRequirementInput({
+        requirement: argv.requirement,
+        requirementFile: argv['requirement-file'],
+        projectRoot,
+      });
+      const continuation = evaluateFreshRunContinuation({
+        projectRoot,
+        manifest: {
+          feature,
+          run_id: runId,
+          report_dir: reportDirRel,
+          requirement: requirement.text,
+          ...(requirement.sources.length > 0 ? { requirement_source_files: requirement.sources } : {}),
+          ...(supersedeTargets[0] ? { successor_of: supersedeTargets[0] } : {}),
+        },
+        forceFresh: Boolean(argv.force),
+      });
+      if (!continuation.allowed) {
+        console.error(`[goal-runner] BLOCKER: ${continuation.reason}`);
+        return 1;
+      }
+    } catch (error) {
+      console.error(`[goal-runner] BLOCKER: ${(error as Error).message}`);
+      return 1;
+    }
   }
-
-  const runId = raw.runId ?? newRunId();
-
-  const reportDirRel = resolveGoalReportDir({ featuresDir, feature, runId, dryRun: raw.dryRun });
   const reportDirAbs = path.join(projectRoot, ...reportDirRel.split('/'));
   fs.mkdirSync(reportDirAbs, { recursive: true });
   const logPathAbs = path.join(reportDirAbs, 'detach.log');
   const logFd = fs.openSync(logPathAbs, 'a');
+  const eventsPathAbs = path.join(reportDirAbs, 'events.jsonl');
+  const baselineEventCount = fs.existsSync(eventsPathAbs) ? loadEventsJsonl(eventsPathAbs).length : 0;
 
   const childArgs = buildDetachedChildArgv(process.argv.slice(2), runId, { resume: isResume });
   const preloadPath = resolveDetachedPreloadPath();
@@ -4021,10 +4335,22 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
       env: sanitizeSpawnEnv(process.env).env,
     },
   );
+  let spawnError: string | undefined;
+  child.once('error', error => { spawnError = error.message; });
   // Parent must release the fd and the child reference: keeps no handle on the log
   // (so the host's pipe wait can't be extended) and lets the parent exit cleanly.
   child.unref();
   fs.closeSync(logFd);
+
+  const startup = await waitForDetachedStartup({
+    projectRoot,
+    reportDirRel,
+    runId,
+    baselineEventCount,
+    childExitCode: () => child.exitCode,
+    childAlive: () => typeof child.pid === 'number' && pidExists(child.pid),
+    childError: () => spawnError,
+  });
 
   console.log(
     JSON.stringify({
@@ -4034,9 +4360,10 @@ function runDetachLauncher(argv: minimist.ParsedArgs): number {
       report_dir: reportDirRel,
       log: path.relative(projectRoot, logPathAbs).replace(/\\/g, '/'),
       pid: child.pid ?? null,
+      startup,
     }),
   );
-  return 0;
+  return startup.state === 'failed' ? 1 : 0;
 }
 
 /** Resolve in the framework process; the detached child may start from a dependency-free consumer cwd. */
@@ -4045,6 +4372,8 @@ export function resolveDetachedPreloadPath(): string {
 }
 
 export interface GoalPhaseRuntimeLaunchOptions {
+  /** Fault-injection seam for the run-internal revision cut; not a runtime mode. */
+  onScopeRevision?: (boundary: 'applied') => void;
   /** Explicit argv for embedded callers; CLI callers omit it. */
   args?: readonly string[];
   /** Explicit layout keeps host bridges and fixture runs independent from process.cwd(). */
@@ -4065,11 +4394,52 @@ export interface GoalPhaseRuntimeLaunchOptions {
  * The single production phase lifecycle. Both attended and detached callers enter main();
  * only the supplied executor transport and fenced owner kind differ.
  */
+function resolveRuntimeLayout(options: GoalPhaseRuntimeLaunchOptions, argv: minimist.ParsedArgs): RepoLayout {
+  const detected = options.layout ?? injectedLayout ?? detectRepoLayout(__dirname);
+  return { ...detected,
+    projectRoot: argv['project-root'] ? path.resolve(String(argv['project-root'])) : detected.projectRoot,
+    frameworkRoot: argv['framework-root'] ? path.resolve(String(argv['framework-root'])) : detected.frameworkRoot,
+  };
+}
+
 export class GoalPhaseRuntime {
   constructor(private readonly options: GoalPhaseRuntimeLaunchOptions = {}) {}
 
-  run(): Promise<number> {
-    return main(this.options);
+  lastRunId?: string;
+
+  /**
+   * D2: there is no successor path any more. A legal revision is appended inside the SAME run,
+   * so the runtime never re-enters itself under a new run id — the old `for(;;)` relaunch loop
+   * (and the `nextArgs` relaunch argv it built) is gone with it.
+   */
+  async run(): Promise<number> {
+    const options = this.options;
+    {
+      const argv = minimist([...(options.args ?? process.argv.slice(2))]);
+      const priorRunId = argv.resume ?? argv['attach-created'];
+      const { projectRoot: root, frameworkRoot } = resolveRuntimeLayout(options, argv);
+      if (typeof priorRunId === 'string' && typeof argv.feature === 'string') {
+        const scope = loadEffectiveExecutionScope(root, argv.feature, priorRunId);
+        if (scope) {
+          const prior = loadGoalManifestFromRun(root, priorRunId, { feature: argv.feature });
+          const events = loadEventsJsonlStrict(path.join(root, prior.report_dir, 'events.jsonl')).events;
+          const terminal = [...events].reverse().find(event => event.type === 'run_end');
+          if (terminal?.status === 'CHAIN_SLICE_COMPLETED' && !scope.unresolved.length) {
+            const completed = scope.completion_target === 'feature'
+              ? assessFeatureCompletion(root, prior.feature, { expectedChain: executionCompletionPhases(scope), expectedTrack: 'full' }).complete
+              : collectCleanPassIssues({ projectRoot: root, feature: prior.feature, chain: executionCompletionPhases(scope), frameworkRoot }).length === 0;
+            if (completed) { this.lastRunId = priorRunId; return 0; }
+          }
+        }
+      }
+      const code = await main(options);
+      const finished = terminalEventCtx;
+      if (!finished) return code;
+      this.lastRunId = finished.runId;
+      // D2: the run projects its own completion and there is no ancestor chain to clean up, so the
+      // post-run verification that used to gate that cleanup is gone rather than left as a no-op.
+      return code;
+    }
   }
 
   async executeExecutor(
@@ -4148,11 +4518,22 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
     console.error('[goal-phase-runtime] BLOCKER: session owner 只能使用 attended executor');
     return 1;
   }
+  // plan 8d2b4f60 D7（第2轮 plan review finding 13）：反向约束。owner.kind 已升格为
+  // vl_multimodal 终签的执行形态判据（attended ⇒ 结构性不可达），双向蕴含缺一半就是旁路：
+  // `--runtime-executor attended --runtime-owner process` 会让 gate 判不出 attended，
+  // 从而把先前 detached 轮的 refs 读取记录当本轮证据终签。
+  if (executorMode === 'attended' && runtimeOwnerKind !== 'session') {
+    console.error(
+      '[goal-phase-runtime] BLOCKER: attended executor 必须配 session owner（detached 只能配 process owner）；' +
+        'owner.kind 是 attended 的唯一机内判据，错配会让视觉终签误采信先前 invocation 的读取记录。',
+    );
+    return 1;
+  }
   const attachCreatedRunId = typeof argv['attach-created'] === 'string'
     ? argv['attach-created'].trim()
     : '';
-  if (attachCreatedRunId && (executorMode !== 'attended' || runtimeOwnerKind !== 'session')) {
-    console.error('[goal-phase-runtime] BLOCKER: --attach-created 仅供 attended session 首次接管');
+  if (attachCreatedRunId && !((executorMode === 'attended' && runtimeOwnerKind === 'session') || (executorMode === 'detached' && runtimeOwnerKind === 'process'))) {
+    console.error('[goal-phase-runtime] BLOCKER: --attach-created owner/transport 不匹配');
     return 1;
   }
   if (attachCreatedRunId && argv.resume) {
@@ -4172,7 +4553,7 @@ export async function main(options: GoalPhaseRuntimeLaunchOptions = {}): Promise
   // blocking host shell (e.g. chrys TUI shell tool) is not held for the whole run.
   // The spawned child carries `--detached-child` and runs this same main() normally.
   if (argv.detach && !argv['detached-child']) {
-    return runDetachLauncher(argv);
+    return await runDetachLauncher(argv);
   }
 
   if (argv.help) {
@@ -4197,14 +4578,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   const manifestArgv = toManifestCliArgv(argv);
-  const detectedLayout = options.layout ?? injectedLayout ?? detectRepoLayout(__dirname);
-  const projectRoot = argv['project-root']
-    ? path.resolve(String(argv['project-root']))
-    : detectedLayout.projectRoot;
-  const frameworkRoot = argv['framework-root']
-    ? path.resolve(String(argv['framework-root']))
-    : detectedLayout.frameworkRoot;
-  const layout: RepoLayout = { ...detectedLayout, projectRoot, frameworkRoot };
+  const layout = resolveRuntimeLayout(options, argv);
+  const { projectRoot, frameworkRoot } = layout;
 
   // f9c2e6b4 t4：**fresh 才读源文件**——resume 一律只认 manifest 里已冻结的 requirement，
   // 这样"权威需求文件可长期复用"与"旧内容绝不悄悄进新 run"同时成立。
@@ -4279,7 +4654,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   }
 
   const cfg = loadFrameworkConfig(projectRoot);
-  const workflow = (injectedWorkflowResolver ?? resolveWorkflowSpec)(
+  let workflow = (injectedWorkflowResolver ?? resolveWorkflowSpec)(
     projectRoot,
     { config: cfg, frameworkRoot },
   );
@@ -4303,6 +4678,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
       feature: String(argv.feature),
       featuresDir,
     });
+    // D2.5 delete-list #8: the detached attach-created guard required a *verified scoped
+    // successor* lineage, which is unsatisfiable once the successor path is gone. Birth
+    // completeness is carried by assertGoalRunAttachable + inspectGoalRunCreation (plan §7.2,
+    // where the surrendered accuracy — the successor-lineage dimension — is recorded).
   } else if (argv.resume) {
     if (!argv.manifest && !argv.feature) {
       console.error('[goal-runner] BLOCKER: --resume 须配 --feature 或 --manifest');
@@ -4363,6 +4742,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
     );
   }
 
+  if (argv.resume || attachCreatedRunId) workflow = workflowForExistingRun(workflow, manifest, frameworkRoot);
+  const requestedSupersedeTargets = normalizeSupersedeTargets(argv.supersede);
+  // plan b2d7f4e9 §3.2：`--supersede` 必须点名一个 run。feature 载体（无 run 的完成）没有 run 可 supersede——
+  // 它的完成后修正是追加 feature 范围修订后起新 run；空值不得被静默当成 fresh run。
+  if (Object.prototype.hasOwnProperty.call(argv, 'supersede') && !requestedSupersedeTargets.length) {
+    console.error('[goal-runner] BLOCKER: --supersede 必须指向一个已存在的 run；无 run 的 feature 完成后修正请先按当前输入追加 feature 范围修订，再起新 run（不带 --supersede）');
+    return 1;
+  }
+  let requestedExecutionScope = !argv.resume && !attachCreatedRunId && !requestedSupersedeTargets.length
+    // D1.3：出生范围 = 转交时 feature 的**有效**范围（有冻结记录时不重算候选）——
+    // 与 `--prepare-run` 入口**同一个** `resolveBirthExecutionScope`，不是第三条路径。
+    // D1.3：出生范围**一律**过统一解析——`manifest.execution_scope ?? ...` 的写法会让
+    // 「manifest 自带范围」跳过 feature 记录的转交 / 候选漂移 / provenance 检查（第一轮阻断 3）。
+    // successor（--supersede / --rebaseline-to）不走这里：它要先核合法源 run、再在 supersede 上下文里
+    // 按最终需求重解析（plan b2d7f4e9 §3.2，见下方 requirement 合并之后的 `resolveSuccessorExecutionScope`）。
+    ? resolveBirthScopeForManifest(projectRoot, manifest, workflow, frameworkRoot)
+    : undefined;
+  if (requestedExecutionScope && workflow.schema_version !== '1.2') throw new Error('[execution-scope] fresh scoped run requires workflow 1.2');
+
   // T3①：自动后继的唯一 manifest 写入点继承源 run 的预算与指纹账本。
   // 审计权仍来自后续 fresh run 的 supersede 事件；这里仅把启动约束和防震荡
   // 指纹带入新 manifest，不能单独让旧 run 的阶段 PASS 跨 run 生效。
@@ -4373,12 +4771,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
   let supersedeSourceRequirement: string | undefined;
   // plan c4e8a1f7 T2（评审 P1 三轮修复）：源 run 的需求来源列表（successor 来源重设用）
   let supersedeSourceSourceFiles: string[] | undefined;
-  const requestedSupersedeTargets =
-    Array.isArray(argv.supersede)
-      ? argv.supersede.filter((value): value is string => typeof value === 'string')
-      : typeof argv.supersede === 'string'
-        ? [argv.supersede]
-        : [];
   // A resumed run that supersedes itself must fail before locks, run_start, progress,
   // or any other event-producing startup work. The later loop keeps the same check as
   // defence in depth, while the resumed source remains strictly read-only here.
@@ -4430,6 +4822,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           if (typeof record.round_fingerprint === 'string') round.push(record.round_fingerprint);
           if (typeof record.drift_fingerprint === 'string') drift.push(record.drift_fingerprint);
         }
+        // plan b2d7f4e9 §3.2 第 1 步到此：源 run 可加载、出生记录 complete/legacy。范围不在这里继承——
+        // 1.2 workflow 在 requirement 合并之后于 supersede 上下文重解析（第 2 步）；非 1.2 沿用源 manifest。
         manifest = inheritSuccessorManifest(manifest, source, { round, drift });
       } catch (error) {
         // 后继 manifest 是新 run 唯一写入点的启动合同；继承失败不能静默退回默认
@@ -4437,7 +4831,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 下方既有校验负责，但本次启动先 fail-closed，不制造合同不完整的后继。
         throw new Error(
           `[goal-runner] BLOCKER: 无法构造 supersede 后继 manifest（源=${sourceRunId}）：` +
-            `${(error as Error).message}`,
+            `${(error as Error).message}` +
+            '（--supersede 只接已存在的 run；无 run 的 feature 完成后修正请先追加 feature 范围修订，再起新 run）',
         );
       }
     }
@@ -4627,7 +5022,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const dryRun = dryRunMode;
   if (dryRun) setAppendEventBaseFields({ dry_run: true }); // T1b：dry 事件全量打标
   const forceResume = Boolean(argv['force-resume']);
-  const goalTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
+  const goalTrack = manifest.execution_scope || workflow.schema_version === '1.2' ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature, manifest.run_id));
   if (Object.keys(process.env).some(key => key.toUpperCase() === 'HARNESS_DIFF_BASE_REF')) {
     console.warn(
       '[goal-runner] 已忽略并从 goal 子进程环境剥离 HARNESS_DIFF_BASE_REF；' +
@@ -4644,7 +5039,51 @@ Goal runner — tool-agnostic multi-phase orchestrator
       process.exit(1);
     }
   }
-  const requestedChain = attachedCreation?.state === 'complete'
+  if (!argv.resume && !attachCreatedRunId && workflow.schema_version === '1.2') {
+    // plan b2d7f4e9 §3.2 第 2 步：successor 在已核合法的 supersede 上下文里按**最终**需求（上方合并之后）
+    // 重解析出生范围——义务按当前输入重派生、既往证据经同一核验复用；feature 记录只作血缘核对。
+    // 这一步在 createGoalRun 之前：拒绝即不建 run、不写审计、不动转交记录。
+    if (manifest.successor_of) {
+      try {
+        requestedExecutionScope = resolveSuccessorExecutionScope(projectRoot, manifest.feature, workflow, frameworkRoot, manifest.requirement, manifest.successor_of);
+      } catch (error) {
+        throw new Error(`[goal-runner] BLOCKER: successor 出生范围无法解析（源=${manifest.successor_of}）：${(error as Error).message}`);
+      }
+    }
+    // D1.3（第二轮阻断 1）：现代 fresh/detached 路径**无条件采用**统一出生解析的结果。
+    // `??=` 会让 `--manifest` 自带的旧范围留下来，随后用错误的出生范围建 run，而转交登记
+    // 要到 `createGoalRun` 之后才因指纹失配报错——顺序已经晚了。自带范围与解析结果不同即拒。
+    // successor 的 manifest 带着从源 run 继承来的旧出生范围，被重解析结果替换是本意，不比对。
+    if (requestedExecutionScope) {
+      if (!manifest.successor_of && manifest.execution_scope
+        && executionScopeFingerprint(validateExecutionScope(manifest.execution_scope)) !== executionScopeFingerprint(requestedExecutionScope)) {
+        throw new Error('[execution-scope] manifest 自带的出生范围与统一出生解析结果不一致——请去掉 --manifest 里的 execution_scope，或按 correction / successor 路径处理');
+      }
+      manifest.execution_scope = requestedExecutionScope;
+    }
+    if (!manifest.execution_scope?.phase_chain.length) throw new Error('[execution-scope] empty scope: validate existing completion without a new run');
+    if ((typeof argv.start === 'string' && argv.start !== manifest.execution_scope.phase_chain[0]) || (typeof argv.end === 'string' && argv.end !== manifest.execution_scope.phase_chain.at(-1))) throw new Error('[execution-scope] start/end must match the resolved scope');
+    manifest.start_phase = manifest.execution_scope.phase_chain[0];
+    manifest.end_phase = manifest.execution_scope.phase_chain.at(-1)!;
+    manifest.chain_override = [...manifest.execution_scope.phase_chain];
+  }
+  // D2 §4.2.3: everything below reads the EFFECTIVE scope (birth + applied revisions); only the
+  // birth-value projections that guard manifest identity keep reading manifest.execution_scope.
+  // The birth scope, validated once: every "what did a revision revoke" projection derives from it.
+  const birthScope = manifest.execution_scope ? validateExecutionScope(manifest.execution_scope) : undefined;
+  const effectiveBirthScope = manifest.execution_scope
+    ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(path.join(projectRoot, manifest.report_dir, 'events.jsonl')))
+    : undefined;
+  // plan a9f3c7d2 第二笔（R5）：单职责请求关掉自己的定义缺口后，有效链**本来就是空的**。
+  // 空链不是合法的执行目标——它既过不了 `resolveActualGoalPhaseChainAtBirth` 的非空校验，
+  // 又会让 `resolveResumeFromEvents` / `applyInvalidationsToResume` 按空链重建出 `outcomes=[]`，
+  // 把上一段真实的 PASS 整个丢掉，resume 的终态落回 PARTIAL。此时退回**出生冻结链**（授权边界，
+  // 也正是完成证据所在的那条链）：本阶段的 PASS 照常从事件重建，起点推导随之落在链尾，
+  // 不会重新派发；失效/撤销规则一行不放宽。只对 request 终点二分，feature 终点一字不动。
+  const requestedChain = effectiveBirthScope
+    ? [...(effectiveBirthScope.phase_chain.length === 0 && effectiveBirthScope.completion_target === 'request'
+        ? validateExecutionScope(manifest.execution_scope!).phase_chain : effectiveBirthScope.phase_chain)]
+    : attachedCreation?.state === 'complete'
     ? [...attachedCreation.event.phase_chain]
     : resolveAutoChain(
         workflow,
@@ -4653,7 +5092,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         manifest.chain_override,
         goalTrack,
       );
-  const fullWorkflowChain = featurePhasesFromWorkflow(workflow, goalTrack);
+  // B3: the completion chain must follow revisions, otherwise phases a revision added never enter
+  // the completion projection at :9821.
+  // `let`: a run-internal revision re-targets the completion projection together with `chain`.
+  let fullWorkflowChain = effectiveBirthScope ? executionCompletionPhases(effectiveBirthScope) : featurePhasesFromWorkflow(workflow, goalTrack);
   // Receipt-derived legacy fidelity recovery changes which phases must actually execute. Resolve
   // that fact before a fresh modern run is born, then freeze the expanded chain in manifest and
   // run_created. Later resume/attach paths may validate this birth fact, but never recompute it.
@@ -4663,7 +5105,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
   const actualBirthChain = resolveActualGoalPhaseChainAtBirth({
     requestedChain,
     fullWorkflowChain,
-    requiresLegacyFidelityRecovery: freshLegacyFidelity !== null,
+    requiresLegacyFidelityRecovery: !manifest.execution_scope && freshLegacyFidelity !== null,
   });
   let freshCreation: GoalRunCreationResult | null = null;
 
@@ -4698,6 +5140,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
   // dry-run 隔离命名空间不受真实 run 孤儿阻挡（T1b）。
   if (!argv.resume && !attachCreatedRunId && !dryRun) {
     guardOrphanedFeatureRun(projectRoot, featuresDir, manifest.feature, Boolean(argv.force));
+    const continuation = evaluateFreshRunContinuation({
+      projectRoot,
+      manifest,
+      forceFresh: Boolean(argv.force),
+    });
+    if (!continuation.allowed) {
+      console.error(`[goal-runner] BLOCKER: ${continuation.reason}`);
+      return 1;
+    }
   }
 
   acquireGoalLocks(projectRoot, featuresDir, manifest.feature, {
@@ -4732,7 +5183,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
       manifest,
       chain: actualBirthChain,
       ...(rebaselineRequest ? { rebaselineFromRunId: rebaselineRequest.sourceRunId } : {}),
+      forceFresh: Boolean(argv.force),
     });
+    // D1.3 转交登记：createGoalRun 成功之后立刻写，理由同 `--prepare-run` 入口
+    //（出生未完成时 feature 侧不得留下指向不存在 run 的指针）。
+    // 这里只登记首次 feature→run 转交；successor 的再转交要以已写入的 supersede 审计为前提，
+    // 在下方审计事件之后登记（plan b2d7f4e9 §3.2 第 4 步）。
+    if (manifest.execution_scope && !manifest.successor_of) {
+      try {
+        registerFeatureScopeTransfer({
+          projectRoot, feature: manifest.feature, runId: manifest.run_id,
+          transferredScopeFingerprint: executionScopeFingerprint(validateExecutionScope(manifest.execution_scope)),
+        });
+      } catch (error) {
+        throw new Error(`[execution-scope] feature 范围转交登记失败：${(error as Error).message}`);
+      }
+    }
   }
   if (runControl) {
     const recordHandoffMailboxQuarantine = (notice: HandoffMailboxQuarantine): void => {
@@ -4934,7 +5400,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
             requestAlreadyRecorded: pendingLegacyFidelityBacktrack !== null,
           }
         : null;
-    const frozenChain = manifest.phase_chain ? [...manifest.phase_chain] : [...requestedChain];
+    // D2 §4.2.3: `manifest.phase_chain` deliberately keeps its BIRTH value (identity projection),
+    // so it must not drive execution once a revision has landed — a [spec]-born run would keep
+    // executing [spec] forever. `requestedChain` is already the effective chain; use it whenever
+    // this run has a scope, and fall back to the frozen manifest chain only for legacy runs.
+    const frozenChain = manifest.execution_scope
+      ? [...requestedChain]
+      : manifest.phase_chain ? [...manifest.phase_chain] : [...requestedChain];
     const modernBirth = freshCreation !== null || attachedCreation?.state === 'complete';
     if (legacyFidelityRecovery && modernBirth) {
       const requiredPrefix = fullWorkflowChain.slice(specIdx, requestedStartIdx);
@@ -4962,7 +5434,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         return 1;
       }
     }
-    const chain = modernBirth
+    // D2 §4.2.3: `chain` is the execution truth and must be re-targetable when a revision lands,
+    // so it is a `let` and gets reassigned at the revision boundary (reassigning the derived
+    // frozenChain alone would never switch the loop).
+    let chain = modernBirth
       ? frozenChain
       : legacyFidelityRecovery
         ? [
@@ -5117,7 +5592,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
     if (canaryHardCliFailure) {
       const guidance =
         `视觉金丝雀探测遇 CLI/adapter 兼容性问题（非需求代码）：${canaryHardCliFailure}\n` +
-        '这是 CLI/config 参数不兼容或 spawn race——请核对 adapter 版本/配置/环境后重跑' +
+        '这是 CLI/config 参数不兼容、模型不可用或 spawn race——请核对 adapter 版本/配置/模型/环境后重跑' +
         '（--refresh-vision-probe 触发重探）；不是需求或产品代码问题，不进入正式 phase。';
       goalEvents.emit({
         type: 'phase_halt',
@@ -5127,7 +5602,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         reason: canaryHardCliFailure,
         halt_guidance: guidance,
       });
-      goalEvents.emit({ type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure' });
+      goalEvents.emit({
+        type: 'run_end', status: 'HALTED', halt_reason: 'canary_cli_hard_failure',
+        error: canaryHardCliFailure.slice(0, 1000),
+      });
       runConcluded = true;
       console.error(`\n===== canary_cli_hard_failure =====\n${guidance}\n`);
       return 1;
@@ -5525,6 +6003,25 @@ Goal runner — tool-agnostic multi-phase orchestrator
     const supersededRunIds: string[] = ([] as string[])
       .concat(argv.supersede ?? [])
       .filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+    // plan c4e7a9b2 §3.3 B1：交付周期边界 = 上一次可信完成（assessFeature record ok）的 run——出生时算一次，
+    // 只在它落在本次 supersede 血缘内时写进每条审计事件；预算三维（回退/轮次/活跃时长）自它之后起算。
+    // 评估不可算即不设边界（按全血缘折叠的现状口径，不拒绝出生）。
+    let cycleBoundary: string | undefined;
+    if (supersededRunIds.length > 0) {
+      try {
+        const record = assessFeatureCompletion(projectRoot, manifest.feature, {
+          ...resolveChangeUnitExpectedExecution(projectRoot, manifest.feature), frameworkRoot,
+        }).record;
+        if (record.state === 'ok' && record.run_id) {
+          cycleBoundary = foldBudgetLineage({
+            projectRoot, featuresDir, feature: manifest.feature,
+            seedTargets: supersededRunIds, currentEvents: priorEvents, cycleBoundary: record.run_id,
+          }).cycleBoundary;
+        }
+      } catch (error) {
+        console.warn(`[goal-runner] 交付周期边界不可算，预算按 supersede 全血缘折叠：${(error as Error).message}`);
+      }
+    }
     for (const target of supersededRunIds) {
       // b7e4d2a9 Todo2：supersede 现在连带删除目标场外状态——新增两道前置：
       // ① target 来自原始 CLI 串，先过 runId 严格 basename 契约（禁 /\ 与 . ..）；
@@ -5545,7 +6042,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         concludeStartupBlocker('supersede_target_invalid', msg);
         return 1;
       }
-      const targetRunDir = path.join(projectRoot, featuresDir, manifest.feature, 'goal-runs', target);
+      const targetRunDir = path.join(projectRoot, featuresDir, featureRelativePath(manifest.feature), 'goal-runs', target);
       const targetEvents = path.join(targetRunDir, 'events.jsonl');
       if (!fs.existsSync(targetEvents)) {
         const msg = `--supersede 目标 run 不存在：${target}`;
@@ -5565,6 +6062,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       goalEvents.emit(buildSupersedeAuditEvent({
         targetRunId: target,
         supersedingRunId: manifest.run_id,
+        ...(cycleBoundary ? { deliveryCycleBoundary: cycleBoundary } : {}),
         ...(rebaselineRequest?.sourceRunId === target
           ? { rebaselineTo: rebaselineRequest.baseSha, creation: freshCreation }
           : {}),
@@ -5580,6 +6078,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
       }
     }
+    // plan b2d7f4e9 §3.2 第 4 步：审计事件已落，feature 冻结记录（若有）追加一条转交指向本后继，旧转交保留。
+    // 登记函数自己读本 run 的 supersede 审计与出生范围核对，不信这里的声明；无记录时是 no-op。
+    if (freshCreation && manifest.execution_scope && manifest.successor_of && !dryRun) {
+      try {
+        registerFeatureScopeTransfer({
+          projectRoot, feature: manifest.feature, runId: manifest.run_id,
+          transferredScopeFingerprint: executionScopeFingerprint(validateExecutionScope(manifest.execution_scope)),
+        });
+      } catch (error) {
+        const msg = `feature 范围转交登记失败：${(error as Error).message}`;
+        console.error(`[goal-runner] BLOCKER: ${msg}`);
+        // 出生前已核过血缘；到这里还失败只可能是记录被并发改写——按既有 supersede 参数类收口（操作者核对后重起）。
+        concludeStartupBlocker('supersede_target_invalid', msg);
+        return 1;
+      }
+    }
 
     if (!dryRun && legacyFidelityRecovery && !legacyFidelityRecovery.requestAlreadyRecorded) {
       const recoveryBudget = foldBudgetLineage({
@@ -5588,6 +6102,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         feature: manifest.feature,
         seedTargets: supersededRunIds,
         currentEvents: priorEvents,
+        cycleBoundary,
       }).budgetFoldEvents.filter(
         event => (event as { type?: string }).type === 'phase_backtrack_requested',
       ).length;
@@ -5738,7 +6253,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
     // progress.json / heartbeat 同源，不再各自复制公式）。
     const budgetLineage = foldBudgetLineage({
       projectRoot, featuresDir, feature: manifest.feature,
-      seedTargets: supersededRunIds, currentEvents: priorEvents,
+      seedTargets: [...new Set([...supersededRunIds, ...(manifest.execution_scope && manifest.successor_of ? [manifest.successor_of] : [])])], currentEvents: priorEvents,
+      cycleBoundary,
     });
     const ancestorBudgetEvents = budgetLineage.ancestorEvents;
     const budgetFoldEvents = budgetLineage.budgetFoldEvents;
@@ -5762,7 +6278,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // S4：invalidation 消费——resume 起点推导剔除已失效且未重新完成的 phase
       // （被失效旧 PASS 不得作为续跑依据；十消费面矩阵之 resume 项）。
       // pass snapshot 已退役：失效事件本身即事实全部，无缓存需要退位。
-      const inv = applyInvalidationsToResume(chain, outcomes, priorEvents);
+      // The revision's own content carries which phases lost their reuse — recovery derives it
+      // instead of depending on a second event that may not have been written yet (review B1/2).
+      // ONE projected stream for every recovery reader: invalidation, validation-only eligibility
+      // and closure-only retry must all see the phases this run's revisions revoked, or two of them
+      // would happily skip the agent for a phase the third just sent back to the chain (review B1).
+      const recoveryEvents = eventsWithScopeRevocations(birthScope, priorEvents);
+      const inv = applyInvalidationsToResume(chain, outcomes, recoveryEvents);
       outcomes = inv.outcomes;
       chainStartIndex = Math.min(chainStartIndex, inv.startIndex);
       resumePostAgentPhases = new Set(inv.postAgentPhases);
@@ -5771,7 +6293,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       // 若事件窗口证明 agent 已完成、只差验证，同样派生 validation-only 资格（复用同一机器）。
       // 仅当该 phase 尚未被 invalidation 窗口覆盖时并入（inv 的 settled 判定更严格，优先）；
       // 不派生（返回 null）= 只是不从旧 halt 派生资格，后续完全由既有 resume/invalidation 路径决定。
-      const haltEligibility = deriveHaltValidationOnlyEligibility(priorEvents);
+      const haltEligibility = deriveHaltValidationOnlyEligibility(recoveryEvents);
       if (haltEligibility && !resumePostAgentPhases.has(haltEligibility.phase)) {
         resumePostAgentPhases.add(haltEligibility.phase);
         resumePostAgentAttemptIds[haltEligibility.phase] = haltEligibility.invoke_id;
@@ -5868,20 +6390,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
     }
 
     let halted = false;
-    // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 1 次/run。
-    // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents）
+    // S4 回退状态机：计数从 events 回放（进程重启不清零）；上限 DEFAULT_MAX_BACKTRACKS / 本交付周期。
+    // T1④：回退计数同样沿 supersede 链折叠（budgetFoldEvents ⊇ priorEvents），c4e7a9b2：自上次可信完成起算
     let backtracksUsed = budgetFoldEvents.filter(e => (e as { type?: string }).type === 'phase_backtrack_requested').length;
     let backtrackReviewFocus: string[] = [];
     // wall 由 goal-timeout 派生：max(配置 wall, Σ链路 per-phase + 缓冲)，
     // 保证全链单次满 per-phase 预算能跑完，避免被总 wall 提前截断。
-    const wallMs = resolveWallClockMs(manifest);
+    // Derived from the chain in force, and re-derived after a revision: a revision that adds a
+    // phase must not leave that phase without budget. Consumed budget (`priorActiveMs`) is untouched.
+    let wallMs = resolveWallClockMs(manifest, chain);
     // P0-4（plan d9b4f7e2，rev8 偏离① 定稿口径）：wall deadline 制——**硬上界覆盖
     // agent/harness/backoff 三路径**（可用预算一律先扣 FINALIZE_RESERVE_MS 收尾预留）；
     // run_end 后收尾为 pre-check 拦截的 best-effort（finalize_skipped/finalize_overrun）。
     // 07-13 案实锤：预算只在 attempt 启动前检查，review 在 ~580m 启动后跑满 32m，
     // 限 585m 实跑 612m。plan e7c2a4d8 T2：deadline 硬上界语义不变，只换基点——
     // 当前会话起点 + 剩余活跃预算（priorActiveMs 已扣）。
-    const wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
+    let wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
     // P0-A：显式 timeout 低于建议地板只 WARN 不抬升（尊重显式 override 契约）。
     for (const warn of collectPhaseTimeoutWarnings(manifest, chain)) {
       console.warn(warn);
@@ -5896,9 +6420,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const remainingWallMs = Math.max(0, wallMs - activeElapsedMs);
       const min = Math.round.bind(null);
       console.log(
-        `[goal-runner] ${argv.resume ? 'resume' : 'run_start'} 预算（supersede lineage 折叠口径）: ` +
+        `[goal-runner] ${argv.resume ? 'resume' : 'run_start'} 预算（本交付周期口径：自上次可信完成起，含 supersede 链` +
+          `${budgetLineage.cycleBoundary ? `；边界 ${budgetLineage.cycleBoundary}` : ''}）: ` +
           `turns ${budgetBase.totalTurns}/${manifest.budget.max_total_turns}（remaining ${remainingTurns}）；` +
-          `wall ${min(activeElapsedMs / 60000)}m/${min(wallMs / 60000)}m（remaining ~${min(remainingWallMs / 60000)}m）`,
+          `wall ${min(activeElapsedMs / 60000)}m/${min(wallMs / 60000)}m（remaining ~${min(remainingWallMs / 60000)}m）；` +
+          `回退 ${backtracksUsed}/${DEFAULT_MAX_BACKTRACKS}`,
       );
     }
 
@@ -6002,6 +6528,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
       : Math.max(1, Math.trunc(options.maxRounds));
     let runtimeRoundsStarted = 0;
     let runtimeBoundaryYielded = false;
+    // D2: the `scope_revision_requested` handoff flag is gone — a revision keeps this very loop
+    // running, so there is no early exit and no terminal special-casing for it.
     for (let phaseIdx = chainStartIndex; phaseIdx < chain.length && !halted; phaseIdx++) {
       const phase = chain[phaseIdx];
       const boundaryRecommendation: AssessRecommendation = {
@@ -6031,6 +6559,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
       let priorAttemptTimedOut = false;
       // 上一轮 gate 未能产出可读 summary 时，保留其真实末尾输出给下一轮修复。
       let priorHarnessFailure: string | undefined;
+      let priorHarnessSummaryWasStale = false;
       // P0-D：transient 计数与"上轮断流"语义都从 events.jsonl 派生（跨 continue/--resume
       // 不清零/不丢——内存变量在新进程必然归零，codex P1）。
       const phaseStartEvents = loadAuthoritativeEvents(
@@ -6115,7 +6644,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // events↔ledger integrity 对账——**无条件执行**（期望集恒空正是主路径失效形态：
         // agent 先写→gate 恒 duplicate；期望集现已含 duplicate 的 row_hash）。缺行/改行/
         // 损坏行/重复行/陈旧孤儿行 → halt 求人（删账本行=绕 fuse；损坏不解释成空历史）。
-        // pending 收养仅限"已 start、未 commit"的 invocation。诚实边界：运行时一致性防护，
+        // 收养仅限"已 start、未 commit"的 invocation，以及最后一个已提交 testing attempt
+        // invoke 窗口内 hash 自洽的行（plan 6279fcd7）。诚实边界：运行时一致性防护，
         // 非协同篡改双文件的密码学防护。
         if (!dryRun && phase === 'testing') {
           const eventsForIntegrity = loadAuthoritativeEvents(eventsPath);
@@ -6124,6 +6654,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
             loopId: `goal:${manifest.run_id}`,
             expectedRowHashes: collectVisualRoundRowHashes(eventsForIntegrity),
             pendingAttemptIds: collectUncommittedVisualAttemptIds(eventsForIntegrity),
+            // plan 6279fcd7 修法二：最后一个已提交 testing attempt 窗口内的存量自检行
+            committedAttemptWindow: collectLastCommittedVisualAttemptWindow(eventsForIntegrity),
           });
           if (!recon.ok) {
             halted = true;
@@ -6179,7 +6711,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
         //   ② events 五态窗口（--resume 跨进程，见 deriveContinuationFromEvents）；
         //   ③ checkpoint timed_out（仅用于把 ② 的 unknown 升级为 agent_timeout——旧日志
         //      end 事件可能缺 timed_out 标记）。
-        const attemptHistory = loadAuthoritativeEvents(eventsPath);
+        // Same projection as recovery: `isClosureOnlyRetryPending` below must not treat a revoked
+        // phase's pre-revision PASS+retry as "only closure left".
+        const attemptHistory = eventsWithScopeRevocations(birthScope, loadAuthoritativeEvents(eventsPath));
+        const latestPhaseVerdict = [...attemptHistory].reverse().find(
+          (event) => event.type === 'phase_verdict' && event.phase === phase,
+        );
+        const previousSummaryWasStale =
+          priorHarnessSummaryWasStale || latestPhaseVerdict?.stale_summary === true;
+        const previousHarnessFailure =
+          priorHarnessFailure ?? latestPhaseVerdict?.harness_error_excerpt;
         const persistedContinuation = deriveContinuationFromEvents(attemptHistory, phase);
         let continuation: { cause: ContinuationCause; process_resumed: boolean } | null = null;
         if (priorAttemptApiError) {
@@ -6205,7 +6746,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 被残留旧 summary 污染。
         let priorFailure: string | undefined;
         let priorFailureKind: FailureKind | undefined;
-        if (isPhaseContinuation && priorSummaryRead.summary) {
+        if (isPhaseContinuation && priorSummaryRead.summary && !previousSummaryWasStale) {
           const v = priorSummaryRead.summary.verdict;
           if (v === 'FAIL' || v === 'INCOMPLETE') {
             // 旧 framework_integrity/manifest/foreign/dirty 只供历史 renderer，不能重新
@@ -6219,7 +6760,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
         if (isPhaseContinuation && !priorFailure) {
-          const fatal = priorHarnessFailure ?? readHarnessFailureFromDetachLog(
+          const fatal = previousHarnessFailure ?? readHarnessFailureFromDetachLog(
             path.join(projectRoot, manifest.report_dir, 'detach.log'),
           );
           if (fatal) {
@@ -6398,22 +6939,6 @@ Goal runner — tool-agnostic multi-phase orchestrator
           break;
         }
 
-        // visual-capability-truth S3（路径 B）：spec 期 inline canary——runner 随机出题
-        // （答案只在内存），业务产出与答题同 invocation；判卷通过才签 invocation_bound。
-        let inlineCanaryKey: CanaryAnswerKey | null = null;
-        let inlineCanaryBlock = '';
-        if (!dryRun && phase === 'spec' && capabilityAdvisory?.hasVision) {
-          try {
-            inlineCanaryKey = generateRandomCanaryAnswerKey();
-            const canaryPng = path.join(phaseDir, 'inline-canary.png');
-            await renderCanaryImage(canaryPng, inlineCanaryKey);
-            inlineCanaryBlock = buildInlineCanaryBlock(canaryPng);
-          } catch (e) {
-            inlineCanaryKey = null;
-            console.warn(`[S3] inline canary 生成失败（不阻断，能力停留 run_probed）：${(e as Error).message}`);
-          }
-        }
-
         // 【pass snapshot 已整体退役 · runner-owned-machine-facts（codex 审计定案）】
         // closure-only 是上一轮权威 phase_verdict 的流程状态（PASS+advance_blocked+retry）。
         // PASS 产物的防篡改不再靠冻结快照/恢复：改坏了下一轮 harness FAIL，改了仍合法则
@@ -6428,15 +6953,26 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // 两个边界共用同一实现（codex P1：不另建检测器）。返回 true = 已处置（回退或
         // halt），调用方须 `phaseDone = true; continue;`。
         const runPlanAuthorityGate = (boundary: 'pre_spawn' | 'post_agent'): boolean => {
-          if (dryRun || phase !== ('coding' as FeaturePhase)) return false;
+          if (dryRun || phase !== ('coding' as FeaturePhase) || (!manifest.execution_scope && goalTrack === 'lite')) return false;
+          // Legacy lite authorization remains with change scope and its original checks; it never owned plan closure.
           // runner-owned-machine-facts 裁剪（codex 定案）：授权=仓内 fresh 的 plan
           // closure（recomputePhaseEvidenceStaleness 同一把尺），跨 run 稳定——fresh
           // --start coding 无需本 run 快照即可开工；pass snapshot 只承担同阶段
           // closure-retry 的 TOCTOU 保护，与授权彻底解耦（不再派生/不再写内存锚）。
+          // B3: the coding authority gate must judge on the EFFECTIVE scope (a revision that put
+          // plan back in the chain changes what 'authorized' means), and must pass the current run
+          // id so plan evidence this same run just closed is not judged live_drift.
           const authority = checkPlanAuthority({
+            executionScope: manifest.execution_scope
+              ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath))
+              : undefined,
             projectRoot,
             feature: manifest.feature,
             frameworkRoot,
+            currentRunId: manifest.run_id,
+            // B（plan b5c1e9d7 §3.2）：本门只在 phase==='coding' 时进入（:6834 早退），
+            // 传的就是「当前正在施工的 owner」——归属为它的条目此刻本就在变，不算上游漂移。
+            pendingOwnerPhase: String(phase),
           });
           if (authority.kind === 'ok') {
             return false;
@@ -6472,7 +7008,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 ? '→ **未启动 coding agent**，'
                 : '→ **本轮 coding 产出不予采信、gate 不运行**，') +
               `自动回退 plan 重新裁决并重新签发快照（tx=${replan.txId}）。\n` +
-              `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
+              `（回退预算：本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））\n`,
             );
             phaseIdx = replan.planIdx - 1; // for 循环 ++ 后落回 plan
             // adjudicated-repair-loop M1（review 修复）：scope-replan 回退路径同样记录
@@ -6540,6 +7076,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             projectRoot,
             frameworkRoot,
             feature: manifest.feature,
+            runId: manifest.execution_scope ? manifest.run_id : undefined,
             phaseOrder: fullWorkflowChain.map(String),
             track: goalTrack,
             profileDir: resolvedProfile.profileDir,
@@ -6563,7 +7100,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         }
 
         const prompt = buildPhasePrompt(
-          manifest,
+          // The prompt must describe the chain and obligations that are actually in force now:
+          // `manifest.execution_scope` keeps its birth bytes (identity), so a revised run would
+          // otherwise instruct the agent from the superseded scope (review M3).
+          effectiveBirthScope ? { ...manifest, execution_scope: applyScopeRevisions(validateExecutionScope(manifest.execution_scope!), loadAuthoritativeEvents(eventsPath)) } : manifest,
           projectRoot,
           phase,
           frameworkRoot,
@@ -6584,9 +7124,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
               }
             : undefined,
           phaseWriteBoundary ?? undefined,
-          // cp→main: 先 cp 写边界批次（plan 1741b6f2）再 cp 本批，避免上一实参的上下文冲突；主干 loadResolvedProfile 同样挂 extensionBundle，此行无需改。
           extensionInputsForPhase(projectRoot, String(phase)),
-        ) + inlineCanaryBlock +
+          // plan 5e1c7a93 D4：attended 不注入无人值守禁问块（B02 已把 attended ⇔ session owner
+          // 做成双向约束，信号唯一且已被拒绝启动分支守住）。
+          executorMode === 'attended',
+        ) +
           // S4：回退后 review 注入增量重点复审清单（授权 ≠ 免审）
           (phase === 'review' && backtrackReviewFocus.length > 0
             ? buildBacktrackReviewFocusBlock(backtrackReviewFocus)
@@ -6679,7 +7221,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const vars: InvokeTemplateVars = {
           PROMPT_FILE: promptPath,
           PROMPT: prompt,
-          SKILL_PATH: path.join(frameworkRoot, PHASE_SKILL_REL[phase]),
+          SKILL_PATH: phaseSkillPath(frameworkRoot, phase),
           PROJECT_ROOT: projectRoot,
           FRAMEWORK_ROOT: frameworkRoot,
           FEATURE: manifest.feature,
@@ -7023,7 +7565,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           adapterModel: manifest.adapter_model_pin?.value,
           instruction: prompt,
           runtimeFacts: {
-            runBaseSha: manifest.run_base_sha,
+            // A2: same resolver as the diff baseline — birth value, or the one frozen by the first
+            // coding/ut-bearing revision (D2 §3 问题 9).
+            runBaseSha: resolveRunBaseline(manifest, loadAuthoritativeEvents(eventsPath)).baseSha,
             receiptRequired: goalTrack !== 'lite',
             resume: Boolean(argv.resume),
             successor: typeof manifest.successor_of === 'string',
@@ -7038,6 +7582,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ...deviceEnv,
           },
         });
+        // 主干 attended runtime truth（b05d3dc7）：attended 每次 attempt 由运行时按当前 owner
+        // fence 签发 phase_start（driver=session, attempt_id/owner_id/owner_epoch），harness 侧
+        // attended-goal-context 以其为正证据精确核对 phase/attempt——invented phase/attempt
+        // 不能借用活 fence。它是 driver 级签发记录，不进 canonical lifecycle 投影
+        //（goal-canonical-lifecycle 按 driver=session 跳过），detached 零变化。
+        if (attendedExecutor && runControl && !resumePostAgent) {
+          goalEvents.emit({
+            type: 'phase_start',
+            phase: String(phase),
+            attempt_id: visualAttemptId,
+            owner_id: runControl.token.owner_id,
+            owner_epoch: runControl.token.epoch,
+            driver: 'session',
+            attempt: retries + 1,
+          });
+        }
         let invoke = resumePostAgent
           ? ({
               exitCode: 0,
@@ -7211,9 +7771,11 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // plan e6b3f8d2 t1：adapter terminal 契约事实。
           // · terminal_failure_observed —— codex `turn.failed`（失败终态，与
           //   completion_observed 互斥；exit 0 已在 invoke 边界规范化为非零）。
-          // · terminal_error_excerpt —— `turn.failed` 正文 + 顶层 `error` 事件的**纯诊断**
-          //   摘要。error 不是契约终态（error→重试成功→turn.completed 合法），因此它
-          //   **不进** api_disconnected / failure classifier / retry 任何判据，只在此留痕。
+          // · terminal_error_excerpt —— `turn.failed` 正文 + 顶层 `error` 事件的解析后摘要。
+          //   error 不是契约终态（error→重试成功→turn.completed 合法），因此它**不进**
+          //   api_disconnected / failure classifier / retry 判据；唯一例外是下方 exit≠0 时的
+          //   resolveInvokeHardCliFailure（400 信封 + 实采措辞表 → adapter_cli_hard_failure）。
+          //   run_end.error（halt 引导首行）另是纯诊断，不进任何裁决。
           terminal_failure_observed: invoke.terminal_failure_observed,
           terminal_error_excerpt: invoke.terminal_error_excerpt,
           lingering_pipe: invoke.lingering_pipe,
@@ -7269,6 +7831,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             stdout: invoke.stdout ?? '',
             stderr: invoke.stderr ?? '',
             ...(invoke.spawn_error ? { spawn_error: invoke.spawn_error } : {}),
+            ...(invoke.terminal_error_excerpt ? { terminal_error_excerpt: invoke.terminal_error_excerpt } : {}),
           }, { formalInvoke: true });
           if (hardCli) {
             const guidance =
@@ -7388,7 +7951,13 @@ Goal runner — tool-agnostic multi-phase orchestrator
               String(phase),
               attributableChanges,
             );
-            if (classifiedWrites.observed.length > 0) {
+            // plan f3b8d261 §3.1: UT's own source writes ride the same event so check-coding can
+            // tell a UT output from a coding write.  Observations are persisted in full — a
+            // truncated tail would hide the very rewrite that voids such a fact.
+            const utOwned = phase === 'ut'
+              ? classifiedWrites.allowed.filter((write) => write.roles.some((role) => role.kind === 'source'))
+              : [];
+            if (classifiedWrites.observed.length > 0 || utOwned.length > 0) {
               // Attribution without adjudication: unresolved ownership is a gap in the
               // artifact registry (which describes skill narratives only), and a
               // source/workspace cross-phase write is already graded once by its checker.
@@ -7397,7 +7966,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 type: 'phase_write_observed',
                 phase,
                 invoke_id: invokeId,
-                observations: classifiedWrites.observed.slice(0, 50).map((observation) => ({
+                ...(utOwned.length > 0 ? {
+                  owned: utOwned.map((write) => ({
+                    path: write.path,
+                    how: write.how,
+                    pre_sha256: write.preSha256,
+                    post_sha256: write.postSha256,
+                  })),
+                } : {}),
+                observations: classifiedWrites.observed.map((observation) => ({
                   path: observation.path,
                   how: observation.how,
                   disposition: observation.disposition,
@@ -7580,104 +8157,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
           }
         }
 
-        // 三轮 review P0-2：runner-owned receipt 的可信边界=顺序信任——每个 spec invocation
-        // 结束后 runner **先清理**两张回执文件（agent 在 invocation 内伪造的文件被压尾清除），
-        // 再按判卷/审计结果重签发，并把回执文件 sha256 写入事件；消费面校验"该 invoke 的
-        // 最后一条 runner 事件 + 文件 hash 一致"，非 runner 签发即拒。
-        if (!dryRun && phase === 'spec') {
-          try {
-            fs.rmSync(capabilityReceiptPath(projectRoot, manifest.feature), { force: true });
-            fs.rmSync(specRefsReceiptPath(projectRoot, manifest.feature), { force: true });
-          } catch (e) {
-            console.warn(`[S3] 回执清理异常（不阻断，消费面 fail-closed）：${(e as Error).message}`);
-          }
-        }
-
-        // visual-capability-truth S3（路径 B 判卷，plan c4e8a1f7 T3）：inline canary 答卷
-        // → 签发/拒签 invocation_bound receipt。未答/答错/CANNOT_SEE_IMAGE → 不签
-        // （能力停留 run_probed，vl_multimodal 终签自然被拒）——不阻断 phase，走盲档工作法。
-        // 判卷 SSOT 统一复用 resolveCanaryCacheDecision/parseCanaryAnswer（不再保留
-        // isCanaryAnswerComplete + classifyCanaryResponse(raw) 分叉）：
-        //  · structured adapter 从**纯 agent-events.jsonl** 的终态 result 语义取答卷
-        //    （parseCanaryAnswer 内部做信封投影；events 缺失/无终态 → 不判卷不签发）；
-        //  · 非结构化 adapter **只消费本次 invoke 的 stdout** 与 exitCode/timed_out/
-        //    silent_killed/skipped 事实——不读 stderr、prompt echo、人读混合日志
-        //    （旧实现读整份 agent-output.log，prompt 自带 CANNOT_SEE_IMAGE 污染判卷，
-        //    宿主 run 20260823T161102Z-68480b 三轮拒签实锤）。
-        if (!dryRun && phase === 'spec' && inlineCanaryKey) {
-          try {
-            // plan e6b3f8d2 t1：信封方言分派。claude 家族走三文件分流的 agent-events.jsonl；
-            // codex 的 JSONL 就在本次 invoke 的 stdout 上（tool_event_provenance 仍是 none，
-            // 不产 agent-events.jsonl——**terminal 事件流 ≠ 工具证据流**，不得混用）。
-            const canaryEnvelope = resolveCanaryStdoutEnvelope(
-              manifest.adapter ?? 'generic',
-              cap.capability?.tool_event_provenance,
-            );
-            const structuredStdout = canaryEnvelope !== 'none';
-            let decisionStdout = '';
-            if (canaryEnvelope === 'claude_stream_json') {
-              const eventsAbs = agentEventsLogPath(outputLogPath);
-              const eventsRaw = fs.existsSync(eventsAbs) ? fs.readFileSync(eventsAbs, 'utf-8') : '';
-              decisionStdout = eventsRaw;
-              if (!decisionStdout) {
-                console.log('[S3] inline canary：agent-events.jsonl 缺失/为空（断流?）——不判卷不签发');
-              }
-            } else {
-              // 非结构化：本次 invocation 的 stdout 事实（内存保留 64KB 上限，答卷足够）。
-              decisionStdout = invoke.stdout ?? '';
-            }
-            let issued = false;
-            if (decisionStdout) {
-              const decision = resolveCanaryCacheDecision({
-                stdout: decisionStdout,
-                exitCode: invoke.exitCode,
-                timed_out: invoke.timed_out,
-                silent_killed: invoke.silent_killed,
-                skipped: invoke.skipped,
-                structured_stdout: structuredStdout,
-                ...(structuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
-              }, inlineCanaryKey);
-              if (decision.kind === 'valid' && decision.classify.verdict === 'tool_read') {
-                writeCapabilityReceipt(projectRoot, manifest.feature, {
-                  adapter: manifest.adapter ?? 'generic',
-                  run_id: manifest.run_id,
-                  invoke_id: invokeId,
-                  binding_path: 'inline_canary',
-                  verdict: 'tool_read',
-                  model: 'unknown',
-                });
-                issued = true;
-              } else {
-                console.log(
-                  `[S3] inline canary 未通过/未作答（${decision.kind === 'valid' ? `verdict=${decision.classify.verdict}` : decision.detail}）——` +
-                    'invocation_bound 不签发（vl_multimodal 终签将被拒，走盲档/能力路由）',
-                );
-              }
-            }
-            goalEvents.emit({
-              type: 'capability_receipt',
-              phase,
-              invoke_id: invokeId,
-              status: issued ? 'issued_inline_canary' : 'not_issued',
-              // P0-2 事件锚：签发态携带回执文件 sha256（消费面比对，agent 伪造文件即失配）
-              ...(issued
-                ? { receipt_sha256: sha256FileFull(capabilityReceiptPath(projectRoot, manifest.feature)) }
-                : {}),
-            });
-            if (!issued) {
-              console.log('[S3] inline canary 未通过/未作答——invocation_bound 不签发（vl_multimodal 终签将被拒，走盲档/能力路由）');
-            }
-          } catch (e) {
-            console.warn(`[S3] inline canary 判卷异常（不签发，不阻断）：${(e as Error).message}`);
-          }
-        }
-
         // visual-capability-truth S3：spec 期参考图验读回执——vl_multimodal 终签的证据面
         // （canary 只证能看测试图；本回执证"逐张读过本需求参考图"）。无解析器 adapter →
         // 不产出 → 终签结构性被拒（正是 20260718 cursor 自签形态的解药）。
         // plan c4e8a1f7 T2：期望分母=共享发现集合（正文显式 ∪ source 直接父目录；仅空集
         // 回退 ux-reference）——不再从 agent 产出的 spec.md 自算较小分母（宿主实锤：spec
         // 漏一张回执分母跟着缩水，无法证明 runner 发现的全集均已建模/验读）。
+        // plan 8d2b4f60 D2（codex finding 2）：**attended 不生产回执**。阶段日志路径按 phase
+        // 固定（phases/<phase>/agent-output.log），attended 走 phase_execute_request、不碰这
+        // 两个文件——盘上仍是上一轮 detached 的 agent-events.jsonl，审计它等于把遗留日志重签
+        // 成新材料证据。守卫加 executorMode==='detached'，attended 只发 skipped 事件不写盘。
         if (!dryRun && phase === 'spec' && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
           try {
             const refAbsPaths = resolveRequirementReferenceImages(
@@ -7686,7 +8175,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
               manifest.requirement,
               { requirementSourceFiles: manifest.requirement_source_files },
             );
-            if (refAbsPaths.length > 0) {
+            if (refAbsPaths.length > 0 && executorMode !== 'detached') {
+              goalEvents.emit({
+                type: 'spec_refs_receipt_produced',
+                phase,
+                invoke_id: invokeId,
+                status: 'skipped',
+                reason: 'attended_no_invoke_audit',
+              });
+              console.log('[S3] spec refs 回执跳过：attended 轮无本次 invocation 的逐图审计（不覆盖既有回执，vl_multimodal 结构性不可达）');
+            } else if (refAbsPaths.length > 0) {
               const producedRefs = produceSpecRefsReceipt({
                 projectRoot,
                 feature: manifest.feature,
@@ -7696,6 +8194,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 eventsLogAbsPath: agentEventsLogPath(outputLogPath),
                 refAbsPaths,
               });
+              const carriedOver = producedRefs.carriedOver?.length ?? 0;
               goalEvents.emit({
                 type: 'spec_refs_receipt_produced',
                 phase,
@@ -7703,15 +8202,19 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 status: producedRefs.produced
                   ? (producedRefs.unread?.length ? 'partial' : 'complete')
                   : 'skipped',
-                // P0-2 事件锚：产出态携带回执文件 sha256
+                // 诊断用（D2：已无消费者校验它，事件锚校验随顺序信任一并删除）
                 ...(producedRefs.produced
                   ? { receipt_sha256: sha256FileFull(specRefsReceiptPath(projectRoot, manifest.feature)) }
                   : {}),
+                // D4：本轮未读、沿用本 run 先前 invocation 记录（内容未变）的张数
+                ...(producedRefs.produced ? { carried_over: carriedOver } : {}),
               });
               if (!producedRefs.produced) {
                 console.log(`[S3] spec refs 回执未签发（${producedRefs.reason}）——vl_multimodal 不可签`);
               } else if (producedRefs.unread?.length) {
                 console.log(`[S3] spec refs 回执：${producedRefs.unread.length} 张参考图无验读记录（unread）`);
+              } else if (carriedOver > 0) {
+                console.log(`[S3] spec refs 回执：${carriedOver} 张读取记录沿用本 run 先前 invocation（内容未变）`);
               }
             }
           } catch (e) {
@@ -7883,7 +8386,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const harnessEndedAtMs = Date.now();
         priorHarnessFailure = harnessExit === 0
           ? undefined
-          : formatHarnessFailureTail(harnessRun.outputTail);
+          : formatHarnessFailureTail(harnessRun.outputTail) ??
+            `Harness exited with code ${harnessExit} without producing a current readable summary.`;
 
         goalEvents.emit({
           type: 'harness_end',
@@ -8014,7 +8518,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
                 reportsDir: featurePhaseReportsDir(
                   projectRoot, manifest.feature, String(phase), frameworkRoot,
                 ),
-              })
+                projectRoot,
+                // B08 D1：装机复用轮的当前 HAP 完整摘要（install meta + 盘上 HAP 三核）
+                currentHapSha256Full: resolveCurrentHapSha256Full(
+                  projectRoot,
+                  featurePhaseReportsDir(projectRoot, manifest.feature, String(phase), frameworkRoot),
+                ),
+              }, readFreshDowngradedVisualScreens(freshSummary ? summaryAbsPath : null, {
+                runId: manifest.run_id, attemptId: visualAttemptId, startedAtMs: harnessStartedAtMs,
+              }))
             : { defects: [], unverified: [] };
         // P0-5（plan 7c4f2e9b）：in-flow 探针结果 hoist——closure_kind 分类 fresh 路径
         // 复用本次控制流已取得的 receiptValidation，不重复 spawn（codex 五轮）。
@@ -8176,7 +8688,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
         // framework-identity-boundary 2.4：当前 attempt 的所有裁决面只消费这一份投影。
         // 原始 summary 仍可供 verdict/closure/visual receipt 与历史报告展示，但旧
         // framework integrity blocker 不得再进入 meta/signature/repair/reconcile/event。
-        const decisionSummary = stripRetiredFrameworkIntegrityForCurrentRun(summary);
+        const decisionSummary = resolved.stale_summary
+          ? null
+          : stripRetiredFrameworkIntegrityForCurrentRun(summary);
+        priorHarnessSummaryWasStale = resolved.stale_summary;
         // P0-D：API 断流哨兵（adapter 感知信封锚定）。B/D 并存取 agent_timeout 优先
         // （runner tree-kill 是确定性事实，断流串可能是被杀连带产生）→ timed_out 时不扫。
         const apiErrorSentinel =
@@ -8203,6 +8718,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           agentApiError: apiErrorSentinel !== null,
           agentNoOutput,
           operatorInterrupt,
+          harnessFailedWithoutFreshSummary: !dryRun && !freshSummary && harnessExit !== 0,
           // P0-5/P0-3 freshness（决策表 SSOT）：fresh 超时轮的 integrity/framework_bug
           // 确定性证据优先于 agent_timeout（harness 在 tree-kill 之后新鲜跑出，可信）。
           staleSummary: resolved.stale_summary,
@@ -8212,6 +8728,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const integritySubtypes =
           baseFailureKind === 'framework_integrity_block' ? extractIntegritySubtypes(decisionSummary) : [];
         const affectedFiles = extractDeterministicAffectedFiles(decisionSummary);
+        const contentRelatedFiles = extractContentRelatedFiles(decisionSummary);
         // P0-B：agent_timeout 无 deterministic affected_files 时监控 phase 主产物
         // （spec.md 等 + context-exploration.md）——产物内容变化=有进展，guard 放行续作。
         const watchedFiles =
@@ -8219,7 +8736,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
             ? affectedFiles
             : baseFailureKind === 'agent_timeout'
               ? timeoutWatchArtifactPaths(projectRoot, manifest.feature, phase)
-              : [];
+              : baseFailureKind === 'code_regression'
+                ? contentRelatedFiles
+                : [];
         const currentArtifactSnapshot =
           watchedFiles.length > 0 ? snapshotArtifacts(projectRoot, watchedFiles) : {};
 
@@ -8246,7 +8765,12 @@ Goal runner — tool-agnostic multi-phase orchestrator
             closureFinalizationError !== null ||
             interactionSentinel !== null ||
             actionableResult.defects.length > 0 ||
-            actionableResult.unverified.length > 0,
+            // B08 D4（plan 9b2d5e7c）：unverified（证据身份不齐待重采）不再单独构成失败事实——宿主 i2
+            // 的 PASS+retry 因 evidence 绑定失败带上 code_regression。保留**可信真机根失败**这一项：
+            // 绑定通过且 case 失败（test_contract/environment/unknown 也走 unverified 通路）是真实失败
+            // 事实，否则既有「Test-contract attribution survives retry and resume」的 test_contract
+            // 归因无法持久化到 phase_verdict（f4 t1）。与任一其他失败事实并存时归因照旧保留。
+            (actionableResult.trustedDeviceRootClassifications?.length ?? 0) > 0,
         });
         const meta = currentFailureProjection.blockingMeta;
         // P0-B §七.3：签名必须使用 evidence 精修后的最终 kind。否则 phase_verdict 虽然
@@ -8269,7 +8793,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           // fail-closed：候选写不回 summary（唯一真源）＝assess 看不见缺陷＝回退链断
           // ——不得静默降级为 advance，也不得落回任何旧路由（旧路由已删除）。
           // summary 路径缺失同样计入（codex 二轮：缺 summaryAbsPath 时不得绕过契约）。
-          if (!summaryAbsPath) {
+          if (!freshSummary || !summaryAbsPath) {
             repairCandidatesUnwritable = '本轮 summary.json 路径不可用（缺失/解析失败），可信缺陷无处落盘';
           } else {
             try {
@@ -8315,6 +8839,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
         let haltReason: string | undefined;
         let awaitConfirmGuidance: string | undefined;
+        // plan e7a2c4f1 §3.6：no-progress guard 的 `phase_halt` 在 `decideAndEmit` 之后才发
+        //（顺序见下方赋值处注释），这里只暂存事件体。
+        let noProgressHaltEvent: Record<string, unknown> | undefined;
         // 责任阶段统一路由 fail-closed（codex 冻结项⑦）：验真器已判可信缺陷，但候选
         // 写不回 summary（唯一真源）→ assess 看不见缺陷，回退链断；停下求人，不 advance。
         if (repairCandidatesUnwritable) {
@@ -8568,6 +9095,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
             currentBlockerSignature,
             priorArtifactSnapshot,
             currentArtifactSnapshot,
+            relevantEvidenceKnown: failureKind === 'code_regression' && contentRelatedFiles.length > 0,
           })
         ) {
           driverGuardAction = 'halt';
@@ -8586,6 +9114,48 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   : failureKind === 'agent_timeout'
                     ? 'no_progress_agent_timeout'
                     : 'no_progress_guard';
+          // plan e7a2c4f1 §3.6（G27）：相关集合未知/为空＝没解析出可修目标，本阶段无路
+          // 可走——沿**既有** `no_progress_guard` 停下交回（不新增 halt reason），只把
+          // 理由说准。措辞守住一条线：`extractContentRelatedFiles` 的集合只来自
+          // `repair_candidates[].files` 与 `blockers[].affected_files`，空集说明「相关目标
+          // 未知」，**不是**「证明了没做修复尝试」。
+          if (failureKind === 'code_regression' && contentRelatedFiles.length === 0) {
+            awaitConfirmGuidance = buildNoRelevantTargetGuidance({
+              feature: manifest.feature,
+              runId: manifest.run_id,
+              phase: String(phase),
+              blockerIds: (decisionSummary?.blockers ?? [])
+                .map((blocker) => String((blocker as { id?: string }).id ?? ''))
+                .filter(Boolean)
+                .slice(0, 8),
+              harnessPrefixRel: layout.frameworkRel
+                ? path.posix.join(layout.frameworkRel, 'harness')
+                : 'harness',
+            }).join('\n');
+            console.log(`\n===== ${haltReason} =====\n${awaitConfirmGuidance}\n`);
+          }
+          // b3f7d9a2 三处可见契约：halt 文案与终态的承载处 = phase_halt 事件 / outcome /
+          // console。本分支原先只写后两处——detach 停机后只读 events 的消费者（resume 资格
+          // 派生、run_disposition 投影、`rebuildOutcomesFromEvents`）拿不到停止理由与指引。
+          // §3.6 让普通 content 失败（相关集合未知）也能走到这里，必须补齐。
+          // **发射点在 `decideAndEmit` 之后**：`rebuildOutcomesFromEvents`（`goal-runner-phase.ts`）
+          // 遇到更新的 `phase_verdict` 会丢弃在它之前的 `lastHalt`，先发就等于没发。
+          noProgressHaltEvent = {
+            type: 'phase_halt',
+            phase,
+            halt_reason: haltReason,
+            reason: `blocker_signature 重复且 watched 产物零变化（failure_kind=${failureKind}）`,
+            ...(awaitConfirmGuidance ? { halt_guidance: awaitConfirmGuidance } : {}),
+            ...runDispositionFields(decide(
+              { incident: haltReason, phase: String(phase) },
+              NO_AUTHORITY,
+              {
+                orchestration: 'goal', owner_kind: runtimeOwnerKind,
+                can_prompt_now: runtimeOwnerKind === 'session',
+                invocation: argv.resume ? 'resume' : 'fresh',
+              },
+            )),
+          };
         } else if (
           // E4：CUMULATIVE（非仅连续）家族重复熔断——上面 shouldHaltNoProgress 只比"紧邻上一次"，
           // 会被 FAIL(真 blocker 串)↔PASS(合成 agent_timeout@phase signature) 边界打断
@@ -8836,6 +9406,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           phase,
           verdict,
           legacyAction: driverGuardAction,
+          currentSummaryFresh: !resolved.stale_summary,
           failureKind: meta.failure_kind ?? currentFailureProjection.failureKindForEvent,
           blockingClass: meta.blocking_class,
           propagateToDownstream: manifest.dependency_policy.propagate_to_downstream,
@@ -8843,6 +9414,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           blockers: (decisionSummary?.blockers ?? []).map((blocker) => ({
             id: String((blocker as { id?: string }).id ?? 'unknown'),
             blocking_class: (blocker as { blocking_class?: string }).blocking_class,
+            classification: (blocker as { classification?: string }).classification,
+            actionability: (blocker as { actionability?: import('./utils/goal-failure-classifier').BlockerActionability }).actionability,
           })),
           deterministicDefects: driverActionableDefects.map((defect) => defect.fingerprint),
           retriesUsed: retries,
@@ -8890,6 +9463,41 @@ Goal runner — tool-agnostic multi-phase orchestrator
         });
         if (runControl) {
           assertFencedOwner(runControl.dir, runControl.token, 'assess_recommendation');
+        }
+        let pendingScopeRevision: ExecutionScope | undefined;
+        // Kept alongside the resolved scope so the appended event records what triggered it.
+        let pendingScopeRevisionInput: ExecutionScopeInput | undefined;
+        let pendingScopeRevisionCheckId: string | undefined;
+        if (manifest.execution_scope && !invoke.timed_out && freshSummary && summaryAbsPath) {
+          const reportFile = path.join(path.dirname(summaryAbsPath), 'script-report.json');
+          const report = fs.existsSync(reportFile) ? JSON.parse(fs.readFileSync(reportFile, 'utf8')) as { checks?: Array<{ id?: string; scope_revision_input?: ExecutionScopeInput }> } : {};
+          const proposalChecks = (report.checks ?? []).filter(check => check.scope_revision_input);
+          const proposals = proposalChecks.map(check => check.scope_revision_input!);
+          pendingScopeRevisionCheckId = proposalChecks[0]?.id;
+          // D2.7 / 批次 3 阻断 6：提案校验走**与 feature 路径同一个**
+          // `resolveScopeRevisionProposal`——单提案、请求边界、已完成阶段补证明、impact
+          // 继承与修正、失效 satisfied_by 剔除、「范围变了必须有新来源」全部同源实现。
+          const old = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath));
+          const completed = new Set(verdict === 'PASS' && !resolved.advance_blocked && outcomes.every(outcome => outcome.verdict === 'PASS' && !outcome.halted)
+            ? [...outcomes.map(outcome => String(outcome.phase)), String(phase)] : []);
+          const revisionOutcome = resolveScopeRevisionProposal({
+            projectRoot,
+            frameworkRoot,
+            feature: manifest.feature,
+            workflow,
+            proposals,
+            previous: old,
+            // 授权边界取**出生冻结链**（`old` 是应用过修订的有效链，会缩短）。
+            authorizedPhases: validateExecutionScope(manifest.execution_scope).phase_chain,
+            completedPhases: completed,
+            currentRunId: manifest.run_id,
+            requirement: manifest.requirement,
+          });
+          if (revisionOutcome) {
+            pendingScopeRevisionInput = revisionOutcome.input;
+            pendingScopeRevision = revisionOutcome.scope;
+            reconcileObservation.scope_revision = pendingScopeRevision;
+          }
         }
         const runAssess = (): ReturnType<typeof assessFeature> => assessFeature({
           projectRoot,
@@ -9010,6 +9618,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             invoke.exitCode !== 0 && invoke.stderr.trim()
               ? truncateOneLine(invoke.stderr.trim(), 400)
               : undefined,
+          harness_error_excerpt:
+            harnessExit !== 0 && priorHarnessFailure
+              ? truncateOneLine(priorHarnessFailure.slice(-400), 400)
+              : undefined,
           },
         });
         if (action === 'halt' && !haltReason) {
@@ -9031,7 +9643,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
           //     fail-closed。**不给 catch-all 起精确名字**。
           // 判据抽在 resolveAssessHaltIncident（纯函数，行为矩阵单测）——`retries >= max`
           // 只是必要条件，预算恰好用满时任何落进本 catch-all 的 halt 都会被误标。
-          haltReason = resolveAssessHaltIncident({
+          haltReason = assessment.recommendation.reason.startsWith('execution_scope_unresolved:') ? 'execution_scope_unresolved' : resolveAssessHaltIncident({
             retriesUsed: retries,
             maxRetriesPerPhase: manifest.budget.max_retries_per_phase,
             runnerAction: assessment.recommendation.runner_action,
@@ -9059,7 +9671,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
             reason:
               crossPhaseNote +
               (assessReason || 'assess returned halt without a driver-owned reason'),
+            ...(haltReason === 'execution_scope_unresolved' ? runDispositionFields(decide(
+              { incident: haltReason, phase: String(phase), detail: assessReason }, NO_AUTHORITY,
+              { orchestration: 'goal', owner_kind: runtimeOwnerKind, can_prompt_now: runtimeOwnerKind === 'session', invocation: argv.resume ? 'resume' : 'fresh' },
+            )) : {}),
           });
+        }
+        // §3.6：guard 驱动的 no-progress halt 在 verdict 之后落事件——`rebuildOutcomesFromEvents`
+        // 按"最后一条 phase_halt 覆盖更早的 terminal phase_verdict"重建，先发会被丢掉。
+        if (noProgressHaltEvent && action === 'halt') {
+          goalEvents.emit(noProgressHaltEvent);
         }
         emitMilestone(`GOAL_PHASE phase=${phase} event=verdict result=${action}`);
         flushProgress();
@@ -9139,6 +9760,59 @@ Goal runner — tool-agnostic multi-phase orchestrator
               verifier_evidence: snap.verifier_evidence,
             advance_blocked: resolved.advance_blocked,
           });
+          if (assessment.recommendation.action === 'revise_scope' && pendingScopeRevision) {
+            // D2: append the revision to THIS run and keep dispatching. No sealing, no owner or
+            // Feature lock release, no successor — this block sits inside the existing
+            // acquireGoalLocks finally, and releaseAllLocks/releaseRunOwner are never called here.
+            const runEvents = loadAuthoritativeEvents(eventsPath);
+            const birth = validateExecutionScope(manifest.execution_scope);
+            const applied = loadScopeRevisions(runEvents, birth);
+            const inputFingerprint = executionScopeFingerprint(pendingScopeRevisionInput ?? pendingScopeRevision);
+            // Idempotence (D2.8 'revision written then interrupted'): dedupe by revision input
+            // fingerprint, so a re-entry after the append does not add a second entry.
+            const duplicate = applied.some(revision => executionScopeFingerprint(revision.revision_input) === inputFingerprint);
+            if (!duplicate) {
+              const previous = applied.length ? applied[applied.length - 1].execution_scope : birth;
+              assertRevisionKeepsRequiredObligations(previous, pendingScopeRevision);
+              // run_base_sha: a [spec]-born run has none in its manifest (birth identity field,
+              // write-once). The FIRST coding/ut-bearing revision freezes it at the event layer;
+              // all three conditions must hold or this entry must not carry it.
+              const needsBaseline = !manifest.run_base_sha
+                && !applied.some(revision => typeof revision.run_base_sha === 'string' && revision.run_base_sha)
+                && pendingScopeRevision.phase_chain.some(phase => phase === 'coding' || phase === 'ut');
+              goalEvents.emit({
+                type: 'scope_revised',
+                revision_index: applied.length + 1,
+                previous_scope_fingerprint: executionScopeFingerprint(previous),
+                execution_scope: pendingScopeRevision,
+                revision_input: pendingScopeRevisionInput ?? null,
+                trigger: { phase: String(phase), check_id: pendingScopeRevisionCheckId ?? 'scope_revision_input' },
+                allowed_fields: [...SCOPE_REVISION_FIELDS],
+                ...(needsBaseline ? { run_base_sha: validateExactSha(resolveGoalRunHeadSha(projectRoot), 'Git HEAD') } : {}),
+              });
+              options.onScopeRevision?.('applied');
+            }
+            // Re-read the effective scope and re-target the execution chain / cursor from it.
+            const revised = applyScopeRevisions(birth, loadAuthoritativeEvents(eventsPath));
+            chain = [...revised.phase_chain] as FeaturePhase[];
+            // The completion projection follows the revision too, or phases it added never reach it.
+            fullWorkflowChain = executionCompletionPhases(revised) as FeaturePhase[];
+            // One judgement for both paths: the in-run cursor and `--resume` derive the revoked
+            // phases from the same revision content and run it through the same function.
+            outcomes = applyInvalidationsToResume(chain, outcomes, eventsWithScopeRevocations(birth, loadAuthoritativeEvents(eventsPath))).outcomes;
+            wallMs = resolveWallClockMs(manifest, chain);
+            wallDeadlineMs = sessionStartMs + Math.max(0, wallMs - priorActiveMs);
+            // Cursor is re-derived, never incremented: a revision may delete, insert or rewind
+            // phases, and 'first phase with no effective PASS yet' covers all three shapes.
+            // `latest`, not `some` — a historical PASS that a later result superseded is not a
+            // current satisfied result (review B1), the same ruler the terminal judgement uses.
+            const latestFor = (candidate: string) => [...outcomes].reverse().find(outcome => String(outcome.phase) === candidate);
+            phaseIdx = chain.findIndex(candidate => {
+              const last = latestFor(String(candidate));
+              return !(last && last.verdict === 'PASS' && !last.advance_blocked);
+            }) - 1;
+            if (phaseIdx < -1) phaseIdx = chain.length;
+          }
           phaseDone = true;
           if (featureLock) touchLock(featureLock.path, featureLock.ownerId);
           continue;
@@ -9246,7 +9920,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
               + (backtrackHaltGuidance ?? (haltReason === 'backtrack_fingerprint_repeat'
                 ? `整轮 repair candidates 集合与上次回退完全相同（roundFingerprint=${roundFp.slice(0, 12)}…）——继续回退只会空转，进入收敛熔断。\n`
                 : haltReason === 'backtrack_limit'
-                  ? `回退预算已耗尽（共用 ${DEFAULT_MAX_BACKTRACKS} 次/run）——本 run 诚实终止，可由新 correction/successor 输入继续。\n`
+                  ? `回退预算已耗尽（本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））——本 run 诚实终止，可由新 correction/successor 输入继续。\n`
                   : '')),
             );
           } else {
@@ -9298,7 +9972,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
                   + summaryRepairCandidates.slice(0, 6).map(c => `${c.id}→${c.category}`).join('、')
                   + `）——责任阶段=${targetPhaseBt}。\n`)
               + `回退 ${targetPhaseBt}（候选清单按阶段注入后续 prompt），再级联重走下游。\n`
-              + `（第 ${backtracksUsed} 次回退，共用预算 ${DEFAULT_MAX_BACKTRACKS} 次/run）\n`,
+              + `（回退预算：本交付周期共 ${DEFAULT_MAX_BACKTRACKS} 次（自上次可信完成起，含 supersede 链；已用 ${backtracksUsed}））\n`,
             );
             outcomes = outcomes.filter(o => !invalidatedBt.includes(o.phase));
             goalEvents.emit({ type: 'phase_backtrack_started', to_phase: String(targetPhaseBt) });
@@ -9412,6 +10086,10 @@ Goal runner — tool-agnostic multi-phase orchestrator
             invoke.exitCode !== 0 && invoke.stderr.trim()
               ? truncateOneLine(invoke.stderr.trim(), 400)
               : undefined,
+          harness_error_excerpt:
+            harnessExit !== 0 && priorHarnessFailure
+              ? truncateOneLine(priorHarnessFailure.slice(-400), 400)
+              : undefined,
         });
         halted = true;
         phaseDone = true;
@@ -9431,10 +10109,22 @@ Goal runner — tool-agnostic multi-phase orchestrator
       return 0;
     }
 
-    const reachedEnd =
-      !halted &&
-      outcomes.length === chain.length &&
-      outcomes[outcomes.length - 1]?.phase === chain[chain.length - 1];
+    // D2 §4.2.3: after a revision the chain can shrink, grow or rewind, so a length equality is
+    // no longer meaningful. Judge by the LATEST effective result per chain phase.
+    // `outcomes` stays what it always was — a current-effective projection, pruned on backtrack
+    // (:6677 / :9509); execution history lives in events, not here (third-round M1).
+    const latestOutcome = (phase: string) => [...outcomes].reverse().find(outcome => String(outcome.phase) === phase);
+    // plan a9f3c7d2 第二笔（R5）：单职责（`completion_target=request`）请求跑完本阶段、修订把出生
+    // 时的定义缺口关掉之后，有效链**本来就该是空的**——「没有下一步」正是它的成功终局。空链在这里
+    // 被原判「未达链尾」→ PARTIAL，单职责请求于是永远到不了成功终局。只对 request 终点二分，
+    // feature 终点一字不变；`outcomes` 里至少有一条干净 PASS 才算数（本阶段没跑或失败时链不会空）。
+    const requestSliceDone = birthScope?.completion_target === 'request' && chain.length === 0
+      && outcomes.some(outcome => outcome.verdict === 'PASS' && !outcome.advance_blocked);
+    const reachedEnd = !halted && (requestSliceDone || (chain.length > 0 && chain.every(phase => {
+      const latest = latestOutcome(String(phase));
+      return latest?.verdict === 'PASS' && !latest.advance_blocked;
+    })));
+    const terminalChain = chain.map(String);
 
     // 全链跑完时消费与 completion 同源的 issue 集。legacy needs_human 会在 collector 中
     // 重投影为 needs_fix；当前 writer 不再生成 AWAITING_HUMAN_REVIEW。
@@ -9450,7 +10140,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         collectCleanPassIssues({
           projectRoot,
           feature: manifest.feature,
-          chain: chain.map(String),
+          chain: terminalChain,
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }),
@@ -9461,7 +10151,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         console.error(`[probe-cls] ${JSON.stringify(collectCleanPassIssues({
           projectRoot,
           feature: manifest.feature,
-          chain: chain.map(String),
+          chain: terminalChain,
           currentRequirementSha: computeRunRequirementSha(projectRoot, manifest.feature, manifest.run_id, featuresDir),
           frameworkRoot,
         }))}`);
@@ -9534,10 +10224,16 @@ Goal runner — tool-agnostic multi-phase orchestrator
       | undefined;
     const lastHaltedProjected =
       lastHalted && typeof lastHalted.run_disposition === 'string' ? lastHalted : undefined;
+    // 诊断保真：halt 引导首行（如适配器 400 原文）随终态事件带出，与 goal-report Reason 列同源；
+    // 与紧急收口 run_end{HALTED, error} 同键，不参与任何裁决。
+    const lastHaltDetail = typeof lastHalted?.halt_guidance === 'string'
+      ? lastHalted.halt_guidance.split(/\r?\n/).map((l) => l.trim()).find(Boolean)
+      : undefined;
     goalEvents.emit({
       type: 'run_end',
       status,
       ...(status === 'HALTED' && lastHaltReason ? { halt_reason: lastHaltReason } : {}),
+      ...(status === 'HALTED' && lastHaltDetail ? { error: lastHaltDetail.slice(0, 1000) } : {}),
       ...(status === 'HALTED' && lastHaltedProjected
         ? {
             run_disposition: lastHaltedProjected.run_disposition,
@@ -9570,23 +10266,36 @@ Goal runner — tool-agnostic multi-phase orchestrator
 
     // t8：feature 完成凭证——仅当全链（按 track 解析）逐阶段 clean_pass 才生成；
     // 生成失败/不满足只记录，不改变 run 终局（feature 级状态由 verify-feature-completion 判）。
+    // B3: read the EFFECTIVE scope. A [spec]-born run keeps a non-empty `unresolved` in its birth
+    // scope forever, so judging eligibility on the birth value made completion structurally
+    // unreachable for D2's main scenario (spec discovers a device duty, run continues, completes).
+    const completionScope = manifest.execution_scope
+      ? applyScopeRevisions(validateExecutionScope(manifest.execution_scope), loadAuthoritativeEvents(eventsPath))
+      : undefined;
+    const completionChain = (completionScope ? executionCompletionPhases(completionScope) : fullWorkflowChain).map(String);
     if (!finalizeDeadlineExceeded && status === 'CHAIN_SLICE_COMPLETED') {
       try {
-        const issues = collectCleanPassIssues({
+        // D1 §6.5：生成资格判据与无 run 出口**同一个函数**（范围终点 / unresolved / clean-pass），
+        // 这里只保留本路径独有的前置条件（run 终局为 CHAIN_SLICE_COMPLETED）。
+        const { eligible, issues } = shouldGenerateFeatureCompletion(completionScope, {
           projectRoot,
           feature: manifest.feature,
-          chain: fullWorkflowChain.map(String),
+          // Recomputed here, not reused from startup: a revision may have changed the chain since.
+          chain: completionChain,
+          // D2: evidence this very run just closed is unsealed by design; historical runs unchanged.
+          runId: manifest.run_id,
           frameworkRoot,
         });
-        if (issues.length === 0) {
+        if (eligible) {
           const { runIds: phaseRunIds, attempts: phaseAttempts } = resolvePhaseRunIds(
-            projectRoot, manifest.feature, fullWorkflowChain.map(String),
+            projectRoot, manifest.feature, completionChain,
           );
           for (const o of outcomes) phaseRunIds[String(o.phase)] = manifest.run_id;
           const { originalAbs } = generateFeatureCompletion({
             projectRoot,
             feature: manifest.feature,
-            chain: fullWorkflowChain.map(String),
+            // Same chain the clean-pass check above used; the startup value predates any revision.
+            chain: completionChain,
             workflowTrack: goalTrack,
             runId: manifest.run_id,
             runDirAbs: path.join(projectRoot, manifest.report_dir),
@@ -9599,7 +10308,9 @@ Goal runner — tool-agnostic multi-phase orchestrator
           );
         } else {
           emitMilestone(
-            `GOAL_RUN event=feature_completion_skipped reason=non_clean_pass pending=${issues.length} run_id=${manifest.run_id}`,
+            // 'pending=N' alone forces every reader to guess which duty blocked the certificate;
+            // name the issues (same lesson as the stale changed_paths projection).
+            `GOAL_RUN event=feature_completion_skipped reason=${issues.length ? 'non_clean_pass' : 'scope_not_complete'} pending=${issues.length} run_id=${manifest.run_id} issues=${issues.slice(0, 6).map(issue => `[${issue.phase}] ${issue.condition}: ${issue.detail}`).join(' | ')}`,
           );
         }
       } catch (err) {
@@ -9698,7 +10409,7 @@ export function runGoalPhaseRuntimeProcessCli(): void {
     releaseAllLocks();
   });
 
-  void main()
+  void new GoalPhaseRuntime().run()
     .then((code) => {
       process.exit(code);
     })

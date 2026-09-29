@@ -33,6 +33,10 @@ flowchart LR
 
 ## 2. 字段契约（acceptance.yaml）
 
+现代范围消费已验证的 acceptance 内容（含 P3 等价投影），不以物理文件存在性代替语义。performance 可选 `ut_layer: unit|device|both`，复用 `ut_focus` / `device_focus`：unit 的描述、负载、指标和阈值须足以确定基准证明；device/both 必须明确 device_focus。旧 performance 缺层级保持 unknown，不默认算 unit，也不因运行失败改层级。NFR ID 进入原 UT/device 覆盖集合；R8 仍只对纯 unit AC/BD、无 NFR 引用的 TC 在设备前阻断。
+
+验证层不等于执行环境：UT 经 ohosTest HAP 使用设备不意味着还需 testing。只有有效验收、影响事实与全部相关缺口均支持零设备义务时才省略 testing；零义务 reconcile-only 不生成报告或设备动作，不能据此声称测试 PASS。
+
 | 字段 | 何时必填 | 说明 |
 |------|----------|------|
 | `ut_layer` | 每条 criterion / boundary **必填** | `unit` / `device` / `both` |
@@ -72,7 +76,7 @@ flowchart LR
 
 - `acceptance_to_test_case` 分母仅 `ut_layer ∈ {device, both}` 的 P0/P1
 - `test_plan_freshness_vs_acceptance`：`acceptance.yaml` 新于 `test-plan.md` → BLOCKER
-- plan 若关联 `ut_layer=unit` 的 AC → **WARN**（鼓励从 plan 剔除）
+- plan 若关联 `ut_layer=unit` 的 AC：某条 TC **仅**关联 unit 层 AC/BD 且无 NFR 引用 → **BLOCKER**（该 TC 由 business-ut 覆盖，须从 test-plan 删除；不得改 UT，也不得改标 `manual:*` 绕过），且在任何 build/install/device 动作之前裁决、零设备调用；混合引用（unit + device/both 或 NFR）→ **WARN**（鼓励从「关联 AC」列剔除 unit 引用）
 
 ---
 

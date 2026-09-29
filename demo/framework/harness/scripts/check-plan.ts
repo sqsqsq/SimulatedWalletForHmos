@@ -23,6 +23,7 @@ import {
   PhaseChecker,
   CheckContext,
   CheckResult,
+  CHECK_NOT_APPLICABLE_MARKER,
 } from './utils/types';
 import { SpecLoader } from './utils/spec-loader';
 import {
@@ -38,6 +39,10 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { checkTypedConstructionContent, designScopeRevisionChecks } from './utils/blueprint-skill-projection';
+import * as path from 'path';
+import { architectureImpactIssues, checkChangeUnitFeatureProjection, loadChangeUnitBlueprintScope } from './utils/change-unit-feature-projection';
+import { asRecord, asRecords } from './utils/component-blueprint-model';
 import {
   extractHeadings,
   getSectionContent,
@@ -498,10 +503,90 @@ function checkFileStructurePerModule(ctx: CheckContext, design: string): CheckRe
   }];
 }
 
-function checkDataModelTyped(ctx: CheckContext, design: string): CheckResult[] {
+/** plan 7b3e9a15 D2：plan 三章节与 contracts 集合的一一对应。 */
+export type PlanSectionCollection = 'data_models' | 'interfaces' | 'components';
+
+/** 章节正文里的「不适用：<依据>」声明行（允许列表项前缀与粗体包裹）。 */
+const SECTION_NOT_APPLICABLE_RE = /^[ \t]*(?:[-*+][ \t]+)?\**不适用\**[ \t]*[:：][ \t]*(\S.*?)[ \t]*$/m;
+
+/**
+ * plan 7b3e9a15 D2：「依据明确的不适用」出口的**唯一**判定实现，三个 check 共用。
+ *
+ * 纯函数（只读 ctx.featureSpec 与章节正文，零 I/O、零写入）。返回值是 CheckResult 的
+ * 状态片段——severity 由各调用点保留自己的既有值（`component_tree_per_page` 是 MAJOR，
+ * 另两个是 BLOCKER；提 severity 属改质量红线，本批不做）。
+ *
+ * **可用性前提写死在这里**（§1-② 已核实上游并不保证）。三条同时成立才允许走 n/a：
+ *   1. `ctx.featureSpec.contracts` 在场（contracts.yaml 缺失时 loader 根本不挂载）；
+ *   2. contracts.yaml 解析成功（根节点非 mapping 时 loader 同样不挂载——与 1 合流）；
+ *   3. `shape_issues` 里没有指向该集合的留痕。
+ *
+ * 第 3 条堵掉最危险的一类：`data_models: {}` 被 spec-loader 的 normalizeArrayField 归空后
+ * 长度为 0，只看"数组为空"就会把一份**写错形状**的 contracts 判成"确实不涉及"。三条里任一
+ * 不成立 → 返回 null → 落回今天的全部判定，**绝不给 SKIP**。
+ *
+ * 放弃的准确性：只看 contracts 对应数组是否为空，不校验 contracts 本身有没有漏声明——
+ * 那属 spec→plan 追溯与契约闭包的职责。作者同时在 contracts 漏声明并在 plan 写 n/a 时本
+ * 出口拦不住；代价接受，理由是不新建第二套适用性真源。
+ */
+export function resolveSectionApplicability(
+  ctx: CheckContext,
+  sectionContent: string,
+  collection: PlanSectionCollection,
+): { status: CheckResult['status']; details: string; suggestion?: string; structured?: unknown } | null {
+  const declared = SECTION_NOT_APPLICABLE_RE.exec(sectionContent);
+  if (!declared) return null;
+  const rationale = declared[1];
+
+  const contracts = ctx.featureSpec?.contracts as Record<string, unknown> | undefined;
+  if (!contracts) return null; // 前提 1+2：真源不可信 → 落回原判定
+  const shapeTainted = (ctx.featureSpec?.shape_issues ?? []).some(
+    issue => issue.includes('contracts.yaml') && issue.includes(`\`${collection}`),
+  );
+  if (shapeTainted) return null; // 前提 3
+
+  const raw = contracts[collection];
+  const entries = Array.isArray(raw) ? raw : [];
+  if (entries.length > 0) {
+    const named = entries
+      .slice(0, 5)
+      .map((e, i) => {
+        const r = (e ?? {}) as Record<string, unknown>;
+        const label = [r.name, r.class, r.file].find(v => typeof v === 'string' && v.trim());
+        return `  - ${typeof label === 'string' ? label : `${collection}[${i}]`}`;
+      })
+      .join('\n');
+    return {
+      status: 'FAIL',
+      details:
+        `章节声明「不适用：${rationale}」，但 contracts.${collection} 里有 ${entries.length} 条声明：\n${named}` +
+        (entries.length > 5 ? '\n  - …' : ''),
+      suggestion: `删掉「不适用」声明并按 contracts.${collection} 的条目补齐本章节；若这些条目确实不该存在，先改 contracts.yaml。`,
+    };
+  }
+  return {
+    status: 'SKIP',
+    details: `判据 contracts.${collection} 长度为 0（真源在场、解析成功、无形状留痕）；作者依据：${rationale}`,
+    // codex 实施 review 第 1 轮 medium：SKIP+BLOCKER 的既有语义是"门禁没跑完"——
+    // writer 的 blocking_skips 收它、`decideNextAction` 据此提前返回
+    // `review_blocking_skips_then_verifier`，把**已确认不适用**的章节说成待办、还绕过
+    // disabled 与 verifier FAIL 两条分支。status/severity 一字不改（展示面与质量轴口径
+    // 不动），只加这一条机读标注，由 writer 侧把真 n/a 排除出阻断跳过项。
+    structured: { applicability: CHECK_NOT_APPLICABLE_MARKER },
+  };
+}
+
+// D2/V4：导出供单测走**真实函数**（不复刻判定逻辑）。
+export function checkDataModelTyped(ctx: CheckContext, design: string): CheckResult[] {
   const section = getSectionContent(design, '数据模型定义');
   if (!section) {
     return [{ id: 'data_model_typed', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'data_model_typed'), severity: 'BLOCKER', status: 'FAIL', details: '未找到「数据模型定义」章节。' }];
+  }
+
+  // D2：章节在场、内容如实标注不适用 → SKIP；contracts 里有条目却写不适用 → 假 n/a FAIL。
+  const applicability = resolveSectionApplicability(ctx, section, 'data_models');
+  if (applicability) {
+    return [{ id: 'data_model_typed', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'data_model_typed'), severity: 'BLOCKER', ...applicability }];
   }
 
   const tsBlocks = extractCodeBlocks(section).filter(b =>
@@ -535,10 +620,16 @@ function checkDataModelTyped(ctx: CheckContext, design: string): CheckResult[] {
   return [{ id: 'data_model_typed', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'data_model_typed'), severity: 'BLOCKER', status: 'PASS', details: `找到 ${modelBlocks.length} 个数据模型代码块，未使用 any 类型。` }];
 }
 
-function checkInterfaceSignaturesComplete(ctx: CheckContext, design: string): CheckResult[] {
+// D2/V4：导出供单测走**真实函数**（不复刻判定逻辑）。
+export function checkInterfaceSignaturesComplete(ctx: CheckContext, design: string): CheckResult[] {
   const section = getSectionContent(design, '服务层接口定义');
   if (!section) {
     return [{ id: 'interface_signatures_complete', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'interface_signatures_complete'), severity: 'BLOCKER', status: 'FAIL', details: '未找到「服务层接口定义」章节。' }];
+  }
+
+  const applicability = resolveSectionApplicability(ctx, section, 'interfaces');
+  if (applicability) {
+    return [{ id: 'interface_signatures_complete', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'interface_signatures_complete'), severity: 'BLOCKER', ...applicability }];
   }
 
   const codeBlocks = extractCodeBlocks(section).filter(b =>
@@ -581,10 +672,18 @@ function checkInterfaceSignaturesComplete(ctx: CheckContext, design: string): Ch
   }];
 }
 
-function checkComponentTreePerPage(ctx: CheckContext, design: string): CheckResult[] {
+// D2/V4：导出供单测走**真实函数**（不复刻判定逻辑）。
+export function checkComponentTreePerPage(ctx: CheckContext, design: string): CheckResult[] {
   const section = getSectionContent(design, '页面组件树');
   if (!section) {
     return [{ id: 'component_tree_per_page', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'component_tree_per_page'), severity: 'MAJOR', status: 'FAIL', details: '未找到「页面组件树」章节。' }];
+  }
+
+  // D2：判据用 contracts.components **整体**为空，不区分"页面组件"与"普通组件"
+  //（`kind` 字段没有机器约束）——宁可让"有组件无页面"的 feature 仍走原判定，也不猜 kind。
+  const applicability = resolveSectionApplicability(ctx, section, 'components');
+  if (applicability) {
+    return [{ id: 'component_tree_per_page', category: 'structure', description: ruleDesc(ctx, 'structure_checks', 'component_tree_per_page'), severity: 'MAJOR', ...applicability }];
   }
 
   const subsections = getSubsectionHeadings(design, '页面组件树');
@@ -871,6 +970,64 @@ function checkDesignToArchitecture(ctx: CheckContext, design: string): CheckResu
 }
 
 // --------------------------------------------------------------------------
+// plan a3c7e9d1 t2/t3：CU-bound 叙述 plan —— Scope / 架构影响只核对蓝图投影
+// --------------------------------------------------------------------------
+
+/**
+ * 普通 Feature 返回 null（scope_declaration / architecture_impact_declared / plan_to_architecture 原样执行）。
+ * CU-bound：in_scope_modules 集合等于蓝图可修改模块且无 expansions；架构影响段 `decisions:` 集合等于蓝图
+ * architecture_impact 决策 id（无决策写 impact: none）；plan_to_architecture = 决策已裁决 + 当前 DSL 现值核对。
+ */
+export function checkChangeUnitBoundPlanScope(ctx: CheckContext, design: string): CheckResult[] | null {
+  if (!ctx.feature.startsWith('cu-')) return null;
+  const result = (id: string, category: CheckResult['category'], failures: string[], pass: string): CheckResult => ({
+    id, category, description: ruleDesc(ctx, category === 'traceability' ? 'traceability_checks' : 'structure_checks', id), severity: 'BLOCKER',
+    status: failures.length ? 'FAIL' : 'PASS',
+    details: `${failures.length ? failures.join('；') : pass}（来源=蓝图）`,
+    ...(failures.length ? { suggestion: 'CU-bound plan 不再判定范围与架构影响：回 /component-design 做蓝图 revision；DSL 改写走 framework-init 获准路径（init 预设 / 手工编辑 config 后重跑 UPDATE），plan 不是 DSL writer。' } : {}),
+  });
+  let projection: NonNullable<ReturnType<typeof loadChangeUnitBlueprintScope>>;
+  try {
+    projection = loadChangeUnitBlueprintScope(ctx.projectRoot, ctx.feature)!;
+  } catch (error) {
+    const failure = [`无法解析 CU 蓝图投影：${(error as Error).message}`];
+    return [result('scope_declaration', 'structure', failure, ''), result('architecture_impact_declared', 'structure', failure, ''), result('plan_to_architecture', 'traceability', failure, '')];
+  }
+  const { scope, error } = parseScope(design);
+  const scopeFailures: string[] = [];
+  if (!scope) scopeFailures.push(error ? describeScopeError(error) : 'Scope 声明无法解析');
+  else {
+    const inScope = new Set(scope.in_scope_modules);
+    if (inScope.size !== projection.modifiable.length || projection.modifiable.some(name => !inScope.has(name))) {
+      scopeFailures.push(`in_scope_modules [${[...inScope].join(', ')}] 必须集合等于蓝图可修改模块 [${projection.modifiable.join(', ')}]`);
+    }
+    if ((scope.expansions_with_user_approval ?? []).length > 0) scopeFailures.push('CU-bound 不适用 plan.scope_expansion，expansions_with_user_approval 必须为空；范围扩大走蓝图 revision');
+  }
+  const decisions = asRecords(asRecord(projection.blueprint.decisions_and_gaps)?.decisions).filter(d => d.kind === 'architecture_impact');
+  const expected = decisions.map(d => String(d.decision_id)).sort();
+  const impactFailures: string[] = [];
+  const block = extractCodeBlocks(getSectionContent(design, '架构影响声明') ?? '', 'yaml')[0];
+  let declared: Record<string, unknown> | null = null;
+  try { declared = block ? asRecord(YAML.parse(block.content)) ?? null : null; } catch { declared = null; }
+  const inner = asRecord(declared?.architecture_impact) ?? declared;
+  if (!inner) impactFailures.push('「架构影响声明」须含 yaml 块');
+  else {
+    const actual = normalizeToStringArray(inner.decisions).sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) impactFailures.push(`decisions [${actual.join(', ')}] 必须等于蓝图 architecture_impact 决策 [${expected.join(', ')}]`);
+    if ((String(inner.impact ?? '') === 'none') !== (expected.length === 0)) impactFailures.push(`impact 须${expected.length ? '不为' : '为'} none`);
+  }
+  const architecture = architectureImpactIssues(ctx.projectRoot, projection.blueprint, projection.modifiable,
+    projection.changeUnit.design_refs.filter(ref => ref.target.kind === 'decision').map(ref => ref.target.id));
+  return [
+    result('scope_declaration', 'structure', scopeFailures, `in_scope_modules = 蓝图可修改模块 [${projection.modifiable.join(', ')}]`),
+    result('architecture_impact_declared', 'structure', impactFailures, `架构影响段 = 蓝图决策投影 [${expected.join(', ') || 'none'}]`),
+    result('plan_to_architecture', 'traceability', architecture.issues.map(item => item.message),
+      `相关架构影响决策已裁决且与当前 DSL 一致${architecture.warnings.length ? `；待人工核对：${architecture.warnings.join('；')}` : ''}`),
+  ];
+}
+
+
+// --------------------------------------------------------------------------
 // Main Checker
 // --------------------------------------------------------------------------
 
@@ -908,7 +1065,8 @@ const CONSTRAINT_CATEGORIES = new Set(['security', 'performance', 'dfx', 'nfr', 
 
 function checkSpecConstraintTraceability(ctx: CheckContext, plan: string): CheckResult[] {
   const accPath = featureFilePath(ctx.projectRoot, ctx.feature, 'acceptance.yaml');
-  if (!fs.existsSync(accPath)) {
+  const typed = ctx.resolvedInputs ? ctx.featureSpec.acceptance : undefined;
+  if (!typed && !fs.existsSync(accPath)) {
     return [{
       id: 'spec_constraint_traceability',
       category: 'traceability',
@@ -920,7 +1078,7 @@ function checkSpecConstraintTraceability(ctx: CheckContext, plan: string): Check
   }
   let doc: { criteria?: Array<Record<string, unknown>> };
   try {
-    doc = YAML.parse(fs.readFileSync(accPath, 'utf-8')) as { criteria?: Array<Record<string, unknown>> };
+    doc = typed ?? YAML.parse(fs.readFileSync(accPath, 'utf-8')) as { criteria?: Array<Record<string, unknown>> };
   } catch (e) {
     return [{
       id: 'spec_constraint_traceability',
@@ -949,7 +1107,8 @@ function checkSpecConstraintTraceability(ctx: CheckContext, plan: string): Check
   }
   let contractsText = '';
   const contractsPath = featureFilePath(ctx.projectRoot, ctx.feature, 'contracts.yaml');
-  if (fs.existsSync(contractsPath)) {
+  if (ctx.resolvedInputs) contractsText = JSON.stringify(ctx.featureSpec.contracts ?? {});
+  else if (fs.existsSync(contractsPath)) {
     contractsText = fs.readFileSync(contractsPath, 'utf-8');
   }
   const haystack = `${plan}\n${contractsText}`;
@@ -1055,6 +1214,13 @@ const checker: PhaseChecker = {
   phase: 'plan',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
+    if (ctx.resolvedInputs && !ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'plan.md')) {
+      const results = [...checkTypedConstructionContent(ctx), ...checkContractFileReferenceClosure(ctx), ...checkChangeUnitFeatureProjection(ctx, 'plan'), ...checkSpecConstraintTraceability(ctx, ''),
+        ...runAcceptanceYamlStructureChecks(ctx, (_c, _s, id) => id),
+        ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
+      if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'visual-parity.yaml')) results.push(...dispatchPlanVisualParity(ctx));
+      return [...results, ...designScopeRevisionChecks(ctx, results)];
+    }
     const design = loadDoc(ctx, 'plan.md');
     if (!design) {
       const designRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'plan.md');
@@ -1074,11 +1240,13 @@ const checker: PhaseChecker = {
 
     results.push(...safeRun(() => checkContractFileReferenceClosure(ctx), 'contract_file_reference_closure'));
     results.push(...safeRun(() => checkRequiredChapters(ctx, design), 'required_chapters'));
-    results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
+    const cuBoundScope = ctx.feature.startsWith('cu-') ? safeRun(() => checkChangeUnitBoundPlanScope(ctx, design) ?? [], 'scope_declaration') : null;
+    if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id !== 'plan_to_architecture'));
+    else results.push(...safeRun(() => checkScopeDeclaration(ctx, design), 'scope_declaration'));
     results.push(...safeRun(() => checkScopeConsistencyWithPrd(ctx, design, prd), 'scope_consistency_with_spec'));
     // visual-capability-truth S6（P1-F）：集成契约 vs scope 一致性（机器真源=integration_points）
     results.push(...safeRun(() => checkIntegrationScopeConsistency(ctx, design), 'integration_scope_consistency'));
-    results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
+    if (!cuBoundScope) results.push(...safeRun(() => checkArchitectureImpactDeclared(ctx, design), 'architecture_impact_declared'));
     results.push(...safeRun(() => checkArchitectureDiagram(ctx, design), 'architecture_diagram'));
     results.push(...safeRun(() => checkModuleChangeTable(ctx, design), 'module_change_table'));
     results.push(...safeRun(() => checkFileStructurePerModule(ctx, design), 'file_structure_per_module'));
@@ -1089,6 +1257,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkStateManagementTable(ctx, design), 'state_management_table'));
     results.push(...safeRun(() => checkRouteDesignTable(ctx, design), 'route_design_table'));
     results.push(...safeRun(() => checkMetadataHeader(ctx, design), 'metadata_header'));
+    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'plan'), 'change_unit_feature_projection'));
 
     if (isPlanVisualParitySkipped(ctx.resolvedProfile)) {
       results.push({
@@ -1113,10 +1282,13 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkPrdCoverage(ctx, design, prd, 'P1', 'spec_p1_coverage'), 'spec_p1_coverage'));
     results.push(...safeRun(() => checkMappingToFile(ctx, design), 'mapping_to_file'));
     results.push(...safeRun(() => checkSpecConstraintTraceability(ctx, design), 'spec_constraint_traceability'));
-    results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
+    if (cuBoundScope) results.push(...cuBoundScope.filter(item => item.id === 'plan_to_architecture'));
+    else results.push(...safeRun(() => checkDesignToArchitecture(ctx, design), 'plan_to_architecture'));
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'plan', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,
@@ -1125,7 +1297,7 @@ const checker: PhaseChecker = {
       ),
     );
 
-    return results;
+    return [...results, ...designScopeRevisionChecks(ctx, results)];
   },
 };
 

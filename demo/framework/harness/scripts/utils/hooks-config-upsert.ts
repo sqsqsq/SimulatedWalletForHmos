@@ -189,7 +189,7 @@ export function computeHooksConfigUpsert(
   return { status: 'updated', nextText: stringifyDoc(nextDoc) };
 }
 
-export type RemovalStatus = 'removed' | 'unchanged' | 'invalid_json' | 'missing';
+export type RemovalStatus = 'removed' | 'unchanged' | 'invalid_json' | 'invalid_schema' | 'missing';
 
 export interface RemovalResult {
   status: RemovalStatus;
@@ -199,30 +199,70 @@ export interface RemovalResult {
 }
 
 /**
+ * 从 hook command 抽出「node 单脚本调用」的脚本路径：斜杠归一，去掉 `./` 与
+ * `${…PROJECT_DIR}/` 前缀。复合/拼接命令（`&&`、带参数等）返回 null——不猜归属。
+ * 归属判定（本文件）与退役清理的引用去向判定（check-init）共用同一份解析，勿另抄正则。
+ */
+export function extractNodeScriptPath(command: string): string | null {
+  const match = command.match(/^node(?:\.exe)?\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|<>]+))\s*$/i);
+  if (!match) return null;
+  return (match[1] ?? match[2] ?? match[3]!).replace(/\\/g, '/')
+    .replace(/^(?:\.\/|\$(?:\{[A-Z0-9_]*PROJECT_(?:DIR|ROOT)\}|[A-Z0-9_]*PROJECT_(?:DIR|ROOT))\/)/, '');
+}
+
+/**
  * 卸载/adapter 切换：删除全部 owned/legacy command 条目，保留第三方条目与容器结构；
  * 事件数组删空后移除该事件键（空容器清理），其余顶层字段原样保留。
  */
 export function computeHooksConfigRemoval(
   existingText: string | null,
   ownedCommands: readonly string[],
+  ownedScriptPaths: readonly string[] = [],
 ): RemovalResult {
   if (existingText === null) return { status: 'missing' };
   const doc = parseDoc(existingText);
   if (!doc) return { status: 'invalid_json' };
-  if (!doc.hooks || typeof doc.hooks !== 'object' || Array.isArray(doc.hooks)) {
+  if (doc.hooks === undefined) {
     return { status: 'unchanged', nextText: existingText };
   }
+  if (!doc.hooks || typeof doc.hooks !== 'object' || Array.isArray(doc.hooks)
+    || Object.values(doc.hooks).some(arr => !Array.isArray(arr))) {
+    return { status: 'invalid_schema' };
+  }
   const owned = new Set([...ownedCommands, ...LEGACY_OWNED_COMMANDS]);
+  const normalizeScriptPath = (p: string): string => {
+    const normalized = p.replace(/\\/g, '/');
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const scripts = new Set(ownedScriptPaths.map(normalizeScriptPath));
+  const isOwned = (command: string): boolean => {
+    if (owned.has(command)) return true;
+    const script = extractNodeScriptPath(command);
+    return script !== null && scripts.has(normalizeScriptPath(script));
+  };
   const hooks = { ...(doc.hooks as Record<string, unknown>) };
   let changed = false;
+  const removeEntries = (arr: unknown[]): unknown[] => arr.flatMap(e => {
+    const command = entryCommand(e);
+    if (command !== null && isOwned(command)) {
+      changed = true;
+      return [];
+    }
+    if (e && typeof e === 'object' && !Array.isArray(e)) {
+      const group = e as Record<string, unknown>;
+      if (Array.isArray(group.hooks)) {
+        const kept = removeEntries(group.hooks);
+        if (JSON.stringify(kept) !== JSON.stringify(group.hooks)) {
+          return kept.length ? [{ ...group, hooks: kept }] : [];
+        }
+      }
+    }
+    return [e];
+  });
   for (const [event, arr] of Object.entries(hooks)) {
     if (!Array.isArray(arr)) continue;
-    const kept = arr.filter((e) => {
-      const c = entryCommand(e);
-      return c === null || !owned.has(c);
-    });
-    if (kept.length !== arr.length) {
-      changed = true;
+    const kept = removeEntries(arr);
+    if (JSON.stringify(kept) !== JSON.stringify(arr)) {
       if (kept.length === 0) delete hooks[event];
       else hooks[event] = kept;
     }

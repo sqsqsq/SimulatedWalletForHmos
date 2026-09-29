@@ -29,6 +29,7 @@ import { isVisionCanaryFresh, canaryAdmissibleForExecution } from './multimodal-
 // plan d8c5f3a7 T1：与三轴 resolver 共用同一采信谓词（禁两把尺子——见函数内注释）
 // plan d7f3a9c4 t3：执行身份升级 `{runId, modelPin}` 二元——重探判定与采信判定共用
 // canaryAdmissibleForExecution（无 pin 时精确退化为 canaryAdmissibleForRun）。
+import { featureRelativePath } from './feature-identity';
 import {
   assertAdapterHeadlessFullPermission,
   invokeAgentHeadless,
@@ -464,10 +465,12 @@ export async function runVisionCanaryProbe(input: {
       ...(canaryStructuredStdout ? { structured_stdout_format: canaryEnvelope } : {}),
     }, answerKey);
     if (decision.kind !== 'valid') {
+      // 调用失败时带出 adapter terminal 原文（codex turn.failed 等），不让 400/401 只剩一个 exitCode。
+      const excerpt = decision.kind === 'invoke_failed' ? invoke.terminal_error_excerpt : undefined;
       return {
         ran: true,
         outcome: decision.kind === 'invoke_failed' ? 'invoke_failed_not_cached' : 'invalid_not_cached',
-        error: decision.detail,
+        error: excerpt ? `${decision.detail}：${excerpt.slice(0, 500)}` : decision.detail,
       };
     }
     const existing = loadLocalConfig(projectRoot) ?? { schema_version: LOCAL_SCHEMA_VERSION };
@@ -594,6 +597,11 @@ export interface FidelityRoutingInitInput {
   now?: () => Date;
 }
 
+/** 当前逻辑 feature 自身目录前缀；需求解引用排除与 M5A 物理路径共用同一 SSOT。 */
+export function goalFeatureSelfReferencePrefix(featuresDirRel: string, feature: string): string {
+  return `${featuresDirRel.replace(/\\/g, '/')}/${featureRelativePath(feature)}/`;
+}
+
 /**
  * plan f6b2d9a4 T2：路由初始化唯一执行实现（runner-owned）——goal 模式由 goal-runner
  * 在 agent invoke 前调用；phase-driven 由 skills/feature/spec Step 1 经
@@ -607,7 +615,7 @@ export function initializeFidelityRouting(
 ): { routing: FidelityRoutingDecision; receiptNote: string; requirementSha: string } {
   const deref = dereferenceRequirementDocs(input.projectRoot, input.requirement, {
     featuresDirRel: input.featuresDirRel,
-    excludePrefixes: [`${input.featuresDirRel.replace(/\\/g, '/')}/${input.feature}/`],
+    excludePrefixes: [goalFeatureSelfReferencePrefix(input.featuresDirRel, input.feature)],
   });
   const receiptNote = input.fidelityReceiptRel
     ? 'legacy fidelity_receipt 已忽略：质量档位只能由冻结需求或新的 correction/successor 输入改变。'

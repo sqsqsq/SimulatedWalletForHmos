@@ -20,6 +20,7 @@
     "asset:placeholders": "ts-node ../profiles/hmos-app/harness/asset-placeholder-cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "npm run check:global",
+    "sync:codex-agents": "ts-node scripts/sync-codex-agent-templates.ts",
     "backfill:context": "ts-node scripts/backfill-context-exploration.ts",
     "derive-hylyre-plan-hint": "ts-node scripts/derive-hylyre-plan-hint.ts",
     "derive-adhoc-hylyre-hint": "ts-node scripts/derive-adhoc-hylyre-hint.ts",
@@ -31,11 +32,16 @@
     "goal:supervise": "ts-node scripts/goal-supervise.ts",
     "validate:ut-artifact": "ts-node scripts/validate-ut-artifact.ts",
     "bootstrap:code-graph": "ts-node scripts/bootstrap-code-graph.ts",
+    "bootstrap:component-index": "ts-node scripts/bootstrap-component-index.ts",
+    "check:component-blueprint": "ts-node scripts/check-component-blueprint.ts",
+    "check:change-unit": "ts-node scripts/check-change-unit.ts",
+    "check:component-closure": "ts-node scripts/check-component-closure.ts",
     "visual-diff-nav:migrate": "ts-node ../profiles/hmos-app/harness/visual-diff-nav-migrate.ts",
     "device:policy": "ts-node scripts/device-policy.ts --check --json",
     "device:enroll": "ts-node scripts/device-policy.ts --enroll",
     "device:set": "ts-node scripts/device-policy.ts --set",
-    "device:rebind": "ts-node scripts/device-policy.ts --rebind"
+    "device:rebind": "ts-node scripts/device-policy.ts --rebind",
+    "device:ready": "ts-node scripts/device-policy.ts --ready"
   },
   "dependencies": {
     "chalk": "^4.1.2",

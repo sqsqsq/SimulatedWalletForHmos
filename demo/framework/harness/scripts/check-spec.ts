@@ -46,7 +46,9 @@ import {
   lookupTerm,
 } from './utils/glossary-parser';
 import { isSpecVisualHandoffSkipped, dispatchSpecVisualHandoff, isSpecUiSpecSkipped, dispatchSpecUiSpec, isSpecAssetAcquisitionSkipped, dispatchSpecAssetAcquisition } from '../capability-registry';
-import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath } from '../config';
+import { relCatalog, relGlossary, relFeatureArtifact, relFeatureFile, loadFrameworkConfig, featureFilePath, relFeaturesDir } from '../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（素材路径 fallback 不得拼接逻辑 id）
+import { featureRelativePath } from './utils/feature-identity';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { reviewVisionForMode } from './utils/visual-provider-identity';
 import {
@@ -66,14 +68,16 @@ import {
   parseFidelityDeferrals,
   parseFidelityTargetFromHandoffDoc,
 } from './utils/fidelity-shared';
-import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, type UiSpecAsset } from './utils/ui-spec-shared';
-import { loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
+import { parseVisualHandoffYamlRoot, loadUiSpecFile, uiSpecAbsPath, collectAllComponentNodes, type UiSpecAsset } from './utils/ui-spec-shared';
+import { collectCurrentRequirementText, loadRefElementsFile, refElementsAbsPath } from './utils/fidelity-shared';
 import { scanUiSpecCounterevidence, type RefElementLite } from './utils/vision-counterevidence';
 import { verifyVlSigningChain } from './utils/critic-receipt-producer';
 import { isGoalOrchestrationEnv } from './utils/phase-state';
 import { evaluateAcceptanceFlowStructure, evaluateFlowContract } from './utils/p0-semantic-gates';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
+import { designScopeRevisionChecks, checkAuthoritativeContentAligned } from './utils/blueprint-skill-projection';
+import { loadChangeUnitBlueprintScope } from './utils/change-unit-feature-projection';
 export { dispatchSpecVisualHandoff as checkVisualHandoff };
 export { dispatchSpecUiSpec as checkUiSpecStructureBundle };
 
@@ -337,7 +341,7 @@ export function maybeWriteAssetRequest(ctx: CheckContext): void {
     ...items.map(a => {
       const role = /(logo|brand)/i.test(a.key) ? 'brand_logo' : 'illustration';
       const size = role === 'brand_logo' ? '96×96（正方形，透明底 png/svg）' : '≥320×200（png/svg）';
-      const drop = a.resolved_path ?? `doc/features/${ctx.feature}/spec/assets/${a.key}.png`;
+      const drop = a.resolved_path ?? `${relFeaturesDir(ctx.projectRoot)}/${featureRelativePath(ctx.feature)}/spec/assets/${a.key}.png`;
       const ph = role === 'brand_logo' ? 'text_avatar（首字色块）' : 'illustration_frame（中性占位框）';
       return `| ${a.key} | ${role} | ${size} | ${drop} | ${ph} |`;
     }),
@@ -450,8 +454,11 @@ export function checkVisionOutputCounterevidence(ctx: CheckContext): CheckResult
         id, category: 'structure', description,
         severity: 'BLOCKER', status: 'PASS',
         details:
-          `无确定性反证、正向 provenance 成立且当前 invocation 回执完整（texts=${scan.counters.texts_total} 全匹配；` +
-          `invoke=${chain.expectedInvoke}）。`,
+          `无确定性反证、正向 provenance 成立且本 run 的材料证据完整（texts=${scan.counters.texts_total} 全匹配；` +
+          `refs 验读 ${chain.currentRefs.length} 张，逐张 hash 核对` +
+          (chain.carriedRefs.length > 0
+            ? `，其中 ${chain.carriedRefs.length} 张读取记录来自本 run 先前 invocation（内容未变）`
+            : '') + '）。',
       }];
     }
     return [{
@@ -1245,6 +1252,82 @@ function checkTerminologyModulesWithinScope(ctx: CheckContext, prd: string): Che
 }
 
 // --------------------------------------------------------------------------
+// plan a3c7e9d1 t2：CU-bound 叙述 spec —— 术语映射表与 Scope 声明只核对蓝图投影，不再二次问人
+// --------------------------------------------------------------------------
+
+/** 普通 Feature 返回 null（四项门禁原样执行）；CU-bound 时同 id 核对蓝图投影，details 注明来源=蓝图。 */
+export function checkChangeUnitBoundSpecScope(ctx: CheckContext, prd: string): CheckResult[] | null {
+  if (!ctx.feature.startsWith('cu-')) return null;
+  const result = (id: string, failures: string[], pass: string): CheckResult => ({
+    id, category: 'structure', description: ruleDesc(ctx, 'structure_checks', id), severity: 'BLOCKER',
+    status: failures.length ? 'FAIL' : 'PASS',
+    details: `${failures.length ? failures.join('；') : pass}（来源=蓝图）`,
+    ...(failures.length ? { suggestion: 'CU-bound spec 只投影蓝图裁决：回 /component-design 调和蓝图（术语事实 / touches / development 节点 module）后重新投影，不在 spec 内改范围或问人。', affected_files: specMdAffected(ctx) } : {}),
+  });
+  let projection: NonNullable<ReturnType<typeof loadChangeUnitBlueprintScope>>;
+  try {
+    projection = loadChangeUnitBlueprintScope(ctx.projectRoot, ctx.feature)!;
+  } catch (error) {
+    const failure = [`无法解析 CU 蓝图投影：${(error as Error).message}`];
+    return ['terminology_mapping_table', 'scope_declaration', 'scope_matches_catalog', 'terminology_modules_within_scope'].map(id => result(id, failure, ''));
+  }
+  const out: CheckResult[] = [];
+  const table = extractTables(getSectionContent(prd, '术语映射表') ?? '')[0];
+  const termFailures: string[] = [];
+  if (!table || !tableHasColumns(table, TERMINOLOGY_REQUIRED_COLUMNS).hasAll) {
+    termFailures.push(`「术语映射表」须为含 ${TERMINOLOGY_REQUIRED_COLUMNS.join('/')} 列的表格`);
+  } else {
+    const moduleIdx = table.headers.findIndex(h => h.includes('权威模块'));
+    const confirmIdx = table.headers.findIndex(h => h.includes('用户确认'));
+    const confidenceIdx = table.headers.findIndex(h => h.includes('置信度'));
+    const confusedIdx = table.headers.findIndex(h => h.includes('易混项'));
+    const rows = table.rows.filter(row => (row[0] || '').trim() && !/^\{.*\}$/.test((row[0] || '').trim()));
+    const expected = new Map(projection.terms.map(term => [term.term, term]));
+    const names = rows.map(row => (row[0] || '').trim());
+    const duplicated = [...new Set(names.filter((name, i) => names.indexOf(name) !== i))];
+    const missing = [...expected.keys()].filter(term => !names.includes(term));
+    const extra = [...new Set(names)].filter(term => !expected.has(term));
+    // 逐行逐字段核对投影（canonical_module / confidence / easily_confused_with 每项都须出现在易混项列）。
+    const drifted = rows.flatMap(row => {
+      const fact = expected.get((row[0] || '').trim());
+      if (!fact) return [];
+      const cell = (i: number) => (row[i] || '').trim();
+      const diffs = [
+        ...(cell(moduleIdx) !== fact.canonical_module ? [`权威模块 ${cell(moduleIdx)}≠${fact.canonical_module}`] : []),
+        ...(cell(confidenceIdx).toLowerCase() !== fact.confidence ? [`置信度 ${cell(confidenceIdx)}≠${fact.confidence}`] : []),
+        ...fact.easily_confused_with.filter(item => !cell(confusedIdx).includes(item)).map(item => `易混项缺 ${item}`),
+      ];
+      return diffs.length ? [`${fact.term}：${diffs.join('，')}`] : [];
+    });
+    const unticked = rows.filter(row => !/\[[xX]\]/.test(row[confirmIdx] || '')).map(row => (row[0] || '').trim());
+    if (duplicated.length) termFailures.push(`术语行重复（每个术语只能投影一行）：${duplicated.join('、')}`);
+    if (missing.length) termFailures.push(`缺蓝图术语事实行：${missing.join('、')}`);
+    if (extra.length) termFailures.push(`多出蓝图没有的术语行：${extra.join('、')}`);
+    if (drifted.length) termFailures.push(`与蓝图术语事实投影不一致：${drifted.join('；')}`);
+    if (unticked.length) termFailures.push(`投影行用户确认列须为 [x]：${unticked.join('、')}`);
+  }
+  out.push(result('terminology_mapping_table', termFailures, `术语映射表 ${projection.terms.length} 行与蓝图术语事实一致`));
+  const { scope, error } = parseScope(prd);
+  const modifiable = new Set(projection.modifiable);
+  const scopeFailures: string[] = [];
+  if (!scope) scopeFailures.push(error ? describeScopeError(error) : 'Scope 声明无法解析');
+  else {
+    const inScope = new Set(scope.in_scope_modules);
+    if (inScope.size !== modifiable.size || [...inScope].some(name => !modifiable.has(name))) {
+      scopeFailures.push(`in_scope_modules [${[...inScope].join(', ')}] 必须集合等于蓝图可修改模块 [${projection.modifiable.join(', ')}]`);
+    }
+    if ((scope.expansions_with_user_approval ?? []).length > 0) scopeFailures.push('CU-bound 不允许 expansions_with_user_approval；范围扩大走蓝图 revision');
+  }
+  out.push(result('scope_declaration', scopeFailures, `in_scope_modules = 蓝图可修改模块 [${projection.modifiable.join(', ')}]`));
+  const unknownModules = scope ? [...scope.in_scope_modules, ...scope.out_of_scope_modules].filter(name => !projection.admitted.modules.has(name)) : [];
+  out.push(result('scope_matches_catalog',
+    !projection.admitted.catalogOk ? [`${relCatalog(ctx.projectRoot)} 不可读`] : unknownModules.length ? [`Scope 模块不是获准模块（catalog ∪ 蓝图 add_module/move_module 声明）：${unknownModules.join('、')}`] : [],
+    'Scope 模块均为获准模块'));
+  out.push(...checkTerminologyModulesWithinScope(ctx, prd).map(item => ({ ...item, details: `${item.details}（来源=蓝图）` })));
+  return out;
+}
+
+// --------------------------------------------------------------------------
 // C1b: glossary 术语在正文出现但未进术语映射表 → WARN（兜底网）
 // --------------------------------------------------------------------------
 
@@ -1476,6 +1559,18 @@ const checker: PhaseChecker = {
   phase: 'spec',
 
   async check(ctx: CheckContext): Promise<CheckResult[]> {
+    if (ctx.resolvedInputs && !ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'spec.md')) {
+      const results = [...runAcceptanceYamlStructureChecks(ctx, (_c, _s, id) => id),
+        ...evaluateAcceptanceFlowStructure(ctx.projectRoot, ctx.feature, ctx.featureSpec.acceptance), ...evaluateFlowContract(ctx.projectRoot, ctx.feature, '', ctx.featureSpec.acceptance),
+        ...checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', { factsContext: ctx.factsContext, resolvedInputs: ctx.resolvedInputs, phaseRule: ctx.phaseRule, profileName: ctx.resolvedProfile.name, frameworkRoot: ctx.frameworkRoot })];
+      if (ctx.resolvedInputs.context.required_outputs.some(name => path.basename(name) === 'ui-spec.yaml')) {
+        const input = ctx.resolvedInputs.values.requirement;
+        const requirement = input?.state === 'resolved' && typeof input.value === 'string' ? input.value : '';
+        results.push(...checkFidelityCapabilityPregate(ctx), ...dispatchSpecVisualHandoff(ctx, requirement), ...dispatchSpecUiSpec(ctx, requirement), ...dispatchSpecAssetAcquisition(ctx));
+      }
+      results.push(...safeRun(() => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
+      return [...results, ...designScopeRevisionChecks(ctx, results)];
+    }
     const prd = loadPrd(ctx);
     if (!prd) {
       const prdRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'spec.md');
@@ -1493,11 +1588,17 @@ const checker: PhaseChecker = {
     ];
 
     results.push(...safeRun(() => checkRequiredChapters(ctx, prd), 'required_chapters'));
-    results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
-    results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
-    results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
-    results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
-    results.push(...safeRun(() => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));
+    const cuBoundScope = ctx.feature.startsWith('cu-') ? safeRun(() => checkChangeUnitBoundSpecScope(ctx, prd) ?? [], 'terminology_mapping_table') : null;
+    if (cuBoundScope) {
+      results.push(...cuBoundScope);
+      results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
+    } else {
+      results.push(...safeRun(() => checkTerminologyMappingTable(ctx, prd), 'terminology_mapping_table'));
+      results.push(...safeRun(() => checkHeadlessAssumptionsTrace(ctx), 'headless_assumptions_review'));
+      results.push(...safeRun(() => checkScopeDeclaration(ctx, prd), 'scope_declaration'));
+      results.push(...safeRun(() => checkScopeMatchesCatalog(ctx, prd), 'scope_matches_catalog'));
+      results.push(...safeRun(() => checkTerminologyModulesWithinScope(ctx, prd), 'terminology_modules_within_scope'));
+    }
     if (isSpecVisualHandoffSkipped(ctx.resolvedProfile)) {
       results.push({
         id: 'visual_handoff',
@@ -1574,6 +1675,8 @@ const checker: PhaseChecker = {
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'spec', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,
@@ -1598,7 +1701,10 @@ const checker: PhaseChecker = {
     // --- goal-fakepass-hardening t7：ux-reference 逐图建模对账（out-of-scope 加界）---
     results.push(...safeRun(() => checkUxReferenceMapping(ctx), 'ux_reference_mapping'));
 
-    return results;
+    // plan c4e7a9b2 A1：手写 acceptance 与当前设计权威对齐（spec 是责任阶段，不对齐不得 PASS）。
+    results.push(...safeRun(() => checkAuthoritativeContentAligned(ctx, 'acceptance'), 'authoritative_content_aligned'));
+
+    return [...results, ...designScopeRevisionChecks(ctx, results)];
   },
 };
 
@@ -1606,8 +1712,49 @@ const checker: PhaseChecker = {
  * t7（codex 二轮 P1-2/四轮 P1-8）：每张参考图须映射 ui-spec 屏或显式 out-of-scope
  * 登记（裁剪证明：crop_of 父图 + reason）；需求正文直接引用的图片 agent 无权自划
  * out-of-scope；多数（>50%）out-of-scope → FAIL——"难还原的截图全标裁剪素材"后门关闭。
+ * plan c4e7a9b2 A2：同一入口另核 ref-elements `excluded`（参考图侧元素的需求排除登记）。
  */
-function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
+export function checkUxReferenceMapping(ctx: CheckContext): CheckResult[] {
+  return [...checkUxReferenceImages(ctx), ...checkRefElementsExcluded(ctx)];
+}
+
+/**
+ * plan c4e7a9b2 A2：`disposition: excluded` = 需求明文排除（下游视觉缺陷据此退出返修）。
+ * 须带 requirement_quote 且**逐字**出现在**当前执行身份**的需求原文（collectCurrentRequirementText：
+ * 当前 goal run 的 manifest，或无 run 时身份匹配的 explicit_cli SSOT 原文；历史 run 不得替当前 run
+ * 授权，spec.md 不是需求、agent 不能自证排除）；被 ui-spec 覆盖的元素不得排除。无 excluded 条目不产结果。
+ */
+function checkRefElementsExcluded(ctx: CheckContext): CheckResult[] {
+  const id = 'ref_elements_excluded';
+  const description = 'ref-elements excluded 须逐字引自需求原文且不被 ui-spec 覆盖';
+  const excluded = (loadRefElementsFile(refElementsAbsPath(ctx.projectRoot, ctx.feature))?.elements ?? [])
+    .filter((e) => e?.disposition === 'excluded');
+  if (excluded.length === 0) return [];
+  const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
+  const covered = new Set([
+    ...(uiDoc ? collectAllComponentNodes(uiDoc).map((n) => n.id) : []),
+    ...(uiDoc?.screens ?? []).flatMap((s) => s.must_have_elements ?? []),
+  ].filter((x): x is string => typeof x === 'string').map((x) => x.toLowerCase()));
+  const featuresDirRel = (loadFrameworkConfig(ctx.projectRoot).paths?.features_dir ?? 'doc/features').replace(/\\/g, '/');
+  const reqText = collectCurrentRequirementText(ctx.projectRoot, ctx.feature, featuresDirRel);
+  const failures: string[] = [];
+  for (const e of excluded) {
+    const quote = typeof e.requirement_quote === 'string' ? e.requirement_quote.trim() : '';
+    if (!quote) failures.push(`${e.element_id}：excluded 缺 requirement_quote`);
+    else if (!reqText.includes(quote)) failures.push(`${e.element_id}：requirement_quote「${quote}」未逐字出现在需求原文`);
+    if (covered.has(String(e.element_id).toLowerCase())) failures.push(`${e.element_id}：已被 ui-spec 覆盖，不得登记 excluded`);
+  }
+  return [{
+    id, category: 'structure', description, severity: 'BLOCKER',
+    status: failures.length > 0 ? 'FAIL' : 'PASS',
+    details: failures.length > 0 ? failures.join('\n') : `${excluded.length} 条 excluded 均有逐字需求引文且未被 ui-spec 覆盖。`,
+    ...(failures.length > 0
+      ? { suggestion: 'requirement_quote 须逐字复制需求原文的排除句；需求没说排除的元素改登 implement 或 defer。' }
+      : {}),
+  }];
+}
+
+function checkUxReferenceImages(ctx: CheckContext): CheckResult[] {
   const id = 'ux_reference_mapping';
   const description = 'ux-reference 参考图逐图建模对账（未映射/越权 out-of-scope 拦截）';
   const uxDir = featureFilePath(ctx.projectRoot, ctx.feature, 'ux-reference');

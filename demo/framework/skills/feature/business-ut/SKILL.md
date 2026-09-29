@@ -1,8 +1,14 @@
 # 业务级 UT Skill (`business-ut` · v2.1)
 
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 无 Feature 专项按[请求 CLI](../../../docs/operations/request-harness.md)由 Agent 执行准备、Research 和实际检查；完成只代表本次请求，不继续 Feature 链。
+
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `ut.plan_confirm` / `ut.mock_plan` / `ut.dag_confirm` / `ut.ok_to_testing` / `phase.next_step`。这些交互用于普通输入/导航，不得降低质量门禁。
 
 ## 前置
+
+**现代独立与组合调用**：完整 Feature/CU 使用 P1/P3 的有效 unit/both AC、BD、NFR、契约与实际源码；无 spec.md/plan.md 不补空文档。用户只运行/补指定测试时，按 request CLI 的 targets.tests 与已有断言/明确行为目标执行，只报告本次请求，不强制整份 acceptance、testability-audit 或 mock-plan。新增断言必须有授权预期，characterization 仅证明现状。首个实际阶段按入口 factsContext 建立事实，已有基线才追加 delta。**预期来源四步（写测试前逐类断言做，机器只核登记有效、语义归你）**：① **读具体条目**——打开引用的文件与锚点读原文，不凭文件名或标题推断；② **区分现状描述与授权要求**——**catalog / 源码注释 / 既有测试 / 实现代码这类「记载当前是什么」的条目不构成来源依据**，只有 acceptance / 验收条目 / 约束知识里规定「应当是什么」的条目才算，同一份文件里两类并存时按**被引的那一条**判、不按文件判；③ **逐类核对**——把每类断言的预期与该条目原文对照，把结论（命中 / 不命中 / 该条目没说）写进本次请求 report-dir 的 `context/facts.md` 的 `## phase_delta: ut` 节；④ **逐条登记或标注**——对得上就登记来源，对不上或该条目只描述现状就标 characterization。**标注写在每条断言自己身上**：用例名前加 `[CHAR-…]`（现状）或 `[AC-…]` / `[BD-…]` / `[BRANCH-…]`（有来源标签），或在**紧邻该行上方**加 `// characterization` / `// expectation: <项目内相对路径>`；**写在 `describe(` 上或文件头的总括注释不算登记**（框架不做作用域继承，`/* */` 块注释也不算）。**每条断言单独成行、以 `it(` 或 `test(` 起行、名字用字符串字面量，不要用 `skip` / `each` 等变体绕开登记**。标注清楚的现状记录是合法交付、不判 FAIL，但结果呈现为「现状记录」而不是「正确性通过」；依据要求**应当失败的断言保留失败与原因**，「不改实现」不授权为跑绿调整期望。**专项独立调用的能力边界（hmos）**：UT 专项**只执行已配置模块 `src/ohosTest/` 下的 Hypium 用例**——写测试前先跑 `--prepare-request` 看落点，它会在准备期报出落点与载体缺口；报 profile 能力缺口时**如实停在该处**，不改投其它目录、不用其它模块的通过代替。**为跑测试而新建测试载体或修改模块构建配置**（新增 `src/ohosTest/`、改 `build-profile.json5` 的 `targets` 等）**超出「补测试」的字面范围**：先向用户说明该改动及其原因、**得到认可后再做**，不得静默完成（沿用既有「范围外改动先说明」约定）。任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。确认工具链本身跑 `check-personal-setup.ts --json --ensure`；失败诊断先读同次 `hvigor-*.meta.json` 的 `envProbe`（`DEVECO_SDK_HOME_PATH` 本次实际取值 / `JAVA_HOME` / 变量**是否设置**——布尔为 true 不等于框架派生成功）与 `command`、`exitCode`，再读构建日志正文，重新解析出来的值只作辅助且须标为「当前值」，安装目录扫描第三顺位。
+
+**验证层与环境分开**：unit 性能项的指标与证明方法来自有效 acceptance，计入实际单元证据；ohosTest HAP 的 build/install/device 是 UT toolchain 的一部分，不自动安排 testing。现代调用明确依赖均为 pure 时不强造 mock-plan；真实外部依赖、分支和 testability 缺口继续按原专业检查处理。完成与复用由冻结 scope 和现有证据决定，不因末段为 UT 自报 Feature 完成。
 
 本工程须先完成 [`framework-init`](../../project/framework-init/SKILL.md)：`framework.config.json` 与 **paths**/**`architecture` 段**已由初始化写入或与之一致。
 
@@ -10,7 +16,7 @@
 
 **设备策略（BLOCKER，`ut.run` 需真机时）**：[device-policy-gate](../../reference/device-policy-gate.md)：`npx ts-node scripts/device-policy.ts --check --json`（**判定两段**：退出码 0 且 stdout 合法 JSON → 看 `code`；非零或非法 JSON = 执行失败须停止，含**凭据库不可读**，此时不得当成"未配置"去引导重新登记）；`code=device_policy_unset` 就**先问用户四选一**再跑装机/`aa test`（选 ③ 须追问 `existing`/`managed`，禁默认托管）。**只看 `code` 不看 `configured`**——凭据已 burned/不存在或只有 `emulator_fallback=disabled` 时，`configured=true` 而 `code=unset`。与 goal 模式同一契约——普通模式下用户同样有权知道"可以启用自动解锁"，而不是撞上一句干巴巴的"设备锁屏"。PIN 只能由用户在自己终端登记，**绝不进对话**。harness-runner 在需设备 phase 另有**进程级**入口门（同一 `code`，在任何设备操作前 fail-fast，并把设备目标解析一次注入全链），漏问不会静默跑到锁屏——但那只是兜底，四选一仍是你的活。
 
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证不得读取。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/contracts/acceptance/use-cases 是否存在）；输入缺失回上游补齐。
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`；只有精确目录是正式 feature，同名归档/前缀条目只是旁证不得读取。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。展示输入矩阵（spec/plan/contracts/acceptance/use-cases 是否存在）；输入缺失回上游补齐。
 
 ## 条件加载索引
 
@@ -89,6 +95,8 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 
 **缺 use-cases.yaml**：不阻塞，按 acceptance.yaml + dag.yaml 直接写 UT；WARN 非 BLOCKER；严禁为此回头要求补 use-cases.yaml 套架构。**缺 acceptance.yaml**：提示先运行 spec 阶段（**例外**：提供脱敏日志切片时走 path-c characterization，不要求先补 spec，见三路径路由）。
 
+**CU-bound 例外**：存在 `contracts.change_unit` 时，是否需要 use-cases.yaml/DAG 由 `contracts.state_management` 的有序步骤、失败/恢复、共享消费者、生命周期事实与 `acceptance.ut_layer` 机械派生；派生为 required 时缺失即 BLOCKER，不得 authored opt-out。简单只读/首次加载且无上述复杂事实时仍走退化模式，不制造假 mutation/subscription。
+
 **保证等级**：Harness 在 checker 前一次性解析 contract capabilities 与输入 source chain，机械写入 `summary.assurance` 和 `capability_resolutions`；Skill 不得手写 `full/basic` 档位。可裁剪能力会以受控理由投影到质量轴，核心输入缺失仍不可闭环；acceptance 追溯、真实 toolchain 编译/测试、反假 PASS 与源码变更红线一律不降级。
 
 ## 规约参考
@@ -127,7 +135,7 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
 
 **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
 
 ## 门禁清单表（v2.1 检查覆盖项）
 

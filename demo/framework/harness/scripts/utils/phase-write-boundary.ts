@@ -55,6 +55,7 @@ export interface ResolvePhaseWriteBoundaryOptions {
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
+  runId?: string;
   phaseOrder: readonly string[];
   track: FeatureTrack;
   profileDir: string;
@@ -110,6 +111,13 @@ function loadCodingScope(
   modules: Array<{ name: string; package_path: string }>;
   diagnostics: string[];
 } {
+  if (options.runId) {
+    const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId);
+    const modules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+    const resolution = resolveModulePathPrefixes(options.projectRoot, modules.map(module => module.name), modules);
+    return { prefixes: resolution.allowedPrefixes, modules, diagnostics: resolution.unmapped.map(name => `bound module has no path: ${name}`) };
+  }
   const loader = new SpecLoader(options.projectRoot, undefined, undefined, options.frameworkRoot);
   const featureSpec = loader.loadFeatureSpec(options.feature);
   const scopeDocName = options.track === 'lite' ? 'change.md' : 'plan.md';
@@ -151,6 +159,10 @@ export function resolvePhaseWriteBoundary(
   const phaseOrder = [...options.phaseOrder].map(String);
   const phaseSet = new Set(phaseOrder);
   const contracts = phaseContractIndex(loadFeatureContracts(options.frameworkRoot));
+  const active = (phase: string): boolean => {
+    const indexed = contracts.get(phase);
+    return !!indexed && (indexed.contract.schema_version === '1.1' || indexed.phase.tracks.includes(options.track));
+  };
   const inventory = new Map(loadArtifactInventory(options.frameworkRoot).artifacts.map((a) => [a.id, a]));
   const domains: PhaseWriteDomain[] = [];
   const seen = new Set<string>();
@@ -163,7 +175,7 @@ export function resolvePhaseWriteBoundary(
       diagnostics.push(`phase ${phase} has no registered skill contract; read-only`);
       continue;
     }
-    if (!indexed.phase.tracks.includes(options.track)) continue;
+    if (!active(phase)) continue;
     for (const output of indexed.phase.produces) {
       if (output.artifact) {
         const registered = inventory.get(output.artifact);
@@ -203,14 +215,14 @@ export function resolvePhaseWriteBoundary(
   const codingContract = contracts.get('coding')?.phase;
   const codingProducesSource =
     phaseSet.has('coding') &&
-    codingContract?.tracks.includes(options.track) === true &&
-    codingContract.produces.some((o) => o.kind === 'source');
+    active('coding') &&
+    codingContract?.produces.some((o) => o.kind === 'source') === true;
 
   const utContract = contracts.get('ut')?.phase;
   const utProducesSource =
     phaseSet.has('ut') &&
-    utContract?.tracks.includes(options.track) === true &&
-    utContract.produces.some((o) => o.kind === 'source');
+    active('ut') &&
+    utContract?.produces.some((o) => o.kind === 'source') === true;
   const utRoots = utProducesSource && options.resolveUtSourceRoots
     ? options.resolveUtSourceRoots(options.projectRoot, codingScope.modules)
     : [];
@@ -468,17 +480,17 @@ export function classifyPhaseInvocationChanges(
   currentPhase: string,
   changes: readonly PhaseInvocationChange[],
 ): {
-  allowed: PhaseInvocationChange[];
+  allowed: Array<PhaseInvocationChange & PhasePathOwnership>;
   violations: PhaseWriteViolation[];
   observed: PhaseWriteObservation[];
 } {
-  const allowed: PhaseInvocationChange[] = [];
+  const allowed: Array<PhaseInvocationChange & PhasePathOwnership> = [];
   const violations: PhaseWriteViolation[] = [];
   const observed: PhaseWriteObservation[] = [];
   for (const change of changes) {
     const ownership = resolvePhasePathOwnership(resolution, change.path);
     if (ownership.status === 'unique' && ownership.owner === currentPhase) {
-      allowed.push(change);
+      allowed.push({ ...change, ...ownership });
       continue;
     }
     // Only an inventory-registered artifact domain carries the accountability that the
@@ -498,6 +510,40 @@ export function classifyPhaseInvocationChanges(
     });
   }
   return { allowed, violations, observed };
+}
+
+/**
+ * Replay one run's attribution events into "path → bytes the UT invocation left there"
+ * (`null` = UT removed it).  Any later observation or violation of the same path, by any
+ * invocation, voids the fact until a UT invocation writes it again.  This grants nothing:
+ * check-coding only uses it to stop blaming coding for a UT output whose bytes are unchanged.
+ */
+export function replayUtOwnedWrites(
+  events: ReadonlyArray<object>,
+): Map<string, { sha256: string | null; voidedBy?: string }> {
+  const facts = new Map<string, { sha256: string | null; voidedBy?: string }>();
+  const rows = (value: unknown): Array<{ path?: unknown; post_sha256?: unknown }> =>
+    Array.isArray(value) ? value.filter((row) => !!row && typeof row === 'object') : [];
+  const voidPath = (rawPath: unknown, phase: unknown): void => {
+    const fact = typeof rawPath === 'string' ? facts.get(rawPath) : undefined;
+    if (fact) fact.voidedBy = String(phase ?? 'unknown');
+  };
+  for (const event of events as ReadonlyArray<Record<string, unknown>>) {
+    if (event.type === 'phase_write_violation') {
+      for (const row of rows(event.violations)) voidPath(row.path, event.phase);
+      continue;
+    }
+    if (event.type !== 'phase_write_observed') continue;
+    for (const row of rows(event.observations)) voidPath(row.path, event.phase);
+    if (event.phase !== 'ut') continue;
+    for (const row of rows(event.owned)) {
+      if (typeof row.path !== 'string') continue;
+      if (row.post_sha256 === null || (typeof row.post_sha256 === 'string' && /^[0-9a-f]{64}$/.test(row.post_sha256))) {
+        facts.set(row.path, { sha256: row.post_sha256 });
+      }
+    }
+  }
+  return facts;
 }
 
 export function renderPhaseWriteBoundaryGuidance(

@@ -295,6 +295,7 @@ export interface ContractsSpec {
     }>;
   }>;
   components: Array<{
+    asset_selection?: import('./component-assets').AssetSelection;
     name: string;
     module: string;
     file: string;
@@ -310,6 +311,11 @@ export interface ContractsSpec {
     description?: string;
   }>;
   files: string[];
+  /** Project conventions applied by this Feature; normalized once by SpecLoader. */
+  conventions_applied?: Array<{
+    id: string;
+    planned_locations: string[];
+  }>;
   resource_keys?: Record<string, Record<string, ResourceEntry[]>>;
   /**
    * visual-capability-truth S6（P1-F）：宿主集成契约机器块——scope 一致性与可达性检查的
@@ -327,12 +333,48 @@ export interface ContractsSpec {
     priority: string;
     key_files: string[];
   }>;
+  /** P2：canonical CU 义务到本 Feature 施工落点的 ID-only 投影。 */
+  change_unit?: {
+    change_unit_ref: import('./change-unit-model').ChangeUnitRef;
+    predicate_mappings: Array<{
+      predicate_id: string;
+      implementation_refs: string[];
+      test_refs: string[];
+    }>;
+    provide_mappings: Array<{
+      provide_id: string;
+      implementation_refs: string[];
+      test_refs: string[];
+    }>;
+    design_ref_mappings: Array<{
+      design_ref: import('./component-blueprint-model').ComponentBlueprintRef;
+      implementation_refs: string[];
+      verification_refs: string[];
+    }>;
+  };
   state_management?: Array<{
     data: string;
     scope: string;
     decorator: string;
     holder: string;
     module: string;
+    /** P2 CU-bound runtime construction：仍在既有 state_management 内，不新增平行 runtime section。 */
+    design_ref?: import('./component-blueprint-model').ComponentBlueprintRef;
+    owner_ref?: string;
+    contract_refs?: string[];
+    ordered_steps?: string[];
+    lifecycle_triggers?: string[];
+    failure_recovery?: Record<string, unknown>;
+    mutations?: Array<{ mutation_id: string; kind?: string; publication_ref?: string; recovery_ref?: string }>;
+    publications?: Array<{ publication_id: string }>;
+    subscriptions?: Array<{
+      subscription_id: string;
+      consumer_ref: string;
+      publication_ref?: string;
+      replay_or_snapshot?: string;
+      cleanup?: string;
+    }>;
+    consumers?: Array<{ consumer_id: string; initial_load_ref?: string; update_ref?: string }>;
   }>;
   navigation?: ContractNavigationSpec;
 }
@@ -423,6 +465,9 @@ export interface AcceptanceSpec {
     threshold: string;
     unit: string;
     description: string;
+    ut_layer?: UtLayer;
+    ut_focus?: string;
+    device_focus?: string;
   }>;
 }
 
@@ -486,6 +531,7 @@ export interface UseCaseDef {
 export interface UseCasesSpec {
   schema_version: string;
   feature: string;
+  source?: string;
   use_cases: UseCaseDef[];
 }
 
@@ -524,6 +570,8 @@ export interface VisualHandoffResolutionRow {
 
 /** 单项检查结果 */
 export interface CheckResult {
+  /** Owning checker may propose new sourced facts; only runtime may freeze a successor. */
+  scope_revision_input?: import('./execution-scope').ExecutionScopeInput;
   id: string;
   category: 'structure' | 'semantic' | 'traceability';
   description: string;
@@ -543,7 +591,7 @@ export interface CheckResult {
   blocking_class?: string;
   /** P0-4（plan 7c4f2e9b）：显式 actionability（agent_fixable/human_only/toolchain_blocked）——
    * 缺省走 goal-failure-classifier 注册表映射（优先级链：显式→映射→缺省 agent_fixable）。 */
-  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+  actionability?: 'agent_fixable' | 'human_only' | 'toolchain_blocked' | 'framework_blocked';
   /** P1-7（plan 7c4f2e9b）：operator/人类专用补充说明（framework 内部机制话术落此）——
    * goal-report 渲染，**不进 agent 重试 prompt 失败回喂块**。 */
   operator_note?: string;
@@ -560,6 +608,21 @@ export interface CheckResult {
    * false）——runner 消费后经账本侧车 + 显式 schema 字段（summary.visual_round）落盘。
    */
   structured?: unknown;
+}
+
+/**
+ * `structured.applicability` 的唯一取值（plan 7b3e9a15 D2，codex 实施 review 一轮 medium）：
+ * 该 check 的判据**已确认不适用**——不是"没跑成"。SKIP+BLOCKER 的既有语义是后者，
+ * 于是真 n/a 会进 `summary.blocking_skips` 并让 `decideNextAction` 提前返回
+ * `review_blocking_skips_then_verifier`。带本标注的 SKIP 由 writer 排除出阻断跳过项；
+ * status/severity 一律不变（展示面、质量轴计数、blocker 聚合口径都不动）。
+ */
+export const CHECK_NOT_APPLICABLE_MARKER = 'not_applicable';
+
+/** 该 check 是否已确认不适用（读 `structured.applicability`，形状不符一律 false）。 */
+export function isCheckNotApplicable(check: Pick<CheckResult, 'structured'>): boolean {
+  const s = check.structured as { applicability?: unknown } | null | undefined;
+  return typeof s === 'object' && s !== null && s.applicability === CHECK_NOT_APPLICABLE_MARKER;
 }
 
 /** harness summary.json 软 WARN（不抬 blocker；与 summary.schema.json soft_advisory 对齐） */
@@ -856,12 +919,45 @@ export interface ExtensionValidationError {
   path?: string;
 }
 
+export interface ExtensionKnowledgeEntry {
+  path: string;
+  absPath: string;
+  summary: string;
+  audience: 'global' | string[];
+  legacy: boolean;
+}
+
+export interface ExtensionMcpAction {
+  id: string;
+  tool: string;
+  required: boolean;
+  severity: 'MAJOR' | 'BLOCKER';
+  produces: string[];
+  produceAbsPaths: string[];
+  usage: string;
+}
+
+export interface ExtensionPhaseBinding {
+  kind: 'knowledge' | 'skill' | 'mcp';
+  ref: string;
+}
+
+export type ExtensionPhaseBindingSlot =
+  | 'before_phase_work'
+  | 'before_phase_verify'
+  | 'after_phase_verify_before_close';
+
 /** doc/extensions 解析产物（manifest 缺失则为零值 + rootDir=null） */
 export interface ExtensionBundle {
   rootDir: string | null;
   manifestPath: string | null;
+  manifestVersion: '1.0' | '1.1' | null;
+  featurePhases: string[];
   skills: string[];
   knowledgePaths: string[];
+  knowledge: ExtensionKnowledgeEntry[];
+  mcpActions: Record<string, ExtensionMcpAction>;
+  phaseBindings: Record<string, Partial<Record<ExtensionPhaseBindingSlot, ExtensionPhaseBinding[]>>>;
   hooks: Record<string, Record<string, string[]>>;
   extensionCapabilities: Record<string, ProfileCapabilitySpec>;
   phaseRuleOverlayPaths: Record<string, string>;
@@ -891,11 +987,30 @@ export interface HarnessResolvedProfile {
 /** 每个阶段的检查器必须实现此接口 */
 export interface PhaseChecker {
   phase: Phase;
-  check(context: CheckContext): Promise<CheckResult[]>;
+  subjects?: readonly ('feature' | 'request')[];
+  check(context: CheckContext<'feature' | 'request'>): Promise<CheckResult[]>;
 }
 
 /** 传入检查器的上下文 */
-export interface CheckContext {
+export type CheckContext<S extends 'feature' | 'request' = 'feature'> = S extends 'request' ? RequestCheckContext : FeatureCheckContext;
+
+export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' | 'projectRoot' | 'frameworkRoot' | 'frameworkRel' | 'harnessRoot' | 'phaseRule' | 'resolvedProfile'> {
+  subject: 'request';
+  request: import('./capability-resolution-entry-input').PreparedRequest;
+  reportDir: string;
+  resolvedInputs: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext: import('./context-facts').FactsInvocationContext;
+}
+
+export interface FeatureCheckContext {
+  /** Native global-phase selection; no Feature birth or persisted request state. */
+  module?: string;
+  term?: string;
+  packagePath?: string;
+  docPath?: string;
+  subject?: 'feature';
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
   phase: Phase;
   feature: string;
   projectRoot: string;

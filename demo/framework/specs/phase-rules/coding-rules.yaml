@@ -13,6 +13,9 @@ phase: coding
 version: "1.0"
 applies_to: "**"
 
+# 现代输入由 coding contract 1.1 / P1/P3 解析；模块、写集和 UI 范围以
+# run 绑定的施工契约与既有 run baseline 为准。没有 plan.md 不免除真实设计检查。
+
 structure_checks:
 
   host_entry_reachability:
@@ -20,17 +23,6 @@ structure_checks:
       宿主入口可达性（visual-capability-truth S6/P1-G）：以 integration_points 为真源静态
       走查宿主入口→路由→feature 页面——入口未消费/路由缺失 → BLOCKER（页面孤岛在
       review 前暴露，不等真机 TC-001 才发现）。
-
-  media_reference_integrity:
-    description: >
-      资源引用完整性（plan d8c5f3a7 v23 F4）：源码 `$r('app.media.X')` 必须解析到实际素材
-      文件。悬空引用编译期不报错、运行期渲染空白（2026-07-24 事故：删素材后残留 7 处引用致
-      大面积空白）——coding 是素材被删的实际现场，在此确定性拦截，档位无关。
-      （v23 收敛：asset_non_destructive 证据分级体系与 required_anchors 通道已删；本条是
-      素材完整性唯一保留的静态硬门禁——"文件存在但页面没渲染"交 visual-diff。）
-    severity: BLOCKER
-    rule:
-      expect: "media_reference_integrity"
 
   upstream_verdict_gate:
     description: >
@@ -100,6 +92,25 @@ structure_checks:
 semantic_checks: {}
 
 traceability_checks:
+  component_asset_selection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_asset_projection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_export_registered:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_new_static_checks:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_uncurated:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+
+  change_unit_feature_projection:
+    description: CU-bound Feature 的 predicate/provide/design-ref 映射须落到真实施工文件与测试，运行时只读 state_management 真源
+    severity: BLOCKER
   ui_diff_within_declared_files:
     description: >
       UI 文件级 scope 门（plan c4e8b1d3 G1）：越界 UI 文件 = 本次 changed UI files −

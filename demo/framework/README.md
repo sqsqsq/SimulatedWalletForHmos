@@ -7,7 +7,7 @@
 ## 能做什么
 
 - **架构可配置**：外层/内层模块依赖、路径根目录等由实例根的 `framework.config.json` 声明，harness 从配置读取，不绑死某一种层数或层名。
-- **阶段化工作流**：由实例 `active_workflow` 指向的 YAML（默认 `spec-driven`）声明全局元阶段与 feature 链；**全局**：`extensions` / `init` / `catalog` / `glossary` / `docs`；**功能**：`spec` → `plan` → `coding` → `review` / `ut`（自 `coding` 分叉）→ `testing`（v2.3 前为 `prd` → `design`，alias 仍可读）。每阶段有 YAML 规则 + `check-*.ts`（见 [`docs/operations/harness-runbook.md`](docs/operations/harness-runbook.md)）。完整 DAG 以 [`workflows/spec-driven.workflow.yaml`](workflows/spec-driven.workflow.yaml) 为准。
+- **按义务执行**：新请求默认 [obligation-driven](workflows/obligation-driven.workflow.yaml)，按请求终点、真实输入与未满足义务冻结阶段范围。项目维护和专项 review/UT/testing 独立结束；完整交付有两个载体——交互路径由机器把范围冻结进 `doc/features/<feature>/execution-scope.json` 逐阶段跑，需要无人值守或 run 级预算/恢复时用真实 Goal 身份（权威优先级：本次关联的 run > feature 冻结记录）。已有设计可复用，不强制补齐物理文档。旧运行见 [迁移说明](MIGRATION.md)。
 - **框架升级兼容（compat）**：存量 feature 遇新版本 BLOCKER 时，可在 `doc/features/<feature>/compat.yaml` 做**可过期**临时降级；推荐用 `cd framework/harness && npm run backfill:context` 正规化。详见 [docs/evolution/compat-protocol-v1.md](docs/evolution/compat-protocol-v1.md) 与 [MIGRATION.md §v2.6](MIGRATION.md)。
 - **多 agent 入口**：通过 `framework/agents/<adapter>/` 插件，把同一套 Skill 按所选客户端约定暴露出来（slash、跳板、全局说明文件等）；**产品与路径对照仅限** [agents/README.md](agents/README.md)。
 - **工程类型 profile（project_profile）**：与 adapter 正交，声明在实例根 `framework.config.json` 的 `project_profile`（默认 `hmos-app`）。每套模板位于 [profiles/](profiles/README.md)，可禁用整阶段 harness 或声明能力档位。
@@ -22,7 +22,7 @@
 | `profiles/` | **profile-plugin** | 宿主 toolchain / capability / overlay |
 | `agents/` | **agent-plugin** | IDE 适配（slash / 跳板 / rules） |
 | `workflows/` | **workflow**（可选） | phase DAG YAML，fork 自定义顺序 |
-| 实例根 `doc/extensions/` | **instance-extension** | 业务 SKILL、knowledge、hooks、manifest |
+| 实例根 `doc/extensions/` | **instance-extension** | 业务 SKILL、audience knowledge、hooks、MCP produces、Feature phase bindings |
 
 叠加顺序：**framework 默认 → profile → workflow → instance extensions**。详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md)。
 

@@ -78,7 +78,12 @@ profile-skill-asset:<skill-id>/<asset_key>
 | framework-init | [project/framework-init/SKILL.md](project/framework-init/SKILL.md) | 显式选择/调用，或明确接入发布件 / 创建/迁移 config / 刷新 adapters |
 | catalog-bootstrap | [project/catalog-bootstrap/SKILL.md](project/catalog-bootstrap/SKILL.md) | `module-catalog.yaml` / `glossary.yaml` |
 | code-graph | [project/code-graph/SKILL.md](project/code-graph/SKILL.md) | 模块 `code-graph.yaml` 建图、core 策展与 module-graph 漂移门禁 |
+| conventions-bootstrap | [project/conventions-bootstrap/SKILL.md](project/conventions-bootstrap/SKILL.md) | 逐条确认策展可选工程惯例资产 |
+| component-design | [project/component-design/SKILL.md](project/component-design/SKILL.md) | **创建或继续部件设计的唯一用户入口**（组织侧称 Story Design）：需求源物化 → 正式性判定 → 蓝图 admitted → 1..N canonical CU → 施工 readiness；局部请求按需结束，完整交接才要求 CU |
+| change-unit-progression | [project/change-unit-progression/SKILL.md](project/change-unit-progression/SKILL.md) | 设计准备段（0 CU 合法入口）与 Change Unit 单并发连续推进 |
+| component-closure | [project/component-closure/SKILL.md](project/component-closure/SKILL.md) | 从蓝图、CU、Feature completion 与既有证据机械派生部件闭环 |
 | goal-mode | [project/goal-mode/SKILL.md](project/goal-mode/SKILL.md) | goal-runner 薄入口 |
+| extension | [project/extension/SKILL.md](project/extension/SKILL.md) | 实例扩展 init/inspect/add/materialize/verify/adjust 与 M7 输入接缝 |
 
 ### feature/ — 需求级（管线顺序由 workflow DAG 决定）
 

@@ -3,7 +3,7 @@
 // ============================================================================
 // **只做结果聚合，不造真机执行平台**：消费宿主统一回归已产出的
 // visual-diff.json / crash-diagnostics / coding 素材门结果 / HomeTab UITree dump，
-// 按随包固定 golden contract（10 个固定正向需求屏 + HomeTab forbidden anchor）
+// 按随包固定 golden contract（用户确认的三屏需求；不从本轮产物推导集合）
 // 出确定性裁决。**evaluator 属于发布内容**（打进 candidate zip，harness/scripts/**
 // 不在 release excludes），保证运行的是 candidate 内实现。
 //
@@ -17,7 +17,11 @@
 // CLI：
 //   npx ts-node harness/scripts/consumer-golden/evaluate-bc-opencard.ts \
 //     --project-root <hostRoot> --run-id <goalRunId> \
-//     [--expected-manifest-sha <hex64>] [--out <reportPath>]
+//     [--feature <featureName>] [--expected-manifest-sha <hex64>] [--out <reportPath>]
+//
+// `--feature` 缺省为 `bc-openCard`（golden 立项时的 feature 名）。宿主 feature 目录名
+// 与它不一致时（例如 `bc-openCard-1`）必须显式传，否则 featureDir / 指纹 / coding 素材门
+// 三处全部读到不存在的路径，run_binding 必 FAIL。默认值下行为与加该参数前逐字相同。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -25,7 +29,8 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { featureDir, featurePhaseReportsDir } from '../../config';
 
-const FEATURE = 'bc-openCard';
+/** golden 立项时的 feature 名；`--feature` / `GoldenEvalInput.feature` 缺省即此值。 */
+const DEFAULT_FEATURE = 'bc-openCard';
 
 export interface GoldenContract {
   schema_version: string;
@@ -64,6 +69,8 @@ export interface GoldenEvalInput {
   /** candidate 记录的 in-zip manifest sha（Todo 4 candidate 流程传入）；null=仅记录不比对 */
   expectedManifestSha?: string | null;
   contractPath?: string;
+  /** 宿主 feature 目录名；缺省 `bc-openCard`（不传时行为与本参数存在之前逐字相同） */
+  feature?: string;
 }
 
 interface VisualDiffScreenRow {
@@ -89,13 +96,13 @@ function screenshotHashOf(abs: string): string | null {
 }
 
 /** 当前 build fingerprint（与 goal-runner/capture 同一生产口径：install meta 的 hap 现算） */
-function currentBuildFpOf(projectRoot: string): string | null {
+function currentBuildFpOf(projectRoot: string, feature: string): string | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { resolveCurrentBuildFingerprint } = require('../../../profiles/hmos-app/harness/build-fingerprint') as {
       resolveCurrentBuildFingerprint: (r: string, f: string, ph?: string) => string | null;
     };
-    return resolveCurrentBuildFingerprint(projectRoot, FEATURE, 'testing');
+    return resolveCurrentBuildFingerprint(projectRoot, feature, 'testing');
   } catch {
     return null;
   }
@@ -115,12 +122,13 @@ function sha256File(abs: string): string {
 
 export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport {
   const { projectRoot, runId } = input;
+  const feature = input.feature?.trim() || DEFAULT_FEATURE;
   const frameworkRoot = input.frameworkRoot ?? path.resolve(__dirname, '..', '..', '..');
   const contractPath =
     input.contractPath ?? path.join(__dirname, 'bc-opencard.golden-contract.json');
   const contract = loadContract(contractPath);
   const items: GoldenEvalItem[] = [];
-  const featDir = featureDir(projectRoot, FEATURE);
+  const featDir = featureDir(projectRoot, feature);
 
   // --- 绑定 0a：candidate manifest（安装的就是这个 candidate）---
   const sidecarPath = path.join(frameworkRoot, 'RELEASE-MANIFEST.sha256');
@@ -205,7 +213,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
       });
 
   // --- 绑定 0c：当前 build fingerprint（round20 P1——同 run 内换 build 后旧截图不得过关）---
-  const currentFp = currentBuildFpOf(projectRoot);
+  const currentFp = currentBuildFpOf(projectRoot, feature);
   items.push(currentFp
     ? { id: 'build_binding_available', verdict: 'PASS', detail: `当前 build fingerprint=${currentFp}（install meta + hap 现算）。` }
     : {
@@ -240,18 +248,15 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
   );
   const contractCaptureSet = new Set(contract.positive_screens.map(s => s.capture));
 
-  // --- 1. 十固定屏精确集合相等（缺失/重复/替换/多余均 FAIL）---
+  // --- 1. 固定需求屏精确集合相等（缺失/重复/替换/多余均 FAIL）---
   const missing = [...contractCaptureSet].filter(id => !capturedIds.has(id)).sort();
   const extra = [...capturedIds].filter(id => !contractCaptureSet.has(id)).sort();
   const dup = [...duplicateIds].sort();
-  const goldenHint = missing.length >= 1 && missing.every(id => id.startsWith('bank_card_list_sheet'))
-    ? '（提示：仅缺 P1 屏时最常见原因是宿主回归未设 MAISON_GOLDEN_CONTRACT——golden 采集入口见 candidate build 输出）'
-    : '';
   items.push(missing.length === 0 && extra.length === 0 && dup.length === 0
-    ? { id: 'ten_fixed_screens_exact_set', verdict: 'PASS', detail: `10 个固定正向需求屏精确集合相等（含 P1 bank_card_list_sheet），无重复条目。` }
+    ? { id: 'fixed_screens_exact_set', verdict: 'PASS', detail: `${contractCaptureSet.size} 个固定正向需求屏精确集合相等，无重复条目。` }
     : {
-        id: 'ten_fixed_screens_exact_set', verdict: 'FAIL',
-        detail: `集合不等：缺失=[${missing.join(', ') || '无'}]；多余/错误屏=[${extra.join(', ') || '无'}]；重复=[${dup.join(', ') || '无'}]（缺失、重复、替换、多出错误屏均 FAIL）${goldenHint}。`,
+        id: 'fixed_screens_exact_set', verdict: 'FAIL',
+        detail: `集合不等：缺失=[${missing.join(', ') || '无'}]；多余/错误屏=[${extra.join(', ') || '无'}]；重复=[${dup.join(', ') || '无'}]（缺失、重复、替换、多出错误屏均 FAIL）。`,
       });
 
   // --- 1b. run 绑定新鲜度：contract 屏必须为**本 run** 采集（round19 P1——防第二个 run 复用第一个 run 的截图）---
@@ -274,7 +279,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
     .map(({ id, row }) => `${id}=${row!.verdict ?? 'missing'}`)
     .sort();
   items.push(notPass.length === 0
-    ? { id: 'verdict_all_pass', verdict: 'PASS', detail: 'contract 十屏 verdict 全部为明确 pass。' }
+    ? { id: 'verdict_all_pass', verdict: 'PASS', detail: 'contract 指定屏的 verdict 全部为明确 pass。' }
     : { id: 'verdict_all_pass', verdict: 'FAIL', detail: `非 pass 判定（pending/skipped/warn/fail/缺失均不算成功）：[${notPass.join(', ')}]。` });
 
   // --- 1d. 截图绑定：evaluated_screenshot_hash 在场且与盘上截图一致（判定绑定的就是这张图）---
@@ -346,7 +351,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
   let assetDetail = '';
   let assetFail = false;
   try {
-    const reportsDir = featurePhaseReportsDir(projectRoot, FEATURE, 'coding', frameworkRoot);
+    const reportsDir = featurePhaseReportsDir(projectRoot, feature, 'coding', frameworkRoot);
     const summaryPath = path.join(reportsDir, 'summary.json');
     if (!fs.existsSync(summaryPath)) {
       assetFail = true;
@@ -422,7 +427,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
     ? { id: 'no_must_fix', verdict: 'PASS', detail: 'contract 屏的 visual-diff 条目均无 must_fix / warn / fail。' }
     : { id: 'no_must_fix', verdict: 'FAIL', detail: `存在 must_fix 或 warn/fail 判定：[${withMustFix.join(', ')}]。` });
 
-  // --- 6. HomeTab forbidden anchor（负向第 11 目标；round20 P1：只认 golden capture
+  // --- 6. contract 声明的负向目标（只认 golden capture
   // 生产的 wrapper 证据——须绑定本 run + 当前 build，裸 dump/历史残留一律不采信）---
   for (const f of contract.forbidden ?? []) {
     const evidenceAbs = path.join(featDir, f.evidence);
@@ -483,7 +488,9 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
   // --- 8. 关键半模态与完成页有声明且采到 ---
   const keyMissing = (contract.key_overlays_and_completion ?? []).filter(id => !capturedIds.has(id));
   items.push(keyMissing.length === 0
-    ? { id: 'key_overlays_and_completion', verdict: 'PASS', detail: '关键半模态（card_type/sms）与完成页均已采到。' }
+    ? { id: 'key_overlays_and_completion', verdict: 'PASS', detail: contract.key_overlays_and_completion?.length
+      ? 'contract 指定的关键半模态与完成页均已采到。'
+      : '本基线未要求半模态或完成页，不追加旧需求的页面义务。' }
     : { id: 'key_overlays_and_completion', verdict: 'FAIL', detail: `缺失：[${keyMissing.join(', ')}]。` });
 
   // --- 诊断附件 ---
@@ -503,7 +510,7 @@ export function evaluateConsumerGolden(input: GoldenEvalInput): GoldenEvalReport
 
   return {
     schema_version: '1.0',
-    feature: FEATURE,
+    feature,
     run_id: runId,
     generated_at: new Date().toISOString(),
     installed_manifest_sha256: installedSha,
@@ -528,13 +535,14 @@ export function main(argv = process.argv.slice(2)): number {
   const projectRoot = argOf(argv, '--project-root');
   const runId = argOf(argv, '--run-id');
   if (!projectRoot || !runId) {
-    console.error('用法：evaluate-bc-opencard --project-root <hostRoot> --run-id <goalRunId> [--expected-manifest-sha <hex64>] [--out <path>]');
+    console.error(`用法：evaluate-bc-opencard --project-root <hostRoot> --run-id <goalRunId> [--feature <name>（缺省 ${DEFAULT_FEATURE}）] [--expected-manifest-sha <hex64>] [--out <path>]`);
     return 2;
   }
   const report = evaluateConsumerGolden({
     projectRoot: path.resolve(projectRoot),
     runId,
     expectedManifestSha: argOf(argv, '--expected-manifest-sha') ?? null,
+    feature: argOf(argv, '--feature'),
   });
   const out = argOf(argv, '--out') ??
     path.join(path.resolve(projectRoot), 'doc', 'consumer-golden-report.json');

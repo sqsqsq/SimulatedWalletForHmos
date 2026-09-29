@@ -5,13 +5,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../../config';
+import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY, DEFAULT_PATHS } from '../../config';
 import {
   formatExtensionSkillSectionMarkdown,
   loadReservedBridgeIds,
   resolveBridgeTargets,
   scanExtensionSkills,
 } from './instance-skill-bridge';
+import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../../extension-loader';
 
 export type TemplateVars = Record<string, string>;
 
@@ -105,12 +106,45 @@ export interface BuildAgentsTemplateVarsOptions {
   architectureSummary?: string;
   agentAdapter?: string;
   paths?: {
+    conventions?: string;
+    component_index?: string;
+    component_catalog?: string;
     architecture_md?: string;
     module_catalog?: string;
     glossary?: string;
     features_dir?: string;
     extension_dir?: string;
   };
+}
+
+function formatExtensionEntrySection(
+  base: string,
+  bundle: ReturnType<typeof loadInstanceExtensions>,
+  projectRoot: string,
+): string {
+  if (bundle.manifestVersion !== '1.1' || bundle.errors.length > 0) return base;
+  const lines = [base.trimEnd()];
+  const global = bundle.knowledge.filter(item => item.audience === 'global');
+  if (global.length > 0) {
+    lines.push('', '### 实例全局知识', '', '| 路径 | 摘要 |', '|---|---|');
+    for (const item of global) {
+      const source = path.relative(projectRoot, item.absPath).replace(/\\/g, '/');
+      lines.push(`| [${source}](${source}) | ${item.summary || '—'} |`);
+    }
+  }
+  const phases = Object.entries(bundle.phaseBindings)
+    .filter(([, slots]) => (slots.before_phase_work?.length ?? 0) > 0);
+  if (phases.length > 0) {
+    lines.push('', '### 实例阶段前置绑定', '');
+    const manifest = bundle.manifestPath
+      ? path.relative(projectRoot, bundle.manifestPath).replace(/\\/g, '/')
+      : 'doc/extensions/manifest.yaml';
+    for (const [phase, slots] of phases) {
+      const refs = slots.before_phase_work!.map(item => `${item.kind}:${item.ref}`).join('、');
+      lines.push('- `' + phase + '` 动笔前：先按 `' + manifest + '` 处理 ' + refs + '；运行 `/extension inspect` 查看路径、usage 与消费者。');
+    }
+  }
+  return `${lines.filter((line, index) => index > 0 || line.length > 0).join('\n')}\n`;
 }
 
 /**
@@ -141,7 +175,12 @@ export function buildAgentsTemplateVars(
       ? (config.paths as Record<string, unknown>)
       : {};
 
-  const rows = scanExtensionSkills(opts.projectRoot, extDir);
+  const bundle = loadInstanceExtensions(opts.projectRoot, extDir, { frameworkRoot: opts.frameworkRoot });
+  const rows = scanExtensionSkills(
+    opts.projectRoot,
+    extDir,
+    extensionSkillIdsForBridge(bundle),
+  );
   const reserved = loadReservedBridgeIds(opts.frameworkRoot);
   const { targets } = resolveBridgeTargets(rows, reserved);
 
@@ -180,8 +219,15 @@ export function buildAgentsTemplateVars(
       paths.module_catalog ?? cfgPaths.module_catalog ?? 'doc/module-catalog.yaml',
     ),
     GLOSSARY_PATH: String(paths.glossary ?? cfgPaths.glossary ?? 'doc/glossary.yaml'),
+    CONVENTIONS_PATH: String(
+      paths.conventions ?? cfgPaths.conventions ?? DEFAULT_PATHS.conventions,
+    ),
+    COMPONENT_INDEX_PATH: String(paths.component_index ?? cfgPaths.component_index ?? DEFAULT_PATHS.component_index),
+    COMPONENT_CATALOG_PATH: String(paths.component_catalog ?? cfgPaths.component_catalog ?? DEFAULT_PATHS.component_catalog),
     FEATURES_DIR: String(paths.features_dir ?? cfgPaths.features_dir ?? 'doc/features'),
-    EXTENSION_SKILL_SECTION: formatExtensionSkillSectionMarkdown(targets),
+    EXTENSION_SKILL_SECTION: formatExtensionEntrySection(
+      formatExtensionSkillSectionMarkdown(targets, bundle.manifestVersion === '1.1'), bundle, opts.projectRoot,
+    ),
   };
 }
 
@@ -198,6 +244,9 @@ export interface LegacyRenderEnv {
   architecture_md_path: string;
   module_catalog_path: string;
   glossary_path: string;
+  conventions_path?: string;
+  component_index_path?: string;
+  component_catalog_path?: string;
   features_dir: string;
   module_inner_layers_csv: string;
   cross_module_exports_file: string;
@@ -221,6 +270,9 @@ export function legacyRenderEnvToTemplateVars(env: LegacyRenderEnv): TemplateVar
     ARCHITECTURE_MD_PATH: env.architecture_md_path,
     MODULE_CATALOG_PATH: env.module_catalog_path,
     GLOSSARY_PATH: env.glossary_path,
+    CONVENTIONS_PATH: env.conventions_path ?? DEFAULT_PATHS.conventions!,
+    COMPONENT_INDEX_PATH: env.component_index_path ?? DEFAULT_PATHS.component_index!,
+    COMPONENT_CATALOG_PATH: env.component_catalog_path ?? DEFAULT_PATHS.component_catalog!,
     FEATURES_DIR: env.features_dir,
     EXTENSION_SKILL_SECTION: env.extension_skill_section ?? '',
     MODULE_INNER_LAYERS_CSV: env.module_inner_layers_csv,

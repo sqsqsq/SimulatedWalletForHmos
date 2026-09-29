@@ -31,9 +31,13 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import { resolveFactsAbsPath, isFactsEstablishingPhase, factsPhaseFingerprint } from './context-facts';
+import { isInsideProjectRoot } from './project-relative-path';
 import * as path from 'path';
+import * as YAML from 'yaml';
 
 import {
+  artifactReadCandidatePaths,
   featurePhaseReportsDir,
   loadFrameworkConfig,
   receiptDirPath,
@@ -72,6 +76,41 @@ export interface EvidenceEntry {
   /** 文件不存在时为 null（诚实记录，不伪造） */
   sha256: string | null;
   exists: boolean;
+  /** Only new facts entries use a phase projection; legacy entries retain byte hashes. */
+  facts_phase?: string;
+  /** Phase authorized by the frozen execution scope to advance this source path. */
+  owner_phase?: string;
+  /** plan c4e7a9b2 B2（沿 facts_phase 先例）：登记路径条目的 sha256 是身份中立摘要，不是字节哈希。 */
+  identity_neutral?: typeof IDENTITY_NEUTRAL_EVIDENCE;
+}
+
+export const IDENTITY_NEUTRAL_EVIDENCE = 'ref-content@1';
+
+/**
+ * CU 派生 Feature 的登记路径 → 身份中立摘要（`identityNeutralDigest`）；undefined = 非登记路径（字节口径），
+ * null = 登记路径但算不出（不能证明等价）。登记：canonical CU、Feature 目录的三份派生投影文件、CU 所属蓝图——
+ * 蓝图条目在本 Feature 里只代表「本 CU 消费的权威内容」，摘要取 CU 中立视图（已展开全部消费目标，所有权引用不展开）。
+ */
+function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string): string | null | undefined {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const { tryParseCuFeatureId } = require('./feature-identity') as typeof import('./feature-identity');
+  const identity = tryParseCuFeatureId(feature);
+  if (!identity) return undefined;
+  const { identityNeutralDigest } = require('./change-unit-design-preparation') as typeof import('./change-unit-design-preparation');
+  const { changeUnitPath } = require('./change-unit-path') as typeof import('./change-unit-path');
+  const { componentBlueprintPath } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
+  const { BLUEPRINT_PROJECTION_FILES } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const target = path.resolve(absPath);
+  const digestOf = (artifact: string, file: string): string | null => {
+    try { return identityNeutralDigest(projectRoot, artifact, YAML.parse(fs.readFileSync(file, 'utf8'))); } catch { return null; }
+  };
+  const cuFile = changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId);
+  if (target === path.resolve(cuFile) || target === path.resolve(componentBlueprintPath(projectRoot, identity.blueprintId))) return digestOf('change-unit@1', cuFile);
+  for (const [artifact, name] of Object.entries(BLUEPRINT_PROJECTION_FILES)) {
+    if (target === path.resolve(resolveFeatureArtifact(projectRoot, feature, name).actualPath)) return digestOf(artifact, target);
+  }
+  return undefined;
 }
 
 export interface EvidenceEnvironment {
@@ -145,6 +184,7 @@ export const PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE: Partial<Record<Phase, stri
  */
 export const PHASE_REPORTS_OUTPUT_FILES = [
   'summary.json',
+  'script-report.json',
   'trace.json',
   'device-test-evidence.json',
 ] as const;
@@ -153,6 +193,8 @@ export const PHASE_REPORTS_OUTPUT_FILES = [
 // verifier 条目字节对账照旧生效——校验侧遍历的是 manifest 里已记录的条目，不是本表。
 
 export interface ResolveManifestOptions {
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
   projectRoot: string;
   feature: string;
   phase: Phase;
@@ -190,11 +232,17 @@ function isGoalRunManifestPath(relPath: string): boolean {
   return /(?:^|\/)goal-runs\/(?:\.dry\/)?[^/]+\/manifest\.json$/.test(relPath.replace(/\\/g, '/'));
 }
 
-function evidenceEntryMatchesCurrentFile(
+export function evidenceEntryMatchesCurrentFile(
   projectRoot: string,
   entry: EvidenceEntry,
+  feature: string,
 ): boolean {
   const absPath = path.join(projectRoot, entry.path);
+  if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase) === entry.sha256;
+  if (entry.identity_neutral !== undefined) {
+    return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE && entry.sha256 !== null
+      && identityNeutralEvidenceDigest(projectRoot, feature, absPath) === entry.sha256;
+  }
   const current = sha256File(absPath);
   if (current === entry.sha256) return true;
   if (!isGoalRunManifestPath(entry.path) || entry.sha256 === null || !fs.existsSync(absPath)) return false;
@@ -204,6 +252,11 @@ function evidenceEntryMatchesCurrentFile(
   } catch {
     return false;
   }
+}
+
+function factsEvidenceHash(absPath: string, phase: string): string | null {
+  try { return factsPhaseFingerprint(fs.readFileSync(absPath, 'utf8'), phase); }
+  catch { return null; }
 }
 
 function sha256Text(text: string): string {
@@ -353,15 +406,16 @@ function guessFrameworkRoot(projectRoot: string): string | null {
  */
 export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): PhaseEvidenceManifest {
   const { projectRoot, feature, phase } = opts;
+  if (opts.factsContext && !('feature' in opts.factsContext.subject)) throw new Error('Feature evidence requires Feature facts subject');
   const nowIso = (opts.now ? opts.now() : new Date()).toISOString();
 
-  const inputNames = [
+  const inputNames = opts.resolvedInputs ? [] : [
     ...(REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? []),
     ...(OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? []).filter((f) =>
       resolveFeatureArtifact(projectRoot, feature, f, opts.featurePathOpts).exists,
     ),
   ];
-  const outputNames = [
+  const outputNames = opts.resolvedInputs ? opts.resolvedInputs.context.required_outputs : [
     ...(PHASE_OUTPUT_FILES_BY_PHASE[phase] ?? []),
     ...(PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE[phase] ?? []).filter((f) =>
       resolveFeatureArtifact(projectRoot, feature, f, opts.featurePathOpts).exists,
@@ -381,7 +435,8 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   }
 
   const entryMap = new Map<string, EvidenceEntry>();
-  const addEntry = (absPath: string, role: 'input' | 'output'): void => {
+  const factsPath = opts.factsContext ? resolveFactsAbsPath(projectRoot, feature, opts.factsContext) : undefined;
+  const addEntry = (absPath: string, role: 'input' | 'output', ownerPhase?: string): void => {
     const rel = toPosixRel(projectRoot, absPath);
     const base = path.basename(rel);
     if (base === 'phase-completion-receipt.md' || base === PHASE_EVIDENCE_MANIFEST_FILENAME) {
@@ -392,12 +447,55 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     const prev = entryMap.get(rel);
     if (prev) {
       if (prev.role !== role) prev.role = 'both';
+      if (ownerPhase) prev.owner_phase = ownerPhase;
       return;
     }
-    const hash = stagedHashes.get(rel) ?? sha256File(absPath);
-    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null });
+    const isFacts = factsPath !== undefined && path.resolve(absPath) === path.resolve(factsPath);
+    const neutral = isFacts || stagedHashes.has(rel) || !fs.existsSync(absPath) ? undefined : identityNeutralEvidenceDigest(projectRoot, feature, absPath);
+    const hash = isFacts ? factsEvidenceHash(absPath, String(phase)) : stagedHashes.get(rel) ?? neutral ?? sha256File(absPath);
+    entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}), ...(neutral ? { identity_neutral: IDENTITY_NEUTRAL_EVIDENCE } : {}), ...(ownerPhase ? { owner_phase: ownerPhase } : {}) });
+  };
+  const addBoundInput = (dep: import('./capability-resolution').ResolutionDependency): void => {
+    const rel = toPosixRel(projectRoot, dep.path);
+    const owner = opts.factsContext?.source_owners?.[rel];
+    if (owner === String(phase)) {
+      addEntry(dep.path, 'output', String(phase));
+      return;
+    }
+    if (sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) throw new Error(`input binding stale: ${dep.path}`);
+    addEntry(dep.path, 'input', owner);
   };
 
+  if (opts.resolvedInputs) {
+    if (!('feature' in opts.resolvedInputs.context.subject) || opts.resolvedInputs.context.subject.feature !== feature || opts.resolvedInputs.phase !== String(phase)) {
+      throw new Error('[phase-evidence-manifest] Feature evidence requires matching Feature invocation');
+    }
+    for (const value of Object.values(opts.resolvedInputs.values)) {
+      const deps = value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(a => a.dependencies);
+      for (const dep of deps) {
+        if (!isInsideProjectRoot(projectRoot, dep.path) || (opts.frameworkRoot && path.resolve(opts.frameworkRoot) !== path.resolve(projectRoot) && isInsideProjectRoot(opts.frameworkRoot, dep.path))) continue;
+        addBoundInput(dep);
+      }
+    }
+  }
+  if (opts.factsContext) {
+    const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
+    addEntry(factsPath, isFactsEstablishingPhase(String(phase), opts.factsContext) ? 'output' : 'input');
+    for (const source of opts.factsContext.source_paths) {
+      const owner = opts.factsContext.source_owners?.[source];
+      addEntry(path.resolve(projectRoot, source), owner === String(phase) ? 'output' : 'input', owner);
+    }
+    for (const [source, owner] of Object.entries(opts.factsContext.source_owners ?? {})) {
+      if (owner === String(phase) && !opts.factsContext.source_paths.includes(source) && fs.existsSync(path.resolve(projectRoot, source))) {
+        addEntry(path.resolve(projectRoot, source), 'output', owner);
+      }
+    }
+    if (opts.factsContext.baseline) for (const dep of opts.factsContext.baseline.dependencies) {
+      const rel = toPosixRel(projectRoot, dep.path);
+      if (opts.factsContext.source_owners?.[rel] === String(phase)) addEntry(dep.path, 'output', String(phase));
+      else addBoundInput(dep);
+    }
+  }
   for (const name of inputNames) {
     addEntry(resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath, 'input');
   }
@@ -408,7 +506,7 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     addEntry(resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath, 'output');
   }
   // spec 子目录按需产出（存在才纳入）
-  for (const rel of PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE[phase] ?? []) {
+  for (const rel of opts.resolvedInputs ? [] : PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE[phase] ?? []) {
     const abs = featureFilePath(projectRoot, feature, rel, opts.featurePathOpts);
     if (fs.existsSync(abs)) addEntry(abs, 'output');
   }
@@ -466,6 +564,99 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
   };
 }
 
+/**
+ * 该 phase 的 manifest 面**候选**路径全集（不看存在性，含 legacy 读回退路径）。
+ *
+ * 为什么需要它：`resolvePhaseEvidenceManifest` 的可选条目「存在才纳入」——文件被删后
+ * 整条从 manifest 消失，只比"本轮 manifest 里有的"识别不了删除。沿用判据
+ * （harness-runner `carriedMaterialStillCurrent`）用本集合判定"旧材料视图里的某个文件
+ * 属不属于 manifest 面"，据此做双向核对。表沿用本模块与 spec-loader 的既有 SSOT，
+ * 不另立手写表。
+ *
+ * reports/ 下的运行期产出**不在**集合内：由 `createRuntimeArtifactPredicate` 统一排除——
+ * 与 `buildVerifierMaterialView` 是**同一条**规则，不复制第二份（codex review 三轮 medium）。
+ */
+export function phaseEvidenceManifestCandidatePaths(opts: {
+  resolvedInputs?: import('./capability-resolution').ResolvedPhaseInputs;
+  factsContext?: import('./context-facts').FactsInvocationContext;
+  projectRoot: string;
+  feature: string;
+  phase: Phase;
+  frameworkRoot?: string;
+  featurePathOpts?: FeaturePathOptions;
+}): Set<string> {
+  const { projectRoot, feature, phase } = opts;
+  if (opts.resolvedInputs && (!('feature' in opts.resolvedInputs.context.subject) || opts.resolvedInputs.context.subject.feature !== feature || opts.resolvedInputs.phase !== String(phase))) throw new Error('Feature evidence requires matching Feature invocation');
+  const isRuntimeArtifact = createRuntimeArtifactPredicate({
+    projectRoot,
+    feature,
+    phase: String(phase),
+    frameworkRoot: opts.frameworkRoot,
+  });
+  const out = new Set<string>();
+  const add = (rel: string): void => {
+    if (!isRuntimeArtifact(rel)) out.add(rel);
+  };
+  if (opts.resolvedInputs) {
+    for (const value of Object.values(opts.resolvedInputs.values)) {
+      for (const dep of value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(a => a.dependencies)) {
+        if (!isInsideProjectRoot(projectRoot, dep.path) || (opts.frameworkRoot && path.resolve(opts.frameworkRoot) !== path.resolve(projectRoot) && isInsideProjectRoot(opts.frameworkRoot, dep.path))) continue;
+        add(toPosixRel(projectRoot, dep.path));
+      }
+    }
+    for (const name of opts.resolvedInputs.context.required_outputs) add(toPosixRel(projectRoot, resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath));
+    if (opts.factsContext) {
+      add(toPosixRel(projectRoot, resolveFactsAbsPath(projectRoot, feature, opts.factsContext)));
+      for (const source of opts.factsContext.source_paths) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
+      for (const source of Object.keys(opts.factsContext.source_owners ?? {})) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
+      for (const dep of opts.factsContext.baseline?.dependencies ?? []) add(toPosixRel(projectRoot, dep.path));
+    }
+    return out;
+  }
+  for (const name of [
+    ...(REQUIRED_FEATURE_FILES_BY_PHASE[phase] ?? []),
+    ...(OPTIONAL_FEATURE_FILES_BY_PHASE[phase] ?? []),
+    ...(PHASE_OUTPUT_FILES_BY_PHASE[phase] ?? []),
+    ...(PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE[phase] ?? []),
+  ]) {
+    for (const abs of artifactReadCandidatePaths(projectRoot, feature, name, opts.featurePathOpts)) {
+      add(toPosixRel(projectRoot, abs));
+    }
+  }
+  for (const rel of PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE[phase] ?? []) {
+    add(toPosixRel(projectRoot, featureFilePath(projectRoot, feature, rel, opts.featurePathOpts)));
+  }
+  return out;
+}
+
+/**
+ * manifest 面的**运行期产出排除谓词**：reports 目录（含其下全部文件）与阶段回执不属于 manifest 面。
+ *
+ * 唯一口径（SSOT）：材料视图的构建侧 `buildVerifierMaterialView`（verifier-material.ts）与
+ * 归属判定侧 `phaseEvidenceManifestCandidatePaths` 共用本函数。两边各写一份规则的后果
+ * （codex review 三轮 medium，已内存复现）：`reports_dir_pattern` 指向 phase 目录**本身**时，
+ * review-report.md 在构建侧被当运行期产出排除、只能经 contextFiles 进旧视图，却被候选集认成
+ * manifest 面 → 沿用判据的反向比较恒 false → 材料一字未动、仅切 balanced 也丢弃 subject，
+ * strict 轮的 FAIL 否决随之落空（少否决）。
+ *
+ * `frameworkRoot` 惰性用于 `featurePhaseReportsDir` 的回退分支（配置有 reports_dir_pattern 时不需要）。
+ */
+export function createRuntimeArtifactPredicate(opts: {
+  projectRoot: string;
+  feature: string;
+  phase: string;
+  frameworkRoot?: string;
+}): (relPath: string) => boolean {
+  const reportsRel = toPosixRel(
+    opts.projectRoot,
+    featurePhaseReportsDir(opts.projectRoot, opts.feature, opts.phase, opts.frameworkRoot),
+  );
+  return (relPath: string): boolean =>
+    relPath === reportsRel ||
+    relPath.startsWith(`${reportsRel}/`) ||
+    path.basename(relPath) === 'phase-completion-receipt.md';
+}
+
 export function phaseEvidenceManifestPath(projectRoot: string, feature: string, phase: string): string {
   return path.join(receiptDirPath(projectRoot, feature, phase), 'reports', PHASE_EVIDENCE_MANIFEST_FILENAME);
 }
@@ -503,7 +694,10 @@ function isValidEntry(e: unknown): e is EvidenceEntry {
   return !!o && typeof o.path === 'string' && o.path.length > 0
     && (o.role === 'input' || o.role === 'output' || o.role === 'both')
     && (o.sha256 === null || typeof o.sha256 === 'string')
-    && typeof o.exists === 'boolean';
+    && typeof o.exists === 'boolean'
+    && (o.facts_phase === undefined || (typeof o.facts_phase === 'string' && o.facts_phase.length > 0))
+    && (o.owner_phase === undefined || (typeof o.owner_phase === 'string' && o.owner_phase.length > 0))
+    && (o.identity_neutral === undefined || o.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE);
 }
 
 export interface LoadedManifest {
@@ -533,6 +727,7 @@ export function loadPhaseEvidenceManifest(
     if (String(manifest.phase) !== String(phase)) errors.push(`manifest.phase 失配：${String(manifest.phase)} ≠ ${phase}`);
     if (!Array.isArray(manifest.inputs) || !manifest.inputs.every(isValidEntry)) errors.push('inputs 结构非法');
     if (!Array.isArray(manifest.outputs) || !manifest.outputs.every(isValidEntry)) errors.push('outputs 结构非法');
+    if (errors.length === 0 && [...manifest.inputs, ...manifest.outputs].some(entry => entry.facts_phase !== undefined && entry.facts_phase !== manifest.phase)) errors.push('facts_phase 与 manifest.phase 失配');
     if (!manifest.environment || typeof manifest.environment !== 'object') errors.push('environment 缺失');
     if (typeof manifest.aggregate_sha256 !== 'string') errors.push('aggregate_sha256 缺失');
     if (errors.length === 0 && recomputeManifestAggregate(manifest) !== manifest.aggregate_sha256) {
@@ -670,7 +865,7 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
     if (stagedSha !== undefined) {
       seenStaged.add(entry.path);
       if (!entry.exists || entry.sha256 !== stagedSha) changed.add(entry.path);
-    } else if (!evidenceEntryMatchesCurrentFile(input.projectRoot, entry)) {
+    } else if (!evidenceEntryMatchesCurrentFile(input.projectRoot, entry, input.feature)) {
       changed.add(entry.path);
     }
   }
@@ -698,10 +893,26 @@ export function recomputePhaseEvidenceStaleness(
   projectRoot: string,
   feature: string,
   chain: string[],
-  opts?: { currentRequirementSha?: string | null; frameworkRoot?: string },
+  opts?: { currentRequirementSha?: string | null; frameworkRoot?: string; pendingOwnerPhase?: string; pendingOwnerPaths?: string[] },
 ): PhaseStalenessResult[] {
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
+  const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
+  const ownerFreshness = new Map<string, boolean>();
+  const ownedOutputIsCurrent = (entry: EvidenceEntry, manifestPhase: string): boolean => {
+    if (pendingOwnerPaths.has(entry.path)) return true;
+    if (!entry.owner_phase || entry.owner_phase === manifestPhase) return false;
+    if (entry.owner_phase === opts?.pendingOwnerPhase) return true;
+    const owner = loadPhaseEvidenceManifest(projectRoot, feature, entry.owner_phase);
+    let fresh = ownerFreshness.get(entry.owner_phase);
+    if (fresh === undefined) {
+      fresh = recomputePhaseEvidenceStaleness(projectRoot, feature, [entry.owner_phase], { ...opts, pendingOwnerPaths: [...pendingOwnerPaths] })[0]?.verdict === 'fresh';
+      ownerFreshness.set(entry.owner_phase, fresh);
+    }
+    return fresh && !!owner?.integrityOk && owner.manifest.outputs.some(output =>
+      output.path === entry.path && output.owner_phase === entry.owner_phase
+      && evidenceEntryMatchesCurrentFile(projectRoot, output, feature));
+  };
 
   for (const phase of chain) {
     if (upstreamBad) {
@@ -731,6 +942,9 @@ export function recomputePhaseEvidenceStaleness(
       });
       upstreamBad = phase;
       continue;
+    }
+    if (opts?.pendingOwnerPhase) for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
+      if (entry.owner_phase === opts.pendingOwnerPhase) pendingOwnerPaths.add(entry.path);
     }
     // ② plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 的 schema/aggregate/条目哈希已自证完整性，
     //    回执是闭环后的人读投影（可被 harness 随时重生成），不再作为 freshness 锚。
@@ -768,7 +982,7 @@ export function recomputePhaseEvidenceStaleness(
     const { manifest } = loaded;
     const changed = new Set<string>();
     for (const entry of [...manifest.inputs, ...manifest.outputs]) {
-      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry)) changed.add(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
     }
     // plan 07a41ec6 T4：回执不再参与 freshness（receipt_changed 恒 false）
     const receiptChanged = false;

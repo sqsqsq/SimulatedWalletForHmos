@@ -60,14 +60,10 @@ goal_capability:
       write_mode: full-access
       approval_mode: never
 
-# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」，与运行模式、
-# 发布机制无关。调用协议 adapter 无关——共享规则 bundle 与 AGENTS.md 要求 task 工具触发
-# subagent_type=verifier、prompt = request JSON 整段；报告由**调用方**把 verifier 回复原样
-# 写入 summary.verifier_report，本 adapter 不参与发布。
-# 入册凭据：宿主 opencode 1.18.26，2026-09-05 实跑观测——主 agent 用 task 工具派出
-# subagent_type=verifier 的子会话（sessionId ≠ parentSessionId），子代理读到 ai-prompt.md
-# 并交回带终态块的回复；只读来自 frontmatter 的逐工具 deny 声明（对照组去掉即可写）。
-verifier_subagent: true
+deprecated_artifacts:
+  - path: skill/app-component-blueprint/
+    action: backup_delete
+    reason: "设计入口收敛至 component-design，P1 改为内部工作流"
 
 post_install_hooks: []
 
@@ -88,3 +84,12 @@ notes: |
   - **迁移**：UPDATE 会新增 `.opencode/skill`/`.opencode/rules`；旧版若曾物化到 `.agents`，该目录**不会自动删除**
     （未同时使用 generic/chrys 时可人工清理，避免 opencode 跨目录扫到同名 skill 仅 logWarning 的噪声）。
   - 口径 SSOT：agents/adapter-schema.yaml（bridge-only）。
+
+# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」，与运行模式、
+# 发布机制无关。调用协议 adapter 无关——共享规则 bundle 与 AGENTS.md 要求 task 工具触发
+# subagent_type=verifier、prompt = request JSON 整段；报告由**调用方**把 verifier 回复原样
+# 写入 summary.verifier_report，本 adapter 不参与发布。
+# 入册凭据：宿主 opencode 1.18.26，2026-09-05 实跑观测——主 agent 用 task 工具派出
+# subagent_type=verifier 的子会话（sessionId ≠ parentSessionId），子代理读到 ai-prompt.md
+# 并交回带终态块的回复；只读来自 frontmatter 的逐工具 deny 声明（对照组去掉即可写）。
+verifier_subagent: true

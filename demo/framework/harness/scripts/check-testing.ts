@@ -104,6 +104,7 @@ import { writeGeneratedTestReport } from '../../profiles/hmos-app/harness/test-r
 import {
   computeExecutionKey,
   decideReuse,
+  listExecutionKeyRuns,
   freezeRunArtifacts,
   restoreFrozenRunArtifacts,
   refreshStabilityForNewestRun,
@@ -111,6 +112,7 @@ import {
   writeExecutionKeyRecord,
   writeStabilityReport,
   type ExecutionKeyInputs,
+  type ExecutionKeyRunView,
 } from '../../profiles/hmos-app/harness/execution-key';
 import { parseHylyreTrace as parseHylyreTraceForReuse } from '../../profiles/hmos-app/harness/providers/device-test-run';
 
@@ -141,6 +143,7 @@ import {
 } from './utils/acceptance-layering';
 import { runAcceptanceYamlStructureChecks, ACCEPTANCE_ID_PATTERN } from './utils/check-acceptance';
 import { checkUpstreamVerdictGate, readUpstreamPhaseView } from './utils/upstream-verdict-gate';
+import { SpecLoader } from './utils/spec-loader';
 import { countBlockingDebt, loadVisualDebtEx } from './utils/visual-debt';
 import {
   formatRootPollutionWarnDetails,
@@ -181,7 +184,7 @@ import {
   lintDerivedPlanSelectorContract,
   type AcceptanceActionBinding,
 } from '../../profiles/hmos-app/harness/selector-contract';
-import { loadAppInstallCandidateMeta, resolveHdcExecutableSync, runHdcRaw } from '../../profiles/hmos-app/harness/hdc-runner';
+import { loadAppInstallCandidateMeta, resolveExecutionDeviceIdentity } from '../../profiles/hmos-app/harness/hdc-runner';
 import {
   EXECUTION_CHANNEL_DOMAIN,
   evaluateExecutionChannelDeclaration,
@@ -213,8 +216,10 @@ import { evaluateSelectorRuntimeV1 } from './utils/hylyre-selector-gates-v1';
 import { collectFailureRoutesV1 } from './utils/hylyre-failure-routing-v1';
 import {
   bindChannelEvidence,
+  extractTcNfrRefs,
   loadVisualScreenVerdicts,
   PROVIDER_EVIDENCE_CONTRACT,
+  type ChannelEvidenceBinding,
 } from './utils/execution-channel-evidence';
 import { injectP0IdentityAssertions } from './utils/p0-identity-injection';
 import { buildCanonicalSelectorIndex, type CanonicalSelectorIndex } from './utils/planned-step-normalizer';
@@ -275,6 +280,7 @@ function loadTestEnvironmentKeywordGroups(ctx: CheckContext): string[][] {
 }
 
 function loadDoc(ctx: CheckContext, docName: string): string | null {
+  if (ctx.resolvedInputs && ['spec.md', 'plan.md'].includes(docName)) return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadFeatureDoc(ctx.projectRoot, ctx.feature, docName, ctx.resolvedInputs);
   const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, docName);
   if (!resolved.exists) return null;
   return fs.readFileSync(resolved.actualPath, 'utf-8');
@@ -884,7 +890,11 @@ function extractDeclaredOverallRate(section: string | null): number | null {
   return null;
 }
 
-export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): string[] {
+export function checkSkipFlagDisclosure(
+  ctx: CheckContext,
+  report: string,
+  channelEvidenceBindings: readonly ChannelEvidenceBinding[] = [],
+): string[] {
   let command = '';
   let traceSummary: {
     cases_count?: unknown;
@@ -944,11 +954,15 @@ export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): stri
   const skippedCount = typeof traceSummary?.skipped_count === 'number' ? traceSummary.skipped_count : 0;
   if (casesCount !== null && failedCount !== null) {
     const tracePassCeiling = Math.max(0, casesCount - failedCount - blockedCount - skippedCount);
-    if (reportedPass > tracePassCeiling) {
+    // plan e7a2c4f1 宿主回灌 09-23：trace_summary 只数 hylyre trace；非 hylyre 通道 TC 的通过
+    // 由同一次 harness 的逐 TC channel binding（p0_coverage_integrity / 证据义务门同源）证明。
+    const channelCovered = channelEvidenceBindings.filter(b => b.verdict.kind === 'covered').length;
+    if (reportedPass > tracePassCeiling + channelCovered) {
       issues.push(
         `报告自称"通过" ${reportedPass} 条，超过 trace 证明可通过的 ${tracePassCeiling} 条` +
+        `与非 hylyre 通道机器闭合（covered）的 ${channelCovered} 条之和` +
         `（cases=${casesCount}、failed=${failedCount}、blocked=${blockedCount}、skipped=${skippedCount}）` +
-        '——失败、阻塞与跳过均不得计入通过分子。',
+        '——失败、阻塞、跳过与未闭合的通道证据均不得计入通过分子。',
       );
     }
   }
@@ -1005,7 +1019,11 @@ export function checkSkipFlagDisclosure(ctx: CheckContext, report: string): stri
   return issues;
 }
 
-export function checkPassRateCalculated(ctx: CheckContext, report: string | null): CheckResult[] {
+export function checkPassRateCalculated(
+  ctx: CheckContext,
+  report: string | null,
+  channelEvidenceBindings: readonly ChannelEvidenceBinding[] = [],
+): CheckResult[] {
   const id = 'pass_rate_calculated';
   if (!report) {
     return [{
@@ -1042,7 +1060,7 @@ export function checkPassRateCalculated(ctx: CheckContext, report: string | null
   // 判据取既有产物（device-test-run.meta.json 的真实命令 + trace_summary + 报告正文），零新协议。
   // **只做追加约束**：不早退、不短路原有 P0/P1/总体通过率检查（早退会让"加一句免责声明就过门"，
   // 正是本条要堵的假通过）。
-  const disclosureIssues = checkSkipFlagDisclosure(ctx, report);
+  const disclosureIssues = checkSkipFlagDisclosure(ctx, report, channelEvidenceBindings);
 
   const issues: string[] = [];
   // 既有门禁条件保持原样（overall 仅进文案、不参与判定），本 todo 只追加约束、不改既有语义
@@ -1306,7 +1324,14 @@ export function checkVisualDebtDisclosure(ctx: CheckContext, report: string | nu
 // Traceability Checks
 // --------------------------------------------------------------------------
 
-function extractTestCaseACRefs(plan: string): Map<string, string[]> {
+/**
+ * TC → 「关联 AC」列里**合词法**的 AC/BD 引用。
+ *
+ * `rawTokens`（可选出参）同步收下切分后的**原始** token（未经 `ACCEPTANCE_ID_PATTERN`
+ * 过滤）。R8 需要它来判「这条 TC 的引用是否全部可解析」——只看过滤后的集合会把
+ * `AC-003, AC-XYZ` 误当成"只引用了 unit AC"。其余调用方不传，行为不变。
+ */
+function extractTestCaseACRefs(plan: string, rawTokens?: Map<string, string[]>): Map<string, string[]> {
   const result = new Map<string, string[]>();
   const section = getSectionContent(plan, '测试用例');
   if (!section) return result;
@@ -1325,8 +1350,10 @@ function extractTestCaseACRefs(plan: string): Map<string, string[]> {
     const acRefs = (row[acCol] || '').trim();
     if (tcId && acRefs) {
       // e9d4b7a3 t2：词法 SSOT（ACCEPTANCE_ID_PATTERN）——不再本地复写第二套 ^(AC|BD)- 规则
-      const refs = acRefs.split(/[,，、\s]+/).filter(r => ACCEPTANCE_ID_PATTERN.test(r));
+      const tokens = acRefs.split(/[,，、\s]+/).filter(t => t.length > 0);
+      const refs = tokens.filter(r => ACCEPTANCE_ID_PATTERN.test(r));
       result.set(tcId, refs);
+      rawTokens?.set(tcId, tokens);
     }
   }
 
@@ -1415,6 +1442,7 @@ export function checkAcceptanceToTestCase(ctx: CheckContext, plan: string | null
 
   const acRefs = extractTestCaseACRefs(plan);
   const allCoveredACs = new Set<string>();
+  for (const refs of extractTcNfrRefs(plan).values()) for (const ref of refs) allCoveredACs.add(ref.toUpperCase());
   for (const refs of acRefs.values()) {
     for (const ref of refs) {
       allCoveredACs.add(ref.toUpperCase().replace(/\s/g, ''));
@@ -1563,65 +1591,100 @@ function checkTestPlanFreshnessVsAcceptance(ctx: CheckContext): CheckResult[] {
   }];
 }
 
-function checkPlanReferencesUnitLayerAc(ctx: CheckContext, plan: string | null): CheckResult[] {
+/**
+ * R8：TC **仅**关联 unit 层 AC/BD ⇒ BLOCKER（该 TC 根本不该存在于真机计划里）。
+ *
+ * 分档（按每条 TC 的引用形态）：
+ * - 引用非空、**每个原始 token 都解析得到**、全部 `ut_layer=unit` → BLOCKER FAIL；
+ * - 同样全部解析得到、含 unit 且另有 device/both/NFR → MINOR WARN（保持既有语义）；
+ * - 其余一律**不裁决**（本检查对该 TC 沉默，交 `acceptance_to_test_case` /
+ *   `test_case_to_acceptance` / `acceptance_ut_layer_complete` / 编号结构检查）：
+ *   · 空引用；
+ *   · 原始 token 里有解析不到的项（未知 AC、`AC-XYZ` 这类不合词法的写法）；
+ *   · 引用的 AC/BD 存在但**未声明 `ut_layer`**——未声明不等于 unit；
+ *   · 用例编号建立不了 `TC-\d+` 关联（codex review P1-1：此时 `extractTcNfrRefs`
+ *     根本不会为该行产出条目，"查不到 NFR" 只是缺映射，不能当成"没有 NFR"）。
+ *
+ * NFR/性能引用复用 `extractTcNfrRefs`（与 5e1c7a93 D3 同一条识别路径），不写第二套正则。
+ */
+export function checkPlanReferencesUnitLayerAc(ctx: CheckContext, plan: string | null): CheckResult[] {
   const id = 'plan_references_unit_layer_ac';
   const acceptance = ctx.featureSpec.acceptance;
+  const base = { id, category: 'traceability' as const, description: ruleDesc(ctx, 'traceability_checks', id) };
   if (!acceptance || !plan) {
-    return [{
-      id,
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', id),
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: 'acceptance 或 test-plan 不可用。',
-    }];
+    return [{ ...base, severity: 'MINOR', status: 'SKIP', details: 'acceptance 或 test-plan 不可用。' }];
   }
-  const unitOnlyIds = new Set(
-    (acceptance.criteria ?? [])
-      .filter(c => c.ut_layer === 'unit')
-      .map(c => c.id.toUpperCase().replace(/\s/g, '')),
-  );
-  for (const b of acceptance.boundaries ?? []) {
-    if (b.ut_layer === 'unit') unitOnlyIds.add(b.id.toUpperCase().replace(/\s/g, ''));
+  const normId = (s: string): string => s.toUpperCase().replace(/\s/g, '');
+  const layerById = new Map<string, string | undefined>();
+  for (const item of [...(acceptance.criteria ?? []), ...(acceptance.boundaries ?? [])]) {
+    layerById.set(normId(item.id), item.ut_layer);
   }
-  if (unitOnlyIds.size === 0) {
-    return [{
-      id,
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', id),
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: '无 ut_layer=unit 的 AC/BD。',
-    }];
+  if (![...layerById.values()].some(l => l === 'unit')) {
+    return [{ ...base, severity: 'MINOR', status: 'SKIP', details: '无 ut_layer=unit 的 AC/BD。' }];
   }
-  const acRefs = extractTestCaseACRefs(plan);
-  const hits: string[] = [];
-  for (const refs of acRefs.values()) {
-    for (const ref of refs) {
-      const norm = ref.toUpperCase().replace(/\s/g, '');
-      if (unitOnlyIds.has(norm)) hits.push(ref);
+
+  const nfrRefs = extractTcNfrRefs(plan);
+  const unitOnlyTcs: string[] = [];
+  const mixedHits: string[] = [];
+  const rawTokens = new Map<string, string[]>();
+  extractTestCaseACRefs(plan, rawTokens);
+  for (const [tcId, tokens] of rawTokens) {
+    if (tokens.length === 0) continue;
+    // extractTcNfrRefs 的键是规范化的 `TC-\d+`（与执行通道声明同一口径）；建立不了
+    // 关联就等于拿不到该行的 NFR 视图，不裁决。
+    const tcKey = tcId.match(/TC-\d+/i)?.[0]?.toUpperCase();
+    if (!tcKey) continue;
+    const nfrOfTc = new Set(nfrRefs.get(tcKey) ?? []);
+    const unitRefs: string[] = [];
+    let hasNonUnit = false;
+    let unresolved = false;
+    for (const token of tokens) {
+      const norm = normId(token);
+      // NFR-* 由 extractTcNfrRefs 解析；它是合法的非 unit 引用，不算"未解析"。
+      if (nfrOfTc.has(norm)) { hasNonUnit = true; continue; }
+      const layer = layerById.get(norm);
+      if (layer === undefined) { unresolved = true; break; }
+      if (layer === 'unit') unitRefs.push(token);
+      else hasNonUnit = true;
     }
+    if (unresolved || unitRefs.length === 0) continue;
+    if (hasNonUnit) mixedHits.push(`${tcId} → ${unitRefs.join(', ')}`);
+    else unitOnlyTcs.push(`${tcId} 仅关联 unit 层 AC（${unitRefs.join(', ')}）`);
   }
-  const unique = [...new Set(hits)];
-  if (unique.length === 0) {
+
+  if (unitOnlyTcs.length > 0) {
     return [{
-      id,
-      category: 'traceability',
-      description: ruleDesc(ctx, 'traceability_checks', id),
+      ...base,
+      severity: 'BLOCKER',
+      status: 'FAIL',
+      failure_kind: 'plan_contract',
+      details:
+        // 这是"照单删除"清单，必须逐条列全——截断会藏起第 11 条，设备短路文案又复用这段。
+        `test-plan 有 ${unitOnlyTcs.length} 条用例仅关联 unit 层 AC/BD，应由 business-ut 覆盖：\n` +
+        `${unitOnlyTcs.map(t => `  - ${t}`).join('\n')}\n` +
+        '请从 test-plan.md 删除这些 TC。本问题不要求修改 UT，也不能通过 manual 通道解决。' +
+        (mixedHits.length > 0 ? `\n另有混合引用（unit + device/both/NFR，仅提示）：\n${truncateList(mixedHits, 10)}` : ''),
+      suggestion:
+        '删除这些 TC（连同其执行通道声明与派生 hylyre 行）；unit 层 AC 的覆盖义务在 business-ut，' +
+        '不得改标 manual:*，也不得为它们改写 UT。',
+    }];
+  }
+  if (mixedHits.length > 0) {
+    return [{
+      ...base,
       severity: 'MINOR',
-      status: 'PASS',
-      details: 'test-plan 未关联 ut_layer=unit 的 AC/BD（符合 device 执行层分母）。',
+      status: 'WARN',
+      details:
+        `test-plan 有 ${mixedHits.length} 条用例同时关联了 unit 层 AC/BD（unit 部分应由 business-ut UT 覆盖）：\n` +
+        truncateList(mixedHits, 10),
+      suggestion: '从真机 TC 的「关联 AC」列剔除 unit 层引用，仅保留 ut_layer∈{device,both} 与 NFR。',
     }];
   }
   return [{
-    id,
-    category: 'traceability',
-    description: ruleDesc(ctx, 'traceability_checks', id),
+    ...base,
     severity: 'MINOR',
-    status: 'WARN',
-    details:
-      `test-plan 关联了 ${unique.length} 个 unit 层 AC/BD（应由 business-ut UT 覆盖）：\n${truncateList(unique, 10)}`,
-    suggestion: '从真机 test-plan 剔除 unit 层 AC，仅保留 ut_layer∈{device,both}。',
+    status: 'PASS',
+    details: 'test-plan 未关联 ut_layer=unit 的 AC/BD（符合 device 执行层分母）。',
   }];
 }
 
@@ -1936,6 +1999,16 @@ interface DeviceTestPipelineHolder {
   installOk: boolean;
   /** 装机前计算的完整 64 hex HAP 摘要（provider 回传） */
   hapSha256Full: string | null;
+  // B08 D1（plan 9b2d5e7c）：复用态事实——evidence 写出门槛改为"装机事实已知 ∧ 设备执行事实存在"，
+  // 复用轮照常写出并按执行键身份采信；缺省 false/null = 非复用（旧行为逐字不变）。
+  /** 本轮装机为复用（同 HAP 未变、设备已装）；摘要仍由 provider 同源回传到 hapSha256Full */
+  installReused?: boolean;
+  /** 本轮 device_test.run 为同键复用（decideReuse 命中） */
+  deviceRunReused?: boolean;
+  /** 本轮执行键（真跑与复用都记） */
+  executionKey?: string | null;
+  /** 被复用 run 目录（相对 projectRoot，正斜杠） */
+  reusedRunDir?: string | null;
   /** Native/legacy evidence decision for the same run; in-memory only. */
   hylyreEvidenceGate?: HylyreEvidenceGateResult;
   /** Existing run/evidence identity for native trace/plan binding. */
@@ -2205,6 +2278,12 @@ function checkReportReconcileOnlyPipeline(
   holder: DeviceTestPipelineHolder,
   plan: string | null,
   report: string | null,
+  /**
+   * 生产入口（:5844）在调用本函数**之前**就用 regenerateTestReport 从 trace 整份重写过
+   * 报告正文——性能类 AC 的耗时缺口只存在于重写前的那一份里（codex review 第 1 轮 #2）。
+   * 调用方把重写前的盘上正文原样传进来，性能缺口在**首次重建之前**识别并留在 hard 桶。
+   */
+  reportBeforeRebuild?: string | null,
 ): CheckResult[] {
   const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
   const buildPath = path.join(reportsDir, 'device-test-build.result.json');
@@ -2216,10 +2295,13 @@ function checkReportReconcileOnlyPipeline(
   const buildTool = readJsonRecord(buildToolPath);
   const install = readJsonRecord(installPath);
   const run = readJsonRecord(runPath);
-  const timing = readJsonRecord(timingPath);
+  let timing = readJsonRecord(timingPath);
   const tracePath = resolveAuthoritativeHylyreTracePath(reportsDir);
   const trace = tracePath ? parseHylyreTrace(tracePath) : null;
+  // plan 5e1c7a93 D3：执行事实缺口（hard，仍 BLOCKER FAIL）与派生统计缺口（soft，先重建、
+  // 不可重建则 WARN + UNKNOWN）分两桶。check id、严重度、report-only 的「零设备调用」承诺全不变。
   const issues: string[] = [];
+  const softIssues: string[] = [];
 
   const readyRecord = readJsonRecord(path.join(reportsDir, 'hylyre-ready.meta.json'));
   const hylyreCfg = resolveHylyreToolConfig(ctx.projectRoot);
@@ -2230,7 +2312,7 @@ function checkReportReconcileOnlyPipeline(
     manifestRecord.value && typeof manifestRecord.value.hylyre_version === 'string'
       ? manifestRecord.value.hylyre_version
       : null;
-  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
   const nativeEvidenceApplicable = Boolean(acceptance?.criteria.some(isP0DeviceInteractive));
   const evidenceGate = nativeEvidenceApplicable
     ? evaluateHylyreNativeEvidenceGate({
@@ -2356,8 +2438,33 @@ function checkReportReconcileOnlyPipeline(
     ranAt = readTimestamp(runRecord, 'ran_at', 'device-test-run.meta.json', issues);
   }
 
+  // plan 5e1c7a93 D3：派生统计**先重建**——timing 由 trace + build/install/run meta 重算
+  // （collectDeviceTestTimings + writeDeviceTestTimingJson），只有重建后仍不闭合的才进 soft
+  // 桶判 UNKNOWN + WARN。纯读盘 + 纯计算：不触发设备 / hvigor / hdc / Hylyre 任何调用。
+  let derivedRebuilt = false;
+  if (!runSkipped && tracePath && trace) {
+    try {
+      const rebuiltDoc = collectDeviceTestTimings({
+        projectRoot: ctx.projectRoot,
+        feature: ctx.feature,
+        reportsDir,
+        hylyreTracePath: tracePath,
+      });
+      const same =
+        JSON.stringify(rebuiltDoc.pipeline) === JSON.stringify(timing.value?.pipeline) &&
+        JSON.stringify(rebuiltDoc.cases) === JSON.stringify(timing.value?.cases);
+      if (!same) {
+        writeDeviceTestTimingJson(reportsDir, rebuiltDoc);
+        timing = readJsonRecord(timingPath);
+        derivedRebuilt = true;
+      }
+    } catch {
+      /* 重建失败 = 该派生统计不可重建，由 soft 桶判 UNKNOWN */
+    }
+  }
+
   if (!runSkipped && timing.value) {
-    timingGeneratedAt = readTimestamp(timing.value, 'generated_at', 'device-test-timing.json', issues);
+    timingGeneratedAt = readTimestamp(timing.value, 'generated_at', 'device-test-timing.json', softIssues);
   }
 
   if (!buildSkipped && !installSkipped) {
@@ -2409,12 +2516,24 @@ function checkReportReconcileOnlyPipeline(
     }
   }
   if (!runSkipped && runEndedAt.ms !== null && timingGeneratedAt.ms !== null && runEndedAt.ms > timingGeneratedAt.ms) {
-    issues.push(`timing.generated_at=${timingGeneratedAt.raw} 早于 run_ended_at=${runEndedAt.raw}`);
+    // D3：源 meta 都在，陈旧的只是 timing 这份投影——重算即闭合，不得逼一次真机重跑。
+    softIssues.push(`timing.generated_at=${timingGeneratedAt.raw} 早于 run_ended_at=${runEndedAt.raw}`);
   }
   if (!buildSkipped && !installSkipped && !runSkipped &&
       buildAt.ms !== null && installAt.ms !== null && runStartedAt.ms !== null &&
       (buildAt.ms > installAt.ms || installAt.ms > runStartedAt.ms)) {
-    issues.push('build → install → run_started_at 时间链不闭合');
+    // 同一 HAP 可以在已验证执行之后再次装机，随后复用旧 run；本轮装机时间不是旧 run 的前置时间。
+    // 只在最新执行记录仍可复用、且绑定当前 HAP/trace 时接受这条时间倒序；run 内部时序照常核验。
+    const latest = listExecutionKeyRuns(reportsDir)[0];
+    const boundRun = latest && tracePath && buildHapPath &&
+      recordedPathForProject(ctx.projectRoot, latest.record.trace_path) === path.resolve(tracePath) &&
+      latest.record.trace_sha256 === sha256File(tracePath) &&
+      latest.record.inputs?.hap_sha256_full === computeHapSha256Full(buildHapPath) &&
+      Array.isArray(latest.record.inputs?.flags) &&
+      decideReuse(reportsDir, computeExecutionKey(latest.record.inputs)).reusable;
+    if (!boundRun || buildAt.ms > installAt.ms) {
+      issues.push('build → install → run_started_at 时间链不闭合');
+    }
   }
 
   if (!runSkipped && runRecord) {
@@ -2455,28 +2574,29 @@ function checkReportReconcileOnlyPipeline(
         (timingPipeline as Record<string, unknown>).hap_built_at === null)
     );
     if (!timingShapeValid) {
-      issues.push(`缺失或无效的最终 ${path.basename(timingPath)}${timing.error ? `（${timing.error}）` : ''}`);
+      softIssues.push(`缺失或无效的最终 ${path.basename(timingPath)}${timing.error ? `（${timing.error}）` : ''}`);
     }
   }
 
   if (timingShapeValid && timing.value && timingPipeline && Array.isArray(timingCases)) {
     const pipeline = timingPipeline as Record<string, unknown>;
     for (const key of ['build_ms', 'install_ms', 'hylyre_run_ms', 'page_save_ms']) {
-      if (!hasOwn(pipeline, key)) issues.push(`device-test-timing.json.pipeline 缺少字段：${key}`);
+      if (!hasOwn(pipeline, key)) softIssues.push(`device-test-timing.json.pipeline 缺少字段：${key}`);
       else if (pipeline[key] !== null && finiteNonNegative(pipeline[key]) === null) {
-        issues.push(`device-test-timing.json.pipeline.${key} 不是非负数或 null：${String(pipeline[key])}`);
+        softIssues.push(`device-test-timing.json.pipeline.${key} 不是非负数或 null：${String(pipeline[key])}`);
       }
     }
-    compareTimingPipelineOptionalNumber(issues, pipeline, 'total_harness_ms');
+    compareTimingPipelineOptionalNumber(softIssues, pipeline, 'total_harness_ms');
 
     if (typeof buildRecord?.reused !== 'boolean' || typeof installRecord?.reused !== 'boolean') {
       issues.push('build/install meta 缺少 boolean reused，无法闭合 timing 复用状态');
     } else {
+      // D3：源 meta 合法（上面的守卫已过），不一致的只是 timing 投影 → soft。
       if (pipeline.build_reused !== buildRecord.reused) {
-        issues.push(`timing.pipeline.build_reused=${String(pipeline.build_reused)} 与 build.reused=${String(buildRecord.reused)} 不一致`);
+        softIssues.push(`timing.pipeline.build_reused=${String(pipeline.build_reused)} 与 build.reused=${String(buildRecord.reused)} 不一致`);
       }
       if (pipeline.install_reused !== installRecord.reused) {
-        issues.push(`timing.pipeline.install_reused=${String(pipeline.install_reused)} 与 install.reused=${String(installRecord.reused)} 不一致`);
+        softIssues.push(`timing.pipeline.install_reused=${String(pipeline.install_reused)} 与 install.reused=${String(installRecord.reused)} 不一致`);
       }
     }
 
@@ -2484,7 +2604,7 @@ function checkReportReconcileOnlyPipeline(
     const buildToolDuration = finiteNonNegative(buildTool.value?.durationMs);
     if (buildRecord?.reused !== true && buildResultDuration !== null && buildToolDuration !== null &&
         Math.abs(buildResultDuration - buildToolDuration) > 1) {
-      issues.push(`build duration sources 不一致：device-test-build=${buildResultDuration}ms，hvigor meta=${buildToolDuration}ms`);
+      softIssues.push(`build duration sources 不一致：device-test-build=${buildResultDuration}ms，hvigor meta=${buildToolDuration}ms`);
     }
     const buildDurationSource = buildRecord?.reused === true
       ? 0
@@ -2496,38 +2616,43 @@ function checkReportReconcileOnlyPipeline(
       ? finiteNonNegative((pageSave as Record<string, unknown>).duration_ms)
       : null;
     if (buildDurationSource === null && buildRecord?.reused !== true) {
-      issues.push('build meta 缺少有效 hvigorDurationMs/durationMs，无法确认最终 build 耗时');
+      softIssues.push('build meta 缺少有效 hvigorDurationMs/durationMs，无法确认最终 build 耗时');
     }
     if (installDurationSource === null && installRecord?.reused !== true) {
-      issues.push('device-test-install.meta.json 缺少有效 durationMs，无法确认最终 install 耗时');
+      softIssues.push('device-test-install.meta.json 缺少有效 durationMs，无法确认最终 install 耗时');
     }
     if (runDurationSource === null) {
-      issues.push('device-test-run.meta.json 缺少有效 run_duration_ms，无法确认最终 Hylyre 耗时');
+      softIssues.push('device-test-run.meta.json 缺少有效 run_duration_ms，无法确认最终 Hylyre 耗时');
     }
     if (pageSave === null || typeof pageSave !== 'object' || pageSaveDurationSource === null) {
-      issues.push('device-test-run.meta.json 缺少有效 hylyre_page_save.duration_ms，无法确认最终 page save 耗时');
+      softIssues.push('device-test-run.meta.json 缺少有效 hylyre_page_save.duration_ms，无法确认最终 page save 耗时');
     }
-    compareTimingPipelineNumber(issues, pipeline, 'build_ms', buildDurationSource);
-    compareTimingPipelineNumber(issues, pipeline, 'install_ms', installDurationSource);
-    compareTimingPipelineNumber(issues, pipeline, 'hylyre_run_ms', runDurationSource);
-    compareTimingPipelineNumber(issues, pipeline, 'page_save_ms', pageSaveDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'build_ms', buildDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'install_ms', installDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'hylyre_run_ms', runDurationSource);
+    compareTimingPipelineNumber(softIssues, pipeline, 'page_save_ms', pageSaveDurationSource);
 
     const buildHapBuiltAt = buildRecord?.hapBuiltAt;
     if (typeof buildHapBuiltAt !== 'string' || !buildHapBuiltAt.trim() || !Number.isFinite(Date.parse(buildHapBuiltAt))) {
       issues.push(`device-test-build.result.json.hapBuiltAt 缺失或非法：${String(buildHapBuiltAt)}`);
     } else if (pipeline.hap_built_at !== buildHapBuiltAt) {
-      issues.push(`timing.pipeline.hap_built_at=${String(pipeline.hap_built_at)} 与 build.hapBuiltAt=${buildHapBuiltAt} 不一致`);
+      // D3：源 meta 合法，陈旧的只是 timing 投影 → soft。
+      softIssues.push(`timing.pipeline.hap_built_at=${String(pipeline.hap_built_at)} 与 build.hapBuiltAt=${buildHapBuiltAt} 不一致`);
     }
 
-    const timingById = new Map<string, number>();
+    const timingById = new Map<string, number | null>();
     for (const row of timingCases as Array<Record<string, unknown>>) {
       const id = typeof row?.id === 'string' ? row.id.trim().toUpperCase() : '';
-      const duration = finiteNonNegative(row?.duration_ms);
+      // plan 5e1c7a93 D3：null = 本轮没量到（legacy cost 分配分支），是**合法的 UNKNOWN 行**，
+      // 不是非法行；它单独出一条 UNKNOWN soft issue（带 TC id，供性能类 AC 前置判据识别）。
+      const unmeasured = row?.duration_ms === null;
+      const duration = unmeasured ? null : finiteNonNegative(row?.duration_ms);
       const stepCount = row?.step_count;
-      if (!id || duration === null || typeof stepCount !== 'number' || !Number.isInteger(stepCount) || stepCount < 0 || timingById.has(id)) {
-        issues.push('device-test-timing.json 的 case duration/step_count 行无效或重复');
+      if (!id || (!unmeasured && duration === null) || typeof stepCount !== 'number' || !Number.isInteger(stepCount) || stepCount < 0 || timingById.has(id)) {
+        softIssues.push('device-test-timing.json 的 case duration/step_count 行无效或重复');
         continue;
       }
+      if (unmeasured) softIssues.push(`最终 timing 的 case 耗时未量到（UNKNOWN）：${id}`);
       timingById.set(id, duration);
     }
     const traceIds = new Set<string>();
@@ -2540,8 +2665,8 @@ function checkReportReconcileOnlyPipeline(
         else traceIds.add(id);
       }
       const timingIds = new Set(timingById.keys());
-      for (const id of traceIds) if (!timingIds.has(id)) issues.push(`最终 timing 缺少 case duration：${id}`);
-      for (const id of timingIds) if (!traceIds.has(id)) issues.push(`最终 timing 含 trace 不存在的旧 case：${id}`);
+      for (const id of traceIds) if (!timingIds.has(id)) softIssues.push(`最终 timing 缺少 case duration：${id}`);
+      for (const id of timingIds) if (!traceIds.has(id)) softIssues.push(`最终 timing 含 trace 不存在的旧 case：${id}`);
     }
     if (trace && trace.feature !== ctx.feature) {
       issues.push(`authoritative trace.feature=${trace.feature} 与当前 feature=${ctx.feature} 不一致`);
@@ -2550,14 +2675,60 @@ function checkReportReconcileOnlyPipeline(
     timingDoc = timing.value as unknown as DeviceTestTimingDocument;
   }
 
+  // plan 5e1c7a93 D3：性能类 AC 的耗时**不得由重建路径提供**——识别必须发生在重建之前。
+  // 识别路径：featureSpec.acceptance.performance[].id ∩ test-plan「关联 AC」列的 NFR 引用
+  // （extractTcNfrRefs）。两侧任一为空 → 性能集合为空，不误伤（识别路径的已知边界）。
+  const perfAcIds = new Set(
+    (ctx.featureSpec?.acceptance?.performance ?? [])
+      .map(item => String((item as { id?: unknown }).id ?? '').trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const perfTcIds = perfAcIds.size > 0 && plan
+    ? [...extractTcNfrRefs(plan).entries()]
+        .filter(([, refs]) => refs.some(ref => perfAcIds.has(ref)))
+        .map(([tc]) => tc)
+    : [];
+  const mentionsPerfTc = (text: string): boolean =>
+    perfTcIds.length > 0 && perfTcIds.some(tc => text.toUpperCase().includes(tc));
+  const perfHardIssues: string[] = softIssues.filter(mentionsPerfTc);
+
   if (report && timingDoc) {
     const channelDecl = loadExecutionChannelDeclaration(ctx, plan);
-    const reportTiming = reconcileReportWithDeviceTestTiming(report, {
-      timing: timingDoc,
+    const reconcileWith = (md: string) => reconcileReportWithDeviceTestTiming(md, {
+      timing: timingDoc!,
       ...(buildAt.raw ? { buildTimestamp: buildAt.raw } : {}),
       ...(channelDecl.column_declared ? { hylyreTcIds: channelDecl.hylyre_tc_ids } : {}),
     });
-    issues.push(...reportTiming.mismatches);
+    // 性能 case 的 duration 必须来自本次或被复用的**真实执行** trace——它的对账缺口
+    // 在**任何**重建之前就扣下，不允许被重算的报告正文抹平。生产入口已经先重写过一次，
+    // 所以「重建前」的那一份必须由调用方传进来（codex review 第 1 轮 #2）。
+    if (reportBeforeRebuild && reportBeforeRebuild !== report) {
+      perfHardIssues.push(...reconcileWith(reportBeforeRebuild).mismatches.filter(mentionsPerfTc));
+    }
+    let reportTiming = reconcileWith(report);
+    perfHardIssues.push(...reportTiming.mismatches.filter(mentionsPerfTc));
+    // plan 5e1c7a93 D3：报告正文与 timing 不符是**派生一致性**缺口——先由既有
+    // writeGeneratedTestReport 从 trace + plan 重算正文再复算，仍不闭合才进 soft 桶。
+    // 报告本就在同一轮的后续 check 里被整份重算，这里只是把重算提前到对账之前。
+    if (reportTiming.mismatches.length > 0 && plan && tracePath) {
+      try {
+        const rewritten = writeGeneratedTestReport({
+          projectRoot: ctx.projectRoot,
+          feature: ctx.feature,
+          reportsDir,
+          tracePath,
+          planMd: plan,
+          channelDecl,
+        });
+        if (rewritten.written) {
+          derivedRebuilt = true;
+          reportTiming = reconcileWith(fs.readFileSync(rewritten.path, 'utf-8'));
+        }
+      } catch {
+        /* 重建失败 = 该派生统计不可重建，由 soft 桶判 UNKNOWN */
+      }
+    }
+    softIssues.push(...reportTiming.mismatches);
   }
 
   holder.buildReused = Boolean(buildRecord?.reused);
@@ -2621,22 +2792,42 @@ function checkReportReconcileOnlyPipeline(
 
   const id = 'report_reconcile_only';
   const desc = ruleDesc(ctx, 'structure_checks', id);
-  const detailLines = issues.length === 0
+  // plan 5e1c7a93 D3：命中性能 TC 的耗时缺口一律回 hard 桶（识别与扣留都发生在重建之前）。
+  const hardIssues = [
+    ...issues,
+    ...[...new Set(perfHardIssues)].map(issue => `${issue}（性能类 AC：耗时必须真实量测，不接受重建或 UNKNOWN）`),
+  ];
+  const derivedIssues = softIssues.filter(issue => !perfHardIssues.includes(issue));
+  const detailLines = hardIssues.length === 0
     ? [`已读取 authoritative trace=${tracePath}，cases=${trace?.cases?.length ?? 0}；路径/指纹/时间戳/复用状态/精确 case 集合/报告耗时均与同一最终 run 闭合。`]
-    : issues.map(issue => `  - ${issue}`);
+    : hardIssues.map(issue => `  - ${issue}`);
+  const derivedLines = derivedIssues.length === 0
+    ? []
+    : [
+        `派生统计 UNKNOWN（${derivedIssues.length} 项）：该统计项为 UNKNOWN，不构成执行事实结论；` +
+        `${derivedRebuilt ? '已由 trace + meta 重建后复算，' : ''}仍不闭合的项如下（报告耗时格写空值占位，不写数字）：`,
+        ...derivedIssues.map(issue => `  - ${issue}`),
+      ];
+  // hard 缺口在 → FAIL；只有派生缺口 → WARN（severity 保持 BLOCKER，即既有「BLOCKER 级 WARN」形态）。
+  const reconcileStatus: CheckResult['status'] =
+    hardIssues.length > 0 ? 'FAIL' : derivedIssues.length > 0 ? 'WARN' : 'PASS';
   const reconcileResult: CheckResult = {
     id,
     category: 'structure',
     description: desc,
     severity: 'BLOCKER',
-    status: issues.length === 0 ? 'PASS' : 'FAIL',
+    status: reconcileStatus,
     details: [
       'report-only reconciliation 只读既有 test-plan/report/trace/timing/build-install-run meta；未调用设备、hvigor、hdc、Hylyre 或视觉采集。',
       ...detailLines,
+      ...derivedLines,
     ].join('\n'),
-    suggestion: issues.length === 0
+    ...(reconcileStatus === 'WARN' ? { failure_kind: 'derived_statistic_unavailable' } : {}),
+    suggestion: reconcileStatus === 'PASS'
       ? '继续由既有 report/trace/static checks 与 summary writer 完整重算派生结果。'
-      : '补齐同一最终 run 的 authoritative trace、test-plan、test-report、device-test-timing 与 build/install/run meta 后重新执行 report-only。',
+      : reconcileStatus === 'WARN'
+        ? '派生统计缺口不构成执行事实结论；如需数字，补齐 build/install/run meta 的 durationMs 后重跑 report-only。'
+        : '补齐同一最终 run 的 authoritative trace、test-plan、test-report、device-test-timing 与 build/install/run meta 后重新执行 report-only。',
   };
   const selectorBlockers = staticPlan.selectorWarnings.filter(v => v.severity === 'BLOCKER');
   const selectorResult: CheckResult[] = staticPlan.selectorWarnings.length > 0
@@ -3045,6 +3236,7 @@ function checkDeviceTestInstallGate(
     // d9e4b7c1 T2：未合并的实装事实（evidence 写入门槛消费）
     holder.installExecuted = res.executed === true && res.reused !== true;
     holder.installOk = res.ok === true && holder.installExecuted;
+    holder.installReused = res.reused === true;
     holder.hapSha256Full = res.hapSha256Full ?? null;
 
     const installDetail = res.reused
@@ -3080,13 +3272,16 @@ function checkDeviceTestInstallGate(
  * install provider 知道 executed/ok/hash、run provider 知道 trace/cases，二者都不具备
  * 写入的全部事实；由 build→install→run 完成后的本函数单点合成）。
  *
- * 写入门槛（plan d9e4b7c1 v13 冻结，全部满足才写）：
+ * 写入门槛（plan d9e4b7c1 v13 冻结；B08 D1 plan 9b2d5e7c 把前两条事实放宽到复用态）：
  *   · MAISON_GOAL_GATE_HARNESS==='1'（runner 直 spawn 的 gate 专属标记）；
  *   · goal run/attempt 身份完整；
- *   · 本轮真实安装成功（installExecuted && installOk——installPassed 合并了 reuse 不作数）；
- *   · device_test.run 已执行且本轮 trace 在盘（trace_path 直取 holder，禁调 authoritative
- *     resolver——那是 collector 的二次核验器，writer 用它会把旧 trace 洗成本轮）；
+ *   · 装机事实已知：本轮真实安装成功（installExecuted && installOk）**或** 装机复用同 HAP
+ *     （installPassed && installReused && hapSha256Full 非空——摘要由 install provider 复用分支同源回传）；
+ *   · 设备执行事实存在：device_test.run 真跑或同键复用，且 trace 在盘（trace_path 直取 holder，
+ *     禁调 authoritative resolver——那是 collector 的二次核验器，writer 用它会把旧 trace 洗成本轮）；
  *   · 写前复算 HAP 完整摘要与装机前一致（compose 内执行，TOCTOU 钉死）。
+ * 复用事实以可选字段（install_reused / reused_by_execution_key / execution_key / reused_run_dir）
+ * 写进 doc，schema_version 仍 1.1；采信端按执行键身份核验（goal-phase-runtime validateDeviceTestEvidenceBinding）。
  * 结果语义（review P1：evidence 生成失败不得静默吞——"真机测的是旧 HAP、当前 HAP 已变化"
  * 时 compose 会拒绝，若只 warn 则 collector 把缺文件当无信号、testing 可能假放行）：
  *   · 非 goal gate / goal 身份不全 → []（普通模式零变化）；
@@ -3106,14 +3301,24 @@ export function writeDeviceTestEvidenceIfEligible(
   const goalRunId = process.env.MAISON_GOAL_RUN_ID?.trim() ?? '';
   const attemptId = process.env.MAISON_GOAL_ATTEMPT?.trim() ?? '';
   if (!goalRunId || !attemptId) return [];
-  if (!holder.installExecuted || !holder.installOk) {
-    console.warn('[device-test-evidence] 未写入：本轮无真实安装成功事实（上游 install 门禁负责裁决）');
+  const installKnown =
+    (holder.installExecuted && holder.installOk) ||
+    (holder.installPassed && holder.installReused === true && Boolean(holder.hapSha256Full));
+  if (!installKnown) {
+    console.warn('[device-test-evidence] 未写入：本轮装机事实未知（既非真实安装成功，也非复用同 HAP；上游 install 门禁负责裁决）');
     return [];
   }
   if (!holder.deviceTestRunExecuted || !holder.hylyreTracePath) {
     console.warn('[device-test-evidence] 未写入：本轮 device_test.run 未执行或 trace 缺失（上游 run 门禁负责裁决）');
     return [];
   }
+  // B08 D1：复用态事实（全部可选；非复用轮 install_reused/reused_by_execution_key=false，其余不写）
+  const reuseFields = {
+    install_reused: holder.installReused === true,
+    reused_by_execution_key: holder.deviceRunReused === true,
+    ...(holder.executionKey ? { execution_key: holder.executionKey } : {}),
+    ...(holder.deviceRunReused === true && holder.reusedRunDir ? { reused_run_dir: holder.reusedRunDir } : {}),
+  };
   // 至此：正式 gate 已完成真实安装与 run——evidence 必须写出，任何失败都是 BLOCKER
   const fail = (details: string): CheckResult[] => [{
     id, category: 'structure', description: desc, severity: 'BLOCKER', status: 'FAIL',
@@ -3159,6 +3364,7 @@ export function writeDeviceTestEvidenceIfEligible(
       written_at: new Date().toISOString(),
       cases: [],
       artifact_binding: holder.nativeArtifactBinding,
+      ...reuseFields,
     };
     try {
       fs.mkdirSync(reportsDir, { recursive: true });
@@ -3203,7 +3409,7 @@ export function writeDeviceTestEvidenceIfEligible(
   try {
     const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     fs.mkdirSync(reportsDir, { recursive: true });
-    const doc = { ...composed.doc, written_at: new Date().toISOString() };
+    const doc = { ...composed.doc, ...reuseFields, written_at: new Date().toISOString() };
     fs.writeFileSync(deviceTestEvidencePath(reportsDir), `${JSON.stringify(doc, null, 2)}\n`, 'utf-8');
   } catch (e) {
     return fail(`写盘异常：${(e as Error).message}`);
@@ -3508,7 +3714,7 @@ function checkP0RuntimeStepEvidenceGate(
 ): CheckResult[] {
   const id = 'p0_runtime_step_evidence';
   const description = 'P0 device flow 原生 CaseResult.steps[] 证据';
-  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  const acceptance = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
   if (!acceptance?.criteria.some(isP0DeviceInteractive)) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，native StepResult evidence 不适用。' }];
   }
@@ -3797,39 +4003,6 @@ export function derivedPlanStaleByTcTable(
   return false;
 }
 
-/**
- * codex review（plan 07a41ec6 T6）：执行键里的设备与显示身份——HARNESS_HDC_TARGET 优先，否则 `hdc list targets`
- * 恰好一台时取其序列号；显示环境取 `wm size`（best-effort）。设备身份未知时不允许同键复用。
- */
-function resolveExecutionDeviceIdentity(): { device: string | null; display_env: string } {
-  let device = process.env.HARNESS_HDC_TARGET?.trim() || null;
-  let exe: string | null = null;
-  try {
-    exe = resolveHdcExecutableSync();
-  } catch {
-    exe = null;
-  }
-  if (!device && exe) {
-    try {
-      const probe = runHdcRaw(exe, ['list', 'targets'], { timeout: 5000 });
-      const lines = String(probe.stdout ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !/\[Empty\]/i.test(l));
-      if (probe.status === 0 && lines.length === 1) device = lines[0];
-    } catch {
-      /* 探测失败 = 设备未知 */
-    }
-  }
-  let displayEnv = '';
-  if (device && exe) {
-    try {
-      const wm = runHdcRaw(exe, ['-t', device, 'shell', 'wm', 'size'], { timeout: 5000 });
-      if (wm.status === 0) displayEnv = String(wm.stdout ?? '').split(/\r?\n/)[0].trim();
-    } catch {
-      displayEnv = '';
-    }
-  }
-  return { device, display_env: displayEnv };
-}
-
 /** plan 07a41ec6 T3：feature ui-spec 的 canonical 索引（无 ui-spec 时 by_text 不能映射身份，只认 by_id 字面）。 */
 function buildCanonicalIndexForFeature(ctx: CheckContext): CanonicalSelectorIndex | null {
   const doc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
@@ -3841,7 +4014,7 @@ function runP0IdentityInjection(ctx: CheckContext, derivedMd: string, topPlanMd:
   return injectP0IdentityAssertions({
     derivedMd,
     topPlanMd,
-    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature),
+    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined),
     canonical: buildCanonicalIndexForFeature(ctx),
   });
 }
@@ -3896,7 +4069,7 @@ function checkP0IdentityInjectionStatic(ctx: CheckContext, plan: string | null):
  * 不解析 description/precondition/expected，也不把它当第二套 canonical selector 真源。
  */
 function collectAcceptanceActionBindings(ctx: CheckContext): AcceptanceActionBinding[] {
-  const doc = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+  const doc = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
   if (!doc) return [];
   return doc.criteria.flatMap(ac => {
     const target = ac.checkpoint?.action?.target_element_id;
@@ -3929,6 +4102,52 @@ function collectDeviceTestStaticPlanGates(
   const navLint = lintDerivedHylyrePlanSteps(derivedContent, topCases);
   return { stepLint, selectorWarnings, navLint };
 }
+/**
+ * 复用轮的冻结件回填 + 派生统计重建——**每轮只回填一次**（codex review 第 1 轮 #4）。
+ * 旧写法在重建之后又 restore 了一次，把重建好的完整 timing 覆盖回不完整的冻结副本，
+ * 报告与门禁读到的仍是旧数据。返回 false = 重建覆盖不全，调用方 fail-closed 回落真跑。
+ */
+function adoptFrozenRunArtifactsForReuse(
+  ctx: CheckContext,
+  reusable: ExecutionKeyRunView,
+  rebuildRequired: boolean,
+): boolean {
+  const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
+  try {
+    // codex review：复用不只重绑 trace——把该 run 冻结的 timing/meta 回填顶层，报告与门禁读到的是同一 run 的三件套
+    restoreFrozenRunArtifacts(reusable.runDir, reportsDir);
+    if (!rebuildRequired) return true;
+    const rebuiltDoc = collectDeviceTestTimings({
+      projectRoot: ctx.projectRoot,
+      feature: ctx.feature,
+      reportsDir,
+      hylyreTracePath: reusable.record.trace_path,
+    });
+    const reusedTrace = parseHylyreTraceForReuse(reusable.record.trace_path);
+    const expected = new Set((reusedTrace?.cases ?? []).map(c => String(c.id).trim().toUpperCase()));
+    const got = new Set(rebuiltDoc.cases.map(c => c.id.trim().toUpperCase()));
+    if (!(expected.size > 0 && [...expected].every(idc => got.has(idc)))) return false;
+    // 重建结果落盘发生在**唯一一次** restore 之后，此后本轮不再回填冻结件。
+    writeDeviceTestTimingJson(reportsDir, rebuiltDoc);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** V8：把复用轮的「回填一次 + 重建」序列暴露给单测，断言最终盘上 timing 是重建结果。 */
+export const __testing_adoptFrozenRunArtifactsForReuse = adoptFrozenRunArtifactsForReuse;
+
+/**
+ * B07 D3：当前生效 golden contract 的身份（MAISON_GOLDEN_CONTRACT 指向文件的 sha256 前 16 位；
+ * 未设/不可读 → 'none'）。只做报告披露，不入执行键——普通测试结论与 golden 结论在同一报告里分开可读。
+ */
+function goldenContractIdentity(projectRoot: string): string {
+  const raw = process.env.MAISON_GOLDEN_CONTRACT?.trim();
+  if (!raw) return 'none';
+  return sha256File(path.isAbsolute(raw) ? raw : path.resolve(projectRoot, raw))?.slice(0, 16) ?? 'none';
+}
+
 function checkDeviceTestRunGate(
   ctx: CheckContext,
   hapHolder: DeviceTestPipelineHolder,
@@ -4250,7 +4469,7 @@ function checkDeviceTestRunGate(
     // T6 pre-run evidence capability: native CaseResult.steps[] is independent
     // of the legacy runtime telemetry bridge. Only an old provider may enter
     // the bounded bridge path; native 0.4.0 must never be monkey-patched.
-    const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature);
+    const acceptanceFlows = loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined);
     const runtimeEvidenceRequired = Boolean(
       acceptanceFlows?.criteria.some(isP0DeviceInteractive),
     );
@@ -4323,7 +4542,13 @@ function checkDeviceTestRunGate(
       : !executionKeyInputs.device
         ? { reusable: null, reason: '设备身份未知（无 HARNESS_HDC_TARGET 且 hdc list targets 非唯一），不做同键复用' }
         : decideReuse(reportsBase, executionKey);
-    const reusable = reuse.reusable;
+    // plan 5e1c7a93 D3：派生证据不全不再直接拒绝复用——回填后先重建 timing，重建后
+    // 覆盖不全则 fail-closed 回落真跑（不带半份统计签发）。执行事实缺口仍由 decideReuse
+    // 直接拒绝（reusable=null），走不到这里。
+    let reusable = reuse.reusable;
+    if (reusable && !adoptFrozenRunArtifactsForReuse(ctx, reusable, Boolean(reuse.evidenceRebuildRequired))) {
+      reusable = null;
+    }
     let hylyreOutDir: string;
     let runPlanPath: string;
     let derivedPlanSha256AtStart: string | null;
@@ -4343,8 +4568,8 @@ function checkDeviceTestRunGate(
         logPath: '',
         errors: [],
       };
-      // codex review：复用不只重绑 trace——把该 run 冻结的 timing/meta 回填顶层，报告与门禁读到的是同一 run 的三件套
-      restoreFrozenRunArtifacts(hylyreOutDir, featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot));
+      // 冻结件回填（含派生统计重建）已在 adoptFrozenRunArtifactsForReuse 里做过，**每轮只一次**：
+      // 再 restore 一次会把重建好的 timing 覆盖回不完整的冻结副本（codex review 第 1 轮 #4）。
     } else {
     const freshRun = prepareFreshHylyreRunDir({
       reportsBase,
@@ -4472,6 +4697,10 @@ function checkDeviceTestRunGate(
 
     hapHolder.hylyreTracePath = run.tracePath;
     hapHolder.deviceTestRunExecuted = true;
+    // B08 D1：复用态事实进 holder（evidence 写出与采信按执行键身份，不再按本轮时间窗）
+    hapHolder.deviceRunReused = Boolean(reusable);
+    hapHolder.executionKey = executionKey;
+    hapHolder.reusedRunDir = reusable ? path.relative(ctx.projectRoot, reusable.runDir).replace(/\\/g, '/') : null;
 
     const outcomeEval = evaluateHylyreRunOutcome(run.trace);
     let evidenceGate: HylyreEvidenceGateResult | null = null;
@@ -4611,17 +4840,12 @@ function checkDeviceTestRunGate(
       },
     ];
 
-    if (run.ok && reusable) {
-      out.push({
-        id: 'visual_diff_capture',
-        category: 'structure',
-        description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
-        severity: 'MINOR',
-        status: 'PASS',
-        details: '同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。',
-      });
-    }
-    if (run.ok && !reusable && !isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
+    // B07 D3（plan 6e4a2c8b）：采集块提成局部闭包——同键复用且 golden contract 生效时
+    // 也走同一入口（只补采集，不重跑 device_test/UT）。golden 身份不入执行键；两分支的
+    // visual_diff_capture 行都披露 golden_contract=<sha256 前 16 位>|none。
+    const goldenContractId = goldenContractIdentity(ctx.projectRoot);
+    const captureIfUiChanged = (logPath: string): void => {
+      if (isDeviceVisualDiffSkipped(ctx.resolvedProfile)) return;
       const specMd = loadSpecMarkdown(ctx.projectRoot, ctx.feature);
       if (specMd !== null) {
         const uiChange = parseUiChangeFromSpecMarkdown(specMd);
@@ -4642,7 +4866,7 @@ function checkDeviceTestRunGate(
               pythonPath: ready.pythonPath,
               hypiumWorkDir,
               deviceSn: process.env.HARNESS_HDC_TARGET,
-              logPath: run.logPath,
+              logPath,
             }),
             // t2（plan c6d8f2b4）：截图同时点 dump 布局树（layout-<screen_id>.json），T8 几何不变量消费。
             // 轻量化守恒（rev8/D11）：仅 pixel_1to1 档采集——semantic_layout/reference_only 不付
@@ -4652,7 +4876,7 @@ function checkDeviceTestRunGate(
                   pythonPath: ready.pythonPath,
                   hypiumWorkDir,
                   deviceSn: process.env.HARNESS_HDC_TARGET,
-                  logPath: run.logPath,
+                  logPath,
                 })
               : undefined,
             // 与 device_test.run 的 app 启动方式对齐（宿主热修回收，round6 收尾批 P0-3）
@@ -4661,13 +4885,36 @@ function checkDeviceTestRunGate(
               hypiumWorkDir,
               deviceSn: process.env.HARNESS_HDC_TARGET,
               bundleName,
-              logPath: run.logPath,
-              ...readDeviceTestRunHylyreNavOpts(run.logPath),
+              logPath,
+              ...readDeviceTestRunHylyreNavOpts(logPath),
             }),
-          }));
+          }).map(r => ({ ...r, details: `${r.details ?? ''}\ngolden_contract=${goldenContractId}` })));
         }
       }
+    };
+    if (run.ok && reusable) {
+      if (loadGoldenContractFromEnv(ctx.projectRoot).targets !== null) {
+        // golden 生效：不得把 visual_diff_capture 直接记 PASS——golden 模式的"本 run 强制重采 +
+        // forbidden 证据生产"只在采集入口里运行。nav 参数读顶层已回填的 device-test-run.meta.json
+        //（adoptFrozenRunArtifactsForReuse 已回填），故 logPath 取顶层 reportsDir 下路径；
+        // 不得用 reusable.runDir 拼（读不到 meta，退回 omitBundle:false）。
+        captureIfUiChanged(path.join(
+          featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot),
+          'visual-diff-capture.reuse.log',
+        ));
+      } else {
+        out.push({
+          id: 'visual_diff_capture',
+          category: 'structure',
+          description: 'device_test.run 后 visual_diff 自动截图与骨架采集',
+          severity: 'MINOR',
+          status: 'PASS',
+          details: '同键复用：设备截图沿用被复用 run 的产物（visual-diff.json / device-screenshots），参考图或 ui-spec 变化时按现有截图重新比较，不重跑交互。' +
+            `\ngolden_contract=${goldenContractId}`,
+        });
+      }
     }
+    if (run.ok && !reusable) captureIfUiChanged(run.logPath);
 
     const reportsDir = featurePhaseReportsDir(ctx.projectRoot, ctx.feature, ctx.phase, ctx.frameworkRoot);
     const pollutionHit = loadTestingRootPollutionMeta(reportsDir);
@@ -4912,6 +5159,9 @@ export function runDeviceVisualDiffCapture(
   return [];
 }
 
+/** B07 V4/V5：复用分支的生产接线（同键复用 × golden 采集）——单测注入 mock 传输面走真实门禁。 */
+export const __testing_checkDeviceTestRunGate = checkDeviceTestRunGate;
+
 /** Test seam: static derived-plan validation must happen before install-based runtime SKIP. */
 export function __testing_checkDeviceTestRunGateBeforeInstall(ctx: CheckContext): CheckResult[] {
   return checkDeviceTestRunGate(ctx, {
@@ -5148,8 +5398,9 @@ export function __testing_checkChannelEvidenceObligation(
   plan: string | null,
   priorResults: readonly CheckResult[] = [],
   hapPath?: string | null,
+  resolvedBindings?: readonly ChannelEvidenceBinding[],
 ): CheckResult[] {
-  return checkChannelEvidenceObligation(ctx, plan, priorResults, hapPath);
+  return checkChannelEvidenceObligation(ctx, plan, priorResults, hapPath, resolvedBindings);
 }
 
 export function __testing_checkExecutionChannelDeclaration(
@@ -5221,17 +5472,18 @@ function loadUseCaseSpec(ctx: CheckContext): UseCasesSpec | null {
  */
 /**
  * plan a6c4e9f2 T3（review P1）：设备流水线准入的**唯一**判据。
- * - report-only 按契约零设备/零 provider 调用，无论声明是否闭合都完整只读重算
- *   （通道迁移 BLOCKER 已独立记账，phase 仍 FAIL；历史 run 必须保持可诊断）；
- * - 其余情况必须先看 `decl.ok`：缺列/缺值/非法值/同 TC 重复一律不进 build/install/
- *   Hylyre/device，也**不跑"合法子集"**（那会产出半份 trace）。
+ * - report-only 按契约零设备/零 provider 调用，无论计划契约是否闭合都完整只读重算
+ *   （契约 BLOCKER 已独立记账，phase 仍 FAIL；历史 run 必须保持可诊断）；
+ * - 其余情况必须先看计划契约 `ok`：通道声明缺列/缺值/非法值/同 TC 重复，或（R8）存在
+ *   仅关联 unit 层 AC 的 TC，一律不进 build/install/Hylyre/device，也**不跑"合法子集"**
+ *   （那会产出半份 trace）。调用方负责把这些前置裁决合成 `ok`，并在短路结果里写真实原因。
  */
 export function shouldRunDevicePipeline(
-  declaration: { ok: boolean },
+  planContract: { ok: boolean },
   reportReconcileOnly: boolean,
 ): { device: boolean; reportOnly: boolean } {
   if (reportReconcileOnly) return { device: false, reportOnly: true };
-  return { device: declaration.ok, reportOnly: false };
+  return { device: planContract.ok, reportOnly: false };
 }
 
 function checkExecutionChannelDeclaration(ctx: CheckContext, plan: string | null): CheckResult[] {
@@ -5287,26 +5539,22 @@ function checkExecutionChannelDeclaration(ctx: CheckContext, plan: string | null
  *
  * 另外两处返修见 `execution-channel-evidence.ts` 头注：读错路径、自造弱解析器。
  */
-function checkChannelEvidenceObligation(
+function resolveChannelEvidenceBindings(
   ctx: CheckContext,
   plan: string | null,
+  decl: ExecutionChannelDeclarationResult,
   priorResults: readonly CheckResult[],
   hapPath?: string | null,
-): CheckResult[] {
-  const decl = loadExecutionChannelDeclaration(ctx, plan);
-  const nonHylyreCount =
-    decl.manual_tc_ids.length + decl.visual_tc_ids.length + decl.provider_tc_ids.length;
-  if (nonHylyreCount === 0) return [];
-
+): ChannelEvidenceBinding[] {
   const visualGate = [...priorResults].reverse().find(r => r.id === 'visual_diff');
-  const bindings = bindChannelEvidence({
+  return bindChannelEvidence({
     planMd: plan,
-    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature),
+    acceptance: loadAcceptanceFlowsDoc(ctx.projectRoot, ctx.feature, ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined),
     visual: loadVisualScreenVerdicts({
       projectRoot: ctx.projectRoot,
       feature: ctx.feature,
       currentBuildFingerprint: hapPath ? computeHapBuildFingerprint(hapPath) : null,
-      visualGateStatus: visualGate?.status ?? null,
+      visualGate: visualGate ?? null,
     }),
     visualTcIds: decl.visual_tc_ids,
     providerTcIds: decl.provider_tc_ids,
@@ -5314,6 +5562,21 @@ function checkChannelEvidenceObligation(
     manualTcIds: decl.manual_tc_ids,
     gaps: decl.unsupported_gap,
   });
+}
+
+function checkChannelEvidenceObligation(
+  ctx: CheckContext,
+  plan: string | null,
+  priorResults: readonly CheckResult[],
+  hapPath?: string | null,
+  resolvedBindings?: readonly ChannelEvidenceBinding[],
+): CheckResult[] {
+  const decl = loadExecutionChannelDeclaration(ctx, plan);
+  const nonHylyreCount =
+    decl.manual_tc_ids.length + decl.visual_tc_ids.length + decl.provider_tc_ids.length;
+  if (nonHylyreCount === 0) return [];
+
+  const bindings = resolvedBindings ?? resolveChannelEvidenceBindings(ctx, plan, decl, priorResults, hapPath);
   // plan 07a41ec6 T2：unsupported_gap 不阻断——留分母、不算 PASS，只披露
   const blocking = bindings.filter(b => b.verdict.kind !== 'covered' && b.verdict.kind !== 'unsupported_gap');
   const covered = bindings.filter(b => b.verdict.kind === 'covered');
@@ -5325,6 +5588,12 @@ function checkChannelEvidenceObligation(
         ...gaps.map(b => `  - [${b.channel}] ${b.tc_id}：${b.verdict.detail}`),
       ]
     : [];
+  // plan e7a2c4f1 §3.4（G28）：把绑定上携带的责任方提到本 check 上，走既有
+  // `repair_candidates`（testing 期只认显式 owner）与失败归因通道。产品真值优先于
+  // spec，spec 优先于能力缺口——三者同时出现时先修能让用户拿到正确产品的那一个。
+  const ownerRank = ['coding', 'spec', 'capability'] as const;
+  const blockingOwner = ownerRank.find(owner => blocking.some(b => b.repair_owner === owner));
+  const blockingFiles = [...new Set(blocking.filter(b => b.repair_owner === blockingOwner).flatMap(b => b.affected_files ?? []))];
   return [{
     id: 'testing_channel_evidence_obligation',
     category: 'structure',
@@ -5332,6 +5601,8 @@ function checkChannelEvidenceObligation(
     severity: 'BLOCKER',
     status: blocking.length === 0 ? 'PASS' : 'FAIL',
     ...(blocking.length === 0 ? {} : { failure_kind: 'testing_channel_unverified' as const }),
+    ...(blocking.length > 0 && blockingOwner ? { repair_owner: blockingOwner } : {}),
+    ...(blockingFiles.length > 0 ? { affected_files: blockingFiles } : {}),
     structured: {
       unsupported_gap_count: gaps.length,
       unsupported_gap: gaps.map(b => ({ tc_id: b.tc_id, channel: b.channel, detail: b.verdict.detail })),
@@ -5642,6 +5913,7 @@ function regenerateTestReport(
   plan: string | null,
   channelDecl: ExecutionChannelDeclarationResult,
   results: CheckResult[],
+  channelEvidenceBindings?: readonly ChannelEvidenceBinding[],
 ): string | null {
   const id = 'test_report_generated';
   const description = 'test-report.md 由 harness 从权威 run 整份生成（plan 07a41ec6 T5）';
@@ -5663,6 +5935,7 @@ function regenerateTestReport(
     tracePath,
     planMd: plan,
     channelDecl,
+    channelEvidenceBindings,
   });
   if (!written.written) {
     results.push({
@@ -5692,8 +5965,10 @@ function regenerateTestReport(
 
 const checker: PhaseChecker = {
   phase: 'testing',
+  subjects: ['feature', 'request'],
 
-  async check(ctx: CheckContext): Promise<CheckResult[]> {
+  async check(ctx: CheckContext<'feature' | 'request'>): Promise<CheckResult[]> {
+    if (ctx.subject === 'request') return require('./utils/request-phase').checkRequestTests(ctx);
     const plan = loadDoc(ctx, 'test-plan.md');
     // plan 07a41ec6 T5：test-report.md 由 harness 生成（device run 之后 / report-only 之前重写），故为 let
     let report = loadDoc(ctx, 'test-report.md');
@@ -5723,6 +5998,8 @@ const checker: PhaseChecker = {
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'testing', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,
@@ -5748,15 +6025,23 @@ const checker: PhaseChecker = {
     // decl.ok=false 时零设备动作，只产结构化 BLOCKER。
     results.push(...safeRun(() => checkExecutionChannelDeclaration(ctx, plan), 'testing_execution_channel'));
     results.push(...safeRun(() => checkP0IdentityInjectionStatic(ctx, plan), 'p0_identity_injection'));
+    // R8：「TC 仅关联 unit 层 AC」同样是**计划契约错误**（这条 TC 不该存在于真机计划里），
+    // 所以与通道声明并列前移到 build/install/device 之前裁决一次——跑完机再提示等于白烧一轮，
+    // 而且 AI 会去改 UT / 改标 manual 绕路。分层结果只在这里算一次，后面不再重算。
+    const unitLayerAcResults = safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac');
+    results.push(...unitLayerAcResults);
+    const unitOnlyTcBlocked = unitLayerAcResults.find(r => r.severity === 'BLOCKER' && r.status === 'FAIL');
     const channelDeclaration = loadExecutionChannelDeclaration(ctx, plan);
     // 声明未闭合时，被拦的是**设备动作**，不是全部分析。report-only 按契约零设备/零 provider
     // 调用，因此照常完整重算——通道迁移的 BLOCKER 已由上面那条 check 独立记账，phase 仍然 FAIL，
     // 不需要顺手把只读重算也关掉（那会让历史 run 连诊断都跑不了）。
-    const pipelinePlan = shouldRunDevicePipeline(channelDeclaration, Boolean(ctx.reportReconcileOnly));
+    const pipelinePlan = shouldRunDevicePipeline(
+      { ok: channelDeclaration.ok && !unitOnlyTcBlocked },
+      Boolean(ctx.reportReconcileOnly),
+    );
+    const reportBeforeRebuild = pipelinePlan.reportOnly ? report : null;
     if (pipelinePlan.reportOnly) {
-      // plan 07a41ec6 T5：report-only 先按权威 run 重写机器报告，再做对账（报告永不落后 run）
-      report = regenerateTestReport(ctx, deviceTestHapHolder, plan, channelDeclaration, results) ?? report;
-      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report));
+      // 最终报告延后到 visual/channel 裁决之后生成；report-only 的旧正文保留用于差异对账。
     } else if (!pipelinePlan.device) {
       results.push({
         id: 'device_test_run',
@@ -5764,10 +6049,19 @@ const checker: PhaseChecker = {
         description: ruleDesc(ctx, 'structure_checks', 'device_test_run'),
         severity: 'BLOCKER',
         status: 'SKIP',
-        details:
-          '顶层 execution_channel 声明未闭合，已在任何 build/install/device 动作之前停下（零设备调用）。\n' +
-          channelDeclaration.detail,
-        suggestion: `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,
+        details: [
+          ...(unitOnlyTcBlocked
+            ? ['测试计划含仅关联 unit 层 AC 的用例，已在设备动作前停下（零设备调用）。\n' + unitOnlyTcBlocked.details]
+            : []),
+          ...(channelDeclaration.ok
+            ? []
+            : ['顶层 execution_channel 声明未闭合，已在任何 build/install/device 动作之前停下（零设备调用）。\n' +
+               channelDeclaration.detail]),
+        ].join('\n\n'),
+        suggestion: unitOnlyTcBlocked
+          ? '先按 plan_references_unit_layer_ac 从 test-plan.md 删除仅关联 unit 层 AC 的 TC 再跑 testing。' +
+            (channelDeclaration.ok ? '' : `同轮还须修好执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）。`)
+          : `先修好顶层 test-plan.md 的执行通道声明（${EXECUTION_CHANNEL_DOMAIN}）再跑 testing；harness 不按用例文字猜通道，也不会只跑"合法子集"。`,
       });
     } else {
       results.push(...checkDeviceTestBuildGate(ctx, deviceTestHapHolder));
@@ -5780,15 +6074,7 @@ const checker: PhaseChecker = {
         () => writeDeviceTestEvidenceIfEligible(ctx, deviceTestHapHolder),
         'device_test_evidence_write',
       ));
-      // plan 07a41ec6 T5：真机跑完即从本轮 trace/timing/meta 整份生成报告（agent 零手写）
-      report = regenerateTestReport(ctx, deviceTestHapHolder, plan, channelDeclaration, results) ?? report;
     }
-    results.push(
-      ...safeRun(
-        () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),
-        'report_trace_reconciliation',
-      ),
-    );
     results.push(...safeRun(() => checkUiEntryCoverage(ctx), 'ui_entry_coverage'));
 
     // --- Structure checks: Test Plan ---
@@ -5801,20 +6087,9 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkPassCriteriaDefined(ctx, plan), 'pass_criteria_defined'));
     results.push(...safeRun(() => checkPlanMetadata(ctx, plan), 'plan_metadata_header'));
 
-    // --- Structure checks: Test Report ---
-    results.push(...safeRun(() => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
-    results.push(...safeRun(() => checkExecutionResultTable(ctx, report), 'execution_result_table'));
-    results.push(...safeRun(() => checkPassRateCalculated(ctx, report), 'pass_rate_calculated'));
-    results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
-    results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
-
-    // --- blind-visual-hardening d1 切片一：负面裁决闭环 + 上游裁决传播 ---
-    results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
-    // --- blind-visual-hardening d5：视觉债务披露 ---
-    results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
     results.push(
       ...safeRun(
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing' }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'testing', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );
@@ -5829,11 +6104,9 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkDeviceCaseNormalization(ctx), 'device_case_contract'));
     results.push(...safeRun(() => checkTestPlanFreshnessVsAcceptance(ctx), 'test_plan_freshness_vs_acceptance'));
     results.push(...safeRun(() => checkAcceptanceToTestCase(ctx, plan), 'acceptance_to_test_case'));
-    results.push(...safeRun(() => checkPlanReferencesUnitLayerAc(ctx, plan), 'plan_references_unit_layer_ac'));
+    // plan_references_unit_layer_ac 已在设备流水线之前裁决（见上），此处不重算。
     results.push(...safeRun(() => checkTestCaseToAcceptance(ctx, plan), 'test_case_to_acceptance'));
     results.push(...safeRun(() => checkBoundaryCoverage(ctx, plan), 'boundary_coverage'));
-    results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
-    results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
 
     if (isDeviceVisualDiffSkipped(ctx.resolvedProfile)) {
       results.push({
@@ -5894,6 +6167,43 @@ const checker: PhaseChecker = {
       }
     }
 
+    if (pipelinePlan.reportOnly) {
+      results.push(...checkReportReconcileOnlyPipeline(ctx, deviceTestHapHolder, plan, report, reportBeforeRebuild));
+    }
+    // visual 之后只算一次逐 TC channel binding；报告、P0/AC 与义务门共享同一结果。
+    const channelEvidenceBindings = resolveChannelEvidenceBindings(
+      ctx,
+      plan,
+      channelDeclaration,
+      results,
+      deviceTestHapHolder.hapPath ?? null,
+    );
+    if (pipelinePlan.device || pipelinePlan.reportOnly) {
+      report = regenerateTestReport(
+        ctx,
+        deviceTestHapHolder,
+        plan,
+        channelDeclaration,
+        results,
+        channelEvidenceBindings,
+      ) ?? report;
+    }
+    results.push(
+      ...safeRun(
+        () => checkReportTraceReconciliation(ctx, report, deviceTestHapHolder),
+        'report_trace_reconciliation',
+      ),
+    );
+    results.push(...safeRun(() => checkReportRequiredChapters(ctx, report), 'report_required_chapters'));
+    results.push(...safeRun(() => checkExecutionResultTable(ctx, report), 'execution_result_table'));
+    results.push(...safeRun(() => checkPassRateCalculated(ctx, report, channelEvidenceBindings), 'pass_rate_calculated'));
+    results.push(...safeRun(() => checkDefectTableFormat(ctx, report), 'defect_table_format'));
+    results.push(...safeRun(() => checkReportConclusionWithVerdict(ctx, report), 'report_conclusion_with_verdict'));
+    results.push(...safeRun(() => checkNegativeTestingVerdictClosure(report), 'negative_verdict_closure'));
+    results.push(...safeRun(() => checkVisualDebtDisclosure(ctx, report), 'visual_debt_disclosure'));
+    results.push(...safeRun(() => checkPlanToReportConsistency(ctx, plan, report), 'plan_to_report_consistency'));
+    results.push(...safeRun(() => checkDefectToTestCase(ctx, plan, report), 'defect_to_test_case'));
+
     // --- goal-fakepass-hardening t2：review 闭环源码快照对账（BLOCKER，无 grace window）---
     results.push(...safeRun(() => checkReviewClosureAttestationGate(ctx), 'review_closure_attestation'));
 
@@ -5914,6 +6224,7 @@ const checker: PhaseChecker = {
         const inputs = {
           projectRoot: ctx.projectRoot,
           feature: ctx.feature,
+          acceptance: ctx.resolvedInputs ? ctx.featureSpec.acceptance ?? null : undefined,
           planMd: plan ?? '',
           reportMd: report ?? '',
           trace,
@@ -5922,6 +6233,7 @@ const checker: PhaseChecker = {
           reportConclusion: report ? parseReportConclusionVerdict(report) : null,
           // plan 07a41ec6 T2：unsupported_gap 留分母、不算 PASS/FAIL（五数口径）
           unsupportedGapTcIds: loadExecutionChannelDeclaration(ctx, plan ?? null).unsupported_gap_tc_ids,
+          channelEvidenceBindings,
         };
         return [...evaluateP0CoverageIntegrity(inputs), ...evaluateP0SemanticCoverage(inputs)];
       }, 'p0_semantic_gates'),
@@ -5956,7 +6268,13 @@ const checker: PhaseChecker = {
     ));
     // 6.5b：证据义务必须晚于 visual 产出与 visual 门本身。
     results.push(...safeRun(
-      () => checkChannelEvidenceObligation(ctx, plan, results, deviceTestHapHolder.hapPath ?? null),
+      () => checkChannelEvidenceObligation(
+        ctx,
+        plan,
+        results,
+        deviceTestHapHolder.hapPath ?? null,
+        channelEvidenceBindings,
+      ),
       'testing_channel_evidence_obligation',
     ));
     results.push(...checkP0RuntimeStepEvidenceGate(ctx, results, deviceTestHapHolder));
@@ -5971,7 +6289,9 @@ const checker: PhaseChecker = {
  * t2（goal-fakepass-hardening）：testing 期产品源码 vs review 闭环快照对账。
  * bc-openCard 事故：testing 期写入 DEVICE_TEST_FAST_PATH=true 短路核心流程，review 审过的
  * 代码与真机跑的不是同一份。基线=attestation 固化 inventory；走树=冻结 roots ∪ 当前重
- * discovery（新增整模块可见）。任何差异/缺 attestation → BLOCKER，指引回跑 review 闭环。
+ * discovery（新增整模块可见）。缺基线 / 有漂移都**按风险分级**给出所需的一次复核，未做时
+ * MAJOR WARN 并如实标注（review 语义结论对这些改动未重审），不一刀 BLOCKER——见函数体
+ * :6107–6108 的同源说明与四个出口。
  */
 function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
   const id = 'review_closure_attestation';

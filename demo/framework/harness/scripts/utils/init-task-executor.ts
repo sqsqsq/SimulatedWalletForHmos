@@ -545,7 +545,7 @@ export function executeInitTask(
 
       const sources = loadFrameworkConfigWithSources(ctx.projectRoot);
       const config = sources.config;
-      const adapters = resolveMaterializedAdaptersForCleanup(ctx, config, sources);
+      const adapters = resolveMaterializedAdaptersForCleanup(ctx, config, sources, path.resolve(ctx.harnessRoot, '..'));
       const backupSession: BackupSession = {
         stamp: new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'),
       };
@@ -553,41 +553,66 @@ export function executeInitTask(
       const cleanupResults: CleanupResult[] = [];
 
       for (const name of adapters) {
-        const adapter = loadAdapter(name);
-        const { cleaned } = applyDeprecatedArtifactsCleanup(
-          ctx.projectRoot,
-          adapter,
-          mode,
-          { backupSession },
-        );
-        for (const item of cleaned) {
-          cleanupResults.push({
-            path: item.path,
-            backup_path: item.backup_path ?? undefined,
-            kind: 'deprecated_artifact',
-            adapter: name,
+        try {
+          const adapter = loadAdapter(name);
+          const { cleaned, blocked, warnings } = applyDeprecatedArtifactsCleanup(
+            ctx.projectRoot, adapter, mode,
+            { backupSession, targetRoot: name === 'generic' ? config.paths.agent_bundle_root : undefined },
+          );
+          for (const item of cleaned) {
+            cleanupResults.push({
+              path: item.path, backup_path: item.backup_path ?? undefined,
+              kind: item.action === 'remove_hook_registration' ? 'hook_registration' : 'deprecated_artifact',
+              adapter: name,
+            });
+          }
+          for (const item of blocked) {
+            cleanupResults.push({ path: item.path, kind: 'deprecated_artifact', adapter: name,
+              status: 'blocked', message: item.reason });
+          }
+          for (const item of warnings) {
+            cleanupResults.push({ path: item.path, kind: 'deprecated_artifact', adapter: name,
+              status: 'warning', message: item.reason });
+          }
+        } catch (e) {
+          cleanupResults.push({ path: name, kind: 'deprecated_artifact', adapter: name,
+            status: 'failed', message: (e as Error).message });
+        }
+        // 一个 adapter 的注册配置损坏，不妨碍其旧跳板或其他 adapter 的安全清理。
+        try {
+          const legacy = applyLegacySkillBridgeCleanup({
+            projectRoot: ctx.projectRoot, materializedAdapters: [name], mode, config, backupSession,
           });
+          cleanupResults.push(...legacy.cleaned);
+        } catch (e) {
+          cleanupResults.push({ path: name, kind: 'legacy_skill_bridge', adapter: name,
+            status: 'failed', message: (e as Error).message });
         }
       }
 
-      const legacy = applyLegacySkillBridgeCleanup({
-        projectRoot: ctx.projectRoot,
-        materializedAdapters: adapters,
-        mode,
-        config,
-        backupSession,
-      });
-      cleanupResults.push(...legacy.cleaned);
-
       const backupRelDir = backupSession.backupRelDir ?? null;
-      const total = cleanupResults.length;
-      const cleanupEffects: CleanupEffects = { backup_deleted: total };
+      const issues = cleanupResults.filter(item => item.status);
+      const successes = cleanupResults.filter(item => !item.status);
+      const total = successes.length;
+      const hookConfigs = successes.filter(item => item.kind === 'hook_registration').length;
+      const countOf = (status: NonNullable<CleanupResult['status']>) =>
+        issues.filter(i => i.status === status).length;
+      const cleanupEffects: CleanupEffects = {
+        backup_deleted: total - hookConfigs,
+        ...(issues.length ? { blocked: countOf('blocked'), warning: countOf('warning'),
+          failed: countOf('failed') } : {}),
+        ...(hookConfigs ? { hook_configs_updated: hookConfigs } : {}),
+      };
 
       return {
-        message: total
-          ? `cleanup backup_delete ${total} 项${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
-          : '无 deprecated / 遗留跳板需清理',
-        ...(total > 0 ? { cleanup_results: cleanupResults, cleanup_effects: cleanupEffects } : {}),
+        // blocked（工程内仍有引用，脚本已保留）与 warning（工程外引用，已删本地副本）都是
+        // 如实记录的部分结果，不是任务失败；failed 只留给 catch 到的异常。
+        failed: countOf('failed') > 0,
+        message: (total
+          ? `cleanup backup_delete ${total - hookConfigs} 项${hookConfigs ? `，更新 hook 注册 ${hookConfigs} 份` : ''}${backupRelDir ? `（备份 ${backupRelDir}）` : ''}`
+          : issues.length ? '退役清理有未完成项' : '无 deprecated / 遗留跳板需清理')
+          + (issues.length ? '；' + issues.map(i => i.adapter + ': ' + i.status + ' ' + i.message).join('；') : ''),
+        ...(cleanupResults.length > 0 ? { cleanup_results: cleanupResults, cleanup_effects: cleanupEffects } : {}),
       };
     }
     case 'harness-install':
@@ -747,14 +772,23 @@ export function executeInitTask(
         syncTemplateTarget(ctx, adapter, renderEnv, adapter.entryFile.targetRel, { ownedByTask }),
       );
     }
+    // D8（plan 7b2e9d4c）：auto_overwrite 文件改走 applyInitMechanismSync——已存在且内容不同时
+    // 先备份到 .framework-backup/<stamp>/ 再覆盖，与首位 adapter 的 sync-auto-overwrite:<target>
+    // 逐文件任务同一条写盘链。此前次位 adapter（宿主里 codex 就是次位）没有逐文件任务，整包
+    // 物化直接 syncTemplateTarget 覆盖宿主手写文件、无备份。ownedByTask 语义两条链一致。
     for (const f of adapter.templateFiles) {
+      if (f.update_policy === 'auto_overwrite' && f.kind !== 'materialized') continue;
       fileResults.push(syncTemplateTarget(ctx, adapter, renderEnv, f.targetRel, { ownedByTask }));
     }
+    const mechanism = applyInitMechanismSync(ctx.projectRoot, adapter, { ownedByTask });
+    fileResults.push(...mechanism.results);
     throwIfBlocked(fileResults);
 
     const fileEffects = aggregateFileEffects(fileResults);
     return {
-      message: formatBundleSyncMessage(name, fileEffects),
+      message:
+        formatBundleSyncMessage(name, fileEffects) +
+        (mechanism.backupRelDir ? `（备份 ${mechanism.backupRelDir}）` : ''),
       file_effects: fileEffects,
       file_results: fileResults,
     };

@@ -1,3 +1,4 @@
+# P3: 显式 1.1 调用按 required_outputs 检查叙述格式；typed 内容、来源、授权和实际义务仍须校验。
 # ============================================================================
 # Plan 阶段规约 — profile 中立骨架（无 toolchain 细则）
 # ============================================================================
@@ -13,11 +14,55 @@ phase: plan
 version: "1.0"
 applies_to: "doc/features/{module}/plan/plan.md"
 
-structure_checks: {}
+structure_checks:
+  acceptance_content_complete:
+    severity: BLOCKER
+    description: 显式 typed 验收须含可执行步骤、精确预期、合法 ID 与分层关注点。
+  design_scope_facts:
+    severity: BLOCKER
+    description: 新设计事实只经既有 P2 报告提议重签，不删除冻结 required 义务。
+  acceptance_use_cases_resolvable:
+    severity: BLOCKER
+    description: typed 验收的 linked_flow/linked_branch 必须指向真实用例。
+  construction_content_complete:
+    severity: BLOCKER
+    description: 施工文件、类型和接口签名须完整，不能用叙述省略减弱内容检查。
+  usecase_spec_schema:
+    severity: BLOCKER
+    description: 复用 UT 的 UseCasesSpec schema 检查，必要用例不能使用占位条目。
+
 
 semantic_checks: {}
 
 traceability_checks:
+  component_asset_selection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_asset_projection:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_export_registered:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_new_static_checks:
+    severity: BLOCKER
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+  component_uncurated:
+    severity: MAJOR
+    description: 组件资产检查；语义见 docs/concepts/component-assets.md。
+
+  change_unit_feature_projection:
+    description: CU-bound Feature 必须以 canonical change_unit_ref 和完整 ID-only mappings 施工，且机械派生 use-case/DAG 义务
+    severity: BLOCKER
+  cu_scope_matches_blueprint:
+    description: CU-bound contracts.modules 必须 ⊆ 蓝图可修改模块集合（只由 CU touches 解析到 development 节点 module）；越界回 /component-design 调和
+    severity: BLOCKER
+  cu_architecture_impact_not_effective:
+    description: 相关 architecture_impact（add_module/move_module/dependency_edge）须已裁决且与当前 DSL 一致；dependency_edge 按 add/remove 核对目标许可
+    severity: BLOCKER
+  cu_architecture_dsl_other:
+    description: architecture_impact dsl_other 只登记不机检，提示人工核对已经权威批准落盘
+    severity: MAJOR
   contract_file_reference_closure:
     description: >
       contracts.yaml 中所有 schema 声明的文件引用必须属于规范化 contracts.files；

@@ -13,6 +13,7 @@ import * as YAML from 'yaml';
 import { receiptDirPath, resolveFeatureArtifact } from '../../config';
 // e9d4b7a3 t2：AC/BD id 词法 SSOT 由 acceptance 侧承载，行内引用解析不再自写第二套正则
 import { extractAcceptanceIdRefs } from './check-acceptance';
+import type { ChannelEvidenceBinding } from './execution-channel-evidence';
 import {
   extractDerivedPlanCases,
   loadExplicitSkipTcIds,
@@ -74,11 +75,11 @@ export interface AcceptanceFlowsDoc {
   criteria: AcceptanceCriterion[];
 }
 
-export function loadAcceptanceFlowsDoc(projectRoot: string, feature: string): AcceptanceFlowsDoc | null {
+export function loadAcceptanceFlowsDoc(projectRoot: string, feature: string, supplied?: unknown): AcceptanceFlowsDoc | null {
   const res = resolveFeatureArtifact(projectRoot, feature, 'acceptance.yaml');
-  if (!res.exists) return null;
+  if (supplied === undefined && !res.exists) return null;
   try {
-    const doc = YAML.parse(fs.readFileSync(res.actualPath, 'utf-8')) as {
+    const doc = (supplied === undefined ? YAML.parse(fs.readFileSync(res.actualPath, 'utf-8')) : supplied) as {
       flows?: Record<string, { screens?: string[] } | string[]>;
       criteria?: AcceptanceCriterion[];
     };
@@ -115,10 +116,10 @@ export function checkpointComplete(cp: AcCheckpoint | undefined): boolean {
 // t4a：check-spec 侧——结构化 checkpoint + 三约束 + requirement_ref 验存
 // ----------------------------------------------------------------------------
 
-export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string): CheckResult[] {
+export function evaluateAcceptanceFlowStructure(projectRoot: string, feature: string, supplied?: unknown): CheckResult[] {
   const id = 'acceptance_flow_structure';
   const description = 'P0 交互 AC 结构化 checkpoint + flows 三约束 + requirement_ref 验存';
-  const doc = loadAcceptanceFlowsDoc(projectRoot, feature);
+  const doc = loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
   if (!doc) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: 'acceptance.yaml 不存在/不可解析。' }];
   }
@@ -233,10 +234,11 @@ export function evaluateFlowContract(
   projectRoot: string,
   feature: string,
   _requirementText: string,
+  supplied?: unknown,
 ): CheckResult[] {
   const id = 'acceptance_flow_contract';
   const description = '结构化流程模型机器契约（spec-owned + phase-evidence freshness）';
-  const doc = loadAcceptanceFlowsDoc(projectRoot, feature);
+  const doc = loadAcceptanceFlowsDoc(projectRoot, feature, supplied);
   const applicable = doc && doc.criteria.some(isP0DeviceInteractive) && Object.keys(doc.flows).length > 0;
   if (!applicable) {
     return [{ id, category: 'structure', description, severity: 'MINOR', status: 'SKIP', details: '无 P0 device flow，flow_contract 不适用。' }];
@@ -305,6 +307,7 @@ export function isBareIdentityAssertion(step: unknown, kind: 'wait_for' | 'wait_
 export interface P0GateInputs {
   projectRoot: string;
   feature: string;
+  acceptance?: unknown;
   planMd: string;
   reportMd: string;
   /** Native trace is the only accepted execution evidence for production P0 gates. */
@@ -317,6 +320,8 @@ export interface P0GateInputs {
   reportConclusion: string | null;
   /** plan 07a41ec6 T2：静态三态判定出的 unsupported_gap TC——留在分母、不算 PASS/FAIL、不阻止完成 */
   unsupportedGapTcIds?: readonly string[];
+  /** 与 testing channel obligation / report 共用的一次逐 TC 机器裁决。 */
+  channelEvidenceBindings?: readonly ChannelEvidenceBinding[];
   now?: () => Date;
 }
 
@@ -680,7 +685,7 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       gateFailure: 'authoritative trace 缺失，无法消费 CaseResult.steps[]',
     };
   }
-  const acceptance = loadAcceptanceFlowsDoc(inp.projectRoot, inp.feature);
+  const acceptance = loadAcceptanceFlowsDoc(inp.projectRoot, inp.feature, inp.acceptance);
   const p0Acs = (acceptance?.criteria ?? []).filter(isP0DeviceInteractive);
   const reportsBase = path.join(receiptDirPath(inp.projectRoot, inp.feature, 'testing'), 'reports');
   const selected = inp.derivedPlanPath
@@ -741,6 +746,11 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
   const acceptedAcIds = new Set<string>();
   // plan 07a41ec6 T2：unsupported_gap 的 P0 TC 不进 pass/fail 评估，但留在分母（五数口径）
   const gapSet = new Set((inp.unsupportedGapTcIds ?? []).map(id => id.toUpperCase()));
+  const visualBindings = new Map(
+    (inp.channelEvidenceBindings ?? [])
+      .filter(binding => binding.channel === 'visual')
+      .map(binding => [binding.tc_id.toUpperCase(), binding] as const),
+  );
   const gapCaseIds: string[] = [];
   for (const entry of p0Entries) {
     if (gapSet.has(entry.id.toUpperCase())) {
@@ -748,6 +758,25 @@ function evaluateNativeP0(inp: P0GateInputs): NativeP0Evaluation {
       continue;
     }
     const acs = p0Acs.filter(ac => entry.acRefs.includes(ac.id));
+    const visualBinding = visualBindings.get(entry.id.toUpperCase());
+    if (visualBinding) {
+      const evaluation: NativeCaseEvaluation = {
+        caseId: entry.id,
+        passed: visualBinding.verdict.kind === 'covered' && acs.length > 0,
+        reasons: visualBinding.verdict.kind === 'covered'
+          ? (acs.length > 0 ? [] : ['visual TC 未关联可验收的 P0 AC'])
+          : [visualBinding.verdict.detail],
+        acIds: acs.map(ac => ac.id),
+      };
+      evaluations.push(evaluation);
+      if (evaluation.passed) {
+        passedCaseIds.push(entry.id);
+        for (const acId of evaluation.acIds) acceptedAcIds.add(acId);
+      } else {
+        skippedCaseIds.push(entry.id);
+      }
+      continue;
+    }
     const traceCase = traceByTc.get(entry.id);
     const evaluation = evaluateNativeCase(traceCase, acs, derivedByTc.get(entry.id) ?? [], canonical, entry.id);
     evaluations.push(evaluation);

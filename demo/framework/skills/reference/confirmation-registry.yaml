@@ -154,7 +154,8 @@ entries:
       ③ **必须先追问档位**：`existing`（只复用已开实例，绝不启停）还是 `managed`（框架
       启动并回收）——「允许降级」不等于同意框架主动拉起模拟器；选 `managed` 还须再确认
       具体 emulator profile（AVD 名），**禁默认托管**。
-      ①③ 写完须重跑探测确认 `code=ok`：
+      ①②③ 落盘 / 登记后由 agent 跑 `--ready --json`（退出 0 看 `code=ready`）确认，
+      不再让用户重跑探测；探测契约同款：
       `npx ts-node scripts/device-policy.ts --check --json`（直接调脚本，`npm run` 会往
       stdout 插 banner）。**判定两段**：退出码 0 **且** stdout 合法 JSON → 看 `code`
       （`device_policy_unset` 属正常结果）；非零 **或** stdout 非合法 JSON → 执行失败
@@ -304,6 +305,26 @@ entries:
         portable: "暂不确认"
 
   # --- catalog-bootstrap catalog ---
+  - id: conventions.staging_card
+    skill: "conventions-bootstrap"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "Step 5 逐条确认"
+    portable_menu: "1=y确认 2=e修改 3=s跳过 4=q作废"
+    options:
+      - value: confirm
+        label: "确认 — 将当前惯例卡写入工程惯例资产"
+        portable: "1=y确认"
+      - value: edit
+        label: "修改 — 调整当前卡片后再次确认"
+        portable: "2=e修改"
+      - value: skip
+        label: "跳过 — 保留候选但本轮不入库"
+        portable: "3=s跳过"
+      - value: void
+        label: "作废 — 丢弃当前候选"
+        portable: "4=q作废"
+
   - id: catalog.staging_module
     skill: "catalog-bootstrap"
     class: enum
@@ -411,18 +432,19 @@ entries:
         portable: "2=清理/恢复路径"
 
   - id: spec.terminology
-    skill: "spec"
+    skill: "component-design"
     class: artifact_checkbox
     ssot_anchor: "user-confirmation-ux.md §3.4"
-    skill_step: "Step 1.5"
+    skill_step: "component-design 第 2 步 / spec Step 1.5（非 CU-bound）"
     portable_menu: "1=全部确认high行 2=逐行确认 3=逐行修改"
-    artifact: "spec.md ## 0. 术语映射表 [x]"
-    harness: check-spec terminology_mapping_table
+    artifact: "蓝图 discovery.facts term:<术语>（extraction_method: user_confirmed）；非 CU-bound：spec 术语映射表 [x] 列"
+    harness: check-component-blueprint terminology_facts_confirmed
+    notes: "正式需求在 /component-design 一次确认（headless 记 headless_assumed、入 must-review、不回写 glossary）；CU-bound spec 术语映射表只投影不再问人。非 CU-bound 平铺 Feature 仍在 spec Step 1.5 确认并写回 spec.md 术语映射表 [x]（check-spec terminology_mapping_table）。"
     options:
       - value: all_confirm
-        label: "全部确认 — 所有行写回 spec [x]，进入后续 spec 步骤"
+        label: "全部确认 — 所有行写回蓝图 term: 事实 user_confirmed（非 CU-bound：spec [x]），继续后续步骤"
         portable: "1=全部确认 high 行"
-        side_effect: "写回 spec 术语映射表 [x] 列"
+        side_effect: "写回蓝图 term: 事实 extraction_method: user_confirmed（非 CU-bound：spec 术语映射表 [x] 列）"
       - value: row_by_row
         label: "逐行确认 — 逐条确认，有问题可修改"
         portable: "2=逐行确认"
@@ -431,9 +453,9 @@ entries:
         portable: "3=逐行修改"
     matrix_options:
       - value: confirm_row
-        label: "确认该行 — 写回本行 [x]"
+        label: "确认该行 — 写回本行 term: 事实 user_confirmed（非 CU-bound：本行 [x]）"
         portable: "1=确认该行"
-        side_effect: "写回 spec 术语映射表本行 [x]"
+        side_effect: "写回蓝图本行 term: 事实 extraction_method: user_confirmed（非 CU-bound：spec 术语映射表本行 [x]）"
       - value: edit_row
         label: "改映射 — 修改本行权威模块或消歧"
         portable: "2=改映射"
@@ -452,27 +474,6 @@ entries:
         label: "继续改 spec — 本轮不冻结"
         portable: "2=继续改 spec"
 
-  # --- change-lite（lite 轨） ---
-  - id: feature.track
-    skill: "change-lite"
-    class: gate
-    ssot_anchor: "user-confirmation-ux.md §3.1"
-    skill_step: "S1 判档 / 中途升档"
-    portable_menu: "1=接受建议档 2=升 full 3=保持 lite"
-    notes: "agent 依 change-rules.yaml track_scoring 提议档位；一票升 full 项（pixel_1to1 / 跨模块 / goal 模式）命中时不得提议 lite。中途升档复用本 gate：确认后 feature.yaml history append，change.md 作 spec/plan 种子。"
-    options:
-      - value: accept_suggested
-        label: "接受建议档 — 按评分建议的 track 进入对应链"
-        portable: "1=接受建议档"
-        side_effect: "写 feature.yaml track/score_snapshot/selection_source"
-      - value: upgrade_full
-        label: "升 full — 走 spec→plan→coding→review→ut→testing 全链"
-        portable: "2=升 full"
-        side_effect: "feature.yaml track: full；升档时 history append + change.md 作种子"
-      - value: keep_lite
-        label: "保持 lite — 走 change→coding→exit 单文档链"
-        portable: "3=保持 lite"
-
   # --- plan ---
   - id: plan.scope_expansion
     skill: "plan"
@@ -481,6 +482,7 @@ entries:
     skill_step: "Step 2.5"
     portable_menu: "1=已读并同意 2=拒绝 3=修改提议"
     requires_preamble: "须先展示完整 Scope 扩展提议正文"
+    notes: "CU-bound 不适用：模块范围由蓝图 touches 派生，范围扩大回 /component-design 做蓝图 revision。"
     options:
       - value: approve
         label: "已读并同意扩展 — 记录用户原话到 expansions_with_user_approval"
@@ -512,6 +514,7 @@ entries:
     class: enum
     ssot_anchor: "user-confirmation-ux.md §3.2"
     skill_step: "架构影响声明"
+    notes: "CU-bound 不适用：架构影响由蓝图 architecture_impact 决策裁决，plan 段只投影决策 id，变化回蓝图 revision；plan 不是 DSL writer。"
     portable_menu: "1=impact=none 2=dsl_change 3=其他(说明)"
     options:
       - value: none
@@ -792,3 +795,22 @@ entries:
       - value: edit_plan
         label: "修改计划 — 我要调整测试计划后再跑"
         portable: "2=修改计划"
+
+  # --- component design (formal-requirement entry) ---
+  - id: design.formality_routing
+    skill: "component-design"
+    class: enum
+    ssot_anchor: "user-confirmation-ux.md §3.2"
+    skill_step: "正式性判定（component-design 第 0 步；spec / change-lite 首次冻结施工意图时的兜底复核共用同一确认点）"
+    portable_menu: "1=正式需求 2=非正式维护 3=信息不足"
+    notes: "仅在判据信息不足、或兜底复核发现事项符合正式需求判据却未经蓝图时询问。上游已显式标为正式需求时该分类具权威性、不再询问。这是路由确认点，不是质量门禁：不新增 track_scoring 条目、不新增档位、不加机器 BLOCKER；三处入口共用本条目，不各建状态。"
+    options:
+      - value: formal_requirement
+        label: "正式需求 — 回 /component-design 建立部件演进蓝图后再施工"
+        portable: "1=正式需求"
+      - value: non_formal_maintenance
+        label: "非正式维护 — 不改变行为/契约/数据/NFR/运行语义/架构责任，继续 L0/L1 施工分档"
+        portable: "2=非正式维护"
+      - value: needs_clarification
+        label: "信息不足 — 继续澄清后再判，不猜测、不默认按任一侧处理"
+        portable: "3=信息不足"

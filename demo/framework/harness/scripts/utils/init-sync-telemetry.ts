@@ -21,17 +21,25 @@ export interface FileEffects {
 export interface CleanupResult {
   path: string;
   backup_path?: string;
-  kind: 'deprecated_artifact' | 'legacy_skill_bridge';
+  kind: 'deprecated_artifact' | 'legacy_skill_bridge' | 'hook_registration';
   adapter?: string;
   legacy_id?: string;
+  /** blocked=本工程内仍有引用，保留脚本；warning=引用指向工程外，已删本地副本待人工核对；failed=异常 */
+  status?: 'blocked' | 'failed' | 'warning';
+  message?: string;
 }
 
 export interface CleanupEffects {
   backup_deleted: number;
+  hook_configs_updated?: number;
+  blocked?: number;
+  warning?: number;
+  failed?: number;
 }
 
 export interface InitTaskExecutionResult {
   message: string;
+  failed?: boolean;
   file_effects?: FileEffects;
   file_results?: SyncTemplateResult[];
   cleanup_results?: CleanupResult[];

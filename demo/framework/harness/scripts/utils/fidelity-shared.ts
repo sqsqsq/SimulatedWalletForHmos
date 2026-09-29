@@ -9,6 +9,8 @@ import { createRequire } from 'module';
 import type { CheckContext, VisionMode } from './types';
 import { parseVisualHandoffYamlRoot, parseUiChangeFromSpecMarkdown, UI_CHANGE_REQUIRES_UI_SPEC } from './ui-spec-shared';
 import { featureFilePath, relFeaturesDir } from '../../config';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（fidelity 血缘/ux-reference 路径全链消费）
+import { featureRelativePath } from './feature-identity';
 import { readCanaryOcrCapableSignal } from './multimodal-probe';
 import { inspectGoalRunCreationFiles } from './goal-run-creation';
 
@@ -47,7 +49,9 @@ export interface RefElementEntry {
   color_ref?: string;
   icon_kind?: string;
   badge?: string;
-  disposition: 'implement' | 'defer';
+  /** plan c4e7a9b2 A2：`excluded` = 需求明文排除（非质量义务、非债务），须带 requirement_quote 逐字引自需求原文 */
+  disposition: 'implement' | 'defer' | 'excluded';
+  requirement_quote?: string;
   /** structured | vl — 第二刀双写优先级 */
   provenance?: 'structured' | 'vl';
 }
@@ -346,7 +350,7 @@ export function listAuthoritativeGoalRuns(
   feature: string,
   featuresDirRel = 'doc/features',
 ): AuthoritativeGoalRuns {
-  return classifyGoalRunsDir(path.join(projectRoot, featuresDirRel, feature, 'goal-runs'));
+  return classifyGoalRunsDir(path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs'));
 }
 
 /** 绝对路径口径（verify-feature-completion 等经 featureFilePath 解析目录的消费面）。 */
@@ -405,7 +409,7 @@ export function collectRequirementIntentText(
   feature: string,
   featuresDirRel = 'doc/features',
 ): string {
-  const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
+  const runsDir = path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs');
   if (!fs.existsSync(runsDir)) return '';
   const parts: string[] = [];
   // T1d：权威枚举单一入口（跳过 .dry 与残留——dry manifest 不再进需求意图/hash）。
@@ -416,12 +420,62 @@ export function collectRequirementIntentText(
       if (typeof m.requirement === 'string' && m.requirement.trim()) {
         parts.push(dereferenceRequirementDocs(projectRoot, m.requirement, {
           featuresDirRel,
-          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRelativePath(feature)}/`],
         }).combined);
       }
     } catch { /* 单 manifest 损坏跳过 */ }
   }
   return parts.join('\n\n');
+}
+
+/**
+ * plan c4e7a9b2 返修#1/#4：**当前执行身份**的权威需求原文（授权类门禁用，不合并历史 run）。
+ *  · goal：`MAISON_GOAL_RUN_ID` 对应权威 run 的 manifest.requirement（同源解引用）+ requirement_source_files 原文；
+ *  · 无 run：身份匹配（`phase:<feature>:spec`）的 explicit_cli fidelity-intent SSOT 所记单个
+ *    requirement_source_files 原文，且按原文重算 requirement_sha256 须等于签发值（`--requirement-file` 路径）。
+ * 其余一律空串——spec.md / 宽泛意图文本 / 行内 `--requirement`（未落原文）都不能授权。
+ */
+export function collectCurrentRequirementText(
+  projectRoot: string,
+  feature: string,
+  featuresDirRel = 'doc/features',
+): string {
+  const excludePrefixes = [`${featuresDirRel.replace(/\\/g, '/')}/${featureRelativePath(feature)}/`];
+  const readSource = (p: string): string => {
+    try {
+      return fs.readFileSync(path.isAbsolute(p) ? p : path.join(projectRoot, p), 'utf-8').replace(/^﻿/, '').trim();
+    } catch {
+      return '';
+    }
+  };
+  const runId = process.env.MAISON_GOAL_RUN_ID?.trim();
+  if (runId) {
+    if (!listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs.includes(runId)) return '';
+    try {
+      const m = JSON.parse(fs.readFileSync(
+        path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json'), 'utf-8',
+      )) as { requirement?: unknown; requirement_source_files?: unknown };
+      const parts = typeof m.requirement === 'string' && m.requirement.trim()
+        ? [dereferenceRequirementDocs(projectRoot, m.requirement, { featuresDirRel, excludePrefixes }).combined]
+        : [];
+      if (Array.isArray(m.requirement_source_files)) {
+        for (const f of m.requirement_source_files) if (typeof f === 'string') parts.push(readSource(f));
+      }
+      return parts.join('\n\n');
+    } catch {
+      return '';
+    }
+  }
+  const ssot = loadFidelityIntentSsot(projectRoot, feature);
+  const sources = ssot?.requirement_source_files ?? [];
+  if (
+    ssot?.requirement_provenance !== 'explicit_cli' ||
+    ssot.execution_identity !== `phase:${feature}:spec` ||
+    sources.length !== 1
+  ) return '';
+  const text = readSource(sources[0]);
+  if (!text || computeRequirementShaFromText(projectRoot, feature, text, featuresDirRel) !== ssot.requirement_sha256) return '';
+  return dereferenceRequirementDocs(projectRoot, text, { featuresDirRel, excludePrefixes }).combined;
 }
 
 /**
@@ -436,7 +490,8 @@ export function collectRequirementSsotPaths(
   featuresDirRel = 'doc/features',
 ): string[] {
   const out = new Set<string>();
-  const runsDir = path.join(projectRoot, featuresDirRel, feature, 'goal-runs');
+  const featureRel = featureRelativePath(feature);
+  const runsDir = path.join(projectRoot, featuresDirRel, featureRel, 'goal-runs');
   if (fs.existsSync(runsDir)) {
     // T1d：权威枚举单一入口（.dry/残留不入阶段血缘——更晚 dry run 不得改变 lineage）。
     for (const runId of listAuthoritativeGoalRuns(projectRoot, feature, featuresDirRel).runs) {
@@ -444,12 +499,12 @@ export function collectRequirementSsotPaths(
       // codex 七轮 P0-2：manifest.json 本身入血缘——内联 manifest.requirement 被改
       //（不解引用任何文件）也必须使上游 closure stale。此前只收解引用文件，纯内联
       // 需求改写对 closure 隐形。
-      out.add(path.join(featuresDirRel, feature, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
+      out.add(path.join(featuresDirRel, featureRel, 'goal-runs', runId, 'manifest.json').split(path.sep).join('/'));
       try {
         const m = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { requirement?: string };
         for (const rel of dereferenceRequirementDocs(projectRoot, m.requirement, {
           featuresDirRel,
-          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${feature}/`],
+          excludePrefixes: [`${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`],
         }).resolvedPaths) {
           out.add(rel);
         }
@@ -457,12 +512,12 @@ export function collectRequirementSsotPaths(
     }
   }
   // ux-reference 参考图
-  const uxDir = path.join(projectRoot, featuresDirRel, feature, 'ux-reference');
+  const uxDir = path.join(projectRoot, featuresDirRel, featureRel, 'ux-reference');
   try {
     if (fs.existsSync(uxDir)) {
       for (const f of fs.readdirSync(uxDir)) {
         if (/\.(jpe?g|png|webp|bmp)$/i.test(f)) {
-          out.add(path.join(featuresDirRel, feature, 'ux-reference', f).split(path.sep).join('/'));
+          out.add(path.join(featuresDirRel, featureRel, 'ux-reference', f).split(path.sep).join('/'));
         }
       }
     }
@@ -483,7 +538,7 @@ export function computeRunRequirementSha(
   featuresDirRel = 'doc/features',
 ): string | null {
   if (!runId) return null;
-  const manifestPath = path.join(projectRoot, featuresDirRel, feature, 'goal-runs', runId, 'manifest.json');
+  const manifestPath = path.join(projectRoot, featuresDirRel, featureRelativePath(feature), 'goal-runs', runId, 'manifest.json');
   if (!fs.existsSync(manifestPath)) return null;
   let requirement: string;
   try {
@@ -505,7 +560,8 @@ export function computeRequirementShaFromText(
   requirement: string,
   featuresDirRel = 'doc/features',
 ): string {
-  const currentFeaturePrefix = `${featuresDirRel.replace(/\\/g, '/')}/${feature}/`;
+  const featureRel = featureRelativePath(feature);
+  const currentFeaturePrefix = `${featuresDirRel.replace(/\\/g, '/')}/${featureRel}/`;
   const deref = dereferenceRequirementDocs(projectRoot, requirement, {
     featuresDirRel,
     excludePrefixes: [currentFeaturePrefix],
@@ -1082,7 +1138,7 @@ export function collectIntentTextWithPhaseFallback(
   const goalText = collectRequirementIntentText(projectRoot, feature, featuresDirRel);
   if (goalText.trim()) return goalText;
   const parts: string[] = [];
-  const featRoot = path.join(projectRoot, featuresDirRel, feature);
+  const featRoot = path.join(projectRoot, featuresDirRel, featureRelativePath(feature));
   const EXCLUDE = new Set(['visual-debt.md']);
   try {
     if (fs.existsSync(featRoot)) {
@@ -1151,7 +1207,14 @@ export function loadRefElementsFile(absPath: string): RefElementsDoc | null {
   try {
     const doc = YAML.parse(fs.readFileSync(absPath, 'utf-8')) as RefElementsDoc;
     if (!doc || typeof doc !== 'object' || !Array.isArray(doc.elements)) return null;
-    return doc;
+    // plan c4e7a9b2 返修#3：读兼容——缺省/非法 disposition 按 implement（旧口径 `!== 'defer'` 的等价），
+    // 下游一律严格 `=== 'implement'`，旧条目不得因此静默移出分母。
+    return {
+      ...doc,
+      elements: doc.elements.map(e => (e && typeof e === 'object' && e.disposition !== 'defer' && e.disposition !== 'excluded'
+        ? { ...e, disposition: 'implement' as const }
+        : e)),
+    };
   } catch {
     return null;
   }

@@ -75,7 +75,7 @@ export function isOperatorInterruptSignal(
  * 优先级：operator_interrupt（控制台中断类退出，压过一切）> agent_timeout（runner tree-kill
  * 确定性事实）>
  * transient_api_error（断流串可能是被杀连带产生，故 timed_out 时不判断流）>
- * agent_no_output > blocker 归因。
+ * agent_no_output > current harness failure without a fresh summary > blocker 归因。
  */
 export interface AgentInvokeSignals {
   /** invoke.timed_out === true（maison 自己的预算 tree-kill） */
@@ -84,14 +84,16 @@ export interface AgentInvokeSignals {
   agentApiError?: boolean;
   /** 0 字节输出保守兜底（preflight 已过 + 无 spawn error + 极短时长 + exit≠0） */
   agentNoOutput?: boolean;
+  /** 当前 harness 非零退出且没有刷新 summary；只能消费本次执行诊断，不能借旧 blocker 归因。 */
+  harnessFailedWithoutFreshSummary?: boolean;
   /** isOperatorInterruptSignal(exitCode, signal) 命中——控制台中断类退出，非任何一种"内容失败"。 */
   operatorInterrupt?: boolean;
   /**
    * P0-5/P0-3 freshness（plan d9b4f7e2 决策表）：resolved.stale_summary——本轮 harness 是否
    * **没有**产出新 summary（mtime 未更新）。fresh（false）时超时轮的确定性 integrity/
    * framework_bug 证据可信（harness 在 tree-kill agent 之后新鲜跑出），优先于 agent_timeout；
-   * stale（true）时旧 summary 的此类证据不可信，一律归 agent_timeout。未传视同 stale
-   * （fail-safe：宁可多续作一轮，不凭旧证据 halt）。
+   * stale（true）时旧 summary 的此类证据不可信；若本轮 harness 明确非零退出，按当前
+   * harness failure 归确定性执行失败，否则回落 agent_timeout。未传视同 stale。
    */
   staleSummary?: boolean;
 }
@@ -245,6 +247,10 @@ export const ADVANCE_BLOCKED_HALT_THRESHOLD = 2;
  * Coverage: spec/plan/review artifact gates + receipt trace/context gates.
  */
 export const DETERMINISTIC_GATE_BLOCKER_IDS = new Set<string>([
+  // harness-runner legal early exits
+  'capability_resolution_contract',
+  'execution_scope_frozen',
+  'feature_artifact_resolution',
   // check-spec.ts
   'spec_file_exists',
   'terminology_mapping_table',
@@ -270,6 +276,13 @@ export interface GoalSummaryBlocker {
   affected_files?: string[];
   /** P0-4（plan 7c4f2e9b）：check 侧显式 actionability（优先级链第一环；缺省走注册表映射） */
   actionability?: BlockerActionability;
+  /**
+   * plan e7a2c4f1 §3.4（G28）：check 侧已判出的责任方（`repair_candidates` 的同一字段）。
+   * 归因据此避开"证据通道断裂被说成 code_regression"——`spec` 归 `spec_capture_gap`
+   * （与 `ui_spec_fidelity_gate` 同族：验读证据没建立起来，没有一支指向产品源码），
+   * `capability` 归 `toolchain`（盲重试无益、早 halt）。`coding` 沿既有兜底不改。
+   */
+  repair_owner?: string;
 }
 
 // ============================================================================
@@ -279,7 +292,7 @@ export interface GoalSummaryBlocker {
 // 兼容映射 → 缺省 agent_fixable（未登记 blocker 行为不变）。
 // ============================================================================
 
-export type BlockerActionability = 'agent_fixable' | 'human_only' | 'toolchain_blocked';
+export type BlockerActionability = 'agent_fixable' | 'human_only' | 'toolchain_blocked' | 'framework_blocked';
 
 /** human_only 兼容映射：仅剩已退役的历史门禁 id。当前 blocker 不得进入人签队列。 */
 const HUMAN_ONLY_BLOCKER_IDS: ReadonlySet<string> = new Set<string>([
@@ -305,6 +318,7 @@ export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActio
   const id = b.id ?? '';
   if (HUMAN_ONLY_BLOCKER_IDS.has(id)) return 'human_only';
   if (b.classification && HUMAN_ONLY_CLASSIFICATIONS.has(b.classification)) return 'human_only';
+  if (b.classification === 'framework_bug' || b.blocking_class === 'framework_internal') return 'framework_blocked';
   if (
     RUNTIME_OWNED_BASELINE_BLOCKERS.has(id) ||
     (b.classification && RUNTIME_OWNED_BASELINE_BLOCKERS.has(b.classification))
@@ -316,11 +330,13 @@ export function resolveBlockerActionability(b: GoalSummaryBlocker): BlockerActio
 
 export interface ActionabilityAggregate {
   hasToolchain: boolean;
+  hasFramework: boolean;
   /** blockers 非空且全部 human_only（求人谓词 ¬∃agent_fixable ∧ ∃human_only） */
   allHumanOnly: boolean;
   agentFixableIds: string[];
   humanOnlyIds: string[];
   toolchainIds: string[];
+  frameworkIds: string[];
 }
 
 export function aggregateBlockerActionability(
@@ -330,20 +346,24 @@ export function aggregateBlockerActionability(
   const agentFixableIds: string[] = [];
   const humanOnlyIds: string[] = [];
   const toolchainIds: string[] = [];
+  const frameworkIds: string[] = [];
   for (const b of blockers) {
     const id = b.id ?? '(unnamed)';
     switch (resolveBlockerActionability(b)) {
       case 'toolchain_blocked': toolchainIds.push(id); break;
       case 'human_only': humanOnlyIds.push(id); break;
-      default: agentFixableIds.push(id);
+      case 'framework_blocked': frameworkIds.push(id); break;
+      case 'agent_fixable': agentFixableIds.push(id); break;
     }
   }
   return {
     hasToolchain: toolchainIds.length > 0,
-    allHumanOnly: blockers.length > 0 && agentFixableIds.length === 0 && toolchainIds.length === 0 && humanOnlyIds.length > 0,
+    hasFramework: frameworkIds.length > 0,
+    allHumanOnly: blockers.length > 0 && agentFixableIds.length === 0 && toolchainIds.length === 0 && frameworkIds.length === 0 && humanOnlyIds.length > 0,
     agentFixableIds,
     humanOnlyIds,
     toolchainIds,
+    frameworkIds,
   };
 }
 
@@ -379,6 +399,15 @@ export interface GoalSummaryLike {
   blocking_class?: string;
   failure_kind?: string;
   blockers?: GoalSummaryBlocker[];
+  repair_candidates?: Array<{ id?: string; files?: string[] }>;
+}
+
+/** Machine-related content paths only; prose/notes/HEAD are deliberately absent. */
+export function extractContentRelatedFiles(summary: GoalSummaryLike | null | undefined): string[] {
+  return [...new Set([
+    ...(summary?.repair_candidates ?? []).flatMap(candidate => candidate.files ?? []),
+    ...(summary?.blockers ?? []).flatMap(blocker => blocker.affected_files ?? []),
+  ].map(file => file.trim().replace(/\\/g, '/')).filter(Boolean))];
 }
 
 const CURRENT_INTEGRITY_ID = 'node_options_injection';
@@ -584,6 +613,8 @@ export function classifyFailureKind(
   }
   if (signals?.agentApiError) return 'transient_api_error';
   if (signals?.agentNoOutput) return 'agent_no_output';
+  if (signals?.harnessFailedWithoutFreshSummary) return 'deterministic_gate_or_artifact_missing';
+  if (signals?.staleSummary === true) return 'agent_timeout';
   // 历史 framework-only summary 没有当前失败事实。返回中性 continuation kind，且
   // goal-phase-runtime 会在调用 classifier 前直接剥离，不把该值写入 prompt/halt/retry。
   if (!currentSummary) return 'agent_timeout';
@@ -636,13 +667,32 @@ export function classifyFailureKind(
   // 不落 code_regression（事故 i3/i4 即被误标）、不复用 capture 桶（其语义=修采集导航）、
   // 不入 SIGNATURE_HALT_KINDS（主出口=actionability 聚合层即时求人，不靠粗熔断兜底）。
   if (ids.some(isSpecCaptureGapBlockerId)) return 'spec_capture_gap';
+  // plan e7a2c4f1 §3.4（G28）：check 层已判出责任方时不再落兜底 code_regression——
+  // 宿主 7 次 testing 失败里 6 次就是这么被说成"改码"的。`repair_owner` 是
+  // `repair_candidates` 既有字段，这里只是让归因读同一份事实，不新增分类。
+  // 产品真值（`coding`）仍走兜底，不改。
+  const owners = new Set((currentSummary.blockers ?? []).map((b) => b.repair_owner).filter(Boolean));
+  if (!owners.has('coding')) {
+    if (owners.has('capability')) return 'toolchain';
+    if (owners.has('spec')) return 'spec_capture_gap';
+  }
   return 'code_regression';
 }
 
+/**
+ * plan 2f8a6d40 D2：精确 id（非前缀）也归 spec_capture_gap。`ui_spec_fidelity_gate` 的四个
+ * FAIL 出口（spec-ui-spec-check.ts:296/:334/:375）**全部**是"验读证据没建立起来"——
+ * unreachable / not_probed / not_yet / mismatch / 有视觉能力却没核对原图，没有一支指向产品
+ * 源码。落 catch-all 的 code_regression 会触发 goal-phase-runtime.ts:3568 的"先 revert 上一轮
+ * 改动"指导，对一个缺视觉回执的 spec 阶段是错向指令（宿主 run 20260905T103028Z-79d3fd 第 104 行）。
+ * 与 isCaptureBlockerId / isToolchainBlockerId 同一写法（前缀 ∪ 精确 id 集）。
+ */
+const SPEC_CAPTURE_GAP_BLOCKER_IDS: ReadonlySet<string> = new Set<string>(['ui_spec_fidelity_gate']);
+
 /** spec 期捕获完整性缺口族（capture_completeness / capture_completeness_external 等；
- * ocr_unavailable 已被 toolchain 表先行吸收） */
+ * ocr_unavailable 已被 toolchain 表先行吸收）+ ui-spec 保真门的缺证类失败 */
 export function isSpecCaptureGapBlockerId(id: string): boolean {
-  return id.startsWith('capture_completeness');
+  return id.startsWith('capture_completeness') || SPEC_CAPTURE_GAP_BLOCKER_IDS.has(id);
 }
 
 /** Collect affected_files from deterministic blockers on the summary. */
@@ -712,6 +762,11 @@ export interface NoProgressGuardInput {
   currentBlockerSignature: string;
   priorArtifactSnapshot: ArtifactSnapshot | null;
   currentArtifactSnapshot: ArtifactSnapshot;
+  /**
+   * content 失败的相关文件集合是否已由机器证据解析且非空
+   * （`extractContentRelatedFiles` = `repair_candidates[].files` ∪ `blockers[].affected_files`）。
+   */
+  relevantEvidenceKnown?: boolean;
 }
 
 /**
@@ -722,10 +777,23 @@ export interface NoProgressGuardInput {
  *      达成"工具链/采集反复失败不吃视觉迭代预算"的预算分流）。
  *   - visual_gap：同一组视觉门禁 signature 重复（coding 上一轮"修"未改变任何失败门禁）= 无改善 → 熔断求人，
  *     避免 homepage 那种"3 轮把卡包瞎挪、视觉门禁原样复现"的空转。
- *   - code_regression：仍永不 guard-halt（偏好重试，可能是自引入回归）。
+ *   - code_regression：相关集合**已知**时仍要求可比内容基线（不得用空快照冒充"无改动"）；
+ *     相关集合**未知或为空**时（无 repair candidate、无 blocker affected_files）意味着
+ *     没解析出可修目标＝本阶段无路可走，同签名重复即停（plan e7a2c4f1 §3.6，覆盖
+ *     1f3d7a92 §3.3 顺带选的"退回有界重试烧满 max_retries_per_phase"出路——那条路在三轮
+ *     宿主实测里 8 次同签名零进展、且终态理由 `content_retry_exhausted` 把账本问题说成
+ *     内容问题）。**空集只说明"没解析出目标"，不能说成"证明了没修"**，调用点的文案因此
+ *     必须写「相关目标未知」。不新增 halt reason，仍走既有 `no_progress_guard`。
  */
 export function shouldHaltNoProgress(input: NoProgressGuardInput): boolean {
-  if (!SIGNATURE_HALT_KINDS.has(input.failureKind)) return false;
+  const priorKeys = Object.keys(input.priorArtifactSnapshot ?? {}).sort();
+  const currentKeys = Object.keys(input.currentArtifactSnapshot).sort();
+  const comparableContentBaseline = priorKeys.length > 0 && currentKeys.length > 0 &&
+    JSON.stringify(priorKeys) === JSON.stringify(currentKeys);
+  const eligible = SIGNATURE_HALT_KINDS.has(input.failureKind) ||
+    (input.failureKind === 'code_regression' &&
+      (input.relevantEvidenceKnown === true ? comparableContentBaseline : true));
+  if (!eligible) return false;
   if (!input.priorBlockerSignature || input.priorBlockerSignature.length === 0) return false;
   if (input.priorBlockerSignature !== input.currentBlockerSignature) return false;
   return !artifactsProgressed(input.priorArtifactSnapshot, input.currentArtifactSnapshot);

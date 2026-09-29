@@ -185,6 +185,46 @@ export function dispatchUtRun(
   return fn(options);
 }
 
+/**
+ * 准备期（`--prepare-request`）的**只读**目标探测（plan a9f3c7d2 A10）。
+ *
+ * 与 `dispatchRequestTests` 的差别只有一处：provider 没有导出该函数时**返回空数组**而不是抛错——
+ * 旧 profile / 未适配 provider 的现状因此原样保持（准备期不产生 gap，执行期行为一行不变）。
+ */
+export function dispatchRequestTargetProbe(
+  resolved: HarnessResolvedProfile,
+  phase: string,
+  projectRoot: string,
+  tests: readonly string[],
+): string[] {
+  const key: CapabilityKey = phase === 'ut' ? 'ut.run' : 'device_test.run';
+  // 「本来就没有可执行 provider」是正常形态（未声明 / none / SKIP）：静默返回空，现状不变。
+  const capability = resolved.capabilities[key];
+  const provider = capability?.provider?.trim();
+  if (!capability || !provider || provider === 'none' || capability.severity === 'SKIP') return [];
+  let mod: ProviderModule & { provider?: ProviderMetadata };
+  try {
+    mod = requireCapabilityProvider(resolved, key) as ProviderModule & { provider?: ProviderMetadata };
+  } catch (error) {
+    // 到这里说明 provider **应该**可用却加载失败（缺依赖、模块异常、metadata 不匹配）——
+    // 那是真实缺口，不能和「没有探测导出」混成同一种静默（第一轮代码 review 建议 2）。
+    return [`capability:${key}:provider_unavailable（${(error as Error).message}）`];
+  }
+  if (mod.provider && !mod.provider.exports.includes('inspectRequestTargets')) return [];
+  const fn = mod['inspectRequestTargets'];
+  if (typeof fn !== 'function') return [];
+  const result = fn(projectRoot, tests) as { gaps?: unknown } | undefined;
+  return Array.isArray(result?.gaps) ? (result!.gaps as unknown[]).filter((gap): gap is string => typeof gap === 'string') : [];
+}
+
+/** Request transport on the same installed test capability; no caller-supplied commands. */
+export function dispatchRequestTests(ctx: CheckContext<'request'>): unknown | Promise<unknown> {
+  const key = ctx.phase === 'ut' ? 'ut.run' : 'device_test.run';
+  if (isCapabilitySkipped(ctx.resolvedProfile, key)) throw new Error(`request requires unavailable capability ${key}`);
+  const fn = requireProviderFunction(ctx.resolvedProfile, key, 'runRequestTests');
+  return fn(ctx);
+}
+
 export function probeUtRunDevices(ctx: CheckContext): any {
   const fn = requireProviderFunction(ctx.resolvedProfile, 'ut.run', 'probeDevices');
   return fn();
@@ -352,13 +392,7 @@ export function dispatchCodingVisualParity(ctx: CheckContext): CheckResult[] {
     'coding.visual_parity',
     'checkVisualParity',
   );
-  // v23 F4：悬空 $r 引用扫描——coding 是素材被删的实际现场，确定性 FAIL 档位无关。
-  //（asset-nondestructive 的五级证据/baseline 体系已删，此为唯一保留的素材完整性硬门禁；
-  //  "文件存在但页面没渲染"交 visual-diff，"换成错误真图"交视觉对照，不伪装成静态可判。）
-  const mediaRefFn = requireProviderFunction<(c: CheckContext) => CheckResult[]>(
-    ctx.resolvedProfile, 'coding.visual_parity', 'checkMediaReferenceIntegrity',
-  );
-  return [...fn(ctx), ...mediaRefFn(ctx)];
+  return fn(ctx);
 }
 
 export function dispatchPlanVisualParity(ctx: CheckContext): CheckResult[] {

@@ -46,7 +46,7 @@ export interface VisualDebtDoc {
   entries: VisualDebtEntry[];
 }
 
-/** 债务源 check（id → 归类）；非 PASS 都保持机器可见 open debt。 */
+/** 债务源 check（id → 归类）；FAIL 与非 MINOR SKIP 保持机器可见 open debt（WARN 只披露不入账，plan a3f7c1d9 D3(b)）。 */
 const DEBT_SOURCE_CHECKS: Record<string, { label: string }> = {
   visual_parity_unverified_crop: { label: '素材未验真（crop 未过 asset_crop_validation）' },
   asset_materialization_sanity: { label: '物化素材 sanity 违例（空白/纯色/损坏/role 失配）' },
@@ -57,6 +57,8 @@ const DEBT_SOURCE_CHECKS: Record<string, { label: string }> = {
   visual_multimodal_parity: { label: '视觉多模态层降级（盲档 SKIP，保真未验）' },
   capture_completeness_external: { label: '参考图覆盖缺口（盲档能力/证据清单）' },
   visual_diff: { label: '设备视觉对照未产出/未达' },
+  // B08 D3（plan 9b2d5e7c）：长图参考按顶部一屏比对时，顶部之外的 must_have 零证据——显式未验证入债务
+  visual_reference_viewport: { label: '参考图顶部一屏外未验证' },
 };
 
 export function visualDebtJsonPath(projectRoot: string, feature: string): string {
@@ -109,8 +111,9 @@ interface CheckLike {
  * 单调 ledger reducer（codex 实施 review P0-1 重构）：
  *   - check 本轮**缺席**（该 phase 不跑此检查）→ 历史条目原样保留——债务跨阶段单调，
  *     coding 期的债不因 testing 期不跑 visual_parity 而蒸发；
- *   - 同 scope 本轮**明确 PASS** → 才允许 closed（审计行保留）；
- *   - 只有源 check 转绿才能关闭；legacy accepted 在进入 reducer 时重开。
+ *   - 本轮 **FAIL 或非 MINOR SKIP**（盲档，无投影兜底）→ 开账/续账；
+ *   - 同 scope 本轮 **PASS 或 WARN**（且无前者）→ 才允许 closed（审计行保留）；仅 MINOR SKIP 同缺席保留；
+ *   - 只有源 check 转绿/降为披露才能关闭；legacy accepted 在进入 reducer 时重开。
  * 粒度：check 级为主键基座；带结构化 findings 的源（render_visibility 逐屏、
  * asset_materialization_sanity 逐素材）展开为 `debt:<check>:<scope>` 子条目，逐项清偿可审计。
  */
@@ -150,23 +153,47 @@ export function deriveVisualDebt(
   };
 
   for (const [checkId, meta] of Object.entries(DEBT_SOURCE_CHECKS)) {
-    const hits = checks.filter(c => c.id === checkId);
-    if (hits.length === 0) {
-      // 本轮缺席：历史条目单调保留（含该 check 的全部 scope 子条目）
+    // plan a3f7c1d9 D3(a)：visual_diff 结果在只有 WARN 命中时以 visual_diff_layout_invariants
+    // 之名落盘（finalizeVisualDiffHits；structured.kind 仍 'visual_diff'）——按 kind 归集，
+    // 否则 BLOCKER 债务永不闭账。
+    const hits = checks.filter(
+      c => c.id === checkId
+        || (checkId === 'visual_diff' && (c.structured as { kind?: unknown } | undefined)?.kind === 'visual_diff'),
+    );
+    // D3(b) 四态收口（codex R2 #2 + 实施 review R1 SKIP 裁定）：FAIL 或非 MINOR SKIP（盲档整体 SKIP 时
+    // 没有任何东西阻断发布，保留既有兜底）开账/续账；PASS 或 WARN（且无前者）关账（WARN 是披露不是债务，
+    // 披露面照旧走 check 结果/summary/visual_debt_disclosure）；仅 MINOR SKIP 或缺席保留历史。
+    const worst = hits.find(c => c.status === 'FAIL')
+      ?? hits.find(c => c.status === 'SKIP' && c.severity !== 'MINOR');
+    const settled = hits.some(c => c.status === 'PASS' || c.status === 'WARN');
+    // plan 6644ea45 §4.3 窄例外：gate 物化的降级屏（soft 档自报 major 残差，aggregate 仍 WARN）逐屏开账，
+    // 阻断发布；同屏 minor 随屏 scope 入账。其余 WARN 仍按四态关账。
+    const downgraded = checkId === 'visual_diff'
+      ? [...new Set(hits.flatMap(c => {
+          const list = (c.structured as { downgraded_screens?: unknown } | undefined)?.downgraded_screens;
+          return Array.isArray(list) ? list.filter((s): s is string => typeof s === 'string' && s.length > 0) : [];
+        }))]
+      : [];
+    if (!worst && !settled) {
+      // 本轮缺席 / 仅 MINOR SKIP：历史条目单调保留（含该 check 的全部 scope 子条目）
       for (const pe of prevEntries.filter(e => e.source_check_id === checkId)) emit(pe);
       continue;
     }
-    const worst = hits.find(c => c.status === 'FAIL') ?? hits.find(c => c.status === 'WARN')
-      ?? hits.find(c => c.status === 'SKIP' && c.severity !== 'MINOR');
-    if (!worst) {
-      // 本轮明确 PASS → 该 check 全部历史条目闭账 closed（审计保留）
+    if (!worst && downgraded.length === 0) {
+      // 本轮 PASS / WARN（无 FAIL、无非 MINOR SKIP）→ 该 check 全部历史条目闭账 closed（审计保留）
       for (const pe of prevEntries.filter(e => e.source_check_id === checkId)) {
         emit(pe.status === 'closed' ? pe : { ...pe, status: 'closed' });
       }
       continue;
     }
     const resolutionClass: DebtResolutionClass = 'needs_fix';
-    const currentScopes = scopesOf(checkId, worst);
+    const currentScopes: ReturnType<typeof scopesOf> = [
+      ...(worst ? scopesOf(checkId, worst) : []),
+      ...downgraded.map(sc => ({
+        id: `debt:${checkId}:${sc}`, screen_id: sc, summaryExtra: `（屏 ${sc}，按档位降级的自报残差）`,
+      })),
+    ];
+    const severity = worst?.severity ?? 'MAJOR';
     const currentIds = new Set(currentScopes.map(s => s.id));
     for (const scope of currentScopes) {
       const prevEntry = prevById.get(scope.id);
@@ -174,7 +201,7 @@ export function deriveVisualDebt(
       emit({
         id: scope.id,
         source_check_id: checkId,
-        severity: worst.severity,
+        severity,
         summary: `${meta.label}${scope.summaryExtra ?? ''}`,
         status,
         resolution_class: resolutionClass,

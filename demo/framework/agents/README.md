@@ -22,9 +22,10 @@ framework/agents/
 ├── cursor/                      ← Cursor adapter（AGENTS.md + .cursor/skills/ 跳板 + .cursor/rules/）
 │   ├── adapter.yaml
 │   └── templates/
-└── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + goal_capability）
+└── codex/                       ← Codex CLI adapter（AGENTS.md + .codex/skills/ 跳板 + .codex/agents/ + goal_capability）
     ├── adapter.yaml
     └── templates/
+        └── agents/              ← 角色 toml（verifier.toml，由 claude verifier.md 渲染，勿手改）
 ├── chrys/                       ← Chrys agent adapter（AGENTS.md + .agents/ bundle + chrys run headless）
 │   ├── adapter.yaml
 │   └── templates/
@@ -82,7 +83,9 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 - **正确落点**：扩写写到 `framework/skills/<n>/` 正文及同目录 `prompts/`、`templates/`、`reference/`；需要改跳板默认形态时改 **本目录下对应 adapter 子目录** 的 `templates/`，再经 Framework 初始化（framework-init）render 下发，**勿**仅在实例跳板内手补。
 - Cursor 侧的会话级总规则与本条呼应：见 `cursor/templates/rules/framework.mdc`（Skill 路由第三条）。
 
-**v2.3+ 扁平 skill-id**：实例根跳板目录/文件使用扁平名（如 `.cursor/skills/coding/`、`.claude/commands/coding.md`），不再生成编号形态的旧目录。UPDATE `framework-init` 的 `cleanup-deprecated` 任务会按 `materialized_adapters` 自动 `backup_delete` 遗留 skill 跳板（含语义旧名如 `prd-design` / `requirement-design`；备份 `.framework-backup/<timestamp>/`）；**勿**再依赖宿主手工删旧跳板。旧 adapter 级废弃目录（`adapter.yaml` `deprecated_artifacts`）仍走同一任务。
+**全 adapter 升级清理**：UPDATE `framework-init` 的 `cleanup-deprecated` 检查发布件中全部 adapter，包含已退出 `materialized_adapters` 的历史残留。旧 skill/command 名（编号、`prd-design` / `requirement-design`、`goal-orchestration` 等）按各 adapter 的物化目录声明清理，generic 跟随 `paths.agent_bundle_root`。专属退役文件登记在 `adapter.yaml` 的 `deprecated_artifacts`；退役 hook 同时登记 `hook_configs`，先移除旧注册再删除脚本，保留宿主其他 hook/配置。所有修改先备份到 `.framework-backup/<timestamp>/`，S3 run-log 分别记录删除数与 hook 配置更新数。配置仍含脚本引用时保留脚本并记 blocked（任务不因此 failed）；引用全部解析到工程外的绝对路径时不阻断删除本地副本，配置逐字不变并记 warning 待人工核对；非法配置/清理抛错记 failed。三类诊断都进 run-log，其余 adapter/旧跳板一律继续处理。CREATE 或跳过清理任务不执行此操作。
+
+**维护约定**：删除或迁移已发布的模板时，必须同步登记旧产物路径或共享旧 skill/command 名，并验证升级清理；仅删除发布件模板不会自动删除宿主文件。无专属退役项的 adapter 可省略 `deprecated_artifacts`，仍支持共享清理机制。共享目录内仍被其他 adapter 使用的现行产物、未知宿主自有文件不作整目录清空；“无 deprecated 需清理”仅表示已登记范围没有命中，不代表任意历史误生成文件均不存在。
 
 ## Init Skill：编排流（framework-init · S1–S4）
 
@@ -101,8 +104,8 @@ schema、组合约束与 fallback 以 [`adapter-schema.yaml`](./adapter-schema.y
 |--------------------------|--------------------------------------------|--------------|
 | `generic` | `AGENTS.md` | `{paths.agent_bundle_root}/skills/` + `{paths.agent_bundle_root}/rules/`（根目录名由用户指定，如 `.agents`） |
 | `claude` | `CLAUDE.md` | `.claude/commands/*.md`、`.claude/agents/verifier.md`、`.claude/settings.json`、`.claude/hooks/*.mjs` |
-| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（8 份内置跳板）、`.cursor/rules/framework.mdc` |
-| `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md` |
+| `cursor` | `AGENTS.md` | `.cursor/skills/<skill>/SKILL.md`（16 份内置跳板）、`.cursor/rules/framework.mdc` |
+| `codex` | `AGENTS.md` | `.codex/skills/<skill>/SKILL.md`（bridge 跳板）、`.codex/rules/interaction-renderer.md`、`.codex/agents/verifier.toml`（生成物） |
 | `chrys` | `AGENTS.md` | `.agents/skills/<skill>/SKILL.md`（bridge 跳板）、`.agents/rules/interaction-renderer.md` |
 | `opencode` | `AGENTS.md` | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板；技能自动注册为 slash）、`.opencode/rules/interaction-renderer.md` |
 | `codeagent` | `AGENTS.md` | `.cac/commands/*.md`（自有副本，身份行=codeagent）、`.cac/agents/verifier.md`、`.cac/settings.json`（变量 `${CODEAGENT3_PROJECT_DIR}`）、`.cac/hooks/*.mjs`、`.cac/rules/*.md`（与 claude 共享模板） |
@@ -135,6 +138,9 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | 其它自定义 bundle | `["generic"]`（默认 `.agents`/bridge 零配置；仅非标 bundle 根须显式配置 `paths.agent_bundle_root`） |
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
+
+实例扩展另走 `/extension materialize`：它只读项目级 `materialized_adapters[]`，为每个已物化 adapter
+刷新 extension Skill bridge 与 AGENTS/CLAUDE 扩展段；不读个人 active adapter。
 
 ## Adapter 选定建议（personal setup · framework-initb）
 
@@ -199,7 +205,7 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 | generic | AGENTS.md | — | `{agent_bundle_root}/skills/*`（bridge 薄跳板；inline 已废弃） | `{agent_bundle_root}/rules/*.mdc` | — | — |
 | claude  | CLAUDE.md | `.claude/commands/*.md` + `.claude/agents/verifier.md` | — | `.claude/rules/*.md` | `.claude/settings.json` | `.claude/hooks/*.mjs` |
 | cursor  | AGENTS.md | — | `.cursor/skills/<skill>/SKILL.md`（模板 SSOT：`shared/agent-bundle/templates/skills-bridge`） | `.cursor/rules/*.mdc` | — | — |
-| codex   | AGENTS.md | — | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
+| codex   | AGENTS.md | —（顶层 `subagents` → `.codex/agents/verifier.toml`，生成物） | `.codex/skills/<skill>/SKILL.md`（bridge 跳板） | `.codex/rules/interaction-renderer.md` | — | — |
 | chrys   | AGENTS.md | — | `.agents/skills/<skill>/SKILL.md`（bridge 跳板） | `.agents/rules/interaction-renderer.md` | — | — |
 | opencode | AGENTS.md | —（技能自动注册 slash） | `.opencode/skill/<skill>/SKILL.md`（自有原生目录；bridge 跳板） | `.opencode/rules/interaction-renderer.md` | — | — |
 | codeagent | AGENTS.md | `.cac/commands/*.md`（自有副本）+ `.cac/agents/verifier.md`（共享模板） | — | `.cac/rules/*.md`（共享模板） | `.cac/settings.json` | `.cac/hooks/*.mjs`（共享模板） |
@@ -235,6 +241,11 @@ verifier 不是每阶段必跑的仪式，而是按 workflow 声明 + evidence p
 
 写者只有一个，且不是 verifier 自己：verifier 保持只读工具集。闭环侧只校验三条——文件在、终态块
 回显的 subject 等于 `summary.verifier_subject_id`、verdict 与 blocker_count 一致。
+
+**codex 的审查员人设由 claude 的 `verifier.md` 渲染**（`.codex/agents/verifier.toml`，顶层 `subagents`
+声明 + `auto_overwrite`；`cd harness && npm run sync:codex-agents` 生成，等值由 unit test 守护）；
+其中 `sandbox_mode = "read-only"` **只是角色默认值**——Codex spawn_agent 会用父线程实时权限覆盖
+（goal 父进程为 danger-full-access），不构成隔离保证，不写盘靠正文硬性规则（plan 7b2e9d4c D1/D3）。
 
 **只登记宿主实跑观测过的 adapter**（入册纪律）：claude / codeagent / codex 已登记；
 cursor / opencode / chrys / generic 未登记。共享规则文件被物化 **不等于** 运行时会读取——opencode

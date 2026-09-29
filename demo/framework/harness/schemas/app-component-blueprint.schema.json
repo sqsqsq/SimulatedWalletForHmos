@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmaison.dev/schemas/app-component-blueprint.schema.json",
+  "title": "AgentMaison App Component Blueprint",
+  "type": "object",
+  "required": [
+    "artifact",
+    "component_id",
+    "blueprint_id",
+    "revision",
+    "source_fingerprint",
+    "decision_fingerprint",
+    "provenance",
+    "review_summary",
+    "design_views",
+    "decisions_and_gaps",
+    "relations",
+    "contracts",
+    "providers",
+    "discovery",
+    "app_lens",
+    "derived_results"
+  ],
+  "properties": {
+    "artifact": { "const": "component-blueprint@1" },
+    "component_id": { "$ref": "#/$defs/stableId" },
+    "blueprint_id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "source_fingerprint": { "$ref": "#/$defs/sha256" },
+    "decision_fingerprint": { "$ref": "#/$defs/sha256" },
+    "supersedes": { "$ref": "#/$defs/stableId" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "review_summary": { "type": "object" },
+    "design_views": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/view" }
+    },
+    "decisions_and_gaps": {
+      "type": "object",
+      "required": ["decisions", "gaps"],
+      "properties": {
+        "decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } },
+        "gaps": { "type": "array", "items": { "$ref": "#/$defs/gap" } }
+      }
+    },
+    "relations": { "type": "array", "items": { "$ref": "#/$defs/relation" } },
+    "contracts": { "type": "array", "items": { "type": "object", "required": ["contract_id"] } },
+    "providers": { "type": "array", "items": { "type": "object", "required": ["provider_id"] } },
+    "discovery": {
+      "type": "object",
+      "required": ["source_fingerprint", "facts", "conflicts", "inputs", "requirement_traceability"],
+      "properties": {
+        "source_fingerprint": { "$ref": "#/$defs/sha256" },
+        "facts": { "type": "array", "items": { "type": "object" } },
+        "conflicts": { "type": "array", "items": { "type": "object" } },
+        "inputs": {
+          "type": "object",
+          "required": ["current_scope_items"],
+          "properties": {
+            "current_scope_items": { "type": "array", "items": { "$ref": "#/$defs/currentScopeItem" } }
+          }
+        },
+        "requirement_traceability": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/requirementTraceability" }
+        }
+      }
+    },
+    "app_lens": { "type": "object" },
+    "derived_results": { "type": "array", "items": { "type": "object", "required": ["result_id", "status"] } },
+    "generated_graphs": { "type": "array", "items": { "type": "object" } }
+  },
+  "$defs": {
+    "stableId": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "provenance": {
+      "type": "object",
+      "required": ["source_kind", "source_ref", "observed_at", "evidence_strength", "extraction_method"],
+      "properties": {
+        "source_kind": { "type": "string", "minLength": 1 },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "source_revision": { "type": "string", "minLength": 1 },
+        "observed_at": { "type": "string", "minLength": 1 },
+        "evidence_strength": { "enum": ["authoritative", "observed", "inferred", "unknown"] },
+        "extraction_method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "currentScopeItem": {
+      "type": "object",
+      "required": ["item_id", "kind", "source_ref", "source_sha256", "provenance"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/stableId" },
+        "kind": { "enum": ["requirement", "goal", "invariant", "high_risk"] },
+        "source_ref": { "type": "string", "minLength": 1 },
+        "source_revision": { "type": "string", "minLength": 1 },
+        "source_sha256": { "$ref": "#/$defs/sha256" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "requirementTraceability": {
+      "type": "object",
+      "required": ["item_id", "blueprint_refs"],
+      "properties": {
+        "item_id": { "$ref": "#/$defs/stableId" },
+        "blueprint_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "view": {
+      "type": "object",
+      "required": [
+        "view_id",
+        "viewpoint_contract",
+        "applicability",
+        "stakeholders",
+        "purpose",
+        "current_state",
+        "target_state",
+        "delta",
+        "decisions_and_gaps",
+        "verification_refs",
+        "nodes"
+      ],
+      "properties": {
+        "view_id": { "enum": ["logical", "runtime", "development", "deployment", "scenarios"] },
+        "viewpoint_contract": { "type": "string", "minLength": 1 },
+        "applicability": { "enum": ["applicable", "not_applicable"] },
+        "evolution_impact": { "enum": ["changed", "verified_unchanged"] },
+        "unchanged_evidence": { "$ref": "#/$defs/unchangedEvidence" },
+        "stakeholders": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "purpose": { "type": "string", "minLength": 1 },
+        "current_state": {},
+        "target_state": {},
+        "delta": {},
+        "decisions_and_gaps": { "type": "array" },
+        "verification_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "runtime_data_flows": { "type": "array" }
+      }
+    },
+    "unchangedEvidence": {
+      "type": "object",
+      "required": ["evidence_refs", "current_state_ref"],
+      "properties": {
+        "evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "current_state_ref": { "type": "string", "minLength": 1 },
+        "rechecked_at": { "type": "string", "minLength": 1 }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["node_id", "owner", "current_state", "target_state", "provenance", "verification_refs"],
+      "properties": {
+        "node_id": { "$ref": "#/$defs/stableId" },
+        "owner": { "type": "string", "minLength": 1 },
+        "module": { "type": "string", "minLength": 1 },
+        "current_state": {},
+        "target_state": {},
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "verification_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "required": ["relation_id", "from", "to", "relation_type", "owner", "provenance", "verification_refs"],
+      "properties": {
+        "relation_id": { "$ref": "#/$defs/stableId" },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "relation_type": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string", "minLength": 1 },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "verification_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["decision_id", "status", "owner", "provenance", "verification_refs"],
+      "properties": {
+        "decision_id": { "$ref": "#/$defs/stableId" },
+        "kind": { "type": "string" },
+        "target_ref": { "type": "string" },
+        "asset_resolution": { "enum": ["reuse", "configure", "adapt", "evolve", "custom"] },
+        "component_ref": { "type": "string" },
+        "rationale": { "type": "string" },
+        "change": { "enum": ["add_module", "retire_module", "move_module", "responsibility_rewrite", "dependency_edge", "dsl_other"] },
+        "module": { "type": "string", "minLength": 1 },
+        "layer": { "type": "string", "minLength": 1 },
+        "from_layer": { "type": "string", "minLength": 1 },
+        "to_layer": { "type": "string", "minLength": 1 },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "direction": { "enum": ["add", "remove"] },
+        "affected_items": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "status": { "enum": ["answered_with_evidence", "decided_with_authority", "open_decision", "blocker", "not_applicable"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "human_decision": { "enum": ["establish_seam", "keep_direct"] },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "verification_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "required": ["gap_id", "status", "owner", "needed_by", "unlock_condition", "provenance"],
+      "properties": {
+        "gap_id": { "$ref": "#/$defs/stableId" },
+        "status": { "enum": ["open_decision", "blocker", "not_applicable"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "needed_by": { "type": "string", "minLength": 1 },
+        "unlock_condition": { "type": "string", "minLength": 1 },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    }
+  }
+}

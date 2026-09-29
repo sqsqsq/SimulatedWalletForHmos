@@ -12,7 +12,7 @@ Skill contract 是 feature phase 的可执行输入声明。它定义产生的 a
 - `derive` source 精确引用纯 provider id；不存在的目录或无法推导的输入同样是 `absent`；`invalid` 会停止该 input 的 fallback。
 - 不存在字符串 DSL、交互式 ask source、动态 provider 匹配或 input 级 required/optional 政策。
 
-`capabilities` 通过 input id 声明要验证的能力，每一项都包含 `id`、`axis`、`inputs`、`tracks`、可选 `applicability_provider_id` 和唯一的缺失策略 `on_missing`。
+`capabilities` 通过 input id 声明要验证的能力。1.0 包含 `id`、`axis`、`inputs`、`tracks`、可选 `applicability_provider_id` 和缺失策略 `on_missing`；1.1 不接受 `tracks`，改用 `obligation_kinds`，或对不绑定义务的能力显式声明 `input_role: base|enhancement`。base 必须 `on_missing: fail`。
 
 ```yaml
 inputs:
@@ -30,7 +30,114 @@ capabilities:
     on_missing: fail
 ```
 
-解析先运行 track 与命名 applicability provider；若不适用，capability 是 `not_applicable`，且不会尝试 source。适用后 source 依声明顺序解析：`resolved` 停止成功，`absent` 回退，`invalid` 停止并使 capability `blocked`。可用 capability 的最终状态只有 `resolved`、`pruned`、`blocked`；input 的缺失政策只由 capability 的 `on_missing` 决定。
+1.0 先运行 track 与命名 applicability provider；1.1 消费调用方已经裁定的义务适用性，unknown（含缺失种类）blocked，not_applicable 不尝试 source。适用后 source 依声明顺序解析：resolved 停止成功，absent 回退，invalid 停止并使 capability blocked。1.1 required 义务缺输入时不能被旧 `on_missing: prune` 降级；可选增强仍可诚实 prune。
+
+## 1.1 调用期内容与接线边界
+
+当前默认 Feature contracts 保持 1.0；1.1 schema、reader 和共享消费接口已经提供，P2/P6 的真实范围/入口接线及 P3–P5 的 phase 契约迁移完成前不切换默认请求。
+
+`resolveCapabilityInputs` 一次返回不可变 `report` 与调用期 `ResolvedPhaseInputs`。后者的 `values` 保存 `ResolvedInput<T>`，`artifacts` 按既有 artifact ID 提供经过同一 schema 和 SpecLoader 规范化的内容；不新增文件或万能 YAML。`InputBinding` 保留 input_id、artifact/derive source、实际 dependencies、source_refs 和规范化内容 SHA-256。报告只序列化 binding/attempts/诊断，不复制 value。每个 input 在一次调用内只解析一次。
+
+`PhaseInputContext` 是 P2/P6 交给共享内核的调用参数，不是新持久状态：subject、已判定的义务、required_outputs、可选 expected_bindings/invalidated_sources。Feature 使用真实 Feature identity，request 使用 request_sha256，两者互斥。绑定不匹配或上游明确宣告来源失效时 blocked，回原有 stale/correction 责任路径；不在解析器内重规划。
+
+artifact 内容先通过注册 schema 与 SpecLoader 既有字段校验。derive 返回实际内容而不是“project_root 可用”标志：requirement 只读当前调用文本，test-targets/codebase 只读显式且项目内的目标文件，adhoc-cases 使用既有用例归一化内核。静态 `DERIVE_PROVIDER_TYPES` 声明返回类型，1.1 每个 fallback 分支必须同类型；文本需求不能作为 acceptance 的等价替代。`derive.blueprint-acceptance/contracts` 的实际字段映射由 P3 实现，不在 P1 注册假 provider。
+
+Feature 调用把读取面拆成 `codeTargets` 与 `testTargets`：前者来自冻结 contracts/CU、当前有效义务及已核实 Research，后者再按 profile 的 UT 根识别；两者都只是调用期输入，不授予写权限。verification-only review/UT 不需要 implementation 义务也能读取 contracts 指定的现存产品源码。`contracts.files` 中由本阶段或后继阶段负责创建的缺失文件保留为授权产出，不拖垮同组现存输入；到了下游仍缺失时照常 blocked。
+
+无 run 的 spec 从候选 `requirement_basis` 校验原始需求。文件输入只绑定来源路径与字节，不复制正文；inline/旧候选没有可恢复来源时，入口要求调用者以 `--requirement` 或 `--requirement-file` 重给原文，并核对既有文本指纹。Goal 调用继续以冻结 manifest 为唯一需求权威，CLI 不得覆盖。
+
+SpecLoader、CheckContext、verifier 上下文与材料指纹消费同一解析结果。新协议的输入读取面来自实际 attempts/bindings，输出来自本次 required_outputs；旧 REQUIRED/OPTIONAL 文件表只用于未提供新协议上下文的 1.0 路径。evidence 生成时来源已经变化必须报 stale，不能把重新读取的新字节绑定到旧内容。framework 文件不作为 consumer evidence 输入；contract 使用已有 fingerprint。
+
+新请求默认使用 obligation-driven 1.2 与输入 1.1；旧 Skill 仅在内部 legacy 路径恢复，公共入口不再提供轨道选择。
+
+## Facts 1.1
+
+首个实际 Skill 的 Research 在写代码、审查、UT 规划或设备动作之前建立 `context/facts.md`，`established_by` 记录真实 phase。Feature facts 的身份位**按载体二分**：run 载体绑 `feature` + `run_id`；无 run 的 feature 载体绑 `feature` + `frozen_scope_fingerprint`（当前冻结范围指纹），两者互斥，同时出现即判身份混淆。request facts 只绑定 request_sha256，位置为调用方指定的 report-dir/context/facts.md。`FactsInvocationContext` 来自 P2/P6，不能从 facts 自报内容反推建立资格。
+
+建立阶段的 `source_code_paths` 在统一 entry 内先做 subject、项目内路径、真实文件可读性与规范化去重校验，再进入 `derive.codebase` 绑定和 evidence；后继阶段只从完整性有效且 fresh 的既有 evidence 承接这些路径。缺失、越界、错误身份或重复变体都显式失败，不用全仓扫描替代。
+
+后续或成功前驱的基线通过 baseline fingerprint 与来源 dependencies 核验，保留真实 established_by/run 来源，只追加当前 phase_delta。已有 1.0 facts 可经显式 baseline 承接，不能因文件存在自动满足。继续检查 Code Facts、当前目标覆盖、源码可读性、ready_to_produce 和覆盖风险；复用基线不重施后续阶段的全量探索阈值。新建立阶段使用实际 phase 的规则/profile snippets，不冒充 spec。
+
+本次新增调查路径可写在当前 phase_delta 内的「路径 / 事实 / 影响」表，不改写原基线 frontmatter；checker 同时核对原来源绑定及当前实际目标的可读性。
+
+Feature evidence/恢复/verifier 使用同一 facts 路径；request 不调用 Feature receipt/completion writer。旧 pass snapshot 已退役，P1 不恢复它或增加场外状态；旧 backfill 与旧 per-phase exploration reader 保持兼容。
+
+新 facts evidence 条目在既有 manifest 内以 `facts_phase` 标明基线＋本阶段增量投影，后续无关增量不改变它；旧条目仍按原始字节核验。发布前，baseline.dependencies 与 resolved-input 来源共用 exists/sha256 比对，来源变化或删除报既有 stale，不重签新字节。
+
+## P2 运行接线
+
+workflow 1.2 用静态 `obligation_provider_id` 表达职责，`resolveExecutionScope` 统一计算执行范围；auto_chain 只提供稳定默认次序。P3/P6 提供规范化请求与有来源的业务事实，验收分层复用既有检查，未知保持具体缺口。候选中的契约指纹由出生入口从安装的 contracts 重算。
+
+完整交付有**两个载体**：① 交互路径把 execution_scope 冻结在 feature 级记录（`<features_dir>/<feature>/execution-scope.json`，机器单 writer，与候选文件分开）；② Goal 路径在 manifest/run_created 冻结，phase_chain、chain_override、start/end 必须同值投影。权威优先级是「本次关联的 run > feature 冻结记录」，说不清时明确报错、不选边。两条路都只读出生范围，Feature 候选和后来的 track/默认排序不覆盖它；同一 feature 后起 run 以**转交时 feature 的有效范围**出生并登记转交指纹。Scope 的控制边与依据仍在同一载体内，不建立平行图。
+
+P1 调用上下文、阶段指令、assess、完成验证和 CU expected execution 都经**同一个统一入口**读取该范围（有 run 身份读 run，无身份读 feature 冻结记录），消费方不自行判断载体。有效施工输入可承接信息要求，真正未完成的设计决策/控制前置仍回责任方；request-only 及 unknown 不签 Feature completion，全复用只验证现有结果，不造空 run。
+
+责任 checker 可在既有 CheckResult 中提出 `scope_revision_input`；两个载体的提案校验是**同一个函数**，feature 载体把修订记在冻结记录的 `revisions[]` 里（形状与 `scope_revised` 一致，无 run 字段）。合法修订在**同一 run / 同一条冻结记录**内追加一条即完成：不封卷、不释放 owner/锁、不生成后继，出生范围与失败历史不被改写，有效范围 = 出生 + 按 index 应用的修订。后继只留给失败修复型 supersede、用户显式改需求与建 run 未完成的修复；那条路上预算、权限和 pin 继承，前驱临时恢复状态保留到后继完成后沿既有 GC 清理。失败来源保持 PARTIAL/HALTED，其裸 PASS 不变成复用证据。默认 spec-driven 尚未切换，P3–P6 的具体 Skill 迁移和 P7 的公开切换继续按计划推进。
+
+## 输入读取矩阵与迁移责任（P1）
+
+以下为实施时的读取合同；不是运行状态表。来源列的 `@1` 指 inventory，derive 指静态 provider。所有上游输入都不要求本次重产；需要新裁决/操作时才形成控制依赖，不能把现有 requires 全部改名为 control。当前阶段自己的产物仍需检查。
+
+| 消费面 | 内容/字段 | 现有 reader | 来源与缺失行为 | 本次新产出/真实先行操作 | 绑定与 owner |
+|---|---|---|---|---|---|
+| spec | 需求原文、范围、代码和视觉参考 | capability-resolution、check-spec、verify-spec | 当前 requirement、源码、参考图；缺必需预期/参考则 blocked | 验收不明确才补 spec；正式需求先蓝图 | binding + 实际输出；P1/P3 |
+| plan | spec、criteria/boundaries、源码、ui-spec | SpecLoader、check-plan、verify-plan | 有效验收/获准切片；新设计缺口回责任方 | 仅未满足施工设计要求新 plan；共同决策不能在此重裁 | contracts/design_refs；P1/P3 |
+| coding | files/modules/interfaces/state_management、验收、use_cases、视觉契约 | SpecLoader、check-coding、verify-coding | 当前 contracts/验收与源码；required 缺失 blocked | 首次写入前 facts 与真实授权；不要求本次新 plan/spec | binding、源码和写集；P1/P4，投影 P3 |
+| review | diff/源码、对照契约、plan、验收、ui-spec | SpecLoader、check-review、verify-review | 真实审查目标；可选设计增强缺失诚实降级 | 已有代码可独立审查；review-report 是本阶段输出 | 输入 binding 与审查证据；P1/P4 |
+| ut | criteria/boundaries/ut_layer、use_cases/branches、目标符号、contracts | SpecLoader、check-ut、verify-ut | 有效验收或专项明确目标；不能从代码猜预期 | 必需单元证据；mock/确认等真实控制保留 | 目标与覆盖证据；P1/P5 |
+| testing | 用例意图、分层、contracts、review-report、设备/视觉目标 | SpecLoader、check-testing、verify-testing | 有效验收或 adhoc cases；必要输入缺失 blocked | 有设备义务才执行；构建/安装等操作先后保持 | 来源与实际设备输出；P1/P5 |
+| change/exit | change 原文与实现 | 旧 capability/SpecLoader/check-change/check-exit | 旧出生协议 artifact/derive | 仅旧运行兼容 | 旧 evidence；P7 |
+| 全局知识 | catalog/glossary/Graph/conventions/extension | 各 project checker、profile 与 collectContextFiles | 既有各自真源；optional 缺失不强造 bootstrap | 只完成请求的知识责任 | 实际引用；P6 |
+| 首 Skill facts | Code Facts/source_code_paths、ready/risk | context-facts、context-exploration、exploration-strategy | 当前调用 subject 与目标、真实调查；缺/坏 blocked | 写主产物前必须建立或承接 | facts 与来源；P1 内核，P2/P6 派发 |
+| 后继 facts/恢复 | 基线、phase_delta、来源新鲜度 | context-facts、goal-checkpoint | 显式 baseline；旧字段缺失不当零义务 | 保留原建立身份，只补当前增量 | 原基线 + 当前源；P1/P2 |
+| 静态契约 | inputs/capabilities/produces、provider 返回类型 | check-contract-consistency | 每个分支注册、类型和 producer；1.1 不要求 producer 祖先 | 无运行时结果，不把 producer 存在当本次执行 | contract fingerprint；P1 |
+| evidence/closure | 读取路径、输出、来源 fingerprint | phase-evidence-manifest、phase-closure-finalizer | 新协议 attempts + required_outputs；旧表仅兼容 | 真实输出必须存在；request 不签 Feature 凭证 | 同次报告；P1/P2，完成聚合 P7 |
+| verifier/hook | 真实内容、facts 路径、材料/范围快照 | collectContextFiles、verifier-material、既有 Stop hook | 调用期内容与同源材料绑定；不另读固定上游文件 | verifier 独立判断；hook 只读 runtime 快照 | P1 内容/材料，P2 快照，P3–P5 prompts |
+
+具体 Feature contract 输入见下表；缺失策略列记录当前 1.0 声明供逐项迁移，1.1 必须再服从本次义务。
+
+| phase | input | 有序来源 | 当前 capability / on_missing |
+|---|---|---|---|
+| ut | code | derive.codebase | capability_ut_core_context / fail |
+| ut | acceptance | acceptance@1 | capability_ut_core_context / fail |
+| ut | use_cases | use-cases@1 | capability_ut_use_case_context / prune |
+| ut | plan | plan@1 | capability_ut_design_context / prune |
+| ut | contracts | contracts@1 | capability_ut_design_context / prune |
+| ut | test_targets | derive.test-targets | capability_ut_design_context / prune |
+| change | requirement | derive.requirement | capability_change_context / fail |
+| change | codebase | derive.codebase | capability_change_context / fail |
+| exit | change | change@1 | capability_exit_context / fail |
+| exit | implementation | derive.codebase | capability_exit_context / fail |
+| review | code | derive.codebase | capability_review_code_context / fail |
+| review | spec | spec@1 | capability_review_design_context / prune |
+| review | plan | plan@1 → derive.test-targets | capability_review_design_context / prune |
+| review | contracts | contracts@1 | capability_review_design_context / prune |
+| review | acceptance | acceptance@1 | capability_review_acceptance_context / prune |
+| review | ui_spec | ui-spec@1 | capability_review_visual_context / prune |
+| coding | codebase | derive.codebase | capability_coding_full_context / fail；capability_coding_lite_context / fail |
+| coding | plan | plan@1 | capability_coding_full_context / fail |
+| coding | contracts | contracts@1 | capability_coding_full_context / fail |
+| coding | acceptance | acceptance@1 | capability_coding_full_context / fail |
+| coding | change | change@1 | capability_coding_lite_context / fail |
+| coding | spec | spec@1 | capability_coding_spec_context / prune |
+| coding | use_cases | use-cases@1 | capability_coding_spec_context / prune |
+| coding | ui_spec | ui-spec@1 | capability_coding_visual_context / prune |
+| coding | visual_parity | visual-parity@1 | capability_coding_visual_context / prune |
+| testing | cases | acceptance@1 → derive.adhoc-cases | capability_testing_cases / fail |
+| testing | tested_code | derive.codebase | capability_testing_code_context / fail |
+| testing | spec | spec@1 | capability_testing_design_context / prune |
+| testing | plan | plan@1 → derive.test-targets | capability_testing_static_plan_context / prune |
+| testing | contracts | contracts@1 | capability_testing_design_context / prune |
+| testing | use_cases | use-cases@1 | capability_testing_design_context / prune |
+| testing | review_report | review-report@1 | capability_testing_design_context / prune |
+| plan | spec | spec@1 | capability_plan_context / fail |
+| plan | acceptance | acceptance@1 | capability_plan_context / fail |
+| plan | codebase | derive.codebase | capability_plan_context / fail |
+| plan | ui_spec | ui-spec@1 | capability_plan_visual_context / prune |
+| spec | requirement | derive.requirement | capability_spec_requirement / fail |
+| spec | codebase | derive.codebase | capability_spec_codebase / prune |
+| spec | visual_reference | derive.visual-reference | capability_spec_visual_reference / fail |
+
 
 ### `derive.requirement` 来源表（plan c8e5b3f1 t1）
 
@@ -51,6 +158,8 @@ phase runner 在 checker 之前只生成一次不可变 `CapabilityResolutionRep
 报告据 capability 状态机械计算全局保证等级：`blocked < degraded < full`。`summary.json` 1.2 持久化 `assurance`、`capability_resolutions` 及 `capability_resolution_contract_fingerprint`；不再输出 `summary.depth` 或 quality-depth/missing-input 镜像字段。
 
 为保证 fallback 可审计，evidence manifest 只绑定项目内的 applicability 输入，以及从第一个 source 到 resolved/invalid 终止 source 的每一次实际尝试；framework contract 不以文件路径进入 consumer manifest，而以 `capability_resolution_contract_fingerprint` 留在 summary/closure provenance。缺失的高优先级文件按 `exists:false` 绑定，因此随后出现文件也会使旧 closure stale；未尝试的低优先级 source 不进入绑定。
+
+源码 evidence 只为真实写权限携带责任阶段：contracts 非测试写集归 implementation owner，profile 测试根归 unit-evidence owner；写集外 Research/配置仍是普通只读输入。Research 阶段继续绑定实际读取字节，当前责任阶段 gate 可把自己的授权路径视为待产出，闭环后则由该 owner 的当前 output 承接；已消费 owner 的 review 等阶段不继承豁免。测试目标只进入声明 `derive.test-targets` 的阶段，因此 UT 改自己的测试不会反向作废 coding/review，UT 改产品源码仍使 coding/review 失效。需求、contracts 与其它真实输入漂移没有豁免。
 
 ## 质量轴、closure 和 assess
 

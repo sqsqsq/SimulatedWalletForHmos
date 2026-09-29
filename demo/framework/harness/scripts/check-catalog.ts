@@ -40,8 +40,10 @@ import {
   resolveFeatureArtifact,
   relFeatureArtifact,
   loadFrameworkConfig,
+  enumerateFeatures,
 } from '../config';
 import { getCatalogAllowedModuleFormats } from '../profile-loader';
+import { checkComponentCatalog } from './utils/component-catalog-check';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -423,8 +425,8 @@ function checkTypicalVsNotResponsibleConflict(
 // Traceability Checks
 // --------------------------------------------------------------------------
 
-function checkEasilyConfusedReferencesExist(ctx: CheckContext, catalog: ModuleCatalog): CheckResult[] {
-  const known = new Set(catalog.modules.map(m => m.name));
+function checkEasilyConfusedReferencesExist(ctx: CheckContext, catalog: ModuleCatalog, universe = catalog): CheckResult[] {
+  const known = new Set(universe.modules.map(m => m.name));
   const broken: string[] = [];
 
   for (const m of catalog.modules) {
@@ -495,8 +497,9 @@ function checkEasilyConfusedNoSelfReference(
 function checkEasilyConfusedSymmetric(
   ctx: CheckContext,
   catalog: ModuleCatalog,
+  universe = catalog,
 ): CheckResult[] {
-  const byName = new Map<string, ModuleCard>(catalog.modules.map(m => [m.name, m]));
+  const byName = new Map<string, ModuleCard>(universe.modules.map(m => [m.name, m]));
   const unidirectionalMarker = 'unidirectional';
   const asymmetric: string[] = [];
 
@@ -686,11 +689,12 @@ function checkFeatureScopeIntegrity(
   const affected = new Set<string>([relCatalog(ctx.projectRoot)]);
   let scannedCount = 0;
 
-  const dirents = fs.readdirSync(featuresDir, { withFileTypes: true });
-  for (const dirent of dirents) {
-    if (!dirent.isDirectory()) continue;
+  // M5A §5.2/§5.3：共享枚举函数（工作区容器下钻、孤儿/歧义 fail-closed）；
+  // 路径 helper 只接受逻辑 featureId（内部经唯一 SSOT 展开为物理相对路径）；
+  // `relativePath` 仅用于直接扫描实际目录（见 enumerateFeatures 返回值语义）。
+  for (const item of enumerateFeatures(ctx.projectRoot)) {
     for (const fileName of ['spec.md', 'plan.md']) {
-      const resolved = resolveFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
+      const resolved = resolveFeatureArtifact(ctx.projectRoot, item.featureId, fileName);
       if (!resolved.exists) continue;
       const content = fs.readFileSync(resolved.actualPath, 'utf-8');
       const { scope } = parseScope(content);
@@ -706,7 +710,7 @@ function checkFeatureScopeIntegrity(
       if (inMissing.length > 0) where.push(`in_scope_modules:[${inMissing.join(', ')}]`);
       if (outMissing.length > 0) where.push(`out_of_scope_modules:[${outMissing.join(', ')}]`);
 
-      const rel = relFeatureArtifact(ctx.projectRoot, dirent.name, fileName);
+      const rel = relFeatureArtifact(ctx.projectRoot, item.featureId, fileName);
       broken.push({ file: rel, missing: allMissing, in_or_out: where });
       affected.add(rel);
     }
@@ -786,7 +790,8 @@ const checker: PhaseChecker = {
       }];
     }
 
-    const catalog = result.catalog;
+    const catalog = ctx.module ? { ...result.catalog, modules: result.catalog.modules.filter(m => m.name === ctx.module) } : result.catalog;
+    if (ctx.module && !catalog.modules.length) return [{ id: 'requested_module_present', category: 'structure', description: '请求模块存在', severity: 'BLOCKER', status: 'FAIL', details: ctx.module, suggestion: '确认 --module 名称；若是本次要新增的模块，只补该模块画像后重跑。' }];
     const results: CheckResult[] = [];
 
     // Structure
@@ -804,14 +809,17 @@ const checker: PhaseChecker = {
     ));
 
     // Traceability
-    results.push(...safeRun(() => checkEasilyConfusedReferencesExist(ctx, catalog), 'easily_confused_references_exist'));
+    results.push(...safeRun(() => checkEasilyConfusedReferencesExist(ctx, catalog, result.catalog), 'easily_confused_references_exist'));
     results.push(...safeRun(() => checkEasilyConfusedNoSelfReference(ctx, catalog), 'easily_confused_no_self_reference'));
-    results.push(...safeRun(() => checkEasilyConfusedSymmetric(ctx, catalog), 'easily_confused_symmetric'));
+    results.push(...safeRun(() => checkEasilyConfusedSymmetric(ctx, catalog, result.catalog), 'easily_confused_symmetric'));
     results.push(...safeRun(() => checkEntryFileOnDisk(ctx, catalog), 'entry_file_on_disk'));
     results.push(...safeRun(() => checkLayerMatchesPath(ctx, catalog), 'layer_matches_path'));
     results.push(...safeRun(() => runEntryFileMatchesOhPackageMain(ctx, catalog), 'entry_file_matches_oh_package_main'));
     results.push(...safeRun(() => runKeyExportsFreshVsIndex(ctx, catalog), 'key_exports_fresh_vs_index'));
-    results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
+    if (!ctx.module) {
+      results.push(...safeRun(() => checkFeatureScopeIntegrity(ctx, catalog), 'feature_scope_integrity'));
+      results.push(...checkComponentCatalog(ctx.projectRoot));
+    }
 
     return results;
   },

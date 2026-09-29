@@ -13,6 +13,7 @@ import type { ImageInputMode } from './multimodal-probe';
 import { formatReadImageEvidenceInstructions } from './read-image-evidence';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 import { featurePhaseReportsDir, relFeaturesDir } from '../../config';
 import {
@@ -28,6 +29,7 @@ import {
   ScriptReportCompatApplied,
   ScriptReportCompatExpired,
   ContextFileEntry,
+  RequestCheckContext,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
@@ -150,6 +152,24 @@ export function generateScriptReport(
   return report;
 }
 
+/** Request reports reuse checks/summary serializers without Feature compatibility or closure writes. */
+export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
+  const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
+  const summary = computeSummary(finalized);
+  if (finalized.some(check => check.status === 'FAIL' || (check.status === 'SKIP' && check.severity === 'BLOCKER' && (check.structured as { applicability?: unknown } | undefined)?.applicability !== 'not_applicable'))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
+    requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
+    timestamp: new Date().toISOString(), project_root: ctx.projectRoot };
+  const inputBindings = Object.fromEntries(Object.entries(ctx.resolvedInputs.values).filter(([, value]) => value.state === 'resolved').map(([id, value]) => [id, value.state === 'resolved' ? value.binding : null]));
+  const report = { ...common, checks: finalized, summary, input_bindings: inputBindings };
+  fs.mkdirSync(ctx.reportDir, { recursive: true });
+  const reportPath = path.join(ctx.reportDir, 'script-report.json');
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
+  const native = finalized.flatMap(check => (check.structured as { request_evidence?: unknown[] } | undefined)?.request_evidence ?? []);
+  fs.writeFileSync(path.join(ctx.reportDir, 'summary.json'), JSON.stringify({ ...common, ...summary, input_bindings: inputBindings, evidence: { script_report: path.relative(ctx.projectRoot, reportPath).replace(/\\/g, '/'), script_report_sha256: crypto.createHash('sha256').update(fs.readFileSync(reportPath)).digest('hex'), native } }, null, 2) + '\n');
+  return { verdict: summary.verdict, reportPath };
+}
+
 /**
  * Step 4/5（组装 prompt / 合并报告）阶段若出现未捕获异常，
  * 必须将失败回写到已经落盘的 script-report.json，避免"磁盘 PASS + 控制台崩栈"误导。
@@ -268,6 +288,40 @@ export function projectScriptReportForPrompt(report: ScriptReport): Record<strin
   };
 }
 
+/**
+ * D1/D2（plan 3a7f9c12）：产品失败诊断的 prompt 正文段。
+ *
+ * 只说三件事，且每件都必须说：①本轮脚本是 FAIL 而不是 PASS，你被叫来是**因为**它 FAIL；
+ * ②哪几条失败是被放行的（其余 BLOCKER FAIL 一条都不存在、BLOCKER SKIP 只剩已标注为已确认不适用的，
+ *   否则本轮根本不会有 request）；
+ * ③报告终态 = 本轮**语义检查**的结论，与产品是否合格是两件事——不得为了"和产品一致"
+ * 就把终态改成 FAIL 并跳过检查项（D3 的终态口径：blocker_count 只数本轮语义 BLOCKER FAIL）。
+ */
+function formatRepairDiagnosisNotice(
+  diagnosis: { failedCheckIds: readonly string[]; reason: string },
+): string {
+  const ids = diagnosis.failedCheckIds.length > 0 ? diagnosis.failedCheckIds.join('、') : '(未列出)';
+  return [
+    '## 本轮为产品失败诊断（脚本 verdict=FAIL）',
+    '',
+    '本轮脚本门禁**未通过**，request 仍被签发——这是框架对已复现的两类可诊断产品失败开的窄例外：',
+    `**${diagnosis.reason}**`,
+    '',
+    `- 已被放行的失败检查项：\`${ids}\`。除它们之外本轮没有其它 BLOCKER 级 FAIL，也没有未标注为已确认不适用的 BLOCKER SKIP` +
+      '（报告里带 `structured.applicability=not_applicable` 的 SKIP 是判据不适用，不是没跑完），也没有未解析的 capability——',
+    '  否则不会有这份 request（材料/环境问题的出路是先修材料/环境，不是叫审查员来看半份材料）。',
+    '- 上方内嵌的脚本报告是**原始 FAIL 报告**，没有被投影成 PASS。产品的 FAIL 与 open 闭环状态本轮不变，',
+    '  你的结论也**不会**改变它们：修好产品才能 PASS。',
+    '',
+    '**你要做的**：照常按「语义检查项」逐项评估并给出汇总表——尤其是与这些失败直接相关的项',
+    '（review：问题清单逐条是否属实、论证是否成立；ut：测试是否真在驱动业务、断言是否有价值）。',
+    '',
+    '**终态块的口径不变**：`blocker_count` = **本轮你自己的语义检查**中 severity=BLOCKER 且 status=FAIL 的项数，',
+    '`verdict=PASS` 当且仅当它为 0。**不要**因为产品失败就把终态写成 FAIL——那是把产品裁决塞进报告裁决，',
+    '会让本该产生的回修候选整批消失；也**不要**因为你判 PASS 就宣称产品通过。两者是两个独立事实。',
+  ].join('\n');
+}
+
 export function assembleAIPrompt(
   harnessRoot: string,
   projectRoot: string,
@@ -281,6 +335,7 @@ export function assembleAIPrompt(
   frameworkRoot?: string,
   options?: {
     imageInput?: ImageInputMode;
+    extensionInstructions?: string;
     /**
      * plan a9d4e7c2 P1-1：**workflow 声明的模板路径**（`verifier_prompt`，相对 harness 根），
      * 由 `resolveVerifierPlan` 带出。调用方必须传——装配用哪个模板是 workflow 的声明说了算。
@@ -292,6 +347,12 @@ export function assembleAIPrompt(
      * 声明路径不可读即抛错，绝不回退。
      */
     verifierPromptRel?: string;
+    /**
+     * D1/D2（plan 3a7f9c12）：本轮属**产品失败诊断**（脚本 FAIL 的窄放行分支）。
+     * 在场时正文尾部追加一段说明——列出已被放行的失败 check、以及"报告终态只表示本轮
+     * 语义检查结论，产品执行 FAIL 原样保留"。缺省 = 常规验证请求，正文一字不变。
+     */
+    repairDiagnosis?: { failedCheckIds: readonly string[]; reason: string };
   },
 ): string {
   const template = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options?.verifierPromptRel);
@@ -346,6 +407,9 @@ export function assembleAIPrompt(
   }
 
   let tail = '';
+  if (options?.repairDiagnosis) {
+    tail += `\n\n---\n\n${formatRepairDiagnosisNotice(options.repairDiagnosis)}\n`;
+  }
   if (phase === 'coding' && options?.imageInput === 'tool_read') {
     tail +=
       '\n\n---\n\n## 多模态读图取证（tool_read · M3）\n\n' +
@@ -357,22 +421,32 @@ export function assembleAIPrompt(
       '\n\n---\n\n## Lifecycle hooks（实例 / profile / framework）\n\n' +
       lifecycleHookFragments.map((f, i) => `### Hook fragment ${i + 1}\n\n${f}`).join('\n\n');
   }
+  if (options?.extensionInstructions) {
+    tail += `\n\n---\n\n${options.extensionInstructions}\n`;
+  }
 
   // 占位符填充抽成纯函数：写盘文本与规范化摘要**同一次装配、同一套输入**产出，
   // 只有两处 runner telemetry 取不同值。这样"规范化"不再是事后对自由文本猜正则，
   // 而是在格式化之前就精确知道哪两段是易变量。
   // round7 skills/文案批（plan a9c4e7f1）：{features_dir} 解析实例配置的 paths.features_dir，
   // custom 宿主下 verifier 读/引用真实路径，不再硬编码 doc/features。
+  // e7a2c4f1 §10.4④：一次扫描 + 函数替换值——内联内容逐字保留。字符串替换值会把
+  // `$\``/`$'`/`$&`/`$$` 当特殊模式（宿主 prompt 自我复制 9 份、ArkTS `$$this` 被改成 `$this`），
+  // 逐段顺序替换还会把内联内容里的 `{phase}`/`{timestamp}` 等字样二次改写。
   const fill = (scriptReportValue: string, timestampValue: string): string => {
-    let out = template;
-    out = out.replace(/\{spec_content\}/g, specContent);
-    out = out.replace(/\{script_report\}/g, scriptReportValue);
-    out = out.replace(/\{feature_name\}/g, feature);
-    out = out.replace(/\{phase\}/g, phase);
-    out = out.replace(/\{timestamp\}/g, timestampValue);
-    out = out.replace(/\{features_dir\}/g, relFeaturesDir(projectRoot));
-    out = out.replace(/\{context_files\}/g, contextSection);
-    return out + tail;
+    const values: Record<string, string> = {
+      spec_content: specContent,
+      script_report: scriptReportValue,
+      feature_name: feature,
+      phase,
+      timestamp: timestampValue,
+      features_dir: relFeaturesDir(projectRoot),
+      context_files: contextSection,
+    };
+    return template.replace(
+      /\{(spec_content|script_report|feature_name|phase|timestamp|features_dir|context_files)\}/g,
+      (_match, key: string) => values[key],
+    ) + tail;
   };
 
   // plan a9d4e7c2 T4：这里曾经额外产出一份「规范化摘要」（把 {timestamp} 与

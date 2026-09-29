@@ -13,8 +13,6 @@
 | Framework 接入方式 | `framework/` 子目录（Maison 发布件 zip 解压集成，非 git submodule） |
 | 架构摘要 | 5 个外层（01-Product…05-SystemBase），模块内 4 层 shared→data→domain→presentation，跨模块出口见 DSL `cross_module_exports_file` |
 
-详细架构说明：[doc/architecture.md](doc/architecture.md)。
-
 ## 二、SSOT（Single Source of Truth）
 
 | 维度 | SSOT 文件 | 说明 |
@@ -23,13 +21,12 @@
 | 架构 DSL（机器可读） | [framework.config.json](framework.config.json) → `architecture` | 修改必过 `/framework-init`（UPDATE 模式） |
 | 模块画像（Catalog） | [doc/module-catalog.yaml](doc/module-catalog.yaml) | 职责/`NOT_responsible_for`/`easily_confused_with`。Scope 防错源头 |
 | 业务术语表（Glossary） | [doc/glossary.yaml](doc/glossary.yaml) | 自然语言业务名词 ↔ 权威模块映射 |
+| 组件资产（可选·若存在） | [doc/component-index.yaml](doc/component-index.yaml) / [doc/component-catalog.yaml](doc/component-catalog.yaml) | 源码派生索引与人确认台账；`/component-catalog-bootstrap` |
+| 工程惯例（Conventions，可选·若存在） | [doc/conventions.md](doc/conventions.md) | 横切工程实践；仅由 `/conventions-bootstrap` 创建并逐条确认 |
 | 通用编码规范（hmos-app） | [framework/profiles/hmos-app/skills/coding/templates/coding-standards.md](framework/profiles/hmos-app/skills/coding/templates/coding-standards.md) | ArkTS 命名、目录、import、资源等编码规则 |
 | ArkTS 易错点（hmos-app） | [framework/profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md](framework/profiles/hmos-app/skills/coding/reference/arkts-pitfalls.md) | **弱模型必读**：常见错例 vs 正例 |
 | 阶段规则/校验脚本 | [framework/specs/phase-rules/](framework/specs/phase-rules/) / [framework/harness/scripts/](framework/harness/scripts/) | BLOCKER 级门禁 |
-
-### 2.1 全局设计原则（BLOCKER）
-
-所有阶段遵循 [framework/docs/overview.md §1.2.1](framework/docs/overview.md#121-四条总设计原则) 的“效率优先、简单优先、回退重签、协作可恢复”。在满足用户目标、确定性正确性、安全与数据完整性以及用户明确要求后，使用覆盖当前真实风险的最小验证；不得为过程证据完美、绝对防篡改或假设风险追加无新信息的阶段、模型轮次、工具调用与重复验证。速度与准确度的边界缺少实证时，披露已知缺口并依据真实宿主反馈迭代，不为寻找理论最优先造比较实验或额外机制。
+| 全局设计原则 | 所有阶段遵循 [framework/docs/overview.md §1.2.1](framework/docs/overview.md#121-四条总设计原则) 的“效率优先、简单优先、回退重签、协作可恢复”。在满足用户目标、确定性正确性、安全与数据完整性以及用户明确要求后，使用覆盖当前真实风险的最小验证；不得为过程证据完美、绝对防篡改或假设风险追加无新信息的阶段、模型轮次、工具调用与重复验证。速度与准确度的边界缺少实证时，披露已知缺口并依据真实宿主反馈迭代，不为寻找理论最优先造比较实验或额外机制。 | BLOCKER |
 
 ## 三、红线清单（无论在哪个阶段都必须遵守，BLOCKER 除标注外）
 
@@ -49,36 +46,35 @@
 
 ## 四、工作流与 Skill 路由
 
-### 4.0 需求分档路由（L0 / L1 lite / L2 full）
+### 4.0 需求路由（正式性与请求终点）
 
-任何新请求**先分档，再动手**。判档评分 SSOT：`framework/specs/phase-rules/change-rules.yaml > track_scoring`；档位经 `feature.track` 确认。拿不准一律进 lite。
+> **两问定路由**：① 本轮要动什么（**范围**）；② 按什么标准算对（**验收语义**）。「不改实现」只回答①，不免除②。
+> **正式需求**＝有明确交付或验收责任，且拟改变**部件行为、外部契约、数据/NFR、运行语义或架构责任**的事项；不改变这些语义的**纯文档和机械维护**除外。**主 Agent 的前置责任**：把本次请求接入对应执行路径。同一交付单元的下游产出必须以**已具备的上游依据和有效范围**为输入——不得边补前置边提前施工，不得要求设计追认已写好的实现。**委派不豁免你**：子 Agent 的边界是它那个 Skill 的边界，不解除你自己的前置责任。已有有效输入与证据按规则复用，缺口交回责任方。
 
-| 档 | 触发 | 管线 | 门禁 |
-|---|---|---|---|
-| L0 direct | 小修小改/文案/单文件 bug；其它无需框架管线的日常任务 | 不进 Skill 管线，直接完成主动作 | 无框架门禁，仍须原生 test/lint/build + 第三节红线 |
-| L1 lite | 单模块 feature、无像素级 UI 保真 | change → coding → exit（[change-lite](framework/skills/feature/change-lite/SKILL.md)） | 编译+lint+`diff_within_scope`+验收 checkbox+条件 UT |
-| L2 full | 跨模块/pixel_1to1/goal 模式 | spec→plan→coding→review→ut→testing 全链 | 每阶段四重闭环 |
+判类前**先查已有依据**（既有 acceptance、蓝图、[doc/module-catalog.yaml](doc/module-catalog.yaml)、约束知识）：查到即复用并写明引用；只有涉及**新增或变更预期**才进入设计职责，再决定复用、修订还是新建蓝图——不因「不改实现」跳过②，也不因「补测试」强制新建蓝图。查完仍存在影响断言或交付的语义缺口时，**只就该缺口**问用户。正式需求进入 [component-design](framework/skills/project/component-design/SKILL.md)，沿已有需求源、蓝图与 CU 设计继续；上游明确的正式分类不得降级。非正式维护按本次范围直接完成、不创建蓝图；任何需要编译或跑测试的校验一律经框架执行器（专项 request CLI 或 `harness-runner --phase`）；不裸调 hvigor，也不引导用户去运行宿主自带脚本。执行器会从 `framework.local.json` 补齐工具链环境（`DEVECO_SDK_HOME` / JBR）——裸调不会执行这段补齐逻辑。三条边界。**准备工作（读代码、看截图、查依据）可以并行**，禁的只是依赖未满足就提前施工。**局部 review / UT / testing 请求**走各自的 request 准备路径，不强迫建蓝图或 Feature；**无 Feature 的独立测试请求，落笔写测试之前先跑 `--prepare-request` 确认落点与载体**；**已有 Feature/CU 上下文的测试沿其有效范围和阶段入口执行**，不得把正式交付中的测试拆成独立请求。**恢复已有任务**复用既有有效范围与证据，不因本节重跑完整链。
 
-**一票升 full**（命中任一）：pixel_1to1 意图；明确跨模块信号；goal 模式运行。lite 实施中出现 scope 越界/跨模块信号→停下走升档确认（`feature.track`）。
+| 请求终点 | 主 Agent 的职责 |
+|---|---|
+| 显式 Skill / 局部维护 | 仅执行该职责；project 原生 CLI 或 review/UT/testing 的 request CLI；产出请求结果后结束 |
+| 查看 / 局部设计 / 完整设计 | 复用已有产物，按缺口继续；component-design 到本次设计终点或 CU readiness 即交还结果，不启动施工 |
+| 完整实现交付 | **依赖顺序，不是验证流水线**：① **设计交接**（admitted blueprint + ready CU）是范围候选的输入——蓝图与 CU 不是可并行赶的文书，是范围的来源；② `goal-mode-entry --prepare-scope` 生成候选并写入 `feature.yaml`（主 Agent 只提供四项输入：**完成终点**、**请求结果**、**明确的请求动作** `--requested-phases`、**影响判断及其来源路径**；绑定、指纹、unit/device/visual 派生、code-review 补齐全部由机器完成），核对它打印的范围投影——**`--prepare-scope` 只生成候选、不冻结范围**；③ 进入受管执行：**不建 run** 则逐阶段 `harness-runner --phase <p> --feature <f>`，**首次阶段调用**冻结 feature 级范围记录并核对候选指纹；**建 run** 则 `--prepare-run` 创建真实 attended Goal（以转交时 feature 的有效范围出生）；④ 各阶段产物只在其阶段内产生，两条路都按冻结的 `execution_scope` 推进到完成终点。**用户已授权完整交付时，走完这条链到完成终点是主 Agent 自己的事**——不把正式闭环当收尾时可再问一次的可选项，仍须询问的只有既有确认点（真实授权、策展语义、预算、外部不可逆动作、设计缺口澄清）。|
+| 继续 | 先读取已有 active run、冻结范围和 successor/revision；恢复该运行，不重新选择流程 |
 
-**普通请求由主 Agent 负责**：分档与执行都在主 Agent，`framework-init` **不是**全局请求路由、preflight 或 public gate。只有明确的 init 动作（显式选择/调用、首次接入发布件、创建/补齐/迁移 `framework.config.json`、集成新发布件后刷新 config/adapters/物化产物）才进入该 Skill；仅出现 framework、Framework 产物或衍生物名词不构成 init 意图。「先完成 X，再执行 `/framework-init`」由主 Agent 按顺序处理：先完成 X，到明确 init 动作时才调用。
+阶段不是固定套餐：有可复用输入不补物理文档；unknown 交既有责任方补依据；仅 review 不自动安排 UT/testing。新任务按义务计算范围；旧运行恢复见 MIGRATION。
+
+**普通请求由主 Agent 负责**：framework-init 仅用于明确安装、更新、配置或 adapter 物化意图；产物提及 framework 不构成 init 意图。init-next-steps 是可选建议，不授权 catalog、glossary、Graph 或 Feature 全链。入口与独立动作见 [项目请求入口](framework/docs/operations/project-entry.md)。
 
 **修正三问**（中途 NL 修正必答，先分层再动手）：
 
 | 问 | 是 → 落点层 |
 |---|---|
-| Q1 需求/验收本身变了？ | spec（spec.md/acceptance.yaml；lite=change.md 意图/验收清单） |
-| Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；lite=change.md Scope/关键契约） |
+| Q1 需求/验收本身变了？ | spec（spec.md/acceptance.yaml；旧记录=change.md 意图/验收清单） |
+| Q2 需求没变，接口/契约/设计要变？ | plan（plan.md/contracts.yaml；旧记录=change.md Scope/关键契约） |
 | Q3 上游都没错——要改产品代码？ | 是→coding；否（纯补验证）→ut/testing |
 
-`--correction-init` 按上述事实自动路由责任阶段，不要求人签，也不写状态、没有收口命令。只改根因层 SSOT
-产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]` 让落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口
-（语义 verifier 不重审：材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）
-——重验 ≠ 重做，不重新进入六阶段流程，不重写 spec/plan/review 全文（在相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
-重验后按**漂移分级**补一次复核，不无条件重走 review→UT→testing：文档/报告/备注变化不复审产品；测试代码变化只跑相关测试；
-导航/状态/业务交互变化做一次 scoped diff review；布局/字号/颜色/资源变化做一次真机截图或 `--measure` 几何量测复核；多类同时变化做一次最终合并 diff review
-（`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核类型并如实标注，不再永久 BLOCKER）。
-用户反馈是 successor/correction 输入，不是对上一 run 的签名。
+`--correction-init` 按上述事实自动路由责任阶段，不要求人签、不写状态、没有收口命令。只改根因层 SSOT 产物、代码与测试输入，再跑一次 `--revalidate --feature <feature> [--from <phase>]`：落点层及下游已闭环 phase 只重跑脚本门禁并按既有闭环路径收口（语义 verifier 不重审——材料未变复用既有报告，材料变了但历史有 PASS 标 `completed_with_prior_review`，差异登记在 `summary.verifier_closure`）；重验 ≠ 重做，不重新进入六阶段、不重写 spec/plan/review 全文（相应产物追加"修正记录"小节即可），不为修正另建 feature 或状态。
+重验后按**漂移分级**补一次复核，不无条件重走 review→UT→testing：文档/报告/备注变化不复审产品；测试代码变化只跑相关测试；导航/状态/业务交互变化做一次 scoped diff review；布局/字号/颜色/资源变化做一次真机截图或 `--measure` 几何量测复核；多类同时变化做一次最终合并 diff review（`review_closure_attestation` / `ut_no_src_mutation` 以 WARN 列出所需复核类型并如实标注，不再永久 BLOCKER）。用户反馈是 successor/correction 输入，不是对上一 run 的签名。
+**已完成后的修正**不走重验（重验只做在途的机械复检、不签发完成）：在同一 feature 上以 supersede 起一个后继 run，范围由框架按当前输入与既往证据算出，只跑未覆盖义务的责任阶段、其余复用；feature 载体（无 run 完成）先追加范围修订再起新 run。改动已提交进仓库的，起后继时把基线重设为当前提交；未提交的沿用源 run 基线。测试用例一律由后继的 UT 阶段以新增测试文件或新增用例产出（同字节重写不算覆盖），框架不把基线里已有的测试算作本轮覆盖证据。
 
 ### 4.0.1 阶段 Skill 总表
 
@@ -90,7 +86,9 @@
 | 0. 模块画像/术语表自举 | [framework/skills/project/catalog-bootstrap/SKILL.md](framework/skills/project/catalog-bootstrap/SKILL.md) |
 | 0. Code Graph 建图与维护 | [framework/skills/project/code-graph/SKILL.md](framework/skills/project/code-graph/SKILL.md) |
 | 0. 目标模式（goal-runner） | [framework/skills/project/goal-mode/SKILL.md](framework/skills/project/goal-mode/SKILL.md) |
-| L1. Lite 轨 | [framework/skills/feature/change-lite/SKILL.md](framework/skills/feature/change-lite/SKILL.md) |
+| 0. 实例扩展管理 | [framework/skills/project/extension/SKILL.md](framework/skills/project/extension/SKILL.md) |
+| **创建或继续部件设计（Story Design，唯一设计入口）** | [framework/skills/project/component-design/SKILL.md](framework/skills/project/component-design/SKILL.md) |
+| CU 推进 / 部件闭环 | [change-unit-progression](framework/skills/project/change-unit-progression/SKILL.md) · [component-closure](framework/skills/project/component-closure/SKILL.md) |
 | 1-6. Spec/Plan/编码/审查/业务级UT/真机测试 | [framework/skills/feature/{spec,plan,coding,code-review,business-ut,device-testing}/SKILL.md](framework/skills/README.md) |
 
 
@@ -133,7 +131,6 @@
 
 ## 七、快速索引
 
-- Framework 使用说明：[framework/README.md](framework/README.md)
 - Skill 索引：[framework/skills/README.md](framework/skills/README.md)
 - 功能需求产物目录：[doc/features](doc/features)
 - catalog-bootstrap 全局阶段命令（无 `--feature`）：`cd framework/harness && npx ts-node harness-runner.ts --phase catalog`（或 `--phase glossary`）

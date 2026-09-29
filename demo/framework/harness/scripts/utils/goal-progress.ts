@@ -5,8 +5,11 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（锁/run 路径必须经它展开）
+import { featureRelativePath } from './feature-identity';
 import { isDryReportDir, type GoalManifest } from './goal-manifest';
-import { inspectGoalRunCreationFiles } from './goal-run-creation';
+import { inspectGoalRunCreationFiles, applyScopeRevisions } from './goal-run-creation';
+import { validateExecutionScope } from './execution-scope';
 import {
   LEGACY_FEATURE_PHASE_ORDER,
   resolveFeatureTrack,
@@ -286,25 +289,36 @@ function buildPhaseSpans(events: GoalRunEvent[], chain: FeaturePhase[]): PhaseSp
   }));
 
   const spanByPhase = new Map(chain.map((p, i) => [p, i]));
+  const resetSpan = (j: number): void => {
+    spans[j] = {
+      phase: chain[j],
+      attempt: 0,
+      started_at: null,
+      ended_at: null,
+      status: 'NOT_STARTED',
+      substep: null,
+      recovered: false,
+      ended: false,
+      deferred: false,
+      halted: false,
+    };
+  };
 
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
 
     if (e.type === 'resume') {
       const startIndex = Math.max(0, Math.min(e.start_index ?? 0, spans.length));
-      for (let j = startIndex; j < spans.length; j++) {
-        spans[j] = {
-          phase: chain[j],
-          attempt: 0,
-          started_at: null,
-          ended_at: null,
-          status: 'NOT_STARTED',
-          substep: null,
-          recovered: false,
-          ended: false,
-          deferred: false,
-          halted: false,
-        };
+      for (let j = startIndex; j < spans.length; j++) resetSpan(j);
+      continue;
+    }
+    // plan c4e7a9b2 §3.5：回退失效的阶段与来源阶段重置（同 resume）——否则 `ended` 锁存让重跑的
+    // phase_start 被挡、当前阶段停在来源阶段。
+    if (e.type === 'phase_backtrack_requested') {
+      const b = e as { from_phase?: string; invalidated_phases?: string[] };
+      for (const p of [...(b.invalidated_phases ?? []), b.from_phase ?? e.phase]) {
+        const j = spanByPhase.get(p as FeaturePhase);
+        if (j !== undefined) resetSpan(j);
       }
       continue;
     }
@@ -795,8 +809,8 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
   const eventsPath = relPath(projectRoot, path.join(projectRoot, reportDir, 'events.jsonl'));
 
   // C1：链投影按 feature track（lite 走显式 lite 链）；事件链过滤放宽到 workflow 全部 feature phase
-  const progressTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature));
-  const fallbackChain = resolveAutoChain(
+  const progressTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, manifest.feature, manifest.run_id));
+  const fallbackChain = manifest.execution_scope?.phase_chain ?? manifest.phase_chain ?? resolveAutoChain(
     workflow,
     manifest.start_phase,
     manifest.end_phase,
@@ -804,9 +818,25 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     progressTrack,
   );
   const allowedPhases = [
-    ...new Set([...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
+    ...new Set([...fallbackChain, ...workflowFeaturePhases(workflow, 'full'), ...workflowFeaturePhases(workflow, 'lite')]),
   ];
-  const chain = resolveChainFromEvents(events, fallbackChain, allowedPhases);
+  // D2: the effective scope is the current truth about which phases this run must run — the first
+  // `run_start.chain` is the birth projection and must not override it (review M3). Resolved through
+  // the same `applyScopeRevisions` every other consumer uses, not a second hand-rolled reader
+  // (review 建议 2). A corrupt chain must not blank the progress panel: the runtime is the component
+  // that fails on corruption, this one keeps rendering what the events do show.
+  let revisedChain: FeaturePhase[] | undefined;
+  try {
+    if (manifest.execution_scope) {
+      const effective = applyScopeRevisions(validateExecutionScope(manifest.execution_scope), events);
+      if (effective !== manifest.execution_scope) {
+        revisedChain = effective.phase_chain.map(p => normalizePhaseId(p, p)).filter((p): p is FeaturePhase => allowedPhases.includes(p));
+      }
+    }
+  } catch { revisedChain = undefined; }
+  // `!== undefined`, not `?.length`: a legally empty effective chain (everything already reused)
+  // must stay empty rather than silently fall back to the birth projection.
+  const chain = revisedChain !== undefined ? revisedChain : resolveChainFromEvents(events, fallbackChain, allowedPhases);
 
   const hasRunStart = events.some((e) => e.type === 'run_start');
   const lastRunEnd = resolveEffectiveRunEnd(events);
@@ -852,7 +882,9 @@ export function projectGoalProgress(input: ProjectProgressInput): GoalProgressSn
     }
   }
   // 与 goal-runner 共用同一 resolver，杜绝"runner 等 90min 但 progress 按 60min 报 STALLED"脑裂。
-  const wallLimitMs = resolveWallClockMs(manifest);
+  // 同源包括**链**：runtime 在修订后按有效链重算 wall（goal-phase-runtime 的 revise_scope 分支），
+  // 这里不传 chain 就会按出生链报一个更小的上限（review M3）。
+  const wallLimitMs = resolveWallClockMs(manifest, chain);
   const stallPhase: FeaturePhase = currentPhase ?? chain[0] ?? 'review';
   // P0-4（plan d9b4f7e2）：timeout 单一事实源——优先读最近 agent_invoke_start 的
   // effective_timeout_ms（钳制/升档后的真值；runner 升档而 progress 静态解析 manifest
@@ -1380,7 +1412,7 @@ export function resolveFeatureLockPath(
   featuresDir: string,
   feature: string,
 ): string {
-  return path.join(projectRoot, featuresDir, feature, 'goal-runs', FEATURE_LOCK_NAME);
+  return path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', FEATURE_LOCK_NAME);
 }
 
 export function resolveRunnerLockPath(
@@ -1395,7 +1427,7 @@ export function resolveRunnerLockPath(
   if (reportDir) {
     return path.join(projectRoot, ...reportDir.replace(/\\/g, '/').split('/'), RUN_LOCK_NAME);
   }
-  return path.join(projectRoot, featuresDir, feature, 'goal-runs', runId, RUN_LOCK_NAME);
+  return path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs', runId, RUN_LOCK_NAME);
 }
 
 export function loadProgressContext(
@@ -1423,7 +1455,7 @@ export function resolveLatestRunId(
   featuresDir: string,
   feature: string,
 ): string | null {
-  const runsDir = path.join(projectRoot, featuresDir, feature, 'goal-runs');
+  const runsDir = path.join(projectRoot, featuresDir, featureRelativePath(feature), 'goal-runs');
   if (!fs.existsSync(runsDir)) return null;
 
   let best: { runId: string; ts: number } | null = null;

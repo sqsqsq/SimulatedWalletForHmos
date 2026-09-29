@@ -24,7 +24,8 @@
 //      `evaluated_screenshot_hash` / `evaluated_build_fingerprint` / `evaluation_invalidated`。
 //      这一条如果配上正确路径，才是真正的逃生口：一份手改的极简 JSON 就能把 TC 洗绿。
 //   现在改为**复用既有** `validateVisualDiffJson` + `isStaleVisualDiffVerdict` +
-//   `isMissingEvaluatedScreenshotHash`，并要求本轮 visual 门自身 PASS，不另建第二判据。
+//   `isMissingEvaluatedScreenshotHash`，并要求本轮 visual aggregate PASS 或 producer 明示
+//   仅 advisory 的 WARN，不另建第二判据。
 //
 //   provider —— active 且无 per-TC producer 在计划期即 invalid_test；inactive/SKIP 才
 //               作为 unsupported_gap 到这里披露。capability 解析记录
@@ -48,11 +49,19 @@ import { featureDir } from '../../config';
 import { extractAcceptanceIdRefs } from './check-acceptance';
 import { extractTables, getSectionContent, type MdTable } from './markdown-parser';
 import type { AcceptanceFlowsDoc } from './p0-semantic-gates';
+import type { CheckResult } from './types';
+import { loadUiSpecFile, uiSpecAbsPath } from './ui-spec-shared';
 import {
+  effectiveScreens,
   isMissingEvaluatedScreenshotHash,
   isStaleVisualDiffVerdict,
+  loadRepairAuthorityScope,
   validateVisualDiffJson,
 } from '../../../profiles/hmos-app/harness/visual-diff-check';
+import {
+  collectP0OverlayTargetIds,
+  isOverlayRootScreen,
+} from '../../../profiles/hmos-app/harness/visual-diff-targets';
 
 /** provider 通道要变成可绑定，provider 侧必须先满足的最小契约。 */
 export const PROVIDER_EVIDENCE_CONTRACT =
@@ -78,6 +87,14 @@ export interface ChannelEvidenceBinding {
   tc_id: string;
   channel: 'visual' | 'provider' | 'manual';
   verdict: ChannelEvidenceVerdict;
+  /**
+   * plan e7a2c4f1 §3.4（G28）：该条不可闭合的责任方与责任文件（来自 visual gate 的
+   * `evidence_block_owner` / `affected_files`）。调用方把它们提到
+   * `testing_channel_evidence_obligation` 的 `repair_owner` / `affected_files` 上，
+   * 走既有 `repair_candidates` 与失败归因通道；不新增 check id、不新建披露渠道。
+   */
+  repair_owner?: 'coding' | 'spec' | 'capability';
+  affected_files?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +133,29 @@ export function extractTcAcceptanceRefs(planMd: string): Map<string, string[]> {
   return out;
 }
 
+/**
+ * 从同一张表的同一列读出 TC → 性能 NFR 引用；复用通用验收 ID 解析，支持命名 NFR。
+ * 列里没有 NFR 时该 TC 不进入性能 timing 判据；未知/混合引用仍由原计划门禁处理。
+ */
+export function extractTcNfrRefs(planMd: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const section = getSectionContent(planMd, '测试用例') ?? getSectionContent(planMd, '测试用例清单') ?? '';
+  const tables = extractTables(section || planMd);
+  if (tables.length === 0) return out;
+  const table = tables[0];
+  const idCol = pickColumnIndex(table, ['用例编号', '编号', 'TC-ID', 'TC ID']);
+  const acCol = pickColumnIndex(table, ['关联 AC', '关联']);
+  if (acCol < 0) return out;
+  for (const row of table.rows) {
+    const tcRaw = (idCol >= 0 ? row[idCol] : row[0] || '').trim();
+    const matched = tcRaw.match(/TC-\d+/i);
+    if (!matched) continue;
+    const refs = extractAcceptanceIdRefs(row[acCol] ?? '').filter(id => id.startsWith('NFR-'));
+    if (refs.length > 0) out.set(matched[0].toUpperCase(), refs);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // visual-diff.json 的逐屏 verdict
 // ---------------------------------------------------------------------------
@@ -124,8 +164,19 @@ export interface VisualScreenVerdicts {
   /** 产物可读、合 schema、且本轮 visual 门自身通过；false 时 byScreen 必为空 */
   available: boolean;
   detail: string;
+  /**
+   * plan e7a2c4f1 §3.4（G28）：`available=false` 时的责任方，直接取自 producer 算好的
+   * `VisualDiffStructuredPayload.evidence_block_owner`（只有那里同时看得见三个合取项）。
+   * 沿既有 `repair_owner` 通道出去——引用/缺文件回 spec、能力缺口归 capability（不回 coding）、
+   * 产品真值仍回 coding；说不出原因时为 undefined，行为与本 plan 之前一致。
+   */
+  unavailableOwner?: 'coding' | 'spec' | 'capability';
+  /** 责任文件（spec owner 侧，来自 visual gate 的既有 `affected_files`）。 */
+  unavailableFiles?: string[];
   /** screen_id → 该屏是否可作为"本轮已通过"的证据 */
   byScreen: Map<string, ScreenEvidence>;
+  /** checkpoint base screen → canonical capture ids；overlay root 通常恰好一个。 */
+  canonicalByCheckpoint?: Map<string, string[]>;
 }
 
 export interface ScreenEvidence {
@@ -141,11 +192,24 @@ export interface VisualEvidenceOptions {
   feature: string;
   /** 本轮 build 指纹；给了才能判"旧 build 的结论不算数" */
   currentBuildFingerprint?: string | null;
-  /**
-   * 本轮 `visual_diff` 门的实际结论。**必须由调用方在 visual 检查跑完之后传入**——
-   * 缺省视为未通过。证据义务不能早于产生证据的那一步执行。
-   */
-  visualGateStatus?: string | null;
+  /** 本轮 visual aggregate；必须在 visual 检查后传入，缺省/不可用均拒绝。 */
+  visualGate: Pick<CheckResult, 'id' | 'status' | 'severity' | 'structured' | 'affected_files'> | null;
+}
+
+/**
+ * 稳定 visual aggregate 的证据资格：PASS 与 WARN **读同一个** `channel_evidence_usable` 布尔。
+ *
+ * plan e7a2c4f1 §3.1：判据改成逐屏真值 + 覆盖条件之后，PASS 不再蕴含"逐屏覆盖成立"——
+ * 全屏 pass、hits 为空、但 OCR 不可用且无 region_attest 的轮次照样能产出 PASS 聚合，却不该
+ * 被绑定消费。gate 缺席 / id 不是 visual_diff 仍直接拒（那是身份，不是档位）。
+ */
+export function visualGateAllowsEvidence(
+  gate: Pick<CheckResult, 'id' | 'status' | 'severity' | 'structured'> | null | undefined,
+): boolean {
+  if (!gate || gate.id !== 'visual_diff') return false;
+  if (gate.status !== 'PASS' && gate.status !== 'WARN') return false;
+  const payload = gate.structured as { kind?: string; channel_evidence_usable?: unknown } | undefined;
+  return payload?.kind === 'visual_diff' && payload.channel_evidence_usable === true;
 }
 
 /**
@@ -156,13 +220,33 @@ export interface VisualEvidenceOptions {
  * 不是 phase reports 目录。
  */
 export function loadVisualScreenVerdicts(opts: VisualEvidenceOptions): VisualScreenVerdicts {
-  const empty = (detail: string): VisualScreenVerdicts =>
-    ({ available: false, detail, byScreen: new Map() });
+  const empty = (detail: string, blame?: Pick<VisualScreenVerdicts, 'unavailableOwner' | 'unavailableFiles'>): VisualScreenVerdicts =>
+    ({ available: false, detail, byScreen: new Map(), ...(blame ?? {}) });
 
   // 证据义务必须晚于证据产生：visual 门没跑通就没有"本轮结论"可消费。
-  const gate = (opts.visualGateStatus ?? '').toUpperCase();
-  if (gate !== 'PASS') {
-    return empty(`本轮 visual_diff 门未通过（status=${opts.visualGateStatus ?? '(未执行)'}），无本轮视觉证据可消费`);
+  const gatePass = visualGateAllowsEvidence(opts.visualGate);
+  if (!gatePass) {
+    // plan e7a2c4f1 §3.1：判据是逐屏覆盖而不是门的状态，所以拒绝理由必须说清是哪一种——
+    // "status=PASS 却说门未通过"曾是现场最费解的一句。
+    const gate = opts.visualGate;
+    const status = gate?.status ?? '(未执行)';
+    const aggregateUsableStatus = gate?.id === 'visual_diff' && (status === 'PASS' || status === 'WARN');
+    const why = aggregateUsableStatus
+      ? `本轮视觉证据资格不成立（status=${status}）：需「屏无 fail/must_fix、无 blocker/major defects 与确定性 placement 背离 + evaluated_screenshot_hash + 文本 placement 核对已跑完或 vl_screening region_attest」`
+      : `本轮 visual_diff 门未通过（status=${status}：门缺席、id 不符或状态本身不可消费）`;
+    // plan e7a2c4f1 §3.4（G28）：责任方与责任文件跟着这条不可消费一起出去，否则
+    // §3.3 分出的五类原因到了 obligation BLOCKER 就只剩一句通用文案，归因照旧落 code_regression。
+    const owner = (gate?.structured as { evidence_block_owner?: unknown } | undefined)?.evidence_block_owner;
+    const blame = owner === 'coding' || owner === 'spec' || owner === 'capability'
+      ? {
+          unavailableOwner: owner as NonNullable<VisualScreenVerdicts['unavailableOwner']>,
+          ...(owner === 'spec'
+            ? { unavailableFiles: (gate?.affected_files ?? []).filter(f => /(^|\/)spec\//.test(f)) }
+            : {}),
+        }
+      : undefined;
+    const ownerNote = blame ? `；责任方=${blame.unavailableOwner}${blame.unavailableFiles?.length ? `（${blame.unavailableFiles.join('、')}）` : ''}` : '';
+    return empty(`${why}，无本轮视觉证据可消费${ownerNote}`, blame);
   }
 
   const file = path.join(
@@ -186,12 +270,18 @@ export function loadVisualScreenVerdicts(opts: VisualEvidenceOptions): VisualScr
     return empty(`visual-diff.json 结构性错误：${validated.errors.slice(0, 4).join('；')}`);
   }
 
+  // plan 6644ea45 §4.2：gate 物化的降级屏（soft 档自报残差）——其 warn 也算可用，结论由视觉债务披露。
+  // 缺字段 = 空集 = 现状。
+  const downgradedRaw = (opts.visualGate?.structured as { downgraded_screens?: unknown } | undefined)?.downgraded_screens;
+  const downgraded = new Set(Array.isArray(downgradedRaw) ? downgradedRaw.filter((s): s is string => typeof s === 'string') : []);
   const byScreen = new Map<string, ScreenEvidence>();
-  for (const screen of validated.report.screens ?? []) {
+  // plan c4e7a9b2 A2：逐屏证据资格读 gate 同一授权过滤后的有效视图（需求排除项不否决该屏证据）。
+  const effective = effectiveScreens(validated.report, loadRepairAuthorityScope(opts.projectRoot, opts.feature));
+  for (const screen of effective.screens) {
     const id = typeof screen.screen_id === 'string' ? screen.screen_id.trim() : '';
     if (!id) continue;
     const verdict = String(screen.verdict ?? '');
-    let usable = verdict === 'pass';
+    let usable = verdict === 'pass' || (verdict === 'warn' && downgraded.has(id));
     let reason: string | undefined;
     if (!usable) {
       reason = `verdict=${verdict || '(空)'}`;
@@ -211,10 +301,19 @@ export function loadVisualScreenVerdicts(opts: VisualEvidenceOptions): VisualScr
     }
     byScreen.set(id, { verdict, usable, ...(reason ? { reason } : {}) });
   }
+  const canonicalByCheckpoint = new Map<string, string[]>();
+  const uiDoc = loadUiSpecFile(uiSpecAbsPath(opts.projectRoot, opts.feature));
+  const overlays = collectP0OverlayTargetIds(uiDoc);
+  for (const screen of uiDoc?.screens ?? []) {
+    if (!isOverlayRootScreen(screen)) continue;
+    const rootTarget = overlays.find(target => target.parentScreenId === screen.id);
+    if (rootTarget) canonicalByCheckpoint.set(screen.id, [rootTarget.id]);
+  }
   return {
     available: true,
-    detail: `visual-diff.json 载入 ${byScreen.size} 屏（本轮 visual 门 PASS）`,
+    detail: `visual-diff.json 载入 ${byScreen.size} 屏（本轮 visual 门 ${opts.visualGate?.status ?? 'UNKNOWN'}，证据可用）`,
     byScreen,
+    canonicalByCheckpoint,
   };
 }
 
@@ -257,7 +356,10 @@ export function bindChannelEvidence(input: ChannelEvidenceInput): ChannelEvidenc
   const tcToAc = input.planMd ? extractTcAcceptanceRefs(input.planMd) : new Map<string, string[]>();
 
   for (const tcId of input.visualTcIds) {
-    out.push({ tc_id: tcId, channel: 'visual', verdict: bindVisualTc(tcId, tcToAc, input) });
+    // 责任方由 `bindVisualTc` **在产生该裁决的那一支**上附着（只有"视觉产物不可用"那一支才附）；
+    // 外层不再按 `!input.visual.available` 反推——缺关联 AC / 缺 checkpoint 会在更早的分支
+    // 提前返回 unbound，那是**计划侧**绑定断裂，不得冒领 visual gate 的归属（codex 二轮阻断）。
+    out.push({ tc_id: tcId, channel: 'visual', ...bindVisualTc(tcId, tcToAc, input) });
   }
   const gapByTc = new Map((input.gaps ?? []).map(g => [g.tc_id.toUpperCase(), g]));
   for (const item of input.providerTcIds) {
@@ -309,16 +411,23 @@ export function bindChannelEvidence(input: ChannelEvidenceInput): ChannelEvidenc
   return out;
 }
 
+/**
+ * 返回**这条绑定自己的**裁决与责任归属。责任只由"视觉产物不可用"那一支产生：其余分支
+ * （缺关联 AC / 缺 checkpoint / 多 overlay target / 缺条目 / 屏不可用）都是计划或产品侧事实，
+ * 与本轮 visual gate 的 `evidence_block_owner` 无关。
+ */
 function bindVisualTc(
   tcId: string,
   tcToAc: Map<string, string[]>,
   input: ChannelEvidenceInput,
-): ChannelEvidenceVerdict {
+): Pick<ChannelEvidenceBinding, 'verdict' | 'repair_owner' | 'affected_files'> {
   const acIds = tcToAc.get(tcId) ?? [];
   if (acIds.length === 0) {
     return {
-      kind: 'unbound',
-      detail: `顶层计划未给 ${tcId} 声明结构化「关联 AC」，无法把它绑到任何视觉目标（不从用例名/备注猜）`,
+      verdict: {
+        kind: 'unbound',
+        detail: `顶层计划未给 ${tcId} 声明结构化「关联 AC」，无法把它绑到任何视觉目标（不从用例名/备注猜）`,
+      },
     };
   }
   const screens: string[] = [];
@@ -330,36 +439,60 @@ function bindVisualTc(
   }
   if (acWithoutScreens.length > 0) {
     return {
-      kind: 'unbound',
-      detail:
-        `${acWithoutScreens.join('、')} 的 acceptance checkpoint 没有声明 pre_screen/post_screen，` +
-        '视觉目标无法机器确定（checkpoint 是唯一合法来源，不用 linked_flow/散文兜底）',
+      verdict: {
+        kind: 'unbound',
+        detail:
+          `${acWithoutScreens.join('、')} 的 acceptance checkpoint 没有声明 pre_screen/post_screen，` +
+          '视觉目标无法机器确定（checkpoint 是唯一合法来源，不用 linked_flow/散文兜底）',
+      },
     };
   }
   const unique = [...new Set(screens)];
-  if (!input.visual.available) {
-    return { kind: 'unbound', detail: `${tcId} 已绑定屏 ${unique.join('、')}，但视觉产物不可用：${input.visual.detail}` };
-  }
-  const missing = unique.filter(id => !input.visual.byScreen.has(id));
-  if (missing.length > 0) {
+  const ambiguous = unique.filter(id => (input.visual.canonicalByCheckpoint?.get(id)?.length ?? 0) > 1);
+  if (ambiguous.length > 0) {
     return {
-      kind: 'unbound',
-      detail: `visual-diff.json 缺少 ${tcId} 所绑定屏的条目：${missing.join('、')}（缺条目不等于通过）`,
+      verdict: {
+        kind: 'unbound',
+        detail: `${tcId} checkpoint 屏存在多个 overlay capture target：${ambiguous.map(id => `${id}→${input.visual.canonicalByCheckpoint?.get(id)?.join('/')}`).join('、')}`,
+      },
     };
   }
-  const notUsable = unique.filter(id => !input.visual.byScreen.get(id)?.usable);
+  const canonical = unique.map(id => input.visual.canonicalByCheckpoint?.get(id)?.[0] ?? id);
+  if (!input.visual.available) {
+    // **唯一**附着责任方的一支：本轮 visual gate 说不出可消费的证据，owner 由 producer 的
+    // `evidence_block_owner` 决定（引用/缺文件→spec、OCR 能力缺口→capability、产品真值→coding）。
+    return {
+      verdict: { kind: 'unbound', detail: `${tcId} 已绑定屏 ${canonical.join('、')}，但视觉产物不可用：${input.visual.detail}` },
+      ...(input.visual.unavailableOwner ? { repair_owner: input.visual.unavailableOwner } : {}),
+      ...(input.visual.unavailableFiles?.length ? { affected_files: input.visual.unavailableFiles } : {}),
+    };
+  }
+  const missing = canonical.filter(id => !input.visual.byScreen.has(id));
+  if (missing.length > 0) {
+    return {
+      verdict: {
+        kind: 'unbound',
+        detail: `visual-diff.json 缺少 ${tcId} 所绑定屏的条目：${missing.join('、')}（缺条目不等于通过）`,
+      },
+    };
+  }
+  const notUsable = canonical.filter(id => !input.visual.byScreen.get(id)?.usable);
   if (notUsable.length > 0) {
     return {
-      kind: 'failed',
-      detail:
-        `${tcId} 绑定屏未全部提供本轮可用证据：` +
-        notUsable.map(id => `${id}（${input.visual.byScreen.get(id)?.reason ?? '未知原因'}）`).join('、'),
+      verdict: {
+        kind: 'failed',
+        detail:
+          `${tcId} 绑定屏未全部提供本轮可用证据：` +
+          notUsable.map(id => `${id}（${input.visual.byScreen.get(id)?.reason ?? '未知原因'}）`).join('、'),
+      },
     };
   }
   return {
-    kind: 'covered',
-    detail:
-      `${tcId} → ${acIds.join('、')} → 屏 ${unique.join('、')} 逐屏 verdict=pass，` +
-      '且截图 hash / build 指纹 / 评估新鲜度均通过复核',
+    verdict: {
+      kind: 'covered',
+      detail:
+        `${tcId} → ${acIds.join('、')} → 屏 ${canonical.join('、')} 逐屏 verdict=pass，` +
+        '且截图 hash / build 指纹 / 评估新鲜度均通过复核',
+    },
   };
 }

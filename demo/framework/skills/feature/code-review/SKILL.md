@@ -1,5 +1,7 @@
 # Code Review Skill (`code-review`)
 
+> **输入协议边界**：旧版固定上游阅读口径仅适用于历史 1.0 输入。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。新默认使用 1.1 输入，调用上下文必须由入口解析，不得自行补造。 无 Feature 专项按[请求 CLI](../../../docs/operations/request-harness.md)由 Agent 执行准备、Research 和实际检查；完成只代表本次请求，不继续 Feature 链。
+
 > **用户确认 UX**：[user-confirmation-ux.md](../../reference/user-confirmation-ux.md) · `review.module_name` / `review.report_save` / `review.ok_to_ut` / `phase.next_step`。
 
 ## 前置
@@ -8,7 +10,7 @@
 
 **Harness 运行时前置**：满足 [Host harness readiness · Tier_1](../../reference/host-harness-readiness.md) 与 [Shell cwd 契约](../../reference/harness-cli-cwd.md)。**Personal setup（BLOCKER）**：[personal-setup-gate](../../reference/personal-setup-gate.md)：`check-personal-setup.ts --json --ensure`；仅解析 JSON。**视觉能力自测（UI 相关需求·交互式）**：personal-setup `ok` 后按 [interactive-vision-canary](../../reference/interactive-vision-canary.md) 后台跑自测卷判卷 CLI（防死锁编排逐步照做）。
 
-**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。输入缺失（至少 `plan.md`/`contracts.yaml`/`acceptance.yaml`）须报告并回上游补齐。
+**Feature 归档定位协议**（本阶段是消费者）：先基于 `paths.features_dir` 精确定位 `<features_dir>/<feature>/`。 `<feature>` 语义见 [路径术语表](../../reference/agents-entry-detail.md)（物理 Feature 路径）；定位一律经框架解析（CLI/SSOT/harness 产物路径），不得手工拼接逻辑 identity（含编码 `cu-…`）。**跨会话 Resume Gate（BLOCKER，AGENTS §5.2）**：receipt 可能已存在时须先自跑 `check-receipt.ts`；exit 0 → 已闭环，**停等 `phase.next_step`**。输入缺失（至少 `plan.md`/`contracts.yaml`/`acceptance.yaml`）须报告并回上游补齐。
 
 review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNESS_DIFF_BASE_REF=working`——这些属于 coding/UT 的构建与 diff 自愈职责。
 
@@ -40,7 +42,8 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 | 审查维度 | 主要依据 | 严重级别 |
 |----------|---------|---------|
 | 架构合规性 | `doc/architecture.md` + `architecture` DSL | BLOCKER |
-| 模块内四层分层 / 接口一致性 / 文件完整性 / 资源引用完整性 | `coding-rules.yaml` / `contracts.yaml` | BLOCKER |
+| 模块内四层分层 / 接口一致性 / 文件完整性 | `coding-rules.yaml` / `contracts.yaml` | BLOCKER |
+| 资源引用完整性 | `coding_compile` 真实编译结果 | BLOCKER |
 | 命名规范 / 硬编码字符串 | `coding-rules.yaml` | MAJOR |
 | 异常处理 / 业务逻辑正确性 | `acceptance.yaml` / `plan.md` | MAJOR |
 | 数据所有权 / 模拟数据隔离 | `coding-rules.yaml` | MAJOR/MINOR |
@@ -51,20 +54,26 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 
 | 输入项 | 必需 |
 |--------|------|
-| 功能模块名 / plan.md / contracts.yaml / acceptance.yaml / coding-rules.yaml | ✅ |
-| doc/architecture.md / 源代码（contracts.yaml files 列表） | ✅ |
+| 明确审查目标、代码/diff 基线与适用项目规则 | ✅；专项使用 request CLI，组合使用真实 Feature/run。**专项独立调用**：输入=明确审查目标 + `targets.files` + 基线；报告落点=请求 `report-dir` 内的 `review-report.md`（不得写进 Feature 树）；当前 profile 能机器执行的是章节/问题表/引用/结论一致性等结构检查，**语义结论由你写**；`--prepare-request` 报出的能力缺口如实呈现，不改投其它落点 |
+| contracts / acceptance / 蓝图 runtime 与 design_refs | 组合交付或用户要求按设计验收时必需；来源由 P1/P3 解析 |
+| plan.md / spec.md | 仅本次有实际文档消费时读取；不得强造空文档 |
+| doc/architecture.md / 实际目标源码 | ✅，按请求范围及项目适用规则 |
 | spec.md | 可选，验证功能覆盖完整性 |
+| `paths.conventions`（缺失键用框架默认值） | 文件存在时独立必读全文，不依赖 plan 是否声明 |
 
 **能力解析与上下文**：报告头必须写 `保证等级`，其值只来自 harness summary 1.2 的 `assurance` 与 `capability_resolutions`，不得手写 `full/basic` 或另一套缺失输入政策。review contract 的结构化 source chain 决定 artifact/derive 回退；显式非 UI 由 applicability preflight 判定为不适用，输入存在却不能解析仍是 invalid/blocking，不能伪装为降级。输入裁剪不降低代码问题判真标准。`missing_review_report` 仍须补齐后重跑；`missing_source_from_contracts` 仍须确认 coding 是否完成或同步契约。
 
+**CU-bound Feature**：额外核对 Feature id/`change_unit_ref`、predicate/provide/design-ref ID-only mapping 与真实文件/符号/测试一一落地；`contracts.state_management` 是运行时施工唯一真源。任何复制/重定义 CU/蓝图、平行 runtime section、空 Store/EventBus/interface 或施工发现的蓝图冲突均为 BLOCKER；蓝图冲突回 P1，不在 review 中补造定义。
+
 ## 流程骨架
 
-1. **收集审查上下文**：确认模块名（`review.module_name`：`1=确认` `2=修改`）；读 plan.md/spec.md（若存在）/architecture.md/coding-rules.yaml/contracts.yaml/acceptance.yaml；按 `contracts.yaml > files` 读全部源代码；展示审查范围摘要。
-2. **Research Sub-Phase**（Context Facts Gate·BLOCKER，Step 3 审查清单前完成，C4）：必读 Step 1 全部待审源文件 + plan/contracts/acceptance/coding-rules；复合评分 ≥60 或 L4 架构级变更 MUST subagent；追加 `<features_dir>/<feature>/context/facts.md` 的 `## phase_delta: review` 节（全部读完才置该节非空，无新增事实写 "none"）。
+1. **收集审查上下文**：先确定请求终点和基线。专项按 [request CLI](../../../docs/operations/request-harness.md) prepare→Research→报告→同一 checker 执行，不要求本次 coding。组合交付消费 P1/P3 的契约/验收及全部声明源码，逐项对照 CU design_refs、runtime flow、组件资产与惯例；缺必需对照资料仍失败。叙述文档仅在实际需要时读取。
+2. **Research Sub-Phase**（审查前完成）：读取全部目标源码及适用对照。入口指定 review 为首阶段且无有效 facts 时建立绑定本次身份/基线的 facts；有有效基线时才追加 `## phase_delta: review`（无新增写 "none"）。专项使用 request facts/reportDir，不触碰活跃 Feature 的 facts、attestation、receipt 或 events。复杂问题的独立质询仍按既有要求执行。
 3. **系统化审查**（5 子维度，详见 reference）：架构合规性（BLOCKER）→ 接口一致性（BLOCKER）→ 编码规范（MAJOR）→ 业务逻辑（MAJOR）→ 数据层（MAJOR/MINOR）；UI 需求另做视觉保真维度（详见 reference，pixel_1to1 P0 全覆盖不许抽查）。
+   惯例文件存在时还须执行 reference「工程惯例核对」：以目标文件集合核对全部条目，输出全量台账；适用条目打开范例，存量违反降为 advisory。重复意见只能建议 `/conventions-bootstrap` 升格，不直接写惯例文件。
 4. **生成审查报告**：模板 `templates/review-report-template.md`，**必须包含 6 章节**：审查范围 / 审查方法 / 问题清单（编号+严重程度+分类+描述+涉及文件+修复建议）/ 问题统计 / 修复建议摘要 / 结论。问题分类用预定义类别（分层违规/接口不一致/资源引用/命名规范/硬编码/逻辑错误/异常处理/性能/安全/其他）。严重程度：BLOCKER（架构分层违规/接口签名不一致/文件缺失/资源引用缺失）/ MAJOR（命名/硬编码/异常处理/逻辑错误）/ MINOR（模拟数据隔离/风格/注释）/ INFO（改进建议）。结论：BLOCKER>0→不通过；BLOCKER=0 且 MAJOR>0→有条件通过；均 0→通过。
 5. **质量门禁自检**（10 项：审查范围明确/问题清单六列格式/严重程度四级值域/分类值域/统计一致/修复建议可操作/结论一致性/涉及文件真实存在/问题有代码证据/元数据齐全）：不通过定位问题自动修正重检。
-6. **输出与归档**：展示报告确认（`review.report_save`：`1=确认落盘` `2=修改后再落盘`）→ 保存 `<features_dir>/{module-name}/review/review-report.md`。
+6. **输出与归档**：Feature 使用既有报告与 attestation 路径及单写者规则；专项只写 prepare 返回的 reportDir/review_report。两者均记录实际覆盖与基线，review 完成不代表未完成的实现/测试义务已完成；新实现须审查其当前基线，旧 PASS 不得代替。根因归设计时沿原归因回退，不统一塞给 coding。
 
 ## 门禁清单表
 
@@ -76,6 +85,7 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
 | 结论一致性 | 结论与 BLOCKER 数量匹配 | BLOCKER |
 | 涉及文件存在性 | 问题清单引用路径真实存在 | BLOCKER |
 | 分类值域 / 问题统计一致 | 仅预定义分类 / 计数与清单一致 | MAJOR |
+| 工程惯例覆盖 | 台账精确覆盖、声明落位、蓝图贯穿与 gate 委托一致；无文件无声明时 SKIP | MAJOR |
 | 元数据 | 模块标识/审查日期/审查版本齐全 | MINOR |
 
 ```bash
@@ -88,7 +98,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 
 **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
 
-**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮刻意不产出 verifier 调用面，先修 BLOCKER 再说。
+**harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
 
 ## 阶段闭环判定（全局入口 §5.1）
 
@@ -130,3 +140,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {
 ## 收尾
 
 阶段结束时只呈现 Harness 输出的「下一步」段落，不自行推导或补写跨阶段建议。
+
+## 组件资产审查（若启用）
+
+读取 [组件资产 SSOT](../../../docs/concepts/component-assets.md)、index/catalog 摘要、候选 live 调用点与全部目标源码，核对蓝图决定、合同选型和实际实现是否一致。语义重复由 verifier 结合调用点判断；同一组件包装 ≥2 给 WARN 建议 evolve，不做文本匹配 gate。新共享导出须登记且适用静态项无 fail/unknown；存量 unknown 不阻断，私有 custom 不要求登记，uncurated 仅建议增量策展。三个静态项不代表渲染或真机能力。

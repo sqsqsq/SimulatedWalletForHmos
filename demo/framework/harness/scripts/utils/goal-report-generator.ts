@@ -138,6 +138,8 @@ export interface GoalPhaseOutcome {
   agent_duration_ms?: number;
   /** agent 非零退出时的 stderr 摘要（binary 不可 spawn 的 preflight 诊断在此）。 */
   agent_stderr_excerpt?: string;
+  /** harness 非零退出时的当前执行诊断（不得由历史 summary 替代）。 */
+  harness_error_excerpt?: string;
 }
 
 export interface GoalReportFidelityRouting {
@@ -481,6 +483,9 @@ export function generateGoalReportMarkdown(
     if (p.agent_stderr_excerpt) {
       lines.push(`| ↳ agent stderr | — | — | — | — | ${p.agent_stderr_excerpt.replace(/\|/g, '\\|')} | — |`);
     }
+    if (p.harness_error_excerpt) {
+      lines.push(`| ↳ harness error | — | — | — | — | ${p.harness_error_excerpt.replace(/\|/g, '\\|')} | — |`);
+    }
     // P2#9（post-impl review）：显式超时预算过小 advisory 入报告（仅 console 会在 detach 后蒸发）
     if (options.events?.length) {
       const advisories = new Set(
@@ -503,6 +508,21 @@ export function generateGoalReportMarkdown(
         lines.push(
           `| ↳ 模型核验 | — | — | — | — | adapter_model_observed=${String(m.observed).replace(/\|/g, '\\|')}` +
             ` ≠ adapter_model_pin=${String(m.pin).replace(/\|/g, '\\|')}（仅告警，verdict/路由不变） | — |`,
+        );
+      }
+      // plan 8d2b4f60 D4（codex finding 7）：参考图读取记录的跨 invocation 沿用披露。
+      // summary 不收 PASS check（harness-runner.ts:2574），gate 的 PASS details 到不了这里，
+      // 所以披露自己接一条线：走既有 spec_refs_receipt_produced 事件的 carried_over 字段。
+      // codex 实施 review 第 1 轮 finding 3：取该 phase **末轮**事件，不取历史最大值——
+      // 「i2 沿用 3 张、i3 全部重读（carried_over=0）」时报历史最大等于把旧轮事实说成本轮。
+      const refsEvents = options.events.filter(
+        e => e.type === 'spec_refs_receipt_produced' && e.phase === String(p.phase),
+      );
+      const lastCarriedOver = Number(refsEvents[refsEvents.length - 1]?.carried_over ?? 0);
+      if (Number.isFinite(lastCarriedOver) && lastCarriedOver > 0) {
+        lines.push(
+          `| ↳ 参考图读取 | — | — | — | — | 本轮沿用本 run 先前 invocation 记录 ` +
+            `${lastCarriedOver} 张（内容未变） | — |`,
         );
       }
     }

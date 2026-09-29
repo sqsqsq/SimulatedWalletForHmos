@@ -351,7 +351,7 @@ export function tryValidateReceipt(
   // C2：lite track 的 receipt 机制架构性不适用——短路避免无谓 subprocess spawn，
   // 且绝不能把「没有 receipt」误判为 status:'missing'（那会被上游当作待补齐的
   // 未闭环凭证反复提示；lite 本就不产生这份凭证）。
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
+  const track = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature, opts?.goalIdentity?.runId));
   if (track === 'lite') {
     return {
       status: 'not_applicable',
@@ -526,6 +526,16 @@ export function runSyncClosureDetailed(
         frameworkRoot: frameworkRoot ?? path.resolve(harnessRoot, '..'),
         feature,
         phase,
+        // **这里刻意不传 `goalRunId`**（plan b5c1e9d7 §8.7）。归属重建需要 run 身份，但
+        // `goalRunId` 不是「只喂重建」的一个入参——`productionEvidence`
+        //（`phase-closure-finalizer.ts` 的 `Boolean(opts.goalRunId?.trim()) || isGoalEnvironment()`）
+        // 用它决定要不要**强制** requirement 血缘哈希，而那道门在重建的 try/catch 之外。
+        // `check-receipt` 那条路的身份来自 `MAISON_GOAL_RUN_ID`，`isGoalEnvironment()` 本来就为真、
+        // 透传不改判据；这条路的身份来自调用方入参，透传会**第一次**为 `--sync-closure` 打开
+        // 那道强制门（既有 `check-receipt-policy` 两条 T4 实测变红）。
+        // 归属不因此丢失：finalizer 的重建在缺 `goalRunId` 时回落**正在闭环的那份 canonical
+        // summary 的 `run_id`**（该证据自己的 run 身份；本函数上面的 `tryValidateReceipt` 已带
+        // `goalIdentity` 校验过身份），两件事就此解耦——由 OWN-T6 锁住。
         persistPhaseState: () =>
           syncPhaseStateOnReceiptPassStrict(projectRoot, feature, phase, receiptValidation, {
             frameworkRoot,

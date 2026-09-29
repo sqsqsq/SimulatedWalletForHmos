@@ -130,12 +130,12 @@ coding 后绕过 UI scope、按字节一致自动授权或另建 asset 豁免表
 | `HALTED` | 预算/收敛熔断、完整性持续不稳定、真正外部权限边界或 framework defect 等诚实终止；可修质量 FAIL 走责任阶段重跑，P0 skip/档位/视觉证据不得靠 waiver 放行 |
 | `COMPLETED` | legacy（旧 run 事件读取兼容），新 run 不再写出 |
 
-**任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `verify-feature-completion`
-返回 `VALID`（重算全链 clean_pass/血缘/attestation/supersede 审计；伪造/缩链/世界后变
-分别判 INVALID/STALE）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
+**任何 run 级状态 ≠ 需求完成**：feature 完成唯一判据 = `assessFeature`（feature-assessment）
+返回 `complete`（记录可信 + 义务逐条覆盖 + 无 blocking；伪造/缩链判记录 broken，世界后变
+判对应义务 uncovered）。截断链 run（`--start` 非链首）启动前会机器核验上游各阶段
 closure（phase-evidence-manifest staleness + review attestation），manifest 文本断言不作数。
 废弃 HALTED 旧 run 用 `--supersede <run_id>`（写审计事件，completion 只认经审计的 supersede）；
-只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。
+只有需要切断旧 diff lineage 时才同时使用上节的 `--rebaseline-to`。completed 源 run 的 successor 重算范围（只跑未覆盖义务的责任阶段）。
 
 **DEFERRED ≠ 完成**：不得宣称 UT/真机已闭环。
 
@@ -145,7 +145,7 @@ closure（phase-evidence-manifest staleness + review attestation），manifest �
 - testing 只消费 authoritative trace 的 `CaseResult.steps[]`；Maison 根据 acceptance/checkpoint 自算 coverage。最低契约为 Hylyre `0.5.0`、trace `schema_version=0.4-p0`、`result_protocol=hylyre.step-outcome/1`（Step Outcome v1），并需通过 release manifest → ready meta → trace environment 版本链与必需字段门禁。native trace 同时绑定实际 derived plan、top plan、trace 路径/SHA，并核对 StepResult count/index/kind；`execution`、`verification`、`evidence`、`expected_check_mode` 与 StepResult 的 `outcome` 是机器消费字段：状态读 `outcome.status`，失败事实读 `outcome.failure.domain/code/facts`，blocked 原因读 `outcome.cause`，skipped 原因读 `outcome.reason`，selector 读 `selector.request`/`selector.resolution`；flat `status`/`failure_kind`/`failure_code` 已退役，也不从 `diagnostic` 文本重建。
 - 顶层 `test-plan.md` 每条 TC 声明唯一 `execution_channel`（`hylyre|visual|manual:<gap_class>|provider:<capability-id>`）；known manual gap / inactive provider 才是 `unsupported_gap`，裸/未知 manual、未登记或 active 无 producer 的 provider 在跑机前 `invalid_test`。派生器只编译 `channel=hylyre` 的精确集合，不得新增/删除/改写通道。责任路由只消费实际执行且 `outcome.status=failed` 的步骤；`blocked/capability` 与 `blocked/infrastructure` 各投影 1 次 disposition 而非伪造 failure route，`blocked/prior_step` 与 `skipped/policy` 零 route 零 defer。
 - native StepResult 在场时不再调用旧 runtime telemetry monkey-patch；历史 telemetry 仅作具体 checkpoint 的有限兼容或一致性 WARN，不得合成第二套 CaseResult/StepResult 状态。goal 仍保留 run/attempt/HAP/device identity binding。
-- run 已产 trace 且 agent 已基于最终 trace/timing 写好顶层 `test-report.md` 后，可执行 `--report-reconcile-only --phase testing --feature <feature>`。该模式只读最终 trace、test-plan、`device-test-timing.json` 与 build/install/run meta，完整重算既有 report/static checks、summary、quality axes 与 repair candidates；不调用 hvigor、hdc、Hylyre、设备或视觉采集，也不修改 trace 字节。
+- run 已产 trace 后即可执行 `--report-reconcile-only --phase testing --feature <feature>`（harness 自己生成报告，**不要求** agent 预先写好顶层 `test-report.md`）。该模式只读最终 trace、test-plan、`device-test-timing.json` 与 build/install/run meta，完整重算既有 report/static checks、summary、quality axes 与 repair candidates；不调用 hvigor、hdc、Hylyre、设备或视觉采集，也不修改 trace 字节。
 - 报告必须保留 skip 并计入正确分母（P1/P2 的未执行 case 也不能绕过 testing FAIL），使用最终 build/install reused 状态、最终 timing，并回填每个 case duration；native timing 直接汇总 StepResult duration，legacy 才回退日志算法；不得把首轮真编或旧轮数据写成最终执行轮数据。
 
 ## Adapter 选择与 personal setup（goal 入口）
@@ -274,7 +274,7 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
 
 宿主的"后台启动"（Cursor `is_background` / Claude Code `run_in_background`）只让 agent **立即拿回控制权**，进程仍是**会话内子进程**——宿主会话结束 / 活跃 agent 轮次收尾即被回收（2026-06 实测：`is_background` 直挂的 run 在轮次收尾被杀，`progress.json` 长期显示"运行中的尸体"）。**"拿回控制权" ≠ "活过我的会话"。**
 
-故**无人值守一律用真 `--detach`**（真 OS 脱离：`detached:true`+`unref()`+stdio 落 `detach.log`），实测能**活过 Cursor 完全关闭再重开**。宿主有后台模式可叠加用来不阻塞 launcher，但**存活靠 `--detach`，不靠 `is_background`**。启动后须**存活自校验**（`detach.log` 增长 + `goal-status` 活性正常），没起就如实报"启动未存活"，不要假报"已在后台跑"。
+故**无人值守一律用真 `--detach`**（真 OS 脱离：`detached:true`+`unref()`+stdio 落 `detach.log`），实测能**活过 Cursor 完全关闭再重开**。宿主有后台模式可叠加用来不阻塞 launcher，但**存活靠 `--detach`，不靠 `is_background`**。启动与存活结果以 launcher 返回的 `startup` 为准，调用方不追加握手：`failed` 报启动失败，其余三态按真实状态汇报。
 
 **存活是环境属性**：会**整组/整树杀**进程的敌对宿主（部分公司沙箱 / CI；Node `detached:true` 不设 `CREATE_BREAKAWAY_FROM_JOB`，挡不住 `taskkill /T` / kill-on-close Job）下 `--detach` 也保不住，须用 OS 调度任务（cron / Windows Task Scheduler）托管 run。下面 chrys / opencode 是"阻塞型宿主"的具体落地。
 
@@ -298,9 +298,9 @@ cd framework/harness && npx ts-node scripts/goal-runner.ts \
   --feature <feature-slug> --requirement "需求" --adapter chrys --detach
 ```
 
-- launcher **秒级 fork 后台 child 并打印一行 JSON**（`{detached, run_id, report_dir, log, pid}`）后 `exit 0`；宿主 shell 拿到干净 0 退出码立即返回，**不触发超时杀树**。
+- launcher fork 后台 child，完成自身有界启动确认后打印一行 JSON（`{detached, run_id, report_dir, log, pid, startup}`）；`startup=failed` 时非零退出，其余状态干净返回，**不等待任务终局**。
 - child 的 stdio 重定向到 `report_dir/detach.log`，**不继承宿主 shell 的管道**（否则宿主 `communicate()`/阻塞读会一直等到 child 关 pipe，反而拖到超时杀树）。
-- 解析 launcher JSON 取 `run_id`，随后按下文执行启动握手、汇报并交还轮次；`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
+- 解析 launcher JSON 取 `run_id` 与 `startup`，按 `ready` / `terminal` / `alive_timeout` / `failed` 准确汇报后交还轮次；调用方不再重复握手。`--detach` 同样兼容 `--resume <run-id> --feature <f> --detach`。
 - 适用前提（实测，chrys `foundation/platform/process.py`）：宿主 shell 用 `CREATE_NEW_CONSOLE` 而非 kill-on-close Job Object，且**仅在超时/取消时杀树**——故 launcher 干净退出即可让 detach 存活。
 
 **监控口径（chrys/opencode 无流式）**：`phases/<phase>/agent-output.log` 在 phase 结束前**恒为空**——活性**只**看 `goal-status` / `progress.json` / events 心跳（每 ~60s 一拍），**禁止** tail `agent-output.log` 判断卡死。
@@ -314,7 +314,7 @@ cd framework/harness && npx ts-node scripts/goal-status.ts \
   --feature <feature-slug> --run-id latest --json
 ```
 
-主 agent 启动 runner 后，默认执行**有界启动握手**（硬上限 ≤30s，间隔 2–5s，只检查 manifest 落盘 / `detach.log` 增长 / liveness；按结果分类汇报——有可信终态/等待态证据就报真实状态，非终态且进程健康报「已启动」，超窗但进程仍活着报「尚未就绪，进程仍存活」，仅进程确实死亡且无结束证据才报「未存活」），就绪后汇报 `run_id`、进度路径、续查命令并**结束当前轮次**——这是默认，不需要用户开口「后台跑」，也不进入 monitor（禁止用 `sleep`/`for`/`grep events.jsonl` 等自制循环等待 phase/verdict/run_end 事件；启动握手是唯一例外）。仅当用户明确要求盯守时才进入 bounded monitor：
+launcher 已使用 manifest、本次新增 events、liveness 与 progress 完成**有界启动确认**；主 agent 只消费返回 JSON 的 `startup` 四态并汇报 `run_id`、进度路径和续查命令，然后**结束当前轮次**。不得再用 `sleep` / `for` / `grep events.jsonl` 重复握手或等待 phase/verdict/run_end；仅当用户明确要求盯守时才进入 bounded monitor：
 
 ```bash
 cd framework/harness && npx ts-node scripts/goal-monitor.ts \

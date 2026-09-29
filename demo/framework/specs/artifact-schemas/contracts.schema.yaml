@@ -19,9 +19,46 @@ x-file-reference-fields:
   - resource_keys.<module>.<category>[].media
   - navigation.config_files[]
   - prd_to_code_traceability[].key_files[]
+x-blueprint-projection: "Blueprint-derived source identities are checked by blueprint-skill-projection.ts; manual source labels remain supported."
 type: object
 additionalProperties: true
 properties:
+  components:
+    type: array
+    description: Existing component tree; asset_selection is the blueprint decision construction projection. Format SSOT is docs/concepts/component-assets.md.
+    items:
+      type: object
+      additionalProperties: true
+      properties:
+        asset_selection:
+          type: object
+          additionalProperties: false
+          required: [resolution]
+          properties:
+            resolution: { enum: [reuse, configure, adapt, evolve, custom] }
+            component_ref: { type: string, minLength: 1 }
+            rationale: { type: string, minLength: 1 }
+            bindings: { type: object }
+          description: Conditional required fields and ID validity are enforced by SpecLoader; absence is allowed until the index is enabled.
+  change_unit:
+    type: object
+    description: ID-only construction projection bound to one canonical change-unit@1 ref; semantic completeness is enforced by phase checkers.
+  state_management:
+    type: array
+    description: Sole Feature runtime-construction authority, including CU-bound runtime details when applicable.
   files:
     type: array
     items: { type: string, minLength: 1 }
+  conventions_applied:
+    type: array
+    description: Applicable project-convention ids and the files/directories where this Feature plans to honor them.
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, planned_locations]
+      properties:
+        id: { type: string, minLength: 1 }
+        planned_locations:
+          type: array
+          minItems: 1
+          items: { type: string, minLength: 1 }

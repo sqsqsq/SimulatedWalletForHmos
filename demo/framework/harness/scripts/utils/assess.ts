@@ -1,3 +1,5 @@
+import { executionCompletionPhases, type ExecutionScope } from './execution-scope';
+import { loadEffectiveExecutionScope } from './goal-run-creation';
 // ============================================================================
 // assess.ts — deterministic, level-triggered feature reconciliation (assess@1)
 // ============================================================================
@@ -9,7 +11,8 @@ import {
   featureFilePath,
   featurePhaseReportsDir,
 } from '../../config';
-import { resolveWorkflowSpec } from '../../workflow-loader';
+import { loadGoalManifestFromRun } from './goal-manifest';
+import { resolveWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
 import {
   recomputePhaseEvidenceStaleness,
   phaseEvidenceManifestPath,
@@ -39,6 +42,8 @@ import {
   type MinimumAssurance,
 } from './skill-contract';
 import { collectBlockedCapabilityFacts, type BlockedCapabilityFact } from './capability-resolution';
+import { assessFeature as assessFeatureCompletion } from './feature-assessment';
+import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
 import type { CapabilityResolution } from './capability-resolution';
 
 export type AssessGapKind =
@@ -60,9 +65,12 @@ export interface AssessAuthorizationContext {
 
 /** Injected by a reconcile driver; assess never reads event logs directly. */
 export interface ReconcileObservationV1 {
+  scope_revision?: ExecutionScope;
   schema_version: '1.0';
   state: 'active' | 'fused';
   reason?: string;
+  /** 当前 attempt 是否刷新了 summary；false 时历史 summary 仅展示，不提供 repair candidates。 */
+  current_summary_fresh?: boolean;
   residual_fingerprints?: string[];
   phase_outcome?: {
     phase: string;
@@ -75,7 +83,7 @@ export interface ReconcileObservationV1 {
   };
   blockers?: Array<{
     id: string;
-    actionability: 'automatic' | 'human' | 'external' | 'unknown';
+    actionability: 'automatic' | 'human' | 'external' | 'framework' | 'unknown';
     blocking_class?: string;
   }>;
   deterministic_defects?: string[];
@@ -147,6 +155,7 @@ export interface AssessPrunedPropagation {
   source: string;
 }
 export interface AssessObservation {
+  execution_scope?: ExecutionScope;
   schema_version: '1.0';
   feature: string;
   workflow: string;
@@ -182,6 +191,7 @@ export interface AssessRecommendation {
     | 'resolve_deferred'
     | 'restore_inputs_and_rerun'
     | 'validate_feature_completion'
+    | 'revise_scope'
     | 'stop';
   phase: string | null;
   reason: string;
@@ -322,14 +332,11 @@ function isDeferredSummary(summary: Record<string, unknown>): boolean {
 }
 
 /**
- * plan c8e5b3f1 t2 D：summary 是否含**本地** blocked capability（相关 unresolved attempts 均无
- * upstream_producer）。真 device/external/deferred 场景（verdict=INCOMPLETE 且 blockers 为
- * external/device）会命中 isDeferredSummary 的 blockers 分支，本函数不覆盖——只有"verdict=INCOMPLETE
- * 且无 external blocker、且确有本地 blocked capability"时返回 true，从而让该 phase 走 failed 而非
- * 被 isDeferredSummary 一律标成 deferred。（与 collectPrunedPropagations 的 upstream_producer 语义
- * 一致：带 producer 的 unresolved attempt 交给上游 pruned 传播，不在此当本地失败。）
+ * summary 是否含非外部的 blocked capability。显式 external/device blocker 或
+ * completion_status=deferred 优先；否则 unresolved attempt 无论由当前 phase 补齐还是携带
+ * upstream_producer，都属于可路由输入缺口，不能被 verdict=INCOMPLETE 泛化成外部 defer。
  */
-function hasLocalBlockedCapability(summary: Record<string, unknown>): boolean {
+function hasInputBlockedCapability(summary: Record<string, unknown>): boolean {
   // review P2：显式 external/device blocker **或** completion_status==='deferred' 都**优先**保持
   // deferred——本地 blocked 不得吞掉真实外部/显式延迟（含 completion_status 显式置 deferred 的场景）。
   const hasExternalBlocker = (summary.blockers as Array<Record<string, unknown>> | undefined)?.some((blocker) =>
@@ -351,7 +358,7 @@ function hasLocalBlockedCapability(summary: Record<string, unknown>): boolean {
         const rec = attempt as Record<string, unknown>;
         const state = rec.state;
         if (state === 'absent' || state === 'invalid' || state === 'not_applicable') {
-          if (typeof rec.upstream_producer === 'string' && rec.upstream_producer) return false;
+          return true;
         }
       }
     }
@@ -438,13 +445,17 @@ function collectPrunedPropagations(
       .localeCompare([b.producer_phase, b.producer_capability, b.downstream_phase, b.downstream_capability, b.input_id].join('|')));
 }
 export function observeFeatureState(options: AssessFeatureOptions): AssessObservation {
-  const workflow = resolveWorkflowSpec(options.projectRoot, {
+  let workflow = resolveWorkflowSpec(options.projectRoot, {
     frameworkRoot: options.frameworkRoot,
   });
-  const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature));
-  const allPhases = resolvePhaseChain(workflow, track).featureOrdered.map(String);
+  // D1 §6.4：删掉「有 runId 才读范围」的三元——统一入口在无 run 时读 feature 冻结记录。
+  const scope = loadEffectiveExecutionScope(options.projectRoot, options.feature, options.runId);
+  const run = options.runId && fs.existsSync(featureFilePath(options.projectRoot, options.feature, 'goal-runs/' + options.runId + '/manifest.json')) ? loadGoalManifestFromRun(options.projectRoot, options.runId, { feature: options.feature }) : undefined;
+  if (run) workflow = workflowForExistingRun(workflow, run, options.frameworkRoot ?? path.resolve(__dirname, '../../..'));
+  const track = scope ? 'full' : resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, options.feature, options.runId));
+  const allPhases = scope ? executionCompletionPhases(scope) : run?.phase_chain ?? resolvePhaseChain(workflow, track).featureOrdered.map(String);
   if (allPhases.length === 0) throw new Error(`[assess] workflow=${workflow.name} track=${track} 无 feature phase`);
-  const goalEnd = options.goalEnd ?? allPhases[allPhases.length - 1];
+  const goalEnd = scope ? allPhases[allPhases.length - 1] : options.goalEnd ?? allPhases[allPhases.length - 1];
   const phases = sliceThrough(allPhases, goalEnd);
   const frameworkRoot = options.frameworkRoot ??
     path.resolve(__dirname, '..', '..', '..');
@@ -553,9 +564,9 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
       ...(readRepairCandidatesFromSummary(summary).length > 0
         ? { repair_candidates: readRepairCandidatesFromSummary(summary) }
         : {}),
-      // plan c8e5b3f1 t2 D：不把 verdict=INCOMPLETE 一律当 deferred——本地 blocked capability
-      //（unresolved attempts 均无 upstream_producer）应走 failed；真 device/external 仍 deferred。
-      deferred: isDeferredSummary(summary) && !hasLocalBlockedCapability(summary),
+      // capability 输入缺口（本地或有 upstream producer）走 failed/owner route；
+      // 显式 device/external/completion deferred 仍保持 deferred。
+      deferred: isDeferredSummary(summary) && !hasInputBlockedCapability(summary),
       blocked_capabilities: blockedCapabilityFactsFor(summary),
       summary_fingerprint: fileHash(summaryPath),
       evidence_fingerprint: fileHash(evidencePath),
@@ -585,12 +596,13 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
     });
   });
   const prunedPropagations = collectPrunedPropagations(currentSummaries);
-  const workflowFingerprint = hash(workflow);
+  const workflowFingerprint = scope ? scope.policy_fingerprint : hash(workflow);
   const trackFingerprint = hash({
     track,
-    feature_decl: fileHash(featureFilePath(options.projectRoot, options.feature, 'feature.yaml')),
+    feature_decl: scope ? null : fileHash(featureFilePath(options.projectRoot, options.feature, 'feature.yaml')),
   });
   const goalFingerprint = hash({
+    execution_scope: scope ?? null,
     goal_end: goalEnd,
     minimum_assurance: options.minimumAssurance ?? {},
   });
@@ -623,6 +635,7 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   return {
     schema_version: '1.0',
     feature: options.feature,
+    ...(scope ? { execution_scope: scope } : {}),
     workflow: workflow.name,
     track,
     goal_end: goalEnd,
@@ -643,7 +656,26 @@ export function observeFeatureState(options: AssessFeatureOptions): AssessObserv
   };
 }
 
+function producerOwnedInputGap(
+  phase: AssessPhaseObservation,
+  phaseOrder: ReadonlyMap<string, number>,
+): AssessGap | null {
+  const currentIndex = phaseOrder.get(phase.phase);
+  if (phase.verdict === 'PASS' || phase.deferred || currentIndex === undefined) return null;
+  const owned = (phase.blocked_capabilities ?? []).flatMap(capability =>
+    capability.unresolved.flatMap(unresolved => {
+      const owner = unresolved.upstream_producer;
+      const ownerIndex = owner ? phaseOrder.get(owner) : undefined;
+      if (!owner || ownerIndex === undefined || ownerIndex >= currentIndex) return [];
+      const paths = unresolved.dependencies.filter(dep => dep.path).map(dep => `${dep.path}${dep.exists ? '' : '(missing)'}`).join(', ');
+      return [{ owner, ownerIndex, detail: `downstream=${phase.phase} capability=${capability.capability} input=${unresolved.input} source=${unresolved.source}${unresolved.detail ? `: ${unresolved.detail}` : ''}${paths ? ` path=[${paths}]` : ''}` }];
+    }),
+  ).sort((a, b) => a.ownerIndex - b.ownerIndex)[0];
+  return owned ? { phase: owned.owner, kind: 'failed', detail: `上游输入缺口：${owned.detail}` } : null;
+}
+
 function gapsFromObservation(observation: AssessObservation): AssessGap[] {
+  const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
   const gaps: AssessGap[] = (observation.pruned_propagations ?? []).map((item) => ({
     phase: item.producer_phase,
     kind: 'pruned',
@@ -664,6 +696,11 @@ function gapsFromObservation(observation: AssessObservation): AssessGap[] {
         kind: 'legacy_unverified',
         detail: `summary schema=${phase.schema_version ?? 'unknown'}；须重跑 harness 生成 ${SUMMARY_SCHEMA_VERSION_CURRENT}`,
       });
+      continue;
+    }
+    const ownedInputGap = producerOwnedInputGap(phase, phaseOrder);
+    if (ownedInputGap) {
+      if (!gaps.some(gap => gap.phase === ownedInputGap.phase)) gaps.push(ownedInputGap);
       continue;
     }
     if (phase.deferred) {
@@ -806,7 +843,7 @@ function recommendationForObservation(
     const currentPhase = reconcile?.phase_outcome?.phase;
     // 候选唯一真源=phase summary（assess 直读，不经 reconcile 复制）——goal 的 detached
     // runner、in-session/batch driver、manual 渲染因此共用同一事实与同一裁决。
-    const candidates = currentPhase
+    const candidates = currentPhase && reconcile?.current_summary_fresh !== false
       ? observation.phases.find((p) => p.phase === currentPhase)?.repair_candidates ?? []
       : [];
     if (reconcile?.state === 'active' && currentPhase && candidates.length > 0) {
@@ -842,6 +879,12 @@ function recommendationForObservation(
     // 「summary 写不进去就悄悄走旧路」的绕过口（codex 二轮冻结项①）。
   }
   const phaseOutcome = observation.reconcile?.phase_outcome;
+  if (!fused && phaseOutcome && observation.reconcile?.current_summary_fresh !== false) {
+    const phaseOrder = new Map(observation.phases.map((phase, index) => [phase.phase, index]));
+    const currentObservation = observation.phases.find(phase => phase.phase === phaseOutcome.phase);
+    const currentOwnerGap = currentObservation ? producerOwnedInputGap(currentObservation, phaseOrder) : null;
+    if (currentOwnerGap) return recommendationForGap(observation, currentOwnerGap, false);
+  }
   if (!fused && phaseOutcome && ['PASS', 'FAIL', 'INCOMPLETE'].includes(phaseOutcome.verdict)) {
     const decision = classifyPhaseAssessment({
       verdict: phaseOutcome.verdict as HarnessVerdict,
@@ -880,6 +923,16 @@ export function assessObservation(
   const gaps = gapsFromObservation(observation);
   const fused = observation.reconcile?.state === 'fused';
   const recommendation = recommendationForObservation(observation, gaps, fused);
+  if (!fused && observation.reconcile?.scope_revision) {
+    recommendation.action = 'revise_scope'; recommendation.phase = null;
+    recommendation.reason = 'new sourced facts require a scope revision in this run';
+    delete recommendation.runner_action;
+  } else if (!gaps.length && observation.execution_scope?.unresolved.length) {
+    const gap = observation.execution_scope.unresolved[0];
+    gaps.push({ phase: gap.owner, kind: 'missing', detail: gap.reason });
+    recommendation.action = 'stop'; recommendation.phase = null;
+    recommendation.reason = 'execution_scope_unresolved: ' + gap.reason;
+  }
   const reconciled = gaps.length === 0 && !fused &&
     recommendation.action === 'validate_feature_completion';
   const resultWithoutProjection = {
@@ -953,12 +1006,61 @@ export function writeNextProjection(
   return target;
 }
 
+/**
+ * plan c4e7a9b2 §3.5：无 run 时推荐以完成评估入口（feature-assessment）为准——与出生链同源，
+ * 不再按逐阶段 summary 推荐。无完成记录时评估无「已完成部分哪里失效」可答，保留观察器推荐（返回 null）。
+ */
+function completionAssessmentRecommendation(
+  options: AssessFeatureOptions,
+  chain: string[],
+): AssessRecommendation | null {
+  let a: ReturnType<typeof assessFeatureCompletion>;
+  try {
+    a = assessFeatureCompletion(options.projectRoot, options.feature, {
+      ...resolveChangeUnitExpectedExecution(options.projectRoot, options.feature),
+      frameworkRoot: options.frameworkRoot,
+    });
+  } catch {
+    return null;
+  }
+  if (a.record.state === 'absent') return null;
+  if (a.complete) {
+    return { action: 'validate_feature_completion', phase: null, reason: '完成评估：记录可信、义务全覆盖；仍须执行 feature completion validation', requires_driver_authorization: true };
+  }
+  const uncovered = a.obligations.filter(o => o.status === 'uncovered' && o.owner_phase);
+  if (uncovered.length) {
+    const rank = (p: string): number => (chain.includes(p) ? chain.indexOf(p) : Infinity);
+    const phase = uncovered.map(o => o.owner_phase).sort((x, y) => rank(x) - rank(y))[0];
+    // feature 载体完成记录 run_id=null：没有可 supersede 的 run（execution-scope 测试 b2d7 t3 #15）。
+    const hint = a.record.state !== 'ok' ? ''
+      : a.record.run_id ? `；完成后修正经 \`--supersede ${a.record.run_id}\``
+        : '；feature 载体：先按当前输入追加范围修订再起新 run';
+    return { action: 'run_phase', phase, reason: `完成评估 uncovered：${uncovered.map(o => o.id).join(', ')}${hint}`, requires_driver_authorization: true };
+  }
+  if (a.blocking.length) {
+    return { action: 'stop', phase: null, reason: `完成评估 blocking：${a.blocking.join('；')}`, requires_driver_authorization: true };
+  }
+  return null;
+}
+
 export function assessFeature(options: AssessFeatureOptions): AssessResult {
   const observation = observeFeatureState(options);
-  const result = assessObservation(
+  let result = assessObservation(
     observation,
     options.authorization ?? { mode: 'manual' },
   );
+  const override = options.runId ? null : completionAssessmentRecommendation(options, observation.phases.map(p => p.phase));
+  if (override) {
+    const { projection_fingerprint: _stale, ...rest } = result;
+    const reconciled = rest.gaps.length === 0 && !rest.stop.fused && override.action === 'validate_feature_completion';
+    const withoutProjection = {
+      ...rest,
+      recommendation: override,
+      run_status_candidate: reconciled ? 'CHAIN_SLICE_COMPLETED' as const : null,
+      feature_completion: reconciled ? 'REQUIRES_VALIDATION' as const : null,
+    };
+    result = { ...withoutProjection, projection_fingerprint: hash(withoutProjection) };
+  }
   if (options.writeProjection !== false) {
     writeNextProjection(options.projectRoot, options.feature, result);
   }

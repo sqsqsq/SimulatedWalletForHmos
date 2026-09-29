@@ -31,17 +31,23 @@ import {
   getColumnValues,
   extractDeclaredVerdict,
 } from './utils/markdown-parser';
-import { relFeatureArtifact, relFeatureFile, featureFilePath, resolveFeatureArtifact } from '../config';
+import { relFeatureArtifact, relFeatureFile, featureFilePath, conventionsPath, relConventions, resolveFeatureArtifact } from '../config';
+import { loadPhaseRuleWithOverlays } from '../profile-loader';
+import { asRecord, asRecords } from './utils/component-blueprint-model';
+import { resolveChangeUnitRef } from './utils/change-unit-path';
+import { resolveComponentBlueprintRef } from './utils/component-blueprint-path';
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
+import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
+import { resolveRequestInputs } from './utils/capability-resolution';
 
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
 
 function ruleDesc(
-  ctx: CheckContext,
+  ctx: CheckContext<'feature' | 'request'>,
   section: 'structure_checks' | 'semantic_checks' | 'traceability_checks',
   id: string,
 ): string {
@@ -49,20 +55,36 @@ function ruleDesc(
   return checks?.[id]?.description?.trim() ?? id;
 }
 
-function loadReviewReport(ctx: CheckContext): string | null {
+function loadReviewReport(ctx: CheckContext<'feature' | 'request'>): string | null {
+  if (ctx.subject === 'request') {
+    const value = ctx.resolvedInputs.values.review_report;
+    return value?.state === 'resolved' && typeof value.value === 'string' ? value.value : null;
+  }
   return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
     .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'review-report.md');
 }
 
 function loadDesign(ctx: CheckContext): string | null {
   return new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot)
-    .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'plan.md');
+    .loadFeatureDoc(ctx.projectRoot, ctx.feature, 'plan.md', ctx.resolvedInputs);
+}
+
+function reviewTargetFiles(ctx: CheckContext<'feature' | 'request'>): string[] {
+  if (ctx.subject === 'request') return ctx.request.targets.files;
+  if (!ctx.resolvedInputs) return ctx.featureSpec.contracts?.files ?? [];
+  const code = ctx.resolvedInputs.values.code;
+  return code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : [];
 }
 
 function checkReviewContext(ctx: CheckContext): CheckResult[] {
   const results: CheckResult[] = [];
-  const files = ctx.featureSpec.contracts?.files ?? [];
-  const missingSources = files.filter(f => f.endsWith('.ets') && !fs.existsSync(path.join(ctx.projectRoot, f)));
+  if (ctx.resolvedInputs?.context.obligations.implementation === 'required') {
+    for (const id of ['contracts', 'acceptance']) if (ctx.resolvedInputs.values[id]?.state !== 'resolved') results.push({
+      id: 'review_required_design', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '组合实现审查必须有有效设计与验收', details: `required comparison missing: ${id}`, suggestion: '回设计责任方补齐真实对照输入，不能以独立代码审查替代实现验收。',
+    });
+  }
+  const files = reviewTargetFiles(ctx);
+  const missingSources = files.filter(f => (ctx.resolvedInputs || f.endsWith('.ets')) && !fs.existsSync(path.join(ctx.projectRoot, f)));
   if (missingSources.length > 0) {
     results.push({
       id: 'review_context_source_files',
@@ -84,7 +106,7 @@ function checkReviewContext(ctx: CheckContext): CheckResult[] {
 // Structure Checks
 // --------------------------------------------------------------------------
 
-function checkRequiredChapters(ctx: CheckContext, report: string): CheckResult[] {
+function checkRequiredChapters(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const expectedPairs = [
     ['审查范围'],
     ['审查方法', '审查维度'],
@@ -121,7 +143,7 @@ function checkRequiredChapters(ctx: CheckContext, report: string): CheckResult[]
   }];
 }
 
-function checkIssueTableFormat(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueTableFormat(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const section = getSectionContent(report, '问题清单');
   if (!section) {
     return [{
@@ -197,7 +219,7 @@ function getIssueTable(report: string): ReturnType<typeof extractTables>[0] | nu
   return tables.length > 0 ? tables[0] : null;
 }
 
-function checkSeverityValues(ctx: CheckContext, report: string): CheckResult[] {
+function checkSeverityValues(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -240,7 +262,7 @@ function checkSeverityValues(ctx: CheckContext, report: string): CheckResult[] {
   }];
 }
 
-function checkIssueCategoryValues(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueCategoryValues(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -285,7 +307,7 @@ function checkIssueCategoryValues(ctx: CheckContext, report: string): CheckResul
   }];
 }
 
-function checkStatisticsSummary(ctx: CheckContext, report: string): CheckResult[] {
+function checkStatisticsSummary(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const section = getSectionContent(report, '问题统计');
   if (!section) {
     return [{
@@ -400,8 +422,9 @@ function rewriteStatisticsTable(report: string, counts: Record<string, number>):
   return lines.join('\n');
 }
 
-function writeReviewReport(ctx: CheckContext, content: string): boolean {
+function writeReviewReport(ctx: CheckContext<'feature' | 'request'>, content: string): boolean {
   try {
+    if (ctx.subject === 'request') { fs.writeFileSync(ctx.request.inputs.review_report, content, 'utf8'); return true; }
     const resolved = resolveFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
     const target = resolved.exists ? resolved.actualPath : resolved.canonicalPath;
     fs.writeFileSync(target, content, 'utf-8');
@@ -417,7 +440,7 @@ function writeReviewReport(ctx: CheckContext, content: string): boolean {
  *   · 计数自洽：问题清单行数 vs 统计表合计 vs 正文"共 N 条"。
  * 新报告优先引用「文件 + symbol」；行号需要时由 renderer 生成。
  */
-function checkReviewReferenceLint(ctx: CheckContext, report: string): CheckResult[] {
+function checkReviewReferenceLint(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const id = 'review_reference_lint';
   const description = 'review 报告引用新鲜度与计数自洽（WARN 提示：path:line 存在/范围、问题数三方一致）';
   const findings: string[] = [];
@@ -428,7 +451,9 @@ function checkReviewReferenceLint(ctx: CheckContext, report: string): CheckResul
     if (lineCountCache.has(abs)) return lineCountCache.get(abs)!;
     let n: number | null = null;
     try {
-      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) n = fs.readFileSync(abs, 'utf-8').split('\n').length;
+      const bound = ctx.subject === 'request' ? ctx.request.sourceContents.find(file => path.resolve(ctx.projectRoot, file.path) === abs) : undefined;
+      if (bound) n = bound.content.split('\n').length;
+      else if (fs.existsSync(abs) && fs.statSync(abs).isFile()) n = fs.readFileSync(abs, 'utf-8').split('\n').length;
     } catch { n = null; }
     lineCountCache.set(abs, n);
     return n;
@@ -507,7 +532,7 @@ function checkScopeDeclaration(ctx: CheckContext, report: string): CheckResult[]
   }];
 }
 
-function checkConclusionWithVerdict(ctx: CheckContext, report: string): CheckResult[] {
+function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论');
   if (!section) {
     return [{
@@ -572,7 +597,7 @@ function checkConclusionWithVerdict(ctx: CheckContext, report: string): CheckRes
   }];
 }
 
-function checkMetadataHeader(ctx: CheckContext, report: string): CheckResult[] {
+function checkMetadataHeader(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const metadata = extractMetadata(report);
   const required = ['模块标识', '审查日期', '审查版本', '保证等级'];
   const missing = required.filter(f => !metadata[f]);
@@ -597,7 +622,7 @@ function checkMetadataHeader(ctx: CheckContext, report: string): CheckResult[] {
 // Traceability Checks
 // --------------------------------------------------------------------------
 
-function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -623,7 +648,8 @@ function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
     const cell = (row[fileCol] || '').trim();
     cell.split(/[,，\n]/)
       .map(f => f.replace(/`/g, '').trim())
-      .filter(f => f.endsWith('.ets') || f.endsWith('.json') || f.endsWith('.json5'))
+      .map(f => f.replace(/:\d+(?:-\d+)?$/, ''))
+      .filter(f => /\.(?:ets|tsx?|m?js|json5?|py|java|kt|swift)$/.test(f))
       .forEach(f => allFiles.add(f));
   }
 
@@ -639,7 +665,8 @@ function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
   const missing: string[] = [];
   for (const filePath of allFiles) {
     const fullPath = path.join(ctx.projectRoot, filePath);
-    if (!fs.existsSync(fullPath)) missing.push(filePath);
+    const bound = ctx.subject === 'request' && ctx.request.sourceContents.some(file => path.resolve(ctx.projectRoot, file.path) === fullPath);
+    if (!bound && !fs.existsSync(fullPath)) missing.push(filePath);
   }
 
   if (missing.length === 0) {
@@ -661,7 +688,7 @@ function checkIssueToFile(ctx: CheckContext, report: string): CheckResult[] {
   }];
 }
 
-function checkIssueToCodingRule(ctx: CheckContext, report: string): CheckResult[] {
+function checkIssueToCodingRule(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const table = getIssueTable(report);
   if (!table) {
     return [{
@@ -725,7 +752,16 @@ function checkIssueToCodingRule(ctx: CheckContext, report: string): CheckResult[
   }];
 }
 
-function checkReviewScopeToDesign(ctx: CheckContext, report: string): CheckResult[] {
+function checkReviewScopeToDesign(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
+  if (ctx.resolvedInputs) {
+    const contracts = ctx.subject === 'request' ? new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadRequestArtifacts(ctx.resolvedInputs).contracts : ctx.featureSpec.contracts;
+    if (!contracts) return [];
+    const scope = getSectionContent(report, '审查范围') ?? '';
+    const targets = reviewTargetFiles(ctx);
+    const missing = targets.filter(file => !scope.includes(file));
+    return [{ id: 'review_scope_to_design', category: 'traceability', severity: 'BLOCKER', status: missing.length ? 'FAIL' : 'PASS', description: '审查范围覆盖实际施工输入', details: missing.length ? missing.join('\n') : `已覆盖 ${targets.length} 个实际目标；契约与蓝图语义由独立审查逐项对照。`, ...(missing.length ? { suggestion: '读取并审查绑定契约的目标文件，在报告中列明实际覆盖范围。' } : {}) }];
+  }
+  if (ctx.subject === 'request') return [];
   const design = loadDesign(ctx);
   if (!design) {
     return [{
@@ -810,14 +846,15 @@ const VISUAL_REVIEW_EVIDENCE: ReadonlyArray<{ label: string; re: RegExp }> = [
 export function checkVisualFidelityReview(ctx: CheckContext, report: string): CheckResult[] {
   // 仅 UI 需求需要视觉维度：以 spec.md 的 ui_change 判定（与 spec/coding 视觉门禁同 gate）
   const specPath = featureFilePath(ctx.projectRoot, ctx.feature, path.join('spec', 'spec.md'));
-  if (!fs.existsSync(specPath)) return [];
-  let requiresUiSpec = false;
-  try {
+  if (!ctx.resolvedInputs && !fs.existsSync(specPath)) return [];
+  let requiresUiSpec = ctx.resolvedInputs?.context.obligations['visual-evidence'] === 'required' || ctx.resolvedInputs?.values.ui_spec?.state === 'resolved';
+  try { if (!ctx.resolvedInputs) {
     // 延迟 require 避免为非 UI 项目引入依赖面
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const shared = require('./utils/ui-spec-shared') as typeof import('./utils/ui-spec-shared');
     const uiChange = shared.parseUiChangeFromSpecMarkdown(fs.readFileSync(specPath, 'utf-8'));
     requiresUiSpec = Boolean(uiChange && shared.UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange));
+  }
   } catch {
     return [];
   }
@@ -871,6 +908,111 @@ export function checkVisualFidelityReview(ctx: CheckContext, report: string): Ch
 // Main Checker
 // --------------------------------------------------------------------------
 
+/** 惯例只解析标题和 gate 两字段；contracts 只消费 SpecLoader 的归一化结果。 */
+export function checkConventionsCoverage(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
+  const id = 'conventions_coverage';
+  const contracts = ctx.subject === 'request' ? new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadRequestArtifacts(ctx.resolvedInputs).contracts : ctx.featureSpec.contracts;
+  const declared = contracts?.conventions_applied ?? [];
+  const assetPath = conventionsPath(ctx.projectRoot);
+  const result = (status: CheckResult['status'], details: string): CheckResult[] => [{
+    id, category: 'traceability', severity: 'MAJOR', status,
+    description: ruleDesc(ctx, 'traceability_checks', id), details,
+    affected_files: [relConventions(ctx.projectRoot), ctx.subject === 'request' ? path.relative(ctx.projectRoot, ctx.request.inputs.review_report) : relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md')],
+    ...(ctx.subject === 'request' && status === 'SKIP' ? { structured: { applicability: 'not_applicable' } } : {}),
+    ...(status === 'FAIL' ? { suggestion: '按 details 补齐惯例覆盖台账或回 plan 修正 conventions_applied；不要复制 gate 判定结果。' } : {}),
+  }];
+  if (!fs.existsSync(assetPath)) {
+    return result(declared.length ? 'FAIL' : 'SKIP', declared.length
+      ? 'conventions_applied 非空，但惯例真源文件不存在。'
+      : '惯例文件不存在且无声明；本工程未启用惯例核对。');
+  }
+  let text: string;
+  try { text = fs.readFileSync(assetPath, 'utf8'); }
+  catch { return result('FAIL', '惯例文件存在但不可读取。'); }
+  const errors: string[] = [];
+  const headings = extractHeadings(text).filter(heading => heading.level === 2);
+  const lines = text.split(/\r?\n/);
+  const cards = headings.map((heading, index) => ({
+    id: heading.text,
+    body: lines.slice(heading.lineNumber, headings[index + 1]?.lineNumber ? headings[index + 1].lineNumber - 1 : lines.length).join('\n'),
+  }));
+  const ledgerHeadings = extractHeadings(report).filter(heading => heading.text.includes('工程惯例覆盖台账'));
+  if (ledgerHeadings.length !== 1) errors.push('须恰有一个「工程惯例覆盖台账」章节。');
+  const tables = extractTables(getSectionContent(report, '工程惯例覆盖台账') ?? '');
+  const ledger: Array<{ id: string; verdict: string; basis: string }> = [];
+  for (const table of tables) {
+    const idCol = table.headers.findIndex(header => /^(惯例\s*)?id$/i.test(header.trim()));
+    const verdictCol = table.headers.findIndex(header => header === '判定');
+    const basisCol = table.headers.findIndex(header => header === '依据');
+    if ([idCol, verdictCol, basisCol].some(index => index < 0)) {
+      errors.push('台账表头必须包含「惯例 id / 判定 / 依据」。');
+      continue;
+    }
+    for (const row of table.rows) ledger.push({ id: (row[idCol] ?? '').replace(/`/g, '').trim(), verdict: (row[verdictCol] ?? '').trim(), basis: (row[basisCol] ?? '').trim() });
+  }
+  for (const [side, ids] of [
+    ['惯例标题', cards.map(card => card.id)],
+    ['覆盖台账', ledger.map(row => row.id)],
+    ['conventions_applied', declared.map(entry => entry.id)],
+  ] as Array<[string, string[]]>) {
+    if (new Set(ids).size !== ids.length) errors.push(`${side} id 重复。`);
+  }
+  const cardIds = new Set(cards.map(card => card.id));
+  const ledgerIds = new Set(ledger.map(row => row.id));
+  if (cardIds.size !== ledgerIds.size || [...cardIds].some(cardId => !ledgerIds.has(cardId))) errors.push('台账 id 集合必须与惯例标题 id 集合精确相等。');
+  const verdicts = ['PASS', 'VIOLATION', 'GATE_DELEGATED', 'NOT_APPLICABLE', 'NOT_ASSESSED'];
+  const issueRows = getIssueTable(report)?.rows ?? [];
+  for (const row of ledger) {
+    if (!verdicts.includes(row.verdict)) errors.push(`${row.id} 判定值非法：${row.verdict}`);
+    if (!row.basis) errors.push(`${row.id} 缺一句依据。`);
+    const escaped = row.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const ref = new RegExp(`(^|[^A-Za-z0-9_-])${escaped}($|[^A-Za-z0-9_-])`);
+    if (row.verdict === 'VIOLATION' && !issueRows.some(issueRow => ref.test(issueRow.join(' ')))) errors.push(`${row.id} VIOLATION 未在问题清单引用该 id。`);
+  }
+  const loader = new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot);
+  for (const card of cards) {
+    const enforcement = [...card.body.matchAll(/^enforcement:\s*(.*?)\s*$/gm)];
+    const refs = [...card.body.matchAll(/^gate_ref:\s*(.*?)\s*$/gm)];
+    const gate = enforcement.length === 1 && enforcement[0][1] === 'gate';
+    if (enforcement.length && !gate) errors.push(`${card.id} enforcement 仅允许 gate，review 卡不应携带机器字段。`);
+    if (gate ? refs.length !== 1 : refs.length > 0) errors.push(`${card.id} gate_ref 必须且只能出现在 gate 卡中。`);
+    if (gate && refs.length === 1) {
+      const match = refs[0][1].match(/^([a-z][a-z0-9_-]*)\/([A-Za-z0-9_-]+)$/);
+      try {
+        if (!match) throw new Error('格式应为 phase/rule_id');
+        const rules = loadPhaseRuleWithOverlays(match[1], loader.loadPhaseRule(match[1]), ctx.resolvedProfile);
+        if (![rules.structure_checks, rules.semantic_checks, rules.traceability_checks].some(section => Object.prototype.hasOwnProperty.call(section ?? {}, match[2]))) throw new Error('resolved phase rules 中不存在该规则');
+      } catch (error) { errors.push(`${card.id} gate_ref 无效：${refs[0][1]}（${(error as Error).message}）`); }
+    }
+    const row = ledger.find(entry => entry.id === card.id);
+    if (row && (row.verdict === 'GATE_DELEGATED') !== gate) errors.push(`${card.id} GATE_DELEGATED 与 gate 卡必须双向对应。`);
+  }
+  const targets = ctx.subject === 'request' ? ctx.request.targets.files : contracts?.files ?? [];
+  for (const entry of declared) {
+    if (!cardIds.has(entry.id)) errors.push(`conventions_applied 引用不存在的惯例：${entry.id}`);
+    for (const location of entry.planned_locations) {
+      if (!targets.some(file => file === location || file.startsWith(`${location}/`))) errors.push(`${entry.id} planned_location 未命中目标文件集合：${location}`);
+    }
+  }
+  const cuRef = contracts?.change_unit?.change_unit_ref;
+  if (cuRef) {
+    try {
+      const cu = resolveChangeUnitRef(ctx.projectRoot, cuRef).changeUnit;
+      const blueprint = resolveComponentBlueprintRef(ctx.projectRoot, cu.component_blueprint_ref).blueprint;
+      const covered = new Set([...declared.map(entry => entry.id), ...ledger.filter(row => row.verdict === 'NOT_APPLICABLE').map(row => row.id)]);
+      for (const fact of asRecords(asRecord(blueprint.discovery)?.facts)) {
+        const provenance = asRecord(fact.provenance);
+        if (provenance?.source_kind !== 'convention') continue;
+        const sourceRef = String(provenance.source_ref ?? '');
+        const prefix = `${relConventions(ctx.projectRoot)}#`;
+        if (!sourceRef.startsWith(prefix) || !cardIds.has(sourceRef.slice(prefix.length))) errors.push(`蓝图惯例来源不在当前真源中：${sourceRef}`);
+        else if (!covered.has(sourceRef.slice(prefix.length))) errors.push(`蓝图惯例未被 CU 声明且未判 NOT_APPLICABLE：${sourceRef.slice(prefix.length)}`);
+      }
+    } catch (error) { errors.push(`无法核对所引蓝图惯例：${(error as Error).message}`); }
+  }
+  return result(errors.length ? 'FAIL' : 'PASS', errors.length ? errors.join('\n') : `全部 ${cards.length} 条惯例覆盖与声明一致；gate 仅验证引用存在性。`);
+}
+
 function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
   try {
     // t1d（plan e6a3c9f4）：编排边界附加产出来源，供报告/summary 定位真实产出方。
@@ -903,8 +1045,24 @@ function safeRun(fn: () => CheckResult[], checkId: string): CheckResult[] {
 
 const checker: PhaseChecker = {
   phase: 'review',
+  subjects: ['feature', 'request'],
 
-  async check(ctx: CheckContext): Promise<CheckResult[]> {
+  async check(ctx: CheckContext<'feature' | 'request'>): Promise<CheckResult[]> {
+    if (ctx.subject === 'request') {
+      let report = loadReviewReport(ctx);
+      if (!report) return [{ id: 'review_report_exists', category: 'structure', severity: 'BLOCKER', status: 'FAIL', description: '专项审查报告缺失', details: ctx.request.inputs.review_report, suggestion: '完成真实审查并写入本次 review_report，再运行同一请求。' }];
+      const results = [...checkRequiredChapters(ctx, report), ...checkIssueTableFormat(ctx, report), ...checkSeverityValues(ctx, report), ...checkIssueCategoryValues(ctx, report), ...checkStatisticsSummary(ctx, report)];
+      ctx.resolvedInputs = resolveRequestInputs(ctx.projectRoot, ctx.frameworkRoot, ctx.request);
+      report = fs.readFileSync(ctx.request.inputs.review_report, 'utf8');
+      const issueChecks = [...checkIssueToFile(ctx, report), ...checkIssueToCodingRule(ctx, report)];
+      if (!getIssueTable(report) && !results.some(check => check.id === 'issue_table_format' && check.status === 'FAIL')) for (const check of [...results, ...issueChecks]) if (check.status === 'SKIP') check.structured = { applicability: 'not_applicable' };
+      results.push(...checkReviewReferenceLint(ctx, report), ...checkConclusionWithVerdict(ctx, report), ...checkMetadataHeader(ctx, report), ...issueChecks, ...checkNegativeVerdictClosure(report), ...checkConditionalPassClosure(ctx, report));
+      const scope = getSectionContent(report, '审查范围') ?? '';
+      const missing = ctx.request.targets.files.filter(file => !scope.includes(file));
+      if (missing.length) results.push({ id: 'review_request_scope', category: 'traceability', severity: 'BLOCKER', status: 'FAIL', description: '审查范围未覆盖请求目标', details: missing.join(', '), suggestion: '按本次目标与基线审查全部指定文件，并在范围中列出真实目标。' });
+      results.push(...checkReviewScopeToDesign(ctx, report), ...checkConventionsCoverage(ctx, report));
+      return results;
+    }
     const loadedReport = loadReviewReport(ctx);
     if (!loadedReport) {
       const reportRel = relFeatureArtifact(ctx.projectRoot, ctx.feature, 'review-report.md');
@@ -931,6 +1089,8 @@ const checker: PhaseChecker = {
     results.push(
       ...safeRun(
         () => checkFactsArtifact(ctx.projectRoot, ctx.feature, 'review', {
+          factsContext: ctx.factsContext,
+          resolvedInputs: ctx.resolvedInputs,
           phaseRule: ctx.phaseRule,
           profileName: ctx.resolvedProfile.name,
           frameworkRoot: ctx.frameworkRoot,
@@ -958,6 +1118,8 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkIssueToFile(ctx, report), 'issue_to_file'));
     results.push(...safeRun(() => checkIssueToCodingRule(ctx, report), 'issue_to_coding_rule'));
     results.push(...safeRun(() => checkReviewScopeToDesign(ctx, report), 'review_scope_to_design'));
+    results.push(...safeRun(() => checkConventionsCoverage(ctx, report), 'conventions_coverage'));
+    results.push(...safeRun(() => checkChangeUnitFeatureProjection(ctx, 'review'), 'change_unit_feature_projection'));
 
     // --- goal-fakepass-hardening 洞⑥：有条件通过闭环门禁 ---
     results.push(...safeRun(() => checkConditionalPassClosure(ctx, report), 'conditional_pass_closure'));
@@ -966,7 +1128,7 @@ const checker: PhaseChecker = {
     results.push(...safeRun(() => checkNegativeVerdictClosure(report), 'negative_verdict_closure'));
     results.push(
       ...safeRun(
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review' }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'review', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );
@@ -1016,7 +1178,7 @@ export function checkNegativeVerdictClosure(report: string): CheckResult[] {
  * 机器化：有条件通过且存在未关闭 MAJOR → BLOCKER FAIL。人工授权不得把已知缺陷
  * 降级为可推进状态；LLM verifier 的 PASS 只证"报告可信"，不再被消费为"产品 PASS"。
  */
-function checkConditionalPassClosure(ctx: CheckContext, report: string): CheckResult[] {
+function checkConditionalPassClosure(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
   const id = 'conditional_pass_closure';
   const description = '「有条件通过」闭环门禁（未闭环 MAJOR 不得推进）';
   const section = getSectionContent(report, '结论') ?? getSectionContent(report, '审查结论') ?? '';

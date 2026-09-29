@@ -6,16 +6,20 @@ import {
   projectToObservedActionability,
   type ObservedActionability,
 } from './adjudication';
+import type { BlockerActionability } from './goal-failure-classifier';
 
 export interface GoalReconcileBlockerInput {
   id: string;
   blocking_class?: string;
+  classification?: string;
+  actionability?: BlockerActionability;
 }
 
 export interface GoalReconcileObservationInput {
   phase: string;
   verdict: string;
   legacyAction: string;
+  currentSummaryFresh?: boolean;
   failureKind?: string;
   blockingClass?: string;
   propagateToDownstream?: boolean;
@@ -55,7 +59,12 @@ export interface GoalReconcileObservationInput {
  * 塞进 incident 注册表属于概念错配。故：**注册表命中即以内核为准；未命中保留既有正则
  * 兜底**（legacy，随类目逐步注册而收敛）——不因收编而改判历史 blocking_class。
  */
-function actionability(blockingClass?: string): ObservedActionability {
+function actionability(blocker: GoalReconcileBlockerInput): ObservedActionability {
+  if (blocker.actionability === 'framework_blocked') return 'framework';
+  if (blocker.actionability === 'toolchain_blocked') return 'external';
+  if (blocker.actionability === 'human_only') return 'human';
+  if (blocker.classification === 'framework_bug' || blocker.blocking_class === 'framework_internal') return 'framework';
+  const blockingClass = blocker.blocking_class;
   if (!blockingClass) return 'unknown';
   const spec = lookupIncident(blockingClass);
   if (spec) return projectToObservedActionability(spec.class);
@@ -72,7 +81,7 @@ function stableFingerprint(input: GoalReconcileObservationInput): string {
     verdict: input.verdict,
     action: input.legacyAction,
     failure_kind: input.failureKind ?? null,
-    blockers: (input.blockers ?? []).map((item) => [item.id, item.blocking_class ?? null]).sort(),
+    blockers: (input.blockers ?? []).map((item) => [item.id, item.blocking_class ?? null, item.classification ?? null, item.actionability ?? null]).sort(),
     defects: [...(input.deterministicDefects ?? [])].sort(),
   });
   return crypto.createHash('sha256').update(body, 'utf8').digest('hex');
@@ -87,6 +96,9 @@ export function deriveReconcileObservation(
     schema_version: '1.0',
     state: input.fused ? 'fused' : 'active',
     ...(input.fuseReason ? { reason: input.fuseReason } : {}),
+    ...(input.currentSummaryFresh !== undefined
+      ? { current_summary_fresh: input.currentSummaryFresh }
+      : {}),
     residual_fingerprints: input.residualFingerprints ?? [fingerprint],
     phase_outcome: {
       phase: input.phase,
@@ -101,7 +113,7 @@ export function deriveReconcileObservation(
     },
     blockers: (input.blockers ?? []).map((item) => ({
       id: item.id,
-      actionability: actionability(item.blocking_class),
+      actionability: actionability(item),
       ...(item.blocking_class ? { blocking_class: item.blocking_class } : {}),
     })),
     // 责任阶段统一路由：候选**不进 reconcile**（唯一真源=phase summary，assess 直读）——

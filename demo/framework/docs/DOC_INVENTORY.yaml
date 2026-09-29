@@ -24,6 +24,14 @@
 schema_version: "1.0"
 
 docs:
+  - path: framework/docs/concepts/component-assets.md
+    role: 组件资产发现、选型与静态能力证据说明
+    sources:
+      - framework/harness/scripts/utils/component-assets.ts
+      - framework/profiles/hmos-app/harness/component-extractor.ts
+      - framework/skills/project/component-catalog-bootstrap/SKILL.md
+    update_triggers:
+      - 组件索引、策展、选型或静态检查契约改变
   # --------------------------------------------------------------------------
   # 全景介绍（顶层入口）
   # --------------------------------------------------------------------------
@@ -118,6 +126,9 @@ docs:
       - framework/specs/workflow-schema.json
       - framework/specs/instance-extension-manifest.schema.yaml
       - framework/specs/lifecycle-hooks-schema.yaml
+      - framework/harness/extension-loader.ts
+      - framework/harness/scripts/utils/extension-runtime.ts
+      - framework/skills/project/extension/SKILL.md
     update_triggers:
       - workflow-schema.json / manifest schema / lifecycle-hooks-schema 字段变更
       - profile-loader 合并顺序或 extension 装载语义变更
@@ -125,12 +136,13 @@ docs:
 
   - path: framework/docs/evolution/extension-protocol-v1.md
     role: extension/workflow/hooks 三套协议的 schema_version 与 breaking 约定（v1 起点）
-    audience: framework 维护者 / 做多仓库同步的子模块管理者
+    audience: framework 维护者 / 做多仓库发布件同步的维护者
     sources:
       - framework/specs/workflow-schema.json
       - framework/specs/instance-extension-manifest.schema.yaml
       - framework/specs/lifecycle-hooks-schema.yaml
       - framework/MIGRATION.md
+      - framework/skills/project/extension/SKILL.md
     update_triggers:
       - 任一则 schema 主版本升级
       - MIGRATION.md 增加与本协议相关的迁移章节
@@ -151,6 +163,22 @@ docs:
       - Code Graph schema / GraphExtractor contract / drift 分级变更
       - flow DAG ephemeral 或 coverage-evidence 契约变更
       - 「dag」三重含义澄清或索引-only 原则调整
+
+  - path: framework/docs/concepts/conventions.md
+    role: 工程惯例资产的职责边界、弱结构格式与消费闭环唯一人读 SSOT
+    audience: framework 维护者 / 在消费者工程策展与使用横切工程实践的开发者
+    sources:
+      - framework/harness/config.ts
+      - framework/specs/framework.config.schema.json
+      - framework/skills/project/conventions-bootstrap/SKILL.md
+      - framework/skills/project/component-design/SKILL.md
+      - framework/skills/feature/plan/SKILL.md
+      - framework/skills/feature/code-review/SKILL.md
+      - framework/harness/scripts/check-review.ts
+    update_triggers:
+      - conventions 条目机器字段或默认路径改变
+      - bootstrap 确认/去重纪律改变
+      - 蓝图、CU contracts 或 review 台账消费协议改变
 
   - path: framework/docs/concepts/terminology-guarding.md
     role: 术语守门设计与演进路线图（catalog + glossary + 三道 BLOCKER）
@@ -218,6 +246,33 @@ docs:
       - 新增 BLOCKER 级别 phase（特别是会改变流程图的）
       - hvigor / hdc 调用参数改变（影响 runbook 对专文的交叉引用；细则在 hmos-app-harness-toolchain.md）
 
+  - path: framework/docs/operations/component-design-host-adaptation.md
+    role: 部件内设计阶段（Story Design）的宿主适配唯一人读入口——责任边界、三条接缝的方向/时点/字段/失败语义、单 CU 与多 CU 两条最小接入流程、Story 类扩展职责映射、随包样例与验证命令
+    audience: 把自己的需求管理 / 评审 / 归档系统接到 AgentMaison 的宿主工程开发者
+    sources:
+      - framework/harness/schemas/requirement-source-materialization.schema.json
+      - framework/harness/schemas/blueprint-review-feedback.schema.json
+      - framework/harness/schemas/app-component-blueprint.schema.json
+      - framework/harness/scripts/utils/blueprint-host-seams.ts
+      - framework/harness/scripts/utils/blueprint-review-projection.ts
+      - framework/harness/scripts/check-component-blueprint.ts
+      - framework/skills/project/component-design/SKILL.md
+      - framework/skills/project/extension/SKILL.md
+      - framework/specs/instance-extension-manifest.schema.yaml
+      - framework/docs/operations/samples/requirement-source-materialization.valid.json
+      - framework/docs/operations/samples/requirement-source-materialization.invalid-hash.json
+      - framework/docs/operations/samples/blueprint-review-projection.valid.md
+      - framework/docs/operations/samples/blueprint-review-projection.invalid-added-fact.md
+      - framework/docs/operations/samples/blueprint-review-feedback.valid.json
+      - framework/docs/operations/samples/blueprint-review-feedback.invalid-authority.json
+      - framework/docs/operations/samples/extension-m7-manifest.yaml
+    update_triggers:
+      - 三条接缝任一的 schema 字段、artifact 标识或必填面变更
+      - check:component-blueprint 的 --materialization / --projection / --feedback 模式语义或诊断 id 变更
+      - 评审投影 renderer 输出结构变更（valid 样例须同批重算）
+      - 反馈四类分类、authority 门槛或 revision 递进语义变更
+      - /component-design 编排流程的阶段或终点边界变更
+
   # --------------------------------------------------------------------------
   # 演进验收（实例扩展 / adapter 桥接）
   # --------------------------------------------------------------------------
@@ -230,6 +285,12 @@ docs:
       - framework/harness/scripts/render-agents-md.mjs
       - framework/harness/extension-loader.ts
       - framework/harness/hooks-dispatcher.ts
+      - framework/harness/scripts/extension.ts
+      - framework/harness/scripts/utils/extension-inspect.ts
+      - framework/harness/scripts/utils/extension-runtime.ts
+      - framework/skills/project/extension/SKILL.md
+      - framework/agents/shared/agent-bundle/templates/skills-bridge/extension/SKILL.md
+      - framework/agents/codeagent/templates/commands/extension.md
       - framework/agents/adapter-schema.yaml
       - framework/agents/claude/adapter.yaml
       - framework/agents/cursor/adapter.yaml
@@ -258,3 +319,10 @@ docs:
       - backfill:context CLI 或退出码语义变更
 
 # 未在 docs[] 中出现的 `framework/docs/**/*.md`（若存在）应在补写 inventory 或移出目录，避免 doc_files_exist MAJOR。
+
+  - path: framework/docs/operations/project-entry.md
+    role: 项目请求原生入口与职责终点
+    sources:
+      - framework/skills/skills.index.yaml
+      - framework/workflows/spec-driven.workflow.yaml
+      - framework/harness/scripts/utils/execution-scope.ts

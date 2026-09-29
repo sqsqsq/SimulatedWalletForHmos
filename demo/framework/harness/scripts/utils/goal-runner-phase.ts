@@ -4,6 +4,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { featureRelativePath } from './feature-identity';
 import { featurePhaseReportsDir, receiptFilePath } from '../../config';
 import type { GoalPhaseOutcome } from './goal-report-generator';
 import type {
@@ -201,6 +202,7 @@ export interface GoalRunEvent {
   /** defer verdict 的精确原因；缺省兼容旧事件为 external_blocked。 */
   deferred_reason?: string;
   failure_kind_classified?: string;
+  stale_summary?: boolean;
   /** E4：跨 attempt 累计统计（events.jsonl 回放，非内存计数）用——phase_verdict 已带的字段。 */
   blocker_signature?: string;
   halt_reason?: string;
@@ -238,15 +240,23 @@ export interface GoalRunEvent {
    */
   terminal_failure_observed?: boolean;
   /**
-   * plan e6b3f8d2 t1（agent_invoke_end）：terminal 诊断摘要（turn.failed 正文 + 顶层
-   * error 事件）。**纯诊断**——不进任何 settle / classifier / retry 判据。
+   * plan e6b3f8d2 t1（agent_invoke_end）：terminal 摘要（turn.failed 正文 + 顶层 error 事件）。
+   * 不进 settle / retry / failure classifier 判据；例外：正式 invoke 与金丝雀的
+   * resolveInvokeHardCliFailure 用它按 400 信封 + 实采措辞表判适配器硬失败。
    */
   terminal_error_excerpt?: string;
+  /** 本次 harness 非零退出的末尾诊断；stale summary 时这是当前 attempt 的可消费事实。 */
+  harness_error_excerpt?: string;
   lingering_pipe?: boolean;
   recovered?: boolean;
   /** agent_invoke_end 既有字段（dry-run invoke 写 true；"证据齐全即跳过"机制已删）。 */
   skipped?: boolean;
   invoke_id?: string;
+  /** attended session phase_start 的正式签发元组（harness 权限注入前精确对账）。 */
+  attempt_id?: string;
+  owner_id?: string;
+  owner_epoch?: number;
+  driver?: string;
   invoke_start_ts?: string;
   chain?: string[];
   attempt?: number;
@@ -389,8 +399,8 @@ export function partitionExecutionSessions(
 
 /**
  * t1/rev6（f7a3d9c2）+ review-fix（cursor Critical）：events 回放——账本行期望 hash 集。
- * **含 duplicate**：主路径是"agent 自跑 harness append → 外层 gate 撞同 round_key 得
- * duplicate"，events 里只会出现 duplicate 事件，但其 row_hash 就是那条账本行——只收
+ * **含 duplicate**：主路径是"执行者自检写 journal → runtime 收编 → 外层 gate 撞同 round_key
+ * 得 duplicate"，gate 事件是 duplicate，但其 row_hash 就是那条收编行——只收
  * appended 会让期望集恒空、整段 integrity 空转（删账本绕 fuse 不再被拦）。
  * append_failed 无 row_hash，天然不入期望。
  */
@@ -426,6 +436,37 @@ export function collectUncommittedVisualAttemptIds(events: GoalRunEvent[]): stri
   }
   const uncommitted = startedTesting.filter(id => !committed.has(id));
   return uncommitted.length > 0 ? [uncommitted[uncommitted.length - 1]] : [];
+}
+
+/**
+ * plan 6279fcd7 修法二：本 run **最后一个已提交**的 testing attempt 及其 invoke 窗口——
+ * 启动对账据此收养该窗口内 hash 自洽的孤儿行（修法一之前 attended 自检直写的存量行）。
+ * 与上面同口径回放：启动过（agent_invoke_start）且有带 visual_attempt 的 visual_round。
+ * 窗口 = [该 invoke 的 agent_invoke_start.ts, 同 invoke_id 最后一条事件.ts]（终点覆盖 gate 结算）。
+ * 只取最后一个：每次 testing 入口都先对账，更早 attempt 的孤儿行不可能合法遗留。
+ */
+export function collectLastCommittedVisualAttemptWindow(
+  events: GoalRunEvent[],
+): { attemptId: string; startMs: number; endMs: number } | null {
+  const starts: Array<{ attemptId: string; invokeId: string; ts?: string }> = [];
+  const committed = new Set<string>();
+  for (const e of events) {
+    if (e.type === 'agent_invoke_start' && e.phase === 'testing' && typeof e.invoke_id === 'string') {
+      const m = e.invoke_id.match(/-(i\d+)$/);
+      if (m) starts.push({ attemptId: m[1], invokeId: e.invoke_id, ts: e.ts });
+    }
+    if (e.type === 'visual_round' && typeof e.visual_attempt === 'string' && e.visual_attempt) {
+      committed.add(e.visual_attempt);
+    }
+  }
+  const last = [...starts].reverse().find(s => committed.has(s.attemptId));
+  if (!last) return null;
+  const endTs = [...events].reverse().find(e => e.invoke_id === last.invokeId)?.ts;
+  const startMs = Date.parse(last.ts ?? '');
+  const endMs = Date.parse(endTs ?? '');
+  return Number.isFinite(startMs) && Number.isFinite(endMs)
+    ? { attemptId: last.attemptId, startMs, endMs }
+    : null;
 }
 
 /**
@@ -576,21 +617,44 @@ export function collectSupersededAncestorEvents(opts: {
   /** 注入供测试；缺省读盘（authoritative 口径——dry 段照常剔除） */
   loadEvents?: (absPath: string) => GoalRunEvent[];
 }): GoalRunEvent[] {
+  return sortByTs([...loadSupersedeLineage(opts).values()].flat());
+}
+
+const sortByTs = (events: GoalRunEvent[]): GoalRunEvent[] =>
+  events.sort((a, b) => String(a.ts ?? '').localeCompare(String(b.ts ?? '')));
+
+/** 沿 supersede 链收祖先 run → 各自 events（`visited` 防环，缺失 events = 空）。 */
+function loadSupersedeLineage(opts: {
+  projectRoot: string;
+  featuresDir: string;
+  feature: string;
+  seedTargets: readonly string[];
+  loadEvents?: (absPath: string) => GoalRunEvent[];
+}): Map<string, GoalRunEvent[]> {
   const load = opts.loadEvents ?? loadAuthoritativeEvents;
-  const visited = new Set<string>();
-  const chainEvents: GoalRunEvent[] = [];
+  const lineage = new Map<string, GoalRunEvent[]>();
   const queue = [...opts.seedTargets];
   while (queue.length > 0) {
     const id = queue.shift();
-    if (!id || visited.has(id)) continue;
-    visited.add(id);
-    const abs = path.join(
-      opts.projectRoot, opts.featuresDir, opts.feature, 'goal-runs', id, 'events.jsonl');
-    const evs = load(abs);
-    chainEvents.push(...evs);
+    if (!id || lineage.has(id)) continue;
+    const evs = load(path.join(
+      opts.projectRoot, opts.featuresDir, featureRelativePath(opts.feature), 'goal-runs', id, 'events.jsonl'));
+    lineage.set(id, evs);
     queue.push(...extractSupersedeTargets(evs));
   }
-  return chainEvents.sort((a, b) => String(a.ts ?? '').localeCompare(String(b.ts ?? '')));
+  return lineage;
+}
+
+/** plan c4e7a9b2 §3.3 B1：当前 run 自己 supersede 审计事件上的交付周期边界（祖先事件上的旧边界不参与）。 */
+function extractCycleBoundary(events: readonly GoalRunEvent[]): string | undefined {
+  let boundary: string | undefined;
+  for (const e of events) {
+    const t = e as { type?: string; delivery_cycle_boundary?: unknown };
+    if (t.type === 'supersede' && typeof t.delivery_cycle_boundary === 'string' && t.delivery_cycle_boundary) {
+      boundary = t.delivery_cycle_boundary;
+    }
+  }
+  return boundary;
 }
 
 /**
@@ -608,6 +672,8 @@ export interface BudgetLineageFold {
   ancestorEvents: GoalRunEvent[];
   /** 折叠种子（显式 ∪ 事件派生，去重保序） */
   foldSeeds: string[];
+  /** 实际生效的交付周期边界（落在本次血缘内才生效）；undefined = 全血缘折叠 */
+  cycleBoundary?: string;
 }
 
 export function foldBudgetLineage(opts: {
@@ -616,6 +682,12 @@ export function foldBudgetLineage(opts: {
   feature: string;
   seedTargets?: readonly string[];
   currentEvents?: readonly GoalRunEvent[];
+  /**
+   * plan c4e7a9b2 §3.3 B1：交付周期边界 B（上一次 record ok 的完成 run）。fresh 出生显式传（同 seedTargets 先例——
+   * 出生时 supersede 事件尚未进 currentEvents）；缺省从当前 run supersede 事件的 `delivery_cycle_boundary` 读。
+   * 折叠 = 祖先(seeds) − ({B} ∪ 祖先(B))：上一周期不占本周期额度，本周期失败 run 照计。
+   */
+  cycleBoundary?: string;
   /** 注入供测试；缺省读盘 */
   loadEvents?: (absPath: string) => GoalRunEvent[];
 }): BudgetLineageFold {
@@ -623,19 +695,23 @@ export function foldBudgetLineage(opts: {
   const foldSeeds = [
     ...new Set([...(opts.seedTargets ?? []), ...extractSupersedeTargets(current)]),
   ];
-  const ancestorEvents = foldSeeds.length > 0
-    ? collectSupersededAncestorEvents({
-        projectRoot: opts.projectRoot,
-        featuresDir: opts.featuresDir,
-        feature: opts.feature,
-        seedTargets: foldSeeds,
-        ...(opts.loadEvents ? { loadEvents: opts.loadEvents } : {}),
-      })
-    : [];
+  const lineage = foldSeeds.length > 0 ? loadSupersedeLineage({ ...opts, seedTargets: foldSeeds }) : new Map<string, GoalRunEvent[]>();
+  const boundary = opts.cycleBoundary ?? extractCycleBoundary(current);
+  const cycleBoundary = boundary && lineage.has(boundary) ? boundary : undefined;
+  // B 在血缘内 ⇒ 祖先(B) 也都已在 lineage 里：就地从 B 沿 supersede 求闭包，不再读盘
+  const previousCycle = new Set<string>();
+  for (const queue = cycleBoundary ? [cycleBoundary] : []; queue.length > 0;) {
+    const id = queue.shift()!;
+    if (previousCycle.has(id) || !lineage.has(id)) continue;
+    previousCycle.add(id);
+    queue.push(...extractSupersedeTargets(lineage.get(id)!));
+  }
+  const ancestorEvents = sortByTs([...lineage].filter(([id]) => !previousCycle.has(id)).flatMap(([, evs]) => evs));
   return {
     budgetFoldEvents: ancestorEvents.length > 0 ? [...ancestorEvents, ...current] : current,
     ancestorEvents,
     foldSeeds,
+    ...(cycleBoundary ? { cycleBoundary } : {}),
   };
 }
 

@@ -43,6 +43,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+// 发布件内共享 SSOT 加载（M5A §4.3）：hook 不携带 decoder 副本；CJS 模块经
+// createRequire 同步 require（Node ESM → CJS 互操作）。
+const requireNodeModule = (() => {
+  try {
+    return createRequire(import.meta.url);
+  } catch {
+    return null;
+  }
+})();
 
 // --------------------------------------------------------------------------
 // HOOK 端默认时间常量
@@ -181,6 +192,25 @@ function readFeaturesDirFromConfig(projectRoot) {
     return 'doc/features';
   } catch {
     return 'doc/features';
+  }
+}
+
+/**
+ * M5A §4.3：解析 feature 的物理相对路径（经发布件内唯一 SSOT）。
+ * - legacy id：原样返回（不依赖 SSOT，保持旧行为）；
+ * - `cu-` 前缀：必须经 SSOT 展开——SSOT 缺失/损坏/抛错（含非法 payload 的
+ *   fail-closed 异常）时返回 null，调用方 fail-closed（阻断或走州文件兜底），
+ *   **绝不**把编码后的逻辑 id 当物理路径（spec：“Invalid cu- identity fails
+ *   closed” / “hooks SHALL NOT read or write a path containing the encoded identity”）。
+ */
+function resolveFeatureRel(projectRoot, feature) {
+  if (typeof feature !== 'string' || !feature.startsWith('cu-')) return feature;
+  try {
+    const ssotAbs = path.resolve(projectRoot, 'framework', 'harness', 'scripts', 'utils', 'feature-identity.js');
+    if (!fs.existsSync(ssotAbs) || !requireNodeModule) return null;
+    return requireNodeModule(ssotAbs).featureRelativePath(feature);
+  } catch {
+    return null;
   }
 }
 
@@ -478,6 +508,10 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
     if (feature === '_global') {
       return path.resolve(projectRoot, 'framework/harness/reports/_global', phase);
     }
+    // M5A：<feature> 占位符替换为物理相对路径（唯一 SSOT 展开，见 resolveFeatureRel）；
+    // `cu-` 前缀解析失败 → null（fail-closed，禁止把编码 id 当物理路径）。
+    const featureRel = resolveFeatureRel(projectRoot, feature);
+    if (featureRel === null) return null;
     let pattern = null;
     try {
       const cfgPath = path.resolve(projectRoot, 'framework.config.json');
@@ -490,10 +524,13 @@ function resolveFeaturePhaseReportDir(projectRoot, feature, phase) {
       pattern = null;
     }
     if (pattern) {
-      const rel = pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase);
+      const rel = pattern.replace(/<feature>/g, featureRel).replace(/<phase>/g, phase);
       return path.resolve(projectRoot, rel);
     }
-    return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
+    // M5A t4：无 reports_dir_pattern 时默认形态跟随 features_dir（P2 spec
+    // “Custom features_dir … no path construction SHALL hardcode doc/features”），
+    // 而非硬编码 framework/harness/reports。
+    return path.resolve(projectRoot, readFeaturesDirFromConfig(projectRoot), featureRel, phase, "reports");
   } catch {
     return path.resolve(projectRoot, 'framework/harness/reports', feature, phase);
   }
@@ -563,7 +600,7 @@ export function decideEscapeValve(prevSig, prevCount, signature, maxConsecutiveB
   return { count, release };
 }
 
-function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features') {
+function buildBlockReason(state, missingItems, summaryHint = null, progress = null, featuresDir = 'doc/features', reportsDirRel = null) {
   const phase = state.phase ?? 'unknown';
   const feature = state.feature ?? 'unknown';
   const rerunCmd = `cd framework/harness && npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
@@ -579,13 +616,34 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
     (summaryHint && summaryHint.verdict === 'PASS');
   const closureOpen = !summaryHint || summaryHint.closureStatus !== 'closed';
   const closureOnly = Boolean(scriptPassed && closureOpen);
+  // D2（plan 3a7f9c12）：产品失败诊断轮——脚本仍 FAIL，写完 verifier 报告后 base summary
+  // 依旧 FAIL、候选尚未重算，sync-closure 的 finalizer 必然拒收。这条分支的正确出口是
+  // 「重跑本阶段 harness 让 writer 重算候选，再看新 summary 的 NEXT 找 owner」；
+  // 正式 goal 编排下则写完即交回 runner（外层自己会跑 gate harness，不要自跑）。
+  const repairDiagnosis = Boolean(summaryHint && summaryHint.nextAction === 'run_verifier_for_repair');
   const headline = closureOnly
     ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。脚本已 PASS，下一步只做这一件事——对齐闭环态（重跑完整 harness 不会因时间戳换 subject，但这里没有必要）：`
-    : `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`;
+    : repairDiagnosis
+      ? `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。产品 FAIL 但失败可诊断，下一步只做这一件事——把 verifier request 投给 verifier 并写回报告（先别改产品、也别急着重跑 harness）：`
+      : `[Stop Hook] 阶段未闭环：feature="${feature}" phase="${phase}"。下一步只做这一件事——真正修复后重跑 harness：`;
   const lines = [
     // 动作优先（弱模型友好）：先给"下一步只做这一件事"，把长说明收到后面。
     headline,
-    `  → ${closureOnly ? syncCmd : rerunCmd}`,
+    `  → ${
+      closureOnly
+        ? syncCmd
+        : repairDiagnosis
+          ? `Task(subagent_type=verifier, prompt=${
+              summaryHint && summaryHint.verifierRequest
+                ? summaryHint.verifierRequest
+                : (reportsDirRel ? `${reportsDirRel}/verifier.request.<subject>.json` : '本阶段 reports 目录下的 verifier.request.<subject>.json')
+            } 的完整正文)，再按下面第 3 步收尾`
+          : rerunCmd
+    }`,
+    // M5A：CU Feature 物理路径解析失败（identity 非法 / SSOT 缺失）时点名诊断，不生成任何伪路径。
+    ...(reportsDirRel === null && feature.startsWith('cu-')
+      ? ['  （无法解析 CU Feature 物理路径：framework SSOT 缺失/损坏或 identity 非法——请先修复 framework 安装或 CU 身份后重跑）']
+      : []),
     ...(progress && progress.max > 0
       ? [`（第 ${progress.count}/${progress.max} 次拦截；连续零进展达 ${progress.max} 次将自动放行，交还你/用户决定。）`]
       : []),
@@ -606,7 +664,7 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           `       ${syncCmd}`,
           `     它会按 base summary、verifier evidence 与 policy 收口；exit 0 即闭环。receipt 只在 closed 后 best-effort 投影，不需要手填。`,
           `  2. 若它报 verifier 证据缺失且 summary.verifier_request 在场：`,
-          `       ${summaryHint && summaryHint.verifierRequest ? summaryHint.verifierRequest : `<features_dir>/${feature}/${phase}/reports/verifier.request.<subject>.json`}`,
+          `       ${summaryHint && summaryHint.verifierRequest ? summaryHint.verifierRequest : (reportsDirRel ? `${reportsDirRel}/verifier.request.<subject>.json` : '本阶段 reports 目录下的 verifier.request.<subject>.json')}`,
           `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
           `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
           `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
@@ -618,7 +676,9 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           `  1. 按 summary.next_action 修因（脚本尚未 PASS），然后自跑完整 harness：`,
           `       cd framework/harness && npx ts-node harness-runner.ts \\`,
           `         --phase ${phase} --feature ${feature}`,
-          `  2. 脚本 PASS 后若输出了 verifier request（summary.verifier_request 在场），`,
+          `     例外：next_action=run_verifier_for_repair 表示本轮产品 FAIL 但失败可诊断，`,
+          `     harness 已在脚本 FAIL 下签发了 request——先做第 2 步，别急着改产品。`,
+          `  2. summary.verifier_request 在场时（脚本 PASS，或上面那条诊断例外），`,
           `     用 Task 工具调 verifier 子 agent（subagent_type=verifier），`,
           `     prompt = 那份 request JSON 的**完整正文**（几十行，整段投递）。`,
           `     verifier 会按其中的 prompt_path 自行 Read ai-prompt.md；不要投递 ai-prompt.md`,
@@ -626,8 +686,21 @@ function buildBlockReason(state, missingItems, summaryHint = null, progress = nu
           `     verifier 返回后，把它的回复**原样全文**写入 summary.verifier_report 指向的路径`,
           `     （报告由你写，不是 verifier 写；不摘要、不只贴终态块）。`,
           `     没有输出 request = 本阶段不适用 verifier，跳到第 3 步。`,
-          `  3. 运行 ${syncCmd}`,
-          `     （只读 base summary、verifier evidence 与 policy；receipt 在 closed 后机器投影）后再尝试 stop。`,
+          ...(repairDiagnosis
+            ? [
+                `  3. 诊断轮（next_action=run_verifier_for_repair）**不要跑 sync-closure**：`,
+                `     脚本仍 FAIL、回修候选尚未重算，finalizer 必然拒收。按你所处的模式二选一：`,
+                `     · 正式 goal 编排（外层 runner 拉起的轮次）：写完报告即结束本轮，`,
+                `       回传当前 FAIL 与 summary/报告路径，由外层 runner 重跑 gate harness 重算候选；不要自跑。`,
+                `     · 非 goal（你自己在跑本阶段）：重跑一次本阶段 harness 让 writer 重算回修候选：`,
+                `           ${rerunCmd}`,
+                `       然后按新 summary 的 NEXT 指引找到 owner 阶段回修（当前阶段不改产品）。`,
+                `     harness 的 NEXT 一行已按上述两种模式给出对应措辞，以它为准。`,
+              ]
+            : [
+                `  3. 运行 ${syncCmd}`,
+                `     （只读 base summary、verifier evidence 与 policy；receipt 在 closed 后机器投影）后再尝试 stop。`,
+              ]),
         ]),
     '',
     '如果你想【放弃这个阶段，转去做别的事】，先执行：',
@@ -763,11 +836,14 @@ async function main() {
     return;
   }
 
-  // 未达阈值 → 动作优先文案 + exit 2
+  // 未达阈值 → 动作优先文案 + exit 2。reports 目录经 M5A SSOT 与 reports_dir_pattern 解析成物理路径；
+  // CU Feature 解析失败（SSOT 不可用 / identity 非法）→ null，文案点名诊断，绝不把编码后的逻辑 id 当物理路径。
+  const reportsDirAbs = resolveFeaturePhaseReportDir(projectRoot, state.feature ?? 'unknown', state.phase ?? 'unknown');
+  const reportsDirRel = reportsDirAbs ? path.relative(projectRoot, reportsDirAbs).replace(/\\/g, '/') : null;
   const reason = buildBlockReason(state, result.missing, readSummaryHint(projectRoot, state), {
     count,
     max: maxConsecutiveBlocks,
-  }, readFeaturesDirFromConfig(projectRoot));
+  }, readFeaturesDirFromConfig(projectRoot), reportsDirRel);
   const decision = {
     decision: 'block',
     reason,

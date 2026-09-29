@@ -29,7 +29,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import * as YAML from 'yaml';
 
-import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY } from '../config';
+import { DEFAULT_PROJECT_PROFILE_SUB_VARIANT_DISPLAY, DEFAULT_PATHS as FRAMEWORK_DEFAULT_PATHS } from '../config';
 import { frameworkLogicalRelPath } from '../repo-layout';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import {
@@ -47,7 +47,7 @@ import {
   PendingMigrationEntry,
 } from './utils/config-field-merger';
 import { loadLocalConfig } from './utils/framework-local-config';
-import { computeHooksConfigUpsert } from './utils/hooks-config-upsert';
+import { computeHooksConfigUpsert, computeHooksConfigRemoval, extractNodeScriptPath } from './utils/hooks-config-upsert';
 import { PhaseChecker, CheckContext, CheckResult } from './utils/types';
 import {
   buildFrameworkIdentityResult,
@@ -59,12 +59,13 @@ import {
   readAgentBundlePathsFromConfig,
   type ResolvedAgentBundlePaths,
 } from './utils/agent-bundle-paths';
-import { readGenericBundlePathsFromConfigPaths } from './utils/legacy-skill-bridge-cleanup';
+import { assertSafeProjectRelativePath, readGenericBundlePathsFromConfigPaths } from './utils/legacy-skill-bridge-cleanup';
 import {
   listFrameworkBuiltinSkillDirs,
   materializeAgentBundleSkills,
   materializeInlineSkillMarkdown,
 } from './utils/materialize-agent-bundle-skills';
+import { isInsideProjectRoot } from './utils/project-relative-path';
 import { resolveSkillPath } from './utils/resolve-skill-path';
 
 // --------------------------------------------------------------------------
@@ -154,6 +155,7 @@ const DEFAULT_PATHS = {
   glossary: 'doc/glossary.yaml',
   glossary_seed: 'doc/glossary-seed.txt',
   architecture_md: 'doc/architecture.md',
+  conventions: FRAMEWORK_DEFAULT_PATHS.conventions!,
 } as const;
 
 type TextArtifactCompareKind = 'byte_equal' | 'eol_only' | 'content_different';
@@ -382,7 +384,7 @@ interface AdapterDescriptor {
   /** adapter.yaml 中声明的所有 template 路径，用于 template_files_resolvable */
   declaredTemplatePaths: Array<{ field: string; abs: string; exists: boolean }>;
   /** deprecated_artifacts 列表（check-init UPDATE 时 backup_delete） */
-  deprecatedArtifacts: Array<{ path: string; action: string; reason: string }>;
+  deprecatedArtifacts: Array<{ path: string; action: string; reason: string; hookConfigs?: string[] }>;
   /** 解析后的 adapter.yaml 原始对象（供 target root 等推导） */
   rawConfig: Record<string, unknown> | null;
 }
@@ -417,6 +419,7 @@ function resolveAdapterTargetRoot(cfg: Record<string, unknown> | null): string |
     (cfg.rules as { target_dir?: string } | undefined)?.target_dir,
     (cfg.hooks as { target_dir?: string } | undefined)?.target_dir,
     (cfg.commands as { target_dir?: string } | undefined)?.target_dir,
+    (cfg.skill_bridge as { target_dir?: string } | undefined)?.target_dir,
   ].filter((d): d is string => typeof d === 'string' && d.includes('/'));
   for (const d of candidates) {
     const posix = d.replace(/\\/g, '/');
@@ -477,6 +480,58 @@ function removePathRecursive(abs: string): void {
   fs.rmSync(abs, { recursive: true, force: true });
 }
 
+/**
+ * 脚本路径是否解析到本工程之外；相对路径一律视为工程内。
+ * 比的是**真实路径**——工程自身的 junction/symlink 别名字面看着越界，realpath 后仍是工程内，
+ * 不得据此删掉仍被引用的脚本。取最近存在的祖先做 realpath；无法判定一律返回 false（视为
+ * 工程内 → blocked，fail-closed）。
+ */
+function isOutsideProject(projectRoot: string, scriptPath: string): boolean {
+  // 含未展开变量/shell 表达式（`$` `%` 反引号）的路径由宿主 shell 运行时展开，字面目录
+  // 不存在、祖先上溯到的 Temp 等目录不代表真实去向——一律当工程内（blocked），不解释 shell。
+  // `${…PROJECT_DIR}/` 前缀已由 extractNodeScriptPath 剥除，不受此条影响。
+  if (/[$%`]/.test(scriptPath)) return false;
+  if (!path.isAbsolute(scriptPath)) return false;
+  try {
+    let existing = path.resolve(scriptPath);
+    while (!fs.existsSync(existing)) {
+      const parent = path.dirname(existing);
+      if (parent === existing) return false;
+      existing = parent;
+    }
+    return !isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(existing));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 递归剔除引用 `base` 且「解析出单脚本路径、该路径指向工程外」的 **command 键**，
+ * 被剔除的路径写进 `ctx.offsite`。只删这一个键、不丢整个对象——同对象里的
+ * args/matcher/任意字段仍留在剩余文档里，工程内的残留引用因此照样落 blocked。
+ */
+function stripOffsiteCommands(
+  node: unknown,
+  ctx: { projectRoot: string; base: string; offsite: string[] },
+): unknown {
+  if (Array.isArray(node)) return node.map(item => stripOffsiteCommands(item, ctx));
+  if (node && typeof node === 'object') {
+    const kept: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (k === 'command' && typeof v === 'string' && v.toLowerCase().includes(ctx.base)) {
+        const script = extractNodeScriptPath(v);
+        if (script !== null && isOutsideProject(ctx.projectRoot, script)) {
+          ctx.offsite.push(script);
+          continue;
+        }
+      }
+      kept[k] = stripOffsiteCommands(v, ctx);
+    }
+    return kept;
+  }
+  return node;
+}
+
 export interface DeprecatedCleanupBackupSession {
   stamp: string;
   backupRelDir?: string;
@@ -486,46 +541,102 @@ export function applyDeprecatedArtifactsCleanup(
   projectRoot: string,
   adapter: AdapterDescriptor,
   mode: InitMode,
-  options?: { backupSession?: DeprecatedCleanupBackupSession },
-): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; backupRelDir: string | null } {
+  options?: { backupSession?: DeprecatedCleanupBackupSession; targetRoot?: string },
+): { cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']>; blocked: Array<{ path: string; reason: string }>; warnings: Array<{ path: string; reason: string }>; backupRelDir: string | null } {
   const cleaned: NonNullable<CheckInitReport['deprecated_artifacts_cleaned']> = [];
+  const blocked: Array<{ path: string; reason: string }> = [];
+  const warnings: Array<{ path: string; reason: string }> = [];
   if (mode !== 'update') {
-    return { cleaned, backupRelDir: null };
+    return { cleaned, blocked, warnings, backupRelDir: null };
   }
   const entries = adapter.deprecatedArtifacts;
-  if (!entries.length) return { cleaned, backupRelDir: null };
+  if (!entries.length) return { cleaned, blocked, warnings, backupRelDir: null };
 
-  const root = resolveAdapterTargetRoot(adapter.rawConfig);
-  if (!root) return { cleaned, backupRelDir: null };
+  const root = (options?.targetRoot?.trim() || resolveAdapterTargetRoot(adapter.rawConfig))
+    ?.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!root) return { cleaned, blocked, warnings, backupRelDir: null };
 
   const session = options?.backupSession;
   let backupRelDir: string | null = session?.backupRelDir ?? null;
+  const backup = (relPath: string): string => {
+    const source = assertSafeProjectRelativePath(projectRoot, relPath);
+    if (!backupRelDir) {
+      backupRelDir = `.framework-backup/${session?.stamp ?? nowStamp()}`;
+      if (session) session.backupRelDir = backupRelDir;
+    }
+    const backupRelPath = `${backupRelDir}/${relPath}`;
+    const backupAbs = assertSafeProjectRelativePath(projectRoot, backupRelPath);
+    // 一个配置可能在同一轮退役多个脚本，保留首次修改前的完整原件。
+    if (!fs.existsSync(backupAbs)) copyPathRecursive(source, backupAbs);
+    return backupRelPath;
+  };
+  const registrations = new Map<string, string[]>();
+  for (const entry of entries) {
+    if (entry.action !== 'backup_delete') continue;
+    const scriptRel = toPosix(`${root}/${entry.path}`);
+    assertSafeProjectRelativePath(projectRoot, scriptRel);
+    for (const cfg of entry.hookConfigs ?? []) {
+      const configRel = toPosix(`${root}/${cfg}`);
+      registrations.set(configRel, [...(registrations.get(configRel) ?? []), scriptRel]);
+    }
+  }
+  // 先解析所有旧注册，非法配置不改写、也不先删其脚本制造悬空引用。
+  const rewrites = [...registrations].flatMap(([relPath, scripts]) => {
+    const absPath = assertSafeProjectRelativePath(projectRoot, relPath);
+    if (!fs.existsSync(absPath)) return [];
+    const removal = computeHooksConfigRemoval(fs.readFileSync(absPath, 'utf-8'), [], [
+      ...scripts, ...scripts.map(p => path.resolve(projectRoot, p)),
+    ]);
+    if (removal.status === 'invalid_json' || removal.status === 'invalid_schema') {
+      throw new Error(`[check-init] 无法安全清理退役 hook 注册：${relPath} (${removal.status})`);
+    }
+    // 按文件名保守保留可能仍被引用的脚本；但文件名兜底只对**解析到本工程内**的引用生效——
+    // 宿主 hooks.json 里指向另一个仓库绝对路径的注册与本工程的副本无关，不得阻断删除。
+    const nextDoc = JSON.parse(removal.nextText!);
+    const remaining = JSON.stringify(nextDoc).toLowerCase();
+    for (const script of scripts) {
+      const base = path.posix.basename(script).toLowerCase();
+      if (!remaining.includes(base)) continue;
+      const offsite: string[] = [];
+      const stripped = stripOffsiteCommands(nextDoc, { projectRoot, base, offsite });
+      if (offsite.length > 0 && !JSON.stringify(stripped).toLowerCase().includes(base)) {
+        warnings.push({ path: script,
+          reason: `${relPath} 引用工程外路径 ${offsite.join('、')}，未改写，请人工核对` });
+      } else {
+        blocked.push({ path: script, reason: `${relPath} 仍含脚本引用，保留文件；请核对并移除旧注册后重跑` });
+      }
+    }
+    return removal.status === 'removed' ? [{ relPath, absPath, nextText: removal.nextText! }] : [];
+  });
+  for (const rewrite of rewrites) {
+    const backupPath = backup(rewrite.relPath);
+    fs.writeFileSync(rewrite.absPath, rewrite.nextText, 'utf-8');
+    cleaned.push({ path: rewrite.relPath, action: 'remove_hook_registration',
+      reason: '移除退役脚本注册，保留宿主其余配置', backup_path: backupPath });
+  }
   for (const entry of entries) {
     if (entry.action !== 'backup_delete') continue;
     const relPath = entry.path.replace(/\\/g, '/').replace(/\/+$/, '');
-    const absPath = path.join(projectRoot, root, relPath);
+    const absPath = assertSafeProjectRelativePath(projectRoot, `${root}/${relPath}`);
+    if (blocked.some(item => item.path === `${root}/${relPath}`)) continue;
     if (!fs.existsSync(absPath)) continue;
 
-    if (!backupRelDir) {
-      const stamp = session?.stamp ?? nowStamp();
-      backupRelDir = `.framework-backup/${stamp}`;
-      fs.mkdirSync(path.join(projectRoot, backupRelDir), { recursive: true });
-      if (session) session.backupRelDir = backupRelDir;
-    }
-    const backupAbs = path.join(projectRoot, backupRelDir, root, relPath);
-    copyPathRecursive(absPath, backupAbs);
+    const backupPath = backup(`${root}/${relPath}`);
     removePathRecursive(absPath);
+    // 仅移除清空的 hooks 目录；不递归清空 adapter 根或宿主自有文件。
+    const parent = path.dirname(absPath);
+    if (path.posix.dirname(relPath) === 'hooks' && fs.readdirSync(parent).length === 0) fs.rmdirSync(parent);
     cleaned.push({
       path: toPosix(path.join(root, relPath)),
       action: entry.action,
       reason: entry.reason,
-      backup_path: toPosix(path.join(backupRelDir, root, relPath)),
+      backup_path: toPosix(backupPath),
     });
     process.stderr.write(
       `[check-init] deprecated artifact backup_delete: ${root}/${relPath} → ${backupRelDir}/${root}/${relPath}\n`,
     );
   }
-  return { cleaned, backupRelDir };
+  return { cleaned, blocked, warnings, backupRelDir };
 }
 
 function loadAdapter(adapter: string): AdapterDescriptor {
@@ -573,6 +684,8 @@ function loadAdapter(adapter: string): AdapterDescriptor {
         path: row.path,
         action: row.action,
         reason: typeof row.reason === 'string' ? row.reason : '',
+        hookConfigs: Array.isArray(row.hook_configs)
+          ? row.hook_configs.filter((p): p is string => typeof p === 'string') : undefined,
       });
     }
   }
@@ -629,14 +742,18 @@ function loadAdapter(adapter: string): AdapterDescriptor {
         parseUpdatePolicy(cfg.commands.update_policy),
       );
     }
-    if (cfg.commands.subagents && cfg.commands.subagents.template_dir && cfg.commands.subagents.target_dir) {
-      collectDir(
-        cfg.commands.subagents.template_dir,
-        cfg.commands.subagents.target_dir,
-        'commands.subagents.template_dir',
-        parseUpdatePolicy(cfg.commands.subagents.update_policy),
-      );
-    }
+  }
+  // 子代理模板：顶层 subagents 优先，commands.subagents 是历史位置（语义相同，schema 禁止同时声明）。
+  // 必须在 commands 块**之外**收集——codex 的 `commands: null` 进不了上面那个块（plan 7b2e9d4c D2）。
+  const subagents = cfg.subagents
+    ?? (cfg.commands && typeof cfg.commands === 'object' ? cfg.commands.subagents : undefined);
+  if (subagents && subagents.template_dir && subagents.target_dir) {
+    collectDir(
+      subagents.template_dir,
+      subagents.target_dir,
+      cfg.subagents ? 'subagents.template_dir' : 'commands.subagents.template_dir',
+      parseUpdatePolicy(subagents.update_policy),
+    );
   }
   if (cfg.skill_bridge && typeof cfg.skill_bridge === 'object'
     && cfg.skill_bridge.template_dir && cfg.skill_bridge.target_dir) {
@@ -914,6 +1031,7 @@ function buildRenderEnv(
       architecture_md: cfg.paths.architecture_md,
       module_catalog: cfg.paths.module_catalog,
       glossary: cfg.paths.glossary,
+      conventions: cfg.paths.conventions,
       features_dir: cfg.paths.features_dir,
     },
   });
@@ -931,6 +1049,7 @@ function buildRenderEnv(
     architecture_md_path: vars.ARCHITECTURE_MD_PATH,
     module_catalog_path: vars.MODULE_CATALOG_PATH,
     glossary_path: vars.GLOSSARY_PATH,
+    conventions_path: vars.CONVENTIONS_PATH,
     features_dir: vars.FEATURES_DIR,
     module_inner_layers_csv: Array.isArray(arch?.module_inner_layers)
       ? (arch.module_inner_layers as string[]).join(' / ')
