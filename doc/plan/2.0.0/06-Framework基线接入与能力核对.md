@@ -4,7 +4,7 @@
 
 ## 1. 输入、当前事实与首个动作
 
-所有 main/story 均为 SimulatedWalletForHmos 的分支。当前 main=025d1b6b，Framework 3.1.0/source_commit=074a4c3c 已经 74196422 同步到 demo，20851566 交回并通过基线评审。§1–3 的本轮任务已完成，执行者直接进入 §4；以下版本取得/同步步骤保留供后续实际基线更新使用，不重复安装。
+所有 main/story 均为 SimulatedWalletForHmos 的分支。当前 main=025d1b6b，Framework 3.1.0/source_commit=074a4c3c 已经 74196422 同步到 demo，20851566 交回并通过基线评审。§1–3 已完成；§4 能力核对也已由 882aeeb0 交回并评审，当前按[能力核对裁定](评审意见/2026-09-29-Framework3.1能力核对评审.md)进入后继接线；以下版本取得/同步步骤保留供后续实际基线更新使用，不重复安装。
 
 实施者接单先重新核远端并登记结果：
 
