@@ -9,7 +9,7 @@
 
 1. 六个阶段各有自己那一份原则页，spec 的任务包命令跑得出内容；
 2. 参数缺席 / 真源读不到 → 明确失败、退出非零，**不降级成空**（静默的空和真正的空长得一样）；
-3. 取法写在作者一定读得到的三处：流程的下一步文本、SKILL、入口文件的扩展段；
+3. 取法写在作者一定读得到的两处：流程的下一步文本、SKILL；
 4. 「读过了」有唯一机械留痕：原则页路径进了 `key_inputs_read` 才过既有门禁。
 """
 import json
@@ -29,7 +29,6 @@ MANIFEST = EXT / "manifest.yaml"
 RULES = EXT / "rules"
 AUTHOR_CLI = "doc/extensions/hooks/spec/author.mjs"
 FLOW = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
-SECTION = EXT / "skills" / "story" / "AGENTS.section.md"
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 # context-exploration 门禁只覆盖这五个；testing 没有，如实无留痕。
 GATED_PHASES = ("spec", "plan", "coding", "review", "ut")
@@ -98,7 +97,7 @@ class ChannelFailuresAreLoud(unittest.TestCase):
 
 
 class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
-    """取法写在作者一定读得到的三处——文件在磁盘上不等于作者看见了。"""
+    """取法写在作者一定读得到的两处——文件在磁盘上不等于作者看见了。"""
 
     def test_the_flow_next_step_text_carries_the_command(self):
         """作者逐步跟的是 `status` 的下一步文本——spec 段每一步都要带着取法。"""
@@ -127,14 +126,6 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         self.assertIn(AUTHOR_CLI, text)
         self.assertIn("doc/extensions/hooks/<阶段>/author.md", text)
 
-    def test_the_entry_section_carries_the_command(self):
-        section = SECTION.read_text(encoding="utf-8")
-        self.assertIn(AUTHOR_CLI, section)
-        for f in (REPO / "demo" / "CLAUDE.md", REPO / "demo" / "AGENTS.md"):
-            with self.subTest(file=f.name):
-                self.assertIn(AUTHOR_CLI, f.read_text(encoding="utf-8"),
-                              "入口文件的扩展段没跟上真源")
-
 
 class TheHostChannelIsNotUsed(unittest.TestCase):
     """作者要求不占宿主的作者事件，也不再引用已退场的框架入口。"""
@@ -147,7 +138,7 @@ class TheHostChannelIsNotUsed(unittest.TestCase):
                                  "作者要求又登记回宿主的作者事件了——那里到不了动笔之前")
 
     def test_no_delivery_surface_points_at_the_retired_framework_entry(self):
-        surfaces = [MANIFEST, SECTION, EXT / "skills" / "story" / "SKILL.md"]
+        surfaces = [MANIFEST, EXT / "skills" / "story" / "SKILL.md"]
         surfaces += [RULES / f"{p}-rules.overlay.yaml" for p in GATED_PHASES]
         for f in surfaces:
             with self.subTest(file=f.name):
@@ -197,12 +188,6 @@ class ManifestKeepsOneSourceOfTruth(unittest.TestCase):
             with self.subTest(phase=phase):
                 self.assertEqual([f"extensions/hooks/{phase}/author.md"], hits,
                                  f"{phase} 的作者内容出现了第二份：{hits}")
-
-    def test_the_entry_section_only_points_it_does_not_copy(self):
-        """入口段只给取法，不搬正文——搬过去就有两份要同步。"""
-        section = SECTION.read_text(encoding="utf-8")
-        self.assertLess(len(section), 1200, "扩展段变长了，像是把正文搬了进来")
-        self.assertNotIn("先完整读它", section)
 
 
 if __name__ == "__main__":

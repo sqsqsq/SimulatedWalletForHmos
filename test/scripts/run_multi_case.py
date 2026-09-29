@@ -239,9 +239,8 @@ def demo_check() -> str:
 
 
 def install_dev_source(template: Path) -> dict[str, Any]:
-    """在 template 里装开发源，再核装上的与开发源逐字节相同；不成立即抛错，template 作废。"""
-    result = publish_to_demo.install_extension(
-        DEV_SOURCE, template, publish_to_demo.manifest_bridges(DEV_SOURCE))
+    """在 template 里装开发源（宿主入口由安装动作的写后核把关），再核装上的与开发源逐字节相同；不成立即抛错，template 作废。"""
+    result = publish_to_demo.install_extension(DEV_SOURCE, template)
     if result.status != "installed":
         raise SystemExit(f"[multi] template 装开发源失败（{result.status}）：{result.problems}"
                          "——template 作废，不建 Case，从 demo 重新装配")
@@ -250,10 +249,8 @@ def install_dev_source(template: Path) -> dict[str, Any]:
                 if (installed / rel).read_bytes() != (DEV_SOURCE / rel).read_bytes()]
     extra = sorted(set(publish_to_demo.enumerate_source(installed))
                    - set(publish_to_demo.enumerate_source(DEV_SOURCE)))
-    bridges = [b.target for b in publish_to_demo.manifest_bridges(DEV_SOURCE)
-               if (template / b.target).read_bytes() != b.source.read_bytes()]
-    if mismatch or extra or bridges:
-        raise SystemExit(f"[multi] template 与开发源不同源：内容不同 {mismatch[:5]}、多出 {extra[:5]}、入口 {bridges}")
+    if mismatch or extra:
+        raise SystemExit(f"[multi] template 与开发源不同源：内容不同 {mismatch[:5]}、多出 {extra[:5]}")
     return {"status": result.status, "source_version": result.source_version, "changed": len(result.completed)}
 
 

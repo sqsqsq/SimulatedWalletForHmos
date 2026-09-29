@@ -1,1 +1,1 @@
-{"paths":{"extension_dir":"doc/extensions"}}
+{"paths":{"extension_dir":"doc/extensions"},"materialized_adapters":["claude"]}

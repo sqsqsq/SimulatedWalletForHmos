@@ -26,21 +26,20 @@ import tempfile
 import unittest
 from pathlib import Path
 import yaml
-from ext_workspace import installed_package, link_harness_yaml
+from ext_workspace import copy_host_entries, git_init_excluding_framework, installed_package, link_framework
 
 #: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
 PKG_ROOT = installed_package()
 PKG_EXT = PKG_ROOT / "doc" / "extensions"
 SCAN = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
-#: 包登记的宿主入口（target），正文在包工程的同一路径
-LAUNCHERS = tuple(b["target"] for b in yaml.safe_load(
-    (PKG_EXT / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["bridges"])
+ENTRIES = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
 
 
 class AdaptCase(unittest.TestCase):
-    """每个用例搭一个「已装好扩展、已提交」的目标工程，跑真 `adapt-scan`。
+    """每个用例搭一个「接入了 demo Framework、已装好扩展、已提交」的目标工程，跑真 `adapt-scan`。
 
-    目标必须是 git 仓且有基线提交：核对靠 `git diff`，没有底就没有「变了哪些」。
+    目标必须是 git 仓且有基线提交：核对靠 `git diff`，没有底就没有「变了哪些」。宿主入口取包工程里
+    Framework 物化好的那一份，与目标的配置一致。
     """
 
     def setUp(self) -> None:  # noqa: D102
@@ -51,29 +50,16 @@ class AdaptCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.target = Path(self._tmp.name) / "target"
-        self.target.mkdir(parents=True)
-        (self.target / "framework.config.json").write_text(
-            json.dumps({"paths": {"extension_dir": "doc/extensions"}}, ensure_ascii=False),
-            encoding="utf-8")
+        link_framework(self.target)
         (self.target / ".gitignore").write_text(
             "doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
-        link_harness_yaml(self.target)
-        for rel in LAUNCHERS:
-            dst = self.target / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(PKG_ROOT / rel, dst)
+        copy_host_entries(PKG_ROOT, self.target)
         self.ext = self.target / "doc" / "extensions"
         self.scripts = self.ext / "skills" / "story" / "scripts"
         self.core = self.scripts / "core"
         self.adapters = self.scripts / "adapters"
-        # 入口文件：⑤ 要它含扩展段连同标记区
-        section = self.ext / "skills" / "story" / "AGENTS.section.md"
-        body = section.read_text(encoding="utf-8") if section.exists() else ""
-        (self.target / "AGENTS.md").write_text(
-            "# 目标工程\n\n## 实例扩展\n\n<!-- story-ext:begin -->\n"
-            + body.strip() + "\n<!-- story-ext:end -->\n", encoding="utf-8")
         self.commit("baseline")
 
     # ---- 驱动 ----
@@ -85,7 +71,7 @@ class AdaptCase(unittest.TestCase):
 
     def commit(self, message: str) -> None:
         if not (self.target / ".git").exists():
-            self.git("init", "-q")
+            git_init_excluding_framework(self.target)
         self.git("add", "-A")
         self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message)
 
@@ -97,6 +83,14 @@ class AdaptCase(unittest.TestCase):
 
     def out(self, proc: subprocess.CompletedProcess) -> str:
         return ((proc.stdout or "") + (proc.stderr or "")).strip()
+
+    def make_fresh(self) -> None:
+        """退回空仓：撤掉扩展，再让 Framework 按「没有扩展」重新物化入口（入口文件里不再有扩展那一节）。"""
+        shutil.rmtree(self.ext)
+        proc = subprocess.run(["node", str(ENTRIES), "--project-root", str(self.target), "--action", "materialize"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.commit("空仓")
 
 
 class TheTargetKeepsWhatIsItsOwn(AdaptCase):
@@ -200,6 +194,10 @@ class TheMechanismFollowsThePackage(AdaptCase):
         """一个文件两种所有权：机制登记跟包，`provides.knowledge` 跟目标。"""
         manifest = self.ext / "manifest.yaml"
         text = manifest.read_text(encoding="utf-8")
+        (self.ext / "knowledge" / "facts" / "own-profile.md").write_text(
+            "---\nname: 自己的画像\nkind: facts\nform: facets\n"
+            "applies_when: 判断需求归不归本部件时读：本部件是谁\n---\n\n## 职责\n\n负责本部件的业务。\n",
+            encoding="utf-8")
         mine = "  knowledge:\n    - knowledge/facts/own-profile.md\n"
         head, _, tail = text.partition("  knowledge:\n")
         keep = tail.split("\n  hooks:", 1)[1] if "\n  hooks:" in tail else ""
@@ -228,9 +226,9 @@ class KnowledgeIsCheckedWithoutAFeature(AdaptCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
 
     def test_a_fresh_install_checks_clean_and_writes_nothing(self) -> None:
-        shutil.rmtree(self.ext)
-        self.commit("空仓")
-        self.assertEqual(0, self.adapt("--apply").returncode)
+        self.make_fresh()
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
         self.commit("装好")
         proc = self.run_check()
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -252,10 +250,8 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
     """升级后按演进记录（晚于目标 adapted_for 的条目）与只读检查决定问不问人；选稍后不落盘任何文件。"""
 
     def set_adapted(self, version: str) -> None:
-        manifest = self.ext / "manifest.yaml"
-        rows = [f'adapted_for: "{version}"' if l.startswith("adapted_for:") else l
-                for l in manifest.read_text(encoding="utf-8").split("\n")]
-        manifest.write_text("\n".join(rows), encoding="utf-8")
+        (self.ext / "adaptation.yaml").write_text(
+            f'adapters: stand-in\nadapted_for: "{version}"\n', encoding="utf-8")
         self.commit(f"知识按 {version} 适配过")
 
     def test_newer_protocol_entries_are_listed_and_asked(self) -> None:
@@ -266,8 +262,8 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn("停一次问人「现在做这些适配吗」", proc.stdout)
         for older in ("1.9.4：", "1.9.5：", "1.9.6："):
             self.assertNotIn(older, proc.stdout, "已适配过的版本又列了一遍")
-        manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('adapted_for: "1.9.6"', manifest, "没等人选就写了适配版本")
+        adaptation = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
+        self.assertIn('adapted_for: "1.9.6"', adaptation, "没等人选就写了适配版本")
 
     def test_a_knowledge_breach_is_listed_and_asked(self) -> None:
         fact = next((self.ext / "knowledge" / "facts").glob("*.md"))
@@ -285,7 +281,8 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn("目标已按包的版本适配，知识与当前协议一致", proc.stdout)
         self.assertNotIn("停一次问人", proc.stdout)
         self.assertEqual("", self.git("status", "--porcelain", "--", "doc/extensions/manifest.yaml",
-                                      "doc/extensions/knowledge").stdout.strip(), "只是提示却写了知识或清单")
+                                      "doc/extensions/adaptation.yaml", "doc/extensions/knowledge").stdout.strip(),
+                         "只是提示却写了知识、清单或适配状态")
 
 
 class ThePreflightStopsInsteadOfGuessing(AdaptCase):
@@ -329,19 +326,18 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
 
     def setUp(self) -> None:  # noqa: D102
         super().setUp()
-        # 把「已装好」的那一份撤掉，只留一个空仓：配置键 + 入口文件
-        shutil.rmtree(self.ext)
-        self.commit("空仓")
+        self.make_fresh()
 
     def test_the_manifest_registers_no_knowledge_and_writes_none(self) -> None:
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
-        manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
-        block = manifest.split("  knowledge:\n", 1)[1].split("\n  hooks:", 1)[0]
-        listed = [l.strip()[2:] for l in block.splitlines() if l.strip().startswith("- ")]
-        self.assertEqual([], listed, "首次安装替目标激活了知识")
+        manifest = yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))
+        self.assertEqual([], manifest["provides"]["knowledge"], "首次安装替目标激活了知识")
+        self.assertRegex(manifest["name"], r"^[a-z][a-z0-9_-]*$", "Framework 只认小写 slug 的 name")
         written = [p for p in (self.ext / "knowledge").rglob("*") if p.is_file()] if (self.ext / "knowledge").exists() else []
         self.assertEqual([], written, "脚本往目标的 knowledge/ 写了东西")
+        self.assertEqual("{}\n", (self.ext / "adaptation.yaml").read_text(encoding="utf-8"),
+                         "首次安装的适配状态应为空映射：包的替身身份与已适配版本不属于目标")
 
     def test_the_derivation_runs_on_a_fresh_install(self) -> None:
         """装完直接跑知识派生：四类皆空、不抛——这是「装完就能跑」的判据本身。"""
@@ -390,11 +386,9 @@ class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
         判的是**包**不是目标，所以这条用临时包跑：把真包复制一份、放一个脚本进去。
         """
         pkg = Path(self._tmp.name) / "pkg"
-        pkg.mkdir()
-        shutil.copy(self.target / "framework.config.json", pkg / "framework.config.json")
+        link_framework(pkg)
         shutil.copytree(PKG_EXT, pkg / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
-        link_harness_yaml(pkg)
         (pkg / "doc" / "extensions" / "skills" / "story" / "scripts" / "loose.mjs").write_text(
             "export const x = 1;\n", encoding="utf-8")
 

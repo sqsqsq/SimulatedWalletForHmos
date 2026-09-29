@@ -53,6 +53,49 @@ def link_harness_yaml(root: Path) -> Path:
     return target
 
 
+def link_framework(root: Path) -> Path:
+    """让临时工程根接入 demo 的 Framework：复制 demo 的 `framework.config.json`（物化哪些宿主由它定），
+    `framework/` 整个目录接一条指向 demo 的 junction（Windows）或符号链接。安装与宿主入口物化只读它、
+    写在工程根；链接在临时目录清理时被删，demo 不动。已存在的都不动。"""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    config = root / "framework.config.json"
+    if not config.exists():
+        shutil.copy2(REPO_ROOT / "demo" / "framework.config.json", config)
+    target = root / "framework"
+    if not target.exists():
+        source = REPO_ROOT / "demo" / "framework"
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(source), str(target))
+        else:
+            os.symlink(source, target, target_is_directory=True)
+    return target
+
+
+#: 宿主入口所在：各宿主的 Skill 跳板目录与两份入口文件
+HOST_ENTRIES = (".agents", ".cac", ".claude", ".codex", ".cursor", ".opencode", "AGENTS.md", "CLAUDE.md")
+
+
+def copy_host_entries(source_root: Path, target_root: Path) -> None:
+    """把一个工程的宿主入口（各宿主目录与 AGENTS.md / CLAUDE.md）原样复制到另一个工程。"""
+    for name in HOST_ENTRIES:
+        src = Path(source_root) / name
+        if src.is_dir():
+            shutil.copytree(src, Path(target_root) / name, dirs_exist_ok=True)
+        elif src.is_file():
+            shutil.copy2(src, Path(target_root) / name)
+
+
+def git_init_excluding_framework(root: Path) -> None:
+    """在临时工程里建 git 仓，并让它不看 `framework/`：那是指向 demo 的链接，git 会跟进去收录整个 Framework。"""
+    import subprocess
+    subprocess.run(["git", "-C", str(root), "init", "-q"], check=True, capture_output=True)
+    exclude = Path(root) / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text("/framework/\n", encoding="utf-8")
+
+
 def _install_dev_source() -> Path:
     """开发源暂存进临时消费工程的 `doc/extensions`：文件集合用正式安装的源枚举规则，运行态不带。
 
@@ -78,7 +121,7 @@ _INSTALLED: Path | None = None
 
 
 def installed_package() -> Path:
-    """用正式安装动作把开发源装进一个临时消费工程（扩展、六份入口、扩展段都到位），返回工程根。
+    """用正式安装动作把开发源装进一个接入了 demo Framework 的临时消费工程（扩展与各宿主入口都到位），返回工程根。
 
     adapt 按运行态执行：它的包是装好了的工程，从包里的脚本起跑。每个进程建一次。
     """
@@ -86,13 +129,8 @@ def installed_package() -> Path:
     if _INSTALLED is None:
         root = Path(tempfile.mkdtemp(prefix="story-installed-")) / "package"
         atexit.register(shutil.rmtree, root.parent, True)
-        root.mkdir()
-        demo = REPO_ROOT / "demo"
-        for name in ("framework.config.json", "AGENTS.md", "CLAUDE.md"):
-            shutil.copy2(demo / name, root / name)
-        link_harness_yaml(root)
-        result = publish_to_demo.install_extension(
-            DEV_SOURCE, root, publish_to_demo.manifest_bridges(DEV_SOURCE))
+        link_framework(root)
+        result = publish_to_demo.install_extension(DEV_SOURCE, root)
         if result.status != "installed":
             raise RuntimeError(f"开发源装不进临时工程：{result.status} {result.problems or result.failed}")
         _INSTALLED = root

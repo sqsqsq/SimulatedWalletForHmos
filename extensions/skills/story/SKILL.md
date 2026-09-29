@@ -8,8 +8,31 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 > 读者：执行 `/story` 的主 agent。时机：启动 `/story` 时读一遍；中途只按 `status` 的 `next` 回到对应规则页。
 
 本文件只讲**链条怎么走、在哪停、产物各是什么**。各步的作业规则在 `rules/` 与 `phases/`，
-命令由脚本自己打印，不在这里复述第二遍。`/story adapt` 是把本扩展装到别的工程的运维动作，
-见 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)。
+命令由脚本自己打印，不在这里复述第二遍。
+
+## 命令路由
+
+`/story <命令> [参数]` 按命令只读本文的所需章节：
+
+| 命令 | 读哪里 |
+|---|---|
+| `init <编号>` | 「命令入口 · 初始化」；`AR` 开头的先读「需求系统 Token」，其余编号走本地起手，不要 token |
+| `archive <AR>` | 「需求系统 Token」+「命令入口 · 归档」 |
+| `restore <AR>` | 「需求系统 Token」+「命令入口 · 恢复」 |
+| `update <编号>` | 「命令入口 · 更新」；要从需求系统取新内容时先读「需求系统 Token」 |
+| `adapt [<目标工程>]` | 改读 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)：把本扩展装到或升级到另一个工程，与需求流程无关 |
+| `help` | 只输出下面这张表 |
+
+| 顺序 | 命令 | 功能 |
+|---|---|---|
+| 1 | `/story init <编号>` | 起手取材、导入与分析，之后按本文一路做到 spec 闭环 |
+| 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 作附件一并归档上传（自动备份；任一缺失或未过门禁即拒绝） |
+| 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
+| 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物 |
+| — | `/story adapt [<目标工程>]` | 把 Story Extension 装到或升级到另一个工程 |
+| — | `/story help` | 输出本表 |
+
+`init` 之后不需要人再敲命令；中断后用 `python doc/extensions/skills/story/scripts/core/story_flow.py status --feature <编号>` 问现在走到哪、下一步做什么。
 
 ## 链条
 

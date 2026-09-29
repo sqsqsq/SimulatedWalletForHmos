@@ -900,6 +900,23 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             subprocess.run(["git", "-C", str(root), *cmd], check=True, capture_output=True)
         return demo
 
+    def setUp(self) -> None:
+        super().setUp()
+        # 宿主入口的核与物化走 Framework 原生能力，已由 test_publish_to_demo 在真 Framework 上测过；
+        # 这里的假 demo 没有 Framework，只替换那一步，测装配本身（复制边界、同源核对、失败即作废）。
+        self.entry_calls: list[tuple[str, str]] = []
+        self.entry_results = {"plan": (0, {"retire": [], "conflicts": [], "entries": []}),
+                              "materialize": (0, {"written": [], "removed": [], "problems": []})}
+
+        def fake_entries(script, target, *args):
+            action = args[args.index("--action") + 1]
+            self.entry_calls.append((str(target), action))
+            return self.entry_results[action]
+
+        patcher = mock.patch.object(run_multi_case.publish_to_demo, "_entries", fake_entries)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def build_template(self, demo: Path, suite_id: str) -> Path:
         root = demo.parent
         suite_root = root / "suite"
@@ -929,9 +946,8 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         for rel in run_multi_case.publish_to_demo.enumerate_source(run_multi_case.DEV_SOURCE):
             self.assertEqual((run_multi_case.DEV_SOURCE / rel).read_bytes(), (ext / rel).read_bytes(), rel)
         self.assertFalse((ext / "hooks/retired/old.mjs").exists(), "demo 里上一版的机制文件残留在 template")
-        for bridge in run_multi_case.publish_to_demo.manifest_bridges(run_multi_case.DEV_SOURCE):
-            self.assertEqual(bridge.source.read_bytes(), (template / bridge.target).read_bytes())
-        self.assertIn("<!-- story-ext:begin -->", (template / "AGENTS.md").read_text(encoding="utf-8"))
+        self.assertEqual([str(template)] * 2, [call[0] for call in self.entry_calls],
+                         "宿主入口没有按「写前核 → 物化」在 template 上各走一次")
         after = {p.relative_to(demo).as_posix(): p.read_bytes() for p in demo.rglob("*") if p.is_file()}
         self.assertEqual(snapshot, after, "装配写了 demo")
         boundary = run_multi_case.read_json(root / "suite" / "workspace-boundary.json")
@@ -1015,9 +1031,7 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         root = Path(tempfile.mkdtemp(prefix="story-multi-install-"))
         self.addCleanup(shutil.rmtree, root, True)
         demo = self.fake_demo(root)
-        (demo / "AGENTS.md").write_text("# demo\n<!-- story-ext:begin -->\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(root), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "坏标记"],
-                       check=True, capture_output=True)
+        self.entry_results["plan"] = (1, {"retire": [], "conflicts": ["AGENTS.md：有原生生成之外的内容"], "entries": []})
         with self.assertRaises(SystemExit) as caught:
             self.build_template(demo, f"install-fail-{os.getpid()}")
         self.assertIn("template 作废", str(caught.exception))

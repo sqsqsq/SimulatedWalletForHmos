@@ -7,7 +7,7 @@
 
 | 目录 | 是什么 |
 |---|---|
-| `extensions/` | Story Extension 开发源（机制、知识样板、宿主入口 `bridges/`） |
+| `extensions/` | Story Extension 开发源（机制、知识样板；宿主入口由 Framework 按 manifest 物化） |
 | `demo/` | 完整消费工程：业务代码与业务文档、`framework/` 发布件、消费配置、宿主物化与已安装的 Extension（发布版） |
 | `doc/` | 项目文档：`spec/` 需求与版本范围，`plan/` 方案、评审与交回，`release/` 按版本的发布说明（只写本版增量）与 AI 交付流程说明；`features/` 是 CLI 测试回流的需求产物（不入库） |
 | `README.md` | 项目说明与使用指南，只写当前状态；维护者据此分发给使用者 |
@@ -88,8 +88,8 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统；提
   进入消费仓；本仓副本只在用户明确授权的单步验证中临时修改，交付时保留上游基线、可复现补丁和临时放行的失效条件。
 - 本仓对 framework 有两处本地定制：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与
   `demo/framework/agents/opencode/templates/agents/verifier.md` 子代理模板（物化为 `demo/.opencode/agent/verifier.md`，根 `.opencode/agent/verifier.md`
-  是维护装置的拷贝）。它们不含逻辑改动、不交上游，接入新发布件时按 §6 重新加回；不随 story-adaptation 进目标仓，进目标仓的只有 manifest
-  `provides.bridges` 登记的入口。
+  是维护装置的拷贝）。它们不含逻辑改动、不交上游，接入新发布件时按 §6 重新加回；不随 story-adaptation 进目标仓，目标仓的宿主入口
+  由它自己的 Framework 按扩展 manifest 物化。
 - `demo/.opencode/` 同时是 CLI 测试装置（Case 工作区从 demo 复制）：外网实跑用 opencode，内网用 codex。
 
 ## 3. 不变量
@@ -228,8 +228,10 @@ R 的分级计算与确认检查尚未接线，现有测试通过不代表分级
 
 ## 7. Extension 安装与发布
 
-同一个安装函数 `test/scripts/publish_to_demo.py` 服务两种目标，顺序固定：整体替换目标 `doc/extensions` → 按 manifest `provides.bridges`
-的「目标位置 / 来源」对写宿主入口 → 更新 AGENTS.md / CLAUDE.md 的 story-ext 扩展段（区外不动）。
+同一个安装函数 `test/scripts/publish_to_demo.py` 服务两种目标，顺序固定：宿主入口写前核（只读）→ 整体替换目标 `doc/extensions` →
+撤下已核的旧入口、Framework 原生物化宿主入口并写后核。入口的核与物化只有一份实现，即扩展里的
+`skills/story-adaptation/scripts/entries.mjs`，对外 adapt 用的也是它：入口文件去掉已装旧版的扩展段后须与 Framework 的渲染逐字相同，
+已装旧版登记的入口须与旧发布源相同才撤下，要物化的 Skill 入口位置上不能有无归属的文件；不成立就停在写之前。
 
 - **测试**：只装一次性 template，由 `run_multi_case.py` 按 TEST §1.2 装配，离线检查用的 template 按 TEST §5 现建。测试不写 demo；
   需求产物回流到维护仓 `doc/features/`。
@@ -241,7 +243,7 @@ R 的分级计算与确认检查尚未接线，现有测试通过不代表分级
   python test/scripts/publish_to_demo.py --source extensions --target demo             # 退出 0 = 已安装
   ```
 
-  验证 `git status -- demo` 的改动只在 `demo/doc/extensions/`、manifest 登记的入口和两份入口文件的扩展段，再核 demo 扩展与开发源同源（打印 `True`）：
+  验证 `git status -- demo` 的改动只在 `demo/doc/extensions/`、Framework 物化的扩展 Skill 入口与入口文件，再核 demo 扩展与开发源同源（打印 `True`）：
 
   ```powershell
   python -c @"
@@ -258,6 +260,6 @@ R 的分级计算与确认检查尚未接线，现有测试通过不代表分级
   然后跑 `python test/scripts/check_failure_modes.py`（缺省检查 demo）。发布提交带上 demo、`doc/release/<版本>.md` 与更新后的
   [README](README.md)，并在 EVOLUTION 登记。提交前核：本版增量里使用者可见的每项变化都已反映在 README 的当前描述里
   （命令、能力、产物、入口、安装），与发布版本一致；README 只写当前状态，版本变化只写在本版发布说明。
-- **失败**：退出 2 是输入读取或 git 前置不成立，目标没写；退出 1 是写入中途失败，结果 JSON 列出实际完成项。用 git 查看并还原 demo，
+- **失败**：退出 2 是输入读取、git 前置或宿主入口写前核不成立，目标没写；退出 1 是写入或物化中途失败，结果 JSON 列出实际完成项。用 git 查看并还原 demo，
   修好后从同一源重装。
 - **对外升级**：其他仓的安装与升级用 demo 里已装的发布版 adapt（`demo/doc/extensions/skills/story-adaptation/`）。

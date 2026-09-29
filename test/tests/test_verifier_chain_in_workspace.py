@@ -123,17 +123,19 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         self.assertEqual((DEMO / VERIFIER_DEF).read_bytes(), (REPO_ROOT / VERIFIER_DEF).read_bytes())
 
     def test_the_two_agents_entries_follow_their_owners(self) -> None:
-        """story 入口归 Extension：demo 与 template 各等于自己所装包登记的来源；
-        story-adaptation 入口不在登记里，是 Framework 物化的那份，template 保持 demo 的原样。"""
-        bridges = self.runner.publish_to_demo.manifest_bridges
-        target = ".agents/skills/story/SKILL.md"
-        installed = next(b for b in bridges(DEMO / "doc/extensions") if b.target == target)
-        self.assertEqual(installed.source.read_bytes(), (DEMO / target).read_bytes(), "demo 的 story 入口不是它已装包登记的那份")
-        dev = next(b for b in bridges(self.runner.DEV_SOURCE) if b.target == target)
-        self.assertEqual(dev.source.read_bytes(), (self.template / target).read_bytes())
-        rel = ".agents/skills/story-adaptation/SKILL.md"
-        self.assertNotIn(rel, [b.target for b in bridges(self.runner.DEV_SOURCE)])
-        self.assertEqual((DEMO / rel).read_bytes(), (self.template / rel).read_bytes())
+        """demo 装着 1.9.8：story 入口等于它已装包登记的来源。template 装着开发版：两个 Skill 入口都由
+        Framework 按 manifest 物化，带归属标记、指向各自的 SKILL。"""
+        import yaml
+        installed = yaml.safe_load((DEMO / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
+        for item in installed["provides"].get("bridges", []):
+            with self.subTest(demo=item["target"]):
+                self.assertEqual((DEMO / "doc/extensions" / item["source"]).read_bytes(),
+                                 (DEMO / item["target"]).read_bytes(), "demo 的入口不是它已装包登记的那份")
+        for skill in ("story", "story-adaptation"):
+            with self.subTest(template=skill):
+                text = (self.template / f".agents/skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+                self.assertIn("agent-maison:instance-extension-bridge", text)
+                self.assertIn(f"doc/extensions/skills/{skill}/SKILL.md", text)
 
     def test_hook_configs_live_in_the_consumer_and_resolve_from_its_root(self) -> None:
         """四份钩子配置只在消费工程里；其中每条命令都从消费根（含带空格的 workspace）找得到脚本。

@@ -2,19 +2,19 @@
 
     python test/scripts/publish_to_demo.py --source <扩展源码目录> --target <消费工程目录> [--dry-run]
 
-顺序固定：枚举源 → 整体替换目标 doc/extensions（含源的示范知识，源里没有的旧文件退出）→ 按 manifest
-登记的 target/source 对写宿主入口 → 用源的扩展段更新 AGENTS.md / CLAUDE.md 的 story-ext 标记区（区外不动）。
+顺序固定：枚举源 → 宿主入口写前核（原生渲染比对、旧入口归属，只读）→ 整体替换目标 doc/extensions（含源的
+示范知识，源里没有的旧文件退出）→ 退出已核的旧入口、Framework 原生物化宿主入口并写后核。入口的核与物化只有
+一份实现：扩展里的 skills/story-adaptation/scripts/entries.mjs，对外 adapt 用的也是它。
 
 命令行用于发布 demo：git 查询必须成功、非忽略状态必须干净，否则不装；出错由维护者用 git 看改动、还原。
 一次性 template 由装配直接调 install_extension，失败就丢掉重建。本脚本不回滚、不留安装日志。
 
-退出码：0 已规划 / 已安装；2 输入读取或解析失败（目标没写）；1 写入失败（结果里列出实际完成项）。
+退出码：0 已规划 / 已安装；2 输入读取、解析或入口写前核失败（目标没写）；1 写入或物化失败（结果里列出实际完成项）。
 """
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -24,22 +24,13 @@ from pathlib import Path
 import yaml
 
 EXTENSION_DIR = "doc/extensions"
-SECTION = "skills/story/AGENTS.section.md"
-ENTRIES = ("AGENTS.md", "CLAUDE.md")
-BEGIN, END = "<!-- story-ext:begin -->", "<!-- story-ext:end -->"
+ENTRIES_SCRIPT = "skills/story-adaptation/scripts/entries.mjs"
 
 #: 源集合的排除清单（唯一一处）：源根的 adapt/；名称以 .adapt- 起头的；任意层级的这些目录；这些后缀。
 EXCLUDED_ROOT_NAMES = frozenset({"adapt"})
 EXCLUDED_PREFIX = ".adapt-"
 EXCLUDED_DIR_NAMES = frozenset({".git", "node_modules", "__pycache__", ".pytest_cache"})
 EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyo"})
-
-
-@dataclass(frozen=True)
-class BridgeFile:
-    """一份宿主入口：source 是源文件，target 是它在消费工程里的相对路径。"""
-    source: Path
-    target: str
 
 
 @dataclass
@@ -99,50 +90,20 @@ def enumerate_source(source: Path) -> list[str]:
     return files
 
 
-def manifest_bridges(source: Path) -> list[BridgeFile]:
-    """正常安装的入口来自源 manifest 的 provides.bridges（target/source 对）。"""
-    doc = yaml.safe_load((Path(source) / "manifest.yaml").read_text(encoding="utf-8")) or {}
-    items = (doc.get("provides") or {}).get("bridges") or []
-    bad = [item for item in items if not isinstance(item, dict) or not {"source", "target"} <= item.keys()]
-    if bad:
-        raise InputError([f"manifest provides.bridges 每项要有 target 与 source：{bad}"])
-    return [BridgeFile(source=Path(source) / item["source"], target=str(item["target"])) for item in items]
+def _entries(script: Path, target: Path, *args: str) -> tuple[int, dict]:
+    """跑一次 entries.mjs，返回（退出码，JSON 结果）。退出 2 或输出读不出时结果里带 error。"""
+    proc = subprocess.run(["node", str(script), "--project-root", str(target), *args],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        return proc.returncode, json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return proc.returncode, {"error": proc.stderr.strip() or f"entries.mjs 退出 {proc.returncode}、无输出"}
 
 
-def render_zone(text: str, body: str) -> str:
-    """标记区在就整段替换，不在就插到「实例扩展」一节末尾，都没有就追加到文件末尾（与 adapt 同一规则）。"""
-    eol = "\r\n" if "\r\n" in text else "\n"
-    lines = text.replace("\r\n", "\n").split("\n")
-    rows = [BEGIN, *body.split("\n"), END]
-    begins = [i for i, line in enumerate(lines) if BEGIN in line]
-    ends = [i for i, line in enumerate(lines) if END in line]
-    if begins:
-        return eol.join(lines[:begins[0]] + rows + lines[ends[0] + 1:])
-    at = next((i for i, line in enumerate(lines) if re.match(r"#{2,6}\s.*实例扩展", line)), None)
-    if at is not None:
-        depth = len(re.match(r"#+", lines[at]).group(0))
-        end = next((i for i in range(at + 1, len(lines))
-                    if (m := re.match(r"(#+)\s", lines[i])) and len(m.group(1)) <= depth), len(lines))
-        while end > at + 1 and not lines[end - 1].strip():
-            end -= 1
-        return eol.join(lines[:end] + [""] + rows + lines[end:])
-    return eol.join(lines + [""] + rows + [""])
+def _plan(source: Path, target: Path) -> tuple[list[tuple], str | None, list[str]]:
+    """读全部输入、备好要写的内容并做宿主入口写前核；有问题就一起报告，目标不写。
 
-
-def _zone_problem(name: str, text: str) -> str | None:
-    begins = text.count(BEGIN)
-    ends = text.count(END)
-    if begins > 1 or ends > 1:
-        return f"{name} 的扩展段标记重复（begin {begins} 处、end {ends} 处）"
-    if begins != ends or (begins and text.index(END) < text.index(BEGIN)):
-        return f"{name} 的扩展段标记不成对"
-    return None
-
-
-def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[list[tuple], str | None]:
-    """读全部输入、备好要写的内容；读取或解析有问题就一起报告，目标不写。
-
-    返回（写入项, 版本）：写入项是 (目标相对路径, 内容)，扩展目录的文件在前，随后是入口与入口文件。
+    返回（写入项, 版本, 要退出的旧入口）：写入项是 (目标相对路径, 内容)。
     """
     problems: list[str] = []
     if not source.is_dir() or not target.is_dir():
@@ -152,9 +113,11 @@ def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[l
     except InputError as exc:
         problems += exc.problems
         files = []
-    version = None
+    version, skills = None, []
     try:
-        version = str((yaml.safe_load((source / "manifest.yaml").read_text(encoding="utf-8")) or {}).get("version"))
+        manifest = yaml.safe_load((source / "manifest.yaml").read_text(encoding="utf-8")) or {}
+        version = str(manifest.get("version"))
+        skills = [s for s in (manifest.get("provides") or {}).get("skills") or [] if isinstance(s, str)]
     except (OSError, yaml.YAMLError) as exc:
         problems.append(f"源的 manifest.yaml 读不出：{exc}")
     writes: list[tuple] = []
@@ -163,39 +126,24 @@ def _plan(source: Path, target: Path, bridge_files: list[BridgeFile]) -> tuple[l
             writes.append((f"{EXTENSION_DIR}/{rel}", (source / rel).read_bytes()))
         except OSError as exc:
             problems.append(f"源文件读不出：{rel}（{exc}）")
-    for bridge in bridge_files:
-        try:
-            writes.append((bridge.target, Path(bridge.source).read_bytes()))
-        except OSError as exc:
-            problems.append(f"入口源读不出：{bridge.source}（{exc}）")
-    section = source / SECTION
-    if section.is_file():
-        raw = section.read_text(encoding="utf-8").replace("\r\n", "\n")
-        body = "\n".join(line for line in raw.split("\n") if not line.strip().startswith("<!-- story-ext:")).strip()
-        present = [name for name in ENTRIES if (target / name).is_file()]
-        if not present:
-            problems.append(f"目标没有入口文件（{' / '.join(ENTRIES)}）：扩展段无处可放")
-        for name in present:
-            text = (target / name).read_bytes().decode("utf-8")
-            issue = _zone_problem(name, text)
-            if issue:
-                problems.append(issue)
-            else:
-                writes.append((name, render_zone(text, body).encode("utf-8")))
+    code, plan = _entries(source / ENTRIES_SCRIPT, target, "--action", "plan", "--skills", ",".join(skills))
+    if "error" in plan:
+        problems.append(f"宿主入口核不了：{plan['error']}")
+    problems += [f"宿主入口冲突：{c}" for c in plan.get("conflicts", [])]
     if problems:
         raise InputError(problems)
-    return writes, version
+    return writes, version, plan.get("retire", [])
 
 
-def install_extension(source: Path, target: Path, bridge_files: list[BridgeFile], *,
-                      dry_run: bool = False) -> InstallResult:
-    """先删掉整个目标扩展目录，再写源的全部文件、入口与入口文件的扩展段。"""
+def install_extension(source: Path, target: Path, *, dry_run: bool = False) -> InstallResult:
+    """入口写前核通过后，删掉整个目标扩展目录、写源的全部文件，再交 Framework 物化宿主入口。"""
     source, target = Path(source).resolve(), Path(target).resolve()
     try:
-        writes, version = _plan(source, target, bridge_files)
+        writes, version, retire = _plan(source, target)
     except InputError as exc:
         return InstallResult("preflight_failed", None, str(target), problems=exc.problems)
-    planned = [f"replace {EXTENSION_DIR}/", *(rel for rel, _ in writes)]
+    planned = [f"replace {EXTENSION_DIR}/", *(rel for rel, _ in writes),
+               *(f"retire {rel}" for rel in retire), "materialize host entries"]
     if dry_run:
         return InstallResult("planned", version, str(target), planned=planned)
     completed: list[str] = []
@@ -215,6 +163,13 @@ def install_extension(source: Path, target: Path, bridge_files: list[BridgeFile]
             return InstallResult("write_failed", version, str(target), planned, completed,
                                  [rel], [f"写 {rel} 失败：{exc}"])
         completed.append(rel)
+    code, result = _entries(target / EXTENSION_DIR / ENTRIES_SCRIPT, target,
+                            "--action", "materialize", "--retire", ",".join(retire))
+    completed += [f"retire {rel}" for rel in result.get("removed", [])] + result.get("written", [])
+    problems = ([result["error"]] if "error" in result else []) + result.get("problems", [])
+    if code != 0 or problems:
+        return InstallResult("write_failed", version, str(target), planned, completed,
+                             ["materialize host entries"], problems)
     return InstallResult("installed", version, str(target), planned, completed)
 
 
@@ -245,8 +200,7 @@ def main(argv: list[str] | None = None) -> int:
         dirty = git_dirty(target)
         if dirty:
             raise InputError(["目标有没提交的改动，先核对、提交或处理后再装：" + "；".join(dirty[:10])])
-        result = install_extension(Path(args.source), target, manifest_bridges(Path(args.source)),
-                                   dry_run=args.dry_run)
+        result = install_extension(Path(args.source), target, dry_run=args.dry_run)
     except (InputError, OSError, yaml.YAMLError) as exc:
         problems = exc.problems if isinstance(exc, InputError) else [f"源的 manifest.yaml 读不出：{exc}"]
         result = InstallResult("preflight_failed", None, str(target), problems=problems)

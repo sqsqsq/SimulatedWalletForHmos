@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import posixpath
+import os
 import re
 import shutil
 import subprocess
@@ -851,45 +851,16 @@ def m08_whole_file_sha_lock(root: Path, ctx: Ctx) -> Outcome:
     return Outcome(True, "模式守恒分正文与元数据")
 
 
-def _bridge_positions(root: Path) -> dict[str, str]:
-    """扩展登记的宿主入口：源文件（相对扩展根）→ 它在目标工程里的位置。"""
-    manifest = root / "manifest.yaml"
-    if not manifest.is_file():
-        return {}
-    items = ((yaml.safe_load(read_text(manifest)) or {}).get("provides") or {}).get("bridges") or []
-    return {item["source"]: item["target"] for item in items
-            if isinstance(item, dict) and "source" in item and "target" in item}
-
-
-#: 入口正文按这个安装位写链接（与 adapt 的默认安装位同一个）
-BRIDGE_EXT = "doc/extensions"
-
-
-def _bridge_link_target(root: Path, position: str, link: str) -> Path | None:
-    """入口源里的链接按它装到目标工程后的位置解析；落在扩展里的换回扩展根。"""
-    resolved = posixpath.normpath(posixpath.join(posixpath.dirname(position), link))
-    if resolved.startswith(BRIDGE_EXT + "/"):
-        return root / resolved[len(BRIDGE_EXT) + 1:]
-    return None
-
-
 @checker
 def m09_dangling_cross_reference(root: Path, ctx: Ctx) -> Outcome:
-    """跨文件相对引用必须真实存在。
-
-    宿主入口的源文件（``provides.bridges`` 的 source）写的是装到目标工程之后的相对链接，
-    按登记的 target 位置解析；其余文件按自身位置解析。
-    """
+    """跨文件相对引用必须真实存在：按文件自身位置解析。"""
     link_re = re.compile(r"\[[^\]]*\]\((\.{1,2}/[^)#\s]+)\)")
-    positions = _bridge_positions(root)
     hits = []
     for path in iter_files(root, TEXT_SUFFIXES, NON_MECHANISM_DIRS):
-        position = positions.get(path.relative_to(root).as_posix())
         for n, line in enumerate(split_lines(read_text(path)), start=1):
             for m in link_re.finditer(line):
-                target = (_bridge_link_target(root, position, m.group(1)) if position
-                          else (path.parent / m.group(1)).resolve())
-                if target is None or not target.exists():
+                target = (path.parent / m.group(1)).resolve()
+                if not target.exists():
                     hits.append(f"{path.relative_to(root).as_posix()}:{n} → {m.group(1)}")
     if hits:
         return Outcome(False, "悬空引用：" + "；".join(hits[:5]))
@@ -1564,6 +1535,19 @@ def _git(cwd: Path, *args: str) -> None:
                    encoding="utf-8", errors="replace")
 
 
+def _link_framework(tree: Path) -> None:
+    """让夹具里的一棵工程树接上被查工程的 Framework（Windows 用 junction）；临时目录清理时只删链接本身。"""
+    link = tree / "framework"
+    if link.exists():
+        return
+    source = PROJECT_ROOT / "framework"
+    if sys.platform == "win32":
+        import _winapi
+        _winapi.CreateJunction(str(source), str(link))
+    else:
+        os.symlink(source, link, target_is_directory=True)
+
+
 def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess:
     """把目标做成一个提交过的 git 仓，施加 ``after/`` 的变更，再跑真实 ``--check``。
 
@@ -1576,6 +1560,8 @@ def _run_adapt_check(target: Path, package: Path) -> subprocess.CompletedProcess
     """
     script = executor_ext() / ADAPT_SCRIPT
     _git(target, "init", "-q")
+    # framework/ 是指向被查工程 Framework 的链接，git 会跟进去收录整个 Framework
+    (target / ".git" / "info" / "exclude").write_text("/framework/\n", encoding="utf-8")
     _git(target, "add", "-A")
     _git(target, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "baseline")
     after = target.parent / "after"
@@ -1599,7 +1585,7 @@ def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
     「适配完成」就只是句口号——而这三件恰好是升级唯一能造成不可逆损失的地方。
 
     夹具自带 ``package/``（装好扩展的工程）与 ``target/`` 两棵树、可选 ``after/``（写入后的状态）；整棵树先复制到
-    临时目录再跑，夹具本身不被写脏。真实目标用**当前包**去核一棵已提交的未适配目标树，
+    临时目录、接上被查工程的 Framework、目标的宿主入口当场物化，再跑，夹具本身不被写脏。真实目标用**当前包**去核一棵已提交的未适配目标树，
     验证它在真包上同样判得出——不是只在迷你夹具里有效。
     """
     import shutil, tempfile
@@ -1611,6 +1597,15 @@ def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
         tmp = Path(td)
         if (root / "target").exists() and (root / "package").exists():   # 夹具
             shutil.copytree(root, tmp / "case")
+            for tree in ("target", "package"):
+                _link_framework(tmp / "case" / tree)
+            # 夹具目标的宿主入口按被查工程的 Framework 当场物化：入口形态随 Framework 版本，不写死在夹具里
+            entries = executor_ext() / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
+            made = subprocess.run(["node", str(entries), "--project-root", str(tmp / "case" / "target"),
+                                   "--action", "materialize"], capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", cwd=str(REPO_ROOT))
+            if made.returncode != 0:
+                return Outcome(False, "夹具目标的宿主入口物化失败：" + (made.stdout + made.stderr).strip()[:300])
             proc = _run_adapt_check(tmp / "case" / "target", tmp / "case" / "package")
         else:                                                            # 真实目标
             src = REPO_ROOT / "test" / "fixtures" / "adapt" / "target-prior"

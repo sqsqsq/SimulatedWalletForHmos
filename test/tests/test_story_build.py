@@ -1037,16 +1037,16 @@ class TestRetiredThings(unittest.TestCase):
         for gone in ("before.json", "--scan", "mkdirSync(WORK"):
             self.assertNotIn(gone, scan, f"adapt 还在落工作件：{gone}")
 
-    def test_the_entry_section_moved_into_the_skill(self) -> None:
-        """入口段随 skill 走，根目录不再有它——旧路径全仓零残留。"""
-        self.assertTrue((self.EXT / "skills/story/AGENTS.section.md").is_file())
-        self.assertFalse((self.EXT / "AGENTS.section.md").exists())
-        for path in sorted(self.EXT.rglob("*.mjs")):
-            text = path.read_text(encoding="utf-8", errors="replace")
-            for line in text.split("\n"):
-                if "AGENTS.section.md" in line:
-                    self.assertIn("skills/story/AGENTS.section.md", line,
-                                  f"{path.name} 还指着旧路径：{line.strip()}")
+    def test_host_entries_are_left_to_the_framework(self) -> None:
+        """宿主入口由 Framework 按 manifest 1.1 的 skills 物化：包里不再自带跳板与入口段，也不登记它们。"""
+        self.assertFalse((self.EXT / "bridges").exists(), "包里还带着自己的宿主跳板")
+        self.assertFalse((self.EXT / "skills/story/AGENTS.section.md").exists(), "包里还带着入口文件的扩展段")
+        manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
+        self.assertIn('schema_version: "1.1"', manifest)
+        self.assertNotIn("bridges:", manifest)
+        for key in ("adapters:", "adapted_for:"):
+            self.assertFalse(any(l.startswith(key) for l in manifest.splitlines()),
+                             f"{key} 还在 manifest 里——它归 adaptation.yaml")
 
     def test_the_manifest_version_covers_this_round(self) -> None:
         """manifest 版本就是正在开发的这一版：上一版发布后，新版本的第一次提交就把它升上去。

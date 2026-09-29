@@ -1,6 +1,6 @@
 ---
 name: story-adaptation
-description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、覆盖跳板、按来源决定带不带对接实现，脚本不碰知识与目标身份；升级后按演进记录列出目标已适配版本之后的知识、对接层与在途单条目，人定范围后由模型依据真实代码逐块做完。
+description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、按来源决定带不带对接实现，宿主入口交 Framework 物化，脚本不碰知识、目标身份与适配状态；升级后按演进记录列出目标已适配版本之后的知识、对接层与在途单条目，人定范围后由模型依据真实代码逐块做完。
 ---
 
 # story adapt — 把 Story Extension 装到 / 升级到目标工程
@@ -16,7 +16,9 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 | `<ext>/skills/story/scripts/adapters/`（入口、鉴权及其内部实现模块） | **看来源**，见下 | Demo 来源不碰；业务仓之间整份换掉 |
 | `<ext>/knowledge/` | 目标 | 脚本不读不写；内容由你按「知识适配」一节改 |
 | `<ext>/` 下其余一切 | 包 | 整份换掉 |
-| `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`adapters`、`adapted_for`、`provides.knowledge` 归目标 | 按这条规则合成 |
+| `<ext>/manifest.yaml` | 机制登记归包；`name`、`description`、`provides.knowledge` 归目标 | 按这条规则合成 |
+| `<ext>/adaptation.yaml` | 目标：对接来源 `adapters`、已适配版本 `adapted_for` | 已有不动；1.x 升级从旧 manifest 迁这两项；首次写空映射 `{}` |
+| 宿主入口（各宿主的 Skill 跳板、`AGENTS.md` / `CLAUDE.md`） | Framework | 按 manifest 的 `provides.skills` 与目标的 `materialized_adapters` 原生物化 |
 
 **没有第三种要你判断的情形**：一个文件归谁，看它在哪个目录。
 
@@ -24,16 +26,16 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 
 | 来源 | 对接层 | 为什么 |
 |---|---|---|
-| **替身包**（manifest 写 `adapters: stand-in`） | 不给、也不覆盖 | 它的对接实现用本地目录模拟需求系统，装进业务仓会往一个不存在的地方读写单据 |
+| **替身包**（`adaptation.yaml` 写 `adapters: stand-in`） | 不给、也不覆盖 | 它的对接实现用本地目录模拟需求系统，装进业务仓会往一个不存在的地方读写单据 |
 | **业务仓**（没有这个键） | 整份换成来源版本 | 业务仓对接的是同一个需求系统，共用一套实现 |
 
-判来源看包 `manifest.yaml` 的 `adapters`——它归目标、升级不改，所以每个仓说的都是它自己的对接层。不靠仓名、目录结构或脚本内容猜。
+判来源看包 `adaptation.yaml` 的 `adapters`——它归目标、升级不改，所以每个仓说的都是它自己的对接层。不靠仓名、目录结构或脚本内容猜。
 
 替身包装出来的仓没有 `adapters/`：对接层列为未适配，从一个已经实现好的业务仓复刻，之后随版本按演进记录的 `[对接层]` 条目跟进。
 
 ## 按版本跟进
 
-目标要做的适配全部写在 `reference/upgrade-changes.md`：按扩展版本分节，每条标块——`[知识]`、`[对接层]`、`[在途单]`。目标 manifest 的 `adapted_for` 记它已按哪一版适配；升级只做晚于它的条目，已适配过的不重做。
+目标要做的适配全部写在 `reference/upgrade-changes.md`：按扩展版本分节，每条标块——`[知识]`、`[对接层]`、`[在途单]`。目标 `adaptation.yaml` 的 `adapted_for` 记它已按哪一版适配；升级只做晚于它的条目，已适配过的不重做。
 
 | 块 | 怎样做 | 交回什么 |
 |---|---|---|
@@ -58,7 +60,9 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 它先查三件，任一不满足就退出并点名：
 
 - **目标是 git 仓库的根**、**这次要覆盖的路径上没有未提交改动**——升级会整份换掉那些文件，没存档的改动被盖掉就找不回来了。git 在这里回答的是「你的改动存过没有」，不是「谁改的」；
-- **包与目标都读得到**（各自的 `framework.config.json` 与包的 `manifest.yaml`）。
+- **包与目标都读得到**（各自的 `framework.config.json`，包的 `manifest.yaml` 与 `adaptation.yaml`），目标已接入 Framework；
+- **宿主入口写前核**：Framework 物化会整份重写 `AGENTS.md` / `CLAUDE.md`、不接管无归属的入口文件。入口文件去掉已装旧版的扩展段后与 Framework 的渲染不同、已装旧版登记的入口被人改过、要物化的 Skill 入口位置上有无归属的文件，都点名停下——要保留的内容由人挪到它自己的位置，确认可弃的删掉；
+- **manifest 的 `name` 是小写 slug**：Framework 按它识别扩展；目标的 name 不合规就停，由人改。
 
 **不替用户动他的工作区**：不自动 stash、不自动提交。报错会点名脏的路径，让他自己先提交或暂存。
 
@@ -69,14 +73,14 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 
 ### 3 写入
 
-`--apply` 一次做完全部确定性写入：删掉退场文件、复制机制面、合成 manifest、覆盖跳板、重写入口标记区、补 `.gitignore` 那一行。
+`--apply` 一次做完全部确定性写入：删掉退场文件、复制机制面、合成 manifest、写适配状态、补 `.gitignore` 那一行，再撤下已装旧版登记且未被改过的入口，交 Framework 物化宿主入口并核一遍。
 你只下命令、读结果。
 
 **升级不停等**：一次升级指令授权到写入完成加自检，只有失败才回头问人。写入面已由目录边界完全确定，没有可拍板的选项。
 
 **首次安装多两件**，其中一件归你：
 
-- 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），按目标的 `project_name` 生成 manifest 的 `name` 与 `description`，知识激活清单为空。**不放包里的任何知识**——那是目标仓自己的东西，从空的开始。
+- 脚本做的：确保 `framework.config.json` 有 `paths.extension_dir` 这个键（缺就加），按目标的 `project_name` 生成 manifest 的 `name`（转成小写 slug）与 `description`，知识激活清单为空，`adaptation.yaml` 为空映射。**不放包里的任何知识**——那是目标仓自己的东西，从空的开始。
 - **你做的：写部件定位知识**——回答本部件是谁、职责边界、与哪些交互方怎样交互，初析与 AR 提取靠它判断上游内容归不归本部件。这是首次安装里唯一归模型的一件事：
 
 | 项 | 内容 |
@@ -99,8 +103,8 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 | 组 | 判什么 |
 |---|---|
 | ① 机制面 | 这一次覆盖范围内的文件与包逐字一致，包里没有的目标也不该有 |
-| ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `adapters` / `adapted_for` / `provides.knowledge` 跟目标 |
-| ③ 入口文件 | `AGENTS.md` / `CLAUDE.md` 含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
+| ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `provides.knowledge` 跟目标；目标有 `adaptation.yaml` |
+| ③ 宿主入口 | 入口文件等于 Framework 按当前配置的渲染；每个 Skill 的入口都在、带 Framework 归属标记 |
 | ④ `.gitignore` | 有章草稿目录那一行——本命令自己不落工作件，没有第二行要挡的 |
 | ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/` 两个目录，根下没有文件 |
 
@@ -110,7 +114,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 加上按当前协议加载目标知识的结果。`--check` 通过、机制交回之后：
 
 - 任一非空：按块把条目与问题原样摆给人，停一次问「现在做这些适配吗」，人可以只选其中几块。选中的按「按版本跟进」一节做；
-  三块都做完并交回后，把目标 manifest 的 `adapted_for` 写成包的版本；只做了一部分时不写，交回里列出未做的块与条目；选稍后，不写任何东西；
+  三块都做完并交回后，把目标 `adaptation.yaml` 的 `adapted_for` 写成包的版本；只做了一部分时不写，交回里列出未做的块与条目；选稍后，不写任何东西；
 - 都空：报一句「目标已按包的版本适配」，不问。
 
 `--check` 不查工作区干不干净、也不看 git（那是 `--apply` 的前置）：它只读，回答的是
@@ -124,5 +128,5 @@ diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提�
 
 - **不做历史兼容**：旧结构、混合目录、部分迁移状态都不进设计、不进分支、不进验收。已有产物由用户手动调整。
 - **脚本不动 knowledge**：升级不读不写，首次不放包里的正文；知识内容只由你在人定的范围内按方法页改。
-- **不动 framework**：包不依赖任何 framework 改动。
+- **不动 framework**：包不依赖任何 framework 改动；宿主入口只经 Framework 自己的物化写。
 - **不动目标 `framework.config.json` 的其它键**：它是目标工程的架构 DSL 真源，adapt 只在首次安装时确保 `paths.extension_dir` 存在。

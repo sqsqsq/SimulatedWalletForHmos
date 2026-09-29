@@ -1,0 +1,5 @@
+# 这个仓的适配状态，归目标：adapt 升级不改，首次安装为空
+# adapters: stand-in 表示对接实现是替身（本地目录模拟需求系统），adapt 不把它复制进目标
+adapters: stand-in
+# 知识、对接层与在途单已按哪一版适配：三块都交回时写，adapt 升级后据它列出更新的演进条目
+adapted_for: "1.9.7"
