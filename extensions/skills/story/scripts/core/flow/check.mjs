@@ -2,7 +2,7 @@
  * story 前置流程契约的门禁（`AR/story-src/story-flow.json`）。
  *
  * 这套判据校验的是 /story 链自己的产物——三级关卡问了没、决策留痕齐不齐、
- * 范围收口没有——与 spec 章节结构无关，所以不放在 spec hook 里。
+ * 范围收口没有；成文骨架起稿前（`story-build skeleton`）按它预检。
  *
  * 契约的写入侧在同目录的 Python 流程模块；本文件是 JS 侧的只读消费者。
  * 导出都是纯函数：给 featureRoot，回问题串数组（空 = 通过）。
@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 /**
  * story 前置流程契约（`AR/story-src/story-flow.json`，规则见 rules/init_analysis.md）。
  *
- * 契约存在即表示该 feature 走了 /story：材料导入、拆分裁决、进入 spec 的授权都记在里面。
- * 未收口就进 spec，说明这些决策没走完：诊断出 PRD 缺料却径直进 /spec，人工补录的整份 PRD
+ * 契约存在即表示该需求走了 /story：材料导入、拆分裁决、交给设计的授权都记在里面。
+ * 未收口就起稿成文，说明这些决策没走完：诊断出 PRD 缺料却径直往下写，人工补录的整份 PRD
  * 就全程没被读过。这里是该跳步的机械拦截点。
  *
  * 没走 /story 的 feature 没有这个文件，**不受本检查影响**。
@@ -67,14 +67,13 @@ function stripBom(text) {
   return String(text ?? '').replace(/^\uFEFF/, '');
 }
 
-const FLOW_FIX = "前置流程由 /story 的三级关卡（材料 → 范围怎么定 → 承载哪份）逐级写进契约，范围收口之后才进本阶段。";
+const FLOW_FIX = "前置流程由 /story 的三级关卡（材料 → 范围怎么定 → 承载哪份）逐级写进契约，范围收口、交给设计之后才起稿成文。";
 /**
  * 契约状态机：`complete`（范围收口）→ `story_written`（成文登记）。
  *
  * **每道判据问的都是「到没到某个点」，答案是一段区间，不是一个值。**
  * 写成等于某个值，会在流程往前走之后反过来拦住自己的产物：「须 complete」写成
- * `status !== 'complete'`，成文登记后 spec harness 一重跑就 FAIL，`upstream_verdict_gate`
- * 再把 coding、review 一并判红——四个已合法闭环的阶段集体翻红。
+ * `status !== 'complete'`，成文登记后再跑同一道检查就 FAIL，已合法走过的步骤集体翻红。
  *
  * `archived` 不是流程状态：归档是契约里独立的记录字段（`contract.archived`），
  * 登记归档要求流程已在 `story_written`，状态本身不再前进——流程状态只写实际走到过的值。
@@ -264,7 +263,7 @@ export function flowProblems(featureRoot) {
 
   if (!reached(flow, 'complete')) {
     problems.push(
-      `AR/story-src/story-flow.json：status 是 ${flow?.status ?? '缺失'}，story 前置流程未收口，材料与拆分决策没走完就进了 spec——${FLOW_FIX}`
+      `AR/story-src/story-flow.json：status 是 ${flow?.status ?? '缺失'}，story 前置流程未收口，材料与拆分决策没走完就开始成文——${FLOW_FIX}`
     );
   } else {
     // 收口的前置是**本轮范围已定**：第二级选了整体承载，或第三级完成定案。

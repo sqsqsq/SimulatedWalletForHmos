@@ -114,6 +114,7 @@ function scopeConsumption(native, blueprint, snapshotRef) {
  * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
  * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。
  * 给了冻结快照时一并回答 `consumption`：这一版蓝图消费了本次交给设计的条目没有。
+ * 已准入时列出活动施工单位 `units`（原生枚举、去掉已被取代的）：身份、Feature 标识与原生目录（工程相对）。
  */
 export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snapshotRef = null) {
   const native = loadNative(projectRoot);
@@ -144,11 +145,24 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snaps
   const out = {
     status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
     blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
-    projection: readProjection(native, checked),
+    projection: readProjection(native, checked), units: admitted ? activeUnits(native, projectRoot, blueprintId) : [],
     ...(snapshotRef ? { consumption: scopeConsumption(native, checked.blueprint, snapshotRef) } : {}),
   };
   if (purpose === 'delivery' && !admitted) out.status = 'not_admitted';
   return out;
+}
+
+/** 蓝图的活动施工单位：原生枚举，去掉被精确取代而退役的；目录取原生身份给出的位置。 */
+function activeUnits(native, projectRoot, blueprintId) {
+  const retired = native.module('scripts/utils/component-closure-inputs.ts').retiredChangeUnitIds(native.root, blueprintId);
+  const encode = native.module('scripts/utils/feature-identity.js').encodeCuFeatureId;
+  return native.module('scripts/utils/change-unit-path.ts').enumerateCanonicalChangeUnits(native.root, blueprintId)
+    .map(u => String(u.changeUnit.change_unit_id)).filter(id => !retired.has(id)).sort()
+    .map(id => {
+      const featureId = encode(blueprintId, id);
+      const dir = featureDir(projectRoot, featureId);
+      return { change_unit_id: id, feature_id: featureId, path: dir ? rel(native.root, dir) : null };
+    });
 }
 
 /** 蓝图旁的原生评审投影：没有、与这一版 canonical 的确定性派生对不上（stale）、有效。 */

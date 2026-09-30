@@ -1,7 +1,7 @@
 /**
  * 归档件红线与语言红线的判定形态 —— 词与类别在章节合同（`language_redline`），形态在这里。
  *
- * 读者是 story-build check（story.md 与 review.md）、章提交与 hooks/spec/post_check.mjs（spec.md 的文档坐标）。
+ * 读者是 story-build check（story.md 与 review.md）与章提交。
  * 合同给：红线有哪几类及各自作用域、来源括注的词；本文件给：行内代码、
  * 驼峰与下划线标识、文档坐标、仓内路径这几种**形态本身**。围栏与标题的切法走 `document.mjs`，
  * 本文件不自己认围栏。
@@ -84,7 +84,7 @@ const FRAMEWORK_ARTIFACT_NAMES = ['acceptance', 'spec', 'impact', 'review'];
  * 文档坐标的全部形态。文件名只认**文档**：任意 `.md`，加上知识文件与框架产物的名字——
  * 资源与代码文件名（`string.json`）是工程标识，附录里是它们的正当落点，不在这里拦。
  */
-/** 指到别的文档的章节 —— spec 门禁也按这一种判（spec 可以写自己的文件名与 §）。 */
+/** 指到别的文档的章节。 */
 const CROSS_DOC_COORDINATES = [
   DOC_COORDINATE_HEAD,
 ];

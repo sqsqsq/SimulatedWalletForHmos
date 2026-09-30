@@ -24,7 +24,7 @@ semantic_checks:
       该条按**未裁**处理。
 
 # 作者起手内容的读没读过：唯一的机械留痕。
-# 本阶段的作者要求由作者动笔前自己取（入口见 SKILL 与 CLAUDE.md 扩展段），
+# 本阶段的作者要求由作者动笔前自己取（入口是 story-knowledge Skill 的动作前知识任务），
 # 取到之后没有任何东西能证明它被读了——
 # 除非作者把来源坐标写进 framework `context-exploration` 的 `key_inputs_read`。
 # 这里把那条路径声明为本阶段的必需片段，既有门禁 `context_exploration_inputs_coverage`

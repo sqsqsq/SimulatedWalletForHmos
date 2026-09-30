@@ -96,8 +96,7 @@ export function obligationsFromContracts(contracts) {
 /**
  * `must` 出现在了不该出现的地方。
  *
- * 只查**能明确判定为越位**的位置（实体的顶层，而非其成员），不做全树扫描——
- * 全树扫描会把 `files[].must` 这类合法位置也一并报出来。
+ * 只查**能明确判定为越位**的位置（实体的顶层，而非其成员），不做全树扫描。
  */
 export function misplacedMust(contracts) {
   const bad = [];
@@ -124,9 +123,6 @@ export function misplacedMust(contracts) {
       }
     }
   }
-  arr(contracts?.files).forEach((fl, i) => {
-    if (typeof fl !== 'string') bad.push(`contracts.yaml 的 files 第 ${i + 1} 项不是路径字符串，files 是原生授权文件清单，不承载 must 或模式角色`);
-  });
   if (mustOf(contracts).length) bad.push('contracts.yaml 顶层挂了 must，must 的位置是具体实体');
   return bad;
 }

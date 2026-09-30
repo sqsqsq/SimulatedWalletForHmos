@@ -330,7 +330,7 @@ def ar_design_skeleton(ids: dict[str, str | None]) -> str:
         "## 1 简介\n\n### 1.1 需求介绍\n\n### 1.2 本 AR 范围与拆分说明\n\n"
         "<!-- 本 AR 承载哪部分；范围外内容归属（兄弟 AR 单号或「待立项」）。必填，空着分不清「没拆」与「忘了写」。\n"
         "     三形态（按流程契约 positioning/split 判）见 rules/ar_design_init.md §3（模板 1.2 三形态）——\n"
-        "     「无拆分」不等于「承载全部」：同 SR 有兄弟 AR 时后者是假的，会被 spec 门禁拦下 -->\n\n"
+        "     「无拆分」不等于「承载全部」：同 SR 有兄弟 AR 时后者是假的 -->\n\n"
         "### 1.3 相关文档链接\n\n| 内容 | 链接 |\n| --- | --- |\n"
         f"{links}"
         "| UX设计文档 | |\n\n"

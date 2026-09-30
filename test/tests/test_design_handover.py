@@ -149,7 +149,9 @@ class TheDesignObjectIsBoundOnce(HandoverCase):
 
     def test_another_binding_is_refused(self) -> None:
         self.ready()
+        before = (self.src / "story-flow.json").read_bytes()
         self.assertIn("不改绑", self.refused("bind-design", "--component", "wallet-home", "--blueprint", "other"))
+        self.assertEqual(before, (self.src / "story-flow.json").read_bytes(), "拒绝改绑却改了契约")
 
     def test_the_blueprint_lives_apart_from_the_requirement(self) -> None:
         """蓝图标识与需求标识相同时拒绝：两者会落在同一目录，原生把需求材料当作平铺 Feature 产物。"""
@@ -304,11 +306,30 @@ class TheDesignConsumesThisInput(HandoverCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return json.loads(proc.stdout)
 
+    def tree(self) -> dict[str, bytes]:
+        features = self.root / "doc" / "features"
+        return {p.relative_to(features).as_posix(): p.read_bytes() for p in features.rglob("*") if p.is_file()}
+
     def test_a_blueprint_built_from_this_input_is_ready_to_write(self) -> None:
         self.handed()
         design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
+        before = self.tree()
         self.assertEqual("ready_to_write", self.ok("status")["state"])
+        self.assertEqual(before, self.tree(), "status 是只读查询，却写了需求或蓝图工作区")
         self.assertEqual([], self.source_problems())
+
+    def test_an_unadmitted_blueprint_waits_and_status_writes_nothing(self) -> None:
+        """蓝图在、读得过，但准入没过：等设计继续到准入，不成文；status 不写任何东西。"""
+        self.handed()
+        canonical = design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
+        text = canonical.read_text(encoding="utf-8")
+        self.assertEqual(1, text.count("  admission:\n    status: pass\n"))
+        canonical.write_bytes(text.replace("  admission:\n    status: pass\n", "  admission:\n    status: blocked\n").encode("utf-8"))
+        before = self.tree()
+        status = self.ok("status")
+        self.assertEqual(("waiting_for_design", "design_blueprint"), (status["state"], status["next"]))
+        self.assertIn("还没准入", status["action"])
+        self.assertEqual(before, self.tree())
 
     def test_an_admitted_blueprint_of_another_requirement_waits_for_the_design(self) -> None:
         """同组件、换成本需求标识的准入蓝图，来源仍是另一份需求：等设计同步，不成文。"""
@@ -381,6 +402,18 @@ class WhatCannotBeFrozenIsRefused(HandoverCase):
         (self.src / "notes.md").write_text("草稿\n", encoding="utf-8")
         self.write_input(adopted=["RR/prd.md", "assets/flow.svg", "AR/story-src/notes.md"])
         self.assertIn("不是本轮确认的材料", json.loads(self.commit().stdout)["error"])
+
+    def test_a_refusal_after_a_registered_input_keeps_it(self) -> None:
+        """已登记过一版输入，之后的冻结因伪造人签被拒：登记的那一版原样还在，不多出版本。"""
+        self.ready()
+        self.write_input()
+        self.assertEqual(0, self.commit().returncode)
+        registered = self.contract()["input"]
+        versions = self.versions()
+        self.write_input(ids=["deadbeef"])
+        self.assertIn("deadbeef", json.loads(self.commit().stdout)["error"])
+        self.assertEqual(registered, self.contract()["input"])
+        self.assertEqual(versions, self.versions())
 
     def test_a_damaged_version_is_not_reused(self) -> None:
         self.ready()

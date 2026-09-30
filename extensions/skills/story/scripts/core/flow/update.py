@@ -465,17 +465,33 @@ def cmd_update_prepare(feature_root: Path, result: str | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 阶段事实：哪些阶段有产物、闭没闭环。**只读报告**：施工归 Framework，update 不推进、不因它挡收口。
+# 施工事实：需求关联的蓝图有哪些施工单位，各阶段有没有产物、闭没闭环。**只读报告**：施工归 Framework，
+# update 不推进、不因它挡收口。
 #
-# 读的是 harness 自己写的 `<阶段>/reports/summary.json`——它是只读投影，不是我们的账。
-# 读不出来就说读不出来：闭没闭环这件事不许猜，猜错的方向是「以为闭了」。
+# 施工单位由原生读蓝图时列出（身份与原生目录）；阶段读 harness 自己写的 `<施工单位>/<阶段>/reports/summary.json`
+# ——它是只读投影，不是我们的账。读不出来就说读不出来：闭没闭环这件事不许猜，猜错的方向是「以为闭了」。
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 
 
-def _phase_facts(feature_root: Path) -> list[dict]:
+def _unit_facts(feature_root: Path, project_root: Path | None = None) -> list[dict]:
+    """需求还没关联蓝图、蓝图还没准入时为空列表；蓝图读不过时报原生问题。"""
+    blueprint = ((load(feature_root) or {}).get("design_binding") or {}).get("blueprint_id")
+    if not blueprint:
+        return []
+    from flow import native  # noqa: PLC0415 —— 施工单位由原生读蓝图时列出
+    project_root = project_root or native.project_root_of(feature_root)
+    read = native.call(project_root, "blueprint", "--blueprint", str(blueprint), "--purpose", "draft")
+    if read.get("status") != "ok":
+        return [{"blueprint_id": blueprint, "readable": False, "why": native.issues_text(read) or read.get("status")}]
+    return [{"change_unit_id": u["change_unit_id"], "feature_id": u["feature_id"], "path": u["path"],
+             "phases": _phase_facts(project_root / u["path"]) if u.get("path") else []}
+            for u in read.get("units") or []]
+
+
+def _phase_facts(unit_root: Path) -> list[dict]:
     out = []
     for phase in PHASES:
-        summary = feature_root / phase / "reports" / "summary.json"
+        summary = unit_root / phase / "reports" / "summary.json"
         if not summary.is_file():
             continue
         try:
@@ -508,7 +524,7 @@ def cmd_update_status(feature_root: Path, feature: str, project_root: Path) -> d
     records = _records(feature_root)
     openest = _latest(records, None, ACTIVE)
     closed = _latest(records, "closed")
-    out = {"rounds": len(records), "phases": _phase_facts(feature_root),
+    out = {"rounds": len(records), "units": _unit_facts(feature_root, project_root),
            "stage": ((load(feature_root) or {}).get("update") or {}).get("stage"),
            "paths": _paths(project_root, feature_root)}
     if openest:
@@ -692,20 +708,20 @@ def cmd_update_close(feature_root: Path) -> dict:
     current, unreadable = _scan(feature_root)
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
     kept = _keep(feature_root, current, root / "after")
-    phases = _phase_facts(feature_root)
+    units = _unit_facts(feature_root)
     # 人在这一轮的原话随轮次留档：契约只清「开着的那一轮」（还原同样如此）
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
                sources=_sources(feature_root),
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
-               phases=phases, decisions=(contract.get("update") or {}).get("decisions", []))
+               units=units, decisions=(contract.get("update") or {}).get("decisions", []))
     contract["update"] = {"open": None, "last_closed": rid}
     save(feature_root, contract)
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
     return {"update": rid, "status": "closed", "requested_result": result, "compared_next_time": kept,
-            "unreadable": unreadable, "phases": phases, "design_feedback": feedback,
+            "unreadable": unreadable, "units": units, "design_feedback": feedback,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("本轮终点是取材与澄清：还没有设计或成文，按需求进展接着走。" if result == "materials" else "")
                       + (f"设计反馈 {len(feedback)} 条交蓝图负责方，接受与否待确认（负责方回复记在 update-notes）；收口不代表已接受，也不取得施工授权。"

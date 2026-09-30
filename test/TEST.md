@@ -77,7 +77,7 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 
 模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除 `doc/features`、Framework 活动状态、
 `oh_modules`、`build`、`.hvigor`、`__pycache__` 等运行态，业务模块自己的单测目录照常带上）→ 把根 `extensions/` 的当前开发源（含未提交改动）
-装进模板的 `doc/extensions/`、写入口与扩展段 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步不成立，模板作废、
+装进模板的 `doc/extensions/`、按原生物化写宿主入口 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步不成立，模板作废、
 不建 Case、不起跑，修好后重新装配。各 Case 工作区从模板复制，
 再放入该 Case 的输入；启动前检查路径边界与软链接，并在 `workspace-boundary.json` 记录 demo 提交、`copied`、`excluded`、安装结果和各 Case 的
 `case_seeded`。
@@ -197,7 +197,7 @@ python test/scripts/run_multi_case.py reply --suite-id story-suite-20260822-1400
 
 heartbeat 绑定 suite-id，每次唤醒只执行一次 `poll --wait-sec 0`：
 
-- 按返回的 `next_interval_sec` 更新同一个 heartbeat，不创建第二个任务。poll 在全部 Case 连续两轮稳定处于 Spec 或之后时给 120 秒，
+- 按返回的 `next_interval_sec` 更新同一个 heartbeat，不创建第二个任务。poll 在全部 Case 连续两轮稳定处于需求成文登记之后时给 120 秒，
   有 `awaiting_reply`、阶段回退或状态异常时回到 15 秒。
 - `next_action=reply_then_poll`：按 §3.2 当轮回复并立即再 poll；`finalize`：执行 §4.5 回灌、输出逐 Case 汇总并暂停 heartbeat。
 - 命令失败时诊断并重试一次，仍失败则保持 15 秒并报告。

@@ -412,6 +412,12 @@ class ThePlanSideReadsTheSameSource(NeutralKnowledgeCase):
         self.write_contracts(EXIT_METHOD)
         self.assertIn("k-neu-01（NEU-01", self.hook("plan"))
 
+    def test_the_retired_files_object_carries_nothing(self) -> None:
+        """1.x 把义务挂在 files 对象上；2.0 的 files 只是原生授权文件清单（原生读取时规整成路径）：
+        挂在上面的义务不算有实体承担，对应的判断被点名。"""
+        self.write_contracts("files:\n  - path: src/exit.ets\n    must:\n" + must("NEU-01", "ut").replace("          ", "      "))
+        self.assertIn("k-neu-01（NEU-01", self.hook("plan"), "files 对象上的义务被当成了实体承担")
+
     def test_an_obligation_outside_the_judgement_is_named(self) -> None:
         """反过来也不许多出来：不适用的判断上挂义务，两处说法对不上。"""
         self.write_contracts(EXIT_METHOD + "        must:\n" + must("NEU-01", "ut") + must("NEU-02", "ut", text="重试复用同一个标识"))

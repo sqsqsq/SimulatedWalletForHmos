@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import unittest
 
 import test_knowledge_protocol as kp
@@ -52,11 +53,14 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
         self.assertIn("k-neu-02（NEU-02）没有验收条目承接", message, "设计缺口屏蔽了承接组")
 
     def test_a_clean_spec_passes(self) -> None:
+        """合法的普通 Feature 没走 /story、没有 Story：spec 门禁照常通过，不要求 Story。"""
         self.judged()
         self.write_contracts()
         self.acceptance_with()
+        self.assertFalse((self.feature_root / "AR").exists(), "这个 Feature 本来就没有 Story")
         result = self.hook_result("spec")
         self.assertTrue(result.get("ok"), result)
+        self.assertNotIn("story", json.dumps(result, ensure_ascii=False).lower(), "普通 Feature 被要求了 Story")
         self.assertIn("验收标准与 acceptance.yaml（这一次没有生成 spec.md）", self.fragments(result))
 
 

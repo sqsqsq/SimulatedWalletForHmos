@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import run_layout
+
 TOOL_OUTPUT_LIMIT = 600
 
 
@@ -198,13 +200,15 @@ def snapshot(out_dir: Path, feature_root: Path) -> dict[str, Any]:
     `activity_age_sec` 每次读取都会增长，**必须排除在 revision 之外**，
     否则没有任何真实变化也会不停唤醒，变成忙轮询。
     """
+    # 设计进展在需求关联的蓝图工作区里（与需求目录分开），按流程契约的设计关联找，不按需求名猜
+    blueprint = run_layout.linked_blueprint(feature_root.parent, feature_root.name)
     payload: dict[str, Any] = {
         "runlog": _stat(out_dir / "runlog.md"),
         "events": _stat(out_dir / "events.jsonl"),
-        "spec": _stat(feature_root / "spec" / "spec.md"),
         "story": _stat(feature_root / "AR" / "story.md"),
         "review": _stat(feature_root / "AR" / "review.md"),
-        "acceptance": _stat(feature_root / "acceptance.yaml"),
+        "blueprint": _stat(feature_root.parent / blueprint / "blueprint" / "component-blueprint.yaml")
+        if blueprint else {"exists": False},
     }
     newest = max((v.get("mtime", 0) for v in payload.values() if v.get("exists")), default=0)
     payload["activity_age_sec"] = round(time.time() - newest, 1) if newest else None

@@ -383,23 +383,8 @@ class StatusReportsFactsNotJudgementPart2(StatusReportsFactsNotJudgementCase):
         self.assertEqual(root.resolve().as_posix(), out["paths"]["project_root"])
         self.assertEqual((feature / "inbox").resolve().as_posix(), out["paths"]["inbox"])
 
-    def test_phase_facts_come_from_the_harness_summary(self) -> None:
-        reports = self.feature_root / "spec" / "reports"
-        reports.mkdir(parents=True, exist_ok=True)
-        (reports / "summary.json").write_text(
-            json.dumps({"phase": "spec", "verdict": "PASS", "closure_status": "closed"}),
-            encoding="utf-8")
-        out = self.update("--action", "status")
-        self.assertEqual("closed", out["phases"][0]["closure"])
-
-    def test_an_unreadable_summary_is_not_guessed(self) -> None:
-        """闭没闭环不许猜——猜错的方向永远是「以为闭了」。"""
-        reports = self.feature_root / "spec" / "reports"
-        reports.mkdir(parents=True, exist_ok=True)
-        (reports / "summary.json").write_text("{坏的", encoding="utf-8")
-        out = self.update("--action", "status")
-        self.assertFalse(out["phases"][0]["readable"])
-        self.assertNotIn("closure", out["phases"][0])
+    def test_without_a_design_link_there_are_no_units(self) -> None:
+        self.assertEqual([], self.update("--action", "status")["units"])
 
 
 class ClosingBindsTheNotes(UpdateCase):
@@ -514,6 +499,23 @@ class RestoreFollowsTheTruthTable(UpdateCase):
         out = self.update("--action", "restore")
         self.assertEqual(changed, design.read_bytes(), "受保护件被还原了")
         self.assertNotIn("AR/design.md", [c["file"] for c in out["conflicts"]])
+
+    def test_frozen_inputs_and_the_framework_keep_their_bytes(self) -> None:
+        """这一轮里新冻结的输入版本与 Framework 都不是本扩展拥有的文件：恢复不删、不改，也不列冲突。"""
+        frozen = self.src / "inputs" / "20260930-in-round" / "manifest.json"
+        frozen.parent.mkdir(parents=True)
+        frozen.write_text('{"version": "20260930-in-round"}\n', encoding="utf-8")
+        framework = self.root / "framework"
+
+        def tree(base: Path) -> dict[str, bytes]:
+            return {p.relative_to(base).as_posix(): p.read_bytes() for p in base.rglob("*") if p.is_file()} if base.is_dir() else {}
+
+        before = tree(framework)
+        self.complete_point()
+        out = self.update("--action", "restore")
+        self.assertEqual('{"version": "20260930-in-round"}\n', frozen.read_text(encoding="utf-8"), "冻结输入被恢复动了")
+        self.assertFalse(any(c["file"].startswith("AR/story-src/inputs/") for c in out["conflicts"]))
+        self.assertEqual(before, tree(framework), "恢复改了 Framework 的字节")
 
     def test_the_flow_contract_keeps_its_other_fields(self) -> None:
         """流程契约只动开着的这一轮的指针：轮次、人签、设计关联这些字段不随恢复回退。"""
@@ -794,7 +796,56 @@ class ConstructionIsReportedNotRequired(UpdateCase):
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         out = self.update("--action", "close")
         self.assertEqual("closed", out.get("status"), out)
-        self.assertEqual([("spec", "open")], [(p["phase"], p["closure"]) for p in out["phases"]])
+        self.assertEqual([], out["units"], "没有设计关联时施工事实为空，不挡收口")
+
+
+class ConstructionFactsComeFromTheUnits(unittest.TestCase):
+    """施工事实按需求关联的蓝图逐个施工单位读：身份与目录由原生读蓝图时给出，阶段读 harness 自己写的 summary。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from test_knowledge_task import BLUEPRINT, make_project  # noqa: PLC0415 —— 真实蓝图与施工单位的工程
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.root = make_project(root=Path(cls._tmp.name) / "p")
+        cls.unit = cls.root / "doc" / "features" / BLUEPRINT / "balance-refresh"
+        feature_root = cls.root / "doc" / "features" / "REQ-U"
+        (feature_root / "AR" / "story-src").mkdir(parents=True)
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.state import save  # noqa: PLC0415
+            save(feature_root, {"schema": 5, "rounds": [],
+                                "design_binding": {"component_id": "wallet-main", "blueprint_id": BLUEPRINT}})
+        finally:
+            sys.path.remove(str(core))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def status(self) -> dict:
+        proc = subprocess.run([sys.executable, str(FLOW), "update", "--feature", "REQ-U", "--project-root", str(self.root),
+                               "--action", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        return json.loads([l for l in proc.stdout.splitlines() if l.strip().startswith("{")][-1])
+
+    def summary(self, text: str) -> None:
+        reports = self.unit / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text(text, encoding="utf-8")
+
+    def test_each_unit_reports_its_phases(self) -> None:
+        self.summary(json.dumps({"verdict": "PASS", "closure_status": "closed"}))
+        [unit] = self.status()["units"]
+        self.assertEqual("balance-refresh", unit["change_unit_id"])
+        self.assertTrue(unit["feature_id"].startswith("cu-"))
+        self.assertEqual([("spec", "closed")], [(p["phase"], p["closure"]) for p in unit["phases"]])
+
+    def test_an_unreadable_summary_is_not_guessed(self) -> None:
+        """闭没闭环不许猜——猜错的方向永远是「以为闭了」。"""
+        self.summary("{坏的")
+        [phase] = self.status()["units"][0]["phases"]
+        self.assertFalse(phase["readable"])
+        self.assertNotIn("closure", phase)
 
 
 class TheRequestedResultDecidesTheClose(UpdateCase):
@@ -1033,10 +1084,8 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
         self.assertIn(row, text)
         story.write_text(text.replace(row, row + "- 系统设计：接口与端云分工。原文：[SR/design.md](../SR/design.md)\n"),
                          encoding="utf-8")
-        # 登记前要经独立审查：审查对象里的章节合同与判据取工程里装的扩展；1.x 的平铺 Spec 产物与蓝图工作区
-        # 同在需求目录时原生按歧义拒绝，2.0 的需求目录没有它
+        # 登记前要经独立审查：审查对象里的章节合同与判据取工程里装的扩展
         design_kit.install_review_mechanism(self.root, DEV_EXT)
-        shutil.rmtree(self.feature_root / "spec", ignore_errors=True)
         self.outputs: list[str] = []
 
     def run_cmd(self, *args: str) -> subprocess.CompletedProcess:
@@ -1175,7 +1224,6 @@ class RegisteredCase(UpdateCase):
             story.write_text(text.replace(row, row + "- 系统设计：接口与端云分工。原文：[SR/design.md](../SR/design.md)\n"),
                              encoding="utf-8")
             design_kit.install_review_mechanism(self.root, DEV_EXT)
-            shutil.rmtree(self.feature_root / "spec", ignore_errors=True)
             (self.src / "decisions.json").write_text(json.dumps({"decisions": [self.TOPIC]}, ensure_ascii=False), encoding="utf-8")
             self.assertTrue(StoryIsRegisteredAgainAfterChanges.register(self).get("success"), self.outputs[-1])
             cls._registered = Path(tempfile.mkdtemp(prefix="story-update-registered-")) / "work"

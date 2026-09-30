@@ -49,8 +49,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
         self.root = Path(self._tmp.name) / "work"
         designed_copy(self.FIXTURE, "REQ-DEMO", DRAFT, self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
-        # 1.x 的平铺 Spec 产物与蓝图工作区同在一个需求目录，原生按歧义拒绝；2.0 的需求目录没有它
-        shutil.rmtree(self.root / "doc" / "features" / "REQ-DEMO" / "spec")
+        self.assertFalse((self.root / "doc" / "features" / "REQ-DEMO" / "spec").exists(), "2.0 的需求目录没有 Spec 产物")
         self.flow_path = self.root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
         self.story = self.flow_path.parent.parent / "story.md"
 
@@ -151,6 +150,16 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart2(TheStoryIsReviewedRegistered
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
         self.assertIn("CR-001", out.stdout)
 
+    def test_a_reply_out_of_the_native_format_is_kept_and_not_registered(self) -> None:
+        """审查者的回复不合原生报告格式：判 report_invalid，原回复一字不改地留着，不登记。"""
+        original = self.reviewed("pass")
+        original.write_text("看过了，整体还行。\n", encoding="utf-8")
+        kept = original.read_bytes()
+        result = self.result()
+        self.assertEqual("report_invalid", result["result"], result)
+        self.assertEqual(kept, original.read_bytes(), "归类改了审查者的原回复")
+        self.assertNotEqual(0, self.register().returncode)
+
     def test_a_blocking_review_is_not_registered(self) -> None:
         for kind in ("block", "major"):
             with self.subTest(kind=kind):
@@ -225,7 +234,6 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         fixture = Path(self._tmp.name) / "fixture"
         shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
         feature = fixture / "doc" / "features" / "REQ-DEMO"
-        shutil.rmtree(feature / "spec")
         (feature / "ux-reference").mkdir()
         shutil.copy2(next((REPO / "test" / "fixtures").rglob("*.png")), feature / "ux-reference" / "home.png")
         self.root = Path(self._tmp.name) / "work"
