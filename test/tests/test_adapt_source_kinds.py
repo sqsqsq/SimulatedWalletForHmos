@@ -142,9 +142,11 @@ class SourceKindCase(unittest.TestCase):
         return pkg
 
 
-class DemoAndBusinessSources(SourceKindCase):
+class DemoAndBusinessSourcesCase(SourceKindCase):
     """演示包与业务包作来源：替身不交出去，真实实现不被覆盖，业务仓之间照带。"""
 
+
+class DemoAndBusinessSources(DemoAndBusinessSourcesCase):
     def test_a_demo_install_does_not_hand_over_the_stand_ins(self) -> None:
         """Demo 装到新仓：给机制与知识骨架，**不给**三个对接替身。\n\n        那三个是本地模拟，装到业务仓里跑起来会往一个不存在的目录读写需求单据。\n        目标从已实现的业务仓复刻，之后按升级演进记录的对接层条目跟进。\n        """
         target = self.blank_repo("BizA")
@@ -175,6 +177,8 @@ class DemoAndBusinessSources(SourceKindCase):
                       "业务仓之间复刻没把对接实现带过去")
         self.assertEqual(0, self.adapt("--check", target, source).returncode)
 
+
+class DemoAndBusinessSourcesPart2(DemoAndBusinessSourcesCase):
     def test_a_later_source_change_reaches_the_target(self) -> None:
         """来源改了对接实现，再复刻一次，目标跟上——它归来源，不是目标的自留地。"""
         source = self.source_repo("BizA")
@@ -266,9 +270,11 @@ class TheAdapterBlocks(SourceKindCase):
         self.assertFalse((target / "doc/extensions/manifest.yaml").exists(), "停之前已经写过盘了")
 
 
-class TheSourceKindIsRead(SourceKindCase):
+class TheSourceKindIsReadCase(SourceKindCase):
     """来源种类只按登记读：引号、包名、标记与换行都不改变判断。"""
 
+
+class TheSourceKindIsRead(TheSourceKindIsReadCase):
     def test_yaml_quoting_does_not_change_the_source_kind(self) -> None:
         """`adapters` 取的是 YAML 的**值**，不是那一行的字面。\n\n        `adapters: stand-in` 与 `adapters: "stand-in"` 是同一个值。拿字面去比，\n        加一对引号就把替身包判成业务仓——而那一判之下 `--apply` 会把目标的真实现\n        覆盖成替身，退出码还是 0。这是本设计里唯一不可逆的错法。\n        """
         target = self.blank_repo("BizA")
@@ -303,6 +309,8 @@ class TheSourceKindIsRead(SourceKindCase):
         self.assertNotIn("adapted_for:", text)
         self.assertEqual("{}\n", (target / "doc" / "extensions" / "adaptation.yaml").read_text(encoding="utf-8"))
 
+
+class TheSourceKindIsReadPart2(TheSourceKindIsReadCase):
     def test_a_broken_bridge_is_caught(self) -> None:
         """宿主入口在 `<ext>/` 之外，覆盖范围扫不到——`--check` 按 Framework 的入口核对报出来。
 
@@ -405,9 +413,11 @@ class WhatTheTargetGets(SourceKindCase):
         self.assertNotIn("1.7.0", after.split("version:", 1)[0])
 
 
-class IdentityAndUpgrade(SourceKindCase):
+class IdentityAndUpgradeCase(SourceKindCase):
     """身份与升级：名字描述归目标、版本跟包、每个 Skill 有原生入口，1.x 就地升级，冲突写前停。"""
 
+
+class IdentityAndUpgrade(IdentityAndUpgradeCase):
     def test_the_target_keeps_its_own_name_and_description(self) -> None:
         """`name` 与 `description` 归目标：首次按它的工程名生成，之后任何升级都不改。\n\n        改掉的话，目标的 manifest 就顶着发布源的名字——两个仓的产物看起来出自同一处。\n        """
         target = self.blank_repo("BizA")
@@ -473,6 +483,8 @@ class IdentityAndUpgrade(SourceKindCase):
         self.assertEqual(0, again.returncode, self.out(again))
         self.assertIn("当前适配仍有效", self.out(again))
 
+
+class IdentityAndUpgradePart2(IdentityAndUpgradeCase):
     def test_an_unowned_legacy_stub_stops_before_writing(self) -> None:
         """入口位置上有无归属标记、也不是已装旧版登记的文件：不接管、不覆盖，写前停并点名。"""
         target = self.legacy_repo(keep_stub=True)

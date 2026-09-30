@@ -254,7 +254,7 @@ class TheCaptionStoreHoldsTwoIndependentFacts(MaterialRoundCase):
         self.assertNotIn("unused", entry)
 
 
-class CompleteThenMaterialChanged(MaterialRoundCase):
+class CompleteThenMaterialChangedCase(MaterialRoundCase):
     """收口之后材料又变了：不开新轮，只记一笔；要重新决策显式 `reopen`。
 
     死锁的形状（首跑实测，耗掉 18 分钟）：
@@ -285,6 +285,38 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
             data["story_basis"] = design_kit.registered_basis(root, self.feature_root.name)
             path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def put_inbox_file(self, name: str = "后到的稿.md") -> None:
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / name).write_text("# 后到的稿" + chr(10) * 2 + "登记之后才来的材料。" + chr(10),
+                                  encoding="utf-8")
+
+    def put_classified_inbox(self, name: str = "后到的稿.md") -> None:
+        """放一份**已归类**的原件：`round` 看得见它，而它还没并入正文。"""
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / name).write_text("# " + name + "\n\n收口之后才到的材料。\n",
+                                  encoding="utf-8")
+        cf = inbox / ".classify.json"
+        classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
+        classify[name] = "AR"
+        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+
+    def import_inbox(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(STORY_SCRIPTS / "import_sources.py"),
+             "--feature", FEATURE, "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=120, cwd=str(REPO_ROOT))
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+
+    def status_payload(self) -> dict:
+        proc = self.run_flow("status")
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
+
+
+class CompleteThenMaterialChanged(CompleteThenMaterialChangedCase):
     def test_material_change_after_complete_opens_no_round(self) -> None:
         self.complete_it()
         before = len(self.contract()["rounds"])
@@ -345,6 +377,8 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertTrue(result.get("afterComplete"))
         self.assertEqual(before, len(self.contract()["rounds"]))
 
+
+class CompleteThenMaterialChangedPart2(CompleteThenMaterialChangedCase):
     def test_status_after_the_story_is_written_gives_no_import(self) -> None:
         """成文登记之后放料，`status` 不引导导入——那条路归 `round` 与 `reopen`。
 
@@ -361,12 +395,6 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertNotEqual("import_materials", payload["next"],
                             "成文之后还引导导入，story 的依据就被改掉了")
         self.assertEqual("run_archived", payload["next"])
-
-    def put_inbox_file(self, name: str = "后到的稿.md") -> None:
-        inbox = self.feature_root / "inbox"
-        inbox.mkdir(exist_ok=True)
-        (inbox / name).write_text("# 后到的稿" + chr(10) * 2 + "登记之后才来的材料。" + chr(10),
-                                  encoding="utf-8")
 
     def test_a_registered_story_still_says_what_is_sitting_in_the_inbox(self) -> None:
         """登记之后放的料不顺手导（导了 story 就对不上它据以成文的依据），
@@ -420,6 +448,8 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual(0, self.run_flow("reopen").returncode)
         self.assertEqual("in_progress", self.contract()["status"])
 
+
+class CompleteThenMaterialChangedPart3(CompleteThenMaterialChangedCase):
     def test_reopen_keeps_the_registration_on_hold(self) -> None:
         """重拍范围不抹掉上一次成文登记：它留作依据，但在重新提交、重新登记之前不可交付。"""
         self.complete_it("story_written")
@@ -495,6 +525,8 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertTrue(payload.get("next") and payload.get("action"), f"reopen 没给出下一步：{payload}")
         self.assertIn("下一步", out)
 
+
+class CompleteThenMaterialChangedPart4(CompleteThenMaterialChangedCase):
     def test_registering_right_after_reopen_names_the_next_step(self) -> None:
         """reopen 之后直接 `story`：拒绝，但说出与 `status` 同一句的下一步，不只说「没收口」。"""
         self.complete_it("story_written")
@@ -520,31 +552,6 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertNotIn("没收口", out)
         after = self.contract()
         self.assertEqual((before["status"], before.get("story_basis")), (after["status"], after.get("story_basis")))
-
-
-    def put_classified_inbox(self, name: str = "后到的稿.md") -> None:
-        """放一份**已归类**的原件：`round` 看得见它，而它还没并入正文。"""
-        inbox = self.feature_root / "inbox"
-        inbox.mkdir(exist_ok=True)
-        (inbox / name).write_text("# " + name + "\n\n收口之后才到的材料。\n",
-                                  encoding="utf-8")
-        cf = inbox / ".classify.json"
-        classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
-        classify[name] = "AR"
-        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
-
-    def import_inbox(self) -> None:
-        proc = subprocess.run(
-            [sys.executable, str(STORY_SCRIPTS / "import_sources.py"),
-             "--feature", FEATURE, "--project-root", str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(REPO_ROOT))
-        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
-
-    def status_payload(self) -> dict:
-        proc = self.run_flow("status")
-        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
-        return json.loads(proc.stdout[proc.stdout.index("{"):])
 
     def test_registering_a_new_baseline_does_not_clear_pending(self) -> None:
         """`round` 登记的是基准，不是「原件已经并入正文」。

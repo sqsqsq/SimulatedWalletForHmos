@@ -78,7 +78,7 @@ from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.publish import cmd_publish, cmd_restored
 from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_bind_design, cmd_complete
-from flow.lifecycle import cmd_archived, cmd_status, cmd_story
+from flow.lifecycle import cmd_archived, cmd_material_status, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
 from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_inputs, cmd_update_prepare,
                          cmd_update_restore, cmd_update_status)
@@ -116,6 +116,8 @@ def main() -> int:
     ap.add_argument("--action", default="inputs",
                     choices=["inputs", "prepare", "status", "close", "restore", "feedback"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
+    ap.add_argument("--materials", action="store_true",
+                    help="status：只答材料就没就位（起稿预检用），不算整条下一步")
     ap.add_argument("--result", default=None, choices=["materials", "documents"],
                     help="update prepare：本轮请求的终点——只取材与澄清是 materials，要同步人读件是 documents")
     args = ap.parse_args()
@@ -147,7 +149,7 @@ def main() -> int:
                 payload, code = cmd_decide(feature_root, args)
                 result.update(payload)
         elif args.mode == "status":
-            result.update(cmd_status(feature_root))
+            result.update(cmd_material_status(feature_root) if args.materials else cmd_status(feature_root))
         elif args.mode == "story":
             result.update(cmd_story(feature_root, project_root))
         elif args.mode == "publish":

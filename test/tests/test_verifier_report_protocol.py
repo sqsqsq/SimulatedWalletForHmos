@@ -33,13 +33,14 @@ STORY_MD = """# 甲需求（SMPFEAT）
 用户现在拿不到凭据。
 """
 
-class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
+class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
     """一条真实的正常链：定稿并准备原生审查请求 → 审查者回复 → 原生检查 → 登记 → 交付门。
 
     审查者是夹具（按原生格式写事实记录与报告），只验证协议接得上；真实的独立执行与业务效果在 CLI 里核。
     """
 
     FIXTURE = REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
+
     FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
 
     def setUp(self) -> None:
@@ -79,6 +80,12 @@ class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
     def flow(self) -> dict:
         return json.loads(self.flow_path.read_text(encoding="utf-8"))
 
+    def native_summary(self) -> dict:
+        prepared = json.loads((self.flow_path.parent / "review" / "prepared.json").read_text(encoding="utf-8"))
+        return json.loads((self.root / prepared["report_dir"] / "summary.json").read_text(encoding="utf-8"))
+
+
+class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDeliveredCase):
     def test_plain_check_never_touches_the_delivery_gate(self) -> None:
         """登记前与返修中跑的是普通 check：那时独立审查还没发生。"""
         out = self.check()
@@ -116,10 +123,8 @@ class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
         again = json.loads([l for l in self.register().stdout.splitlines() if l.startswith("{")][-1])
         self.assertFalse(again["registered"], "同一份对象重复登记换了身份")
 
-    def native_summary(self) -> dict:
-        prepared = json.loads((self.flow_path.parent / "review" / "prepared.json").read_text(encoding="utf-8"))
-        return json.loads((self.root / prepared["report_dir"] / "summary.json").read_text(encoding="utf-8"))
 
+class TheStoryIsReviewedRegisteredAndDeliveredPart2(TheStoryIsReviewedRegisteredAndDeliveredCase):
     def test_a_native_failure_is_not_turned_into_a_pass(self) -> None:
         """原生判 FAIL（问题只指向 Markdown 时 issue_to_file 是没声明不适用的阻断 SKIP）：如实交回，不归成 pass / warn。"""
         self.reviewed("advice")
@@ -156,6 +161,8 @@ class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
                 self.assertIn("fail", refused.stdout)
                 self.assertEqual("complete", self.flow()["status"])
 
+
+class TheStoryIsReviewedRegisteredAndDeliveredPart3(TheStoryIsReviewedRegisteredAndDeliveredCase):
     def test_without_a_reply_nothing_is_registered(self) -> None:
         self.assertEqual("report_missing", self.result()["result"], "没准备也没回复却给了结果")
         self.assertEqual(0, self.review("prepare").returncode)
@@ -179,6 +186,8 @@ class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
         self.assertEqual(("story_written", before), (self.flow()["status"], self.flow()["story_basis"]))
         self.assertNotEqual(0, self.check("--deliver").returncode)
 
+
+class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegisteredAndDeliveredCase):
     def test_a_blueprint_revised_after_registration_blocks(self) -> None:
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
@@ -253,7 +262,7 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         self.assertEqual(0, delivered.returncode, delivered.stdout + delivered.stderr)
 
 
-class ReviewTaskReachesTheVerifier(unittest.TestCase):
+class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做：Story 的独立审查任务带着判据原文与这一次的输入交给审查者。
 
     输入自带：临时工作区里造一个最小需求目录。拿仓内真实需求当输入的话，
@@ -303,6 +312,34 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertEqual(0, r.returncode, r.stderr[:600])
         return r.stdout
 
+    @property
+    def rules(self) -> Path:
+        return self.root / "doc" / "extensions" / "rules" / "story-reader-rules.yaml"
+
+    def overlay_method(self) -> str:
+        """判据与结论要求的**唯一维护处**：`rules/story-reader-rules.yaml` 的 `story_reader_review`。"""
+        text = self.rules.read_text(encoding="utf-8")
+        return text[text.index("story_reader_review:"):]
+
+    def material_key(self) -> str:
+        module = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
+        r = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]); const {rows} = m.reviewObject(process.argv[2], process.argv[3]);"
+             "process.stdout.write(m.materialKey(process.argv[2], rows));", module, str(self.root), FEATURE],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        return r.stdout
+
+    def plan_path(self) -> Path:
+        return self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
+
+    def base_plan(self) -> str:
+        return (REPO / "test/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
+                / "REQ-DEMO/AR/story-src/story-template.md").read_text(encoding="utf-8")
+
+
+class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
     def test_an_open_choice_is_judged_against_the_current_objects(self) -> None:
         """仍开着的选择对着本次 Story、Review 与关联蓝图判，结论写进原生报告的「审查方法」；零 Spec 时不要求读它。"""
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
@@ -326,15 +363,6 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
     def test_the_spec_phase_no_longer_carries_the_story_review(self) -> None:
         """Story 的判据只在自己的位置：spec 阶段的审查任务里不再有它。"""
         self.assertNotIn("story_reader_review", self.spec_phase_fragments())
-
-    @property
-    def rules(self) -> Path:
-        return self.root / "doc" / "extensions" / "rules" / "story-reader-rules.yaml"
-
-    def overlay_method(self) -> str:
-        """判据与结论要求的**唯一维护处**：`rules/story-reader-rules.yaml` 的 `story_reader_review`。"""
-        text = self.rules.read_text(encoding="utf-8")
-        return text[text.index("story_reader_review:"):]
 
     def test_the_task_lists_every_image_with_its_state(self) -> None:
         """任务里没有的**数据**，审查者拿不到：图逐张列出，连它是什么、用不用一起。"""
@@ -382,6 +410,8 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         for needle in ("跨章对着读", "blocking_findings", "advisories", "不许空", "按实际关系判"):
             self.assertIn(needle, task, f"审查任务里没有「{needle}」")
 
+
+class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
     def test_the_method_is_maintained_only_in_the_rules(self) -> None:
         """方法一份：`story-reader-rules.yaml` 维护「怎么判」，构造器运行时读它、代码里不另写一份。
 
@@ -420,16 +450,6 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
             if line.strip():
                 self.assertIn(line, task, f"全文里少了这一行：{line}")
         self.assertEqual(1, task.count(fence), "全文放了不止一次")
-
-    def material_key(self) -> str:
-        module = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
-        r = subprocess.run(
-            ["node", "--input-type=module", "-e",
-             "const m = await import(process.argv[1]); const {rows} = m.reviewObject(process.argv[2], process.argv[3]);"
-             "process.stdout.write(m.materialKey(process.argv[2], rows));", module, str(self.root), FEATURE],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(0, r.returncode, r.stderr[:600])
-        return r.stdout
 
     def test_a_projection_refresh_keeps_the_task_and_an_authored_edit_changes_it(self) -> None:
         """AC22：审查任务片段不含机器区内容，机器区内容变了片段不变；审查对象按原始字节算，机器区内容变了对象跟着变，
@@ -483,6 +503,8 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         for needle in ("回看清单逐条核去向", "撞点", "算没写依据"):
             self.assertIn(needle, method, f"overlay 的审查提示里没有「{needle}」")
 
+
+class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
     def test_the_task_carries_the_contract_questions(self) -> None:
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         text = self.inject()
@@ -503,13 +525,6 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         task = self.inject()
         for needle in ("### 报告怎么写", "`编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议`", "**审查结论**"):
             self.assertIn(needle, task)
-
-    def plan_path(self) -> Path:
-        return self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
-
-    def base_plan(self) -> str:
-        return (REPO / "test/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
-                / "REQ-DEMO/AR/story-src/story-template.md").read_text(encoding="utf-8")
 
     def test_the_task_carries_the_writing_design_once_and_follows_it(self) -> None:
         """写作设计全文随任务到审查者手上一次；改了设计，任务跟着变——审查核的是这一版。"""

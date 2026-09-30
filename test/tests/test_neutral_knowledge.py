@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -190,10 +191,20 @@ class NeutralKnowledgeCase(unittest.TestCase):
     def entries(self) -> list[str]:
         return self.eval_js("k.activeKnowledge(root).entries.map(e => e.id).join(',')").split(",")
 
+    #: 激活知识的派生结果按清单与知识正文的内容缓存：同样的知识不再为每条判断起一次 node
+    _active: dict[str, list[dict]] = {}
+
     def active(self) -> list[dict]:
-        proc = node("--input-type=module", "-e", ACTIVE, str(self.root), str(self.module("knowledge.mjs")))
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        return json.loads(proc.stdout)
+        h = hashlib.sha256()
+        for p in [self.ext / "manifest.yaml", *sorted((self.ext / "knowledge").rglob("*.md"))]:
+            h.update(p.relative_to(self.ext).as_posix().encode())
+            h.update(p.read_bytes())
+        key = h.hexdigest()
+        if key not in NeutralKnowledgeCase._active:
+            proc = node("--input-type=module", "-e", ACTIVE, str(self.root), str(self.module("knowledge.mjs")))
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            NeutralKnowledgeCase._active[key] = json.loads(proc.stdout)
+        return NeutralKnowledgeCase._active[key]
 
     def decision(self, unit: str, outcome: str, rationale: str, source: str = "", **knowledge) -> dict:
         """一条知识应用决定：来源与原文摘要按激活知识里含这个单元的那份文件取（`source` 是文件路径的一段，同名单元时用它挑）。"""

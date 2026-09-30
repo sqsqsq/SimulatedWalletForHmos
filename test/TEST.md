@@ -383,7 +383,7 @@ print(m.create_workspace_template(d, '$id')[0])
 "@
 ```
 
-- 相关修改先跑有区分力的用例（`-k <关键词>`，看慢项加 `-q --durations 10`），通过后在完整需求收口跑必要全量；无新改动不重复刷全量。
+- 按影响范围分层跑：改一处只跑直接覆盖它的用例（`-k <关键词>` 或那几个文件）；一个子步骤收尾跑它所在的功能块；全量与失效形态回归只在提交或交回前各跑一次；无新改动不重复刷全量，要看某条失败的细节只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明。这些命令不启动真实被测 CLI。
 - pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录。
 - 串行只在排障时用，且只串行跑那一条：`python -m unittest discover test/tests`。测试隔离与慢用例的编写纪律见 [tests/README.md](tests/README.md)。

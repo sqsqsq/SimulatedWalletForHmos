@@ -155,7 +155,7 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
         self.assertIn(["ux-reference/README.md"], docs, "说明文件没按目录登记成材料")
 
 
-class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
+class EveryRegisteredImageNeedsSomewhereToGoCase(RegistrationCase):
     """每张图都有去处：要么正文引了，要么登记了本需求为什么不用它。"""
 
     def build(self, *args: str) -> subprocess.CompletedProcess:
@@ -196,6 +196,35 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
 
+    def insert_after_heading(self, level: str, title: str, text: str) -> None:
+        """在某个标题下面插一段。
+
+        **按标题名找，不按编号找**：编号由 `number` 机器铺，骨架阶段还没有，
+        写死「### E.」的夹具在骨架上一定找不到。
+        """
+        lines = self.story.read_text(encoding="utf-8").split("\n")
+        at = next((i for i, l in enumerate(lines)
+                   if l.startswith(f"{level} ") and l.rstrip().endswith(title)), None)
+        self.assertIsNotNone(at, f"骨架里没有「{title}」这一节，夹具要跟着改")
+        lines[at + 1:at + 1] = ["", *text.split("\n")]
+        self.story.write_text("\n".join(lines), encoding="utf-8")
+
+    def put_in_list(self, row: str) -> None:
+        """写进附录材料清单**那一节**。
+
+        写在别处不算：判据按那一节逐行读，附录末尾随手加一行既不在清单里，
+        也会被「附录里不放图」另报一次。
+        """
+        # 骨架只有章锚，附录的小节由 `chapter --from` 落盘时才有——夹具自己搭这一节。
+        self.insert_after_heading(
+            "##", "附录", "### 材料清单" + "\n" * 2 + row)
+
+    def put_in_body(self, block: str) -> None:
+        """写进正文某一章——附录不算正文，图放那里另有判据管。"""
+        self.insert_after_heading("##", "功能说明", block)
+
+
+class EveryRegisteredImageNeedsSomewhereToGo(EveryRegisteredImageNeedsSomewhereToGoCase):
     def test_a_feature_relative_path_is_refused_with_the_right_one(self) -> None:
         """只认相对工程根的写法，报错把正确的一起给出来。
 
@@ -228,6 +257,8 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         self.assertEqual(0, self.mark_unused("参考稿与最终交互不一致").returncode)
         self.assertEqual("参考稿与最终交互不一致", self.images()[0]["unused"])
 
+
+class EveryRegisteredImageNeedsSomewhereToGoPart2(EveryRegisteredImageNeedsSomewhereToGoCase):
     def test_marking_it_used_again_clears_the_reason(self) -> None:
         """后来又要用它：撤掉理由，说明留着。"""
         self.assertEqual(0, self.mark_unused("先不用").returncode)
@@ -240,33 +271,6 @@ class EveryRegisteredImageNeedsSomewhereToGo(RegistrationCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual("", self.images()[0].get("unused", ""))
         self.assertEqual("签约页", self.images()[0]["caption"], "撤取舍不该动说明")
-
-    def insert_after_heading(self, level: str, title: str, text: str) -> None:
-        """在某个标题下面插一段。
-
-        **按标题名找，不按编号找**：编号由 `number` 机器铺，骨架阶段还没有，
-        写死「### E.」的夹具在骨架上一定找不到。
-        """
-        lines = self.story.read_text(encoding="utf-8").split("\n")
-        at = next((i for i, l in enumerate(lines)
-                   if l.startswith(f"{level} ") and l.rstrip().endswith(title)), None)
-        self.assertIsNotNone(at, f"骨架里没有「{title}」这一节，夹具要跟着改")
-        lines[at + 1:at + 1] = ["", *text.split("\n")]
-        self.story.write_text("\n".join(lines), encoding="utf-8")
-
-    def put_in_list(self, row: str) -> None:
-        """写进附录材料清单**那一节**。
-
-        写在别处不算：判据按那一节逐行读，附录末尾随手加一行既不在清单里，
-        也会被「附录里不放图」另报一次。
-        """
-        # 骨架只有章锚，附录的小节由 `chapter --from` 落盘时才有——夹具自己搭这一节。
-        self.insert_after_heading(
-            "##", "附录", "### 材料清单" + "\n" * 2 + row)
-
-    def put_in_body(self, block: str) -> None:
-        """写进正文某一章——附录不算正文，图放那里另有判据管。"""
-        self.insert_after_heading("##", "功能说明", block)
 
     def test_declining_it_and_using_it_is_reported(self) -> None:
         """说了不用却引了——两处对不上，读者按哪一处理解都不对。

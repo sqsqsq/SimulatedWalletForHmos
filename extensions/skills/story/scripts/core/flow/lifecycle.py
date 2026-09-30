@@ -45,6 +45,19 @@ def derived_state(contract: dict | None, step: str) -> str:
     return "input_ready" if step in S4_STEPS else "scope_pending"
 
 
+def cmd_material_status(feature_root: Path) -> dict:
+    """只答材料就没就位：`pending` 与 `changed`，没就位时带上去处。起稿预检只问这一件，不必算整条下一步（那要读蓝图）。"""
+    contract = load(feature_root)
+    if not (contract or {}).get("rounds"):
+        return {"exists": contract is not None, "material_state": None}
+    manifest = live_materials(feature_root)
+    state = material_state(feature_root, contract["rounds"][-1], manifest)
+    out = {"exists": True, "material_state": {"pending": state["pending"], "changed": state["changed"]}}
+    if state["pending"] or state["changed"]:
+        out["next"], out["action"] = next_step(feature_root, contract, manifest)
+    return out
+
+
 def cmd_status(feature_root: Path) -> dict:
     contract = load(feature_root)
     # 材料事实**一份**：路由、收件箱提示与下面的 JSON 输出读的是同一个时点的清单。

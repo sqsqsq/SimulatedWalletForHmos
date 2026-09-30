@@ -27,14 +27,15 @@ const PYTHONS = ['python', 'python3'];
  * @param {string} projectRoot 目标工程根——**必须显式传**，cwd 替代不了它：
  *   Python 侧没有 `--project-root` 时按脚本自身位置解析工程
  * @param {string} feature 需求名
- * @param {{timeoutMs?: number}} opts 调用方自己的超时，不在这里定一套配置
+ * @param {{timeoutMs?: number, materialsOnly?: boolean}} opts 调用方自己的超时，不在这里定一套配置；
+ *   `materialsOnly` 只问材料就没就位，不算整条下一步
  * @returns {{data: object|null, error: string|null}} 两者恰有一个非空
  */
-export function queryFlowStatus(projectRoot, feature, { timeoutMs } = {}) {
+export function queryFlowStatus(projectRoot, feature, { timeoutMs, materialsOnly = false } = {}) {
   const missing = [];
   for (const exe of PYTHONS) {
     const r = spawnSync(exe, [FLOW_SCRIPT, 'status', '--feature', feature,
-      '--project-root', projectRoot],
+      '--project-root', projectRoot, ...(materialsOnly ? ['--materials'] : [])],
     { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true });
     if (r.error) {
       // **只有「这个解释器不在」才换候选**：超时、被杀、参数太长都说明它已经跑起来了，

@@ -1,19 +1,19 @@
 """已交给设计、蓝图准入的需求工作区：成文与检查类用例从这里起步。
 
-每份夹具每个进程只准备一次（复制夹具、放准入蓝图、用真实流程命令走到交给设计、按蓝图重投附录），
-存档后复制给各用例。流程契约与冻结输入只记工程内相对路径，复制到别处照样成立；Framework 链接复制后重接。
+每份夹具只准备一次（复制夹具、放准入蓝图、用真实流程命令走到交给设计、按蓝图重投附录），各进程与之后各轮共用
+（`shared_state`，键是输入内容的摘要），复制给各用例。流程契约与冻结输入只记工程内相对路径，复制到别处照样成立；
+Framework 链接复制后重接。
 """
 from __future__ import annotations
 
-import atexit
 import json
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import design_kit
+import shared_state
 from ext_workspace import DEV_EXT, REPO_ROOT, link_framework
 from flow_steps import walk_to_complete
 
@@ -76,24 +76,19 @@ REAL_RUN_DESIGN = {
 
 
 def designed_copy(fixture: Path, feature: str, draft: str, target: Path, design: dict | None = None) -> None:
-    """夹具 + 已准入的蓝图 + 真实走过的交给设计：每个进程每份夹具只准备一次，存档后复制到 `target`。
+    """夹具 + 已准入的蓝图 + 真实走过的交给设计：同一组输入只准备一次，复制到 `target`。
 
     流程契约与冻结输入只记工程内相对路径，复制到别处照样成立；Framework 链接复制后重接。
     """
-    key = (fixture, feature)
-    if key not in _DESIGNED:
-        base = Path(tempfile.mkdtemp(prefix="story-build-designed-")) / "work"
-        atexit.register(shutil.rmtree, base.parent, True)
+    def build(base: Path) -> None:
         shutil.copytree(fixture, base / "doc" / "features" / feature if fixture.name == feature else base)
-        design = dict(design or {})
-        decisions = design.pop("decisions", FIXTURE_DECISIONS)
+        spec = dict(design or {})
+        decisions = spec.pop("decisions", FIXTURE_DECISIONS)
         design_kit.prepare_designed(base, feature, flow_script=FLOW, build_script=BUILD, access=ACCESS, draft=draft,
-                                    decisions=decisions, design=design)
-        _DESIGNED[key] = base
-    base = _DESIGNED[key]
-    shutil.copytree(base, target, dirs_exist_ok=True,
-                    ignore=lambda d, names: ["framework"] if Path(d) == base else [])
+                                    decisions=decisions, design=spec)
+
+    key = shared_state.digest(fixture, *shared_state.COMMON, feature, draft, shared_state.framework_version(),
+                              json.dumps(design or {}, ensure_ascii=False, sort_keys=True, default=str))
+    base = shared_state.shared_tree("designed", key, build)
+    shared_state.copy_tree(base, target)
     link_framework(target)
-
-
-_DESIGNED: dict[tuple, Path] = {}

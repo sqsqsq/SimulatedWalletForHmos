@@ -275,9 +275,11 @@ class UnreadableIsAGapNotADeletion(UpdateCase):
         self.assertNotIn("AR/story.md", out["changed"], out)
 
 
-class StatusReportsFactsNotJudgement(UpdateCase):
+class StatusReportsFactsNotJudgementCase(UpdateCase):
     """`status` 只报事实：有没有开着的、说明在不在、阶段闭没闭环。"""
 
+
+class StatusReportsFactsNotJudgement(StatusReportsFactsNotJudgementCase):
     def test_it_says_there_is_nothing_open(self) -> None:
         out = self.update("--action", "status")
         self.assertIsNone(out["open"])
@@ -342,6 +344,8 @@ class StatusReportsFactsNotJudgement(UpdateCase):
         self.assertIsNone(out["upstream"])
         self.assertIn("本地需求没有上游", out["action"])
 
+
+class StatusReportsFactsNotJudgementPart2(StatusReportsFactsNotJudgementCase):
     def test_a_system_requirement_reads_its_receipt(self) -> None:
         """AR 需求按来源展示最近一次取材回执；有没有回执不决定来源。"""
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -956,7 +960,7 @@ class TheStoryRegistrationLeavesTheFirstBaseline(UpdateCase):
         self.assertIn("AR/story.md", out["changed"])
 
 
-class StoryIsRegisteredAgainAfterChanges(UpdateCase):
+class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
     """story 登记之后要改：改完重跑 `story` 就是重新登记，不退状态、不碰流程契约（U39）。
 
     spec 阶段返修、update 轮内修订、归档后重拍范围三种情形走同一条链；
@@ -1022,6 +1026,8 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         for out in self.outputs:
             self.assertNotIn("手改", out)
 
+
+class StoryIsRegisteredAgainAfterChanges(StoryIsRegisteredAgainAfterChangesCase):
     def test_spec_stage_change_is_registered_again(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.rewrite_background("支付提交后用户要能看到回执状态。登记之后补的一句。")
@@ -1049,6 +1055,8 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assertIn("回写需求系统等人确认", status["action"], "收口之后没说本地已更新、回写待人确认")
         self.assert_no_hand_edit()
 
+
+class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChangesCase):
     def test_a_recommitted_extract_needs_the_story_registered_again(self) -> None:
         """update 轮内重新提交提取稿：上一次登记随之作废，不重跑 `story` 就不收口。"""
         self.assertTrue(self.register().get("success"), self.outputs[-1])

@@ -251,7 +251,7 @@ export function materialListSkeleton(ctx) {
  */
 export function materialsNotReady(ctx) {
   const { data, error } = queryFlowStatus(ctx.projectRoot, ctx.args.feature,
-    { timeoutMs: 120000 });
+    { timeoutMs: 120000, materialsOnly: true });
   if (error) {
     return `\`story_flow.py status\` 跑不通（${error}）——原件导没导、材料变没变由 story_flow 的材料链`
       + '按磁盘现状答，起骨架前读它的结论'
