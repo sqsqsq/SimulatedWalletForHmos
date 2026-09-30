@@ -48,13 +48,16 @@ export function designSource(ctx) {
       + '先 `story_flow.py bind-design` 与 `complete` 把需求交给设计');
   } else {
     out.snapshot = readSnapshot(ctx, input, problems);
-    const read = readBlueprint(ctx.projectRoot, binding.blueprint_id, 'delivery');
+    const read = readBlueprint(ctx.projectRoot, binding.blueprint_id, 'delivery', input.snapshot_ref);
     if (read.status !== 'ok') {
       problems.push(`蓝图 ${binding.blueprint_id}：${read.status === 'not_admitted' ? '还没准入' : `原生读取 ${read.status}`}`
         + `${read.issues?.length ? `（${read.issues.slice(0, 3).map(i => i.code ?? i.id).join('、')}）` : ''}`
         + '——成文按已准入的蓝图写，由设计职责在 component-design 里走到准入');
     } else if (read.blueprint?.component_id !== binding.component_id) {
       problems.push(`蓝图 ${binding.blueprint_id} 归属组件 ${read.blueprint?.component_id}，不是本需求关联的 ${binding.component_id}`);
+    } else if (read.consumption?.status !== 'ok') {
+      problems.push(`蓝图 ${binding.blueprint_id} 还没消费本次交给设计的输入 ${input.snapshot_ref}：`
+        + `${(read.consumption?.issues ?? []).map(i => i.message).join('；')}——由设计职责在 component-design 里按这份输入同步蓝图`);
     } else if (read.projection?.status !== 'valid') {
       problems.push(`蓝图 ${binding.blueprint_id} 的评审投影 ${read.projection?.path}`
         + `${read.projection?.status === 'missing' ? '还没生成' : '与当前 revision 对不上'}——由设计职责按原生 renderer 生成，Extension 不手改`);

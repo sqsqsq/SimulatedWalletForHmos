@@ -4,6 +4,8 @@
 - **准入蓝图**：取 `test/fixtures/blueprint/wallet-balance-refresh` 那份真实准入的 canonical，蓝图标识换成需求标识
   （新需求默认 blueprint_id = 需求标识），按需插入知识应用决定、精确明细与术语事实；评审投影在真实流程里
   由设计职责按原生 renderer 生成，这里代它生成同一份字节——Extension 只读、不写它；
+- **设计消费本次输入**：需求已交给设计时，蓝图的需求条目换成这次冻结输入推出的原生条目（与原生 builder 从
+  物化件取条目同形），来源指纹按原生算法重算——真实流程里这是设计职责在 component-design 里做的；
 - **交给设计**：用真实流程命令走材料关卡、范围关卡、关联设计对象与冻结输入，人签与真实运行留下的记录同形。
 """
 from __future__ import annotations
@@ -184,13 +186,42 @@ fs.writeFileSync(file, text.split(bp.source_fingerprint).join(next));
 """
 
 
+def handed_items(root: Path, feature: str, access: Path) -> list[dict] | None:
+    """需求登记的冻结输入推出的原生需求条目：用那份扩展的冻结模块算物化件，去掉 authority（原生
+    `materializedScopeItems` 的形状）。需求还没交给设计时返回 None。"""
+    flow = root / features_dir(root) / feature / "AR" / "story-src" / "story-flow.json"
+    contract = json.loads(flow.read_text(encoding="utf-8")) if flow.is_file() else {}
+    ref = (contract.get("input") or {}).get("snapshot_ref")
+    if not ref:
+        return None
+    core = Path(access).resolve().parents[2] / "skills" / "story" / "scripts" / "core"
+    if str(core) not in sys.path:
+        sys.path.insert(0, str(core))
+    from materials import frozen  # noqa: PLC0415
+    snapshot = json.loads((root / ref).read_text(encoding="utf-8"))
+    doc = frozen.materialization({"snapshot": snapshot}, ref.rsplit("/", 1)[0], contract["design_binding"])
+    return [{k: v for k, v in item.items() if k != "authority"} for item in doc["items"]]
+
+
+def consume_items(text: str, items: list[dict]) -> str:
+    """canonical 的需求条目与追溯换成给定条目：每条追溯到蓝图的余额刷新节点。"""
+    head, rest = text.split("    current_scope_items:\n", 1)
+    tail = rest[rest.index("\napp_lens:"):]
+    trace = [{"item_id": i["item_id"], "blueprint_refs": ["view:logical/node:wallet-balance"]} for i in items]
+    return (head + "    current_scope_items: " + json.dumps(items, ensure_ascii=False)
+            + "\n  requirement_traceability: " + json.dumps(trace, ensure_ascii=False) + tail)
+
+
 def install_blueprint(root: Path, blueprint: str, access: Path, *, projection: bool = True,
                       decisions: list[str] | None = None, details: list[str] | None = None,
-                      terms: list[str] | None = None) -> Path:
+                      terms: list[str] | None = None, consume: bool = True,
+                      items: list[dict] | None = None) -> Path:
     """把准入蓝图放到 `<features_dir>/<blueprint>/blueprint/`，返回 canonical 路径。
 
     `decisions` / `details` 是 `knowledge_decision` / `story_detail` 生成的 canonical 片段，按原文插进去；
-    `projection` 为假时不生成评审投影。
+    `projection` 为假时不生成评审投影。需求已交给设计且 `consume` 为真时，蓝图消费登记的冻结输入；
+    `consume` 为假时保留夹具原来那份需求（另一个需求）的条目——反例用；`items` 直接给出要消费的条目
+    （流程契约还没落盘时用）。
     """
     ensure_framework(root)
     source = BLUEPRINT_FIXTURE / "doc" / "features" / "wallet-balance-refresh" / "blueprint" / "component-blueprint.yaml"
@@ -203,9 +234,12 @@ def install_blueprint(root: Path, blueprint: str, access: Path, *, projection: b
         text = text.rstrip("\n") + "\nstory_details:\n" + "".join(details)
     if terms:
         text = text.replace("  facts:\n", "  facts:\n" + "".join(terms), 1)
+    items = items if items is not None else handed_items(root, blueprint, access) if consume else None
+    if items:
+        text = consume_items(text, items)
     target.write_bytes(text.encode("utf-8"))
-    if terms:
-        # 事实变了，来源指纹按原生算法重算：它由 discovery 的事实与当前范围条目确定性得出
+    if terms or items:
+        # 事实或需求条目变了，来源指纹按原生算法重算：它由 discovery 的事实与当前范围条目确定性得出
         proc = subprocess.run(["node", "--input-type=module", "-e", REFINGERPRINT, str(root), str(access), blueprint, str(target)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         if proc.returncode != 0:
@@ -246,16 +280,17 @@ def design_input(src: Path) -> dict:
 
 
 def hand_to_design(flow: Callable[..., dict], src: Path, access: Path) -> None:
-    """关联设计对象、写设计输入，提交冻结。蓝图标识取需求标识；`access` 是用来调原生的 framework-access。"""
+    """关联设计对象、写设计输入，提交冻结；再由设计按这份输入走到准入。蓝图标识取需求标识；
+    `access` 是用来调原生的 framework-access。"""
     feature_root = src.parents[1]
     root = project_root_of(feature_root)
     ensure_framework(root)
-    # 设计由原生 component-design 完成：没有蓝图就放一份已准入的（带一条知识应用决定），成文按它写
-    if not (feature_root.parent / feature_root.name / "blueprint" / "component-blueprint.yaml").is_file():
-        install_blueprint(root, feature_root.name, access, decisions=[GENERIC_DECISION])
     flow("bind-design", "--component", COMPONENT, "--blueprint", feature_root.name)
     (src / "design-input.json").write_text(json.dumps(design_input(src), ensure_ascii=False), encoding="utf-8")
     flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
+    # 设计由原生 component-design 完成：放一份消费了这次输入、已准入的蓝图（带一条知识应用决定），成文按它写
+    if not (feature_root.parent / feature_root.name / "blueprint" / "component-blueprint.yaml").is_file():
+        install_blueprint(root, feature_root.name, access, decisions=[GENERIC_DECISION])
 
 
 def walk_to_design(flow: Callable[..., dict], src: Path, draft_text: str, access: Path,
@@ -297,7 +332,6 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
             raise RuntimeError(f"{args}: {proc.stdout}\n{proc.stderr}")
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    install_blueprint(root, feature, access, decisions=decisions if decisions is not None else [GENERIC_DECISION], **(design or {}))
     if not (src / "story-flow.json").is_file():
         before = {p for p in feature_root.rglob("*") if p.is_file()}
         walk_to_design(flow, src, draft, access)
@@ -307,6 +341,8 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
             path.unlink()
         if placeholders:
             flow("round")
+    # 设计按登记的输入走到准入：蓝图消费这次冻结输入，带本夹具要的知识应用决定与设计内容
+    install_blueprint(root, feature, access, decisions=decisions if decisions is not None else [GENERIC_DECISION], **(design or {}))
     if (feature_root / "AR" / "story.md").is_file():
         proc = subprocess.run(["node", str(build_script), "project", "--feature", feature, "--project-root", str(root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

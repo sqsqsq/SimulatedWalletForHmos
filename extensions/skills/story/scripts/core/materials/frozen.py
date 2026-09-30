@@ -36,10 +36,11 @@ IMAGE_SUFFIXES = importer.IMAGE_EXTS | {".svg", ".gif"}
 #: 原生 currentScopeItem 的类别
 KINDS = ("requirement", "goal", "invariant", "high_risk")
 FORMALITIES = ("formal_requirement", "non_formal_maintenance", "unspecified")
-#: 每类文件的来源性质：原件与人签是事实，提取稿是分析
+#: 每类文件能证明的来源性质。原件与图片只证明冻结时读到了这些字节（observed），其中哪句话是正式授权结论
+#: 由设计与审查按内容判；人签是人的原话（authoritative）；提取稿是分析（inferred）。
 PROVENANCE = {
-    "original": {"source_kind": "requirement_material", "extraction_method": "as_confirmed", "evidence_strength": "authoritative"},
-    "image": {"source_kind": "requirement_image", "extraction_method": "as_confirmed", "evidence_strength": "authoritative"},
+    "original": {"source_kind": "requirement_material", "extraction_method": "frozen_file_observation", "evidence_strength": "observed"},
+    "image": {"source_kind": "requirement_image", "extraction_method": "frozen_file_observation", "evidence_strength": "observed"},
     "human_record": {"source_kind": "human_decision", "extraction_method": "recorded_user_reply", "evidence_strength": "authoritative"},
     "extracted_analysis": {"source_kind": "extracted_analysis", "extraction_method": "extracted_analysis", "evidence_strength": "inferred"},
 }
@@ -97,16 +98,32 @@ def adopted_files(feature_root: Path, adopted: list, manifest: dict) -> list[str
     return out
 
 
+def effective_human_records(contract: dict) -> list[dict]:
+    """当前有效的人签：同一关卡（会议话题按话题分）只认最后一条人给出、已生效的记录。
+
+    之后的轮次重新答过同一关卡（reopen 或补料后重问），前一条就被替代；没有重问的关卡沿用原记录。
+    """
+    latest: dict[tuple, dict] = {}
+    for r in contract.get("rounds", []):
+        for g in r.get("gates", []):
+            if g.get("by") == "human" and g.get("outcome") == "accepted":
+                latest[(g.get("gate"), g.get("meeting"), g.get("item"))] = dict(g, round=r.get("round"))
+    return list(latest.values())
+
+
 def human_records(contract: dict, ids: list) -> list[dict]:
-    """人签导出：每个编号都要对得上流程契约里一条人给出、已生效的关卡记录，原话与所选项照录。"""
-    records = [dict(g, round=r.get("round")) for r in contract.get("rounds", []) for g in r.get("gates", [])
-               if g.get("by") == "human" and g.get("outcome") == "accepted"]
+    """人签导出：每个编号都要对得上一条当前有效的人签，原话、所选项与各自的时刻照录。"""
+    records = effective_human_records(contract)
+    superseded = {g.get("ask_id") for r in contract.get("rounds", []) for g in r.get("gates", [])
+                  if g.get("by") == "human" and g.get("outcome") == "accepted"}
     out: list[dict] = []
     for raw in ids:
         ask_id = str(raw or "").strip()
         hits = [g for g in records if g.get("ask_id") == ask_id]
         if not hits:
-            raise FrozenError(f"human_decision_ids 里的 {ask_id!r} 在流程契约里找不到人给出、已生效的关卡记录")
+            raise FrozenError(f"human_decision_ids 里的 {ask_id!r} "
+                              + ("已被之后同一关卡的人签替代，不是当前有效的决定" if ask_id in superseded
+                                 else "在流程契约里找不到人给出、已生效的关卡记录"))
         out.extend({k: g[k] for k in ("ask_id", "gate", "round", "chosen", "no", "label", "reply", "at", "meeting", "item")
                     if k in g} for g in hits)
     return out
@@ -184,7 +201,6 @@ def selection(feature_root: Path, contract: dict, design_input: dict, manifest: 
                   for rel in sorted(files)],
         "scope_items": scope_items(design_input["scope_items"], set(files)),
         "human_decision_ids": [str(x).strip() for x in design_input["human_decision_ids"]],
-        "human_decided_at": max((d.get("at") or "" for d in decisions), default=None),
     }
     return files, roles, body
 
@@ -233,7 +249,8 @@ def freeze(feature_root: Path, contract: dict, design_input: dict, manifest: dic
 def materialization(frozen: dict, project_rel_dir: str, binding: dict) -> dict:
     """冻结版本的来源物化（requirement-source-materialization@1）：source_ref 指冻结目录里的最终文件。
 
-    人签的来源时刻取原记录时刻，其余取首次冻结时刻——重复导出不生成新的来源时刻。
+    来源时刻都是首次冻结时读到（导出）这份文件的时刻，重复导出沿用：原件与图片按 `frozen_file_observation`
+    标明是本次文件观察，不冒充原取得时间；人签合并文件记导出时刻，每条原话的时刻留在文件里各自的 `at`。
     """
     snapshot = frozen["snapshot"]
     rows = {row["path"]: row for row in snapshot["files"]}
@@ -241,8 +258,7 @@ def materialization(frozen: dict, project_rel_dir: str, binding: dict) -> dict:
     for item in snapshot["scope_items"]:
         row = rows[item["source_path"]]
         ref = f"{project_rel_dir}/files/{row['path']}"
-        observed = snapshot.get("human_decided_at") if row["role"] == "human_record" else snapshot["observed_at"]
-        provenance = {**row["provenance"], "source_ref": ref, "observed_at": observed or snapshot["observed_at"]}
+        provenance = {**row["provenance"], "source_ref": ref, "observed_at": snapshot["observed_at"]}
         entry = {"item_id": item["item_id"], "kind": item["kind"], "source_ref": ref,
                  "source_sha256": "sha256:" + row["sha256"], "provenance": provenance, "authority": item["authority"]}
         if item.get("source_revision"):

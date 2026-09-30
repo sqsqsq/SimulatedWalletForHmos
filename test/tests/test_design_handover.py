@@ -18,6 +18,7 @@ import unittest
 from pathlib import Path
 
 from ext_workspace import DEV_EXT, REPO_ROOT
+import design_kit
 from flow_steps import answer, ensure_framework, write_gaps
 
 STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -111,8 +112,9 @@ class HandoverCase(unittest.TestCase):
             self.ok("bind-design", "--component", "wallet-home", "--blueprint", self.feature)
 
     def scope_ask(self) -> str:
-        return next(g["ask_id"] for r in self.contract()["rounds"] for g in r["gates"]
-                    if g["gate"] == "scope_decision" and g["outcome"] == "accepted")
+        """当前有效的范围人签：最后一次人给出、已生效的范围关卡记录。"""
+        return [g["ask_id"] for r in self.contract()["rounds"] for g in r["gates"]
+                if g["gate"] == "scope_decision" and g["outcome"] == "accepted"][-1]
 
     def write_input(self, *, adopted=None, ids=None, items=None) -> None:
         body = {
@@ -211,6 +213,21 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.assertTrue(all(item["source_ref"].startswith(prefix) for item in doc["items"]))
         self.assertEqual("recorded_user_reply", doc["items"][1]["provenance"]["extraction_method"])
 
+    def test_a_file_only_proves_it_was_observed_and_the_person_is_the_authority(self) -> None:
+        """原件只证明冻结时读到了这些字节；只有人签是人的权威。时刻是冻结观察时刻，人签原话各自的时刻留在导出里。"""
+        self.committed()
+        [version] = self.versions()
+        snapshot = json.loads((version / "snapshot.json").read_text(encoding="utf-8"))
+        strength = {row["role"]: row["provenance"]["evidence_strength"] for row in snapshot["files"]}
+        self.assertEqual({"original": "observed", "image": "observed", "extracted_analysis": "inferred",
+                          "human_record": "authoritative"}, strength)
+        doc = json.loads((version / "materialization.json").read_text(encoding="utf-8"))
+        main = doc["items"][0]["provenance"]
+        self.assertEqual(("observed", "frozen_file_observation", snapshot["observed_at"]),
+                         (main["evidence_strength"], main["extraction_method"], main["observed_at"]))
+        self.assertEqual(snapshot["observed_at"], doc["items"][1]["provenance"]["observed_at"], "人签合并文件记导出时刻")
+        self.assertNotIn("human_decided_at", snapshot)
+
     def test_an_interrupted_freeze_leaves_no_version_and_the_same_command_resumes(self) -> None:
         """断在改名之前：只剩临时目录，它不是一个版本；重跑同一条命令照常冻结并登记。"""
         self.ready()
@@ -239,7 +256,7 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.assertEqual(1, len(self.versions()))
 
     def test_another_input_needs_reopen_and_the_old_version_stays(self) -> None:
-        self.committed()
+        first = self.committed()["input"]["snapshot_ref"]
         self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
         proc = self.commit()
         self.assertIn("reopen", json.loads(proc.stdout[proc.stdout.index("{"):])["error"])
@@ -247,8 +264,66 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         answer(self.ok, "scope_decision", "1")
         self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
         self.assertEqual(0, self.commit().returncode)
-        self.assertEqual(2, len(self.versions()), "换输入删掉或覆写了已被引用的旧版本")
+        now = self.contract()["input"]["snapshot_ref"]
+        self.assertNotEqual(first, now)
+        self.assertTrue((self.root / first).is_file(), "换输入删掉或覆写了已被引用的旧版本")
         self.assertEqual("waiting_for_design", self.ok("status")["state"])
+
+
+class TheDesignConsumesThisInput(HandoverCase):
+    """成文按的蓝图要真的消费了本次交给设计的输入：准入、标识对得上还不够，需求条目要指向这次冻结的来源。"""
+
+    ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+    SOURCE = """
+    const [module, root, feature] = process.argv.slice(1);
+    const { designSource } = await import(module);
+    const ctx = { projectRoot: root, args: { feature },
+                  flowPath: `${root}/doc/features/${feature}/AR/story-src/story-flow.json` };
+    process.stdout.write(JSON.stringify(designSource(ctx).problems));
+    """
+
+    def handed(self) -> None:
+        self.ready(bind=False)
+        self.ok("bind-design", "--component", design_kit.COMPONENT, "--blueprint", self.feature)
+        self.write_input()
+        self.assertEqual(0, self.commit().returncode)
+
+    def source_problems(self) -> list[str]:
+        module = (STORY_SCRIPTS / "story" / "design-source.mjs").resolve().as_uri()
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.SOURCE, module, str(self.root), self.feature],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_a_blueprint_built_from_this_input_is_ready_to_write(self) -> None:
+        self.handed()
+        design_kit.install_blueprint(self.root, self.feature, self.ACCESS, decisions=[design_kit.GENERIC_DECISION])
+        self.assertEqual("ready_to_write", self.ok("status")["state"])
+        self.assertEqual([], self.source_problems())
+
+    def test_an_admitted_blueprint_of_another_requirement_waits_for_the_design(self) -> None:
+        """同组件、换成本需求标识的准入蓝图，来源仍是另一份需求：等设计同步，不成文。"""
+        self.handed()
+        design_kit.install_blueprint(self.root, self.feature, self.ACCESS, decisions=[design_kit.GENERIC_DECISION],
+                                     consume=False)
+        status = self.ok("status")
+        self.assertEqual(("waiting_for_design", "design_blueprint"), (status["state"], status["next"]))
+        self.assertIn("还没消费本次交给设计的输入", status["action"])
+        [problem] = self.source_problems()
+        self.assertIn("request-main", problem)
+
+    def test_a_blueprint_still_on_the_previous_input_waits_for_the_design(self) -> None:
+        """换过一版输入：蓝图还引用上一版冻结的来源，等设计按新输入同步。"""
+        self.handed()
+        design_kit.install_blueprint(self.root, self.feature, self.ACCESS, decisions=[design_kit.GENERIC_DECISION])
+        self.ok("reopen")
+        answer(self.ok, "scope_decision", "1")
+        self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
+        self.assertEqual(0, self.commit().returncode)
+        status = self.ok("status")
+        self.assertEqual("design_blueprint", status["next"])
+        self.assertIn("不是本次冻结的", status["action"])
+        self.assertTrue(any("不是本次冻结的" in p for p in self.source_problems()))
 
 
 class ALocalRequirementHasNoManifest(HandoverCase):
@@ -279,6 +354,19 @@ class WhatCannotBeFrozenIsRefused(HandoverCase):
         self.assertIn("deadbeef", json.loads(self.commit().stdout)["error"])
         self.assertEqual([], self.versions())
 
+    def test_a_decision_replaced_by_a_later_answer_is_not_current(self) -> None:
+        """reopen 之后范围关卡重新答过：上一次的人签已被替代，不能当作本次的有效决定交给设计。"""
+        self.ready()
+        old = self.scope_ask()
+        self.write_input()
+        self.assertEqual(0, self.commit().returncode)
+        self.ok("reopen")
+        answer(self.ok, "scope_decision", "1")
+        self.write_input(ids=[old])
+        self.assertIn("已被之后同一关卡的人签替代", json.loads(self.commit().stdout)["error"])
+        self.write_input(ids=[self.scope_ask()])
+        self.assertEqual(0, self.commit().returncode)
+
     def test_something_not_confirmed_this_round_cannot_be_adopted(self) -> None:
         self.ready()
         (self.src / "notes.md").write_text("草稿\n", encoding="utf-8")
@@ -291,8 +379,6 @@ class WhatCannotBeFrozenIsRefused(HandoverCase):
         self.assertEqual(0, self.commit().returncode)
         [version] = self.versions()
         (version / "files" / "RR" / "prd.md").write_text("被改过\n", encoding="utf-8")
-        self.ok("reopen")
-        answer(self.ok, "scope_decision", "1")
         self.assertIn("已损坏", json.loads(self.commit().stdout)["error"])
 
     def test_the_native_source_check_decides_and_nothing_is_registered(self) -> None:

@@ -126,13 +126,19 @@ def pending_chapters(feature_root: Path) -> int:
 
 def design_stage_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     """设计输入登记之后：按原生蓝图的真实状态回答等设计还是可以成文。flow 不存准入与 revision 的副本。"""
+    return design_gate(feature_root, contract) or story_stage_step(feature_root)
+
+
+def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
+    """设计这一侧还差什么：蓝图没建、读不过、没准入、没消费本次输入或投影不对时给下一步；都成立返回 None。"""
     binding = contract.get("design_binding") or {}
     blueprint = binding.get("blueprint_id")
     entry = (contract.get("input") or {}).get("snapshot_ref")
     if not blueprint or not entry:
         raise FlowError("流程契约标了已提交，却没有设计关联（design_binding）或登记的输入（input）：契约不完整。"
                         "跑 `story_flow.py bind-design` 与 `complete` 重新提交")
-    read = native.call(native.project_root_of(feature_root), "blueprint", "--blueprint", str(blueprint), "--purpose", "draft")
+    read = native.call(native.project_root_of(feature_root), "blueprint", "--blueprint", str(blueprint), "--purpose", "draft",
+                       "--snapshot", str(entry))
     if read["status"] == "missing":
         return ("design_blueprint",
                 f"设计输入已冻结（`{entry}`）。按 `phases/design.md` 进原生 component-design，"
@@ -142,12 +148,17 @@ def design_stage_step(feature_root: Path, contract: dict) -> tuple[str, str]:
         return ("fix_blueprint", f"蓝图 `{blueprint}` 原生读不过（{read['status']}）：{native.issues_text(read)}——设计职责按原生报错修正")
     if not read.get("admitted"):
         return ("design_blueprint", f"蓝图 `{blueprint}` 还没准入：按 `phases/design.md` 在 component-design 里继续到准入")
+    consumption = read.get("consumption") or {}
+    if consumption.get("status") != "ok":
+        return ("design_blueprint",
+                f"蓝图 `{blueprint}` 还没消费本次交给设计的输入（`{entry}`）：{native.issues_text(consumption)}——"
+                "设计职责在 component-design 里按这份输入同步蓝图的需求条目，再重新准入")
     projection = read.get("projection") or {}
     if projection.get("status") != "valid":
         return ("design_projection",
                 f"蓝图已准入，评审投影 `{projection.get('path')}` {'还没生成' if projection.get('status') == 'missing' else '与当前 revision 对不上'}："
                 "由设计职责按原生 renderer 生成，Extension 不手改")
-    return story_stage_step(feature_root)
+    return None
 
 
 def story_stage_step(feature_root: Path) -> tuple[str, str]:
@@ -336,6 +347,9 @@ def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | N
     """story 已写出来之后要不要重新登记：登记之后 story、输入、蓝图或知识变了，或状态停在已收口（update 里
     重新提交输入、重新登记没过）。不需要返回 None。还在逐章写的单不走这里，由成文那条路给下一步。
     """
+    waiting = design_gate(feature_root, contract)
+    if waiting:
+        return waiting
     drift = registration_drift(feature_root, contract) + basis_drift(feature_root, contract)
     if drift or contract.get("status") == "complete":
         return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")

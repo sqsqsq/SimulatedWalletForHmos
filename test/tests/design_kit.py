@@ -39,8 +39,6 @@ def hand_over_state(root: Path, feature: str, contract: dict, *, with_blueprint:
         # 成文依据要算激活知识的摘要：没装扩展的测试工程放一份空的激活清单
         manifest_file.parent.mkdir(parents=True, exist_ok=True)
         manifest_file.write_text("provides:\n  knowledge: []\n", encoding="utf-8")
-    if with_blueprint and not (feature_root / "blueprint" / "component-blueprint.yaml").is_file():
-        install_blueprint(root, feature, ACCESS, decisions=[GENERIC_DECISION])
     draft = feature_root / "AR" / "story-src" / "design-draft.md"
     if not draft.is_file():
         draft.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +59,12 @@ def hand_over_state(root: Path, feature: str, contract: dict, *, with_blueprint:
                          "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}],
     }, manifest, "AR/story-src/design-draft.md", "2026-09-30T00:00:00+00:00")
     ref = f"{features_dir(root)}/{feature}/AR/story-src/inputs/{version['version']}/snapshot.json"
-    return {**contract, "design_binding": {"component_id": COMPONENT, "blueprint_id": feature},
+    binding = {"component_id": COMPONENT, "blueprint_id": feature}
+    if with_blueprint and not (feature_root / "blueprint" / "component-blueprint.yaml").is_file():
+        items = frozen.materialization(version, ref.rsplit("/", 1)[0], binding)["items"]
+        install_blueprint(root, feature, ACCESS, decisions=[GENERIC_DECISION],
+                          items=[{k: v for k, v in i.items() if k != "authority"} for i in items])
+    return {**contract, "design_binding": binding,
             "input": {"snapshot_ref": ref, "snapshot_sha256": version["snapshot_sha256"],
                       "materials_digest": manifest["digest"], "candidate_sha256": frozen.digest(draft.read_bytes())}}
 

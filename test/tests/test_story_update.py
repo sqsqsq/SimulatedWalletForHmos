@@ -29,6 +29,7 @@ from test_story_build import (  # noqa: E402
 )
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
 from flow_steps import answer, write_gaps  # noqa: E402
+import design_kit  # noqa: E402
 from ext_workspace import DEV_EXT
 
 FLOW = (DEV_EXT / "skills" / "story" / "scripts"
@@ -963,6 +964,10 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
     def contract(self) -> dict:
         return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
 
+    def design_syncs(self) -> None:
+        """交给设计的输入换了一版：设计职责在 component-design 里按新输入同步蓝图并重新准入。"""
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS, decisions=[design_kit.GENERIC_DECISION])
+
     def mark_archived(self) -> None:
         """归档由数据对接层执行、`archived` 登记要过交付门；这里经契约的读写函数记下标记。"""
         sys.path.insert(0, str(FLOW.parent))
@@ -1013,6 +1018,8 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         draft.write_text(draft.read_text(encoding="utf-8") + "\n按改版稿核过一遍。\n", encoding="utf-8")
         done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
         self.assertTrue(done.get("committed"), done)
+        self.assertEqual("design_blueprint", self.flow("status")["next"], "输入换了版本，蓝图还没按它同步")
+        self.design_syncs()
         self.assertEqual("register_story", self.flow("status")["next"])
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         refused = self.update("--action", "close")
@@ -1029,8 +1036,11 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         answer(self.flow, "scope_decision", "还是整体承载", "--chosen", "carry_all")
         draft = self.src / "design-draft.md"
         draft.write_text(draft.read_text(encoding="utf-8") + "\n重拍范围后核过一遍。\n", encoding="utf-8")
+        (self.src / "design-input.json").write_text(  # 设计输入带重新确认的那条人签
+            json.dumps(design_kit.design_input(self.src), ensure_ascii=False), encoding="utf-8")
         done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
         self.assertEqual("complete", done.get("status"), done)
+        self.design_syncs()
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.assertEqual("story_written", self.contract()["status"])
         self.assert_no_hand_edit()
