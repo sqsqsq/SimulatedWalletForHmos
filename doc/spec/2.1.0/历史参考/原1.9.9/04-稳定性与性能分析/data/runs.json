@@ -1,0 +1,6084 @@
+[
+ {
+  "suite": "story-suite-20260822-225100-retry3",
+  "case": "pattern-image-review",
+  "run": "20260822-221148-16368-310f539b",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 3042.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 601,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 249,
+    "error": 3,
+    "usage": 206,
+    "text": 134
+   },
+   "tool_total": 249,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260822-225100-retry3",
+  "case": "source-conflict-review",
+  "run": "20260822-221150-10136-12a0b88a",
+  "status": "stop_failed",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "story",
+  "requested_end_phase": "plan",
+  "duration_sec": 3159.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {},
+  "phases": {},
+  "events": {
+   "events_total": 67,
+   "types": {
+    "lifecycle": 4,
+    "session": 1,
+    "tool": 31,
+    "usage": 23,
+    "error": 2,
+    "text": 6
+   },
+   "tool_total": 31,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260822-225100-retry3",
+  "case": "split-interactive",
+  "run": "20260822-221152-9780-a4feda74",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 3057.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 651,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 278,
+    "usage": 224,
+    "error": 4,
+    "text": 136
+   },
+   "tool_total": 278,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260822-225100-retry3",
+  "case": "split-two-ar",
+  "run": "20260822-221157-9236-44ce9b4c",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 3052.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 634,
+   "types": {
+    "lifecycle": 3,
+    "session": 1,
+    "tool": 279,
+    "usage": 232,
+    "text": 115,
+    "error": 4
+   },
+   "tool_total": 279,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260822-553928",
+  "case": "pattern-image-review",
+  "run": "20260822-164924-21580-25f3cf07",
+  "status": "target_not_reached",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 4068.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 961,
+   "types": {
+    "lifecycle": 24,
+    "session": 1,
+    "tool": 392,
+    "usage": 336,
+    "error": 8,
+    "text": 200
+   },
+   "tool_total": 392,
+   "tool_failed": 8
+  }
+ },
+ {
+  "suite": "story-suite-20260822-553928",
+  "case": "source-conflict-review",
+  "run": "20260822-164924-28268-f827c6b5",
+  "status": "target_not_reached",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 15906.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_plan": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 832,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 331,
+    "usage": 306,
+    "error": 4,
+    "text": 178
+   },
+   "tool_total": 331,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260822-553928",
+  "case": "split-interactive",
+  "run": "20260822-164925-3160-79e7477a",
+  "status": "target_not_reached",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 15905.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 744,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 333,
+    "usage": 262,
+    "error": 3,
+    "text": 135
+   },
+   "tool_total": 333,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260822-553928",
+  "case": "split-two-ar",
+  "run": "20260822-164925-33348-adf57d3c",
+  "status": "timeout",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 15911.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_plan": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 974,
+   "types": {
+    "lifecycle": 21,
+    "session": 1,
+    "tool": 430,
+    "usage": 333,
+    "error": 7,
+    "text": 182
+   },
+   "tool_total": 430,
+   "tool_failed": 7
+  }
+ },
+ {
+  "suite": "story-suite-20260823-172448",
+  "case": "pattern-image-review",
+  "run": "20260823-172507-41876-5e8ac2d1",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 5792.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1101,
+   "types": {
+    "lifecycle": 25,
+    "session": 1,
+    "tool": 443,
+    "usage": 414,
+    "text": 216,
+    "error": 2
+   },
+   "tool_total": 443,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260823-172448",
+  "case": "split-interactive",
+  "run": "20260823-172508-35436-f5ad7915",
+  "status": "stop_failed",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "spec",
+  "requested_end_phase": "plan",
+  "duration_sec": 5859.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {},
+  "phases": {},
+  "events": {
+   "events_total": 850,
+   "types": {
+    "lifecycle": 14,
+    "session": 1,
+    "tool": 357,
+    "usage": 312,
+    "text": 164,
+    "error": 2
+   },
+   "tool_total": 357,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260824-091443",
+  "case": "pattern-image-review",
+  "run": "20260824-091500-24808-94e1849a",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "review",
+  "requested_end_phase": "review",
+  "duration_sec": 5964.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   },
+   "coding": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_coding": "skipped"
+    }
+   },
+   "review": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_review": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 926,
+   "types": {
+    "lifecycle": 60,
+    "session": 1,
+    "tool": 327,
+    "usage": 338,
+    "text": 199,
+    "error": 1
+   },
+   "tool_total": 327,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260824-091443",
+  "case": "split-interactive",
+  "run": "20260824-091501-9320-b0ccf684",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 6032.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_plan": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1233,
+   "types": {
+    "lifecycle": 11,
+    "session": 1,
+    "tool": 491,
+    "usage": 455,
+    "text": 271,
+    "error": 4
+   },
+   "tool_total": 491,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260824-121823",
+  "case": "pattern-image-review",
+  "run": "20260824-121842-37812-6fd076c3",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 1588.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "merge_story_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 403,
+   "types": {
+    "lifecycle": 5,
+    "session": 1,
+    "tool": 180,
+    "usage": 139,
+    "text": 77,
+    "error": 1
+   },
+   "tool_total": 180,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260824-121823",
+  "case": "split-interactive",
+  "run": "20260824-121841-36692-16d42507",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 1521.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 191,
+   "types": {
+    "lifecycle": 7,
+    "session": 1,
+    "tool": 77,
+    "usage": 62,
+    "text": 44
+   },
+   "tool_total": 77,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260824-130828",
+  "case": "pattern-image-review",
+  "run": "20260824-130853-42760-d3f7c121",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 3201.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 676,
+   "types": {
+    "lifecycle": 5,
+    "session": 1,
+    "tool": 296,
+    "usage": 243,
+    "text": 130,
+    "error": 1
+   },
+   "tool_total": 296,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260824-130828",
+  "case": "split-interactive",
+  "run": "20260824-130853-24080-614ad528",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 3201.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 555,
+   "types": {
+    "lifecycle": 6,
+    "session": 1,
+    "tool": 237,
+    "usage": 188,
+    "text": 121,
+    "error": 2
+   },
+   "tool_total": 237,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260825-162511",
+  "case": "split-interactive",
+  "run": "20260825-162538-1680-f0dbdf9d",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 10498.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_plan": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1252,
+   "types": {
+    "lifecycle": 21,
+    "session": 1,
+    "tool": 502,
+    "usage": 463,
+    "text": 264,
+    "error": 1
+   },
+   "tool_total": 502,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260826-1230",
+  "case": "split-interactive",
+  "run": "20260826-122600-26920-d600110d",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "review",
+  "requested_end_phase": "review",
+  "duration_sec": 2287.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   },
+   "coding": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_coding": "skipped"
+    }
+   },
+   "review": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_review": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 202,
+   "types": {
+    "lifecycle": 7,
+    "session": 1,
+    "tool": 94,
+    "usage": 61,
+    "text": 39
+   },
+   "tool_total": 94,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260826-1310",
+  "case": "split-interactive",
+  "run": "20260826-130454-22564-fce1d134",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "review",
+  "requested_end_phase": "review",
+  "duration_sec": 16145.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_coding": "unreadable",
+   "gate_harness_plan": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_merge_story": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "merge_story_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   },
+   "coding": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_coding": "pass"
+    }
+   },
+   "review": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_review": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1604,
+   "types": {
+    "lifecycle": 27,
+    "session": 1,
+    "tool": 609,
+    "usage": 577,
+    "text": 387,
+    "error": 3
+   },
+   "tool_total": 609,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260828-191953",
+  "case": "pattern-image-review",
+  "run": "20260828-192045-33432-00356200",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "review",
+  "requested_end_phase": "review",
+  "duration_sec": 11508.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_coding": "unreadable",
+   "gate_harness_plan": "unreadable",
+   "gate_harness_review": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   },
+   "coding": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_coding": "fail"
+    }
+   },
+   "review": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_review": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1399,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 574,
+    "usage": 501,
+    "text": 299,
+    "error": 6
+   },
+   "tool_total": 574,
+   "tool_failed": 5
+  }
+ },
+ {
+  "suite": "story-suite-20260828-191953",
+  "case": "source-conflict-review",
+  "run": "20260828-192046-25364-3fa6641c",
+  "status": "target_not_reached",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "review",
+  "requested_end_phase": "review",
+  "duration_sec": 10461.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_coding": "unreadable",
+   "gate_harness_plan": "unreadable",
+   "gate_harness_review": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   },
+   "coding": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_coding": "pass"
+    }
+   },
+   "review": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_review": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1011,
+   "types": {
+    "lifecycle": 20,
+    "session": 1,
+    "tool": 420,
+    "usage": 364,
+    "error": 6,
+    "text": 200
+   },
+   "tool_total": 420,
+   "tool_failed": 6
+  }
+ },
+ {
+  "suite": "story-suite-20260829-101242",
+  "case": "source-conflict-review",
+  "run": "20260829-101346-30380-c489b7a2",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 4239.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 394,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 193,
+    "usage": 135,
+    "text": 55
+   },
+   "tool_total": 193,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260829-115836",
+  "case": "source-conflict-review",
+  "run": "20260829-115953-24660-089dad5c",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "review",
+  "requested_end_phase": "review",
+  "duration_sec": 11034.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_coding": "unreadable",
+   "gate_harness_plan": "unreadable",
+   "gate_harness_review": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   },
+   "coding": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_coding": "pass"
+    }
+   },
+   "review": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_review": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1305,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 545,
+    "usage": 480,
+    "text": 257,
+    "error": 4
+   },
+   "tool_total": 545,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260829-115836",
+  "case": "split-two-ar",
+  "run": "20260829-115955-23340-ab357d65",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 10480.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_plan": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1008,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 413,
+    "usage": 360,
+    "text": 212,
+    "error": 4
+   },
+   "tool_total": 413,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260829-caseA",
+  "case": "traffic-card-loss",
+  "run": "20260829-160727-13228-ec4ee3db",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 24.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 4,
+   "types": {
+    "lifecycle": 2,
+    "session": 1,
+    "error": 1
+   },
+   "tool_total": 0,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260830-fA",
+  "case": "traffic-card-loss",
+  "run": "20260830-022342-33656-fc59a6b4",
+  "status": "target_not_reached",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 8214.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 669,
+   "types": {
+    "lifecycle": 13,
+    "session": 1,
+    "tool": 281,
+    "usage": 245,
+    "text": 129
+   },
+   "tool_total": 281,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260830-fB",
+  "case": "local-issue-autotopup",
+  "run": "20260830-044620-36000-12c46024",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "review",
+  "requested_end_phase": "review",
+  "duration_sec": 10341.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_plan": "unreadable",
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   },
+   "coding": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_coding": "skipped"
+    }
+   },
+   "review": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_review": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1390,
+   "types": {
+    "lifecycle": 16,
+    "session": 1,
+    "tool": 550,
+    "usage": 508,
+    "text": 313,
+    "error": 2
+   },
+   "tool_total": 550,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260831-105803",
+  "case": "auto-topup",
+  "run": "20260831-105930-24288-1dab0c6c",
+  "status": "target_not_reached",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 2507.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 506,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 214,
+    "usage": 176,
+    "text": 101,
+    "error": 2
+   },
+   "tool_total": 214,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260831-105803",
+  "case": "car-key-sharing",
+  "run": "20260831-105931-35416-dd7827f2",
+  "status": "timeout",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 6865.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 978,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 410,
+    "usage": 352,
+    "text": 202,
+    "error": 3
+   },
+   "tool_total": 410,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260831-125744",
+  "case": "auto-topup",
+  "run": "20260831-125915-16184-9b49e341",
+  "status": "target_not_reached",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 1098.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 307,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 143,
+    "usage": 102,
+    "error": 1,
+    "text": 48
+   },
+   "tool_total": 143,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260831-125744",
+  "case": "car-key-sharing",
+  "run": "20260831-125916-30928-68099031",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 6101.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 645,
+   "types": {
+    "lifecycle": 21,
+    "session": 1,
+    "tool": 245,
+    "usage": 234,
+    "text": 143,
+    "error": 1
+   },
+   "tool_total": 245,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260831-165400",
+  "case": "auto-topup",
+  "run": "20260831-165506-36432-91f9dc7c",
+  "status": "cli_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 1638.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 282,
+   "types": {
+    "lifecycle": 6,
+    "session": 1,
+    "tool": 142,
+    "usage": 91,
+    "text": 41,
+    "error": 1
+   },
+   "tool_total": 142,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260831-165400",
+  "case": "car-key-sharing",
+  "run": "20260831-165508-24340-0ab524f1",
+  "status": "gate_failed",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 8060.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1107,
+   "types": {
+    "lifecycle": 20,
+    "session": 1,
+    "tool": 438,
+    "usage": 384,
+    "text": 262,
+    "error": 2
+   },
+   "tool_total": 438,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260831-215200",
+  "case": "auto-topup",
+  "run": "20260831-215315-10800-128f3e88",
+  "status": "cli_failed",
+  "failure_kind": "command_failed",
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 11.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 4,
+   "types": {
+    "lifecycle": 2,
+    "session": 1,
+    "error": 1
+   },
+   "tool_total": 0,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260831-215200",
+  "case": "car-key-sharing",
+  "run": "20260831-215317-30620-b2c0eabe",
+  "status": "cli_failed",
+  "failure_kind": "command_failed",
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 9.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 4,
+   "types": {
+    "lifecycle": 2,
+    "session": 1,
+    "error": 1
+   },
+   "tool_total": 0,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260901-121846",
+  "case": "auto-topup",
+  "run": "20260901-122031-36936-8487db9c",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4922.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 512,
+   "types": {
+    "lifecycle": 13,
+    "session": 1,
+    "tool": 234,
+    "usage": 175,
+    "text": 87,
+    "error": 2
+   },
+   "tool_total": 234,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260901-121846",
+  "case": "car-key-sharing",
+  "run": "20260901-122033-34840-4a5ef33a",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 4992.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 937,
+   "types": {
+    "lifecycle": 9,
+    "session": 1,
+    "tool": 366,
+    "usage": 350,
+    "text": 210,
+    "error": 1
+   },
+   "tool_total": 366,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260901-150010",
+  "case": "auto-topup",
+  "run": "20260901-150208-10600-d9ebafbb",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 8870.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 475,
+   "types": {
+    "lifecycle": 13,
+    "session": 1,
+    "tool": 212,
+    "usage": 171,
+    "text": 76,
+    "error": 2
+   },
+   "tool_total": 212,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260901-150010",
+  "case": "car-key-sharing",
+  "run": "20260901-150210-34860-6cce3aeb",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 8943.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 525,
+   "types": {
+    "lifecycle": 15,
+    "session": 1,
+    "tool": 227,
+    "usage": 213,
+    "text": 66,
+    "error": 3
+   },
+   "tool_total": 227,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260904-090548",
+  "case": "auto-topup",
+  "run": "20260904-090957-31572-61db26dc",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "story",
+  "requested_end_phase": "spec",
+  "duration_sec": 234.0,
+  "human_wait_sec": null,
+  "human_wait_events": null,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 40,
+   "types": {
+    "lifecycle": 3,
+    "session": 1,
+    "tool": 19,
+    "usage": 12,
+    "text": 5
+   },
+   "tool_total": 19,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260904-091600",
+  "case": "auto-topup",
+  "run": "20260904-091603-19400-84e591ef",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 5487.0,
+  "human_wait_sec": 150.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 650,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 282,
+    "error": 1,
+    "usage": 222,
+    "text": 136
+   },
+   "tool_total": 282,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260904-141250",
+  "case": "auto-topup",
+  "run": "20260904-142051-16760-847d42a4",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 6043.0,
+  "human_wait_sec": 125.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 889,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 372,
+    "usage": 357,
+    "text": 143,
+    "error": 4
+   },
+   "tool_total": 372,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260904-184450",
+  "case": "auto-topup",
+  "run": "20260904-184705-980-f5061228",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "story",
+  "requested_end_phase": "spec",
+  "duration_sec": 1683.0,
+  "human_wait_sec": 123.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 247,
+   "types": {
+    "lifecycle": 13,
+    "session": 1,
+    "tool": 99,
+    "usage": 85,
+    "text": 49
+   },
+   "tool_total": 99,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260904-194427",
+  "case": "auto-topup",
+  "run": "20260904-203355-33612-9fab8aea",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3670.0,
+  "human_wait_sec": 125.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 836,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 355,
+    "usage": 317,
+    "text": 146,
+    "error": 5
+   },
+   "tool_total": 355,
+   "tool_failed": 5
+  }
+ },
+ {
+  "suite": "story-suite-20260905-145704",
+  "case": "auto-topup",
+  "run": "20260905-145942-20592-bbafc8a2",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3014.0,
+  "human_wait_sec": 117.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 752,
+   "types": {
+    "lifecycle": 9,
+    "session": 1,
+    "tool": 323,
+    "usage": 282,
+    "text": 133,
+    "error": 4
+   },
+   "tool_total": 323,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260906-015500",
+  "case": "auto-topup",
+  "run": "20260906-014635-28484-727b0e8a",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 2718.0,
+  "human_wait_sec": 59.0,
+  "human_wait_events": 2,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 799,
+   "types": {
+    "lifecycle": 6,
+    "session": 1,
+    "tool": 371,
+    "usage": 316,
+    "text": 104,
+    "error": 1
+   },
+   "tool_total": 371,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260906-125105",
+  "case": "auto-topup",
+  "run": "20260906-125340-32140-5b4a139b",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 1906.0,
+  "human_wait_sec": 97.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 604,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 259,
+    "usage": 230,
+    "text": 103,
+    "error": 3
+   },
+   "tool_total": 259,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260906-233000",
+  "case": "auto-topup",
+  "run": "20260906-232101-21772-b36284f7",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4041.0,
+  "human_wait_sec": 179.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   }
+  },
+  "events": {
+   "events_total": 761,
+   "types": {
+    "lifecycle": 9,
+    "session": 1,
+    "tool": 318,
+    "usage": 279,
+    "text": 153,
+    "error": 1
+   },
+   "tool_total": 318,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260907-004500",
+  "case": "auto-topup",
+  "run": "20260907-003502-29492-f0fb4d93",
+  "status": "stop_failed",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4298.0,
+  "human_wait_sec": 97.0,
+  "human_wait_events": 2,
+  "gates": {},
+  "phases": {},
+  "events": {
+   "events_total": 811,
+   "types": {
+    "lifecycle": 6,
+    "session": 1,
+    "tool": 334,
+    "usage": 315,
+    "text": 155
+   },
+   "tool_total": 334,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260907-020000",
+  "case": "auto-topup",
+  "run": "20260907-015145-30176-e81b3b0d",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3012.0,
+  "human_wait_sec": 68.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 872,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 355,
+    "usage": 322,
+    "text": 180,
+    "error": 6
+   },
+   "tool_total": 355,
+   "tool_failed": 6
+  }
+ },
+ {
+  "suite": "story-suite-20260907-1520",
+  "case": "auto-topup",
+  "run": "20260907-142507-2568-338838f7",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3837.0,
+  "human_wait_sec": 99.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 688,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 308,
+    "usage": 272,
+    "text": 99
+   },
+   "tool_total": 308,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260908-2115",
+  "case": "auto-topup",
+  "run": "20260908-191333-23392-f5996e3f",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3960.0,
+  "human_wait_sec": 272.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 744,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 310,
+    "usage": 291,
+    "text": 131,
+    "error": 1
+   },
+   "tool_total": 310,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260908-step12",
+  "case": "auto-topup",
+  "run": "20260908-152025-31372-69b35fd7",
+  "status": "gate_failed",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3125.0,
+  "human_wait_sec": 99.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 667,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 282,
+    "usage": 245,
+    "text": 131
+   },
+   "tool_total": 282,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260909-1402",
+  "case": "auto-topup",
+  "run": "20260909-140324-11424-904b4eb2",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4054.0,
+  "human_wait_sec": 65.0,
+  "human_wait_events": 2,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 749,
+   "types": {
+    "lifecycle": 6,
+    "session": 1,
+    "tool": 296,
+    "usage": 277,
+    "text": 165,
+    "error": 4
+   },
+   "tool_total": 296,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260913-232703",
+  "case": "auto-topup",
+  "run": "20260913-233046-29204-b31f3344",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 2576.0,
+  "human_wait_sec": 63.0,
+  "human_wait_events": 2,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 614,
+   "types": {
+    "lifecycle": 6,
+    "session": 1,
+    "tool": 268,
+    "error": 6,
+    "usage": 238,
+    "text": 95
+   },
+   "tool_total": 268,
+   "tool_failed": 6
+  }
+ },
+ {
+  "suite": "story-suite-20260914-143310",
+  "case": "auto-topup",
+  "run": "20260914-143555-31368-7c822e44",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 5740.0,
+  "human_wait_sec": 173.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 866,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 375,
+    "usage": 340,
+    "text": 141,
+    "error": 1
+   },
+   "tool_total": 375,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260914-143310",
+  "case": "car-key-sharing",
+  "run": "20260914-143556-2904-b9794c01",
+  "status": "gate_failed",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 5557.0,
+  "human_wait_sec": 391.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 815,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 339,
+    "usage": 285,
+    "error": 1,
+    "text": 177
+   },
+   "tool_total": 339,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260914-190900",
+  "case": "auto-topup",
+  "run": "20260914-191044-8204-9579e486",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3756.0,
+  "human_wait_sec": 168.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 783,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 338,
+    "usage": 270,
+    "text": 165,
+    "error": 1
+   },
+   "tool_total": 338,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260914-190900",
+  "case": "car-key-sharing",
+  "run": "20260914-211724-30628-dd62e427",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "story",
+  "requested_end_phase": "plan",
+  "duration_sec": 41535.0,
+  "human_wait_sec": 41031.0,
+  "human_wait_events": 2,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "skipped"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 70,
+   "types": {
+    "lifecycle": 7,
+    "session": 1,
+    "tool": 31,
+    "usage": 22,
+    "text": 9
+   },
+   "tool_total": 31,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260915-154711",
+  "case": "auto-topup",
+  "run": "20260915-154958-26484-6467625d",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3889.0,
+  "human_wait_sec": 149.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 650,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 284,
+    "usage": 266,
+    "text": 86,
+    "error": 3
+   },
+   "tool_total": 284,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260915-154711",
+  "case": "car-key-sharing",
+  "run": "20260915-155000-9784-09b1fbe2",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 6812.0,
+  "human_wait_sec": 284.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1067,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 443,
+    "usage": 387,
+    "text": 221,
+    "error": 3
+   },
+   "tool_total": 443,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260916-130054",
+  "case": "auto-topup",
+  "run": "20260916-130342-28364-b356dcc4",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3171.0,
+  "human_wait_sec": 282.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 718,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 305,
+    "usage": 273,
+    "text": 124,
+    "error": 3
+   },
+   "tool_total": 305,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260916-130054",
+  "case": "car-key-sharing",
+  "run": "20260916-130342-16468-bed10d92",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 5654.0,
+  "human_wait_sec": 243.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1000,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 416,
+    "usage": 382,
+    "text": 187,
+    "error": 2
+   },
+   "tool_total": 416,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260917-095900",
+  "case": "auto-topup",
+  "run": "20260917-100138-10760-bd0ec4aa",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 9065.0,
+  "human_wait_sec": 5538.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 766,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 316,
+    "usage": 285,
+    "text": 152,
+    "error": 4
+   },
+   "tool_total": 316,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260917-095900",
+  "case": "car-key-sharing",
+  "run": "20260917-100139-32508-84f0f593",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 14844.0,
+  "human_wait_sec": 6199.0,
+  "human_wait_events": 7,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1114,
+   "types": {
+    "lifecycle": 16,
+    "session": 1,
+    "tool": 444,
+    "usage": 411,
+    "text": 238,
+    "error": 4
+   },
+   "tool_total": 444,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260917-180959",
+  "case": "auto-topup",
+  "run": "20260917-181312-21912-b0e2dc90",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4793.0,
+  "human_wait_sec": 138.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 837,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 341,
+    "usage": 299,
+    "text": 185,
+    "error": 1
+   },
+   "tool_total": 341,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260917-180959",
+  "case": "car-key-sharing",
+  "run": "20260917-181312-30404-bcfde42b",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 13367.0,
+  "human_wait_sec": 251.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1396,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 570,
+    "usage": 534,
+    "text": 279,
+    "error": 2
+   },
+   "tool_total": 570,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260918-084325",
+  "case": "auto-topup",
+  "run": "20260918-084624-22736-cb6a997d",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3716.0,
+  "human_wait_sec": 74.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 803,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 338,
+    "usage": 318,
+    "text": 131,
+    "error": 5
+   },
+   "tool_total": 338,
+   "tool_failed": 5
+  }
+ },
+ {
+  "suite": "story-suite-20260918-084325",
+  "case": "car-key-sharing",
+  "run": "20260918-084624-21600-39753863",
+  "status": "gate_failed",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 6611.0,
+  "human_wait_sec": 264.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1030,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 431,
+    "usage": 394,
+    "text": 187,
+    "error": 5
+   },
+   "tool_total": 431,
+   "tool_failed": 5
+  }
+ },
+ {
+  "suite": "story-suite-20260918-140014",
+  "case": "auto-topup",
+  "run": "20260918-140312-21968-5decdd93",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3628.0,
+  "human_wait_sec": 84.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 758,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 313,
+    "usage": 282,
+    "text": 150
+   },
+   "tool_total": 313,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260918-140014",
+  "case": "car-key-sharing",
+  "run": "20260918-140312-22664-eb443f7a",
+  "status": "stop_failed",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 7790.0,
+  "human_wait_sec": 1078.0,
+  "human_wait_events": 18,
+  "gates": {},
+  "phases": {},
+  "events": {
+   "events_total": 1021,
+   "types": {
+    "lifecycle": 38,
+    "session": 1,
+    "tool": 451,
+    "usage": 383,
+    "text": 146,
+    "error": 2
+   },
+   "tool_total": 451,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260918-175714",
+  "case": "auto-topup",
+  "run": "20260918-180019-6768-1e68e5d7",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 5146.0,
+  "human_wait_sec": 49.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 889,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 370,
+    "usage": 345,
+    "text": 165
+   },
+   "tool_total": 370,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260918-175714",
+  "case": "car-key-sharing",
+  "run": "20260918-180019-2276-87989888",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 5137.0,
+  "human_wait_sec": 146.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 805,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 343,
+    "usage": 331,
+    "text": 122
+   },
+   "tool_total": 343,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260920-1155",
+  "case": "auto-topup",
+  "run": "20260920-194122-28204-8bae2f56",
+  "status": "worker_lost",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 53897.0,
+  "human_wait_sec": 90.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {},
+  "events": {
+   "events_total": 1048,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 401,
+    "usage": 396,
+    "text": 238,
+    "error": 2
+   },
+   "tool_total": 401,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260920-1155",
+  "case": "car-key-sharing",
+  "run": "20260920-194123-33724-75061b34",
+  "status": "worker_lost",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 55444.0,
+  "human_wait_sec": 134.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {},
+  "events": {
+   "events_total": 1253,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 509,
+    "usage": 470,
+    "text": 260,
+    "error": 1
+   },
+   "tool_total": 509,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260921-1239",
+  "case": "auto-topup",
+  "run": "20260921-124212-17556-f0cc7594",
+  "status": "gate_failed",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 7970.0,
+  "human_wait_sec": 92.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1189,
+   "types": {
+    "lifecycle": 14,
+    "session": 1,
+    "tool": 480,
+    "usage": 428,
+    "text": 264,
+    "error": 2
+   },
+   "tool_total": 480,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260921-1239",
+  "case": "car-key-sharing",
+  "run": "20260921-124214-33804-c77df898",
+  "status": "gate_failed",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 6546.0,
+  "human_wait_sec": 110.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1260,
+   "types": {
+    "lifecycle": 14,
+    "session": 1,
+    "tool": 494,
+    "usage": 473,
+    "text": 276,
+    "error": 2
+   },
+   "tool_total": 494,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260922-1116",
+  "case": "auto-topup",
+  "run": "20260922-112011-29044-d2eca1e2",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4688.0,
+  "human_wait_sec": 113.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 758,
+   "types": {
+    "lifecycle": 14,
+    "session": 1,
+    "tool": 314,
+    "usage": 286,
+    "text": 142,
+    "error": 1
+   },
+   "tool_total": 314,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260922-1116",
+  "case": "car-key-sharing",
+  "run": "20260922-112011-18456-5a1296bd",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 7730.0,
+  "human_wait_sec": 58.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1132,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 462,
+    "usage": 436,
+    "text": 224,
+    "error": 1
+   },
+   "tool_total": 462,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260922-1904",
+  "case": "auto-topup",
+  "run": "20260922-190755-9448-cd16dd76",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3485.0,
+  "human_wait_sec": 54.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 956,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 381,
+    "usage": 341,
+    "text": 222,
+    "error": 3
+   },
+   "tool_total": 381,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260922-1904",
+  "case": "car-key-sharing",
+  "run": "20260922-190756-1388-dec0ef29",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 4070.0,
+  "human_wait_sec": 61.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 829,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 349,
+    "usage": 328,
+    "error": 2,
+    "text": 141
+   },
+   "tool_total": 349,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260923-1255",
+  "case": "auto-topup",
+  "run": "20260923-125846-28872-d9061ca3",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 2988.0,
+  "human_wait_sec": 130.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 737,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 306,
+    "usage": 272,
+    "text": 144,
+    "error": 4
+   },
+   "tool_total": 306,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260923-1255",
+  "case": "car-key-sharing",
+  "run": "20260923-125847-13844-fe007d2f",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 6851.0,
+  "human_wait_sec": 1751.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1187,
+   "types": {
+    "lifecycle": 14,
+    "session": 1,
+    "tool": 470,
+    "usage": 437,
+    "text": 258,
+    "error": 7
+   },
+   "tool_total": 470,
+   "tool_failed": 7
+  }
+ },
+ {
+  "suite": "story-suite-20260924-1234",
+  "case": "auto-topup",
+  "run": "20260924-123734-27356-dbffa853",
+  "status": "harness_incomplete",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 3581.0,
+  "human_wait_sec": 140.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 916,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 366,
+    "usage": 338,
+    "text": 195,
+    "error": 6
+   },
+   "tool_total": 366,
+   "tool_failed": 6
+  }
+ },
+ {
+  "suite": "story-suite-20260924-1234",
+  "case": "car-key-sharing",
+  "run": "20260924-123735-35892-3543b9e5",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 4483.0,
+  "human_wait_sec": 486.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 967,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 415,
+    "usage": 391,
+    "text": 146,
+    "error": 2
+   },
+   "tool_total": 415,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260925-004130",
+  "case": "auto-topup",
+  "run": "20260925-004513-24356-893a9cdb",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 2904.0,
+  "human_wait_sec": 72.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 816,
+   "types": {
+    "lifecycle": 8,
+    "session": 1,
+    "tool": 335,
+    "usage": 296,
+    "text": 174,
+    "error": 2
+   },
+   "tool_total": 335,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260925-004130",
+  "case": "car-key-sharing",
+  "run": "20260925-004514-12728-e69e5265",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 28284.0,
+  "human_wait_sec": 24627.0,
+  "human_wait_events": 12,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 893,
+   "types": {
+    "lifecycle": 26,
+    "session": 1,
+    "tool": 347,
+    "usage": 302,
+    "text": 211,
+    "error": 6
+   },
+   "tool_total": 347,
+   "tool_failed": 6
+  }
+ },
+ {
+  "suite": "story-suite-20260925-114632",
+  "case": "auto-topup",
+  "run": "20260925-115003-20472-88215e07",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 5914.0,
+  "human_wait_sec": 107.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1245,
+   "types": {
+    "lifecycle": 14,
+    "session": 1,
+    "tool": 489,
+    "usage": 445,
+    "text": 293,
+    "error": 3
+   },
+   "tool_total": 489,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260925-114632",
+  "case": "car-key-sharing",
+  "run": "20260925-115005-17932-22671f6c",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "plan",
+  "duration_sec": 8755.0,
+  "human_wait_sec": 4098.0,
+  "human_wait_events": 88,
+  "gates": {
+   "gate_post_check": false,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1518,
+   "types": {
+    "lifecycle": 179,
+    "session": 1,
+    "tool": 481,
+    "usage": 536,
+    "text": 319,
+    "error": 2
+   },
+   "tool_total": 481,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260925-191417",
+  "case": "auto-topup",
+  "run": "20260925-191831-30068-e5e7b4a9",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4278.0,
+  "human_wait_sec": 126.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 978,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 388,
+    "usage": 372,
+    "text": 204,
+    "error": 1
+   },
+   "tool_total": 388,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260925-191417",
+  "case": "car-key-sharing",
+  "run": "20260925-191833-24532-30b3237f",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 9868.0,
+  "human_wait_sec": 449.0,
+  "human_wait_events": 8,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1680,
+   "types": {
+    "lifecycle": 20,
+    "session": 1,
+    "tool": 680,
+    "usage": 633,
+    "text": 343,
+    "error": 3
+   },
+   "tool_total": 680,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260926-190654",
+  "case": "auto-topup",
+  "run": "20260926-191041-29640-9e66a060",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 11191.0,
+  "human_wait_sec": 220.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1792,
+   "types": {
+    "lifecycle": 19,
+    "session": 1,
+    "tool": 658,
+    "usage": 645,
+    "text": 463,
+    "error": 6
+   },
+   "tool_total": 658,
+   "tool_failed": 6
+  }
+ },
+ {
+  "suite": "story-suite-20260926-190654",
+  "case": "car-key-sharing",
+  "run": "20260926-191043-18088-9f900a58",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 7474.0,
+  "human_wait_sec": 485.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1305,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 536,
+    "usage": 491,
+    "text": 263,
+    "error": 2
+   },
+   "tool_total": 536,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260927-004309",
+  "case": "auto-topup",
+  "run": "20260927-004648-29900-3f22aae1",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 31404.0,
+  "human_wait_sec": 360.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1046,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 425,
+    "usage": 391,
+    "text": 207,
+    "error": 4
+   },
+   "tool_total": 425,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260927-004309",
+  "case": "car-key-sharing",
+  "run": "20260927-004650-28068-f8e49ae6",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 31402.0,
+  "human_wait_sec": 154.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": "completed_with_prior_review",
+    "review_verdict": "PASS",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1090,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 461,
+    "usage": 423,
+    "text": 194,
+    "error": 1
+   },
+   "tool_total": 461,
+   "tool_failed": 1
+  }
+ },
+ {
+  "suite": "story-suite-20260927-125342",
+  "case": "auto-topup",
+  "run": "20260927-125754-1340-0ec0d161",
+  "status": "harness_incomplete",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 9128.0,
+  "human_wait_sec": 321.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 946,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 372,
+    "usage": 346,
+    "text": 207,
+    "error": 2
+   },
+   "tool_total": 372,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260927-125342",
+  "case": "car-key-sharing",
+  "run": "20260927-125756-9104-4e87b033",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 28947.0,
+  "human_wait_sec": 4900.0,
+  "human_wait_events": 8,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1457,
+   "types": {
+    "lifecycle": 22,
+    "session": 1,
+    "tool": 608,
+    "usage": 569,
+    "text": 247,
+    "error": 10
+   },
+   "tool_total": 608,
+   "tool_failed": 10
+  }
+ },
+ {
+  "suite": "story-suite-20260927-233356",
+  "case": "auto-topup",
+  "run": "20260927-233735-23272-b2d91798",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 4736.0,
+  "human_wait_sec": 337.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 973,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 404,
+    "usage": 363,
+    "text": 184,
+    "error": 3
+   },
+   "tool_total": 404,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260927-233356",
+  "case": "car-key-sharing",
+  "run": "20260927-233737-6972-1d1d6b7c",
+  "status": "stop_failed",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "spec",
+  "requested_end_phase": "plan",
+  "duration_sec": 34586.0,
+  "human_wait_sec": 25925.0,
+  "human_wait_events": 56,
+  "gates": {},
+  "phases": {},
+  "events": {
+   "events_total": 901,
+   "types": {
+    "lifecycle": 114,
+    "session": 1,
+    "tool": 315,
+    "error": 3,
+    "usage": 330,
+    "text": 138
+   },
+   "tool_total": 315,
+   "tool_failed": 3
+  }
+ },
+ {
+  "suite": "story-suite-20260928-091518",
+  "case": "auto-topup",
+  "run": "20260928-091916-8348-477b97a6",
+  "status": "stop_failed",
+  "failure_kind": null,
+  "target_reached": null,
+  "highest_phase": "story",
+  "requested_end_phase": "spec",
+  "duration_sec": 821.0,
+  "human_wait_sec": 134.0,
+  "human_wait_events": 2,
+  "gates": {},
+  "phases": {},
+  "events": {
+   "events_total": 192,
+   "types": {
+    "lifecycle": 6,
+    "session": 1,
+    "tool": 94,
+    "usage": 65,
+    "text": 26
+   },
+   "tool_total": 94,
+   "tool_failed": 0
+  }
+ },
+ {
+  "suite": "story-suite-20260928-091518",
+  "case": "car-key-sharing",
+  "run": "20260928-091917-32640-72219822",
+  "status": "stopped",
+  "failure_kind": null,
+  "target_reached": false,
+  "highest_phase": "spec",
+  "requested_end_phase": "plan",
+  "duration_sec": 888.0,
+  "human_wait_sec": 190.0,
+  "human_wait_events": 3,
+  "gates": {
+   "gate_harness_spec": "unreadable",
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "not_reached",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "fail"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "open",
+    "review_mode": null,
+    "review_verdict": "FAIL",
+    "verifier_blockers": null,
+    "gates": {
+     "harness_spec": "fail"
+    }
+   },
+   "plan": {
+    "execution_status": "not_reached",
+    "closure_status": "not_reached",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "harness_plan": "skipped"
+    }
+   }
+  },
+  "events": {
+   "events_total": 297,
+   "types": {
+    "lifecycle": 9,
+    "session": 1,
+    "tool": 140,
+    "usage": 102,
+    "text": 41,
+    "error": 4
+   },
+   "tool_total": 140,
+   "tool_failed": 4
+  }
+ },
+ {
+  "suite": "story-suite-20260928-093817",
+  "case": "auto-topup",
+  "run": "20260928-094212-5644-fc68d6bd",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 5842.0,
+  "human_wait_sec": 296.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1014,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 425,
+    "usage": 374,
+    "text": 194,
+    "error": 2
+   },
+   "tool_total": 425,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260928-093817",
+  "case": "car-key-sharing",
+  "run": "20260928-094214-35604-6a757344",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 7963.0,
+  "human_wait_sec": 313.0,
+  "human_wait_events": 6,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 1434,
+   "types": {
+    "lifecycle": 18,
+    "session": 1,
+    "tool": 555,
+    "usage": 531,
+    "text": 323,
+    "error": 6
+   },
+   "tool_total": 555,
+   "tool_failed": 6
+  }
+ },
+ {
+  "suite": "story-suite-20260928-214524",
+  "case": "auto-topup",
+  "run": "20260928-214945-35912-f7199a4f",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "spec",
+  "requested_end_phase": "spec",
+  "duration_sec": 2937.0,
+  "human_wait_sec": 761.0,
+  "human_wait_events": 4,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 700,
+   "types": {
+    "lifecycle": 10,
+    "session": 1,
+    "tool": 288,
+    "usage": 231,
+    "text": 168,
+    "error": 2
+   },
+   "tool_total": 288,
+   "tool_failed": 2
+  }
+ },
+ {
+  "suite": "story-suite-20260928-214524",
+  "case": "car-key-sharing",
+  "run": "20260928-214947-29336-a94d3554",
+  "status": "finished",
+  "failure_kind": null,
+  "target_reached": true,
+  "highest_phase": "plan",
+  "requested_end_phase": "plan",
+  "duration_sec": 4552.0,
+  "human_wait_sec": 991.0,
+  "human_wait_events": 5,
+  "gates": {
+   "gate_post_check": true,
+   "gate_story_build": "unreadable"
+  },
+  "phases": {
+   "story": {
+    "execution_status": "completed",
+    "closure_status": "not_applicable",
+    "review_mode": null,
+    "review_verdict": null,
+    "verifier_blockers": null,
+    "gates": {
+     "post_check": "pass",
+     "story_build_check": "pass"
+    }
+   },
+   "spec": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_spec": "pass"
+    }
+   },
+   "plan": {
+    "execution_status": "completed",
+    "closure_status": "closed",
+    "review_mode": null,
+    "review_verdict": "PASS",
+    "verifier_blockers": 0,
+    "gates": {
+     "harness_plan": "pass"
+    }
+   }
+  },
+  "events": {
+   "events_total": 956,
+   "types": {
+    "lifecycle": 12,
+    "session": 1,
+    "tool": 407,
+    "usage": 372,
+    "text": 161,
+    "error": 3
+   },
+   "tool_total": 407,
+   "tool_failed": 3
+  }
+ }
+]

@@ -1,0 +1,240 @@
+{
+  "date": "2026-09-30",
+  "baseline_commit": "02e4b7d9414bb7ff14cdef4c33e60c9490d8336b",
+  "source_root": "doc/spec/1.9.9",
+  "destination_root": "doc/spec/2.1.0/历史参考/原1.9.9",
+  "file_count": 46,
+  "total_bytes": 7633021,
+  "files": [
+    {
+      "path": "00-版本范围.md",
+      "size": 11309,
+      "sha256": "4b824558e191cceab066c14fcb91c6ef023ae3e4b82dc849ba345fe7cbe090cb"
+    },
+    {
+      "path": "01-场景交互时序.md",
+      "size": 6020,
+      "sha256": "0ea21d5f6cb0a329d4da1e1a42817c8547cbfef7981e9ee0eb6f5a2871b18006"
+    },
+    {
+      "path": "02-金样优化.md",
+      "size": 11571,
+      "sha256": "aa5c3bef25552c02a1a644942e86dba6b9ff606ed64264cc6bb9829edbe6b1a1"
+    },
+    {
+      "path": "03-知识范围定义.md",
+      "size": 5839,
+      "sha256": "63902967b4b94ae26d5f61b798e12def5e93462d4ea65ff325a5b293b506ea1e"
+    },
+    {
+      "path": "04-SVG图形通道.md",
+      "size": 7613,
+      "sha256": "2bf7760c676f982acf46350dd6da0d291db123c2ac430eb0866afa5791f2240b"
+    },
+    {
+      "path": "04-稳定性与性能分析/00-分析方案.md",
+      "size": 10674,
+      "sha256": "9eca85fbb29604a5a837b696fc9078f8e89c6a743c2f29e9e3177b4eb4bdd0c2"
+    },
+    {
+      "path": "04-稳定性与性能分析/01-分析报告.md",
+      "size": 16168,
+      "sha256": "46ac9865ae3574e95512e35bc7cf3407989b6732923ea384e7f97c53f3ef07f6"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/analysis-a5-a6.md",
+      "size": 27809,
+      "sha256": "0b0545b5feb2943f89d1c8e72eec9170c51c676812205405ef3e0dc925dc32f5"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/analysis-b3-b4.md",
+      "size": 28570,
+      "sha256": "92c539579dc9f472f18dc9868823c4ebee828bc3df641165720c11c345de7350"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/analysis-b5-ar90006-story-review.md",
+      "size": 41075,
+      "sha256": "344c90f2f6999ae9ffcdd5d9b3be6682bd52f4360b229837c5df0353b9118af2"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/analysis-b5-issue206.md",
+      "size": 39040,
+      "sha256": "9ac39c339a73f765260429d3fc25625b4352c85ac8357bc64641d25106ddc676"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/analysis-b5-plan.md",
+      "size": 41129,
+      "sha256": "189894626656d1daf32edde04c09d2d228de3253155be561728d86cf10bd3d03"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/analysis-b5-spec-draft.md",
+      "size": 35869,
+      "sha256": "ca63c9eef66b8ffcb1153226362f69c6b2317b453316a54d22d6add37e5ec8df"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/docs.json",
+      "size": 6720447,
+      "sha256": "3ba81b6b4eba28c679901690e6a20a9adb8dd70367d024520209151f28ab293a"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/assets/detail-entry.png",
+      "size": 3152,
+      "sha256": "328419dced4a2be58e2950b9b10bf1517cbe09f400584ae2eb6d811da8876fc7"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/assets/disabled-state.png",
+      "size": 2260,
+      "sha256": "adeefcff56af7d05daa85f588ebbc48bdbb36a1e75302f12e9fe6d5924d336db"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/assets/manage-page.png",
+      "size": 2638,
+      "sha256": "24fbb597b158d849b8a40f8aa932aba91c539cf197ae71af701cbad6541a8f7e"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/assets/signup-page.png",
+      "size": 3385,
+      "sha256": "6c8da20cbbc6fdd4c3dfcc46f34d21f6e481b0859af7168e190df9161a050e30"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/assets/verify-page.png",
+      "size": 3040,
+      "sha256": "c8b62984ec0018e2eb4b6ea8119e7b11eba79433fa03b8120072a69fd48253cd"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/review.md",
+      "size": 16657,
+      "sha256": "3b6d23676b00af6d981ac585d598df7fe5f638a58090a667924fa6095ce53e91"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/spec.md",
+      "size": 47901,
+      "sha256": "51f290cc059ee50189626ebb14cc62f478d0bffae6284d1c8cc949d5f6d9f117"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/story.md",
+      "size": 49857,
+      "sha256": "f6921e90cd313274fac043780ee731325ce45c9005052d282636af542a75d4b8"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/ux-reference/detail-entry.png",
+      "size": 3152,
+      "sha256": "328419dced4a2be58e2950b9b10bf1517cbe09f400584ae2eb6d811da8876fc7"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/ux-reference/disabled-state.png",
+      "size": 2260,
+      "sha256": "adeefcff56af7d05daa85f588ebbc48bdbb36a1e75302f12e9fe6d5924d336db"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/ux-reference/manage-page.png",
+      "size": 2638,
+      "sha256": "24fbb597b158d849b8a40f8aa932aba91c539cf197ae71af701cbad6541a8f7e"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/ux-reference/signup-page.png",
+      "size": 3385,
+      "sha256": "6c8da20cbbc6fdd4c3dfcc46f34d21f6e481b0859af7168e190df9161a050e30"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/AR90006/ux-reference/verify-page.png",
+      "size": 3040,
+      "sha256": "c8b62984ec0018e2eb4b6ea8119e7b11eba79433fa03b8120072a69fd48253cd"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/factbase-AR90006.md",
+      "size": 35708,
+      "sha256": "e8443532818ed9b35a0e7c7919be9054f6d601cd1d34c0ffccb10e8a5fa6ce25"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/factbase-ISSUE-206.md",
+      "size": 40932,
+      "sha256": "37f5d7850f4e909931173e7c5e7561822b5320ef272764093e2fc8859892a04e"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/assets/accept-page.png",
+      "size": 3208,
+      "sha256": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/assets/key-card-detail.png",
+      "size": 3004,
+      "sha256": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/assets/share-manage.png",
+      "size": 2674,
+      "sha256": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/assets/share-setup.png",
+      "size": 3188,
+      "sha256": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/plan.md",
+      "size": 36854,
+      "sha256": "275b950142506129688fc8318b3756a13771b07987f6b93006621aaa60eb50da"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/review.md",
+      "size": 14245,
+      "sha256": "e8157ef7a06aae2638015a5aee37f567fca392fad985b29a51de4c234fd035a5"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/spec.md",
+      "size": 44815,
+      "sha256": "160b2fc604c62486330209d3ce2689f553ba7680047ef2e42a93f4e39f158cd3"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/story.md",
+      "size": 47576,
+      "sha256": "ad87fe5952a41f510bec46c4b9065599095002c9dd1fe8025fc029d73390b1ba"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/ux-reference/accept-page.png",
+      "size": 3208,
+      "sha256": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/ux-reference/key-card-detail.png",
+      "size": 3004,
+      "sha256": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/ux-reference/share-manage.png",
+      "size": 2674,
+      "sha256": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/ISSUE-206/ux-reference/share-setup.png",
+      "size": 3188,
+      "sha256": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/golden/MANIFEST.md",
+      "size": 5258,
+      "sha256": "5f06790ae5079a0a824b9ab40b9bbf8200e8d94b42a08e402826e7677fc76a7c"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/index.json",
+      "size": 85290,
+      "sha256": "a897b4053a59d0ddba5b0cad743e6be630fd8f5ce00b90ca1e29c32e9d6ad76c"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/runs.json",
+      "size": 138058,
+      "sha256": "23a486de21ded563dd9bc53be39cb1d6483d568294e395fb37c98538149be7c0"
+    },
+    {
+      "path": "04-稳定性与性能分析/data/summary.json",
+      "size": 3727,
+      "sha256": "af1aac85cba8f9456318d71608a8b044de1e9fcec68077db68521c3d5a78a007"
+    },
+    {
+      "path": "05-升级分发链路.md",
+      "size": 9912,
+      "sha256": "423028019382a75fc7e36f62cfe123736897fcb84d444a419eb096a4e16a719c"
+    }
+  ]
+}
