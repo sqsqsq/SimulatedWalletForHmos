@@ -10,17 +10,15 @@
  *
  * 契约：stdin JSON ctx → stdout JSON result。
  */
-import { featureDir } from '../shared/framework-access.mjs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readTextOrNull } from '../shared/paths.mjs';
-import { acceptanceIdRe, knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
+import { acceptanceIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
 import { obligationsFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 
 /** UT 侧的覆盖证据：覆盖报告 + 用例源码里出现的 AC 标记。 */
-function coveredAcceptanceIds(projectRoot, feature) {
-  const root = featureDir(projectRoot, feature);
+function coveredAcceptanceIds(root) {
   const ids = new Set();
 
   const reportPath = path.join(root, 'ut', 'reports', 'ac-coverage.json');
@@ -53,11 +51,10 @@ function coveredAcceptanceIds(projectRoot, feature) {
 }
 
 export default guard('ut', async (ctx) => {
-  const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
-  if (error) return gate(ctx, { problems: [error] });
-  if (!exists) {
-    return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: '契约还没建（或读不到）' }] });
-  }
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'ut');
+  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  const contracts = inputs.contracts;
+  if (!contracts) return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: inputs.why }] });
   const obligations = obligationsFromContracts(contracts);
   if (!obligations.length) {
     return gate(ctx, { skipped: [{ what: '验收条目 UT 覆盖', why: '契约里没有 must' }] });
@@ -65,10 +62,11 @@ export default guard('ut', async (ctx) => {
 
   // 桥接：acceptance.yaml 的 knowledge_rule 把验收条目认回规约条目（framework 原生追溯链）。
   // 同一规约常有多个验收条目（不同场景），逐条核，不能只看最后一条；
-  // 解析失败要接住报出来，不能当空集合放行。
-  const { acceptance, error: accError } = readAcceptance(ctx.projectRoot, ctx.feature);
+  // 原生没给出验收时说出原因，不当空集合放行。
+  const acceptance = inputs.acceptance;
+  const accError = acceptance ? null : `验收拿不到（${inputs.why}）——义务按验收条目分派，没有验收就核不了覆盖`;
   const { byRule, problems: accProblems } = knowledgeCriteria(acceptance);
-  const covered = coveredAcceptanceIds(ctx.projectRoot, ctx.feature);
+  const covered = coveredAcceptanceIds(inputs.dir);
   const problems = accError ? [accError] : [...accProblems];
 
   for (const ob of obligations) {
@@ -95,5 +93,5 @@ export default guard('ut', async (ctx) => {
     }
   }
 
-  return gate(ctx, { problems });
+  return gate(ctx, { problems: [...inputs.problems, ...problems] });
 });

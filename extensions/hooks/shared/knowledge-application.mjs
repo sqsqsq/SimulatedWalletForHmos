@@ -21,22 +21,23 @@ import { extensionRoot } from './paths.mjs';
 const PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCHEMA = path.join(PACKAGE, 'skills', 'story', 'contracts', 'knowledge-application.schema.json');
 
-/** 激活知识按工程相对路径登记：类别、形态、单元、原始摘要，规约另带每条的强制力与哪几条是评审动作。 */
+/** 激活知识按工程相对路径登记：类别、形态、单元、原始摘要，规约另带每条的强制力与哪几条是评审动作，模式另带声明的角色。 */
 function activation(projectRoot) {
   const knowledge = activeKnowledge(projectRoot);
   const ext = extensionRoot(projectRoot);
   const out = new Map();
-  const add = (kind, file, form, units, entries = []) => {
+  const add = (kind, file, form, units, entries = [], roles = []) => {
     const abs = path.join(ext, ...file.split('/'));
     out.set(path.relative(projectRoot, abs).split(path.sep).join('/'), {
       kind, file, form, units,
       sha256: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex')}`,
       force: new Map(entries.map(e => [e.id, e.force])),
       reviewActions: new Set(entries.filter(e => e.reviewAction).map(e => e.id)),
+      roles: new Set(roles),
     });
   };
   for (const c of knowledge.constraints) add('constraints', c.file, c.form, c.units, c.entries);
-  for (const p of knowledge.patterns) add('patterns', p.file, p.form, p.units);
+  for (const p of knowledge.patterns) add('patterns', p.file, p.form, p.units, [], [...(p.roles ?? []), ...(p.optionalRoles ?? [])]);
   for (const f of knowledge.facts) add('facts', f.file, f.form, f.units);
   return out;
 }
@@ -78,6 +79,8 @@ function checkKnowledgeApplications(projectRoot, { decisions, facts = [], addres
       say(id, `判断时的原文摘要 ${k.source_sha256} 与 ${source.file} 现在的 ${source.sha256} 不同——知识原文变了，按新原文重判`);
     }
     if (k.outcome === 'waived' && source.force.get(k.unit) === '红线') say(id, `${k.unit} 是红线，不能豁免`);
+    const undeclared = (k.roles ?? []).map(r => r.role).filter(role => !source.roles.has(role));
+    if (undeclared.length) say(id, `角色 ${undeclared.join('、')} 不是 ${source.file} 声明的角色（${[...source.roles].join('、')}）`);
     if (addresses) {
       const refs = [...k.target_refs, ...(k.roles ?? []).map(r => r.target_ref)];
       const dangling = refs.filter(r => !addresses.has(r));
@@ -127,30 +130,69 @@ export function blueprintKnowledge(projectRoot, blueprint) {
  */
 export function featureKnowledge(projectRoot, feature, contracts) {
   const who = featureIdentity(projectRoot, feature);
-  if (who.status !== 'ok' || who.kind !== 'cu') {
+  if (who.status !== 'ok') {
+    // 原生身份认不出（不存在的 CU、坏编号）：原样交回，不当成另一种对象去核
+    const label = `Feature ${feature}`;
+    return { rows: [], problems: (who.issues ?? []).map(i => `${label}：原生 ${i.code ?? '问题'} ${i.message ?? ''}`), scope: NOTHING, label };
+  }
+  if (who.kind !== 'cu') {
     return { ...checkKnowledgeApplications(projectRoot, {
       decisions: contracts?.knowledge_applications ?? [], label: `Feature ${feature} 的契约` }), scope: null, label: `Feature ${feature} 的契约` };
   }
   const label = `蓝图 ${who.blueprintId}`;
   const read = readBlueprint(projectRoot, who.blueprintId, 'draft');
-  if (read.status !== 'ok') return { rows: [], problems: [`${label} 原生读不过（${read.status}）——设计负责方处理`], scope: new Set(), label };
-  const addressing = loadNative(projectRoot).module('scripts/utils/blueprint-addressing.ts');
-  const index = [...addressing.stableAddressIndex(read.blueprint)];
-  const scope = new Set();
-  for (const ref of who.design_refs) {
-    try {
-      const record = addressing.resolveBlueprintTarget(read.blueprint, ref.target);
-      const hit = index.find(([, r]) => r === record);
-      if (hit) scope.add(hit[0]);
-    } catch {
-      // 设计引用解析不了由原生 CU 校验报，这里只少一个承接地址
-    }
-  }
-  return { ...blueprintKnowledge(projectRoot, read.blueprint), scope, label, blueprint: read.blueprint };
+  if (read.status !== 'ok') return { rows: [], problems: [`${label} 原生读不过（${read.status}）——设计负责方处理`], scope: NOTHING, label };
+  const problems = [];
+  const scope = unitScope(loadNative(projectRoot).module('scripts/utils/blueprint-addressing.ts'), read.blueprint, who.design_refs,
+    ref => problems.push(`${label}：施工单位的设计引用 ${JSON.stringify(ref.target)} 在蓝图里解析不了——交设计负责方`));
+  const checked = blueprintKnowledge(projectRoot, read.blueprint);
+  return { ...checked, problems: [...problems, ...checked.problems], scope, label, blueprint: read.blueprint };
 }
 
-/** 这个施工单位要承接的判断：落点（含模式角色落点）与它的设计引用有交集的；scope 为 null 时全部。 */
+const NOTHING = { has: () => false };
+
+/**
+ * 施工单位的设计责任范围：按原生目标关系判一个稳定地址在不在里面——它就是设计引用指向的对象、在其中，或包含它，
+ * 不按地址字符串前缀猜。解析不了的设计引用交给 `bad` 报出来，不静默少算。
+ */
+function unitScope(addressing, blueprint, refs, bad) {
+  const index = addressing.stableAddressIndex(blueprint);
+  const roots = [];
+  for (const ref of refs) {
+    try {
+      roots.push(addressing.resolveBlueprintTarget(blueprint, ref.target));
+    } catch {
+      bad(ref);
+    }
+  }
+  const inside = new Set();
+  const walk = (node) => {
+    if (!node || typeof node !== 'object' || inside.has(node)) return;
+    inside.add(node);
+    for (const v of Object.values(node)) walk(v);
+  };
+  roots.forEach(walk);
+  const holds = (node, seen = new Set()) => {
+    if (!node || typeof node !== 'object' || seen.has(node)) return false;
+    if (roots.includes(node)) return true;
+    seen.add(node);
+    return Object.values(node).some(v => holds(v, seen));
+  };
+  return { has: address => index.has(address) && (inside.has(index.get(address)) || holds(index.get(address))) };
+}
+
+/** 这个施工单位要承接的判断：落点（含模式角色落点）在它的设计责任内的；scope 为 null 时全部。 */
 export function carriedBy(rows, scope) {
   return rows.filter(d => !scope || [...(d.knowledge.target_refs ?? []), ...(d.knowledge.roles ?? []).map(r => r.target_ref)]
     .some(t => scope.has(t)));
+}
+
+/** 选型决定里由这个施工单位承担的角色：角色自己的落点在它的设计责任内；整体角色齐不齐在蓝图层核。 */
+export function rolesOf(decision, scope) {
+  return (decision.knowledge.roles ?? []).filter(r => !scope || scope.has(r.target_ref));
+}
+
+/** 一条判断对应的规约条目：按判断的来源文件与单元找——不同文件可以有同编号的条目，不按裸编号取。 */
+export function entryOf(knowledge, decision) {
+  return decision?.file ? knowledge.entries.find(e => e.file === decision.file && e.id === decision.knowledge?.unit) ?? null : null;
 }

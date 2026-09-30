@@ -39,7 +39,7 @@ criteria:
 ## 跑哪条命令
 
 `cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature <Feature id>`。派审、采纳与报告回来之后的处置见
-[phase-closure.md](../../skills/story/reference/phase-closure.md)「闭环」。取证与结论写法见
+[phase-closure.md](../../skills/story/reference/phase-closure.md)「闭环」。本单位有设计之外的新增工程事实要写时，取证与结论写法见
 [`evidence-rules.md`](../../skills/story/reference/evidence-rules.md)。
 
 ## 门禁会拦什么

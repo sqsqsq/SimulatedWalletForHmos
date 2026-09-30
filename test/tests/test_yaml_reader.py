@@ -5,7 +5,7 @@
 
 1. 标量词法：引号、行尾注释、引号里的 `#`，同一个值的几种合法写法读出来一样
    （adapt 靠 `name` 相等判来源，多一对引号就把判断带向相反的一边）；
-2. 四类真实样本（framework 契约模板、带流式写法的契约、knowledge-use 骨架、verifier 报告的
+2. 真实样本（framework 契约模板、带流式写法的契约、带知识应用决定与实体义务的契约、verifier 报告的
    YAML 围栏）扩展读出的对象与 framework 侧 `YAML.parse` 深相等；
 3. 临时根没有 `framework/harness` 时，第一次解析抛错且文案带安装命令——不下载、不退回别的读法。
 """
@@ -46,6 +46,10 @@ def node_json(script: str, *argv: str) -> subprocess.CompletedProcess:
     return subprocess.run(["node", "--input-type=module", "-e", script, "--", *argv],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
+
+
+#: 当前形态的契约：平铺维护 Feature 的知识应用决定、实体上的 must 与 pattern_roles（流式与块式混写）
+KNOWLEDGE_CONTRACT = Path(__file__).resolve().parents[1] / "fixtures" / "yaml" / "knowledge-contract.yaml"
 
 class ScalarLexing(unittest.TestCase):
     """跑真的读取器，不在这里重实现一份判断。"""
@@ -113,6 +117,7 @@ class SameObjectAsFramework(unittest.TestCase):
     """四类真实样本：扩展读出的对象与 framework 侧 `yaml` 包直接读出的深相等。"""
 
     SAMPLES = {
+        # 当前形态的契约样本放在夹具里，不从历史运行产物里找
         "framework 契约模板": REPO_ROOT / "demo" / "framework" / "skills" / "feature" / "plan" / "contracts-template.yaml",
     }
 
@@ -125,9 +130,7 @@ class SameObjectAsFramework(unittest.TestCase):
                               if "- {" in p.read_text(encoding="utf-8", errors="replace")), None)
         if flow_contract:
             cls.SAMPLES["带流式写法的契约"] = flow_contract
-        use = sorted(out.glob("*/cases/*/*/artifact/spec/knowledge-use.yaml"))
-        if use:
-            cls.SAMPLES["knowledge-use"] = use[-1]
+        cls.SAMPLES["带知识应用决定与实体义务的契约"] = KNOWLEDGE_CONTRACT
         cls.fences: dict[str, str] = {}
         for report in sorted(out.glob("*/cases/*/*/artifact/*/reports/verifier.report.*.md"))[-3:]:
             text = report.read_text(encoding="utf-8", errors="replace")

@@ -17,8 +17,7 @@ import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { carriedBy, featureKnowledge } from '../shared/knowledge-application.mjs';
-import { featureDir } from '../shared/framework-access.mjs';
-import { acceptanceIdRe, functionIdRe, knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
+import { acceptanceIdRe, functionIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 
 /** 「验收标准」一节的正文行：标题下到下一个同级或更高级标题。 */
@@ -77,8 +76,10 @@ export default guard('spec', async (ctx) => {
   const alignment = { name: '验收标准与 acceptance.yaml', problems: [], skipped: [] };
   const groups = [design, bridge, alignment];
 
-  const acc = readAcceptance(ctx.projectRoot, ctx.feature);
-  if (acc.error) bridge.problems.push(acc.error);
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'spec');
+  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  groups.unshift({ name: '原生对本阶段输入报的问题', problems: inputs.problems, skipped: [] });
+  const acceptance = inputs.acceptance;
 
   let knowledge = null;
   try {
@@ -87,14 +88,14 @@ export default guard('spec', async (ctx) => {
     design.problems.push(`${e.message}——激活知识派生失败；判断的来源与验收桥都按它核`);
   }
   if (knowledge) {
-    const judged = featureKnowledge(ctx.projectRoot, ctx.feature, readContracts(ctx.projectRoot, ctx.feature).contracts);
+    const judged = featureKnowledge(ctx.projectRoot, ctx.feature, inputs.contracts);
     design.problems.push(...judged.problems);
     const applied = carriedBy(judged.rows, judged.scope)
       .filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction);
-    if (!acc.exists) {
-      if (applied.length) bridge.skipped.push({ what: '验收承接适用规约', why: 'acceptance.yaml 还没生成' });
-    } else if (!acc.error) {
-      const { byRule, problems } = knowledgeCriteria(acc.acceptance);
+    if (!acceptance) {
+      if (applied.length) bridge.skipped.push({ what: '验收承接适用规约', why: inputs.why });
+    } else {
+      const { byRule, problems } = knowledgeCriteria(acceptance);
       bridge.problems.push(...problems);
       for (const d of applied) {
         const rows = (byRule.get(d.knowledge.unit) ?? []).filter(r => String(r.knowledge_decision_id).trim() === d.decision_id);
@@ -112,10 +113,10 @@ export default guard('spec', async (ctx) => {
     }
   }
 
-  const specPath = path.join(featureDir(ctx.projectRoot, ctx.feature), 'spec', 'spec.md');
+  const specPath = path.join(inputs.dir, 'spec', 'spec.md');
   if (!fs.existsSync(specPath)) alignment.skipped.push({ what: '验收标准与 acceptance.yaml', why: '这一次没有生成 spec.md' });
-  else if (acc.exists && !acc.error) {
-    alignment.problems.push(...acceptanceAlignment(fs.readFileSync(specPath, 'utf-8').split(/\r?\n/), acc.acceptance));
+  else if (acceptance) {
+    alignment.problems.push(...acceptanceAlignment(fs.readFileSync(specPath, 'utf-8').split(/\r?\n/), acceptance));
   }
 
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'spec'), skipped: [] });

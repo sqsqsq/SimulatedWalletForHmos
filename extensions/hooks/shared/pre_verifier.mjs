@@ -18,14 +18,13 @@
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
  */
 import * as path from 'node:path';
-import { readContracts } from './contracts.mjs';
+import { phaseArtifacts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
-import { carriedBy, featureKnowledge } from './knowledge-application.mjs';
+import { carriedBy, entryOf, featureKnowledge } from './knowledge-application.mjs';
 import { knowledgeTask } from './knowledge-task.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, readTextOrNull, relDisplay } from './paths.mjs';
-import { designStatPoints, planStatRows, pointKey } from './stat-points.mjs';
-import { featureDir } from './framework-access.mjs';
+import { designStatPoints, planStatRows, pointKey, statDelivery } from './stat-points.mjs';
 import { overlayChecks } from './verifier-report.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
@@ -58,14 +57,13 @@ const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r
 /**
  * spec：本施工单位承接的判断一条一行，原条目与判定、要求与落点并列；审查对着原文核验收是否承接了它们。
  */
-function decisionTable(projectRoot, feature, knowledge) {
-  const judged = featureKnowledge(projectRoot, feature, readContracts(projectRoot, feature).contracts);
+function decisionTable(projectRoot, feature, knowledge, inputs) {
+  const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
   const rows = carriedBy(judged.rows, judged.scope);
   const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
   if (!rows.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
-  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
   return ['| 决定 | 知识单元 | 原文 | 判定 | 要求与理由 | 落点 |', '|---|---|---|---|---|---|',
-    ...rows.map(d => `| ${d.decision_id} | ${d.knowledge.unit} | ${cell(byId.get(d.knowledge.unit)?.constraint ?? '（模式，见知识任务原文）')} `
+    ...rows.map(d => `| ${d.decision_id} | ${d.knowledge.unit} | ${cell(entryOf(knowledge, d)?.constraint ?? '（模式，见知识任务原文）')} `
       + `| ${d.knowledge.outcome} | ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} | ${cell(d.knowledge.target_refs.join('、'))} |`),
     ...gaps];
 }
@@ -74,21 +72,25 @@ function decisionTable(projectRoot, feature, knowledge) {
  * plan 及之后：每条出现过的规约一行，原条目与契约上挂着它的全部 `must` 并列。
  * 审查判「must 是不是这条规约要求的那件事、是否改变了规约原义」，要对着原文判。
  */
-function obligationTable(projectRoot, feature, knowledge) {
-  const { contracts, error, exists } = readContracts(projectRoot, feature);
-  if (error || !exists) return [`**契约读不到**：${error ?? '缺 contracts.yaml'}——原义与 must 无从并列，未验证。`];
-  const musts = obligationsFromContracts(contracts);
-  const ruleIds = [...new Set(musts.map(o => o.rule).filter(Boolean))];
-  if (!ruleIds.length) return ['契约上一条 `must` 都没有。'];
-  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
+function obligationTable(projectRoot, feature, knowledge, inputs) {
+  const contracts = inputs.contracts;
+  if (!contracts) return [`**契约拿不到**：${inputs.why}——原义与 must 无从并列，未验证。`];
+  const musts = obligationsFromContracts(contracts).filter(o => o.rule);
+  if (!musts.length) return ['契约上一条 `must` 都没有。'];
+  // 条目按义务出自的判断找（来源文件 + 单元）：不同文件同编号的规约各成一行
+  const decisions = new Map(featureKnowledge(projectRoot, feature, contracts).rows.map(d => [d.decision_id, d]));
+  const groups = new Map();
+  for (const o of musts) {
+    const key = `${o.rule}\0${o.decisionId ?? ''}`;
+    groups.set(key, [...(groups.get(key) ?? []), o]);
+  }
   const rows = ['| 编号 | 约束原文 | 命中后要给出 | 附注 | 契约上的 must（实体：要落实成什么 · verify · 出自的决定） |',
     '|---|---|---|---|---|'];
-  for (const id of ruleIds) {
-    const e = byId.get(id);
-    const list = musts.filter(o => o.rule === id)
-      .map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'} · ${o.decisionId || '（没写 decision_id）'}`);
-    rows.push(`| ${id} | ${cell(e?.constraint ?? '（不在激活清单）')} | ${cell(e?.handling)} | ${cell(e?.note)} `
-      + `| ${list.map(cell).join('<br>')} |`);
+  for (const list of groups.values()) {
+    const e = entryOf(knowledge, decisions.get(list[0].decisionId));
+    const cells = list.map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'} · ${o.decisionId || '（没写 decision_id）'}`);
+    rows.push(`| ${list[0].rule} | ${cell(e?.constraint ?? '（认不回判断的来源条目）')} | ${cell(e?.handling)} | ${cell(e?.note)} `
+      + `| ${cells.map(cell).join('<br>')} |`);
   }
   return rows;
 }
@@ -97,11 +99,18 @@ function obligationTable(projectRoot, feature, knowledge) {
  * plan：蓝图埋点明细的每个统计点与 plan.md 逐点表里同名的全部结果行并列，对不上的两边各自单列。
  * 设计没给统计设计时如实说缺在哪。
  */
-function statPointTable(projectRoot, feature) {
-  const design = designStatPoints(featureKnowledge(projectRoot, feature, readContracts(projectRoot, feature).contracts));
+function statPointTable(projectRoot, feature, inputs) {
+  const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
+  const design = designStatPoints(judged);
   if (design.state === 'none' || design.state === 'missing') return [`${design.why}：埋点这一项按本阶段原有要求审，不另立缺口。`];
   if (design.state === 'empty') return ['蓝图的埋点明细里没有统计点表：统计设计结构待补——按设计缺口判，plan 行无从对齐。'];
-  const plan = planStatRows(readTextOrNull(path.join(featureDir(projectRoot, feature), 'plan', 'plan.md')) ?? '');
+  const planText = inputs.dir && readTextOrNull(path.join(inputs.dir, 'plan', 'plan.md'));
+  if (planText === null || planText === undefined || planText === '') {
+    // 没有 plan.md：逐点表的一致性不适用，埋点义务照样逐点审——对着契约方法说明与验收
+    return [...statDelivery(judged, inputs.contracts, inputs.acceptance), '',
+      '这一次没有 plan.md：逐点核每个统计点在契约方法说明与验收里有没有写出适用结果与验证方式，缺哪个点名哪个。'];
+  }
+  const plan = planStatRows(planText);
   const byKey = new Map();
   for (const r of plan) byKey.set(pointKey(r.point), [...(byKey.get(pointKey(r.point)) ?? []), r]);
   const consumed = new Set();
@@ -174,6 +183,7 @@ export default async function preVerifier(ctx) {
   }
 
   const knowledgeIds = checkIds.filter(id => id.startsWith(KNOWLEDGE_CHECK_PREFIX));
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, phase);
   const fragments = [];
   let knowledge = null;
   let knowledgeGap = '';
@@ -184,8 +194,8 @@ export default async function preVerifier(ctx) {
   }
   const table = !knowledge ? [`**激活知识派生失败**：${knowledgeGap}——原义无从并列，按规约文件逐条读，结论写未验证的部分。`]
     : !knowledge.entries.length ? ['激活清单里没有规约条目。']
-      : phase === 'spec' ? decisionTable(ctx.projectRoot, ctx.feature, knowledge)
-        : obligationTable(ctx.projectRoot, ctx.feature, knowledge);
+      : phase === 'spec' ? decisionTable(ctx.projectRoot, ctx.feature, knowledge, inputs)
+        : obligationTable(ctx.projectRoot, ctx.feature, knowledge, inputs);
 
   fragments.push(allChecksFragment(checks));
   fragments.push(reviewerKnowledge(ctx));
@@ -210,7 +220,7 @@ export default async function preVerifier(ctx) {
     ...table,
     '',
     ...(phase === 'plan' ? [
-      '埋点逐统计点并列（按统计点名对齐）：', '', ...statPointTable(ctx.projectRoot, ctx.feature), '',
+      '埋点逐统计点并列（按统计点名对齐）：', '', ...statPointTable(ctx.projectRoot, ctx.feature, inputs), '',
       knowledge?.facts.length ? '要用到的已有能力、字段与取值规则，按上面列出的项目事实核。'
         : '激活清单里没有项目事实：取值不对照项目规则核，只核与知识无关的几件事。', ''] : []),
     '**先走业务，再核交接**（登记齐不齐、编号在不在册，机械层已经核过）：',

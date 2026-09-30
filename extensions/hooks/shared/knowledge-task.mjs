@@ -16,10 +16,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blueprintKnowledge } from './knowledge-application.mjs';
+import { blueprintKnowledge, featureKnowledge } from './knowledge-application.mjs';
 import { readBlueprint, readFeature } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
+import { statDelivery } from './stat-points.mjs';
 import { extensionRoot, relDisplay } from './paths.mjs';
 
 const BLUEPRINT_ACTIONS = ['discovery', 'design', 'questioning'];
@@ -127,7 +128,7 @@ function featureTask(root, feature, action, supplied) {
     if (!facts.length) facts = ['蓝图里还没有知识应用的事实与决定。'];
     facts.push(`本施工单位承担的设计对象：${f.design_refs.map(r => `${r?.target?.kind}:${r?.target?.id}`).join('、') || '（无）'}`);
   } else {
-    const rows = (f.inputs.contracts?.value?.knowledge_applications ?? []).map(d => `- 决定 \`${d.decision_id}\`（${d.status}）：${d.rationale ?? ''}`);
+    const rows = (f.spec?.contracts?.knowledge_applications ?? []).map(d => `- 决定 \`${d.decision_id}\`（${d.status}）：${d.rationale ?? ''}`);
     facts = rows.length ? rows : ['契约里还没有知识应用的决定。'];
   }
   const duties = [];
@@ -136,15 +137,20 @@ function featureTask(root, feature, action, supplied) {
     gaps.push('执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」先准备范围'
       + '（没有候选先走原生 prepare-scope，再由原生 ensureFeatureExecutionScopeFrozen 冻结），返回 frozen 或 reused 后重取本任务再动笔；原生失败按它的报错交回责任方。');
   } else {
-    const contracts = f.inputs.contracts;
-    if (contracts?.state === 'resolved') {
-      const must = obligationsFromContracts(contracts.value);
-      duties.push(`契约来自 ${contracts.binding?.kind ?? '原生'}${contracts.binding?.artifact ? ` ${contracts.binding.artifact}` : ''}。`,
+    // 契约与验收取原生按阶段组装的那一份：解析器选定的输入加本阶段自己的产出
+    const contracts = f.spec?.contracts ?? null;
+    const source = f.inputs.contracts;
+    if (contracts) {
+      const must = obligationsFromContracts(contracts);
+      duties.push(`契约来自 ${source?.binding?.kind ?? '本阶段产出'}${source?.binding?.artifact ? ` ${source.binding.artifact}` : ''}。`,
         ...(must.length ? must.map(m => `- \`${m.entityPath}\`：${m.rule} ${m.text}（验证 ${m.verify || '未写'}）`) : ['契约里没有知识义务。']));
     } else {
-      duties.push(`本阶段没有可读的施工契约（${contracts?.state ?? '本阶段不读契约'}）${contracts?.detail ? `：${contracts.detail}` : ''}。`);
+      duties.push(`本阶段没有可读的施工契约（${source?.state ?? '本阶段不读契约'}）${source?.detail ? `：${source.detail}` : ''}。`);
     }
-    const acceptance = f.inputs.acceptance?.value;
+    const acceptance = f.spec?.acceptance ?? null;
+    if (f.identity.kind === 'cu' && action !== 'spec') {
+      duties.push(...statDelivery(featureKnowledge(root, feature, contracts), contracts, acceptance));
+    }
     const bridged = [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])].filter(c => c?.knowledge_rule);
     duties.push(...bridged.map(c => `- 验收 \`${c.id}\` 承接 \`${c.knowledge_rule}\`${c.knowledge_decision_id ? `（决定 ${c.knowledge_decision_id}）` : ''}`));
     if (f.assurance === 'degraded') gaps.push('原生阶段解析为 degraded：有能力被裁剪，按原生报告核对本阶段可用的输入。');

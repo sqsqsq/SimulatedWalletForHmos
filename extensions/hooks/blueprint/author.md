@@ -10,6 +10,7 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
 ## 知识怎样进蓝图
 
 - **项目事实**：设计用到的现有模块、能力、字段与上报渠道，按事实原文写进来源发现的事实，保留出处；缺的事实写明向谁取得。
+  现状怎么取、结论怎么写见 `doc/extensions/skills/story/reference/evidence-rules.md`，来源发现之前读。
 - **规约**：与本需求相关的每条逐条判断。适用的，要求写在真正承担它的设计对象上，并写明验证去向；不适用的，写出使它不适用的需求条件；只有真实授权才写豁免，连同理由与补偿。
 - **设计模式**：单元怎么切、信号从哪来按 `doc/extensions/skills/story/reference/knowledge/protocol.md`「设计模式」；列出候选与取舍理由；选中的写明每个角色落在哪个设计对象或流程步骤上；定不下来的登记为未决，写明由谁、在何时定。
 - **判断的来源**：你依据材料作出的判断保持推断来源；人签过的裁决引用人的原话与记录位置。

@@ -27,13 +27,14 @@ import difflib
 import json
 import re
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 from materials import registry
 
 from flow.routing import basis_drift, inputs_answer, material_state
-from flow.state import (CONTRACT, FlowError, STORY, REVIEW, STORY_CONTRACT, file_sha256, system_requirement,
+from flow.state import (CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, file_sha256, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -534,12 +535,17 @@ def cmd_update_status(feature_root: Path, feature: str, project_root: Path) -> d
 FEEDBACK = "design-feedback.json"
 
 
-def _feedback_states(rec: dict, native_out: dict) -> list[dict]:
-    """每条反馈现在的处理状态：蓝图里有决定指向它才算处理过，否则待处理——不自报接受。"""
-    handled = native_out.get("handled") or {}
-    return [{**item, "state": "已处理" if item["feedback_id"] in handled else "待处理",
-             **({"handled_by": handled[item["feedback_id"]]} if item["feedback_id"] in handled else {})}
-            for item in rec.get("items", [])]
+def _feedback_observed(feature_root: Path, fb: dict) -> list[dict]:
+    """每条反馈现在的观察：候选资格照提交时记下的，当前蓝图里来源精确指向它的决定照原生读。
+
+    有相关决定不等于接受：负责方的实际回复记在本轮 update-notes，接受与否由模型读它与当前设计判；这里一律是「待确认」。
+    """
+    from flow import native  # noqa: PLC0415 —— 只有这一步读原生蓝图
+    ids = [item["feedback_id"] for item in fb.get("items", [])]
+    out = native.call(native.project_root_of(feature_root), "feedback-related", "--blueprint", fb["blueprint_id"],
+                      "--ref", fb["ref"], stdin=ids)
+    related = out.get("related") or {}
+    return [{**item, "state": "待确认", "related_decisions": related.get(item["feedback_id"], [])} for item in fb.get("items", [])]
 
 
 def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
@@ -547,7 +553,8 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
 
     每条反馈挂在一条设计议题上（`feedback_id` 是议题编号，同一议题多条写 `D3.1`、`D3.2`），`target_ref` 与议题登记的
     `design_target.target_ref` 相同，这条议题在本轮有人的原话（`decide --update --issue`）。被评的版本是成文登记记下的蓝图
-    版本。原生只判每条够不够格进入调和；接受与否由蓝图负责方在 component-design 里处理，这里只报「已处理 / 待处理」。
+    版本。两件事分开记：提交时的候选资格（原生只判够不够格进入调和，文件没改就不重判，蓝图出了新版本也不改投），
+    与当前蓝图里来源精确指向这份反馈的决定。接受与否由蓝图负责方在 component-design 里定，这里只报「待确认」。
     没有设计目标的业务意见不进这份文件，留在需求侧照议题处理。
     """
     records = _records(feature_root)
@@ -560,8 +567,9 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
     if not path.is_file():
         raise FlowError(f"本轮还没有 {FEEDBACK}：把评审人对设计议题的意见写成 blueprint-review-feedback@1，"
                         f"落点 AR/story-src/updates/{rid}/{FEEDBACK}，写法见 phases/update.md「设计反馈」")
+    raw = path.read_bytes()
     try:
-        doc = json.loads(path.read_text(encoding="utf-8").lstrip("\ufeff"))
+        doc = json.loads(raw.decode("utf-8").lstrip("\ufeff"))
     except ValueError as exc:
         raise FlowError(f"{FEEDBACK} 不是合法 JSON（{exc}）") from exc
     contract = load(feature_root) or {}
@@ -569,42 +577,47 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
     reviewed = ((contract.get("story_basis") or {}).get("blueprint_ref") or {}).get("revision")
     if not blueprint or reviewed is None:
         raise FlowError("这张单还没有按蓝图成文登记过：评审人评的是登记的那一版，没有登记就没有被评的蓝图版本")
-    try:
-        topics = {str(d.get("id")): d for d in json.loads(
-            (feature_root / "AR" / "story-src" / "decisions.json").read_text(encoding="utf-8-sig")).get("decisions", [])}
-    except (OSError, ValueError, AttributeError) as exc:
-        raise FlowError(f"AR/story-src/decisions.json 读不出议题（{exc}）：反馈按议题认") from exc
-    said = {d.get("issue") for d in (contract.get("update") or {}).get("decisions", [])}
+    digest = file_sha256(path)
+    fb = rec.get("design_feedback") or {}
+    if fb.get("digest") != digest:
+        try:
+            topics = {str(d.get("id")): d for d in json.loads(
+                (feature_root / "AR" / "story-src" / "decisions.json").read_text(encoding="utf-8-sig")).get("decisions", [])}
+        except (OSError, ValueError, AttributeError) as exc:
+            raise FlowError(f"AR/story-src/decisions.json 读不出议题（{exc}）：反馈按议题认") from exc
+        said = {d.get("issue") for d in (contract.get("update") or {}).get("decisions", [])}
+        problems, items = [], []
+        if doc.get("blueprint_id") != blueprint:
+            problems.append(f"blueprint_id 应是本单关联的蓝图 {blueprint}")
+        if doc.get("source_revision") != reviewed:
+            problems.append(f"source_revision 应是成文登记时评审的蓝图版本 {reviewed}（写的是 {doc.get('source_revision')}）")
+        for item in doc.get("items") or []:
+            fid = str(item.get("feedback_id", ""))
+            issue = fid.split(".")[0]
+            target = ((topics.get(issue) or {}).get("design_target") or {}).get("target_ref")
+            if not target:
+                problems.append(f"{fid}：议题 {issue} 没有登记 design_target——没有设计目标的业务意见留在需求侧，不进设计反馈")
+            elif item.get("target_ref") != target:
+                problems.append(f"{fid}：target_ref 应是议题 {issue} 登记的 {target}")
+            if issue not in said:
+                problems.append(f"{fid}：议题 {issue} 在本轮没有记下人的原话——先 `decide --update ... --issue {issue} --reply \"<原话>\"`")
+            items.append({"feedback_id": fid, "issue": issue, "kind": item.get("kind"), "target_ref": item.get("target_ref")})
+        from flow import native  # noqa: PLC0415 —— 只有这一步要读原生蓝图
+        out = native.call(project_root, "feedback", "--blueprint", blueprint, stdin=doc)
+        fb = {"path": f"AR/story-src/updates/{rid}/{FEEDBACK}", "ref": path.relative_to(project_root).as_posix(), "digest": digest,
+              "blueprint_id": blueprint, "source_revision": reviewed, "items": items, "problems": problems,
+              "native_issues": out.get("issues", []), "candidates": out.get("candidates"),
+              "eligible": not problems and out.get("status") == "ok"}
+        rec["design_feedback"] = fb
+        (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    observed = _feedback_observed(feature_root, fb)
+    return {"update": rid, "feedback": observed, "eligible": fb["eligible"], "problems": fb["problems"],
+            "native_issues": fb["native_issues"], "candidates": fb["candidates"], "source_revision": fb["source_revision"],
+            "action": ("反馈够格进入调和，交蓝图负责方在 component-design 里处理。候选资格不等于接受：负责方的回复原文记进本轮 "
+                       "update-notes.md，结合当前蓝图判结果，没有明确结论就保持待确认。"
+                       if fb["eligible"] else "反馈有问题，改好本轮的 design-feedback.json 再跑：" + "；".join(
+                           fb["problems"] + [f"{i.get('code') or i.get('id')} {i.get('message', '')}" for i in fb["native_issues"]][:8]))}
 
-    problems, items = [], []
-    if doc.get("blueprint_id") != blueprint:
-        problems.append(f"blueprint_id 应是本单关联的蓝图 {blueprint}")
-    if doc.get("source_revision") != reviewed:
-        problems.append(f"source_revision 应是成文登记时评审的蓝图版本 {reviewed}（写的是 {doc.get('source_revision')}）")
-    for item in doc.get("items") or []:
-        fid = str(item.get("feedback_id", ""))
-        issue = fid.split(".")[0]
-        target = ((topics.get(issue) or {}).get("design_target") or {}).get("target_ref")
-        if not target:
-            problems.append(f"{fid}：议题 {issue} 没有登记 design_target——没有设计目标的业务意见留在需求侧，不进设计反馈")
-        elif item.get("target_ref") != target:
-            problems.append(f"{fid}：target_ref 应是议题 {issue} 登记的 {target}")
-        if issue not in said:
-            problems.append(f"{fid}：议题 {issue} 在本轮没有记下人的原话——先 `decide --update ... --issue {issue} --reply \"<原话>\"`")
-        items.append({"feedback_id": fid, "issue": issue, "kind": item.get("kind"), "target_ref": item.get("target_ref")})
-    from flow import native  # noqa: PLC0415 —— 只有这一步要读原生蓝图
-    out = native.call(project_root, "feedback", "--blueprint", blueprint, stdin=doc)
-    rec["design_feedback"] = {"path": f"AR/story-src/updates/{rid}/{FEEDBACK}", "blueprint_id": blueprint,
-                              "source_revision": reviewed, "items": items, "problems": problems,
-                              "native_issues": out.get("issues", []), "candidates": out.get("candidates")}
-    (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    states = _feedback_states(rec["design_feedback"], out)
-    ok = not problems and out.get("status") == "ok"
-    return {"update": rid, "feedback": states, "problems": problems, "native_issues": out.get("issues", []),
-            "candidates": out.get("candidates"), "current_revision": out.get("revision"),
-            "action": ("反馈合格，交蓝图负责方在 component-design 里调和；接受与否由它定，处理之前每条都是「待处理」，不写成已接受。"
-                       if ok else "反馈有问题，改好本轮的 design-feedback.json 再跑：" + "；".join(
-                           problems + [f"{i.get('code') or i.get('id')} {i.get('message', '')}" for i in out.get("issues", [])][:8]))}
 
 def record_owned_after(feature_root: Path) -> str | None:
     """这一轮的完成点（story 登记、收口）：记下本扩展拥有的文件此刻的指纹，恢复据它认「本轮留下的就是这一版」。
@@ -675,13 +688,7 @@ def cmd_update_close(feature_root: Path) -> dict:
 
     record_owned_after(feature_root)
     rec = dict(_records(feature_root))[rid]
-    feedback = None
-    if rec.get("design_feedback"):
-        from flow import native  # noqa: PLC0415 —— 有设计反馈才读原生蓝图看处理结果
-        doc = json.loads((feature_root / rec["design_feedback"]["path"]).read_text(encoding="utf-8").lstrip("\ufeff"))
-        feedback = _feedback_states(rec["design_feedback"],
-                                    native.call(native.project_root_of(feature_root), "feedback",
-                                                "--blueprint", rec["design_feedback"]["blueprint_id"], stdin=doc))
+    feedback = _feedback_observed(feature_root, rec["design_feedback"]) if rec.get("design_feedback") else None
     current, unreadable = _scan(feature_root)
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
     kept = _keep(feature_root, current, root / "after")
@@ -701,8 +708,8 @@ def cmd_update_close(feature_root: Path) -> dict:
             "unreadable": unreadable, "phases": phases, "design_feedback": feedback,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("本轮终点是取材与澄清：还没有设计或成文，按需求进展接着走。" if result == "materials" else "")
-                      + (f"设计反馈 {sum(1 for x in feedback if x['state'] == '待处理')} 条待蓝图负责方处理。"
-                         if feedback and any(x['state'] == '待处理' for x in feedback) else "")
+                      + (f"设计反馈 {len(feedback)} 条交蓝图负责方，接受与否待确认（负责方回复记在 update-notes）；收口不代表已接受，也不取得施工授权。"
+                         if feedback else "")
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
                          if unreadable else "")}
 
@@ -763,6 +770,21 @@ def record_baseline(feature_root: Path) -> str | None:
     return rid
 
 
+def _manual_content(feature_root: Path) -> dict:
+    """评审记录里人写过的内容，按渲染侧同一份判据（`story-build review --action manual`）。读不出来按有人写过处理。"""
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError("找不到 node：撤回前要核评审记录里有没有人写过的意见")
+    from flow import native  # noqa: PLC0415 —— 工程根按需求目录往上找
+    proc = subprocess.run([node, str(CORE_DIR / "story-build.mjs"), "review", "--action", "manual", "--feature", feature_root.name,
+                           "--project-root", str(native.project_root_of(feature_root))],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    rows = [line for line in proc.stdout.splitlines() if line.startswith("{")]
+    if proc.returncode != 0 or not rows:
+        return {"issues": ["（评审记录读不出，按有人写过处理）"], "freeform": False}
+    return json.loads(rows[-1])
+
+
 def cmd_update_restore(feature_root: Path) -> dict:
     """把本扩展在这一轮改过的文件退回开轮之前。**先保住现在，再按指纹一份份判。**
 
@@ -772,6 +794,9 @@ def cmd_update_restore(feature_root: Path) -> dict:
     - current 等于 before：本来就是开轮时的样子，不动；
     - 本轮完成点登记过它、current 仍是那一版：退回 before（开轮时没有的删掉）；
     - 其余（后来又改过、本轮没到完成点）：保留 current，列成冲突并给出可比的版本。
+
+    评审记录另有人工区：现在这一份里有人写过字（议题的人工区或自由意见区）而又与开轮时不同，一律保留为冲突——
+    人的意见不随撤回退掉或删掉，旧议题与现在的表态能不能对上由渲染与议题流程处理。
 
     有冲突时轮次照旧开着（`restore_conflicted`），人定好之后再跑一次，只处理满足条件的那几份。
     """
@@ -799,9 +824,17 @@ def cmd_update_restore(feature_root: Path) -> dict:
             shutil.copyfile(src, saved / rel)
 
     conflicts, restored, removed = [], [], []
+    review = "/".join(REVIEW)
+    manual = _manual_content(feature_root) if current.get(review) not in (None, before.get(review)) else None
     for rel in keys:
         was, now_sha = before.get(rel), current.get(rel)
         if now_sha == was:
+            continue
+        if rel == review and manual and (manual["issues"] or manual["freeform"]):
+            conflicts.append({"file": rel, "before": f"AR/story-src/updates/{rid}/before/{rel}" if was else None,
+                              "current": f"AR/story-src/updates/{rid}/{saved.name}/{rel}",
+                              "why": "评审记录里有人写过的意见（" + "、".join(manual["issues"] + (["自由意见区"] if manual["freeform"] else []))
+                                     + "），不随撤回退掉——旧议题与现在的表态对不对得上交渲染与议题流程"})
             continue
         if after is not None and rel in after and now_sha == after[rel]:
             if was is None:

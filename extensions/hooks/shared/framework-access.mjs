@@ -13,6 +13,7 @@
  *   node framework-access.mjs --project-root <根> --action binding --component <组件 id> --blueprint <蓝图 id>
  *   node framework-access.mjs --project-root <根> --action sources  < 来源物化 JSON（stdin）
  *   node framework-access.mjs --project-root <根> --action feedback --blueprint <id>  < blueprint-review-feedback@1（stdin）
+ *   node framework-access.mjs --project-root <根> --action feedback-related --blueprint <id> --ref <反馈文件工程相对路径>  < feedback_id 列表（stdin）
  * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期或未准入（带原生 issues），2 参数或依赖错误。
  */
 import * as fs from 'node:fs';
@@ -227,24 +228,32 @@ function checkSources(projectRoot, doc) {
 }
 
 /**
- * 核一份设计评审反馈（blueprint-review-feedback@1）：原生只判每条够不够格进入调和（授权、证据、版本、目标地址），
- * 不判接受与否。处理结果从蓝图读：某条决定的来源指向 `<反馈文件>#<feedback_id>` 才算有了可读的处理，否则待处理。
+ * 核一份设计评审反馈（blueprint-review-feedback@1）的候选资格：原生只判每条够不够格进入调和（授权、证据、版本、目标地址），
+ * 不判接受与否，也不说处理了没有。
  */
 function checkFeedback(projectRoot, blueprintId, doc) {
   const native = loadNative(projectRoot);
   const read = readBlueprint(projectRoot, blueprintId, 'draft');
-  if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [], candidates: null, handled: {} };
+  if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [], candidates: null };
   const intake = native.module('scripts/utils/blueprint-host-seams.ts').validateBlueprintReviewFeedback(doc, read.blueprint);
-  const handled = {};
-  for (const d of read.blueprint.decisions_and_gaps?.decisions ?? []) {
-    const at = String(d?.provenance?.source_ref ?? '').split('#')[1];
-    if (at) handled[at] = { decision_id: d.decision_id, status: d.status, revision: read.blueprint.revision };
-  }
   return {
     status: intake.issues.some(i => i.severity === 'BLOCKER') ? 'invalid' : 'ok', issues: intake.issues,
     candidates: { rulings: intake.authoritativeRulingCandidateIds, facts: intake.factSupplementCandidateIds },
-    revision: read.blueprint.revision, handled,
+    revision: read.blueprint.revision,
   };
+}
+
+/**
+ * 当前蓝图里与某份反馈精确相关的决定：来源 `provenance.source_ref` 恰好是「反馈文件的工程相对路径#feedback_id」的那些，
+ * 带原生 status 与当前 revision。只是观察：有相关决定不等于反馈被接受，是否接受看负责方的实际回复与当前设计。
+ */
+function feedbackRelated(projectRoot, blueprintId, ref, ids) {
+  const read = readBlueprint(projectRoot, blueprintId, 'draft');
+  if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [], related: {} };
+  const related = Object.fromEntries(ids.map(id => [id, (read.blueprint.decisions_and_gaps?.decisions ?? [])
+    .filter(d => d?.provenance?.source_ref === `${ref}#${id}`)
+    .map(d => ({ decision_id: d.decision_id, status: d.status }))]));
+  return { status: 'ok', issues: [], revision: read.blueprint.revision, related };
 }
 
 /** 需求正文要调用方给：原生恢复不出，或给的与冻结绑定对不上。 */
@@ -313,10 +322,9 @@ export function featureIdentity(projectRoot, feature) {
   }
 }
 
-/** 本阶段产物所在的目录：原生身份认不出时按目录名拼，由调用方照常报「文件不在」。 */
+/** 本阶段产物所在的目录，取原生身份给出的位置；身份认不出时为 null，由调用方报原生给的问题，不自拼目录。 */
 export function featureDir(projectRoot, feature) {
-  const who = featureIdentity(projectRoot, feature);
-  return who.dir ?? path.join(projectRoot, 'doc', 'features', String(feature));
+  return featureIdentity(projectRoot, feature).dir ?? null;
 }
 
 /**
@@ -327,9 +335,27 @@ export function featureDir(projectRoot, feature) {
  * 时范围与需求都以 run 为准，不收调用方给的需求。范围还没冻结时不解析、不代为冻结，只报 `scope: not_frozen`。
  * 只读：不写范围、报告与回执。
  *
+ * `spec` 是原生检查器看到的同一份规格（`SpecLoader.loadFeatureSpec`）：冻结时由解析器选定的输入加本阶段自己的产出组成
+ * （本阶段的产出按产出核，不拿上游输入顶替），没冻结时是原生按本地文件读出的规格。阶段消费者只读它，不另读文件。
+ *
  * @param {{ requirement?: string, requirementFile?: string }} [supplied] 调用方手里的原始需求正文或文件，只在无 run 的 spec 用
  */
 export function readFeature(projectRoot, feature, phase, supplied = {}) {
+  // 同一次任务里同一个 Feature 同一阶段只解析一次：几个消费者各跑一遍原生解析器，得到的也是同一份
+  const key = supplied.requirement === undefined && supplied.requirementFile === undefined
+    ? `${path.resolve(projectRoot)}\0${feature}\0${phase}\0${process.env.MAISON_GOAL_RUN_ID ?? ''}` : null;
+  if (key && features.has(key)) return features.get(key);
+  const out = resolveFeature(projectRoot, feature, phase, supplied);
+  if (key) features.set(key, out);
+  return out;
+}
+
+const features = new Map();
+
+/** 原生按阶段组装的规格里，扩展消费的那几份：契约、验收与用例（没有的为 null）。 */
+const specOf = spec => ({ contracts: spec.contracts ?? null, acceptance: spec.acceptance ?? null, useCases: spec.useCases ?? null });
+
+function resolveFeature(projectRoot, feature, phase, supplied) {
   const native = loadNative(projectRoot);
   const identity = native.module('scripts/utils/feature-identity.js');
   const { loadFrameworkConfig } = native.module('config.ts');
@@ -373,6 +399,7 @@ export function readFeature(projectRoot, feature, phase, supplied = {}) {
       // 范围未冻结：不选本阶段输入，只核本地已有文件的形状——坏形状不能等到冻结后才报
       const local = new SpecLoader(native.root, undefined, undefined, native.frameworkRoot).loadFeatureSpec(feature);
       out.issues.push(...(local.shape_issues ?? []).map(message => ({ code: 'feature_spec_shape', message })));
+      out.spec = specOf(local);
       if (out.issues.length) out.status = 'invalid';
       return out;
     }
@@ -407,6 +434,8 @@ export function readFeature(projectRoot, feature, phase, supplied = {}) {
       if (value.state === 'invalid') out.issues.push({ code: `${name}_invalid`, message: value.detail });
     }
     out.issues.push(...(spec?.shape_issues ?? []).map(message => ({ code: 'feature_spec_shape', message })));
+    out.spec = spec ? specOf(spec) : null;
+    out.required_outputs = resolution.inputs?.context?.required_outputs ?? [];
   } catch (e) {
     return { ...out, ...failure('invalid', e) };
   }
@@ -423,14 +452,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery [--snapshot <快照>]'
       + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
       + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）'
-      + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）';
-    if (!root || !['blueprint', 'feature', 'binding', 'sources', 'feedback'].includes(action)) throw new Error(usage);
-    if (action === 'feedback' && !opt('--blueprint')) throw new Error(usage);
+      + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）'
+      + ' | --action feedback-related --blueprint <id> --ref <反馈文件>（stdin 给 feedback_id 列表）';
+    if (!root || !['blueprint', 'feature', 'binding', 'sources', 'feedback', 'feedback-related'].includes(action)) throw new Error(usage);
+    if (['feedback', 'feedback-related'].includes(action) && !opt('--blueprint')) throw new Error(usage);
+    if (action === 'feedback-related' && !opt('--ref')) throw new Error(usage);
     if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
     if (action === 'feature' && (!opt('--feature') || !opt('--phase'))) throw new Error(usage);
     if (action === 'binding' && (!opt('--component') || !opt('--blueprint'))) throw new Error(usage);
     let doc;
-    if (action === 'sources' || action === 'feedback') {
+    if (['sources', 'feedback', 'feedback-related'].includes(action)) {
       try {
         doc = JSON.parse(fs.readFileSync(0, 'utf8'));
       } catch (e) {
@@ -441,6 +472,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       : action === 'binding' ? checkBinding(root, opt('--component'), opt('--blueprint'))
         : action === 'sources' ? checkSources(root, doc)
           : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)
+            : action === 'feedback-related' ? feedbackRelated(root, opt('--blueprint'), opt('--ref'), doc)
           : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });
     process.stdout.write(`${JSON.stringify(out, null, 1)}\n`);
     process.exitCode = out.status === 'ok' ? 0 : 1;

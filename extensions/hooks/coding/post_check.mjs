@@ -17,9 +17,10 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { contractFiles, readContracts, resolveEntityRef } from '../shared/contracts.mjs';
+import { contractFiles, phaseArtifacts, resolveEntityRef } from '../shared/contracts.mjs';
 import { guard, gate } from '../shared/gate.mjs';
-import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
+import { activeKnowledge } from '../shared/knowledge.mjs';
+import { entryOf, featureKnowledge } from '../shared/knowledge-application.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { blankComments, filesForEntity, runProbe } from '../shared/probes.mjs';
 
@@ -43,11 +44,10 @@ function sources(projectRoot, files) {
 }
 
 export default guard('coding', async (ctx) => {
-  const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
-  if (error) return gate(ctx, { problems: [error] });
-  if (!exists) {
-    return gate(ctx, { skipped: [{ what: '义务落点与探针', why: '契约还没建（或读不到）' }] });
-  }
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'coding');
+  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  const contracts = inputs.contracts;
+  if (!contracts) return gate(ctx, { skipped: [{ what: '义务落点与探针', why: inputs.why }] });
 
   let knowledge;
   try {
@@ -93,8 +93,9 @@ export default guard('coding', async (ctx) => {
   // ---- 2. 规约自带的探针：对形态匹配的每处落点跑，结果按「阻断」声明与强制力处置 ----
   // 不按实体收窄的探针，同一规约挂几处就会扫同一批文件、得同一个结果：按规约 + 结果只报一次
   const reported = new Set();
+  const decisions = new Map(featureKnowledge(ctx.projectRoot, ctx.feature, contracts).rows.map(d => [d.decision_id, d]));
   for (const ob of obligations) {
-    const entry = entryById(knowledge, ob.rule);
+    const entry = entryOf(knowledge, decisions.get(ob.decisionId));
     const probe = entry?.probe;
     if (!probe || (probe.kind === 'present_in_method' && ob.entityKind !== 'interfaces')) continue;
     const r = runProbe(probe, {
@@ -152,5 +153,5 @@ export default guard('coding', async (ctx) => {
     });
   }
 
-  return gate(ctx, { problems, warnings });
+  return gate(ctx, { problems: [...inputs.problems, ...problems], warnings });
 });

@@ -465,6 +465,20 @@ function hasHumanWords(zone, id) {
 }
 
 /**
+ * 评审记录里人写过的内容：写过字的议题（与首版人工区不同）与自由意见区。update 撤回据它判这份 Review 能不能动。
+ *
+ * @returns {{issues: string[], freeform: boolean}}
+ */
+export function manualContent(reviewText) {
+  const text = String(reviewText ?? '');
+  const ids = [...text.matchAll(/<!-- decision: ([^>]+?) -->/g)].map(m => m[1].trim());
+  return {
+    issues: ids.filter(id => hasHumanWords(issueZones(text, id, '')?.human ?? null, id)),
+    freeform: Boolean(extractFreeformZone(text)?.trim()),
+  };
+}
+
+/**
  * 旧稿里有、这次登记表里没有的议题 —— **人写过字的那些，不许静默消失**。
  *
  * `renderReview` 只按当前登记表里的 id 重建，旧文里多出来的那几条压根不进新文，

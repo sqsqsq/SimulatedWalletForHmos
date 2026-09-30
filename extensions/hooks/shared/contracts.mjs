@@ -6,9 +6,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { featureDir } from './framework-access.mjs';
-import { readTextOrNull } from './paths.mjs';
-import { parseYaml } from './yaml.mjs';
+import { featureDir, readFeature } from './framework-access.mjs';
 
 /**
  * 实体引用语法：`<集合>.<实体>[.<成员>]`。
@@ -24,30 +22,22 @@ const ENTITY_KINDS = [
 ];
 
 /**
- * 契约的路径——**与 framework 同一份**（`spec-loader.ts` 读 feature 根下这一份）。
+ * 本阶段要核的契约、验收与用例 —— 原生检查器看到的同一份规格（`readFeature(...).spec`）：
+ * 范围冻结后是原生解析器选定的输入加本阶段自己的产出（派生、复用、物化都由原生定），没冻结时是原生按本地文件读出的规格。
+ * 扩展不另读 YAML、不按文件有无选来源；原生对这个 Feature 与本阶段输入报的问题（身份、过期、形状、缺必需输入）原样带回。
  *
- * 读 plan 子目录下的另一份，会让同一份契约在仓里有两个物理位置：framework 读
- * feature 根、扩展读子目录。那时执行者只能复制一份去同步，而义务（实体上的 `must`）
- * 就挂在那份副本上——「每类数据一份真源」被绕开了。
+ * @returns {{dir: string|null, contracts: object|null, acceptance: object|null, useCases: object|null,
+ *   problems: string[], why: string}} `dir` 是原生身份给出的目录（认不出为 null）；`why` 是某份拿不到时的一句原因
  */
-function contractsPath(projectRoot, feature) {
-  return path.join(featureDir(projectRoot, feature), 'contracts.yaml');
-}
-
-/**
- * 读 contracts.yaml。
- * @returns {{contracts: object|null, error: string|null, exists: boolean}}
- *   解析失败**不返回空对象**——空契约会让所有实体解析恒假、所有集合判据恒真。
- */
-export function readContracts(projectRoot, feature) {
-  const p = contractsPath(projectRoot, feature);
-  const raw = readTextOrNull(p);
-  if (raw === null) return { contracts: null, error: null, exists: false };
-  try {
-    return { contracts: parseYaml(raw), error: null, exists: true };
-  } catch (e) {
-    return { contracts: null, error: `contracts.yaml：解析失败（${e.message}）——契约按 YAML 解析，解析失败时实体与挂在上面的 must 都读不出`, exists: true };
-  }
+export function phaseArtifacts(projectRoot, feature, phase) {
+  const f = readFeature(projectRoot, feature, phase);
+  const problems = (f.issues ?? []).map(i => `原生 ${i.code ?? i.id ?? '问题'}：${i.message ?? ''}`);
+  return {
+    dir: featureDir(projectRoot, feature),
+    contracts: f.spec?.contracts ?? null, acceptance: f.spec?.acceptance ?? null, useCases: f.spec?.useCases ?? null,
+    problems,
+    why: problems.length ? problems.join('；') : f.scope === 'frozen' ? `原生 ${phase} 阶段解析没有给出这一份` : '本地还没有这一份',
+  };
 }
 
 
@@ -194,7 +184,6 @@ export function contractFiles(contracts) {
   return [...out];
 }
 
-/** acceptance.yaml 读取（知识义务的验证要求单源）。 */
 /** 验收编号的形态：唯一定义在章节合同 `id_shapes.acceptance`。 */
 const STORY_CONTRACT = new URL('../../skills/story/contracts/story-chapters.json', import.meta.url);
 
@@ -203,17 +192,6 @@ const idShape = kind => new RegExp(`\\b(?:${JSON.parse(fs.readFileSync(STORY_CON
 export const acceptanceIdRe = () => idShape('acceptance');
 /** 验收行关联的功能编号形态（`id_shapes.function`）。 */
 export const functionIdRe = () => idShape('function');
-
-export function readAcceptance(projectRoot, feature) {
-  const p = path.join(featureDir(projectRoot, feature), 'acceptance.yaml');
-  const raw = readTextOrNull(p);
-  if (raw === null) return { acceptance: null, error: null, exists: false };
-  try {
-    return { acceptance: parseYaml(raw), error: null, exists: true };
-  } catch (e) {
-    return { acceptance: null, error: `acceptance.yaml：解析失败（${e.message}）——验收条目与 knowledge_rule 桥接都按这份 YAML 的结构读，解析不了就核不了`, exists: true };
-  }
-}
 
 /**
  * 规约编号 → 该编号下**全部**验收条目 —— 各阶段桥接前的唯一入口。
@@ -226,7 +204,7 @@ export function readAcceptance(projectRoot, feature) {
  * 数组没有自己的下游（Spec 只要编号集合，UT/testing 只要 byRule），却要维护两个接口与
  * 两次遍历。只读解析结果，不改输入对象，不落盘。
  *
- * @param {object|null} acceptance readAcceptance 解析出的 acceptance
+ * @param {object|null} acceptance phaseArtifacts 给出的 acceptance（原生组装的那一份）
  * @param {string[]} [sections] 桥接所在的集合名，默认 `ACCEPTANCE_SECTIONS`
  * @returns {{byRule: Map<string, object[]>, problems: string[]}}
  *   缺集合视为空；非数组集合或非对象成员报明集合与序号；`knowledge_rule` 缺省的条目属
@@ -240,21 +218,10 @@ const ACCEPTANCE_SECTIONS = ['criteria', 'boundaries'];
 export function knowledgeCriteria(acceptance, sections = ACCEPTANCE_SECTIONS) {
   const problems = [];
   const byRule = new Map();
+  // 集合不是列表、条目不是映射由原生规格读取报（feature_spec_shape），交到这里的已经是规范化后的条目
   for (const section of sections) {
-    const value = acceptance?.[section];
-    if (value === undefined || value === null || value === '') continue;
-    if (!Array.isArray(value)) {
-      problems.push(`acceptance.yaml 的 ${section} 不是列表（读到 ${typeof value}）——`
-        + '桥接按条目逐条读，读不出结构就核不了');
-      continue;
-    }
-    value.forEach((row, i) => {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) {
-        problems.push(`acceptance.yaml 的 ${section} 第 ${i + 1} 条不是键值对象——`
-          + '验收条目要写成「id / 场景 / 通过条件」的映射，裸值桥不到知识条目');
-        return;
-      }
-      if (!('knowledge_rule' in row)) return;
+    (Array.isArray(acceptance?.[section]) ? acceptance[section] : []).forEach((row) => {
+      if (!row || typeof row !== 'object' || !('knowledge_rule' in row)) return;
       const rule = row.knowledge_rule;
       if (typeof rule !== 'string' || !rule.trim()) {
         problems.push(`acceptance.yaml 的 ${section}「${String(row.id ?? '（没写 id）')}」：knowledge_rule 不是一个编号——`

@@ -533,6 +533,61 @@ class RestoreFollowsTheTruthTable(UpdateCase):
         self.assertEqual({"open": None, "last_restored": self.rid}, flow["update"])
 
 
+class RestoreKeepsTheReviewersWords(UpdateCase):
+    """评审记录的人工区归人：撤回时有人写过意见的 Review 保留现状、列成冲突，不整文件退回或删掉；只有机器内容的照真值表处理。"""
+
+    ISSUE = ("<!-- story-build:begin 议题 D1 · 由决策登记表生成，改它请改真源 · sha256:0123456789abcdef -->\n"
+             "#### 1.1.1 余额刷新的触发时机\n\n请产品负责人评审。\n\n")
+    EMPTY = "评审结论：\n- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n\n<!-- decision: D1 -->\n"
+    FILLED = "评审结论：\n- [ ] 同意\n- [x] 需修改\n- [ ] 暂缓\n修改意见：切账号时也要刷新。\n\n<!-- decision: D1 -->\n"
+
+    def review(self) -> Path:
+        return self.feature_root / "AR" / "review.md"
+
+    def write(self, human: str) -> bytes:
+        body = f"# 评审记录\n\n{self.ISSUE}{human}".encode("utf-8")
+        self.review().write_bytes(body)
+        return body
+
+    def complete_point(self) -> None:
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.update import record_owned_after  # noqa: PLC0415
+            record_owned_after(self.feature_root)
+        finally:
+            sys.path.remove(str(core))
+
+    def test_a_new_review_with_the_reviewers_words_is_kept(self) -> None:
+        self.review().unlink(missing_ok=True)
+        self.update()
+        filled = self.write(self.FILLED)
+        self.complete_point()
+        out = self.update("--action", "restore")
+        self.assertEqual("restore_conflicted", out["status"], out)
+        self.assertEqual(filled, self.review().read_bytes(), "本轮收到的人工意见随撤回丢了")
+        row = next(c for c in out["conflicts"] if c["file"] == "AR/review.md")
+        self.assertIn("D1", row["why"])
+
+    def test_an_existing_review_with_the_reviewers_words_is_not_rolled_back(self) -> None:
+        self.write(self.EMPTY)
+        self.update()
+        filled = self.write(self.FILLED)
+        self.complete_point()
+        out = self.update("--action", "restore")
+        self.assertEqual("restore_conflicted", out["status"], out)
+        self.assertEqual(filled, self.review().read_bytes(), "人工意见被退回开轮时的空区")
+
+    def test_a_review_with_only_machine_content_follows_the_table(self) -> None:
+        was = self.write(self.EMPTY)
+        self.update()
+        self.review().write_bytes(was.replace("请产品负责人评审。".encode("utf-8"), "请端侧负责人评审。".encode("utf-8")))
+        self.complete_point()
+        out = self.update("--action", "restore")
+        self.assertEqual("restored", out["status"], out)
+        self.assertEqual(was, self.review().read_bytes())
+
+
 class RestoreRefusesWithoutAScene(UpdateCase):
     """还原不了时说清原因，**当前内容一个字节不动**——不能为了「还原」先把现在的丢了。"""
 
@@ -1165,33 +1220,46 @@ class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
         (self.updates / self.rid / "design-feedback.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         return self.update("--action", "feedback")
 
-    def test_a_qualified_opinion_is_pending_until_the_owner_handles_it(self) -> None:
+    def test_a_qualified_opinion_is_not_an_acceptance(self) -> None:
+        """候选资格够格不等于接受：状态一律待确认，资格按提交时评审的版本记下。"""
         self.said()
         out = self.feedback()
         self.assertEqual([], out["problems"], out)
-        self.assertEqual([("D1", "待处理")], [(x["feedback_id"], x["state"]) for x in out["feedback"]])
-        self.assertIn("不写成已接受", out["action"])
+        self.assertTrue(out["eligible"], out)
+        self.assertEqual([("D1", "待确认", [])], [(x["feedback_id"], x["state"], x["related_decisions"]) for x in out["feedback"]])
+        self.assertIn("候选资格不等于接受", out["action"])
         rec = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
         self.assertEqual(self.revision, rec["design_feedback"]["source_revision"])
 
-    def test_a_decision_pointing_at_it_makes_it_handled(self) -> None:
-        """蓝图负责方调和之后，蓝图里有决定的来源指向这条反馈：状态读成已处理，带上那条决定。"""
-        self.said()
-        self.feedback()
+    def add_decision(self, source_ref: str, status: str) -> None:
+        """蓝图负责方调和时记的一条决定：来源写到它依据的那份反馈。"""
         blueprint = design_kit.blueprint_of(self.root, FEATURE)
         canonical = self.root / design_kit.features_dir(self.root) / blueprint / "blueprint" / "component-blueprint.yaml"
         doc = yaml.safe_load(canonical.read_text(encoding="utf-8"))
         doc["decisions_and_gaps"]["decisions"].append({
-            "decision_id": "feedback-d1", "kind": "review_feedback", "status": "answered_with_evidence", "owner": "design-author",
+            "decision_id": "feedback-d1", "kind": "review_feedback", "status": status, "owner": "design-author",
             "rationale": "切账号时同样刷新余额", "verification_refs": [self.TARGET],
             "provenance": {"source_kind": "review_feedback", "observed_at": "2026-09-30T00:00:00Z", "evidence_strength": "observed",
-                           "extraction_method": "reconcile",
-                           "source_ref": f"doc/features/{FEATURE}/AR/story-src/updates/{self.rid}/design-feedback.json#D1"}})
+                           "extraction_method": "reconcile", "source_ref": source_ref}})
         canonical.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
         design_kit.render_projection(self.root, blueprint, design_kit.ACCESS)
+
+    def test_an_exact_reference_is_shown_but_stays_to_be_confirmed(self) -> None:
+        """来源精确指向这份反馈的决定列成相关决定、带原生状态；接受与否仍看负责方的回复，状态不变。"""
+        self.said()
+        self.feedback()
+        self.add_decision(f"doc/features/{FEATURE}/AR/story-src/updates/{self.rid}/design-feedback.json#D1", "open_decision")
         out = self.update("--action", "feedback")
-        self.assertEqual([("D1", "已处理", "feedback-d1")],
-                         [(x["feedback_id"], x["state"], x.get("handled_by", {}).get("decision_id")) for x in out["feedback"]], out)
+        self.assertEqual([("D1", "待确认", [{"decision_id": "feedback-d1", "status": "open_decision"}])],
+                         [(x["feedback_id"], x["state"], x["related_decisions"]) for x in out["feedback"]], out)
+
+    def test_the_same_anchor_in_another_file_is_not_related(self) -> None:
+        """别的轮次、别的文件里同样写 #D1 的决定，不算这份反馈的相关决定。"""
+        self.said()
+        self.feedback()
+        self.add_decision(f"doc/features/{FEATURE}/AR/story-src/updates/20000101-000000/design-feedback.json#D1", "answered_with_evidence")
+        out = self.update("--action", "feedback")
+        self.assertEqual([[]], [x["related_decisions"] for x in out["feedback"]], out)
 
     def test_without_the_human_words_it_is_named(self) -> None:
         self.assertIn("没有记下人的原话", "；".join(self.feedback()["problems"]))

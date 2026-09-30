@@ -21,11 +21,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS_MJS = DEV_EXT / "hooks" / "shared" / "contracts.mjs"
 FEATURE = "AR90001"
 
-CONTRACT_YAML = """modules:
+CONTRACT_YAML = """interfaces:
   - name: 甲模块
-    must:
-      - text: 缓存凭证读取前校验签名
-        verify: ut
+    file: src/a.ets
+    methods:
+      - name: read
+        must:
+          - text: 缓存凭证读取前校验签名
+            verify: ut
 """
 
 
@@ -34,9 +37,9 @@ class TestContractsSingleSource(unittest.TestCase):
         script = (
             "import {pathToFileURL} from 'node:url';"
             "const m=await import(pathToFileURL(process.argv[1]).href);"
-            "const r=m.readContracts(process.argv[2], process.argv[3]);"
-            "console.log(JSON.stringify({exists:r.exists,error:r.error,"
-            "names:(r.contracts?.modules??[]).map(x=>x.name)}));")
+            "const r=m.phaseArtifacts(process.argv[2], process.argv[3], 'plan');"
+            "console.log(JSON.stringify({exists:r.contracts!==null,"
+            "names:(r.contracts?.interfaces??[]).map(x=>x.name)}));")
         proc = subprocess.run(
             [self.node, "--input-type=module", "-e", script, "--",
              str(CONTRACTS_MJS), str(root), FEATURE],
@@ -60,7 +63,6 @@ class TestContractsSingleSource(unittest.TestCase):
         (self.feature_root / "contracts.yaml").write_text(CONTRACT_YAML, encoding="utf-8")
         result = self.read_contracts(self.root)
         self.assertTrue(result["exists"])
-        self.assertIsNone(result["error"])
         self.assertEqual(result["names"], ["甲模块"])
 
     def test_does_not_fall_back_to_the_plan_subdirectory(self) -> None:

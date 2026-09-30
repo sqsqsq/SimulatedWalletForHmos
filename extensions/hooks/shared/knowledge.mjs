@@ -490,10 +490,8 @@ export function activeKnowledge(projectRoot) {
   }
   if (bad.length) fail(`知识不合协议（${bad.length} 处，每条写明所在文件）：\n  · ${bad.join('\n  · ')}`);
 
+  // 不同文件可以有同编号的条目：判断与义务按「来源文件 + 单元」认，不按裸编号
   const entries = out.constraints.flatMap(c => c.entries);
-  const ids = entries.map(e => e.id);
-  const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
-  if (dup.length) fail(`条目编号重复：${[...new Set(entries.filter(e => dup.includes(e.id)).map(e => `${e.file} ${e.id}`))].join('、')}——激活规约的编号全仓唯一，一经分配不复用`);
 
   return {
     ...out,
@@ -501,11 +499,6 @@ export function activeKnowledge(projectRoot) {
     prefixes: [...new Set(entries.map(e => e.prefix))],
     patternIds: out.patterns.map(p => p.id),
   };
-}
-
-/** 按编号取条目；找不到返回 null（调用方据此判「编号不在册」）。 */
-export function entryById(knowledge, id) {
-  return knowledge.entries.find(e => e.id === id) ?? null;
 }
 
 /**

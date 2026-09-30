@@ -42,6 +42,27 @@ export function designStatPoints(design) {
   return { state: details.some(d => d.rows.length) ? 'ready' : 'empty', details };
 }
 
+const list = (x) => (Array.isArray(x) ? x : []);
+
+/**
+ * 埋点在施工单位的落实处并列送到作者与审查者：蓝图的埋点明细、契约里承担它的方法说明、验收条目。
+ * 没有 plan.md 时统计点、适用结果与验证方式就写在方法说明（`interfaces[].methods[].description`）与验收里；
+ * 对不对得上由审查逐点判，这里只并列。没有落在本单位的埋点明细时为空。
+ */
+export function statDelivery(design, contracts, acceptance) {
+  const want = designStatPoints(design);
+  if (want.state === 'none' || want.state === 'missing') return [];
+  const methods = list(contracts?.interfaces).flatMap(i => list(i?.methods).filter(m => String(m?.description ?? '').trim())
+    .map(m => `- \`${i.name}.${m.name}\`：${String(m.description).trim()}`));
+  const cases = [...list(acceptance?.criteria), ...list(acceptance?.boundaries)]
+    .map(c => `- 验收 \`${c?.id}\`：${c?.description ?? c?.expected ?? c?.scenario ?? ''}`);
+  return ['埋点明细（蓝图 story_details 里的 event，落在本施工单位）：',
+    ...want.details.map(d => `- ${d.title}（${d.id}）：统计点 ${d.rows.map(r => clean(r[0])).join('、') || '（明细里没有统计点表）'}`),
+    '承担统计点的契约方法说明（没有 plan.md 时，统计点、适用结果与验证方式写在这里）：',
+    ...(methods.length ? methods : ['- （契约方法都没有说明）']),
+    '验收条目：', ...(cases.length ? cases : ['- （没有验收条目）'])];
+}
+
 /** plan.md 里逐点落实的结果行：`[{ point, methods, cells }]`；plan.md 没有这样的表返回空数组。 */
 export function planStatRows(planText) {
   return tableRows(planText, ['统计点', '责任方法']).map(({ cells, at }) => ({

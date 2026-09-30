@@ -82,7 +82,7 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
         message = self.hook("plan")
         self.assertIn("解析失败", message)
         self.assertIn("验收 AC-K9（失败）", message, "契约读不出屏蔽了用例引用组")
-        self.assertIn("契约解析失败", message.split("未能执行")[-1], "义务与一致组该以 skipped 写明前置")
+        self.assertIn("解析失败", message.split("未能执行")[-1], "义务与一致组该以 skipped 写明前置")
 
     def test_a_clean_plan_passes(self) -> None:
         self.judged()

@@ -16,32 +16,27 @@
  */
 import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
-import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
-import { carriedBy, featureKnowledge } from '../shared/knowledge-application.mjs';
+import { activeKnowledge } from '../shared/knowledge.mjs';
+import { carriedBy, entryOf, featureKnowledge, rolesOf } from '../shared/knowledge-application.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, verifyProblem }
   from '../shared/obligations.mjs';
 import { readTextOrNull } from '../shared/paths.mjs';
 import { designStatPoints, planStatRows, pointKey } from '../shared/stat-points.mjs';
-import { featureDir } from '../shared/framework-access.mjs';
-import { readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
-import { parseYaml } from '../shared/yaml.mjs';
+import { phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 
 /**
  * `use-cases.yaml` 里 `linked_acceptance` 引的编号都要在 `acceptance.yaml` 里存在。
  * 验收编号取 acceptance 顶层各列表条目的 `id`，不认前缀；文件缺席或读不了与悬空引用分开报。
  */
-function acceptanceRefProblems(projectRoot, feature, group) {
-  const raw = readTextOrNull(path.join(featureDir(projectRoot, feature), 'use-cases.yaml'));
-  if (raw === null) return [];
-  const acc = readAcceptance(projectRoot, feature);
-  if (!acc.acceptance) {
-    group.skipped.push({ what: '用例的验收引用', why: acc.error ?? '没有 acceptance.yaml' });
+function acceptanceRefProblems(inputs, group) {
+  const cases = inputs.useCases;
+  if (!cases) return [];
+  if (!inputs.acceptance) {
+    group.skipped.push({ what: '用例的验收引用', why: inputs.why });
     return [];
   }
-  let cases;
-  try { cases = parseYaml(raw); } catch (e) { return [`use-cases.yaml：解析失败（${e.message}）——linked_acceptance 的验收引用从这份 YAML 读，解析不了就核不了`]; }
-  const ids = new Set(Object.values(acc.acceptance).filter(Array.isArray).flat()
+  const ids = new Set(Object.values(inputs.acceptance).filter(Array.isArray).flat()
     .map(c => c?.id).filter(Boolean).map(String));
   const dangling = new Map();
   const walk = (node, at) => {
@@ -62,15 +57,19 @@ function acceptanceRefProblems(projectRoot, feature, group) {
  * 埋点逐点落实：蓝图落在本单位的每个统计点在 plan.md 的逐点表里有行，每行的责任方法是契约声明的方法。
  * 只核对应与引用；结果、来源、去重与验证写没写到位是语义，归独立审查。
  */
-function statProblems(ctx, design, contracts, group) {
+function statProblems(inputs, design, contracts, group) {
   const want = designStatPoints(design);
   if (want.state === 'none' || want.state === 'missing') { group.skipped.push({ what: '埋点逐统计点落实', why: want.why }); return; }
   if (want.state === 'empty') {
     group.skipped.push({ what: '埋点逐统计点落实', why: `蓝图的埋点明细（${want.details.map(d => d.id).join('、')}）里没有表头含「统计点」的表` });
     return;
   }
-  const planText = readTextOrNull(path.join(featureDir(ctx.projectRoot, ctx.feature), 'plan', 'plan.md'));
-  if (planText === null) { group.skipped.push({ what: '埋点逐统计点落实', why: '这一次没有 plan.md，逐点表无处可对' }); return; }
+  const planText = readTextOrNull(path.join(inputs.dir, 'plan', 'plan.md'));
+  if (planText === null) {
+    // 埋点义务照样送到审查：它对着契约方法说明与验收逐点核；这里只是 Markdown 逐点表的一致性不适用
+    group.skipped.push({ what: 'plan.md 逐点表一致性', why: '这一次没有 plan.md；统计点由契约方法说明与验收承载，交独立审查逐点核' });
+    return;
+  }
   const rows = planStatRows(planText);
   const points = want.details.flatMap(d => d.rows.map(r => r[0]));
   const have = new Set(rows.map(r => pointKey(r.point)));
@@ -105,22 +104,23 @@ export default guard('plan', async (ctx) => {
   const stat = { name: '埋点逐统计点落实', problems: [], skipped: [] };
   const groups = [contract, design, obligation, consistency, pattern, reference, stat];
 
-  reference.problems.push(...acceptanceRefProblems(ctx.projectRoot, ctx.feature, reference));
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'plan');
+  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  groups.unshift({ name: '原生对本阶段输入报的问题', problems: inputs.problems, skipped: [] });
+  reference.problems.push(...acceptanceRefProblems(inputs, reference));
 
   // ---- 契约可读、must 挂位、resource_keys 形状 ----
-  const read = readContracts(ctx.projectRoot, ctx.feature);
-  const contracts = read.contracts;
-  if (read.error) contract.problems.push(read.error);
-  else if (!read.exists) {
-    // 契约缺失由原生门禁判；本组判据没跑成要说出来
-    contract.skipped.push({ what: '契约实体上的义务与角色', why: '契约还没建' });
+  const contracts = inputs.contracts;
+  if (!contracts) {
+    // 契约拿不到的原因由原生给：派生、复用或本阶段产出都没有，或原生判它不合格
+    contract.skipped.push({ what: '契约实体上的义务与角色', why: inputs.why });
   } else {
     for (const bad of misplacedMust(contracts)) {
       contract.problems.push(`${bad}——must 的挂载位置是封闭集合（data_models[].fields[]、interfaces[].methods[]、components[] 及其 state[]、resource_keys 的资源条目），coding 只从这些位置读义务`);
     }
     contract.problems.push(...resourceEntries(contracts).problems);
   }
-  const noContract = contracts ? null : (read.error ? '契约解析失败' : '契约还没建');
+  const noContract = contracts ? null : inputs.why;
 
   // ---- 设计里的知识判断：本施工单位承接的那部分 ----
   let knowledge = null;
@@ -144,20 +144,21 @@ export default guard('plan', async (ctx) => {
     for (const ob of obligations) {
       const at = `contracts.yaml 的 ${ob.entityPath || '(未知实体)'}`;
       if (!ob.rule) { obligation.problems.push(`${at}：有一条 must 没写 rule——must 按 rule 的编号认回激活知识里的规约条目`); continue; }
-      const entry = entryById(knowledge, ob.rule);
-      if (!entry) { obligation.problems.push(`${at}：must.rule「${ob.rule}」不在激活知识里`); continue; }
       if (!ob.text) obligation.problems.push(`${at}：${ob.rule} 的 must 缺 text——text 写这条规约在本需求落实成什么，coding 按它落实`);
+      // 先认回判断，再按判断的来源文件与单元找条目：不同文件可以有同编号的规约
+      const decision = applied.find(d => d.decision_id === ob.decisionId);
+      if (!ob.decisionId) { obligation.problems.push(`${at}：${ob.rule} 的 must 没写 decision_id——义务按它认回设计里那条适用判断`); continue; }
+      if (!decision) { obligation.problems.push(`${at}：${ob.rule} 的 must 指向 ${ob.decisionId}，它不是本施工单位承接的适用判断`); continue; }
+      if (decision.knowledge.unit !== ob.rule) { obligation.problems.push(`${at}：must.rule 是 ${ob.rule}，它指向的判断 ${ob.decisionId} 判的是 ${decision.knowledge.unit}`); continue; }
+      const entry = entryOf(knowledge, decision);
+      if (!entry) { obligation.problems.push(`${at}：must.rule「${ob.rule}」不在判断 ${ob.decisionId} 的来源 ${decision.file} 里`); continue; }
       const verify = verifyProblem(entry, ob.verify);
       if (verify) obligation.problems.push(`${at} 的 ${ob.rule} ${verify}`);
-      const decision = applied.find(d => d.decision_id === ob.decisionId);
-      if (!ob.decisionId) obligation.problems.push(`${at}：${ob.rule} 的 must 没写 decision_id——义务按它认回设计里那条适用判断`);
-      else if (!decision) obligation.problems.push(`${at}：${ob.rule} 的 must 指向 ${ob.decisionId}，它不是本施工单位承接的适用判断`);
-      else if (decision.knowledge.unit !== ob.rule) obligation.problems.push(`${at}：must.rule 是 ${ob.rule}，它指向的判断 ${ob.decisionId} 判的是 ${decision.knowledge.unit}`);
     }
-    for (const rule of new Set(obligations.map(o => o.rule))) {
-      if (entryById(knowledge, rule)?.probe?.kind !== 'present_in_method') continue;
-      if (!obligations.some(o => o.rule === rule && o.entityKind === 'interfaces')) {
-        obligation.skipped.push({ what: `${rule} 的探针`, why: '探针无落点：它查方法体，而这条规约没有挂在 interfaces[].methods[] 上的 must' });
+    for (const d of applied) {
+      if (entryOf(knowledge, d)?.probe?.kind !== 'present_in_method') continue;
+      if (!obligations.some(o => o.decisionId === d.decision_id && o.entityKind === 'interfaces')) {
+        obligation.skipped.push({ what: `${d.knowledge.unit} 的探针`, why: '探针无落点：它查方法体，而这条规约没有挂在 interfaces[].methods[] 上的 must' });
       }
     }
   }
@@ -187,10 +188,12 @@ export default guard('plan', async (ctx) => {
       if (declared && pr.pattern !== declared.id) pattern.problems.push(`${at}：pattern 写的是 ${pr.pattern}，决定 ${pr.decisionId} 选的是 ${declared.id}`);
       if (!(decision.knowledge.roles ?? []).some(r => r.role === pr.role)) {
         pattern.problems.push(`${at}：角色「${pr.role}」不在决定 ${pr.decisionId} 选定的角色里（${(decision.knowledge.roles ?? []).map(r => r.role).join('、')}）`);
+      } else if (!rolesOf(decision, judged.scope).some(r => r.role === pr.role)) {
+        pattern.problems.push(`${at}：角色「${pr.role}」按决定 ${pr.decisionId} 落在别的施工单位的设计责任里——本单位只承担落点在自己设计引用内的角色`);
       }
     }
     for (const d of selected) {
-      for (const r of d.knowledge.roles ?? []) {
+      for (const r of rolesOf(d, judged.scope)) {
         if (!roles.some(pr => pr.decisionId === d.decision_id && pr.role === r.role)) {
           pattern.problems.push(`contracts.yaml：选型决定 ${d.decision_id} 的角色「${r.role}」（${r.target_ref}）没有实体承担——在真正承担它的 components / interfaces / data_models 上写 pattern_roles`);
         }
@@ -198,7 +201,7 @@ export default guard('plan', async (ctx) => {
     }
   }
 
-  if (judged) statProblems(ctx, judged, contracts, stat);
+  if (judged) statProblems(inputs, judged, contracts, stat);
 
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'plan'), skipped: [] });

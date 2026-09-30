@@ -12,11 +12,11 @@
  *
  * 契约：stdin JSON ctx → stdout JSON result。
  */
-import { featureDir } from '../shared/framework-access.mjs';
 import * as path from 'node:path';
 import { lines, readTextOrNull } from '../shared/paths.mjs';
-import { readContracts } from '../shared/contracts.mjs';
-import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
+import { phaseArtifacts } from '../shared/contracts.mjs';
+import { activeKnowledge } from '../shared/knowledge.mjs';
+import { entryOf, featureKnowledge } from '../shared/knowledge-application.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { cellByHeader as cellOf, tableCells }
@@ -47,18 +47,18 @@ function reviewTable(text) {
 }
 
 export default guard('review', async (ctx) => {
-  const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
-  if (error) return gate(ctx, { problems: [error] });
-  if (!exists) {
-    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '契约还没建（或读不到）' }] });
-  }
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'review');
+  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  const contracts = inputs.contracts;
+  if (!contracts) return gate(ctx, { skipped: [{ what: '知识义务复核表', why: inputs.why }] });
   const obligations = obligationsFromContracts(contracts);
+  const decisions = new Map(featureKnowledge(ctx.projectRoot, ctx.feature, contracts).rows.map(d => [d.decision_id, d]));
   const roles = patternRolesFromContracts(contracts);
   if (!obligations.length && !roles.length) {
     return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '契约里没有 must，也没有承担模式角色的实体' }] });
   }
 
-  const reportPath = path.join(featureDir(ctx.projectRoot, ctx.feature), 'review', 'review-report.md');
+  const reportPath = path.join(inputs.dir, 'review', 'review-report.md');
   const text = readTextOrNull(reportPath);
   if (text === null) {
     // 报告缺失由框架的 check-review 负责，但本判据确实没跑成，要报出来
@@ -97,7 +97,7 @@ export default guard('review', async (ctx) => {
       problems.push(`review/review-report.md 第 ${row.line} 行：${where} 的结论列是「${verdict}」——结论列取值封闭为 ${VERDICTS.join(' / ')}`);
       continue;
     }
-    const force = entryById(knowledge, ob.rule)?.force;
+    const force = entryOf(knowledge, decisions.get(ob.decisionId))?.force;
     if (verdict === '未落实' && force === '红线') {
       problems.push(`review/review-report.md 第 ${row.line} 行：${where} 判「未落实」，这条规约是红线——强制力取自激活知识，红线未落实即阻断，不能带着交付`);
       continue;
@@ -120,5 +120,5 @@ export default guard('review', async (ctx) => {
     }
   }
 
-  return gate(ctx, { problems });
+  return gate(ctx, { problems: [...inputs.problems, ...problems] });
 });

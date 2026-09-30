@@ -45,7 +45,7 @@ import { ORIGINAL, prepareReview, reviewResult } from './story/independent-revie
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
-import { cmdBuild, registrationGap } from './story/review.mjs';
+import { cmdBuild, manualContent, registrationGap } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck, storyCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
@@ -123,10 +123,16 @@ function cmdBasis(ctx) {
  *   生成原生请求并调原生 prepare；给出派审要带的东西。
  * - `check`：核这一次的审查结果，输出一行 JSON（`result`、`detail`），pass / warn 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
+ * - `manual`：评审记录里人写过的内容（写过字的议题、自由意见区），一行 JSON。
  */
 async function cmdReview(ctx) {
-  if (!['prepare', 'check'].includes(ctx.args.action)) {
-    fail('用法: story-build.mjs review --action prepare|check --feature <需求名> [--project-root <路径>] [--report-dir <项目相对路径>]');
+  if (!['prepare', 'check', 'manual'].includes(ctx.args.action)) {
+    fail('用法: story-build.mjs review --action prepare|check|manual --feature <需求名> [--project-root <路径>] [--report-dir <项目相对路径>]');
+  }
+  if (ctx.args.action === 'manual') {
+    // 评审记录里人写过的内容（update 撤回判 Review 能不能动）：一行 JSON
+    process.stdout.write(`${JSON.stringify(manualContent(readText(ctx.reviewPath) ?? ''))}\n`);
+    return;
   }
   if (ctx.args.action === 'check') {
     const out = await reviewResult(ctx);

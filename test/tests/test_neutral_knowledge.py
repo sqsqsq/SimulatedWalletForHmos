@@ -226,8 +226,11 @@ class NeutralKnowledgeCase(unittest.TestCase):
             self.decision("NEU-01", "applied", "本需求新增出口", requirement="中性出口在入口生成一次标识并向后透传",
                           target_refs=[TARGET]),
             self.decision("NEU-02", "not_applicable", "本需求没有重试路径，出口只走一次")]
-        others = [self.decision(u, "not_applicable", "本需求不涉及这条规约")
-                  for s in self.active() if s["kind"] == "constraints" and "neutral-domain" not in s["file"] for u in s["units"]]
+        done = {(d["provenance"]["source_ref"], d["knowledge"]["unit"]) for d in neutral}
+        others = [{**self.decision(u, "not_applicable", "本需求不涉及这条规约", s["file"]),
+                   "decision_id": f"k-{Path(s['file']).stem}-{u.lower()}"}
+                  for s in self.active() if s["kind"] == "constraints" and "neutral-domain" not in s["file"] for u in s["units"]
+                  if (f"doc/extensions/{s['file']}", u) not in done]
         return neutral + others
 
     def write_contracts(self, body: str = "", decisions: list[dict] | None = None) -> None:
@@ -509,18 +512,17 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.assertIn("解析失败", self.ut_message())
 
     def test_a_section_that_is_not_a_list_is_named(self) -> None:
-        """集合写成一句话：读不出结构就核不了，报明是哪个集合，不当空集合放行。"""
+        """集合写成一句话：原生读规格时点名是哪个集合，扩展照样报义务没有验收承接，不当空集合放行。"""
         self.write_acceptance("criteria: 还没写\n")
         message = self.ut_message()
-        self.assertIn("不是列表", message)
-        self.assertIn("criteria", message)
+        self.assertIn("`criteria` 应为数组", message)
+        self.assertIn("没有 knowledge_rule: NEU-01", message)
 
     def test_a_bare_value_row_is_named(self) -> None:
-        """条目写成裸值：桥不到知识条目，要点名是第几条。"""
+        """条目写成裸值：原生读规格时点名是哪一条并剔除，其余条目照常核。"""
         self.write_acceptance("criteria:\n  - id: AC-1\n" + self.BRIDGE + "  - 只写了一句话\n")
         message = self.ut_message()
-        self.assertIn("不是键值对象", message)
-        self.assertIn("第 2 条", message)
+        self.assertIn("`criteria[1]` 应为映射", message)
 
     def test_an_empty_rule_is_named(self) -> None:
         """`knowledge_rule:` 留空与「没写这个字段」不是一回事：后者是普通业务验收。"""
@@ -541,6 +543,54 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.write_contracts()
         self.write_acceptance("criteria:\n  - id: AC-9\n    description: 普通业务验收\n")
         self.assertIn("k-neu-01（NEU-01）没有验收条目承接", self.hook("spec"))
+
+
+#: 另一份规约里也有 NEU-01：编号相同、来源不同，要求实机证据
+OTHER_CONSTRAINT = """---
+name: 中性另一域
+kind: constraints
+form: entries
+applies_when: 需求有新增出口时：出口的实机表现
+domain: NEU
+---
+
+# 中性另一域
+
+| 编号 | 约束 | 强制力 | 命中条件 | 处置 | 验证（执行体） | 探针 |
+|---|---|---|---|---|---|---|
+| NEU-01 | 另一域的同号条目：出口在弱网下也要给出结果 | 基线 | 有新增出口 | 弱网下给出结果 | 模型：核对超时分支。实机：弱网走查 | 无 |
+"""
+
+
+class TheSameIdFromTwoFiles(NeutralKnowledgeCase):
+    """两份规约都有 NEU-01：激活照常，判断与义务按「来源文件 + 单元」认，各自按自己那一条的执行体核 verify。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.ext / "knowledge" / "constraints" / "neutral-other.md").write_text(OTHER_CONSTRAINT, encoding="utf-8")
+        manifest = self.ext / "manifest.yaml"
+        manifest.write_text(manifest.read_text(encoding="utf-8").replace(
+            "    - knowledge/constraints/neutral-domain.md\n",
+            "    - knowledge/constraints/neutral-domain.md\n    - knowledge/constraints/neutral-other.md\n"), encoding="utf-8")
+
+    def test_both_files_load(self) -> None:
+        got = json.loads(self.eval_js("JSON.stringify(k.activeKnowledge(root).entries.filter(e => e.id === 'NEU-01').map(e => e.file))"))
+        self.assertEqual(["knowledge/constraints/neutral-domain.md", "knowledge/constraints/neutral-other.md"], sorted(got))
+
+    def test_each_must_follows_its_own_source(self) -> None:
+        other = {**self.decision("NEU-01", "applied", "出口要在弱网下给结果", "neutral-other",
+                                 requirement="弱网下出口给出结果", target_refs=[TARGET]), "decision_id": "k-other-neu-01"}
+        self.write_contracts(
+            "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
+            "      - name: emitWithTrace\n        must:\n" + must("NEU-01", "review")
+            + "      - name: emitOnWeakNetwork\n        must:\n" + must("NEU-01", "review", "k-other-neu-01", "弱网下给出结果"),
+            decisions=self.judged(neutral=[
+                self.decision("NEU-01", "applied", "本需求新增出口", "neutral-domain", requirement="入口生成一次标识", target_refs=[TARGET]),
+                self.decision("NEU-02", "not_applicable", "本需求没有重试路径", "neutral-domain"), other]))
+        message = self.hook("plan")
+        self.assertNotIn("emitWithTrace 的 NEU-01", message, "中性域的 NEU-01 只要模型证据，review 就够")
+        self.assertIn("emitOnWeakNetwork 的 NEU-01 标了 verify: review，而该规约声明要「实机」证据", message)
+        self.assertNotIn("只判一次", message)
 
 
 if __name__ == "__main__":

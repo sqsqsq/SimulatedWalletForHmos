@@ -11,11 +11,10 @@
  *
  * 契约：stdin JSON ctx → stdout JSON result。
  */
-import { featureDir } from '../shared/framework-access.mjs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readTextOrNull } from '../shared/paths.mjs';
-import { acceptanceIdRe, knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
+import { acceptanceIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
 import { obligationsFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 
@@ -26,8 +25,8 @@ import { guard, gate } from '../shared/gate.mjs';
  * 产物建了却一个 AC 都没引用是「验了个寂寞」，那正是本 hook 要抓的。
  * 把二者混成一个「空集就放过」，后一种情况会静默溜走。
  */
-function referencedAcceptanceIds(projectRoot, feature) {
-  const root = path.join(featureDir(projectRoot, feature), 'testing');
+function referencedAcceptanceIds(dir) {
+  const root = path.join(dir, 'testing');
   const ids = new Set();
   let artifactCount = 0;
   const stack = [root];
@@ -53,25 +52,25 @@ function referencedAcceptanceIds(projectRoot, feature) {
 }
 
 export default guard('testing', async (ctx) => {
-  const { contracts, error, exists } = readContracts(ctx.projectRoot, ctx.feature);
-  if (error) return gate(ctx, { problems: [error] });
-  if (!exists) {
-    return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: '契约还没建（或读不到）' }] });
-  }
+  const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'testing');
+  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  const contracts = inputs.contracts;
+  if (!contracts) return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: inputs.why }] });
   const obligations = obligationsFromContracts(contracts);
   if (!obligations.length) {
     return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: '契约里没有 must' }] });
   }
 
-  const { ids: referenced, artifactCount } = referencedAcceptanceIds(ctx.projectRoot, ctx.feature);
+  const { ids: referenced, artifactCount } = referencedAcceptanceIds(inputs.dir);
   if (!artifactCount) {
     return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: '测试产物还没建' }] });
   }
 
   // 桥接：acceptance.yaml 的 knowledge_rule 把验收条目认回规约条目（framework 原生追溯链）。
   // 同一规约常有多个验收条目（不同场景），逐条核，不能只看最后一条；
-  // 解析失败要接住报出来，不能当空集合放行。
-  const { acceptance, error: accError } = readAcceptance(ctx.projectRoot, ctx.feature);
+  // 原生没给出验收时说出原因，不当空集合放行。
+  const acceptance = inputs.acceptance;
+  const accError = acceptance ? null : `验收拿不到（${inputs.why}）——义务按验收条目分派，没有验收就核不了覆盖`;
   const { byRule, problems: accProblems } = knowledgeCriteria(acceptance);
   const problems = accError ? [accError] : [...accProblems];
 
@@ -99,5 +98,5 @@ export default guard('testing', async (ctx) => {
     }
   }
 
-  return gate(ctx, { problems });
+  return gate(ctx, { problems: [...inputs.problems, ...problems] });
 });

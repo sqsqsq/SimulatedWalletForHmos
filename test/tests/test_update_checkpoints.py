@@ -439,7 +439,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
 
     PASS = ("[story-build check] 通过：10 章\n", "", 0)
     CONTENT_FAIL = ("", "[story-build check] 2 处未通过\n", 1)
-    PREFLIGHT_FAIL = ("", "[story-build] spec/knowledge-use.yaml 还有 3 条没有判断\n", 1)
+    PREFLIGHT_FAIL = ("", "[story-build] AR/story-src/ 台账缺 1 件：decisions.json（由 skeleton 产出）\n", 1)
     NOT_STARTED = ("", "", 3221225794)
     POST_OK = ('{"ok":true}\n', "", 0)
 
