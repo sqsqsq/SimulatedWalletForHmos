@@ -261,6 +261,43 @@ function runlessRequirement(native, feature, supplied) {
 }
 
 /**
+ * 原生 Feature 的身份与目录：CU 在 `<蓝图>/<施工单位>/`，平铺维护 Feature 在它自己的目录；CU 另带设计引用。
+ * 阶段钩子按它找本阶段产物，不按需求名拼路径。
+ *
+ * @returns {{status: string, kind?: string, blueprintId?: string, changeUnitId?: string, dir?: string,
+ *            design_refs?: object[], blueprint_ref?: object|null, issues: object[]}}
+ */
+export function featureIdentity(projectRoot, feature) {
+  const native = loadNative(projectRoot);
+  const identity = native.module('scripts/utils/feature-identity.js');
+  const { loadFrameworkConfig } = native.module('config.ts');
+  let kind;
+  let relPath;
+  try {
+    kind = identity.classifyFeatureId(feature);
+    relPath = identity.featureRelativePath(feature);
+  } catch (e) {
+    return failure('invalid', e);
+  }
+  const featuresDir = loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
+  const out = { status: 'ok', ...kind, dir: path.join(native.root, ...featuresDir.split('/'), ...String(relPath).split('/')),
+    design_refs: [], blueprint_ref: null, issues: [] };
+  if (kind.kind !== 'cu') return out;
+  try {
+    const unit = native.module('scripts/utils/change-unit-path.ts').loadCanonicalChangeUnit(native.root, kind.blueprintId, kind.changeUnitId).changeUnit;
+    return { ...out, design_refs: unit.design_refs ?? [], blueprint_ref: unit.component_blueprint_ref };
+  } catch (e) {
+    return { ...out, ...failure('invalid', e) };
+  }
+}
+
+/** 本阶段产物所在的目录：原生身份认不出时按目录名拼，由调用方照常报「文件不在」。 */
+export function featureDir(projectRoot, feature) {
+  const who = featureIdentity(projectRoot, feature);
+  return who.dir ?? path.join(projectRoot, 'doc', 'features', String(feature));
+}
+
+/**
  * 读一个原生 Feature（CU 或平铺维护 Feature）在某阶段的输入：身份与蓝图引用，加上当前阶段的原生只读解析结果。
  *
  * 范围已冻结时，按原生阶段调用的同一顺序组装入口参数、跑阶段解析器：用哪份输入、复用、过期与 invalid 全由原生定，

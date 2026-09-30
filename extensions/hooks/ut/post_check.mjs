@@ -10,16 +10,17 @@
  *
  * 契约：stdin JSON ctx → stdout JSON result。
  */
+import { featureDir } from '../shared/framework-access.mjs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { featureRoot, readTextOrNull } from '../shared/paths.mjs';
+import { readTextOrNull } from '../shared/paths.mjs';
 import { acceptanceIdRe, knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
 import { obligationsFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 
 /** UT 侧的覆盖证据：覆盖报告 + 用例源码里出现的 AC 标记。 */
 function coveredAcceptanceIds(projectRoot, feature) {
-  const root = featureRoot(projectRoot, feature);
+  const root = featureDir(projectRoot, feature);
   const ids = new Set();
 
   const reportPath = path.join(root, 'ut', 'reports', 'ac-coverage.json');
@@ -74,10 +75,11 @@ export default guard('ut', async (ctx) => {
     const rule = String(ob.rule ?? '?');
     // verify 是四阶段分派的单源：本阶段只管 ut 与 both，其余是显式不适用
     if (ob.verify !== 'ut' && ob.verify !== 'both') continue;
-    const entries = byRule.get(rule);
-    if (!entries || !entries.length) {
+    // 同编号的规约可能来自不同文件：按义务出自的那条判断认验收
+    const entries = (byRule.get(rule) ?? []).filter(c => String(c.knowledge_decision_id).trim() === ob.decisionId);
+    if (!entries.length) {
       problems.push(`acceptance.yaml：义务 ${rule} 标了 verify: ${ob.verify}，但没有 `
-        + `knowledge_rule: ${rule} 的验收条目——门禁按 knowledge_rule 把验收条目认回规约，要覆盖的场景从这些条目取`);
+        + `knowledge_rule: ${rule}、knowledge_decision_id: ${ob.decisionId} 的验收条目——门禁按这两项把验收条目认回义务出自的判断，要覆盖的场景从这些条目取`);
       continue;
     }
     for (const c of entries) {

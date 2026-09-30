@@ -2,8 +2,8 @@
 
 全部用中性知识（机制从没见过的域前缀与模式），机制零改动：
   载入——协议版本与值域不合就点名，一次列全；
-  看到——骨架每条带条目内容行，「规约」带强制力与验法；
-  识别——本轮豁免按强制力允许，未确认的事实面要写核实位置；
+  看到——知识任务按文件送原文、单元与「何时读」；
+  识别——设计的判断按强制力核：红线不许豁免，豁免要写理由、补偿与授权；
   应用——每处落点的 verify 符合规约声明的执行体，契约流式与块式同一读法、resource_keys 按 framework 两层合同；
   传递——review 一处落点一行、结论按列取准确值、未落实按强制力处置；
         coding 探针按「阻断」声明与强制力处置，注释不当代码证据，注释里的在册编号报到行号。
@@ -55,26 +55,21 @@ applies_when: 设计出口与重试时：本工程已有的出口登记与重试
 重试入口可能在中性调度器里。
 """
 
-#: 一份判全的判断：三条命中并落实，一条不命中。键里的 `-` 换成 `_` 就是覆写参数名。
+#: 一份判全的判断：三条适用并落实，一条不涉及。键里的 `-` 换成 `_` 就是覆写参数名。
 JUDGED = {
-    "NEU-01": "applicable: true\n    requirement: 出口生成一次标识\n    contract: 中性出口接口",
-    "NEU-02": "applicable: true\n    requirement: 重试复用标识\n    contract: 中性出口接口",
-    "NEU-03": "applicable: true\n    requirement: 出口字段不用方向词\n    contract: 中性出口接口",
-    "NEU-04": "applicable: false\n    reason: 本需求的出口不计耗时",
+    "NEU-01": ("applied", "出口生成一次标识"),
+    "NEU-02": ("applied", "重试复用标识"),
+    "NEU-03": ("applied", "出口字段不用方向词"),
+    "NEU-04": ("not_applicable", "本需求的出口不计耗时"),
 }
 
-
-def judgement(**over: str) -> str:
-    return "\n".join(f"  - id: {k}\n    {over.get(k.replace('-', '_'), v)}" for k, v in JUDGED.items())
-
-
-def waived(reason: str, compensation: str = "") -> str:
-    tail = f"\n      compensation: {compensation}" if compensation else ""
-    return f"applicable: true\n    waived:\n      reason: {reason}{tail}"
+#: 本轮豁免：理由、补偿与授权三样都要有
+WAIVER = {"reason": "这一轮只有单次出口", "compensation": "下一轮补重试", "authority_ref": "decision:scope-01"}
 
 
 def landing(rule: str, text: str, verify: str) -> str:
-    return (f"          - rule: {rule}\n            text: {text}\n            verify: {verify}\n")
+    return (f"          - rule: {rule}\n            decision_id: k-{rule.lower()}\n"
+            f"            text: {text}\n            verify: {verify}\n")
 
 
 def contracts(v01: str = "review", v02: str = "ut", *, second02: str = "", head: str = "") -> str:
@@ -132,12 +127,28 @@ class ProtocolCase(nk.NeutralKnowledgeCase):
         """门禁交给审查提示的片段：告警与未执行判据。"""
         return "\n".join(result.get("promptFragments") or [])
 
-    def judged(self, **over: str) -> None:
-        self.write_use(neutral=judgement(**over))
-        self.assertEqual(0, self.render().returncode, self.render().stderr)
+    def judged(self, **over: tuple[str, str] | dict) -> None:
+        """设计的判断：中性域按 JUDGED（可覆写），其余激活规约逐条不涉及；之后写的契约都带上它。"""
+        neutral = []
+        for unit, (outcome, why) in JUDGED.items():
+            got = over.get(unit.replace("-", "_"), (outcome, why))
+            extra = {}
+            if isinstance(got, dict):
+                outcome, why, extra = "waived", got["reason"], {"waiver": got}
+            else:
+                outcome, why = got
+            if outcome == "applied":
+                extra = {"requirement": why, "target_refs": [nk.TARGET]}
+            neutral.append(self.decision(unit, outcome, why, **extra))
+        self.decisions = self.judged_all(neutral)
 
-    def write_contracts(self, text: str) -> None:
-        (self.feature_root / "contracts.yaml").write_text(text, encoding="utf-8")
+    def judged_all(self, neutral: list[dict]) -> list[dict]:
+        return nk.NeutralKnowledgeCase.judged(self, neutral=neutral)
+
+    def write_contracts(self, text: str = "") -> None:
+        if not hasattr(self, "decisions"):
+            self.judged()
+        super().write_contracts(text, self.decisions)
 
 
 class KnowledgeDescribesItself(ProtocolCase):
@@ -250,102 +261,58 @@ class TheProtocolIsCheckedOnLoad(ProtocolCase):
 
 
 class TheJudgementSeesTheEntry(ProtocolCase):
-    """看到：判命中时要的内容送到骨架那一行；「规约」带着 plan 定证据来源要的两列。"""
+    """看到：判断时要的内容按文件送到——原文带强制力与验法，单元逐个列出，每份带自己的「何时读」。"""
 
-    def test_the_skeleton_carries_each_entry_and_facet(self) -> None:
-        proc = nk.node(str(self.module("knowledge-use.mjs")), "init",
-                       "--feature", nk.FEATURE, "--project-root", str(self.root))
+    def task(self) -> str:
+        proc = self.knowledge_task()
         self.assertEqual(0, proc.returncode, proc.stderr)
-        text = self.use_path.read_text(encoding="utf-8")
-        # 条目原义分行送达：约束原文与强制力、命中条件、命中后要给出、验法——处置与命中条件不挤在一行
-        block = text.split("  - id: NEU-02", 1)[1].split("  - id: ", 1)[0]
-        for line in ("# 红线 · 重复触发时复用同一个标识", "# 命中条件：有重试路径", "# 命中后要给出：", "# 验法：模型 / 实机"):
-            self.assertIn(line, block)
-        self.assertNotIn("命中：", text, "命中条件又挤回同一行")
-        self.assertIn("# 面：出口登记 / 重试入口\n", text)
+        return proc.stdout
 
-    def init_skeleton(self) -> str:
-        proc = nk.node(str(self.module("knowledge-use.mjs")), "init",
-                       "--feature", nk.FEATURE, "--project-root", str(self.root))
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        return self.use_path.read_text(encoding="utf-8")
+    def test_the_task_carries_each_file_with_its_units(self) -> None:
+        text = self.task()
+        block = text.split("knowledge/constraints/neutral-domain.md", 1)[1]
+        self.assertIn("- 单元：NEU-01、NEU-02、NEU-03、NEU-04", block)
+        self.assertIn("- 何时读：需求有新增出口时：出口的标识与字段要求", block)
+        self.assertIn("| NEU-02 | 重复触发时复用同一个标识 | 红线 | 有重试路径 |", block, "原文连强制力与命中条件一起送到")
 
     def test_each_fact_says_when_to_read_it(self) -> None:
-        """骨架每份项目事实带自己的「何时读」，作者据它判用不用；多行自述续行仍是注释，骨架照常读回。"""
-        text = self.init_skeleton()
-        self.assertIn("    # 何时读：设计出口与重试时：本工程已有的出口登记与重试入口\n    # 面：", text)
+        """每份项目事实带自己的「何时读」，作者据它判用不用；多行自述照样送到。"""
+        self.assertIn("- 何时读：设计出口与重试时：本工程已有的出口登记与重试入口", self.task())
         self.edit_knowledge("facts/neutral-facts.md",
                             "applies_when: 设计出口与重试时：本工程已有的出口登记与重试入口\n",
                             "applies_when: |\n  设计出口时：\n  出口登记在哪\n")
-        self.use_path.unlink()
-        text = self.init_skeleton()
-        self.assertIn("    # 何时读：设计出口时：\n    #   出口登记在哪\n    # 面：", text)
-        proc = nk.node("--input-type=module", "-e",
-                       f"const d = await import({nk.as_url(self.module('knowledge-use/document.mjs'))});"
-                       f"const u = d.readUse({json.dumps(self.root.as_posix())}, {json.dumps(nk.FEATURE)});"
-                       "process.stdout.write(JSON.stringify(u.facts.map(f => f.id)));")
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertIn("neutral-facts", json.loads(proc.stdout))
-
-    def test_the_projection_carries_force_and_method(self) -> None:
-        self.judged()
-        zone = self.spec_path.read_text(encoding="utf-8").split("knowledge-use:begin 规约 ")[1]
-        self.assertIn("| NEU-02 | 红线 | 重试复用标识 | 技术契约 · 中性出口接口 | 模型 / 实机 |", zone)
+        block = self.task().split("knowledge/facts/neutral-facts.md", 1)[1]
+        self.assertIn("设计出口时：", block)
+        self.assertIn("出口登记在哪", block)
 
 
 class AWaiverFollowsTheForce(ProtocolCase):
-    """识别：命中但本轮豁免，红线不许、基线要补偿、建议可空；未确认的事实面要写核实位置。"""
+    """识别：适用但本轮豁免，红线不许；豁免要写理由、补偿与授权，改强制力就改结论。"""
 
-    def render_output(self) -> tuple[int, str]:
-        proc = self.render()
-        return proc.returncode, proc.stderr + proc.stdout
+    def spec(self, **over) -> str:
+        self.judged(**over)
+        self.write_contracts()
+        return self.hook("spec")
 
     def test_a_red_line_cannot_be_waived(self) -> None:
-        self.write_use(neutral=judgement(NEU_02=waived("这一轮只有单次出口", "下一轮补重试")))
-        code, out = self.render_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("NEU-02 是红线", out)
+        self.assertIn("NEU-02 是红线，不能豁免", self.spec(NEU_02=WAIVER))
 
-    def test_a_baseline_waiver_needs_a_compensation(self) -> None:
-        self.write_use(neutral=judgement(NEU_01=waived("这一轮出口沿用旧标识")))
-        code, out = self.render_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("要写 compensation", out)
+    def test_a_baseline_waiver_with_its_reasons_passes(self) -> None:
+        self.assertNotIn("知识应用", self.spec(NEU_01=WAIVER))
 
-    def test_a_suggestion_waiver_may_skip_the_compensation(self) -> None:
-        self.write_use(neutral=judgement(NEU_04=waived("这一轮不计耗时")))
-        code, out = self.render_output()
-        self.assertEqual(0, code, out)
-        zone = self.spec_path.read_text(encoding="utf-8").split("knowledge-use:begin 规约 ")[1]
-        self.assertIn("命中但本轮豁免（评审判）", zone)
-        self.assertNotIn("| NEU-04 |", zone, "豁免的命中不进落实表")
+    def test_a_waiver_without_its_compensation_is_refused(self) -> None:
+        bare = {k: v for k, v in WAIVER.items() if k != "compensation"}
+        self.assertIn("k-neu-01：形态不合", self.spec(NEU_01=bare), "少一样就不是合法的豁免")
 
-    def test_an_empty_facet_says_it_is_empty(self) -> None:
-        self.write_use(neutral=judgement())
-        self.edit(self.use_path, "facet: 出口登记", 'facet: ""')
-        code, out = self.render_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("facet 空着", out)
-
-    def test_a_file_level_use_is_refused(self) -> None:
-        self.write_use(neutral=judgement())
-        self.edit(self.use_path, "    used:\n      - facet: 出口登记\n        used_for:", "    used_for:")
-        code, out = self.render_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("没写 used", out)
+    def test_changing_the_force_changes_the_verdict(self) -> None:
+        self.edit_knowledge("constraints/neutral-domain.md", "| 基线 | 有新增出口 |", "| 红线 | 有新增出口 |")
+        self.assertIn("NEU-01 是红线，不能豁免", self.spec(NEU_01=WAIVER))
 
 
 class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
     """应用：一条 must 一处落点，它的 verify 由规约声明的执行体定。"""
 
     def plan(self, text: str) -> str:
-        self.judged()
-        (self.feature_root / "plan").mkdir(parents=True, exist_ok=True)
-        (self.feature_root / "plan" / "plan.md").write_text(
-            "# 计划\n\n## 2. 模块架构图\n\n略。\n\n## 9. 宿主扩展\n\n### 9.1 项目知识\n\n略。\n\n### 9.2 规约\n\n略。\n\n### 9.3 设计模式\n\n"
-            "| 适用单元 | 候选 | 选型 | 角色 | 理由 |\n|---|---|---|---|---|\n"
-            "| 出口标识的生成与消费 | neutral-pattern | 采用 | 标识生成者 | 标识贯穿三步 |\n"
-            "", encoding="utf-8")
         self.write_contracts(text)
         result = self.hook_result("plan")
         # 阻断的问题与交给审查者的未执行判据一起看：这一组判据两类都会报
@@ -365,7 +332,7 @@ class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
 
     def test_a_method_probe_without_a_method_landing_is_reported(self) -> None:
         text = ("data_models:\n  - name: 出口上下文\n    fields:\n      - name: traceId\n        must:\n"
-                "          - rule: NEU-02\n            text: 重试复用标识\n            verify: ut\n"
+                "          - rule: NEU-02\n            decision_id: k-neu-02\n            text: 重试复用标识\n            verify: ut\n"
                 "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
                 "      - name: emitWithTrace\n        must:\n"
                 + landing("NEU-01", "入口生成标识并透传", "review") + landing("NEU-03", "出口字段名不用方向词", "review"))
@@ -383,9 +350,9 @@ class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
         """
         flow = ("data_models:\n  - name: 出口记录\n    fields:\n"
                 "      - { name: traceId, type: string,\n"
-                "          must: [ { rule: NEU-02, text: 重试复用标识, verify: ut } ] }\n")
+                "          must: [ { rule: NEU-02, decision_id: k-neu-02, text: 重试复用标识, verify: ut } ] }\n")
         block = ("data_models:\n  - name: 出口记录\n    fields:\n      - name: traceId\n        type: string\n"
-                 "        must:\n          - rule: NEU-02\n            text: 重试复用标识\n            verify: ut\n")
+                 "        must:\n          - rule: NEU-02\n            decision_id: k-neu-02\n            text: 重试复用标识\n            verify: ut\n")
         self.assertNotIn("流式", self.plan(contracts(head=flow)))
         self.assertEqual(self.plan(contracts(head=flow)), self.plan(contracts(head=block)))
 
@@ -397,12 +364,12 @@ class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
         """
         rk = ("resource_keys:\n  中性模块:\n    string:\n"
               "      - key: exit.trace.label\n        value: 出口标识\n"
-              "        must:\n          - rule: NEU-03\n            text: 出口文案不用方向词\n            verify: review\n"
+              "        must:\n          - rule: NEU-03\n            decision_id: k-neu-03\n            text: 出口文案不用方向词\n            verify: review\n"
               "    media:\n      - key: exit_icon\n        value: 图\n")
         message = self.plan(contracts(head=rk))
         self.assertNotIn("resource_keys", message, message)
         layered = ("resource_keys:\n  中性模块:\n    string:\n"
-                   "      must:\n        - rule: NEU-03\n          text: 出口文案不用方向词\n          verify: review\n")
+                   "      must:\n        - rule: NEU-03\n          decision_id: k-neu-03\n          text: 出口文案不用方向词\n          verify: review\n")
         self.assertIn("resource_keys.中性模块.string 分类层挂了 must", self.plan(contracts(head=layered)))
         flat = "resource_keys:\n  - key: exit.trace.label\n    value: 出口标识\n"
         self.assertIn("resource_keys 不是「模块 → 分类 → 资源列表」的两层对象", self.plan(contracts(head=flat)))
@@ -416,7 +383,6 @@ class TheReviewTableIsOneRowPerLanding(ProtocolCase):
     REUSE = "interfaces.中性出口接口.reuseTrace"
 
     def review(self, *rows: tuple[str, str, str, str]) -> str:
-        self.judged()
         self.write_contracts(contracts(second02="ut"))
         (self.feature_root / "review").mkdir(parents=True, exist_ok=True)
         table = "\n".join(f"| {r} | {at} | src/exit.ets | {verdict} | {basis} |" for r, at, verdict, basis in rows)
@@ -468,7 +434,6 @@ class TheCodeIsTheEvidence(ProtocolCase):
             "}\n")
 
     def coding(self, source: str) -> str:
-        self.judged()
         self.write_contracts(contracts())
         (self.root / "src").mkdir(exist_ok=True)
         (self.root / "src" / "exit.ets").write_text(source, encoding="utf-8")
@@ -497,7 +462,6 @@ class TheCodeIsTheEvidence(ProtocolCase):
     def test_a_file_probe_is_reported_once_per_rule(self) -> None:
         """同一规约挂两处、探针不按实体收窄：扫的是同一批文件，同样的行号只报一次。"""
         bad = self.GOOD.replace("const trace = this.newTrace();", "const trace = this.newTrace({ leftSide: 1 });")
-        self.judged()
         self.write_contracts(contracts().replace(
             "      - name: reuseTrace\n        must:\n",
             "      - name: reuseTrace\n        must:\n" + landing("NEU-03", "出口字段名不用方向词", "review")))
@@ -518,7 +482,7 @@ class TheCodeIsTheEvidence(ProtocolCase):
 
 
 class TheAuthorPagesSayWhereThingsGo(unittest.TestCase):
-    """作者页：coding 不再要「说法」、模式指针指下篇；plan 有执行体对照、借挂的落点与中性反例。"""
+    """作者页：coding 不再要「说法」、模式指针指下篇；plan 有执行体对照、义务带出自的决定、业务规则不挂义务。"""
 
     def read(self, phase: str) -> str:
         return (nk.EXT / "hooks" / phase / "author.md").read_text(encoding="utf-8")
@@ -531,7 +495,7 @@ class TheAuthorPagesSayWhereThingsGo(unittest.TestCase):
 
     def test_the_plan_page(self) -> None:
         page = self.read("plan")
-        for needle in ("不是某条规约要求的业务规则写在这里", "借挂", "含「实机」", "`review` 即可"):
+        for needle in ("不是某条规约要求的业务规则写在实体自己的描述里", "含「实机」", "写 `review`", "decision_id"):
             self.assertIn(needle, page)
 
 

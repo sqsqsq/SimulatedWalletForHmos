@@ -186,7 +186,7 @@ class MeasureReadsRealEvents(unittest.TestCase):
         """被读得最多的是扩展自己的判据脚本，不是 framework 的 check-*.ts。"""
         r = self._measure([{
             "tool_name": "read",
-            "tool_input": {"filePath": "doc/extensions/hooks/shared/knowledge-use.mjs"},
+            "tool_input": {"filePath": "doc/extensions/hooks/shared/knowledge-application.mjs"},
             "tool_output": "export function coverageProblems() {}",
         }])
         self.assertEqual(1, r["reads_checker_source"])

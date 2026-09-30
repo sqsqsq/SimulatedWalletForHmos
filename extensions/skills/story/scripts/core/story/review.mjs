@@ -12,10 +12,9 @@ import { ProjectionConflict, projectionDigest, recordedDigest } from './document
 /**
  * 一条决策登记要写满的字段，与「缺了会怎样」。
  *
- * 导出，因为作者任务包要照它列——字段名在校验里写一遍、在提示词里再写一遍，
- * 就是两份真源，改了一处另一处静默过期。
+ * 字段名与缺了会怎样只在这里写一份：校验与报错都照它列，不在提示词里再写一遍。
  */
-export const DECISION_FIELDS = [
+const DECISION_FIELDS = [
   ['title', '陈述句标题（已定的陈述结论，待定的陈述事项）'],
   ['clarification', '带小标题分段的澄清正文'],
   ['decider', '请谁评审（角色名）'],

@@ -291,14 +291,14 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
     def test_the_guide_registers_a_declined_image_outside_the_appendix(self) -> None:
         """不用的图，理由登记在材料清单里；附录那一节只列初始资料。
 
-        **方法在作业书，那条命令在任务包**：命令带着这一轮的真实路径，抄进方法页就成了
+        **方法在作业书，那条命令在骨架给的成文输入里**：命令带着这一轮的真实路径，抄进方法页就成了
         第二份会过期的写法。两边各自都要在。
         """
         guide = read("phases/story-write.md")
         self.assertIn("写明为什么不用", guide, "作业书没说不用的图要登记理由")
         self.assertIn("附录的材料清单不列图", guide)
-        package = read_ext("hooks/spec/author.mjs")
-        self.assertIn("--unused", package, "任务包里没有那条登记命令")
+        inputs = read_ext("skills/story/scripts/core/story/story-inputs.mjs")
+        self.assertIn("--unused", inputs, "成文输入里没有那条登记命令")
 
     def test_the_scan_map_and_the_contract_word_list_agree(self) -> None:
         """作业书里的类型名与合同 `decision_categories` 的 key 一一对上——

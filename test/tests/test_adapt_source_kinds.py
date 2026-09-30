@@ -227,7 +227,9 @@ class TheAdapterBlocks(SourceKindCase):
         got = self.follow_up(self.adapt("--apply", target, PKG_ROOT))
         self.assertEqual("1.9.6", got["installed"])
         self.assertTrue(got["items"]["在途单"])
-        self.assertTrue(all(i.startswith("1.9.7：") for i in got["items"]["在途单"]), got["items"]["在途单"])
+        later = [i.split("：", 1)[0] for i in got["items"]["在途单"]]
+        self.assertIn("1.9.7", later)
+        self.assertTrue(all(tuple(map(int, v.split("."))) > (1, 9, 6) for v in later), later)
         self.assertTrue(any(i.startswith("1.9.5：") for i in got["items"]["知识"]))
 
     def test_a_business_source_leaves_out_the_adapter_block(self) -> None:

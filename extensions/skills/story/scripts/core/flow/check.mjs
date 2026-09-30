@@ -311,36 +311,6 @@ export function flowProblems(featureRoot) {
   return problems;
 }
 
-/** 场景探针：走过 /story 的 feature 才有流程契约。没走的不受本套判据影响。 */
-export function isStoryFeature(featureRoot) {
-  return fs.existsSync(path.join(featureRoot, ...FLOW_FILE));
-}
-
-/**
- * 叙事件成文了没有——spec 阶段三份产物里的第三份。
- *
- * spec 一次 pass 产出 `spec.md` / `AR/review.md` / `AR/story.md`，三者事实同源。
- * 判据不查文件在不在：只查存在的话，**手写一份简版照样过**。
- * 查的是登记态——`story_flow.py story` 登记前会重跑 `story-build check`，
- * 登记成功即等于 check 的判据都过了。一处判定，一处真源。
- *
- * 成文在 spec 阶段内，由阶段边界守着：本地单没有归档这个时点，挂在归档上的触发条件永远不来。
- */
-export function storyProduced(featureRoot) {
-  const { exists, flow, error } = readFlow(featureRoot);
-  if (!exists) return [];                // 没走 /story，本判据不适用
-  if (error) {
-    // 读不出状态就判不了成文态。**不当作「没成文」也不当作「成文了」**——说出读不了这件事。
-    return [`AR/story-src/story-flow.json：不是合法 JSON（${error}）——成文态按契约状态判，读不出无从判定；${FLOW_FIX}`];
-  }
-  if (reached(flow, 'story_written')) return [];
-  return [
-    'AR/story.md：未登记成文，spec 三份产物缺叙事件——spec 是一次 pass 产出 '
-    + 'spec.md / AR/review.md / AR/story.md 三份；成文态由 `story_flow.py story` 登记，'
-    + '当前该做的动作由 `story_flow.py status --feature <feature>` 给出。',
-  ];
-}
-
 /** 读契约。三种结果各自可辨：没有文件 / 读出来了 / 解析失败并带原因。 */
 function readFlow(featureRoot) {
   const flowPath = path.join(featureRoot, ...FLOW_FILE);

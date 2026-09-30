@@ -15,7 +15,7 @@
 | `form` | 形态，指机器读的正文结构：`facets`（分面）、`halves`（上下篇）或 `entries`（条目表），必填 |
 | `applies_when` | 什么情况下读、它回答什么问题，例如「判断上游内容是否归本部件时：本部件是谁、职责边界、与谁交互」 |
 
-任务包与审查按「路径 —— `applies_when`」列出全部激活知识，读者据此按当前需求选读；所以 `applies_when` 要写清问题，一个「always」说明不了它回答什么。正文开头一句接着说它帮读者做什么决定。登记只在 manifest：新增、改名、拆分一份知识，改知识文件与 `provides.knowledge` 即可。
+知识任务与审查按「路径 —— `applies_when`」列出全部激活知识，读者据此按当前需求选读；所以 `applies_when` 要写清问题，一个「always」说明不了它回答什么。正文开头一句接着说它帮读者做什么决定。登记只在 manifest：新增、改名、拆分一份知识，改知识文件与 `provides.knowledge` 即可。
 
 初析与 AR 提取要读的，是自述回答「本部件是谁、职责边界、与哪些交互方怎样交互」的那一份；首次安装时先写它。
 
@@ -29,7 +29,7 @@
 | frontmatter | 四项 | 四项，不写 roles | 四项，可选 `domain`（等于条目前缀） | 四项，`name` 即模式 id；`roles` 必填、`optional_roles`、`coordinator_role`；`depends_on` 给模型读，机制不读 |
 | 加载器核的结构 | 至少一个二级标题；正文没有「# 上篇 ·」 | 两个一级标题「# 上篇 · …」「# 下篇 · …」，各篇至少一个二级标题 | 表头含「编号」「约束」的条目表（§六） | 同 facts × halves，另核 `roles` 非空、`coordinator_role` 在 roles 里 |
 | 登记单元 | 面名 | 篇名（上篇 / 下篇） | 条目编号 | 单元、候选与信号 |
-| 下游怎么用 | 任务包列面名，作者登记用了哪一面，审查回查 | spec 读并登记上篇；plan 任务包附下篇全文；coding 读下篇 | spec「规约」投影、验收 `knowledge_rule`、plan `must`、探针 | spec「设计模式」投影、plan `files[].pattern/role`、coding 读下篇 |
+| 下游怎么用 | 知识任务列面名，蓝图事实的 `value.knowledge` 记用了哪一面，审查回查 | 设计读上篇、事实记用了哪一篇；plan 与 coding 读下篇 | 蓝图知识应用决定（Story 附录·规约投影）、验收 `knowledge_rule` 与 `knowledge_decision_id`、plan 实体 `must`（带 `decision_id`）、探针 | 蓝图选型决定（角色落点）、plan 实体 `pattern_roles`、coding 读下篇 |
 | Demo 示例 | `knowledge/facts/` 里 `form: facets` 的各份 | `knowledge/facts/` 里 `form: halves` 的那份 | `knowledge/constraints/` 里带「探针」列的那一份 | `knowledge/design-patterns/` 各份 |
 
 ## 三、谁写什么

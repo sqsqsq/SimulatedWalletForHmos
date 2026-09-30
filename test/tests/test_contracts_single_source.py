@@ -15,7 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from ext_workspace import DEV_EXT, DEV_ROOT
+from ext_workspace import DEV_EXT, DEV_ROOT, link_harness_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS_MJS = DEV_EXT / "hooks" / "shared" / "contracts.mjs"
@@ -52,6 +52,7 @@ class TestContractsSingleSource(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
+        link_harness_yaml(self.root)
         self.feature_root = self.root / "doc" / "features" / FEATURE
         (self.feature_root / "plan").mkdir(parents=True)
 
@@ -75,9 +76,9 @@ if __name__ == "__main__":
 
 
 class PatternSignalSourceIsStatedToBothReaders(unittest.TestCase):
-    """「信号来自业务流程本身」只在协议写一处，spec 模板指到那一节。
+    """「信号来自业务流程本身」只在协议写一处，蓝图作者页指到那一节。
 
-    spec 阶段做候选判定的人手上是 spec 模板：模板用「protocol.md「设计模式」」把他送到那一节，
+    模式选型在蓝图设计时做，设计作者手上是蓝图作者页：它用 protocol.md「设计模式」的指引把他送到那一节，
     不再抄一遍——两处各写一份，改的时候只改到一处（检查器 M19 守同一件事）。
     """
 
@@ -86,15 +87,15 @@ class PatternSignalSourceIsStatedToBothReaders(unittest.TestCase):
         "当前用模拟、演示或简化方式承载某一步，不改变业务信号——承载会换，业务不会。",
     )
     PROTOCOL = Path("doc/extensions/skills/story/reference/knowledge/protocol.md")
-    TEMPLATE = Path("doc/extensions/skills/story/templates/spec-sections.md")
+    TEMPLATE = Path("doc/extensions/hooks/blueprint/author.md")
 
     def test_both_readers_carry_the_same_sentences(self) -> None:
         protocol = (DEV_ROOT / self.PROTOCOL).read_text(encoding="utf-8")
         template = (DEV_ROOT / self.TEMPLATE).read_text(encoding="utf-8")
         for sentence in self.SENTENCES:
             self.assertIn(sentence, protocol)
-            self.assertNotIn(sentence, template, "模板又抄了一遍协议里的规则")
-        self.assertIn("protocol.md「设计模式」", template, "模板没有把读者送到协议那一节")
+            self.assertNotIn(sentence, template, "作者页又抄了一遍协议里的规则")
+        self.assertIn("protocol.md`「设计模式」", template, "作者页没有把读者送到协议那一节")
 
     def test_the_copyable_verdict_wording_is_gone_from_the_routing_table(self) -> None:
         """路由表里那句可照抄的具体描述已退场。

@@ -85,7 +85,7 @@ const FRAMEWORK_ARTIFACT_NAMES = ['acceptance', 'spec', 'impact', 'review'];
  * 资源与代码文件名（`string.json`）是工程标识，附录里是它们的正当落点，不在这里拦。
  */
 /** 指到别的文档的章节 —— spec 门禁也按这一种判（spec 可以写自己的文件名与 §）。 */
-export const CROSS_DOC_COORDINATES = [
+const CROSS_DOC_COORDINATES = [
   DOC_COORDINATE_HEAD,
 ];
 

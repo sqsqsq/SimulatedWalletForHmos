@@ -34,10 +34,7 @@ const FORMS = { facts: ['facets', 'halves'], constraints: ['entries'], patterns:
 /** 上下篇的两个篇名：halves 形态的登记单元就是它们。 */
 export const HALVES = ['上篇', '下篇'];
 
-/** 事实按 `name` 认：knowledge-use 的 `facts[].id` 就是它，校验与送达共用这一处。 */
-export const factsByName = knowledge => new Map(knowledge.facts.map(f => [f.name, f]));
-
-/** 读写规则与适配方法的位置（相对扩展根）：任务包、审查与报错都指向这里。 */
+/** 读写规则与适配方法的位置（相对扩展根）：知识任务、审查与报错都指向这里。 */
 const PROTOCOL_DOC = 'skills/story/reference/knowledge/protocol.md';
 
 /** 激活清单文件名（相对扩展根）。 */
@@ -372,7 +369,7 @@ function parseFactFile(body, fm, rel, form, bad) {
  *
  * @returns {string[]} 相对扩展根的 POSIX 斜杠路径，按清单顺序
  */
-export function knowledgeFiles(projectRoot) {
+function knowledgeFiles(projectRoot) {
   return knowledgeRegistrations(projectRoot).map(r => r.file);
 }
 
@@ -419,7 +416,7 @@ export function knowledgeRegistrations(projectRoot) {
  * 要在两处登记，改一处忘另一处就是静默漂移，而它们本来就是同一件事。
  *
  * 知识靠自己描述自己：frontmatter 的 `applies_when` 说何时读、回答什么，每份解析结果带上它
- * （`appliesWhen`），任务包与审查据此把知识交给当前阶段；机制不点任何知识的名字。
+ * （`appliesWhen`），知识任务与审查据此把知识交给当前阶段；机制不点任何知识的名字。
  *
  * @returns {{facts: object[], constraints: object[], patterns: object[],
  *            entries: object[], prefixes: string[], patternIds: string[]}}
@@ -477,7 +474,7 @@ export function activeKnowledge(projectRoot) {
       const got = raw === undefined || raw === null ? '的 frontmatter 缺 applies_when'
         : typeof raw === 'string' ? '的 applies_when 是空的' : `的 applies_when 不是文字（读到 ${typeof raw}）`;
       bad.push(`${relPosix} ${got} —— 用一句话写这份知识何时读、回答什么，`
-        + `任务包与审查按它把知识交给当前阶段（写法见 ${PROTOCOL_DOC}）`);
+        + `知识任务与审查按它把知识交给当前阶段（写法见 ${PROTOCOL_DOC}）`);
     }
     // 本文件的结构错误（条目表零行、缺角色等）记下后接着核下一份：维护者一轮看到全部问题。
     try {
@@ -597,7 +594,7 @@ export function selfCheck(projectRoot, knowledge) {
 }
 
 /**
- * 激活知识及其自述用途，外加读写规则的位置：作者任务包与审查任务共用这一段。
+ * 激活知识及其自述用途，外加读写规则的位置：审查任务用这一段。
  * 只渲染已有对象，不按任何知识名字分支。
  */
 export function knowledgeGuide(projectRoot, knowledge) {

@@ -582,7 +582,7 @@ def mark_unused(feature_root: Path, target: Path, reason: str) -> dict:
     """登记本需求为什么不用这张图。**不复制、不改名、不动文件**。
 
     材料里的图不都属于本需求——废弃的对照稿、友商参考、别的单据的页面都可能在里面。
-    它们的去向要有个落点：写在这里，作者任务包与读者审查逐张读得到，
+    它们的去向要有个落点：写在这里，成文输入与读者审查逐张读得到，
     归档件里也就不必为了解释一张不用的图而把它引进正文。
     """
     from materials import registry
@@ -612,7 +612,7 @@ def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> di
     复制进 `ux-reference/` 会让视觉链路把它当成一屏去匹配，然后报它没映射到任何页面。
 
     图片的身份是内容，所以说明按 sha256 记，跟着这张图走；名字只是给人看的。
-    登记完刷新材料清单——清单是唯一真源，作者任务包与读者审查都从它逐张读。
+    登记完刷新材料清单——清单是唯一真源，成文输入与读者审查都从它逐张读。
     """
     from materials import registry  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
 

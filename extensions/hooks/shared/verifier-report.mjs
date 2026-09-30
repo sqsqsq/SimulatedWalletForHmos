@@ -9,10 +9,11 @@
  * 这里核的是本阶段 overlay 的每条判据在汇总表里都有一行、同一对象只登记第一份合规结论、WARN/FAIL 有处置记录。
  * Story 的独立人读审查不在这里：判据在 `rules/story-reader-rules.yaml`，任务由 `reader-review-task.mjs` 生成。
  */
+import { featureDir } from './framework-access.mjs';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
+import { extensionRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 import { tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 
@@ -80,7 +81,7 @@ export function reportProblems(projectRoot, feature, phase) {
   } else if (subject && !ledger[subject] && !problems.length) {
     fs.writeFileSync(ledgerPath, `${JSON.stringify({ ...ledger, [subject]: digest }, null, 2)}\n`, 'utf-8');
   }
-  const notes = readTextOrNull(path.join(featureRoot(projectRoot, feature), phase, 'notes.md')) ?? '';
+  const notes = readTextOrNull(path.join(featureDir(projectRoot, feature), phase, 'notes.md')) ?? '';
   const undisposed = rows.filter(r => /^(WARN|FAIL)$/.test(r.status) && !notes.includes(r.id));
   if (undisposed.length) {
     problems.push(`${phase}/notes.md：审查结论 ${undisposed.map(r => `${r.id}（${r.status}）`).join('、')}没有处置记录`
@@ -108,7 +109,7 @@ const INVALID_EVIDENCE =
  * 那是如实披露的状态，不是缺件。
  */
 function reportLocation(projectRoot, feature, phase) {
-  const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
+  const dir = path.join(featureDir(projectRoot, feature), phase, 'reports');
   const summary = readJsonOrNull(path.join(dir, 'summary.json'));
   if (!summary) return { summaryFound: false, abs: null, summary: null };
   const rel = typeof summary.verifier_report === 'string' ? summary.verifier_report.trim() : '';

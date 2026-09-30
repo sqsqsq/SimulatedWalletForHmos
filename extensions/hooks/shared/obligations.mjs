@@ -8,7 +8,8 @@
 /**
  * `must` 允许挂载的实体位置是**封闭集合**：`data_models[].fields[]`、
  * `interfaces[].methods[]`、`components[]`、`components[].state[]`、
- * `resource_keys.<模块>.<分类>[]`、`files[]`。多一处就是给「随便找个地方声明一下」开口子。
+ * `resource_keys.<模块>.<分类>[]`。多一处就是给「随便找个地方声明一下」开口子。
+ * `files` 是原生的授权文件清单（字符串），不承载义务；文件级职责由真正承担它的实体表达。
  *
  * 以下面的遍历代码为准；另设一个导出的常量重列一遍只会多一处失同步点——。
  */
@@ -47,9 +48,9 @@ function mustOf(node) {
 /**
  * 遍历五类实体收集 `must`。
  *
- * @returns {{rule, text, verify, entityPath, entityKind, file}[]}
- *   `entityPath` 是可回查的实体引用（`components.X.state.y` 形态），
- *   `file` 是该实体所属的实现文件（`files[]` 上的 must 才有；其余为 null，由 coding 侧按契约定位）。
+ * @returns {{rule, text, verify, decisionId, entityPath, entityKind, file}[]}
+ *   `entityPath` 是可回查的实体引用（`components.X.state.y` 形态），`decisionId` 是这条义务出自的知识应用决定，
+ *   `file` 是该实体所属的实现文件（实体写了 `file` 才有，由 coding 侧按契约定位）。
  */
 export function obligationsFromContracts(contracts) {
   const out = [];
@@ -59,6 +60,7 @@ export function obligationsFromContracts(contracts) {
         rule: String(m.rule ?? '').trim(),
         text: String(m.text ?? '').trim(),
         verify: String(m.verify ?? '').trim().toLowerCase(),
+        decisionId: String(m.decision_id ?? '').trim(),
         entityKind,
         entityPath,
         file: file ?? null,
@@ -66,28 +68,25 @@ export function obligationsFromContracts(contracts) {
     }
   };
 
+  const fileOf = it => (it?.file ? String(it.file).replace(/\\/g, '/') : null);
   for (const dm of arr(contracts?.data_models)) {
     for (const f of arr(dm.fields)) {
-      push(f, 'data_models', `data_models.${name(dm)}.${name(f)}`, null);
+      push(f, 'data_models', `data_models.${name(dm)}.${name(f)}`, fileOf(dm));
     }
   }
   for (const itf of arr(contracts?.interfaces)) {
     for (const me of arr(itf.methods)) {
-      push(me, 'interfaces', `interfaces.${name(itf)}.${name(me)}`, null);
+      push(me, 'interfaces', `interfaces.${name(itf)}.${name(me)}`, fileOf(itf));
     }
   }
   for (const c of arr(contracts?.components)) {
-    push(c, 'components', `components.${name(c)}`, null);
+    push(c, 'components', `components.${name(c)}`, fileOf(c));
     for (const st of arr(c.state)) {
-      push(st, 'components', `components.${name(c)}.state.${name(st)}`, null);
+      push(st, 'components', `components.${name(c)}.state.${name(st)}`, fileOf(c));
     }
   }
   for (const e of resourceEntries(contracts).entries) {
     push(e.node, 'resource_keys', e.ref, null);
-  }
-  for (const fl of arr(contracts?.files)) {
-    const p = name(fl);
-    push(fl, 'files', `files.${p}`, p);
   }
   return out;
 }
@@ -123,25 +122,34 @@ export function misplacedMust(contracts) {
       }
     }
   }
+  arr(contracts?.files).forEach((fl, i) => {
+    if (typeof fl !== 'string') bad.push(`contracts.yaml 的 files 第 ${i + 1} 项不是路径字符串，files 是原生授权文件清单，不承载 must 或模式角色`);
+  });
   if (mustOf(contracts).length) bad.push('contracts.yaml 顶层挂了 must，must 的位置是具体实体');
   return bad;
 }
 
 /**
- * 模式采用的结构投影：`files[].pattern` + `files[].role`。
+ * 模式采用的结构投影：真实承担角色的 `components` / `interfaces` / `data_models` 实体上的
+ * `pattern_roles: [{pattern, role, decision_id}]`，以实体的原生名定位，实现文件取实体自己的 `file`。
  *
- * 角色实体就是文件里的类，不另写「角色 → 类名」映射表——那只会与 `files[]` 漂移。
+ * @returns {{pattern, role, decisionId, entity, entityPath, path}[]}
  */
 export function patternRolesFromContracts(contracts) {
   const out = [];
-  for (const fl of arr(contracts?.files)) {
-    const pattern = String(fl?.pattern ?? '').trim();
-    if (!pattern) continue;
-    out.push({
-      pattern,
-      role: String(fl?.role ?? '').trim(),
-      path: name(fl),
-    });
+  for (const kind of ['components', 'interfaces', 'data_models']) {
+    for (const it of arr(contracts?.[kind])) {
+      for (const pr of arr(it?.pattern_roles)) {
+        out.push({
+          pattern: String(pr?.pattern ?? '').trim(),
+          role: String(pr?.role ?? '').trim(),
+          decisionId: String(pr?.decision_id ?? '').trim(),
+          entity: name(it),
+          entityPath: `${kind}.${name(it)}`,
+          path: it?.file ? String(it.file).replace(/\\/g, '/') : null,
+        });
+      }
+    }
   }
   return out;
 }

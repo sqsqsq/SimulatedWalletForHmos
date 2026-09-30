@@ -6,7 +6,7 @@
 
 这里守的是**两件事的区别**：
 
-  没登记 = 这个仓还没配置知识，返回四类皆空，链条照走；
+  没登记 = 这个仓还没配置知识，返回四类皆空，链条照走（知识任务说一句人话，门禁没有要判的条目）；
   登记了却读不到 = 读取失败被吞成空，仍然响亮报错（失效形态 M06 守的正是它）。
 
 判据分不出这两件事，就只能二选一：要么新仓跑不起来，要么一份读不到的知识被当成
@@ -103,29 +103,27 @@ class EmptyKnowledgeRepo(unittest.TestCase):
         self.assertNotEqual(0, proc.returncode, "登记的文件读不到却过了——那正是静默失效")
         self.assertIn("not-there.md", proc.stderr)
 
-    def test_the_task_package_says_this_repo_has_no_knowledge(self) -> None:
-        """任务包给作者一句人话，不是「激活 0 条约束（域：）」那种像坏了的句子。"""
+    def test_the_task_says_this_repo_has_no_knowledge(self) -> None:
+        """知识任务给作者一句人话，并指到知识怎么写、怎么登记——不是一节空着像坏了的原文。"""
         proc = subprocess.run(
-            ["node", str(self.ext / "hooks" / "spec" / "author.mjs"), "--feature", FEATURE],
-            cwd=str(self.root), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=90)
-        self.assertEqual(0, proc.returncode, f"空知识下任务包出不来：{proc.stderr}")
-        self.assertIn("本仓未配置知识", proc.stdout)
-        self.assertNotIn("域：）", proc.stdout, "渲染出了空洞的派生结果，作者会以为机制坏了")
+            ["node", str(self.module("knowledge-task.mjs")), "--project-root", str(self.root), "--feature", FEATURE,
+             "--action", "spec", "--audience", "author"],
+            cwd=str(self.root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+        self.assertEqual(0, proc.returncode, f"空知识下知识任务出不来：{proc.stderr}")
+        self.assertIn("这个工程还没有登记知识", proc.stdout)
         self.assertIn("skills/story/reference/knowledge/protocol.md", proc.stdout)
 
-    def test_the_use_skeleton_comes_out_with_zero_entries(self) -> None:
-        """`knowledge-use.yaml` 的骨架照样生成，只是一条都没有——没有条目要判。"""
-        proc = subprocess.run(
-            ["node", str(self.module("knowledge-use.mjs")), "init", "--feature", FEATURE],
-            cwd=str(self.root), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=90)
-        self.assertEqual(0, proc.returncode, f"空知识下骨架生成失败：{proc.stderr}")
-        text = (self.feature_root / "spec" / "knowledge-use.yaml").read_text(encoding="utf-8")
-        body = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
-        self.assertNotIn("applicable", "\n".join(body), "零条目的骨架里冒出了要判的条目")
-        self.assertIn("patterns: []", "\n".join(body),
-                      "一个候选都不在册还摆着填写占位——那个问题只有一种答案")
+    def test_there_is_nothing_to_judge(self) -> None:
+        """没有激活规约就没有要判的条目：契约里一条判断都不写，spec 门禁不报漏判。"""
+        (self.feature_root / "contracts.yaml").write_text("interfaces: []\n", encoding="utf-8")
+        proc = node("--input-type=module", "-e",
+                    f"const hook = (await import({as_url(self.ext / 'hooks' / 'spec' / 'post_check.mjs')})).default;"
+                    f"const out = await hook({{ phase: 'spec', feature: {json.dumps(FEATURE)},"
+                    f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                    "process.stdout.write(JSON.stringify(out));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertNotIn("没有判断激活规约", proc.stdout)
+        self.assertNotIn("知识应用", proc.stdout)
 
 
 if __name__ == "__main__":

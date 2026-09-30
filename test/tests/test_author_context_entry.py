@@ -3,11 +3,11 @@
 
 宿主的作者事件只在装配 verifier ai-prompt 时消费，从不进入作者动笔前的上下文——
 登记在那里，作者要到产物落盘之后才读得到。所以本扩展的作者要求由作者自己取：
-原则页是 `doc/extensions/hooks/<阶段>/author.md`，spec 阶段另有一条命令出**本次任务包**。
+原则页是 `doc/extensions/hooks/<动作>/author.md`，这一次的知识、承接的判断与缺口由知识任务命令给出。
 
 所以这里测的不是「文件在不在」，是**通道**：
 
-1. 六个阶段各有自己那一份原则页，spec 的任务包命令跑得出内容；
+1. 蓝图设计与六个阶段各有自己那一份原则页，知识任务命令跑得出内容并指回原则页；
 2. 参数缺席 / 真源读不到 → 明确失败、退出非零，**不降级成空**（静默的空和真正的空长得一样）；
 3. 取法写在作者一定读得到的地方：流程的下一步文本、SKILL；每个阶段动笔前 Framework 按 phase_bindings 调知识 Skill；
 4. 「读过了」有唯一机械留痕：原则页路径进了 `key_inputs_read` 才过既有门禁。
@@ -28,11 +28,27 @@ REPO = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
 MANIFEST = EXT / "manifest.yaml"
 RULES = EXT / "rules"
-AUTHOR_CLI = "doc/extensions/hooks/spec/author.mjs"
+TASK_CLI = "doc/extensions/hooks/shared/knowledge-task.mjs"
 FLOW = EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 # context-exploration 门禁只覆盖这五个；testing 没有，如实无留痕。
 GATED_PHASES = ("spec", "plan", "coding", "review", "ut")
+
+
+def workspace(case: unittest.TestCase | None = None) -> Path:
+    """一份装了开发版扩展的工作区，带一个平铺维护 Feature `demo`。"""
+    ws = Path(tempfile.mkdtemp())
+    if case:
+        case.addCleanup(shutil.rmtree, ws, True)
+    shutil.copytree(EXT, ws / "doc" / "extensions",
+                    ignore=shutil.ignore_patterns("__pycache__", ".adapt-*", "node_modules"))
+    link_harness_yaml(ws)
+    (ws / "doc" / "features" / "demo").mkdir(parents=True)
+    return ws
+
+
+def task(ws: Path, *args: str) -> subprocess.CompletedProcess:
+    return _node([TASK_CLI, "--project-root", str(ws), *args], ws)
 
 
 def _node(args, cwd: Path) -> subprocess.CompletedProcess:
@@ -43,57 +59,58 @@ def _node(args, cwd: Path) -> subprocess.CompletedProcess:
 
 
 class AuthorRequirementsAreReachable(unittest.TestCase):
-    """六份原则页在，spec 的任务包命令出得来内容。"""
+    """蓝图设计与六个阶段的原则页在，知识任务命令出得来这一次的内容。"""
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.task_package = _node([AUTHOR_CLI, "--feature", "demo"], DEV_ROOT)
+        cls.ws = workspace()
+        cls.task = task(cls.ws, "--feature", "demo", "--action", "spec", "--audience", "author")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        shutil.rmtree(cls.ws, True)
 
     def test_every_phase_has_its_own_principles_page(self):
-        for phase in PHASES:
+        for phase in ("blueprint", *PHASES):
             with self.subTest(phase=phase):
                 self.assertTrue((EXT / "hooks" / phase / "author.md").is_file(),
                                 f"{phase} 没有原则页，作者动笔前无从取要求")
 
-    def test_the_task_package_command_prints_this_round(self):
-        proc = self.task_package
-        self.assertEqual(0, proc.returncode, f"任务包命令挂了：{proc.stderr[-600:]}")
-        self.assertIn("demo", proc.stdout, "任务包没带上本次 feature")
+    def test_the_task_command_prints_this_round(self):
+        proc = self.task
+        self.assertEqual(0, proc.returncode, f"知识任务命令挂了：{proc.stderr[-600:]}")
+        self.assertIn("demo", proc.stdout, "知识任务没带上本次 feature")
         self.assertIn("doc/extensions/hooks/spec/author.md", proc.stdout,
-                      "任务包没指回原则页——那是 key_inputs_read 要逐字引用的坐标")
+                      "知识任务没指回原则页——那是 key_inputs_read 要逐字引用的坐标")
 
-    def test_the_task_package_covers_the_four_sources(self):
-        """任务包是四处真源的投影：位置、激活清单、材料里的图、章节合同。"""
-        for needle in ("你现在在哪", "知识判断", "决策登记", "材料里的图"):
+    def test_the_task_carries_its_six_blocks(self):
+        """对象、知识原文、事实与决定、契约与义务、完成条件、缺口：一份不缺。"""
+        for needle in ("当前动作与对象", "激活知识及原文", "有效事实与决定", "当前契约与义务", "本次完成条件", "缺口与责任"):
             with self.subTest(needle=needle):
-                self.assertIn(needle, self.task_package.stdout)
+                self.assertIn(needle, self.task.stdout)
 
 
 class ChannelFailuresAreLoud(unittest.TestCase):
     """参数缺席 / 真源读不到必须能分辨——它们的处置完全不同，都不许静默出空。"""
 
-    def test_missing_feature_is_refused_with_the_usage(self):
-        proc = _node([AUTHOR_CLI], DEV_ROOT)
-        self.assertNotEqual(0, proc.returncode, "没给 feature 却当成功返回")
+    def test_missing_object_is_refused_with_the_usage(self):
+        proc = task(workspace(self), "--action", "spec", "--audience", "author")
+        self.assertNotEqual(0, proc.returncode, "没给对象却当成功返回")
         self.assertIn("--feature", proc.stderr)
-        self.assertEqual("", proc.stdout.strip(), "失败了还印出半份任务包")
+        self.assertEqual("", proc.stdout.strip(), "失败了还印出半份任务")
 
-    def test_missing_contract_fails_loudly_instead_of_degrading_to_empty(self):
-        """章节合同读不到 → 明确失败，**不**降级成空。
+    def test_missing_knowledge_fails_loudly_instead_of_degrading_to_empty(self):
+        """激活的知识文件读不到 → 明确失败，**不**降级成空。
 
-        静默的空和真正的空长得一样；这条链路一旦静默失效，现场只表现为
-        「作者又漏了几章」。
+        静默的空和真正的空长得一样；这条链路一旦静默失效，现场只表现为「作者又漏判了几条」。
         """
-        ws = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, ws, True)
-        shutil.copytree(EXT, ws / "doc" / "extensions",
-                        ignore=shutil.ignore_patterns("__pycache__", ".adapt-*", "node_modules"))
-        link_harness_yaml(ws)
-        (ws / "doc/extensions/skills/story/contracts/story-chapters.json").unlink()
-
-        proc = _node([AUTHOR_CLI, "--feature", "demo"], ws)
-        self.assertNotEqual(0, proc.returncode, "合同没了却照样返回成功")
-        self.assertIn("合同", proc.stderr)
+        ws = workspace(self)
+        manifest = yaml.safe_load((ws / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
+        first = manifest["provides"]["knowledge"][0]
+        (ws / "doc" / "extensions" / (first if isinstance(first, str) else first["path"])).unlink()
+        proc = task(ws, "--feature", "demo", "--action", "spec", "--audience", "author")
+        self.assertNotEqual(0, proc.returncode, "知识读不到却照样返回成功")
+        self.assertIn("知识", proc.stderr)
         self.assertEqual("", proc.stdout.strip())
 
 
@@ -125,9 +142,9 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         self.assertIn("component-design", action)
         self.assertIn("story-knowledge", action, "流程的下一步文本没给设计前取知识的入口")
 
-    def test_the_skill_carries_the_command(self):
+    def test_the_skill_carries_both_entries(self):
         text = (EXT / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn(AUTHOR_CLI, text)
+        self.assertIn("story-knowledge", text)
         self.assertIn("doc/extensions/hooks/<阶段>/author.md", text)
 
 

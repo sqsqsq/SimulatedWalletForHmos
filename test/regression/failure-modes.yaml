@@ -371,8 +371,8 @@ modes:
       形态还在——附录的结论列仍然可能是规约原文的复制。换的是发现者：机械复制检查
       （子串 + 相似度）在步骤 10 退场，因为它只拦得住逐字复制，而「同义改写」正好绕过它，
       于是判据教会的是换个说法而不是写本需求的设计。
-      现在由 spec overlay 的 `knowledge_spec_exit_substance` 按真源判：
-      把编号遮住这句话还能不能指导编码。
+      2.0 起附录·规约投影蓝图的知识应用决定，由读者审查（`rules/story-reader-rules.yaml`
+      「规约或知识判定的依据只回显条目名称、复述规约原文」）按真源判：把编号遮住这句话还能不能指导编码。
     found_round: "2026-08-24"
     form: 附录「结论或落点」列是规约原文的复制或子串（E1/E2），只列已命中冒充已应用
     clause: B1-12 / B1-14 / 坑 #14 / N8
@@ -386,14 +386,14 @@ modes:
     responsibility: verifier
     approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
-      同 P02：形态在产物侧仍可能发生，发现者从机械复制检查换成 spec overlay 的
-      `knowledge_spec_exit_substance`。判断的真源现在是 `spec/knowledge-use.yaml`，
-      审查对着它与材料看 requirement 落在哪个具体名字上。
+      同 P02：发现者从机械复制检查换成审查。2.0 起 spec 不再有约束出口，判断在设计里的知识应用决定
+      （蓝图或平铺 Feature 的契约），spec 承接它的是验收条目：spec overlay 的 `knowledge_acceptance_bridge`
+      把「只把规约换句话说一遍」判 FAIL，审查对着判断与材料看验收写的是不是本需求的行为与验证责任。
     found_round: "2026-08-24"
     form: spec 约束出口「本需求的要求」列复述规约原文，到编码那里等于没有要求
     clause: B1-12 / B1-14 / N8
     target: product
-    applicable_when: 存在 spec/spec.md 扩展章的「规约」节
+    applicable_when: 存在 acceptance.yaml 里桥到规约的验收条目
     severity: BLOCKER
     status: fixed
 
@@ -771,20 +771,15 @@ modes:
     found_round: "2026-08-29"
     form: spec 四阶段全绿而叙事件从来没被写出来——成文没有阶段边界守着，本地单直接跳过
     clause: KF-1a / 06 §三 F3
-    checker: f01_spec_without_story
     target: mechanism
-    bad_fixture: test/fixtures/failure-modes/F01-spec-without-story/bad
-    good_fixture: test/fixtures/failure-modes/F01-spec-without-story/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
-    scope_note: >
-      story 是 spec 阶段三份产物之一。把它挪到 spec 之后当独立一步、触发条件写「归档之前」，
-      本地单没有归档，这个时点就不存在——实测四阶段 harness 全 pass、AR/story.md 不存在，
-      只有测试域的 story_build_check 拦住。成文回到 spec 阶段内，才有阶段边界要求它。
-      判据查登记态不查文件在不在：手写一份简版照样骗过「文件存在」（基线的注释自己承认过）；
-      登记前会重跑 story-build check，登记成功即九项判据都过了。
-      bad = status complete（范围收口了但没成文，必须报）；good = story_written（不许报）。
+    status: retired
+    approved_by: 2.0.0 方案（04-步骤3 §2 阶段交接表：Spec 退出「Spec 内生成 Story/Review、Spec 必须有人读交付登记」）
+    reason: >
+      这条形态的前提是 story 为 spec 阶段三份产物之一。2.0 起 Story/Review 是需求级人读交付，由已准入蓝图成文、
+      走需求级登记与交付门；CU 的 spec 是施工单位的需求规格，不产出也不等待叙事件，spec 门禁不再核成文态。
+      叙事件没写出来由需求级交付门拦（登记前重跑 story-build check）。
 
   - id: R04-flow-status-after-s5
     dimension: content
@@ -860,12 +855,11 @@ modes:
     severity: BLOCKER
     status: fixed
     scope_note: >
-      判据面本身已按 isStoryFeature 分好：§9 技术契约、术语解释列、三份产物只在有流程契约时
-      才要求；§10 / §11 是知识判定的出口，对所有需求生效（判定产生的代码要求不进 spec，
-      编码那里就拿不到）。本条守的是**它别退回去**——只写 §10/§11 的需求跑 spec 门禁要能过，
-      且回话里不提 story / 三份产物 / 技术契约 / 归档件 / 三级关卡：作者读到这些，
-      就会去写他根本不需要写的东西。反夹具是同一份 spec 加一个 complete 的流程契约
-      （= 走了 /story），那时 §9 与三份产物就该被硬拦。
+      2.0 起 spec 门禁不再承担 Story，只核设计里的知识判断、验收承接与验收标准一致；平铺维护 Feature
+      的判断写在它契约的 knowledge_applications。本条守的是**它别退回去**——判断写全、验收承接了的
+      普通需求跑 spec 门禁要能过，且回话里不提 story / 三份产物 / 技术契约 / 归档件 / 三级关卡：
+      作者读到这些，就会去写他根本不需要写的东西。反夹具是同一份需求加一个 complete 的流程契约
+      （= 走了 /story），只作对照。
 
   - id: S01-diagram-degraded
     dimension: expression

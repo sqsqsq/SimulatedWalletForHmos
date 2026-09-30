@@ -50,13 +50,15 @@ function knowledgeBlock(root, action) {
   const registrations = knowledgeRegistrations(root).filter(r => reaches(r, action));
   const ordered = registrations.map(r => ({ ...byFile.get(r.file), registration: r })).filter(k => k.file);
   const rows = ['## 2. 激活知识及原文', ''];
+  const protocol = path.join(extensionRoot(root), 'skills', 'story', 'reference', 'knowledge', 'protocol.md');
   if (!ordered.length) {
     const total = knowledgeRegistrations(root).length;
     return { knowledge, rows: [...rows, total ? `登记了 ${total} 份知识，受众里都没有 ${action}（零项）。`
-      : '激活清单为空：这个工程还没有登记知识（零项）。'] };
+      : `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`] };
   }
   const half = DESIGN_SIDE.has(action) ? HALVES[0] : HALVES[1];
-  rows.push(`共 ${ordered.length} 份，按激活顺序。先按「何时读」判断与本动作是否相关；相关的逐条判断适用与否。`, '');
+  rows.push(`共 ${ordered.length} 份，按激活顺序。先按「何时读」判断与本动作是否相关；相关的逐条判断适用与否。`
+    + `各列与形态怎么读见 \`${relDisplay(root, protocol)}\`。`, '');
   for (const k of ordered) {
     const file = path.join(extensionRoot(root), ...k.file.split('/'));
     const body = fs.readFileSync(file, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();

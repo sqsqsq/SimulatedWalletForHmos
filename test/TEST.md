@@ -423,11 +423,11 @@ python -m unittest discover -s test/tests -p "test_verifier_smoke.py"   # 离线
 
 ```powershell
 python -m unittest discover -s test/tests -p "test_author_context_entry.py"
-node doc/extensions/hooks/spec/author.mjs --feature <feature>    # 在装好开发源的模板根下跑（demo 里是发布版）
+node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <根> --feature <feature> --action <阶段> --audience author
 ```
 
-第二条是消费模型动笔前跑的那一条。各阶段原则页是 `doc/extensions/hooks/<phase>/author.md`，作者按 SKILL、入口文件扩展段与
-`story_flow.py status` 的下一步去取。非零退出码表示取不全：缺 `--feature` 退 2，章节合同读不到退 1。
+第二条是消费模型动笔前跑的那一条（Framework 按 phase_bindings 调 story-knowledge）。各阶段原则页是
+`doc/extensions/hooks/<phase>/author.md`，知识任务第 5 块指回它。非零退出码表示取不全：缺对象或动作报用法，激活知识读不到或原生输入缺失报对象、缺口与责任。
 
 ### 5.4 失效形态全量回归
 

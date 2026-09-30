@@ -35,23 +35,24 @@ from design_fixture import (  # noqa: E402,F401  接 Framework 的做法与失�
 
 def link_harness_yaml(root: Path) -> Path:
     """让临时工程根像一个接入了 framework 的工程：`framework.config.json`（缺则写空配置，扩展对空配置
-    一律取默认路径）与指向真实 `yaml` 包的 `framework/harness/node_modules/yaml` 链接；已存在的都不动。
-    返回链接路径。"""
+    一律取默认路径）、指向真实 `yaml` 包的 `framework/harness/node_modules/yaml` 链接，并补接 demo Framework
+    缺的部分（阶段钩子按原生身份找施工单位目录）；已存在的都不动。返回 yaml 链接路径。"""
+    from design_fixture import overlay_framework  # noqa: PLC0415
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     config = root / "framework.config.json"
     if not config.exists():
         config.write_text("{}\n", encoding="utf-8")
     target = root / "framework" / "harness" / "node_modules" / "yaml"
-    if target.exists():
-        return target
-    target.parent.mkdir(parents=True, exist_ok=True)
-    source = HARNESS / "node_modules" / "yaml"
-    if sys.platform == "win32":
-        import _winapi
-        _winapi.CreateJunction(str(source), str(target))
-    else:
-        os.symlink(source, target, target_is_directory=True)
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = HARNESS / "node_modules" / "yaml"
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(source), str(target))
+        else:
+            os.symlink(source, target, target_is_directory=True)
+    overlay_framework(root)
     return target
 
 

@@ -11,9 +11,10 @@
  *
  * 契约：stdin JSON ctx → stdout JSON result。
  */
+import { featureDir } from '../shared/framework-access.mjs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { featureRoot, readTextOrNull } from '../shared/paths.mjs';
+import { readTextOrNull } from '../shared/paths.mjs';
 import { acceptanceIdRe, knowledgeCriteria, readAcceptance, readContracts } from '../shared/contracts.mjs';
 import { obligationsFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
@@ -26,7 +27,7 @@ import { guard, gate } from '../shared/gate.mjs';
  * 把二者混成一个「空集就放过」，后一种情况会静默溜走。
  */
 function referencedAcceptanceIds(projectRoot, feature) {
-  const root = path.join(featureRoot(projectRoot, feature), 'testing');
+  const root = path.join(featureDir(projectRoot, feature), 'testing');
   const ids = new Set();
   let artifactCount = 0;
   const stack = [root];
@@ -78,10 +79,11 @@ export default guard('testing', async (ctx) => {
     const rule = String(ob.rule ?? '?');
     // verify 是四阶段分派的单源：本阶段只管 device 与 both，其余是显式不适用
     if (ob.verify !== 'device' && ob.verify !== 'both') continue;
-    const entries = byRule.get(rule);
-    if (!entries || !entries.length) {
+    // 同编号的规约可能来自不同文件：按义务出自的那条判断认验收
+    const entries = (byRule.get(rule) ?? []).filter(c => String(c.knowledge_decision_id).trim() === ob.decisionId);
+    if (!entries.length) {
       problems.push(`acceptance.yaml：义务 ${rule} 标了 verify: ${ob.verify}，但没有 `
-        + `knowledge_rule: ${rule} 的验收条目——门禁按 knowledge_rule 把验收条目认回规约，要走查的场景从这些条目取`);
+        + `knowledge_rule: ${rule}、knowledge_decision_id: ${ob.decisionId} 的验收条目——门禁按这两项把验收条目认回义务出自的判断，要走查的场景从这些条目取`);
       continue;
     }
     for (const c of entries) {

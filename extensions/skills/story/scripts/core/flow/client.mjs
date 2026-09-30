@@ -1,12 +1,10 @@
 /**
  * 问 `story_flow.py status` —— **JS 侧唯一的流程状态查询客户端**。
  *
- * 两个消费者（作者任务包、成文起手预检）问的是同一件事，所以只有这一处会拼脚本路径、
- * 轮解释器、解析 JSON。各写一套的话，其中一套迟早漏掉 `--project-root`——那一次运行里
- * 位置读的是脚本所在仓，材料与知识读的是目标工作区，而两半都写在同一份输入里。
+ * 只有这一处会拼脚本路径、轮解释器、解析 JSON，工程根显式传 `--project-root`——漏了它，
+ * 位置读的是脚本所在仓，材料与知识读的是目标工作区。
  *
- * 这里只做一件事：**把问题问出去，把答案原样带回来**。要不要阻断、下一步做什么由调用方
- * 定——起手预检要拦，作者包只要把问题说清楚。
+ * 这里只做一件事：**把问题问出去，把答案原样带回来**。要不要阻断、下一步做什么由调用方定。
  */
 import { spawnSync } from 'node:child_process';
 import * as path from 'node:path';
@@ -18,7 +16,7 @@ import { fileURLToPath } from 'node:url';
  * 导出它是为了**渲染可复跑的命令**：作者要自己跑一次时，命令里的脚本得是这里真正调的
  * 那一个。写相对路径的话，它只在工程与机制同一个仓、且 cwd 恰好是工程根时才跑得起来。
  */
-export const FLOW_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)),
+const FLOW_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)),
   '..', 'story_flow.py');
 
 //: 两个候选名是现有行为。**只有解释器起不动才换下一个**：已经跑起来并报了业务失败

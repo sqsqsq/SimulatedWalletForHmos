@@ -66,8 +66,8 @@ S6 交付选择    →  送审（/story archive）/ 完整设计交接 / 完整�
 | 成文：写作设计、按章写与回看 | [phases/story-write.md](phases/story-write.md) |
 | 产物更新 | [phases/update.md](phases/update.md) |
 
-**作者要求怎么取**：原则页是 `doc/extensions/hooks/<阶段>/author.md`（六个阶段各一份）；
-spec 与 plan 阶段另有**本次任务包**，动笔前跑 `node doc/extensions/hooks/spec/author.mjs --feature <名>` 或 `node doc/extensions/hooks/plan/author.mjs --feature <名>` 拿到。
+**作者要求怎么取**：原则页是 `doc/extensions/hooks/<阶段>/author.md`（蓝图设计与六个施工阶段各一份）；
+这一次的知识、承接的判断与缺口由 story-knowledge Skill 的知识任务给出，动笔前取。
 
 ## 推进契约
 

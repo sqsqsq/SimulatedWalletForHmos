@@ -1,8 +1,8 @@
-"""做判断的那一刻把原义送到：判断骨架、审查任务书、决策登记与路由各自送到该给的那一份。
+"""做判断的那一刻把原义送到：知识任务、审查任务书、决策登记与路由各自送到该给的那一份。
 
 锁的是送达，不是判断：
-  ① 规约的附注按条目切开送到判断骨架，整域通则单列，不在册的编号报出来；
-  ② 处置是评审动作的条目命中后落到议题（走 /story）或写明谁表态（不走），指不到的报出来；
+  ① 规约连附注一起按原文送到知识任务，不在册的编号报出来；
+  ② 处置是评审动作的条目适用时不产生代码要求：不要验收桥，也不要实体上的义务；
   ③ verifier 任务书里原条目与当前判断并列（spec 判断、plan 契约），会议逐话题四栏并列，
      上游图与承接它的 story 图并排——取不到的写未验证，不给空；
   ④ 选方案的议题要有「建议」段；⑤ 章级合同表跟着模板选定的位置只铺一次；⑥ 归档后下一步是 done。
@@ -61,102 +61,85 @@ class DeliveryCase(kp.ProtocolCase):
 
 
 class KnowledgeGuideReachesEveryReader(DeliveryCase):
-    """spec / plan 作者包与审查拿到同一份「路径 —— 用途」与读写规则位置，按知识的自我描述，不点名。"""
+    """spec / plan 的知识任务与 plan 审查拿到同一份「路径 —— 何时读」与读写规则位置，按知识的自我描述，不点名。"""
 
     def test_the_three_readers_see_the_same_guide(self) -> None:
-        self.judged()
-        line = "- `doc/extensions/knowledge/facts/neutral-facts.md` —— 设计出口与重试时：本工程已有的出口登记与重试入口"
+        self.write_contracts()
         outputs = {}
-        for phase in ("spec", "plan"):
-            proc = subprocess.run(["node", str(self.ext / "hooks" / phase / "author.mjs"), "--feature", nk.FEATURE],
-                                  cwd=self.root, capture_output=True, text=True, encoding="utf-8", timeout=90)
+        for action in ("spec", "plan"):
+            proc = self.knowledge_task(action)
             self.assertEqual(0, proc.returncode, proc.stderr)
-            outputs[f"{phase} 作者包"] = proc.stdout
+            outputs[f"{action} 知识任务"] = proc.stdout
         outputs["plan 审查"] = self.pre_verifier("plan")
         for who, text in outputs.items():
             with self.subTest(who=who):
-                self.assertIn(line, text)
+                self.assertIn("`doc/extensions/knowledge/facts/neutral-facts.md`", text)
+                self.assertIn("设计出口与重试时：本工程已有的出口登记与重试入口", text)
                 self.assertIn("doc/extensions/skills/story/reference/knowledge/protocol.md", text)
 
 
 class NotesReachTheJudgement(DeliveryCase):
-    def skeleton(self) -> str:
-        proc = nk.node(str(self.module("knowledge-use.mjs")), "init",
-                       "--feature", nk.FEATURE, "--project-root", str(self.root))
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        return self.use_path.read_text(encoding="utf-8")
-
-    def test_an_entry_note_goes_under_its_entry_and_the_general_rule_once(self) -> None:
+    def test_an_entry_note_reaches_the_task_verbatim(self) -> None:
+        """附注是要求的一部分：连同条目表一起按原文送到，作者判断时读得到。"""
         self.with_constraint(notes=NOTES)
-        text = self.skeleton()
-        block = text.split("  - id: NEU-02", 1)[1].split("  - id: ", 1)[0]
-        self.assertIn("# 附注：重试指同一次操作的再次提交。 换一个操作不算重试。", block)
-        self.assertNotIn("附注", text.split("  - id: NEU-01", 1)[1].split("  - id: ", 1)[0],
-                         "没有附注的条目不该有附注行")
-        self.assertEqual(1, text.count("中性域·通则：出口按用户视角切"), "整域通则没单列或列了不止一次")
-        self.assertNotIn("用户视角切", block, "通则被并进了上一条条目的附注")
+        proc = self.knowledge_task()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        block = proc.stdout.split("knowledge/constraints/neutral-domain.md", 1)[1]
+        self.assertIn("- **NEU-02**：重试指同一次操作的再次提交。", block)
+        self.assertIn("- 出口按用户视角切", block)
 
     def test_a_note_for_an_id_that_is_not_in_the_table_is_named(self) -> None:
         self.with_constraint(notes=NOTES + "- **NEU-09**：没有这一条。\n")
         self.assertIn("「NEU-09」，条目表里没有这个编号", self.load_error())
 
 
-class AReviewActionLandsOnADecision(DeliveryCase):
-    def judged_with_action(self, landing: str) -> None:
+class AReviewActionAsksForNoCode(DeliveryCase):
+    """处置是评审动作的条目适用时，它要的是动作与留痕，不产生代码要求：spec 不要验收桥，plan 不要义务。"""
+
+    def setUp(self) -> None:
+        super().setUp()
         self.with_constraint(rows=REVIEW_ACTION_ROW)
-        self.write_use(neutral=kp.judgement()
-                       + "\n  - id: NEU-05\n    applicable: true\n    reason: 本需求新增了一个出口\n" + landing)
-        self.render()
+        self.judged()
+        self.decisions.append(self.decision("NEU-05", "applied", "本需求新增了一个出口",
+                                            requirement="出口说明文档归档", target_refs=[nk.TARGET]))
 
-    def make_story_feature(self, ids: list[str]) -> None:
-        (self.src() / "story-flow.json").write_text('{"schema": 5, "rounds": []}', encoding="utf-8")
-        (self.src() / "decisions.json").write_text(
-            json.dumps({"decisions": [{"id": i} for i in ids]}), encoding="utf-8")
+    def test_spec_does_not_ask_for_an_acceptance_bridge(self) -> None:
+        self.write_contracts()
+        (self.feature_root / "acceptance.yaml").write_text(
+            "criteria:\n" + "".join(f"  - id: AC-{n}\n    knowledge_rule: NEU-0{n}\n    knowledge_decision_id: k-neu-0{n}\n"
+                                    for n in (1, 2, 3)), encoding="utf-8")
+        message = self.hook("spec")
+        self.assertNotIn("NEU-05", message)
+        self.assertNotIn("知识应用", message)
 
-    def test_a_story_feature_needs_an_existing_decision(self) -> None:
-        self.make_story_feature(["D-1"])
-        self.judged_with_action("")
-        self.assertIn("NEU-05 是命中的评审动作，没写 decision", self.hook("spec"))
-        self.judged_with_action("    decision: D-9\n")
-        self.assertIn("decision「D-9」在 AR/story-src/decisions.json 里没有这个议题", self.hook("spec"))
-        self.judged_with_action("    decision: D-1\n")
-        self.assertNotIn("NEU-05", self.hook("spec"))
-
-    def test_a_feature_without_story_writes_who_answers(self) -> None:
-        self.judged_with_action("    decision: D-1\n")
-        self.assertIn("没走 /story、没有议题登记——decision 按", self.hook("spec"))
-        self.judged_with_action("    impact: 出口负责人在评审记录里表态\n")
-        self.assertNotIn("NEU-05", self.hook("spec"))
-
-    def test_decision_is_only_for_review_actions(self) -> None:
-        self.write_use(neutral=kp.judgement(NEU_01="applicable: true\n    requirement: 出口生成一次标识\n"
-                                            "    decision: D-1"))
-        proc = self.render()
-        self.assertIn("NEU-01 写了 decision", proc.stderr + proc.stdout)
+    def test_plan_does_not_ask_for_an_obligation(self) -> None:
+        self.write_contracts(kp.contracts(second02="ut"))
+        self.assertNotIn("k-neu-05", self.hook("plan"))
 
 
 class TheTaskBookCarriesTheOriginal(DeliveryCase):
     def test_spec_rows_put_the_entry_next_to_the_judgement(self) -> None:
-        self.judged()
+        self.write_contracts()
         text = self.pre_verifier("spec")
         self.assertIn("原知识与仓内事实是审查依据", text)
-        row = next(l for l in text.splitlines() if l.startswith("| NEU-02 |"))
-        for part in ("红线", "重复触发时复用同一个标识", "有重试路径", "重试复用", "命中：重试复用标识", "技术契约 · 中性出口接口"):
+        row = next(l for l in text.splitlines() if l.startswith("| k-neu-02 |"))
+        for part in ("NEU-02", "重复触发时复用同一个标识", "applied", "重试复用标识", nk.TARGET):
             self.assertIn(part, row)
-        self.assertIn("不命中：本需求的出口不计耗时", next(l for l in text.splitlines() if l.startswith("| NEU-04 |")))
+        self.assertIn("本需求的出口不计耗时", next(l for l in text.splitlines() if l.startswith("| k-neu-04 |")))
 
-    def test_a_missing_judgement_is_unverified_not_empty(self) -> None:
+    def test_a_missing_judgement_is_a_design_gap_not_empty(self) -> None:
+        super(kp.ProtocolCase, self).write_contracts("", [])
         text = self.pre_verifier("spec")
-        self.assertIn("作者判断读不到", text)
-        self.assertIn("未取得，未验证", text)
+        self.assertIn("没有本施工单位承接的知识判断", text)
+        self.assertIn("**设计缺口**", text)
+        self.assertIn("没有判断激活规约 NEU-01", text)
 
     def test_plan_rows_put_the_entry_next_to_every_must(self) -> None:
-        self.judged()
         self.write_contracts(kp.contracts(second02="both"))
-        row = next(l for l in self.pre_verifier("plan").splitlines() if l.startswith("| NEU-02 |"))
+        row = next(l for l in self.pre_verifier("plan").splitlines() if l.startswith("| NEU-02 |") and "reuseTrace" in l)
         self.assertIn("重复触发时复用同一个标识", row)
-        self.assertIn("interfaces.中性出口接口.reuseTrace：重试时复用入口生成的标识 · ut", row)
-        self.assertIn("interfaces.中性出口接口.emitWithTrace：重试时复用入口生成的标识 · both", row)
+        self.assertIn("interfaces.中性出口接口.reuseTrace：重试时复用入口生成的标识 · ut · k-neu-02", row)
+        self.assertIn("interfaces.中性出口接口.emitWithTrace：重试时复用入口生成的标识 · both · k-neu-02", row)
 
     def test_meeting_topics_come_in_four_columns(self) -> None:
         src = self.src()

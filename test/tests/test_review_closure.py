@@ -194,10 +194,9 @@ class TheAcceptanceIdsLineUp(ClosureCase):
         self.spec().write_text(text.replace(old, new, 1), encoding="utf-8")
 
     def test_aligned_ids_raise_nothing(self) -> None:
-        """实跑夹具经 spec 门禁：验收编号、上游编号承接与知识登记都不报。"""
+        """实跑夹具经 spec 门禁：「验收标准」与 acceptance.yaml 的编号一致性不报。"""
         out = self.gate()
-        for needle in ("在 acceptance.yaml 里没有", "关联功能两处不一致", "同号不同义",
-                       "上游材料的验收编号没有承接", "没有篇", "没有面", "manifest_digest"):
+        for needle in ("在 acceptance.yaml 里没有", "关联功能两处不一致", "同号不同义"):
             self.assertNotIn(needle, out)
 
     def test_an_id_missing_from_acceptance_is_named(self) -> None:
@@ -217,28 +216,6 @@ class TheAcceptanceIdsLineUp(ClosureCase):
         (self.fr / "acceptance.yaml").write_text(
             ACCEPTANCE + "  - id: AC-2\n    prd_function: F9\n    description: 另一件事\n", encoding="utf-8")
         self.assertIn("AC-2 同号不同义", self.gate())
-
-    def test_an_upstream_id_that_was_renumbered_is_named(self) -> None:
-        prd = self.fr / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n| AC-K7 | 上游写的一条验收 |\n", encoding="utf-8")
-        lost = next(l for l in self.gate().split("\\n") if "上游材料的验收编号没有承接" in l)
-        self.assertIn("AC-K7", lost)
-        self.edit_spec("### P0 功能验收标准", "不承接：AC-K7 归兄弟单验收。\n\n### P0 功能验收标准")
-        self.assertNotIn("AC-K7", self.gate())
-
-
-class TheNumericSourcesAreListedInFull(ClosureCase):
-    def test_every_line_is_listed_once_and_ordinals_are_skipped(self) -> None:
-        lines = "".join(f"\n第 {i} 行说明：等待 {i}0 秒。\n" for i in range(1, 8))
-        text = self.spec().read_text(encoding="utf-8")
-        self.spec().write_text(text.replace("## 8. 验收标准", lines + "\n连续第 2 次失败时提示。\n\n## 8. 验收标准", 1),
-                               encoding="utf-8")
-        message = json.loads(self.gate())["message"]
-        numeric = [line for line in message.split("\n") if "处数值未标来源类型" in line]
-        self.assertEqual(1, len(numeric), "数值来源问题要合成一条、列全")
-        for i in range(1, 8):
-            self.assertIn(f"{i}0 秒", numeric[0], f"第 {i} 处没列出来")
-        self.assertNotIn("第 2 次", numeric[0], "序数被当成了数值")
 
 
 if __name__ == "__main__":

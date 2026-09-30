@@ -50,3 +50,6 @@
 本版新增 Cursor 与 `.agents` 两份宿主入口，入口登记改为 target / source 对，均由 `--apply` 写入；目标没有需要人工适配的事项。
 
 ## 2.0.0
+
+- [知识] 模式与多步方法的上篇读者从 spec / plan 改为蓝图设计：选型、角色落点与统计设计在写蓝图时做；下篇仍给 plan、coding、review。上报知识的统计点表写进蓝图 `story_details`（`kind: event`）的正文，表头保留「统计点」列；它的完成判断里 plan 的逐点表（表头含「统计点」「责任方法」）按统计点名对齐蓝图的埋点明细。处置为评审动作的规约不建验收、不挂契约义务。验证：拿一个带埋点的需求，知识任务里上篇标为设计侧、plan 门禁逐点核出缺行。
+- [在途单] `spec/knowledge-use.yaml`、spec 与 plan 的「宿主扩展」章不再读取：走 /story 的单在蓝图里写知识应用决定（CU 的 spec 验收带 `knowledge_decision_id`、契约 `must` 带 `decision_id`）；平铺维护 Feature 写在它契约的 `knowledge_applications`。在途单的判断按新位置重写一遍。

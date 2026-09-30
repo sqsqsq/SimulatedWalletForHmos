@@ -1,0 +1,6 @@
+criteria:
+  - id: AC-1
+    scenario: 正常提交
+    expected: 提交后能看到受理结果，重试时受理单编号不变
+    knowledge_rule: SMP-01
+    knowledge_decision_id: k-smp-01

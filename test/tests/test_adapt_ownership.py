@@ -276,6 +276,8 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn("停一次问人", proc.stdout)
 
     def test_nothing_to_adapt_is_one_sentence(self) -> None:
+        """知识已按包的版本适配过：没有晚于它的条目，只给一句话。"""
+        self.set_adapted(yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))["version"])
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("目标已按包的版本适配，知识与当前协议一致", proc.stdout)

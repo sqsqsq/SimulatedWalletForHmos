@@ -6,7 +6,8 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { featureRoot, readTextOrNull } from './paths.mjs';
+import { featureDir } from './framework-access.mjs';
+import { readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 
 /**
@@ -20,7 +21,6 @@ const ENTITY_KINDS = [
   'state_management',
   'navigation',
   'resource_keys',
-  'files',
 ];
 
 /**
@@ -31,7 +31,7 @@ const ENTITY_KINDS = [
  * 就挂在那份副本上——「每类数据一份真源」被绕开了。
  */
 function contractsPath(projectRoot, feature) {
-  return path.join(featureRoot(projectRoot, feature), 'contracts.yaml');
+  return path.join(featureDir(projectRoot, feature), 'contracts.yaml');
 }
 
 /**
@@ -115,18 +115,6 @@ export function resolveEntityRef(contracts, ref) {
           reason: `resource_keys 里没有「${parts.slice(1).join('.')}」（引用写完整的 resource_keys.<模块>.<分类>.<key>）`,
           tail };
   }
-  // files 的实体名是路径，整体匹配
-  if (kind === 'files') {
-    const target = parts.slice(1).join('.');
-    const hit = bucket.some(it => {
-      const n = entityName(it).replace(/\\/g, '/');
-      return n === target || n.endsWith('/' + target) || n.includes(target);
-    });
-    return hit
-      ? { ok: true, reason: '', tail: target.split('/').pop() }
-      : { ok: false, reason: `${kind} 里没有「${target}」`, tail: target.split('/').pop() };
-  }
-
   const entity = parts[1];
   const item = bucket.find(it => entityName(it) === entity);
   if (!item) {
@@ -213,13 +201,11 @@ const STORY_CONTRACT = new URL('../../skills/story/contracts/story-chapters.json
 const idShape = kind => new RegExp(`\\b(?:${JSON.parse(fs.readFileSync(STORY_CONTRACT, 'utf-8')
   .replace(/^\uFEFF/, '')).id_shapes[kind].join('|')})\\b`, 'g');
 export const acceptanceIdRe = () => idShape('acceptance');
-/** 上游材料里读者要对照的原始验收编号形态（`id_shapes.keep`）。 */
-export const keptIdRe = () => idShape('keep');
 /** 验收行关联的功能编号形态（`id_shapes.function`）。 */
 export const functionIdRe = () => idShape('function');
 
 export function readAcceptance(projectRoot, feature) {
-  const p = path.join(featureRoot(projectRoot, feature), 'acceptance.yaml');
+  const p = path.join(featureDir(projectRoot, feature), 'acceptance.yaml');
   const raw = readTextOrNull(p);
   if (raw === null) return { acceptance: null, error: null, exists: false };
   try {
@@ -273,7 +259,13 @@ export function knowledgeCriteria(acceptance, sections = ACCEPTANCE_SECTIONS) {
       if (typeof rule !== 'string' || !rule.trim()) {
         problems.push(`acceptance.yaml 的 ${section}「${String(row.id ?? '（没写 id）')}」：knowledge_rule 不是一个编号——`
           + '一条 criteria 一个 `knowledge_rule: <编号>`，多条规约各写一条 criteria；'
-          + '写成列表或留空的话，下游按编号分派时对不到场景（形状见任务包 §2）');
+          + '写成列表或留空的话，下游按编号分派时对不到场景（形状见 spec 作者页）');
+        return;
+      }
+      const decision = row.knowledge_decision_id;
+      if (typeof decision !== 'string' || !decision.trim()) {
+        problems.push(`acceptance.yaml 的 ${section}「${String(row.id ?? '（没写 id）')}」：写了 knowledge_rule ${rule}，没写 knowledge_decision_id——`
+          + '验收按决定认回知识来源，同编号的规约可能来自不同文件，只写编号认不回是哪一条判断');
         return;
       }
       const key = rule.trim();

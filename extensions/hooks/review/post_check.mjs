@@ -12,8 +12,9 @@
  *
  * 契约：stdin JSON ctx → stdout JSON result。
  */
+import { featureDir } from '../shared/framework-access.mjs';
 import * as path from 'node:path';
-import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
+import { lines, readTextOrNull } from '../shared/paths.mjs';
 import { readContracts } from '../shared/contracts.mjs';
 import { activeKnowledge, entryById } from '../shared/knowledge.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
@@ -54,10 +55,10 @@ export default guard('review', async (ctx) => {
   const obligations = obligationsFromContracts(contracts);
   const roles = patternRolesFromContracts(contracts);
   if (!obligations.length && !roles.length) {
-    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '契约里没有 must，也没有标 pattern 的文件' }] });
+    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '契约里没有 must，也没有承担模式角色的实体' }] });
   }
 
-  const reportPath = path.join(featureRoot(ctx.projectRoot, ctx.feature), 'review', 'review-report.md');
+  const reportPath = path.join(featureDir(ctx.projectRoot, ctx.feature), 'review', 'review-report.md');
   const text = readTextOrNull(reportPath);
   if (text === null) {
     // 报告缺失由框架的 check-review 负责，但本判据确实没跑成，要报出来
@@ -115,7 +116,7 @@ export default guard('review', async (ctx) => {
   for (const id of new Set(roles.map(r => r.pattern).filter(Boolean))) {
     if (!table.data.some(r => r.joined.includes(id))) {
       problems.push(`review/review-report.md：采用的模式 ${id} 在复核表里没有对应行`
-        + '——契约 files 里有文件标了这个 pattern，门禁在复核表各行里找这个模式名；本阶段核实现是否按这个结构落');
+        + '——契约里有实体在 pattern_roles 承担这个模式的角色，门禁在复核表各行里找这个模式名；本阶段核实现是否按这个结构落');
     }
   }
 

@@ -772,7 +772,7 @@ def m05_crlf_unsafe_split(root: Path, ctx: Ctx) -> Outcome:
 def m06_silent_empty_derivation(root: Path, ctx: Ctx) -> Outcome:
     """知识派生模块在派生为空时必须出声（throw），不得返回空集蒙混。
 
-    **认的是「谁把激活清单变成派生值」**，不是文件名：派生实现拆进 `knowledge-use/`
+    **认的是「谁把激活清单变成派生值」**，不是文件名：派生实现拆进多个模块
     之后，只认文件名会漏掉真正派生的那几个模块，而门禁照样报通过；而按目录一刀切
     又会把渲染与校验也算进来——它们返回空列表是「没问题」，不是「没派生出来」。
 
@@ -1920,6 +1920,7 @@ def _spec_post_check(root: Path) -> tuple[bool, str] | None:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / root.name
         shutil.copytree(root, work)
+        _link_framework(work)  # 门禁经原生身份定位 Feature，要接上被查工程的 Framework
         hook = _ext_file(work, "hooks/spec/post_check.mjs")
         if hook is None:
             hook = executor_ext() / "hooks" / "spec" / "post_check.mjs"
@@ -1937,13 +1938,12 @@ def _spec_post_check(root: Path) -> tuple[bool, str] | None:
 def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
     """不走 /story 的需求被 story 专属要求拦住——扩展对它该是隐形的。
 
-    判据面本身已经按 `isStoryFeature` 分好了：§9 技术契约、术语解释列、三份产物
-    只在有流程契约时才要求；§10 / §11 是知识判定的出口，对所有需求生效
-    （判定产生的代码要求不进 spec，编码那里就拿不到）。
+    2.0 起 spec 门禁不再承担 Story：它只核设计里的知识判断、验收承接与验收标准一致，对所有需求一样；
+    平铺维护 Feature 的判断写在它契约的 `knowledge_applications`。
 
-    这一条守的是**它别退回去**：只写 §10/§11 的需求跑 spec 门禁要能过，
+    这一条守的是**它别退回去**：判断写全、验收承接了的普通需求跑 spec 门禁要能过，
     而且回话里不能提 story 专属的那几样——作者读到「三份产物」「技术契约」，
-    就会去写他根本不需要写的东西。
+    就会去写他根本不需要写的东西。反夹具走了 /story，只作对照，不属本条判的对象。
     """
     spec = root / "doc" / "features" / "REQ-DEMO" / "spec" / "spec.md"
     if not spec.exists():
@@ -1954,16 +1954,14 @@ def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
     ok, message = result
     has_flow = (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json").exists()
     if has_flow:
-        # 有流程契约 = 走了 /story：该被要求写全，拦住才对
-        if ok:
-            return Outcome(False, "走了 /story 却没拦——§9 与三份产物本该是硬要求")
-        return Outcome(False, f"story 需求被正常拦下：{message.splitlines()[2][:70] if len(message.splitlines()) > 2 else message[:70]}")
+        # 有流程契约 = 走了 /story：不是本条判的对象，按反例计
+        return Outcome(False, "夹具走了 /story：本条只判不走 /story 的需求")
     if not ok:
         return Outcome(False, f"非 story 需求被拦住了：{message[:220]}")
     leaked = [w for w in _STORY_ONLY_WORDS if w in message.lower()]
     if leaked:
         return Outcome(False, f"门禁回话里提了 story 专属要求 {leaked}——对这个需求它们不存在")
-    return Outcome(True, "非 story 需求只写两节即通过，回话里没有 story 专属要求")
+    return Outcome(True, "非 story 需求判断写全即通过，回话里没有 story 专属要求")
 
 @checker
 def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
@@ -2314,19 +2312,19 @@ def _knowledge_structure_words(root: Path) -> set[str]:
 def m20_mechanism_writes_knowledge_structure(root: Path, ctx: Ctx) -> Outcome:
     """机制写死某份知识的结构：节名、角色名、表头列名或知识名出现在机制文件里。
 
-    机制只引用协议与产物模板定义的结构名；某份知识换了节名或列名，机制一个字不动也照常工作。
+    机制只引用协议与产物模板（Story 章节合同）定义的结构名；某份知识换了节名或列名，机制一个字不动也照常工作。
     词表从知识目录现场派生，减去协议与模板里出现的词。
     """
     words = _knowledge_structure_words(root)
     if not words:
         return Outcome(True, "无知识目录（不适用）")
-    allowed = "\n".join(read_text(p) for p in iter_files(root, TEXT_SUFFIXES)
-                         if p.name == "protocol.md" or "templates" in p.parts)
+    allowed = "\n".join(read_text(p) for p in iter_files(root, ALL_SUFFIXES)
+                         if p.name in ("protocol.md", "story-chapters.json") or "templates" in p.parts)
     words = {w for w in words if w not in allowed}
     hits = []
     for path in iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS):
         # manifest 登记知识清单是它的职责；协议与模板定义结构名
-        if path.name in ("protocol.md", "manifest.yaml") or "templates" in path.parts:
+        if path.name in ("protocol.md", "manifest.yaml", "story-chapters.json") or "templates" in path.parts:
             continue
         text = read_text(path)
         hits += [f"{path.relative_to(root).as_posix()}「{w}」" for w in sorted(words) if w in text]
@@ -2515,46 +2513,6 @@ def _self_check_dimensions(text: str) -> list[str]:
         if m:
             out.append(m.group(1).strip())
     return out
-
-
-@checker
-def f01_spec_without_story(root: Path, ctx: Ctx) -> Outcome:
-    """spec 四阶段全绿，叙事件却从来没被写出来。
-
-    story 是 spec 阶段三份产物之一（spec.md / review.md / story.md）。曾经把它挪到
-    spec 之后当独立一步，触发条件写「归档之前」——本地单没有归档，这个时点不存在，
-    于是没有任何阶段边界要求它。实测：四阶段 harness 全 pass、`AR/story.md` 不存在。
-
-    判据查**登记态**不查文件在不在：手写一份简版照样能骗过「文件存在」
-    （基线就这么判，注释里自己承认过）。`story_flow.py story` 登记前会重跑
-    `story-build check`，登记成功即九项判据都过了。
-    """
-    feature_root = root / "doc" / "features" / "REQ-DEMO"
-    if not (feature_root / "AR" / "story-src" / "story-flow.json").exists():
-        return Outcome(True, "夹具里没有流程契约（该形态未启用）")
-    problems = _flow_check_call(root, feature_root, "storyProduced")
-    if problems is None:
-        return Outcome(False, "storyProduced 跑不起来")
-    if problems:
-        return Outcome(False, f"叙事件未成文被点名：{problems[0][:80]}")
-    return Outcome(True, "成文已登记，spec 三份产物齐")
-
-
-def _flow_check_call(root: Path, feature_root: Path, fn: str) -> list[str] | None:
-    """调 flow/check.mjs 的某个导出，回问题串数组；跑不起来回 None。"""
-    script = (
-        "import {pathToFileURL} from 'node:url';"
-        "const m=await import(pathToFileURL(process.argv[1]).href);"
-        "console.log(JSON.stringify(m[process.argv[3]](process.argv[2])));")
-    check = _ext_file(root, "skills/story/scripts/core/flow/check.mjs")
-    if check is None:
-        check = executor_ext() / "skills" / "story" / "scripts" / "core" / "flow" / "check.mjs"
-    proc = subprocess.run(
-        ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root), fn],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-    if proc.returncode != 0:
-        return None
-    return json.loads(proc.stdout or "[]")
 
 
 @checker

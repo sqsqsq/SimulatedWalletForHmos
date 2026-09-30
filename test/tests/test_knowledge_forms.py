@@ -80,18 +80,8 @@ class MethodCase(nk.NeutralKnowledgeCase):
         manifest.write_text(body.replace("  knowledge:\n", f"  knowledge:\n    - knowledge/{rel}\n", 1),
                             encoding="utf-8")
 
-    def use_method(self, facet: str = "上篇") -> None:
-        """在默认判断之上登记用了 neutral-method 的某一篇。"""
-        self.write_use()
-        text = self.use_path.read_text(encoding="utf-8").replace(
-            "constraint_domains:",
-            f"  - id: neutral-method\n    used:\n      - facet: {facet}\n        used_for: 列出口\n"
-            "constraint_domains:", 1)
-        self.use_path.write_text(text, encoding="utf-8")
-
-    def plan_package(self) -> str:
-        proc = subprocess.run(["node", str(self.ext / "hooks/plan/author.mjs"), "--feature", nk.FEATURE],
-                              cwd=self.root, capture_output=True, text=True, encoding="utf-8", timeout=90)
+    def plan_task(self) -> str:
+        proc = self.knowledge_task("plan")
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 
@@ -126,7 +116,7 @@ class TheFormIsDeclaredAndChecked(MethodCase):
 
 
 class TheUnitFollowsTheForm(MethodCase):
-    """AC03：登记单元按形态；校验用对应标签；投影两次渲染字节一致。"""
+    """AC03：登记单元按形态；判断引用的单元按形态核。"""
 
     def test_each_cell_has_its_own_unit(self) -> None:
         got, err = load(self.root)
@@ -139,36 +129,21 @@ class TheUnitFollowsTheForm(MethodCase):
         self.assertEqual(["NEU-01", "NEU-02"], domain["units"])
 
     def test_a_wrong_half_is_named_as_a_half(self) -> None:
-        self.use_method("中篇")
-        proc = self.render()
-        self.assertNotEqual(0, proc.returncode)
-        self.assertIn("facts 的「neutral-method」没有篇「中篇」（有：上篇、下篇）", proc.stdout + proc.stderr)
-
-    def test_the_projection_renders_the_same_bytes_twice(self) -> None:
-        self.use_method()
-        first = self.render()
-        self.assertEqual(0, first.returncode, first.stdout + first.stderr)
-        once = self.spec_path.read_bytes()
-        self.assertEqual(0, self.render().returncode)
-        self.assertEqual(once, self.spec_path.read_bytes())
+        chosen = self.decision("上篇", "selected", "标识贯穿多步", "neutral-pattern", kind="patterns",
+                               target_refs=[nk.TARGET], roles=[{"role": "标识生成者", "target_ref": nk.TARGET}])
+        chosen["knowledge"]["unit"] = "中篇"
+        self.write_contracts(decisions=self.judged() + [chosen])
+        self.assertIn("单元 中篇 不在 knowledge/design-patterns/neutral-pattern.md 里", self.hook("spec"))
 
 
-class ThePlanPackageCarriesTheLowerHalf(MethodCase):
-    """AC26 / AC05：送什么由 spec 的登记决定；节名怎么改、知识怎么增删，机制文件一个字节不动。"""
+class ThePlanTaskPointsAtTheLowerHalf(MethodCase):
+    """AC26 / AC05：plan 的知识任务把上下篇都送到、说明本动作主要用下篇；节名怎么改、知识怎么增删，机制文件一个字节不动。"""
 
-    def test_a_registered_upper_half_brings_its_lower_half(self) -> None:
-        self.use_method()
-        package = self.plan_package()
-        self.assertIn("### neutral-method · 下篇", package)
-        self.assertIn("每个出口写一行：出口名、核对人、核对时机。", package)
-        self.assertNotIn("先把出口逐个列出来。", package, "上篇不该跟着附进 plan 任务包")
-
-    def test_an_unregistered_method_is_named_not_attached(self) -> None:
-        self.write_use()
-        package = self.plan_package()
-        self.assertNotIn("### neutral-method · 下篇", package)
-        line = next(l for l in package.split("\n") if l.startswith("spec 未登记使用的上下篇知识"))
-        self.assertIn("neutral-method", line)
+    def test_the_plan_task_carries_both_halves_and_names_the_lower(self) -> None:
+        block = self.plan_task().split("### neutral-method（facts，halves）", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("- 本动作主要用下篇", block)
+        self.assertIn("每个出口写一行：出口名、核对人、核对时机。", block)
+        self.assertIn("先把出口逐个列出来。", block, "另一篇供核对承接，也在")
 
     def test_knowledge_changes_leave_the_mechanism_untouched(self) -> None:
         body = (self.ext / "knowledge/facts/neutral-method.md").read_text(encoding="utf-8")
@@ -181,9 +156,8 @@ class ThePlanPackageCarriesTheLowerHalf(MethodCase):
             "    - knowledge/facts/event-tracking.md\n", ""), encoding="utf-8")
         _, err = load(self.root)
         self.assertEqual("", err)
-        self.use_method()
-        self.assertEqual(0, self.render().returncode)
-        self.assertIn("## 另一个节名", self.plan_package())
+        self.write_contracts()
+        self.assertIn("## 另一个节名", self.plan_task())
         # 门禁与审查请求照常：不因知识的增删改而异常或报知识不合协议
         for hook, phase in (("spec/post_check.mjs", "spec"), ("shared/pre_verifier.mjs", "spec"),
                             ("shared/pre_verifier.mjs", "plan")):
@@ -222,9 +196,8 @@ def knowledge_words() -> set[str]:
 class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
     """AC04 / AC27：机制只引用协议与产物出口的结构名；知识结构与内容词从机制里退出。"""
 
-    STRUCTURE_DOCS = (EXT / "skills/story/reference/knowledge/protocol.md",
-                      EXT / "skills/story/templates/spec-sections.md",
-                      EXT / "skills/story/templates/plan-sections.md")
+    #: 知识里出现、机制也按自身语义使用的通用词（成文上下文、审查上下文），不是引用某份知识的结构
+    GENERIC = {"上下文"}
     REMOVED = ("所在流程", "字段取值", "settle", "角色与登记位置", "每次上报带什么", "以后台数据为分母", "衡量什么")
 
     def mechanism_texts(self):
@@ -244,10 +217,10 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
         return names
 
     def test_no_knowledge_word_outside_the_structure_names(self) -> None:
-        """词表从知识派生，减去协议的结构名与产物模板里的出口名；两个字的通用词不算专名。"""
-        templates = "\n".join(p.read_text(encoding="utf-8") for p in self.STRUCTURE_DOCS[1:])
+        """词表从知识派生，减去协议的结构名与产物出口名（Story 章节合同）；两个字的通用词不算专名。"""
+        exits = (EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8")
         allowed = self.protocol_structure_names()
-        words = {w for w in knowledge_words() if w not in allowed and w not in templates and len(w) >= 3}
+        words = {w for w in knowledge_words() - self.GENERIC if w not in allowed and w not in exits and len(w) >= 3}
         self.assertTrue(words, "派生词表为空，这条核不到东西")
         hits = [f"{f.relative_to(EXT).as_posix()}：{w}" for f, text in self.mechanism_texts()
                 for w in sorted(words) if w in text]

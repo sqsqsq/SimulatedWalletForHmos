@@ -60,7 +60,7 @@ export default guard('coding', async (ctx) => {
   const roles = patternRolesFromContracts(contracts);
   if (!obligations.length && !roles.length) {
     return gate(ctx, {
-      skipped: [{ what: '义务落点与探针', why: '契约里没有 must，也没有标 pattern 的文件' }],
+      skipped: [{ what: '义务落点与探针', why: '契约里没有 must，也没有承担模式角色的实体' }],
     });
   }
 
@@ -79,7 +79,6 @@ export default guard('coding', async (ctx) => {
 
   // ---- 1. 落点实体在代码里存在（注释抹掉之后）----
   for (const ob of obligations) {
-    if (ob.entityKind === 'files') continue;             // 文件级由框架原生门禁负责
     const resolved = resolveEntityRef(contracts, ob.entityPath);
     if (/[/\\]/.test(resolved.tail)) continue;            // 路径类落点同上
     const name = tailIdentifier(ob.entityPath);
@@ -121,20 +120,20 @@ export default guard('coding', async (ctx) => {
     }
   }
 
-  // ---- 3. 模式角色：在定义文件之外被引用 ----
+  // ---- 3. 模式角色：承担角色的实体在它的实现文件之外被引用 ----
   for (const pr of roles) {
-    const base = path.basename(pr.path).replace(/\.[^.]+$/, '');
-    const scope = filesForEntity(present, base);
+    const base = pr.entity;
+    const scope = filesForEntity(present, pr.path ? path.basename(pr.path).replace(/\.[^.]+$/, '') : base);
     if (!scope.narrowed) {
-      warnings.push(`模式 ${pr.pattern} 的角色文件「${pr.path}」还没建，引用可达性未验`);
+      warnings.push(`模式 ${pr.pattern} 的角色「${pr.role}」（${pr.entityPath}${pr.path ? `，${pr.path}` : ''}）的实现文件还没建，引用可达性未验`);
       continue;
     }
     const r = runProbe(
       { kind: 'referenced_outside_definition', pattern: '', count: null, raw: 'referenced_outside_definition' },
       { projectRoot: ctx.projectRoot, files: present, entityName: base, entityKind: 'files' });
     if (!r.ok) {
-      problems.push(`模式 ${pr.pattern} 的角色「${pr.role}」（${pr.path}）${r.detail}`
-        + '——门禁在契约点名的其他已建文件里抹掉注释后按整词找这个角色的文件名；只有定义没有调用，这个模式就只落在了文件名上');
+      problems.push(`模式 ${pr.pattern} 的角色「${pr.role}」（${pr.entityPath}）${r.detail}`
+        + '——门禁在契约点名的其他已建文件里抹掉注释后按整词找这个角色实体的名字；只有定义没有调用，这个模式就只落在了名字上');
     }
   }
 

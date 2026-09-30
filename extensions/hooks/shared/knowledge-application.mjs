@@ -13,7 +13,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadNative } from './framework-access.mjs';
+import { featureIdentity, loadNative, readBlueprint } from './framework-access.mjs';
 import { activeKnowledge } from './knowledge.mjs';
 import { extensionRoot } from './paths.mjs';
 
@@ -21,7 +21,7 @@ import { extensionRoot } from './paths.mjs';
 const PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCHEMA = path.join(PACKAGE, 'skills', 'story', 'contracts', 'knowledge-application.schema.json');
 
-/** 激活知识按工程相对路径登记：类别、形态、单元、原始摘要，规约另带每条的强制力。 */
+/** 激活知识按工程相对路径登记：类别、形态、单元、原始摘要，规约另带每条的强制力与哪几条是评审动作。 */
 function activation(projectRoot) {
   const knowledge = activeKnowledge(projectRoot);
   const ext = extensionRoot(projectRoot);
@@ -32,6 +32,7 @@ function activation(projectRoot) {
       kind, file, form, units,
       sha256: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex')}`,
       force: new Map(entries.map(e => [e.id, e.force])),
+      reviewActions: new Set(entries.filter(e => e.reviewAction).map(e => e.id)),
     });
   };
   for (const c of knowledge.constraints) add('constraints', c.file, c.form, c.units, c.entries);
@@ -54,7 +55,8 @@ const where = ref => String(ref ?? '').split('#')[0].replace(/\\/g, '/');
  * @param {string} projectRoot
  * @param {{decisions: object[], facts?: object[], addresses?: Set<string>|null, label: string}} design
  *   `addresses` 是这份设计的原生稳定地址（没有就不核落点）；`label` 用在报错里说是哪份设计。
- * @returns {{rows: object[], problems: string[]}} rows 是合格的知识应用决定，按激活清单里的来源与单元带上文件
+ * @returns {{rows: object[], problems: string[]}} rows 是合格的知识应用决定，按激活清单里的来源与单元带上文件，
+ *   评审动作（不产生代码要求，不进验收与义务）标 `reviewAction`
  */
 function checkKnowledgeApplications(projectRoot, { decisions, facts = [], addresses = null, label }) {
   const native = loadNative(projectRoot);
@@ -84,7 +86,7 @@ function checkKnowledgeApplications(projectRoot, { decisions, facts = [], addres
     const key = `${source.file}#${k.unit}`;
     if (judged.has(key)) say(id, `与 ${judged.get(key)} 判的是同一条（${key}），一条知识只判一次`);
     judged.set(key, id);
-    rows.push({ ...d, file: source.file });
+    rows.push({ ...d, file: source.file, reviewAction: source.reviewActions.has(k.unit) });
   }
   for (const [ref, source] of active) {
     if (source.kind !== 'constraints') continue;
@@ -114,4 +116,41 @@ export function blueprintKnowledge(projectRoot, blueprint) {
     addresses: new Set(addressing.stableAddressIndex(blueprint).keys()),
     label: `蓝图 ${blueprint.blueprint_id}`,
   });
+}
+
+/**
+ * 一个施工 Feature 的知识判断：CU 取它蓝图里的知识应用（按原生地址核），并把它的设计引用换成稳定地址作承接范围；
+ * 非 CU 的维护 Feature 取它原生契约里的 `knowledge_applications`，没有蓝图也不去猜 Story。
+ *
+ * @returns {{rows: object[], problems: string[], scope: Set<string>|null, label: string, blueprint?: object}}
+ *   scope 为 null 时判断全部由它承接；CU 带上读到的蓝图，专项明细（如埋点）从它取
+ */
+export function featureKnowledge(projectRoot, feature, contracts) {
+  const who = featureIdentity(projectRoot, feature);
+  if (who.status !== 'ok' || who.kind !== 'cu') {
+    return { ...checkKnowledgeApplications(projectRoot, {
+      decisions: contracts?.knowledge_applications ?? [], label: `Feature ${feature} 的契约` }), scope: null, label: `Feature ${feature} 的契约` };
+  }
+  const label = `蓝图 ${who.blueprintId}`;
+  const read = readBlueprint(projectRoot, who.blueprintId, 'draft');
+  if (read.status !== 'ok') return { rows: [], problems: [`${label} 原生读不过（${read.status}）——设计负责方处理`], scope: new Set(), label };
+  const addressing = loadNative(projectRoot).module('scripts/utils/blueprint-addressing.ts');
+  const index = [...addressing.stableAddressIndex(read.blueprint)];
+  const scope = new Set();
+  for (const ref of who.design_refs) {
+    try {
+      const record = addressing.resolveBlueprintTarget(read.blueprint, ref.target);
+      const hit = index.find(([, r]) => r === record);
+      if (hit) scope.add(hit[0]);
+    } catch {
+      // 设计引用解析不了由原生 CU 校验报，这里只少一个承接地址
+    }
+  }
+  return { ...blueprintKnowledge(projectRoot, read.blueprint), scope, label, blueprint: read.blueprint };
+}
+
+/** 这个施工单位要承接的判断：落点（含模式角色落点）与它的设计引用有交集的；scope 为 null 时全部。 */
+export function carriedBy(rows, scope) {
+  return rows.filter(d => !scope || [...(d.knowledge.target_refs ?? []), ...(d.knowledge.roles ?? []).map(r => r.target_ref)]
+    .some(t => scope.has(t)));
 }

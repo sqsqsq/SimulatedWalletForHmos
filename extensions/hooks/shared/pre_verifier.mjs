@@ -20,23 +20,21 @@
 import * as path from 'node:path';
 import { readContracts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
+import { carriedBy, featureKnowledge } from './knowledge-application.mjs';
 import { knowledgeTask } from './knowledge-task.mjs';
-import { readUse, requirements, UseError } from './knowledge-use/document.mjs';
-import { contractSections } from './knowledge-use/validation.mjs';
-import { landingName } from './knowledge-use/projection.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
-import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
+import { extensionRoot, readTextOrNull, relDisplay } from './paths.mjs';
+import { designStatPoints, planStatRows, pointKey } from './stat-points.mjs';
+import { featureDir } from './framework-access.mjs';
 import { overlayChecks } from './verifier-report.mjs';
-import { planStatRows, pointKey, specStatPoints, statDesignState } from './stat-points.mjs';
-import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
 const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
 
 /** 本阶段被审的知识判断在哪。spec 自己判，plan 冻结成契约上的 must，之后各阶段按它落实与取证。 */
 const SOURCE_OF_TRUTH = {
-  spec: { file: 'spec/knowledge-use.yaml', what: '每条规约命中与否、命中的要求做什么、模式有哪些候选' },
-  plan: { file: 'contracts.yaml', what: '每条命中的规约挂在哪个实体上（`must`）、模式选了哪几个（`files[].pattern`）' },
+  spec: { file: 'acceptance.yaml', what: '本施工单位承接的适用判断（设计里的知识应用决定）有没有验收条目承接（`knowledge_rule` 与 `knowledge_decision_id`）' },
+  plan: { file: 'contracts.yaml', what: '每条承接的适用判断挂在哪个实体上（`must`，带 `decision_id`）、选中模式的角色由哪个实体承担（`pattern_roles`）' },
   coding: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，代码里有没有落实' },
   review: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，复核表里一处落点一行的结论' },
   ut: { file: 'contracts.yaml', what: '要单测证据的 `must`（`verify: ut / both`）与 `acceptance.yaml` 里桥到规约的验收条目' },
@@ -45,91 +43,31 @@ const SOURCE_OF_TRUTH = {
 
 /** 审查先走通的产物与它交给下游的东西：spec 交 plan 设计，plan 交编码实现与验证。 */
 const WALK = {
-  spec: { what: '业务章与承载专项的那一章', handoff: 'plan 能据以设计：业务对象与动作、条件与结果、依据与具体的未决；'
-    + '关键结论有源材料或已定决定支持（仍 open 的选择有没有被写成已定归读者审查逐条判）；'
-    + '统计设计的指标小节标题是指标名、有定义段与带统计点的表，按读者含 spec 的那一篇知识核，判不过的写出是哪一处；'
-    + '命中的规约要求讲清某项专项时，按那份知识核承载章里的相应设计' },
-  plan: { what: '设计章、`contracts.yaml` 与 `use-cases.yaml`',
+  spec: { what: '本施工单位的行为、边界与验收', handoff: 'plan 能据以设计：业务对象与动作、条件与结果、依据与具体的未决；'
+    + '关键结论有源材料、已准入设计或已定决定支持；适用规约要求的行为与验证责任在验收里有条目承接' },
+  plan: { what: '设计、`contracts.yaml` 与 `use-cases.yaml`',
     handoff: '编码能据以实现与验证：按每个业务结果走通接口的输入、返回、状态与调用，返回类型在本次契约或可定位的现有类型里存在，'
-      + '选中交互模式要的用户动作与业务状态在 use-cases 里实际存在；'
-      + '每个统计点的每种结果有责任方法，读者含 plan 的那一篇知识要求的字段有实际值或按其规则得出的值及来源，指标口径引用 spec；'
+      + '选中模式要的角色由真实实体承担，用户动作与业务状态在 use-cases 里实际存在；'
+      + '设计里的专项明细（如统计点、数据策略）落到了承担它的方法与实体上；'
       + 'use-cases 引的验收与方法在 acceptance 与 contracts（或已核的外部接口）里找得到，找不到是实现断链' },
 };
 
-/**
- * plan：spec 埋点的每个统计点与 plan 埋点小节里同名的全部结果行并列，对不上的两边各自单列。
- * 同一统计点被几个指标共用时，每个指标下都列出同一组 plan 行。spec 没给统计设计时如实说缺在哪。
- */
-function statPointTable(projectRoot, feature) {
-  const dir = featureRoot(projectRoot, feature);
-  const spec = readTextOrNull(path.join(dir, 'spec', 'spec.md'));
-  const points = spec === null ? null : specStatPoints(spec);
-  const state = statDesignState(points);
-  if (state === 'missing') {
-    return [isStoryFeature(dir) ? 'spec 缺埋点一节：上游没有交出统计设计，plan 的埋点无从承接——按 spec 缺口判。'
-      : '本需求没走 /story，spec 未提供统计设计：埋点这一项按本阶段原有要求审，不另立缺口。'];
-  }
-  if (state === 'na') return [`spec 埋点一节写的是「${points.na}」：核这条依据是否成立、plan 是否同样写了不涉及。`];
-  if (state === 'empty') return ['spec 埋点一节没有指标点位表：统计设计结构待补——按 spec 缺口判，plan 行无从对齐。'];
-  const plan = planStatRows(readTextOrNull(path.join(dir, 'plan', 'plan.md')) ?? '');
-  const byKey = new Map();
-  for (const r of plan?.rows ?? []) byKey.set(pointKey(r.point), [...(byKey.get(pointKey(r.point)) ?? []), r]);
-  const consumed = new Set();
-  const rows = ['| 指标 | spec 的这一行 | plan 的结果行 |', '|---|---|---|'];
-  for (const g of points.groups) {
-    for (const r of g.rows) {
-      const key = pointKey(r[0]);
-      const got = byKey.get(key) ?? [];
-      consumed.add(key);
-      rows.push(`| ${cell(g.title)} | ${cell(r.join(' ／ '))} | `
-        + `${got.length ? got.map(x => cell(x.cells.join(' ／ '))).join('<br>') : '（plan 没有这个统计点）'} |`);
-    }
-  }
-  for (const [key, got] of byKey) {
-    if (!consumed.has(key)) for (const x of got) rows.push(`| — | （spec 没有这个统计点） | ${cell(x.cells.join(' ／ '))} |`);
-  }
-  rows.push('', '并列的每一行按读者含 plan 的那一篇知识核：项目规则算得出的字段是不是具体值，'
-    + '那一篇要求的角色在契约里都有承载它的实体与方法。');
-  return rows;
-}
-
-/** 表格一格：竖线转义、换行并成一行，空的写一横。 */
+/** 表格一格：竖线转义、换行压成空格，空值写「—」。 */
 const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ').trim() || '—';
 
 /**
- * spec 阶段：每条激活规约一行，原条目的每一栏与作者判断并列——包括不命中、整域不适用与豁免。
- * 原要求本身必须在表里：审查判「reason 说的是不是命中条件里的事实」「要求有没有偏离原义」，要对着原文判。
+ * spec：本施工单位承接的判断一条一行，原条目与判定、要求与落点并列；审查对着原文核验收是否承接了它们。
  */
-function specJudgementTable(projectRoot, feature, knowledge) {
-  let use = null;
-  let gap = '';
-  try {
-    use = readUse(projectRoot, feature);
-  } catch (e) {
-    if (!(e instanceof UseError)) throw e;
-    gap = e.message;
-  }
-  const byId = new Map((use?.constraints ?? []).map(r => [String(r?.id ?? '').trim(), r]));
-  const na = new Map((use?.domains ?? []).map(r => [String(r?.prefix ?? '').trim(), r]));
-  const sections = contractSections(readTextOrNull(path.join(featureRoot(projectRoot, feature), 'spec', 'spec.md')));
-  const rows = ['| 编号 | 强制力 | 约束原文 | 命中条件 | 命中后要给出 | 附注 | 作者判断 | 落点 |',
-    '|---|---|---|---|---|---|---|---|'];
-  for (const e of knowledge.entries) {
-    const r = byId.get(e.id);
-    const d = na.get(e.prefix);
-    const judged = !use ? '未取得，未验证'
-      : d ? `整域不适用：${d.reason ?? ''}`
-        : !r ? '（没有去处）'
-          : r.applicable === false ? `不命中：${r.reason ?? ''}`
-            : r.applicable !== true ? `applicable 写的是「${r.applicable}」`
-              : r.waived ? `命中·本轮豁免：${r.waived?.reason ?? ''}${r.waived?.compensation ? `；补偿：${r.waived.compensation}` : ''}`
-                : `命中：${(e.reviewAction ? [r.reason] : requirements(r)).filter(Boolean).join('；')}`;
-    const landing = !r ? '—' : r.contract ? landingName(sections, r.contract) : r.impact ? `影响 · ${r.impact}`
-      : r.decision ? `议题 ${r.decision}` : '—';
-    rows.push(`| ${e.id} | ${cell(e.force)} | ${cell(e.constraint)} | ${cell(e.when)} | ${cell(e.handling)} `
-      + `| ${cell(e.note)} | ${cell(judged)} | ${cell(landing)} |`);
-  }
-  return gap ? [`**作者判断读不到**：${gap}——下表的判断一栏是未验证，不替它下结论。`, '', ...rows] : rows;
+function decisionTable(projectRoot, feature, knowledge) {
+  const judged = featureKnowledge(projectRoot, feature, readContracts(projectRoot, feature).contracts);
+  const rows = carriedBy(judged.rows, judged.scope);
+  const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
+  if (!rows.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
+  const byId = new Map(knowledge.entries.map(e => [e.id, e]));
+  return ['| 决定 | 知识单元 | 原文 | 判定 | 要求与理由 | 落点 |', '|---|---|---|---|---|---|',
+    ...rows.map(d => `| ${d.decision_id} | ${d.knowledge.unit} | ${cell(byId.get(d.knowledge.unit)?.constraint ?? '（模式，见知识任务原文）')} `
+      + `| ${d.knowledge.outcome} | ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} | ${cell(d.knowledge.target_refs.join('、'))} |`),
+    ...gaps];
 }
 
 /**
@@ -143,14 +81,45 @@ function obligationTable(projectRoot, feature, knowledge) {
   const ruleIds = [...new Set(musts.map(o => o.rule).filter(Boolean))];
   if (!ruleIds.length) return ['契约上一条 `must` 都没有。'];
   const byId = new Map(knowledge.entries.map(e => [e.id, e]));
-  const rows = ['| 编号 | 约束原文 | 命中后要给出 | 附注 | 契约上的 must（实体：要落实成什么 · verify） |',
+  const rows = ['| 编号 | 约束原文 | 命中后要给出 | 附注 | 契约上的 must（实体：要落实成什么 · verify · 出自的决定） |',
     '|---|---|---|---|---|'];
   for (const id of ruleIds) {
     const e = byId.get(id);
-    const list = musts.filter(o => o.rule === id).map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'}`);
+    const list = musts.filter(o => o.rule === id)
+      .map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'} · ${o.decisionId || '（没写 decision_id）'}`);
     rows.push(`| ${id} | ${cell(e?.constraint ?? '（不在激活清单）')} | ${cell(e?.handling)} | ${cell(e?.note)} `
       + `| ${list.map(cell).join('<br>')} |`);
   }
+  return rows;
+}
+
+/**
+ * plan：蓝图埋点明细的每个统计点与 plan.md 逐点表里同名的全部结果行并列，对不上的两边各自单列。
+ * 设计没给统计设计时如实说缺在哪。
+ */
+function statPointTable(projectRoot, feature) {
+  const design = designStatPoints(featureKnowledge(projectRoot, feature, readContracts(projectRoot, feature).contracts));
+  if (design.state === 'none' || design.state === 'missing') return [`${design.why}：埋点这一项按本阶段原有要求审，不另立缺口。`];
+  if (design.state === 'empty') return ['蓝图的埋点明细里没有统计点表：统计设计结构待补——按设计缺口判，plan 行无从对齐。'];
+  const plan = planStatRows(readTextOrNull(path.join(featureDir(projectRoot, feature), 'plan', 'plan.md')) ?? '');
+  const byKey = new Map();
+  for (const r of plan) byKey.set(pointKey(r.point), [...(byKey.get(pointKey(r.point)) ?? []), r]);
+  const consumed = new Set();
+  const rows = ['| 埋点明细 | 设计的这一行 | plan 的结果行 |', '|---|---|---|'];
+  for (const d of design.details) {
+    for (const r of d.rows) {
+      const key = pointKey(r[0]);
+      const got = byKey.get(key) ?? [];
+      consumed.add(key);
+      rows.push(`| ${cell(d.title)} | ${cell(r.join(' ／ '))} | `
+        + `${got.length ? got.map(x => cell(x.cells.join(' ／ '))).join('<br>') : '（plan 没有这个统计点）'} |`);
+    }
+  }
+  for (const [key, got] of byKey) {
+    if (!consumed.has(key)) for (const x of got) rows.push(`| — | （设计没有这个统计点） | ${cell(x.cells.join(' ／ '))} |`);
+  }
+  rows.push('', '并列的每一行按读者含 plan 的那一篇知识核：项目规则算得出的字段是不是具体值，'
+    + '那一篇要求的角色在契约里都有承载它的实体与方法。');
   return rows;
 }
 
@@ -215,7 +184,7 @@ export default async function preVerifier(ctx) {
   }
   const table = !knowledge ? [`**激活知识派生失败**：${knowledgeGap}——原义无从并列，按规约文件逐条读，结论写未验证的部分。`]
     : !knowledge.entries.length ? ['激活清单里没有规约条目。']
-      : phase === 'spec' ? specJudgementTable(ctx.projectRoot, ctx.feature, knowledge)
+      : phase === 'spec' ? decisionTable(ctx.projectRoot, ctx.feature, knowledge)
         : obligationTable(ctx.projectRoot, ctx.feature, knowledge);
 
   fragments.push(allChecksFragment(checks));
@@ -251,9 +220,9 @@ export default async function preVerifier(ctx) {
     `2. **核本阶段交付够不够下游用**：${(WALK[phase] ?? { handoff: '下游能据以继续' }).handoff}。未知要具体而真实。`,
     '   缺口按对下游的影响定级：下游要重新决定接口结构、核心业务行为或必要取值的，相关条目 FAIL；'
       + '措辞与局部优化才是 advisory / WARN。概述写得长不等于交付够用。',
-    '3. **核知识判断与设计一致**，上表是追溯入口：命中的要求在设计里落地了吗，落点是不是真的做这件事的实体（借挂、夹带点名）；',
-    '   不适用的依据能回查到命中条件里的事实吗（「不涉及」不是依据）；豁免有没有理由、影响与补偿；',
-    '   项目事实登记的能力复用了吗；模式候选的单元与信号、采用模式的角色投影指向真实的分支、步骤与实体吗。',
+    '3. **核知识判断落到了本阶段产物**，上表是追溯入口：适用的要求在本阶段产物里落地了吗，落点是不是真的做这件事的实体（借挂、夹带点名）；',
+    '   判断本身有问题（不适用的依据回查不到事实、豁免缺理由或补偿）时，指出来交设计负责方，不在本阶段改判；',
+    '   项目事实登记的能力复用了吗；选中模式的角色由真实的分支、步骤与实体承担吗。',
     '   通用措辞也可以准确，专门措辞也可能错，按内容判。',
     '',
     '**不要做的事**：不逐条对账、不出裁决表、不为每条结论找一段够长的引文（`decisions.json` 里仍 open 的议题例外：它归读者审查，那一节逐条给结论）。',

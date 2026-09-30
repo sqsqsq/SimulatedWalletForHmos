@@ -164,12 +164,6 @@ export function headingEnd(doc, heading) {
   return next ? next.at : (doc?.lines ?? []).length;
 }
 
-/** `parent` 管到的范围里、下一级中名字匹配 `nameRe` 的第一个标题；没有返回 undefined。 */
-export function childHeading(doc, parent, nameRe) {
-  const end = headingEnd(doc, parent);
-  return doc.headings.find(h => h.at > parent.at && h.at < end && h.level === parent.level + 1 && nameRe.test(h.name));
-}
-
 /**
  * 按名字挑一项 —— **全链唯一的按名定位规则**：先精确，再包含；包含只在唯一命中时成立。
  *

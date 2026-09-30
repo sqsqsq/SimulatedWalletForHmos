@@ -49,7 +49,7 @@ import { cmdBuild, registrationGap } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck, storyCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
-import { storyInputs } from '../../../../hooks/spec/author.mjs';
+import { storyInputs } from './story/story-inputs.mjs';
 
 const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'basis', 'review'];
 
