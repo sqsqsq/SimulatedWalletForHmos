@@ -44,7 +44,7 @@ S4 交给设计    →  bind-design 关联组件与蓝图；按已定范围写�
    ↓
 [framework component-design]  蓝图走到准入，生成评审投影
    ↓
-S5 成文        →  写作设计 → 照骨架按章写 → 回看 → check → 独立审查 → `story_flow.py story` 登记 → 交付门
+S5 成文        →  写作设计 → 照骨架按章写 → 回看 → check → 独立审查（定稿、派审、核结果）→ `story_flow.py story` 登记 → 交付门
    ↓
 S6 交付选择    →  送审（/story archive）/ 完整设计交接 / 完整实现 / 暂不推进
 ```

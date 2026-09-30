@@ -160,6 +160,36 @@ function readProjection(native, checked) {
 }
 
 /**
+ * 原生无 Feature 专项请求（`request-phase.ts` 的 `runExplicitRequest`，参数键与 `npm run check` 的命令行相同）。
+ * 在本进程里调用同一份发布件，接住它写到标准输出的那一段 JSON：prepare 给请求身份与缺口，
+ * 正式检查给 `{subject, request_sha256, verdict, report}`。原生抛错原样交回，不猜结果。
+ *
+ * @returns {Promise<{code: number, output: object|null, text: string}>}
+ */
+export async function explicitRequest(projectRoot, args) {
+  const native = loadNative(projectRoot);
+  const { runExplicitRequest } = native.module('scripts/utils/request-phase.ts');
+  const printed = [];
+  const log = console.log;
+  console.log = (...parts) => printed.push(parts.join(' '));
+  let code;
+  try {
+    code = await runExplicitRequest({ projectRoot: native.root, frameworkRoot: native.frameworkRoot, args });
+  } finally {
+    console.log = log;
+  }
+  const text = printed.join('\n');
+  const json = text.slice(text.search(/^\{/m));
+  let output = null;
+  try {
+    output = JSON.parse(args['prepare-request'] ? json : json.split(/\r?\n/).filter(l => l.startsWith('{')).pop());
+  } catch {
+    output = null;
+  }
+  return { code, output, text };
+}
+
+/**
  * 需求要关联的设计对象：组件与蓝图标识按原生规则核；蓝图已在时核它实际归属的组件，不按名称猜。
  * 蓝图还不存在是合法的新对象。
  */

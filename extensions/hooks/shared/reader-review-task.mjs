@@ -20,6 +20,7 @@ import { sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/stor
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
+import { reviewObject } from '../../skills/story/scripts/core/story/review-object.mjs';
 
 //: 本模块所在的扩展包根：判据与章节合同都属于机制，随包发布
 const PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -221,6 +222,35 @@ function designRows(projectRoot, src) {
     ...(flow?.input?.snapshot_ref ? [`- \`${flow.input.snapshot_ref}\` —— 交给设计的冻结输入（原件、提取稿与人签按原始字节）。`] : [])];
 }
 
+/** 这一次审查对象的全部材料：待审的与只读对照的分列；任务自己不列（它就是这份）。 */
+function objectRows(projectRoot, feature) {
+  const { rows, problems } = reviewObject(projectRoot, feature, { withTask: false });
+  const line = r => `- \`${r.path}\` —— ${r.label}`;
+  return ['', '### 本次审查的材料（原生请求逐字节绑定的就是这些）', '',
+    '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
+    '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
+    ...problems.map(p => `- **读不到**：${p}——与它有关的判断写未验证`)];
+}
+
+/** 报告的格式：原生 review 报告与事实记录，审查者照它写，原生检查按它核。 */
+const REPORT_FORMAT = [
+  '', '### 报告怎么写', '',
+  '回复就是一份原生 review 报告，宿主原样存下交原生检查；格式不合的回复不计结论，要重给。',
+  '',
+  '1. 先在报告目录写事实记录 `context/facts.md`（原生 P1）：frontmatter 写 `schema_version: "1.1"`、',
+  '   `request_sha256: <派审时给的那个值>`、`established_by: review`、`ready_to_produce: true`、',
+  '   `has_blocker_coverage_risk: false`、`exploration_mode: subagent`、`subagents_used`、`files_inspected_count`、',
+  '   `searches_performed_estimate`（不少于 3）、`decisions_unlocked`，`source_code_paths` 逐条列上面「本次审查的材料」的全部路径与本任务文件；',
+  '   不写 feature 与 run_id。正文一张表，表头含「事实」与「路径」，写你实际读到了什么。',
+  '2. 报告章节依次是：审查范围（逐条列出全部材料路径与本任务文件）、审查方法（逐章过了什么、open 议题的逐条结论、',
+  '   会议话题的去向）、问题清单、问题统计、修复建议摘要、结论。',
+  '3. 问题清单一张表，表头：`编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议`；编号写 `CR-001` 起，',
+  '   严重程度按判据写 BLOCKER / MAJOR / MINOR / INFO，分类从「逻辑错误、异常处理、其他」里选，涉及文件写项目相对路径。',
+  '   没有问题写「无问题。」，不建空表。',
+  '4. 问题统计按严重程度计数，与问题清单一致。',
+  '5. 结论一节写一行 `**审查结论**: <通过 | 有条件通过 | 不通过>`，只写一个，再写判定依据。',
+];
+
 /**
  * 任务书正文：判据原文，加这一次的输入与要回答的问题。
  *
@@ -249,6 +279,7 @@ export function readerReviewTask(projectRoot, feature) {
     '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
     '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
     ...designRows(projectRoot, path.join(root, 'AR', 'story-src')),
+    ...objectRows(projectRoot, feature),
   ];
 
   const storyPath = path.join(root, 'AR', 'story.md');
@@ -346,6 +377,7 @@ export function readerReviewTask(projectRoot, feature) {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
 
+  rows.push(...REPORT_FORMAT);
   return rows.join('\n');
 }
 

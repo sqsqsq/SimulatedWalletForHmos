@@ -152,11 +152,13 @@ function registeredDigests(ctx) {
   return flow.story_basis?.files ?? null;
 }
 
-/** 材料指纹：换行差异不算改动（同一份文件在两台机器上可能行尾不同）。 */
-function digestOf(text) {
-  return crypto.createHash('sha256')
-    .update(String(text ?? '').replace(/\r\n/g, '\n'), 'utf-8')
-    .digest('hex').slice(0, 16);
+/** 登记指纹：原始字节的完整 SHA-256，与 `flow/state.py` 的 `file_sha256` 同口径。读不到为 null。 */
+function digestOf(file) {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  } catch {
+    return null;
+  }
 }
 
 /** 激活规约条目 —— 派生失败要出声，不能当作「本需求没有规约」。 */
@@ -176,7 +178,7 @@ export function ledgerDigestProblems(ctx) {
   //
   // 登记记下 story 与它据以成文的依据此刻的指纹；之后任一份改了，登记说的就不是现在这份。
   // 改是正常的（返修、update 修订），改完重跑 `story` 重新登记。
-  // 与 `flow/state.py` 的 `registration_drift` 同一件事，指纹口径同 `ledger_digest`。
+  // 与 `flow/state.py` 的 `registration_drift` 同一件事，指纹口径同 `file_sha256`。
   const digests = registeredDigests(ctx);
   if (digests === null) {
     return ['AR/story-src/story-flow.json：记着已成文登记，却没有成文依据的文件指纹 story_basis.files，契约不完整'
@@ -185,9 +187,9 @@ export function ledgerDigestProblems(ctx) {
   for (const [rel, want2] of Object.entries(digests)) {
     const file = path.join(ctx.featureRoot, ...rel.split('/'));
     if (want2 === null && !fs.existsSync(file)) continue;
-    if (want2 !== digestOf(readRaw(file))) {
-      problems.push(`${rel} 在成文登记之后改过（与登记记下的指纹不同）——登记由 \`story_flow.py story --feature <名>\` 按当前内容重新登记`
-        + '（它重投附录、编号、渲染 review 并全篇 check）');
+    if (want2 !== digestOf(file)) {
+      problems.push(`${rel} 在成文登记之后改过（与登记记下的指纹不同）——改完先 \`story-build review --action prepare\` 定稿并重新审查，`
+        + '审查通过后跑 `story_flow.py story --feature <名>` 重新登记');
     }
   }
   return problems;

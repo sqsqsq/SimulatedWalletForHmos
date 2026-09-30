@@ -971,7 +971,12 @@ modes:
     good_fixture: test/fixtures/failure-modes/R02-knowledge-row-missing/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: pending_capability
+    approved_by: 维护设计者（2026-09-30 步骤 2 实施评审 §3）
+    reason: >
+      附录·规约改由蓝图的知识应用决定投影之后，「knowledge-use 投影少一行」的前提不在了；
+      旧断言退出，逐条规约判断按步骤 3 已定的 knowledge 合同迁到蓝图条目与来源身份覆盖，
+      当前知识消费者接线完成前只做夹具自检。步骤 3 交回恢复有效的正反例。
     scope_note: >
       判定原先落在一份独立的判定记录文件里；那份文件退场后，作业指引与门禁一起没了。
       现在规约条目是来源单元，与材料里的事实走同一条守恒链：缺一条点名一条，

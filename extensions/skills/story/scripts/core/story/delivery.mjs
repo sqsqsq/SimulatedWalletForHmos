@@ -5,6 +5,7 @@
  */
 import { isSystemRequirement, readJson } from './context.mjs';
 import { basisDriftProblems, designSource } from './design-source.mjs';
+import { reviewResult } from './independent-review.mjs';
 
 /**
  * 交付门通过之后往哪走 —— 打印这一问的选项，**不替人选**。
@@ -26,15 +27,14 @@ export function deliveryNextSteps(ctx) {
 }
 
 /**
- * 交付门 —— 成文依据还是登记时那一份吗，独立审查给出可消费的结论了吗。
+ * 交付门 —— 成文依据还是登记时那一份吗，这一份的独立审查给出可消费的结论了吗。
  *
- * 设计来源不成立、登记之后蓝图 / 输入 / 知识变了，都拦：登记说的已经不是现在这份。
- * 独立人读审查的原生调用接通之前，审查结论取不到——那不是失败，但**要出声**：静默通过的话，
- * 没经过审查的 story 就这么交出去了，事后没人看得出来。有既有明确授权按授权交付，没有就请人选。
+ * 设计来源不成立、登记之后蓝图 / 输入 / 知识 / 被审文件变了，都拦：登记说的已经不是现在这份。
+ * 审查结论只认当前对象的原生审查结果：pass 放行，warn 放行并列出建议，其余照结果拦。
  *
- * @returns {{problems: string[], notes: string[]}}
+ * @returns {Promise<{problems: string[], notes: string[]}>}
  */
-export function deliveryProblems(ctx) {
+export async function deliveryProblems(ctx) {
   const flow = readJson(ctx.flowPath, null);
   if (flow?.status !== 'story_written') {
     return { problems: ['还没登记成文——交付的是登记过的那一份，先跑 `story_flow.py story` 登记'], notes: [] };
@@ -42,9 +42,10 @@ export function deliveryProblems(ctx) {
   const source = designSource(ctx);
   const drift = source.problems.length ? source.problems : basisDriftProblems(ctx);
   if (drift.length) return { problems: drift, notes: [] };
-  return {
-    problems: [],
-    notes: ['这份 Story 未经独立人读审查：独立审查的原生调用尚未接通，审查结论取不到。'
-      + '有既有明确授权就按授权交付并如实说明未审；没有就请人选择，不写成审查通过'],
-  };
+  const review = await reviewResult(ctx);
+  if (review.result === 'pass') return { problems: [], notes: [] };
+  if (review.result === 'warn') {
+    return { problems: [], notes: [`独立审查带非阻断建议通过，建议照录：${review.advisories.join('；')}`] };
+  }
+  return { problems: [`独立审查结果 ${review.result}：${review.detail}`], notes: [] };
 }

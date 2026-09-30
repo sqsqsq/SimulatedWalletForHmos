@@ -20,8 +20,8 @@ def _core_modules():
     if str(CORE) not in sys.path:
         sys.path.insert(0, str(CORE))
     from materials import frozen, registry  # noqa: PLC0415
-    from flow.state import STORY_REGISTERED, ledger_digest  # noqa: PLC0415
-    return frozen, registry, STORY_REGISTERED, ledger_digest
+    from flow.state import STORY_REGISTERED, file_sha256  # noqa: PLC0415
+    return frozen, registry, STORY_REGISTERED, file_sha256
 
 
 #: 冻结设计输入时提交的最小提取稿：五段结构齐全
@@ -72,11 +72,11 @@ def hand_over_state(root: Path, feature: str, contract: dict, *, with_blueprint:
 def registered_basis(root: Path, feature: str) -> dict:
     """这一刻真实的成文依据（与 `story_flow.py story` 登记时写的同形）：流程契约里的设计关联与输入要先在盘上。"""
     import subprocess  # noqa: PLC0415
-    _, _, registered, ledger_digest = _core_modules()
+    _, _, registered, file_sha256 = _core_modules()
     proc = subprocess.run(["node", str(CORE / "story-build.mjs"), "basis", "--feature", feature, "--project-root", str(root)],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if proc.returncode != 0:
         raise RuntimeError(f"成文依据取不到：{proc.stderr[:800]}")
     feature_root = root / features_dir(root) / feature
     return {**json.loads(proc.stdout),
-            "files": {rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in registered}}
+            "files": {rel: file_sha256(feature_root / Path(*rel.split("/"))) for rel in registered}}

@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 from flow.state import (
-    CORE_DIR, DESIGN, FlowError, REVIEW, S4_STEPS, STORY, STORY_REGISTERED, last_gate, ledger_digest, load, log,
+    CORE_DIR, DESIGN, FlowError, REVIEW, S4_STEPS, STORY, STORY_REGISTERED, file_sha256, last_gate, load, log,
     now, require, round_gates, save, stage_of)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
 from flow import asks
@@ -100,33 +100,22 @@ def cmd_status(feature_root: Path) -> dict:
 
 
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
-    """登记「Story 已成文」：按已准入蓝图写成的 story 与 review 到位了。
+    """登记「Story 已成文」：按已准入蓝图写成、经独立审查的 story 与 review 就是要交付的这一份。
 
-    story 在蓝图准入之后成文：先建十章骨架，再按合同顺序一次写一章、经命令原子落盘；
-    逐章落盘让中途失败只影响那一章。
+    **登记只读核对，不改被审对象**：附录重投、编号与 Review 渲染在准备审查时已经做完
+    （`story-build review --action prepare`），登记这一步再动它们，审的就不是登记的那一份。依次核：
 
-    **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
-    不在这里重实现——两处各判各的，迟早对不上。
+    1. 全篇结构检查（`story-build check`）通过；
+    2. 这一份的独立审查结果（`story-build review --action check`）是 pass 或 warn——审的是现在这份；
+    3. 这一刻的成文依据（`story-build basis`）：蓝图引用、交给设计的输入版本、激活知识摘要，
+       加上 Story、Review、决策登记与写作设计的原始字节指纹。
 
-    **编号之前先重投影**：附录的机器区从已准入蓝图投影，蓝图在成文期间还可能修订。
-    以登记这一次为准，`story-build project` 从当前真源重算一遍。
-
-    **check 之前先编号**：章序、小节序、图序是纯确定性变换，由 `story-build number`
-    统一铺——作者写业务名标题就够了。编号在登记之前完成；命令幂等，已经对的文件一个字节都不改。
-
-    **登记记下成文依据**（`story_basis`）：实际的蓝图引用、交给设计的输入版本、激活知识的摘要，
-    以及 story 与它的决策登记、写作设计的指纹。之后任何一样变了（返修、update 修订、蓝图升版、知识改动），
-    改完重跑本命令就是重新登记——上一次登记先作废，检查通过再记新的一次；检查没过时状态停在已收口、未登记。
+    都成立才一次写入新依据；任一步不成立照实报出，已有的登记与依据原样保留（派生为待同步）。
+    依据与已登记的相同时什么都不改。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if status == "story_written":
-        for key in ("story_written_at", "story_basis"):
-            contract.pop(key, None)
-        contract["status"] = status = "complete"
-        save(feature_root, contract)
-        log("上一次成文登记已作废，按当前内容重新登记")
-    if status != "complete":
+    if status not in ("complete", "story_written"):
         # 重拍范围之后直接来登记的常见一步：说出现在该做什么，不只说「不行」。
         # 下一步要按磁盘现状读材料；读不出来时「还没收口」照样先说，原因附在后面。
         try:
@@ -141,66 +130,43 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     checker = CORE_DIR / "story-build.mjs"
     node = shutil.which("node")
     if node is None:
-        raise FlowError("找不到 node：成文态登记要先重跑 story-build check，无法跳过")
-    projected = subprocess.run(
-        [node, str(checker), "project", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if projected.returncode != 0:
-        raise FlowError(
-            "story-build project 跑不通，成文态不予登记：\n"
-            + (projected.stderr or projected.stdout or "").strip())
-    numbered = subprocess.run(
-        [node, str(checker), "number", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if numbered.returncode != 0:
-        raise FlowError(
-            "story-build number 跑不通，成文态不予登记：\n"
-            + (numbered.stderr or numbered.stdout or "").strip())
-    # review 也在这一步渲染：它的机器区按当前决策件重算，人工填的内容逐字节保留。
-    # 不在这里渲染的话，下面那道 check 面对的是一份还不存在的 review——
-    # 归档件红线（⑨）于是要等到交付门才报，报了还得回来再登记一次。
-    rendered = subprocess.run(
-        [node, str(checker), "build", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if rendered.returncode != 0:
-        raise FlowError(
-            "story-build build 跑不通，成文态不予登记：\n"
-            + (rendered.stderr or rendered.stdout or "").strip())
-    proc = subprocess.run(
-        [node, str(checker), "check", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if proc.returncode != 0:
-        raise FlowError(
-            "story-build check 未通过，成文态不予登记：\n"
-            + (proc.stderr or proc.stdout or "").strip())
+        raise FlowError("找不到 node：成文态登记要先跑 story-build 的检查，无法跳过")
 
-    # 成文依据：这一刻的设计引用、冻结输入与知识摘要，由 story-build 按同一份计算给出
-    basis = subprocess.run(
-        [node, str(checker), "basis", "--feature", feature_root.name, "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    def build(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run([node, str(checker), *args, "--feature", feature_root.name, "--project-root", str(project_root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+    checked = build("check", "--registering")
+    if checked.returncode != 0:
+        raise FlowError("story-build check 未通过，成文态不予登记：\n" + (checked.stderr or checked.stdout or "").strip())
+    reviewed = build("review", "--action", "check")
+    rows = [line for line in reviewed.stdout.splitlines() if line.startswith("{")]
+    review = json.loads(rows[-1]) if rows else {}
+    if reviewed.returncode != 0 or review.get("result") not in ("pass", "warn"):
+        raise FlowError(f"这一份的独立审查还不能消费（{review.get('result', '读不到结果')}）：{review.get('detail', (reviewed.stderr or '').strip()[:600])}"
+                        "——按 `phases/design.md`「五、独立审查、登记与交付」处置，审查通过再登记")
+    basis = build("basis")
     if basis.returncode != 0:
         raise FlowError("成文依据取不到，成文态不予登记：\n" + (basis.stderr or basis.stdout or "").strip())
 
-    contract["status"] = "story_written"
-    contract["story_written_at"] = now()
-    # 登记记下 story 与它据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
-    # 与流程路由拿它核「登记之后改过没有」，改过就重跑 `story` 重新登记。
+    # 登记记下 story、review 与它们据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
+    # 与流程路由拿它核「登记之后改过没有」，改过就重新审查、重新登记。
     #
     # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
     # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
-    contract["story_basis"] = {
-        **json.loads(basis.stdout),
-        "files": {rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED},
-    }
+    wanted = {**json.loads(basis.stdout),
+              "files": {rel: file_sha256(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}}
+    if status == "story_written" and contract.get("story_basis") == wanted:
+        log("这一份已经按同样的依据登记过，不改")
+        return {"status": "story_written", "story": str(story), "registered": False}
+    contract["status"] = "story_written"
+    contract["story_written_at"] = now()
+    contract["story_basis"] = wanted
     save(feature_root, contract)
     baseline = record_baseline(feature_root)
-    return {"status": "story_written", "story": str(story),
+    return {"status": "story_written", "story": str(story), "registered": True, "review": review.get("result"),
             **({"update_baseline": baseline} if baseline else {})}
 
 

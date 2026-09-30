@@ -348,3 +348,58 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         if proc.returncode != 0:
             raise RuntimeError(f"附录按蓝图重投失败：{proc.stdout}{proc.stderr}")
+
+
+def install_review_mechanism(root: Path, extension: Path) -> None:
+    """审查对象里的章节合同与判据取工程里装的那份扩展：只装了部分扩展的测试工程从 `extension` 补这两份。"""
+    for rel in ("skills/story/contracts/story-chapters.json", "rules/story-reader-rules.yaml"):
+        target = root / "doc" / "extensions" / rel
+        if not target.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(extension / rel, target)
+
+
+#: 夹具审查者的问题清单：每种结论一份（编号、严重程度、分类、问题描述、修复建议）
+REVIEW_ISSUES = {
+    "pass": [],
+    "advice": [("CR-001", "MINOR", "其他", "背景一章的结论先于依据出现，读者要回读", "把依据移到结论之前")],
+    "major": [("CR-001", "MAJOR", "其他", "流程一章没说受理失败之后谁通知用户", "补写失败之后的去向")],
+    "block": [("CR-001", "BLOCKER", "逻辑错误", "材料要求的超时释放在正文里没有落点", "在业务方案一章补写超时释放由谁发起")],
+}
+
+
+def write_review(root: Path, feature: str, kind: str = "pass") -> Path:
+    """夹具审查者：按原生格式写事实记录，并把一份原生 review 报告作为回复原样存到 `review-original.md`。
+
+    只验证协议——准备出的请求、原生检查与结果归类接得上——不是真实的独立审查。返回原回复的路径。
+    """
+    review = root / features_dir(root) / feature / "AR" / "story-src" / "review"
+    prepared = json.loads((review / "prepared.json").read_text(encoding="utf-8"))
+    files = sorted(json.loads((review / "request.json").read_text(encoding="utf-8"))["targets"]["files"])
+    out = root / prepared["report_dir"]
+    (out / "context").mkdir(parents=True, exist_ok=True)
+    (out / "context" / "facts.md").write_text("\n".join([
+        "---", 'schema_version: "1.1"', f"request_sha256: {prepared['request_sha256']}", "established_by: review",
+        "ready_to_produce: true", "has_blocker_coverage_risk: false", "exploration_mode: subagent", "subagents_used: yes",
+        f"files_inspected_count: {len(files)}", f"searches_performed_estimate: {max(3, len(files))}",
+        "source_code_paths:", *[f"  - {p}" for p in files], "decisions_unlocked:", "  - 审查结论", "---", "",
+        "## Code Facts", "", "| # | 事实 | 路径 | 证据 |", "|---|---|---|---|",
+        *[f"| {i + 1} | 读了全文 | `{p}` | 全文 |" for i, p in enumerate(files)], ""]), encoding="utf-8")
+    story = f"{features_dir(root)}/{feature}/AR/story.md"
+    issues = REVIEW_ISSUES[kind]
+    count = {s: sum(1 for i in issues if i[1] == s) for s in ("BLOCKER", "MAJOR", "MINOR", "INFO")}
+    verdict = "不通过" if count["BLOCKER"] else "有条件通过" if count["MAJOR"] else "通过"
+    table = ["| 编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议 |", "|---|---|---|---|---|---|",
+             *[f"| {a} | {b} | {c} | {d} | `{story}` | {e} |" for a, b, c, d, e in issues]]
+    text = "\n".join([
+        f"# Story 审查报告 — {feature}", "", "## 一、审查范围", "", *[f"- `{p}`" for p in files], "",
+        "## 二、审查方法", "", "按任务里的判据逐章对着来源读。", "",
+        "## 三、问题清单", "", *(table if issues else ["无问题。"]), "",
+        "## 四、问题统计", "", "| 严重程度 | 数量 |", "|---|---|", *[f"| {s} | {n} |" for s, n in count.items()],
+        f"| **合计** | **{len(issues)}** |", "",
+        "## 五、修复建议摘要", "", "见问题清单。" if issues else "无。", "",
+        "## 六、结论", "", f"**审查结论**: {verdict}", "", "**判定依据**:",
+        f"- BLOCKER 数量: {count['BLOCKER']}", f"- MAJOR 数量: {count['MAJOR']}", ""])
+    original = out / "review-original.md"
+    original.write_text(text, encoding="utf-8")
+    return original

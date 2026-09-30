@@ -26,7 +26,7 @@
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
  * | `basis` | 输出这一刻的成文依据（设计引用、冻结输入、知识摘要），登记与路由用它 |
- * | `review`| 独立人读审查：`--action prepare` 生成审查任务，`--action check` 报审查结论能不能消费 |
+ * | `review`| 独立人读审查：`--action prepare` 定稿并准备原生审查请求，`--action check` 核这一次的审查结果 |
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -41,7 +41,7 @@ import {
 } from './story/context.mjs';
 import { designGaps, materialSubsectionName, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
-import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
+import { ORIGINAL, prepareReview, reviewResult } from './story/independent-review.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
@@ -61,7 +61,9 @@ function parseArgs(argv) {
     else if (argv[i] === '--chapter') args.chapter = argv[++i];
     else if (argv[i] === '--from') args.from = argv[++i];
     else if (argv[i] === '--deliver') args.deliver = true;
+    else if (argv[i] === '--registering') args.registering = true;
     else if (argv[i] === '--action') args.action = argv[++i];
+    else if (argv[i] === '--report-dir') args.reportDir = argv[++i];
   }
   return args;
 }
@@ -115,31 +117,39 @@ function cmdBasis(ctx) {
 }
 
 /**
- * 独立人读审查。审查在登记之前：先过全篇结构检查（设计来源成立、各章与附录都对得上），再准备审查；
- * 登记时重核依据，交付门按审查结论与授权放行。
+ * 独立人读审查，接 Framework 原生的无 Feature review request（`story/independent-review.mjs`）。
  *
- * - `prepare`：把判据原文与这一次的输入写成审查任务 `AR/story-src/review/task.md`，交给独立审查者；
- * - `check`：报审查结论能不能消费。
- *
- * 独立审查的原生调用（派审、报告落点、对象身份与状态映射）接通之前，没有可消费的审查结论：
- * 照实说审查者不可用，不伪造报告，不写成通过；交付时按既有授权或请人选择，并说明未审。
+ * - `prepare`：先把审查对象定成最终版——附录重投、编号、渲染 Review，全篇结构检查通过——再写审查任务、
+ *   生成原生请求并调原生 prepare；给出派审要带的东西。
+ * - `check`：核这一次的审查结果，输出一行 JSON（`result`、`detail`），pass / warn 退出 0，其余退出 1。
+ *   登记与交付门消费同一个结果。
  */
-function cmdReview(ctx) {
-  if (!['prepare', 'check'].includes(ctx.args.action)) fail('用法: story-build.mjs review --action prepare|check --feature <需求名> [--project-root <路径>]');
-  const { problems } = storyCheck({ ...ctx, args: { ...ctx.args, deliver: false } });
-  if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
-  const unavailable = 'reviewer_unavailable：独立审查的原生调用尚未接通，没有可消费的审查结论——'
-    + '按 phases/design.md「五、独立审查、登记与交付」里「审查者不可用」那一行走';
+async function cmdReview(ctx) {
+  if (!['prepare', 'check'].includes(ctx.args.action)) {
+    fail('用法: story-build.mjs review --action prepare|check --feature <需求名> [--project-root <路径>] [--report-dir <项目相对路径>]');
+  }
   if (ctx.args.action === 'check') {
-    process.stdout.write(`[story-build review] ${unavailable}\n`);
+    const out = await reviewResult(ctx);
+    process.stdout.write(`${JSON.stringify(out)}\n`);
+    process.exitCode = ['pass', 'warn'].includes(out.result) ? 0 : 1;
     return;
   }
-  const dir = path.join(ctx.srcDir, 'review');
-  fs.mkdirSync(dir, { recursive: true });
-  const task = path.join(dir, 'task.md');
-  fs.writeFileSync(task, `${readerReviewTask(ctx.projectRoot, ctx.args.feature)}\n`, 'utf-8');
-  process.stdout.write(`[story-build review] 审查任务已生成：${relFromFeature(ctx, task)}\n`
-    + `[story-build review] ${unavailable}\n`);
+  cmdProject(ctx);
+  cmdNumber(ctx);
+  cmdBuild(ctx);
+  const { problems } = storyCheck(ctx, { registration: false });
+  if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
+  const out = await prepareReview(ctx, ctx.args.reportDir);
+  if (out.error) fail(out.error);
+  process.stdout.write([
+    `[story-build review] 审查已准备：对象 ${out.rows.length} 份，请求 request_sha256 ${out.request_sha256}`,
+    `  任务：${relFromFeature(ctx, path.join(ctx.srcDir, 'review', 'task.md'))}（待审与只读对照材料在里面分列）`,
+    `  报告目录：${out.reportDir}`,
+    '派审：用宿主与作者隔离的独立执行能力（子代理）交给审查者，带上任务文件、request_sha256 与报告目录。审查者按任务读全部材料，',
+    `  在 ${out.reportDir}/context/facts.md 写原生事实记录，回复一份原生 review 报告（格式见任务「报告怎么写」）。`,
+    `回复原样写到 ${out.reportDir}/${ORIGINAL}（一字不改），再跑 story-build review --action check；`
+      + '派审与结果的处置见 phases/design.md「五、独立审查、登记与交付」。', '',
+  ].join('\n'));
 }
 
 /**
@@ -251,7 +261,7 @@ function cmdSkeleton(ctx) {
   process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv);
   if (!COMMANDS.includes(args.command)) {
     fail(`用法: story-build.mjs <${COMMANDS.join('|')}> --feature <需求名> [--project-root <路径>]`);
@@ -264,8 +274,8 @@ function main() {
   else if (args.command === 'chapter') cmdChapter(ctx);
   else if (args.command === 'project') cmdProject(ctx);
   else if (args.command === 'basis') cmdBasis(ctx);
-  else if (args.command === 'review') cmdReview(ctx);
-  else if (args.command === 'check') cmdCheck(ctx);
+  else if (args.command === 'review') await cmdReview(ctx);
+  else if (args.command === 'check') await cmdCheck(ctx);
   else if (args.command === 'number') cmdNumber(ctx);
   else cmdBuild(ctx);
 }
@@ -273,6 +283,6 @@ function main() {
 // 直接跑才执行命令；被 import 时只导出判定函数（正面校准要拿句边界判把一份文档
 // 逐句灌一遍，那件事不该经由一个需要完整需求目录的命令行去做）。
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  main().catch((e) => fail(e?.stack ?? String(e)));
 }
 

@@ -9,7 +9,8 @@
 材料与范围确认 → bind-design → complete（冻结输入、原生来源检查）
   → component-design 走到准入并生成评审投影
   → story-build skeleton → 写作设计 → 逐章 chapter → 回看 → check
-  → 独立审查（story-build review）→ story_flow.py story 登记 → check --deliver 交付门 → 交付选择
+  → 独立审查（story-build review：定稿、准备原生请求 → 派审 → 核结果）→ story_flow.py story 登记
+  → check --deliver 交付门 → 交付选择
 ```
 
 `/story` 默认做到交付门并问一次交付选择。已有明确授权覆盖后续时照授权接续；业务审批与实施授权分开对待。
@@ -62,21 +63,29 @@
 
 ## 五、独立审查、登记与交付
 
-1. **审查**：`story-build check` 通过之后，跑 `story-build review --action prepare`。它生成审查任务 `AR/story-src/review/task.md`，内含判据原文与这一次的输入，交给独立审查者。审查结论由 `story-build review --action check` 取：
+1. **定稿并准备审查**：`story-build check` 通过之后，跑 `story-build review --action prepare`。它先把审查对象定成最终版
+   （附录重投、编号、渲染 `AR/review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`、生成 Framework 原生的
+   无 Feature review 请求并调原生 prepare，输出这一次的 request_sha256 与报告目录（默认 `doc/reports/story/<需求>/<材料键>/`，
+   与需求目录分开）。之后改了任何被审材料，重新 prepare、重新审。
+2. **派审**：用宿主与作者隔离的独立执行能力（子代理）把任务文件、request_sha256 与报告目录交给审查者。审查者读任务里列的全部材料，
+   在报告目录写原生事实记录 `context/facts.md`，回复一份原生 review 报告（格式在任务的「报告怎么写」）。
+   你把回复**原样**写到 `<报告目录>/review-original.md`，一字不改。
+3. **核结果**：`story-build review --action check` 核审的是不是现在这份、回复在不在，跑原生检查并归类：
 
-   | 结论 | 你做什么 |
+   | 结果 | 你做什么 |
    |---|---|
-   | 通过，结构检查也通过 | 登记，交付 |
-   | 有建议、没有阻断项 | 带建议交付，不因建议反复重审 |
-   | 有阻断项 | 回到最早出错的那一处（材料、决策登记、写作设计、章草稿或设计）修，改完重审 |
-   | 报告缺失、无效或对象已变 | 保留原回复，重新准备或修真实输入，不改审查结论 |
-   | 审查者不可用 | 照实说这份 Story 未经独立审查；有既有明确授权按授权交付，没有就请人选择 |
-   | 输入无效或工具出错 | 停下，报告实际的工具或来源缺口 |
+   | pass | 登记，交付 |
+   | warn（只有 MINOR / INFO 建议） | 登记，带建议交付，不因建议反复重审 |
+   | fail（不通过，或有未关闭 MAJOR） | 回到最早出错的那一处（材料、决策登记、写作设计、章草稿或设计）修，改完重新 prepare、重审 |
+   | report_missing / report_invalid | 保留原回复，请审查者按格式重给，不改它的结论 |
+   | subject_stale | 审的不是现在这份：重新 prepare，按新材料再审 |
+   | input_invalid / tool_error | 停下，报告实际的工具或来源缺口 |
 
-   独立审查的原生调用接通之前，`check` 给出的是「审查者不可用」。
-2. **登记**：`story_flow.py story`。它从蓝图重投附录、编号、渲染 review、全篇 check，记下成文依据（蓝图引用、输入版本、知识摘要与文件指纹）。登记之后任何一样变了，改完重跑就是重新登记。
-3. **交付门**：`story-build check --deliver`。它核交付的是登记的那一份，依据没有变。
-4. **交付选择**：交付门通过后问一次，并按停等表记下人的选择：
+   宿主没有独立执行能力时，照实告诉人缺什么，不自审顶替；这一版交付门不放行未经审查的 Story。
+4. **登记**：`story_flow.py story`。它只读核对：结构检查、这一份的审查结果（pass 或 warn）、成文依据（蓝图引用、输入版本、
+   知识摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），都成立才一次记下新依据；不成立时已有的登记原样保留。
+5. **交付门**：`story-build check --deliver`。它核交付的是登记的那一份、依据没有变、审查结果仍可消费。
+6. **交付选择**：交付门通过后问一次，并按停等表记下人的选择：
    - 送审：仅系统需求；
    - 完整设计交接；
    - 完整实现；

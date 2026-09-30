@@ -1,10 +1,10 @@
 """交付门拦不拦得住、读者审查的任务送不送得到。
 
-## 交付门
+## 审查、登记与交付门
 
-`check --deliver` 核的是**登记过的那一份**：没登记不交付；登记之后蓝图、交给设计的输入或激活知识变了，
-登记说的就不是现在这份，拦下并指回重新登记。独立人读审查的原生调用接通之前，审查结论取不到——
-照实说这份 Story 未经审查，不写成通过；通过之后给出一次交付选择（本地单没有送审）。
+审查接 Framework 原生的无 Feature review request：准备时定稿、生成请求，审查者的回复原样存下，原生检查之后归类。
+登记只读核对，审查结果可消费才写新依据，失败保留旧依据；`check --deliver` 核的是**登记过、审过的那一份**，
+登记之后蓝图、输入、知识或被审文件变了就拦下；通过之后给出一次交付选择（本地单没有送审）。
 
 ## 送达与任务定义
 
@@ -33,29 +33,51 @@ STORY_MD = """# 甲需求（SMPFEAT）
 用户现在拿不到凭据。
 """
 
-class TheDeliveryGateChecksTheRegisteredBasis(unittest.TestCase):
-    """交付门只在 `--deliver` 起作用：交付的是登记过的那一份，依据变了要拦，没经过独立审查要照实说。"""
+class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
+    """一条真实的正常链：定稿并准备原生审查请求 → 审查者回复 → 原生检查 → 登记 → 交付门。
+
+    审查者是夹具（按原生格式写事实记录与报告），只验证协议接得上；真实的独立执行与业务效果在 CLI 里核。
+    """
 
     FIXTURE = REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
+    FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
         designed_copy(self.FIXTURE, "REQ-DEMO", DRAFT, self.root)
+        design_kit.install_review_mechanism(self.root, DEV_EXT)
+        # 1.x 的平铺 Spec 产物与蓝图工作区同在一个需求目录，原生按歧义拒绝；2.0 的需求目录没有它
+        shutil.rmtree(self.root / "doc" / "features" / "REQ-DEMO" / "spec")
         self.flow_path = self.root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
+        self.story = self.flow_path.parent.parent / "story.md"
+
+    def run_node(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["node", str(STORY_BUILD), *args, "--feature", "REQ-DEMO", "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
 
     def check(self, *extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["node", str(STORY_BUILD), "check", "--feature", "REQ-DEMO",
-             "--project-root", str(self.root), *extra],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        return self.run_node("check", *extra)
 
-    def register(self) -> None:
-        flow = json.loads(self.flow_path.read_text(encoding="utf-8"))
-        flow["status"] = "story_written"
-        flow["story_basis"] = design_kit.registered_basis(self.root, "REQ-DEMO")
-        self.flow_path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+    def review(self, action: str) -> subprocess.CompletedProcess:
+        return self.run_node("review", "--action", action)
+
+    def result(self) -> dict:
+        out = self.review("check")
+        return json.loads([l for l in out.stdout.splitlines() if l.startswith("{")][-1])
+
+    def register(self) -> subprocess.CompletedProcess:
+        return subprocess.run(["python", str(self.FLOW), "story", "--feature", "REQ-DEMO", "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+    def reviewed(self, kind: str = "pass") -> Path:
+        prepared = self.review("prepare")
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        return design_kit.write_review(self.root, "REQ-DEMO", kind)
+
+    def flow(self) -> dict:
+        return json.loads(self.flow_path.read_text(encoding="utf-8"))
 
     def test_plain_check_never_touches_the_delivery_gate(self) -> None:
         """登记前与返修中跑的是普通 check：那时独立审查还没发生。"""
@@ -67,53 +89,96 @@ class TheDeliveryGateChecksTheRegisteredBasis(unittest.TestCase):
         self.assertNotEqual(0, out.returncode)
         self.assertIn("还没登记成文", out.stdout + out.stderr)
 
-    def test_a_registered_story_passes_and_says_it_was_not_reviewed(self) -> None:
-        """审查结论取不到时照实说未审，给出交付选择；本地单没有送审。"""
-        self.register()
+    def test_the_normal_chain_reviews_registers_and_delivers(self) -> None:
+        """准备出的请求绑定 Story、Review 与对照材料；审查通过之后登记，交付门放行并问一次交付选择。"""
+        original = self.reviewed("pass")
+        request = json.loads((self.flow_path.parent / "review" / "request.json").read_text(encoding="utf-8"))
+        files = request["targets"]["files"]
+        for need in ("doc/features/REQ-DEMO/AR/story.md", "doc/features/REQ-DEMO/AR/review.md",
+                     "doc/features/REQ-DEMO/AR/story-src/review/task.md", "doc/extensions/rules/story-reader-rules.yaml"):
+            self.assertIn(need, files)
+        self.assertTrue(any("/AR/story-src/inputs/" in p for p in files), "冻结输入没进审查对象")
+        self.assertTrue(any(p.endswith("component-blueprint.yaml") for p in files), "蓝图没进审查对象")
+        self.assertEqual({"head": "WORKTREE"}, request["baseline"])
+        self.assertEqual("pass", self.result()["result"])
+        registered = self.register()
+        self.assertEqual(0, registered.returncode, registered.stdout + registered.stderr)
+        self.assertEqual("story_written", self.flow()["status"])
+        self.assertIn("AR/review.md", self.flow()["story_basis"]["files"])
         out = self.check("--deliver")
         text = out.stdout + out.stderr
         self.assertEqual(0, out.returncode, text)
-        self.assertIn("未经独立人读审查", text)
-        self.assertNotIn("PASS", text)
         for choice in ("完整设计交接", "完整实现", "暂不推进"):
             self.assertIn(choice, text)
         self.assertNotIn("/story archive", text, "本地单没有送审")
+        self.assertEqual(original.read_bytes(), (original.parent / "review-original.md").read_bytes())
+        again = json.loads([l for l in self.register().stdout.splitlines() if l.startswith("{")][-1])
+        self.assertFalse(again["registered"], "同一份对象重复登记换了身份")
 
-    def review(self, action: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["node", str(STORY_BUILD), "review", "--action", action, "--feature", "REQ-DEMO",
-             "--project-root", str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-
-    def test_the_review_is_prepared_once_the_structure_check_passes(self) -> None:
-        """审查在登记之前：结构检查没过不准备；过了就生成带判据原文的任务，照实说审查调用未接通。"""
-        story = self.flow_path.parent.parent / "story.md"
-        text = story.read_text(encoding="utf-8")
-        story.write_text(text.replace("## 附录", "## 附录外的一章\n\n写错的章。\n\n## 附录", 1), encoding="utf-8")
-        refused = self.review("prepare")
-        self.assertNotEqual(0, refused.returncode)
-        self.assertIn("结构检查没过", refused.stdout + refused.stderr)
-        story.write_text(text, encoding="utf-8")
-        out = self.review("prepare")
+    def test_advisories_are_delivered_with_the_story(self) -> None:
+        self.reviewed("advice")
+        result = self.result()
+        self.assertEqual("warn", result["result"], result)
+        self.assertEqual(0, self.register().returncode)
+        out = self.check("--deliver")
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
-        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
-        self.assertIn("### 判据", task)
-        self.assertIn("跨章对着读", task)
-        self.assertIn("reviewer_unavailable", out.stdout)
+        self.assertIn("CR-001", out.stdout)
 
-    def test_checking_says_the_reviewer_is_unavailable_without_inventing_a_result(self) -> None:
-        out = self.review("check")
-        self.assertEqual(0, out.returncode, out.stderr)
-        self.assertIn("reviewer_unavailable", out.stdout)
-        self.assertNotIn("PASS", out.stdout)
-        self.assertFalse((self.flow_path.parent / "review" / "report.md").exists(), "没有审查却落了报告")
+    def test_a_blocking_review_is_not_registered(self) -> None:
+        for kind in ("block", "major"):
+            with self.subTest(kind=kind):
+                self.reviewed(kind)
+                self.assertEqual("fail", self.result()["result"])
+                refused = self.register()
+                self.assertNotEqual(0, refused.returncode)
+                self.assertIn("fail", refused.stdout)
+                self.assertEqual("complete", self.flow()["status"])
+
+    def test_without_a_reply_nothing_is_registered(self) -> None:
+        self.assertEqual("report_missing", self.result()["result"], "没准备也没回复却给了结果")
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual("report_missing", self.result()["result"])
+        self.assertNotEqual(0, self.register().returncode)
+
+    def test_a_story_changed_after_the_review_is_stale(self) -> None:
+        self.reviewed("pass")
+        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        self.assertEqual("subject_stale", self.result()["result"])
+        self.assertNotEqual(0, self.register().returncode)
+
+    def test_a_failed_registration_keeps_the_old_basis(self) -> None:
+        """重新登记没过：旧依据原样留着，派生为待同步，不交付。"""
+        self.reviewed("pass")
+        self.assertEqual(0, self.register().returncode)
+        before = self.flow()["story_basis"]
+        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        self.reviewed("block")
+        self.assertNotEqual(0, self.register().returncode)
+        self.assertEqual(("story_written", before), (self.flow()["status"], self.flow()["story_basis"]))
+        self.assertNotEqual(0, self.check("--deliver").returncode)
 
     def test_a_blueprint_revised_after_registration_blocks(self) -> None:
-        self.register()
+        self.reviewed("pass")
+        self.assertEqual(0, self.register().returncode)
         design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, "本需求没有任何上报动作", "本需求只在提交时上报一次")
         out = self.check("--deliver")
         self.assertNotEqual(0, out.returncode)
         self.assertIn("登记之后", out.stdout + out.stderr)
+
+    def test_the_review_is_prepared_once_the_structure_check_passes(self) -> None:
+        """结构检查没过不准备；过了就生成带判据原文与报告格式的任务。"""
+        text = self.story.read_text(encoding="utf-8")
+        self.story.write_text(text.replace("## 附录", "## 附录外的一章\n\n写错的章。\n\n## 附录", 1), encoding="utf-8")
+        refused = self.review("prepare")
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("结构检查没过", refused.stdout + refused.stderr)
+        self.story.write_text(text, encoding="utf-8")
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
+        for needle in ("### 判据", "跨章对着读", "### 报告怎么写", "### 本次审查的材料", "待审（结论针对它们）"):
+            self.assertIn(needle, task)
+        self.assertNotIn("reviewer_unavailable", out.stdout + task)
 
 
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
@@ -325,16 +390,18 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
                           f"「{chapter['title']}」的读者问题没送到")
 
     def test_the_output_contract_lives_with_the_method(self) -> None:
-        """PASS 只进汇总表、明细只列非 PASS——本项不设例外，否则正常 PASS 会被拒。
+        """结论写成原生 review 报告：阻断与建议各进问题清单的哪几级、证据写在哪、没有问题怎么写，与方法同处一份。
 
-        它与方法同处一份（overlay）：输出要求与判据分在两个文件时，改一处就对不上。
+        输出要求与判据分在两个文件时，改一处就对不上；任务书的「报告怎么写」给章节与表头。
         """
         method = self.overlay_method()
-        self.assertIn("汇总表", method)
-        self.assertIn("不许空", method)
-        self.assertIn("blocking_findings", method)
-        self.assertIn("advisories", method)
-        self.assertNotIn("为标记的一块", method, "又要求了 markdown 块")
+        for needle in ("原生 review 报告", "不许空", "blocking_findings", "advisories", "问题清单", "无问题。"):
+            self.assertIn(needle, method)
+        for gone in ("汇总表", "YAML 明细", "为标记的一块"):
+            self.assertNotIn(gone, method, f"旧的输出契约「{gone}」还在")
+        task = self.inject()
+        for needle in ("### 报告怎么写", "`编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议`", "**审查结论**"):
+            self.assertIn(needle, task)
 
     def plan_path(self) -> Path:
         return self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"

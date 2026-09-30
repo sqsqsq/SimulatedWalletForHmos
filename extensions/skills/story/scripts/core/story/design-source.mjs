@@ -108,7 +108,7 @@ export function basisDriftProblems(ctx) {
   }
   const now = currentBasis(ctx);
   if (now.problems.length) return now.problems;
-  const again = '——改完跑 `story_flow.py story` 重投附录并重新登记，重新审查';
+  const again = '——改完先 `story-build review --action prepare` 定稿并重新审查，审查通过后跑 `story_flow.py story` 重新登记';
   const out = [];
   const was = basis.blueprint_ref ?? {};
   if (was.artifact_sha256 !== now.blueprint_ref?.artifact_sha256 || was.revision !== now.blueprint_ref?.revision) {

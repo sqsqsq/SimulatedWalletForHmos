@@ -941,6 +941,10 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assertIn(row, text)
         story.write_text(text.replace(row, row + "- 系统设计：接口与端云分工。原文：[SR/design.md](../SR/design.md)\n"),
                          encoding="utf-8")
+        # 登记前要经独立审查：审查对象里的章节合同与判据取工程里装的扩展；1.x 的平铺 Spec 产物与蓝图工作区
+        # 同在需求目录时原生按歧义拒绝，2.0 的需求目录没有它
+        design_kit.install_review_mechanism(self.root, DEV_EXT)
+        shutil.rmtree(self.feature_root / "spec", ignore_errors=True)
         self.outputs: list[str] = []
 
     def run_cmd(self, *args: str) -> subprocess.CompletedProcess:
@@ -950,6 +954,11 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         return proc
 
     def register(self) -> dict:
+        """定稿并准备审查，夹具审查者给出通过的回复，再登记。"""
+        prepared = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--feature", FEATURE,
+                                "--project-root", str(self.root))
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        design_kit.write_review(self.root, FEATURE, "pass")
         out = self.flow("story")
         self.outputs.append(json.dumps(out, ensure_ascii=False))
         return out
@@ -994,8 +1003,6 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.mark_archived()
         rid = self.update()["update"]
-        spec = self.feature_root / "spec" / "spec.md"
-        spec.write_text(spec.read_text(encoding="utf-8") + "\n回执状态按服务端为准。\n", encoding="utf-8")
         self.rewrite_background("支付提交后用户要能看到回执状态，以服务端为准。")
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         refused = self.update("--action", "close")

@@ -47,9 +47,11 @@ function groupedProblems(problems, marks) {
 /**
  * 全篇确定性判据算一遍，不打印、不退出：`check` 打印它，独立审查准备前要它先过。
  *
+ * `registration` 为假时不核「登记之后改过没有」：准备审查的正是登记之后改过、要重新审查的那一份。
+ *
  * @returns {{problems: string[], marks: {from: number, label: string}[], notes: string[], chapters: number}}
  */
-export function storyCheck(ctx) {
+export function storyCheck(ctx, { registration = true } = {}) {
   // 起步先判台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的余波。
   requireLedgers(ctx);
   const problems = [];
@@ -83,7 +85,7 @@ export function storyCheck(ctx) {
   }
 
   mark('⓪b 台账没在登记之后被换过');
-  problems.push(...ledgerDigestProblems(ctx), ...basisDriftProblems(ctx));
+  if (registration) problems.push(...ledgerDigestProblems(ctx), ...basisDriftProblems(ctx));
 
   mark('⓪c 写作设计');
   // 章是照写作设计写的：设计读不了，下面按章核的选定结构也就无从谈起。
@@ -274,22 +276,20 @@ export function storyCheck(ctx) {
   mark('⑮ AR 根下只有交付文档');
   problems.push(...strayFileProblems(ctx));
 
-  mark('⑭ 交付门');
-  // ⑭ 交付门：只有 `check --deliver` 判，普通 check 恒不判。
-  //
-  // 两个入口同一实现，按**动作**分而不按文件在不在推断阶段：登记前与返修中跑的是
-  // 普通 check，那时读者审查还没发生，判它只会得到一个恒定的「不适用」；
-  // 交付（远程单上传前、本地单闭环后）跑的是 `--deliver`，那时闭环该已经成立。
-  if (ctx.args.deliver) {
-    const delivery = deliveryProblems(ctx);
-    problems.push(...delivery.problems);
-    notes.push(...delivery.notes);
-  }
   return { problems, marks, notes, chapters: sections.length };
 }
 
-export function cmdCheck(ctx) {
-  const { problems, marks, notes, chapters } = storyCheck(ctx);
+export async function cmdCheck(ctx) {
+  // 登记自己跑的那一次（`--registering`）不核「登记之后改过没有」：它要换掉的正是旧登记
+  const { problems, marks, notes, chapters } = storyCheck(ctx, { registration: !ctx.args.registering });
+  // ⑭ 交付门：只有 `check --deliver` 判。按**动作**分而不按文件在不在推断阶段：
+  // 登记前与返修中跑的是普通 check，那时审查还没发生；交付跑 `--deliver`，那时登记与审查该已成立。
+  if (ctx.args.deliver) {
+    const delivery = await deliveryProblems(ctx);
+    marks.push({ from: problems.length, label: '⑭ 交付门' });
+    problems.push(...delivery.problems);
+    notes.push(...delivery.notes);
+  }
   if (notes.length) {
     process.stdout.write('[story-build check] 记一笔（不拦）：\n');
     notes.forEach(n => process.stdout.write(`  · ${n}\n`));

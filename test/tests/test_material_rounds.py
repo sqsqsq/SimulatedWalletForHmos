@@ -24,7 +24,7 @@ MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.inputs import MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
-from flow.state import CONTRACT, STORY_REGISTERED, ledger_digest  # noqa: E402
+from flow.state import CONTRACT, STORY_REGISTERED, file_sha256  # noqa: E402
 from materials import importer  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -507,20 +507,19 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertIn("下一步", out)
         self.assertIn(action[:16], out, "登记被拒时给的下一步与 status 不是同一句")
 
-    def test_registering_again_replaces_the_registration(self) -> None:
-        """已经登记过再跑 `story`：上一次登记作废、按当前内容重新登记。
-
-        这里盘上没有 story.md，登记失败——状态停在已收口、未登记，说的是缺 story，
-        不是「只登记一次」，也不是「没收口」。
+    def test_registering_again_keeps_the_old_registration_when_it_fails(self) -> None:
+        """已经登记过再跑 `story`：通过才换成新登记；这里盘上没有 story.md，登记失败——
+        说的是缺 story，不是「只登记一次」也不是「没收口」，已有的登记原样留着。
         """
         self.complete_it("story_written")
+        before = self.contract()
         proc = self.run_flow("story")
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertEqual(1, proc.returncode, out)
-        self.assertIn("重新登记", out)
         self.assertIn("AR/story.md 不存在", out)
         self.assertNotIn("没收口", out)
-        self.assertEqual("complete", self.contract()["status"])
+        after = self.contract()
+        self.assertEqual((before["status"], before.get("story_basis")), (after["status"], after.get("story_basis")))
 
 
     def put_classified_inbox(self, name: str = "后到的稿.md") -> None:
@@ -1200,21 +1199,20 @@ class DraftsAreNotFrozenIntoTheLedger(unittest.TestCase):
 
 
 class RegistrationReprojectsFirst(unittest.TestCase):
-    """登记的顺序是 project → number → check。
+    """定稿在审查之前：准备审查时按 project → number → build → check 把被审对象定成最终版；登记只读核对。
 
-    附录的机器区是 spec 扩展章与 knowledge-use.yaml 的投影，而真源在成文期间还会变；
-    以登记这一次为准，否则归档件里留的是一份会漂移的副本。
+    附录的机器区是已准入蓝图的投影，而真源在成文期间还会变。登记再动它，审的就不是登记的那一份。
     """
 
     def test_the_order_is_project_then_number_then_check(self) -> None:
-        source = (DEV_EXT / "skills" / "story" / "scripts"
-                  / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
-        body = source.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
-        order = [cmd for cmd in ("\"project\"", "\"number\"", "\"check\"")
-                 if cmd in body]
-        self.assertEqual(['"project"', '"number"', '"check"'], order,
-                         "登记时没有先按真源重投影")
-        self.assertLess(body.index('"project"'), body.index('"number"'))
+        source = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs").read_text(encoding="utf-8")
+        body = source.split("async function cmdReview(", 1)[1].split("\n}\n", 1)[0]
+        order = [body.index(step) for step in ("cmdProject(ctx)", "cmdNumber(ctx)", "cmdBuild(ctx)", "storyCheck(ctx", "prepareReview(")]
+        self.assertEqual(sorted(order), order, "准备审查时没有先定稿再检查、再准备请求")
+        lifecycle = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
+        registration = lifecycle.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
+        for gone in ('"project"', '"number"', 'build("build")'):
+            self.assertNotIn(gone, registration, "登记又在改被审对象")
 
     def test_registration_deletes_nothing_under_story_src(self) -> None:
         """登记不删 `story-src/` 里的任何过程件——它们是「这份 story 怎么写出来的」现场。

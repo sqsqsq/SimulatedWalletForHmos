@@ -239,6 +239,8 @@ def split_main_and_appendix(text: str) -> tuple[str, str]:
 class Outcome:
     ok: bool
     evidence: str = ""
+    #: checker 自己没跑起来（夹具装配或执行出错）：测试基础设施失败，不算判出了形态
+    infra: bool = False
 
 
 @dataclass
@@ -2655,7 +2657,7 @@ def run_checker(name: str, root: Path, ctx: Ctx) -> Outcome:
     try:
         return fn(root, ctx)
     except Exception as exc:  # noqa: BLE001 —— 解析失败必须响亮，不静默当通过
-        return Outcome(False, f"checker 执行异常：{type(exc).__name__}: {exc}")
+        return Outcome(False, f"checker 执行异常：{type(exc).__name__}: {exc}", infra=True)
 
 
 def fixture_ctx(fixture: Path, mode: dict) -> Ctx:
@@ -2705,7 +2707,8 @@ def self_check(mode: dict, report: Report) -> None:
             report.add(ModeResult(mode["id"], "self_check", rel, "FAIL", "夹具目录不存在"))
             continue
         outcome = run_checker(mode["checker"], path, fixture_ctx(path, mode))
-        ok = outcome.ok is expect_ok
+        # 装配或执行出错不是「判出了形态」：反夹具也不因此算拦住
+        ok = outcome.ok is expect_ok and not outcome.infra
         report.add(
             ModeResult(
                 mode["id"],

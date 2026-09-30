@@ -44,6 +44,7 @@ S4_STEPS = ("generate_design", "run_complete")
 # 登记之后任一份再改，`story-build check` 报「登记之后改过」，重跑 `story` 重新登记。
 STORY_REGISTERED = (
     "AR/story.md",
+    "AR/review.md",
     "AR/story-src/decisions.json",
     "AR/story-src/story-template.md",
 )
@@ -97,16 +98,15 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def ledger_digest(path: Path) -> str | None:
-    """台账指纹：**换行差异不算改动**（同一份文件在两台机器上可能行尾不同）。
+def file_sha256(path: Path) -> str | None:
+    """登记指纹：原始字节的完整 SHA-256，读不到为 None。
 
-    这一个要与 `story-build.mjs` 的 `digestOf` 逐字节同口径——登记由本脚本写，
-    核对由那边做，两边算法差一点就会变成「每次都说台账被改过」。
+    与 `story/context.mjs` 的 `digestOf` 同口径——登记由本脚本写，核对两边都做。
+    Review 的人工区改了一个字也算改了：人读件变了，审查与登记说的就不是这一份。
     """
     if not path.is_file():
         return None
-    text = path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
-    return sha256(text.encode("utf-8")).hexdigest()[:16]
+    return sha256(path.read_bytes()).hexdigest()
 
 
 #: 契约自身的内容摘要。每次写入由本模块重算；读到对不上说明有人绕过命令改过文件。
@@ -197,7 +197,7 @@ def registration_drift(feature_root: Path, contract: dict) -> list[str]:
     """已登记的成文之后又变了什么：story 与它的决策登记、写作设计的指纹，以及交给设计的输入版本。没登记过返回空。
 
     与 `story/context.mjs` 的 `ledgerDigestProblems` 是同一件事的两处读者：
-    流程路由与 update 收口在这里问，成文检查在那边问，指纹都由 `ledger_digest` 口径算。
+    流程路由与 update 收口在这里问，成文检查在那边问，指纹都由 `file_sha256` 口径算。
     蓝图与知识换没换要读原生对象，由路由经 `story-build basis` 另问。
     """
     if contract.get("status") != "story_written":
@@ -207,7 +207,7 @@ def registration_drift(feature_root: Path, contract: dict) -> list[str]:
         raise FlowError("流程契约记着已成文登记，却没有成文依据 story_basis：契约不完整。"
                         "跑 `story_flow.py story` 按当前内容重新登记")
     drift = [rel for rel in STORY_REGISTERED
-             if basis["files"].get(rel) != ledger_digest(feature_root / Path(*rel.split("/")))]
+             if basis["files"].get(rel) != file_sha256(feature_root / Path(*rel.split("/")))]
     if basis.get("input_sha256") != (contract.get("input") or {}).get("snapshot_sha256"):
         drift.append("交给设计的输入")
     return drift

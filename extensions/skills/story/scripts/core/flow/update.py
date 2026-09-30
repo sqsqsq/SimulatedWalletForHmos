@@ -584,7 +584,7 @@ def cmd_update_close(feature_root: Path) -> dict:
     if drift or (registered_before and contract.get("status") != "story_written"):
         raise FlowError("story 这一轮改过，还没按当前内容重新登记，不收口："
                         + (f"登记之后改过 {'、'.join(drift)}；" if drift else "")
-                        + "跑 `story_flow.py story` 重新登记（它会重投附录、编号、渲染 review 并全篇 check）")
+                        + "先 `story-build review --action prepare` 定稿（重投附录、编号、渲染 review、全篇 check）并重新独立审查，审查通过后跑 `story_flow.py story` 重新登记")
 
     current, unreadable = _scan(feature_root)
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
