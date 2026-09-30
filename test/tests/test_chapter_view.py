@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from ext_workspace import link_harness_yaml, DEV_EXT, DEV_ROOT
+from designed_fixture import DRAFT, designed_copy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
@@ -149,7 +150,7 @@ class OneParsePerChapterPerRun(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
-        shutil.copytree(FIXTURE, self.root)      # 工程侧：夹具自己的清单与知识不动
+        designed_copy(FIXTURE, FEATURE, DRAFT, self.root)   # 工程侧：交给设计、蓝图已准入的夹具
         self.mech = Path(self._tmp.name) / "mech" / "doc" / "extensions"
         shutil.copytree(EXT, self.mech)          # 机制侧：副本按相对位置自己找模块
         link_harness_yaml(self.mech.parents[1])
@@ -493,17 +494,6 @@ class OneRuleOnEveryPath(unittest.TestCase):
         ids = self.run_js("const m = await import(at('images.mjs'));"
                           "process.stdout.write(JSON.stringify(m.diagramsOf(process.argv[1]).map(d => d.id)));", text)
         self.assertEqual(["§5.2 #1"], ids)
-
-    def test_the_appendix_projection_reads_the_real_section(self) -> None:
-        spec = "\n".join([
-            "in_scope_modules:", "  - 甲模块", "", "~~~markdown",
-            "## 0. 术语映射表", "", "| 术语 | 权威模块 | 解释 |", "|---|---|---|", "| 样例词 | 甲模块 | 样例解释 |",
-            "~~~", "",
-            "## 0. 术语映射表", "", "| 术语 | 权威模块 | 解释 |", "|---|---|---|", "| 真词 | 甲模块 | 真解释 |", "",
-        ])
-        terms = self.run_js("const m = await import(at('appendix.mjs'));"
-                            "process.stdout.write(JSON.stringify(m.specTerms(process.argv[1])));", spec)
-        self.assertEqual([["真词", "真解释"]], terms)
 
     def test_the_material_list_is_located_past_quoted_headings(self) -> None:
         story = "\n".join([

@@ -49,6 +49,7 @@ from typing import Callable, Iterable
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import design_fixture  # noqa: E402
 import golden_workspace  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1821,6 +1822,11 @@ def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[in
         return _story_build_in(work, extra_verdict)
 
 
+#: 夹具交给设计时提交的最小提取稿：五段结构齐全
+_MIN_DRAFT = ("# 需求 — 开发需求（AR）\n\n## 1 简介\n\nx\n\n## 2 需求分析\n\nx\n\n"
+              "## 3 SE 方案摘要（本部件相关）\n\nx\n\n## 4 上游索引\n\nx\n\n## 5 上游已声明线索\n\n无。\n")
+
+
 def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-DEMO") -> tuple[int, str]:
     build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
     if build is None:
@@ -1835,6 +1841,13 @@ def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-D
         [sys.executable, str(flow), "round", "--feature", feature,
          "--project-root", str(root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    # 成文按已准入的蓝图写：夹具里没走过交给设计的，放一份准入蓝图并用真实流程命令交给设计，附录按它重投
+    access = _ext_file(root, "hooks/shared/framework-access.mjs") or executor_ext() / "hooks" / "shared" / "framework-access.mjs"
+    story_src = root / "doc" / "features" / feature / "AR" / "story-src"
+    if not (story_src / "story-flow.json").is_file() or '"design_binding"' not in (story_src / "story-flow.json").read_text(encoding="utf-8"):
+        (story_src / "story-flow.json").unlink(missing_ok=True)
+        design_fixture.prepare_designed(root, feature, flow_script=flow, build_script=build, access=access,
+                                        draft=_MIN_DRAFT)
 
     def run(cmd: str) -> subprocess.CompletedProcess:
         return subprocess.run(

@@ -360,8 +360,7 @@ export function storyInputs(ctx, sources) {
   const derived = (key) => ctx.contract.sources?.[key]?.derived === true;
   return [
     ...imageSection(ctx.projectRoot, feature), '',
-    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')), '',
-    ...diagramSection('## 4b. spec 里的图（搬进 story）', 'spec', of('SPEC'), derived('SPEC')),
+    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')),
   ];
 }
 

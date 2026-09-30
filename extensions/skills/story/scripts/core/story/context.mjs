@@ -169,20 +169,6 @@ export function activeKnowledgeEntries(ctx) {
   }
 }
 
-/**
- * spec.md 全文。路径取自合同声明的来源，不写死。
- *
- * 读不到就返回 null——骨架照建，只是少了打底的那几行；spec 缺失另有判据报。
- */
-export function specText(ctx) {
-  const rel = ctx.contract?.sources?.SPEC?.path;
-  if (!rel || !ctx.featureRoot) return null;
-  const text = readText(path.join(ctx.featureRoot, ...rel.split('/')));
-  // 行尾在这里归一，不在下游各处正则里补 `\r?`：真实的 spec.md 由宿主在 Windows 上写，
-  // 是 CRLF；补正则要每加一处派生就记得补一次，漏一处就是一次静默为空的派生。
-  return text === null ? null : text.replace(/\r\n/g, '\n');
-}
-
 /** 登记之后改过没有 —— story 与它的决策登记、写作设计对得上最近一次成文登记的指纹。 */
 export function ledgerDigestProblems(ctx) {
   const problems = [];

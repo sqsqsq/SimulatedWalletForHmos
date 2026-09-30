@@ -29,6 +29,8 @@ DEV_SOURCE = REPO_ROOT / "extensions"
 
 sys.path.insert(0, str(REPO_ROOT / "test" / "scripts"))
 import publish_to_demo  # noqa: E402
+from design_fixture import (  # noqa: E402,F401  接 Framework 的做法与失效形态运行器共用一份
+    ensure_framework, link_framework, overlay_framework, project_root_of)
 
 
 def link_harness_yaml(root: Path) -> Path:
@@ -51,55 +53,6 @@ def link_harness_yaml(root: Path) -> Path:
     else:
         os.symlink(source, target, target_is_directory=True)
     return target
-
-
-def link_framework(root: Path) -> Path:
-    """让临时工程根接入 demo 的 Framework：复制 demo 的 `framework.config.json`（物化哪些宿主由它定），
-    `framework/` 整个目录接一条指向 demo 的 junction（Windows）或符号链接。安装与宿主入口物化只读它、
-    写在工程根；链接在临时目录清理时被删，demo 不动。已存在的都不动。"""
-    root = Path(root)
-    root.mkdir(parents=True, exist_ok=True)
-    config = root / "framework.config.json"
-    if not config.exists():
-        shutil.copy2(REPO_ROOT / "demo" / "framework.config.json", config)
-    target = root / "framework"
-    if not target.exists():
-        source = REPO_ROOT / "demo" / "framework"
-        if sys.platform == "win32":
-            import _winapi
-            _winapi.CreateJunction(str(source), str(target))
-        else:
-            os.symlink(source, target, target_is_directory=True)
-    return target
-
-
-def _link_dir(source: Path, target: Path) -> None:
-    if sys.platform == "win32":
-        import _winapi
-        _winapi.CreateJunction(str(source), str(target))
-    else:
-        os.symlink(source, target, target_is_directory=True)
-
-
-def overlay_framework(root: Path) -> None:
-    """`framework/` 已经在（只接了 yaml 包、或放了替身）的临时工程补接 demo Framework 缺的部分：
-    `framework/`、`harness/`、`node_modules/` 三层逐项只补缺的——目录接链接、文件复制，已有的一律不动。"""
-    def fill(source: Path, target: Path, depth: int) -> None:
-        target.mkdir(parents=True, exist_ok=True)
-        for item in source.iterdir():
-            dest = target / item.name
-            if dest.exists() or dest.is_symlink():
-                if depth and item.is_dir() and dest.is_dir() and not os.path.islink(dest) and not _is_junction(dest):
-                    fill(item, dest, depth - 1)
-            elif item.is_dir():
-                _link_dir(item, dest)
-            else:
-                shutil.copy2(item, dest)
-    fill(REPO_ROOT / "demo" / "framework", Path(root) / "framework", 2)
-
-
-def _is_junction(path: Path) -> bool:
-    return bool(getattr(os.path, "isjunction", lambda p: False)(path))
 
 
 #: 宿主入口所在：各宿主的 Skill 跳板目录与两份入口文件

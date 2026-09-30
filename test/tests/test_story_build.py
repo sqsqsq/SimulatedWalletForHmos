@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import os
@@ -20,7 +21,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from ext_workspace import link_harness_yaml, DEV_EXT, DEV_ROOT
+from ext_workspace import link_framework, link_harness_yaml, DEV_EXT, DEV_ROOT
+import design_kit  # noqa: E402
+from designed_fixture import FIXTURE_DECISIONS, REAL_RUN_DESIGN, designed_copy, ensure_flow_state  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import golden_workspace  # noqa: E402
 from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
@@ -28,6 +31,7 @@ from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_comp
 REPO_ROOT = Path(__file__).resolve().parents[2]
 IMAGES = (DEV_EXT / "skills/story/scripts/core/story/images.mjs")
 BUILD = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
 FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
@@ -116,34 +120,13 @@ def _appendix_title() -> str:
     return (hit or {}).get("title", "")
 
 
-def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> None:
-    """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。
-
-    08 §2.1 之后 skeleton 的起手预检要读流程契约与材料基准；夹具没有时，
-    用真实流程命令把 S1–S3 走完并提交一份提取稿——生成的契约即收口态。
-    """
-    if (src / "story-flow.json").is_file():
-        return
-    def flow(*args: str) -> dict:
-        proc = subprocess.run(
-            [sys.executable, str(FLOW), *args, "--feature", feature,
-             "--project-root", str(root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(REPO_ROOT))
-        assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
-        return json.loads(proc.stdout[proc.stdout.index("{"):])
-
-    walk_to_complete(flow, src, draft_text)
-
-
-
 class StoryBuildCase(unittest.TestCase):
-    """每个用例一份新工作区；子类只关心自己那一条判据。"""
+    """每个用例一份新工作区（交给设计、蓝图已准入）；子类只关心自己那一条判据。"""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name) / "work"
-        shutil.copytree(FIXTURE, self.root)
+        designed_copy(FIXTURE, FEATURE, self.DRAFT, self.root)
         self.addCleanup(self._tmp.cleanup)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
@@ -402,110 +385,8 @@ def replace_stat_section(text: str, section: str) -> str:
     return text[:start] + section + ("" if end < 0 else text[end + 1:])
 
 
-class SourceNumbersStayInTheSpec(StoryBuildCase):
-    """埋点里的局部编号（9.4.1）只在 spec 里成立：进附录时去掉，业务标题里的数字不动。"""
-
-    EVENTS = ('### 9.4 埋点\n\n#### 9.4.1 开户成功率\n\n| 统计点 | 适用结果 |\n|---|---|\n| 信息校验 | 步骤成功 |\n\n'
-              '#### 2.0 版本的查询成功率\n\n- 查询结果按次记录。\n\n')
-
-    def test_the_local_number_is_dropped_and_business_digits_kept(self) -> None:
-        self.init_audit()
-        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
-        spec.write_text(replace_stat_section(spec.read_text(encoding="utf-8"), self.EVENTS), encoding="utf-8")
-        proc = self.run_build("project")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        story = self.story()
-        zone = story[story.index("<!-- story-build:begin 埋点 "):]
-        self.assertIn("#### 开户成功率", zone)
-        self.assertNotIn("9.4.1", zone)
-        self.assertIn("#### 2.0 版本的查询成功率", zone)
-
-
-class TheEventDesignIsProjectedWhole(StoryBuildCase):
-    """spec 的埋点是埋点设计的唯一完整说明：附录按原次序整节投影，不只搬表。
-
-    只搬表的话，流程怎么分、指标是什么、哪些交互由自动上报采集全丢了，归档件里只剩名目表。
-    """
-
-    EVENTS = '### 9.4 埋点\n\n开户与结果查询两个流程各看一个成功率。\n\n#### 开户成功率\n\n衡量开户办理的完成比例：分子是开户成功，分母是全部提交开户；打点在开户办理流程的信息校验与短信验证两步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 信息校验 | 开户办理 | 步骤成功 / 普通失败 | 检索零命中 |\n| 短信验证 | 开户办理 | 步骤成功 / 普通失败 / 主动取消 | 检索零命中 |\n\n- 页面进入、点击由自动运维上报采集。\n\n#### 查询成功率\n\n衡量开户结果查询的成功比例：分子是查询成功，分母是全部查询；打点在结果查询流程的查询开户结果一步。\n\n| 统计点 | 所在流程 | 适用结果 | 代码现状 |\n|---|---|---|---|\n| 查询开户结果 | 结果查询 | 步骤成功 / 普通失败 | 检索零命中 |\n\n'
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.init_audit()
-        self.spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
-        self.spec.write_text(replace_stat_section(self.spec.read_text(encoding="utf-8"), self.EVENTS), encoding="utf-8")
-        proc = self.run_build("project")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-
-    def zone(self) -> str:
-        return self.zone_of("埋点")
-
-    def zone_of(self, name: str) -> str:
-        text = self.story()
-        at = text.index(f"<!-- story-build:begin {name} ")
-        return text[at:text.index("<!-- story-build:end -->", at)]
-
-    def test_prose_headings_tables_and_lists_come_in_order(self) -> None:
-        """埋点这个 H3 标题归作者（草稿铺好），机器区从它下面的总述开始。"""
-        zone = self.zone()
-        self.assertNotIn("### 埋点", zone)
-        order = ["开户与结果查询两个流程", "#### 开户成功率", "衡量开户办理的完成比例",
-                 "| 信息校验 |", "| 短信验证 |", "- 页面进入、点击由自动运维上报采集", "#### 查询成功率",
-                 "| 查询开户结果 |"]
-        at = [zone.index(piece) for piece in order]
-        self.assertEqual(sorted(at), at, "段落、小标题、表与列表没按原次序投影")
-
-    def test_numbering_the_zone_headings_is_not_an_edit(self) -> None:
-        """登记时先投影后编号：区里的指标小标题被编上号，核对不报、再投影也不当手改。"""
-        proc = self.run_build("number")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertRegex(self.zone(), r"#### 10\.3\.\d+ 开户成功率")
-        code, out = self.check_output()
-        self.assertNotIn("埋点", out, out)
-        proc = self.run_build("project")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-
-    def test_the_code_status_column_stays_in_spec(self) -> None:
-        self.assertNotIn("代码现状", self.zone())
-        self.assertNotIn("检索零命中", self.zone())
-
-    def test_other_subsections_keep_their_own_conclusion(self) -> None:
-        """数据、配置没有表时，各自的「不涉及」进各自的机器区——H4 标题已经说明是哪一项。"""
-        self.assertIn("不涉及：", self.zone_of("技术契约·数据存储"))
-        self.assertIn("不涉及：", self.zone_of("技术契约·配置项"))
-
-    def test_relative_references_are_rebased_to_the_story(self) -> None:
-        """spec 在 spec/、归档件在 AR/：相对引用要换成从归档件出发，否则投过去就是坏链。
-
-        锚点指回 spec 那一处（它指的标题在归档件里不存在）；外链与围栏里的样例不动。
-        """
-        text = self.spec.read_text(encoding="utf-8")
-        self.spec.write_text(replace_stat_section(text, '### 9.4 埋点\n\n详见[口径说明](detail.md)与[上级材料](../assets/rules.md#口径)，外部规范见[平台](https://example.com/spec)。\n\n#### 开户成功率\n\n回看[本节开头](#开户成功率)；示意图 ![流程](img/flow.png)。\n\n| 步骤 | 依据 | 代码现状 |\n|---|---|---|\n| 信息校验 | [校验规则](rules/check.md) | 检索零命中 |\n\n```text\n[围栏里的样例](detail.md)\n```\n\n[ref]: notes/ref.md\n\n'), encoding="utf-8")
-        proc = self.run_build("project")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        zone = self.zone()
-        for want in ("[口径说明](../spec/detail.md)", "[上级材料](../assets/rules.md#口径)",
-                     "[平台](https://example.com/spec)", "[本节开头](../spec/spec.md#开户成功率)",
-                     "![流程](../spec/img/flow.png)", "[校验规则](../spec/rules/check.md)",
-                     "[围栏里的样例](detail.md)", "[ref]: ../spec/notes/ref.md"):
-            with self.subTest(want=want):
-                self.assertIn(want, zone)
-
-    def test_the_projected_zone_passes_check_and_a_source_change_is_caught(self) -> None:
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-        self.spec.write_text(self.spec.read_text(encoding="utf-8").replace(
-            "分母是全部提交开户", "分母是全部进入开户页的用户"), encoding="utf-8")
-        code, out = self.check_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("埋点", out)
-        proc = self.run_build("project")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertIn("分母是全部进入开户页的用户", self.zone())
-
-
 class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
-    """附录的机器区与真源逐区逐行比 —— **不先 project 再比**。
+    """附录的机器区与真源（已准入蓝图）逐区逐行比 —— **不先 project 再比**。
 
     先 project 再比是必绿的：那等于拿刚写下去的东西跟自己比。这一组直接改盘上的机器区
     （非首列、删行、换序、破标记）与真源，check 必须发现，且**一个字节都不许写**。
@@ -538,8 +419,8 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
     def test_a_change_outside_the_first_column_is_caught(self) -> None:
         """只比首列的老判据看不见这一类：标识没动，说明被改了。"""
         at, end, lines = self.zone_lines("规约")
-        target = next(i for i in range(at + 1, end) if "SMP-01" in lines[i])
-        lines[target] = "| 甲域约束 | SMP-01 | 不命中 | 改成了别的说法 |"
+        target = next(i for i in range(at + 1, end) if "knowledge-smp-01" in lines[i])
+        lines[target] = lines[target].replace("受理单编号在入口生成", "改成了别的说法")
         self.rewrite(lines)
         self.expect_caught()
 
@@ -559,59 +440,45 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.expect_caught()
 
     def test_a_broken_end_marker_is_caught(self) -> None:
-        at, end, lines = self.zone_lines("技术契约·依赖变更")
+        at, end, lines = self.zone_lines("改动边界")
         lines[end] = "<!-- 结束标记被改坏了 -->"
         self.rewrite(lines)
         self.expect_caught("结束标记")
 
     def test_a_duplicated_zone_is_caught(self) -> None:
-        at, end, lines = self.zone_lines("技术契约·依赖变更")
+        at, end, lines = self.zone_lines("改动边界")
         self.rewrite(lines[:end + 1] + lines[at:end + 1] + lines[end + 1:])
         self.expect_caught("两段机器区")
 
-    def test_a_deleted_required_spec_section_is_not_an_empty_expectation(self) -> None:
-        """只删 spec 技术契约的端云接口与对应的机器区，作者区留一句说明——旧判据返回 0。
-
-        「没有这一节」与「这件事不涉及」不是一回事：后者是写出来的结论，评审者读得到。
-        """
-        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
-        text = spec.read_text(encoding="utf-8")
-        start = text.index("#### 9.1.1")
-        end = text.index("#### 9.1.2")
-        spec.write_text(text[:start] + text[end:], encoding="utf-8")
-        at, endline, lines = self.zone_lines("技术契约·端云接口")
-        lines[at:endline + 1] = ["这一节的接口约定见业务方案章。"]
-        self.rewrite(lines)
-        self.expect_caught("端云接口」")
+    def test_a_design_source_that_does_not_hold_is_not_an_empty_expectation(self) -> None:
+        """评审投影不在（设计来源不成立）：不按「期望为空」放行，报出来源与责任方。"""
+        (self.root / "doc" / "features" / FEATURE / "blueprint" / "component-blueprint.review.md").unlink()
+        self.expect_caught("评审投影")
 
     def test_an_unknown_machine_zone_is_not_author_text(self) -> None:
         """合同里没有这个名字的机器区：它没有真源可比，会一直冒充现行投影。"""
-        at, endline, lines = self.zone_lines("技术契约·依赖变更")
+        at, endline, lines = self.zone_lines("改动边界")
         extra = ["<!-- story-build:begin obsolete · 由某处生成，改它请改真源 -->",
                  "| 旧 | 行 |", "|---|---|", "| 1 | 2 |", "<!-- story-build:end -->"]
         self.rewrite(lines[:endline + 1] + [""] + extra + lines[endline + 1:])
         self.expect_caught("obsolete")
 
     def test_an_orphan_end_marker_is_caught(self) -> None:
-        at, endline, lines = self.zone_lines("技术契约·依赖变更")
+        at, endline, lines = self.zone_lines("改动边界")
         self.rewrite(lines[:endline + 1] + ["", "<!-- story-build:end -->"]
                      + lines[endline + 1:])
         self.expect_caught("孤立")
 
     def test_a_nested_begin_marker_is_caught(self) -> None:
         """一个结束只配一个开始：两个开始都去认后面同一行，其中一段的边界是编的。"""
-        at, endline, lines = self.zone_lines("技术契约·依赖变更")
-        inner = "<!-- story-build:begin 端云接口 · 由spec 技术契约生成，改它请改真源 -->"
+        at, endline, lines = self.zone_lines("改动边界")
+        inner = "<!-- story-build:begin 规约 · 由蓝图知识应用决定生成，改它请改真源 -->"
         self.rewrite(lines[:at + 1] + [inner] + lines[at + 1:])
         self.expect_caught("还没关上")
 
     def test_a_changed_source_is_caught(self) -> None:
-        """真源变了而机器区没跟着变——报的是区与它的责任真源，不是让作者改机器区。"""
-        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
-        text = spec.read_text(encoding="utf-8")
-        self.assertIn("没有新增或变更的端云契约", text)
-        spec.write_text(text.replace("没有新增或变更的端云契约",
-                                     "接口改名成 submitBusinessOrder"), encoding="utf-8")
+        """蓝图修订了而机器区没跟着重投——报的是区与它的责任真源，不是让作者改机器区。"""
+        design_kit.change_blueprint(self.root, FEATURE, ACCESS, "本需求没有任何上报动作", "本需求只在提交时上报一次")
         before = self.story_path.read_bytes()
         code, out = self.check_output()
         self.assertEqual(1, code, out)
@@ -619,16 +486,16 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.assertIn("内容以真源为准", out, "没有指出内容以真源为准")
         self.assertEqual(before, self.story_path.read_bytes(), "只读检查写了盘")
 
-    def test_an_unreadable_required_spec_is_not_an_empty_expectation(self) -> None:
-        """spec 读不到不等于「期望是空的」：那会让缺一整节的附录静默通过。"""
-        (self.root / "doc" / "features" / FEATURE / "spec" / "spec.md").unlink()
+    def test_an_unadmitted_blueprint_stops_the_check_of_every_zone(self) -> None:
+        """蓝图没准入不等于「期望是空的」：那会让缺一整节的附录静默通过。"""
+        design_kit.change_blueprint(self.root, FEATURE, ACCESS, "  admission:\n    status: pass", "  admission:\n    status: fail")
         code, out = self.check_output()
         self.assertEqual(1, code, out)
-        self.assertIn("读不到 spec", out)
+        self.assertIn("成文按已准入的蓝图写", out)
 
     def test_the_authors_own_words_next_to_the_zone_are_left_alone(self) -> None:
         """作者解释区在机器标记之外：不参加比较，也不被生成器重写。"""
-        at, end, lines = self.zone_lines("技术契约·依赖变更")
+        at, end, lines = self.zone_lines("改动边界")
         note = "这一节的取舍见业务方案章。"
         self.rewrite(lines[:at] + [note, ""] + lines[at:])
         code, out = self.check_output()
@@ -638,16 +505,128 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.assertIn(note, self.story(), "project 把作者的解释冲掉了")
 
 
-class TheAppendixUsesTheSpecSectionNames(StoryBuildCase):
-    """附录技术契约下的小节与 spec 同名：旧形态「接口」「数据」「配置」按新结构报出位置。"""
+class TheSpecialDesignIsCarriedVerbatim(StoryBuildCase):
+    """蓝图里的专项设计（`story_details` 的 special_design）写在正文：逐字出现，表达可以组织，内容不改写。"""
 
-    def test_the_old_subsection_names_are_named(self) -> None:
+    BODY = "单日自动充值上限 300 元，按自然日重置。"
+
+    def setUp(self) -> None:
+        super().setUp()
         self.init_audit()
-        self.assertEqual(0, self.check_output()[0])
-        text = self.story().replace("#### 端云接口", "#### 接口").replace("#### 数据存储", "#### 数据")
-        self.story_path.write_text(text, encoding="utf-8")
-        out = self.assert_check_names("「附录·技术契约」：下面缺「端云接口」小节（现在的小节是「接口」「数据」")
-        self.assertIn("下面缺「数据存储」小节", out)
+        design_kit.install_blueprint(self.root, FEATURE, ACCESS, decisions=FIXTURE_DECISIONS,
+                                     details=[design_kit.story_detail("detail-limit", "special_design", "充值上限", self.BODY)])
+
+    def test_a_missing_special_design_is_reported(self) -> None:
+        code, out = self.check_output()
+        self.assertEqual(1, code, out)
+        self.assertIn("detail-limit", out)
+
+    def test_the_verbatim_body_in_the_story_passes(self) -> None:
+        self.rewrite_story("### 技术契约", f"{self.BODY}\n\n### 技术契约")
+        code, out = self.check_output()
+        self.assertNotIn("detail-limit", out, out)
+
+
+class TheReadersRenderTheNativeObjects(unittest.TestCase):
+    """附录读取器：原生对象的字段原样排出，不补、不改写、不推断；表头与标签来自章节合同。"""
+
+    READERS = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "appendix-readers.mjs"
+    CONTRACT = DEV_EXT / "skills" / "story" / "contracts" / "story-chapters.json"
+
+    def rows(self, zone: str, blueprint: dict) -> list[str]:
+        """按合同里这一区登记的读取器，对一份蓝图记录算出机器区的行。"""
+        script = (
+            "import * as fs from 'node:fs';"
+            "const [readers, contract, zone, bp] = process.argv.slice(1);"
+            "const { READERS } = await import(readers);"
+            "const c = JSON.parse(fs.readFileSync(contract, 'utf-8'));"
+            "const sections = c.chapters.find(x => x.appendix).projection.sections;"
+            "const [section, h4] = zone.split('·');"
+            "const def = h4 ? sections[section].h4.find(x => x.title === h4) : sections[section];"
+            "const rows = READERS[def.reader].rows({ blueprint: JSON.parse(bp) }, def, zone);"
+            "process.stdout.write(JSON.stringify(rows));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, self.READERS.resolve().as_uri(),
+                               str(self.CONTRACT), zone, json.dumps(blueprint, ensure_ascii=False)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        return json.loads(proc.stdout)
+
+    CONTRACT_BP = {"contracts": [{
+        "contract_id": "balance-query",
+        "operation": {"operation_id": "queryBalance", "direction": "outbound", "version": "v2", "source_ref": "api/wallet.yaml#queryBalance"},
+        "request_dto": {"dto_id": "BalanceRequest", "fields": [
+            {"field_id": "cardNo", "type": "string", "semantics": "卡号|掩码后", "nullable": False}]},
+        "response_dto": {"dto_id": "BalanceResponse", "fields": [
+            {"field_id": "balance", "type": "number", "semantics": "余额（分）", "nullable": True}]},
+        "mappings": [{"mapping_id": "m1", "target_field": "displayBalance", "kind": "derivation",
+                      "source_fields": ["balance"], "rule": "分转元，两位小数"}],
+        "errors": {"timeout": "3 秒按失败处理", "source_ref": "api/wallet.yaml#errors"},
+        "idempotency": {"key": "cardNo+day"},
+        "nfr": {"latency_p95_ms": 800},
+    }, {"contract_id": "second", "operation": {"operation_id": "op2", "direction": "inbound", "version": "v1", "source_ref": "x"}}]}
+
+    def test_a_contract_carries_its_operation_fields_mappings_and_semantics(self) -> None:
+        rows = self.rows("技术契约·端云接口", self.CONTRACT_BP)
+        text = "\n".join(rows)
+        for needle in ("**balance-query**", "queryBalance", "v2", "api/wallet.yaml#queryBalance",
+                       "| 请求 BalanceRequest | cardNo | string | 卡号\\|掩码后 | 必有 |",
+                       "| 响应 BalanceResponse | balance | number | 余额（分） | 可空 |",
+                       "| m1 | displayBalance | derivation | balance | 分转元，两位小数 |",
+                       "- 错误语义：timeout：3 秒按失败处理（依据 api/wallet.yaml#errors）",
+                       "- 幂等：key：cardNo+day", "- 非功能：latency_p95_ms：800", "**second**"):
+            self.assertIn(needle, text)
+
+    def test_tables_do_not_run_together(self) -> None:
+        """每张表前面是空行——连着写会被 markdown 并成一张错表。"""
+        rows = self.rows("技术契约·端云接口", self.CONTRACT_BP)
+        heads = [i for i, l in enumerate(rows) if l.startswith("|") and i + 1 < len(rows) and rows[i + 1].startswith("|---")]
+        self.assertGreaterEqual(len(heads), 2)
+        for i in heads:
+            self.assertEqual("", rows[i - 1], f"表前一行是「{rows[i - 1]}」")
+
+    def test_data_flows_and_their_policies(self) -> None:
+        bp = {"design_views": [{"view_id": "runtime", "runtime_data_flows": [
+            {"flow_id": "balance-cache", "data_domain_refs": ["balance"], "source_of_truth": {"owner": "云侧"},
+             "state_owner": "WalletMain", "failure_recovery": "失败保留上次值"}]}],
+            "story_details": [{"id": "d1", "kind": "data_policy", "title": "缓存有效期",
+                               "body": "余额缓存 5 分钟。\n\n| 场景 | 处理 |\n|---|---|\n| 切账号 | 清空 |",
+                               "evidence_refs": ["flow:balance-cache"]}]}
+        text = "\n".join(self.rows("技术契约·数据存储", bp))
+        self.assertIn("| balance-cache | balance | owner：云侧 | WalletMain | 失败保留上次值 |", text)
+        self.assertIn("| 切账号 | 清空 |", text, "精确明细的正文没有逐字带上")
+        self.assertIn("flow:balance-cache", text)
+
+    def test_details_take_only_their_kind_and_keep_the_body_verbatim(self) -> None:
+        body = "开关名 `balance.refresh.enabled`。\n\n- 默认开启\n- 灰度 10%"
+        bp = {"story_details": [{"id": "c1", "kind": "configuration", "title": "刷新开关", "body": body, "evidence_refs": ["n1"]},
+                                {"id": "e1", "kind": "event", "title": "成功率", "body": "上报一次", "evidence_refs": ["n2"]}]}
+        text = "\n".join(self.rows("技术契约·配置项", bp))
+        self.assertIn(body, text)
+        self.assertNotIn("上报一次", text, "别的类别混进来了")
+
+    def test_knowledge_rows_come_only_from_knowledge_decisions(self) -> None:
+        bp = {"decisions_and_gaps": {"decisions": [
+            {"decision_id": "k1", "kind": "knowledge_application", "status": "answered_with_evidence",
+             "knowledge": {"rule": "UI-1"}, "rationale": "走统一加载态", "target_ref": "view:logical/node:x"},
+            {"decision_id": "other", "status": "decided_with_authority"}]}}
+        text = "\n".join(self.rows("规约", bp))
+        self.assertIn("| k1 | answered_with_evidence | rule：UI-1 | 走统一加载态 → view:logical/node:x |", text)
+        self.assertNotIn("other", text)
+
+    def test_the_boundary_lists_modules_and_architecture_changes(self) -> None:
+        bp = {"design_views": [{"view_id": "development", "nodes": [
+            {"node_id": "n", "module": "WalletMain", "current_state": "无刷新", "target_state": "可刷新"}]}],
+            "decisions_and_gaps": {"decisions": [{"decision_id": "a", "change": "dependency_edge", "from": "WalletMain",
+                                                  "to": "NetKit", "direction": "add", "rationale": "取余额"}]}}
+        text = "\n".join(self.rows("改动边界", bp))
+        self.assertIn("| WalletMain | 无刷新 → 可刷新 |", text)
+        self.assertIn("| WalletMain → NetKit | dependency_edge：add：取余额 |", text)
+
+    def test_nothing_in_the_source_projects_nothing(self) -> None:
+        """真源里没有这类对象：一行都不编，由结构判据要求作者写「不涉及：<依据>」。"""
+        for zone in ("技术契约·端云接口", "技术契约·数据存储", "技术契约·配置项", "规约", "埋点", "改动边界"):
+            with self.subTest(zone=zone):
+                self.assertEqual([], self.rows(zone, {}))
 
 
 class TestOwnRequirementIdIsNotAnIdentifier(StoryBuildCase):
@@ -2142,7 +2121,7 @@ class RealRunCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature = self.root / "doc" / "features" / "AR90006"
-        shutil.copytree(self.REAL, self.feature)
+        designed_copy(self.REAL, "AR90006", DRAFT_TEXT, self.root, REAL_RUN_DESIGN)
         ext = self.root / "doc" / "extensions"
         ext.mkdir(parents=True)
         shutil.copy2(self.EXTENSION / "manifest.yaml", ext / "manifest.yaml")
@@ -2282,12 +2261,13 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertNotIn("| 术语 |", story, "术语起始行不该留在骨架里")
         self.assertIn("<!-- 待写：术语 -->", story)
 
-    def test_the_terms_seed_comes_from_the_real_crlf_spec(self) -> None:
-        """真实的 spec 是 CRLF——`scopeList` 的正则曾在它上面静默零命中。"""
+    def test_the_terms_seed_comes_from_the_blueprint_terms(self) -> None:
+        """术语起始行是蓝图里确认过的术语，一词一行；解释留给作者从来源写，不拿模块名代替。"""
         self.build("skeleton")
         draft = self.draft("02-术语.md").read_text(encoding="utf-8")
-        rows = [l for l in draft.split("\n") if l.startswith("|") and "---" not in l]
-        self.assertGreaterEqual(len(rows), 3, "术语起始行没从 spec §0 派生出来")
+        rows = [l for l in draft.split("\n") if l.startswith("|") and "---" not in l][1:]
+        self.assertEqual(["| 自动充值 |  |", "| 免密签约 |  |", "| 充值上限 |  |"], rows)
+        self.assertNotIn("WalletMain", draft, "模块名顶替了解释")
 
     def test_no_diagram_is_preplaced_in_the_flow_draft(self) -> None:
         """图不预放：上游的图逐张送到任务包，放哪一章由作者按内容定。
@@ -2403,7 +2383,7 @@ class TheContractCarriesTheKeptSeeds(RealRunCase):
         self.assertNotIn("### ", scope, "范围章没有要机器定位的小节，不预置标题")
 
 class TheMachineZoneComesFromTheSource(RealRunCase):
-    """附录的机器区每次都从当前真源重算，不读旧 story、不含占位。
+    """附录的机器区每次都从当前真源（已准入蓝图）重算，不读旧 story、不含占位。
 
     读旧的就成了「真源 + 一份会漂移的副本」；含占位则作者填了会被下一次投影打回。
     """
@@ -2418,15 +2398,13 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
         return self.story()
 
-    def test_landing_the_appendix_projects_every_zone(self) -> None:
-        """技术契约下端云接口、数据存储、配置项、依赖变更各一区，规约、埋点、改动边界各一区。"""
+    def test_landing_the_appendix_projects_every_zone_the_blueprint_has(self) -> None:
+        """蓝图里有知识应用决定与开发视图：规约、改动边界各一区；没有的类别不投。"""
         self.build("skeleton")
         appendix = self.author_appendix().split("## 附录", 1)[1]
-        self.assertEqual(7, appendix.count("story-build:begin"), "机器区没投全")
-        for name in ("技术契约·端云接口", "技术契约·数据存储", "技术契约·配置项", "技术契约·依赖变更",
-                     "规约", "埋点", "改动边界"):
+        for name in ("规约", "改动边界"):
             self.assertIn(f"story-build:begin {name} ", appendix)
-        self.assertIn("getAutoTopupPolicy", appendix)
+        self.assertNotIn("story-build:begin 技术契约·端云接口", appendix, "蓝图没有契约却投出了接口区")
         self.assertIn("服务端返回的受理状态决定后续处理路径。", appendix, "作者写的那一句丢了")
         self.assertIn("给出了业务规则", appendix, "材料贡献句丢了")
 
@@ -2437,52 +2415,22 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
             body = zone.split("<!-- story-build:end -->", 1)[0]
             self.assertNotIn("{{", body, "机器区里有作者要填的占位")
 
-    def test_the_code_status_column_stays_out(self) -> None:
-        """「代码现状」是 spec 给下游 AI 的仓内路径与检索结论，不进归档件。"""
-        self.build("skeleton")
-        appendix = self.author_appendix().split("## 附录", 1)[1]
-        self.assertNotIn("代码现状", appendix)
-        self.assertNotIn("检索 WalletMain data 层端云调用零命中", appendix, "代码现状列进了归档件")
-
     def test_reprojection_follows_the_source(self) -> None:
-        """真源变了，重投影跟上；作者区一个字节不动。"""
+        """蓝图修订了，重投影跟上；作者区一个字节不动。"""
         self.build("skeleton")
         self.author_appendix()
-        use = self.feature / "spec" / "knowledge-use.yaml"
-        text = use.read_text(encoding="utf-8")
-        self.assertIn("无新引入位图资源", text)
-        use.write_text(text.replace("无新引入位图资源",
-                                    "改过的依据：无新引入位图资源", 1),
-                       encoding="utf-8")
+        design_kit.change_blueprint(self.root, "AR90006", ACCESS, "本需求没有任何上报动作", "改过的依据：本需求没有任何上报动作")
         self.build("project")
         story = self.story()
         self.assertIn("改过的依据", story, "重投影没跟上真源")
-        self.assertEqual(7, story.count("story-build:begin"), "重投影后机器区数量变了")
         self.assertIn("服务端返回的受理状态决定后续处理路径。", story)
         self.assertIn("给出了业务规则", story)
 
     def test_the_verdict_basis_comes_from_the_source(self) -> None:
-        """判定的依据取 knowledge-use.yaml 的原文，不留 `{{依据}}` 让作者再抄。"""
+        """规约的理由取蓝图里知识应用决定的原文，不留 `{{依据}}` 让作者再抄。"""
         self.build("skeleton")
         appendix = self.author_appendix().split("## 附录", 1)[1]
-        self.assertIn("方向性布局参数使用 start/end", appendix)
-
-    def test_tables_do_not_run_together(self) -> None:
-        """每张投影表前面是空行、标题或机器区起始标记——连着写会被 markdown 并成一张错表。"""
-        self.build("skeleton")
-        story = self.author_appendix()
-        data = story.split("### 技术契约", 1)[1].split("改动边界", 1)[0]
-        lines = [l.strip() for l in data.split("\n")]
-        # 表头 = 下一行是分隔行的那一行。分隔行必须**非空**且只由 | - : 空格组成——
-        # 少了「非空」这一条，空行也满足，于是表后的第一行数据被当成新表头。
-        heads = [i for i, l in enumerate(lines)
-                 if l.startswith("|") and i + 1 < len(lines) and lines[i + 1]
-                 and set(lines[i + 1]) <= set("|-: ")]
-        self.assertGreaterEqual(len(heads), 3, "spec 技术契约与埋点的表没都投过来")
-        for i in heads:
-            before = lines[i - 1]
-            self.assertTrue(before == "" or before.startswith("#") or before.startswith("<!-- story-build:begin"),
-                            f"表前一行是「{before}」，markdown 会把它并进前一张表")
+        self.assertIn("受理单编号在入口生成", appendix)
 
 
 class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
@@ -2526,23 +2474,19 @@ class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
 class ProjectionRefusesToInventContent(RealRunCase):
     """机器区宁可停下也不写占位——作者改不了它，挂着就永远不会被填。"""
 
-    def test_a_missing_basis_stops_the_projection(self) -> None:
-        """激活清单里有、判断骨架里没有——投影不替它编一个依据出来。"""
+    def test_active_knowledge_without_any_decision_stops_the_projection(self) -> None:
+        """激活了规约、蓝图里却没有一条知识应用决定——投影不替设计编一个判断出来。"""
         self.build("skeleton")
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(self.draft("10-附录.md"))))
-        use = self.feature / "spec" / "knowledge-use.yaml"
-        text = use.read_text(encoding="utf-8")
-        start = text.index("  - id: UX-01")
-        end = text.index("  - id: ", start + 10)
-        use.write_text(text[:start] + text[end:], encoding="utf-8")
+        design_kit.install_blueprint(self.root, "AR90006", ACCESS)
         proc = subprocess.run(
             ["node", str(BUILD), "project", "--feature", "AR90006",
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(1, proc.returncode, "缺依据还照投不误")
+        self.assertEqual(1, proc.returncode, "缺判断还照投不误")
         out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertIn("UX-01", out, "没指向缺依据的那一条")
-        self.assertIn("knowledge-use.yaml", out)
+        self.assertIn("知识应用决定", out)
+        self.assertIn("设计职责", out)
 
     def test_a_zone_outside_the_contract_is_removed(self) -> None:
         """合同里没有的旧机器区要删：它指的真源已经没人维护了。"""
@@ -2556,8 +2500,7 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
         story = self.story()
         self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
-        self.assertIn("story-build:begin 技术契约·端云接口", story)
-
+        self.assertIn("story-build:begin 改动边界", story)
 
 
 class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
@@ -2567,12 +2510,12 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
     不核位置、不核张数：放哪一章由作者按内容定，判据管不了也不该管。
     """
 
-    SPEC = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
+    SR_DOC = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
             "```mermaid\ngraph TD\nA[进入签约页] --> B[免密验证]\n```\n\n"
             "### 5.2 自动充值触发\n\n"
             "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
 
-    UPSTREAM = {"SR": "SR/design.md", "spec": "spec/spec.md"}
+    UPSTREAM = {"SR": "SR/design.md"}
 
     def missing(self, upstream: dict[str, str], story: str) -> list[tuple[str, str, str]]:
         """经 check 用的 `carriedDiagramProblems` 取「在 story 里没有」的那几张：(来源, 身份, 主题)。"""
@@ -2585,7 +2528,7 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
                 ["node", "--input-type=module", "-e",
                  "const m = await import(process.argv[1]);"
                  "const ctx = { featureRoot: process.argv[2], contract: { sources: {"
-                 " SE: { path: 'SR/design.md' }, SPEC: { path: 'spec/spec.md' } } } };"
+                 " SE: { path: 'SR/design.md' } } } };"
                  "process.stdout.write(JSON.stringify(m.carriedDiagramProblems(ctx, process.argv[3])));",
                  IMAGES.resolve().as_uri(), tmp, story],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
@@ -2601,7 +2544,7 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
         return [i for _, i, _ in self.missing({label: upstream}, story)]
 
     def carried(self, story: str):
-        return [[i, topic] for _, i, topic in self.missing({"spec": self.SPEC}, story)]
+        return [[i, topic] for _, i, topic in self.missing({"SR": self.SR_DOC}, story)]
 
     def test_identity_comes_from_the_position(self) -> None:
         """作者不用给图起名：它在哪一节、是那一节的第几张，就是它的身份。"""
@@ -2609,9 +2552,9 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
         self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(missing))
 
     def test_only_the_first_line_of_the_fence_counts(self) -> None:
-        """标记只认围栏第一行——正文里提一句「图源 spec §5.2 #1」不算带过来。"""
-        story = ("## 五\n\n```mermaid\n%% 图源 spec §5.1 #1\ngraph TD\nA-->B\n```\n"
-                 "\n这一节的图来自 图源 spec §5.2 #1。\n")
+        """标记只认围栏第一行——正文里提一句「图源 SR §5.2 #1」不算带过来。"""
+        story = ("## 五\n\n```mermaid\n%% 图源 SR §5.1 #1\ngraph TD\nA-->B\n```\n"
+                 "\n这一节的图来自 图源 SR §5.2 #1。\n")
         self.assertEqual(["§5.2 #1"], [i for i, _ in self.carried(story)])
 
     def test_the_report_names_the_topic_not_the_count(self) -> None:
@@ -2621,29 +2564,27 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
         self.assertIn("自动充值触发", topics["§5.2 #1"])
 
     def test_one_fence_can_carry_two_upstream_marks(self) -> None:
-        """同一张图两份上游都画过时，story 里只该有一张——两行标记写在同一个围栏开头。
+        """同一件事上游画了两张图时，story 里只该有一张——两行标记写在同一个围栏开头。
 
         一个围栏只认一个标记的话，作者要么把同一张图贴两遍，要么必然被报一条
         「在 story 里没有」。判据逼出重复内容，那是设计问题不是作者问题。
         """
-        sr = "## 1. 协作\n\n```mermaid\ngraph TD\nA[入口] --> B[签约]\n```\n"
-        spec_one = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
-                    "```mermaid\n%% 图源 SR §1 #1\ngraph TD\nA[入口] --> B[签约]\n```\n")
+        sr = ("## 1. 协作\n\n```mermaid\ngraph TD\nA[入口] --> B[签约]\n```\n\n"
+              "## 5. 业务流程\n\n### 5.1 签约流程\n\n```mermaid\ngraph TD\nA[入口] --> B[签约]\n```\n")
         story = ("## 五\n\n签约这条路径这样走。\n\n```mermaid\n"
-                 "%% 图源 SR §1 #1\n%% 图源 spec §5.1 #1\n"
+                 "%% 图源 SR §1 #1\n%% 图源 SR §5.1 #1\n"
                  "graph TD\nA --> B\n```\n")
-        self.assertEqual([], self.carried_for(sr, "SR", story), "SR 那份登记没认")
-        self.assertEqual([], self.carried_for(spec_one, "spec", story), "spec 那份登记没认")
+        self.assertEqual([], self.carried_for(sr, "SR", story), "同一围栏的两行登记没都认")
 
     def test_a_marker_inside_the_body_is_not_a_registration(self) -> None:
         """只认开头连续那几行：图正文里再出现的 `%%` 是注释，不是登记。"""
         story = ("## 五\n\n```mermaid\ngraph TD\nA --> B\n"
-                 "%% 图源 spec §5.1 #1\n```\n")
+                 "%% 图源 SR §5.1 #1\n```\n")
         self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(i for i, _ in self.carried(story)))
 
     def test_an_upstream_marker_riding_along_does_not_confuse_it(self) -> None:
         """上一环的标记随围栏带过来无妨：换成指向直接上游的那一行即可。"""
-        story = ("## 五\n\n```mermaid\n%% 图源 spec §5.2 #1\n%% 图源 SR §3 #1\n"
+        story = ("## 五\n\n```mermaid\n%% 图源 SR §5.2 #1\n%% 图源 SR §3 #1\n"
                  "graph TD\nC-->D\n```\n")
         self.assertEqual(["§5.1 #1"], [i for i, _ in self.carried(story)])
 
@@ -2715,15 +2656,11 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
         self.assertNotIn("我加的一行", story)
 
     def test_a_source_change_reprojects_as_usual(self) -> None:
-        """真源变了照常重投——这条纪律拦的是手改，不是拦更新。"""
+        """蓝图修订了照常重投——这条纪律拦的是手改，不是拦更新。"""
         self.land()
-        spec = self.feature / "spec" / "spec.md"
-        text = spec.read_text(encoding="utf-8")
-        spec.write_text(text.replace("out_of_scope_modules:",
-                                     "out_of_scope_modules:\n    - NewlyExcluded", 1),
-                        encoding="utf-8")
+        design_kit.change_blueprint(self.root, "AR90006", ACCESS, "target_state: refresh trigger", "target_state: refresh trigger and badge")
         self.assertEqual(0, self.project().returncode)
-        self.assertIn("| NewlyExcluded | 不改 |", self.story(), "真源改了却没重投")
+        self.assertIn("refresh trigger and badge", self.story(), "真源改了却没重投")
 
     def test_a_zone_without_a_digest_counts_as_edited(self) -> None:
         """标记里没有摘要：无从分辨「真源变了」与「有人改了」，按改过处理，停下问人。"""
@@ -2739,8 +2676,7 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
 class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
     """投影要认真源的每一种合法写法，也要跟着它变空。
 
-    作者按 `knowledge-use.yaml` 的规矩写「整域不适用」，投影却说他缺依据；
-    spec 某一节被删空，story 里挂着上一版冒充现状——两样都是「机器区不认真源」。
+    机器区没有作者：它写出的每个字都随归档走，违规要指回真源，作者写在机器区之外的话不被动。
     """
 
     def landed_appendix(self) -> str:
@@ -2748,39 +2684,10 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(self.draft("10-附录.md"))))
         return self.story()
 
-    def use_file(self):
-        return self.feature / "spec" / "knowledge-use.yaml"
-
-    def test_a_domain_marked_not_applicable_projects_one_row(self) -> None:
-        """整域不适用：一个域一行，域内条目不必逐条登记——那份 YAML 就是这么规定的。"""
-        self.landed_appendix()
-        use = self.use_file()
-        text = use.read_text(encoding="utf-8")
-        start = text.index("  - id: RES-01")
-        end = text.index("  - id: ", start + 10)
-        text = (text[:start] + text[end:]).replace(
-            "constraint_domains: []",
-            "constraint_domains:\n  - prefix: RES\n    applicable: false\n"
-            "    reason: 本需求不新增任何工程资源，整域不适用。", 1)
-        # RES 域里另一条也要移走，整域才谈得上「不逐条登记」
-        start = text.index("  - id: RES-02")
-        end = text.index("  - id: ", start + 10)
-        use.write_text(text[:start] + text[end:], encoding="utf-8")
-
-        self.build("project")
-        story = self.story()
-        self.assertIn("| 整域不适用 |", story, "整域那一行没投出来")
-        self.assertIn("本需求不新增任何工程资源", story, "域级依据没投出来")
-        self.assertNotIn("| RES-01 |", story, "整域不适用时域内条目不该再逐条出现")
-
     def test_a_redline_in_a_machine_zone_is_reported_to_its_source(self) -> None:
         """机器区没有作者：真源里的「PRD §」投进附录后，报错指向真源那一行，不叫作者改机器区。"""
         self.landed_appendix()
-        spec = self.feature / "spec" / "spec.md"
-        text = spec.read_text(encoding="utf-8")
-        cell = "| `getAutoTopupPolicy` | 新增 |"
-        self.assertIn(cell, text, "夹具变了，用例要跟着改")
-        spec.write_text(text.replace(cell, "| `getAutoTopupPolicy` | 新增（见 PRD §3） |", 1), encoding="utf-8")
+        design_kit.change_blueprint(self.root, "AR90006", ACCESS, "本需求没有任何上报动作", "本需求没有任何上报动作（见 PRD §3）")
         self.build("project")
         code, out = self.check_output()
         self.assertEqual(1, code, out)
@@ -2790,73 +2697,19 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.assertNotIn("story.md 出现文档坐标", out, "机器区里的问题又就地报给了作者")
         self.assertNotIn("：文档坐标「PRD §3」", out, "机器区里的问题又按章报给了作者")
 
-    def test_an_emptied_required_section_stops_the_projection(self) -> None:
-        """必需小节被删空：**不是「不涉及」**，投影拒绝且 Story 不变。
-
-        文档有字不等于技术契约已明确不涉及。按空期望放行的话，`project` 会把旧机器区
-        当成「真源没内容了」删掉——删完盘上看起来合法，而少了一整节没人看得出来。
-        要说不涉及就在那一节写「不涉及：<依据>」一行，那是写出来的结论（见下一条）。
-        """
-        story = self.landed_appendix()
-        self.assertIn("story-build:begin 技术契约·端云接口", story)
-        spec = self.feature / "spec" / "spec.md"
-        text = spec.read_text(encoding="utf-8")
-        start = text.index("#### 9.1.1")
-        end = text.index("#### 9.1.2")
-        spec.write_text(text[:start] + "#### 9.1.1 端云接口\r\n\r\n" + text[end:],
-                        encoding="utf-8")
-        before = self.story_path.read_bytes()
-        proc = self.build_raw("project")
-        out = (proc.stderr or "") + (proc.stdout or "")
-        self.assertEqual(1, proc.returncode, out)
-        self.assertIn("技术契约 › 端云接口」", out)
-        self.assertEqual(before, self.story_path.read_bytes(), "拒绝了却已经写盘")
-        code, cout = self.check_output()
-        self.assertEqual(1, code, cout)
-        self.assertIn("技术契约 › 端云接口」", cout, "只读检查要给同一个结论")
-
-    def test_a_not_applicable_line_reaches_the_appendix(self) -> None:
-        """依赖变更写「不涉及：…」也是结论——丢了它，story 相对 spec 就减了一条。"""
-        spec = self.feature / "spec" / "spec.md"
-        text = spec.read_text(encoding="utf-8")
-        start = text.index("#### 9.1.4")
-        end = text.index("### 9.2", start)
-        spec.write_text(text[:start]
-                        + "#### 9.1.4 依赖变更\r\n\r\n不涉及：本需求不新增任何三方依赖。\r\n\r\n"
-                        + text[end:], encoding="utf-8")
-        story = self.landed_appendix()
-        self.assertIn("不涉及：本需求不新增任何三方依赖。", self.zone(story, "技术契约·依赖变更"))
-        boundary = story.split("### 改动边界", 1)[1].split("###", 1)[0]
-        self.assertIn("| 改动 |", boundary, "Scope 的模块行也要在")
-
     def zone(self, story: str, name: str) -> str:
         at = story.index(f"<!-- story-build:begin {name} ")
         return story[at:story.index("<!-- story-build:end -->", at)]
 
-    def test_the_interface_columns_use_the_readers_names(self) -> None:
-        """列名按合同换成读者用的名字，只丢列、改名，不造新列；「代码现状」不投。"""
-        zone = self.zone(self.landed_appendix(), "技术契约·端云接口")
-        self.assertIn("| 接口 | 性质 | 输入 → 输出 | 错误码 |", zone)
-        self.assertNotIn("云侧接口", zone)
-        self.assertNotIn("代码现状", zone)
-
-    def test_one_requirement_one_row(self) -> None:
-        """一条规约两条要求（夹具的 UX-01 就是）：出两行，编号每行都写，规约域与判定只在首行。"""
-        zone = self.zone(self.landed_appendix(), "规约")
-        rows = [l for l in zone.split("\n") if "| UX-01 |" in l]
-        self.assertEqual(2, len(rows), rows)
-        self.assertIn("| 命中 |", rows[0])
-        self.assertTrue(rows[1].startswith("|  | UX-01 |  |"), rows[1])
-
     def test_an_author_note_after_a_zone_is_left_alone(self) -> None:
         """H4 下机器区之后是作者说明：不参加比较，重投也不动它。"""
         story = self.landed_appendix()
-        end = story.index("<!-- story-build:end -->", story.index("<!-- story-build:begin 技术契约·端云接口 "))
+        end = story.index("<!-- story-build:end -->", story.index("<!-- story-build:begin 改动边界 "))
         cut = end + len("<!-- story-build:end -->")
         note = "\n\n错误码上游未给出，联调时补齐失败语义。"
         self.story_path.write_text(story[:cut] + note + story[cut:], encoding="utf-8")
         code, out = self.check_output()           # 别的章还没写，整篇不过；只看这一区有没有被报
-        self.assertNotIn("技术契约·端云接口", out, out)
+        self.assertNotIn("「附录·改动边界」的机器区", out, out)
         self.build("project")
         self.assertIn("错误码上游未给出，联调时补齐失败语义。", self.story())
 
@@ -2864,51 +2717,6 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         """只取机器区——目的句在它外面，那一句归作者。"""
         section = self.landed_appendix().split("### 改动边界", 1)[1].split("###", 1)[0]
         return section.split("story-build:begin", 1)[1].split("story-build:end", 1)[0]
-
-    def test_the_boundary_is_one_table_with_one_row_per_module(self) -> None:
-        """一个模块一行。两份清单各挤成一格的话，评审者要在一串顿号里找自己那个模块。"""
-        zone = self.boundary_zone()
-        self.assertIn("| 模块 | 本单怎么动 |", zone)
-        for module in ("WalletMain", "AccountManager"):
-            self.assertIn(f"| {module} |", zone, f"{module} 没有自己那一行")
-        seps = [l for l in zone.split("\n") if set(l.replace("|", "").strip()) <= {"-"}
-                and l.strip()]
-        self.assertEqual(1, len(seps), f"改动边界应当只有一张表，实际 {len(seps)} 张")
-
-    def test_the_scope_rationale_stays_in_the_spec(self) -> None:
-        """Scope 的切分理由写给 plan 与工程（这份夹具里带 `navDestinationMap`），留在 spec；
-        归档件讲为什么这么切归范围与业务方案两章。机器区只有模块表，⑩b 不因它报红线。"""
-        spec = (self.feature / "spec" / "spec.md").read_text(encoding="utf-8")
-        self.assertIn("navDestinationMap", spec, "夹具的切分理由里该有工程标识，这条才测得到")
-        zone = self.boundary_zone()
-        self.assertNotIn("navDestinationMap", zone)
-        self.assertNotIn("自动充值端侧能力", zone, "切分理由被投进了归档件")
-        self.assertTrue(all(l.startswith("|") for l in zone.split("\n")[1:]
-                            if l.strip() and not l.strip().startswith("<!--")), zone)
-
-    def test_the_table_has_only_columns_that_carry_something(self) -> None:
-        """两列。第三列「依据」逐行重复同一句来源，读者读它读不出任何新东西。"""
-        zone = self.boundary_zone()
-        header = next(l for l in zone.split("\n") if l.startswith("| 模块 |"))
-        self.assertEqual(2, header.count("|") - 1, f"表不是两列：{header}")
-
-    def test_the_boundary_only_says_changed_or_unchanged(self) -> None:
-        """改动边界只回答模块怎么动：值只有「改动」「不改」，新引入的依赖不混进来。"""
-        rows = [l for l in self.boundary_zone().split("\n") if l.startswith("| ") and not l.startswith("| 模块 |")]
-        self.assertTrue(rows, "改动边界没有模块行")
-        self.assertEqual({"改动", "不改"} >= {r.split("|")[2].strip() for r in rows}, True, rows)
-
-    def test_the_dependency_changes_keep_every_column(self) -> None:
-        """依赖变更与 spec 同名同列投到技术契约下：体积影响与兼容风险都带过去，「代码现状」不投。"""
-        zone = self.zone(self.landed_appendix(), "技术契约·依赖变更")
-        self.assertIn("| 依赖 | 变更 | 体积影响 | 兼容风险 |", zone)
-        self.assertIn("支付免密能力", zone)
-        self.assertNotIn("代码现状", zone)
-        proc = subprocess.run(
-            ["node", str(BUILD), "check", "--feature", "AR90006",
-             "--project-root", str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertNotIn("依赖变更」：", proc.stdout + proc.stderr)
 
     def test_the_machine_zone_leaves_no_slot_for_the_author(self) -> None:
         """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""
@@ -3102,17 +2910,18 @@ class TestSourceNecessityIsJudgedOnce(SkeletonPreflightCase):
     """
 
     def test_a_missing_required_source_blocks_both(self) -> None:
-        (self.feature_root() / "spec" / "spec.md").unlink()
+        (self.feature_root() / "AR" / "design.md").unlink()
+        self.round_now()                    # 缺件也是材料变化，先登记进本轮
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, out)
         self.assertIn("必备来源缺失", out)
-        self.assertIn("spec/spec.md", out)
+        self.assertIn("AR/design.md", out)
         self.assert_wrote_nothing(before)
 
         code2, out2 = self.check_output()
         self.assertEqual(1, code2, f"起手拦了，交付前的 check 却放过：{out2}")
-        self.assertIn("spec/spec.md", out2)
+        self.assertIn("AR/design.md", out2)
         self.assertIn("必备来源", out2)
 
     def test_a_local_ticket_may_lack_the_remote_only_sources(self) -> None:
@@ -3159,42 +2968,27 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
         self.assert_wrote_nothing(before)
         self.assertEqual("{ 坏了", (self.src / "decisions.json").read_text(encoding="utf-8"))
 
-    def test_a_spec_missing_the_sections_it_reads_blocks_and_writes_nothing(self) -> None:
-        """起手要读的那几节不在，就回 Spec——不是记一笔往下走。
+    def test_a_design_source_that_does_not_hold_blocks_and_writes_nothing(self) -> None:
+        """蓝图的评审投影不在：设计来源不成立，起手停下并指回设计职责——不是记一笔往下走。
 
-        「没有这一节」与「这件事不涉及」不是一回事：后者是 Spec 里写出来的结论，
-        评审者读得到；前者只是没写到那儿，而一路往下走的话，作者要到十章都写完、
-        附录投不出东西时才发现。
+        成文按已准入的蓝图写；一路往下走的话，作者要到十章都写完、附录投不出东西时才发现。
         """
-        spec = self.feature_root() / "spec" / "spec.md"
-        spec.write_text("# 甲需求 — 需求规格（Spec）\n\n## 1. 需求概述\n\n内容未完成。\n",
-                        encoding="utf-8")
+        (self.feature_root() / "blueprint" / "component-blueprint.review.md").unlink()
         before = self.files_now()
         code, out = self.skeleton()
-        self.assertEqual(1, code, f"Spec 缺必要章节却起了手：{out}")
-        self.assertIn("术语映射表", out)
-        self.assertIn("不涉及", out, "没告诉作者「确实不涉及」该怎么写")
+        self.assertEqual(1, code, f"设计来源不成立却起了手：{out}")
+        self.assertIn("评审投影", out)
+        self.assertIn("设计职责", out)
         self.assert_wrote_nothing(before)
 
-    def test_each_projection_source_is_required_on_its_own(self) -> None:
-        """附录一节从三份输入投影，三份不能互相替代。
-
-        用「任意一节有正文」放过的话，只要数据存储在，配置项与埋点缺了也不会有人提——
-        而附录那几节正是从它们各自投出来的。
-        """
-        spec = self.feature_root() / "spec" / "spec.md"
-        full = spec.read_text(encoding="utf-8")
-        for section in ("#### 9.1.2 数据存储", "#### 9.1.3 配置项", "### 9.2 埋点"):
-            with self.subTest(section=section):
-                cut = full.index(section)
-                end = full.find("\n#", cut + len(section))
-                spec.write_text(full[:cut] + ("" if end < 0 else full[end + 1:]), encoding="utf-8")
-                before = self.files_now()
-                code, out = self.skeleton()
-                self.assertEqual(1, code, f"只缺 {section} 却起了手：{out}")
-                self.assertIn(f"› {section.split()[-1]}」", out, "没说清缺的是哪一节")
-                self.assert_wrote_nothing(before)
-        spec.write_text(full, encoding="utf-8")
+    def test_active_knowledge_without_a_design_judgement_blocks(self) -> None:
+        """激活了规约、蓝图里没有知识应用决定：起手停下，判断归设计，不由成文补。"""
+        design_kit.install_blueprint(self.root, FEATURE, ACCESS)
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("知识应用决定", out)
+        self.assert_wrote_nothing(before)
 
     def test_an_explicit_not_applicable_section_is_legal(self) -> None:
         """写出来的「不涉及：<依据>」是结论，起手照常——不逼作者补一张空表。"""
@@ -3215,7 +3009,7 @@ class TestTheSubmitCommandRunsAsWritten(StoryBuildCase):
         self._tmp = tempfile.TemporaryDirectory()
         # 工程根带空格与 `$`：两样都是 shell 会动手脚的字符
         self.root = Path(self._tmp.name) / "work space $x"
-        shutil.copytree(FIXTURE, self.root)
+        designed_copy(FIXTURE, FEATURE, self.DRAFT, self.root)
         self.addCleanup(self._tmp.cleanup)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"

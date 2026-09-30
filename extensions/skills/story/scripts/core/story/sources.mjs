@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { isSystemRequirement, readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
 import { scanMaterialList } from './language.mjs';
+import { designSource } from './design-source.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
 import { subsectionSpan } from './document.mjs';
 
@@ -155,19 +156,19 @@ export function joinPosix(base, ref) {
 }
 
 // --------------------------------------------------------------------------
-// 从 spec 派生：story 相对 spec 只能增加，不能减少
+// 上游带图的文档：图由作者按内容搬进 story
 // --------------------------------------------------------------------------
 
 /**
- * story 的上游有哪几份 —— 系统设计与 spec，读不到的那份不算，不猜。
+ * story 的上游有哪几份带图的文档 —— 系统设计，读不到就不算，不猜。
  *
- * 上游只列到这两份：产品需求文档里一般不画 `mermaid`，为它留一条通道是空的；
- * 真出现了，作者按内容搬进 story 就是，机器不为一份没有图的文档立判据。
+ * 产品需求文档里一般不画 `mermaid`，为它留一条通道是空的；真出现了，作者按内容搬进 story 就是，
+ * 机器不为一份没有图的文档立判据。设计事实来自蓝图，不在这里。
  */
 export function upstreamDocs(ctx) {
   const out = [];
   // 标签是图源标记里写的那个名字；路径以合同 `sources` 为准
-  for (const [label, key] of [['SR', 'SE'], ['spec', 'SPEC']]) {
+  for (const [label, key] of [['SR', 'SE']]) {
     const rel = ctx.contract.sources?.[key]?.path;
     const text = rel ? readText(path.join(ctx.featureRoot, rel)) : null;
     if (text !== null) out.push([label, text]);
@@ -212,7 +213,10 @@ export function redactMaterialLinks(storyText, ctx) {
   return lines.join('\n');
 }
 
-/** 附录·材料清单的每一行：类别、文件名与链接由清单给，贡献由作者写。 */
+/**
+ * 附录·材料清单的每一行：类别、文件名与链接由清单给，采用的版本由冻结的设计输入给，贡献由作者写。
+ * 冻结集合里的派生分析（提取稿）与人签记录不是原始材料，另起一行写明角色。
+ */
 export function materialListSkeleton(ctx) {
   const targets = materialListTargets(ctx);
   if (!targets || targets === 'broken') return [];
@@ -220,9 +224,18 @@ export function materialListSkeleton(ctx) {
   // 收件箱原件不在合同的来源表里（它是人另外给的），落到「原件」。
   const kinds = new Map(Object.values(ctx.contract?.sources ?? {})
     .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
-  return targets.must.map(([rel]) =>
+  const snapshot = designSource(ctx).snapshot;
+  const frozen = new Map((snapshot?.files ?? []).map(row => [row.path, row]));
+  const version = (row) => (row ? `（采用版本 ${String(row.sha256).slice(0, 12)}）` : '（本次设计未采用）');
+  const lines = targets.must.map(([rel]) =>
     `- ${kinds.get(rel) ?? (rel.startsWith('inbox/') ? '原件' : '材料')}：`
-    + `[${basename(rel)}](${relFromStory(rel)})——{{这份材料贡献了什么}}`);
+    + `[${basename(rel)}](${relFromStory(rel)})${snapshot ? version(frozen.get(rel)) : ''}——{{这份材料贡献了什么}}`);
+  const roles = (ctx.contract?.chapters ?? []).find(c => c.appendix)?.material_roles ?? {};
+  for (const row of (snapshot?.files ?? []).filter(r => r.role === 'extracted_analysis' || r.role === 'human_record')) {
+    const rel = path.relative(ctx.featureRoot, path.join(snapshot.dir, 'files', ...row.path.split('/'))).split(path.sep).join('/');
+    lines.push(`- ${roles[row.role] ?? row.role}：[${basename(row.path)}](${relFromStory(rel)})${version(row)}——{{这份材料贡献了什么}}`);
+  }
+  return lines;
 }
 
 /**

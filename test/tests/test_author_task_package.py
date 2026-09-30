@@ -203,75 +203,68 @@ class CurrentDecisionsReachTheAuthor(WorkspaceCase):
                 self.assertNotIn("当前登记为空", got)
 
 
-class SpecDiagramsReachTheAuthor(WorkspaceCase):
-    """spec 里的图逐张给身份、主题与**原件坐标**，不指定放哪一章。
+class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
+    """系统设计里的图逐张给身份、主题与**原件坐标**，不指定放哪一章。
 
     不复制围栏原文：副本一旦与原件不同步，作者改的是副本；任务包也因此长到一次读不完。
+    设计事实来自蓝图，Story 不从 Spec 搬图，任务包里也就没有 Spec 那一节。
     """
 
-    SPEC = ("# 甲需求\n\n## 5. 业务流程\n\n### 5.2 自动充值触发\n\n"
-            "```mermaid\ngraph TD\nC[余额上报] --> D[判定]\n```\n")
+    SR = ("# 系统设计\n\n## 5. 业务流程\n\n### 5.2 自动充值触发\n\n"
+          "```mermaid\ngraph TD\nC[余额上报] --> D[判定]\n```\n")
 
-    def package_with_spec(self) -> str:
-        spec = self.feature_root / "spec" / "spec.md"
-        spec.write_text(self.SPEC, encoding="utf-8")
+    def package_with_sr(self) -> str:
+        sr = self.feature_root / "SR" / "design.md"
+        sr.parent.mkdir(parents=True, exist_ok=True)
+        sr.write_text(self.SR, encoding="utf-8")
         return self.task_package()
+
+    @staticmethod
+    def section_4a(package: str) -> str:
+        return package.split("## 4a.", 1)[1].split("\n## ", 1)[0]
 
     def test_each_diagram_comes_with_coordinates_and_its_content(self) -> None:
         """身份、标记写法、原件位置之外，源图内容就在这里：作者对着原图的关系画，不必再去翻原件。"""
-        package = self.package_with_spec()
-        self.assertIn("spec 里的图", package)
-        self.assertIn("spec §5.2 #1", package, "没给身份，作者不知道标记写什么")
-        self.assertIn("`%% 图源 spec §5.2 #1`", package, "没给标记的写法，搬过去就核不到")
-        self.assertIn("spec/spec.md", package, "没给原件路径")
+        package = self.package_with_sr()
+        self.assertIn("系统设计里的图", package)
+        self.assertIn("SR §5.2 #1", package, "没给身份，作者不知道标记写什么")
+        self.assertIn("`%% 图源 SR §5.2 #1`", package, "没给标记的写法，搬过去就核不到")
+        self.assertIn("SR/design.md", package, "没给原件路径")
         self.assertRegex(package, r"第 \d+–\d+ 行", "没给围栏在原件里的行范围")
         self.assertIn("C[余额上报]", package, "源图内容没送到，作者只能按行号自己去读")
-
-    def test_a_spec_not_yet_written_is_not_reported_as_lost(self) -> None:
-        """Spec 还没写成时它的图给不出来——那是时点，不是丢件：说清什么时候给。
-
-        说成「读不到，先找回来」的话，作者会在 Spec 阶段一开头去找一份本来就还不存在的文件。
-        """
-        spec = self.feature_root / "spec" / "spec.md"
-        if spec.exists():
-            spec.unlink()
-        section = self.task_package().split("## 4b.", 1)[1]
-        self.assertIn("还没写成", section)
-        self.assertIn("story-build skeleton", section, "没说清这些图什么时候给")
-        self.assertNotIn("找回来", section)
-        self.assertNotIn("spec 里现在没有图", section, "给不出来不等于没有图")
 
     def test_an_unreadable_upstream_is_a_problem_not_an_empty_section(self) -> None:
         """系统需求（AR 开头）的系统设计该有却读不到：要报出来，静默给一节空的，作者会以为上游没画过图。"""
         remote = f"AR{FEATURE}"
         shutil.copytree(self.feature_root, self.feature_root.parent / remote)
-        section = self.task_package(remote).split("## 4a.", 1)[1].split("## 4b.", 1)[0]
+        section = self.section_4a(self.task_package(remote))
         self.assertIn("读不到 `SR/design.md`", section)
         self.assertIn("找回来", section)
 
     def test_a_local_ticket_without_a_system_design_is_not_a_loss(self) -> None:
         """本地单没有需求系统给的系统设计是正常的：照合同说「本需求没有」，不报丢件。"""
-        section = self.task_package().split("## 4a.", 1)[1].split("## 4b.", 1)[0]
+        section = self.section_4a(self.task_package())
         self.assertIn("本需求没有 `SR/design.md`", section)
         self.assertNotIn("读不到", section)
 
     def test_it_names_the_topic_and_not_a_chapter(self) -> None:
         """放哪一节由作者按内容定——任务包不预设位置。"""
-        package = self.package_with_spec()
+        package = self.package_with_sr()
         self.assertIn("自动充值触发", package)
         self.assertIn("放哪一节按它讲的内容定", package)
 
-    def test_both_upstreams_get_their_own_section(self) -> None:
-        """上游两份各一节，下游都是 story——spec 的内容归框架管，扩展不往那边搬图。"""
-        package = self.package_with_spec()
+    def test_only_the_system_design_section_is_given(self) -> None:
+        """上游带图的只有系统设计：没有「spec 里的图」一节，也不往 spec 搬图。"""
+        package = self.package_with_sr()
         self.assertIn("系统设计里的图（搬进 story）", package)
-        self.assertIn("spec 里的图（搬进 story）", package)
+        self.assertNotIn("spec 里的图", package)
         self.assertNotIn("搬进 spec", package)
 
     def test_no_diagrams_says_so(self) -> None:
-        (self.feature_root / "spec").mkdir(parents=True, exist_ok=True)
-        (self.feature_root / "spec" / "spec.md").write_text("# 甲需求\n", encoding="utf-8")
-        self.assertIn("spec 里现在没有图", self.task_package())
+        sr = self.feature_root / "SR" / "design.md"
+        sr.parent.mkdir(parents=True, exist_ok=True)
+        sr.write_text("# 系统设计\n", encoding="utf-8")
+        self.assertIn("SR 里现在没有图", self.task_package())
 
 
 class TaskPackageIsRendered(WorkspaceCase):

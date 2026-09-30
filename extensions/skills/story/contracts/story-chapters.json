@@ -10,12 +10,6 @@
       "required": true,
       "label": "系统设计"
     },
-    "SPEC": {
-      "path": "spec/spec.md",
-      "derived": true,
-      "required": true,
-      "label": "本轮规格"
-    },
     "DESIGN": {
       "path": "AR/design.md",
       "required": true,
@@ -146,7 +140,7 @@
       "id": "10-appendix",
       "title": "附录",
       "appendix": true,
-      "boundary": "理解型叙述归正文各章，字段与规则的真源归 spec 扩展章的技术契约、规约与埋点",
+      "boundary": "理解型叙述归正文各章，字段与规则的真源归已准入蓝图的契约、运行数据流、知识应用决定与精确明细，材料归冻结的设计输入",
       "subsections": [
         "技术契约",
         "规约",
@@ -160,20 +154,23 @@
         "每个规约条目命中与否及依据"
       ],
       "projection": {
-        "drop_columns": ["代码现状"],
         "sections": {
           "技术契约": {"h4": [
-            {"title": "端云接口", "from": ["宿主扩展治理项", "技术契约", "端云接口"], "rename": {"云侧接口": "接口", "新增·复用·变更": "性质", "入参 → 出参": "输入 → 输出"}},
-            {"title": "数据存储", "from": ["宿主扩展治理项", "技术契约", "数据存储"]},
-            {"title": "配置项", "from": ["宿主扩展治理项", "技术契约", "配置项"]},
-            {"title": "依赖变更", "from": ["宿主扩展治理项", "技术契约", "依赖变更"]}
+            {"title": "端云接口", "reader": "contracts",
+             "tables": {"fields": "位置|字段|类型|含义|可空", "mappings": "映射|目标字段|方式|来源字段|规则"},
+             "labels": {"request": "请求", "response": "响应", "nullable": "可空", "required": "必有", "version": "版本",
+                        "basis": "依据", "errors": "错误语义", "idempotency": "幂等", "nfr": "非功能"}},
+            {"title": "数据存储", "reader": "data_flows", "detail_kind": "data_policy",
+             "tables": {"flows": "数据流|数据域|权威来源|状态归属|失败与恢复"}},
+            {"title": "配置项", "reader": "details", "detail_kind": "configuration"}
           ]},
-          "规约": {"kind": "knowledge_use"},
-          "埋点": {"from": ["宿主扩展治理项", "埋点"], "whole": true},
-          "改动边界": {"kind": "scope"}
+          "规约": {"reader": "knowledge_applications", "tables": {"rows": "决定|判定|知识|理由与落点"}},
+          "埋点": {"reader": "details", "detail_kind": "event"},
+          "改动边界": {"reader": "change_boundary", "tables": {"rows": "模块|本单怎么动"},
+                       "labels": {"unchanged": "开发视图不变"}}
         }
       },
-      "subsection_tables": {"改动边界": "模块|本单怎么动", "规约": "规约域|编号|判定|依据"}
+      "material_roles": {"original": "原件", "image": "图片", "human_record": "人签记录", "extracted_analysis": "派生分析（提取稿）"}
     }
   ],
   "id_shapes": {

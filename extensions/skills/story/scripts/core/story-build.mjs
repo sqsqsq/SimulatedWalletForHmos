@@ -3,7 +3,7 @@
  *
  * ## 成文怎么走
  *
- * 材料与 Spec 齐备之后，`skeleton` 给出成文要用的当前输入并建写作设计空壳与章草稿；
+ * 设计输入交出、蓝图准入且评审投影有效之后，`skeleton` 给出成文要用的当前输入并建写作设计空壳与章草稿；
  * 作者先写本需求的写作设计骨架，再照骨架一次写一章、经 `chapter` 原子替换落盘，
  * 十章写完再按回看清单逐条处置。每步输出有界、写完即落盘、断了能续——整篇一次重出是全有或全无，
  * 中途断了磁盘上什么都没有。
@@ -21,7 +21,7 @@
  * |------|--------|
  * | `skeleton` | 预检流程与材料；建决策登记骨架、写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
- * | `project` | 附录机器区按当前真源（spec 扩展章、knowledge-use.yaml）重投 |
+ * | `project` | 附录机器区按当前真源（已准入蓝图、冻结的设计输入）重投 |
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
@@ -35,9 +35,10 @@ import {
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {
-  createContext, fail, readJson, readText, specText,
+  createContext, fail, readJson, readText,
 } from './story/context.mjs';
-import { materialSubsectionName, projectAppendix, specGaps, specTerms } from './story/appendix.mjs';
+import { designGaps, materialSubsectionName, projectAppendix } from './story/appendix.mjs';
+import { designSource, termFacts } from './story/design-source.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
@@ -86,7 +87,7 @@ function cmdNumber(ctx) {
 // --------------------------------------------------------------------------
 
 /**
- * 附录机器区按当前真源重投。登记之后 spec 改了，直接重跑 `story_flow.py story`：
+ * 附录机器区按当前真源重投。登记之后蓝图升了 revision，直接重跑 `story_flow.py story`：
  * 它先重投再登记，一步跟上。
  */
 function cmdProject(ctx) {
@@ -95,14 +96,14 @@ function cmdProject(ctx) {
   const { text, zones } = projectAppendix(ctx, story);
   if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
   process.stdout.write(`[story-build project] 附录机器区按当前真源重投 ${zones} 节`
-    + '（spec 扩展章 / knowledge-use.yaml）；材料清单归你，不动\n');
+    + '（已准入蓝图 / 冻结的设计输入）；机器区外的说明归你，不动\n');
 }
 
 /**
  * 起手：十章骨架 + 每章一份草稿。
  *
  * **预检全部读完、判完、算完，才开始写盘**。顺序不是风格问题：一边建决策骨架一边
- * 才发现 Spec 缺了的话，盘上留下的是半份起手，而作者拿到的报错说的是另一件事——
+ * 才发现设计还没准入的话，盘上留下的是半份起手，而作者拿到的报错说的是另一件事——
  * 他要先弄清哪些已经建了，才知道重跑安不安全。
  */
 function cmdSkeleton(ctx) {
@@ -141,17 +142,9 @@ function cmdSkeleton(ctx) {
       + blocking.map(m => missingSourceLine(m)).join('；'));
   }
 
-  // ---- 预检 ④：Spec 可读、非空，本步要消费的那几节都在 ----
-  const spec = specText(ctx);
-  if (spec !== null && !spec.trim()) {
-    fail('spec/spec.md：是空的——story 骨架从 spec 的术语映射表与扩展章各节派生');
-  }
-  const gaps = spec === null ? [] : specGaps(ctx.contract, spec);
-  if (gaps.length) {
-    fail(`spec/spec.md：缺起手要读的这几节，骨架没起：\n  · ${gaps.join('\n  · ')}\n`
-      + '  不涉及的节写「不涉及：<依据>」一行也算有内容——'
-      + '起手按这一节有没有正文判，写出来的结论评审者读得到');
-  }
+  // ---- 预检 ④：设计来源成立：已准入的蓝图、有效的评审投影、登记的冻结输入 ----
+  const gaps = designGaps(ctx);
+  if (gaps.length) fail(`设计来源还不成立，骨架没起：\n  · ${gaps.join('\n  · ')}`);
 
   // ---- 预检 ⑤：决策登记起手前就有议题，或写明本单无待决（只读，不写） ----
   const gap = registrationGap(ctx);
@@ -159,7 +152,7 @@ function cmdSkeleton(ctx) {
 
   // ---- 内容计算：也在写盘之前 ----
   const facts = {
-    terms: specTerms(spec),
+    terms: termFacts(designSource(ctx).blueprint),
     materialListName: materialSubsectionName(ctx.contract),
     materialListRows: materialListSkeleton(ctx),
   };
@@ -211,7 +204,7 @@ function cmdSkeleton(ctx) {
     process.stdout.write(`\n结构起点：${relFromFeature(ctx, file)} 已经动过，没有自动改；`
       + `写作设计选定、它里面还没有的结构如下，按需贴进去：\n${rows.join('\n')}\n`);
   }
-  // 成文要用的当前输入在这一刻取：Spec 刚写完，它的图这时才列得出来。
+  // 成文要用的当前输入在这一刻取：材料与系统设计里的图此刻列得出来。
   process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
 }
 
