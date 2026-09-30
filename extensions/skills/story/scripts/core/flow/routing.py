@@ -278,9 +278,9 @@ def update_inputs_step(feature_root: Path, contract: dict,
         return pending
     if state["changed"]:
         return ("refresh_round", "新料已并入正文：跑 `story_flow.py round` 登记到本轮（它不开新轮），"
-                "再 `story_flow.py update --action prepare`")
-    return ("update_prepare", "输入已定：跑 `story_flow.py update --feature <名> --action prepare`"
-            "，它比较八项并开这一轮")
+                "再 `story_flow.py update --action prepare --result <materials|documents>`")
+    return ("update_prepare", "输入已定：跑 `story_flow.py update --feature <名> --action prepare --result <materials|documents>`"
+            "（按人这次的请求记终点），它比较六项并开这一轮")
 
 
 def update_open_step(feature_root: Path, contract: dict,

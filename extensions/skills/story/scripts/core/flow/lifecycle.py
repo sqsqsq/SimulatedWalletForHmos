@@ -14,7 +14,7 @@ from flow.state import (
     now, require, round_gates, save, stage_of)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
 from flow import asks
-from flow.update import record_baseline
+from flow.update import record_baseline, record_owned_after
 from flow.meetings import topic_digest
 from materials import meeting
 
@@ -160,11 +160,14 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
               "files": {rel: file_sha256(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}}
     if status == "story_written" and contract.get("story_basis") == wanted:
         log("这一份已经按同样的依据登记过，不改")
+        record_owned_after(feature_root)
         return {"status": "story_written", "story": str(story), "registered": False}
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
     contract["story_basis"] = wanted
     save(feature_root, contract)
+    # 登记是 update 一轮的完成点：本扩展拥有的文件此刻的指纹记进这一轮，撤回时据它认「本轮留下的就是这一版」
+    record_owned_after(feature_root)
     baseline = record_baseline(feature_root)
     return {"status": "story_written", "story": str(story), "registered": True, "review": review.get("result"),
             **({"update_baseline": baseline} if baseline else {})}

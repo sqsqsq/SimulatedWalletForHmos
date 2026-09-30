@@ -369,14 +369,13 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
     EXT = DEV_EXT
 
     def test_the_closure_rule_is_written_once_and_referenced(self) -> None:
-        """WARN 与审查结论的处置只在 reference/phase-closure.md「闭环」写一张表；两个作者页与 update 方法页只引用它。"""
+        """WARN 与审查结论的处置只在 reference/phase-closure.md「闭环」写一张表；spec 与 plan 作者页只引用它。"""
         spec = (SKILL / "reference" / "phase-closure.md").read_text(encoding="utf-8")
         closure = spec.split("## 闭环", 1)[1]
         for row in ("有阻断项", "PASS，改动只影响表达", "PASS，改动改变业务口径", "PASS，建议不在本阶段修"):
             self.assertIn(row, closure, f"闭环表缺「{row}」这一类")
         self.assertFalse((SKILL / "phases" / "spec.md").exists(), "Story 编排已迁到 phases/design.md")
-        for f in (self.EXT / "hooks" / "plan" / "author.md", SKILL / "phases" / "update.md",
-                  self.EXT / "hooks" / "spec" / "author.md"):
+        for f in (self.EXT / "hooks" / "plan" / "author.md", self.EXT / "hooks" / "spec" / "author.md"):
             text = f.read_text(encoding="utf-8")
             with self.subTest(file=f.name):
                 self.assertIn("「闭环」", text, "没有指向唯一的处置规则")

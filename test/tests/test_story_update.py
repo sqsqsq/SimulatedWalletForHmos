@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import atexit
 import json
 import shutil
 import subprocess
@@ -21,6 +22,8 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
+
+import yaml
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -30,7 +33,7 @@ from test_story_build import (  # noqa: E402
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
 from flow_steps import answer, write_gaps  # noqa: E402
 import design_kit  # noqa: E402
-from ext_workspace import DEV_EXT
+from ext_workspace import DEV_EXT, link_framework
 
 FLOW = (DEV_EXT / "skills" / "story" / "scripts"
         / "core" / "story_flow.py")
@@ -58,6 +61,8 @@ class UpdateCase(unittest.TestCase):
         """不写 `--action` 就是 prepare：多数用例测的是比较本身，输入阶段另有一组。"""
         if "--action" not in extra:
             extra = ("--action", "prepare", *extra)
+        if "prepare" in extra and "--result" not in extra:
+            extra = (*extra, "--result", "documents")
         return self.flow("update", *extra)
 
     def flow(self, mode: str, *extra: str) -> dict:
@@ -95,11 +100,16 @@ class TheFirstRunHasNoBaseline(UpdateCase):
         self.assertFalse(out["baseline"])
         self.assertIn("没有上次已处理的版本", out["action"])
 
-    def test_the_scene_before_this_run_is_kept_whole(self) -> None:
+    def test_the_owned_files_are_kept_and_protected_ones_are_not(self) -> None:
+        """镜像只留本扩展拥有的文件（恢复据它写回）；受保护的上游原件恢复从不改写，不进镜像。"""
         out = self.update()
         before = self.updates / out["update"] / "before"
-        self.assertTrue((before / "spec" / "spec.md").is_file(), "镜像里没有 spec")
         self.assertTrue((before / "AR" / "story.md").is_file(), "镜像里没有 story")
+        self.assertFalse((before / "AR" / "design.md").exists(), "受保护的上游原件进了镜像")
+        rec = json.loads((self.updates / out["update"] / "record.json").read_text(encoding="utf-8"))
+        self.assertIn("AR/story.md", rec["owned_before"])
+        self.assertNotIn("AR/design.md", rec["owned_before"])
+        self.assertEqual("documents", rec["requested_result"])
 
     def test_the_mirror_does_not_contain_itself(self) -> None:
         """镜像不复制本层自己的落点——复制了就是把镜像套进镜像，每轮翻一倍。"""
@@ -119,7 +129,7 @@ class TheFirstRunHasNoBaseline(UpdateCase):
         self.assertFalse((before / "spec" / "reports").exists(), "阶段报告进了镜像")
         self.assertFalse((before / ".backups").exists(), "导入备份进了镜像")
         self.assertFalse((before / "spec" / "revalidation.json").exists(), "重验过程件进了镜像")
-        self.assertTrue((before / "spec" / "spec.md").is_file(), "排除得太宽，业务正文也没了")
+        self.assertTrue((before / "AR" / "story.md").is_file(), "排除得太宽，业务正文也没了")
 
 
 class OneRoundAtATime(UpdateCase):
@@ -148,7 +158,7 @@ class NothingChangedIsAFactNotAnExit(UpdateCase):
 
     def test_it_does_not_touch_the_earlier_rounds(self) -> None:
         """清理只管本次的临时副本——**历史备份一个字节都不许动**。"""
-        keep = self.updates / self.closed / "before" / "spec" / "spec.md"
+        keep = self.updates / self.closed / "before" / "AR" / "story.md"
         was = keep.read_bytes()
         self.update()
         self.assertEqual(was, keep.read_bytes(), "上一轮的镜像被这一趟改了")
@@ -171,7 +181,7 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
     #: 而且会被报成「无变化」退出——比漏报更糟的是它看起来像结论。
     WATCHED = {
         "AR/review.md": "# 评审记录\n\n首版。\n",
-        "plan/plan.md": "# 设计\n\n首版。\n",
+        "AR/story.md": "# 需求故事\n\n首版。\n",
     }
     #: 模型据交付件写出来的中间真源：随交付件的修订而变，是结果不是原因，不进判定。
     DERIVED = {
@@ -190,11 +200,7 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
         self.close_latest()
 
     def test_every_watched_product_shows_up_when_hand_edited(self) -> None:
-        """逐份核：改了哪一份就报哪一份。
-
-        `plan/plan.md` 是 plan 单的常改处（car 就是 plan 单），漏掉它的话，
-        一次 plan 阶段的 update 会整个报成「没变化」。
-        """
+        """逐份核：改了哪一份就报哪一份——人读件被评审人或作者直接改过，漏盯的话整轮会报成「没变化」。"""
         for rel in self.WATCHED:
             with self.subTest(rel=rel):
                 target = self.feature_root / rel
@@ -208,16 +214,15 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
 
     def test_a_hand_edited_product_shows_up(self) -> None:
         """有人在起跑前直接改了产物——只比材料指纹的话，这一笔永远看不见。"""
-        spec = self.feature_root / "spec" / "spec.md"
-        spec.write_text(spec.read_text(encoding="utf-8") + "\n<!-- 人手改的一行 -->\n",
-                        encoding="utf-8")
+        design = self.feature_root / "AR" / "design.md"
+        design.write_text(design.read_text(encoding="utf-8") + "\n<!-- 人手改的一行 -->\n",
+                          encoding="utf-8")
         out = self.update()
         self.assertEqual("changed", out["comparison"], out)
-        self.assertIn("spec/spec.md", out["changed"])
+        self.assertIn("AR/design.md", out["changed"])
 
     def test_intermediate_sources_do_not_count(self) -> None:
-        """决策登记与强契约手改了也不报：报出来只是对人没有意义的几行。
-        人要直接改强契约，那是 framework 的修正入口，不是 update。"""
+        """决策登记与契约手改了也不报：报出来只是对人没有意义的几行。"""
         for rel in self.DERIVED:
             target = self.feature_root / rel
             target.write_text(target.read_text(encoding="utf-8") + "# 手改\n", encoding="utf-8")
@@ -253,20 +258,20 @@ class UnreadableIsAGapNotADeletion(UpdateCase):
                 return real(path)
 
             with unittest.mock.patch.object(update_mod.registry, "file_digest", flaky):
-                return update_mod.cmd_update_prepare(self.feature_root)
+                return update_mod.cmd_update_prepare(self.feature_root, "documents")
         finally:
             sys.path.remove(str(core))
 
     def test_it_is_reported_as_a_gap(self) -> None:
-        out = self.prepare_with_broken_read("spec.md")
+        out = self.prepare_with_broken_read("story.md")
         self.assertNotEqual("unchanged", out["comparison"], "读不到却报了无变化")
-        self.assertIn("spec/spec.md", out["unreadable"], out)
+        self.assertIn("AR/story.md", out["unreadable"], out)
         self.assertIn("这是缺口", out["action"])
 
     def test_it_is_not_counted_as_removed(self) -> None:
         """上次在、这次读不出来，`removed` 里不许有它——模型会拿着它去删下游功能。"""
-        out = self.prepare_with_broken_read("spec.md")
-        self.assertNotIn("spec/spec.md", out["changed"], out)
+        out = self.prepare_with_broken_read("story.md")
+        self.assertNotIn("AR/story.md", out["changed"], out)
 
 
 class StatusReportsFactsNotJudgement(UpdateCase):
@@ -423,52 +428,119 @@ class ClosingBindsTheNotes(UpdateCase):
         self.assertEqual("closed", out.get("status"), out)
         self.assertTrue((self.updates / self.rid / "after").is_dir())
         # 有了 after/，下一轮改动才算得出正文差异（没有它只能说「这几份变了」）
-        spec = self.feature_root / "spec" / "spec.md"
-        spec.write_text(spec.read_text(encoding="utf-8") + "\n新加的一行\n", encoding="utf-8")
+        story = self.feature_root / "AR" / "story.md"
+        story.write_text(story.read_text(encoding="utf-8") + "\n新加的一行\n", encoding="utf-8")
         nxt = self.update()
         self.assertGreaterEqual(nxt["diffs"], 1, "有了比较正文却没算出差异")
 
 
-class RestoreKeepsBothSides(UpdateCase):
+class RestoreFollowsTheTruthTable(UpdateCase):
+    """恢复只动本扩展拥有的文件，逐份按开轮时、本轮完成点与现在的指纹判；受保护件与流程契约的其余字段一个字节不动。"""
+
     def setUp(self) -> None:
         super().setUp()
         self.rid = self.update()["update"]
-        self.spec = self.feature_root / "spec" / "spec.md"
+        self.story = self.feature_root / "AR" / "story.md"
+        self.was = self.story.read_bytes()
 
-    def test_it_puts_the_scene_back_and_saves_what_came_after(self) -> None:
-        self.spec.write_text(self.spec.read_text(encoding="utf-8") + "\n这一轮改的\n",
-                             encoding="utf-8")
-        later = self.feature_root / "AR" / "story-src" / "这一轮新建的.md"
-        later.write_text("开始之后才有的。\n", encoding="utf-8")
+    def complete_point(self) -> None:
+        """本轮完成点（story 登记或收口）记下的指纹：真实流程里由 `story` 登记与 `close` 写。"""
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.update import record_owned_after  # noqa: PLC0415
+            self.assertEqual(self.rid, record_owned_after(self.feature_root))
+        finally:
+            sys.path.remove(str(core))
 
+    def record(self) -> dict:
+        return json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
+
+    def test_a_registered_change_goes_back_and_a_new_draft_goes_away(self) -> None:
+        self.story.write_bytes(self.was + "这一轮改的\n".encode("utf-8"))
+        draft = self.src / "drafts" / "这一轮新建的.md"
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text("开始之后才有的。\n", encoding="utf-8")
+        self.complete_point()
         out = self.update("--action", "restore")
-        self.assertEqual("restored", out["status"])
-        self.assertNotIn("这一轮改的", self.spec.read_text(encoding="utf-8"))
-        self.assertFalse(later.exists(), "这一轮之后新建的文件没被还原掉")
-        saved = self.updates / self.rid / Path(out["conflict_copy"]).name
-        self.assertIn("这一轮改的", (saved / "spec" / "spec.md").read_text(encoding="utf-8"),
-                      "被覆盖的那一版没留下来")
-        self.assertTrue((saved / "AR" / "story-src" / "这一轮新建的.md").is_file())
+        self.assertEqual("restored", out["status"], out)
+        self.assertEqual(self.was, self.story.read_bytes())
+        self.assertFalse(draft.exists(), "本轮新建、登记过的草稿没退掉")
+        saved = self.feature_root / out["restore_copy"]
+        self.assertIn("这一轮改的", (saved / "AR" / "story.md").read_text(encoding="utf-8"), "被退掉的那一版没留下来")
+        self.assertIsNone(self.flow("update", "--action", "status")["open"], "没有冲突却没关掉这一轮")
 
-    def test_our_own_bookkeeping_is_not_reported_as_a_conflict(self) -> None:
-        """流程契约里那一笔记号是本层自己写的。报成冲突的话，真冲突会被这条噪声埋掉。"""
+    def test_an_unregistered_change_is_kept_as_a_conflict(self) -> None:
+        """没到完成点的改动没有登记的那一版可比：保留现状，列冲突，这一轮照旧开着。"""
+        self.story.write_bytes(self.was + "中断稿\n".encode("utf-8"))
         out = self.update("--action", "restore")
-        self.assertNotIn("AR/story-src/story-flow.json", out["conflicts"])
+        self.assertEqual("restore_conflicted", out["status"], out)
+        self.assertIn("中断稿", self.story.read_text(encoding="utf-8"), "冲突的现状被覆盖了")
+        row = next(c for c in out["conflicts"] if c["file"] == "AR/story.md")
+        self.assertTrue((self.feature_root / row["before"]).is_file(), "没给开轮时那一版")
+        self.assertTrue((self.feature_root / row["current"]).is_file(), "没存现在这一版")
+        status = self.flow("update", "--action", "status")
+        self.assertEqual(self.rid, status["open"])
+        self.assertIn("AR/story.md", [c["file"] for c in status["restore_conflicts"]])
+        self.assertIn("冲突", self.update("--action", "close").get("error", ""), "有冲突却收口了")
+
+    def test_a_change_after_the_complete_point_is_a_conflict(self) -> None:
+        self.story.write_bytes(self.was + "登记过的\n".encode("utf-8"))
+        self.complete_point()
+        self.story.write_bytes(self.was + "登记之后又改的\n".encode("utf-8"))
+        out = self.update("--action", "restore")
+        self.assertEqual(["AR/story.md"], [c["file"] for c in out["conflicts"]])
+        self.assertIn("登记之后又改的", self.story.read_text(encoding="utf-8"))
+
+    def test_a_resolved_conflict_is_restored_on_the_next_run(self) -> None:
+        """人把冲突那份定回开轮时的样子，再跑一次就收掉这一轮。"""
+        self.story.write_bytes(self.was + "中断稿\n".encode("utf-8"))
+        self.assertEqual("restore_conflicted", self.update("--action", "restore")["status"])
+        self.story.write_bytes(self.was)
+        out = self.update("--action", "restore")
+        self.assertEqual("restored", out["status"], out)
+        self.assertEqual([], out["conflicts"])
+
+    def test_protected_bytes_are_never_touched(self) -> None:
+        design = self.feature_root / "AR" / "design.md"
+        changed = design.read_bytes() + "冻结之后的新版\n".encode("utf-8")
+        design.write_bytes(changed)
+        self.complete_point()
+        out = self.update("--action", "restore")
+        self.assertEqual(changed, design.read_bytes(), "受保护件被还原了")
+        self.assertNotIn("AR/design.md", [c["file"] for c in out["conflicts"]])
+
+    def test_the_flow_contract_keeps_its_other_fields(self) -> None:
+        """流程契约只动开着的这一轮的指针：轮次、人签、设计关联这些字段不随恢复回退。"""
+        path = self.src / "story-flow.json"
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.state import load, save  # noqa: PLC0415
+            contract = load(self.feature_root)
+            contract["archived"] = {"at": "2026-09-30T00:00:00+00:00"}
+            save(self.feature_root, contract)
+        finally:
+            sys.path.remove(str(core))
+        self.assertEqual("restored", self.update("--action", "restore")["status"])
+        flow = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual({"at": "2026-09-30T00:00:00+00:00"}, flow.get("archived"), "契约的其他字段被还原了")
+        self.assertEqual({"open": None, "last_restored": self.rid}, flow["update"])
 
 
 class RestoreRefusesWithoutAScene(UpdateCase):
     """还原不了时说清原因，**当前内容一个字节不动**——不能为了「还原」先把现在的丢了。"""
 
     def test_nothing_to_restore_when_no_update_was_made(self) -> None:
-        spec = self.feature_root / "spec" / "spec.md"
+        spec = self.feature_root / "AR" / "story.md"
         was = spec.read_bytes()
         out = self.update("--action", "restore")
-        self.assertIn("没有做过 update", out.get("error", ""), out)
+        self.assertIn("没有开着的更新可以还原", out.get("error", ""), out)
         self.assertEqual(was, spec.read_bytes())
 
     def test_a_missing_scene_is_refused_and_current_content_kept(self) -> None:
         rid = self.update()["update"]
-        spec = self.feature_root / "spec" / "spec.md"
+        spec = self.feature_root / "AR" / "story.md"
         spec.write_text(spec.read_text(encoding="utf-8") + "\n这一轮改的\n", encoding="utf-8")
         was = spec.read_bytes()
         shutil.rmtree(self.updates / rid / "before")
@@ -508,8 +580,8 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
 
     def test_the_words_stay_on_record_after_the_close(self) -> None:
         """收口只清开着的那一轮：这一轮人的每句原话与问法摘要随 record.json 留档。"""
-        rid = self.update()["update"]
         self.put_issue()
+        rid = self.update()["update"]
         self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
         self.decide("--update", "开关默认关闭", "--issue", "D1", "--reply", "默认关，灰度开关由运营开")
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
@@ -522,8 +594,8 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
 
     def test_the_words_stay_on_record_after_a_restore(self) -> None:
         """还原的那一轮同样留档：人说过的话不随现场一起撤回。"""
-        rid = self.update()["update"]
         self.put_issue()
+        rid = self.update()["update"]
         self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
         self.assertEqual("restored", self.update("--action", "restore").get("status"))
         rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
@@ -650,94 +722,54 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertEqual(rounds, len(self.contract()["rounds"]))
 
 
-class CloseKnowsWhetherTheReviewWasAdopted(UpdateCase):
-    """收口前逐阶段看审查闭环：报告写了、判 PASS，阶段却仍沿用历史 → 不收口。
+class ConstructionIsReportedNotRequired(UpdateCase):
+    """施工归 Framework：阶段闭没闭环只读报告，update 不推进、不因它挡收口。"""
 
-    framework 不改写已闭环的 summary，`--sync-closure` 输出「已闭环」也不代表报告被采纳了；
-    只有再跑一次完整 harness 才会采纳（C5 实验）。正式 T2 两个模型都据「已闭环」报了完成。
-    """
-
-    SUBJECT = "a" * 64
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.rid = self.update()["update"]
-        (self.updates / self.rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
-        self.reports = self.feature_root / "spec" / "reports"
-        self.reports.mkdir(parents=True, exist_ok=True)
-        (self.reports / f"verifier.report.{self.SUBJECT}.md").write_text(
-            "审查正文。\n\n<!-- maison-verifier-result:v1 -->\n"
-            f"verifier_subject_id: {self.SUBJECT}\nverdict: PASS\nblocker_count: 0\n"
-            "<!-- /maison-verifier-result:v1 -->\n", encoding="utf-8")
-
-    def summary(self, adopted: bool) -> None:
-        body = {"closure_status": "closed", "verdict": "PASS", "verifier_subject_id": self.SUBJECT,
-                "readiness_signals": [] if adopted else [{"id": "semantic_not_reverified"}]}
-        if not adopted:
-            body["verifier_closure"] = {"mode": "completed_with_prior_review"}
-        (self.reports / "summary.json").write_text(json.dumps(body), encoding="utf-8")
-
-    def test_a_written_but_unadopted_report_blocks_the_close(self) -> None:
-        self.summary(adopted=False)
-        out = self.update("--action", "close")
-        self.assertIn("没被采纳", out.get("error", ""), out)
-        self.assertIn("--phase", out["error"])
-
-    def test_an_adopted_report_closes_and_the_facts_come_back(self) -> None:
-        self.summary(adopted=True)
-        out = self.update("--action", "close")
-        self.assertEqual("closed", out.get("status"), out)
-        spec = [f for f in out["phases"] if f["phase"] == "spec"][0]
-        self.assertIsNone(spec["closure_mode"])
-        self.assertEqual([], spec["signals"])
-
-    def test_no_report_is_not_this_guard(self) -> None:
-        """没派审（无变化、只改过程记录）时仍能收口：守卫只管「报告在却没被采纳」。"""
-        (self.reports / f"verifier.report.{self.SUBJECT}.md").unlink()
-        self.summary(adopted=False)
-        out = self.update("--action", "close")
-        self.assertEqual("closed", out.get("status"), out)
-        self.assertEqual("completed_with_prior_review", out["phases"][0]["closure_mode"])
-
-
-class ClosedPhasesMustStayClosed(UpdateCase):
-    """开这一轮时已闭环的阶段，收口时要仍然闭环；本来没闭环的阶段不是这一轮要推进的。
-
-    完整跑一次 harness 时，报告对不上当前 subject 或判 FAIL，阶段会回到 open（1.9.5 plan 实验）。
-    此前的守卫只拦「报告在、却沿用历史」，拦不住这一种——一轮更新会带着没闭环的阶段收口。
-    """
-
-    def summary(self, phase: str, closure: str) -> None:
-        reports = self.feature_root / phase / "reports"
+    def test_an_open_phase_is_reported_and_the_round_closes(self) -> None:
+        rid = self.update()["update"]
+        reports = self.feature_root / "spec" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
         (reports / "summary.json").write_text(json.dumps(
-            {"closure_status": closure, "verdict": "PASS", "verifier_subject_id": "b" * 64,
-             "readiness_signals": []}), encoding="utf-8")
-
-    def open_round(self) -> None:
-        rid = self.update()["update"]
+            {"closure_status": "open", "verdict": "FAIL", "verifier_subject_id": "b" * 64}), encoding="utf-8")
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
-
-    def test_a_phase_reopened_by_this_round_blocks_the_close(self) -> None:
-        self.summary("spec", "closed")
-        self.open_round()
-        self.summary("spec", "open")
-        out = self.update("--action", "close")
-        self.assertIn("spec（仍未闭环）", out.get("error", ""), out)
-
-    def test_a_vanished_summary_blocks_the_close(self) -> None:
-        self.summary("spec", "closed")
-        self.open_round()
-        (self.feature_root / "spec" / "reports" / "summary.json").unlink()
-        self.assertIn("spec（summary 不见了）", self.update("--action", "close").get("error", ""))
-
-    def test_a_phase_that_was_never_closed_does_not_block(self) -> None:
-        """Plan 本来就在途：这一轮只更新已有产物，不负责把它推到闭环。"""
-        self.summary("spec", "closed")
-        self.summary("plan", "open")
-        self.open_round()
         out = self.update("--action", "close")
         self.assertEqual("closed", out.get("status"), out)
+        self.assertEqual([("spec", "open")], [(p["phase"], p["closure"]) for p in out["phases"]])
+
+
+class TheRequestedResultDecidesTheClose(UpdateCase):
+    """本轮终点照人的请求记：只取材与澄清是 materials，要同步人读件是 documents；终点不为收口降级。"""
+
+    def open_round(self, result: str) -> str:
+        rid = self.update("--result", result)["update"]
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        return rid
+
+    def test_prepare_needs_the_result(self) -> None:
+        out = self.flow("update", "--action", "prepare")
+        self.assertIn("--result", out.get("error", ""), out)
+        self.assertFalse(self.updates.exists() and self.rounds(), "没记终点却开了轮")
+
+    def test_a_materials_round_closes_without_touching_documents(self) -> None:
+        self.open_round("materials")
+        out = self.update("--action", "close")
+        self.assertEqual("closed", out.get("status"), out)
+        self.assertIn("还没有设计或成文", out["action"])
+
+    def test_a_materials_round_that_touched_the_story_does_not_close(self) -> None:
+        self.open_round("materials")
+        story = self.feature_root / "AR" / "story.md"
+        story.write_text(story.read_text(encoding="utf-8") + "\n改了一段\n", encoding="utf-8")
+        out = self.update("--action", "close")
+        self.assertIn("documents", out.get("error", ""), out)
+
+    def test_the_result_can_grow_but_not_shrink(self) -> None:
+        rid = self.open_round("materials")
+        self.assertEqual("documents", self.update("--result", "documents")["requested_result"])
+        refused = self.update("--result", "materials")
+        self.assertIn("不能改成 materials", refused.get("error", ""), refused)
+        rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
+        self.assertEqual("documents", rec["requested_result"])
 
 
 class ANewVersionReplacesTheOldOriginal(UpdateCase):
@@ -916,11 +948,11 @@ class TheStoryRegistrationLeavesTheFirstBaseline(UpdateCase):
                              "旧的成文基准没换掉")
         finally:
             sys.path.remove(str(core))
-        spec = self.feature_root / "spec" / "spec.md"
-        spec.write_text(spec.read_text(encoding="utf-8") + "\n登记之后改的一行\n", encoding="utf-8")
+        story = self.feature_root / "AR" / "story.md"
+        story.write_text(story.read_text(encoding="utf-8") + "\n登记之后改的一行\n", encoding="utf-8")
         out = self.update()
         self.assertTrue(out["baseline"], out)
-        self.assertIn("spec/spec.md", out["changed"])
+        self.assertIn("AR/story.md", out["changed"])
 
 
 class StoryIsRegisteredAgainAfterChanges(UpdateCase):
@@ -1053,59 +1085,120 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assert_no_hand_edit()
 
 
-class ChangedSubjectsNeedAReview(UpdateCase):
-    """AC20（U43）：开轮时已闭环、这一轮审查对象变了的阶段，收口时 harness 的 summary 要说当前对象审过。
+class DesignFeedbackGoesToTheBlueprintOwner(UpdateCase):
+    """评审人对设计议题的意见在 update 里交给蓝图负责方：挂在有设计目标的议题上、带本轮记下的原话、
+    指向成文登记时评审的蓝图版本；原生只判够不够格，处理之前一律「待处理」。"""
 
-    判的是审查对象的实际变化，不是 update-notes 里作者声明的一行字；读的是 framework 写好的
-    summary（闭环 PASS，且不是沿用历史或沿用历史而走了修正重验），与交付门同一条规则、不重判报告。
-    """
+    TARGET = "view:logical/node:wallet-balance"
+    TOPIC = {"id": "D1", "status": "open", "review_mode": "choice", "category": "依赖与承载",
+             "title": "余额刷新的触发时机待定", "decider": "产品负责人",
+             "clarification": "**决策点**：首页余额在什么时候刷新。\n\n**依据**：蓝图写回到首页时刷新，材料没说切账号时怎样。\n\n"
+                              "**可选的做法**：\n\n1. 回到首页就刷新——余额总是新的；每次回首页多一次请求。\n"
+                              "2. 只在下拉时刷新——请求少；用户可能看到旧余额。\n\n**建议**：选择方案 1（回到首页就刷新）。\n\n"
+                              "**理由**：余额是用户最先看的数。",
+             "design_target": {"target_ref": TARGET}}
 
-    BEFORE, AFTER = "c" * 64, "d" * 64
+    #: 登记好 story 的工程只做一次（登记要定稿、审查、登记，一次约 4 秒），每条用例复制一份再开 update
+    _registered: Path | None = None
 
     def setUp(self) -> None:
-        super().setUp()
-        self.reports = self.feature_root / "spec" / "reports"
-        self.reports.mkdir(parents=True, exist_ok=True)
+        self.outputs: list[str] = []
+        cls = type(self)
+        if cls._registered is None:
+            super().setUp()
+            story = self.feature_root / "AR" / "story.md"
+            text = story.read_text(encoding="utf-8")
+            row = "- 开发需求：本轮从上游提取的开发需求，业务分工与本单范围。原文：[AR/design.md](design.md)\n"
+            story.write_text(text.replace(row, row + "- 系统设计：接口与端云分工。原文：[SR/design.md](../SR/design.md)\n"),
+                             encoding="utf-8")
+            design_kit.install_review_mechanism(self.root, DEV_EXT)
+            shutil.rmtree(self.feature_root / "spec", ignore_errors=True)
+            (self.src / "decisions.json").write_text(json.dumps({"decisions": [self.TOPIC]}, ensure_ascii=False), encoding="utf-8")
+            self.assertTrue(StoryIsRegisteredAgainAfterChanges.register(self).get("success"), self.outputs[-1])
+            cls._registered = Path(tempfile.mkdtemp(prefix="story-update-registered-")) / "work"
+            atexit.register(shutil.rmtree, cls._registered.parent, True)
+            root = self.root
+            shutil.copytree(root, cls._registered, ignore=lambda d, names: ["framework"] if Path(d) == root else [])
+        else:
+            self._tmp = tempfile.TemporaryDirectory()
+            self.addCleanup(self._tmp.cleanup)
+            self.root = Path(self._tmp.name) / "work"
+            base = cls._registered
+            shutil.copytree(base, self.root, ignore=lambda d, names: ["framework"] if Path(d) == base else [])
+            link_framework(self.root)
+            self.feature_root = self.root / "doc" / "features" / FEATURE
+            self.src = self.feature_root / "AR" / "story-src"
+            self.updates = self.src / "updates"
+        self.rid = self.update("--result", "documents")["update"]
+        self.revision = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["story_basis"]["blueprint_ref"]["revision"]
 
-    def open_round(self) -> None:
-        self.rid = self.update()["update"]
-        (self.updates / self.rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+    run_cmd = StoryIsRegisteredAgainAfterChanges.run_cmd
+    BUILD = StoryIsRegisteredAgainAfterChanges.BUILD
 
-    def summary(self, subject: str, closure: str = "closed", **extra: object) -> None:
-        body = {"closure_status": closure, "verdict": "PASS", "verifier_subject_id": subject,
-                "readiness_signals": [], **extra}
-        (self.reports / "summary.json").write_text(json.dumps(body), encoding="utf-8")
+    def said(self) -> None:
+        proc = subprocess.run([sys.executable, str(FLOW), "decide", "--feature", FEATURE, "--project-root", str(self.root),
+                               "--update", "余额刷新时机", "--issue", "D1", "--reply", "切账号时也要刷新"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
-    PRIOR = {"verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": "c" * 64}}
+    def feedback(self, **item) -> dict:
+        body = {"feedback_id": "D1", "kind": "opinion", "source_revision": self.revision,
+                "target_ref": self.TARGET, "body": "切账号时也要刷新余额", **item}
+        doc = {"artifact": "blueprint-review-feedback@1", "blueprint_id": design_kit.blueprint_of(self.root, FEATURE),
+               "component_id": "wallet-main", "source_revision": self.revision, "items": [body]}
+        (self.updates / self.rid / "design-feedback.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        return self.update("--action", "feedback")
 
-    def test_an_unchanged_subject_closes(self) -> None:
-        self.summary(self.BEFORE)
-        self.open_round()
-        self.assertEqual("closed", self.update("--action", "close").get("status"))
+    def test_a_qualified_opinion_is_pending_until_the_owner_handles_it(self) -> None:
+        self.said()
+        out = self.feedback()
+        self.assertEqual([], out["problems"], out)
+        self.assertEqual([("D1", "待处理")], [(x["feedback_id"], x["state"]) for x in out["feedback"]])
+        self.assertIn("不写成已接受", out["action"])
+        rec = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.revision, rec["design_feedback"]["source_revision"])
 
-    def test_a_changed_subject_reviewed_and_adopted_closes(self) -> None:
-        self.summary(self.BEFORE)
-        self.open_round()
-        self.summary(self.AFTER)
-        self.assertEqual("closed", self.update("--action", "close").get("status"))
+    def test_a_decision_pointing_at_it_makes_it_handled(self) -> None:
+        """蓝图负责方调和之后，蓝图里有决定的来源指向这条反馈：状态读成已处理，带上那条决定。"""
+        self.said()
+        self.feedback()
+        blueprint = design_kit.blueprint_of(self.root, FEATURE)
+        canonical = self.root / design_kit.features_dir(self.root) / blueprint / "blueprint" / "component-blueprint.yaml"
+        doc = yaml.safe_load(canonical.read_text(encoding="utf-8"))
+        doc["decisions_and_gaps"]["decisions"].append({
+            "decision_id": "feedback-d1", "kind": "review_feedback", "status": "answered_with_evidence", "owner": "design-author",
+            "rationale": "切账号时同样刷新余额", "verification_refs": [self.TARGET],
+            "provenance": {"source_kind": "review_feedback", "observed_at": "2026-09-30T00:00:00Z", "evidence_strength": "observed",
+                           "extraction_method": "reconcile",
+                           "source_ref": f"doc/features/{FEATURE}/AR/story-src/updates/{self.rid}/design-feedback.json#D1"}})
+        canonical.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        design_kit.render_projection(self.root, blueprint, design_kit.ACCESS)
+        out = self.update("--action", "feedback")
+        self.assertEqual([("D1", "已处理", "feedback-d1")],
+                         [(x["feedback_id"], x["state"], x.get("handled_by", {}).get("decision_id")) for x in out["feedback"]], out)
 
-    def test_a_changed_subject_carried_by_prior_review_does_not_close(self) -> None:
-        self.summary(self.BEFORE)
-        self.open_round()
-        self.summary(self.AFTER, readiness_signals=[{"id": "semantic_not_reverified"}], **self.PRIOR)
-        out = self.update("--action", "close")
-        self.assertIn("审查对象在这一轮变了", out.get("error", ""), out)
+    def test_without_the_human_words_it_is_named(self) -> None:
+        self.assertIn("没有记下人的原话", "；".join(self.feedback()["problems"]))
 
-    def test_an_expression_only_change_carried_by_revalidation_closes(self) -> None:
-        """PASS 之后只改表达、走修正重验：summary 带 script_revalidated 的沿用就放行。"""
-        self.summary(self.BEFORE)
-        self.open_round()
-        self.summary(self.AFTER, readiness_signals=[{"id": "script_revalidated"}], **self.PRIOR)
-        self.assertEqual("closed", self.update("--action", "close").get("status"))
+    def test_a_ruling_without_authority_is_not_a_ruling(self) -> None:
+        self.said()
+        out = self.feedback(kind="authoritative_ruling")
+        self.assertIn("review_feedback_authority_insufficient", [i.get("id") for i in out["native_issues"]], out)
 
-    def test_a_phase_open_at_the_start_is_not_this_rounds_to_close(self) -> None:
-        """开轮时本来没闭环的阶段不是这一轮必须推进的对象：对象变了、仍没闭环也不挡收口。"""
-        self.summary(self.BEFORE, closure="open")
-        self.open_round()
-        self.summary(self.AFTER, closure="open")
-        self.assertEqual("closed", self.update("--action", "close").get("status"))
+    def test_an_old_revision_is_named(self) -> None:
+        self.said()
+        out = self.feedback(source_revision=self.revision + 1)
+        self.assertTrue(any("review_feedback_item_revision_mismatch" == i.get("id") for i in out["native_issues"]), out)
+
+    def test_a_topic_without_a_design_target_stays_on_the_requirement_side(self) -> None:
+        self.said()
+        topic = {**self.TOPIC}
+        topic.pop("design_target")
+        (self.src / "decisions.json").write_text(json.dumps({"decisions": [topic]}, ensure_ascii=False), encoding="utf-8")
+        self.assertIn("留在需求侧", "；".join(self.feedback()["problems"]))
+
+    def test_a_target_outside_the_blueprint_is_refused_at_registration(self) -> None:
+        topic = {**self.TOPIC, "design_target": {"target_ref": "view:logical/node:no-such-node"}}
+        (self.src / "decisions.json").write_text(json.dumps({"decisions": [topic]}, ensure_ascii=False), encoding="utf-8")
+        proc = self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE, "--project-root", str(self.root))
+        self.assertIn("不是已准入蓝图", proc.stdout + proc.stderr)

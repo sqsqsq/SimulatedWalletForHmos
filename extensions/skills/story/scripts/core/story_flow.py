@@ -26,7 +26,7 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
     python story_flow.py story    --feature <AR>
     python story_flow.py reopen   --feature <AR>
     python story_flow.py archived --feature <AR>
-    python story_flow.py update   --feature <AR> [--action inputs|prepare|status|close|restore]
+    python story_flow.py update   --feature <AR> [--action inputs|prepare|status|close|restore|feedback] [--result materials|documents]
 
 `init` 与 `archived` 不写轮次，写的是**工作区骨架**与**归档态**：这两件事的执行方
 （数据对接层 story.js）不随交付走，各部署环境自备实现，所以判据不能挂在它落的文件上。
@@ -77,7 +77,7 @@ from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_bind_design, cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
-from flow.update import (cmd_update_close, cmd_update_inputs, cmd_update_prepare,
+from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_inputs, cmd_update_prepare,
                          cmd_update_restore, cmd_update_status)
 
 
@@ -111,8 +111,10 @@ def main() -> int:
     ap.add_argument("--component", default=None, help="bind-design：设计对象的组件标识")
     ap.add_argument("--blueprint", default=None, help="bind-design：设计对象的蓝图标识")
     ap.add_argument("--action", default="inputs",
-                    choices=["inputs", "prepare", "status", "close", "restore"],
+                    choices=["inputs", "prepare", "status", "close", "restore", "feedback"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
+    ap.add_argument("--result", default=None, choices=["materials", "documents"],
+                    help="update prepare：本轮请求的终点——只取材与澄清是 materials，要同步人读件是 documents")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -160,10 +162,12 @@ def main() -> int:
                 result.update(cmd_update_close(feature_root))
             elif args.action == "restore":
                 result.update(cmd_update_restore(feature_root))
+            elif args.action == "feedback":
+                result.update(cmd_update_feedback(feature_root, project_root))
             elif args.action == "inputs":
                 result.update(cmd_update_inputs(feature_root, args.feature, project_root))
             else:
-                result.update(cmd_update_prepare(feature_root))
+                result.update(cmd_update_prepare(feature_root, args.result))
         else:
             result.update(cmd_complete(feature_root, project_root, args.feature, args.from_path, args.input_path))
 

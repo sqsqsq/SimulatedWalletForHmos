@@ -12,6 +12,7 @@
  *        [--requirement-file <文件> | --requirement <原文>]（无 run 的 spec 恢复不出需求来源时给）
  *   node framework-access.mjs --project-root <根> --action binding --component <组件 id> --blueprint <蓝图 id>
  *   node framework-access.mjs --project-root <根> --action sources  < 来源物化 JSON（stdin）
+ *   node framework-access.mjs --project-root <根> --action feedback --blueprint <id>  < blueprint-review-feedback@1（stdin）
  * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期或未准入（带原生 issues），2 参数或依赖错误。
  */
 import * as fs from 'node:fs';
@@ -225,6 +226,27 @@ function checkSources(projectRoot, doc) {
   return { status: issues.length ? 'invalid' : 'ok', issues };
 }
 
+/**
+ * 核一份设计评审反馈（blueprint-review-feedback@1）：原生只判每条够不够格进入调和（授权、证据、版本、目标地址），
+ * 不判接受与否。处理结果从蓝图读：某条决定的来源指向 `<反馈文件>#<feedback_id>` 才算有了可读的处理，否则待处理。
+ */
+function checkFeedback(projectRoot, blueprintId, doc) {
+  const native = loadNative(projectRoot);
+  const read = readBlueprint(projectRoot, blueprintId, 'draft');
+  if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [], candidates: null, handled: {} };
+  const intake = native.module('scripts/utils/blueprint-host-seams.ts').validateBlueprintReviewFeedback(doc, read.blueprint);
+  const handled = {};
+  for (const d of read.blueprint.decisions_and_gaps?.decisions ?? []) {
+    const at = String(d?.provenance?.source_ref ?? '').split('#')[1];
+    if (at) handled[at] = { decision_id: d.decision_id, status: d.status, revision: read.blueprint.revision };
+  }
+  return {
+    status: intake.issues.some(i => i.severity === 'BLOCKER') ? 'invalid' : 'ok', issues: intake.issues,
+    candidates: { rulings: intake.authoritativeRulingCandidateIds, facts: intake.factSupplementCandidateIds },
+    revision: read.blueprint.revision, handled,
+  };
+}
+
 /** 需求正文要调用方给：原生恢复不出，或给的与冻结绑定对不上。 */
 const requirementGap = message => Object.assign(new Error(message), { code: 'requirement_text_needed' });
 
@@ -400,22 +422,25 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery [--snapshot <快照>]'
       + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
-      + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）';
-    if (!root || !['blueprint', 'feature', 'binding', 'sources'].includes(action)) throw new Error(usage);
+      + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）'
+      + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）';
+    if (!root || !['blueprint', 'feature', 'binding', 'sources', 'feedback'].includes(action)) throw new Error(usage);
+    if (action === 'feedback' && !opt('--blueprint')) throw new Error(usage);
     if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
     if (action === 'feature' && (!opt('--feature') || !opt('--phase'))) throw new Error(usage);
     if (action === 'binding' && (!opt('--component') || !opt('--blueprint'))) throw new Error(usage);
     let doc;
-    if (action === 'sources') {
+    if (action === 'sources' || action === 'feedback') {
       try {
         doc = JSON.parse(fs.readFileSync(0, 'utf8'));
       } catch (e) {
-        throw new Error(`stdin 不是来源物化 JSON（${e?.message ?? e}）`);
+        throw new Error(`stdin 不是 JSON（${e?.message ?? e}）`);
       }
     }
     const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot'))
       : action === 'binding' ? checkBinding(root, opt('--component'), opt('--blueprint'))
         : action === 'sources' ? checkSources(root, doc)
+          : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)
           : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });
     process.stdout.write(`${JSON.stringify(out, null, 1)}\n`);
     process.exitCode = out.status === 'ok' ? 0 : 1;

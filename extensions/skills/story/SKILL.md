@@ -181,16 +181,17 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 | 新材料 | 人放进 `inbox/`，或系统需求经取材取回，走导入链 |
 | 评审回流 | 评审人在 review.md 人工区表态；系统需求的评审回稿经取材取回 |
 | 人的新决定 | 人在对话里说的，经 `decide --update` 记原话 |
-| 有人直接改过的文档 | 八项比较报出来 |
+| 有人直接改过的文档 | 六项比较报出来 |
 
-- **前置**：这个单已经有产物（Spec / Story / Review / Plan 至少一样）
+- **前置**：这个单走过 /story（有流程契约）；update 只改需求级的材料、提取稿、设计输入与 Story / Review，不推进施工
 - **取材不写业务文件**：取回的只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
 ```
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 续行状态与本需求的 paths
 node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游（系统需求必做）
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料
-python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action prepare   # ④ 比较并开这一轮
+python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action prepare --result <materials|documents>   # ④ 比较并开这一轮
+python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action feedback  # 评审人对设计议题提了意见时：核本轮的设计反馈
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action close     # ⑤ 写好 update-notes.md 后收口
 ```
 
@@ -200,9 +201,10 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
   `success` 与逐份状态为准：失败就停在这里，报出哪一份读取失败，不拿上一次的回执或「没有变化」代替。
 - **③** 收件箱有新原件先导入、`round` 登记到本轮，再 ④；④ 见到未并入的原件会拒绝并列出文件。
 
-**④** 把本次执行前的现场留一份并开这一轮，比较结果（八项哪几份变了、上次以来新并入的原件）交你读原文判断；
-八项都没变也照常开轮，没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
-整轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。
+**④** 按人这次的请求记本轮终点（只取材与澄清、没有已有人读件受影响是 `materials`，其余是 `documents`），
+把本扩展拥有的文件开轮时的样子留一份并开这一轮，比较结果（六项哪几份变了、上次以来新并入的原件）交你读原文判断；
+六项都没变也照常开轮，没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
+这一轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。
 
 **人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。
 意思没变，请他确认沿用，用 `story_flow.py decide --feature <编号> --update 沿用上一版表态 --issue <议题 id> --reply "<他的原话>"` 记一笔再重跑；

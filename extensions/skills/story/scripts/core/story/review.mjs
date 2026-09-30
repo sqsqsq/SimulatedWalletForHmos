@@ -6,7 +6,9 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { loadNative } from '../../../../../hooks/shared/framework-access.mjs';
 import { fail, readJson, readText } from './context.mjs';
+import { designSource } from './design-source.mjs';
 import { ProjectionConflict, projectionDigest, recordedDigest } from './document.mjs';
 
 /**
@@ -110,6 +112,24 @@ export function cmdBuild(ctx) {
 // --------------------------------------------------------------------------
 
 /**
+ * 设计议题指向蓝图里的哪一处：`design_target.target_ref` 是已准入蓝图的稳定地址。评审人对它的意见在 update 里
+ * 作为设计反馈交给蓝图负责方，被评的蓝图版本就是成文登记记下的那一版。设计来源不成立另有报错，这里不重复。
+ */
+function designTargetProblems(ctx, dec) {
+  if (dec?.design_target === undefined) return [];
+  const id = dec?.id ?? '（无编号）';
+  const ref = dec.design_target?.target_ref;
+  if (typeof ref !== 'string' || !ref.trim()) {
+    return [`决策 ${id} 的 design_target：写成 {"target_ref": "<蓝图稳定地址>"}——设计议题的意见按它交给蓝图负责方`];
+  }
+  const { blueprint } = designSource(ctx);
+  if (!blueprint) return [];
+  const index = loadNative(ctx.projectRoot).module('scripts/utils/blueprint-addressing.ts').stableAddressIndex(blueprint);
+  return index.has(ref) ? [] : [`决策 ${id} 的 design_target.target_ref「${ref}」不是已准入蓝图 ${blueprint.blueprint_id} 里的稳定地址`
+    + '——地址取蓝图评审投影与知识任务里给出的稳定地址'];
+}
+
+/**
  * 决策登记的字段齐备 —— **只判形式，不判数量、不判叙述**。
  *
  * 数量下限会催生凑数议题，叙述质量的判据会催生套话。这里只核「渲染得出来」。
@@ -146,7 +166,7 @@ export function decisionProblems(ctx) {
           + '——review 里议题的层次由状态分章、类型成节、逐条成项给出，正文里的标题行会把它压乱；'
           + '澄清正文的小标题形态是加粗段首（`**要点**：…`）');
       }
-      problems.push(...formProblems(dec));
+      problems.push(...formProblems(dec), ...designTargetProblems(ctx, dec));
       // 类别决定它成章落在哪一节。**只判在不在词表里**——不判每类有没有条目、
       // 不判数量、不判空类要不要解释：那些是配额，配额逼出来的是凑数与逃生口。
       const keys = (ctx.contract.decision_categories ?? []).map(c => c?.key);

@@ -238,6 +238,16 @@
     "gates": ["material_scope", "scope_decision", "split_carrier", "meeting"],
     "carry_all": "carry_all"
   },
+  "update_files": {
+    "editable": ["AR/story.md", "AR/story-src/design-draft.md", "AR/story-src/design-input.json",
+      "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
+      "AR/story-src/drafts/**"],
+    "regenerate": ["AR/review.md", "AR/story-src/materials.json"],
+    "protected": ["RR/**", "SR/**", "AR/design.md", "AR/detail.json", "inbox/**", "assets/**", "ux-reference/**",
+      "AR/story-src/meetings/**", "AR/story-src/inputs/**", "AR/story-src/review/**", "AR/story-src/updates/**",
+      ".backups/**"],
+    "field_owned": ["AR/story-src/story-flow.json"]
+  },
   "pending_mark": "待写",
   "heading_counters": [
     "种",
