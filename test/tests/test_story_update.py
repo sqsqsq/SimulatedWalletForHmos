@@ -624,18 +624,16 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertIn("交通卡自动充值-v2.md", out["error"])
 
     def test_inside_an_open_round_every_command_agrees(self) -> None:
-        """AC13：update 这一轮开着时，reopen、status、round、complete、decide 判定一致。
+        """AC13：update 这一轮开着时，status、round、complete、decide 判定一致。
 
-        reopen 不在这一轮里重拍范围；新材料登记进当前轮；提取稿改了由 complete 重新提交、
-        范围沿用已定的；关卡不再问人。09-25、09-26 两次实跑都卡在这条序列上。
+        新材料登记进当前轮；提取稿改了由 complete 冻结新一版输入、范围沿用已定的；关卡不再问人。
+        09-25、09-26 两次实跑都卡在这条序列上。要重拍范围时 reopen 在 update 里同样合法，
+        update 照旧开着（锁在 test_material_rounds 的 reopen 用例里）。
         """
         self.update("--action", "inputs")
         self.answer()
         self.update()
         rounds = len(self.contract()["rounds"])
-        refused = self.flow("reopen")
-        self.assertIn("update", refused.get("error", ""), refused)
-        self.assertEqual(rounds, len(self.contract()["rounds"]), "update 期间 reopen 开了新轮")
         prd = self.feature_root / "RR" / "prd.md"
         prd.write_text(prd.read_text(encoding="utf-8") + "\n单日上限 300。\n", encoding="utf-8")
         self.assertEqual("refresh_round", self.next_of())

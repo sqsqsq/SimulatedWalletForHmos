@@ -104,7 +104,7 @@ class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
                     result = rounds.cmd_reopen(self.feature_root)
                 disk = self.disk()
                 self.assertEqual("in_progress", disk["status"], "盘上没重开")
-                self.assertNotIn("story_written_at", disk, "成文登记没撤销")
+                self.assertTrue(disk["rounds"][-1].get("reopened"), "重开的一轮没留标记")
                 self.assertEqual("in_progress", result["status"])
                 self.assertIsNone(result["next"], "算不出来的下一步被编了一个")
                 self.assertIn("材料清单读不出（注入）", result["action"], "没说清为什么算不出来")
@@ -418,23 +418,18 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual(0, self.run_flow("reopen").returncode)
         self.assertEqual("in_progress", self.contract()["status"])
 
-    def test_reopen_undoes_the_story_registration(self) -> None:
-        """重拍范围时成文登记一起作废：范围定了之后 story 按新范围重新登记。"""
+    def test_reopen_keeps_the_registration_on_hold(self) -> None:
+        """重拍范围不抹掉上一次成文登记：它留作依据，但在重新提交、重新登记之前不可交付。"""
         self.complete_it("story_written")
-        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["story_written_at"] = "2026-09-04T00:00:00+08:00"
-        data["story_digests"] = {"AR/story-src/decisions.json": "sha"}
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
+        before = self.contract()
         proc = self.run_flow("reopen")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         contract = self.contract()
-        self.assertNotIn("story_written_at", contract)
-        self.assertNotIn("story_digests", contract)
+        self.assertEqual(before["story_digests"], contract["story_digests"])
+        self.assertEqual((before["design_binding"], before["input"]), (contract["design_binding"], contract["input"]))
+        self.assertEqual("in_progress", contract["status"], "重开之后仍是可交付的成文态")
         out = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertEqual(["story_digests", "story_written_at"], out["storyRegistrationUndone"],
-                         "作废了什么要说出来——不然查不回来产物为什么对不上")
+        self.assertTrue(out["basisOnHold"], "保留了什么、为什么暂不可交付要说出来")
 
     def test_reopen_opens_a_round_for_the_scope_gate(self) -> None:
         """材料没变也另开一轮：当前轮已记的范围关卡不替重拍授权，下一步回到范围关卡。"""
@@ -457,25 +452,29 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual("await_gate:scope_decision", payload["next"],
                          "重开之后没回到范围关卡：当前轮已记的范围替重拍授权了")
 
-    def test_reopen_waits_for_an_open_update(self) -> None:
-        """update 这一轮开着时不重拍：它沿用已定范围，先收口这一轮。"""
+    def test_reopen_inside_an_open_update_keeps_it_open(self) -> None:
+        """update 里重开范围：update 照旧开着，下一步回到范围关卡，不要求先伪造一次收口。"""
         self.complete_it("story_written")
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["update"] = {"open": "20260926-000000"}
+        data["rounds"][-1]["positioning"] = {"scope_text": "整单", "sr_related_ars": []}
+        data["rounds"][-1]["scope_options"] = [{"key": "all", "label": "整体承载"}]
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         proc = self.run_flow("reopen")
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("update", proc.stdout + proc.stderr)
-        self.assertEqual("story_written", self.contract()["status"])
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual("20260926-000000", self.contract()["update"]["open"], "重开把 update 关掉了")
+        status = self.run_flow("status")
+        payload = json.loads(status.stdout[status.stdout.index("{"):])
+        self.assertEqual("await_gate:scope_decision", payload["next"])
 
-    def test_reopen_from_complete_has_nothing_to_undo(self) -> None:
-        """还没成文时没有成文登记可撤——留痕里就是空的，不编造。"""
+    def test_reopen_from_complete_has_nothing_on_hold(self) -> None:
+        """还没成文时没有成文登记可保留——留痕里如实说没有，不编造。"""
         self.complete_it()
         proc = self.run_flow("reopen")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         out = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertEqual([], out["storyRegistrationUndone"])
+        self.assertFalse(out["basisOnHold"])
 
     def test_reopen_refuses_when_not_complete(self) -> None:
         """没收口就没有要打开的东西——这条防的是把 reopen 当成万能重置键。"""

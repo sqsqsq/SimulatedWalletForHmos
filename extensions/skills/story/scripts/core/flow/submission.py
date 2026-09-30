@@ -143,7 +143,7 @@ def cmd_complete(feature_root: Path, project_root: Path, feature: str, from_arg:
         raise FlowError("收件箱里有还没并入正文的原件，先导入再提交：" + "、".join(state["pending"][:3]))
     if live.get("digest") != (current.get("materials") or {}).get("digest"):
         raise FlowError("材料在这一轮登记之后又变了：重跑 `story_flow.py round` 登记，拿新材料重新确认，再提交")
-    if not in_update(contract):
+    if not in_update(contract) or current.get("reopened"):
         step, action = scope_step(feature_root, contract)
         if step not in S4_STEPS:
             raise FlowError(f"本轮范围尚未定下来，还不能提交：{action}（`status` 的 next 是 {step}）")

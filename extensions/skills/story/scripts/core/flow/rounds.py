@@ -9,7 +9,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.state import (
-    FlowError, SCHEMA, after_complete, in_update, load, log, require, save)
+    FlowError, SCHEMA, after_complete, in_update, load, log, require, save, stage_of)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
 from flow.routing import closed_inbox_note, live_materials, next_step
@@ -110,33 +110,27 @@ def cmd_round(feature_root: Path) -> dict:
 
 
 def cmd_reopen(feature_root: Path) -> dict:
-    """重拍范围——**唯一的回退出口**，只做这一件事。
+    """重开本需求的范围决定——**唯一的回退出口**，只做这一件事。
 
-    收口之后要重新拍板范围（材料变了、会上有要人定的话题、范围本身定错了）时走它：
-    状态回到 `in_progress`，另开一轮承接重拍的关卡，材料没变也一样——当前轮已记的
-    范围关卡不替重拍授权。新一轮沿用本轮的材料基准、本 AR 定位与范围选项集，
-    分析要改就改侧车再跑 `round`。
+    收口之后要重新拍板范围（材料变了、会上有要人定的话题、范围本身定错了）时走它：状态回到 `in_progress`，
+    另开一轮承接重拍的关卡，材料没变也一样——当前轮已记的范围关卡不替重拍授权。新一轮沿用本轮的材料基准、
+    本 AR 定位与范围选项集，分析要改就改侧车再跑 `round`。
 
-    状态回到 `in_progress`，登记记号随之清掉：范围定了之后照常 `complete`，再跑 `story` 按新范围登记。
-    只改 story 不用走这里——改完重跑 `story` 就是重新登记。
-
-    update 这一轮开着时不重拍：update 沿用本单已定的范围，先 `update close` 收口这一轮。
+    设计关联、已冻结的输入、人签历史与上一次成文登记都保留：登记在重新确认、重新提交并重新登记之前不可交付。
+    update 这一轮开着时同样可以重开，update 照旧开着，收口条件不变。只改 story 不用走这里——改完重跑 `story`。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if in_update(contract):
-        raise FlowError("update 这一轮还开着：它沿用本单已定的范围，不在这一轮里重拍。"
-                        "先按 `phases/update.md`「二、一条线」收口这一轮（范围问题写进保留项），"
-                        "再跑 `story_flow.py reopen`")
-    if not after_complete(contract):
+    if not after_complete(contract) and stage_of(contract) != "update_open":
         raise FlowError(f"流程还没收口（现在是 {status}），范围关卡本来就开着：跑 `story_flow.py status` 取下一步")
-    undone = sorted(key for key in ("story_written_at", "story_digests") if contract.pop(key, None) is not None)
+    held = status == "story_written"
     current = contract["rounds"][-1]
     entry = {"round": len(contract["rounds"]) + 1,
              "materials": current.get("materials"),
              "positioning": current.get("positioning"),
              "scope_options": current.get("scope_options"),
-             "gates": []}
+             "gates": [],
+             "reopened": True}
     contract["rounds"].append(entry)
     contract["status"] = "in_progress"
     save(feature_root, contract)
@@ -149,7 +143,7 @@ def cmd_reopen(feature_root: Path) -> dict:
         step, action = None, (f"下一步暂时算不出来（{exc}）。重开已经生效，不要再跑 reopen；"
                               "按这个原因修好材料后跑 `story_flow.py status` 取下一步")
     log(f"流程已重开（{status} → in_progress），重拍的关卡记进第 {entry['round']} 轮"
-        + ("；范围定了之后照常 complete，再跑 story 按新范围登记" if undone else "")
+        + ("；上一次成文登记保留但暂不可交付，范围定了之后重新 complete、再跑 story 登记" if held else "")
         + f"。下一步：{action}")
     return {"status": "in_progress", "rounds": len(contract["rounds"]),
-            "storyRegistrationUndone": undone, "next": step, "action": action}
+            "basisOnHold": held, "next": step, "action": action}

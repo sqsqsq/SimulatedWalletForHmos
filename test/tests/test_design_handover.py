@@ -211,6 +211,19 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.assertTrue(all(item["source_ref"].startswith(prefix) for item in doc["items"]))
         self.assertEqual("recorded_user_reply", doc["items"][1]["provenance"]["extraction_method"])
 
+    def test_an_interrupted_freeze_leaves_no_version_and_the_same_command_resumes(self) -> None:
+        """断在改名之前：只剩临时目录，它不是一个版本；重跑同一条命令照常冻结并登记。"""
+        self.ready()
+        self.write_input()
+        staging = self.src / "inputs" / ".staging-interrupted"
+        (staging / "files" / "RR").mkdir(parents=True)
+        (staging / "files" / "RR" / "prd.md").write_text("写到一半\n", encoding="utf-8")
+        self.assertEqual([], self.versions())
+        self.assertNotIn("input", self.contract())
+        self.assertEqual(0, self.commit().returncode)
+        [version] = self.versions()
+        self.assertEqual(PRD, (version / "files" / "RR" / "prd.md").read_text(encoding="utf-8"))
+
     def test_after_the_commit_the_state_waits_for_the_design(self) -> None:
         self.committed()
         status = self.ok("status")

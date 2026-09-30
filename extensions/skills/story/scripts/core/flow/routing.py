@@ -14,7 +14,7 @@ from pathlib import Path
 from materials import meeting, registry
 
 from flow.state import (
-    CARRY_ALL, DESIGN_DRAFT, FlowError, STORY_CONTRACT, after_complete,
+    CARRY_ALL, DESIGN_DRAFT, FlowError, S4_STEPS, STORY_CONTRACT, after_complete,
     last_gate, registration_drift, round_gates, stage_of)
 from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
@@ -287,10 +287,15 @@ def update_open_step(feature_root: Path, contract: dict,
     meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
     if meeting_now:
         return meeting_now
+    # 这一轮 update 里重开了范围：先回范围关卡重新确认，update 照旧开着
+    if contract["rounds"][-1].get("reopened") and not after_complete(contract):
+        step, action = scope_step(feature_root, contract)
+        if step not in S4_STEPS:
+            return step, action
     if not after_complete(contract):
-        return ("run_complete", f"更新 {rid}：改完提取稿 `{'/'.join(DESIGN_DRAFT)}` 跑 "
-                f"`story_flow.py complete --feature <名> --from {'/'.join(DESIGN_DRAFT)}` 收口，"
-                "范围沿用本单已定的")
+        return ("run_complete", f"更新 {rid}：改完提取稿 `{'/'.join(DESIGN_DRAFT)}` 与设计输入，跑 "
+                f"`story_flow.py complete --feature <名> --from {'/'.join(DESIGN_DRAFT)} --input AR/story-src/design-input.json`"
+                " 冻结新一版输入交给设计")
     reregister = registration_step(feature_root, contract)
     if reregister:
         return reregister
@@ -503,8 +508,11 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     if not (feature_root / Path(*DESIGN_DRAFT)).is_file():
         return ("generate_design",
                 "S4：按 rules/ar_design_init.md 提取，写到 "
-                f"`{'/'.join(DESIGN_DRAFT)}`——`AR/design.md` 是上游给进来的输入件，"
-                "提取稿另成一份，由收口那一步提交上去")
+                f"`{'/'.join(DESIGN_DRAFT)}`——`AR/design.md` 是上游给进来的原件，不覆盖；"
+                "提取稿作为派生分析与采用的原件一起交给设计")
+    bind = "" if contract.get("design_binding") else (
+        "先 `story_flow.py bind-design --feature <名> --component <组件> --blueprint <蓝图>` 关联设计对象，再")
     return ("run_complete",
-            "提取稿已在。跑 `story_flow.py complete --feature <名> "
-            f"--from {'/'.join(DESIGN_DRAFT)}` 提交并收口")
+            f"提取稿已在。{bind}按 `phases/design.md` 写设计输入 `AR/story-src/design-input.json`（采用的原件与图、"
+            "人签编号、需求条目），跑 `story_flow.py complete --feature <名> "
+            f"--from {'/'.join(DESIGN_DRAFT)} --input AR/story-src/design-input.json` 冻结并交给设计")
