@@ -22,7 +22,7 @@ PAIRS = (REPO_ROOT / "test" / "fixtures" / "narrative-variants" / "pairs"
          / "pairs.json")
 CONTRACT = (DEV_EXT / "skills" / "story" / "contracts"
             / "story-chapters.json")
-OVERLAY = DEV_EXT / "rules" / "spec-rules.overlay.yaml"
+OVERLAY = DEV_EXT / "rules" / "story-reader-rules.yaml"
 EXTENSION = DEV_EXT
 
 sys.path.insert(0, str(SCRIPTS))

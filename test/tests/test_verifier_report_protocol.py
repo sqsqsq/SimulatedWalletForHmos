@@ -79,6 +79,33 @@ class TheDeliveryGateChecksTheRegisteredBasis(unittest.TestCase):
             self.assertIn(choice, text)
         self.assertNotIn("/story archive", text, "本地单没有送审")
 
+    def review(self, action: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(STORY_BUILD), "review", "--action", action, "--feature", "REQ-DEMO",
+             "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+
+    def test_the_review_is_prepared_only_for_the_registered_story(self) -> None:
+        """审的是登记过的那一份：没登记不准备；登记之后生成的任务带着判据原文，照实说审查调用未接通。"""
+        refused = self.review("prepare")
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("还没登记成文", refused.stdout + refused.stderr)
+        self.register()
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
+        self.assertIn("### 判据", task)
+        self.assertIn("跨章对着读", task)
+        self.assertIn("reviewer_unavailable", out.stdout)
+
+    def test_checking_says_the_reviewer_is_unavailable_without_inventing_a_result(self) -> None:
+        self.register()
+        out = self.review("check")
+        self.assertEqual(0, out.returncode, out.stderr)
+        self.assertIn("reviewer_unavailable", out.stdout)
+        self.assertNotIn("PASS", out.stdout)
+        self.assertFalse((self.flow_path.parent / "review" / "report.md").exists(), "没有审查却落了报告")
+
     def test_a_blueprint_revised_after_registration_blocks(self) -> None:
         self.register()
         design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, "本需求没有任何上报动作", "本需求只在提交时上报一次")
@@ -88,10 +115,7 @@ class TheDeliveryGateChecksTheRegisteredBasis(unittest.TestCase):
 
 
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
-    """判据要先成为「任务」，才谈得上做没做。
-
-    注入的清单只列 framework 自己那十项、扩展这边又按前缀过滤，两道都漏，
-    读者审查就不是「任务」，审查者不会去做它。
+    """判据要先成为「任务」，才谈得上做没做：Story 的独立审查任务带着判据原文与这一次的输入交给审查者。
 
     输入自带：临时工作区里造一个最小需求目录。拿仓内真实需求当输入的话，
     CLI 起跑时装置会把 `doc/features` 整个迁走，测试跟着一起塌。
@@ -112,6 +136,18 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         ]}, ensure_ascii=False), encoding="utf-8")
 
     def inject(self, feature: str = FEATURE) -> str:
+        """这一次的审查任务（`story-build review --action prepare` 写进审查目录的那一份）。"""
+        module = self.root / "doc/extensions/hooks/shared/reader-review-task.mjs"
+        r = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]); process.stdout.write(m.readerReviewTask(process.argv[2], process.argv[3]));",
+             module.resolve().as_uri(), str(self.root), feature],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        return r.stdout
+
+    def spec_phase_fragments(self) -> str:
+        """spec 阶段 pre_verifier 交给审查者的片段。"""
         driver = """
         import(process.argv[2]).then(async m => {
           const out = await m.default({ projectRoot: process.argv[3],
@@ -123,30 +159,28 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         script.write_text(driver, encoding="utf-8")
         hook = self.root / "doc/extensions/hooks/shared/pre_verifier.mjs"
         r = subprocess.run(
-            ["node", str(script), hook.resolve().as_uri(), str(self.root), feature],
+            ["node", str(script), hook.resolve().as_uri(), str(self.root), FEATURE],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(0, r.returncode, r.stderr[:600])
         return r.stdout
 
-    def test_the_reader_review_is_injected_not_filtered_out(self) -> None:
+    def test_the_task_carries_its_criteria(self) -> None:
         text = self.inject()
-        self.assertIn("story_reader_review", text, "读者审查被滤掉了")
+        self.assertIn("story_reader_review", text)
+        self.assertIn("### 判据", text)
 
-    def test_it_comes_first(self) -> None:
-        """它要通读一份 300 行的归档件，排在后面最容易被当附注跳过。"""
-        text = self.inject()
-        self.assertLess(text.index("story_reader_review"), text.index("知识判据"))
+    def test_the_spec_phase_no_longer_carries_the_story_review(self) -> None:
+        """Story 的判据只在自己的位置：spec 阶段的审查任务里不再有它。"""
+        self.assertNotIn("story_reader_review", self.spec_phase_fragments())
 
     @property
-    def overlay(self) -> Path:
-        return self.root / "doc" / "extensions" / "rules" / "spec-rules.overlay.yaml"
+    def rules(self) -> Path:
+        return self.root / "doc" / "extensions" / "rules" / "story-reader-rules.yaml"
 
     def overlay_method(self) -> str:
-        """判据与结论要求的**唯一维护处**：spec overlay 的 `story_reader_review`。"""
-        text = self.overlay.read_text(encoding="utf-8")
-        at = text.index("story_reader_review:")
-        end = text.index("\n# ", at)
-        return text[at:end]
+        """判据与结论要求的**唯一维护处**：`rules/story-reader-rules.yaml` 的 `story_reader_review`。"""
+        text = self.rules.read_text(encoding="utf-8")
+        return text[text.index("story_reader_review:"):]
 
     def test_the_task_lists_every_image_with_its_state(self) -> None:
         """任务里没有的**数据**，审查者拿不到：图逐张列出，连它是什么、用不用一起。"""
@@ -188,51 +222,26 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         text = self.inject()
         self.assertIn("盘上读不到", text)
 
-    def test_the_host_assembly_really_carries_the_overlay_method(self) -> None:
-        """正常路径的证据：**宿主装配之后**任务里有这份方法。
+    def test_the_task_really_carries_the_method(self) -> None:
+        """正常路径的证据：审查者手上的任务里有这份方法——判据原文随任务送达。"""
+        task = self.inject()
+        for needle in ("跨章对着读", "blocking_findings", "advisories", "不许空", "按实际关系判"):
+            self.assertIn(needle, task, f"审查任务里没有「{needle}」")
 
-        只断言「fragment 里没有方法」加「overlay 文件里有那段文字」证明不了它到得了
-        审查者手上——中间那一步（框架把 overlay 合进本阶段判据）没被核过。
-        这里调框架自己那个合并函数（`mergePhaseRuleSpec`），不启动真实 CLI、不改 Framework。
-        """
-        harness = REPO / "demo" / "framework" / "harness"
-        runner = harness / "node_modules" / "ts-node" / "dist" / "bin.js"
-        if not runner.is_file():
-            self.skipTest("framework/harness 里没有 ts-node")
-        script = (
-            "const { mergePhaseRuleSpec } = require('./profile-loader');"
-            "const YAML = require('yaml'); const fs = require('fs');"
-            f"const overlay = YAML.parse(fs.readFileSync({json.dumps(str(self.overlay))}, 'utf-8'));"
-            "const base = { phase: 'spec', semantic_checks: { framework_own: { description: 'x' } } };"
-            "const merged = mergePhaseRuleSpec(base, overlay);"
-            "const item = merged.semantic_checks.story_reader_review || {};"
-            "process.stdout.write(JSON.stringify({"
-            "  hint: String(item.ai_prompt_hint || ''),"
-            "  desc: String(item.description || ''),"
-            "  keptFrameworkOwn: !!merged.semantic_checks.framework_own }));")
-        out = subprocess.run(["node", str(runner), "-e", script],
-                             cwd=str(harness), capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=180)
-        self.assertEqual(0, out.returncode, out.stderr[-600:])
-        got = json.loads(out.stdout)
-        self.assertTrue(got["keptFrameworkOwn"], "合并把框架自己那几项挤掉了")
-        both = got["desc"] + got["hint"]
-        for needle in ("跨章对着读", "blocking_findings", "advisories", "不许空",
-                       "按实际关系判"):
-            self.assertIn(needle, both, f"宿主装配后的任务里没有「{needle}」")
-
-    def test_the_method_is_maintained_only_in_the_overlay(self) -> None:
-        """方法一份：overlay 维护「怎么判」，构造器只给这一次的数据。
+    def test_the_method_is_maintained_only_in_the_rules(self) -> None:
+        """方法一份：`story-reader-rules.yaml` 维护「怎么判」，构造器运行时读它、代码里不另写一份。
 
         两处各写一遍时改一处另一处静默过期——而过期的那一份仍会被送到审查者手上。
         """
         method = self.overlay_method()
         for needle in ("总览与局部加起来", "端到端过程", "分支去向", "理由成不成立",
                        "跨章对着读", "blocking_findings", "advisories", "不许空"):
-            self.assertIn(needle, method, f"overlay 里没有「{needle}」")
-        fragment = self.inject()
-        for needle in ("总览与局部加起来", "端到端过程", "理由成不成立", "blocking_findings"):
-            self.assertNotIn(needle, fragment, f"构造器又复制了一份方法：{needle}")
+            self.assertIn(needle, method, f"判据里没有「{needle}」")
+        source = (self.root / "doc/extensions/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
+        for needle in ("总览与局部加起来", "端到端过程", "跨章对着读"):
+            self.assertNotIn(needle, source, f"构造器又复制了一份方法：{needle}")
+        spec = (self.root / "doc/extensions/rules/spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("story_reader_review:", spec, "spec overlay 里还有一份 Story 判据")
 
     def test_the_collaboration_order_is_judged_by_relation_not_headcount(self) -> None:
         """两方之间也可能有复杂往返，多方单向直通反而不需要——不设人数门槛。"""
@@ -291,11 +300,11 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertIn("SKIP", task)
         self.assertNotIn("```````markdown", task)
 
-    def test_the_task_says_where_the_overwritten_ar_is_kept(self) -> None:
-        """当前 AR/design.md 是提取稿：回查上游原话给 .backups/local/ 的位置，不让它用提取稿替。"""
+    def test_the_task_says_the_extract_is_a_derived_analysis(self) -> None:
+        """提取稿是派生分析：回查上游原话看 RR、SR 与 AR/design.md 原文，不拿提取稿自证。"""
         task = self.inject()
-        self.assertIn("`.backups/local/`", task)
-        self.assertIn("提取稿", task)
+        self.assertIn("派生分析", task)
+        self.assertNotIn(".backups/local/", task, "上游 AR 不再被覆盖，没有备份位置可指")
 
     def test_the_task_carries_the_recheck_list(self) -> None:
         """审查拿到的回看清单与作者手里的是同一张：逐条核去向，不另编一份。"""
@@ -359,7 +368,7 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         (feature / "RR" / "prd.md").write_text("# 产品需求\n", encoding="utf-8")
         section = self.inject().split("### 原材料原文", 1)[1].split("###", 1)[0]
         self.assertIn("`RR/prd.md`", section)
-        self.assertIn("acceptance.yaml", section)
+        self.assertNotIn("spec/spec.md", section, "Story 不再以 Spec 为成文来源")
         self.assertNotIn("读不到 `SR/design.md`", section, "本地单没有系统设计是正常的")
         (feature / "AR" / "detail.json").write_text("{}", encoding="utf-8")
         section = self.inject().split("### 原材料原文", 1)[1].split("###", 1)[0]
@@ -369,16 +378,14 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         section = self.inject(remote).split("### 原材料原文", 1)[1].split("###", 1)[0]
         self.assertIn("读不到 `SR/design.md`", section, "系统需求缺必备来源没点名")
 
-    def test_the_overlay_judges_against_sources_not_the_design(self) -> None:
-        """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在 overlay。"""
+    def test_the_rules_judge_against_sources_not_the_design(self) -> None:
+        """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在判据文件。"""
         method = self.overlay_method()
         for needle in ("先独立想清楚", "写作设计", "设计漏掉的不因此算不在范围", "写了理由不等于理由成立",
-                       "还开着的决定被写成已定", "acceptance.yaml", "正文提到过", "真实待决写清了边界",
+                       "还开着的决定被写成已定", "已准入蓝图", "正文提到过", "真实待决写清了边界",
                        "写明未验证与影响"):
-            self.assertIn(needle, method, f"overlay 里没有「{needle}」")
-        fragment = self.inject()
-        for needle in ("先独立想清楚", "设计漏掉的不因此算不在范围", "还开着的决定被写成已定"):
-            self.assertNotIn(needle, fragment, f"构造器又复制了一份方法：{needle}")
+            self.assertIn(needle, method, f"判据里没有「{needle}」")
+        self.assertNotIn("acceptance.yaml", method, "Story 判据还指着 Spec 的验收文件")
 
     def test_the_task_does_not_mention_a_publisher(self) -> None:
         """报告由调用方原样写出，没有钩子代它发布——任务书里不该还有那一环。"""

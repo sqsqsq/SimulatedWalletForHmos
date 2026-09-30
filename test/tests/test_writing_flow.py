@@ -392,7 +392,7 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
                 self.assertNotIn(old, text)
 
     def test_the_reviewer_asks_the_three_figure_questions(self) -> None:
-        overlay = (self.EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        overlay = (self.EXT / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
         for q in ("图前是不是把这段过程讲了一遍", "图后是不是说明了各分支成立的条件", "图种合不合读者要判断的那件事",
                   "一段是不是讲了几件独立的事"):
             with self.subTest(q=q):
@@ -422,5 +422,5 @@ class TheWritingMindOpensTheGuide(unittest.TestCase):
                 self.assertNotIn(old, text)
 
     def test_the_reviewer_names_document_talk_as_an_advisory(self) -> None:
-        overlay = (self.EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        overlay = (self.EXT / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
         self.assertIn(f"正文里指着文档说话的句子——{self.DOCTALK}——与章开场白", overlay)

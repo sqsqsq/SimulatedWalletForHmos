@@ -26,16 +26,12 @@ import { contractSections } from './knowledge-use/validation.mjs';
 import { landingName } from './knowledge-use/projection.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
-import { readerReviewTask } from './reader-review-task.mjs';
 import { overlayChecks } from './verifier-report.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from './stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
 const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
-
-/** 读者审查那一项。它要的输入与问题清单与知识判据不同，单独成段。 */
-const READER_REVIEW_ID = 'story_reader_review';
 
 /** 本阶段被审的知识判断在哪。spec 自己判，plan 冻结成契约上的 must，之后各阶段按它落实与取证。 */
 const SOURCE_OF_TRUTH = {
@@ -224,10 +220,6 @@ export default async function preVerifier(ctx) {
 
   fragments.push(allChecksFragment(checks));
   fragments.push(reviewerKnowledge(ctx));
-  // 读者审查放在判据清单之后：它要通读整份归档件与全部材料，是这批判据里最重的一项。
-  if (checkIds.includes(READER_REVIEW_ID)) {
-    fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));
-  }
   if (!knowledgeIds.length) return { promptFragments: fragments };
 
   const fragment = [
