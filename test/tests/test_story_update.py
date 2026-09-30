@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import shutil
 import subprocess
@@ -1085,9 +1086,8 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assert_no_hand_edit()
 
 
-class DesignFeedbackGoesToTheBlueprintOwner(UpdateCase):
-    """评审人对设计议题的意见在 update 里交给蓝图负责方：挂在有设计目标的议题上、带本轮记下的原话、
-    指向成文登记时评审的蓝图版本；原生只判够不够格，处理之前一律「待处理」。"""
+class RegisteredCase(UpdateCase):
+    """已按蓝图成文登记的工程，带一条设计议题。"""
 
     TARGET = "view:logical/node:wallet-balance"
     TOPIC = {"id": "D1", "status": "open", "review_mode": "choice", "category": "依赖与承载",
@@ -1129,11 +1129,19 @@ class DesignFeedbackGoesToTheBlueprintOwner(UpdateCase):
             self.feature_root = self.root / "doc" / "features" / FEATURE
             self.src = self.feature_root / "AR" / "story-src"
             self.updates = self.src / "updates"
-        self.rid = self.update("--result", "documents")["update"]
-        self.revision = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["story_basis"]["blueprint_ref"]["revision"]
 
     run_cmd = StoryIsRegisteredAgainAfterChanges.run_cmd
     BUILD = StoryIsRegisteredAgainAfterChanges.BUILD
+
+
+class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
+    """评审人对设计议题的意见在 update 里交给蓝图负责方：挂在有设计目标的议题上、带本轮记下的原话、
+    指向成文登记时评审的蓝图版本；原生只判够不够格，处理之前一律「待处理」。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.rid = self.update("--result", "documents")["update"]
+        self.revision = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["story_basis"]["blueprint_ref"]["revision"]
 
     def said(self) -> None:
         proc = subprocess.run([sys.executable, str(FLOW), "decide", "--feature", FEATURE, "--project-root", str(self.root),
@@ -1202,3 +1210,102 @@ class DesignFeedbackGoesToTheBlueprintOwner(UpdateCase):
         (self.src / "decisions.json").write_text(json.dumps({"decisions": [topic]}, ensure_ascii=False), encoding="utf-8")
         proc = self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE, "--project-root", str(self.root))
         self.assertIn("不是已准入蓝图", proc.stdout + proc.stderr)
+
+
+class PublishChecksTheExternalVersion(RegisteredCase):
+    """发布前按交付门核资格、用取材回执核外部正文还是不是上次知道的那一版；被别人改过就交人，不直接覆盖。
+    本地单没有远端动作。需求系统单由编号决定，这里在进程内把本单当作系统单。"""
+
+    def call(self, name: str, *args, system: bool = True):
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow import publish  # noqa: PLC0415
+            with unittest.mock.patch.object(publish, "system_requirement", lambda _: system):
+                return getattr(publish, name)(self.feature_root, *args)
+        finally:
+            sys.path.remove(str(core))
+
+    def receipt(self, body: bytes | None, when: str = "2099-01-01T00:00:00+00:00", status: str = "fetched") -> None:
+        item = {"name": "AR-design.md", "status": status if body is not None else "absent"}
+        if body is not None:
+            item["digest"] = "sha256:" + hashlib.sha256(body).hexdigest()[:16]
+        (self.src / "fetched.json").write_text(json.dumps({"fetchedAt": when, "items": [item]}), encoding="utf-8")
+
+    def publish(self, reply=None) -> dict:
+        return self.call("cmd_publish", self.root, reply)
+
+    def error(self, fn, *args) -> str:
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.state import FlowError  # noqa: PLC0415
+            with self.assertRaises(FlowError) as caught:
+                fn(*args)
+            return str(caught.exception)
+        finally:
+            sys.path.remove(str(core))
+
+    def test_a_local_requirement_has_no_remote_action(self) -> None:
+        self.assertIn("本地单没有远端动作", self.error(lambda: self.call("cmd_publish", self.root, None, system=False)))
+
+    def test_it_needs_a_fetch_after_the_registration(self) -> None:
+        self.assertIn("先取一次材", self.error(self.publish))
+        self.receipt((self.feature_root / "AR" / "design.md").read_bytes(), when="2000-01-01T00:00:00+00:00")
+        self.assertIn("重新取一次材", self.error(self.publish))
+
+    def test_the_first_publish_starts_from_the_adopted_design(self) -> None:
+        self.receipt((self.feature_root / "AR" / "design.md").read_bytes())
+        out = self.publish()
+        self.assertTrue(out["publishable"], out)
+        self.assertIn("首次发布", out["diff"])
+        self.assertEqual(["D1 余额刷新的触发时机待定"], out["open_topics"])
+
+    def test_an_external_edit_goes_to_a_person(self) -> None:
+        self.receipt("别人在需求系统上改过的正文\n".encode("utf-8"))
+        out = self.publish()
+        self.assertFalse(out["publishable"], out)
+        self.assertIn("不直接覆盖", out["action"])
+        confirmed = self.publish("看过了，按本地这一版覆盖")
+        self.assertTrue(confirmed["publishable"], confirmed)
+        flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+        self.assertEqual("看过了，按本地这一版覆盖", flow["publish_overrides"][-1]["reply"])
+
+    def test_after_a_publish_the_published_version_is_the_baseline(self) -> None:
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.state import load, save  # noqa: PLC0415
+            contract = load(self.feature_root)
+            from flow.lifecycle import publication_record  # noqa: PLC0415
+            contract["archived"] = publication_record(self.feature_root)
+            save(self.feature_root, contract)
+        finally:
+            sys.path.remove(str(core))
+        self.receipt((self.feature_root / "AR" / "story.md").read_bytes(), status="same")
+        out = self.publish()
+        self.assertTrue(out["publishable"], out)
+        self.assertEqual("与上次发布逐字相同", out["diff"])
+        self.receipt((self.feature_root / "AR" / "design.md").read_bytes())
+        self.assertFalse(self.publish()["publishable"], "发布之后外部回到了旧版却没当成外部改动")
+
+    def test_a_remote_restore_moves_the_external_baseline_and_keeps_local_files(self) -> None:
+        self.assertIn("还没归档过", self.error(lambda: self.call("cmd_restored")))
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.state import load, save  # noqa: PLC0415
+            contract = load(self.feature_root)
+            from flow.lifecycle import publication_record  # noqa: PLC0415
+            contract["archived"] = publication_record(self.feature_root)
+            save(self.feature_root, contract)
+        finally:
+            sys.path.remove(str(core))
+        story = (self.feature_root / "AR" / "story.md").read_bytes()
+        older = (self.feature_root / "AR" / "design.md").read_bytes()
+        self.receipt(older, status="same")
+        out = self.call("cmd_restored")
+        self.assertTrue(out["differs"], out)
+        self.assertEqual(story, (self.feature_root / "AR" / "story.md").read_bytes(), "远端恢复动了本地文件")
+        self.receipt(older, status="same")
+        self.assertTrue(self.publish()["publishable"], "恢复之后外部就是恢复的那一版，不该再当成别人改过")

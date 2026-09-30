@@ -25,7 +25,9 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
     python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md --input AR/story-src/design-input.json
     python story_flow.py story    --feature <AR>
     python story_flow.py reopen   --feature <AR>
+    python story_flow.py publish  --feature <AR> [--reply <人确认覆盖外部改动的原话>]
     python story_flow.py archived --feature <AR>
+    python story_flow.py restored --feature <AR>
     python story_flow.py update   --feature <AR> [--action inputs|prepare|status|close|restore|feedback] [--result materials|documents]
 
 `init` 与 `archived` 不写轮次，写的是**工作区骨架**与**归档态**：这两件事的执行方
@@ -73,6 +75,7 @@ from materials import importer
 from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
 from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
+from flow.publish import cmd_publish, cmd_restored
 from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_bind_design, cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
@@ -86,7 +89,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="story 需求流程契约的唯一写入者")
     ap.add_argument("mode",
                     choices=["init", "round", "decide", "status", "bind-design", "complete", "reopen",
-                             "story", "archived", "meeting-refresh", "update"])
+                             "story", "publish", "archived", "restored", "meeting-refresh", "update"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
@@ -147,6 +150,10 @@ def main() -> int:
             result.update(cmd_status(feature_root))
         elif args.mode == "story":
             result.update(cmd_story(feature_root, project_root))
+        elif args.mode == "publish":
+            result.update(cmd_publish(feature_root, project_root, args.reply))
+        elif args.mode == "restored":
+            result.update(cmd_restored(feature_root))
         elif args.mode == "archived":
             result.update(cmd_archived(feature_root, project_root))
         elif args.mode == "bind-design":

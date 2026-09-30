@@ -109,6 +109,15 @@ def file_sha256(path: Path) -> str | None:
     return sha256(path.read_bytes()).hexdigest()
 
 
+#: 上次发布出去的 Story 与 Review 原样留在这里（相对需求目录）：下一次发布前据它给出差异
+PUBLISHED = (".backups", "published")
+
+
+def short_digest(data: bytes) -> str:
+    """与对接层回执同一口径的摘要：`sha256:` 加前 16 位，比外部正文是哪一版用。"""
+    return "sha256:" + sha256(data).hexdigest()[:16]
+
+
 #: 契约自身的内容摘要。每次写入由本模块重算；读到对不上说明有人绕过命令改过文件。
 DIGEST_KEY = "digest"
 #: 本次命令里读到的手改提示。入口把它带进输出，命令本身照常执行。

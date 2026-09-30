@@ -11,7 +11,7 @@ from pathlib import Path
 
 from flow.state import (
     CORE_DIR, DESIGN, FlowError, REVIEW, S4_STEPS, STORY, STORY_REGISTERED, file_sha256, last_gate, load, log,
-    now, require, round_gates, save, stage_of)
+    now, require, round_gates, save, stage_of, PUBLISHED, short_digest)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
 from flow import asks
 from flow.update import record_baseline, record_owned_after
@@ -173,6 +173,17 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
             **({"update_baseline": baseline} if baseline else {})}
 
 
+def publication_record(feature_root: Path) -> dict:
+    """上传成功之后的发布记录：这一次发出去的 Story 与 Review 的摘要，外部现在就是这一版；原样留一份给下一次比差异。"""
+    story, review = feature_root / Path(*STORY), feature_root / Path(*REVIEW)
+    out = feature_root / Path(*PUBLISHED)
+    out.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(story, out / "story.md")
+    shutil.copyfile(review, out / "review.md")
+    digest = short_digest(story.read_bytes())
+    return {"at": now(), "story_digest": digest, "review_digest": short_digest(review.read_bytes()), "external_digest": digest}
+
+
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     """登记「叙事件已送审」。归档动作由数据对接层执行，本命令只记状态。
 
@@ -209,7 +220,8 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
             "归档件未通过交付门（详见上方输出），拒绝登记归档态。"
             "已经传上去的那一版是不合格的：修好后重新归档，再登记")
 
-    contract["archived"] = {"at": now()}
+    # 发布记录：外部现在就是这一版，下一次发布据它判外部有没有被别人改过
+    contract["archived"] = publication_record(feature_root)
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
     return {"archived": True, "at": contract["archived"]["at"]}

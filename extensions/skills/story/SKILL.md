@@ -155,22 +155,28 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 ### 归档
 
 - **前置**：Story 已登记并通过交付门，`AR/story.md` 与 `AR/review.md` 齐备；不适用于本地单
-- **archive 不修改工作区任何文件**
+- **上传不修改工作区任何文件**
 
 ```
-node doc/extensions/skills/story/scripts/core/story-build.mjs check --deliver --feature <AR>   # ① 交付门
-node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-token>        # ② 上传
-python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ③ 登记（自带 ① 的门禁，不可逆）
+node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<工程根>" --out "<本单 inbox>"   # ① 取外部当前内容
+python doc/extensions/skills/story/scripts/core/story_flow.py publish --feature <AR>    # ② 发布前核对
+node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-token>        # ③ 上传
+python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ④ 登记发布记录（自带交付门，不可逆）
 ```
 
-② 失败就停下，不做 ③ 登记。
+- **②** 重跑交付门，并用 ① 的回执核需求系统上的正文还是不是上次发布（或恢复）之后的那一版。它返回这次与上次发布的差异、
+  仍开着的议题与未验证项：**摆给人，人授权了再做 ③**。外部在那之后被别人改过时它报冲突、不放行——要并进来的走 `/story update`；
+  人看过仍要覆盖，带 `--reply "<原话>"` 再跑 ②，原话记进契约。
+- **③** 失败就停下，不做 ④；本地正确的修改留着。重试前重新 ① 和 ②：外部可能在失败之后又被改过，重试的是上传这一步。
 
 **③ 登记之后**，`AR/review.md` **归人所有**：再渲染时人工区逐字保留，机器区按当前决策件重算。决策件带着未勾的议题去归档是常态路径：
 评审的形态就是评审人在线上批注表态，归档时提示一句即可，**不停等确认**。
 
 ### 恢复
 
-`node .../story.js restore <AR> <mcp-token>`——把需求系统上的正文恢复到上一版，回退 archive 那次覆盖。
+`node .../story.js restore <AR> <mcp-token>`——把需求系统上的正文恢复到上一版，回退 archive 那次覆盖；评审记录附件与之后的人工意见留在系统上。
+恢复之后 `fetch` 一次，再 `story_flow.py restored --feature <AR>`：它记下外部现在是哪一版，报告与本地 Story 的差异。
+本地文件一个都不动，归档登记与人签照旧。本地单没有远端，没有这一步。
 
 ### 更新
 
