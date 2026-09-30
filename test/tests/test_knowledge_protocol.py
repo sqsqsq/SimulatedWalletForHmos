@@ -499,5 +499,92 @@ class TheAuthorPagesSayWhereThingsGo(unittest.TestCase):
             self.assertIn(needle, page)
 
 
+
+#: 另一份规约里也有 NEU-03：同一个阻断探针，强制力是红线
+OTHER_SAME_ID = """---
+name: 中性另一域
+kind: constraints
+form: entries
+applies_when: 需求有新增出口时：出口字段的对外约定
+domain: NEU
+---
+
+# 中性另一域
+
+| 编号 | 约束 | 强制力 | 命中条件 | 处置 | 验证（执行体） | 探针 |
+|---|---|---|---|---|---|---|
+| NEU-03 | 对外约定里出口字段不写方向词 | 红线 | 有新增出口 | 字段名用中性词 | 模型：检索方向词 | 阻断：absent_regex:\\bleftSide\\b |
+"""
+
+
+class TheSameIdFromTwoSourcesIsProbedEach(ProtocolCase):
+    """两份规约都有 NEU-03、探针相同：本域那条是基线，另一域那条是红线。同一处代码未过时两条各按自己的强制力处置，
+    红线那条不因编号、结果和文字都相同而被基线那条遮住；义务的先后不影响结果。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.edit_knowledge("constraints/neutral-domain.md", "| 红线 | 有新增出口 | 字段名用中性词",
+                            "| 基线 | 有新增出口 | 字段名用中性词")
+        self.put("constraints/neutral-other.md", OTHER_SAME_ID)
+        self.edit(self.ext / "manifest.yaml", "    - knowledge/constraints/neutral-domain.md\n",
+                  "    - knowledge/constraints/neutral-domain.md\n    - knowledge/constraints/neutral-other.md\n")
+        self.judged()
+        other = {**self.decision("NEU-03", "applied", "对外约定也要求字段不用方向词", "neutral-other",
+                                 requirement="出口字段名不用方向词", target_refs=[nk.TARGET]), "decision_id": "k-other-neu-03"}
+        self.decisions = [d for d in self.decisions if "neutral-other" not in d["provenance"]["source_ref"]] + [other]
+        (self.root / "src").mkdir(exist_ok=True)
+        (self.root / "src" / "exit.ets").write_text(TheCodeIsTheEvidence.GOOD.replace(
+            "const trace = this.newTrace();", "const trace = this.newTrace({ leftSide: 1 });"), encoding="utf-8")
+
+    def landings(self, *decisions: str) -> str:
+        return ("interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
+                "      - name: emitWithTrace\n        must:\n"
+                + "".join(f"          - rule: NEU-03\n            decision_id: {d}\n"
+                          "            text: 出口字段名不用方向词\n            verify: review\n" for d in decisions))
+
+    def test_the_red_line_blocks_in_either_order(self) -> None:
+        for order in (("k-neu-03", "k-other-neu-03"), ("k-other-neu-03", "k-neu-03")):
+            with self.subTest(order=order):
+                self.write_contracts(self.landings(*order))
+                result = self.hook_result("coding")
+                self.assertFalse(result.get("ok"), result)
+                self.assertEqual(1, result["message"].count("而这条规约是红线"), result["message"])
+                self.assertIn("出自判断 k-other-neu-03", result["message"])
+                self.assertIn("记未落实", self.fragments(result), "基线那条照样记未落实")
+
+    def test_the_same_decision_twice_is_reported_once(self) -> None:
+        self.write_contracts(self.landings("k-other-neu-03", "k-other-neu-03"))
+        self.assertEqual(1, self.hook("coding").count("而这条规约是红线"))
+
+
+class TheNativeInputProblemIsNeverDropped(ProtocolCase):
+    """原生对本阶段输入报的问题在每个出口都带着：Feature 不存在时，本判据没跑成也不能自报通过；
+    输入成立、只是没有义务时照常不阻断。"""
+
+    def run_hook(self, phase: str, feature: str) -> dict:
+        proc = nk.node("--input-type=module", "-e",
+                       f"const hook = (await import({nk.as_url(self.ext / 'hooks' / phase / 'post_check.mjs')})).default;"
+                       f"const out = await hook({{ phase: '{phase}', feature: {json.dumps(feature)},"
+                       f" projectRoot: {json.dumps(self.root.as_posix())} }});"
+                       "process.stdout.write(JSON.stringify(out));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout or "{}")
+
+    def test_a_missing_feature_blocks_every_downstream_gate(self) -> None:
+        for phase in ("coding", "review", "ut", "testing"):
+            with self.subTest(phase=phase):
+                result = self.run_hook(phase, "NK99999")
+                self.assertFalse(result.get("ok"), result)
+                self.assertIn("原生", result.get("message") or "")
+
+    def test_a_valid_input_without_obligations_passes(self) -> None:
+        self.write_contracts("interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n"
+                             "    methods:\n      - name: emitWithTrace\n")
+        for phase in ("coding", "review", "ut", "testing"):
+            with self.subTest(phase=phase):
+                result = self.run_hook(phase, nk.FEATURE)
+                self.assertTrue(result.get("ok"), result)
+
+
 if __name__ == "__main__":
     unittest.main()

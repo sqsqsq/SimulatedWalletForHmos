@@ -45,21 +45,23 @@ function sources(projectRoot, files) {
 
 export default guard('coding', async (ctx) => {
   const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'coding');
-  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  // 每个出口都带上原生对本阶段输入报的问题：输入不成立时，本判据不适用或没跑成都不能自报通过
+  const done = (r) => gate(ctx, { ...r, problems: [...inputs.problems, ...(r.problems ?? [])] });
+  if (!inputs.dir) return done({});
   const contracts = inputs.contracts;
-  if (!contracts) return gate(ctx, { skipped: [{ what: '义务落点与探针', why: inputs.why }] });
+  if (!contracts) return done({ skipped: [{ what: '义务落点与探针', why: inputs.why }] });
 
   let knowledge;
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    return gate(ctx, { problems: [`激活知识派生失败（coding 门禁按激活知识取规约的探针与编号）：${e.message}`] });
+    return done({ problems: [`激活知识派生失败（coding 门禁按激活知识取规约的探针与编号）：${e.message}`] });
   }
 
   const obligations = obligationsFromContracts(contracts);
   const roles = patternRolesFromContracts(contracts);
   if (!obligations.length && !roles.length) {
-    return gate(ctx, {
+    return done({
       skipped: [{ what: '义务落点与探针', why: '契约里没有 must，也没有承担模式角色的实体' }],
     });
   }
@@ -68,7 +70,7 @@ export default guard('coding', async (ctx) => {
   const present = files.filter(rel => fs.existsSync(path.resolve(ctx.projectRoot, rel)));
   if (!present.length) {
     // 契约文件一个都还没建：框架原生的文件完整性门禁会报，这里不重复；但要报出这组判据没跑成
-    return gate(ctx, {
+    return done({
       skipped: [{ what: '义务落点与探针', why: '契约点名的实现文件一个都还没建' }],
     });
   }
@@ -91,7 +93,8 @@ export default guard('coding', async (ctx) => {
   }
 
   // ---- 2. 规约自带的探针：对形态匹配的每处落点跑，结果按「阻断」声明与强制力处置 ----
-  // 不按实体收窄的探针，同一规约挂几处就会扫同一批文件、得同一个结果：按规约 + 结果只报一次
+  // 不按实体收窄的探针，同一判断挂几处就会扫同一批文件、得同一个结果：按判断 + 结果只报一次。
+  // 编号不是身份：不同来源的同编号规约是不同判断，强制力各自处置
   const reported = new Set();
   const decisions = new Map(featureKnowledge(ctx.projectRoot, ctx.feature, contracts).rows.map(d => [d.decision_id, d]));
   for (const ob of obligations) {
@@ -104,9 +107,10 @@ export default guard('coding', async (ctx) => {
       entityName: tailIdentifier(ob.entityPath),
       entityKind: ob.entityKind,
     });
-    const where = `义务 ${ob.rule}（${ob.entityPath}）的探针`;
-    if (reported.has(`${ob.rule}|${r.ok}|${r.detail}`)) continue;
-    reported.add(`${ob.rule}|${r.ok}|${r.detail}`);
+    const where = `义务 ${ob.rule}（${ob.entityPath}，出自判断 ${ob.decisionId}）的探针`;
+    const key = `${ob.decisionId}|${r.ok}|${r.detail}`;
+    if (reported.has(key)) continue;
+    reported.add(key);
     if (!r.scanned) {
       // 0 命中要出声：探针写错了与代码没问题，在结果上完全同形
       warnings.push(`${where}扫描 0 个文件——形态可能不匹配本工程：${r.detail}`);
@@ -153,5 +157,5 @@ export default guard('coding', async (ctx) => {
     });
   }
 
-  return gate(ctx, { problems: [...inputs.problems, ...problems], warnings });
+  return done({ problems, warnings });
 });

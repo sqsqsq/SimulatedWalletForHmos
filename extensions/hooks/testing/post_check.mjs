@@ -53,17 +53,19 @@ function referencedAcceptanceIds(dir) {
 
 export default guard('testing', async (ctx) => {
   const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'testing');
-  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  // 每个出口都带上原生对本阶段输入报的问题：输入不成立时，本判据不适用或没跑成都不能自报通过
+  const done = (r) => gate(ctx, { ...r, problems: [...inputs.problems, ...(r.problems ?? [])] });
+  if (!inputs.dir) return done({});
   const contracts = inputs.contracts;
-  if (!contracts) return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: inputs.why }] });
+  if (!contracts) return done({ skipped: [{ what: '验收条目实机覆盖', why: inputs.why }] });
   const obligations = obligationsFromContracts(contracts);
   if (!obligations.length) {
-    return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: '契约里没有 must' }] });
+    return done({ skipped: [{ what: '验收条目实机覆盖', why: '契约里没有 must' }] });
   }
 
   const { ids: referenced, artifactCount } = referencedAcceptanceIds(inputs.dir);
   if (!artifactCount) {
-    return gate(ctx, { skipped: [{ what: '验收条目实机覆盖', why: '测试产物还没建' }] });
+    return done({ skipped: [{ what: '验收条目实机覆盖', why: '测试产物还没建' }] });
   }
 
   // 桥接：acceptance.yaml 的 knowledge_rule 把验收条目认回规约条目（framework 原生追溯链）。
@@ -98,5 +100,5 @@ export default guard('testing', async (ctx) => {
     }
   }
 
-  return gate(ctx, { problems: [...inputs.problems, ...problems] });
+  return done({ problems });
 });

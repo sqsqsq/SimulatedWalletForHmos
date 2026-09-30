@@ -48,26 +48,28 @@ function reviewTable(text) {
 
 export default guard('review', async (ctx) => {
   const inputs = phaseArtifacts(ctx.projectRoot, ctx.feature, 'review');
-  if (!inputs.dir) return gate(ctx, { problems: inputs.problems });
+  // 每个出口都带上原生对本阶段输入报的问题：输入不成立时，本判据不适用或没跑成都不能自报通过
+  const done = (r) => gate(ctx, { ...r, problems: [...inputs.problems, ...(r.problems ?? [])] });
+  if (!inputs.dir) return done({});
   const contracts = inputs.contracts;
-  if (!contracts) return gate(ctx, { skipped: [{ what: '知识义务复核表', why: inputs.why }] });
+  if (!contracts) return done({ skipped: [{ what: '知识义务复核表', why: inputs.why }] });
   const obligations = obligationsFromContracts(contracts);
   const decisions = new Map(featureKnowledge(ctx.projectRoot, ctx.feature, contracts).rows.map(d => [d.decision_id, d]));
   const roles = patternRolesFromContracts(contracts);
   if (!obligations.length && !roles.length) {
-    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '契约里没有 must，也没有承担模式角色的实体' }] });
+    return done({ skipped: [{ what: '知识义务复核表', why: '契约里没有 must，也没有承担模式角色的实体' }] });
   }
 
   const reportPath = path.join(inputs.dir, 'review', 'review-report.md');
   const text = readTextOrNull(reportPath);
   if (text === null) {
     // 报告缺失由框架的 check-review 负责，但本判据确实没跑成，要报出来
-    return gate(ctx, { skipped: [{ what: '知识义务复核表', why: '审查报告还没生成' }] });
+    return done({ skipped: [{ what: '知识义务复核表', why: '审查报告还没生成' }] });
   }
 
   const table = reviewTable(text);
   if (!table || !table.data.length) {
-    return gate(ctx, {
+    return done({
       problems: [`review/review-report.md 缺「${SECTION_TITLE}」表——门禁在标题含「${SECTION_TITLE}」的小节里读第一张表，契约里每条 must 一行结论。`
         + '形态：| rule | 落点（契约实体） | 落实位置（文件:符号） | 结论（落实/未落实/不适用） | 依据 |'
         + '；「不适用」也要写，缺席与「做过但没写」事后完全同形，而只有前者是缺陷'],
@@ -78,7 +80,7 @@ export default guard('review', async (ctx) => {
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    return gate(ctx, { problems: [`激活知识派生失败（review 门禁按激活知识取规约的强制力）：${e.message}`] });
+    return done({ problems: [`激活知识派生失败（review 门禁按激活知识取规约的强制力）：${e.message}`] });
   }
 
   const problems = [];
@@ -120,5 +122,5 @@ export default guard('review', async (ctx) => {
     }
   }
 
-  return gate(ctx, { problems: [...inputs.problems, ...problems] });
+  return done({ problems });
 });

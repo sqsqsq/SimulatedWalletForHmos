@@ -89,5 +89,43 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         self.assertEqual([], run("m.planStatRows(plan)", plan=EVENT))
 
 
+
+#: 一条带附加条件、多种结果的合法埋点明细
+CONDITIONAL = """保存结果进统计。失败原因必须保留，拒绝时带上拒绝码。
+
+| 统计点 | 业务动作 | 实际适用结果 |
+|---|---|---|
+| 保存结果 | 点保存 | 成功、拒绝 |
+"""
+
+CONTRACTS = {"interfaces": [{"name": "SaveService", "methods": [
+    {"name": "save", "description": "统计点「保存结果」：成功报成功；拒绝报拒绝并带拒绝码与失败原因"}, {"name": "load"}]}]}
+
+ACCEPTANCE = {"criteria": [{"id": "AC-001", "description": "拒绝时上报拒绝码", "verification_steps": ["触发一次拒绝"],
+                            "expected_result": "统计里有一条拒绝，带拒绝码与失败原因", "ut_layer": "both",
+                            "device_focus": "抓包看上报字段"}],
+              "boundaries": [{"id": "BD-001", "scenario": "网络断开时保存", "expected": "报拒绝，失败原因为网络"}]}
+
+
+class TheDeliveryCarriesTheOriginals(unittest.TestCase):
+    """没有 plan.md 时送给作者与审查的是原文：明细正文与身份、方法说明、验收完整条目，不是只剩统计点名。"""
+
+    def test_the_whole_body_the_methods_and_every_acceptance_field_are_there(self) -> None:
+        got = "\n".join(run("m.statDelivery(design, plan.contracts, plan.acceptance)",
+                            {**design([{**detail(body=CONDITIONAL), "id": "detail-save"}])},
+                            plan={"contracts": CONTRACTS, "acceptance": ACCEPTANCE}))
+        for needle in ("失败原因必须保留，拒绝时带上拒绝码", "| 保存结果 | 点保存 | 成功、拒绝 |",
+                       "detail-save；依据 view:runtime/flow:invoice",
+                       "`interfaces.SaveService.save`：统计点「保存结果」：成功报成功；拒绝报拒绝并带拒绝码与失败原因",
+                       "criteria `AC-001`", "expected_result：统计里有一条拒绝，带拒绝码与失败原因", "ut_layer：both",
+                       "device_focus：抓包看上报字段", 'verification_steps：["触发一次拒绝"]',
+                       "boundaries `BD-001`", "scenario：网络断开时保存", "expected：报拒绝，失败原因为网络"):
+            self.assertIn(needle, got)
+        self.assertNotIn("SaveService.load", got, "没有说明的方法不列")
+
+    def test_a_detail_outside_this_unit_sends_nothing(self) -> None:
+        self.assertEqual([], run("m.statDelivery(design, null, null)", design([detail(refs=("view:runtime/flow:other",))])))
+
+
 if __name__ == "__main__":
     unittest.main()

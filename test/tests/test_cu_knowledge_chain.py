@@ -67,9 +67,27 @@ def design(root: Path, with_roles: bool) -> None:
         assert text.count(owner) == 1
         text = text.replace(owner, owner + "              pattern_roles:\n                - pattern: decision-tree\n"
                             f"                  role: 节点表\n                  decision_id: {PATTERN_ID}\n", 1)
+    assert text.endswith("derived_results: []\n")
+    text += STAT_DETAIL
     canonical.write_bytes(text.encode("utf-8"))
     unit = root / "doc" / "features" / BLUEPRINT / "balance-refresh" / "change-unit.yaml"
     unit.write_bytes(unit.read_bytes().replace(old.encode(), sha(canonical).encode()))
+
+
+#: 落在本施工单位模块上的埋点明细：带附加条件与多种结果
+STAT_DETAIL = f"""story_details:
+  - id: detail-balance-refresh-event
+    kind: event
+    title: 余额刷新埋点
+    body: |
+      刷新结果进统计。失败原因必须保留，拒绝时带上拒绝码。
+
+      | 统计点 | 业务动作 | 实际适用结果 |
+      |---|---|---|
+      | 余额刷新 / 保存结果 | 返回首页 | 成功、拒绝 |
+    evidence_refs:
+      - {MODULE}
+"""
 
 
 PROBE = """
@@ -83,8 +101,10 @@ const a = c.phaseArtifacts(root, feature, 'plan');
 const i = a.contracts?.interfaces?.[0] ?? {};
 const gate = await plan({ phase: 'plan', feature, projectRoot: root });
 const review = await pre({ phase: 'plan', feature, projectRoot: root });
+const kt = await import(base + 'shared/knowledge-task.mjs');
+const author = kt.knowledgeTask(root, { action: 'plan', audience: 'author', feature });
 process.stdout.write(JSON.stringify({ must: i.methods?.[0]?.must ?? null, roles: i.pattern_roles ?? null, problems: a.problems,
-  gate: gate.message ?? '', review: (review.promptFragments ?? []).join('\\n') }));
+  gate: gate.message ?? '', review: (review.promptFragments ?? []).join('\\n'), author }));
 """
 
 
@@ -105,10 +125,16 @@ class ChainCase(unittest.TestCase):
         cls._tmp.cleanup()
 
     def probe(self, env: dict | None = None) -> dict:
+        """门禁、审查任务与作者任务读到的结果；同一类的工程不变，默认环境下只跑一次。"""
+        if env is None and "_out" in self.__class__.__dict__:
+            return self.__class__._out
         proc = subprocess.run(["node", "--input-type=module", "-e", PROBE, str(self.root.as_posix()), CU],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
-        return json.loads(proc.stdout)
+        out = json.loads(proc.stdout)
+        if env is None:
+            self.__class__._out = out
+        return out
 
 
 class TheDerivedContractCarriesTheObligations(ChainCase):
@@ -123,6 +149,16 @@ class TheDerivedContractCarriesTheObligations(ChainCase):
         self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
         self.assertNotIn("没有实体承担", out["gate"], out["gate"])
         self.assertIn(f"ut · {KNOWLEDGE_ID}", out["review"], "审查任务没并列出实体上的义务与出自的决定")
+
+    def test_the_stat_detail_reaches_author_and_reviewer_in_full(self) -> None:
+        """没有 plan.md：埋点明细正文、方法说明与验收完整条目原样送到 plan 作者与审查。"""
+        out = self.probe()
+        for who in ("author", "review"):
+            for needle in ("失败原因必须保留，拒绝时带上拒绝码", "| 余额刷新 / 保存结果 | 返回首页 | 成功、拒绝 |",
+                           "detail-balance-refresh-event；依据 " + MODULE, "`interfaces.HomeRepository.refreshBalance`：刷新余额",
+                           "criteria `AC-001`", "expected_result：账户卡片展示最新余额", "device_focus：返回首页后账户卡片余额文本更新"):
+                self.assertIn(needle, out[who], who)
+        self.assertIn("这一次没有 plan.md：逐点核每个统计点", out["review"])
 
     def test_a_role_placed_elsewhere_is_not_this_units(self) -> None:
         """「上下文」落在别的设计对象上：本单位不被要求承担它。"""
