@@ -25,7 +25,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from flow_steps import walk_to_complete
+from flow_steps import ensure_framework, walk_to_complete
 from ext_workspace import link_harness_yaml, DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -846,6 +846,10 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
         data["rounds"][-1]["gates"] = []
+        # 收口意味着已关联设计对象、登记了冻结输入；之后的位置要读原生蓝图
+        data["design_binding"] = {"component_id": "wallet-home", "blueprint_id": FEATURE}
+        data["input"] = {"snapshot_ref": f"doc/features/{FEATURE}/AR/story-src/inputs/0/snapshot.json"}
+        ensure_framework(self.root)
         if status == "story_written":
             # 已登记的契约带此刻的登记指纹（缺了是契约不完整，status 报错）
             sys.path.insert(0, str(FLOW_SCRIPT.parent))
@@ -853,28 +857,13 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
             data["story_digests"] = {rel: ledger_digest(self.feature_root / rel) for rel in STORY_REGISTERED}
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-    def test_after_the_flow_closes_it_gives_the_spec_stage_order(self) -> None:
-        """两跑都先跑了 harness 再写 story，三轮 FAIL 全是「产物不齐」。"""
+    def test_after_the_input_is_registered_it_waits_for_the_blueprint(self) -> None:
+        """输入登记了、蓝图还没建：派生状态是等设计，下一步指向原生 component-design 与登记的那份输入。"""
         self.write_contract("complete")
-        action = self.status()["action"]
-        self.assertIn("knowledge-use.mjs init", action)
-        self.assertIn("harness", action)
-
-    def test_it_repeats_the_authorization_for_entering_spec(self) -> None:
-        """进 spec 的授权是 `/story` 启动时声明的，收口这一步要原样打出来。
-
-        不打的话，模型在 framework 的阶段边界只能按默认策略再问一次授权——
-        它没错，是「/story 即声明做到 spec 闭环」这条链没有接到 framework 认的形态上。
-        """
-        self.write_contract("complete")
-        action = self.status()["action"]
-        self.assertIn("本轮授权", action)
-        self.assertIn("不必再要一次授权", action)
-
-    def test_it_moves_on_once_the_judgement_exists(self) -> None:
-        self.write_contract("complete")
-        (self.feature_root / "spec" / "knowledge-use.yaml").write_text("schema: 1\n", encoding="utf-8")
-        self.assertIn("spec.md", self.status()["action"])
+        out = self.status()
+        self.assertEqual(("waiting_for_design", "design_blueprint"), (out["state"], out["next"]))
+        self.assertIn("component-design", out["action"])
+        self.assertIn(out["input"]["snapshot_ref"], out["action"])
 
     def test_after_registration_it_points_at_harness_not_build(self) -> None:
         """登记那一步已经渲染并核过 review——再叫作者去 build 就是两处说法。"""
@@ -977,8 +966,8 @@ class TheSourceScriptAsksTheTargetProject(unittest.TestCase):
     """
 
     FLOW = {
-        "schema": 4, "feature": FEATURE, "status": "complete",
-        "design_generated_at": "2026-09-12T00:00:00",
+        "schema": 5, "feature": FEATURE, "status": "complete",
+        "input": {"snapshot_ref": "doc/features/x/AR/story-src/inputs/0/snapshot.json"},
         "rounds": [{
             "round": 1,
             "materials": {"path": "AR/story-src/materials.json", "digest": "seeded"},

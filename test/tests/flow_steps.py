@@ -6,8 +6,11 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Callable
+
+from ext_workspace import REPO_ROOT, link_framework, overlay_framework
 
 
 def write_gaps(src: Path, missing: tuple[str, ...] = (), why: str = "夹具：材料齐了") -> None:
@@ -48,9 +51,49 @@ def open_decision(did: str, title: str, point: str, options: list[tuple[str, str
             "decider": decider, "category": category}
 
 
+def project_root_of(feature_root: Path) -> Path:
+    """需求目录所在的工程根：有 framework.config.json 的那一层；没有就按默认需求目录 doc/features 往上两层。"""
+    for parent in feature_root.resolve().parents:
+        if (parent / "framework.config.json").is_file():
+            return parent
+    return feature_root.resolve().parents[2]
+
+
+def ensure_framework(root: Path) -> None:
+    """交给设计要读 Framework 原生对象：工程没接入的，照 demo 的配置接上它的 Framework。"""
+    if not (root / "framework.config.json").is_file():
+        shutil.copy2(REPO_ROOT / "demo" / "framework.config.json", root / "framework.config.json")
+    if not (root / "framework").exists():
+        link_framework(root)
+    elif not (root / "framework" / "harness" / "package.json").is_file():
+        overlay_framework(root)
+
+
+def design_input(src: Path) -> dict:
+    """本轮确认的材料全部采用，人签取范围关卡那一条，需求条目指向第一份正文。"""
+    manifest = json.loads((src / "materials.json").read_text(encoding="utf-8"))
+    adopted = [p for m in manifest["materials"] if m.get("sha256") for p in m["paths"]]
+    contract = json.loads((src / "story-flow.json").read_text(encoding="utf-8"))
+    asks = [g["ask_id"] for g in contract["rounds"][-1]["gates"]
+            if g["gate"] == "scope_decision" and g["outcome"] == "accepted"]
+    main = next(p for m in manifest["materials"] if m["kind"] == "doc" and m.get("sha256") for p in m["paths"])
+    return {"adopted": adopted, "human_decision_ids": asks[-1:],
+            "scope_items": [{"item_id": "request-main", "kind": "requirement", "source_path": main,
+                             "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}]}
+
+
+def hand_to_design(flow: Callable[..., dict], src: Path) -> None:
+    """关联设计对象、写设计输入，提交冻结。蓝图标识取需求标识。"""
+    feature_root = src.parents[1]
+    ensure_framework(project_root_of(feature_root))
+    flow("bind-design", "--component", "wallet-home", "--blueprint", feature_root.name)
+    (src / "design-input.json").write_text(json.dumps(design_input(src), ensure_ascii=False), encoding="utf-8")
+    flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
+
+
 def walk_to_complete(flow: Callable[..., dict], src: Path, draft_text: str,
                      scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
-    """用真实流程命令走完 S1–S3 并提交提取稿：材料关卡、需求分析、范围关卡、收口。"""
+    """用真实流程命令走完 S1–S3 并交给设计：材料关卡、需求分析、范围关卡、关联设计对象、冻结输入。"""
     src.mkdir(parents=True, exist_ok=True)
     (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
     flow("init")
@@ -63,4 +106,4 @@ def walk_to_complete(flow: Callable[..., dict], src: Path, draft_text: str,
         [{"key": "carry_all", "label": "按当前范围整体承载"}], ensure_ascii=False), encoding="utf-8")
     flow("round")
     answer(flow, "scope_decision", "夹具：整体承载", "--chosen", "carry_all")
-    flow("complete", "--from", "AR/story-src/design-draft.md")
+    hand_to_design(flow, src)

@@ -1,4 +1,4 @@
-"""story_flow.py — init→spec 流程契约（`AR/story-src/story-flow.json`）的**唯一写入者**。
+"""story_flow.py — 需求流程契约（`AR/story-src/story-flow.json`）的**唯一写入者**。
 
 契约记录每一步的输入、输出与交互：**摆出了哪些选项**、谁在什么依据下选了哪一项，
 事后可查、可推翻。
@@ -21,7 +21,8 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
     python story_flow.py decide   --feature <AR> --update <定了哪件事> --issue <议题编号> --reply <人的原话>
     python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
     python story_flow.py status   --feature <AR>
-    python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md
+    python story_flow.py bind-design --feature <AR> --component <组件> --blueprint <蓝图>
+    python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md --input AR/story-src/design-input.json
     python story_flow.py story    --feature <AR>
     python story_flow.py reopen   --feature <AR>
     python story_flow.py archived --feature <AR>
@@ -58,7 +59,7 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
 
 本文件只做参数解析、分派与顶层输出；每条命令的实现在 `flow/` 下按职责分开：
 契约读写、常量与阶段判定在 `state`，一次性侧车与骨架在 `inputs`，「现在走到哪」在 `routing`，
-问法在 `asks`，`decide`/`round`/`complete`/`status` 各在 `decisions`/`rounds`/`submission`/`lifecycle`。
+问法在 `asks`，`decide`/`round`/`bind-design`+`complete`/`status` 各在 `decisions`/`rounds`/`submission`/`lifecycle`。
 """
 from __future__ import annotations
 
@@ -73,7 +74,7 @@ from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
 from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.rounds import cmd_reopen, cmd_round
-from flow.submission import cmd_complete
+from flow.submission import cmd_bind_design, cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
 from flow.update import (cmd_update_close, cmd_update_inputs, cmd_update_prepare,
@@ -82,9 +83,9 @@ from flow.update import (cmd_update_close, cmd_update_inputs, cmd_update_prepare
 
 # ---------------------------------------------------------------------------
 def main() -> int:
-    ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")
+    ap = argparse.ArgumentParser(description="story 需求流程契约的唯一写入者")
     ap.add_argument("mode",
-                    choices=["init", "round", "decide", "status", "complete", "reopen",
+                    choices=["init", "round", "decide", "status", "bind-design", "complete", "reopen",
                              "story", "archived", "meeting-refresh", "update"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
@@ -105,6 +106,10 @@ def main() -> int:
                     help="decide：更新期间人定的一件事（与三级关卡无关，要有开着的 update）")
     ap.add_argument("--from", dest="from_path", default=None,
                     help="complete：要提交的提取稿，落点 " + "/".join(DESIGN_DRAFT))
+    ap.add_argument("--input", dest="input_path", default=None,
+                    help="complete：设计输入（采用集合、人签编号、语义条目），缺省 AR/story-src/design-input.json")
+    ap.add_argument("--component", default=None, help="bind-design：设计对象的组件标识")
+    ap.add_argument("--blueprint", default=None, help="bind-design：设计对象的蓝图标识")
     ap.add_argument("--action", default="inputs",
                     choices=["inputs", "prepare", "status", "close", "restore"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
@@ -142,6 +147,8 @@ def main() -> int:
             result.update(cmd_story(feature_root, project_root))
         elif args.mode == "archived":
             result.update(cmd_archived(feature_root, project_root))
+        elif args.mode == "bind-design":
+            result.update(cmd_bind_design(feature_root, project_root, args.component, args.blueprint))
         elif args.mode == "reopen":
             result.update(cmd_reopen(feature_root))
         elif args.mode == "meeting-refresh":
@@ -158,7 +165,7 @@ def main() -> int:
             else:
                 result.update(cmd_update_prepare(feature_root))
         else:
-            result.update(cmd_complete(feature_root, args.feature, args.from_path))
+            result.update(cmd_complete(feature_root, project_root, args.feature, args.from_path, args.input_path))
 
         result["success"] = code == 0
         if TAMPER_NOTES:

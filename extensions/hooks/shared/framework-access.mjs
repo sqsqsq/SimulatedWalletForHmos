@@ -9,6 +9,8 @@
  *   node framework-access.mjs --project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery
  *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id> --phase <阶段>
  *        [--requirement-file <文件> | --requirement <原文>]（无 run 的 spec 恢复不出需求来源时给）
+ *   node framework-access.mjs --project-root <根> --action binding --component <组件 id> --blueprint <蓝图 id>
+ *   node framework-access.mjs --project-root <根> --action sources  < 来源物化 JSON（stdin）
  * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期或未准入（带原生 issues），2 参数或依赖错误。
  */
 import * as fs from 'node:fs';
@@ -90,9 +92,56 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft') {
   const out = {
     status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
     blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
+    projection: readProjection(native, checked),
   };
   if (purpose === 'delivery' && !admitted) out.status = 'not_admitted';
   return out;
+}
+
+/** 蓝图旁的原生评审投影：没有、与这一版 canonical 的确定性派生对不上（stale）、有效。 */
+function readProjection(native, checked) {
+  const file = path.join(path.dirname(checked.canonicalPath), 'component-blueprint.review.md');
+  const out = { path: rel(native.root, file) };
+  if (!fs.existsSync(file)) return { ...out, status: 'missing', issues: [] };
+  const issues = native.module('scripts/utils/blueprint-host-seams.ts')
+    .validateBlueprintReviewPublication(fs.readFileSync(file, 'utf8'), checked.blueprint, checked.artifactSha256);
+  return { ...out, status: issues.length ? 'stale' : 'valid', issues };
+}
+
+/**
+ * 需求要关联的设计对象：组件与蓝图标识按原生规则核；蓝图已在时核它实际归属的组件，不按名称猜。
+ * 蓝图还不存在是合法的新对象。
+ */
+function checkBinding(projectRoot, componentId, blueprintId) {
+  const native = loadNative(projectRoot);
+  const paths = native.module('scripts/utils/component-blueprint-path.ts');
+  try {
+    paths.assertComponentId(componentId);
+    paths.assertBlueprintId(blueprintId);
+  } catch (e) {
+    return failure('invalid', e);
+  }
+  let loaded;
+  try {
+    loaded = paths.loadCanonicalBlueprint(native.root, blueprintId);
+  } catch (e) {
+    return e?.code === 'component_blueprint_missing' ? { status: 'ok', exists: false, issues: [] } : failure('invalid', e);
+  }
+  const actual = loaded.blueprint?.component_id;
+  return actual === componentId ? { status: 'ok', exists: true, issues: [] }
+    : { status: 'mismatch', exists: true, issues: [{ code: 'blueprint_component_mismatch', message: `蓝图 ${blueprintId} 归属组件 ${actual}，不是 ${componentId}` }] };
+}
+
+/**
+ * 核一份来源物化（requirement-source-materialization@1 形状）：原生校验信封、项目内 source_ref、原始字节摘要、
+ * provenance 与 authority。系统单的物化件落在冻结目录里；本地单同一形状只在内存里核，不另造 provider manifest。
+ */
+function checkSources(projectRoot, doc) {
+  const native = loadNative(projectRoot);
+  const issues = native.module('scripts/utils/blueprint-host-seams.ts').validateRequirementSourceMaterialization(doc, {
+    projectRoot: native.root, blueprintId: doc?.blueprint_id, componentId: doc?.component_id,
+  });
+  return { status: issues.length ? 'invalid' : 'ok', issues };
 }
 
 /** 需求正文要调用方给：原生恢复不出，或给的与冻结绑定对不上。 */
@@ -232,13 +281,24 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const action = opt('--action');
   try {
     const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery'
-      + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]';
-    if (!root || !['blueprint', 'feature'].includes(action)) throw new Error(usage);
+      + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
+      + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）';
+    if (!root || !['blueprint', 'feature', 'binding', 'sources'].includes(action)) throw new Error(usage);
     if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
     if (action === 'feature' && (!opt('--feature') || !opt('--phase'))) throw new Error(usage);
-    const out = action === 'blueprint'
-      ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft')
-      : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });
+    if (action === 'binding' && (!opt('--component') || !opt('--blueprint'))) throw new Error(usage);
+    let doc;
+    if (action === 'sources') {
+      try {
+        doc = JSON.parse(fs.readFileSync(0, 'utf8'));
+      } catch (e) {
+        throw new Error(`stdin 不是来源物化 JSON（${e?.message ?? e}）`);
+      }
+    }
+    const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft')
+      : action === 'binding' ? checkBinding(root, opt('--component'), opt('--blueprint'))
+        : action === 'sources' ? checkSources(root, doc)
+          : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });
     process.stdout.write(`${JSON.stringify(out, null, 1)}\n`);
     process.exitCode = out.status === 'ok' ? 0 : 1;
   } catch (e) {

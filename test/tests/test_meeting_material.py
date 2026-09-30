@@ -15,6 +15,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from ext_workspace import DEV_EXT
+from flow_steps import ensure_framework, project_root_of
 from xml.sax.saxutils import escape
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -718,7 +719,10 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         from flow import routing
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
-        contract = {**self.contract(), "status": "complete"}
+        contract = {**self.contract(), "status": "complete",
+                    "design_binding": {"component_id": "wallet-home", "blueprint_id": self.fr.name},
+                    "input": {"snapshot_ref": f"doc/features/{self.fr.name}/AR/story-src/inputs/0/snapshot.json"}}
+        ensure_framework(project_root_of(self.fr))
         self.assertEqual("late_meeting", routing.next_step(self.fr, contract)[0])
         self.read_meeting(docx)
         self.assertNotEqual("late_meeting", routing.next_step(self.fr, contract)[0])

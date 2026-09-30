@@ -26,10 +26,10 @@ CLIENT = CORE / "flow" / "client.mjs"
 FEATURE = "AR90001"
 
 FLOW_JSON = {
-    "schema": 4,
+    "schema": 5,
     "feature": FEATURE,
     "status": "complete",
-    "design_generated_at": "2026-09-12T00:00:00",
+    "input": {"snapshot_ref": "doc/features/x/AR/story-src/inputs/0/snapshot.json"},
     "rounds": [{
         "round": 1,
         "materials": {"path": "AR/story-src/materials.json", "digest": "seeded"},

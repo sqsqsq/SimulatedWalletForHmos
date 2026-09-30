@@ -109,7 +109,7 @@ class AReviewActionLandsOnADecision(DeliveryCase):
         self.render()
 
     def make_story_feature(self, ids: list[str]) -> None:
-        (self.src() / "story-flow.json").write_text('{"schema": 4, "rounds": []}', encoding="utf-8")
+        (self.src() / "story-flow.json").write_text('{"schema": 5, "rounds": []}', encoding="utf-8")
         (self.src() / "decisions.json").write_text(
             json.dumps({"decisions": [{"id": i} for i in ids]}), encoding="utf-8")
 

@@ -22,6 +22,7 @@ from pathlib import Path
 
 import yaml
 from ext_workspace import link_harness_yaml, DEV_EXT, DEV_ROOT
+from flow_steps import ensure_framework
 
 REPO = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
@@ -99,14 +100,17 @@ class ChannelFailuresAreLoud(unittest.TestCase):
 class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
     """取法写在作者一定读得到的地方——文件在磁盘上不等于作者看见了。"""
 
-    def test_the_flow_next_step_text_carries_the_command(self):
-        """作者逐步跟的是 `status` 的下一步文本——spec 段每一步都要带着取法。"""
+    def test_the_flow_next_step_text_carries_the_knowledge_entry(self):
+        """输入交给设计之后，作者逐步跟的 `status` 下一步文本要带着设计前取知识的入口。"""
         ws = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, ws, True)
+        ensure_framework(ws)
         feature_root = ws / "doc" / "features" / "demo"
         (feature_root / "AR" / "story-src").mkdir(parents=True)
         (feature_root / "AR" / "story-src" / "story-flow.json").write_text(json.dumps({
-            "schema": 4, "feature": "demo", "status": "complete",
+            "schema": 5, "feature": "demo", "status": "complete",
+            "design_binding": {"component_id": "wallet-home", "blueprint_id": "demo"},
+            "input": {"snapshot_ref": "doc/features/demo/AR/story-src/inputs/0/snapshot.json"},
             "rounds": [{"round": 1, "gates": []}],
         }, ensure_ascii=False), encoding="utf-8")
 
@@ -118,8 +122,8 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         )
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
         action = json.loads(proc.stdout)["action"]
-        self.assertIn(AUTHOR_CLI, action, "流程的下一步文本没给任务包命令")
-        self.assertIn("doc/extensions/hooks/spec/author.md", action)
+        self.assertIn("component-design", action)
+        self.assertIn("story-knowledge", action, "流程的下一步文本没给设计前取知识的入口")
 
     def test_the_skill_carries_the_command(self):
         text = (EXT / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")

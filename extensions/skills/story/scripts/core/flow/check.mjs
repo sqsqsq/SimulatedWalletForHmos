@@ -93,7 +93,20 @@ function reached(flow, atLeast) {
   const need = FLOW_STATES.indexOf(atLeast);
   return at >= 0 && need >= 0 && at >= need;
 }
-const DESIGN_FILE = ['AR', 'design.md'];
+/** 登记的冻结设计输入里那份提取稿（派生分析）的位置；没有登记或读不出快照时为 null。 */
+function frozenAnalysis(featureRoot, flow) {
+  const ref = String(flow?.input?.snapshot_ref ?? '');
+  const at = ref.indexOf('/AR/story-src/inputs/');
+  if (at < 0) return null;
+  const dir = path.join(featureRoot, ...path.posix.dirname(ref.slice(at + 1)).split('/'));
+  try {
+    const snapshot = JSON.parse(fs.readFileSync(path.join(dir, 'snapshot.json'), 'utf-8'));
+    const row = (snapshot.files ?? []).find(r => r?.role === 'extracted_analysis');
+    return row ? path.join(dir, 'files', ...String(row.path).split('/')) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function flowProblems(featureRoot) {
   const { exists, flow, error } = readFlow(featureRoot);
@@ -265,12 +278,12 @@ export function flowProblems(featureRoot) {
           '范围没定下来，收口与决策记录自相矛盾'
       );
     }
-    if (!flow?.design_generated_at) {
-      problems.push('AR/story-src/story-flow.json 标了 complete，但 design_generated_at 为空——提取件生成未留痕');
+    if (!flow?.input?.snapshot_ref) {
+      problems.push('AR/story-src/story-flow.json 标了 complete，但没有登记冻结的设计输入（input）——跑 `story_flow.py complete` 提交');
     }
   }
 
-  // 契约与产物的交叉核对：同 SR 还有其它 AR 时，design.md 必须点名它们。
+  // 契约与产物的交叉核对：同 SR 还有其它 AR 时，交给设计的提取稿必须点名它们。
   //
   // 查的是**该出现的有没有出现**，不是**不该出现什么措辞**：范围外内容归谁，只能靠写出
   // 单号来表达，换个说法绕不过去；而拿「承载全部需求」这类句子当违禁词，模型换句话
@@ -278,16 +291,16 @@ export function flowProblems(featureRoot) {
   const related = Array.isArray(lastRound?.positioning?.sr_related_ars)
     ? lastRound.positioning.sr_related_ars
     : [];
+  const designPath = frozenAnalysis(featureRoot, flow);
   if (related.length) {
-    const designPath = path.join(featureRoot, ...DESIGN_FILE);
-    if (fs.existsSync(designPath)) {
+    if (designPath && fs.existsSync(designPath)) {
       const designText = fs.readFileSync(designPath, 'utf-8');
       const missing = related
         .map(x => String(x?.ar ?? '').trim())
         .filter(ar => ar && !designText.includes(ar));
       if (missing.length) {
         problems.push(
-          `AR/design.md 通篇没提到同一 SR 下的 ${missing.join('、')}——` +
+          `交给设计的提取稿通篇没提到同一 SR 下的 ${missing.join('、')}——` +
             '有兄弟 AR 就说明本 AR 不承载全部，范围外内容归谁必须写出来（单号或「待立项」），' +
             '否则 spec 的 out_of_scope 只能笼统写「本需求不做」，评审者分不清有人接还是没人接。' +
             '形态见 rules/ar_design_init.md §3（模板 1.2 三形态）'

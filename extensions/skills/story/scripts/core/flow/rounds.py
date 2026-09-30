@@ -37,8 +37,6 @@ def cmd_round(feature_root: Path) -> dict:
         "schema": SCHEMA, "status": "in_progress",
         "rounds": [],
         "split": {"decided": "none", "settled_round": None, "scope_text": None, "parts": []},
-        "design": None,
-        "design_generated_at": None,
     }
     rounds = contract["rounds"]
 

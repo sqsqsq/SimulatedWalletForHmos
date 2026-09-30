@@ -1092,7 +1092,7 @@ class TestChangesAfterRegistration(StoryBuildCase):
     def register(self) -> None:
         """把成文态登记写进流程契约——含登记那一刻的指纹。"""
         flow = {
-            "schema": 4, "feature": FEATURE, "status": "story_written",
+            "schema": 5, "feature": FEATURE, "status": "story_written",
             "rounds": [{"round": 1, "gates": []}],
             "story_digests": {rel: self.ledger_digest(rel) for rel in self.REGISTERED},
         }

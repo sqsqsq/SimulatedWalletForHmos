@@ -73,6 +73,35 @@ def link_framework(root: Path) -> Path:
     return target
 
 
+def _link_dir(source: Path, target: Path) -> None:
+    if sys.platform == "win32":
+        import _winapi
+        _winapi.CreateJunction(str(source), str(target))
+    else:
+        os.symlink(source, target, target_is_directory=True)
+
+
+def overlay_framework(root: Path) -> None:
+    """`framework/` 已经在（只接了 yaml 包、或放了替身）的临时工程补接 demo Framework 缺的部分：
+    `framework/`、`harness/`、`node_modules/` 三层逐项只补缺的——目录接链接、文件复制，已有的一律不动。"""
+    def fill(source: Path, target: Path, depth: int) -> None:
+        target.mkdir(parents=True, exist_ok=True)
+        for item in source.iterdir():
+            dest = target / item.name
+            if dest.exists() or dest.is_symlink():
+                if depth and item.is_dir() and dest.is_dir() and not os.path.islink(dest) and not _is_junction(dest):
+                    fill(item, dest, depth - 1)
+            elif item.is_dir():
+                _link_dir(item, dest)
+            else:
+                shutil.copy2(item, dest)
+    fill(REPO_ROOT / "demo" / "framework", Path(root) / "framework", 2)
+
+
+def _is_junction(path: Path) -> bool:
+    return bool(getattr(os.path, "isjunction", lambda p: False)(path))
+
+
 #: 宿主入口所在：各宿主的 Skill 跳板目录与两份入口文件
 HOST_ENTRIES = (".agents", ".cac", ".claude", ".codex", ".cursor", ".opencode", "AGENTS.md", "CLAUDE.md")
 

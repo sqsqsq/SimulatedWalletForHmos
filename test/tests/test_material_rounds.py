@@ -28,7 +28,7 @@ from flow.state import CONTRACT, STORY_REGISTERED, ledger_digest  # noqa: E402
 from materials import importer  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flow_steps import write_gaps  # noqa: E402
+from flow_steps import ensure_framework, project_root_of, write_gaps  # noqa: E402
 FEATURE = "AR90001"
 
 
@@ -275,6 +275,10 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
+        # 收口意味着已关联设计对象、登记了冻结输入；收口之后的路由要读原生蓝图
+        data["design_binding"] = {"component_id": "wallet-home", "blueprint_id": self.feature_root.name}
+        data["input"] = {"snapshot_ref": f"doc/features/{self.feature_root.name}/AR/story-src/inputs/0/snapshot.json"}
+        ensure_framework(project_root_of(self.feature_root))
         if status == "story_written":
             data["story_digests"] = {rel: ledger_digest(self.feature_root / rel) for rel in STORY_REGISTERED}
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

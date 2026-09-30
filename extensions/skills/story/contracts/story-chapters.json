@@ -237,7 +237,7 @@
     }
   },
   "flow": {
-    "schema": 4,
+    "schema": 5,
     "gates": ["material_scope", "scope_decision", "split_carrier", "meeting"],
     "carry_all": "carry_all"
   },

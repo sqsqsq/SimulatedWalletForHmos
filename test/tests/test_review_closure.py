@@ -103,7 +103,7 @@ class ClosureCase(unittest.TestCase):
         (self.fr / "acceptance.yaml").write_text(ACCEPTANCE, encoding="utf-8")
         # 走过 /story 的需求才判上游承接与数值来源
         (self.fr / "AR" / "story-src" / "story-flow.json").write_text(json.dumps(
-            {"schema": 4, "status": "complete", "rounds": [{"round": 1, "gates": []}]}), encoding="utf-8")
+            {"schema": 5, "status": "complete", "rounds": [{"round": 1, "gates": []}]}), encoding="utf-8")
         (self.root / "drive.mjs").write_text(DRIVER, encoding="utf-8")
         self.reports = self.fr / "spec" / "reports"
 

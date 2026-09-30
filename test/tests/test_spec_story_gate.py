@@ -24,7 +24,7 @@ FLOW_CHECK = (DEV_EXT / "skills" / "story"
 FEATURE = "AR90001"
 
 MINIMAL_FLOW = {
-    "schema": 4,
+    "schema": 5,
     "feature": FEATURE,
     "status": "complete",
     "rounds": [{"round": 1, "gates": []}],
@@ -119,7 +119,7 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
                        "options": [{"key": "carry_all"}], "outcome": "accepted",
                        "at": "2026-09-12T00:00:00", "by": "human", "ask_id": "a1", "reply": "1"}],
         }]
-        flow["design_generated_at"] = "2026-09-12T00:00:00"
+        flow["input"] = {"snapshot_ref": "doc/features/x/AR/story-src/inputs/0/snapshot.json"}
         (self.feature_root / "AR" / "story-src" / "story-flow.json").write_text(
             json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
 

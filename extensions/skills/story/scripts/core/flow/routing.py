@@ -19,6 +19,7 @@ from flow.state import (
 from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
 from flow.meetings import meeting_basis, pending_asks, refresh_problems
+from flow import native
 
 def closed_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
@@ -102,23 +103,11 @@ def settled_this_round(contract: dict) -> bool:
             and split.get("settled_round") == contract["rounds"][-1].get("round"))
 
 
-#: 进 spec 的授权：`/story` 启动时就声明了范围，收口这一步原样回显。
-#: 不回显的话，模型在阶段边界只能按 framework 的默认策略再问一次——它没错，是链没接上。
-SPEC_STAGE_AUTHORIZATION = (
-    "本轮授权：`/story <AR>` 的启动语义是「做到 spec 闭环并通过交付门」（batch 多阶段声明），"
-    "spec 阶段在声明范围内，**不必再要一次授权**；plan 及其之后仍按 framework 默认策略停等。")
-
-#: 这一段的顺序，四个分支共用一句。
-SPEC_STAGE_ORDER = (
-    "动笔前先取本阶段的作者要求：原则页 `doc/extensions/hooks/spec/author.md`，"
-    "本次任务包 `node doc/extensions/hooks/spec/author.mjs --feature <名>`"
-    "（其余阶段各读 `doc/extensions/hooks/<阶段>/author.md`）。"
-    "顺序：knowledge-use init → 逐条填判断 → 写 spec.md 与扩展章的技术契约、埋点 → "
-    "story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
-    "回看清单逐条处置 → "
-    "story_flow.py story 登记"
-    "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ harness → verifier。"
-    "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
+#: 成文这一段的顺序，几个分支共用一句。
+STORY_STAGE_ORDER = (
+    "顺序：story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
+    "回看清单逐条处置 → `story_flow.py story` 登记"
+    "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ 独立审查 → 交付选择")
 
 
 def pending_chapters(feature_root: Path) -> int:
@@ -133,27 +122,37 @@ def pending_chapters(feature_root: Path) -> int:
     mark = str(json.loads(STORY_CONTRACT.read_text(encoding="utf-8"))["pending_mark"])
     return len(re.findall(r"<!--\s*" + re.escape(mark) + r"[:：]", text))
 
-def spec_stage_step(feature_root: Path) -> tuple[str, str]:
-    """收口之后、成文登记之前——spec 阶段内做到哪儿了。
+def design_stage_step(feature_root: Path, contract: dict) -> tuple[str, str]:
+    """设计输入登记之后：按原生蓝图的真实状态回答等设计还是可以成文。flow 不存准入与 revision 的副本。"""
+    binding = contract.get("design_binding") or {}
+    blueprint = binding.get("blueprint_id")
+    entry = (contract.get("input") or {}).get("snapshot_ref")
+    if not blueprint or not entry:
+        raise FlowError("流程契约标了已提交，却没有设计关联（design_binding）或登记的输入（input）：契约不完整。"
+                        "跑 `story_flow.py bind-design` 与 `complete` 重新提交")
+    read = native.call(native.project_root_of(feature_root), "blueprint", "--blueprint", str(blueprint), "--purpose", "draft")
+    if read["status"] == "missing":
+        return ("design_blueprint",
+                f"设计输入已冻结（`{entry}`）。按 `phases/design.md` 进原生 component-design，"
+                f"用这份输入建立蓝图 `{blueprint}` 并走到准入；知识在设计决定前取（story-knowledge）")
+    if read["status"] != "ok":
+        return ("fix_blueprint", f"蓝图 `{blueprint}` 原生读不过（{read['status']}）：{native.issues_text(read)}——设计职责按原生报错修正")
+    if not read.get("admitted"):
+        return ("design_blueprint", f"蓝图 `{blueprint}` 还没准入：按 `phases/design.md` 在 component-design 里继续到准入")
+    projection = read.get("projection") or {}
+    if projection.get("status") != "valid":
+        return ("design_projection",
+                f"蓝图已准入，评审投影 `{projection.get('path')}` {'还没生成' if projection.get('status') == 'missing' else '与当前 revision 对不上'}："
+                "由设计职责按原生 renderer 生成，Extension 不手改")
+    return story_stage_step(feature_root)
 
-    手上没有这一段的顺序时，作者会先跑 harness，再靠门禁一轮轮告诉它还差什么——
-    而那些红全是「产物不齐」。顺序本身是确定的，按磁盘上有什么就能说清。
-    """
-    def have(*rel: str) -> bool:
-        return (feature_root / Path(*rel)).is_file()
 
-    if not have("spec", "knowledge-use.yaml"):
-        return ("spec_knowledge_use_init",
-                SPEC_STAGE_AUTHORIZATION
-                + " 进 /spec：第一步 `knowledge-use.mjs init --feature <名>` 生成判断骨架"
-                "（激活条目一条不落，你只填 applicable 与依据）。" + SPEC_STAGE_ORDER)
-    if not have("spec", "spec.md"):
-        return "spec_write", "判断骨架已在。接着写 spec.md（扩展章的「规约」「设计模式」由 render 生成，不手写）。" + SPEC_STAGE_ORDER
-    if not have("AR", "story.md"):
+def story_stage_step(feature_root: Path) -> tuple[str, str]:
+    """蓝图准入、投影有效之后，成文做到哪儿了——按磁盘上有什么说清。"""
+    if not (feature_root / "AR" / "story.md").is_file():
         return ("story_skeleton",
-                "spec.md 已在。跑 `story-build skeleton`：它给出成文要用的当前输入"
-                "（材料里的图、系统设计与 Spec 里的图），建写作设计空壳与章草稿，"
-                "并告诉你先写整篇设计还是先写哪一章。" + SPEC_STAGE_ORDER)
+                "蓝图已准入。跑 `story-build skeleton`：它给出成文要用的当前输入，建写作设计空壳与章草稿，"
+                "并告诉你先写整篇设计还是先写哪一章。" + STORY_STAGE_ORDER)
     left = pending_chapters(feature_root)
     if left:
         return ("story_chapters",
@@ -161,12 +160,11 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
                 "先跑 `story-build skeleton` 取回当前输入与下一步（写作设计还没写好时它先让你写设计）；"
                 "逐章在草稿上写、`story-build chapter --from <草稿>` 落盘——"
                 "每次落盘先核这一章能确定的那几条，判不过时盘上什么都不变；"
-                "落盘之后它会给出下一章。" + SPEC_STAGE_ORDER)
+                "落盘之后它会给出下一章。" + STORY_STAGE_ORDER)
     return ("register_story",
             "十章齐了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
-            "（业务结论改 Spec 或决策登记，骨架改写作设计，正文改草稿再 chapter 提交），"
-            "`story-build check` 通过之后跑 `story_flow.py story` 登记成文"
-            "——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
+            "（业务结论改决策登记或回设计，骨架改写作设计，正文改草稿再 chapter 提交），"
+            "`story-build check` 通过之后跑 `story_flow.py story` 登记成文。" + STORY_STAGE_ORDER)
 
 
 #: 停等点的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
@@ -377,7 +375,7 @@ def next_step(feature_root: Path, contract: dict | None,
                     "（它不开新轮；要重新走关卡重新决策，跑 `story_flow.py reopen`），"
                     "再继续 spec 阶段——spec 与叙事件都按本轮登记的那批料写"
                     + closed_tail(feature_root, contract, manifest))
-        step, action = spec_stage_step(feature_root)
+        step, action = design_stage_step(feature_root, contract)
         return step, action + closed_tail(feature_root, contract, manifest)
 
     current = contract["rounds"][-1]

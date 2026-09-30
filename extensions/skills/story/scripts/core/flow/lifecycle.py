@@ -9,13 +9,39 @@ import subprocess
 from pathlib import Path
 
 from flow.state import (
-    CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_REGISTERED, ledger_digest, load, log,
-    now, require, round_gates, save)
+    CORE_DIR, DESIGN, FlowError, REVIEW, S4_STEPS, STORY, STORY_REGISTERED, last_gate, ledger_digest, load, log,
+    now, require, round_gates, save, stage_of)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
 from flow import asks
 from flow.update import record_baseline
 from flow.meetings import topic_digest
 from materials import meeting
+
+
+#: 设计交接之后等设计的几步与成文的几步（路由给出），派生状态按它们归类
+DESIGN_STEPS = ("design_blueprint", "fix_blueprint", "design_projection")
+WRITING_STEPS = ("story_skeleton", "story_chapters", "register_story")
+
+
+def derived_state(contract: dict | None, step: str) -> str:
+    """需求现在处在哪一态：由契约与路由的同一次判断派生，不另存副本。
+
+    gathering 材料未确认；scope_pending 范围未定；input_ready 可以冻结输入；waiting_for_design 输入已登记、
+    蓝图没有或未准入（含投影无效）；ready_to_write 可以成文；needs_sync 已登记的输入或成文与现状不符；
+    registered 成文已登记且与现状一致。update 的两段另由 `update` 字段给出。
+    """
+    if not contract or not contract.get("rounds"):
+        return "gathering"
+    status = contract.get("status")
+    if status == "story_written":
+        return "needs_sync" if step == "register_story" else "registered"
+    if status == "complete":
+        return ("waiting_for_design" if step in DESIGN_STEPS
+                else "ready_to_write" if step in WRITING_STEPS else "needs_sync")
+    confirmed = last_gate(round_gates(contract), "material_scope")
+    if not confirmed or confirmed.get("outcome") != "accepted":
+        return "gathering"
+    return "input_ready" if step in S4_STEPS else "scope_pending"
 
 
 def cmd_status(feature_root: Path) -> dict:
@@ -56,6 +82,10 @@ def cmd_status(feature_root: Path) -> dict:
         "split": contract.get("split", {}).get("decided"),
         "design": bool((feature_root / Path(*DESIGN)).is_file()),
         "archived": bool(contract.get("archived")),
+        "state": derived_state(contract, step),
+        **({"update": stage_of(contract)} if stage_of(contract).startswith("update_") else {}),
+        "design_binding": contract.get("design_binding"),
+        "input": contract.get("input"),
         "material_state": ({"pending": state["pending"], "changed": state["changed"]}
                            if state else None),
         # 会议话题在这里机械枚举一次：全部版本、全部话题，含不属于本需求与归属判不准的。
