@@ -1,113 +1,50 @@
 /**
- * 交付门 —— 真实审查的回执、交付前的判据与通过之后的两条路。
+ * 交付门 —— 交付前核成文依据与独立审查，以及通过之后的交付选择。
  *
- * 按**动作**分而不按文件在不在推断阶段：登记前跑的是普通 check，那时读者审查还没发生。
+ * 按**动作**分而不按文件在不在推断阶段：登记前跑的是普通 check，那时独立审查还没发生。
  */
-import { spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { isSystemRequirement, readJson } from './context.mjs';
-import { storyReviewProblems } from '../../../../../hooks/shared/verifier-report.mjs';
-
-/**
- * 框架回执的入口 —— 直接用 node 起 framework 自己那份 ts-node，不经 shell。
- *
- * `npx` 在 Windows 上是 `npx.cmd`，而 Node 从 18.20 / 20.12 起拒绝不带 shell 地起 `.cmd`
- * （`EINVAL`）；带 shell 又要为参数里的空格与引号操心。装 ts-node 的是 framework/harness
- * 自己，路径解析得到就直接把它当普通 js 跑，两边都不用碰。
- */
-function receiptRunner(harness) {
-  try {
-    const require = createRequire(import.meta.url);
-    return require.resolve('ts-node/dist/bin.js', { paths: [harness] });
-  } catch {
-    return null;
-  }
-}
+import { basisDriftProblems, designSource } from './design-source.mjs';
 
 /**
  * 交付门通过之后往哪走 —— 打印这一问的选项，**不替人选**。
  *
- * 系统需求问「归档送审 / 进入 plan」；本地单没有归档，只剩 plan。评审人的表态之后由 `/story update` 承接。
+ * 系统需求可以送审（归档）或先送审再继续；本地单没有送审，只有本地交付。已有授权覆盖的直接用，
+ * 业务审批与普通实施授权分开。评审人的表态之后由 `/story update` 承接。
  * 这是脚本给的确定性文本，与 `story_flow.py status` 同一口径。
  */
 export function deliveryNextSteps(ctx) {
   const remote = readJson(ctx.flowPath, null) !== null && isSystemRequirement(ctx.args.feature);
-  const rows = remote
-    ? ['  1  归档送审：`/story archive <AR>`',
-      '  2  进入 plan：按 framework 的 `phase.next_step` 走']
-    : ['  本地单没有归档：进入 plan，按 framework 的 `phase.next_step` 走。'];
-  return ['', '[story-build check] 交付门通过。按停等表问人一次：', '',
-    ...rows, ''].join('\n');
+  const rows = [
+    ...(remote ? ['  - 送审：`/story archive <AR>`，归档后评审人在需求系统表态'] : []),
+    '  - 完整设计交接：在已准入蓝图上按原生 change-unit-progression 完成施工单位设计准备，不启动施工',
+    '  - 完整实现：在授权范围内接续设计准备与原生交互式开发，按原生结果推进',
+    '  - 暂不推进：停在这里，之后从 `story_flow.py status` 续上',
+  ];
+  return ['', '[story-build check] 交付门通过。按停等表问人一次交付选择：', '',
+    ...rows, ...(remote ? [] : ['  （本地单没有送审）']), ''].join('\n');
 }
 
 /**
- * 交付门 —— 阶段闭环成立了吗，读者审查这一项写成形态了吗。
+ * 交付门 —— 成文依据还是登记时那一份吗，独立审查给出可消费的结论了吗。
  *
- * **闭环由框架判，扩展不重判**：报告在不在、终态块回显的 subject 对不对、
- * verdict 与 blocker 数一致不一致、verifier 派没派，都是 `check-receipt` 的判断。
- * 这里只跑它一次，退出码非 0 就把它的话原样带出来。
- *
- * 回执通过之后才轮到形态：读者审查那一项在汇总表里有没有一行、证据空不空、
- * 非 PASS 时两类结论齐不齐。**回执通过而这一项 FAIL 是不该出现的**——它是 BLOCKER 级，
- * FAIL 时 verdict 必为 FAIL、回执必然过不去；真出现了，交付照样拦。
- *
- * 跑不起来不算通过：找不到框架、起不了 ts-node 都如实报出来，让人自己跑一次。
- * 本宿主没登记审查员时读者审查这一项判不了——那不是失败，但**要出声**：
- * 静默通过的话，没经过审查的 story 就这么交出去了，事后没人看得出来。
+ * 设计来源不成立、登记之后蓝图 / 输入 / 知识变了，都拦：登记说的已经不是现在这份。
+ * 独立人读审查的原生调用接通之前，审查结论取不到——那不是失败，但**要出声**：静默通过的话，
+ * 没经过审查的 story 就这么交出去了，事后没人看得出来。有既有明确授权按授权交付，没有就请人选。
  *
  * @returns {{problems: string[], notes: string[]}}
  */
 export function deliveryProblems(ctx) {
-  const harness = path.join(ctx.projectRoot, 'framework', 'harness');
-  const receipt = path.join(harness, 'scripts', 'check-receipt.ts');
-  const manual = 'cd framework/harness && npx ts-node scripts/check-receipt.ts '
-    + `--feature ${ctx.args.feature} --phase spec`;
-  const fail = (msg) => ({ problems: [msg], notes: [] });
-  if (!fs.existsSync(receipt)) {
-    return fail('framework/harness/scripts/check-receipt.ts：找不到，交付门跑不了——'
-      + '闭环判定归框架，判不了按未通过计');
+  const flow = readJson(ctx.flowPath, null);
+  if (flow?.status !== 'story_written') {
+    return { problems: ['还没登记成文——交付的是登记过的那一份，先跑 `story_flow.py story` 登记'], notes: [] };
   }
-  const runner = receiptRunner(harness);
-  if (!runner) {
-    return fail('framework/harness 里没有 ts-node，交付门跑不了——'
-      + `回执由这份 ts-node 起 check-receipt.ts 判（等价命令 \`${manual}\`），判不了按未通过计`);
-  }
-  const r = spawnSync(process.execPath,
-    [runner, path.join('scripts', 'check-receipt.ts'),
-      '--feature', ctx.args.feature, '--phase', 'spec'],
-    { cwd: harness, encoding: 'utf-8', timeout: 300000, windowsHide: true });
-  if (r.error) {
-    return fail(`check-receipt 起不来（${r.error.message}），交付门跑不了——等价命令是 \`${manual}\`，`
-      + '判不了按未通过计');
-  }
-  if (r.status !== 0) {
-    const say = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split(/\r?\n/)
-      .filter(Boolean).slice(-12).join(' / ');
-    return fail(`spec 阶段回执：check-receipt 未通过（${say || `退出码 ${r.status}`}）——交付门以框架判定的 spec 阶段闭环为前提`);
-  }
-
-  const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
-  if (review.status === 'NOT_APPLICABLE') {
-    // 本宿主没有登记审查员：沿用户批准记一笔放行，但**如实说没审过**——
-    // 说成「语义 PASS」的话，这份 story 会带着一句没发生过的结论交出去。
-    return { problems: [], notes: [`story 未经读者语义审查即交付：${review.detail}`] };
-  }
-  if (review.problems.length) return { problems: review.problems, notes: [] };
-  // 报告的**结构**没问题不等于**审查判它过了**：交付门看审查自己的结论与阻断项。
-  // 只有阻断项才拦；判 WARN 而没有阻断项时放行，建议项记进 notes（`phases/spec.md`「闭环」）。
-  const blocking = review.blocking ?? [];
-  if (review.reviewVerdict === 'PASS' || (review.reviewVerdict === 'WARN' && !blocking.length)) {
-    const advisories = (review.advisories ?? []).map(a => `读者审查建议：${typeof a === 'string' ? a : JSON.stringify(a)}`);
-    return { problems: [], notes: [...(review.notes ?? []), ...advisories] };
-  }
+  const source = designSource(ctx);
+  const drift = source.problems.length ? source.problems : basisDriftProblems(ctx);
+  if (drift.length) return { problems: drift, notes: [] };
   return {
-    problems: [`读者语义审查报告：判 ${review.reviewVerdict ?? '（取不到）'}，有 ${blocking.length} 条阻断问题`
-      + (blocking.length ? `（${blocking.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join('；')}）` : '')
-      + '——交付门在审查判 PASS、或判 WARN 且没有阻断项时放行；有阻断项之后怎么走见 `phases/spec.md`「闭环」表「有阻断项」那一行'],
-    notes: [],
+    problems: [],
+    notes: ['这份 Story 未经独立人读审查：独立审查的原生调用尚未接通，审查结论取不到。'
+      + '有既有明确授权就按授权交付并如实说明未审；没有就请人选择，不写成审查通过'],
   };
 }
-
-

@@ -13,6 +13,7 @@ import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import {
   appendixChapter, appendixStructureProblems, appendixZoneProblems,
 } from './appendix.mjs';
+import { basisDriftProblems } from './design-source.mjs';
 import {
   activeKnowledgeEntries, fail, ledgerDigestProblems, readText, requireLedgers,
   strayFileProblems,
@@ -77,7 +78,7 @@ export function cmdCheck(ctx) {
   }
 
   mark('⓪b 台账没在登记之后被换过');
-  problems.push(...ledgerDigestProblems(ctx));
+  problems.push(...ledgerDigestProblems(ctx), ...basisDriftProblems(ctx));
 
   mark('⓪c 写作设计');
   // 章是照写作设计写的：设计读不了，下面按章核的选定结构也就无从谈起。

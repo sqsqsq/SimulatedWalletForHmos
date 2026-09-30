@@ -1,30 +1,15 @@
-"""读者审查的报告读得出来吗、交付门拦不拦得住 —— 审了没有、写成形态没有。
+"""交付门拦不拦得住、读者审查的任务送不送得到。
 
-**逐行裁决的核对早已退场**：那条路径要求 verifier 把每条判定写成一行、每行附一段够长的
-引文，门禁再逐行核键与引文。它逼出的是把清单里的字抄进证据列的回声，而不是判断。
-留下的是两件仍然确定的事：
+## 交付门
 
-  ① 报告在哪、读不读得出来（落点由 harness 写在 `summary.verifier_report`）；
-  ② 读者审查那一项在汇总表里有没有一行、证据空不空、非 PASS 时两类结论齐不齐。
+`check --deliver` 核的是**登记过的那一份**：没登记不交付；登记之后蓝图、交给设计的输入或激活知识变了，
+登记说的就不是现在这份，拦下并指回重新登记。独立人读审查的原生调用接通之前，审查结论取不到——
+照实说这份 Story 未经审查，不写成通过；通过之后给出一次交付选择（本地单没有送审）。
 
-报几条、报得对不对由人抽查，门禁判不了。
+## 送达与任务定义
 
-## 报告是调用方写的
-
-派 verifier 的那个 agent 把子代理的回复**原样全文**写到 `summary.verifier_report`
-指向的路径。身份归框架：文件在不在、终态块回显的 subject 对不对、verdict 与
-blocker 数一致不一致，都是 `check-receipt` 的判断，扩展不重复核。
-
-## 交付门这一份测到哪儿
-
-`check --deliver` 先跑 `check-receipt`，通过之后才核报告形态。这里测的是**接线**
-（普通 check 不碰它；框架不在时如实报「跑不了」而不是当通过）与**报告形态判据本身**。
-「回执真的绿了之后交付门放行」要一次真实闭环才有对象，那是 CLI 实跑的判据。
-
-## 送达与任务定义，比结果块更早的两道
-
-判据没进 verifier 的任务清单，或者任务里没有一条问「材料登记的每张图用了没有」，
-落盘那一步就没有对象。这两道也在这一份里锚住。
+判据没进审查者的任务清单，或者任务里没有一条问「材料登记的每张图用了没有」，
+审查那一步就没有对象。这两道也在这一份里锚住。
 """
 import json
 import shutil
@@ -33,15 +18,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from ext_workspace import link_harness_yaml, DEV_EXT
+from designed_fixture import DRAFT, designed_copy
+import design_kit
 
 REPO = Path(__file__).resolve().parents[2]
-MODULE = DEV_EXT / "hooks" / "shared" / "verifier-report.mjs"
 STORY_BUILD = DEV_EXT / "skills/story/scripts/core/story-build.mjs"
 CONTRACT = DEV_EXT / "skills/story/contracts/story-chapters.json"
 FEATURE = "RT90001"
-
-SUBJECT = "a" * 64
-REPORT_REL = f"doc/features/SMPFEAT/spec/reports/verifier.report.{SUBJECT}.md"
 
 STORY_MD = """# 甲需求（SMPFEAT）
 
@@ -50,518 +33,59 @@ STORY_MD = """# 甲需求（SMPFEAT）
 用户现在拿不到凭据。
 """
 
-DRIVER = """
-const [, , modulePath, projectRoot, feature, phase] = process.argv;
-const mod = await import(modulePath);
-process.stdout.write(JSON.stringify(mod.storyReviewProblems(projectRoot, feature, phase)));
-"""
+class TheDeliveryGateChecksTheRegisteredBasis(unittest.TestCase):
+    """交付门只在 `--deliver` 起作用：交付的是登记过的那一份，依据变了要拦，没经过独立审查要照实说。"""
 
-# 汇总表：每项一行，PASS 也列，最后一格是一行证据。
-def row(status: str, evidence: str = "逐章过了背景、范围、流程、异常、验收") -> str:
-    return (
-        "| id | status | severity | 证据 |\n"
-        "|---|---|---|---|\n"
-        "| acceptance_testable | PASS | BLOCKER | §8 每条都可判 |\n"
-        f"| story_reader_review | {status} | BLOCKER | {evidence} |\n"
-    )
-
-
-DETAILS = """
-```yaml
-verification_result:
-  checks:
-    - id: story_reader_review
-      status: FAIL
-      details:
-        blocking_findings:
-          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口
-        advisories: []
-```
-"""
-
-DETAILS_MISSING_ADVISORIES = DETAILS.replace("        advisories: []\n", "")
-
-PER_UNIT_TABLE = """
-| 单元键 | 裁决 | 引文 |
-|---|---|---|
-| PRD:7:2c7fc380 | 讲清 | 用户现在拿不到凭据 |
-"""
-
-
-class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
-    """报告的落点只有一个来源：harness 写的 `summary.verifier_report`。"""
-
-    def _run(self, *, summary, report: str | None,
-             extra: dict[str, str] | None = None) -> dict:
-        """summary=None 表示 harness 还没跑过；extra 是报告目录里另放的文件。"""
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            reports = root / "doc" / "features" / "SMPFEAT" / "spec" / "reports"
-            reports.mkdir(parents=True)
-            (root / "doc/features/SMPFEAT/AR").mkdir(parents=True)
-            (root / "doc/features/SMPFEAT/AR/story.md").write_text(STORY_MD, encoding="utf-8")
-            if summary is not None:
-                (reports / "summary.json").write_text(
-                    json.dumps(summary, ensure_ascii=False), encoding="utf-8")
-            if report is not None:
-                (root / REPORT_REL).write_text(report, encoding="utf-8")
-            for name, text in (extra or {}).items():
-                (reports / name).write_text(text, encoding="utf-8")
-
-            driver = root / "driver.mjs"
-            driver.write_text(DRIVER, encoding="utf-8")
-            r = subprocess.run(
-                ["node", str(driver), MODULE.as_uri(), str(root), "SMPFEAT", "spec"],
-                capture_output=True, text=True, encoding="utf-8",
-            )
-            self.assertEqual(r.returncode, 0, f"driver 挂了：{r.stderr[:600]}")
-            return json.loads(r.stdout)
-
-    def run_with(self, report: str | None) -> dict:
-        return self._run(summary={"verifier_report": REPORT_REL}, report=report)
-
-    def test_before_harness_runs_it_is_not_applicable(self) -> None:
-        """没有 summary = harness 还没跑——那不是通过，是还轮不到判。"""
-        out = self._run(summary=None, report=None)
-        self.assertEqual("NOT_APPLICABLE", out["status"])
-        self.assertEqual([], out["problems"])
-
-    def test_a_host_without_a_reviewer_is_not_applicable(self) -> None:
-        """summary 在而没有落点 = 本宿主没登记审查员：如实披露，不当缺件。"""
-        out = self._run(summary={"phase": "spec"}, report=None)
-        self.assertEqual("NOT_APPLICABLE", out["status"])
-        self.assertIn("没有登记审查员", out["detail"])
-
-    def test_a_declared_landing_with_no_file_fails(self) -> None:
-        """落点写了、文件不在：推不出回复存在——报错说清落点只认对当前请求的原样全文回复。"""
-        out = self.run_with(None)
-        self.assertEqual("FAIL", out["status"])
-        said = out["problems"][0]
-        self.assertIn("当前审查对象还没有报告", said)
-        self.assertIn("落点只认 verifier 对当前请求", said)
-        self.assertIn("当前审查只认对当前请求的原样回复", said)
-
-    def test_a_prior_review_closure_says_the_current_object_was_not_reviewed(self) -> None:
-        """沿用历史审查收口时，照 summary 说出当前对象没有独立审查、沿用的是谁，不当成通过。"""
-        out = self._run(summary={
-            "verifier_report": REPORT_REL, "verifier_subject_id": SUBJECT,
-            "verifier_request": f"doc/features/SMPFEAT/spec/reports/verifier.request.{SUBJECT}.json",
-            "verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": "b" * 64,
-                                 "current_subject_id": SUBJECT,
-                                 "current_material_not_reverified": ["lifecycle_hook_fragments"]},
-        }, report=None)
-        self.assertEqual("FAIL", out["status"])
-        self.assertIn("当前对象未独立审查", out["detail"])
-        said = out["problems"][0]
-        self.assertIn("按 completed_with_prior_review 收口", said)
-        self.assertIn("没有独立审查，沿用的是 bbbbbbbbbbbb", said)
-        self.assertIn("lifecycle_hook_fragments", said)
-        self.assertIn(f"verifier.request.{SUBJECT}.json", said)
-
-
-
-class ACorrectionMayCarryTheReviewedPass(TheReportIsReadAtItsDeclaredLanding):
-    """当前对象没有报告时的分流：只有修正重验、且沿用的历史报告就是那个对象的有效 PASS，
-    才按沿用交付，并留一笔「当前材料未独立重审」；其余都按未完成报。
-    update 里改了业务的阶段由 `update --action close` 核当前报告，交付门不再按「update 开着」一律拦。"""
-
-    PRIOR = "b" * 64
-
-    def summary(self, signals=("script_revalidated",)) -> dict:
-        return {"verifier_report": REPORT_REL, "verifier_subject_id": SUBJECT, "verdict": "PASS",
-                "closure_status": "closed", "readiness_signals": [{"id": s} for s in signals],
-                "verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": self.PRIOR,
-                                     "current_subject_id": SUBJECT,
-                                     "current_material_not_reverified": ["lifecycle_hook_fragments"]}}
-
-    def history(self, subject: str | None = None, verdict: str = "PASS", row: str = "PASS") -> dict[str, str]:
-        return {f"verifier.report.{self.PRIOR}.md": row_text(row) + "\n<!-- maison-verifier-result:v1 -->\n"
-                f"verifier_subject_id: {subject or self.PRIOR}\nverdict: {verdict}\nblocker_count: 0\n"
-                "<!-- /maison-verifier-result:v1 -->\n"}
-
-    def test_a_correction_with_a_valid_reviewed_pass_is_carried_with_a_note(self) -> None:
-        out = self._run(summary=self.summary(), report=None, extra=self.history())
-        self.assertEqual("PASS", out["reviewVerdict"])
-        self.assertIn("当前材料未独立重审", out["notes"][0])
-        self.assertIn("lifecycle_hook_fragments", out["notes"][0])
-
-    def test_a_missing_or_failed_history_is_not_carried(self) -> None:
-        for name, extra in (("缺席", {}), ("FAIL", self.history(verdict="FAIL")),
-                            ("对象不符", self.history(subject="c" * 64)), ("读者审查未过", self.history(row="FAIL"))):
-            with self.subTest(name):
-                out = self._run(summary=self.summary(), report=None, extra=extra)
-                self.assertEqual("FAIL", out["status"])
-                self.assertEqual("沿用的历史审查无效", out["detail"])
-
-    def test_without_the_revalidate_mark_it_cannot_be_confirmed(self) -> None:
-        out = self._run(summary=self.summary(signals=()), report=None, extra=self.history())
-        self.assertEqual("FAIL", out["status"])
-        self.assertEqual("当前对象未独立审查", out["detail"])
-
-    def test_the_update_state_does_not_decide_the_carry(self) -> None:
-        """交付门不读流程契约判 update 开没开：沿用只看修正重验与历史报告。"""
-        out = self._run(summary=self.summary(), report=None, extra=self.history())
-        self.assertEqual("PASS", out["reviewVerdict"], out)
-        self.assertIn("当前材料未独立重审", out["notes"][0])
-
-
-def row_text(status: str) -> str:
-    return row(status) + ("" if status == "PASS" else DETAILS)
-
-class TheSummaryRowIsTheConclusion(unittest.TestCase):
-    """上游的输出契约：汇总表每项一行（PASS 也列），明细只列非 PASS。"""
-
-    def _run(self, report: str) -> dict:
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            reports = root / "doc" / "features" / "SMPFEAT" / "spec" / "reports"
-            reports.mkdir(parents=True)
-            (reports / "summary.json").write_text(
-                json.dumps({"verifier_report": REPORT_REL}), encoding="utf-8")
-            (root / REPORT_REL).write_text(report, encoding="utf-8")
-            driver = root / "driver.mjs"
-            driver.write_text(DRIVER, encoding="utf-8")
-            r = subprocess.run(
-                ["node", str(driver), MODULE.as_uri(), str(root), "SMPFEAT", "spec"],
-                capture_output=True, text=True, encoding="utf-8",
-            )
-            self.assertEqual(r.returncode, 0, f"driver 挂了：{r.stderr[:600]}")
-            return json.loads(r.stdout)
-
-    def test_a_pass_row_alone_is_enough(self) -> None:
-        """判 PASS 的项按契约不写明细——要求它写就是给本项设例外，正常 PASS 会被拒。"""
-        out = self._run(row("PASS"))
-        self.assertEqual("PASS", out["status"], out)
-        self.assertEqual([], out["problems"])
-
-    def test_a_report_without_the_row_fails(self) -> None:
-        out = self._run("| id | status | severity | 证据 |\n|---|---|---|---|\n"
-                        "| acceptance_testable | PASS | BLOCKER | §8 每条都可判 |\n")
-        self.assertEqual("FAIL", out["status"])
-        self.assertIn("汇总表里没有", out["problems"][0])
-
-    def test_an_empty_evidence_cell_fails(self) -> None:
-        """空证据与没审长得一样。"""
-        for empty in ("", "—"):
-            with self.subTest(evidence=empty or "(空)"):
-                out = self._run(row("PASS", empty))
-                self.assertEqual("FAIL", out["status"], out)
-                self.assertIn("证据格", out["problems"][0])
-
-    def test_a_non_pass_row_needs_both_keys(self) -> None:
-        out = self._run(row("FAIL") + DETAILS)
-        self.assertEqual("PASS", out["status"], f"带两键的 FAIL 报告解析不过：{out}")
-
-    def test_a_three_column_row_is_not_evidence(self) -> None:
-        """少一列时最后一格是 severity，非空——按「取最后一格」判会把它当证据放过去。"""
-        out = self._run("| id | status | severity |\n|---|---|---|\n"
-                        "| story_reader_review | PASS | BLOCKER |\n")
-        self.assertEqual("FAIL", out["status"], out)
-        self.assertIn("少了证据列", out["problems"][0])
-
-    def test_another_checks_keys_do_not_count_as_this_ones(self) -> None:
-        """两个键要在**这一条自己**的 details 下——全文搜的话别项的键会算到它头上。"""
-        borrowed = (
-            "\n```yaml\n"
-            "verification_result:\n"
-            "  checks:\n"
-            "    - id: other_check\n"
-            "      status: FAIL\n"
-            "      details:\n"
-            "        blocking_findings: []\n"
-            "        advisories: []\n"
-            "    - id: story_reader_review\n"
-            "      status: FAIL\n"
-            "      details: |\n"
-            "        第 5 章与第 8 章对不上。\n"
-            "```\n")
-        out = self._run(row("FAIL") + borrowed)
-        self.assertEqual("FAIL", out["status"], f"借了别项的键就放行：{out}")
-        self.assertIn("它自己的明细里缺", out["problems"][0])
-
-    def test_the_fix_hint_never_asks_the_author_to_write_the_report(self) -> None:
-        """读报错的是作者，而报告必须是子代理回复的原样落盘——叫他补就是叫他伪造证据。"""
-        reports = {
-            "缺行": "| id | status | severity | 证据 |\n|---|---|---|---|\n",
-            "证据空": row("PASS", ""),
-            "缺键": row("FAIL"),
-        }
-        for name, report in reports.items():
-            with self.subTest(shape=name):
-                out = self._run(report)
-                self.assertEqual("FAIL", out["status"])
-                self.assertIn("不要自己补", out["problems"][0])
-                self.assertIn("再投给 verifier", out["problems"][0])
-
-    def test_a_non_pass_row_missing_a_key_fails(self) -> None:
-        out = self._run(row("FAIL") + DETAILS_MISSING_ADVISORIES)
-        self.assertEqual("FAIL", out["status"])
-        self.assertIn("advisories", out["problems"][0])
-
-    def test_key_names_outside_the_fence_are_not_the_keys(self) -> None:
-        """围栏外的附注里出现键名不算数——那是在讲这两个键，不是这一项的结论。"""
-        report = row("FAIL") + (
-            "\n```yaml\n"
-            "verification_result:\n"
-            "  checks:\n"
-            "    - id: story_reader_review\n"
-            "      status: FAIL\n"
-            "      details: {}\n"
-            "```\n"
-            "\n"
-            "附注：blocking_findings 与 advisories 的写法见任务书。\n")
-        out = self._run(report)
-        self.assertEqual("FAIL", out["status"], f"围栏外的字样被当成了键：{out}")
-        self.assertIn("它自己的明细里缺", out["problems"][0])
-
-    def test_a_prose_details_is_not_two_conclusions(self) -> None:
-        """`details:` 是一段话时，里面写着「未提供 blocking_findings 和 advisories」
-        恰恰说明这两类结论**没有**——子串搜却会判它有。
-        """
-        report = row("FAIL") + (
-            "\n```yaml\n"
-            "verification_result:\n"
-            "  checks:\n"
-            "    - id: story_reader_review\n"
-            "      status: FAIL\n"
-            "      details: |\n"
-            "        未提供 blocking_findings 和 advisories，只写了一段说明。\n"
-            "```\n")
-        out = self._run(report)
-        self.assertEqual("FAIL", out["status"], f"一段散文被当成了两类结论：{out}")
-        self.assertIn("它自己的明细里缺", out["problems"][0])
-
-    def test_a_details_entry_at_the_end_of_the_yaml_still_reads(self) -> None:
-        """本项排在末尾、后面跟着 `summary:` 时，范围止于围栏，键照样读得出来。"""
-        report = row("FAIL") + (
-            "\n```yaml\n"
-            "verification_result:\n"
-            "  checks:\n"
-            "    - id: story_reader_review\n"
-            "      status: FAIL\n"
-            "      details:\n"
-            "        blocking_findings:\n"
-            "          - 第 5 章与第 8 章对不上\n"
-            "        advisories: []\n"
-            "```\n")
-        out = self._run(report)
-        self.assertEqual("PASS", out["status"], f"正常的 FAIL 明细被拒了：{out}")
-
-    def with_checks(self, *blocks: str) -> str:
-        """一份带 YAML 结构块的报告；`blocks` 是 `checks` 下的几条，按给的顺序排。"""
-        return row("FAIL") + ("\n```yaml\nverification_result:\n  checks:\n"
-                              + "".join(blocks) + "```\n")
-
-    #: 读者审查那一条，写全了两类结论。
-    GOOD = ("    - id: story_reader_review\n"
-            "      status: FAIL\n"
-            "      details:\n"
-            "        blocking_findings:\n"
-            "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n"
-            "        advisories: []\n")
-
-    #: 别的一条，正文是块标量——真实报告里几乎每条都长这样。
-    OTHER = ("    - id: visual_handoff_semantics\n"
-             "      status: WARN\n"
-             "      details: |\n"
-             "        §4 说界面规格以产品原稿为准，而 handoff 块声明没有参考图，\n"
-             "        两处对不上；authoritative_refs 是空数组。\n"
-             "      suggestion: |\n"
-             "        把参考图填进 authoritative_refs，或说明为什么维持降级。\n")
-
-    def test_it_reads_wherever_this_item_sits(self) -> None:
-        """排最前、夹在中间、排最后都读得到——位置不该改变结论。
-
-        此前是切片读：从这一条划到下一条或围栏结束。**别的条目里的块标量会把范围搅乱**，
-        于是同一份报告换个顺序就判出不同结果，而作者写的是合法 YAML。
-        """
-        for name, report in (
-            ("排最前", self.with_checks(self.GOOD, self.OTHER)),
-            ("夹中间", self.with_checks(self.OTHER, self.GOOD, self.OTHER)),
-            ("排最后", self.with_checks(self.OTHER, self.GOOD)),
-        ):
-            with self.subTest(位置=name):
-                out = self._run(report)
-                self.assertEqual("PASS", out["status"], f"{name}时读不出来：{out}")
-
-    def test_a_block_scalar_in_this_item_does_not_hide_its_keys(self) -> None:
-        """本条自己也有块标量字段时，两个键照样读得出来。"""
-        item = self.GOOD.replace(
-            "        advisories: []\n",
-            "        advisories: []\n      suggestion: |\n        先补第 8 章那条验收。\n")
-        out = self._run(self.with_checks(self.OTHER, item))
-        self.assertEqual("PASS", out["status"], out)
-
-    def test_a_multi_line_advisory_is_still_a_list_item(self) -> None:
-        """一条 advisory 写成多行就是 `- |`，那是合法 YAML。
-
-        不认它的话，读取器的局限又一次被说成作者写错了——他会被要求重写报告。
-        """
-        item = ("    - id: story_reader_review\n"
-                "      status: WARN\n"
-                "      details:\n"
-                "        blocking_findings: []\n"
-                "        advisories:\n"
-                "          - |\n"
-                "            第 5 章说未实名可下单，\n"
-                "            第 8 章验收里没有这个入口。\n"
-                "          - 图 3 前面没有承接句\n")
-        out = self._run(self.with_checks(self.OTHER, item))
-        self.assertEqual("PASS", out["status"], f"多行 advisory 被判成读不出结构：{out}")
-
-    def test_yaml_that_cannot_be_parsed_is_said_so(self) -> None:
-        """读不出结构与「缺这两个键」是两回事。
-
-        说成缺键的话，作者会去补两个已经写着的键，补完还报，他只能去翻这个脚本。
-        """
-        broken = self.with_checks(
-            "    - id: story_reader_review\n"
-            "      status: FAIL\n"
-            "      details:\n"
-            "        blocking_findings: []\n"
-            "           advisories: []\n")     # 缩进对不上，整块读不出结构
-        out = self._run(broken)
-        self.assertEqual("FAIL", out["status"], out)
-        self.assertIn("读不出来", out["problems"][0], out["problems"][0])
-        self.assertNotIn("明细里缺", out["problems"][0], "读不出结构被说成了缺键")
-
-class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
-    """交付门只在 `--deliver` 起作用，而且跑不起来不算通过。"""
+    FIXTURE = REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
-        (self.root / "doc").mkdir(parents=True)
-        shutil.copytree(DEV_EXT, self.root / "doc" / "extensions",
-                        ignore=shutil.ignore_patterns("__pycache__", ".adapt-*", "node_modules"))
-        link_harness_yaml(self.root)
-        # 台账齐备，check 才走得到后面的判据；这一份 story 本身合不合格不是这里要判的。
-        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
-        src.mkdir(parents=True)
-        (src.parent / "story.md").write_text(STORY_MD, encoding="utf-8")
-        (src / "decisions.json").write_text("[]", encoding="utf-8")
-        shutil.copy2(REPO / "test/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
-                     "/REQ-DEMO/AR/story-src/story-template.md", src / "story-template.md")
+        designed_copy(self.FIXTURE, "REQ-DEMO", DRAFT, self.root)
+        self.flow_path = self.root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
 
     def check(self, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["node", str(STORY_BUILD), "check", "--feature", FEATURE,
+            ["node", str(STORY_BUILD), "check", "--feature", "REQ-DEMO",
              "--project-root", str(self.root), *extra],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
 
+    def register(self) -> None:
+        flow = json.loads(self.flow_path.read_text(encoding="utf-8"))
+        flow["status"] = "story_written"
+        flow["story_basis"] = design_kit.registered_basis(self.root, "REQ-DEMO")
+        self.flow_path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def test_plain_check_never_touches_the_delivery_gate(self) -> None:
-        """登记前与返修中跑的是普通 check：那时读者审查还没发生，判它只会恒定不适用。"""
+        """登记前与返修中跑的是普通 check：那时独立审查还没发生。"""
         out = self.check()
-        self.assertNotIn("交付门", out.stdout + out.stderr,
-                         "普通 check 去判了还没发生的事")
+        self.assertNotIn("交付门", out.stdout + out.stderr, "普通 check 去判了还没发生的事")
 
-    def test_a_repo_without_the_framework_is_not_a_pass(self) -> None:
-        """闭环归框架判；框架不在就判不了交付，别把「跑不了」当通过。"""
+    def test_an_unregistered_story_is_not_delivered(self) -> None:
         out = self.check("--deliver")
         self.assertNotEqual(0, out.returncode)
-        self.assertIn("check-receipt.ts", out.stderr,
-                      f"交付门没接到框架回执上：{out.stderr[-600:]}")
+        self.assertIn("还没登记成文", out.stdout + out.stderr)
 
-    def test_the_gate_really_spawns_the_receipt(self) -> None:
-        """门要真的把回执跑起来——起不来的话它「报了个跑不了」，等于没有门。
+    def test_a_registered_story_passes_and_says_it_was_not_reviewed(self) -> None:
+        """审查结论取不到时照实说未审，给出交付选择；本地单没有送审。"""
+        self.register()
+        out = self.check("--deliver")
+        text = out.stdout + out.stderr
+        self.assertEqual(0, out.returncode, text)
+        self.assertIn("未经独立人读审查", text)
+        self.assertNotIn("PASS", text)
+        for choice in ("完整设计交接", "完整实现", "暂不推进"):
+            self.assertIn(choice, text)
+        self.assertNotIn("/story archive", text, "本地单没有送审")
 
-        `npx` 在 Windows 上是 `npx.cmd`，Node 18.20 / 20.12 之后拒绝不带 shell 地起 `.cmd`。
-        这里放一个替身 runner：断言它被 node 起起来了、它的话被原样带出来。
-        替身站的是 ts-node 的位置——要回归的是**怎么起**，不是 ts-node 本身。
-        """
-        self._stub_receipt(1, "替身回执：这个阶段没闭环")
+    def test_a_blueprint_revised_after_registration_blocks(self) -> None:
+        self.register()
+        design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, "本需求没有任何上报动作", "本需求只在提交时上报一次")
         out = self.check("--deliver")
         self.assertNotEqual(0, out.returncode)
-        self.assertIn("替身回执", out.stderr,
-                      f"回执没被起起来，门只报了个「跑不了」：{out.stderr[-600:]}")
-        self.assertNotIn("交付门跑不了", out.stderr)
+        self.assertIn("登记之后", out.stdout + out.stderr)
 
-    def _stub_receipt(self, exit_code: int, say: str) -> None:
-        """替身回执：站 ts-node 的位置，按给定退出码与话术回。"""
-        harness = self.root / "framework" / "harness"
-        (harness / "scripts").mkdir(parents=True, exist_ok=True)
-        (harness / "scripts" / "check-receipt.ts").write_text("", encoding="utf-8")
-        dist = harness / "node_modules" / "ts-node" / "dist"
-        dist.mkdir(parents=True, exist_ok=True)
-        (dist.parent / "package.json").write_text('{"name":"ts-node","version":"0.0.0"}',
-                                                  encoding="utf-8")
-        (dist / "bin.js").write_text(
-            f"process.stderr.write({say!r});process.exit({exit_code});", encoding="utf-8")
-
-    def test_a_host_without_a_reviewer_says_so_instead_of_passing_silently(self) -> None:
-        """回执过了、本宿主没审查员——不拦，但要出声。
-
-        静默通过的话，没经过读者审查的 story 就这么交出去了，事后没人看得出来。
-        """
-        self._stub_receipt(0, "回执通过")
-        reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
-        reports.mkdir(parents=True)
-        (reports / "summary.json").write_text(json.dumps({"phase": "spec"}), encoding="utf-8")
-
-        out = self.check("--deliver")
-        self.assertIn("未经读者语义审查即交付", out.stdout,
-                      f"降级没出声：{out.stdout[-600:]}")
-
-    def write_report(self, status: str) -> None:
-        """把审查报告放到落点上：汇总行 + 结构块（FAIL 时两类结论都写全）。"""
-        reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
-        reports.mkdir(parents=True, exist_ok=True)
-        (reports / "summary.json").write_text(
-            json.dumps({"phase": "spec", "verifier_report": REPORT_REL}),
-            encoding="utf-8")
-        body = row(status)
-        if status != "PASS":
-            body += ("\n```yaml\nverification_result:\n  checks:\n"
-                     "    - id: story_reader_review\n"
-                     f"      status: {status}\n"
-                     "      details:\n"
-                     "        blocking_findings:\n"
-                     "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n"
-                     "        advisories: []\n```\n")
-        target = self.root / REPORT_REL
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
-
-    def test_a_complete_report_that_failed_is_not_a_pass(self) -> None:
-        """报告的**结构**齐备不等于**审查判它过了**。
-
-        结构齐备而 verdict 是 FAIL 时放行，等于把「审出问题」当成了「审过了」——
-        那份 story 会带着一句没发生过的结论交出去。
-        """
-        self._stub_receipt(0, "回执通过")
-        self.write_report("FAIL")
-        out = self.check("--deliver")
-        self.assertNotEqual(0, out.returncode, (out.stdout + out.stderr)[-600:])
-        self.assertIn("判 FAIL", out.stdout + out.stderr)
-        self.assertIn("第 5 章说未实名可下单", out.stdout + out.stderr, "没指到那一条阻断问题")
-
-    def test_a_warn_without_blocking_passes_with_its_advisories(self) -> None:
-        """AC21：读者审查判 WARN 而没有阻断项，交付门放行，建议项进 notes。"""
-        self._stub_receipt(0, "回执通过")
-        self.write_report("WARN")
-        target = self.root / REPORT_REL
-        target.write_text(target.read_text(encoding="utf-8").replace(
-            "        blocking_findings:\n          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n        advisories: []",
-            "        blocking_findings: []\n        advisories:\n          - 第 3 章标题可以更短"), encoding="utf-8")
-        out = self.check("--deliver")
-        both = out.stdout + out.stderr
-        self.assertNotIn("[⑭ 交付门]", both, f"WARN 无阻断却被交付门拦住：{both[-600:]}")
-        self.assertIn("第 3 章标题可以更短", both, "建议项没进 notes")
-
-    def test_a_passing_report_raises_nothing_at_the_gate(self) -> None:
-        """审查判 PASS、回执过了、结构齐备——交付门这一类不该有问题。
-
-        这份夹具的 story 本身只有一章，别的判据照样会红；**这里只核交付门那一类**，
-        不拿整体退出码当交付结论。
-        """
-        self._stub_receipt(0, "回执通过")
-        self.write_report("PASS")
-        out = self.check("--deliver")
-        both = out.stdout + out.stderr
-        self.assertNotIn("判的是", both, "审查判了 PASS 却被交付门拦住")
-        self.assertNotIn("未经读者语义审查", both, "有报告却说没审过")
-        self.assertNotIn("[⑭ 交付门]", both, f"交付门报了问题：{both[-600:]}")
 
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做。

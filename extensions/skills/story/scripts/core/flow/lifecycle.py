@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -99,29 +100,28 @@ def cmd_status(feature_root: Path) -> dict:
 
 
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
-    """登记「叙事件已成文」——spec 阶段三份产物的第三份到位了。
+    """登记「Story 已成文」：按已准入蓝图写成的 story 与 review 到位了。
 
-    story 在 **spec 阶段内**成文：先建十章骨架，再按合同顺序一次写一章、经命令原子落盘。
-    成文有 spec 的阶段边界守着；逐章落盘让中途失败只影响那一章。
+    story 在蓝图准入之后成文：先建十章骨架，再按合同顺序一次写一章、经命令原子落盘；
+    逐章落盘让中途失败只影响那一章。
 
     **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
     不在这里重实现——两处各判各的，迟早对不上。
 
-    **编号之前先重投影**：附录的技术契约、规约、埋点、改动边界四节是机器区，
-    真源（spec 扩展章、knowledge-use.yaml）在成文期间还会变——补一条规约判断、改一个
-    接口出参。以登记这一次为准，`story-build project` 从当前真源重算一遍。
+    **编号之前先重投影**：附录的机器区从已准入蓝图投影，蓝图在成文期间还可能修订。
+    以登记这一次为准，`story-build project` 从当前真源重算一遍。
 
     **check 之前先编号**：章序、小节序、图序是纯确定性变换，由 `story-build number`
     统一铺——作者写业务名标题就够了。编号在登记之前完成；命令幂等，已经对的文件一个字节都不改。
 
-    **可以重复登记**：登记记下 story 与它的决策登记、写作设计此刻的指纹。之后改了任何一份
-    （spec 阶段返修、update 修订），改完重跑本命令就是重新登记——上一次登记先作废，
-    检查通过再记新的一次；检查没过时状态停在已收口、未登记，照报错改完再跑。
+    **登记记下成文依据**（`story_basis`）：实际的蓝图引用、交给设计的输入版本、激活知识的摘要，
+    以及 story 与它的决策登记、写作设计的指纹。之后任何一样变了（返修、update 修订、蓝图升版、知识改动），
+    改完重跑本命令就是重新登记——上一次登记先作废，检查通过再记新的一次；检查没过时状态停在已收口、未登记。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
     if status == "story_written":
-        for key in ("story_written_at", "story_digests"):
+        for key in ("story_written_at", "story_basis"):
             contract.pop(key, None)
         contract["status"] = status = "complete"
         save(feature_root, contract)
@@ -178,6 +178,13 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
             "story-build check 未通过，成文态不予登记：\n"
             + (proc.stderr or proc.stdout or "").strip())
 
+    # 成文依据：这一刻的设计引用、冻结输入与知识摘要，由 story-build 按同一份计算给出
+    basis = subprocess.run(
+        [node, str(checker), "basis", "--feature", feature_root.name, "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if basis.returncode != 0:
+        raise FlowError("成文依据取不到，成文态不予登记：\n" + (basis.stderr or basis.stdout or "").strip())
+
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
     # 登记记下 story 与它据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
@@ -187,8 +194,9 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
-    contract["story_digests"] = {
-        rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED
+    contract["story_basis"] = {
+        **json.loads(basis.stdout),
+        "files": {rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED},
     }
     save(feature_root, contract)
     baseline = record_baseline(feature_root)

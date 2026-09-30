@@ -26,6 +26,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from flow_steps import ensure_framework, walk_to_complete
+import design_kit  # noqa: E402
 from ext_workspace import link_harness_yaml, DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -839,16 +840,14 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
         data["rounds"][-1]["gates"] = []
-        # 收口意味着已关联设计对象、登记了冻结输入；之后的位置要读原生蓝图
-        data["design_binding"] = {"component_id": "wallet-home", "blueprint_id": FEATURE}
-        data["input"] = {"snapshot_ref": f"doc/features/{FEATURE}/AR/story-src/inputs/0/snapshot.json"}
+        # 收口意味着已关联设计对象、登记了冻结输入：用产品的冻结模块补成真实状态，之后的位置要读原生蓝图
         ensure_framework(self.root)
-        if status == "story_written":
-            # 已登记的契约带此刻的登记指纹（缺了是契约不完整，status 报错）
-            sys.path.insert(0, str(FLOW_SCRIPT.parent))
-            from flow.state import STORY_REGISTERED, ledger_digest  # noqa: PLC0415
-            data["story_digests"] = {rel: ledger_digest(self.feature_root / rel) for rel in STORY_REGISTERED}
+        data = design_kit.hand_over_state(self.root, FEATURE, data, with_blueprint=status == "story_written")
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        if status == "story_written":
+            # 已登记的契约带此刻的成文依据（缺了是契约不完整，status 报错）
+            data["story_basis"] = design_kit.registered_basis(self.root, FEATURE)
+            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     def test_after_the_input_is_registered_it_waits_for_the_blueprint(self) -> None:
         """输入登记了、蓝图还没建：派生状态是等设计，下一步指向原生 component-design 与登记的那份输入。"""
@@ -858,34 +857,14 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         self.assertIn("component-design", out["action"])
         self.assertIn(out["input"]["snapshot_ref"], out["action"])
 
-    def test_after_registration_it_points_at_harness_not_build(self) -> None:
-        """登记那一步已经渲染并核过 review——再叫作者去 build 就是两处说法。"""
+    def test_after_registration_it_points_at_review_and_delivery(self) -> None:
+        """登记那一步已经渲染并核过 review；接下来是独立审查、交付门与一次交付选择，规则所在指向 phase 文档。"""
         self.write_contract("story_written")
         action = self.status()["action"]
-        self.assertIn("harness", action)
-        self.assertIn("verifier", action)
-        self.assertNotIn("`story-build build` 渲染", action)
-
-    def test_the_road_after_verifier_is_spelled_out(self) -> None:
-        """verifier PASS 之后做什么，得有下文。
-
-        只写「接着做什么」的话，PASS 之后顺手再跑一次 harness 是很自然的动作——
-        时间戳换了 subject，check-receipt 报证据缺失，verifier 只好再来一次，
-        而产物一个字节没动。出口：阻断项才返修；闭环之后的真实问题走 framework 修正入口
-        （correction-init → revalidate，verifier 不重审），不手动派 verifier
-        （1.9.3 裁定 A：「改完重新绑定审查对象」被读成重跑闭环链，实跑里一份产物被审了五六遍）。
-        """
-        self.write_contract("story_written")
-        action = self.status()["action"]
-        for step in ("check-receipt", "--deliver", "plan"):
-            self.assertIn(step, action, f"verifier 之后的「{step}」这一步没写出来")
-        # 规则只在 phase 文档写一次，路由指过去（G05）
-        self.assertIn("phases/spec.md", action, "没指向闭环规则所在的那一节")
-        spec_phase = (DEV_EXT / "skills/story/phases/spec.md").read_text(encoding="utf-8")
-        self.assertIn("--revalidate", spec_phase, "闭环规则里没有重验入口")
-        # 回执是 harness 的只读投影（receipt_schema 2.1），agent 零手填——
-        # 让模型去回填一份它不该碰的文件，轻则白做，重则被判手写凭证。
-        self.assertNotIn("回填", action, "还在让模型回填 framework 的凭证")
+        for step in ("独立审查", "--deliver", "交付选择", "phases/design.md"):
+            self.assertIn(step, action)
+        for gone in ("harness", "verifier", "check-receipt", "`story-build build` 渲染", "回填"):
+            self.assertNotIn(gone, action)
 
     def test_a_gate_step_shows_the_shape_of_the_file_to_write(self) -> None:
         """S1–S4 的侧车形状：二跑为弄清它切片读了本脚本六次。"""

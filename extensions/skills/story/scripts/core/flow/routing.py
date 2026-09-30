@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from materials import meeting, registry
 
 from flow.state import (
-    CARRY_ALL, DESIGN_DRAFT, FlowError, S4_STEPS, STORY_CONTRACT, after_complete,
+    CARRY_ALL, CORE_DIR, DESIGN_DRAFT, FlowError, S4_STEPS, STORY_CONTRACT, after_complete,
     last_gate, registration_drift, round_gates, stage_of)
 from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
@@ -305,11 +307,34 @@ def update_open_step(feature_root: Path, contract: dict,
             + closed_tail(feature_root, contract, manifest))
 
 
+def basis_drift(feature_root: Path, contract: dict) -> list[str]:
+    """登记之后蓝图或激活知识换了没有：按 `story-build basis` 给出的这一刻的依据比。读不出来照实报。"""
+    if contract.get("status") != "story_written":
+        return []
+    root = native.project_root_of(feature_root)
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError("找不到 node：核成文依据要跑 story-build basis")
+    proc = subprocess.run([node, str(CORE_DIR / "story-build.mjs"), "basis", "--feature", feature_root.name,
+                           "--project-root", str(root)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise FlowError("成文依据读不出来：" + (proc.stderr or proc.stdout or "").strip()[:600])
+    now = json.loads(proc.stdout)
+    was = (contract.get("story_basis") or {})
+    ref, cur = was.get("blueprint_ref") or {}, now.get("blueprint_ref") or {}
+    out = []
+    if (ref.get("artifact_sha256"), ref.get("revision")) != (cur.get("artifact_sha256"), cur.get("revision")):
+        out.append(f"蓝图（登记时 r{ref.get('revision')}，现在 r{cur.get('revision')}）")
+    if was.get("knowledge_sha256") != now.get("knowledge_sha256"):
+        out.append("激活知识")
+    return out
+
+
 def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """story 已写出来之后要不要重新登记：登记之后又改过，或状态停在已收口（update 里重新提交提取稿、
-    重新登记没过）。不需要返回 None。还在逐章写的单不走这里，由 spec 阶段那条路给下一步。
+    """story 已写出来之后要不要重新登记：登记之后 story、输入、蓝图或知识变了，或状态停在已收口（update 里
+    重新提交输入、重新登记没过）。不需要返回 None。还在逐章写的单不走这里，由成文那条路给下一步。
     """
-    drift = registration_drift(feature_root, contract)
+    drift = registration_drift(feature_root, contract) + basis_drift(feature_root, contract)
     if drift or contract.get("status") == "complete":
         return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")
                 + "改完跑 `story_flow.py story` 重新登记（它会重投附录、编号、渲染 review 并全篇 check）")
@@ -356,9 +381,10 @@ def next_step(feature_root: Path, contract: dict | None,
                 + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",
-                "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
-                "check-receipt → `story-build check --deliver` 交付门；交付门通过后按停等表问一次"
-                "「归档送审 / 进入 plan」（本地单只有进 plan）"
+                "Story 已按已准入蓝图登记成文。按 `phases/design.md`「交付」走完：独立审查"
+                "（`story-build review --action prepare`；原生审查调用未接通时如实说明这份 Story 未审）→ "
+                "`story-build check --deliver` 交付门；通过后按停等表问一次交付选择"
+                "（送审 / 完整设计交接 / 完整实现 / 暂不推进；本地单没有送审）"
                 + closed_tail(feature_root, contract, manifest))
     if stage == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，

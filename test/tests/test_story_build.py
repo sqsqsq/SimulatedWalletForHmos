@@ -1069,14 +1069,12 @@ class TestChangesAfterRegistration(StoryBuildCase):
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def register(self) -> None:
-        """把成文态登记写进流程契约——含登记那一刻的指纹。"""
-        flow = {
-            "schema": 5, "feature": FEATURE, "status": "story_written",
-            "rounds": [{"round": 1, "gates": []}],
-            "story_digests": {rel: self.ledger_digest(rel) for rel in self.REGISTERED},
-        }
-        (self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json").write_text(
-            json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+        """把成文态登记写进流程契约——含登记那一刻的成文依据（设计引用、输入、知识与文件指纹）。"""
+        path = self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json"
+        flow = json.loads(path.read_text(encoding="utf-8"))
+        flow["status"] = "story_written"
+        flow["story_basis"] = design_kit.registered_basis(self.root, FEATURE)
+        path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def test_a_changed_story_is_named_by_check(self) -> None:
         """登记之后改了一章没重新登记：登记说的已经不是现在这份。"""

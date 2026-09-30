@@ -29,6 +29,7 @@ from materials import importer  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flow_steps import ensure_framework, project_root_of, write_gaps  # noqa: E402
+import design_kit  # noqa: E402
 FEATURE = "AR90001"
 
 
@@ -82,7 +83,7 @@ class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
         self.contract_path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(self.contract_path.read_text(encoding="utf-8"))
         data.update(status="story_written", story_written_at="2026-09-14T00:00:00+08:00",
-                    story_digests={"AR/story-src/decisions.json": "sha"})
+                    story_basis={"files": {"AR/story-src/decisions.json": "sha"}})
         self.written = json.dumps(data, ensure_ascii=False, indent=2)
         self.contract_path.write_text(self.written, encoding="utf-8")
 
@@ -275,13 +276,14 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
-        # 收口意味着已关联设计对象、登记了冻结输入；收口之后的路由要读原生蓝图
-        data["design_binding"] = {"component_id": "wallet-home", "blueprint_id": self.feature_root.name}
-        data["input"] = {"snapshot_ref": f"doc/features/{self.feature_root.name}/AR/story-src/inputs/0/snapshot.json"}
-        ensure_framework(project_root_of(self.feature_root))
-        if status == "story_written":
-            data["story_digests"] = {rel: ledger_digest(self.feature_root / rel) for rel in STORY_REGISTERED}
+        # 收口意味着已关联设计对象、登记了冻结输入：用产品的冻结模块补成真实状态，收口之后的路由要读原生蓝图
+        root = project_root_of(self.feature_root)
+        ensure_framework(root)
+        data = design_kit.hand_over_state(root, self.feature_root.name, data)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        if status == "story_written":
+            data["story_basis"] = design_kit.registered_basis(root, self.feature_root.name)
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def test_material_change_after_complete_opens_no_round(self) -> None:
         self.complete_it()
@@ -425,7 +427,7 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         proc = self.run_flow("reopen")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         contract = self.contract()
-        self.assertEqual(before["story_digests"], contract["story_digests"])
+        self.assertEqual(before["story_basis"], contract["story_basis"])
         self.assertEqual((before["design_binding"], before["input"]), (contract["design_binding"], contract["input"]))
         self.assertEqual("in_progress", contract["status"], "重开之后仍是可交付的成文态")
         out = json.loads(proc.stdout[proc.stdout.index("{"):])

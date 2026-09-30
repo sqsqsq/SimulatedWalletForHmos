@@ -1,5 +1,5 @@
 /**
- * story 的登记、核对与校验 —— 六个命令，围绕**一份文档写成**这件事。
+ * story 的登记、核对与校验 —— 七个命令，围绕**一份文档写成**这件事。
  *
  * ## 成文怎么走
  *
@@ -15,7 +15,7 @@
  * ——讲清没讲清、贴不贴合、图题说的是不是这张图——都不在这里，归 verifier 的
  * 语义判据与真实结果观察。用字符串近似语义，模型只会照着字符串改。
  *
- * ## 六个命令
+ * ## 七个命令
  *
  * | 命令 | 做什么 |
  * |------|--------|
@@ -25,6 +25,7 @@
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
+ * | `basis` | 输出这一刻的成文依据（设计引用、冻结输入、知识摘要），登记与路由用它 |
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -38,7 +39,7 @@ import {
   createContext, fail, readJson, readText,
 } from './story/context.mjs';
 import { designGaps, materialSubsectionName, projectAppendix } from './story/appendix.mjs';
-import { designSource, termFacts } from './story/design-source.mjs';
+import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
@@ -48,7 +49,7 @@ import { cmdCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
 import { storyInputs } from '../../../../hooks/spec/author.mjs';
 
-const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project'];
+const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'basis'];
 
 function parseArgs(argv) {
   const args = { command: argv[2] && !argv[2].startsWith('--') ? argv[2] : '' };
@@ -97,6 +98,17 @@ function cmdProject(ctx) {
   if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
   process.stdout.write(`[story-build project] 附录机器区按当前真源重投 ${zones} 节`
     + '（已准入蓝图 / 冻结的设计输入）；机器区外的说明归你，不动\n');
+}
+
+/**
+ * 这一刻的成文依据（设计引用、冻结输入、知识摘要）输出成一行 JSON：`story_flow.py story` 登记时写进流程契约，
+ * 流程路由拿它核登记之后换没换。设计来源不成立时照实失败。
+ */
+function cmdBasis(ctx) {
+  const basis = currentBasis(ctx);
+  if (basis.problems.length) fail(`设计来源不成立，成文依据取不到：\n  · ${basis.problems.join('\n  · ')}`);
+  const { problems, ...rest } = basis;
+  process.stdout.write(`${JSON.stringify(rest)}\n`);
 }
 
 /**
@@ -220,6 +232,7 @@ function main() {
   if (args.command === 'skeleton') cmdSkeleton(ctx);
   else if (args.command === 'chapter') cmdChapter(ctx);
   else if (args.command === 'project') cmdProject(ctx);
+  else if (args.command === 'basis') cmdBasis(ctx);
   else if (args.command === 'check') cmdCheck(ctx);
   else if (args.command === 'number') cmdNumber(ctx);
   else cmdBuild(ctx);

@@ -149,7 +149,7 @@ export function requireLedgers(ctx) {
 function registeredDigests(ctx) {
   const flow = readJson(ctx.flowPath, null);
   if (flow?.status !== 'story_written') return {};
-  return flow.story_digests ?? null;
+  return flow.story_basis?.files ?? null;
 }
 
 /** 材料指纹：换行差异不算改动（同一份文件在两台机器上可能行尾不同）。 */
@@ -179,7 +179,7 @@ export function ledgerDigestProblems(ctx) {
   // 与 `flow/state.py` 的 `registration_drift` 同一件事，指纹口径同 `ledger_digest`。
   const digests = registeredDigests(ctx);
   if (digests === null) {
-    return ['AR/story-src/story-flow.json：记着已成文登记，却没有登记指纹 story_digests，契约不完整'
+    return ['AR/story-src/story-flow.json：记着已成文登记，却没有成文依据的文件指纹 story_basis.files，契约不完整'
       + '——登记指纹由 `story_flow.py story --feature <名>` 按当前内容重新登记时写入'];
   }
   for (const [rel, want2] of Object.entries(digests)) {

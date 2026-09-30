@@ -67,22 +67,20 @@ class TheDeliveryGateAsksOneThing(unittest.TestCase):
             for gone in ("交付门上人给的评审意见", "交付门上人的评审意见"):
                 self.assertNotIn(gone, text, f"{rel} 里还有交付门口头评审入口")
 
-    def test_the_route_after_registration_asks_archive_or_plan(self) -> None:
-        sys.path.insert(0, str(SKILL / "scripts" / "core"))
-        from flow import routing  # noqa: PLC0415
-        with tempfile.TemporaryDirectory() as tmp:
-            fr = Path(tmp)
-            step, action = routing.next_step(fr, {"rounds": [{"round": 1}], "status": "story_written",
-                                                  "story_digests": {}})
-        self.assertEqual("run_archived", step)
-        self.assertIn("归档送审 / 进入 plan", action)
-        self.assertIn("phases/spec.md", action, "规则应只写在 phase 文档，路由指过去")
+    def test_the_route_after_registration_asks_the_delivery_choice(self) -> None:
+        """登记之后：独立审查、交付门、问一次交付选择；规则只写在 phase 文档，路由指过去。"""
+        text = (SKILL / "scripts" / "core" / "flow" / "routing.py").read_text(encoding="utf-8")
+        branch = text.split('    if stage == "story_written":', 1)[1].split("\n    if stage ==", 1)[0]
+        self.assertIn('"run_archived"', branch)
+        for needle in ("phases/design.md", "独立审查", "--deliver", "交付选择"):
+            self.assertIn(needle, branch)
+        self.assertNotIn("进入 plan", branch)
 
-    def test_the_delivery_gate_prints_two_choices(self) -> None:
+    def test_the_delivery_gate_prints_the_delivery_choices(self) -> None:
         text = (SKILL / "scripts" / "core" / "story" / "delivery.mjs").read_text(encoding="utf-8")
-        self.assertIn("归档送审", text)
-        self.assertIn("进入 plan", text)
-        self.assertNotIn("先归档，再进 plan", text)
+        for choice in ("送审", "完整设计交接", "完整实现", "暂不推进"):
+            self.assertIn(choice, text)
+        self.assertNotIn("进入 plan", text)
 
 
 if __name__ == "__main__":

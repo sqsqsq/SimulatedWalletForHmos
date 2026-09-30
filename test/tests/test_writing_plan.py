@@ -25,7 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_story_build import (  # noqa: E402
     BUILD, FEATURE, FLOW, PLAN_FIXTURE, REPO_ROOT, StoryBuildCase, ensure_flow_state, minimal_body,
 )
-from ext_workspace import DEV_EXT  # noqa: E402
+from ext_workspace import DEV_EXT, project_root_of  # noqa: E402
+import design_kit  # noqa: E402
 
 CONTRACT_PATH = DEV_EXT / "skills" / "story" / "contracts" / "story-chapters.json"
 PLAN_MODULE = (DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -655,13 +656,13 @@ class TheDesignIsRegisteredWithTheStory(PlanCase):
 
     def register(self) -> None:
         sys.path.insert(0, str(FLOW.parent))
-        from flow.state import STORY_REGISTERED, ledger_digest  # noqa: PLC0415
+        from flow.state import STORY_REGISTERED  # noqa: PLC0415
         self.assertIn("AR/story-src/story-template.md", STORY_REGISTERED)
         feature_root = self.src.parent.parent
         path = self.src / "story-flow.json"
         flow = json.loads(path.read_text(encoding="utf-8"))
         flow["status"] = "story_written"
-        flow["story_digests"] = {rel: ledger_digest(feature_root / rel) for rel in STORY_REGISTERED}
+        flow["story_basis"] = design_kit.registered_basis(project_root_of(feature_root), feature_root.name)
         path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def test_an_edit_after_registration_is_named_until_registered_again(self) -> None:

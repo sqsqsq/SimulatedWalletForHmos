@@ -8,7 +8,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readBlueprint } from '../../../../../hooks/shared/framework-access.mjs';
+import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
+import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
 import { readJson } from './context.mjs';
+
+const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
 const cache = new WeakMap();
 
@@ -60,6 +64,55 @@ export function designSource(ctx) {
     }
   }
   cache.set(ctx, out);
+  return out;
+}
+
+/** 激活知识的确定性摘要：有序的激活登记（路径、受众、摘要）与每份知识文件的原始字节。 */
+function knowledgeDigest(ctx) {
+  const rows = knowledgeRegistrations(ctx.projectRoot).map((r) => {
+    let bytes = null;
+    try {
+      bytes = fs.readFileSync(path.join(extensionRoot(ctx.projectRoot), ...r.file.split('/')));
+    } catch {
+      bytes = null;
+    }
+    return { file: r.file, audience: r.audience, summary: r.summary, sha256: bytes === null ? null : sha256(bytes) };
+  });
+  return sha256(JSON.stringify(rows));
+}
+
+/**
+ * 这一刻的成文依据：设计引用（原生完整 blueprint_ref）、登记的冻结输入、激活知识。
+ * 登记（`story_flow.py story` 经 `story-build basis`）与核对（check、交付门）用同一份计算。
+ */
+export function currentBasis(ctx) {
+  const source = designSource(ctx);
+  const flow = readJson(ctx.flowPath, null);
+  return {
+    problems: source.problems, blueprint_ref: source.ref,
+    input_sha256: flow?.input?.snapshot_sha256 ?? null, knowledge_sha256: knowledgeDigest(ctx),
+  };
+}
+
+/** 成文登记之后，设计、输入或知识换了没有——换了的，登记说的就不是现在这份。文件的改动由登记指纹另核。 */
+export function basisDriftProblems(ctx) {
+  const flow = readJson(ctx.flowPath, null);
+  if (flow?.status !== 'story_written') return [];
+  const basis = flow.story_basis;
+  if (!basis) {
+    return ['AR/story-src/story-flow.json：记着已成文登记，却没有成文依据 story_basis，契约不完整'
+      + '——跑 `story_flow.py story --feature <名>` 按当前内容重新登记'];
+  }
+  const now = currentBasis(ctx);
+  if (now.problems.length) return now.problems;
+  const again = '——改完跑 `story_flow.py story` 重投附录并重新登记，重新审查';
+  const out = [];
+  const was = basis.blueprint_ref ?? {};
+  if (was.artifact_sha256 !== now.blueprint_ref?.artifact_sha256 || was.revision !== now.blueprint_ref?.revision) {
+    out.push(`登记之后蓝图变了（登记时 r${was.revision}，现在 r${now.blueprint_ref?.revision}）${again}`);
+  }
+  if (basis.input_sha256 !== now.input_sha256) out.push(`登记之后交给设计的输入换了版本${again}`);
+  if (basis.knowledge_sha256 !== now.knowledge_sha256) out.push(`登记之后激活知识或知识原文变了${again}`);
   return out;
 }
 

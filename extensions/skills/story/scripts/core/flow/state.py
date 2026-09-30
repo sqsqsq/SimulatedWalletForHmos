@@ -194,19 +194,23 @@ def after_complete(contract: dict) -> bool:
 
 
 def registration_drift(feature_root: Path, contract: dict) -> list[str]:
-    """已登记的 story 之后又改了哪几份：登记时的指纹对不上现在的文件。没登记过返回空。
+    """已登记的成文之后又变了什么：story 与它的决策登记、写作设计的指纹，以及交给设计的输入版本。没登记过返回空。
 
     与 `story/context.mjs` 的 `ledgerDigestProblems` 是同一件事的两处读者：
     流程路由与 update 收口在这里问，成文检查在那边问，指纹都由 `ledger_digest` 口径算。
+    蓝图与知识换没换要读原生对象，由路由经 `story-build basis` 另问。
     """
     if contract.get("status") != "story_written":
         return []
-    if "story_digests" not in contract:
-        raise FlowError("流程契约记着已成文登记，却没有登记指纹 story_digests：契约不完整。"
+    basis = contract.get("story_basis")
+    if not isinstance(basis, dict) or not isinstance(basis.get("files"), dict):
+        raise FlowError("流程契约记着已成文登记，却没有成文依据 story_basis：契约不完整。"
                         "跑 `story_flow.py story` 按当前内容重新登记")
-    digests = contract["story_digests"]
-    return [rel for rel in STORY_REGISTERED
-            if digests.get(rel) != ledger_digest(feature_root / Path(*rel.split("/")))]
+    drift = [rel for rel in STORY_REGISTERED
+             if basis["files"].get(rel) != ledger_digest(feature_root / Path(*rel.split("/")))]
+    if basis.get("input_sha256") != (contract.get("input") or {}).get("snapshot_sha256"):
+        drift.append("交给设计的输入")
+    return drift
 
 
 def round_gates(contract: dict) -> list[dict]:
