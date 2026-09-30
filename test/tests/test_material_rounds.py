@@ -907,8 +907,8 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
         """S4 收口处那一问退场——它固定长出第三个停等点。"""
         text = self.skill()
         for gone in ("一次问代替逐段问", "一次讲清", "做到哪一步"):
-            self.assertNotIn(gone, text, "「%s」还在，进 spec 前仍会停一次" % gone)
-        self.assertIn("直接进 spec，不问", text)
+            self.assertNotIn(gone, text, "「%s」还在，交给设计前仍会停一次" % gone)
+        self.assertIn("直接进 component-design，不问", text)
 
     def test_the_failure_exit_is_a_handover_not_a_counter(self) -> None:
         """「修不动了」是请人接手，不是确认点；停不停由作者判断，要说清缺什么、需要谁提供。"""

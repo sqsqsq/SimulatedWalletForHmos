@@ -228,7 +228,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         raise FlowError("找不到 node：归档态登记要先重跑交付门，无法跳过")
-    # 交付门而不是普通 check：走到这里 spec 该已经闭环，读者审查也该已经落报告。
+    # 交付门而不是普通 check：走到这里 story 该已登记、依据未变，审查结论也该已经如实记下。
     # 普通 check 判不到那两样，用它登记归档态等于把「审没审过」这一格空着送审。
     proc = subprocess.run(
         [node, str(checker), "check", "--deliver", "--feature", feature_root.name,

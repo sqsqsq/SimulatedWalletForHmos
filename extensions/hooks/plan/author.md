@@ -45,7 +45,7 @@ spec 的埋点列了统计点时，在「埋点」一节实现它们（形状见
 
 ## 五、跑哪条命令
 
-`cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature <需求名>`。写完通读一遍 `plan.md` 与契约，找错字、乱码与两处不一致。报告回来之后按 [phases/spec.md](../../skills/story/phases/spec.md)「闭环」那张表处置，改动属于哪一类写进 `plan/notes.md`。写 plan 时发现 spec 的现状结论与仓不符：走修正入口改 spec，并登记与工程现状矛盾的议题，再继续 plan；不在 plan 里另写一套现状。
+`cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature <需求名>`。写完通读一遍 `plan.md` 与契约，找错字、乱码与两处不一致。报告回来之后按 [phase-closure.md](../../skills/story/reference/phase-closure.md)「闭环」那张表处置，改动属于哪一类写进 `plan/notes.md`。写 plan 时发现 spec 的现状结论与仓不符：走修正入口改 spec，并登记与工程现状矛盾的议题，再继续 plan；不在 plan 里另写一套现状。
 
 ## 六、门禁会拦什么
 

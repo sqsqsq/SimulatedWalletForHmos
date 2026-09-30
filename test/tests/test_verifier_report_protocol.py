@@ -85,12 +85,15 @@ class TheDeliveryGateChecksTheRegisteredBasis(unittest.TestCase):
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
 
-    def test_the_review_is_prepared_only_for_the_registered_story(self) -> None:
-        """审的是登记过的那一份：没登记不准备；登记之后生成的任务带着判据原文，照实说审查调用未接通。"""
+    def test_the_review_is_prepared_once_the_structure_check_passes(self) -> None:
+        """审查在登记之前：结构检查没过不准备；过了就生成带判据原文的任务，照实说审查调用未接通。"""
+        story = self.flow_path.parent.parent / "story.md"
+        text = story.read_text(encoding="utf-8")
+        story.write_text(text.replace("## 附录", "## 附录外的一章\n\n写错的章。\n\n## 附录", 1), encoding="utf-8")
         refused = self.review("prepare")
         self.assertNotEqual(0, refused.returncode)
-        self.assertIn("还没登记成文", refused.stdout + refused.stderr)
-        self.register()
+        self.assertIn("结构检查没过", refused.stdout + refused.stderr)
+        story.write_text(text, encoding="utf-8")
         out = self.review("prepare")
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
         task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
@@ -99,7 +102,6 @@ class TheDeliveryGateChecksTheRegisteredBasis(unittest.TestCase):
         self.assertIn("reviewer_unavailable", out.stdout)
 
     def test_checking_says_the_reviewer_is_unavailable_without_inventing_a_result(self) -> None:
-        self.register()
         out = self.review("check")
         self.assertEqual(0, out.returncode, out.stderr)
         self.assertIn("reviewer_unavailable", out.stdout)

@@ -573,7 +573,7 @@ def cmd_update_close(feature_root: Path) -> dict:
                   if now_by[ph].get("subject") != subject and not _reviewed_now(now_by[ph])]
     if unreviewed:
         raise FlowError(f"{'、'.join(unreviewed)} 的审查对象在这一轮变了，当前对象还没有审查结论，不收口："
-                        "按 `phases/spec.md`「闭环」一节处置——改了业务的派审并完整跑一次 harness 采纳，"
+                        "按 `reference/phase-closure.md`「闭环」一节处置——改了业务的派审并完整跑一次 harness 采纳，"
                         "PASS 之后只改表达的走修正重验")
 
     # 开轮时已登记的 story（本轮镜像里的契约记着那一刻的状态），这一轮改过——登记之后改了，

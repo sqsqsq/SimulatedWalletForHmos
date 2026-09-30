@@ -25,7 +25,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 
 | 顺序 | 命令 | 功能 |
 |---|---|---|
-| 1 | `/story init <编号>` | 起手取材、导入与分析，之后按本文一路做到 spec 闭环 |
+| 1 | `/story init <编号>` | 起手取材、导入与分析，之后按本文一路做到交付门并问一次交付选择 |
 | 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 作附件一并归档上传（自动备份；任一缺失或未过门禁即拒绝） |
 | 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物 |
@@ -40,13 +40,13 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 S1 取材        →  拉三套材料、建工作区骨架
 S2 导入+初析   →  列 inbox → 导入 → 材料盘点 →（材料确认后）有会议时读会，有要人定的话题停一次 → 需求分析
 S3 关卡        →  材料 →（会议）→ 范围怎么定 → 承载哪份
-S4 收口        →  按已定范围写提取稿，`complete --from` 提交为 AR/design.md、契约置 complete
+S4 交给设计    →  bind-design 关联组件与蓝图；按已定范围写提取稿与设计输入，`complete` 冻结输入、过原生来源检查
    ↓
-[framework spec 阶段闭环]
-   ├─ 阶段内一次 pass 产出三份：spec.md / AR/review.md / AR/story.md
-   └─ story：起手 → 写写作设计 → 照骨架按章写、按章落盘 → 回看 → `story_flow.py story` 登记
+[framework component-design]  蓝图走到准入，生成评审投影
    ↓
-S5 归档        →  /story archive 上传叙事件与评审记录
+S5 成文        →  写作设计 → 照骨架按章写 → 回看 → check → 独立审查 → `story_flow.py story` 登记 → 交付门
+   ↓
+S6 交付选择    →  送审（/story archive）/ 完整设计交接 / 完整实现 / 暂不推进
 ```
 
 **位置由契约回答，不靠回忆**：`story_flow.py status --feature <AR>` 读契约给出 `next` 与下一步动作。
@@ -61,8 +61,8 @@ S5 归档        →  /story archive 上传叙事件与评审记录
 | S2 读会（导入了会议材料时） | [phases/meeting-read.md](phases/meeting-read.md) |
 | S2 初析与流程契约 | [rules/init_analysis.md](rules/init_analysis.md) |
 | S3 关卡怎么摆 | [rules/scope_gate.md](rules/scope_gate.md) |
-| S4 写提取稿并提交 | [rules/ar_design_init.md](rules/ar_design_init.md) |
-| spec 阶段作业（含成文顺序、verifier 与交付门） | [phases/spec.md](phases/spec.md) |
+| S4 写提取稿 | [rules/ar_design_init.md](rules/ar_design_init.md) |
+| S4–S6 交给设计、成文顺序、独立审查与交付 | [phases/design.md](phases/design.md) |
 | 成文：写作设计、按章写与回看 | [phases/story-write.md](phases/story-write.md) |
 | 产物更新 | [phases/update.md](phases/update.md) |
 
@@ -73,17 +73,17 @@ spec 与 plan 阶段另有**本次任务包**，动笔前跑 `node doc/extension
 
 **这一节是本扩展里推进授权的唯一定义**，各阶段须知与作业书只引用它、不复述。
 
-**`/story <AR>` 的启动语义 = 做到 spec 闭环并通过交付门**。这是本扩展对 framework 推进策略的
+**`/story <AR>` 的启动语义 = 做到交付门并问一次交付选择**。这是本扩展对 framework 推进策略的
 batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8.1 第 2 条、§8.2）：
-**范围之内不再逐阶段要授权**，超出这个范围（plan 及其之后）仍按 framework 的默认策略停等。
-`status` 在收口那一步会把这句声明原样打出来。
+**范围之内不再逐阶段要授权**，交付选择之后的施工按人选的那一项与 framework 的推进策略走。
+`status` 在输入冻结、进 component-design 那一步会把这句声明原样打出来。
 
 | 层 | 谁说了算 | 怎么推进 |
 |---|---|---|
-| **story 流程段内**：S1→S4、spec 阶段内的成文与登记、S5 归档 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，只在下表列的地方停 |
-| **framework 阶段之间**：spec 闭环 → plan 及之后 | framework 的推进策略 | 它解析的是用户消息，本扩展既不问也不判 |
+| **story 流程段内**：S1→S4、蓝图设计到准入、S5 成文与交付门 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，只在下表列的地方停 |
+| **交付选择之后**：完整设计交接、完整实现 | 人的交付选择与 framework 的推进策略 | 已有明确授权覆盖的直接接续；业务审批与实施授权分开对待 |
 
-**S4 收口之后直接进 spec，不问**：本轮的终点在启动时就声明了，中途再问是把一个已经有主的问题重问一次。
+**交给设计之后直接进 component-design，不问**：本轮的终点在启动时就声明了，中途再问是把一个已经有主的问题重问一次。
 
 ## 停等真值表
 
@@ -95,9 +95,9 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 | **材料关卡**（`material_scope`） | 你问。第一轮必停；此后只在你拿新材料重新盘出缺口时停；`/story update` 的输入阶段每次必停一次 | 两项固定，顺序与标签来自章节合同；推荐由脚本按你写的缺口文件算 | `decide --ask --reply` |
 | **会议裁决**（`meeting`） | 你问。材料确认之后，会议判断里有带 `question` 的话题时停一次，逐话题 | 会议判断里那个话题的选项 | 同上，另加 `--meeting --item` |
 | **范围关卡**（`scope_decision` 及追问 `split_carrier`） | 你问。需求分析之后必停；切法与承载哪份是同一次对话里的追问 | 契约里需求分析定下的选项集；份表 | 同上 |
-| **术语确认**（framework 的关卡） | 你问。spec 阶段写术语表时，交互态下请人逐条确认 | spec §0 术语映射表 | 人确认之后才勾 `[x]`；人没确认的不勾 |
+| **术语确认**（framework 的关卡） | 你问。蓝图设计里确认术语时，交互态下请人逐条确认 | 蓝图的术语事实 | 人确认之后才登记为已确认；人没确认的不登记 |
 | **视觉 provider**（framework 的个人设置询问） | framework 在阶段入口问 | framework 给的候选 | 人答了用 framework 的 `record-visual-provider` 落盘 |
-| **交付门之后** | 你问。`story-build check --deliver` 通过后问一次：「归档送审 / 进入 plan」（本地单只有进 plan）。用户开场说做到送审或做到评审时，这一问就是本轮终点的停等 | 交付门打印的选项 | 人选归档就走「命令入口 · 归档」 |
+| **交付选择** | 你问。`story-build check --deliver` 通过后问一次：送审 / 完整设计交接 / 完整实现 / 暂不推进（本地单没有送审）。已有明确授权覆盖的按授权走，不再问 | 交付门打印的选项 | 人选送审就走「命令入口 · 归档」 |
 | **查无此单** | 你问。全是占位件且取材报「查无此单」 | 确认单号 | 按人给的单号重取 |
 | **归档、恢复** | 你问。不可逆或覆盖线上内容的操作 | 各自的既有确认点 | 按各自的既有确认点 |
 
@@ -150,11 +150,11 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 
 **没有需求系统单据时**（问题单、别人发来的需求文档）：入口不变，仍是 `/story init <编号>`。
 非 `AR` 开头的编号不碰需求系统，跳过 ①、直接建骨架。**本地单没有归档环节**——交付终点是仓内的
-`spec/spec.md` + `AR/story.md` + `AR/review.md` 三件。
+`AR/story.md` + `AR/review.md`。
 
 ### 归档
 
-- **前置**：spec 阶段已闭环，`AR/story.md` 与 `AR/review.md` 齐备；不适用于本地单
+- **前置**：Story 已登记并通过交付门，`AR/story.md` 与 `AR/review.md` 齐备；不适用于本地单
 - **archive 不修改工作区任何文件**
 
 ```
@@ -216,15 +216,16 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | `SR/design.md` | 整体方案、三方分工、系统级约定（外部输入） |
 | `AR/story-src/upstream.md` | 人工补录的本部件上游材料（外部输入） |
 | `ux-reference/` | 界面参考图与设计基准（外部输入） |
-| `AR/story-src/init-analysis.md` | 关卡决策的支撑分析与来源初筛（**非交付件**；Spec 与成文从它的来源初筛起步） |
+| `AR/story-src/init-analysis.md` | 关卡决策的支撑分析与来源初筛（**非交付件**；设计与成文从它的来源初筛起步） |
 | `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架（作者写，成文登记时随稿记指纹） |
 | `AR/story-src/materials.json` | 手上有哪些材料、各自的身份与版本；收件箱里哪些原件还没并入正文 |
 | `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、并入与决策（谁、何时、依据） |
-| `AR/design.md` | 上游要**本部件（本 AR 范围内）**做什么（S4 提取件，/spec 的输入） |
-| `spec/spec.md` | 本部件**要做什么**（需求侧规格，意图 SSOT） |
-| `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；与 spec 并列交付，前者 AI 写、后者人写 |
-| `acceptance.yaml` | 怎么算做对了 |
-| `AR/story.md` | 把上述组织成可评审的叙述（派生物，零新事实；archive 的上传正文） |
+| `AR/design.md` | 上游开发需求文档原件（外部输入，保持原样） |
+| `AR/story-src/design-draft.md` | 本 AR 范围内要做什么的提取稿（派生分析，随设计输入冻结） |
+| `AR/story-src/inputs/<版本>/` | 交给设计的冻结输入：采用的原件、图、提取稿与人签导出 |
+| 组件蓝图（framework `component-design`） | 本部件怎么设计（准入后是 Story 附录与后续施工的设计来源） |
+| `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
+| `AR/story.md` | 把材料、决定与已准入的设计组织成可评审的叙述（零新事实；archive 的上传正文） |
 
 ## 需求系统 Token
 

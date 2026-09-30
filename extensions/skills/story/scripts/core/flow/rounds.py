@@ -64,7 +64,7 @@ def cmd_round(feature_root: Path) -> dict:
                 "positioning": bool(current.get("positioning")),
                 "scopeOptions": len(current.get("scope_options") or [])}
 
-    # 收口之后材料又变了：**不开新轮**。收口的含义是「本轮范围已定、可以进 spec」，
+    # 收口之后材料又变了：**不开新轮**。收口的含义是「本轮范围已定、可以交给设计」，
     # 此后补一份说明文件、改一个错字都不该把流程推回未定状态。
     #
     # 开轮的代价是死锁：新轮没有任何决策，而 `decide` 被 status=complete 挡住，

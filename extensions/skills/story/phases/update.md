@@ -177,7 +177,7 @@ contracts、use-cases、AR 提取件与写作设计、`context/facts.md`、会�
 只改表达、核对后未修订、只改了过程记录的阶段不派审。按阶段依赖来，先 spec 后 plan；
 spec 的返修改了 plan 的材料时，先把 plan 同步好再取它的请求。story 改过的，先重跑 `story` 重新登记。
 
-完整跑 harness、派审、采纳与报告回来之后的处置，按 `phases/spec.md`「闭环」一节那张表，本页不另写一份。
+完整跑 harness、派审、采纳与报告回来之后的处置，按 [`reference/phase-closure.md`](../reference/phase-closure.md)「闭环」一节那张表，本页不另写一份。
 派审期间不动被审的材料；本宿主没有 verifier 时，如实报告「这次更新没有完成独立审查」，不用自审顶替。
 **这一步走完才往下写说明、收口**：收口读的是此刻各阶段的闭环结论，之后再改的东西落在这一轮之外。
 

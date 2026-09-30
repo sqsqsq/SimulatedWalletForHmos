@@ -29,7 +29,7 @@ async function archiveOne(reqNo, mcpToken, skipBackup = false, contentOverride =
   if (body === undefined) {
     for (const rel of ['AR/story.md', 'AR/review.md']) {
       if (!fs.existsSync(path.join(root, rel))) {
-        throw new Error(`${rel} 不存在，无可归档物：${reqNo}。它是 spec 阶段的产物，请回 spec 补齐后重试。`);
+        throw new Error(`${rel} 不存在，无可归档物：${reqNo}。它是 /story 成文登记的产物，请回 /story 补齐后重试。`);
       }
     }
     body = fs.readFileSync(path.join(root, 'AR', 'story.md'), 'utf-8');

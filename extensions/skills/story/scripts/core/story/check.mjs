@@ -44,7 +44,12 @@ function groupedProblems(problems, marks) {
   return out;
 }
 
-export function cmdCheck(ctx) {
+/**
+ * 全篇确定性判据算一遍，不打印、不退出：`check` 打印它，独立审查准备前要它先过。
+ *
+ * @returns {{problems: string[], marks: {from: number, label: string}[], notes: string[], chapters: number}}
+ */
+export function storyCheck(ctx) {
   // 起步先判台账在不在：删掉一件再跑，后面每一条判据都只是「依据不全」的余波。
   requireLedgers(ctx);
   const problems = [];
@@ -280,7 +285,11 @@ export function cmdCheck(ctx) {
     problems.push(...delivery.problems);
     notes.push(...delivery.notes);
   }
+  return { problems, marks, notes, chapters: sections.length };
+}
 
+export function cmdCheck(ctx) {
+  const { problems, marks, notes, chapters } = storyCheck(ctx);
   if (notes.length) {
     process.stdout.write('[story-build check] 记一笔（不拦）：\n');
     notes.forEach(n => process.stdout.write(`  · ${n}\n`));
@@ -303,8 +312,7 @@ export function cmdCheck(ctx) {
     }
     process.exit(1);
   }
-  process.stdout.write(`[story-build check] 通过：${sections.length} 章\n`);
-  // 交付门通过 = 这份 story 可以交出去了。往下有两条路，**由人选**——
-  // 归档送审与进入 plan 都是正当的下一步，谁先谁后取决于这个需求的排期。
+  process.stdout.write(`[story-build check] 通过：${chapters} 章\n`);
+  // 交付门通过 = 这份 story 可以交出去了。往下怎么走**由人选**，选项由交付门给出。
   if (ctx.args.deliver) process.stdout.write(deliveryNextSteps(ctx));
 }

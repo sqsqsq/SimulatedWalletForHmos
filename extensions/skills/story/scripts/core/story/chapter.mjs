@@ -255,7 +255,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   const originals = (docs ?? sourceStatus(ctx).docs).map(d => d.rel).join('、');
   const rows = [];
   if (plan?.problems.length) {
-    rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、Spec 与决策登记，`
+    rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、已准入蓝图与决策登记，`
       + '写阅读主线与每章骨架；写完重跑'
       + ` node ${shellArg(ctx.scriptPath)} skeleton --feature ${shellArg(ctx.args.feature)}`
       + ` --project-root ${shellArg(ctx.projectRoot)}`);
@@ -277,8 +277,8 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + `来源 ${originals}；方法见 ${guide} 的「五、照骨架写一章」`);
   } else {
     rows.push('NEXT: 十章齐了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
-      + 'Spec、验收、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
-      + '处置完跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
+      + '蓝图、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
+      + '处置完 story-build check 通过、准备独立审查（story-build review --action prepare），再跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: 回看清单（本输出下方）；当前 ${storyRel} 全文；写作设计 ${planRel}；决策登记 `
       + `${relFromFeature(ctx, ctx.decisionsPath)}；来源初筛 `

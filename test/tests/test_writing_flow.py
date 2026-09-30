@@ -46,11 +46,11 @@ def section(guide: str, name: str) -> str:
 
 class TestFinalPassIsInTheFlow(unittest.TestCase):
     def test_phase_order_lists_it(self) -> None:
-        spec = read("phases/spec.md")
-        self.assertIn("②b 回看", spec)
-        self.assertLess(spec.index("② 按章写"), spec.index("②b 回看"), "回看在按章写之后")
-        self.assertLess(spec.index("②b 回看"), spec.index("③ 登记"),
-                        "回看在登记之前——登记那一步会渲染 review，"
+        order = read("phases/design.md").split("## 一、顺序", 1)[1].split("\n## ", 1)[0]
+        self.assertLess(order.index("逐章 chapter"), order.index("回看"), "回看在按章写之后")
+        self.assertLess(order.index("回看"), order.index("独立审查"), "回看在独立审查之前")
+        self.assertLess(order.index("独立审查"), order.index("story 登记"),
+                        "回看与审查在登记之前——登记那一步会渲染 review，"
                         "评审记录面对的应当是处置过的全篇")
 
     def test_the_authoring_guide_carries_the_recheck(self) -> None:
@@ -107,9 +107,9 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
             self.assertNotIn(gone, guide, f"旧的写作设计协议「{gone}」还在作业书里")
 
     def test_the_phase_order_puts_the_design_between_skeleton_and_chapters(self) -> None:
-        spec = read("phases/spec.md")
-        self.assertLess(spec.index("① 当前输入"), spec.index("①b 写整篇写作设计"))
-        self.assertLess(spec.index("①b 写整篇写作设计"), spec.index("② 按章写"))
+        order = read("phases/design.md").split("## 一、顺序", 1)[1].split("\n## ", 1)[0]
+        self.assertLess(order.index("story-build skeleton"), order.index("写作设计"))
+        self.assertLess(order.index("写作设计"), order.index("逐章 chapter"))
         route = read("scripts/core/flow/routing.py")
         self.assertIn("写整篇写作设计", route, "流程路由的顺序里没有写作设计")
         self.assertNotIn("先重取一次任务包", route, "当前输入已由 skeleton 给出，路由不该再让作者重取任务包")
@@ -117,8 +117,8 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
     def test_the_analysis_keeps_its_source_screening_for_later(self) -> None:
         rules = read("rules/init_analysis.md")
         self.assertIn("### ⑥ 来源初筛", rules)
-        self.assertNotIn("`/spec` 不读它", rules, "Spec 从来源初筛起步，分析规则不能再说 Spec 不读它")
-        self.assertIn("init-analysis.md", read("phases/spec.md"), "Spec 的必读输入里没有来源初筛")
+        self.assertNotIn("`/spec` 不读它", rules, "设计从来源初筛起步，分析规则不能再说下游不读它")
+        self.assertIn("init-analysis.md", read("phases/story-write.md"), "成文的必读输入里没有来源初筛")
 
 
 class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
@@ -132,7 +132,7 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
         guide = read("phases/story-write.md")
         body = section(guide, "照骨架写一章")
         for needle in ("先答骨架里的问题，再补骨架没列的", "骨架已铺在里面", "写着写着认识变了",
-                       "回 Spec 或 `decisions.json` 改", "依赖它的行为不能同时写成已定"):
+                       "回蓝图或 `decisions.json` 改", "依赖它的行为不能同时写成已定"):
             self.assertIn(needle, body, f"写一章那一节少了「{needle}」")
         # 图怎么选归「表达选择」一节，写章这里只说落盘；两处并存过一轮（可改画 / 一律原样搬入），
         # 作者读到哪句走哪条，car 那一轮的时序图就这么被改画成流程图、丢了失败责任。
@@ -201,7 +201,7 @@ class TheFinalPassLandsThroughChapterSubmit(unittest.TestCase):
 
     def test_no_seven_line_ledger_is_asked_for_anywhere(self) -> None:
         """生产者、校验、冻结、指令四处一起退——留一处，它就还会被人当成要求。"""
-        for rel in ("phases/story-write.md", "phases/spec.md", "phases/update.md",
+        for rel in ("phases/story-write.md", "phases/design.md", "phases/update.md",
                     "scripts/core/story-build.mjs", "scripts/core/story/check.mjs",
                     "scripts/core/story/context.mjs", "scripts/core/story_flow.py"):
             self.assertNotIn("copyedit", read(rel), f"{rel} 还在要七行自证")
@@ -221,10 +221,9 @@ class TestIssueDefinitionIsOneText(unittest.TestCase):
         return text.split(self.ANCHOR, 1)[1].split("**登记时机**", 1)[0]
 
     def test_the_phase_page_points_at_it_instead_of_repeating(self) -> None:
-        phase = read("phases/spec.md")
+        phase = read("phases/design.md")
         self.assertNotIn(self.ANCHOR, phase, "阶段页又抄了一份议题定义")
-        self.assertIn("story-write.md", phase, "阶段页没给出定义在哪")
-        self.assertIn("什么算一条议题", phase, "阶段页连指路都没有，作者不知道去哪读")
+        self.assertIn("story-write.md", phase, "阶段页没给出成文方法在哪")
 
     def test_it_names_the_admission_rule_and_what_is_not_registered(self) -> None:
         """准入判据只有一条：表态「需修改」会有产物要改；实现选型不登记。"""
@@ -370,11 +369,12 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
     EXT = DEV_EXT
 
     def test_the_closure_rule_is_written_once_and_referenced(self) -> None:
-        """WARN 与审查结论的处置只在 phases/spec.md「闭环」写一张表；plan 作者页与 update 方法页只引用它。"""
-        spec = (SKILL / "phases" / "spec.md").read_text(encoding="utf-8")
-        closure = spec.split("### 闭环", 1)[1]
+        """WARN 与审查结论的处置只在 reference/phase-closure.md「闭环」写一张表；两个作者页与 update 方法页只引用它。"""
+        spec = (SKILL / "reference" / "phase-closure.md").read_text(encoding="utf-8")
+        closure = spec.split("## 闭环", 1)[1]
         for row in ("有阻断项", "PASS，改动只影响表达", "PASS，改动改变业务口径", "PASS，建议不在本阶段修"):
             self.assertIn(row, closure, f"闭环表缺「{row}」这一类")
+        self.assertFalse((SKILL / "phases" / "spec.md").exists(), "Story 编排已迁到 phases/design.md")
         for f in (self.EXT / "hooks" / "plan" / "author.md", SKILL / "phases" / "update.md",
                   self.EXT / "hooks" / "spec" / "author.md"):
             text = f.read_text(encoding="utf-8")

@@ -62,7 +62,7 @@ class AHandEditIsReportedNotBlocking(unittest.TestCase):
 
 class TheDeliveryGateAsksOneThing(unittest.TestCase):
     def test_no_page_routes_a_delivery_gate_opinion_into_update(self) -> None:
-        for rel in ("phases/spec.md", "scripts/core/flow/routing.py", "SKILL.md"):
+        for rel in ("phases/design.md", "scripts/core/flow/routing.py", "SKILL.md"):
             text = (SKILL / rel).read_text(encoding="utf-8")
             for gone in ("交付门上人给的评审意见", "交付门上人的评审意见"):
                 self.assertNotIn(gone, text, f"{rel} 里还有交付门口头评审入口")

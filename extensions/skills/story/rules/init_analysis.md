@@ -27,7 +27,7 @@ S2b 需求分析   → ①需求概览 ②本部件视角 ③本 AR 定位 ④�
 
 给 S3 关卡上做决策的人看的分析。它**不是交付件**：归档不含它，生成 design.md 也
 **不以它为源**（四源不变）——它与 design.md 大面积重叠，不划死边界就是同一事实两个落点。
-第 ⑥ 节的来源初筛留给后面用：Spec 从它起步，成文与审查回来对照它和原文。
+第 ⑥ 节的来源初筛留给后面用：设计从它起步，成文与审查回来对照它和原文。
 
 **S2a 只写第 ⑤ 节的 1、2 两段**（材料清单 + 缺口判断）；材料确认后再补齐 ①–④、⑤3、⑤4 与 ⑥。
 六节最终形态，缺一节不成立：
@@ -158,7 +158,7 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 
 ### ⑥ 来源初筛 —— 材料里每一块内容对本需求有什么用
 
-把你读材料时已经形成的判断留下来：Spec 从这里起步，成文与审查回来对照它和原文，
+把你读材料时已经形成的判断留下来：设计从这里起步，成文与审查回来对照它和原文，
 不必把同一份材料再从头分类一遍。按**能独立判断的主题**逐块写——通常是最小一级标题下的正文；
 父级标题自己有正文也算一块，用途相同的相邻几块可以合写一行：
 
@@ -200,8 +200,8 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
 | S3 人回话之后 | `python …/story_flow.py decide --feature <AR> --gate <material_scope\|scope_decision\|split_carrier> --ask <ask_id> --reply "<人的原话>" [--chosen <编号>]`（原话没写编号或标签时加 `--chosen`） |
 | 会议话题的人裁决（材料确认之后，有要问人的话题时停一次） | 同上，`--gate meeting --meeting <主名>@<版本> --item <话题 id>`；读会见 [phases/meeting-read.md](../phases/meeting-read.md) |
 | 你自己的判断 | `python …/story_flow.py decide --feature <AR> --gate <本级> --propose --chosen <编号> --why "<理由>"`：记成提议，下次停等请人确认 |
-| S4 提取稿写好后 | `python …/story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md`（提交为 AR/design.md 并收口） |
-| **收口之后材料又变** | 照常跑 `round`——它不会开新轮，只更新材料指纹并记一笔。补个说明文件、改个错字都属这一类，流程仍是收口的，照常进 spec |
+| S4 提取稿与设计输入写好后 | `python …/story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md --input AR/story-src/design-input.json`（冻结输入、交给设计） |
+| **收口之后材料又变** | 照常跑 `round`——它不会开新轮，只更新材料指纹并记一笔。补个说明文件、改个错字都属这一类，流程仍是收口的，照常交给设计 |
 | **收口之后要重新拍板范围** | `python …/story_flow.py reopen --feature <AR>`：另开一轮回到范围关卡（材料没变也一样），然后照常 `decide` → `complete` → `story` 重新登记。它只用于重拍范围，会留痕；只改 story 不用它 |
 
 ### 侧车文件
@@ -250,8 +250,8 @@ SR 关联清单 / 三源都没给 → 取部件全量）」**
   但校验没过（如说了料已放进 inbox，收件箱里却没有新文件），按 stderr 提示重新与用户确认；`1` 是参数/前置错误。
 
 拆分定案的范围文字由份表中本 AR 那一份的 `scope` 推导进契约，S4 从那里逐字抄进
-`AR/design.md` 的「本 AR 范围与拆分说明」——写进 §1.2 之后那里是权威，
+提取稿的「本 AR 范围与拆分说明」——写进 §1.2 之后那里是权威，
 契约转为历史记录，不构成双落点。
 
-**防跳步**：spec 阶段 post_check 见本文件存在且未收口即 BLOCKER，
-即「诊断出缺料却径直进 /spec」这种跳步走不通。没走 /story 的 feature 没有本文件，不适用。
+**防跳步**：材料或范围没定时 `complete` 与 `story` 都拒绝，
+即「诊断出缺料却径直交给设计」这种跳步走不通。没走 /story 的 feature 没有本文件，不适用。

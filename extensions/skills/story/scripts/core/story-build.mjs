@@ -37,17 +37,17 @@ import {
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {
-  createContext, fail, ledgerDigestProblems, readJson, readText,
+  createContext, fail, readJson, readText,
 } from './story/context.mjs';
 import { designGaps, materialSubsectionName, projectAppendix } from './story/appendix.mjs';
-import { basisDriftProblems, currentBasis, designSource, termFacts } from './story/design-source.mjs';
+import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
 import { readerReviewTask } from '../../../../hooks/shared/reader-review-task.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
 import { cmdBuild, registrationGap } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
-import { cmdCheck } from './story/check.mjs';
+import { cmdCheck, storyCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
 import { storyInputs } from '../../../../hooks/spec/author.mjs';
 
@@ -115,7 +115,8 @@ function cmdBasis(ctx) {
 }
 
 /**
- * 独立人读审查。审查对象是**登记过的那一份**：没登记、或登记之后依据变了，先重新登记（登记时已跑全篇结构检查）。
+ * 独立人读审查。审查在登记之前：先过全篇结构检查（设计来源成立、各章与附录都对得上），再准备审查；
+ * 登记时重核依据，交付门按审查结论与授权放行。
  *
  * - `prepare`：把判据原文与这一次的输入写成审查任务 `AR/story-src/review/task.md`，交给独立审查者；
  * - `check`：报审查结论能不能消费。
@@ -125,12 +126,10 @@ function cmdBasis(ctx) {
  */
 function cmdReview(ctx) {
   if (!['prepare', 'check'].includes(ctx.args.action)) fail('用法: story-build.mjs review --action prepare|check --feature <需求名> [--project-root <路径>]');
-  const flow = readJson(ctx.flowPath, null);
-  if (flow?.status !== 'story_written') fail('还没登记成文——独立审查审的是登记过的那一份，先跑 `story_flow.py story` 登记');
-  const drift = [...ledgerDigestProblems(ctx), ...basisDriftProblems(ctx)];
-  if (drift.length) fail(`登记之后有变化，审查对象已经不是登记的那一份：\n  · ${drift.join('\n  · ')}`);
+  const { problems } = storyCheck({ ...ctx, args: { ...ctx.args, deliver: false } });
+  if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
   const unavailable = 'reviewer_unavailable：独立审查的原生调用尚未接通，没有可消费的审查结论——'
-    + '交付时照实说明这份 Story 未经独立审查；有既有明确授权按授权交付，没有就请人选择';
+    + '按 phases/design.md「五、独立审查、登记与交付」里「审查者不可用」那一行走';
   if (ctx.args.action === 'check') {
     process.stdout.write(`[story-build review] ${unavailable}\n`);
     return;

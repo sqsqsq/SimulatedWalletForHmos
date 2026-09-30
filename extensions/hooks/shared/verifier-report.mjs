@@ -85,7 +85,7 @@ export function reportProblems(projectRoot, feature, phase) {
   if (undisposed.length) {
     problems.push(`${phase}/notes.md：审查结论 ${undisposed.map(r => `${r.id}（${r.status}）`).join('、')}没有处置记录`
       + '——门禁按判据编号在 notes.md 里找它的处置；处置的几类（返修、只改表达已重验、改了业务已再审、留给哪一阶段）'
-      + '在 phases/spec.md「闭环」');
+      + '在 skills/story/reference/phase-closure.md「闭环」');
   }
   return problems;
 }

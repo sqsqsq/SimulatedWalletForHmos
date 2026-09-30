@@ -108,8 +108,8 @@ def settled_this_round(contract: dict) -> bool:
 #: 成文这一段的顺序，几个分支共用一句。
 STORY_STAGE_ORDER = (
     "顺序：story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
-    "回看清单逐条处置 → `story_flow.py story` 登记"
-    "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ 独立审查 → 交付选择")
+    "回看清单逐条处置 → check 通过 → 独立审查 → `story_flow.py story` 登记"
+    "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ 交付门 → 交付选择")
 
 
 def pending_chapters(feature_root: Path) -> int:
@@ -136,7 +136,8 @@ def design_stage_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     if read["status"] == "missing":
         return ("design_blueprint",
                 f"设计输入已冻结（`{entry}`）。按 `phases/design.md` 进原生 component-design，"
-                f"用这份输入建立蓝图 `{blueprint}` 并走到准入；知识在设计决定前取（story-knowledge）")
+                f"用这份输入建立蓝图 `{blueprint}` 并走到准入；知识在设计决定前取（story-knowledge）。"
+                "本轮授权：`/story <AR>` 的启动语义是「做到交付门并问一次交付选择」（batch 多阶段声明），直接进，不问")
     if read["status"] != "ok":
         return ("fix_blueprint", f"蓝图 `{blueprint}` 原生读不过（{read['status']}）：{native.issues_text(read)}——设计职责按原生报错修正")
     if not read.get("admitted"):
@@ -165,8 +166,9 @@ def story_stage_step(feature_root: Path) -> tuple[str, str]:
                 "落盘之后它会给出下一章。" + STORY_STAGE_ORDER)
     return ("register_story",
             "十章齐了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
-            "（业务结论改决策登记或回设计，骨架改写作设计，正文改草稿再 chapter 提交），"
-            "`story-build check` 通过之后跑 `story_flow.py story` 登记成文。" + STORY_STAGE_ORDER)
+            "（业务结论改决策登记或回设计，骨架改写作设计，正文改草稿再 chapter 提交）；"
+            "`story-build check` 通过之后准备独立审查（`story-build review --action prepare`），"
+            "再跑 `story_flow.py story` 登记成文。" + STORY_STAGE_ORDER)
 
 
 #: 停等点的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
@@ -381,8 +383,8 @@ def next_step(feature_root: Path, contract: dict | None,
                 + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",
-                "Story 已按已准入蓝图登记成文。按 `phases/design.md`「交付」走完：独立审查"
-                "（`story-build review --action prepare`；原生审查调用未接通时如实说明这份 Story 未审）→ "
+                "Story 已按已准入蓝图登记成文。按 `phases/design.md`「交付」走完：独立审查的结论"
+                "（`story-build review --action check`；原生审查调用未接通时如实说明这份 Story 未审）→ "
                 "`story-build check --deliver` 交付门；通过后按停等表问一次交付选择"
                 "（送审 / 完整设计交接 / 完整实现 / 暂不推进；本地单没有送审）"
                 + closed_tail(feature_root, contract, manifest))
@@ -404,7 +406,7 @@ def next_step(feature_root: Path, contract: dict | None,
             return ("refresh_round",
                     "材料在收口之后又变了：先跑 `story_flow.py round` 把这次变化登记到本轮"
                     "（它不开新轮；要重新走关卡重新决策，跑 `story_flow.py reopen`），"
-                    "再继续 spec 阶段——spec 与叙事件都按本轮登记的那批料写"
+                    "再继续——设计输入与叙事件都按本轮登记的那批料写"
                     + closed_tail(feature_root, contract, manifest))
         step, action = design_stage_step(feature_root, contract)
         return step, action + closed_tail(feature_root, contract, manifest)
