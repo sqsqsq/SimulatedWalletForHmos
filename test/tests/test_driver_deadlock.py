@@ -46,23 +46,21 @@ class VerifierReportNaming(unittest.TestCase):
                 old.unlink()
             (self.reports / name).write_text("verdict: PASS\n", encoding="utf-8")
             self.assertIsNotNone(
-                run_case.verifier_report("ZZTEST9001", "spec"),
+                run_case.verifier_report(self.tmp, "spec"),
                 f"{name} 应被认作 verifier 凭证——命名一变就判未闭环会让 Case 空转")
 
     def test_absent_report_is_missing(self):
         for old in self.reports.iterdir():
             old.unlink()
-        self.assertIsNone(run_case.verifier_report("ZZTEST9001", "spec"))
-        ok, missing = run_case.phase_evidence_complete("ZZTEST9001", "spec")
+        self.assertIsNone(run_case.verifier_report(self.tmp, "spec"))
+        ok, missing = run_case.phase_evidence_complete(self.tmp, "spec")
         self.assertFalse(ok)
         self.assertIn("verifier 报告", missing)
 
 
 class NoTurnBudget(unittest.TestCase):
-    """续话轮次上限已退场——它按 end_phase 分配预算，而 story 流程的关卡不在
-    `PHASE_ORDER` 里、一轮都分不到。实测 `end_phase=spec` 时全程只有 6 轮，
-    光走关卡就用光，模型刚在 spec 抛出术语映射表等人确认就被判「目标未达成」。
-    终点由 end_phase 判定，空转由观测者 stop。"""
+    """续话轮次上限已退场——它按阶段分配预算，而 story 流程的关卡一轮都分不到，
+    实测全程只有 6 轮，光走关卡就用光。终点由 end_at 判定，空转由观测者 stop。"""
 
     def test_the_turn_budget_is_gone(self):
         src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
@@ -166,32 +164,39 @@ class ObservingDoesNotChangeTheObserved(unittest.TestCase):
     阶段自己定稿的那份 summary 已经回答了「过没过」，读它就够。
     """
 
-    def _run_gates(self, *, closed: bool) -> tuple[dict, list]:
+    def _run_gates(self, *, state: str) -> tuple[dict, list]:
         called = []
 
-        def fake_harness(feature, phase, out_dir):
+        def fake_harness(feature, phase, out_dir, tag=None):
             called.append(phase)
             return "pass", {"status": "ran"}
+
+        facts = {"responsible_phases": ["plan"], "units": [{
+            "change_unit_id": "cu1", "feature_id": "cu-x", "feature_path": "doc/features/bp/cu1",
+            "design": "constructable", "phases": {"plan": {"state": state, "missing": []}}}]}
 
         with tempfile.TemporaryDirectory() as d:
             out = Path(d)
             with unittest.mock.patch.object(run_case, "phase_was_reached",
                                             lambda *a, **k: True), \
-                 unittest.mock.patch.object(run_case, "phase_evidence_complete",
-                                            lambda *a, **k: (closed, [])), \
                  unittest.mock.patch.object(run_case, "run_phase_harness", fake_harness):
-                gates = run_case.run_gates("AR90001", out, end_phase="plan",
-                                           start_phase="plan")
+                gates = run_case.run_gates("AR90001", out, facts, start_phase="plan")
         return gates, called
 
     def test_a_closed_phase_is_read_not_rerun(self) -> None:
-        gates, called = self._run_gates(closed=True)
+        gates, called = self._run_gates(state="closed")
         self.assertEqual([], called, "阶段已闭环还去跑 harness——换掉 subject 就是改了被观察物")
-        self.assertEqual("pass", gates["harness_plan"])
+        self.assertEqual("pass", gates["harness_plan@cu1"])
+
+    def test_a_native_reuse_is_not_run(self) -> None:
+        """原生判定这一阶段无需产出：不跑 harness，记 skipped。"""
+        gates, called = self._run_gates(state="reused")
+        self.assertEqual([], called)
+        self.assertEqual("skipped", gates["harness_plan@cu1"])
 
     def test_an_unclosed_phase_still_runs(self) -> None:
         """没闭环的照跑：不跑就不知道它过没过，那是另一种失真。"""
-        _, called = self._run_gates(closed=False)
+        _, called = self._run_gates(state="open")
         self.assertEqual(["plan"], called)
 
 

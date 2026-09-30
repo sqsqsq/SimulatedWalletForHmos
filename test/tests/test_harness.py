@@ -37,6 +37,7 @@ def _load(name: str, filename: str):
 
 observe = _load("story_observe", "observe.py")
 rc = _load("story_run_case", "run_case.py")
+import end_target  # noqa: E402  —— run_case 已把 test/scripts 放进导入路径
 
 
 class PollCadenceTest(unittest.TestCase):
@@ -94,10 +95,9 @@ class CaseConfigTest(unittest.TestCase):
                 self.assertTrue(str(cfg.get("prompt") or "").strip(), f"{path} 缺 prompt")
                 self.assertTrue(str(cfg.get("start_phase") or "").strip(),
                                 f"{path} 缺 start_phase，gate 区间不能靠默认值猜")
-                self.assertTrue(str(cfg.get("end_phase") or "").strip(),
-                                f"{path} 缺 end_phase，正常停止点不明确")
+                self.assertIn("end_at", cfg, f"{path} 缺 end_at，正常停止点不明确")
                 rc.resolve_start_phase(cfg)
-                rc.phase_index(str(cfg["end_phase"]))
+                rc.resolve_end_at(cfg)
 
     def test_interactive_cases_do_not_preload_the_answer(self) -> None:
         """交互用例的诉求必须由人在关卡上说出口——写进 prompt 就白搭了。"""
@@ -639,13 +639,8 @@ class SourceTransactionTest(unittest.TestCase):
         self.assertEqual(restore.call_count, 2)
 
 
-class EndPhaseTest(unittest.TestCase):
-    """end_phase：跑到哪个阶段为止。
-
-    加它是因为 harness 原来只驱动到 spec——三份产物一齐备就 break，
-    后面的 plan/coding/review/ut 无从驱动。**缺省必须是 spec**：既有用例一个字没改，
-    行为要与从前逐字节一致，否则这次改造本身就成了变量。
-    """
+class EndAtTest(unittest.TestCase):
+    """end_at：本轮终点。一个真源（Case 的 end_at），命令行只作一次性覆盖，写法同一套。"""
 
     def test_phase_order_matches_the_workflow(self) -> None:
         """阶段序列取自 framework 的 feature full 轨，顺序错了闭环判据就查错阶段。"""
@@ -653,38 +648,58 @@ class EndPhaseTest(unittest.TestCase):
                          ("spec", "plan", "coding", "review", "ut", "testing"))
 
     def test_unknown_phase_is_rejected_loudly(self) -> None:
-        """写错 end_phase 要当场报，不能默默按 spec 跑完然后让人以为测了全流程。"""
+        """写错阶段要当场报，不能默默按别的阶段跑完然后让人以为测了全流程。"""
         with self.assertRaises(SystemExit) as ctx:
             rc.phase_index("codeing")       # 常见拼写错
         self.assertIn("codeing", str(ctx.exception))
 
-    def test_spec_target_requires_its_formal_closure(self) -> None:
-        """三份阅读产物出现不等于 spec 闭环，不能据此提前结束整条用例。"""
-        root = Path(tempfile.mkdtemp())
-        original = rc.REPO_ROOT
-        try:
-            rc.REPO_ROOT = root
-            feature = "AR90099"
-            feature_root = root / rc.FEATURES_DIR / feature
-            (feature_root / "AR").mkdir(parents=True)
-            (feature_root / "AR" / "story.md").write_text("story", encoding="utf-8")
-            (feature_root / "AR" / "review.md").write_text("review", encoding="utf-8")
-            phase_root = feature_root / "spec"
-            phase_root.mkdir()
-            (phase_root / "spec.md").write_text("spec", encoding="utf-8")
-            self.assertFalse(rc.target_reached(feature, "spec"))
+    def test_the_four_kinds_and_their_phase_rule(self) -> None:
+        for value, want in (({"kind": "story"}, {"kind": "story"}), ("blueprint", {"kind": "blueprint"}),
+                            ("design_handoff", {"kind": "design_handoff"}),
+                            ({"kind": "phase", "phase": "plan"}, {"kind": "phase", "phase": "plan"}),
+                            ("phase:coding", {"kind": "phase", "phase": "coding"})):
+            with self.subTest(value=value):
+                self.assertEqual(want, rc.resolve_end_at({"id": "c", "end_at": value}))
+        for bad in ({"kind": "phase"}, {"kind": "story", "phase": "plan"}, {"kind": "spec"},
+                    {"kind": "phase", "phase": "plan", "extra": 1}, "phase:codeing"):
+            with self.subTest(bad=bad), self.assertRaises(SystemExit):
+                rc.resolve_end_at({"id": "c", "end_at": bad})
 
-            reports = phase_root / "reports"
+    def test_the_override_wins_and_the_old_key_is_refused(self) -> None:
+        self.assertEqual({"kind": "blueprint"}, rc.resolve_end_at({"id": "c", "end_at": {"kind": "story"}}, "blueprint"))
+        with self.assertRaises(SystemExit) as ctx:
+            rc.resolve_end_at({"id": "c", "end_phase": "spec"})
+        self.assertIn("end_at", str(ctx.exception))
+        with self.assertRaises(SystemExit):
+            rc.resolve_end_at({"id": "c"})
+
+    def test_a_unit_phase_needs_its_formal_closure_or_a_native_reuse(self) -> None:
+        """阶段产物出现不等于闭环；原生输入有问题时回执也不算数；原生判定无需产出才算合法复用。"""
+        root = Path(tempfile.mkdtemp())
+        try:
+            unit = root / "doc" / "features" / "bp" / "cu1"
+            (unit / "spec").mkdir(parents=True)
+            (unit / "spec" / "spec.md").write_text("spec", encoding="utf-8")
+            frozen = {"status": "ok", "scope": "frozen", "issues": [], "required_outputs": ["acceptance.yaml"]}
+            state, missing = end_target.phase_closed(unit, "spec", frozen, rc.phase_evidence_complete)
+            self.assertEqual("open", state)
+            self.assertIn("完成回执", missing)
+            self.assertEqual("reused", end_target.phase_closed(unit, "spec", {**frozen, "required_outputs": []},
+                                                               rc.phase_evidence_complete)[0])
+            reports = unit / "spec" / "reports"
             reports.mkdir()
             (reports / "trace.json").write_text("{}", encoding="utf-8")
             (reports / "verifier.report.md").write_text("PASS", encoding="utf-8")
             (reports / "summary.json").write_text(
                 json.dumps({"verdict": "PASS", "receipt_status": "passed",
                             "closure_status": "closed"}), encoding="utf-8")
-            (phase_root / "phase-completion-receipt.md").write_text("ok", encoding="utf-8")
-            self.assertTrue(rc.target_reached(feature, "spec"))
+            (unit / "spec" / "phase-completion-receipt.md").write_text("ok", encoding="utf-8")
+            self.assertEqual(("closed", []), end_target.phase_closed(unit, "spec", frozen, rc.phase_evidence_complete))
+            stale = {**frozen, "status": "invalid", "issues": ["contracts_invalid：过期"]}
+            self.assertEqual("open", end_target.phase_closed(unit, "spec", stale, rc.phase_evidence_complete)[0])
+            self.assertEqual("open", end_target.phase_closed(unit, "spec", {**frozen, "scope": "not_frozen"},
+                                                             rc.phase_evidence_complete)[0])
         finally:
-            rc.REPO_ROOT = original
             shutil.rmtree(root, ignore_errors=True)
 
     def test_no_wall_clock_and_no_turn_budget(self) -> None:
@@ -693,7 +708,7 @@ class EndPhaseTest(unittest.TestCase):
         两者保护的都是「进程失控」，而这里的观测者逐轮驱动、随时可以 stop。
         实测两次都是限制先到：一次 1h54m 硬超时把正在推进的会话从中间切断，
         一次 6 轮预算被 story 流程的关卡用光——留下的都是半成品，
-        观测到的既不是能力也不是缺陷。终点只由 end_phase 判定。
+        观测到的既不是能力也不是缺陷。终点只由 end_at 判定。
         """
         for gone in ("PHASE_TURNS", "MAX_TURNS", "SOFT_TIMEOUT", "HARD_TIMEOUT"):
             self.assertFalse(hasattr(rc, gone), f"{gone} 应当已退场")
@@ -738,32 +753,37 @@ class PhaseResultModelTest(unittest.TestCase):
                         "closure_status": "closed"}), encoding="utf-8")
         (phase_root / "phase-completion-receipt.md").write_text("ok", encoding="utf-8")
 
+    def facts(self, state: str = "closed", missing: list | None = None, phases=("plan",)) -> dict:
+        return {"responsible_phases": list(phases), "units": [{
+            "change_unit_id": "cu1", "feature_id": "cu-x", "feature_path": "doc/features/bp/cu1", "design": "constructable",
+            "phases": {p: {"state": state, "missing": missing or []} for p in phases}}]}
+
     def test_phase_and_gate_scope_match_start_end(self) -> None:
-        self.assertEqual(rc.applicable_phases("story", "plan"), ("story", "spec", "plan"))
-        self.assertEqual(rc.applicable_phases("plan", "plan"), ("plan",))
-        plan_gates = rc.expected_gate_names("plan", "plan")
-        self.assertEqual(plan_gates, ("harness_plan", "upstream_fingerprint"))
-        self.assertNotIn("story_criteria", plan_gates)
+        self.assertEqual(end_target.responsible_phases({"kind": "phase", "phase": "plan"}), ("spec", "plan"))
+        self.assertEqual(end_target.responsible_phases({"kind": "phase", "phase": "plan"}, "plan"), ("plan",))
+        self.assertEqual(end_target.responsible_phases({"kind": "story"}), ())
+        self.assertEqual(rc.expected_gate_names("plan", self.facts()), ("harness_plan@cu1", "upstream_fingerprint"))
+        story = rc.expected_gate_names("story", self.facts(phases=("spec", "plan")))
+        self.assertEqual(story[1:], ("harness_spec@cu1", "harness_plan@cu1"))
+        self.assertEqual(rc.expected_gate_names("story", {"responsible_phases": [], "units": []})[-1:], story[:1])
 
     def test_closed_plan_records_execution_and_closure(self) -> None:
+        self.unit = self.root / "doc" / "features" / "bp" / "cu1"
+        self.feature_root = self.unit
         self._closed_phase("plan", "plan.md")
-        results = rc.build_phase_results(
-            self.feature, "plan", "plan",
-            {"harness_plan": "pass", "upstream_fingerprint": "pass"})
-        self.assertEqual(results["plan"]["execution_status"], "completed")
-        self.assertEqual(results["plan"]["closure_status"], "closed")
+        results = rc.build_phase_results(self.feature, "plan", {"harness_plan@cu1": "pass"}, self.facts())
+        self.assertEqual(results["plan@cu1"]["execution_status"], "completed")
+        self.assertEqual(results["plan@cu1"]["closure_status"], "closed")
+        self.assertEqual(results["plan@cu1"]["gates"], {"harness_plan@cu1": "pass"})
 
     def test_plan_gate_can_pass_while_formal_closure_is_open(self) -> None:
+        self.feature_root = self.root / "doc" / "features" / "bp" / "cu1"
         self._closed_phase("plan", "plan.md")
-        summary = self.feature_root / "plan" / "reports" / "summary.json"
-        summary.write_text(json.dumps({
-            "verdict": "PASS", "receipt_status": "failed", "closure_status": "open",
-        }), encoding="utf-8")
-        results = rc.build_phase_results(
-            self.feature, "plan", "plan", {"harness_plan": "pass"})
-        self.assertEqual(results["plan"]["execution_status"], "completed")
-        self.assertEqual(results["plan"]["closure_status"], "open")
-        self.assertIn("formal closure", results["plan"]["closure_missing"][0])
+        results = rc.build_phase_results(self.feature, "plan", {"harness_plan@cu1": "pass"},
+                                         self.facts("open", ["formal closure 未完成"]))
+        self.assertEqual(results["plan@cu1"]["execution_status"], "completed")
+        self.assertEqual(results["plan@cu1"]["closure_status"], "open")
+        self.assertIn("formal closure", results["plan@cu1"]["closure_missing"][0])
 
     def test_published_phase_result_is_write_once(self) -> None:
         out = self.root / "out"
@@ -777,15 +797,17 @@ class PhaseResultModelTest(unittest.TestCase):
     def test_downstream_files_do_not_change_upstream_fingerprint(self) -> None:
         (self.feature_root / "AR").mkdir(parents=True)
         (self.feature_root / "AR" / "story.md").write_text("story", encoding="utf-8")
-        (self.feature_root / "spec").mkdir()
-        spec = self.feature_root / "spec" / "spec.md"
+        unit = self.root / "doc" / "features" / "bp" / "cu1"
+        (unit / "spec").mkdir(parents=True)
+        spec = unit / "spec" / "spec.md"
         spec.write_text("spec", encoding="utf-8")
-        before = rc.compute_upstream_fingerprint(self.feature, "plan")
-        (self.feature_root / "plan").mkdir()
-        (self.feature_root / "plan" / "plan.md").write_text("plan", encoding="utf-8")
-        self.assertEqual(before, rc.compute_upstream_fingerprint(self.feature, "plan"))
+        units = [{"feature_path": "doc/features/bp/cu1"}]
+        before = rc.compute_upstream_fingerprint(self.feature, "plan", units)
+        (unit / "plan").mkdir()
+        (unit / "plan" / "plan.md").write_text("plan", encoding="utf-8")
+        self.assertEqual(before, rc.compute_upstream_fingerprint(self.feature, "plan", units))
         spec.write_text("changed", encoding="utf-8")
-        self.assertNotEqual(before, rc.compute_upstream_fingerprint(self.feature, "plan"))
+        self.assertNotEqual(before, rc.compute_upstream_fingerprint(self.feature, "plan", units))
 
 
 class ResumeFromPhaseTest(unittest.TestCase):
@@ -828,8 +850,8 @@ class ResumeFromPhaseTest(unittest.TestCase):
         """
         root = Path(tempfile.mkdtemp())
         try:
-            feature = "AR90099"
-            phase_root = root / "doc" / "features" / feature / "spec"
+            unit = root / "doc" / "features" / "bp" / "cu1"
+            phase_root = unit / "spec"
             (phase_root / "reports").mkdir(parents=True)
             for name in ("trace.json", "verifier.report.md"):
                 (phase_root / "reports" / name).write_text("{}", encoding="utf-8")
@@ -843,7 +865,7 @@ class ResumeFromPhaseTest(unittest.TestCase):
             original = rc.REPO_ROOT
             try:
                 rc.REPO_ROOT = root
-                ok, missing = rc.phase_evidence_complete(feature, "spec")
+                ok, missing = rc.phase_evidence_complete(unit, "spec")
             finally:
                 rc.REPO_ROOT = original
             self.assertTrue(ok, f"四件套与 formal closure 均齐备却被判不齐：缺 {missing}")
@@ -854,8 +876,8 @@ class ResumeFromPhaseTest(unittest.TestCase):
         """放宽的只是 git 时效，凭证缺失照样拦——否则这条校验就白设了。"""
         root = Path(tempfile.mkdtemp())
         try:
-            feature = "AR90099"
-            phase_root = root / "doc" / "features" / feature / "spec"
+            unit = root / "doc" / "features" / "bp" / "cu1"
+            phase_root = unit / "spec"
             (phase_root / "reports").mkdir(parents=True)
             for name in ("trace.json", "verifier.report.md"):
                 (phase_root / "reports" / name).write_text("{}", encoding="utf-8")
@@ -866,7 +888,7 @@ class ResumeFromPhaseTest(unittest.TestCase):
             original = rc.REPO_ROOT
             try:
                 rc.REPO_ROOT = root
-                ok, missing = rc.phase_evidence_complete(feature, "spec")
+                ok, missing = rc.phase_evidence_complete(unit, "spec")
             finally:
                 rc.REPO_ROOT = original
             self.assertFalse(ok)
@@ -876,34 +898,40 @@ class ResumeFromPhaseTest(unittest.TestCase):
 
     def test_resume_prompt_does_not_restart_the_pipeline(self) -> None:
         """续跑 prompt 不能复用「执行 /story init …」——那会让模型重跑已完成的阶段。"""
-        prompt = rc.resume_prompt("AR90003", "plan", "plan")
+        prompt = rc.resume_prompt("AR90003", "plan", {"kind": "phase", "phase": "plan"}, ["cu1"])
         self.assertNotIn("/story init", prompt)
         self.assertIn("plan", prompt)
         self.assertIn("AR90003", prompt)
+        self.assertIn("cu1", prompt)
 
 
 class GateReplyRoutingTest(unittest.TestCase):
     """续话文案按**卡在哪一层**分流。
 
-    实测教训：spec 闭环后模型给的推荐链路是「评审 → 归档」，「进 plan」排在其后。
+    实测教训：交付门上模型给的推荐链路是「评审 → 归档」，「继续施工设计」排在其后。
     驱动器回一句"按你推荐的选项继续"，模型照办执行了归档、宣布"全链已交付"，
     随后空转 5 次——`plan/` 目录从未建立。
 
-    一句通用回话应付不了两种关卡：材料关卡要的是"按推荐走"，
-    阶段边界要的是**指名道姓的推进指令**。
+    一句通用回话应付不了两种关卡：材料与成文关卡要的是"按推荐走"，
+    交付之后的施工设计要的是**指名道姓的推进指令**。
     """
 
-    def test_material_gate_keeps_the_recommendation_reply(self) -> None:
-        """产物未齐时推荐项就是「进入 /spec」，按推荐走是对的。"""
-        reply = rc.continuation_reply("AR90003", artifacts_done=False, next_phase=None)
-        self.assertIn("推荐", reply)
+    def test_before_delivery_the_recommendation_reply_stays(self) -> None:
+        """需求还没交付时推荐项就是往下走，按推荐走是对的。"""
+        self.assertIn("推荐", rc.continuation_reply("AR90003", story_done=False, facts={"end_at": "phase:plan"}))
+        self.assertIn("推荐", rc.continuation_reply("AR90003", story_done=True, facts={"end_at": "story"}))
 
-    def test_phase_boundary_names_the_next_phase(self) -> None:
-        """产物齐但阶段未闭环 = 卡在阶段边界，必须指名下一个阶段。"""
-        reply = rc.continuation_reply("AR90003", artifacts_done=True, next_phase="plan")
+    def test_after_delivery_the_next_step_is_named(self) -> None:
+        """交付之后还要施工设计：设计准备没做完说设计准备，某施工单位的阶段没闭环就点名它。"""
+        handoff = rc.continuation_reply("AR90003", story_done=True, facts={"end_at": "phase:plan", "units": []})
+        self.assertIn("设计准备", handoff)
+        reply = rc.continuation_reply("AR90003", story_done=True, facts={"end_at": "phase:plan", "units": [
+            {"change_unit_id": "cu1", "phases": {"spec": {"state": "closed", "missing": []},
+                                                 "plan": {"state": "open", "missing": ["完成回执"]}}}]})
+        self.assertIn("cu1", reply)
         self.assertIn("plan", reply)
         self.assertNotIn("按你推荐的选项继续", reply,
-                         "阶段边界仍在说「按推荐走」——模型会照 spec 的推荐去归档")
+                         "阶段边界仍在说「按推荐走」——模型会照交付门的推荐去归档")
 
 
 class TwoCheckpointEndPhaseTest(unittest.TestCase):
@@ -924,12 +952,12 @@ class TwoCheckpointEndPhaseTest(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_the_fake_phase_is_gone(self) -> None:
-        """`story-review` 不再是合法 end_phase——它随 `/story review` 一起退场。"""
+        """`story-review` 不是合法阶段——它随 `/story review` 一起退场。"""
         self.assertFalse(hasattr(rc, "STORY_REVIEW"), "假阶段常量还在")
         with self.assertRaises(SystemExit):
             rc.phase_index("story-review")
 
-    def test_an_unknown_end_phase_still_fails(self) -> None:
+    def test_an_unknown_phase_still_fails(self) -> None:
         with self.assertRaises(SystemExit):
             rc.phase_index("nowhere")
 
@@ -1129,7 +1157,7 @@ class PhaseSlotTest(unittest.TestCase):
 class GateScopeTest(unittest.TestCase):
     """只为**实际到达过**的阶段跑 harness。
 
-    实测教训：`end_phase=ut` 时驱动器为 plan/coding/review/ut 四个从未执行过的阶段
+    实测教训：终点为 ut 时驱动器为 plan/coding/review/ut 四个从未执行过的阶段
     跑了 harness，13 秒内连产四份 FAIL summary，并把 framework 的全局阶段槽写成 ut，
     反过来拦住观测者会话的 Stop hook。
 

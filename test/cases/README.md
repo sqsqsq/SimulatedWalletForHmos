@@ -4,12 +4,13 @@
 
 ## 阶段推进是驱动器的职责，不是被测模型的
 
-- `run_case.py` 在每个阶段边界按 `end_phase` 算出下一个未闭环阶段，指名下发推进指令（`continuation_reply`，「现在执行 plan 阶段」）。
+- `run_case.py` 按 `end_at` 观测终点（`test/scripts/end_target.py`）；需求交付之后还要施工设计时，指名下发下一步
+  （`continuation_reply`，「现在执行施工单位 X 的 plan 阶段」）。
 - **Case 的 `prompt` 里不写阶段链**。只写起点动作（`/story init …`）、业务任务与执行要求；「随后依次完成 spec、plan、coding」这类话一律不写。
   写了会与驱动器双写、把「模型会不会自己一路跑」混进观测、改终点时两边对不上（来源见 ../EVOLUTION.md §6）。
-- **要改本轮终点，只改 `case.yaml` 的 `end_phase` 一行**，不动 prompt。命令行 override 与回显字段见 TEST §4.1。
-- story 流程内的动作（取材、归档送审、评审意见处置）不在 `PHASE_ORDER`（spec…testing）里，驱动器不会下发，所以**要写在 prompt 里**，
-  写成需求方的话（「做到评审」「评审我来回」），不是命令名。
+- **要改本轮终点，只改 `case.yaml` 的 `end_at` 一行**，不动 prompt。写法与回显字段见 TEST §4.1。
+- prompt 用业务终点说做到哪（「需求说明定稿送审，不开展施工」「需求说明定稿后继续完成可交开发的实现方案，到方案为止」）；
+  story 流程内的动作（取材、归档送审、评审意见处置）驱动器不会下发，写成需求方的话，不是命令名。
 
 ## prompt 怎么写：说需求，不说做法
 

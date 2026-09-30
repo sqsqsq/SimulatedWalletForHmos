@@ -29,14 +29,14 @@ replies:
   - id: terms-confirmed
     expected_turn: 4
     expected_kind: story_gate
-    expected_phase: spec
+    expected_phase: story
     text: 术语确认，按你列的定。
 
-  - id: enter-plan
+  - id: continue-to-plan
     expected_turn: 5
     expected_kind: story_gate
-    expected_phase: spec
-    text: 进入 plan。
+    expected_phase: story
+    text: 继续做实现方案，到方案为止，不写代码。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material

@@ -37,14 +37,14 @@ class CaseConfigIsOptional(unittest.TestCase):
     """`after_initial` 不配就是普通单终点——既有用例一个字节不用改。"""
 
     def test_a_plain_case_has_no_second_segment(self) -> None:
-        plan = rmc.CasePlan("c", "AR1", "story", "spec", False, ("spec",))
+        plan = rmc.CasePlan("c", "AR1", "story", {"kind": "story"}, False, ())
         self.assertEqual("", plan.after_initial)
         self.assertIsNone(plan.as_dict()["after_initial"])
 
     def test_only_update_is_accepted(self) -> None:
         """值域一个字：别的写法当场拒绝，不要跑到一半才发现它没生效。"""
         self.assertIn("after_initial", (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8"))
-        plan = rmc.CasePlan("c", "AR1", "story", "spec", False, ("spec",), (), (), "update")
+        plan = rmc.CasePlan("c", "AR1", "story", {"kind": "story"}, False, (), (), (), "update")
         self.assertEqual("update", plan.as_dict()["after_initial"])
 
 
@@ -299,21 +299,24 @@ class TheSecondCheckpointShowsTheReviewClosure(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def test_it_reports_each_phase_as_it_is(self) -> None:
-        out = rc.review_closure("AR1")
+        out = rc.review_closure(self.tmp / "doc" / "features" / "AR1")
         self.assertEqual("completed_with_prior_review", out["spec"]["mode"])
         self.assertEqual(["semantic_not_reverified"], out["spec"]["signals"])
         self.assertEqual([], out["plan"]["signals"])
         self.assertNotIn("coding", out, "没有产物的阶段不该出现")
 
     def test_phase_results_carry_the_review_apart_from_closure(self) -> None:
-        results = rc.build_phase_results("AR1", "spec", "plan", {})
-        self.assertEqual("completed_with_prior_review", results["spec"]["review"]["mode"])
-        self.assertFalse(results["spec"]["review"]["report_adopted"])
+        facts = {"responsible_phases": ["spec", "plan"], "units": [{
+            "change_unit_id": "cu1", "feature_id": "cu-x", "feature_path": "doc/features/AR1", "design": "constructable",
+            "phases": {p: {"state": "open", "missing": []} for p in ("spec", "plan")}}]}
+        results = rc.build_phase_results("AR1", "spec", {}, facts)
+        self.assertEqual("completed_with_prior_review", results["spec@cu1"]["review"]["mode"])
+        self.assertFalse(results["spec@cu1"]["review"]["report_adopted"])
 
     def test_the_event_carries_it(self) -> None:
         src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
         at = src.index('feed.emit("update_checkpoint"')
-        self.assertIn("closure=review_closure(feature)", src[at:at + 300])
+        self.assertIn("closure=units_review_closure(facts)", src[at:at + 300])
 
 
 class ReportAdoptedMeansTheCurrentReportPassedAndWasTakenIn(unittest.TestCase):
@@ -354,7 +357,7 @@ class ReportAdoptedMeansTheCurrentReportPassedAndWasTakenIn(unittest.TestCase):
             "审查正文\n\n" + text, encoding="utf-8")
 
     def review(self) -> dict:
-        return rc.review_closure("AR1")["plan"]
+        return rc.review_closure(self.tmp / "doc" / "features" / "AR1")["plan"]
 
     def test_the_current_passing_report_taken_in_counts(self) -> None:
         self.summary()
@@ -431,7 +434,7 @@ class ReportAdoptedMeansTheCurrentReportPassedAndWasTakenIn(unittest.TestCase):
 
 
 class StoryGatesTellNotRunFromFailed(unittest.TestCase):
-    """收尾的 story 门禁：「检查没跑成」与「内容不通过」分开记，同一份输入只跑一次。
+    """收尾的需求交付门（`story-build check --deliver`）：「检查没跑成」与「内容不通过」分开记，同一份输入只跑一次。
 
     T2 两个 Case 收工之后 node 起不来（0xC0000142、日志为空），被记成 gate_failed；
     事后在同一工作区重跑，检查通过。那是机器的账，不是被测产物的。
@@ -441,14 +444,13 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
     CONTENT_FAIL = ("", "[story-build check] 2 处未通过\n", 1)
     PREFLIGHT_FAIL = ("", "[story-build] AR/story-src/ 台账缺 1 件：decisions.json（由 skeleton 产出）\n", 1)
     NOT_STARTED = ("", "", 3221225794)
-    POST_OK = ('{"ok":true}\n', "", 0)
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        hook = self.tmp / "doc" / "extensions" / "hooks" / "spec" / "post_check.mjs"
-        hook.parent.mkdir(parents=True)
-        hook.write_text("// 替身\n", encoding="utf-8")
+        entry = self.tmp / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("// 替身\n", encoding="utf-8")
         self.feature = self.tmp / "doc" / "features" / "AR1"
         (self.feature / "AR" / "story-src").mkdir(parents=True)
         (self.feature / "AR" / "story.md").write_text("# story\n", encoding="utf-8")
@@ -462,7 +464,8 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
 
     def fake_gate(self, command, *, cwd, log_path, shell=False):
         self.calls += 1
-        out, err, code = self.POST_OK if "--input-type=module" in command else self.build
+        self.assertIn("--deliver", command, "需求交付门要以只读交付检查运行")
+        out, err, code = self.build
         log_path.write_text(out + err, encoding="utf-8")
         return (subprocess.CompletedProcess(command, code, out, err),
                 {"command": command, "returncode": code})
@@ -479,20 +482,16 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
                 self.assertEqual(want, rc._story_build_verdict(
                     subprocess.CompletedProcess([], code, out, err)))
         self.assertIsNone(rc._story_build_verdict(None), "启动异常也是没跑成")
-        self.assertIsNone(rc._post_check_verdict(subprocess.CompletedProcess([], 0, "", "")))
-        self.assertEqual("fail", rc._post_check_verdict(
-            subprocess.CompletedProcess([], 0, '{"ok":false}\n', "")))
 
     def test_a_check_that_did_not_run_is_absent_not_failed(self) -> None:
         """没跑成的不写进结果——缺席的门禁由现有语义判成 harness_incomplete，不是 gate_failed。"""
         self.build = self.NOT_STARTED
         gates = self.run_gates()
         self.assertNotIn("story_build_check", gates)
-        self.assertEqual("pass", gates["post_check"])
         diag = json.loads((self.out / "gate_diagnostics.json").read_text(encoding="utf-8"))
         self.assertEqual("not_run", diag["story_build_check"]["status"])
         self.assertIn("story_build_check",
-                      set(rc.expected_gate_names("story", "spec")) - set(gates),
+                      set(rc.expected_gate_names("story", {"units": [], "responsible_phases": []})) - set(gates),
                       "缺席没有落到装置的账上")
 
     def test_a_real_content_failure_stays_a_failure(self) -> None:
@@ -501,14 +500,18 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
 
     def test_the_same_inputs_are_checked_once(self) -> None:
         first = self.run_gates()
-        self.assertEqual(2, self.calls)
+        self.assertEqual(1, self.calls)
         self.assertEqual(first, self.run_gates(), "复用的结果与第一次不同")
-        self.assertEqual(2, self.calls, "输入一字未变，却又起了检查进程")
+        self.assertEqual(1, self.calls, "输入一字未变，却又起了检查进程")
 
     def test_any_input_change_reruns(self) -> None:
-        """正文、侧车、检查器实现变了都重跑——旧 PASS 不沿用。"""
+        """正文、侧车、检查器实现、需求关联的蓝图变了都重跑——旧 PASS 不沿用。"""
+        (self.feature / "AR" / "story-src" / "story-flow.json").write_text(
+            json.dumps({"design_binding": {"blueprint_id": "bp1"}}), encoding="utf-8")
+        (self.tmp / "doc" / "features" / "bp1" / "blueprint").mkdir(parents=True)
         for rel in ("doc/features/AR1/AR/story.md", "doc/features/AR1/AR/story-src/story-template.md",
-                    "doc/extensions/hooks/spec/post_check.mjs"):
+                    "doc/extensions/skills/story/scripts/core/story-build.mjs",
+                    "doc/features/bp1/blueprint/component-blueprint.yaml"):
             with self.subTest(rel=rel):
                 self.run_gates()
                 before = self.calls
@@ -516,7 +519,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
                 target.write_text((target.read_text(encoding="utf-8") if target.exists() else "")
                                   + "改了一行\n", encoding="utf-8")
                 self.run_gates()
-                self.assertEqual(before + 2, self.calls, f"{rel} 变了却复用了旧结果")
+                self.assertEqual(before + 1, self.calls, f"{rel} 变了却复用了旧结果")
 
     def test_a_run_that_did_not_finish_is_checked_again(self) -> None:
         """没跑成那次不是业务结论，不缓存：环境恢复后下一次调用真的重查、拿到新结论。"""
@@ -524,7 +527,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
         self.assertNotIn("story_build_check", self.run_gates())
         self.build = self.PASS
         gates = self.run_gates()
-        self.assertEqual(4, self.calls, "输入没变，但上次没跑成，这次该重查")
+        self.assertEqual(2, self.calls, "输入没变，但上次没跑成，这次该重查")
         self.assertEqual("pass", gates["story_build_check"])
 
     def test_a_real_content_failure_is_reused(self) -> None:
@@ -532,7 +535,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
         self.build = self.CONTENT_FAIL
         self.run_gates()
         self.assertEqual("fail", self.run_gates()["story_build_check"])
-        self.assertEqual(2, self.calls)
+        self.assertEqual(1, self.calls)
 
     def test_a_config_change_reruns(self) -> None:
         """检查器按工程配置找扩展与需求目录：配置变了，旧结论不能再用。"""
@@ -540,7 +543,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
         (self.tmp / "framework.config.json").write_text(
             json.dumps({"paths": {"extension_dir": "tools/other-ext"}}), encoding="utf-8")
         self.run_gates()
-        self.assertEqual(4, self.calls, "改了扩展目录配置却复用了旧结论")
+        self.assertEqual(2, self.calls, "改了扩展目录配置却复用了旧结论")
 
     def test_a_diagnostics_write_failure_reaches_the_host(self) -> None:
         """写不进诊断要让宿主看见（stderr 进 worker.log，再发一条事件），且下次重查。"""
@@ -556,7 +559,7 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
         self.assertIn("gate_diagnostics.json 写不进去", err.getvalue())
         self.assertIn("gate_diagnostics_write_failed", events)
         self.run_gates(Feed())
-        self.assertEqual(4, self.calls, "缓存没落盘却被当成已检查")
+        self.assertEqual(2, self.calls, "缓存没落盘却被当成已检查")
 
     def test_the_second_checkpoint_runs_the_gates_before_waiting(self) -> None:
         src = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
@@ -568,4 +571,5 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
 class TheOldFakePhaseIsGone(unittest.TestCase):
     def test_story_review_is_not_an_end_phase_anymore(self) -> None:
         self.assertFalse(hasattr(rc, "STORY_REVIEW"))
-        self.assertNotIn("story-review", rmc.VALID_END)
+        with self.assertRaises(SystemExit):
+            rc.resolve_end_at({"id": "c", "end_at": "story-review"})

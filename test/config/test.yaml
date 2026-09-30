@@ -69,12 +69,12 @@ cli:
   # 一次把正在推进的会话从中间切断（1h54m 硬超时，plan 刚开始），
   # 一次轮次预算 6 轮被 story 流程的关卡用光（模型刚在 spec 抛出术语映射表等确认）。
   # 两次留下的都是半成品产物，观测到的既不是能力也不是缺陷。
-  # 终点由 case.yaml 的 end_phase 判定；空转由观测者看着 stop。
+  # 终点由 case.yaml 的 end_at 判定；空转由观测者看着 stop。
   # `soft_timeout` / `hard_timeout` / `phase_hard_timeout` / `max_turns` 已停用，
   # 写在这里会被 run_case.py 直接拒绝——防的是「以为还在生效」。
 
 observation:
-  # Story 与前置交互阶段需要及时驱动；进入 spec 后转为 Goal/heartbeat 的两分钟观测。
+  # Story 与前置交互阶段需要及时驱动；需求成文登记之后转为 Goal/heartbeat 的两分钟观测。
   interaction_interval_sec: 15
   automation_interval_sec: 120
   # worker 自己每 10 秒续租；控制端只在 PID 已不存在且租约超过 3 分钟时判 worker_lost。
@@ -87,9 +87,8 @@ startup:
   max_attempts: 3
 
 gates:
-  # 被测流程实际执行的项目原生门禁（消费工程里装好的扩展）；协调器只记录运行结果和诊断。
-  post_check: doc/extensions/hooks/spec/post_check.mjs
-  # story.md 的确定性判据：章节合同、附录机器区与真源一致、材料清单、图片身份、归档件红线。
+  # 需求交付门（消费工程里装好的扩展，`check --deliver` 只读）：成文依据当前、独立审查可消费，加 story.md 的确定性判据。
+  # 施工单位各阶段的门禁是 framework 自己的 harness，按终点观测到的施工单位逐个跑。
   story_build: doc/extensions/skills/story/scripts/core/story-build.mjs
 
 output:

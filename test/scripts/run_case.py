@@ -53,6 +53,7 @@ sys.path.insert(0, str(HOST_ROOT))
 import run_layout
 from cli_config_group import load_cli_group, select_cli
 from phase_state import derive_phase_state
+import end_target
 
 
 def _configure_console() -> None:
@@ -79,7 +80,7 @@ if "turn_timeout" in CFG["cli"] or "idle_timeout" in CFG["cli"]:
     raise SystemExit("[runner] turn_timeout/idle_timeout 已废弃：静默不是失败条件")
 # **本域不设运行时限**（用户裁定 2026-08-31）。时限保护的是「进程失控」，
 # 而这里的观测者逐轮驱动、随时可以 stop——一个跑得久的阶段不是失控，是它本来就长。
-# 实测两次：`end_phase` 靠前时时限反而先到，把正在推进的会话从中间切断，
+# 实测两次：终点靠前时时限反而先到，把正在推进的会话从中间切断，
 # 留下一堆半成品产物，观测到的既不是能力也不是缺陷。传 0 = 不限制。
 NO_TIME_LIMIT = 0
 STOP_GRACE = int(CFG["cli"].get("stop_grace", 60))
@@ -99,7 +100,7 @@ for gone in ("soft_timeout", "hard_timeout", "phase_hard_timeout", "max_turns",
     if gone in CFG["cli"]:
         raise SystemExit(
             f"[runner] cli.{gone} 已停用：本域不设运行时限、续话轮次上限，"
-            "等宿主回话也不设上限。目标由 end_phase 判定，何时收工由宿主 conclude。"
+            "等宿主回话也不设上限。目标由 end_at 判定，何时收工由宿主 conclude。"
             "把这一项从配置里删掉")
 if OBSERVATION_INTERVAL_SEC <= 0:
     raise SystemExit("[runner] observation.interval_sec 必须大于 0")
@@ -159,12 +160,10 @@ def driver_prompt(prompt: str, interactive: bool) -> str:
     del interactive
     return prompt
 
-# 阶段序列（framework 的 feature full 轨）。end_phase 用它定位「跑到哪为止」。
-PHASE_ORDER = ("spec", "plan", "coding", "review", "ut", "testing")
-# **不设续话轮次上限**（用户裁定 2026-08-31）。上一版按 end_phase 求和分配预算，
-# 而 story 流程自己的关卡（取材、补料、范围、成文前确认）不在 PHASE_ORDER 里、
-# 一轮都分不到——`end_phase=spec` 时全程只有 6 轮，光走关卡就用光，模型刚在 spec
-# 抛出术语映射表等人确认就被判「目标未达成」。终点由 end_phase 判定，
+# 原生阶段序列：每个施工单位按它走；终点写在 Case 的 `end_at`（见 end_target.py）。
+PHASE_ORDER = end_target.PHASES
+# **不设续话轮次上限**（用户裁定 2026-08-31）。按阶段求和分配预算时，story 流程自己的关卡
+# （取材、补料、范围、成文前确认）一轮都分不到，光走关卡就用光。终点由 end_at 判定，
 # 空转由观测者看着 stop，不由一个与关卡数无关的计数器代管。
 # 产品源码目录。coding 阶段会写这里，跑完必须复位，否则第二轮起跑点就不是干净的。
 # **精确列举而不是「除 doc/test 之外」**：漏掉一个目录只是少复位一处，
@@ -326,13 +325,13 @@ VERIFIER_REPORT_PATTERNS = (
 )
 
 
-def verifier_report(feature: str, phase: str):
-    """本阶段的 verifier 产物——认一组文件名，不认单一文件名。
+def verifier_report(root: Path, phase: str):
+    """本阶段的 verifier 产物——认一组文件名，不认单一文件名。`root` 是施工单位（或平铺 Feature）的目录。
 
     命名由被测流程决定且历史上变过；驱动器把某一个名字当契约，等于把
     「换了个文件名」变成「阶段永远不闭环」。
     """
-    reports = REPO_ROOT / FEATURES_DIR / feature / phase / "reports"
+    reports = root / phase / "reports"
     if not reports.is_dir():
         return None
     for pattern in VERIFIER_REPORT_PATTERNS:
@@ -342,8 +341,8 @@ def verifier_report(feature: str, phase: str):
     return None
 
 
-def phase_evidence_complete(feature: str, phase: str) -> tuple[bool, list[str]]:
-    """前序阶段是否已经闭环——续跑与目标终点的共同判据。
+def phase_evidence_complete(root: Path, phase: str) -> tuple[bool, list[str]]:
+    """一个施工单位的一个阶段是否已经闭环——续跑与目标终点的共同判据。`root` 是施工单位的目录（原生身份给出）。
 
     **不用 `check-receipt` 的退出码**：它还会比对 `summary.source_commit_sha` 与当前
     HEAD，HEAD 一推进就判「summary 属旧工作状态」。那条判据对**继续开发**是对的
@@ -355,18 +354,18 @@ def phase_evidence_complete(feature: str, phase: str) -> tuple[bool, list[str]]:
     同时仍要求 trace、summary、verifier 与回执四件物理凭证存在。这样 HEAD 后续移动不会
     抹掉“当时已闭环”的历史事实，未填写或未通过的回执也不会因文件占位而被误算成 closed。
     """
-    root = REPO_ROOT / FEATURES_DIR / feature / phase
+    base = root / phase
     checks = {
-        "trace.json": root / "reports" / "trace.json",
-        "summary.json": root / "reports" / "summary.json",
-        "完成回执": root / "phase-completion-receipt.md",
+        "trace.json": base / "reports" / "trace.json",
+        "summary.json": base / "reports" / "summary.json",
+        "完成回执": base / "phase-completion-receipt.md",
     }
     missing = [name for name, path in checks.items() if not path.is_file()]
     # verifier 报告的**文件名不是契约**：同一份内容曾落成 verifier.report.md 与
     # verifier-report.yaml 两种命名。驱动器按单一文件名判闭环时，另一种命名会被判成
     # 「未闭环」→ 反复下发同一条推进指令 → 模型按规则拒绝重跑 → 空转到预算耗尽
     # （实测一次 27 轮）。所以这里认一组名字，任一存在即算。
-    if not verifier_report(feature, phase):
+    if not verifier_report(root, phase):
         missing.append("verifier 报告")
     if missing:
         return False, missing
@@ -401,18 +400,17 @@ def phase_was_reached(feature_root: Path, phase: str) -> bool:
     return any(p.name != "reports" for p in root.iterdir())
 
 
-def resume_prompt(feature: str, start_phase: str, end_phase: str) -> str:
+def resume_prompt(feature: str, start_phase: str, end_at: dict, units: list[str]) -> str:
     """续跑的起手指令。
 
     **不能复用「执行 /story init …」那句**——上游已经跑完并闭环，再说一遍
     只会让模型重跑一遍已完成的阶段，既浪费又会把已闭环的产物覆盖掉。
     """
-    tail = (f"一路走到 {end_phase} 阶段闭环为止"
-            if start_phase != end_phase else f"完成 {start_phase} 阶段并闭环")
+    end = end_at.get("phase", start_phase)
+    tail = f"每个施工单位一路走到 {end} 阶段闭环为止" if start_phase != end else f"每个施工单位完成 {start_phase} 阶段并闭环"
     return (
-        f"需求 {feature} 的上游阶段已完成并通过闭环判定，产物都在 "
-        f"doc/features/{feature}/ 下。现在从 **{start_phase} 阶段**继续，"
-        f"按该阶段 Skill 的规则产出物料并通过它自己的门禁与闭环判定，{tail}。\n\n"
+        f"需求 {feature} 已交付，它的施工单位（{'、'.join(units) or '见蓝图'}）上游阶段已完成并通过闭环判定。"
+        f"现在从 **{start_phase} 阶段**继续，按该阶段 Skill 的规则产出物料并通过它自己的门禁与闭环判定，{tail}。\n\n"
         "执行要求：\n"
         "- 不要重跑已完成的上游阶段，直接读它们的产物作为输入；\n"
         "- 各确认关卡与阶段推进按你的判断取默认/推荐选项，无需逐一找我确认；\n"
@@ -421,54 +419,35 @@ def resume_prompt(feature: str, start_phase: str, end_phase: str) -> str:
     )
 
 
-def continuation_reply(feature: str, *, artifacts_done: bool, next_phase: str | None) -> str:
+def continuation_reply(feature: str, *, story_done: bool, facts: dict) -> str:
     """续话文案——按**卡在哪一层**分流。
 
-    一句通用回话应付不了两种关卡。实测教训：spec 闭环后模型给的推荐链路是
-    「评审 → 归档」，「进 plan」被排在其后并注明"建议先完成评审与归档"。
-    驱动器回"按你推荐的选项继续"，模型照办执行了归档、宣布"全链已交付"，
-    此后空转 5 次——`plan/` 目录从未建立。
+    一句通用回话应付不了两种关卡。实测教训：交付门的推荐链路是「评审 → 归档」，
+    驱动器回"按你推荐的选项继续"，模型照办执行了归档、宣布"全链已交付"，此后空转。
 
-    材料关卡要的是"按推荐走"（那里的推荐项就是「进入 /spec」）；
-    **阶段边界要的是指名道姓的推进指令**。
+    材料关卡与需求成文要的是"按推荐走"；需求交付之后还要施工设计时，
+    **要指名道姓地说出下一步**：设计准备没做完就说设计准备，某个施工单位的阶段没闭环就点名它。
     """
-    if not artifacts_done or not next_phase:
+    kind = (facts.get("end_at") or "").split(":")[0]
+    if not story_done or kind not in ("design_handoff", "phase") or facts.get("target_closed"):
         return GATE_REPLY
+    open_item = end_target.first_open(facts)
+    if open_item is None:
+        return ("需求说明已交付，现在接着把施工设计准备做完：在已准入的蓝图上完成施工单位的设计准备，到可交开发为止。\n"
+                "评审与归档不是现在要做的事。各确认关卡按你的判断取默认/推荐选项，不用再问我；每个决策照常写明依据。")
+    unit, phase = open_item
     return (
-        f"上游阶段已闭环，现在执行 **{next_phase} 阶段**：按该阶段 Skill 的规则产出物料，"
-        f"跑它自己的 harness 与 verifier，填完成回执，直到 {next_phase} 阶段闭环。\n"
+        f"需求说明已交付，现在执行施工单位 {unit} 的 **{phase} 阶段**：按该阶段 Skill 的规则产出物料，"
+        f"跑它自己的 harness 与 verifier，填完成回执，直到这个阶段闭环。\n"
         "评审与归档不是现在要做的事，先把阶段流水线走完。\n"
         "各确认关卡按你的判断取默认/推荐选项，不用再问我；每个决策照常写明依据。"
     )
-
-
-def next_unclosed_phase(feature: str, end_phase: str) -> str | None:
-    """目标之前第一个未闭环的阶段——推进指令要指名它，不能笼统说「继续」。
-
-    判据与前置校验一致，都用 `phase_evidence_complete`（四件凭证 + summary formal closure）而不是
-    `check-receipt` 的退出码：后者还比对 summary 的 commit sha 与当前 HEAD，
-    测试期间只要有人提交，已闭环的阶段就会被重新算成「未闭环」，
-    于是驱动器会一遍遍指挥模型回去重跑早就做完的阶段。
-    """
-    for phase in PHASE_ORDER[:phase_index(end_phase) + 1]:
-        ok, _ = phase_evidence_complete(feature, phase)
-        if not ok:
-            return phase
-    return None
-
-
-# 注：1.9.4 之前这里还有一个 story 侧终点 `story-review`——归档送审、评审人表态、
-# `/story review` 回流处置，凭证是那份处置台账。它随 `/story review` 一起退场：
-# 评审意见现在走 `/story update`，而「更新到哪算走完」由双检查点的第二段判
-# （见 `update_round` 与 `after_initial`），不再需要一个 PHASE_ORDER 之外的假阶段。
-
-
 def phase_index(phase: str) -> int:
     try:
         return PHASE_ORDER.index(phase)
     except ValueError:
         raise SystemExit(
-            f"[runner] 未知 end_phase「{phase}」，可用：{' / '.join(PHASE_ORDER)}") from None
+            f"[runner] 未知阶段「{phase}」，可用：{' / '.join(PHASE_ORDER)}") from None
 
 
 # 注：曾用 `check-receipt.ts` 的退出码判闭环（那是 framework 自己的判据，不自造，
@@ -478,16 +457,34 @@ def phase_index(phase: str) -> int:
 # 指挥模型回去重跑早已做完的阶段。改用 `phase_evidence_complete` 读取已定稿的闭环事实。
 
 
-def target_reached(feature: str, end_phase: str) -> bool:
-    """跑到目标阶段了没有——续话与否只看它。
+def resolve_end_at(case: dict, override: str | None = None) -> dict:
+    """本轮终点：命令行覆盖优先，其次 Case 的 `end_at`。旧键 `end_phase` 不再认。"""
+    if "end_phase" in case:
+        raise SystemExit(f"[runner] Case {case.get('id')} 还写着 end_phase：终点改用 end_at: {{kind, phase?}}（见 end_target.py）")
+    try:
+        if override:
+            return end_target.parse_end_at(override, where="--end-at")
+        if "end_at" not in case:
+            raise SystemExit(f"[runner] Case {case.get('id')} 没写 end_at")
+        return end_target.parse_end_at(case["end_at"], where=f"Case {case.get('id')}")
+    except end_target.EndAtError as exc:
+        raise SystemExit(f"[runner] {exc}") from None
 
-    Story 本身没有 framework receipt；但 end_phase=spec 表示 spec 必须完成四件套闭环，
-    不能在三份阅读产物刚出现时提前停下。
-    """
-    if not artifacts_ready(feature):
+
+def observe_target(feature: str, end_at: dict, case: dict | None, start_phase: str = "story") -> dict:
+    """终点的原生观测（见 end_target.observe）：到没到、缺什么、逐施工单位的身份与各阶段结论。"""
+    return end_target.observe(REPO_ROOT, FEATURES_DIR, feature, end_at, case=case,
+                              story_build=str(CFG["gates"]["story_build"]), receipt=phase_evidence_complete,
+                              start_phase=start_phase)
+
+
+def story_registered(feature: str) -> bool:
+    """需求成文登记过没有（读流程契约）——续话分流用；交付门是否通过由终点观测判。"""
+    flow = REPO_ROOT / FEATURES_DIR / feature / "AR" / "story-src" / "story-flow.json"
+    try:
+        return json.loads(flow.read_text(encoding="utf-8")).get("status") in ("story_written", "archived")
+    except (OSError, ValueError):
         return False
-    ok, _ = phase_evidence_complete(feature, end_phase)
-    return ok
 
 
 def update_round(feature: str) -> dict:
@@ -570,8 +567,8 @@ def wait_at_update_checkpoint(out_dir: Path, feed, runlog, state: dict, *,
             state["awaiting_stale_sec"] = waited
             refresh_worker_lease(out_dir, state, force=True, event="update_checkpoint_stale")
 
-def review_closure(feature: str) -> dict:
-    """各阶段审查闭环现在是哪一种 —— 第二检查点带给宿主，**只报事实**。
+def review_closure(root: Path) -> dict:
+    """一个施工单位各阶段审查闭环现在是哪一种 —— 第二检查点带给宿主，**只报事实**。
 
     `completed_with_prior_review` 或信号里还挂着 `semantic_not_reverified`，说明这一轮的
     审查报告没有被采纳（沿用了历史 PASS）；`report_adopted` 只在当前报告确实被采纳且通过时为 true。预跑里 auto 就停在这一步：报告写了、没同步闭环，
@@ -579,7 +576,7 @@ def review_closure(feature: str) -> dict:
     """
     out = {}
     for phase in PHASE_ORDER:
-        path = REPO_ROOT / FEATURES_DIR / feature / phase / "reports" / "summary.json"
+        path = root / phase / "reports" / "summary.json"
         if not path.is_file():
             continue
         try:
@@ -636,35 +633,43 @@ def _report_result(rel: str | None) -> dict:
             "blocker_count": int(blockers) if blockers and blockers.isdigit() else blockers}
 
 
-def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
+def units_review_closure(facts: dict) -> dict:
+    """逐施工单位的审查闭环（`review_closure`）；终点不列施工单位时为空。"""
+    return {u["change_unit_id"]: review_closure(REPO_ROOT / str(u.get("feature_path") or ""))
+            for u in facts.get("units") or []}
+
+
+def closure_facts(feature: str, start_phase: str, end_at: dict, case: dict | None) -> dict:
     """本轮的闭环事实——**只报事实，不下结论**。
 
-    「这一轮该不该结束」由宿主判断：他要同时看见「目标阶段的凭证齐没齐」和
+    「这一轮该不该结束」由宿主判断：他要同时看见「终点的原生事实齐没齐」和
     「模型嘴上说了什么」。装置把前者算清楚交出去，后者随 `awaiting_prompt` 走；
     **装置不据模型的散文改阶段、也不据它自动收工**——那又回到了机械判定。
 
-    `beyond_target` 是把「模型说要进 plan」落成事实的那一半：它嘴上说时这里是空的，
-    它真建了下一阶段的产物时才非空。两者摆在一起，宿主才判得准。
+    `beyond_target_evidence` 是把「模型说要往下走」落成事实的那一半：施工单位真建了终点之后阶段的产物时才非空。
     """
-    ok, missing = phase_evidence_complete(feature, end_phase)
-    feature_root = REPO_ROOT / FEATURES_DIR / feature
-    beyond = [phase for phase in PHASE_ORDER[phase_index(end_phase) + 1:]
-              if phase_was_reached(feature_root, phase)]
+    facts = observe_target(feature, end_at, case, start_phase)
+    responsible = end_target.responsible_phases(end_at, start_phase)
+    later = PHASE_ORDER[PHASE_ORDER.index(end_at["phase"]) + 1:] if end_at["kind"] == "phase" else PHASE_ORDER
+    beyond = [f"{phase}@{u['change_unit_id']}" for u in facts["units"] for phase in later
+              if phase_was_reached(REPO_ROOT / str(u.get("feature_path") or ""), phase)]
     return {
-        "target_phase": end_phase,
-        "target_closed": target_reached(feature, end_phase),
-        "target_missing": [] if ok else list(missing),
-        "artifacts_ready": artifacts_ready(feature),
-        "next_unclosed_phase": next_unclosed_phase(feature, end_phase),
+        "end_at": end_target.label(end_at),
+        "target_closed": facts["reached"],
+        "target_missing": facts["missing"],
+        "blueprint_id": facts.get("blueprint_id"),
+        "blueprint": facts.get("blueprint"),
+        "units": facts["units"],
+        "story_registered": story_registered(feature),
         "beyond_target_evidence": beyond,
-        "applicable_phases": list(applicable_phases(start_phase, end_phase)),
+        "responsible_phases": list(responsible),
     }
 
 
 def publish_closure(out_dir: Path, state: dict, feature: str,
-                    start_phase: str, end_phase: str) -> dict:
+                    start_phase: str, end_at: dict, case: dict | None) -> dict:
     """把闭环事实刷进 state，让 poll 期间的宿主看得到（此前只在终态算一次）。"""
-    facts = closure_facts(feature, start_phase, end_phase)
+    facts = closure_facts(feature, start_phase, end_at, case)
     state["closure"] = facts
     refresh_worker_lease(out_dir, state)
     return facts
@@ -703,46 +708,35 @@ def terminal_status_for(execution_status: str, stop_reason: str | None,
     if execution_status != "finished":
         return execution_status, 1
     return ("finished", 0) if reached else ("target_not_reached", 1)
-
-
-def applicable_phases(start_phase: str, end_phase: str) -> tuple[str, ...]:
-    """本轮真正负责的阶段；未进入范围的 coding/review 不产生“伪失败”。"""
-    end_idx = phase_index(end_phase)
-    if start_phase == "story":
-        return ("story", *PHASE_ORDER[:end_idx + 1])
-    start_idx = phase_index(start_phase)
-    return PHASE_ORDER[start_idx:end_idx + 1]
-
-
-def expected_gate_names(start_phase: str, end_phase: str) -> tuple[str, ...]:
-    """由阶段区间正向派生 gate，避免用例结束后再拿无关阶段补跑。"""
+def expected_gate_names(start_phase: str, facts: dict) -> tuple[str, ...]:
+    """由起点与终点观测正向派生 gate：story 起跑有需求交付门，每个施工单位的每个负责阶段一个 harness。"""
     names: list[str] = []
-    if start_phase == "story":
-        names.append("post_check")
-        if CFG.get("gates", {}).get("story_build"):
-            names.append("story_build_check")
-    names.extend(f"harness_{phase}" for phase in applicable_phases(start_phase, end_phase)
-                 if phase != "story")
+    if start_phase == "story" and CFG.get("gates", {}).get("story_build"):
+        names.append("story_build_check")
+    names.extend(f"harness_{phase}@{u['change_unit_id']}" for u in facts.get("units") or []
+                 for phase in facts.get("responsible_phases") or [])
     if start_phase != "story":
         names.append("upstream_fingerprint")
     return tuple(names)
 
 
-def compute_upstream_fingerprint(feature: str, start_phase: str) -> dict[str, Any] | None:
-    """只指纹化续跑所依赖的上游产物，不把本轮新增下游文件算进漂移。"""
+def compute_upstream_fingerprint(feature: str, start_phase: str, units: list[dict]) -> dict[str, Any] | None:
+    """只指纹化续跑所依赖的上游产物（需求目录的来源件、各施工单位起点之前的阶段与施工真源），不把本轮新增下游文件算进漂移。"""
     if start_phase == "story":
         return None
     start_idx = phase_index(start_phase)
-    feature_root = REPO_ROOT / FEATURES_DIR / feature
-    roots = [feature_root / name for name in ("AR", "RR", "SR", "inbox", "ux-reference")]
-    roots.extend(feature_root / p for p in PHASE_ORDER[:start_idx])
-    # 部分阶段真源位于 feature 根而非 phase 子目录：acceptance 属 spec，
-    # contracts/use-cases 属 plan。next.json 与 context/facts.md 会被下游合法推进/追加，
-    # 不应纳入“不漂移”判据。
-    if start_idx >= PHASE_ORDER.index("plan"):
-        roots.append(feature_root / "acceptance.yaml")
-    if start_idx >= PHASE_ORDER.index("coding"):
-        roots.extend(feature_root / name for name in ("contracts.yaml", "use-cases.yaml"))
+    features_root = REPO_ROOT / FEATURES_DIR
+    requirement = features_root / feature
+    roots = [requirement / name for name in ("AR", "RR", "SR", "inbox", "ux-reference")]
+    for unit in units:
+        unit_root = REPO_ROOT / str(unit.get("feature_path") or "")
+        roots.extend(unit_root / p for p in PHASE_ORDER[:start_idx])
+        # 部分阶段真源在施工单位根而非阶段子目录：acceptance 属 spec，contracts/use-cases 属 plan。
+        # next.json 与 context/facts.md 会被下游合法推进/追加，不纳入「不漂移」判据。
+        if start_idx >= PHASE_ORDER.index("plan"):
+            roots.append(unit_root / "acceptance.yaml")
+        if start_idx >= PHASE_ORDER.index("coding"):
+            roots.extend(unit_root / name for name in ("contracts.yaml", "use-cases.yaml"))
     digest = hashlib.sha256()
     files = 0
     for base in roots:
@@ -753,53 +747,43 @@ def compute_upstream_fingerprint(feature: str, start_phase: str) -> dict[str, An
         else:
             continue
         for path in sorted(candidates, key=lambda p: p.as_posix()):
-            rel = path.relative_to(feature_root).as_posix()
+            rel = path.relative_to(features_root).as_posix()
             digest.update(rel.encode("utf-8"))
             digest.update(b"\0")
             digest.update(hashlib.sha256(path.read_bytes()).digest())
             files += 1
     return {"algo": "sha256", "digest": digest.hexdigest(), "file_count": files,
-            "roots": [p.relative_to(feature_root).as_posix() for p in roots]}
-
-
-def _phase_reached(feature_root: Path, phase: str) -> bool:
-    if phase == "story":
-        return all((feature_root / rel).is_file() for rel in ("AR/story.md", "AR/review.md"))
-    return phase_was_reached(feature_root, phase)
-
-
-def build_phase_results(feature: str, start_phase: str, end_phase: str,
-                        gates: dict[str, str]) -> dict[str, dict[str, Any]]:
-    """建立每个 phase 的执行、门禁与 formal closure 记录。"""
-    feature_root = REPO_ROOT / FEATURES_DIR / feature
-    reviews = review_closure(feature)
+            "roots": [p.relative_to(features_root).as_posix() for p in roots]}
+def build_phase_results(feature: str, start_phase: str, gates: dict[str, str],
+                        facts: dict) -> dict[str, dict[str, Any]]:
+    """每个结果一份记录：需求交付（story 起跑时）与每个施工单位的每个负责阶段（`<阶段>@<施工单位>`）。"""
     output: dict[str, dict[str, Any]] = {}
-    for phase in applicable_phases(start_phase, end_phase):
-        reached = _phase_reached(feature_root, phase)
-        if phase == "story":
-            gate_names = tuple(name for name in
-                               ("post_check", "story_build_check")
-                               if name in gates)
-        else:
-            gate_names = (f"harness_{phase}",) if f"harness_{phase}" in gates else ()
-        phase_gates = {name: gates[name] for name in gate_names}
-        if phase == "story":
-            closure, missing = "not_applicable", []
-        elif reached:
-            closed, missing = phase_evidence_complete(feature, phase)
-            closure = "closed" if closed else "open"
-        else:
-            closure, missing = "not_reached", []
-        output[phase] = {
-            "phase": phase,
-            "applicable": True,
-            "execution_status": "completed" if reached else "not_reached",
-            "closure_status": closure,
-            "closure_missing": missing,
-            # 执行到终点、formal closure 与本轮审查报告是否被采纳是三件事，分开报
-            "review": reviews.get(phase),
-            "gates": phase_gates,
+    if start_phase == "story":
+        registered = story_registered(feature)
+        output["story"] = {
+            "phase": "story", "applicable": True,
+            "execution_status": "completed" if registered else "not_reached",
+            "closure_status": "not_applicable", "closure_missing": [],
+            "review": None,
+            "gates": {name: gates[name] for name in ("story_build_check",) if name in gates},
         }
+    for unit in facts.get("units") or []:
+        unit_root = REPO_ROOT / str(unit.get("feature_path") or "")
+        reviews = review_closure(unit_root)
+        for phase, row in (unit.get("phases") or {}).items():
+            key = f"{phase}@{unit['change_unit_id']}"
+            reached = phase_was_reached(unit_root, phase)
+            output[key] = {
+                "phase": phase, "change_unit_id": unit["change_unit_id"], "feature_id": unit["feature_id"],
+                "applicable": True,
+                "execution_status": "completed" if reached or row["state"] == "reused" else "not_reached",
+                # closed = 回执正式收口；reused = 原生判定这一阶段无需产出；open = 还没闭环
+                "closure_status": row["state"],
+                "closure_missing": row["missing"],
+                # 执行到终点、formal closure 与本轮审查报告是否被采纳是三件事，分开报
+                "review": reviews.get(phase),
+                "gates": {f"harness_{key}": gates[f"harness_{key}"]} if f"harness_{key}" in gates else {},
+            }
     return output
 
 
@@ -808,7 +792,7 @@ def publish_phase_results(out_dir: Path,
     """每轮每阶段只发布一次；相同内容可重入，不允许后续 stop 改写。"""
     published: dict[str, str] = {}
     for phase, payload in phase_results.items():
-        path = out_dir / "phase-results" / f"{phase}.json"
+        path = out_dir / "phase-results" / f"{phase.replace('@', '--')}.json"
         encoded = json.dumps(payload, ensure_ascii=False, indent=2)
         if path.is_file():
             existing = json.loads(path.read_text(encoding="utf-8"))
@@ -818,15 +802,6 @@ def publish_phase_results(out_dir: Path,
             _atomic_write(path, encoded)
         published[phase] = str(path.relative_to(out_dir))
     return published
-
-
-def artifacts_ready(feature: str) -> bool:
-    """三份交付产物是否齐备——续话与否只看它，不看菜单文本（格式一变就失效）。"""
-    root = REPO_ROOT / FEATURES_DIR / feature
-    return all((root / rel).is_file() for rel in
-               ("spec/spec.md", "AR/story.md", "AR/review.md"))
-
-
 def _rmtree_force(path: Path) -> None:
     """删审计目录时先摘只读位再重试。
 
@@ -942,12 +917,9 @@ def refresh_worker_lease(out_dir: Path, state: dict, *, force: bool = False,
     if event:
         state["last_event"] = {"name": event, "at": _clock_text(current)}
     if phase:
-        # `phase` 是**驱动器要去哪**，不是**模型到了哪**——三个调用点传的分别是起跑阶段、
-        # 下一个未闭环阶段、以及 `end_phase`（目标）。它曾被无条件写进
-        # current_phase / highest_phase_reached，于是「准备跑 plan 的门禁」被记成「到达了
-        # plan」：实测两个 Case 就这样在没有任何 plan 产物时被报成到达 plan。
-        # 现在它只作**意图留痕**，阶段状态一律由 derive_phase_state 从 framework 状态与
-        # 真实阶段产物推导——目标阶段、runner 提示、准备执行 gate、模型口头宣告都不算数。
+        # `phase` 是**驱动器要去哪**，不是**模型到了哪**：只作意图留痕。阶段状态一律由
+        # derive_phase_state 从流程契约与原生终点观测推出——目标、runner 提示、准备执行 gate、
+        # 模型口头宣告都不算数（它们曾让没有任何 plan 产物的 Case 被报成到达 plan）。
         state["phase_intent"] = {"phase": phase, "event": event, "at": _clock_text(current)}
     state.update(derive_phase_state(REPO_ROOT, str(state.get("feature") or ""), state,
                                     observed_at=_clock_text(current)))
@@ -1155,8 +1127,8 @@ def source_transaction_root(out_dir: Path) -> Path:
     return out_dir / SOURCE_TRANSACTION_DIR
 
 
-def interval_contains_coding(start_phase: str, end_phase: str) -> bool:
-    return "coding" in applicable_phases(start_phase, end_phase)
+def interval_contains_coding(start_phase: str, end_at: dict) -> bool:
+    return "coding" in end_target.responsible_phases(end_at, start_phase)
 
 
 def _git_bytes(args: list[str], *, input_bytes: bytes | None = None,
@@ -1530,17 +1502,16 @@ def _run_logged_gate(command: list[str], *, cwd: Path, log_path: Path,
 
 
 def run_phase_harness(feature: str, phase: str,
-                      out_dir: Path) -> tuple[str, dict[str, Any]]:
+                      out_dir: Path, tag: str | None = None) -> tuple[str, dict[str, Any]]:
     """跑 framework 自己的阶段 harness；只调用发布件，不修改 framework。
 
-    story 那两个门禁（post_check / story-build）只认识 story/spec 的产物，
-    对 plan 的 contracts.yaml、coding 的源码一无所知。真正判这些的是 framework 的
+    需求交付门只认识需求与成文，对施工单位的契约、源码一无所知。真正判这些的是 framework 的
     `harness-runner.ts --phase <p>`，它按 workflow 的规则集跑。
     """
     command = ["npx", "ts-node", "harness-runner.ts", "--phase", phase,
                "--feature", feature]
     cwd = REPO_ROOT / "framework" / "harness"
-    log_path = out_dir / f"gate_harness_{phase}.log"
+    log_path = out_dir / f"gate_harness_{phase}{'_' + tag if tag else ''}.log"
     completed, diagnosis = _run_logged_gate(
         command, cwd=cwd, log_path=log_path, shell=(os.name == "nt"))
     return ("pass" if completed is not None and completed.returncode == 0 else "fail"), diagnosis
@@ -1568,20 +1539,6 @@ def _gate_diagnosis(cp: subprocess.CompletedProcess, *, command: list[str] | Non
     }
 
 
-def _post_check_verdict(r: subprocess.CompletedProcess | None) -> str | None:
-    """post_check 的结论按它自己的输出协议：读到带 `ok` 的 JSON 才算跑成；否则返回 None。"""
-    if r is None:
-        return None
-    for line in reversed((r.stdout or "").splitlines()):
-        try:
-            data = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(data, dict) and "ok" in data:
-            return "pass" if r.returncode == 0 and data["ok"] is True else "fail"
-    return None
-
-
 def _story_build_verdict(r: subprocess.CompletedProcess | None) -> str | None:
     """story-build check 的结论（用户 2026-09-21 定的输出协议）。
 
@@ -1603,9 +1560,9 @@ def _story_build_verdict(r: subprocess.CompletedProcess | None) -> str | None:
 def _story_gate_inputs(feature: str) -> str | None:
     """story 门禁读到的全部输入的摘要——**任何一样变了，旧结论就不能再用**。
 
-    检查器按 `framework.config.json` 的 `paths` 找扩展与需求目录，所以配置本身、门禁配置（跑哪两个入口）、
-    两个入口文件、配置解析出的扩展目录与需求目录都在内。只哈希 story.md 不够：检查器还读侧车、契约、
-    知识与引用资源；少算一样，旧 PASS 就会被当成新的。
+    检查器按 `framework.config.json` 的 `paths` 找扩展与需求目录，所以配置本身、门禁配置、入口文件、
+    配置解析出的扩展目录、需求目录与它关联的蓝图工作区都在内。只哈希 story.md 不够：交付门还读侧车、
+    蓝图与审查结论；少算一样，旧 PASS 就会被当成新的。
     """
     config_path = REPO_ROOT / "framework.config.json"
     try:
@@ -1617,22 +1574,25 @@ def _story_gate_inputs(feature: str) -> str | None:
     parts = [hashlib.sha256(config_bytes).hexdigest()[:16],
              hashlib.sha256(json.dumps(CFG["gates"], sort_keys=True).encode("utf-8")).hexdigest()[:16]]
     try:
-        for rel in (CFG["gates"].get("post_check"), CFG["gates"].get("story_build")):
-            entry = REPO_ROOT / rel if rel else None
-            parts.append(hashlib.sha256(entry.read_bytes()).hexdigest()[:16]
-                         if entry and entry.is_file() else "absent")
+        rel = CFG["gates"].get("story_build")
+        entry = REPO_ROOT / rel if rel else None
+        parts.append(hashlib.sha256(entry.read_bytes()).hexdigest()[:16]
+                     if entry and entry.is_file() else "absent")
         ext = REPO_ROOT / ext_rel
         parts.append(_tree_digest(ext) if ext.is_dir() else "absent")
         parts.append(_tree_digest(REPO_ROOT / FEATURES_DIR / feature))
+        blueprint = run_layout.linked_blueprint(REPO_ROOT / FEATURES_DIR, feature)
+        if blueprint:
+            parts.append(_tree_digest(REPO_ROOT / FEATURES_DIR / blueprint))
     except OSError:
         return None
     return ":".join(parts)
 
 
 def _run_story_gates(feature: str, out_dir: Path, feed=None) -> dict[str, str]:
-    """运行只属于 story→spec 新生成链路的两个门禁。绿 ≠ 语义达标。
+    """需求交付门（`story-build check --deliver`，只读）。绿 ≠ 语义达标。
 
-    plan-only 不调用本函数，因而不会重复解释既有 Story。
+    阶段续跑不调用本函数，因而不会重复解释既有 Story。
 
     **没跑成的门禁不写进结果**：它只在诊断里记原因与原始输出，终态由缺席门禁的现有语义
     （`harness_incomplete`，装置这边的账）表达——不把机器问题记成被测产物的内容失败。
@@ -1653,27 +1613,11 @@ def _run_story_gates(feature: str, out_dir: Path, feed=None) -> dict[str, str]:
         _write_gate_diagnostics(diagnostics_path, diagnostics, feed)
         return gates
 
-    post_check = REPO_ROOT / CFG["gates"]["post_check"]
-    script = (
-        "import {pathToFileURL} from 'node:url';"
-        f"const m=await import(pathToFileURL({json.dumps(str(post_check))}).href);"
-        "console.log(JSON.stringify(await m.default({phase:'spec',"
-        f"feature:{json.dumps(feature)},projectRoot:{json.dumps(str(REPO_ROOT))}}})));")
-    command = ["node", "--input-type=module", "-e", script]
-    post_log = out_dir / "gate_post_check.log"
-    r, post_diagnosis = _run_logged_gate(command, cwd=REPO_ROOT, log_path=post_log)
     gates: dict[str, str] = {}
-    diagnostics: dict[str, Any] = {"post_check": post_diagnosis}
-    verdict = _post_check_verdict(r)
-    if verdict:
-        gates["post_check"] = verdict
-    else:
-        post_diagnosis["status"] = "not_run"
-        post_diagnosis["reason"] = "没有读到它的结论输出（带 ok 的 JSON）：检查没跑成，不是内容不通过"
-    # story.md 的九项判据：章节合同、来源单元三态守恒、裁决与判定表核实、术语守恒、四红线。
+    diagnostics: dict[str, Any] = {}
     story_build = CFG["gates"].get("story_build")
     if story_build:
-        build_command = ["node", str(REPO_ROOT / story_build), "check", "--feature", feature,
+        build_command = ["node", str(REPO_ROOT / story_build), "check", "--deliver", "--feature", feature,
                          "--project-root", str(REPO_ROOT)]
         build_log = out_dir / "gate_story_build.log"
         r3, build_diagnosis = _run_logged_gate(
@@ -1686,9 +1630,9 @@ def _run_story_gates(feature: str, out_dir: Path, feed=None) -> dict[str, str]:
             build_diagnosis["status"] = "not_run"
             build_diagnosis["reason"] = ("既不是「通过」也不是它自己的诊断（退出码不是 0/1、没有输出或启动异常）："
                                          "检查没跑成，不是内容不通过")
-    # 只有两项都拿到结论才缓存：没跑成的那次不是业务结论，下一次调用要重查——
+    # 拿到结论才缓存：没跑成的那次不是业务结论，下一次调用要重查——
     # 缓存了它，环境恢复之后也永远是「没跑成」。
-    wanted = {"post_check"} | ({"story_build_check"} if story_build else set())
+    wanted = {"story_build_check"} if story_build else set()
     if inputs and wanted <= set(gates):
         diagnostics["story_gates_cache"] = {
             "inputs": inputs, "run": out_dir.name, "at": now_iso(),
@@ -1712,10 +1656,10 @@ def _write_gate_diagnostics(path: Path, diagnostics: dict[str, Any], feed=None) 
             feed.emit("gate_diagnostics_write_failed", error=str(exc))
 
 
-def run_gates(feature: str, out_dir: Path, end_phase: str = "spec", *,
+def run_gates(feature: str, out_dir: Path, facts: dict, *,
               start_phase: str = "story",
               upstream_fingerprint: dict[str, Any] | None = None, feed=None) -> dict[str, str]:
-    """只运行本轮阶段区间适用的 gate，并统一发布可追溯诊断。"""
+    """只运行本轮适用的 gate（需求交付门 + 每个施工单位的每个负责阶段），并统一发布可追溯诊断。"""
     gates: dict[str, str] = {}
     diagnostics: dict[str, Any] = {}
     diagnostics_path = out_dir / "gate_diagnostics.json"
@@ -1729,31 +1673,36 @@ def run_gates(feature: str, out_dir: Path, end_phase: str = "spec", *,
 
     # 只为**本轮负责且实际到达过**的阶段跑 harness。没执行过的阶段跑出来的 FAIL
     # 只说明“没跑过”，还会污染 framework 的全局阶段槽。
-    feature_root = REPO_ROOT / FEATURES_DIR / feature
-    for phase in (p for p in applicable_phases(start_phase, end_phase) if p != "story"):
-        if not phase_was_reached(feature_root, phase):
-            gates[f"harness_{phase}"] = "skipped"
-            diagnostics[f"harness_{phase}"] = {
-                "status": "skipped", "reason": "阶段没有 reports/ 之外的真实产物"}
-            continue
-        # **已闭环的阶段不重跑**：harness 每跑一次都重新派生 verifier subject，
-        # 跑完 summary 记的就是一个没有报告的 subject——观察动作改了被观察物。
-        # 它自己定稿的那份 summary 已经回答了「这个阶段过没过」，读它就够。
-        closed, _missing = phase_evidence_complete(feature, phase)
-        if closed:
-            gates[f"harness_{phase}"] = "pass"
-            diagnostics[f"harness_{phase}"] = {
-                "status": "pass", "source": "existing_summary",
-                "reason": "阶段已闭环（四件凭证齐 + summary 正式收口），读既有结论；"
-                          "重跑 harness 会换掉 verifier subject，把被观察的产物改成未闭环",
-            }
-            continue
-        gate_status, diagnosis = run_phase_harness(feature, phase, out_dir)
-        gates[f"harness_{phase}"] = gate_status
-        diagnostics[f"harness_{phase}"] = diagnosis
+    for unit in facts.get("units") or []:
+        unit_root = REPO_ROOT / str(unit.get("feature_path") or "")
+        for phase in facts.get("responsible_phases") or []:
+            name = f"harness_{phase}@{unit['change_unit_id']}"
+            row = (unit.get("phases") or {}).get(phase) or {}
+            if row.get("state") == "reused":
+                gates[name] = "skipped"
+                diagnostics[name] = {"status": "skipped", "reason": "原生判定这一阶段无需产出（合法复用）"}
+                continue
+            if not phase_was_reached(unit_root, phase):
+                gates[name] = "skipped"
+                diagnostics[name] = {"status": "skipped", "reason": "阶段没有 reports/ 之外的真实产物"}
+                continue
+            # **已闭环的阶段不重跑**：harness 每跑一次都重新派生 verifier subject，
+            # 跑完 summary 记的就是一个没有报告的 subject——观察动作改了被观察物。
+            # 它自己定稿的那份 summary 已经回答了「这个阶段过没过」，读它就够。
+            if row.get("state") == "closed":
+                gates[name] = "pass"
+                diagnostics[name] = {
+                    "status": "pass", "source": "existing_summary",
+                    "reason": "阶段已闭环（四件凭证齐 + summary 正式收口），读既有结论；"
+                              "重跑 harness 会换掉 verifier subject，把被观察的产物改成未闭环",
+                }
+                continue
+            gate_status, diagnosis = run_phase_harness(unit["feature_id"], phase, out_dir, tag=unit["change_unit_id"])
+            gates[name] = gate_status
+            diagnostics[name] = diagnosis
 
     if start_phase != "story":
-        current = compute_upstream_fingerprint(feature, start_phase)
+        current = compute_upstream_fingerprint(feature, start_phase, facts.get("units") or [])
         unchanged = bool(upstream_fingerprint and current
                          and upstream_fingerprint.get("digest") == current.get("digest"))
         gates["upstream_fingerprint"] = "pass" if unchanged else "fail"
@@ -1774,7 +1723,7 @@ def run_gates(feature: str, out_dir: Path, end_phase: str = "spec", *,
 def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                cli_config_id: str | None = None,
                start_phase_override: str | None = None,
-               end_phase_override: str | None = None) -> int:
+               end_at_override: str | None = None) -> int:
     if run_id:
         case, out_dir, feature = _load_case(case_id, run_id)
         resolved_run_id = run_id
@@ -1790,15 +1739,18 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 f"[runner] 用例 {case_id} 已有活动运行 {active['run_id']}，先 stop 再启动")
         out_dir, resolved_run_id = run_layout.create_run(OUT_ROOT, case_id)
         prepared = True
-    # end_phase 缺省 spec、start_phase 缺省 story——既有用例一字不改，行为逐字节一致。
-    end_phase = str(end_phase_override or case.get("end_phase") or "spec").strip()
-    # **不配就是普通单终点**：既有用例一个字节不改，行为逐字节一致。
-    # 配了 `after_initial: update` 才走双检查点——到目标不终止，等宿主评完第一段再续第二段。
+    # 终点只认 end_at（命令行 --end-at 覆盖）；start_phase 缺省 story。
+    end_at = resolve_end_at(case, end_at_override)
+    # **不配就是普通单终点**。配了 `after_initial: update` 才走双检查点——到目标不终止，等宿主评完第一段再续第二段。
     after_initial = str(case.get("after_initial") or "").strip()
-    end_idx = phase_index(end_phase)
     start_phase = resolve_start_phase(case, start_phase_override)
-    if start_phase != "story" and phase_index(start_phase) > end_idx:
-        raise SystemExit(f"[runner] start_phase({start_phase}) 在 end_phase({end_phase}) 之后")
+    if start_phase != "story":
+        if end_at["kind"] != "phase":
+            raise SystemExit(f"[runner] 从阶段 {start_phase} 续跑只配 phase 终点，本轮终点是 {end_target.label(end_at)}")
+        try:
+            end_target.responsible_phases(end_at, start_phase)
+        except end_target.EndAtError as exc:
+            raise SystemExit(f"[runner] {exc}") from None
     # 阶段之间还有 phase.next_step / plan.ok_to_code 这类编号确认；自动模式沿用同一条
     # 回话即可（它说的是「按你推荐的选项继续」，对关卡与阶段推进同样成立），
     # 但要在报告里显式记下这轮有多少次是驱动器替人应答的。
@@ -1816,7 +1768,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
              "feature": feature, "pid": os.getpid(), "status": "running",
              "started_at": time.strftime("%Y-%m-%d %H:%M:%S"), "cli_run_id": None,
              "interactive": interactive, "requested_start_phase": start_phase,
-             "requested_end_phase": end_phase,
+             "requested_end_at": end_target.label(end_at),
              "after_initial": after_initial or None,
              "checkpoint_stage": "initial" if after_initial else None,
              "cli_config_id": cli_config["id"]}
@@ -1832,7 +1784,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     # 不还原的话，被测模型（或本驱动器的门禁调用）留下的阶段会拦住观测者会话的 Stop hook。
     phase_slot_snapshot = snapshot_phase_slot()
     phase_slot_restored = False
-    result["end_phase"] = end_phase
+    result["end_at"] = end_target.label(end_at)
     result["start_phase"] = start_phase
     if should_migrate_feature_history(start_phase):
         result["feature_history"] = migrate_feature_history(feature, start_phase, out_dir, resolved_run_id)
@@ -1842,18 +1794,19 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             feed.emit("workspace_seeded", files=result["workspace_seeded"])
     else:
         # 续跑：上一轮的产物正是本轮的输入，迁移当前 feature 就等于白续。
-        # 但要先确认前序阶段真的闭环——在半成品上跑下游，失败了也无法归因。
+        # 但要先确认每个施工单位的前序阶段真的闭环——在半成品上跑下游，失败了也无法归因。
         prev = phase_before(start_phase)
         if prev and prev != "story":
-            ok, missing = phase_evidence_complete(feature, prev)
-            if not ok:
+            before = observe_target(feature, {"kind": "phase", "phase": prev}, case, "story")
+            if not before["reached"]:
                 raise SystemExit(
-                    f"[runner] 拒绝从 {start_phase} 续跑：前序阶段 {prev} 的闭环凭证不齐"
-                    f"（缺 {'、'.join(missing)}）。先让它闭环，或改回 start_phase: story 从头跑")
+                    f"[runner] 拒绝从 {start_phase} 续跑：施工单位的前序阶段 {prev} 没有全部闭环"
+                    f"（{'；'.join(before['missing'][:5])}）。先让它闭环，或改回 start_phase: story 从头跑")
         feed.emit("resume_from", start_phase=start_phase, previous_closed=prev or "-")
         runlog.event("续跑", f"从 {start_phase} 阶段起跑，沿用既有产物（前序 {prev} 凭证齐备）")
 
-    upstream_fingerprint = compute_upstream_fingerprint(feature, start_phase)
+    upstream_fingerprint = compute_upstream_fingerprint(
+        feature, start_phase, observe_target(feature, end_at, case, start_phase)["units"] if start_phase != "story" else [])
     if upstream_fingerprint:
         result["upstream_fingerprint"] = upstream_fingerprint
         feed.emit("upstream_fingerprint", digest=upstream_fingerprint["digest"][:16],
@@ -1868,7 +1821,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     # run_multi_case.py 的白名单快照负责，不能再调用 demo 的 Git 源码事务。
     isolated_workspace = os.environ.get("STORY_ISOLATED_WORKSPACE", "").strip() == "1"
     source_transaction_required = (
-        interval_contains_coding(start_phase, end_phase) and not isolated_workspace
+        interval_contains_coding(start_phase, end_at) and not isolated_workspace
     )
     source_transaction_restored = False
     source_transaction_finalized = False
@@ -1898,7 +1851,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 # 重跑一遍已完成并闭环的上游阶段。
                 prompt=driver_prompt(
                     case["prompt"].strip() if start_phase == "story"
-                    else resume_prompt(feature, start_phase, end_phase),
+                    else resume_prompt(feature, start_phase, end_at,
+                                       [u["change_unit_id"] for u in observe_target(feature, end_at, case, start_phase)["units"]]),
                     interactive),
                 cwd=TARGET, soft_timeout_sec=NO_TIME_LIMIT, hard_timeout_sec=NO_TIME_LIMIT,
                 stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir, cli_config["name"]),
@@ -1918,10 +1872,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 turns += 1
                 handle = client.start(request)
                 state.update(cli_run_id=handle.run_id)
-                phase_hint = ("story" if start_phase == "story" and not artifacts_ready(feature)
-                              else (next_unclosed_phase(feature, end_phase) or end_phase))
                 refresh_worker_lease(out_dir, state, force=True, event="cli_run_started",
-                                     phase=phase_hint)
+                                     phase=str(state.get("current_phase") or start_phase))
                 feed.emit("cli_run_started", cli_run_id=handle.run_id, turn=turns)
                 print(f"[live] run={handle.run_id} turn={turns} started",
                       file=sys.stderr, flush=True)
@@ -1971,7 +1923,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 refresh_worker_lease(out_dir, state, force=True, event="cli_run_finished")
                 # 每回合把闭环事实刷进 state：宿主是靠它判定「本轮到此为止」的，
                 # 只在终态算一次的话，poll 期间他什么也看不到。
-                publish_closure(out_dir, state, feature, start_phase, end_phase)
+                facts = publish_closure(out_dir, state, feature, start_phase, end_at, case)
                 # 四条出口，每条各记一个 stop_reason——上一版三种情况共用
                 # `target_not_reached` 一个桶，事后分不出是模型没做完、没人回话、
                 # 还是 CLI 压根没回 session id。
@@ -1982,7 +1934,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     runlog.event("宿主收工", result["conclude_reason"] or "（未写理由）")
                     feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
                     break
-                if target_reached(feature, end_phase) and state.get("checkpoint_stage") != "update":
+                if facts["target_closed"] and state.get("checkpoint_stage") != "update":
                     if not after_initial:
                         result["stop_reason"] = "target_reached"
                         break
@@ -2031,7 +1983,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                             feed.emit("story_gates_prerun", **_run_story_gates(feature, out_dir, feed))
                         feed.emit("update_checkpoint", turn=turns,
                                   round=result.get("update_round"),
-                                  closure=review_closure(feature))
+                                  closure=units_review_closure(facts))
                         wait_at_update_checkpoint(out_dir, feed, runlog, state,
                                                   turn=turns, why=why)
                         result["conclude_reason"] = "第二检查点评测完成"
@@ -2063,17 +2015,17 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         feed.emit("host_concluded", turn=turns)
                         break
                 else:
-                    # 卡在哪一层，就说哪一层的话：产物没齐是材料关卡（按推荐走即可），
-                    # 产物齐了但阶段没闭环是阶段边界（必须指名下一个阶段——spec 的推荐链路
-                    # 是「评审→归档」，笼统说「按推荐走」会让模型去归档然后宣布全链交付）。
-                    done = artifacts_ready(feature)
-                    nxt = next_unclosed_phase(feature, end_phase) if done else None
+                    # 卡在哪一层，就说哪一层的话：需求没交付是材料与成文关卡（按推荐走即可），
+                    # 交付之后还要施工设计时必须指名下一步（交付门的推荐链路是「评审→归档」，
+                    # 笼统说「按推荐走」会让模型去归档然后宣布全链交付）。
+                    done = story_registered(feature)
+                    nxt = end_target.first_open(facts) if done else None
                     stuck_turns = stuck_turns + 1 if nxt == stuck_phase else 1
                     stuck_phase = nxt
-                    gate_reply = continuation_reply(feature, artifacts_done=done, next_phase=nxt)
+                    gate_reply = continuation_reply(feature, story_done=done, facts=facts)
                     feed.emit("gate_reply", turn=turns,
-                              reason=(f"阶段边界：推进到 {nxt}（同阶段第 {stuck_turns} 次）" if nxt
-                                      else f"未达 {end_phase}，按推荐继续"))
+                              reason=(f"阶段边界：推进施工单位 {nxt[0]} 的 {nxt[1]}（同一处第 {stuck_turns} 次）" if nxt
+                                      else f"未达 {end_target.label(end_at)}，按推荐继续"))
                     runlog.event("续话", f"第 {turns + 1} 轮：{gate_reply[:80]}")
                 request = replace(
                     request, prompt=driver_prompt(gate_reply, interactive),
@@ -2101,26 +2053,25 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                 result["failure_kind"] = run.get("failure_kind")
                 result["exit_code"] = run.get("exit_code")
         result["elapsed_sec"] = round(time.time() - t0, 1)
-        result["target_reached"] = target_reached(feature, end_phase)
-        result["closure"] = closure_facts(feature, start_phase, end_phase)
-        next_phase = PHASE_ORDER[end_idx + 1] if end_idx + 1 < len(PHASE_ORDER) else None
+        facts = closure_facts(feature, start_phase, end_at, case)
+        result["closure"] = facts
+        result["target_reached"] = facts["target_closed"]
         result["pipeline"] = {
             "requested_start_phase": start_phase,
-            "requested_end_phase": end_phase,
+            "requested_end_at": end_target.label(end_at),
             "status": ("completed_at_requested_end" if result["target_reached"]
                        else "requested_end_not_reached"),
-            "next_phase": next_phase,
-            "next_phase_status": "not_started_by_scope" if next_phase else "not_applicable",
         }
         result["phase_scope"] = {
-            "phases": list(applicable_phases(start_phase, end_phase)),
-            "expected_gates": list(expected_gate_names(start_phase, end_phase)),
+            "phases": facts["responsible_phases"],
+            "units": [u["change_unit_id"] for u in facts["units"]],
+            "expected_gates": list(expected_gate_names(start_phase, facts)),
         }
 
         retryable_provider_failure = result.get("failure_kind") in {
             "auth_required", "content_policy_rejected",
         }
-        refresh_worker_lease(out_dir, state, force=True, event="gates_started", phase=end_phase)
+        refresh_worker_lease(out_dir, state, force=True, event="gates_started", phase=end_target.label(end_at))
         if retryable_provider_failure:
             # The coordinator will recreate this Case from its immutable baseline.
             # Running business gates over a known partial product wastes time and
@@ -2130,11 +2081,11 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             feed.emit("gates_skipped", reason=result["gates_skipped_reason"])
         else:
             result["gates"] = run_gates(
-                feature, out_dir, end_phase, start_phase=start_phase,
+                feature, out_dir, facts, start_phase=start_phase,
                 upstream_fingerprint=upstream_fingerprint, feed=feed)
         feed.emit("gates_done", **result["gates"])
 
-        missing_gates = sorted(set(expected_gate_names(start_phase, end_phase))
+        missing_gates = sorted(set(expected_gate_names(start_phase, facts))
                                - set(result["gates"]))
         result["gate_scope_complete"] = not missing_gates
         if missing_gates:
@@ -2142,7 +2093,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         # `warn` 也算过：非凭证文件的合法漂移要出声，但不该判整轮失败。
         gates_pass = all(v in ("pass", "skipped", "warn") for v in result["gates"].values())
         result["phase_results"] = build_phase_results(
-            feature, start_phase, end_phase, result["gates"])
+            feature, start_phase, result["gates"], facts)
         result["phase_result_files"] = publish_phase_results(out_dir, result["phase_results"])
         if result["execution_status"] == "finished":
             status, code = terminal_status_for(
@@ -2163,9 +2114,14 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                   target_reached=result["target_reached"], gates=result["gates"])
 
         # 归档产物副本：下一条新链会把当前 feature 移到仓外；run 目录仍保留本轮不可变审计副本。
-        src = REPO_ROOT / FEATURES_DIR / feature
-        if src.is_dir():
-            artifact = out_dir / "artifact"
+        # 需求关联的蓝图工作区（含施工单位）另存一份，按它自己的身份命名。
+        copies = [(REPO_ROOT / FEATURES_DIR / feature, out_dir / "artifact")]
+        linked = run_layout.linked_blueprint(REPO_ROOT / FEATURES_DIR, feature)
+        if linked:
+            copies.append((REPO_ROOT / FEATURES_DIR / linked, out_dir / "artifact-blueprint"))
+        for src, artifact in copies:
+            if not src.is_dir():
+                continue
             # 长路径前缀：更新轮次的 before/ 镜像里套着带 64 位哈希的阶段报告，
             # 放进 run 目录就过了 260 字符。上一版在这里崩掉，worker 连终态都没写成，
             # 被判 worker_lost，门禁结果与 phase-results 一并没了。
@@ -2256,19 +2212,19 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
 
 
 def cmd_start(case_id: str, start_phase_override: str | None = None,
-              end_phase_override: str | None = None,
+              end_at_override: str | None = None,
               cli_config_id: str | None = None) -> int:
     """后台跑：为每次执行创建不可变 run-id 目录，然后立即返回。"""
-    _, _, feature = _load_case_definition(case_id)
+    case, _, feature = _load_case_definition(case_id)
     cli_config = select_cli(CLI_CONFIGURATIONS, cli_config_id)
     if start_phase_override and start_phase_override not in {"story", *PHASE_ORDER}:
         raise SystemExit(f"[runner] 未知 start_phase「{start_phase_override}」")
-    if end_phase_override:
-        phase_index(end_phase_override)
-    if start_phase_override and start_phase_override != "story" and end_phase_override:
-        if phase_index(start_phase_override) > phase_index(end_phase_override):
-            raise SystemExit(
-                f"[runner] start_phase({start_phase_override}) 在 end_phase({end_phase_override}) 之后")
+    end_at = resolve_end_at(case, end_at_override)
+    if start_phase_override and start_phase_override != "story":
+        try:
+            end_target.responsible_phases(end_at, start_phase_override)
+        except end_target.EndAtError as exc:
+            raise SystemExit(f"[runner] {exc}") from None
     active = run_layout.read_pointer(OUT_ROOT, case_id, "active")
     if active:
         active_dir, _ = run_layout.resolve_run(OUT_ROOT, case_id, str(active["run_id"]))
@@ -2285,7 +2241,7 @@ def cmd_start(case_id: str, start_phase_override: str | None = None,
     state = {"case": case_id, "run_id": run_id, "feature": feature, "pid": None,
              "status": "starting", "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
              "requested_start_phase": start_phase_override,
-             "requested_end_phase": end_phase_override,
+             "requested_end_at": end_at_override,
              "cli_config_id": cli_config["id"]}
     refresh_worker_lease(out_dir, state, force=True, event="worker_starting")
 
@@ -2293,8 +2249,8 @@ def cmd_start(case_id: str, start_phase_override: str | None = None,
             "--run-id", run_id, "--cli-config", cli_config["id"]]
     if start_phase_override:
         argv.extend(("--start-phase", start_phase_override))
-    if end_phase_override:
-        argv.extend(("--end-phase", end_phase_override))
+    if end_at_override:
+        argv.extend(("--end-at", end_at_override))
     kwargs: dict[str, Any] = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
                                | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW}
                               if sys.platform == "win32" else {"start_new_session": True})
@@ -2336,7 +2292,7 @@ def cmd_start(case_id: str, start_phase_override: str | None = None,
         "feature": feature, "worker_pid": proc.pid,
         "status": state.get("status", "starting"), "cli_config_id": cli_config["id"],
         "requested_start_phase": start_phase_override,
-        "requested_end_phase": end_phase_override,
+        "requested_end_at": end_at_override,
         "observation_interval_sec": OBSERVATION_INTERVAL_SEC,
         "poll": f"python test/scripts/run_case.py {case_id} poll "
                 f"--cursor 0 --model-cursor 0 --wait-sec {OBSERVATION_INTERVAL_SEC}",
@@ -2389,7 +2345,7 @@ def cmd_poll(case_id: str, cursor: int, model_cursor: int, wait_sec: int, max_ch
                     "highest_phase_reached": state.get("highest_phase_reached"),
                     "phase_source": state.get("phase_source"),
                     "phase_observed_at": state.get("phase_observed_at"),
-                    "spec_entered_at": state.get("spec_entered_at"),
+                    "story_done_at": state.get("story_done_at"),
                     "last_event": state.get("last_event"),
                     "heartbeat_at": state.get("heartbeat_at"),
                     "lease_expires_at": state.get("lease_expires_at"),
@@ -2885,8 +2841,8 @@ def main() -> int:
                     help="内部：本 attempt 使用的 cli.configurations id")
     ap.add_argument("--start-phase", default=None,
                     help="内部：协调器覆盖本轮起始阶段；不改变 case.yaml")
-    ap.add_argument("--end-phase", default=None,
-                    help="内部：协调器覆盖本轮终止阶段；不改变 case.yaml")
+    ap.add_argument("--end-at", default=None,
+                    help="内部：协调器覆盖本轮终点（story / blueprint / design_handoff / phase:<阶段>）；不改变 case.yaml")
     ap.add_argument("--cursor", type=int, default=0)
     ap.add_argument("--model-cursor", type=int, default=0,
                     help="被测模型推理流的游标，与 --cursor 相互独立")
@@ -2908,9 +2864,9 @@ def main() -> int:
         return foreground(args.case_id, prepared=args.prepared, run_id=args.run_id,
                           cli_config_id=args.cli_config,
                           start_phase_override=args.start_phase,
-                          end_phase_override=args.end_phase)
+                          end_at_override=args.end_at)
     if args.command == "start":
-        return cmd_start(args.case_id, args.start_phase, args.end_phase,
+        return cmd_start(args.case_id, args.start_phase, args.end_at,
                          args.cli_config)
     if args.command == "poll":
         return cmd_poll(args.case_id, args.cursor, args.model_cursor,

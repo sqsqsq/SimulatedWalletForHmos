@@ -60,13 +60,13 @@ replies:
   - id: terms-confirmed
     expected_turn: 10
     expected_kind: story_gate
-    expected_phase: spec
+    expected_phase: story
     text: 术语确认，按你列的定。
 
   - id: deliver-for-review
     expected_turn: 11
     expected_kind: story_gate
-    expected_phase: spec
+    expected_phase: story
     text: 归档送审。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。

@@ -12,6 +12,10 @@ from pathlib import Path
 import yaml
 from ext_workspace import DEV_EXT
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import end_target  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = ROOT / "test/cases"
@@ -21,7 +25,6 @@ CASE_IDS = {
     if path.is_dir() and (path / "case.yaml").is_file()
 }
 VALID_START = {"story", "spec", "plan", "coding", "review", "ut", "testing"}
-VALID_END = set(VALID_START)
 VARIANTS = ("brief.md", "role.md", "process.md")
 
 
@@ -60,7 +63,8 @@ class CaseShapeTest(unittest.TestCase):
             self.assertEqual(directory.name, case.get("id"))
             self.assertTrue(str(case.get("ar", "")).strip())
             self.assertIn(case.get("start_phase", "story"), VALID_START)
-            self.assertIn(case.get("end_phase", "spec"), VALID_END)
+            self.assertNotIn("end_phase", case)
+            end_target.parse_end_at(case.get("end_at"), where=directory.name)
             self.assertTrue(str(case.get("prompt", "")).strip())
 
             # 材料分三处，都可以为空，但不能三处都空——那样这个 Case 没有输入。
@@ -104,13 +108,12 @@ class CaseShapeTest(unittest.TestCase):
     def test_prompts_do_not_drive_phase_advancement(self) -> None:
         """阶段推进归驱动器，不归被测模型。
 
-        `run_case.py` 在每个阶段边界按 `end_phase` 算出下一个未闭环阶段并**指名下发**
-        推进指令。prompt 里再写一遍阶段链，就是和驱动器双写：改终点时两边对不上
+        `run_case.py` 按 `end_at` 观测终点，需求交付之后还要施工设计时**指名下发**下一步。
+        prompt 里再写一遍阶段链，就是和驱动器双写：改终点时两边对不上
         （实测协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，模型照 prompt 走），
         而且把「模型会不会自己一路跑」混进了观测——测的就不再是驱动器能不能推动它。
 
-        `/story` 自己的动作（init / archive / review）不在 PHASE_ORDER 里，驱动器不发，
-        必须写在 prompt 里，所以不在本判据的拦截范围内。
+        prompt 用业务终点说做到哪（需求说明定稿送审、到实现方案为止），不写阶段名。
         """
         chain = re.compile(
             r"(依次完成|继续执行|随后执行\s*/?(spec|plan)|一路走到|"
@@ -122,7 +125,7 @@ class CaseShapeTest(unittest.TestCase):
             hit = chain.search(prompt)
             self.assertIsNone(
                 hit, f"{case_id} 的 prompt 在替驱动器安排阶段推进：「{hit.group(0) if hit else ''}」"
-                     f"——终点只由 end_phase 定，prompt 只写起点动作与业务要求")
+                     f"——终点只由 end_at 定，prompt 只写起点动作与业务要求")
 
 
 class NarrativeFixtureTest(unittest.TestCase):
@@ -163,7 +166,7 @@ class CompositeCoverageTest(unittest.TestCase):
     def test_every_story_capability_has_a_carrier(self) -> None:
         # 「上游已拆两张单与兄弟交接」由退役的 traffic-card-loss（金样回归锚，
         # case.retired.yaml，不进常规 suite）承载，不在此表。
-        # 只登记走得到的能力：两个 Case 的终点是 spec 与 plan，coding 与真实改码不在这一轮。
+        # 只登记走得到的能力：两个 Case 的终点是需求交付（story）与实现方案（phase: plan），coding 与真实改码不在这一轮。
         carriers = {
             "系统按单号拉取": {"auto-topup"},
             "没有系统单据的本地起手": {"car-key-sharing"},
@@ -173,14 +176,16 @@ class CompositeCoverageTest(unittest.TestCase):
             "材料冲突登记为议题、评审回流定源": {"car-key-sharing"},
             "材料写明尚未决定的问题保持 open": {"car-key-sharing"},
             "归档送审与 update 取回评审回稿": {"auto-topup"},
+            "零施工单位下完成需求交付": {"auto-topup"},
+            "交付后继续施工设计，逐施工单位到 plan": {"car-key-sharing"},
             "评审人在议题人工区表态、update 承接": {"car-key-sharing"},
             "多方协作与多步分支流程": {"car-key-sharing"},
             "会议转写进需求输入": {"auto-topup"},
         }
         for capability, expected in carriers.items():
             self.assertTrue(expected <= CASE_IDS, capability)
-        ends = {case_id: definition(case_id).get("end_phase") for case_id in CASE_IDS}
-        self.assertEqual({"auto-topup": "spec", "car-key-sharing": "plan"}, ends,
+        ends = {case_id: definition(case_id).get("end_at") for case_id in CASE_IDS}
+        self.assertEqual({"auto-topup": {"kind": "story"}, "car-key-sharing": {"kind": "phase", "phase": "plan"}}, ends,
                          "终点变了，上面的能力登记要跟着核")
 
     def test_retired_case_stays_out_of_the_suite(self) -> None:

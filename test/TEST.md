@@ -54,7 +54,7 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 
 宿主完整读过 §0–§4 后，用户输入「开始测试」即进入编排。每次从当前 `cases/*/case.yaml` 动态读取可用 Case，生成编号多选项并另列
 「全部当前 Case」，允许单选、多选或全选。确认前复述实际 Case、feature、目标阶段、隔离 workspace 和回流范围；确认之前只执行 `plan`
-等只读检查。本轮要改终点时改 `case.yaml` 的 `end_phase`；`--end-phase` 只作一次性覆盖（§4.1）。
+等只读检查。本轮要改终点时改 `case.yaml` 的 `end_at`；`--end-at` 只作一次性覆盖（§4.1）。
 
 ### 1.2 起跑前的固定顺序
 
@@ -135,9 +135,9 @@ CLI 宿主按 `config/test.yaml > cli.configurations` 的顺序选，配置条�
 一次 `poll --wait-sec 0` 是完整事务：读取 suite 全部 Case，并行消费所有非终态 Case 的新事件、模型输出、阶段和状态，把每个真实
 `awaiting_reply` 连同「这一关按规划本该表达什么」交给宿主，最后统一计算稳定状态。poll 自身不等待，等待只来自定时器。
 
-阶段不按模型回复文本猜：从 Case workspace 的结构化证据校正，feature 匹配的 `framework/harness/state/.current-phase.json` 为首选，阶段目录中
-非 `reports/` 产物为后备。`current_phase` 是当前阶段，`highest_phase_reached` 是本轮到过的最高阶段、不回退（`last_phase` 与 `current_phase` 同值），
-首次到达 Spec 时写入 `spec_entered_at`。
+阶段不按模型回复文本猜，也不看目录出现没有：从需求流程契约与 worker 每回合发布的原生终点观测（`closure`）推出，依次是 `story`（成文登记之前）、
+`design_handoff`（施工单位还没全部可施工）、各原生阶段（所有活动施工单位里最早还没闭环的那个）。`current_phase` 是当前阶段，
+`highest_phase_reached` 是本轮到过的最远阶段、不回退（`last_phase` 与 `current_phase` 同值），需求首次成文登记时写入 `story_done_at`。
 
 每次返回 `suite_terminal`、`selected_case_count`、动态 `cases`、`interactions`、`adaptive_reply_requests`、`automation_stability`、`next_action`
 （`poll_after_interval` / `reply_then_poll` / `finalize`）、`progress_changed`、`changes` 与 `next_interval_sec`。
@@ -215,13 +215,22 @@ python test/scripts/run_multi_case.py watch --suite-id story-suite-20260822-1400
 
 ## 4. 收工与回流
 
-### 4.1 终点：`case.yaml` 的 `end_phase`
+### 4.1 终点：`case.yaml` 的 `end_at`
 
-终点的真源是 `case.yaml` 的 `end_phase`，一个 Case 一行；`cases/` 属被测输入，改它单独记一笔账。`--end-phase` 是命令行 override，
-记在 suite 记录的 `requested_end_phase` 与 `effective_phase_scope`，而 `end_phase` 字段始终回显 `case.yaml` 原值。
+终点的真源是 `case.yaml` 的 `end_at: {kind, phase?}`，一个 Case 一行；`cases/` 属被测输入，改它单独记一笔账。`--end-at`
+（`story` / `blueprint` / `design_handoff` / `phase:<阶段>`）是命令行 override，记在 suite 记录的 `requested_end_at`，实际终点记
+`effective_end_at`，`end_at` 字段始终回显 `case.yaml` 原值。`phase` 只在 `kind: phase` 时写。
 
-`end_phase` 决定驱动器的推进目标、跑哪几个 gate、`closure.target_phase` 的比对基准。目标阶段闭环时装置自己停；没闭环而宿主判断本轮
-已到位时用 `conclude`（§4.2），逐 Case 生效。
+| kind | 到达的判据（`test/scripts/end_target.py`，只读原生对象） |
+|---|---|
+| `story` | 需求已登记成文，只读交付门 `story-build check --deliver` 通过；不要求 Spec/Plan 或施工单位 |
+| `blueprint` | 蓝图已准入，评审投影与这一版有效；不创建 Story、不要求施工单位 |
+| `design_handoff` | 蓝图已准入，至少一个活动施工单位，且每个都被原生判为可施工；不要求施工 |
+| `phase` | 在 `design_handoff` 之上，每个活动施工单位在终点及之前各阶段：完成回执正式收口，或原生判定该阶段无需产出（合法复用） |
+
+蓝图取需求流程契约里的设计关联；直接走 Framework 的 Case 在 `case.yaml` 显式写 `blueprint_id`。有一个施工单位没到，整单就没到。
+`end_at` 决定驱动器的推进目标、跑哪几个 gate（需求交付门，加每个施工单位每个负责阶段的 `harness_<阶段>@<施工单位>`）。
+终点到了装置自己停；没到而宿主判断本轮已到位时用 `conclude`（§4.2），逐 Case 生效。
 
 ### 4.2 何时 `conclude`
 
@@ -229,22 +238,22 @@ python test/scripts/run_multi_case.py watch --suite-id story-suite-20260822-1400
 
 | 字段 | 说的是 |
 |---|---|
-| `target_phase` / `target_closed` | 本轮目标阶段；它的四件凭证齐没齐 |
-| `target_missing` | 差哪几件（`trace.json` / `summary.json` / 完成回执 / verifier 报告） |
-| `artifacts_ready` | spec.md、AR/story.md、AR/review.md 三件在不在 |
-| `next_unclosed_phase` | 目标之前第一个还没闭环的阶段 |
-| `beyond_target_evidence` | 目标之后的阶段有没有真实产物（模型真建了下一阶段产物才非空） |
+| `end_at` / `target_closed` | 本轮终点；按 §4.1 的判据到没到 |
+| `target_missing` | 差什么：交付门的原话、蓝图准入与投影、缺施工单位或设计判定、某施工单位某阶段的原生问题或缺的凭证 |
+| `blueprint_id` / `units` | 需求关联的蓝图；逐施工单位的身份、设计判定与各负责阶段的结论（`closed` / `reused` / `open`） |
+| `story_registered` | 需求成文登记过没有 |
+| `beyond_target_evidence` | 终点之后的阶段有没有真实产物（`<阶段>@<施工单位>`，施工单位真建了产物才非空） |
 
 | 看到 | 做什么 |
 |---|---|
 | `target_closed = true` | 装置自己停，不用 conclude |
-| `target_closed = false`，模型宣告「进入下一阶段 / 本阶段已完成」，且 `target_phase` 就是当前阶段 | 判定本轮到位 → `conclude` |
+| `target_closed = false`，模型宣告本轮已完成，且 `target_missing` 只剩宿主已判为不属本轮的项 | 判定本轮到位 → `conclude` |
 | `target_closed = false`，`target_missing` 还差凭证、模型也没宣告 | 按需求方身份继续回话 |
 | 拿不准 | 再 poll 一轮 |
 
 ```powershell
 python test/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-140000 `
-  --case <case-id> --reason "模型宣告进入 plan，本轮目标 spec 已到位"
+  --case <case-id> --reason "需求说明已送审，本轮终点 story 已到位"
 ```
 
 `conclude` 在模型这一轮结束时生效：worker 在轮与轮之间读收工请求，自己退出续话循环，门禁照跑、产物齐全。

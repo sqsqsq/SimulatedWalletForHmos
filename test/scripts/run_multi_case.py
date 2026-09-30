@@ -59,7 +59,8 @@ sys.path.insert(0, str(HERE))
 import publish_to_demo  # noqa: E402
 import run_layout  # noqa: E402
 from cli_config_group import load_cli_group  # noqa: E402
-from phase_state import ALL_PHASES, derive_phase_state  # noqa: E402
+from phase_state import ALL_PHASES, derive_phase_state, phase_rank  # noqa: E402
+import end_target  # noqa: E402
 
 CLI_CONFIGURATIONS, CLI_RETRY_POLICY = load_cli_group(CFG)
 
@@ -86,11 +87,8 @@ FEATURE_ARCHIVE_NAME = "archive"
 FEATURE_ARCHIVE_TIMESTAMP_FORMAT = str(CFG.get("feature_history", {}).get(
     "timestamp_format", "%Y%m%d-%H%M%S"))
 
-VALID_START = {"story", "spec", "plan", "coding", "review", "ut", "testing"}
-# 1.9.4：`story-review` 这个 PHASE_ORDER 之外的假终点随 `/story review` 一起退场。
-# 评审意见现在是 update 的输入，「更新到哪算走完」由双检查点的第二段判（after_initial）。
-VALID_END = set(VALID_START)
-PHASE_ORDER = ("spec", "plan", "coding", "review", "ut", "testing")
+PHASE_ORDER = end_target.PHASES
+VALID_START = {"story", *PHASE_ORDER}
 TERMINAL_STATUS = {
     "finished", "timeout", "stopped", "stop_failed", "cli_failed",
     "worker_start_failed", "worker_lost", "source_restore_failed",
@@ -142,7 +140,7 @@ class CasePlan:
     case_id: str
     feature: str
     start_phase: str
-    end_phase: str
+    end_at: dict
     interactive: bool
     phases: tuple[str, ...]
     interaction_script: tuple[dict[str, Any], ...] = ()
@@ -159,7 +157,7 @@ class CasePlan:
             "case": self.case_id,
             "feature": self.feature,
             "start_phase": self.start_phase,
-            "end_phase": self.end_phase,
+            "end_at": end_target.label(self.end_at),
             "interactive": self.interactive,
             "phase_scope": list(self.phases),
             "contains_coding": self.contains_coding,
@@ -492,7 +490,7 @@ def prepare_case_retry(suite: dict[str, Any], record: dict[str, Any]) -> None:
         "run_id": None, "worker_pid": None, "cursor": 0, "model_cursor": 0,
         "last_phase": None, "current_phase": None,
         "highest_phase_reached": None, "phase_source": None,
-        "phase_observed_at": None, "spec_entered_at": None,
+        "phase_observed_at": None, "story_done_at": None,
         "awaiting_since": None, "execution_status": None,
         "failure_kind": None, "pipeline": None,
         "last_poll_at": None, "last_error": None, "last_awaiting": None,
@@ -766,7 +764,7 @@ def load_interaction_script(case_id: str) -> tuple[dict[str, Any], ...]:
 # 关卡回复的阶段前提：turn 编号只说「第几关」，说不出「这一关在哪个阶段」。
 # 评审意见这类回复必须在归档之后才有意义——只按 turn 排队，模型少停一关就会把
 # 后面的话提前送进前面的关卡，而且送出去了才发现对不上。
-VALID_EXPECTED_PHASE = frozenset({"story", "spec", "archived"})
+VALID_EXPECTED_PHASE = frozenset({*ALL_PHASES, "archived"})
 
 
 def gate_phase_ready(record: dict[str, Any], expected_phase: str) -> bool:
@@ -783,21 +781,11 @@ def gate_phase_ready(record: dict[str, Any], expected_phase: str) -> bool:
             return bool(json.loads(flow.read_text(encoding="utf-8")).get("archived"))
         except (OSError, ValueError):
             return False
-    highest = str(record.get("highest_phase_reached") or "").strip()
+    highest = str(record.get("highest_phase_reached") or "story").strip()
     if expected_phase == "story":
-        # story 关卡发生在进入 spec 之前：还没到过 spec 就是 story 阶段。
-        return highest not in PHASE_ORDER
-    return highest in PHASE_ORDER and (
-        PHASE_ORDER.index(highest) >= PHASE_ORDER.index(expected_phase))
-
-
-def phase_scope(start_phase: str, end_phase: str) -> tuple[str, ...]:
-    """Return phases that can touch Framework state for a case."""
-    end_index = PHASE_ORDER.index(end_phase)
-    start_index = 0 if start_phase == "story" else PHASE_ORDER.index(start_phase)
-    if start_index > end_index:
-        raise ValueError(f"阶段范围反向: {start_phase} -> {end_phase}")
-    return PHASE_ORDER[start_index:end_index + 1]
+        # story 关卡发生在需求成文登记之前：还没越过 story 就是 story 阶段。
+        return phase_rank(highest) <= phase_rank("story")
+    return phase_rank(highest) >= phase_rank(expected_phase)
 
 
 def load_case_plan(case_id: str) -> CasePlan:
@@ -816,17 +804,19 @@ def load_case_plan(case_id: str) -> CasePlan:
         raise SystemExit(f"[multi] case {case_id} 的需求编号 {feature} 与回流根的归档目录同名，"
                          "回流会写进 doc/features/archive；换一个编号")
     start_phase = str(case.get("start_phase") or "story").strip()
-    end_phase = str(case.get("end_phase") or "spec").strip()
-    if start_phase not in VALID_START or end_phase not in VALID_END:
-        raise SystemExit(f"[multi] case 阶段非法: {case_id}: {start_phase} -> {end_phase}")
+    if start_phase not in VALID_START:
+        raise SystemExit(f"[multi] case 起点非法: {case_id}: {start_phase}")
+    if "end_phase" in case:
+        raise SystemExit(f"[multi] case {case_id} 还写着 end_phase：终点改用 end_at: {{kind, phase?}}")
     try:
-        phases = phase_scope(start_phase, end_phase)
-    except ValueError as exc:
+        end_at = end_target.parse_end_at(case.get("end_at"), where=f"case {case_id}")
+        phases = end_target.responsible_phases(end_at, start_phase)
+    except end_target.EndAtError as exc:
         raise SystemExit(f"[multi] {exc}") from exc
     after_initial = str(case.get("after_initial") or "").strip()
     if after_initial and after_initial != "update":
         raise SystemExit(f"[multi] case {case_id} 的 after_initial 只认 update: {after_initial}")
-    return CasePlan(case_id, feature, start_phase, end_phase,
+    return CasePlan(case_id, feature, start_phase, end_at,
                     bool(case.get("interactive")), phases,
                     load_interaction_script(case_id),
                     load_supplements(case_id), after_initial)
@@ -908,35 +898,43 @@ def source_restore_status(state: dict[str, Any]) -> str:
     return str(restore.get("status") or "unknown")
 
 
-def requested_end_phase(plan: CasePlan, base_end_phase: str | None,
-                        continue_case: str | None,
-                        continue_end_phase: str | None) -> str | None:
+def requested_end_at(plan: CasePlan, base_end_at: str | None,
+                     continue_case: str | None,
+                     continue_end_at: str | None) -> str | None:
+    """本轮对这个 Case 的终点覆盖（命令行写法）；没有覆盖为 None，用 Case 配置的 end_at。"""
     if continue_case == plan.case_id:
-        return continue_end_phase or base_end_phase
-    return base_end_phase
+        return continue_end_at or base_end_at
+    return base_end_at
 
 
-def validate_phase_overrides(base_end_phase: str | None,
+def validate_phase_overrides(base_end_at: str | None,
                              continue_case: str | None,
-                             continue_end_phase: str | None,
+                             continue_end_at: str | None,
                              plans: list[CasePlan]) -> None:
-    if base_end_phase and base_end_phase not in VALID_END:
-        raise SystemExit(f"[multi] 非法 --end-phase: {base_end_phase}")
+    for flag, value in (("--end-at", base_end_at), ("--continue-end-at", continue_end_at)):
+        if value:
+            try:
+                end_target.parse_end_at(value, where=flag)
+            except end_target.EndAtError as exc:
+                raise SystemExit(f"[multi] {exc}") from exc
     if continue_case and continue_case not in {plan.case_id for plan in plans}:
         raise SystemExit(f"[multi] --continue-case 不在选中 Case 中: {continue_case}")
-    if continue_case and not continue_end_phase:
-        raise SystemExit("[multi] --continue-case 必须同时提供 --continue-end-phase")
-    if continue_end_phase and continue_end_phase not in VALID_END:
-        raise SystemExit(f"[multi] 非法 --continue-end-phase: {continue_end_phase}")
+    if continue_case and not continue_end_at:
+        raise SystemExit("[multi] --continue-case 必须同时提供 --continue-end-at")
 
 
-def new_case_record(plan: CasePlan, target_end_phase: str | None = None) -> dict[str, Any]:
-    target_end = target_end_phase or plan.end_phase
-    target_phases = phase_scope(plan.start_phase, target_end)
+def new_case_record(plan: CasePlan, target_end_at: str | None = None) -> dict[str, Any]:
+    """`requested_end_at` 是命令行覆盖（没有为 None），`effective_end_at` 是本轮实际终点，`end_at` 是 Case 配置原值。"""
+    effective = end_target.parse_end_at(target_end_at, where="--end-at") if target_end_at else plan.end_at
+    try:
+        target_phases = end_target.responsible_phases(effective, plan.start_phase)
+    except end_target.EndAtError as exc:
+        raise SystemExit(f"[multi] {plan.case_id}：{exc}") from exc
     return {
         **plan.as_dict(),
         "requested_start_phase": plan.start_phase,
-        "requested_end_phase": target_end_phase,
+        "requested_end_at": target_end_at,
+        "effective_end_at": end_target.label(effective),
         "effective_phase_scope": list(target_phases),
         "wait_for_cases": [],
         "interaction_script": list(plan.interaction_script),
@@ -961,7 +959,7 @@ def new_case_record(plan: CasePlan, target_end_phase: str | None = None) -> dict
         "highest_phase_reached": None,
         "phase_source": None,
         "phase_observed_at": None,
-        "spec_entered_at": None,
+        "story_done_at": None,
         "awaiting_since": None,
         "source_restore_status": "not_started",
         "execution_status": None,
@@ -1050,7 +1048,7 @@ def refresh_record(record: dict[str, Any]) -> dict[str, Any]:
     record["run_id"] = state.get("run_id")
     record["worker_pid"] = state.get("pid")
     for key in ("last_phase", "current_phase", "highest_phase_reached",
-                "phase_source", "phase_observed_at", "spec_entered_at"):
+                "phase_source", "phase_observed_at", "story_done_at"):
         if state.get(key) is not None:
             record[key] = state.get(key)
     record["awaiting_since"] = state.get("awaiting_since")
@@ -1104,7 +1102,7 @@ def reconcile_record_phase(record: dict[str, Any]) -> dict[str, Any]:
     if not workspace_text:
         return {}
     keys = ("current_phase", "highest_phase_reached", "phase_source",
-            "phase_observed_at", "last_phase", "spec_entered_at")
+            "phase_observed_at", "last_phase", "story_done_at")
     before = {key: record.get(key) for key in keys}
     record.update(derive_phase_state(Path(workspace_text),
                                      str(record.get("feature") or ""), record,
@@ -1737,8 +1735,8 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
     override_args: list[str] = []
     if case.get("requested_start_phase") and case["requested_start_phase"] != case.get("start_phase"):
         override_args.extend(("--start-phase", str(case["requested_start_phase"])))
-    if case.get("requested_end_phase"):
-        override_args.extend(("--end-phase", str(case["requested_end_phase"])))
+    if case.get("requested_end_at"):
+        override_args.extend(("--end-at", str(case["requested_end_at"])))
     override_args.extend(("--cli-config", config_id))
     history = case.setdefault("start_history", [])
     for attempt in range(1, START_MAX_ATTEMPTS + 1):
@@ -1938,12 +1936,12 @@ def schedule_pending(suite: dict[str, Any]) -> None:
 
 def _case_is_stably_automatic(record: dict[str, Any]) -> bool:
     status = str(record.get("status") or "")
-    if not record.get("spec_entered_at"):
+    if not record.get("story_done_at"):
         return False
     if status in TERMINAL_STATUS:
         return True
     current = str(record.get("current_phase") or record.get("last_phase") or "")
-    return status == "running" and current in PHASE_ORDER
+    return status == "running" and phase_rank(current) > phase_rank("story")
 
 
 def suite_automation_ready(suite: dict[str, Any]) -> bool:
@@ -1981,7 +1979,7 @@ def update_automation_stability(suite: dict[str, Any],
             "current_phase": record.get("current_phase"),
             "highest_phase_reached": record.get("highest_phase_reached"),
             "phase_source": record.get("phase_source"),
-            "spec_entered_at": record.get("spec_entered_at"),
+            "story_done_at": record.get("story_done_at"),
             "stable": _case_is_stably_automatic(record),
         }
         for record in records
@@ -2033,7 +2031,7 @@ def poll_one(record: dict[str, Any], wait_sec: int, max_chars: int,
             "highest_phase_reached": run.get("highest_phase_reached"),
             "phase_source": run.get("phase_source"),
             "phase_observed_at": run.get("phase_observed_at"),
-            "spec_entered_at": run.get("spec_entered_at"),
+            "story_done_at": run.get("story_done_at"),
             "next_cursor": payload.get("next_cursor"),
             "next_model_cursor": payload.get("next_model_cursor"),
             "awaiting_reply": payload.get("awaiting_reply"),
@@ -2083,7 +2081,7 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
             if result.get("status"):
                 record["status"] = result["status"]
             for key in ("last_phase", "current_phase", "highest_phase_reached",
-                        "phase_source", "phase_observed_at", "spec_entered_at"):
+                        "phase_source", "phase_observed_at", "story_done_at"):
                 if result.get(key) is not None:
                     record[key] = result[key]
             phase_correction = reconcile_record_phase(record)
@@ -2161,7 +2159,8 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
         {
             "case": record["case"], "feature": record["feature"],
             "requested_start_phase": record.get("requested_start_phase"),
-            "requested_end_phase": record.get("requested_end_phase"),
+            "requested_end_at": record.get("requested_end_at"),
+            "effective_end_at": record.get("effective_end_at"),
             "effective_phase_scope": record.get("effective_phase_scope"),
             "status": record.get("status"), "run_id": record.get("run_id"),
             "last_phase": record.get("last_phase"),
@@ -2258,7 +2257,8 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
                 "case": record["case"], "feature": record["feature"],
                 "workspace": record.get("workspace"),
                 "requested_start_phase": record.get("requested_start_phase"),
-                "requested_end_phase": record.get("requested_end_phase"),
+                "requested_end_at": record.get("requested_end_at"),
+            "effective_end_at": record.get("effective_end_at"),
                 "effective_phase_scope": record.get("effective_phase_scope"),
                 "status": record.get("status"), "run_id": record.get("run_id"),
                 "last_phase": record.get("last_phase"),
@@ -2266,7 +2266,7 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
                 "highest_phase_reached": record.get("highest_phase_reached"),
                 "phase_source": record.get("phase_source"),
                 "phase_observed_at": record.get("phase_observed_at"),
-                "spec_entered_at": record.get("spec_entered_at"),
+                "story_done_at": record.get("story_done_at"),
                 "awaiting_since": record.get("awaiting_since"),
             "events_idle_sec": record.get("events_idle_sec"),
             "stalled": record.get("stalled"),
@@ -2301,9 +2301,9 @@ def ensure_no_external_active(plans: list[CasePlan]) -> None:
 
 
 def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
-                 base_end_phase: str | None = None,
+                 base_end_at: str | None = None,
                  continue_case: str | None = None,
-                 continue_end_phase: str | None = None,
+                 continue_end_at: str | None = None,
                  non_sandbox_authorized: bool = False,
                  preserve_current_features: bool = False) -> tuple[Path, dict[str, Any]]:
     if jobs <= 0:
@@ -2311,7 +2311,7 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
     if not non_sandbox_authorized:
         raise SystemExit(
             "[multi] CLI 测试必须显式提供 --authorize-non-sandbox，记录用户授权后才能启动")
-    validate_phase_overrides(base_end_phase, continue_case, continue_end_phase, plans)
+    validate_phase_overrides(base_end_at, continue_case, continue_end_at, plans)
     if jobs < len(plans):
         raise SystemExit(
             f"[multi] 隔离并行 suite 要求 jobs >= Case 数量（{jobs} < {len(plans)}），"
@@ -2396,18 +2396,18 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
             "automation_interval_sec": AUTOMATION_INTERVAL_SEC,
             "start_policy": "sequential_confirmed_then_parallel_run",
             "start_max_attempts": START_MAX_ATTEMPTS,
-            "post_interaction_observation": "goal_heartbeat_after_entering_spec",
-            "base_end_phase_override": base_end_phase,
+            "post_interaction_observation": "goal_heartbeat_after_story_done",
+            "base_end_at_override": base_end_at,
             "continued_case": continue_case,
-            "continued_end_phase": continue_end_phase,
+            "continued_end_at": continue_end_at,
             "same_batch_start": False,
         },
         "events": [],
     }
     for case_id, plan in plan_map.items():
         record = new_case_record(
-            plan, requested_end_phase(plan, base_end_phase,
-                                      continue_case, continue_end_phase))
+            plan, requested_end_at(plan, base_end_at,
+                                   continue_case, continue_end_at))
         suite["case_states"][case_id] = record
     set_suite_environment(suite)
     Path(suite["control_root"]).mkdir(parents=True, exist_ok=True)
@@ -2523,7 +2523,7 @@ def progress_snapshot(suite: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "interaction_state": record.get("interaction_state"),
             "reply_status": record.get("last_reply_status"),
             "last_error": record.get("last_error"),
-            "spec_entered_at": record.get("spec_entered_at"),
+            "story_done_at": record.get("story_done_at"),
         }
         for record in suite.get("case_states", {}).values()
     }
@@ -2622,17 +2622,17 @@ def print_summary(suite: dict[str, Any]) -> None:
 
 
 def command_plan(plans: list[CasePlan], jobs: int,
-                 base_end_phase: str | None = None,
+                 base_end_at: str | None = None,
                  continue_case: str | None = None,
-                 continue_end_phase: str | None = None) -> int:
-    validate_phase_overrides(base_end_phase, continue_case, continue_end_phase, plans)
+                 continue_end_at: str | None = None) -> int:
+    validate_phase_overrides(base_end_at, continue_case, continue_end_at, plans)
     if jobs < len(plans):
         raise SystemExit(
             f"[multi] 隔离并行 plan 要求 jobs >= Case 数量（{jobs} < {len(plans)}）")
     print(json.dumps({
         "cases": [
-            {**plan.as_dict(), "requested_end_phase": requested_end_phase(
-                plan, base_end_phase, continue_case, continue_end_phase)}
+            {**plan.as_dict(), "requested_end_at": requested_end_at(
+                plan, base_end_at, continue_case, continue_end_at)}
             for plan in plans
         ],
         "jobs": jobs,
@@ -2659,13 +2659,13 @@ def command_plan(plans: list[CasePlan], jobs: int,
 
 
 def command_start(plans: list[CasePlan], suite_id: str, jobs: int,
-                  base_end_phase: str | None = None,
+                  base_end_at: str | None = None,
                   continue_case: str | None = None,
-                  continue_end_phase: str | None = None,
+                  continue_end_at: str | None = None,
                   non_sandbox_authorized: bool = False,
                   preserve_current_features: bool = False) -> int:
-    path, suite = create_suite(plans, suite_id, jobs, base_end_phase,
-                               continue_case, continue_end_phase,
+    path, suite = create_suite(plans, suite_id, jobs, base_end_at,
+                               continue_case, continue_end_at,
                                non_sandbox_authorized,
                                preserve_current_features)
     prepare_suite_preflight(path, suite)
@@ -3304,7 +3304,7 @@ def write_case_observation_record(suite: dict[str, Any],
     lines = [
         f"# {record['case']} 测试观测记录", "",
         f"- Feature：`{record['feature']}`",
-        f"- 目标阶段：`{record.get('requested_end_phase') or record.get('end_phase')}`",
+        f"- 终点：`{record.get('effective_end_at') or record.get('end_at')}`",
         f"- 最终状态：`{record.get('status')}`",
         f"- Run ID：`{record.get('run_id') or '未创建'}`",
         f"- 最终 CLI 配置：`{record.get('cli_config_id') or '未选择'}`",
@@ -3373,14 +3373,14 @@ def main() -> int:
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--suite-id", default="")
-    parser.add_argument("--end-phase", default="",
-                        help="覆盖未指定继续 Case 的本轮终止阶段")
+    parser.add_argument("--end-at", default="",
+                        help="覆盖未指定继续 Case 的本轮终点（story / blueprint / design_handoff / phase:<阶段>）")
     parser.add_argument("--point", default="initial", choices=("initial", "update"),
                         help="checkpoint / promote-checkpoint：哪一段的快照")
     parser.add_argument("--continue-case", default="",
                         help="选定一个 Case 使用单独的后续终止阶段")
-    parser.add_argument("--continue-end-phase", default="",
-                        help="--continue-case 的终止阶段")
+    parser.add_argument("--continue-end-at", default="",
+                        help="--continue-case 的终点，写法同 --end-at")
     parser.add_argument("--case", dest="reply_case", default="")
     parser.add_argument("--text", default="")
     parser.add_argument("--reply-mode", choices=("scripted", "adaptive", "manual"),
@@ -3413,15 +3413,15 @@ def main() -> int:
 
     if args.command in {"plan", "start"}:
         plans = select_cases(args.case_ids, args.all)
-        base_end_phase = args.end_phase or None
+        base_end_at = args.end_at or None
         continue_case = args.continue_case or None
-        continue_end_phase = args.continue_end_phase or None
+        continue_end_at = args.continue_end_at or None
         if args.command == "plan":
-            return command_plan(plans, args.jobs, base_end_phase,
-                                continue_case, continue_end_phase)
+            return command_plan(plans, args.jobs, base_end_at,
+                                continue_case, continue_end_at)
         suite_id = args.suite_id or datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}"
-        return command_start(plans, suite_id, args.jobs, base_end_phase,
-                             continue_case, continue_end_phase,
+        return command_start(plans, suite_id, args.jobs, base_end_at,
+                             continue_case, continue_end_at,
                              args.authorize_non_sandbox,
                              args.preserve_current_features)
 

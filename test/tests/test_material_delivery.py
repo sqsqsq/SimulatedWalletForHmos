@@ -69,7 +69,7 @@ class FixtureCase(unittest.TestCase):
 
     def write_case_yaml(self, deliver: str) -> None:
         (self.case / "case.yaml").write_text(
-            f"id: {CASE_ID}\nar: {FEATURE}\nstart_phase: story\nend_phase: spec\n"
+            f"id: {CASE_ID}\nar: {FEATURE}\nstart_phase: story\nend_at: {{kind: story}}\n"
             f"prompt: |\n  做这张单。\n"
             f"supplements:\n  - file: {DOC_NAME}\n    deliver: {deliver}\n",
             encoding="utf-8")

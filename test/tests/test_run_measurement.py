@@ -446,7 +446,7 @@ class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):
     def test_target_phase_alone_does_not_advance(self):
         """只有「本轮目标是 plan」这一个事实时，阶段仍是 story。
 
-        实测反例：驱动器在 `gates_started` 把 `end_phase` 当观测阶段写进状态，
+        实测反例：驱动器在 `gates_started` 把终点当观测阶段写进状态，
         于是两个 Case 在没有任何 plan 产物时被报成到达 plan。
         """
         state = self._state()
@@ -455,21 +455,22 @@ class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):
         self.assertEqual("story", result["current_phase"])
         self.assertEqual("story", result["highest_phase_reached"])
 
-    def test_framework_state_advances(self):
-        """正样本：framework 自己说到了 spec → 抬升。"""
-        self._write_framework_phase("spec")
-        result = phase_state.derive_phase_state(self.ws, self.feature, self._state())
+    def test_native_observation_advances(self):
+        """正样本：原生终点观测里施工单位的 spec 还没闭环 → 阶段是 spec。"""
+        state = {**self._state(), "closure": {"end_at": "phase:plan", "units": [
+            {"design": "constructable", "phases": {"spec": {"state": "open"}, "plan": {"state": "open"}}}]}}
+        result = phase_state.derive_phase_state(self.ws, self.feature, state)
         self.assertEqual("spec", result["current_phase"])
-        self.assertEqual("framework_current_phase", result["phase_source"])
+        self.assertEqual("flow_and_native_observation", result["phase_source"])
 
-    def test_real_artifact_advances(self):
-        """正样本：真产物落盘 → 抬升。"""
+    def test_the_slot_or_a_phase_directory_alone_does_not_advance(self):
+        """反样本：全局阶段槽写着 spec、需求目录下出现 spec/，都不是阶段证据。"""
+        self._write_framework_phase("spec")
         art = self.ws / "doc/features" / self.feature / "spec" / "spec.md"
         art.parent.mkdir(parents=True)
         art.write_text("# spec", encoding="utf-8")
         result = phase_state.derive_phase_state(self.ws, self.feature, self._state())
-        self.assertEqual("spec", result["highest_phase_reached"])
-        self.assertEqual("phase_artifact", result["phase_source"])
+        self.assertEqual("story", result["highest_phase_reached"])
 
     def test_reports_dir_alone_is_not_an_artifact(self):
         """反样本：只有 reports/ 不算到达——门禁跑过不等于阶段产物有了。"""

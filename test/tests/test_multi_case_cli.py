@@ -31,6 +31,11 @@ class MultiCasePlanTest(unittest.TestCase):
         self.assertEqual(len(plans), len({plan.feature for plan in plans}))
 
 
+#: 终点观测：一个可施工的施工单位，spec 已闭环、plan 还没闭环
+AT_PLAN = {"end_at": "phase:plan", "units": [{"change_unit_id": "cu1", "design": "constructable", "phases": {
+    "spec": {"state": "closed", "missing": []}, "plan": {"state": "open", "missing": ["完成回执"]}}}]}
+
+
 class StructuredPhaseStateTest(unittest.TestCase):
     def setUp(self) -> None:
         self.root = Path(tempfile.mkdtemp())
@@ -54,42 +59,41 @@ class StructuredPhaseStateTest(unittest.TestCase):
             "updated_at": "2026-08-22T03:43:28Z",
         }), encoding="utf-8")
 
-    def test_framework_state_corrects_story_to_spec(self) -> None:
-        record = self.record()
-        self.write_current_phase("spec")
-        changes = run_multi_case.reconcile_record_phase(record)
-        self.assertEqual("spec", record["current_phase"])
-        self.assertEqual("spec", record["highest_phase_reached"])
-        self.assertEqual("framework_current_phase", record["phase_source"])
-        self.assertIn("current_phase", changes)
-        self.assertTrue(record["spec_entered_at"])
+    def register(self) -> None:
+        flow = self.root / f"doc/features/{self.feature}/AR/story-src/story-flow.json"
+        flow.parent.mkdir(parents=True)
+        flow.write_text(json.dumps({"status": "story_written"}), encoding="utf-8")
 
-    def test_phase_artifact_is_structured_fallback(self) -> None:
+    def test_native_observation_moves_the_phase(self) -> None:
+        """需求登记成文、终点观测列出施工单位之后，阶段是所有施工单位里最早还没闭环的那个。"""
+        self.register()
+        record = {**self.record(), "closure": AT_PLAN}
+        changes = run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("plan", record["current_phase"])
+        self.assertEqual("plan", record["highest_phase_reached"])
+        self.assertEqual("flow_and_native_observation", record["phase_source"])
+        self.assertIn("current_phase", changes)
+        self.assertTrue(record["story_done_at"])
+
+    def test_waiting_for_units_is_design_handoff(self) -> None:
+        self.register()
+        record = {**self.record(), "closure": {"end_at": "phase:plan", "units": []}}
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("design_handoff", record["current_phase"])
+        record["closure"] = {"end_at": "story", "units": []}
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("story", record["current_phase"], "终点是 story 时不往施工推")
+
+    def test_a_phase_directory_or_the_global_slot_alone_does_not_advance(self) -> None:
+        """目录出现、全局阶段槽写着 spec，都不是阶段证据。"""
         artifact = self.root / f"doc/features/{self.feature}/spec/spec.md"
         artifact.parent.mkdir(parents=True)
         artifact.write_text("# spec", encoding="utf-8")
-        record = self.record()
-        run_multi_case.reconcile_record_phase(record)
-        self.assertEqual("spec", record["current_phase"])
-        self.assertEqual("phase_artifact", record["phase_source"])
-
-    def test_framework_phase_is_current_while_artifact_advances_highest(self) -> None:
         self.write_current_phase("spec")
-        artifact = self.root / f"doc/features/{self.feature}/plan/plan.md"
-        artifact.parent.mkdir(parents=True)
-        artifact.write_text("# plan", encoding="utf-8")
         record = self.record()
-        run_multi_case.reconcile_record_phase(record)
-        self.assertEqual("spec", record["current_phase"])
-        self.assertEqual("plan", record["highest_phase_reached"])
-        self.assertEqual("framework_current_phase", record["phase_source"])
-
-    def test_invalid_or_foreign_framework_state_is_ignored(self) -> None:
-        record = self.record()
-        self.write_current_phase("spec", feature="OTHER")
         run_multi_case.reconcile_record_phase(record)
         self.assertEqual("story", record["current_phase"])
-        self.assertFalse(record.get("spec_entered_at"))
+        self.assertFalse(record.get("story_done_at"))
 
     def test_model_prose_does_not_change_phase(self) -> None:
         record = self.record()
@@ -101,10 +105,13 @@ class StructuredPhaseStateTest(unittest.TestCase):
         record = self.record()
         record.update({"current_phase": "plan", "last_phase": "plan",
                        "highest_phase_reached": "plan",
-                       "spec_entered_at": "2026-08-22T03:00:00Z"})
+                       "story_done_at": "2026-08-22T03:00:00Z",
+                       "closure": {"end_at": "phase:plan", "units": [
+                           {"design": "constructable", "phases": {"spec": {"state": "open"}}}]}})
         run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("spec", record["current_phase"])
         self.assertEqual("plan", record["highest_phase_reached"])
-        self.assertEqual("2026-08-22T03:00:00Z", record["spec_entered_at"])
+        self.assertEqual("2026-08-22T03:00:00Z", record["story_done_at"])
 
 
 class SuiteFeatureArchiveTest(unittest.TestCase):
@@ -224,6 +231,31 @@ class SuiteFeatureArchiveTest(unittest.TestCase):
 
 class MultiCasePlanContinuationTest(unittest.TestCase):
 
+    PLAN = run_multi_case.CasePlan("c1", "AR-1", "story", {"kind": "story"}, False, ())
+
+    def test_an_override_is_recorded_beside_the_case_value(self) -> None:
+        """命令行覆盖记在 requested_end_at，实际终点记 effective_end_at，end_at 仍回显 Case 配置原值。"""
+        plain = run_multi_case.new_case_record(self.PLAN)
+        self.assertEqual((None, "story", "story", []),
+                         (plain["requested_end_at"], plain["effective_end_at"], plain["end_at"], plain["effective_phase_scope"]))
+        moved = run_multi_case.new_case_record(self.PLAN, "phase:plan")
+        self.assertEqual(("phase:plan", "phase:plan", "story", ["spec", "plan"]),
+                         (moved["requested_end_at"], moved["effective_end_at"], moved["end_at"], moved["effective_phase_scope"]))
+
+    def test_the_continued_case_gets_its_own_end(self) -> None:
+        other = run_multi_case.CasePlan("c2", "AR-2", "story", {"kind": "story"}, False, ())
+        self.assertEqual("phase:plan", run_multi_case.requested_end_at(self.PLAN, "blueprint", "c1", "phase:plan"))
+        self.assertEqual("blueprint", run_multi_case.requested_end_at(other, "blueprint", "c1", "phase:plan"))
+        self.assertIsNone(run_multi_case.requested_end_at(other, None, "c1", "phase:plan"))
+
+    def test_bad_overrides_are_refused_before_anything_starts(self) -> None:
+        plans = [self.PLAN]
+        for args in (("phase", None, None), ("spec", None, None), (None, "c1", None),
+                     (None, "c1", "phase:codeing"), (None, "nobody", "story")):
+            with self.subTest(args=args), self.assertRaises(SystemExit):
+                run_multi_case.validate_phase_overrides(*args, plans)
+        run_multi_case.validate_phase_overrides("design_handoff", "c1", "phase:plan", plans)
+
     def test_all_case_definitions_are_loaded_without_new_schema(self) -> None:
         case_ids = sorted(path.name for path in run_multi_case.CASES_ROOT.iterdir()
                           if path.is_dir() and (path / "case.yaml").is_file())
@@ -232,7 +264,7 @@ class MultiCasePlanContinuationTest(unittest.TestCase):
         self.assertEqual(len(plans), len({plan.feature for plan in plans}))
         for plan in plans:
             self.assertIn(plan.start_phase, run_multi_case.VALID_START)
-            self.assertIn(plan.end_phase, run_multi_case.VALID_END)
+            self.assertIn(plan.end_at["kind"], ("story", "blueprint", "design_handoff", "phase"))
             self.assertEqual(plan.contains_coding, "coding" in plan.phases)
 
     def test_all_cases_form_one_suite_with_unique_features(self) -> None:
@@ -306,7 +338,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
     def test_start_retries_three_times_before_failing(self) -> None:
         record = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
         record.update({"start_phase": "story", "requested_start_phase": "story",
-                       "requested_end_phase": None, "start_history": []})
+                       "requested_end_at": None, "start_history": []})
         record["workspace"] = tempfile.mkdtemp()   # 工作区已备好，本例只测重试计数
         suite = self.suite(record)
         suite.update({"bundle_root": tempfile.mkdtemp()})
@@ -324,7 +356,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
     def test_lost_start_response_adopts_matching_active_run(self) -> None:
         record = self.record("case-gamma-fixture", "AR-GAMMA", "pending")
         record.update({"start_phase": "story", "requested_start_phase": "story",
-                       "requested_end_phase": None, "start_history": []})
+                       "requested_end_at": None, "start_history": []})
         record["workspace"] = tempfile.mkdtemp()   # 同上：本例测的是丢响应后的认领
         suite = self.suite(record)
         suite.update({"bundle_root": tempfile.mkdtemp()})
@@ -527,13 +559,14 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             result = run_multi_case.poll_one(record, 120, 1000, suite)
         self.assertEqual(15, result["observation_cadence_sec"])
         self.assertIn("15", invoke.call_args.args)
-        record["last_phase"] = "spec"
-        record["spec_entered_at"] = "2026-08-22T00:00:00+08:00"
+        record["last_phase"] = "plan"
+        record["story_done_at"] = "2026-08-22T00:00:00+08:00"
+        record["closure"] = AT_PLAN
         suite["automation_stability"] = {
             "required_confirmations": 2, "consecutive_confirmations": 2,
             "ready_at": "2026-08-22T00:00:30+08:00",
         }
-        payload["run"]["last_phase"] = "spec"
+        payload["run"]["last_phase"] = "plan"
         with mock.patch.object(run_multi_case, "invoke_case",
                                return_value=(0, payload, "", "")):
             result = run_multi_case.poll_one(record, 15, 1000, suite)
@@ -543,20 +576,20 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         story = self.record("case-alpha-fixture", "AR-ALPHA", "running")
         story["last_phase"] = "story"
         spec = self.record("case-beta-fixture", "ISSUE-BETA", "running")
-        spec["last_phase"] = "spec"
-        spec["spec_entered_at"] = "2026-08-22T00:00:00+08:00"
+        spec["last_phase"] = "plan"
+        spec["story_done_at"] = "2026-08-22T00:00:00+08:00"
         suite = self.suite(story, spec)
         suite["automation_stability"] = {"ready_at": None}
         self.assertFalse(run_multi_case.suite_automation_ready(suite))
-        story["last_phase"] = "spec"
-        story["spec_entered_at"] = "2026-08-22T00:00:00+08:00"
+        story["last_phase"] = "plan"
+        story["story_done_at"] = "2026-08-22T00:00:00+08:00"
         self.assertFalse(run_multi_case.suite_automation_ready(suite))
 
     def test_two_complete_spec_rounds_are_required_and_regression_resets(self) -> None:
         first = self.record("case-alpha-fixture", "AR-ALPHA", "running")
         second = self.record("case-beta-fixture", "ISSUE-BETA", "running")
         for record in (first, second):
-            record.update({"last_phase": "spec", "spec_entered_at": "entered"})
+            record.update({"last_phase": "plan", "story_done_at": "entered"})
         suite = self.suite(first, second)
         suite["automation_stability"] = {
             "required_confirmations": 2, "consecutive_confirmations": 0,
@@ -611,7 +644,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
 
     def test_ready_suite_switches_same_heartbeat_to_120_seconds(self) -> None:
         record = self.record("case-x", "feature-x", "running")
-        record.update({"last_phase": "spec", "spec_entered_at": "entered"})
+        record.update({"last_phase": "plan", "story_done_at": "entered"})
         suite = self.suite(record)
         suite.update({"suite_id": "ready", "status": "running",
                       "automation_stability": {
@@ -638,7 +671,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
                        "last_reply_status": None, "last_error": None})
         suite = self.suite(record)
         before = run_multi_case.progress_snapshot(suite)
-        record.update({"last_phase": "spec", "spec_entered_at": "entered",
+        record.update({"last_phase": "plan", "story_done_at": "entered",
                        "interaction_state": "complete",
                        "last_reply_status": "accepted"})
         changes = run_multi_case.progress_changes(before, suite, [{
