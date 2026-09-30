@@ -92,6 +92,7 @@ class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
     def test_the_normal_chain_reviews_registers_and_delivers(self) -> None:
         """准备出的请求绑定 Story、Review 与对照材料；审查通过之后登记，交付门放行并问一次交付选择。"""
         original = self.reviewed("pass")
+        kept = original.read_bytes()
         request = json.loads((self.flow_path.parent / "review" / "request.json").read_text(encoding="utf-8"))
         files = request["targets"]["files"]
         for need in ("doc/features/REQ-DEMO/AR/story.md", "doc/features/REQ-DEMO/AR/review.md",
@@ -111,13 +112,34 @@ class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
         for choice in ("完整设计交接", "完整实现", "暂不推进"):
             self.assertIn(choice, text)
         self.assertNotIn("/story archive", text, "本地单没有送审")
-        self.assertEqual(original.read_bytes(), (original.parent / "review-original.md").read_bytes())
+        self.assertEqual(kept, original.read_bytes(), "原生检查、登记或交付门改了审查者的原回复")
         again = json.loads([l for l in self.register().stdout.splitlines() if l.startswith("{")][-1])
         self.assertFalse(again["registered"], "同一份对象重复登记换了身份")
 
-    def test_advisories_are_delivered_with_the_story(self) -> None:
+    def native_summary(self) -> dict:
+        prepared = json.loads((self.flow_path.parent / "review" / "prepared.json").read_text(encoding="utf-8"))
+        return json.loads((self.root / prepared["report_dir"] / "summary.json").read_text(encoding="utf-8"))
+
+    def test_a_native_failure_is_not_turned_into_a_pass(self) -> None:
+        """原生判 FAIL（问题只指向 Markdown 时 issue_to_file 是没声明不适用的阻断 SKIP）：如实交回，不归成 pass / warn。"""
         self.reviewed("advice")
         result = self.result()
+        self.assertEqual("FAIL", self.native_summary()["verdict"])
+        self.assertNotIn(result["result"], ("pass", "warn"), result)
+        self.assertIn("issue_to_file", result["detail"])
+        self.assertNotEqual(0, self.register().returncode)
+
+    @unittest.expectedFailure
+    def test_advisories_are_delivered_with_the_story(self) -> None:
+        """产品目标：只有非阻断建议的审查可以交付，原生与 Extension 同次都给出可消费的结论。
+
+        当前未满足：Framework 3.1.0 的 request 审查只把代码后缀当作可解析的涉及文件，问题只指向 Markdown 时
+        判阻断 SKIP（见 doc/plan/2.0.0/评审意见/2026-09-30-Framework3.1专项审查文件引用问题.md）。
+        上游修好后这条会意外通过，届时去掉标记。
+        """
+        self.reviewed("advice")
+        result = self.result()
+        self.assertEqual("PASS", self.native_summary()["verdict"])
         self.assertEqual("warn", result["result"], result)
         self.assertEqual(0, self.register().returncode)
         out = self.check("--deliver")
@@ -181,6 +203,56 @@ class TheStoryIsReviewedRegisteredAndDelivered(unittest.TestCase):
         self.assertNotIn("reviewer_unavailable", out.stdout + task)
 
 
+class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
+    """带界面参考图的需求：需求目录保留 `ux-reference/`，蓝图在异名的工作区（`bp-<需求>`），
+    冻结、蓝图消费、原生审查准备、登记与交付一路走通（审查者是夹具）。"""
+
+    FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
+    IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        fixture = Path(self._tmp.name) / "fixture"
+        shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
+        feature = fixture / "doc" / "features" / "REQ-DEMO"
+        shutil.rmtree(feature / "spec")
+        (feature / "ux-reference").mkdir()
+        shutil.copy2(next((REPO / "test" / "fixtures").rglob("*.png")), feature / "ux-reference" / "home.png")
+        self.root = Path(self._tmp.name) / "work"
+        designed_copy(fixture, "REQ-DEMO", DRAFT, self.root)
+        design_kit.install_review_mechanism(self.root, DEV_EXT)
+
+    def run_node(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["node", str(STORY_BUILD), *args, "--feature", "REQ-DEMO", "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+    def test_the_story_is_reviewed_and_delivered_next_to_its_ui_reference(self) -> None:
+        flow = json.loads((self.root / "doc/features/REQ-DEMO/AR/story-src/story-flow.json").read_text(encoding="utf-8"))
+        self.assertEqual("bp-REQ-DEMO", flow["design_binding"]["blueprint_id"])
+        self.assertTrue((self.root / "doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml").is_file())
+        # 参考图没用上：照检查给的那条命令原样登记不用的理由
+        hint = self.run_node("check").stderr
+        command = hint.split("`import_sources.py ", 1)[1].split("`", 1)[0]
+        image = command.split("--caption-image ", 1)[1].split(" ", 1)[0]
+        self.assertEqual("doc/features/REQ-DEMO/ux-reference/home.png", image)
+        done = subprocess.run(["python", str(self.IMPORT), "--feature", "REQ-DEMO", "--project-root", str(self.root),
+                               "--caption-image", image, "--unused", "首页现状参考，本需求不改首页"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        prepared = self.run_node("review", "--action", "prepare")
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        request = json.loads((self.root / "doc/features/REQ-DEMO/AR/story-src/review/request.json").read_text(encoding="utf-8"))
+        self.assertTrue(any(p.endswith("/files/ux-reference/home.png") for p in request["targets"]["files"]))
+        self.assertIn("doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml", request["targets"]["files"])
+        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        registered = subprocess.run(["python", str(self.FLOW), "story", "--feature", "REQ-DEMO", "--project-root", str(self.root)],
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, registered.returncode, registered.stdout + registered.stderr)
+        delivered = self.run_node("check", "--deliver")
+        self.assertEqual(0, delivered.returncode, delivered.stdout + delivered.stderr)
+
+
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做：Story 的独立审查任务带着判据原文与这一次的输入交给审查者。
 
@@ -230,6 +302,21 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(0, r.returncode, r.stderr[:600])
         return r.stdout
+
+    def test_an_open_choice_is_judged_against_the_current_objects(self) -> None:
+        """仍开着的选择对着本次 Story、Review 与关联蓝图判，结论写进原生报告的「审查方法」；零 Spec 时不要求读它。"""
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        (src / "decisions.json").write_text(json.dumps({"decisions": [{
+            "id": "D1", "status": "open", "title": "超时由谁释放", "decider": "需求负责人",
+            "clarification": "**要定的事**：超时由谁释放。"}]}, ensure_ascii=False), encoding="utf-8")
+        task = self.inject()
+        section = task.split("### 仍开着的选择", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("「审查方法」", section)
+        self.assertIn("关联蓝图", section)
+        for gone in ("Spec", "acceptance.yaml", "证据格"):
+            self.assertNotIn(gone, section, f"开着的选择还要对着「{gone}」判")
+        self.assertIn("上游（系统设计）里没有图。", task)
+        self.assertNotIn("spec）里没有图", task)
 
     def test_the_task_carries_its_criteria(self) -> None:
         text = self.inject()
@@ -334,18 +421,32 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
                 self.assertIn(line, task, f"全文里少了这一行：{line}")
         self.assertEqual(1, task.count(fence), "全文放了不止一次")
 
+    def material_key(self) -> str:
+        module = (DEV_EXT / "skills/story/scripts/core/story/review-object.mjs").resolve().as_uri()
+        r = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]); const {rows} = m.reviewObject(process.argv[2], process.argv[3]);"
+             "process.stdout.write(m.materialKey(process.argv[2], rows));", module, str(self.root), FEATURE],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        return r.stdout
+
     def test_a_projection_refresh_keeps_the_task_and_an_authored_edit_changes_it(self) -> None:
-        """AC22：机器区重投不改审查片段（审查对象不变）；作者区改了，片段跟着变。片段不含机器区内容。"""
+        """AC22：审查任务片段不含机器区内容，机器区内容变了片段不变；审查对象按原始字节算，机器区内容变了对象跟着变，
+        幂等重投（字节不变）对象不变；作者区改了，片段与对象都变。"""
         story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
-        zone = ("\n<!-- story-build:begin 技术契约·端云接口 · 由spec 「宿主扩展治理项 › 技术契约 › 端云接口」生成，改它请改真源 · sha256:0000000000000000 -->\n"
+        zone = ("\n<!-- story-build:begin 技术契约·端云接口 · 由蓝图 contracts（bp-RT90001 r3）生成，改它请改真源 · sha256:0000000000000000 -->\n"
                 "| 接口 | 用途 |\n|---|---|\n| queryState | 查状态 |\n<!-- story-build:end -->\n")
         story.write_text(STORY_MD + zone, encoding="utf-8")
-        first = self.inject()
-        story.write_text(STORY_MD + zone.replace("queryState | 查状态", "queryState | 查处理状态"), encoding="utf-8")
-        self.assertEqual(first, self.inject(), "机器区重投换了审查对象")
+        first, key = self.inject(), self.material_key()
         self.assertNotIn("queryState", first, "机器区内容进了审查片段")
+        story.write_text(STORY_MD + zone, encoding="utf-8")
+        self.assertEqual(key, self.material_key(), "幂等重投换了审查对象")
+        story.write_text(STORY_MD + zone.replace("queryState | 查状态", "queryState | 查处理状态"), encoding="utf-8")
+        self.assertEqual(first, self.inject(), "机器区内容改了，任务片段跟着变")
+        self.assertNotEqual(key, self.material_key(), "机器区内容变了，审查对象却没变")
         story.write_text(STORY_MD + "\n作者补的一句。\n" + zone, encoding="utf-8")
-        self.assertNotEqual(first, self.inject(), "作者区改了，审查对象没跟着变")
+        self.assertNotEqual(first, self.inject(), "作者区改了，任务片段没跟着变")
 
     def test_a_longer_inner_fence_does_not_close_the_wrapper(self) -> None:
         """正文里合法地出现一道更长的围栏（贴一段 markdown 示例）时，包装不能被它关上。"""
@@ -464,50 +565,40 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
 
 
 class TheTaskMovesOnlyWithTheAuthorsInput(unittest.TestCase):
-    """U38：审查片段只随作者输入变化，登记一份报告不铸出新的审查对象。
+    """U38：审查对象只随被审材料变化，报告与检查结果落盘不铸出新的审查对象。
 
-    framework 按材料摘要给审查对象寻址，钩子片段在摘要里。片段里写「上一份报告的路径」时，
-    每登记一份报告下一次就是新对象，同一份材料审了又审（09-26 实跑 auto 派审 20 次）。
+    原生按请求目标的原始字节给审查对象寻址。报告目录在对象之外：审过、检查过之后重新准备，
+    材料键与原生 request_sha256 都不变；作者改了被审材料，两者都跟着变（09-26 实跑同一份材料审了又审 20 次）。
     """
 
-    setUp = ReviewTaskReachesTheVerifier.setUp
-    inject = ReviewTaskReachesTheVerifier.inject
+    FIXTURE = TheStoryIsReviewedRegisteredAndDelivered.FIXTURE
+    setUp = TheStoryIsReviewedRegisteredAndDelivered.setUp
+    run_node = TheStoryIsReviewedRegisteredAndDelivered.run_node
+    review = TheStoryIsReviewedRegisteredAndDelivered.review
+    result = TheStoryIsReviewedRegisteredAndDelivered.result
 
-    def register_report(self, subject: str) -> None:
-        reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
-        reports.mkdir(parents=True, exist_ok=True)
-        ledger = reports / "verifier.conclusions.json"
-        data = json.loads(ledger.read_text(encoding="utf-8")) if ledger.is_file() else {}
-        data[subject] = {"verdict": "PASS"}
-        ledger.write_text(json.dumps(data), encoding="utf-8")
-        (reports / f"verifier.report.{subject}.md").write_text("审查正文。\n", encoding="utf-8")
+    def prepared(self) -> dict:
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+        return json.loads((self.flow_path.parent / "review" / "prepared.json").read_text(encoding="utf-8"))
 
-    def decisions(self, title: str) -> None:
-        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
-        (src / "decisions.json").write_text(json.dumps({"decisions": [
-            {"id": "D1", "status": "open", "title": title, "decider": "需求方",
-             "clarification": "1. 甲\n2. 乙"}]}, ensure_ascii=False), encoding="utf-8")
+    def test_a_report_and_its_check_leave_the_object_unchanged(self) -> None:
+        first = self.prepared()
+        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.assertEqual("pass", self.result()["result"])
+        self.assertTrue((self.root / first["report_dir"] / "summary.json").is_file(), "原生检查没有落结果")
+        again = self.prepared()
+        self.assertEqual((first["material_key"], first["request_sha256"]), (again["material_key"], again["request_sha256"]),
+                         "报告与检查结果落盘换了审查对象")
 
-    def test_registering_reports_leaves_the_task_unchanged(self) -> None:
-        self.decisions("超时后怎么办")
-        first = self.inject()
-        self.register_report("a" * 64)
-        second = self.inject()
-        self.register_report("b" * 64)
-        third = self.inject()
-        self.assertEqual(first, second, "登记一份报告就改了审查片段：审查对象会跟着换代")
-        self.assertEqual(first, third)
-        self.assertIn("verifier.conclusions.json", self.overlay_text(),
-                      "上一份报告的找法要写在判据里，片段里不写")
-
-    def test_the_authors_input_still_moves_the_task(self) -> None:
-        self.decisions("超时后怎么办")
-        before = self.inject()
-        self.decisions("超时之后是否自动重试")
-        self.assertNotEqual(before, self.inject(), "决策登记改了，审查片段却没变")
-
-    def overlay_text(self) -> str:
-        return (self.root / "doc" / "extensions" / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+    def test_the_authors_input_still_moves_the_object(self) -> None:
+        first = self.prepared()
+        decisions = self.flow_path.parent / "decisions.json"
+        data = json.loads(decisions.read_text(encoding="utf-8"))
+        decisions.write_text(json.dumps({**data, "no_pending": "作者改了理由"}, ensure_ascii=False), encoding="utf-8")
+        again = self.prepared()
+        self.assertNotEqual(first["material_key"], again["material_key"], "决策登记改了，审查对象没变")
+        self.assertNotEqual(first["request_sha256"], again["request_sha256"])
 
 
 if __name__ == "__main__":

@@ -200,7 +200,9 @@ export function imageProblems(ctx, storyText) {
     problems.push(`AR/story-src/materials.json 登记的图「${m.paths[0]}」${m.caption ? `（${m.caption}）` : ''}`
       + '：在 story 里没被引用，也没登记为什么不用——每张登记的图按有没有去处判：'
       + '讲它的那一章有引用，或材料清单里有不用的理由'
-      + '（登记由 `import_sources.py --feature <名> --caption-image ' + m.paths[0] + ' --unused "<理由>"` 写入）');
+      + '（登记由 `import_sources.py --feature <名> --caption-image '
+      + path.relative(ctx.projectRoot, path.join(ctx.featureRoot, m.paths[0])).split(path.sep).join('/')
+      + ' --unused "<理由>"` 写入，图的路径相对工程根）');
   }
   return { problems, notes };
 }

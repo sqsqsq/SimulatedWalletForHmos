@@ -17,7 +17,7 @@
 
 ## 二、交给设计
 
-1. **关联设计对象**：`story_flow.py bind-design --feature <需求> --component <组件> --blueprint <蓝图>`。新需求的蓝图标识通常就是需求标识，照实给出；已有蓝图时核它实际归属的组件。关联一次，之后不改绑。
+1. **关联设计对象**：`story_flow.py bind-design --feature <需求> --component <组件> --blueprint <蓝图>`。蓝图标识与需求标识分开（需求材料目录与蓝图工作区是两个目录）：新需求建议 `bp-<需求标识>`；已有设计给出它实际的蓝图标识，核它归属的组件。标识已被别的对象占用时照报错换一个你实际要用的，不自动搜索或改名。关联一次，之后不改绑。
 2. **写设计输入** `AR/story-src/design-input.json`：
 
    ```json

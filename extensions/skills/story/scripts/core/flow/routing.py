@@ -552,7 +552,8 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
                 f"`{'/'.join(DESIGN_DRAFT)}`——`AR/design.md` 是上游给进来的原件，不覆盖；"
                 "提取稿作为派生分析与采用的原件一起交给设计")
     bind = "" if contract.get("design_binding") else (
-        "先 `story_flow.py bind-design --feature <名> --component <组件> --blueprint <蓝图>` 关联设计对象，再")
+        "先 `story_flow.py bind-design --feature <名> --component <组件> --blueprint <蓝图>` 关联设计对象"
+        "（蓝图标识与需求标识分开，新需求建议 bp-<需求标识>），再")
     return ("run_complete",
             f"提取稿已在。{bind}按 `phases/design.md` 写设计输入 `AR/story-src/design-input.json`（采用的原件与图、"
             "人签编号、需求条目），跑 `story_flow.py complete --feature <名> "

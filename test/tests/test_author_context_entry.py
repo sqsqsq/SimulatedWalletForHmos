@@ -109,7 +109,7 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
         (feature_root / "AR" / "story-src").mkdir(parents=True)
         (feature_root / "AR" / "story-src" / "story-flow.json").write_text(json.dumps({
             "schema": 5, "feature": "demo", "status": "complete",
-            "design_binding": {"component_id": "wallet-home", "blueprint_id": "demo"},
+            "design_binding": {"component_id": "wallet-home", "blueprint_id": "bp-demo"},
             "input": {"snapshot_ref": "doc/features/demo/AR/story-src/inputs/0/snapshot.json"},
             "rounds": [{"round": 1, "gates": []}],
         }, ensure_ascii=False), encoding="utf-8")

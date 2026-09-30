@@ -1,8 +1,8 @@
 """已交给设计、蓝图准入的需求工作区怎样准备——测试夹具与失效形态运行器共用这一份。
 
 - **接 Framework**：临时工程接 demo 的 Framework（整目录链接，或在已有替身旁逐层补缺）；
-- **准入蓝图**：取 `test/fixtures/blueprint/wallet-balance-refresh` 那份真实准入的 canonical，蓝图标识换成需求标识
-  （新需求默认 blueprint_id = 需求标识），按需插入知识应用决定、精确明细与术语事实；评审投影在真实流程里
+- **准入蓝图**：取 `test/fixtures/blueprint/wallet-balance-refresh` 那份真实准入的 canonical，蓝图标识换成需求关联的那一个
+  （新需求建议 `bp-<需求标识>`，蓝图工作区与需求目录分开），按需插入知识应用决定、精确明细与术语事实；评审投影在真实流程里
   由设计职责按原生 renderer 生成，这里代它生成同一份字节——Extension 只读、不写它；
 - **设计消费本次输入**：需求已交给设计时，蓝图的需求条目换成这次冻结输入推出的原生条目（与原生 builder 从
   物化件取条目同形），来源指纹按原生算法重算——真实流程里这是设计职责在 component-design 里做的；
@@ -146,8 +146,16 @@ def story_detail(detail_id: str, kind: str, title: str, body: str) -> str:
             "      - view:logical/node:wallet-balance\n")
 
 
-def change_blueprint(root: Path, blueprint: str, access: Path, old: str, new: str) -> None:
-    """设计职责修订了蓝图：canonical 里换一段原文，再按原生 renderer 重新生成评审投影。"""
+def blueprint_of(root: Path, feature: str) -> str:
+    """需求关联的蓝图标识：流程契约里关联了就用它，还没关联用新需求的建议标识 `bp-<需求标识>`。"""
+    flow = root / features_dir(root) / feature / "AR" / "story-src" / "story-flow.json"
+    contract = json.loads(flow.read_text(encoding="utf-8")) if flow.is_file() else {}
+    return (contract.get("design_binding") or {}).get("blueprint_id") or f"bp-{feature}"
+
+
+def change_blueprint(root: Path, feature: str, access: Path, old: str, new: str) -> None:
+    """设计职责修订了需求关联的蓝图：canonical 里换一段原文，再按原生 renderer 重新生成评审投影。"""
+    blueprint = blueprint_of(root, feature)
     canonical = root / features_dir(root) / blueprint / "blueprint" / "component-blueprint.yaml"
     text = canonical.read_text(encoding="utf-8")
     if text.count(old) != 1:
@@ -212,11 +220,11 @@ def consume_items(text: str, items: list[dict]) -> str:
             + "\n  requirement_traceability: " + json.dumps(trace, ensure_ascii=False) + tail)
 
 
-def install_blueprint(root: Path, blueprint: str, access: Path, *, projection: bool = True,
+def install_blueprint(root: Path, feature: str, access: Path, *, projection: bool = True,
                       decisions: list[str] | None = None, details: list[str] | None = None,
                       terms: list[str] | None = None, consume: bool = True,
                       items: list[dict] | None = None) -> Path:
-    """把准入蓝图放到 `<features_dir>/<blueprint>/blueprint/`，返回 canonical 路径。
+    """把需求关联的准入蓝图放到 `<features_dir>/<蓝图标识>/blueprint/`（与需求目录分开），返回 canonical 路径。
 
     `decisions` / `details` 是 `knowledge_decision` / `story_detail` 生成的 canonical 片段，按原文插进去；
     `projection` 为假时不生成评审投影。需求已交给设计且 `consume` 为真时，蓝图消费登记的冻结输入；
@@ -224,6 +232,7 @@ def install_blueprint(root: Path, blueprint: str, access: Path, *, projection: b
     （流程契约还没落盘时用）。
     """
     ensure_framework(root)
+    blueprint = blueprint_of(root, feature)
     source = BLUEPRINT_FIXTURE / "doc" / "features" / "wallet-balance-refresh" / "blueprint" / "component-blueprint.yaml"
     target = root / features_dir(root) / blueprint / "blueprint" / "component-blueprint.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -234,7 +243,7 @@ def install_blueprint(root: Path, blueprint: str, access: Path, *, projection: b
         text = text.rstrip("\n") + "\nstory_details:\n" + "".join(details)
     if terms:
         text = text.replace("  facts:\n", "  facts:\n" + "".join(terms), 1)
-    items = items if items is not None else handed_items(root, blueprint, access) if consume else None
+    items = items if items is not None else handed_items(root, feature, access) if consume else None
     if items:
         text = consume_items(text, items)
     target.write_bytes(text.encode("utf-8"))
@@ -285,11 +294,12 @@ def hand_to_design(flow: Callable[..., dict], src: Path, access: Path) -> None:
     feature_root = src.parents[1]
     root = project_root_of(feature_root)
     ensure_framework(root)
-    flow("bind-design", "--component", COMPONENT, "--blueprint", feature_root.name)
+    blueprint = f"bp-{feature_root.name}"
+    flow("bind-design", "--component", COMPONENT, "--blueprint", blueprint)
     (src / "design-input.json").write_text(json.dumps(design_input(src), ensure_ascii=False), encoding="utf-8")
     flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
     # 设计由原生 component-design 完成：放一份消费了这次输入、已准入的蓝图（带一条知识应用决定），成文按它写
-    if not (feature_root.parent / feature_root.name / "blueprint" / "component-blueprint.yaml").is_file():
+    if not (feature_root.parent / blueprint / "blueprint" / "component-blueprint.yaml").is_file():
         install_blueprint(root, feature_root.name, access, decisions=[GENERIC_DECISION])
 
 

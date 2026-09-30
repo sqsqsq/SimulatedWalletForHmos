@@ -720,7 +720,7 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
         contract = {**self.contract(), "status": "complete",
-                    "design_binding": {"component_id": "wallet-home", "blueprint_id": self.fr.name},
+                    "design_binding": {"component_id": "wallet-home", "blueprint_id": f"bp-{self.fr.name}"},
                     "input": {"snapshot_ref": f"doc/features/{self.fr.name}/AR/story-src/inputs/0/snapshot.json"}}
         ensure_framework(project_root_of(self.fr))
         self.assertEqual("late_meeting", routing.next_step(self.fr, contract)[0])

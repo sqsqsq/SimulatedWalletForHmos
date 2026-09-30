@@ -59,8 +59,8 @@ def hand_over_state(root: Path, feature: str, contract: dict, *, with_blueprint:
                          "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}],
     }, manifest, "AR/story-src/design-draft.md", "2026-09-30T00:00:00+00:00")
     ref = f"{features_dir(root)}/{feature}/AR/story-src/inputs/{version['version']}/snapshot.json"
-    binding = {"component_id": COMPONENT, "blueprint_id": feature}
-    if with_blueprint and not (feature_root / "blueprint" / "component-blueprint.yaml").is_file():
+    binding = {"component_id": COMPONENT, "blueprint_id": f"bp-{feature}"}
+    if with_blueprint and not (root / features_dir(root) / binding["blueprint_id"] / "blueprint" / "component-blueprint.yaml").is_file():
         items = frozen.materialization(version, ref.rsplit("/", 1)[0], binding)["items"]
         install_blueprint(root, feature, ACCESS, decisions=[GENERIC_DECISION],
                           items=[{k: v for k, v in i.items() if k != "authority"} for i in items])

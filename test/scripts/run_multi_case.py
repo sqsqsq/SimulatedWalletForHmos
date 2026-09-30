@@ -2903,6 +2903,8 @@ def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
     if returncode == 0 and isinstance(payload, dict):
         record.setdefault("checkpoints", {})[point] = {
             "path": payload.get("path"), "digest": payload.get("digest"),
+            **({"blueprint": payload["blueprint"], "blueprint_path": payload.get("blueprint_path")}
+               if payload.get("blueprint") else {}),
             "session": payload.get("session"), "at": now()}
     else:
         record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
@@ -2931,11 +2933,27 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
     source = Path(saved)
     if is_archive_name(str(record["feature"])):
         raise SystemExit(f"[multi] {case_id} 的需求编号与归档目录 doc/features/archive 同名，拒绝回流")
-    destination = FEATURES_ROOT / str(record["feature"])
-    source_digest = _tree_digest(source)
+    checkpoint = (record.get("checkpoints") or {}).get(point) or {}
     result: dict[str, Any] = {"case": case_id, "point": point,
-                              "source": str(source), "destination": str(destination),
-                              "sha256": source_digest}
+                              **_promote_tree(source, FEATURES_ROOT / str(record["feature"]))}
+    # 需求关联的蓝图工作区与需求目录分开固定，按它自己的身份回流
+    if checkpoint.get("blueprint_path"):
+        design = _promote_tree(Path(checkpoint["blueprint_path"]), FEATURES_ROOT / str(checkpoint["blueprint"]))
+        result["blueprint"] = design
+        if design["status"] == "destination_conflict":
+            result["status"] = "destination_conflict"
+    record.setdefault("promotions", {})[point] = {**result, "at": now()}
+    append_event(suite, "case_checkpoint_promoted", case=case_id, point=point,
+                 status=result["status"])
+    save_suite(path / "suite.json", suite)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["status"] in ("promoted", "already_promoted") else 1
+
+
+def _promote_tree(source: Path, destination: Path) -> dict[str, Any]:
+    """把一个固定下来的目录回流到维护仓：目的地内容相同算已回流，不同不覆盖、报冲突。"""
+    source_digest = _tree_digest(source)
+    result: dict[str, Any] = {"source": str(source), "destination": str(destination), "sha256": source_digest}
     if destination.exists():
         if _tree_digest(destination) == source_digest:
             result["status"] = "already_promoted"
@@ -2946,12 +2964,7 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(_long(source), _long(destination))
         result["status"] = "promoted"
-    record.setdefault("promotions", {})[point] = {**result, "at": now()}
-    append_event(suite, "case_checkpoint_promoted", case=case_id, point=point,
-                 status=result["status"])
-    save_suite(path / "suite.json", suite)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result["status"] in ("promoted", "already_promoted") else 1
+    return result
 
 
 def advance_plan(record: dict[str, Any], step_id: str) -> None:
@@ -3200,6 +3213,15 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
         else:
             shutil.copytree(_long(feature_source), _long(feature_destination))
             promoted.append(feature_item)
+    # 需求关联的蓝图工作区在另一个目录，按它自己的身份回流；双检查点单的终态同样另名落地
+    blueprint = run_layout.linked_blueprint(workspace / "doc" / "features", str(record["feature"]))
+    if blueprint and feature_source.is_dir():
+        name = f"{blueprint}-update" if record.get("after_initial") == "update" else blueprint
+        design = {"kind": "blueprint", **_promote_tree(workspace / "doc" / "features" / blueprint, FEATURES_ROOT / name)}
+        if design["status"] == "destination_conflict":
+            conflicts.append({**design, "reason": "blueprint_destination_conflict"})
+        else:
+            (already_promoted if design["status"] == "already_promoted" else promoted).append(design)
 
     # Source promotion uses a per-file three-way check.  This accepts the suite
     # baseline, is idempotent when a prior finalize already wrote the same file,

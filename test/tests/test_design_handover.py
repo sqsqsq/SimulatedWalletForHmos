@@ -33,6 +33,8 @@ from flow.submission import cmd_complete  # noqa: E402
 from materials import registry  # noqa: E402
 
 FEATURE = "AR90001"
+#: 需求关联的蓝图：与需求目录分开，新需求建议 bp-<需求标识>
+BLUEPRINT = f"bp-{FEATURE}"
 UPSTREAM_AR = ("# AR90001 上游预填\n\n## 上游先写下的几条\n\n"
                "- 判定与扣款都在服务端，端侧只做签约入口。\n")
 PRD = "# 产品需求\n\n背景。签约流程见下图：\n\n![签约流程](../assets/flow.svg)\n"
@@ -109,7 +111,7 @@ class HandoverCase(unittest.TestCase):
         answer(self.ok, "scope_decision", "1")
         (self.src / "design-draft.md").write_text(DRAFT, encoding="utf-8")
         if bind:
-            self.ok("bind-design", "--component", "wallet-home", "--blueprint", self.feature)
+            self.ok("bind-design", "--component", "wallet-home", "--blueprint", f"bp-{self.feature}")
 
     def scope_ask(self) -> str:
         """当前有效的范围人签：最后一次人给出、已生效的范围关卡记录。"""
@@ -139,15 +141,22 @@ class HandoverCase(unittest.TestCase):
 class TheDesignObjectIsBoundOnce(HandoverCase):
     def test_the_first_binding_is_written_and_the_same_one_changes_nothing(self) -> None:
         self.ready(bind=False)
-        out = self.ok("bind-design", "--component", "wallet-home", "--blueprint", FEATURE)
-        self.assertEqual({"component_id": "wallet-home", "blueprint_id": FEATURE}, out["design_binding"])
+        out = self.ok("bind-design", "--component", "wallet-home", "--blueprint", BLUEPRINT)
+        self.assertEqual({"component_id": "wallet-home", "blueprint_id": BLUEPRINT}, out["design_binding"])
         before = (self.src / "story-flow.json").read_bytes()
-        self.assertFalse(self.ok("bind-design", "--component", "wallet-home", "--blueprint", FEATURE)["bound"])
+        self.assertFalse(self.ok("bind-design", "--component", "wallet-home", "--blueprint", BLUEPRINT)["bound"])
         self.assertEqual(before, (self.src / "story-flow.json").read_bytes(), "同值重复关联改了契约")
 
     def test_another_binding_is_refused(self) -> None:
         self.ready()
         self.assertIn("不改绑", self.refused("bind-design", "--component", "wallet-home", "--blueprint", "other"))
+
+    def test_the_blueprint_lives_apart_from_the_requirement(self) -> None:
+        """蓝图标识与需求标识相同时拒绝：两者会落在同一目录，原生把需求材料当作平铺 Feature 产物。"""
+        self.ready(bind=False)
+        error = self.refused("bind-design", "--component", "wallet-home", "--blueprint", self.feature)
+        self.assertIn(f"bp-{self.feature}", error)
+        self.assertNotIn("design_binding", self.contract())
 
     def test_an_unsafe_identifier_is_refused_by_the_native_rule(self) -> None:
         self.ready(bind=False)
@@ -208,7 +217,7 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.committed()
         [version] = self.versions()
         doc = json.loads((version / "materialization.json").read_text(encoding="utf-8"))
-        self.assertEqual(("requirement-source-materialization@1", FEATURE), (doc["artifact"], doc["blueprint_id"]))
+        self.assertEqual(("requirement-source-materialization@1", BLUEPRINT), (doc["artifact"], doc["blueprint_id"]))
         prefix = version.relative_to(self.root).as_posix() + "/files/"
         self.assertTrue(all(item["source_ref"].startswith(prefix) for item in doc["items"]))
         self.assertEqual("recorded_user_reply", doc["items"][1]["provenance"]["extraction_method"])
@@ -284,7 +293,7 @@ class TheDesignConsumesThisInput(HandoverCase):
 
     def handed(self) -> None:
         self.ready(bind=False)
-        self.ok("bind-design", "--component", design_kit.COMPONENT, "--blueprint", self.feature)
+        self.ok("bind-design", "--component", design_kit.COMPONENT, "--blueprint", f"bp-{self.feature}")
         self.write_input()
         self.assertEqual(0, self.commit().returncode)
 
@@ -448,7 +457,7 @@ class PrecheckFailuresChangeNothing(HandoverCase):
         self.ok("round")
         write_gaps(self.src)
         answer(self.ok, "material_scope", "现有材料就是全部")
-        self.ok("bind-design", "--component", "wallet-home", "--blueprint", FEATURE)
+        self.ok("bind-design", "--component", "wallet-home", "--blueprint", BLUEPRINT)
         (self.src / "design-draft.md").write_text(DRAFT, encoding="utf-8")
         self.write_input(ids=[])
         self.assert_untouched("--from", DRAFT_REL, "--input", INPUT_REL, says="范围尚未定")

@@ -1199,6 +1199,52 @@ class FeaturesFlowBackToTheMaintenanceDoc(unittest.TestCase):
         self.assertTrue((self.root / "ws-other/doc/features/AR-9/story.md").is_file(), "冲突时动了来源")
         self.assertFalse((self.demo / "doc/features").exists(), "终态回流进了 demo")
 
+    def link_blueprint(self, workspace: Path, text: str) -> None:
+        """需求关联一份异名的蓝图工作区（流程契约的 design_binding）。"""
+        src = workspace / "doc/features/AR-9/AR/story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        (src / "story-flow.json").write_text(json.dumps(
+            {"design_binding": {"component_id": "c", "blueprint_id": "bp-AR-9"}}), encoding="utf-8")
+        (workspace / "doc/features/bp-AR-9/blueprint").mkdir(parents=True)
+        (workspace / "doc/features/bp-AR-9/blueprint/component-blueprint.yaml").write_text(text, encoding="utf-8")
+
+    def test_the_linked_blueprint_flows_back_under_its_own_name(self) -> None:
+        """需求与蓝图工作区分开：终态与检查点回流都按关联把蓝图工作区一起带回，按它自己的身份落地。"""
+        suite = {"bundle_root": str(self.root / "bundle"),
+                 "main_source_baseline": run_multi_case.snapshot_workspace_sources(self.demo)}
+        workspace = self.workspace_with("ws-bp", "终态")
+        self.link_blueprint(workspace, "设计")
+        self.assertEqual("bp-AR-9", run_multi_case.run_layout.linked_blueprint(workspace / "doc/features", "AR-9"))
+        baseline = self.root / "bundle/cases/case-bp/workspace-baseline.json"
+        run_multi_case.write_json(baseline, run_multi_case.snapshot_workspace_sources(workspace))
+        record = {"case": "case-bp", "feature": "AR-9", "workspace": str(workspace), "workspace_baseline": str(baseline),
+                  "status": "finished", "execution_status": "finished"}
+        self.assertEqual("promoted", run_multi_case.promote_case_workspace(suite, record)["status"])
+        self.assertEqual("设计", (self.features / "bp-AR-9/blueprint/component-blueprint.yaml").read_text(encoding="utf-8"))
+
+        snapshot, design = self.root / "snapshot/AR-10", self.root / "snapshot/AR-10.blueprint"
+        (snapshot).mkdir(parents=True)
+        (snapshot / "story.md").write_text("第一段", encoding="utf-8")
+        (design / "blueprint").mkdir(parents=True)
+        (design / "blueprint/component-blueprint.yaml").write_text("第一段的设计", encoding="utf-8")
+        suite_id = "suite-bp"
+        bundle = self.root / "suites" / suite_id
+        run_multi_case.write_json(bundle / "suite.json", {"bundle_root": str(bundle), "events": [], "case_states": {
+            "case-10": {"case": "case-10", "feature": "AR-10", "status": "awaiting_reply", "checkpoints": {
+                "after_initial": {"path": str(snapshot), "blueprint": "bp-AR-10", "blueprint_path": str(design)}}}}})
+        with mock.patch.object(run_multi_case, "refresh_record", side_effect=lambda r: r), mock.patch("sys.stdout"):
+            self.assertEqual(0, run_multi_case.command_promote_checkpoint(suite_id, "case-10", "after_initial"))
+        self.assertEqual("第一段的设计", (self.features / "bp-AR-10/blueprint/component-blueprint.yaml").read_text(encoding="utf-8"))
+
+    def test_a_requirement_without_a_separate_blueprint_links_nothing(self) -> None:
+        workspace = self.workspace_with("ws-none", "终态")
+        features = workspace / "doc/features"
+        self.assertIsNone(run_multi_case.run_layout.linked_blueprint(features, "AR-9"), "没有流程契约却推测出了蓝图")
+        src = features / "AR-9/AR/story-src"
+        src.mkdir(parents=True)
+        (src / "story-flow.json").write_text(json.dumps({"design_binding": {"blueprint_id": "AR-9"}}), encoding="utf-8")
+        self.assertIsNone(run_multi_case.run_layout.linked_blueprint(features, "AR-9"), "与需求同名的不算另一份工作区")
+
     def test_the_reserved_archive_name_is_never_written_back(self) -> None:
         """回流根下的 archive 是历史归档：检查点与终态回流都不许写进它。"""
         history = self.features / "archive/Story-Features-20260101-000000/AR0"

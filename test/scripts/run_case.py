@@ -2533,16 +2533,33 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
     if not source.is_dir():
         print(json.dumps({"ok": False, "error": f"需求目录不在：{source}"}, ensure_ascii=False))
         return 1
-    dest = out_dir / "checkpoints" / point
+    frozen = _freeze_tree(source, out_dir / "checkpoints" / point)
+    if not frozen["ok"]:
+        print(json.dumps({"case": case_id, "point": point, **frozen}, ensure_ascii=False))
+        return 1
+    # 需求关联的蓝图工作区在另一个目录：同一时刻一起固定，评测与回流拿到的是同一刻的设计
+    blueprint = run_layout.linked_blueprint(REPO_ROOT / FEATURES_DIR, feature)
+    extra: dict = {}
+    if blueprint:
+        design = _freeze_tree(REPO_ROOT / FEATURES_DIR / blueprint, out_dir / "checkpoints" / f"{point}.blueprint")
+        if not design["ok"]:
+            print(json.dumps({"case": case_id, "point": point, "blueprint": blueprint, **design}, ensure_ascii=False))
+            return 1
+        extra = {"blueprint": blueprint, "blueprint_path": design["path"], "blueprint_digest": design["digest"]}
+    print(json.dumps({"ok": True, "case": case_id, "point": point, "path": frozen["path"],
+                      "digest": frozen["digest"], **({"reused": True} if frozen.get("reused") else {}), **extra,
+                      "session": state.get("cli_session_id"), "stage": state.get("checkpoint_stage")},
+                     ensure_ascii=False))
+    return 0
+
+
+def _freeze_tree(source: Path, dest: Path) -> dict:
+    """把一个目录固定成不可变快照：复制前后各取一次摘要，不一样判失败；同内容重入幂等，内容不同的不覆盖。"""
     before = _tree_digest(source)
     if dest.exists():
         same = _tree_digest(dest) == before
-        print(json.dumps({"ok": same, "case": case_id, "point": point,
-                          "path": str(dest), "reused": same,
-                          **({} if same else {"error": "已有一份内容不同的快照，没有覆盖——"
-                                                      "先看清楚它是哪一次的"})},
-                         ensure_ascii=False))
-        return 0 if same else 1
+        return {"ok": same, "path": str(dest), "digest": before, "reused": same,
+                **({} if same else {"error": "已有一份内容不同的快照，没有覆盖——先看清楚它是哪一次的"})}
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
         shutil.copytree(_long(source), _long(dest))
@@ -2550,20 +2567,11 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
         # 复制一半的快照比没有更糟：下一次重试会撞上「已有一份内容不同的快照」而拒绝，
         # 人只能手动去删一个他不知道为什么在那里的目录。
         shutil.rmtree(_long(dest), ignore_errors=True)
-        print(json.dumps({"ok": False, "error": f"复制快照失败，已清掉半成品：{str(exc)[:600]}"},
-                         ensure_ascii=False))
-        return 1
-    after = _tree_digest(source)
-    if after != before:
+        return {"ok": False, "error": f"复制快照失败，已清掉半成品：{str(exc)[:600]}"}
+    if _tree_digest(source) != before:
         shutil.rmtree(_long(dest), ignore_errors=True)
-        print(json.dumps({"ok": False, "error": "复制期间需求目录变了，这次快照作废——"
-                                                "worker 应当停着，先查是谁在写"},
-                         ensure_ascii=False))
-        return 1
-    print(json.dumps({"ok": True, "case": case_id, "point": point, "path": str(dest),
-                      "digest": before, "session": state.get("cli_session_id"),
-                      "stage": state.get("checkpoint_stage")}, ensure_ascii=False))
-    return 0
+        return {"ok": False, "error": "复制期间目录变了，这次快照作废——worker 应当停着，先查是谁在写"}
+    return {"ok": True, "path": str(dest), "digest": before}
 
 
 def _long(path: Path) -> Path:

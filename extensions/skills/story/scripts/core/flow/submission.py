@@ -91,12 +91,17 @@ def candidate_problems(feature_root: Path, feature: str, text: str) -> list[str]
 def cmd_bind_design(feature_root: Path, project_root: Path, component: str, blueprint: str) -> dict:
     """需求关联的设计对象：首次写入，同值重复不改一个字节，别的值冲突。
 
-    标识按原生规则核；蓝图已在时核它实际归属的组件。关联之后不自动改绑——绑错了重新起单。
+    需求目录与蓝图工作区分开：蓝图标识不能与需求标识相同——两者同在需求目录下时，原生把需求材料
+    （如 `ux-reference/`）当作平铺 Feature 产物，按歧义拒绝。标识按原生规则核；蓝图已在时核它实际归属的组件。
+    关联之后不自动改绑——绑错了重新起单。
     """
     contract = require(load(feature_root))
     component, blueprint = str(component or "").strip(), str(blueprint or "").strip()
     if not component or not blueprint:
-        raise FlowError("bind-design 要 --component 与 --blueprint：新需求的蓝图标识通常就是需求标识，但要显式给出")
+        raise FlowError("bind-design 要 --component 与 --blueprint：新需求建议蓝图标识 bp-<需求标识>，要显式给出")
+    if blueprint == feature_root.name:
+        raise FlowError(f"蓝图标识 {blueprint} 与需求标识相同：需求目录与蓝图工作区要分开——"
+                        f"新需求建议 --blueprint bp-{feature_root.name}，已有设计给出它实际的蓝图标识")
     wanted = {"component_id": component, "blueprint_id": blueprint}
     bound = contract.get("design_binding")
     if bound == wanted:

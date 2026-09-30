@@ -229,8 +229,9 @@ class LongPathsDoNotBreakTheRun(unittest.TestCase):
     def test_a_failed_snapshot_leaves_no_half_copy(self) -> None:
         """复制一半的快照比没有更糟：下一次重试会撞上「已有一份不同的快照」。"""
         case = (SCRIPTS / "run_case.py").read_text(encoding="utf-8")
-        body = case.split("def cmd_checkpoint", 1)[1].split("\ndef ", 1)[0]
+        body = case.split("def _freeze_tree", 1)[1].split("\ndef ", 1)[0]
         self.assertIn("已清掉半成品", body)
+        self.assertIn("_freeze_tree(", case.split("def cmd_checkpoint", 1)[1].split("\ndef ", 1)[0])
 
 
 class ASuiteThatFinishedDirtyIsStillFinished(unittest.TestCase):

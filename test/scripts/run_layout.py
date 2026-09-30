@@ -168,3 +168,19 @@ def publish_latest(out_root: Path, case_id: str, run_id: str, status: str) -> No
     active = read_pointer(out_root, case_id, "active")
     if active and str(active.get("run_id")) == run_id:
         (control / "active.json").unlink(missing_ok=True)
+
+
+def linked_blueprint(features_root: Path, feature: str) -> str | None:
+    """需求关联的蓝图工作区名（流程契约的 `design_binding.blueprint_id`）。
+
+    需求目录与蓝图工作区分开：快照与回流按这层关联把两处各自带上，不从需求名推测蓝图位置。
+    没有关联、与需求同名或盘上不存在时返回 None。
+    """
+    flow = Path(features_root) / feature / "AR" / "story-src" / "story-flow.json"
+    try:
+        blueprint = str(json.loads(flow.read_text(encoding="utf-8"))["design_binding"]["blueprint_id"] or "").strip()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not blueprint or blueprint == feature or Path(blueprint).name != blueprint:
+        return None
+    return blueprint if (Path(features_root) / blueprint).is_dir() else None

@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import atexit
-import hashlib
 import json
 import os
 import re
@@ -452,7 +451,8 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
 
     def test_a_design_source_that_does_not_hold_is_not_an_empty_expectation(self) -> None:
         """评审投影不在（设计来源不成立）：不按「期望为空」放行，报出来源与责任方。"""
-        (self.root / "doc" / "features" / FEATURE / "blueprint" / "component-blueprint.review.md").unlink()
+        (self.root / "doc" / "features" / design_kit.blueprint_of(self.root, FEATURE) / "blueprint"
+         / "component-blueprint.review.md").unlink()
         self.expect_caught("评审投影")
 
     def test_an_unknown_machine_zone_is_not_author_text(self) -> None:
@@ -1058,15 +1058,6 @@ class TestChangesAfterRegistration(StoryBuildCase):
     实测一轮：登记 00:04，spec 阶段 00:20 又跑了一次 init，登记那一刻的落点账被冲掉。
     产物还在，它据以成文的依据换了一批，谁也看不出来——指纹核对让它看得出来。
     """
-
-    REGISTERED = ("AR/story-src/decisions.json", "AR/story.md")
-
-    def ledger_digest(self, rel: str) -> str | None:
-        path = self.root / "doc" / "features" / FEATURE / rel
-        if not path.is_file():
-            return None
-        text = path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
     def register(self) -> None:
         """把成文态登记写进流程契约——含登记那一刻的成文依据（设计引用、输入、知识与文件指纹）。"""
@@ -2971,7 +2962,8 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
 
         成文按已准入的蓝图写；一路往下走的话，作者要到十章都写完、附录投不出东西时才发现。
         """
-        (self.feature_root() / "blueprint" / "component-blueprint.review.md").unlink()
+        (self.root / "doc" / "features" / design_kit.blueprint_of(self.root, FEATURE) / "blueprint"
+         / "component-blueprint.review.md").unlink()
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, f"设计来源不成立却起了手：{out}")

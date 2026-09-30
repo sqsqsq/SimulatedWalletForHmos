@@ -13,7 +13,7 @@
  * | fail | 审查结论阻断（不通过，或有未关闭 MAJOR 的有条件通过） |
  * | report_missing / report_invalid | 回复不在，或不合原生报告格式 |
  * | subject_stale | 审的不是现在这份（材料或请求身份变了） |
- * | input_invalid / tool_error | 请求准备不了，或原生检查没给出当前合法结果 |
+ * | input_invalid / tool_error | 请求准备不了，或原生检查没给出当前合法结果（含没有声明不适用的阻断项未执行） |
  *
  * 原生 summary 通过只证明报告的结构与绑定，不证明审查独立、业务无遗漏；那两件在真实运行里核。
  */
@@ -130,17 +130,18 @@ export async function reviewResult(ctx) {
   if (!current) return { result: 'tool_error', detail: `原生检查没有给出这一次请求的合法 summary（${run.text.slice(0, 300)}）` };
 
   const checks = readJson(scriptFile, {}).checks ?? [];
-  // 问题只指向 Markdown 时原生 issue_to_file 找不到代码路径，判 SKIP；它不说明报告有问题
+  // 原生判 FAIL 的，和没有声明不适用却没执行的阻断项，都不是可消费的结论
   const failing = checks.filter(c => c.status === 'FAIL' || (c.status === 'SKIP' && c.severity === 'BLOCKER'
-    && c.structured?.applicability !== 'not_applicable' && c.id !== 'issue_to_file'));
+    && c.structured?.applicability !== 'not_applicable'));
+  const failed = failing.filter(c => c.status === 'FAIL');
   const listed = failing.map(c => `${c.id}：${String(c.details ?? '').split(/\r?\n/)[0]}`).join('；');
   const at = { report_dir: was.report_dir };
-  if (failing.some(c => STALE.has(c.id))) return { result: 'subject_stale', detail: listed, ...at };
-  if (failing.some(c => BUSINESS.has(c.id))) return { result: 'fail', detail: `审查结论阻断：${issueRows(ctx, dir).join('；') || listed}`, ...at };
-  if (failing.some(c => FORMAT.has(c.id) || String(c.id).startsWith('context_exploration'))) {
+  if (failed.some(c => STALE.has(c.id))) return { result: 'subject_stale', detail: listed, ...at };
+  if (failed.some(c => BUSINESS.has(c.id))) return { result: 'fail', detail: `审查结论阻断：${issueRows(ctx, dir).join('；') || listed}`, ...at };
+  if (failed.some(c => FORMAT.has(c.id) || String(c.id).startsWith('context_exploration'))) {
     return { result: 'report_invalid', detail: `回复不合原生报告格式：${listed}——保留原回复，请审查者按格式重给，不改它的结论`, ...at };
   }
-  if (failing.length) return { result: 'tool_error', detail: `原生检查的失败认不出类别，原样列出：${listed}`, ...at };
+  if (failing.length) return { result: 'tool_error', detail: `原生检查没有给出可消费的结论，原样列出：${listed}`, ...at };
   const advisories = issueRows(ctx, dir);
   return { result: advisories.length ? 'warn' : 'pass', detail: advisories.length ? `非阻断建议 ${advisories.length} 条` : '审查通过', advisories, ...at };
 }
