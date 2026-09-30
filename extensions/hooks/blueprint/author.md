@@ -17,6 +17,27 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
 
 来源发现阶段已成立的判断直接承接到设计，设计中出现新的对象时回到知识任务核一遍相关知识。
 
+## 知识应用决定的写法
+
+每条激活规约一条决定，模式一个单元一条，写在 `decisions_and_gaps.decisions`，形态以
+`doc/extensions/skills/story/contracts/knowledge-application.schema.json` 为准：
+
+```yaml
+- decision_id: knowledge-ret-01
+  kind: knowledge_application
+  status: answered_with_evidence
+  owner: design-author
+  rationale: 本需求在处理过程中保存临时记录
+  provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/constraints/<规约文件>.md, observed_at: 2026-09-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
+  verification_refs: [view:logical/node:record-store]
+  knowledge: {kind: constraints, form: entries, unit: RET-01, source_sha256: "sha256:3f5e0b8c9d1a2e4f6071829304a5b6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d", outcome: applied, requirement: 处理完成后清除临时记录, target_refs: [view:logical/node:record-store]}
+```
+
+- `source_ref`、`source_sha256`、`unit` 照抄知识任务第 2 块；原文之后变了按新原文重判。
+- 规约：适用 `applied` 写 `requirement` 与承担它的设计对象地址；不适用 `not_applicable`（`status` 同为 `not_applicable`，理由写哪个条件不成立）；豁免 `waived` 带 `waiver: {reason, compensation, authority_ref}` 指真实授权，红线不能豁免。
+- 模式：`selected` / `adjusted` 写 `roles: [{role, target_ref}]`，`rejected` 写反证；定不下来写 `pending`，`status` 为 `open_decision` 或 `blocker` 并登记原生缺口。
+- 事实用到的知识单元写在事实的 `value.knowledge: {unit, form, source_sha256}`，读到的内容与用途写 `value.observation`。
+
 ## 原生字段放不下的精确内容
 
 已形成的设计对象（节点、运行数据流、契约）里，原生字段表达不了的精确内容——数据的有效期与清理、配置项取值、埋点统计点、专项设计——写进蓝图顶层的 `story_details`，经原生修订生效：

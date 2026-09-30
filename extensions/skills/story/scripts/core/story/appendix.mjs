@@ -14,7 +14,8 @@ import {
   chapterSpan, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames,
   zoneBlock, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
-import { activeKnowledgeEntries, fail } from './context.mjs';
+import { fail } from './context.mjs';
+import { blueprintKnowledge } from '../../../../../hooks/shared/knowledge-application.mjs';
 import { designSource } from './design-source.mjs';
 import { READERS } from './appendix-readers.mjs';
 
@@ -66,18 +67,13 @@ function appendixZones(ctx, source) {
 
 /**
  * 投影输入还成不成立 —— **写入侧与只读侧同一份结论**：设计来源不成立（没关联、未准入、投影对不上、
- * 冻结输入读不到）时不投也不按「期望为空」放行；激活了知识而蓝图里一条知识应用决定都没有，是设计缺了判断。
+ * 冻结输入读不到）时不投也不按「期望为空」放行；蓝图里的知识应用缺判断、原文已变或落点失效，是设计待同步。
  */
 function appendixSourceProblems(ctx) {
   const source = designSource(ctx);
   if (source.problems.length) return source.problems;
-  const decided = (source.blueprint.decisions_and_gaps?.decisions ?? []).some(d => d?.kind === 'knowledge_application');
-  const active = activeKnowledgeEntries(ctx);
-  if (active.length && !decided) {
-    return [`这一轮激活了 ${active.length} 条规约，蓝图 ${source.ref.blueprint_id} 里没有知识应用决定`
-      + '——判断在设计时写进蓝图（knowledge_application），附录·规约按它投影；由设计职责补上'];
-  }
-  return [];
+  const { problems } = blueprintKnowledge(ctx.projectRoot, source.blueprint);
+  return problems.map(p => `${p}——判断在设计时写进蓝图（knowledge_application），附录·规约按它投影；由设计职责在 component-design 里修订`);
 }
 
 /** 起手（`skeleton`）要的设计来源缺口：与投影、核对同一份结论。 */

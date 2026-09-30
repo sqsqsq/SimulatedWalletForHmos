@@ -975,7 +975,7 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
 
     def design_syncs(self) -> None:
         """交给设计的输入换了一版：设计职责在 component-design 里按新输入同步蓝图并重新准入。"""
-        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS, decisions=[design_kit.GENERIC_DECISION])
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS)
 
     def mark_archived(self) -> None:
         """归档由数据对接层执行、`archived` 登记要过交付门；这里经契约的读写函数记下标记。"""

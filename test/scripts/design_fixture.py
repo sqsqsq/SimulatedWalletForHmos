@@ -117,22 +117,71 @@ def render_projection(root: Path, blueprint: str, access: Path) -> None:
         raise RuntimeError(f"评审投影生成失败：{proc.stderr[-600:]}")
 
 
-def knowledge_decision(decision_id: str, rule: str, verdict: str, rationale: str) -> str:
-    """一条知识应用决定的 canonical 文本（缩进对齐顶层 decisions 列表）。"""
-    return (f"    - decision_id: {decision_id}\n"
+#: 蓝图里真实存在、夹具的知识落点用的稳定地址
+TARGET = "view:logical/node:wallet-balance"
+
+
+def knowledge_decision(decision_id: str, unit: str, outcome: str, rationale: str,
+                       requirement: str | None = None) -> dict:
+    """一条规约的知识应用决定：来源文件与原文摘要在放进蓝图时按工程里激活的知识算（`decision_text`）。"""
+    return {"decision_id": decision_id, "unit": unit, "outcome": outcome, "rationale": rationale,
+            **({"requirement": requirement} if requirement else {})}
+
+
+ACTIVE_CONSTRAINTS = """
+import { pathToFileURL } from 'node:url';
+const [root, module] = process.argv.slice(1);
+const { activeKnowledge } = await import(pathToFileURL(module).href);
+process.stdout.write(JSON.stringify(activeKnowledge(root).constraints.map(c => ({ file: c.file, units: c.units }))));
+"""
+
+
+def active_constraints(root: Path, access: Path) -> list[dict]:
+    """工程激活的规约文件与各自的单元（扩展根相对路径）；没有激活清单就没有。"""
+    if not (root / "doc" / "extensions" / "manifest.yaml").is_file():
+        return []
+    proc = subprocess.run(["node", "--input-type=module", "-e", ACTIVE_CONSTRAINTS, str(root),
+                           str(Path(access).parent / "knowledge.mjs")],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"激活知识读不出来：{proc.stderr[-600:]}")
+    return json.loads(proc.stdout)
+
+
+def decision_text(root: Path, spec: dict, active: list[dict]) -> str:
+    """一条知识应用决定的 canonical 文本（缩进对齐顶层 decisions 列表）：来源与摘要取激活的那份规约文件。"""
+    source = next((c for c in active if spec["unit"] in c["units"]), None)
+    if source is None:
+        raise AssertionError(f"夹具要判的 {spec['unit']} 不在工程激活的规约里")
+    ref = f"doc/extensions/{source['file']}"
+    applied = spec["outcome"] == "applied"
+    knowledge = {"kind": "constraints", "form": "entries", "unit": spec["unit"],
+                 "source_sha256": "sha256:" + hashlib.sha256((root / ref).read_bytes()).hexdigest(),
+                 "outcome": spec["outcome"], **({"requirement": spec["requirement"]} if applied else {}),
+                 "target_refs": [TARGET] if applied else []}
+    provenance = {"source_kind": "knowledge", "source_ref": ref, "observed_at": "2026-09-30T00:00:00Z",
+                  "evidence_strength": "inferred", "extraction_method": "read_and_apply"}
+    status = "not_applicable" if spec["outcome"] == "not_applicable" else "answered_with_evidence"
+    return (f"    - decision_id: {spec['decision_id']}\n"
             "      kind: knowledge_application\n"
-            "      status: answered_with_evidence\n"
+            f"      status: {status}\n"
             "      owner: design-author\n"
-            f"      knowledge: {{rule: {rule}, verdict: {verdict}}}\n"
-            f"      rationale: {json.dumps(rationale, ensure_ascii=False)}\n"
-            "      target_ref: view:logical/node:wallet-balance\n"
-            "      provenance: *a2\n"
-            "      verification_refs:\n"
-            f"        - verify:{decision_id}\n")
+            f"      rationale: {json.dumps(spec['rationale'], ensure_ascii=False)}\n"
+            f"      provenance: {json.dumps(provenance, ensure_ascii=False)}\n"
+            f"      verification_refs: [{TARGET}]\n"
+            f"      knowledge: {json.dumps(knowledge, ensure_ascii=False)}\n")
 
 
-#: 通用夹具的一条知识应用决定：激活了规约的工程，成文要蓝图里至少有一条判断
-GENERIC_DECISION = knowledge_decision("knowledge-generic", "GEN-1", "not_applicable", "夹具：本需求不涉及这条规约")
+def judged_rules(active: list[dict], given: list[dict] | None, exact: bool) -> list[dict]:
+    """设计对激活规约的判断：`exact` 时就是给的这几条（反例用，可以漏判）；否则给的里面激活了的照用，
+    其余逐条判定本需求不涉及（夹具默认）。"""
+    if exact:
+        return list(given or [])
+    units = {u for c in active for u in c["units"]}
+    chosen = [d for d in (given or []) if d["unit"] in units]
+    done = {d["unit"] for d in chosen}
+    return chosen + [knowledge_decision(f"knowledge-{u.lower()}", u, "not_applicable", "夹具：本需求不涉及这条规约")
+                     for c in active for u in c["units"] if u not in done]
 
 
 def story_detail(detail_id: str, kind: str, title: str, body: str) -> str:
@@ -221,12 +270,14 @@ def consume_items(text: str, items: list[dict]) -> str:
 
 
 def install_blueprint(root: Path, feature: str, access: Path, *, projection: bool = True,
-                      decisions: list[str] | None = None, details: list[str] | None = None,
-                      terms: list[str] | None = None, consume: bool = True,
+                      decisions: list[dict] | None = None, details: list[str] | None = None,
+                      terms: list[str] | None = None, consume: bool = True, exact_decisions: bool = False,
                       items: list[dict] | None = None) -> Path:
     """把需求关联的准入蓝图放到 `<features_dir>/<蓝图标识>/blueprint/`（与需求目录分开），返回 canonical 路径。
 
-    `decisions` / `details` 是 `knowledge_decision` / `story_detail` 生成的 canonical 片段，按原文插进去；
+    `decisions` 是 `knowledge_decision` 给出的判断：激活了的照用，其余激活规约逐条判定不涉及；
+    `exact_decisions` 为真时蓝图里就只有给的这几条（反例用：可以漏判，空列表就一条不判）；
+    `details` 是 `story_detail` 生成的 canonical 片段，按原文插进去；
     `projection` 为假时不生成评审投影。需求已交给设计且 `consume` 为真时，蓝图消费登记的冻结输入；
     `consume` 为假时保留夹具原来那份需求（另一个需求）的条目——反例用；`items` 直接给出要消费的条目
     （流程契约还没落盘时用）。
@@ -237,8 +288,11 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
     target = root / features_dir(root) / blueprint / "blueprint" / "component-blueprint.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     text = source.read_text(encoding="utf-8").replace("blueprint_id: wallet-balance-refresh\n", f"blueprint_id: {blueprint}\n", 1)
-    if decisions:
-        text = text.replace("decisions_and_gaps:\n  decisions:\n", "decisions_and_gaps:\n  decisions:\n" + "".join(decisions), 1)
+    active = active_constraints(root, access)
+    judged = judged_rules(active, decisions, exact_decisions)
+    if judged:
+        text = text.replace("decisions_and_gaps:\n  decisions:\n", "decisions_and_gaps:\n  decisions:\n"
+                            + "".join(decision_text(root, d, active) for d in judged), 1)
     if details:
         text = text.rstrip("\n") + "\nstory_details:\n" + "".join(details)
     if terms:
@@ -300,7 +354,7 @@ def hand_to_design(flow: Callable[..., dict], src: Path, access: Path) -> None:
     flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
     # 设计由原生 component-design 完成：放一份消费了这次输入、已准入的蓝图（带一条知识应用决定），成文按它写
     if not (feature_root.parent / blueprint / "blueprint" / "component-blueprint.yaml").is_file():
-        install_blueprint(root, feature_root.name, access, decisions=[GENERIC_DECISION])
+        install_blueprint(root, feature_root.name, access)
 
 
 def walk_to_design(flow: Callable[..., dict], src: Path, draft_text: str, access: Path,
@@ -324,12 +378,14 @@ def walk_to_design(flow: Callable[..., dict], src: Path, draft_text: str, access
 
 
 def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_script: Path, access: Path,
-                     draft: str, decisions: list[str] | None = None, design: dict | None = None) -> None:
+                     draft: str, decisions: list[dict] | None = None, design: dict | None = None,
+                     project_must_pass: bool = True) -> None:
     """就地把一份需求工作区准备成「交给设计、蓝图已准入」：接 Framework、放准入蓝图、用真实流程命令走到交给设计，
     再把 init 为没拉到的上游补的占位件删掉登记（与夹具原有材料一致），附录机器区按蓝图重投。
 
     `flow_script` / `build_script` / `access` 是本次要用的那份扩展里的 story_flow.py、story-build.mjs 与
-    framework-access.mjs；已有流程契约的工作区不重走流程。
+    framework-access.mjs；已有流程契约的工作区不重走流程。`project_must_pass` 为假时附录重投不过不抛错——
+    被测的就是这份设计，重投不过的原因由之后的检查照实报出。
     """
     ensure_framework(root)
     feature_root = root / features_dir(root) / feature
@@ -352,11 +408,11 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
         if placeholders:
             flow("round")
     # 设计按登记的输入走到准入：蓝图消费这次冻结输入，带本夹具要的知识应用决定与设计内容
-    install_blueprint(root, feature, access, decisions=decisions if decisions is not None else [GENERIC_DECISION], **(design or {}))
+    install_blueprint(root, feature, access, decisions=decisions, **(design or {}))
     if (feature_root / "AR" / "story.md").is_file():
         proc = subprocess.run(["node", str(build_script), "project", "--feature", feature, "--project-root", str(root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        if proc.returncode != 0:
+        if proc.returncode != 0 and project_must_pass:
             raise RuntimeError(f"附录按蓝图重投失败：{proc.stdout}{proc.stderr}")
 
 

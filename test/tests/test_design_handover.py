@@ -306,14 +306,14 @@ class TheDesignConsumesThisInput(HandoverCase):
 
     def test_a_blueprint_built_from_this_input_is_ready_to_write(self) -> None:
         self.handed()
-        design_kit.install_blueprint(self.root, self.feature, self.ACCESS, decisions=[design_kit.GENERIC_DECISION])
+        design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
         self.assertEqual("ready_to_write", self.ok("status")["state"])
         self.assertEqual([], self.source_problems())
 
     def test_an_admitted_blueprint_of_another_requirement_waits_for_the_design(self) -> None:
         """同组件、换成本需求标识的准入蓝图，来源仍是另一份需求：等设计同步，不成文。"""
         self.handed()
-        design_kit.install_blueprint(self.root, self.feature, self.ACCESS, decisions=[design_kit.GENERIC_DECISION],
+        design_kit.install_blueprint(self.root, self.feature, self.ACCESS,
                                      consume=False)
         status = self.ok("status")
         self.assertEqual(("waiting_for_design", "design_blueprint"), (status["state"], status["next"]))
@@ -324,7 +324,7 @@ class TheDesignConsumesThisInput(HandoverCase):
     def test_a_blueprint_still_on_the_previous_input_waits_for_the_design(self) -> None:
         """换过一版输入：蓝图还引用上一版冻结的来源，等设计按新输入同步。"""
         self.handed()
-        design_kit.install_blueprint(self.root, self.feature, self.ACCESS, decisions=[design_kit.GENERIC_DECISION])
+        design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
         self.ok("reopen")
         answer(self.ok, "scope_decision", "1")
         self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])

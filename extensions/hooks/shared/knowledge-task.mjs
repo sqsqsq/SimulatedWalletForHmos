@@ -12,9 +12,11 @@
  * 只读。退出 0 输出完整任务；1 为坏身份、坏知识登记或所需来源缺失（stdout 不给半份，stderr 写对象、缺口、责任）；
  * 2 为参数或依赖错误。空清单合法，明示零项。
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { blueprintKnowledge } from './knowledge-application.mjs';
 import { readBlueprint, readFeature } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
@@ -58,8 +60,10 @@ function knowledgeBlock(root, action) {
   for (const k of ordered) {
     const file = path.join(extensionRoot(root), ...k.file.split('/'));
     const body = fs.readFileSync(file, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+    const digest = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
     rows.push(`### ${k.name}（${k.file.split('/')[1] ?? ''}，${k.form}）`, '',
-      `- 位置：\`${relDisplay(root, file)}\``, `- 何时读：${k.appliesWhen}`,
+      `- 位置：\`${relDisplay(root, file)}\`（判断的 provenance.source_ref）`, `- 原文摘要：\`${digest}\`（判断的 source_sha256）`,
+      `- 单元：${k.units.join('、')}`, `- 何时读：${k.appliesWhen}`,
       ...(k.registration.audience === null ? []
         : [`- 登记：受众 ${JSON.stringify(k.registration.audience)}${k.registration.summary ? `，摘要「${k.registration.summary}」` : ''}`]),
       ...(k.form === 'halves' ? [`- 本动作主要用${half}；两篇都在下面，另一篇供核对承接`] : []),
@@ -90,6 +94,7 @@ function blueprintTask(root, id, action) {
     : `蓝图 \`${id}\`（尚未建立）`;
   if (bp?.issues?.length) gaps.push(`蓝图原生校验有 ${bp.issues.length} 项：${bp.issues.slice(0, 5).map(i => i.id ?? i.code).join('、')}——设计作者处理。`);
   const decided = bp ? decisionsOf(bp.blueprint) : [];
+  if (bp) gaps.push(...blueprintKnowledge(root, bp.blueprint).problems.map(p => `${p}——设计作者处理。`));
   return {
     object,
     facts: decided.length ? decided : [bp ? '蓝图里还没有知识应用的事实与决定。' : '蓝图尚未建立，没有已成立的判断。'],
@@ -149,8 +154,9 @@ function featureTask(root, feature, action, supplied) {
 }
 
 export function knowledgeTask(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
-  const task = blueprint ? blueprintTask(root, blueprint, action) : featureTask(root, feature, action, { requirement, requirementFile });
+  // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处
   const { knowledge, rows } = knowledgeBlock(root, action);
+  const task = blueprint ? blueprintTask(root, blueprint, action) : featureTask(root, feature, action, { requirement, requirementFile });
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));
   const done = audience === 'author'

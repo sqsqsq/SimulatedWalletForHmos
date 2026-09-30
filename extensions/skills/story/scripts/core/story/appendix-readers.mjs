@@ -75,10 +75,15 @@ function dataRows(blueprint, def, where) {
   return details.length ? [...out, ...(out.length ? [''] : []), ...details] : out;
 }
 
-/** 规约：蓝图里的知识应用决定，逐条写判定、涉及的知识、理由与落点。 */
+/** 规约：蓝图里的知识应用决定，逐条写知识单元、判定、要求与理由（豁免带补偿）、落点。 */
 function knowledgeRows(blueprint, def, where) {
   const rows = (blueprint.decisions_and_gaps?.decisions ?? []).filter(d => d?.kind === 'knowledge_application')
-    .map(d => [d.decision_id, d.status, d.knowledge, [d.rationale, d.target_ref && `→ ${d.target_ref}`].filter(Boolean).join(' ')].map(cell));
+    .map((d) => {
+      const k = d.knowledge ?? {};
+      const waiver = k.waiver && `豁免：${k.waiver.reason}；补偿：${k.waiver.compensation}`;
+      return [k.unit, k.outcome, [k.requirement, d.rationale, waiver].filter(Boolean).join('；'),
+        (k.target_refs ?? []).join('、') || '—'].map(cell);
+    });
   return rows.length ? renderTable(header(def, 'rows', where), rows) : [];
 }
 

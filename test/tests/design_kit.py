@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from design_fixture import *  # noqa: F401,F403
-from design_fixture import COMPONENT, GENERIC_DECISION  # noqa: F401
+from design_fixture import COMPONENT  # noqa: F401
 from ext_workspace import DEV_EXT
 
 #: 装在临时消费工程里的开发版 framework-access：夹具用它调原生
@@ -62,7 +62,7 @@ def hand_over_state(root: Path, feature: str, contract: dict, *, with_blueprint:
     binding = {"component_id": COMPONENT, "blueprint_id": f"bp-{feature}"}
     if with_blueprint and not (root / features_dir(root) / binding["blueprint_id"] / "blueprint" / "component-blueprint.yaml").is_file():
         items = frozen.materialization(version, ref.rsplit("/", 1)[0], binding)["items"]
-        install_blueprint(root, feature, ACCESS, decisions=[GENERIC_DECISION],
+        install_blueprint(root, feature, ACCESS,
                           items=[{k: v for k, v in i.items() if k != "authority"} for i in items])
     return {**contract, "design_binding": binding,
             "input": {"snapshot_ref": ref, "snapshot_sha256": version["snapshot_sha256"],

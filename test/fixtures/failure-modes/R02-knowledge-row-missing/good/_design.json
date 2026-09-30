@@ -1,0 +1,16 @@
+{
+  "$comment": "夹具的设计判断：蓝图里就是这几条知识应用决定（不补判）",
+  "knowledge_decisions": [
+    {
+      "unit": "SMP-01",
+      "outcome": "applied",
+      "rationale": "本需求新增提交入口",
+      "requirement": "受理单编号在入口生成"
+    },
+    {
+      "unit": "SMP-02",
+      "outcome": "not_applicable",
+      "rationale": "本需求没有任何上报动作"
+    }
+  ]
+}

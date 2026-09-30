@@ -963,7 +963,7 @@ modes:
   - id: R02-knowledge-row-missing
     dimension: content
     found_round: "2026-08-28"
-    form: 激活规约条目在归档件合规章的判定表里缺行——逐条判定失去落点，批次 1 的知识应用在 story 侧退化
+    form: 激活规约有一条在设计里没有判断——逐条判定失去落点，附录·规约少了那一行，知识应用在 story 侧退化
     clause: E2 / KR-2b
     checker: r02_knowledge_row_missing
     target: mechanism
@@ -971,16 +971,12 @@ modes:
     good_fixture: test/fixtures/failure-modes/R02-knowledge-row-missing/good
     applicable_when: always
     severity: BLOCKER
-    status: pending_capability
-    approved_by: 维护设计者（2026-09-30 步骤 2 实施评审 §3）
-    reason: >
-      附录·规约改由蓝图的知识应用决定投影之后，「knowledge-use 投影少一行」的前提不在了；
-      旧断言退出，逐条规约判断按步骤 3 已定的 knowledge 合同迁到蓝图条目与来源身份覆盖，
-      当前知识消费者接线完成前只做夹具自检。步骤 3 交回恢复有效的正反例。
+    status: fixed
     scope_note: >
-      判定原先落在一份独立的判定记录文件里；那份文件退场后，作业指引与门禁一起没了。
-      现在规约条目是来源单元，与材料里的事实走同一条守恒链：缺一条点名一条，
-      判「不命中」也要有行有依据，整域不适用时给该域一行即可（P15 的域级判定回来了）。
+      判定原先落在 spec/knowledge-use.yaml，附录·规约是它的投影；2.0 起判断是已准入蓝图里的
+      知识应用决定（形态见 knowledge-application.schema.json），附录·规约按它投影。
+      激活规约逐条要有判断（按来源文件与单元认，不适用也要写明哪个条件不成立），漏判一条点名一条，
+      交回设计职责；夹具的 `_design.json` 写明设计里就是哪几条判断。
 
   - id: G01-judgement-blocks-golden
     dimension: expression

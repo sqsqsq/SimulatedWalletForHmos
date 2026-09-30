@@ -164,7 +164,7 @@
              "tables": {"flows": "数据流|数据域|权威来源|状态归属|失败与恢复"}},
             {"title": "配置项", "reader": "details", "detail_kind": "configuration"}
           ]},
-          "规约": {"reader": "knowledge_applications", "tables": {"rows": "决定|判定|知识|理由与落点"}},
+          "规约": {"reader": "knowledge_applications", "tables": {"rows": "知识单元|判定|要求与理由|落点"}},
           "埋点": {"reader": "details", "detail_kind": "event"},
           "改动边界": {"reader": "change_boundary", "tables": {"rows": "模块|本单怎么动"},
                        "labels": {"unchanged": "开发视图不变"}}

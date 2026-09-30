@@ -1848,8 +1848,16 @@ def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-D
     story_src = root / "doc" / "features" / feature / "AR" / "story-src"
     if not (story_src / "story-flow.json").is_file() or '"design_binding"' not in (story_src / "story-flow.json").read_text(encoding="utf-8"):
         (story_src / "story-flow.json").unlink(missing_ok=True)
+        # 夹具可以写明设计里就是哪几条知识应用决定（`_design.json`，不补判）；没写就逐条判定不涉及
+        judged = root / "_design.json"
+        decisions = None if not judged.is_file() else [
+            design_fixture.knowledge_decision(f"knowledge-{d['unit'].lower()}", d["unit"], d["outcome"], d["rationale"],
+                                              requirement=d.get("requirement"))
+            for d in json.loads(judged.read_text(encoding="utf-8"))["knowledge_decisions"]]
         design_fixture.prepare_designed(root, feature, flow_script=flow, build_script=build, access=access,
-                                        draft=_MIN_DRAFT)
+                                        draft=_MIN_DRAFT, decisions=decisions,
+                                        design={"exact_decisions": True} if decisions is not None else None,
+                                        project_must_pass=False)
 
     def run(cmd: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -1881,21 +1889,18 @@ def _norm(text: str) -> str:
 
 @checker
 def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
-    """激活规约条目在合规章的判定表里缺行——逐条判定又丢了。
+    """激活规约有一条在设计里没有判断——逐条判定又丢了，附录·规约也就少了那一行。
 
-    判定原先落在一份独立的记录文件里，那份文件退场后既无作业指引也无门禁。
-    现在条目是来源单元，缺一条要点名一条。
+    判断在已准入蓝图的知识应用决定里，附录·规约按它投影；漏判的那一条要被点名，交回设计职责。
     """
     if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "提交之后回执没到之前，界面停在等待态")
     if code == 0:
-        return Outcome(True, "激活规约条目在判定表里逐条有行")
-    # 判定表是 `knowledge-use.yaml` 的投影（Q6）：少一条规约就是机器区少一行，
-    # 不再另有一条「逐条问这个编号有没有行」的反向解析判据。
-    if "「规约」" in out and "少了行" in out:
-        return Outcome(False, f"判定表缺行被点名：{out.split('少了行')[0][-80:]}少了行")
-    return Outcome(False, f"check 未过（非缺行原因）：{out[:200]}")
+        return Outcome(True, "激活规约在设计里逐条有判断，附录·规约逐条成行")
+    if "没有判断激活规约" in out:
+        return Outcome(False, "漏判被点名：" + out.split("没有判断激活规约", 1)[1].split("——", 1)[0].strip())
+    return Outcome(False, f"check 未过（非漏判原因）：{out[:300]}")
 
 
 #: story 专属要求的说法——它们出现在**非** story 需求的门禁回话里，就是作者面泄漏。

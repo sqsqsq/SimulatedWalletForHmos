@@ -1,0 +1,82 @@
+{
+  "$comment": "知识应用的扩展字段形态，唯一合同。决定本身在原生设计里（蓝图 decisions_and_gaps.decisions[] 的 kind=knowledge_application，或非 CU 维护 Feature 的 contracts.knowledge_applications[]）；这里只定义它带的 knowledge 字段与事实的 value.knowledge。来源、原始摘要、激活单元、稳定地址与逐条覆盖由 hooks/shared/knowledge-application.mjs 按实际对象核。用原生 lite-json-schema 的关键字子集。",
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "text": {"type": "string", "minLength": 1},
+    "refs": {"type": "array", "items": {"$ref": "#/$defs/text"}},
+    "constraintKnowledge": {
+      "type": "object",
+      "required": ["kind", "form", "unit", "source_sha256", "outcome", "target_refs"],
+      "properties": {
+        "kind": {"const": "constraints"},
+        "form": {"const": "entries"},
+        "unit": {"$ref": "#/$defs/text"},
+        "source_sha256": {"$ref": "#/$defs/sha256"},
+        "outcome": {"enum": ["applied", "not_applicable", "waived", "pending"]},
+        "requirement": {"$ref": "#/$defs/text"},
+        "target_refs": {"$ref": "#/$defs/refs"},
+        "waiver": {
+          "type": "object",
+          "required": ["reason", "compensation", "authority_ref"],
+          "properties": {
+            "reason": {"$ref": "#/$defs/text"},
+            "compensation": {"$ref": "#/$defs/text"},
+            "authority_ref": {"$ref": "#/$defs/text"}
+          }
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"outcome": {"const": "applied"}}},
+         "then": {"required": ["requirement"], "properties": {"target_refs": {"minItems": 1}}}},
+        {"if": {"properties": {"outcome": {"const": "waived"}}}, "then": {"required": ["waiver"]}}
+      ]
+    },
+    "patternKnowledge": {
+      "type": "object",
+      "required": ["kind", "form", "unit", "source_sha256", "outcome", "target_refs"],
+      "properties": {
+        "kind": {"const": "patterns"},
+        "form": {"const": "halves"},
+        "unit": {"$ref": "#/$defs/text"},
+        "source_sha256": {"$ref": "#/$defs/sha256"},
+        "outcome": {"enum": ["selected", "rejected", "adjusted", "pending"]},
+        "target_refs": {"$ref": "#/$defs/refs"},
+        "roles": {
+          "type": "array",
+          "items": {"type": "object", "required": ["role", "target_ref"],
+                    "properties": {"role": {"$ref": "#/$defs/text"}, "target_ref": {"$ref": "#/$defs/text"}}}
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"outcome": {"enum": ["selected", "adjusted"]}}},
+         "then": {"required": ["roles"], "properties": {"target_refs": {"minItems": 1}, "roles": {"minItems": 1}}}}
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "required": ["decision_id", "kind", "status", "rationale", "provenance", "knowledge"],
+      "properties": {
+        "kind": {"const": "knowledge_application"},
+        "rationale": {"$ref": "#/$defs/text"},
+        "provenance": {"type": "object", "required": ["source_ref"], "properties": {"source_ref": {"$ref": "#/$defs/text"}}},
+        "knowledge": {"oneOf": [{"$ref": "#/$defs/constraintKnowledge"}, {"$ref": "#/$defs/patternKnowledge"}]}
+      },
+      "allOf": [
+        {"if": {"properties": {"knowledge": {"properties": {"outcome": {"const": "pending"}}}}},
+         "then": {"properties": {"status": {"enum": ["open_decision", "blocker"]}}},
+         "else": {"properties": {"status": {"enum": ["answered_with_evidence", "decided_with_authority", "not_applicable"]}}}},
+        {"if": {"properties": {"knowledge": {"properties": {"outcome": {"const": "not_applicable"}}}}},
+         "then": {"properties": {"status": {"const": "not_applicable"}}}}
+      ]
+    },
+    "factKnowledge": {
+      "type": "object",
+      "required": ["unit", "form", "source_sha256"],
+      "properties": {
+        "unit": {"$ref": "#/$defs/text"},
+        "form": {"enum": ["facets", "halves"]},
+        "source_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

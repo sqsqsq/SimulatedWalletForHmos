@@ -418,7 +418,7 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
     def test_a_change_outside_the_first_column_is_caught(self) -> None:
         """只比首列的老判据看不见这一类：标识没动，说明被改了。"""
         at, end, lines = self.zone_lines("规约")
-        target = next(i for i in range(at + 1, end) if "knowledge-smp-01" in lines[i])
+        target = next(i for i in range(at + 1, end) if lines[i].startswith("| SMP-01 "))
         lines[target] = lines[target].replace("受理单编号在入口生成", "改成了别的说法")
         self.rewrite(lines)
         self.expect_caught()
@@ -607,10 +607,17 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
     def test_knowledge_rows_come_only_from_knowledge_decisions(self) -> None:
         bp = {"decisions_and_gaps": {"decisions": [
             {"decision_id": "k1", "kind": "knowledge_application", "status": "answered_with_evidence",
-             "knowledge": {"rule": "UI-1"}, "rationale": "走统一加载态", "target_ref": "view:logical/node:x"},
+             "knowledge": {"kind": "constraints", "form": "entries", "unit": "UI-1", "outcome": "applied",
+                           "requirement": "列表加载时用统一加载态", "target_refs": ["view:logical/node:x"]},
+             "rationale": "首页列表首次加载"},
+            {"decision_id": "k2", "kind": "knowledge_application", "status": "answered_with_evidence",
+             "knowledge": {"kind": "constraints", "form": "entries", "unit": "UI-2", "outcome": "waived", "target_refs": [],
+                           "waiver": {"reason": "旧页面下线在即", "compensation": "下线前加提示", "authority_ref": "gate:scope"}},
+             "rationale": "只影响即将下线的页面"},
             {"decision_id": "other", "status": "decided_with_authority"}]}}
         text = "\n".join(self.rows("规约", bp))
-        self.assertIn("| k1 | answered_with_evidence | rule：UI-1 | 走统一加载态 → view:logical/node:x |", text)
+        self.assertIn("| UI-1 | applied | 列表加载时用统一加载态；首页列表首次加载 | view:logical/node:x |", text)
+        self.assertIn("| UI-2 | waived | 只影响即将下线的页面；豁免：旧页面下线在即；补偿：下线前加提示 | — |", text)
         self.assertNotIn("other", text)
 
     def test_the_boundary_lists_modules_and_architecture_changes(self) -> None:
@@ -2096,6 +2103,24 @@ class ChaptersLandOneAtATime(Step8Case):
         self.assertIn("背景", out)
 
 
+_REAL_WITH_KNOWLEDGE: dict[Path, Path] = {}
+
+
+def real_with_knowledge(real: Path) -> Path:
+    """真实一跑的需求目录加上开发版的激活清单与知识：设计要逐条判断激活的规约，知识要在交给设计之前就在。
+    每个进程拼一份，交给 designed_copy 缓存设计。"""
+    if real not in _REAL_WITH_KNOWLEDGE:
+        base = Path(tempfile.mkdtemp(prefix="story-real-run-")) / "work"
+        atexit.register(shutil.rmtree, base.parent, True)
+        shutil.copytree(real, base / "doc" / "features" / real.name)
+        ext = base / "doc" / "extensions"
+        ext.mkdir(parents=True)
+        shutil.copy2(DEV_EXT / "manifest.yaml", ext / "manifest.yaml")
+        shutil.copytree(DEV_EXT / "knowledge", ext / "knowledge")
+        _REAL_WITH_KNOWLEDGE[real] = base
+    return _REAL_WITH_KNOWLEDGE[real]
+
+
 class RealRunCase(unittest.TestCase):
     """拿真实一跑的产物走作者路径。
 
@@ -2110,11 +2135,7 @@ class RealRunCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature = self.root / "doc" / "features" / "AR90006"
-        designed_copy(self.REAL, "AR90006", DRAFT_TEXT, self.root, REAL_RUN_DESIGN)
-        ext = self.root / "doc" / "extensions"
-        ext.mkdir(parents=True)
-        shutil.copy2(self.EXTENSION / "manifest.yaml", ext / "manifest.yaml")
-        shutil.copytree(self.EXTENSION / "knowledge", ext / "knowledge")
+        designed_copy(real_with_knowledge(self.REAL), "AR90006", DRAFT_TEXT, self.root, REAL_RUN_DESIGN)
         self.story_path = self.feature / "AR" / "story.md"
         self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
@@ -2467,14 +2488,14 @@ class ProjectionRefusesToInventContent(RealRunCase):
         """激活了规约、蓝图里却没有一条知识应用决定——投影不替设计编一个判断出来。"""
         self.build("skeleton")
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(self.draft("10-附录.md"))))
-        design_kit.install_blueprint(self.root, "AR90006", ACCESS)
+        design_kit.install_blueprint(self.root, "AR90006", ACCESS, decisions=[], exact_decisions=True)
         proc = subprocess.run(
             ["node", str(BUILD), "project", "--feature", "AR90006",
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(1, proc.returncode, "缺判断还照投不误")
         out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertIn("知识应用决定", out)
+        self.assertIn("没有判断激活规约", out)
         self.assertIn("设计职责", out)
 
     def test_a_zone_outside_the_contract_is_removed(self) -> None:
@@ -2972,13 +2993,23 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
         self.assert_wrote_nothing(before)
 
     def test_active_knowledge_without_a_design_judgement_blocks(self) -> None:
-        """激活了规约、蓝图里没有知识应用决定：起手停下，判断归设计，不由成文补。"""
-        design_kit.install_blueprint(self.root, FEATURE, ACCESS)
+        """激活规约逐条判断：蓝图漏判一条，起手停下并点名那一条，判断归设计，不由成文补。"""
+        design_kit.install_blueprint(self.root, FEATURE, ACCESS, decisions=FIXTURE_DECISIONS[:1], exact_decisions=True)
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, out)
-        self.assertIn("知识应用决定", out)
+        self.assertIn("没有判断激活规约 SMP-02", out)
+        self.assertNotIn("SMP-01", out.split("没有判断激活规约", 1)[1].split("\n", 1)[0])
         self.assert_wrote_nothing(before)
+
+    def test_a_judgement_on_old_knowledge_text_blocks(self) -> None:
+        """判断记着当时的知识原文摘要：原文之后改了，蓝图待同步，起手停下。"""
+        design_kit.install_blueprint(self.root, FEATURE, ACCESS, decisions=FIXTURE_DECISIONS)
+        rules = next((self.root / "doc" / "extensions" / "knowledge" / "constraints").glob("*.md"))
+        rules.write_text(rules.read_text(encoding="utf-8") + "\n补一句说明。\n", encoding="utf-8")
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("知识原文变了", out)
 
     def test_an_explicit_not_applicable_section_is_legal(self) -> None:
         """写出来的「不涉及：<依据>」是结论，起手照常——不逼作者补一张空表。"""

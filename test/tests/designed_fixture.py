@@ -56,13 +56,20 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
 
 #: 夹具激活的两条规约在蓝图里的判断：成文按已准入蓝图写，附录·规约由它投影
 FIXTURE_DECISIONS = [
-    design_kit.knowledge_decision("knowledge-smp-01", "SMP-01", "applicable", "本需求新增提交入口，受理单编号在入口生成"),
+    design_kit.knowledge_decision("knowledge-smp-01", "SMP-01", "applied", "本需求新增提交入口",
+                                  requirement="受理单编号在入口生成"),
     design_kit.knowledge_decision("knowledge-smp-02", "SMP-02", "not_applicable", "本需求没有任何上报动作"),
 ]
 
 
-#: 真实一跑（AR90006）的蓝图还带确认过的术语与一条埋点明细：术语起始行与附录·埋点都从蓝图来
+#: 真实一跑（AR90006）的蓝图还带确认过的术语与一条埋点明细：术语起始行与附录·埋点都从蓝图来；
+#: 它激活的是开发版知识，判断落在那几条真实规约上（其余逐条判不涉及）
 REAL_RUN_DESIGN = {
+    "decisions": [
+        design_kit.knowledge_decision("knowledge-obs-02", "OBS-02", "applied", "本需求新增提交入口",
+                                      requirement="受理单编号在入口生成"),
+        design_kit.knowledge_decision("knowledge-obs-03", "OBS-03", "not_applicable", "本需求没有任何上报动作"),
+    ],
     "terms": [design_kit.term_fact(term) for term in ("自动充值", "免密签约", "充值上限")],
     "details": [design_kit.story_detail("detail-event", "event", "签约转化", "统计点：签约成功时上报一次。")],
 }
@@ -78,8 +85,10 @@ def designed_copy(fixture: Path, feature: str, draft: str, target: Path, design:
         base = Path(tempfile.mkdtemp(prefix="story-build-designed-")) / "work"
         atexit.register(shutil.rmtree, base.parent, True)
         shutil.copytree(fixture, base / "doc" / "features" / feature if fixture.name == feature else base)
+        design = dict(design or {})
+        decisions = design.pop("decisions", FIXTURE_DECISIONS)
         design_kit.prepare_designed(base, feature, flow_script=FLOW, build_script=BUILD, access=ACCESS, draft=draft,
-                                    decisions=FIXTURE_DECISIONS, design=design)
+                                    decisions=decisions, design=design)
         _DESIGNED[key] = base
     base = _DESIGNED[key]
     shutil.copytree(base, target, dirs_exist_ok=True,
