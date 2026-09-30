@@ -88,7 +88,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 | 「能核实」是什么 | 每条事实后面带仓内路径或 DSL 键名；依据在别人手里的写明向谁取得，不写推断 |
 | 停一次问人 | 摆出这份知识、manifest 的 `name` 与 `description`（脚本按工程名生成的初值，你把描述改准）、`framework.config.json` 的配置键，人改过再落盘 |
 
-写完登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。其余知识按 `--apply` 列出的知识条目逐题判适用：适用的按目标仓自己的代码与规范写一份，不适用的写明查过哪里、为什么；目标仓有而条目里没有的主题另补；范围摆给人定一次（方法页第 2 步）。
+写完登记进 `manifest.yaml` 的 `provides.knowledge`——那份清单归目标，脚本不替它写。其余知识按 `--apply` 列出的知识条目逐题判适用：适用的按目标仓自己的代码与规范写一份，不适用的写明查过哪里、为什么；目标仓有而条目里没有的事实与规约主题另补，设计模式不自行归纳；范围摆给人定一次（方法页第 2 步）。动笔前读方法页「首次知识的质量判据」与主题页 `reference/knowledge-topics.md` 里这个主题的一节；首次只写起步知识，扩充归目标维护者。
 
 知识交回后跑 `node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --mark-adapted --target <目标根> --package <包根>`，脚本把 `adapted_for` 写成包的版本；对接层按「两种来源」处理，未适配的在交回里列出。
 
