@@ -6,6 +6,7 @@
  * 只认这两个列名，不认任何知识文件名、渠道名、结果枚举或编码——那些只在项目知识里。
  */
 import { parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
+import { entityId } from './contracts.mjs';
 
 const clean = (s) => String(s ?? '').replace(/[`*]/g, '').trim();
 //: 「接口.方法」形态的引用：plan 表里责任方法这么写，契约里按 `interfaces.<接口>.<方法>` 找。
@@ -55,7 +56,7 @@ export function statDelivery(design, contracts, acceptance) {
   const want = designStatPoints(design);
   if (want.state === 'none' || want.state === 'missing') return [];
   const methods = list(contracts?.interfaces).flatMap(i => list(i?.methods).filter(m => String(m?.description ?? '').trim())
-    .map(m => `- \`interfaces.${i.name ?? i.class}.${m.name}\`：${String(m.description).trim()}`));
+    .map(m => `- \`interfaces.${entityId('interfaces', i)}.${m.name}\`：${String(m.description).trim()}`));
   const cases = ['criteria', 'boundaries', 'performance'].flatMap(k => list(acceptance?.[k]).flatMap(c =>
     [`- ${k} \`${c?.id ?? '（没写 id）'}\``, ...Object.entries(c ?? {}).filter(([key]) => key !== 'id')
       .map(([key, v]) => `  - ${key}：${value(v)}`)]));

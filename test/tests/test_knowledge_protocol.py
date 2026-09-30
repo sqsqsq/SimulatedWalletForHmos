@@ -74,7 +74,7 @@ def landing(rule: str, text: str, verify: str) -> str:
 
 def contracts(v01: str = "review", v02: str = "ut", *, second02: str = "", head: str = "") -> str:
     """两个方法：emitWithTrace 扛 NEU-01 / NEU-03，reuseTrace 扛 NEU-02；`second02` 给 NEU-02 再加一处落点。"""
-    return (head + "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
+    return (head + "interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
             "      - name: emitWithTrace\n        must:\n"
             + landing("NEU-01", "入口生成标识并透传", v01)
             + landing("NEU-03", "出口字段名不用方向词", "review")
@@ -333,7 +333,7 @@ class EachLandingCarriesTheEvidenceItsRuleAsks(ProtocolCase):
     def test_a_method_probe_without_a_method_landing_is_reported(self) -> None:
         text = ("data_models:\n  - name: 出口上下文\n    fields:\n      - name: traceId\n        must:\n"
                 "          - rule: NEU-02\n            decision_id: k-neu-02\n            text: 重试复用标识\n            verify: ut\n"
-                "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
+                "interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
                 "      - name: emitWithTrace\n        must:\n"
                 + landing("NEU-01", "入口生成标识并透传", "review") + landing("NEU-03", "出口字段名不用方向词", "review"))
         self.assertIn("探针无落点", self.plan(text))
@@ -537,7 +537,7 @@ class TheSameIdFromTwoSourcesIsProbedEach(ProtocolCase):
             "const trace = this.newTrace();", "const trace = this.newTrace({ leftSide: 1 });"), encoding="utf-8")
 
     def landings(self, *decisions: str) -> str:
-        return ("interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
+        return ("interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
                 "      - name: emitWithTrace\n        must:\n"
                 + "".join(f"          - rule: NEU-03\n            decision_id: {d}\n"
                           "            text: 出口字段名不用方向词\n            verify: review\n" for d in decisions))
@@ -578,12 +578,23 @@ class TheNativeInputProblemIsNeverDropped(ProtocolCase):
                 self.assertIn("原生", result.get("message") or "")
 
     def test_a_valid_input_without_obligations_passes(self) -> None:
-        self.write_contracts("interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n"
+        self.write_contracts("interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n"
                              "    methods:\n      - name: emitWithTrace\n")
         for phase in ("coding", "review", "ut", "testing"):
             with self.subTest(phase=phase):
                 result = self.run_hook(phase, nk.FEATURE)
                 self.assertTrue(result.get("ok"), result)
+
+
+
+class AnInterfaceIsKnownByItsClass(ProtocolCase):
+    """原生接口按 class 认：只写 name 的接口挂着义务时，plan 点名它缺 class，不拼出空身份的地址。"""
+
+    def test_a_name_only_interface_is_named(self) -> None:
+        self.write_contracts(contracts().replace("  - class: 中性出口接口", "  - name: 中性出口接口"))
+        message = self.hook("plan")
+        self.assertIn("contracts.yaml 的 interfaces 第 1 项没有 class，却挂着 must 或 pattern_roles", message)
+        self.assertNotIn("interfaces..", message)
 
 
 if __name__ == "__main__":

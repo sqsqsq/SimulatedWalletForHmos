@@ -8,7 +8,7 @@ knowledge_applications:
     verification_refs: [contract:neutral-exit]
     knowledge: {kind: constraints, form: entries, unit: NEU-01, source_sha256: "sha256:0000000000000000000000000000000000000000000000000000000000000000", outcome: applied, requirement: 入口生成一次标识, target_refs: [contract:neutral-exit]}
 interfaces:
-  - name: 中性出口接口
+  - class: 中性出口接口
     file: src/exit.ets
     pattern_roles:
       - {pattern: decision-tree, role: 节点表, decision_id: k-tree}

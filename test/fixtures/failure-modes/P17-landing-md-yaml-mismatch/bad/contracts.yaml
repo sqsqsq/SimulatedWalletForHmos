@@ -1,5 +1,5 @@
 interfaces:
-  - name: OrderService
+  - class: OrderService
     methods:
       - name: submit
         must:

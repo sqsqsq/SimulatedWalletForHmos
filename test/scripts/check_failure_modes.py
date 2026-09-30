@@ -1171,7 +1171,7 @@ def _musts(root: Path) -> list[tuple[str, str]]:
     for itf in data.get("interfaces") or []:
         for m in (itf.get("methods") or []) if isinstance(itf, dict) else []:
             if isinstance(m, dict):
-                take(f"interfaces.{itf.get('name')}.{m.get('name')}", m)
+                take(f"interfaces.{itf.get('class')}.{m.get('name')}", m)
     for c in data.get("components") or []:
         if isinstance(c, dict):
             take(f"components.{c.get('name')}", c)

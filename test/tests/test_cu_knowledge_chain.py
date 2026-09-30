@@ -103,8 +103,12 @@ const gate = await plan({ phase: 'plan', feature, projectRoot: root });
 const review = await pre({ phase: 'plan', feature, projectRoot: root });
 const kt = await import(base + 'shared/knowledge-task.mjs');
 const author = kt.knowledgeTask(root, { action: 'plan', audience: 'author', feature });
+const o = await import(base + 'shared/obligations.mjs');
+const addresses = o.obligationsFromContracts(a.contracts ?? {}).map(x => x.entityPath);
+const roleAddresses = o.patternRolesFromContracts(a.contracts ?? {}).map(x => x.entityPath);
 process.stdout.write(JSON.stringify({ must: i.methods?.[0]?.must ?? null, roles: i.pattern_roles ?? null, problems: a.problems,
-  gate: gate.message ?? '', review: (review.promptFragments ?? []).join('\\n'), author }));
+  gate: gate.message ?? '', review: (review.promptFragments ?? []).join('\\n'), author, dir: a.dir, addresses, roleAddresses,
+  resolved: [...addresses, ...roleAddresses].map(r => c.resolveEntityRef(a.contracts, r).ok) }));
 """
 
 
@@ -124,9 +128,9 @@ class ChainCase(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls._tmp.cleanup()
 
-    def probe(self, env: dict | None = None) -> dict:
-        """门禁、审查任务与作者任务读到的结果；同一类的工程不变，默认环境下只跑一次。"""
-        if env is None and "_out" in self.__class__.__dict__:
+    def probe(self, env: dict | None = None, fresh: bool = False) -> dict:
+        """门禁、审查任务与作者任务读到的结果；同一类的工程不变，默认环境下只跑一次（`fresh` 在改过工程后重读）。"""
+        if env is None and not fresh and "_out" in self.__class__.__dict__:
             return self.__class__._out
         proc = subprocess.run(["node", "--input-type=module", "-e", PROBE, str(self.root.as_posix()), CU],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env)
@@ -160,6 +164,15 @@ class TheDerivedContractCarriesTheObligations(ChainCase):
                 self.assertIn(needle, out[who], who)
         self.assertIn("这一次没有 plan.md：逐点核每个统计点", out["review"])
 
+    def test_every_consumer_names_the_interface_by_its_class(self) -> None:
+        """原生接口身份是 class：义务地址、接口角色地址、引用解析与审查任务都认 HomeRepository。"""
+        out = self.probe()
+        self.assertEqual(["interfaces.HomeRepository.refreshBalance"], out["addresses"])
+        self.assertEqual(["interfaces.HomeRepository"], out["roleAddresses"])
+        self.assertEqual([True, True], out["resolved"])
+        self.assertIn("interfaces.HomeRepository.refreshBalance：刷新失败时记一条带页面与原因的日志", out["review"])
+        self.assertNotIn("interfaces..", json.dumps(out, ensure_ascii=False))
+
     def test_a_role_placed_elsewhere_is_not_this_units(self) -> None:
         """「上下文」落在别的设计对象上：本单位不被要求承担它。"""
         self.assertNotIn("上下文", self.probe()["gate"])
@@ -171,6 +184,21 @@ class TheDerivedContractCarriesTheObligations(ChainCase):
                                                       if "ts_transpile_cache" not in p).strip()}
         env.pop("STORY_TEST_TS_CACHE", None)
         self.assertEqual(cached, self.probe(env))
+
+
+class ThePlanTableNamesTheClassMethod(ChainCase):
+    """plan.md 逐点表的责任方法写「接口 class.方法 name」：契约声明的方法认得出，写错的方法照样被拒绝。"""
+
+    def test_the_declared_method_passes_and_a_wrong_one_is_named(self) -> None:
+        plan = Path(self.probe()["dir"]) / "plan" / "plan.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text("# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+                        "| 余额刷新 / 保存结果 | 成功 | HomeRepository.refreshBalance |\n"
+                        "| 余额刷新 / 保存结果 | 拒绝 | HomeRepository.saveNothing |\n", encoding="utf-8")
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("HomeRepository.saveNothing 在 contracts.yaml 的 interfaces[].methods[] 里找不到", gate)
+        self.assertNotIn("HomeRepository.refreshBalance 在 contracts.yaml", gate)
+        self.assertNotIn("逐点表里没有行", gate)
 
 
 class AMissingOwnRoleIsNamed(ChainCase):

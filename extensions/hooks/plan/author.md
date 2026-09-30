@@ -12,7 +12,7 @@
 |---|---|
 | 知识任务 | 知识原文、本施工单位承接的适用判断与选型决定、设计引用的对象、缺口 |
 | 本施工单位的 spec 与 `acceptance.yaml`（有才读） | 要履行的业务条件、验收与验证责任 |
-| 蓝图里本单位承担的设计对象与 `story_details` | 专项设计与精确明细（配置、埋点、数据策略）——落到承担它的方法与实体上；埋点明细（`kind: event`）在 plan.md 用一张逐点表落实：表头含「统计点」「责任方法」，每个统计点每种结果一行，责任方法写契约里的「接口.方法」；这一次没有 plan.md 时，统计点、适用结果与验证方式写进承担它的方法 `description` 与相关验收条目 |
+| 蓝图里本单位承担的设计对象与 `story_details` | 专项设计与精确明细（配置、埋点、数据策略）——落到承担它的方法与实体上；埋点明细（`kind: event`）在 plan.md 用一张逐点表落实：表头含「统计点」「责任方法」，每个统计点每种结果一行，责任方法写契约里的「接口 class.方法 name」；这一次没有 plan.md 时，统计点、适用结果与验证方式写进承担它的方法 `description` 与相关验收条目 |
 
 ## 二、设计要证明它履行得了需求
 
@@ -26,7 +26,7 @@
 
 ```yaml
 interfaces:
-  - name: RecordStore
+  - class: RecordStore
     file: src/main/ets/data/RecordStore.ets
     methods:
       - name: finishProcess
@@ -42,7 +42,7 @@ interfaces:
 - `verify` 按规约声明的执行体定：含「实机」写 `ut` / `device` / `both`；只有「模型」（或加「构建」）写 `review`；「人工」不挂 `must`。
 - **选中模式的角色**写在真实承担它的 `components` / `interfaces` / `data_models` 实体上：`pattern_roles: [{pattern, role, decision_id}]`，
   `role` 取选型决定里的角色，实现文件取实体自己的 `file`。
-- 设计用到的每个方法都在 `interfaces[].methods[]` 声明；`use-cases.yaml` 只引用契约里声明过的方法与 `acceptance.yaml` 里存在的验收编号。
+- 设计用到的每个方法都在 `interfaces[].methods[]` 声明；实体按原生身份认——接口是 `class`，方法、字段、状态、数据模型与组件是 `name`，义务与角色地址如 `interfaces.RecordStore.finishProcess`；`use-cases.yaml` 只引用契约里声明过的方法与 `acceptance.yaml` 里存在的验收编号。
 
 ## 四、跑哪条命令
 

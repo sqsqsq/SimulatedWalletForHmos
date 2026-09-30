@@ -255,7 +255,7 @@ class NeutralKnowledgeCase(unittest.TestCase):
 
 
 #: 挂在中性出口接口上的一条义务：出自 NEU-01 的适用判断
-EXIT_METHOD = ("interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n"
+EXIT_METHOD = ("interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n"
                "    methods:\n      - name: emitWithTrace\n")
 
 
@@ -581,7 +581,7 @@ class TheSameIdFromTwoFiles(NeutralKnowledgeCase):
         other = {**self.decision("NEU-01", "applied", "出口要在弱网下给结果", "neutral-other",
                                  requirement="弱网下出口给出结果", target_refs=[TARGET]), "decision_id": "k-other-neu-01"}
         self.write_contracts(
-            "interfaces:\n  - name: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
+            "interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
             "      - name: emitWithTrace\n        must:\n" + must("NEU-01", "review")
             + "      - name: emitOnWeakNetwork\n        must:\n" + must("NEU-01", "review", "k-other-neu-01", "弱网下给出结果"),
             decisions=self.judged(neutral=[

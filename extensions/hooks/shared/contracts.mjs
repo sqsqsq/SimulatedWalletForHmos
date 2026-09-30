@@ -47,20 +47,28 @@ function asArray(v) {
   return [v];
 }
 
-/** 契约条目的名字：不同集合的命名字段不同，逐个试。 */
-function entityName(item) {
-  if (typeof item === 'string') return item;
+/** 原生契约各集合的身份字段（`framework/harness/scripts/utils/types.ts` 的 ContractsSpec）：接口按 class 认，状态管理按 data 认。 */
+const ID_FIELD = { interfaces: 'class', state_management: 'data' };
+
+/**
+ * 契约实体的原生身份：接口是 `class`，数据模型、组件、模块是 `name`，状态管理是 `data`；缺这个字段为空串。
+ * 义务、模式角色、引用解析、plan 责任方法与送达输出都按它拼地址 `<集合>.<身份>[.<成员 name>]`。
+ */
+export function entityId(kind, item) {
   if (!item || typeof item !== 'object') return '';
-  return String(item.name ?? item.class ?? item.key ?? item.path ?? item.file ?? item.id ?? '');
+  return String(item[ID_FIELD[kind] ?? 'name'] ?? '').trim();
 }
+
+/** 成员的名字：字段、方法、状态、属性、事件按 `name`，子组件是字符串。 */
+const memberName = (m) => String(typeof m === 'string' ? m : m?.name ?? '').trim();
 
 /** 条目的成员名集合（字段 / 方法 / 状态 / 属性）。 */
 function memberNames(item) {
   if (!item || typeof item !== 'object') return [];
   const out = [];
-  for (const key of ['fields', 'methods', 'state', 'props', 'events', 'children', 'keys']) {
+  for (const key of ['fields', 'methods', 'state', 'props', 'events', 'children']) {
     for (const m of asArray(item[key])) {
-      const n = entityName(m);
+      const n = memberName(m);
       if (n) out.push(n);
     }
   }
@@ -106,7 +114,7 @@ export function resolveEntityRef(contracts, ref) {
           tail };
   }
   const entity = parts[1];
-  const item = bucket.find(it => entityName(it) === entity);
+  const item = bucket.find(it => entityId(kind, it) === entity);
   if (!item) {
     return { ok: false, reason: `${kind} 里没有「${entity}」`, tail };
   }
@@ -156,7 +164,7 @@ export function resourceEntries(contracts) {
         continue;
       }
       list.forEach((node, i) => {
-        const key = entityName(node);
+        const key = String(node?.key ?? '').trim();
         if (!key) {
           problems.push(`contracts.yaml 的 resource_keys.${module}.${category} 第 ${i + 1} 条：没有 key——资源条目按 key 认，引用写作 resource_keys.<模块>.<分类>.<key>，must 按这个引用挂`);
           return;
@@ -172,8 +180,7 @@ export function resourceEntries(contracts) {
 export function contractFiles(contracts) {
   const out = new Set();
   for (const it of asArray(contracts?.files)) {
-    const n = entityName(it);
-    if (n) out.add(n.replace(/\\/g, '/'));
+    if (typeof it === 'string' && it) out.add(it.replace(/\\/g, '/'));
   }
   for (const kind of ['data_models', 'interfaces', 'components']) {
     for (const it of asArray(contracts?.[kind])) {

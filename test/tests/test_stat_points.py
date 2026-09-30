@@ -98,7 +98,7 @@ CONDITIONAL = """保存结果进统计。失败原因必须保留，拒绝时带
 | 保存结果 | 点保存 | 成功、拒绝 |
 """
 
-CONTRACTS = {"interfaces": [{"name": "SaveService", "methods": [
+CONTRACTS = {"interfaces": [{"class": "SaveService", "methods": [
     {"name": "save", "description": "统计点「保存结果」：成功报成功；拒绝报拒绝并带拒绝码与失败原因"}, {"name": "load"}]}]}
 
 ACCEPTANCE = {"criteria": [{"id": "AC-001", "description": "拒绝时上报拒绝码", "verification_steps": ["触发一次拒绝"],

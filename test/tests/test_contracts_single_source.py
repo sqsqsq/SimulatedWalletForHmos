@@ -22,7 +22,7 @@ CONTRACTS_MJS = DEV_EXT / "hooks" / "shared" / "contracts.mjs"
 FEATURE = "AR90001"
 
 CONTRACT_YAML = """interfaces:
-  - name: 甲模块
+  - class: 甲模块
     file: src/a.ets
     methods:
       - name: read
@@ -39,7 +39,7 @@ class TestContractsSingleSource(unittest.TestCase):
             "const m=await import(pathToFileURL(process.argv[1]).href);"
             "const r=m.phaseArtifacts(process.argv[2], process.argv[3], 'plan');"
             "console.log(JSON.stringify({exists:r.contracts!==null,"
-            "names:(r.contracts?.interfaces??[]).map(x=>x.name)}));")
+            "names:(r.contracts?.interfaces??[]).map(x=>x.class)}));")
         proc = subprocess.run(
             [self.node, "--input-type=module", "-e", script, "--",
              str(CONTRACTS_MJS), str(root), FEATURE],

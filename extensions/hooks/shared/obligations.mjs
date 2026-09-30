@@ -18,7 +18,7 @@
  * `verify` 的封闭取值：这处落点的证据由谁取。`ut / device / both` 是实机，`review` 只由 verifier 判。
  * 探针不在其中——它随规约走，coding 对形态匹配的每处落点自动跑，不是作者为某处落点做的选择。
  */
-import { resourceEntries } from './contracts.mjs';
+import { entityId, resourceEntries } from './contracts.mjs';
 
 const VERIFY_KINDS = ['ut', 'device', 'both', 'review'];
 
@@ -39,7 +39,8 @@ export function verifyProblem(entry, verify) {
 }
 
 const arr = (v) => (Array.isArray(v) ? v : []);
-const name = (it) => String(it?.name ?? it?.path ?? it?.key ?? '').trim();
+/** 成员（字段、方法、状态）的原生名；实体本身的身份按 `entityId` 取。 */
+const name = (it) => String(it?.name ?? '').trim();
 
 function mustOf(node) {
   return arr(node?.must).filter(m => m && typeof m === 'object');
@@ -69,20 +70,21 @@ export function obligationsFromContracts(contracts) {
   };
 
   const fileOf = it => (it?.file ? String(it.file).replace(/\\/g, '/') : null);
-  for (const dm of arr(contracts?.data_models)) {
+  // 缺原生身份的实体不拼地址，由 unidentifiedCarriers 点名
+  for (const dm of arr(contracts?.data_models).filter(x => entityId('data_models', x))) {
     for (const f of arr(dm.fields)) {
-      push(f, 'data_models', `data_models.${name(dm)}.${name(f)}`, fileOf(dm));
+      push(f, 'data_models', `data_models.${entityId('data_models', dm)}.${name(f)}`, fileOf(dm));
     }
   }
-  for (const itf of arr(contracts?.interfaces)) {
+  for (const itf of arr(contracts?.interfaces).filter(x => entityId('interfaces', x))) {
     for (const me of arr(itf.methods)) {
-      push(me, 'interfaces', `interfaces.${name(itf)}.${name(me)}`, fileOf(itf));
+      push(me, 'interfaces', `interfaces.${entityId('interfaces', itf)}.${name(me)}`, fileOf(itf));
     }
   }
-  for (const c of arr(contracts?.components)) {
-    push(c, 'components', `components.${name(c)}`, fileOf(c));
+  for (const c of arr(contracts?.components).filter(x => entityId('components', x))) {
+    push(c, 'components', `components.${entityId('components', c)}`, fileOf(c));
     for (const st of arr(c.state)) {
-      push(st, 'components', `components.${name(c)}.state.${name(st)}`, fileOf(c));
+      push(st, 'components', `components.${entityId('components', c)}.state.${name(st)}`, fileOf(c));
     }
   }
   for (const e of resourceEntries(contracts).entries) {
@@ -100,14 +102,14 @@ export function obligationsFromContracts(contracts) {
 export function misplacedMust(contracts) {
   const bad = [];
   for (const dm of arr(contracts?.data_models)) {
-    if (mustOf(dm).length) bad.push(`contracts.yaml 的 data_models.${name(dm)} 顶层挂了 must，data_models 的 must 位置是 fields[]`);
+    if (mustOf(dm).length) bad.push(`contracts.yaml 的 data_models.${entityId('data_models', dm)} 顶层挂了 must，data_models 的 must 位置是 fields[]`);
   }
   for (const itf of arr(contracts?.interfaces)) {
-    if (mustOf(itf).length) bad.push(`contracts.yaml 的 interfaces.${name(itf)} 顶层挂了 must，interfaces 的 must 位置是 methods[]`);
+    if (mustOf(itf).length) bad.push(`contracts.yaml 的 interfaces.${entityId('interfaces', itf)} 顶层挂了 must，interfaces 的 must 位置是 methods[]`);
   }
   for (const key of ['modules', 'navigation', 'state_management', 'integration_points']) {
     for (const it of arr(contracts?.[key])) {
-      if (mustOf(it).length) bad.push(`contracts.yaml 的 ${key}.${name(it)} 挂了 must，${key} 不在允许挂 must 的实体里`);
+      if (mustOf(it).length) bad.push(`contracts.yaml 的 ${key}.${entityId(key, it)} 挂了 must，${key} 不在允许挂 must 的实体里`);
     }
   }
   const rk = contracts?.resource_keys;
@@ -130,6 +132,24 @@ export function misplacedMust(contracts) {
 }
 
 /**
+ * 挂着 `must` 或 `pattern_roles` 却缺原生身份的实体：接口缺 `class`，数据模型、组件缺 `name`。
+ * 义务与角色的地址由身份拼出，这些实体上的义务与角色不进 `obligationsFromContracts` / `patternRolesFromContracts`，在这里点名。
+ */
+export function unidentifiedCarriers(contracts) {
+  const bad = [];
+  for (const [kind, members] of [['data_models', ['fields']], ['interfaces', ['methods']], ['components', ['state']]]) {
+    arr(contracts?.[kind]).forEach((it, i) => {
+      const carries = mustOf(it).length || arr(it?.pattern_roles).length || members.some(k => arr(it?.[k]).some(m => mustOf(m).length));
+      const field = kind === 'interfaces' ? 'class' : 'name';
+      if (carries && !entityId(kind, it)) {
+        bad.push(`contracts.yaml 的 ${kind} 第 ${i + 1} 项没有 ${field}，却挂着 must 或 pattern_roles——原生按 ${field} 认这个实体，义务与角色的地址由它拼出`);
+      }
+    });
+  }
+  return bad;
+}
+
+/**
  * 模式采用的结构投影：真实承担角色的 `components` / `interfaces` / `data_models` 实体上的
  * `pattern_roles: [{pattern, role, decision_id}]`，以实体的原生名定位，实现文件取实体自己的 `file`。
  *
@@ -138,14 +158,14 @@ export function misplacedMust(contracts) {
 export function patternRolesFromContracts(contracts) {
   const out = [];
   for (const kind of ['components', 'interfaces', 'data_models']) {
-    for (const it of arr(contracts?.[kind])) {
+    for (const it of arr(contracts?.[kind]).filter(x => entityId(kind, x))) {
       for (const pr of arr(it?.pattern_roles)) {
         out.push({
           pattern: String(pr?.pattern ?? '').trim(),
           role: String(pr?.role ?? '').trim(),
           decisionId: String(pr?.decision_id ?? '').trim(),
-          entity: name(it),
-          entityPath: `${kind}.${name(it)}`,
+          entity: entityId(kind, it),
+          entityPath: `${kind}.${entityId(kind, it)}`,
           path: it?.file ? String(it.file).replace(/\\/g, '/') : null,
         });
       }

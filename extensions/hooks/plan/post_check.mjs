@@ -18,11 +18,11 @@ import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { carriedBy, entryOf, featureKnowledge, rolesOf } from '../shared/knowledge-application.mjs';
-import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, verifyProblem }
+import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, unidentifiedCarriers, verifyProblem }
   from '../shared/obligations.mjs';
 import { readTextOrNull } from '../shared/paths.mjs';
 import { designStatPoints, planStatRows, pointKey } from '../shared/stat-points.mjs';
-import { phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
+import { entityId, phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 
 /**
@@ -80,7 +80,7 @@ function statProblems(inputs, design, contracts, group) {
   }
   if (!contracts) { group.skipped.push({ what: '责任方法', why: '契约读不到' }); return; }
   const list = (x) => (Array.isArray(x) ? x : []);
-  const declared = new Set(list(contracts.interfaces).flatMap(i => list(i?.methods).map(m => `${i?.name}.${m?.name}`)));
+  const declared = new Set(list(contracts.interfaces).flatMap(i => list(i?.methods).map(m => `${entityId('interfaces', i)}.${m?.name}`)));
   const seen = new Map();
   for (const r of rows) {
     const k = (seen.get(pointKey(r.point)) ?? 0) + 1;
@@ -118,7 +118,7 @@ export default guard('plan', async (ctx) => {
     for (const bad of misplacedMust(contracts)) {
       contract.problems.push(`${bad}——must 的挂载位置是封闭集合（data_models[].fields[]、interfaces[].methods[]、components[] 及其 state[]、resource_keys 的资源条目），coding 只从这些位置读义务`);
     }
-    contract.problems.push(...resourceEntries(contracts).problems);
+    contract.problems.push(...unidentifiedCarriers(contracts), ...resourceEntries(contracts).problems);
   }
   const noContract = contracts ? null : inputs.why;
 
