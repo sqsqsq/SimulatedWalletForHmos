@@ -1245,6 +1245,53 @@ class RegisteredCase(UpdateCase):
     BUILD = StoryIsRegisteredAgainAfterChanges.BUILD
 
 
+
+class TheUpdateRoundRunsEndToEnd(RegisteredCase):
+    """update 的正常第二段串成一条：新材料 → 报输入、问一次补料 → 开轮 → 新料登记进本轮 → reopen 由人确认范围
+    → 冻结新输入 → 设计按它同步 → 重新独立审查并登记 → 收口。只测协议与状态，不假装模型的语义；
+    每一步都是新起的进程，中途断开后从盘上的状态接着走（跨会话就是重载已有状态）。"""
+
+    def test_the_whole_round(self) -> None:
+        contract = lambda: json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+        status = lambda: self.flow("status")
+        # 上游材料出了新版
+        prd = self.feature_root / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n改版：余额刷新失败要提示用户。\n", encoding="utf-8")
+        # 先报输入，在材料关卡问一次要不要补料；人说就这些
+        self.assertEqual("inputs", self.update("--action", "inputs")["stage"])
+        write_gaps(self.src)
+        self.assertEqual("accepted", answer(self.flow, "material_scope", "不补，材料就这些", "--chosen", "confirm_scope")["outcome"])
+        rid = self.update("--result", "documents")["update"]
+        self.assertEqual(rid, contract()["update"]["open"])
+        # 改版的材料登记进本轮，不开新轮
+        rounds = len(contract()["rounds"])
+        self.assertEqual("refresh_round", status()["next"])
+        self.flow("round")
+        self.assertEqual(rounds, len(contract()["rounds"]))
+        # 要重拍范围：reopen 由人在范围关卡确认；这一轮 update 照旧开着
+        self.assertEqual("await_gate:scope_decision", self.flow("reopen").get("next"))
+        self.assertEqual(rid, self.flow("update", "--action", "status")["open"], "重载状态：开着的这一轮还在")
+        answer(self.flow, "scope_decision", "还是整体承载", "--chosen", "carry_all")
+        # 按新料改提取稿、冻结新一版输入（带这次人签），设计按它同步蓝图并重新准入
+        draft = self.src / "design-draft.md"
+        draft.write_text(draft.read_text(encoding="utf-8") + "\n按改版稿补了失败提示。\n", encoding="utf-8")
+        (self.src / "design-input.json").write_text(json.dumps(design_kit.design_input(self.src), ensure_ascii=False),
+                                                    encoding="utf-8")
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertEqual("complete", done.get("status"), done)
+        self.assertEqual("design_blueprint", status()["next"], "输入换了版本，蓝图还没按它同步")
+        StoryIsRegisteredAgainAfterChanges.design_syncs(self)
+        self.assertEqual("register_story", status()["next"])
+        # 收口前要按当前设计重新登记：没登记不收口
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        self.assertIn("重新登记", self.update("--action", "close").get("error", ""))
+        self.assertTrue(StoryIsRegisteredAgainAfterChanges.register(self).get("success"), self.outputs[-1])
+        closed = self.update("--action", "close")
+        self.assertEqual("closed", closed.get("status"), closed)
+        self.assertEqual({"open": None, "last_closed": rid}, contract()["update"])
+        self.assertEqual("story_written", contract()["status"])
+
+
 class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
     """评审人对设计议题的意见在 update 里交给蓝图负责方：挂在有设计目标的议题上、带本轮记下的原话、
     指向成文登记时评审的蓝图版本；原生只判够不够格，处理之前一律「待处理」。"""

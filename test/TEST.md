@@ -223,10 +223,10 @@ python test/scripts/run_multi_case.py watch --suite-id story-suite-20260822-1400
 
 | kind | 到达的判据（`test/scripts/end_target.py`，只读原生对象） |
 |---|---|
-| `story` | 需求已登记成文，只读交付门 `story-build check --deliver` 通过；不要求 Spec/Plan 或施工单位 |
+| `story` | 需求已登记成文，交付门 `story-build check --deliver` 通过——它只读已做过的独立审查结论，不重跑检查、不写报告；不要求 Spec/Plan 或施工单位 |
 | `blueprint` | 蓝图已准入，评审投影与这一版有效；不创建 Story、不要求施工单位 |
 | `design_handoff` | 蓝图已准入，至少一个活动施工单位，且每个都被原生判为可施工；不要求施工 |
-| `phase` | 在 `design_handoff` 之上，每个活动施工单位在终点及之前各阶段：完成回执正式收口，或原生判定该阶段无需产出（合法复用） |
+| `phase` | 在 `design_handoff` 之上，每个活动施工单位在终点及之前各阶段：冻结范围要执行的，原生完成证据身份相符、收口且质量结论 PASS，认定到达时阶段物证仍新鲜；不执行的，必需义务由原生承接证据满足（合法复用），或义务全部不适用 |
 
 蓝图取需求流程契约里的设计关联；直接走 Framework 的 Case 在 `case.yaml` 显式写 `blueprint_id`。有一个施工单位没到，整单就没到。
 `end_at` 决定驱动器的推进目标、跑哪几个 gate（需求交付门，加每个施工单位每个负责阶段的 `harness_<阶段>@<施工单位>`）。
@@ -239,10 +239,10 @@ python test/scripts/run_multi_case.py watch --suite-id story-suite-20260822-1400
 | 字段 | 说的是 |
 |---|---|
 | `end_at` / `target_closed` | 本轮终点；按 §4.1 的判据到没到 |
-| `target_missing` | 差什么：交付门的原话、蓝图准入与投影、缺施工单位或设计判定、某施工单位某阶段的原生问题或缺的凭证 |
-| `blueprint_id` / `units` | 需求关联的蓝图；逐施工单位的身份、设计判定与各负责阶段的结论（`closed` / `reused` / `open`） |
+| `target_missing` | 差什么：交付门的原话、蓝图准入与投影、缺施工单位或设计判定、执行范围没冻结、某施工单位某阶段的完成证据、质量结论、物证新鲜度或承接证据 |
+| `blueprint_id` / `units` | 需求关联的蓝图；逐施工单位的身份、设计判定与各负责阶段的结论（`closed` / `reused` / `not_applicable` / `not_in_scope` / `open`）及原生事实 |
 | `story_registered` | 需求成文登记过没有 |
-| `beyond_target_evidence` | 终点之后的阶段有没有真实产物（`<阶段>@<施工单位>`，施工单位真建了产物才非空） |
+| `beyond_target_evidence` | 诊断：终点之后的阶段目录里看得到文件（`<阶段>@<施工单位>`），不认完成 |
 
 | 看到 | 做什么 |
 |---|---|

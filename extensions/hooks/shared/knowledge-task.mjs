@@ -27,7 +27,7 @@ const BLUEPRINT_ACTIONS = ['discovery', 'design', 'questioning'];
 const FEATURE_ACTIONS = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 const AUDIENCES = ['author', 'reviewer'];
 /** 上下篇知识：上篇给设计侧（需求与设计动作），下篇给实现侧。 */
-const DESIGN_SIDE = new Set(['discovery', 'design', 'questioning', 'spec']);
+const DESIGN_SIDE = new Set(['discovery', 'design', 'questioning']);
 
 class TaskError extends Error {}
 const stop = (object, gap, owner) => { throw new TaskError(`对象：${object}\n缺口：${gap}\n责任：${owner}`); };

@@ -403,12 +403,13 @@ modes:
     approved_by: 用户（2026-09-04 裁定，见 reviews/10 §7）
     reason: >
       同 P02，落在 plan 侧：由 plan overlay 的 `knowledge_obligation_substance` 判
-      ——那一章的设计里是否真的因为这条义务多出了字段、方法、状态或校验。
+      ——挂着义务（`must`，带 decision_id）的实体在本需求里是否真的因为这条义务多出了字段、方法、状态或校验。
+      2026-10-01 按 2.0.0 步骤 4 阶段评审 §5 改适用面：义务挂在契约实体上、出自蓝图的知识应用决定，不再有知识冻结块。
     found_round: "2026-08-24"
-    form: plan 冻结的 obligation 是规约原文改写，没有本需求的设计结论
+    form: plan 里挂在实体上的 must 是规约原文改写，没有本需求的设计结论
     clause: B1-10 / B1-12 / B1-14
     target: product
-    applicable_when: 存在 contracts.yaml 知识冻结块
+    applicable_when: 契约实体上挂有出自知识应用决定的 must
     severity: BLOCKER
     status: fixed
 
@@ -431,13 +432,13 @@ modes:
     found_round: "2026-09-25"
     form: plan 的设计输入（项目知识、规约、设计模式）没有写成宿主扩展锚点「9. 宿主扩展」的下一级小节，或缺其中之一
     clause: 1.9.6 宿主扩展归位与埋点分工 02
-    checker: p06_knowledge_decision_outside_anchor
     target: product
-    bad_fixture: test/fixtures/failure-modes/P06-knowledge-decision-outside-anchor/bad
-    good_fixture: test/fixtures/failure-modes/P06-knowledge-decision-outside-anchor/good
     applicable_when: 存在 plan/plan.md
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 维护设计者，2026-10-01，2.0.0 步骤 4 阶段评审 §5
+    reason: >
+      固定的 plan「9. 宿主扩展」三节已没有消费者：2.0 的设计输入在蓝图里成立，知识送达由动作前知识任务、施工单位承接由契约实体上的 must / pattern_roles 与 plan 门禁验证。
 
   - id: P07-rule-ids-in-story-body
     dimension: readability
@@ -555,25 +556,25 @@ modes:
     found_round: "2026-08-25"
     form: 有命中条件的规约域没先判域，对着域内条目逐条写「不涉及」——判定负担照旧，时机判断没做
     clause: B1-13「条件域先判域，常驻域逐条」
-    checker: p15_domain_gating_not_applied
     target: product
-    bad_fixture: test/fixtures/failure-modes/P15-domain-gating-not-applied/bad
-    good_fixture: test/fixtures/failure-modes/P15-domain-gating-not-applied/good
     applicable_when: 存在 AR/story-src/knowledge.json 且激活清单里有条件域
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 维护设计者，2026-10-01，2.0.0 步骤 4 阶段评审 §5
+    reason: >
+      读 AR/story-src/knowledge.json 与「条件域先判域」的旧状态已退出：知识按各文件的 applies_when 送达，适用与否由蓝图里逐条的知识应用决定承担，不再有域级判定状态。
   - id: P16-spec-exit-diverges-from-registry
     dimension: knowledge
     found_round: "2026-08-25"
     form: 规格件出口章的要求与判定登记件同编号结论不同文，同一条要求出现两个版本且都没人报错
     clause: B1-14「出口章与登记源同文」
-    checker: p16_spec_exit_diverges
     target: product
-    bad_fixture: test/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/bad
-    good_fixture: test/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/good
     applicable_when: 存在 AR/story-src/knowledge.json 与 spec/spec.md 的约束要求表
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 维护设计者，2026-10-01，2.0.0 步骤 4 阶段评审 §5
+    reason: >
+      Spec 出口章与 knowledge.json 同文的双载体已退出：精确投影由蓝图到 Story 附录（机器区与真源一致），施工义务由知识应用决定到契约实体与验收承接，相应回归保留。
 
   - id: P17-landing-md-yaml-mismatch
     dimension: knowledge
@@ -784,22 +785,18 @@ modes:
   - id: R04-flow-status-after-s5
     dimension: content
     found_round: "2026-08-28"
-    form: spec 的流程契约门禁把 S5 之后的状态判成「未收口」，回头拦住自己的产物——
-      四个已合法闭环的阶段被 upstream_verdict_gate 级联判红
-    clause: KR-4b / 实跑 story-suite-20260828-191953
+    form: 需求级流程状态不幂等——走到成文登记之后，重复查询或重复登记改变了状态、换了身份或写了文件，reopen 之后却没有进入待同步
+    clause: KR-4b / 实跑 story-suite-20260828-191953；2.0.0 步骤 4 阶段评审 §5 改锁现行流程
     checker: r04_flow_status_after_s5
     target: mechanism
-    bad_fixture: test/fixtures/failure-modes/R04-flow-status-after-s5/bad
-    good_fixture: test/fixtures/failure-modes/R04-flow-status-after-s5/good
+    self_check: internal
     applicable_when: always
     severity: BLOCKER
     status: fixed
     scope_note: >
-      「已收口」是一段区间不是一个值：契约状态机 complete →（spec）→ story_written → archived，
-      门禁问的是「进 spec 之前范围定了没有」，complete 之后每个状态都满足。
-      写成等于 complete，S5 一登记成文态，spec harness 重跑就 FAIL。
-      本条由真实实跑撞出来（AR90004 走完 S5 后四阶段集体翻红），夹具取自那次的真实契约、去掉单号字面。
-      bad = status init（真没收口，必须报）；good = status story_written（S5 已登记，不许报）。
+      「到没到某个点」是一段区间不是一个值：complete（交给设计）→ 设计准入 → story_written（成文登记）。
+      检查器在 R01 好样本的副本上用真实流程命令走一遍：每一步连查两次 status 结果相同、第二次不再写入（停在关卡时第一次写问法侧车），
+      同一份对象重复登记不换身份，reopen 之后进行中、交付门拦住。
 
   - id: C01-story-conservation
     dimension: content

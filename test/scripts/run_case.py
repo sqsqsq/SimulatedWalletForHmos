@@ -308,96 +308,10 @@ def phase_before(phase: str) -> str | None:
     return "story" if idx == 0 else PHASE_ORDER[idx - 1]
 
 
-VERIFIER_REPORT_PATTERNS = (
-    # 现协议：报告由 SubagentStop 钩子从 verifier 的终态消息生成，按 subject 分区落盘。
-    # 这两条不加，闭环判定会把**已经闭环**的阶段判成未闭环——驱动器于是反复下发
-    # 同一条推进指令，模型按规则拒绝重跑，空转到没人叫停为止（旧协议下实测过 27 轮）。
-    "verifier.report.*.json",
-    "verifier.report.*.md",
-    # 以下是历史命名。这里与扩展机制层**不同**：机器裁决的真源只能有一个（扩展只认
-    # 上面那份 JSON），而这里判的是「报告文件在不在」，认一组名字才不会被换名字打断。
-    "verifier.report.md",
-    "verifier-report.yaml",
-    "verifier-report.yml",
-    "verifier-*-result.yaml",
-    "verifier-*.md",
-    "verify-*.md",
-)
-
-
-def verifier_report(root: Path, phase: str):
-    """本阶段的 verifier 产物——认一组文件名，不认单一文件名。`root` 是施工单位（或平铺 Feature）的目录。
-
-    命名由被测流程决定且历史上变过；驱动器把某一个名字当契约，等于把
-    「换了个文件名」变成「阶段永远不闭环」。
-    """
-    reports = root / phase / "reports"
-    if not reports.is_dir():
-        return None
-    for pattern in VERIFIER_REPORT_PATTERNS:
-        for hit in sorted(reports.glob(pattern)):
-            if hit.is_file():
-                return hit
-    return None
-
-
-def phase_evidence_complete(root: Path, phase: str) -> tuple[bool, list[str]]:
-    """一个施工单位的一个阶段是否已经闭环——续跑与目标终点的共同判据。`root` 是施工单位的目录（原生身份给出）。
-
-    **不用 `check-receipt` 的退出码**：它还会比对 `summary.source_commit_sha` 与当前
-    HEAD，HEAD 一推进就判「summary 属旧工作状态」。那条判据对**继续开发**是对的
-    （代码变了，旧结论可能不成立），但对**续跑测试**是错的——我们要确认的是
-    「上游确实跑完并闭环过」，不是「自那以后没人提交过」。拿它当阻断条件，
-    等于要求测试期间全仓静止。
-
-    所以不重跑 check-receipt，而读取它已经定稿进 summary 的 `receipt_status/closure_status`；
-    同时仍要求 trace、summary、verifier 与回执四件物理凭证存在。这样 HEAD 后续移动不会
-    抹掉“当时已闭环”的历史事实，未填写或未通过的回执也不会因文件占位而被误算成 closed。
-    """
-    base = root / phase
-    checks = {
-        "trace.json": base / "reports" / "trace.json",
-        "summary.json": base / "reports" / "summary.json",
-        "完成回执": base / "phase-completion-receipt.md",
-    }
-    missing = [name for name, path in checks.items() if not path.is_file()]
-    # verifier 报告的**文件名不是契约**：同一份内容曾落成 verifier.report.md 与
-    # verifier-report.yaml 两种命名。驱动器按单一文件名判闭环时，另一种命名会被判成
-    # 「未闭环」→ 反复下发同一条推进指令 → 模型按规则拒绝重跑 → 空转到预算耗尽
-    # （实测一次 27 轮）。所以这里认一组名字，任一存在即算。
-    if not verifier_report(root, phase):
-        missing.append("verifier 报告")
-    if missing:
-        return False, missing
-    try:
-        summary = json.loads(checks["summary.json"].read_text(encoding="utf-8-sig"))
-    except (json.JSONDecodeError, OSError) as exc:
-        return False, [f"summary.json 不可读（{exc}）"]
-    verdict = str(summary.get("verdict", "")).upper()
-    if verdict != "PASS":
-        return False, [f"summary.verdict={verdict or '<缺失>'}（须 PASS）"]
-    receipt_status = str(summary.get("receipt_status", "")).lower()
-    closure_status = str(summary.get("closure_status", "")).lower()
-    if receipt_status != "passed" or closure_status != "closed":
-        return False, [
-            f"formal closure 未完成（receipt_status={receipt_status or '<缺失>'}, "
-            f"closure_status={closure_status or '<缺失>'}）"
-        ]
-    return True, []
-
-
-def phase_was_reached(feature_root: Path, phase: str) -> bool:
-    """该阶段是否真的执行过——判据是**有没有 reports 之外的产物**。
-
-    只有 `reports/` 说明这个阶段只被 harness 空跑过（那正是缺陷 2 留下的痕迹：
-    为没执行过的阶段跑 harness，产出一份 FAIL summary）。
-    对这种阶段再跑一次 harness，得到的 FAIL 不含任何信息——它只说明「没跑过」，
-    而这件事本来就知道；代价却是污染 framework 的全局阶段槽。
-    """
-    root = feature_root / phase
-    if not root.is_dir():
-        return False
-    return any(p.name != "reports" for p in root.iterdir())
+def files_observed(unit_root: Path, phase: str) -> bool:
+    """**诊断**：施工单位的阶段目录里看得到 reports 之外的文件。不认完成、不判复用、不决定门禁跑不跑——那些只读原生事实。"""
+    root = unit_root / phase
+    return root.is_dir() and any(p.name != "reports" for p in root.iterdir())
 
 
 def resume_prompt(feature: str, start_phase: str, end_at: dict, units: list[str]) -> str:
@@ -450,13 +364,6 @@ def phase_index(phase: str) -> int:
             f"[runner] 未知阶段「{phase}」，可用：{' / '.join(PHASE_ORDER)}") from None
 
 
-# 注：曾用 `check-receipt.ts` 的退出码判闭环（那是 framework 自己的判据，不自造，
-# 本来更正确）。但它额外比对 summary.source_commit_sha 与当前 HEAD——这对
-# **继续开发**是对的（代码变了旧结论可能不成立），对**跑测试**却是错的：
-# 测试期间只要有人提交，已闭环的阶段就会被重新算成未闭环，驱动器会一遍遍
-# 指挥模型回去重跑早已做完的阶段。改用 `phase_evidence_complete` 读取已定稿的闭环事实。
-
-
 def resolve_end_at(case: dict, override: str | None = None) -> dict:
     """本轮终点：命令行覆盖优先，其次 Case 的 `end_at`。旧键 `end_phase` 不再认。"""
     if "end_phase" in case:
@@ -472,10 +379,12 @@ def resolve_end_at(case: dict, override: str | None = None) -> dict:
 
 
 def observe_target(feature: str, end_at: dict, case: dict | None, start_phase: str = "story") -> dict:
-    """终点的原生观测（见 end_target.observe）：到没到、缺什么、逐施工单位的身份与各阶段结论。"""
+    """终点的原生观测（见 end_target.observe）：到没到、缺什么、逐施工单位的身份与各阶段结论。
+
+    阶段完成读原生完成证据与执行范围，不跑会写回执的 check-receipt；无关的提交不影响结论，材料与绑定变了才失效（原生新鲜度判）。
+    """
     return end_target.observe(REPO_ROOT, FEATURES_DIR, feature, end_at, case=case,
-                              story_build=str(CFG["gates"]["story_build"]), receipt=phase_evidence_complete,
-                              start_phase=start_phase)
+                              story_build=str(CFG["gates"]["story_build"]), start_phase=start_phase)
 
 
 def story_registered(feature: str) -> bool:
@@ -646,13 +555,13 @@ def closure_facts(feature: str, start_phase: str, end_at: dict, case: dict | Non
     「模型嘴上说了什么」。装置把前者算清楚交出去，后者随 `awaiting_prompt` 走；
     **装置不据模型的散文改阶段、也不据它自动收工**——那又回到了机械判定。
 
-    `beyond_target_evidence` 是把「模型说要往下走」落成事实的那一半：施工单位真建了终点之后阶段的产物时才非空。
+    `beyond_target_evidence` 是诊断：终点之后的阶段目录里看得到文件（`<阶段>@<施工单位>`），不认完成。
     """
     facts = observe_target(feature, end_at, case, start_phase)
     responsible = end_target.responsible_phases(end_at, start_phase)
     later = PHASE_ORDER[PHASE_ORDER.index(end_at["phase"]) + 1:] if end_at["kind"] == "phase" else PHASE_ORDER
     beyond = [f"{phase}@{u['change_unit_id']}" for u in facts["units"] for phase in later
-              if phase_was_reached(REPO_ROOT / str(u.get("feature_path") or ""), phase)]
+              if files_observed(REPO_ROOT / str(u.get("feature_path") or ""), phase)]
     return {
         "end_at": end_target.label(end_at),
         "target_closed": facts["reached"],
@@ -772,12 +681,13 @@ def build_phase_results(feature: str, start_phase: str, gates: dict[str, str],
         reviews = review_closure(unit_root)
         for phase, row in (unit.get("phases") or {}).items():
             key = f"{phase}@{unit['change_unit_id']}"
-            reached = phase_was_reached(unit_root, phase)
+            native = row.get("native") or {}
+            executed = native.get("kind") == "executed" and (native.get("completion") or {}).get("summary")
             output[key] = {
                 "phase": phase, "change_unit_id": unit["change_unit_id"], "feature_id": unit["feature_id"],
                 "applicable": True,
-                "execution_status": "completed" if reached or row["state"] == "reused" else "not_reached",
-                # closed = 回执正式收口；reused = 原生判定这一阶段无需产出；open = 还没闭环
+                "execution_status": ("completed" if executed else row["state"] if row["state"] != "open" else "not_reached"),
+                # closed = 原生完成证据收口且通过；reused = 义务由原生承接证据满足；not_applicable / not_in_scope；open = 还没到
                 "closure_status": row["state"],
                 "closure_missing": row["missing"],
                 # 执行到终点、formal closure 与本轮审查报告是否被采纳是三件事，分开报
@@ -1674,17 +1584,17 @@ def run_gates(feature: str, out_dir: Path, facts: dict, *,
     # 只为**本轮负责且实际到达过**的阶段跑 harness。没执行过的阶段跑出来的 FAIL
     # 只说明“没跑过”，还会污染 framework 的全局阶段槽。
     for unit in facts.get("units") or []:
-        unit_root = REPO_ROOT / str(unit.get("feature_path") or "")
         for phase in facts.get("responsible_phases") or []:
             name = f"harness_{phase}@{unit['change_unit_id']}"
             row = (unit.get("phases") or {}).get(phase) or {}
-            if row.get("state") == "reused":
+            native = row.get("native") or {}
+            if native.get("kind") != "executed":
                 gates[name] = "skipped"
-                diagnostics[name] = {"status": "skipped", "reason": "原生判定这一阶段无需产出（合法复用）"}
+                diagnostics[name] = {"status": "skipped", "reason": f"冻结范围不执行这一阶段（{row.get('state')}）：{'；'.join(row.get('missing') or []) or '原生事实成立'}"}
                 continue
-            if not phase_was_reached(unit_root, phase):
+            if not (native.get("completion") or {}).get("summary"):
                 gates[name] = "skipped"
-                diagnostics[name] = {"status": "skipped", "reason": "阶段没有 reports/ 之外的真实产物"}
+                diagnostics[name] = {"status": "skipped", "reason": "原生没有这一阶段身份相符的完成证据：阶段还没执行完，不为它空跑 harness"}
                 continue
             # **已闭环的阶段不重跑**：harness 每跑一次都重新派生 verifier subject，
             # 跑完 summary 记的就是一个没有报告的 subject——观察动作改了被观察物。
@@ -1693,7 +1603,7 @@ def run_gates(feature: str, out_dir: Path, facts: dict, *,
                 gates[name] = "pass"
                 diagnostics[name] = {
                     "status": "pass", "source": "existing_summary",
-                    "reason": "阶段已闭环（四件凭证齐 + summary 正式收口），读既有结论；"
+                    "reason": "阶段已闭环（原生完成证据身份相符、收口且通过，物证新鲜），读既有结论；"
                               "重跑 harness 会换掉 verifier subject，把被观察的产物改成未闭环",
                 }
                 continue

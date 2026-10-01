@@ -673,58 +673,28 @@ class EndAtTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             rc.resolve_end_at({"id": "c"})
 
-    def test_a_unit_phase_needs_its_formal_closure_or_a_native_reuse(self) -> None:
-        """阶段产物出现不等于闭环；原生输入有问题时回执也不算数；原生判定无需产出才算合法复用。"""
-        root = Path(tempfile.mkdtemp())
-        try:
-            unit = root / "doc" / "features" / "bp" / "cu1"
-            (unit / "spec").mkdir(parents=True)
-            (unit / "spec" / "spec.md").write_text("spec", encoding="utf-8")
-            frozen = {"status": "ok", "scope": "frozen", "issues": [], "required_outputs": ["acceptance.yaml"]}
-            state, missing = end_target.phase_closed(unit, "spec", frozen, rc.phase_evidence_complete)
-            self.assertEqual("open", state)
-            self.assertIn("完成回执", missing)
-            self.assertEqual("reused", end_target.phase_closed(unit, "spec", {**frozen, "required_outputs": []},
-                                                               rc.phase_evidence_complete)[0])
-            reports = unit / "spec" / "reports"
-            reports.mkdir()
-            (reports / "trace.json").write_text("{}", encoding="utf-8")
-            (reports / "verifier.report.md").write_text("PASS", encoding="utf-8")
-            (reports / "summary.json").write_text(
-                json.dumps({"verdict": "PASS", "receipt_status": "passed",
-                            "closure_status": "closed"}), encoding="utf-8")
-            (unit / "spec" / "phase-completion-receipt.md").write_text("ok", encoding="utf-8")
-            self.assertEqual(("closed", []), end_target.phase_closed(unit, "spec", frozen, rc.phase_evidence_complete))
-            stale = {**frozen, "status": "invalid", "issues": ["contracts_invalid：过期"]}
-            self.assertEqual("open", end_target.phase_closed(unit, "spec", stale, rc.phase_evidence_complete)[0])
-            self.assertEqual("open", end_target.phase_closed(unit, "spec", {**frozen, "scope": "not_frozen"},
-                                                             rc.phase_evidence_complete)[0])
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
-
-    def test_no_wall_clock_and_no_turn_budget(self) -> None:
-        """本域不设运行时限、也不设续话轮次上限。
-
-        两者保护的都是「进程失控」，而这里的观测者逐轮驱动、随时可以 stop。
-        实测两次都是限制先到：一次 1h54m 硬超时把正在推进的会话从中间切断，
-        一次 6 轮预算被 story 流程的关卡用光——留下的都是半成品，
-        观测到的既不是能力也不是缺陷。终点只由 end_at 判定。
-        """
-        for gone in ("PHASE_TURNS", "MAX_TURNS", "SOFT_TIMEOUT", "HARD_TIMEOUT"):
-            self.assertFalse(hasattr(rc, gone), f"{gone} 应当已退场")
-        self.assertEqual(0, rc.NO_TIME_LIMIT)
-
-    def test_source_reset_scope_is_enumerated_not_inferred(self) -> None:
-        """源码复位范围必须是**列举**的。
-
-        写成「除 doc/test 之外」那种反向规则，一旦仓库多出一个顶层目录就会被卷进去删——
-        而被测件（doc/extensions）与 harness 自己（test）都在仓库里。
-        漏列一个目录只是少复位一处，多算一个目录是删掉被测对象。
-        """
-        for forbidden in ("doc", "test", "framework", "tools", "output", ""):
-            self.assertNotIn(forbidden, rc.SOURCE_DIRS)
-        self.assertTrue(all(d[:2].isdigit() for d in rc.SOURCE_DIRS),
-                         f"源码目录应是 NN-Name 形态：{rc.SOURCE_DIRS}")
+    def test_phase_state_follows_the_native_facts(self) -> None:
+        """**分支消费**：原生事实 → 阶段结论（真实原生判定见 test_blueprint_case_closure）。"""
+        done = {"summary": True, "closure": True, "verdict": "PASS"}
+        cases = [
+            ({"kind": "executed", "completion": {**done, "summary": False}}, "open", "身份相符"),
+            ({"kind": "executed", "completion": {**done, "closure": False}}, "open", "正式收口"),
+            ({"kind": "executed", "completion": {**done, "verdict": "FAIL"}}, "open", "质量结论是 FAIL"),
+            ({"kind": "executed", "completion": done, "freshness": {"verdict": "stale", "changed_paths": ["a"]}}, "open", "不再新鲜"),
+            ({"kind": "executed", "completion": done}, "closed", None),
+            ({"kind": "executed", "completion": done, "freshness": {"verdict": "fresh"}}, "closed", None),
+            ({"kind": "satisfied", "unsatisfied": [], "issues": []}, "reused", None),
+            ({"kind": "satisfied", "unsatisfied": ["x"], "issues": []}, "open", "没有承接证据"),
+            ({"kind": "satisfied", "unsatisfied": [], "issues": ["x: input binding stale"]}, "open", "input binding stale"),
+            ({"kind": "not_applicable"}, "not_applicable", None),
+            ({"kind": "not_in_scope"}, "not_in_scope", None),
+        ]
+        for native, state, why in cases:
+            with self.subTest(native=native):
+                got, missing = end_target.phase_state("spec", native)
+                self.assertEqual(state, got)
+                if why:
+                    self.assertIn(why, "；".join(missing))
 
 
 class PhaseResultModelTest(unittest.TestCase):
@@ -756,7 +726,9 @@ class PhaseResultModelTest(unittest.TestCase):
     def facts(self, state: str = "closed", missing: list | None = None, phases=("plan",)) -> dict:
         return {"responsible_phases": list(phases), "units": [{
             "change_unit_id": "cu1", "feature_id": "cu-x", "feature_path": "doc/features/bp/cu1", "design": "constructable",
-            "phases": {p: {"state": state, "missing": missing or []} for p in phases}}]}
+            "phases": {p: {"state": state, "missing": missing or [],
+                           "native": {"kind": "executed", "completion": {"summary": True, "closure": state == "closed"}}}
+                       for p in phases}}]}
 
     def test_phase_and_gate_scope_match_start_end(self) -> None:
         self.assertEqual(end_target.responsible_phases({"kind": "phase", "phase": "plan"}), ("spec", "plan"))
@@ -839,62 +811,6 @@ class ResumeFromPhaseTest(unittest.TestCase):
         self.assertEqual(rc.phase_before("plan"), "spec")
         self.assertEqual(rc.phase_before("coding"), "plan")
         self.assertIsNone(rc.phase_before("story"), "从头跑没有前序阶段可校验")
-
-    def test_evidence_check_ignores_head_movement(self) -> None:
-        """前置校验查的是「上游跑完并闭环过」，不是「自那以后没人提交过」。
-
-        `check-receipt` 还会比对 summary.source_commit_sha 与当前 HEAD——那条判据
-        对继续开发是对的（代码变了旧结论可能不成立），对续跑测试却是错的：
-        拿它当阻断条件等于要求测试期间全仓静止。这里读取 summary 已定稿的 formal closure，
-        不因之后一次提交抹掉“当时已闭环”的事实。
-        """
-        root = Path(tempfile.mkdtemp())
-        try:
-            unit = root / "doc" / "features" / "bp" / "cu1"
-            phase_root = unit / "spec"
-            (phase_root / "reports").mkdir(parents=True)
-            for name in ("trace.json", "verifier.report.md"):
-                (phase_root / "reports" / name).write_text("{}", encoding="utf-8")
-            (phase_root / "reports" / "summary.json").write_text(
-                json.dumps({"verdict": "PASS",
-                            "receipt_status": "passed", "closure_status": "closed",
-                            "source_commit_sha": "0000000000000000000000000000000000000000"}),
-                encoding="utf-8")
-            (phase_root / "phase-completion-receipt.md").write_text("ok\n", encoding="utf-8")
-
-            original = rc.REPO_ROOT
-            try:
-                rc.REPO_ROOT = root
-                ok, missing = rc.phase_evidence_complete(unit, "spec")
-            finally:
-                rc.REPO_ROOT = original
-            self.assertTrue(ok, f"四件套与 formal closure 均齐备却被判不齐：缺 {missing}")
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
-
-    def test_evidence_check_still_catches_a_missing_receipt(self) -> None:
-        """放宽的只是 git 时效，凭证缺失照样拦——否则这条校验就白设了。"""
-        root = Path(tempfile.mkdtemp())
-        try:
-            unit = root / "doc" / "features" / "bp" / "cu1"
-            phase_root = unit / "spec"
-            (phase_root / "reports").mkdir(parents=True)
-            for name in ("trace.json", "verifier.report.md"):
-                (phase_root / "reports" / name).write_text("{}", encoding="utf-8")
-            (phase_root / "reports" / "summary.json").write_text(
-                json.dumps({"verdict": "PASS", "receipt_status": "passed",
-                            "closure_status": "closed"}), encoding="utf-8")
-            # 故意不写 phase-completion-receipt.md
-            original = rc.REPO_ROOT
-            try:
-                rc.REPO_ROOT = root
-                ok, missing = rc.phase_evidence_complete(unit, "spec")
-            finally:
-                rc.REPO_ROOT = original
-            self.assertFalse(ok)
-            self.assertIn("完成回执", missing)
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
 
     def test_resume_prompt_does_not_restart_the_pipeline(self) -> None:
         """续跑 prompt 不能复用「执行 /story init …」——那会让模型重跑已完成的阶段。"""
@@ -1155,7 +1071,7 @@ class PhaseSlotTest(unittest.TestCase):
 
 
 class GateScopeTest(unittest.TestCase):
-    """只为**实际到达过**的阶段跑 harness。
+    """门禁执行本身的事实留痕（门禁按原生完成事实选，见 test_driver_deadlock）。
 
     实测教训：终点为 ut 时驱动器为 plan/coding/review/ut 四个从未执行过的阶段
     跑了 harness，13 秒内连产四份 FAIL summary，并把 framework 的全局阶段槽写成 ut，
@@ -1164,20 +1080,6 @@ class GateScopeTest(unittest.TestCase):
     跑一个没有产物的阶段，得到的 FAIL 不含任何信息——它只说明"没跑过"，而这件事
     我们本来就知道。
     """
-
-    def test_phase_without_artifacts_is_skipped(self) -> None:
-        root = Path(tempfile.mkdtemp())
-        try:
-            feature_root = root / "doc" / "features" / "AR90099"
-            (feature_root / "plan" / "reports").mkdir(parents=True)
-            # 只有 reports/（上一轮空跑留下的），没有任何真产物
-            (feature_root / "plan" / "reports" / "summary.json").write_text("{}", encoding="utf-8")
-            self.assertFalse(rc.phase_was_reached(feature_root, "plan"),
-                             "只有 reports/ 不算到达过——那正是空跑留下的痕迹")
-            (feature_root / "plan" / "plan.md").write_text("# plan\n", encoding="utf-8")
-            self.assertTrue(rc.phase_was_reached(feature_root, "plan"))
-        finally:
-            shutil.rmtree(root, ignore_errors=True)
 
     def test_gate_launch_exception_is_a_diagnostic_not_a_silent_crash(self) -> None:
         root = Path(tempfile.mkdtemp())

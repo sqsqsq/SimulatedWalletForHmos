@@ -5,7 +5,7 @@
  */
 import { isSystemRequirement, readJson } from './context.mjs';
 import { basisDriftProblems, designSource } from './design-source.mjs';
-import { reviewResult } from './independent-review.mjs';
+import { verifiedReviewResult } from './independent-review.mjs';
 
 /**
  * 交付门通过之后往哪走 —— 打印这一问的选项，**不替人选**。
@@ -30,7 +30,8 @@ export function deliveryNextSteps(ctx) {
  * 交付门 —— 成文依据还是登记时那一份吗，这一份的独立审查给出可消费的结论了吗。
  *
  * 设计来源不成立、登记之后蓝图 / 输入 / 知识 / 被审文件变了，都拦：登记说的已经不是现在这份。
- * 审查结论只认当前对象的原生审查结果：pass 放行，warn 放行并列出建议，其余照结果拦。
+ * 审查结论只认当前对象已经做过的原生审查结果（只读，不复制回复、不重跑检查）：pass 放行，warn 放行并列出建议，
+ * 其余照结果拦；还没检查过就指回作者跑 `review --action check`。
  *
  * @returns {Promise<{problems: string[], notes: string[]}>}
  */
@@ -42,7 +43,7 @@ export async function deliveryProblems(ctx) {
   const source = designSource(ctx);
   const drift = source.problems.length ? source.problems : basisDriftProblems(ctx);
   if (drift.length) return { problems: drift, notes: [] };
-  const review = await reviewResult(ctx);
+  const review = await verifiedReviewResult(ctx);
   if (review.result === 'pass') return { problems: [], notes: [] };
   if (review.result === 'warn') {
     return { problems: [], notes: [`独立审查带非阻断建议通过，建议照录：${review.advisories.join('；')}`] };

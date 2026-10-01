@@ -24,38 +24,6 @@ import run_case  # noqa: E402
 import run_multi_case  # noqa: E402
 
 
-class VerifierReportNaming(unittest.TestCase):
-    """verifier 产物的**文件名不是契约**：认一组名字，任一存在即算闭环凭证。"""
-
-    def setUp(self):
-        # 运行根换成临时目录：真实运行根是 demo，往里写会留下 demo/doc/features，挡住下一次装配
-        import shutil
-        root = Path(tempfile.mkdtemp(prefix="verifier-naming-"))
-        self.addCleanup(shutil.rmtree, root, True)
-        patcher = unittest.mock.patch.multiple(run_case, REPO_ROOT=root, FEATURES_DIR="doc/features")
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.tmp = root / "doc" / "features" / "ZZTEST9001"
-        self.reports = self.tmp / "spec" / "reports"
-        self.reports.mkdir(parents=True, exist_ok=True)
-
-    def test_recognises_each_known_naming(self):
-        for name in ("verifier.report.md", "verifier-report.yaml",
-                     "verifier-spec-result.yaml", "verifier-spec.md"):
-            for old in self.reports.iterdir():
-                old.unlink()
-            (self.reports / name).write_text("verdict: PASS\n", encoding="utf-8")
-            self.assertIsNotNone(
-                run_case.verifier_report(self.tmp, "spec"),
-                f"{name} 应被认作 verifier 凭证——命名一变就判未闭环会让 Case 空转")
-
-    def test_absent_report_is_missing(self):
-        for old in self.reports.iterdir():
-            old.unlink()
-        self.assertIsNone(run_case.verifier_report(self.tmp, "spec"))
-        ok, missing = run_case.phase_evidence_complete(self.tmp, "spec")
-        self.assertFalse(ok)
-        self.assertIn("verifier 报告", missing)
 
 
 class NoTurnBudget(unittest.TestCase):
@@ -164,6 +132,14 @@ class ObservingDoesNotChangeTheObserved(unittest.TestCase):
     阶段自己定稿的那份 summary 已经回答了「过没过」，读它就够。
     """
 
+    #: 原生事实的几种形状（end_target.observe 给的 `native`），这里只核驱动器怎么按它选门禁
+    NATIVE = {
+        "closed": {"kind": "executed", "completion": {"summary": True, "closure": True, "verdict": "PASS"}},
+        "open": {"kind": "executed", "completion": {"summary": True, "closure": False, "verdict": "PASS"}},
+        "unexecuted": {"kind": "executed", "completion": {"summary": False, "closure": False, "verdict": None}},
+        "reused": {"kind": "satisfied", "obligations": ["design-context:candidate"], "unsatisfied": [], "issues": []},
+    }
+
     def _run_gates(self, *, state: str) -> tuple[dict, list]:
         called = []
 
@@ -172,14 +148,13 @@ class ObservingDoesNotChangeTheObserved(unittest.TestCase):
             return "pass", {"status": "ran"}
 
         facts = {"responsible_phases": ["plan"], "units": [{
-            "change_unit_id": "cu1", "feature_id": "cu-x", "feature_path": "doc/features/bp/cu1",
-            "design": "constructable", "phases": {"plan": {"state": state, "missing": []}}}]}
+            "change_unit_id": "cu1", "feature_id": "cu-x", "feature_path": "doc/features/bp/cu1", "design": "constructable",
+            "phases": {"plan": {"state": "open" if state in ("open", "unexecuted") else state, "missing": [],
+                                "native": self.NATIVE[state]}}}]}
 
         with tempfile.TemporaryDirectory() as d:
             out = Path(d)
-            with unittest.mock.patch.object(run_case, "phase_was_reached",
-                                            lambda *a, **k: True), \
-                 unittest.mock.patch.object(run_case, "run_phase_harness", fake_harness):
+            with unittest.mock.patch.object(run_case, "run_phase_harness", fake_harness):
                 gates = run_case.run_gates("AR90001", out, facts, start_phase="plan")
         return gates, called
 
@@ -198,6 +173,12 @@ class ObservingDoesNotChangeTheObserved(unittest.TestCase):
         """没闭环的照跑：不跑就不知道它过没过，那是另一种失真。"""
         _, called = self._run_gates(state="open")
         self.assertEqual(["plan"], called)
+
+    def test_a_phase_without_native_completion_evidence_is_not_run(self) -> None:
+        """执行链上的阶段还没有身份相符的完成证据：不为它空跑 harness（空跑只产出「没跑过」的 FAIL，还污染全局阶段槽）。"""
+        gates, called = self._run_gates(state="unexecuted")
+        self.assertEqual([], called)
+        self.assertEqual("skipped", gates["harness_plan@cu1"])
 
 
 if __name__ == "__main__":

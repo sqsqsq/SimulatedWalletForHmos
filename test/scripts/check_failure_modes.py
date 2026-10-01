@@ -308,34 +308,6 @@ def load_constraint_entries(knowledge_root: Path | None) -> list[dict]:
     return entries
 
 
-def load_constraint_domains(knowledge_root: Path | None) -> list[dict]:
-    """从知识目录派生规约域及其命中条件（frontmatter 的 applies_when）。
-
-    写 ``always`` 的是常驻域，域内条目逐条判；其余是条件域，先判域再判条目。
-    域前缀从条目编号派生，不吃 frontmatter 里可能缺失的 domain 字段。
-    """
-    out: list[dict] = []
-    if knowledge_root is None or not knowledge_root.exists():
-        return out
-    for path in sorted(knowledge_root.rglob("*.md")):
-        text = read_text(path)
-        if not header_index(text, ["编号", "约束"]):
-            continue
-        fm = re.match(r"^---\r?\n(.*?)\r?\n---", text, flags=re.DOTALL)
-        applies = ""
-        if fm:
-            m = re.search(r"^applies_when\s*:\s*(.*)$", fm.group(1), flags=re.MULTILINE)
-            applies = m.group(1).strip() if m else ""
-        prefixes = {
-            cell(cells, header_index(text, ["编号", "约束"]) or [], "编号").strip().split("-")[0]
-            for _, cells in md_table_rows(text, ["编号", "约束"])
-        }
-        for prefix in sorted(p for p in prefixes if p):
-            out.append({"prefix": prefix, "applies_when": applies, "always": applies == "always",
-                        "file": path.name})
-    return out
-
-
 def sources_for(entry_id: str, entries: list[dict]) -> list[str]:
     out: list[str] = []
     for e in entries:
@@ -1140,14 +1112,6 @@ def _contracts_path(root: Path) -> Path | None:
     return p if p.exists() else None
 
 
-def _plan_path(root: Path) -> Path | None:
-    for rel in ("plan/plan.md", "plan.md"):
-        p = root / rel
-        if p.exists():
-            return p
-    return None
-
-
 def _musts(root: Path) -> list[tuple[str, str]]:
     """契约实体上挂的 must：`(规约编号, 实体路径)`。实体路径按 `interfaces.<接口>.<方法>` 这类形态写。"""
     path = _contracts_path(root)
@@ -1208,25 +1172,6 @@ def p01_appendix_prefix_granularity(root: Path, ctx: Ctx) -> Outcome:
     if bad:
         return Outcome(False, "；".join(bad[:5]))
     return Outcome(True, "附录编号全部到条目级")
-
-@checker
-def p06_knowledge_decision_outside_anchor(root: Path, ctx: Ctx) -> Outcome:
-    """设计输入（项目知识、规约、设计模式）是宿主扩展锚点「9. 宿主扩展」的下一级小节，三节齐全。"""
-    plan = _plan_path(root)
-    if plan is None:
-        return Outcome(True, "无 plan.md（不适用）")
-    heads = [(len(m.group(1)), m.group(2).strip(), i) for i, line in enumerate(split_lines(read_text(plan)))
-             if (m := re.match(r"^(#{1,6})\s+(.+)$", line.strip()))]
-    name = lambda text: re.sub(r"^\d+(?:\.\d+)*\.?\s*", "", text)
-    anchor = next((h for h in heads if h[0] == 2 and name(h[1]).startswith("宿主扩展")), None)
-    if anchor is None:
-        return Outcome(False, "plan.md 缺「9. 宿主扩展」章")
-    end = next((h[2] for h in heads if h[2] > anchor[2] and h[0] <= 2), 10 ** 9)
-    subs = {name(h[1]) for h in heads if anchor[2] < h[2] < end and h[0] == 3}
-    missing = [s for s in ("项目知识", "规约", "设计模式") if s not in subs]
-    if missing:
-        return Outcome(False, f"「9. 宿主扩展」下一级缺：{'、'.join(missing)}")
-    return Outcome(True, "设计输入三节在宿主扩展锚点的下一级")
 
 
 @checker
@@ -1364,77 +1309,6 @@ def p14_image_broken_link(root: Path, ctx: Ctx) -> Outcome:
     if broken:
         return Outcome(False, "图片引用解析不到文件：" + "；".join(broken[:5]))
     return Outcome(True, f"{total} 处图片引用均可解析")
-
-
-@checker
-def p15_domain_gating_not_applied(root: Path, ctx: Ctx) -> Outcome:
-    """有命中条件的规约域，须先做域级判定，不是对着域内条目逐条写「不涉及」。"""
-    registry = _registry(root)
-    if registry is None:
-        return Outcome(True, "无判定登记件（不适用）")
-    domains = load_constraint_domains(ctx.knowledge_root)
-    if not domains:
-        return Outcome(True, "知识目录派生不出规约域（证据不足）")
-    conditional = {d["prefix"]: d for d in domains if not d["always"]}
-    if not conditional:
-        return Outcome(True, "激活的规约域都是常驻域（不适用）")
-    declared = {
-        str(d.get("prefix", "")).strip()
-        for d in registry.get("domains", []) or []
-        if isinstance(d, dict)
-    }
-    listed = {
-        eid.split("-")[0]
-        for c in registry.get("constraints", []) or []
-        if isinstance(c, dict) and (eid := str(c.get("id", "")).strip())
-    }
-    missing = [p for p in conditional if p not in declared and p in listed]
-    if missing:
-        return Outcome(False, "条件域未做域级判定却逐条登记：" + "、".join(sorted(missing)))
-    no_basis = [
-        str(d.get("prefix", ""))
-        for d in registry.get("domains", []) or []
-        if isinstance(d, dict) and not str(d.get("basis", "")).strip()
-    ]
-    if no_basis:
-        return Outcome(False, "域级判定缺依据：" + "、".join(sorted(no_basis)))
-    return Outcome(True, f"{len(conditional)} 个条件域都先判了域")
-
-
-@checker
-def p16_spec_exit_diverges(root: Path, ctx: Ctx) -> Outcome:
-    """规格件的出口章与判定登记件同文——同一条结论只有一份。"""
-    registry = _registry(root)
-    if registry is None:
-        return Outcome(True, "无判定登记件（不适用）")
-    spec = root / "spec" / "spec.md"
-    if not spec.exists():
-        return Outcome(True, "无规格件（不适用）")
-    text = read_text(spec)
-    headers = header_index(text, ["编号", "要求"])
-    if not headers:
-        return Outcome(True, "规格件无约束要求表（不适用）")
-    registered = {
-        str(c.get("id", "")).strip(): str(c.get("conclusion", "")).strip()
-        for c in registry.get("constraints", []) or []
-        if isinstance(c, dict)
-    }
-    diverged: list[str] = []
-    checked = 0
-    for _, cells in md_table_rows(text, ["编号", "要求"]):
-        rid = cell(cells, headers, "编号").strip(" `*")
-        want = registered.get(rid)
-        if not want:
-            continue
-        checked += 1
-        got = cell(cells, headers, "要求")
-        if _norm(got) != _norm(want):
-            diverged.append(f"{rid}（登记「{want[:24]}…」/ 出口「{got[:24]}…」）")
-    if diverged:
-        return Outcome(False, "出口章与登记源不同文：" + "；".join(diverged[:5]))
-    if checked == 0:
-        return Outcome(True, "出口章没有与登记源对应的编号（不适用）")
-    return Outcome(True, f"{checked} 行与登记源同文")
 
 
 @checker
@@ -2517,44 +2391,79 @@ def _self_check_dimensions(text: str) -> list[str]:
 
 @checker
 def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
-    """spec 的流程契约门禁把 S5 之后的状态判成「未收口」，回头拦住自己的产物。
+    """需求级流程状态幂等：走到哪一步，重复查询与重复登记都不改变它，reopen 之后待同步。
 
-    契约状态机是 `complete` →（spec）→ `story_written`（S5 登记）→ `archived`。
-    门禁问的是「进 spec 之前范围定了没有」，`complete` 之后每个状态都满足这个前提；
-    写成「等于 complete」就会在 S5 之后让 spec harness 一重跑就 FAIL，
-    `upstream_verdict_gate` 再把 coding、review 一并判 FAIL——四个已闭环的阶段集体翻红。
+    契约状态机是 `complete`（交给设计）→ 设计准入 → `story_written`（成文登记）。每道判据问的都是「到没到某个点」，
+    写成「等于某个值」会在流程往前走之后反过来拦住自己的产物。这里在 R01 好样本的副本上用真实流程命令走一遍：
+    交给设计、登记成文、重复查询与重复登记、reopen，逐步核状态与重复查询不再写入。正反预期都在这条链里（`self_check: internal`）。
     """
-    feature_root = root / "doc" / "features" / "REQ-DEMO"
-    if not (feature_root / "AR" / "story-src" / "story-flow.json").exists():
-        return Outcome(True, "夹具里没有流程契约（该形态未启用）")
-    script = (
-        "import {pathToFileURL} from 'node:url';"
-        "const m=await import(pathToFileURL(process.argv[1]).href);"
-        "console.log(JSON.stringify(m.flowProblems(process.argv[2])));")
-    check = _ext_file(root, "skills/story/scripts/core/flow/check.mjs")
-    if check is None:
-        check = executor_ext() / "skills" / "story" / "scripts" / "core" / "flow" / "check.mjs"
-    proc = subprocess.run(
-        ["node", "--input-type=module", "-e", script, "--", str(check), str(feature_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-    if proc.returncode != 0:
-        return Outcome(False, f"flowProblems 跑不起来：{(proc.stderr or '')[-200:]}")
-    problems = json.loads(proc.stdout or "[]")
-    unclosed = [p for p in problems if "未收口" in p]
-    if unclosed:
-        return Outcome(False, f"契约被判未收口：{unclosed[0][:120]}")
-    return Outcome(True, f"收口判定正确（其余 {len(problems)} 条与本形态无关）")
+    # 流程命令要在接入了 Framework 的工程里跑：一律取装在被测工程里的扩展，不取开发源目录
+    flow = executor_ext() / "skills/story/scripts/core/story_flow.py"
+    build = executor_ext() / "skills/story/scripts/core/story-build.mjs"
+    feature = "REQ-DEMO"
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / "work"
+        shutil.copytree(REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", work)
+        try:
+            _story_build_in(work, None, feature)
+        except RuntimeError as exc:
+            return Outcome(False, f"交给设计没走通：{str(exc)[:200]}", infra=True)
+        feature_root = work / "doc" / "features" / feature
+        contract = feature_root / "AR" / "story-src" / "story-flow.json"
 
-def _registry(root: Path) -> dict | None:
-    """判定登记件（归档件的知识判定源）。"""
-    path = root / "AR" / "story-src" / "knowledge.json"
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(read_text(path))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"knowledge.json 解析失败：{exc}") from exc
-    return data if isinstance(data, dict) else None
+        def run(*cmd: str) -> subprocess.CompletedProcess:
+            return subprocess.run([*cmd, "--feature", feature, "--project-root", str(work)],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+        def tree() -> dict[str, bytes]:
+            return {p.relative_to(work).as_posix(): p.read_bytes() for p in (work / "doc").rglob("*") if p.is_file()}
+
+        def status_twice(stage: str) -> tuple[dict | None, str]:
+            # 停在关卡时第一次 status 写问法侧车（人看到的选项与 decide 核对的是同一份）；再查一次结果相同、不再写
+            first = run(sys.executable, str(flow), "status")
+            settled = tree()
+            second = run(sys.executable, str(flow), "status")
+            if first.returncode != 0 or second.returncode != 0:
+                return None, f"{stage}：status 报错（{(first.stdout + first.stderr).strip()[:160]}）"
+            got = [json.loads(o.stdout[o.stdout.index("{"):]) for o in (first, second)]
+            if got[0] != got[1]:
+                return None, f"{stage}：连查两次 status 结果不同"
+            if tree() != settled:
+                return None, f"{stage}：重复查询又写了文件"
+            return got[0], ""
+
+        designed, why = status_twice("交给设计之后")
+        if designed is None:
+            return Outcome(False, why)
+        design_fixture.install_review_mechanism(work, executor_ext())
+        prepared = run("node", str(build), "review", "--action", "prepare")
+        if prepared.returncode != 0:
+            return Outcome(False, f"审查准备不了：{(prepared.stdout + prepared.stderr).strip()[:200]}", infra=True)
+        design_fixture.write_review(work, feature, "pass")
+        if run("node", str(build), "review", "--action", "check").returncode != 0:
+            return Outcome(False, "夹具审查结果不可消费", infra=True)
+        registered = run(sys.executable, str(flow), "story")
+        if registered.returncode != 0:
+            return Outcome(False, f"登记成文没成：{(registered.stdout + registered.stderr).strip()[:200]}")
+        written, why = status_twice("登记成文之后")
+        if written is None:
+            return Outcome(False, why)
+        if written.get("status") != "story_written" or written.get("next") != "run_archived":
+            return Outcome(False, f"登记成文之后状态是 {written.get('status')}、下一步 {written.get('next')}，不是成文态与交付")
+        kept = contract.read_bytes()
+        again = run(sys.executable, str(flow), "story")
+        rows = [line for line in again.stdout.splitlines() if line.startswith("{")]
+        if again.returncode != 0 or not rows or json.loads(rows[-1]).get("registered") is not False or contract.read_bytes() != kept:
+            return Outcome(False, "同一份对象重复登记换了身份或改了契约")
+        if run(sys.executable, str(flow), "reopen").returncode != 0:
+            return Outcome(False, "reopen 报错")
+        reopened, why = status_twice("reopen 之后")
+        if reopened is None:
+            return Outcome(False, why)
+        delivered = run("node", str(build), "check", "--deliver")
+        if reopened.get("status") != "in_progress" or delivered.returncode == 0:
+            return Outcome(False, f"reopen 之后状态是 {reopened.get('status')}，交付门{'放行了' if delivered.returncode == 0 else '拦住了'}：应待同步、交付门拦住")
+    return Outcome(True, "交给设计、登记成文、重复查询与重复登记、reopen 待同步都成立")
 
 
 def _norm(text: str) -> str:

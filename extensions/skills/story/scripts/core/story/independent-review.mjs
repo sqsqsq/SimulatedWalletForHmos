@@ -90,46 +90,85 @@ export async function prepareReview(ctx, reportDirArg) {
 }
 
 /**
- * 这一次审查的结果：审的是不是现在这份、回复在不在、原生检查怎么说、报告结论是什么。
+ * 准备时记下的这一次审查，与现在的审查对象、回复对照：审的是不是现在这份、回复在不在。只读。
  *
- * @returns {Promise<{result: string, detail: string, advisories?: string[], report_dir?: string}>}
+ * @returns {Promise<{was?: object, dir?: string, original?: string, outcome?: object}>} `outcome` 在就是提前给出的结果
  */
-export async function reviewResult(ctx) {
+async function preparedReview(ctx) {
   const { request, prepared } = places(ctx);
   const was = readJson(prepared, null);
   if (!was?.material_key) {
-    return { result: 'report_missing', detail: '还没准备这一次的审查——先跑 `story-build review --action prepare`' };
+    return { outcome: { result: 'report_missing', detail: '还没准备这一次的审查——先跑 `story-build review --action prepare`' } };
   }
   const object = reviewObject(ctx.projectRoot, ctx.args.feature);
-  if (object.problems.length) return { result: 'input_invalid', detail: `审查对象不全：${object.problems.join('；')}` };
+  if (object.problems.length) return { outcome: { result: 'input_invalid', detail: `审查对象不全：${object.problems.join('；')}` } };
   if (materialKey(ctx.projectRoot, object.rows) !== was.material_key) {
-    return { result: 'subject_stale', detail: '准备审查之后审查对象变了——审的不是现在这份，重新 prepare，按新材料再审' };
+    return { outcome: { result: 'subject_stale', detail: '准备审查之后审查对象变了——审的不是现在这份，重新 prepare，按新材料再审' } };
   }
   const dir = path.join(ctx.projectRoot, ...String(was.report_dir).split('/'));
   const original = path.join(dir, ORIGINAL);
   if (!fs.existsSync(original)) {
-    return { result: 'report_missing', detail: `审查者的回复不在 ${was.report_dir}/${ORIGINAL}——把独立审查者的回复原样写到那里` };
+    return { outcome: { result: 'report_missing', detail: `审查者的回复不在 ${was.report_dir}/${ORIGINAL}——把独立审查者的回复原样写到那里` } };
   }
-  fs.copyFileSync(original, path.join(dir, WORKING));
+  // 原生 prepare 只算请求身份、不写盘：请求对象与准备时不同就不是这一次的审查
   const again = await nativePrepare(ctx, request, was.report_dir);
-  if (again.error) return { result: 'input_invalid', detail: `原生请求准备不了：${again.error}` };
+  if (again.error) return { outcome: { result: 'input_invalid', detail: `原生请求准备不了：${again.error}` } };
   if (again.prepared.request_sha256 !== was.request_sha256) {
-    return { result: 'subject_stale', detail: '原生请求身份与准备时不同——重新 prepare，按新请求再审' };
+    return { outcome: { result: 'subject_stale', detail: '原生请求身份与准备时不同——重新 prepare，按新请求再审' } };
   }
+  return { was, dir, original };
+}
+
+/** 原生检查留下的 summary 与 script-report 是不是这一次请求的：subject、阶段、请求身份与脚本报告摘要都对得上。 */
+function boundSummary(was, dir) {
+  const summary = readJson(path.join(dir, 'summary.json'), null);
+  const scriptFile = path.join(dir, 'script-report.json');
+  return summary?.subject === 'request' && summary?.completion_target === 'request' && summary?.phase === 'review'
+    && summary?.request_sha256 === was.request_sha256 && fs.existsSync(scriptFile)
+    && summary?.evidence?.script_report_sha256 === sha(fs.readFileSync(scriptFile));
+}
+
+/**
+ * 执行这一次审查的原生检查：把审查者的原回复交给原生 request 检查，归类结论。作者显式跑 `review --action check`、
+ * 登记成文时调用；会写工作报告与原生 summary / script-report。
+ *
+ * @returns {Promise<{result: string, detail: string, advisories?: string[], report_dir?: string}>}
+ */
+export async function reviewResult(ctx) {
+  const { was, dir, original, outcome } = await preparedReview(ctx);
+  if (outcome) return outcome;
+  fs.copyFileSync(original, path.join(dir, WORKING));
+  const { request } = places(ctx);
   let run;
   try {
     run = await explicitRequest(ctx.projectRoot, args(request, was.report_dir, false));
   } catch (e) {
     return { result: 'tool_error', detail: `原生检查出错：${e?.message ?? e}` };
   }
-  const summary = readJson(path.join(dir, 'summary.json'), null);
-  const scriptFile = path.join(dir, 'script-report.json');
-  const current = run.output?.request_sha256 === was.request_sha256 && summary?.subject === 'request'
-    && summary?.completion_target === 'request' && summary?.phase === 'review' && summary?.request_sha256 === was.request_sha256
-    && fs.existsSync(scriptFile) && summary?.evidence?.script_report_sha256 === sha(fs.readFileSync(scriptFile));
-  if (!current) return { result: 'tool_error', detail: `原生检查没有给出这一次请求的合法 summary（${run.text.slice(0, 300)}）` };
+  if (run.output?.request_sha256 !== was.request_sha256 || !boundSummary(was, dir)) {
+    return { result: 'tool_error', detail: `原生检查没有给出这一次请求的合法 summary（${run.text.slice(0, 300)}）` };
+  }
+  return classify(ctx, was, dir);
+}
 
-  const checks = readJson(scriptFile, {}).checks ?? [];
+/**
+ * 读取已经做过的这一次审查的结论，**只读**：不复制回复、不跑原生检查。交付门与状态观察用它。
+ * 原生检查没跑过、或跑过之后回复变了，就说还没有可读的结论，由作者跑 `review --action check`。
+ */
+export async function verifiedReviewResult(ctx) {
+  const { was, dir, original, outcome } = await preparedReview(ctx);
+  if (outcome) return outcome;
+  const working = path.join(dir, WORKING);
+  const checked = fs.existsSync(working) && fs.readFileSync(working).equals(fs.readFileSync(original)) && boundSummary(was, dir);
+  if (!checked) {
+    return { result: 'report_unchecked', detail: '这一次审查的回复还没经原生检查，或检查之后回复变了——跑 `story-build review --action check`' };
+  }
+  return classify(ctx, was, dir);
+}
+
+/** 原生检查结果的归类：执行检查与读取结论共用这一份。 */
+function classify(ctx, was, dir) {
+  const checks = readJson(path.join(dir, 'script-report.json'), {}).checks ?? [];
   // 原生判 FAIL 的，和没有声明不适用却没执行的阻断项，都不是可消费的结论
   const failing = checks.filter(c => c.status === 'FAIL' || (c.status === 'SKIP' && c.severity === 'BLOCKER'
     && c.structured?.applicability !== 'not_applicable'));
