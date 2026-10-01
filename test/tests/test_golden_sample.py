@@ -13,8 +13,6 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
-import json
 import sys
 import tempfile
 import unittest
@@ -22,7 +20,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "test" / "scripts"))
+import golden_design  # noqa: E402
 import golden_workspace  # noqa: E402
+import yaml  # noqa: E402
 GOLDEN = REPO_ROOT / "test" / "golden"
 INPUT_FIXTURE = REPO_ROOT / "test" / "fixtures" / "golden" / "AR90004"
 GOLDEN_STORY = GOLDEN / "story-金样-AR90004.md"
@@ -167,16 +167,13 @@ class GoldenIsFrozen(unittest.TestCase):
 
 
 class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
-    """章首那张时序图同时承接两份上游，两行标记写在同一个围栏里。
+    """章首那张时序图承接系统设计的端到端时序：围栏里一行 `%% 图源 SR §3 #1`。
 
-    「对应」的含义是标记指向它，不是照抄：SR §3 画的端到端时序与 spec §5.1 的
-    流程图讲的是同一件事，金样把它们合成一张、改画成时序——一个围栏、两行标记。
-    这正是「重复来源可以合并」的形态，也是它唯一能被机器核到的形态。
-
-    **只核图对应这一类**：去掉标记后整篇还有别的类会不会报，与这一类无关。
+    正本里同一个围栏还有一行 `spec §5.1 #1`：2.0 的直接上游不再有 spec，那张流程图的各分支由蓝图的场景与运行对象
+    承载（映射表逐分支登记），迁移只删这一行（步骤 4 阶段评审 §4 第 3 条）。**只核图对应这一类**。
     """
 
-    MARKS = "%% 图源 SR §3 #1\n%% 图源 spec §5.1 #1\n"
+    MARK = "%% 图源 SR §3 #1\n"
 
     def diagram_complaints(self, story: str) -> list[str]:
         out = self.check_output(story)
@@ -185,53 +182,91 @@ class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
     def check_output(self, story: str) -> str:
         return workspace_check(story)[1]
 
-    def test_both_upstream_diagrams_are_carried(self) -> None:
+    def test_the_system_design_diagram_is_carried(self) -> None:
         complaints = self.diagram_complaints(
             GOLDEN_STORY.read_text(encoding="utf-8"))
         self.assertEqual([], complaints, "上游有图没被金样带着")
 
-    def test_dropping_the_marks_is_caught(self) -> None:
+    def test_dropping_the_mark_is_caught(self) -> None:
         """去掉标记就该报——不然上一条是在空跑。"""
         story = GOLDEN_STORY.read_text(encoding="utf-8")
-        self.assertIn(self.MARKS, story, "金样的两行标记不在了")
-        complaints = self.diagram_complaints(story.replace(self.MARKS, ""))
-        self.assertEqual(2, len(complaints), f"该报两条，实报 {len(complaints)}：{complaints}")
-        self.assertTrue(any("SR §3" in c for c in complaints))
-        self.assertTrue(any("spec §5.1" in c for c in complaints))
+        self.assertIn(self.MARK, story, "金样的系统设计图源标记不在了")
+        complaints = self.diagram_complaints(story.replace(self.MARK, ""))
+        self.assertEqual(1, len(complaints), f"该报一条，实报 {len(complaints)}：{complaints}")
+        self.assertIn("SR §3", complaints[0])
 
     def test_missing_carry_is_its_own_class_one_line_per_diagram(self) -> None:
         """缺承接归自己的一类「⑫d 上游图承接」，一张图一行——不混进机器区一致性，也不逐张重复写法。"""
-        story = GOLDEN_STORY.read_text(encoding="utf-8").replace(self.MARKS, "")
+        story = GOLDEN_STORY.read_text(encoding="utf-8").replace(self.MARK, "")
         out = self.check_output(story)
-        self.assertIn("[⑫d 上游图承接] 2 处", out)
+        self.assertIn("[⑫d 上游图承接] 1 处", out)
         lines = [l for l in out.split("\n") if "在 story 里没有" in l]
-        self.assertEqual(2, len(lines), lines)
-        self.assertTrue(all("%% 图源" in l for l in lines), "去向写法要在同一行里")
+        self.assertEqual(1, len(lines), lines)
+        self.assertIn("%% 图源", lines[0], "去向写法要在同一行里")
+
+
+class TheMigrationIsRegistered(unittest.TestCase):
+    """正本的旧元数据按映射表迁移（步骤 4 阶段评审 §4）：只动登记过的，没登记的报错；映射指向的蓝图对象真实存在。"""
+
+    def setUp(self) -> None:
+        self.plan = golden_design.mapping()
+        self.story = GOLDEN_STORY.read_text(encoding="utf-8")
+        self.migrated = golden_design.migrate(self.story)
+
+    def test_only_the_registered_lines_change(self) -> None:
+        """删的只有 spec 图源那一行与依赖变更机器区的首尾两行标记，两处图片链接改指登记的原件抽图，其余一个字节不动。"""
+        self.assertIn("%% 图源 SR §3 #1", self.migrated)
+        lines = self.story.split("\n")
+        at = next(k for k, l in enumerate(lines) if l.startswith("<!-- story-build:begin 技术契约·依赖变更 "))
+        end = next(k for k in range(at, len(lines)) if lines[k].startswith("<!-- story-build:end -->"))
+        drop = {lines.index("%% 图源 spec §5.1 #1"), at, end}
+        expected = "\n".join(l for k, l in enumerate(lines) if k not in drop)
+        for ref in self.plan["image_refs"]:
+            self.assertEqual(1, expected.count(f"]({ref['from']})"))
+            expected = expected.replace(f"]({ref['from']})", f"]({ref['to']})")
+        self.assertEqual(expected, self.migrated)
+
+    def test_the_dependency_section_keeps_its_text_as_author_zone(self) -> None:
+        self.assertNotIn("story-build:begin 技术契约·依赖变更", self.migrated)
+        zone = next(z for z in self.plan["zones"] if z["zone"] == "技术契约·依赖变更")
+        for fact in zone["facts"]:
+            self.assertIn(fact, self.migrated)
+
+    def test_an_unregistered_mark_or_zone_fails(self) -> None:
+        with self.assertRaisesRegex(golden_design.MappingError, "没登记"):
+            golden_design.migrate(self.story.replace("%% 图源 SR §3 #1", "%% 图源 SR §9 #1"))
+        with self.assertRaisesRegex(golden_design.MappingError, "没登记"):
+            golden_design.migrate(self.story.replace("story-build:begin 改动边界 ", "story-build:begin 别的区 "))
+        with self.assertRaisesRegex(golden_design.MappingError, "没登记"):
+            golden_design.migrate(self.story.replace("](assets/image1.png)", "](assets/image9.png)"))
+
+    def test_every_mapped_address_exists_in_the_blueprint(self) -> None:
+        blueprint = yaml.safe_load((golden_design.DESIGN / "component-blueprint.yaml").read_text(encoding="utf-8"))
+        addresses = {f"view:{v['view_id']}/node:{n['node_id']}" for v in blueprint["design_views"]
+                     for n in v.get("nodes") or []}
+        refs = [ref for mark in self.plan["diagram_marks"] for b in mark.get("branches", []) for ref in b["blueprint"]]
+        refs += list(self.plan["knowledge_targets"].values())
+        refs += [ref for d in self.plan["story_details"] for ref in d["evidence_refs"]]
+        refs += [ref for z in self.plan["zones"] for ref in z.get("blueprint", []) if ref.startswith("view:")]
+        self.assertTrue(refs)
+        self.assertEqual([], [ref for ref in refs if ref not in addresses])
+
+    def test_stale_zones_do_not_count_as_found(self) -> None:
+        """没重投的 1.x 机器区里的旧事实不算找到。"""
+        self.assertTrue(any("没按蓝图重投" in m for m in golden_design.verify(self.migrated)))
 
 
 class JudgementsDoNotBlockTheGolden(unittest.TestCase):
     """判据改动先跑这一行：拦住金样的判据，错的是判据。"""
 
-    def test_the_spec_gate_accepts_the_golden_inputs(self) -> None:
-        """金样的输入夹具经 spec 门禁：上游编号承接、知识登记、埋点形状都不报。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            golden_workspace.build(root)
-            gate = root / "doc" / "extensions" / "hooks" / "spec" / "post_check.mjs"
-            proc = subprocess.run(
-                ["node", "--input-type=module", "-e",
-                 f"const m = (await import({json.dumps(gate.as_uri())})).default;"
-                 f"const out = await m({{ phase: 'spec', feature: 'AR90004', projectRoot: {json.dumps(root.as_posix())} }});"
-                 "process.stdout.write(JSON.stringify(out));"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        for needle in ("门禁自身异常", "上游材料的验收编号没有承接", "没有篇", "没有面", "manifest_digest",
-                       "缺定义段", "下没有统计点"):
-            self.assertNotIn(needle, proc.stdout)
-
     def test_the_golden_passes_in_its_workspace(self) -> None:
-        code, out = workspace_check()
+        """检查零 FAIL，且映射表登记的每条旧事实在重投后的新输出里都在。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            golden_workspace.build(Path(tmp))
+            code, out = golden_workspace.check(Path(tmp))
+            missing = golden_design.verify(golden_workspace.story(Path(tmp)))
         self.assertEqual(0, code, f"判据拦住了金样——修判据，不修金样：\n{out[:1500]}")
+        self.assertEqual([], missing, "旧事实在新输出里找不到")
 
     def test_the_judgements_actually_run(self) -> None:
         """零 FAIL 要是「真的判过了」，不是「一条都没跑」。

@@ -1530,6 +1530,27 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         out = self.assert_check_names("少了一份材料")
         self.assertIn("inbox/补充说明.docx", out)
 
+    def test_the_original_and_its_conversion_are_one_material(self) -> None:
+        """原件导入后转换出的正文与原件是同一份材料：列原件就够，转换稿不另算一份（金样 AR90004 列的是原件）。"""
+        manifest = self.src / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        prd = next(m for m in data["materials"] if m.get("paths") == ["RR/prd.md"])
+        data["materials"].append({**prd, "paths": ["ux-reference/README.md"]})
+        data["sources"] = [{"file": "补充说明.docx", "ingested": True, "target": "ux-reference/README.md"}]
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        (self.feature_root() / "inbox").mkdir(exist_ok=True)
+        (self.feature_root() / "inbox" / "补充说明.docx").write_bytes(b"DOCX")
+        self.rewrite_story(self.LISTED, self.LISTED + "\n- 补充说明：原文：[补充说明.docx](../inbox/补充说明.docx)")
+        _, out = self.check_output()
+        self.assertNotIn("少了一份材料", out, out[:500])
+        self.assertNotIn("列了不是初始资料的东西", out, out[:500])
+        # 只列转换稿也算列到了这一份
+        self.rewrite_story("[补充说明.docx](../inbox/补充说明.docx)", "[README.md](../ux-reference/README.md)")
+        (self.feature_root() / "ux-reference").mkdir(exist_ok=True)
+        (self.feature_root() / "ux-reference" / "README.md").write_text("x", encoding="utf-8")
+        _, out = self.check_output()
+        self.assertNotIn("少了一份材料", out, out[:500])
+
 
 class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
     """「写没写」可以机械判，「写得够不够」不行。

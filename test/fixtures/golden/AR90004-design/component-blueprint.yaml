@@ -1,0 +1,263 @@
+artifact: component-blueprint@1
+component_id: wallet-main
+blueprint_id: bp-AR90004
+revision: 1
+source_fingerprint: sha256:1111111111111111111111111111111111111111111111111111111111111111
+decision_fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000000
+provenance: &sr
+  source_kind: system_design
+  source_ref: doc/features/AR90004/SR/design.md
+  observed_at: 2026-08-30T10:00:00+08:00
+  evidence_strength: authoritative
+  extraction_method: authorized-current-scope-input
+review_summary:
+  title: 交通卡紧急挂失
+  summary: 钱包端以云侧资格和申请状态为事实源，把一次挂失处理分成加载资格、等待风险确认、身份恢复、冲突恢复、创建或复用申请、确认冻结结果几个业务阶段。
+  authored_by: component-design-author
+  questioning:
+    status: complete
+    provider_id: independent-design-questioning
+    isolated_context: true
+    frontier_budget: 3
+    repeated_frontier_count: 0
+    writes_ssot: false
+    items: []
+  admission:
+    status: pass
+    root_questions_complete: true
+    current_slice:
+      slice_id: cu-emergency-loss
+      contracts_ready: false
+      design_refs_ready: true
+      controlled_fakes: []
+    blocker_refs: []
+design_views:
+  - view_id: logical
+    viewpoint_contract: app-logical@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [product, development]
+    purpose: 交通卡紧急挂失的业务路径与结果交接。
+    current_state: 钱包没有交通卡紧急挂失。
+    target_state: 钱包端以云侧资格和申请状态为事实源，把一次挂失处理分成加载资格、等待风险确认、身份恢复、冲突恢复、创建或复用申请、确认冻结结果几个业务阶段。
+    delta: 新增交通卡紧急挂失业务路径；冻结成功后向补卡单交出冻结凭证与最终冻结状态。
+    decisions_and_gaps: [decision:emergency-loss-scope]
+    verification_refs: [verify:logical]
+    nodes:
+      - node_id: emergency-loss
+        owner: wallet-team
+        current_state: 无交通卡紧急挂失。
+        target_state: 页面根据每一步的业务结果决定下一项操作；需要用户阅读、确认或完成身份时停止自动推进，由新的用户动作继续。
+        provenance: *sr
+        verification_refs: [verify:emergency-loss]
+      - node_id: freeze-handoff
+        owner: wallet-team
+        current_state: 无冻结结果交接。
+        target_state: 云侧确认冻结后，AR90004 将 freezeTicketId 和最终冻结状态交给 AR90005。
+        provenance: *sr
+        verification_refs: [verify:freeze-handoff]
+  - view_id: runtime
+    viewpoint_contract: app-runtime@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [development]
+    purpose: 页面状态与恢复上下文的运行路径。
+    current_state: 无挂失页面与恢复上下文。
+    target_state: 页面对外状态为资格加载、等待风险确认、等待身份、状态冲突、提交中、结果确认中、已冻结、处理中、失败；每条失败只有一个收敛位置。
+    delta: 新增挂失页面状态推进与恢复上下文的保存、校验和清理。
+    decisions_and_gaps: [decision:emergency-loss-scope]
+    verification_refs: [verify:runtime]
+    nodes:
+      - node_id: loss-page-stages
+        owner: wallet-team
+        current_state: 无。
+        target_state: 内部执行步骤不直接作为 UI 状态；每条失败只有一个收敛位置，由页面状态给出重试或客服动作。
+        design_basis_refs: [view:logical/node:emergency-loss]
+        provenance: *sr
+        verification_refs: [verify:loss-page-stages]
+      - node_id: recovery-context
+        owner: wallet-team
+        current_state: 无。
+        target_state: loss_report_recovery_context 按账号隔离，不随备份恢复；最终成功、明确失败、账号变化或超过有效期时清理。
+        design_basis_refs: [view:logical/node:emergency-loss]
+        provenance: *sr
+        verification_refs: [verify:recovery-context]
+  - view_id: development
+    viewpoint_contract: app-development@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [development]
+    purpose: 实现归属与模块边界。
+    current_state: WalletMain 没有挂失入口与卡云适配。
+    target_state: WalletMain 承载挂失入口、挂失页面、状态编排、恢复上下文和卡云适配层；账号、公共 UI、工具与宿主能力用既有出口。
+    delta: 只改 WalletMain。
+    decisions_and_gaps: [decision:emergency-loss-scope]
+    verification_refs: [verify:development]
+    nodes:
+      - node_id: wallet-main-module
+        owner: wallet-team
+        module: WalletMain
+        current_state: 没有交通卡紧急挂失
+        target_state: 新增挂失入口、挂失页面、状态编排、恢复上下文和卡云适配层
+        design_basis_refs: [view:logical/node:emergency-loss]
+        provenance: *sr
+        verification_refs: [verify:wallet-main-module]
+      - node_id: account-manager-module
+        owner: account-team
+        module: AccountManager
+        current_state: 账号的既有提供方
+        target_state: 账号的既有提供方
+        design_basis_refs: [view:logical/node:emergency-loss]
+        provenance: *sr
+        verification_refs: [verify:account-manager-module]
+      - node_id: comm-ui-module
+        owner: ui-team
+        module: CommUI
+        current_state: 公共 UI 的既有提供方
+        target_state: 公共 UI 的既有提供方
+        design_basis_refs: [view:logical/node:emergency-loss]
+        provenance: *sr
+        verification_refs: [verify:comm-ui-module]
+      - node_id: comm-func-module
+        owner: platform-team
+        module: CommFunc
+        current_state: 工具的既有提供方
+        target_state: 工具的既有提供方
+        design_basis_refs: [view:logical/node:emergency-loss]
+        provenance: *sr
+        verification_refs: [verify:comm-func-module]
+      - node_id: phone-module
+        owner: platform-team
+        module: Phone
+        current_state: 宿主能力的既有提供方
+        target_state: 宿主能力的既有提供方
+        design_basis_refs: [view:logical/node:emergency-loss]
+        provenance: *sr
+        verification_refs: [verify:phone-module]
+  - view_id: deployment
+    viewpoint_contract: app-deployment@1
+    applicability: not_applicable
+    applicability_evidence:
+      evidence_refs: [doc/features/AR90004/SR/design.md]
+      disposition: not_applicable
+    stakeholders: [architecture]
+    purpose: 部署拓扑。
+    current_state: 单应用
+    target_state: 单应用
+    delta: none
+    decisions_and_gaps: []
+    verification_refs: [verify:deployment-na]
+    nodes: []
+  - view_id: scenarios
+    viewpoint_contract: app-scenarios@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders: [product]
+    purpose: 紧急挂失的业务分支。
+    current_state: 无。
+    target_state: 资格可用、身份不完整、卡片状态冲突和已存在申请各有自己的查询、上下文校验、外部能力调用、恢复与失败收敛，最终统一映射为用户可理解的页面状态。
+    delta: 新增挂失主路径与各恢复分支。
+    decisions_and_gaps: [decision:emergency-loss-scope]
+    verification_refs: [verify:scenarios]
+    nodes:
+      - node_id: identity-recovery
+        owner: wallet-team
+        current_state: 无。
+        target_state: 账号无效时保存上下文并进入身份恢复，身份返回原检查点后重新加载资格与恢复上下文。
+        logical_refs: [view:logical/node:emergency-loss]
+        runtime_refs: [view:runtime/node:recovery-context]
+        development_owner_ref: view:development/node:wallet-main-module
+        provenance: *sr
+        verification_refs: [verify:identity-recovery]
+      - node_id: existing-application
+        owner: wallet-team
+        current_state: 无。
+        target_state: 存在既有请求或冻结状态时查询既有请求并展示状态；已冻结则展示既有冻结结果并交接，否则回到风险确认。
+        logical_refs: [view:logical/node:emergency-loss, view:logical/node:freeze-handoff]
+        runtime_refs: [view:runtime/node:loss-page-stages]
+        development_owner_ref: view:development/node:wallet-main-module
+        provenance: *sr
+        verification_refs: [verify:existing-application]
+      - node_id: confirm-and-submit
+        owner: wallet-team
+        current_state: 无。
+        target_state: 用户确认风险后保存幂等上下文并提交挂失；未确认则停在风险确认。
+        logical_refs: [view:logical/node:emergency-loss]
+        runtime_refs: [view:runtime/node:loss-page-stages, view:runtime/node:recovery-context]
+        development_owner_ref: view:development/node:wallet-main-module
+        provenance: *sr
+        verification_refs: [verify:confirm-and-submit]
+      - node_id: freeze-result
+        owner: wallet-team
+        current_state: 无。
+        target_state: 卡云返回冻结成功则展示成功并交接 freezeTicketId；待确认或超时展示待确认并保留重试；冻结失败展示失败原因并保留重试与客服。
+        logical_refs: [view:logical/node:emergency-loss, view:logical/node:freeze-handoff]
+        runtime_refs: [view:runtime/node:loss-page-stages]
+        development_owner_ref: view:development/node:wallet-main-module
+        provenance: *sr
+        verification_refs: [verify:freeze-result]
+      - node_id: retry-reuse
+        owner: wallet-team
+        current_state: 无。
+        target_state: 重试先查询既有请求，再回到卡云结果。
+        logical_refs: [view:logical/node:emergency-loss]
+        runtime_refs: [view:runtime/node:recovery-context]
+        development_owner_ref: view:development/node:wallet-main-module
+        provenance: *sr
+        verification_refs: [verify:retry-reuse]
+decisions_and_gaps:
+  decisions:
+    - decision_id: emergency-loss-scope
+      status: decided_with_authority
+      owner: product-owner
+      provenance: *sr
+      verification_refs: [verify:emergency-loss-scope]
+  gaps: []
+relations:
+  - relation_id: loss-implemented-by-wallet-main
+    from: view:logical/node:emergency-loss
+    to: view:development/node:wallet-main-module
+    relation_type: implemented_by
+    owner: wallet-team
+    provenance: *sr
+    verification_refs: [verify:loss-wallet-main-relation]
+contracts: []
+discovery:
+  source_fingerprint: sha256:1111111111111111111111111111111111111111111111111111111111111111
+  facts:
+    - fact_id: fact-financial-card-rdb
+      subject: WalletMain.FinancialCard.BankCardRdbHelper
+      value: 工程已有 FinancialCard/BankCardRdbHelper.ets 作为 relationalStore 参考
+      provenance: *sr
+  conflicts: []
+  inputs:
+    current_scope_items: []
+  requirement_traceability: []
+app_lens:
+  runtime_flow_trigger_assessment:
+    # 六项触发条件按 SR 原文逐条裁决；成立的几项要求运行视图给出 runtime_data_flow
+    persistent_or_remote_ui:
+      applies: true
+      evidence_refs: [doc/features/AR90004/SR/design.md#2-责任矩阵]
+      note: 交通卡云适配层是资格和冻结结果的唯一事实源，页面状态由云侧结果决定。
+    multiple_consumers:
+      applies: true
+      evidence_refs: [doc/features/AR90004/SR/design.md#5-数据状态与恢复]
+      note: 冻结凭证与最终冻结状态交给 AR90005，共享挂失上下文保留到补卡完成或取消。
+    background_system_external_scheduled_write:
+      applies: false
+      evidence_refs: [doc/features/AR90004/SR/design.md#6-配置质量与安全]
+      note: 只由打开、身份回跳、用户重试和重新进入触发；页面停留期间无轮询和后台任务。
+    cold_start_resume_mount_account_switch:
+      applies: true
+      evidence_refs: [doc/features/AR90004/SR/design.md#7-异常与交付协同]
+      note: 页面销毁或重新进入时校验账号、上下文版本和有效期后恢复到安全检查点；账号变化时清理恢复上下文。
+    user_mutation_refreshes_other_consumers:
+      applies: false
+      evidence_refs: [doc/features/AR90004/SR/design.md#3-端到端时序]
+      note: 用户确认后的提交只推进本页面的状态；补卡在冻结确认后经交接读取结果，不由提交动作推送刷新。
+    cache_sync_freshness_consistency_process_recreation:
+      applies: true
+      evidence_refs: [doc/features/AR90004/SR/design.md#6-配置质量与安全]
+      note: 读到旧版或损坏上下文时清理并从资格查询开始，不根据旧缓存展示成功；状态冲突时不用本地缓存覆盖云侧。
+derived_results: []

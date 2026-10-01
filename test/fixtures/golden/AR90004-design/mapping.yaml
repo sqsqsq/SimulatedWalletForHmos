@@ -1,0 +1,172 @@
+# 金样 AR90004 旧元数据 → 2.0 承载的映射表（2.0.0 步骤 4 阶段评审 §4）
+#
+# 每一项写旧位置、承载它的蓝图对象、新输出里的位置；golden_design.migrate / verify 只按这里登记的处理，
+# 没登记的旧图源标记与旧机器区报错。机器派生的精确字段逐字核（facts）；图里业务分支的等价由维护设计者人工对照。
+
+diagram_marks:
+  - mark: "SR §3 #1"
+    action: keep
+    note: 系统设计端到端时序，2.0 的直接上游，标记不动。
+  - mark: "spec §5.1 #1"
+    action: drop_mark
+    story_location: 第 5 章章首时序图，图的参与者与分支原样保留
+    reason: spec 退出 2.0 的上游，这张流程图的内容由蓝图的场景与运行对象承载；只删这一行失效标记。
+    branches:
+      - spec: 加载资格与恢复上下文
+        blueprint: [view:runtime/node:recovery-context, view:runtime/node:loss-page-stages]
+        story: 图中「查询资格与既有申请」
+      - spec: 账号是否有效 → 否 → 保存上下文并进入身份恢复 → 身份返回原检查点 → 重新加载
+        blueprint: [view:scenarios/node:identity-recovery]
+        story: 图中 alt「身份未完成」
+      - spec: 是否存在既有请求或冻结状态 → 查询既有请求并展示状态 → 已冻结则展示既有结果并交接，否则回到风险确认
+        blueprint: [view:scenarios/node:existing-application]
+        story: 图中 else「卡片状态冲突」（刷新状态与既有申请）
+      - spec: 用户是否确认风险 → 是 → 保存幂等上下文并提交挂失
+        blueprint: [view:scenarios/node:confirm-and-submit]
+        story: 图中 else「资格可用」（阅读风险并确认 → 创建或复用申请）
+      - spec: 卡云返回结果 → 冻结成功 / 待确认或超时 / 冻结失败
+        blueprint: [view:scenarios/node:freeze-result, view:logical/node:freeze-handoff]
+        story: 图中「已冻结 / 处理中 / 失败」与「可读结果与恢复动作」
+      - spec: 待确认后重试先查询既有请求，再回到卡云结果
+        blueprint: [view:scenarios/node:retry-reuse]
+        story: 图后要点「提交或查询途中网络中断按 5.4 恢复」
+
+image_refs:
+  # 正本引用的是归档副本 test/golden/assets/imageN.png（1.x 归档时复制进 AR/assets/）；2.0 的图按材料登记认，
+  # 登记的是导入从原件抽出的 assets/紧急挂失界面原型说明/imageN.png。两者逐字节相同（迁移时核指纹），只改链接。
+  - from: assets/image1.png
+    to: ../assets/紧急挂失界面原型说明/image1.png
+  - from: assets/image2.png
+    to: ../assets/紧急挂失界面原型说明/image2.png
+
+zones:
+  - zone: 技术契约·端云接口
+    action: reproject
+    pending: >
+      接口的结构化权威来源待维护设计者核定（步骤 4 阶段评审 §4 第 1 条）：SR §4 给出接口名、输入/输出语义、调用条件与错误行为，
+      没有 DTO 类型、可空性、API 版本与完整 mapping；字段映射与原生缺口见实施反馈。核定前蓝图不建顶层 contracts，这一节的旧事实不核。
+    pending_facts:
+      - "`queryLossEligibility`"
+      - "`createOrReuseLossApplication`"
+      - "`queryFreezeResult`"
+  - zone: 技术契约·数据存储
+    action: reproject
+    blueprint: [story_details:data_policy:detail-loss-recovery-context]
+    facts:
+      - "| `loss_report_recovery_context` | relationalStore | `maskedCardId, accountScopeHash, checkpoint, idempotencyKey, applicationIdDigest, updatedAt` | 最终成功、明确失败、账号变化或超过有效期时清理；补卡协作期按上游共享约定保留 | 页面返回、身份恢复和重试查询时恢复同一流程；按账号隔离且不随备份恢复 |"
+  - zone: 技术契约·配置项
+    action: reproject
+    blueprint: [story_details:configuration:detail-emergency-loss-switch]
+    facts:
+      - "| `traffic_card_emergency_loss_enabled` | `false`（关闭） | 关闭或读取失败时隐藏紧急挂失入口；旧版本读取不到该项时按关闭处理。 |"
+  - zone: 技术契约·依赖变更
+    action: to_author
+    blueprint: [view:development/node:wallet-main-module, view:development/node:account-manager-module, view:development/node:comm-ui-module, view:development/node:comm-func-module]
+    note: 2.0 附录没有依赖变更机器区；原节作为作者区保留原文，结论由开发视图节点（WalletMain 改、其余模块只提供既有出口）承载，在改动边界机器区可查。
+    facts:
+      - "不涉及新增或升级外部依赖：复用 `AccountManager`、`CommUI`、`CommFunc` 的已有出口；卡云适配层由 `WalletMain` 自有代码承载。"
+  - zone: 规约
+    action: reproject
+    blueprint: [decisions_and_gaps.decisions（kind=knowledge_application，逐条）]
+    note: 1.x 的「规约域」列由知识应用决定的来源文件确定；「命中 / 不命中」对应 applied / not_applicable；两行写的同一编号合成一条决定，两段要求原文都在。
+    facts:
+      - 三个新增接口的出参缺字段时按失败或处理中收敛，不当作已冻结
+      - 三个接口的失败都收敛为页面可读失败状态，本需求不新增错误码，也不改动既有码的编号与含义
+      - 新增页面文案形成翻译清单，跟踪中英文资源的回译与合入
+      - 挂失入口只在钱包内的交通卡详情页出现，不对其他应用开放；三个接口由钱包调用卡云，不对外提供
+      - 资格查询只在打开页面、身份回跳与冲突恢复时调用，页面停留期间不轮询
+      - 冻结结果只在提交返回后与用户主动刷新时查询
+      - 交付时给出新增文案资源的体积增量；不新增图片、三方 SDK 与独立安装包
+      - 清除恢复数据或缓存后重新进入，从无上下文状态重建挂失流程，不崩溃、不死循环
+      - 重新进入、身份回跳与快速重复点击共享同一幂等状态，不重复创建挂失申请
+      - 资格、身份恢复、提交、结果与冲突各阶段经本地日志记录，并以同一流程关联标识串联
+      - 统计冻结成功率与中断恢复成功率，覆盖提交挂失、冻结结果与流程恢复三个统计点
+      - 每个统计点每种结果在结果确定时上报一条，重复回调不产生第二条终态
+      - 三个统计点的上报编码先核仓内无既有登记，再在项目唯一登记位置登记
+      - 材料没有运营采集诉求，AC-8 要求的是关键路径可观察，由运维统计承接
+      - 界面图标使用系统符号，不新增图片
+      - 新增文案登记在 WalletMain 资源中，中英文成对，页面只引用资源 key
+      - 页面、日志、上报与恢复记录只接收脱敏卡片标识与账号范围摘要
+      - 恢复数据按账号范围隔离，不随备份恢复
+      - 资格、恢复与结果三段的方向性布局参数用 start/end，文本对齐用 TextAlign.Start/End
+  - zone: 埋点
+    action: reproject
+    blueprint: [story_details:event:detail-loss-tracking]
+    facts:
+      - 运维统计紧急挂失的冻结结果与中断恢复，用来定位用户卡在哪一段（AC-8 要求关键路径可观察）；上报只带匿名入口、阶段与结果分类，上报失败不改变挂失结果。
+      - 衡量提交挂失申请后云侧确认冻结的比例：分子是冻结结果为已冻结的次数，分母是提交挂失申请的次数；处理中与失败是未冻结的两种去向，分别计数供定位。
+      - "| 提交挂失 | 用户确认后提交或复用挂失申请 | 已受理 / 失败 | 创建或复用申请返回时 | 新增 |"
+      - "| 冻结结果 | 查询云侧冻结结果 | 已冻结 / 处理中 / 失败 | 冻结结果查询返回时 | 新增 |"
+      - 衡量挂失流程中断后回到原检查点的比例：分子是恢复后回到用户离开时那一步的次数，分母是发生恢复的次数。
+      - "| 流程恢复 | 身份回跳、冲突恢复或重新进入后恢复流程 | 回到原检查点 / 从资格查询重来 | 恢复上下文读取完成时 | 新增 |"
+  - zone: 改动边界
+    action: reproject
+    blueprint: [view:development/node:wallet-main-module, view:development/node:account-manager-module, view:development/node:comm-ui-module, view:development/node:comm-func-module, view:development/node:phone-module]
+    note: 1.x 的「改动 / 不改」由开发视图节点的当前→目标表达：WalletMain 从没有挂失到新增挂失能力；其余四个模块当前与目标同为既有提供方。
+    facts:
+      - WalletMain
+      - AccountManager
+      - CommUI
+      - CommFunc
+      - Phone
+
+#: 知识应用决定的落点：1.x 判断记的契约名 / 影响 → 蓝图里承担它的对象
+knowledge_targets:
+  UX-01: view:runtime/node:loss-page-stages
+  SEC-01: view:runtime/node:recovery-context
+  DFX-01: view:runtime/node:loss-page-stages
+  DFX-02: view:development/node:wallet-main-module
+  OBS-02: view:runtime/node:loss-page-stages
+  OBS-03: view:logical/node:emergency-loss
+  OBS-05: view:logical/node:emergency-loss
+  OBS-06: view:logical/node:emergency-loss
+  RES-01: view:runtime/node:loss-page-stages
+  RES-02: view:development/node:wallet-main-module
+  COMPAT-01: view:runtime/node:loss-page-stages
+  ENV-01: view:runtime/node:recovery-context
+  ENV-02: view:runtime/node:recovery-context
+  DLV-01: view:development/node:wallet-main-module
+
+story_details:
+  - id: detail-loss-recovery-context
+    kind: data_policy
+    title: 挂失恢复上下文
+    evidence_refs: [view:runtime/node:recovery-context]
+    body: |
+      | 键名/表名 | 介质 | 值结构 | 有效期 | 用途 |
+      |---|---|---|---|---|
+      | `loss_report_recovery_context` | relationalStore | `maskedCardId, accountScopeHash, checkpoint, idempotencyKey, applicationIdDigest, updatedAt` | 最终成功、明确失败、账号变化或超过有效期时清理；补卡协作期按上游共享约定保留 | 页面返回、身份恢复和重试查询时恢复同一流程；按账号隔离且不随备份恢复 |
+  - id: detail-emergency-loss-switch
+    kind: configuration
+    title: 紧急挂失入口开关
+    evidence_refs: [view:development/node:wallet-main-module]
+    body: |
+      | 配置项 | 默认值 | 行为 |
+      |---|---|---|
+      | `traffic_card_emergency_loss_enabled` | `false`（关闭） | 关闭或读取失败时隐藏紧急挂失入口；旧版本读取不到该项时按关闭处理。 |
+  - id: detail-loss-tracking
+    kind: event
+    title: 紧急挂失埋点
+    evidence_refs: [view:logical/node:emergency-loss]
+    body: |
+      运维统计紧急挂失的冻结结果与中断恢复，用来定位用户卡在哪一段（AC-8 要求关键路径可观察）；上报只带匿名入口、阶段与结果分类，上报失败不改变挂失结果。
+
+      挂失冻结成功率：衡量提交挂失申请后云侧确认冻结的比例：分子是冻结结果为已冻结的次数，分母是提交挂失申请的次数；处理中与失败是未冻结的两种去向，分别计数供定位。
+
+      | 统计点 | 业务动作 | 实际适用结果 | 本端获知时机 | 已有覆盖或新增 |
+      |---|---|---|---|---|
+      | 提交挂失 | 用户确认后提交或复用挂失申请 | 已受理 / 失败 | 创建或复用申请返回时 | 新增 |
+      | 冻结结果 | 查询云侧冻结结果 | 已冻结 / 处理中 / 失败 | 冻结结果查询返回时 | 新增 |
+
+      中断恢复成功率：衡量挂失流程中断后回到原检查点的比例：分子是恢复后回到用户离开时那一步的次数，分母是发生恢复的次数。
+
+      | 统计点 | 业务动作 | 实际适用结果 | 本端获知时机 | 已有覆盖或新增 |
+      |---|---|---|---|---|
+      | 流程恢复 | 身份回跳、冲突恢复或重新进入后恢复流程 | 回到原检查点 / 从资格查询重来 | 恢复上下文读取完成时 | 新增 |
+
+#: 不进 2.0 蓝图的 1.x 元数据，各写原因
+not_carried:
+  - what: 1.x spec 9.3 的两个模式候选（decision-tree、page-interaction）
+    why: 1.x 里只是候选、选型留给 plan；2.0 的选型是设计决定，迁移不替设计新增决定。模式判断不是必填，金样正文也没有呈现它们。
+  - what: 1.x knowledge-use 的事实使用登记（component-profile、engineering-capabilities、event-tracking）
+    why: 金样正文没有呈现事实使用登记；2.0 的事实承接在设计讨论里，不进 Story 附录。

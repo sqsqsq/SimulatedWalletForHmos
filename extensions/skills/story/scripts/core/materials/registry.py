@@ -293,6 +293,7 @@ def collect_sources(feature_root: Path) -> list[dict]:
                     importer.render_target(sections[cls])):
                 for p in docs:
                     entries[p.name]["ingested"] = True
+                    entries[p.name]["target"] = targets[cls].as_posix()
 
         for image in images:
             # 界面图的落点是平铺的顶层，字节相同才算并入——同名换了内容也是新料

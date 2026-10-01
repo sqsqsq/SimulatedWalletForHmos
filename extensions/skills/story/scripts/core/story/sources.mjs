@@ -131,12 +131,14 @@ function materialListTargets(ctx) {
   const data = readManifest(ctx);
   if (data === null || data === 'broken') return data;
   if (!Array.isArray(data.materials)) return 'broken';
+  // 收件箱原件与它转换出的正文是同一份材料：列原件或转换稿任一个就算列到
+  const sources = (Array.isArray(data.sources) ? data.sources : []).filter(src => src?.file);
+  const converted = new Set(sources.map(src => src.target).filter(Boolean));
   const must = data.materials
     .filter(m => m?.kind === 'doc' && m.sha256 && Array.isArray(m.paths) && m.paths.length)
+    .filter(m => !m.paths.some(p => converted.has(p)))
     .map(m => m.paths);
-  for (const src of (Array.isArray(data.sources) ? data.sources : [])) {
-    if (src?.file) must.push([`inbox/${src.file}`]);
-  }
+  for (const src of sources) must.push([`inbox/${src.file}`, ...(src.target ? [src.target] : [])]);
   return { must };
 }
 
