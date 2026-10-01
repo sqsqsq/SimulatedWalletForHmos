@@ -5,7 +5,8 @@
  *   调原生 prepare 取请求身份与缺口，记下这一次的材料键、报告目录与 request_sha256。
  * - **结果**：审查者的回复原样在 `<报告目录>/review-original.md`；每次核对先把它逐字复制成原生检查用的工作报告
  *   `review-report.md`（原生检查可能回写统计表，原回复只此一份、不被改写），再跑原生正式检查，
- *   核 summary 的身份与证据摘要，按原生检查结果与报告内容归成下面几类。
+ *   核 summary 的身份与证据摘要、工作报告与原生绑定一致，记下交入的原回复摘要，按原生检查结果与报告内容归成下面几类。
+ *   只读查询核原回复仍是交入的那份、工作报告仍是原生绑定的那份，不重跑检查。
  *
  * | 结果 | 含义 |
  * |---|---|
@@ -129,39 +130,66 @@ function boundSummary(was, dir) {
 }
 
 /**
+ * 当前工作报告就是原生检查绑定的那一份：summary 与 script-report 记的 `review_report` 绑定一致，
+ * 用原生 `readBoundInput` 按同一来源重读核字节（原生检查对工作报告的规范化已在绑定里）。
+ * 工程整体搬过位置时，按 summary 记下的检查时工程根重定位绑定里的路径。
+ */
+function workingBound(ctx, was, dir) {
+  const summary = readJson(path.join(dir, 'summary.json'), null);
+  const script = readJson(path.join(dir, 'script-report.json'), null);
+  const binding = summary?.input_bindings?.review_report;
+  if (!binding || JSON.stringify(binding) !== JSON.stringify(script?.input_bindings?.review_report)) return false;
+  const working = path.resolve(dir, WORKING);
+  const native = loadNative(ctx.projectRoot);
+  try {
+    native.module('scripts/utils/capability-resolution.ts').readBoundInput({
+      projectRoot: ctx.projectRoot, frameworkRoot: native.frameworkRoot, phase: 'review', track: 'full',
+      request: { inputs: { review_report: working } }, inputContext: { subject: { request_sha256: was.request_sha256 } },
+    }, binding, summary.project_root);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 执行这一次审查的原生检查：把审查者的原回复交给原生 request 检查，归类结论。作者显式跑 `review --action check`、
- * 登记成文时调用；会写工作报告与原生 summary / script-report。
+ * 登记成文时调用；会写工作报告与原生 summary / script-report，检查成功后在准备记录里记下交入的原回复摘要。
  *
  * @returns {Promise<{result: string, detail: string, advisories?: string[], report_dir?: string}>}
  */
 export async function reviewResult(ctx) {
   const { was, dir, original, outcome } = await preparedReview(ctx);
   if (outcome) return outcome;
-  fs.copyFileSync(original, path.join(dir, WORKING));
-  const { request } = places(ctx);
+  const { request, prepared } = places(ctx);
+  const { original_sha256: _, ...record } = was;
+  fs.writeFileSync(prepared, `${JSON.stringify(record, null, 2)}\n`, 'utf-8');
+  const handed = fs.readFileSync(original);
+  fs.writeFileSync(path.join(dir, WORKING), handed);
   let run;
   try {
     run = await explicitRequest(ctx.projectRoot, args(request, was.report_dir, false));
   } catch (e) {
     return { result: 'tool_error', detail: `原生检查出错：${e?.message ?? e}` };
   }
-  if (run.output?.request_sha256 !== was.request_sha256 || !boundSummary(was, dir)) {
+  if (run.output?.request_sha256 !== was.request_sha256 || !boundSummary(was, dir) || !workingBound(ctx, was, dir)) {
     return { result: 'tool_error', detail: `原生检查没有给出这一次请求的合法 summary（${run.text.slice(0, 300)}）` };
   }
+  fs.writeFileSync(prepared, `${JSON.stringify({ ...record, original_sha256: sha(handed) }, null, 2)}\n`, 'utf-8');
   return classify(ctx, was, dir);
 }
 
 /**
  * 读取已经做过的这一次审查的结论，**只读**：不复制回复、不跑原生检查。交付门与状态观察用它。
- * 原生检查没跑过、或跑过之后回复变了，就说还没有可读的结论，由作者跑 `review --action check`。
+ * 原回复是检查时交入的那一份、工作报告是原生检查绑定的那一份，结论才可读；否则由作者跑 `review --action check`。
  */
 export async function verifiedReviewResult(ctx) {
   const { was, dir, original, outcome } = await preparedReview(ctx);
   if (outcome) return outcome;
-  const working = path.join(dir, WORKING);
-  const checked = fs.existsSync(working) && fs.readFileSync(working).equals(fs.readFileSync(original)) && boundSummary(was, dir);
+  const checked = was.original_sha256 === sha(fs.readFileSync(original)) && boundSummary(was, dir)
+    && workingBound(ctx, was, dir);
   if (!checked) {
-    return { result: 'report_unchecked', detail: '这一次审查的回复还没经原生检查，或检查之后回复变了——跑 `story-build review --action check`' };
+    return { result: 'report_unchecked', detail: '这一次审查的回复还没经原生检查，或检查之后原回复、工作报告变了——跑 `story-build review --action check`' };
   }
   return classify(ctx, was, dir);
 }

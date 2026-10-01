@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import unittest
@@ -260,11 +261,18 @@ class JudgementsDoNotBlockTheGolden(unittest.TestCase):
     """判据改动先跑这一行：拦住金样的判据，错的是判据。"""
 
     def test_the_golden_passes_in_its_workspace(self) -> None:
-        """检查零 FAIL，且映射表登记的每条旧事实在重投后的新输出里都在。"""
+        """检查零 FAIL，且映射表登记的每条旧事实在重投后的新输出里都在。
+
+        冻结输入里 AR/design.md 是原件、交给设计的提取稿是另一份文件，两者角色不混。"""
         with tempfile.TemporaryDirectory() as tmp:
             golden_workspace.build(Path(tmp))
             code, out = golden_workspace.check(Path(tmp))
             missing = golden_design.verify(golden_workspace.story(Path(tmp)))
+            src = Path(tmp) / "doc" / "features" / "AR90004" / "AR" / "story-src"
+            snapshot = json.loads(next(src.glob("inputs/*/snapshot.json")).read_text(encoding="utf-8"))
+        roles = {f["path"]: f["role"] for f in snapshot["files"]}
+        self.assertEqual("original", roles.get("AR/design.md"), roles)
+        self.assertEqual("extracted_analysis", roles.get("AR/story-src/design-draft.md"), roles)
         self.assertEqual(0, code, f"判据拦住了金样——修判据，不修金样：\n{out[:1500]}")
         self.assertEqual([], missing, "旧事实在新输出里找不到")
 

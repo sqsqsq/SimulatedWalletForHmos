@@ -1551,6 +1551,27 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         _, out = self.check_output()
         self.assertNotIn("少了一份材料", out, out[:500])
 
+    def test_several_originals_merged_into_one_conversion(self) -> None:
+        """两份原件并入同一份转换稿：列转换稿就覆盖两份；只列其中一份原件，另一份照报。"""
+        manifest = self.src / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        prd = next(m for m in data["materials"] if m.get("paths") == ["RR/prd.md"])
+        data["materials"].append({**prd, "paths": ["ux-reference/README.md"]})
+        data["sources"] = [{"file": name, "ingested": True, "target": "ux-reference/README.md"}
+                           for name in ("甲原型.docx", "乙原型.docx")]
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        (self.feature_root() / "inbox").mkdir(exist_ok=True)
+        (self.feature_root() / "ux-reference").mkdir(exist_ok=True)
+        (self.feature_root() / "ux-reference" / "README.md").write_text("x", encoding="utf-8")
+        for name in ("甲原型.docx", "乙原型.docx"):
+            (self.feature_root() / "inbox" / name).write_bytes(b"DOCX")
+        self.rewrite_story(self.LISTED, self.LISTED + "\n- 界面原型：原文：[README.md](../ux-reference/README.md)")
+        _, out = self.check_output()
+        self.assertNotIn("少了一份材料", out, out[:500])
+        self.rewrite_story("[README.md](../ux-reference/README.md)", "[甲原型.docx](../inbox/甲原型.docx)")
+        out = self.assert_check_names("少了一份材料")
+        self.assertIn("inbox/乙原型.docx", out)
+
 
 class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
     """「写没写」可以机械判，「写得够不够」不行。

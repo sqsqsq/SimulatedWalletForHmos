@@ -56,7 +56,10 @@ def _use_snapshot(ext: Path) -> None:
 
 
 def _hand_to_design(root: Path, ext: Path, src: Path) -> None:
-    """真实流程命令走到交给设计：材料关卡、范围关卡、关联 bp-AR90004、按提取稿 AR/design.md 冻结输入。"""
+    """真实流程命令走到交给设计：材料关卡、范围关卡、关联 bp-AR90004、冻结输入。
+
+    AR/design.md 是本次的上游原件，原样作输入；交给设计的提取稿另落 AR/story-src/design-draft.md，
+    文本沿用 1.x 的旧稿（就是那份 AR/design.md）并在稿末注明，不当作一次新的模型提取。"""
     script = ext / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 
     def flow(*args: str) -> dict:
@@ -88,7 +91,11 @@ def _hand_to_design(root: Path, ext: Path, src: Path) -> None:
     flow("bind-design", "--component", golden_design.COMPONENT, "--blueprint", golden_design.BLUEPRINT_ID)
     (src / "design-input.json").write_text(json.dumps(design_fixture.design_input(src), ensure_ascii=False),
                                            encoding="utf-8")
-    flow("complete", "--from", "AR/design.md", "--input", "AR/story-src/design-input.json")
+    old = (src.parents[1] / "AR" / "design.md").read_text(encoding="utf-8")
+    (src / "design-draft.md").write_text(
+        old.rstrip("\n") + "\n\n<!-- 金样夹具：本提取稿沿用 1.x 旧稿 AR/design.md 的文本，不是本次模型提取 -->\n",
+        encoding="utf-8")
+    flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
 
 
 def build(root: Path, story: str | None = None, extensions: Path = EXT) -> Path:

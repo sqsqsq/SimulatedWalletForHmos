@@ -221,6 +221,64 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegistered
         self.assertNotIn("reviewer_unavailable", out.stdout + task)
 
 
+class TheReadOnlyResultIsBoundToTheCheckedBytes(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """只读查询认的是被检查的那两份字节：原回复是检查时交入的那份，工作报告是原生绑定的那份；查询前后一个字节不写。"""
+
+    READ = ("const m = await import(process.argv[1]); const root = process.argv[2];"
+            "process.stdout.write(JSON.stringify(await m.verifiedReviewResult({ projectRoot: root,"
+            " featureRoot: root + '/doc/features/REQ-DEMO', args: { feature: 'REQ-DEMO' } })));")
+
+    def read_only(self) -> dict:
+        module = (DEV_EXT / "skills/story/scripts/core/story/independent-review.mjs").as_uri()
+        before = self.tree()
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.READ, module, str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        self.assertEqual(before, self.tree(), "只读查询写了盘")
+        return json.loads(proc.stdout)
+
+    def tree(self) -> dict:
+        return {p.relative_to(self.root).as_posix(): p.read_bytes()
+                for p in (self.root / "doc").rglob("*") if p.is_file()}
+
+    def report_dir(self) -> Path:
+        prepared = json.loads((self.flow_path.parent / "review" / "prepared.json").read_text(encoding="utf-8"))
+        return self.root / prepared["report_dir"]
+
+    def test_a_native_statistics_fix_is_read_back_without_a_new_check(self) -> None:
+        """原生按问题表修正了统计数：工作报告与原回复不再相同，检查结果照样能只读取回。"""
+        original = self.reviewed("advice")
+        request = json.loads((self.flow_path.parent / "review" / "request.json").read_text(encoding="utf-8"))
+        target = next(p for p in request["targets"]["files"] if p.endswith("/snapshot.json"))
+        text = original.read_text(encoding="utf-8")
+        original.write_text(text.replace("| `doc/features/REQ-DEMO/AR/story.md` |", f"| `{target}` |")
+                            .replace("| MINOR | 1 |", "| MINOR | 9 |"), encoding="utf-8")
+        checked = self.result()
+        self.assertEqual("warn", checked["result"], checked)
+        self.assertNotEqual(original.read_bytes(), (self.report_dir() / "review-report.md").read_bytes(),
+                            "原生没有修正统计，这条用例没测到规范化")
+        self.assertEqual(checked, self.read_only())
+
+    def test_a_reply_swapped_after_the_check_is_not_read_as_checked(self) -> None:
+        """检查通过后把原回复与工作报告一起换成「不通过」、不重验：只读查询指回检查，不沿用旧的通过。"""
+        original = self.reviewed("pass")
+        self.assertEqual("pass", self.result()["result"])
+        swapped = original.read_text(encoding="utf-8").replace("**审查结论**: 通过", "**审查结论**: 不通过")
+        self.assertNotEqual(swapped, original.read_text(encoding="utf-8"))
+        original.write_text(swapped, encoding="utf-8")
+        (self.report_dir() / "review-report.md").write_text(swapped, encoding="utf-8")
+        self.assertEqual("report_unchecked", self.read_only()["result"])
+
+    def test_a_working_report_changed_after_the_check_is_not_read_as_checked(self) -> None:
+        self.reviewed("pass")
+        self.assertEqual("pass", self.result()["result"])
+        working = self.report_dir() / "review-report.md"
+        working.write_text(working.read_text(encoding="utf-8") + "\n补一句。\n", encoding="utf-8")
+        self.assertEqual("report_unchecked", self.read_only()["result"])
+        self.assertEqual("pass", self.result()["result"], "显式检查按原回复重做，恢复可读结论")
+        self.assertEqual("pass", self.read_only()["result"])
+
+
 class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
     """带界面参考图的需求：需求目录保留 `ux-reference/`，蓝图在异名的工作区（`bp-<需求>`），
     冻结、蓝图消费、原生审查准备、登记与交付一路走通（审查者是夹具）。"""
