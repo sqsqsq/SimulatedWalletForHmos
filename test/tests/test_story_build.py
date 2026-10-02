@@ -561,13 +561,14 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
     def test_a_contract_carries_its_operation_fields_mappings_and_semantics(self) -> None:
         rows = self.rows("技术契约·端云接口", self.CONTRACT_BP)
         text = "\n".join(rows)
-        for needle in ("**balance-query**", "queryBalance", "v2", "api/wallet.yaml#queryBalance",
+        for needle in ("**balance-query**", "queryBalance", "v2",
                        "| 请求 BalanceRequest | cardNo | string | 卡号\\|掩码后 | 必有 |",
                        "| 响应 BalanceResponse | balance | number | 余额（分） | 可空 |",
                        "| m1 | displayBalance | derivation | balance | 分转元，两位小数 |",
-                       "- 错误语义：timeout：3 秒按失败处理（依据 api/wallet.yaml#errors）",
+                       "- 错误语义：timeout：3 秒按失败处理",
                        "- 幂等：key：cardNo+day", "- 非功能：latency_p95_ms：800", "**second**"):
             self.assertIn(needle, text)
+        self.assertNotIn("api/wallet.yaml", text, "来源路径是仓内路径，不进归档件的附录")
 
     def test_tables_do_not_run_together(self) -> None:
         """每张表前面是空行——连着写会被 markdown 并成一张错表。"""

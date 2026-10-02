@@ -1,0 +1,80 @@
+# 金样夹具：AR90004 的 SE 接口转写。真实流程里由设计作者读冻结的 SR 原文写成；金样没有模型运行，由维护夹具按 SR §4 转写。
+# provenance 不参与原生比对；{frozen_sr} 在装配时换成本次冻结的 SR 副本路径。
+operations:
+  queryLossEligibility:
+    operation_id: queryLossEligibility
+    direction: wallet-to-transit-card-cloud
+    version: v1
+    provenance: {source_kind: system_design, source_ref: "{frozen_sr}", locator: "§4.1", observed_at: "2026-08-30T10:00:00+08:00", evidence_strength: observed, extraction_method: transcribed-from-se-design}
+  createOrReuseLossApplication:
+    operation_id: createOrReuseLossApplication
+    direction: wallet-to-transit-card-cloud
+    version: v1
+    provenance: {source_kind: system_design, source_ref: "{frozen_sr}", locator: "§4.2", observed_at: "2026-08-30T10:00:00+08:00", evidence_strength: observed, extraction_method: transcribed-from-se-design}
+  queryFreezeResult:
+    operation_id: queryFreezeResult
+    direction: wallet-to-transit-card-cloud
+    version: v1
+    provenance: {source_kind: system_design, source_ref: "{frozen_sr}", locator: "§4.3", observed_at: "2026-08-30T10:00:00+08:00", evidence_strength: observed, extraction_method: transcribed-from-se-design}
+
+dtos:
+  QueryLossEligibilityRequestV1:
+    dto_id: QueryLossEligibilityRequestV1
+    fields:
+      - {field_id: cardId, type: string, required: true, nullable: false, semantics: 脱敏映射后的卡片标识}
+      - {field_id: accountScope, type: string, required: true, nullable: false, semantics: 账号范围摘要}
+  QueryLossEligibilityResponseV1:
+    dto_id: QueryLossEligibilityResponseV1
+    fields:
+      - {field_id: eligible, type: boolean, required: true, nullable: false, semantics: 是否可以挂失}
+      - {field_id: identityRequired, type: boolean, required: true, nullable: false, semantics: 是否需要先完成身份}
+      - {field_id: cardState, type: string, required: true, nullable: false, semantics: "normal / frozen / conflict"}
+      - {field_id: existingApplication, type: object, required: false, nullable: true, semantics: "已有申请；没有时为空。含 applicationId（string）与 status（submitted / processing / frozen / failed）"}
+      - {field_id: reason, type: string, required: false, nullable: true, semantics: 可读原因，eligible 为 false 时给出}
+  CreateOrReuseLossApplicationRequestV1:
+    dto_id: CreateOrReuseLossApplicationRequestV1
+    fields:
+      - {field_id: cardId, type: string, required: true, nullable: false, semantics: 脱敏映射后的卡片标识}
+      - {field_id: accountScope, type: string, required: true, nullable: false, semantics: 账号范围摘要}
+      - {field_id: userConfirmed, type: boolean, required: true, nullable: false, semantics: 用户已确认冻结风险，必须为 true}
+      - {field_id: idempotencyKey, type: string, required: true, nullable: false, semantics: 稳定幂等键，同一次挂失流程内不变}
+  CreateOrReuseLossApplicationResponseV1:
+    dto_id: CreateOrReuseLossApplicationResponseV1
+    fields:
+      - {field_id: applicationId, type: string, required: true, nullable: false, semantics: 申请标识}
+      - {field_id: status, type: string, required: true, nullable: false, semantics: 固定为 submitted}
+      - {field_id: reused, type: boolean, required: true, nullable: false, semantics: 是否复用了已有的有效申请}
+  QueryFreezeResultRequestV1:
+    dto_id: QueryFreezeResultRequestV1
+    fields:
+      - {field_id: applicationId, type: string, required: true, nullable: false, semantics: 申请标识}
+  QueryFreezeResultResponseV1:
+    dto_id: QueryFreezeResultResponseV1
+    fields:
+      - {field_id: result, type: string, required: true, nullable: false, semantics: "frozen / processing / failed"}
+      - {field_id: freezeTicketId, type: string, required: false, nullable: true, semantics: 冻结凭证，只在 result 为 frozen 时给出，交给补卡单}
+      - {field_id: reason, type: string, required: false, nullable: true, semantics: 可读原因}
+
+errors:
+  queryLossEligibility:
+    items: {call_failure: 调用失败（网络、超时、服务端错误）沿用卡云既有错误码，不新增}
+  createOrReuseLossApplication:
+    items: {call_failure: 失败沿用既有错误码；响应丢失后用同一 idempotencyKey 重调}
+  queryFreezeResult:
+    items: {call_failure: 失败沿用既有错误码}
+
+idempotency:
+  queryLossEligibility:
+    rule: 只读查询，可以重复调用
+  createOrReuseLossApplication:
+    rule: 同一 idempotencyKey，或该卡已有有效申请时，返回原 applicationId 且 reused 为 true，不新建
+  queryFreezeResult:
+    rule: 只读查询，可以重复调用
+
+nfr:
+  queryLossEligibility:
+    requirements: {call_timing: 打开页面、身份回跳、冲突恢复时调用；无后台轮询}
+  createOrReuseLossApplication:
+    requirements: {single_application: 响应丢失后再次调用也不得创建第二份申请}
+  queryFreezeResult:
+    requirements: {success_gate: 只有 frozen 能驱动成功页面}

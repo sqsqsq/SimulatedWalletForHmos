@@ -72,7 +72,9 @@ INPUT_FINGERPRINTS = {
     "AR/story-src/story-template.md": "e4b02703194c89bd",
     "inbox/紧急挂失界面原型说明.docx": "5fa860eb01b25972",
     "RR/prd.md": "ff0013420c4c0741",
-    "SR/design.md": "d9ccbd10489f89d1",
+    # 2026-10-02 用户决定接口走模拟真实场景：§4 三个接口段后补 SE 接口明细（版本、字段类型、必填与可空），原段落一字未改；
+    # 草案与来源对照见 doc/plan/2.0.0/实施反馈/2026-10-02-步骤4-模拟SE接口草案.md，与 CLI 结果一并交设计者审定。
+    "SR/design.md": "46f04c03a511d971",
     "spec/knowledge-use.yaml": "073dcaed046304a7",
     # 2026-09-27 步骤 9（U55）：扩展章平列——埋点提为 9.4、依赖变更为 9.1.4，规约与设计模式两节改名。
     # 同日步骤 9 返修 R3：「规约」生成区的落点前缀写名字所在的节（技术契约 / 埋点）。
@@ -270,7 +272,11 @@ class JudgementsDoNotBlockTheGolden(unittest.TestCase):
             missing = golden_design.verify(golden_workspace.story(Path(tmp)))
             src = Path(tmp) / "doc" / "features" / "AR90004" / "AR" / "story-src"
             snapshot = json.loads(next(src.glob("inputs/*/snapshot.json")).read_text(encoding="utf-8"))
+            listed = golden_workspace.review_object(Path(tmp))
         roles = {f["path"]: f["role"] for f in snapshot["files"]}
+        for name in ("se-interfaces.yaml", "mappings.yaml"):
+            self.assertIn(f"doc/features/bp-AR90004/blueprint/contracts/{name}", listed,
+                          "Story 审查对象没带上蓝图契约引用的接口转写或映射")
         self.assertEqual("original", roles.get("AR/design.md"), roles)
         self.assertEqual("extracted_analysis", roles.get("AR/story-src/design-draft.md"), roles)
         self.assertEqual(0, code, f"判据拦住了金样——修判据，不修金样：\n{out[:1500]}")

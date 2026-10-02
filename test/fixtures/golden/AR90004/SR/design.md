@@ -68,14 +68,53 @@ sequenceDiagram
 输入脱敏映射后的 `cardId` 与 `accountScope`，返回 `eligible`、`identityRequired`、`cardState`、
 `existingApplication` 和可读原因。打开页面、身份回跳、冲突恢复时调用；无后台轮询。
 
+接口版本 v1，钱包调用交通卡云。
+
+| 字段 | 方向 | 类型 | 必填 | 可为空 | 说明 |
+|---|---|---|---|---|---|
+| `cardId` | 入参 | string | 是 | 否 | 脱敏映射后的卡片标识 |
+| `accountScope` | 入参 | string | 是 | 否 | 账号范围摘要 |
+| `eligible` | 出参 | boolean | 是 | 否 | 是否可以挂失 |
+| `identityRequired` | 出参 | boolean | 是 | 否 | 是否需要先完成身份 |
+| `cardState` | 出参 | string | 是 | 否 | `normal` / `frozen` / `conflict` |
+| `existingApplication` | 出参 | object | 否 | 是 | 已有申请；没有时为空。含 `applicationId`（string）与 `status`（`submitted` / `processing` / `frozen` / `failed`） |
+| `reason` | 出参 | string | 否 | 是 | 可读原因，`eligible` 为 false 时给出 |
+
+调用失败（网络、超时、服务端错误）沿用卡云既有错误码，不新增。只读查询，可以重复调用。
+
 ### 4.2 `createOrReuseLossApplication`
 
 输入卡片标识、账号范围、用户确认和稳定幂等键。存在有效申请时返回原 `applicationId`；否则创建并返回
 `submitted` 状态。响应丢失后再次调用也不得创建第二份申请。
 
+接口版本 v1，钱包调用交通卡云。
+
+| 字段 | 方向 | 类型 | 必填 | 可为空 | 说明 |
+|---|---|---|---|---|---|
+| `cardId` | 入参 | string | 是 | 否 | 脱敏映射后的卡片标识 |
+| `accountScope` | 入参 | string | 是 | 否 | 账号范围摘要 |
+| `userConfirmed` | 入参 | boolean | 是 | 否 | 用户已确认冻结风险，必须为 true |
+| `idempotencyKey` | 入参 | string | 是 | 否 | 稳定幂等键，同一次挂失流程内不变 |
+| `applicationId` | 出参 | string | 是 | 否 | 申请标识 |
+| `status` | 出参 | string | 是 | 否 | 固定为 `submitted` |
+| `reused` | 出参 | boolean | 是 | 否 | 是否复用了已有的有效申请 |
+
+同一 `idempotencyKey`，或该卡已有有效申请时，返回原 `applicationId` 且 `reused` 为 true，不新建。失败沿用既有错误码；响应丢失后用同一 `idempotencyKey` 重调。
+
 ### 4.3 `queryFreezeResult`
 
 输入 `applicationId`，返回 `frozen`、`processing` 或 `failed` 及可读原因。只有 `frozen` 能驱动成功页面。
+
+接口版本 v1，钱包调用交通卡云。
+
+| 字段 | 方向 | 类型 | 必填 | 可为空 | 说明 |
+|---|---|---|---|---|---|
+| `applicationId` | 入参 | string | 是 | 否 | 申请标识 |
+| `result` | 出参 | string | 是 | 否 | `frozen` / `processing` / `failed` |
+| `freezeTicketId` | 出参 | string | 否 | 是 | 冻结凭证，只在 `result` 为 `frozen` 时给出，交给补卡单 |
+| `reason` | 出参 | string | 否 | 是 | 可读原因 |
+
+只读查询，可以重复调用。失败沿用既有错误码。
 
 ## 5. 数据、状态与恢复
 

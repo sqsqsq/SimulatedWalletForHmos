@@ -136,3 +136,21 @@ def check(root: Path) -> tuple[int, str]:
 
 def story(root: Path) -> str:
     return (root / "doc" / "features" / FEATURE / "AR" / "story.md").read_text(encoding="utf-8")
+
+
+REVIEW_OBJECT = """
+import { pathToFileURL } from 'node:url';
+const [root, module] = process.argv.slice(1);
+const { reviewObject } = await import(pathToFileURL(module).href);
+process.stdout.write(JSON.stringify(reviewObject(root, 'AR90004').rows.map(r => r.path)));
+"""
+
+
+def review_object(root: Path) -> list[str]:
+    """Story 独立审查会交给审查者的材料路径（相对工程根）。"""
+    module = root / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
+    proc = subprocess.run(["node", "--input-type=module", "-e", REVIEW_OBJECT, str(root), str(module)],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"审查对象读不出来：{proc.stderr[-600:]}")
+    return json.loads(proc.stdout)

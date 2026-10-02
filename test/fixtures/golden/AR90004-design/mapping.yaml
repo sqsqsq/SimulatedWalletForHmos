@@ -42,13 +42,24 @@ image_refs:
 zones:
   - zone: 技术契约·端云接口
     action: reproject
-    pending: >
-      接口的结构化权威来源待维护设计者核定（步骤 4 阶段评审 §4 第 1 条）：SR §4 给出接口名、输入/输出语义、调用条件与错误行为，
-      没有 DTO 类型、可空性、API 版本与完整 mapping；字段映射与原生缺口见实施反馈。核定前蓝图不建顶层 contracts，这一节的旧事实不核。
-    pending_facts:
-      - "`queryLossEligibility`"
-      - "`createOrReuseLossApplication`"
-      - "`queryFreezeResult`"
+    blueprint: [contract:query-loss-eligibility-v1, contract:create-or-reuse-loss-application-v1, contract:query-freeze-result-v1]
+    note: >
+      2.0 由设计作者读冻结 SR 原文转写接口（金样由夹具 contracts/se-interfaces.yaml 提供），本部件映射另写 contracts/mappings.yaml，
+      蓝图契约逐段引用二者（二次返修评审与接口转写裁定 §3）。SR §4 的接口明细是 10-02 按用户决定补的模拟 SE 内容。
+      1.x spec 里模型补的字段名 userConfirmation 不是 SR 原文，SE 明细定为 userConfirmed；「新增 WalletMain 卡云适配接口」由开发视图承载。
+    facts:
+      - queryLossEligibility
+      - createOrReuseLossApplication
+      - queryFreezeResult
+      - "| cardId |"
+      - "| accountScope |"
+      - "| eligible |"
+      - "| identityRequired |"
+      - "| cardState |"
+      - "| existingApplication |"
+      - "| applicationId |"
+      - "| idempotencyKey |"
+      - "| freezeTicketId |"
   - zone: 技术契约·数据存储
     action: reproject
     blueprint: [story_details:data_policy:detail-loss-recovery-context]

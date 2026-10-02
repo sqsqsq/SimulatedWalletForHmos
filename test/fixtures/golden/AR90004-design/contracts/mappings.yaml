@@ -1,0 +1,20 @@
+# 金样夹具：AR90004 本部件（WalletMain）的字段映射，是本部件的设计决定，SE 不给。真实流程里由设计作者写。
+mappings:
+  eligibility-card-id: {mapping_id: eligibility-card-id, kind: direct, source_fields: [cardId], target_field: LossContext.maskedCardId, rule: 页面上下文里的脱敏卡片标识原样传入}
+  eligibility-account-scope: {mapping_id: eligibility-account-scope, kind: direct, source_fields: [accountScope], target_field: LossContext.accountScopeHash, rule: 账号范围摘要原样传入}
+  eligibility-eligible: {mapping_id: eligibility-eligible, kind: direct, source_fields: [eligible], target_field: LossEligibility.eligible, rule: 原样保留}
+  eligibility-identity: {mapping_id: eligibility-identity, kind: direct, source_fields: [identityRequired], target_field: LossEligibility.identityRequired, rule: 为 true 时页面进入等待身份}
+  eligibility-card-state: {mapping_id: eligibility-card-state, kind: direct, source_fields: [cardState], target_field: LossEligibility.cardState, rule: conflict 时页面进入状态冲突}
+  eligibility-existing: {mapping_id: eligibility-existing, kind: derivation, source_fields: [existingApplication], target_field: LossEligibility.existingApplicationId, rule: 取 existingApplication.applicationId，为空时没有既有申请}
+  eligibility-reason: {mapping_id: eligibility-reason, kind: direct, source_fields: [reason], target_field: LossEligibility.reasonText, rule: 为空时页面用通用不可用文案}
+  submit-card-id: {mapping_id: submit-card-id, kind: direct, source_fields: [cardId], target_field: LossContext.maskedCardId, rule: 与资格查询同一份脱敏卡片标识}
+  submit-account-scope: {mapping_id: submit-account-scope, kind: direct, source_fields: [accountScope], target_field: LossContext.accountScopeHash, rule: 与资格查询同一份账号范围摘要}
+  submit-confirmed: {mapping_id: submit-confirmed, kind: direct, source_fields: [userConfirmed], target_field: LossContext.riskConfirmed, rule: 用户勾选确认后才为 true}
+  submit-idempotency: {mapping_id: submit-idempotency, kind: direct, source_fields: [idempotencyKey], target_field: LossContext.idempotencyKey, rule: 取恢复上下文里保存的幂等键，同一流程内不变}
+  submit-application-id: {mapping_id: submit-application-id, kind: direct, source_fields: [applicationId], target_field: LossContext.applicationIdDigest, rule: 恢复上下文只保存申请标识摘要}
+  submit-status: {mapping_id: submit-status, kind: drop, source_fields: [status], target_field: LossApplication.status, rule: 固定为 submitted，页面以随后的冻结结果为准}
+  submit-reused: {mapping_id: submit-reused, kind: direct, source_fields: [reused], target_field: LossApplication.reused, rule: 只用于日志与统计}
+  result-application-id: {mapping_id: result-application-id, kind: direct, source_fields: [applicationId], target_field: LossContext.applicationId, rule: 使用提交时取得的申请标识}
+  result-result: {mapping_id: result-result, kind: direct, source_fields: [result], target_field: LossResult.state, rule: 只有 frozen 映射为成功}
+  result-ticket: {mapping_id: result-ticket, kind: direct, source_fields: [freezeTicketId], target_field: LossResult.freezeTicketId, rule: 只在 frozen 时取用，交补卡单}
+  result-reason: {mapping_id: result-reason, kind: direct, source_fields: [reason], target_field: LossResult.reasonText, rule: 为空时页面用通用文案}

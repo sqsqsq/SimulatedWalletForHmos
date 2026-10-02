@@ -159,7 +159,7 @@
             {"title": "端云接口", "reader": "contracts",
              "tables": {"fields": "位置|字段|类型|含义|可空", "mappings": "映射|目标字段|方式|来源字段|规则"},
              "labels": {"request": "请求", "response": "响应", "nullable": "可空", "required": "必有", "version": "版本",
-                        "basis": "依据", "errors": "错误语义", "idempotency": "幂等", "nfr": "非功能"}},
+                        "errors": "错误语义", "idempotency": "幂等", "nfr": "非功能"}},
             {"title": "数据存储", "reader": "data_flows", "detail_kind": "data_policy",
              "tables": {"flows": "数据流|数据域|权威来源|状态归属|失败与恢复"}},
             {"title": "配置项", "reader": "details", "detail_kind": "configuration"}

@@ -45,9 +45,11 @@ _LENS = ("module_boundaries", "capability_seams", "feature_flags", "data_produce
 
 
 def _questioning(blueprint: dict) -> list[dict]:
-    """独立设计质询的记录骨架：每个视图、关系、应用视角与需求术语各一问，证据指向系统设计原文。"""
+    """独立设计质询的记录骨架：每个视图、关系、运行数据流、应用视角与需求术语各一问，证据指向系统设计原文。"""
     scopes = [("view", f"view:{v['view_id']}") for v in blueprint["design_views"] if v.get("applicability") == "applicable"]
     scopes += [("relation", f"relation:{r['relation_id']}") for r in blueprint["relations"]]
+    scopes += [("flow", f"flow:{fl['flow_id']}") for v in blueprint["design_views"]
+               for fl in v.get("runtime_data_flows") or []]
     scopes += [("app_lens", f"app_lens:{k}") for k in _LENS]
     scopes += [("terminology", "terminology:current_scope_items")]
     return [{"question_id": f"q-{ref.replace(':', '-').replace('_', '-')}", "scope_kind": kind, "scope_ref": ref,
@@ -74,9 +76,62 @@ def _decision(spec: dict, source_ref: str, source_sha: str, provenance_at: str) 
             "knowledge": knowledge}
 
 
+#: 蓝图工作区里接口转写与映射的位置（工程根起）
+CONTRACTS_DIR = f"doc/features/{BLUEPRINT_ID}/blueprint/contracts"
+#: 契约 → (operation, 请求 DTO, 响应 DTO, 映射标识前缀)
+CONTRACTS = {
+    "query-loss-eligibility-v1": ("queryLossEligibility", "QueryLossEligibilityRequestV1", "QueryLossEligibilityResponseV1", "eligibility-"),
+    "create-or-reuse-loss-application-v1": ("createOrReuseLossApplication", "CreateOrReuseLossApplicationRequestV1",
+                                            "CreateOrReuseLossApplicationResponseV1", "submit-"),
+    "query-freeze-result-v1": ("queryFreezeResult", "QueryFreezeResultRequestV1", "QueryFreezeResultResponseV1", "result-"),
+}
+
+
+def _contracts() -> list[dict]:
+    """蓝图契约按转写与映射逐段组装：各段内容与 source_ref 指向的段落逐项一致（原生逐段比对）。"""
+    se = yaml.safe_load((DESIGN / "contracts" / "se-interfaces.yaml").read_text(encoding="utf-8"))
+    maps = yaml.safe_load((DESIGN / "contracts" / "mappings.yaml").read_text(encoding="utf-8"))["mappings"]
+    se_ref = f"{CONTRACTS_DIR}/se-interfaces.yaml"
+    map_ref = f"{CONTRACTS_DIR}/mappings.yaml"
+    prov = {"source_kind": "interface", "source_ref": se_ref, "observed_at": "2026-08-30T10:00:00+08:00",
+            "evidence_strength": "observed", "extraction_method": "transcribed-from-se-design"}
+    mprov = {**prov, "source_ref": map_ref, "extraction_method": "component-design-decision"}
+    out = []
+    for cid, (op, req, resp, prefix) in CONTRACTS.items():
+        def dto(name: str) -> dict:
+            fields = se["dtos"][name]["fields"]
+            return {"dto_id": name, "source_ref": f"{se_ref}#/dtos/{name}", "verification_refs": [f"verify:{cid}-{name}"],
+                    "fields": [{**f, "source_ref": f"{se_ref}#/dtos/{name}/fields/{i}", "provenance": prov}
+                               for i, f in enumerate(fields)]}
+
+        def part(kind: str) -> dict:
+            return {**se[kind][op], "source_ref": f"{se_ref}#/{kind}/{op}", "verification_refs": [f"verify:{cid}-{kind}"]}
+
+        out.append({
+            "contract_id": cid,
+            "operation": {**{k: v for k, v in se["operations"][op].items() if k != "provenance"},
+                          "source_ref": f"{se_ref}#/operations/{op}", "verification_refs": [f"verify:{cid}-operation"]},
+            "request_dto": dto(req), "response_dto": dto(resp),
+            "mappings": [{**m, "source_ref": f"{map_ref}#/mappings/{mid}", "provenance": mprov,
+                          "verification_refs": [f"verify:mapping-{mid}"]} for mid, m in maps.items() if mid.startswith(prefix)],
+            "errors": part("errors"), "idempotency": part("idempotency"), "nfr": part("nfr"),
+            "owner": "wallet-team", "needed_by": "cu-emergency-loss", "provenance": prov})
+    return out
+
+
+def place_contract_sources(root: Path, frozen_sr: str) -> None:
+    """接口转写与映射放进蓝图工作区；转写里的原文出处换成本次冻结的 SR 副本。"""
+    target = root / CONTRACTS_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    text = (DESIGN / "contracts" / "se-interfaces.yaml").read_text(encoding="utf-8").replace("{frozen_sr}", frozen_sr)
+    (target / "se-interfaces.yaml").write_bytes(text.encode("utf-8"))
+    (target / "mappings.yaml").write_bytes((DESIGN / "contracts" / "mappings.yaml").read_bytes())
+
+
 def assemble(items: list[dict], knowledge_root: Path) -> str:
-    """组装 canonical 文本：模板 + 骨架 + 精确明细 + 知识应用决定 + 需求条目。返回 YAML 文本（来源指纹待重算）。"""
+    """组装 canonical 文本：模板 + 骨架 + 精确明细 + 知识应用决定 + 需求条目 + 契约。返回 YAML 文本（来源指纹待重算）。"""
     blueprint = yaml.safe_load((DESIGN / "component-blueprint.yaml").read_text(encoding="utf-8"))
+    blueprint["contracts"] = _contracts()
     plan = mapping()
     fixture = yaml.safe_load(_PROVIDERS_FROM.read_text(encoding="utf-8"))
     blueprint["providers"] = fixture["providers"]
@@ -135,6 +190,8 @@ def install(root: Path, items: list[dict], access: Path, knowledge_root: Path) -
     import design_fixture  # noqa: PLC0415 —— 与夹具共用投影生成
     target = root / "doc" / "features" / BLUEPRINT_ID / "blueprint" / "component-blueprint.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
+    flow = json.loads((root / "doc" / "features" / "AR90004" / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
+    place_contract_sources(root, f"{flow['input']['snapshot_ref'].rsplit('/', 1)[0]}/files/SR/design.md")
     target.write_bytes(assemble(items, knowledge_root).encode("utf-8"))
     for script, args in ((REFINGERPRINT, [str(root), str(access), str(target)]),):
         proc = subprocess.run(["node", "--input-type=module", "-e", script, *args],
@@ -221,7 +278,7 @@ def verify(story: str) -> list[str]:
     for zone in plan["zones"]:
         if zone["zone"] in stale:
             continue
-        for fact in zone.get("facts", []) + zone.get("pending_facts", []):
+        for fact in zone.get("facts", []):
             if fact not in story:
                 missing.append(f"{zone['zone']}：{fact}")
     return missing

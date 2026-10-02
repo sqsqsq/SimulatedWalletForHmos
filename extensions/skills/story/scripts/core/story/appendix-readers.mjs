@@ -22,16 +22,16 @@ function cell(value) {
   return text || '—';
 }
 
-//: 原生对象里描述来历的字段：依据单独说一次，其余不进正文
+//: 原生对象里描述来历的字段不进正文：它们是仓内路径与核对记号，归档件的读者手上没有这个仓
 const TRACE_KEYS = new Set(['provenance', 'verification_refs', 'evidence_refs', 'source_ref', 'source_sha256']);
 
-/** 原生字段的值原样写出：对象按字段逐一写、数组逐项写，依据（source_ref）附在末尾。 */
+/** 原生字段的值原样写出：对象按字段逐一写、数组逐项写。 */
 function describe(value) {
   if (value === null || value === undefined || value === '') return '';
   if (typeof value !== 'object') return String(value);
   if (Array.isArray(value)) return value.map(describe).filter(Boolean).join('；');
   const parts = Object.entries(value).filter(([k]) => !TRACE_KEYS.has(k)).map(([k, v]) => `${k}：${describe(v)}`);
-  return `${parts.join('；')}${value.source_ref ? `（依据 ${value.source_ref}）` : ''}`;
+  return parts.join('；');
 }
 
 /** 端云接口：每个契约的 operation、请求与响应字段、字段映射，以及错误语义、幂等与非功能要求。 */
@@ -40,8 +40,7 @@ function contractRows(blueprint, def, where) {
   for (const c of blueprint.contracts ?? []) {
     const op = c.operation ?? {};
     if (out.length) out.push('');
-    out.push(`**${c.contract_id}**：${op.operation_id ?? '—'}（${op.direction ?? '—'}，${label(def, 'version')} ${op.version ?? '—'}，`
-      + `${label(def, 'basis')} \`${op.source_ref ?? '—'}\`）`);
+    out.push(`**${c.contract_id}**：${op.operation_id ?? '—'}（${op.direction ?? '—'}，${label(def, 'version')} ${op.version ?? '—'}）`);
     const fields = [['request', c.request_dto], ['response', c.response_dto]].flatMap(([side, dto]) =>
       (dto?.fields ?? []).map(f => [`${label(def, side)} ${dto.dto_id ?? ''}`.trim(), f.field_id ?? f.name, f.type,
         f.semantics, f.nullable === true ? label(def, 'nullable') : label(def, 'required')].map(cell)));

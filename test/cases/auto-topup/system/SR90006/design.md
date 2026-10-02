@@ -53,6 +53,61 @@ graph TD
 - `getAutoTopupStatus` 返回签约状态、当前门限与面额、最近记录、连续失败次数和停用状态。
 - `cancelAutoTopupContract` 解除后不回滚进行中的订单，也不撤销已完成订单。
 
+### 接口明细
+
+四个接口均由钱包调用交通卡云，接口版本 1.0。金额一律以「分」为单位的整数。
+
+**getAutoTopupPolicy**
+
+请求参数：
+
+| 参数名 | 类型 | 是否必须 | 含义 |
+|---|---|---|---|
+| accountId | string | 必须 | 去标识账号 |
+| cardId | string | 必须 | 卡片标识 |
+
+返回参数：
+
+| 参数名 | 类型 | 能否为空 | 含义 |
+|---|---|---|---|
+| signable | boolean | 不能 | 是否可签约 |
+| unsignableReason | string | 能 | 不可签约的原因（如未实名），可签约时为空 |
+| thresholdOptions | int[] | 不能 | 门限档位 |
+| amountOptions | int[] | 不能 | 面额档位 |
+| dailyLimit | int | 不能 | 单日限额 |
+| agreementText | string | 不能 | 协议文案 |
+
+**createAutoTopupContract**
+
+请求参数：accountId（string，必须）、cardId（string，必须）、agreementNo（string，必须，支付部件返回的协议号）、threshold（int，必须）、amount（int，必须）。
+
+返回参数：
+
+| 参数名 | 类型 | 能否为空 | 含义 |
+|---|---|---|---|
+| contractNo | string | 不能 | 签约号 |
+| existed | boolean | 不能 | 是否为既有生效签约（true 时没有新建） |
+
+**getAutoTopupStatus**
+
+请求参数：accountId（string，必须）、cardId（string，必须）。
+
+| 参数名 | 类型 | 能否为空 | 含义 |
+|---|---|---|---|
+| contractStatus | string | 不能 | `none` / `active` / `disabled` |
+| contractNo | string | 能 | 未签约时为空 |
+| threshold | int | 能 | 当前门限，未签约时为空 |
+| amount | int | 能 | 当前面额，未签约时为空 |
+| recentRecords | object[] | 不能 | 最近记录，可以是空列表；每项含 time、amount、result |
+| consecutiveFailures | int | 不能 | 连续扣款失败次数 |
+| disabledReason | string | 能 | 停用原因，未停用时为空 |
+
+**cancelAutoTopupContract**
+
+请求参数：contractNo（string，必须）。返回参数：cancelled（boolean，不能为空）。解约不回滚进行中的订单。
+
+各接口失败时返回卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码。创建签约以「卡片 + 生效状态」判重：已有生效签约时返回既有 `contractNo`。
+
 创建签约之前要先拿到用户本人的授权。钱包把协议文案与协议号交给支付部件，由它拉起验证界面；
 用户当场确认后，支付部件把授权结果返回钱包。拿到授权，钱包才带着 `agreementNo` 去调
 `createAutoTopupContract`；没拿到（用户取消，或验证没通过），钱包停在签约页，

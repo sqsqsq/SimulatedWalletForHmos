@@ -27,7 +27,7 @@ review_summary:
     root_questions_complete: true
     current_slice:
       slice_id: cu-emergency-loss
-      contracts_ready: false
+      contracts_ready: true
       design_refs_ready: true
       controlled_fakes: []
     blocker_refs: []
@@ -82,6 +82,66 @@ design_views:
         design_basis_refs: [view:logical/node:emergency-loss]
         provenance: *sr
         verification_refs: [verify:recovery-context]
+    runtime_data_flows:
+      - flow_id: loss-application-flow
+        data_domain_refs: [data-domain:loss-application]
+        external_contract_refs: [contract:query-loss-eligibility-v1, contract:create-or-reuse-loss-application-v1, contract:query-freeze-result-v1]
+        source_of_truth:
+          authority: contract:query-freeze-result-v1
+          persistence: relationalStore:loss_report_recovery_context
+          projections_and_caches: [view:runtime/node:recovery-context]
+          reconciliation: 交通卡云的资格与申请状态为准；恢复上下文只保存检查点与幂等键，重新进入时先查云侧再恢复页面。
+        triggers:
+          - trigger_id: open-or-return
+            kind: cold_start
+            timing: 打开页面、身份回跳、冲突恢复时
+            idempotency: 只读查询，可以重复调用
+          - trigger_id: confirm-and-submit
+            kind: user_mutation
+            timing: 用户确认风险后
+            idempotency: 恢复上下文里的 idempotencyKey，同一流程内不变
+        initial_load:
+          initial_load_id: eligibility-and-context
+          strategy: 先读本账号的恢复上下文，再查询资格与既有申请
+          owner: wallet-team
+          data_scope: 当前账号、当前卡片
+          freshness: 每次进入页面向云侧重新查询，不用本地缓存展示成功
+        state_owner:
+          ref: view:runtime/node:loss-page-stages
+          states: [资格加载, 等待风险确认, 等待身份, 状态冲突, 提交中, 结果确认中, 已冻结, 处理中, 失败]
+        mutations:
+          - mutation_id: submit-loss
+            kind: user
+            persistence_ref: relationalStore:loss_report_recovery_context
+            publication_ref: publication:loss-state-changed
+            recovery_ref: recovery:requery-cloud
+        publications:
+          - publication_id: loss-state-changed
+            snapshot: 页面当前阶段与云侧结果
+        subscriptions: []
+        consumers:
+          - consumer_id: loss-page
+            initial_load_ref: initial-load:eligibility-and-context
+            update_ref: publication:loss-state-changed
+        failure_recovery:
+          recovery_id: requery-cloud
+          persistence_failure: 恢复上下文写不进去时不提交，提示重试
+          response_loss: 用同一 idempotencyKey 重调创建或复用接口
+          process_recreation: 读恢复上下文回到原检查点，再向云侧查询
+        decisions_and_gaps: []
+        evidence_refs: [doc/features/AR90004/SR/design.md]
+        verification_refs: [verify:loss-application-flow]
+        logical_contract_refs: [contract:query-loss-eligibility-v1, contract:create-or-reuse-loss-application-v1, contract:query-freeze-result-v1]
+        development_owner_ref: view:development/node:wallet-main-module
+        lifecycle_coverage:
+          cold_start: {status: covered, evidence_refs: [doc/features/AR90004/SR/design.md]}
+          warm_resume: {status: covered, evidence_refs: [doc/features/AR90004/SR/design.md]}
+          page_attach: {status: covered, evidence_refs: [doc/features/AR90004/SR/design.md]}
+          page_detach: {status: covered, evidence_refs: [doc/features/AR90004/SR/design.md]}
+          account_switch: {status: covered, evidence_refs: [doc/features/AR90004/SR/design.md]}
+          process_recreation: {status: covered, evidence_refs: [doc/features/AR90004/SR/design.md]}
+          background_write: {status: not_applicable, evidence_refs: [doc/features/AR90004/SR/design.md]}
+        provenance: *sr
   - view_id: development
     viewpoint_contract: app-development@1
     applicability: applicable
