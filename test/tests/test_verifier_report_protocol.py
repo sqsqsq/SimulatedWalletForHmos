@@ -208,6 +208,23 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegistered
         self.assertNotEqual(0, out.returncode)
         self.assertIn("登记之后", out.stdout + out.stderr)
 
+    def test_a_questioning_without_its_original_does_not_reach_the_story(self) -> None:
+        """蓝图记着完成的质询，原件却不在：成文的设计来源不成立，指回设计负责方重新派质询；原件回来就恢复。"""
+        self.assertEqual(0, self.check().returncode)
+        originals = next((self.root / "doc" / "features").glob("*/blueprint/questioning"))
+        replies = list(originals.rglob("reply.md"))
+        self.assertTrue(replies)
+        kept = {p: p.read_bytes() for p in replies}
+        for p in replies:
+            p.unlink()
+        out = self.check()
+        self.assertNotEqual(0, out.returncode)
+        self.assertIn("设计作者自己填写的记录不算质询", out.stdout + out.stderr)
+        self.assertIn("重新派质询", out.stdout + out.stderr)
+        for p, data in kept.items():
+            p.write_bytes(data)
+        self.assertEqual(0, self.check().returncode)
+
     def test_the_review_is_prepared_once_the_structure_check_passes(self) -> None:
         """结构检查没过不准备；过了就生成带判据原文与报告格式的任务。"""
         text = self.story.read_text(encoding="utf-8")

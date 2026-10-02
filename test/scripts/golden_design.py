@@ -44,8 +44,12 @@ _LENS = ("module_boundaries", "capability_seams", "feature_flags", "data_produce
          "state_owners", "initialization", "publication_subscription", "ui_refresh", "process_recovery")
 
 
+#: 夹具的质询原件：被评候选与质询者回复，质询项的来源指向回复
+QUESTIONING = f"doc/features/{BLUEPRINT_ID}/blueprint/questioning/r1"
+
+
 def _questioning(blueprint: dict) -> list[dict]:
-    """独立设计质询的记录骨架：每个视图、关系、运行数据流、应用视角与需求术语各一问，证据指向系统设计原文。"""
+    """独立设计质询的记录骨架：每个视图、关系、运行数据流、应用视角与需求术语各一问，证据指向系统设计原文，来源是质询原件。"""
     scopes = [("view", f"view:{v['view_id']}") for v in blueprint["design_views"] if v.get("applicability") == "applicable"]
     scopes += [("relation", f"relation:{r['relation_id']}") for r in blueprint["relations"]]
     scopes += [("flow", f"flow:{fl['flow_id']}") for v in blueprint["design_views"]
@@ -55,7 +59,10 @@ def _questioning(blueprint: dict) -> list[dict]:
     return [{"question_id": f"q-{ref.replace(':', '-').replace('_', '-')}", "scope_kind": kind, "scope_ref": ref,
              "question": f"Is {ref} closed?", "frontier_fingerprint": f"ff-{ref}", "owner": "architecture-owner",
              "disposition": "answered_with_evidence", "answer": "Evidence-backed.", "evidence_refs": [SR],
-             "verification_refs": [f"verify:{ref}"], "provenance": blueprint["provenance"]} for kind, ref in scopes]
+             "verification_refs": [f"verify:{ref}"],
+             "provenance": {**blueprint["provenance"], "source_kind": "independent_questioning",
+                            "source_ref": f"{QUESTIONING}/reply.md", "evidence_strength": "observed",
+                            "extraction_method": "isolated-subagent-reply"}} for kind, ref in scopes]
 
 
 #: 蓝图工作区里接口转写与映射的位置（工程根起）
@@ -167,7 +174,12 @@ def install(root: Path, items: list[dict], access: Path, knowledge_root: Path) -
     target.parent.mkdir(parents=True, exist_ok=True)
     flow = json.loads((root / "doc" / "features" / "AR90004" / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
     place_contract_sources(root, f"{flow['input']['snapshot_ref'].rsplit('/', 1)[0]}/files/SR/design.md")
-    target.write_bytes(assemble(items, knowledge_root).encode("utf-8"))
+    text = assemble(items, knowledge_root)
+    target.write_bytes(text.encode("utf-8"))
+    originals = root / QUESTIONING
+    originals.mkdir(parents=True, exist_ok=True)
+    (originals / "candidate.yaml").write_bytes(text.encode("utf-8"))
+    (originals / "reply.md").write_bytes("# 独立质询回复（夹具）\n\n逐个原生范围核对，均有证据，无未决项。\n".encode("utf-8"))
     for script, args in ((REFINGERPRINT, [str(root), str(access), str(target)]),):
         proc = subprocess.run(["node", "--input-type=module", "-e", script, *args],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)

@@ -20,6 +20,7 @@ import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { questioningProblems } from './questioning.mjs';
 
 const loaded = new Map();
 
@@ -457,6 +458,11 @@ function resolveFeature(projectRoot, feature, phase, supplied) {
   return out;
 }
 
+/** 命令行读蓝图时一并给出质询原件的缺口（判据在 questioning.mjs），路由据它停在设计。 */
+function withQuestioning(root, read) {
+  return read.status === 'ok' ? { ...read, questioning_problems: questioningProblems(root, read) } : read;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const opt = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -482,7 +488,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         throw new Error(`stdin 不是 JSON（${e?.message ?? e}）`);
       }
     }
-    const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot'))
+    const out = action === 'blueprint' ? withQuestioning(root, readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot')))
       : action === 'binding' ? checkBinding(root, opt('--component'), opt('--blueprint'))
         : action === 'sources' ? checkSources(root, doc)
           : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)

@@ -288,6 +288,10 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
     target = root / features_dir(root) / blueprint / "blueprint" / "component-blueprint.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     text = source.read_text(encoding="utf-8").replace("blueprint_id: wallet-balance-refresh\n", f"blueprint_id: {blueprint}\n", 1)
+    # 质询原件随蓝图一起放到新工作区，质询项指向它的路径跟着换
+    text = text.replace("doc/features/wallet-balance-refresh/blueprint/questioning/",
+                        f"{features_dir(root)}/{blueprint}/blueprint/questioning/")
+    shutil.copytree(source.parent / "questioning", target.parent / "questioning", dirs_exist_ok=True)
     active = active_constraints(root, access)
     judged = judged_rules(active, decisions, exact_decisions)
     if judged:

@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readBlueprint } from '../../../../../hooks/shared/framework-access.mjs';
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
+import { questioningProblems } from '../../../../../hooks/shared/questioning.mjs';
 import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
 import { readJson } from './context.mjs';
 
@@ -62,8 +63,12 @@ export function designSource(ctx) {
       problems.push(`蓝图 ${binding.blueprint_id} 的评审投影 ${read.projection?.path}`
         + `${read.projection?.status === 'missing' ? '还没生成' : '与当前 revision 对不上'}——由设计职责按原生 renderer 生成，Extension 不手改`);
     } else {
-      out.blueprint = read.blueprint;
-      out.ref = read.blueprint_ref;
+      const unquestioned = questioningProblems(ctx.projectRoot, read);
+      problems.push(...unquestioned.map(p => `${p}——由设计职责在 component-design 里重新派质询`));
+      if (!unquestioned.length) {
+        out.blueprint = read.blueprint;
+        out.ref = read.blueprint_ref;
+      }
     }
   }
   cache.set(ctx, out);

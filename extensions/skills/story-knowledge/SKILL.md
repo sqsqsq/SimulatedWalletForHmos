@@ -5,13 +5,13 @@ description: 进入一个 Feature 阶段或蓝图设计动作之前，取当前�
 
 # story-knowledge — 动作前取知识任务
 
-读者：进入 Feature 阶段或蓝图设计动作的主 agent。时机：阶段作业开始之前（manifest 的 phase_bindings 把本 Skill 登记在每个 Feature 阶段之前）；蓝图的来源发现、设计与质询之前由发起设计的一方调用。
+读者：进入 Feature 阶段或蓝图设计动作的主 agent。时机：阶段作业开始之前（manifest 的 phase_bindings 把本 Skill 登记在每个 Feature 阶段之前）；蓝图的来源发现与设计之前由设计作者调用；质询任务由主执行者取来交给隔离的质询者，取任务只是准备，不算质询。
 
 | 场景 | 命令 |
 |---|---|
 | Feature 阶段（spec / plan / coding / review / ut / testing） | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --feature <当前 Feature id> --action <当前阶段> --audience author` |
 | 蓝图来源发现与设计 | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --blueprint <蓝图 id> --action discovery --audience author`（写设计时 `--action design`） |
-| 蓝图独立质询 | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --blueprint <蓝图 id> --action questioning --audience reviewer` |
+| 蓝图独立质询（主执行者取，交给隔离的质询者） | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --blueprint <蓝图 id> --action questioning --audience reviewer` |
 
 Feature id 与阶段取当前阶段上下文里 Framework 给出的原生值，蓝图 id 取本次设计请求里的值。
 

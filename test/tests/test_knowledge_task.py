@@ -541,6 +541,36 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.assertIn("本施工单位承担的设计对象：", proc.stdout)
         self.assertIn("hooks/plan/author.md", proc.stdout)
 
+    def test_the_questioning_task_carries_the_handoff(self) -> None:
+        """质询任务交给隔离质询者：被评候选与原件位置、原生质询范围逐项、每项要回什么。"""
+        proc = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        canonical = self.root / "doc/features" / BLUEPRINT / "blueprint/component-blueprint.yaml"
+        key = hashlib.sha256(canonical.read_bytes()).hexdigest()[:16]
+        base = f"doc/features/{BLUEPRINT}/blueprint/questioning/{key}"
+        self.assertIn(f"`{base}/candidate.yaml`", proc.stdout)
+        self.assertIn(f"`{base}/reply.md`", proc.stdout)
+        blueprint = yaml.safe_load(canonical.read_text(encoding="utf-8"))
+        for view in blueprint["design_views"]:
+            if view.get("applicability") == "applicable":
+                self.assertIn(f"`view:{view['view_id']}`（view）", proc.stdout)
+        for relation in blueprint.get("relations") or []:
+            self.assertIn(f"`relation:{relation['relation_id']}`（relation）", proc.stdout)
+        self.assertIn("质询者只读，不改蓝图", proc.stdout)
+
+    def test_a_completed_questioning_without_its_original_is_a_gap(self) -> None:
+        """质询记成完成、原件却不在：设计动作的任务把它列为缺口，交设计负责方重新派质询。"""
+        originals = self.root / "doc/features" / BLUEPRINT / "blueprint/questioning"
+        kept = Path(tempfile.mkdtemp()) / "q"
+        shutil.move(str(originals), kept)
+        self.addCleanup(shutil.rmtree, kept.parent, True)  # 清理按注册的逆序：先搬回，再删临时目录
+        self.addCleanup(shutil.move, str(kept), originals)
+        proc = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        gaps = proc.stdout.split("## 6. 缺口与责任", 1)[1]
+        self.assertIn("设计作者自己填写的记录不算质询", gaps)
+        self.assertIn("设计负责方重新派质询", gaps)
+
     def test_questioning_without_a_draft_fails_without_half_a_task(self) -> None:
         proc = self.task("--blueprint", "new-thing", "--action", "questioning", "--audience", "reviewer")
         self.assertEqual(1, proc.returncode)

@@ -44,14 +44,21 @@
 
 ## 三、设计
 
-蓝图由 Framework 的 component-design 建立、质询、调和到准入：
+蓝图由 Framework 的 component-design 建立、质询、调和到准入，本次请求做到准入并生成评审投影为止：
 
-- 用冻结的输入作为来源：系统需求交物化件，本地需求交需求条目。
-- 设计动手前与质询前各取一次知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
+- 用冻结的输入作为来源：系统需求交物化件，本地需求交需求条目；人签以冻结版本里的导出为准。实际读过的材料才记为已消费。
+- 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
 - 原生字段表达不了的精确内容写进 `story_details`，写法见 `hooks/blueprint/author.md`。
+- **独立质询**由你（主执行者）派给宿主已有的隔离子代理，作者不自己质询：
+  1. 候选写好后取质询任务（`--action questioning --audience reviewer`），它给出原生质询范围、被评候选的原件位置与回复要求；
+  2. 把候选原样复制到任务写的 `candidate.yaml`，再把任务交给子代理；它只读材料、逐项回复，不改蓝图；
+  3. 回复原样存为任务写的 `reply.md`，一字不改；
+  4. 设计负责方逐项处理真实问题（要人定的问人），再写原生 `review_summary.questioning`：`provider_id` 写这次子代理调用的身份，
+     每项的 `provenance.source_ref` 指向那份 `reply.md`，`source_kind: independent_questioning`。
+  宿主没有隔离执行能力时，质询保持未完成，如实告诉人缺什么，不自己填写质询结果，蓝图也不准入。
 - 准入之后由设计职责按原生 renderer 生成评审投影 `component-blueprint.review.md`。
 
-蓝图没准入或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。只查看、重入或改表达不产生新的设计 revision。
+蓝图没准入、投影与当前 revision 对不上，或质询记录没指向原件时，`status` 停在等设计，成文不起手。只查看、重入或改表达不产生新的设计 revision。
 
 ## 四、成文
 

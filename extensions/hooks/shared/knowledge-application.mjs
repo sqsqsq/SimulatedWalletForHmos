@@ -98,6 +98,10 @@ function checkKnowledgeApplications(projectRoot, { decisions, facts = [], addres
       problems.push(`${label} 没有判断激活规约 ${missing.join('、')}（${ref}）——规约逐条判断，不适用也要写明本需求哪个条件不成立`);
     }
   }
+  for (const f of facts.filter(x => !x?.value?.knowledge && active.has(where(x?.provenance?.source_ref)))) {
+    problems.push(`${label} 的事实 ${f.fact_id ?? '（无编号）'}：来源是激活知识 ${where(f.provenance.source_ref)}，`
+      + '却没写 value.knowledge（单元与原文摘要）——知识里读到的事实按它登记，原文变了才核得出来');
+  }
   for (const f of facts.filter(x => x?.value?.knowledge)) {
     const id = f.fact_id ?? '（无编号）';
     const shape = schemaCheck(native, f.value.knowledge, 'factKnowledge');

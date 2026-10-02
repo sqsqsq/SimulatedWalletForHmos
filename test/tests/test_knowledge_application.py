@@ -86,6 +86,17 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
         out = self.problems(waive)
         self.assertTrue(any("红线，不能豁免" in p for p in out), out)
 
+    def test_a_fact_read_from_knowledge_must_say_which_unit(self) -> None:
+        """事实来源是激活的项目知识却没写 value.knowledge：报出来；来源是仓里代码的普通事实照原生形态，不要求它。"""
+        fact = ("bp.discovery.facts.push({fact_id: 'f-from-knowledge', subject: 'module:WalletMain', value: {observation: '钱包主模块'},"
+                " provenance: {source_kind: 'knowledge', source_ref: 'doc/extensions/knowledge/facts/sample-facts.md',"
+                " observed_at: '2026-10-02T00:00:00Z', evidence_strength: 'observed', extraction_method: 'read'}});")
+        out = self.problems(fact)
+        self.assertTrue(any("f-from-knowledge" in p and "value.knowledge" in p for p in out), out)
+        plain = fact.replace("source_kind: 'knowledge'", "source_kind: 'code'").replace(
+            "doc/extensions/knowledge/facts/sample-facts.md", "02-Feature/WalletMain/src/main/ets/pages/Index.ets")
+        self.assertEqual([], self.problems(plain))
+
     def test_a_pending_judgement_is_an_open_decision(self) -> None:
         out = self.problems("decisions[0].knowledge.outcome = 'pending';")
         self.assertTrue(any("形态不合" in p for p in out), "pending 却标成已作答")
