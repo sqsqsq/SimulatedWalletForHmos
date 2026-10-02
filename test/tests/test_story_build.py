@@ -553,9 +553,10 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
             {"field_id": "balance", "type": "number", "semantics": "余额（分）", "nullable": True}]},
         "mappings": [{"mapping_id": "m1", "target_field": "displayBalance", "kind": "derivation",
                       "source_fields": ["balance"], "rule": "分转元，两位小数"}],
-        "errors": {"timeout": "3 秒按失败处理", "source_ref": "api/wallet.yaml#errors"},
-        "idempotency": {"key": "cardNo+day"},
-        "nfr": {"latency_p95_ms": 800},
+        "errors": {"items": {"timeout": "3 秒按失败处理"}, "source_ref": "api/wallet.yaml#errors",
+                   "internal": {"retry": {"budget": 3}}},
+        "idempotency": {"rule": "同卡同日只记一次"},
+        "nfr": {"requirements": {"latency_p95_ms": 800}},
     }, {"contract_id": "second", "operation": {"operation_id": "op2", "direction": "inbound", "version": "v1", "source_ref": "x"}}]}
 
     def test_a_contract_carries_its_operation_fields_mappings_and_semantics(self) -> None:
@@ -566,8 +567,9 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
                        "| 响应 BalanceResponse | balance | number | 余额（分） | 可空 |",
                        "| m1 | displayBalance | derivation | balance | 分转元，两位小数 |",
                        "- 错误语义：timeout：3 秒按失败处理",
-                       "- 幂等：key：cardNo+day", "- 非功能：latency_p95_ms：800", "**second**"):
+                       "- 幂等：同卡同日只记一次", "- 非功能：latency_p95_ms：800", "**second**"):
             self.assertIn(needle, text)
+        self.assertNotIn("budget", text, "明确字段之外的嵌套对象被摊平写进了附录")
         self.assertNotIn("api/wallet.yaml", text, "来源路径是仓内路径，不进归档件的附录")
 
     def test_tables_do_not_run_together(self) -> None:
@@ -580,13 +582,17 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
 
     def test_data_flows_and_their_policies(self) -> None:
         bp = {"design_views": [{"view_id": "runtime", "runtime_data_flows": [
-            {"flow_id": "balance-cache", "data_domain_refs": ["balance"], "source_of_truth": {"owner": "云侧"},
-             "state_owner": "WalletMain", "failure_recovery": "失败保留上次值"}]}],
+            {"flow_id": "balance-cache", "data_domain_refs": ["balance"],
+             "source_of_truth": {"authority": "云侧", "projections_and_caches": [{"cache": "内存"}]},
+             "state_owner": {"ref": "WalletMain", "states": ["加载", "完成"]},
+             "failure_recovery": {"persistence_failure": "失败保留上次值", "extra": {"nested": "不写"}}}]}],
             "story_details": [{"id": "d1", "kind": "data_policy", "title": "缓存有效期",
                                "body": "余额缓存 5 分钟。\n\n| 场景 | 处理 |\n|---|---|\n| 切账号 | 清空 |",
                                "evidence_refs": ["flow:balance-cache"]}]}
         text = "\n".join(self.rows("技术契约·数据存储", bp))
-        self.assertIn("| balance-cache | balance | owner：云侧 | WalletMain | 失败保留上次值 |", text)
+        self.assertIn("| balance-cache | balance | 权威：云侧 | 归属：WalletMain；状态：加载、完成 | 写入失败：失败保留上次值 |", text)
+        for gone in ("内存", "不写", "nested"):
+            self.assertNotIn(gone, text, "明确字段之外的嵌套对象被摊平写进了附录")
         self.assertIn("| 切账号 | 清空 |", text, "精确明细的正文没有逐字带上")
         self.assertIn("flow:balance-cache", text)
 

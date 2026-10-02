@@ -120,6 +120,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
 
     1. 全篇结构检查（`story-build check`）通过；
     2. 这一份的独立审查结果（`story-build review --action check`）是 pass 或 warn——审的是现在这份；
+       宿主没有独立审查能力、人授权不经审查交付的（unreviewed）同样可登记，披露随结果；
     3. 这一刻的成文依据（`story-build basis`）：蓝图引用、交给设计的输入版本、激活知识摘要，
        加上 Story、Review、决策登记与写作设计的原始字节指纹。
 
@@ -155,7 +156,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     reviewed = build("review", "--action", "check")
     rows = [line for line in reviewed.stdout.splitlines() if line.startswith("{")]
     review = json.loads(rows[-1]) if rows else {}
-    if reviewed.returncode != 0 or review.get("result") not in ("pass", "warn"):
+    if reviewed.returncode != 0 or review.get("result") not in ("pass", "warn", "unreviewed"):
         raise FlowError(f"这一份的独立审查还不能消费（{review.get('result', '读不到结果')}）：{review.get('detail', (reviewed.stderr or '').strip()[:600])}"
                         "——按 `phases/design.md`「五、独立审查、登记与交付」处置，审查通过再登记")
     basis = build("basis")

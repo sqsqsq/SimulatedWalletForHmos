@@ -159,9 +159,6 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
         return ("design_projection",
                 f"蓝图已准入，评审投影 `{projection.get('path')}` {'还没生成' if projection.get('status') == 'missing' else '与当前 revision 对不上'}："
                 "由设计职责按原生 renderer 生成，Extension 不手改")
-    if read.get("questioning_problems"):
-        return ("design_blueprint", "；".join(read["questioning_problems"])
-                + "——按 `phases/design.md`「三、设计」在 component-design 里重新派独立质询，处理后重新准入")
     return None
 
 

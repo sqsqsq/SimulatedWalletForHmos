@@ -20,7 +20,6 @@ import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { questioningProblems } from './questioning.mjs';
 
 const loaded = new Map();
 
@@ -174,36 +173,6 @@ function readProjection(native, checked) {
   const issues = native.module('scripts/utils/blueprint-host-seams.ts')
     .validateBlueprintReviewPublication(fs.readFileSync(file, 'utf8'), checked.blueprint, checked.artifactSha256);
   return { ...out, status: issues.length ? 'stale' : 'valid', issues };
-}
-
-/**
- * 原生无 Feature 专项请求（`request-phase.ts` 的 `runExplicitRequest`，参数键与 `npm run check` 的命令行相同）。
- * 在本进程里调用同一份发布件，接住它写到标准输出的那一段 JSON：prepare 给请求身份与缺口，
- * 正式检查给 `{subject, request_sha256, verdict, report}`。原生抛错原样交回，不猜结果。
- *
- * @returns {Promise<{code: number, output: object|null, text: string}>}
- */
-export async function explicitRequest(projectRoot, args) {
-  const native = loadNative(projectRoot);
-  const { runExplicitRequest } = native.module('scripts/utils/request-phase.ts');
-  const printed = [];
-  const log = console.log;
-  console.log = (...parts) => printed.push(parts.join(' '));
-  let code;
-  try {
-    code = await runExplicitRequest({ projectRoot: native.root, frameworkRoot: native.frameworkRoot, args });
-  } finally {
-    console.log = log;
-  }
-  const text = printed.join('\n');
-  const json = text.slice(text.search(/^\{/m));
-  let output = null;
-  try {
-    output = JSON.parse(args['prepare-request'] ? json : json.split(/\r?\n/).filter(l => l.startsWith('{')).pop());
-  } catch {
-    output = null;
-  }
-  return { code, output, text };
 }
 
 /**
@@ -458,11 +427,6 @@ function resolveFeature(projectRoot, feature, phase, supplied) {
   return out;
 }
 
-/** 命令行读蓝图时一并给出质询原件的缺口（判据在 questioning.mjs），路由据它停在设计。 */
-function withQuestioning(root, read) {
-  return read.status === 'ok' ? { ...read, questioning_problems: questioningProblems(root, read) } : read;
-}
-
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const opt = k => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
@@ -488,7 +452,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         throw new Error(`stdin 不是 JSON（${e?.message ?? e}）`);
       }
     }
-    const out = action === 'blueprint' ? withQuestioning(root, readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot')))
+    const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot'))
       : action === 'binding' ? checkBinding(root, opt('--component'), opt('--blueprint'))
         : action === 'sources' ? checkSources(root, doc)
           : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)

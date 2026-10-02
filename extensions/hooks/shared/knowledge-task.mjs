@@ -20,7 +20,7 @@ import { blueprintKnowledge, featureKnowledge } from './knowledge-application.mj
 import { loadNative, readBlueprint, readFeature } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
-import { questioningProblems, questioningRound } from './questioning.mjs';
+import { questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
 import { extensionRoot, relDisplay } from './paths.mjs';
 
@@ -99,12 +99,11 @@ function blueprintTask(root, id, action) {
   if (bp?.issues?.length) gaps.push(`蓝图原生校验有 ${bp.issues.length} 项：${bp.issues.slice(0, 5).map(i => i.id ?? i.code).join('、')}——设计作者处理。`);
   const decided = bp ? decisionsOf(bp.blueprint) : [];
   if (bp) gaps.push(...blueprintKnowledge(root, bp.blueprint).problems.map(p => `${p}——设计作者处理。`));
-  if (bp && action !== 'questioning') gaps.push(...questioningProblems(root, bp).map(p => `${p}——设计负责方重新派质询。`));
   const duties = ['设计阶段还没有施工契约；知识判断以决定的形式落在蓝图里，施工义务在施工单位的契约中承接。'];
   if (action === 'questioning') {
     const round = questioningRound(root, bp, loadNative(root));
-    duties.push(`被评候选是上面这一版。派审前主执行者把它原样复制为 \`${round.candidate}\`，`
-      + `连同本任务交给宿主的隔离子代理；回复原样存为 \`${round.reply}\`。质询者只读，不改蓝图。`,
+    duties.push(`被评候选是上面这一版。主执行者把本任务交给宿主的隔离子代理，派审时的候选与回复原样留存`
+      + `（建议位置 \`${round.candidate}\`、\`${round.reply}\`）。质询者只读，不改蓝图。`,
     `原生质询范围，逐项唯一覆盖：${round.scopes.map(([ref, kind]) => `\`${ref}\`（${kind}）`).join('、')}。`,
     '每项回：问题、回答、证据、处置（answered_with_evidence / decided_with_authority / open_decision / blocker / not_applicable）、'
       + '责任方、验证去向，以及未决项与处置建议。');

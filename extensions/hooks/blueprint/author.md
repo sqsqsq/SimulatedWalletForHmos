@@ -57,4 +57,4 @@ story_details:
 原生字段已经表达的不重复写进 `body`。埋点（`event`）的统计点写成表头含「统计点」的表，施工单位的 plan 按统计点名逐点落实。前三类投进 Story 附录，专项设计由成文作者在讲它的那一章原样呈现。还没形成施工值的写明由哪个阶段定。
 
 ## 端云接口的转写与独立质询
-SE 文档里的接口设计格式不固定：读懂冻结的 SR 原文，转写成 `blueprint/contracts/se-interfaces.yaml`，本部件的字段映射写同目录 `mappings.yaml`，蓝图契约用 `source_ref` 指向它们。原文没给的不补，登记缺口。写法见 `doc/extensions/skills/story/reference/evidence-rules.md`「5. 端云接口转写成契约来源」。独立质询由主执行者派给隔离的子代理，你不填写质询结果。
+SE 文档里的接口设计格式不固定：读懂冻结的 SR 原文，转写成 `blueprint/contracts/se-interfaces.yaml`，本部件的字段映射写同目录 `mappings.yaml`，蓝图契约用 `source_ref` 指向它们。接口负责方有记录的逐项确认同样是来源；来源没给的不补，登记缺口。写法见 `doc/extensions/skills/story/reference/evidence-rules.md`「5. 端云接口转写成契约来源」。独立质询由主执行者派给隔离的子代理，你不填写质询结果。

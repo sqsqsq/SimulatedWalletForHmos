@@ -50,15 +50,14 @@
 - 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
 - 原生字段表达不了的精确内容写进 `story_details`，写法见 `hooks/blueprint/author.md`。
 - **独立质询**由你（主执行者）派给宿主已有的隔离子代理，作者不自己质询：
-  1. 候选写好后取质询任务（`--action questioning --audience reviewer`），它给出原生质询范围、被评候选的原件位置与回复要求；
-  2. 把候选原样复制到任务写的 `candidate.yaml`，再把任务交给子代理；它只读材料、逐项回复，不改蓝图；
-  3. 回复原样存为任务写的 `reply.md`，一字不改；
-  4. 设计负责方逐项处理真实问题（要人定的问人），再写原生 `review_summary.questioning`：`provider_id` 写这次子代理调用的身份，
-     每项的 `provenance.source_ref` 指向那份 `reply.md`，`source_kind: independent_questioning`。
+  1. 候选写好后取质询任务（`--action questioning --audience reviewer`），它给出原生质询范围、回复要求与原件的建议位置；
+  2. 把任务交给子代理；它只读材料、逐项回复，不改蓝图；
+  3. 派审时的候选与回复原样留存，一字不改；
+  4. 设计负责方逐项处理真实问题（要人定的问人），再写原生 `review_summary.questioning`，`provider_id` 写这次子代理调用的身份。
   宿主没有隔离执行能力时，质询保持未完成，如实告诉人缺什么，不自己填写质询结果，蓝图也不准入。
 - 准入之后由设计职责按原生 renderer 生成评审投影 `component-blueprint.review.md`。
 
-蓝图没准入、投影与当前 revision 对不上，或质询记录没指向原件时，`status` 停在等设计，成文不起手。只查看、重入或改表达不产生新的设计 revision。
+蓝图没准入或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。只查看、重入或改表达不产生新的设计 revision。
 
 ## 四、成文
 
@@ -72,25 +71,26 @@
 ## 五、独立审查、登记与交付
 
 1. **定稿并准备审查**：`story-build check` 通过之后，跑 `story-build review --action prepare`。它先把审查对象定成最终版
-   （附录重投、编号、渲染 `AR/review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`、生成 Framework 原生的
-   无 Feature review 请求并调原生 prepare，输出这一次的 request_sha256 与报告目录（默认 `doc/reports/story/<需求>/<材料键>/`，
-   与需求目录分开）。之后改了任何被审材料，重新 prepare、重新审。
-2. **派审**：用宿主与作者隔离的独立执行能力（子代理）把任务文件、request_sha256 与报告目录交给审查者。审查者读任务里列的全部材料，
-   在报告目录写原生事实记录 `context/facts.md`，回复一份原生 review 报告（格式在任务的「报告怎么写」）。
-   你把回复**原样**写到 `<报告目录>/review-original.md`，一字不改。
-3. **核结果**：`story-build review --action check` 核审的是不是现在这份、回复在不在，跑原生检查并归类：
+   （附录重投、编号、渲染 `AR/review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`，输出这一次的材料键、
+   报告目录（默认 `doc/reports/story/<需求>/<材料键前 16 位>/`，与需求目录分开）与这一份回复的位置。同一份材料已有通过的报告时
+   输出 `reused`，直接核结果。之后改了任何被审材料，重新 prepare、重新审。
+2. **派审**：用宿主与作者隔离的独立执行能力（子代理）把任务文件与材料键交给审查者。审查者读任务里列的全部材料，
+   回复一份 Story 报告（格式在任务的「报告怎么写」）。你把回复**原样**写到准备输出的回复位置，一字不改；之前的回复保留。
+3. **核结果**：`story-build review --action check` 只读核审的是不是现在这份、报告合不合格式与引用、结论是什么：
 
    | 结果 | 你做什么 |
    |---|---|
    | pass | 登记，交付 |
    | warn（只有 MINOR / INFO 建议） | 登记，带建议交付，不因建议反复重审 |
-   | fail（不通过，或有未关闭 MAJOR） | 回到最早出错的那一处（材料、决策登记、写作设计、章草稿或设计）修，改完重新 prepare、重审 |
-   | report_missing / report_invalid | 保留原回复，请审查者按格式重给，不改它的结论 |
+   | fail（有 BLOCKER / MAJOR 发现） | 回到最早出错的那一处（材料、决策登记、写作设计、章草稿或设计）修，改完重新 prepare、重审 |
+   | report_missing / report_invalid | 保留原回复，请审查者按格式重给，不改它的结论、不替它补引用 |
    | subject_stale | 审的不是现在这份：重新 prepare，按新材料再审 |
-   | input_invalid / tool_error | 停下，报告实际的工具或来源缺口 |
+   | input_invalid | 停下，报告实际的来源缺口 |
 
-   宿主没有独立执行能力时，照实告诉人缺什么，不自审顶替；这一版交付门不放行未经审查的 Story。
-4. **登记**：`story_flow.py story`。它只读核对：结构检查、这一份的审查结果（pass 或 warn）、成文依据（蓝图引用、输入版本、
+   宿主确实没有独立执行能力时，照实告诉人缺什么，不自审顶替。人明确授权这一版不经审查交付时，
+   用 `story-build review --action unreviewed --reason "<缺什么>" --reply "<人的原话>"` 记下，结果是 unreviewed：
+   可以登记与交付，未审查的事实随交付门输出告诉读者；材料一变授权就不再适用。坏报告、没派审或工具失败不归这一类。
+4. **登记**：`story_flow.py story`。它只读核对：结构检查、这一份的审查结果（pass、warn 或人授权的 unreviewed）、成文依据（蓝图引用、输入版本、
    知识摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），都成立才一次记下新依据；不成立时已有的登记原样保留。
 5. **交付门**：`story-build check --deliver`。它核交付的是登记的那一份、依据没有变、审查结果仍可消费。
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：

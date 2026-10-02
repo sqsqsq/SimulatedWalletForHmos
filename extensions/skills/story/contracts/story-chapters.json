@@ -161,7 +161,9 @@
              "labels": {"request": "请求", "response": "响应", "nullable": "可空", "required": "必有", "version": "版本",
                         "errors": "错误语义", "idempotency": "幂等", "nfr": "非功能"}},
             {"title": "数据存储", "reader": "data_flows", "detail_kind": "data_policy",
-             "tables": {"flows": "数据流|数据域|权威来源|状态归属|失败与恢复"}},
+             "tables": {"flows": "数据流|数据域|权威来源|状态归属|失败与恢复"},
+             "labels": {"authority": "权威", "persistence": "持久化", "reconciliation": "对账", "ref": "归属", "states": "状态",
+                        "persistence_failure": "写入失败", "subscription_failure": "订阅失败", "process_recreation": "进程重建"}},
             {"title": "配置项", "reader": "details", "detail_kind": "configuration"}
           ]},
           "规约": {"reader": "knowledge_applications", "tables": {"rows": "知识单元|判定|要求与理由|落点"}},

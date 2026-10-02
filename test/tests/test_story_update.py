@@ -1180,6 +1180,25 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
         self.assertEqual("closed", self.update("--action", "close").get("status"))
         self.assert_no_hand_edit()
 
+    def test_changed_materials_need_a_new_frozen_input_before_close(self) -> None:
+        """update 轮里材料变了：稿子重新登记了，设计输入却还是旧冻结版本——不收口；重跑 complete、设计同步、重新登记后收口。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.mark_archived()
+        rid = self.update()["update"]
+        prd = self.feature_root / "RR" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n改版：回执状态以服务端为准。\n", encoding="utf-8")
+        self.flow("round")
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        refused = self.update("--action", "close")
+        self.assertIn("设计输入还是变化之前冻结的那一版", refused.get("error", ""), refused)
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertTrue(done.get("committed"), done)
+        self.design_syncs()
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        self.assert_no_hand_edit()
+
     def test_rescoping_after_archive_goes_through_the_scope_gate(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.mark_archived()

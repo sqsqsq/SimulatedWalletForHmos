@@ -1213,7 +1213,7 @@ class RegistrationReprojectsFirst(unittest.TestCase):
 
     def test_the_order_is_project_then_number_then_check(self) -> None:
         source = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs").read_text(encoding="utf-8")
-        body = source.split("async function cmdReview(", 1)[1].split("\n}\n", 1)[0]
+        body = source.split("function cmdReview(", 1)[1].split("\n}\n", 1)[0]
         order = [body.index(step) for step in ("cmdProject(ctx)", "cmdNumber(ctx)", "cmdBuild(ctx)", "storyCheck(ctx", "prepareReview(")]
         self.assertEqual(sorted(order), order, "准备审查时没有先定稿再检查、再准备请求")
         lifecycle = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")

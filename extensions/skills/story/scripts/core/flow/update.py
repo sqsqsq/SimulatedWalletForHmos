@@ -688,6 +688,16 @@ def cmd_update_close(feature_root: Path) -> dict:
     if result == "materials" and touched:
         raise FlowError(f"这一轮登记的请求是 materials，却改了已有人读件 {'、'.join(touched)}，不收口："
                         "已有 Story 受影响的是 documents——`update --action prepare --result documents` 改记终点，按 documents 收口")
+    if result == "documents" and contract.get("input"):
+        # 与 complete 同一口径：登记的输入记着冻结时的材料摘要，本轮材料变了它就还是旧依据
+        try:
+            live = registry.build(feature_root)
+        except registry.MaterialError as exc:
+            raise FlowError(str(exc)) from exc
+        if live.get("digest") != contract["input"].get("materials_digest"):
+            raise FlowError("这一轮材料变了，设计输入还是变化之前冻结的那一版，不收口：在 design-input.json 写明本轮采用集合"
+                            "（不采用的在提取稿写理由），重跑 `story_flow.py complete` 冻结新版本——采用集合没变就复用原版本、"
+                            "只记下这次的材料；设计与成文按登记的新输入同步后再收口")
     if result == "documents" and (feature_root / Path(*STORY)).is_file():
         registered_before = (load(root / "before") or {}).get("status") == "story_written"
         if contract.get("status") != "story_written":

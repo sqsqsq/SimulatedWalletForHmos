@@ -41,7 +41,7 @@ import {
 } from './story/context.mjs';
 import { designGaps, materialSubsectionName, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
-import { ORIGINAL, prepareReview, reviewResult } from './story/independent-review.mjs';
+import { authorizeUnreviewed, prepareReview, reviewResult } from './story/independent-review.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
@@ -64,6 +64,8 @@ function parseArgs(argv) {
     else if (argv[i] === '--registering') args.registering = true;
     else if (argv[i] === '--action') args.action = argv[++i];
     else if (argv[i] === '--report-dir') args.reportDir = argv[++i];
+    else if (argv[i] === '--reason') args.reason = argv[++i];
+    else if (argv[i] === '--reply') args.reply = argv[++i];
   }
   return args;
 }
@@ -117,17 +119,19 @@ function cmdBasis(ctx) {
 }
 
 /**
- * 独立人读审查，接 Framework 原生的无 Feature review request（`story/independent-review.mjs`）。
+ * 独立人读审查（`story/independent-review.mjs`）。
  *
- * - `prepare`：先把审查对象定成最终版——附录重投、编号、渲染 Review，全篇结构检查通过——再写审查任务、
- *   生成原生请求并调原生 prepare；给出派审要带的东西。
- * - `check`：核这一次的审查结果，输出一行 JSON（`result`、`detail`），pass / warn 退出 0，其余退出 1。
+ * - `prepare`：先把审查对象定成最终版——附录重投、编号、渲染 Review，全篇结构检查通过——再写审查任务，
+ *   给出材料键与这一份回复的位置；同一份材料已有有效通过的报告时给出原位置（reused）。
+ * - `check`：只读核这一次的审查报告，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
+ * - `unreviewed`：宿主没有独立审查能力时，记下缺什么（`--reason`）与人授权不经审查交付的原话（`--reply`），绑定定稿的这一版。
  * - `manual`：评审记录里人写过的内容（写过字的议题、自由意见区），一行 JSON。
  */
-async function cmdReview(ctx) {
-  if (!['prepare', 'check', 'manual'].includes(ctx.args.action)) {
-    fail('用法: story-build.mjs review --action prepare|check|manual --feature <需求名> [--project-root <路径>] [--report-dir <项目相对路径>]');
+function cmdReview(ctx) {
+  if (!['prepare', 'check', 'unreviewed', 'manual'].includes(ctx.args.action)) {
+    fail('用法: story-build.mjs review --action prepare|check|unreviewed|manual --feature <需求名> [--project-root <路径>]'
+      + ' [--report-dir <项目相对路径>] [--reason <宿主缺什么> --reply <人的原话>]');
   }
   if (ctx.args.action === 'manual') {
     // 评审记录里人写过的内容（update 撤回判 Review 能不能动）：一行 JSON
@@ -135,9 +139,15 @@ async function cmdReview(ctx) {
     return;
   }
   if (ctx.args.action === 'check') {
-    const out = await reviewResult(ctx);
+    const out = reviewResult(ctx);
     process.stdout.write(`${JSON.stringify(out)}\n`);
-    process.exitCode = ['pass', 'warn'].includes(out.result) ? 0 : 1;
+    process.exitCode = ['pass', 'warn', 'unreviewed'].includes(out.result) ? 0 : 1;
+    return;
+  }
+  if (ctx.args.action === 'unreviewed') {
+    const out = authorizeUnreviewed(ctx, ctx.args.reason, ctx.args.reply);
+    if (out.error) fail(out.error);
+    process.stdout.write(`${JSON.stringify(out)}\n`);
     return;
   }
   cmdProject(ctx);
@@ -145,17 +155,15 @@ async function cmdReview(ctx) {
   cmdBuild(ctx);
   const { problems } = storyCheck(ctx, { registration: false });
   if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
-  const out = await prepareReview(ctx, ctx.args.reportDir);
+  const out = prepareReview(ctx, ctx.args.reportDir);
   if (out.error) fail(out.error);
-  process.stdout.write([
-    `[story-build review] 审查已准备：对象 ${out.rows.length} 份，请求 request_sha256 ${out.request_sha256}`,
-    `  任务：${relFromFeature(ctx, path.join(ctx.srcDir, 'review', 'task.md'))}（待审与只读对照材料在里面分列）`,
-    `  报告目录：${out.reportDir}`,
-    '派审：用宿主与作者隔离的独立执行能力（子代理）交给审查者，带上任务文件、request_sha256 与报告目录。审查者按任务读全部材料，',
-    `  在 ${out.reportDir}/context/facts.md 写原生事实记录，回复一份原生 review 报告（格式见任务「报告怎么写」）。`,
-    `回复原样写到 ${out.reportDir}/${ORIGINAL}（一字不改），再跑 story-build review --action check；`
-      + '派审与结果的处置见 phases/design.md「五、独立审查、登记与交付」。', '',
-  ].join('\n'));
+  process.stdout.write(`${JSON.stringify({ material_key: out.material_key, task: out.task, report_dir: out.report_dir,
+    report_file: out.report_file, reused: out.reused, materials: out.rows.length })}\n`);
+  process.stdout.write(out.reused
+    ? `[story-build review] 这份材料已有通过的报告（${out.report_file}），不用重审，直接 check。\n`
+    : ['[story-build review] 审查已准备：用宿主与作者隔离的独立执行能力（子代理）交给审查者，带上任务文件与材料键。',
+      `  审查者按任务读全部材料，回复一份 Story 报告（格式见任务「报告怎么写」）；回复原样写到 ${out.report_file}（一字不改），`,
+      '  再跑 story-build review --action check。派审与结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
 }
 
 /**

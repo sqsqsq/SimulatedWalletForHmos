@@ -34,12 +34,12 @@ review_summary:
           - doc/requirements/wallet-balance-refresh.md
         verification_refs:
           - verify:view:logical
-        provenance: &q1
-          source_kind: independent_questioning
-          source_ref: doc/features/wallet-balance-refresh/blueprint/questioning/r1/reply.md
+        provenance: &a1
+          source_kind: code
+          source_ref: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
           observed_at: 2026-09-29T10:00:00+08:00
           evidence_strength: observed
-          extraction_method: isolated-subagent-reply
+          extraction_method: read-source
       - question_id: q-view-runtime
         scope_kind: view
         scope_ref: view:runtime
@@ -52,7 +52,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:view:runtime
-        provenance: *q1
+        provenance: *a1
       - question_id: q-view-development
         scope_kind: view
         scope_ref: view:development
@@ -65,7 +65,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:view:development
-        provenance: *q1
+        provenance: *a1
       - question_id: q-view-scenarios
         scope_kind: view
         scope_ref: view:scenarios
@@ -78,7 +78,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:view:scenarios
-        provenance: *q1
+        provenance: *a1
       - question_id: q-relation-balance-implemented-by-module
         scope_kind: relation
         scope_ref: relation:balance-implemented-by-module
@@ -91,7 +91,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:relation:balance-implemented-by-module
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-module-boundaries
         scope_kind: app_lens
         scope_ref: app_lens:module_boundaries
@@ -104,7 +104,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:module_boundaries
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-capability-seams
         scope_kind: app_lens
         scope_ref: app_lens:capability_seams
@@ -117,7 +117,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:capability_seams
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-feature-flags
         scope_kind: app_lens
         scope_ref: app_lens:feature_flags
@@ -130,7 +130,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:feature_flags
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-data-producers-consumers
         scope_kind: app_lens
         scope_ref: app_lens:data_producers_consumers
@@ -143,7 +143,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:data_producers_consumers
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-lifecycle-triggers
         scope_kind: app_lens
         scope_ref: app_lens:lifecycle_triggers
@@ -156,7 +156,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:lifecycle_triggers
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-state-owners
         scope_kind: app_lens
         scope_ref: app_lens:state_owners
@@ -169,7 +169,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:state_owners
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-initialization
         scope_kind: app_lens
         scope_ref: app_lens:initialization
@@ -182,7 +182,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:initialization
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-publication-subscription
         scope_kind: app_lens
         scope_ref: app_lens:publication_subscription
@@ -195,7 +195,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:publication_subscription
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-ui-refresh
         scope_kind: app_lens
         scope_ref: app_lens:ui_refresh
@@ -208,7 +208,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:ui_refresh
-        provenance: *q1
+        provenance: *a1
       - question_id: q-app-lens-process-recovery
         scope_kind: app_lens
         scope_ref: app_lens:process_recovery
@@ -221,7 +221,7 @@ review_summary:
           - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
         verification_refs:
           - verify:app_lens:process_recovery
-        provenance: *q1
+        provenance: *a1
       - question_id: q-terminology-current-scope-items
         scope_kind: terminology
         scope_ref: terminology:current_scope_items
@@ -234,7 +234,7 @@ review_summary:
           - doc/requirements/wallet-balance-refresh.md
         verification_refs:
           - verify:terminology:current_scope_items
-        provenance: *q1
+        provenance: *a1
   admission:
     status: pass
     root_questions_complete: true
@@ -439,12 +439,7 @@ relations:
     to: view:development/node:wallet-main-module
     relation_type: implemented_by
     owner: wallet-team
-    provenance: &a1
-      source_kind: code
-      source_ref: 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
-      observed_at: 2026-09-29T10:00:00+08:00
-      evidence_strength: observed
-      extraction_method: read-source
+    provenance: *a1
     verification_refs:
       - verify:balance-module-relation
 contracts: []

@@ -325,14 +325,14 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertFalse(moved["reached"])
         self.assertEqual(edited, self.tree(), "正文变了之后观测重写了报告")
 
-    def test_a_reply_not_yet_checked_is_pointed_back_to_the_author(self) -> None:
-        """回复写好了但还没跑原生检查：交付门不替作者检查，指回 `review --action check`。"""
+    def test_a_reply_broken_after_registration_is_not_delivered(self) -> None:
+        """登记之后回复被改得不合报告合同：交付门读的就是这份回复，照实拦下，不沿用登记时的通过。"""
         original = self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
-        original.write_bytes(original.read_bytes() + "\n补一句。\n".encode("utf-8"))
+        original.write_text(original.read_text(encoding="utf-8").replace("## 总体结论", "## 结论"), encoding="utf-8")
         facts = observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None, story_build=str(DEV_STORY_BUILD))
         self.assertFalse(facts["reached"])
-        self.assertTrue(any("review --action check" in m for m in facts["missing"]), facts["missing"])
+        self.assertTrue(any("report_invalid" in m for m in facts["missing"]), facts["missing"])
 
 
 if __name__ == "__main__":

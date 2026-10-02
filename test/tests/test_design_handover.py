@@ -342,16 +342,6 @@ class TheDesignConsumesThisInput(HandoverCase):
         self.assertIn("还没准入", status["action"])
         self.assertEqual(before, self.tree())
 
-    def test_a_questioning_without_its_original_waits_for_the_design(self) -> None:
-        """准入、投影都对，质询记录却没有原件：等设计重新派质询，不成文；成文的设计来源同样不成立。"""
-        self.handed()
-        canonical = design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
-        shutil.rmtree(canonical.parent / "questioning")
-        status = self.ok("status")
-        self.assertEqual(("waiting_for_design", "design_blueprint"), (status["state"], status["next"]))
-        self.assertIn("重新派独立质询", status["action"])
-        self.assertTrue(any("不算质询" in p for p in self.source_problems()))
-
     def test_an_admitted_blueprint_of_another_requirement_waits_for_the_design(self) -> None:
         """同组件、换成本需求标识的准入蓝图，来源仍是另一份需求：等设计同步，不成文。"""
         self.handed()

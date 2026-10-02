@@ -203,6 +203,12 @@ function imageRows(projectRoot, feature) {
 //: Story 读者审查的判据 id —— 结果条目用它，不另起名字
 const READER_REVIEW_ID = 'story_reader_review';
 
+/** 报告「判据核对」要逐项写的判据 ID：判据文件 semantic_checks 的全部键。 */
+export function readerCheckIds() {
+  const text = readTextOrNull(path.join(PACKAGE, 'rules', 'story-reader-rules.yaml'));
+  return Object.keys((text === null ? null : parseYaml(text)?.semantic_checks) ?? {});
+}
+
 /** 判据原文：与本模块同一个包里 `rules/story-reader-rules.yaml` 的这一条。读不到是包坏了，照实停下。 */
 function criteria() {
   const file = path.join(PACKAGE, 'rules', 'story-reader-rules.yaml');
@@ -230,29 +236,25 @@ function designRows(projectRoot, src) {
 function objectRows(projectRoot, feature) {
   const { rows, problems } = reviewObject(projectRoot, feature, { withTask: false });
   const line = r => `- \`${r.path}\` —— ${r.label}`;
-  return ['', '### 本次审查的材料（原生请求逐字节绑定的就是这些）', '',
+  return ['', '### 本次审查的材料（材料键按它们的原始字节算）', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
     ...problems.map(p => `- **读不到**：${p}——与它有关的判断写未验证`)];
 }
 
-/** 报告的格式：原生 review 报告与事实记录，审查者照它写，原生检查按它核。 */
+/** 报告的格式：Story 业务报告，审查者照它写，`story-build review --action check` 按它核。 */
 const REPORT_FORMAT = [
   '', '### 报告怎么写', '',
-  '回复就是一份原生 review 报告，宿主原样存下交原生检查；格式不合的回复不计结论，要重给。',
+  '回复就是这份 Markdown 报告，宿主原样存下；格式不合的回复不计结论，要重给。',
   '',
-  '1. 先在报告目录写事实记录 `context/facts.md`（原生 P1）：frontmatter 写 `schema_version: "1.1"`、',
-  '   `request_sha256: <派审时给的那个值>`、`established_by: review`、`ready_to_produce: true`、',
-  '   `has_blocker_coverage_risk: false`、`exploration_mode: subagent`、`subagents_used`、`files_inspected_count`、',
-  '   `searches_performed_estimate`（不少于 3）、`decisions_unlocked`，`source_code_paths` 逐条列上面「本次审查的材料」的全部路径与本任务文件；',
-  '   不写 feature 与 run_id。正文一张表，表头含「事实」与「路径」，写你实际读到了什么。',
-  '2. 报告章节依次是：审查范围（逐条列出全部材料路径与本任务文件）、审查方法（逐章过了什么、open 议题的逐条结论、',
-  '   会议话题的去向）、问题清单、问题统计、修复建议摘要、结论。',
-  '3. 问题清单一张表，表头：`编号 | 严重程度 | 分类 | 问题描述 | 涉及文件 | 修复建议`；编号写 `CR-001` 起，',
-  '   严重程度按判据写 BLOCKER / MAJOR / MINOR / INFO，分类从「逻辑错误、异常处理、其他」里选，涉及文件写项目相对路径。',
-  '   没有问题写「无问题。」，不建空表。',
-  '4. 问题统计按严重程度计数，与问题清单一致。',
-  '5. 结论一节写一行 `**审查结论**: <通过 | 有条件通过 | 不通过>`，只写一个，再写判定依据。',
+  '1. 第一行写 `material_key: <派审时给的材料键，64 位>`，全文只这一行。',
+  '2. 二级标题依次是「判据核对」「发现」「总体结论」，各恰好一个，标题字照写。',
+  '3. 「判据核对」一张表，表头 `判据 ID | 结果 | 依据`：判据逐项一行，ID 照本任务标题括号里的判据 ID 写，结果写 pass / warn / fail / not_applicable，',
+  '   依据写你据以判断的事实；不适用写业务理由。表后写审查方法：逐章过了什么、仍开着的议题逐条结论、会议话题的去向。',
+  '4. 「发现」一张表，表头 `编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任`：严重程度按判据写 BLOCKER / MAJOR / MINOR / INFO；',
+  '   材料位置写上面「本次审查的材料」里那份文件的路径，可加章节或行；修正责任写该回哪一处改、由谁定。没有发现保留表头、不写行。',
+  '5. 「总体结论」第一行写 pass、warn 或 fail 之一，再写理由：有 BLOCKER / MAJOR 或判据 fail 是 fail，只有 MINOR / INFO 或判据 warn 是 warn，',
+  '   其余 pass。材料读不到使某项判断做不了时写明未验证，不写成已核。',
 ];
 
 /**

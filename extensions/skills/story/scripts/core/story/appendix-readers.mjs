@@ -1,8 +1,8 @@
 /**
  * 附录的读取器：一份已准入蓝图的记录（原生读取所得）→ 某一节机器区的行。
  *
- * 每个读取器只把原生对象的字段原样排成表或段，不补、不改写、不推断不适用；表头与文字标签由章节合同登记，
- * 本文件不写业务词。投影与核对共用这一份计算（`appendix.mjs` 调用）。
+ * 每个读取器按原生对象的明确字段排成表或段，不补、不改写、不推断不适用，也不把任意嵌套对象摊平成键值串；
+ * 表头与文字标签由章节合同登记，本文件不写业务词。投影与核对共用这一份计算（`appendix.mjs` 调用）。
  */
 import { renderTable } from './chapter-contract.mjs';
 import { fail } from './context.mjs';
@@ -18,20 +18,26 @@ const label = (def, key) => def.labels?.[key] ?? key;
 
 /** 表格单元：管道符转义、换行并成一行，空值写破折号。 */
 function cell(value) {
-  const text = describe(value).replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ');
+  const text = text_(value).replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ');
   return text || '—';
 }
 
-//: 原生对象里描述来历的字段不进正文：它们是仓内路径与核对记号，归档件的读者手上没有这个仓
-const TRACE_KEYS = new Set(['provenance', 'verification_refs', 'evidence_refs', 'source_ref', 'source_sha256']);
+/** 标量字段的值；标量数组逐项用顿号连。对象不在这里写：每个对象由调用方按它的明确字段取。 */
+function text_(value) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.filter(v => v !== null && typeof v !== 'object').map(String).join('、');
+  return typeof value === 'object' ? '' : String(value);
+}
 
-/** 原生字段的值原样写出：对象按字段逐一写、数组逐项写。 */
-function describe(value) {
-  if (value === null || value === undefined || value === '') return '';
-  if (typeof value !== 'object') return String(value);
-  if (Array.isArray(value)) return value.map(describe).filter(Boolean).join('；');
-  const parts = Object.entries(value).filter(([k]) => !TRACE_KEYS.has(k)).map(([k, v]) => `${k}：${describe(v)}`);
-  return parts.join('；');
+/** 按合同登记的标签取对象的几个明确字段，写成「标签：值」；没写的字段不出现。 */
+function labelled(def, record, keys) {
+  return keys.map(k => [label(def, k), text_(record?.[k])]).filter(([, v]) => v).map(([l, v]) => `${l}：${v}`).join('；');
+}
+
+/** 「编码 → 含义」这类条目：对象按条目逐项、标量数组逐项，写成一段。 */
+function entries(items) {
+  if (Array.isArray(items)) return text_(items);
+  return Object.entries(items ?? {}).map(([k, v]) => `${k}：${text_(v)}`).join('；');
 }
 
 /** 端云接口：每个契约的 operation、请求与响应字段、字段映射，以及错误语义、幂等与非功能要求。 */
@@ -48,7 +54,8 @@ function contractRows(blueprint, def, where) {
     const maps = (c.mappings ?? []).map(m => [m.mapping_id, m.target_field, m.kind ?? 'direct',
       (m.source_fields ?? []).join('、'), m.rule].map(cell));
     if (maps.length) out.push('', ...renderTable(header(def, 'mappings', where), maps));
-    out.push('', ...['errors', 'idempotency', 'nfr'].map(k => `- ${label(def, k)}：${describe(c[k]) || '—'}`));
+    const semantics = { errors: entries(c.errors?.items), idempotency: text_(c.idempotency?.rule), nfr: entries(c.nfr?.requirements) };
+    out.push('', ...Object.entries(semantics).map(([k, v]) => `- ${label(def, k)}：${v || '—'}`));
   }
   return out;
 }
@@ -67,8 +74,10 @@ function detailBlocks(blueprint, kind) {
 /** 数据存储：运行视图里每条数据流的数据域、权威来源、状态归属与失败恢复，加数据策略类精确明细。 */
 function dataRows(blueprint, def, where) {
   const runtime = (blueprint.design_views ?? []).find(v => v?.view_id === 'runtime');
-  const rows = (runtime?.runtime_data_flows ?? []).map(f => [f.flow_id, f.data_domain_refs, f.source_of_truth,
-    f.state_owner, f.failure_recovery].map(cell));
+  const rows = (runtime?.runtime_data_flows ?? []).map(f => [f.flow_id, f.data_domain_refs,
+    labelled(def, f.source_of_truth, ['authority', 'persistence', 'reconciliation']),
+    labelled(def, f.state_owner, ['ref', 'states']),
+    labelled(def, f.failure_recovery, ['persistence_failure', 'subscription_failure', 'process_recreation'])].map(cell));
   const out = rows.length ? renderTable(header(def, 'flows', where), rows) : [];
   const details = detailBlocks(blueprint, def.detail_kind);
   return details.length ? [...out, ...(out.length ? [''] : []), ...details] : out;
@@ -91,10 +100,10 @@ function boundaryRows(blueprint, def, where) {
   const dev = (blueprint.design_views ?? []).find(v => v?.view_id === 'development');
   const rows = [];
   if (dev?.evolution_impact === 'verified_unchanged' || dev?.applicability === 'not_applicable') {
-    rows.push([label(def, 'unchanged'), describe(dev.unchanged_evidence ?? dev.purpose)].map(cell));
+    rows.push([label(def, 'unchanged'), text_(dev.purpose)].map(cell));
   }
   for (const n of dev?.nodes ?? []) {
-    rows.push([n.module ?? n.node_id, `${describe(n.current_state) || '—'} → ${describe(n.target_state) || '—'}`].map(cell));
+    rows.push([n.module ?? n.node_id, `${text_(n.current_state) || '—'} → ${text_(n.target_state) || '—'}`].map(cell));
   }
   for (const d of (blueprint.decisions_and_gaps?.decisions ?? []).filter(x => x?.change)) {
     const what = d.module ?? [d.from, d.to].filter(Boolean).join(' → ');

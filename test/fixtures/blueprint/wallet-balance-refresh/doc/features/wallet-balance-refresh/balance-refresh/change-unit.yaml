@@ -10,7 +10,7 @@ component_blueprint_ref:
   blueprint_id: wallet-balance-refresh
   revision: 3
   source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-  artifact_sha256: sha256:5f788354b48536d3513b5d4a59fd2563db9a2f919eccef24397e42a3865c531d
+  artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
   target:
     kind: blueprint
     id: wallet-balance-refresh
@@ -33,7 +33,7 @@ design_refs:
     blueprint_id: wallet-balance-refresh
     revision: 3
     source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-    artifact_sha256: sha256:5f788354b48536d3513b5d4a59fd2563db9a2f919eccef24397e42a3865c531d
+    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
     target:
       kind: node
       id: wallet-main-module
@@ -43,7 +43,7 @@ design_refs:
     blueprint_id: wallet-balance-refresh
     revision: 3
     source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-    artifact_sha256: sha256:5f788354b48536d3513b5d4a59fd2563db9a2f919eccef24397e42a3865c531d
+    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
     target:
       kind: node
       id: wallet-balance
@@ -53,7 +53,7 @@ design_refs:
     blueprint_id: wallet-balance-refresh
     revision: 3
     source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-    artifact_sha256: sha256:5f788354b48536d3513b5d4a59fd2563db9a2f919eccef24397e42a3865c531d
+    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
     target:
       kind: relation
       id: balance-implemented-by-module
