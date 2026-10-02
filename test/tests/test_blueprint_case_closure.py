@@ -38,10 +38,14 @@ fs.writeFileSync(path.join(path.dirname(loaded.canonicalPath), 'component-bluepr
 """
 
 
+LOCAL = {"kind": "story", "delivery": "local"}
+SUBMITTED = {"kind": "story", "delivery": "submitted"}
+
+
 def observe(root: Path, end_at: dict, *, feature: str = "REQ-DESIGN", blueprint: str | None = BLUEPRINT,
-            story_build: str = STORY_BUILD) -> dict:
+            story_build: str = STORY_BUILD, system_dir: Path | None = None) -> dict:
     return end_target.observe(root, "doc/features", feature, end_at, case={"blueprint_id": blueprint} if blueprint else None,
-                              story_build=story_build)
+                              story_build=story_build, system_dir=system_dir)
 
 
 #: 原生收口时写阶段物证清单的同一对函数：按本阶段的原生输入与产出落哈希（包括 summary）
@@ -242,16 +246,45 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
     这份夹具工程只装了审查机制，交付门用开发源的入口按 `--project-root` 跑（与交付门自己的测试同一个跑法）。"""
 
     def test_unregistered_is_not_delivered_and_delivered_is_reached(self) -> None:
-        before = observe(self.root, {"kind": "story"}, feature="REQ-DEMO", blueprint=None,
+        before = observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None,
                          story_build=str(DEV_STORY_BUILD))
         self.assertFalse(before["reached"])
         self.assertIn("还没登记成文", before["missing"][0])
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
-        after = observe(self.root, {"kind": "story"}, feature="REQ-DEMO", blueprint=None,
+        after = observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None,
                          story_build=str(DEV_STORY_BUILD))
         self.assertTrue(after["reached"], after["missing"])
-        self.assertEqual({"ok": True}, after["delivery"])
+        self.assertEqual({"ok": True, "kind": "local"}, after["delivery"])
+
+    def test_submitted_needs_the_current_version_in_the_requirement_system(self) -> None:
+        """送审终点：交付门通过之外，发布记录指当前 Story，需求系统上的正文逐字是它、评审记录附件在。"""
+        self.reviewed("pass")
+        self.assertEqual(0, self.register().returncode)
+        system = self.root.parent / "system"
+
+        def submitted() -> dict:
+            return observe(self.root, SUBMITTED, feature="REQ-DEMO", blueprint=None,
+                           story_build=str(DEV_STORY_BUILD), system_dir=system)
+
+        self.assertIn("还没送审", submitted()["missing"][0])
+        archived = subprocess.run(["python", str(self.FLOW), "archived", "--feature", "REQ-DEMO",
+                                   "--project-root", str(self.root)],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, archived.returncode, archived.stdout + archived.stderr)
+        self.assertIn("正文", submitted()["missing"][0], "只登记了归档、系统上没有正文，不算送审")
+
+        # 对接层上传后的需求系统：正文是 Story，评审记录是附件
+        ticket = system / "REQ-DEMO"
+        (ticket / "attachments").mkdir(parents=True)
+        (ticket / "design.md").write_bytes(self.story.read_bytes())
+        (ticket / "attachments" / "review.md").write_bytes((self.story.parent / "review.md").read_bytes())
+        reached = submitted()
+        self.assertTrue(reached["reached"], reached["missing"])
+        self.assertEqual({"ok": True, "kind": "submitted"}, reached["delivery"])
+
+        (ticket / "design.md").write_bytes(self.story.read_bytes() + "系统上被改过。\n".encode("utf-8"))
+        self.assertFalse(submitted()["reached"], "系统上的正文不是当前这一版")
 
     def tree(self) -> dict[str, bytes]:
         doc = self.root / "doc"
@@ -262,12 +295,12 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
         before = self.tree()
-        self.assertTrue(observe(self.root, {"kind": "story"}, feature="REQ-DEMO", blueprint=None,
+        self.assertTrue(observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None,
                                 story_build=str(DEV_STORY_BUILD))["reached"])
         self.assertEqual(before, self.tree(), "终点观测改了被测工程的文件")
         self.story.write_bytes(self.story.read_bytes() + "登记之后改的一句。\n".encode("utf-8"))
         edited = self.tree()
-        moved = observe(self.root, {"kind": "story"}, feature="REQ-DEMO", blueprint=None, story_build=str(DEV_STORY_BUILD))
+        moved = observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None, story_build=str(DEV_STORY_BUILD))
         self.assertFalse(moved["reached"])
         self.assertEqual(edited, self.tree(), "正文变了之后观测重写了报告")
 
@@ -276,7 +309,7 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         original = self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
         original.write_bytes(original.read_bytes() + "\n补一句。\n".encode("utf-8"))
-        facts = observe(self.root, {"kind": "story"}, feature="REQ-DEMO", blueprint=None, story_build=str(DEV_STORY_BUILD))
+        facts = observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None, story_build=str(DEV_STORY_BUILD))
         self.assertFalse(facts["reached"])
         self.assertTrue(any("review --action check" in m for m in facts["missing"]), facts["missing"])
 

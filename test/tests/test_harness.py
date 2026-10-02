@@ -62,20 +62,13 @@ class PollCadenceTest(unittest.TestCase):
 
 
 class CaseConfigTest(unittest.TestCase):
-    """用例配置的机械看护——把「测的是交互还是记忆」这件事钉死在配置里。
+    """用例配置的机械看护：起点、终点与回话来源都写在配置里。
 
-    实测教训：为了测「用户要求按特性拆分」，曾把那句话预塞进初始 prompt。
-    模型走到关卡时它已在几十步之外，于是概括任务描述、整句丢掉，判成「无范围指示」。
-    那测出来的是记忆衰减，与关卡交互无关。
-
-    所以：拆分诉求要么由真人在关卡上口述（`interactive: true`），
-    要么用例头注明说自己是「对照组」（专测事先说过的话还认不认得出）。
-    两条路都合法，**含糊不清不合法**。
+    Story Case 只用命令起手（`../cases/README.md`），诉求由宿主在关卡上说出口，
+    所以这里只核配置齐全、交互用例有固定的回话来源。
     """
 
     CASES = REPO_ROOT / "test" / "cases"
-    # 用户表达「本次只做一部分」的说法，用于识别 prompt 里预塞了拆分诉求。
-    SPLIT_WORDS = ("只做其中一部分", "切开", "先做第一份", "本单承载", "拆开", "只做一部分")
 
     def _cases(self) -> list[tuple[str, Path, dict, str]]:
         import yaml
@@ -99,62 +92,21 @@ class CaseConfigTest(unittest.TestCase):
                 rc.resolve_start_phase(cfg)
                 rc.resolve_end_at(cfg)
 
-    def test_interactive_cases_do_not_preload_the_answer(self) -> None:
-        """交互用例的诉求必须由人在关卡上说出口——写进 prompt 就白搭了。"""
+    def test_interactive_cases_have_a_fixed_reply_source(self) -> None:
+        """回话要有个固定来源，否则每轮现编，轮次之间就不可比。
+
+        逐关卡的 `interaction-script.yaml` 是它的完整形态（还能带补料投放）；
+        只有一关要回的用例可以用 case.yaml 的 `suggested_reply` 顶。
+        """
         for name, path, cfg, _ in self._cases():
             if not rc.is_interactive(cfg):
                 continue
             with self.subTest(case=name):
-                prompt = str(cfg.get("prompt") or "")
-                hit = [w for w in self.SPLIT_WORDS if w in prompt]
-                self.assertFalse(
-                    hit, f"{path} 声明了交互模式，prompt 里却预塞了诉求 {hit}"
-                         "——那又退回测记忆了")
-                # 回话要有个固定来源，否则每轮现编，轮次之间就不可比。
-                # 逐关卡的 `interaction-script.yaml` 是它的完整形态（还能带补料投放）；
-                # 只有一关要回的用例可以用 case.yaml 的 `suggested_reply` 顶。
                 script = path.parent / "interaction-script.yaml"
                 self.assertTrue(
                     script.is_file() or str(cfg.get("suggested_reply") or "").strip(),
                     f"{path} 既没有 interaction-script.yaml 也没有 suggested_reply："
                     "每轮现编回话，轮次之间就不可比")
-
-    def test_a_prompt_that_claims_seeded_material_actually_ships_it(self) -> None:
-        """prompt 说「材料我已经放好了」，`workspace/` 里就必须真有东西。
-
-        实测踩过：新建用例时抄了 prompt 却漏建 `workspace/`，跑起来 inbox 是空的。
-        模型只会如实报告「没有待导入材料」，一路跑完——**没有任何一步会失败**，
-        而这一轮测的其实是另一个场景。
-        """
-        claims = ("放到这个需求的目录下", "已经把", "放好了", "放进")
-        for name, path, cfg, _ in self._cases():
-            prompt = str(cfg.get("prompt") or "")
-            if not any(w in prompt for w in claims):
-                continue
-            workspace = path.parent / "workspace"
-            with self.subTest(case=name):
-                files = [p for p in workspace.rglob("*") if p.is_file()] if workspace.is_dir() else []
-                self.assertTrue(
-                    files,
-                    f"{path} 的 prompt 声称材料已放进工作区，但 {workspace} 是空的"
-                    "——跑起来 inbox 没东西，模型如实说「无待导入材料」，测的是另一个场景")
-
-    def test_a_preloaded_split_request_declares_itself_a_control_case(self) -> None:
-        """自动用例若在 prompt 里给了拆分诉求，头注必须写明它是对照组。"""
-        for name, path, cfg, raw in self._cases():
-            if rc.is_interactive(cfg):
-                continue
-            prompt = str(cfg.get("prompt") or "")
-            if not any(w in prompt for w in self.SPLIT_WORDS):
-                continue
-            header = raw.split("id:")[0]
-            with self.subTest(case=name):
-                # 认「对照组」这个词，不认「对照」——后者在正文里随处可见
-                # （「对照他说过的话」），宽一个字就漏掉整条看护。
-                self.assertIn(
-                    "对照组", header,
-                    f"{path} 把拆分诉求预塞进了 prompt 却没声明自己是对照组——"
-                    "读的人会以为它测的是交互")
 
 
 class FeedCursorTest(unittest.TestCase):
@@ -654,19 +606,23 @@ class EndAtTest(unittest.TestCase):
         self.assertIn("codeing", str(ctx.exception))
 
     def test_the_four_kinds_and_their_phase_rule(self) -> None:
-        for value, want in (({"kind": "story"}, {"kind": "story"}), ("blueprint", {"kind": "blueprint"}),
+        for value, want in (({"kind": "story", "delivery": "submitted"}, {"kind": "story", "delivery": "submitted"}),
+                            ("story", {"kind": "story", "delivery": "local"}),
+                            ("story:submitted", {"kind": "story", "delivery": "submitted"}),
+                            ("blueprint", {"kind": "blueprint"}),
                             ("design_handoff", {"kind": "design_handoff"}),
                             ({"kind": "phase", "phase": "plan"}, {"kind": "phase", "phase": "plan"}),
                             ("phase:coding", {"kind": "phase", "phase": "coding"})):
             with self.subTest(value=value):
                 self.assertEqual(want, rc.resolve_end_at({"id": "c", "end_at": value}))
-        for bad in ({"kind": "phase"}, {"kind": "story", "phase": "plan"}, {"kind": "spec"},
+        for bad in ({"kind": "phase"}, {"kind": "story", "delivery": "local", "phase": "plan"}, {"kind": "spec"},
+                    {"kind": "story"}, {"kind": "story", "delivery": "sent"}, {"kind": "blueprint", "delivery": "local"},
                     {"kind": "phase", "phase": "plan", "extra": 1}, "phase:codeing"):
             with self.subTest(bad=bad), self.assertRaises(SystemExit):
                 rc.resolve_end_at({"id": "c", "end_at": bad})
 
     def test_the_override_wins_and_the_old_key_is_refused(self) -> None:
-        self.assertEqual({"kind": "blueprint"}, rc.resolve_end_at({"id": "c", "end_at": {"kind": "story"}}, "blueprint"))
+        self.assertEqual({"kind": "blueprint"}, rc.resolve_end_at({"id": "c", "end_at": {"kind": "story", "delivery": "submitted"}}, "blueprint"))
         with self.assertRaises(SystemExit) as ctx:
             rc.resolve_end_at({"id": "c", "end_phase": "spec"})
         self.assertIn("end_at", str(ctx.exception))

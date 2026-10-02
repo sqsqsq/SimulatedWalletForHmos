@@ -199,10 +199,7 @@ def now_iso() -> str:
 
 
 def pop_resume_request(out_dir: Path) -> dict | None:
-    """取走宿主的续跑请求（取走即删，同 `pop_pending_reply`）：`{text, answer}`。
-
-    `answer` 是检查点上模型那一问的回答，先投它；`text` 是第二段的业务请求，答完再投。
-    """
+    """取走宿主的续跑请求（取走即删，同 `pop_pending_reply`）：`{text}`，第二段的业务请求。"""
     path = out_dir / RESUME_FILE
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -212,7 +209,7 @@ def pop_resume_request(out_dir: Path) -> dict | None:
     if not text:
         return None
     path.unlink(missing_ok=True)
-    return {"text": text, "answer": str(data.get("answer") or "").strip()}
+    return {"text": text}
 
 
 def pop_conclude_request(out_dir: Path) -> dict | None:
@@ -367,7 +364,7 @@ def phase_index(phase: str) -> int:
 def resolve_end_at(case: dict, override: str | None = None) -> dict:
     """本轮终点：命令行覆盖优先，其次 Case 的 `end_at`。旧键 `end_phase` 不再认。"""
     if "end_phase" in case:
-        raise SystemExit(f"[runner] Case {case.get('id')} 还写着 end_phase：终点改用 end_at: {{kind, phase?}}（见 end_target.py）")
+        raise SystemExit(f"[runner] Case {case.get('id')} 还写着 end_phase：终点改用 end_at: {{kind, phase?, delivery?}}（见 end_target.py）")
     try:
         if override:
             return end_target.parse_end_at(override, where="--end-at")
@@ -383,8 +380,10 @@ def observe_target(feature: str, end_at: dict, case: dict | None, start_phase: s
 
     阶段完成读原生完成证据与执行范围，不跑会写回执的 check-receipt；无关的提交不影响结论，材料与绑定变了才失效（原生新鲜度判）。
     """
+    system = os.environ.get("STORY_REQUIREMENT_SYSTEM_DIR", "").strip()
     return end_target.observe(REPO_ROOT, FEATURES_DIR, feature, end_at, case=case,
-                              story_build=str(CFG["gates"]["story_build"]), start_phase=start_phase)
+                              story_build=str(CFG["gates"]["story_build"]), start_phase=start_phase,
+                              system_dir=Path(system) if system else None)
 
 
 def story_registered(feature: str) -> bool:
@@ -438,9 +437,8 @@ def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int,
     while True:
         request = pop_resume_request(out_dir)
         if request:
-            runlog.event("续跑", (request["answer"] + " / " if request["answer"] else "") + request["text"][:200])
-            feed.emit("resume_update", turn=turn, text=observe.shorten(request["text"], 300),
-                      answer=observe.shorten(request["answer"], 300) or None)
+            runlog.event("续跑", request["text"][:200])
+            feed.emit("resume_update", turn=turn, text=observe.shorten(request["text"], 300))
             return request
         if pop_conclude_request(out_dir) is not None:
             return None
@@ -1863,16 +1861,13 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         break
                     # 进第二段：记下此刻的更新操作，第二段的终点靠它与之后的比。
                     entry = update_round(feature)
-                    # 先答检查点上那一问，业务请求排在它之后：答完那一轮结束时再投。
-                    first = resumed["answer"] or resumed["text"]
                     state.update(status="running", checkpoint_stage="update",
                                  update_entry_round=entry.get("last_closed"),
                                  resumed_at=now_iso(),
-                                 queued_update_text=resumed["text"] if resumed["answer"] else None,
                                  awaiting_kind=None, awaiting_prompt=None, pending_question=None)
                     refresh_worker_lease(out_dir, state, force=True, event="resume_update")
                     result["resumed_at_turn"] = turns
-                    request = replace(request, prompt=driver_prompt(first, interactive),
+                    request = replace(request, prompt=driver_prompt(resumed["text"], interactive),
                                       session_id=session_id)
                     continue
                 if state.get("checkpoint_stage") == "update":
@@ -1906,13 +1901,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     break
                 # 人先说话：交互用例等真人回话；自动用例里也允许中途插一句
                 # （观察者发现模型走偏时可以当场纠正，不必重跑）。
-                # 续跑时先答了检查点那一问：这一轮结束，接着投第二段的业务请求。
-                queued = state.pop("queued_update_text", None)
-                gate_reply = queued or pop_pending_reply(out_dir)
-                if queued:
-                    feed.emit("resume_update_request", turn=turns, text=observe.shorten(queued, 300))
-                    runlog.event("第二段请求", queued[:200])
-                elif gate_reply:
+                gate_reply = pop_pending_reply(out_dir)
+                if gate_reply:
                     feed.emit("human_reply", turn=turns, text=observe.shorten(gate_reply, 300))
                     runlog.event("人回话", gate_reply[:200])
                 elif interactive:
@@ -2353,8 +2343,7 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
     # 检查点在等宿主评测，不在等回话：这时收下的话会在续跑后被当成下一关的回答。
     if state.get("awaiting_kind") in ("initial_checkpoint", "update_checkpoint"):
         print(json.dumps({"ok": False, "error": (
-            "正停在检查点上，不收回话：第一检查点评完用 resume-update（模型那一问用 --answer 先答），"
-            "第二检查点评完用 conclude")}, ensure_ascii=False))
+            "正停在检查点上，不收回话：第一检查点评完用 resume-update，第二检查点评完用 conclude")}, ensure_ascii=False))
         return 1
     # 只要 worker 仍处于 awaiting_reply 且 lease 未过期，就允许入队。
     # Windows 的进程查询可能被权限策略拒绝，不能把诊断失败变成“无人接收”。
@@ -2412,6 +2401,14 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
             print(json.dumps({"case": case_id, "point": point, "blueprint": blueprint, **design}, ensure_ascii=False))
             return 1
         extra = {"blueprint": blueprint, "blueprint_path": design["path"], "blueprint_digest": design["digest"]}
+    # Story 的独立审查报告在需求目录之外（doc/reports/story/<需求>/）：同一时刻一起固定，评测看得到审查原件
+    reports = REPO_ROOT / "doc" / "reports" / "story" / feature
+    if reports.is_dir():
+        kept = _freeze_tree(reports, out_dir / "checkpoints" / f"{point}.reports")
+        if not kept["ok"]:
+            print(json.dumps({"case": case_id, "point": point, "reports": str(reports), **kept}, ensure_ascii=False))
+            return 1
+        extra.update(reports_path=kept["path"], reports_digest=kept["digest"])
     print(json.dumps({"ok": True, "case": case_id, "point": point, "path": frozen["path"],
                       "digest": frozen["digest"], **({"reused": True} if frozen.get("reused") else {}), **extra,
                       "session": state.get("cli_session_id"), "stage": state.get("checkpoint_stage")},
@@ -2577,8 +2574,7 @@ def _write_into_system(feature: str, source: Path, item: dict) -> dict:
     return {"file": source.name, "kind": "system", "destination": f"{feature}/{rel}"}
 
 
-def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
-                      answer: str = "") -> int:
+def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None) -> int:
     """评完第一段，把第二段的业务请求投给还停着的那个 worker。
 
     投的是**一句正常的业务话**（`/story update <编号>`），不是测试控制语句——
@@ -2607,11 +2603,10 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
                   for n in deliver_supplements(case_id, feature, list(deliver or []))]
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / RESUME_FILE).write_text(
-        json.dumps({"text": text, "answer": (answer or "").strip(),
-                    "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
+        json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
         encoding="utf-8")
-    print(json.dumps({"ok": True, "case": case_id, "answer": (answer or "").strip() or None,
-                      "queued": text[:200], "delivered": delivered}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "case": case_id, "queued": text[:200], "delivered": delivered},
+                     ensure_ascii=False))
     return 0
 
 
@@ -2766,8 +2761,6 @@ def main() -> int:
                     help="checkpoint：固定哪一段的快照")
     ap.add_argument("--deliver", action="append", default=[],
                     help="reply：随这句话把 cases/<id>/supplements/ 下的补料放进收件箱，可多次")
-    ap.add_argument("--answer", default="",
-                    help="resume-update：先答检查点上模型那一问的一句话，答完再投 --text")
     args = ap.parse_args()
 
     if args.command == "run":
@@ -2790,7 +2783,7 @@ def main() -> int:
     if args.command == "checkpoint":
         return cmd_checkpoint(args.case_id, args.point)
     if args.command == "resume-update":
-        return cmd_resume_update(args.case_id, args.text, args.deliver, args.answer)
+        return cmd_resume_update(args.case_id, args.text, args.deliver)
     return cmd_stop(args.case_id, args.force)
 
 

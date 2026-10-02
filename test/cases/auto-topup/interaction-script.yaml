@@ -12,7 +12,7 @@ replies:
     deliver:
       - 交通卡自动充值.docx
       - 交通卡澄清会记录-0903.docx
-    text: 补充材料，产品原稿和九月初澄清会的会议记录都放入需求目录了。
+    text: 已放入。
 
   # 会议话题逐个摆出来要人拍板时的立场：它问哪一个就答哪一个，没问到的不说。
   - id: meeting-update-interface
@@ -67,7 +67,7 @@ replies:
     expected_turn: 11
     expected_kind: story_gate
     expected_phase: story
-    text: 归档送审。
+    text: 送审。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material

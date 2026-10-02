@@ -12,7 +12,7 @@ replies:
     deliver:
       - 数字车钥匙分享.docx
       - 车钥匙接受侧界面说明.docx
-    text: 补充材料，产品需求稿和接受侧界面说明都已放入需求目录。
+    text: 已放入。
 
   - id: materials-complete
     expected_turn: 2
@@ -32,11 +32,11 @@ replies:
     expected_phase: story
     text: 术语确认，按你列的定。
 
-  - id: continue-to-plan
+  - id: implementation-plan
     expected_turn: 5
     expected_kind: story_gate
     expected_phase: story
-    text: 继续做实现方案，到方案为止，不写代码。
+    text: 实现方案。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material

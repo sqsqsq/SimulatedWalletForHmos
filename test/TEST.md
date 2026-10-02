@@ -218,13 +218,14 @@ python test/scripts/run_multi_case.py watch --suite-id story-suite-20260822-1400
 
 ### 4.1 终点：`case.yaml` 的 `end_at`
 
-终点的真源是 `case.yaml` 的 `end_at: {kind, phase?}`，一个 Case 一行；`cases/` 属被测输入，改它单独记一笔账。`--end-at`
-（`story` / `blueprint` / `design_handoff` / `phase:<阶段>`）是命令行 override，记在 suite 记录的 `requested_end_at`，实际终点记
-`effective_end_at`，`end_at` 字段始终回显 `case.yaml` 原值。`phase` 只在 `kind: phase` 时写。
+终点的真源是 `case.yaml` 的 `end_at: {kind, phase?, delivery?}`，一个 Case 一行；`cases/` 属被测输入，改它单独记一笔账。`--end-at`
+（`story` / `story:submitted` / `blueprint` / `design_handoff` / `phase:<阶段>`）是命令行 override，记在 suite 记录的 `requested_end_at`，
+实际终点记 `effective_end_at`，`end_at` 字段始终回显 `case.yaml` 原值。`phase` 只在 `kind: phase` 时写；`delivery` 只在 `kind: story` 时写，
+Case 里必须写明 `local` 或 `submitted`，命令行的 `story` 简写取 `local`。
 
 | kind | 到达的判据（`test/scripts/end_target.py`，只读原生对象） |
 |---|---|
-| `story` | 需求已登记成文，交付门 `story-build check --deliver` 通过——它只读已做过的独立审查结论，不重跑检查、不写报告；不要求 Spec/Plan 或施工单位 |
+| `story` | 需求已登记成文，交付门 `story-build check --deliver` 通过——它只读已做过的独立审查结论，不重跑检查、不写报告；不要求 Spec/Plan 或施工单位。`delivery: submitted` 另要当前这一版已真实送审：流程契约的发布记录是当前 Story，需求系统上的正文与它逐字相同、评审记录附件在；装置只读，不替模型上传 |
 | `blueprint` | 蓝图已准入，评审投影与这一版有效；不创建 Story、不要求施工单位 |
 | `design_handoff` | 蓝图已准入，至少一个活动施工单位，且每个都被原生判为可施工；不要求施工 |
 | `phase` | 在 `design_handoff` 之上，每个活动施工单位在终点及之前各阶段：冻结范围要执行的，原生完成证据身份相符、收口且质量结论 PASS，认定到达时阶段物证仍新鲜；不执行的，必需义务由原生承接证据满足（合法复用），或义务全部不适用 |
@@ -328,13 +329,13 @@ output/story/<suite-id>/
 | 步 | 动作 | 为什么在这一步 |
 |---|---|---|
 | 1 | Case 自己停在第一检查点（`awaiting_kind: initial_checkpoint`），模型最后那一问在 `question` 与 `pending_question` 里；等待期间 `reply` 一律被拒 | 到目标就终止只能另起 run，那是重启新会话冒充续行 |
-| 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；复制前后目录摘要不同则快照作废 |
+| 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；需求目录、关联蓝图与需求目录外的 Story 审查报告同一刻固定，复制前后目录摘要不同则快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`；不先回流，第一段产物就只剩快照 |
-| 5 | `resume-update --case <id> --text "<case.yaml 的 update_request>"`，不传 `--answer` | 只投第二段的业务请求；检查点上模型留的那一问属于第一段收尾，不单独作答。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
+| 5 | `resume-update --case <id> --text "<case.yaml 的 update_request>"` | 只投第二段请求；交付选择在第一段的关卡上已经答过，终点真正到了才停在检查点，这里不替模型答别的。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
 | 6 | 第二段起手在材料关卡停一次，按该 Case `interaction-script.yaml` 的 `update-material` 作答；之后 Case 停在第二检查点（`stop_reason: update_checkpoint`） | 终点以流程契约里这一轮 update 关闭为准，模型说「更新完成」不算 |
 | 7 | `checkpoint --point update` → 只读后评 → `conclude` | story 门禁已在进第二检查点前跑过；第二检查点的唯一出口是 conclude，不发的话 worker 一直等，最后只能被外部停掉、终态成 `worker_lost` |
-| 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段那份不被覆盖 |
+| 8 | 全部终态后 `finalize --promote` | 第二段真跑过时终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；第一段没到终点就收尾的，终态用原编号 |
 
 | `update_inputs` 的 `kind` | 投到哪 | 模拟的是 |
 |---|---|---|

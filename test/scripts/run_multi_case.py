@@ -2982,12 +2982,10 @@ def advance_plan(record: dict[str, Any], step_id: str) -> None:
 
 
 def command_resume_update(suite_id: str, case_id: str, text: str,
-                          deliver: list[str] | None = None,
-                          answer: str = "", step_id: str = "") -> int:
+                          deliver: list[str] | None = None) -> int:
     """第一段评完、回流完，把第二段的业务请求投进去（同一次对话）。
 
-    模型停在检查点时常留着一问（交付门问归档送审还是进入 plan）：`answer` 先答它，
-    按规划立场记为 planned（`step_id` 指名条目），答完那一轮再投 `text`。
+    检查点是终点真正到了之后才停的（交付选择已在关卡上答过），这里只投第二段请求，不替模型答别的。
     """
     path, suite = load_suite(suite_id)
     if case_id not in suite["case_states"]:
@@ -2998,22 +2996,11 @@ def command_resume_update(suite_id: str, case_id: str, text: str,
         raise SystemExit(f"[multi] {case_id} 的第一段还没回流，先 promote-checkpoint —— "
                          "回流之前续跑的话，第一段的产物就只剩快照里那一份了")
     args = ["--text", text]
-    if answer.strip():
-        args += ["--answer", answer.strip()]
     for name in deliver or []:
         args += ["--deliver", name]
     returncode, payload, stdout, stderr = invoke_case(case_id, "resume-update", *args, suite=suite)
     if returncode == 0:
-        record["resumed_update"] = {"text": text[:400], "answer": answer.strip() or None,
-                                    "delivered": list(deliver or []), "at": now()}
-        if answer.strip():
-            append_case_observation(suite, case_id, {
-                "kind": "interaction_reply", "mode": "manual",
-                "reply_kind": "planned" if step_id else "answered",
-                "planned_step": step_id or None,
-                "prompt": (record.get("last_awaiting") or {}).get("prompt"),
-                "reply": answer.strip(), "returncode": returncode})
-            advance_plan(record, step_id)
+        record["resumed_update"] = {"text": text[:400], "delivered": list(deliver or []), "at": now()}
     else:
         record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
     append_event(suite, "case_resumed_update", case=case_id, returncode=returncode)
@@ -3134,6 +3121,11 @@ def _tree_digest(root: Path) -> str | None:
     return hashlib.sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def segment_name(record: dict[str, Any], name: str) -> str:
+    """终态回流的目录名：第二段真跑过（resume-update 投进去了）才另名 `<名>-update`。"""
+    return f"{name}-update" if record.get("resumed_update") else name
+
+
 def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     """Archive and promote every terminal Case with a retained workspace."""
     workspace = Path(str(record.get("workspace") or "")).resolve()
@@ -3171,6 +3163,14 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
         "copied_evidence": copied_evidence,
         "captured_at": now(),
     }
+    # Story 的独立审查报告在需求目录之外：终态时一并留进本 Case 的证据目录
+    reports = workspace / "doc" / "reports" / "story" / str(record["feature"])
+    kept_reports = case_root / "story-reports"
+    if kept_reports.exists():
+        shutil.rmtree(_long(kept_reports))
+    if reports.is_dir():
+        shutil.copytree(_long(reports), _long(kept_reports))
+        evidence["story_reports"] = str(kept_reports)
     write_json(diff_root / "manifest.json", evidence)
     record["source_diff"] = evidence
 
@@ -3190,11 +3190,10 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     # Feature documents are independent Case outputs.  They must not be blocked
     # by source changes promoted by an earlier Case in the same finalize batch.
     feature_source = workspace / "doc" / "features" / str(record["feature"])
-    # 双检查点单的终态文档**另名落地**：原编号那一份是第一段回流的，两段分开看才比得出
-    # 「更新改了什么」。目录名换了不改里面的需求编号，也不动报告与引用。
-    feature_destination = FEATURES_ROOT / (
-        f"{record['feature']}-update" if record.get("after_initial") == "update"
-        else str(record["feature"]))
+    # 第二段真跑过（resume-update 投进去了）时，终态文档**另名落地**：原编号那一份是第一段回流的，
+    # 两段分开看才比得出「更新改了什么」。只配了 after_initial、第一段没到终点的，终态仍是第一段的产物，用原名。
+    # 目录名换了不改里面的需求编号，也不动报告与引用。
+    feature_destination = FEATURES_ROOT / segment_name(record, str(record["feature"]))
     if feature_source.is_dir() and is_archive_name(feature_destination.name):
         conflicts.append({"kind": "feature", "source": str(feature_source),
                           "destination": str(feature_destination),
@@ -3216,7 +3215,7 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     # 需求关联的蓝图工作区在另一个目录，按它自己的身份回流；双检查点单的终态同样另名落地
     blueprint = run_layout.linked_blueprint(workspace / "doc" / "features", str(record["feature"]))
     if blueprint and feature_source.is_dir():
-        name = f"{blueprint}-update" if record.get("after_initial") == "update" else blueprint
+        name = segment_name(record, blueprint)
         design = {"kind": "blueprint", **_promote_tree(workspace / "doc" / "features" / blueprint, FEATURES_ROOT / name)}
         if design["status"] == "destination_conflict":
             conflicts.append({**design, "reason": "blueprint_destination_conflict"})
@@ -3394,8 +3393,6 @@ def main() -> int:
                              "neutral=中性推进 / improvised=宿主自己的话（会污染观测）")
     parser.add_argument("--deliver", action="append", default=[],
                         help="reply：随这句话把该 Case supplements/ 下的材料放进收件箱，可多次")
-    parser.add_argument("--answer", default="",
-                        help="resume-update：先答检查点上模型那一问的一句话（配 --step 记为 planned），答完再投 --text")
     parser.add_argument("--wait-sec", type=int, default=15)
     parser.add_argument("--interval", type=int, default=60,
                         help="watch：两次零等待 poll 之间隔几秒")
@@ -3453,8 +3450,7 @@ def main() -> int:
         if not args.reply_case or not args.text.strip():
             raise SystemExit("[multi] resume-update 必须提供 --case 与 --text"
                              "（投的是一句正常的业务请求，不是测试控制语句）")
-        return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver,
-                                     args.answer, args.step_id)
+        return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver)
     if args.command == "retry":
         if not args.reply_case:
             raise SystemExit("[multi] retry 必须提供 --case（逐 Case 重启，不动其它 Case）")

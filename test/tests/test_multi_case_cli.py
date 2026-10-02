@@ -231,19 +231,19 @@ class SuiteFeatureArchiveTest(unittest.TestCase):
 
 class MultiCasePlanContinuationTest(unittest.TestCase):
 
-    PLAN = run_multi_case.CasePlan("c1", "AR-1", "story", {"kind": "story"}, False, ())
+    PLAN = run_multi_case.CasePlan("c1", "AR-1", "story", {"kind": "story", "delivery": "local"}, False, ())
 
     def test_an_override_is_recorded_beside_the_case_value(self) -> None:
         """命令行覆盖记在 requested_end_at，实际终点记 effective_end_at，end_at 仍回显 Case 配置原值。"""
         plain = run_multi_case.new_case_record(self.PLAN)
-        self.assertEqual((None, "story", "story", []),
+        self.assertEqual((None, "story:local", "story:local", []),
                          (plain["requested_end_at"], plain["effective_end_at"], plain["end_at"], plain["effective_phase_scope"]))
         moved = run_multi_case.new_case_record(self.PLAN, "phase:plan")
-        self.assertEqual(("phase:plan", "phase:plan", "story", ["spec", "plan"]),
+        self.assertEqual(("phase:plan", "phase:plan", "story:local", ["spec", "plan"]),
                          (moved["requested_end_at"], moved["effective_end_at"], moved["end_at"], moved["effective_phase_scope"]))
 
     def test_the_continued_case_gets_its_own_end(self) -> None:
-        other = run_multi_case.CasePlan("c2", "AR-2", "story", {"kind": "story"}, False, ())
+        other = run_multi_case.CasePlan("c2", "AR-2", "story", {"kind": "story", "delivery": "local"}, False, ())
         self.assertEqual("phase:plan", run_multi_case.requested_end_at(self.PLAN, "blueprint", "c1", "phase:plan"))
         self.assertEqual("blueprint", run_multi_case.requested_end_at(other, "blueprint", "c1", "phase:plan"))
         self.assertIsNone(run_multi_case.requested_end_at(other, None, "c1", "phase:plan"))
@@ -1211,16 +1211,23 @@ class FeaturesFlowBackToTheMaintenanceDoc(unittest.TestCase):
         suite = {"bundle_root": str(self.root / "bundle"),
                  "main_source_baseline": run_multi_case.snapshot_workspace_sources(self.demo)}
 
-        def record(workspace: Path, case: str, after_initial: str = "") -> dict:
+        def record(workspace: Path, case: str, after_initial: str = "", resumed: bool = False) -> dict:
             baseline = self.root / "bundle/cases" / case / "workspace-baseline.json"
             run_multi_case.write_json(baseline, run_multi_case.snapshot_workspace_sources(workspace))
             return {"case": case, "feature": "AR-9", "workspace": str(workspace),
                     "workspace_baseline": str(baseline), "status": "finished",
-                    "execution_status": "finished", "after_initial": after_initial}
+                    "execution_status": "finished", "after_initial": after_initial,
+                    **({"resumed_update": {"text": "/story update AR-9"}} if resumed else {})}
 
-        plain = record(self.workspace_with("ws-plain", "普通终态"), "case-plain")
-        update = record(self.workspace_with("ws-update", "更新后的终态"), "case-update", "update")
+        plain_ws = self.workspace_with("ws-plain", "普通终态")
+        report = plain_ws / "doc/reports/story/AR-9/k1/review-original.1.md"
+        report.parent.mkdir(parents=True)
+        report.write_text("审查原件", encoding="utf-8")
+        plain = record(plain_ws, "case-plain")
+        update = record(self.workspace_with("ws-update", "更新后的终态"), "case-update", "update", resumed=True)
         self.assertEqual("promoted", run_multi_case.promote_case_workspace(suite, plain)["status"])
+        kept = self.root / "bundle/cases/case-plain/story-reports/k1/review-original.1.md"
+        self.assertEqual("审查原件", kept.read_text(encoding="utf-8"), "需求目录外的 Story 审查报告没留进证据")
         self.assertEqual("promoted", run_multi_case.promote_case_workspace(suite, update)["status"])
         self.assertEqual("普通终态", (self.features / "AR-9/story.md").read_text(encoding="utf-8"))
         self.assertEqual("更新后的终态", (self.features / "AR-9-update/story.md").read_text(encoding="utf-8"))

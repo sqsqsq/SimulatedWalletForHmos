@@ -36,16 +36,16 @@ REVIEW = (
 
 
 class TheCheckpointKeepsThePendingQuestion(unittest.TestCase):
-    """AC29：第一检查点带着模型那一问；续跑先答它，再投业务请求。"""
+    """AC29：第一检查点带着模型最后那句话给宿主评；续跑只投第二段请求，不替模型答别的。"""
 
-    def test_the_resume_request_carries_the_answer_first(self) -> None:
+    def test_the_resume_request_carries_only_the_update_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
             (out / rc.RESUME_FILE).write_text(json.dumps(
-                {"text": "/story update AR90006", "answer": "归档送审。"}, ensure_ascii=False),
+                {"text": "/story update AR90006", "answer": "送审。"}, ensure_ascii=False),
                 encoding="utf-8")
             got = rc.pop_resume_request(out)
-            self.assertEqual({"text": "/story update AR90006", "answer": "归档送审。"}, got)
+            self.assertEqual({"text": "/story update AR90006"}, got)
             self.assertFalse((out / rc.RESUME_FILE).exists(), "取走之后请求还在")
 
     def test_waiting_at_the_checkpoint_shows_the_models_question(self) -> None:
@@ -54,7 +54,7 @@ class TheCheckpointKeepsThePendingQuestion(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(rc, "refresh_worker_lease"), \
                 mock.patch.object(rc, "pop_resume_request",
-                                  return_value={"text": "继续", "answer": "进入 plan。"}):
+                                  return_value={"text": "/story update AR90006"}):
             got = rc.wait_for_resume(Path(tmp), feed, runlog, state, turn=7,
                                      pending="要归档送审，还是进入 plan？")
         self.assertEqual("要归档送审，还是进入 plan？", state["awaiting_prompt"])
@@ -62,7 +62,7 @@ class TheCheckpointKeepsThePendingQuestion(unittest.TestCase):
         emitted = feed.emit.call_args_list[0]
         self.assertEqual("initial_checkpoint", emitted.args[0])
         self.assertEqual("要归档送审，还是进入 plan？", emitted.kwargs["pending_question"])
-        self.assertEqual("进入 plan。", got["answer"])
+        self.assertEqual({"text": "/story update AR90006"}, got)
 
 
 class ThePlanIsShownOnlyWhenItFits(unittest.TestCase):

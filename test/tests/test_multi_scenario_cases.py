@@ -99,51 +99,6 @@ class CaseShapeTest(unittest.TestCase):
             self.assertEqual([], [str(path) for path in in_workspace
                                   if path.name in forbidden])
 
-    def test_prompts_do_not_contain_maintenance_or_expected_story_answers(self) -> None:
-        for case_id in CASE_IDS:
-            prompt = str(definition(case_id)["prompt"])
-            for leaked in ("历史答案", "期望 Story"):
-                self.assertNotIn(leaked, prompt, case_id)
-
-    def test_prompts_do_not_drive_phase_advancement(self) -> None:
-        """阶段推进归驱动器，不归被测模型。
-
-        `run_case.py` 按 `end_at` 观测终点，需求交付之后还要施工设计时**指名下发**下一步。
-        prompt 里再写一遍阶段链，就是和驱动器双写：改终点时两边对不上
-        （实测协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，模型照 prompt 走），
-        而且把「模型会不会自己一路跑」混进了观测——测的就不再是驱动器能不能推动它。
-
-        prompt 用业务终点说做到哪（需求说明定稿送审、到实现方案为止），不写阶段名。
-        """
-        chain = re.compile(
-            r"(依次完成|继续执行|随后执行\s*/?(spec|plan)|一路走到|"
-            r"(spec|plan|coding|review)\s*(阶段)?(闭环)?后(继续|再|本轮)|"
-            r"到\s*(spec|plan|coding|review|ut|testing)\s*(阶段)?为止|"
-            r"不进入\s*(plan|coding|review|UT|真机))")
-        for case_id in sorted(CASE_IDS):
-            prompt = str(definition(case_id)["prompt"])
-            hit = chain.search(prompt)
-            self.assertIsNone(
-                hit, f"{case_id} 的 prompt 在替驱动器安排阶段推进：「{hit.group(0) if hit else ''}」"
-                     f"——终点只由 end_at 定，prompt 只写起点动作与业务要求")
-
-
-class NarrativeFixtureTest(unittest.TestCase):
-    def test_three_styles_share_the_same_semantic_fact_tokens(self) -> None:
-        required = {
-            "COMPLETED", "PENDING", "FAILED", "PDF", "PNG", "maskCounterparty",
-            "wallet_receipt_temp", "GET /wallet/transactions/{transactionId}",
-            "IDLE", "RENDERING", "READY", "ERROR", "CANCELLED",
-            "receipt_render_start", "receipt_render_success", "receipt_render_fail",
-            "RECEIPT-001", "RECEIPT-002", "RECEIPT-003",
-        }
-        for name in VARIANTS:
-            text = (FIXTURES / name).read_text(encoding="utf-8")
-            self.assertEqual([], sorted(token for token in required if token not in text), name)
-            self.assertIn("端侧渲染", text)
-            self.assertIn("服务端生成", text)
-            self.assertIn("上报失败", text)
-
     def test_styles_have_different_titles_and_organization(self) -> None:
         texts = [(FIXTURES / name).read_text(encoding="utf-8") for name in VARIANTS]
         heading_sets = [tuple(re.findall(r"^#{1,3}\s+(.+)$", text, re.M)) for text in texts]
@@ -185,7 +140,7 @@ class CompositeCoverageTest(unittest.TestCase):
         for capability, expected in carriers.items():
             self.assertTrue(expected <= CASE_IDS, capability)
         ends = {case_id: definition(case_id).get("end_at") for case_id in CASE_IDS}
-        self.assertEqual({"auto-topup": {"kind": "story"}, "car-key-sharing": {"kind": "phase", "phase": "plan"}}, ends,
+        self.assertEqual({"auto-topup": {"kind": "story", "delivery": "submitted"}, "car-key-sharing": {"kind": "phase", "phase": "plan"}}, ends,
                          "终点变了，上面的能力登记要跟着核")
 
     def test_retired_case_stays_out_of_the_suite(self) -> None:
@@ -355,25 +310,18 @@ class CompositeCoverageTest(unittest.TestCase):
                           if item.get("deliver") == "on_request"}
             self.assertTrue(on_request <= delivered, directory.name)
 
-    def test_prompts_stay_in_the_voice_of_the_person_who_asked(self) -> None:
-        """prompt 只说业务：单号、材料在哪、做到哪一步。
+    def test_story_cases_start_and_update_with_the_command_only(self) -> None:
+        """起手与第二段请求只给命令和单号。
 
-        点了命令、脚本、文件名、关卡名，测的就不再是「模型能不能自己走通」，
-        而是「出题的人知不知道答案」；写了处置法（图片怎么办、冲突怎么办、
-        要不要拆），那几个观测点当场作废。
+        材料在哪、开过什么会、做到哪一步，都由模型在流程里问、宿主在关卡上答；
+        写进请求就把要观测的取材与交付选择提前告诉了它。
         """
-        banned = ("/story", "story.js", "story_flow", "import_sources", "harness",
-                  "AR/design.md", "spec.md", "story.md", "review.md", "inbox",
-                  "关卡", "收件箱", "占位件",
-                  "图片", "兄弟", "冲突", "拆分", "未决", "定源", "补料")
-        # 「这轮别动被测对象」是工作纪律，不是需求信息，先摘掉再查。
-        discipline = ("doc/extensions/", "test/", "framework/")
         for case_id in sorted(CASE_IDS):
-            prompt = str(definition(case_id)["prompt"])
-            for word in discipline:
-                prompt = prompt.replace(word, "")
-            hit = [word for word in banned if word in prompt]
-            self.assertEqual([], hit, f"{case_id} 的 prompt 泄题：{hit}")
+            cfg = definition(case_id)
+            ar = str(cfg["ar"])
+            self.assertEqual(f"/story init {ar}", str(cfg["prompt"]).strip(), case_id)
+            if cfg.get("after_initial") == "update":
+                self.assertEqual(f"/story update {ar}", str(cfg["update_request"]).strip(), case_id)
 
     def test_local_markdown_images_resolve_inside_their_case(self) -> None:
         for directory in case_directories():

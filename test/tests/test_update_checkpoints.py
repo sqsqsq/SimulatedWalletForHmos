@@ -37,14 +37,14 @@ class CaseConfigIsOptional(unittest.TestCase):
     """`after_initial` 不配就是普通单终点——既有用例一个字节不用改。"""
 
     def test_a_plain_case_has_no_second_segment(self) -> None:
-        plan = rmc.CasePlan("c", "AR1", "story", {"kind": "story"}, False, ())
+        plan = rmc.CasePlan("c", "AR1", "story", {"kind": "story", "delivery": "local"}, False, ())
         self.assertEqual("", plan.after_initial)
         self.assertIsNone(plan.as_dict()["after_initial"])
 
     def test_only_update_is_accepted(self) -> None:
         """值域一个字：别的写法当场拒绝，不要跑到一半才发现它没生效。"""
         self.assertIn("after_initial", (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8"))
-        plan = rmc.CasePlan("c", "AR1", "story", {"kind": "story"}, False, (), (), (), "update")
+        plan = rmc.CasePlan("c", "AR1", "story", {"kind": "story", "delivery": "local"}, False, (), (), (), "update")
         self.assertEqual("update", plan.as_dict()["after_initial"])
 
 
@@ -133,11 +133,13 @@ class TheOrderIsSnapshotThenPromoteThenResume(unittest.TestCase):
 
 
 class TheTwoSegmentsLandInDifferentPlaces(unittest.TestCase):
-    def test_the_final_documents_use_a_separate_directory(self) -> None:
-        """终态文档另名：原编号那一份是第一段回流的，两段分开才比得出更新改了什么。"""
-        src = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
-        self.assertIn('f"{record[\'feature\']}-update"', src)
-        self.assertIn('after_initial") == "update"', src)
+    def test_the_final_documents_are_named_by_the_segment_that_ran(self) -> None:
+        """终态文档另名只在第二段真跑过时：第一段没到终点就收尾的，终态仍是第一段的产物。"""
+        planned_only = {"after_initial": "update"}
+        self.assertEqual("AR1", rmc.segment_name(planned_only, "AR1"))
+        ran = {**planned_only, "resumed_update": {"text": "/story update AR1"}}
+        self.assertEqual("AR1-update", rmc.segment_name(ran, "AR1"))
+        self.assertEqual("bp-AR1-update", rmc.segment_name(ran, "bp-AR1"))
 
     def test_the_terminal_sets_agree_between_the_two_sides(self) -> None:
         """两边的终态名单要一致：Case 已经收尾，宿主却判它还活着就拒绝回灌。"""
@@ -162,6 +164,25 @@ class TheSecondCheckpointAlsoWaits(unittest.TestCase):
         self.assertIn("pop_conclude_request", body, "第二检查点没有出口")
         self.assertNotIn("pop_resume_request", body,
                          "第二段之后没有第三段，这里不该再收续跑请求")
+
+    def test_the_checkpoint_also_freezes_the_story_reports(self) -> None:
+        """Story 的独立审查报告在需求目录之外：检查点与需求目录同一刻固定它。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root, out = Path(tmp) / "ws", Path(tmp) / "out"
+            (root / rc.FEATURES_DIR / "AR1").mkdir(parents=True)
+            (root / rc.FEATURES_DIR / "AR1" / "story.md").write_text("正文", encoding="utf-8")
+            report = root / "doc" / "reports" / "story" / "AR1" / "k1" / "review-original.1.md"
+            report.parent.mkdir(parents=True)
+            report.write_text("审查原件", encoding="utf-8")
+            with unittest.mock.patch.object(rc, "REPO_ROOT", root), \
+                    unittest.mock.patch.object(rc, "_load_case", return_value=({}, out, "AR1")), \
+                    unittest.mock.patch.object(rc, "reconcile_worker_state", return_value={"status": "awaiting_reply"}), \
+                    unittest.mock.patch.object(rc, "read_state", return_value={}), \
+                    unittest.mock.patch("sys.stdout", new=io.StringIO()) as said:
+                self.assertEqual(0, rc.cmd_checkpoint("c", "initial"))
+            self.assertIn("reports_path", json.loads(said.getvalue()))
+            kept = out / "checkpoints" / "initial.reports" / "k1" / "review-original.1.md"
+            self.assertEqual("审查原件", kept.read_text(encoding="utf-8"))
 
     def test_the_checkpoint_command_still_requires_a_stopped_worker(self) -> None:
         """两个检查点用同一条判据：worker 停着才复制。"""

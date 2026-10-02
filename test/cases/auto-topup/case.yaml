@@ -13,9 +13,9 @@ ar: AR90006
 system: true
 interactive: true
 start_phase: story
-# 终点**由驱动器判定**（test/scripts/end_target.py）：story = 需求已登记成文且只读交付门通过。
-# 不要求 Spec/Plan 或施工单位。改终点只改这一行，prompt 里不写阶段链。
-end_at: {kind: story}
+# 终点**由驱动器判定**（test/scripts/end_target.py）：story + submitted = 当前成文已登记、交付资格成立，
+# 且当前版本已真实归档到需求系统。不要求 Spec/Plan 或施工单位。改终点只改这一行。
+end_at: {kind: story, delivery: submitted}
 
 # 人手上备着、但没提前放进需求目录的材料。模型第一次停在材料关卡时全部一次交出——
 # 提前铺好，「它会不会发现材料不够」就永远测不到。
@@ -45,15 +45,8 @@ update_inputs:
     destination: review-feedback.md
     note: 两条同意、一条要改（停用后给出重新签约的去处）、一条暂缓
 
-# 第二段的业务请求：resume-update 的 --text 原样用这一句，按 planned 记账（TEST §4.4）。
-update_request: 产品需求出了新版，已放进需求目录；评审人的意见也回到系统上了。按这些把 AR90006 更新一下。
+# 第二段的请求：resume-update 的 --text 原样用这一句（TEST §4.4）。新稿与回稿由模型自己取得。
+update_request: /story update AR90006
 
-# prompt 是**需求方说的话**：只给单号、材料在哪、做到哪一步。
-# 不点命令、脚本、文件名、关卡名，也不写处置法——那些正是要观测的东西。
-prompt: |
-  AR90006 是交通卡自动充值的开发需求，产品需求和系统设计都在需求系统里，
-  从这张单开始做，做到需求说明定稿送审，这轮不开展施工。
-
-  界面的图产品当时没归档进系统，原稿在我手上，你要的时候跟我说。
-  九月初产品和开发开过一次澄清会，会议记录也在我手上。
-  过程中需要我表态的地方停下来问我，别替我拿主意。
+# 只用命令起手（test/cases/README.md）：材料、会议、终点都由模型在流程里问，宿主在关卡上答。
+prompt: /story init AR90006

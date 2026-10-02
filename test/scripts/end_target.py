@@ -1,10 +1,12 @@
 """用例终点 `end_at` —— 形态、解析，以及按原生对象观测到没到。
 
-终点只有这一个真源：Case 配置的 `end_at: {kind, phase?}`，命令行的 `--end-at` 覆盖它（同一套写法）。
+终点只有这一个真源：Case 配置的 `end_at: {kind, phase?, delivery?}`，命令行的 `--end-at` 覆盖它（同一套写法）。
 
 | kind | 到达的判据 |
 |---|---|
-| story | 需求已登记成文，只读交付门 `story-build check --deliver` 通过（原生设计有效、依据当前、独立审查可消费） |
+| story | 需求已登记成文，只读交付门 `story-build check --deliver` 通过（原生设计有效、依据当前、独立审查可消费）。
+`delivery: local` 到此为止；`delivery: submitted` 还要当前这一版已真实归档：流程契约的发布记录是当前 Story，
+需求系统上的正文与它逐字相同、评审记录附件在。Case 配置必须写 delivery，命令行的 `story` 简写取 local |
 | blueprint | 蓝图已准入，评审投影与这一版有效；不要求 Story 或施工单位 |
 | design_handoff | 蓝图已准入，至少一个活动施工单位，且每个都被原生判为可施工；不要求施工 |
 | phase | 在 design_handoff 之上，每个活动施工单位在终点及之前各阶段：冻结范围要执行的，原生完成证据身份相符、已收口、质量结论 PASS，
@@ -15,6 +17,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -25,6 +28,7 @@ from run_layout import bound_blueprint
 HERE = Path(__file__).resolve().parent
 KINDS = ("story", "blueprint", "design_handoff", "phase")
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
+DELIVERIES = ("local", "submitted")
 
 
 class EndAtError(ValueError):
@@ -32,18 +36,29 @@ class EndAtError(ValueError):
 
 
 def parse_end_at(value: Any, *, where: str) -> dict:
-    """配置里的映射或命令行的字符串（`story` / `blueprint` / `design_handoff` / `phase:<阶段>`）→ `{kind, phase?}`。"""
+    """配置里的映射或命令行的字符串（`story` / `story:submitted` / `blueprint` / `design_handoff` / `phase:<阶段>`）
+    → `{kind, phase?, delivery?}`。"""
     if isinstance(value, str):
-        kind, _, phase = value.strip().partition(":")
-        value = {"kind": kind, **({"phase": phase} if phase else {})}
+        kind, _, detail = value.strip().partition(":")
+        key = "delivery" if kind == "story" else "phase"
+        value = {"kind": kind, **({key: detail} if detail else {"delivery": "local"} if kind == "story" else {})}
     if not isinstance(value, dict):
-        raise EndAtError(f"{where}：end_at 要写成 {{kind, phase?}}，读到 {type(value).__name__}")
-    extra = sorted(set(value) - {"kind", "phase"})
+        raise EndAtError(f"{where}：end_at 要写成 {{kind, phase?, delivery?}}，读到 {type(value).__name__}")
+    extra = sorted(set(value) - {"kind", "phase", "delivery"})
     if extra:
-        raise EndAtError(f"{where}：end_at 只认 kind 与 phase，多了 {'、'.join(extra)}")
+        raise EndAtError(f"{where}：end_at 只认 kind、phase 与 delivery，多了 {'、'.join(extra)}")
     kind = str(value.get("kind") or "").strip()
     if kind not in KINDS:
         raise EndAtError(f"{where}：end_at.kind「{kind}」不在 {' / '.join(KINDS)} 里")
+    delivery = value.get("delivery")
+    if kind == "story":
+        if delivery not in DELIVERIES:
+            raise EndAtError(f"{where}：kind 为 story 时 delivery 必填，取 {' / '.join(DELIVERIES)}，读到「{delivery}」")
+        if value.get("phase") is not None:
+            raise EndAtError(f"{where}：kind 为 story 时不带 phase")
+        return {"kind": "story", "delivery": delivery}
+    if delivery is not None:
+        raise EndAtError(f"{where}：kind 为 {kind} 时不带 delivery")
     phase = value.get("phase")
     if kind == "phase":
         if phase not in PHASES:
@@ -55,7 +70,9 @@ def parse_end_at(value: Any, *, where: str) -> dict:
 
 
 def label(end_at: dict) -> str:
-    """命令行与记录里的写法：`story`、`phase:plan`。"""
+    """命令行与记录里的写法：`story:submitted`、`phase:plan`。"""
+    if end_at["kind"] == "story":
+        return f"story:{end_at['delivery']}"
     return f"phase:{end_at['phase']}" if end_at["kind"] == "phase" else end_at["kind"]
 
 
@@ -106,6 +123,36 @@ def story_delivery(root: Path, features_dir: str, feature: str, story_build: str
     return False, said[:8] or [f"交付门没通过（退出码 {proc.returncode}）"]
 
 
+def short_digest(data: bytes) -> str:
+    """与流程契约发布记录同一口径（`flow/state.py` 的 short_digest）。"""
+    return "sha256:" + hashlib.sha256(data).hexdigest()[:16]
+
+
+def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Path | None) -> list[str]:
+    """当前这一版真实送审了没有：发布记录指当前 Story，需求系统上的正文逐字是它、评审记录附件在。只读，不替模型上传。"""
+    ar = root / features_dir / feature / "AR"
+    try:
+        archived = json.loads((ar / "story-src" / "story-flow.json").read_text(encoding="utf-8")).get("archived") or {}
+        story = (ar / "story.md").read_bytes()
+    except (OSError, ValueError) as exc:
+        return [f"读不出流程契约或 AR/story.md（{exc}）"]
+    if not archived:
+        return ["流程契约里没有发布记录：当前这一版还没送审"]
+    if archived.get("story_digest") != short_digest(story):
+        return [f"发布记录是 {archived.get('story_digest')}，当前 Story 是 {short_digest(story)}：送审的不是当前这一版"]
+    if system_dir is None:
+        return ["没有需求系统（STORY_REQUIREMENT_SYSTEM_DIR 未设）：送审终点只对系统单成立"]
+    ticket = system_dir / feature
+    try:
+        body = (ticket / "design.md").read_bytes()
+    except OSError:
+        return [f"需求系统上没有这张单的正文（{ticket / 'design.md'}）"]
+    missing = [] if body == story else ["需求系统上的正文与当前 Story 不同：归档没有落到系统上"]
+    if not (ticket / "attachments" / "review.md").is_file():
+        missing.append("需求系统上没有评审记录附件（attachments/review.md）")
+    return missing
+
+
 #: 阶段结论：closed（执行并收口）、reused（不执行，义务由原生承接证据满足）、not_applicable（义务全部不适用）、
 #: not_in_scope（范围里本阶段没有义务）都算到了；open 是还没到
 DONE = ("closed", "reused", "not_applicable", "not_in_scope")
@@ -137,7 +184,8 @@ def phase_state(phase: str, native: dict) -> tuple[str, list[str]]:
 
 
 def observe(root: Path, features_dir: str, feature: str, end_at: dict, *, case: dict | None,
-            story_build: str, start_phase: str = "story", settle: bool = True) -> dict:
+            story_build: str, start_phase: str = "story", settle: bool = True,
+            system_dir: Path | None = None) -> dict:
     """终点到了没有：`{end_at, reached, missing, blueprint_id, blueprint, units, delivery?}`。
 
     `units` 逐个施工单位列身份、设计判定与各阶段结论；有一个没到，整单就没到——不拿其中一个的 PASS 当整单终点。
@@ -147,7 +195,9 @@ def observe(root: Path, features_dir: str, feature: str, end_at: dict, *, case: 
                              "blueprint": None, "units": []}
     if end_at["kind"] == "story":
         ok, missing = story_delivery(root, features_dir, feature, story_build)
-        facts.update(reached=ok, missing=missing, delivery={"ok": ok})
+        if ok and end_at["delivery"] == "submitted":
+            missing = story_submitted(root, features_dir, feature, system_dir)
+        facts.update(reached=not missing, missing=missing, delivery={"ok": ok, "kind": end_at["delivery"]})
         return facts
     blueprint = blueprint_of(root, features_dir, feature, case)
     facts["blueprint_id"] = blueprint
