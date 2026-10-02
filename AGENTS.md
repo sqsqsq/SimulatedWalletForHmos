@@ -17,9 +17,7 @@
 
 `extensions/` 是当前开发版；测试时它被装进从 demo 复制的一次性 template；demo 只在正式发布时更新，平时保持上一个发布版。
 
-分支：`story-1.0` 维护 1.x，`story` 演进 2.x；main 跟随远端，保留其原有 Extension，不承担 Story 发布源。
-当前 2.0.0 设计与实施从 [实施总览](doc/plan/2.0.0/01-实施总览与协作合同.md)进入；本文件的安装及知识阶段说明仍描述已交付的 1.9.8，
-由对应实施步完成验证后同步，不能把待交付接口当作当前能力。
+版本目标、分支安排、实施进度与当前交接入口记录在对应的 spec/plan 中；本文维护项目长期适用的职责、所有权和工作规则。
 
 - 维护任务以用户本次给定的目标、需求、计划和状态为输入，在 `doc/spec/`、`doc/plan/` 中按该任务查找已有材料；对应不上时先补齐歧义。
   `doc/features/*` 是测试回流的运行产物，其下 `archive/` 按批次存历轮起跑前的归档；维护需求在 `doc/spec/`。
@@ -84,7 +82,7 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统；提
 
 本仓特殊事实：
 
-- `demo/framework/` 是 AgentMaison 3.1.0 的 vendored 副本（`demo/framework/RELEASE-MANIFEST.json`）。正式交付落在上游，经 framework-init UPDATE
+- `demo/framework/` 是 AgentMaison 的 vendored 发布件，版本与构建身份以 `demo/framework/RELEASE-MANIFEST.json` 为准。正式交付落在上游，经 framework-init UPDATE
   进入消费仓；本仓副本只在用户明确授权的单步验证中临时修改，交付时保留上游基线、可复现补丁和临时放行的失效条件。
 - 本仓对 framework 有两处本地定制：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与
   `demo/framework/agents/opencode/templates/agents/verifier.md` 子代理模板（物化为 `demo/.opencode/agent/verifier.md`，根 `.opencode/agent/verifier.md`
@@ -207,8 +205,8 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统；提
 评审或预算记录，注明范围、额度、理由与确认角色；初始预算与累计变化保留，连续小幅改签不能规避 150% 人工确认。完成时同时核功能质量、
 实际新增、旧机制退出与最终总量：预算以内但旧实现未退出不能完成；超预算但必要合理的按上表权限调整。§3 的质量要求不能通过增加预算豁免。
 
-**现有检查只覆盖一部分**：`test/regression/mechanism-budget.yaml` 与 `test/tests/test_mechanism_budget.py` 按上述范围检查分类总量、峰值与完成目标；
-R 的分级计算与确认检查尚未接线，现有测试通过不代表分级复核已做，由 reviewer 按本节执行。接线现状与历史额度见台账文件头。
+预算额度及检查工具的覆盖范围在 `test/regression/mechanism-budget.yaml` 维护，计量实现见 `test/tests/test_mechanism_budget.py`。
+reviewer 按本节核对累计新增、退出与分级确认；工具通过不能替代其尚未覆盖的复核责任。
 
 ## 6. framework 接入
 
@@ -220,7 +218,7 @@ R 的分级计算与确认检查尚未接线，现有测试通过不代表分级
 3. 两处本地定制（§2）被发布件覆盖时，在新文件上重新加回定制内容，不整文件回退到旧版。
 4. 在 demo 根按 [framework-init](demo/framework/skills/project/framework-init/SKILL.md) 做 UPDATE（S1–S4），物化清单按本轮实际选择。
 5. 用 demo 已装版本的 manifest 判断 diff 里的入口是否属于 Extension；已登记入口或 AGENTS/CLAUDE 的 story-ext 扩展段被换成通用内容时，
-   只把该文件恢复为已装版本的内容，不重装 Extension（方案 1.9.8 分册 03 §2.2）。
+   只把该文件恢复为已装版本的内容，不重装 Extension。
 6. 装置同步：根 `.opencode/agent/verifier.md` 逐字节复制自 `demo/.opencode/agent/verifier.md`。
 7. 验证：demo 下 `cd framework/harness && npm test`；`check_framework_drift.py` 结果与本次接入一致；按 [TEST §5](test/TEST.md) 跑与改动相关的离线回归。
 8. 提交 demo，并在 [test/EVOLUTION.md](test/EVOLUTION.md) 登记发布件版本、source_commit、定制处理与验证结果。

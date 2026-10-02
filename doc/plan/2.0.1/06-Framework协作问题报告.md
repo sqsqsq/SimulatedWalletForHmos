@@ -1,54 +1,48 @@
-# Framework 3.1.0 协作问题报告
+# Framework 3.1.0 协作：适用边界与最小接线请求
 
-状态：供用户转交，**尚未发送上游**。基线为本仓 `demo/framework/RELEASE-MANIFEST.json` 的 3.1.0，source_commit `074a4c3c4a0591c8ed2162e2a0d048a1fdec081f`；不推断远端今天是否已有修复。证据见同目录分析及仓根 `output/story/2.0.1-analysis-20261002/`。
+供用户转交，尚未发送。基线：3.1.0，source_commit 074a4c3c4a0591c8ed2162e2a0d048a1fdec081f；不推断远端今天是否已有修复。
 
-结论：**既有 Extension/维护装置问题，也有已经复现的 Framework 缺陷。** 不是“全部上游阻塞”，也不是“Framework 没问题，只需再跑一次”。输入传输、更新依据、人读投影归本仓；Markdown 独立产物审查问题须上游修正后才能正确完成该接口验收。
+## 1. 归因更正
 
-## U1：独立产物审查的 Markdown 引用与报告解析
+无 Feature review 仍复用 active workflow 的代码审查 checker；review-rules 明确 Code Review 定位。本仓不再以补 Markdown 后缀解决 Story 审查，也不申请通用文档审查框架。
 
-性质：Markdown-only 问题引用不被识别是已确认缺陷；结论标题误匹配是本次实际遇到的解析/格式合同问题，一并请上游定位。
+实跑的无关 JSON 引用绕行仍是不正确行为，交回“未触发”仍与记录不符；责任改为适配选型错误。无 Feature 不代表任意审查对象。代码审查自身是否另有文档/配置引用问题，不作为本版依赖。
 
-现象：Story 报告中真实问题指向 `story.md` 等 Markdown，原生 check 报不可解析文件引用。源码 `harness/scripts/check-review.ts:652` 的后缀集合为 `ets|tsx?|m?js|json5?|py|java|kt|swift`，不含 md/yaml/yml；同文件另一引用解析器已经含这些后缀。模型为通过检查在六条发现上补了相同 `decisions.json`。另外，最终结论前出现“open 议题逐条结论”标题时，模型被迫重命名标题以适应 `getSectionContent(..., '结论')`。
+缺专用质询 agent 或 helper 无脚本调用不证明宿主无法隔离执行。原生已有独立质询要求，须落实实际交接；不由作者自证，也不笼统宣称 Framework 无缺口。
 
-本轮复现来源：自动充值主任务 `prt_0fab87949001wfJglm1E6O5gus`，恢复 reviewer 会话 `ses_f0553a123ffeux63bt3voLaNsm`；报告目录 `f8bf4579a28773d7`。此前交回写“未触发”不准确。
+## 2. FW-01：设计资产消费（必要）
 
-请求修正：独立产物的文件引用按实际 request/material 集合与真实路径验证，支持 Markdown/YAML；复用一致的路径解析，不让不同检查器的后缀集合矛盾。最终结论应按公布的报告结构准确读取，不受普通业务子标题含“结论”影响。prepare 时提供当前合法报告合同，使 reviewer 不用事后读源码猜判据。
+已核 extension-loader 解析 skillAssetAbsPaths，profile-skill-assets 有 resolveSkillAssetPath；component-design-host-adaptation §7.1 指设计知识走 skill_assets，没有 before_component_design。当前正常设计指令未完整消费本扩展作者/质询资产。
 
-验收：只有 Markdown 的真实发现可通过引用合法性检查；不存在/不属当前审查材料的引用按真实协议报告；中间章节含“结论”不替代最终结论；材料变更后报告过期；不需加无关 JSON、不需要伪 Feature/phase、无阶段 receipt。原生既有 prepare/check 的签名可保持，Extension 只核发布件与行为，不新增通用审查实现。
+请求复用现有入口：
+- discovery 前读 component-design 的 extension_author_requirements。
+- 派质询时交 extension_review_requirements、候选与必要知识。
+- 无登记保持原生；登记不可读/解析失败报告缺口，不声称消费。
+- 直接 component-design 与 Story 转入同路。
+- 读取 Markdown 要求页，不新增任意脚本执行、provider 或 phase。
 
-影响：阻塞“诚实、可用的独立人读审查”正式验收；不阻塞本仓只读分析及其他本地修正。不得用报告补丁当完成证据。若上游已有修复，请提供包含修复的实际发布件及回归结果，按 AGENTS §6 接入，不在 vendored 副本上临时修。
+验收有/无登记、缺文件、直接/Story 入口，核实际执行体输入，不只核 manifest。上游交发布件/回归，本仓按 AGENTS §6 接入，不改 vendored 或设永久 Story 旁路。
 
-## U2：物化 Skill 丢失用途
+## 3. FW-02：独立质询执行合同（必要）
 
-性质：已确认的信息损失，建议修复；它是自然语言选路的必要输入之一，不是本次车钥匙失败的唯一根因。
+复用原生 scope 派生、结果构造与校验，明确：
+1. 主执行者用宿主已有隔离子代理，交当前候选/来源/required scopes/必要知识/扩展要求。
+2. 质询者只读返回逐项结果；主执行者原样存蓝图质询过程目录。
+3. 设计负责方处理问题再写 questioning，不以 provider 字符串代实际独立。
+4. 候选与报告可回查，避免最终新增 questioning 与派审前全文摘要的循环比较。
+5. 未完成或无能力如实缺口；不填 complete，不增固定返修次数、注册中心或调度器。
+6. 字段与计算信息在动作前提供，正常设计不读 checker 报错猜合同。
 
-源码：`harness/scripts/utils/instance-skill-bridge.ts` 的桥接描述只写“实例扩展 Skill：story”，没有保留源 SKILL frontmatter description。当前原生 AGENTS 表也主要列名称/路径。对不知道命令的用户，需求说明任务更容易被匹配到原生 spec。
+验收真实调用/输入/原件及原生检查，构造报告仅证字段。无需新命名 API；实际执行入口、输入输出与留存位置须随发布件明确，不让实施者猜。
 
-请求：优先复用源 SKILL 的有效 description，在原生物化的宿主入口中保留；无需新增 Extension 自有 bridge、provider 或旁路入口。manifest 所有权和目标位置保持原生机制。
+FW-01/FW-02 未接入限制直接设计/完整质询签收，不阻塞本仓独立 CLI、Story 审查、投影和更新修正。这是本报告的请求编号，区别于 2.0.0 spec 的四项接缝 A/B/C/D。
 
-验收：有正常 description 的 Skill 在支持的宿主桥接中用途不丢失，Markdown/YAML 引用转义正确；安装冲突策略不变。无描述的原生允许输入维持原生明确诊断/缺省规则，但不能声称该输入已携带用途。自然语言选路另经真实行为验证，不能靠桥接字符串出现就宣告成立。
+## 4. FW-03：物化保留用途（增强）
 
-影响：直接显式 `/story` 可继续诊断；正常自然入口目标需该信息送达。Extension 不能在 Spec 阶段以“缺 story-flow”强制接管所有原生任务。
+instance-skill-bridge 的“实例扩展 Skill：story”缺用途。建议保留源 SKILL 有效 description，沿原生所有权物化，不重建 Extension bridge。
 
-## U3：component-design 的实际独立质询与作者可用输入
+不阻塞命令 Case，不包办车钥匙失败归因。核描述可见、转义和覆盖保护；自然语言选路另需行为证据，命令成功不代表自然语言发现通过。
 
-性质：**目前首先是调用/实现偏离，尚不能直接判 Framework 缺功能。** 原生 SKILL 已要求发现、设计、独立质询与调和；本次主模型没有正确执行，而是派一个作者读 checker、填写独立质询记录。应先恢复原生正常流程，再判断公共能力是否不足。
+## 5. 本仓责任
 
-需要上游协助核实的行为合同：
-
-1. 正常 component-design 如何把候选、原始来源、已登记扩展质询要求和必要知识交给真实独立执行体；使用哪个已支持的宿主调度入口。
-2. 原始质询结果在哪里保存，负责方如何将实际处理结果绑定当前 revision；不能只由作者填写 provider/isolated_context 就认作实际独立审查。
-3. 作者应从哪些正式协议取得必要字段和可计算指纹，哪些现有工具负责生成；不以 checker 源码阅读作为正常设计必经动作。
-
-Extension 先按已存在的原生路径调用并交付两项资产，不复制调度。如果现有流程足以完成，交付真实调用/报告证据即关闭本项，无需上游新功能。如果公开能力确实缺上述接线，请上游提供最小的实际入口、输入、输出、失败语义与测试；设计者核对后补实施合同。**此处不是已交付的新 API，也不授权实施者猜一个接口。**
-
-验收场景：有/无扩展要求的正常设计；真实独立质询；未定来源保持未定；实际收到的材料与登记一致；无独立能力诚实披露。重点是正常流程，不要求建设新通用 Agent 层级或复杂异常状态机。
-
-## 明确不归上游的问题
-
-- `tools/cli` 经 npm CMD 丢多行输入：本仓维护装置问题，不能要求 Framework 为它兜底。
-- 模型借 headless_assumed、移动 needed_by、把推断标为 SE 权威：先修调用/作者合同和独立质询，不能据此指控原生协议要求这么做。
-- Story 投影冗长、设计明细只在人读件、新采用材料配旧输入摘要：Extension 责任。
-- Case 送审前截停、未归档就投放归档后意见：测试合同责任。
-
-请上游回复 U1/U2 的修复状态与发布件身份，以及 U3 的现有公共调用路径。用户转交前本报告不代表上游已接受任务或承诺交付。
+cmd 截断、误用代码审查、旧结论账本/旧夹具依赖、授权话术、投影/有效输入、Case 终点由本仓处理。Story 用现有宿主子代理和材料指纹，不申请通用文档审查平台。
