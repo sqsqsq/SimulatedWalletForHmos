@@ -61,7 +61,8 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 0. **实例前置自检**（缺一不起跑）：`framework.config.json` 配了 `paths.ui_kit_target_dir` 且该目录已物化 UI kit 组件，否则跑到 coding 的
    Case 都会被 UI kit 门禁拦在「目标目录无法解析」上；demo 的 `framework/harness/state/` 下没有属于别人的阶段状态（有则先弄清归属，
    再决定是否 clear-state）；demo 是发布基线：顶层没有维护目录（`test`、`tools`、`output`、`scratch`、`.bak`、`.git`）、没有 `doc/features`，
-   git 查询成功且非忽略改动为空。
+   git 查询成功且非忽略改动为空。Windows 上被测 CLI 在 PATH 里解析到原生可执行文件，不是 npm 的 `.cmd` 包装（配法见
+   [tools/cli/README](../tools/cli/README.md)），否则首条请求会在启动前被拒。
 1. 创建本轮 `output/story/<suite-id>/` 控制目录。
 2. 扫描并关联 `%TEMP%/sw-story/*` 与 `output/story/*` 中的历史 suite。
 3. 整体预检终态、PID、lease、路径边界、软链接和所有权。

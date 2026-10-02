@@ -23,6 +23,18 @@ Business tools select only a registry name and model. They never pass raw CLI
 arguments or provider profile names. Each registry entry maps the common
 default behavior to the concrete CLI permissions and flags it requires.
 
+### Windows：用 CLI 的原生可执行文件
+
+prompt 作为一个参数原样交给 CLI，进程以 `shell=False` 直接启动。npm 在 PATH 上装的 `opencode.cmd`、`codex.cmd`
+是批处理包装，Windows 会经 cmd.exe 转交参数：第一个换行之后的内容丢失，`%`、`&` 被改写。所以注册解析到
+`.cmd`/`.bat` 时在启动前报配置错误。
+
+本机二选一（路径含用户名，不提交）：
+
+- 把包内原生程序所在目录排到 PATH 中包装器之前，例如 `%APPDATA%\npm\node_modules\opencode-ai\bin`（内有 `opencode.exe`）；
+- 直接调用 API 时，也可复制一份注册文件放在 `output/` 下，把 `executable` 写成原生程序的绝对路径，经 `registry_path` 传入。
+  Case 驱动用默认注册，只认 PATH。
+
 ## Python API
 
 ```python

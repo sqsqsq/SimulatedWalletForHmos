@@ -14,6 +14,7 @@ from .models import CliRunRequest
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "clis.json"
 ALLOWED_PLACEHOLDERS = {"prompt", "cwd", "model", "session_id", "schema"}
+BATCH_SUFFIXES = {".cmd", ".bat"}
 
 
 class CliConfigurationError(ValueError):
@@ -215,6 +216,16 @@ class CliRegistry:
             if check_executable:
                 raise CliNotFoundError(f"CLI is not installed or not in PATH: {executable_name}")
             executable = executable_name
+        if check_executable and Path(executable).suffix.lower() in BATCH_SUFFIXES:
+            # Windows runs a batch file through cmd.exe, which ends the command at
+            # the first newline and rewrites % and & — the prompt would not reach
+            # the CLI intact. Launch the CLI's own executable instead.
+            raise CliConfigurationError(
+                f"{request.cli} resolves to the batch wrapper {executable}; cmd.exe would "
+                "truncate or rewrite the prompt. Put the CLI's native executable (for npm "
+                "installs, the package's bin/*.exe) ahead of the wrapper on PATH, or set "
+                "`executable` to its path in a local registry file."
+            )
 
         defaults = self.data["defaults"]
         timeout = {**defaults["timeout"], **(profile.get("timeout") or {})}

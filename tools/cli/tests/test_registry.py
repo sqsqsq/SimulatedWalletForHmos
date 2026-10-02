@@ -90,6 +90,31 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("-s", resume.argv)
         self.assertIn("ses-1", resume.argv)
 
+    def test_batch_wrapper_is_rejected_before_launch(self) -> None:
+        temp = Path(__file__).resolve().parents[3] / "output" / "cli-tests" / uuid.uuid4().hex
+        temp.mkdir(parents=True)
+        try:
+            for name, rejected in (("opencode.cmd", True), ("opencode.BAT", True), ("opencode.exe", False)):
+                executable = temp / name
+                executable.write_bytes(b"")
+                value = json.loads(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
+                value["clis"]["opencode"]["executable"] = str(executable)
+                path = temp / "clis.json"
+                path.write_text(json.dumps(value), encoding="utf-8")
+                request = CliRunRequest(cli="opencode", model="m", prompt="多行\n请求", cwd=Path("."))
+                registry = CliRegistry(path)
+                if rejected:
+                    with self.assertRaisesRegex(CliConfigurationError, "batch wrapper"):
+                        registry.build(request)
+                else:
+                    self.assertEqual(str(executable.resolve()), registry.build(request).executable)
+        finally:
+            shutil.rmtree(temp, ignore_errors=True)
+            try:
+                temp.parent.rmdir()
+            except OSError:
+                pass
+
     def test_unknown_placeholder_is_rejected(self) -> None:
         value = json.loads(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
         value["clis"]["opencode"]["profiles"]["readonly"]["args"].append("{business_field}")
