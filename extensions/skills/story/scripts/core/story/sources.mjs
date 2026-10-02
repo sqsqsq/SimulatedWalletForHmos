@@ -195,6 +195,15 @@ export function adoptedText(ctx, rel) {
 }
 
 /**
+ * 本次采用的上游原件正文（产品需求、系统设计、开发需求）：交给设计后取冻结副本，之前取当前文件。
+ * 判一个编号是不是上游自己的编号时用它。
+ */
+export function adoptedUpstreamTexts(ctx) {
+  return ['PRD', 'SE', 'DESIGN'].map(key => ctx.contract.sources?.[key]?.path)
+    .filter(Boolean).map(rel => adoptedText(ctx, rel)?.text).filter(t => typeof t === 'string');
+}
+
+/**
  * 材料清单那一节里的全部链接目标，带行号。
  *
  * 与 `scanMaterialList` 的行形态判分开：那条判「这一行是不是列表、有没有链接」，

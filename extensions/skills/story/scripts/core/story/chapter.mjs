@@ -28,7 +28,7 @@ import {
 } from './document.mjs';
 import { activeKnowledgeEntries, fail, readRaw, readText } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
-import { redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
+import { adoptedUpstreamTexts, redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
 import { chapterImageProblems, chapterSourceMarkProblems, strayMarks } from './images.mjs';
@@ -175,8 +175,12 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
   }
   out.push(...chapterStructureProblems(chapter, view));
   out.push(...sectionShapeProblems(chapter.title, view));
+  // 上游原件自己的编号不是仓内工作编号：原文里出现过的照常可以引用，不强制改号
+  const upstream = ctx.idShapes?.drop?.length ? adoptedUpstreamTexts(ctx) : [];
+  const fromUpstream = id => upstream.some(t => new RegExp(
+    `(?<![A-Za-z0-9-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`).test(t));
   for (const re of ctx.idShapes?.drop ?? []) {
-    const hits = [...withoutDiagramBodies(view).matchAll(re)].map(m => m[0]);
+    const hits = [...withoutDiagramBodies(view).matchAll(re)].map(m => m[0]).filter(id => !fromUpstream(id));
     if (!hits.length) continue;
     out.push(`「${chapter.title}」：出现了仓内工作编号 ${[...new Set(hits)].slice(0, 6).join('、')}`
       + '——编号形态按章节合同 id_shapes 判（图的围栏里不判），评审人手上没有这些编号的对照');

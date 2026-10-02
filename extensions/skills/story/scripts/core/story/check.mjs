@@ -127,7 +127,12 @@ export function storyCheck(ctx, { registration = true } = {}) {
   // 合同里的形态正则编译一次，坏的当场报出来：写错一条就静默不判的话，门禁全绿。
   problems.push(...(ctx.idShapes?.problems ?? []));
   const acceptanceSec = sections.find(s => s.title.includes('验收'));
-  for (const re of ctx.idShapes?.keep ?? []) {
+  const keep = ctx.idShapes?.keep ?? [];
+  if (keep.length && !keep.some(re => [...storyText.matchAll(re)].length)) {
+    notes.push(`story.md：没有合同 id_shapes.keep 形态（${keep.map(re => re.source).join('、')}）的验收编号，验收编号全集这一条没有可核对象`
+      + '——上游用别的编号写法时，原始验收是否逐条承接由独立审查对照冻结原文判');
+  }
+  for (const re of keep) {
     const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));
     if (!inStory.size) continue;
     if (!acceptanceSec) { problems.push('story.md：有验收编号，却没有「验收」章——验收编号按章节合同 id_shapes 认，出现过的都要落在验收章'); continue; }

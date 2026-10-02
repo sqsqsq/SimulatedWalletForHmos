@@ -1973,6 +1973,24 @@ class TheChapterIsCheckedBeforeItLands(Step8Case):
         self.assertEqual(1, proc.returncode, self.out(proc))
         self.assertIn("仓内工作编号", self.out(proc))
 
+    def test_other_acceptance_numbering_is_said_to_be_outside_the_mechanical_check(self) -> None:
+        """上游用「验收甲」这类编号：机器核不到全集，照实说这一条没有可核对象，交审查对照原文。"""
+        self.init_audit()
+        _, out = self.check_output()
+        self.assertNotIn("AC-", self.story_path.read_text(encoding="utf-8"), "夹具前提：Story 里没有 AC 形态的编号")
+        self.assertIn("验收编号全集这一条没有可核对象", out)
+        self.assertIn("独立审查对照冻结原文", out)
+
+    def test_the_upstreams_own_numbering_is_not_a_work_id(self) -> None:
+        """上游原件自己用 F3 编功能点：Story 照原文引用它不是仓内工作编号，不强制改号。"""
+        flow = json.loads((self.feature_root() / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
+        frozen = self.root / Path(flow["input"]["snapshot_ref"]).parent / "files" / "RR" / "prd.md"
+        frozen.write_text(frozen.read_text(encoding="utf-8") + "\n功能点 F3：签约。\n", encoding="utf-8")
+        self.assertEqual(0, self.put("背景", "签约对应上游的 F3。\n").returncode)
+        proc = self.put("背景", "签约对应上游的 F4。\n")
+        self.assertEqual(1, proc.returncode, "上游原文里没有的编号仍按仓内工作编号拦")
+        self.assertIn("F4", self.out(proc))
+
     def test_the_first_three_lines_say_what_to_do_next(self) -> None:
         """首屏前三行固定 NEXT / INPUT / RESULT：当前动作、动作要读的东西、刚才做了什么。"""
         proc = self.put("术语", minimal_body("术语", "本需求用到的词。"))
