@@ -190,6 +190,7 @@ def cmd_complete(feature_root: Path, project_root: Path, feature: str, from_arg:
     save(feature_root, contract)
     log(f"设计输入已冻结并登记：{wanted['snapshot_ref']}")
     return {"status": "complete", "input": wanted, "committed": True,
+            **({"unadopted_references": version["unadopted_references"]} if version["unadopted_references"] else {}),
             "design_entry": {"snapshot_ref": wanted["snapshot_ref"],
                              **({"materialization": f"{snapshot_dir}/{frozen.MATERIALIZATION}"} if system
                                 else {"current_scope_items": doc["items"]})}}

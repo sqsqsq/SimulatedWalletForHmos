@@ -31,13 +31,14 @@
    }
    ```
 
-   - `adopted`：本轮确认的原件与它们引用的图，逐份列；不采用的材料在提取稿里写明理由。原件里引用的本地图片与链接都要在采用集合里。
+   - `adopted`：本轮确认的原件与它们引用的图，逐份列；不采用的材料在提取稿里写明理由。原件里引用的本地图片要在采用集合里；作为设计依据的本地文件同样采用进来。
    - `human_decision_ids`：真实关卡记录的 `ask_id`。人的原话、所选项与时间由脚本从流程契约导出，不手填。
    - `scope_items`：需求条目的身份、类别与权威取自材料与人签。`kind` 取 requirement / goal / invariant / high_risk；来源没分类的 `formality` 写 `unspecified`，由人在设计入口确认。
 3. **冻结并交给设计**：`story_flow.py complete --feature <需求> --from AR/story-src/design-draft.md --input AR/story-src/design-input.json`。
    - 采用的原件、图片、提取稿（派生分析）与人签导出，按原始字节冻结在 `AR/story-src/inputs/<版本>/`。
    - 系统需求在版本里生成 `materialization.json`，本地需求把需求条目交给蓝图作者。两者都先过原生来源检查，通过才登记。
    - 同一份输入重跑复用原版本。`AR/design.md` 是上游原件，保持原样。
+   - 输出里的 `unadopted_references` 是原件链到、但没纳入本次冻结的文件：逐条判断它是不是设计依据——是就补成材料再提交，不是就在提取稿里写明不采用。没纳入的文件内容不算已取得的来源。
    - 失败时候选与诊断留在原处，已登记的输入不变。按报错补齐后重跑同一条命令。
 4. 已登记一版之后要换输入，先 `story_flow.py reopen` 重新确认范围，或在 `/story update` 里重新提交。已被设计引用的版本一直保留。
 

@@ -129,33 +129,41 @@ def human_records(contract: dict, ids: list) -> list[dict]:
     return out
 
 
-def references(text: str) -> list[str]:
-    """正文里的本地引用目标（去掉锚点与查询串）；外部地址、页内锚点不算。"""
-    out: list[str] = []
+def references(text: str) -> list[tuple[str, bool]]:
+    """正文里的本地引用目标（去掉锚点与查询串）与它是不是图；外部地址、页内锚点不算。"""
+    out: list[tuple[str, bool]] = []
     for m in REFERENCE.finditer(text):
         target = (m.group(1) or m.group(2) or "").strip()
         if not target or target.startswith("#") or re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I):
             continue
         target = re.split(r"[#?]", target, maxsplit=1)[0]
         if target:
-            out.append(target)
+            image = m.group(0).startswith("!") or m.group(2) is not None or PurePosixPath(target).suffix.lower() in IMAGE_SUFFIXES
+            out.append((target, image))
     return out
 
 
-def closure_problems(feature_root: Path, originals: list[str], chosen: set[str]) -> list[str]:
-    """原件里的本地相对引用都要在选集里：图片与链接闭合，缺的报出具体路径，不按同名去找。"""
+def closure_problems(feature_root: Path, originals: list[str], chosen: set[str]) -> tuple[list[str], list[str]]:
+    """原件里的本地引用：图要在采用集合里，缺的报出具体路径，不按同名去找；普通链接指向没采用的文件，
+    列为没纳入本次冻结的参考，由模型判断要不要补成材料——参考链接不是采用义务，不拦冻结。"""
     problems: list[str] = []
+    notes: list[str] = []
     for rel in originals:
         if PurePosixPath(rel).suffix.lower() in IMAGE_SUFFIXES:
             continue
         text = (feature_root / rel).read_bytes().decode("utf-8", errors="replace")
-        for target in references(text):
+        for target, image in references(text):
             joined = os.path.normpath(os.path.join(os.path.dirname(rel), target)).replace("\\", "/")
-            if joined.startswith("../") or joined == "..":
-                problems.append(f"{rel} 引用 {target}，指到了需求目录外")
-            elif joined not in chosen:
-                problems.append(f"{rel} 引用 {target}（{joined}），它不在采用集合里")
-    return problems
+            if joined in chosen:
+                continue
+            outside = joined.startswith("../") or joined == ".."
+            if image:
+                problems.append(f"{rel} 引用图 {target}，" + ("指到了需求目录外——图先经导入入口进入需求材料"
+                                                             if outside else f"（{joined}）它不在采用集合里"))
+            else:
+                notes.append(f"{rel} 链接 {target}" + ("（需求目录外）" if outside else f"（{joined}）")
+                             + "：没纳入本次冻结，它的内容不算已取得的来源")
+    return problems, notes
 
 
 def scope_items(raw: list, chosen: set[str]) -> list[dict]:
@@ -193,16 +201,16 @@ def selection(feature_root: Path, contract: dict, design_input: dict, manifest: 
     if decisions:
         files[HUMAN_RECORD] = json.dumps({"decisions": decisions}, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
         roles[HUMAN_RECORD] = "human_record"
-    problems = closure_problems(feature_root, originals, set(files))
+    problems, notes = closure_problems(feature_root, originals, set(files))
     if problems:
-        raise FrozenError("原件的本地引用没有闭合在采用集合里：" + "；".join(problems))
+        raise FrozenError("原件引用的图没有闭合在采用集合里：" + "；".join(problems))
     body = {
         "files": [{"path": rel, "sha256": digest(files[rel]), "role": roles[rel], "provenance": PROVENANCE[roles[rel]]}
                   for rel in sorted(files)],
         "scope_items": scope_items(design_input["scope_items"], set(files)),
         "human_decision_ids": [str(x).strip() for x in design_input["human_decision_ids"]],
     }
-    return files, roles, body
+    return files, roles, body, notes
 
 
 def verify(directory: Path, body: dict) -> dict:
@@ -223,7 +231,7 @@ def verify(directory: Path, body: dict) -> dict:
 def freeze(feature_root: Path, contract: dict, design_input: dict, manifest: dict, candidate_rel: str,
            observed_at: str) -> dict:
     """冻结一版设计输入，返回版本号、目录与快照。同一内容复用已有版本。"""
-    files, _, body = selection(feature_root, contract, design_input, manifest, candidate_rel)
+    files, _, body, notes = selection(feature_root, contract, design_input, manifest, candidate_rel)
     version = digest(canonical(body))
     root = feature_root / Path(*INPUTS)
     final = root / version
@@ -243,7 +251,7 @@ def freeze(feature_root: Path, contract: dict, design_input: dict, manifest: dic
         finally:
             shutil.rmtree(staging, ignore_errors=True)
     return {"version": version, "dir": final, "snapshot": snapshot,
-            "snapshot_sha256": digest((final / SNAPSHOT).read_bytes())}
+            "snapshot_sha256": digest((final / SNAPSHOT).read_bytes()), "unadopted_references": notes}
 
 
 def materialization(frozen: dict, project_rel_dir: str, binding: dict) -> dict:

@@ -183,6 +183,17 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
+    def test_a_background_link_is_listed_not_refused(self) -> None:
+        """原件里的普通参考链接不是采用义务：冻结照常成立，没纳入的那几份列给模型判断要不要补成材料。"""
+        self.prd.write_text(PRD + "\n背景见 [旧版说明](../../other/old.md) 与 [系统设计](../SR/design.md)。\n",
+                            encoding="utf-8")
+        out = self.committed()
+        notes = out.get("unadopted_references", [])
+        self.assertEqual(2, len(notes), notes)
+        self.assertTrue(any("../../other/old.md" in n and "需求目录外" in n for n in notes), notes)
+        self.assertTrue(any("SR/design.md" in n for n in notes), notes)
+        self.assertEqual("complete", self.contract()["status"])
+
     def test_the_upstream_design_is_never_overwritten(self) -> None:
         self.committed()
         self.assertEqual(UPSTREAM_AR, self.design.read_text(encoding="utf-8"))
