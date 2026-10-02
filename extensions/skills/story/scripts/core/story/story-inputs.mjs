@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, relDisplay } from '../../../../../hooks/shared/paths.mjs';
 import { SHELL, shellArg } from './drafts.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths } from './images.mjs';
-import { relFromStory } from './sources.mjs';
+import { adoptedText, relFromStory } from './sources.mjs';
 
 /**
  * 材料里的图 —— **一张图一项任务**。
@@ -109,7 +109,7 @@ function diagramSection(heading, label, src, derived) {
   }
   const list = diagramsOf(src.text);
   if (!list.length) {
-    rows.push(`${label} 里现在没有图。`);
+    rows.push(`${label} 里没有可解析的 Mermaid 图；图片、PlantUML 等其他格式的图没有作结构解析，读原文 \`${rel}\` 自己对照。`);
     return rows;
   }
   const downstream = 'story';
@@ -144,8 +144,13 @@ export function storyInputs(ctx, sources) {
     ?? sources.missing.find(m => m.doc === key)
     ?? { rel: ctx.contract.sources?.[key]?.path ?? key };
   const derived = (key) => ctx.contract.sources?.[key]?.derived === true;
+  // 交给设计之后，图取本次采用的冻结版本
+  const adopted = (src) => {
+    const read = typeof src.text === 'string' ? adoptedText(ctx, src.rel) : null;
+    return read ? { ...src, text: read.text, rel: read.at } : src;
+  };
   return [
     ...imageSection(ctx.projectRoot, feature), '',
-    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')),
+    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', adopted(of('SE')), derived('SE')),
   ];
 }

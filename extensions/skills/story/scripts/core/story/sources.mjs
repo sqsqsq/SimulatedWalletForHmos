@@ -6,7 +6,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { isSystemRequirement, readText } from './context.mjs';
+import { isSystemRequirement, readJson, readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
 import { scanMaterialList } from './language.mjs';
 import { designSource } from './design-source.mjs';
@@ -172,10 +172,26 @@ export function upstreamDocs(ctx) {
   // 标签是图源标记里写的那个名字；路径以合同 `sources` 为准
   for (const [label, key] of [['SR', 'SE']]) {
     const rel = ctx.contract.sources?.[key]?.path;
-    const text = rel ? readText(path.join(ctx.featureRoot, rel)) : null;
-    if (text !== null) out.push([label, text]);
+    const read = rel ? adoptedText(ctx, rel) : null;
+    if (read) out.push([label, read.text, read.at]);
   }
   return out;
+}
+
+/**
+ * 需求目录里一份上游文件在本次采用的版本：交给设计后读冻结输入里的原始字节，当前工作区的新版本不改变已采用的来源；
+ * 还没交给设计时读当前文件。返回正文与它的位置（冻结副本给工程内路径，当前文件给需求目录内路径），读不到返回 null。
+ *
+ * @param {{projectRoot: string, featureRoot: string}} ctx
+ */
+export function adoptedText(ctx, rel) {
+  const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
+  const ref = flow?.input?.snapshot_ref;
+  const at = ref ? `${path.posix.dirname(String(ref))}/files/${rel}` : null;
+  const file = at && ctx.projectRoot ? path.join(ctx.projectRoot, ...at.split('/')) : path.join(ctx.featureRoot, rel);
+  const text = readText(file);
+  if (text === null) return null;
+  return { text, at: at && ctx.projectRoot ? at : rel };
 }
 
 /**

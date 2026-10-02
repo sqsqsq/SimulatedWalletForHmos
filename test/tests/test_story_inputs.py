@@ -188,11 +188,15 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
         self.assertNotIn("spec 里的图", package)
         self.assertNotIn("搬进 spec", package)
 
-    def test_no_diagrams_says_so(self) -> None:
+    def test_no_parsable_diagram_is_not_called_no_diagram(self) -> None:
+        """没解析出 Mermaid 不等于上游没有图：说明哪种格式没作结构解析，指回原文自己对照。"""
         sr = self.feature_root / "SR" / "design.md"
         sr.parent.mkdir(parents=True, exist_ok=True)
-        sr.write_text("# 系统设计\n", encoding="utf-8")
-        self.assertIn("SR 里现在没有图", self.inputs())
+        sr.write_text("# 系统设计\n\n![时序](seq.png)\n", encoding="utf-8")
+        package = self.inputs()
+        self.assertIn("SR 里没有可解析的 Mermaid 图", package)
+        self.assertIn("没有作结构解析", package)
+        self.assertNotIn("现在没有图", package)
 
 
 class MaterialImagesAreOneTaskEach(WorkspaceCase):

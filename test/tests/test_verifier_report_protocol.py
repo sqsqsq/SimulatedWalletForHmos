@@ -418,7 +418,7 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
         self.assertIn("关联蓝图", section)
         for gone in ("Spec", "acceptance.yaml", "证据格"):
             self.assertNotIn(gone, section, f"开着的选择还要对着「{gone}」判")
-        self.assertIn("上游（系统设计）里没有图。", task)
+        self.assertIn("本需求的材料里没有系统设计，没有上游图要对照。", task)
         self.assertNotIn("spec）里没有图", task)
 
     def test_the_task_carries_its_criteria(self) -> None:

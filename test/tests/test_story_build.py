@@ -2615,6 +2615,32 @@ class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
                  "graph TD\nC-->D\n```\n")
         self.assertEqual(["§5.1 #1"], [i for i, _ in self.carried(story)])
 
+    def test_the_adopted_frozen_version_is_what_counts(self) -> None:
+        """交给设计之后按冻结的那一版认：工作区的 SR 之后加了图，不改变已采用来源要承接的图。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature = root / "doc" / "features" / "REQ-X"
+            snapshot = "doc/features/REQ-X/AR/story-src/inputs/v1/snapshot.json"
+            frozen = root / "doc/features/REQ-X/AR/story-src/inputs/v1/files/SR/design.md"
+            frozen.parent.mkdir(parents=True)
+            frozen.write_text("## 5. 业务流程\n\n```mermaid\ngraph TD\nA[进入] --> B[确认]\n```\n", encoding="utf-8")
+            (feature / "SR").mkdir(parents=True)
+            (feature / "SR" / "design.md").write_text(self.SR_DOC, encoding="utf-8")
+            (feature / "AR" / "story-src" / "story-flow.json").write_text(
+                json.dumps({"input": {"snapshot_ref": snapshot}}), encoding="utf-8")
+            proc = subprocess.run(
+                ["node", "--input-type=module", "-e",
+                 "const m = await import(process.argv[1]);"
+                 "const ctx = { projectRoot: process.argv[2], featureRoot: process.argv[3], contract: { sources: {"
+                 " SE: { path: 'SR/design.md' } } } };"
+                 "process.stdout.write(JSON.stringify(m.carriedDiagramProblems(ctx, '')));",
+                 IMAGES.resolve().as_uri(), str(root), str(feature)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        missing = json.loads(proc.stdout)
+        self.assertEqual(1, len(missing), missing)
+        self.assertTrue(missing[0].startswith("SR §5 #1"), missing)
+
 
 class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
     """恢复时缺哪章补哪章，但**已落盘的章补的是现稿**，不是起点。
