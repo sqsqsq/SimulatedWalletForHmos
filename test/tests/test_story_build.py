@@ -1016,20 +1016,37 @@ class TestRetiredThings(unittest.TestCase):
             self.assertFalse(any(l.startswith(key) for l in manifest.splitlines()),
                              f"{key} 还在 manifest 里——它归 adaptation.yaml")
 
-    def test_the_manifest_version_covers_this_round(self) -> None:
-        """manifest 版本就是正在开发的这一版：新版本的第一次提交就把它升上去，升级演进记录的最后一节就是它。
+    @staticmethod
+    def version_problems(source_manifest: str, changes: str, released_manifest: str) -> list[str]:
+        """开发源的版本与升级演进记录、demo 发布版的关系。
 
-        adapt 拿包的版本与目标的 adapted_for 比较演进记录，版本号落后，本版条目就漏报。
-        开发版要高于 demo 里装着的发布版：demo 只在正式发布时更新，开发源与它同号说明还没升。
+        adapt 拿包的版本与目标的 adapted_for 比较演进记录，版本号与最后一节对不上，本版条目就漏报。
+        开发源不低于 demo 里装着的发布版：开发中高于它，正式发布之后两者同号，都是合法状态。
+        新版本第一次改动就升号，由提交评审核，这一条静态比较代替不了。
         """
-        manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        version = re.search(r'^version: "([0-9.]+)"$', manifest, re.M).group(1)
-        changes = (self.EXT / "skills/story-adaptation/reference/upgrade-changes.md").read_text(encoding="utf-8")
-        self.assertEqual(version, re.findall(r"^## ([0-9.]+)$", changes, re.M)[-1], "演进记录的最后一节不是开发版")
-        released = (REPO_ROOT / "demo/doc/extensions/manifest.yaml").read_text(encoding="utf-8")
-        released = re.search(r'^version: "([0-9.]+)"$', released, re.M).group(1)
+        version = lambda text: re.search(r'^version: "([0-9.]+)"$', text, re.M).group(1)  # noqa: E731
         as_tuple = lambda v: tuple(int(x) for x in v.split("."))  # noqa: E731
-        self.assertGreater(as_tuple(version), as_tuple(released), "开发版没有高于 demo 里的发布版")
+        source, released = version(source_manifest), version(released_manifest)
+        problems = []
+        if source != re.findall(r"^## ([0-9.]+)$", changes, re.M)[-1]:
+            problems.append(f"演进记录的最后一节不是开发源版本 {source}")
+        if as_tuple(source) < as_tuple(released):
+            problems.append(f"开发源 {source} 低于 demo 里的发布版 {released}")
+        return problems
+
+    def test_the_version_rule_accepts_development_and_release_states(self) -> None:
+        manifest = lambda v: f'schema_version: "1.1"\nname: pkg\nversion: "{v}"\n'  # noqa: E731
+        changes = "## 2.0.0\n\n## 2.0.1\n"
+        self.assertEqual([], self.version_problems(manifest("2.0.1"), changes, manifest("2.0.0")), "开发中高于发布版")
+        self.assertEqual([], self.version_problems(manifest("2.0.1"), changes, manifest("2.0.1")), "正式发布后同号")
+        self.assertTrue(self.version_problems(manifest("2.0.1"), changes, manifest("2.1.0")), "开发源低于发布版没拦")
+        self.assertTrue(self.version_problems(manifest("2.0.0"), changes, manifest("1.9.8")), "演进记录最后一节对不上没拦")
+
+    def test_the_manifest_version_covers_this_round(self) -> None:
+        manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
+        changes = (self.EXT / "skills/story-adaptation/reference/upgrade-changes.md").read_text(encoding="utf-8")
+        released = (REPO_ROOT / "demo/doc/extensions/manifest.yaml").read_text(encoding="utf-8")
+        self.assertEqual([], self.version_problems(manifest, changes, released))
         # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
         # 「我们这个仓怎么用它」），每一版改了什么在 doc/release/ 的发布说明里。
         # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。
