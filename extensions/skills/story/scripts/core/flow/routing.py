@@ -399,7 +399,7 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("run_archived",
                 "Story 已按已准入蓝图写成、经独立审查并登记。按 `phases/design.md`「五、独立审查、登记与交付」走完："
                 "`story-build check --deliver` 交付门；通过后按停等表问一次交付选择"
-                "（送审 / 完整设计交接 / 完整实现 / 暂不推进；本地单没有送审）"
+                "（送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进；本地单没有送审）"
                 + closed_tail(feature_root, contract, manifest))
     if stage == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，

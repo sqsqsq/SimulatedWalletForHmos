@@ -4,8 +4,8 @@
 （2.0.0 步骤 2 实施评审 §3、步骤 4 阶段评审 §4）。
 
 - 蓝图：`test/fixtures/golden/AR90004-design/component-blueprint.yaml` 写着 AR90004 自己的设计事实（文字取自
-  SR、spec 与 AR 原文）；这里补上与设计内容无关的骨架（质询记录、供给方、应用视角）、精确明细（原文照录）、
-  知识应用决定（1.x 判断逐条转写，来源取金样知识快照）与本次冻结输入推出的需求条目，按原生算法重算来源指纹并生成投影。
+  SR、spec 与 AR 原文）与知识应用决定；这里补上与设计内容无关的骨架（质询记录、供给方、应用视角）、精确明细（原文照录）、
+  知识来源指纹（按工程里激活的知识重算）与本次冻结输入推出的需求条目，按原生算法重算来源指纹并生成投影。
 - 迁移：映射表 `mapping.yaml` 逐项写旧元数据的去处。图源标记只删映射表登记过的那一行；改作者区的机器区去掉标记、
   原文保留；其余机器区由当前 renderer 重投。映射表没登记的旧标记、旧机器区一律报错，不通用删除。
 - 核对：每条旧事实在新输出里逐字找得到；找不到就报错。
@@ -56,24 +56,6 @@ def _questioning(blueprint: dict) -> list[dict]:
              "question": f"Is {ref} closed?", "frontier_fingerprint": f"ff-{ref}", "owner": "architecture-owner",
              "disposition": "answered_with_evidence", "answer": "Evidence-backed.", "evidence_refs": [SR],
              "verification_refs": [f"verify:{ref}"], "provenance": blueprint["provenance"]} for kind, ref in scopes]
-
-
-def _decision(spec: dict, source_ref: str, source_sha: str, provenance_at: str) -> dict:
-    """1.x 的一条规约判断 → 知识应用决定。要求与依据照录；命中的理由取 1.x 记下的落点，不命中的取 1.x 的依据。"""
-    applied = spec["applicable"]
-    requirement = "；".join(spec.get("requirement") or [])
-    landing = spec.get("contract") or spec.get("impact")
-    knowledge = {"kind": "constraints", "form": "entries", "unit": spec["id"], "source_sha256": source_sha,
-                 "outcome": "applied" if applied else "not_applicable",
-                 **({"requirement": requirement} if applied else {}),
-                 "target_refs": [spec["target_ref"]] if applied else []}
-    return {"decision_id": f"knowledge-{spec['id'].lower()}", "kind": "knowledge_application",
-            "status": "answered_with_evidence" if applied else "not_applicable", "owner": "design-author",
-            "rationale": f"落点：{landing}" if applied else spec["reason"],
-            "provenance": {"source_kind": "knowledge", "source_ref": source_ref, "observed_at": provenance_at,
-                           "evidence_strength": "inferred", "extraction_method": "read_and_apply"},
-            "verification_refs": [spec["target_ref"]] if applied else [SR],
-            "knowledge": knowledge}
 
 
 #: 蓝图工作区里接口转写与映射的位置（工程根起）
@@ -141,18 +123,11 @@ def assemble(items: list[dict], knowledge_root: Path) -> str:
     # 精确明细：正文照录金样原机器区（映射表登记了出处）
     blueprint["story_details"] = [{"id": d["id"], "kind": d["kind"], "title": d["title"], "body": d["body"].strip() + "\n",
                                    "evidence_refs": d["evidence_refs"]} for d in plan["story_details"]]
-    # 知识应用决定：1.x 的判断逐条转写，来源取工程里激活的金样知识快照
-    use = yaml.safe_load((REPO_ROOT / "test" / "fixtures" / "golden" / "AR90004" / "spec" / "knowledge-use.yaml")
-                         .read_text(encoding="utf-8"))
-    targets = plan["knowledge_targets"]
-    decisions = []
-    for spec in use["constraints"]:
-        source = next(p for p in sorted((knowledge_root / "constraints").glob("*.md"))
-                      if re.search(rf"^\|\s*{re.escape(spec['id'])}\s*\|", p.read_text(encoding="utf-8"), re.M))
-        ref = f"doc/extensions/knowledge/constraints/{source.name}"
-        sha = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
-        decisions.append(_decision({**spec, "target_ref": targets.get(spec["id"])}, ref, sha, "2026-08-30T10:00:00+08:00"))
-    blueprint["decisions_and_gaps"]["decisions"] = decisions + blueprint["decisions_and_gaps"]["decisions"]
+    # 知识应用决定写在夹具里；来源指纹按工程里激活的那份知识重算
+    for decision in blueprint["decisions_and_gaps"]["decisions"]:
+        if decision.get("kind") == "knowledge_application":
+            source = knowledge_root / decision["provenance"]["source_ref"].removeprefix("doc/extensions/knowledge/")
+            decision["knowledge"]["source_sha256"] = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
     blueprint["discovery"]["inputs"]["current_scope_items"] = items
     blueprint["discovery"]["requirement_traceability"] = [
         {"item_id": i["item_id"], "blueprint_refs": ["view:logical/node:emergency-loss"]} for i in items]

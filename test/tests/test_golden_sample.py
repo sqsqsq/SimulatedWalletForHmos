@@ -64,6 +64,14 @@ GOLDEN_FINGERPRINTS = {
     "assets/AR90006/verify-page.png": "c8b62984ec0018e2",
 }
 
+#: 1.x 的 spec 与知识判断：只作迁移出处与对照，不进工作区，也不是装配的输入（知识应用决定已在现行蓝图夹具里）
+HISTORY_FINGERPRINTS = {
+    "spec/knowledge-use.yaml": "073dcaed046304a7",
+    # 2026-09-27 步骤 9（U55）：扩展章平列——埋点提为 9.4、依赖变更为 9.1.4，规约与设计模式两节改名。
+    # 同日步骤 9 返修 R3：「规约」生成区的落点前缀写名字所在的节（技术契约 / 埋点）。
+    "spec/spec.md": "4a2b81e36d35c45f",
+}
+
 INPUT_FINGERPRINTS = {
     # 2026-09-26 夹具补成可由现行机制检查的需求工作区（06 §3.5）：spec 9.1.4 按指标组织、
     # 9.2/9.3 由新增的知识判断投影；补写作设计、决策登记与界面原型原件。
@@ -75,10 +83,6 @@ INPUT_FINGERPRINTS = {
     # 2026-10-02 用户决定接口走模拟真实场景：§4 三个接口段后补 SE 接口明细（版本、字段类型、必填与可空），原段落一字未改；
     # 草案与来源对照见 doc/plan/2.0.0/实施反馈/2026-10-02-步骤4-模拟SE接口草案.md，与 CLI 结果一并交设计者审定。
     "SR/design.md": "46f04c03a511d971",
-    "spec/knowledge-use.yaml": "073dcaed046304a7",
-    # 2026-09-27 步骤 9（U55）：扩展章平列——埋点提为 9.4、依赖变更为 9.1.4，规约与设计模式两节改名。
-    # 同日步骤 9 返修 R3：「规约」生成区的落点前缀写名字所在的节（技术契约 / 埋点）。
-    "spec/spec.md": "4a2b81e36d35c45f",
     "ux-reference/README.md": "b7d62b1835408302",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",
@@ -124,7 +128,7 @@ def workspace_check(story: str | None = None) -> tuple[int, str]:
 class GoldenIsFrozen(unittest.TestCase):
     def test_every_file_matches_its_fingerprint(self) -> None:
         for root, fingerprints in ((GOLDEN, GOLDEN_FINGERPRINTS),
-                                   (INPUT_FIXTURE, INPUT_FINGERPRINTS)):
+                                   (INPUT_FIXTURE, {**INPUT_FINGERPRINTS, **HISTORY_FINGERPRINTS})):
             for rel, want in fingerprints.items():
                 path = root / rel
                 with self.subTest(file=path.relative_to(REPO_ROOT)):
@@ -143,7 +147,7 @@ class GoldenIsFrozen(unittest.TestCase):
         """输入夹具只保存构造场景需要的材料，不保存 story/review 金样副本。"""
         actual = {p.relative_to(INPUT_FIXTURE).as_posix()
                   for p in INPUT_FIXTURE.rglob("*") if p.is_file()}
-        self.assertEqual(set(INPUT_FINGERPRINTS), actual)
+        self.assertEqual(set(INPUT_FINGERPRINTS) | set(HISTORY_FINGERPRINTS), actual)
 
     def test_canonical_golden_files_exist(self) -> None:
         for rel in GOLDEN_FINGERPRINTS:
@@ -248,7 +252,8 @@ class TheMigrationIsRegistered(unittest.TestCase):
         addresses = {f"view:{v['view_id']}/node:{n['node_id']}" for v in blueprint["design_views"]
                      for n in v.get("nodes") or []}
         refs = [ref for mark in self.plan["diagram_marks"] for b in mark.get("branches", []) for ref in b["blueprint"]]
-        refs += list(self.plan["knowledge_targets"].values())
+        refs += [ref for d in blueprint["decisions_and_gaps"]["decisions"] if d.get("kind") == "knowledge_application"
+                 for ref in d["knowledge"]["target_refs"]]
         refs += [ref for d in self.plan["story_details"] for ref in d["evidence_refs"]]
         refs += [ref for z in self.plan["zones"] for ref in z.get("blueprint", []) if ref.startswith("view:")]
         self.assertTrue(refs)

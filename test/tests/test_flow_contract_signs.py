@@ -78,7 +78,7 @@ class TheDeliveryGateAsksOneThing(unittest.TestCase):
 
     def test_the_delivery_gate_prints_the_delivery_choices(self) -> None:
         text = (SKILL / "scripts" / "core" / "story" / "delivery.mjs").read_text(encoding="utf-8")
-        for choice in ("送审", "完整设计交接", "完整实现", "暂不推进"):
+        for choice in ("送审", "完整设计交接", "实现方案", "完整实现", "暂不推进"):
             self.assertIn(choice, text)
         self.assertNotIn("进入 plan", text)
 

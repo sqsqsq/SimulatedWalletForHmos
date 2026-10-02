@@ -12,8 +12,8 @@
  *
  * ## 注入不等于执行
  *
- * 读者审查的报告有没有落盘由交付门核（`verifier-report.mjs`，调用方是 `delivery.mjs`），
- * 核的是形态：结果块在不在、结论分类齐不齐。审查得对不对由人抽查。
+ * 本阶段审查报告的形态由 post_check 核（`verifier-report.mjs`：结果块在不在、判据齐不齐），
+ * 身份与结论由原生 `check-receipt` 核。审查得对不对由人抽查。
  *
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
  */

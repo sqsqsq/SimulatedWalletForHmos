@@ -1,6 +1,6 @@
 ## 迁到 2.0 的工作区（2026-10-01）
 
-依据 doc/plan/2.0.0/评审意见/2026-10-01-步骤4阶段评审.md §4：正本不改，`test/scripts/golden_workspace.py` 用真实流程命令把 `fixtures/golden/AR90004/` 的上游材料与原件走到交给设计（spec 不进工作区），`golden_design.py` 按 `fixtures/golden/AR90004-design/` 的蓝图模板（设计事实取自 SR、spec 与 AR 原文）与 1.x 知识判断建 bp-AR90004，再按同目录 `mapping.yaml` 迁移正本的旧元数据、由当前 renderer 重投附录机器区、逐项核旧事实。
+依据 doc/plan/2.0.0/评审意见/2026-10-01-步骤4阶段评审.md §4：正本不改，`test/scripts/golden_workspace.py` 用真实流程命令把 `fixtures/golden/AR90004/` 的上游材料与原件走到交给设计（spec 不进工作区），`golden_design.py` 按 `fixtures/golden/AR90004-design/` 的蓝图夹具（设计事实取自 SR、spec 与 AR 原文，含知识应用决定）建 bp-AR90004，再按同目录 `mapping.yaml` 迁移正本的旧元数据、由当前 renderer 重投附录机器区、逐项核旧事实。
 
 - spec §5.1 图源标记逐分支映射到蓝图场景与运行对象后删这一行，SR §3 标记不动；依赖变更原节保留为作者区；图片链接改指登记的原件抽图（逐字节相同）。
 - 端云接口（2026-10-02）：输入 SR §4 按用户决定补了模拟 SE 接口明细；设计作者的转写由夹具 `AR90004-design/contracts/se-interfaces.yaml` 提供，本部件映射在同目录 `mappings.yaml`，蓝图契约与运行数据流逐段引用它们，原生比对通过后准入；附录端云接口由契约重投。
@@ -13,7 +13,7 @@
 
 依据 plan/1.9.7/2026-09-25-整体设计/06 §3.4、§3.5：
 
-- **AR90004 story 金样经生产入口判**：`test/scripts/golden_workspace.py` 用 `fixtures/golden/AR90004/`（上游材料、spec、知识判断、写作设计、决策登记、原件）与知识快照 `fixtures/golden/knowledge/` 搭一份需求工作区，把金样放进去跑 `story-build check --feature AR90004`。附录技术契约下的端云接口、数据存储、配置项、依赖变更，以及规约、埋点、改动边界七处是机器区，由这份工作区投影；定位句、作者说明与材料清单归金样。
+- **AR90004 story 金样经生产入口判**：`test/scripts/golden_workspace.py` 用 `fixtures/golden/AR90004/`（上游材料、写作设计、决策登记、原件；1.x 的 spec 与知识判断只作迁移出处）与知识快照 `fixtures/golden/knowledge/` 搭一份需求工作区，把金样放进去跑 `story-build check --feature AR90004`。附录技术契约下的端云接口、数据存储、配置项、依赖变更，以及规约、埋点、改动边界七处是机器区，由这份工作区投影；定位句、作者说明与材料清单归金样。
 - **埋点按指标**：AR90004 两个指标（挂失冻结成功率、中断恢复成功率），AR90006 标题只写指标名；终态分布不当指标。
 - **review 金样**按现行载体：议题 D 编号、形态随状态（待确认给可选做法，已定引人的原话）、人工区三态加修改意见；`test_review_golden.py` 把金样倒推成登记表，渲染结果与金样逐字节相同。
 - **AR90006 story 金样**按 0903 澄清会结论与答案卷更新：签约更新接口、AC-R1 与开关口径修正，调高面额是否重新验证、授权后建约失败保持待定。

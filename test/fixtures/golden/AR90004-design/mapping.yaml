@@ -121,23 +121,6 @@ zones:
       - CommFunc
       - Phone
 
-#: 知识应用决定的落点：1.x 判断记的契约名 / 影响 → 蓝图里承担它的对象
-knowledge_targets:
-  UX-01: view:runtime/node:loss-page-stages
-  SEC-01: view:runtime/node:recovery-context
-  DFX-01: view:runtime/node:loss-page-stages
-  DFX-02: view:development/node:wallet-main-module
-  OBS-02: view:runtime/node:loss-page-stages
-  OBS-03: view:logical/node:emergency-loss
-  OBS-05: view:logical/node:emergency-loss
-  OBS-06: view:logical/node:emergency-loss
-  RES-01: view:runtime/node:loss-page-stages
-  RES-02: view:development/node:wallet-main-module
-  COMPAT-01: view:runtime/node:loss-page-stages
-  ENV-01: view:runtime/node:recovery-context
-  ENV-02: view:runtime/node:recovery-context
-  DLV-01: view:development/node:wallet-main-module
-
 story_details:
   - id: detail-loss-recovery-context
     kind: data_policy

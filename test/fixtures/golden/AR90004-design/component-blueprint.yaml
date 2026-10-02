@@ -267,6 +267,357 @@ design_views:
         verification_refs: [verify:retry-reuse]
 decisions_and_gaps:
   decisions:
+    - decision_id: knowledge-ux-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：挂失页面三段布局
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/ux-consistency.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:loss-page-stages
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: UX-01
+        outcome: applied
+        requirement: 资格、恢复与结果三段的方向性布局参数用 start/end，文本对齐用 TextAlign.Start/End
+        target_refs:
+        - view:runtime/node:loss-page-stages
+    - decision_id: knowledge-sec-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：loss_report_recovery_context
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/security-privacy.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:recovery-context
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: SEC-01
+        outcome: applied
+        requirement: 页面、日志、上报与恢复记录只接收脱敏卡片标识与账号范围摘要；恢复数据按账号范围隔离，不随备份恢复
+        target_refs:
+        - view:runtime/node:recovery-context
+    - decision_id: knowledge-dfx-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：queryLossEligibility
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:loss-page-stages
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DFX-01
+        outcome: applied
+        requirement: 资格查询只在打开页面、身份回跳与冲突恢复时调用，页面停留期间不轮询；冻结结果只在提交返回后与用户主动刷新时查询
+        target_refs:
+        - view:runtime/node:loss-page-stages
+    - decision_id: knowledge-dfx-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：WalletMain 资源清单与依赖清单
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:development/node:wallet-main-module
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DFX-02
+        outcome: applied
+        requirement: 交付时给出新增文案资源的体积增量；不新增图片、三方 SDK 与独立安装包
+        target_refs:
+        - view:development/node:wallet-main-module
+    - decision_id: knowledge-obs-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：queryFreezeResult
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:loss-page-stages
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-02
+        outcome: applied
+        requirement: 资格、身份恢复、提交、结果与冲突各阶段经本地日志记录，并以同一流程关联标识串联
+        target_refs:
+        - view:runtime/node:loss-page-stages
+    - decision_id: knowledge-obs-03
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：冻结结果
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:logical/node:emergency-loss
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-03
+        outcome: applied
+        requirement: 统计冻结成功率与中断恢复成功率，覆盖提交挂失、冻结结果与流程恢复三个统计点
+        target_refs:
+        - view:logical/node:emergency-loss
+    - decision_id: knowledge-obs-05
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：提交挂失
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:logical/node:emergency-loss
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-05
+        outcome: applied
+        requirement: 每个统计点每种结果在结果确定时上报一条，重复回调不产生第二条终态
+        target_refs:
+        - view:logical/node:emergency-loss
+    - decision_id: knowledge-obs-06
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：流程恢复
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:logical/node:emergency-loss
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-06
+        outcome: applied
+        requirement: 三个统计点的上报编码先核仓内无既有登记，再在项目唯一登记位置登记
+        target_refs:
+        - view:logical/node:emergency-loss
+    - decision_id: knowledge-obs-07
+      kind: knowledge_application
+      status: not_applicable
+      owner: design-author
+      rationale: 材料没有运营采集诉求，AC-8 要求的是关键路径可观察，由运维统计承接
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - doc/features/AR90004/SR/design.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-07
+        outcome: not_applicable
+        target_refs: []
+    - decision_id: knowledge-res-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：挂失页面三段布局
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:loss-page-stages
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: RES-01
+        outcome: applied
+        requirement: 界面图标使用系统符号，不新增图片
+        target_refs:
+        - view:runtime/node:loss-page-stages
+    - decision_id: knowledge-res-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：WalletMain 文案资源清单
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:development/node:wallet-main-module
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: RES-02
+        outcome: applied
+        requirement: 新增文案登记在 WalletMain 资源中，中英文成对，页面只引用资源 key
+        target_refs:
+        - view:development/node:wallet-main-module
+    - decision_id: knowledge-compat-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：queryFreezeResult
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/compatibility-checklist.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:loss-page-stages
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: COMPAT-01
+        outcome: applied
+        requirement: 三个新增接口的出参缺字段时按失败或处理中收敛，不当作已冻结
+        target_refs:
+        - view:runtime/node:loss-page-stages
+    - decision_id: knowledge-compat-02
+      kind: knowledge_application
+      status: not_applicable
+      owner: design-author
+      rationale: 三个接口的失败都收敛为页面可读失败状态，本需求不新增错误码，也不改动既有码的编号与含义
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/compatibility-checklist.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - doc/features/AR90004/SR/design.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: COMPAT-02
+        outcome: not_applicable
+        target_refs: []
+    - decision_id: knowledge-env-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：loss_report_recovery_context
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:recovery-context
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: ENV-01
+        outcome: applied
+        requirement: 清除恢复数据或缓存后重新进入，从无上下文状态重建挂失流程，不崩溃、不死循环
+        target_refs:
+        - view:runtime/node:recovery-context
+    - decision_id: knowledge-env-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：createOrReuseLossApplication
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:runtime/node:recovery-context
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: ENV-02
+        outcome: applied
+        requirement: 重新进入、身份回跳与快速重复点击共享同一幂等状态，不重复创建挂失申请
+        target_refs:
+        - view:runtime/node:recovery-context
+    - decision_id: knowledge-dlv-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 落点：WalletMain 文案资源清单
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/deliverables.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - view:development/node:wallet-main-module
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DLV-01
+        outcome: applied
+        requirement: 新增页面文案形成翻译清单，跟踪中英文资源的回译与合入
+        target_refs:
+        - view:development/node:wallet-main-module
+    - decision_id: knowledge-dlv-02
+      kind: knowledge_application
+      status: not_applicable
+      owner: design-author
+      rationale: 挂失入口只在钱包内的交通卡详情页出现，不对其他应用开放；三个接口由钱包调用卡云，不对外提供
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/deliverables.md
+        observed_at: '2026-08-30T10:00:00+08:00'
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs:
+      - doc/features/AR90004/SR/design.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DLV-02
+        outcome: not_applicable
+        target_refs: []
     - decision_id: emergency-loss-scope
       status: decided_with_authority
       owner: product-owner

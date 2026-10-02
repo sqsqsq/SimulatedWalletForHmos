@@ -19,6 +19,8 @@ export function deliveryNextSteps(ctx) {
   const rows = [
     ...(remote ? ['  - 送审：`/story archive <AR>`，归档后评审人在需求系统表态'] : []),
     '  - 完整设计交接：在已准入蓝图上按原生 change-unit-progression 完成施工单位设计准备，不启动施工',
+    '  - 实现方案：完成施工单位设计准备，再沿原生交互路径为每个施工单位准备范围，请求终点写到 Plan'
+      + '（`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，原生判合法复用的不重写，止于 Plan、不进入 Coding',
     '  - 完整实现：在授权范围内接续设计准备与原生交互式开发，按原生结果推进',
     '  - 暂不推进：停在这里，之后从 `story_flow.py status` 续上',
   ];
