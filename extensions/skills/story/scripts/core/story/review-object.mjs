@@ -3,7 +3,7 @@
  *
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算：三处用同一份，审的就是要交付的那一份。
  * 待审的是 Story 与 Review；其余是只读对照：写作设计、决策登记、会议记录、交给设计的冻结输入（采用版本的原件、
- * 图、提取稿与人签）、已准入蓝图与评审投影、激活清单与知识原文、章节合同与判据。
+ * 图、提取稿与人签）、已准入蓝图与评审投影、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
  * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
  */
 import * as crypto from 'node:crypto';
@@ -12,6 +12,20 @@ import * as path from 'node:path';
 import { readBlueprint } from '../../../../../hooks/shared/framework-access.mjs';
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
 import { extensionRoot, featureRoot, readJsonOrNull } from '../../../../../hooks/shared/paths.mjs';
+
+/** 蓝图契约各段 `source_ref` 实际引用的文件（去掉 `#` 之后的指针），按出现顺序去重。 */
+function contractSources(blueprint) {
+  const refs = [];
+  for (const c of blueprint?.contracts ?? []) {
+    const parts = [c.operation, c.request_dto, c.response_dto, ...(c.request_dto?.fields ?? []),
+      ...(c.response_dto?.fields ?? []), ...(c.mappings ?? []), c.errors, c.idempotency, c.nfr];
+    for (const part of parts) {
+      const file = String(part?.source_ref ?? '').split('#')[0];
+      if (file && !refs.includes(file)) refs.push(file);
+    }
+  }
+  return refs;
+}
 
 /** 审查任务在需求目录里的位置：它也是审查对象的一部分。 */
 export const TASK = ['AR', 'story-src', 'review', 'task.md'];
@@ -68,6 +82,9 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   if (read?.status === 'ok') {
     add(path.join(projectRoot, ...read.canonical_path.split('/')), 'source', `已准入的蓝图 r${read.blueprint_ref.revision}`);
     add(path.join(projectRoot, ...read.projection.path.split('/')), 'source', '蓝图的原生评审投影');
+    for (const file of contractSources(read.blueprint)) {
+      add(path.join(projectRoot, ...file.split('/')), 'source', `蓝图契约引用的接口转写或映射 ${file}`);
+    }
   } else {
     problems.push(`蓝图 ${blueprint ?? '（没有设计关联）'} 读不到或未准入`);
   }

@@ -76,3 +76,13 @@
 **文档坐标**（`SR §x` / `RR §x` / `AR §x`）与**小节互指**（`见 A5`）一律不写：
 坐标换个文档就失效，名字到哪都成立，且坐标由 AI 自己写、无法自证真假。
 改用事物的名字——写「见管理台功能开关 `event_signup_enabled`」，不写「见 A5」。
+
+## 5. 端云接口转写成契约来源
+
+读者：写蓝图契约的设计作者。SE 文档里的接口设计格式不固定，原生契约要一份能逐段比对的结构化来源：由你读懂原文转写，机器只核蓝图与转写一致，转写是否忠实由设计质询对照原文核。
+
+- **协议**：读冻结输入里的 SR 原文（`AR/story-src/inputs/<版本>/files/SR/...`），写 `blueprint/contracts/se-interfaces.yaml`。按原生结构分段写 operations（`operation_id`、`direction`、`version`）、dtos（`dto_id`、`fields[]`：`field_id`、`type`、`required`、`nullable`、`semantics`）、errors（`items`）、idempotency（`rule`）、nfr（`requirements`）。每段带 `provenance`，`source_ref` 写原文所在的冻结文件与章节（`provenance`、`source_ref` 不参与比对）。原文写了什么照写，没写的不补。
+- **映射**：每个 wire 字段落到本部件的哪个字段、怎么换算，是本部件的设计决定，写同目录 `mappings.yaml`（`mapping_id`、`kind`、`source_fields`、`target_field`、`rule`），用不到的字段写 `kind: drop`。
+- **引用**：蓝图 `contracts` 各段的 `source_ref` 写工程根起的路径加段落指针，如 `doc/features/<蓝图 id>/blueprint/contracts/se-interfaces.yaml#/dtos/<DTO>`；内容与所指段落逐项一致，键、取值类型与顺序都算（原生逐段比对）。
+- **缺的与冲突的**：原文没给类型、版本、可空性，或前后说法冲突，登记缺口并写明向谁取得；当前施工单位要用的设为 blocker。不知道能不能为空就不写成不可为空，也不拿旧材料里的推测充当 SE 原文。
+- **修订**：被旧 revision 引用的转写与映射文件保留，新版本用新文件名并改 `source_ref`。
