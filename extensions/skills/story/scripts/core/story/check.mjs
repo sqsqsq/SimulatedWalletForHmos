@@ -318,6 +318,6 @@ export async function cmdCheck(ctx) {
     process.exit(1);
   }
   process.stdout.write(`[story-build check] 通过：${chapters} 章\n`);
-  // 交付门通过 = 这份 story 可以交出去了。往下怎么走**由人选**，选项由交付门给出。
+  // 交付门通过 = 这份 story 可以交出去了。往下怎么走按已有授权，没指定就**由人选**，选项由交付门给出。
   if (ctx.args.deliver) process.stdout.write(deliveryNextSteps(ctx));
 }

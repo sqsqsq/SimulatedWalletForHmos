@@ -143,7 +143,7 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
         return ("design_blueprint",
                 f"设计输入已冻结（`{entry}`）。按 `phases/design.md` 进原生 component-design，"
                 f"用这份输入建立蓝图 `{blueprint}` 并走到准入；知识在设计决定前取（story-knowledge）。"
-                "本轮授权：`/story <AR>` 的启动语义是「做到交付门并问一次交付选择」（batch 多阶段声明），直接进，不问")
+                "本轮授权：`/story <AR>` 的启动语义是「做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择」（batch 多阶段声明），直接进，不问")
     if read["status"] != "ok":
         return ("fix_blueprint", f"蓝图 `{blueprint}` 原生读不过（{read['status']}）：{native.issues_text(read)}——设计职责按原生报错修正")
     if not read.get("admitted"):
@@ -398,7 +398,7 @@ def next_step(feature_root: Path, contract: dict | None,
     if stage == "story_written":
         return ("run_archived",
                 "Story 已按已准入蓝图写成、经独立审查并登记。按 `phases/design.md`「五、独立审查、登记与交付」走完："
-                "`story-build check --deliver` 交付门；通过后按停等表问一次交付选择"
+                "`story-build check --deliver` 交付门；通过后已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择"
                 "（送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进；本地单没有送审）"
                 + closed_tail(feature_root, contract, manifest))
     if stage == "complete":

@@ -1017,15 +1017,19 @@ class TestRetiredThings(unittest.TestCase):
                              f"{key} 还在 manifest 里——它归 adaptation.yaml")
 
     def test_the_manifest_version_covers_this_round(self) -> None:
-        """manifest 版本就是正在开发的这一版：上一版发布后，新版本的第一次提交就把它升上去。
+        """manifest 版本就是正在开发的这一版：新版本的第一次提交就把它升上去，升级演进记录的最后一节就是它。
 
-        **版本号写死在这里是故意的**：新版本开工时这一条要跟着改，升级演进记录里这一版的节同时出现——
         adapt 拿包的版本与目标的 adapted_for 比较演进记录，版本号落后，本版条目就漏报。
+        开发版要高于 demo 里装着的发布版：demo 只在正式发布时更新，开发源与它同号说明还没升。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "2.0.0"', manifest)
+        version = re.search(r'^version: "([0-9.]+)"$', manifest, re.M).group(1)
         changes = (self.EXT / "skills/story-adaptation/reference/upgrade-changes.md").read_text(encoding="utf-8")
-        self.assertIn("\n## 2.0.0\n", changes)
+        self.assertEqual(version, re.findall(r"^## ([0-9.]+)$", changes, re.M)[-1], "演进记录的最后一节不是开发版")
+        released = (REPO_ROOT / "demo/doc/extensions/manifest.yaml").read_text(encoding="utf-8")
+        released = re.search(r'^version: "([0-9.]+)"$', released, re.M).group(1)
+        as_tuple = lambda v: tuple(int(x) for x in v.split("."))  # noqa: E731
+        self.assertGreater(as_tuple(version), as_tuple(released), "开发版没有高于 demo 里的发布版")
         # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
         # 「我们这个仓怎么用它」），每一版改了什么在 doc/release/ 的发布说明里。
         # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。

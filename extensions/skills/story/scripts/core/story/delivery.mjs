@@ -8,7 +8,7 @@ import { basisDriftProblems, designSource } from './design-source.mjs';
 import { verifiedReviewResult } from './independent-review.mjs';
 
 /**
- * 交付门通过之后往哪走 —— 打印这一问的选项，**不替人选**。
+ * 交付门通过之后往哪走 —— 已有明确授权按其范围继续，没指定后续目标才问；打印这一问的选项，**不替人选**。
  *
  * 系统需求可以送审（归档）或先送审再继续；本地单没有送审，只有本地交付。已有授权覆盖的直接用，
  * 业务审批与普通实施授权分开。评审人的表态之后由 `/story update` 承接。
@@ -24,7 +24,7 @@ export function deliveryNextSteps(ctx) {
     '  - 完整实现：在授权范围内接续设计准备与原生交互式开发，按原生结果推进',
     '  - 暂不推进：停在这里，之后从 `story_flow.py status` 续上',
   ];
-  return ['', '[story-build check] 交付门通过。按停等表问人一次交付选择：', '',
+  return ['', '[story-build check] 交付门通过。已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择（停等表）：', '',
     ...rows, ...(remote ? [] : ['  （本地单没有送审）']), ''].join('\n');
 }
 

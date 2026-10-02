@@ -117,6 +117,7 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         self.assertEqual(0, out.returncode, text)
         for choice in ("完整设计交接", "实现方案", "完整实现", "暂不推进"):
             self.assertIn(choice, text)
+        self.assertIn("已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择", text, "交付门输出仍是无条件问人")
         self.assertIn("--requested-phases spec,plan", text, "实现方案没把 Plan 上限交给原生范围准备")
         self.assertIn("不进入 Coding", text)
         self.assertNotIn("/story archive", text, "本地单没有送审")

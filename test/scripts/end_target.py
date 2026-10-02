@@ -5,8 +5,8 @@
 | kind | 到达的判据 |
 |---|---|
 | story | 需求已登记成文，只读交付门 `story-build check --deliver` 通过（原生设计有效、依据当前、独立审查可消费）。
-`delivery: local` 到此为止；`delivery: submitted` 还要当前这一版已真实归档：流程契约的发布记录是当前 Story，
-需求系统上的正文与它逐字相同、评审记录附件在。Case 配置必须写 delivery，命令行的 `story` 简写取 local |
+`delivery: local` 到此为止；`delivery: submitted` 还要当前这一版已真实归档：发布记录与已发布副本是当前 Story 与 Review，
+需求系统上的正文与评审记录附件逐字是这两件。Case 配置必须写 delivery，命令行的 `story` 简写取 local |
 | blueprint | 蓝图已准入，评审投影与这一版有效；不要求 Story 或施工单位 |
 | design_handoff | 蓝图已准入，至少一个活动施工单位，且每个都被原生判为可施工；不要求施工 |
 | phase | 在 design_handoff 之上，每个活动施工单位在终点及之前各阶段：冻结范围要执行的，原生完成证据身份相符、已收口、质量结论 PASS，
@@ -129,27 +129,44 @@ def short_digest(data: bytes) -> str:
 
 
 def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Path | None) -> list[str]:
-    """当前这一版真实送审了没有：发布记录指当前 Story，需求系统上的正文逐字是它、评审记录附件在。只读，不替模型上传。"""
-    ar = root / features_dir / feature / "AR"
+    """当前这一版真实送审了没有：Story 与 Review 两件都要对上。只读，不替模型上传、不写任何文件。
+
+    发布记录（流程契约 `archived` 的两份摘要与 `.backups/published/` 副本）要是当前这两件；需求系统上，
+    正文逐字是当前 Story，评审记录附件逐字是当前 Review。只登记了归档、附件旧了或空着，都不算送到。
+    """
+    feature_root = root / features_dir / feature
+    ar = feature_root / "AR"
     try:
         archived = json.loads((ar / "story-src" / "story-flow.json").read_text(encoding="utf-8")).get("archived") or {}
-        story = (ar / "story.md").read_bytes()
+        current = {"Story": (ar / "story.md").read_bytes(), "Review": (ar / "review.md").read_bytes()}
     except (OSError, ValueError) as exc:
-        return [f"读不出流程契约或 AR/story.md（{exc}）"]
+        return [f"读不出流程契约、AR/story.md 或 AR/review.md（{exc}）"]
     if not archived:
         return ["流程契约里没有发布记录：当前这一版还没送审"]
-    if archived.get("story_digest") != short_digest(story):
-        return [f"发布记录是 {archived.get('story_digest')}，当前 Story 是 {short_digest(story)}：送审的不是当前这一版"]
+    missing: list[str] = []
+    published = feature_root / ".backups" / "published"
+    for name, key, copy in (("Story", "story_digest", "story.md"), ("Review", "review_digest", "review.md")):
+        if archived.get(key) != short_digest(current[name]):
+            missing.append(f"发布记录里的 {name} 是 {archived.get(key)}，当前是 {short_digest(current[name])}：送审的不是当前这一版")
+        try:
+            same = (published / copy).read_bytes() == current[name]
+        except OSError:
+            same = False
+        if not same:
+            missing.append(f"已发布副本 .backups/published/{copy} 不是当前 {name}")
+    if missing:
+        return missing
     if system_dir is None:
         return ["没有需求系统（STORY_REQUIREMENT_SYSTEM_DIR 未设）：送审终点只对系统单成立"]
     ticket = system_dir / feature
-    try:
-        body = (ticket / "design.md").read_bytes()
-    except OSError:
-        return [f"需求系统上没有这张单的正文（{ticket / 'design.md'}）"]
-    missing = [] if body == story else ["需求系统上的正文与当前 Story 不同：归档没有落到系统上"]
-    if not (ticket / "attachments" / "review.md").is_file():
-        missing.append("需求系统上没有评审记录附件（attachments/review.md）")
+    for name, rel in (("Story", "design.md"), ("Review", "attachments/review.md")):
+        try:
+            remote = (ticket / rel).read_bytes()
+        except OSError:
+            missing.append(f"需求系统上没有这张单的{'正文' if name == 'Story' else '评审记录附件'}（{rel}）")
+            continue
+        if remote != current[name]:
+            missing.append(f"需求系统上的{'正文' if name == 'Story' else '评审记录附件'}（{rel}）与当前 {name} 不同：归档没有送到")
     return missing
 
 

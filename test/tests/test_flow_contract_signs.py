@@ -82,6 +82,16 @@ class TheDeliveryGateAsksOneThing(unittest.TestCase):
             self.assertIn(choice, text)
         self.assertNotIn("进入 plan", text)
 
+    def test_every_surface_reuses_an_existing_authorization_before_asking(self) -> None:
+        """已有明确授权按其范围继续，没指定后续目标才问：SKILL、design 页、路由与交付门输出同一句，不留无条件问人的旧话术。"""
+        rule = "已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择"
+        for rel in ("SKILL.md", "phases/design.md", "scripts/core/flow/routing.py", "scripts/core/story/delivery.mjs"):
+            text = (SKILL / rel).read_text(encoding="utf-8")
+            with self.subTest(surface=rel):
+                self.assertIn(rule, text)
+                for gone in ("并问一次交付选择", "通过后问一次，并", "按停等表问人一次交付选择", "通过后按停等表问一次交付选择"):
+                    self.assertNotIn(gone, text)
+
 
 if __name__ == "__main__":
     unittest.main()

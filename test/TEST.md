@@ -225,7 +225,7 @@ Case 里必须写明 `local` 或 `submitted`，命令行的 `story` 简写取 `l
 
 | kind | 到达的判据（`test/scripts/end_target.py`，只读原生对象） |
 |---|---|
-| `story` | 需求已登记成文，交付门 `story-build check --deliver` 通过——它只读已做过的独立审查结论，不重跑检查、不写报告；不要求 Spec/Plan 或施工单位。`delivery: submitted` 另要当前这一版已真实送审：流程契约的发布记录是当前 Story，需求系统上的正文与它逐字相同、评审记录附件在；装置只读，不替模型上传 |
+| `story` | 需求已登记成文，交付门 `story-build check --deliver` 通过——它只读已做过的独立审查结论，不重跑检查、不写报告；不要求 Spec/Plan 或施工单位。`delivery: submitted` 另要当前这一版已真实送审：流程契约的发布记录与已发布副本是当前 Story 与 Review，需求系统上的正文与评审记录附件逐字是这两件；装置只读，不替模型上传 |
 | `blueprint` | 蓝图已准入，评审投影与这一版有效；不创建 Story、不要求施工单位 |
 | `design_handoff` | 蓝图已准入，至少一个活动施工单位，且每个都被原生判为可施工；不要求施工 |
 | `phase` | 在 `design_handoff` 之上，每个活动施工单位在终点及之前各阶段：冻结范围要执行的，原生完成证据身份相符、收口且质量结论 PASS，认定到达时阶段物证仍新鲜；不执行的，必需义务由原生承接证据满足（合法复用），或义务全部不适用 |

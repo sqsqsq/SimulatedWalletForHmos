@@ -258,7 +258,7 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertEqual({"ok": True, "kind": "local"}, after["delivery"])
 
     def test_submitted_needs_the_current_version_in_the_requirement_system(self) -> None:
-        """送审终点：交付门通过之外，发布记录指当前 Story，需求系统上的正文逐字是它、评审记录附件在。"""
+        """送审终点：交付门通过之外，发布记录与已发布副本是当前 Story 与 Review，需求系统上的正文与附件逐字是这两件。"""
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
         system = self.root.parent / "system"
@@ -275,16 +275,37 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertIn("正文", submitted()["missing"][0], "只登记了归档、系统上没有正文，不算送审")
 
         # 对接层上传后的需求系统：正文是 Story，评审记录是附件
+        review = self.story.parent / "review.md"
         ticket = system / "REQ-DEMO"
-        (ticket / "attachments").mkdir(parents=True)
+        attachment = ticket / "attachments" / "review.md"
+        attachment.parent.mkdir(parents=True)
         (ticket / "design.md").write_bytes(self.story.read_bytes())
-        (ticket / "attachments" / "review.md").write_bytes((self.story.parent / "review.md").read_bytes())
-        reached = submitted()
-        self.assertTrue(reached["reached"], reached["missing"])
+        for stale, why in ((b"", "空附件"), (review.read_bytes() + "上一版的评审记录。\n".encode("utf-8"), "旧附件")):
+            attachment.write_bytes(stale)
+            self.assertTrue(any("评审记录附件" in m for m in submitted()["missing"]), f"{why}被当成送到了")
+        attachment.write_bytes(review.read_bytes())
+
+        def snapshot() -> dict[str, bytes]:
+            return {**self.tree(), **{f"system/{p.relative_to(system).as_posix()}": p.read_bytes()
+                                      for p in system.rglob("*") if p.is_file()}}
+
+        before = snapshot()
+        for _ in range(2):
+            reached = submitted()
+            self.assertTrue(reached["reached"], reached["missing"])
         self.assertEqual({"ok": True, "kind": "submitted"}, reached["delivery"])
+        self.assertEqual(before, snapshot(), "重复观察写了文件")
 
         (ticket / "design.md").write_bytes(self.story.read_bytes() + "系统上被改过。\n".encode("utf-8"))
         self.assertFalse(submitted()["reached"], "系统上的正文不是当前这一版")
+        (ticket / "design.md").write_bytes(self.story.read_bytes())
+
+        # 只改了 Review、Story 没动：系统上也换成新 Review，旧的发布记录仍不代表这一版送审过
+        review.write_bytes(review.read_bytes() + "归档之后改的一句。\n".encode("utf-8"))
+        attachment.write_bytes(review.read_bytes())
+        missing = end_target.story_submitted(self.root, "doc/features", "REQ-DEMO", system)
+        self.assertTrue(any("发布记录里的 Review" in m for m in missing), missing)
+        self.assertFalse(any("Story" in m for m in missing), missing)
 
     def tree(self) -> dict[str, bytes]:
         doc = self.root / "doc"
