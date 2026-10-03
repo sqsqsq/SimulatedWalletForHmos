@@ -23,7 +23,7 @@ function readSnapshot(ctx, input, problems) {
   try {
     bytes = fs.readFileSync(file);
   } catch {
-    problems.push(`冻结输入 ${input.snapshot_ref} 读不到——设计输入由 \`story_flow.py complete\` 冻结，已登记的版本不能删`);
+    problems.push(`冻结输入 ${input.snapshot_ref} 读不到（它由 \`story_flow.py complete\` 写入）：恢复这份文件；恢复不了时先 \`story_flow.py reopen\` 或开一轮 update，再重新 complete`);
     return null;
   }
   if (crypto.createHash('sha256').update(bytes).digest('hex') !== input.snapshot_sha256) {

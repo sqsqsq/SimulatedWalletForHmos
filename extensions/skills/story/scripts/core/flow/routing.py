@@ -397,7 +397,7 @@ def next_step(feature_root: Path, contract: dict | None,
                 + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
                 + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
-        return ("run_archived",
+        return ("run_delivery_gate",
                 "Story 已按已准入蓝图写成、经独立审查并登记。按 `phases/design.md`「五、独立审查、登记与交付」走完："
                 "`story-build check --deliver` 交付门；通过后已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择"
                 "（送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进；本地单没有送审）"

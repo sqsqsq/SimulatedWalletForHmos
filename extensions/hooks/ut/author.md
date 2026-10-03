@@ -9,7 +9,7 @@
 | 文件 | 拿什么 |
 |---|---|
 | `contracts.yaml` | 各实体上的 `must`——`verify` 决定谁来验 |
-| 需求根目录的 `acceptance.yaml` | `knowledge_rule` 指回规约条目的那条验收条目，按它的 `ut_focus` 写断言 |
+| 需求根目录的 `acceptance.yaml` | `knowledge_rule` 与 `knowledge_decision_id` 指回这条义务出自的判断的那条验收条目，按它的 `ut_focus` 写断言 |
 
 ## 二、产出形态
 
@@ -34,7 +34,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <需�
 ## 四、门禁会拦什么
 
 - `verify` 为 `ut` / `both` 的义务在本阶段没有覆盖，也没有说法。
-- 标了 `ut` / `both` 却在 `acceptance.yaml` 里找不到 `knowledge_rule` 指回它的验收条目
+- 标了 `ut` / `both` 却在 `acceptance.yaml` 里找不到 `knowledge_rule` 与 `knowledge_decision_id` 指回它的验收条目
   ——那样本阶段无从知道该覆盖哪个场景。
 - 用例名对得上而断言不相干——判据是**用例是否真的覆盖了那个场景**，
   不是用例名里有没有出现该域的词。按验收条目的 `ut_focus` 写断言。

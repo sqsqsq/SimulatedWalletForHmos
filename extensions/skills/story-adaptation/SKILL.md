@@ -1,6 +1,6 @@
 ---
 name: story-adaptation
-description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、按来源决定带不带对接实现，宿主入口交 Framework 物化，脚本不碰知识、目标身份与适配状态；升级后按演进记录列出目标已适配版本之后的知识、对接层与在途单条目，人定范围后由模型依据真实代码逐块做完。
+description: /story adapt——把 Story Extension 装到或升级到目标工程。所有权由目录表达：换 core/、按来源决定带不带对接实现，宿主入口交 Framework 物化；脚本写机制面并合成 manifest，知识由你按方法页写；升级后按演进记录列出目标已适配版本之后的知识、对接层与在途单条目，人定范围后由模型依据真实代码逐块做完。
 ---
 
 # story adapt — 把 Story Extension 装到 / 升级到目标工程
@@ -57,7 +57,7 @@ description: /story adapt——把 Story Extension 装到或升级到目标工�
 node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目标根> --package <包根>
 ```
 
-它先查三件，任一不满足就退出并点名：
+它先查下面几件，任一不满足就退出并点名：
 
 - **目标是 git 仓库的根**、**这次要覆盖的路径上没有未提交改动**——升级会整份换掉那些文件，没存档的改动被盖掉就找不回来了。git 在这里回答的是「你的改动存过没有」，不是「谁改的」；
 - **包与目标都读得到**（各自的 `framework.config.json`，包的 `manifest.yaml` 与 `adaptation.yaml`），目标已接入 Framework；
@@ -118,12 +118,11 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
   三块都做完并交回后，把目标 `adaptation.yaml` 的 `adapted_for` 写成包的版本；只做了一部分时不写，交回里列出未做的块与条目；选稍后，不写任何东西；
 - 都空：报一句「目标已按包的版本适配」，不问。
 
-`--check` 不查工作区干不干净、也不看 git（那是 `--apply` 的前置）：它只读，回答的是
+`--check` 只读，不要求工作区干净（那是 `--apply` 的前置），回答的是
 **这个目标现在装的是不是包的这一版**。知识能不能加载、内容够不够是另一件事，交回时与它分开报（方法页「交回」）。
 
-拿 `git diff` 判「升级碰了什么」不成立：目标自己改过知识、`--apply` 一个字节没写，
-diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提交了，diff 为空，装错了也看不出来。
-「adapt 碰没碰 `knowledge/` 与 `adapters/`」由复制范围保证，不需要事后找证据。
+这次写了哪些文件看 `--apply` 的输出；`git diff` 里还会有目标自己的未提交改动，对照输出区分。
+「adapt 碰没碰 `knowledge/` 与 `adapters/`」由复制范围保证。
 
 ## 不做的事
 

@@ -382,19 +382,37 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertEqual("run_state", r["human_wait_source"])
 
     def test_time_is_split_by_what_was_running(self):
-        """门禁 / verifier / 成文 分开归属——只报总墙钟看不出时间花在哪。"""
+        """门禁 / 各类子任务 / 成文 分开归属——只报总墙钟看不出时间花在哪。Story 自己的检查命令也算门禁。"""
         r = self._measure([
             {"tool_name": "write", "tool_input": {"filePath": "a.md"}},
             _harness(GATE_FAIL),
             {"tool_name": "task", "tool_input": {"subagent_type": "verifier"}},
+            {"tool_name": "bash", "tool_input": {"command": "node doc/extensions/skills/story/scripts/core/story-build.mjs "
+                                                           "review --action check --feature X"}},
         ])
         gaps = r["gap_sec_by_kind"]
-        self.assertGreater(gaps["gate"], 0)
-        self.assertGreater(gaps["verifier"], 0)
+        self.assertGreater(gaps["gate"], 60, "story-build review --action check 没算进门禁")
+        self.assertGreater(gaps["stage_verifier"], 0)
+
+    def test_subtasks_are_told_apart_by_what_they_were_given(self):
+        """子任务按派给它的任务分：人读审查、设计质询、格式修正、阶段 verifier，其余是独立作者。"""
+        cases = {
+            "reader_review": {"description": "独立审查 X Story",
+                              "prompt": "按任务文件 `doc/features/X/AR/story-src/review/task.md` 逐字执行，回复写到 review-original.1.md"},
+            "design_questioning": {"description": "蓝图质询",
+                                   "prompt": "按 knowledge-task --action questioning 的范围逐项回复"},
+            "format_fix": {"description": "修正 review 报告格式",
+                           "prompt": "只按原报告内容修正格式：doc/reports/story/X/k/review-original.1.md"},
+            "stage_verifier": {"subagent_type": "verifier", "prompt": "读 verifier_request 后审 spec"},
+            "author": {"description": "构建 canonical blueprint", "prompt": "构造 component blueprint 并迭代到无 BLOCKER"},
+        }
+        for want, tool_input in cases.items():
+            with self.subTest(kind=want):
+                self.assertEqual(want, measure_run.task_kind({"tool_name": "task", "tool_input": tool_input}))
 
 
 class EachSegmentIsMeasured(unittest.TestCase):
-    """双检查点单按续跑那一刻切两段，各报时长、模型与工具时间、verifier、首次门禁与登记、返工。"""
+    """双检查点单按续跑那一刻切两段，各报时长、模型与工具时间、各类子任务、首次门禁与登记、返工。"""
 
     def test_the_two_segments_carry_their_own_fields(self):
         records = [
@@ -418,11 +436,11 @@ class EachSegmentIsMeasured(unittest.TestCase):
             r = measure_run.measure(run / "events.jsonl", run_dir=run)
         first, second = r["segments"]["initial"], r["segments"]["update"]
         self.assertEqual({"fail_count": 2}, first["first_harness"])
-        self.assertEqual(1, first["verifier_runs"])
+        self.assertEqual(1, first["task_runs"]["stage_verifier"])
         self.assertEqual(2.0, first["rework_min"], "门禁 10:01 没过、10:03 通过")
         self.assertEqual({"fail_count": 1}, second["first_story_register"])
         self.assertEqual(1.0, second["rework_min"])
-        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "verifier_gap_sec"):
+        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "task_runs", "task_gap_sec"):
             self.assertIn(key, second)
 
 

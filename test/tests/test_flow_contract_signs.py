@@ -2,7 +2,8 @@
 
   ① 契约带自身摘要：手改之后任一命令报「契约被手改」并给恢复路径，命令照常执行；
      下一次由脚本写入就重算摘要，提示消失（AC14）；
-  ② 交付门之后的问法只有「归档送审 / 进入 plan」，交付门上的口头评审不再是 update 的入口（AC18）。
+  ② 登记之后的下一步是交付门：通过后按授权继续，或问一次交付选择（送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进）；
+     交付门上的口头评审不再是 update 的入口（AC18）。
 """
 from __future__ import annotations
 
@@ -71,7 +72,7 @@ class TheDeliveryGateAsksOneThing(unittest.TestCase):
         """登记之后：独立审查、交付门、问一次交付选择；规则只写在 phase 文档，路由指过去。"""
         text = (SKILL / "scripts" / "core" / "flow" / "routing.py").read_text(encoding="utf-8")
         branch = text.split('    if stage == "story_written":', 1)[1].split("\n    if stage ==", 1)[0]
-        self.assertIn('"run_archived"', branch)
+        self.assertIn('"run_delivery_gate"', branch)
         for needle in ("phases/design.md", "独立审查", "--deliver", "交付选择"):
             self.assertIn(needle, branch)
         self.assertNotIn("进入 plan", branch)

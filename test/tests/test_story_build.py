@@ -2327,7 +2327,7 @@ class OneChapterIsJudgedWhenItIsSubmitted(RealRunCase):
                                    encoding="utf-8")
         _, out = self.check_output()
         self.assertRegex(out, r"story\.md「范围」第 \d+ 行：工程标识「自动充值签约缓存」写在反引号里")
-        self.assertIn("story.md 由各章草稿经 chapter 装配", out)
+        self.assertIn("改哪一章就改它的草稿，再用 chapter 提交", out)
 
     def test_a_registered_image_nobody_uses_is_left_to_the_whole_check(self) -> None:
         proc = self.submit("03-范围.md", "范围", "")

@@ -479,8 +479,11 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 | 5 | spec 阶段上下文增量 | ≤ 150K |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
 
-`segments` 按段给出（双检查点单分 `initial` / `update`，普通单一段 `whole`）：`duration_min`、`model_gap_sec`、`tool_gap_sec`、`verifier_runs`、
-`verifier_gap_sec`、`first_harness`、`first_story_register`、`rework_min`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
+`segments` 按段给出（双检查点单分 `initial` / `update`，普通单一段 `whole`）：`duration_min`、`model_gap_sec`、`tool_gap_sec`、`task_runs`、
+`task_gap_sec`、`first_harness`、`first_story_register`、`rework_min`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
+子任务按派给它的任务分五类：`reader_review`（Story 人读审查）、`design_questioning`（蓝图设计质询）、`format_fix`（已有审查回复修格式或重给）、
+`stage_verifier`（阶段 verifier）、`author`（其余独立作者）；`gap_sec_by_kind` 的门禁时间含 harness-runner 与 Story 的
+`story-build check`、`review --action check`、`story_flow.py story`。
 
 第 3 项是调查信号：记录作者为何读 checker、读后做了什么，与产物、性能、Knowledge 应用及跨 Case 重复情况一起判断（AGENTS §1）。
 

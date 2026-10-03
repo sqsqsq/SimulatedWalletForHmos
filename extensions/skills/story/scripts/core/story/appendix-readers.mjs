@@ -13,7 +13,7 @@ import { fail } from './context.mjs';
 /** 登记在合同里的表头；读取器要的表没登记是合同坏了，照实停下。 */
 function header(def, key, where) {
   const text = def.tables?.[key];
-  if (!text) fail(`章节合同附录章 projection：「${where}」没登记 tables.${key} 表头——脚本合成的附录表按合同登记的表头出，脚本不留字面`);
+  if (!text) fail(`章节合同附录章 projection：「${where}」缺 tables.${key} 表头，Story Extension 的章节合同不完整：停下，交 Story Extension 维护者补表头`);
   return String(text).split('|').map(h => h.trim());
 }
 

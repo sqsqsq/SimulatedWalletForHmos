@@ -2448,7 +2448,7 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
         written, why = status_twice("登记成文之后")
         if written is None:
             return Outcome(False, why)
-        if written.get("status") != "story_written" or written.get("next") != "run_archived":
+        if written.get("status") != "story_written" or written.get("next") != "run_delivery_gate":
             return Outcome(False, f"登记成文之后状态是 {written.get('status')}、下一步 {written.get('next')}，不是成文态与交付")
         kept = contract.read_bytes()
         again = run(sys.executable, str(flow), "story")

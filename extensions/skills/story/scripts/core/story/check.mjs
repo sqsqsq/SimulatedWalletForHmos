@@ -242,7 +242,7 @@ export function storyCheck(ctx, { registration = true } = {}) {
       + '——附录机器区由 `story-build project` 从真源按行投影，问题出在真源里对应的那几行；手改机器区会被下一次投影覆盖');
   }
 
-  mark('⑪ 章内判据（story.md 由各章草稿经 chapter 装配，直接改 story.md 会被下一次装配覆盖）');
+  mark('⑪ 章内判据（各章经 `story-build chapter` 按章锚替换进 story.md：改哪一章就改它的草稿，再用 chapter 提交）');
   // 与章提交同一个实现：单章通过而全篇报同一条（或反过来）时，
   // 作者只能把两处的差别当成运气。经 `chapter` 提交的章在提交时已经判过，
   // 这里报出的是绕过 `chapter` 直接改了 story.md 的那几处。

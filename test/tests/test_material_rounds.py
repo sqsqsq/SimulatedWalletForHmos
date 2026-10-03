@@ -394,7 +394,7 @@ class CompleteThenMaterialChangedPart2(CompleteThenMaterialChangedCase):
         payload = json.loads(proc.stdout[proc.stdout.index("{"):])
         self.assertNotEqual("import_materials", payload["next"],
                             "成文之后还引导导入，story 的依据就被改掉了")
-        self.assertEqual("run_archived", payload["next"])
+        self.assertEqual("run_delivery_gate", payload["next"])
 
     def test_a_registered_story_still_says_what_is_sitting_in_the_inbox(self) -> None:
         """登记之后放的料不顺手导（导了 story 就对不上它据以成文的依据），
@@ -409,7 +409,7 @@ class CompleteThenMaterialChangedPart2(CompleteThenMaterialChangedCase):
 
         proc = self.run_flow("status")
         payload = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertEqual("run_archived", payload["next"], "已登记的下一步被改掉了")
+        self.assertEqual("run_delivery_gate", payload["next"], "已登记的下一步被改掉了")
         self.assertIn("补的界面稿.md", (proc.stdout or "") + (proc.stderr or ""))
 
     def test_an_empty_inbox_after_freezing_says_nothing_extra(self) -> None:
