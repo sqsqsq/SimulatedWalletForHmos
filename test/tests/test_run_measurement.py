@@ -502,6 +502,38 @@ class StoryGatesCountFailuresAndRework(unittest.TestCase):
         self.assertEqual(["story_register@N"], seg["rework_open"])
 
 
+    def test_reading_a_gate_script_is_not_a_gate(self) -> None:
+        """脚本名只出现在读取里（cat 源码）不是一轮门禁：不计次数、不计门禁时间、不记未知。"""
+        r = self.measure(
+            {"tool_name": "bash", "tool_input": {"command": "cat framework/harness/harness-runner.ts"}, "tool_output": ""},
+            {"tool_name": "bash", "tool_input": {"command": "cat doc/extensions/skills/story/scripts/core/story-build.mjs check --feature A"},
+             "tool_output": ""})
+        self.assertEqual((0, 0, 0), (r["harness_runs"], r["gate_rounds_unknown"], len(r["gate_calls_unattributed"])))
+        self.assertEqual(0, r["gap_sec_by_kind"]["gate"])
+        self.assertIsNone(r["segments"]["whole"]["first_gate"])
+
+    def test_a_combined_output_of_two_gates_is_unattributed(self) -> None:
+        """一次调用先后执行 A、B 两个审查核对，合并输出 fail 又 pass：归属不了，A 不记成通过，单列成一次调用。"""
+        both = {"tool_name": "bash", "tool_input": {"command":
+                "node x/story-build.mjs review --action check --feature A; node x/story-build.mjs review --action check --feature B"},
+                "tool_output": '{"result": "fail"}\n{"result": "pass"}'}
+        r = self.measure(both)
+        seg = r["segments"]["whole"]
+        self.assertEqual((0, 0), (r["gate_rounds_with_fail"], r["gate_rounds_unknown"]))
+        self.assertEqual([{"seq": 0, "candidates": ["story_review@A", "story_review@B"]}], r["gate_calls_unattributed"])
+        self.assertIsNone(seg["first_gate"])
+
+    def test_an_unattributed_call_does_not_close_rework(self) -> None:
+        """A 单独失败之后，一次合并执行 A、B 输出 pass：归属不了，不结束 A 的返工。"""
+        both = {"tool_name": "bash", "tool_input": {"command":
+                "node x/story-build.mjs review --action check --feature A && node x/story-build.mjs review --action check --feature B"},
+                "tool_output": '{"result": "pass"}\n{"result": "pass"}'}
+        seg = self.measure(_story_review("fail", feature="A"), both)["segments"]["whole"]
+        self.assertEqual(["story_review@A"], seg["rework_open"])
+        self.assertEqual(0.0, seg["rework_min"])
+        self.assertEqual(1, len(seg["gate_calls_unattributed"]))
+
+
 class EachSegmentIsMeasured(unittest.TestCase):
     """双检查点单按续跑那一刻切两段，各报时长、模型与工具时间、各类子任务、首次门禁与登记、返工。"""
 

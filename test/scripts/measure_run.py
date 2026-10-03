@@ -18,8 +18,10 @@
   读取类动作的参数里出现就计一次；知识层是 ``.md``，不在其内——读知识是正当的。
 - 第 4 项只看工具**输出**（门禁报了什么），同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 ``cat`` 一次不算两轮。
 - 门禁：harness-runner 与 Story 的 ``story-build check``、``review --action check``、``story_flow.py story``，
-  按脚本名与动作认（参数顺序不论），结果只读输出里的结构化结论；读不到记 unknown（``gate_rounds_unknown``），
-  不当成零失败。返工按同一动作同一对象从 fail 算到下一轮 pass，全程与分段同一份计算。
+  只认实际执行的（脚本名前只有解释器，``cat`` 这类读取不算），参数顺序不论；一次调用只执行一个门禁才算一轮，
+  结果只读输出里的结构化结论，读不到记 unknown（``gate_rounds_unknown``），不当成零失败；一次调用执行多个门禁、
+  合并输出归属不了的按调用单列（``gate_calls_unattributed``，带候选），不算任何对象的通过或失败。
+  返工按同一动作同一对象从 fail 算到下一轮 pass，全程与分段同一份计算。
 - 子任务：保留说明、子代理类型、引用的文件与间隔；角色只按引用的任务文件或子代理类型**推断**，
   没有依据或依据冲突记 unknown，正式角色与成本由维护者在后评里核定。
 - 三个字段：``gate_rounds_with_fail``（有 FAIL 的门禁轮次）；``gap_sec_by_kind``（门禁 / 子任务 / 成文 / 其它的时间去向，
@@ -176,51 +178,82 @@ def _json_rows(output: str) -> list[dict]:
     return rows
 
 
-def gate_call(event: dict) -> dict | None:
-    """这次工具调用是不是一轮门禁：动作、对象、结果（pass / fail / unknown）与失败条数；不是门禁返回 None。
+#: 执行脚本的解释器：命令段里脚本名前面只有它们（与它们的开关）时，脚本是被执行的；
+#: 前面是 cat、grep 这类读取动词时只是在读源码，不算门禁。
+INTERPRETERS = {"node", "python", "python3", "py", "npx", "ts-node", "tsx"}
 
-    命令从入参认，结果只从输出里该命令的结构化结论读——读不到就是 unknown，不当成通过，也不当成失败。
-    """
-    if str(event.get("tool_name") or "").lower() != "bash":
-        return None
-    raw = event.get("tool_input")
-    command = raw.get("command") if isinstance(raw, dict) else None
-    command = _norm_path(str(command if command is not None else _request_text(event)))
-    output = _output_text(event)
-    for seg in _split_segments(command):
+
+def _program(token: str) -> str:
+    name = token.rsplit("/", 1)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def executed_gates(command: str) -> list[tuple[str, dict]]:
+    """命令里实际执行的门禁：每项是动作与参数。脚本名只出现在读取或引用里的不算；不是门禁的子命令也不算。"""
+    found = []
+    for seg in _split_segments(_norm_path(command)):
         tokens = seg.replace('"', " ").replace("'", " ").split()
         for i, token in enumerate(tokens):
             kind = GATE_SCRIPTS.get(token.rsplit("/", 1)[-1])
             if kind is None:
                 continue
+            if not all(_program(t) in INTERPRETERS or t.startswith("-") for t in tokens[:i]):
+                break
             args = tokens[i + 1:]
             positional = args[0] if args and not args[0].startswith("-") else None
             opts = _options(args)
-            target = str(opts.get("feature") or "?")
-            if kind == "harness":
-                ids = {m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"}
-                total = HARNESS_TOTAL_RE.search(output)
-                outcome = ("fail" if ids or (total and int(total.group(1)))
-                           else "pass" if total else "unknown")
-                return {"action": f"harness:{opts.get('phase') or '?'}", "object": target, "outcome": outcome,
-                        "fail_count": len(ids) or (int(total.group(1)) if total else 0), "check_ids": sorted(ids)}
-            if kind == "story-build" and positional == "check":
-                failed = STORY_CHECK_FAIL_RE.search(output)
-                outcome = ("fail" if failed else "pass" if STORY_CHECK_PASS_RE.search(output) else "unknown")
-                action = "story_check:deliver" if opts.get("deliver") is True else "story_check"
-                return {"action": action, "object": target, "outcome": outcome,
-                        "fail_count": int(failed.group(1)) if failed else 0}
-            if kind == "story-build" and positional == "review" and opts.get("action") == "check":
-                result = next((r["result"] for r in reversed(_json_rows(output)) if isinstance(r.get("result"), str)), None)
-                outcome = "unknown" if result is None else "pass" if result in REVIEW_PASSING else "fail"
-                return {"action": "story_review", "object": target, "outcome": outcome,
-                        "fail_count": int(outcome == "fail"), "result": result}
-            if kind == "story_flow" and positional == "story":
-                success = next((r["success"] for r in reversed(_json_rows(output)) if isinstance(r.get("success"), bool)), None)
-                outcome = "unknown" if success is None else "pass" if success else "fail"
-                return {"action": "story_register", "object": target, "outcome": outcome,
-                        "fail_count": int(outcome == "fail")}
-    return None
+            action = (f"harness:{opts.get('phase') or '?'}" if kind == "harness"
+                      else ("story_check:deliver" if opts.get("deliver") is True else "story_check")
+                      if kind == "story-build" and positional == "check"
+                      else "story_review" if kind == "story-build" and positional == "review" and opts.get("action") == "check"
+                      else "story_register" if kind == "story_flow" and positional == "story" else None)
+            if action:
+                found.append((action, opts))
+            break
+    return found
+
+
+def _gate_result(action: str, output: str) -> dict:
+    """单个门禁的结果：只读该命令的结构化结论，读不到是 unknown。"""
+    if action.startswith("harness:"):
+        ids = {m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"}
+        total = HARNESS_TOTAL_RE.search(output)
+        outcome = "fail" if ids or (total and int(total.group(1))) else "pass" if total else "unknown"
+        return {"outcome": outcome, "fail_count": len(ids) or (int(total.group(1)) if total else 0),
+                "check_ids": sorted(ids)}
+    if action.startswith("story_check"):
+        failed = STORY_CHECK_FAIL_RE.search(output)
+        outcome = "fail" if failed else "pass" if STORY_CHECK_PASS_RE.search(output) else "unknown"
+        return {"outcome": outcome, "fail_count": int(failed.group(1)) if failed else 0}
+    if action == "story_review":
+        result = next((r["result"] for r in reversed(_json_rows(output)) if isinstance(r.get("result"), str)), None)
+        outcome = "unknown" if result is None else "pass" if result in REVIEW_PASSING else "fail"
+        return {"outcome": outcome, "fail_count": int(outcome == "fail"), "result": result}
+    success = next((r["success"] for r in reversed(_json_rows(output)) if isinstance(r.get("success"), bool)), None)
+    outcome = "unknown" if success is None else "pass" if success else "fail"
+    return {"outcome": outcome, "fail_count": int(outcome == "fail")}
+
+
+def gate_call(event: dict) -> dict | None:
+    """这次工具调用里实际执行的门禁；没有执行门禁返回 None。
+
+    只执行了一个门禁：它就是一轮，结果从输出里该命令的结构化结论读，读不到是 unknown。
+    一次调用执行了多个门禁：合并的输出没法可靠归给其中哪一个，记 unattributed，
+    列出候选与调用序号，不算任何对象的通过或失败，也不开始、不结束返工。
+    """
+    if str(event.get("tool_name") or "").lower() != "bash":
+        return None
+    raw = event.get("tool_input")
+    command = raw.get("command") if isinstance(raw, dict) else None
+    gates = executed_gates(str(command if command is not None else _request_text(event)))
+    if not gates:
+        return None
+    if len(gates) > 1:
+        return {"action": "unattributed", "object": "?", "outcome": "unattributed", "fail_count": 0,
+                "candidates": [f"{a}@{o.get('feature') or '?'}" for a, o in gates], "seq": event.get("seq")}
+    action, opts = gates[0]
+    return {"action": action, "object": str(opts.get("feature") or "?"),
+            **_gate_result(action, _output_text(event))}
 
 
 #: 子任务角色只按结构化依据推断：入参引用的任务文件，其次子代理类型。提示词里提到某个动作不算依据。
@@ -349,18 +382,25 @@ def split_at_checkpoint(events: list[dict], run_dir: Path | None) -> int | None:
 
 
 def gate_summary(rows: list[dict]) -> dict:
-    """一组事件里的门禁：首次门禁、首次登记、有失败的轮次、结果未知的轮次、返工时长与还没修好的。
+    """一组事件里的门禁：首次门禁、首次登记、各类轮次、返工时长与还没修好的。
 
-    返工按同一动作、同一对象算：一轮 fail 起算，到同一动作同一对象下一轮 pass 为止，各段相加；
-    结果未知的那一轮既不开始也不结束返工。全程与分段都用这一份计算，分段相加等于全程。
+    计数单位是**门禁轮次**（只执行了一个门禁的调用）：有失败的、结果未知的分开计；
+    一次调用执行多个门禁、输出归属不了的，按**调用**单列（``gate_calls_unattributed``），不算进轮次。
+    返工按同一动作、同一对象算：一轮 fail 起算，到同一动作同一对象下一轮 pass 为止；
+    结果未知与归属不了的调用既不开始也不结束返工。全程与分段都用这一份计算：轮次与调用计数分段可相加，
+    返工时长按段各自计算，跨段的返工区间不保证分段相加等于全程。
     """
     first_gate = first_register = None
     failing_since: dict[tuple, datetime] = {}
     rework_sec = 0.0
     rounds_fail = rounds_unknown = 0
+    unattributed: list[dict] = []
     for e in rows:
         gate = gate_call(e)
         if gate is None:
+            continue
+        if gate["outcome"] == "unattributed":
+            unattributed.append({"seq": gate["seq"], "candidates": gate["candidates"]})
             continue
         ts = _ts(e.get("timestamp"))
         brief = {k: gate[k] for k in ("action", "object", "outcome", "fail_count")}
@@ -379,6 +419,7 @@ def gate_summary(rows: list[dict]) -> dict:
             rounds_unknown += 1
     return {"first_gate": first_gate, "first_story_register": first_register,
             "gate_rounds_with_fail": rounds_fail, "gate_rounds_unknown": rounds_unknown,
+            "gate_calls_unattributed": unattributed,
             "rework_min": round(rework_sec / 60, 1),
             "rework_open": sorted(f"{a}@{o}" for a, o in failing_since)}
 
@@ -538,7 +579,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "context_last": context_last,
         "context_growth": (context_last - context_first
                            if context_first is not None and context_last is not None else None),
-        **{k: v for k, v in gate_summary(events).items() if k in ("gate_rounds_with_fail", "gate_rounds_unknown")},
+        **{k: v for k, v in gate_summary(events).items()
+           if k in ("gate_rounds_with_fail", "gate_rounds_unknown", "gate_calls_unattributed")},
         "tasks": tasks,
         "task_gap_sec_inferred": {role: round(sum(t["gap_sec"] for t in tasks if t["inferred_role"] == role), 1)
                                   for role in TASK_ROLES},
@@ -633,7 +675,9 @@ def render(result: dict) -> str:
         "",
         "  ── 门禁 ──",
         f"    harness 运行 {result['harness_runs']} 次",
-        f"    有 FAIL 的门禁轮次：{result['gate_rounds_with_fail']} 轮｜结果未知的门禁轮次：{result['gate_rounds_unknown']} 轮",
+        f"    有 FAIL 的门禁轮次：{result['gate_rounds_with_fail']} 轮｜结果未知的门禁轮次：{result['gate_rounds_unknown']} 轮"
+        f"｜一次执行多个门禁、归属不了的调用：{len(result['gate_calls_unattributed'])} 次",
+        *(f"      #{u['seq']} 候选 {'、'.join(u['candidates'])}" for u in result["gate_calls_unattributed"]),
         f"    反复 FAIL 的 check：{result['repeated_check_fails'] or '（本轮没有 FAIL）'}   目标 同一 id ≤2 轮",
         "",
         "  ── 时间去哪了（间隔归属的近似值，不是实测 span）──",
@@ -665,6 +709,7 @@ def render(result: dict) -> str:
                       for k in TASK_ROLES if seg['task_runs_inferred'][k])
             + f"｜首次门禁 {seg['first_gate']}｜首次登记 {seg['first_story_register']}"
             + f"｜FAIL 轮次 {seg['gate_rounds_with_fail']}｜未知 {seg['gate_rounds_unknown']}"
+            + f"｜归属不了的调用 {len(seg['gate_calls_unattributed'])}"
             + f"｜返工 {seg['rework_min']} 分钟" + (f"（未修好：{'、'.join(seg['rework_open'])}）" if seg['rework_open'] else ""))
     return "\n".join(lines)
 

@@ -484,9 +484,12 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 `task_runs_inferred`、`task_gap_sec_inferred`、`first_gate`、`first_story_register`、`gate_rounds_with_fail`、`gate_rounds_unknown`、
 `rework_min`、`rework_open`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
 
-- **门禁**：harness-runner 与 Story 的 `story-build check`、`review --action check`、`story_flow.py story`，按脚本名与动作认，参数顺序不论；
-  结果只读输出里的结构化结论，读不到记未知（`gate_rounds_unknown`），不当成零失败。返工按同一动作、同一对象从失败算到下一次通过，
-  没修好的列在 `rework_open`。全程与分段用同一份计算。
+- **门禁**：harness-runner 与 Story 的 `story-build check`、`review --action check`、`story_flow.py story`，只认实际执行的
+  （脚本名前只有解释器；`cat` 这类读取源码不算），参数顺序不论。一次调用只执行一个门禁才算一轮：结果只读输出里的结构化结论，
+  读不到记未知（`gate_rounds_unknown`），不当成零失败。一次调用执行多个门禁、合并输出归属不了的，按调用单列在
+  `gate_calls_unattributed`（带候选），不算任何对象的通过或失败。返工按同一动作、同一对象从失败算到下一次通过，
+  没修好的列在 `rework_open`；归属不了的调用不开始也不结束返工。全程与分段用同一份计算，轮次与调用计数可相加，
+  返工时长按段各自计算。
 - **子任务**：`tasks` 逐次列出说明、子代理类型、引用的文件与时间间隔。角色只按引用的任务文件（Story 审查任务、蓝图质询目录）或子代理类型
   **推断**，没有依据或依据冲突记 `unknown`；独立作者、格式修正等正式角色与成本，由维护者对照真实派遣在后评里核定。
 - 耗时都是事件间隔归属的近似值，不是实测执行时长。
