@@ -175,4 +175,4 @@ class TheMethodPageSaysHowToGetItRight(unittest.TestCase):
             self.assertIn(needle, closure, f"闭环一节没说「{needle}」")
         update = (phases / "update.md").read_text(encoding="utf-8")
         self.assertIn("「五、独立审查、登记与交付」", update, "update 方法页没有指向唯一的审查与登记规则")
-        self.assertIn("没有完成独立审查", update, "没说宿主没有审查员时该如实报告")
+        self.assertIn("没有可派的审查子代理时，按 `phases/design.md`「五」第 3 步", update, "没说宿主没有审查子代理时怎么做")

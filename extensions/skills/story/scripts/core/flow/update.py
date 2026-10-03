@@ -34,8 +34,7 @@ from pathlib import Path
 from materials import frozen, registry
 
 from flow.routing import basis_drift, inputs_answer, material_state
-from flow.submission import DESIGN_INPUT
-from flow.state import (CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, file_sha256, system_requirement,
+from flow.state import (CONTRACT, CORE_DIR, DESIGN_INPUT, FlowError, STORY, REVIEW, STORY_CONTRACT, file_sha256, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -355,7 +354,7 @@ def _set_result(root: Path, rec: dict, result: str) -> None:
     if result == was:
         return
     if was == "documents":
-        raise FlowError("这一轮登记的请求是 documents（要同步人读件），不能改成 materials：终点由人的请求与受影响的已有结果定，不为收口降级")
+        raise FlowError("这一轮登记的请求是 documents（要同步人读件），只能从 materials 改为 documents：终点由人的请求与受影响的已有结果定")
     rec["requested_result"] = result
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -720,7 +719,7 @@ def cmd_update_close(feature_root: Path) -> dict:
         stale = registered_input_stale(feature_root, contract)
         if stale:
             raise FlowError(f"{stale}，不收口：在 design-input.json 写明本轮采用集合、需求条目与人签（不采用的在提取稿写理由），"
-                            "重跑 `story_flow.py complete`——内容没变就复用原版本、只记下这次的材料；"
+                            "重跑 `story_flow.py complete`——内容没变就复用原版本并记下这次的材料；"
                             "设计与成文按登记的输入同步后再收口")
     if result == "documents" and (feature_root / Path(*STORY)).is_file():
         registered_before = (load(root / "before") or {}).get("status") == "story_written"
@@ -758,7 +757,7 @@ def cmd_update_close(feature_root: Path) -> dict:
             "unreadable": unreadable, "units": units, "design_feedback": feedback,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("本轮终点是取材与澄清：还没有设计或成文，按需求进展接着走。" if result == "materials" else "")
-                      + (f"设计反馈 {len(feedback)} 条交蓝图负责方，接受与否待确认（负责方回复记在 update-notes）；收口不代表已接受，也不取得施工授权。"
+                      + (f"设计反馈 {len(feedback)} 条交蓝图负责方，接受与否待确认（负责方回复记在 update-notes）；施工授权另由人给。"
                          if feedback else "")
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
                          if unreadable else "")}

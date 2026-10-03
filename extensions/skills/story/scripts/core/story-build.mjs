@@ -209,7 +209,7 @@ function cmdSkeleton(ctx) {
 
   // ---- 预检 ④：设计来源成立：已准入的蓝图、有效的评审投影、登记的冻结输入 ----
   const gaps = designGaps(ctx);
-  if (gaps.length) fail(`设计来源还不成立，骨架没起：\n  · ${gaps.join('\n  · ')}`);
+  if (gaps.length) fail(`设计来源或附录投影还不成立，骨架没起：\n  · ${gaps.join('\n  · ')}`);
 
   // ---- 预检 ⑤：决策登记起手前就有议题，或写明本单无待决（只读，不写） ----
   const gap = registrationGap(ctx);

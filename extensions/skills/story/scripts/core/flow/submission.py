@@ -13,7 +13,7 @@ from materials import frozen, importer, registry
 
 from flow import native
 from flow.state import (
-    DESIGN_DRAFT, FlowError, S4_STEPS, after_complete, in_update, load, log, now, require, save,
+    DESIGN_DRAFT, DESIGN_INPUT, FlowError, S4_STEPS, after_complete, in_update, load, log, now, require, save,
     system_requirement)
 from flow.inputs import ar_design_skeleton, read_ids
 from flow.routing import material_state, scope_step
@@ -21,8 +21,6 @@ from flow.routing import material_state, scope_step
 
 #: 提取稿的五段：代码围栏外、带序号的二级标题。序号后的点可有可无。
 S4_HEADING = re.compile(r"^##\s+(\d+)\s*\.?\s+\S")
-#: 设计输入的默认落点：模型写采用集合、人签编号与语义条目
-DESIGN_INPUT = ("AR", "story-src", "design-input.json")
 
 
 def resolve_candidate(feature_root: Path, given: str | None) -> Path:

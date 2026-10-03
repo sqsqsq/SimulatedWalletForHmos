@@ -120,8 +120,10 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         for choice in ("完整设计交接", "实现方案", "完整实现", "暂不推进"):
             self.assertIn(choice, text)
         self.assertIn("已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择", text, "交付门输出仍是无条件问人")
-        self.assertIn("--requested-phases spec,plan", text, "实现方案没把 Plan 上限交给原生范围准备")
-        self.assertIn("不进入 Coding", text)
+        self.assertIn("止于 Plan、不进入 Coding", text)
+        self.assertIn("phases/design.md「五、独立审查、登记与交付」第 6 步", text, "交付选项没指向执行方法")
+        method = (DEV_EXT / "skills/story/phases/design.md").read_text(encoding="utf-8").split("6. **交付选择**", 1)[1]
+        self.assertIn("--requested-phases spec,plan", method, "实现方案没把 Plan 上限交给范围准备")
         self.assertNotIn("/story archive", text, "本地单没有送审")
         self.assertEqual(kept, original.read_bytes(), "核对、登记或交付门改了审查者的原回复")
         again = json.loads([l for l in self.register().stdout.splitlines() if l.startswith("{")][-1])
@@ -258,13 +260,33 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
                 original.write_text(mutate(original.read_text(encoding="utf-8")), encoding="utf-8")
                 self.assertEqual(want, self.result()["result"])
 
+    def test_locations_keep_their_quoting(self) -> None:
+        """材料位置按引用边界取完整路径：整格一条路径可含空格，多条或夹说明时逐条反引号；取完再去定位片段。"""
+        meeting = self.flow_path.parent / "meetings" / "中性 会议" / "v1" / "raw.md"
+        meeting.parent.mkdir(parents=True)
+        meeting.write_text("主持人：先看续期。\n", encoding="utf-8")
+        story = "doc/features/REQ-DEMO/AR/story.md"
+        raw = "doc/features/REQ-DEMO/AR/story-src/meetings/中性 会议/v1/raw.md"
+        cases = {
+            "整格一条含空格的路径": (f"{raw}#续期", "warn"),
+            "反引号括住含空格的路径与行号": (f"`{raw}:1`", "warn"),
+            "两条路径夹说明": (f"`{story}#背景` 与会议原话 `{raw}`", "warn"),
+            "含空格但不存在的路径": (f"`doc/features/REQ-DEMO/AR/story-src/meetings/中性 会议/v2/raw.md`", "report_invalid"),
+            "多条路径没逐条括起": (f"{story} {raw}", "report_invalid"),
+        }
+        for label, (where, want) in cases.items():
+            with self.subTest(case=label):
+                original = self.reviewed("advice")
+                original.write_text(original.read_text(encoding="utf-8").replace(f"`{story}`", where), encoding="utf-8")
+                self.assertEqual(want, self.result()["result"], self.result())
+
     def blueprint_path(self) -> str:
         task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
         return next(part for part in task.split("`") if part.endswith("component-blueprint.yaml"))
 
 
 class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """宿主确实没有独立审查能力、这一版也没有已知结论时，人明确授权才可不经审查交付；
+    """当前 adapter 没声明审查子代理、这一版的结果是 report_missing 时，人明确授权才可不经审查交付；
     授权记在流程契约，审查状态写进最终的 Story 与 Review，材料一变就不再适用。"""
 
     def unreviewed(self, *extra: str) -> subprocess.CompletedProcess:
@@ -299,6 +321,18 @@ class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCa
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
         self.assertIn("本版未经独立审查", out.stdout)
 
+    def test_a_crlf_story_gets_one_disclosure(self) -> None:
+        """以 CRLF 交来的 Story：披露写进交付章一次，重跑准备字节不变。"""
+        self.story.write_bytes(self.story.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual(0, self.authorize().returncode)
+        self.assertEqual(0, self.review("prepare").returncode)
+        first = self.story.read_bytes()
+        self.assertEqual(1, first.decode("utf-8").count("本版未经独立审查"))
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual(first, self.story.read_bytes(), "重跑准备改了 Story 的字节")
+        self.assertEqual("unreviewed", self.result()["result"])
+
     def test_a_host_that_can_review_is_not_waived(self) -> None:
         (self.root / "framework.local.json").write_text('{"schema_version": "1.0", "agent_adapter": "opencode"}',
                                                          encoding="utf-8")
@@ -315,6 +349,32 @@ class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCa
         refused = self.authorize()
         self.assertNotEqual(0, refused.returncode, "已有不通过的结论还记了未审查授权")
         self.assertNotIn("review_waiver", self.flow())
+
+    def test_another_report_dir_keeps_the_known_blocker(self) -> None:
+        """同一份材料的报告目录在首次准备时定下：另指目录报冲突、不改文件，已知的阻断仍在，也记不了未审查授权；
+        原目录里真实复审的新报告照常更新结论。"""
+        self.reviewed("block")
+        self.assertEqual("fail", self.result()["result"])
+        before = self.tree()
+        moved = self.run_node("review", "--action", "prepare", "--report-dir", "doc/reports/alternate-neutral")
+        self.assertNotEqual(0, moved.returncode)
+        self.assertIn("报告目录冲突", moved.stdout + moved.stderr)
+        self.assertEqual(before, self.tree(), "目录冲突的准备改了文件")
+        self.assertEqual("fail", self.result()["result"])
+        self.assertNotEqual(0, self.authorize().returncode, "换目录之后记上了未审查授权")
+        self.assertNotIn("review_waiver", self.flow())
+        self.reviewed("pass")
+        self.assertEqual("pass", self.result()["result"], "原目录里的复审没更新结论")
+
+    def test_a_chosen_report_dir_stays_with_its_material(self) -> None:
+        """首次准备指定的目录随材料键沿用：之后不带参数准备仍写进它。"""
+        first = self.run_node("review", "--action", "prepare", "--report-dir", "doc/reports/chosen")
+        self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+        self.assertEqual("doc/reports/chosen", self.prepared()["report_dir"])
+        design_kit.write_review(self.root, "REQ-DEMO", "block")
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual("doc/reports/chosen", self.prepared()["report_dir"])
+        self.assertEqual("fail", self.result()["result"])
 
     def test_a_changed_story_drops_the_authorization_and_a_real_review_takes_over(self) -> None:
         self.assertEqual(0, self.review("prepare").returncode)
@@ -466,7 +526,8 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
             "clarification": "**要定的事**：超时由谁释放。"}]}, ensure_ascii=False), encoding="utf-8")
         task = self.inject()
         section = task.split("### 仍开着的选择", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("「审查方法」", section)
+        self.assertIn("「判据核对」表后的审查方法", section)
+        self.assertIn("在「发现」表记一条", section)
         self.assertIn("关联蓝图", section)
         for gone in ("Spec", "acceptance.yaml", "证据格"):
             self.assertNotIn(gone, section, f"开着的选择还要对着「{gone}」判")
@@ -614,12 +675,12 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         after = task.split(fence, 1)[1]
         self.assertIn("`````markdown", after, "更长的内层围栏没被包进来")
 
-    def test_an_unreadable_story_is_a_skip_not_an_empty_full_text(self) -> None:
-        """空串冒充全文 = 审查会对着空白作答；如实 SKIP。"""
+    def test_an_unreadable_story_is_an_incomplete_object_not_an_empty_full_text(self) -> None:
+        """Story 读不到或是空的：任务说明审查对象不全、准备报 input_invalid，不给空白全文。"""
         (self.root / "doc" / "features" / FEATURE / "AR" / "story.md").write_text(
             "   \n", encoding="utf-8")
         task = self.inject()
-        self.assertIn("SKIP", task)
+        self.assertIn("input_invalid", task)
         self.assertNotIn("```````markdown", task)
 
     def test_the_task_says_the_extract_is_a_derived_analysis(self) -> None:

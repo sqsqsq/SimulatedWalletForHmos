@@ -46,15 +46,15 @@
 
 蓝图由 Framework 的 component-design 建立、质询、调和到准入，本次请求做到准入并生成评审投影为止：
 
-- 用冻结的输入作为来源：系统需求交物化件，本地需求交需求条目；人签以冻结版本里的导出为准。实际读过的材料才记为已消费。
+- 用冻结的输入作为来源：系统需求交物化件，本地需求交需求条目；人签以冻结版本里的导出为准。把读过的材料逐份记为已消费。
 - 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
 - 原生字段表达不了的精确内容写进 `story_details`，写法见 `hooks/blueprint/author.md`。
-- **独立质询**由你（主执行者）派给宿主已有的隔离子代理，作者不自己质询：
+- **独立质询**由你（主执行者）派给宿主的隔离子代理：
   1. 候选写好后取质询任务（`--action questioning --audience reviewer`），它给出原生质询范围、回复要求与原件的建议位置；
   2. 把任务交给子代理；它只读材料、逐项回复，不改蓝图；
   3. 派审时的候选与回复原样留存，一字不改；
-  4. 设计负责方逐项处理真实问题（要人定的问人），再写原生 `review_summary.questioning`，`provider_id` 写这次子代理调用的身份。
-  宿主没有隔离执行能力时，质询保持未完成，如实告诉人缺什么，不自己填写质询结果，蓝图也不准入。
+  4. 设计负责方逐项处理质询提出的问题（要人定的问人），再写原生 `review_summary.questioning`，`provider_id` 写这次子代理调用的身份。
+  宿主没有隔离子代理时，停在质询这一步：向人说明需要一个隔离的质询者，质询完成后蓝图才准入。
 - 准入之后由设计职责按原生 renderer 生成评审投影 `component-blueprint.review.md`。
 
 蓝图没准入或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。只查看、重入或改表达不产生新的设计 revision。
@@ -72,7 +72,8 @@
 
 1. **定稿并准备审查**：`story-build check` 通过之后，跑 `story-build review --action prepare`。它先把审查对象定成最终版
    （附录重投、编号、渲染 `AR/review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`，输出这一次的材料键、
-   报告目录（默认 `doc/reports/story/<需求>/<材料键前 16 位>/`，与需求目录分开）与这一份回复的位置。同一份材料已有通过的报告时
+   报告目录（默认 `doc/reports/story/<需求>/<材料键前 16 位>/`，与需求目录分开；可用 `--report-dir` 指定，首次准备定下后同一份材料一直沿用）
+   与这一份回复的位置。同一份材料已有通过的报告时
    输出 `reused`，直接核结果。之后改了任何被审材料，重新 prepare、重新审。
 2. **派审**：用宿主与作者隔离的独立执行能力（子代理）把任务文件与材料键交给审查者。审查者读任务里列的全部材料，
    回复一份 Story 报告（格式在任务的「报告怎么写」）。你把回复**原样**写到准备输出的回复位置，一字不改；之前的回复保留。
@@ -83,22 +84,24 @@
    | pass | 登记，交付 |
    | warn（只有 MINOR / INFO 建议） | 登记，带建议交付，不因建议反复重审 |
    | fail（有 BLOCKER / MAJOR 发现） | 回到最早出错的那一处（材料、决策登记、写作设计、章草稿或设计）修，改完重新 prepare、重审 |
-   | report_missing / report_invalid | 保留原回复，请审查者按格式重给，不改它的结论、不替它补引用 |
-   | subject_stale | 审的不是现在这份：重新 prepare，按新材料再审 |
-   | input_invalid | 停下，报告实际的来源缺口 |
+   | report_missing | 把任务与材料键交审查者，回复原样写到准备给出的位置 |
+   | report_invalid | 原回复留在原处；重新 prepare 取新位置，把原回复连同任务「报告怎么写」交审查者重给一份 |
+   | subject_stale | 准备之后被审材料变了：重新 prepare，按新任务再派审 |
+   | input_invalid | 停下，向人报告缺哪份来源、向谁取得 |
 
-   宿主确实没有独立执行能力时，照实告诉人缺什么，不自审顶替。人明确授权这一版不经审查交付时，在 prepare 之后用
-   `story_flow.py unreviewed --reason "<缺什么>" --reply "<人的原话>"` 记下：它核宿主确实声明不能派审查子代理、这一版也没有已知审查结论，
-   才记进流程契约。再跑一次 prepare，审查状态写进 Story 交付章与 Review 题头，结果是 unreviewed，可以登记与交付。
-   材料一变授权就不再适用；已有不通过的结论、坏报告、没派审或工具失败都不归这一类。之后能审了，`--withdraw` 撤回再正常派审。
-4. **登记**：`story_flow.py story`。它只读核对：结构检查、这一份的审查结果（pass、warn 或人授权的 unreviewed）、成文依据（蓝图引用、输入版本、
-   知识摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），都成立才一次记下新依据；不成立时已有的登记原样保留。
-5. **交付门**：`story-build check --deliver`。它核交付的是登记的那一份、依据没有变、审查结果仍可消费。
+   宿主没有可派的审查子代理（当前 adapter 没有声明）时，向人说明这一版需要独立审查，并问是否授权本版不经审查交付。
+   人授权后，在 prepare 之后、结果为 report_missing 时跑 `story_flow.py unreviewed --reason "<缺什么>" --reply "<人的原话>"`，
+   授权记进流程契约；再跑一次 prepare，审查状态写进 Story 交付章与 Review 题头，结果是 unreviewed，可以登记与交付。
+   授权对应当时这一版材料：材料变了要重新审查或重新授权；之后宿主能派审了，用 `--withdraw` 撤回后正常派审。
+4. **登记**：`story_flow.py story`。它核结构检查、这一份的审查结果（pass、warn 或人授权的 unreviewed）与成文依据
+   （蓝图引用、输入版本、知识摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），通过后记下新依据。
+5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据没变、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：
-   - 送审：仅系统需求；
-   - 完整设计交接；
-   - 实现方案：止于 Plan；
-   - 完整实现；
-   - 暂不推进。
+   - 送审：仅系统需求，走 `/story archive <AR>`；
+   - 完整设计交接：在已准入蓝图上按 Framework change-unit-progression 完成施工单位设计准备，不启动施工；
+   - 实现方案：完成施工单位设计准备，再沿 Framework 交互路径为每个施工单位准备范围，请求终点写到 Plan
+     （`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，Framework 判可复用的沿用，止于 Plan；
+   - 完整实现：在授权范围内接续设计准备与 Framework 交互式开发，按 Framework 结果推进；
+   - 暂不推进：停在这里，之后从 `story_flow.py status` 续上。
 
    `AR/review.md` 是首版，评审人在人工区表态。你不代填，评审回来由 `/story update` 承接。

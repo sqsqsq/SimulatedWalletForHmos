@@ -91,9 +91,10 @@ function decisionRows(decisionsPath) {
   const settled = all.filter(d => d?.status === 'settled');
   const out = ['', '### 仍开着的选择：受影响的行为有没有被写成已定', '',
     open.length
-      ? '**每一条都写一句结论**，写在报告的「审查方法」一节：依赖这个选择的行为在 Story 正文、附录、Review 与关联蓝图的哪几处，'
+      ? '**每一条都写一句结论**，写在「判据核对」表后的审查方法里：依赖这个选择的行为在 Story 正文、附录、Review 与关联蓝图的哪几处，'
         + '那几处只写了共同要求与条件，还是已经替人选了一边。各选项（含保持待定）都会有的行为才是共同要求；'
-        + '只属于某一个选项的做法或数值出现在正文与验收里，就是替人选了一边，同时记进 blocking_findings。判的是后果，不是正文里有没有「待定」二字。'
+        + '只属于某一个选项的做法或数值出现在正文与验收里，就是替人选了一边，在「发现」表记一条，严重程度按所属判据。'
+        + '按正文与验收实际写出的行为判。'
       : '本轮没有仍开着的条目。'];
   for (const d of open) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
@@ -226,9 +227,9 @@ export function readerCheckIds() {
 function designRows(projectRoot, src) {
   const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
   const blueprint = flow?.design_binding?.blueprint_id;
-  if (!blueprint) return ['- **没有设计关联**——成文按已准入的蓝图写，设计事实无从核对，写未验证。'];
+  if (!blueprint) return ['- **没有设计关联**——设计事实无从核对，按「报告怎么写」第 5 条记进「发现」。'];
   const read = readBlueprint(projectRoot, blueprint, 'delivery');
-  if (read.status !== 'ok') return [`- **蓝图 ${blueprint} 读不到或未准入**（${read.status}）——设计事实无从核对，写未验证。`];
+  if (read.status !== 'ok') return [`- **蓝图 ${blueprint} 读不到或未准入**（${read.status}）——设计事实无从核对，按「报告怎么写」第 5 条记进「发现」。`];
   return [`- \`${read.canonical_path}\` —— 已准入的蓝图（revision ${read.blueprint_ref.revision}），设计事实的权威；`,
     `- \`${read.projection.path}\` —— 它的原生评审投影；`,
     ...(flow?.input?.snapshot_ref ? [`- \`${flow.input.snapshot_ref}\` —— 交给设计的冻结输入（原件、提取稿与人签按原始字节）。`] : [])];
@@ -241,7 +242,7 @@ function objectRows(projectRoot, feature) {
   return ['', '### 本次审查的材料（材料键按它们的原始字节算）', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
-    ...problems.map(p => `- **读不到**：${p}——与它有关的判断写未验证`)];
+    ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
 }
 
 /** 报告的格式：Story 业务报告，审查者照它写，`story-build review --action check` 按它核。 */
@@ -254,9 +255,10 @@ const REPORT_FORMAT = [
   '3. 「判据核对」一张表，表头 `判据 ID | 结果 | 依据`：判据逐项一行，ID 照本任务「判据」各节标题里的写，结果写 pass / warn / fail / not_applicable，',
   '   依据写你据以判断的事实；不适用写业务理由。表后写审查方法：逐章过了什么、仍开着的议题逐条结论、会议话题的去向。',
   '4. 「发现」一张表，表头 `编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任`：严重程度按判据写 BLOCKER / MAJOR / MINOR / INFO；',
-  '   材料位置写上面「本次审查的材料」里那份文件的路径，可加章节或行；修正责任写该回哪一处改、由谁定。没有发现保留表头、不写行。',
+  '   材料位置写上面「本次审查的材料」里那份文件的路径，可加 `#章节` 或 `:行`：只引一份文件时整格写这条路径，路径含空格照写；',
+  '   引多份文件或夹带说明时，每条路径用反引号括起，这一列的反引号只用来括路径。修正责任写该回哪一处改、由谁定。没有发现保留表头、不写行。',
   '5. 「总体结论」第一行写 pass、warn 或 fail 之一，再写理由：有 BLOCKER / MAJOR 或判据 fail 是 fail，只有 MINOR / INFO 或判据 warn 是 warn，',
-  '   其余 pass。材料读不到使某项判断做不了时写明未验证，不写成已核。',
+  '   其余 pass。审查中某份材料读不到：在「发现」表按相关判据记一条 BLOCKER，写明读不到哪份、哪些判断因此未核；其余能核的照常核。',
 ];
 
 /**
@@ -295,7 +297,7 @@ export function readerReviewTask(projectRoot, feature) {
   const storyPath = path.join(root, 'AR', 'story.md');
   const story = readOrNull(storyPath);
   if (story === null || !story.trim()) {
-    rows.push('', '`AR/story.md` 现在读不到或是空的——本项 SKIP，如实写 SKIP，不要凭空作答。');
+    rows.push('', '`AR/story.md` 现在读不到或是空的：审查对象不全，这一次准备报 input_invalid，补齐 Story 后重新准备。');
     return rows.join('\n');
   }
 
@@ -316,7 +318,7 @@ export function readerReviewTask(projectRoot, feature) {
   rows.push('', '### 作者的写作设计：当前 `AR/story-src/story-template.md` 全文', '');
   if (plan === null || !plan.trim()) {
     rows.push('**写作设计缺口**：`AR/story-src/story-template.md` 读不到或是空的。照原材料与范围审正文，'
-      + '把「没有可核的写作设计」写进结论——它是本轮的阻断问题。');
+      + '在「发现」表按相关判据记一条 BLOCKER：没有可核的写作设计，写明因此未核的范围。');
   } else {
     const planFence = `${'`'.repeat(longestFence(plan) + 1)}text`;
     rows.push('（作者对本需求的阅读主线与每章骨架，是待核的作者判断，不是审查标准）', '',
@@ -334,7 +336,7 @@ export function readerReviewTask(projectRoot, feature) {
   const { docs, blocking } = sourceStatus({ contract, featureRoot: root });
   rows.push('', '### 原材料原文', '',
     ...docs.map(d => `- \`${d.rel}\` —— ${contract?.sources?.[d.doc]?.label ?? '材料'}`),
-    ...blocking.map(m => `- **读不到 \`${m.rel}\`**——它是必备来源；与它有关的判断写未验证，不替它下结论`),
+    ...blocking.map(m => `- **读不到 \`${m.rel}\`**——它是必备来源；与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
     '- `AR/story-src/decisions.json` —— 已登记的判断：哪些定了、哪些还开着，未决的去向从它核');
   rows.push('', '### 另外这几份按需去读', '',
     '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
@@ -381,8 +383,7 @@ export function readerReviewTask(projectRoot, feature) {
   rows.push('', '### 材料里的图（这一次有哪几张）', '');
   if (images.gap) {
     rows.push(`**输入有缺口**：${images.gap}。`
-      + '在缺口修好之前，不要就「图用没用、取舍成不成立」下结论——'
-      + '把这件事写进结论，它是本轮的阻断问题。');
+      + '「图用没用、取舍成不成立」这一项未核：在「发现」表按相关判据记一条 BLOCKER，写明这处缺口与未核的范围。');
   } else {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }

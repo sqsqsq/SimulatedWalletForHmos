@@ -68,13 +68,13 @@ function appendixZones(ctx, source, gaps = []) {
 /**
  * 投影输入还成不成立 —— **写入侧与只读侧同一份结论**：设计来源不成立（没关联、未准入、投影对不上、
  * 冻结输入读不到）时不投也不按「期望为空」放行；蓝图里的知识应用缺判断、原文已变或落点失效，是设计待同步；
- * 蓝图有、附录却没有人读写法的结构是投影缺口，同样交设计。
+ * 蓝图有、章节合同却没有人读写法的结构是投影适配缺口，交扩展维护。
  */
 function appendixSourceProblems(ctx) {
   const source = designSource(ctx);
   if (source.problems.length) return source.problems;
   const { problems } = blueprintKnowledge(ctx.projectRoot, source.blueprint);
-  // 投影缺口：蓝图里有、附录却没有人读写法的结构——不写空、不略过，交设计
+  // 投影适配缺口：蓝图里有、章节合同还没有人读写法的结构，并入这份结论
   const gaps = [];
   appendixZones(ctx, source, gaps);
   return [...problems.map(p => `${p}——判断在设计时写进蓝图（knowledge_application），附录·规约按它投影；由设计职责在 component-design 里修订`),

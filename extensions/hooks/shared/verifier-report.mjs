@@ -47,7 +47,7 @@ function tableRows(text) {
  * 当前审查报告立不立得住 —— 格式、判据全不全、WARN 行有没有处置记录。
  *
  * 报告由调用方原样落盘在 `summary.verifier_report`。格式不合或缺判据的回复每次运行都报，不计作结论。
- * 报告的身份与有效性（对象回显、过期）由原生 `check-receipt` 判；重新派审得到的新回复按同样判据核，只读不写。
+ * 报告的身份与有效性（对象回显、过期）由原生 `check-receipt` 判；每份回复按同样判据核，本模块只读。
  * 还没派审（报告不在）不在这里报：派不派由 framework 的 NEXT 行说。
  *
  * @returns {string[]}

@@ -100,18 +100,20 @@ function blueprintTask(root, id, action) {
   const decided = bp ? decisionsOf(bp.blueprint) : [];
   if (bp) gaps.push(...blueprintKnowledge(root, bp.blueprint).problems.map(p => `${p}——设计作者处理。`));
   const duties = ['设计阶段还没有施工契约；知识判断以决定的形式落在蓝图里，施工义务在施工单位的契约中承接。'];
+  const dispatch = [];
   if (action === 'questioning') {
     const round = questioningRound(root, bp, loadNative(root));
-    duties.push(`被评候选是上面这一版。主执行者把本任务交给宿主的隔离子代理，派审时的候选与回复原样留存`
-      + `（建议位置 \`${round.candidate}\`、\`${round.reply}\`）。质询者只读，不改蓝图。`,
+    duties.push('被评候选是上面这一版。你只读材料、逐项回复；蓝图由设计负责方按回复修订。',
     `原生质询范围，逐项唯一覆盖：${round.scopes.map(([ref, kind]) => `\`${ref}\`（${kind}）`).join('、')}。`,
     '每项回：问题、回答、证据、处置（answered_with_evidence / decided_with_authority / open_decision / blocker / not_applicable）、'
       + '责任方、验证去向，以及未决项与处置建议。');
+    dispatch.push(`把本任务交给宿主的隔离子代理；派审时的候选与回复原样留存，建议位置 \`${round.candidate}\`、\`${round.reply}\`。`);
   }
   return {
     object,
     facts: decided.length ? decided : [bp ? '蓝图里还没有知识应用的事实与决定。' : '蓝图尚未建立，没有已成立的判断。'],
     duties,
+    dispatch,
     gaps,
     page: `hooks/blueprint/${action === 'questioning' ? 'reviewer' : 'author'}.md`,
   };
@@ -189,7 +191,8 @@ export function knowledgeTask(root, { action, audience, blueprint, feature, requ
     '## 5. 本次完成条件', '', ...done, '',
     '## 6. 缺口与责任', '',
     ...([...task.gaps, ...problems.map(p => `知识自检：${p}——目标工程的知识维护者处理。`)].map(g => `- ${g}`)),
-    ...(!task.gaps.length && !problems.length ? ['- 无。'] : []), ''].join('\n');
+    ...(!task.gaps.length && !problems.length ? ['- 无。'] : []), '',
+    ...(task.dispatch?.length ? ['## 7. 派审与留存（主执行者）', '', ...task.dispatch, ''] : [])].join('\n');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -17,15 +17,15 @@ import { reviewResult } from './independent-review.mjs';
 export function deliveryNextSteps(ctx) {
   const remote = readJson(ctx.flowPath, null) !== null && isSystemRequirement(ctx.args.feature);
   const rows = [
-    ...(remote ? ['  - 送审：`/story archive <AR>`，归档后评审人在需求系统表态'] : []),
-    '  - 完整设计交接：在已准入蓝图上按原生 change-unit-progression 完成施工单位设计准备，不启动施工',
-    '  - 实现方案：完成施工单位设计准备，再沿原生交互路径为每个施工单位准备范围，请求终点写到 Plan'
-      + '（`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，原生判合法复用的不重写，止于 Plan、不进入 Coding',
-    '  - 完整实现：在授权范围内接续设计准备与原生交互式开发，按原生结果推进',
-    '  - 暂不推进：停在这里，之后从 `story_flow.py status` 续上',
+    ...(remote ? ['  - 送审：把这份需求送到需求系统，评审人在那里表态'] : []),
+    '  - 完整设计交接：把已准入的设计准备成可施工的施工单位，不开始施工',
+    '  - 实现方案：设计准备之后为每个施工单位完成 Spec 与 Plan，止于 Plan、不进入 Coding',
+    '  - 完整实现：在授权范围内从设计准备一直推进到开发完成',
+    '  - 暂不推进：停在这里，之后可以接着做',
   ];
   return ['', '[story-build check] 交付门通过。已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择（停等表）：', '',
-    ...rows, ...(remote ? [] : ['  （本地单没有送审）']), ''].join('\n');
+    ...rows, ...(remote ? [] : ['  （本地单没有送审）']),
+    '  选定之后怎么执行见 phases/design.md「五、独立审查、登记与交付」第 6 步。', ''].join('\n');
 }
 
 /**

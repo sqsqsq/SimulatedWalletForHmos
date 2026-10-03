@@ -556,7 +556,9 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
                 self.assertIn(f"`view:{view['view_id']}`（view）", proc.stdout)
         for relation in blueprint.get("relations") or []:
             self.assertIn(f"`relation:{relation['relation_id']}`（relation）", proc.stdout)
-        self.assertIn("质询者只读，不改蓝图", proc.stdout)
+        self.assertIn("你只读材料、逐项回复", proc.stdout)
+        dispatch = proc.stdout.split("## 7. 派审与留存（主执行者）", 1)[1]
+        self.assertIn(f"`{base}/reply.md`", dispatch, "派审与留存没单列给主执行者")
 
     def test_questioning_without_a_draft_fails_without_half_a_task(self) -> None:
         proc = self.task("--blueprint", "new-thing", "--action", "questioning", "--audience", "reviewer")

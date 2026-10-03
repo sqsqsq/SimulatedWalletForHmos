@@ -1,7 +1,8 @@
 /**
  * Story 的独立审查 —— 准备这一次的审查对象与任务，核审查者原样落盘的 Story 业务报告。
  *
- * - **准备**：写审查任务，按审查对象算材料键（这一次 Story 的身份），定报告目录与这一份回复的位置。
+ * - **准备**：写审查任务，按审查对象算材料键（这一次 Story 的身份），定这一份回复的位置。报告目录随材料键在首次准备时
+ *   定下，同一份材料沿用它，另指目录报冲突。
  *   同一份材料已有有效通过的报告就复用；还没写回复的位置复用；之前的回复坏了或不通过，另起一份，旧回复保留。
  * - **核结果**：显式 check、登记、交付门与状态共用这一份判定，只读：审的是不是现在这份、报告合不合合同、结论是什么。
  *
@@ -49,12 +50,20 @@ export function prepareReview(ctx, reportDirArg) {
   fs.mkdirSync(dir, { recursive: true });
   const task = path.join(ctx.featureRoot, ...TASK);
   // 任务是审查对象的一部分，所以不嵌入由对象算出的材料键：材料键由准备输出交给派审方
-  fs.writeFileSync(task, `${readerReviewTask(ctx.projectRoot, ctx.args.feature)}\n`, 'utf-8');
+  const taskText = `${readerReviewTask(ctx.projectRoot, ctx.args.feature)}\n`;
+  if (readText(task) !== taskText) fs.writeFileSync(task, taskText, 'utf-8');
   const object = reviewObject(ctx.projectRoot, ctx.args.feature);
   if (object.problems.length) return { error: `审查对象不全：${object.problems.join('；')}` };
   const key = materialKey(ctx.projectRoot, object.rows);
-  const reportDir = reportDirArg ?? `doc/reports/story/${ctx.args.feature}/${key.slice(0, 16)}`;
   const was = readJson(prepared, null);
+  // 报告目录随材料键定一次：同一份材料的历次回复都在这个目录里，结论按它们取
+  const bound = was?.report_dirs?.[key];
+  const asked = reportDirArg && String(reportDirArg).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  if (bound && asked && asked !== bound) {
+    return { error: `报告目录冲突：这一份材料（材料键 ${key.slice(0, 16)}…）的报告目录在首次准备时定为 ${bound}，`
+      + `这次指定的是 ${asked}。同一份材料的回复都在 ${bound}，准备记录与已有回复未改动；去掉 --report-dir 或写 ${bound} 重跑` };
+  }
+  const reportDir = bound ?? asked ?? `doc/reports/story/${ctx.args.feature}/${key.slice(0, 16)}`;
   let reportFile = null;
   let reused = false;
   if (was?.material_key === key && was.report_file) {
@@ -70,7 +79,7 @@ export function prepareReview(ctx, reportDirArg) {
   // 授权随这一次准备沿用与否，在准备开始时判定一次（`pendingDisclosure`）；披露已写进文件，材料键里含它
   const waiver = disclosedWaiver(ctx);
   fs.writeFileSync(prepared, `${JSON.stringify({ material_key: key, report_dir: reportDir, report_file: reportFile,
-    ...(waiver ? { waiver_at: waiver.at } : {}) }, null, 2)}\n`, 'utf-8');
+    report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(waiver ? { waiver_at: waiver.at } : {}) }, null, 2)}\n`, 'utf-8');
   const rel = path.relative(ctx.projectRoot, task).split(path.sep).join('/');
   return { material_key: key, task: rel, rows: object.rows, report_dir: reportDir, report_file: reportFile, reused };
 }
@@ -116,7 +125,7 @@ function reviewStatusLines(waiver) {
 
 /**
  * 记授权之前的核对（`story_flow.py unreviewed` 调用）：宿主有没有独立审查能力、这一版现在的审查结果。
- * 只有宿主确实没有能力、这一版也没有已知结论（report_missing）时，授权才成立。
+ * 授权的前提：当前 adapter 没声明审查子代理，且这一版的结果是 report_missing。
  */
 export function waiverCheck(ctx) {
   const host = hostReviewer(ctx.projectRoot);
@@ -135,7 +144,7 @@ export function reviewResult(ctx) {
   const object = reviewObject(ctx.projectRoot, ctx.args.feature);
   if (object.problems.length) return { result: 'input_invalid', detail: `审查对象不全：${object.problems.join('；')}` };
   if (materialKey(ctx.projectRoot, object.rows) !== was.material_key) {
-    return { result: 'subject_stale', detail: '准备审查之后审查对象变了——审的不是现在这份，重新 prepare，按新材料再审' };
+    return { result: 'subject_stale', detail: '准备审查之后审查对象变了：重跑 prepare，按新任务与材料键再派审' };
   }
   const at = { report_file: was.report_file };
   const file = abs(ctx, was.report_file);
@@ -170,9 +179,13 @@ function sections(text) {
   return out;
 }
 
-const cells = line => tableCells(line).map(c => c.replace(/[`*]/g, '').trim());
+const plain = c => c.replace(/[`*]/g, '').trim();
+const cells = line => tableCells(line).map(plain);
 
-/** 一节里的第一张表：表头、分隔行与数据行逐行核列数，读不完整就报，不丢行。没有表返回 null。 */
+/**
+ * 一节里的第一张表：表头、分隔行与数据行逐行核列数，读不完整就报，不丢行。没有表返回 null。
+ * `data` 去掉了反引号与强调符；`raw` 是原单元格，材料位置从它取引用边界。
+ */
 function table(body) {
   const lines = String(body ?? '').split(/\r?\n/).map(l => l.trim());
   const start = lines.findIndex(l => l.startsWith('|'));
@@ -184,25 +197,31 @@ function table(body) {
   if (rule.length !== header.length || !rule.every(c => /^:?-{3,}:?$/.test(c))) {
     return { header, error: '表头下一行要是分隔行（每列 ---），列数与表头相同' };
   }
-  const data = block.slice(2).map(cells);
-  const bad = data.findIndex(r => r.length !== header.length);
-  if (bad >= 0) return { header, error: `第 ${bad + 1} 行数据有 ${data[bad].length} 列，表头是 ${header.length} 列` };
-  return { header, data };
+  const raw = block.slice(2).map(l => tableCells(l).map(c => c.trim()));
+  const bad = raw.findIndex(r => r.length !== header.length);
+  if (bad >= 0) return { header, error: `第 ${bad + 1} 行数据有 ${raw[bad].length} 列，表头是 ${header.length} 列` };
+  return { header, data: raw.map(r => r.map(plain)), raw };
 }
 
-/** 材料位置里写到的文件：去掉章节定位（`#…`）与行号（`:行`），只认含路径分隔的词。 */
+/**
+ * 材料位置写到的文件：有反引号时每段反引号是一条路径，没有时整格是一条路径（路径可含空格）。
+ * 取得完整路径后再去掉章节定位（`#…`）与行号（`:行`）。
+ */
 function locations(cell) {
-  return String(cell).split(/[\s、，,；;]+/).map(t => t.replace(/#.*$/, '').replace(/:\d+(-\d+)?$/, ''))
-    .filter(t => t.includes('/'));
+  const text = String(cell).trim();
+  const quoted = [...text.matchAll(/`([^`]+)`/g)].map(m => m[1]);
+  return (quoted.length ? quoted : [text]).map(t => t.trim().replace(/#.*$/, '').replace(/:\d+(-\d+)?$/, ''))
+    .filter(Boolean);
 }
 
 /** 一份回复对这一份材料：材料键、三节、判据逐项、发现的材料引用、结论与发现一致。 */
 function judge(text, key, materials) {
   const invalid = why => ({ result: 'report_invalid',
-    detail: `回复不合报告合同：${why.join('；')}——保留这份回复，请审查者按任务「报告怎么写」重给，不改它的结论` });
+    detail: `回复不合报告合同：${why.join('；')}。这份回复留在原处；跑 \`story-build review --action prepare\` 取新的回复位置`
+      + '（同一份材料沿用原报告目录），把这份回复连同任务「报告怎么写」交审查者重给一份，写到新位置' });
   const keys = [...text.matchAll(/^material_key: *([0-9a-f]{64}) *$/gm)].map(m => m[1]);
   if (keys.length !== 1) return invalid([`material_key 行要恰好一行（现在 ${keys.length} 行）`]);
-  if (keys[0] !== key) return { result: 'subject_stale', detail: '报告回显的材料键不是这一次准备的——审的不是现在这份，按新任务重新派审' };
+  if (keys[0] !== key) return { result: 'subject_stale', detail: '报告回显的材料键不是这一次准备的：按这一次的任务与材料键重新派审' };
   const parts = sections(text);
   const why = REPORT_HEADINGS.filter(h => parts.get(h)?.length !== 1).map(h => `二级标题「${h}」要恰好一个`);
   if (why.length) return invalid(why);
@@ -222,13 +241,13 @@ function judge(text, key, materials) {
     if (!basis) why.push(`判据 ${id} 没写依据`);
   }
   const paths = new Set(materials.map(m => m.path));
-  for (const [no, severity, id, where, what, owner] of found.data) {
+  found.data.forEach(([no, severity, id, where, what, owner], i) => {
     if (!no || !what || !owner) why.push(`发现 ${no || '（无编号）'} 缺编号、问题与依据或修正责任`);
     if (!SEVERITIES.includes(severity)) why.push(`发现 ${no} 的严重程度「${severity}」不是 ${SEVERITIES.join('/')}`);
     if (!ids.includes(id)) why.push(`发现 ${no} 的判据 ID「${id}」不在判据里`);
-    const refs = locations(where);
+    const refs = locations(found.raw[i][3]);
     if (!refs.length || refs.some(r => !paths.has(r))) why.push(`发现 ${no} 的材料位置「${where}」不是这一次审查材料里的文件`);
-  }
+  });
   const numbers = found.data.map(r => r[0]);
   if (new Set(numbers).size !== numbers.length) why.push('发现编号有重复');
   const lines = String(parts.get('总体结论')[0]).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -254,7 +273,8 @@ export function discloseInStory(ctx) {
   const text = readText(ctx.storyPath);
   const span = chapter && text !== null ? chapterSpan(text, chapter.title) : null;
   if (!span) return;
-  let lines = text.slice(span.start, span.end).split('\n');
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  let lines = text.slice(span.start, span.end).split(/\r?\n/);
   const at = zoneSpan(lines, chapter.review_status);
   if (at) lines = [...lines.slice(0, at.start > 0 && !lines[at.start - 1].trim() ? at.start - 1 : at.start), ...lines.slice(at.end)];
   const block = reviewStatusBlock(ctx);
@@ -263,6 +283,6 @@ export function discloseInStory(ctx) {
     while (k > 0 && !lines[k - 1].trim()) k -= 1;
     lines = [...lines.slice(0, k), '', ...block, ...lines.slice(k)];
   }
-  const out = text.slice(0, span.start) + lines.join('\n') + text.slice(span.end);
+  const out = text.slice(0, span.start) + lines.join(eol) + text.slice(span.end);
   if (out !== text) fs.writeFileSync(ctx.storyPath, out, 'utf-8');
 }

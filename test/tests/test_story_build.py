@@ -573,9 +573,11 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
                        "- 幂等：同卡同日只记一次", "- 非功能：latency_p95_ms：800", "**second**"):
             self.assertIn(needle, text)
         self.assertNotIn("api/wallet.yaml", text, "来源路径是仓内路径，不进归档件的附录")
-        # 结构化的错误条目没有人读写法：报出位置交设计，不写空、不略过
+        # 结构化的错误条目章节合同还没有人读写法：报出位置，蓝图保持原样，交扩展维护补写法
         self.assertEqual(1, len(self.gaps), self.gaps)
         self.assertIn("contracts.balance-query.errors.items.conflict", self.gaps[0])
+        self.assertIn("投影适配缺口", self.gaps[0])
+        self.assertIn("Story Extension 维护者", self.gaps[0])
 
     def test_tables_do_not_run_together(self) -> None:
         """每张表前面是空行——连着写会被 markdown 并成一张错表。"""
@@ -599,9 +601,10 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
         text = "\n".join(self.rows("技术契约·数据存储", bp))
         self.assertIn("| balance-cache | balance | 权威：云侧；持久化：relationalStore:balance；投影与缓存：view:runtime/node:home；"
                       "对账：以云侧为准 | 归属：WalletMain；状态：加载、完成 | 恢复编号：requery；写入失败：失败保留上次值 |", text)
-        # 合同没给写法的子字段：报出位置交设计，不写空、不略过
+        # 合同没给写法的子字段：报出位置交扩展维护；同一数据流另有精确明细也照常投影，缺口仍在
         self.assertEqual(1, len(self.gaps), self.gaps)
         self.assertIn("runtime_data_flows.balance-cache.failure_recovery.response_loss", self.gaps[0])
+        self.assertIn("蓝图保持原样", self.gaps[0])
         self.assertIn("| 切账号 | 清空 |", text, "精确明细的正文没有逐字带上")
         self.assertIn("flow:balance-cache", text)
 

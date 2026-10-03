@@ -202,8 +202,7 @@ def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, r
                    withdraw: bool = False) -> dict:
     """人授权这一版不经独立审查交付：原话、原因与授权给在哪一版，记进流程契约（人签与发布确认同在这里）。
 
-    只在宿主确实没有独立审查能力（原生按当前 adapter 的 verifier_subagent 声明判）、这一版也没有已知审查结论时成立：
-    已有不通过的结论、坏报告、没派审都不归这一类。记下之后重跑 `story-build review --action prepare`，
+    前提：当前 adapter 没声明审查子代理（读它的 verifier_subagent 声明），且这一版的审查结果是 report_missing。记下之后重跑 `story-build review --action prepare`，
     审查状态写进 Story 交付章与 Review 题头，再登记。`--withdraw` 撤回，之后按正常审查走。
     """
     contract = require(load(feature_root))
@@ -224,10 +223,10 @@ def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, r
         raise FlowError("核不了宿主能力与审查结果：" + (proc.stderr or proc.stdout).strip()[:600])
     state = json.loads(rows[-1])
     if state["host_reviewer"]:
-        raise FlowError(f"当前宿主 {state['adapter']} 声明能派独立审查子代理：按 `phases/design.md`「五」派审，不走未审查交付")
+        raise FlowError(f"当前宿主 {state['adapter']} 声明能派独立审查子代理：按 `phases/design.md`「五」派审")
     if state["result"] != "report_missing" or not state.get("material_key"):
-        raise FlowError(f"这一版的审查结果是 {state['result']}（{state['detail']}）：已有结论或报告要处理的不归未审查交付；"
-                        "还没准备的先 `story-build review --action prepare` 定稿")
+        raise FlowError(f"这一版的审查结果是 {state['result']}（{state['detail']}）：未审查授权记在已准备、还没有回复的这一版上"
+                        "（report_missing）；按 `phases/design.md`「五」第 3 步的表处理这个结果，还没准备的先跑 `story-build review --action prepare`")
     contract["review_waiver"] = {"material_key": state["material_key"], "reason": reason.strip(), "reply": reply.strip(),
                                  "by": "human", "adapter": state["adapter"], "at": now()}
     save(feature_root, contract)

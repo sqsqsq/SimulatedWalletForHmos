@@ -15,7 +15,8 @@
  */
 
 /**
- * `verify` 的封闭取值：这处落点的证据由谁取。`ut / device / both` 是实机，`review` 只由 verifier 判。
+ * `verify` 的封闭取值：这处落点的验证责任。`ut` 单元测试、`device` 设备验证、`both` 两者都要、`review` 由 verifier 判；
+ * 实际在不在设备上执行，由运行证据证明。
  * 探针不在其中——它随规约走，coding 对形态匹配的每处落点自动跑，不是作者为某处落点做的选择。
  */
 import { entityId, resourceEntries } from './contracts.mjs';
@@ -30,7 +31,7 @@ const VERIFY_BY_EXECUTOR = { 实机: ['ut', 'device', 'both'] };
  * @returns {string|null} 对不上时的说明
  */
 export function verifyProblem(entry, verify) {
-  if (!VERIFY_KINDS.includes(verify)) return `verify「${verify || '(空)'}」不是 ${VERIFY_KINDS.join(' / ')} 之一——verify 取值封闭，定这处落点的证据由谁取，ut / device / both 是实机，review 只由 verifier 判`;
+  if (!VERIFY_KINDS.includes(verify)) return `verify「${verify || '(空)'}」不是 ${VERIFY_KINDS.join(' / ')} 之一——verify 取值封闭，定这处落点的验证责任：ut 单元测试、device 设备验证、both 两者都要、review 由 verifier 判`;
   const [executor, allowed] = Object.entries(VERIFY_BY_EXECUTOR)
     .find(([x]) => (entry?.executors ?? []).includes(x)) ?? [];
   return allowed && !allowed.includes(verify)

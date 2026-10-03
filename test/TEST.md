@@ -366,35 +366,23 @@ python test/scripts/run_multi_case.py finalize `
 
 ## 5. 离线验证
 
-命令从仓根执行，并行参数照抄不删（`-n auto --dist loadscope`、`--jobs`、`-j`；`--dist loadscope` 让同一个类的用例共用夹具、不互相踩）。
+离线验证用 `test/scripts/verify.py`，从仓根执行，只选场景。并行参数、模板装配与先后顺序都写在脚本里，不手拼 pytest 或检查命令：
+
+| 场景 | 命令 | 什么时候跑 |
+|---|---|---|
+| 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
+| 全量 | `python test/scripts/verify.py full` | 提交或交回前一次 |
+| 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4 |
+| 交回 | `python test/scripts/verify.py handback` | 交回前一次：全量 → 失效形态 → CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`，依次串行 |
+| Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
+
+每步的完整输出写到 `output/verify/<时刻>-<场景>/<步骤>.log`，控制台只打印每步的结论行与耗时；有一步失败退出码非 0。
+全量与失效形态不要同时起两个场景：两者争用同一份共享测试状态缓存。
+
 `test/tests/conftest.py` 给测试起的 node 进程带上 ts-node 转译缓存（系统临时目录 `story-ts-transpile-cache`，按内容取键，删了只会重新转译）；
 要读原生 Framework 的用例按准备状态分小类，一个类只造一种状态：`loadscope` 按类分 worker，大类会串行拖住整轮。
 
-```powershell
-python -m pytest test/tests -n auto --dist loadscope
-python -m pytest tools/cli/tests -n auto --dist loadscope
-python -m compileall -q -j 0 tools/cli test/scripts
-python -m tools.cli.scripts.validate_clis
-python test/scripts/run_multi_case.py plan --all --jobs <实际Case数>
-python test/scripts/check_failure_modes.py --project-root <装好开发源的模板>
-node --check <每个 extensions 下的 .mjs>      # 彼此无依赖，可同时起
-```
-
-`--project-root` 给装好开发源的模板：用最近一次 `start` 的 `%TEMP%/sw-story/<suite-id>/workspace-template`，或不起 CLI、按 §1.2 同一装配顺序
-现建一份（`<id>` 每次取新值，打印的是模板路径）：
-
-```powershell
-$id = "offline-" + (Get-Date -Format yyyyMMdd-HHmmss)
-python -c @"
-import sys, pathlib
-sys.path.insert(0, 'test/scripts')
-import run_multi_case as m
-d = pathlib.Path('output/scratch/$id'); d.mkdir(parents=True)
-print(m.create_workspace_template(d, '$id')[0])
-"@
-```
-
-- 按影响范围分层跑：改一处只跑直接覆盖它的用例（`-k <关键词>` 或那几个文件）；一个子步骤收尾跑它所在的功能块；全量与失效形态回归只在提交或交回前各跑一次；无新改动不重复刷全量，要看某条失败的细节只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
+- 按影响范围分层跑：改一处用 `affected`；全量与失效形态回归只在提交或交回前各跑一次（`handback` 一次跑完）；无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明。这些命令不启动真实被测 CLI。
 - pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录。
 - 串行只在排障时用，且只串行跑那一条：`python -m unittest discover test/tests`。测试隔离与慢用例的编写纪律见 [tests/README.md](tests/README.md)。

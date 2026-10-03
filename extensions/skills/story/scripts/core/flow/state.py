@@ -37,6 +37,8 @@ DESIGN = ("AR", "design.md")
 # 模型把提取结果写在这里，由 `complete` 提交上去。写在同一个文件里的话，
 # 材料指纹会因为自己的输出而变，流程被自己推回未定状态。
 DESIGN_DRAFT = ("AR", "story-src", "design-draft.md")
+#: 设计输入的默认落点：模型写采用集合、人签编号与语义条目
+DESIGN_INPUT = ("AR", "story-src", "design-input.json")
 # 到了这两步就意味着**本轮范围已定**，S4 可以做。候选稿在不在由 `complete` 自己核，
 # 不借道 next_step——候选可以由 `--from` 指到别处，而 next_step 只认默认落点。
 S4_STEPS = ("generate_design", "run_complete")

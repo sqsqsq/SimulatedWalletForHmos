@@ -5,7 +5,7 @@ description: 进入一个 Feature 阶段或蓝图设计动作之前，取当前�
 
 # story-knowledge — 动作前取知识任务
 
-读者：进入 Feature 阶段或蓝图设计动作的主 agent。时机：阶段作业开始之前（manifest 的 phase_bindings 把本 Skill 登记在每个 Feature 阶段之前）；蓝图的来源发现与设计之前由设计作者调用；质询任务由主执行者取来交给隔离的质询者，取任务只是准备，不算质询。
+读者：进入 Feature 阶段或蓝图设计动作的主 agent。时机：阶段作业开始之前（manifest 的 phase_bindings 把本 Skill 登记在每个 Feature 阶段之前）；蓝图的来源发现与设计之前由设计作者调用；质询任务由主执行者取来交给隔离的质询者，由质询者完成质询。
 
 | 场景 | 命令 |
 |---|---|

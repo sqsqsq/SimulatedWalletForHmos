@@ -878,7 +878,7 @@ class TheRequestedResultDecidesTheClose(UpdateCase):
         rid = self.open_round("materials")
         self.assertEqual("documents", self.update("--result", "documents")["requested_result"])
         refused = self.update("--result", "materials")
-        self.assertIn("不能改成 materials", refused.get("error", ""), refused)
+        self.assertIn("只能从 materials 改为 documents", refused.get("error", ""), refused)
         rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
         self.assertEqual("documents", rec["requested_result"])
 
