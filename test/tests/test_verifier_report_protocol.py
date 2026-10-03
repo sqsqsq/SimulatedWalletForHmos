@@ -229,6 +229,39 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertTrue(again["reused"])
         self.assertEqual(original, self.root / again["report_file"])
 
+    def restored(self, kind: str) -> tuple[Path, dict, dict]:
+        """材料 A 有了回复 → 改成 B 并准备 → 恢复 A 的原始字节再准备。返回 A 的回复、第二次准备 A 的输出、check 的结果。"""
+        original = self.reviewed(kind)
+        a = self.story.read_bytes()
+        self.story.write_bytes(a + "\n改成 B 的一句。\n".encode("utf-8"))
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.story.write_bytes(a)
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+        prepared = json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
+        return original, prepared, self.result()
+
+    def test_a_restored_material_reuses_its_passing_report(self) -> None:
+        """A→B→A：A 目录里的 pass 由 prepare 复用（reused、原回复），check 读的是同一份。"""
+        original, prepared, result = self.restored("pass")
+        self.assertTrue(prepared["reused"], prepared)
+        self.assertEqual(original, self.root / prepared["report_file"])
+        self.assertEqual(("pass", prepared["report_file"]), (result["result"], result["report_file"]))
+
+    def test_a_restored_material_reuses_its_advisory_report(self) -> None:
+        original, prepared, result = self.restored("advice")
+        self.assertTrue(prepared["reused"], prepared)
+        self.assertEqual(("warn", prepared["report_file"]), (result["result"], result["report_file"]))
+
+    def test_a_restored_material_keeps_its_blocker(self) -> None:
+        """A→B→A：A 的 fail 不被复用成通过；prepare 另起回复位置，check 仍是 fail，之后在原目录复审可更新。"""
+        original, prepared, result = self.restored("block")
+        self.assertFalse(prepared["reused"], prepared)
+        self.assertNotEqual(original, self.root / prepared["report_file"])
+        self.assertEqual("fail", result["result"])
+        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.assertEqual("pass", self.result()["result"])
+
     def test_a_new_reply_after_a_failing_one_is_judged_on_its_own(self) -> None:
         first = self.reviewed("block")
         self.assertEqual("fail", self.result()["result"])

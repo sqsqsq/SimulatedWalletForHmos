@@ -3,7 +3,8 @@
  *
  * - **准备**：写审查任务，按审查对象算材料键（这一次 Story 的身份），定这一份回复的位置。报告目录随材料键在首次准备时
  *   定下，同一份材料沿用它，另指目录报冲突。
- *   同一份材料已有有效通过的报告就复用；还没写回复的位置复用；之前的回复坏了或不通过，另起一份，旧回复保留。
+ *   这份材料在报告目录里的结论与核结果同一份读取：有效通过（pass / warn）就复用那份回复，材料改走又改回来也一样；
+ *   其余情况另起下一个编号的回复位置，旧回复保留。
  * - **核结果**：显式 check、登记、交付门与状态共用这一份判定，只读：审的是不是现在这份、报告合不合合同、结论是什么。
  *
  * | 结果 | 含义 |
@@ -64,18 +65,13 @@ export function prepareReview(ctx, reportDirArg) {
       + `这次指定的是 ${asked}。同一份材料的回复都在 ${bound}，准备记录与已有回复未改动；去掉 --report-dir 或写 ${bound} 重跑` };
   }
   const reportDir = bound ?? asked ?? `doc/reports/story/${ctx.args.feature}/${key.slice(0, 16)}`;
-  let reportFile = null;
-  let reused = false;
-  if (was?.material_key === key && was.report_file) {
-    const last = reviewResult(ctx);
-    reused = ['pass', 'warn'].includes(last.result) && last.report_file === was.report_file;
-    if (reused || ['report_missing', 'unreviewed'].includes(last.result)) reportFile = was.report_file;
-  }
-  if (!reportFile) {
-    const taken = fs.existsSync(abs(ctx, reportDir)) ? fs.readdirSync(abs(ctx, reportDir))
-      .map(f => /^review-original\.(\d+)\.md$/.exec(f)?.[1]).filter(Boolean).map(Number) : [];
-    reportFile = `${reportDir}/${reply(Math.max(0, ...taken) + 1)}`;
-  }
+  // 这份材料已有的结论与 check 同一份读取；材料改走又改回来（A→B→A）也认目录里 A 的回复
+  const current = was?.material_key === key ? was.report_file : null;
+  let known = materialConclusion(ctx, key, reportDir, current, object.rows);
+  // 当前回复不合合同时，新开回复位置之后 check 读的是目录里其余回复中最新的有效结论，这里按同样的读法
+  if (known?.result === 'report_invalid') known = earlierConclusion(ctx, key, reportDir, current, object.rows);
+  const reused = ['pass', 'warn'].includes(known?.result);
+  const reportFile = reused ? known.report_file : `${reportDir}/${reply(Math.max(0, ...replyNumbers(ctx, reportDir)) + 1)}`;
   // 授权随这一次准备沿用与否，在准备开始时判定一次（`pendingDisclosure`）；披露已写进文件，材料键里含它
   const waiver = disclosedWaiver(ctx);
   fs.writeFileSync(prepared, `${JSON.stringify({ material_key: key, report_dir: reportDir, report_file: reportFile,
@@ -147,11 +143,9 @@ export function reviewResult(ctx) {
     return { result: 'subject_stale', detail: '准备审查之后审查对象变了：重跑 prepare，按新任务与材料键再派审' };
   }
   const at = { report_file: was.report_file };
-  const file = abs(ctx, was.report_file);
-  if (fs.existsSync(file)) return { ...judge(fs.readFileSync(file, 'utf-8'), was.material_key, object.rows), ...at };
-  // 这一份还没回复：同一份材料之前已有有效结论的，结论仍在——重新准备不撤销已知的阻断
-  const earlier = earlierConclusion(ctx, was, object.rows);
-  if (earlier) return earlier;
+  // 这一份还没回复时，同一份材料之前已有的有效结论仍在：重新准备不撤销已知的阻断
+  const known = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object.rows);
+  if (known) return known;
   const waiver = readJson(ctx.flowPath, null)?.review_waiver;
   if (waiver?.at && was.waiver_at === waiver.at && !hostReviewer(ctx.projectRoot).declared) {
     return { result: 'unreviewed', detail: `本版未经独立审查：${waiver.reason}；人授权原话「${waiver.reply}」（${waiver.at}）`, ...at };
@@ -159,13 +153,28 @@ export function reviewResult(ctx) {
   return { result: 'report_missing', detail: `审查者的回复不在 ${was.report_file}——把独立审查者的回复原样写到那里`, ...at };
 }
 
-/** 同一份材料（同一报告目录）里之前的回复，从新到旧取第一份有效结论；没有返回 null。 */
-function earlierConclusion(ctx, was, materials) {
-  const dir = abs(ctx, was.report_dir);
-  const files = fs.existsSync(dir) ? fs.readdirSync(dir).map(f => [f, Number(/^review-original\.(\d+)\.md$/.exec(f)?.[1])])
-    .filter(([, n]) => n).sort((a, b) => b[1] - a[1]).map(([f]) => `${was.report_dir}/${f}`) : [];
-  for (const rel of files.filter(f => f !== was.report_file)) {
-    const out = judge(fs.readFileSync(abs(ctx, rel), 'utf-8'), was.material_key, materials);
+/**
+ * 这一份材料在它的报告目录里的结论，prepare 与 check 共用：当前回复位置有回复就判它；
+ * 没有就从目录里其余回复取最新的有效结论；都没有返回 null。
+ */
+function materialConclusion(ctx, key, reportDir, reportFile, materials) {
+  if (reportFile && fs.existsSync(abs(ctx, reportFile))) {
+    return { ...judge(fs.readFileSync(abs(ctx, reportFile), 'utf-8'), key, materials), report_file: reportFile };
+  }
+  return earlierConclusion(ctx, key, reportDir, reportFile, materials);
+}
+
+/** 报告目录里已有回复的编号。 */
+function replyNumbers(ctx, reportDir) {
+  const dir = abs(ctx, reportDir);
+  return fs.existsSync(dir) ? fs.readdirSync(dir).map(f => Number(/^review-original\.(\d+)\.md$/.exec(f)?.[1])).filter(Boolean) : [];
+}
+
+/** 报告目录里除 `skip` 之外的回复，从新到旧取第一份有效结论（pass / warn / fail）；没有返回 null。 */
+function earlierConclusion(ctx, key, reportDir, skip, materials) {
+  const files = replyNumbers(ctx, reportDir).sort((a, b) => b - a).map(n => `${reportDir}/${reply(n)}`);
+  for (const rel of files.filter(f => f !== skip)) {
+    const out = judge(fs.readFileSync(abs(ctx, rel), 'utf-8'), key, materials);
     if (['pass', 'warn', 'fail'].includes(out.result)) return { ...out, report_file: rel };
   }
   return null;

@@ -83,10 +83,18 @@ def build_template(log_dir: Path) -> str:
 
 
 def summary(name: str, text: str) -> str:
-    """每步的结论行：失效形态取「形态 N 条」那一行，Case 计划列出 Case，其余（pytest 的计数行等）取最后一行非空输出。"""
+    """每步的结论行：失效形态取「形态 N 条」那一行，compileall 与 validate_clis、Case 计划各给一句，其余（pytest 的计数行等）取最后一行非空输出。"""
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if name == "failure-modes":
         return next((l for l in reversed(lines) if l.startswith("形态 ")), lines[-1] if lines else "")
+    if name == "compileall":
+        return "无编译错误" if not lines else lines[-1]
+    if name == "validate-clis":
+        try:
+            report = json.loads(text)
+        except ValueError:
+            return lines[-1] if lines else ""
+        return f"ok={report.get('ok')}，CLI：{'、'.join(report.get('clis', []))}"
     if name == "cases":
         try:
             plan = json.loads(text)
