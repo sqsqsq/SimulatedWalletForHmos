@@ -1217,6 +1217,9 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.assertEqual("closed", self.update("--action", "close").get("status"))
 
+class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChangesCase):
+    """不采用的新材料与归档后改范围：有效输入与范围关卡各按自己的规则走。"""
+
     def test_a_new_material_left_out_is_recorded_without_changing_the_input(self) -> None:
         """来了一份新材料而本轮不采用：重跑 complete 只记下这次材料，冻结版本照旧复用、设计不用同步；成文重新登记后收口。"""
         self.assertTrue(self.register().get("success"), self.outputs[-1])

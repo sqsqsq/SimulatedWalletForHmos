@@ -7,11 +7,14 @@
     python test/scripts/verify.py affected <测试文件…> [-k <关键词>]   # 改一处：只跑直接覆盖它的测试
     python test/scripts/verify.py full                               # 全量 test/tests
     python test/scripts/verify.py failure-modes                      # 现建装好开发源的模板，跑失效形态
-    python test/scripts/verify.py handback                           # 交回前：全量 → 失效形态 → 其余离线检查，依次串行
+    python test/scripts/verify.py handback                           # 交回前：全量、失效形态、其余离线检查三条通道同时跑
     python test/scripts/verify.py cases                              # 多 Case 计划（全部 Case，并行数取 Case 数）
 
-每一步的完整输出写到 ``output/verify/<时刻>/<步骤>.log``，控制台只打印每步的结论行与耗时；
-有一步失败，退出码非 0。场景与层次的用法见 test/TEST.md §5。
+每一步的完整输出写到 ``output/verify/<时刻>/<步骤>.log``，控制台按完成先后打印每步的结论行与耗时，
+最后按固定顺序汇总一次；有一步失败，退出码非 0。场景与层次的用法见 test/TEST.md §5。
+
+同时跑的前提是各步不写同一处：每次现建自己的模板，pytest 与失效形态各用自己的临时目录；
+跨进程共享的重夹具（``test/tests/shared_state.py``）有锁，先在临时位置造好再改名。
 """
 from __future__ import annotations
 
@@ -20,7 +23,9 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -104,7 +109,10 @@ def summary(name: str, text: str) -> str:
     return lines[-1] if lines else ""
 
 
-def run(name: str, argv: list[str], log_dir: Path) -> bool:
+_PRINT = threading.Lock()
+
+
+def run(name: str, argv: list[str], log_dir: Path) -> tuple[str, bool, str]:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     started = time.monotonic()
     if argv[0] == "node-check":
@@ -121,21 +129,29 @@ def run(name: str, argv: list[str], log_dir: Path) -> bool:
         text = proc.stdout + proc.stderr
         ok = proc.returncode == 0
     (log_dir / f"{name}.log").write_text(text, encoding="utf-8")
-    print(f"[{'通过' if ok else '失败'}] {name}（{time.monotonic() - started:.0f} 秒）：{summary(name, text)}", flush=True)
-    return ok
+    line = f"[{'通过' if ok else '失败'}] {name}（{time.monotonic() - started:.0f} 秒）：{summary(name, text)}"
+    with _PRINT:
+        print(line, flush=True)
+    return name, ok, line
 
 
-def scenario(args: argparse.Namespace) -> list:
-    """场景 → 依次执行的步骤组。每组拿日志目录、返回步骤列表，轮到它才求值：失效形态的模板在前面的步骤跑完后才建。"""
+def scenario(args: argparse.Namespace) -> list[list]:
+    """场景 → 通道：不同通道同时跑，同一通道里的步骤组先后跑。
+
+    每组拿日志目录、返回步骤列表，轮到它才求值：失效形态的模板在它那条通道开跑时才建。
+    """
     template_steps = lambda d: failure_mode_steps(build_template(d))  # noqa: E731
     return {
-        "affected": [lambda _: affected_steps(args.targets, args.keyword)],
-        "full": [lambda _: full_steps()],
-        "failure-modes": [template_steps],
-        "cases": [lambda _: case_steps()],
-        # 全量与失效形态先后跑：同时跑会争用同一份共享测试状态缓存
-        "handback": [lambda _: full_steps(), template_steps, lambda _: other_offline_steps()],
+        "affected": [[lambda _: affected_steps(args.targets, args.keyword)]],
+        "full": [[lambda _: full_steps()]],
+        "failure-modes": [[template_steps]],
+        "cases": [[lambda _: case_steps()]],
+        "handback": [[lambda _: full_steps()], [template_steps], [lambda _: other_offline_steps()]],
     }[args.scenario]
+
+
+def run_lane(lane: list, log_dir: Path) -> list[tuple[str, bool, str]]:
+    return [run(name, cmd, log_dir) for group in lane for name, cmd in group(log_dir)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -155,8 +171,15 @@ def main(argv: list[str] | None = None) -> int:
     log_dir = REPO / "output" / "verify" / f"{datetime.now():%Y%m%d-%H%M%S}-{args.scenario}"
     log_dir.mkdir(parents=True, exist_ok=True)
     print(f"[verify] {args.scenario}，日志在 {log_dir.relative_to(REPO).as_posix()}", flush=True)
-    results = [run(name, cmd, log_dir) for group in scenario(args) for name, cmd in group(log_dir)]
-    return 0 if all(results) else 1
+    lanes = scenario(args)
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+        results = [r for lane in pool.map(lambda lane: run_lane(lane, log_dir), lanes) for r in lane]
+    if len(results) > 1:
+        print(f"[verify] 汇总（墙钟 {time.monotonic() - started:.0f} 秒）：", flush=True)
+        for _, _, line in results:
+            print(f"  {line}", flush=True)
+    return 0 if all(ok for _, ok, _ in results) else 1
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -372,17 +372,18 @@ python test/scripts/run_multi_case.py finalize `
 |---|---|---|
 | 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
 | 全量 | `python test/scripts/verify.py full` | 提交或交回前一次 |
-| 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4 |
-| 交回 | `python test/scripts/verify.py handback` | 交回前一次：全量 → 失效形态 → CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`，依次串行 |
+| 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4；各条形态按进程并行，结果按台账顺序输出 |
+| 交回 | `python test/scripts/verify.py handback` | 交回前一次：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑 |
 | Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
 
-每步的完整输出写到 `output/verify/<时刻>-<场景>/<步骤>.log`，控制台只打印每步的结论行与耗时；有一步失败退出码非 0。
-全量与失效形态不要同时起两个场景：两者争用同一份共享测试状态缓存。
+每步的完整输出写到 `output/verify/<时刻>-<场景>/<步骤>.log`，控制台按完成先后打印每步的结论行与耗时，多步时最后按固定顺序汇总；有一步失败退出码非 0。
+同时跑的前提是各步只写自己的位置：每次现建自己的模板，测试与失效形态各用自己的临时目录，跨进程共享的重夹具（`tests/shared_state.py`）有锁、造好再改名。
+新写的测试或失效形态检查要守这一条；要排查并行带来的问题时，失效形态加 `--jobs 1` 串行对照。
 
 `test/tests/conftest.py` 给测试起的 node 进程带上 ts-node 转译缓存（系统临时目录 `story-ts-transpile-cache`，按内容取键，删了只会重新转译）；
 要读原生 Framework 的用例按准备状态分小类，一个类只造一种状态：`loadscope` 按类分 worker，大类会串行拖住整轮。
 
-- 按影响范围分层跑：改一处用 `affected`；全量与失效形态回归只在提交或交回前各跑一次（`handback` 一次跑完）；无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
+- 按影响范围分层跑：改一处用 `affected`；全量与失效形态回归只在提交或交回前跑一次（`handback` 同时跑完）；无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明。这些命令不启动真实被测 CLI。
 - pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录。
 - 串行只在排障时用，且只串行跑那一条：`python -m unittest discover test/tests`。测试隔离与慢用例的编写纪律见 [tests/README.md](tests/README.md)。
@@ -479,11 +480,16 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 | 5 | spec 阶段上下文增量 | ≤ 150K |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
 
-`segments` 按段给出（双检查点单分 `initial` / `update`，普通单一段 `whole`）：`duration_min`、`model_gap_sec`、`tool_gap_sec`、`task_runs`、
-`task_gap_sec`、`first_harness`、`first_story_register`、`rework_min`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
-子任务按派给它的任务分五类：`reader_review`（Story 人读审查）、`design_questioning`（蓝图设计质询）、`format_fix`（已有审查回复修格式或重给）、
-`stage_verifier`（阶段 verifier）、`author`（其余独立作者）；`gap_sec_by_kind` 的门禁时间含 harness-runner 与 Story 的
-`story-build check`、`review --action check`、`story_flow.py story`。
+`segments` 按段给出（双检查点单分 `initial` / `update`，普通单一段 `whole`）：`duration_min`、`model_gap_sec`、`tool_gap_sec`、
+`task_runs_inferred`、`task_gap_sec_inferred`、`first_gate`、`first_story_register`、`gate_rounds_with_fail`、`gate_rounds_unknown`、
+`rework_min`、`rework_open`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
+
+- **门禁**：harness-runner 与 Story 的 `story-build check`、`review --action check`、`story_flow.py story`，按脚本名与动作认，参数顺序不论；
+  结果只读输出里的结构化结论，读不到记未知（`gate_rounds_unknown`），不当成零失败。返工按同一动作、同一对象从失败算到下一次通过，
+  没修好的列在 `rework_open`。全程与分段用同一份计算。
+- **子任务**：`tasks` 逐次列出说明、子代理类型、引用的文件与时间间隔。角色只按引用的任务文件（Story 审查任务、蓝图质询目录）或子代理类型
+  **推断**，没有依据或依据冲突记 `unknown`；独立作者、格式修正等正式角色与成本，由维护者对照真实派遣在后评里核定。
+- 耗时都是事件间隔归属的近似值，不是实测执行时长。
 
 第 3 项是调查信号：记录作者为何读 checker、读后做了什么，与产物、性能、Knowledge 应用及跨 Case 重复情况一起判断（AGENTS §1）。
 

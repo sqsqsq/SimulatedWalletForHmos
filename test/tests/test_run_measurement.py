@@ -236,13 +236,19 @@ class MeasureReadsRealEvents(unittest.TestCase):
         r = self._measure([{
             "tool_name": "bash",
             "tool_input": {"command":
+                           "node doc/extensions/skills/story/scripts/core/story-build.mjs skeleton "
+                           "--feature X | tail -20"},
+            "tool_output": "[story-build skeleton] 已起手",
+        }, {
+            "tool_name": "bash",
+            "tool_input": {"command":
                            "node doc/extensions/skills/story/scripts/core/story-build.mjs check "
                            "--feature X | tail -20"},
-            "tool_output": "[story-build check] 通过",
+            "tool_output": "[story-build check] 通过：10 章",
         }])
         self.assertEqual(0, r["reads_checker_source"])
         self.assertEqual(0, r["reads_rule_text"])
-        self.assertEqual(1, r["bash_rule_path_not_read"], "执行判据脚本要记成未分类，看得见")
+        self.assertEqual(1, r["bash_rule_path_not_read"], "执行非门禁脚本要记成未分类，看得见；check 是门禁")
         self.assertEqual("v3", r["read_algorithm"])
 
     def test_an_escaped_bar_in_a_grep_pattern_is_not_a_pipe(self):
@@ -382,33 +388,118 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertEqual("run_state", r["human_wait_source"])
 
     def test_time_is_split_by_what_was_running(self):
-        """门禁 / 各类子任务 / 成文 分开归属——只报总墙钟看不出时间花在哪。Story 自己的检查命令也算门禁。"""
+        """门禁 / 子任务 / 成文 分开归属——只报总墙钟看不出时间花在哪。Story 自己的检查命令也算门禁。"""
         r = self._measure([
             {"tool_name": "write", "tool_input": {"filePath": "a.md"}},
             _harness(GATE_FAIL),
             {"tool_name": "task", "tool_input": {"subagent_type": "verifier"}},
-            {"tool_name": "bash", "tool_input": {"command": "node doc/extensions/skills/story/scripts/core/story-build.mjs "
-                                                           "review --action check --feature X"}},
+            _story_review("fail"),
         ])
         gaps = r["gap_sec_by_kind"]
         self.assertGreater(gaps["gate"], 60, "story-build review --action check 没算进门禁")
-        self.assertGreater(gaps["stage_verifier"], 0)
+        self.assertGreater(gaps["task"], 0)
 
-    def test_subtasks_are_told_apart_by_what_they_were_given(self):
-        """子任务按派给它的任务分：人读审查、设计质询、格式修正、阶段 verifier，其余是独立作者。"""
-        cases = {
-            "reader_review": {"description": "独立审查 X Story",
-                              "prompt": "按任务文件 `doc/features/X/AR/story-src/review/task.md` 逐字执行，回复写到 review-original.1.md"},
-            "design_questioning": {"description": "蓝图质询",
-                                   "prompt": "按 knowledge-task --action questioning 的范围逐项回复"},
-            "format_fix": {"description": "修正 review 报告格式",
-                           "prompt": "只按原报告内容修正格式：doc/reports/story/X/k/review-original.1.md"},
-            "stage_verifier": {"subagent_type": "verifier", "prompt": "读 verifier_request 后审 spec"},
-            "author": {"description": "构建 canonical blueprint", "prompt": "构造 component blueprint 并迭代到无 BLOCKER"},
-        }
-        for want, tool_input in cases.items():
-            with self.subTest(kind=want):
-                self.assertEqual(want, measure_run.task_kind({"tool_name": "task", "tool_input": tool_input}))
+
+class SubtaskRolesAreInferredFromStructure(unittest.TestCase):
+    """子任务保留说明、子代理类型与引用的文件；角色只按引用的任务文件或子代理类型推断，提示词里提到某个动作不算依据。"""
+
+    CASES = {
+        "审查任务里提到格式问题重给": ({"description": "独立审查 N Story",
+                                    "prompt": "按 `doc/features/N/AR/story-src/review/task.md` 逐字执行；报告格式问题由审查者重给"},
+                                   "reader_review"),
+        "作者任务里提到质询": ({"description": "写蓝图候选",
+                             "prompt": "独立质询由主执行者派遣，你只完成作者工作：写 doc/features/bp-N/blueprint/component-blueprint.yaml"},
+                            "unknown"),
+        "只查路径的任务": ({"description": "看看文件在不在", "prompt": "列出 doc/features/N/AR/story.md 是否存在"}, "unknown"),
+        "正常的人读审查": ({"description": "审查", "prompt": "任务文件 doc/features/N/AR/story-src/review/task.md，材料键 k"},
+                         "reader_review"),
+        "原生阶段 verifier": ({"subagent_type": "verifier", "prompt": "审 spec 阶段产物"}, "stage_verifier"),
+        "蓝图质询": ({"description": "质询", "prompt": "回复写到 doc/features/bp-N/blueprint/questioning/k/reply.md"},
+                   "design_questioning"),
+        "依据指向两种角色": ({"prompt": "doc/features/N/AR/story-src/review/task.md 与 doc/features/bp-N/blueprint/questioning/k/reply.md"},
+                          "unknown"),
+    }
+
+    def test_each_call_keeps_its_facts_and_an_inferred_role(self) -> None:
+        for label, (tool_input, role) in self.CASES.items():
+            with self.subTest(case=label):
+                call = measure_run.task_call({"tool_name": "task", "tool_input": tool_input})
+                self.assertEqual(role, call["inferred_role"], call)
+                self.assertEqual(tool_input.get("description", ""), call["description"])
+                self.assertTrue(call["inferred_from"])
+
+    def test_the_run_lists_every_call_with_its_basis(self) -> None:
+        records = [{"tool_name": "task", "tool_input": t} for t, _ in self.CASES.values()]
+        r = MeasureReadsRealEvents._measure(MeasureReadsRealEvents(), records)
+        self.assertEqual(len(self.CASES), len(r["tasks"]))
+        self.assertEqual(sorted(role for _, role in self.CASES.values()), sorted(t["inferred_role"] for t in r["tasks"]))
+        refs = next(t["refs"] for t in r["tasks"] if t["description"] == "看看文件在不在")
+        self.assertEqual(["doc/features/N/AR/story.md"], refs)
+        self.assertIn("unknown", r["task_gap_sec_inferred"])
+
+
+def _story_review(result: str | None, *, feature: str = "N", order: str = "action-first") -> dict:
+    """一次 `story-build review --action check`；result 为 None 时输出里没有结构化结论。"""
+    args = (f"review --action check --feature {feature}" if order == "action-first"
+            else f"review --feature {feature} --action check")
+    out = "" if result is None else json.dumps({"result": result, "detail": "…"}, ensure_ascii=False)
+    return {"tool_name": "bash", "tool_input": {"command": f"node doc/extensions/skills/story/scripts/core/story-build.mjs {args}"},
+            "tool_output": out}
+
+
+class StoryGatesCountFailuresAndRework(unittest.TestCase):
+    """Story 门禁与原生门禁同一份计算：失败轮次、首次门禁、返工，参数换序结果相同，读不到结论记未知。"""
+
+    def measure(self, *records) -> dict:
+        return MeasureReadsRealEvents._measure(MeasureReadsRealEvents(), list(records))
+
+    def test_a_failed_review_then_a_pass_on_the_same_object_is_rework(self) -> None:
+        r = self.measure(_story_review("fail"), _story_review("pass"))
+        seg = r["segments"]["whole"]
+        self.assertEqual(1, r["gate_rounds_with_fail"])
+        self.assertEqual({"action": "story_review", "object": "N", "outcome": "fail", "fail_count": 1}, seg["first_gate"])
+        self.assertEqual(1.0, seg["rework_min"])
+        self.assertEqual([], seg["rework_open"])
+
+    def test_a_first_pass_has_no_rework(self) -> None:
+        seg = self.measure(_story_review("warn"))["segments"]["whole"]
+        self.assertEqual("pass", seg["first_gate"]["outcome"])
+        self.assertEqual((0, 0.0), (seg["gate_rounds_with_fail"], seg["rework_min"]))
+
+    def test_argument_order_does_not_change_the_result(self) -> None:
+        a = self.measure(_story_review("fail"), _story_review("pass"))
+        b = self.measure(_story_review("fail", order="feature-first"), _story_review("pass", order="feature-first"))
+        for key in ("gate_rounds_with_fail", "gap_sec_by_kind"):
+            self.assertEqual(a[key], b[key], key)
+        self.assertEqual(a["segments"]["whole"]["rework_min"], b["segments"]["whole"]["rework_min"])
+
+    def test_an_unreadable_result_is_unknown_not_zero_failures(self) -> None:
+        r = self.measure(_story_review(None))
+        seg = r["segments"]["whole"]
+        self.assertEqual(1, r["gate_rounds_unknown"])
+        self.assertEqual("unknown", seg["first_gate"]["outcome"])
+        self.assertEqual(0, r["gate_rounds_with_fail"])
+
+    def test_interleaved_objects_are_reworked_separately(self) -> None:
+        r = self.measure(_story_review("fail", feature="A"), _story_review("fail", feature="B"),
+                         _story_review("pass", feature="A"), _story_review("subject_stale", feature="B"))
+        seg = r["segments"]["whole"]
+        self.assertEqual(3, r["gate_rounds_with_fail"])
+        self.assertEqual(2.0, seg["rework_min"], "A 从 10:00 到 10:02")
+        self.assertEqual(["story_review@B"], seg["rework_open"])
+
+    def test_check_and_registration_read_their_own_conclusions(self) -> None:
+        check = {"tool_name": "bash", "tool_input": {"command": "node x/story-build.mjs check --feature N"},
+                 "tool_output": "[story-build check] 3 处未通过，分属 1 类"}
+        passed = {**check, "tool_output": "[story-build check] 通过：10 章"}
+        register = {"tool_name": "bash", "tool_input": {"command": "python x/story_flow.py story --feature N"},
+                    "tool_output": json.dumps({"success": False, "error": "审查结果 fail"}, ensure_ascii=False)}
+        r = self.measure(check, passed, register)
+        seg = r["segments"]["whole"]
+        self.assertEqual({"action": "story_check", "object": "N", "outcome": "fail", "fail_count": 3}, seg["first_gate"])
+        self.assertEqual("fail", seg["first_story_register"]["outcome"])
+        self.assertEqual(2, r["gate_rounds_with_fail"])
+        self.assertEqual(["story_register@N"], seg["rework_open"])
 
 
 class EachSegmentIsMeasured(unittest.TestCase):
@@ -421,9 +512,9 @@ class EachSegmentIsMeasured(unittest.TestCase):
             {"tool_name": "task", "tool_input": {"subagent_type": "verifier"}},
             _harness(GATE_PASS),
             {"tool_name": "bash", "tool_input": {"command": "python story_flow.py story --feature X"},
-             "tool_output": "[story-build check] 2 处未通过"},
+             "tool_output": '{"success": false, "error": "结构检查没过"}'},
             {"tool_name": "bash", "tool_input": {"command": "python story_flow.py story --feature X"},
-             "tool_output": "登记成文"},
+             "tool_output": '{"success": true, "registered": true}'},
         ]
         events = _events(*records)
         for e in events:
@@ -435,13 +526,16 @@ class EachSegmentIsMeasured(unittest.TestCase):
             (run / "state.json").write_text(json.dumps({"resumed_at": "2026-09-02T10:04:00+00:00"}), encoding="utf-8")
             r = measure_run.measure(run / "events.jsonl", run_dir=run)
         first, second = r["segments"]["initial"], r["segments"]["update"]
-        self.assertEqual({"fail_count": 2}, first["first_harness"])
-        self.assertEqual(1, first["task_runs"]["stage_verifier"])
+        self.assertEqual({"action": "harness:spec", "object": "?", "outcome": "fail", "fail_count": 2}, first["first_gate"])
+        self.assertEqual(1, first["task_runs_inferred"]["stage_verifier"])
         self.assertEqual(2.0, first["rework_min"], "门禁 10:01 没过、10:03 通过")
-        self.assertEqual({"fail_count": 1}, second["first_story_register"])
+        self.assertEqual({"action": "story_register", "object": "X", "outcome": "fail", "fail_count": 1},
+                         second["first_story_register"])
         self.assertEqual(1.0, second["rework_min"])
-        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "task_runs", "task_gap_sec"):
+        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "task_runs_inferred", "task_gap_sec_inferred"):
             self.assertIn(key, second)
+        self.assertEqual(r["gate_rounds_with_fail"], first["gate_rounds_with_fail"] + second["gate_rounds_with_fail"],
+                         "全程与分段的失败轮次不一致")
 
 
 class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):

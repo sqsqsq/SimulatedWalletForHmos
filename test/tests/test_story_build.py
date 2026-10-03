@@ -1903,7 +1903,7 @@ class TheBytesOutsideTheChapterAreBytes(Step8Case):
         self.assertEqual(before[:cut], after[:cut], "附录之前的字节变了")
 
 
-class TheChapterIsCheckedBeforeItLands(Step8Case):
+class TheChapterIsCheckedBeforeItLandsCase(Step8Case):
     """写前核对：坏候选不进 story.md，作者手上只有一份要改的东西（草稿）。
 
     从前判据只在全篇 check 那一步跑，于是坏的那一章先落盘、再被报出来——
@@ -1926,6 +1926,9 @@ class TheChapterIsCheckedBeforeItLands(Step8Case):
     def out(self, proc) -> str:
         return (proc.stderr or "") + (proc.stdout or "")
 
+
+
+class TheChapterIsCheckedBeforeItLands(TheChapterIsCheckedBeforeItLandsCase):
     def test_a_bad_chapter_changes_nothing_on_disk(self) -> None:
         before = self.story_path.read_text(encoding="utf-8")
         proc = self.put("术语", "只有一句话，没有那张表。\n")
@@ -2005,6 +2008,7 @@ class TheChapterIsCheckedBeforeItLands(Step8Case):
                          "拒绝了却已经写盘")
         self.assertEqual(1, before.count("## 术语"))
 
+class TheChapterIsCheckedBeforeItLandsPart2(TheChapterIsCheckedBeforeItLandsCase):
     def test_a_heading_inside_a_fence_is_fine(self) -> None:
         """围栏里的标题是被引用的样例，不是新起一章。"""
         proc = self.put("背景", "本章有效正文。\n\n```markdown\n## 举例的标题\n```\n")

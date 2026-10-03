@@ -1,6 +1,6 @@
-"""离线验证的固定入口（test/scripts/verify.py）：每个场景的命令与先后由脚本定，调用方只选场景。
+"""离线验证的固定入口（test/scripts/verify.py）：每个场景的命令、通道与先后由脚本定，调用方只选场景。
 
-只核命令怎么拼、按什么顺序求值，不真跑全量或失效形态。
+只核命令怎么拼、怎么分通道、按什么顺序求值，不真跑全量或失效形态。
 """
 import argparse
 import sys
@@ -16,7 +16,7 @@ import verify  # noqa: E402
 def steps_of(scenario: str, **extra) -> list[tuple[str, list[str]]]:
     args = argparse.Namespace(scenario=scenario, targets=extra.get("targets", []), keyword=extra.get("keyword"))
     with mock.patch.object(verify, "build_template", return_value="TEMPLATE"):
-        return [step for group in verify.scenario(args) for step in group(REPO)]
+        return [step for lane in verify.scenario(args) for group in lane for step in group(REPO)]
 
 
 class EveryPytestRunIsParallel(unittest.TestCase):
@@ -34,18 +34,32 @@ class EveryPytestRunIsParallel(unittest.TestCase):
             verify.affected_steps(["no_such_test.py"], None)
 
 
-class TheHandbackRunsInOrder(unittest.TestCase):
-    def test_full_suite_first_then_failure_modes_on_a_fresh_template_then_the_rest(self) -> None:
-        names = [name for name, _ in steps_of("handback")]
-        self.assertEqual(["full", "failure-modes", "cli-tests", "compileall", "validate-clis", "node-check"], names)
+class TheHandbackRunsInLanes(unittest.TestCase):
+    def test_full_failure_modes_and_the_rest_are_three_lanes(self) -> None:
+        args = argparse.Namespace(scenario="handback", targets=[], keyword=None)
+        with mock.patch.object(verify, "build_template", return_value="TEMPLATE"):
+            lanes = [[name for group in lane for name, _ in group(REPO)] for lane in verify.scenario(args)]
+        self.assertEqual([["full"], ["failure-modes"], ["cli-tests", "compileall", "validate-clis", "node-check"]], lanes)
         failure_modes = dict(steps_of("handback"))["failure-modes"]
         self.assertEqual(["--project-root", "TEMPLATE"], failure_modes[-2:], "失效形态没对现建的模板跑")
 
-    def test_the_template_is_built_only_when_its_turn_comes(self) -> None:
+    def test_the_template_is_built_when_its_lane_starts(self) -> None:
+        """排通道时不建模板：模板在失效形态那条通道开跑时才建，全量那条通道不碰它。"""
         args = argparse.Namespace(scenario="handback", targets=[], keyword=None)
-        groups = verify.scenario(args)
-        with mock.patch.object(verify, "build_template", side_effect=AssertionError("全量还没跑就建了模板")):
-            groups[0](REPO)
+        with mock.patch.object(verify, "build_template", side_effect=AssertionError("排通道时建了模板")):
+            lanes = verify.scenario(args)
+            lanes[0][0](REPO)
+            lanes[2][0](REPO)
+
+    def test_every_lane_reports_in_a_fixed_order(self) -> None:
+        """通道同时跑、完成有先后，汇总仍按通道顺序，有一步失败退出码非 0。"""
+        def fake_run(name, cmd, log_dir):
+            return name, name != "compileall", f"[{name}]"
+        with mock.patch.object(verify, "run", side_effect=fake_run), \
+                mock.patch.object(verify, "build_template", return_value="TEMPLATE"), \
+                mock.patch("sys.stdout"):
+            code = verify.main(["handback"])
+        self.assertEqual(1, code)
 
 
 class CasesPlanEveryCase(unittest.TestCase):

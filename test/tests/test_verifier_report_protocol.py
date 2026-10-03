@@ -86,6 +86,29 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
         return {p.relative_to(self.root).as_posix(): p.read_bytes()
                 for p in (self.root / "doc").rglob("*") if p.is_file()}
 
+    def restored(self, kind: str) -> tuple[Path, dict, dict]:
+        """材料 A 有了回复 → 改成 B 并准备 → 恢复 A 的原始字节再准备。返回 A 的回复、第二次准备 A 的输出、check 的结果。"""
+        original = self.reviewed(kind)
+        a = self.story.read_bytes()
+        self.story.write_bytes(a + "\n改成 B 的一句。\n".encode("utf-8"))
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.story.write_bytes(a)
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+        prepared = json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
+        return original, prepared, self.result()
+
+    def blueprint_path(self) -> str:
+        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
+        return next(part for part in task.split("`") if part.endswith("component-blueprint.yaml"))
+
+    def unreviewed(self, *extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["python", str(self.FLOW), "unreviewed", "--feature", "REQ-DEMO", "--project-root", str(self.root),
+                               *extra], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+    def authorize(self) -> subprocess.CompletedProcess:
+        return self.unreviewed("--reason", "宿主没有可派的审查子代理", "--reply", "这版先不审，直接交")
+
 
 class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDeliveredCase):
     def test_plain_check_never_touches_the_delivery_gate(self) -> None:
@@ -229,17 +252,8 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertTrue(again["reused"])
         self.assertEqual(original, self.root / again["report_file"])
 
-    def restored(self, kind: str) -> tuple[Path, dict, dict]:
-        """材料 A 有了回复 → 改成 B 并准备 → 恢复 A 的原始字节再准备。返回 A 的回复、第二次准备 A 的输出、check 的结果。"""
-        original = self.reviewed(kind)
-        a = self.story.read_bytes()
-        self.story.write_bytes(a + "\n改成 B 的一句。\n".encode("utf-8"))
-        self.assertEqual(0, self.review("prepare").returncode)
-        self.story.write_bytes(a)
-        out = self.review("prepare")
-        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
-        prepared = json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
-        return original, prepared, self.result()
+class TheReportIsCheckedReadOnlyPart2(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """材料改走又改回来：通过的回复复用，阻断的保持；不通过之后的新回复按它自己判。"""
 
     def test_a_restored_material_reuses_its_passing_report(self) -> None:
         """A→B→A：A 目录里的 pass 由 prepare 复用（reused、原回复），check 读的是同一份。"""
@@ -269,6 +283,9 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertNotEqual(first, second, "不通过之后重新派审没有另起一份")
         self.assertTrue(first.is_file(), "旧回复没保留")
         self.assertEqual("pass", self.result()["result"])
+
+class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """报告合同：信不过的回复不计结论，材料位置按引用边界取完整路径。"""
 
     def test_the_contract_refuses_what_it_cannot_trust(self) -> None:
         story = "doc/features/REQ-DEMO/AR/story.md"
@@ -313,21 +330,10 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
                 original.write_text(original.read_text(encoding="utf-8").replace(f"`{story}`", where), encoding="utf-8")
                 self.assertEqual(want, self.result()["result"], self.result())
 
-    def blueprint_path(self) -> str:
-        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
-        return next(part for part in task.split("`") if part.endswith("component-blueprint.yaml"))
-
 
 class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCase):
     """当前 adapter 没声明审查子代理、这一版的结果是 report_missing 时，人明确授权才可不经审查交付；
     授权记在流程契约，审查状态写进最终的 Story 与 Review，材料一变就不再适用。"""
-
-    def unreviewed(self, *extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["python", str(self.FLOW), "unreviewed", "--feature", "REQ-DEMO", "--project-root", str(self.root),
-                               *extra], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-
-    def authorize(self) -> subprocess.CompletedProcess:
-        return self.unreviewed("--reason", "宿主没有可派的审查子代理", "--reply", "这版先不审，直接交")
 
     def test_the_authorization_is_recorded_and_disclosed_in_both_documents(self) -> None:
         self.assertNotEqual(0, self.authorize().returncode, "没定稿就记了授权")
@@ -382,6 +388,9 @@ class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCa
         refused = self.authorize()
         self.assertNotEqual(0, refused.returncode, "已有不通过的结论还记了未审查授权")
         self.assertNotIn("review_waiver", self.flow())
+
+class AnUnreviewedDeliveryNeedsAHumanPart2(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """未审查授权与报告目录、材料变化：同一份材料换目录不消掉阻断，材料一变授权就不再适用。"""
 
     def test_another_report_dir_keeps_the_known_blocker(self) -> None:
         """同一份材料的报告目录在首次准备时定下：另指目录报冲突、不改文件，已知的阻断仍在，也记不了未审查授权；

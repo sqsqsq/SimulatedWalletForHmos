@@ -41,6 +41,7 @@ import shutil
 import subprocess
 import tempfile
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -2115,6 +2116,23 @@ def _sentences(text: str) -> list[str]:
     return out
 
 
+def _prose(text: str) -> str:
+    """Markdown 正文：去掉围栏代码块。代码块里是数据与命令的样例，样例标识在多处复用不是规则重复。"""
+    out, fence = [], None
+    for line in split_lines(text):
+        m = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if m:
+            mark = m.group(1)
+            if fence is None:
+                fence = mark
+            elif mark[0] == fence[0] and len(mark) >= len(fence):
+                fence = None
+            continue
+        if fence is None:
+            out.append(line)
+    return "\n".join(out)
+
+
 def _section(text: str, name: str) -> str | None:
     """标题含 `name` 的那一节正文（到同级或更高级标题为止）。"""
     lines = split_lines(text)
@@ -2138,9 +2156,11 @@ def m19_rule_defined_twice(root: Path, ctx: Ctx) -> Outcome:
 
     规则只在一处定义：别的文档用「<文件>「<节名>」」指过去，不再抄一遍。被指向的那一节就是定义处；
     它里面的规则句在别的交付文件里又原样出现，两处迟早只改到一处。
+    比的是 Markdown 正文：围栏代码块里的数据与命令样例不算规则句，样例标识在多处复用不报。
+    只证明覆盖内的机械重复，不代替语义上的单一真源审查。
     """
     files = iter_files(root, ALL_SUFFIXES, NON_MECHANISM_DIRS)
-    texts = {p: read_text(p) for p in files}
+    texts = {p: (_prose(read_text(p)) if p.suffix == ".md" else read_text(p)) for p in files}
     defined: dict[str, tuple[Path, str]] = {}
     for text in texts.values():
         for rel, name in _REF_RE.findall(text):
@@ -2551,47 +2571,63 @@ def features_dir(project_root: Path) -> Path:
     return project_root / rel
 
 
-def self_check(mode: dict, report: Report) -> None:
-    """反夹具必 FAIL、正夹具必 PASS。
+def self_check_jobs(mode: dict) -> list:
+    """一条形态的夹具自检拆成单项：台账缺项立即给结果（ModeResult），能跑的给任务（`("self", mode, 哪一份夹具)`）。
 
     ``self_check: internal`` 的形态例外：它的正反例内建在 checker 的数据里
     （每条样本各带预期），外部 bad/good 目录对它没有意义——那种形态跑一次 checker
     本身，checker 内部逐条比对预期并把偏离项报出来。
     """
     if str(mode.get("self_check", "")).strip() == "internal":
+        return [("self", mode, "internal")]
+    out: list = []
+    for kind in ("bad_fixture", "good_fixture"):
+        rel = mode.get(kind)
+        if not rel:
+            out.append(ModeResult(mode["id"], "self_check", kind, "FAIL", f"台账缺 {kind}"))
+        elif not (REPO_ROOT / rel).exists():
+            out.append(ModeResult(mode["id"], "self_check", rel, "FAIL", "夹具目录不存在"))
+        else:
+            out.append(("self", mode, kind))
+    return out
+
+
+def self_check_one(mode: dict, kind: str) -> ModeResult:
+    """一份夹具的自检：反夹具必 FAIL、正夹具必 PASS；internal 跑一次 checker 看它自己的逐分支预期。"""
+    if kind == "internal":
         outcome = run_checker(mode["checker"], executor_ext(), Ctx(
             knowledge_root=executor_ext() / "knowledge",
             extension_root=executor_ext(),
             project_root=PROJECT_ROOT,
         ))
-        report.add(ModeResult(
-            mode["id"], "self_check", "internal（逐分支预期）",
-            "PASS" if outcome.ok else "FAIL", outcome.evidence,
-        ))
-        return
-    for kind, expect_ok in (("bad_fixture", False), ("good_fixture", True)):
-        rel = mode.get(kind)
-        if not rel:
-            report.add(ModeResult(mode["id"], "self_check", kind, "FAIL", f"台账缺 {kind}"))
-            continue
-        path = REPO_ROOT / rel
-        if not path.exists():
-            report.add(ModeResult(mode["id"], "self_check", rel, "FAIL", "夹具目录不存在"))
-            continue
-        outcome = run_checker(mode["checker"], path, fixture_ctx(path, mode))
-        # 装配或执行出错不是「判出了形态」：反夹具也不因此算拦住
-        ok = outcome.ok is expect_ok and not outcome.infra
-        report.add(
-            ModeResult(
-                mode["id"],
-                "self_check",
-                kind,
-                "PASS" if ok else "FAIL",
-                outcome.evidence
-                if ok
-                else f"期望 {'PASS' if expect_ok else 'FAIL'}，实际 {'PASS' if outcome.ok else 'FAIL'}：{outcome.evidence}",
-            )
-        )
+        return ModeResult(mode["id"], "self_check", "internal（逐分支预期）",
+                          "PASS" if outcome.ok else "FAIL", outcome.evidence)
+    expect_ok = kind == "good_fixture"
+    path = REPO_ROOT / mode[kind]
+    outcome = run_checker(mode["checker"], path, fixture_ctx(path, mode))
+    # 装配或执行出错不是「判出了形态」：反夹具也不因此算拦住
+    ok = outcome.ok is expect_ok and not outcome.infra
+    return ModeResult(
+        mode["id"], "self_check", kind, "PASS" if ok else "FAIL",
+        outcome.evidence if ok
+        else f"期望 {'PASS' if expect_ok else 'FAIL'}，实际 {'PASS' if outcome.ok else 'FAIL'}：{outcome.evidence}",
+    )
+
+
+def run_job(job: tuple) -> ModeResult:
+    """进程池里跑的一项：一份夹具的自检，或一个真实目标的检查。"""
+    if job[0] == "self":
+        _, mode, kind = job
+        return self_check_one(mode, kind)
+    _, mode, label, root, ctx = job
+    outcome = run_checker(mode["checker"], root, ctx)
+    return ModeResult(mode["id"], "real_target", label, "PASS" if outcome.ok else "FAIL", outcome.evidence)
+
+
+def _init_worker(project_root: Path) -> None:
+    """子进程按本次的消费工程定执行器位置（主进程在 main 里设的全局，子进程要重设）。"""
+    global PROJECT_ROOT
+    PROJECT_ROOT = project_root
 
 
 def real_targets(mode: dict, feature_roots: list[Path], extension_root: Path,
@@ -2626,6 +2662,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--self-check", action="store_true", help="只跑夹具自检")
     ap.add_argument("--list", action="store_true", help="列出台账")
     ap.add_argument("--quiet", action="store_true", help="只打印失败与汇总")
+    ap.add_argument("--jobs", type=int, default=min(32, os.cpu_count() or 1),
+                    help="并行进程数（缺省取 CPU 核数，最多 32）；1 为串行，排障时用。"
+                    "各项检查只写自己的临时目录，结果按台账顺序输出，与串行一致")
     ap.add_argument(
         "--historical",
         action="store_true",
@@ -2659,6 +2698,8 @@ def main(argv: list[str] | None = None) -> int:
     feature_roots = [p for p in feature_roots if p.exists()]
 
     report = Report()
+    #: 按台账顺序排好的结果位：ModeResult 是立即结果，元组是要跑的检查
+    slots: list = []
     print("=" * 78)
     print("失效形态全量回归（口径：夹具自检必须正反判定正确；真实目标只跑 status=fixed）")
     print(f"台账 {LEDGER.relative_to(REPO_ROOT).as_posix()}：{len(modes)} 条")
@@ -2673,7 +2714,7 @@ def main(argv: list[str] | None = None) -> int:
     for mode in modes:
         if mode["status"] == "retired":
             if not mode.get("reason") or not mode.get("approved_by"):
-                report.add(ModeResult(mode["id"], "ledger", "-", "FAIL", "retired 缺 reason/approved_by"))
+                slots.append(ModeResult(mode["id"], "ledger", "-", "FAIL", "retired 缺 reason/approved_by"))
             continue
         who = delegated_to(mode)
         if who:
@@ -2681,13 +2722,13 @@ def main(argv: list[str] | None = None) -> int:
             if who == "observed" and not mode.get("observed_by"):
                 missing.append("observed_by")
             if missing:
-                report.add(ModeResult(mode["id"], "ledger", "-", "FAIL",
-                                      f"责任委派缺 {'/'.join(missing)}——换发现者要有人签字，"
-                                      "observed 还要写清真实运行里谁看什么"))
+                slots.append(ModeResult(mode["id"], "ledger", "-", "FAIL",
+                                        f"责任委派缺 {'/'.join(missing)}——换发现者要有人签字，"
+                                        "observed 还要写清真实运行里谁看什么"))
             else:
-                report.add(ModeResult(mode["id"], "delegated", who, "SKIP", mode["reason"]))
+                slots.append(ModeResult(mode["id"], "delegated", who, "SKIP", mode["reason"]))
             continue
-        self_check(mode, report)
+        slots.extend(self_check_jobs(mode))
 
     if not args.self_check:
         for mode in modes:
@@ -2695,21 +2736,22 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if mode["status"] != "fixed":
                 if mode["status"] == "pending_capability":
-                    report.add(
+                    slots.append(
                         ModeResult(mode["id"], "real_target", "-", "SKIP", "目标能力尚未建（非回归失败）")
                     )
                 continue
             for label, root, ctx in real_targets(mode, feature_roots, extension_root, project_root):
-                outcome = run_checker(mode["checker"], root, ctx)
-                report.add(
-                    ModeResult(
-                        mode["id"],
-                        "real_target",
-                        label,
-                        "PASS" if outcome.ok else "FAIL",
-                        outcome.evidence,
-                    )
-                )
+                slots.append(("real", mode, label, root, ctx))
+
+    jobs = [x for x in slots if isinstance(x, tuple)]
+    if args.jobs > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init_worker,
+                                 initargs=(project_root,)) as pool:
+            done = iter(list(pool.map(run_job, jobs)))
+    else:
+        done = iter([run_job(j) for j in jobs])
+    for slot in slots:
+        report.add(next(done) if isinstance(slot, tuple) else slot)
 
     historical_rows: list[tuple[str, str, bool, str]] = []
     if args.historical:
