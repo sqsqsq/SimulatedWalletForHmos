@@ -198,6 +198,43 @@ def publication_record(feature_root: Path) -> dict:
     return {"at": now(), "story_digest": digest, "review_digest": short_digest(review.read_bytes()), "external_digest": digest}
 
 
+def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, reply: str | None,
+                   withdraw: bool = False) -> dict:
+    """人授权这一版不经独立审查交付：原话、原因与授权给在哪一版，记进流程契约（人签与发布确认同在这里）。
+
+    只在宿主确实没有独立审查能力（原生按当前 adapter 的 verifier_subagent 声明判）、这一版也没有已知审查结论时成立：
+    已有不通过的结论、坏报告、没派审都不归这一类。记下之后重跑 `story-build review --action prepare`，
+    审查状态写进 Story 交付章与 Review 题头，再登记。`--withdraw` 撤回，之后按正常审查走。
+    """
+    contract = require(load(feature_root))
+    if withdraw:
+        contract.pop("review_waiver", None)
+        save(feature_root, contract)
+        return {"review_waiver": None, "action": "已撤回未审查授权：重跑 `story-build review --action prepare`，按正常审查走"}
+    if not str(reason or "").strip() or not str(reply or "").strip():
+        raise FlowError("要写明宿主缺什么（--reason）与人授权不经审查交付的原话（--reply）")
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError("找不到 node：授权前要核宿主能力与这一版的审查结果，无法跳过")
+    proc = subprocess.run([node, str(CORE_DIR / "story-build.mjs"), "review", "--action", "waiver-check",
+                           "--feature", feature_root.name, "--project-root", str(project_root)],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    rows = [line for line in proc.stdout.splitlines() if line.startswith("{")]
+    if proc.returncode != 0 or not rows:
+        raise FlowError("核不了宿主能力与审查结果：" + (proc.stderr or proc.stdout).strip()[:600])
+    state = json.loads(rows[-1])
+    if state["host_reviewer"]:
+        raise FlowError(f"当前宿主 {state['adapter']} 声明能派独立审查子代理：按 `phases/design.md`「五」派审，不走未审查交付")
+    if state["result"] != "report_missing" or not state.get("material_key"):
+        raise FlowError(f"这一版的审查结果是 {state['result']}（{state['detail']}）：已有结论或报告要处理的不归未审查交付；"
+                        "还没准备的先 `story-build review --action prepare` 定稿")
+    contract["review_waiver"] = {"material_key": state["material_key"], "reason": reason.strip(), "reply": reply.strip(),
+                                 "by": "human", "adapter": state["adapter"], "at": now()}
+    save(feature_root, contract)
+    return {"review_waiver": contract["review_waiver"],
+            "action": "已记下：重跑 `story-build review --action prepare`，审查状态写进 Story 交付章与 Review 题头，再 `story_flow.py story` 登记"}
+
+
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     """登记「叙事件已送审」。归档动作由数据对接层执行，本命令只记状态。
 

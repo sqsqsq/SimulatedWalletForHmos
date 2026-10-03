@@ -425,7 +425,7 @@ def install_review_mechanism(root: Path, extension: Path) -> None:
             shutil.copy2(extension / rel, target)
 
 
-#: 夹具审查者的问题清单：每种结论一份（编号、严重程度、分类、问题描述、修复建议）
+#: 夹具审查者的发现：每种结论一份（编号、严重程度、问题与依据、修正责任），判据 ID 与材料位置由 write_review 填
 REVIEW_ISSUES = {
     "pass": [],
     "advice": [("F-1", "MINOR", "背景一章的结论先于依据出现，读者要回读", "作者把依据移到结论之前")],

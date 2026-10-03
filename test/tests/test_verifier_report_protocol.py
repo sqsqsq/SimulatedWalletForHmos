@@ -243,6 +243,14 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
             "标题只是含「结论」": ("pass", lambda t: t.replace("## 总体结论", "## 总体结论与建议"), "report_invalid"),
             "材料键不是这一份": ("pass", lambda t: t.replace(self.prepared()["material_key"], "0" * 64), "subject_stale"),
             "引用 YAML 材料": ("advice", lambda t: t.replace(f"`{story}`", f"`{self.blueprint_path()}`"), "warn"),
+            "带章节定位的真实路径": ("advice", lambda t: t.replace(f"`{story}`", f"`{story}#背景`"), "warn"),
+            "引用不存在的副本": ("advice", lambda t: t.replace(f"`{story}`", f"`{story}.bak`"), "report_invalid"),
+            "发现表缺分隔行，MAJOR 不能被当成分隔行丢掉": ("major", lambda t: t.replace("|---|---|---|---|---|---|\n", "")
+                                                 .replace("| story_reader_review | fail |", "| story_reader_review | pass |")
+                                                 .replace("fail：", "pass："), "report_invalid"),
+            "发现行少一列": ("advice", lambda t: t.replace(" 作者把依据移到结论之前 |", ""), "report_invalid"),
+            "总体结论不在第一行": ("pass", lambda t: t.replace("pass：按判据与发现判定。", "说明见下。\npass：按判据与发现判定。"),
+                          "report_invalid"),
         }
         for label, (kind, mutate, want) in cases.items():
             with self.subTest(case=label):
@@ -256,29 +264,71 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
 
 
 class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """宿主没有独立审查能力：人明确授权才可不经审查交付，授权绑定定稿的这一版，交付门把未审查的事实说出来。"""
+    """宿主确实没有独立审查能力、这一版也没有已知结论时，人明确授权才可不经审查交付；
+    授权记在流程契约，审查状态写进最终的 Story 与 Review，材料一变就不再适用。"""
 
     def unreviewed(self, *extra: str) -> subprocess.CompletedProcess:
-        return self.run_node("review", "--action", "unreviewed", *extra)
+        return subprocess.run(["python", str(self.FLOW), "unreviewed", "--feature", "REQ-DEMO", "--project-root", str(self.root),
+                               *extra], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
-    def test_the_authorization_is_recorded_and_disclosed(self) -> None:
-        self.assertNotEqual(0, self.unreviewed("--reason", "宿主没有子代理", "--reply", "这版先不审，直接交").returncode,
-                            "没定稿就记了授权")
+    def authorize(self) -> subprocess.CompletedProcess:
+        return self.unreviewed("--reason", "宿主没有可派的审查子代理", "--reply", "这版先不审，直接交")
+
+    def test_the_authorization_is_recorded_and_disclosed_in_both_documents(self) -> None:
+        self.assertNotEqual(0, self.authorize().returncode, "没定稿就记了授权")
         self.assertEqual(0, self.review("prepare").returncode)
-        self.assertNotEqual(0, self.unreviewed("--reason", "宿主没有子代理").returncode, "没有人的原话也记了授权")
-        self.assertEqual(0, self.unreviewed("--reason", "宿主没有子代理", "--reply", "这版先不审，直接交").returncode)
+        self.assertNotEqual(0, self.unreviewed("--reason", "宿主没有可派的审查子代理").returncode, "没有人的原话也记了授权")
+        recorded = self.authorize()
+        self.assertEqual(0, recorded.returncode, recorded.stdout + recorded.stderr)
+        self.assertEqual("human", self.flow()["review_waiver"]["by"])
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual("unreviewed", self.result()["result"])
+        story = self.story.read_text(encoding="utf-8")
+        chapter = story.split("## 9.", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("本版未经独立审查", chapter, "Story 交付章没有审查状态")
+        self.assertIn("这版先不审，直接交", chapter)
+        review = (self.story.parent / "review.md").read_text(encoding="utf-8")
+        head = review.split("\n## ", 1)[0]
+        self.assertIn("本版未经独立审查", head, "Review 题头之后、议题之前没有审查状态")
+        before = self.tree()
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual(before, {k: v for k, v in self.tree().items()}, "同样的输入重跑准备改了字节")
         self.assertEqual("unreviewed", self.result()["result"])
         self.assertEqual(0, self.register().returncode)
         out = self.check("--deliver")
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
         self.assertIn("本版未经独立审查", out.stdout)
-        self.assertIn("这版先不审，直接交", out.stdout)
 
-    def test_a_changed_story_needs_the_review_or_a_new_authorization(self) -> None:
+    def test_a_host_that_can_review_is_not_waived(self) -> None:
+        (self.root / "framework.local.json").write_text('{"schema_version": "1.0", "agent_adapter": "opencode"}',
+                                                         encoding="utf-8")
         self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual(0, self.unreviewed("--reason", "宿主没有子代理", "--reply", "这版先不审").returncode)
-        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        refused = self.authorize()
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("声明能派独立审查子代理", refused.stdout + refused.stderr)
+
+    def test_a_failing_review_is_not_turned_into_an_unreviewed_delivery(self) -> None:
+        self.reviewed("block")
+        self.assertEqual("fail", self.result()["result"])
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual("fail", self.result()["result"], "重新准备撤销了同一份材料的已知阻断")
+        refused = self.authorize()
+        self.assertNotEqual(0, refused.returncode, "已有不通过的结论还记了未审查授权")
+        self.assertNotIn("review_waiver", self.flow())
+
+    def test_a_changed_story_drops_the_authorization_and_a_real_review_takes_over(self) -> None:
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual(0, self.authorize().returncode)
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual("unreviewed", self.result()["result"])
+        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n登记前补的一句。\n", encoding="utf-8")
         self.assertEqual("subject_stale", self.result()["result"])
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual("report_missing", self.result()["result"], "材料变了还沿用旧授权")
+        self.assertNotIn("本版未经独立审查", self.story.read_text(encoding="utf-8"), "授权不适用了，披露还留在 Story 里")
+        self.assertEqual(0, self.unreviewed("--withdraw").returncode)
+        self.reviewed("pass")
+        self.assertEqual("pass", self.result()["result"])
 
 
 class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
@@ -427,6 +477,22 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
         text = self.inject()
         self.assertIn("story_reader_review", text)
         self.assertIn("### 判据", text)
+
+    def test_every_registered_criterion_is_sent_and_required(self) -> None:
+        """判据文件登记几项，任务就发几项、报告就核几项：两边读的是同一份，不靠「现在只有一条」。"""
+        rules = self.root / "doc/extensions/rules/story-reader-rules.yaml"
+        rules.write_text(rules.read_text(encoding="utf-8").rstrip("\n") + "\n  neutral_second_criterion:\n"
+                         "    description: 第二条中性判据的说明。\n    severity: MAJOR\n"
+                         "    ai_prompt_hint: 第二条判据怎么审。\n", encoding="utf-8")
+        text = self.inject()
+        for needle in ("### 判据 story_reader_review（BLOCKER）", "### 判据 neutral_second_criterion（MAJOR）",
+                       "第二条中性判据的说明。", "第二条判据怎么审。"):
+            self.assertIn(needle, text)
+        module = self.root / "doc/extensions/hooks/shared/reader-review-task.mjs"
+        ids = subprocess.run(["node", "--input-type=module", "-e",
+                              "const m = await import(process.argv[1]); process.stdout.write(JSON.stringify(m.readerCheckIds()));",
+                              module.resolve().as_uri()], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(["story_reader_review", "neutral_second_criterion"], json.loads(ids.stdout))
 
     def test_the_spec_phase_no_longer_carries_the_story_review(self) -> None:
         """Story 的判据只在自己的位置：spec 阶段的审查任务里不再有它。"""

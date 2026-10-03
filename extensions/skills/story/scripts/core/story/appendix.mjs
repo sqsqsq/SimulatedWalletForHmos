@@ -50,13 +50,13 @@ export function materialSubsectionName(contract) {
  * `source`（真源，带蓝图的 revision）、`rows`（投出来的行）。**不含任何占位**：机器区里出现「作者要填的格子」，
  * 作者填了会被下一次投影打回。
  */
-function appendixZones(ctx, source) {
+function appendixZones(ctx, source, gaps = []) {
   const revision = source.ref ? `${source.ref.blueprint_id} r${source.ref.revision}` : '';
   const out = [];
   const add = (zone, section, h4, def) => {
     const reader = READERS[def.reader];
     if (!reader) fail(`章节合同附录章 projection：「${zone}」登记的读取器 ${def.reader} 不存在（可用：${Object.keys(READERS).join('、')}）`);
-    out.push({ zone, section, h4, source: `${reader.source}（${revision}）`, rows: reader.rows(source, def, zone) });
+    out.push({ zone, section, h4, source: `${reader.source}（${revision}）`, rows: reader.rows(source, def, zone, gaps) });
   };
   for (const [section, def] of Object.entries(projectionOf(ctx.contract))) {
     if (def.reader) add(section, section, null, def);
@@ -67,13 +67,18 @@ function appendixZones(ctx, source) {
 
 /**
  * 投影输入还成不成立 —— **写入侧与只读侧同一份结论**：设计来源不成立（没关联、未准入、投影对不上、
- * 冻结输入读不到）时不投也不按「期望为空」放行；蓝图里的知识应用缺判断、原文已变或落点失效，是设计待同步。
+ * 冻结输入读不到）时不投也不按「期望为空」放行；蓝图里的知识应用缺判断、原文已变或落点失效，是设计待同步；
+ * 蓝图有、附录却没有人读写法的结构是投影缺口，同样交设计。
  */
 function appendixSourceProblems(ctx) {
   const source = designSource(ctx);
   if (source.problems.length) return source.problems;
   const { problems } = blueprintKnowledge(ctx.projectRoot, source.blueprint);
-  return problems.map(p => `${p}——判断在设计时写进蓝图（knowledge_application），附录·规约按它投影；由设计职责在 component-design 里修订`);
+  // 投影缺口：蓝图里有、附录却没有人读写法的结构——不写空、不略过，交设计
+  const gaps = [];
+  appendixZones(ctx, source, gaps);
+  return [...problems.map(p => `${p}——判断在设计时写进蓝图（knowledge_application），附录·规约按它投影；由设计职责在 component-design 里修订`),
+    ...gaps];
 }
 
 /** 起手（`skeleton`）要的设计来源缺口：与投影、核对同一份结论。 */

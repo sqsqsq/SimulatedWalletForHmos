@@ -41,7 +41,7 @@ import {
 } from './story/context.mjs';
 import { designGaps, materialSubsectionName, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
-import { authorizeUnreviewed, prepareReview, reviewResult } from './story/independent-review.mjs';
+import { discloseInStory, pendingDisclosure, prepareReview, reviewResult, waiverCheck } from './story/independent-review.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
@@ -64,8 +64,6 @@ function parseArgs(argv) {
     else if (argv[i] === '--registering') args.registering = true;
     else if (argv[i] === '--action') args.action = argv[++i];
     else if (argv[i] === '--report-dir') args.reportDir = argv[++i];
-    else if (argv[i] === '--reason') args.reason = argv[++i];
-    else if (argv[i] === '--reply') args.reply = argv[++i];
   }
   return args;
 }
@@ -125,13 +123,13 @@ function cmdBasis(ctx) {
  *   给出材料键与这一份回复的位置；同一份材料已有有效通过的报告时给出原位置（reused）。
  * - `check`：只读核这一次的审查报告，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
- * - `unreviewed`：宿主没有独立审查能力时，记下缺什么（`--reason`）与人授权不经审查交付的原话（`--reply`），绑定定稿的这一版。
+ * - `waiver-check`：只读，给 `story_flow.py unreviewed` 记授权之前核宿主能力与这一版的审查结果，一行 JSON。
  * - `manual`：评审记录里人写过的内容（写过字的议题、自由意见区），一行 JSON。
  */
 function cmdReview(ctx) {
-  if (!['prepare', 'check', 'unreviewed', 'manual'].includes(ctx.args.action)) {
-    fail('用法: story-build.mjs review --action prepare|check|unreviewed|manual --feature <需求名> [--project-root <路径>]'
-      + ' [--report-dir <项目相对路径>] [--reason <宿主缺什么> --reply <人的原话>]');
+  if (!['prepare', 'check', 'waiver-check', 'manual'].includes(ctx.args.action)) {
+    fail('用法: story-build.mjs review --action prepare|check|waiver-check|manual --feature <需求名> [--project-root <路径>]'
+      + ' [--report-dir <项目相对路径>]');
   }
   if (ctx.args.action === 'manual') {
     // 评审记录里人写过的内容（update 撤回判 Review 能不能动）：一行 JSON
@@ -144,15 +142,15 @@ function cmdReview(ctx) {
     process.exitCode = ['pass', 'warn', 'unreviewed'].includes(out.result) ? 0 : 1;
     return;
   }
-  if (ctx.args.action === 'unreviewed') {
-    const out = authorizeUnreviewed(ctx, ctx.args.reason, ctx.args.reply);
-    if (out.error) fail(out.error);
-    process.stdout.write(`${JSON.stringify(out)}\n`);
+  if (ctx.args.action === 'waiver-check') {
+    process.stdout.write(`${JSON.stringify(waiverCheck(ctx))}\n`);
     return;
   }
+  pendingDisclosure(ctx);
   cmdProject(ctx);
   cmdNumber(ctx);
   cmdBuild(ctx);
+  discloseInStory(ctx);
   const { problems } = storyCheck(ctx, { registration: false });
   if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
   const out = prepareReview(ctx, ctx.args.reportDir);

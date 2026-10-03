@@ -23,7 +23,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chapterStructureProblems, pickedStructureNames } from './chapter-contract.mjs';
 import {
-  chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
+  authoredText, chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
   parseChapter, pendingChapters, placeholderProblems, storySections, zonesByLine,
 } from './document.mjs';
 import { activeKnowledgeEntries, fail, readRaw, readText } from './context.mjs';
@@ -145,7 +145,9 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
   const body = String(candidateBody ?? '');
   const lines = lineBody === null ? body : String(lineBody);
   const at = where ?? (n => `「${chapter.title}」第 ${n} 行`);
-  if (!norm(body)) {
+  // 机器区（如交付章的审查状态）不是作者写的：空不空、是不是「不涉及」只看作者的部分
+  const authored = authoredText(body);
+  if (!norm(authored)) {
     out.push(`「${chapter.title}」：只有标题没有正文`
       + `——不涉及的章写「${EMPTY_SECTION_TEXT}」一句才算明说过的结论；空着分不清「判过了不涉及」与「还没写」`);
     return out;
@@ -153,7 +155,7 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
   // 明说过「不涉及」的章到此为止：它没有结构可言，也没有解析的必要——
   // 空章照样解析的话，一次 check 会为九个空章各切一遍文。
   // 例外只有一种：写作设计还为这一章选着表或图，两个明确声明冲突，交作者二选一。
-  if (norm(body) === norm(EMPTY_SECTION_TEXT)) {
+  if (norm(authored) === norm(EMPTY_SECTION_TEXT)) {
     const picked = pickedStructureNames(chapter);
     if (picked.length) {
       out.push(`「${chapter.title}」：正文写的是「${EMPTY_SECTION_TEXT}」，写作设计骨架却还为它选着`

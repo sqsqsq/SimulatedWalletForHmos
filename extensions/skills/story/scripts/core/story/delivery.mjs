@@ -49,6 +49,6 @@ export async function deliveryProblems(ctx) {
   if (review.result === 'warn') {
     return { problems: [], notes: [`独立审查带非阻断建议通过，建议照录：${review.advisories.join('；')}`] };
   }
-  if (review.result === 'unreviewed') return { problems: [], notes: [`${review.detail}——交付时向读者说明`] };
+  if (review.result === 'unreviewed') return { problems: [], notes: [`${review.detail}——已写进 Story 交付章与 Review 题头的审查状态`] };
   return { problems: [`独立审查结果 ${review.result}：${review.detail}`], notes: [] };
 }

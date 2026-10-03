@@ -126,7 +126,6 @@ design_views:
         failure_recovery:
           recovery_id: requery-cloud
           persistence_failure: 恢复上下文写不进去时不提交，提示重试
-          response_loss: 用同一 idempotencyKey 重调创建或复用接口
           process_recreation: 读恢复上下文回到原检查点，再向云侧查询
         decisions_and_gaps: []
         evidence_refs: [doc/features/AR90004/SR/design.md]

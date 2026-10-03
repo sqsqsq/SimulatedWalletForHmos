@@ -228,9 +228,15 @@ def verify(directory: Path, body: dict) -> dict:
     return snapshot
 
 
+def current_version(feature_root: Path, contract: dict, design_input: dict, manifest: dict, candidate_rel: str) -> str:
+    """按当前设计输入（采用集合、需求条目、有效人签）、提取稿与采用文件的字节，算出现在冻结会得到的版本号。只读。"""
+    _, _, body, _ = selection(feature_root, contract, design_input, manifest, candidate_rel)
+    return digest(canonical(body))
+
+
 def freeze(feature_root: Path, contract: dict, design_input: dict, manifest: dict, candidate_rel: str,
            observed_at: str) -> dict:
-    """冻结一版设计输入，返回版本号、目录与快照。同一内容复用已有版本。"""
+    """冻结一版设计输入，返回版本号、目录与快照。同一内容复用已有版本（版本号与 `current_version` 同一算法）。"""
     files, _, body, notes = selection(feature_root, contract, design_input, manifest, candidate_rel)
     version = digest(canonical(body))
     root = feature_root / Path(*INPUTS)

@@ -78,7 +78,7 @@ from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.publish import cmd_publish, cmd_restored
 from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_bind_design, cmd_complete
-from flow.lifecycle import cmd_archived, cmd_material_status, cmd_status, cmd_story
+from flow.lifecycle import cmd_archived, cmd_material_status, cmd_status, cmd_story, cmd_unreviewed
 from flow.meetings import cmd_meeting_refresh
 from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_inputs, cmd_update_prepare,
                          cmd_update_restore, cmd_update_status)
@@ -89,13 +89,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="story 需求流程契约的唯一写入者")
     ap.add_argument("mode",
                     choices=["init", "round", "decide", "status", "bind-design", "complete", "reopen",
-                             "story", "publish", "archived", "restored", "meeting-refresh", "update"])
+                             "story", "unreviewed", "publish", "archived", "restored", "meeting-refresh", "update"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
                     help="关卡编号，缺省 material_scope")
     ap.add_argument("--ask", default=None, help="decide：`status` 给出的问法编号 ask_id")
-    ap.add_argument("--reply", default=None, help="decide：人的原话，逐字")
+    ap.add_argument("--reply", default=None, help="decide、unreviewed：人的原话，逐字")
+    ap.add_argument("--reason", default=None, help="unreviewed：宿主缺什么独立审查能力")
+    ap.add_argument("--withdraw", action="store_true", help="unreviewed：撤回未审查授权（之后真正审查）")
     ap.add_argument("--chosen", default=None,
                     help="decide：人选的选项编号或键——原话没写编号或标签时用；--propose 时是提议项")
     ap.add_argument("--propose", action="store_true", help="decide：记成模型的提议，不推进流程")
@@ -152,6 +154,8 @@ def main() -> int:
             result.update(cmd_material_status(feature_root) if args.materials else cmd_status(feature_root))
         elif args.mode == "story":
             result.update(cmd_story(feature_root, project_root))
+        elif args.mode == "unreviewed":
+            result.update(cmd_unreviewed(feature_root, project_root, args.reason, args.reply, args.withdraw))
         elif args.mode == "publish":
             result.update(cmd_publish(feature_root, project_root, args.reply))
         elif args.mode == "restored":

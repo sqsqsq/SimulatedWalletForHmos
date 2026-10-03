@@ -200,24 +200,26 @@ function imageRows(projectRoot, feature) {
   }) };
 }
 
-//: Story 读者审查的判据 id —— 结果条目用它，不另起名字
-const READER_REVIEW_ID = 'story_reader_review';
-
-/** 报告「判据核对」要逐项写的判据 ID：判据文件 semantic_checks 的全部键。 */
-export function readerCheckIds() {
+/**
+ * 判据原文：与本模块同一个包里 `rules/story-reader-rules.yaml` 的 `semantic_checks`，按登记顺序全部取出。
+ * 任务逐项发送、报告逐项核对都用这一份；读不到或某项没有说明是包坏了，照实停下。
+ *
+ * @returns {[string, {description: string, severity?: string, ai_prompt_hint?: string}][]}
+ */
+function readerChecks() {
   const text = readTextOrNull(path.join(PACKAGE, 'rules', 'story-reader-rules.yaml'));
-  return Object.keys((text === null ? null : parseYaml(text)?.semantic_checks) ?? {});
+  const checks = Object.entries((text === null ? null : parseYaml(text)?.semantic_checks) ?? {});
+  const broken = checks.filter(([, c]) => !c?.description).map(([id]) => id);
+  if (!checks.length || broken.length) {
+    throw new Error(`rules/story-reader-rules.yaml 的 semantic_checks ${checks.length ? `里 ${broken.join('、')} 没有说明` : '读不出判据'}`
+      + '：Story 读者审查的判据只写在那里');
+  }
+  return checks;
 }
 
-/** 判据原文：与本模块同一个包里 `rules/story-reader-rules.yaml` 的这一条。读不到是包坏了，照实停下。 */
-function criteria() {
-  const file = path.join(PACKAGE, 'rules', 'story-reader-rules.yaml');
-  const text = readTextOrNull(file);
-  const check = text === null ? null : parseYaml(text)?.semantic_checks?.[READER_REVIEW_ID];
-  if (!check?.description) {
-    throw new Error(`rules/story-reader-rules.yaml 读不出 ${READER_REVIEW_ID}：Story 读者审查的判据只写在那里`);
-  }
-  return check;
+/** 报告「判据核对」要逐项写的判据 ID：与任务发送的是同一份判据。 */
+export function readerCheckIds() {
+  return readerChecks().map(([id]) => id);
 }
 
 /** 设计来源：流程契约关联的蓝图，按原生读到的 canonical 与评审投影位置给出；读不到照实说。 */
@@ -249,7 +251,7 @@ const REPORT_FORMAT = [
   '',
   '1. 第一行写 `material_key: <派审时给的材料键，64 位>`，全文只这一行。',
   '2. 二级标题依次是「判据核对」「发现」「总体结论」，各恰好一个，标题字照写。',
-  '3. 「判据核对」一张表，表头 `判据 ID | 结果 | 依据`：判据逐项一行，ID 照本任务标题括号里的判据 ID 写，结果写 pass / warn / fail / not_applicable，',
+  '3. 「判据核对」一张表，表头 `判据 ID | 结果 | 依据`：判据逐项一行，ID 照本任务「判据」各节标题里的写，结果写 pass / warn / fail / not_applicable，',
   '   依据写你据以判断的事实；不适用写业务理由。表后写审查方法：逐章过了什么、仍开着的议题逐条结论、会议话题的去向。',
   '4. 「发现」一张表，表头 `编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任`：严重程度按判据写 BLOCKER / MAJOR / MINOR / INFO；',
   '   材料位置写上面「本次审查的材料」里那份文件的路径，可加章节或行；修正责任写该回哪一处改、由谁定。没有发现保留表头、不写行。',
@@ -266,18 +268,20 @@ const REPORT_FORMAT = [
 export function readerReviewTask(projectRoot, feature) {
   const contract = contractOf();
   const root = featureRoot(projectRoot, feature);
-  const check = criteria();
+  const checks = readerChecks();
   const rows = [
-    `## Story 独立人读审查（${READER_REVIEW_ID}，${check.severity ?? 'BLOCKER'}）`,
+    `## Story 独立人读审查（判据 ${checks.map(([id]) => id).join('、')}）`,
     '',
-    '### 判据',
-    '',
-    String(check.description).trim(),
-    '',
-    '### 怎么审、结论写什么',
-    '',
-    String(check.ai_prompt_hint ?? '').trim(),
-    '',
+    ...checks.flatMap(([id, check]) => [
+      `### 判据 ${id}（${check.severity ?? 'BLOCKER'}）`,
+      '',
+      String(check.description).trim(),
+      '',
+      `### 怎么审、结论写什么（${id}）`,
+      '',
+      String(check.ai_prompt_hint ?? '').trim(),
+      '',
+    ]),
     '### 读这些',
     '',
     '- `AR/story.md` —— 审查对象（全文在下面「审查对象」那一节，通读它）；',

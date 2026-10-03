@@ -110,6 +110,14 @@ function scopeConsumption(native, blueprint, snapshotRef) {
   return { status: issues.length ? 'unconsumed' : 'ok', issues };
 }
 
+/** 宿主能不能派独立审查子代理：原生按当前 adapter 的 `verifier_subagent` 声明判（`agents/<adapter>/adapter.yaml`）。 */
+export function hostReviewer(projectRoot) {
+  const native = loadNative(projectRoot);
+  const adapter = native.module('config.ts').loadFrameworkConfig(projectRoot)?.agent_adapter ?? null;
+  return { adapter, declared: native.module('scripts/utils/adapter-catalog.ts')
+    .resolveVerifierSubagentDeclared(native.frameworkRoot, adapter) };
+}
+
 /**
  * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
  * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。

@@ -536,13 +536,16 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
             "const sections = c.chapters.find(x => x.appendix).projection.sections;"
             "const [section, h4] = zone.split('·');"
             "const def = h4 ? sections[section].h4.find(x => x.title === h4) : sections[section];"
-            "const rows = READERS[def.reader].rows({ blueprint: JSON.parse(bp) }, def, zone);"
-            "process.stdout.write(JSON.stringify(rows));")
+            "const gaps = [];"
+            "const rows = READERS[def.reader].rows({ blueprint: JSON.parse(bp) }, def, zone, gaps);"
+            "process.stdout.write(JSON.stringify({ rows, gaps }));")
         proc = subprocess.run(["node", "--input-type=module", "-e", script, self.READERS.resolve().as_uri(),
                                str(self.CONTRACT), zone, json.dumps(blueprint, ensure_ascii=False)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        return json.loads(proc.stdout)
+        out = json.loads(proc.stdout)
+        self.gaps = out["gaps"]
+        return out["rows"]
 
     CONTRACT_BP = {"contracts": [{
         "contract_id": "balance-query",
@@ -553,8 +556,8 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
             {"field_id": "balance", "type": "number", "semantics": "余额（分）", "nullable": True}]},
         "mappings": [{"mapping_id": "m1", "target_field": "displayBalance", "kind": "derivation",
                       "source_fields": ["balance"], "rule": "分转元，两位小数"}],
-        "errors": {"items": {"timeout": "3 秒按失败处理"}, "source_ref": "api/wallet.yaml#errors",
-                   "internal": {"retry": {"budget": 3}}},
+        "errors": {"items": {"timeout": "3 秒按失败处理", "conflict": {"meaning": "卡状态冲突", "recovery": "重新查询后再提交"}},
+                   "source_ref": "api/wallet.yaml#errors", "verification_refs": ["verify:errors"]},
         "idempotency": {"rule": "同卡同日只记一次"},
         "nfr": {"requirements": {"latency_p95_ms": 800}},
     }, {"contract_id": "second", "operation": {"operation_id": "op2", "direction": "inbound", "version": "v1", "source_ref": "x"}}]}
@@ -569,8 +572,10 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
                        "- 错误语义：timeout：3 秒按失败处理",
                        "- 幂等：同卡同日只记一次", "- 非功能：latency_p95_ms：800", "**second**"):
             self.assertIn(needle, text)
-        self.assertNotIn("budget", text, "明确字段之外的嵌套对象被摊平写进了附录")
         self.assertNotIn("api/wallet.yaml", text, "来源路径是仓内路径，不进归档件的附录")
+        # 结构化的错误条目没有人读写法：报出位置交设计，不写空、不略过
+        self.assertEqual(1, len(self.gaps), self.gaps)
+        self.assertIn("contracts.balance-query.errors.items.conflict", self.gaps[0])
 
     def test_tables_do_not_run_together(self) -> None:
         """每张表前面是空行——连着写会被 markdown 并成一张错表。"""
@@ -583,18 +588,33 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
     def test_data_flows_and_their_policies(self) -> None:
         bp = {"design_views": [{"view_id": "runtime", "runtime_data_flows": [
             {"flow_id": "balance-cache", "data_domain_refs": ["balance"],
-             "source_of_truth": {"authority": "云侧", "projections_and_caches": [{"cache": "内存"}]},
+             "source_of_truth": {"authority": "云侧", "persistence": "relationalStore:balance",
+                                 "projections_and_caches": ["view:runtime/node:home"], "reconciliation": "以云侧为准"},
              "state_owner": {"ref": "WalletMain", "states": ["加载", "完成"]},
-             "failure_recovery": {"persistence_failure": "失败保留上次值", "extra": {"nested": "不写"}}}]}],
+             "failure_recovery": {"recovery_id": "requery", "persistence_failure": "失败保留上次值",
+                                  "response_loss": {"retry": "同一幂等键重调"}}}]}],
             "story_details": [{"id": "d1", "kind": "data_policy", "title": "缓存有效期",
                                "body": "余额缓存 5 分钟。\n\n| 场景 | 处理 |\n|---|---|\n| 切账号 | 清空 |",
                                "evidence_refs": ["flow:balance-cache"]}]}
         text = "\n".join(self.rows("技术契约·数据存储", bp))
-        self.assertIn("| balance-cache | balance | 权威：云侧 | 归属：WalletMain；状态：加载、完成 | 写入失败：失败保留上次值 |", text)
-        for gone in ("内存", "不写", "nested"):
-            self.assertNotIn(gone, text, "明确字段之外的嵌套对象被摊平写进了附录")
+        self.assertIn("| balance-cache | balance | 权威：云侧；持久化：relationalStore:balance；投影与缓存：view:runtime/node:home；"
+                      "对账：以云侧为准 | 归属：WalletMain；状态：加载、完成 | 恢复编号：requery；写入失败：失败保留上次值 |", text)
+        # 合同没给写法的子字段：报出位置交设计，不写空、不略过
+        self.assertEqual(1, len(self.gaps), self.gaps)
+        self.assertIn("runtime_data_flows.balance-cache.failure_recovery.response_loss", self.gaps[0])
         self.assertIn("| 切账号 | 清空 |", text, "精确明细的正文没有逐字带上")
         self.assertIn("flow:balance-cache", text)
+
+    def test_structured_node_states_are_reported_not_dashed(self) -> None:
+        """开发视图节点的状态写成结构：附录没有它的写法就报出位置，不显示成「— → —」。"""
+        bp = {"design_views": [{"view_id": "development", "nodes": [
+            {"node_id": "wallet", "module": "WalletMain", "current_state": "无余额刷新",
+             "target_state": {"summary": "首页按需刷新余额", "trigger": "回到首页"}}]}]}
+        text = "\n".join(self.rows("改动边界", bp))
+        self.assertIn("| WalletMain | 无余额刷新 → — |", text)
+        self.assertEqual(["design_views.development.nodes.wallet.target_state.summary",
+                          "design_views.development.nodes.wallet.target_state.trigger"],
+                         [g.split("蓝图 ", 1)[1].split(" ", 1)[0] for g in self.gaps])
 
     def test_details_take_only_their_kind_and_keep_the_body_verbatim(self) -> None:
         body = "开关名 `balance.refresh.enabled`。\n\n- 默认开启\n- 灰度 10%"

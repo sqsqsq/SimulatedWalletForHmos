@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { loadNative } from '../../../../../hooks/shared/framework-access.mjs';
 import { fail, readJson, readText } from './context.mjs';
 import { designSource } from './design-source.mjs';
+import { reviewStatusBlock } from './independent-review.mjs';
 import { ProjectionConflict, projectionDigest, recordedDigest } from './document.mjs';
 
 /**
@@ -96,7 +97,7 @@ export function cmdBuild(ctx) {
   const notes = [];
   try {
     out = renderReview(list, old, ctx.contract.decision_categories ?? [], notes,
-                       carriedOver(ctx.flowPath));
+                       carriedOver(ctx.flowPath), reviewStatusBlock(ctx));
   } catch (e) {
     if (e instanceof ProjectionConflict) fail(e.message);
     throw e;
@@ -361,9 +362,10 @@ const DOC_HINT = '> 怎么填：第一部分还没定，等你评；第二部分
 const FREEFORM_HINT = '> 以上议题之外你认为该说的事写在这里——缺的分支、该复用的既有能力、'
   + '遗漏的埋点都算。按 1. 2. 3. 编号列举，每条写清是什么、影响哪里。';
 
-/** 归档件的头部：大标题 + 一条可见提示。 */
-function renderDocHeader() {
-  return `# 评审记录\n\n${DOC_HINT}\n`;
+/** 归档件的头部：大标题 + 一条可见提示；本版人授权不经审查交付时，紧接着是审查状态（机器维护）。 */
+function renderDocHeader(status = []) {
+  const disclosed = status.length ? `\n${status.join('\n')}\n` : '';
+  return `# 评审记录\n\n${DOC_HINT}\n${disclosed}`;
 }
 
 /**
@@ -631,7 +633,7 @@ function groupByCategory(list, categories) {
  * @param {{key:string, section:string}[]} categories 合同的类型词表
  * @returns {string}
  */
-function renderReview(list, previous = '', categories = [], notes = [], carried = new Set()) {
+function renderReview(list, previous = '', categories = [], notes = [], carried = new Set(), status = []) {
   const old = String(previous ?? '');
   const decisions = Array.isArray(list) ? list.filter(Boolean) : [];
   // **整份覆盖之前先看一眼旧文里多出来的那几条**：登记表里没有了，而人在上面写过字。
@@ -644,7 +646,7 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
       + 'build 按登记表整份重渲染，登记表里没有的议题连同人工区都不进新文；'
       + '旧文里这样的议题带着人写过字的人工区（到 `<!-- decision: … -->` 标记为止）时 build 停下。');
   }
-  const out = [renderDocHeader()];
+  const out = [renderDocHeader(status)];
 
   STATUS_CHAPTERS.forEach((chapter, ci) => {
     const no = ci + 1;

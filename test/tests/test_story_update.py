@@ -1191,13 +1191,55 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         refused = self.update("--action", "close")
-        self.assertIn("设计输入还是变化之前冻结的那一版", refused.get("error", ""), refused)
+        self.assertIn("材料变了", refused.get("error", ""), refused)
         done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
         self.assertTrue(done.get("committed"), done)
         self.design_syncs()
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.assertEqual("closed", self.update("--action", "close").get("status"))
         self.assert_no_hand_edit()
+
+    def test_a_changed_input_declaration_needs_a_new_frozen_input_before_close(self) -> None:
+        """材料字节没变，设计输入里一条需求条目的类别改了：登记的冻结版本已不是现在的有效输入——不收口，重跑 complete 后收口。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.mark_archived()
+        rid = self.update()["update"]
+        path = self.src / "design-input.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["scope_items"][0]["kind"] = "goal" if data["scope_items"][0]["kind"] != "goal" else "requirement"
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        refused = self.update("--action", "close")
+        self.assertIn("与登记的冻结版本不同", refused.get("error", ""), refused)
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertTrue(done.get("committed"), done)
+        self.design_syncs()
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+
+    def test_a_new_material_left_out_is_recorded_without_changing_the_input(self) -> None:
+        """来了一份新材料而本轮不采用：重跑 complete 只记下这次材料，冻结版本照旧复用、设计不用同步；成文重新登记后收口。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.mark_archived()
+        rid = self.update()["update"]
+        before = self.contract()["input"]["snapshot_ref"]
+        (self.feature_root / "assets").mkdir(exist_ok=True)
+        (self.feature_root / "assets" / "meeting-photo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+        unused = self.run_cmd(sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
+                              "--project-root", str(self.root), "--caption-image",
+                              f"doc/features/{FEATURE}/assets/meeting-photo.png", "--unused", "会场照片，不是需求依据")
+        self.assertEqual(0, unused.returncode, unused.stdout + unused.stderr)
+        self.flow("round")
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        refused = self.update("--action", "close")
+        self.assertIn("材料变了", refused.get("error", ""), refused)
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertEqual(before, done["input"]["snapshot_ref"], "不采用的新材料改了冻结版本")
+        again = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertFalse(again.get("committed"), "同一份输入重入又登记了一次")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])  # 材料清单写明新材料的去处，重新审查登记
+        closed = self.update("--action", "close")
+        self.assertEqual("closed", closed.get("status"), closed)
 
     def test_rescoping_after_archive_goes_through_the_scope_gate(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])

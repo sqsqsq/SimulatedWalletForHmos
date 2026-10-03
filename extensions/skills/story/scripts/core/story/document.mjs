@@ -643,6 +643,18 @@ export function zonesByLine(lines) {
   return out;
 }
 
+/** 去掉机器区（含首尾标记）之后的正文：一章是不是空、是不是只写了「不涉及」，按作者写的部分判。 */
+export function authoredText(text) {
+  const out = [];
+  let inside = false;
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    if (line.startsWith(ZONE_BEGIN)) inside = true;
+    else if (inside && line.trim() === ZONE_END) inside = false;
+    else if (!inside) out.push(line);
+  }
+  return out.join('\n');
+}
+
 /**
  * 一段正文里某个生成区的行区间（含首尾标记），没有就返回 null。
  */

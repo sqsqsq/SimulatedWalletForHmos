@@ -31,9 +31,10 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from materials import registry
+from materials import frozen, registry
 
 from flow.routing import basis_drift, inputs_answer, material_state
+from flow.submission import DESIGN_INPUT
 from flow.state import (CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, file_sha256, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
 
@@ -652,6 +653,33 @@ def record_owned_after(feature_root: Path) -> str | None:
     return rid
 
 
+def registered_input_stale(feature_root: Path, contract: dict) -> str | None:
+    """登记的设计输入是不是现在的有效输入：两件都要成立，不成立返回原因。
+
+    ① 登记时记下的材料摘要等于当前材料：本轮来的新材料无论采用与否，都要经 complete 记下处置；
+    ② 按当前设计输入、提取稿、有效人签与采用文件重算的冻结版本号（`frozen.current_version`，与 complete 同一算法）
+       等于登记的版本：采用关系、需求条目或人签变了，材料字节不变也算变。
+    """
+    try:
+        live = registry.build(feature_root)
+    except registry.MaterialError as exc:
+        raise FlowError(str(exc)) from exc
+    if live.get("digest") != contract["input"].get("materials_digest"):
+        return "这一轮材料变了，设计输入还是变化之前登记的那一版"
+    snapshot_ref = str(contract["input"].get("snapshot_ref") or "")
+    version = snapshot_ref.rsplit("/", 2)[-2] if snapshot_ref.count("/") >= 2 else ""
+    try:
+        snapshot = json.loads((feature_root / Path(*frozen.INPUTS) / version / frozen.SNAPSHOT).read_text(encoding="utf-8"))
+        candidate = next(row["path"] for row in snapshot["files"] if row.get("role") == "extracted_analysis")
+        design_input = frozen.read_input(feature_root, "/".join(DESIGN_INPUT))
+        now = frozen.current_version(feature_root, contract, design_input, live, candidate)
+    except (OSError, ValueError, StopIteration, frozen.FrozenError) as exc:
+        return f"按当前设计输入核不了登记的版本（{exc}）"
+    if now != version:
+        return "当前的设计输入（采用集合、需求条目、人签或提取稿）与登记的冻结版本不同"
+    return None
+
+
 def cmd_update_close(feature_root: Path) -> dict:
     """收口这一轮：**绑定说明、记下此刻的文件摘要、留一份可比的正文**。
 
@@ -689,15 +717,11 @@ def cmd_update_close(feature_root: Path) -> dict:
         raise FlowError(f"这一轮登记的请求是 materials，却改了已有人读件 {'、'.join(touched)}，不收口："
                         "已有 Story 受影响的是 documents——`update --action prepare --result documents` 改记终点，按 documents 收口")
     if result == "documents" and contract.get("input"):
-        # 与 complete 同一口径：登记的输入记着冻结时的材料摘要，本轮材料变了它就还是旧依据
-        try:
-            live = registry.build(feature_root)
-        except registry.MaterialError as exc:
-            raise FlowError(str(exc)) from exc
-        if live.get("digest") != contract["input"].get("materials_digest"):
-            raise FlowError("这一轮材料变了，设计输入还是变化之前冻结的那一版，不收口：在 design-input.json 写明本轮采用集合"
-                            "（不采用的在提取稿写理由），重跑 `story_flow.py complete` 冻结新版本——采用集合没变就复用原版本、"
-                            "只记下这次的材料；设计与成文按登记的新输入同步后再收口")
+        stale = registered_input_stale(feature_root, contract)
+        if stale:
+            raise FlowError(f"{stale}，不收口：在 design-input.json 写明本轮采用集合、需求条目与人签（不采用的在提取稿写理由），"
+                            "重跑 `story_flow.py complete`——内容没变就复用原版本、只记下这次的材料；"
+                            "设计与成文按登记的输入同步后再收口")
     if result == "documents" and (feature_root / Path(*STORY)).is_file():
         registered_before = (load(root / "before") or {}).get("status") == "story_written"
         if contract.get("status") != "story_written":
