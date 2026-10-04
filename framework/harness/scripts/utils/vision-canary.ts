@@ -16,6 +16,7 @@ import * as crypto from 'crypto';
 import Jimp from 'jimp';
 import { extractClaudeFinalResultText, planUsesClaudeStreamJson } from './claude-envelope';
 import { extractCodexAgentMessageText } from './codex-terminal-events';
+import { codexTerminalFailureStatus } from './goal-headless-sentinel';
 
 export type CanaryVerdict = 'tool_read' | 'ocr_capable' | 'none';
 
@@ -290,12 +291,12 @@ export interface CanaryInvocationFacts {
 }
 
 /** 判卷前需要投影的 stdout 信封方言（plan e6b3f8d2 t1）。 */
-export type CanaryStdoutEnvelope = 'claude_stream_json' | 'codex_turn_jsonl';
+export type CanaryStdoutEnvelope = 'claude_stream_json' | 'codex_turn_jsonl' | 'cursor_stream_json';
 
 /**
  * adapter → 判卷 stdout 信封方言（'none' = 纯文本，直接扫）。
  * 与各自的 argv 注入条件**严格同构**：
- *   · claude 家族：`--output-format stream-json` 仅在 tool_event_provenance=structured_events 时注入；
+ *   · Claude 家族与 Cursor：`--output-format stream-json` 恒由 adapter argv 注入，独立于工具审计能力；
  *   · codex：`--json` 由 codexArgv **无条件**追加（plan e6b3f8d2 t1），故恒为 JSONL。
  */
 export function resolveCanaryStdoutEnvelope(
@@ -303,6 +304,7 @@ export function resolveCanaryStdoutEnvelope(
   toolEventProvenance?: string,
 ): 'none' | CanaryStdoutEnvelope {
   if (adapterName === 'codex') return 'codex_turn_jsonl';
+  if (adapterName === 'cursor') return 'cursor_stream_json';
   return planUsesClaudeStreamJson(adapterName, toolEventProvenance as never) ? 'claude_stream_json' : 'none';
 }
 
@@ -352,7 +354,7 @@ export function parseCanaryAnswer(
     const projected =
       invocation.structured_stdout_format === 'codex_turn_jsonl'
         ? extractCodexAgentMessageText(invocation.stdout)
-        : extractClaudeFinalResultText(invocation.stdout);
+        : extractClaudeFinalResultText(invocation.stdout, invocation.structured_stdout_format === 'cursor_stream_json');
     if (projected === null) {
       structuredProjectedNull = true;
       raw = '';
@@ -521,6 +523,21 @@ function matchCodex400Permanent(allOutput: string): { label: string; line: strin
   return null;
 }
 
+/** 400 信封 + 实采措辞表的命中（resolveInvokeHardCliFailure ③ 与 isModelUnsupportedFailure 共用同一判定）。 */
+function codexModel400Hit(facts: CanaryHardCliFailureFacts): { label: string; line: string } | null {
+  return matchCodex400Permanent(`${facts.terminal_error_excerpt ?? ''}\n${facts.stderr}\n${facts.stdout}`);
+}
+
+/**
+ * plan 4e6fb3b6 §6.2："模型不受支持"——即 resolveInvokeHardCliFailure 判定次序里由 ③（400 模型永久错误）
+ * 命中的硬失败：spawn_error 优先于它、timeout/silent/skipped/exit0 不算。只有这一类才进获准替代；
+ * 其它 CLI 硬失败保持现状。不另写措辞匹配。
+ */
+export function isModelUnsupportedFailure(facts: CanaryHardCliFailureFacts): boolean {
+  if (facts.skipped || facts.timed_out || facts.silent_killed || facts.spawn_error) return false;
+  return facts.exitCode !== 0 && codexModel400Hit(facts) !== null;
+}
+
 /**
  * plan c4e8a1f7 T1a：正式 phase invoke 与金丝雀探测共用的**硬失败共享分类**（SSOT）。
  * 分类三源（任一命中即硬失败）：
@@ -562,9 +579,16 @@ export function resolveInvokeHardCliFailure(
   // ③ Codex 结构化模型兼容 400（先于②判——它是 CLI 兼容类硬错误，run 必停机）。
   // 解析后的 terminal 正文排最前：stdout 里的同一信封是转义形态，签名命不中。
   if (facts.exitCode !== 0) {
-    const combined = `${facts.terminal_error_excerpt ?? ''}\n${facts.stderr}\n${facts.stdout}`;
-    const hit = matchCodex400Permanent(combined);
+    const hit = codexModel400Hit(facts);
     if (hit) return hit.line ? `${hit.label}原文：${hit.line}` : hit.label;
+    // plan 4e6fb3b6 §4：同一信封的 401/403（认证失败/无权限）同属外部硬失败——重试同一调用不会变；
+    // 只认 turn.failed 终态段（terminal 契约），429/5xx 归瞬时（goal-headless-sentinel），400 仍走上面。
+    // 没有真实 401/403 样本：按 400 真实信封形状加状态码识别，形态不同则落回既有路径。
+    const status = codexTerminalFailureStatus(facts.terminal_error_excerpt);
+    if (status === 401 || status === 403) {
+      return `Codex 认证/权限硬错误（status=${status}）：当前 Codex 登录状态或账号权限不允许本次调用——`
+        + `重新登录或换有权限的账号后重跑，非内容失败。原文：${facts.terminal_error_excerpt!.slice(0, 500)}`;
+    }
   }
   // ② CLI/config 参数不兼容——必要条件缺一不可。
   if (facts.exitCode === 0) return null;

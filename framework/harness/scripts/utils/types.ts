@@ -724,7 +724,8 @@ export interface HarnessRunSummary {
     message: string;
     source_check?: string;
   }>;
-  blocking_warnings: Array<{
+  /** 已停写（plan 3abca824 t3）：没有决策读取方；只为读取带该字段的旧 summary 保留。 */
+  blocking_warnings?: Array<{
     id: string;
     blocking_class?: string;
     details_excerpt: string;
@@ -750,6 +751,11 @@ export interface HarnessRunSummary {
     suggestion?: string;
     source?: string;
   }>;
+  /**
+   * plan f7045213 §4.3：去向表判为"披露、不阻断"的失败（账本与形状类）。条数计入完成缺口；
+   * 当代 writer 恒写（去向表为空时为 []），旧 summary 可缺省。
+   */
+  disclosed_failures?: import('./check-disposition').DisclosedFailure[];
   next_action: string;
   receipt_status?: string;
   closure_status?: 'open' | 'closed';
@@ -766,6 +772,7 @@ export interface HarnessRunSummary {
     summary: string;
     item_fingerprint: string;
     source_phase: string;
+    evidence_refs?: import('./repair-candidates').RepairEvidenceRef[];
     /** adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记；缺省=legacy check-domain。 */
     identity_schema?: 'signal@1';
   }>;
@@ -1003,6 +1010,10 @@ export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' |
 }
 
 export interface FeatureCheckContext {
+  /** 当前 gate 已授予的绝对截止；只传剩余时间，不授予写入/收口职责。 */
+  gateDeadlineMs?: number;
+  /** 同一 pipeline 的未提交 device evidence；仅预览引用，正式件由 runtime 提交。 */
+  deviceTestEvidence?: { trace_path: string };
   /** Native global-phase selection; no Feature birth or persisted request state. */
   module?: string;
   term?: string;

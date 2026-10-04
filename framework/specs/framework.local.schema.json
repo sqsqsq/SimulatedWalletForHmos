@@ -16,6 +16,24 @@
       "type": "string",
       "description": "Active adapter for this developer (must be in project materialized_adapters when set)"
     },
+    "adapters": {
+      "type": "object",
+      "description": "Per-adapter personal settings, keyed by adapter name (plan 4e6fb3b6 §6.1). Unparsable values are treated as not configured, with a warning.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "approved_models": {
+            "type": "array",
+            "description": "Approved alternative models, tried in order when the effective model is rejected as unsupported and the user did not pin a model with --adapter-model. Absent = no alternatives (current behavior).",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        }
+      }
+    },
     "toolchain": {
       "type": "object",
       "properties": {
@@ -233,6 +251,17 @@
           "type": "string",
           "minLength": 1,
           "description": "AVD name used by the managed fallback (e.g. \"Pura 90\")"
+        }
+      }
+    },
+    "design_repair": {
+      "type": "object",
+      "description": "Pre-authorization for design repairs the framework may dispatch on its own (plan 9c3d7e1a §5.5).",
+      "properties": {
+        "unattended_b1": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, an unattended run that halts on a B1 design-authority failure (repairable within existing authority) may dispatch one isolated repair attempt per halt signature. Only boolean true enables it; absent or any other value means not authorized."
         }
       }
     }

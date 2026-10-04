@@ -180,8 +180,15 @@ doc/features/<feature>/
 
 - `run_statuses`：阶段状态面板，例如 `coding_run_status` / `ut_run_status` / `testing_run_status`。
 - `readiness_signals`：非 BLOCKER 但代表"尚未就绪"的信号，例如 catalog/glossary 空骨架、docs freshness 无法判定。
-- `blocking_warnings` / `blocking_skips`：`severity=BLOCKER` 但状态为 `WARN/SKIP` 的检查项，避免被 verdict PASS 掩盖。
+- `blocking_skips`：`severity=BLOCKER` 但状态为 `SKIP` 的检查项（已确认不适用的除外），避免被 verdict PASS 掩盖。`blocking_warnings` 已停写：schema 保留该属性，旧 summary 带着它照常可读，新 summary 不再出现。
+- `verdict` / 退出码 / `blocker_count`：阶段结论只算一次（脚本阻断、报告合法性、质量轴与能力解析取更严一侧），控制台、合并报告与进程退出码都用它；`blockers` 与 `blocker_count` 是同一个有效阻断集合（聚合的运行状态项在源失败已列出时不重复计入）。
+- `disclosed_failures`：失败但按处置表只披露、不阻断的检查（账本与形状类，如 `schema_version_present`）；条数计入完成缺口，完成标签为 `COMPLETE_WITH_GAPS`。
 - `next_action`：给 agent / Stop hook 的下一步建议；同会话未闭环时，Stop hook 会把最近一次 `summary.json.next_action` 带入阻断文案。
+- `repair_candidates[].evidence_refs`：可选的只读 native 交接定位（trace_path/case_id/step_index，以及派生/失败边界路径）；
+  `files`/`affected_files` 仍仅是修复目标。补证据不会改变 native 旧指纹、拒修或无进展判定；旧候选缺此字段仍可读。
+- `readiness_signals` 中 `id=verifier_repair_diagnosis`：点明 review 的具体漏行/冲突/错绑定，以及当前 request 资格。
+  已签发当前 request 才走 `run_verifier_for_repair`；carried/disabled/混合失败不虚构 request，先修可合法修复的资格原因。
+  合法 refuted/unclear 不按格式坏重投，旧负面结论与拒修依据保留，产品 FAIL/open 不被诊断或人签洗绿。
 - `closure_status`：`open` | `closed`；`closed` 当且仅当 `check-receipt.ts` 会通过（与 `receipt_status=passed` 对齐）。closed 时 `next_action=phase_closed_wait_user`。
 - **跨会话恢复**：`cd framework/harness && npx ts-node harness-runner.ts --sync-closure --phase <phase> --feature <feature>` 或单独跑 `check-receipt.ts`（PASS 时也会回写 `.current-phase.json`）。见 `AGENTS.md` §5.2。
 
@@ -287,9 +294,18 @@ framework/docs/skills/feature/business-ut.md (doc_ts=2026-04-25T10:00:00+08:00):
 
 ### 6.5 退出码语义
 
-- 全部 PASS / 仅 SKIP（如非 git 仓库） → 0
-- MAJOR FAIL（doc 可能过期 / source 路径失效）→ 1
-- 不会有 BLOCKER（docs phase 设计上不阻塞 CI）
+- 阶段结论 PASS → 0；结论 FAIL / INCOMPLETE 或执行出错 → 非零。只有 SKIP（如非 git 仓库，`doc_freshness` 判定不了）时结论仍是 PASS。
+- MAJOR 失败（`doc_files_exist`、`source_paths_resolvable`、`profile_skill_assets_resolvable`、`doc_freshness`：文档缺失、可能过期、source 路径失效）写进报告，**不单独改变退出码**。
+- BLOCKER 失败让结论为 FAIL。完整清单以报告里 `severity` 为 BLOCKER 的检查项为准；下面是常见来源：
+  - `check-docs.ts` 自己产出的阻断检查：
+    - `inventory_exists`：`DOC_INVENTORY.yaml` 缺失或结构不合法（此时其余检查不跑；`inventory_schema_valid` 只在读取成功时报 PASS）；
+    - `requested_docs_present`：`--path` 指定的文档不在 inventory 里；
+    - `skill_body_max_lines`：某个 `skills/**/SKILL.md` 主干行数超预算；
+    - `forced_full_read_blacklist`：出现未登记的无条件强制全读句式；
+    - `correction_layer_unconditional_confirm`：skills / templates 仍引用已退役的 correction.layer 人签闸；
+    - `entry_template_budget`：`templates/AGENTS.md.template` 缺失、超行数预算或缺骨架标记。
+  - 不带 `--path` 时还会跑三组文档 lint，各自的失败也是阻断级：确认交互写法（[`check-skills-confirmation-ux.ts`](../../harness/scripts/check-skills-confirmation-ux.ts)；其中 registry 引用缺失与条目偏少只是 MINOR 警告）、编号式 skill 路径（[`check-no-numbered-skill-paths.ts`](../../harness/scripts/check-no-numbered-skill-paths.ts)）、编号式 skill 文案（[`check-no-numbered-skill-prose.ts`](../../harness/scripts/check-no-numbered-skill-prose.ts)）。
+- 在 CI 里用 docs phase 卡门时：退出码只反映阻断级失败；要让"文档可能过期"也挡 CI，需读报告里的 MAJOR 失败自行判断。
 
 ---
 
@@ -571,3 +587,9 @@ cat framework/harness/state/.current-phase.json
       last_seen_session_id / last_seen_at 字段（向后兼容：缺失即按"未盖章"处理）；
     - 与全局入口 §5.1.1 协同。
 -->
+
+### Goal 检查与正式收口
+
+goal 执行者自检与外层 gate CLI 都只产检查事实和 proposal；PASS/open 表示当前检查通过、等待 runtime 正式 gate 与 finalizer。check-receipt 和 --sync-closure 在 goal 中只校验，不能抢先提交阶段或 Feature completion。独立无 goal 入口保留原闭环。自检 PASS/closed 不触发 invocation 结束，四个内置 adapter 按终态或自然退出走已有 grace/管道有界收尾。
+
+goal 的全部 visual rounds 写现有 journal，runtime 在 gate 前后顺序、幂等收编。device evidence 先组装同一个 holder/doc供同 gate native/legacy 检查与 verifier preview 消费，再由 runtime 核 gate 窗口、attempt/device/HAP/trace 后提交正式文件。legacy checkpoint 仍 WARN；绑定或提交失败保持 FAIL/open。旧 gate flag 不授予正式写入职责。

@@ -20,3 +20,6 @@
 *.py     text eol=lf
 *.toml   text eol=lf
 *.sha256 text eol=lf
+
+# Preserve the original bytes of Maison release assets.
+framework/** -text

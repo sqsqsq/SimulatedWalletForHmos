@@ -17,7 +17,6 @@
     "summary_json",
     "run_statuses",
     "readiness_signals",
-    "blocking_warnings",
     "blocking_skips",
     "blockers",
     "next_action"
@@ -42,6 +41,21 @@
     "feature": { "type": "string", "minLength": 1 },
     "verdict": { "type": "string", "enum": ["PASS", "FAIL", "INCOMPLETE"] },
     "blocker_count": { "type": "integer", "minimum": 0 },
+    "disclosed_failures": {
+      "type": "array",
+      "description": "plan f7045213 §4.3：去向表判为披露、不阻断的失败（账本与形状类）；条数计入完成缺口。当代 writer 恒写（去向表为空时为空数组），旧 summary 可缺省",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "protects", "severity", "details_excerpt"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "protects": { "type": "string", "enum": ["product_truth", "result_basis", "ledger_shape", "capability_gap"] },
+          "severity": { "type": "string", "minLength": 1 },
+          "details_excerpt": { "type": "string" }
+        }
+      }
+    },
     "fail_count": { "type": "integer", "minimum": 0 },
     "warn_count": { "type": "integer", "minimum": 0 },
     "asset_debt_revision": {
@@ -100,6 +114,7 @@
     },
     "blocking_warnings": {
       "type": "array",
+      "description": "plan 3abca824 t3：已停写（没有决策读取方）；保留属性只为读取带该字段的旧 summary",
       "items": { "$ref": "#/$defs/blocking_notice" }
     },
     "blocking_skips": {
@@ -139,7 +154,23 @@
             "enum": ["signal@1"],
             "description": "adjudicated-repair-loop（plan e2b7c4a9）：信号级候选标记——仅 testing 结构化视觉信号候选携带（identity = sha256(computeDefectFingerprint(screen, defect))）；无字段 = legacy check-domain 候选（可诊断/路由，不入累计 one-shot 收敛与 no-op 判定）。可选、向后兼容。"
           },
-          "source_phase": { "type": "string", "minLength": 1 }
+          "source_phase": { "type": "string", "minLength": 1 },
+          "evidence_refs": {
+            "type": "array",
+            "description": "只读 native StepResult 交接定位，不参与修复目标、指纹或进展判定；旧候选可缺席。",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trace_path", "case_id", "step_index"],
+              "properties": {
+                "trace_path": { "type": "string", "minLength": 1, "pattern": "^(?![/\\\\]|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$" },
+                "case_id": { "type": "string", "minLength": 1 },
+                "step_index": { "type": "integer", "minimum": 0 },
+                "derived_plan_path": { "type": "string", "minLength": 1, "pattern": "^(?![/\\\\]|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$" },
+                "artifact_paths": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^(?![/\\\\]|[A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\\\u0000]+$" } }
+              }
+            }
+          }
         }
       }
     },

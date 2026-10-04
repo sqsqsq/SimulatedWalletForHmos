@@ -101,6 +101,21 @@
 | `story` | [doc/extensions/skills/story/SKILL.md](doc/extensions/skills/story/SKILL.md) |
 | `wallet-sdk-onboarding` | [doc/extensions/skills/wallet-sdk-onboarding/SKILL.md](doc/extensions/skills/wallet-sdk-onboarding/SKILL.md) |
 
+
+### component-design 设计前知识
+
+动笔前读取适用原文；索引/候选不是事实确认或已读证明。维护写入须沿原授权与时点，不在 run 内擅自刷新图谱。
+
+- `doc/module-catalog.yaml` — 模块职责、反例与易混项；完整索引可继续探索
+- `doc/glossary.yaml` — 术语与 alias 候选；字面命中不替代语义消歧
+- `doc/architecture.md` — 架构背景；设计依据仍按原权威链引用
+- `doc/conventions.md` — 存在时读全文；review 独立选适用项并打开范例（文件缺失 / 未启用；不声称已消费）
+- `doc/component-index.yaml` — 完整组件库存；与策展按 id 联合读取并反查源码
+- `doc/component-catalog.yaml` — 组件适用/不适用与易混项；不覆盖源码事实（文件缺失 / 未启用；不声称已消费）
+- `framework/docs/README.md` — 框架背景索引，按当前任务跟随相关原始链接
+- `framework/profiles/hmos-app/skills/README.md` — 当前 profile 知识与 Skill 资产协议
+- `<module>/code-graph.yaml` — 按相关模块替换 <module>；无图回源码，不自动建图（文件缺失 / 未启用；不声称已消费）
+- component-design knowledge：未声明可选资产（extension → profile）。
 > **catalog-bootstrap（catalog+glossary）是所有其它 Skill 的前置**：先建好 Catalog+Glossary，后续 spec 术语消歧与 Scope 守门才有可校验基准。
 
 **执行规则**：进入某阶段前必须完整读一遍对应 SKILL.md 主干；SKILL.md 内"条件加载索引"指向的 reference/template/checklist **仅在对应场景/步骤触发时才读**，不是入口即全读（C3 skill-slim）。产物必须通过 `harness-runner.ts --phase <phase> --feature <name>` 及独立 verifier 子 agent 执行 `verify-*.md`。
