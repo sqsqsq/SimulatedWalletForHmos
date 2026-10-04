@@ -520,7 +520,8 @@ class StoryGatesCountFailuresAndRework(unittest.TestCase):
         r = self.measure(both)
         seg = r["segments"]["whole"]
         self.assertEqual((0, 0), (r["gate_rounds_with_fail"], r["gate_rounds_unknown"]))
-        self.assertEqual([{"seq": 0, "candidates": ["story_review@A", "story_review@B"]}], r["gate_calls_unattributed"])
+        self.assertEqual([{"seq": 0, "candidates": ["story_review@A", "story_review@B"], "reason": "一次执行了多个门禁"}],
+                         r["gate_calls_unattributed"])
         self.assertIsNone(seg["first_gate"])
 
     def test_an_unattributed_call_does_not_close_rework(self) -> None:
@@ -532,6 +533,45 @@ class StoryGatesCountFailuresAndRework(unittest.TestCase):
         self.assertEqual(["story_review@A"], seg["rework_open"])
         self.assertEqual(0.0, seg["rework_min"])
         self.assertEqual(1, len(seg["gate_calls_unattributed"]))
+
+
+    def test_another_output_source_after_the_gate_is_unattributed(self) -> None:
+        """单个门禁后面又读了别的报告：输出不能可靠归给本次门禁，不覆盖已有的 fail，也不结束返工。"""
+        mixed = {"tool_name": "bash", "tool_input": {"command":
+                 "node x/story-build.mjs review --action check --feature A; cat saved-report.json"},
+                 "tool_output": '{"result": "fail"}\n{"result": "pass"}'}
+        r = self.measure(_story_review("fail", feature="A"), mixed)
+        seg = r["segments"]["whole"]
+        self.assertEqual(1, r["gate_rounds_with_fail"], "混合输出被算成了一轮")
+        self.assertEqual(["story_review@A"], seg["rework_open"])
+        [call] = r["gate_calls_unattributed"]
+        self.assertEqual(["story_review@A"], call["candidates"])
+        self.assertIn("门禁之外还有输出来源", call["reason"])
+
+    def test_contradicting_conclusions_in_one_output_are_unattributed(self) -> None:
+        """只执行一个门禁、输出里却有互相矛盾的结论：不挑一个当结论。"""
+        for name, record in {
+            "审查核对": {"tool_name": "bash", "tool_input": {"command": "node x/story-build.mjs review --action check --feature A"},
+                     "tool_output": '{"result": "fail"}\n{"result": "pass"}'},
+            "成文登记": {"tool_name": "bash", "tool_input": {"command": "python x/story_flow.py story --feature A"},
+                     "tool_output": '{"success": false}\n{"success": true}'},
+            "结构检查": {"tool_name": "bash", "tool_input": {"command": "node x/story-build.mjs check --feature A"},
+                     "tool_output": "[story-build check] 2 处未通过\n[story-build check] 通过：10 章"},
+            "原生门禁": _harness(GATE_FAIL + GATE_PASS),
+        }.items():
+            with self.subTest(gate=name):
+                r = self.measure(record)
+                self.assertEqual((0, 0), (r["gate_rounds_with_fail"], r["gate_rounds_unknown"]))
+                self.assertEqual(1, len(r["gate_calls_unattributed"]))
+
+    def test_cutting_the_gate_output_keeps_the_attribution(self) -> None:
+        """前面切目录、后面经管道截取门禁自己的输出：仍归给这一次门禁。"""
+        cut = {"tool_name": "bash", "tool_input": {"command":
+               "cd work && node x/story-build.mjs review --feature A --action check 2>&1 | tail -5"},
+               "tool_output": '{"result": "fail"}'}
+        r = self.measure(cut)
+        self.assertEqual(1, r["gate_rounds_with_fail"])
+        self.assertEqual([], r["gate_calls_unattributed"])
 
 
 class EachSegmentIsMeasured(unittest.TestCase):
