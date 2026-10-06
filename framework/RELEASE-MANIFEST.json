@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "4a87b7dbfa0058c8a44f2ce4642156c3411abffa",
-  "built_at": "2026-10-04T15:10:15.535Z",
+  "source_commit": "98434b6f943c50d09e71c704af0947f44bad0d5c",
+  "built_at": "2026-10-06T14:23:17.426Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "76e1df6f754eed9bae0e53cfcd908486dc528d74ce70dfc583c503eb86f76bf6"
+      "sha256": "d194ddfe730d1f04736101ddcef910fbcfada1160bfa86ffc4fb7890800c1c80"
     },
     {
       "path": "README.md",
@@ -506,7 +506,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "58d042e4c8e29965d224bee5d2b76f2f699634e9beb6da7ab3757c0bbd4dadb8"
+      "sha256": "7cdf29f46c4267ce05d1a20be895b827f62c3dab80b5e24ea4d6871c3795ff71"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -686,7 +686,7 @@
     },
     {
       "path": "harness/prompts/verify-testing.md",
-      "sha256": "93a475f97107e993ffb8087357a7599c9ee7a2accc0ea71ae263ee2e01d68ace"
+      "sha256": "8ad405f1d9cc5d182744e391b884d839683d86689ef49231db9b97cd5103aaf8"
     },
     {
       "path": "harness/prompts/verify-ut.md",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "828cddc3c8f2fe62ee31c7a71b39e164576b0ff46c67c19e73d8c161bee2231b"
+      "sha256": "9e8c957b4418936631fb3c78421c7f665427de58a8c669fef9e14ded884ebabd"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -922,7 +922,7 @@
     },
     {
       "path": "harness/scripts/goal-supervise.ts",
-      "sha256": "f1fc27c1a68761f66a29844040b67adedfcd67f6bb4f0c2ca42f402fac1ae917"
+      "sha256": "ceb7f8b8266ae3bd8c015561c172286b6ea8565bcbb495b313c934e4ff638c68"
     },
     {
       "path": "harness/scripts/grade-vision-canary.ts",
@@ -1042,7 +1042,7 @@
     },
     {
       "path": "harness/scripts/utils/adjudication.ts",
-      "sha256": "b3b6fd3d2520b89c93a58708ec0b4e4613d1e5ed0a9cae8348e1d13f31eed19a"
+      "sha256": "fa2ea4d0cd3ae81e11617729a5f783250f0eb4eaf7e94249ea20b12cc8c89407"
     },
     {
       "path": "harness/scripts/utils/agent-bundle-paths.ts",
@@ -1086,7 +1086,7 @@
     },
     {
       "path": "harness/scripts/utils/await-confirm-guidance.ts",
-      "sha256": "c545011d78a7850d630841e813467254bc28d6432eeb4af9a156638f9a8d6684"
+      "sha256": "d61653343310874bde8a5161eec496a80076d412996c8fa91211684fd305af06"
     },
     {
       "path": "harness/scripts/utils/behavior-switch-scan.ts",
@@ -1466,7 +1466,7 @@
     },
     {
       "path": "harness/scripts/utils/execution-channel-evidence.ts",
-      "sha256": "52b4fcbdd92eccd89513e3d787ea38cde5e1c2520e417b4e8120191c61f22b41"
+      "sha256": "e2d708171bd5bcc01d344a8a655a9ee40cb43aa8cbcd1ddfbdb0fa754fe16f03"
     },
     {
       "path": "harness/scripts/utils/execution-channel.ts",
@@ -1626,7 +1626,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-progress.ts",
-      "sha256": "84e0517e3e0d58c432bad0fd824ae1d93c28ae84c0ba357fd4ee84608dbd676e"
+      "sha256": "8177599246091c6e46a0a9ef036353d36a853c8bf67b6ccb9071468fcfb27c5a"
     },
     {
       "path": "harness/scripts/utils/goal-reconcile-boundary.ts",
@@ -1638,7 +1638,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-report-generator.ts",
-      "sha256": "db5e523a412f94467f2e26a539b9f4da65f6f609d46892762be71a21c5931ac0"
+      "sha256": "d2f8566601dec588d67638e19d87447197e09e83ca21856ebba551acd33ceceb"
     },
     {
       "path": "harness/scripts/utils/goal-run-baseline.ts",
@@ -1650,7 +1650,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-run-creation.ts",
-      "sha256": "a59188f000424eb5861a161f8991684afe070ca0d25d8628f6f18c3319d6634b"
+      "sha256": "1341ea9ac40a45ac82694daee54e56ff7fee6133733ac1e9ff22d4d053b7fbfe"
     },
     {
       "path": "harness/scripts/utils/goal-run-lock.ts",
@@ -1658,11 +1658,11 @@
     },
     {
       "path": "harness/scripts/utils/goal-runner-phase.ts",
-      "sha256": "c1cd1c323c65e5506d99f4b03341069e14ffc745ce66d2e524b3484507b88dcf"
+      "sha256": "0884b292dfcc1e8af3b90c1ec5f1e35e4b34968d6f0232eb421790bf34fa7012"
     },
     {
       "path": "harness/scripts/utils/goal-supervisor.ts",
-      "sha256": "b79d076515e40a31448b7918d084e595dcb02660aa2bcd113577893b511ebf8f"
+      "sha256": "9565ece6178a6f00aec4a5db6fb5beeca7a32f20cad3c4c9a433c73a66378c69"
     },
     {
       "path": "harness/scripts/utils/goal-timeout.ts",
@@ -1870,7 +1870,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-transition-policy.ts",
-      "sha256": "1e209eafb3fe2b7838682fb37ad50bfb3ce55f67285c71aede0e31a541dee686"
+      "sha256": "fd1a180cb9dce264a99c674076b14f30c77f9dfccb4f4392d1df0649888ecbcb"
     },
     {
       "path": "harness/scripts/utils/phase-write-boundary.ts",
@@ -1962,7 +1962,7 @@
     },
     {
       "path": "harness/scripts/utils/scope-replan.ts",
-      "sha256": "172f5225d1b350dee7665fbb0ab834740c6e4ad930f104e4da4e001a91f6c004"
+      "sha256": "19f132f00ed214fe8ba0fdaecb5b7c108d541bcb459bc3e8eaad02761bb75751"
     },
     {
       "path": "harness/scripts/utils/shape-guards.ts",
@@ -2830,7 +2830,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-check.ts",
-      "sha256": "c5674aaee989b640dd2f9741f6f6035cc4683e1945a9fa149435cc5c31aea30f"
+      "sha256": "912802c593973bb9f2b954a4a6fa55d03c12e601a8078c731e13faaae53e21d2"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-hylyre-screenshot.ts",
@@ -2866,7 +2866,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-provider-review.ts",
-      "sha256": "7e958a4f1c62d842d596ecb70109fd30adee5d5346289672361af3f9d4fd1731"
+      "sha256": "51cb42f7c2a45cf6a51ea89dd40417ab296f913482045cea6e8f041fa5865959"
     },
     {
       "path": "profiles/hmos-app/harness/visual-structure-parity.ts",
@@ -4690,7 +4690,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "9a84e3cea54ada4991c913764d2a66b97c8f372b441df67421d1c4cbaf7aca7c"
+      "sha256": "fdef1e948c6dbe967f1087f5242a36ac408df5477a5ded79fa437e62fb74f06e"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
