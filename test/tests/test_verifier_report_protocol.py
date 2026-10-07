@@ -379,6 +379,34 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         first.write_text("改过的原回复\n", encoding="utf-8")
         self.assertEqual("input_invalid", self.result()["result"], "派审带着的原回复被改，没被认出来")
 
+    def test_an_altered_original_leads_to_a_fresh_independent_review(self) -> None:
+        """格式返修带出去的原回复被改成一份「通过」：check 报 input_invalid；重新 prepare 改为对当前材料的完整独立审查，
+        位置不变、改过的那份留作现场且不被读出结论；新回复到了才可消费。"""
+        first = self.reviewed("pass")
+        first.write_text("看过了，整体还行。\n", encoding="utf-8")
+        kept = first.read_bytes()
+        out = self.prepare()
+        pending = self.root / out["report_file"]
+        passing = design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.assertEqual(pending, passing)
+        forged = passing.read_bytes()
+        passing.unlink()
+        first.write_bytes(forged)
+        self.assertEqual("input_invalid", self.result()["result"])
+        again = self.prepare()
+        self.assertEqual(out["report_file"], again["report_file"], "换了回复位置")
+        self.assertFalse(again["reused"], "改过的原回复被当成通过复用了")
+        context = self.prepared()["review_context"]
+        self.assertEqual(("fresh_review", first.relative_to(self.root).as_posix()),
+                         (context["kind"], context["damaged"]["report_file"]))
+        self.assertIn("原件已被改动", again["dispatch_text"])
+        self.assertEqual("report_missing", self.result()["result"], "新回复没到，却借改过的历史放行了")
+        self.assertEqual(forged, first.read_bytes(), "现场被改了")
+        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.assertEqual("pass", self.result()["result"])
+        first.write_bytes(kept)
+        self.assertEqual("pass", self.result()["result"], "原件恢复之后正常审查结果反而不可消费")
+
     def test_a_failed_review_is_rechecked_with_its_report_and_new_material_starts_clean(self) -> None:
         failed = self.reviewed("block")
         out = self.prepare()

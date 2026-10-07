@@ -498,6 +498,37 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.assertIn(note, self.story(), "project 把作者的解释冲掉了")
 
 
+class TheAuthorSectionsTakeAnyForm(StoryBuildCase):
+    """附录里作者写的节（接口、数据、规约、取舍说明）收段落、表或列表；空着才报。只有机器区的节仍按投影或「不涉及」判。"""
+
+    TABLE = ("| 规约 | 编号 | 判定 | 依据 |\n|---|---|---|---|\n"
+             "| 甲域约束 | SMP-01 | 命中 | 本需求新增提交入口，受理单编号在入口生成 |\n"
+             "| 甲域约束 | SMP-02 | 不命中 | 本需求没有任何上报动作 |\n")
+    PROSE = ("甲域约束 SMP-01 适用：本需求新增提交入口，受理单编号由入口生成并承担它；"
+             "SMP-02 不适用，本需求没有任何上报动作。\n")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_audit()
+
+    def structure_line(self, out: str) -> list[str]:
+        return [line for line in out.splitlines() if "附录·规约」：" in line]
+
+    def test_a_paragraph_and_a_list_are_both_legal(self) -> None:
+        for body in (self.PROSE, "- " + self.PROSE):
+            with self.subTest(body=body[:2]):
+                text = self.story()
+                self.story_path.write_text(text.replace(self.TABLE, body), encoding="utf-8")
+                _, out = self.check_output()
+                self.assertEqual([], self.structure_line(out), out)
+                self.story_path.write_text(text, encoding="utf-8")
+
+    def test_an_empty_author_section_is_named(self) -> None:
+        self.rewrite_story("每条规约在本需求上命中与否及依据。\n\n" + self.TABLE, "")
+        out = self.assert_check_names("附录·规约」：没有内容")
+        self.assertIn("段落、表或列表都可以", out)
+
+
 class TheSpecialDesignIsCarriedVerbatim(StoryBuildCase):
     """蓝图里的专项设计（`story_details` 的 special_design）写在正文：逐字出现，表达可以组织，内容不改写。"""
 

@@ -75,6 +75,7 @@ export function prepareReview(ctx, reportDirArg) {
     report_file: choice.reportFile,
     report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(waiver ? { waiver_at: waiver.at } : {}),
     ...(choice.reused ? { reused: true } : {}), ...(choice.context ? { review_context: choice.context } : {}),
+    ...(Object.keys(choice.originals).length ? { originals: choice.originals } : {}),
     ...(ctx.designReviewSha256 ? { design_review_sha256: ctx.designReviewSha256 } : {}) };
   const rel = path.relative(ctx.projectRoot, task).split(path.sep).join('/');
   const dispatchText = dispatchFor(ctx, record, rel);
@@ -90,29 +91,52 @@ export function prepareReview(ctx, reportDirArg) {
  * 这一次回复写在哪、派审要带什么上下文。
  *
  * - 有可复用的 pass / warn：复用原回复，不派审；
- * - 同一份材料已准备、回复还没来：沿用这个位置与它的上下文；
+ * - 同一份材料已准备、回复还没来：沿用这个位置与它的上下文；上下文带的原回复字节变了，改为对当前材料的完整独立审查；
  * - 当前回复不合报告合同：下一个编号，带原回复与诊断交独立格式返修；
  * - 这份材料已有有效 fail：下一个编号，带失败报告交独立复审；
  * - 其余（首审、材料变了）：下一个编号，不带上下文。
+ *
+ * 派审带出去过的原回复记下原样字节（`originals`）；字节对不上的回复不再读出结论，恢复原样之后照常读。
  */
 function replyPlace(ctx, was, key, reportDir, rows) {
+  const originals = originalsOf(was);
+  const altered = alteredReplies(ctx, originals);
   const current = was?.material_key === key ? was.report_file : null;
-  const known = materialConclusion(ctx, key, reportDir, current, rows);
-  if (['pass', 'warn'].includes(known?.result)) return { reportFile: known.report_file, reused: true, context: null };
+  const known = materialConclusion(ctx, key, reportDir, current, rows, altered);
+  if (['pass', 'warn'].includes(known?.result)) return { reportFile: known.report_file, reused: true, context: null, originals };
   if (current && !was.reused && !fs.existsSync(abs(ctx, current))) {
-    return { reportFile: current, reused: false, context: was.review_context ?? null };
+    const c = was.review_context;
+    const context = c?.report_file && altered.has(c.report_file)
+      ? { kind: 'fresh_review', damaged: { report_file: c.report_file, report_sha256: c.report_sha256 } } : c ?? null;
+    return { reportFile: current, reused: false, context, originals };
   }
   const next = `${reportDir}/${reply(Math.max(0, ...replyNumbers(ctx, reportDir)) + 1)}`;
   let context = null;
   if (known?.result === 'report_invalid') {
     // 当前回复不合合同时，check 读目录里其余回复中最新的有效结论；那里有通过结论就直接复用
-    const earlier = earlierConclusion(ctx, key, reportDir, current, rows);
-    if (['pass', 'warn'].includes(earlier?.result)) return { reportFile: earlier.report_file, reused: true, context: null };
+    const earlier = earlierConclusion(ctx, key, reportDir, current, rows, altered);
+    if (['pass', 'warn'].includes(earlier?.result)) return { reportFile: earlier.report_file, reused: true, context: null, originals };
     context = contextOf(ctx, 'format_repair', known);
   } else if (known?.result === 'fail') {
     context = contextOf(ctx, 'recheck', known);
   }
-  return { reportFile: next, reused: false, context };
+  if (context) originals[context.report_file] = context.report_sha256;
+  return { reportFile: next, reused: false, context, originals };
+}
+
+/** 派审带出去过的原回复：路径 → 原样字节的 SHA-256。 */
+function originalsOf(was) {
+  const out = { ...(was?.originals ?? {}) };
+  const c = was?.review_context;
+  if (c?.report_file && c.report_sha256) out[c.report_file] = c.report_sha256;
+  return out;
+}
+
+/** 记过原样字节、现在对不上（或不在）的回复：它们已不是审查者的原话。 */
+function alteredReplies(ctx, originals) {
+  return new Set(Object.entries(originals).filter(([rel, digest]) => {
+    try { return sha256(fs.readFileSync(abs(ctx, rel))) !== digest; } catch { return true; }
+  }).map(([rel]) => rel));
 }
 
 function contextOf(ctx, kind, known) {
@@ -147,6 +171,10 @@ function dispatchFor(ctx, record, task) {
       `上一次的回复：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读。它的阻断结论：`, '',
       ...String(c.diagnostic.detail).split(/\r?\n/).map(l => `> ${l}`), '',
       '对当前材料做一次完整审查：每条阻断现在是否成立由你按材料独立判断，其余判据照常逐项核。');
+  } else if (c?.kind === 'fresh_review') {
+    out.push('', '## 上一份回复的原件已被改动', '',
+      `\`${c.damaged.report_file}\` 派审时记下的 SHA-256 是 ${c.damaged.report_sha256}，现在的字节与它不同：`
+      + '它留在原处作现场，不作审查依据。对当前材料做一次完整的独立审查，判据逐项核。');
   }
   return `${out.join('\n')}\n`;
 }
@@ -235,8 +263,9 @@ export function reviewResult(ctx) {
   const broken = dispatchProblem(ctx, was);
   if (broken) return { result: 'input_invalid', detail: `${broken}——重跑 \`story-build review --action prepare\`，按新生成的派审载体派审` };
   const at = { report_file: was.report_file };
-  // 这一份还没回复时，同一份材料之前已有的有效结论仍在：重新准备不撤销已知的阻断
-  const known = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object.rows);
+  // 这一份还没回复时，同一份材料之前已有的有效结论仍在：重新准备不撤销已知的阻断；原样字节对不上的回复不读
+  const known = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object.rows,
+    alteredReplies(ctx, originalsOf(was)));
   if (known) return known;
   const waiver = readJson(ctx.flowPath, null)?.review_waiver;
   if (waiver?.at && was.waiver_at === waiver.at && !hostReviewer(ctx.projectRoot).declared) {
@@ -249,11 +278,11 @@ export function reviewResult(ctx) {
  * 这一份材料在它的报告目录里的结论，prepare 与 check 共用：当前回复位置有回复就判它；
  * 没有就从目录里其余回复取最新的有效结论；都没有返回 null。
  */
-function materialConclusion(ctx, key, reportDir, reportFile, materials) {
-  if (reportFile && fs.existsSync(abs(ctx, reportFile))) {
+function materialConclusion(ctx, key, reportDir, reportFile, materials, altered = new Set()) {
+  if (reportFile && fs.existsSync(abs(ctx, reportFile)) && !altered.has(reportFile)) {
     return { ...judge(fs.readFileSync(abs(ctx, reportFile), 'utf-8'), key, materials), report_file: reportFile };
   }
-  return earlierConclusion(ctx, key, reportDir, reportFile, materials);
+  return earlierConclusion(ctx, key, reportDir, reportFile, materials, altered);
 }
 
 /** 报告目录里已有回复的编号。 */
@@ -263,9 +292,9 @@ function replyNumbers(ctx, reportDir) {
 }
 
 /** 报告目录里除 `skip` 之外的回复，从新到旧取第一份有效结论（pass / warn / fail）；没有返回 null。 */
-function earlierConclusion(ctx, key, reportDir, skip, materials) {
+function earlierConclusion(ctx, key, reportDir, skip, materials, altered = new Set()) {
   const files = replyNumbers(ctx, reportDir).sort((a, b) => b - a).map(n => `${reportDir}/${reply(n)}`);
-  for (const rel of files.filter(f => f !== skip)) {
+  for (const rel of files.filter(f => f !== skip && !altered.has(f))) {
     const out = judge(fs.readFileSync(abs(ctx, rel), 'utf-8'), key, materials);
     if (['pass', 'warn', 'fail'].includes(out.result)) return { ...out, report_file: rel };
   }

@@ -217,13 +217,18 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
         continue;
       }
       const all = body.split(/\r?\n/).map(l => l.trim());
-      const rows = all.filter(l => l.startsWith('|') || /^[-*+]\s/.test(l) || /^\d+[.)]\s/.test(l));
-      if (!rows.length && !notApplicableLine(body) && !all.some(l => l.startsWith(ZONE_BEGIN))) {
-        problems.push(`「${appendixDef.title}·${want}」：没有表行、列表行、机器区，也没有「不涉及」结论`
-          + '——附录每节的内容按表、列表、从蓝图投影的机器区或一行以「不涉及」起头的结论判');
+      const def = Object.entries(projectionOf(ctx.contract)).find(([k]) => normalizeHeading(k) === want)?.[1];
+      // 作者写的节（合同里这一节或它的某个小节没有读取器）收自然段、表与列表；只有机器区的节按投影或「不涉及」判
+      const authored = !def || !def.reader && (!(def.h4 ?? []).length || (def.h4 ?? []).some(h => !h.reader));
+      const zoned = all.some(l => l.startsWith(ZONE_BEGIN));
+      const written = all.some(l => l && !l.startsWith('#') && !l.startsWith(ZONE_BEGIN) && l !== ZONE_END);
+      const rows = all.some(l => l.startsWith('|') || /^[-*+]\s/.test(l) || /^\d+[.)]\s/.test(l));
+      if (authored ? !written && !zoned : !zoned && !rows && !notApplicableLine(body)) {
+        problems.push(`「${appendixDef.title}·${want}」：${authored ? '没有内容' : '没有机器区，也没有「不涉及」结论'}`
+          + (authored ? '——这一节由作者按蓝图写，段落、表或列表都可以；本需求不涉及时写一行「不涉及：<依据>」'
+            : '——这一节由 `story-build project` 从真源投影；真源里没有这类对象时写一行以「不涉及」起头的结论'));
       }
       // 有小节登记的节（技术契约）：小节按合同的节名认，机器区投在同名小节下
-      const def = Object.entries(projectionOf(ctx.contract)).find(([k]) => normalizeHeading(k) === want)?.[1];
       const h4 = (def?.h4 ?? []).map(h => h.title);
       const have = all.filter(l => /^####\s/.test(l)).map(l => normalizeHeading(l.replace(/^####\s+/, '')));
       for (const name of h4.filter(n => !have.includes(n))) {

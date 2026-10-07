@@ -69,17 +69,23 @@ review_readiness: {
 
 本轮 Story 路径已真实质询，不重复声称无宿主能力。未交付的责任是直接入口的统一送达和原生执行合同。用途物化增强 FW-03 保持非阻塞，命令入口成功不证明自然语言发现成功。
 
-## 4. FW-05：Spec→Plan 事实基线，先复现再定责
+## 4. FW-05：无 run 的范围修订后 facts 增量承接（已复现）
 
-现象：车钥匙 Spec 有真实审查与闭环，Plan 发生 facts 范围指纹/established_by 失败；作者后来手改 facts 并重验，最终现场已污染。不能据此直接要求 Framework 改逻辑。
+本仓已核定特定上游问题：[返修复核](评审意见/2026-10-07-集中返修复核.md) §2。观察发布件仍为本文件开头的 3.1.0 / 074a4c3c；不声明远端后续版本是否已修复。
 
-复现合同：按 04 中性 CU 正常路径，冻结同一 requirement，记录 Spec 完成前后及 Plan 首次调用的 execution-scope、resolvedInputs、facts、evidence manifest。首阶段只用原生实际身份；不人工填修哈希、不复用被改坏的事实。
+**进入条件**：来源完整、蓝图合法准入的中性 CU，设计层验收/施工契约由 Spec/Plan 细化；同一 requirement 经原生 prepare-scope 得到 `[spec, plan]`，采用无 run 的 feature 载体。不是已完成结果的合法复用。
 
-- 正常路径通过：本仓修错误调用/续行说明，FW-05 关闭为非上游缺陷，留下原生正确恢复示例。
-- 正常 acceptance/contracts 派生使原生建立事实不能承接：上游修实际 baseline 绑定/失效恢复，给准确公共调用和回归。旧值重放被拒仍保留；不禁用 facts 检查、不把错误变 WARN。
-- 输入或证据不全：补齐最早缺失的实际输入，不基于错误提示猜调用身份。
+**实际序列**：原生冻结范围→Spec 建立 facts→Spec 脚本检查通过、原生形成 scope_revision_input 并修订有效范围→离线构造且明确标识的 verifier 回复→原生 Spec `PASS/closed` 并建议 Plan→仅追加 `phase_delta: plan`→Plan 报 facts 范围指纹不匹配。
 
-上游交付前不签相应施工路径，但不阻止独立的人读整改。无需新增事实恢复器或外部状态系统。
+**证据位置**：`output/story/2.0.2-fw05-repro-20261007/` 的 `fw05_repro.py`、`fw05_variant.py`、`fw05_spec.py`、`fw05_close.py`，以及 `execution-scope.json`、`facts-spec-original.md`、`4-receipt-spec.log`、`3-runner-plan-a.log`。复现工程位于 `output/scratch/2.0.2/fw05/p`；冻结记录含绝对路径，重跑应按脚本重新建立范围，不照搬冻结记录。所有 harness 调用必须显式传 `--project-root`，不能让 vendored 路径推导为 demo。
+
+**最早冲突**：`capability-resolution-entry-input.ts` 给 feature facts 的 frozen_scope_fingerprint 来自当前有效范围；`context-facts.ts` 的身份匹配不因 baseline 成立而豁免，而 factsBaselineFingerprint 包含原 frontmatter。原生正常修订后旧指纹失败；作者改成新指纹又改变建立基线。本仓要求的恢复是实际原生增量承接，不是让 Plan 重做一次全量探索或手改 established_by。
+
+**上游交付合同**：同一 feature 的合法范围修订后，验证仍有效的原来源和阶段证据，允许后继通过 phase_delta 承接；新增目标/来源变化按实际依赖重验；身份不符、篡改基线及旧结果重放仍拒绝。由上游确定身份稳定性或原生重绑的具体实现，并提供准确入口与回归，不在 Extension 新建恢复器、不改 receipt、不降检查等级。
+
+**验收**：新执行 Spec→Plan、相同输入重入、合法复用、真实来源变化、旧身份/被改基线拒绝；验证先前阶段仍有效且新阶段责任可履行。复现中的人工构造 verifier 只证明机械接缝，不证明业务语义或设备效果。
+
+影响限定于上述无 run、发生原生范围修订的增量承接。原车钥匙另有用 Story 正文作为 requirement 的错误调用，已由本仓修正；本报告不豁免该错误、不扩大为所有 Plan 或所有运行载体都失败。上游发布件接入并通过此合同前不签该施工路径；其他独立整改可继续。
 
 ## 5. 上游交回与接入
 
