@@ -1,6 +1,6 @@
-"""只读与登记类命令：`status` 报位置，`story` 登记成文态，`archived` 记归档。
+"""只读与登记类命令：`status` 报位置，`story` 登记成文态。
 
-`story` 与 `archived` 沿正式命令路径调用 `story-build.mjs` 做成文检查，不反向导入入口。
+`story` 沿正式命令路径调用 `story-build.mjs` 做成文检查，不反向导入入口；归档登记在 `flow/publish.py`。
 """
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ import subprocess
 from pathlib import Path
 
 from flow.state import (
-    CORE_DIR, DESIGN, FlowError, REVIEW, S4_STEPS, STORY, STORY_REGISTERED, file_sha256, last_gate, load, log,
-    now, require, round_gates, save, stage_of, PUBLISHED, short_digest)
+    CORE_DIR, DESIGN, FlowError, S4_STEPS, STORY, STORY_REGISTERED, file_sha256, last_gate, load, log,
+    now, require, round_gates, save, stage_of)
 from flow.routing import live_materials, material_state, next_step, sidecar_shape
 from flow import asks
 from flow.update import record_baseline, record_owned_after
@@ -167,7 +167,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 与流程路由拿它核「登记之后改过没有」，改过就重新审查、重新登记。
     #
     # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
-    # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
+    # 它们走不漏到读者手上——归档只上传 story.md、review.md 与 design-review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
     wanted = {**json.loads(basis.stdout),
@@ -185,17 +185,6 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     baseline = record_baseline(feature_root)
     return {"status": "story_written", "story": str(story), "registered": True, "review": review.get("result"),
             **({"update_baseline": baseline} if baseline else {})}
-
-
-def publication_record(feature_root: Path) -> dict:
-    """上传成功之后的发布记录：这一次发出去的 Story 与 Review 的摘要，外部现在就是这一版；原样留一份给下一次比差异。"""
-    story, review = feature_root / Path(*STORY), feature_root / Path(*REVIEW)
-    out = feature_root / Path(*PUBLISHED)
-    out.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(story, out / "story.md")
-    shutil.copyfile(review, out / "review.md")
-    digest = short_digest(story.read_bytes())
-    return {"at": now(), "story_digest": digest, "review_digest": short_digest(review.read_bytes()), "external_digest": digest}
 
 
 def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, reply: str | None,
@@ -232,46 +221,3 @@ def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, r
     save(feature_root, contract)
     return {"review_waiver": contract["review_waiver"],
             "action": "已记下：重跑 `story-build review --action prepare`，审查状态写进 Story 交付章与 Review 题头，再 `story_flow.py story` 登记"}
-
-
-def cmd_archived(feature_root: Path, project_root: Path) -> dict:
-    """登记「叙事件已送审」。归档动作由数据对接层执行，本命令只记状态。
-
-    归档态是**流程状态**，落在流程契约里：装配脚本据它判定 `AR/review.md` 已归人所有，
-    此后重新渲染时人工区逐字保留、机器区按当前决策件重算，评审人的批注与回稿都留在那份文件里。判据在契约里，
-    与谁执行的归档无关——数据对接层由各部署环境自备实现，不随交付走。
-
-    **登记自带门禁**：先重跑一次 `story-build check`，通过才记——归档时 story 可能又改过，
-    成文态那次的校验不算数。登记不可逆，凭据只认校验过的产物。
-    """
-    contract = require(load(feature_root))
-    if contract.get("status") != "story_written":
-        raise FlowError(
-            "还没登记成文态：归档的是 story，story 没过 check 就归档等于把未校验的产物送审。"
-            "先跑 `story_flow.py story --feature <名>`")
-    story, review = feature_root / Path(*STORY), feature_root / Path(*REVIEW)
-    for path, name in ((story, "AR/story.md"), (review, "AR/review.md")):
-        if not path.is_file():
-            raise FlowError(f"{name} 不存在：归档件不全，无可登记的归档态")
-
-    checker = CORE_DIR / "story-build.mjs"
-    node = shutil.which("node")
-    if node is None:
-        raise FlowError("找不到 node：归档态登记要先重跑交付门，无法跳过")
-    # 交付门而不是普通 check：走到这里 story 该已登记、依据未变，审查结论也该已经如实记下。
-    # 普通 check 判不到那两样，用它登记归档态等于把「审没审过」这一格空着送审。
-    proc = subprocess.run(
-        [node, str(checker), "check", "--deliver", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    if proc.returncode != 0:
-        log((proc.stderr or proc.stdout).strip()[:2000])
-        raise FlowError(
-            "归档件未通过交付门（详见上方输出），拒绝登记归档态。"
-            "已经传上去的那一版是不合格的：修好后重新归档，再登记")
-
-    # 发布记录：外部现在就是这一版，下一次发布据它判外部有没有被别人改过
-    contract["archived"] = publication_record(feature_root)
-    save(feature_root, contract)
-    log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
-    return {"archived": True, "at": contract["archived"]["at"]}

@@ -27,14 +27,24 @@ const VERIFY_KINDS = ['ut', 'device', 'both', 'review'];
 const VERIFY_BY_EXECUTOR = { 实机: ['ut', 'device', 'both'] };
 
 /**
+ * 一条规约的每处落点允许写的 `verify`：声明了要实机证据的只能取实机那几种，其余在封闭取值里按落点的验证责任定。
+ * 作者任务呈现它、门禁按它核，两处同一份。
+ * @returns {{executor: string|null, allowed: string[]}}
+ */
+export function verifyChoices(entry) {
+  const [executor, allowed] = Object.entries(VERIFY_BY_EXECUTOR)
+    .find(([x]) => (entry?.executors ?? []).includes(x)) ?? [null, VERIFY_KINDS];
+  return { executor, allowed };
+}
+
+/**
  * 一处落点的 `verify` 与它指向的规约声明对不对得上。一条 must 就是一处落点，多处落点各自照此判。
  * @returns {string|null} 对不上时的说明
  */
 export function verifyProblem(entry, verify) {
   if (!VERIFY_KINDS.includes(verify)) return `verify「${verify || '(空)'}」不是 ${VERIFY_KINDS.join(' / ')} 之一——verify 取值封闭，定这处落点的验证责任：ut 单元测试、device 设备验证、both 两者都要、review 由 verifier 判`;
-  const [executor, allowed] = Object.entries(VERIFY_BY_EXECUTOR)
-    .find(([x]) => (entry?.executors ?? []).includes(x)) ?? [];
-  return allowed && !allowed.includes(verify)
+  const { executor, allowed } = verifyChoices(entry);
+  return executor && !allowed.includes(verify)
     ? `标了 verify: ${verify}，而该规约声明要「${executor}」证据——声明要「${executor}」证据的规约，每处落点的 verify 取 ${allowed.join(' / ')}`
     : null;
 }

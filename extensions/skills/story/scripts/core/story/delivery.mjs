@@ -6,6 +6,7 @@
 import { isSystemRequirement, readJson } from './context.mjs';
 import { basisDriftProblems, designSource } from './design-source.mjs';
 import { reviewResult } from './independent-review.mjs';
+import { designReviewProblems } from './appendix.mjs';
 
 /**
  * 交付门通过之后往哪走 —— 已有明确授权按其范围继续，没指定后续目标才问；打印这一问的选项，**不替人选**。
@@ -31,7 +32,7 @@ export function deliveryNextSteps(ctx) {
 /**
  * 交付门 —— 成文依据还是登记时那一份吗，这一份的独立审查给出可消费的结论了吗。
  *
- * 设计来源不成立、登记之后蓝图 / 输入 / 知识 / 被审文件变了，都拦：登记说的已经不是现在这份。
+ * 设计来源不成立、登记之后蓝图 / 输入 / 知识 / 被审文件变了、设计附件不是当前原生投影，都拦：登记说的已经不是现在这份。
  * 审查结论只读当前对象的 Story 报告：pass 放行，warn 放行并列出建议，人授权的未审查交付放行并披露，其余照结果拦。
  *
  * @returns {Promise<{problems: string[], notes: string[]}>}
@@ -42,7 +43,7 @@ export async function deliveryProblems(ctx) {
     return { problems: ['还没登记成文——交付的是登记过的那一份，先跑 `story_flow.py story` 登记'], notes: [] };
   }
   const source = designSource(ctx);
-  const drift = source.problems.length ? source.problems : basisDriftProblems(ctx);
+  const drift = source.problems.length ? source.problems : [...basisDriftProblems(ctx), ...designReviewProblems(ctx)];
   if (drift.length) return { problems: drift, notes: [] };
   const review = reviewResult(ctx);
   if (review.result === 'pass') return { problems: [], notes: [] };

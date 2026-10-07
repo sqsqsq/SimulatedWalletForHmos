@@ -2,8 +2,8 @@
  * Story 独立人读审查的任务书 —— **判据与这一次要看的东西**，从真源渲染。
  *
  * 判据本身（审什么、什么算 blocking、什么不做）只在 `rules/story-reader-rules.yaml` 的 `story_reader_review`
- * 里写一份，这里原样带上；其余是它判不出来的部分：本需求的输入路径、设计来源、这一版合同的十章问题与章级维度、
- * 材料清单里现有的图逐张。同一件事在两处各写一遍，改一处另一处就静默过期。
+ * 里写一份，这里原样带上；其余是它判不出来的部分：这一次审查材料的唯一一份文件索引、读法、决定与会议的对照、
+ * 上游图与承接图、这一版合同的十章问题与章级维度、材料清单里现有的图逐张。同一件事在两处各写一遍，改一处另一处就静默过期。
  * 唯一消费者是 `story-build review --action prepare`。
  */
 import * as fs from 'node:fs';
@@ -11,9 +11,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
-import { readBlueprint } from './framework-access.mjs';
-import { headingEnd, parseDocument, ZONE_BEGIN, ZONE_END, zonesByLine }
-  from '../../skills/story/scripts/core/story/document.mjs';
+import { headingEnd, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
@@ -21,6 +19,7 @@ import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { reviewObject } from '../../skills/story/scripts/core/story/review-object.mjs';
+import { reportFormat } from '../../skills/story/scripts/core/story/review-report-contract.mjs';
 
 //: 本模块所在的扩展包根：判据与章节合同都属于机制，随包发布
 const PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -223,43 +222,25 @@ export function readerCheckIds() {
   return readerChecks().map(([id]) => id);
 }
 
-/** 设计来源：流程契约关联的蓝图，按原生读到的 canonical 与评审投影位置给出；读不到照实说。 */
-function designRows(projectRoot, src) {
-  const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
-  const blueprint = flow?.design_binding?.blueprint_id;
-  if (!blueprint) return ['- **没有设计关联**——设计事实无从核对，按「报告怎么写」第 5 条记进「发现」。'];
-  const read = readBlueprint(projectRoot, blueprint, 'delivery');
-  if (read.status !== 'ok') return [`- **蓝图 ${blueprint} 读不到或未准入**（${read.status}）——设计事实无从核对，按「报告怎么写」第 5 条记进「发现」。`];
-  return [`- \`${read.canonical_path}\` —— 已准入的蓝图（revision ${read.blueprint_ref.revision}），设计事实的权威；`,
-    `- \`${read.projection.path}\` —— 它的原生评审投影；`,
-    ...(flow?.input?.snapshot_ref ? [`- \`${flow.input.snapshot_ref}\` —— 交给设计的冻结输入（原件、提取稿与人签按原始字节）。`] : [])];
-}
-
 /** 这一次审查对象的全部材料：待审的与只读对照的分列；任务自己不列（它就是这份）。 */
-function objectRows(projectRoot, feature) {
+function objectRows(projectRoot, feature, contract) {
   const { rows, problems } = reviewObject(projectRoot, feature, { withTask: false });
+  const { blocking } = sourceStatus({ contract, featureRoot: featureRoot(projectRoot, feature) });
   const line = r => `- \`${r.path}\` —— ${r.label}`;
   return ['', '### 本次审查的材料（材料键按它们的原始字节算）', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
-    ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
+    ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
+    ...blocking.map(m => `- **读不到 \`${m.rel}\`**——它是必备来源；与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
 }
 
-/** 报告的格式：Story 业务报告，审查者照它写，`story-build review --action check` 按它核。 */
-const REPORT_FORMAT = [
-  '', '### 报告怎么写', '',
-  '回复就是这份 Markdown 报告，宿主原样存下；格式不合的回复不计结论，要重给。',
-  '',
-  '1. 第一行写 `material_key: <派审时给的材料键，64 位>`，全文只这一行。',
-  '2. 二级标题依次是「判据核对」「发现」「总体结论」，各恰好一个，标题字照写。',
-  '3. 「判据核对」一张表，表头 `判据 ID | 结果 | 依据`：判据逐项一行，ID 照本任务「判据」各节标题里的写，结果写 pass / warn / fail / not_applicable，',
-  '   依据写你据以判断的事实；不适用写业务理由。表后写审查方法：逐章过了什么、仍开着的议题逐条结论、会议话题的去向。',
-  '4. 「发现」一张表，表头 `编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任`：严重程度按判据写 BLOCKER / MAJOR / MINOR / INFO；',
-  '   材料位置写上面「本次审查的材料」里那份文件的路径，可加 `#章节` 或 `:行`：只引一份文件时整格写这条路径，路径含空格照写；',
-  '   引多份文件或夹带说明时，每条路径用反引号括起，这一列的反引号只用来括路径。修正责任写该回哪一处改、由谁定。没有发现保留表头、不写行。',
-  '5. 「总体结论」第一行写 pass、warn 或 fail 之一，再写理由：有 BLOCKER / MAJOR 或判据 fail 是 fail，只有 MINOR / INFO 或判据 warn 是 warn，',
-  '   其余 pass。审查中某份材料读不到：在「发现」表按相关判据记一条 BLOCKER，写明读不到哪份、哪些判断因此未核；其余能核的照常核。',
-];
+/** 读法：先来源与设计，再通读待审的三件。 */
+const READING = ['', '### 怎么读', '',
+  '1. 先读来源与人签（冻结输入里的原件、会议原文与人的裁决、决策登记），再读整体设计（蓝图与它的原生评审投影），'
+  + '然后通读待审的 Story、Review 与设计附件；写作设计是作者的安排，作参考。',
+  '2. 冻结输入里的提取稿是派生分析：回查上游看原件。',
+  '3. 一份文件一次读不完时按范围接着读到末尾；读不到的按「报告怎么写」第 5 条处理。',
+  '4. 发现整体业务矛盾时追到它的权威对象（决定、蓝图、来源），按它对这次交付的影响定严重程度。'];
 
 /**
  * 任务书正文：判据原文，加这一次的输入与要回答的问题。
@@ -284,64 +265,18 @@ export function readerReviewTask(projectRoot, feature) {
       String(check.ai_prompt_hint ?? '').trim(),
       '',
     ]),
-    '### 读这些',
-    '',
-    '- `AR/story.md` —— 审查对象（全文在下面「审查对象」那一节，通读它）；',
-    '- `AR/story-src/materials.json` —— 据以成文的材料清单（含每张图是什么）；',
-    '- `AR/story-src/decisions.json` —— 已登记的判断，哪些定了、哪些还开着；',
-    '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
-    ...designRows(projectRoot, path.join(root, 'AR', 'story-src')),
-    ...objectRows(projectRoot, feature),
+    ...READING,
+    ...objectRows(projectRoot, feature, contract),
   ];
 
   const storyPath = path.join(root, 'AR', 'story.md');
-  const story = readOrNull(storyPath);
-  if (story === null || !story.trim()) {
-    rows.push('', '`AR/story.md` 现在读不到或是空的：审查对象不全，这一次准备报 input_invalid，补齐 Story 后重新准备。');
-    return rows.join('\n');
-  }
-
-  // **当前全文一次**：审查的是这一份，不是宿主愿意去读的那部分。让它自己去开文件时，
-  // 截断、读旧稿、读不到都会变成「看起来审过了」——而三种都分不出来。
-  // 外层围栏比正文里**最长的那道**再多一个反引号：固定七个的话，正文里合法地出现
-  // 一道更长的示例围栏时，包装会被它提前关上——后半篇于是掉出围栏，看起来像任务书的话。
-  // 附录的机器区由已准入蓝图投影：这里按区名留一行指向盘上原文，
-  // 片段含作者区全文、不含机器区，投影刷新不改这一段，审查对象只随作者区变。
-  const authored = authorZone(story);
-  const fence = `${'`'.repeat(longestFence(authored) + 1)}markdown`;
-  rows.push('', '### 审查对象：当前 `AR/story.md`（附录机器区按区名指向盘上原文）', '',
-    '（与盘上那一份不一致时以盘上为准，并把这件事写进结论；机器区的内容打开 `AR/story.md` 读，与正文同样要核）', '',
-    fence, authored.replace(/\s+$/, ''), fence.replace(/markdown$/, ''));
-
-  // 写作设计：作者这一版的阅读主线与骨架，全文一次。读不到不能拿空设计当审过，说成缺口。
-  const plan = readOrNull(path.join(root, 'AR', 'story-src', 'story-template.md'));
-  rows.push('', '### 作者的写作设计：当前 `AR/story-src/story-template.md` 全文', '');
-  if (plan === null || !plan.trim()) {
-    rows.push('**写作设计缺口**：`AR/story-src/story-template.md` 读不到或是空的。照原材料与范围审正文，'
-      + '在「发现」表按相关判据记一条 BLOCKER：没有可核的写作设计，写明因此未核的范围。');
-  } else {
-    const planFence = `${'`'.repeat(longestFence(plan) + 1)}text`;
-    rows.push('（作者对本需求的阅读主线与每章骨架，是待核的作者判断，不是审查标准）', '',
-      planFence, plan.replace(/\s+$/, ''), planFence.replace(/text$/, ''));
-  }
-
+  const story = readOrNull(storyPath) ?? '';
   // 回看清单：作者十章齐后逐条处置的同一张清单，这里核每一条的去向成不成立。
   const src = path.join(root, 'AR', 'story-src');
   const planCtx = { contract, featureRoot: root, srcDir: src, storyPath,
     decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
   rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',
     ...recheckRows(recheckItems(planCtx, contract ? readWritingPlan(planCtx) : null, story)));
-
-  // 原材料原文逐份给位置：审查要能回到原件，不只看作者转述之后的样子。该有而读不到的说成缺口。
-  const { docs, blocking } = sourceStatus({ contract, featureRoot: root });
-  rows.push('', '### 原材料原文', '',
-    ...docs.map(d => `- \`${d.rel}\` —— ${contract?.sources?.[d.doc]?.label ?? '材料'}`),
-    ...blocking.map(m => `- **读不到 \`${m.rel}\`**——它是必备来源；与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
-    '- `AR/story-src/decisions.json` —— 已登记的判断：哪些定了、哪些还开着，未决的去向从它核');
-  rows.push('', '### 另外这几份按需去读', '',
-    '- `AR/story-src/story-flow.json` —— 已确认的本 AR 范围；',
-    '- 冻结输入里的提取稿是派生分析，不是上游原话：回查上游看 `RR`、`SR` 与 `AR/design.md` 原文，不拿提取稿自证；',
-    '- 下面那一节的图片身份目录 —— 每张图是什么、用没用、不用的理由。');
   // 会议逐话题把会议判断、原话、人的裁决与当前结果并排：审查要对着原话判，不只读模型写的结果。
   // 位置逐版列实际存在的那些，纠偏留痕仍回原件看。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
@@ -388,20 +323,8 @@ export function readerReviewTask(projectRoot, feature) {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
 
-  rows.push(...REPORT_FORMAT);
+  rows.push(...reportFormat());
   return rows.join('\n');
-}
-
-/** story 的作者区：机器区（投影）整段换成一行区名。 */
-function authorZone(story) {
-  const lines = String(story).split(/\r?\n/);
-  const zones = zonesByLine(lines);
-  const out = [];
-  lines.forEach((line, i) => {
-    if (line.startsWith(ZONE_BEGIN)) out.push(`（附录机器区：${zones.get(i + 1)?.name ?? line.slice(ZONE_BEGIN.length).split(' · ')[0]}）`);
-    else if (!zones.has(i) && line.trim() !== ZONE_END) out.push(line);
-  });
-  return out.join('\n');
 }
 
 /** 读一份文件；读不到返回 null——空串与「读不到」在这里必须分得开。 */

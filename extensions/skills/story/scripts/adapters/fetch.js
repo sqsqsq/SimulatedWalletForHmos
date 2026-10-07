@@ -9,9 +9,10 @@
  *   parentNo 是上一级单号（AR → SR，SR → RR，RR 为 null），入口据它逐级往上拉。
  *
  * fetchUpstream(reqNo, mcpToken, { outDir }) → 回执
- *   **只读取材**：把这张单现在关联的上游正文与评审回稿取回，一个业务文件都不写。
+ *   **只读取材**：把这张单现在关联的上游正文、评审回稿与两个附件取回，一个业务文件都不写。
  *   三份正文写进 outDir（本单 inbox），与本地对应文件逐字相同的不落盘；评审回稿写
- *   `AR/story-src/review-feedback.md`；回执写 `AR/story-src/fetched.json`（不放 inbox，
+ *   `AR/story-src/review-feedback.md`；评审记录附件与设计附件和本地不同时写 `AR/story-src/fetched-review.md`、
+ *   `fetched-design-review.md`（不覆盖本地 AR/review.md 的人工区）；回执写 `AR/story-src/fetched.json`（不放 inbox，
  *   否则会被当成一份材料导入），带取材时刻 fetchedAt（带时区的 ISO 8601）。每份的 status 四态分开：fetched / same / absent / failed——
  *   混成一个的话，一次读取错误会被当成「评审没提意见」。
  */
@@ -19,7 +20,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { callMcp, REQUIREMENT_URL } = require('./mcp');
+const { callMcp, REQUIREMENT_URL, ATTACHMENT_URL } = require('./mcp');
 const { featureDir, levelDir } = require('./dirs');
 
 const BODY = { AR: 'design.md', SR: 'design.md', RR: 'prd.md' };
@@ -89,6 +90,10 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     { name: 'RR-prd.md', label: '产品需求正文', no: rrNo, body: 'prd.md', local: ['RR/prd.md'] },
     { name: 'review-feedback.md', label: '评审人留下的回稿', no: reqNo, body: 'review-feedback.md',
       local: [], dir: src },
+    { name: 'review.md', label: '评审记录附件', no: reqNo, attachment: 'review.md',
+      local: ['AR/review.md'], dir: src, saveAs: 'fetched-review.md' },
+    { name: 'design-review.md', label: '设计附件', no: reqNo, attachment: 'design-review.md',
+      local: ['AR/design-review.md'], dir: src, saveAs: 'fetched-design-review.md' },
   ];
   const items = [];
   for (const w of wanted) {
@@ -96,7 +101,9 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     if (!w.no) { items.push({ ...id, status: 'absent', note: '这张单上没有挂它' }); continue; }
     let body;
     try {
-      body = await getBody(w.no, w.body, mcpToken);
+      body = w.attachment
+        ? await callMcp(ATTACHMENT_URL, 'getAttachment', { reqNo: w.no, name: w.attachment }, mcpToken)
+        : await getBody(w.no, w.body, mcpToken);
     } catch (e) {
       items.push({ ...id, status: 'failed', note: e.message });
       continue;
@@ -104,16 +111,16 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     if (body === null) { items.push({ ...id, status: 'absent', note: '系统上现在没有这一份' }); continue; }
     const facts = {
       digest: `sha256:${crypto.createHash('sha256').update(body).digest('hex').slice(0, 16)}`,
-      origin: `${w.no}/${w.body}`,
+      origin: `${w.no}/${w.attachment ? `attachments/${w.attachment}` : w.body}`,
       bytes: Buffer.byteLength(body, 'utf-8'),
     };
     const same = w.local.find(rel => readOr(path.join(root, rel)) === body);
     if (same) { items.push({ ...id, status: 'same', note: `与本地 ${same} 逐字相同`, ...facts }); continue; }
     const dir = w.dir || outDir;
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, w.name), body, 'utf-8');
+    fs.writeFileSync(path.join(dir, w.saveAs ?? w.name), body, 'utf-8');
     items.push({ ...id, status: 'fetched',
-      saved: path.relative(root, path.join(dir, w.name)).split(path.sep).join('/'), ...facts });
+      saved: path.relative(root, path.join(dir, w.saveAs ?? w.name)).split(path.sep).join('/'), ...facts });
   }
   fs.mkdirSync(src, { recursive: true });
   fs.writeFileSync(path.join(src, 'fetched.json'),

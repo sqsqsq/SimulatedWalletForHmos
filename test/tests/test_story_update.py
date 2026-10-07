@@ -1448,8 +1448,10 @@ class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
 
 
 class PublishChecksTheExternalVersion(RegisteredCase):
-    """发布前按交付门核资格、用取材回执核外部正文还是不是上次知道的那一版；被别人改过就交人，不直接覆盖。
-    本地单没有远端动作。需求系统单由编号决定，这里在进程内把本单当作系统单。"""
+    """发布前按交付门核资格，用取材回执逐件核 Story 正文、Review 附件与设计附件：E=L 跳过，E=B 可写，其余交人；
+    三件都有这一版登记之后的读回才登记归档。本地单没有远端动作。需求系统单由编号决定，这里在进程内把本单当作系统单。"""
+
+    NAMES = {"AR-design.md": "story.md", "review.md": "review.md", "design-review.md": "design-review.md"}
 
     def call(self, name: str, *args, system: bool = True):
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -1461,14 +1463,36 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         finally:
             sys.path.remove(str(core))
 
-    def receipt(self, body: bytes | None, when: str = "2099-01-01T00:00:00+00:00", status: str = "fetched") -> None:
-        item = {"name": "AR-design.md", "status": status if body is not None else "absent"}
-        if body is not None:
-            item["digest"] = "sha256:" + hashlib.sha256(body).hexdigest()[:16]
-        (self.src / "fetched.json").write_text(json.dumps({"fetchedAt": when, "items": [item]}), encoding="utf-8")
+    @staticmethod
+    def digest(body: bytes) -> str:
+        return "sha256:" + hashlib.sha256(body).hexdigest()[:16]
+
+    def local(self, name: str) -> bytes:
+        return (self.feature_root / "AR" / self.NAMES[name]).read_bytes()
+
+    def receipt(self, body: bytes | None, when: str = "2099-01-01T00:00:00+00:00", status: str = "fetched",
+                attachments: dict | None = None, checked: str | None = None) -> None:
+        """取材回执：正文给 body（None 是系统上没有），两个附件默认系统上没有；`checked` 给出时三件都记成上传读回。"""
+        items = []
+        for name, value in (("AR-design.md", body), *((n, (attachments or {}).get(n)) for n in ("review.md", "design-review.md"))):
+            item = {"name": name, "status": (status if name == "AR-design.md" else "fetched") if value is not None else "absent"}
+            if value is not None:
+                item["digest"] = self.digest(value)
+            if checked:
+                item["checkedAt"] = checked
+            items.append(item)
+        (self.src / "fetched.json").write_text(json.dumps({"fetchedAt": when, "items": items}), encoding="utf-8")
+
+    def uploaded(self, checked: str = "2099-01-01T00:00:00+00:00") -> None:
+        """三件都已上传并读回：回执里每件是本地当前这一份。"""
+        self.receipt(self.local("AR-design.md"), checked=checked,
+                     attachments={n: self.local(n) for n in ("review.md", "design-review.md")})
 
     def publish(self, reply=None) -> dict:
         return self.call("cmd_publish", self.root, reply)
+
+    def actions(self, out: dict) -> dict:
+        return {r["item"]: r["action"] for r in out["items"]}
 
     def error(self, fn, *args) -> str:
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -1480,6 +1504,9 @@ class PublishChecksTheExternalVersion(RegisteredCase):
             return str(caught.exception)
         finally:
             sys.path.remove(str(core))
+
+    def contract(self) -> dict:
+        return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
 
     def test_a_local_requirement_has_no_remote_action(self) -> None:
         self.assertIn("本地单没有远端动作", self.error(lambda: self.call("cmd_publish", self.root, None, system=False)))
@@ -1493,54 +1520,80 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.receipt((self.feature_root / "AR" / "design.md").read_bytes())
         out = self.publish()
         self.assertTrue(out["publishable"], out)
+        self.assertEqual({"AR-design.md": "write", "review.md": "write", "design-review.md": "write"}, self.actions(out))
         self.assertIn("首次发布", out["diff"])
         self.assertEqual(["D1 余额刷新的触发时机待定"], out["open_topics"])
 
-    def test_an_external_edit_goes_to_a_person(self) -> None:
-        self.receipt("别人在需求系统上改过的正文\n".encode("utf-8"))
+    def test_an_external_edit_goes_to_a_person_and_the_grant_covers_only_that_change(self) -> None:
+        external = "别人在需求系统上改过的正文\n".encode("utf-8")
+        self.receipt(external)
         out = self.publish()
         self.assertFalse(out["publishable"], out)
         self.assertIn("不直接覆盖", out["action"])
         confirmed = self.publish("看过了，按本地这一版覆盖")
         self.assertTrue(confirmed["publishable"], confirmed)
-        flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
-        self.assertEqual("看过了，按本地这一版覆盖", flow["publish_overrides"][-1]["reply"])
+        grant = self.contract()["publish_overrides"][-1]
+        self.assertEqual(("AR-design.md", self.digest(external), self.digest(self.local("AR-design.md")), "看过了，按本地这一版覆盖"),
+                         (grant["item"], grant["external"], grant["local"], grant["reply"]))
+        self.assertTrue(self.publish()["publishable"], "同一处改动、同一份本地件，授权该沿用")
+        self.receipt("别人又改了一次\n".encode("utf-8"))
+        self.assertFalse(self.publish()["publishable"], "外部又变了，旧授权被泛化沿用")
 
-    def test_after_a_publish_the_published_version_is_the_baseline(self) -> None:
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
-        sys.path.insert(0, str(core))
-        try:
-            from flow.state import load, save  # noqa: PLC0415
-            contract = load(self.feature_root)
-            from flow.lifecycle import publication_record  # noqa: PLC0415
-            contract["archived"] = publication_record(self.feature_root)
-            save(self.feature_root, contract)
-        finally:
-            sys.path.remove(str(core))
-        self.receipt((self.feature_root / "AR" / "story.md").read_bytes(), status="same")
+    def test_a_same_named_attachment_nobody_published_is_a_conflict(self) -> None:
+        """首次发布附件：系统上已有同名却不是我们的内容，所有权未确认，交人。"""
+        self.receipt((self.feature_root / "AR" / "design.md").read_bytes(), attachments={"review.md": "别人的附件\n".encode("utf-8")})
+        out = self.publish()
+        self.assertFalse(out["publishable"], out)
+        self.assertEqual("conflict", self.actions(out)["review.md"])
+        self.assertEqual("write", self.actions(out)["design-review.md"])
+
+    def test_archived_needs_three_readbacks_of_this_version(self) -> None:
+        self.receipt((self.feature_root / "AR" / "design.md").read_bytes())
+        self.assertIn("上传读回不全", self.error(lambda: self.call("cmd_archived", self.root)))
+        self.uploaded(checked="2000-01-01T00:00:00+00:00")
+        self.assertIn("早于这一版的登记", self.error(lambda: self.call("cmd_archived", self.root)), "旧读回放行了这一版")
+        self.uploaded()
+        receipt = json.loads((self.src / "fetched.json").read_text(encoding="utf-8"))
+        receipt["items"][2] = {**receipt["items"][2], "status": "failed", "note": "本次发布读回尚未完成"}
+        (self.src / "fetched.json").write_text(json.dumps(receipt), encoding="utf-8")
+        self.assertIn("design-review.md", self.error(lambda: self.call("cmd_archived", self.root)))
+        self.assertNotIn("archived", self.contract())
+        self.uploaded()
+        out = self.call("cmd_archived", self.root)
+        self.assertTrue(out["archived"])
+        archived = self.contract()["archived"]
+        self.assertEqual(self.digest(self.local("design-review.md")), archived["design_review_digest"])
+        self.assertEqual(self.contract()["story_basis"]["blueprint_ref"], archived["design_blueprint_ref"])
+        for name in ("story.md", "review.md", "design-review.md"):
+            self.assertEqual((self.feature_root / "AR" / name).read_bytes(),
+                             (self.feature_root / ".backups" / "published" / name).read_bytes())
+
+    def test_after_a_publish_each_item_is_its_own_baseline(self) -> None:
+        self.uploaded()
+        self.call("cmd_archived", self.root)
+        self.uploaded()
         out = self.publish()
         self.assertTrue(out["publishable"], out)
+        self.assertEqual({"skip"}, set(self.actions(out).values()))
         self.assertEqual("与上次发布逐字相同", out["diff"])
-        self.receipt((self.feature_root / "AR" / "design.md").read_bytes())
+        self.receipt((self.feature_root / "AR" / "design.md").read_bytes(),
+                     attachments={n: self.local(n) for n in ("review.md", "design-review.md")})
         self.assertFalse(self.publish()["publishable"], "发布之后外部回到了旧版却没当成外部改动")
+        self.receipt(self.local("AR-design.md"), attachments={"review.md": self.local("review.md")})
+        self.assertEqual("conflict", self.actions(self.publish())["design-review.md"], "发布过的附件被删也是外部改动")
 
-    def test_a_remote_restore_moves_the_external_baseline_and_keeps_local_files(self) -> None:
+    def test_a_remote_restore_moves_only_the_body_baseline_and_keeps_local_files(self) -> None:
         self.assertIn("还没归档过", self.error(lambda: self.call("cmd_restored")))
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
-        sys.path.insert(0, str(core))
-        try:
-            from flow.state import load, save  # noqa: PLC0415
-            contract = load(self.feature_root)
-            from flow.lifecycle import publication_record  # noqa: PLC0415
-            contract["archived"] = publication_record(self.feature_root)
-            save(self.feature_root, contract)
-        finally:
-            sys.path.remove(str(core))
-        story = (self.feature_root / "AR" / "story.md").read_bytes()
+        self.uploaded()
+        self.call("cmd_archived", self.root)
+        story = self.local("AR-design.md")
         older = (self.feature_root / "AR" / "design.md").read_bytes()
-        self.receipt(older, status="same")
+        attachments = {n: self.local(n) for n in ("review.md", "design-review.md")}
+        self.receipt(older, status="same", attachments=attachments)
         out = self.call("cmd_restored")
         self.assertTrue(out["differs"], out)
-        self.assertEqual(story, (self.feature_root / "AR" / "story.md").read_bytes(), "远端恢复动了本地文件")
-        self.receipt(older, status="same")
-        self.assertTrue(self.publish()["publishable"], "恢复之后外部就是恢复的那一版，不该再当成别人改过")
+        self.assertEqual(story, self.local("AR-design.md"), "远端恢复动了本地文件")
+        self.receipt(older, status="same", attachments=attachments)
+        out = self.publish()
+        self.assertTrue(out["publishable"], "恢复之后外部就是恢复的那一版，不该再当成别人改过")
+        self.assertEqual({"AR-design.md": "write", "review.md": "skip", "design-review.md": "skip"}, self.actions(out))

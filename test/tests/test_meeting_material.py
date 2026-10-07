@@ -503,6 +503,28 @@ class TheHumanChoiceIsTheOnlyDecision(MeetingCase):
         gate = next(g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "meeting")
         self.assertEqual("c", gate["chosen"], "记成了推荐项")
 
+    def test_a_clarification_topic_asks_again_and_keeps_the_first_answer(self) -> None:
+        """已记的回答事后发现选项带着没说明的后果：补一条澄清话题再问，原记录保留。"""
+        code, _, log = self.decide("--chosen", "b", "--reply", "先挂着")
+        self.assertEqual(0, code, log)
+        topics = json.loads(json.dumps(TOPICS)) + [{
+            "id": "T2-1", "title": "通知方式（澄清）", "ownership": "ours",
+            "evidence": [{"start": 9, "end": 9}],
+            "finding": "上次所选的维持待定没有说明：待定期间不发任何通知。",
+            "question": "原问法是「通知方式现在定下来，还是继续挂着」，你选了维持待定；待定期间不发通知，这样可以吗？",
+            "options": [{"key": "a", "label": "可以，待定期间不发通知"},
+                        {"key": "b", "label": "待定期间先发站内信——多一个临时入口，结论出来后要撤"}]}]
+        self.read_meeting(self.docx, topics=topics)
+        state = self.status()
+        self.assertEqual("await_gate:meeting", state["next"])
+        self.assertEqual(["T2-1"], [a.split("/")[-1] for a in meetings.pending_asks(
+            meeting.read_notes(self.fr, []), self.contract())], "澄清话题没被问，或原话题被重问")
+        code, _, log = self.decide("--chosen", "b", "--reply", "先发站内信", item="T2-1")
+        self.assertEqual(0, code, log)
+        signed = {g["item"]: g["chosen"] for g in self.contract()["rounds"][-1]["gates"]
+                  if g["gate"] == "meeting"}
+        self.assertEqual({"T2": "b", "T2-1": "b"}, signed, "原回答被覆盖或新回答没记下")
+
 
 class TheCurrentResultIsWrittenByTheModel(MeetingCase):
     """当前会议结果由模型写：脚本只核输入绑定、话题去向与引用，不判业务。"""

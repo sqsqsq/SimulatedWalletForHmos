@@ -21,7 +21,7 @@ import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
  * 白名单而不是黑名单：黑名单挡不住下一个往根下写的新文件，而这里要成立的是一个
  * 持续的性质——机制不往交付层散辅助件。
  */
-const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md', 'detail.json'];
+const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md', 'design-review.md', 'detail.json'];
 
 export function fail(msg) {
   process.stderr.write(`[story-build] ${msg}\n`);
@@ -35,6 +35,13 @@ export function readText(file) {
 /** 本项目只有 AR 开头的需求挂在需求系统上，其余（问题单、自定义名、local 开头…）都是本地需求。来源由编号决定，与 `flow/state.py::system_requirement` 同一规则。 */
 export function isSystemRequirement(feature) {
   return String(feature ?? '').startsWith('AR');
+}
+
+/** 先写临时文件再换名：读到的要么是旧的一份，要么是完整的新一份。 */
+export function replaceFile(file, data) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, file);
 }
 
 export function readJson(file, fallback) {

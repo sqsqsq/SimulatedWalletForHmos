@@ -114,13 +114,18 @@ function checkKnowledgeApplications(projectRoot, { decisions, facts = [], addres
   return { rows, problems };
 }
 
+/** 蓝图的原生稳定地址集合（`contract:<id>`、`view:<视图>/node:<id>`、`decision:<id>` 等）。 */
+export function blueprintAddresses(projectRoot, blueprint) {
+  const addressing = loadNative(projectRoot).module('scripts/utils/blueprint-addressing.ts');
+  return new Set(addressing.stableAddressIndex(blueprint).keys());
+}
+
 /** 蓝图里的知识应用：决定、事实，落点按原生稳定地址核。 */
 export function blueprintKnowledge(projectRoot, blueprint) {
-  const addressing = loadNative(projectRoot).module('scripts/utils/blueprint-addressing.ts');
   return checkKnowledgeApplications(projectRoot, {
     decisions: blueprint.decisions_and_gaps?.decisions ?? [],
     facts: blueprint.discovery?.facts ?? [],
-    addresses: new Set(addressing.stableAddressIndex(blueprint).keys()),
+    addresses: blueprintAddresses(projectRoot, blueprint),
     label: `蓝图 ${blueprint.blueprint_id}`,
   });
 }

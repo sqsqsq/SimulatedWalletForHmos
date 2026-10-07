@@ -142,7 +142,7 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
     if read["status"] == "missing":
         return ("design_blueprint",
                 f"设计输入已冻结（`{entry}`）。按 `phases/design.md`「三、设计」进原生 component-design："
-                f"用这份输入为组件 `{binding.get('component_id')}` 建立蓝图 `{blueprint}`，做到准入并生成评审投影为止；"
+                f"用这份输入为组件 `{binding.get('component_id')}` 建立蓝图 `{blueprint}`，请求写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到准入并生成评审投影为止；"
                 "知识在设计决定前取（story-knowledge），独立质询交宿主的隔离子代理。"
                 "本轮授权：`/story <AR>` 的启动语义是「做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择」（batch 多阶段声明），直接进，不问")
     if read["status"] != "ok":
@@ -390,9 +390,13 @@ def next_step(feature_root: Path, contract: dict | None,
     if stage == "archived":
         # 归档之后收口过一轮 update：本地已按它更新，回写需求系统等人确认（`phases/update.md`「已归档」一行）
         closed = str((contract.get("update") or {}).get("last_closed") or "")
-        at = str((contract.get("archived") or {}).get("at") or "")
+        archived = contract.get("archived") or {}
+        at = str(archived.get("at") or "")
         updated = closed[:15] > at.replace("-", "").replace(":", "").replace("T", "-")[:15]
+        restored = archived.get("restored_at") and archived.get("external_digest") != archived.get("story_digest")
         return ("done", ("本地已按 update 更新；回写需求系统等人确认，确认后走 `/story archive`。" if updated
+                         else "需求系统上的正文已恢复到旧版，两个附件仍是最近一次发布的版本，三件分属不同版本；"
+                              "要再送审走 `/story archive`，按逐件基线重新核。" if restored
                          else "本轮已归档送审。")
                 + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
                 + closed_tail(feature_root, contract, manifest))

@@ -16,10 +16,10 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blueprintKnowledge, featureKnowledge } from './knowledge-application.mjs';
+import { blueprintKnowledge, carriedBy, entryOf, featureKnowledge, rolesOf } from './knowledge-application.mjs';
 import { loadNative, readBlueprint, readFeature } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
-import { obligationsFromContracts } from './obligations.mjs';
+import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
 import { questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
 import { extensionRoot, relDisplay } from './paths.mjs';
@@ -51,7 +51,7 @@ function knowledgeBlock(root, action) {
   const byFile = new Map([...knowledge.facts, ...knowledge.constraints, ...knowledge.patterns].map(k => [k.file, k]));
   const registrations = knowledgeRegistrations(root).filter(r => reaches(r, action));
   const ordered = registrations.map(r => ({ ...byFile.get(r.file), registration: r })).filter(k => k.file);
-  const rows = ['## 2. 激活知识及原文', ''];
+  const rows = ['## 4. 激活知识及原文', ''];
   const protocol = path.join(extensionRoot(root), 'skills', 'story', 'reference', 'knowledge', 'protocol.md');
   if (!ordered.length) {
     const total = knowledgeRegistrations(root).length;
@@ -119,7 +119,29 @@ function blueprintTask(root, id, action) {
   };
 }
 
-function featureTask(root, feature, action, supplied) {
+/**
+ * 本施工单位要履行的知识判断：承接的适用规约（带要求、落点与这条允许的 verify）与选中模式在本单位的角色，
+ * 先于知识原文交给作者。判断不在这里重做，原文按条目在第 4 块。
+ */
+function carriedDuties(root, feature, action, contracts, knowledge) {
+  const judged = featureKnowledge(root, feature, contracts);
+  const carried = carriedBy(judged.rows, judged.scope);
+  const applied = carried.filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction);
+  const selected = carried.filter(d => d.knowledge.kind === 'patterns' && ['selected', 'adjusted'].includes(d.knowledge.outcome));
+  const out = [`本施工单位承接 ${applied.length} 条适用规约、${selected.length} 条选中模式（原文在第 4 块，按来源文件与单元找）：`];
+  for (const d of applied) {
+    const { executor, allowed } = verifyChoices(entryOf(knowledge, d));
+    out.push(`- \`${d.decision_id}\`（${d.knowledge.unit}，${d.file}）：${d.knowledge.requirement ?? ''}；落在 ${(d.knowledge.target_refs ?? []).join('、')}`
+      + (action === 'plan' ? `；must 带 decision_id，verify 取 ${allowed.join(' / ')}${executor ? `（规约声明要「${executor}」证据）` : ''}` : '')
+      + (action === 'spec' ? '；验收写出它要求的可观察行为与验证责任，带 knowledge_rule 与 knowledge_decision_id' : ''));
+  }
+  for (const d of selected) {
+    out.push(`- \`${d.decision_id}\`（模式 ${path.basename(d.file, '.md')}，${d.file}）：本单位承担的角色 ${rolesOf(d, judged.scope).map(r => `${r.role} → ${r.target_ref}`).join('、') || '（无）'}`);
+  }
+  return { duties: applied.length || selected.length ? out : ['本施工单位没有承接的适用规约与选中模式。'], gaps: judged.problems };
+}
+
+function featureTask(root, feature, action, supplied, knowledge) {
   const f = readFeature(root, feature, action, supplied);
   if (f.status !== 'ok') {
     stop(`Feature ${feature}（${action} 阶段）`, f.issues.map(i => `${i.code} ${i.message}`).join('；'),
@@ -135,9 +157,10 @@ function featureTask(root, feature, action, supplied) {
   let facts = [];
   if (f.identity.kind === 'cu') {
     const bp = readBlueprint(root, f.identity.blueprintId, 'draft');
-    facts = bp.status === 'ok' ? decisionsOf(bp.blueprint) : [];
+    // spec / plan 在第 3 块逐条拿到本单位承接的判断，这里只给设计对象；其余动作列蓝图里的全部判断
+    facts = bp.status !== 'ok' || ['spec', 'plan'].includes(action) ? [] : decisionsOf(bp.blueprint);
     if (bp.status !== 'ok') gaps.push(`蓝图读不到（${bp.status}）：设计负责方处理。`);
-    if (!facts.length) facts = ['蓝图里还没有知识应用的事实与决定。'];
+    if (!facts.length && !['spec', 'plan'].includes(action)) facts = ['蓝图里还没有知识应用的事实与决定。'];
     facts.push(`本施工单位承担的设计对象：${f.design_refs.map(r => `${r?.target?.kind}:${r?.target?.id}`).join('、') || '（无）'}`);
   } else {
     const rows = (f.spec?.contracts?.knowledge_applications ?? []).map(d => `- 决定 \`${d.decision_id}\`（${d.status}）：${d.rationale ?? ''}`);
@@ -152,6 +175,11 @@ function featureTask(root, feature, action, supplied) {
     // 契约与验收取原生按阶段组装的那一份：解析器选定的输入加本阶段自己的产出
     const contracts = f.spec?.contracts ?? null;
     const source = f.inputs.contracts;
+    if (f.identity.kind === 'cu' && ['spec', 'plan'].includes(action)) {
+      const carried = carriedDuties(root, feature, action, contracts, knowledge);
+      duties.push(...carried.duties);
+      gaps.push(...carried.gaps.map(p => `${p}——设计负责方处理。`));
+    }
     if (contracts) {
       const must = obligationsFromContracts(contracts);
       duties.push(`契约来自 ${source?.binding?.kind ?? '本阶段产出'}${source?.binding?.artifact ? ` ${source.binding.artifact}` : ''}。`,
@@ -176,18 +204,19 @@ function featureTask(root, feature, action, supplied) {
 export function knowledgeTask(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
   // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处
   const { knowledge, rows } = knowledgeBlock(root, action);
-  const task = blueprint ? blueprintTask(root, blueprint, action) : featureTask(root, feature, action, { requirement, requirementFile });
+  const task = blueprint ? blueprintTask(root, blueprint, action)
+    : featureTask(root, feature, action, { requirement, requirementFile }, knowledge);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));
   const done = audience === 'author'
-    ? [`按 \`${page}\` 做本动作；知识方面：与本动作相关的每份知识都判断适用与否，适用的把要求落到第 3、4 块对应的设计对象或契约实体上，`
-      + '不适用写明本需求里使它不适用的条件；已成立的判断直接承接。']
-    : [`对照第 2 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
+    ? [`按 \`${page}\` 做本动作；知识方面：先履行第 2、3 块已成立的判断与义务，再按第 4 块原文核与本动作相关的每份知识：`
+      + '适用的把要求落到对应的设计对象或契约实体上，不适用写明本需求里使它不适用的条件；已成立的判断直接承接，不重判。']
+    : [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
   return [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）${task.preview ? '——预览，执行范围未冻结' : ''}`, '',
     '## 1. 当前动作与对象', '', `- 动作：${action}`, `- 对象：${task.object}`, '',
+    '## 2. 有效事实与决定', '', ...task.facts, '',
+    '## 3. 当前契约与义务', '', ...task.duties, '',
     ...rows, '',
-    '## 3. 有效事实与决定', '', ...task.facts, '',
-    '## 4. 当前契约与义务', '', ...task.duties, '',
     '## 5. 本次完成条件', '', ...done, '',
     '## 6. 缺口与责任', '',
     ...([...task.gaps, ...problems.map(p => `知识自检：${p}——目标工程的知识维护者处理。`)].map(g => `- ${g}`)),

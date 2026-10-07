@@ -1604,6 +1604,12 @@ def load_suite(suite_id: str) -> tuple[Path, dict[str, Any]]:
     return path, suite
 
 
+def text_from_file(path: Path) -> str:
+    """回话原文：UTF-8 文件里的全部内容，只去掉文件末尾那一个换行。从文件读不经 shell，以 `/` 开头的话、多行与引号都按原样。"""
+    text = path.read_text(encoding="utf-8")
+    return text[:-2] if text.endswith("\r\n") else text[:-1] if text.endswith("\n") else text
+
+
 def invoke_case(case_id: str, command: str, *args: str,
                 suite: dict[str, Any] | None = None) -> tuple[int, dict[str, Any] | None, str, str]:
     """Call the existing runner without an outer timeout or a pipe.
@@ -3382,6 +3388,8 @@ def main() -> int:
                         help="--continue-case 的终点，写法同 --end-at")
     parser.add_argument("--case", dest="reply_case", default="")
     parser.add_argument("--text", default="")
+    parser.add_argument("--text-file", default="",
+                        help="reply / resume-update：回话原文从这个 UTF-8 文件读（多行、引号、以 / 开头的话都按原样）")
     parser.add_argument("--reply-mode", choices=("scripted", "adaptive", "manual"),
                         default="manual")
     parser.add_argument("--reason", default="")
@@ -3407,6 +3415,10 @@ def main() -> int:
                         help="已停用；workspace/output 在下一轮 suite 起跑时统一清理")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    if args.text_file:
+        if args.text:
+            raise SystemExit("[multi] --text 与 --text-file 只给一个")
+        args.text = text_from_file(Path(args.text_file))
 
     if args.command in {"plan", "start"}:
         plans = select_cases(args.case_ids, args.all)
@@ -3447,9 +3459,8 @@ def main() -> int:
             raise SystemExit("[multi] promote-checkpoint 必须提供 --case")
         return command_promote_checkpoint(args.suite_id, args.reply_case, args.point)
     if args.command == "resume-update":
-        if not args.reply_case or not args.text.strip():
-            raise SystemExit("[multi] resume-update 必须提供 --case 与 --text"
-                             "（投的是一句正常的业务请求，不是测试控制语句）")
+        if not args.reply_case:
+            raise SystemExit("[multi] resume-update 必须提供 --case（第二段请求取 case.yaml 的 update_request）")
         return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver)
     if args.command == "retry":
         if not args.reply_case:

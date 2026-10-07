@@ -1,12 +1,16 @@
 /**
- * 附录的读取器：一份已准入蓝图的记录（原生读取所得）→ 某一节机器区的行。
+ * 附录的读取器：已准入蓝图的记录（原生读取所得）或登记的冻结输入 → 某一节机器区的行。
  *
- * 每个读取器把蓝图字段排成表或段，不补、不改写、不推断不适用。字段值是标量就照写；是对象时按章节合同为这一节
- * 登记的子字段标签写「标签：值」，合同没给人读写法的结构（没登记标签的子字段、更深一层的嵌套）报成投影适配缺口：
+ * 机器区只投精确明细（配置、埋点）、改动边界与本次冻结材料；接口、数据与规约由作者按蓝图写业务摘要，
+ * 完整技术契约在设计附件。每个读取器把字段排成表或段，不补、不改写、不推断不适用。字段值是标量就照写；是对象时按章节合同为这一节
+ * 登记的子字段标签写「标签：值」，合同没给人读写法的结构报成投影适配缺口：
  * 蓝图保持原样，由扩展维护者按实际结构在章节合同补人读写法。
  * 来历与核对字段（provenance、各类 refs、source_ref、摘要）不进正文。表头与标签由章节合同登记，本文件不写业务词。
  * 投影与核对共用这一份计算（`appendix.mjs` 调用）。
  */
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import { fail } from './context.mjs';
 
@@ -52,46 +56,6 @@ function readable(def, value, ctx, field) {
   }).filter(Boolean).join('；');
 }
 
-/** 「编码 → 含义」这类条目（错误、非功能要求）：键是业务编码，值写成文字；值是结构的报缺口。 */
-function entries(items, ctx, field) {
-  if (items === null || items === undefined || Array.isArray(items) || scalar(items)) return readable({}, items, ctx, field);
-  return Object.entries(items).map(([k, v]) => (scalar(v) ? `${k}：${v ?? ''}` : gapAt(ctx, `${field}.${k}`)))
-    .filter(Boolean).join('；');
-}
-
-/** 契约语义段（errors / idempotency / nfr）里读的那一个字段；段里还有别的业务字段就报缺口。 */
-function sectionField(section, key, ctx, field) {
-  for (const k of Object.keys(section ?? {})) if (k !== key && !TRACE_KEYS.has(k)) gapAt(ctx, `${field}.${k}`);
-  return section?.[key];
-}
-
-/** 端云接口：每个契约的 operation、请求与响应字段、字段映射，以及错误语义、幂等与非功能要求。 */
-function contractRows(blueprint, def, ctx) {
-  const out = [];
-  for (const c of blueprint.contracts ?? []) {
-    const op = c.operation ?? {};
-    const at = `contracts.${c.contract_id}`;
-    if (out.length) out.push('');
-    out.push(`**${c.contract_id}**：${op.operation_id ?? '—'}（${op.direction ?? '—'}，${label(def, 'version')} ${op.version ?? '—'}）`);
-    const fields = [['request', c.request_dto], ['response', c.response_dto]].flatMap(([side, dto]) =>
-      (dto?.fields ?? []).map(f => [`${label(def, side)} ${dto.dto_id ?? ''}`.trim(), f.field_id ?? f.name,
-        readable(def, f.type, ctx, `${at}.${side}_dto.${f.field_id ?? f.name}.type`),
-        readable(def, f.semantics, ctx, `${at}.${side}_dto.${f.field_id ?? f.name}.semantics`),
-        f.nullable === true ? label(def, 'nullable') : label(def, 'required')].map(cell)));
-    if (fields.length) out.push('', ...renderTable(header(def, 'fields', ctx.where), fields));
-    const maps = (c.mappings ?? []).map(m => [m.mapping_id, m.target_field, m.kind ?? 'direct',
-      readable(def, m.source_fields, ctx, `${at}.mappings.${m.mapping_id}.source_fields`),
-      readable(def, m.rule, ctx, `${at}.mappings.${m.mapping_id}.rule`)].map(cell));
-    if (maps.length) out.push('', ...renderTable(header(def, 'mappings', ctx.where), maps));
-    const semantics = { errors: entries(sectionField(c.errors, 'items', ctx, `${at}.errors`), ctx, `${at}.errors.items`),
-      idempotency: readable(def, sectionField(c.idempotency, 'rule', ctx, `${at}.idempotency`), ctx, `${at}.idempotency.rule`),
-      nfr: entries(sectionField(c.nfr, 'requirements', ctx, `${at}.nfr`), ctx, `${at}.nfr.requirements`) };
-    out.push('', ...Object.entries(semantics).map(([k, v]) => `- ${label(def, k)}：${v || '—'}`));
-  }
-  return out;
-}
-
-
 /** 某一类精确明细（`story_details`）：标题、完整正文逐字、依据。 */
 function detailBlocks(blueprint, kind) {
   const out = [];
@@ -101,31 +65,6 @@ function detailBlocks(blueprint, kind) {
       '', `（${d.id}；${(d.evidence_refs ?? []).join('、') || '—'}）`);
   }
   return out;
-}
-
-/** 数据存储：运行视图里每条数据流的数据域、权威来源、状态归属与失败恢复，加数据策略类精确明细。 */
-function dataRows(blueprint, def, ctx) {
-  const runtime = (blueprint.design_views ?? []).find(v => v?.view_id === 'runtime');
-  const rows = (runtime?.runtime_data_flows ?? []).map((f) => {
-    const at = `runtime_data_flows.${f.flow_id}`;
-    return [f.flow_id, readable(def, f.data_domain_refs, ctx, `${at}.data_domain_refs`),
-      ...['source_of_truth', 'state_owner', 'failure_recovery'].map(k => readable(def, f[k], ctx, `${at}.${k}`))].map(cell);
-  });
-  const out = rows.length ? renderTable(header(def, 'flows', ctx.where), rows) : [];
-  const details = detailBlocks(blueprint, def.detail_kind);
-  return details.length ? [...out, ...(out.length ? [''] : []), ...details] : out;
-}
-
-/** 规约：蓝图里的知识应用决定，逐条写知识单元、判定、要求与理由（豁免带补偿）、落点。 */
-function knowledgeRows(blueprint, def, ctx) {
-  const rows = (blueprint.decisions_and_gaps?.decisions ?? []).filter(d => d?.kind === 'knowledge_application')
-    .map((d) => {
-      const k = d.knowledge ?? {};
-      const waiver = k.waiver && `豁免：${k.waiver.reason}；补偿：${k.waiver.compensation}`;
-      return [k.unit, k.outcome, [k.requirement, d.rationale, waiver].filter(Boolean).join('；'),
-        (k.target_refs ?? []).join('、') || '—'].map(cell);
-    });
-  return rows.length ? renderTable(header(def, 'rows', ctx.where), rows) : [];
 }
 
 /** 改动边界：开发视图里每个节点动到的模块，与改模块、依赖边的架构影响决定。 */
@@ -147,12 +86,33 @@ function boundaryRows(blueprint, def, ctx) {
   return rows.length ? renderTable(header(def, 'rows', ctx.where), rows) : [];
 }
 
-/** 每个读取器：`rows(source, def, where, gaps)`，没有人读写法的结构记进 `gaps`。 */
+/**
+ * 本次冻结材料：当前冻结快照里的每份文件，按路径排序一行——来源文件（链接指向快照里的那一份）、材料角色、
+ * 本次版本（原始字节摘要前 16 位与快照目录）。写前逐份核原始字节与快照登记的摘要，对不上记进 `gaps`，这一次不投。
+ */
+function materialRows(source, def, ctx) {
+  const snapshot = source.snapshot;
+  if (!snapshot) return [];
+  const version = path.basename(snapshot.dir);
+  const from = path.dirname(ctx.storyPath);
+  const rows = [...(snapshot.files ?? [])].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).map((row) => {
+    const file = path.join(snapshot.dir, 'files', ...String(row.path).split('/'));
+    let bytes = null;
+    try { bytes = fs.readFileSync(file); } catch { bytes = null; }
+    if (bytes === null || crypto.createHash('sha256').update(bytes).digest('hex') !== row.sha256) {
+      ctx.gaps.push(`附录「${ctx.where}」：冻结输入里的 ${row.path} ${bytes === null ? '读不到' : '原始字节与快照登记的摘要对不上'}`
+        + '——冻结版本不改；恢复这份文件，恢复不了先 `story_flow.py reopen` 或开一轮 update，再重新 complete');
+    }
+    const link = path.relative(from, file).split(path.sep).join('/');
+    return [`[${row.path}](${link})`, def.roles?.[row.role] ?? row.role, `${String(row.sha256).slice(0, 16)}（${version}）`].map(cell);
+  });
+  return rows.length ? renderTable(header(def, 'rows', ctx.where), rows) : [];
+}
+
+/** 每个读取器：`rows(source, def, where, gaps, ctx)`，没有人读写法的结构与读不到的输入记进 `gaps`。 */
 export const READERS = {
-  contracts: { rows: (s, def, where, gaps) => contractRows(s.blueprint, def, { where, gaps }), source: '蓝图 contracts' },
-  data_flows: { rows: (s, def, where, gaps) => dataRows(s.blueprint, def, { where, gaps }), source: '蓝图运行视图与数据策略明细' },
   details: { rows: (s, def) => detailBlocks(s.blueprint, def.detail_kind), source: '蓝图 story_details' },
-  knowledge_applications: { rows: (s, def, where, gaps) => knowledgeRows(s.blueprint, def, { where, gaps }), source: '蓝图知识应用决定' },
   change_boundary: { rows: (s, def, where, gaps) => boundaryRows(s.blueprint, def, { where, gaps }), source: '蓝图开发视图与架构影响决定' },
+  materials: { rows: (s, def, where, gaps, ctx) => materialRows(s, def, { where, gaps, storyPath: ctx.storyPath }), source: '登记的冻结输入' },
 };
 

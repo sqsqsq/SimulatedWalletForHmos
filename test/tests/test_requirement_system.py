@@ -10,8 +10,10 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -29,6 +31,12 @@ RR = "RR70001"
 PRD_TEXT = "# 产品需求正文\n\n用户要的是这一段。\n"
 SR_TEXT = "# 系统设计正文\n\n分工写在这一段。\n"
 AR_TEXT = "# 系统预填的开发需求\n\n上游先填了一版。\n"
+DESIGN_REVIEW_TEXT = "# 蓝图评审投影\n\n完整技术契约在这一份。\n"
+
+
+def short(path: Path) -> str:
+    """与对接层回执同一口径的摘要。"""
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
 
 class SystemCase(unittest.TestCase):
@@ -72,7 +80,21 @@ class SystemCase(unittest.TestCase):
         (self.feature / "AR").mkdir(parents=True, exist_ok=True)
         (self.feature / "AR" / "story.md").write_text(story, encoding="utf-8")
         (self.feature / "AR" / "review.md").write_text(notes, encoding="utf-8")
+        (self.feature / "AR" / "design-review.md").write_text(DESIGN_REVIEW_TEXT, encoding="utf-8")
         return story, notes
+
+    def fetch(self) -> dict:
+        proc = subprocess.run(
+            ["node", str(STORY_JS), "fetch", AR, "token", "--out", str(self.feature / "inbox"),
+             "--project-root", str(self.project)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
+
+    def items(self) -> dict:
+        receipt = json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
+        return {i["name"]: i for i in receipt["items"]}
 
 
 def _env() -> dict[str, str]:
@@ -144,27 +166,36 @@ class TestInit(SystemCase):
 
 
 class TestArchive(SystemCase):
-    """KM-2：归档是往系统上写；本地只多一份系统正文的备份，在 `.backups/cloud/`。"""
+    """归档是往系统上写三件：正文、评审记录附件、设计附件，逐件写入并读回；本地只多一份系统正文的备份，回执记读回。"""
 
     def setUp(self) -> None:
         super().setUp()
         self.story("init", AR)
         self.story_text, self.notes_text = self.write_spec_products()
+        self.before = self.fetch()
 
-    def test_body_is_replaced_and_previous_version_kept(self) -> None:
+    def test_three_items_are_written_and_read_back(self) -> None:
         proc = self.story("archive", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
         receipt = self.receipt(proc)
         self.assertTrue(receipt["archived"])
         self.assertTrue(receipt["verified"])
         self.assertEqual(self.story_text, (self.system / AR / "design.md").read_text("utf-8"))
-        self.assertEqual(self.notes_text,
-                         (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
-        self.assertTrue(receipt["reviewArchived"])
+        self.assertEqual(self.notes_text, (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
+        self.assertEqual(DESIGN_REVIEW_TEXT, (self.system / AR / "attachments" / "design-review.md").read_text("utf-8"))
         backups = sorted((self.feature / ".backups" / "cloud").glob("design-*.md"))
         self.assertEqual(1, len(backups))
         self.assertEqual(AR_TEXT, backups[0].read_text("utf-8"))
         self.assertEqual(f".backups/cloud/{backups[0].name}", receipt["backupPath"])
+        items = self.items()
+        for name, local in (("AR-design.md", "story.md"), ("review.md", "review.md"), ("design-review.md", "design-review.md")):
+            item = items[name]
+            self.assertEqual("fetched", item["status"], item)
+            self.assertEqual(short(self.feature / "AR" / local), item["digest"])
+            self.assertIn("checkedAt", item)
+        after = json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.before["fetchedAt"], after["fetchedAt"], "上传刷新了取材时间")
+        self.assertEqual({i["name"]: i for i in self.before["items"]}["SR-design.md"], items["SR-design.md"], "上传动了上游材料的回执")
 
     def test_only_markdown_reaches_the_system(self) -> None:
         """本地有图也不上传：系统不承载图片，链接更不该被改写。"""
@@ -178,7 +209,7 @@ class TestArchive(SystemCase):
         self.assertEqual({".json", ".md"}, set(uploaded))
         self.assertIn("../assets/ux/screen.png", (self.system / AR / "design.md").read_text("utf-8"))
 
-    def test_only_the_cloud_backup_is_written_locally(self) -> None:
+    def test_only_the_cloud_backup_and_the_receipt_change_locally(self) -> None:
         before = {p.relative_to(self.feature).as_posix(): p.read_bytes()
                   for p in sorted(self.feature.rglob("*")) if p.is_file()}
         self.story("archive", AR)
@@ -187,14 +218,52 @@ class TestArchive(SystemCase):
         added = sorted(set(after) - set(before))
         self.assertEqual(1, len(added), added)
         self.assertTrue(added[0].startswith(".backups/cloud/design-"), added)
-        self.assertEqual(before, {k: v for k, v in after.items() if k in before})
+        changed = sorted(k for k in before if before[k] != after.get(k))
+        self.assertEqual(["AR/story-src/fetched.json"], changed)
 
-    def test_missing_story_fails_without_touching_the_system(self) -> None:
-        (self.feature / "AR" / "story.md").unlink()
+    def test_a_missing_item_fails_without_touching_the_system(self) -> None:
+        for rel in ("AR/story.md", "AR/design-review.md"):
+            with self.subTest(missing=rel):
+                kept = (self.feature / rel).read_bytes()
+                (self.feature / rel).unlink()
+                proc = self.story("archive", AR)
+                self.assertEqual(1, proc.returncode)
+                self.assertIn(rel, self.receipt(proc)["error"])
+                self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
+                (self.feature / rel).write_bytes(kept)
+
+    def test_a_change_after_the_preflight_stops_before_any_write(self) -> None:
+        """预检之后有人在系统上写了附件：一件都不写。"""
+        (self.system / AR / "attachments").mkdir(parents=True, exist_ok=True)
+        (self.system / AR / "attachments" / "review.md").write_text("评审人在线上改的\n", encoding="utf-8")
         proc = self.story("archive", AR)
         self.assertEqual(1, proc.returncode)
-        self.assertIn("AR/story.md", self.receipt(proc)["error"])
+        self.assertIn("预检之后又变了", self.receipt(proc)["error"])
         self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
+        self.assertEqual("评审人在线上改的\n", (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
+
+    def test_a_failed_item_keeps_the_written_ones_and_a_retry_skips_them(self) -> None:
+        """第三件写不进去：前两件已写并读回，第三件记失败；重新取材后重试，已写的两件判相同、不再写。"""
+        target = self.system / AR / "attachments" / "design-review.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("旧附件\n", encoding="utf-8")
+        target.chmod(stat.S_IREAD)
+        self.addCleanup(target.chmod, stat.S_IREAD | stat.S_IWRITE)
+        self.fetch()
+        proc = self.story("archive", AR)
+        self.assertEqual(1, proc.returncode)
+        items = self.items()
+        self.assertEqual(("fetched", "fetched", "failed"),
+                         tuple(items[n]["status"] for n in ("AR-design.md", "review.md", "design-review.md")))
+        self.assertNotIn("checkedAt", items["design-review.md"])
+        target.chmod(stat.S_IREAD | stat.S_IWRITE)
+        self.fetch()
+        proc = self.story("archive", AR)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        items = self.items()
+        self.assertEqual(("same", "same", "fetched"),
+                         tuple(items[n]["status"] for n in ("AR-design.md", "review.md", "design-review.md")))
+        self.assertEqual(DESIGN_REVIEW_TEXT, target.read_text("utf-8"))
 
     def test_local_ticket_has_no_place_to_archive(self) -> None:
         """没有系统单据的本地单不走归档——交付终点就是仓内那三份产物。"""
@@ -208,14 +277,15 @@ class TestArchive(SystemCase):
 
 
 class TestRestore(SystemCase):
-    """KM-3：restore 用 `.backups/cloud/` 里的备份恢复系统正文，本地业务文件不动。"""
+    """restore 用 `.backups/cloud/` 里的备份恢复系统正文，附件与本地业务文件不动。"""
 
     def setUp(self) -> None:
         super().setUp()
         self.story("init", AR)
         self.story_text, self.notes_text = self.write_spec_products()
+        self.fetch()
 
-    def test_restore_returns_the_previous_body(self) -> None:
+    def test_restore_returns_the_previous_body_and_leaves_the_attachments(self) -> None:
         self.story("archive", AR)
         self.assertEqual(self.story_text, (self.system / AR / "design.md").read_text("utf-8"))
         proc = self.story("restore", AR)
@@ -223,6 +293,7 @@ class TestRestore(SystemCase):
         self.assertTrue(self.receipt(proc)["restored"])
         self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
         self.assertEqual(self.story_text, (self.feature / "AR" / "story.md").read_text("utf-8"))
+        self.assertEqual(DESIGN_REVIEW_TEXT, (self.system / AR / "attachments" / "design-review.md").read_text("utf-8"))
 
     def test_restore_takes_the_latest_cloud_backup(self) -> None:
         self.story("archive", AR)

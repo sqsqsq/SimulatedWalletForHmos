@@ -2578,13 +2578,14 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None)
     """评完第一段，把第二段的业务请求投给还停着的那个 worker。
 
     投的是**一句正常的业务话**（`/story update <编号>`），不是测试控制语句——
-    被测模型看到的必须与真实使用时一模一样。`--deliver` 的顺序与 reply 一致：
-    先把材料放进去，再排这句话；反了的话，模型会照着话去看一个还不存在的东西。
+    被测模型看到的必须与真实使用时一模一样。不给 `--text` 时取 case.yaml 的 `update_request`，与第一段的 `prompt`
+    同一条路：从文件读出原文、按参数列表交给 CLI，中间不经 shell（Git Bash 会把命令行里以 `/` 开头的参数改写成 Windows 路径）。
+    `--deliver` 的顺序与 reply 一致：先把材料放进去，再排这句话；反了的话，模型会照着话去看一个还不存在的东西。
     """
-    _, out_dir, feature = _load_case(case_id)
-    text = (text or "").strip()
+    case, out_dir, feature = _load_case(case_id)
+    text = (text or "").strip() or str(case.get("update_request") or "").strip()
     if not text:
-        print(json.dumps({"ok": False, "error": "--text 不能为空"}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": "case.yaml 没有 update_request，也没给 --text"}, ensure_ascii=False))
         return 1
     state = reconcile_worker_state(out_dir, read_state(out_dir))
     if state.get("awaiting_kind") != "initial_checkpoint":

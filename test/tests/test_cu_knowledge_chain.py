@@ -154,6 +154,15 @@ class TheDerivedContractCarriesTheObligations(ChainCase):
         self.assertNotIn("没有实体承担", out["gate"], out["gate"])
         self.assertIn(f"ut · {KNOWLEDGE_ID}", out["review"], "审查任务没并列出实体上的义务与出自的决定")
 
+    def test_the_plan_author_gets_the_carried_duties_before_the_knowledge_text(self) -> None:
+        """plan 作者先拿到本单位承接的判断：要求、落点与这条允许的 verify（与门禁同一份规则），再是知识原文。"""
+        author = self.probe()["author"]
+        duties = author.split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识及原文", 1)[0]
+        self.assertIn(f"`{KNOWLEDGE_ID}`（OBS-02", duties)
+        self.assertIn("must 带 decision_id，verify 取", duties)
+        self.assertIn(f"`{PATTERN_ID}`（模式 decision-tree", duties)
+        self.assertIn("节点表 →", duties)
+
     def test_the_stat_detail_reaches_author_and_reviewer_in_full(self) -> None:
         """没有 plan.md：埋点明细正文、方法说明与验收完整条目原样送到 plan 作者与审查。"""
         out = self.probe()

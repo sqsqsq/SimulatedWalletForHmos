@@ -47,6 +47,7 @@ S4_STEPS = ("generate_design", "run_complete")
 STORY_REGISTERED = (
     "AR/story.md",
     "AR/review.md",
+    "AR/design-review.md",
     "AR/story-src/decisions.json",
     "AR/story-src/story-template.md",
 )
@@ -111,7 +112,7 @@ def file_sha256(path: Path) -> str | None:
     return sha256(path.read_bytes()).hexdigest()
 
 
-#: 上次发布出去的 Story 与 Review 原样留在这里（相对需求目录）：下一次发布前据它给出差异
+#: 上次发布出去的 Story、Review 与设计附件原样留在这里（相对需求目录）：下一次发布前据它给出差异
 PUBLISHED = (".backups", "published")
 
 
@@ -244,3 +245,5 @@ def last_gate(gates: list[dict], name: str) -> dict | None:
 
 STORY = ("AR", "story.md")
 REVIEW = ("AR", "review.md")
+#: 设计附件：本次蓝图原生评审投影的逐字节副本，与 Story、Review 一起交付
+DESIGN_REVIEW = ("AR", "design-review.md")

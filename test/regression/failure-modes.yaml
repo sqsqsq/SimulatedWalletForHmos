@@ -965,7 +965,7 @@ modes:
     status: fixed
     scope_note: >
       判定原先落在 spec/knowledge-use.yaml，附录·规约是它的投影；2.0 起判断是已准入蓝图里的
-      知识应用决定（形态见 knowledge-application.schema.json），附录·规约按它投影。
+      知识应用决定（形态见 knowledge-application.schema.json），附录·规约由作者按它写。
       激活规约逐条要有判断（按来源文件与单元认，不适用也要写明哪个条件不成立），漏判一条点名一条，
       交回设计职责；夹具的 `_design.json` 写明设计里就是哪几条判断。
 
@@ -1214,11 +1214,13 @@ modes:
     clause: KG-3 / 坑 #30
     checker: s16_material_list_intermediate
     target: mechanism
-    bad_fixture: test/fixtures/failure-modes/S16-material-list-intermediate/bad
-    good_fixture: test/fixtures/failure-modes/S16-material-list-intermediate/good
     applicable_when: always
     severity: BLOCKER
-    status: fixed
+    status: retired
+    approved_by: 维护设计者（2.0.2 整体设计 03 §2.1 与 05 §4 退出表，用户 2026-10-04 确认方案）
+    reason: >
+      2.0.2 材料清单的「本次冻结材料」由脚本按当前冻结快照投影成机器区，作者只写采用与取舍说明；
+      按 materials.json 核作者手列集合的判据随手写清单一并退出，冻结表由投影核对与手改保护接替。
     scope_note: >
       实测一份产物 22 行：本轮规格被链了 4 次，事实记录、参考件与原图都单列。
       列到的每一份按材料清单逐份对：不在清单里的（本轮规格、记录、图片直链）点名。

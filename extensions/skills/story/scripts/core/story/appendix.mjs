@@ -1,23 +1,29 @@
 /**
- * 附录 —— 已准入蓝图与冻结输入的投影、手改保护，以及附录自己的结构判据。
+ * 附录 —— 已准入蓝图与冻结输入的投影、手改保护、附录自己的结构判据，以及设计附件。
  *
- * 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。这里管两件事：
+ * 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。这里管三件事：
  * 机器区**从真源重算**（不读旧 story，读旧的就成了真源加一份会漂的副本），
- * 以及作者区与机器区的分界——有人在机器区写过字就停下，不静默盖掉。
+ * 作者区与机器区的分界——有人在机器区写过字就停下，不静默盖掉——以及设计附件 `AR/design-review.md`。
  *
- * 真源是原生读取、已准入且评审投影对得上的蓝图（契约、运行数据流、知识应用决定、开发视图与架构影响、
- * 精确明细 `story_details`），以及登记的冻结设计输入。每一节由章节合同登记的具名读取器算出，
- * 生成与核对共用同一份计算；表头与文字标签登记在合同，本文件不写业务词。
+ * 机器区的真源是原生读取、已准入且评审投影对得上的蓝图（开发视图与架构影响、精确明细 `story_details` 里的
+ * 配置与埋点），以及登记的冻结设计输入。接口、数据与规约由作者按蓝图写业务摘要，完整技术契约在设计附件。
+ * 每个机器区由章节合同登记的具名读取器算出，生成与核对共用同一份计算；表头与文字标签登记在合同，本文件不写业务词。
  */
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   chapterSpan, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames,
   zoneBlock, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
-import { fail } from './context.mjs';
-import { blueprintKnowledge } from '../../../../../hooks/shared/knowledge-application.mjs';
+import { fail, readJson, replaceFile } from './context.mjs';
+import { blueprintAddresses, blueprintKnowledge } from '../../../../../hooks/shared/knowledge-application.mjs';
 import { designSource } from './design-source.mjs';
 import { READERS } from './appendix-readers.mjs';
+
+//: 设计附件：本次蓝图原生评审投影的逐字节副本，随 Story 与 Review 一起交付
+const DESIGN_REVIEW = ['AR', 'design-review.md'];
+const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
 
 /** 附录那一章（合同里标了 `appendix` 的那个）。没有就返回 null。 */
 export function appendixChapter(contract) {
@@ -56,11 +62,11 @@ function appendixZones(ctx, source, gaps = []) {
   const add = (zone, section, h4, def) => {
     const reader = READERS[def.reader];
     if (!reader) fail(`章节合同附录章 projection：「${zone}」登记的读取器 ${def.reader} 不存在（可用：${Object.keys(READERS).join('、')}）`);
-    out.push({ zone, section, h4, source: `${reader.source}（${revision}）`, rows: reader.rows(source, def, zone, gaps) });
+    out.push({ zone, section, h4, source: `${reader.source}（${revision}）`, rows: reader.rows(source, def, zone, gaps, ctx) });
   };
   for (const [section, def] of Object.entries(projectionOf(ctx.contract))) {
     if (def.reader) add(section, section, null, def);
-    for (const h4 of def.h4 ?? []) add(`${section}·${h4.title}`, section, h4.title, h4);
+    for (const h4 of (def.h4 ?? []).filter(h => h.reader)) add(h4.zone ?? `${section}·${h4.title}`, section, h4.title, h4);
   }
   return out;
 }
@@ -77,8 +83,28 @@ function appendixSourceProblems(ctx) {
   // 投影适配缺口：蓝图里有、章节合同还没有人读写法的结构，并入这份结论
   const gaps = [];
   appendixZones(ctx, source, gaps);
-  return [...problems.map(p => `${p}——判断在设计时写进蓝图（knowledge_application），附录·规约按它投影；由设计职责在 component-design 里修订`),
+  return [...problems.map(p => `${p}——判断在设计时写进蓝图（knowledge_application），附录·规约按它写；由设计职责在 component-design 里修订`),
     ...gaps];
+}
+
+//: 原生稳定地址的形态：种类前缀加编号，写作设计「依据」行里引用蓝图对象用它
+const ADDRESS = /\b(?:blueprint|view|relation|decision|gap|contract):[^\s`'"，、；。）)]+/g;
+
+/**
+ * 附录作者写的几节（接口、数据、规约、材料取舍）在写作设计骨架里的「依据」：引用的原生地址要在当前蓝图里。
+ * 摘要是否覆盖真实影响、有没有遗漏由独立审查判；这里只核写下的地址指得到对象。
+ */
+export function appendixBasisProblems(ctx, plan) {
+  const appendix = appendixChapter(ctx.contract);
+  const skeleton = appendix ? plan?.skeletons?.get(appendix.id) : null;
+  const source = designSource(ctx);
+  if (!skeleton || !source.blueprint) return [];
+  const known = blueprintAddresses(ctx.projectRoot, source.blueprint);
+  const nodes = [skeleton, ...skeleton.sections.flatMap(s => [s, ...s.sections])];
+  const cited = nodes.flatMap(n => n.notes.filter(note => /^依据[:：]/.test(note))
+    .flatMap(note => [...note.matchAll(ADDRESS)].map(m => ({ at: n.title ?? appendix.id, ref: m[0] }))));
+  return cited.filter(c => !known.has(c.ref)).map(c => `写作设计「${c.at}」的依据引用了 ${c.ref}，`
+    + `当前蓝图 ${source.ref?.blueprint_id} r${source.ref?.revision} 里没有这个对象——依据写当前蓝图里实际的原生地址`);
 }
 
 /** 起手（`skeleton`）要的设计来源缺口：与投影、核对同一份结论。 */
@@ -103,8 +129,8 @@ function specialDesignProblems(ctx, storyText) {
  *
  * ① `chapter` 落盘附录章之后：作者的草稿里只有目的句、H4 标题与材料清单，机器区由这里投出来，
  *    他登记前跑 `check` 才不会因为机器区是空的而红；
- * ② `story_flow.py story` 登记时：真源在成文期间还会变（补一条规约判断、改一个接口），
- *    以登记这一次为准。
+ * ② `story-build review --action prepare` 定稿时：真源在成文期间还会变（补一条配置明细、蓝图换版），
+ *    以定稿这一次为准。
  *
  * 每次都从当前真源重算，不读旧 story：读旧的就成了「真源 + 一份会漂移的副本」。
  * 机器区紧跟在它的 H4 标题下（没有 H4 的挂在该节末尾）；H4 标题与区后的说明归作者，这里不碰。
@@ -125,15 +151,12 @@ export function projectAppendix(ctx, storyText) {
   const zones = appendixZones(ctx, designSource(ctx));
   let lines = storyText.slice(span.start, span.end).split(/\r?\n/);
   let count = 0;
-  // 集合对账：合同里有的按真源重投，合同里没有的区块删掉——某一节从合同去掉或改名之后，
-  // 旧区会一直挂着，而它指的真源已经没人维护了。
+  // 合同里没有的机器区来自旧版本的章合同：这份 Story 属于旧版在途单，不在这里删改
   const want = new Set(zones.map(z => z.zone));
-  for (const line of [...lines]) {
-    if (!line.startsWith(ZONE_BEGIN)) continue;
-    const name = line.slice(ZONE_BEGIN.length).split(' · ')[0].trim();
-    const at = want.has(name) ? null : zoneSpan(lines, name);
-    if (at) lines = [...lines.slice(0, at.start), ...lines.slice(at.end)];
-  }
+  const stale = [...new Set(lines.filter(l => l.startsWith(ZONE_BEGIN))
+    .map(l => l.slice(ZONE_BEGIN.length).split(' · ')[0].trim()).filter(name => !want.has(name)))];
+  if (stale.length) fail(`附录里有本版章节合同不再投影的机器区（${stale.join('、')}），${path.basename(ctx.storyPath)} 未改动：`
+    + '这份 Story 来自旧版本，在旧版本里收口，或用本版重新 `/story init` 起单');
   for (const z of zones) {
     const at0 = zoneSpan(lines, z.zone);
     // 真源那一节现在什么都没有了（蓝图里这类对象没有了）：
@@ -289,14 +312,13 @@ export function appendixZoneProblems(ctx, storyText) {
   }
   problems.push(...specialDesignProblems(ctx, storyText));
   // **集合两向都核**：上面走的是合同要的那几区；盘上多出来的名字在这里报。
-  // 合同里没有它，就没有真源与它比——既不受投影约束，也不是作者说明，它会长期冒充现行投影。
+  // 合同里没有它，就没有真源与它比：它来自旧版本的章合同，或是手写的标记。
   const known = new Set(zones.map(z => z.zone));
   for (const name of onDisk.keys()) {
     if (known.has(name)) continue;
-    problems.push(`「${appendix.title}」：机器区「${name}」不在合同的投影登记里`
+    problems.push(`「${appendix.title}」：机器区「${name}」不在本版章节合同的投影登记里`
       + `（登记的是 ${zones.map(z => z.zone).join('、')}）`
-      + '——机器区按合同登记的名字对应真源，这一段没有真源可比，也不随投影更新；'
-      + '机器标记之外是作者区');
+      + '——旧版本的 Story 在旧版本里收口，或用本版重新 `/story init` 起单；手写的标记删掉，内容写在机器标记之外');
   }
   return problems;
 }
@@ -372,4 +394,57 @@ function firstDiff(have, want) {
     if (a[i] !== b[i]) return { why: '这一行不一样', at: i, have: a[i], want: b[i] };
   }
   return null;
+}
+
+/**
+ * 盘上的设计附件是不是本扩展上次生成的那一份：准备记录、当前 update 的完成点与成文登记里记过的摘要。
+ * 三处都是既有的所有权记录；与其中任一相符就是机器产物，可以按当前投影重写。
+ */
+function knownDesignReview(ctx) {
+  const rel = DESIGN_REVIEW.join('/');
+  const known = new Set();
+  const prepared = readJson(path.join(ctx.srcDir, 'review', 'prepared.json'), null);
+  if (prepared?.design_review_sha256) known.add(prepared.design_review_sha256);
+  const flow = readJson(ctx.flowPath, null);
+  if (flow?.story_basis?.files?.[rel]) known.add(flow.story_basis.files[rel]);
+  const open = flow?.update?.open;
+  const record = open ? readJson(path.join(ctx.srcDir, 'updates', open, 'record.json'), null) : null;
+  if (record?.owned_after?.[rel]) known.add(record.owned_after[rel]);
+  return known;
+}
+
+/**
+ * 定稿时写设计附件 `AR/design-review.md`：复制当前蓝图的原生评审投影，字节相同。
+ *
+ * 设计来源不成立时不写（调用方在这之前已经按同一份结论停下）。盘上已有的附件与当前投影不同、
+ * 又不是上次生成的那一份，就是有人改过：停下不盖，修改回蓝图。成功后把写下的摘要记进 `ctx`，准备记录据它认所有权。
+ */
+export function attachDesignReview(ctx) {
+  const source = designSource(ctx);
+  if (source.problems.length || !source.projection) {
+    fail(`设计附件写不出来：\n  · ${source.problems.join('\n  · ') || '原生评审投影的位置读不到'}`);
+  }
+  const bytes = fs.readFileSync(path.join(ctx.projectRoot, ...source.projection.split('/')));
+  const target = path.join(ctx.featureRoot, ...DESIGN_REVIEW);
+  const now = fs.existsSync(target) ? fs.readFileSync(target) : null;
+  if (now && !now.equals(bytes)) {
+    if (!knownDesignReview(ctx).has(sha256(now))) {
+      fail(`${DESIGN_REVIEW.join('/')} 与当前原生评审投影 ${source.projection} 不同，也不是上次生成的那一份：盘上这份被改过，未覆盖。`
+        + '它是原生投影的副本，设计要改回蓝图修订；把这份里的改动交回它的责任处之后删掉它，再跑 prepare 重新生成');
+    }
+  }
+  if (!now || !now.equals(bytes)) replaceFile(target, bytes);
+  ctx.designReviewSha256 = sha256(bytes);
+}
+
+/** 交付前核设计附件：等于当前蓝图的原生评审投影。 */
+export function designReviewProblems(ctx) {
+  const source = designSource(ctx);
+  if (source.problems.length || !source.projection) return [];
+  const target = path.join(ctx.featureRoot, ...DESIGN_REVIEW);
+  const want = fs.readFileSync(path.join(ctx.projectRoot, ...source.projection.split('/')));
+  const have = fs.existsSync(target) ? fs.readFileSync(target) : null;
+  if (have?.equals(want)) return [];
+  return [`${DESIGN_REVIEW.join('/')} ${have ? '与' : '不在，'}当前蓝图的原生评审投影 ${source.projection}${have ? ' 不同' : ''}`
+    + '——设计附件在 `story-build review --action prepare` 定稿时按当前投影生成，重新 prepare、审查并登记'];
 }

@@ -331,6 +331,102 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
                 self.assertEqual(want, self.result()["result"], self.result())
 
 
+class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """派审载体：prepare 把完整材料键、任务与回复位置写进 dispatch.md，返修与复审的上下文也在里面；check 核它与准备记录一致。"""
+
+    def prepare(self) -> dict:
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+        return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
+
+    def dispatch_file(self) -> Path:
+        return self.flow_path.parent / "review" / "dispatch.md"
+
+    def test_the_dispatch_carries_the_full_identity_and_is_checked(self) -> None:
+        out = self.prepare()
+        text = self.dispatch_file().read_text(encoding="utf-8")
+        self.assertEqual(text, out["dispatch_text"])
+        for needle in (out["material_key"], out["task"], out["report_file"]):
+            self.assertIn(needle, text)
+        self.assertEqual(64, len(out["material_key"]))
+        self.dispatch_file().write_text(text.replace(out["material_key"], out["material_key"][:16]), encoding="utf-8")
+        self.assertEqual("input_invalid", self.result()["result"], "改过的派审载体没被认出来")
+        self.dispatch_file().unlink()
+        self.assertEqual("input_invalid", self.result()["result"], "缺派审载体没被认出来")
+        again = self.prepare()
+        self.assertEqual(out["report_file"], again["report_file"], "同一份材料再准备，空回复位置又递增了")
+        self.assertEqual("report_missing", self.result()["result"])
+
+    def test_a_bad_reply_goes_back_to_an_isolated_reviewer_with_its_diagnosis(self) -> None:
+        first = self.reviewed("pass")
+        first.write_text("看过了，整体还行。\n", encoding="utf-8")
+        kept = first.read_bytes()
+        diagnosis = self.result()
+        self.assertEqual("report_invalid", diagnosis["result"])
+        out = self.prepare()
+        self.assertNotEqual(first, self.root / out["report_file"], "坏回复的位置被拿来写新回复")
+        context = self.prepared()["review_context"]
+        self.assertEqual(("format_repair", first.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
+        self.assertEqual(diagnosis["detail"], context["diagnostic"]["detail"])
+        self.assertIn(diagnosis["detail"].splitlines()[0], out["dispatch_text"], "诊断没原样进派审载体")
+        self.assertIn(context["report_sha256"], out["dispatch_text"])
+        again = self.prepare()
+        self.assertEqual(out["report_file"], again["report_file"], "同一次返修再准备，回复位置递增了")
+        self.assertEqual(context, self.prepared()["review_context"], "再准备丢了返修上下文")
+        self.assertEqual(kept, first.read_bytes(), "原回复被改了")
+        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.assertEqual("pass", self.result()["result"])
+        first.write_text("改过的原回复\n", encoding="utf-8")
+        self.assertEqual("input_invalid", self.result()["result"], "派审带着的原回复被改，没被认出来")
+
+    def test_a_failed_review_is_rechecked_with_its_report_and_new_material_starts_clean(self) -> None:
+        failed = self.reviewed("block")
+        out = self.prepare()
+        context = self.prepared()["review_context"]
+        self.assertEqual(("recheck", failed.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
+        self.assertIn("F-1", out["dispatch_text"], "失败报告的阻断结论没进派审载体")
+        self.assertEqual("fail", self.result()["result"], "新位置还空着，原有效 fail 被撤销")
+        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n新材料的一句。\n", encoding="utf-8")
+        self.prepare()
+        self.assertNotIn("review_context", self.prepared(), "材料变了还带着旧审查的上下文")
+
+
+class TheDesignAttachmentIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """设计附件 AR/design-review.md：定稿时从原生评审投影逐字节复制，是被审、被登记的一件；手改不盖，蓝图换版照常重写。"""
+
+    def attachment(self) -> Path:
+        return self.story.parent / "design-review.md"
+
+    def projection(self) -> Path:
+        return self.root / "doc" / "features" / design_kit.blueprint_of(self.root, "REQ-DEMO") / "blueprint" / "component-blueprint.review.md"
+
+    def test_prepare_copies_the_projection_byte_for_byte_and_reviews_it(self) -> None:
+        self.reviewed("pass")
+        self.assertEqual(self.projection().read_bytes(), self.attachment().read_bytes())
+        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
+        self.assertIn("doc/features/REQ-DEMO/AR/design-review.md`", task, "设计附件不在审查材料里")
+        self.assertEqual(0, self.register().returncode)
+        self.assertEqual(0, self.check("--deliver").returncode)
+
+    def test_a_hand_edit_is_kept_and_stops_the_prepare(self) -> None:
+        self.assertEqual(0, self.review("prepare").returncode)
+        edited = self.attachment().read_bytes() + "手加的一行。\n".encode("utf-8")
+        self.attachment().write_bytes(edited)
+        out = self.review("prepare")
+        self.assertNotEqual(0, out.returncode, "被改过的设计附件被静默覆盖")
+        self.assertIn("被改过", out.stdout + out.stderr)
+        self.assertEqual(edited, self.attachment().read_bytes())
+
+    def test_a_revised_blueprint_rewrites_it_and_the_old_registration_is_not_delivered(self) -> None:
+        self.reviewed("pass")
+        self.assertEqual(0, self.register().returncode)
+        design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, "target_state: refresh trigger",
+                                    "target_state: refresh trigger and badge")
+        self.assertNotEqual(0, self.check("--deliver").returncode, "蓝图换版之后旧附件仍被交付")
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertEqual(self.projection().read_bytes(), self.attachment().read_bytes(), "蓝图换版之后附件没跟着重写")
+
+
 class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCase):
     """当前 adapter 没声明审查子代理、这一版的结果是 report_missing 时，人明确授权才可不经审查交付；
     授权记在流程契约，审查状态写进最终的 Story 与 Review，材料一变就不再适用。"""
@@ -644,7 +740,7 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
     def test_the_task_really_carries_the_method(self) -> None:
         """正常路径的证据：审查者手上的任务里有这份方法——判据原文随任务送达。"""
         task = self.inject()
-        for needle in ("跨章对着读", "blocking_findings", "advisories", "不许空", "按实际关系判"):
+        for needle in ("跨章对着读", "阻断发现", "**建议**", "不许空", "按实际关系判"):
             self.assertIn(needle, task, f"审查任务里没有「{needle}」")
 
 
@@ -656,7 +752,7 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         """
         method = self.overlay_method()
         for needle in ("总览与局部加起来", "端到端过程", "分支去向", "理由成不成立",
-                       "跨章对着读", "blocking_findings", "advisories", "不许空"):
+                       "跨章对着读", "阻断发现", "**建议**", "不许空"):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
         source = (self.root / "doc/extensions/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
         for needle in ("总览与局部加起来", "端到端过程", "跨章对着读"):
@@ -671,59 +767,20 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         self.assertIn("按实际关系判", method)
         self.assertNotIn("三个以上参与方", self.inject())
 
-    def test_the_task_carries_the_story_full_text_once(self) -> None:
-        """审查对象**放全文**，一次。
-
-        只给路径让它自己去开的话，截断、读旧稿、读不到都会变成「看起来审过了」，
-        而三种都分不出来。外层围栏比正文里最长的那道再多一个反引号——固定长度时，
-        正文里合法地出现一道更长的示例围栏就会把包装提前关上。
-        """
+    def test_the_task_is_one_index_and_embeds_no_document(self) -> None:
+        """任务只给一份文件索引与读法，被审文件与写作设计都按索引去读，任务里不嵌它们的全文。"""
+        self.plan_path().write_text(self.base_plan().replace("## 阅读主线\n\n", "## 阅读主线\n\n设计里独有的一句甲。\n"),
+                                    encoding="utf-8")
         task = self.inject()
-        self.assertIn("### 审查对象：当前 `AR/story.md`", task)
-        fence = next(l for l in task.split("\n")
-                     if l.startswith("```") and l.endswith("markdown"))
-        self.assertGreaterEqual(len(fence) - len("markdown"), 4, fence)
-        for line in STORY_MD.strip().split("\n"):
-            if line.strip():
-                self.assertIn(line, task, f"全文里少了这一行：{line}")
-        self.assertEqual(1, task.count(fence), "全文放了不止一次")
-
-    def test_a_projection_refresh_keeps_the_task_and_an_authored_edit_changes_it(self) -> None:
-        """AC22：审查任务片段不含机器区内容，机器区内容变了片段不变；审查对象按原始字节算，机器区内容变了对象跟着变，
-        幂等重投（字节不变）对象不变；作者区改了，片段与对象都变。"""
+        self.assertIn("### 怎么读", task)
+        index = task.split("### 本次审查的材料", 1)[1].split("\n### ", 1)[0]
+        for rel in ("AR/story.md", "AR/story-src/story-template.md"):
+            self.assertEqual(1, index.count(f"doc/features/{FEATURE}/{rel}`"), f"{rel} 在索引里不是恰好一次")
+        self.assertNotIn("用户现在拿不到凭据。", task, "Story 正文又嵌进了任务")
+        self.assertNotIn("设计里独有的一句甲。", task, "写作设计全文又嵌进了任务")
         story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
-        zone = ("\n<!-- story-build:begin 技术契约·端云接口 · 由蓝图 contracts（bp-RT90001 r3）生成，改它请改真源 · sha256:0000000000000000 -->\n"
-                "| 接口 | 用途 |\n|---|---|\n| queryState | 查状态 |\n<!-- story-build:end -->\n")
-        story.write_text(STORY_MD + zone, encoding="utf-8")
-        first, key = self.inject(), self.material_key()
-        self.assertNotIn("queryState", first, "机器区内容进了审查片段")
-        story.write_text(STORY_MD + zone, encoding="utf-8")
-        self.assertEqual(key, self.material_key(), "幂等重投换了审查对象")
-        story.write_text(STORY_MD + zone.replace("queryState | 查状态", "queryState | 查处理状态"), encoding="utf-8")
-        self.assertEqual(first, self.inject(), "机器区内容改了，任务片段跟着变")
-        self.assertNotEqual(key, self.material_key(), "机器区内容变了，审查对象却没变")
-        story.write_text(STORY_MD + "\n作者补的一句。\n" + zone, encoding="utf-8")
-        self.assertNotEqual(first, self.inject(), "作者区改了，任务片段没跟着变")
-
-    def test_a_longer_inner_fence_does_not_close_the_wrapper(self) -> None:
-        """正文里合法地出现一道更长的围栏（贴一段 markdown 示例）时，包装不能被它关上。"""
-        story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
-        story.write_text(STORY_MD + "\n`````markdown\n```mermaid\nA-->B\n```\n`````\n",
-                         encoding="utf-8")
-        task = self.inject()
-        fence = next(l for l in task.split("\n")
-                     if l.startswith("```") and l.endswith("markdown"))
-        self.assertGreaterEqual(len(fence) - len("markdown"), 6, fence)
-        after = task.split(fence, 1)[1]
-        self.assertIn("`````markdown", after, "更长的内层围栏没被包进来")
-
-    def test_an_unreadable_story_is_an_incomplete_object_not_an_empty_full_text(self) -> None:
-        """Story 读不到或是空的：任务说明审查对象不全、准备报 input_invalid，不给空白全文。"""
-        (self.root / "doc" / "features" / FEATURE / "AR" / "story.md").write_text(
-            "   \n", encoding="utf-8")
-        task = self.inject()
-        self.assertIn("input_invalid", task)
-        self.assertNotIn("```````markdown", task)
+        story.write_text(STORY_MD + "\n作者补的一句。\n", encoding="utf-8")
+        self.assertEqual(task, self.inject(), "改正文的措辞改了任务——正文按索引去读")
 
     def test_the_task_says_the_extract_is_a_derived_analysis(self) -> None:
         """提取稿是派生分析：回查上游原话看 RR、SR 与 AR/design.md 原文，不拿提取稿自证。"""
@@ -755,7 +812,7 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
         输出要求与判据分在两个文件时，改一处就对不上；任务书的「报告怎么写」给章节与表头。
         """
         method = self.overlay_method()
-        for needle in ("Story 报告", "不许空", "blocking_findings", "advisories", "「发现」", "只留表头"):
+        for needle in ("Story 报告", "不许空", "阻断发现", "**建议**", "「发现」", "只留表头"):
             self.assertIn(needle, method)
         for gone in ("汇总表", "YAML 明细", "为标记的一块"):
             self.assertNotIn(gone, method, f"旧的输出契约「{gone}」还在")
@@ -764,42 +821,14 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
                        "`编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任`"):
             self.assertIn(needle, task)
 
-    def test_the_task_carries_the_writing_design_once_and_follows_it(self) -> None:
-        """写作设计全文随任务到审查者手上一次；改了设计，任务跟着变——审查核的是这一版。"""
-        base = self.base_plan()
-        self.plan_path().write_text(
-            base.replace("## 阅读主线\n\n", "## 阅读主线\n\n设计里独有的一句甲。\n"), encoding="utf-8")
-        task = self.inject()
-        self.assertIn("### 作者的写作设计", task)
-        self.assertEqual(1, task.count("设计里独有的一句甲。"), "设计全文没送到，或送了不止一次")
-        self.assertIn("待核的作者判断", task, "没说清设计是待核的判断而不是标准")
-        self.plan_path().write_text(
-            base.replace("## 阅读主线\n\n", "## 阅读主线\n\n改过之后的一句乙。\n"), encoding="utf-8")
-        task = self.inject()
-        self.assertIn("改过之后的一句乙。", task)
-        self.assertNotIn("设计里独有的一句甲。", task, "任务没跟着当前设计走")
-
-    def test_a_missing_writing_design_is_a_gap_not_an_empty_design(self) -> None:
-        section = self.inject().split("### 作者的写作设计", 1)[1].split("###", 1)[0]
-        self.assertIn("写作设计缺口", section)
-        self.assertNotIn("```", section, "拿一段空围栏冒充审过了设计")
-
-    def test_the_task_points_at_the_original_materials(self) -> None:
-        """审查要能回到原件：原文逐份给位置；该有而读不到的点名，不替它下结论。"""
+    def test_the_index_names_a_missing_required_source(self) -> None:
+        """该有而读不到的来源在索引里点名：系统需求缺系统设计要说，本地需求没有它是正常的。"""
         feature = self.root / "doc" / "features" / FEATURE
-        (feature / "RR").mkdir(parents=True, exist_ok=True)
-        (feature / "RR" / "prd.md").write_text("# 产品需求\n", encoding="utf-8")
-        section = self.inject().split("### 原材料原文", 1)[1].split("###", 1)[0]
-        self.assertIn("`RR/prd.md`", section)
-        self.assertNotIn("spec/spec.md", section, "Story 不再以 Spec 为成文来源")
-        self.assertNotIn("读不到 `SR/design.md`", section, "本地单没有系统设计是正常的")
-        (feature / "AR" / "detail.json").write_text("{}", encoding="utf-8")
-        section = self.inject().split("### 原材料原文", 1)[1].split("###", 1)[0]
-        self.assertNotIn("读不到 `SR/design.md`", section, "本地需求留着 detail.json 仍是本地需求")
+        index = lambda name: self.inject(name).split("### 本次审查的材料", 1)[1].split("\n### ", 1)[0]  # noqa: E731
+        self.assertNotIn("读不到 `SR/design.md`", index(FEATURE), "本地单没有系统设计是正常的")
         remote = f"AR{FEATURE}"
         shutil.copytree(feature, feature.parent / remote)
-        section = self.inject(remote).split("### 原材料原文", 1)[1].split("###", 1)[0]
-        self.assertIn("读不到 `SR/design.md`", section, "系统需求缺必备来源没点名")
+        self.assertIn("读不到 `SR/design.md`", index(remote), "系统需求缺必备来源没点名")
 
     def test_the_rules_judge_against_sources_not_the_design(self) -> None:
         """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在判据文件。"""

@@ -34,7 +34,8 @@ function readSnapshot(ctx, input, problems) {
 }
 
 /**
- * @returns {{blueprint: object|null, ref: object|null, snapshot: object|null, problems: string[]}}
+ * @returns {{blueprint: object|null, ref: object|null, projection?: string, snapshot: object|null, problems: string[]}}
+ *   `projection` 是原生评审投影的工程相对路径
  */
 export function designSource(ctx) {
   if (cache.has(ctx)) return cache.get(ctx);
@@ -64,6 +65,7 @@ export function designSource(ctx) {
     } else {
       out.blueprint = read.blueprint;
       out.ref = read.blueprint_ref;
+      out.projection = read.projection.path;
     }
   }
   cache.set(ctx, out);

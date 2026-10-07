@@ -141,7 +141,7 @@
       "id": "10-appendix",
       "title": "附录",
       "appendix": true,
-      "boundary": "理解型叙述归正文各章，字段与规则的真源归已准入蓝图的契约、运行数据流、知识应用决定与精确明细，材料归冻结的设计输入",
+      "boundary": "理解型叙述归正文各章；接口、数据与规约在附录写业务摘要，完整技术契约在设计附件 AR/design-review.md；配置、埋点、改动边界与冻结材料由脚本从蓝图与冻结输入投影",
       "subsections": [
         "技术契约",
         "规约",
@@ -157,24 +157,21 @@
       "projection": {
         "sections": {
           "技术契约": {"h4": [
-            {"title": "端云接口", "reader": "contracts",
-             "tables": {"fields": "位置|字段|类型|含义|可空", "mappings": "映射|目标字段|方式|来源字段|规则"},
-             "labels": {"request": "请求", "response": "响应", "nullable": "可空", "required": "必有", "version": "版本",
-                        "errors": "错误语义", "idempotency": "幂等", "nfr": "非功能"}},
-            {"title": "数据存储", "reader": "data_flows", "detail_kind": "data_policy",
-             "tables": {"flows": "数据流|数据域|权威来源|状态归属|失败与恢复"},
-             "labels": {"authority": "权威", "persistence": "持久化", "projections_and_caches": "投影与缓存", "reconciliation": "对账",
-                        "ref": "归属", "states": "状态", "recovery_id": "恢复编号", "persistence_failure": "写入失败",
-                        "subscription_failure": "订阅失败", "process_recreation": "进程重建"}},
+            {"title": "端云接口", "author_guide": "按蓝图契约逐个写接口：谁在什么时机调用、关键输入从哪来、成功与失败对业务的后果，改变决定或验收的精确约束与未决照写；完整字段、类型与映射在设计附件"},
+            {"title": "数据存储", "author_guide": "逐类写数据由谁持有、权威在哪、用途、有效期、清理与恢复、跨端关系，蓝图数据策略明细里的约定照写；精确地址与传播结构在设计附件"},
             {"title": "配置项", "reader": "details", "detail_kind": "configuration"}
           ]},
-          "规约": {"reader": "knowledge_applications", "tables": {"rows": "知识单元|判定|要求与理由|落点"}},
+          "规约": {"author_guide": "逐条写激活规约在本需求的判定：适用的写本需求的哪项事实使它适用、由谁承担、怎样影响设计，不适用的写边界；判断取自蓝图的知识应用决定"},
           "埋点": {"reader": "details", "detail_kind": "event"},
           "改动边界": {"reader": "change_boundary", "tables": {"rows": "模块|本单怎么动"},
-                       "labels": {"unchanged": "开发视图不变"}}
+                       "labels": {"unchanged": "开发视图不变"}},
+          "材料清单": {"h4": [
+            {"title": "本次冻结材料", "zone": "材料清单", "reader": "materials", "tables": {"rows": "来源文件|材料角色|本次版本"},
+             "roles": {"original": "原件", "image": "图片", "human_record": "人签记录", "extracted_analysis": "派生分析（提取稿）"}},
+            {"title": "采用与取舍说明", "author_guide": "写每份材料实际贡献了什么、原件到转换稿或图片的采用链、没采纳的新值与它的人签依据"}
+          ]}
         }
-      },
-      "material_roles": {"original": "原件", "image": "图片", "human_record": "人签记录", "extracted_analysis": "派生分析（提取稿）"}
+      }
     }
   ],
   "id_shapes": {
@@ -246,7 +243,7 @@
     "editable": ["AR/story.md", "AR/story-src/design-draft.md", "AR/story-src/design-input.json",
       "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
       "AR/story-src/drafts/**"],
-    "regenerate": ["AR/review.md", "AR/story-src/materials.json"],
+    "regenerate": ["AR/review.md", "AR/design-review.md", "AR/story-src/materials.json"],
     "protected": ["RR/**", "SR/**", "AR/design.md", "AR/detail.json", "inbox/**", "assets/**", "ux-reference/**",
       "AR/story-src/meetings/**", "AR/story-src/inputs/**", "AR/story-src/review/**", "AR/story-src/updates/**",
       ".backups/**"],

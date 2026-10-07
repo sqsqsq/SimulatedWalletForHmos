@@ -45,7 +45,7 @@ update_inputs:
     destination: review-feedback.md
     note: 两条同意、一条要改（停用后给出重新签约的去处）、一条暂缓
 
-# 第二段的请求：resume-update 的 --text 原样用这一句（TEST §4.4）。新稿与回稿由模型自己取得。
+# 第二段的请求：resume-update 不给 --text 时投这一句（TEST §4.4）。新稿与回稿由模型自己取得。
 update_request: /story update AR90006
 
 # 只用命令起手（test/cases/README.md）：材料、会议、终点都由模型在流程里问，宿主在关卡上答。

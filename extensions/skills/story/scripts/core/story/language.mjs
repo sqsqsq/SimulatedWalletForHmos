@@ -207,39 +207,6 @@ export function scanLanguageRedline(text, opts = {}) {
   return out;
 }
 
-/** 材料清单那一节的行形态：问题与判法。 */
-const MATERIAL_LIST_HINTS = {
-  material_row: '写成了表格行——材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
-  material_link: '这一项没有 markdown 链接——每份材料给一条原文链接，读者据此自己把那份材料找出来；'
-    + '光写「产品需求文档」他不知道该找谁要哪一份',
-};
-
-/**
- * 材料清单那一节的行形态：成列表、每行给得出原文链接。
- *
- * @param {string} body 该小节正文
- * @param {number} baseLine 该小节正文首行在全篇里的行号（报错要指得回去）
- */
-export function scanMaterialList(body, baseLine = 0) {
-  const hits = [];
-  const lines = String(body ?? '').split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const s = lines[i].trim();
-    const line = baseLine + i;
-    if (s.startsWith('|')) {
-      hits.push({ line, kind: 'material_row', hit: s.slice(0, 40),
-                  hint: MATERIAL_LIST_HINTS.material_row, text: s.slice(0, 100) });
-      continue;
-    }
-    if (!/^[-*+]\s/.test(s)) continue;
-    if (![...s.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)].length) {
-      hits.push({ line, kind: 'material_link', hit: s.slice(0, 40),
-                  hint: MATERIAL_LIST_HINTS.material_link, text: s.slice(0, 100) });
-    }
-  }
-  return hits;
-}
-
 /**
  * 扫描仓内本地路径。
  * @param {string} text 待扫描文本

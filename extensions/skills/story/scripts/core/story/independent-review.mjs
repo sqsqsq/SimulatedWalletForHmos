@@ -1,7 +1,8 @@
 /**
  * Story 的独立审查 —— 准备这一次的审查对象与任务，核审查者原样落盘的 Story 业务报告。
  *
- * - **准备**：写审查任务，按审查对象算材料键（这一次 Story 的身份），定这一份回复的位置。报告目录随材料键在首次准备时
+ * - **准备**：写审查任务，按审查对象算材料键（这一次 Story 的身份），定这一份回复的位置，生成派审载体 `dispatch.md`
+ *   （材料键、任务、回复位置与返修上下文，主执行者原样交给隔离审查者）。报告目录随材料键在首次准备时
  *   定下，同一份材料沿用它，另指目录报冲突。
  *   这份材料在报告目录里的结论与核结果同一份读取：有效通过（pass / warn）就复用那份回复，材料改走又改回来也一样；
  *   其余情况另起下一个编号的回复位置，旧回复保留。
@@ -19,24 +20,26 @@
  *
  * 报告合同通过只证明结构、身份与引用成立，不证明审查独立、业务无遗漏；那两件在真实运行里核。
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { hostReviewer } from '../../../../../hooks/shared/framework-access.mjs';
 import { readerCheckIds, readerReviewTask } from '../../../../../hooks/shared/reader-review-task.mjs';
-import { readJson, readText } from './context.mjs';
+import { readJson, readText, replaceFile } from './context.mjs';
 import { chapterSpan, tableCells, zoneBlock, zoneSpan } from './document.mjs';
 import { TASK, materialKey, reviewObject } from './review-object.mjs';
+import {
+  CHECK_HEADER, CHECK_RESULTS, FINDING_HEADER, REPORT_HEADINGS, SEVERITIES,
+} from './review-report-contract.mjs';
 
-const REPORT_HEADINGS = ['判据核对', '发现', '总体结论'];
-const CHECK_HEADER = ['判据 ID', '结果', '依据'];
-const FINDING_HEADER = ['编号', '严重程度', '判据 ID', '材料位置', '问题与依据', '修正责任'];
-const SEVERITIES = ['BLOCKER', 'MAJOR', 'MINOR', 'INFO'];
 const reply = n => `review-original.${n}.md`;
+const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
 
 function places(ctx) {
   const dir = path.join(ctx.featureRoot, ...TASK.slice(0, -1));
-  return { dir, prepared: path.join(dir, 'prepared.json') };
+  return { dir, prepared: path.join(dir, 'prepared.json'), dispatch: path.join(dir, 'dispatch.md') };
 }
+
 
 const abs = (ctx, rel) => path.join(ctx.projectRoot, ...String(rel).split('/'));
 
@@ -47,10 +50,10 @@ const abs = (ctx, rel) => path.join(ctx.projectRoot, ...String(rel).split('/'));
  *   report_file?: string, reused?: boolean}}
  */
 export function prepareReview(ctx, reportDirArg) {
-  const { dir, prepared } = places(ctx);
+  const { dir, prepared, dispatch } = places(ctx);
   fs.mkdirSync(dir, { recursive: true });
   const task = path.join(ctx.featureRoot, ...TASK);
-  // 任务是审查对象的一部分，所以不嵌入由对象算出的材料键：材料键由准备输出交给派审方
+  // 任务是审查对象的一部分，所以不嵌入由对象算出的材料键：材料键经派审载体交给审查者
   const taskText = `${readerReviewTask(ctx.projectRoot, ctx.args.feature)}\n`;
   if (readText(task) !== taskText) fs.writeFileSync(task, taskText, 'utf-8');
   const object = reviewObject(ctx.projectRoot, ctx.args.feature);
@@ -65,19 +68,106 @@ export function prepareReview(ctx, reportDirArg) {
       + `这次指定的是 ${asked}。同一份材料的回复都在 ${bound}，准备记录与已有回复未改动；去掉 --report-dir 或写 ${bound} 重跑` };
   }
   const reportDir = bound ?? asked ?? `doc/reports/story/${ctx.args.feature}/${key.slice(0, 16)}`;
-  // 这份材料已有的结论与 check 同一份读取；材料改走又改回来（A→B→A）也认目录里 A 的回复
-  const current = was?.material_key === key ? was.report_file : null;
-  let known = materialConclusion(ctx, key, reportDir, current, object.rows);
-  // 当前回复不合合同时，新开回复位置之后 check 读的是目录里其余回复中最新的有效结论，这里按同样的读法
-  if (known?.result === 'report_invalid') known = earlierConclusion(ctx, key, reportDir, current, object.rows);
-  const reused = ['pass', 'warn'].includes(known?.result);
-  const reportFile = reused ? known.report_file : `${reportDir}/${reply(Math.max(0, ...replyNumbers(ctx, reportDir)) + 1)}`;
+  const choice = replyPlace(ctx, was, key, reportDir, object.rows);
   // 授权随这一次准备沿用与否，在准备开始时判定一次（`pendingDisclosure`）；披露已写进文件，材料键里含它
   const waiver = disclosedWaiver(ctx);
-  fs.writeFileSync(prepared, `${JSON.stringify({ material_key: key, report_dir: reportDir, report_file: reportFile,
-    report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(waiver ? { waiver_at: waiver.at } : {}) }, null, 2)}\n`, 'utf-8');
+  const record = { material_key: key, project_root: ctx.projectRoot.split(path.sep).join('/'), report_dir: reportDir,
+    report_file: choice.reportFile,
+    report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(waiver ? { waiver_at: waiver.at } : {}),
+    ...(choice.reused ? { reused: true } : {}), ...(choice.context ? { review_context: choice.context } : {}),
+    ...(ctx.designReviewSha256 ? { design_review_sha256: ctx.designReviewSha256 } : {}) };
   const rel = path.relative(ctx.projectRoot, task).split(path.sep).join('/');
-  return { material_key: key, task: rel, rows: object.rows, report_dir: reportDir, report_file: reportFile, reused };
+  const dispatchText = dispatchFor(ctx, record, rel);
+  // 派审载体先落盘，准备记录最后替换：两者对不上时 check 报 input_invalid，重跑 prepare 即可
+  replaceFile(dispatch, dispatchText);
+  replaceFile(prepared, `${JSON.stringify(record, null, 2)}\n`);
+  return { material_key: key, task: rel, rows: object.rows, report_dir: reportDir, report_file: choice.reportFile,
+    reused: choice.reused, dispatch_file: path.relative(ctx.projectRoot, dispatch).split(path.sep).join('/'),
+    dispatch_text: dispatchText };
+}
+
+/**
+ * 这一次回复写在哪、派审要带什么上下文。
+ *
+ * - 有可复用的 pass / warn：复用原回复，不派审；
+ * - 同一份材料已准备、回复还没来：沿用这个位置与它的上下文；
+ * - 当前回复不合报告合同：下一个编号，带原回复与诊断交独立格式返修；
+ * - 这份材料已有有效 fail：下一个编号，带失败报告交独立复审；
+ * - 其余（首审、材料变了）：下一个编号，不带上下文。
+ */
+function replyPlace(ctx, was, key, reportDir, rows) {
+  const current = was?.material_key === key ? was.report_file : null;
+  const known = materialConclusion(ctx, key, reportDir, current, rows);
+  if (['pass', 'warn'].includes(known?.result)) return { reportFile: known.report_file, reused: true, context: null };
+  if (current && !was.reused && !fs.existsSync(abs(ctx, current))) {
+    return { reportFile: current, reused: false, context: was.review_context ?? null };
+  }
+  const next = `${reportDir}/${reply(Math.max(0, ...replyNumbers(ctx, reportDir)) + 1)}`;
+  let context = null;
+  if (known?.result === 'report_invalid') {
+    // 当前回复不合合同时，check 读目录里其余回复中最新的有效结论；那里有通过结论就直接复用
+    const earlier = earlierConclusion(ctx, key, reportDir, current, rows);
+    if (['pass', 'warn'].includes(earlier?.result)) return { reportFile: earlier.report_file, reused: true, context: null };
+    context = contextOf(ctx, 'format_repair', known);
+  } else if (known?.result === 'fail') {
+    context = contextOf(ctx, 'recheck', known);
+  }
+  return { reportFile: next, reused: false, context };
+}
+
+function contextOf(ctx, kind, known) {
+  return { kind, report_file: known.report_file, report_sha256: sha256(fs.readFileSync(abs(ctx, known.report_file))),
+    diagnostic: { result: known.result, detail: known.detail } };
+}
+
+/**
+ * 派审载体：由准备记录确定性生成，主执行者原样作为宿主 task 的 prompt 交给隔离审查者。
+ * 材料键、任务、回复位置与返修上下文都在这里，不经主执行者转述。
+ */
+function dispatchFor(ctx, record, task) {
+  const head = ['# Story 独立人读审查 · 派审', '',
+    `- 工程根：\`${record.project_root}\``,
+    `- 材料键：\`${record.material_key}\``,
+    `- 审查任务：\`${task}\``];
+  if (record.reused) {
+    return `${[...head, `- 已有通过的回复：\`${record.report_file}\``, '',
+      '这份材料已有可复用的审查结论，这一次不派审，直接跑 `story-build review --action check`。'].join('\n')}\n`;
+  }
+  const out = [...head, `- 回复写到：\`${record.report_file}\`（工程相对路径）`, '',
+    '你是与作者隔离的独立审查者。按审查任务原文执行：只读被审材料与对照材料，只写上面这一份回复，其余文件保持原样。',
+    `回复第一行写 \`material_key: ${record.material_key}\`，其余格式见任务「报告怎么写」。`];
+  const c = record.review_context;
+  if (c?.kind === 'format_repair') {
+    out.push('', '## 上一份回复不合报告合同', '',
+      `原回复：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读，保持原样。核对给出的诊断原文：`, '',
+      ...String(c.diagnostic.detail).split(/\r?\n/).map(l => `> ${l}`), '',
+      '按任务给一份合格的完整报告写到上面的回复位置。原回复里的每条事实与引用回材料核过再写，核不到的不写。');
+  } else if (c?.kind === 'recheck') {
+    out.push('', '## 这份材料上一次的审查结论是 fail', '',
+      `上一次的回复：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读。它的阻断结论：`, '',
+      ...String(c.diagnostic.detail).split(/\r?\n/).map(l => `> ${l}`), '',
+      '对当前材料做一次完整审查：每条阻断现在是否成立由你按材料独立判断，其余判据照常逐项核。');
+  }
+  return `${out.join('\n')}\n`;
+}
+
+/** 派审载体与准备记录、返修上下文里的原回复还对不对得上：对不上返回原因。 */
+function dispatchProblem(ctx, was) {
+  const { dispatch } = places(ctx);
+  const task = path.relative(ctx.projectRoot, path.join(ctx.featureRoot, ...TASK)).split(path.sep).join('/');
+  if (readText(dispatch) !== dispatchFor(ctx, was, task)) {
+    return '派审载体 AR/story-src/review/dispatch.md 不在，或与准备记录对不上';
+  }
+  const c = was.review_context;
+  if (c?.report_file) {
+    let bytes = null;
+    try { bytes = fs.readFileSync(abs(ctx, c.report_file)); } catch { bytes = null; }
+    if (bytes === null || sha256(bytes) !== c.report_sha256) {
+      return `派审带着的原回复 ${c.report_file} ${bytes === null ? '不在' : '字节变了'}：它是独立审查者的原件，恢复宿主保存的原样；`
+        + '恢复不了就保留现场，重新 prepare 做一次完整独立审查';
+    }
+  }
+  return null;
 }
 
 /**
@@ -142,6 +232,8 @@ export function reviewResult(ctx) {
   if (materialKey(ctx.projectRoot, object.rows) !== was.material_key) {
     return { result: 'subject_stale', detail: '准备审查之后审查对象变了：重跑 prepare，按新任务与材料键再派审' };
   }
+  const broken = dispatchProblem(ctx, was);
+  if (broken) return { result: 'input_invalid', detail: `${broken}——重跑 \`story-build review --action prepare\`，按新生成的派审载体派审` };
   const at = { report_file: was.report_file };
   // 这一份还没回复时，同一份材料之前已有的有效结论仍在：重新准备不撤销已知的阻断
   const known = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object.rows);
@@ -226,8 +318,8 @@ function locations(cell) {
 /** 一份回复对这一份材料：材料键、三节、判据逐项、发现的材料引用、结论与发现一致。 */
 function judge(text, key, materials) {
   const invalid = why => ({ result: 'report_invalid',
-    detail: `回复不合报告合同：${why.join('；')}。这份回复留在原处；跑 \`story-build review --action prepare\` 取新的回复位置`
-      + '（同一份材料沿用原报告目录），把这份回复连同任务「报告怎么写」交审查者重给一份，写到新位置' });
+    detail: `回复不合报告合同：${why.join('；')}。这份回复留在原处；跑 \`story-build review --action prepare\` 取新的回复位置，`
+      + '按它生成的派审载体交独立审查者重给一份' });
   const keys = [...text.matchAll(/^material_key: *([0-9a-f]{64}) *$/gm)].map(m => m[1]);
   if (keys.length !== 1) return invalid([`material_key 行要恰好一行（现在 ${keys.length} 行）`]);
   if (keys[0] !== key) return { result: 'subject_stale', detail: '报告回显的材料键不是这一次准备的：按这一次的任务与材料键重新派审' };
@@ -246,7 +338,7 @@ function judge(text, key, materials) {
   const seen = checks.data.map(r => r[0]);
   if (JSON.stringify([...seen].sort()) !== JSON.stringify([...ids].sort())) why.push(`判据要逐项各一行：应有 ${ids.join('、')}，写了 ${seen.join('、') || '（无）'}`);
   for (const [id, result, basis] of checks.data) {
-    if (!['pass', 'warn', 'fail', 'not_applicable'].includes(result)) why.push(`判据 ${id} 的结果「${result}」不是 pass/warn/fail/not_applicable`);
+    if (!CHECK_RESULTS.includes(result)) why.push(`判据 ${id} 的结果「${result}」不是 ${CHECK_RESULTS.join('/')}`);
     if (!basis) why.push(`判据 ${id} 没写依据`);
   }
   const paths = new Set(materials.map(m => m.path));

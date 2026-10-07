@@ -2006,12 +2006,6 @@ def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
 
 
 @checker
-def s16_material_list_intermediate(root: Path, ctx: Ctx) -> Outcome:
-    """材料清单里列中间产物与图片直链——清单变成倾倒区。"""
-    return _form_case(root, "列了不是初始资料的东西", "材料清单只有原始输入")
-
-
-@checker
 def s17_image_new_dir(root: Path, ctx: Ctx) -> Outcome:
     """同名图片被复制进新建的目录——按文件名比对的判据一路放行。
 

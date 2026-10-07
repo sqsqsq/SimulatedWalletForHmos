@@ -26,7 +26,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 | 顺序 | 命令 | 功能 |
 |---|---|---|
 | 1 | `/story init <编号>` | 起手取材、导入与分析，之后按本文一路做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择 |
-| 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 作附件一并归档上传（自动备份；任一缺失或未过门禁即拒绝） |
+| 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 与 `AR/design-review.md` 作附件逐件上传并读回（自动备份；任一缺失或未过门禁即拒绝） |
 | 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物 |
 | — | `/story adapt [<目标工程>]` | 把 Story Extension 装到或升级到另一个工程 |
@@ -150,12 +150,12 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 
 **没有需求系统单据时**（问题单、别人发来的需求文档）：入口不变，仍是 `/story init <编号>`。
 非 `AR` 开头的编号不碰需求系统，跳过 ①、直接建骨架。**本地单没有归档环节**——交付终点是仓内的
-`AR/story.md` + `AR/review.md`。
+`AR/story.md`、`AR/review.md` 与设计附件 `AR/design-review.md`。
 
 ### 归档
 
-- **前置**：Story 已登记并通过交付门，`AR/story.md` 与 `AR/review.md` 齐备；不适用于本地单
-- **上传不修改工作区任何文件**
+- **前置**：Story 已登记并通过交付门，`AR/story.md`、`AR/review.md` 与 `AR/design-review.md` 齐备；不适用于本地单
+- **上传只写取材回执里三件的读回**，工作区其余文件不动
 
 ```
 node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<工程根>" --out "<本单 inbox>"   # ① 取外部当前内容
@@ -164,18 +164,22 @@ node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-tok
 python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ④ 登记发布记录（自带交付门，不可逆）
 ```
 
-- **②** 重跑交付门，并用 ① 的回执核需求系统上的正文还是不是上次发布（或恢复）之后的那一版。它返回这次与上次发布的差异、
-  仍开着的议题与未验证项：**摆给人，人授权了再做 ③**。外部在那之后被别人改过时它报冲突、不放行——要并进来的走 `/story update`；
-  人看过仍要覆盖，带 `--reply "<原话>"` 再跑 ②，原话记进契约。
-- **③** 失败就停下，不做 ④；本地正确的修改留着。重试前重新 ① 和 ②：外部可能在失败之后又被改过，重试的是上传这一步。
+- **②** 重跑交付门，并用 ① 的回执逐件核需求系统上的正文、评审记录附件与设计附件还是不是上次发布（或恢复）之后的那一版
+  （首次发布的附件，系统上应当还没有）。它返回这次与上次发布的差异、每件的动作、仍开着的议题与未验证项：**摆给人，人授权了再做 ③**。
+  某一件被别人改过时它报冲突、不放行——要并进来的走 `/story update`；人看过仍要覆盖，带 `--reply "<原话>"` 再跑 ②，
+  原话连同那一件的外部与本地版本记进契约。
+- **③** 按 正文 → 评审记录附件 → 设计附件 的顺序逐件写入并读回，读回结果记进取材回执。中途失败就停下，不做 ④；
+  本地正确的修改与已完成的几件留着。重试前重新 ① 和 ②：已经写好的那几件判为相同、跳过，外部在失败之后又被改过的报冲突。
+- **④** 核三件都有这一版登记之后的读回、且读回的就是本地当前件，才记发布记录。
 
 **③ 登记之后**，`AR/review.md` **归人所有**：再渲染时人工区逐字保留，机器区按当前决策件重算。决策件带着未勾的议题去归档是常态路径：
 评审的形态就是评审人在线上批注表态，归档时提示一句即可，**不停等确认**。
 
 ### 恢复
 
-`node .../story.js restore <AR> <mcp-token>`——把需求系统上的正文恢复到上一版，回退 archive 那次覆盖；评审记录附件与之后的人工意见留在系统上。
-恢复之后 `fetch` 一次，再 `story_flow.py restored --feature <AR>`：它记下外部现在是哪一版，报告与本地 Story 的差异。
+`node .../story.js restore <AR> <mcp-token>`——把需求系统上的正文恢复到上一版，回退 archive 那次覆盖；两个附件与之后的人工意见留在系统上。
+恢复之后 `fetch` 一次，再 `story_flow.py restored --feature <AR>`：它记下外部正文现在是哪一版，报告与本地 Story 的差异；
+此后正文与两个附件分属不同版本，下一次发布按 ② 逐件核。
 本地文件一个都不动，归档登记与人签照旧。本地单没有远端，没有这一步。
 
 ### 更新
@@ -234,6 +238,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | 组件蓝图（framework `component-design`） | 本部件怎么设计（准入后是 Story 附录与后续施工的设计来源） |
 | `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
 | `AR/story.md` | 把材料、决定与已准入的设计组织成可评审的叙述（零新事实；archive 的上传正文） |
+| `AR/design-review.md` | 设计附件：本次蓝图原生评审投影的逐字节副本，完整技术契约在这里（定稿时生成，不手改；archive 的附件） |
 
 ## 需求系统 Token
 

@@ -567,7 +567,7 @@ class TheExpressionScaffolding(PlanCase):
         shell = self.plan.read_text(encoding="utf-8")
         self.assertIn("读者是谁、读完要做什么决定；哪几件事最容易误解", shell)
         self.assertIn("读完这一章读者要能回答什么；哪个关系必须用图、图后要讲哪几条判断", shell)
-        self.assertIn("- 附录不写骨架：", shell)
+        self.assertIn("- 附录的接口、数据、规约与材料取舍由你写", shell)
         self.assertIn("没有就不写", shell, "待核只在有时写")
 
     def test_an_appendix_without_skeleton_is_not_reported(self) -> None:

@@ -75,10 +75,10 @@ from materials import importer
 from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
 from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
-from flow.publish import cmd_publish, cmd_restored
+from flow.publish import cmd_archived, cmd_publish, cmd_restored
 from flow.rounds import cmd_reopen, cmd_round
 from flow.submission import cmd_bind_design, cmd_complete
-from flow.lifecycle import cmd_archived, cmd_material_status, cmd_status, cmd_story, cmd_unreviewed
+from flow.lifecycle import cmd_material_status, cmd_status, cmd_story, cmd_unreviewed
 from flow.meetings import cmd_meeting_refresh
 from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_inputs, cmd_update_prepare,
                          cmd_update_restore, cmd_update_status)

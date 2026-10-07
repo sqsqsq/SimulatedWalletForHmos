@@ -15,7 +15,7 @@ description: 进入一个 Feature 阶段或蓝图设计动作之前，取当前�
 
 Feature id 与阶段取当前阶段上下文里 Framework 给出的原生值，蓝图 id 取本次设计请求里的值。
 
-输出分六块。完整读完再动手：第 2 块是知识原文，第 3、4 块是已成立的判断与义务，第 5 块是本次完成条件，第 6 块的缺口交给其中写明的责任方。
+输出分六块。完整读完再动手：第 2、3 块是已成立的判断与本动作要履行的义务，第 4 块是知识原文，第 5 块是本次完成条件，第 6 块的缺口交给其中写明的责任方。
 
 退出 1 时 stderr 写明对象、缺口与责任，按它交给责任方或向人说明；退出 2 是参数或依赖问题，修正调用后重取。命令只读，判断与落点写在本动作自己的产物里。
 
@@ -30,7 +30,7 @@ Feature id 与阶段取当前阶段上下文里 Framework 给出的原生值，�
    node -e "require('ts-node').register({transpileOnly:true});const r=require('./scripts/utils/feature-execution-scope').ensureFeatureExecutionScopeFrozen({projectRoot:process.argv[1],frameworkRoot:process.argv[1]+'/framework',feature:process.argv[2]});console.log(JSON.stringify(r,null,1));process.exitCode=['frozen','reused'].includes(r.status)?0:1" <工程根> <Feature id>
    ```
 
-3. 返回 `frozen` 或 `reused` 后重取本阶段任务，确认第 4 块的输入与义务再动笔。返回别的状态按其中 `checks` 的原因交回责任方，不绕过。
+3. 返回 `frozen` 或 `reused` 后重取本阶段任务，确认第 3 块的输入与义务再动笔。返回别的状态按其中 `checks` 的原因交回责任方，不绕过。
 
 不为冻结提前跑整个阶段 harness。
 

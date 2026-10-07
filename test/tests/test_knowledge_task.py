@@ -505,8 +505,8 @@ class TheFirstPhaseIsPreparedNatively(FreshProject):
 
 
 class TheKnowledgeTaskHasSixBlocks(NativeCase):
-    BLOCKS = ("## 1. 当前动作与对象", "## 2. 激活知识及原文", "## 3. 有效事实与决定",
-              "## 4. 当前契约与义务", "## 5. 本次完成条件", "## 6. 缺口与责任")
+    BLOCKS = ("## 1. 当前动作与对象", "## 2. 有效事实与决定", "## 3. 当前契约与义务",
+              "## 4. 激活知识及原文", "## 5. 本次完成条件", "## 6. 缺口与责任")
 
     def registered(self) -> list[str]:
         return yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["knowledge"]
@@ -647,7 +647,7 @@ class TheReviewerGetsTheSameLoader(NativeCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("# 知识任务：plan（审查者）", proc.stdout)
-        self.assertIn("## 2. 激活知识及原文", proc.stdout)
+        self.assertIn("## 4. 激活知识及原文", proc.stdout)
 
 
 if __name__ == "__main__":

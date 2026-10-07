@@ -4,7 +4,7 @@
  * 分层：
  *   story.js（入口：参数解析 → 校验 → 分发）
  *     ├─ fetch.js    init（fetchOne 逐级拉 AR → SR → RR）与 fetch（fetchUpstream 只读取回）
- *     ├─ archive.js  archive（archiveOne）
+ *     ├─ archive.js  archive（archiveOne，三件逐件写入并读回）
  *     └─ restore.js  restore（restoreOne，经 archiveOne 回传备份）
  *   mcp.js（需求系统访问层）  dirs.js（路径）  token.js（取 token，独立入口）
  *
@@ -17,13 +17,14 @@
  *             AR/design.md、SR/design.md、RR/prd.md；系统上缺的正文不写，本地已有的不覆盖。
  *             系统上查无此单即失败，不落占位件。
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,
- *              "reviewArchived":true,"success":true}
- *             AR/story.md 写成系统正文、AR/review.md 传为附件；覆盖前系统正文备份到
- *             需求目录 `.backups/cloud/`；本地只写这一处。缺 story.md 或 review.md 即失败。
+ *              "items":[...],"success":true}
+ *             AR/story.md 写成系统正文、AR/review.md 与 AR/design-review.md 传为附件，逐件读回，读回记进
+ *             AR/story-src/fetched.json；覆盖前系统正文备份到需求目录 `.backups/cloud/`。缺任一件即失败。
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             把 `.backups/cloud/` 里最新一份写回系统正文；没有备份即失败。
  *   fetch   → {"mode":"fetch","reqNo":"...","out":"...","fetched":3,"failed":0,"items":[...],"success":true}
  *             只读取材：上游三份正文写进 --out（必填），评审回稿写 AR/story-src/review-feedback.md，
+ *             两个附件与本地不同时写 AR/story-src/fetched-review.md、fetched-design-review.md，
  *             回执写 AR/story-src/fetched.json；items[].status 为 fetched / same / absent / failed。
  *             有 failed 时 success 为 false、退出码非 0。一个业务文件都不写。
  *

@@ -239,7 +239,20 @@ def migrate(story: str) -> str:
             in_author_zone = False
             continue
         out.append(line)
-    return "\n".join(out)
+    return split_material_list("\n".join(out))
+
+
+def split_material_list(story: str) -> str:
+    """材料清单分两个 H4：本次冻结材料由投影写，原节的作者列表进「采用与取舍说明」。"""
+    at = story.index("材料清单\n")
+    first = story.index("\n- ", at) + 1
+    return story[:first] + "#### 本次冻结材料\n\n#### 采用与取舍说明\n\n" + story[first:]
+
+
+def verify_attachment(projection: str) -> list[str]:
+    """字段级契约在设计附件（原生评审投影）里：映射表登记的每个字段名都要找得到，返回找不到的。"""
+    return [f"{zone['zone']}：设计附件里没有 {fact}" for zone in mapping()["zones"]
+            for fact in zone.get("attachment_facts", []) if fact not in projection]
 
 
 def verify(story: str) -> list[str]:

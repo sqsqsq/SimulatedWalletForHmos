@@ -39,11 +39,11 @@ import { writeDrafts } from './story/drafts.mjs';
 import {
   createContext, fail, readJson, readText,
 } from './story/context.mjs';
-import { designGaps, materialSubsectionName, projectAppendix } from './story/appendix.mjs';
+import { attachDesignReview, designGaps, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
 import { discloseInStory, pendingDisclosure, prepareReview, reviewResult, waiverCheck } from './story/independent-review.mjs';
 import {
-  materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
+  materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
 import { cmdBuild, manualContent, registrationGap } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
@@ -151,17 +151,19 @@ function cmdReview(ctx) {
   cmdNumber(ctx);
   cmdBuild(ctx);
   discloseInStory(ctx);
+  attachDesignReview(ctx);
   const { problems } = storyCheck(ctx, { registration: false });
   if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
   const out = prepareReview(ctx, ctx.args.reportDir);
   if (out.error) fail(out.error);
   process.stdout.write(`${JSON.stringify({ material_key: out.material_key, task: out.task, report_dir: out.report_dir,
-    report_file: out.report_file, reused: out.reused, materials: out.rows.length })}\n`);
+    report_file: out.report_file, reused: out.reused, materials: out.rows.length,
+    dispatch_file: out.dispatch_file, dispatch_text: out.dispatch_text })}\n`);
   process.stdout.write(out.reused
     ? `[story-build review] 这份材料已有通过的报告（${out.report_file}），不用重审，直接 check。\n`
-    : ['[story-build review] 审查已准备：用宿主与作者隔离的独立执行能力（子代理）交给审查者，带上任务文件与材料键。',
-      `  审查者按任务读全部材料，回复一份 Story 报告（格式见任务「报告怎么写」）；回复原样写到 ${out.report_file}（一字不改），`,
-      '  再跑 story-build review --action check。派审与结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
+    : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为宿主隔离子代理的任务交给审查者；`,
+      `  审查者的回复在 ${out.report_file}，宿主只返回文本时原样写到那里。之后跑 story-build review --action check，`,
+      '  结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
 }
 
 /**
@@ -216,11 +218,7 @@ function cmdSkeleton(ctx) {
   if (gap) fail(gap);
 
   // ---- 内容计算：也在写盘之前 ----
-  const facts = {
-    terms: termFacts(designSource(ctx).blueprint),
-    materialListName: materialSubsectionName(ctx.contract),
-    materialListRows: materialListSkeleton(ctx),
-  };
+  const facts = { terms: termFacts(designSource(ctx).blueprint) };
   const existing = readText(ctx.storyPath);
   const chapterState = existing === null
     ? { hasStory: false, written: new Map(), pending: new Set() }
@@ -255,7 +253,7 @@ function cmdSkeleton(ctx) {
     fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
     result = `${ctx.contract.chapters.length} 章骨架 + ${made.length} 份章草稿`
       + '（`AR/story-src/drafts/`，每份开头是读者读完这一章要能回答的问题与必要种子）；'
-      + '附录的技术契约、规约、埋点、改动边界四节由 project 从真源投影，不用你写';
+      + '附录里配置、埋点、改动边界与本次冻结材料由 project 从真源投影，接口、数据、规约与材料的取舍说明由你写';
   }
   if (!hadPlan) result += `；写作设计空壳 ${relFromFeature(ctx, ctx.templatePath)}`;
   if (seeded.length) result += `；按写作设计骨架给 ${seeded.length} 份没动过的草稿铺好小节与表图`;

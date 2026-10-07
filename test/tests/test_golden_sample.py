@@ -221,13 +221,15 @@ class TheMigrationIsRegistered(unittest.TestCase):
         self.migrated = golden_design.migrate(self.story)
 
     def test_only_the_registered_lines_change(self) -> None:
-        """删的只有 spec 图源那一行与依赖变更机器区的首尾两行标记，两处图片链接改指登记的原件抽图，其余一个字节不动。"""
+        """删的只有 spec 图源那一行与改作者区的那几个机器区的首尾两行标记，两处图片链接改指登记的原件抽图，
+        材料清单分出两个 H4，其余一个字节不动。"""
         self.assertIn("%% 图源 SR §3 #1", self.migrated)
         lines = self.story.split("\n")
-        at = next(k for k, l in enumerate(lines) if l.startswith("<!-- story-build:begin 技术契约·依赖变更 "))
-        end = next(k for k in range(at, len(lines)) if lines[k].startswith("<!-- story-build:end -->"))
-        drop = {lines.index("%% 图源 spec §5.1 #1"), at, end}
-        expected = "\n".join(l for k, l in enumerate(lines) if k not in drop)
+        drop = {lines.index("%% 图源 spec §5.1 #1")}
+        for zone in (z["zone"] for z in self.plan["zones"] if z["action"] == "to_author"):
+            at = next(k for k, l in enumerate(lines) if l.startswith(f"<!-- story-build:begin {zone} "))
+            drop |= {at, next(k for k in range(at, len(lines)) if lines[k].startswith("<!-- story-build:end -->"))}
+        expected = golden_design.split_material_list("\n".join(l for k, l in enumerate(lines) if k not in drop))
         for ref in self.plan["image_refs"]:
             self.assertEqual(1, expected.count(f"]({ref['from']})"))
             expected = expected.replace(f"]({ref['from']})", f"]({ref['to']})")
@@ -268,13 +270,15 @@ class JudgementsDoNotBlockTheGolden(unittest.TestCase):
     """判据改动先跑这一行：拦住金样的判据，错的是判据。"""
 
     def test_the_golden_passes_in_its_workspace(self) -> None:
-        """检查零 FAIL，且映射表登记的每条旧事实在重投后的新输出里都在。
+        """检查零 FAIL，且映射表登记的每条旧事实在新输出里都在（字段级契约在设计附件，即原生评审投影里）。
 
         冻结输入里 AR/design.md 是原件、交给设计的提取稿是另一份文件，两者角色不混。"""
         with tempfile.TemporaryDirectory() as tmp:
             golden_workspace.build(Path(tmp))
             code, out = golden_workspace.check(Path(tmp))
             missing = golden_design.verify(golden_workspace.story(Path(tmp)))
+            projection = Path(tmp) / "doc" / "features" / "bp-AR90004" / "blueprint" / "component-blueprint.review.md"
+            missing += golden_design.verify_attachment(projection.read_text(encoding="utf-8"))
             src = Path(tmp) / "doc" / "features" / "AR90004" / "AR" / "story-src"
             snapshot = json.loads(next(src.glob("inputs/*/snapshot.json")).read_text(encoding="utf-8"))
             listed = golden_workspace.review_object(Path(tmp))

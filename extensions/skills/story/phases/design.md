@@ -9,7 +9,7 @@
 材料与范围确认 → bind-design → complete（冻结输入、原生来源检查）
   → component-design 走到准入并生成评审投影
   → story-build skeleton → 写作设计 → 逐章 chapter → 回看 → check
-  → 独立审查（story-build review：定稿、准备原生请求 → 派审 → 核结果）→ story_flow.py story 登记
+  → 独立审查（story-build review：定稿、准备派审载体 → 原样派审 → 核结果）→ story_flow.py story 登记
   → check --deliver 交付门 → 交付选择
 ```
 
@@ -44,7 +44,7 @@
 
 ## 三、设计
 
-蓝图由 Framework 的 component-design 建立、质询、调和到准入，本次请求做到准入并生成评审投影为止：
+蓝图由 Framework 的 component-design 建立、质询、调和到准入。请求 `/component-design <蓝图>` 时写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到准入并生成评审投影为止：
 
 - 用冻结的输入作为来源：系统需求交物化件，本地需求交需求条目；人签以冻结版本里的导出为准。把读过的材料逐份记为已消费。
 - 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
@@ -63,44 +63,51 @@
 
 成文方法见 [`phases/story-write.md`](story-write.md)。Story 按已准入的蓝图写：
 
-- 附录的技术契约、规约、埋点、改动边界由 `story-build project` 从蓝图投影，要改投影内容就回蓝图修订。蓝图里没有的类别不投，由你在那一节写「不涉及：<依据>」。
-- 术语起始行是蓝图里确认过的术语，解释由你从材料写。
-- 材料清单的起始行标出每份材料的采用版本，并另列派生分析与人签记录；每份贡献了什么由你写。
+- 附录的配置、埋点、改动边界与本次冻结材料由 `story-build project` 从蓝图与冻结输入投影，要改投影内容就回蓝图修订。
+- 附录的端云接口、数据存储与规约由你按蓝图写业务摘要（写法见 `story-write.md` 的附录一行）；写作设计骨架里给这几节写
+  `- 依据：`，注明蓝图 revision 与原生地址（如 `contract:<id>`），附录提交时核这些地址指得到当前蓝图的对象。
+- 完整技术契约随设计附件 `AR/design-review.md` 交付：定稿时从原生评审投影逐字节复制，你不写它，设计要改回蓝图。
+- 蓝图里没有的类别由你在那一节写「不涉及：<依据>」。术语起始行是蓝图里确认过的术语，解释由你从材料写。
+- 材料清单的「采用与取舍说明」由你写：每份材料贡献了什么、采用链与没采纳的新值及其人签依据。
 - 蓝图 `story_details` 里的专项设计写在讲它的那一章，内容逐字呈现，表达由你组织。
 
 ## 五、独立审查、登记与交付
 
 1. **定稿并准备审查**：`story-build check` 通过之后，跑 `story-build review --action prepare`。它先把审查对象定成最终版
-   （附录重投、编号、渲染 `AR/review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`，输出这一次的材料键、
-   报告目录（默认 `doc/reports/story/<需求>/<材料键前 16 位>/`，与需求目录分开；可用 `--report-dir` 指定，首次准备定下后同一份材料一直沿用）
-   与这一份回复的位置。同一份材料已有通过的报告时
-   输出 `reused`，直接核结果。之后改了任何被审材料，重新 prepare、重新审。
-2. **派审**：用宿主与作者隔离的独立执行能力（子代理）把任务文件与材料键交给审查者。审查者读任务里列的全部材料，
-   回复一份 Story 报告（格式在任务的「报告怎么写」）。你把回复**原样**写到准备输出的回复位置，一字不改；之前的回复保留。
+   （附录重投、编号、渲染 `AR/review.md`、复制设计附件 `AR/design-review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`，
+   定下这一次的材料键、报告目录（默认 `doc/reports/story/<需求>/<材料键前 16 位>/`，与需求目录分开；可用 `--report-dir` 指定，
+   首次准备定下后同一份材料一直沿用）与这一份回复的位置，生成派审载体 `AR/story-src/review/dispatch.md`（输出里的 `dispatch_text`）。
+   同一份材料已有通过的报告时输出 `reused`，直接核结果。之后改了任何被审材料，重新 prepare、重新审。
+2. **派审**：把 `dispatch_text` 原样作为宿主隔离子代理的任务交给审查者——材料键、任务、回复位置以及返修或复审要带的原回复与诊断都在里面。
+   审查者按任务读全部材料，回复一份 Story 报告写到载体给的位置；宿主只返回文本时，你把回复**原样**写到那里。之前的回复保留。
 3. **核结果**：`story-build review --action check` 只读核审的是不是现在这份、报告合不合格式与引用、结论是什么：
 
    | 结果 | 你做什么 |
    |---|---|
    | pass | 登记，交付 |
    | warn（只有 MINOR / INFO 建议） | 登记，带建议交付，不因建议反复重审 |
-   | fail（有 BLOCKER / MAJOR 发现） | 回到最早出错的那一处（材料、决策登记、写作设计、章草稿或设计）修，改完重新 prepare、重审 |
-   | report_missing | 把任务与材料键交审查者，回复原样写到准备给出的位置 |
-   | report_invalid | 原回复留在原处；重新 prepare 取新位置，把原回复连同任务「报告怎么写」交审查者重给一份 |
-   | subject_stale | 准备之后被审材料变了：重新 prepare，按新任务再派审 |
-   | input_invalid | 停下，向人报告缺哪份来源、向谁取得 |
+   | fail（有 BLOCKER / MAJOR 发现） | 按发现牵涉的业务决定修：决定来源（材料、人签、决策登记）→ 蓝图里承接它的设计对象 → Story、Review 与验收，凡写着这项决定的地方一并改到同一结论；只是表达问题的改章草稿。改完重新 prepare，按新载体交独立审查者完整复核 |
+   | report_missing | 按派审载体派审 |
+   | report_invalid | 原回复留在原处；重新 prepare，新载体带着原回复与诊断，原样交独立审查者重给一份 |
+   | subject_stale | 准备之后被审材料变了：重新 prepare，按新载体再派审 |
+   | input_invalid | 派审载体缺失或与准备记录对不上时重跑 prepare；审查对象缺来源时停下，向人报告缺哪份、向谁取得 |
 
    宿主没有可派的审查子代理（当前 adapter 没有声明）时，向人说明这一版需要独立审查，并问是否授权本版不经审查交付。
    人授权后，在 prepare 之后、结果为 report_missing 时跑 `story_flow.py unreviewed --reason "<缺什么>" --reply "<人的原话>"`，
    授权记进流程契约；再跑一次 prepare，审查状态写进 Story 交付章与 Review 题头，结果是 unreviewed，可以登记与交付。
    授权对应当时这一版材料：材料变了要重新审查或重新授权；之后宿主能派审了，用 `--withdraw` 撤回后正常派审。
 4. **登记**：`story_flow.py story`。它核结构检查、这一份的审查结果（pass、warn 或人授权的 unreviewed）与成文依据
-   （蓝图引用、输入版本、知识摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），通过后记下新依据。
-5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据没变、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
+   （蓝图引用、输入版本、知识摘要，以及 Story、Review、设计附件、决策登记与写作设计的原始字节指纹），通过后记下新依据。
+5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据没变、设计附件仍是当前原生投影、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：
-   - 送审：仅系统需求，走 `/story archive <AR>`；
+   - 送审：仅系统需求，走 `/story archive <AR>`，Story 作正文、Review 与设计附件作附件，三件都读回一致才登记；
    - 完整设计交接：在已准入蓝图上按 Framework change-unit-progression 完成施工单位设计准备，不启动施工；
    - 实现方案：完成施工单位设计准备，再沿 Framework 交互路径为每个施工单位准备范围，请求终点写到 Plan
-     （`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，Framework 判可复用的沿用，止于 Plan；
+     （`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，Framework 判可复用的沿用，止于 Plan。
+     施工单位的 Feature 标识由 Framework 的身份解析给出；`--requirement-file` 用本轮冻结输入里的提取稿：读 `story-flow.json`
+     的 `input.snapshot_ref`，取快照 `files` 里 `role` 为 `extracted_analysis` 的那一行，路径是快照目录下的 `files/<path>`，
+     范围候选、首个阶段与之后的运行都用这一份。快照里没有这一行或有不止一行，回到 `complete` 补齐冻结输入；
+
    - 完整实现：在授权范围内接续设计准备与 Framework 交互式开发，按 Framework 结果推进；
    - 暂不推进：停在这里，之后从 `story_flow.py status` 续上。
 

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -258,7 +259,7 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertEqual({"ok": True, "kind": "local"}, after["delivery"])
 
     def test_submitted_needs_the_current_version_in_the_requirement_system(self) -> None:
-        """送审终点：交付门通过之外，发布记录与已发布副本是当前 Story 与 Review，需求系统上的正文与附件逐字是这两件。"""
+        """送审终点：交付门通过之外，发布记录与已发布副本是当前 Story、Review 与设计附件，需求系统上的正文与两个附件逐字是这三件。"""
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
         system = self.root.parent / "system"
@@ -268,6 +269,13 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
                            story_build=str(DEV_STORY_BUILD), system_dir=system)
 
         self.assertIn("还没送审", submitted()["missing"][0])
+        # 对接层逐件上传并读回：取材回执里三件记这一版的读回
+        items = [{"name": name, "status": "fetched", "checkedAt": "2099-01-01T00:00:00+00:00",
+                  "digest": "sha256:" + hashlib.sha256((self.story.parent / local).read_bytes()).hexdigest()[:16]}
+                 for name, local in (("AR-design.md", "story.md"), ("review.md", "review.md"),
+                                     ("design-review.md", "design-review.md"))]
+        (self.story.parent / "story-src" / "fetched.json").write_text(
+            json.dumps({"fetchedAt": "2099-01-01T00:00:00+00:00", "items": items}), encoding="utf-8")
         archived = subprocess.run(["python", str(self.FLOW), "archived", "--feature", "REQ-DEMO",
                                    "--project-root", str(self.root)],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
@@ -280,6 +288,7 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         attachment = ticket / "attachments" / "review.md"
         attachment.parent.mkdir(parents=True)
         (ticket / "design.md").write_bytes(self.story.read_bytes())
+        (ticket / "attachments" / "design-review.md").write_bytes((self.story.parent / "design-review.md").read_bytes())
         for stale, why in ((b"", "空附件"), (review.read_bytes() + "上一版的评审记录。\n".encode("utf-8"), "旧附件")):
             attachment.write_bytes(stale)
             self.assertTrue(any("评审记录附件" in m for m in submitted()["missing"]), f"{why}被当成送到了")

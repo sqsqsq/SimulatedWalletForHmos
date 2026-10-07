@@ -148,8 +148,8 @@ class TheReviewTaskIsRegistered(unittest.TestCase):
     def test_the_check_exists_with_two_result_kinds(self) -> None:
         text = self.overlay()
         self.assertIn("story_reader_review:", text)
-        self.assertIn("blocking_findings", text)
-        self.assertIn("advisories", text)
+        self.assertIn("阻断发现", text)
+        self.assertIn("**建议**", text)
 
     def test_it_does_not_ask_for_a_per_unit_verdict_table(self) -> None:
         """逐条对账的量随材料涨，读者拿到的判断却不增加——新任务不要那张表。"""

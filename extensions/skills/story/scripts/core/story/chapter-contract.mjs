@@ -195,7 +195,7 @@ export function pickedStructureNames(ch) {
  * 图不生成节点：只铺图三件套的三行指引（`diagramHint`）。
  *
  * @param {object} ch 合同章（可已并入写作设计骨架）
- * @param {object} facts 入口解析好的当前输入：terms、materialListRows、materialListName
+ * @param {object} facts 入口解析好的当前输入：terms
  * @param {{diagramHint?: (at: string, syntax?: string) => string[], guide?: (note: string) => string}} [options]
  * @returns {string[]} markdown 行
  */
@@ -291,19 +291,17 @@ function tableSeed(t, facts) {
   return renderTable(cells, [cells.map(c => `{{${c || '　'}}}`)]);
 }
 
-/** 附录：各节标题（节首可以有一句业务定位，写草稿时给一行指引）；有 H4 的节铺出 H4 标题；材料清单那一节多给贡献行。 */
+/** 附录：各节标题（节首可以有一句业务定位，写草稿时给一行指引）；有 H4 的节铺出 H4 标题；作者写的那几处给合同里的写法指引。 */
 function appendixSeedRows(ch, facts, guide) {
   const out = [];
+  const authored = def => (guide && def?.author_guide ? [guide(def.author_guide), ''] : []);
   for (const name of ch.subsections ?? []) {
+    const def = ch.projection?.sections?.[name];
     out.push(`### ${name}`, '');
     if (guide) out.push(guide('节首可以有一句业务定位：这一节能查到哪些东西的精确名称'), '');
-    // H4 标题与机器区之后的说明归作者；机器区由 `project` 投在标题下，草稿里不放——
-    // 放了他就要在两处维护同一张表。
-    for (const h4 of ch.projection?.sections?.[name]?.h4 ?? []) out.push(`#### ${h4.title}`, '');
-    // 材料清单是作者种子：类别与链接由清单给，「贡献了什么」只有他知道。
-    if (normalizeHeading(name) === normalizeHeading(facts?.materialListName ?? '')) {
-      out.push(...(facts?.materialListRows ?? []), '');
-    }
+    out.push(...authored(def));
+    // 机器区由 `project` 投在 H4 标题下，草稿里不放——放了他就要在两处维护同一张表。
+    for (const h4 of def?.h4 ?? []) out.push(`#### ${h4.title}`, '', ...authored(h4));
   }
   return out;
 }

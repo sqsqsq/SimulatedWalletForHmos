@@ -1,5 +1,5 @@
 /**
- * 正文的来源与材料贡献清单 —— 这份 story 据哪几份材料写成，哪一份还没在手里。
+ * 正文的来源 —— 这份 story 据哪几份材料写成，哪一份还没在手里；附录材料清单里的链接点不点得开。
  *
  * 必需性只在这里判一次：起手预检与交付前的 check 读同一份结果。两处各判一次的话，
  * 同一份缺件会在一处说「本地单缺它正常」、在另一处说「它是必备来源」。
@@ -8,8 +8,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSystemRequirement, readJson, readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
-import { scanMaterialList } from './language.mjs';
-import { designSource } from './design-source.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
 import { subsectionSpan } from './document.mjs';
 
@@ -79,12 +77,6 @@ export function sourceStatus(ctx) {
 // 正文定位：章、小节与附录机器区
 // --------------------------------------------------------------------------
 
-/** 路径的最后一段：材料清单的链接文字用它。 */
-function basename(rel) {
-  const parts = String(rel).split('/');
-  return parts[parts.length - 1];
-}
-
 /**
  * 材料里的图片登记 —— 唯一来源是材料清单（`AR/story-src/materials.json`）。
  *
@@ -102,44 +94,6 @@ export function readManifest(ctx) {
   const text = readText(path.join(ctx.srcDir, 'materials.json'));
   if (text === null) return null;
   try { return JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
-}
-
-/**
- * 材料清单那一节**应当**列到的材料 —— 同样出自 `materials.json`。
- *
- * 这一节回答的是「据哪几份材料写成」。谁来定这个集合，决定了它是账还是倾倒区：
- * 由作者自由罗列时，容易把本轮自己生成的规格链进去，或漏掉一整份——
- * 读者据这一节把材料找出来，漏一份等于那份材料没人知道。
- *
- * 集合 = **这一轮拿到的初始资料**：流程正在消费的那几份正文（清单里 `kind: doc`
- * 且真的在盘上的），加收件箱里的原件——那份是人另外给的、没走需求系统，
- * 读者要知道有它。中间产物不在其中：本轮自己生成的规格与记录不是材料，
- * 它们压根不进清单。
- *
- * **图不在这一节**。图的去向是「引了没有、不引为什么」，那是每张图自己的属性，
- * 跟着内容走（同一张图换个名字、复制到第二个落点，判断还是那个）——所以登记在
- * 材料清单的说明库里（`--caption-image … --unused`），由 ④ 逐张核。
- * 写进这一节的话，读者要在「据哪几份材料写成」里读到十行图，
- * 而其中一半是别的需求的页面。
- *
- * **一份材料一行**：`paths` 有几个是它落了几处，不是几份材料。所以 `must` 的每一项
- * 是一组等价路径，列到其中任意一个就算数。
- *
- * @returns {{must: string[][]} | null | 'broken'}
- */
-function materialListTargets(ctx) {
-  const data = readManifest(ctx);
-  if (data === null || data === 'broken') return data;
-  if (!Array.isArray(data.materials)) return 'broken';
-  // 收件箱原件与它转换出的正文是同一份材料：列原件或转换稿任一个就算列到
-  const sources = (Array.isArray(data.sources) ? data.sources : []).filter(src => src?.file);
-  const converted = new Set(sources.map(src => src.target).filter(Boolean));
-  const must = data.materials
-    .filter(m => m?.kind === 'doc' && m.sha256 && Array.isArray(m.paths) && m.paths.length)
-    .filter(m => !m.paths.some(p => converted.has(p)))
-    .map(m => m.paths);
-  for (const src of sources) must.push([`inbox/${src.file}`, ...(src.target ? [src.target] : [])]);
-  return { must };
 }
 
 export function relFromFeature(ctx, target) {
@@ -204,23 +158,6 @@ export function adoptedUpstreamTexts(ctx) {
 }
 
 /**
- * 材料清单那一节里的全部链接目标，带行号。
- *
- * 与 `scanMaterialList` 的行形态判分开：那条判「这一行是不是列表、有没有链接」，
- * 这里只把目标取出来，交给调用方判它在不在。两件事分开，报错才说得清是哪一件不成立。
- *
- * @returns {[number, string][]} `[行号, 链接目标]`
- */
-function materialLinkTargets(body, baseLine = 0) {
-  const out = [];
-  const lines = String(body ?? '').split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    for (const m of lines[i].matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) out.push([baseLine + i, m[1]]);
-  }
-  return out;
-}
-
-/**
  * 把材料清单那一节里的 markdown 链接换成一个占位词，再交给仓内路径与文档坐标扫描。
  *
  * **原文链接是仓内路径唯一允许出现的位置**：归档件的读者打不开这个仓，但他要能
@@ -238,31 +175,6 @@ export function redactMaterialLinks(storyText, ctx) {
     lines[i] = lines[i].replace(/\[[^\]]*\]\([^)\s]*\)/g, '原文链接');
   }
   return lines.join('\n');
-}
-
-/**
- * 附录·材料清单的每一行：类别、文件名与链接由清单给，采用的版本由冻结的设计输入给，贡献由作者写。
- * 冻结集合里的派生分析（提取稿）与人签记录不是原始材料，另起一行写明角色。
- */
-export function materialListSkeleton(ctx) {
-  const targets = materialListTargets(ctx);
-  if (!targets || targets === 'broken') return [];
-  // 类别取合同的 `sources[*].label`，按路径反查——它在那里已经有答案。
-  // 收件箱原件不在合同的来源表里（它是人另外给的），落到「原件」。
-  const kinds = new Map(Object.values(ctx.contract?.sources ?? {})
-    .filter(x => x?.path && x?.label).map(x => [x.path, x.label]));
-  const snapshot = designSource(ctx).snapshot;
-  const frozen = new Map((snapshot?.files ?? []).map(row => [row.path, row]));
-  const version = (row) => (row ? `（采用版本 ${String(row.sha256).slice(0, 12)}）` : '（本次设计未采用）');
-  const lines = targets.must.map(([rel]) =>
-    `- ${kinds.get(rel) ?? (rel.startsWith('inbox/') ? '原件' : '材料')}：`
-    + `[${basename(rel)}](${relFromStory(rel)})${snapshot ? version(frozen.get(rel)) : ''}——{{这份材料贡献了什么}}`);
-  const roles = (ctx.contract?.chapters ?? []).find(c => c.appendix)?.material_roles ?? {};
-  for (const row of (snapshot?.files ?? []).filter(r => r.role === 'extracted_analysis' || r.role === 'human_record')) {
-    const rel = path.relative(ctx.featureRoot, path.join(snapshot.dir, 'files', ...row.path.split('/'))).split(path.sep).join('/');
-    lines.push(`- ${roles[row.role] ?? row.role}：[${basename(row.path)}](${relFromStory(rel)})${version(row)}——{{这份材料贡献了什么}}`);
-  }
-  return lines;
 }
 
 /**
@@ -316,74 +228,25 @@ export function sourceProblems(ctx) {
   return { problems, notes };
 }
 
-/** 材料清单那一节：行形态、链接点得开、列到的与手里的那几份对得上。 */
+/**
+ * 材料清单那一节的链接点不点得开：本次冻结材料由脚本投影、按快照核；作者在采用与取舍说明里写的链接按 AR/story.md 所在目录解析。
+ */
 export function materialListProblems(ctx, storyText) {
   const problems = [];
-  const notes = [];
-  // ⑫c 材料清单的行形态
-  //
-  // 材料清单的行形态：判的是形态不是内容——
-  // 只问「这一行能不能把材料定位到原件」。图题编号与小节编号归 `number` 机器铺，这里不判。
-  // **「这句话指的是不是这张图」仍不在这里判**：那要读上下文，归独立审查。
-  // 这里只判两件不用读懂任何一句话就能看见的事——图前面有没有一句话、两张图挨着没有。
-  {
-    const appendix = appendixChapter(ctx.contract);
-    const name = materialSubsectionName(ctx.contract);
-    const span = appendix && name ? subsectionSpan(storyText, appendix.title, name) : null;
-    if (span) {
-      const body = storyText.split(/\r?\n/).slice(span.start, span.end).join('\n');
-      const want = materialListTargets(ctx);
-      // 行形态（有没有链接、是不是写成了表格）；链到的是不是这一轮的材料，由下面按材料清单逐份对
-      for (const h of scanMaterialList(body, span.start + 1)) {
-        problems.push(`「${appendix.title}·${name}」第 ${h.line} 行：${h.hint}`);
-      }
-      // 链接得能点开：典型写法 `[RR/prd.md](RR/prd.md)` 解析不到——story.md 在 AR/ 下，
-      // 这个裸相对路径解析出来是 `AR/RR/prd.md`，不存在。
-      const fromDir = path.dirname(ctx.storyPath);
-      for (const [line, target] of materialLinkTargets(body, span.start + 1)) {
-        if (/^(https?:|mailto:)/i.test(target)) continue;
-        if (!fs.existsSync(path.resolve(fromDir, target))) {
-          problems.push(`「${appendix.title}·${name}」第 ${line} 行：链接点不开，${target} 解析不到文件`
-            + '——材料清单的链接按 AR/story.md 所在目录解析；'
-            + '读者打不开这个仓，链接是「据哪几份材料写成」唯一可核的形态');
-        }
-      }
-      // 集合面：列到的与真正在手里的那几份材料对得上
-      if (want === 'broken') {
-        problems.push('AR/story-src/materials.json：读不出材料清单——'
-          + `「${appendix.title}·${name}」列得全不全按它核；`
-          + '这份清单由 `story_flow.py round` 按磁盘现状生成');
-      } else if (!want) {
-        notes.push('AR/story-src/materials.json：不在，'
-          + `「${appendix.title}·${name}」的集合判据未执行`
-          + '——这份清单由 `story_flow.py round` 生成');
-      } else {
-        const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
-        const listed = new Set();
-        for (const [, target] of materialLinkTargets(body, span.start + 1)) {
-          if (/^(https?:|mailto:)/i.test(target)) continue;
-          listed.add(joinPosix(storyDir, target));
-        }
-        const allowed = new Set(want.must.flat());
-        for (const group of want.must) {
-          if (!group.some(rel => listed.has(rel))) {
-            problems.push(`「${appendix.title}·${name}」：少了一份材料 ${group[0]}`
-              + '——这一节按 materials.json 里这一轮的正文材料与收件箱原件逐份核，读者据这一节把材料找出来');
-          }
-        }
-        for (const rel of listed) {
-          if (allowed.has(rel)) continue;
-          problems.push(`「${appendix.title}·${name}」：列了不是初始资料的东西 ${rel}`
-            + '——这一节回答「据哪几份材料写成」，按 materials.json 只收上游那几份正文与收件箱原件，'
-            + '各一行；本轮自己生成的规格与记录不算材料；'
-            + '图的去向登记在材料清单里（`--caption-image … --unused`）');
-        }
-      }
+  const appendix = appendixChapter(ctx.contract);
+  const name = materialSubsectionName(ctx.contract);
+  const span = appendix && name ? subsectionSpan(storyText, appendix.title, name) : null;
+  if (!span) return { problems, notes: [] };
+  const lines = storyText.split(/\r?\n/);
+  const fromDir = path.dirname(ctx.storyPath);
+  for (let i = span.start; i < span.end && i < lines.length; i++) {
+    for (const m of lines[i].matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
+      if (/^(https?:|mailto:)/i.test(m[1]) || fs.existsSync(path.resolve(fromDir, m[1]))) continue;
+      problems.push(`「${appendix.title}·${name}」第 ${i + 1} 行：链接点不开，${m[1]} 解析不到文件`
+        + '——材料清单的链接按 AR/story.md 所在目录解析，读者据它把材料找出来');
     }
   }
-  // 小节编号不在这里判：它由 `number` 命令统一铺。机器保证的形态再设一条
-  // 判据，判的是自己的输出——真正会漏的是机器不做的那部分。
-  return { problems, notes };
+  return { problems, notes: [] };
 }
 
 /**

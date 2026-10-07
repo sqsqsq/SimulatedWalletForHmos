@@ -2,7 +2,7 @@
  * 独立审查的对象 —— 这一次交给审查者的全部材料，只在这里定义一份。
  *
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算：三处用同一份，审的就是要交付的那一份。
- * 待审的是 Story 与 Review；其余是只读对照：写作设计、决策登记、会议记录、交给设计的冻结输入（采用版本的原件、
+ * 待审的是 Story、Review 与设计附件；其余是只读对照：写作设计、决策登记、会议记录、交给设计的冻结输入（采用版本的原件、
  * 图、提取稿与人签）、已准入蓝图与评审投影、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
  * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
  */
@@ -48,6 +48,7 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   const src = path.join(root, 'AR', 'story-src');
   add(path.join(root, 'AR', 'story.md'), 'object', '待审的 Story');
   add(path.join(root, 'AR', 'review.md'), 'object', '待审的决策与评审记录（机器区与人工区）');
+  add(path.join(root, 'AR', 'design-review.md'), 'object', '待审的设计附件（本次蓝图原生评审投影的副本）');
   if (withTask) add(path.join(root, ...TASK), 'source', '审查任务');
   add(path.join(src, 'story-template.md'), 'source', '作者的写作设计（待核的作者判断）');
   add(path.join(src, 'decisions.json'), 'source', '决策登记');

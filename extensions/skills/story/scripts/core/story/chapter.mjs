@@ -27,7 +27,7 @@ import {
   parseChapter, pendingChapters, placeholderProblems, storySections, zonesByLine,
 } from './document.mjs';
 import { activeKnowledgeEntries, fail, readRaw, readText } from './context.mjs';
-import { appendixChapter, projectAppendix } from './appendix.mjs';
+import { appendixBasisProblems, appendixChapter, projectAppendix } from './appendix.mjs';
 import { adoptedUpstreamTexts, redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
@@ -369,14 +369,16 @@ export function cmdChapter(ctx) {
   let next = `${story.slice(0, span.start)}## ${title}\n\n${trimmed}\n\n${story.slice(span.end)}`;
   // 附录章 = 作者区 + 当前真源投影出的机器区。**投在写前核对之前**：那四节本就
   // 不该由他写，不投的话写前核对会因为它们空着而拦下一份合法的附录。
+  const appendixBasis = [];
   if (normalizeHeading(title) === normalizeHeading(appendixChapter(ctx.contract)?.title ?? '')) {
     next = projectAppendix(ctx, next).text;
+    appendixBasis.push(...appendixBasisProblems(ctx, plan));
   }
 
   // 逐行判据判作者写的那份（与 story 里本章正文同形：标题下空一行再接正文），行号按剥离时记下的对应指回草稿
   const draftRel = relFromFeature(ctx, path.resolve(from));
-  const bad = chapterProblems(ctx, planned, chapterBodyIn(next, title), null,
-    n => `草稿 ${draftRel} 第 ${origin[n - 2] ?? '?'} 行`, `\n${trimmed}`);
+  const bad = [...chapterProblems(ctx, planned, chapterBodyIn(next, title), null,
+    n => `草稿 ${draftRel} 第 ${origin[n - 2] ?? '?'} 行`, `\n${trimmed}`), ...appendixBasis];
   if (bad.length) {
     process.stderr.write(`[story-build chapter] 「${title}」${bad.length} 处未通过，`
       + `${path.basename(ctx.storyPath)} 与候选文件都没动：\n`);

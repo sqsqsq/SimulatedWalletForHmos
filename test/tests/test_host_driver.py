@@ -48,6 +48,18 @@ class TheCheckpointKeepsThePendingQuestion(unittest.TestCase):
             self.assertEqual({"text": "/story update AR90006"}, got)
             self.assertFalse((out / rc.RESUME_FILE).exists(), "取走之后请求还在")
 
+    def test_the_update_request_and_a_reply_file_reach_the_driver_verbatim(self) -> None:
+        """第二段请求默认取 case.yaml 的 update_request；回话文件按原样读，以 / 开头、多行与引号都不变。"""
+        import yaml  # noqa: PLC0415
+        multi = run_multi_case
+        case = yaml.safe_load((REPO_ROOT / "test" / "cases" / "auto-topup" / "case.yaml").read_text(encoding="utf-8"))
+        self.assertEqual("/story update AR90006", case["update_request"])
+        text = '/story update AR90006\n第二行 "引号" \'单引号\' E:/a/b'
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = Path(tmp) / "reply.txt"
+            reply.write_bytes((text + "\n").encode("utf-8"))
+            self.assertEqual(text, multi.text_from_file(reply))
+
     def test_waiting_at_the_checkpoint_shows_the_models_question(self) -> None:
         feed, runlog = mock.Mock(), mock.Mock()
         state: dict = {}

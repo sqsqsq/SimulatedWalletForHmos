@@ -135,7 +135,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(result.run_id, state["parent_run_id"])
 
     def test_prompt_reaches_the_cli_verbatim(self) -> None:
-        prompt = '第一行：中文\n\n第三行 "双引号" \'单引号\' 100% %PATH% a & b | c ^ <d>\n末行'
+        prompt = '/story update AR90006\n第一行：中文 E:/a/b c:\\d\n\n第三行 "双引号" \'单引号\' 100% %PATH% a & b | c ^ <d>\n末行'
         result = self.client.run(self.request(prompt=prompt))
         self.assertEqual("succeeded", result.status)
         self.assertIn(f"prompt={prompt};model=fake-model", result.final_text or "")

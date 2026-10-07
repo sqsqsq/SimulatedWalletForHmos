@@ -181,6 +181,8 @@ python test/scripts/run_multi_case.py reply --suite-id story-suite-20260822-1400
 ```
 
 回话要带材料时加 `--deliver <文件名>`（取自该 Case 的 `supplements/`）：文件先落进收件箱，那句话才排进队列。
+回话多行、带引号或以 `/` 开头时写进一个 UTF-8 文件，用 `--text-file <文件>` 代替 `--text`：Git Bash 会把命令行里以 `/`
+开头的参数改写成 Windows 路径（`/story update` 会变成 `<Git 安装目录>/story update`），从文件读不经 shell。
 
 ### 3.3 原话取不到时
 
@@ -332,7 +334,7 @@ output/story/<suite-id>/
 | 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；需求目录、关联蓝图与需求目录外的 Story 审查报告同一刻固定，复制前后目录摘要不同则快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`；不先回流，第一段产物就只剩快照 |
-| 5 | `resume-update --case <id> --text "<case.yaml 的 update_request>"` | 只投第二段请求；交付选择在第一段的关卡上已经答过，终点真正到了才停在检查点，这里不替模型答别的。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
+| 5 | `resume-update --case <id>`（投 case.yaml 的 `update_request`，与第一段的 `prompt` 同一条路） | 只投第二段请求；交付选择在第一段的关卡上已经答过，终点真正到了才停在检查点，这里不替模型答别的。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
 | 6 | 第二段起手在材料关卡停一次，按该 Case `interaction-script.yaml` 的 `update-material` 作答；之后 Case 停在第二检查点（`stop_reason: update_checkpoint`） | 终点以流程契约里这一轮 update 关闭为准，模型说「更新完成」不算 |
 | 7 | `checkpoint --point update` → 只读后评 → `conclude` | story 门禁已在进第二检查点前跑过；第二检查点的唯一出口是 conclude，不发的话 worker 一直等，最后只能被外部停掉、终态成 `worker_lost` |
 | 8 | 全部终态后 `finalize --promote` | 第二段真跑过时终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；第一段没到终点就收尾的，终态用原编号 |
