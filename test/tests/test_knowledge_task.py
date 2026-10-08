@@ -190,6 +190,17 @@ class BlueprintAndUnitIdentity(NativeCase):
         for key in ("component_id", "revision", "source_fingerprint", "artifact_sha256"):
             self.assertTrue(ref[key], key)
 
+    def test_the_summary_is_the_same_read_without_the_blueprint_body(self) -> None:
+        """--summary 只核状态：同一读取与校验，字段与完整输出一致，只少蓝图正文；失败照样失败。"""
+        full = self.access("--action", "blueprint", "--blueprint", BLUEPRINT, "--purpose", "delivery")
+        summary = self.access("--action", "blueprint", "--blueprint", BLUEPRINT, "--purpose", "delivery", "--summary")
+        self.assertIn("blueprint", full[1])
+        self.assertEqual((full[0], {k: v for k, v in full[1].items() if k != "blueprint"}), summary)
+        self.assertEqual((1, "missing"), (lambda c, o: (c, o.get("status")))(
+            *self.access("--action", "blueprint", "--blueprint", "not-there", "--summary")))
+        self.assertEqual(2, self.access("--action", "feature", "--feature", CU, "--phase", "plan", "--summary")[0],
+                         "摘要只属于蓝图读取")
+
     def test_a_unit_before_its_scope_is_frozen_has_identity_but_no_phase_inputs(self) -> None:
         """范围未冻结：身份、蓝图引用与承担的设计对象都在；本阶段输入不由 Extension 自己派生顶上。"""
         code, out = self.access("--action", "feature", "--feature", CU, "--phase", "plan")

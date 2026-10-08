@@ -1,0 +1,3604 @@
+artifact: component-blueprint@1
+component_id: WalletMain
+blueprint_id: bp-AR90006
+revision: 1
+source_fingerprint: sha256:19941e5561adfcaa4f6aa23369469e23eb2675d5359feec7c45091824669bd39
+decision_fingerprint: sha256:5326d9201dc34283360404439674e796490cf1c97d42bc996cfeecb81e186da9
+provenance:
+  source_kind: requirement_material
+  source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/materialization.json
+  observed_at: '2026-10-03T14:12:00Z'
+  evidence_strength: authoritative
+  extraction_method: frozen_file_observation
+review_summary:
+  title: 交通卡自动充值（钱包端）— 部件演进蓝图
+  summary: 钱包端交通卡自动充值：签约入口与签约交互、状态展示与管理、未实名引导与端侧暂存。判定与扣款都在服务端；端侧通过交通卡云五个接口实现签约/状态/改档/解约，并经支付部件完成免密验证。人已确认整体承载（无拆分），会议 T1–T4/T6 已裁决，T5 已采纳。入口可见性按矩阵细分（可签约/未实名/开关/已签约）；改档/关闭走 update/cancel 原关系不断。
+  authored_by: design-author
+  admission:
+    status: pass
+    root_questions_complete: true
+    current_slice:
+      slice_id: slice:ar90006-all
+      contracts_ready: true
+      design_refs_ready: true
+      controlled_fakes: []
+    blocker_refs: []
+  questioning:
+    status: complete
+    provider_id: independent-questioner
+    isolated_context: true
+    frontier_budget: 40
+    repeated_frontier_count: 0
+    writes_ssot: false
+    items:
+    - question_id: q-01
+      scope_kind: view
+      scope_ref: view:logical
+      question: logical 视图与上游是否一致
+      answer: 概念与链路视图（contract-concept/signup-flow/manage-flow/entry-control）与冻结上游一致；入口可见性矩阵按 T3（未实名可见引导实名）与 T4（开关只管新签约）细分，开关不折叠进 signable
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-01
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-02
+      scope_kind: view
+      scope_ref: view:runtime
+      question: runtime 视图与缓存语义是否一致
+      answer: 运行时数据流与 SR 缓存语义一致；wallet_auto_topup_contract 按账号隔离、退出登录清除、不数据备份、仅免网展示；缓存 freshness 与首帧免网展示在实现层合并理解
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-02
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-03
+      scope_kind: flow
+      scope_ref: flow:flow:auto-topup-signup-bind
+      question: 签约流程语义与材料是否一致
+      answer: 签约流程触发器/判重（卡片+生效状态）/失败恢复与 SR、RR 一致；埋点流程级判断成立；统计点逐点明细交 plan 承接
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-03
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-04
+      scope_kind: flow
+      scope_ref: flow:flow:auto-topup-status-manage
+      question: 管理流程语义与材料是否一致
+      answer: 管理流程 authority（状态查询）与 reconciliation（缓存缺失以云侧为准）一致；update 响应 updated 字段登记为设计者推断并挂 blocker gap（未决项2/14）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-04
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-05
+      scope_kind: view
+      scope_ref: view:development
+      question: development 视图与模块归属是否一致
+      answer: 五个开发节点全部归 WalletMain，AutoTopupRepository 五方法对应五契约；签约页档位以 thresholdOptions/amountOptions 为数据源不硬编码；SEC-01 落点成立但脱敏卡号来源待澄清（未决项7）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-05
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-06
+      scope_kind: view
+      scope_ref: view:scenarios
+      question: 场景视图与验收意图是否对齐
+      answer: 9 个场景逐条对齐 AC-R1..R9 与会议 T1/T3/T4；AC-R2 云侧自动充值语义不端侧主测；relation 现已补全场景与契约调用关系
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-06
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-07
+      scope_kind: relation
+      scope_ref: relation:rel-signup-scenario-to-flow
+      question: relation rel-signup-scenario-to-flow 关系是否真实
+      answer: 签约成功场景依赖签约流程（入口→选额→验证→创建→显示已开启），与 SR 签约路径一致
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-07
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-08
+      scope_kind: relation
+      scope_ref: relation:rel-signup-scenario-to-page
+      question: relation rel-signup-scenario-to-page 关系是否真实
+      answer: 签约成功验收落在签约页执行面，owner 与 execution owner 一致
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-08
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-09
+      scope_kind: relation
+      scope_ref: relation:rel-manage-scenario-to-flow
+      question: relation rel-manage-scenario-to-flow 关系是否真实
+      answer: 改档（update 原关系不断）与关闭（cancel）均由管理 flow 承接
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-09
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-10
+      scope_kind: relation
+      scope_ref: relation:rel-manage-scenario-to-page
+      question: relation rel-manage-scenario-to-page 关系是否真实
+      answer: 管理页为改档/关闭/停用重签实现承载
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-10
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-11
+      scope_kind: relation
+      scope_ref: relation:rel-entry-to-signup-flow
+      question: relation rel-entry-to-signup-flow 关系是否真实
+      answer: 未签约且可签约/未实名用户由入口进入签约（含实名引导回跳）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-11
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-12
+      scope_kind: relation
+      scope_ref: relation:rel-entry-to-manage-flow
+      question: relation rel-entry-to-manage-flow 关系是否真实
+      answer: 已签约再进入与开关关闭后已签约不隐藏均经入口分流到管理页
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-12
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-13
+      scope_kind: relation
+      scope_ref: relation:rel-repo-to-contract-status
+      question: relation rel-repo-to-contract-status 关系是否真实
+      answer: AutoTopupRepository.getStatus 调 getAutoTopupStatus
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-13
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-14
+      scope_kind: relation
+      scope_ref: relation:rel-repo-to-contract-policy
+      question: relation rel-repo-to-contract-policy 关系是否真实
+      answer: AutoTopupRepository.getPolicy 调 getAutoTopupPolicy
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-14
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-15
+      scope_kind: relation
+      scope_ref: relation:rel-repo-to-contract-create
+      question: relation rel-repo-to-contract-create 关系是否真实
+      answer: AutoTopupRepository.createContract 调 createAutoTopupContract
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-15
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-16
+      scope_kind: relation
+      scope_ref: relation:rel-repo-to-contract-update
+      question: relation rel-repo-to-contract-update 关系是否真实
+      answer: AutoTopupRepository.updateContract 调 updateAutoTopupContract（会议 T1 新增）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-16
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-17
+      scope_kind: relation
+      scope_ref: relation:rel-repo-to-contract-cancel
+      question: relation rel-repo-to-contract-cancel 关系是否真实
+      answer: AutoTopupRepository.cancelContract 调 cancelAutoTopupContract
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-17
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-18
+      scope_kind: relation
+      scope_ref: relation:rel-unauth-scenario-to-page
+      question: relation rel-unauth-scenario-to-page 关系是否真实
+      answer: 未实名引导场景由入口 builder 承载（T3 修订 AC-R1）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-18
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-19
+      scope_kind: relation
+      scope_ref: relation:rel-verify-cancel-to-page
+      question: relation rel-verify-cancel-to-page 关系是否真实
+      answer: 验证取消保留选择场景落在签约页
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-19
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-20
+      scope_kind: relation
+      scope_ref: relation:rel-reentry-to-entry
+      question: relation rel-reentry-to-entry 关系是否真实
+      answer: 已签约再进入（AC-R9，existed 分流）由入口 builder 承载
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-20
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-21
+      scope_kind: relation
+      scope_ref: relation:rel-switchoff-to-entry
+      question: relation rel-switchoff-to-entry 关系是否真实
+      answer: 开关关闭后已签约入口不隐藏（T4）由入口 builder 承载
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-21
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-22
+      scope_kind: relation
+      scope_ref: relation:rel-disabled-to-manage
+      question: relation rel-disabled-to-manage 关系是否真实
+      answer: 停用态查看与重签场景落在管理页
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-22
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-23
+      scope_kind: relation
+      scope_ref: relation:rel-mask-to-manage
+      question: relation rel-mask-to-manage 关系是否真实
+      answer: 记录脱敏展示（AC-R5）落在管理页记录区
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-23
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-24
+      scope_kind: relation
+      scope_ref: relation:rel-exit-to-signup-page
+      question: relation rel-exit-to-signup-page 关系是否真实
+      answer: 中途退出保留选择（情形表）落在签约页
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-24
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-25
+      scope_kind: app_lens
+      scope_ref: app_lens:module_boundaries
+      question: App lens 根问题 module_boundaries
+      answer: 签约/管理链路整体落在 WalletMain，无跨模块新边界；支付验证/实名属外部能力接缝
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-25
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-26
+      scope_kind: app_lens
+      scope_ref: app_lens:capability_seams
+      question: App lens 根问题 capability_seams
+      answer: 免密验证拉起支付部件、实名取账号能力、五接口落 AutoTopupRepository；agreementNo 仅透传不持久化
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-26
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-27
+      scope_kind: app_lens
+      scope_ref: app_lens:feature_flags
+      question: App lens 根问题 feature_flags
+      answer: 运营开关经 getAutoTopupPolicy 返回；开关只影响未签约入口，已签约用户持续显示（与未实名可见以 signable/unsignableReason 区分）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-27
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-28
+      scope_kind: app_lens
+      scope_ref: app_lens:data_producers_consumers
+      question: App lens 根问题 data_producers_consumers
+      answer: 生产者=卡云接口，消费者=入口/签约页/管理页/详情页；缓存供免网展示与两条 flow 消费者吻合
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-28
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-29
+      scope_kind: app_lens
+      scope_ref: app_lens:lifecycle_triggers
+      question: App lens 根问题 lifecycle_triggers
+      answer: 入口进入加载策略、管理页进入查状态、改档/关闭由用户动作触发，均为低频用户动作时机
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-29
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-30
+      scope_kind: app_lens
+      scope_ref: app_lens:state_owners
+      question: App lens 根问题 state_owners
+      answer: 缓存 owner、卡云权威（SR §3）；领域态为 none/active/disabled，瞬态（免密验证中）移出契约状态集
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-30
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-31
+      scope_kind: app_lens
+      scope_ref: app_lens:initialization
+      question: App lens 根问题 initialization
+      answer: 缓存键退出登录清除、暂存仅本账号本卡、入口显示按策略与状态决定；实名回跳清暂存
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-31
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-32
+      scope_kind: app_lens
+      scope_ref: app_lens:publication_subscription
+      question: App lens 根问题 publication_subscription
+      answer: 无全局订阅；跨页刷新机制（AppStorage 键或返回刷新）由 plan 定（未决项10）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-32
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-33
+      scope_kind: app_lens
+      scope_ref: app_lens:ui_refresh
+      question: App lens 根问题 ui_refresh
+      answer: 首帧缓存免网展示、云侧返回后刷新、失败/取消保留选择，均符合 SR
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-33
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-34
+      scope_kind: app_lens
+      scope_ref: app_lens:process_recovery
+      question: App lens 根问题 process_recovery
+      answer: 进程重建后缓存按账号本地存在、缺失以云侧查询为准；清除数据后按云侧查询恢复，云侧确认无签约才引导签约（ENV-01）
+      disposition: answered_with_evidence
+      frontier_fingerprint: frontier:q-34
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+    - question_id: q-35
+      scope_kind: terminology
+      scope_ref: terminology:current_scope_items
+      question: 需求输入点是否闭环、新术语是否登记
+      answer: 13 个 requirement item 全部经 requirement_traceability 闭环到蓝图对象；新业务术语（自动充值/触发门限/单笔面额/免密协议号/生效签约/停用）本仓 glossary 未登记，由 catalog-bootstrap 补登（未决项13）
+      disposition: open_decision
+      frontier_fingerprint: frontier:q-35
+      owner: independent-questioner
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      provenance:
+        source_kind: questioning
+        source_ref: doc/features/bp-AR90006/blueprint/questioning/3e90ac13b1ce2a18/reply.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: isolated_questioning
+design_views:
+- view_id: logical
+  viewpoint_contract: app-logical@1
+  applicability: applicable
+  evolution_impact: changed
+  stakeholders:
+  - 钱包产品组
+  - 钱包端开发
+  - 交通卡云开发
+  - 支付部件
+  purpose: 自动充值领域概念与接口契约的部件侧视图：签约关系、签约/管理链路、入口显示控制
+  current_state: 钱包端无自动充值概念；交通卡详情页无自动充值入口
+  target_state: 签约关系（contractNo/门限/面额/状态）为端侧展示依据；签约与管理两条链路经五个接口对接卡云
+  delta: 新增自动充值概念与签约/管理链路，入口分流由可签约性、开关与已签约状态共同决定
+  decisions_and_gaps:
+  - decision:scope-human-1
+  - decision:knowledge-sec-01
+  - decision:knowledge-ux-01
+  - gap:gap-update-response
+  - gap:gap-amount-verify
+  verification_refs:
+  - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  nodes:
+  - node_id: contract-concept
+    owner: WalletMain
+    current_state: 钱包端无自动充值签约关系概念
+    target_state: 端侧签约关系展示模型：contractNo、门限、面额、状态（none/active/disabled），来源为云侧状态查询
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - contract:getAutoTopupStatus
+  - node_id: signup-flow
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 详情页入口→签约页（门限/面额单选、协议勾选）→免密验证→创建签约→详情页显示已开启；失败/取消/退出保留选择
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - contract:getAutoTopupPolicy
+    - contract:createAutoTopupContract
+  - node_id: manage-flow
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 管理页（状态/记录/停用态）→ 改门限面额（update）或关闭（cancel）或停用态查看原因后重签
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - contract:getAutoTopupStatus
+    - contract:updateAutoTopupContract
+    - contract:cancelAutoTopupContract
+  - node_id: entry-control
+    owner: WalletMain
+    current_state: 交通卡详情页无自动充值入口
+    target_state: 入口可见性矩阵：未签约+开关开+可签约→签约页；未签约+开关开+未实名→可见并引导实名；未签约+开关关→隐藏；已签约→始终可见进管理页。分流字段用 getAutoTopupPolicy.signable/unsignableReason 与运营开关，不把开关折叠进 signable
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - contract:getAutoTopupPolicy
+    - contract:getAutoTopupStatus
+- view_id: runtime
+  viewpoint_contract: app-runtime@1
+  applicability: applicable
+  evolution_impact: changed
+  stakeholders:
+  - 钱包端开发
+  - 测试
+  - 交通卡云开发
+  purpose: 自动充值在钱包端运行时的数据流与状态归属：策略加载、签约状态缓存、改档与解约的写入闭合
+  current_state: 无自动充值运行时数据流
+  target_state: 策略/状态来自卡云，端侧缓存 wallet_auto_topup_contract（按账号隔离、退出登录清除、不备份）供免网展示
+  delta: 新增配置加载流与签约状态流两条数据流；状态 owner 为钱包端缓存，权威在卡云
+  decisions_and_gaps:
+  - decision:knowledge-sec-01
+  - gap:gap-agreement-retry
+  verification_refs:
+  - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  nodes:
+  - node_id: contract-cache
+    owner: WalletMain
+    current_state: 无自动充值缓存
+    target_state: wallet_auto_topup_contract 缓存 contractNo/门限/面额/状态；按账号隔离、退出登录清除、不参与备份恢复、仅免网展示
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - contract:getAutoTopupStatus
+    design_basis_refs:
+    - contract:getAutoTopupStatus
+  - node_id: strategy-loading
+    owner: WalletMain
+    current_state: 无
+    target_state: 详情页入口处按需加载可签约性与档位；支付能力不可用时隐藏新签约入口
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - contract:getAutoTopupPolicy
+    design_basis_refs:
+    - contract:getAutoTopupPolicy
+  runtime_data_flows:
+  - flow_id: flow:auto-topup-signup-bind
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    data_domain_refs:
+    - wallet-auto-topup-contract
+    external_contract_refs:
+    - contract:getAutoTopupPolicy
+    - contract:createAutoTopupContract
+    source_of_truth:
+      authority: contract:createAutoTopupContract
+      persistence: view:development/node:auto-topup-repository
+      projections_and_caches:
+      - view:runtime/node:contract-cache
+      reconciliation: 端侧缓存缺失以云侧查询为准；云侧查询失败时状态未知，不以缓存缺失推断未签约；写入结果即时刷新缓存
+    triggers:
+    - kind: user_action
+      timing: 入口打开/签约页
+      idempotency: 以「卡片+生效状态」判重，已有生效签约返回既有 contractNo
+    initial_load:
+      initial_load_id: signup-open
+      strategy: 入口打开时拉取策略
+      owner: view:development/node:auto-topup-repository
+      data_scope: 可签约性、档位、协议文案
+      freshness: 每次入口进入时刷新
+    state_owner:
+      ref: view:runtime/node:contract-cache
+      states:
+      - 无签约
+      - 已签约
+    mutations:
+    - mutation_id: create-contract-mutation
+      kind: foreground
+      publication_ref: publication:contract-written
+      persistence_ref: view:development/node:auto-topup-repository
+      recovery_ref: recovery:signup-failure
+    publications:
+    - publication_id: contract-written
+      snapshot: contractNo、门限、面额、状态写入缓存并驱动详情页展示
+    subscriptions: []
+    consumers:
+    - consumer_id: signup-page
+      initial_load_ref: initial-load:signup-open
+      update_ref: publication:contract-written
+    - consumer_id: card-detail
+      initial_load_ref: initial-load:signup-open
+      update_ref: publication:contract-written
+    failure_recovery:
+      recovery_id: signup-failure
+      persistence_failure: 免密验证取消或未通过：不建签约、保留已选门限面额；授权后创建明确失败：不写半签约状态，留在签约页保留选择，再次尝试的方式待 pending-agreement-retry；创建结果未知（超时）：不显示成功也不显示未签约，以 getAutoTopupStatus 确认云侧状态（active 按已开启展示，none 视为本次未建成，查询失败保持未知、可再查）
+      subscription_failure: 无订阅
+      process_recreation: 暂存选择（仅本账号本卡）退出登录清除
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    logical_contract_refs:
+    - contract:createAutoTopupContract
+    development_owner_ref: view:development/node:auto-topup-repository
+    decisions_and_gaps: []
+    lifecycle_coverage:
+      cold_start:
+        status: covered
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      warm_resume:
+        status: covered
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      page_attach:
+        status: covered
+        evidence_refs:
+        - contract:getAutoTopupStatus
+      page_detach:
+        status: not_applicable
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      account_switch:
+        status: covered
+        evidence_refs:
+        - view:runtime/node:contract-cache
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      process_recreation:
+        status: covered
+        evidence_refs:
+        - view:runtime/node:contract-cache
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      background_write:
+        status: not_applicable
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  - flow_id: flow:auto-topup-status-manage
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    data_domain_refs:
+    - wallet-auto-topup-contract
+    external_contract_refs:
+    - contract:getAutoTopupStatus
+    - contract:updateAutoTopupContract
+    - contract:cancelAutoTopupContract
+    source_of_truth:
+      authority: contract:getAutoTopupStatus
+      persistence: view:development/node:auto-topup-repository
+      projections_and_caches:
+      - view:runtime/node:contract-cache
+      reconciliation: 端侧缓存缺失以云侧查询为准；云侧查询失败时状态未知，不以缓存缺失推断未签约；写入结果即时刷新缓存
+    triggers:
+    - kind: user_action
+      timing: 进入管理页/改档/关闭/查看停用
+      idempotency: 以「卡片+生效状态」判重，已有生效签约返回既有 contractNo
+    initial_load:
+      initial_load_id: manage-open
+      strategy: 进入管理页时查询状态
+      owner: view:development/node:auto-topup-repository
+      data_scope: 状态、门限面额、最近记录、连续失败次数、停用原因
+      freshness: 每次进入管理页刷新
+    state_owner:
+      ref: view:runtime/node:contract-cache
+      states:
+      - 无签约
+      - 生效中
+      - 停用
+    mutations:
+    - mutation_id: update-contract-mutation
+      kind: foreground
+      publication_ref: publication:manage-state-written
+      persistence_ref: view:development/node:auto-topup-repository
+      recovery_ref: recovery:manage-failure
+    - mutation_id: cancel-contract-mutation
+      kind: foreground
+      publication_ref: publication:manage-state-written
+      persistence_ref: view:development/node:auto-topup-repository
+      recovery_ref: recovery:manage-failure
+    publications:
+    - publication_id: manage-state-written
+      snapshot: 管理页与详情页展示新的签约状态/门限面额
+    subscriptions: []
+    consumers:
+    - consumer_id: manage-page
+      initial_load_ref: initial-load:manage-open
+      update_ref: publication:manage-state-written
+    - consumer_id: card-detail-state
+      initial_load_ref: initial-load:manage-open
+      update_ref: publication:manage-state-written
+    failure_recovery:
+      recovery_id: manage-failure
+      persistence_failure: 改档/关闭失败留在管理页并提示；回滚不适用，解约不回滚进行中订单
+      subscription_failure: 无订阅
+      process_recreation: 缓存缺失以云侧查询为准（管理页重查）；查询失败显示状态未知可重试，不推断未签约
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    logical_contract_refs:
+    - contract:getAutoTopupStatus
+    development_owner_ref: view:development/node:auto-topup-repository
+    decisions_and_gaps: []
+    lifecycle_coverage:
+      cold_start:
+        status: covered
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      warm_resume:
+        status: covered
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      page_attach:
+        status: covered
+        evidence_refs:
+        - contract:getAutoTopupStatus
+      page_detach:
+        status: not_applicable
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      account_switch:
+        status: covered
+        evidence_refs:
+        - view:runtime/node:contract-cache
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      process_recreation:
+        status: covered
+        evidence_refs:
+        - view:runtime/node:contract-cache
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      background_write:
+        status: not_applicable
+        evidence_refs:
+        - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+- view_id: development
+  viewpoint_contract: app-development@1
+  applicability: applicable
+  evolution_impact: changed
+  stakeholders:
+  - 钱包端开发
+  - 测试
+  purpose: 钱包端实现位置与模块归属：入口、签约页、管理页、仓储与缓存
+  current_state: WalletMain 无自动充值页面与仓储
+  target_state: 新增 entry/signup/manage 页面节点与 AutoTopupRepository、AutoTopupContractCache，全部归 WalletMain 模块
+  delta: 新增 5 个开发节点，module=WalletMain
+  decisions_and_gaps:
+  - decision:knowledge-sec-01
+  - decision:knowledge-ux-01
+  verification_refs:
+  - doc/module-catalog.yaml#WalletMain
+  nodes:
+  - node_id: auto-topup-entry-builder
+    owner: WalletMain
+    module: WalletMain
+    current_state: 不存在
+    target_state: 交通卡详情页自动充值入口 builder（整行，余额行之下、记录之上）；分流到签约页或管理页；未实名引导
+    provenance:
+      source_kind: catalog
+      source_ref: doc/module-catalog.yaml#WalletMain
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    - contract:getAutoTopupPolicy
+    design_basis_refs:
+    - contract:getAutoTopupPolicy
+    - contract:getAutoTopupStatus
+  - node_id: auto-topup-signup-page
+    owner: WalletMain
+    module: WalletMain
+    current_state: 不存在
+    target_state: 签约页：门限/面额单选数据来自 getAutoTopupPolicy.thresholdOptions/amountOptions（运营下发，现行值 5/10/20/30 与 20/50/100 仅作说明）；协议勾选后「开启」可点；拉起免密验证；失败/取消/退出保留选择
+    provenance:
+      source_kind: catalog
+      source_ref: doc/module-catalog.yaml#WalletMain
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    - contract:createAutoTopupContract
+    design_basis_refs:
+    - contract:getAutoTopupPolicy
+    - contract:createAutoTopupContract
+  - node_id: auto-topup-manage-page
+    owner: WalletMain
+    module: WalletMain
+    current_state: 不存在
+    target_state: 管理页：顶部签约状态、最近记录（失败展示原因）、停用态横幅与原因；改门限面额与关闭入口；停用重签入口
+    provenance:
+      source_kind: catalog
+      source_ref: doc/module-catalog.yaml#WalletMain
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    - contract:getAutoTopupStatus
+    design_basis_refs:
+    - contract:getAutoTopupStatus
+    - contract:updateAutoTopupContract
+    - contract:cancelAutoTopupContract
+  - node_id: auto-topup-repository
+    owner: WalletMain
+    module: WalletMain
+    current_state: 不存在
+    target_state: AutoTopupRepository：getPolicy / createContract / getStatus / updateContract / cancelContract 到卡云，金额以分
+    provenance:
+      source_kind: catalog
+      source_ref: doc/module-catalog.yaml#WalletMain
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    design_basis_refs:
+    - contract:getAutoTopupPolicy
+    - contract:createAutoTopupContract
+    - contract:getAutoTopupStatus
+    - contract:updateAutoTopupContract
+    - contract:cancelAutoTopupContract
+  - node_id: auto-topup-cache
+    owner: WalletMain
+    module: WalletMain
+    current_state: 不存在
+    target_state: wallet_auto_topup_contract 缓存读写；按账号隔离、退出登录清除、不参与备份恢复
+    provenance:
+      source_kind: catalog
+      source_ref: doc/module-catalog.yaml#WalletMain
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    design_basis_refs:
+    - contract:getAutoTopupStatus
+- view_id: deployment
+  viewpoint_contract: app-deployment@1
+  applicability: not_applicable
+  stakeholders:
+  - 钱包端开发
+  purpose: 部署视图裁决：单手机应用无独立部署单元
+  current_state: 无变化
+  target_state: 无变化
+  delta: none
+  decisions_and_gaps: []
+  verification_refs:
+  - doc/architecture.md
+  nodes: []
+  applicability_evidence:
+    disposition: not_applicable
+    evidence_refs:
+    - doc/architecture.md#Phone
+    reason: 纯鸿蒙手机应用，单 HAP 装配，无独立部署单元
+- view_id: scenarios
+  viewpoint_contract: app-scenarios@1
+  applicability: applicable
+  evolution_impact: changed
+  stakeholders:
+  - 钱包产品组
+  - 测试
+  - 钱包端开发
+  purpose: 验收场景怎么走：签约、管理、异常分支与开关
+  current_state: 无自动充值场景
+  target_state: 验收意图与场景逐条落实到逻辑/运行时/开发对象
+  delta: 新增 9 个场景节点，对应 RR 验收意图与会议裁决
+  decisions_and_gaps:
+  - decision:scope-human-1
+  verification_refs:
+  - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  nodes:
+  - node_id: scenario-unauth-guide
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 未实名用户能看到入口，点进去被引导实名，完成实名前无法签约（会议 T3 修订 AC-R1）
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    logical_refs:
+    - view:logical/node:entry-control
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    development_owner_ref: view:development/node:auto-topup-entry-builder
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  - node_id: scenario-signup-success
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 签约成功：详情页显示已开启与门限面额；余额低于门限自动充值（云侧）并在记录可见
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    logical_refs:
+    - view:logical/node:signup-flow
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    development_owner_ref: view:development/node:auto-topup-signup-page
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  - node_id: scenario-verify-cancel-resume
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 验证界面取消回到签约页，门限面额仍在可直接再开启（AC-R7）
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    logical_refs:
+    - view:logical/node:signup-flow
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    development_owner_ref: view:development/node:auto-topup-signup-page
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  - node_id: scenario-signed-reentry
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 已签约卡再点入口进入管理页而非重新签约（AC-R9；existed 分流）
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    logical_refs:
+    - view:logical/node:entry-control
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-status-manage
+    development_owner_ref: view:development/node:auto-topup-entry-builder
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  - node_id: scenario-switch-off-signed
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 功能开关关闭：未签约看不到入口；已签约入口不隐藏、照常自动充值（会议 T4 修订 AC-R4）
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: meeting_authority
+    logical_refs:
+    - view:logical/node:entry-control
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-status-manage
+    development_owner_ref: view:development/node:auto-topup-entry-builder
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  - node_id: scenario-disabled-restart
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 连续 3 次扣款失败停用：管理页看到停用状态与失败原因并可重新签约（AC-R3）
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    logical_refs:
+    - view:logical/node:manage-flow
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-status-manage
+    development_owner_ref: view:development/node:auto-topup-manage-page
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  - node_id: scenario-update-and-cancel
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 修改门限面额按新值生效（update 原关系不断，会议 T1）；关闭后不再触发（AC-R6）
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: meeting_authority
+    logical_refs:
+    - view:logical/node:manage-flow
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-status-manage
+    development_owner_ref: view:development/node:auto-topup-manage-page
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  - node_id: scenario-record-mask
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 充值记录卡号按现有规则脱敏展示（AC-R5）
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    logical_refs:
+    - view:logical/node:manage-flow
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-status-manage
+    development_owner_ref: view:development/node:auto-topup-manage-page
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  - node_id: scenario-exit-resume
+    owner: WalletMain
+    current_state: 不存在
+    target_state: 中途退出签约页，下次进入回填此前门限面额（仅本账号本卡，退出登录清除）
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    logical_refs:
+    - view:logical/node:signup-flow
+    runtime_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    development_owner_ref: view:development/node:auto-topup-signup-page
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+decisions_and_gaps:
+  decisions:
+  - decision_id: scope-human-1
+    kind: scope_decision
+    status: decided_with_authority
+    owner: 钱包产品组
+    rationale: 人确认本 AR 整体承载（不拆分）；会议 T1 新增 updateAutoTopupContract 改门限面额、明确不做解约重签
+    provenance:
+      source_kind: user_decision
+      source_ref: doc/features/AR90006/AR/story-src/story-flow.json
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: user_confirmed
+    verification_refs:
+    - view:development/node:auto-topup-manage-page
+  - decision_id: knowledge-sec-01
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:scenarios/node:scenario-record-mask、view:development/node:auto-topup-manage-page
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/security-privacy.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:scenarios/node:scenario-record-mask
+    - view:development/node:auto-topup-manage-page
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: SEC-01
+      source_sha256: sha256:07ce20e1db0b5e06d5d7d8124486955c3bd63c1226af3de934b2d7deac850504
+      outcome: applied
+      requirement: 输出面：充值记录里的卡号在组装展示内容处按现有脱敏规则处理（CommFunc MaskUtil），端侧事件与日志只带去标识账号、卡片类型、阶段和结果分类，不带卡号、金额明细与支付参数（SR §5）；业务接口：accountId（去标识账号）与 cardId 按卡云接口约定传给交通卡云用于签约识别，agreementNo 只透传给卡云、不在钱包持久化也不进日志与事件（SR
+        §3）；接口传输保护方式材料未约定，登记为未知
+      target_refs:
+      - view:scenarios/node:scenario-record-mask
+      - view:development/node:auto-topup-manage-page
+  - decision_id: knowledge-ux-01
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/ux-consistency.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:development/node:auto-topup-signup-page
+    - view:development/node:auto-topup-manage-page
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: UX-01
+      source_sha256: sha256:ec0be15aa7e88c30fa0523c49d55a96cf133747e8ae3c6e6b80d598e87fce2b7
+      outcome: applied
+      requirement: 新增签约页/管理页/详情入口纳入界面一致性检查：方向性参数用 start/end、不在 Column 上用 .direction()、文本对齐用 TextAlign.Start/End
+      target_refs:
+      - view:development/node:auto-topup-signup-page
+      - view:development/node:auto-topup-manage-page
+  - decision_id: knowledge-dfx-01
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-status-manage、view:runtime/node:contract-cache
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-status-manage
+    - view:runtime/node:contract-cache
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: DFX-01
+      source_sha256: sha256:769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed
+      outcome: applied
+      requirement: 端云接口在入口打开/管理页进入/改档关闭等用户动作时机调用（低频），提供 wallet_auto_topup_contract 缓存避免重复拉取
+      target_refs:
+      - view:runtime/flow:flow:auto-topup-status-manage
+      - view:runtime/node:contract-cache
+  - decision_id: knowledge-dfx-02
+    kind: knowledge_application
+    status: not_applicable
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:development/node:auto-topup-signup-page
+    - view:development/node:auto-topup-manage-page
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: DFX-02
+      source_sha256: sha256:769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed
+      outcome: not_applicable
+      requirement: 本需求不新增预置资源、SDK 依赖或 hap 包；两款页面沿用既有控件与资源体系，无体积增量引入
+      target_refs:
+      - view:development/node:auto-topup-signup-page
+      - view:development/node:auto-topup-manage-page
+  - decision_id: knowledge-obs-02
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/observability.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    - view:runtime/flow:flow:auto-topup-status-manage
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: OBS-02
+      source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+      outcome: applied
+      requirement: 签约/管理关键过程沿用项目统一入口记录定位（Logger / HA 事件描述带定位信息），不发独立定位事件
+      target_refs:
+      - view:runtime/flow:flow:auto-topup-signup-bind
+      - view:runtime/flow:flow:auto-topup-status-manage
+  - decision_id: knowledge-obs-03
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/observability.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    - view:runtime/flow:flow:auto-topup-status-manage
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: OBS-03
+      source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+      outcome: applied
+      requirement: 运维指标落实到签约与管理两条流程及必要步骤（策略加载、创建签约、状态查询、改档、解约），实际适用结果完整记录且同次不重复
+      target_refs:
+      - view:runtime/flow:flow:auto-topup-signup-bind
+      - view:runtime/flow:flow:auto-topup-status-manage
+  - decision_id: knowledge-obs-05
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/observability.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    - view:runtime/flow:flow:auto-topup-status-manage
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: OBS-05
+      source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+      outcome: applied
+      requirement: 上报身份、结果与参数按项目 HA 协议，字段有准确含义与真实来源（事件只记录去标识账号、卡片类型、阶段和结果分类）
+      target_refs:
+      - view:runtime/flow:flow:auto-topup-signup-bind
+      - view:runtime/flow:flow:auto-topup-status-manage
+  - decision_id: knowledge-obs-06
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/observability.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    - view:runtime/flow:flow:auto-topup-status-manage
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: OBS-06
+      source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+      outcome: applied
+      requirement: 复用同语义事件与编码（模板 Wallet_COMMON、流程/步骤与内码登记）；新增定义唯一，变更保持既有含义与消费方兼容
+      target_refs:
+      - view:runtime/flow:flow:auto-topup-signup-bind
+      - view:runtime/flow:flow:auto-topup-status-manage
+  - decision_id: knowledge-obs-07
+    kind: knowledge_application
+    status: not_applicable
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/observability.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: OBS-07
+      source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+      outcome: not_applicable
+      requirement: 材料无独立运营采集（BI）诉求：SR 仅要求端侧去标识事件记录，不新增 BI 点位
+      target_refs:
+      - view:runtime/flow:flow:auto-topup-signup-bind
+  - decision_id: knowledge-res-01
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:development/node:auto-topup-signup-page
+    - view:development/node:auto-topup-manage-page
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: RES-01
+      source_sha256: sha256:d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115
+      outcome: applied
+      requirement: 页面图片按优先级取（系统图标→已归档→新引入）；新引入单张不超过 10KB 并说明依据
+      target_refs:
+      - view:development/node:auto-topup-signup-page
+      - view:development/node:auto-topup-manage-page
+  - decision_id: knowledge-res-02
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:development/node:auto-topup-signup-page
+    - view:development/node:auto-topup-manage-page
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: RES-02
+      source_sha256: sha256:d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115
+      outcome: applied
+      requirement: 用户可见文案优先复用项目已有中文完全一致资源；确需新增的按项目惯例定义并引用，中英文齐备
+      target_refs:
+      - view:development/node:auto-topup-signup-page
+      - view:development/node:auto-topup-manage-page
+  - decision_id: knowledge-compat-01
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：contract:updateAutoTopupContract
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/compatibility-checklist.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - contract:updateAutoTopupContract
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: COMPAT-01
+      source_sha256: sha256:0a1a760fafdd9cdaf8d0d25e5db4a45ea5e5caf38eeed4a0e65665324f9ed7b8
+      outcome: applied
+      requirement: 接口面有变更：新增第五接口 updateAutoTopupContract（入参 contractNo/threshold/amount）；既有四接口字段不删不改，新增字段语义独立，不改变现有字段含义、不触发服务端新校验
+      target_refs:
+      - contract:updateAutoTopupContract
+  - decision_id: knowledge-compat-02
+    kind: knowledge_application
+    status: not_applicable
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：contract:getAutoTopupPolicy
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/compatibility-checklist.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - contract:getAutoTopupPolicy
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: COMPAT-02
+      source_sha256: sha256:0a1a760fafdd9cdaf8d0d25e5db4a45ea5e5caf38eeed4a0e65665324f9ed7b8
+      outcome: not_applicable
+      requirement: 本需求不新增/删除/修改错误码（卡云统一错误结构，本需求不新增错误码），本域无 diff 可核
+      target_refs:
+      - contract:getAutoTopupPolicy
+  - decision_id: knowledge-env-01
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/node:contract-cache
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/node:contract-cache
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: ENV-01
+      source_sha256: sha256:61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81
+      outcome: applied
+      requirement: wallet_auto_topup_contract 缓存与签约暂存属本地状态：清除数据或缓存缺失后按云侧 getAutoTopupStatus 恢复展示（active、disabled 照云侧显示，none 才进入签约引导），查询失败按状态未知处理并可重试，不把缓存缺失当成未签约；不崩溃不死循环
+      target_refs:
+      - view:runtime/node:contract-cache
+  - decision_id: knowledge-env-02
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    - view:runtime/flow:flow:auto-topup-status-manage
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: ENV-02
+      source_sha256: sha256:61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81
+      outcome: applied
+      requirement: 入口可能被重复触发：创建签约以「卡片+生效状态」判重返回既有 contractNo；改档/关闭为单请求语义，无重复下单
+      target_refs:
+      - view:runtime/flow:flow:auto-topup-signup-bind
+      - view:runtime/flow:flow:auto-topup-status-manage
+  - decision_id: knowledge-dlv-01
+    kind: knowledge_application
+    status: answered_with_evidence
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/deliverables.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:development/node:auto-topup-signup-page
+    - view:development/node:auto-topup-manage-page
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: DLV-01
+      source_sha256: sha256:ae494fa8bdcb3e56b1977e7cf7787abfc6eee4e632cf9e64e718e862cd657708
+      outcome: applied
+      requirement: 新增签约页/管理页文案梳理为待翻译字符串清单并跟踪回稿合入
+      target_refs:
+      - view:development/node:auto-topup-signup-page
+      - view:development/node:auto-topup-manage-page
+  - decision_id: knowledge-dlv-02
+    kind: knowledge_application
+    status: not_applicable
+    owner: design-author
+    rationale: 在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-entry-builder
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/constraints/deliverables.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - view:development/node:auto-topup-entry-builder
+    knowledge:
+      kind: constraints
+      form: entries
+      unit: DLV-02
+      source_sha256: sha256:ae494fa8bdcb3e56b1977e7cf7787abfc6eee4e632cf9e64e718e862cd657708
+      outcome: not_applicable
+      requirement: 本需求不新增对外开放页面入口或对外开放接口（签约/管理页为钱包应用内页面，卡云接口为本部件作为客户端调用云端，均不构成对外的交付面）
+      target_refs:
+      - view:development/node:auto-topup-entry-builder
+  - decision_id: pending-amount-verify
+    kind: open_decision
+    status: open_decision
+    owner: 支付侧（刘洋/风控）
+    rationale: 会议 T2 保持待定：面额调整是否需重新免密验证待支付侧与风控确认——调高时免密额度变大，调低会上只说「应该不用」并待风控确认；只改门限不涉及额度、不验证已定（会议 14:16）；端侧不写死改面额的交互
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: user_confirmed
+    verification_refs:
+    - view:development/node:auto-topup-manage-page
+    - gap:gap-amount-verify
+  - decision_id: pending-agreement-retry
+    kind: open_decision
+    status: open_decision
+    owner: 支付侧（陈静/刘洋）
+    rationale: 会议 T6 保持待定：免密授权后 createAutoTopupContract 明确失败或结果未知（超时）时，同一协议号能否复用、有效期多长、端侧以复用协议号还是重新验证再次尝试，待卡云与支付对齐；结论前端侧不选定再次尝试的方式
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: user_confirmed
+    verification_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+    - gap:gap-agreement-retry
+  gaps:
+  - gap_id: gap-update-response
+    status: blocker
+    knowledge_state: unknown
+    owner: 交通卡云
+    needed_by: slice:ar90006-all
+    unlock_condition: 卡云定稿 updateAutoTopupContract 的响应字段后解除；在此之前 Updated 字段为占位、后续契约升版
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: inferred_by_designer
+    verification_refs:
+    - contract:updateAutoTopupContract
+    - decision:pending-amount-verify
+  - gap_id: gap-agreement-retry
+    status: blocker
+    knowledge_state: unknown
+    owner: 支付侧（陈静/刘洋）
+    needed_by: slice:ar90006-all
+    unlock_condition: 卡云与支付对齐协议号有效期、复用规则与端侧再次尝试的方式后解除（会议 T6）
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: inferred_by_designer
+    verification_refs:
+    - contract:createAutoTopupContract
+    - decision:pending-agreement-retry
+  - gap_id: gap-amount-verify
+    status: blocker
+    knowledge_state: unknown
+    owner: 支付侧（刘洋/风控）
+    needed_by: slice:ar90006-all
+    unlock_condition: 支付侧与风控确认面额调整（调高、调低）是否需要重新免密验证后解除（会议 T2）
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: inferred_by_designer
+    verification_refs:
+    - contract:updateAutoTopupContract
+    - decision:pending-amount-verify
+  - gap_id: gap-component-assets
+    status: open_decision
+    knowledge_state: unknown
+    owner: design-author
+    needed_by: slice:ar90006-b
+    unlock_condition: 本仓建立 component-index 后做共享 UI 资产选型；当前页面属专题页，缺口留远期
+    provenance:
+      source_kind: catalog
+      source_ref: doc/module-catalog.yaml#WalletMain
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: inferred
+      extraction_method: read_and_apply
+    verification_refs:
+    - provider:component-assets
+    needed_by_current_slice: false
+relations:
+- relation_id: rel-signup-scenario-to-flow
+  from: view:scenarios/node:scenario-signup-success
+  to: view:runtime/flow:flow:auto-topup-signup-bind
+  relation_type: scenario_depends_on
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:runtime/flow:flow:auto-topup-signup-bind
+- relation_id: rel-signup-scenario-to-page
+  from: view:scenarios/node:scenario-signup-success
+  to: view:development/node:auto-topup-signup-page
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-signup-page
+- relation_id: rel-manage-scenario-to-flow
+  from: view:scenarios/node:scenario-update-and-cancel
+  to: view:runtime/flow:flow:auto-topup-status-manage
+  relation_type: scenario_depends_on
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:runtime/flow:flow:auto-topup-status-manage
+- relation_id: rel-manage-scenario-to-page
+  from: view:scenarios/node:scenario-update-and-cancel
+  to: view:development/node:auto-topup-manage-page
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-manage-page
+- relation_id: rel-entry-to-signup-flow
+  from: view:development/node:auto-topup-entry-builder
+  to: view:logical/node:signup-flow
+  relation_type: directs_to
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:logical/node:signup-flow
+- relation_id: rel-entry-to-manage-flow
+  from: view:development/node:auto-topup-entry-builder
+  to: view:logical/node:manage-flow
+  relation_type: directs_to
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:logical/node:manage-flow
+- relation_id: rel-repo-to-contract-status
+  from: view:development/node:auto-topup-repository
+  to: contract:getAutoTopupStatus
+  relation_type: calls_contract
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - contract:getAutoTopupStatus
+- relation_id: rel-repo-to-contract-policy
+  from: view:development/node:auto-topup-repository
+  to: contract:getAutoTopupPolicy
+  relation_type: calls_contract
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - contract:getAutoTopupPolicy
+- relation_id: rel-repo-to-contract-create
+  from: view:development/node:auto-topup-repository
+  to: contract:createAutoTopupContract
+  relation_type: calls_contract
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - contract:createAutoTopupContract
+- relation_id: rel-repo-to-contract-update
+  from: view:development/node:auto-topup-repository
+  to: contract:updateAutoTopupContract
+  relation_type: calls_contract
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - contract:updateAutoTopupContract
+- relation_id: rel-repo-to-contract-cancel
+  from: view:development/node:auto-topup-repository
+  to: contract:cancelAutoTopupContract
+  relation_type: calls_contract
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - contract:cancelAutoTopupContract
+- relation_id: rel-unauth-scenario-to-page
+  from: view:scenarios/node:scenario-unauth-guide
+  to: view:development/node:auto-topup-entry-builder
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-entry-builder
+- relation_id: rel-verify-cancel-to-page
+  from: view:scenarios/node:scenario-verify-cancel-resume
+  to: view:development/node:auto-topup-signup-page
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-signup-page
+- relation_id: rel-reentry-to-entry
+  from: view:scenarios/node:scenario-signed-reentry
+  to: view:development/node:auto-topup-entry-builder
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-entry-builder
+- relation_id: rel-switchoff-to-entry
+  from: view:scenarios/node:scenario-switch-off-signed
+  to: view:development/node:auto-topup-entry-builder
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-entry-builder
+- relation_id: rel-disabled-to-manage
+  from: view:scenarios/node:scenario-disabled-restart
+  to: view:development/node:auto-topup-manage-page
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-manage-page
+- relation_id: rel-mask-to-manage
+  from: view:scenarios/node:scenario-record-mask
+  to: view:development/node:auto-topup-manage-page
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-manage-page
+- relation_id: rel-exit-to-signup-page
+  from: view:scenarios/node:scenario-exit-resume
+  to: view:development/node:auto-topup-signup-page
+  relation_type: scenario_owned_by
+  owner: WalletMain
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  verification_refs:
+  - view:development/node:auto-topup-signup-page
+contracts:
+- contract_id: getAutoTopupPolicy
+  owner: WalletMain
+  needed_by: slice:ar90006-all
+  validation_mode: wire_mapping_closure
+  operation:
+    operation_id: getAutoTopupPolicy
+    direction: outbound
+    version: '1.0'
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/operations/getAutoTopupPolicy
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  request_dto:
+    dto_id: AutoTopupPolicyRequest
+    fields:
+    - field_id: accountId
+      type: string
+      required: true
+      nullable: false
+      semantics: 去标识账号
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyRequest/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: cardId
+      type: string
+      required: true
+      nullable: false
+      semantics: 卡片标识
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyRequest/fields/1
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyRequest
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  response_dto:
+    dto_id: AutoTopupPolicyResponse
+    fields:
+    - field_id: signable
+      type: boolean
+      required: true
+      nullable: false
+      semantics: 是否可签约
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyResponse/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: unsignableReason
+      type: string
+      required: true
+      nullable: true
+      semantics: 不可签约的原因（如未实名），可签约时为空
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyResponse/fields/1
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: thresholdOptions
+      type: int[]
+      required: true
+      nullable: false
+      semantics: 门限档位
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyResponse/fields/2
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: amountOptions
+      type: int[]
+      required: true
+      nullable: false
+      semantics: 面额档位
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyResponse/fields/3
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: dailyLimit
+      type: int
+      required: true
+      nullable: false
+      semantics: 单日限额
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyResponse/fields/4
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: agreementText
+      type: string
+      required: true
+      nullable: false
+      semantics: 协议文案
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyResponse/fields/5
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/AutoTopupPolicyResponse
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  mappings:
+  - mapping_id: policy-req-account
+    kind: direct
+    source_fields:
+    - accountId
+    target_field: 钱包端账号标识（来自登录态）
+    rule: 直取当前登录的去标识账号
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-req-account
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: policy-req-card
+    kind: direct
+    source_fields:
+    - cardId
+    target_field: 当前详情页卡片标识
+    rule: 直取当前交通卡卡片标识
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-req-card
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: policy-resp-signable
+    kind: direct
+    source_fields:
+    - signable
+    target_field: 可签约性状态
+    rule: 控制入口显示与可点
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-signable
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: policy-resp-unsignableReason
+    kind: direct
+    source_fields:
+    - unsignableReason
+    target_field: 不可签约原因
+    rule: 用于实名引导提示文案
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-unsignableReason
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: policy-resp-thresholdOptions
+    kind: direct
+    source_fields:
+    - thresholdOptions
+    target_field: 门限档位列表
+    rule: 签约页单选数据源
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-thresholdOptions
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: policy-resp-amountOptions
+    kind: direct
+    source_fields:
+    - amountOptions
+    target_field: 面额档位列表
+    rule: 签约页单选数据源
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-amountOptions
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: policy-resp-dailyLimit
+    kind: direct
+    source_fields:
+    - dailyLimit
+    target_field: 单日限额
+    rule: 展示与协议文案引用
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-dailyLimit
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: policy-resp-agreementText
+    kind: direct
+    source_fields:
+    - agreementText
+    target_field: 协议文案
+    rule: 签约页展示（含会议 T5 的「单日最多充 200 元」由云侧文案带入）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-agreementText
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  errors:
+    items: 卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/errors
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  idempotency:
+    rule: 只读查询，天然幂等
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/idempotency/getAutoTopupPolicy
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  nfr:
+    requirements: &id001
+    - 金额一律以「分」为单位的整数
+    - createAutoTopupContract 失败或超时的协议号复用时限待卡云与支付对齐（会议 T6，见蓝图 gap agreement-retry）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/nfr
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+- contract_id: createAutoTopupContract
+  owner: WalletMain
+  needed_by: slice:ar90006-all
+  validation_mode: wire_mapping_closure
+  operation:
+    operation_id: createAutoTopupContract
+    direction: outbound
+    version: '1.0'
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/operations/createAutoTopupContract
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  request_dto:
+    dto_id: CreateAutoTopupContractRequest
+    fields:
+    - field_id: accountId
+      type: string
+      required: true
+      nullable: false
+      semantics: 去标识账号
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractRequest/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: cardId
+      type: string
+      required: true
+      nullable: false
+      semantics: 卡片标识
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractRequest/fields/1
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: agreementNo
+      type: string
+      required: true
+      nullable: false
+      semantics: 支付部件返回的协议号
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractRequest/fields/2
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: threshold
+      type: int
+      required: true
+      nullable: false
+      semantics: 触发门限
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractRequest/fields/3
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: amount
+      type: int
+      required: true
+      nullable: false
+      semantics: 单笔充值面额
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractRequest/fields/4
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractRequest
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  response_dto:
+    dto_id: CreateAutoTopupContractResponse
+    fields:
+    - field_id: contractNo
+      type: string
+      required: true
+      nullable: false
+      semantics: 签约号
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractResponse/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: existed
+      type: boolean
+      required: true
+      nullable: false
+      semantics: 是否为既有生效签约（true 时没有新建）
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractResponse/fields/1
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CreateAutoTopupContractResponse
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  mappings:
+  - mapping_id: create-req-account
+    kind: direct
+    source_fields:
+    - accountId
+    target_field: 钱包端账号标识
+    rule: 直取当前登录去标识账号
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/create-req-account
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: create-req-card
+    kind: direct
+    source_fields:
+    - cardId
+    target_field: 当前卡片标识
+    rule: 直取当前交通卡
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/create-req-card
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: create-req-agreementNo
+    kind: direct
+    source_fields:
+    - agreementNo
+    target_field: 免密协议号（仅透传，不持久化）
+    rule: 支付部件验证返回的协议号原样透传
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/create-req-agreementNo
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: create-req-threshold
+    kind: direct
+    source_fields:
+    - threshold
+    target_field: 触发门限
+    rule: 签约页所选门限（分）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/create-req-threshold
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: create-req-amount
+    kind: direct
+    source_fields:
+    - amount
+    target_field: 单笔面额
+    rule: 签约页所选面额（分）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/create-req-amount
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: create-resp-contractNo
+    kind: direct
+    source_fields:
+    - contractNo
+    target_field: wallet_auto_topup_contract.contractNo
+    rule: 缓存签约号，用于后续状态查询与解约
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/create-resp-contractNo
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: create-resp-existed
+    kind: direct
+    source_fields:
+    - existed
+    target_field: 转管理页判定
+    rule: existed=true 时入口与管理页分流，不重复建约
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/create-resp-existed
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  errors:
+    items: 卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/errors
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  idempotency:
+    rule: 创建签约以「卡片 + 生效状态」判重，已有生效签约返回既有 contractNo
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/idempotency/createAutoTopupContract
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  nfr:
+    requirements: *id001
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/nfr
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+- contract_id: getAutoTopupStatus
+  owner: WalletMain
+  needed_by: slice:ar90006-all
+  validation_mode: wire_mapping_closure
+  operation:
+    operation_id: getAutoTopupStatus
+    direction: outbound
+    version: '1.0'
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/operations/getAutoTopupStatus
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  request_dto:
+    dto_id: GetAutoTopupStatusRequest
+    fields:
+    - field_id: accountId
+      type: string
+      required: true
+      nullable: false
+      semantics: 去标识账号
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusRequest/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: cardId
+      type: string
+      required: true
+      nullable: false
+      semantics: 卡片标识
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusRequest/fields/1
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusRequest
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  response_dto:
+    dto_id: GetAutoTopupStatusResponse
+    fields:
+    - field_id: contractStatus
+      type: string
+      required: true
+      nullable: false
+      semantics: none / active / disabled
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: contractNo
+      type: string
+      required: true
+      nullable: true
+      semantics: 未签约时为空
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse/fields/1
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: threshold
+      type: int
+      required: true
+      nullable: true
+      semantics: 当前门限，未签约时为空
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse/fields/2
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: amount
+      type: int
+      required: true
+      nullable: true
+      semantics: 当前面额，未签约时为空
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse/fields/3
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: recentRecords
+      type: object[]
+      required: true
+      nullable: false
+      semantics: 最近记录，可为空列表；每项含 time、amount、result
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse/fields/4
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: consecutiveFailures
+      type: int
+      required: true
+      nullable: false
+      semantics: 连续扣款失败次数
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse/fields/5
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - field_id: disabledReason
+      type: string
+      required: true
+      nullable: true
+      semantics: 停用原因，未停用时为空
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse/fields/6
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/GetAutoTopupStatusResponse
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  mappings:
+  - mapping_id: status-req-account
+    kind: direct
+    source_fields:
+    - accountId
+    target_field: 钱包端账号标识
+    rule: 直取登录去标识账号
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-req-account
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-req-card
+    kind: direct
+    source_fields:
+    - cardId
+    target_field: 当前卡片标识
+    rule: 直取当前交通卡
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-req-card
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-resp-contractStatus
+    kind: direct
+    source_fields:
+    - contractStatus
+    target_field: 签约状态（none/active/disabled）
+    rule: 管理页顶部状态与入口分流依据
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-resp-contractStatus
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-resp-contractNo
+    kind: direct
+    source_fields:
+    - contractNo
+    target_field: wallet_auto_topup_contract.contractNo
+    rule: 状态查询回填缓存签约号（可为空）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-resp-contractNo
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-resp-threshold
+    kind: direct
+    source_fields:
+    - threshold
+    target_field: 当前门限
+    rule: 管理页展示（可为空）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-resp-threshold
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-resp-amount
+    kind: direct
+    source_fields:
+    - amount
+    target_field: 当前面额
+    rule: 管理页展示（可为空）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-resp-amount
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-resp-recentRecords
+    kind: direct
+    source_fields:
+    - recentRecords
+    target_field: 最近充值记录列表
+    rule: 管理页记录区（每项 time/amount/result），卡号按现有规则脱敏
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-resp-recentRecords
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-resp-consecutiveFailures
+    kind: direct
+    source_fields:
+    - consecutiveFailures
+    target_field: 连续失败次数
+    rule: 管理页展示
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-resp-consecutiveFailures
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: status-resp-disabledReason
+    kind: direct
+    source_fields:
+    - disabledReason
+    target_field: 停用原因
+    rule: 停用态横幅展示（可为空）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/status-resp-disabledReason
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  errors:
+    items: 卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/errors
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  idempotency:
+    rule: 只读查询，天然幂等
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/idempotency/getAutoTopupStatus
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  nfr:
+    requirements: *id001
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/nfr
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+- contract_id: cancelAutoTopupContract
+  owner: WalletMain
+  needed_by: slice:ar90006-all
+  validation_mode: wire_mapping_closure
+  operation:
+    operation_id: cancelAutoTopupContract
+    direction: outbound
+    version: '1.0'
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/operations/cancelAutoTopupContract
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  provenance:
+    source_kind: requirement_material
+    source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: frozen_file_observation
+  request_dto:
+    dto_id: CancelAutoTopupContractRequest
+    fields:
+    - field_id: contractNo
+      type: string
+      required: true
+      nullable: false
+      semantics: 签约号
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CancelAutoTopupContractRequest/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CancelAutoTopupContractRequest
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  response_dto:
+    dto_id: CancelAutoTopupContractResponse
+    fields:
+    - field_id: cancelled
+      type: boolean
+      required: true
+      nullable: false
+      semantics: 是否已解约
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CancelAutoTopupContractResponse/fields/0
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: frozen_file_observation
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/CancelAutoTopupContractResponse
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  mappings:
+  - mapping_id: cancel-req-contractNo
+    kind: direct
+    source_fields:
+    - contractNo
+    target_field: 签约号
+    rule: 从缓存或状态查询取得后透传
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/cancel-req-contractNo
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: cancel-resp-cancelled
+    kind: direct
+    source_fields:
+    - cancelled
+    target_field: 关闭结果
+    rule: 关闭成功后在管理页/详情页更新状态，清理缓存
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/cancel-resp-cancelled
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  errors:
+    items: 卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/errors
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  idempotency:
+    rule: 解约不回滚进行中的订单；重复解约幂等返回已解约结果
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/idempotency/cancelAutoTopupContract
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+  nfr:
+    requirements: *id001
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/nfr
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+- contract_id: updateAutoTopupContract
+  owner: WalletMain
+  needed_by: slice:ar90006-all
+  validation_mode: wire_mapping_closure
+  operation:
+    operation_id: updateAutoTopupContract
+    direction: outbound
+    version: '1.0'
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/operations/updateAutoTopupContract
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  provenance:
+    source_kind: meeting
+    source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    observed_at: '2026-10-03T14:12:00Z'
+    evidence_strength: authoritative
+    extraction_method: meeting_authority
+  request_dto:
+    dto_id: UpdateAutoTopupContractRequest
+    fields:
+    - field_id: contractNo
+      type: string
+      required: true
+      nullable: false
+      semantics: 签约号（会议 T1：原签约关系不断）
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/UpdateAutoTopupContractRequest/fields/0
+      provenance:
+        source_kind: meeting
+        source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: meeting_authority
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    - field_id: threshold
+      type: int
+      required: true
+      nullable: false
+      semantics: 触发门限（改动值）
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/UpdateAutoTopupContractRequest/fields/1
+      provenance:
+        source_kind: meeting
+        source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: meeting_authority
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    - field_id: amount
+      type: int
+      required: true
+      nullable: false
+      semantics: 单笔充值面额（改动值）
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/UpdateAutoTopupContractRequest/fields/2
+      provenance:
+        source_kind: meeting
+        source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: authoritative
+        extraction_method: meeting_authority
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/UpdateAutoTopupContractRequest
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  response_dto:
+    dto_id: UpdateAutoTopupContractResponse
+    fields:
+    - field_id: updated
+      type: boolean
+      required: true
+      nullable: false
+      semantics: 是否已更新（字段为待定占位，细节由卡云定稿；见蓝图 gap update-response）
+      source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/UpdateAutoTopupContractResponse/fields/0
+      provenance:
+        source_kind: meeting
+        source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: inferred
+        extraction_method: inferred_by_designer
+      verification_refs:
+      - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/dtos/UpdateAutoTopupContractResponse
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  mappings:
+  - mapping_id: update-req-contractNo
+    kind: direct
+    source_fields:
+    - contractNo
+    target_field: 签约号（原签约关系不断）
+    rule: 会议 T1：改门限/面额走 update 不重签
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/update-req-contractNo
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: meeting_authority
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: update-req-threshold
+    kind: direct
+    source_fields:
+    - threshold
+    target_field: 新门限
+    rule: 管理页改门限后的值（分）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/update-req-threshold
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: meeting_authority
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: update-req-amount
+    kind: direct
+    source_fields:
+    - amount
+    target_field: 新面额
+    rule: 管理页改面额后的值（分）；面额调高是否需重验待定（会议 T2）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/update-req-amount
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: meeting_authority
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  - mapping_id: update-resp-updated
+    kind: direct
+    source_fields:
+    - updated
+    target_field: 更新结果
+    rule: 更新成功后在管理页刷新状态；字段待卡云定稿（见蓝图 gap update-response）
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/update-resp-updated
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: meeting_authority
+    verification_refs:
+    - view:development/node:auto-topup-repository
+  errors:
+    items: 卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/errors
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  idempotency:
+    rule: 按 contractNo 更新门限面额，原签约关系不断；重复提交按目标值收敛
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/idempotency/updateAutoTopupContract
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+  nfr:
+    requirements: *id001
+    source_ref: doc/features/bp-AR90006/blueprint/contracts/se-interfaces.yaml#/nfr
+    verification_refs:
+    - doc/features/AR90006/AR/story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md
+providers:
+- provider_id: current-facts-discovery
+  definition: 读取需求材料、代码、架构与 catalog，建立当前事实
+  consumer: blueprint-author
+  provider: 静态内置
+  requirement: required
+  authority_rule: Code, schema, interface, config, and tests are current-state authority.
+  source_rule: Every assertion carries source_ref and source revision when available.
+  missing_behavior: 材料与代码均可得
+  replacement_behavior: 重扫材料与实现
+  exit_behavior: 保留 provenance 与引用
+  conflict_behavior: 保留双方来源与 owner，禁止 last-write-wins
+  available: true
+  writes:
+  - canonical_blueprint_input
+- provider_id: se-manual-contracts
+  definition: 消费 SE/授权 owner 的接口转写
+  consumer: blueprint-author
+  provider: 静态内置
+  requirement: required
+  authority_rule: Authorized SE or contract owner is external-contract authority.
+  source_rule: Every contract segment carries source_ref, verification ref, and provenance.
+  missing_behavior: 接口细节未定登记缺口
+  replacement_behavior: SE 定稿后重转写
+  exit_behavior: 保留契约 provenance
+  conflict_behavior: 按授权 owner 确认
+  available: true
+  writes:
+  - canonical_blueprint_input
+- provider_id: app-design-lens
+  definition: App 4+1 设计透镜十个根问题
+  consumer: blueprint-author
+  provider: 静态内置
+  requirement: required
+  authority_rule: Lens is not fact authority and cannot override inputs.
+  source_rule: Projection cites inputs, viewpoint contract, and lens rule version.
+  missing_behavior: 仅对可执行 App 适用
+  replacement_behavior: 无
+  exit_behavior: 无
+  conflict_behavior: 材料为准
+  available: true
+  writes:
+  - canonical_blueprint_input
+- provider_id: independent-design-questioning
+  definition: 隔离质询视图/关系/flow/根问题与适用惯例
+  consumer: blueprint-author（派审）
+  provider: 静态内置
+  requirement: required
+  authority_rule: Questioning is not fact or decision authority.
+  source_rule: Answers cite isolated blueprint, evidence package, and registered external inputs.
+  missing_behavior: 无隔离质询者时停在质询
+  replacement_behavior: 换质询者重新质询
+  exit_behavior: 保留质询记录
+  conflict_behavior: 设计负责方逐项处理
+  available: true
+  writes:
+  - canonical_blueprint_input
+- provider_id: conventions-knowledge
+  definition: 工程惯例（可选）
+  consumer: blueprint-author
+  provider: 静态内置
+  requirement: optional
+  authority_rule: Project conventions are stable knowledge input, not current-code authority.
+  source_rule: Applicable facts cite the configured conventions file and exact heading id.
+  missing_behavior: not_applicable（未配置 doc/conventions.md）
+  replacement_behavior: 启用惯例文件后重扫
+  exit_behavior: 无
+  conflict_behavior: 材料与代码为准
+  available: false
+  missing_disposition: not_applicable
+  writes: []
+- provider_id: component-assets
+  definition: 共享 UI 资产选型
+  consumer: blueprint-author
+  provider: 静态内置
+  requirement: optional
+  authority_rule: Source is component fact authority; curation is human selection guidance.
+  source_rule: Selection evidence cites the configured component index or catalog; component_ref identifies the asset.
+  missing_behavior: not_applicable（本仓无 component-index；页面为专题页不作共享资产选型）
+  replacement_behavior: 建立索引后同源重扫
+  exit_behavior: 保留 provenance
+  conflict_behavior: 源码优先并保留策展冲突
+  available: false
+  missing_disposition: not_applicable
+  writes:
+  - canonical_blueprint_input
+discovery:
+  source_fingerprint: sha256:19941e5561adfcaa4f6aa23369469e23eb2675d5359feec7c45091824669bd39
+  facts:
+  - fact_id: fact-component-profile
+    subject: component-profile
+    value:
+      name: 单框架钱包 / 纯鸿蒙钱包 / 钱包客户端 / WalletForHMOS
+      responsibility: 手机侧钱包应用；交通卡自动充值钱包端属于本部件
+      applicable: true
+      interaction_parties:
+      - 服务器接口
+      - 其他手机应用（支付验证拉起）
+      knowledge:
+        unit: 部件申明
+        form: facets
+        source_sha256: sha256:8558822c77b5d65445e905061d18601b85db8d2ca309bcbecfa37779d11b8ccf
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/facts/component-profile.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+  - fact_id: fact-engineering-perf
+    subject: engineering-capabilities
+    value:
+      storage: 数据由各模块 data/repository/*Repository.ets 提供
+      appstorage: 跨页共享内存状态用 AppStorage，键在所属模块 *Constants
+      nav: 业务页为 NavDestination 按名 pushPath；宿主 navDestinationMap 映射模块 index.ets 导出的 @Builder
+      mask: 脱敏用 CommFunc MaskUtil.maskPhone/maskAccount
+      logger: 用 CommFunc Logger
+      knowledge:
+        unit: 敏感数据处理
+        form: facets
+        source_sha256: sha256:5ceffaef57bb36b58a7a4ab41f8f63f05424480a6e3432a113e3be0d95f4b527
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/facts/engineering-capabilities.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+  - fact_id: fact-event-tracking
+    subject: event-tracking
+    value:
+      sk: 本需求在签约/管理两条流程落运维统计：成功/失败结果进 Chart，定位信息随描述；BI 无诉求
+      channel: Chart / VOC
+      knowledge:
+        unit: 上篇
+        form: halves
+        source_sha256: sha256:552f553ce1cb2e32adc9897075dcbc00eaf65e0d881e037bcbb14f75b705c176
+    provenance:
+      source_kind: knowledge
+      source_ref: doc/extensions/knowledge/facts/event-tracking.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+  - fact_id: fact-wallet-scope
+    subject: module-scope
+    value:
+      module: WalletMain
+      responsibility: 首页/我的/卡包/添卡 feature 页面、feature 内仓储与路由
+      relevant: true
+    provenance:
+      source_kind: catalog
+      source_ref: doc/module-catalog.yaml#WalletMain
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: read_and_apply
+  - fact_id: fact-auto-topup-boundary
+    subject: auto-topup-boundary
+    value:
+      verdict: 判定与扣款全部在服务端；端侧不存在发起自动充值接口；判定输入是服务端余额
+      source_authority: SR 与 AR 上游
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+  - fact_id: fact-meeting-decisions
+    subject: meeting-decisions
+    value:
+      update_interface: 新增 updateAutoTopupContract 改门限面额不走解约重签
+      ac_r1: 未实名用户可见入口、点进去被引导实名（修订 AC-R1）
+      switch: 功能开关只影响未签约用户入口，已签约持续显示
+      agreement_limit_text: 协议文案写明单日最多充 200 元
+    provenance:
+      source_kind: meeting
+      source_ref: doc/features/AR90006/AR/story-src/doc-refresh.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: meeting_authority
+  - fact_id: fact-cardcloud-multi-interface
+    subject: cardcloud-interface-set
+    value:
+      interfaces:
+      - getAutoTopupPolicy
+      - createAutoTopupContract
+      - getAutoTopupStatus
+      - cancelAutoTopupContract
+      - updateAutoTopupContract
+    provenance:
+      source_kind: requirement_material
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      observed_at: '2026-10-03T14:12:00Z'
+      evidence_strength: authoritative
+      extraction_method: frozen_file_observation
+  conflicts: []
+  inputs:
+    current_scope_items:
+    - item_id: scenario-detail-entry
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      source_sha256: sha256:e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-signup-page
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      source_sha256: sha256:e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-verify
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      source_sha256: sha256:d8a0e00cddf1ca0eff818f8cf8a1edb793a222a28d00877a61aac773b7db7fde
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-create-contract
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      source_sha256: sha256:d8a0e00cddf1ca0eff818f8cf8a1edb793a222a28d00877a61aac773b7db7fde
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-signup-success-display
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      source_sha256: sha256:e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-unauth-guide
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      source_sha256: sha256:e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-exit-resume
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      source_sha256: sha256:e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-manage-page
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      source_sha256: sha256:e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-update-contract
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md
+      source_sha256: sha256:e3c9a0c6933f8917fbf23da0d0e35d2efae1a3999153e0039bda7c98450e6537
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-cancel-contract
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+      source_sha256: sha256:d8a0e00cddf1ca0eff818f8cf8a1edb793a222a28d00877a61aac773b7db7fde
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-signed-reentry
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md
+      source_sha256: sha256:e3c9a0c6933f8917fbf23da0d0e35d2efae1a3999153e0039bda7c98450e6537
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-record-mask
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+      source_sha256: sha256:e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+    - item_id: scenario-agreement-text
+      kind: requirement
+      source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md
+      source_sha256: sha256:e3c9a0c6933f8917fbf23da0d0e35d2efae1a3999153e0039bda7c98450e6537
+      provenance:
+        source_kind: requirement_material
+        source_ref: doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md
+        observed_at: '2026-10-03T14:12:00Z'
+        evidence_strength: observed
+        extraction_method: frozen_file_observation
+  requirement_traceability:
+  - item_id: scenario-detail-entry
+    blueprint_refs:
+    - view:development/node:auto-topup-entry-builder
+  - item_id: scenario-signup-page
+    blueprint_refs:
+    - view:development/node:auto-topup-signup-page
+  - item_id: scenario-verify
+    blueprint_refs:
+    - view:runtime/flow:flow:auto-topup-signup-bind
+  - item_id: scenario-create-contract
+    blueprint_refs:
+    - contract:createAutoTopupContract
+  - item_id: scenario-signup-success-display
+    blueprint_refs:
+    - view:scenarios/node:scenario-signup-success
+  - item_id: scenario-unauth-guide
+    blueprint_refs:
+    - view:scenarios/node:scenario-unauth-guide
+  - item_id: scenario-exit-resume
+    blueprint_refs:
+    - view:scenarios/node:scenario-exit-resume
+  - item_id: scenario-manage-page
+    blueprint_refs:
+    - view:development/node:auto-topup-manage-page
+  - item_id: scenario-update-contract
+    blueprint_refs:
+    - contract:updateAutoTopupContract
+  - item_id: scenario-cancel-contract
+    blueprint_refs:
+    - contract:cancelAutoTopupContract
+  - item_id: scenario-signed-reentry
+    blueprint_refs:
+    - view:scenarios/node:scenario-signed-reentry
+  - item_id: scenario-record-mask
+    blueprint_refs:
+    - view:scenarios/node:scenario-record-mask
+  - item_id: scenario-agreement-text
+    blueprint_refs:
+    - contract:getAutoTopupPolicy
+app_lens:
+  module_boundaries:
+    disposition: answered_with_evidence
+    answer: 签约/管理链路只落在 WalletMain（入口 builder、签约页、管理页、仓储、缓存）；无跨模块新边界
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  capability_seams:
+    disposition: answered_with_evidence
+    answer: 免密验证拉起支付部件、实名结果取账号能力；策略/签约/状态/解约/更新走卡云接口，均为既有外部接缝
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  feature_flags:
+    disposition: answered_with_evidence
+    answer: 功能开关由运营下发，getAutoTopupPolicy 返回可签约性；开关只影响未签约入口显示
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  data_producers_consumers:
+    disposition: answered_with_evidence
+    answer: 生产者=卡云接口（策略/状态）；消费者=入口、签约页、管理页、详情页；缓存 wallet_auto_topup_contract 供免网展示
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  lifecycle_triggers:
+    disposition: answered_with_evidence
+    answer: 入口进入加载策略；管理页进入查状态；改档/关闭由用户动作触发
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  state_owners:
+    disposition: answered_with_evidence
+    answer: 签约关系状态 owner=wallet_auto_topup_contract（钱包端缓存），权威=卡云；按账号隔离
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  initialization:
+    disposition: answered_with_evidence
+    answer: 缓存键在退出登录时清除；入口显示在 aboutToAppear/页面装配时按策略与状态决定
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  publication_subscription:
+    disposition: answered_with_evidence
+    answer: 签约/改档/关闭的结果写入后驱动详情页与管理页展示（页面内局部状态），无全局订阅
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  ui_refresh:
+    disposition: answered_with_evidence
+    answer: 首帧用缓存免网展示，云侧查询返回后刷新；失败/取消保留选择不丢失当地状态
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  process_recovery:
+    disposition: answered_with_evidence
+    answer: 进程重建后缓存仍按账号本地存在，缺失以云侧查询为准
+    evidence_refs:
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md
+  runtime_flow_trigger_assessment:
+    persistent_or_remote_ui:
+      applies: true
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    multiple_consumers:
+      applies: true
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    background_system_external_scheduled_write:
+      applies: false
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    cold_start_resume_mount_account_switch:
+      applies: true
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    user_mutation_refreshes_other_consumers:
+      applies: true
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+    cache_sync_freshness_consistency_process_recreation:
+      applies: true
+      evidence_refs:
+      - doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
+derived_results: []
+story_details:
+- id: detail-auto-topup-config
+  kind: configuration
+  title: 自动充值配置项
+  body: '| 配置项 | 取值与来源 | 影响 |
+
+    |---|---|---|
+
+    | 自动充值功能开关 | 运营管理台下发；配置不可用按关闭处理 | 只管新签约：关闭后未签约用户看不到入口，已签约用户入口不隐藏、自动充值照常 |
+
+    | 门限档位、面额档位 | getAutoTopupPolicy 返回，运营下发；现行值 5 / 10 / 20 / 30 元与 20 / 50 / 100 元 | 签约页的单选项 |
+
+    | 单日充值上限 | getAutoTopupPolicy 返回 dailyLimit，本期 200 元 | 协议文案写明单日上限；达到上限当日不再触发、不计入连续失败 |
+
+    '
+  evidence_refs:
+  - contract:getAutoTopupPolicy
+  - view:development/node:auto-topup-entry-builder
+- id: detail-auto-topup-events
+  kind: event
+  title: 签约与管理运维统计点
+  body: '| 统计点 | 触发时机 | 携带字段 | 结果分类 |
+
+    |---|---|---|---|
+
+    | 策略加载 | 进入签约时 getAutoTopupPolicy 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+
+    | 创建签约 | createAutoTopupContract 返回或超时后 | 去标识账号、卡片类型、阶段、失败原因分类 | 成功 / 明确失败 / 结果未知 |
+
+    | 状态查询 | getAutoTopupStatus 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+
+    | 改档 | updateAutoTopupContract 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+
+    | 解约 | cancelAutoTopupContract 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+
+
+    事件不带卡号、金额明细与支付参数，上报失败不改变业务结果；事件号、内码与分类由施工单位的 Plan 按项目埋点协议登记。
+
+    '
+  evidence_refs:
+  - view:runtime/flow:flow:auto-topup-signup-bind
+  - view:runtime/flow:flow:auto-topup-status-manage

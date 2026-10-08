@@ -436,6 +436,27 @@ class TheDesignAttachmentIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDe
         self.assertEqual(0, self.register().returncode)
         self.assertEqual(0, self.check("--deliver").returncode)
 
+    def reading(self) -> str:
+        """现在这份材料的审查任务里「怎么读」一节。"""
+        module = DEV_EXT / "hooks/shared/reader-review-task.mjs"
+        r = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]); process.stdout.write(m.readerReviewTask(process.argv[2], 'REQ-DEMO'));",
+             module.resolve().as_uri(), str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        return r.stdout.split("### 怎么读", 1)[1].split("\n### ", 1)[0]
+
+    def test_the_identical_projection_is_read_once(self) -> None:
+        """附件与原生投影同字节：读法写明两处是同一份、完整读附件一次；字节不同就两处都读。"""
+        self.assertEqual(0, self.review("prepare").returncode)
+        projection = self.projection().relative_to(self.root).as_posix()
+        self.assertIn(f"`{projection}` 字节相同，完整读设计附件一次即可", self.reading())
+        self.attachment().write_bytes(self.attachment().read_bytes() + "手加的一行。\n".encode("utf-8"))
+        reading = self.reading()
+        self.assertIn("蓝图与它的原生评审投影", reading)
+        self.assertNotIn("字节相同", reading)
+
     def test_a_hand_edit_is_kept_and_stops_the_prepare(self) -> None:
         self.assertEqual(0, self.review("prepare").returncode)
         edited = self.attachment().read_bytes() + "手加的一行。\n".encode("utf-8")
@@ -866,6 +887,16 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
                        "写明未验证与影响"):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
         self.assertNotIn("acceptance.yaml", method, "Story 判据还指着 Spec 的验收文件")
+
+    def test_consistency_is_judged_on_two_layers(self) -> None:
+        """原始决定对设计、设计对人读件各核一层：人读件忠实复述了与原始决定相反的蓝图主张，仍是阻断。"""
+        method = self.overlay_method()
+        for needle in ("一致性分两层核", "原始决定（材料原文、会议原话、人的裁决、评审回稿）与蓝图的设计是否一致",
+                       "蓝图的设计与人读件", "仍是阻断发现，修正责任写回蓝图负责方",
+                       "结果未知", "脱敏值", "云侧的业务状态", "实际接入者"):
+            self.assertIn(needle, method)
+        task = self.inject()
+        self.assertEqual(1, task.count("一致性分两层核"), "判据原文在任务里装配了不止一次")
 
     def test_the_task_does_not_mention_a_publisher(self) -> None:
         """报告由调用方原样写出，没有钩子代它发布——任务书里不该还有那一环。"""

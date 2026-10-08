@@ -1,0 +1,252 @@
+# SE 车云开放接口 2.1 转写（钱包端视角）—— 车钥匙分享
+# 依据：doc/features/ISSUE-206/SR/design.md §4（冻结输入 SR/design.md）
+# 本文件是蓝图 contracts 的权威来源：各段经 JSON Pointer 被蓝图逐段比对。
+operations:
+  queryKeySharingQuota:
+    operation_id: queryKeySharingQuota
+    direction: client-to-server
+    version: "2.1"
+  queryGranteePermission:
+    operation_id: queryGranteePermission
+    direction: client-to-server
+    version: "2.1"
+  createKeySharing:
+    operation_id: createKeySharing
+    direction: client-to-server
+    version: "2.1"
+  acceptKeySharing:
+    operation_id: acceptKeySharing
+    direction: client-to-server
+    version: "2.1"
+  revokeKeySharing:
+    operation_id: revokeKeySharing
+    direction: client-to-server
+    version: "2.1"
+  queryKeySharingList:
+    operation_id: queryKeySharingList
+    direction: client-to-server
+    version: "2.1"
+
+dtos:
+  QueryKeySharingQuotaRequest:
+    dto_id: QueryKeySharingQuotaRequest
+    fields:
+      - field_id: vehicleId
+        type: string
+        required: true
+        nullable: false
+        semantics: 车辆标识
+  QueryKeySharingQuotaResponse:
+    dto_id: QueryKeySharingQuotaResponse
+    fields:
+      - field_id: canShare
+        type: boolean
+        required: true
+        nullable: false
+        semantics: 是否还能发起分享
+      - field_id: remaining
+        type: integer
+        required: true
+        nullable: false
+        semantics: 剩余可分享数
+      - field_id: reason
+        type: string
+        required: false
+        nullable: true
+        semantics: 满额时的可读原因，可为空
+      - field_id: shares
+        type: list
+        required: true
+        nullable: false
+        semantics: 现有分享清单摘要；每项含 shareId（字符串）与 status（字符串）
+  QueryGranteePermissionRequest:
+    dto_id: QueryGranteePermissionRequest
+    fields:
+      - field_id: vehicleId
+        type: string
+        required: true
+        nullable: false
+        semantics: 车辆标识
+      - field_id: granteeId
+        type: string
+        required: true
+        nullable: false
+        semantics: 对方账号标识
+  QueryGranteePermissionResponse:
+    dto_id: QueryGranteePermissionResponse
+    fields:
+      - field_id: shareable
+        type: boolean
+        required: true
+        nullable: false
+        semantics: 对象是否可分享
+      - field_id: permissionLevels
+        type: list
+        required: true
+        nullable: false
+        semantics: 可用权限档位列表；不可分享时为空列表
+      - field_id: reason
+        type: string
+        required: false
+        nullable: true
+        semantics: 不可分享原因，可为空
+  CreateKeySharingRequest:
+    dto_id: CreateKeySharingRequest
+    fields:
+      - field_id: vehicleId
+        type: string
+        required: true
+        nullable: false
+        semantics: 车辆标识
+      - field_id: granteeId
+        type: string
+        required: true
+        nullable: false
+        semantics: 对方账号标识
+      - field_id: permissionLevel
+        type: string
+        required: true
+        nullable: false
+        semantics: 权限档位
+      - field_id: validUntil
+        type: datetime
+        required: true
+        nullable: false
+        semantics: 有效期（ISO 8601 时间）
+      - field_id: idempotencyKey
+        type: string
+        required: true
+        nullable: false
+        semantics: 幂等标识
+  CreateKeySharingResponse:
+    dto_id: CreateKeySharingResponse
+    fields:
+      - field_id: shareId
+        type: string
+        required: true
+        nullable: false
+        semantics: 分享标识
+      - field_id: status
+        type: string
+        required: true
+        nullable: false
+        semantics: 固定为 pending
+  AcceptKeySharingRequest:
+    dto_id: AcceptKeySharingRequest
+    fields:
+      - field_id: shareId
+        type: string
+        required: true
+        nullable: false
+        semantics: 分享标识
+  AcceptKeySharingResponse:
+    dto_id: AcceptKeySharingResponse
+    fields:
+      - field_id: credentialStatus
+        type: string
+        required: true
+        nullable: false
+        semantics: issued / failed
+      - field_id: status
+        type: string
+        required: true
+        nullable: false
+        semantics: active / pending
+  RevokeKeySharingRequest:
+    dto_id: RevokeKeySharingRequest
+    fields:
+      - field_id: shareId
+        type: string
+        required: true
+        nullable: false
+        semantics: 分享标识
+  RevokeKeySharingResponse:
+    dto_id: RevokeKeySharingResponse
+    fields:
+      - field_id: status
+        type: string
+        required: true
+        nullable: false
+        semantics: revoked / revoking
+      - field_id: graceHours
+        type: integer
+        required: false
+        nullable: true
+        semantics: revoking 时为 48
+  QueryKeySharingListRequest:
+    dto_id: QueryKeySharingListRequest
+    fields:
+      - field_id: vehicleId
+        type: string
+        required: true
+        nullable: false
+        semantics: 车辆标识
+  QueryKeySharingListResponse:
+    dto_id: QueryKeySharingListResponse
+    fields:
+      - field_id: items
+        type: list
+        required: true
+        nullable: false
+        semantics: 每条分享的状态、权限、有效期与对方脱敏标识
+
+errors:
+  queryKeySharingQuota:
+    items:
+      car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+  queryGranteePermission:
+    items:
+      car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+  createKeySharing:
+    items:
+      car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+  acceptKeySharing:
+    items:
+      car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+  revokeKeySharing:
+    items:
+      car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+  queryKeySharingList:
+    items:
+      car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+
+idempotency:
+  queryKeySharingQuota:
+    rule: 查询接口无写副作用，重复调用幂等；进页时调用
+  queryGranteePermission:
+    rule: 查询接口无写副作用，重复调用幂等；换对象重查以最近一次结果为准
+  createKeySharing:
+    rule: 同一幂等标识重复请求返回同一条分享，不重复建立；车厂云签发失败时本接口失败且不留关系
+  acceptKeySharing:
+    rule: 凭据下发失败保持待接受，可重试；重试不产生新分享
+  revokeKeySharing:
+    rule: 撤销以首次结果为准，重复请求返回当前状态；车辆侧自撤销发起即拒绝
+  queryKeySharingList:
+    rule: 查询接口无写副作用，每次进页拉取
+
+nfr:
+  queryKeySharingQuota:
+    requirements:
+      freshness: 每次进页拉取，不落地缓存
+      retry: 接口失败提示可重试
+  queryGranteePermission:
+    requirements:
+      freshness: 选定对象后调用，换对象重查
+      retry: 接口失败提示可重试
+  createKeySharing:
+    requirements:
+      idempotency: idempotencyKey 全程保持
+      atomic: 车厂云签发失败即回滚，不留半生效状态
+      retry: 失败提示可重试
+  acceptKeySharing:
+    requirements:
+      retry: 凭据下发失败保持待接受，可重试
+      atomic: 不改变分享关系
+  revokeKeySharing:
+    requirements:
+      atomic: 车辆侧拒绝自撤销发起即生效
+      timing: 对方离线宽限窗 48 小时
+  queryKeySharingList:
+    requirements:
+      freshness: 每次进页拉取，不落地缓存
+      retry: 断网给网络失败态

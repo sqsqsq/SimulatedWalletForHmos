@@ -58,6 +58,8 @@
 - 准入之后由设计职责按原生 renderer 生成评审投影 `component-blueprint.review.md`。
 
 蓝图没准入或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。只查看、重入或改表达不产生新的设计 revision。
+单独核蓝图状态用 `node doc/extensions/hooks/shared/framework-access.mjs --project-root <根> --action blueprint --blueprint <蓝图> --purpose delivery --snapshot <冻结快照> --summary`：
+同一次完整读取与校验，返回准入、引用、问题、投影与消费结果，不带蓝图正文；设计内容读 canonical 蓝图或评审投影。
 
 ## 四、成文
 
@@ -86,7 +88,7 @@
    |---|---|
    | pass | 登记，交付 |
    | warn（只有 MINOR / INFO 建议） | 登记，带建议交付，不因建议反复重审 |
-   | fail（有 BLOCKER / MAJOR 发现） | 按发现牵涉的业务决定修：决定来源（材料、人签、决策登记）→ 蓝图里承接它的设计对象 → Story、Review 与验收，凡写着这项决定的地方一并改到同一结论；只是表达问题的改章草稿。改完重新 prepare，按新载体交独立审查者完整复核 |
+   | fail（有 BLOCKER / MAJOR 发现） | 按发现牵涉的业务决定修：决定来源（材料、人签、决策登记）→ 蓝图里承接它的设计对象（由设计职责修订、重新准入）→ Story、Review 与验收，凡写着这项决定的地方一并改到同一结论；只是表达问题的改章草稿。改完重新 prepare，按新载体交独立审查者完整复核 |
    | report_missing | 按派审载体派审 |
    | report_invalid | 原回复留在原处；重新 prepare，新载体带着原回复与诊断，原样交独立审查者重给一份 |
    | subject_stale | 准备之后被审材料变了：重新 prepare，按新载体再派审 |

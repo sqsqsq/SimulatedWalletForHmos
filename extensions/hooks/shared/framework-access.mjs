@@ -8,6 +8,7 @@
  * 命令行只读取、不写盘：
  *   node framework-access.mjs --project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery
  *        [--snapshot <冻结快照的项目相对路径>]（给了就核蓝图消费了这次交给设计的条目）
+ *        [--summary]（只核状态：同一读取与校验，输出省掉蓝图正文 blueprint，其余字段照旧）
  *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id> --phase <阶段>
  *        [--requirement-file <文件> | --requirement <原文>]（无 run 的 spec 恢复不出需求来源时给）
  *   node framework-access.mjs --project-root <根> --action binding --component <组件 id> --blueprint <蓝图 id>
@@ -441,7 +442,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const root = opt('--project-root');
   const action = opt('--action');
   try {
-    const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery [--snapshot <快照>]'
+    const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery [--snapshot <快照>] [--summary]'
       + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
       + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）'
       + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）'
@@ -451,6 +452,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (action === 'feedback-related' && !opt('--ref')) throw new Error(usage);
     if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
     if (action === 'feature' && (!opt('--feature') || !opt('--phase'))) throw new Error(usage);
+    const summary = argv.includes('--summary');
+    if (summary && action !== 'blueprint') throw new Error(usage);
     if (action === 'binding' && (!opt('--component') || !opt('--blueprint'))) throw new Error(usage);
     let doc;
     if (['sources', 'feedback', 'feedback-related'].includes(action)) {
@@ -466,7 +469,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
           : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)
             : action === 'feedback-related' ? feedbackRelated(root, opt('--blueprint'), opt('--ref'), doc)
           : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });
-    process.stdout.write(`${JSON.stringify(out, null, 1)}\n`);
+    const { blueprint, ...status } = out;
+    process.stdout.write(`${JSON.stringify(summary ? status : out, null, 1)}\n`);
     process.exitCode = out.status === 'ok' ? 0 : 1;
   } catch (e) {
     process.stderr.write(`[framework-access] ${e?.message ?? e}\n`);

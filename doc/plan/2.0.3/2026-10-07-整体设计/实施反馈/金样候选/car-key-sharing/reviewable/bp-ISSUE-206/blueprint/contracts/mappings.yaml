@@ -1,0 +1,153 @@
+# 车钥匙分享 · 钱包端对车云开放接口 2.1 的字段映射（本部件设计决定）
+# wire 字段落在钱包端模型的位置与换算；用不到的 wire 字段写 kind: drop。
+mappings:
+  quota-vehicleId:
+    mapping_id: quota-vehicleId
+    kind: direct
+    source_fields: [vehicleId]
+    target_field: KeySharingQuotaQuery.vehicleId
+    rule: 透传车辆标识
+  quota-canShare:
+    mapping_id: quota-canShare
+    kind: direct
+    source_fields: [canShare]
+    target_field: KeySharingQuotaView.canShare
+    rule: 透传
+  quota-remaining:
+    mapping_id: quota-remaining
+    kind: direct
+    source_fields: [remaining]
+    target_field: KeySharingQuotaView.remaining
+    rule: 透传
+  quota-reason:
+    mapping_id: quota-reason
+    kind: direct
+    source_fields: [reason]
+    target_field: KeySharingQuotaView.reason
+    rule: 透传，可为空
+  quota-shares:
+    mapping_id: quota-shares
+    kind: direct
+    source_fields: [shares]
+    target_field: KeySharingQuotaView.shares
+    rule: 摘要列表原样承接（shareId/status 透传）
+  permission-vehicleId:
+    mapping_id: permission-vehicleId
+    kind: direct
+    source_fields: [vehicleId]
+    target_field: GrantPermissionQuery.vehicleId
+    rule: 透传
+  permission-granteeId:
+    mapping_id: permission-granteeId
+    kind: direct
+    source_fields: [granteeId]
+    target_field: GrantPermissionQuery.granteeId
+    rule: 透传
+  permission-shareable:
+    mapping_id: permission-shareable
+    kind: direct
+    source_fields: [shareable]
+    target_field: GrantPermissionView.shareable
+    rule: 透传
+  permission-levels:
+    mapping_id: permission-levels
+    kind: direct
+    source_fields: [permissionLevels]
+    target_field: GrantPermissionView.permissionLevels
+    rule: 档位列表原样承接
+  permission-reason:
+    mapping_id: permission-reason
+    kind: direct
+    source_fields: [reason]
+    target_field: GrantPermissionView.reason
+    rule: 透传，可为空
+  create-vehicleId:
+    mapping_id: create-vehicleId
+    kind: direct
+    source_fields: [vehicleId]
+    target_field: ShareDraft.vehicleId
+    rule: 草稿记录车辆标识
+  create-granteeId:
+    mapping_id: create-granteeId
+    kind: direct
+    source_fields: [granteeId]
+    target_field: ShareDraft.granteeId
+    rule: 草稿记录对方账号
+  create-permissionLevel:
+    mapping_id: create-permissionLevel
+    kind: direct
+    source_fields: [permissionLevel]
+    target_field: ShareDraft.permissionLevel
+    rule: 草稿记录权限档位
+  create-validUntil:
+    mapping_id: create-validUntil
+    kind: direct
+    source_fields: [validUntil]
+    target_field: ShareDraft.validUntil
+    rule: 草稿记录有效期
+  create-idempotencyKey:
+    mapping_id: create-idempotencyKey
+    kind: direct
+    source_fields: [idempotencyKey]
+    target_field: ShareDraft.idempotencyKey
+    rule: 草稿记录幂等标识，续办沿用，成功即清
+  create-shareId:
+    mapping_id: create-shareId
+    kind: direct
+    source_fields: [shareId]
+    target_field: ShareCreated.shareId
+    rule: 透传
+  create-status:
+    mapping_id: create-status
+    kind: direct
+    source_fields: [status]
+    target_field: ShareCreated.status
+    rule: 透传（期望 pending）
+  accept-shareId:
+    mapping_id: accept-shareId
+    kind: direct
+    source_fields: [shareId]
+    target_field: AcceptShareQuery.shareId
+    rule: 透传
+  accept-credentialStatus:
+    mapping_id: accept-credentialStatus
+    kind: direct
+    source_fields: [credentialStatus]
+    target_field: AcceptShareResult.credentialStatus
+    rule: 透传（issued/failed）
+  accept-status:
+    mapping_id: accept-status
+    kind: direct
+    source_fields: [status]
+    target_field: AcceptShareResult.status
+    rule: 透传（active/pending）
+  revoke-shareId:
+    mapping_id: revoke-shareId
+    kind: direct
+    source_fields: [shareId]
+    target_field: RevokeShareQuery.shareId
+    rule: 透传
+  revoke-status:
+    mapping_id: revoke-status
+    kind: direct
+    source_fields: [status]
+    target_field: RevokeShareResult.status
+    rule: 透传（revoked/revoking）
+  revoke-graceHours:
+    mapping_id: revoke-graceHours
+    kind: direct
+    source_fields: [graceHours]
+    target_field: RevokeShareResult.graceHours
+    rule: 透传，可为空；revoking 时为 48
+  list-vehicleId:
+    mapping_id: list-vehicleId
+    kind: direct
+    source_fields: [vehicleId]
+    target_field: ShareListQuery.vehicleId
+    rule: 透传
+  list-items:
+    mapping_id: list-items
+    kind: direct
+    source_fields: [items]
+    target_field: ShareListView.items
+    rule: 列表原样承接（shareId/status/permissionLevel/validUntil/granteeMasked）

@@ -1,0 +1,183 @@
+# 端云接口 → 钱包端字段映射（AR90006）
+# 每个 wire 字段落到钱包端哪个字段、怎么换算，是钱包端的设计决定；用不到的字段写 drop。
+mappings:
+  policy-req-account:
+    mapping_id: policy-req-account
+    kind: direct
+    source_fields: [accountId]
+    target_field: 钱包端账号标识（来自登录态）
+    rule: 直取当前登录的去标识账号
+  policy-req-card:
+    mapping_id: policy-req-card
+    kind: direct
+    source_fields: [cardId]
+    target_field: 当前详情页卡片标识
+    rule: 直取当前交通卡卡片标识
+  policy-resp-signable:
+    mapping_id: policy-resp-signable
+    kind: direct
+    source_fields: [signable]
+    target_field: 可签约性状态
+    rule: 控制入口显示与可点
+  policy-resp-unsignableReason:
+    mapping_id: policy-resp-unsignableReason
+    kind: direct
+    source_fields: [unsignableReason]
+    target_field: 不可签约原因
+    rule: 用于实名引导提示文案
+  policy-resp-thresholdOptions:
+    mapping_id: policy-resp-thresholdOptions
+    kind: direct
+    source_fields: [thresholdOptions]
+    target_field: 门限档位列表
+    rule: 签约页单选数据源
+  policy-resp-amountOptions:
+    mapping_id: policy-resp-amountOptions
+    kind: direct
+    source_fields: [amountOptions]
+    target_field: 面额档位列表
+    rule: 签约页单选数据源
+  policy-resp-dailyLimit:
+    mapping_id: policy-resp-dailyLimit
+    kind: direct
+    source_fields: [dailyLimit]
+    target_field: 单日限额
+    rule: 展示与协议文案引用
+  policy-resp-agreementText:
+    mapping_id: policy-resp-agreementText
+    kind: direct
+    source_fields: [agreementText]
+    target_field: 协议文案
+    rule: 签约页展示（含会议 T5 的「单日最多充 200 元」由云侧文案带入）
+  create-req-account:
+    mapping_id: create-req-account
+    kind: direct
+    source_fields: [accountId]
+    target_field: 钱包端账号标识
+    rule: 直取当前登录去标识账号
+  create-req-card:
+    mapping_id: create-req-card
+    kind: direct
+    source_fields: [cardId]
+    target_field: 当前卡片标识
+    rule: 直取当前交通卡
+  create-req-agreementNo:
+    mapping_id: create-req-agreementNo
+    kind: direct
+    source_fields: [agreementNo]
+    target_field: 免密协议号（仅透传，不持久化）
+    rule: 支付部件验证返回的协议号原样透传
+  create-req-threshold:
+    mapping_id: create-req-threshold
+    kind: direct
+    source_fields: [threshold]
+    target_field: 触发门限
+    rule: 签约页所选门限（分）
+  create-req-amount:
+    mapping_id: create-req-amount
+    kind: direct
+    source_fields: [amount]
+    target_field: 单笔面额
+    rule: 签约页所选面额（分）
+  create-resp-contractNo:
+    mapping_id: create-resp-contractNo
+    kind: direct
+    source_fields: [contractNo]
+    target_field: wallet_auto_topup_contract.contractNo
+    rule: 缓存签约号，用于后续状态查询与解约
+  create-resp-existed:
+    mapping_id: create-resp-existed
+    kind: direct
+    source_fields: [existed]
+    target_field: 转管理页判定
+    rule: existed=true 时入口与管理页分流，不重复建约
+  status-req-account:
+    mapping_id: status-req-account
+    kind: direct
+    source_fields: [accountId]
+    target_field: 钱包端账号标识
+    rule: 直取登录去标识账号
+  status-req-card:
+    mapping_id: status-req-card
+    kind: direct
+    source_fields: [cardId]
+    target_field: 当前卡片标识
+    rule: 直取当前交通卡
+  status-resp-contractStatus:
+    mapping_id: status-resp-contractStatus
+    kind: direct
+    source_fields: [contractStatus]
+    target_field: 签约状态（none/active/disabled）
+    rule: 管理页顶部状态与入口分流依据
+  status-resp-contractNo:
+    mapping_id: status-resp-contractNo
+    kind: direct
+    source_fields: [contractNo]
+    target_field: wallet_auto_topup_contract.contractNo
+    rule: 状态查询回填缓存签约号（可为空）
+  status-resp-threshold:
+    mapping_id: status-resp-threshold
+    kind: direct
+    source_fields: [threshold]
+    target_field: 当前门限
+    rule: 管理页展示（可为空）
+  status-resp-amount:
+    mapping_id: status-resp-amount
+    kind: direct
+    source_fields: [amount]
+    target_field: 当前面额
+    rule: 管理页展示（可为空）
+  status-resp-recentRecords:
+    mapping_id: status-resp-recentRecords
+    kind: direct
+    source_fields: [recentRecords]
+    target_field: 最近充值记录列表
+    rule: 管理页记录区（每项 time/amount/result），卡号按现有规则脱敏
+  status-resp-consecutiveFailures:
+    mapping_id: status-resp-consecutiveFailures
+    kind: direct
+    source_fields: [consecutiveFailures]
+    target_field: 连续失败次数
+    rule: 管理页展示
+  status-resp-disabledReason:
+    mapping_id: status-resp-disabledReason
+    kind: direct
+    source_fields: [disabledReason]
+    target_field: 停用原因
+    rule: 停用态横幅展示（可为空）
+  cancel-req-contractNo:
+    mapping_id: cancel-req-contractNo
+    kind: direct
+    source_fields: [contractNo]
+    target_field: 签约号
+    rule: 从缓存或状态查询取得后透传
+  cancel-resp-cancelled:
+    mapping_id: cancel-resp-cancelled
+    kind: direct
+    source_fields: [cancelled]
+    target_field: 关闭结果
+    rule: 关闭成功后在管理页/详情页更新状态，清理缓存
+  update-req-contractNo:
+    mapping_id: update-req-contractNo
+    kind: direct
+    source_fields: [contractNo]
+    target_field: 签约号（原签约关系不断）
+    rule: 会议 T1：改门限/面额走 update 不重签
+  update-req-threshold:
+    mapping_id: update-req-threshold
+    kind: direct
+    source_fields: [threshold]
+    target_field: 新门限
+    rule: 管理页改门限后的值（分）
+  update-req-amount:
+    mapping_id: update-req-amount
+    kind: direct
+    source_fields: [amount]
+    target_field: 新面额
+    rule: 管理页改面额后的值（分）；面额调高是否需重验待定（会议 T2）
+  update-resp-updated:
+    mapping_id: update-resp-updated
+    kind: direct
+    source_fields: [updated]
+    target_field: 更新结果
+    rule: 更新成功后在管理页刷新状态；字段待卡云定稿（见蓝图 gap update-response）

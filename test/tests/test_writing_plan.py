@@ -565,8 +565,11 @@ class TheExpressionScaffolding(PlanCase):
     def test_the_shell_asks_three_questions_and_spares_the_appendix(self) -> None:
         code, out = self.cmd("skeleton")
         shell = self.plan.read_text(encoding="utf-8")
-        self.assertIn("读者是谁、读完要做什么决定；哪几件事最容易误解", shell)
-        self.assertIn("读完这一章读者要能回答什么；哪个关系必须用图、图后要讲哪几条判断", shell)
+        self.assertIn("读者是谁、读完要做什么决定；按责任边界 → 整体协作与关键取舍 → 状态与分支 → 验收与待决", shell)
+        # 每章的读者目标取自章节合同，合同改了问题，空壳跟着变
+        contract = json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))
+        scope = next(ch for ch in contract["chapters"] if ch["id"] == "03-scope")
+        self.assertIn(f"读完这一章读者要能回答：{'；'.join(scope['questions'])}。哪个关系必须用图", shell)
         self.assertIn("- 附录的接口、数据、规约与材料取舍由你写", shell)
         self.assertIn("没有就不写", shell, "待核只在有时写")
 

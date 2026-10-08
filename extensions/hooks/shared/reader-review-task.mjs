@@ -107,7 +107,9 @@ function decisionRows(decisionsPath) {
 function settledDetail(settled) {
   const out = ['', '### 登记成已定的那几条：结论是谁给的', '',
     '逐条回材料、会议原话与评审记录核：这个结论有没有人真的表过态。'
-    + '`decider` 有名字只说明该谁定；依据要指得到那个人表态的位置，转述与计划都不是表态。'];
+    + '要人表态才成立的事（业务口径、对外承诺、处置标「（评审动作）」的规约条目）指不出表态位置就是伪定案，它本该是 `open`。'
+    + '`decider` 有名字只说明该谁定；依据要指得到那个人表态的位置，转述、计划与作者自己的推荐都不是表态。'
+    + '判的是来源不是形态：`settled + confirm`（已有结论请人复核）是正常形态，评审记录里人工区空着也不证明无人表态。'];
   if (!settled.length) {
     out.push('', '本轮没有登记成已定的条目。');
     return out;
@@ -223,8 +225,7 @@ export function readerCheckIds() {
 }
 
 /** 这一次审查对象的全部材料：待审的与只读对照的分列；任务自己不列（它就是这份）。 */
-function objectRows(projectRoot, feature, contract) {
-  const { rows, problems } = reviewObject(projectRoot, feature, { withTask: false });
+function objectRows(projectRoot, feature, contract, { rows, problems }) {
   const { blocking } = sourceStatus({ contract, featureRoot: featureRoot(projectRoot, feature) });
   const line = r => `- \`${r.path}\` —— ${r.label}`;
   return ['', '### 本次审查的材料（材料键按它们的原始字节算）', '',
@@ -234,10 +235,24 @@ function objectRows(projectRoot, feature, contract) {
     ...blocking.map(m => `- **读不到 \`${m.rel}\`**——它是必备来源；与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
 }
 
-/** 读法：先来源与设计，再通读待审的三件。 */
-const READING = ['', '### 怎么读', '',
-  '1. 先读来源与人签（冻结输入里的原件、会议原文与人的裁决、决策登记），再读整体设计（蓝图与它的原生评审投影），'
-  + '然后通读待审的 Story、Review 与设计附件；写作设计是作者的安排，作参考。',
+/** 设计附件与蓝图的原生评审投影字节相同时给出两者路径：同一份内容在两个位置。 */
+function sharedProjection(projectRoot, rows) {
+  const attachment = rows.find(r => r.role === 'object' && r.path.endsWith('/AR/design-review.md'))?.path;
+  const projection = rows.find(r => r.role === 'source' && r.path.endsWith('/component-blueprint.review.md'))?.path;
+  const bytes = p => { try { return fs.readFileSync(path.join(projectRoot, ...p.split('/'))); } catch { return null; } };
+  const a = attachment && bytes(attachment);
+  const b = projection && bytes(projection);
+  return a && b && a.equals(b) ? { attachment, projection } : null;
+}
+
+/** 读法：先来源与设计，再通读待审的三件；附件与投影同字节时只读附件一次。 */
+const reading = shared => ['', '### 怎么读', '',
+  '1. 先读来源与人签（冻结输入里的原件、会议原文与人的裁决、决策登记），'
+  + (shared
+    ? '再读整体设计（蓝图），然后通读待审的 Story、Review 与设计附件；'
+      + `设计附件 \`${shared.attachment}\` 与蓝图的原生评审投影 \`${shared.projection}\` 字节相同，完整读设计附件一次即可。`
+    : '再读整体设计（蓝图与它的原生评审投影），然后通读待审的 Story、Review 与设计附件。')
+  + '写作设计是作者的安排，作参考。',
   '2. 冻结输入里的提取稿是派生分析：回查上游看原件。',
   '3. 一份文件一次读不完时按范围接着读到末尾；读不到的按「报告怎么写」第 5 条处理。',
   '4. 发现整体业务矛盾时追到它的权威对象（决定、蓝图、来源），按它对这次交付的影响定严重程度。'];
@@ -252,6 +267,7 @@ export function readerReviewTask(projectRoot, feature) {
   const contract = contractOf();
   const root = featureRoot(projectRoot, feature);
   const checks = readerChecks();
+  const object = reviewObject(projectRoot, feature, { withTask: false });
   const rows = [
     `## Story 独立人读审查（判据 ${checks.map(([id]) => id).join('、')}）`,
     '',
@@ -265,8 +281,8 @@ export function readerReviewTask(projectRoot, feature) {
       String(check.ai_prompt_hint ?? '').trim(),
       '',
     ]),
-    ...READING,
-    ...objectRows(projectRoot, feature, contract),
+    ...reading(sharedProjection(projectRoot, object.rows)),
+    ...objectRows(projectRoot, feature, contract, object),
   ];
 
   const storyPath = path.join(root, 'AR', 'story.md');
@@ -281,8 +297,10 @@ export function readerReviewTask(projectRoot, feature) {
   // 位置逐版列实际存在的那些，纠偏留痕仍回原件看。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
     rows.push('', '### 会议材料：逐话题并列', '',
-      '每个话题核三句：原话里哪些是确定的；人选了什么、没选什么；当前结果里每个确定的行为有没有依据'
-      + '（没选的那一项的做法出现在结果里，算问题）。');
+      '每个话题按「原话 → 人选的那一项 → 当前结果」核：回 `raw.md` 与 `corrections.json` 看原文，纠偏有没有改了意思、'
+      + '引用的行范围指的是不是那句话；话题有没有漏，会议判断与当前结果有没有写出会上没说的；'
+      + '原话里哪些是确定的，没收敛的有没有被替人定成结论；人选了什么、没选什么'
+      + '（没选的那一项的做法出现在结果里，算问题）；当前结果里每个确定的行为有没有依据，仍未决的有没有传到产物里。');
     for (const dir of meetingVersions(src)) {
       rows.push(`- \`${dir}/raw.md\` —— 原文，行号指它；`
         + `\`${dir}/corrections.json\` 是纠偏留痕，\`${dir}/evidence.md\` 是纠偏后的阅读件`);
@@ -293,7 +311,8 @@ export function readerReviewTask(projectRoot, feature) {
   rows.push(...decisionRows(planCtx.decisionsPath));
 
   rows.push('', '### 上游图与 story 里承接它的图', '',
-    '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；图种可以换，声称承接却丢了关系才算问题。',
+    '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；节点同名、带着图源标记不等于关系还在；'
+    + '图种可以换，声称承接却丢了关系才算问题。',
     ...diagramPairRows(projectRoot, root, story, contract));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
