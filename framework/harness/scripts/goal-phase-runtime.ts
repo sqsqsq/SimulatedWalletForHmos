@@ -205,7 +205,7 @@ import {
 } from './utils/goal-timeout';
 // openspec device-readiness-and-completion t3：设备就绪门（独立异步门，排在 capability
 // gate 之后、agent_invoke_start 之前；未 READY 不调 agent）
-import { phaseRequiresDevice } from './utils/phase-device-requirement';
+import { chainRequiresDevice, phaseRequiresDevice } from './utils/phase-device-requirement';
 import {
   chainRequiresProduct,
   goalProductPurpose,
@@ -4511,13 +4511,16 @@ function setupProgressHooks(
   return flushProgress;
 }
 
-function buildAgentWarn(invoke: {
+export function buildAgentWarn(invoke: {
   exitCode: number;
   timed_out?: boolean;
   silent_killed?: boolean;
+  completion_observed?: boolean;
   duration_ms?: number;
 }): string | undefined {
   if (invoke.exitCode === 0 && !invoke.timed_out && !invoke.silent_killed) return undefined;
+  // plan b7d2e9f4 §3.4：完成后被宽限清理 kill 的非零退出码只是噪声；timeout / silent_killed / 真实失败照报。
+  if (invoke.completion_observed && !invoke.timed_out && !invoke.silent_killed) return undefined;
   const parts: string[] = [];
   if (invoke.timed_out) parts.push('timed_out');
   if (invoke.silent_killed) parts.push('silent_killed');
@@ -5173,6 +5176,17 @@ Goal runner — tool-agnostic multi-phase orchestrator
     delete argv.resume;
     delete argv['force-resume'];
   }
+  // plan b7d2e9f4 §3.3：同一恢复判断的第二种改写——目标 run 从未正式开始（只有出生事件）时，显式 --resume 改为附着同一 run。
+  // 保留 --force-resume：explicitTakeover 在下方读取，过期 session owner（orphaned_session）只靠显式接管拿回。
+  // detach 父进程透传原始参数，由子进程在这里改写，写出 run_start 即握手。
+  if (
+    argv.resume && plainContinuation?.kind === 'rejoin' && plainContinuation.started === false
+    && plainContinuation.runId === String(argv.resume).trim()
+  ) {
+    console.log(`[goal-runner] --resume ${plainContinuation.runId} 改为附着（该 run 尚未正式开始；同一恢复判断）`);
+    delete argv.resume;
+    attachCreatedRunId = argv['attach-created'] = plainContinuation.runId;
+  }
   const explicitContinuation = Boolean(argv.resume || attachCreatedRunId || normalizeSupersedeTargets(argv.supersede).length || argv.force);
   const continuationDecision: RunContinuationDecision | null = explicitContinuation ? null : plainContinuation;
   if (continuationDecision) {
@@ -5222,7 +5236,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
   let manifest: GoalManifest;
   if (attachCreatedRunId) {
     manifest = loadGoalManifestFromRun(projectRoot, attachCreatedRunId, {
-      feature: String(argv.feature),
+      // plan b7d2e9f4 返修 r1：与 resume 分支同源——feature 可能只由 --manifest 提供（resolveRawRunInput 已解析）。
+      feature: rawRunInput.feature,
       featuresDir,
     });
     // D2.5 delete-list #8: the detached attach-created guard required a *verified scoped
@@ -6573,10 +6588,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
       const authoritativeResumeEvents = strictEvents.events.filter((e) =>
         (e as { dry_run?: unknown }).dry_run !== true);
       if (!authoritativeResumeEvents.some((e) => (e as { type?: string }).type === 'run_start')) {
+        // plan b7d2e9f4 §3.3：只有出生事件 = 该 run 从未正式开始（可接入），其余才是真源损坏。
+        const bornOnly = authoritativeResumeEvents.some((e) => (e as { type?: string }).type === 'run_created');
         console.error(
           `[goal-runner] BLOCKER: --resume 需要 events 含有效 authoritative run_start，`
           + `但该文件没有（raw=${strictEvents.events.length} 行，authoritative=${authoritativeResumeEvents.length} 行）：${eventsPath}\n`
-          + '  处置：resume 起点无源可依——人工核查 run 目录（非本 run 的 events / 文件被整体替换/清空）。',
+          + (bornOnly
+            ? `  处置：该 run 只有出生事件、未正式开始——直接以普通方式重新发起同一请求，或用 --attach-created ${manifest.run_id} 接入。`
+            : '  处置：resume 起点无源可依——人工核查 run 目录（非本 run 的 events / 文件被整体替换/清空）。'),
         );
         return 1;
       }
@@ -7919,11 +7938,15 @@ Goal runner — tool-agnostic multi-phase orchestrator
                     : []),
                 ];
               }),
-              // plan a2f7c9e4 §3.6 / §3.7：候选段之后——局部诊断入口（coding + 设备证据才有）与驱动方返修材料（随 --resume 给出才有）
+              // plan a2f7c9e4 §3.6 / §3.7：候选段之后——局部复看要求（coding + 本 run 有设备资格才有）与驱动方返修材料（随 --resume 给出才有）
               ...(() => {
+                // plan c3f8a2d7 §3.3：资格取本 run 的有效阶段链（review→coding 与恢复会话同样适用），设备当下是否可用由 adhoc 设备门判断
+                let deviceCapable = false;
+                try { deviceCapable = chainRequiresDevice(chain.map(String), loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot))); } catch { /* 无可解析 profile：不给复看要求 */ }
                 const diagnosis = formatRepairLocalDiagnosis(String(phase), mine, {
                   harnessDir: path.relative(projectRoot, path.join(frameworkRoot, 'harness')).replace(/\\/g, '/') || '.',
                   feature: manifest.feature,
+                  deviceCapable,
                 });
                 return diagnosis.length > 0 ? ['', ...diagnosis] : [];
               })(),
@@ -10984,6 +11007,23 @@ Goal runner — tool-agnostic multi-phase orchestrator
             manifest.report_dir,
             frameworkRoot,
           );
+          // plan c3f8a2d7 §3.2⑥：run 停在本阶段的外部延迟（halt，或 continue 但已是链尾）与设备停放同一投影形状
+          // （WAITING/external）——resume 回放据此把本阶段重新入队，而不是算作完成；停机说明直接取 summary 里外部阻断
+          // 检查自己的说明与建议（不新建文案源、不挂探针）。链中段的 continue 不在此列（下游照常推进）。
+          const parkProjection = action === 'defer_external_and_halt' || phaseIdx === chain.length - 1
+            ? {
+                run_disposition: 'WAITING' as const,
+                run_wait_kind: 'external' as const,
+                halt_guidance: (decisionSummary?.blockers ?? [])
+                  .filter((b) => (b as { blocking_class?: string }).blocking_class === 'externalBlocked')
+                  .map((b) => {
+                    const blocker = b as { id?: string; details_excerpt?: string; suggestion?: string };
+                    const detail = (blocker.details_excerpt ?? '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? '';
+                    return [`${blocker.id ?? 'unknown'}：${detail}`, ...(blocker.suggestion ? [blocker.suggestion] : [])].join('\n');
+                  })
+                  .join('\n') || `外部条件未满足（${reason}）：条件恢复后重新发起同一请求继续。`,
+              }
+            : undefined;
           outcomes.push({
             phase,
             verdict,
@@ -10998,8 +11038,14 @@ Goal runner — tool-agnostic multi-phase orchestrator
             agent_warn: agentWarn,
             snapshot_files: snap.snapshot_files,
               verifier_evidence: snap.verifier_evidence,
+            ...(parkProjection ?? {}),
           });
           phaseDone = true;
+          if (parkProjection) {
+            // phase_verdict（defer）之后落：events-only 重建以"最后一条 phase_halt 覆盖更早的 verdict"把本阶段视为未完成。
+            goalEvents.emit({ type: 'phase_halt', phase, verdict, reason, ...parkProjection });
+            console.error(`\n===== deferred_external（${reason}） =====\n${parkProjection.halt_guidance}\n`);
+          }
           if (action === 'defer_external_and_halt') {
             halted = true;
           }
