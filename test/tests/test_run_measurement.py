@@ -7,6 +7,7 @@
 
 每个指标都配**能改变结果的正反样本**：只测「有数据时算得出」，测不出「没数据时会不会凭空造数」。
 """
+import hashlib
 import json
 import subprocess
 import sys
@@ -745,10 +746,49 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                                          cwd=str(REPO)).returncode == 0
                 self.assertFalse(ignored, f"{rel} 被忽略了")
 
+    #: 已授权保留的历史原稿：迁移清单按确切路径与原始字节摘要登记，登记在内且字节没变的原件不是新的运行证据
+    HISTORY_MANIFEST = "doc/spec/2.1.0/历史参考/迁移清单.json"
+
+    @classmethod
+    def stray_evidence(cls, repo: Path) -> list[str]:
+        kept: dict[str, str] = {}
+        manifest = repo / cls.HISTORY_MANIFEST
+        if manifest.is_file():
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            kept = {f"{data['destination_root']}/{f['path']}": f["sha256"] for f in data["files"]}
+        out = []
+        for rel in cls.ROOTS:
+            for p in (repo / rel).rglob("*"):
+                if not p.is_file() or not (p.suffix in cls.EVIDENCE_SUFFIXES or p.name == "runlog.md"):
+                    continue
+                path = p.relative_to(repo).as_posix()
+                if kept.get(path) != hashlib.sha256(p.read_bytes()).hexdigest():
+                    out.append(path)
+        return out
+
     def test_run_evidence_lives_under_output(self):
-        stray = [p.relative_to(REPO).as_posix() for rel in self.ROOTS for p in (REPO / rel).rglob("*")
-                 if p.is_file() and (p.suffix in self.EVIDENCE_SUFFIXES or p.name == "runlog.md")]
-        self.assertEqual([], stray, "运行证据放到 output/story/ 下")
+        self.assertEqual([], self.stray_evidence(REPO), "运行证据放到 output/story/ 下")
+
+    def test_only_listed_unchanged_history_originals_are_kept(self):
+        """清单内且字节没变的原件放过；新增的图片、字节被改的原件照样算运行证据。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            history = repo / "doc/spec/2.1.0/历史参考"
+            original = history / "原1.9.9/data/a.png"
+            original.parent.mkdir(parents=True)
+            original.write_bytes(b"original")
+            (repo / "doc/plan").mkdir(parents=True)
+            (history / "迁移清单.json").write_text(json.dumps({
+                "destination_root": "doc/spec/2.1.0/历史参考/原1.9.9",
+                "files": [{"path": "data/a.png", "sha256": hashlib.sha256(b"original").hexdigest()}]}),
+                encoding="utf-8")
+            self.assertEqual([], self.stray_evidence(repo))
+            (history / "原1.9.9/data/b.png").write_bytes(b"new")
+            (repo / "doc/plan/run.log").write_text("x", encoding="utf-8")
+            self.assertEqual({"doc/spec/2.1.0/历史参考/原1.9.9/data/b.png", "doc/plan/run.log"},
+                             set(self.stray_evidence(repo)))
+            original.write_bytes(b"edited")
+            self.assertIn("doc/spec/2.1.0/历史参考/原1.9.9/data/a.png", self.stray_evidence(repo))
 
     def test_golden_output_has_a_single_canonical_copy(self):
         """金样**输出**只有一处正本；fixture 里只留构造场景所需的原始输入。

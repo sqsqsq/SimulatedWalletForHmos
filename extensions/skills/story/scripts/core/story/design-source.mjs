@@ -113,8 +113,12 @@ export function basisDriftProblems(ctx) {
   const again = '——改完先 `story-build review --action prepare` 定稿并重新审查，审查通过后跑 `story_flow.py story` 重新登记';
   const out = [];
   const was = basis.blueprint_ref ?? {};
-  if (was.artifact_sha256 !== now.blueprint_ref?.artifact_sha256 || was.revision !== now.blueprint_ref?.revision) {
-    out.push(`登记之后蓝图变了（登记时 r${was.revision}，现在 r${now.blueprint_ref?.revision}）${again}`);
+  const short = sha => String(sha ?? '').replace(/^sha256:/, '').slice(0, 12);
+  if (was.revision !== now.blueprint_ref?.revision) {
+    out.push(`登记之后蓝图换了版本（登记时 r${was.revision}，现在 r${now.blueprint_ref?.revision}）${again}`);
+  } else if (was.artifact_sha256 !== now.blueprint_ref?.artifact_sha256) {
+    out.push(`登记之后蓝图内容变了（版本仍是 r${was.revision}，内容摘要 ${short(was.artifact_sha256)} → `
+      + `${short(now.blueprint_ref?.artifact_sha256)}）${again}`);
   }
   if (basis.input_sha256 !== now.input_sha256) out.push(`登记之后交给设计的输入换了版本${again}`);
   if (basis.knowledge_sha256 !== now.knowledge_sha256) out.push(`登记之后激活知识或知识原文变了${again}`);

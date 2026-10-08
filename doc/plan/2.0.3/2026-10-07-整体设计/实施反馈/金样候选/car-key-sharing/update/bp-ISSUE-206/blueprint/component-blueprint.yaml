@@ -1,0 +1,2966 @@
+artifact: component-blueprint@1
+component_id: WalletMain
+blueprint_id: bp-ISSUE-206
+revision: 1
+source_fingerprint: sha256:ae6f5151233336574d93662450efa107bf3154278f5dbf37d7aaba22edbb83af
+decision_fingerprint: sha256:38bf9029050f436bd98670fa2a6b926069d2d3977452862554f1190533ad133c
+provenance:
+  source_kind: requirement_input
+  source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/snapshot.json
+  observed_at: 2026-10-03T14:06:51+00:00
+  evidence_strength: observed
+  extraction_method: frozen_input_observation
+review_summary:
+  title: 数字车钥匙分享（钱包端）— 部件演进蓝图
+  summary: 钱包端（WalletMain）承载数字车钥匙分享的端侧链路：车主发起分享（对象/权限/有效期三要素、配额、草稿续办）、被分享人接受、双方状态管理与撤销。分享关系真源在车云、钥匙可用性裁决在车厂云，钱包端只做端侧
+    UI、端云调用、草稿与状态展示，不裁决钥匙可用性。本演进新增四个页面与一个数据服务，全部落在 WalletMain（02-Feature）。
+  authored_by: opencode-story-design
+  questioning:
+    status: pending
+    provider_id: isolated-reviewer-subagent
+    isolated_context: true
+    frontier_budget: 40
+    repeated_frontier_count: 0
+    writes_ssot: false
+    items:
+      - question_id: qx-1
+        question: 逻辑视图是否由当前材料支持且 delta 明确
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: view
+        scope_ref: view:logical
+        disposition: answered_with_evidence
+        answer: 逻辑视图由 SR/PRD 支持且 delta 明确：新增
+          share-domain/grantee-permission-domain/draft-domain/feature-flag
+          四节点、六态与权限档位映射，verification_refs 均指向 design.md 与 prd.md。
+        evidence_refs: &a1
+          - doc/features/ISSUE-206/SR/design.md
+          - doc/features/ISSUE-206/RR/prd.md
+          - doc/module-catalog.yaml
+        verification_refs: *a1
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-2
+        question: 运行时数据闭环（读取/写入/草稿）是否闭合到 state owner、发布订阅与恢复
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: view
+        scope_ref: view:runtime
+        disposition: answered_with_evidence
+        answer: 两条 flow 各自闭合到 state owner：status-flow
+          每次进页拉取、不缓存、state_owner=share-repository、恢复=进页重拉；mutate-flow 三个突变发布到
+          publication:share-status、subscription 页挂载/卸载
+          attach/detach、恢复=草稿续办+宽限窗。
+        evidence_refs: &a2
+          - doc/features/ISSUE-206/SR/design.md
+          - view:runtime/flow:share-status-flow
+          - view:runtime/flow:share-mutate-flow
+        verification_refs: *a2
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-3
+        question: 开发视图模块归属与组件形态是否一致
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: view
+        scope_ref: view:development
+        disposition: answered_with_evidence
+        answer: 四页一服务一入口（share-entry 为 component 形态）全部声明 module=WalletMain，跨模块只经
+          index.ets；组件形态与模块归属一致，且复用 CommUI/CommFunc 已在 purpose/delta 写明。
+        evidence_refs: &a3
+          - doc/module-catalog.yaml
+        verification_refs: *a3
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-4
+        question: 两个用户旅程是否可追踪到逻辑/运行时/开发视图
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: view
+        scope_ref: view:scenarios
+        disposition: answered_with_evidence
+        answer: owner-share-journey 与 grantee-accept-journey 均显式带
+          logical_refs/runtime_refs/development_owner_ref，可追踪到逻辑/运行时/开发节点。
+        evidence_refs: &a4
+          - doc/features/ISSUE-206/RR/prd.md
+          - doc/features/ISSUE-206/ux-reference/README.md
+        verification_refs: *a4
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-5
+        question: 状态读取流是否闭合生命周期、幂等与恢复
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: flow
+        scope_ref: flow:share-status-flow
+        disposition: answered_with_evidence
+        answer: 生命周期七类已闭合：page_enter/remote_notify
+          触发器带幂等（重复进入替换投影），冷启/回温/挂载/卸载/切账号/进程重建均 covered，background_write 标
+          not_applicable；恢复=无本地持久化则进页重拉。
+        evidence_refs: &a5
+          - doc/features/ISSUE-206/SR/design.md
+          - contract:query-key-sharing-list-v1
+        verification_refs: *a5
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-6
+        question: 写入流是否闭合 mutation→publication→subscription→consumer 与失败恢复
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: flow
+        scope_ref: flow:share-mutate-flow
+        disposition: answered_with_evidence
+        answer: mutation(create/accept/revoke)→publication:share-status→subscription:manage-refresh→consumer:manage-mutate-update
+          闭环；恢复=起草失败留草稿/成功即清/签发失败可重试/离线撤销进撤销中宽限窗内回网失效；account_switch 触发清草稿。
+        evidence_refs: &a6
+          - doc/features/ISSUE-206/SR/design.md
+          - contract:create-key-sharing-v1
+        verification_refs: *a6
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-7
+        question: 关系 share-setup-consumes-repo 的端点是否都在本演进内且关系类型成立？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: relation
+        scope_ref: relation:share-setup-consumes-repo
+        disposition: answered_with_evidence
+        answer: 端点均在演进内（share-setup-page → share-repository），calls_data 类型与两端语义一致。
+        evidence_refs: &a7
+          - view:development/node:share-setup-page
+          - view:runtime/node:share-repository
+        verification_refs: *a7
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-8
+        question: 关系 share-manage-consumes-repo 的端点是否都在本演进内且关系类型成立？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: relation
+        scope_ref: relation:share-manage-consumes-repo
+        disposition: answered_with_evidence
+        answer: 端点均在演进内（share-manage-page → share-repository），calls_data 类型与两端语义一致。
+        evidence_refs: &a8
+          - view:development/node:share-manage-page
+          - view:runtime/node:share-repository
+        verification_refs: *a8
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-9
+        question: 关系 share-repo-uses-draft 的端点是否都在本演进内且关系类型成立？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: relation
+        scope_ref: relation:share-repo-uses-draft
+        disposition: answered_with_evidence
+        answer: 端点均在演进内（share-repository → share-draft-store），reads_writes 类型与两端语义一致。
+        evidence_refs: &a9
+          - view:runtime/node:share-repository
+          - view:runtime/node:share-draft-store
+        verification_refs: *a9
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-10
+        question: 关系 share-accept-consumes-processor 的端点是否都在本演进内且关系类型成立？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: relation
+        scope_ref: relation:share-accept-consumes-processor
+        disposition: answered_with_evidence
+        answer: 端点均在演进内（share-accept-page → share-accept-processor），calls_data
+          类型与两端语义一致。
+        evidence_refs: &a10
+          - view:development/node:share-accept-page
+          - view:runtime/node:share-accept-processor
+        verification_refs: *a10
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-11
+        question: 关系 share-domain-implemented 的端点是否都在本演进内且关系类型成立？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: relation
+        scope_ref: relation:share-domain-implemented
+        disposition: answered_with_evidence
+        answer: 端点均在演进内（share-domain → share-repository），implemented_by 类型与两端语义一致。
+        evidence_refs: &a11
+          - view:logical/node:share-domain
+          - view:runtime/node:share-repository
+        verification_refs: *a11
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-12
+        question: App lens 根问题 模块边界是否明确，跨模块只经 index.ets 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:module_boundaries
+        disposition: answered_with_evidence
+        answer: 分享实现全部落在 WalletMain（02-Feature），跨模块只经 index.ets；账号域复用
+          AccountManager，脱敏/日志/导航复用 CommFunc
+        evidence_refs: &a12
+          - doc/module-catalog.yaml
+          - framework.config.json
+        verification_refs: *a12
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-13
+        question: App lens 根问题 端云能力接缝是否单一入口封装 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:capability_seams
+        disposition: answered_with_evidence
+        answer: 端云接口经 KeySharingRepository 单一入口封装；对外不暴露除钱包 UI 之外的 seam
+        evidence_refs: &a13
+          - contract:create-key-sharing-v1
+          - contract:query-key-sharing-list-v1
+        verification_refs: *a13
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-14
+        question: App lens 根问题 分享功能开关是否纳入演进 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:feature_flags
+        disposition: answered_with_evidence
+        answer: 分享功能开关（默认关闭随版本放开），关闭后不能发起新分享、已生效分享不受影响；配置落 WalletMain 常量
+        evidence_refs: &a14
+          - view:logical/node:feature-flag
+        verification_refs: *a14
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-15
+        question: App lens 根问题 分享数据产生者与消费者是否明确 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:data_producers_consumers
+        disposition: answered_with_evidence
+        answer: 车云 produce 分享状态；KeySharingRepository consume 并投影到管理页/接受页；草稿
+          key_sharing_draft 仅端侧使用
+        evidence_refs: &a15
+          - view:runtime/flow:share-status-flow
+          - view:runtime/flow:share-mutate-flow
+        verification_refs: *a15
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-16
+        question: App lens 根问题 六类生命周期触发是否逐条评估 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:lifecycle_triggers
+        disposition: answered_with_evidence
+        answer: 六类触发条件逐条评估：列表拉取/page_enter、写操作/on-submit、账号切换、进程重建均已在 flow 中闭合
+        evidence_refs: &a16
+          - view:runtime/flow:share-status-flow
+          - view:runtime/flow:share-mutate-flow
+        verification_refs: *a16
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-17
+        question: App lens 根问题 分享状态与草稿的 owner 是否无歧义 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:state_owners
+        disposition: answered_with_evidence
+        answer: 分享状态真源在车云，端侧 share-repository 为投影 owner；草稿状态 owner 为
+          share-draft-store；状态 owner 无歧义
+        evidence_refs: &a17
+          - view:runtime/node:share-repository
+          - view:runtime/node:share-draft-store
+        verification_refs: *a17
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-18
+        question: App lens 根问题 初始化（冷启动/进页/草稿续办）是否显式 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:initialization
+        disposition: answered_with_evidence
+        answer: 冷启动按进页路径拉取列表；设置页读草稿续办；初始化不落堆本地列表缓存
+        evidence_refs: &a18
+          - view:runtime/flow:share-status-flow
+          - view:runtime/flow:share-mutate-flow
+        verification_refs: *a18
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-19
+        question: App lens 根问题 发布订阅是否闭合到各消费方 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:publication_subscription
+        disposition: answered_with_evidence
+        answer: share-mutate-flow 内 publication:share-status 经 subscription
+          通知管理/接受侧刷新；订阅在页挂载/卸载时 attach/detach/cleanup
+        evidence_refs: &a19
+          - view:runtime/flow:share-mutate-flow
+        verification_refs: *a19
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-20
+        question: App lens 根问题 UI 刷新时机与失败态是否确定性 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:ui_refresh
+        disposition: answered_with_evidence
+        answer: 管理页列表每次进页拉取、不缓存；断网给网络失败态；刷新确定性由进页路径与失败态保证
+        evidence_refs: &a20
+          - view:runtime/flow:share-status-flow
+        verification_refs: *a20
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-21
+        question: App lens 根问题 进程重建恢复路径是否闭合 是否以证据回答？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: app_lens
+        scope_ref: app_lens:process_recovery
+        disposition: answered_with_evidence
+        answer: 进程重建后：分享列表按进页路径重拉；发起草稿从 key_sharing_draft 恢复续办
+        evidence_refs: &a21
+          - view:runtime/flow:share-status-flow
+          - view:runtime/flow:share-mutate-flow
+        verification_refs: *a21
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+      - question_id: qx-22
+        question: 当前范围引用的业务名词是否都有术语事实且映射合理？
+        frontier_fingerprint: frontier:bp-issue-206-r1
+        owner: design-author
+        scope_kind: terminology
+        scope_ref: terminology:current_scope_items
+        disposition: answered_with_evidence
+        answer: 车钥匙分享/权限档位/分享状态映射到 WalletMain（medium、记录为 headless_assumed）；部件画像与工程能力已登记为
+          facts，语义无歧义。
+        evidence_refs: &a22
+          - doc/glossary.yaml
+          - doc/extensions/knowledge/facts/component-profile.md
+        verification_refs: *a22
+        provenance:
+          source_kind: document
+          source_ref: doc/features/bp-ISSUE-206/blueprint/component-blueprint.yaml
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: inferred
+          extraction_method: questioning_derivation
+  admission:
+    status: blocker
+    root_questions_complete: false
+    blocker_refs: []
+    current_slice:
+      slice_id: slice-bp-issue-206
+      contracts_ready: true
+      design_refs_ready: true
+      controlled_fakes: []
+design_views:
+  - view_id: logical
+    viewpoint_contract: app-logical@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 产品经理
+      - 设计
+      - 开发
+    purpose: 定义车钥匙分享的领域对象：分享关系与六态、对象权限档位、发起草稿与分享功能开关；划定对车云开放接口的领域消费边界。
+    current_state: 车钥匙仅为 AddCardEntryPage 中一个不可点分类
+      c4（CardRepository.getCardCategories 写死返回，点击 toast 暂不支持），无分享领域对象、无端云分享接口调用。
+    target_state: 建立钱包端分享领域：分享状态六态（待接受/生效/已作废/已到期/撤销中/已撤销）、对象与车辆关系的权限档位、发起草稿（联系人/权限/有效期/幂等标识）、分享功能开关。真源在车云，端侧只投影状态。
+    delta: 新增分享领域对象与端云分享接口消费边界；端侧不裁决钥匙可用性。
+    decisions_and_gaps:
+      - decision:atomic-share-rollback
+      - decision:privacy-masking
+    verification_refs:
+      - doc/features/ISSUE-206/SR/design.md
+      - doc/features/ISSUE-206/RR/prd.md
+      - doc/module-catalog.yaml
+    nodes:
+      - node_id: share-domain
+        owner: design-author
+        current_state: 无分享领域模型
+        target_state: 分享关系领域对象：ShareRequest（vehicleId/granteeId/permissionLevel/validUntil/idempotencyKey）、ShareStatus
+          六态映射；真源在车云
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: grantee-permission-domain
+        owner: design-author
+        current_state: 权限档位只在车云判定，端侧不建模
+        target_state: queryGranteePermission 结果：shareable/permissionLevels/reason；换对象重查
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: draft-domain
+        owner: design-author
+        current_state: 无草稿概念
+        target_state: 发起草稿领域对象（联系人、权限档位、有效期、幂等标识）；成功即清、按账号隔离
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: feature-flag
+        owner: design-author
+        current_state: 无分享功能开关
+        target_state: 分享功能开关（默认关闭随版本放开）；关闭后不能发起新分享、已生效分享不受影响
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+  - view_id: runtime
+    viewpoint_contract: app-runtime@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 开发
+      - 测试
+      - 运维
+    purpose: 闭合分享状态读取与写入两条数据流：管理列表/配额每次进页从云端拉取、创建/接受/撤销写车云并经消息推送刷新，发起草稿本地续办，账号切换清草稿。
+    current_state: 无分享数据流：不分列表、无草稿、无写操作；车钥匙分类点击只 toast。
+    target_state: KeySharingRepository 封装六个端云接口调用；管理页/设置页按 vehicleId
+      拉取状态与配额；后台无分享关系写入；草稿 key_sharing_draft 本地存取、成功即清、按账号隔离。
+    delta: 新增分享状态读取流与分享写入流；端侧不缓存分享列表、不打堆本地真源。
+    decisions_and_gaps:
+      - decision:atomic-share-rollback
+    verification_refs:
+      - doc/features/ISSUE-206/SR/design.md
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets
+    nodes:
+      - node_id: share-repository
+        owner: design-author
+        current_state: 无分享 Repository（CardRepository 仅写死返回卡分类）
+        target_state: KeySharingRepository：六个端云接口的调用封装（配额/权限/创建/接受/撤销/列表），返回脱敏视图
+        module: WalletMain
+        design_basis_refs:
+          - view:logical/node:share-domain
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: share-manage-view
+        owner: design-author
+        current_state: 无分享状态展示
+        target_state: 管理列表与钥匙卡片的六态投影；不做本地缓存，断网给网络失败态
+        module: WalletMain
+        design_basis_refs:
+          - view:logical/node:share-domain
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: share-draft-store
+        owner: design-author
+        current_state: 无本地草稿存储
+        target_state: key_sharing_draft 存发起草稿；中途退出/断网回来续办、成功即清、按账号隔离、退出登录清除
+        module: WalletMain
+        design_basis_refs:
+          - view:logical/node:draft-domain
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: share-accept-processor
+        owner: design-author
+        current_state: 无接受侧实现
+        target_state: 接受页进入 → acceptKeySharing 触发下发凭据；失败保持待接受可重试；添加后卡片详情显示权限与有效期、权限外功能不出现
+        module: WalletMain
+        design_basis_refs:
+          - view:logical/node:share-domain
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+    runtime_data_flows:
+      - flow_id: share-status-flow
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        data_domain_refs:
+          - data-domain:sharing-status
+        external_contract_refs:
+          - contract:query-key-sharing-list-v1
+          - contract:query-key-sharing-quota-v1
+        logical_contract_refs:
+          - contract:query-key-sharing-list-v1
+          - contract:query-key-sharing-quota-v1
+        development_owner_ref: view:development/node:share-manage-page
+        source_of_truth:
+          authority: view:runtime/node:share-repository
+          persistence: server:car-cloud（端侧不持久化分享列表）
+          projections_and_caches:
+            - view:runtime/node:share-manage-view
+          reconciliation: 每次进页按 vehicleId 拉取列表与配额，不落地缓存；断网给网络失败态；推送失败由对方主动打开钱包补拉
+        triggers:
+          - kind: page_enter
+            timing: on-enter
+            idempotency: 每次进页一次 queryKeySharingList/Quota，重复进入替换投影
+          - kind: remote_notify
+            timing: on-push
+            idempotency: 推送到达补拉列表，失败不改变分享关系
+        initial_load:
+          initial_load_id: share-list
+          strategy: 进页拉取列表与配额
+          owner: design-author
+          data_scope: 当前 vehicleId 的分享列表与配额
+          freshness: 每次进页拉取
+        state_owner:
+          ref: view:runtime/node:share-repository
+          states:
+            - share-list
+            - remaining-quota
+        mutations: []
+        publications: []
+        subscriptions: []
+        consumers:
+          - consumer_id: manage-page
+            initial_load_ref: initial-load:share-list
+        failure_recovery:
+          recovery_id: recovery:share-list-reload
+          persistence_failure: 无本地持久化，恢复到进页拉取
+          subscription_failure: 断网显示网络失败态，回网重进重拉
+          process_recreation: 进程重建后按进页路径重拉
+        decisions_and_gaps: []
+        evidence_refs:
+          - doc/features/ISSUE-206/SR/design.md
+          - 02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        lifecycle_coverage:
+          cold_start:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          warm_resume:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          page_attach:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          page_detach:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          account_switch:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          process_recreation:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          background_write:
+            status: not_applicable
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+      - flow_id: share-mutate-flow
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        data_domain_refs:
+          - data-domain:sharing-mutation
+          - data-domain:sharing-draft
+        external_contract_refs:
+          - contract:create-key-sharing-v1
+          - contract:accept-key-sharing-v1
+          - contract:revoke-key-sharing-v1
+        logical_contract_refs:
+          - contract:create-key-sharing-v1
+          - contract:accept-key-sharing-v1
+          - contract:revoke-key-sharing-v1
+        development_owner_ref: view:development/node:share-data-service
+        source_of_truth:
+          authority: view:runtime/node:share-repository
+          persistence: key_sharing_draft
+          projections_and_caches:
+            - view:runtime/node:share-manage-view
+          reconciliation: 创建/接受/撤销结果以车云响应为准；一成一败必须回滚；撤销发起即车辆侧拒绝、宽限窗只影响对方卡片消失时间
+        triggers:
+          - kind: user_mutation
+            timing: on-submit
+            idempotency: createKeySharing 使用 idempotencyKey，重复请求返回同一条分享
+          - kind: account_switch
+            timing: on-account-switch
+            idempotency: 草稿按账号隔离，切换即清、不跨账号带出
+        initial_load:
+          initial_load_id: share-draft
+          strategy: 进分享设置页读草稿续办
+          owner: design-author
+          data_scope: 当前账号 key_sharing_draft
+          freshness: 进入时读取，发起成功即清除
+        state_owner:
+          ref: view:runtime/node:share-draft-store
+          states:
+            - draft
+            - pending
+            - active
+            - revoked
+            - revoking
+        mutations:
+          - mutation_id: mutate-create
+            kind: foreground
+            persistence_ref: key_sharing_draft
+            publication_ref: publication:share-status
+            recovery_ref: recovery:share-mutate-recover
+          - mutation_id: mutate-accept
+            kind: foreground
+            publication_ref: publication:share-status
+            recovery_ref: recovery:share-mutate-recover
+          - mutation_id: mutate-revoke
+            kind: foreground
+            publication_ref: publication:share-status
+            recovery_ref: recovery:share-mutate-recover
+        publications:
+          - publication_id: share-status
+            snapshot: 最新分享状态，供管理页/接受侧刷新
+        subscriptions:
+          - subscription_id: subscription:manage-refresh
+            consumer_ref: consumer:manage-mutate-update
+            attach: 页挂载后订阅
+            detach: 页卸载取消
+            cleanup: 移除通知回调
+            replay_or_snapshot: 取最新分享状态列表
+            ordering: 到达顺序
+        consumers:
+          - consumer_id: manage-mutate-update
+            initial_load_ref: initial-load:share-draft
+            update_ref: publication:share-status
+        failure_recovery:
+          recovery_id: share-mutate-recover
+          persistence_failure: 起草中失败保留草稿可续办，成功即清；签发失败可重试、凭据下发失败保持待接受
+          subscription_failure: 撤销离线进入撤销中，宽限窗内回网即失效；车辆侧拒绝自撤销发起生效
+          process_recreation: 进程重建后恢复草稿或按进页路径重拉
+        decisions_and_gaps: []
+        evidence_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        lifecycle_coverage:
+          cold_start:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          warm_resume:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          page_attach:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          page_detach:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          account_switch:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          process_recreation:
+            status: covered
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+          background_write:
+            status: not_applicable
+            evidence_refs:
+              - doc/features/ISSUE-206/SR/design.md
+  - view_id: development
+    viewpoint_contract: app-development@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 开发
+      - 测试
+    purpose: 分配分享端侧实现的模块归属与组件形态：四个页面与一个数据服务全部落在 WalletMain，复用 CommUI 可复用组件与 CommFunc
+      脱敏/日志/导航。
+    current_state: WalletMain 仅
+      HomeTabPage/MineTabPage/CardPackPage/AddCardEntryPage 四个页面；车钥匙只是
+      AddCardEntryPage 里不可点的 c4 分类；无 domain 层。
+    target_state: WalletMain 新增分享数据服务（KeySharingRepository +
+      草稿存储）与四个页面（分享设置、分享管理、接受页、钥匙卡片详情）及分享入口门槛；跨模块只经各模块 index.ets。
+    delta: 新增开发节点
+      share-data-service、share-setup-page、share-manage-page、share-accept-page、key-card-detail-page、share-entry；模块均为
+      WalletMain。
+    decisions_and_gaps:
+      - decision:atomic-share-rollback
+    verification_refs:
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - doc/module-catalog.yaml
+      - framework.config.json
+    nodes:
+      - node_id: share-entry
+        owner: design-author
+        current_state: 本工程没有车钥匙卡片：车钥匙只是添加卡片页里不可点的分类，分享入口没有可挂载的宿主页面
+        target_state: 未登录或没有车钥匙的用户看不到分享入口（AC-K9）；车主从车钥匙卡片进入分享（PRD 旅程第 1 步）；入口的宿主页面待定（decision:share-entry-host）
+        module: WalletMain
+        kind: component
+        design_basis_refs:
+          - view:logical/node:feature-flag
+        verification_refs:
+          - doc/features/ISSUE-206/RR/prd.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: share-setup-page
+        owner: design-author
+        current_state: 无分享设置页
+        target_state: 分享设置页三段：给谁/权限/有效期；先选对象权限区才确定；三项选好「发出」可点；满额置灰给原因；可复用
+          MaisonNavBar/MaisonPrimaryButton/MaisonSelector
+        module: WalletMain
+        kind: page
+        design_basis_refs:
+          - view:logical/node:grantee-permission-domain
+        verification_refs:
+          - doc/features/ISSUE-206/RR/prd.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: share-manage-page
+        owner: design-author
+        current_state: 无分享管理页
+        target_state: 分享管理页顶部车辆+剩余可分享数，列表逐条对象/权限/有效期/状态，可单独撤销；不缓存、断网给网络失败态
+        module: WalletMain
+        kind: page
+        design_basis_refs:
+          - view:runtime/node:share-manage-view
+        verification_refs:
+          - doc/features/ISSUE-206/RR/prd.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: share-accept-page
+        owner: design-author
+        current_state: 无接受侧页面
+        target_state: 接受页车辆信息卡（车型/车主昵称/权限/有效期）+「添加到钱包」；不设拒绝按钮，72 小时未接受作废
+        module: WalletMain
+        kind: page
+        design_basis_refs:
+          - view:runtime/node:share-accept-processor
+        verification_refs:
+          - doc/features/ISSUE-206/ux-reference/README.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/ux-reference/README.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: key-card-detail-page
+        owner: design-author
+        current_state: 无钥匙卡片详情
+        target_state: 添加后钥匙卡片进入钱包卡包，详情显示权限范围与有效期；权限之外功能不出现、不置灰
+        module: WalletMain
+        kind: page
+        design_basis_refs:
+          - view:runtime/node:share-accept-processor
+        verification_refs:
+          - doc/features/ISSUE-206/ux-reference/README.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/ux-reference/README.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+      - node_id: share-data-service
+        owner: design-author
+        current_state: 无分享 Repository 与草稿存储
+        target_state: KeySharingRepository（六接口封装）+ key_sharing_draft 草稿存储（按账号隔离、成功即清）+
+          分享功能开关常量
+        module: WalletMain
+        design_basis_refs:
+          - view:runtime/node:share-repository
+          - view:runtime/node:share-draft-store
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+  - view_id: deployment
+    viewpoint_contract: app-deployment@1
+    applicability: not_applicable
+    stakeholders:
+      - 架构
+      - 运维
+    purpose: 裁决本次演进是否触及部署拓扑。
+    current_state: 单进程 HAP 应用，无独立部署拆分。
+    target_state: 无部署变化。
+    delta: none
+    decisions_and_gaps: []
+    verification_refs:
+      - framework.config.json
+    nodes: []
+    applicability_evidence:
+      evidence_refs:
+        - 01-Product/Phone/src/main/module.json5
+        - framework.config.json
+      disposition: not_applicable
+  - view_id: scenarios
+    viewpoint_contract: app-scenarios@1
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 产品经理
+      - 开发
+      - 测试
+    purpose: 将两个用户可见旅程与设计视图与实现 owner 绑定：车主发起分享并管理与撤销；被分享人接受并查看卡片。
+    current_state: 无分享旅程（车钥匙分类不可点）。
+    target_state: 车主旅程（发出→待接受→管理→撤销）与被分享人旅程（推送→接受页→添加→卡片详情）可按设计视图追踪到实现。
+    delta: 新增 owner-share-journey 与 grantee-accept-journey 两个场景，并补齐跨视图追踪。
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/ISSUE-206/RR/prd.md
+      - doc/features/ISSUE-206/ux-reference/README.md
+    nodes:
+      - node_id: owner-share-journey
+        owner: design-author
+        current_state: 车主无法发起分享
+        target_state: 车主在车钥匙卡点分享 → 设置页（对象/权限/有效期）→ 发出 → 待接受 → 管理/撤销完整旅程；72 小时未接受作废可重发
+        verification_refs:
+          - doc/features/ISSUE-206/RR/prd.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        logical_refs:
+          - view:logical/node:share-domain
+          - view:logical/node:draft-domain
+        runtime_refs:
+          - view:runtime/flow:share-status-flow
+          - view:runtime/flow:share-mutate-flow
+        development_owner_ref: view:development/node:share-manage-page
+      - node_id: grantee-accept-journey
+        owner: design-author
+        current_state: 被分享人无接受入口
+        target_state: 收推送 → 接受页车辆信息卡 → 添加到钱包 → 卡片详情显示权限与有效期、权限外功能不出现
+        verification_refs:
+          - doc/features/ISSUE-206/ux-reference/README.md
+        provenance:
+          source_kind: product_requirement
+          source_ref: doc/features/ISSUE-206/ux-reference/README.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        logical_refs:
+          - view:logical/node:share-domain
+        runtime_refs:
+          - view:runtime/flow:share-mutate-flow
+        development_owner_ref: view:development/node:share-accept-page
+decisions_and_gaps:
+  decisions:
+    - decision_id: knowledge-ux-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增四个页面，均含界面布局，命中 UX-01
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/ux-consistency.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a23
+        - view:development/node:share-setup-page
+        - view:development/node:share-manage-page
+        - view:development/node:share-accept-page
+        - view:development/node:key-card-detail-page
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: UX-01
+        source_sha256: sha256:ec0be15aa7e88c30fa0523c49d55a96cf133747e8ae3c6e6b80d598e87fce2b7
+        outcome: applied
+        target_refs: *a23
+        requirement: RTL 语言下界面镜像正确：方向性参数用 start/end，文本对齐用 TextAlign.Start/End，禁 left/right
+    - decision_id: knowledge-sec-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 对方账号标识既要在业务接口里识别对方，又不能出现在页面、日志与事件里；两类出口分开处理，红线不可豁免
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/security-privacy.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a24
+        - view:runtime/node:share-repository
+        - view:logical/node:share-domain
+        - view:development/node:share-data-service
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: SEC-01
+        source_sha256: sha256:07ce20e1db0b5e06d5d7d8124486955c3bd63c1226af3de934b2d7deac850504
+        outcome: applied
+        target_refs: *a24
+        requirement: 输出面：页面与记录只显示对方昵称与打码账号，打码在生成展示内容处做（MaskUtil），列表展示用车云返回的
+          granteeMasked；日志与事件只带车型类别、阶段与结果分类，不带车牌、账号、位置（SR §5、§6）。业务接口：对方账号标识
+          granteeId 以可识别的值传给车云（queryGranteePermission、createKeySharing），用于判定权限与建立分享；发起草稿保存
+          granteeId 供续办，按账号隔离，发出成功或退出登录清除；接口的权限依据与传输保护材料未约定，登记为未知
+    - decision_id: knowledge-dfx-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增六个端云接口调用，需评估调用频次与缓存
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a25
+        - view:runtime/flow:share-status-flow
+        - view:runtime/flow:share-mutate-flow
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DFX-01
+        source_sha256: sha256:769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed
+        outcome: applied
+        target_refs: *a25
+        requirement: 端云调用有频次评估：列表/配额每次进页一次拉取，草稿本地续办不重复请求；无定时任务/后台轮询
+    - decision_id: knowledge-dfx-02
+      kind: knowledge_application
+      status: not_applicable
+      owner: design-author
+      rationale: 本次不新增 SDK 依赖、不升级 SDK、不新增预置资源；复用系统图标与已有资源，无 hap 体积增量待量化
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a26
+        - view:development/node:share-setup-page
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DFX-02
+        source_sha256: sha256:769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed
+        outcome: not_applicable
+        target_refs: *a26
+    - decision_id: knowledge-obs-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增分享创建/接受/撤销业务流程，需可定位到失败步骤
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a27
+        - view:runtime/flow:share-status-flow
+        - view:runtime/flow:share-mutate-flow
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-02
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        target_refs: *a27
+        requirement: 关键业务过程有足够定位记录，复用 Logger 统一入口；统计点位定位信息随 Chart 描述带，不另记定位事件
+    - decision_id: knowledge-obs-03
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: SR 明确四类事件，需落实到流程与结果（举报渠道见 story_details event）
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a28
+        - view:runtime/flow:share-mutate-flow
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-03
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        target_refs: *a28
+        requirement: 分享发起/接受/撤销/失效四类运维指标落到创建/接受/撤销流程，实际适用结果完整记录，同点位同次尝试不重复
+    - decision_id: knowledge-obs-05
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增上报调用，需按项目协议落实字段映射
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a29
+        - view:development/node:share-data-service
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-05
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        target_refs: *a29
+        requirement: 上报身份、结果、参数符合 WalletHAReport* 协议，字段有准确含义与真实来源；仓库目前仅 Wallet_COMMON
+          模板，新增登记
+    - decision_id: knowledge-obs-06
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增四类分享事件，需核复用与登记
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a30
+        - view:development/node:share-data-service
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-06
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        target_refs: *a30
+        requirement: 复用同语义事件与编码；新增事件定义唯一、变更保持含义与消费方兼容；仓库现只有 Wallet_COMMON，四类分享事件登记为新增
+    - decision_id: knowledge-obs-07
+      kind: knowledge_application
+      status: not_applicable
+      owner: design-author
+      rationale: 未新增独立运营采集需求：四类事件是运维统计（Chart）不是 BI；PRD 目标（发起比例≥15%）由运维指标折算，不新增 BI 点位
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a31 []
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-07
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: not_applicable
+        target_refs: *a31
+    - decision_id: knowledge-res-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增页面含图标，需说明图片来源
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a32
+        - view:development/node:share-setup-page
+        - view:development/node:share-manage-page
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: RES-01
+        source_sha256: sha256:d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115
+        outcome: applied
+        target_refs: *a32
+        requirement: 页面图标按系统图标→已归档图片→新引入取用；本期复用系统 symbol，不新引图片；如新增单张≤10KB
+    - decision_id: knowledge-res-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增页面含大量用户可见文案，需逐条定复用或新增
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a33
+        - view:development/node:share-setup-page
+        - view:development/node:share-manage-page
+        - view:development/node:share-accept-page
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: RES-02
+        source_sha256: sha256:d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115
+        outcome: applied
+        target_refs: *a33
+        requirement: 用户可见文案优先复用项目已有、中文完全一致的资源；确需新增的按项目惯例定义并引用，中英文齐备
+    - decision_id: knowledge-compat-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增六个端云接口，字段结构与既有接口无重叠，需核对兼容性四问
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/compatibility-checklist.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a34
+        - contract:query-key-sharing-quota-v1
+        - contract:query-grantee-permission-v1
+        - contract:create-key-sharing-v1
+        - contract:accept-key-sharing-v1
+        - contract:revoke-key-sharing-v1
+        - contract:query-key-sharing-list-v1
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: COMPAT-01
+        source_sha256: sha256:0a1a760fafdd9cdaf8d0d25e5db4a45ea5e5caf38eeed4a0e65665324f9ed7b8
+        outcome: applied
+        target_refs: *a34
+        requirement: 新增端云接口字段逐问给结论：未删除旧版依赖字段、类型变更两端可处理、新增字段有默认值或可空、不改变现有字段含义或触发服务端新校验
+    - decision_id: knowledge-compat-02
+      kind: knowledge_application
+      status: not_applicable
+      owner: design-author
+      rationale: 本需求不新增、不删除、不改动错误码（SR 明示沿用既有错误码）；老版本拿到分享错误无需特殊兜底
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/compatibility-checklist.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a35 []
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: COMPAT-02
+        source_sha256: sha256:0a1a760fafdd9cdaf8d0d25e5db4a45ea5e5caf38eeed4a0e65665324f9ed7b8
+        outcome: not_applicable
+        target_refs: *a35
+    - decision_id: knowledge-env-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 引入本地草稿存储，属本地状态，需声明清除后的恢复路径
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a36
+        - view:runtime/node:share-draft-store
+        - view:runtime/flow:share-mutate-flow
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: ENV-01
+        source_sha256: sha256:61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81
+        outcome: applied
+        target_refs: *a36
+        requirement: 清除缓存或数据后功能可自恢复或引导重建：删除 key_sharing_draft 草稿不崩溃，进设置页从零续办；分享列表无本地缓存不受清除影响
+    - decision_id: knowledge-env-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 分享创建与撤销是可重复触发的写操作，需幂等/防重
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a37
+        - view:runtime/flow:share-mutate-flow
+        - view:development/node:share-entry
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: ENV-02
+        source_sha256: sha256:61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81
+        outcome: applied
+        target_refs: *a37
+        requirement: 多入口重复进入或重复触发防重入：创建分享用 idempotencyKey，发起不发出第二条；入口门槛避免无钥匙用户进入
+    - decision_id: knowledge-dlv-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 新增页面文案，需交付翻译跟踪
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/deliverables.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a38
+        - view:development/node:share-setup-page
+        - view:development/node:share-manage-page
+        - view:development/node:share-accept-page
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DLV-01
+        source_sha256: sha256:ae494fa8bdcb3e56b1977e7cf7787abfc6eee4e632cf9e64e718e862cd657708
+        outcome: applied
+        target_refs: *a38
+        requirement: 新增/修改文案梳理成待翻译字符串清单并跟踪到翻译回稿合入（分享设置页/管理页/接受页文案）
+    - decision_id: knowledge-dlv-02
+      kind: knowledge_application
+      status: not_applicable
+      owner: design-author
+      rationale: 本需求不新增对外页面或接口：钱包端只作为客户端调用车云开放接口，不对外开放自己的面
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/deliverables.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: inferred
+        extraction_method: read_and_apply
+      verification_refs: &a39 []
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DLV-02
+        source_sha256: sha256:ae494fa8bdcb3e56b1977e7cf7787abfc6eee4e632cf9e64e718e862cd657708
+        outcome: not_applicable
+        target_refs: *a39
+    - decision_id: atomic-share-rollback
+      kind: invariant
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 发起一条分享要两边都点头：车云建关系、车厂云签凭据；一成一败必须回滚，不允许「关系建了、凭据没发」的半生效状态（SR §1）。
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/SR/design.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+      verification_refs:
+        - contract:create-key-sharing-v1
+    - decision_id: revoke-grace-window-drift
+      kind: boundary
+      status: open_decision
+      owner: 需求负责人
+      rationale: 撤销离线宽限存在验收语义分歧：PRD 取「离线最长 24 小时内失效」（AC-K5），SR 与 revokeKeySharing
+        契约取「宽限窗 48 小时 / graceHours=48」。契约字段按 SR 原样转写；对方卡片消失的宽限时长与 AC-K5
+        的验收口径由需求负责人裁决，裁决前不落定；车辆侧自撤销发起即拒绝，两稿一致。
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+      verification_refs:
+        - contract:revoke-key-sharing-v1
+    - decision_id: privacy-masking
+      kind: invariant
+      status: answered_with_evidence
+      owner: design-author
+      rationale: 对方标识在页面、日志与事件里只以脱敏形态出现，页面与记录不出现完整账号或手机号（SR §5、PRD 隐私规则）；业务接口传可识别的对方账号标识，展示掩码不承担业务身份。
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+      verification_refs:
+        - view:runtime/node:share-repository
+    - decision_id: share-undecided-ahead
+      kind: boundary
+      status: open_decision
+      owner: 需求负责人
+      rationale: PRD §五 两件未定：被分享人能否再转给第三人（倾向禁止，等安全评审）；撤销后极端断网是否强制下线（和车厂谈）。本期不承载这两个结论。
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+      verification_refs:
+        - contract:create-key-sharing-v1
+        - contract:revoke-key-sharing-v1
+    - decision_id: scope-carry-all
+      kind: scope_decision
+      status: decided_with_authority
+      owner: 需求负责人
+      rationale: 数字车钥匙分享（钱包端）按当前范围整体承载（ISSUE-206 材料关卡/范围关卡人签确认）。
+      provenance:
+        source_kind: human_decision
+        source_ref: doc/features/ISSUE-206/AR/story-src/human-decisions.json
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: authoritative
+        extraction_method: recorded_user_reply
+      verification_refs:
+        - view:logical/node:share-domain
+    - decision_id: share-entry-host
+      kind: boundary
+      status: open_decision
+      owner: 出行产品组
+      rationale: 产品稿假设车主在钱包的车钥匙卡片上点「分享」、接受后的钥匙进入对方钱包卡包；本工程没有车钥匙卡片（车钥匙只是添加卡片页里不可点的分类，卡包页没有车钥匙卡片的展示）。分享入口挂在哪个页面、接受后的钥匙由谁在卡包展示，待需求方确认车钥匙本人卡片能力的提供方与接入点。
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+      verification_refs:
+        - view:development/node:share-entry
+        - view:development/node:key-card-detail-page
+  gaps:
+    - gap_id: share-undecided-policy
+      status: open_decision
+      owner: 需求负责人
+      needed_by: slice:policy-review-future
+      unlock_condition: 安全评审与车厂协商给出确定性结论后，决定是否承载再转发与强制下线
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+    - gap_id: revoke-grace-window-drift-gap
+      status: open_decision
+      owner: 需求负责人
+      needed_by: slice:acceptance-reconcile-future
+      unlock_condition: 需求负责人裁决 PRD 24h 与 SR 48h 的撤销宽限差异，并同步 AC-K5 验收意图
+      verification_refs:
+        - contract:revoke-key-sharing-v1
+        - decision:revoke-grace-window-drift
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+    - gap_id: component-asset-curation-future
+      status: open_decision
+      owner: design-author
+      needed_by: slice:component-assets-future
+      unlock_condition: 建立 doc/component-index.yaml / component-catalog.yaml 后可完成共享 UI
+        组件选型；当前共享组件选型不可评估
+      knowledge_state: unknown
+      verification_refs:
+        - provider:component-assets
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/SR/design.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+    - gap_id: share-entry-host-gap
+      status: blocker
+      owner: 出行产品组
+      needed_by: slice:share-entry-host
+      unlock_condition: 需求方确认车钥匙本人卡片由哪个模块提供、分享入口挂在哪个页面、接受后的钥匙由谁在卡包展示；之后施工单位才能把入口与卡片详情接到真实页面
+      knowledge_state: unknown
+      verification_refs:
+        - decision:share-entry-host
+        - view:development/node:share-entry
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+relations:
+  - relation_id: share-setup-consumes-repo
+    from: view:development/node:share-setup-page
+    to: view:runtime/node:share-repository
+    relation_type: calls_data
+    owner: design-author
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: observed
+      extraction_method: source_reading
+    verification_refs:
+      - doc/features/ISSUE-206/SR/design.md
+  - relation_id: share-manage-consumes-repo
+    from: view:development/node:share-manage-page
+    to: view:runtime/node:share-repository
+    relation_type: calls_data
+    owner: design-author
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: observed
+      extraction_method: source_reading
+    verification_refs:
+      - doc/features/ISSUE-206/SR/design.md
+  - relation_id: share-repo-uses-draft
+    from: view:runtime/node:share-repository
+    to: view:runtime/node:share-draft-store
+    relation_type: reads_writes
+    owner: design-author
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: observed
+      extraction_method: source_reading
+    verification_refs:
+      - doc/features/ISSUE-206/SR/design.md
+  - relation_id: share-accept-consumes-processor
+    from: view:development/node:share-accept-page
+    to: view:runtime/node:share-accept-processor
+    relation_type: calls_data
+    owner: design-author
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/features/ISSUE-206/ux-reference/README.md
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: observed
+      extraction_method: source_reading
+    verification_refs:
+      - doc/features/ISSUE-206/ux-reference/README.md
+  - relation_id: share-domain-implemented
+    from: view:logical/node:share-domain
+    to: view:runtime/node:share-repository
+    relation_type: implemented_by
+    owner: design-author
+    provenance:
+      source_kind: product_requirement
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: observed
+      extraction_method: source_reading
+    verification_refs:
+      - doc/features/ISSUE-206/SR/design.md
+contracts:
+  - contract_id: query-key-sharing-quota-v1
+    owner: 车云开放接口负责人
+    needed_by: slice-bp-issue-206
+    provenance:
+      source_kind: external_contract
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: authoritative
+      extraction_method: se_interface_transcription
+    operation:
+      operation_id: queryKeySharingQuota
+      direction: client-to-server
+      version: "2.1"
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/operations/queryKeySharingQuota
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    request_dto:
+      dto_id: QueryKeySharingQuotaRequest
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingQuotaRequest
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: 车辆标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingQuotaRequest/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    response_dto:
+      dto_id: QueryKeySharingQuotaResponse
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingQuotaResponse
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: canShare
+          type: boolean
+          required: true
+          nullable: false
+          semantics: 是否还能发起分享
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingQuotaResponse/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: remaining
+          type: integer
+          required: true
+          nullable: false
+          semantics: 剩余可分享数
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingQuotaResponse/fields/1
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: reason
+          type: string
+          required: false
+          nullable: true
+          semantics: 满额时的可读原因，可为空
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingQuotaResponse/fields/2
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: shares
+          type: list
+          required: true
+          nullable: false
+          semantics: 现有分享清单摘要；每项含 shareId（字符串）与 status（字符串）
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingQuotaResponse/fields/3
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    mappings:
+      - mapping_id: quota-vehicleId
+        kind: direct
+        source_fields:
+          - vehicleId
+        target_field: KeySharingQuotaQuery.vehicleId
+        rule: 透传车辆标识
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/quota-vehicleId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: quota-canShare
+        kind: direct
+        source_fields:
+          - canShare
+        target_field: KeySharingQuotaView.canShare
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/quota-canShare
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: quota-remaining
+        kind: direct
+        source_fields:
+          - remaining
+        target_field: KeySharingQuotaView.remaining
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/quota-remaining
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: quota-reason
+        kind: direct
+        source_fields:
+          - reason
+        target_field: KeySharingQuotaView.reason
+        rule: 透传，可为空
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/quota-reason
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: quota-shares
+        kind: direct
+        source_fields:
+          - shares
+        target_field: KeySharingQuotaView.shares
+        rule: 摘要列表原样承接（shareId/status 透传）
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/quota-shares
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+    errors:
+      items:
+        car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/errors/queryKeySharingQuota
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    idempotency:
+      rule: 查询接口无写副作用，重复调用幂等；进页时调用
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/idempotency/queryKeySharingQuota
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    nfr:
+      requirements:
+        freshness: 每次进页拉取，不落地缓存
+        retry: 接口失败提示可重试
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/nfr/queryKeySharingQuota
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+  - contract_id: query-grantee-permission-v1
+    owner: 车云开放接口负责人
+    needed_by: slice-bp-issue-206
+    provenance:
+      source_kind: external_contract
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: authoritative
+      extraction_method: se_interface_transcription
+    operation:
+      operation_id: queryGranteePermission
+      direction: client-to-server
+      version: "2.1"
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/operations/queryGranteePermission
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    request_dto:
+      dto_id: QueryGranteePermissionRequest
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryGranteePermissionRequest
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: 车辆标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryGranteePermissionRequest/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: granteeId
+          type: string
+          required: true
+          nullable: false
+          semantics: 对方账号标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryGranteePermissionRequest/fields/1
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    response_dto:
+      dto_id: QueryGranteePermissionResponse
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryGranteePermissionResponse
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareable
+          type: boolean
+          required: true
+          nullable: false
+          semantics: 对象是否可分享
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryGranteePermissionResponse/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: permissionLevels
+          type: list
+          required: true
+          nullable: false
+          semantics: 可用权限档位列表；不可分享时为空列表
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryGranteePermissionResponse/fields/1
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: reason
+          type: string
+          required: false
+          nullable: true
+          semantics: 不可分享原因，可为空
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryGranteePermissionResponse/fields/2
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    mappings:
+      - mapping_id: permission-vehicleId
+        kind: direct
+        source_fields:
+          - vehicleId
+        target_field: GrantPermissionQuery.vehicleId
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/permission-vehicleId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: permission-granteeId
+        kind: direct
+        source_fields:
+          - granteeId
+        target_field: GrantPermissionQuery.granteeId
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/permission-granteeId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: permission-shareable
+        kind: direct
+        source_fields:
+          - shareable
+        target_field: GrantPermissionView.shareable
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/permission-shareable
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: permission-levels
+        kind: direct
+        source_fields:
+          - permissionLevels
+        target_field: GrantPermissionView.permissionLevels
+        rule: 档位列表原样承接
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/permission-levels
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: permission-reason
+        kind: direct
+        source_fields:
+          - reason
+        target_field: GrantPermissionView.reason
+        rule: 透传，可为空
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/permission-reason
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+    errors:
+      items:
+        car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/errors/queryGranteePermission
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    idempotency:
+      rule: 查询接口无写副作用，重复调用幂等；换对象重查以最近一次结果为准
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/idempotency/queryGranteePermission
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    nfr:
+      requirements:
+        freshness: 选定对象后调用，换对象重查
+        retry: 接口失败提示可重试
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/nfr/queryGranteePermission
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+  - contract_id: create-key-sharing-v1
+    owner: 车云开放接口负责人
+    needed_by: slice-bp-issue-206
+    provenance:
+      source_kind: external_contract
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: authoritative
+      extraction_method: se_interface_transcription
+    operation:
+      operation_id: createKeySharing
+      direction: client-to-server
+      version: "2.1"
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/operations/createKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    request_dto:
+      dto_id: CreateKeySharingRequest
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingRequest
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: 车辆标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingRequest/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: granteeId
+          type: string
+          required: true
+          nullable: false
+          semantics: 对方账号标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingRequest/fields/1
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: permissionLevel
+          type: string
+          required: true
+          nullable: false
+          semantics: 权限档位
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingRequest/fields/2
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: validUntil
+          type: datetime
+          required: true
+          nullable: false
+          semantics: 有效期（ISO 8601 时间）
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingRequest/fields/3
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: idempotencyKey
+          type: string
+          required: true
+          nullable: false
+          semantics: 幂等标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingRequest/fields/4
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    response_dto:
+      dto_id: CreateKeySharingResponse
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingResponse
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareId
+          type: string
+          required: true
+          nullable: false
+          semantics: 分享标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingResponse/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: status
+          type: string
+          required: true
+          nullable: false
+          semantics: 固定为 pending
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/CreateKeySharingResponse/fields/1
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    mappings:
+      - mapping_id: create-vehicleId
+        kind: direct
+        source_fields:
+          - vehicleId
+        target_field: ShareDraft.vehicleId
+        rule: 草稿记录车辆标识
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/create-vehicleId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: create-granteeId
+        kind: direct
+        source_fields:
+          - granteeId
+        target_field: ShareDraft.granteeId
+        rule: 草稿记录对方账号
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/create-granteeId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: create-permissionLevel
+        kind: direct
+        source_fields:
+          - permissionLevel
+        target_field: ShareDraft.permissionLevel
+        rule: 草稿记录权限档位
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/create-permissionLevel
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: create-validUntil
+        kind: direct
+        source_fields:
+          - validUntil
+        target_field: ShareDraft.validUntil
+        rule: 草稿记录有效期
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/create-validUntil
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: create-idempotencyKey
+        kind: direct
+        source_fields:
+          - idempotencyKey
+        target_field: ShareDraft.idempotencyKey
+        rule: 草稿记录幂等标识，续办沿用，成功即清
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/create-idempotencyKey
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: create-shareId
+        kind: direct
+        source_fields:
+          - shareId
+        target_field: ShareCreated.shareId
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/create-shareId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: create-status
+        kind: direct
+        source_fields:
+          - status
+        target_field: ShareCreated.status
+        rule: 透传（期望 pending）
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/create-status
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+    errors:
+      items:
+        car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/errors/createKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    idempotency:
+      rule: 同一幂等标识重复请求返回同一条分享，不重复建立；车厂云签发失败时本接口失败且不留关系
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/idempotency/createKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    nfr:
+      requirements:
+        idempotency: idempotencyKey 全程保持
+        atomic: 车厂云签发失败即回滚，不留半生效状态
+        retry: 失败提示可重试
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/nfr/createKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+  - contract_id: accept-key-sharing-v1
+    owner: 车云开放接口负责人
+    needed_by: slice-bp-issue-206
+    provenance:
+      source_kind: external_contract
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: authoritative
+      extraction_method: se_interface_transcription
+    operation:
+      operation_id: acceptKeySharing
+      direction: client-to-server
+      version: "2.1"
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/operations/acceptKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    request_dto:
+      dto_id: AcceptKeySharingRequest
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/AcceptKeySharingRequest
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareId
+          type: string
+          required: true
+          nullable: false
+          semantics: 分享标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/AcceptKeySharingRequest/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    response_dto:
+      dto_id: AcceptKeySharingResponse
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/AcceptKeySharingResponse
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: credentialStatus
+          type: string
+          required: true
+          nullable: false
+          semantics: issued / failed
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/AcceptKeySharingResponse/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: status
+          type: string
+          required: true
+          nullable: false
+          semantics: active / pending
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/AcceptKeySharingResponse/fields/1
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    mappings:
+      - mapping_id: accept-shareId
+        kind: direct
+        source_fields:
+          - shareId
+        target_field: AcceptShareQuery.shareId
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/accept-shareId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: accept-credentialStatus
+        kind: direct
+        source_fields:
+          - credentialStatus
+        target_field: AcceptShareResult.credentialStatus
+        rule: 透传（issued/failed）
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/accept-credentialStatus
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: accept-status
+        kind: direct
+        source_fields:
+          - status
+        target_field: AcceptShareResult.status
+        rule: 透传（active/pending）
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/accept-status
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+    errors:
+      items:
+        car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/errors/acceptKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    idempotency:
+      rule: 凭据下发失败保持待接受，可重试；重试不产生新分享
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/idempotency/acceptKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    nfr:
+      requirements:
+        retry: 凭据下发失败保持待接受，可重试
+        atomic: 不改变分享关系
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/nfr/acceptKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+  - contract_id: revoke-key-sharing-v1
+    owner: 车云开放接口负责人
+    needed_by: slice-bp-issue-206
+    provenance:
+      source_kind: external_contract
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: authoritative
+      extraction_method: se_interface_transcription
+    operation:
+      operation_id: revokeKeySharing
+      direction: client-to-server
+      version: "2.1"
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/operations/revokeKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    request_dto:
+      dto_id: RevokeKeySharingRequest
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/RevokeKeySharingRequest
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareId
+          type: string
+          required: true
+          nullable: false
+          semantics: 分享标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/RevokeKeySharingRequest/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    response_dto:
+      dto_id: RevokeKeySharingResponse
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/RevokeKeySharingResponse
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: status
+          type: string
+          required: true
+          nullable: false
+          semantics: revoked / revoking
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/RevokeKeySharingResponse/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+        - field_id: graceHours
+          type: integer
+          required: false
+          nullable: true
+          semantics: revoking 时为 48
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/RevokeKeySharingResponse/fields/1
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    mappings:
+      - mapping_id: revoke-shareId
+        kind: direct
+        source_fields:
+          - shareId
+        target_field: RevokeShareQuery.shareId
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/revoke-shareId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: revoke-status
+        kind: direct
+        source_fields:
+          - status
+        target_field: RevokeShareResult.status
+        rule: 透传（revoked/revoking）
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/revoke-status
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: revoke-graceHours
+        kind: direct
+        source_fields:
+          - graceHours
+        target_field: RevokeShareResult.graceHours
+        rule: 透传，可为空；revoking 时为 48
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/revoke-graceHours
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+    errors:
+      items:
+        car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/errors/revokeKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    idempotency:
+      rule: 撤销以首次结果为准，重复请求返回当前状态；车辆侧自撤销发起即拒绝
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/idempotency/revokeKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    nfr:
+      requirements:
+        atomic: 车辆侧拒绝自撤销发起即生效
+        timing: 对方离线宽限窗 48 小时
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/nfr/revokeKeySharing
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+  - contract_id: query-key-sharing-list-v1
+    owner: 车云开放接口负责人
+    needed_by: slice-bp-issue-206
+    provenance:
+      source_kind: external_contract
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml
+      observed_at: 2026-10-03T14:06:51+00:00
+      evidence_strength: authoritative
+      extraction_method: se_interface_transcription
+    operation:
+      operation_id: queryKeySharingList
+      direction: client-to-server
+      version: "2.1"
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/operations/queryKeySharingList
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    request_dto:
+      dto_id: QueryKeySharingListRequest
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingListRequest
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: 车辆标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingListRequest/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    response_dto:
+      dto_id: QueryKeySharingListResponse
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingListResponse
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: items
+          type: list
+          required: true
+          nullable: false
+          semantics: 每条分享的状态、权限、有效期与对方脱敏标识
+          source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/dtos/QueryKeySharingListResponse/fields/0
+          provenance:
+            source_kind: external_contract
+            source_ref: doc/features/ISSUE-206/SR/design.md
+            observed_at: 2026-10-03T14:06:51+00:00
+            evidence_strength: observed
+            extraction_method: source_reading
+    mappings:
+      - mapping_id: list-vehicleId
+        kind: direct
+        source_fields:
+          - vehicleId
+        target_field: ShareListQuery.vehicleId
+        rule: 透传
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/list-vehicleId
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+      - mapping_id: list-items
+        kind: direct
+        source_fields:
+          - items
+        target_field: ShareListView.items
+        rule: 列表原样承接（shareId/status/permissionLevel/validUntil/granteeMasked）
+        source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/mappings.yaml#/mappings/list-items
+        provenance:
+          source_kind: external_contract
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: source_reading
+        verification_refs:
+          - doc/features/ISSUE-206/SR/design.md
+    errors:
+      items:
+        car_cloud_error: 车云错误码与可读信息，本需求不新增错误码
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/errors/queryKeySharingList
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    idempotency:
+      rule: 查询接口无写副作用，每次进页拉取
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/idempotency/queryKeySharingList
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    nfr:
+      requirements:
+        freshness: 每次进页拉取，不落地缓存
+        retry: 断网给网络失败态
+      source_ref: doc/features/bp-ISSUE-206/blueprint/contracts/se-interfaces.yaml#/nfr/queryKeySharingList
+      verification_refs:
+        - doc/features/ISSUE-206/SR/design.md
+providers:
+  - provider_id: current-facts-discovery
+    definition: 静态 provider 接缝
+    consumer: blueprint-builder/lens
+    provider: static builtin reader
+    requirement: required
+    available: true
+    authority_rule: Code, schema, interface, config, and tests are current-state authority.
+    source_rule: Every assertion carries source_ref and source revision when available.
+    missing_behavior: degrade or park as gap
+    replacement_behavior: same-source rescan and invalidate affected P1 results
+    exit_behavior: drop temp retrieval, keep provenance
+    conflict_behavior: no last-write-wins; report both sources
+    writes: []
+  - provider_id: se-manual-contracts
+    definition: 静态 provider 接缝
+    consumer: blueprint-builder/lens
+    provider: static builtin reader
+    requirement: required
+    available: true
+    authority_rule: Authorized SE or contract owner is external-contract authority.
+    source_rule: Every contract segment carries source_ref, verification ref, and
+      provenance.
+    missing_behavior: degrade or park as gap
+    replacement_behavior: same-source rescan and invalidate affected P1 results
+    exit_behavior: drop temp retrieval, keep provenance
+    conflict_behavior: no last-write-wins; report both sources
+    writes: []
+  - provider_id: app-design-lens
+    definition: 静态 provider 接缝
+    consumer: blueprint-builder/lens
+    provider: static builtin reader
+    requirement: required
+    available: true
+    authority_rule: Lens is not fact authority and cannot override inputs.
+    source_rule: Projection cites inputs, viewpoint contract, and lens rule version.
+    missing_behavior: degrade or park as gap
+    replacement_behavior: same-source rescan and invalidate affected P1 results
+    exit_behavior: drop temp retrieval, keep provenance
+    conflict_behavior: no last-write-wins; report both sources
+    writes: []
+  - provider_id: independent-design-questioning
+    definition: 静态 provider 接缝
+    consumer: blueprint-builder/lens
+    provider: static builtin reader
+    requirement: required
+    available: true
+    authority_rule: Questioning is not fact or decision authority.
+    source_rule: Answers cite isolated blueprint, evidence package, and registered
+      external inputs.
+    missing_behavior: degrade or park as gap
+    replacement_behavior: same-source rescan and invalidate affected P1 results
+    exit_behavior: drop temp retrieval, keep provenance
+    conflict_behavior: no last-write-wins; report both sources
+    writes: []
+  - provider_id: conventions-knowledge
+    definition: 静态 provider 接缝
+    consumer: blueprint-builder/lens
+    provider: static builtin reader
+    requirement: optional
+    available: false
+    authority_rule: Project conventions are stable knowledge input, not current-code authority.
+    source_rule: Applicable facts cite the configured conventions file and exact heading id.
+    missing_behavior: degrade or park as gap
+    replacement_behavior: same-source rescan and invalidate affected P1 results
+    exit_behavior: drop temp retrieval, keep provenance
+    conflict_behavior: no last-write-wins; report both sources
+    writes: []
+    missing_disposition: not_applicable
+  - provider_id: component-assets
+    definition: 静态 provider 接缝
+    consumer: blueprint-builder/lens
+    provider: static builtin reader
+    requirement: optional
+    available: false
+    authority_rule: Source is component fact authority; curation is human selection guidance.
+    source_rule: Selection evidence cites the configured component index or catalog;
+      component_ref identifies the asset.
+    missing_behavior: degrade or park as gap
+    replacement_behavior: same-source rescan and invalidate affected P1 results
+    exit_behavior: drop temp retrieval, keep provenance
+    conflict_behavior: no last-write-wins; report both sources
+    writes: []
+    missing_disposition: unknown
+discovery:
+  source_fingerprint: sha256:ae6f5151233336574d93662450efa107bf3154278f5dbf37d7aaba22edbb83af
+  facts:
+    - fact_id: f-carkey-category
+      subject: carkey_category_current
+      value: 车钥匙仅为 AddCardEntryPage 分类列表里不可点的 c4（CardRepository.getCardCategories
+        写死返回，点击 toast 暂不支持）；card_cat_car_key 字符串键未被引用
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: code_observation
+    - fact_id: f-share-impl-absent
+      subject: share_implementation_absent
+      value: 检索 分享/sharing/revoke/acceptKeySharing/shareKey 于全库 *.ets
+        零命中；分享入口、接受侧、撤销逻辑均无实现
+      provenance:
+        source_kind: code
+        source_ref: 02-Feature/WalletMain/src/main/ets
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: code_observation
+    - fact_id: f-catalog-walletmain
+      subject: walletmain_module
+      value: WalletMain 为 02-Feature 层 HAR，index.ets 导出
+        HomeTabPage/MineTabPage/buildCardPackPage/buildAddCardEntryPage；无 domain
+        层
+      provenance:
+        source_kind: catalog
+        source_ref: doc/module-catalog.yaml
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: catalog_observation
+    - fact_id: f-navigation-routes
+      subject: phone_navigation
+      value: Phone 根 Navigation 的 navDestinationMap 仅注册 CardPackPage 与
+        AddCardEntryPage 两个路由；新增页面须改页面导出、模块 index.ets、宿主 navDestinationMap 三处
+      provenance:
+        source_kind: code
+        source_ref: 01-Product/Phone/src/main/ets/pages/index.ets
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: code_observation
+    - fact_id: f-commui-exports
+      subject: commui_exports
+      value: CommUI index.ets 导出 13 项：ActionListItem/SectionCard/showToast/CommColors
+        与
+        maison_ui_kit（MaisonPrimaryButton/MaisonNavBar/MaisonListCard/MaisonSelector/MaisonResultState
+        等）
+      provenance:
+        source_kind: code
+        source_ref: 05-SystemBase/CommUI/src/main/ets/index.ets
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: code_observation
+    - fact_id: f-commfunc-exports
+      subject: commfunc_exports
+      value: CommFunc index.ets 导出 Logger/MaskUtil/NavPathContext
+        与埋点（WalletHAManager、WalletHAEventID 仅 Wallet_COMMON）
+      provenance:
+        source_kind: code
+        source_ref: 05-SystemBase/CommFunc/src/main/ets/index.ets
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: code_observation
+    - fact_id: f-account
+      subject: account_domain
+      value: AccountManager 提供 AccountService 单例与 LoginState/UserProfile；AppStorage 键
+        wallet_is_logged_in/wallet_display_account/wallet_login_state
+      provenance:
+        source_kind: code
+        source_ref: 04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: code_observation
+    - fact_id: f-glossary-walletmain
+      subject: term:车钥匙分享
+      value:
+        canonical_module: WalletMain
+        confidence: medium
+        easily_confused_with:
+          - 钥匙卡
+      provenance:
+        source_kind: glossary
+        source_ref: doc/glossary.yaml
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: headless_assumed
+    - fact_id: f-glossary-perm
+      subject: term:权限档位
+      value:
+        canonical_module: WalletMain
+        confidence: medium
+        easily_confused_with:
+          - 入口门槛
+      provenance:
+        source_kind: glossary
+        source_ref: doc/glossary.yaml
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: headless_assumed
+    - fact_id: f-glossary-status
+      subject: term:分享状态
+      value:
+        canonical_module: WalletMain
+        confidence: medium
+        easily_confused_with:
+          - 车辆状态
+      provenance:
+        source_kind: glossary
+        source_ref: doc/glossary.yaml
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: headless_assumed
+    - fact_id: f-component-profile
+      subject: component_profile
+      value:
+        observation: 部件名：单框架钱包/纯鸿蒙钱包/钱包客户端/WalletForHMOS；职责＝卡证票券在手机上的添加/展示/使用/生命周期管理；交互方含服务器接口、手机系统接口
+        knowledge:
+          unit: 部件申明
+          form: facets
+          source_sha256: sha256:8558822c77b5d65445e905061d18601b85db8d2ca309bcbecfa37779d11b8ccf
+      provenance:
+        source_kind: facts
+        source_ref: doc/extensions/knowledge/facts/component-profile.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: read_and_apply
+    - fact_id: f-engineering
+      subject: engineering_capabilities
+      value:
+        observation: 对外入口/导航（NavPathContext、navDestinationMap
+          三处登记）、数据存储（repository/AppStorage）、配置（*Constants
+          布尔常量）、日志（Logger）、脱敏（MaskUtil）、资源（base/element）、SDK（libs/framework har）
+        knowledge:
+          unit: 对外入口与页面导航
+          form: facets
+          source_sha256: sha256:5ceffaef57bb36b58a7a4ab41f8f63f05424480a6e3432a113e3be0d95f4b527
+      provenance:
+        source_kind: facts
+        source_ref: doc/extensions/knowledge/facts/engineering-capabilities.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: read_and_apply
+  conflicts: []
+  inputs:
+    current_scope_items:
+      - item_id: request-share-create
+        kind: requirement
+        source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+        source_sha256: sha256:08191c0b44384c123a59c3eda07c3543defa2e726d9839fc4ef96ed08af28cf4
+        provenance:
+          source_kind: requirement_material
+          source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: frozen_file_observation
+      - item_id: request-share-manage-revoke
+        kind: requirement
+        source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+        source_sha256: sha256:08191c0b44384c123a59c3eda07c3543defa2e726d9839fc4ef96ed08af28cf4
+        provenance:
+          source_kind: requirement_material
+          source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: frozen_file_observation
+      - item_id: request-share-accept
+        kind: requirement
+        source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/ux-reference/README.md
+        source_sha256: sha256:f70ca30fc6000186702fc7d0c2068abc595b45d2531e914ebbbe64bcc2b5bca8
+        provenance:
+          source_kind: requirement_material
+          source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/ux-reference/README.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: frozen_file_observation
+      - item_id: goal-share-adoption
+        kind: goal
+        source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+        source_sha256: sha256:08191c0b44384c123a59c3eda07c3543defa2e726d9839fc4ef96ed08af28cf4
+        provenance:
+          source_kind: requirement_material
+          source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: frozen_file_observation
+      - item_id: invariant-atomic-share
+        kind: invariant
+        source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/SR/design.md
+        source_sha256: sha256:68ff916dff8a6b007b8457835158d3b2dad68f6967bcce633515ce26702822fa
+        provenance:
+          source_kind: requirement_material
+          source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/SR/design.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: frozen_file_observation
+      - item_id: invariant-privacy
+        kind: invariant
+        source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+        source_sha256: sha256:08191c0b44384c123a59c3eda07c3543defa2e726d9839fc4ef96ed08af28cf4
+        provenance:
+          source_kind: requirement_material
+          source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: frozen_file_observation
+      - item_id: boundary-undecided
+        kind: high_risk
+        source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+        source_sha256: sha256:08191c0b44384c123a59c3eda07c3543defa2e726d9839fc4ef96ed08af28cf4
+        provenance:
+          source_kind: requirement_material
+          source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/files/RR/prd.md
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: observed
+          extraction_method: frozen_file_observation
+  requirement_traceability:
+    - item_id: request-share-create
+      blueprint_refs:
+        - view:logical/node:share-domain
+        - contract:create-key-sharing-v1
+    - item_id: request-share-manage-revoke
+      blueprint_refs:
+        - view:logical/node:share-domain
+        - contract:query-key-sharing-list-v1
+        - contract:revoke-key-sharing-v1
+    - item_id: request-share-accept
+      blueprint_refs:
+        - view:logical/node:share-domain
+        - contract:accept-key-sharing-v1
+        - view:development/node:share-accept-page
+    - item_id: goal-share-adoption
+      blueprint_refs:
+        - view:scenarios/node:owner-share-journey
+    - item_id: invariant-atomic-share
+      blueprint_refs:
+        - contract:create-key-sharing-v1
+    - item_id: invariant-privacy
+      blueprint_refs:
+        - decision:privacy-masking
+    - item_id: boundary-undecided
+      blueprint_refs:
+        - decision:share-undecided-ahead
+        - gap:share-undecided-policy
+app_lens:
+  module_boundaries:
+    disposition: answered_with_evidence
+    answer: 分享实现全部落在 WalletMain（02-Feature），跨模块只经 index.ets；账号域复用
+      AccountManager，脱敏/日志/导航复用 CommFunc
+    evidence_refs: *a12
+  capability_seams:
+    disposition: answered_with_evidence
+    answer: 端云接口经 KeySharingRepository 单一入口封装；对外不暴露除钱包 UI 之外的 seam
+    evidence_refs: *a13
+  feature_flags:
+    disposition: answered_with_evidence
+    answer: 分享功能开关（默认关闭随版本放开），关闭后不能发起新分享、已生效分享不受影响；配置落 WalletMain 常量
+    evidence_refs: *a14
+  data_producers_consumers:
+    disposition: answered_with_evidence
+    answer: 车云 produce 分享状态；KeySharingRepository consume 并投影到管理页/接受页；草稿
+      key_sharing_draft 仅端侧使用
+    evidence_refs: *a15
+  lifecycle_triggers:
+    disposition: answered_with_evidence
+    answer: 六类触发条件逐条评估：列表拉取/page_enter、写操作/on-submit、账号切换、进程重建均已在 flow 中闭合
+    evidence_refs: *a16
+  state_owners:
+    disposition: answered_with_evidence
+    answer: 分享状态真源在车云，端侧 share-repository 为投影 owner；草稿状态 owner 为
+      share-draft-store；状态 owner 无歧义
+    evidence_refs: *a17
+  initialization:
+    disposition: answered_with_evidence
+    answer: 冷启动按进页路径拉取列表；设置页读草稿续办；初始化不落堆本地列表缓存
+    evidence_refs: *a18
+  publication_subscription:
+    disposition: answered_with_evidence
+    answer: share-mutate-flow 内 publication:share-status 经 subscription
+      通知管理/接受侧刷新；订阅在页挂载/卸载时 attach/detach/cleanup
+    evidence_refs: *a19
+  ui_refresh:
+    disposition: answered_with_evidence
+    answer: 管理页列表每次进页拉取、不缓存；断网给网络失败态；刷新确定性由进页路径与失败态保证
+    evidence_refs: *a20
+  process_recovery:
+    disposition: answered_with_evidence
+    answer: 进程重建后：分享列表按进页路径重拉；发起草稿从 key_sharing_draft 恢复续办
+    evidence_refs: *a21
+  runtime_flow_trigger_assessment:
+    persistent_or_remote_ui:
+      applies: true
+      evidence_refs:
+        - doc/features/ISSUE-206/SR/design.md
+        - view:runtime/flow:share-status-flow
+    multiple_consumers:
+      applies: true
+      evidence_refs:
+        - view:runtime/node:share-manage-view
+    background_system_external_scheduled_write:
+      applies: false
+      evidence_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    cold_start_resume_mount_account_switch:
+      applies: true
+      evidence_refs:
+        - doc/features/ISSUE-206/SR/design.md
+    user_mutation_refreshes_other_consumers:
+      applies: true
+      evidence_refs:
+        - doc/features/ISSUE-206/SR/design.md
+        - view:runtime/flow:share-mutate-flow
+    cache_sync_freshness_consistency_process_recreation:
+      applies: true
+      evidence_refs:
+        - doc/features/ISSUE-206/SR/design.md
+        - view:runtime/flow:share-status-flow
+derived_results: []
+story_details:
+  - id: detail-share-draft-policy
+    kind: data_policy
+    title: 发起草稿 key_sharing_draft
+    body: 发起草稿存联系人、权限档位、有效期与幂等标识。发起途中退出或断网回合回来凭它接着办，同一幂等标识不发出第二条；发出成功即清除。按账号隔离，退出登录清除。
+    evidence_refs:
+      - view:runtime/node:share-draft-store
+  - id: detail-share-flag
+    kind: configuration
+    title: 分享功能开关
+    body: 默认关闭，随版本放开；关闭后不能发起新分享，已生效分享不受影响。权限档位文案由云侧配置下发，端侧不写死。
+    evidence_refs:
+      - view:logical/node:feature-flag
+  - id: detail-share-events
+    kind: event
+    title: 分享事件统计
+    body: >-
+      上报分享发起、接受、撤销、失效四类事件，只带车型类别、阶段与结果分类，不带车牌、账号、位置；上报失败不改变分享关系。统计点按
+      WalletHAManager Chart 登记（现仓仅 Wallet_COMMON 模板，事件 ID 待登记）。
+
+
+      | 统计点 | 业务动作 | 实际适用结果 | 本端获知时机 | 已有覆盖或新增 | 代码现状 |
+
+      |---|---|---|---|---|---|
+
+      | 分享流程 / 发起 | 提交创建分享 | 成功 / 签发失败 / 请求失败 | 创建响应或通信失败 | 新增 | 检索零命中 |
+
+      | 分享流程 / 接受 | 提交接受 | 凭据下发成功 / 失败 | 接受响应 | 新增 | 检索零命中 |
+
+      | 分享流程 / 撤销 | 提交撤销 | 立即失效 / 撤销中 / 撤销请求失败 | 撤销响应 | 新增 | 检索零命中 |
+
+      | 分享流程 / 失效 | 已生效分享到期、作废、撤销完成等失效 | 自然到期 / 作废 / 已撤销 | 列表拉取或状态刷新 | 新增 |
+      检索零命中 |
+    evidence_refs:
+      - view:runtime/flow:share-mutate-flow

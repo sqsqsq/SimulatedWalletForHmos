@@ -5,7 +5,7 @@ derived_from:
   blueprint_id: bp-AR90006
   revision: 1
   source_fingerprint: sha256:19941e5561adfcaa4f6aa23369469e23eb2675d5359feec7c45091824669bd39
-  artifact_sha256: sha256:84743518848640d105b09870ed5730ff2c8586d28f006c792ac1036eaf8f93d7
+  artifact_sha256: sha256:37d97d1dc5a371aada5a87af8d64215d9cd2dd8a79adf44df416056484f5a2b6
 projection: component-blueprint-review@1
 ---
 
@@ -313,7 +313,7 @@ Subscriptions and consumers:
 
 ## Independent questioning
 
-- Provider: independent-questioner; status=complete; isolated=true; writes_ssot=false
+- Provider: independent-questioner; status=pending; isolated=true; writes_ssot=false
 - view:logical [answered_with_evidence]: logical 视图与上游是否一致 — 概念与链路视图（contract-concept/signup-flow/manage-flow/entry-control）与冻结上游一致；入口可见性矩阵按 T3（未实名可见引导实名）与 T4（开关只管新签约）细分，开关不折叠进 signable; owner=independent-questioner; evidence=doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md; verification=doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
 - view:runtime [answered_with_evidence]: runtime 视图与缓存语义是否一致 — 运行时数据流与 SR 缓存语义一致；wallet_auto_topup_contract 按账号隔离、退出登录清除、不数据备份、仅免网展示；缓存 freshness 与首帧免网展示在实现层合并理解; owner=independent-questioner; evidence=doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md; verification=doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
 - flow:flow:auto-topup-signup-bind [answered_with_evidence]: 签约流程语义与材料是否一致 — 签约流程触发器/判重（卡片+生效状态）/失败恢复与 SR、RR 一致；埋点流程级判断成立；统计点逐点明细交 plan 承接; owner=independent-questioner; evidence=doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md; verification=doc/features/AR90006/AR/story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md
@@ -352,8 +352,8 @@ Subscriptions and consumers:
 
 ## Admission
 
-- Status: pass
-- Root questions complete: true
+- Status: blocker
+- Root questions complete: false
 - Current slice: slice:ar90006-all; contracts_ready=true; design_refs_ready=true; controlled_fakes=[]
 - Blockers: —
 

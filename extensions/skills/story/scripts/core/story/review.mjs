@@ -378,12 +378,14 @@ function renderDocHeader(status = []) {
  * 选方案的（决策点 / 依据 / 可选的做法 / 建议 / 理由），复核结论的（决策点 / 依据 / 结论与影响）。
  * 渲染器不拆不拼——拼是表单腔的来源。
  *
+ * 标题带议题的 D 编号：Story 正文按它引用议题，章节号随分组与排序变，D 编号不变。
+ *
  * @param {{id, title, clarification, decider}} dec
  * @param {string} number 三级编号（`1.1.1`），由渲染顺序生成
  */
 function renderMachineZone(dec, number) {
   return [
-    `#### ${number} ${String(dec.title ?? '').trim()}`,
+    `#### ${number} ${dec.id} ${String(dec.title ?? '').trim()}`,
     '',
     String(dec.clarification ?? '').trim(),
     '',

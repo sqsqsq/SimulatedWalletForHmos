@@ -15,8 +15,8 @@ review_summary:
   summary: 钱包端交通卡自动充值：签约入口与签约交互、状态展示与管理、未实名引导与端侧暂存。判定与扣款都在服务端；端侧通过交通卡云五个接口实现签约/状态/改档/解约，并经支付部件完成免密验证。人已确认整体承载（无拆分），会议 T1–T4/T6 已裁决，T5 已采纳。入口可见性按矩阵细分（可签约/未实名/开关/已签约）；改档/关闭走 update/cancel 原关系不断。
   authored_by: design-author
   admission:
-    status: pass
-    root_questions_complete: true
+    status: blocker
+    root_questions_complete: false
     current_slice:
       slice_id: slice:ar90006-all
       contracts_ready: true
@@ -24,7 +24,7 @@ review_summary:
       controlled_fakes: []
     blocker_refs: []
   questioning:
-    status: complete
+    status: pending
     provider_id: independent-questioner
     isolated_context: true
     frontier_budget: 40

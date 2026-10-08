@@ -12,6 +12,7 @@
 审查那一步就没有对象。这两道也在这一份里锚住。
 """
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -214,10 +215,29 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegistered
     def test_a_blueprint_revised_after_registration_blocks(self) -> None:
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
+        revision = self.blueprint_revision()
         design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, "本需求没有任何上报动作", "本需求只在提交时上报一次")
         out = self.check("--deliver")
         self.assertNotEqual(0, out.returncode)
-        self.assertIn("登记之后", out.stdout + out.stderr)
+        self.assertIn(f"登记之后蓝图内容变了（版本仍是 r{revision}，内容摘要 ", out.stdout + out.stderr)
+
+    def test_a_new_blueprint_revision_is_named_as_such(self) -> None:
+        """换了 revision 报换版；只改内容不换版报内容变了——提示说的是实际变的那一类。"""
+        self.reviewed("pass")
+        self.assertEqual(0, self.register().returncode)
+        revision = self.blueprint_revision()
+        design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS,
+                                    f"\nrevision: {revision}\n", f"\nrevision: {revision + 1}\n")
+        out = self.check("--deliver")
+        self.assertNotEqual(0, out.returncode)
+        self.assertIn(f"登记之后蓝图换了版本（登记时 r{revision}，现在 r{revision + 1}）", out.stdout + out.stderr)
+
+    def blueprint_revision(self) -> int:
+        """需求关联的蓝图现在的 revision。"""
+        blueprint = design_kit.blueprint_of(self.root, "REQ-DEMO")
+        text = (self.root / design_kit.features_dir(self.root) / blueprint / "blueprint"
+                / "component-blueprint.yaml").read_text(encoding="utf-8")
+        return int(re.search(r"^revision: (\d+)$", text, re.M).group(1))
 
     def test_the_review_is_prepared_once_the_structure_check_passes(self) -> None:
         """结构检查没过不准备；过了就生成带判据原文与报告格式的任务。"""

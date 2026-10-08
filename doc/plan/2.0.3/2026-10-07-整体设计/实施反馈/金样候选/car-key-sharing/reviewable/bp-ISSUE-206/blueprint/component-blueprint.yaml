@@ -16,7 +16,7 @@ review_summary:
     UI、端云调用、草稿与状态展示，不裁决钥匙可用性。本演进新增四个页面与一个数据服务，全部落在 WalletMain（02-Feature）。
   authored_by: opencode-story-design
   questioning:
-    status: complete
+    status: pending
     provider_id: isolated-reviewer-subagent
     isolated_context: true
     frontier_budget: 40
@@ -434,8 +434,8 @@ review_summary:
           evidence_strength: inferred
           extraction_method: questioning_derivation
   admission:
-    status: pass
-    root_questions_complete: true
+    status: blocker
+    root_questions_complete: false
     blocker_refs: []
     current_slice:
       slice_id: slice-bp-issue-206

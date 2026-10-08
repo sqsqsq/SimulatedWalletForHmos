@@ -30,8 +30,9 @@ FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
 
-#: 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别、D 编号）。sha256 前 16 位。
-FINGERPRINT = "c2055c1dcbca18ad"
+#: 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别、D 编号）；
+#: 2026-10-08 议题标题显示 D 编号（2.0.3 复核 R4：Story 按 D 编号引用议题，读者要在 Review 里找得到）。sha256 前 16 位。
+FINGERPRINT = "5b5c5a73529efb68"
 HUMAN_ZONE_HEAD = "评审结论："
 
 
@@ -45,7 +46,7 @@ def parse_golden() -> list[dict]:
     """把金样倒推成登记表。
 
     倒推而不是另写一份样本：另写一份就有了第二个真源。三级分层各承载一个字段：
-    一级章名给 `status`、二级章名给 `category`、三级标题给 `title`；「请…评审。」之前是
+    一级章名给 `status`、二级章名给 `category`、三级标题去掉编号与 D 编号给 `title`；「请…评审。」之前是
     `clarification`，之后是人工区。形态由状态定：待确认是 choice，已定是 confirm。
     """
     out: list[dict] = []
@@ -71,7 +72,7 @@ def parse_golden() -> list[dict]:
             flush()
             cur = {"id": "", "status": status, "category": category,
                    "review_mode": "confirm" if status == "settled" else "choice",
-                   "title": re.sub(r"^####\s+\d+(?:\.\d+)*\s+", "", line).strip(),
+                   "title": re.sub(r"^####\s+\d+(?:\.\d+)*\s+D\d+\s+", "", line).strip(),
                    "clarification": [], "decider": ""}
             continue
         if cur is None:
@@ -182,6 +183,34 @@ class HumanZoneSurvivesRerender(RendererCase):
         after = self.review.read_text(encoding="utf-8")
         self.assertIn(said, after)
         self.assertIn("（复议）", after)
+
+    def test_the_visible_id_follows_its_entry_when_the_order_changes(self) -> None:
+        """标题里的 D 编号是议题自己的：分组与排序变了，章节号跟着变，D 编号随议题走，人工区一个字节不动。"""
+        entries = parse_golden()
+        self.write_decisions(entries)
+        self.assertEqual(0, self.run_build().returncode)
+        said = "修改意见：这一条按会上的结论改。"
+        target = entries[-1]
+        anchor = "<!-- decision: {} -->".format(target["id"])
+        text = self.review.read_text(encoding="utf-8")
+        self.review.write_text(text.replace("修改意见：\n\n" + anchor, said + "\n\n" + anchor, 1),
+                               encoding="utf-8")
+
+        # 最后一条挪到最前、换进另一条已定议题的类别：分组与组内次序都变，它的章节号必然变
+        other = next(e for e in entries if e["status"] == target["status"] and e["category"] != target["category"])
+        moved = dict(target, category=other["category"])
+        self.write_decisions([moved, *entries[:-1]])
+        self.assertEqual(0, self.run_build().returncode)
+        after = self.review.read_text(encoding="utf-8")
+        for entry in [moved, *entries[:-1]]:
+            with self.subTest(id=entry["id"]):
+                heads = [line for line in after.split("\n")
+                         if line.startswith("#### ") and line.endswith(" " + entry["title"])]
+                self.assertEqual(1, len(heads), entry["title"])
+                self.assertRegex(heads[0], r"^#### \d+\.\d+\.\d+ " + entry["id"] + " ")
+        self.assertIn(said + "\n\n" + anchor, after)
+        self.assertEqual(0, self.run_build().returncode)
+        self.assertEqual(after, self.review.read_text(encoding="utf-8"))
 
     def test_rerender_is_idempotent(self) -> None:
         """连渲两次要一模一样——不然计划外意见区每 build 一次就多一个空行。"""

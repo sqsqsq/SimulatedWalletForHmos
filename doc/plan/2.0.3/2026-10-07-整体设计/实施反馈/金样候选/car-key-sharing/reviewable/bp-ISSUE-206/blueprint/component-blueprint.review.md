@@ -5,7 +5,7 @@ derived_from:
   blueprint_id: bp-ISSUE-206
   revision: 1
   source_fingerprint: sha256:ae6f5151233336574d93662450efa107bf3154278f5dbf37d7aaba22edbb83af
-  artifact_sha256: sha256:050865a84d593d290fb981abcdb842eac5abb4524e04a6f02dd734e06eeebefc
+  artifact_sha256: sha256:0a98577d4c0f60877d99405ae82144a04a5705bf9921c7314bef7ff63728447e
 projection: component-blueprint-review@1
 ---
 
@@ -297,7 +297,7 @@ Subscriptions and consumers:
 
 ## Independent questioning
 
-- Provider: isolated-reviewer-subagent; status=complete; isolated=true; writes_ssot=false
+- Provider: isolated-reviewer-subagent; status=pending; isolated=true; writes_ssot=false
 - view:logical [answered_with_evidence]: 逻辑视图是否由当前材料支持且 delta 明确 — 逻辑视图由 SR/PRD 支持且 delta 明确：新增 share-domain/grantee-permission-domain/draft-domain/feature-flag 四节点、六态与权限档位映射，verification_refs 均指向 design.md 与 prd.md。; owner=design-author; evidence=doc/features/ISSUE-206/SR/design.md, doc/features/ISSUE-206/RR/prd.md, doc/module-catalog.yaml; verification=doc/features/ISSUE-206/SR/design.md, doc/features/ISSUE-206/RR/prd.md, doc/module-catalog.yaml
 - view:runtime [answered_with_evidence]: 运行时数据闭环（读取/写入/草稿）是否闭合到 state owner、发布订阅与恢复 — 两条 flow 各自闭合到 state owner：status-flow 每次进页拉取、不缓存、state_owner=share-repository、恢复=进页重拉；mutate-flow 三个突变发布到 publication:share-status、subscription 页挂载/卸载 attach/detach、恢复=草稿续办+宽限窗。; owner=design-author; evidence=doc/features/ISSUE-206/SR/design.md, view:runtime/flow:share-status-flow, view:runtime/flow:share-mutate-flow; verification=doc/features/ISSUE-206/SR/design.md, view:runtime/flow:share-status-flow, view:runtime/flow:share-mutate-flow
 - view:development [answered_with_evidence]: 开发视图模块归属与组件形态是否一致 — 四页一服务一入口（share-entry 为 component 形态）全部声明 module=WalletMain，跨模块只经 index.ets；组件形态与模块归属一致，且复用 CommUI/CommFunc 已在 purpose/delta 写明。; owner=design-author; evidence=doc/module-catalog.yaml; verification=doc/module-catalog.yaml
@@ -323,8 +323,8 @@ Subscriptions and consumers:
 
 ## Admission
 
-- Status: pass
-- Root questions complete: true
+- Status: blocker
+- Root questions complete: false
 - Current slice: slice-bp-issue-206; contracts_ready=true; design_refs_ready=true; controlled_fakes=[]
 - Blockers: —
 
