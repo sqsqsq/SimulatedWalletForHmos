@@ -24,7 +24,6 @@ from ext_workspace import link_framework, link_harness_yaml, DEV_EXT, DEV_ROOT
 import design_kit  # noqa: E402
 from designed_fixture import FIXTURE_DECISIONS, REAL_RUN_DESIGN, designed_copy, ensure_flow_state  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import golden_workspace  # noqa: E402
 from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -871,10 +870,15 @@ class TestNumbering(StoryBuildCase):
         self.assertIn("## " + CHAPTER_OUT_OF_CONTRACT, text)
 
 
-class TestGoldenNumbering(unittest.TestCase):
-    """金样是编号的仲裁锚：跑一遍不变，去掉号再跑还原成它。"""
+class TestNumberingIsAFixedPoint(unittest.TestCase):
+    """编号是确定性渲染：编过号的稿再编一遍不变；把章号、节号、图号都去掉再编，逐字节还原。
 
-    GOLDEN = REPO_ROOT / "test" / "golden" / "story-金样-AR90004.md"
+    输入是专项夹具 REQ-DEMO 的 story，补上多级小节与一张带图号的图，覆盖章、节、小节与图四类编号。
+    """
+
+    STORY = FIXTURE / "doc" / "features" / FEATURE / "AR" / "story.md"
+    STRIP_HEADING = r"^(#{2,4})\s+\d+(?:\.\d+)*\.?\s+"
+    STRIP_FIGURE = r"!\[图\s*\d+\s*[·・]\s*"
 
     def renumber(self, text: str) -> str:
         script = (
@@ -892,18 +896,25 @@ class TestGoldenNumbering(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 
-    def test_the_golden_is_a_fixed_point(self) -> None:
-        text = self.GOLDEN.read_text(encoding="utf-8")
-        self.assertEqual(text, self.renumber(text), "编号拦金样即编号错")
+    def numbered(self) -> str:
+        text = self.STORY.read_text(encoding="utf-8")
+        extra = ("### 状态与分支\n\n先受理再回执。\n\n#### 受理失败\n\n给出原因。\n\n"
+                 "![提交页：填写后提交](../assets/demo/submit.png)\n")
+        self.assertIn("## 业务流程\n", text, "夹具变了，用例要跟着改")
+        return self.renumber(text.replace("## 业务流程\n", "## 业务流程\n\n" + extra, 1))
 
-    def test_a_de_numbered_golden_comes_back_byte_for_byte(self) -> None:
+    def test_a_numbered_story_is_a_fixed_point(self) -> None:
+        text = self.numbered()
+        self.assertRegex(text, r"(?m)^### \d+\.\d+ 状态与分支$", "小节没编上号，这条什么都没验")
+        self.assertRegex(text, r"!\[图 \d+ · 提交页", "图没编上号，这条什么都没验")
+        self.assertEqual(text, self.renumber(text))
+
+    def test_a_de_numbered_story_comes_back_byte_for_byte(self) -> None:
         import re
-        text = self.GOLDEN.read_text(encoding="utf-8")
-        stripped = "\n".join(
-            re.sub(r"!\[图\s*\d+\s*[·・]\s*", "![",
-                   re.sub(r"^(#{2,4})\s+\d+(?:\.\d+)*\.?\s+", r"\1 ", line))
-            for line in text.split("\n"))
-        self.assertNotEqual(text, stripped, "去号版该和金样不一样，否则这条什么都没验")
+        text = self.numbered()
+        stripped = "\n".join(re.sub(self.STRIP_FIGURE, "![", re.sub(self.STRIP_HEADING, r"\1 ", line))
+                             for line in text.split("\n"))
+        self.assertNotEqual(text, stripped, "去号版该和原稿不一样，否则这条什么都没验")
         self.assertEqual(text, self.renumber(stripped))
 
 
@@ -1650,23 +1661,27 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
                          / "story-chapters.json")
         self.build = (self.mech / "skills" / "story" / "scripts" / "core"
                       / "story-build.mjs")
-        self.story = REPO_ROOT / "test" / "golden" / "story-金样-AR90004.md"
+        # 专项夹具：交给设计、蓝图已准入的 REQ-DEMO 工作区，用副本机制的入口跑 check
+        self.ws = Path(self._tmp.name) / "work"
+        designed_copy(FIXTURE, FEATURE, StoryBuildCase.DRAFT, self.ws)
 
     def check(self) -> str:
-        """金样放进用这份副本机制搭的需求工作区，经生产入口 check。"""
-        with tempfile.TemporaryDirectory() as ws:
-            golden_workspace.build(Path(ws), extensions=self.mech)
-            return golden_workspace.check(Path(ws))[1]
+        proc = subprocess.run(
+            ["node", str(self.build), "check", "--feature", FEATURE, "--project-root", str(self.ws)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        return (proc.stdout or "") + (proc.stderr or "")
+
+    BAD = "章节合同的 id_shapes.{}：「{}」不是合法正则"
 
     def test_a_good_contract_says_nothing_about_id_shapes(self) -> None:
-        self.assertNotIn("id_shapes", self.check())
+        self.assertNotIn("不是合法正则", self.check())
 
     def test_a_bad_drop_shape_is_named(self) -> None:
         data = json.loads(self.contract.read_text(encoding="utf-8"))
         data["id_shapes"]["drop"] = data["id_shapes"]["drop"] + ["S(\\d+"]
         self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         out = self.check()
-        self.assertIn("id_shapes.drop", out, "坏配置静默吞掉了")
+        self.assertIn(self.BAD.format("drop", "S(\\d+"), out, "坏配置静默吞掉了")
 
     def test_the_shapes_are_compiled_once_per_command(self) -> None:
         """坏配置在**一条命令里只报一次**：从前每章各编译一遍，十章就该报十次。
@@ -1677,7 +1692,7 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
         data["id_shapes"]["drop"] = data["id_shapes"]["drop"] + ["S(\\d+"]
         self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         out = self.check()
-        self.assertEqual(1, out.count("id_shapes.drop"), "同一条坏配置报了不止一次")
+        self.assertEqual(1, out.count(self.BAD.format("drop", "S(\\d+")), "同一条坏配置报了不止一次")
         core = self.mech / "skills" / "story" / "scripts" / "core" / "story"
         compiled = [f.name for f in sorted(core.glob("*.mjs"))
                     if "new RegExp(shape" in f.read_text(encoding="utf-8")]
@@ -1688,7 +1703,7 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
         data = json.loads(self.contract.read_text(encoding="utf-8"))
         data["id_shapes"]["keep"] = data["id_shapes"]["keep"] + ["AC-[0-9"]
         self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        self.assertIn("id_shapes.keep", self.check(), "坏配置静默吞掉了")
+        self.assertIn(self.BAD.format("keep", "AC-[0-9"), self.check(), "坏配置静默吞掉了")
 
 
 class TheCandidateKeepsWhatIsNotOurs(Step8Case):

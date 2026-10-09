@@ -756,21 +756,27 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         if manifest.is_file():
             data = json.loads(manifest.read_text(encoding="utf-8"))
             kept = {f"{data['destination_root']}/{f['path']}": f["sha256"] for f in data["files"]}
+        reviewed = set(kept.values()) | {hashlib.sha256(g.read_bytes()).hexdigest()
+                                         for g in (repo / "test/golden").rglob("*.png")}
         out = []
         for rel in cls.ROOTS:
             for p in (repo / rel).rglob("*"):
                 if not p.is_file() or not (p.suffix in cls.EVIDENCE_SUFFIXES or p.name == "runlog.md"):
                     continue
                 path = p.relative_to(repo).as_posix()
-                if kept.get(path) != hashlib.sha256(p.read_bytes()).hexdigest():
-                    out.append(path)
+                digest = hashlib.sha256(p.read_bytes()).hexdigest()
+                if kept.get(path) == digest:
+                    continue
+                if rel == "doc/plan" and p.suffix == ".png" and digest in reviewed:
+                    continue                  # 金样候选的配图：已审原件的逐字节副本
+                out.append(path)
         return out
 
     def test_run_evidence_lives_under_output(self):
         self.assertEqual([], self.stray_evidence(REPO), "运行证据放到 output/story/ 下")
 
     def test_only_listed_unchanged_history_originals_are_kept(self):
-        """清单内且字节没变的原件放过；新增的图片、字节被改的原件照样算运行证据。"""
+        """清单内且字节没变的原件放过，doc/plan 里它的逐字节副本（金样候选配图）也放过；新增的图片、字节被改的原件照样算运行证据。"""
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             history = repo / "doc/spec/2.1.0/历史参考"
@@ -787,25 +793,28 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
             (repo / "doc/plan/run.log").write_text("x", encoding="utf-8")
             self.assertEqual({"doc/spec/2.1.0/历史参考/原1.9.9/data/b.png", "doc/plan/run.log"},
                              set(self.stray_evidence(repo)))
+            (repo / "doc/plan/run.log").unlink()
+            (history / "原1.9.9/data/b.png").unlink()
+            copy = repo / "doc/plan/候选/assets/a.png"
+            copy.parent.mkdir(parents=True)
+            copy.write_bytes(b"original")
+            self.assertEqual([], self.stray_evidence(repo), "已审原件的逐字节副本不是运行证据")
+            copy.write_bytes(b"shot")
+            self.assertEqual(["doc/plan/候选/assets/a.png"], self.stray_evidence(repo))
             original.write_bytes(b"edited")
             self.assertIn("doc/spec/2.1.0/历史参考/原1.9.9/data/a.png", self.stray_evidence(repo))
 
     def test_golden_output_has_a_single_canonical_copy(self):
-        """金样**输出**只有一处正本；fixture 里只留构造场景所需的原始输入。
-
-        两者区别不是目录名而是性质：`golden/` 是被对照的成品（story / review / 归档图），
-        `fixtures/golden/AR90004/` 是喂进去的单据与素材。输出一旦有第二份副本，
-        改了哪一份、对照的又是哪一份，就再也说不清。
-        """
+        """金样成品只有 `test/golden/` 一处正本；夹具里出现逐字节副本，改了哪一份、对照的又是哪一份就说不清。"""
         golden = REPO / "test/golden"
         for canonical in ("assets/image1.png", "assets/image2.png",
                           "story-金样-AR90004.md", "review-金样-AR90006.md"):
             self.assertTrue((golden / canonical).exists(), f"金样正本缺 {canonical}")
 
-        fixture_root = REPO / "test/fixtures/golden"
-        strays = [p.relative_to(REPO).as_posix() for p in fixture_root.rglob("*")
-                  if p.is_file() and p.name in {"story.md", "review.md"}]
-        self.assertEqual([], strays, f"fixture 里出现了金样输出副本：{strays}")
+        canon = {p.read_bytes() for p in golden.rglob("*.md")}
+        strays = [p.relative_to(REPO).as_posix() for p in (REPO / "test/fixtures").rglob("*.md")
+                  if p.read_bytes() in canon]
+        self.assertEqual([], strays, f"夹具里出现了金样成品副本：{strays}")
 
 
 if __name__ == "__main__":

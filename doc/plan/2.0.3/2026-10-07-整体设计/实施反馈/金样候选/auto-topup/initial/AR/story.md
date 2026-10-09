@@ -318,7 +318,6 @@ flowchart TD
 
 #### 10.1.3 配置项
 
-<!-- story-build:begin 技术契约·配置项 · 由蓝图 story_details（bp-AR90006 r1）生成，改它请改真源 · sha256:62643450dfa3c614 -->
 **自动充值配置项**
 
 | 配置项 | 取值与来源 | 影响 |
@@ -328,7 +327,6 @@ flowchart TD
 | 单日充值上限 | getAutoTopupPolicy 返回 dailyLimit，本期 200 元 | 协议文案写明单日上限；达到上限当日不再触发、不计入连续失败 |
 
 （detail-auto-topup-config；contract:getAutoTopupPolicy、view:development/node:auto-topup-entry-builder）
-<!-- story-build:end -->
 
 ### 10.2 规约
 
@@ -358,7 +356,6 @@ flowchart TD
 
 验收章的两项上线后观察指标由「创建签约」统计点的结果分类计算。
 
-<!-- story-build:begin 埋点 · 由蓝图 story_details（bp-AR90006 r1）生成，改它请改真源 · sha256:0258fa62ad4369f0 -->
 **签约与管理运维统计点**
 
 | 统计点 | 触发时机 | 携带字段 | 结果分类 |
@@ -372,11 +369,9 @@ flowchart TD
 事件不带卡号、金额明细与支付参数，上报失败不改变业务结果；事件号、内码与分类由施工单位的 Plan 按项目埋点协议登记。
 
 （detail-auto-topup-events；view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage）
-<!-- story-build:end -->
 
 ### 10.4 改动边界
 
-<!-- story-build:begin 改动边界 · 由蓝图开发视图与架构影响决定（bp-AR90006 r1）生成，改它请改真源 · sha256:a275f4bd29ce503b -->
 | 模块 | 本单怎么动 |
 |---|---|
 | WalletMain | 不存在 → 交通卡详情页自动充值入口 builder（整行，余额行之下、记录之上）；分流到签约页或管理页；未实名引导 |
@@ -384,13 +379,11 @@ flowchart TD
 | WalletMain | 不存在 → 管理页：顶部签约状态、最近记录（失败展示原因）、停用态横幅与原因；改门限面额与关闭入口；停用重签入口 |
 | WalletMain | 不存在 → AutoTopupRepository：getPolicy / createContract / getStatus / updateContract / cancelContract 到卡云，金额以分 |
 | WalletMain | 不存在 → wallet_auto_topup_contract 缓存读写；按账号隔离、退出登录清除、不参与备份恢复 |
-<!-- story-build:end -->
 
 ### 10.5 材料清单
 
 #### 10.5.1 本次冻结材料
 
-<!-- story-build:begin 材料清单 · 由登记的冻结输入（bp-AR90006 r1）生成，改它请改真源 · sha256:4af2c688a8ee1ad1 -->
 | 来源文件 | 材料角色 | 本次版本 |
 |---|---|---|
 | [AR/design.md](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md) | 原件 | e3c9a0c6933f8917（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
@@ -403,7 +396,6 @@ flowchart TD
 | [ux-reference/auto-topup-manage.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-manage.png) | 图片 | 24fbb597b158d849（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
 | [ux-reference/auto-topup-signup.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-signup.png) | 图片 | 6c8da20cbbc6fdd4（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
 | [ux-reference/auto-topup-verify.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-verify.png) | 图片 | c8b62984ec0018e2（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-<!-- story-build:end -->
 
 #### 10.5.2 采用与取舍说明
 

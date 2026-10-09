@@ -318,7 +318,15 @@ flowchart TD
 
 #### 10.1.3 配置项
 
-> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
+**自动充值配置项**
+
+| 配置项 | 取值与来源 | 影响 |
+|---|---|---|
+| 自动充值功能开关 | 运营管理台下发；配置不可用按关闭处理 | 只管新签约：关闭后未签约用户看不到入口，已签约用户入口不隐藏、自动充值照常 |
+| 门限档位、面额档位 | getAutoTopupPolicy 返回，运营下发；现行值 5 / 10 / 20 / 30 元与 20 / 50 / 100 元 | 签约页的单选项 |
+| 单日充值上限 | getAutoTopupPolicy 返回 dailyLimit，本期 200 元（产品需求 v1.1 的 300 元经决策记录 D11 不采纳） | 协议文案写明单日上限；达到上限当日不再触发、不计入连续失败 |
+
+（detail-auto-topup-config；contract:getAutoTopupPolicy、view:development/node:auto-topup-entry-builder）
 
 ### 10.2 规约
 
@@ -348,17 +356,46 @@ flowchart TD
 
 验收章的两项上线后观察指标由「创建签约」统计点的结果分类计算。
 
-> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
+**签约与管理运维统计点**
+
+| 统计点 | 触发时机 | 携带字段 | 结果分类 |
+|---|---|---|---|
+| 策略加载 | 进入签约时 getAutoTopupPolicy 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+| 创建签约 | createAutoTopupContract 返回或超时后 | 去标识账号、卡片类型、阶段、失败原因分类 | 成功 / 明确失败 / 结果未知 |
+| 状态查询 | getAutoTopupStatus 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+| 改档 | updateAutoTopupContract 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+| 解约 | cancelAutoTopupContract 返回后 | 去标识账号、卡片类型、阶段 | 成功 / 失败 |
+
+事件不带卡号、金额明细与支付参数，上报失败不改变业务结果；事件号、内码与分类由施工单位的 Plan 按项目埋点协议登记。
+
+（detail-auto-topup-events；view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage）
 
 ### 10.4 改动边界
 
-> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
+| 模块 | 本单怎么动 |
+|---|---|
+| WalletMain | 不存在 → 交通卡详情页自动充值入口 builder（整行，余额行之下、记录之上）；分流到签约页或管理页；未实名引导 |
+| WalletMain | 不存在 → 签约页：门限/面额单选数据来自 getAutoTopupPolicy.thresholdOptions/amountOptions（运营下发，现行值 5/10/20/30 与 20/50/100 仅作说明）；协议勾选后「开启」可点；拉起免密验证；失败/取消/退出保留选择 |
+| WalletMain | 不存在 → 管理页：顶部签约状态、最近记录（失败展示原因）、停用态横幅与原因；改门限面额与关闭入口；停用重签入口 |
+| WalletMain | 不存在 → AutoTopupRepository：getPolicy / createContract / getStatus / updateContract / cancelContract 到卡云，金额以分 |
+| WalletMain | 不存在 → wallet_auto_topup_contract 缓存读写；按账号隔离、退出登录清除、不参与备份恢复 |
 
 ### 10.5 材料清单
 
 #### 10.5.1 本次冻结材料
 
-> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
+| 来源文件 | 材料角色 | 本次版本 |
+|---|---|---|
+| [AR/design.md](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/AR/design.md) | 原件 | e3c9a0c6933f8917（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [AR/story-src/design-draft.md](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/AR/story-src/design-draft.md) | 派生分析（提取稿） | 7aa99072aa32b391（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [AR/story-src/human-decisions.json](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/AR/story-src/human-decisions.json) | 人签记录 | 8ff9799ae567cab0（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [RR/prd.md](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/RR/prd.md) | 原件 | 753787b48531c804（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [SR/design.md](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/SR/design.md) | 原件 | d8a0e00cddf1ca0e（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [ux-reference/auto-topup-disabled.png](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/ux-reference/auto-topup-disabled.png) | 图片 | adeefcff56af7d05（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [ux-reference/auto-topup-entry.png](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/ux-reference/auto-topup-entry.png) | 图片 | 328419dced4a2be5（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [ux-reference/auto-topup-manage.png](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/ux-reference/auto-topup-manage.png) | 图片 | 24fbb597b158d849（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [ux-reference/auto-topup-signup.png](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/ux-reference/auto-topup-signup.png) | 图片 | 6c8da20cbbc6fdd4（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
+| [ux-reference/auto-topup-verify.png](story-src/inputs/12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f/files/ux-reference/auto-topup-verify.png) | 图片 | c8b62984ec0018e2（12f4a1ea6739330b0a9ae5a0036e2097e0516d64d913c48389859ae9462d230f） |
 
 #### 10.5.2 采用与取舍说明
 

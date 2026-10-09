@@ -969,23 +969,22 @@ modes:
       激活规约逐条要有判断（按来源文件与单元认，不适用也要写明哪个条件不成立），漏判一条点名一条，
       交回设计职责；夹具的 `_design.json` 写明设计里就是哪几条判断。
 
-  - id: G01-judgement-blocks-golden
+  - id: G01-judgement-rejects-valid-output
     dimension: expression
     found_round: "2026-08-30"
-    form: 新加或改动的判据把已定稿的理想产物判成违规——判据没有仲裁源，冲突时只能靠加围栏调和
-    clause: KG-0 / P1「拦金样即判据错」
-    checker: g01_judgement_blocks_golden
+    form: 新加或改动的判据把合格产物判成违规，或者判项集体空转——零 FAIL 不等于真的判过
+    clause: KG-0 / P1
+    checker: g01_judgement_rejects_valid_output
     target: mechanism
     self_check: internal
     applicable_when: always
     severity: BLOCKER
     status: fixed
     scope_note: >
-      四轮机制迭代的判据全部从「病」反推，从不存在「期望的 story 长什么样」的具体定义，
-      于是判据互相打架时没有仲裁源：批次 4 首跑一边要求人读的改写、一边要求逐字命中，
-      倾倒成了唯一合法解。金样定稿后成为唯一效果定义——**任何判据若拦金样，错的是判据**。
-      这一条是常驻正例：判据改动先跑它。两个分支都验——金样零 FAIL，
+      常驻正例：判据改动先跑它。正例是合格的 REQ-DEMO 专项夹具（S05 的 good），两个分支都验——合格产物零 FAIL，
       且往副本里塞违例时判项真的点名（不然「零 FAIL」可能只是判项全空转）。
+      2026-10-09 起不再把整份业务金样装配进生产链当正例（2.0.3 的 05 合同）：金样只定义期望结果，
+      确定性判据用专项夹具验证；某条判据与审定金样冲突时，先定位来源、样本或当前规则是否真的变化，再回责任方修。
 
   - id: G02-mechanism-points-at-assets
     dimension: knowledge

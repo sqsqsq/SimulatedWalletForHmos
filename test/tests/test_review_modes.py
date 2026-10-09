@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flow_steps import HUMAN_ZONE  # noqa: E402
-from test_review_golden import RendererCase  # noqa: E402
+from test_review_render import RendererCase  # noqa: E402
 
 CHOICE_BODY = ("**决策点**：受理超时后由谁发起重试。\n\n"
                "**依据**：接口说明只写了超时按未受理处理。\n\n"

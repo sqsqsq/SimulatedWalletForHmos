@@ -1,27 +1,8 @@
-# car-key-sharing/update 候选：来源与语义差异
+# car-key-sharing/update
 
-> 情景终点：承接评审人在 Review 人工区的表态。评审意见「36 小时内对方仍可开门」与「车辆侧撤销即拒绝」冲突，是 Case 有意保留的探针：
-> 预期是登记冲突议题问需求方，按答复确定 36 小时只指卡片收回，车辆侧即拒绝不变，再修订 D1 与相关契约、提示、验收。
-> 状态：**构造的预期候选，不是完整交付**。评审表态取自测试预置输入，需求方答复取自立场 `grace-window-conflict`；10-03 实跑没有 update 段。
-> 以 [reviewable 候选](../reviewable/README.md)为起点，蓝图按负责方接受后的 r2 构造，仍未准入。
-
-## 1. 阅读入口
-
-| 读什么 | 打开 |
-|---|---|
-| 当前稿 Story、Review、设计附件 | `output/story/2.0.3-p1-candidates/car-key-sharing/update/doc/features/ISSUE-206/AR/` |
-| 本轮记录与设计反馈 | 本目录 `AR/story-src/updates/候选-评审回流/update-notes.md`、`design-feedback.json` |
-
-本目录与阅读副本逐字节相同；当前稿的 9 个本地链接全部可达。
-
-## 2. 变化
-
-| 项 | reviewable | update |
-|---|---|---|
-| D1 | 48 小时卡片收回 | 36 小时卡片收回，被分享人一侧提示「正在收回」，车辆侧即拒绝不变；评审人「需修改」的表态随议题保留（决策点不变，问题没换） |
-| D9 | 无 | 新增并定案：36 小时只指卡片收回 |
-| D2、D6 | 待定 | 评审暂缓，保持待定 |
-| 蓝图 | r1 | r2：撤销宽限决定改为 36 小时；新增阻断缺口 `grace-hours-alignment`（车云把接口宽限值 48 改为 36 之前，联调口径不一致） |
-| Story | — | 术语、业务方案、异常与恢复、验收、附录撤销接口一行同步 |
-
-测试输入的一处调整：初段按立场定案后，D1 的标题不再含「宽限」，评审回稿投放找不到这条议题。所以在 `car-review-feedback.yaml` 的匹配词里加上了「对方离线」，没有为了命中去改业务问题（记账见 `test/EVOLUTION.md` §7）。
+- 情景终点：承接评审人在 Review 人工区的表态，更新 Story、Review 与受影响的已有 Spec、Plan。
+- 目标产物：`AR/story.md`、`AR/review.md`；`sharing-wallet-slice/spec/spec.md`、`sharing-wallet-slice/plan/plan.md`；`assets/` 配图。
+- 输入：`test/cases/car-key-sharing`（基底 `15844e09`；交互脚本 10-09 补立场后为 `0d48bdfea52c1989`，`case.yaml` 为 `720a0293704355c6`，评审回稿 `ebbad8571f846f95`，记账见 `test/EVOLUTION.md` §7）。目标工程 demo 与知识取 `15844e09`。
+- 有效宿主立场：评审预置输入 `car-review-feedback.yaml`（D1 需修改：36 小时、「仍可开门」、提示语「正在收回」；D2、D6 暂缓）；`update-material`（不补）；`grace-window-conflict`（车辆侧撤销即拒绝不变，36 小时是卡片收回期限）。
+- 设计选择：「仍可开门」与安全口径冲突，登记 D8 问需求方后定案；D1 改为 36 小时卡片收回、被分享人一侧提示「正在收回」；车云接口宽限值仍是 48，要由车云调整，调整前联调口径不一致。
+- 这是期望结果：人的回答取自 Case 设计的宿主立场，是构造预期的输入，不是已发生的人签；它不证明产品已能产出这份结果。
