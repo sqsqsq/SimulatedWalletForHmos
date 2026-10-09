@@ -179,6 +179,23 @@ class StoryBuildCase(unittest.TestCase):
         self.story_path.write_text(text.replace(old, new), encoding="utf-8")
 
 
+class AMissingRequirementDirectoryIsNamed(unittest.TestCase):
+    """工程根或需求名写错：先说需求目录不存在、在哪，不往下报「台账缺」这类以目录存在为前提的问题，也不建目录。"""
+
+    def test_the_directory_and_the_inputs_are_named(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "工程"
+            root.mkdir()
+            proc = subprocess.run(["node", str(BUILD), "check", "--feature", "NO-SUCH", "--project-root", str(root)],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            out = (proc.stderr or "") + (proc.stdout or "")
+            self.assertEqual(1, proc.returncode, out)
+            self.assertIn(str(root / "doc" / "features" / "NO-SUCH"), out)
+            self.assertIn("不存在", out)
+            self.assertNotIn("台账缺", out)
+            self.assertEqual([], list(root.iterdir()), "报错前建了目录")
+
+
 class TestArchiveRedlines(StoryBuildCase):
     """归档件四红线里机器判得了的那条：正文不许出现仓内路径。
 
@@ -598,6 +615,17 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
         text = "\n".join(self.rows("技术契约·配置项", bp))
         self.assertIn(body, text)
         self.assertNotIn("上报一次", text, "别的类别混进来了")
+
+    def test_two_indicators_each_keep_their_own_definition(self) -> None:
+        """多指标、多流程的埋点：每个指标各自一段，按蓝图次序原样排出，不合并、不按事件数另起指标。"""
+        bp = {"story_details": [
+            {"id": "e1", "kind": "event", "title": "预约成功率", "body": "分子提交成功，分母提交次数。", "evidence_refs": ["n1"]},
+            {"id": "e2", "kind": "event", "title": "取消恢复率", "body": "分子恢复成功，分母取消中断。", "evidence_refs": ["n2"]}]}
+        text = "\n".join(self.rows("埋点", bp))
+        self.assertLess(text.index("预约成功率"), text.index("取消恢复率"))
+        for body in ("分子提交成功，分母提交次数。", "分子恢复成功，分母取消中断。"):
+            self.assertEqual(1, text.count(body))
+        self.assertEqual([], self.gaps)
 
     def test_the_boundary_lists_modules_and_architecture_changes(self) -> None:
         bp = {"design_views": [{"view_id": "development", "nodes": [

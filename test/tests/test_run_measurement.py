@@ -9,11 +9,13 @@
 """
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 from ext_workspace import DEV_EXT
 
 REPO = Path(__file__).resolve().parents[2]
@@ -748,6 +750,26 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
 
     #: 已授权保留的历史原稿：迁移清单按确切路径与原始字节摘要登记，登记在内且字节没变的原件不是新的运行证据
     HISTORY_MANIFEST = "doc/spec/2.1.0/历史参考/迁移清单.json"
+    #: 金样候选的登记位置（2.0.3 的 05 合同 §2：`实施反馈/金样候选/<case>/<情景>/`）。目标稿自带的配图在情景的
+    #: `assets/` 下、被本情景文档引用；图里画的是否适用于该情景由评审者核，这里不看字节
+    CANDIDATE_ROOTS = "doc/plan/*/*/实施反馈/金样候选"
+
+    @classmethod
+    def candidate_assets(cls, repo: Path) -> set[str]:
+        """各候选情景文档实际引用、且落在本情景 assets/ 下的文件。"""
+        link = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")
+        out: set[str] = set()
+        for root in repo.glob(cls.CANDIDATE_ROOTS):
+            for scene in (s for s in root.glob("*/*") if s.is_dir()):
+                assets = (scene / "assets").resolve()
+                for doc in scene.rglob("*.md"):
+                    for target in link.findall(doc.read_text(encoding="utf-8")):
+                        if re.match(r"^[a-z]+:", target) or target.startswith("#"):
+                            continue
+                        f = (doc.parent / unquote(target)).resolve()
+                        if f.is_file() and assets in f.parents:
+                            out.add(f.relative_to(repo.resolve()).as_posix())
+        return out
 
     @classmethod
     def stray_evidence(cls, repo: Path) -> list[str]:
@@ -756,19 +778,15 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         if manifest.is_file():
             data = json.loads(manifest.read_text(encoding="utf-8"))
             kept = {f"{data['destination_root']}/{f['path']}": f["sha256"] for f in data["files"]}
-        reviewed = set(kept.values()) | {hashlib.sha256(g.read_bytes()).hexdigest()
-                                         for g in (repo / "test/golden").rglob("*.png")}
+        candidate = cls.candidate_assets(repo)
         out = []
         for rel in cls.ROOTS:
             for p in (repo / rel).rglob("*"):
                 if not p.is_file() or not (p.suffix in cls.EVIDENCE_SUFFIXES or p.name == "runlog.md"):
                     continue
                 path = p.relative_to(repo).as_posix()
-                digest = hashlib.sha256(p.read_bytes()).hexdigest()
-                if kept.get(path) == digest:
+                if kept.get(path) == hashlib.sha256(p.read_bytes()).hexdigest() or path in candidate:
                     continue
-                if rel == "doc/plan" and p.suffix == ".png" and digest in reviewed:
-                    continue                  # 金样候选的配图：已审原件的逐字节副本
                 out.append(path)
         return out
 
@@ -776,7 +794,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         self.assertEqual([], self.stray_evidence(REPO), "运行证据放到 output/story/ 下")
 
     def test_only_listed_unchanged_history_originals_are_kept(self):
-        """清单内且字节没变的原件放过，doc/plan 里它的逐字节副本（金样候选配图）也放过；新增的图片、字节被改的原件照样算运行证据。"""
+        """清单内且字节没变的原件放过；新增的图片、字节被改的原件照样算运行证据。"""
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             history = repo / "doc/spec/2.1.0/历史参考"
@@ -793,16 +811,40 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
             (repo / "doc/plan/run.log").write_text("x", encoding="utf-8")
             self.assertEqual({"doc/spec/2.1.0/历史参考/原1.9.9/data/b.png", "doc/plan/run.log"},
                              set(self.stray_evidence(repo)))
-            (repo / "doc/plan/run.log").unlink()
-            (history / "原1.9.9/data/b.png").unlink()
-            copy = repo / "doc/plan/候选/assets/a.png"
-            copy.parent.mkdir(parents=True)
-            copy.write_bytes(b"original")
-            self.assertEqual([], self.stray_evidence(repo), "已审原件的逐字节副本不是运行证据")
-            copy.write_bytes(b"shot")
-            self.assertEqual(["doc/plan/候选/assets/a.png"], self.stray_evidence(repo))
             original.write_bytes(b"edited")
             self.assertIn("doc/spec/2.1.0/历史参考/原1.9.9/data/a.png", self.stray_evidence(repo))
+
+    def test_candidate_assets_are_recognised_by_place_and_reference(self):
+        """候选情景 assets/ 下、被本情景文档引用的配图是目标稿的一部分，新画的也算；
+        引用不到的、放在候选范围外的（哪怕与已审原图同字节）、运行截图，都还是运行证据。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "doc/spec").mkdir(parents=True)
+            scene = repo / "doc/plan/2.0.3/设计/实施反馈/金样候选/demo-case/initial"
+            (scene / "AR").mkdir(parents=True)
+            (scene / "assets/页面").mkdir(parents=True)
+            (scene / "assets/页面/新画的图.png").write_bytes(b"brand-new")
+            (scene / "AR/story.md").write_text("![提交页](../assets/%E9%A1%B5%E9%9D%A2/新画的图.png)\n",
+                                               encoding="utf-8")
+            self.assertEqual([], self.stray_evidence(repo), "被引用的新候选配图不是运行证据")
+
+            (scene / "assets/页面/没人引用.png").write_bytes(b"x")
+            (scene / "AR/截图.png").write_bytes(b"shot")
+            (scene / "AR/run.log").write_text("x", encoding="utf-8")
+            elsewhere = repo / "doc/plan/2.0.3/设计/实施反馈/别处/assets/新画的图.png"
+            elsewhere.parent.mkdir(parents=True)
+            elsewhere.write_bytes(b"brand-new")
+            (elsewhere.parent.parent / "说明.md").write_text("![图](assets/新画的图.png)\n", encoding="utf-8")
+            base = "doc/plan/2.0.3/设计/实施反馈/"
+            self.assertEqual({base + "金样候选/demo-case/initial/assets/页面/没人引用.png",
+                              base + "金样候选/demo-case/initial/AR/截图.png",
+                              base + "金样候选/demo-case/initial/AR/run.log",
+                              base + "别处/assets/新画的图.png"},
+                             set(self.stray_evidence(repo)))
+
+            # 文档引用了 assets/ 外的文件也不放行：引用不是放行理由，位置与引用要同时成立
+            (scene / "AR/story.md").write_text("![截图](截图.png)\n", encoding="utf-8")
+            self.assertIn(base + "金样候选/demo-case/initial/AR/截图.png", self.stray_evidence(repo))
 
     def test_golden_output_has_a_single_canonical_copy(self):
         """金样成品只有 `test/golden/` 一处正本；夹具里出现逐字节副本，改了哪一份、对照的又是哪一份就说不清。"""

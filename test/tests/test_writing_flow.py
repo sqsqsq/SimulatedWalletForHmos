@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import unittest
 from pathlib import Path
 from ext_workspace import DEV_EXT
@@ -424,3 +425,54 @@ class TheWritingMindOpensTheGuide(unittest.TestCase):
     def test_the_reviewer_names_document_talk_as_an_advisory(self) -> None:
         overlay = (self.EXT / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
         self.assertIn(f"正文里指着文档说话的句子——{self.DOCTALK}——与章开场白", overlay)
+
+
+class NumbersAndSourcesAreOneDuty(unittest.TestCase):
+    """数值连同单位与条件、来源指得回去、引文与模板残文：作者页写一处，语义归审查，机器不按单位白名单判。"""
+
+    GUIDE = read("phases/story-write.md")
+    LANGUAGE = (SKILL / "scripts/core/story/language.mjs").resolve().as_uri()
+    DOCUMENT = (SKILL / "scripts/core/story/document.mjs").resolve().as_uri()
+
+    #: 中性业务的合法写法：换算、按条件不同的时限、比例写明分母、有出处的业务引文
+    LEGAL = (
+        "单个附件上限 2 MiB，即 2048 KiB，超过时提交页提示换小一些的文件。\n\n"
+        "前台等待 10 秒仍无结果时提示稍后查看；后台同步 60 秒内没有回执的，记为结果未知，由下一次查询确认。\n\n"
+        "预约转化率按提交预约的人数除以进入预约页的人数计，观察窗口为上线后 30 天。\n\n"
+        "> 评审会上产品负责人说：「超过 2 MiB 的附件先拒收，后面再看要不要放宽。」\n"
+    )
+
+    def node(self, script: str) -> str:
+        proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout
+
+    def test_the_guide_states_the_duty_once(self) -> None:
+        for needle in ("连同单位、适用对象与条件", "对得回原值与原口径", "回查不到的泛称不算来源", "模板残文",
+                       "不按事件数推指标数"):
+            self.assertEqual(1, self.GUIDE.count(needle), f"作者页里「{needle}」不是恰好一处")
+        for gone in ("单位表", "单位白名单"):
+            self.assertNotIn(gone, self.GUIDE)
+
+    def test_legal_number_forms_and_business_quotes_pass_the_redlines(self) -> None:
+        """红线只看形态：合法的换算、按条件不同的时限、比例分母与业务引文不该被拦。"""
+        redline = CONTRACT["language_redline"]
+        hits = self.node(
+            f"const m = await import({json.dumps(self.LANGUAGE)});"
+            f"const d = await import({json.dumps(self.DOCUMENT)});"
+            f"const t = {json.dumps(self.LEGAL)};"
+            f"const hits = m.scanLanguageRedline(t, {{kinds: {json.dumps(redline['kinds'])},"
+            f" sourceTags: {json.dumps(redline.get('source_tags', []))}}});"
+            "process.stdout.write(JSON.stringify([...hits.map(h => h.text), ...d.placeholderProblems(t)]));")
+        self.assertEqual([], json.loads(hits))
+
+    def test_template_residue_is_caught_and_semantic_residue_left_to_review(self) -> None:
+        """`{{…}}` 是形态，机器拦；「请在此处填写」这类说明是语义，交审查，机器不按字句判。"""
+        out = json.loads(self.node(
+            f"const d = await import({json.dumps(self.DOCUMENT)});"
+            "process.stdout.write(JSON.stringify(d.placeholderProblems('上限 {{填写阈值}}。\\n> 请在此处填写会议结论。')));"))
+        self.assertEqual(1, len(out), out)
+        self.assertIn("{{填写阈值}}", out[0])
+        rules = read_ext("rules/story-reader-rules.yaml")
+        self.assertIn("模板残文", rules)

@@ -386,22 +386,22 @@ flowchart TD
 
 | 来源文件 | 材料角色 | 本次版本 |
 |---|---|---|
-| [AR/design.md](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/design.md) | 原件 | e3c9a0c6933f8917（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [AR/story-src/design-draft.md](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/story-src/design-draft.md) | 派生分析（提取稿） | 9245b46a2b1eeeb6（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [AR/story-src/human-decisions.json](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/AR/story-src/human-decisions.json) | 人签记录 | f17c12f4d63212ac（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [RR/prd.md](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/RR/prd.md) | 原件 | e90230c22fec374c（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [SR/design.md](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/SR/design.md) | 原件 | d8a0e00cddf1ca0e（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [ux-reference/auto-topup-disabled.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-disabled.png) | 图片 | adeefcff56af7d05（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [ux-reference/auto-topup-entry.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-entry.png) | 图片 | 328419dced4a2be5（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [ux-reference/auto-topup-manage.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-manage.png) | 图片 | 24fbb597b158d849（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [ux-reference/auto-topup-signup.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-signup.png) | 图片 | 6c8da20cbbc6fdd4（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
-| [ux-reference/auto-topup-verify.png](story-src/inputs/0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea/files/ux-reference/auto-topup-verify.png) | 图片 | c8b62984ec0018e2（0ac5c65d6bbdec3bcf0d1a3d744e7e481e5c147e13a02c97a901cb32be792fea） |
+| [auto-topup/system/AR90006/design.md](../../../../../../../../../test/cases/auto-topup/system/AR90006/design.md) | 原件 | e3c9a0c6933f8917 |
+| `AR/story-src/design-draft.md` | 派生分析（提取稿），运行时生成，金样不附带 | — |
+| `AR/story-src/human-decisions.json` | 人签记录，运行时生成，金样不附带 | — |
+| [auto-topup/system/RR90006/prd.md](../../../../../../../../../test/cases/auto-topup/system/RR90006/prd.md) | 原件 | e90230c22fec374c |
+| [auto-topup/system/SR90006/design.md](../../../../../../../../../test/cases/auto-topup/system/SR90006/design.md) | 原件 | d8a0e00cddf1ca0e |
+| [assets/交通卡自动充值/disabled-state.png](../assets/交通卡自动充值/disabled-state.png) | 图片 | adeefcff56af7d05 |
+| [assets/交通卡自动充值/detail-entry.png](../assets/交通卡自动充值/detail-entry.png) | 图片 | 328419dced4a2be5 |
+| [assets/交通卡自动充值/manage-page.png](../assets/交通卡自动充值/manage-page.png) | 图片 | 24fbb597b158d849 |
+| [assets/交通卡自动充值/signup-page.png](../assets/交通卡自动充值/signup-page.png) | 图片 | 6c8da20cbbc6fdd4 |
+| [assets/交通卡自动充值/verify-page.png](../assets/交通卡自动充值/verify-page.png) | 图片 | c8b62984ec0018e2 |
 
 #### 10.5.2 采用与取舍说明
 
-- 产品需求 RR90006 v1.0：业务背景与目标（签约转化率按交通卡月活计）、用户旅程、情形表、产品规则与验收意图。原文：[prd.md](../RR/prd.md)
-- 系统设计 SR90006：分工、四个原有接口、失败与恢复、缓存边界、数据保护与交付顺序；改门限面额的更新接口由澄清会补上。原文：[design.md](../SR/design.md)
-- 开发需求 AR90006：上游预填的端侧边界。原文：[design.md](design.md)
-- 交通卡澄清会记录 0903：采用新增更新接口、只改门限不需要验证、AC-R1 按情形表修订、开关只管新签约、协议文案写明单日上限 200 元；面额调整的验证（D3）与授权后建约失败的处理（D4）保持待定；单日上限上调到 300 的提议会上否决；余额提醒与充值记录按月筛选不属于本单。原件：[交通卡澄清会记录-0903.docx](../inbox/交通卡澄清会记录-0903.docx)
-- 产品原稿《交通卡自动充值》：只取 RR 归档版里没有的界面图，业务口径以 RR v1.0 为准。原件：[交通卡自动充值.docx](../inbox/交通卡自动充值.docx)
+- 产品需求 RR90006 v1.0：业务背景与目标（签约转化率按交通卡月活计）、用户旅程、情形表、产品规则与验收意图。原文：[prd.md](../../../../../../../../../test/cases/auto-topup/system/RR90006/prd.md)
+- 系统设计 SR90006：分工、四个原有接口、失败与恢复、缓存边界、数据保护与交付顺序；改门限面额的更新接口由澄清会补上。原文：[design.md](../../../../../../../../../test/cases/auto-topup/system/SR90006/design.md)
+- 开发需求 AR90006：上游预填的端侧边界。原文：[design.md](../../../../../../../../../test/cases/auto-topup/system/AR90006/design.md)
+- 交通卡澄清会记录 0903：采用新增更新接口、只改门限不需要验证、AC-R1 按情形表修订、开关只管新签约、协议文案写明单日上限 200 元；面额调整的验证（D3）与授权后建约失败的处理（D4）保持待定；单日上限上调到 300 的提议会上否决；余额提醒与充值记录按月筛选不属于本单。原件：[交通卡澄清会记录-0903.docx](../../../../../../../../../test/cases/auto-topup/supplements/交通卡澄清会记录-0903.docx)
+- 产品原稿《交通卡自动充值》：只取 RR 归档版里没有的界面图，业务口径以 RR v1.0 为准。原件：[交通卡自动充值.docx](../../../../../../../../../test/cases/auto-topup/supplements/交通卡自动充值.docx)
 

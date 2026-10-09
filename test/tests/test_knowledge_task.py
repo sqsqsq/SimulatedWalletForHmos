@@ -212,6 +212,27 @@ class BlueprintAndUnitIdentity(NativeCase):
         self.assertEqual(("not_frozen", {}), (out["scope"], out["inputs"]))
         self.assertFalse((self.root / out["feature_path"] / "execution-scope.json").exists(), "读取代为冻结了范围")
 
+    def test_an_unusable_framework_is_named_with_its_path_and_cause(self) -> None:
+        """没接入 Framework、或 harness 依赖装不上：说清是哪个根、缺什么，退出 2，不写任何文件。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            bare = Path(tmp) / "bare"
+            bare.mkdir()
+            proc = self.node("hooks/shared/framework-access.mjs", "--action", "blueprint", "--blueprint", BLUEPRINT,
+                             "--purpose", "draft", root=bare)
+            self.assertEqual(2, proc.returncode, proc.stdout)
+            self.assertIn(str(bare), proc.stderr)
+            self.assertIn("framework/harness/package.json", proc.stderr)
+            broken = Path(tmp) / "broken"
+            (broken / "framework/harness").mkdir(parents=True)
+            (broken / "framework/harness/package.json").write_text("{}", encoding="utf-8")
+            proc = self.node("hooks/shared/framework-access.mjs", "--action", "blueprint", "--blueprint", BLUEPRINT,
+                             "--purpose", "draft", root=broken)
+            self.assertEqual(2, proc.returncode, proc.stdout)
+            self.assertIn("MODULE_NOT_FOUND", proc.stderr)
+            self.assertIn(str(broken / "framework" / "harness"), proc.stderr)
+            self.assertEqual([], list(bare.iterdir()), "读取失败却写了文件")
+            self.assertEqual(["framework"], [p.name for p in broken.iterdir()], "读取失败却写了文件")
+
     def test_bad_identities_and_missing_objects_fail_with_native_codes(self) -> None:
         cases = {
             ("--action", "blueprint", "--blueprint", "../evil"): ("invalid", "blueprint_id_invalid"),

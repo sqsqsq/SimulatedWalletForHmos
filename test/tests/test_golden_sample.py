@@ -3,7 +3,7 @@
 金样定义给定输入下期望的交付结果；业务质量由语义评价与用户审定确认，确定性判据用专项夹具验证，
 金样不经生产链装配。这份测试只守已审结果：
 
-  ① 正本与配图逐字节不变（指纹）、形态数不变；
+  ① 正本与配图逐字节不变（指纹）；
   ② 目录里没有未登记的文件；
   ③ 正文里的配图链接都指得到文件。
 
@@ -21,7 +21,6 @@ from urllib.parse import unquote
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = REPO_ROOT / "test" / "golden"
-GOLDEN_STORY = GOLDEN / "story-金样-AR90004.md"
 
 #: 定稿时点 2026-08-30（用户逐轮批注后认可）；同日二次修订：材料清单每行带原文链接。sha256 前 16 位。
 GOLDEN_FINGERPRINTS = {
@@ -51,7 +50,8 @@ GOLDEN_FINGERPRINTS = {
     "story-金样-AR90006.md": "216e138ed4667f8d",
     # 2026-09-25 过程件目录 design 改名 plan：说明里的历史分析链接改到 plan/1.9.1/ 下的实际位置，正文未动。
     # 2026-09-28 方案目录迁到仓根 doc/plan（1.9.8 P3 目录归属纠正）：同一条链接改到 doc/plan/1.9.1/，正文未动。
-    "story-金样-AR90006-说明.md": "27c234bb7b3a8a26",
+    # 2026-10-09 第四轮复核：退出已失效的「拦金样即判据错」门禁与「单向否决锚」说法，改为冲突时先定位来源、样本或规则；只是职责说明变更，不是业务正本审定。
+    "story-金样-AR90006-说明.md": "5b110699df7606c6",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
     "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
     "assets/AR90006/manage-page.png": "24fbb597b158d849",
@@ -73,17 +73,12 @@ EXPECTED_CANONICAL_FILES = {
     "assets/AR90006/signup-page.png",
     "assets/AR90006/verify-page.png",
     # 设计者的候选样稿（2026-09-22，上报的多流程、多指标组织方式）：只供效果审视，
-    # 不是定稿金样，不进形态比对与否决锚；逐个登记，不放行整个目录。
+    # 不是定稿金样；逐个登记，不放行整个目录。
     "bank-card-opening-reporting-candidate/README.md",
     "bank-card-opening-reporting-candidate/spec.md",
     "bank-card-opening-reporting-candidate/story.md",
     "bank-card-opening-reporting-candidate/plan.md",
 }
-
-#: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 476, "chapters": 10, "subsections": 35,
-         "table_rows": 174, "diagrams": 1, "images": 2}
-
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
@@ -100,18 +95,6 @@ class GoldenIsFrozen(unittest.TestCase):
     def test_canonical_directory_has_no_unregistered_files(self) -> None:
         actual = {p.relative_to(GOLDEN).as_posix() for p in GOLDEN.rglob("*") if p.is_file()}
         self.assertEqual(EXPECTED_CANONICAL_FILES, actual)
-
-    def test_shape_is_unchanged(self) -> None:
-        lines = GOLDEN_STORY.read_text(encoding="utf-8").split("\n")
-        actual = {
-            "lines": len(lines) - (1 if lines and lines[-1] == "" else 0),
-            "chapters": sum(1 for x in lines if x.startswith("## ")),
-            "subsections": sum(1 for x in lines if x.startswith("### ")),
-            "table_rows": sum(1 for x in lines if x.startswith("|")),
-            "diagrams": sum(1 for x in lines if x.startswith("```mermaid")),
-            "images": sum(x.count("![") for x in lines),
-        }
-        self.assertEqual(SHAPE, actual)
 
     def test_every_image_link_resolves(self) -> None:
         """正文配图用金样目录内的相对链接，读者打开就能看到图。"""

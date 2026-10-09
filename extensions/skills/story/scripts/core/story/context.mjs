@@ -105,6 +105,9 @@ export function createContext(args) {
     fail('contracts/story-chapters.json：chapters 为空或不是数组——章节是所有判据的前提，派生为空按合同损坏报');
   }
   const featureDir = featureRoot(projectRoot, args.feature);
+  if (!fs.existsSync(featureDir)) {
+    fail(`需求目录 ${featureDir} 不存在（工程根 ${projectRoot}，需求 ${args.feature}）：本命令读写的台账、正文与评审记录都在这个目录下`);
+  }
   const srcDir = path.join(featureDir, 'AR', 'story-src');
   return {
     args, projectRoot, contract, idShapes, featureRoot: featureDir, srcDir,

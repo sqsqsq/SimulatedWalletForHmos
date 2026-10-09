@@ -806,11 +806,50 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
         text = self.inject()
         self.assertIn("盘上读不到", text)
 
+    def test_the_number_and_source_semantics_reach_the_reviewer_once(self) -> None:
+        """数值同值同义、比例分母、按条件不同的值、来源可回查、引文与残文：任务里各出现一次，规则不在构造器里另写。"""
+        task = self.inject()
+        for needle in ("换算要对得回原值与单位", "比例换了分母不算一致", "不同适用条件下的不同值不算冲突",
+                       "回查不到的泛称不算来源", "模板残文", "数值换算错误或漂移改变了验收"):
+            self.assertEqual(1, task.count(needle), f"审查任务里「{needle}」不是恰好一处")
+        source = (self.root / "doc/extensions/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
+        self.assertNotIn("比例换了分母", source, "构造器又复制了一份判据")
+
     def test_the_task_really_carries_the_method(self) -> None:
         """正常路径的证据：审查者手上的任务里有这份方法——判据原文随任务送达。"""
         task = self.inject()
         for needle in ("跨章对着读", "阻断发现", "**建议**", "不许空", "按实际关系判"):
             self.assertIn(needle, task, f"审查任务里没有「{needle}」")
+
+
+class ALargeTaskKeepsEveryItem(ReviewTaskReachesTheVerifierCase):
+    def test_many_images_choices_and_topics_are_all_listed_and_the_rules_once(self) -> None:
+        """条目多时不丢项、不截断，判据仍只出现一次；普通材料不因数量变成逐条裁决表。"""
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        images = [{"kind": "image", "paths": [f"assets/doc-{i}/p{i}.png"], "caption": f"页面{i}" + "说明" * (i % 5)}
+                  for i in range(1, 13)]
+        (src / "materials.json").write_text(json.dumps({"materials": images}, ensure_ascii=False), encoding="utf-8")
+        choices = [{"id": f"D{i}", "status": "open", "title": f"中性议题{i}" + "很长的标题" * (i % 4),
+                    "decider": "需求负责人", "clarification": f"**决策点**：第{i}件事。"} for i in range(1, 16)]
+        (src / "decisions.json").write_text(json.dumps({"decisions": choices}, ensure_ascii=False), encoding="utf-8")
+        raw = "\n".join(f"第{i}行原话。" for i in range(1, 61))
+        (src / "meetings" / "评审会" / "abcdef12").mkdir(parents=True)
+        (src / "meetings" / "评审会" / "abcdef12" / "raw.md").write_text(raw, encoding="utf-8")
+        topics = [{"id": f"T{i}", "title": f"话题{i}", "finding": f"判断{i}",
+                   "evidence": [{"start": i * 3 - 2, "end": i * 3}]} for i in range(1, 21)]
+        (src / "meeting-notes.json").write_text(json.dumps({"meetings": [
+            {"source": "评审会.md", "source_sha": "abcdef1234", "topics": topics}]}, ensure_ascii=False), encoding="utf-8")
+        task = self.inject()
+        for c in choices:
+            self.assertEqual(1, task.count(f"#### {c['id']} {c['title']}\n"), c["id"])
+        for tp in topics:
+            self.assertEqual(1, task.count(f"#### 评审会@abcdef12/{tp['id']} {tp['title']}\n"), tp["id"])
+        self.assertIn("第60行原话。", task, "最后一个话题的原话没带上")
+        images_section = task.split("### 材料里的图", 1)[1].split("\n### ", 1)[0]
+        for img in images:
+            self.assertIn(img["paths"][0], images_section)
+        self.assertEqual(1, task.count("### 判据 story_reader_review（BLOCKER）"))
+        self.assertEqual(1, task.count("跨章对着读这几问"))
 
 
 class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
