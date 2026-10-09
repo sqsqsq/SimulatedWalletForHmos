@@ -2263,7 +2263,7 @@ contracts:
     source_fields:
     - agreementText
     target_field: 协议文案
-    rule: 签约页展示；协议文案写明单日上限，数值由云侧文案带入（本期取值待 D11 裁定）
+    rule: 签约页展示；协议文案写明单日最多充 200 元，由云侧文案带入（D11：v1.1 的 300 不采纳）
     source_ref: doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-agreementText
     provenance:
       source_kind: requirement_material
@@ -3565,7 +3565,7 @@ story_details:
   kind: configuration
   title: 自动充值配置项
   body: '| 配置项 | 取值与来源 | 影响 |\n|---|---|---|\n| 自动充值功能开关 | 运营管理台下发；配置不可用按关闭处理 | 只管新签约：关闭后未签约用户看不到入口，已签约用户入口不隐藏、自动充值照常 |\n| 门限档位、面额档位 | getAutoTopupPolicy 返回，运营下发；现行值 5 / 10 / 20 / 30 元与 20 / 50 / 100 元
-    | 签约页的单选项 |\n| 单日充值上限 | getAutoTopupPolicy 返回 dailyLimit；本期取值待裁定：澄清会定 200 元，产品需求 v1.1 改为 300 元（决策记录 D11） | 协议文案写明单日上限（数值随 D11 裁定）；达到上限当日不再触发、不计入连续失败 |\n'
+    | 签约页的单选项 |\n| 单日充值上限 | getAutoTopupPolicy 返回 dailyLimit，本期 200 元（产品需求 v1.1 的 300 元经决策记录 D11 不采纳） | 协议文案写明单日上限 200 元；达到上限当日不再触发、不计入连续失败 |\n'
   evidence_refs:
   - contract:getAutoTopupPolicy
   - view:development/node:auto-topup-entry-builder

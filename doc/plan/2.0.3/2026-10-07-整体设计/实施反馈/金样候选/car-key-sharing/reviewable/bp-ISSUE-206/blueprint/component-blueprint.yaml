@@ -2,8 +2,8 @@ artifact: component-blueprint@1
 component_id: WalletMain
 blueprint_id: bp-ISSUE-206
 revision: 1
-source_fingerprint: sha256:ea6f2d72f487826046cec89ba3e8906ea2909334d15b9ae53fe7f39d3c9e554f
-decision_fingerprint: sha256:4d094812922264c9d657cb2e0322bcb564cdce0d59a4887359856bb652f828da
+source_fingerprint: sha256:1747e9ad44080128d278b178bb6670d6b7f27f25b18776e4c48ef3061ab4b6f6
+decision_fingerprint: sha256:f2d9799fd808e0821366fde0497da5d17be250c96016a6bd0e1a12ff08c9116b
 provenance:
   source_kind: requirement_input
   source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/snapshot.json
@@ -820,7 +820,7 @@ design_views:
       - node_id: share-entry
         owner: design-author
         current_state: 本工程没有车钥匙卡片：车钥匙只是添加卡片页里不可点的分类，分享入口没有可挂载的宿主页面
-        target_state: 未登录或没有车钥匙的用户看不到分享入口（AC-K9）；车主从车钥匙卡片进入分享（PRD 旅程第 1 步）；入口的宿主页面待定（decision:share-entry-host）
+        target_state: 卡包车钥匙卡片上的分享入口；未登录或没有车钥匙的用户看不到（AC-K9）；功能开关关闭时不能发起新分享
         module: WalletMain
         kind: component
         design_basis_refs:
@@ -833,6 +833,22 @@ design_views:
           observed_at: 2026-10-03T14:06:51+00:00
           evidence_strength: observed
           extraction_method: source_reading
+      - node_id: car-key-card
+        owner: design-author
+        current_state: 卡包页没有车钥匙卡片的展示
+        target_state: 卡包里展示车钥匙卡片：车主本人的钥匙（来源见 gap:owner-key-source）与接受成功的钥匙；卡片承载分享入口与钥匙卡片详情的入口
+        module: WalletMain
+        kind: component
+        design_basis_refs:
+          - view:logical/node:feature-flag
+        verification_refs:
+          - doc/features/ISSUE-206/RR/prd.md
+        provenance:
+          source_kind: human_decision
+          source_ref: doc/features/ISSUE-206/AR/story-src/decisions.json
+          observed_at: 2026-10-03T14:06:51+00:00
+          evidence_strength: authoritative
+          extraction_method: recorded_user_reply
       - node_id: share-setup-page
         owner: design-author
         current_state: 无分享设置页
@@ -1377,17 +1393,15 @@ decisions_and_gaps:
         - contract:create-key-sharing-v1
     - decision_id: revoke-grace-window-drift
       kind: boundary
-      status: open_decision
+      status: decided_with_authority
       owner: 需求负责人
-      rationale: 撤销离线宽限存在验收语义分歧：PRD 取「离线最长 24 小时内失效」（AC-K5），SR 与 revokeKeySharing
-        契约取「宽限窗 48 小时 / graceHours=48」。契约字段按 SR 原样转写；对方卡片消失的宽限时长与 AC-K5
-        的验收口径由需求负责人裁决，裁决前不落定；车辆侧自撤销发起即拒绝，两稿一致。
+      rationale: 需求方确认：撤销时对方离线，对方设备上的卡片最长 48 小时内收回（与 SR 及 revokeKeySharing.graceHours=48 一致）；车辆侧自撤销发起即拒绝不变。
       provenance:
-        source_kind: product_requirement
-        source_ref: doc/features/ISSUE-206/RR/prd.md
+        source_kind: human_decision
+        source_ref: doc/features/ISSUE-206/AR/story-src/decisions.json
         observed_at: 2026-10-03T14:06:51+00:00
-        evidence_strength: observed
-        extraction_method: source_reading
+        evidence_strength: authoritative
+        extraction_method: recorded_user_reply
       verification_refs:
         - contract:revoke-key-sharing-v1
     - decision_id: privacy-masking
@@ -1446,15 +1460,15 @@ decisions_and_gaps:
         - view:logical/node:share-domain
     - decision_id: share-entry-host
       kind: boundary
-      status: open_decision
+      status: decided_with_authority
       owner: 出行产品组
-      rationale: 产品稿假设车主在钱包的车钥匙卡片上点「分享」、接受后的钥匙进入对方钱包卡包；本工程没有车钥匙卡片（车钥匙只是添加卡片页里不可点的分类，卡包页没有车钥匙卡片的展示）。分享入口挂在哪个页面、接受后的钥匙由谁在卡包展示，待需求方确认车钥匙本人卡片能力的提供方与接入点。
+      rationale: 需求方确认：本次钱包端一并补齐车钥匙卡片在卡包的展示与卡片上的分享入口，接受成功的钥匙也在卡包展示；真车开锁、凭据签发与设备能力不做。车主本人钥匙信息的来源另见 gap:owner-key-source。
       provenance:
-        source_kind: product_requirement
-        source_ref: doc/features/ISSUE-206/RR/prd.md
+        source_kind: human_decision
+        source_ref: doc/features/ISSUE-206/AR/story-src/decisions.json
         observed_at: 2026-10-03T14:06:51+00:00
-        evidence_strength: observed
-        extraction_method: source_reading
+        evidence_strength: authoritative
+        extraction_method: recorded_user_reply
       verification_refs:
         - view:development/node:share-entry
         - view:development/node:key-card-detail-page
@@ -1464,20 +1478,6 @@ decisions_and_gaps:
       owner: 需求负责人
       needed_by: slice:policy-review-future
       unlock_condition: 安全评审与车厂协商给出确定性结论后，决定是否承载再转发与强制下线
-      provenance:
-        source_kind: product_requirement
-        source_ref: doc/features/ISSUE-206/RR/prd.md
-        observed_at: 2026-10-03T14:06:51+00:00
-        evidence_strength: observed
-        extraction_method: source_reading
-    - gap_id: revoke-grace-window-drift-gap
-      status: open_decision
-      owner: 需求负责人
-      needed_by: slice:acceptance-reconcile-future
-      unlock_condition: 需求负责人裁决 PRD 24h 与 SR 48h 的撤销宽限差异，并同步 AC-K5 验收意图
-      verification_refs:
-        - contract:revoke-key-sharing-v1
-        - decision:revoke-grace-window-drift
       provenance:
         source_kind: product_requirement
         source_ref: doc/features/ISSUE-206/RR/prd.md
@@ -1499,15 +1499,15 @@ decisions_and_gaps:
         observed_at: 2026-10-03T14:06:51+00:00
         evidence_strength: observed
         extraction_method: source_reading
-    - gap_id: share-entry-host-gap
+    - gap_id: owner-key-source
       status: blocker
       owner: 出行产品组
-      needed_by: slice:share-entry-host
-      unlock_condition: 需求方确认车钥匙本人卡片由哪个模块提供、分享入口挂在哪个页面、接受后的钥匙由谁在卡包展示；之后施工单位才能把入口与卡片详情接到真实页面
+      needed_by: slice:owner-key-source
+      unlock_condition: 确认卡包里车主本人车钥匙的车辆标识与钥匙信息由谁提供、经哪个接口取得（议题 D8）；之后施工单位才能把车钥匙卡片与分享入口接到真实数据
       knowledge_state: unknown
       verification_refs:
         - decision:share-entry-host
-        - view:development/node:share-entry
+        - view:development/node:car-key-card
       provenance:
         source_kind: product_requirement
         source_ref: doc/features/ISSUE-206/RR/prd.md
@@ -2624,7 +2624,7 @@ providers:
     writes: []
     missing_disposition: unknown
 discovery:
-  source_fingerprint: sha256:ea6f2d72f487826046cec89ba3e8906ea2909334d15b9ae53fe7f39d3c9e554f
+  source_fingerprint: sha256:1747e9ad44080128d278b178bb6670d6b7f27f25b18776e4c48ef3061ab4b6f6
   facts:
     - fact_id: f-carkey-category
       subject: carkey_category_current
@@ -2711,7 +2711,7 @@ discovery:
         source_ref: doc/glossary.yaml
         observed_at: 2026-10-03T14:06:51+00:00
         evidence_strength: observed
-        extraction_method: inferred_by_designer
+        extraction_method: user_confirmed
     - fact_id: f-glossary-perm
       subject: term:权限档位
       value:
@@ -2724,7 +2724,7 @@ discovery:
         source_ref: doc/glossary.yaml
         observed_at: 2026-10-03T14:06:51+00:00
         evidence_strength: observed
-        extraction_method: inferred_by_designer
+        extraction_method: user_confirmed
     - fact_id: f-glossary-status
       subject: term:分享状态
       value:
@@ -2737,7 +2737,7 @@ discovery:
         source_ref: doc/glossary.yaml
         observed_at: 2026-10-03T14:06:51+00:00
         evidence_strength: observed
-        extraction_method: inferred_by_designer
+        extraction_method: user_confirmed
     - fact_id: f-component-profile
       subject: component_profile
       value:
@@ -2947,7 +2947,7 @@ story_details:
   - id: detail-share-draft-policy
     kind: data_policy
     title: 发起草稿 key_sharing_draft
-    body: 发起草稿存联系人、权限档位、有效期与幂等标识。发起途中退出或断网回合回来凭它接着办，同一幂等标识不发出第二条；发出成功即清除。按账号隔离，退出登录清除。
+    body: 发起草稿存对方账号标识、权限档位、有效期与幂等标识。发起途中退出页面、断网或应用关闭后重开都凭它接着办，同一幂等标识不发出第二条；发出成功即清除。按账号隔离，退出登录或切换账号清除；对方账号标识不进入页面、日志与事件。保存方式需扛过应用关闭，由施工单位按隐私规约选型。
     evidence_refs:
       - view:runtime/node:share-draft-store
   - id: detail-share-flag

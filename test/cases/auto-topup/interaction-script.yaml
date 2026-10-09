@@ -74,3 +74,9 @@ replies:
     expected_turn: 12
     expected_kind: story_gate
     text: 不补，材料就这些。
+
+  # 第二段：改版稿把单日上限改成 300，与会上「本期 200 不动」冲突（有意保留的探针）。模型把冲突摆出来问人时的立场。
+  - id: update-daily-limit-conflict
+    expected_turn: 13
+    expected_kind: story_gate
+    text: 单日上限按会上定的，本期 200 元。

@@ -3,6 +3,7 @@
 # 一条只答一个关卡的一个问题；只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.2）。
 # expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
 # 模型第一次停在材料关卡时，产品稿与接受侧界面说明一次交齐；之后材料关卡再问才答「材料就这些」（TEST §3.2）。
+# 下面几条只在模型实际问到那件事时才说；没问到就不说，也不提前透露工程里缺什么。
 replies:
   - id: hand-over-the-product-doc
     expected_turn: 1
@@ -26,26 +27,54 @@ replies:
     expected_phase: story
     text: 不拆单。
 
-  - id: terms-confirmed
+  # 产品稿撤销宽限写 24 小时、系统设计写 48 小时，模型把冲突摆出来问人时的立场（第二段评审会再改成 36 小时）。
+  - id: grace-window-initial
     expected_turn: 4
+    expected_kind: story_gate
+    expected_phase: story
+    text: 宽限按 48 小时，指对方设备上的卡片多久收回；车辆那边一撤销就拒绝，这个不变。
+
+  # 产品稿假设车钥匙卡片已经上线，工程里却没有这张卡片（有意保留的工程事实探针）。模型问到入口挂在哪、卡片由谁展示时的立场。
+  - id: car-key-card-scope
+    expected_turn: 5
+    expected_kind: story_gate
+    expected_phase: story
+    text: 这次钱包端把车钥匙卡片在卡包里的展示和分享入口一起补上，对方接受成功的钥匙也在卡包里展示；真车开锁、凭据签发和设备上的能力不在这次做。
+
+  # 车云接口在工程里还用不了，模型问到怎么承载时的立场。
+  - id: no-real-interface
+    expected_turn: 6
+    expected_kind: story_gate
+    expected_phase: story
+    text: 可以先按定好的接口用模拟数据把钱包端的交互和状态验证起来；和车云的真实联调另算，这次不算验过。
+
+  # 模型问到发起分享中途被打断能不能接着办时的立场。
+  - id: draft-resume-boundary
+    expected_turn: 7
+    expected_kind: story_gate
+    expected_phase: story
+    text: 退出页面、断网、把应用关掉再打开，回来都要能接着办；发出成功、退出登录或者换了账号就清掉，不能串到别的账号。
+
+  - id: terms-confirmed
+    expected_turn: 8
     expected_kind: story_gate
     expected_phase: story
     text: 术语确认，按你列的定。
 
   - id: implementation-plan
-    expected_turn: 5
+    expected_turn: 9
     expected_kind: story_gate
     expected_phase: story
     text: 实现方案。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material
-    expected_turn: 6
+    expected_turn: 10
     expected_kind: story_gate
     text: 不补。
 
   # 模型把评审意见里「36 小时内对方仍可开门」与「撤销起车辆侧即拒绝」的冲突摆出来问人时的立场。
   - id: grace-window-conflict
-    expected_turn: 7
+    expected_turn: 11
     expected_kind: story_gate
     text: 车辆侧撤销即拒绝不变，36 小时是对方设备上卡片收回的期限。

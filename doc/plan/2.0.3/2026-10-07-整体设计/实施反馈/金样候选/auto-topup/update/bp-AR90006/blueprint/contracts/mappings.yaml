@@ -48,7 +48,7 @@ mappings:
     kind: direct
     source_fields: [agreementText]
     target_field: 协议文案
-    rule: 签约页展示；协议文案写明单日上限，数值由云侧文案带入（本期取值待 D11 裁定）
+    rule: 签约页展示；协议文案写明单日最多充 200 元，由云侧文案带入（D11：v1.1 的 300 不采纳）
   create-req-account:
     mapping_id: create-req-account
     kind: direct

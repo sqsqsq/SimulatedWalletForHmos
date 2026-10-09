@@ -5,7 +5,7 @@ derived_from:
   blueprint_id: bp-AR90006
   revision: 2
   source_fingerprint: sha256:5cf72e412d8e71f533b53f5566bcea7c6e14c6cf0aacaacff2b1780cd7003aaa
-  artifact_sha256: sha256:089d1aadf2e747a05417927ae4d6bdcdb7c2c4895915260c00834d07b4257b79
+  artifact_sha256: sha256:89a43ce71b62943c4b35e0d0fe5c2763419115f838b52a3a781309486df0b3a9
 projection: component-blueprint-review@1
 ---
 
@@ -197,7 +197,7 @@ Subscriptions and consumers:
   - policy-resp-thresholdOptions (direct): thresholdOptions → 门限档位列表; rule=签约页单选数据源; source=doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-thresholdOptions
   - policy-resp-amountOptions (direct): amountOptions → 面额档位列表; rule=签约页单选数据源; source=doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-amountOptions
   - policy-resp-dailyLimit (direct): dailyLimit → 单日限额; rule=展示与协议文案引用; source=doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-dailyLimit
-  - policy-resp-agreementText (direct): agreementText → 协议文案; rule=签约页展示；协议文案写明单日上限，数值由云侧文案带入（本期取值待 D11 裁定）; source=doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-agreementText
+  - policy-resp-agreementText (direct): agreementText → 协议文案; rule=签约页展示；协议文案写明单日最多充 200 元，由云侧文案带入（D11：v1.1 的 300 不采纳）; source=doc/features/bp-AR90006/blueprint/contracts/mappings.yaml#/mappings/policy-resp-agreementText
 - Errors: 卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
 - Idempotency: 只读查询，天然幂等
 - NFR: ["金额一律以「分」为单位的整数","createAutoTopupContract 失败或超时的协议号复用时限待卡云与支付对齐（会议 T6，见蓝图 gap agreement-retry）"]

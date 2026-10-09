@@ -4,8 +4,8 @@ derived_from:
   component_id: WalletMain
   blueprint_id: bp-ISSUE-206
   revision: 1
-  source_fingerprint: sha256:ea6f2d72f487826046cec89ba3e8906ea2909334d15b9ae53fe7f39d3c9e554f
-  artifact_sha256: sha256:143d347cff2b1625f886ecfa2e90c335dce6d52dc6dd8b82a366b657addcc0a3
+  source_fingerprint: sha256:1747e9ad44080128d278b178bb6670d6b7f27f25b18776e4c48ef3061ab4b6f6
+  artifact_sha256: sha256:421c27158d0afc15ebe50cbda64eb1a705d094ca801e567ffb3692e77ab07463
 projection: component-blueprint-review@1
 ---
 
@@ -70,7 +70,8 @@ Nodes:
 
 Nodes:
 
-- share-entry — owner=design-author; current=本工程没有车钥匙卡片：车钥匙只是添加卡片页里不可点的分类，分享入口没有可挂载的宿主页面; target=未登录或没有车钥匙的用户看不到分享入口（AC-K9）；车主从车钥匙卡片进入分享（PRD 旅程第 1 步）；入口的宿主页面待定（decision:share-entry-host）; basis=view:logical/node:feature-flag; verification=doc/features/ISSUE-206/RR/prd.md
+- share-entry — owner=design-author; current=本工程没有车钥匙卡片：车钥匙只是添加卡片页里不可点的分类，分享入口没有可挂载的宿主页面; target=卡包车钥匙卡片上的分享入口；未登录或没有车钥匙的用户看不到（AC-K9）；功能开关关闭时不能发起新分享; basis=view:logical/node:feature-flag; verification=doc/features/ISSUE-206/RR/prd.md
+- car-key-card — owner=design-author; current=卡包页没有车钥匙卡片的展示; target=卡包里展示车钥匙卡片：车主本人的钥匙（来源见 gap:owner-key-source）与接受成功的钥匙；卡片承载分享入口与钥匙卡片详情的入口; basis=view:logical/node:feature-flag; verification=doc/features/ISSUE-206/RR/prd.md
 - share-setup-page — owner=design-author; current=无分享设置页; target=分享设置页三段：给谁/权限/有效期；先选对象权限区才确定；三项选好「发出」可点；满额置灰给原因；可复用 MaisonNavBar/MaisonPrimaryButton/MaisonSelector; basis=view:logical/node:grantee-permission-domain; verification=doc/features/ISSUE-206/RR/prd.md
 - share-manage-page — owner=design-author; current=无分享管理页; target=分享管理页顶部车辆+剩余可分享数，列表逐条对象/权限/有效期/状态，可单独撤销；不缓存、断网给网络失败态; basis=view:runtime/node:share-manage-view; verification=doc/features/ISSUE-206/RR/prd.md
 - share-accept-page — owner=design-author; current=无接受侧页面; target=接受页车辆信息卡（车型/车主昵称/权限/有效期）+「添加到钱包」；不设拒绝按钮，72 小时未接受作废; basis=view:runtime/node:share-accept-processor; verification=doc/features/ISSUE-206/ux-reference/README.md
@@ -348,15 +349,14 @@ Subscriptions and consumers:
 - decision knowledge-dlv-01: answered_with_evidence; owner=design-author; verification=view:development/node:share-setup-page, view:development/node:share-manage-page, view:development/node:share-accept-page
 - decision knowledge-dlv-02: not_applicable; owner=design-author; verification=—
 - decision atomic-share-rollback: answered_with_evidence; owner=design-author; verification=contract:create-key-sharing-v1
-- decision revoke-grace-window-drift: open_decision; owner=需求负责人; verification=contract:revoke-key-sharing-v1
+- decision revoke-grace-window-drift: decided_with_authority; owner=需求负责人; verification=contract:revoke-key-sharing-v1
 - decision privacy-masking: answered_with_evidence; owner=design-author; verification=view:runtime/node:share-repository
 - decision share-undecided-ahead: open_decision; owner=需求负责人; verification=contract:create-key-sharing-v1, contract:revoke-key-sharing-v1
 - decision share-force-offline-undecided: open_decision; owner=需求负责人; verification=contract:create-key-sharing-v1, contract:revoke-key-sharing-v1
 - decision scope-carry-all: decided_with_authority; owner=需求负责人; verification=view:logical/node:share-domain
-- decision share-entry-host: open_decision; owner=出行产品组; verification=view:development/node:share-entry, view:development/node:key-card-detail-page
+- decision share-entry-host: decided_with_authority; owner=出行产品组; verification=view:development/node:share-entry, view:development/node:key-card-detail-page
 - gap share-undecided-policy: open_decision; owner=需求负责人; needed_by=slice:policy-review-future; unlock=安全评审与车厂协商给出确定性结论后，决定是否承载再转发与强制下线
-- gap revoke-grace-window-drift-gap: open_decision; owner=需求负责人; needed_by=slice:acceptance-reconcile-future; unlock=需求负责人裁决 PRD 24h 与 SR 48h 的撤销宽限差异，并同步 AC-K5 验收意图
 - gap component-asset-curation-future: open_decision; owner=design-author; needed_by=slice:component-assets-future; unlock=建立 doc/component-index.yaml / component-catalog.yaml 后可完成共享 UI 组件选型；当前共享组件选型不可评估
-- gap share-entry-host-gap: blocker; owner=出行产品组; needed_by=slice:share-entry-host; unlock=需求方确认车钥匙本人卡片由哪个模块提供、分享入口挂在哪个页面、接受后的钥匙由谁在卡包展示；之后施工单位才能把入口与卡片详情接到真实页面
+- gap owner-key-source: blocker; owner=出行产品组; needed_by=slice:owner-key-source; unlock=确认卡包里车主本人车钥匙的车辆标识与钥匙信息由谁提供、经哪个接口取得（议题 D8）；之后施工单位才能把车钥匙卡片与分享入口接到真实数据
 
 > Derived projection only. The canonical YAML remains the machine SSOT.

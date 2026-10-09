@@ -217,3 +217,26 @@ runner 输出统一的下一间隔和结构化进展变化；每轮均展示完�
   `doc/extensions/**` 60 + 40 次/阶段；`check-spec.ts` 被读 9 次，14 条 bash 在 grep checker 反推判据；同一 check id FAIL 5 次
   （`lifecycle_hook_post_check_extension` 洋葱式暴露五层）；spec 阶段上下文 +397K（全程 11K → 818K，零 compaction）；spec 阶段扩展占
   prompt 44.3%；机制层代码行新口径基线 8116。
+
+## 7. Case 输入变更
+
+`test/cases/` 是被测输入，按 cases/README 改一次记一笔：旧/新摘要（原始字节 SHA-256 前 16 位）、增加的立场及预期影响。
+
+- **2026-10-09 补齐两 Case 的宿主立场**（依据 2.0.3 设计者 10-09 裁定）。原始快照 `15844e09` 保留为历史基底；之后的金样候选与成本配对
+  都用这一版新输入，不拿旧输入的历史运行比性能。
+  - `auto-topup/interaction-script.yaml` 81854d79f927870f → 91d5d59473d57dee：新增 `update-daily-limit-conflict`（第二段改版稿单日上限
+    300 与会上冲突，问到时答本期 200 元）。10-03 实跑里宿主是按答案卷临场答的，现在立场有了唯一的书面来源。
+  - `auto-topup/meeting-answer-key.md` 7fac2fd1d8629ca9 → 999e5cc4b578744d：宿主立场一节引用上面那一条。
+  - `car-key-sharing/interaction-script.yaml` e82e00628e8aa18b → 0d48bdfea52c1989：新增四条，都只在模型问到时才说。
+    - `grace-window-initial`：初段宽限按 48 小时，指卡片收回期限，车辆侧撤销即拒绝不变。
+    - `car-key-card-scope`：工程里没有车钥匙卡片，这次一并补卡包里的车钥匙卡片展示与分享入口，接受成功的钥匙也在卡包展示；真车开锁、凭据与设备能力不做。
+    - `no-real-interface`：先按给定接口用模拟数据验证钱包端，真实联调另算、不算验过。
+    - `draft-resume-boundary`：退出页面、断网、应用关闭再打开都能续办；发出成功、退出登录或换账号后清除、不串账号。
+    - 其余条目的预估顺序顺延。
+  - `car-key-sharing/case.yaml` 86a1490b20e0fe6e → 720a0293704355c6：覆盖说明补上工程事实探针、承载方式与草稿续办边界。
+  - `car-key-sharing/update-inputs/car-review-feedback.yaml` a03ca13d07a13952 → ebbad8571f846f95：宽限那条的匹配词加上「对方离线」。
+    初段按新立场把宽限定案后，议题标题写成「撤销时对方离线：……48 小时内收回……」，不再含「宽限」，投放找不到这条议题。改测试输入而不改业务问题。
+  - 预期影响：
+    - 初段的 D1、D3、D5 与草稿边界都可以在问人之后定案；车钥匙卡片在本工程不存在的事实保留为探针，不为它预先补 demo；
+    - 第二段 36 小时再改版，验证已定结论的真实修订；
+    - 立场只给业务范围，类、文件、路由与数据结构由消费模型自己调查。
