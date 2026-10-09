@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "39664b147585e600eed4078e560bcdbe183ae97b",
-  "built_at": "2026-10-08T10:12:24.027Z",
+  "source_commit": "ca860a77ec73bd479ba3ead44861ca066fb487c4",
+  "built_at": "2026-10-09T10:00:57.021Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "bd8e6c029d9e652dda69572b008821422b59b50f2b5dbdff3ab19c64c89bcc6f"
+      "sha256": "de5c7d10a6ffebd575c91b17c889c0ab01f67a91fd9951e46b347ec0dbfe1d92"
     },
     {
       "path": "README.md",
@@ -506,11 +506,11 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "68d5c5e4a7052c84f4e2a54035da19c86bd526e188cb93bda440cfd90373a16f"
+      "sha256": "0e37f49f6ab20c408ed63483e500c7bc5fdbc6bd990b7e81da63ff80939aa44b"
     },
     {
       "path": "docs/operations/harness-runbook.md",
-      "sha256": "0649b688529e0bc0a0f2af8b54f49d32dfe7d1a8e61b127bf05f76038edc6e8f"
+      "sha256": "1d17b1c5f31065cc37279cf037e396fd5b6074ec268ad12a10e099cf0aef80df"
     },
     {
       "path": "docs/operations/layout-oracle-calibration.md",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "de5105bcbcddad4ab61274ca413642c783a02728844fac8955833df43764bbad"
+      "sha256": "2ae95fcfec258a0f8d8b1ef2866a05fc9b21e5f350db1d93bc8d0dbdf87585db"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -1078,7 +1078,7 @@
     },
     {
       "path": "harness/scripts/utils/assess.ts",
-      "sha256": "fab3c82999617f8bf5cc11ed58ab1173586dae253547d8fee4d080e4d42862dc"
+      "sha256": "94a962264c69ae7109c98c7419add6572d2ffda248d4d158a806969f720ec261"
     },
     {
       "path": "harness/scripts/utils/ast-analyzer.ts",
@@ -1174,7 +1174,7 @@
     },
     {
       "path": "harness/scripts/utils/capability-resolution-entry-input.ts",
-      "sha256": "cbb7b2704e984c603c105ff61feaba8ccf893d11584581209a9c39638564c30d"
+      "sha256": "c8c7715c69bd45d031f0851cb8d1d4a7f048363fc33d5bd5a8cbeeb3f3ddf710"
     },
     {
       "path": "harness/scripts/utils/capability-resolution.ts",
@@ -1382,7 +1382,7 @@
     },
     {
       "path": "harness/scripts/utils/context-facts.ts",
-      "sha256": "7dd1aeaf7c84ee3fc0f31ad8f3f1068a9d6c4e27da60d8527a346311a24713b8"
+      "sha256": "9cf6790ef27045da28e6116c8885900def4957a4fb4dff3f1c29a5a48c701ef0"
     },
     {
       "path": "harness/scripts/utils/contract-reference-closure.ts",
@@ -1502,7 +1502,7 @@
     },
     {
       "path": "harness/scripts/utils/feature-assessment.ts",
-      "sha256": "0a0f64bd7f610e2ae0cfe03fda88123e895950220faabb45dec7f81ed6c15eae"
+      "sha256": "5d510bd246a63608ce5f3c126a0c8d71859d258e24f35595d67785bc2bb610f2"
     },
     {
       "path": "harness/scripts/utils/feature-execution-scope.ts",
@@ -1526,7 +1526,7 @@
     },
     {
       "path": "harness/scripts/utils/fidelity-shared.ts",
-      "sha256": "6971d4601cd240417f4033723a3efd1631f70e5be70708c1def49c28eafd70df"
+      "sha256": "05c8fb783caf87f8585c24485767a3a2539f3cd3c564978efb5cda65d3435b17"
     },
     {
       "path": "harness/scripts/utils/finalize-init-run-log.ts",
@@ -1610,7 +1610,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-manifest.ts",
-      "sha256": "3f94b02922b0ef4f9dc25ebffbc8fabbae78f49d4ef967b03d0e4edfab556d5d"
+      "sha256": "0bf7b79edcb5e0ea638a2a091f86ec20b34fea74bcc4a7439f0a8facce3c4d53"
     },
     {
       "path": "harness/scripts/utils/goal-phase-executor.ts",
@@ -1854,7 +1854,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-closure-finalizer.ts",
-      "sha256": "d51766a6fc7bc8e954600458edc4a90f7412feaf92b14dcaa2d73a941319ea10"
+      "sha256": "798b6ab9a14e6b903762649722b96516aa6211794dd2a8ef2468452d23823871"
     },
     {
       "path": "harness/scripts/utils/phase-device-requirement.ts",
@@ -1862,7 +1862,7 @@
     },
     {
       "path": "harness/scripts/utils/phase-evidence-manifest.ts",
-      "sha256": "673ca2db515104e96e47d775ebf89849dfa2d2023686c413e34e20c5409a9d64"
+      "sha256": "d815d15c47011ce6a126d06afa326efb9d2bca4cd67000dff94d05dfd8620ad8"
     },
     {
       "path": "harness/scripts/utils/phase-personal-prerequisites.ts",
@@ -1938,7 +1938,7 @@
     },
     {
       "path": "harness/scripts/utils/revalidate.ts",
-      "sha256": "00b8937a2678a71a4c0a46d4ef330bebfc099e0d5537d157eecc904e391ec7ee"
+      "sha256": "f68615f6211fa69bc3216b22e4a5ffb808dbb350d3426d3a0e7f51239a01042b"
     },
     {
       "path": "harness/scripts/utils/run-state-reducer.ts",
@@ -1966,7 +1966,7 @@
     },
     {
       "path": "harness/scripts/utils/scope-replan.ts",
-      "sha256": "19f132f00ed214fe8ba0fdaecb5b7c108d541bcb459bc3e8eaad02761bb75751"
+      "sha256": "65205068af69c8615b22ac87721d0ae4f5398bf16ad29cce2ad4d71802fc6bb5"
     },
     {
       "path": "harness/scripts/utils/shape-guards.ts",
@@ -2026,7 +2026,7 @@
     },
     {
       "path": "harness/scripts/utils/ui-scope-gate.ts",
-      "sha256": "92b60472f809a1d2bb45823b24195304ba4d4392e1224e94633e441fb6ee1384"
+      "sha256": "75e33d57d3135f81f5f6354023785b660f36d259b5e927dbae276ef5ac4b243c"
     },
     {
       "path": "harness/scripts/utils/ui-spec-shared.ts",
@@ -2034,11 +2034,11 @@
     },
     {
       "path": "harness/scripts/utils/upstream-closure.ts",
-      "sha256": "f354b29948caa0664b6d4671248d1a9423be0d296f81aebce381ba5133a0fe2e"
+      "sha256": "7101c05ff5bbf6ff6002635b6c96b244bd0c970cd5a51dde5d6deaa830623bfa"
     },
     {
       "path": "harness/scripts/utils/upstream-verdict-gate.ts",
-      "sha256": "9a82edd71dde48b09cf7bc39a6d16af7ebf6ac4206c9b937551c3c545f4590f4"
+      "sha256": "069efcf90e420698ab992c3a06c63e0d28e2d4a07fa8027c2be28bf0a32e84fd"
     },
     {
       "path": "harness/scripts/utils/usage-capture.ts",
@@ -2098,7 +2098,7 @@
     },
     {
       "path": "harness/scripts/utils/verify-feature-completion.ts",
-      "sha256": "df290c0a6b54845d4de4c0025321cf095b1bb531f2a3963fbb75ad85c0223f13"
+      "sha256": "6d17b35110e2563ef347cf49ded6c1b6261960aec4f438b8a14b448e21ca51b2"
     },
     {
       "path": "harness/scripts/utils/vision-canary-interactive.ts",
