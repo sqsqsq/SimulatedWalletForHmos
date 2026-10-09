@@ -292,209 +292,79 @@ flowchart TD
 
 ## 10. 附录
 
-附录提供正文里的接口、数据、配置、统计点与规约判断的精确登记，以及据哪几份材料写成这份 Story。
-
 ### 10.1 技术契约
 
-这一节列倒查正文中文名的精确接口、数据与配置项。
+正文里的中文名在这里对应到接口、数据与配置，供实现、测试与维护按名查证；完整字段、类型与映射在随本文一起交付的设计附件里。
 
 #### 10.1.1 端云接口
 
-<!-- story-build:begin 技术契约·端云接口 · 由蓝图 contracts（bp-AR90006 r2）生成，改它请改真源 · sha256:c101898eb415c0ab -->
-**getAutoTopupPolicy**：getAutoTopupPolicy（outbound，版本 1.0）
+五个接口都由钱包端调用交通卡云，金额一律以「分」为单位的整数；失败返回卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码。
 
-| 位置 | 字段 | 类型 | 含义 | 可空 |
-|---|---|---|---|---|
-| 请求 AutoTopupPolicyRequest | accountId | string | 去标识账号 | 必有 |
-| 请求 AutoTopupPolicyRequest | cardId | string | 卡片标识 | 必有 |
-| 响应 AutoTopupPolicyResponse | signable | boolean | 是否可签约 | 必有 |
-| 响应 AutoTopupPolicyResponse | unsignableReason | string | 不可签约的原因（如未实名），可签约时为空 | 可空 |
-| 响应 AutoTopupPolicyResponse | thresholdOptions | int[] | 门限档位 | 必有 |
-| 响应 AutoTopupPolicyResponse | amountOptions | int[] | 面额档位 | 必有 |
-| 响应 AutoTopupPolicyResponse | dailyLimit | int | 单日限额 | 必有 |
-| 响应 AutoTopupPolicyResponse | agreementText | string | 协议文案 | 必有 |
-
-| 映射 | 目标字段 | 方式 | 来源字段 | 规则 |
-|---|---|---|---|---|
-| policy-req-account | 钱包端账号标识（来自登录态） | direct | accountId | 直取当前登录的去标识账号 |
-| policy-req-card | 当前详情页卡片标识 | direct | cardId | 直取当前交通卡卡片标识 |
-| policy-resp-signable | 可签约性状态 | direct | signable | 控制入口显示与可点 |
-| policy-resp-unsignableReason | 不可签约原因 | direct | unsignableReason | 用于实名引导提示文案 |
-| policy-resp-thresholdOptions | 门限档位列表 | direct | thresholdOptions | 签约页单选数据源 |
-| policy-resp-amountOptions | 面额档位列表 | direct | amountOptions | 签约页单选数据源 |
-| policy-resp-dailyLimit | 单日限额 | direct | dailyLimit | 展示与协议文案引用 |
-| policy-resp-agreementText | 协议文案 | direct | agreementText | 签约页展示（含会议 T5 的「单日最多充 200 元」由云侧文案带入） |
-
-- 错误语义：卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
-- 幂等：只读查询，天然幂等
-- 非功能：金额一律以「分」为单位的整数、createAutoTopupContract 失败或超时的协议号复用时限待卡云与支付对齐（会议 T6，见蓝图 gap agreement-retry）
-
-**createAutoTopupContract**：createAutoTopupContract（outbound，版本 1.0）
-
-| 位置 | 字段 | 类型 | 含义 | 可空 |
-|---|---|---|---|---|
-| 请求 CreateAutoTopupContractRequest | accountId | string | 去标识账号 | 必有 |
-| 请求 CreateAutoTopupContractRequest | cardId | string | 卡片标识 | 必有 |
-| 请求 CreateAutoTopupContractRequest | agreementNo | string | 支付部件返回的协议号 | 必有 |
-| 请求 CreateAutoTopupContractRequest | threshold | int | 触发门限 | 必有 |
-| 请求 CreateAutoTopupContractRequest | amount | int | 单笔充值面额 | 必有 |
-| 响应 CreateAutoTopupContractResponse | contractNo | string | 签约号 | 必有 |
-| 响应 CreateAutoTopupContractResponse | existed | boolean | 是否为既有生效签约（true 时没有新建） | 必有 |
-
-| 映射 | 目标字段 | 方式 | 来源字段 | 规则 |
-|---|---|---|---|---|
-| create-req-account | 钱包端账号标识 | direct | accountId | 直取当前登录去标识账号 |
-| create-req-card | 当前卡片标识 | direct | cardId | 直取当前交通卡 |
-| create-req-agreementNo | 免密协议号（仅透传，不持久化） | direct | agreementNo | 支付部件验证返回的协议号原样透传 |
-| create-req-threshold | 触发门限 | direct | threshold | 签约页所选门限（分） |
-| create-req-amount | 单笔面额 | direct | amount | 签约页所选面额（分） |
-| create-resp-contractNo | wallet_auto_topup_contract.contractNo | direct | contractNo | 缓存签约号，用于后续状态查询与解约 |
-| create-resp-existed | 转管理页判定 | direct | existed | existed=true 时入口与管理页分流，不重复建约 |
-
-- 错误语义：卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
-- 幂等：创建签约以「卡片 + 生效状态」判重，已有生效签约返回既有 contractNo
-- 非功能：金额一律以「分」为单位的整数、createAutoTopupContract 失败或超时的协议号复用时限待卡云与支付对齐（会议 T6，见蓝图 gap agreement-retry）
-
-**getAutoTopupStatus**：getAutoTopupStatus（outbound，版本 1.0）
-
-| 位置 | 字段 | 类型 | 含义 | 可空 |
-|---|---|---|---|---|
-| 请求 GetAutoTopupStatusRequest | accountId | string | 去标识账号 | 必有 |
-| 请求 GetAutoTopupStatusRequest | cardId | string | 卡片标识 | 必有 |
-| 响应 GetAutoTopupStatusResponse | contractStatus | string | none / active / disabled | 必有 |
-| 响应 GetAutoTopupStatusResponse | contractNo | string | 未签约时为空 | 可空 |
-| 响应 GetAutoTopupStatusResponse | threshold | int | 当前门限，未签约时为空 | 可空 |
-| 响应 GetAutoTopupStatusResponse | amount | int | 当前面额，未签约时为空 | 可空 |
-| 响应 GetAutoTopupStatusResponse | recentRecords | object[] | 最近记录，可为空列表；每项含 time、amount、result | 必有 |
-| 响应 GetAutoTopupStatusResponse | consecutiveFailures | int | 连续扣款失败次数 | 必有 |
-| 响应 GetAutoTopupStatusResponse | disabledReason | string | 停用原因，未停用时为空 | 可空 |
-
-| 映射 | 目标字段 | 方式 | 来源字段 | 规则 |
-|---|---|---|---|---|
-| status-req-account | 钱包端账号标识 | direct | accountId | 直取登录去标识账号 |
-| status-req-card | 当前卡片标识 | direct | cardId | 直取当前交通卡 |
-| status-resp-contractStatus | 签约状态（none/active/disabled） | direct | contractStatus | 管理页顶部状态与入口分流依据 |
-| status-resp-contractNo | wallet_auto_topup_contract.contractNo | direct | contractNo | 状态查询回填缓存签约号（可为空） |
-| status-resp-threshold | 当前门限 | direct | threshold | 管理页展示（可为空） |
-| status-resp-amount | 当前面额 | direct | amount | 管理页展示（可为空） |
-| status-resp-recentRecords | 最近充值记录列表 | direct | recentRecords | 管理页记录区（每项 time/amount/result），卡号按现有规则脱敏 |
-| status-resp-consecutiveFailures | 连续失败次数 | direct | consecutiveFailures | 管理页展示 |
-| status-resp-disabledReason | 停用原因 | direct | disabledReason | 停用态横幅展示（可为空） |
-
-- 错误语义：卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
-- 幂等：只读查询，天然幂等
-- 非功能：金额一律以「分」为单位的整数、createAutoTopupContract 失败或超时的协议号复用时限待卡云与支付对齐（会议 T6，见蓝图 gap agreement-retry）
-
-**cancelAutoTopupContract**：cancelAutoTopupContract（outbound，版本 1.0）
-
-| 位置 | 字段 | 类型 | 含义 | 可空 |
-|---|---|---|---|---|
-| 请求 CancelAutoTopupContractRequest | contractNo | string | 签约号 | 必有 |
-| 响应 CancelAutoTopupContractResponse | cancelled | boolean | 是否已解约 | 必有 |
-
-| 映射 | 目标字段 | 方式 | 来源字段 | 规则 |
-|---|---|---|---|---|
-| cancel-req-contractNo | 签约号 | direct | contractNo | 从缓存或状态查询取得后透传 |
-| cancel-resp-cancelled | 关闭结果 | direct | cancelled | 关闭成功后在管理页/详情页更新状态，清理缓存 |
-
-- 错误语义：卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
-- 幂等：解约不回滚进行中的订单；重复解约幂等返回已解约结果
-- 非功能：金额一律以「分」为单位的整数、createAutoTopupContract 失败或超时的协议号复用时限待卡云与支付对齐（会议 T6，见蓝图 gap agreement-retry）
-
-**updateAutoTopupContract**：updateAutoTopupContract（outbound，版本 1.0）
-
-| 位置 | 字段 | 类型 | 含义 | 可空 |
-|---|---|---|---|---|
-| 请求 UpdateAutoTopupContractRequest | contractNo | string | 签约号（会议 T1：原签约关系不断） | 必有 |
-| 请求 UpdateAutoTopupContractRequest | threshold | int | 触发门限（改动值） | 必有 |
-| 请求 UpdateAutoTopupContractRequest | amount | int | 单笔充值面额（改动值） | 必有 |
-| 响应 UpdateAutoTopupContractResponse | updated | boolean | 是否已更新（字段为待定占位，细节由卡云定稿；见蓝图 gap update-response） | 必有 |
-
-| 映射 | 目标字段 | 方式 | 来源字段 | 规则 |
-|---|---|---|---|---|
-| update-req-contractNo | 签约号（原签约关系不断） | direct | contractNo | 会议 T1：改门限/面额走 update 不重签 |
-| update-req-threshold | 新门限 | direct | threshold | 管理页改门限后的值（分） |
-| update-req-amount | 新面额 | direct | amount | 管理页改面额后的值（分）；面额调高是否需重验待定（会议 T2） |
-| update-resp-updated | 更新结果 | direct | updated | 更新成功后在管理页刷新状态；字段待卡云定稿（见蓝图 gap update-response） |
-
-- 错误语义：卡云统一错误结构（错误码 + 可读信息），本需求不新增错误码
-- 幂等：按 contractNo 更新门限面额，原签约关系不断；重复提交按目标值收敛
-- 非功能：金额一律以「分」为单位的整数、createAutoTopupContract 失败或超时的协议号复用时限待卡云与支付对齐（会议 T6，见蓝图 gap agreement-retry）
-<!-- story-build:end -->
-
-钱包端通过以下五个接口与交通卡云交互，金额一律以「分」为单位；失败时返回统一错误结构（错误码 + 可读信息），本需求不新增错误码。
+| 接口 | 谁在什么时机调用 | 关键输入从哪来 | 成功与失败对业务的后果 |
+|---|---|---|---|
+| getAutoTopupPolicy | 用户从详情页入口进入签约时 | 当前登录的去标识账号、当前卡片 | 返回可签约性、门限与面额档位、单日限额与协议文案；不可签约时带原因（如未实名），钱包据此引导实名、不拉起免密协议 |
+| createAutoTopupContract | 免密验证通过后 | 账号、卡片、支付部件返回的协议号（只透传）、所选门限与面额 | 成功返回签约号；同一张卡已有生效签约时返回既有签约号并标明，钱包转管理页；明确失败留在签约页；超时结果未知，以 getAutoTopupStatus 确认；协议号能否复用、怎样再次尝试未定（D4） |
+| getAutoTopupStatus | 进入管理页时；创建签约结果未知、本地缓存缺失时 | 账号、卡片 | 返回未签约、生效或停用，当前门限面额、最近记录、连续失败次数与停用原因；查询失败时状态按未知展示、可重试，不推断未签约 |
+| updateAutoTopupContract | 管理页改门限或面额确认后（澄清会新增） | 签约号、新门限、新面额 | 原签约关系不断；只改门限不需要重新验证；改面额是否要重新免密验证未定（D3）；响应字段待卡云定稿，属设计缺口 |
+| cancelAutoTopupContract | 管理页关闭自动充值确认后 | 签约号 | 解约后不再触发；不回滚进行中的订单、不撤销已完成订单；失败留在管理页提示 |
 
 #### 10.1.2 数据存储
 
-<!-- story-build:begin 技术契约·数据存储 · 由蓝图运行视图与数据策略明细（bp-AR90006 r2）生成，改它请改真源 · sha256:da7e3ebb5392af7c -->
-| 数据流 | 数据域 | 权威来源 | 状态归属 | 失败与恢复 |
+| 数据 | 谁持有、权威在哪 | 用途 | 有效期与清理 | 缺失与恢复 |
 |---|---|---|---|---|
-| flow:auto-topup-signup-bind | wallet-auto-topup-contract | 权威：contract:createAutoTopupContract；持久化：view:development/node:auto-topup-repository；投影与缓存：view:runtime/node:contract-cache；对账：端侧缓存缺失以云侧查询为准；写入结果即时刷新缓存 | 归属：view:runtime/node:contract-cache；状态：无签约、已签约 | 恢复编号：signup-failure；写入失败：失败不写半签约状态；免密验证取消/失败保留已选门限面额；订阅失败：无订阅；进程重建：暂存选择（仅本账号本卡）退出登录清除 |
-| flow:auto-topup-status-manage | wallet-auto-topup-contract | 权威：contract:getAutoTopupStatus；持久化：view:development/node:auto-topup-repository；投影与缓存：view:runtime/node:contract-cache；对账：端侧缓存缺失以云侧查询为准；写入结果即时刷新缓存 | 归属：view:runtime/node:contract-cache；状态：无签约、生效中、停用 | 恢复编号：manage-failure；写入失败：改档/关闭失败留在管理页并提示；回滚不适用，解约不回滚进行中订单；订阅失败：无订阅；进程重建：缓存缺失以云侧查询为准（管理页重查） |
-<!-- story-build:end -->
-
-端侧保存的签约关系副本（签约号、门限、面额、状态）仅用于离线免网展示，按账号隔离，退出登录清除，不参与备份恢复；缓存缺失时以云侧查询为准。
+| 签约关系副本（签约号、门限、面额、状态） | 钱包端缓存；权威是交通卡云 | 离线免网展示，后续查询、改档与解约取签约号 | 按账号隔离，退出登录清除，不参与备份恢复；创建、改档、关闭成功后即时刷新 | 缺失或清除数据后按云侧查询恢复：生效、停用照云侧显示，云侧无签约才进签约引导；查询失败按未知展示 |
+| 签约页暂存选择（门限、面额） | 钱包端本地 | 中途离开或去实名后回来回填 | 只在本账号本卡有效，退出登录清除 | 没有暂存时从未选状态开始 |
+| 免密协议号 | 支付部件返回，钱包只透传给卡云 | 创建签约 | 不在钱包持久化，不进日志与事件 | 再次尝试的方式未定（D4） |
 
 #### 10.1.3 配置项
 
-门限档位、面额档位、单日限额与协议文案由策略接口返回，运营侧下发；功能开关由运营管理台控制新签约入口。
+> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
 
 ### 10.2 规约
 
-这里列本需求对工程规约的逐条判断与依据，读它的是验收之后的实现与审查。
+每条激活规约在本需求上的判定，判断取自蓝图的知识应用决定。
 
-<!-- story-build:begin 规约 · 由蓝图知识应用决定（bp-AR90006 r2）生成，改它请改真源 · sha256:5ded8c126b083e51 -->
-| 知识单元 | 判定 | 要求与理由 | 落点 |
+| 规约 | 编号 | 判定 | 依据：本需求的哪项事实使它适用，由谁承担 |
 |---|---|---|---|
-| SEC-01 | applied | 充值记录卡号属敏感数据，展示在采集/组装处按现有脱敏规则处理（CommFunc MaskUtil 体系），任何出口不得明文；在下列设计对象上落实该规约要求并承接其实施与审查：view:scenarios/node:scenario-record-mask、view:development/node:auto-topup-manage-page | view:scenarios/node:scenario-record-mask、view:development/node:auto-topup-manage-page |
-| UX-01 | applied | 新增签约页/管理页/详情入口纳入界面一致性检查：方向性参数用 start/end、不在 Column 上用 .direction()、文本对齐用 TextAlign.Start/End；在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page | view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page |
-| DFX-01 | applied | 端云接口在入口打开/管理页进入/改档关闭等用户动作时机调用（低频），提供 wallet_auto_topup_contract 缓存避免重复拉取；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-status-manage、view:runtime/node:contract-cache | view:runtime/flow:flow:auto-topup-status-manage、view:runtime/node:contract-cache |
-| DFX-02 | not_applicable | 本需求不新增预置资源、SDK 依赖或 hap 包；两款页面沿用既有控件与资源体系，无体积增量引入；在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page | view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page |
-| OBS-02 | applied | 签约/管理关键过程沿用项目统一入口记录定位（Logger / HA 事件描述带定位信息），不发独立定位事件；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage | view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage |
-| OBS-03 | applied | 运维指标落实到签约与管理两条流程及必要步骤（策略加载、创建签约、状态查询、改档、解约），实际适用结果完整记录且同次不重复；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage | view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage |
-| OBS-05 | applied | 上报身份、结果与参数按项目 HA 协议，字段有准确含义与真实来源（事件只记录去标识账号、卡片类型、阶段和结果分类）；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage | view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage |
-| OBS-06 | applied | 复用同语义事件与编码（模板 Wallet_COMMON、流程/步骤与内码登记）；新增定义唯一，变更保持既有含义与消费方兼容；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage | view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage |
-| OBS-07 | not_applicable | 材料无独立运营采集（BI）诉求：SR 仅要求端侧去标识事件记录，不新增 BI 点位；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind | view:runtime/flow:flow:auto-topup-signup-bind |
-| RES-01 | applied | 页面图片按优先级取（系统图标→已归档→新引入）；新引入单张不超过 10KB 并说明依据；在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page | view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page |
-| RES-02 | applied | 用户可见文案优先复用项目已有中文完全一致资源；确需新增的按项目惯例定义并引用，中英文齐备；在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page | view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page |
-| COMPAT-01 | applied | 接口面有变更：新增第五接口 updateAutoTopupContract（入参 contractNo/threshold/amount）；既有四接口字段不删不改，新增字段语义独立，不改变现有字段含义、不触发服务端新校验；在下列设计对象上落实该规约要求并承接其实施与审查：contract:updateAutoTopupContract | contract:updateAutoTopupContract |
-| COMPAT-02 | not_applicable | 本需求不新增/删除/修改错误码（卡云统一错误结构，本需求不新增错误码），本域无 diff 可核；在下列设计对象上落实该规约要求并承接其实施与审查：contract:getAutoTopupPolicy | contract:getAutoTopupPolicy |
-| ENV-01 | applied | wallet_auto_topup_contract 缓存与签约暂存属本地状态：清除数据后以云侧查询为准自恢复或重新签约引导，不崩溃不死循环；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/node:contract-cache | view:runtime/node:contract-cache |
-| ENV-02 | applied | 入口可能被重复触发：创建签约以「卡片+生效状态」判重返回既有 contractNo；改档/关闭为单请求语义，无重复下单；在下列设计对象上落实该规约要求并承接其实施与审查：view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage | view:runtime/flow:flow:auto-topup-signup-bind、view:runtime/flow:flow:auto-topup-status-manage |
-| DLV-01 | applied | 新增签约页/管理页文案梳理为待翻译字符串清单并跟踪回稿合入；在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page | view:development/node:auto-topup-signup-page、view:development/node:auto-topup-manage-page |
-| DLV-02 | not_applicable | 本需求不新增对外开放页面入口或对外开放接口（签约/管理页为钱包应用内页面，卡云接口为本部件作为客户端调用云端，均不构成对外的交付面）；在下列设计对象上落实该规约要求并承接其实施与审查：view:development/node:auto-topup-entry-builder | view:development/node:auto-topup-entry-builder |
-<!-- story-build:end -->
+| 安全隐私 | SEC-01 | 适用 | 本需求接触去标识账号、卡片标识、充值记录卡号与免密协议号。输出面：记录卡号在组装展示内容处按现有脱敏规则处理，事件与日志只带去标识账号、卡片类型、阶段和结果分类；业务接口：账号与卡片按卡云接口用于签约识别，协议号只透传、不落盘；接口传输保护方式材料未约定，记为未知。落在记录展示与签约、管理两条数据流 |
+| UX 一致性 | UX-01 | 适用 | 新增签约页、管理页与详情页入口，按方向性参数、对齐方式等界面一致性要求实现与检查 |
+| DFX 基线 | DFX-01 | 适用 | 端云接口只在用户进入或操作时调用，签约关系副本避免重复拉取；落在管理数据流与本地副本 |
+| DFX 基线 | DFX-02 | 不适用 | 不新增预置资源、SDK 依赖或安装包，两款页面沿用既有控件与资源 |
+| 可观测性 | OBS-02 | 适用 | 签约与管理的关键过程沿用项目统一入口记录定位信息，不发独立定位事件 |
+| 可观测性 | OBS-03 | 适用 | 策略加载、创建签约、状态查询、改档与解约各步骤记录实际结果，同一次不重复 |
+| 可观测性 | OBS-05 | 适用 | 上报字段只取去标识账号、卡片类型、阶段与结果分类，各有真实来源 |
+| 可观测性 | OBS-06 | 适用 | 复用项目既有同语义事件与编码，新增定义唯一 |
+| 可观测性 | OBS-07 | 不适用 | 材料没有独立的运营采集诉求，系统设计只要求端侧去标识事件 |
+| 资源使用 | RES-01 | 适用 | 新页面图片按系统图标、已归档、新引入的顺序取，新引入的写明依据 |
+| 资源使用 | RES-02 | 适用 | 新页面文案优先复用已有一致的中文资源，新增的中英文齐备 |
+| 兼容性检查表 | COMPAT-01 | 适用 | 新增更新签约接口；既有四个接口字段不删不改 |
+| 兼容性检查表 | COMPAT-02 | 不适用 | 本需求不新增、删除或修改错误码 |
+| 环境异常标准场景库 | ENV-01 | 适用 | 签约关系副本与签约暂存属本地状态：清除数据或缓存缺失后按云侧查询恢复，云侧无签约才引导签约，查询失败按未知处理，不崩溃不死循环 |
+| 环境异常标准场景库 | ENV-02 | 适用 | 入口可能被重复触发：创建签约按卡片加生效状态判重，改档与关闭是单请求语义 |
+| 资料交付 | DLV-01 | 适用 | 签约页与管理页新增文案，梳理待翻译字符串并跟踪回稿 |
+| 资料交付 | DLV-02 | 不适用 | 签约页与管理页是钱包应用内页面，卡云接口由本部件作为客户端调用，都不是对外开放面 |
 
 ### 10.3 埋点
 
-端侧对签约与管理两条流程落运维统计，事件只记录去标识账号、卡片类型、阶段和结果分类（来源：系统设计数据保护），上报失败不改变业务结果。观察指标两项：
+验收章的两项上线后观察指标由「创建签约」统计点的结果分类计算。
 
-- 签约净转化率：签约成功的订单数 ÷ 全部创建签约的尝试数，在创建签约步骤打点；
-- 创建签约失败率：创建签约失败 + 超时的次数 ÷ 创建签约尝试次数，失败原因随事件带上。
-
-这两项为本文设定的上线后观察口径，不作为本需求的验收判据（细则见验收章）；具体事件号、内码与分类由实施阶段按项目埋点协议登记。
+> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
 
 ### 10.4 改动边界
 
-本需求在钱包端的改动范围与既有视图不变的部分。
-
-<!-- story-build:begin 改动边界 · 由蓝图开发视图与架构影响决定（bp-AR90006 r2）生成，改它请改真源 · sha256:a275f4bd29ce503b -->
-| 模块 | 本单怎么动 |
-|---|---|
-| WalletMain | 不存在 → 交通卡详情页自动充值入口 builder（整行，余额行之下、记录之上）；分流到签约页或管理页；未实名引导 |
-| WalletMain | 不存在 → 签约页：门限/面额单选数据来自 getAutoTopupPolicy.thresholdOptions/amountOptions（运营下发，现行值 5/10/20/30 与 20/50/100 仅作说明）；协议勾选后「开启」可点；拉起免密验证；失败/取消/退出保留选择 |
-| WalletMain | 不存在 → 管理页：顶部签约状态、最近记录（失败展示原因）、停用态横幅与原因；改门限面额与关闭入口；停用重签入口 |
-| WalletMain | 不存在 → AutoTopupRepository：getPolicy / createContract / getStatus / updateContract / cancelContract 到卡云，金额以分 |
-| WalletMain | 不存在 → wallet_auto_topup_contract 缓存读写；按账号隔离、退出登录清除、不参与备份恢复 |
-<!-- story-build:end -->
+> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
 
 ### 10.5 材料清单
 
-这份 Story 据以下材料写成：
+#### 10.5.1 本次冻结材料
 
-- 产品需求：[prd.md](../RR/prd.md)（采用版本 e90230c22fec）——业务背景、用户旅程、界面说明、情形表、产品规则与验收意图的来源
-- 系统设计：[design.md](../SR/design.md)（采用版本 d8a0e00cddf1）——分工表、五类接口、失败恢复、缓存与数据保护、交付顺序的来源
-- 开发需求：[design.md](design.md)（采用版本 e3c9a0c6933f）——上游预填的端侧边界（无发起充值、服务端余额判定、免密上限随面额、复用合约、开关只管新入口、连续失败停用）
-- 原件：[交通卡澄清会记录-0903.docx](../inbox/交通卡澄清会记录-0903.docx)（会议记录原件在收件箱，结论经读会采用）——会上确认改档走更新接口、AC-R1 修订、开关口径、单日上限协议文案
-- 原件：[交通卡自动充值.docx](../inbox/交通卡自动充值.docx)（产品原稿原件在收件箱，界面图已抽取采用）——产品原稿含界面参考图，已抽取登记为界面参考
+> **缺件**：本节由蓝图投影生成。修订后的蓝图还没有准入，投影暂时生成不了；准入后经 `project` 补上。
 
+#### 10.5.2 采用与取舍说明
+
+- 产品需求 RR90006：本轮采用 v1.1（由 v1.0 改版）。业务背景与目标（签约转化率按交通卡月活计）、用户旅程、情形表与产品规则照旧采用；v1.1 把单日上限改为 300 元并写进协议文案，与澄清会的 200 元冲突，登记为 D11 待裁定；开关措辞改为「可暂停新签约」、已签约入口直达管理页，与会议结论一致；AC-R1 仍是旧句，按会议修订后的口径承接（D2）。原文：[prd.md](../RR/prd.md)
+- 系统设计 SR90006：分工、四个原有接口、失败与恢复、缓存边界、数据保护与交付顺序；改门限面额的更新接口由澄清会补上。原文：[design.md](../SR/design.md)
+- 开发需求 AR90006：上游预填的端侧边界。原文：[design.md](design.md)
+- 评审回稿（评审人在需求系统上的批注）：判定扣款在服务端、单日达上限不计入连续失败两条同意，照旧；停用横幅要给出重新签约的去处并补验收，采纳为 D9；发票开具入口暂缓、本期不做，记为 D10。原文：[review-feedback.md](story-src/review-feedback.md)
+- 交通卡澄清会记录 0903：采用新增更新接口、只改门限不需要验证、AC-R1 按情形表修订、开关只管新签约、协议文案写明单日上限（会上定本期 200 元，产品需求 v1.1 改为 300 元，见 D11）；面额调整的验证（D3）与授权后建约失败的处理（D4）保持待定；单日上限上调到 300 的提议会上否决；余额提醒与充值记录按月筛选不属于本单。原件：[交通卡澄清会记录-0903.docx](../inbox/交通卡澄清会记录-0903.docx)
+- 产品原稿《交通卡自动充值》：只取 RR 归档版里没有的界面图，业务口径以 RR v1.0 为准。原件：[交通卡自动充值.docx](../inbox/交通卡自动充值.docx)

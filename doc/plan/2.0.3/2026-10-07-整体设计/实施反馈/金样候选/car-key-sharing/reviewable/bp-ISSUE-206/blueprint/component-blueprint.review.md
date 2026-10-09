@@ -4,8 +4,8 @@ derived_from:
   component_id: WalletMain
   blueprint_id: bp-ISSUE-206
   revision: 1
-  source_fingerprint: sha256:ae6f5151233336574d93662450efa107bf3154278f5dbf37d7aaba22edbb83af
-  artifact_sha256: sha256:0a98577d4c0f60877d99405ae82144a04a5705bf9921c7314bef7ff63728447e
+  source_fingerprint: sha256:ea6f2d72f487826046cec89ba3e8906ea2909334d15b9ae53fe7f39d3c9e554f
+  artifact_sha256: sha256:143d347cff2b1625f886ecfa2e90c335dce6d52dc6dd8b82a366b657addcc0a3
 projection: component-blueprint-review@1
 ---
 
@@ -351,6 +351,7 @@ Subscriptions and consumers:
 - decision revoke-grace-window-drift: open_decision; owner=需求负责人; verification=contract:revoke-key-sharing-v1
 - decision privacy-masking: answered_with_evidence; owner=design-author; verification=view:runtime/node:share-repository
 - decision share-undecided-ahead: open_decision; owner=需求负责人; verification=contract:create-key-sharing-v1, contract:revoke-key-sharing-v1
+- decision share-force-offline-undecided: open_decision; owner=需求负责人; verification=contract:create-key-sharing-v1, contract:revoke-key-sharing-v1
 - decision scope-carry-all: decided_with_authority; owner=需求负责人; verification=view:logical/node:share-domain
 - decision share-entry-host: open_decision; owner=出行产品组; verification=view:development/node:share-entry, view:development/node:key-card-detail-page
 - gap share-undecided-policy: open_decision; owner=需求负责人; needed_by=slice:policy-review-future; unlock=安全评审与车厂协商给出确定性结论后，决定是否承载再转发与强制下线

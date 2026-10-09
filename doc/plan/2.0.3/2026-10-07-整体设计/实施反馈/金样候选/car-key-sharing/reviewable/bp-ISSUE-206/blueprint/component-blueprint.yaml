@@ -2,8 +2,8 @@ artifact: component-blueprint@1
 component_id: WalletMain
 blueprint_id: bp-ISSUE-206
 revision: 1
-source_fingerprint: sha256:ae6f5151233336574d93662450efa107bf3154278f5dbf37d7aaba22edbb83af
-decision_fingerprint: sha256:38bf9029050f436bd98670fa2a6b926069d2d3977452862554f1190533ad133c
+source_fingerprint: sha256:ea6f2d72f487826046cec89ba3e8906ea2909334d15b9ae53fe7f39d3c9e554f
+decision_fingerprint: sha256:4d094812922264c9d657cb2e0322bcb564cdce0d59a4887359856bb652f828da
 provenance:
   source_kind: requirement_input
   source_ref: doc/features/ISSUE-206/AR/story-src/inputs/b665a2a7dfa349eaf9b6b902cb260fa1e6cef5487f53e933af77bf8cdc3c2ce7/snapshot.json
@@ -1407,7 +1407,21 @@ decisions_and_gaps:
       kind: boundary
       status: open_decision
       owner: 需求负责人
-      rationale: PRD §五 两件未定：被分享人能否再转给第三人（倾向禁止，等安全评审）；撤销后极端断网是否强制下线（和车厂谈）。本期不承载这两个结论。
+      rationale: PRD §五 第 1 条未定：被分享人能否再转给第三人（倾向禁止，等安全评审）。本期不承载这个结论。
+      provenance:
+        source_kind: product_requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        observed_at: 2026-10-03T14:06:51+00:00
+        evidence_strength: observed
+        extraction_method: source_reading
+      verification_refs:
+        - contract:create-key-sharing-v1
+        - contract:revoke-key-sharing-v1
+    - decision_id: share-force-offline-undecided
+      kind: boundary
+      status: open_decision
+      owner: 需求负责人
+      rationale: PRD §五 第 2 条未定：撤销后对方设备与车辆长期不联网时是否请车厂强制下线（还在和车厂谈）。本期不承载这个结论。
       provenance:
         source_kind: product_requirement
         source_ref: doc/features/ISSUE-206/RR/prd.md
@@ -2610,7 +2624,7 @@ providers:
     writes: []
     missing_disposition: unknown
 discovery:
-  source_fingerprint: sha256:ae6f5151233336574d93662450efa107bf3154278f5dbf37d7aaba22edbb83af
+  source_fingerprint: sha256:ea6f2d72f487826046cec89ba3e8906ea2909334d15b9ae53fe7f39d3c9e554f
   facts:
     - fact_id: f-carkey-category
       subject: carkey_category_current
@@ -2697,7 +2711,7 @@ discovery:
         source_ref: doc/glossary.yaml
         observed_at: 2026-10-03T14:06:51+00:00
         evidence_strength: observed
-        extraction_method: headless_assumed
+        extraction_method: inferred_by_designer
     - fact_id: f-glossary-perm
       subject: term:权限档位
       value:
@@ -2710,7 +2724,7 @@ discovery:
         source_ref: doc/glossary.yaml
         observed_at: 2026-10-03T14:06:51+00:00
         evidence_strength: observed
-        extraction_method: headless_assumed
+        extraction_method: inferred_by_designer
     - fact_id: f-glossary-status
       subject: term:分享状态
       value:
@@ -2723,7 +2737,7 @@ discovery:
         source_ref: doc/glossary.yaml
         observed_at: 2026-10-03T14:06:51+00:00
         evidence_strength: observed
-        extraction_method: headless_assumed
+        extraction_method: inferred_by_designer
     - fact_id: f-component-profile
       subject: component_profile
       value:
