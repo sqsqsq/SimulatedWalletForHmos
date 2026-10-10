@@ -221,7 +221,7 @@ class NeutralKnowledgeCase(unittest.TestCase):
                               "outcome": outcome, "target_refs": [], **{k: v for k, v in knowledge.items() if k != "kind"}}}
 
     def judged(self, *, neutral: list[dict] | None = None) -> list[dict]:
-        """设计的判断：中性域按参数（默认 NEU-01 适用、NEU-02 不适用），其余激活规约逐条不涉及。"""
+        """设计的判断：中性域按参数（默认 NEU-01 适用、NEU-02 不适用），其余激活规约逐条不涉及，激活模式逐个有据拒绝。"""
         neutral = neutral if neutral is not None else [
             self.decision("NEU-01", "applied", "本需求新增出口", requirement="中性出口在入口生成一次标识并向后透传",
                           target_refs=[TARGET]),
@@ -231,7 +231,12 @@ class NeutralKnowledgeCase(unittest.TestCase):
                    "decision_id": f"k-{Path(s['file']).stem}-{u.lower()}"}
                   for s in self.active() if s["kind"] == "constraints" and "neutral-domain" not in s["file"] for u in s["units"]
                   if (f"doc/extensions/{s['file']}", u) not in done]
-        return neutral + others
+        # 激活模式按上篇各判一次：没给判断的写一条有据拒绝
+        patterns = [{**self.decision("上篇", "rejected", "本需求没有这个模式适用的交互或分支", s["file"], kind="patterns"),
+                     "decision_id": f"k-{Path(s['file']).stem}-pattern"}
+                    for s in self.active() if s["kind"] == "patterns"
+                    and (f"doc/extensions/{s['file']}", "上篇") not in done]
+        return neutral + others + patterns
 
     def write_contracts(self, body: str = "", decisions: list[dict] | None = None) -> None:
         """维护 Feature 的原生契约：知识应用决定在 `knowledge_applications`，其余按给的正文。"""
@@ -386,7 +391,8 @@ class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):
         """新模式一登记就能被选——在不在册查的是激活清单，不是一份写死的名单。"""
         chosen = self.decision("上篇", "selected", "标识由入口生成、被后续两步消费，贯穿多步", "neutral-pattern", kind="patterns",
                                target_refs=[TARGET], roles=[{"role": "标识生成者", "target_ref": TARGET}])
-        self.write_contracts(decisions=self.judged() + [chosen])
+        others = [d for d in self.judged() if "neutral-pattern" not in d["provenance"]["source_ref"]]
+        self.write_contracts(decisions=others + [chosen])
         self.assertNotIn("知识应用", self.hook("spec"))
 
     def test_an_unregistered_pattern_is_still_refused(self) -> None:

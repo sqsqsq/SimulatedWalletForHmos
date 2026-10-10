@@ -33,37 +33,41 @@ def sha(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def pattern_text(root: Path) -> str:
-    """选型决定：两个角色，一个落在本施工单位的设计对象上，一个落在别处。"""
-    ref = "doc/extensions/knowledge/design-patterns/decision-tree.md"
-    knowledge = {"kind": "patterns", "form": "halves", "unit": "上篇", "source_sha256": sha(root / ref), "outcome": "selected",
-                 "target_refs": [MODULE], "roles": [{"role": "节点表", "target_ref": MODULE}, {"role": "上下文", "target_ref": ELSEWHERE}]}
-    provenance = {"source_kind": "knowledge", "source_ref": ref, "observed_at": "2026-09-30T00:00:00Z",
-                  "evidence_strength": "inferred", "extraction_method": "read_and_apply"}
-    return (f"    - decision_id: {PATTERN_ID}\n      kind: knowledge_application\n      status: answered_with_evidence\n"
-            f"      owner: design-author\n      rationale: 刷新有多个分支，拆成节点\n"
-            f"      provenance: {json.dumps(provenance, ensure_ascii=False)}\n      verification_refs: [{MODULE}]\n"
-            f"      knowledge: {json.dumps(knowledge, ensure_ascii=False)}\n")
+#: 选型决定：两个角色，一个落在本施工单位的设计对象上，一个落在别处
+DECISION_TREE = "knowledge/design-patterns/decision-tree.md"
 
 
-def design(root: Path, with_roles: bool, with_pattern: bool = True) -> None:
+def pattern_spec(mode: str) -> list[dict]:
+    """决策树这个模式的判断：选中（带角色）、待定、拒绝交给夹具默认，漏判则连默认也不写。"""
+    if mode == "selected":
+        return [design_kit.pattern_decision(PATTERN_ID, DECISION_TREE, "selected", "刷新有多个分支，拆成节点", [MODULE],
+                                            [{"role": "节点表", "target_ref": MODULE}, {"role": "上下文", "target_ref": ELSEWHERE}])]
+    if mode == "pending":
+        return [design_kit.pattern_decision(PATTERN_ID, DECISION_TREE, "pending", "分支是否多步要等接口定稿")]
+    return []
+
+
+def design(root: Path, with_roles: bool, pattern: str = "selected") -> None:
     """改夹具蓝图（按原文插入，不整份重写）：逐条的知识判断、选型决定、设计对象契约上的义务与角色；
-    再按原生口径（蓝图原字节的摘要）更新施工单位的蓝图引用。`with_pattern=False` 时整份蓝图没有选型决定。"""
+    再按原生口径（蓝图原字节的摘要）更新施工单位的蓝图引用。`pattern` 是决策树的判断：selected / pending /
+    rejected（与其他模式一样按夹具默认有据拒绝）/ missing（激活模式一条判断都不写，漏判反例）。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     text = canonical.read_text(encoding="utf-8")
     active = design_kit.active_constraints(root, design_kit.ACCESS)
     judged = design_kit.judged_rules(active, [design_kit.knowledge_decision(
-        KNOWLEDGE_ID, "OBS-02", "applied", "余额刷新是新增的业务过程", requirement="刷新失败记一条可定位的日志")], False)
+        KNOWLEDGE_ID, "OBS-02", "applied", "余额刷新是新增的业务过程", requirement="刷新失败记一条可定位的日志"),
+        *pattern_spec(pattern)], False)
+    if pattern == "missing":
+        judged = [d for d in judged if "file" not in d]
     text = text.replace("decisions_and_gaps:\n  decisions:\n", "decisions_and_gaps:\n  decisions:\n"
-                        + "".join(design_kit.decision_text(root, d, active) for d in judged)
-                        + (pattern_text(root) if with_pattern else ""), 1)
+                        + "".join(design_kit.decision_text(root, d, active) for d in judged), 1)
     method = "                - name: refreshBalance\n"
     assert text.count(method) == 1
     text = text.replace(method, method + "                  must:\n                    - rule: OBS-02\n"
                         f"                      decision_id: {KNOWLEDGE_ID}\n                      text: 刷新失败时记一条带页面与原因的日志\n"
                         "                      verify: ut\n", 1)
-    if with_roles and with_pattern:
+    if with_roles and pattern == "selected":
         owner = "              class: HomeRepository\n"
         assert text.count(owner) == 1
         text = text.replace(owner, owner + "              pattern_roles:\n                - pattern: decision-tree\n"
@@ -115,14 +119,14 @@ process.stdout.write(JSON.stringify({ must: i.methods?.[0]?.must ?? null, roles:
 
 class ChainCase(unittest.TestCase):
     WITH_ROLES = True
-    WITH_PATTERN = True
+    PATTERN = "selected"
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
     def setUpClass(cls) -> None:
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
-        design(cls.root, cls.WITH_ROLES, cls.WITH_PATTERN)
+        design(cls.root, cls.WITH_ROLES, cls.PATTERN)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -223,9 +227,9 @@ class AMissingOwnRoleIsNamed(ChainCase):
         self.assertNotIn("「上下文」", gate)
 
 
-class NoPatternIsSelected(ChainCase):
-    """整份蓝图没有选型决定：任务不编角色，规约义务与激活知识照样送达，门禁不因没有角色而拒绝。"""
-    WITH_PATTERN = False
+class EveryPatternIsRejected(ChainCase):
+    """每个激活模式都有据拒绝：零选中角色合法，任务不编角色，规约义务与激活知识照样送达，门禁不因没有角色而拒绝。"""
+    PATTERN = "rejected"
 
     def test_no_role_is_invented_and_the_rule_still_arrives(self) -> None:
         out = self.probe()
@@ -243,6 +247,105 @@ class NoPatternIsSelected(ChainCase):
         self.assertIn("doc/extensions/knowledge/design-patterns/decision-tree.md", knowledge,
                       "没选模式不等于不给模式知识原文")
 
+
+
+class AnUnjudgedPatternIsNamed(ChainCase):
+    """激活模式一条判断都没有是漏判：门禁点名模式与上篇单元，交设计负责方补，不当作「没选中」放过。"""
+    PATTERN = "missing"
+
+    def test_the_gate_names_the_missing_pattern(self) -> None:
+        out = self.probe()
+        self.assertIn("没有判断激活模式", out["gate"])
+        self.assertIn("decision-tree.md", out["gate"])
+        self.assertIsNone(out["roles"])
+
+
+class APendingPatternIsAJudgement(ChainCase):
+    """待定是判断：不报漏判，不编角色；是否阻断按原生缺口与切片责任处理。"""
+    PATTERN = "pending"
+
+    def test_pending_is_not_reported_as_missing(self) -> None:
+        out = self.probe()
+        self.assertNotIn("没有判断激活模式", out["gate"])
+        self.assertIsNone(out["roles"])
+
+
+SPEC_PROBE = """
+import { pathToFileURL } from 'node:url';
+const [root, feature] = process.argv.slice(1);
+const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const spec = (await import(base + 'spec/post_check.mjs')).default;
+const pre = (await import(base + 'shared/pre_verifier.mjs')).default;
+const gate = await spec({ phase: 'spec', feature, projectRoot: root });
+const review = await pre({ phase: 'spec', feature, projectRoot: root });
+process.stdout.write(JSON.stringify({ gate: gate.message ?? '', review: (review.promptFragments ?? []).join('\\n') }));
+"""
+
+POINTS = ("| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+          "| 余额刷新 / 保存结果 | 成功 | HomeRepository.refreshBalance |\n"
+          "| 余额刷新 / 保存结果 | 拒绝 | HomeRepository.refreshBalance |\n")
+RULES = "| 编号 | 落实成什么 | 落点 |\n|---|---|---|\n| OBS-02 | 刷新失败记一条可定位的日志 | `HomeRepository.refreshBalance` |\n"
+
+
+class TheHostChapterExplainsTheUnit(ChainCase):
+    """spec「宿主扩展治理项」、plan「宿主扩展（可选）」：有 Markdown 时章在、承接的几类各有小节、规约编号引得到、
+    逐点表在「埋点」小节里；作者与审查拿到本单位不承接的判断，用来写不适用与不选的理由。"""
+
+    def write(self, phase: str, text: str) -> None:
+        f = Path(self.probe()["dir"]) / phase / f"{phase}.md"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        self.addCleanup(f.unlink)
+
+    def spec_probe(self) -> dict:
+        proc = subprocess.run(["node", "--input-type=module", "-e", SPEC_PROBE, str(self.root.as_posix()), CU],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def test_a_spec_without_the_anchor_is_named(self) -> None:
+        self.write("spec", "# 规格\n\n## 1. 概述\n\n刷新余额。\n")
+        self.assertIn("spec.md：没有「宿主扩展治理项」章", self.spec_probe()["gate"])
+
+    def test_the_spec_chapter_needs_its_sections_and_known_rules(self) -> None:
+        self.write("spec", "# 规格\n\n## 宿主扩展治理项\n\n### 规约\n\n| 编号 | 判定 |\n|---|---|\n| OBS-02 | 适用，见 AC-001 |\n| ZZZ-99 | 适用，见 AC-999 |\n")
+        gate = self.spec_probe()["gate"]
+        self.assertIn("本单位承接设计模式，这一章下没有讲它的小节", gate)
+        self.assertIn("ZZZ-99 不是设计判断过的规约", gate)
+        self.assertNotIn("OBS-02 不是", gate)
+        self.assertNotIn("本单位承接规约", gate)
+        self.assertIn("引用的验收 AC-999 在 acceptance.yaml 里没有", gate)
+        self.assertNotIn("AC-001 在", gate)
+
+    def test_a_complete_spec_chapter_passes(self) -> None:
+        self.write("spec", "# 规格\n\n## 宿主扩展治理项\n\n### 规约\n\n" + RULES + "\n### 设计模式\n\n刷新分支按决策树编排。\n\n## 附录\n")
+        self.assertNotIn("宿主扩展治理项", self.spec_probe()["gate"])
+
+    def test_the_spec_review_lists_judgements_the_unit_does_not_carry(self) -> None:
+        review = self.spec_probe()["review"]
+        self.assertIn(f"| {KNOWLEDGE_ID} |", review)
+        self.assertIn("本单位不承接 |", review)
+
+    def test_the_plan_table_sits_in_the_events_section(self) -> None:
+        self.write("plan", "# 计划\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
+                   + "\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
+        gate = self.probe(fresh=True)["gate"]
+        for gone in ("宿主扩展（可选）」章", "没有讲它的小节", "逐点表不在", "不是设计判断过的规约"):
+            self.assertNotIn(gone, gate)
+
+    def test_a_point_table_elsewhere_and_a_missing_section_are_named(self) -> None:
+        self.write("plan", "# 计划\n\n## 9. 埋点\n\n" + POINTS + "\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES)
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("的逐点表不在「宿主扩展（可选）」的「埋点」小节里", gate)
+        self.assertIn("本单位承接埋点，这一章下没有讲它的小节", gate)
+        self.assertIn("本单位承接设计模式，这一章下没有讲它的小节", gate)
+
+    def test_the_author_gets_the_judgements_it_does_not_carry(self) -> None:
+        facts = self.probe()["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
+        self.assertIn("本单位不承接义务的知识判断与事实", facts)
+        self.assertIn("（not_applicable）", facts)
+        self.assertNotIn(f"`{KNOWLEDGE_ID}`", facts)
+        self.assertNotIn(f"`{PATTERN_ID}`", facts)
 
 SIBLING_PROBE = """
 import { pathToFileURL } from 'node:url';

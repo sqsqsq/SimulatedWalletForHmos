@@ -6,6 +6,11 @@
       "outcome": "applied",
       "rationale": "本需求新增提交入口",
       "requirement": "受理单编号在入口生成"
+    },
+    {
+      "file": "knowledge/design-patterns/sample-pattern.md",
+      "outcome": "rejected",
+      "rationale": "提交只有一步，没有多步分支要编排"
     }
   ]
 }

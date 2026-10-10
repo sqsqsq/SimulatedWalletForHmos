@@ -560,6 +560,16 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
             body = (self.ext / rel).read_text(encoding="utf-8").split("\n---\n", 1)[1].strip()
             self.assertIn(body.splitlines()[0], proc.stdout, f"{rel} 的原文没到")
 
+    def test_unjudged_patterns_reach_the_author_and_the_questioner(self) -> None:
+        """夹具蓝图还没有模式判断：设计作者与质询者的缺口里都点名每个激活模式，与门禁同一集合。"""
+        patterns = [rel for rel in self.registered() if rel.startswith("knowledge/design-patterns/")]
+        self.assertTrue(patterns, "夹具要有激活模式")
+        for action, audience in (("design", "author"), ("questioning", "reviewer")):
+            with self.subTest(action=action):
+                gaps = self.task("--blueprint", BLUEPRINT, "--action", action, "--audience", audience).stdout.split("## 6. 缺口与责任", 1)[1]
+                for rel in patterns:
+                    self.assertIn(f"没有判断激活模式 doc/extensions/{rel}", gaps)
+
     def test_halves_are_marked_for_the_side_that_uses_them(self) -> None:
         design = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout
         plan = self.task("--feature", CU, "--action", "plan", "--audience", "author").stdout

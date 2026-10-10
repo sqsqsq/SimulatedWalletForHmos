@@ -59,12 +59,15 @@ const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r
  */
 function decisionTable(projectRoot, feature, knowledge, inputs) {
   const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
-  const rows = carriedBy(judged.rows, judged.scope);
+  const mine = carriedBy(judged.rows, judged.scope);
   const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
-  if (!rows.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
+  if (!mine.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
+  // 不由本单位承接的判断也列出（落点写明）：宿主扩展章引用它们的不适用与不选理由，审查对着原判断核
   return ['| 决定 | 知识单元 | 原文 | 判定 | 要求与理由 | 落点 |', '|---|---|---|---|---|---|',
-    ...rows.map(d => `| ${d.decision_id} | ${d.knowledge.unit} | ${cell(entryOf(knowledge, d)?.constraint ?? '（模式，见知识任务原文）')} `
-      + `| ${d.knowledge.outcome} | ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} | ${cell(d.knowledge.target_refs.join('、'))} |`),
+    ...[...mine, ...judged.rows.filter(d => !mine.includes(d))].map(d => `| ${d.decision_id} | ${d.knowledge.unit} `
+      + `| ${cell(entryOf(knowledge, d)?.constraint ?? '（模式，见知识任务原文）')} | ${d.knowledge.outcome} `
+      + `| ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} `
+      + `| ${mine.includes(d) ? cell(d.knowledge.target_refs.join('、')) : '本单位不承接'} |`),
     ...gaps];
 }
 

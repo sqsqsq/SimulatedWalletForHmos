@@ -1699,6 +1699,8 @@ def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-D
         # 夹具可以写明设计里就是哪几条知识应用决定（`_design.json`，不补判）；没写就逐条判定不涉及
         judged = root / "_design.json"
         decisions = None if not judged.is_file() else [
+            design_fixture.pattern_decision(f"knowledge-pattern-{Path(d['file']).stem}", d["file"], d["outcome"], d["rationale"])
+            if "file" in d else
             design_fixture.knowledge_decision(f"knowledge-{d['unit'].lower()}", d["unit"], d["outcome"], d["rationale"],
                                               requirement=d.get("requirement"))
             for d in json.loads(judged.read_text(encoding="utf-8"))["knowledge_decisions"]]

@@ -74,6 +74,32 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
                             "bp.decisions_and_gaps.decisions.push(decisions[decisions.length - 1]);")
         self.assertTrue(any("只判一次" in p for p in out), out)
 
+    def test_an_active_pattern_without_judgement_is_named(self) -> None:
+        """激活模式一条判断都没有是漏判，不是「没选中」；点名模式文件与上篇单元。"""
+        out = self.problems("bp.decisions_and_gaps.decisions = bp.decisions_and_gaps.decisions"
+                            ".filter(d => d.knowledge?.kind !== 'patterns');")
+        self.assertTrue(any("没有判断激活模式" in p and "sample-pattern.md" in p and "上篇" in p for p in out), out)
+
+    def test_a_reasoned_rejection_is_a_judgement(self) -> None:
+        """全部有据拒绝是合法判断：夹具默认就是这样，核对通过、不要求选中。"""
+        out = self.problems("if (!decisions.some(d => d.knowledge.kind === 'patterns' && d.knowledge.outcome === 'rejected'))"
+                            " throw new Error('夹具没有拒绝的模式判断');")
+        self.assertEqual([], out)
+
+    def test_a_pending_pattern_is_a_judgement(self) -> None:
+        """待定也是判断：交原生缺口与切片责任处理，这里不当漏判。"""
+        out = self.problems("const d = decisions.find(x => x.knowledge.kind === 'patterns');"
+                            "d.knowledge.outcome = 'pending'; d.status = 'open_decision';")
+        self.assertFalse(any("没有判断激活模式" in p for p in out), out)
+
+    def test_no_active_pattern_needs_no_judgement(self) -> None:
+        """没有激活模式时零判断合法。"""
+        manifest = self.root / "doc" / "extensions" / "manifest.yaml"
+        manifest.write_bytes(manifest.read_bytes().replace(b"    - knowledge/design-patterns/sample-pattern.md\n", b""))
+        out = self.problems("bp.decisions_and_gaps.decisions = bp.decisions_and_gaps.decisions"
+                            ".filter(d => d.knowledge?.kind !== 'patterns');")
+        self.assertFalse(any("模式" in p for p in out), out)
+
     def test_a_red_line_cannot_be_waived(self) -> None:
         rules = self.root / RULES
         rules.write_bytes(rules.read_bytes().replace("| 上报失败只记本地日志，不阻断主流程 | 基线 |".encode("utf-8"),

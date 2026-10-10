@@ -8,6 +8,7 @@
  *   ② **验收标准一致**——spec.md「验收标准」里定义的编号在 acceptance.yaml 里有，关联功能一致；
  *   ③ **审查报告**——格式、判据全不全、一对象一结论、WARN 的处置。
  *   ④ **图源**——spec.md 里采用的图指得到本次有效来源，reuse 的图体与来源一致（与 Story 同一个检查）。
+ *   ⑤ **宿主扩展章**——spec.md「宿主扩展治理项」在，承接的规约与选中模式各有小节，写到的规约与验收编号引得到。
  *
  * 验收是否真的覆盖了规约要求的行为与验证责任，是语义判断，归独立审查。
  *
@@ -17,7 +18,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { carriedBy, featureKnowledge } from '../shared/knowledge-application.mjs';
+import { featureKnowledge, unitDuties } from '../shared/knowledge-application.mjs';
+import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { acceptanceIdRe, functionIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 import { unitDiagramSourceProblems } from '../../skills/story/scripts/core/story/images.mjs';
@@ -84,16 +86,16 @@ export default guard('spec', async (ctx) => {
   const acceptance = inputs.acceptance;
 
   let knowledge = null;
+  let judged = null;
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
     design.problems.push(`${e.message}——激活知识派生失败；判断的来源与验收桥都按它核`);
   }
   if (knowledge) {
-    const judged = featureKnowledge(ctx.projectRoot, ctx.feature, inputs.contracts);
+    judged = featureKnowledge(ctx.projectRoot, ctx.feature, inputs.contracts);
     design.problems.push(...judged.problems);
-    const applied = carriedBy(judged.rows, judged.scope)
-      .filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction);
+    const { applied } = unitDuties(judged);
     if (!acceptance) {
       if (applied.length) bridge.skipped.push({ what: '验收承接适用规约', why: inputs.why });
     } else {
@@ -117,13 +119,17 @@ export default guard('spec', async (ctx) => {
 
   const specPath = path.join(inputs.dir, 'spec', 'spec.md');
   const diagrams = { name: '图源', problems: [], skipped: [] };
-  groups.push(diagrams);
+  const host = { name: '宿主扩展章', problems: [], skipped: [] };
+  groups.push(diagrams, host);
   if (!fs.existsSync(specPath)) {
     alignment.skipped.push({ what: '验收标准与 acceptance.yaml', why: '这一次没有生成 spec.md' });
     diagrams.skipped.push({ what: 'spec.md 的图源', why: '这一次没有生成 spec.md' });
+    host.skipped.push({ what: '宿主扩展治理项', why: '这一次没有生成 spec.md；承接在验收条目里' });
   } else {
     const specText = fs.readFileSync(specPath, 'utf-8');
     if (acceptance) alignment.problems.push(...acceptanceAlignment(specText.split(/\r?\n/), acceptance));
+    if (!judged) host.skipped.push({ what: '宿主扩展治理项', why: '激活知识派生失败，承接范围无从确定' });
+    else host.problems.push(...hostChapterProblems(specText, { file: 'spec.md', anchor: '宿主扩展治理项', judged, acceptance }));
     const checked = unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, specText, 'spec.md');
     diagrams.problems.push(...checked.problems);
     diagrams.skipped.push(...checked.skipped);

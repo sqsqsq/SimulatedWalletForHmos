@@ -11,6 +11,11 @@
       "unit": "SMP-02",
       "outcome": "not_applicable",
       "rationale": "本需求没有任何上报动作"
+    },
+    {
+      "file": "knowledge/design-patterns/sample-pattern.md",
+      "outcome": "rejected",
+      "rationale": "提交只有一步，没有多步分支要编排"
     }
   ]
 }

@@ -92,6 +92,7 @@ graph TD
 | `presentation/pages/ShareAcceptPage.ets` | 接受页：按 shareId 取收到的分享展示车辆信息卡、添加到钱包，结束后回卡包；导出 builder | 新增 |
 | `presentation/pages/KeyCardDetailPage.ets` | 钥匙卡片详情：按 shareId 取当前状态，展示权限范围与有效期，不可用时提示并回卡包；导出 builder | 新增 |
 | `shared/constant/ShareConstants.ets` | 分享功能开关（默认关闭，先例 `HomeConstants.SHOW_LOCAL_CARD_SECTION`）、配额上限 5、待接受 72 小时、宽限 36 小时、有效期档位 | 新增 |
+| `shared/constant/KeySharingChartCodes.ets` | 分享埋点登记：发起、接受、撤销三个流程的流程号、步骤号与内码常量（候选号，编码前核冲突） | 新增 |
 | `index.ets` | 导出四个新页面的 builder | 修改 |
 | `resources/base/element/string.json` | 分享相关中文文案 | 修改 |
 | `resources/en_US/element/string.json` | 分享相关英文文案（工程现在只有 base 资源目录，按 RES-02 中英文齐备新建） | 新增 |
@@ -192,10 +193,11 @@ KeyCardDetailPage
 | `CarKeyRepository.getReceivedKey` | shareId | ReceivedCarKey 或空 | 接受页与详情页取一条分享的当前状态 |
 | `KeySharingRepository.queryQuota` | vehicleId | QuotaView | 对应 queryKeySharingQuota |
 | `KeySharingRepository.queryGranteePermission` | vehicleId, granteeId | GrantPermissionView | granteeId 传可识别的对方账号标识，不传打码值 |
-| `KeySharingRepository.createSharing` | ShareDraft | shareId, status | 对应 createKeySharing，带幂等标识；签发失败返回失败、不留关系 |
-| `KeySharingRepository.acceptSharing` | shareId | credentialStatus, status | 凭据下发失败保持待接受 |
-| `KeySharingRepository.revokeSharing` | shareId | status, graceHours | 对方离线返回撤销中；钱包端按 36 小时展示，车云接口现返回 48，调整前联调口径不一致；只对 status 为 active 的条目调用，其他状态不发请求 |
+| `KeySharingRepository.createSharing` | ShareDraft | shareId, status | 对应 createKeySharing，带幂等标识；签发失败返回失败、不留关系；每次调用新建尝试标识，结果经 `settleCreate` 结算 |
+| `KeySharingRepository.acceptSharing` | shareId | credentialStatus, status | 凭据下发失败保持待接受；每次调用新建尝试标识，结果经 `settleAccept` 结算 |
+| `KeySharingRepository.revokeSharing` | shareId | status, graceHours | 对方离线返回撤销中；钱包端按 36 小时展示，车云接口现返回 48，调整前联调口径不一致；只对 status 为 active 的条目调用，其他状态不发请求；每次调用新建尝试标识，结果经 `settleRevoke` 结算 |
 | `KeySharingRepository.listSharings` | vehicleId | ShareItem[] | 打码标识取车云返回的 granteeMasked |
+| `KeySharingRepository.settleCreate` / `settleAccept` / `settleRevoke` | 尝试标识、业务结果、描述关键值、外码 | — | 一次尝试只结算一次：已结算即返回，否则置位后按 `KeySharingChartCodes` 报一条 Chart；编号与五项值见宿主扩展「埋点」 |
 | `ShareDraftStore.load` / `save` / `clear` | 账号 | ShareDraft / — | 草稿续办与清除 |
 
 六个车云接口的字段与系统设计说明的接口约定一致；沿用车云错误码，不新增。
@@ -257,7 +259,7 @@ flowchart LR
 |----------|------------|--------------|----------------|
 | 对方账号打码 | `CommFunc.MaskUtil` | — | — |
 | 定位日志 | `CommFunc.Logger` | — | — |
-| 四类事件上报 | `CommFunc.WalletHAManager` 上报封装 | — | 仓内只有通用事件模板，四类事件的流程、步骤与内码按新增登记 |
+| 三个流程的事件上报 | `CommFunc.WalletHAManager` 上报封装 | — | 仓内只有通用事件模板，三个流程的流程、步骤与内码新增登记到 `KeySharingChartCodes` |
 | 页面导航 | `NavPathContext`、宿主 `navDestinationMap` | — | — |
 | 登录态 | `AccountManager` | — | — |
 | 设置页交互编排 | 编排 SDK `framework`（`PageInteractionBuilderV3`、`DefaultPageInteractionContext`） | — | — |
@@ -273,7 +275,7 @@ flowchart LR
 | SEC-01 | 展示内容在组装处打码；日志与事件不带账号；业务接口传可识别标识 | `KeySharingRepository` 的展示组装、`ShareDraftStore`、日志与上报调用 | 单测 + 设备 |
 | DFX-01 | 每次进页拉一次，换对象查一次，无轮询 | `KeySharingRepository` 的六个方法 | 单测 |
 | OBS-02 | 创建、接受、撤销失败写定位日志 | `KeySharingRepository.createSharing` / `acceptSharing` / `revokeSharing` | 单测 |
-| OBS-03 / OBS-05 / OBS-06 | 四个流程指标的统计点逐点落到责任方法，字段按上报协议，事件新增登记 | 本章「埋点」表里的责任方法 | 单测 |
+| OBS-03 / OBS-05 / OBS-06 | 三个流程指标的每种结果在责任方法里结算一次，五项值按上报协议，编号登记到 `KeySharingChartCodes` | 本章「埋点」表里的责任方法与结算方法 | 单测 |
 | RES-01 / RES-02 | 图标与文案按复用顺序取；新增文案中英文齐备 | 四个新页面；`string.json`（base、en_US） | 设备 |
 | COMPAT-01 | 六个接口字段与含义不变 | `KeySharingSource` 接口定义 | 单测 |
 | ENV-01 | 草稿清除后从头选，不崩溃 | `ShareDraftStore`、`ShareSetupPage` 回填 | 单测 |
@@ -293,26 +295,37 @@ flowchart LR
 
 ### 埋点
 
-蓝图 detail-share-events 的统计设计按四个流程指标落实。指标按流程算，一次尝试从流程开始到结果确定，重新发起算新的一次；事件只带车型类别、阶段与结果分类。查配额、查权限与进入卡包补拉收到的分享失败只写定位日志（`Logger`），不进统计。仓内只有通用事件模板，各统计点的流程、步骤与内码按项目上报协议新增登记。
+蓝图 detail-share-events 的三个流程指标在这里落到责任方法与具体编号；分享被接受比例由车云按分享记录统计（D7），本单元不为它上报、不记失效事件。
 
-| 指标 | 统计点 | 责任方法 | 结果分类 | 获知时机 |
-|------|--------|----------|----------|----------|
-| 分享发起成功率 | 发起流程 / 创建分享 | `KeySharingRepository.createSharing` | 已建立 / 签发失败 / 请求失败 | 创建响应或通信失败 |
-| 分享接受成功率 | 接受流程 / 接受 | `KeySharingRepository.acceptSharing` | 生效 / 凭据下发失败 / 请求失败 | 接受响应 |
-| 分享撤销成功率 | 撤销流程 / 撤销 | `KeySharingRepository.revokeSharing` | 已受理 / 撤销请求失败 | 撤销响应 |
-| 分享被接受比例 | 分享生命周期 / 接受 | `KeySharingRepository.acceptSharing` | 生效 | 接受响应；与接受流程同一次结算，不重复上报 |
-| 分享被接受比例 | 分享生命周期 / 失效 | `KeySharingRepository.listSharings` | 作废 / 到期 / 已撤销 | 列表拉取时首次得知；同一状态重复拉到不重复记 |
+- 尝试持有者：`createSharing`、`acceptSharing`、`revokeSharing` 每次调用新建一个尝试标识，与创建分享的幂等标识分开；中断后续办沿用草稿的幂等标识，但算新的一次尝试。
+- 结算方法：`settleCreate`、`settleAccept`、`settleRevoke`，一次尝试只结算一个结果；正常响应、车云返回失败、通信异常与重复回调都经它，已结算即返回。
+- 登记文件：`shared/constant/KeySharingChartCodes.ets`。仓内没有流程、步骤与内码登记，下表编号按分配规则取未用号（业务模块 `01`，发起、接受、撤销依次为流程 `001`–`003`），编码前写入登记文件并核冲突。
+- 结果分类：三个流程都只有一步，这一步成功就是流程整体成功，记 `SUCCESS`；失败都是普通失败，记 `STEP_ERROR_BY_ERROR`；请求发出后不能取消，没有用户取消这一结果。
+- 渠道：表内结果只报 Chart，要本地日志时直接调 `Logger`；查配额、查权限与卡包补拉失败只写 `Logger`，不进统计。
+- 边界：退出页面不取消已发出的请求，按它自己的结果结算；接受后车主再撤销，是撤销流程的一次新尝试，接受那条不变；两侧钱包各自只报本端发起的流程。
 
-每个责任方法持有本次尝试，结果在方法内结算一次；重复回调不重报。
+| 统计点 | 业务结果 | 责任方法 | 事件ID（模板/流程/步骤） | 内码 | SDK结果分类 | 描述及关键值来源 | 外码来源 | 结算与验证 |
+|---|---|---|---|---|---|---|---|---|
+| 发起流程 / 创建分享 | 已建立 | `KeySharingRepository.createSharing` | `Wallet_COMMON` / `001` / `001` | `0101010000`（候选，待登记：KeySharingChartCodes） | SUCCESS | 「分享已建立」，拼车型类别（取自本人钥匙）、权限档与有效期档位（取自本次草稿）、是否续办（草稿里有没有沿用的幂等标识） | 无 | `settleCreate`；单测：建立报一条，重复回调不再报 |
+| 发起流程 / 创建分享 | 车云返回失败（含签发失败） | `KeySharingRepository.createSharing` | `Wallet_COMMON` / `001` / `001` | `0101010001`（候选，待登记：KeySharingChartCodes） | STEP_ERROR_BY_ERROR | 「创建分享失败」，拼失败响应里的可读信息与车型类别 | 创建失败响应里的车云错误码 | `settleCreate`；单测：签发失败、满额返回各报一条，不留关系 |
+| 发起流程 / 创建分享 | 通信失败 | `KeySharingRepository.createSharing` | `Wallet_COMMON` / `001` / `001` | `0101010002`（候选，待登记：KeySharingChartCodes） | STEP_ERROR_BY_ERROR | 「创建分享请求未完成」，拼异常类型（超时或断网，取自请求异常） | 无 | `settleCreate`；单测：超时报一条；之后续办拿回同一条分享，另记一次「已建立」 |
+| 接受流程 / 接受 | 生效 | `KeySharingRepository.acceptSharing` | `Wallet_COMMON` / `002` / `001` | `0102010000`（候选，待登记：KeySharingChartCodes） | SUCCESS | 「接受成功，钥匙生效」，拼车型类别（取自收到的分享） | 无 | `settleAccept`；单测：生效报一条，重复回调不再报 |
+| 接受流程 / 接受 | 凭据下发失败 | `KeySharingRepository.acceptSharing` | `Wallet_COMMON` / `002` / `001` | `0102010001`（候选，待登记：KeySharingChartCodes） | STEP_ERROR_BY_ERROR | 「凭据下发失败，保持待接受」，拼接受响应里的 `credentialStatus` 与 `status` | 无（接受响应正常返回，不带错误码） | `settleAccept`；单测：报一条；再点记新的一次 |
+| 接受流程 / 接受 | 车云返回失败 | `KeySharingRepository.acceptSharing` | `Wallet_COMMON` / `002` / `001` | `0102010002`（候选，待登记：KeySharingChartCodes） | STEP_ERROR_BY_ERROR | 「接受分享失败」，拼失败响应里的可读信息 | 接受失败响应里的车云错误码 | `settleAccept`；单测：报一条，保持待接受 |
+| 接受流程 / 接受 | 通信失败 | `KeySharingRepository.acceptSharing` | `Wallet_COMMON` / `002` / `001` | `0102010003`（候选，待登记：KeySharingChartCodes） | STEP_ERROR_BY_ERROR | 「接受请求未完成」，拼异常类型（超时或断网，取自请求异常） | 无 | `settleAccept`；单测：报一条，保持待接受 |
+| 撤销流程 / 撤销 | 已受理 | `KeySharingRepository.revokeSharing` | `Wallet_COMMON` / `003` / `001` | `0103010000`（候选，待登记：KeySharingChartCodes） | SUCCESS | 「撤销已受理」，拼撤销响应里的 `status`（`revoked` 立即失效 / `revoking` 撤销中）与 `graceHours` | 无 | `settleRevoke`；单测：立即失效与撤销中各报一条 |
+| 撤销流程 / 撤销 | 车云返回失败 | `KeySharingRepository.revokeSharing` | `Wallet_COMMON` / `003` / `001` | `0103010001`（候选，待登记：KeySharingChartCodes） | STEP_ERROR_BY_ERROR | 「撤销失败」，拼失败响应里的可读信息 | 撤销失败响应里的车云错误码 | `settleRevoke`；单测：报一条，条目保持生效 |
+| 撤销流程 / 撤销 | 通信失败 | `KeySharingRepository.revokeSharing` | `Wallet_COMMON` / `003` / `001` | `0103010002`（候选，待登记：KeySharingChartCodes） | STEP_ERROR_BY_ERROR | 「撤销请求未完成」，拼异常类型（超时或断网，取自请求异常） | 无 | `settleRevoke`；单测：报一条，条目保持生效 |
 
 ### 验证责任
 
 | 验证 | 覆盖 | 方式 |
 |------|------|------|
 | 业务单元测试 | 六态迁移；幂等创建不重复；签发失败与凭据下发失败；满额与对象不可分享；草稿落盘、续办、清除，以及有草稿时配额已满按满额处理；撤销中 36 小时与被分享人一侧「正在收回」；收到的分享：卡包补拉待接受、接受成功转为钥匙卡片、接受失败保持待接受、撤销中显示「正在收回」、撤销完成与到期移除、旧入口打开详情提示不可用、换账号只取新账号；仅生效态可撤销；打码相同的两个账号各自正确 | 用模拟数据源构造各分支 |
+| 埋点单元测试 | 三个流程每种结果预期的事件（编号、内码、分类）与次数；重复回调不再报；通信失败后续办沿用幂等标识、另记一次；再点接受、重新发起都是新的一次；统计点上不出现 VOC | 用模拟数据源构造各结果，记录上报封装的调用 |
 | 界面检查 | 卡包车钥匙卡片、四个页面的展示、深色与大字、从右到左镜像 | 设备或预览按界面参考图核 |
 | 真实联调 | 六个车云接口与本人钥匙真实来源；撤销宽限值是否已由车云调整为 36 小时；被分享人一侧钥匙查询的真实接口；推送通道接入与点击进入接受页 | 不在本单元；接口就绪后换真实数据源再验 |
 
 ### 不承载
 
-被分享人再转给第三人（D2）、撤销后极端断网强制下线（D5）、真车开锁与凭据签发（D4）不在本单元。
+被分享人再转给第三人（D2）、撤销后极端断网强制下线（D5）、真车开锁与凭据签发（D4）不在本单元。分享被接受比例由车云按分享记录统计（D7），本单元不为它上报。

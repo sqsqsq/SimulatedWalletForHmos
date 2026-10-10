@@ -197,6 +197,9 @@ const STORY_CONTRACT = new URL('../../skills/story/contracts/story-chapters.json
 const idShape = kind => new RegExp(`\\b(?:${JSON.parse(fs.readFileSync(STORY_CONTRACT, 'utf-8')
   .replace(/^\uFEFF/, '')).id_shapes[kind].join('|')})\\b`, 'g');
 export const acceptanceIdRe = () => idShape('acceptance');
+/** 验收编号全集：acceptance 顶层各列表条目的 `id`，不认前缀。 */
+export const acceptanceIds = (acceptance) => new Set(Object.values(acceptance ?? {}).filter(Array.isArray).flat()
+  .map(c => c?.id).filter(Boolean).map(String));
 /** 验收行关联的功能编号形态（`id_shapes.function`）。 */
 export const functionIdRe = () => idShape('function');
 

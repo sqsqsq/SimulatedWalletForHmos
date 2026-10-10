@@ -132,12 +132,14 @@ ACTIVE_CONSTRAINTS = """
 import { pathToFileURL } from 'node:url';
 const [root, module] = process.argv.slice(1);
 const { activeKnowledge } = await import(pathToFileURL(module).href);
-process.stdout.write(JSON.stringify(activeKnowledge(root).constraints.map(c => ({ file: c.file, units: c.units }))));
+const k = activeKnowledge(root);
+process.stdout.write(JSON.stringify([...k.constraints.map(c => ({ kind: 'constraints', file: c.file, units: c.units })),
+  ...k.patterns.map(p => ({ kind: 'patterns', file: p.file, units: [p.units[0]] }))]));
 """
 
 
 def active_constraints(root: Path, access: Path) -> list[dict]:
-    """工程激活的规约文件与各自的单元（扩展根相对路径）；没有激活清单就没有。"""
+    """工程激活的规约与模式（扩展根相对路径、类别、要判的单元：规约逐条，模式取上篇这一个选型单元）；没有激活清单就没有。"""
     if not (root / "doc" / "extensions" / "manifest.yaml").is_file():
         return []
     proc = subprocess.run(["node", "--input-type=module", "-e", ACTIVE_CONSTRAINTS, str(root),
@@ -148,40 +150,62 @@ def active_constraints(root: Path, access: Path) -> list[dict]:
     return json.loads(proc.stdout)
 
 
+def pattern_decision(decision_id: str, file: str, outcome: str, rationale: str,
+                     target_refs: list[str] | None = None, roles: list[dict] | None = None) -> dict:
+    """一个模式的选型判断（按上篇这一个单元判）：`file` 是扩展根相对路径；选中、调整时带落点与角色。"""
+    return {"decision_id": decision_id, "file": file, "unit": "上篇", "outcome": outcome, "rationale": rationale,
+            "target_refs": list(target_refs or []), **({"roles": roles} if roles else {})}
+
+
 def decision_text(root: Path, spec: dict, active: list[dict]) -> str:
-    """一条知识应用决定的 canonical 文本（缩进对齐顶层 decisions 列表）：来源与摘要取激活的那份规约文件。"""
-    source = next((c for c in active if spec["unit"] in c["units"]), None)
+    """一条知识应用决定的 canonical 文本（缩进对齐顶层 decisions 列表）：来源与摘要取激活的那份知识文件。"""
+    if "file" in spec:
+        source = next((c for c in active if c["kind"] == "patterns" and c["file"] == spec["file"]), None)
+    else:
+        source = next((c for c in active if c["kind"] == "constraints" and spec["unit"] in c["units"]), None)
     if source is None:
-        raise AssertionError(f"夹具要判的 {spec['unit']} 不在工程激活的规约里")
+        raise AssertionError(f"夹具要判的 {spec.get('file', spec['unit'])} 不在工程激活的知识里")
     ref = f"doc/extensions/{source['file']}"
+    digest = "sha256:" + hashlib.sha256((root / ref).read_bytes()).hexdigest()
     applied = spec["outcome"] == "applied"
-    knowledge = {"kind": "constraints", "form": "entries", "unit": spec["unit"],
-                 "source_sha256": "sha256:" + hashlib.sha256((root / ref).read_bytes()).hexdigest(),
-                 "outcome": spec["outcome"], **({"requirement": spec["requirement"]} if applied else {}),
-                 "target_refs": [TARGET] if applied else []}
+    if source["kind"] == "patterns":
+        knowledge = {"kind": "patterns", "form": "halves", "unit": spec["unit"], "source_sha256": digest,
+                     "outcome": spec["outcome"], "target_refs": spec.get("target_refs", []),
+                     **({"roles": spec["roles"]} if spec.get("roles") else {})}
+    else:
+        knowledge = {"kind": "constraints", "form": "entries", "unit": spec["unit"], "source_sha256": digest,
+                     "outcome": spec["outcome"], **({"requirement": spec["requirement"]} if applied else {}),
+                     "target_refs": [TARGET] if applied else []}
     provenance = {"source_kind": "knowledge", "source_ref": ref, "observed_at": "2026-09-30T00:00:00Z",
                   "evidence_strength": "inferred", "extraction_method": "read_and_apply"}
-    status = "not_applicable" if spec["outcome"] == "not_applicable" else "answered_with_evidence"
+    status = ("not_applicable" if spec["outcome"] == "not_applicable"
+              else "open_decision" if spec["outcome"] == "pending" else "answered_with_evidence")
     return (f"    - decision_id: {spec['decision_id']}\n"
             "      kind: knowledge_application\n"
             f"      status: {status}\n"
             "      owner: design-author\n"
             f"      rationale: {json.dumps(spec['rationale'], ensure_ascii=False)}\n"
             f"      provenance: {json.dumps(provenance, ensure_ascii=False)}\n"
-            f"      verification_refs: [{TARGET}]\n"
+            f"      verification_refs: [{(knowledge['target_refs'] or [TARGET])[0]}]\n"
             f"      knowledge: {json.dumps(knowledge, ensure_ascii=False)}\n")
 
 
 def judged_rules(active: list[dict], given: list[dict] | None, exact: bool) -> list[dict]:
-    """设计对激活规约的判断：`exact` 时就是给的这几条（反例用，可以漏判）；否则给的里面激活了的照用，
-    其余逐条判定本需求不涉及（夹具默认）。"""
+    """设计对激活知识的判断：`exact` 时就是给的这几条（反例用，可以漏判）；否则给的里面激活了的照用，
+    其余规约逐条判定本需求不涉及、模式逐个写一条有据拒绝（夹具默认）。"""
     if exact:
         return list(given or [])
-    units = {u for c in active for u in c["units"]}
-    chosen = [d for d in (given or []) if d["unit"] in units]
-    done = {d["unit"] for d in chosen}
-    return chosen + [knowledge_decision(f"knowledge-{u.lower()}", u, "not_applicable", "夹具：本需求不涉及这条规约")
-                     for c in active for u in c["units"] if u not in done]
+    rules = {u for c in active if c["kind"] == "constraints" for u in c["units"]}
+    patterns = {c["file"] for c in active if c["kind"] == "patterns"}
+    chosen = [d for d in (given or []) if (d.get("file") in patterns if "file" in d else d["unit"] in rules)]
+    done_rules = {d["unit"] for d in chosen if "file" not in d}
+    done_patterns = {d["file"] for d in chosen if "file" in d}
+    return (chosen
+            + [knowledge_decision(f"knowledge-{u.lower()}", u, "not_applicable", "夹具：本需求不涉及这条规约")
+               for c in active if c["kind"] == "constraints" for u in c["units"] if u not in done_rules]
+            + [pattern_decision(f"knowledge-pattern-{Path(c['file']).stem}", c["file"], "rejected",
+                                "夹具：本需求没有这个模式适用的交互或分支")
+               for c in active if c["kind"] == "patterns" and c["file"] not in done_patterns])
 
 
 def story_detail(detail_id: str, kind: str, title: str, body: str) -> str:

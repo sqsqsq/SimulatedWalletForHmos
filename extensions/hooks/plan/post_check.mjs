@@ -10,6 +10,7 @@
  *   ④ **引用**——用例引的验收编号存在；
  *   ⑤ **埋点逐点落实**——蓝图里落在本单位的每个统计点，plan.md 的逐点表里有行，责任方法是契约声明的方法。
  *   ⑥ **图源**——plan.md 里采用的图指得到本次有效来源，reuse 的图体与来源一致（与 Story 同一个检查）。
+ *   ⑦ **宿主扩展章**——plan.md「宿主扩展（可选）」在，承接的规约、选中模式与埋点各有小节，规约编号引得到，逐点表在「埋点」小节里。
  *
  * 「义务是不是真的被应用了」「text 写的是不是本需求的设计」是语义判断，归独立审查。
  *
@@ -18,12 +19,13 @@
 import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { carriedBy, entryOf, featureKnowledge, rolesOf } from '../shared/knowledge-application.mjs';
+import { entryOf, featureKnowledge, rolesOf, unitDuties } from '../shared/knowledge-application.mjs';
+import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, unidentifiedCarriers, verifyProblem }
   from '../shared/obligations.mjs';
 import { readTextOrNull } from '../shared/paths.mjs';
 import { designStatPoints, planStatRows, pointKey } from '../shared/stat-points.mjs';
-import { entityId, phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
+import { acceptanceIds, entityId, phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 import { unitDiagramSourceProblems } from '../../skills/story/scripts/core/story/images.mjs';
 
@@ -38,8 +40,7 @@ function acceptanceRefProblems(inputs, group) {
     group.skipped.push({ what: '用例的验收引用', why: inputs.why });
     return [];
   }
-  const ids = new Set(Object.values(inputs.acceptance).filter(Array.isArray).flat()
-    .map(c => c?.id).filter(Boolean).map(String));
+  const ids = acceptanceIds(inputs.acceptance);
   const dangling = new Map();
   const walk = (node, at) => {
     if (Array.isArray(node)) { node.forEach(n => walk(n, at)); return; }
@@ -133,9 +134,7 @@ export default guard('plan', async (ctx) => {
   }
   const judged = knowledge ? featureKnowledge(ctx.projectRoot, ctx.feature, contracts) : null;
   if (judged) design.problems.push(...judged.problems);
-  const carried = judged ? carriedBy(judged.rows, judged.scope) : [];
-  const applied = carried.filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction);
-  const selected = carried.filter(d => d.knowledge.kind === 'patterns' && ['selected', 'adjusted'].includes(d.knowledge.outcome));
+  const { applied, selected } = judged ? unitDuties(judged) : { applied: [], selected: [] };
   const why = noContract ?? (knowledge ? null : '激活知识派生失败');
   const obligations = contracts ? obligationsFromContracts(contracts) : [];
 
@@ -210,6 +209,16 @@ export default guard('plan', async (ctx) => {
   const diagrams = planText === null ? { problems: [], skipped: [{ what: 'plan.md 的图源', why: '这一次没有 plan.md' }] }
     : unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, planText, 'plan.md');
   groups.push({ name: '图源', ...diagrams });
+
+  // ---- 宿主扩展章：plan.md「宿主扩展（可选）」在，承接的规约、选中模式与埋点各有小节，逐点表在「埋点」小节里 ----
+  const host = { name: '宿主扩展章', problems: [], skipped: [] };
+  groups.push(host);
+  if (planText === null) host.skipped.push({ what: '宿主扩展（可选）', why: '这一次没有 plan.md；承接在契约的 must、pattern_roles 与方法说明里' });
+  else if (!judged) host.skipped.push({ what: '宿主扩展（可选）', why: '激活知识派生失败，承接范围无从确定' });
+  else {
+    host.problems.push(...hostChapterProblems(planText, { file: 'plan.md', anchor: '宿主扩展（可选）', judged,
+      events: !['none', 'missing'].includes(designStatPoints(judged).state) }));
+  }
 
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'plan'), skipped: [] });

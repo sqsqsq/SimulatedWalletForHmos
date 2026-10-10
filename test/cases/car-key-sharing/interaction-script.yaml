@@ -55,26 +55,33 @@ replies:
     expected_phase: story
     text: 退出页面、断网、把应用关掉再打开，回来都要能接着办；发出成功、退出登录或者换了账号就清掉，不能串到别的账号。
 
-  - id: terms-confirmed
+  # 系统设计列了失效事件，但分享被接受比例要一条分享算一次，两侧钱包的事件拼不出来。模型问到这个比例由谁统计、要不要报失效时的立场。
+  - id: acceptance-ratio-owner
     expected_turn: 8
+    expected_kind: story_gate
+    expected_phase: story
+    text: 分享被接受比例按车云的分享记录统计，钱包端只报发起、接受、撤销三个流程的结果，不另报失效。
+
+  - id: terms-confirmed
+    expected_turn: 9
     expected_kind: story_gate
     expected_phase: story
     text: 术语确认，按你列的定。
 
   - id: implementation-plan
-    expected_turn: 9
+    expected_turn: 10
     expected_kind: story_gate
     expected_phase: story
     text: 实现方案。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material
-    expected_turn: 10
+    expected_turn: 11
     expected_kind: story_gate
     text: 不补。
 
   # 模型把评审意见里「36 小时内对方仍可开门」与「撤销起车辆侧即拒绝」的冲突摆出来问人时的立场。
   - id: grace-window-conflict
-    expected_turn: 11
+    expected_turn: 12
     expected_kind: story_gate
     text: 车辆侧撤销即拒绝不变，36 小时是对方设备上卡片收回的期限。

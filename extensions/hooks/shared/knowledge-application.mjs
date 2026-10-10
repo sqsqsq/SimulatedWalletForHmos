@@ -1,11 +1,11 @@
 /**
- * 设计里的知识应用 —— 按合同形态、激活知识、原始摘要与原生稳定地址核一遍，并核每条激活规约都有判断。
+ * 设计里的知识应用 —— 按合同形态、激活知识、原始摘要与原生稳定地址核一遍，并核每条激活规约、每个激活模式都有判断。
  *
  * 判断只在原生设计里：蓝图 `decisions_and_gaps.decisions[]` 的 `kind: knowledge_application`，事实用到的知识在
  * `discovery.facts[].value.knowledge`；非 CU 的维护 Feature 用它原生契约里的 `knowledge_applications[]`。
  * 形态的唯一合同是 `skills/story/contracts/knowledge-application.schema.json`（用原生 lite-json-schema 校验）；
  * 这里补合同表达不了的：来源是不是激活的知识文件、类别与形态是否与文件一致、单元在不在文件里、
- * 原始摘要是否仍是现在的原文、落点是不是这份设计里真实的稳定地址、红线有没有被豁免、激活规约有没有漏判。
+ * 原始摘要是否仍是现在的原文、落点是不是这份设计里真实的稳定地址、红线有没有被豁免、激活规约与模式有没有漏判。
  *
  * 只读；缺判断、原文变了、落点失效都作为问题交回，由设计职责修订，这里不代写判断。
  */
@@ -14,7 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { featureIdentity, loadNative, readBlueprint } from './framework-access.mjs';
-import { activeKnowledge } from './knowledge.mjs';
+import { activeKnowledge, HALVES } from './knowledge.mjs';
 import { extensionRoot } from './paths.mjs';
 
 //: 本模块所在的扩展包根：形态合同属于机制，随包发布
@@ -92,10 +92,15 @@ function checkKnowledgeApplications(projectRoot, { decisions, facts = [], addres
     rows.push({ ...d, file: source.file, reviewAction: source.reviewActions.has(k.unit) });
   }
   for (const [ref, source] of active) {
-    if (source.kind !== 'constraints') continue;
-    const missing = source.units.filter(u => !judged.has(`${source.file}#${u}`));
-    if (missing.length) {
-      problems.push(`${label} 没有判断激活规约 ${missing.join('、')}（${ref}）——规约逐条判断，不适用也要写明本需求哪个条件不成立`);
+    if (source.kind === 'constraints') {
+      const missing = source.units.filter(u => !judged.has(`${source.file}#${u}`));
+      if (missing.length) {
+        problems.push(`${label} 没有判断激活规约 ${missing.join('、')}（${ref}）——规约逐条判断，不适用也要写明本需求哪个条件不成立`);
+      }
+    } else if (source.kind === 'patterns' && !judged.has(`${source.file}#${HALVES[0]}`)) {
+      // 模式按上篇选型：一份模式一条判断；下篇是落地方法，不再判一遍
+      problems.push(`${label} 没有判断激活模式 ${ref}（单元 ${HALVES[0]}）——按它的上篇判选中、调整、拒绝或待定；`
+        + '没选中也要写一条拒绝，写明本需求里使它不适用的事实');
     }
   }
   for (const f of facts.filter(x => !x?.value?.knowledge && active.has(where(x?.provenance?.source_ref)))) {
@@ -194,6 +199,15 @@ function unitScope(addressing, blueprint, refs, bad) {
 export function carriedBy(rows, scope) {
   return rows.filter(d => !scope || [...(d.knowledge.target_refs ?? []), ...(d.knowledge.roles ?? []).map(r => r.target_ref)]
     .some(t => scope.has(t)));
+}
+
+/** 本施工单位要履行的判断：承接的适用规约（评审动作不产生代码要求，除外）与选中模式；spec、plan 门禁与知识任务共用。 */
+export function unitDuties(judged) {
+  const carried = carriedBy(judged.rows, judged.scope);
+  return {
+    applied: carried.filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction),
+    selected: carried.filter(d => d.knowledge.kind === 'patterns' && ['selected', 'adjusted'].includes(d.knowledge.outcome)),
+  };
 }
 
 /** 选型决定里由这个施工单位承担的角色：角色自己的落点在它的设计责任内；整体角色齐不齐在蓝图层核。 */

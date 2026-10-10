@@ -16,7 +16,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blueprintKnowledge, carriedBy, entryOf, featureKnowledge, rolesOf } from './knowledge-application.mjs';
+import { blueprintKnowledge, entryOf, featureKnowledge, rolesOf, unitDuties } from './knowledge-application.mjs';
 import { loadNative, readBlueprint, readFeature } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
@@ -79,10 +79,11 @@ function knowledgeBlock(root, action) {
   return { knowledge, rows };
 }
 
-/** 蓝图里与知识相关的事实与决定：原样列出，判断归模型。 */
-function decisionsOf(blueprint) {
+/** 蓝图里与知识相关的事实与决定：原样列出，判断归模型；`skip` 里的决定已在别处逐条给出。 */
+function decisionsOf(blueprint, skip = new Set()) {
   const facts = (blueprint?.discovery?.facts ?? []).filter(f => f?.value?.knowledge);
-  const decisions = (blueprint?.decisions_and_gaps?.decisions ?? []).filter(d => d?.kind === 'knowledge_application');
+  const decisions = (blueprint?.decisions_and_gaps?.decisions ?? [])
+    .filter(d => d?.kind === 'knowledge_application' && !skip.has(d.decision_id));
   return [...facts.map(f => `- 事实 \`${f.fact_id}\`：${JSON.stringify(f.value)}`),
     ...decisions.map(d => `- 决定 \`${d.decision_id}\`（${d.status}）：${d.rationale ?? ''} ${JSON.stringify(d.knowledge ?? {})}`)];
 }
@@ -127,9 +128,7 @@ function blueprintTask(root, id, action) {
  * 先于知识原文交给作者。判断不在这里重做，原文按条目在第 4 块。
  */
 function carriedDuties(judged, action, knowledge) {
-  const carried = carriedBy(judged.rows, judged.scope);
-  const applied = carried.filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction);
-  const selected = carried.filter(d => d.knowledge.kind === 'patterns' && ['selected', 'adjusted'].includes(d.knowledge.outcome));
+  const { applied, selected } = unitDuties(judged);
   const out = [`本施工单位承接 ${applied.length} 条适用规约、${selected.length} 条选中模式（原文在第 4 块，按来源文件与单元找）：`];
   for (const d of applied) {
     const { executor, allowed } = verifyChoices(entryOf(knowledge, d));
@@ -228,8 +227,12 @@ function featureTask(root, feature, action, supplied, knowledge) {
   if (f.identity.kind === 'cu') {
     // 本命令只读一次蓝图、算一次判断：设计对象、承接义务、埋点与关联 Story 都用这一份
     judged = featureKnowledge(root, feature, f.spec?.contracts ?? null);
-    // spec / plan 在第 3 块逐条拿到本单位承接的判断，这里只给设计对象；其余动作列蓝图里的全部判断
-    facts = !judged.blueprint || ['spec', 'plan'].includes(action) ? [] : decisionsOf(judged.blueprint);
+    // spec / plan 在第 3 块逐条拿到本单位承接的判断，这里给其余判断与事实（宿主扩展章写不适用、不选与项目事实复用时引原理由）；
+    // 其余动作列蓝图里的全部判断
+    const duties = judged.blueprint && ['spec', 'plan'].includes(action) ? unitDuties(judged) : null;
+    facts = !judged.blueprint ? [] : decisionsOf(judged.blueprint,
+      new Set(duties ? [...duties.applied, ...duties.selected].map(d => d.decision_id) : []));
+    if (duties && facts.length) facts.unshift('本单位不承接义务的知识判断与事实（宿主扩展章引用它们的理由，不重判）：');
     if (!judged.blueprint) gaps.push('蓝图读不到：设计负责方处理。');
     if (!facts.length && !['spec', 'plan'].includes(action)) facts = ['蓝图里还没有知识应用的事实与决定。'];
     facts.push(`本施工单位承担的设计对象：${f.design_refs.map(r => `${r?.target?.kind}:${r?.target?.id}`).join('、') || '（无）'}`);
