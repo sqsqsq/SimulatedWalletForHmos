@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_knowledge_task import BLUEPRINT, CU, make_project, prepare  # noqa: E402  —— 它把 test/scripts 放进导入路径
+from test_knowledge_task import BLUEPRINT, CU, cu_id, make_project, prepare  # noqa: E402  —— 它把 test/scripts 放进导入路径
 import design_kit  # noqa: E402
 
 KNOWLEDGE_ID = "knowledge-obs-02"
@@ -46,9 +46,9 @@ def pattern_text(root: Path) -> str:
             f"      knowledge: {json.dumps(knowledge, ensure_ascii=False)}\n")
 
 
-def design(root: Path, with_roles: bool) -> None:
+def design(root: Path, with_roles: bool, with_pattern: bool = True) -> None:
     """改夹具蓝图（按原文插入，不整份重写）：逐条的知识判断、选型决定、设计对象契约上的义务与角色；
-    再按原生口径（蓝图原字节的摘要）更新施工单位的蓝图引用。"""
+    再按原生口径（蓝图原字节的摘要）更新施工单位的蓝图引用。`with_pattern=False` 时整份蓝图没有选型决定。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     text = canonical.read_text(encoding="utf-8")
@@ -56,13 +56,14 @@ def design(root: Path, with_roles: bool) -> None:
     judged = design_kit.judged_rules(active, [design_kit.knowledge_decision(
         KNOWLEDGE_ID, "OBS-02", "applied", "余额刷新是新增的业务过程", requirement="刷新失败记一条可定位的日志")], False)
     text = text.replace("decisions_and_gaps:\n  decisions:\n", "decisions_and_gaps:\n  decisions:\n"
-                        + "".join(design_kit.decision_text(root, d, active) for d in judged) + pattern_text(root), 1)
+                        + "".join(design_kit.decision_text(root, d, active) for d in judged)
+                        + (pattern_text(root) if with_pattern else ""), 1)
     method = "                - name: refreshBalance\n"
     assert text.count(method) == 1
     text = text.replace(method, method + "                  must:\n                    - rule: OBS-02\n"
                         f"                      decision_id: {KNOWLEDGE_ID}\n                      text: 刷新失败时记一条带页面与原因的日志\n"
                         "                      verify: ut\n", 1)
-    if with_roles:
+    if with_roles and with_pattern:
         owner = "              class: HomeRepository\n"
         assert text.count(owner) == 1
         text = text.replace(owner, owner + "              pattern_roles:\n                - pattern: decision-tree\n"
@@ -114,13 +115,14 @@ process.stdout.write(JSON.stringify({ must: i.methods?.[0]?.must ?? null, roles:
 
 class ChainCase(unittest.TestCase):
     WITH_ROLES = True
+    WITH_PATTERN = True
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
     def setUpClass(cls) -> None:
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
-        design(cls.root, cls.WITH_ROLES)
+        design(cls.root, cls.WITH_ROLES, cls.WITH_PATTERN)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -219,6 +221,74 @@ class AMissingOwnRoleIsNamed(ChainCase):
         self.assertIn("「节点表」", gate)
         self.assertIn("没有实体承担", gate)
         self.assertNotIn("「上下文」", gate)
+
+
+class NoPatternIsSelected(ChainCase):
+    """整份蓝图没有选型决定：任务不编角色，规约义务与激活知识照样送达，门禁不因没有角色而拒绝。"""
+    WITH_PATTERN = False
+
+    def test_no_role_is_invented_and_the_rule_still_arrives(self) -> None:
+        out = self.probe()
+        self.assertEqual([], out["problems"], out["problems"])
+        self.assertEqual(KNOWLEDGE_ID, out["must"][0]["decision_id"])
+        self.assertIsNone(out["roles"])
+        self.assertEqual([], out["roleAddresses"])
+        for gone in ("没有实体承担", "pattern_roles", "节点表"):
+            self.assertNotIn(gone, out["gate"], out["gate"])
+        self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
+        duties = out["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识及原文", 1)[0]
+        self.assertIn(f"`{KNOWLEDGE_ID}`（OBS-02", duties)
+        self.assertNotIn("模式 decision-tree", duties)
+        knowledge = out["author"].split("## 4. 激活知识及原文", 1)[1]
+        self.assertIn("doc/extensions/knowledge/design-patterns/decision-tree.md", knowledge,
+                      "没选模式不等于不给模式知识原文")
+
+
+SIBLING_PROBE = """
+import { pathToFileURL } from 'node:url';
+const [root, ...features] = process.argv.slice(1);
+const k = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/knowledge-application.mjs').href);
+const out = {};
+for (const f of features) {
+  const j = k.featureKnowledge(root, f, null);
+  const carried = k.carriedBy(j.rows, j.scope);
+  out[f] = { problems: j.problems, decisions: carried.map(d => d.decision_id).sort(),
+             roles: carried.flatMap(d => k.rolesOf(d, j.scope).map(r => r.role)).sort() };
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+class SiblingUnitsInOneBlueprint(ChainCase):
+    """同一蓝图两个施工单位：共同落点上的义务两边都承接，只落在一边设计责任内的角色只归那一边。"""
+    STEPS = ()
+    SECOND = "balance-runtime"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        base = cls.root / "doc" / "features" / BLUEPRINT
+        text = (base / "balance-refresh" / "change-unit.yaml").read_text(encoding="utf-8")
+        text = text.replace("change_unit_id: balance-refresh", f"change_unit_id: {cls.SECOND}")
+        head, tail = text.split("design_refs:\n", 1)
+        refs, after = tail[:tail.index("touches:")], tail[tail.index("touches:"):]
+        first = refs[:refs.index("  - artifact: component-blueprint@1", 4)]
+        runtime = first.replace("  - &a1\n    artifact", "  - artifact").replace(
+            "kind: node\n      id: wallet-main-module\n      view_id: development", "kind: view\n      id: runtime")
+        (base / cls.SECOND).mkdir()
+        (base / cls.SECOND / "change-unit.yaml").write_text(head + "design_refs:\n" + refs + runtime + after, encoding="utf-8")
+
+    def test_each_unit_carries_its_own_and_the_shared_duties(self) -> None:
+        second = cu_id(BLUEPRINT, self.SECOND)
+        proc = subprocess.run(["node", "--input-type=module", "-e", SIBLING_PROBE, str(self.root.as_posix()), CU, second],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        out = json.loads(proc.stdout)
+        for f in (CU, second):
+            self.assertEqual([], out[f]["problems"], f)
+            self.assertEqual(sorted([KNOWLEDGE_ID, PATTERN_ID]), out[f]["decisions"], f"{f} 漏了共同落点上的判断")
+        self.assertEqual(["节点表"], out[CU]["roles"], "运行视图上的角色被强给了不承担它的单位")
+        self.assertEqual(["上下文", "节点表"], out[second]["roles"], "承担运行视图的单位漏了它的角色")
 
 
 class TheMaterializedContractIsReused(ChainCase):

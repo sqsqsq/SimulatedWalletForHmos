@@ -24,7 +24,7 @@ STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
 
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
-from materials import registry  # noqa: E402
+from materials import frozen, registry  # noqa: E402
 import measure_run  # noqa: E402
 import phase_state  # noqa: E402
 
@@ -751,12 +751,13 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     #: 已授权保留的历史原稿：迁移清单按确切路径与原始字节摘要登记，登记在内且字节没变的原件不是新的运行证据
     HISTORY_MANIFEST = "doc/spec/2.1.0/历史参考/迁移清单.json"
     #: 金样候选的登记位置（2.0.3 的 05 合同 §2：`实施反馈/金样候选/<case>/<情景>/`）。目标稿自带的配图在情景的
-    #: `assets/` 下、被本情景文档引用；图里画的是否适用于该情景由评审者核，这里不看字节
+    #: `assets/` 下、被本情景文档引用、且是产品支持的图片类型（`materials.frozen.IMAGE_SUFFIXES`）；
+    #: 日志、事件、原件附件与压缩包被引用也不算。图里画的是否适用于该情景由评审者核，这里不看字节
     CANDIDATE_ROOTS = "doc/plan/*/*/实施反馈/金样候选"
 
     @classmethod
     def candidate_assets(cls, repo: Path) -> set[str]:
-        """各候选情景文档实际引用、且落在本情景 assets/ 下的文件。"""
+        """各候选情景文档实际引用、落在本情景 assets/ 下的图片。"""
         link = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")
         out: set[str] = set()
         for root in repo.glob(cls.CANDIDATE_ROOTS):
@@ -767,7 +768,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                         if re.match(r"^[a-z]+:", target) or target.startswith("#"):
                             continue
                         f = (doc.parent / unquote(target)).resolve()
-                        if f.is_file() and assets in f.parents:
+                        if f.is_file() and assets in f.parents and f.suffix.lower() in frozen.IMAGE_SUFFIXES:
                             out.add(f.relative_to(repo.resolve()).as_posix())
         return out
 
@@ -845,6 +846,18 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
             # 文档引用了 assets/ 外的文件也不放行：引用不是放行理由，位置与引用要同时成立
             (scene / "AR/story.md").write_text("![截图](截图.png)\n", encoding="utf-8")
             self.assertIn(base + "金样候选/demo-case/initial/AR/截图.png", self.stray_evidence(repo))
+
+            # 放在 assets/ 里、被正文链接的日志、原件与压缩包也不放行：例外只给图片
+            for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
+                (scene / "assets" / name).write_text("x", encoding="utf-8")
+            (scene / "AR/story.md").write_text(
+                "![提交页](../assets/%E9%A1%B5%E9%9D%A2/新画的图.png)\n\n"
+                + "".join(f"[{n}](../assets/{n})\n" for n in ("run.log", "原稿.docx", "包.zip", "events.jsonl")),
+                encoding="utf-8")
+            stray = set(self.stray_evidence(repo))
+            for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
+                self.assertIn(base + f"金样候选/demo-case/initial/assets/{name}", stray, name)
+            self.assertNotIn(base + "金样候选/demo-case/initial/assets/页面/新画的图.png", stray)
 
     def test_golden_output_has_a_single_canonical_copy(self):
         """金样成品只有 `test/golden/` 一处正本；夹具里出现逐字节副本，改了哪一份、对照的又是哪一份就说不清。"""
