@@ -5,19 +5,21 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { joinPosix, readManifest, relFromFeature, upstreamDocs } from './sources.mjs';
+import { blueprintGraph, loadNative, relatedStories } from '../../../../../hooks/shared/framework-access.mjs';
+import { adoptedDocuments, joinPosix, readManifest, relFromFeature } from './sources.mjs';
 import { normalizeHeading, parseDocument } from './document.mjs';
 
 
+//: 图源标记：围栏开头连续的 `%% 图源 {JSON}` 行，一行一个来源；图正文里再出现的 `%%` 是注释。
+const MARK = /^%%\s*图源(?:\s+(.*?))?\s*$/;
+const MODES = new Set(['reuse', 'refine']);
+
 /**
- * 一份文档里的每张图 —— 身份由**位置**给，来源由**围栏第一行**自报。
+ * 一份文档里的每张图 —— 身份由**位置**给，来源由**围栏开头**自报。
  *
- * 身份 `§<节> #<该节内第几张>`：图不需要作者起名，位置就是它的名字。
- * 来源标记 `%% 图源 <文档> §<节> #<序>` 指向**直接上游**那一张；只有围栏第一行算标记，
- * 所以一张图从 SR 经 spec 到 story，每一环换一次标记，上一环的那行随围栏带过去也无妨。
- *
- * 节取标题的前导编号（`### 5.2 异常回收` → `5.2`）；没有编号就用业务名——
- * 编号是给人对位用的，取不到时身份仍要唯一。
+ * 身份 `§<节> #<该节内第几张>`：图不需要作者起名，位置就是它的名字。节取标题的前导编号
+ * （`### 5.2 异常回收` → `5.2`），没有编号就用业务名——取不到编号时身份仍要唯一。
+ * 来源是围栏开头连续的 `%% 图源 {JSON}` 行，每行解析成一个对象；解析不了的带着原因交给检查，不丢弃。
  */
 export function diagramsOf(text) {
   const doc = parseDocument(text);
@@ -31,29 +33,39 @@ export function diagramsOf(text) {
     const body = doc.lines.slice(fence.from + 1, fence.closed ? fence.to : fence.to + 1);
     const index = (seq.get(section) ?? 0) + 1;
     seq.set(section, index);
-    // 围栏开头**连续的**几行 `%% 图源` 都算标记：同一张图常常两份上游都画过
-    // （系统设计画一遍，spec 的业务流程图就是它），story 里只该有一张——
-    // 两行标记写在同一个围栏里，两处的登记各自成立。只认开头那几行：
-    // 图正文里再出现的 `%%` 是注释，不是登记。
-    const marks = [];
+    const sources = [];
     for (const line of body) {
-      const m = line.trim().match(/^%%\s*图源\s+(.+?)\s*$/);
+      const m = line.trim().match(MARK);
       if (!m) break;
-      marks.push(m[1]);
+      const raw = (m[1] ?? '').trim();
+      let value = null;
+      let error = null;
+      try {
+        value = JSON.parse(raw);
+        if (!value || typeof value !== 'object' || Array.isArray(value)) error = '不是 JSON 对象';
+      } catch (e) {
+        error = e.message;
+      }
+      sources.push({ raw, value: error ? null : value, error });
     }
     out.push({
       section, index, title,
       id: `§${section} #${index}`,
-      sources: marks,
-      //: 围栏在原件里的行范围（**1 起，含首尾标记行**）——作者据它去读原件，
-      //: 而不是读一份被复制进成文输入的副本：副本一旦与原件不同步，他改的是副本。
+      sources,
+      //: 围栏在原件里的行范围（**1 起，含首尾标记行**）——作者据它去读原件
       at: { from: fence.from + 1, to: fence.to + 1 },
-      //: 按**行**给，不拼成字符串——拼了下游就要再切一遍，而切法一旦与这里不同，
-      //: CRLF 的文件每行尾会挂个 `\r`，行尾判据从此静默零命中。
+      //: 按**行**给，不拼成字符串：CRLF 的文件拼了再切，每行尾会挂个 `\r`
       lines: body,
     });
   }
   return out;
+}
+
+/** 图体：去掉开头的来源标记与末尾空行，其余逐行原样——reuse 按它比，不忽略节点、标签与边。 */
+export function diagramBody(d) {
+  const rows = d.lines.slice(d.sources.length);
+  while (rows.length && !rows[rows.length - 1].trim()) rows.pop();
+  return rows;
 }
 
 /** 这张图讲的是什么 —— 小节标题 + 首层节点，给的是**主题**，不是「少了一张图」。 */
@@ -64,53 +76,112 @@ export function diagramTopic(d) {
   return uniq.length ? `${d.title}：${uniq.join(' → ')}` : d.title;
 }
 
-/**
- * 上游每张图，下游有没有一个围栏带着它的来源标记。
- *
- * 只核登记对应：图搬没搬对、周围文字写没写好由语义审查判。
- * 缺了指向的是**功能**不是图——图漏了先找它讲的那件事在下游哪里。
- */
-function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) {
-  const carried = new Set(diagramsOf(downstreamText).flatMap(d => d.sources));
-  return diagramsOf(upstreamText).filter(d => !carried.has(`${upstreamLabel} ${d.id}`));
+/** 图源标记所在的行（1 起，围栏内外都算）：扫仓内路径与语言红线时先抹掉——来源路径是给机器核的。 */
+export function markLines(text) {
+  return String(text ?? '').split(/\r?\n/).flatMap((line, i) => (MARK.test(line.trim()) ? [i + 1] : []));
 }
 
-/** 围栏外的图源标记行（1 起）：标记只在图的围栏第一行算数。 */
-export function strayMarks(text) {
+/** 围栏外的图源标记行（1 起）：标记只在图的围栏开头算数。 */
+function strayMarks(text) {
   const doc = parseDocument(text);
-  return doc.lines.flatMap((line, i) => (!doc.fenced.has(i) && /^\s*%%\s*图源/.test(line) ? [i + 1] : []));
+  return doc.lines.flatMap((line, i) => (!doc.fenced.has(i) && MARK.test(line.trim()) ? [i + 1] : []));
+}
+
+/** 一个 document 来源指向的那张图：路径按原生项目路径规则、在本次有效来源里，图标识在那份文档里唯一。 */
+function documentDiagram(projectRoot, v, documents) {
+  if (typeof v.path !== 'string' || !v.path.trim() || typeof v.diagram !== 'string' || !v.diagram.trim()) {
+    return { problem: '缺 path 或 diagram——document 来源写工程相对路径与图标识（`§<节> #<该节第几张>`）' };
+  }
+  try {
+    loadNative(projectRoot).module('scripts/utils/project-relative-path.ts')
+      .validateProjectRelativePath(path.resolve(projectRoot), v.path, '图源 path');
+  } catch (e) {
+    return { problem: `的 path 不是工程内路径（${e.message}）` };
+  }
+  const text = documents.get(path.posix.normalize(v.path));
+  if (text === undefined) {
+    const known = [...documents.keys()];
+    return { problem: `指向的 ${v.path} 不是本次有效采用的来源——可用的来源：${known.length ? known.map(k => `\`${k}\``).join('、') : '（没有：需求还没交给设计，或采用的材料里没有 Markdown）'}` };
+  }
+  const list = diagramsOf(text);
+  const hit = list.find(d => d.id === v.diagram);
+  if (!hit) {
+    return { problem: `指向的图 ${v.diagram} 在 ${v.path} 里没有——那份文档的图：${list.map(d => d.id).join('、') || '（没有可解析的 Mermaid 图）'}` };
+  }
+  return { lines: diagramBody(hit) };
+}
+
+/** 一个 blueprint 来源指向的生成图：原生 resolver 核引用的身份与版本，graph_id 在这一版里实际存在。 */
+function blueprintDiagram(projectRoot, v) {
+  if (!v.blueprint_ref || typeof v.blueprint_ref !== 'object' || typeof v.graph_id !== 'string' || !v.graph_id.trim()) {
+    return { problem: '缺 blueprint_ref 或 graph_id——blueprint 来源写原生完整引用与已有的 graph_id' };
+  }
+  const got = blueprintGraph(projectRoot, v.blueprint_ref, v.graph_id);
+  if (got.status !== 'ok') return { problem: `核不过（${got.status}）：${got.issues.map(i => i.message).join('；')}` };
+  const rows = got.content.split(/\r?\n/);
+  while (rows.length && !rows[rows.length - 1].trim()) rows.pop();
+  return { lines: rows };
 }
 
 /**
- * 本章的图源标记指得到吗 —— 指向的图在直接上游里存在、不是指向 story 自己，且写在围栏第一行。
+ * 图源标记指得到吗 —— Story 章提交、整篇检查与 spec/plan post_check 共用这一份。
  *
- * 只看本章就判得了，所以在提交本章时判（章提交与整篇检查的 ⑪ 共用）。
- * 只核引用本身：图是不是承接了那张图的关系，要读内容，归读者审查的图文一致判据。
+ * 机械只核来源身份与 reuse 的图体：document 指向本次有效来源里唯一的那张图，blueprint 经原生核过、graph_id 存在；
+ * reuse 要与来源逐行相同。refine 增量讲没讲清、新绘图（不带标记）关系对不对、不适用的来源图去向是否交代，归独立审查。
  *
- * @param {string} text 本章正文，第一行是本章标题（图的节号按标题认）
- * @param {(line:number) => string} where 正文行号（1 起，含标题行）→ 作者要改的位置
+ * @param {string} projectRoot 工程根
+ * @param {string} text 被核的正文（一章或整篇）
+ * @param {Map<string,string>} documents 本次有效的 document 来源：工程相对路径 → 原文
+ * @param {(line:number) => string} where 正文行号（1 起）→ 作者要改的位置
  */
-export function chapterSourceMarkProblems(ctx, text, where) {
+function diagramSourceProblems(projectRoot, text, documents, where) {
   const problems = [];
-  const known = new Set();
-  const labels = new Set();
-  for (const [label, upstream] of upstreamDocs(ctx)) {
-    labels.add(label);
-    for (const d of diagramsOf(upstream)) known.add(`${label} ${d.id}`);
-  }
   for (const d of diagramsOf(text)) {
-    for (const mark of d.sources) {
-      if (known.has(mark)) continue;
-      const label = mark.split(/\s+/)[0];
-      problems.push(`${where(d.at.from)}：图源标记「${mark}」` + (labels.has(label)
-        ? `指向的图在 ${label} 里没有——标记按上游文档的节号与该节内第几张认，${label} 现有的图见 skeleton 输出`
-        : `指向的不是直接上游（上游是 ${[...labels].join('、') || '无'}）——标记登记的是 story 这张图承接了上游哪一张`));
+    const body = diagramBody(d);
+    for (const s of d.sources) {
+      const mark = `图源标记「${s.raw.length > 80 ? `${s.raw.slice(0, 80)}…` : s.raw}」`;
+      const say = msg => problems.push(`${where(d.at.from)}：${mark}${msg}`);
+      if (s.error) { say(`不是一个 JSON 对象（${s.error}）——一行写一个来源：\`%% 图源 {"kind":"document","path":…,"diagram":…,"mode":…}\``); continue; }
+      const v = s.value;
+      if (!MODES.has(v.mode)) { say(`的 mode 是 ${JSON.stringify(v.mode)}——原样采用写 reuse，在来源上补局部关系写 refine；没有适用来源而新绘的图不写标记`); continue; }
+      const found = v.kind === 'document' ? documentDiagram(projectRoot, v, documents)
+        : v.kind === 'blueprint' ? blueprintDiagram(projectRoot, v)
+          : { problem: `的 kind 是 ${JSON.stringify(v.kind)}——来源只有 document（文档里的图）与 blueprint（蓝图生成图）两种` };
+      if (found.problem) { say(found.problem); continue; }
+      if (v.mode === 'reuse' && found.lines.join('\n') !== body.join('\n')) {
+        say('写的是 reuse，图体与来源不一致——原样采用要逐行相同；按本需求补了关系就写 refine，增量写进写作设计这一节的依据');
+      }
     }
   }
   for (const line of strayMarks(text)) {
-    problems.push(`${where(line)}：图源标记写在了围栏外——只有图的围栏里开头那几行 \`%% 图源\` 算登记`);
+    problems.push(`${where(line)}：图源标记写在了围栏外——只有图的围栏开头那几行 \`%% 图源\` 算来源`);
   }
   return problems;
+}
+
+/** Story 一章或整篇的图源：document 来源是本次采用的冻结 Markdown。 */
+export function storyDiagramSourceProblems(ctx, text, where) {
+  return diagramSourceProblems(ctx.projectRoot, text, adoptedDocuments(ctx), where);
+}
+
+/**
+ * 施工单位 spec / plan 的图源：document 来源是蓝图消费的采用来源与当前有效的关联 Story，
+ * 与 Story 用同一个检查；旧表达的 Story 不算有效来源。
+ *
+ * @param {string} label 报错里的文件名（如 `spec.md`）
+ */
+export function unitDiagramSourceProblems(projectRoot, feature, text, label) {
+  const related = relatedStories(projectRoot, feature);
+  const documents = new Map();
+  for (const rel of [...related.sources, ...related.stories.filter(s => s.state === 'current').map(s => s.story)]) {
+    if (!/\.md$/i.test(rel) || documents.has(rel)) continue;
+    try {
+      documents.set(rel, fs.readFileSync(path.join(projectRoot, ...rel.split('/')), 'utf-8'));
+    } catch {
+      // 读不到的来源不进集合：指向它的标记按「不是本次有效采用的来源」报
+    }
+  }
+  return diagramSourceProblems(projectRoot, text, documents, line => `${label} 第 ${line} 行`);
 }
 
 /**
@@ -259,28 +330,6 @@ export function readablePaths(featureRoot, paths) {
     }
   });
 }
-
-/** 上游每张图，story 里各有一个围栏带着它的来源标记。 */
-export function carriedDiagramProblems(ctx, storyText) {
-  const problems = [];
-  // 上游每张图，story 里各有一个围栏带着它的来源标记。
-  //
-  // story 的上游有两份：系统设计（SR）与 spec。图属于哪块内容，内容在 story 落在哪，
-  // 图就该在哪——不是「上游有几张图，story 就派生几节」。所以这里不判位置、不判张数，
-  // **只判登记对应**：标记在，说明这张图被登记着搬过来了；它搬得对不对、
-  // 周围那句话说的是不是它，要读上下文，归独立审查。
-  // 缺了报的是**这张图讲的那件事**，作者据此去找内容，而不是去补一张图。
-  // 一张图一行：来源位置、它讲的那件事、去向。怎么搬（围栏第一行写 `%% 图源 <来源> <编号>`、
-  // 周围文字自己写）是整类共同的写法，不逐张重复。
-  for (const [label, upstream] of upstreamDocs(ctx)) {
-    for (const d of diagramsNotCarried(upstream, label, storyText)) {
-      problems.push(`${label} ${d.id}（${diagramTopic(d)}）在 story 里没有——没有围栏带着它的图源标记；`
-        + '上游每张图按 story 围栏开头的 `%% 图源 ' + `${label} ${d.id}` + '` 认承接；这张图讲的那件事落在 story 哪一章，图就在那一章');
-    }
-  }
-  return problems;
-}
-
 
 function materialImages(ctx) {
   const data = readManifest(ctx);

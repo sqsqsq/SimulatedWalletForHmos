@@ -1,13 +1,14 @@
 /**
- * 成文要用的当前输入 —— 材料里的图（一张图一项，带引用串与登记不用的命令）、系统设计里的图（搬进 story）。
+ * 成文要用的当前输入 —— 材料里的图（一张图一项，带引用串与登记不用的命令）、本次采用来源与蓝图里的图（带可粘的图源标记）。
  *
  * `story-build skeleton` 起手与恢复时打印它：上游正文从调用方已取得的来源状态取，缺席按合同与单据身份说。
  */
 import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, relDisplay } from '../../../../../hooks/shared/paths.mjs';
 import { SHELL, shellArg } from './drafts.mjs';
-import { diagramsOf, diagramTopic, imagesIn, readablePaths } from './images.mjs';
-import { adoptedText, relFromStory } from './sources.mjs';
+import { designSource } from './design-source.mjs';
+import { diagramBody, diagramsOf, diagramTopic, imagesIn, readablePaths } from './images.mjs';
+import { adoptedDocuments, relFromStory } from './sources.mjs';
 
 /**
  * 材料里的图 —— **一张图一项任务**。
@@ -82,75 +83,56 @@ function imageSection(projectRoot, feature) {
   return rows;
 }
 
+/** 一张可用的来源图：身份、主题、位置、可粘的标记与图体。 */
+function diagramRow(title, where, mark, lines) {
+  return [`- **${title}**——${where}；标记：\`%% 图源 ${JSON.stringify(mark)}\``, '', '````mermaid', ...lines, '````', ''];
+}
+
 /**
- * 上游某一份文档里的图 —— 身份、主题、原件路径与围栏行范围，附这一刻的原件内容。
+ * 本次采用来源里的图与蓝图生成图 —— 身份、主题、原件位置，附原件内容与可直接粘的来源标记。
  *
- * 作者按身份写来源标记、按行范围回原件核对；附上的内容取自原件，改图改的是下游自己的那一张。
- *
- * **不指定放哪一节**：图属于哪块内容，内容在下游落在哪，图就该在哪。文字不搬，story 讲给评审者的是来龙去脉。
- *
- * 读不到分三种说：本轮自己产出的那一份还没写成、本需求本来没有这一份（可选来源）、
- * 该有却读不到——只有最后一种要找回来。都说成读不到，作者会去找一份本来就不该在的文件；
- * 静默给一节空的，他会以为这一轮上游没画过图。
- *
- * @param {{rel: string, text?: string, required?: boolean, why?: string}} src 来源状态里的这一份
- * @param {boolean} derived 合同声明它是本轮流程自己生成的
+ * **不指定放哪一节、不要求每张都用**：图属于哪块内容，内容在 story 落在哪，图就在哪；
+ * 原样适用的 reuse，要补局部关系的 refine，不适用的在材料取舍说明里写去向，没有适用来源的按设计新绘、不写标记。
  */
-function diagramSection(heading, label, src, derived) {
-  const rows = [heading, ''];
-  const rel = src.rel;
-  if (typeof src.text !== 'string') {
-    rows.push(derived
-      ? `\`${rel}\` 还没写成——写成之后跑 \`story-build skeleton\`，它的输出里这一节列出其中的图。`
-      : src.required
-        ? `读不到 \`${rel}\`——${label} 里有没有图、各讲什么，现在给不出来。先把这份上游正文找回来，再取一次。`
-        : `本需求没有 \`${rel}\`（${src.why ?? '可选来源'}），这一节没有要搬的图。`);
+function diagramSection(ctx) {
+  const rows = ['## 4a. 采用来源与蓝图里的图', ''];
+  const docs = [...adoptedDocuments(ctx)].map(([at, text]) => [at, diagramsOf(text)]).filter(([, list]) => list.length);
+  const source = designSource(ctx);
+  const graphs = (Array.isArray(source.blueprint?.generated_graphs) ? source.blueprint.generated_graphs : [])
+    .filter(g => g?.graph_id && typeof g.content === 'string');
+  if (!docs.length && !graphs.length) {
+    rows.push('本次冻结的采用来源与蓝图里都没有可解析的 Mermaid 图（还没交给设计时没有冻结来源）；'
+      + '图片、PlantUML 等其他格式没有作结构解析，读原件自己对照。需要图时按设计新绘，不写图源标记。');
     return rows;
   }
-  const list = diagramsOf(src.text);
-  if (!list.length) {
-    rows.push(`${label} 里没有可解析的 Mermaid 图；图片、PlantUML 等其他格式的图没有作结构解析，读原文 \`${rel}\` 自己对照。`);
-    return rows;
+  rows.push('每张图怎么用按它讲的内容定：',
+    '- **原样适用**（同一范围、同一粒度）：整张搬进来，围栏开头粘下面给的标记（`mode` 是 `reuse`），图体逐行不改；',
+    '- **要补本需求的局部关系**：在它上面改，标记里的 `mode` 换成 `refine`，增量写进写作设计这一节的依据；',
+    '- **不适用**：不搬，在材料取舍说明里写它的去向；没有适用来源的图按设计新绘，不写标记。',
+    '一张图承接几张来源时，围栏开头一行写一个来源；周围的文字自己写。', '');
+  for (const [at, list] of docs) {
+    for (const d of list) {
+      rows.push(...diagramRow(`${d.id}（${diagramTopic(d)}）`, `原件 \`${at}\` 第 ${d.at.from}–${d.at.to} 行`,
+        { kind: 'document', path: at, diagram: d.id, mode: 'reuse' }, diagramBody(d)));
+    }
   }
-  const downstream = 'story';
-  rows.push(`原件在 \`${rel}\`，每张图的内容附在下面（取自这一刻的原件）。`,
-    `每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
-    + '搬的时候**围栏第一行写来源标记**（`%% 图源 ' + label + ' §<节> #<第几张>`），'
-    + '机器核的就是它。周围的文字自己写。',
-    '**对应的含义是标记指向它，不是照抄**：把上游的流程改画成时序、'
-    + '按本需求补上它没画的分支，都算对应，改的是画法、讲的是同一件事。',
-    '章首那张同时承接上游某张时，标记就写在它的围栏里。', '');
-  for (const d of list) {
-    rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`
-      + `——原件 \`${rel}\` 第 ${d.at.from}–${d.at.to} 行；`
-      + `标记写 \`%% 图源 ${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
+  if (graphs.length) rows.push('蓝图生成图只画视图里的节点与关系，不是完整业务流程：', '');
+  for (const g of graphs) {
+    const lines = g.content.split(/\r?\n/);
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    rows.push(...diagramRow(g.graph_id, `蓝图 r${source.ref.revision}`,
+      { kind: 'blueprint', blueprint_ref: source.ref, graph_id: g.graph_id, mode: 'reuse' }, lines));
   }
-  rows.push('');
   return rows;
 }
 
 /**
- * 成文要用的当前输入 —— 材料里的图、系统设计里的图。
+ * 成文要用的当前输入 —— 材料里的图、采用来源与蓝图里的图。
  *
- * `story-build skeleton` 起手与恢复时打印它。`sources` 是调用方这一刻已经取得的来源状态（`sourceStatus`）：上游正文从它取，不再读一遍；
- * 缺席按合同与单据身份说。
+ * `story-build skeleton` 起手与恢复时打印它。
  *
  * @param {{projectRoot: string, contract: object, args: {feature: string}}} ctx
- * @param {{docs: object[], missing: object[]}} sources
  */
-export function storyInputs(ctx, sources) {
-  const feature = ctx.args.feature;
-  const of = (key) => sources.docs.find(d => d.doc === key)
-    ?? sources.missing.find(m => m.doc === key)
-    ?? { rel: ctx.contract.sources?.[key]?.path ?? key };
-  const derived = (key) => ctx.contract.sources?.[key]?.derived === true;
-  // 交给设计之后，图取本次采用的冻结版本
-  const adopted = (src) => {
-    const read = typeof src.text === 'string' ? adoptedText(ctx, src.rel) : null;
-    return read ? { ...src, text: read.text, rel: read.at } : src;
-  };
-  return [
-    ...imageSection(ctx.projectRoot, feature), '',
-    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', adopted(of('SE')), derived('SE')),
-  ];
+export function storyInputs(ctx) {
+  return [...imageSection(ctx.projectRoot, ctx.args.feature), '', ...diagramSection(ctx)];
 }

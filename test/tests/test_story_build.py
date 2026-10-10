@@ -2291,11 +2291,11 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         self.assertIn("<!-- 待写：术语 -->", story)
 
     def test_the_terms_seed_comes_from_the_blueprint_terms(self) -> None:
-        """术语起始行是蓝图里确认过的术语，一词一行；解释留给作者从来源写，不拿模块名代替。"""
+        """术语起始行是蓝图里确认过的术语，一词一行，带着它的来源；意思由作者按来源的定义写，不拿模块名代替。"""
         self.build("skeleton")
         draft = self.draft("02-术语.md").read_text(encoding="utf-8")
         rows = [l for l in draft.split("\n") if l.startswith("|") and "---" not in l][1:]
-        self.assertEqual(["| 自动充值 |  |", "| 免密签约 |  |", "| 充值上限 |  |"], rows)
+        self.assertEqual([f"| {t} | {{{{按 doc/module-catalog.yaml 的定义写}}}} |" for t in ("自动充值", "免密签约", "充值上限")], rows)
         self.assertNotIn("WalletMain", draft, "模块名顶替了解释")
 
     def test_no_diagram_is_preplaced_in_the_flow_draft(self) -> None:
@@ -2530,116 +2530,156 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertEqual(before, self.story_path.read_bytes())
 
 
-class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
-    """图属于哪块内容，内容落在哪，图就该在哪——机械只核「每张各有一个围栏带着」。
+class DiagramSourcesFollowOneContract(unittest.TestCase):
+    """图源只有一种写法：围栏开头的 `%% 图源 {JSON}`，document 指本次有效来源里的一张图，blueprint 指蓝图生成图。
 
-    身份由位置给（`§<节> #<该节内第几张>`），来源由围栏第一行自报。
-    不核位置、不核张数：放哪一章由作者按内容定，判据管不了也不该管。
+    机械只核来源身份与 reuse 的图体；不要求每张来源图都有去处、不数图——那是表达选择，归独立审查。
     """
 
-    SR_DOC = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
-            "```mermaid\ngraph TD\nA[进入签约页] --> B[免密验证]\n```\n\n"
-            "### 5.2 自动充值触发\n\n"
-            "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
+    SR = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
+          "```mermaid\ngraph TD\nA[进入签约页] --> B[免密验证]\n```\n\n"
+          "### 5.2 自动充值触发\n\n"
+          "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
+    AT = "doc/features/REQ-X/AR/story-src/inputs/v1/files/SR/design.md"
 
-    UPSTREAM = {"SR": "SR/design.md"}
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls._tmp.name)
+        link_framework(cls.root)
+        cls.feature = cls.freeze()
 
-    def missing(self, upstream: dict[str, str], story: str) -> list[tuple[str, str, str]]:
-        """经 check 用的 `carriedDiagramProblems` 取「在 story 里没有」的那几张：(来源, 身份, 主题)。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            for label, text in upstream.items():
-                f = Path(tmp) / self.UPSTREAM[label]
-                f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(text, encoding="utf-8")
-            proc = subprocess.run(
-                ["node", "--input-type=module", "-e",
-                 "const m = await import(process.argv[1]);"
-                 "const ctx = { featureRoot: process.argv[2], contract: { sources: {"
-                 " SE: { path: 'SR/design.md' } } } };"
-                 "process.stdout.write(JSON.stringify(m.carriedDiagramProblems(ctx, process.argv[3])));",
-                 IMAGES.resolve().as_uri(), tmp, story],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    @classmethod
+    def freeze(cls) -> Path:
+        """需求 REQ-X 交给设计时冻结的来源：系统设计一份。"""
+        rel = cls.AT.rsplit("/files/", 1)[0]
+        frozen = cls.root / cls.AT
+        frozen.parent.mkdir(parents=True, exist_ok=True)
+        frozen.write_text(cls.SR, encoding="utf-8")
+        (cls.root / rel / "snapshot.json").write_text(json.dumps({"files": [{"path": "SR/design.md"}]}), encoding="utf-8")
+        feature = cls.root / "doc" / "features" / "REQ-X"
+        (feature / "AR" / "story-src" / "story-flow.json").write_text(
+            json.dumps({"input": {"snapshot_ref": f"{rel}/snapshot.json"}}), encoding="utf-8")
+        return feature
+
+    def problems(self, story: str) -> list[str]:
+        """经章提交与整篇检查用的同一个入口核：来源是需求冻结的采用材料。"""
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]);"
+             "const ctx = { projectRoot: process.argv[2], featureRoot: process.argv[3] };"
+             "process.stdout.write(JSON.stringify(m.storyDiagramSourceProblems(ctx, process.argv[4], n => `L${n}`)));",
+             IMAGES.resolve().as_uri(), str(self.root), str(self.feature), story],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        out = []
-        for line in json.loads(proc.stdout):
-            m = re.match(r"^(\S+) (§\S+ #\d+)（(.*?)）在 story 里没有", line)
-            self.assertIsNotNone(m, line)
-            out.append(m.groups())
-        return out
+        return json.loads(proc.stdout)
 
-    def carried_for(self, upstream: str, label: str, story: str):
-        return [i for _, i, _ in self.missing({label: upstream}, story)]
+    @staticmethod
+    def fence(body: str, *marks: dict) -> str:
+        head = "".join(f"%% 图源 {json.dumps(m, ensure_ascii=False)}\n" for m in marks)
+        return f"## 五\n\n```mermaid\n{head}{body}```\n"
 
-    def carried(self, story: str):
-        return [[i, topic] for _, i, topic in self.missing({"SR": self.SR_DOC}, story)]
+    def mark(self, diagram: str = "§5.1 #1", mode: str = "reuse", **extra) -> dict:
+        return {"kind": "document", "path": self.AT, "diagram": diagram, "mode": mode, **extra}
 
-    def test_identity_comes_from_the_position(self) -> None:
-        """作者不用给图起名：它在哪一节、是那一节的第几张，就是它的身份。"""
-        missing = dict(self.carried(""))
-        self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(missing))
+    def test_a_reused_diagram_with_the_same_body_passes(self) -> None:
+        self.assertEqual([], self.problems(self.fence("graph TD\nA[进入签约页] --> B[免密验证]\n", self.mark())))
 
-    def test_only_the_first_line_of_the_fence_counts(self) -> None:
-        """标记只认围栏第一行——正文里提一句「图源 SR §5.2 #1」不算带过来。"""
-        story = ("## 五\n\n```mermaid\n%% 图源 SR §5.1 #1\ngraph TD\nA-->B\n```\n"
-                 "\n这一节的图来自 图源 SR §5.2 #1。\n")
-        self.assertEqual(["§5.2 #1"], [i for i, _ in self.carried(story)])
+    def test_reuse_with_one_label_changed_is_named(self) -> None:
+        out = self.problems(self.fence("graph TD\nA[进入签约页] --> B[支付验证]\n", self.mark()))
+        self.assertEqual(1, len(out), out)
+        self.assertIn("图体与来源不一致", out[0])
 
-    def test_the_report_names_the_topic_not_the_count(self) -> None:
-        """缺了指向的是那件事，不是「少了一张图」——所以报的是主题。"""
-        topics = dict(self.carried(""))
-        self.assertIn("余额上报", topics["§5.2 #1"])
-        self.assertIn("自动充值触发", topics["§5.2 #1"])
+    def test_a_refined_diagram_may_differ(self) -> None:
+        """refine 只核来源指得到；增量讲没讲清归审查。"""
+        body = "graph TD\nA[进入签约页] --> B[免密验证]\nB -->|取消| A\n"
+        self.assertEqual([], self.problems(self.fence(body, self.mark(mode="refine"))))
 
-    def test_one_fence_can_carry_two_upstream_marks(self) -> None:
-        """同一件事上游画了两张图时，story 里只该有一张——两行标记写在同一个围栏开头。
+    def test_a_new_diagram_needs_no_mark_and_unused_sources_are_not_reported(self) -> None:
+        """新绘不写标记；来源里没被用的图不报——不是一源一图。"""
+        self.assertEqual([], self.problems("## 五\n\n```mermaid\ngraph TD\nX --> Y\n```\n"))
 
-        一个围栏只认一个标记的话，作者要么把同一张图贴两遍，要么必然被报一条
-        「在 story 里没有」。判据逼出重复内容，那是设计问题不是作者问题。
-        """
-        sr = ("## 1. 协作\n\n```mermaid\ngraph TD\nA[入口] --> B[签约]\n```\n\n"
-              "## 5. 业务流程\n\n### 5.1 签约流程\n\n```mermaid\ngraph TD\nA[入口] --> B[签约]\n```\n")
-        story = ("## 五\n\n签约这条路径这样走。\n\n```mermaid\n"
-                 "%% 图源 SR §1 #1\n%% 图源 SR §5.1 #1\n"
-                 "graph TD\nA --> B\n```\n")
-        self.assertEqual([], self.carried_for(sr, "SR", story), "同一围栏的两行登记没都认")
+    def test_a_missing_diagram_names_the_ones_that_exist(self) -> None:
+        out = self.problems(self.fence("graph TD\nA-->B\n", self.mark(diagram="§9 #1")))
+        self.assertIn("§9 #1", out[0])
+        self.assertIn("§5.1 #1、§5.2 #1", out[0])
 
-    def test_a_marker_inside_the_body_is_not_a_registration(self) -> None:
-        """只认开头连续那几行：图正文里再出现的 `%%` 是注释，不是登记。"""
-        story = ("## 五\n\n```mermaid\ngraph TD\nA --> B\n"
-                 "%% 图源 SR §5.1 #1\n```\n")
-        self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(i for i, _ in self.carried(story)))
+    def test_a_path_outside_the_adopted_sources_is_named(self) -> None:
+        """工作区里同名的新版本、别的需求的文件都不是本次有效来源。"""
+        out = self.problems(self.fence("graph TD\nA-->B\n", self.mark(path="doc/features/REQ-X/SR/design.md")))
+        self.assertIn("不是本次有效采用的来源", out[0])
+        self.assertIn(self.AT, out[0], "没列出可用的来源")
 
-    def test_an_upstream_marker_riding_along_does_not_confuse_it(self) -> None:
-        """上一环的标记随围栏带过来无妨：换成指向直接上游的那一行即可。"""
-        story = ("## 五\n\n```mermaid\n%% 图源 SR §5.2 #1\n%% 图源 SR §3 #1\n"
-                 "graph TD\nC-->D\n```\n")
-        self.assertEqual(["§5.1 #1"], [i for i, _ in self.carried(story)])
+    def test_a_path_escaping_the_project_is_named(self) -> None:
+        out = self.problems(self.fence("graph TD\nA-->B\n", self.mark(path="../outside/design.md")))
+        self.assertIn("不是工程内路径", out[0])
 
-    def test_the_adopted_frozen_version_is_what_counts(self) -> None:
-        """交给设计之后按冻结的那一版认：工作区的 SR 之后加了图，不改变已采用来源要承接的图。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            feature = root / "doc" / "features" / "REQ-X"
-            snapshot = "doc/features/REQ-X/AR/story-src/inputs/v1/snapshot.json"
-            frozen = root / "doc/features/REQ-X/AR/story-src/inputs/v1/files/SR/design.md"
-            frozen.parent.mkdir(parents=True)
-            frozen.write_text("## 5. 业务流程\n\n```mermaid\ngraph TD\nA[进入] --> B[确认]\n```\n", encoding="utf-8")
-            (feature / "SR").mkdir(parents=True)
-            (feature / "SR" / "design.md").write_text(self.SR_DOC, encoding="utf-8")
-            (feature / "AR" / "story-src" / "story-flow.json").write_text(
-                json.dumps({"input": {"snapshot_ref": snapshot}}), encoding="utf-8")
-            proc = subprocess.run(
-                ["node", "--input-type=module", "-e",
-                 "const m = await import(process.argv[1]);"
-                 "const ctx = { projectRoot: process.argv[2], featureRoot: process.argv[3], contract: { sources: {"
-                 " SE: { path: 'SR/design.md' } } } };"
-                 "process.stdout.write(JSON.stringify(m.carriedDiagramProblems(ctx, '')));",
-                 IMAGES.resolve().as_uri(), str(root), str(feature)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        missing = json.loads(proc.stdout)
+    def test_broken_json_unknown_kind_and_mode_are_each_named(self) -> None:
+        story = "## 五\n\n```mermaid\n%% 图源 SR §5.1 #1\ngraph TD\nA-->B\n```\n"
+        self.assertIn("不是一个 JSON 对象", self.problems(story)[0], "旧标签写法不再被认")
+        self.assertIn("kind", self.problems(self.fence("graph TD\nA-->B\n", {**self.mark(), "kind": "spec"}))[0])
+        self.assertIn("mode", self.problems(self.fence("graph TD\nA-->B\n", {**self.mark(), "mode": "copy"}))[0])
+
+    def test_two_sources_in_one_fence_are_each_checked(self) -> None:
+        out = self.problems(self.fence("graph TD\nA[进入签约页] --> B[免密验证]\n",
+                                       self.mark(mode="refine"), self.mark(diagram="§7 #1", mode="refine")))
+        self.assertEqual(1, len(out), out)
+        self.assertIn("§7 #1", out[0])
+
+    def test_only_the_leading_lines_are_sources(self) -> None:
+        """图正文里再出现的 `%%` 是注释；围栏外的标记报一处。"""
+        inside = f"## 五\n\n```mermaid\ngraph TD\nA-->B\n%% 图源 {json.dumps(self.mark(diagram='§9 #1'), ensure_ascii=False)}\n```\n"
+        self.assertEqual([], self.problems(inside))
+        stray = f"## 五\n\n%% 图源 {json.dumps(self.mark(), ensure_ascii=False)}\n"
+        out = self.problems(stray)
+        self.assertEqual(1, len(out), out)
+        self.assertIn("围栏外", out[0])
+
+    def test_a_blueprint_source_is_resolved_by_the_native_reference(self) -> None:
+        """蓝图来源经原生 resolver 核：引用的版本与内容对不上就报，不猜图号。"""
+        stale = {"artifact": "component-blueprint@1", "component_id": "x", "blueprint_id": "bp-none", "revision": 1,
+                 "source_fingerprint": "sha256:0", "artifact_sha256": "sha256:0", "target": {"kind": "blueprint", "id": "bp-none"}}
+        out = self.problems(self.fence("flowchart TD\n  n1[\"A\"]\n", {"kind": "blueprint", "blueprint_ref": stale,
+                                                                        "graph_id": "graph:runtime", "mode": "reuse"}))
+        self.assertEqual(1, len(out), out)
+        self.assertIn("核不过", out[0])
+
+
+class BlueprintGraphsAreAdoptedByReference(StoryBuildCase):
+    """蓝图生成图的来源：同一版蓝图里存在的 graph_id 通过，reuse 比的是生成图的内容。"""
+
+    def test_an_existing_graph_passes_and_a_missing_one_is_named(self) -> None:
+        script = (
+            "import * as fs from 'node:fs';"
+            "const [, root, access, images] = process.argv;"
+            "const fa = await import(access); const im = await import(images);"
+            "const native = fa.loadNative(root);"
+            "const YAML = native.require('yaml');"
+            "const file = root + '/doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml';"
+            "const text = fs.readFileSync(file, 'utf8');"
+            "const bp = YAML.parse(text);"
+            "const view = bp.design_views[0].view_id;"
+            "const g = native.module('scripts/utils/blueprint-graph-generator.ts').generateMermaidViewGraph(bp, view);"
+            "fs.writeFileSync(file, text.replace(/\\s*$/, '\\n') + YAML.stringify({ generated_graphs: [g] }));"
+            "const read = fa.readBlueprint(root, 'bp-REQ-DEMO', 'draft');"
+            "const ctx = { projectRoot: root, featureRoot: root + '/doc/features/REQ-DEMO' };"
+            "const mark = id => '%% 图源 ' + JSON.stringify({ kind: 'blueprint', blueprint_ref: read.blueprint_ref, graph_id: id, mode: 'reuse' });"
+            "const story = id => '## 五\\n\\n```mermaid\\n' + mark(id) + '\\n' + g.content + '```\\n';"
+            "process.stdout.write(JSON.stringify([read.status, im.storyDiagramSourceProblems(ctx, story(g.graph_id), n => n),"
+            " im.storyDiagramSourceProblems(ctx, story('graph:none'), n => n)]));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, str(self.root),
+                               ACCESS.resolve().as_uri(), IMAGES.resolve().as_uri()],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        status, good, missing = json.loads(proc.stdout)
+        self.assertEqual("ok", status)
+        self.assertEqual([], good)
         self.assertEqual(1, len(missing), missing)
-        self.assertTrue(missing[0].startswith("SR §5 #1"), missing)
+        self.assertIn("没有生成图 graph:none", missing[0])
 
 
 class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
@@ -3214,27 +3254,36 @@ class TheTitleCarriesTheName(StoryBuildCase):
         self.assertIn("没有需求名", self.assert_check_names("只有需求编号、没有需求名"))
 
 
-class SourceMarksPointAtRealUpstreamFigures(StoryBuildCase):
-    """AC24：来源标记只核引用——指到上游真有的图、不指向 story 自己；写在围栏外只报一处。"""
+class SourceMarksPointAtAdoptedSources(StoryBuildCase):
+    """章提交与整篇检查用同一个图源检查：标记指到本次冻结来源里真有的图；写在围栏外只报一处。"""
 
     def add_before_terms(self, block: str) -> None:
         self.rewrite_story("本需求不涉及。\n\n## 术语", "本需求不涉及。\n\n" + block + "\n\n## 术语")
 
+    def frozen(self, name: str) -> str:
+        ref = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["input"]["snapshot_ref"]
+        return f"{ref.rsplit('/', 1)[0]}/files/{name}"
+
+    def mark(self, path: str, diagram: str = "§99 #1") -> str:
+        return "%% 图源 " + json.dumps({"kind": "document", "path": path, "diagram": diagram, "mode": "reuse"}, ensure_ascii=False)
+
     def test_a_mark_to_a_missing_figure_is_named(self) -> None:
         self.init_audit()
-        self.add_before_terms("```mermaid\n%% 图源 SR §99 #1\ngraph TD\nA-->B\n```")
-        self.assertIn("「SR §99 #1」", self.assert_check_names("图源标记"))
+        self.add_before_terms(f"```mermaid\n{self.mark(self.frozen('RR/prd.md'))}\ngraph TD\nA-->B\n```")
+        out = self.assert_check_names("图源标记")
+        self.assertIn("§99 #1", out)
 
-    def test_a_mark_to_the_story_itself_is_named(self) -> None:
+    def test_a_mark_to_the_working_copy_is_named(self) -> None:
         self.init_audit()
-        self.add_before_terms("```mermaid\n%% 图源 story §1 #1\ngraph TD\nA-->B\n```")
-        self.assertIn("指向的不是直接上游", self.assert_check_names("图源标记"))
+        self.add_before_terms(f"```mermaid\n{self.mark('doc/features/REQ-DEMO/RR/prd.md')}\ngraph TD\nA-->B\n```")
+        self.assertIn("不是本次有效采用的来源", self.assert_check_names("图源标记"))
 
     def test_a_mark_outside_the_fence_is_one_report(self) -> None:
         self.init_audit()
-        self.add_before_terms("%% 图源 SR §99 #1")
+        self.add_before_terms(self.mark(self.frozen("RR/prd.md")))
         out = self.assert_check_names("写在了围栏外")
         self.assertNotIn("文档坐标", out, "同一行又按文档坐标报了一遍")
+        self.assertNotIn("含仓内路径", out, "标记里的来源路径被当成正文里的仓内路径")
 
 
 class TheProjectionRefreshesAfterRegistration(Step8Case):

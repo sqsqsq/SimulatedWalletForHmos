@@ -9,6 +9,7 @@
  *   ③ **模式角色**——承担角色的实体带 `pattern_roles`，角色取选型决定与模式声明，选中的角色都有实体承担；
  *   ④ **引用**——用例引的验收编号存在；
  *   ⑤ **埋点逐点落实**——蓝图里落在本单位的每个统计点，plan.md 的逐点表里有行，责任方法是契约声明的方法。
+ *   ⑥ **图源**——plan.md 里采用的图指得到本次有效来源，reuse 的图体与来源一致（与 Story 同一个检查）。
  *
  * 「义务是不是真的被应用了」「text 写的是不是本需求的设计」是语义判断，归独立审查。
  *
@@ -24,6 +25,7 @@ import { readTextOrNull } from '../shared/paths.mjs';
 import { designStatPoints, planStatRows, pointKey } from '../shared/stat-points.mjs';
 import { entityId, phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
+import { unitDiagramSourceProblems } from '../../skills/story/scripts/core/story/images.mjs';
 
 /**
  * `use-cases.yaml` 里 `linked_acceptance` 引的编号都要在 `acceptance.yaml` 里存在。
@@ -202,6 +204,11 @@ export default guard('plan', async (ctx) => {
   }
 
   if (judged) statProblems(inputs, judged, contracts, stat);
+
+  // ---- 图源：plan.md 里采用的图指得到本次有效来源，reuse 的图体一致（与 Story、spec 同一个检查） ----
+  const planText = inputs.dir ? readTextOrNull(path.join(inputs.dir, 'plan', 'plan.md')) : null;
+  groups.push({ name: '图源', problems: planText === null ? [] : unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, planText, 'plan.md'),
+    skipped: planText === null ? [{ what: 'plan.md 的图源', why: '这一次没有 plan.md' }] : [] });
 
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'plan'), skipped: [] });

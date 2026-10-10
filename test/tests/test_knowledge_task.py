@@ -682,5 +682,152 @@ class TheReviewerGetsTheSameLoader(NativeCase):
         self.assertIn("## 4. 激活知识及原文", proc.stdout)
 
 
+
+class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
+    """施工单位按蓝图实际消费的冻结来源找到关联需求，照录 Story 里依据落在本单位设计责任内的小节。
+
+    需求 REQ-DEMO 已交给设计，蓝图 bp-REQ-DEMO 消费了它的冻结输入；这里在同一蓝图下放一个施工单位，
+    它的设计引用是开发视图的模块节点、逻辑视图的余额节点与两者之间的关系。
+    """
+
+    FEATURE = "REQ-DEMO"
+    BLUEPRINT = "bp-REQ-DEMO"
+    STORY_FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from designed_fixture import DRAFT, designed_copy  # noqa: PLC0415
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.root = Path(cls._tmp.name) / "work"
+        designed_copy(cls.STORY_FIXTURE, cls.FEATURE, DRAFT, cls.root)
+        from ext_workspace import DEV_EXT  # noqa: PLC0415  —— 开发源在消费工程里才跑得起来
+        cls.ext = DEV_EXT
+        cls.access = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+        ref = cls.node("const r = fa.readBlueprint(root, process.argv[3], 'draft'); out(r.blueprint_ref);", cls.BLUEPRINT)
+        unit = (FIXTURE / "doc" / "features" / BLUEPRINT / "balance-refresh" / "change-unit.yaml").read_text(encoding="utf-8")
+        for old, new in (("revision: 3", f"revision: {ref['revision']}"),
+                         ("sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72", ref["source_fingerprint"]),
+                         ("sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5", ref["artifact_sha256"]),
+                         (BLUEPRINT, cls.BLUEPRINT)):
+            unit = unit.replace(old, new)
+        target = cls.root / "doc" / "features" / cls.BLUEPRINT / "balance-refresh" / "change-unit.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(unit, encoding="utf-8")
+        cls.unit = cu_id(cls.BLUEPRINT, "balance-refresh")
+        cls.ref = ref
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    @classmethod
+    def node(cls, body: str, *args: str):
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const fa = await import(process.argv[1]); const root = process.argv[2];"
+             "const out = v => process.stdout.write(JSON.stringify(v));" + body,
+             cls.access.resolve().as_uri(), str(cls.root), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def setUp(self) -> None:
+        req = self.root / "doc" / "features" / self.FEATURE / "AR"
+        self.flow_file = req / "story-src" / "story-flow.json"
+        self.plan_file = req / "story-src" / "story-template.md"
+        self.story_file = req / "story.md"
+        self.saved = {p: p.read_bytes() for p in (self.flow_file, self.plan_file, self.story_file)}
+        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
+        flow["status"] = "story_written"
+        flow["story_basis"] = {"blueprint_ref": self.ref}
+        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+        plan = self.plan_file.read_text(encoding="utf-8")
+        plan = plan.replace("### 05-flow\n", "### 05-flow\n- 依据：蓝图 `view:runtime`\n", 1)
+        plan = plan.replace("### 06-features\n", "### 06-features\n#### 提交与回执\n"
+                            "- 依据：蓝图 `view:development/node:wallet-main-module`、`contract:nope`\n", 1)
+        self.plan_file.write_text(plan, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        for p, data in self.saved.items():
+            p.write_bytes(data)
+
+    def task(self, feature: str | None = None) -> str:
+        proc = subprocess.run(
+            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
+             "--action", "spec", "--audience", "author", "--feature", feature or self.unit],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return proc.stdout
+
+    def section(self, text: str) -> str:
+        return text.split("### 关联 Story 的已定表达", 1)[1].split("\n## ", 1)[0]
+
+    def test_the_section_inside_the_units_scope_comes_verbatim_with_its_identity(self) -> None:
+        story = (self.root / "doc" / "features" / self.FEATURE / "AR" / "story.md").read_text(encoding="utf-8")
+        wanted = story[story.index("### 6.1 提交与回执"):].split("\n## ", 1)[0].rstrip()
+        section = self.section(self.task())
+        self.assertIn(wanted, section, "相关小节没有照录")
+        self.assertIn(f"doc/features/{self.FEATURE}/AR/story.md", section)
+        self.assertIn("sha256:" + hashlib.sha256(wanted.encode("utf-8")).hexdigest(), section, "身份摘要不是照录内容的摘要")
+
+    def test_a_section_outside_the_scope_is_not_given(self) -> None:
+        """业务流程章的依据是运行视图，不在本单位的设计责任里：不交。"""
+        story = (self.root / "doc" / "features" / self.FEATURE / "AR" / "story.md").read_text(encoding="utf-8")
+        flow_text = story.split("## 业务流程", 1)[1].split("\n## ", 1)[0].strip().splitlines()[0]
+        self.assertNotIn(flow_text, self.section(self.task()))
+
+    def test_an_address_the_blueprint_does_not_have_is_a_gap(self) -> None:
+        self.assertIn("`contract:nope` 在蓝图里解析不了", self.task())
+
+    def test_a_story_written_against_another_revision_is_old_expression(self) -> None:
+        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
+        flow["story_basis"]["blueprint_ref"] = {**self.ref, "revision": self.ref["revision"] - 1}
+        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+        section = self.section(self.task())
+        self.assertIn("旧表达", section)
+        self.assertNotIn("### 6.1 提交与回执", section)
+
+    def test_a_story_bound_to_another_blueprint_is_a_source_problem(self) -> None:
+        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
+        flow["design_binding"] = {**flow["design_binding"], "blueprint_id": "bp-other"}
+        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+        out = self.task()
+        self.assertIn("关联的设计对象是", out)
+        self.assertNotIn("### 6.1 提交与回执", self.section(out))
+
+
+    def unit_diagram_problems(self, spec: str) -> list[str]:
+        images = self.ext / "skills" / "story" / "scripts" / "core" / "story" / "images.mjs"
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const m = await import(process.argv[1]);"
+             "process.stdout.write(JSON.stringify(m.unitDiagramSourceProblems(process.argv[2], process.argv[3], process.argv[4], 'spec.md')));",
+             images.resolve().as_uri(), str(self.root), self.unit, spec],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def test_spec_reuses_a_story_diagram_through_the_same_check(self) -> None:
+        """CU 复用关联 Story 的图走同一个图源检查；Story 成了旧表达后它就不是有效来源。"""
+        body = "flowchart TD\n  提交 --> 等待\n  等待 -->|回执到达| 完成\n"
+        text = self.story_file.read_text(encoding="utf-8")
+        self.story_file.write_text(text.replace("### 6.1 提交与回执\n", f"### 6.1 提交与回执\n\n```mermaid\n{body}```\n", 1),
+                                   encoding="utf-8")
+        story = f"doc/features/{self.FEATURE}/AR/story.md"
+        mark = json.dumps({"kind": "document", "path": story, "diagram": "§6.1 #1", "mode": "reuse"}, ensure_ascii=False)
+        spec = f"## 5. 业务流程\n\n```mermaid\n%% 图源 {mark}\n{body}```\n"
+        self.assertEqual([], self.unit_diagram_problems(spec))
+        changed = self.unit_diagram_problems(spec.replace("回执到达", "回执超时"))
+        self.assertEqual(1, len(changed), changed)
+        self.assertIn("图体与来源不一致", changed[0])
+        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
+        flow["story_basis"]["blueprint_ref"] = {**self.ref, "revision": self.ref["revision"] - 1}
+        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+        stale = self.unit_diagram_problems(spec)
+        self.assertEqual(1, len(stale), stale)
+        self.assertIn("不是本次有效采用的来源", stale[0])
+
+
 if __name__ == "__main__":
     unittest.main()

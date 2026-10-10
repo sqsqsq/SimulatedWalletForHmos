@@ -184,6 +184,24 @@ export function findByName(items, name) {
   return { hit: null, ambiguous: loose.length > 1 ? loose.map(x => x.raw ?? x.name) : null };
 }
 
+/**
+ * 一处小节在全篇里的行区间（0 起，含标题行，`end` 不含）：章，章下的 `###`，再下的 `####`。
+ * 按名定位走 `findByName`；认不开返回 `{ ambiguous }`，找不到返回 null——调用方报缺口，不任选一处。
+ */
+export function storySpan(storyText, chapterTitle, at = '', under = '') {
+  const doc = parseDocument(storyText);
+  let node = doc.headings.find(h => h.level === 2 && h.name === normalizeHeading(chapterTitle));
+  if (!node) return null;
+  for (const [level, name] of [[3, at], [4, under]]) {
+    if (!name) break;
+    const end = headingEnd(doc, node);
+    const { hit, ambiguous } = findByName(doc.headings.filter(h => h.level === level && h.at > node.at && h.at < end), name);
+    if (!hit) return ambiguous ? { ambiguous } : null;
+    node = hit;
+  }
+  return { start: node.at, end: headingEnd(doc, node) };
+}
+
 /** 一张表是否落在 `[from, to)` 里。 */
 export function tablesWithin(doc, from, to) {
   return (doc?.tables ?? []).filter(t => t.line >= from && t.line < to);

@@ -214,6 +214,28 @@ function readSkeleton(plan, lines, range, fenced, say) {
 }
 
 /**
+ * 写作设计里写了依据的位置：章、`####` 小节、`#####` 子节各一条，`- 依据：` 行原文照给。
+ * 施工单位按依据里的蓝图地址取这一处的已定表达。
+ *
+ * @returns {{chapter: string, at: string, under: string, basis: string[]}[]}
+ */
+export function basisSections(plan) {
+  const out = [];
+  const take = (chapter, at, under, notes) => {
+    const basis = notes.map(n => /^依据[:：]\s*(.+)$/.exec(n)?.[1]?.trim()).filter(Boolean);
+    if (basis.length) out.push({ chapter, at, under, basis });
+  };
+  for (const sk of plan?.skeletons?.values() ?? []) {
+    take(sk.id, '', '', sk.notes);
+    for (const s of sk.sections) {
+      take(sk.id, s.title, '', s.notes);
+      for (const c of s.sections) take(sk.id, s.title, c.title, c.notes);
+    }
+  }
+  return out;
+}
+
+/**
  * 登记一项形式：同位置同形式合并，只留一份要求。
  *
  * 同一位置写了通用图与具名图时留具名的那项——它更具体，缺口只报一次；

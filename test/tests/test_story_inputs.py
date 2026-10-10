@@ -108,11 +108,10 @@ class WorkspaceCase(unittest.TestCase):
         core = self.root / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story"
         proc = run("node", "--input-type=module", "-e",
                    f"const c = await import({as_url(core / 'context.mjs')});"
-                   f"const s = await import({as_url(core / 'sources.mjs')});"
                    f"const i = await import({as_url(core / 'story-inputs.mjs')});"
                    f"const ctx = c.createContext({{ feature: {json.dumps(feature)},"
                    f" projectRoot: {json.dumps(self.root.as_posix())} }});"
-                   "process.stdout.write(i.storyInputs(ctx, s.sourceStatus(ctx)).join('\\n'));",
+                   "process.stdout.write(i.storyInputs(ctx).join('\\n'));",
                    cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
@@ -131,72 +130,73 @@ class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
         self.assertEqual("", proc.stdout.strip(), f"还有地方写着旧路径：{proc.stdout}")
 
 
-class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
-    """系统设计里的图逐张给身份、主题与**原件坐标**，不指定放哪一章。
+class AdoptedDiagramsReachTheAuthor(WorkspaceCase):
+    """本次冻结的采用来源里的图逐张给身份、主题、原件位置、图体与可粘的结构化标记，不指定放哪一章、不要求每张都用。
 
-    不复制围栏原文：副本一旦与原件不同步，作者改的是副本；输入也因此长到一次读不完。
-    设计事实来自蓝图，Story 不从 Spec 搬图，输入里也就没有 Spec 那一节。
+    来源只认冻结的那一版：工作区里的系统设计之后改了、加了图，不改变已采用的来源。
     """
 
     SR = ("# 系统设计\n\n## 5. 业务流程\n\n### 5.2 自动充值触发\n\n"
           "```mermaid\ngraph TD\nC[余额上报] --> D[判定]\n```\n")
 
-    def inputs_with_sr(self) -> str:
-        sr = self.feature_root / "SR" / "design.md"
-        sr.parent.mkdir(parents=True, exist_ok=True)
-        sr.write_text(self.SR, encoding="utf-8")
-        return self.inputs()
+    def freeze(self, files: dict[str, str]) -> str:
+        """像 `complete` 那样留下冻结快照：登记的文件放在 `files/` 下，流程契约指向快照。返回冻结目录（工程相对）。"""
+        src = self.feature_root / "AR" / "story-src"
+        rel = f"doc/features/{FEATURE}/AR/story-src/inputs/v1"
+        for name, text in files.items():
+            f = self.root / rel / "files" / name
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(text, encoding="utf-8")
+        (self.root / rel / "snapshot.json").write_text(
+            json.dumps({"files": [{"path": name} for name in files]}), encoding="utf-8")
+        (src / "story-flow.json").write_text(json.dumps({"input": {"snapshot_ref": f"{rel}/snapshot.json"}}), encoding="utf-8")
+        return rel
 
     @staticmethod
     def section_4a(package: str) -> str:
         return package.split("## 4a.", 1)[1].split("\n## ", 1)[0]
 
-    def test_each_diagram_comes_with_coordinates_and_its_content(self) -> None:
-        """身份、标记写法、原件位置之外，源图内容就在这里：作者对着原图的关系画，不必再去翻原件。"""
-        package = self.inputs_with_sr()
-        self.assertIn("系统设计里的图", package)
-        self.assertIn("SR §5.2 #1", package, "没给身份，作者不知道标记写什么")
-        self.assertIn("`%% 图源 SR §5.2 #1`", package, "没给标记的写法，搬过去就核不到")
-        self.assertIn("SR/design.md", package, "没给原件路径")
-        self.assertRegex(package, r"第 \d+–\d+ 行", "没给围栏在原件里的行范围")
-        self.assertIn("C[余额上报]", package, "源图内容没送到，作者只能按行号自己去读")
-
-    def test_an_unreadable_upstream_is_a_problem_not_an_empty_section(self) -> None:
-        """系统需求（AR 开头）的系统设计该有却读不到：要报出来，静默给一节空的，作者会以为上游没画过图。"""
-        remote = f"AR{FEATURE}"
-        shutil.copytree(self.feature_root, self.feature_root.parent / remote)
-        section = self.section_4a(self.inputs(remote))
-        self.assertIn("读不到 `SR/design.md`", section)
-        self.assertIn("找回来", section)
-
-    def test_a_local_ticket_without_a_system_design_is_not_a_loss(self) -> None:
-        """本地单没有需求系统给的系统设计是正常的：照合同说「本需求没有」，不报丢件。"""
+    def test_each_diagram_comes_with_its_mark_position_and_content(self) -> None:
+        """标记照抄就能过机械核：kind、冻结路径、图标识与 reuse 都在；源图内容就在这里，作者对着原图的关系画。"""
+        rel = self.freeze({"SR/design.md": self.SR})
         section = self.section_4a(self.inputs())
-        self.assertIn("本需求没有 `SR/design.md`", section)
-        self.assertNotIn("读不到", section)
+        mark = json.dumps({"kind": "document", "path": f"{rel}/files/SR/design.md", "diagram": "§5.2 #1", "mode": "reuse"},
+                          ensure_ascii=False, separators=(",", ":"))
+        self.assertIn(f"`%% 图源 {mark}`", section, "没给可粘的标记")
+        self.assertRegex(section, r"第 \d+–\d+ 行", "没给围栏在原件里的行范围")
+        self.assertIn("C[余额上报]", section, "源图内容没送到")
+        self.assertIn("自动充值触发", section, "没给图讲的主题")
 
-    def test_it_names_the_topic_and_not_a_chapter(self) -> None:
-        """放哪一节由作者按内容定——输入不预设位置。"""
-        package = self.inputs_with_sr()
-        self.assertIn("自动充值触发", package)
-        self.assertIn("放哪一节按它讲的内容定", package)
+    def test_reuse_refine_new_and_unused_are_all_explained(self) -> None:
+        """不要求每张都用：原样、细化、新绘与不适用各有去处，不指定放哪一章。"""
+        self.freeze({"SR/design.md": self.SR})
+        section = self.section_4a(self.inputs())
+        for words in ("reuse", "refine", "不适用", "新绘，不写标记"):
+            self.assertIn(words, section)
+        self.assertNotIn("每一张都要", section, "一源一图的要求还在")
 
-    def test_only_the_system_design_section_is_given(self) -> None:
-        """上游带图的只有系统设计：没有「spec 里的图」一节，也不往 spec 搬图。"""
-        package = self.inputs_with_sr()
-        self.assertIn("系统设计里的图（搬进 story）", package)
-        self.assertNotIn("spec 里的图", package)
-        self.assertNotIn("搬进 spec", package)
+    def test_every_adopted_markdown_counts_not_only_the_system_design(self) -> None:
+        """来源集合是冻结采用的全部 Markdown：产品需求里画了图，同样列出。"""
+        self.freeze({"SR/design.md": self.SR, "RR/prd.md": "# 产品需求\n\n## 3. 旅程\n\n```mermaid\ngraph LR\nA[打开] --> B[签约]\n```\n"})
+        section = self.section_4a(self.inputs())
+        self.assertIn('"diagram":"§3 #1"', section)
+        self.assertIn('"diagram":"§5.2 #1"', section)
 
-    def test_no_parsable_diagram_is_not_called_no_diagram(self) -> None:
-        """没解析出 Mermaid 不等于上游没有图：说明哪种格式没作结构解析，指回原文自己对照。"""
+    def test_the_working_copy_is_not_a_source(self) -> None:
+        """还没交给设计时没有冻结来源：工作区里的系统设计不算，图按设计新绘，不给标记。"""
         sr = self.feature_root / "SR" / "design.md"
         sr.parent.mkdir(parents=True, exist_ok=True)
-        sr.write_text("# 系统设计\n\n![时序](seq.png)\n", encoding="utf-8")
-        package = self.inputs()
-        self.assertIn("SR 里没有可解析的 Mermaid 图", package)
-        self.assertIn("没有作结构解析", package)
-        self.assertNotIn("现在没有图", package)
+        sr.write_text(self.SR, encoding="utf-8")
+        section = self.section_4a(self.inputs())
+        self.assertNotIn("%% 图源", section)
+        self.assertIn("还没交给设计时没有冻结来源", section)
+
+    def test_no_parsable_diagram_is_not_called_no_diagram(self) -> None:
+        """没解析出 Mermaid 不等于来源没有图：说明哪种格式没作结构解析，指回原文自己对照。"""
+        self.freeze({"SR/design.md": "# 系统设计\n\n![时序](seq.png)\n"})
+        section = self.section_4a(self.inputs())
+        self.assertIn("没有可解析的 Mermaid 图", section)
+        self.assertIn("没有作结构解析", section)
 
 
 class MaterialImagesAreOneTaskEach(WorkspaceCase):

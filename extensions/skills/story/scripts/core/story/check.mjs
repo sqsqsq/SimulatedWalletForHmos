@@ -22,7 +22,7 @@ import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
   EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
-import { carriedDiagramProblems, imageProblems, strayMarks } from './images.mjs';
+import { imageProblems, markLines } from './images.mjs';
 import { decisionProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
@@ -162,10 +162,10 @@ export function storyCheck(ctx, { registration = true } = {}) {
   const reviewText = readText(ctx.reviewPath) ?? '';
   // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
   // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
-  // 围栏外的图源标记由 ⑫d 一处报，这里先抹掉，同一行不再按文档坐标报第二遍
-  const stray = new Set(strayMarks(storyText));
+  // 图源标记由 ⑪ 按章报，标记里的来源路径给机器核，这里先抹掉，同一行不再按文档坐标报第二遍
+  const markRows = new Set(markLines(storyText));
   const storyForPaths = redactMaterialLinks(storyText, ctx).split(/\r?\n/)
-    .map((line, i) => (stray.has(i + 1) ? '' : line)).join('\n');
+    .map((line, i) => (markRows.has(i + 1) ? '' : line)).join('\n');
   const storyLines = storyText.split(/\r?\n/);
   const zones = zonesByLine(storyLines);
   const zoneHits = [];
@@ -272,11 +272,6 @@ export function storyCheck(ctx, { registration = true } = {}) {
     problems.push(...out.problems);
     notes.push(...out.notes);
   }
-
-  mark('⑫d 上游图承接');
-  // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
-  // 标记本身指不指得到、写没写在围栏里，是本章的事，由 ⑪ 判。
-  problems.push(...carriedDiagramProblems(ctx, storyText));
 
   mark('⑮ AR 根下只有交付文档');
   problems.push(...strayFileProblems(ctx));

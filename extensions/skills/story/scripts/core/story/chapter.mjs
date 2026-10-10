@@ -31,7 +31,7 @@ import { appendixBasisProblems, appendixChapter, projectAppendix } from './appen
 import { adoptedUpstreamTexts, redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
-import { chapterImageProblems, chapterSourceMarkProblems, strayMarks } from './images.mjs';
+import { chapterImageProblems, markLines, storyDiagramSourceProblems } from './images.mjs';
 import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import { recheckItems, recheckRows } from './recheck.mjs';
 
@@ -126,7 +126,7 @@ function sectionShapeProblems(title, view) {
 /**
  * 这一章自己能确定的那几条 —— 章提交与全篇 check 共用。
  *
- * 别的章写没写、验收编号全集齐不齐、上游每张图有没有落点，都要读别的章，不在这里。
+ * 别的章写没写、验收编号全集齐不齐，都要读别的章，不在这里。
  *
  * @param {object} ctx 当前上下文
  * @param {object} chapter 章节合同里的这一章
@@ -207,11 +207,11 @@ function chapterLineProblems(ctx, chapter, body, at) {
   const zones = zonesByLine(body.split(/\r?\n/));
   const text = [`## ${chapter.title}`, ...body.split(/\r?\n/).map((l, i) => (zones.has(i) ? '' : l))].join('\n');
   const line = n => at(n - 1);                   // 扫描行号含标题行
-  out.push(...chapterSourceMarkProblems(ctx, text, line));
+  out.push(...storyDiagramSourceProblems(ctx, text, line));
   out.push(...chapterImageProblems(ctx, text, line));
-  // 围栏外的图源标记已由上面报，这几行不再按路径、坐标各报一遍
-  const stray = new Set(strayMarks(text));
-  const scan = redactMaterialLinks(text.split(/\r?\n/).map((l, i) => (stray.has(i + 1) ? '' : l)).join('\n'), ctx);
+  // 图源标记里的来源路径给机器核，标记写错已由上面报，这几行不再按路径、坐标各报一遍
+  const marks = new Set(markLines(text));
+  const scan = redactMaterialLinks(text.split(/\r?\n/).map((l, i) => (marks.has(i + 1) ? '' : l)).join('\n'), ctx);
   for (const h of scanLocalPaths(scan, ctx.projectRoot)) {
     out.push(`${line(h.line)}：含仓内路径「${h.path}」——评审人手上没有这个仓，仓内路径在归档件里打不开；`
       + '材料清单里的原文链接是唯一允许的位置');

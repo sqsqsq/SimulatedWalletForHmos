@@ -62,7 +62,7 @@ const diagramHint = (at, syntax) => [
   guideLine('先把这段过程讲一遍：谁在什么条件下做什么、结果怎样', '作图'),
   guideLine(`这里放${at ? `「${at}」这一节` : '这一章'}选定的`
     + (syntax ? `${DIAGRAM_SYNTAXES[syntax].name}——mermaid 围栏首个声明写 ${DIAGRAM_SYNTAXES[syntax].heads[0]}`
-      : '图——用画图语言的围栏') + '；承接上游的图，围栏第一行写图源标记', '作图'),
+      : '图——用画图语言的围栏') + '；采用来源里的图，围栏开头粘 skeleton 给的图源标记（原样 reuse、补关系 refine），新绘的不写', '作图'),
   guideLine('说明各分支成立的条件、由谁处理及处理结果；单一路径用一句话说明后续去向', '作图'),
 ];
 

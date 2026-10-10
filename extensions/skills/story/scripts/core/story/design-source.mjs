@@ -125,10 +125,17 @@ export function basisDriftProblems(ctx) {
   return out;
 }
 
-/** 蓝图里确认过的术语（`subject: term:<术语>` 的事实）：只给术语，解释由作者从来源写，不拿模块名代替。 */
+/**
+ * 蓝图里确认过的术语（`subject: term:<术语>` 的事实）：术语连同它的来源交给作者，意思由作者按来源的定义写，
+ * 不拿模块名代替。来源取事实的 `provenance.source_ref`；没有来源时这一格写明缺口，定稿前要补上。
+ */
 export function termFacts(blueprint) {
   return (blueprint?.discovery?.facts ?? [])
     .filter(f => String(f?.subject ?? '').startsWith('term:'))
-    .map(f => [String(f.subject).slice('term:'.length).trim(), ''])
+    .map((f) => {
+      const ref = String(f.provenance?.source_ref ?? '').trim();
+      return [String(f.subject).slice('term:'.length).trim(),
+        ref ? `{{按 ${ref} 的定义写}}` : '{{缺定义与来源：设计负责方在蓝图事实里补来源}}'];
+    })
     .filter(([term]) => term);
 }

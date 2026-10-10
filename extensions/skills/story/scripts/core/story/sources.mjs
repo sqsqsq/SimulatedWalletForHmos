@@ -116,18 +116,21 @@ export function joinPosix(base, ref) {
 // --------------------------------------------------------------------------
 
 /**
- * story 的上游有哪几份带图的文档 —— 系统设计，读不到就不算，不猜。
+ * 本次采用的冻结来源里的 Markdown：工程相对路径 → 原文。图源的 document 来源只认这些。
  *
- * 产品需求文档里一般不画 `mermaid`，为它留一条通道是空的；真出现了，作者按内容搬进 story 就是，
- * 机器不为一份没有图的文档立判据。设计事实来自蓝图，不在这里。
+ * 按冻结快照登记的文件逐份读，不扫目录；还没交给设计时没有冻结来源，返回空集合——
+ * 图源核不到来源时报「不是本次有效采用的来源」，不回退读工作区里的新版本。
  */
-export function upstreamDocs(ctx) {
-  const out = [];
-  // 标签是图源标记里写的那个名字；路径以合同 `sources` 为准
-  for (const [label, key] of [['SR', 'SE']]) {
-    const rel = ctx.contract.sources?.[key]?.path;
-    const read = rel ? adoptedText(ctx, rel) : null;
-    if (read) out.push([label, read.text, read.at]);
+export function adoptedDocuments(ctx) {
+  const out = new Map();
+  const ref = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null)?.input?.snapshot_ref;
+  if (!ref || !ctx.projectRoot) return out;
+  const dir = path.posix.dirname(String(ref));
+  for (const row of readJson(path.join(ctx.projectRoot, ...String(ref).split('/')), null)?.files ?? []) {
+    if (!/\.md$/i.test(String(row?.path ?? ''))) continue;
+    const at = `${dir}/files/${row.path}`;
+    const text = readText(path.join(ctx.projectRoot, ...at.split('/')));
+    if (text !== null) out.set(at, text);
   }
   return out;
 }
@@ -138,7 +141,7 @@ export function upstreamDocs(ctx) {
  *
  * @param {{projectRoot: string, featureRoot: string}} ctx
  */
-export function adoptedText(ctx, rel) {
+function adoptedText(ctx, rel) {
   const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
   const ref = flow?.input?.snapshot_ref;
   const at = ref ? `${path.posix.dirname(String(ref))}/files/${rel}` : null;

@@ -3,7 +3,7 @@
  *
  * 判据本身（审什么、什么算 blocking、什么不做）只在 `rules/story-reader-rules.yaml` 的 `story_reader_review`
  * 里写一份，这里原样带上；其余是它判不出来的部分：这一次审查材料的唯一一份文件索引、读法、决定与会议的对照、
- * 上游图与承接图、这一版合同的十章问题与章级维度、材料清单里现有的图逐张。同一件事在两处各写一遍，改一处另一处就静默过期。
+ * 来源图与采用它的图、这一版合同的十章问题与章级维度、材料清单里现有的图逐张。同一件事在两处各写一遍，改一处另一处就静默过期。
  * 唯一消费者是 `story-build review --action prepare`。
  */
 import * as fs from 'node:fs';
@@ -12,9 +12,10 @@ import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 import { headingEnd, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
-import { diagramsOf, diagramTopic, imagesIn, readablePaths }
+import { blueprintGraph } from './framework-access.mjs';
+import { diagramBody, diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
+import { adoptedDocuments, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
@@ -131,30 +132,35 @@ function fenced(rows, lang) {
 }
 
 /**
- * 上游每张图与 story 里带同一图源标记的图并排：源图内容、承接图内容逐张给，多源合一时列全来源。
- * 判的是关系保没保持，不是节点同不同名——并排才看得出来。
+ * story 里带图源标记的每张图与它的来源并排：来源图、story 的图逐张给，标明 reuse 还是 refine。
+ * 判的是关系保没保持、细化有没有依据，不是节点同不同名——并排才看得出来。
+ * 没被任何图引用的采用来源图单列：它的去向由材料取舍说明交代，不要求每张都搬。
  */
-function diagramPairRows(projectRoot, root, story, contract) {
-  const carried = diagramsOf(story);
+function diagramPairRows(projectRoot, root, story) {
+  const docs = adoptedDocuments({ projectRoot, featureRoot: root });
+  const used = new Set();
   const out = [];
-  const docs = upstreamDocs({ contract, projectRoot, featureRoot: root });
-  for (const [label, text] of docs) {
-    for (const d of diagramsOf(text)) {
-      const tag = `${label} ${d.id}`;
-      out.push('', `#### ${tag}（${diagramTopic(d)}）`, '', '上游原图：', '', ...fenced(d.lines, 'mermaid'));
-      const hits = carried.filter(c => c.sources.includes(tag));
-      if (!hits.length) out.push('', 'story 里没有带这个图源标记的图。');
-      for (const c of hits) {
-        const others = c.sources.filter(x => x !== tag);
-        out.push('', `story 里承接它的图（${c.title || '章首'}${others.length ? `；同一张还承接 ${others.join('、')}` : ''}）：`,
-          '', ...fenced(c.lines, 'mermaid'));
+  for (const c of diagramsOf(story).filter(x => x.sources.length)) {
+    out.push('', `#### story 的图（${diagramTopic(c)}）`, '', ...fenced(diagramBody(c), 'mermaid'));
+    for (const s of c.sources) {
+      const v = s.value ?? {};
+      let lines = null;
+      if (v.kind === 'document') {
+        const hit = diagramsOf(docs.get(String(v.path ?? '')) ?? '').find(d => d.id === v.diagram);
+        if (hit) { used.add(`${v.path} ${v.diagram}`); lines = diagramBody(hit); }
+      } else if (v.kind === 'blueprint') {
+        const got = blueprintGraph(projectRoot, v.blueprint_ref, v.graph_id);
+        if (got.status === 'ok') lines = got.content.split(/\r?\n/);
       }
+      out.push('', `来源 \`${s.raw}\`${lines ? `（${v.mode}）：` : '：指不到，机械检查已报'}`, ...(lines ? ['', ...fenced(lines, 'mermaid')] : []));
     }
   }
+  const unused = [...docs].flatMap(([at, text]) => diagramsOf(text).filter(d => !used.has(`${at} ${d.id}`))
+    .map(d => `- \`${at}\` ${d.id}（${diagramTopic(d)}）`));
+  if (unused.length) out.push('', '没有被 story 引用的采用来源图（去向按材料取舍说明核）：', '', ...unused);
   if (out.length) return out;
-  return ['', docs.length
-    ? `上游（系统设计，本次采用的版本 \`${docs[0][2]}\`）里没有可解析的 Mermaid 图；图片、PlantUML 等其他格式的图没有作结构解析，按原文自行对照。`
-    : '本需求的材料里没有系统设计，没有上游图要对照。'];
+  return ['', docs.size ? '采用来源里没有可解析的 Mermaid 图，story 也没有带图源标记的图；其他格式的图按原文自行对照。'
+    : '本需求还没有冻结的采用来源，没有来源图要对照。'];
 }
 
 // 盘上实际有哪几版会议材料：路径逐版列出，审查不必猜目录形状
@@ -310,10 +316,10 @@ export function readerReviewTask(projectRoot, feature) {
 
   rows.push(...decisionRows(planCtx.decisionsPath));
 
-  rows.push('', '### 上游图与 story 里承接它的图', '',
+  rows.push('', '### 来源图与 story 里采用它的图', '',
     '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；节点同名、带着图源标记不等于关系还在；'
-    + '图种可以换，声称承接却丢了关系才算问题。',
-    ...diagramPairRows(projectRoot, root, story, contract));
+    + 'reuse 的图体机械已核，refine 核增量有没有依据、来源的关系有没有丢；没带标记的图是新绘，按设计与正文核。',
+    ...diagramPairRows(projectRoot, root, story));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
   if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {

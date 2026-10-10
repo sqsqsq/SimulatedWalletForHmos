@@ -320,6 +320,99 @@ export function featureDir(projectRoot, feature) {
   return featureIdentity(projectRoot, feature).dir ?? null;
 }
 
+/** 蓝图生成图：原生 resolver 核引用的身份与版本，`graph_id` 在这一版的 `generated_graphs` 里实际存在。 */
+export function blueprintGraph(projectRoot, ref, graphId) {
+  const native = loadNative(projectRoot);
+  let resolved;
+  try {
+    resolved = native.module('scripts/utils/component-blueprint-path.ts').resolveComponentBlueprintRef(native.root, ref);
+  } catch (e) {
+    return failure(e?.code === 'component_blueprint_identity_mismatch' ? 'stale' : 'invalid', e);
+  }
+  const graphs = Array.isArray(resolved.blueprint.generated_graphs) ? resolved.blueprint.generated_graphs : [];
+  const graph = graphs.find(g => g?.graph_id === graphId);
+  if (!graph) {
+    return { status: 'missing', issues: [{ code: 'blueprint_graph_missing', message: `蓝图 ${ref.blueprint_id} r${ref.revision} 没有生成图 ${graphId}`
+      + `（这一版有：${graphs.map(g => g?.graph_id).filter(Boolean).join('、') || '无'}）` }] };
+  }
+  return { status: 'ok', content: String(graph.content ?? ''), issues: [] };
+}
+
+/**
+ * 施工单位关联的 Story：沿蓝图 `currentScopeItems` 实际消费的来源，认出落在需求冻结输入布局
+ * （`<需求目录>/<需求>/AR/story-src/inputs/<版本>/files/…`）里的那些，按需求根去重；不枚举需求目录、不按名称猜。
+ *
+ * 每个需求核三件事：冻结快照的条目与摘要被这版蓝图消费（`scopeConsumption`）、需求关联的设计对象就是这份蓝图、
+ * Story 已按当前输入与当前蓝图成文。前两件不成立是来源问题（`problems`）；第三件不成立时 Story 是旧表达或还没写（`state`）。
+ * 来源不在这一布局的条目是原生直接输入，不产生 Story。`sources` 是蓝图消费的全部来源路径。
+ *
+ * @returns {{status: string, sources: string[], stories: {requirement: string, root: string, story: string,
+ *   template: string, state: 'current'|'stale'|'unwritten', why?: string}[], problems: string[], blueprint?: object}}
+ */
+export function relatedStories(projectRoot, feature) {
+  const out = { status: 'ok', sources: [], stories: [], problems: [] };
+  const who = featureIdentity(projectRoot, feature);
+  if (who.status !== 'ok') return { ...out, status: who.status, problems: (who.issues ?? []).map(i => i.message) };
+  if (who.kind !== 'cu') return out;
+  const native = loadNative(projectRoot);
+  const read = readBlueprint(projectRoot, who.blueprintId, 'draft');
+  if (read.status !== 'ok') return { ...out, status: read.status, problems: [`蓝图 ${who.blueprintId} 原生读取 ${read.status}——设计负责方处理`] };
+  const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
+  const guard = native.module('scripts/utils/project-relative-path.ts');
+  const prefix = `${path.posix.normalize(featuresDir)}/`;
+  const byRequirement = new Map();
+  for (const item of native.module('scripts/utils/blueprint-requirement-traceability.ts').currentScopeItems(read.blueprint)) {
+    let ref;
+    try {
+      ref = path.posix.normalize(guard.validateProjectRelativePath(native.root, String(item.source_ref ?? '').split('#')[0], 'source_ref'));
+    } catch (e) {
+      out.problems.push(`蓝图条目 ${item.item_id} 的来源 ${item.source_ref} 不是工程内路径（${e?.message ?? e}）——设计负责方处理`);
+      continue;
+    }
+    out.sources.push(ref);
+    const parts = ref.startsWith(prefix) ? ref.slice(prefix.length).split('/') : [];
+    if (parts.length < 7 || parts.slice(1, 4).join('/') !== 'AR/story-src/inputs' || parts[5] !== 'files') continue;
+    byRequirement.set(parts[0], new Set([...(byRequirement.get(parts[0]) ?? []), parts[4]]));
+  }
+  for (const [requirement, versions] of byRequirement) {
+    const root = `${prefix}${requirement}`;
+    if (versions.size > 1) {
+      out.problems.push(`需求 ${requirement}：蓝图同时消费了它 ${versions.size} 版冻结输入（${[...versions].join('、')}）——认不出当前是哪一版，设计负责方按一版同步`);
+      continue;
+    }
+    const snapshot = `${root}/AR/story-src/inputs/${[...versions][0]}/snapshot.json`;
+    const consumed = scopeConsumption(native, read.blueprint, snapshot);
+    if (consumed.status !== 'ok') {
+      out.problems.push(`需求 ${requirement} 的冻结输入 ${snapshot} 核不过：${consumed.issues.map(i => i.message).join('；')}——设计负责方处理`);
+      continue;
+    }
+    let flow = null;
+    try {
+      flow = JSON.parse(fs.readFileSync(path.join(native.root, ...root.split('/'), 'AR', 'story-src', 'story-flow.json'), 'utf8'));
+    } catch {
+      flow = null;
+    }
+    const bound = flow?.design_binding;
+    if (bound?.blueprint_id !== who.blueprintId || bound?.component_id !== read.blueprint.component_id) {
+      out.problems.push(`需求 ${requirement} 关联的设计对象是 ${bound ? `${bound.component_id}/${bound.blueprint_id}` : '（读不到）'}，`
+        + `不是本施工单位的 ${read.blueprint.component_id}/${who.blueprintId}——需求负责方核对`);
+      continue;
+    }
+    const entry = { requirement, root, story: `${root}/AR/story.md`, template: `${root}/AR/story-src/story-template.md`, state: 'current' };
+    const was = flow.story_basis?.blueprint_ref;
+    if (flow.input?.snapshot_ref !== snapshot) {
+      Object.assign(entry, { state: 'stale', why: `需求现在登记的设计输入是 ${flow.input?.snapshot_ref ?? '（没有）'}，蓝图消费的是 ${snapshot}` });
+    } else if (flow.status !== 'story_written') {
+      Object.assign(entry, fs.existsSync(path.join(native.root, ...entry.story.split('/')))
+        ? { state: 'stale', why: 'Story 正在修订，现有正文没有按当前输入成文登记' } : { state: 'unwritten', why: 'Story 还没写' });
+    } else if (was?.revision !== read.blueprint_ref.revision || was?.artifact_sha256 !== read.blueprint_ref.artifact_sha256) {
+      Object.assign(entry, { state: 'stale', why: `Story 按蓝图 r${was?.revision} 成文，蓝图现在是 r${read.blueprint_ref.revision}${was?.revision === read.blueprint_ref.revision ? '（内容变了）' : ''}` });
+    }
+    out.stories.push(entry);
+  }
+  return { ...out, blueprint: read.blueprint };
+}
+
 /**
  * 读一个原生 Feature（CU 或平铺维护 Feature）在某阶段的输入：身份与蓝图引用，加上当前阶段的原生只读解析结果。
  *

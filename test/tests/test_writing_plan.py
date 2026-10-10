@@ -220,9 +220,9 @@ class TheFirstSkeletonAsksForTheDesign(PlanCase):
             self.assertIn(f"### {ch['id']}", shell)
 
     def test_the_current_inputs_come_with_the_skeleton(self) -> None:
-        """成文要用的输入在起手这一刻给：材料里的图与系统设计里的图；设计事实来自蓝图，不再有 spec 的图。"""
+        """成文要用的输入在起手这一刻给：材料里的图、采用来源与蓝图里的图；设计事实来自蓝图，不再有 spec 的图。"""
         _, out = self.cmd("skeleton")
-        for heading in ("## 4. 材料里的图", "## 4a. 系统设计里的图"):
+        for heading in ("## 4. 材料里的图", "## 4a. 采用来源与蓝图里的图"):
             self.assertIn(heading, out)
         self.assertNotIn("spec 里的图", out)
 

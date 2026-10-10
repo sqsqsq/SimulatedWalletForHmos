@@ -267,8 +267,8 @@ function cmdSkeleton(ctx) {
     process.stdout.write(`\n结构起点：${relFromFeature(ctx, file)} 已经动过，没有自动改；`
       + `写作设计选定、它里面还没有的结构如下，按需贴进去：\n${rows.join('\n')}\n`);
   }
-  // 成文要用的当前输入在这一刻取：材料与系统设计里的图此刻列得出来。
-  process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
+  // 成文要用的当前输入在这一刻取：材料、采用来源与蓝图里的图此刻列得出来。
+  process.stdout.write(`\n${storyInputs(ctx).join('\n')}\n`);
 }
 
 async function main() {

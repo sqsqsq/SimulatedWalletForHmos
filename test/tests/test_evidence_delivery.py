@@ -190,21 +190,28 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             self.assertIn(option, section, "选项原文没带到审查者手上")
         self.assertNotIn("D-1", section, "已定的归下一节")
 
-    def test_upstream_diagrams_sit_next_to_the_story_diagram_that_carries_them(self) -> None:
-        (self.feature_root / "SR").mkdir(parents=True, exist_ok=True)
-        (self.feature_root / "SR" / "design.md").write_text(
-            "## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
-            "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
-        (self.feature_root / "AR" / "story.md").parent.mkdir(parents=True, exist_ok=True)
+    def test_a_marked_story_diagram_sits_next_to_its_source(self) -> None:
+        """带标记的图与它的来源并排；没被引用的来源图单列，去向由材料取舍说明交代，不算缺图。"""
+        rel = "doc/features/NK90001/AR/story-src/inputs/v1"
+        frozen = self.root / rel / "files" / "SR" / "design.md"
+        frozen.parent.mkdir(parents=True, exist_ok=True)
+        frozen.write_text("## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
+                          "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
+        (self.root / rel / "snapshot.json").write_text(json.dumps({"files": [{"path": "SR/design.md"}]}), encoding="utf-8")
+        flow = self.feature_root / "AR" / "story-src" / "story-flow.json"
+        data = json.loads(flow.read_text(encoding="utf-8")) if flow.exists() else {}
+        data["input"] = {"snapshot_ref": f"{rel}/snapshot.json"}
+        flow.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        mark = json.dumps({"kind": "document", "path": f"{rel}/files/SR/design.md", "diagram": "§3 #1", "mode": "refine"},
+                          ensure_ascii=False, separators=(",", ":"))
         (self.feature_root / "AR" / "story.md").write_text(
-            "# NK90001 中性需求\n\n## 业务流程\n\n```mermaid\n%% 图源 SR §3 #1\nflowchart TD\n  甲 --> 乙\n```\n",
+            f"# NK90001 中性需求\n\n## 业务流程\n\n```mermaid\n%% 图源 {mark}\nflowchart TD\n  甲 --> 乙\n```\n",
             encoding="utf-8")
-        text = self.reader_task().split("### 上游图与 story 里承接它的图", 1)[1]
-        first = text.split("#### SR §3 #1", 1)[1].split("#### ", 1)[0]
-        self.assertIn("乙 -->|失败| 丙", first, "上游原图内容没给")
-        self.assertIn("story 里承接它的图", first)
-        self.assertIn("%% 图源 SR §3 #1", first)
-        self.assertIn("story 里没有带这个图源标记的图", text.split("#### SR §4 #1", 1)[1])
+        text = self.reader_task().split("### 来源图与 story 里采用它的图", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("乙 -->|失败| 丙", text, "来源图内容没给")
+        self.assertIn("（refine）", text)
+        self.assertIn("没有被 story 引用的采用来源图", text)
+        self.assertIn("§4 #1", text.split("没有被 story 引用的采用来源图", 1)[1])
 
 
 class AChoiceNeedsASuggestion(ModesCase):
