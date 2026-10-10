@@ -1,5 +1,6 @@
 /**
- * 成文要用的当前输入 —— 材料里的图（一张图一项，带引用串与登记不用的命令）、本次采用来源与蓝图里的图（带可粘的图源标记）。
+ * 成文要用的当前输入 —— 材料里的图（一张图一项，带引用串与登记不用的命令）、本次采用来源与蓝图里的图（带可粘的图源标记）、
+ * 附录材料清单要列的外部原件。
  *
  * `story-build skeleton` 起手与恢复时打印它：上游正文从调用方已取得的来源状态取，缺席按合同与单据身份说。
  */
@@ -8,7 +9,7 @@ import { featureRoot, readJsonOrNull, relDisplay } from '../../../../../hooks/sh
 import { SHELL, shellArg } from './drafts.mjs';
 import { adoptedInputs, designSource } from './design-source.mjs';
 import { diagramBody, diagramsOf, diagramTopic, imagesIn, readablePaths } from './images.mjs';
-import { relFromStory } from './sources.mjs';
+import { externalOriginals, relFromStory } from './sources.mjs';
 
 /**
  * 材料里的图 —— **一张图一项任务**。
@@ -126,13 +127,23 @@ function diagramSection(ctx) {
   return rows;
 }
 
+/** 附录材料清单要列的外部原件：每份一行、材料列用给的链接；转换稿归回原件。与清单检查同一份集合。 */
+function materialSection(ctx) {
+  const set = externalOriginals(ctx);
+  const rows = ['## 4b. 材料清单要列的原件', ''];
+  if (!set) return [...rows, '还没交给设计，没有冻结快照：原件集合在交给设计之后定。'];
+  rows.push('附录材料清单每份原件一行，材料列用下面的链接；转换稿与抽出的图归回原件，提取稿、人签导出、图片不列：', '',
+    ...[...set.originals].map(([o, via]) => `- \`[${path.posix.basename(o)}](${relFromStory(o)})\`${via ? `——经收件箱导入，转换稿是 ${via}` : ''}`));
+  return set.gap ? [...rows, '', `缺口：${set.gap}`] : rows;
+}
+
 /**
- * 成文要用的当前输入 —— 材料里的图、采用来源与蓝图里的图。
+ * 成文要用的当前输入 —— 材料里的图、采用来源与蓝图里的图、材料清单要列的原件。
  *
  * `story-build skeleton` 起手与恢复时打印它。
  *
  * @param {{projectRoot: string, contract: object, args: {feature: string}}} ctx
  */
 export function storyInputs(ctx) {
-  return [...imageSection(ctx.projectRoot, ctx.args.feature), '', ...diagramSection(ctx)];
+  return [...imageSection(ctx.projectRoot, ctx.args.feature), '', ...diagramSection(ctx), '', ...materialSection(ctx)];
 }

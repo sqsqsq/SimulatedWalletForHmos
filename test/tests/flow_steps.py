@@ -42,5 +42,7 @@ def open_decision(did: str, title: str, point: str, options: list[tuple[str, str
 
 def walk_to_complete(flow: Callable[..., dict], src: Path, draft_text: str,
                      scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
-    """用真实流程命令走完 S1–S3 并交给设计（开发版扩展）：走完即「可以成文」。"""
-    walk_to_design(flow, src, draft_text, design_kit.ACCESS, scope_text)
+    """用真实流程命令走完 S1–S3 并交给设计（开发版扩展）：走完即「可以成文」。
+    init 为没拉到的上游补的占位件不是这张单的材料，登记材料前删掉，不进冻结输入。"""
+    before = {p for p in src.parent.parent.rglob("*") if p.is_file()}
+    walk_to_design(flow, src, draft_text, design_kit.ACCESS, scope_text, before=before)

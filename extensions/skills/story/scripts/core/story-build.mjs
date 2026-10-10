@@ -253,7 +253,7 @@ function cmdSkeleton(ctx) {
     fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
     result = `${ctx.contract.chapters.length} 章骨架 + ${made.length} 份章草稿`
       + '（`AR/story-src/drafts/`，每份开头是读者读完这一章要能回答的问题与必要种子）；'
-      + '附录里配置、埋点、改动边界与本次冻结材料由 project 从真源投影，接口、数据、规约与材料的取舍说明由你写';
+      + '附录里配置、埋点与改动边界由 project 从真源投影，接口、数据、规约与材料清单由你写';
   }
   if (!hadPlan) result += `；写作设计空壳 ${relFromFeature(ctx, ctx.templatePath)}`;
   if (seeded.length) result += `；按写作设计骨架给 ${seeded.length} 份没动过的草稿铺好小节与表图`;

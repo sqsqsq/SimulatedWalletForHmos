@@ -90,20 +90,24 @@ function decisionsOf(blueprint) {
 }
 
 /**
- * spec / plan 第 2 块：本单位相关而不产生义务的判断、需求级判断与事实，宿主扩展章写不适用、不选与复用时引用其理由。
- * 落点全在别的施工单位的判断不给；本单位设计没引用的事实只给定位。
+ * spec / plan 第 2 块：本单位相关而不产生义务的判断、需求级公共依据与本单位引用的事实，宿主扩展章写不适用、不选与复用时
+ * 引用其理由。作用域未确定的判断与指不到的引用另进缺口，交设计负责方，不当成已成立的全局要求。
  */
 function unitLines(judged) {
   const context = unitContext(judged);
   const { applied, selected } = unitDuties(judged);
   const own = context.mine.filter(d => !applied.includes(d) && !selected.includes(d));
-  return [
+  const lines = [
     ...(own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(decisionLine)] : []),
-    ...(context.global.length ? ['需求级判断（没有落点，对整个需求成立，不称本单位适用）：', ...context.global.map(decisionLine)] : []),
+    ...(context.common.length ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...context.common.map(decisionLine)] : []),
+    ...(context.undetermined.length ? ['作用域未确定的判断（没有落点，需设计负责方明确归属）：', ...context.undetermined.map(decisionLine)] : []),
     ...context.facts.map(factLine),
-    ...(context.located.length ? [`需求里另有知识事实，本单位设计没有引用，只给定位：${context.located
+    ...(context.located.length ? [`需求里另有知识事实，与本单位的关联未明，只给定位：${context.located
       .map(f => `\`${f.fact_id}\`（${f.subject ?? ''}）`).join('、')}`] : []),
   ];
+  const gaps = [...context.undetermined.map(d => `判断 ${d.decision_id}（${d.knowledge.unit}，${d.knowledge.outcome}）没有落点，作用域未确定——设计负责方明确它归哪个设计对象。`),
+    ...context.dangling.map(r => `本单位设计的引用 ${r} 在蓝图里找不到对象或事实——设计负责方修正引用。`)];
+  return { lines, gaps };
 }
 
 function blueprintTask(root, id, action) {
@@ -246,7 +250,11 @@ function featureTask(root, feature, action, supplied, knowledge) {
     // 本命令只读一次蓝图、算一次判断：设计对象、承接义务、埋点与关联 Story 都用这一份
     judged = featureKnowledge(root, feature, f.spec?.contracts ?? null);
     // spec / plan 在第 3 块逐条拿到本单位承接的判断，这里给本单位作用域里其余的判断与事实；其余动作列蓝图里的全部判断
-    facts = !judged.blueprint ? [] : ['spec', 'plan'].includes(action) ? unitLines(judged) : decisionsOf(judged.blueprint);
+    if (judged.blueprint && ['spec', 'plan'].includes(action)) {
+      const own = unitLines(judged);
+      facts = own.lines;
+      gaps.push(...own.gaps);
+    } else facts = judged.blueprint ? decisionsOf(judged.blueprint) : [];
     if (!judged.blueprint) gaps.push('蓝图读不到：设计负责方处理。');
     if (!facts.length && !['spec', 'plan'].includes(action)) facts = ['蓝图里还没有知识应用的事实与决定。'];
     facts.push(`本施工单位承担的设计对象：${f.design_refs.map(r => `${r?.target?.kind}:${r?.target?.id}`).join('、') || '（无）'}`);

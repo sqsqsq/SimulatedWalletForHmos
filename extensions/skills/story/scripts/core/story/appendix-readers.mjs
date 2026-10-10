@@ -1,16 +1,13 @@
 /**
- * 附录的读取器：已准入蓝图的记录（原生读取所得）或登记的冻结输入 → 某一节机器区的行。
+ * 附录的读取器：已准入蓝图的记录（原生读取所得）→ 某一节机器区的行。
  *
- * 机器区只投精确明细（配置、埋点）、改动边界与本次冻结材料；接口、数据与规约由作者按蓝图写业务摘要，
+ * 机器区只投精确明细（配置、埋点）与改动边界；接口、数据与规约由作者按蓝图写业务摘要，
  * 完整技术契约在设计附件。每个读取器把字段排成表或段，不补、不改写、不推断不适用。字段值是标量就照写；是对象时按章节合同为这一节
  * 登记的子字段标签写「标签：值」，合同没给人读写法的结构报成投影适配缺口：
  * 蓝图保持原样，由扩展维护者按实际结构在章节合同补人读写法。
  * 来历与核对字段（provenance、各类 refs、source_ref、摘要）不进正文。表头与标签由章节合同登记，本文件不写业务词。
  * 投影与核对共用这一份计算（`appendix.mjs` 调用）。
  */
-import * as crypto from 'node:crypto';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import { fail } from './context.mjs';
 
@@ -86,33 +83,9 @@ function boundaryRows(blueprint, def, ctx) {
   return rows.length ? renderTable(header(def, 'rows', ctx.where), rows) : [];
 }
 
-/**
- * 本次冻结材料：当前冻结快照里的每份文件，按路径排序一行——来源文件（链接指向快照里的那一份）、材料角色、
- * 本次版本（原始字节摘要前 16 位与快照目录）。写前逐份核原始字节与快照登记的摘要，对不上记进 `gaps`，这一次不投。
- */
-function materialRows(source, def, ctx) {
-  const snapshot = source.snapshot;
-  if (!snapshot) return [];
-  const version = path.basename(snapshot.dir);
-  const from = path.dirname(ctx.storyPath);
-  const rows = [...(snapshot.files ?? [])].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).map((row) => {
-    const file = path.join(snapshot.dir, 'files', ...String(row.path).split('/'));
-    let bytes = null;
-    try { bytes = fs.readFileSync(file); } catch { bytes = null; }
-    if (bytes === null || crypto.createHash('sha256').update(bytes).digest('hex') !== row.sha256) {
-      ctx.gaps.push(`附录「${ctx.where}」：冻结输入里的 ${row.path} ${bytes === null ? '读不到' : '原始字节与快照登记的摘要对不上'}`
-        + '——冻结版本不改；恢复这份文件，恢复不了先 `story_flow.py reopen` 或开一轮 update，再重新 complete');
-    }
-    const link = path.relative(from, file).split(path.sep).join('/');
-    return [`[${row.path}](${link})`, def.roles?.[row.role] ?? row.role, `${String(row.sha256).slice(0, 16)}（${version}）`].map(cell);
-  });
-  return rows.length ? renderTable(header(def, 'rows', ctx.where), rows) : [];
-}
-
 /** 每个读取器：`rows(source, def, where, gaps, ctx)`，没有人读写法的结构与读不到的输入记进 `gaps`。 */
 export const READERS = {
   details: { rows: (s, def) => detailBlocks(s.blueprint, def.detail_kind, def.title_level), source: '蓝图 story_details' },
   change_boundary: { rows: (s, def, where, gaps) => boundaryRows(s.blueprint, def, { where, gaps }), source: '蓝图开发视图与架构影响决定' },
-  materials: { rows: (s, def, where, gaps, ctx) => materialRows(s, def, { where, gaps, storyPath: ctx.storyPath }), source: '登记的冻结输入' },
 };
 

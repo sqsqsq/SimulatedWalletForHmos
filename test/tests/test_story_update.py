@@ -1077,13 +1077,6 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
 
     def setUp(self) -> None:
         super().setUp()
-        # 夹具的材料清单少一份系统设计，补齐后 story 能过全篇 check
-        story = self.feature_root / "AR" / "story.md"
-        text = story.read_text(encoding="utf-8")
-        row = "- 开发需求：本轮从上游提取的开发需求，业务分工与本单范围。原文：[AR/design.md](design.md)\n"
-        self.assertIn(row, text)
-        story.write_text(text.replace(row, row + "- 系统设计：接口与端云分工。原文：[SR/design.md](../SR/design.md)\n"),
-                         encoding="utf-8")
         # 登记前要经独立审查：审查对象里的章节合同与判据取工程里装的扩展
         design_kit.install_review_mechanism(self.root, DEV_EXT)
         self.outputs: list[str] = []
@@ -1282,11 +1275,6 @@ class RegisteredCase(UpdateCase):
         cls = type(self)
         if cls._registered is None:
             super().setUp()
-            story = self.feature_root / "AR" / "story.md"
-            text = story.read_text(encoding="utf-8")
-            row = "- 开发需求：本轮从上游提取的开发需求，业务分工与本单范围。原文：[AR/design.md](design.md)\n"
-            story.write_text(text.replace(row, row + "- 系统设计：接口与端云分工。原文：[SR/design.md](../SR/design.md)\n"),
-                             encoding="utf-8")
             design_kit.install_review_mechanism(self.root, DEV_EXT)
             (self.src / "decisions.json").write_text(json.dumps({"decisions": [self.TOPIC]}, ensure_ascii=False), encoding="utf-8")
             self.assertTrue(StoryIsRegisteredAgainAfterChanges.register(self).get("success"), self.outputs[-1])

@@ -59,15 +59,17 @@ const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r
  */
 function decisionTable(projectRoot, feature, knowledge, inputs) {
   const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
-  const { mine, global } = unitContext(judged);
-  const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
+  const { mine, common, undetermined, dangling } = unitContext(judged);
+  const gaps = [...judged.problems, ...dangling.map(r => `本单位设计的引用 ${r} 在蓝图里找不到对象或事实`)]
+    .map(p => `- **设计缺口**：${p}`);
   if (!mine.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
-  // 需求级判断（没有落点）也列出：宿主扩展章引用它的不适用与不选理由，审查对着原判断核；落点在别的单位的不列
+  // 没有落点的也列出：不适用与拒绝是公共依据（宿主扩展章引用其理由），其余作用域未确定；落点在别的单位的不列
+  const where = d => (mine.includes(d) ? cell((d.knowledge.target_refs ?? []).join('、'))
+    : common.includes(d) ? '需求级公共依据（无落点）' : '作用域未确定（无落点，待设计负责方明确）');
   return ['| 决定 | 知识单元 | 原文 | 判定 | 要求与理由 | 落点 |', '|---|---|---|---|---|---|',
-    ...[...mine, ...global].map(d => `| ${d.decision_id} | ${d.knowledge.unit} `
+    ...[...mine, ...common, ...undetermined].map(d => `| ${d.decision_id} | ${d.knowledge.unit} `
       + `| ${cell(entryOf(knowledge, d)?.constraint ?? '（模式，见知识任务原文）')} | ${d.knowledge.outcome} `
-      + `| ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} `
-      + `| ${mine.includes(d) ? cell((d.knowledge.target_refs ?? []).join('、')) : '需求级（无落点）'} |`),
+      + `| ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} | ${where(d)} |`),
     ...gaps];
 }
 

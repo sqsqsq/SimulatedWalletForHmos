@@ -3,7 +3,7 @@
  *
  * 判据本身（审什么、什么算 blocking、什么不做）只在 `rules/story-reader-rules.yaml` 的 `story_reader_review`
  * 里写一份，这里原样带上；其余是它判不出来的部分：这一次审查材料的唯一一份文件索引、读法、决定与会议的对照、
- * 来源图与采用它的图、这一版合同的十章问题与章级维度、材料清单里现有的图逐张。同一件事在两处各写一遍，改一处另一处就静默过期。
+ * 来源图与采用它的图、这一版合同的十章问题与章级维度、材料清单里现有的图逐张、附录材料清单要列的原件。同一件事在两处各写一遍，改一处另一处就静默过期。
  * 唯一消费者是 `story-build review --action prepare`。
  */
 import * as fs from 'node:fs';
@@ -16,7 +16,8 @@ import { blueprintGraph } from './framework-access.mjs';
 import { diagramBody, diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { adoptedInputs } from '../../skills/story/scripts/core/story/design-source.mjs';
-import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { externalOriginals, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { requirementContext } from '../../skills/story/scripts/core/story/context.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
@@ -349,6 +350,13 @@ export function readerReviewTask(projectRoot, feature) {
   } else {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
+
+  // 附录材料清单的原件集合与清单检查同一份：结构由检查核过，这里核每行的贡献与采用关系
+  const set = externalOriginals(requirementContext(projectRoot, root, contract));
+  rows.push('', '### 附录材料清单要列的原件', '', ...(!set ? ['还没交给设计，没有冻结快照，原件集合未定。'] : [
+    '逐行对着原件核「贡献」：写的是这份材料实际给了什么；没采纳的新值或冲突版本写了对比作用与裁决依据。',
+    ...[...set.originals].map(([o, via]) => `- \`${o}\`${via ? `（经收件箱导入，转换稿 \`${via}\`）` : ''}`),
+    ...(set.gap ? [`缺口：${set.gap}`] : [])]));
 
   rows.push(...reportFormat());
   return rows.join('\n');

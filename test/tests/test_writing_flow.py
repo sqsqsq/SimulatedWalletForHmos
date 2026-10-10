@@ -396,8 +396,8 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
         for q in ("图种合不合读者要判断的那件事", "一段是不是讲了几件独立的事", "verdicts.chapter_dimensions"):
             with self.subTest(q=q):
                 self.assertIn(q, overlay)
-        # 图前讲过程、图后讲分支只在章级维度写一份，判据按合同审、不再复述
-        self.assertTrue(any("图前讲过程、图后讲分支" in d for d in CONTRACT["verdicts"]["chapter_dimensions"]))
+        # 图前说明过程、图后列表补条件只在章级维度写一份，判据按合同审、不再复述
+        self.assertTrue(any("图后用列表补图上没讲清的条件、责任与结果" in d for d in CONTRACT["verdicts"]["chapter_dimensions"]))
         self.assertNotIn("图前是不是把这段过程讲了一遍", overlay)
 
 

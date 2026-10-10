@@ -383,13 +383,19 @@ def hand_to_design(flow: Callable[..., dict], src: Path, access: Path) -> None:
 
 
 def walk_to_design(flow: Callable[..., dict], src: Path, draft_text: str, access: Path,
-                   scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
+                   scope_text: str = "本 AR 承载自动充值签约与管理", before: set[Path] | None = None) -> None:
     """用真实流程命令走完 S1–S3 并交给设计：材料关卡、需求分析、范围关卡、关联设计对象、冻结输入。
 
-    工程里同时放好一份已准入的蓝图——走完即「可以成文」。"""
+    工程里同时放好一份已准入的蓝图——走完即「可以成文」。给了 `before`（init 之前就有的文件）时，init 为没拉到的上游
+    补的占位件在登记材料之前删掉：它们不是这张单的材料，不进冻结输入。"""
     src.mkdir(parents=True, exist_ok=True)
     (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
     flow("init")
+    if before is not None:
+        for rel in ("RR/prd.md", "SR/design.md"):
+            placeholder = src.parent.parent / rel
+            if placeholder not in before and placeholder.is_file():
+                placeholder.unlink()
     flow("round")
     write_gaps(src)
     answer(flow, "material_scope", "夹具：现有材料就是全部", "--chosen", "confirm_scope")
@@ -406,7 +412,7 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
                      draft: str, decisions: list[dict] | None = None, design: dict | None = None,
                      project_must_pass: bool = True) -> None:
     """就地把一份需求工作区准备成「交给设计、蓝图已准入」：接 Framework、放准入蓝图、用真实流程命令走到交给设计，
-    再把 init 为没拉到的上游补的占位件删掉登记（与夹具原有材料一致），附录机器区按蓝图重投。
+    init 为没拉到的上游补的占位件在登记材料前删掉（与夹具原有材料一致），附录机器区按蓝图重投。
 
     `flow_script` / `build_script` / `access` 是本次要用的那份扩展里的 story_flow.py、story-build.mjs 与
     framework-access.mjs；已有流程契约的工作区不重走流程。`project_must_pass` 为假时附录重投不过不抛错——
@@ -425,13 +431,7 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
 
     if not (src / "story-flow.json").is_file():
         before = {p for p in feature_root.rglob("*") if p.is_file()}
-        walk_to_design(flow, src, draft, access)
-        placeholders = [feature_root / rel for rel in ("RR/prd.md", "SR/design.md")
-                        if feature_root / rel not in before and (feature_root / rel).is_file()]
-        for path in placeholders:
-            path.unlink()
-        if placeholders:
-            flow("round")
+        walk_to_design(flow, src, draft, access, before=before)
     # 设计按登记的输入走到准入：蓝图消费这次冻结输入，带本夹具要的知识应用决定与设计内容
     install_blueprint(root, feature, access, decisions=decisions, **(design or {}))
     if (feature_root / "AR" / "story.md").is_file():
