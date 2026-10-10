@@ -1509,9 +1509,6 @@ def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
 # 批次 3 子批 A：作者面通道
 # --------------------------------------------------------------------------- #
 
-#: `author.md` 的行数上限——它是索引不是教材，长过这个数说明判据推理又搬回来了。
-AUTHOR_DOC_MAX_LINES = 60
-
 #: 判据推理搬回 author.md 的形态——**整段**展开「怎么判」，而不是一句「门禁会拦什么」。
 #: 只认带标题的推理块。一句「判据是 X 不是 Y」是简洁的门禁说明，属于须知该有的内容，
 #: 拿它当推理段会把正确的写法也判掉（实测 ut/author.md 就撞在这上面）。
@@ -1532,7 +1529,8 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
     「不写文档坐标」），于是作者只能靠门禁报错反推要求，内网实测 plan「仅展示」、coding「完全失效」。
 
     本条守两件事：``hooks/**/*.md`` 只剩 ``author.md`` 与 ``reviewer.md``（作者与独立审查者的要求页，
-    由知识任务点名送达）；每份是**索引**不是教材（≤60 行、不整段展开判据推理）。判定基准派生自
+    由知识任务点名送达）；每份是**索引**不是教材（不整段展开判据推理）。页面读不读得清、有没有重复展开，
+    由维护内容评审按职责与实际信息量核，不用物理行数代替（2026-10-10 退出 60 行门）。判定基准派生自
     ``hooks/`` 的阶段目录，不写死阶段名。
     """
     hooks_dir = root / "hooks"
@@ -1552,8 +1550,6 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
         lines = split_lines(read_text(md))
         while lines and not lines[-1].strip():
             lines.pop()
-        if len(lines) > AUTHOR_DOC_MAX_LINES:
-            hits.append(f"{rel} {len(lines)} 行，超过 {AUTHOR_DOC_MAX_LINES}——author.md 只做索引，不做教材")
         body = read_text(md)
         for marker in REASONING_MARKERS:
             if marker in body:
@@ -1567,7 +1563,7 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
     covered = [p for p in phases if (hooks_dir / p / "author.md").exists()]
     if not covered:
         return Outcome(False, f"{len(phases)} 个阶段一个 author.md 都没有——作者面通道不存在")
-    return Outcome(True, f"{len(covered)}/{len(phases)} 个阶段有 author.md，均 ≤{AUTHOR_DOC_MAX_LINES} 行且无判据推理段")
+    return Outcome(True, f"{len(covered)}/{len(phases)} 个阶段有 author.md，且无判据推理段")
 
 
 @checker

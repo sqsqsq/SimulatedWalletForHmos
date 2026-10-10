@@ -885,6 +885,21 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         self.assertIn("未形成可确定的复用关联", section)
         self.assertIn(self.selected_body(), self.section(), "原来的单位仍取得到它承担的那一节")
 
+    def test_both_phases_receive_the_consistency_contract(self) -> None:
+        """spec 与 plan 的审查任务都列出这条判据；判据把「共同设计错影响本单位」判 FAIL，与「只有 Story 表达错」分开。"""
+        import yaml  # noqa: PLC0415
+        for phase in ("spec", "plan"):
+            with self.subTest(phase=phase):
+                fragments = self.node(
+                    "const pre = (await import(process.argv[4])).default;"
+                    "out((await pre({ phase: process.argv[5], feature: process.argv[3], projectRoot: root })).promptFragments);",
+                    self.unit, (self.ext / "hooks" / "shared" / "pre_verifier.mjs").resolve().as_uri(), phase)
+                self.assertIn("`design_content_consistency`（BLOCKER）", "\n".join(fragments))
+                rule = yaml.safe_load((self.root / "doc" / "extensions" / "rules" / f"{phase}-rules.overlay.yaml")
+                                      .read_text(encoding="utf-8"))["semantic_checks"]["design_content_consistency"]["description"]
+                for words in ("共同设计错了或缺了", "FAIL，回设计负责方", "「错在上游」不降级", "只有 Story 的表达与有效设计矛盾", "人读交付还没同步"):
+                    self.assertIn(words, rule)
+
     # ---- 不是当前那一份：旧表达或缺口 ----
 
     def test_story_or_design_changed_after_registration_is_old_expression(self) -> None:

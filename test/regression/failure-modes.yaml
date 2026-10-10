@@ -640,7 +640,8 @@ modes:
       8 个 hook 事件全在 harness 同一进程、verifier 之前跑完，片段唯一去处是 ai-prompt 尾部
       （harness-runner.ts:765-768 + report-generator.ts:311-318）。基线态六份 on_context_load.md
       400 行通篇作者向文本，内网实测 plan「仅展示」、coding「完全失效」。
-      本条守两件事：hooks/**/*.md 只剩 author.md；每份是索引不是教材（≤60 行、不整段展开判据推理）。
+      本条守两件事：hooks/**/*.md 只剩 author.md；每份是索引不是教材（不整段展开判据推理）。
+      2026-10-10 维护设计者裁定退出 60 行物理行数门：作者页可读性按职责与实际信息量由维护内容评审核，不以行数代理。
       阶段清单派生自 hooks/ 子目录，不写死阶段名（G7）。
 
   - id: A04-gate-pass-no-trace
