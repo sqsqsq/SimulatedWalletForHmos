@@ -237,11 +237,10 @@ class TheMechanismCarriesNoKnowledgeStructure(unittest.TestCase):
 
     def test_the_example_topic_differs_from_cases_and_golden(self) -> None:
         """示例题材从用例补料名与金样标题派生禁用词：整名与它的前三个字都不出现。"""
+        sys.path.insert(0, str(REPO_ROOT / "test" / "scripts"))
+        import check_failure_modes as cfm  # 金样标题的枚举只在一处维护
         topics: set[str] = set()
-        golden = REPO_ROOT / "test/golden"
-        for f in [*golden.glob("*.md"), *golden.glob("*/README.md")]:
-            first = f.read_text(encoding="utf-8").split("\n", 1)[0]
-            name = re.sub(r"^#\s*(AR\d+\s*)?", "", first).split("（")[0].split("：")[0].strip()
+        for name in cfm._golden_titles():
             if re.search(r"[一-鿿]{3}", name):
                 topics.update({name, name[:3]})
         for f in (REPO_ROOT / "test/cases").glob("*/supplements/*"):

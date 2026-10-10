@@ -642,15 +642,20 @@ def _case_numbers() -> list[str]:
     return sorted(w for w in found if not (w.endswith("次") and int(re.match(r"\d+", w).group(0)) < 10))
 
 
-def _golden_titles() -> list[str]:
-    """金样与候选样稿的业务名：大标题去掉单号与括注。"""
-    golden = REPO_ROOT / "test" / "golden"
+def _golden_titles(golden: Path | None = None) -> list[str]:
+    """金样与候选样稿的业务名：大标题去掉单号与括注。
+
+    两种布局都认：根下的 `story-*.md` 与 `*/README.md`，以及按 Case 与情景分目录的 `<case>/<情景>/AR/story.md`。
+    单号按形态去掉（字母开头、可带连字符的编号），不只认 `AR` 前缀。
+    """
+    golden = golden or REPO_ROOT / "test" / "golden"
     names: set[str] = set()
-    for f in [*(f for f in golden.glob("story-*.md") if "说明" not in f.name), *golden.glob("*/README.md")]:
+    for f in [*(f for f in golden.glob("story-*.md") if "说明" not in f.name), *golden.glob("*/README.md"),
+              *golden.glob("*/*/AR/story.md")]:
         first = split_lines(read_text(f))[0] if read_text(f) else ""
         if not first.startswith("# "):
             continue
-        name = re.sub(r"^#\s*(?:AR\d+\s*)?", "", first).split("（")[0].split("：")[0].strip()
+        name = re.sub(r"^#\s*(?:[A-Za-z]+-?\d+\s*)?", "", first).split("（")[0].split("：")[0].strip()
         if len(name) >= 4 and re.search(r"[\u4e00-\u9fff]", name):
             names.add(name)
     return sorted(names)

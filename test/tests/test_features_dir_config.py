@@ -158,6 +158,20 @@ class MaintenanceAndConsumerRootsStayApart(unittest.TestCase):
         self.assertEqual(["AR1", "archive/Story-Features-1/AR1", "archive/Story-Features-2/AR1",
                           "archive/Story-Features-2/ISSUE-2"], got)
 
+    def test_golden_titles_cover_both_layouts(self) -> None:
+        """切换前后两种金样布局的业务名都进禁用词：根下 story-*.md 与 <case>/<情景>/AR/story.md；单号按形态去掉。"""
+        sys.path.insert(0, str(self.SCRIPTS))
+        import check_failure_modes as cfm
+
+        golden = Path(tempfile.mkdtemp(prefix="golden-"))
+        self.addCleanup(shutil.rmtree, golden, True)
+        (golden / "story-金样-AR1.md").write_text("# AR1 旧布局业务名（端侧）\n", encoding="utf-8")
+        for case, scene, title in (("demo-a", "initial", "# AR2 新布局甲业务（钱包端）"),
+                                   ("demo-b", "update", "# ISSUE-3 新布局乙业务（钱包端）")):
+            (golden / case / scene / "AR").mkdir(parents=True)
+            (golden / case / scene / "AR" / "story.md").write_text(title + "\n", encoding="utf-8")
+        self.assertEqual(["新布局乙业务", "新布局甲业务", "旧布局业务名"], cfm._golden_titles(golden))
+
     def test_the_checker_reads_the_consumer_it_is_given_and_never_the_maintenance_repo(self) -> None:
         sys.path.insert(0, str(self.SCRIPTS))
         import check_failure_modes as cfm
