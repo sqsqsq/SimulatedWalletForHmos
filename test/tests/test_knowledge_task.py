@@ -683,6 +683,22 @@ class TheReviewerGetsTheSameLoader(NativeCase):
 
 
 
+class ANativeEntryNeedsNoStory(unittest.TestCase):
+    """蓝图的需求条目直接来自原生需求文件（不在需求冻结输入布局里）：没有 Story 是正常的，任务照常给出、不报缺口。"""
+
+    def test_the_task_says_there_is_no_story_and_goes_on(self) -> None:
+        root = make_project()
+        self.addCleanup(shutil.rmtree, root.parent, True)
+        from ext_workspace import DEV_EXT  # noqa: PLC0415
+        proc = subprocess.run(
+            ["node", str(DEV_EXT / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(root),
+             "--action", "spec", "--audience", "author", "--feature", CU],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        self.assertIn("原生直接入口", proc.stdout)
+        self.assertNotIn("关联 Story：", proc.stdout, "没有 Story 被当成了缺口")
+
+
 class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
     """施工单位按蓝图实际消费的冻结来源找到关联需求，Story 仍是成文登记的那一份时，照录依据落在本单位设计责任内的小节。
 
@@ -715,6 +731,8 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         cls.unit_dir.mkdir(parents=True, exist_ok=True)
         (cls.unit_dir / "change-unit.yaml").write_text(unit, encoding="utf-8")
         cls.unit = cu_id(cls.BLUEPRINT, "balance-refresh")
+        # 夹具工程只装了知识与清单：阶段判据 overlay 从本次扩展补进来，审查侧的片段才按真实判据装配
+        shutil.copytree(DEV_EXT / "rules", cls.root / "doc" / "extensions" / "rules", dirs_exist_ok=True)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -823,6 +841,49 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         after = self.section()
         self.assertNotEqual(before, after)
         self.assertIn("回执超时", after)
+
+    def material_sha(self) -> str:
+        """审查侧的材料身份：pre_verifier 交给原生的片段，经原生 `buildVerifierMaterialView` 算出的 material_sha256。"""
+        return self.node(
+            "const pre = (await import(process.argv[4])).default;"
+            "const r = await pre({ phase: 'spec', feature: process.argv[3], projectRoot: root });"
+            "const vm = fa.loadNative(root).module('scripts/utils/verifier-material.ts');"
+            "out(vm.buildVerifierMaterialView({ projectRoot: root, feature: process.argv[3], phase: 'spec', gateFingerprint: 'g',"
+            " phaseRuleText: '', templateText: '', checks: [], contextFiles: [], lifecycleFragments: r.promptFragments }).material_sha256);",
+            self.unit, (self.ext / "hooks" / "shared" / "pre_verifier.mjs").resolve().as_uri())
+
+    def test_the_native_material_identity_follows_only_the_selected_fragment(self) -> None:
+        """无关段落改动并合法重登记：材料身份不变（审查可复用）；选中节的图变了并重登记：材料身份变（要重审）。"""
+        base = self.material_sha()
+        story = self.story_file.read_bytes().decode("utf-8")
+        self.story_file.write_bytes(story.replace("## 范围\n", "## 范围\n\n补一句与本单位无关的范围说明。\n", 1).encode("utf-8"))
+        self.register()
+        self.assertEqual(base, self.material_sha(), "无关表达变化换了审查对象")
+        story = self.story_file.read_bytes().decode("utf-8")
+        self.story_file.write_bytes(story.replace("回执到达", "回执超时", 1).encode("utf-8"))
+        self.register()
+        self.assertNotEqual(base, self.material_sha(), "相关片段变了，审查对象没换")
+
+    def test_another_unit_split_gets_only_what_it_carries(self) -> None:
+        """同一蓝图换一种施工单位划分：只承担逻辑视图余额节点的单位，取不到挂在开发视图模块上的那一节。"""
+        unit = (self.unit_dir / "change-unit.yaml").read_text(encoding="utf-8")
+        other = unit.replace("change_unit_id: balance-refresh", "change_unit_id: balance-view").replace(
+            "      kind: node\n      id: wallet-main-module\n      view_id: development",
+            "      kind: node\n      id: wallet-balance\n      view_id: logical")
+        self.assertNotEqual(unit, other, "夹具变了，用例要跟着改")
+        target = self.unit_dir.parent / "balance-view" / "change-unit.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(other, encoding="utf-8")
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        proc = subprocess.run(
+            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
+             "--action", "spec", "--audience", "author", "--feature", cu_id(self.BLUEPRINT, "balance-view")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        section = self.section(proc.stdout)
+        self.assertNotIn(self.selected_body(), section)
+        self.assertIn("未形成可确定的复用关联", section)
+        self.assertIn(self.selected_body(), self.section(), "原来的单位仍取得到它承担的那一节")
 
     # ---- 不是当前那一份：旧表达或缺口 ----
 

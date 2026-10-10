@@ -68,7 +68,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py meeting-refresh --
 - **`finding` 是给人和下游读的一段话**：已定与未决在同一条里说清，别把「没定」写成「定了」；
   脚本不读它判业务，所以写不清楚没人会替你发现；
 - **归属**：判得准属于本需求的写 `ours`；判得准不属于的写 `not_ours`，只记不消费；
-  判不准写 `unclear`，并写 `question`；
+  判不准写 `unclear`，并写 `question`；原话把归属留到以后定的（「回去商量」「今天不定」这类）就是判不准，不由你判成 `not_ours`；
 - **问不问**：下列任一成立就写 `question`，这一轮要人定：
   1. 结论改变本单的范围、接口或验收；
   2. 结论与已归档文档或人已做的决定冲突；
