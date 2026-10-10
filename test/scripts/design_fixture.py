@@ -122,10 +122,11 @@ TARGET = "view:logical/node:wallet-balance"
 
 
 def knowledge_decision(decision_id: str, unit: str, outcome: str, rationale: str,
-                       requirement: str | None = None) -> dict:
-    """一条规约的知识应用决定：来源文件与原文摘要在放进蓝图时按工程里激活的知识算（`decision_text`）。"""
+                       requirement: str | None = None, target_refs: list[str] | None = None) -> dict:
+    """一条规约的知识应用决定：来源文件与原文摘要在放进蓝图时按工程里激活的知识算（`decision_text`）；
+    适用的落点默认是夹具的设计对象，`target_refs` 可另指。"""
     return {"decision_id": decision_id, "unit": unit, "outcome": outcome, "rationale": rationale,
-            **({"requirement": requirement} if requirement else {})}
+            **({"requirement": requirement} if requirement else {}), **({"target_refs": target_refs} if target_refs else {})}
 
 
 ACTIVE_CONSTRAINTS = """
@@ -175,7 +176,7 @@ def decision_text(root: Path, spec: dict, active: list[dict]) -> str:
     else:
         knowledge = {"kind": "constraints", "form": "entries", "unit": spec["unit"], "source_sha256": digest,
                      "outcome": spec["outcome"], **({"requirement": spec["requirement"]} if applied else {}),
-                     "target_refs": [TARGET] if applied else []}
+                     "target_refs": (spec.get("target_refs") or [TARGET]) if applied else []}
     provenance = {"source_kind": "knowledge", "source_ref": ref, "observed_at": "2026-09-30T00:00:00Z",
                   "evidence_strength": "inferred", "extraction_method": "read_and_apply"}
     status = ("not_applicable" if spec["outcome"] == "not_applicable"

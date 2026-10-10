@@ -162,7 +162,7 @@
             {"title": "配置项", "reader": "details", "detail_kind": "configuration"}
           ]},
           "规约": {"author_guide": "逐条写激活规约在本需求的判定：适用的写本需求的哪项事实使它适用、由谁承担、怎样影响设计，不适用的写边界；判断取自蓝图的知识应用决定"},
-          "埋点": {"reader": "details", "detail_kind": "event"},
+          "埋点": {"reader": "details", "detail_kind": "event", "title_level": 4},
           "改动边界": {"reader": "change_boundary", "tables": {"rows": "模块|本单怎么动"},
                        "labels": {"unchanged": "开发视图不变"}},
           "材料清单": {"h4": [

@@ -75,6 +75,10 @@ function checkKnowledgeApplications(projectRoot, { decisions, facts = [], addres
     if (!source) { say(id, `来源 ${d.provenance.source_ref} 不是这一轮激活的知识文件`); continue; }
     if (source.kind !== k.kind || source.form !== k.form) { say(id, `写的是 ${k.kind}/${k.form}，来源文件是 ${source.kind}/${source.form}`); continue; }
     if (!source.units.includes(k.unit)) { say(id, `单元 ${k.unit} 不在 ${source.file} 里`); continue; }
+    if (k.kind === 'patterns' && k.unit !== HALVES[0]) {
+      say(id, `模式只按${HALVES[0]}选型，这条判的是 ${k.unit}——${HALVES[1]}是选定后落地方法的输入，不另判一次`);
+      continue;
+    }
     if (k.source_sha256 !== source.sha256) {
       say(id, `判断时的原文摘要 ${k.source_sha256} 与 ${source.file} 现在的 ${source.sha256} 不同——知识原文变了，按新原文重判`);
     }
@@ -163,7 +167,7 @@ export function featureKnowledge(projectRoot, feature, contracts) {
   return { ...checked, problems: [...problems, ...checked.problems], scope, label, blueprint: read.blueprint };
 }
 
-const NOTHING = { has: () => false };
+const NOTHING = { has: () => false, mentions: () => false };
 
 /**
  * 施工单位的设计责任范围：按原生目标关系判一个稳定地址在不在里面——它就是设计引用指向的对象、在其中，或包含它，
@@ -192,11 +196,14 @@ function unitScope(addressing, blueprint, refs, bad) {
     seen.add(node);
     return Object.values(node).some(v => holds(v, seen));
   };
-  return { has: address => index.has(address) && (inside.has(index.get(address)) || holds(index.get(address))) };
+  let text = null;
+  return { has: address => index.has(address) && (inside.has(index.get(address)) || holds(index.get(address))),
+    // 设计责任内的对象有没有按标识引到它（事实没有原生地址，只能按 fact_id 认引用）
+    mentions: id => (text ??= JSON.stringify(roots)).includes(id) };
 }
 
 /** 这个施工单位要承接的判断：落点（含模式角色落点）在它的设计责任内的；scope 为 null 时全部。 */
-export function carriedBy(rows, scope) {
+function carriedBy(rows, scope) {
   return rows.filter(d => !scope || [...(d.knowledge.target_refs ?? []), ...(d.knowledge.roles ?? []).map(r => r.target_ref)]
     .some(t => scope.has(t)));
 }
@@ -208,6 +215,20 @@ export function unitDuties(judged) {
     applied: carried.filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction),
     selected: carried.filter(d => d.knowledge.kind === 'patterns' && ['selected', 'adjusted'].includes(d.knowledge.outcome)),
   };
+}
+
+/**
+ * 本单位人读章能引用的判断与事实，作者任务与审查任务共用这一份：
+ * `mine` 落点或角色在设计责任内的判断（含不适用、拒绝、待定）；`global` 一个落点都没有的需求级判断，
+ * 对整个需求成立、不称本单位适用；落点全在别的施工单位的不给。事实：本单位设计按 fact_id 引到的在 `facts`，
+ * 其余只给定位（`located`）。scope 为 null（平铺维护 Feature）时全部是本单位的。
+ */
+export function unitContext(judged) {
+  const mine = carriedBy(judged.rows, judged.scope);
+  const global = judged.rows.filter(d => !mine.includes(d) && ![...(d.knowledge.target_refs ?? []), ...(d.knowledge.roles ?? [])].length);
+  const all = (judged.blueprint?.discovery?.facts ?? []).filter(f => f?.value?.knowledge);
+  const cited = f => !judged.scope || judged.scope.mentions(f.fact_id);
+  return { mine, global, facts: all.filter(cited), located: all.filter(f => !cited(f)) };
 }
 
 /** 选型决定里由这个施工单位承担的角色：角色自己的落点在它的设计责任内；整体角色齐不齐在蓝图层核。 */

@@ -92,6 +92,13 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
                             "d.knowledge.outcome = 'pending'; d.status = 'open_decision';")
         self.assertFalse(any("没有判断激活模式" in p for p in out), out)
 
+    def test_a_second_half_judgement_is_not_another_selection(self) -> None:
+        """模式只按上篇选型：再按下篇判一条就是同一模式判两次，点名那一条；上篇那条照常算已判断。"""
+        out = self.problems("const d = decisions.find(x => x.knowledge.kind === 'patterns');"
+                            "bp.decisions_and_gaps.decisions.push({ ...d, decision_id: 'k-pattern-lower', knowledge: { ...d.knowledge, unit: '下篇' } });")
+        self.assertTrue(any("k-pattern-lower" in p and "模式只按上篇选型" in p for p in out), out)
+        self.assertFalse(any("没有判断激活模式" in p for p in out), out)
+
     def test_no_active_pattern_needs_no_judgement(self) -> None:
         """没有激活模式时零判断合法。"""
         manifest = self.root / "doc" / "extensions" / "manifest.yaml"

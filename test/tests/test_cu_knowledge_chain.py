@@ -27,6 +27,7 @@ KNOWLEDGE_ID = "knowledge-obs-02"
 PATTERN_ID = "pattern-decision-tree"
 MODULE = "view:development/node:wallet-main-module"
 ELSEWHERE = "view:runtime"
+ELSEWHERE_ID = "knowledge-runtime-only"
 
 
 def sha(path: Path) -> str:
@@ -47,17 +48,21 @@ def pattern_spec(mode: str) -> list[dict]:
     return []
 
 
-def design(root: Path, with_roles: bool, pattern: str = "selected") -> None:
+def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False) -> None:
     """改夹具蓝图（按原文插入，不整份重写）：逐条的知识判断、选型决定、设计对象契约上的义务与角色；
     再按原生口径（蓝图原字节的摘要）更新施工单位的蓝图引用。`pattern` 是决策树的判断：selected / pending /
-    rejected（与其他模式一样按夹具默认有据拒绝）/ missing（激活模式一条判断都不写，漏判反例）。"""
+    rejected（与其他模式一样按夹具默认有据拒绝）/ missing（激活模式一条判断都不写，漏判反例）。
+    `elsewhere` 再加一条只落在运行视图上的适用规约（另一个施工单位独有）。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     text = canonical.read_text(encoding="utf-8")
     active = design_kit.active_constraints(root, design_kit.ACCESS)
+    other = next(u for c in active if c["kind"] == "constraints" for u in c["units"] if u != "OBS-02")
+    extra = [design_kit.knowledge_decision(ELSEWHERE_ID, other, "applied", "运行视图上的后台同步要满足它",
+                                           requirement="同步失败可回查", target_refs=[ELSEWHERE])] if elsewhere else []
     judged = design_kit.judged_rules(active, [design_kit.knowledge_decision(
         KNOWLEDGE_ID, "OBS-02", "applied", "余额刷新是新增的业务过程", requirement="刷新失败记一条可定位的日志"),
-        *pattern_spec(pattern)], False)
+        *pattern_spec(pattern), *extra], False)
     if pattern == "missing":
         judged = [d for d in judged if "file" not in d]
     text = text.replace("decisions_and_gaps:\n  decisions:\n", "decisions_and_gaps:\n  decisions:\n"
@@ -120,13 +125,14 @@ process.stdout.write(JSON.stringify({ must: i.methods?.[0]?.must ?? null, roles:
 class ChainCase(unittest.TestCase):
     WITH_ROLES = True
     PATTERN = "selected"
+    ELSEWHERE = False
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
     def setUpClass(cls) -> None:
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
-        design(cls.root, cls.WITH_ROLES, cls.PATTERN)
+        design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -324,7 +330,7 @@ class TheHostChapterExplainsTheUnit(ChainCase):
     def test_the_spec_review_lists_judgements_the_unit_does_not_carry(self) -> None:
         review = self.spec_probe()["review"]
         self.assertIn(f"| {KNOWLEDGE_ID} |", review)
-        self.assertIn("本单位不承接 |", review)
+        self.assertIn("| 需求级（无落点） |", review)
 
     def test_the_plan_table_sits_in_the_events_section(self) -> None:
         self.write("plan", "# 计划\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
@@ -332,6 +338,13 @@ class TheHostChapterExplainsTheUnit(ChainCase):
         gate = self.probe(fresh=True)["gate"]
         for gone in ("宿主扩展（可选）」章", "没有讲它的小节", "逐点表不在", "不是设计判断过的规约"):
             self.assertNotIn(gone, gate)
+
+    def test_the_plan_chapter_cites_real_acceptance(self) -> None:
+        self.write("plan", "# 计划\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
+                   + "\n验证见 AC-001 与 AC-999。\n\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("plan.md「宿主扩展（可选）」：引用的验收 AC-999 在 acceptance.yaml 里没有", gate)
+        self.assertNotIn("AC-001 在", gate)
 
     def test_a_point_table_elsewhere_and_a_missing_section_are_named(self) -> None:
         self.write("plan", "# 计划\n\n## 9. 埋点\n\n" + POINTS + "\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES)
@@ -342,7 +355,7 @@ class TheHostChapterExplainsTheUnit(ChainCase):
 
     def test_the_author_gets_the_judgements_it_does_not_carry(self) -> None:
         facts = self.probe()["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
-        self.assertIn("本单位不承接义务的知识判断与事实", facts)
+        self.assertIn("需求级判断（没有落点，对整个需求成立，不称本单位适用）", facts)
         self.assertIn("（not_applicable）", facts)
         self.assertNotIn(f"`{KNOWLEDGE_ID}`", facts)
         self.assertNotIn(f"`{PATTERN_ID}`", facts)
@@ -350,21 +363,30 @@ class TheHostChapterExplainsTheUnit(ChainCase):
 SIBLING_PROBE = """
 import { pathToFileURL } from 'node:url';
 const [root, ...features] = process.argv.slice(1);
-const k = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/knowledge-application.mjs').href);
+const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const k = await import(base + 'shared/knowledge-application.mjs');
+const kt = await import(base + 'shared/knowledge-task.mjs');
+const pre = (await import(base + 'shared/pre_verifier.mjs')).default;
 const out = {};
 for (const f of features) {
   const j = k.featureKnowledge(root, f, null);
-  const carried = k.carriedBy(j.rows, j.scope);
-  out[f] = { problems: j.problems, decisions: carried.map(d => d.decision_id).sort(),
-             roles: carried.flatMap(d => k.rolesOf(d, j.scope).map(r => r.role)).sort() };
+  const c = k.unitContext(j);
+  const author = kt.knowledgeTask(root, { action: 'spec', audience: 'author', feature: f });
+  const review = await pre({ phase: 'spec', feature: f, projectRoot: root });
+  out[f] = { problems: j.problems, decisions: c.mine.map(d => d.decision_id).sort(), global: c.global.map(d => d.decision_id),
+             roles: c.mine.flatMap(d => k.rolesOf(d, j.scope).map(r => r.role)).sort(),
+             facts: author.split('## 2. 有效事实与决定')[1].split('## 3. 当前契约与义务')[0], author,
+             review: (review.promptFragments ?? []).join('\\n') };
 }
 process.stdout.write(JSON.stringify(out));
 """
 
 
 class SiblingUnitsInOneBlueprint(ChainCase):
-    """同一蓝图两个施工单位：共同落点上的义务两边都承接，只落在一边设计责任内的角色只归那一边。"""
+    """同一蓝图两个施工单位：共同落点上的义务两边都承接，只落在一边设计责任内的角色与判断只归那一边；
+    没有落点的需求级判断两边各拿一次，作者任务与审查任务按同一份作用域取。"""
     STEPS = ()
+    ELSEWHERE = True
     SECOND = "balance-runtime"
 
     @classmethod
@@ -381,17 +403,43 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         (base / cls.SECOND).mkdir()
         (base / cls.SECOND / "change-unit.yaml").write_text(head + "design_refs:\n" + refs + runtime + after, encoding="utf-8")
 
+    def sibling(self) -> tuple[dict, str]:
+        if "_sibling" not in self.__class__.__dict__:
+            second = cu_id(BLUEPRINT, self.SECOND)
+            proc = subprocess.run(["node", "--input-type=module", "-e", SIBLING_PROBE, str(self.root.as_posix()), CU, second],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+            self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+            self.__class__._sibling = (json.loads(proc.stdout), second)
+        return self.__class__._sibling
+
     def test_each_unit_carries_its_own_and_the_shared_duties(self) -> None:
-        second = cu_id(BLUEPRINT, self.SECOND)
-        proc = subprocess.run(["node", "--input-type=module", "-e", SIBLING_PROBE, str(self.root.as_posix()), CU, second],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        out = json.loads(proc.stdout)
+        out, second = self.sibling()
         for f in (CU, second):
             self.assertEqual([], out[f]["problems"], f)
-            self.assertEqual(sorted([KNOWLEDGE_ID, PATTERN_ID]), out[f]["decisions"], f"{f} 漏了共同落点上的判断")
+        self.assertEqual(sorted([KNOWLEDGE_ID, PATTERN_ID]), out[CU]["decisions"], "模块单位漏了共同落点上的判断")
+        self.assertEqual(sorted([KNOWLEDGE_ID, PATTERN_ID, ELSEWHERE_ID]), out[second]["decisions"], "运行视图单位漏了它独有的判断")
         self.assertEqual(["节点表"], out[CU]["roles"], "运行视图上的角色被强给了不承担它的单位")
         self.assertEqual(["上下文", "节点表"], out[second]["roles"], "承担运行视图的单位漏了它的角色")
+
+    def test_another_units_judgement_stays_with_it(self) -> None:
+        """B 独有的判断不进 A 的作者任务与审查任务；B 自己的审查判断表里有它。"""
+        out, second = self.sibling()
+        self.assertNotIn(ELSEWHERE_ID, out[CU]["author"])
+        self.assertNotIn(ELSEWHERE_ID, out[CU]["review"])
+        self.assertIn(f"| {ELSEWHERE_ID} |", out[second]["review"])
+        self.assertNotIn(ELSEWHERE_ID, out[second]["facts"], "承接的适用判断在第 3 块，不在第 2 块重复")
+
+    def test_a_requirement_level_judgement_is_given_once_and_marked(self) -> None:
+        """没有落点的需求级判断：两个单位各拿一次，标明需求级，不说成本单位适用。"""
+        out, second = self.sibling()
+        for f in (CU, second):
+            self.assertTrue(out[f]["global"], f)
+            self.assertIn("需求级判断（没有落点，对整个需求成立，不称本单位适用）", out[f]["facts"])
+            for d in out[f]["global"]:
+                self.assertEqual(1, out[f]["author"].count(f"`{d}`"), (f, d))
+                self.assertEqual(1, out[f]["review"].count(f"| {d} |"), (f, d))
+                row = next(line for line in out[f]["review"].splitlines() if line.startswith(f"| {d} |"))
+                self.assertTrue(row.endswith("| 需求级（无落点） |"), row)
 
 
 class TheMaterializedContractIsReused(ChainCase):

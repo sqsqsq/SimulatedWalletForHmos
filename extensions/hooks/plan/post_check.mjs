@@ -217,7 +217,8 @@ export default guard('plan', async (ctx) => {
   else if (!judged) host.skipped.push({ what: '宿主扩展（可选）', why: '激活知识派生失败，承接范围无从确定' });
   else {
     host.problems.push(...hostChapterProblems(planText, { file: 'plan.md', anchor: '宿主扩展（可选）', judged,
-      events: !['none', 'missing'].includes(designStatPoints(judged).state) }));
+      acceptance: inputs.acceptance, events: !['none', 'missing'].includes(designStatPoints(judged).state) }));
+    if (!inputs.acceptance) host.skipped.push({ what: '扩展章引用的验收编号', why: inputs.why });
   }
 
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----

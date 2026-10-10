@@ -20,7 +20,7 @@
 import * as path from 'node:path';
 import { phaseArtifacts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
-import { carriedBy, entryOf, featureKnowledge } from './knowledge-application.mjs';
+import { entryOf, featureKnowledge, unitContext } from './knowledge-application.mjs';
 import { knowledgeTask } from './knowledge-task.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, readTextOrNull, relDisplay } from './paths.mjs';
@@ -59,15 +59,15 @@ const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r
  */
 function decisionTable(projectRoot, feature, knowledge, inputs) {
   const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
-  const mine = carriedBy(judged.rows, judged.scope);
+  const { mine, global } = unitContext(judged);
   const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
   if (!mine.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
-  // 不由本单位承接的判断也列出（落点写明）：宿主扩展章引用它们的不适用与不选理由，审查对着原判断核
+  // 需求级判断（没有落点）也列出：宿主扩展章引用它的不适用与不选理由，审查对着原判断核；落点在别的单位的不列
   return ['| 决定 | 知识单元 | 原文 | 判定 | 要求与理由 | 落点 |', '|---|---|---|---|---|---|',
-    ...[...mine, ...judged.rows.filter(d => !mine.includes(d))].map(d => `| ${d.decision_id} | ${d.knowledge.unit} `
+    ...[...mine, ...global].map(d => `| ${d.decision_id} | ${d.knowledge.unit} `
       + `| ${cell(entryOf(knowledge, d)?.constraint ?? '（模式，见知识任务原文）')} | ${d.knowledge.outcome} `
       + `| ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} `
-      + `| ${mine.includes(d) ? cell(d.knowledge.target_refs.join('、')) : '本单位不承接'} |`),
+      + `| ${mine.includes(d) ? cell((d.knowledge.target_refs ?? []).join('、')) : '需求级（无落点）'} |`),
     ...gaps];
 }
 

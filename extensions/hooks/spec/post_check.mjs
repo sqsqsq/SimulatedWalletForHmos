@@ -130,6 +130,7 @@ export default guard('spec', async (ctx) => {
     if (acceptance) alignment.problems.push(...acceptanceAlignment(specText.split(/\r?\n/), acceptance));
     if (!judged) host.skipped.push({ what: '宿主扩展治理项', why: '激活知识派生失败，承接范围无从确定' });
     else host.problems.push(...hostChapterProblems(specText, { file: 'spec.md', anchor: '宿主扩展治理项', judged, acceptance }));
+    if (judged && !acceptance) host.skipped.push({ what: '扩展章引用的验收编号', why: inputs.why });
     const checked = unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, specText, 'spec.md');
     diagrams.problems.push(...checked.problems);
     diagrams.skipped.push(...checked.skipped);

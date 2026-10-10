@@ -56,12 +56,12 @@ function readable(def, value, ctx, field) {
   }).filter(Boolean).join('；');
 }
 
-/** 某一类精确明细（`story_details`）：标题、完整正文逐字、依据。 */
-function detailBlocks(blueprint, kind) {
+/** 某一类精确明细（`story_details`）：标题、完整正文逐字、依据。合同给了 `title_level` 的，标题出成那一级的小节，否则加粗。 */
+function detailBlocks(blueprint, kind, level) {
   const out = [];
   for (const d of (blueprint.story_details ?? []).filter(x => x?.kind === kind)) {
     if (out.length) out.push('');
-    out.push(`**${d.title ?? d.id}**`, '', ...String(d.body ?? '').trim().split(/\r?\n/),
+    out.push(level ? `${'#'.repeat(level)} ${d.title ?? d.id}` : `**${d.title ?? d.id}**`, '', ...String(d.body ?? '').trim().split(/\r?\n/),
       '', `（${d.id}；${(d.evidence_refs ?? []).join('、') || '—'}）`);
   }
   return out;
@@ -111,7 +111,7 @@ function materialRows(source, def, ctx) {
 
 /** 每个读取器：`rows(source, def, where, gaps, ctx)`，没有人读写法的结构与读不到的输入记进 `gaps`。 */
 export const READERS = {
-  details: { rows: (s, def) => detailBlocks(s.blueprint, def.detail_kind), source: '蓝图 story_details' },
+  details: { rows: (s, def) => detailBlocks(s.blueprint, def.detail_kind, def.title_level), source: '蓝图 story_details' },
   change_boundary: { rows: (s, def, where, gaps) => boundaryRows(s.blueprint, def, { where, gaps }), source: '蓝图开发视图与架构影响决定' },
   materials: { rows: (s, def, where, gaps, ctx) => materialRows(s, def, { where, gaps, storyPath: ctx.storyPath }), source: '登记的冻结输入' },
 };

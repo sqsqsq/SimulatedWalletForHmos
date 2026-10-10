@@ -615,6 +615,7 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
                                 {"id": "e1", "kind": "event", "title": "成功率", "body": "上报一次", "evidence_refs": ["n2"]}]}
         text = "\n".join(self.rows("技术契约·配置项", bp))
         self.assertIn(body, text)
+        self.assertIn("**刷新开关**", text, "配置项的标题仍加粗，不升成小节")
         self.assertNotIn("上报一次", text, "别的类别混进来了")
 
     def test_two_indicators_each_keep_their_own_definition(self) -> None:
@@ -623,7 +624,7 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
             {"id": "e1", "kind": "event", "title": "预约成功率", "body": "分子提交成功，分母提交次数。", "evidence_refs": ["n1"]},
             {"id": "e2", "kind": "event", "title": "取消恢复率", "body": "分子恢复成功，分母取消中断。", "evidence_refs": ["n2"]}]}
         text = "\n".join(self.rows("埋点", bp))
-        self.assertLess(text.index("预约成功率"), text.index("取消恢复率"))
+        self.assertLess(text.index("#### 预约成功率"), text.index("#### 取消恢复率"), "指标按合同登记的标题级成小节")
         for body in ("分子提交成功，分母提交次数。", "分子恢复成功，分母取消中断。"):
             self.assertEqual(1, text.count(body))
         self.assertEqual([], self.gaps)
@@ -636,6 +637,34 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
         text = "\n".join(self.rows("改动边界", bp))
         self.assertIn("| WalletMain | 无刷新 → 可刷新 |", text)
         self.assertIn("| WalletMain → NetKit | dependency_edge：add：取余额 |", text)
+
+    def test_metric_numbers_follow_the_source_order(self) -> None:
+        """指标换序、增删后重投再重编号：编号按蓝图次序连续，机器区摘要仍认得出是投影原样（编号不算改动）。"""
+        script = (
+            "import * as fs from 'node:fs';"
+            "const [readers, documents, contract, orders] = process.argv.slice(1);"
+            "const { READERS } = await import(readers);"
+            "const d = await import(documents);"
+            "const c = JSON.parse(fs.readFileSync(contract, 'utf-8'));"
+            "const def = c.chapters.find(x => x.appendix).projection.sections['埋点'];"
+            "const out = [];"
+            "for (const order of JSON.parse(orders)) {"
+            "  const bp = { story_details: order.map(n => ({ id: 'e-' + n, kind: 'event', title: n, body: n + '的口径。', evidence_refs: ['n'] })) };"
+            "  const block = d.zoneBlock('埋点', '蓝图', READERS[def.reader].rows({ blueprint: bp }, def, '埋点', []));"
+            "  const text = d.renumberStory(['## 附录', '', '### 埋点', '', ...block, ''].join('\\n'), [{ title: '附录' }]);"
+            "  const lines = text.split('\\n');"
+            "  out.push({ heads: lines.filter(l => l.startsWith('#### ')), edited: d.zoneHandEdited(lines, d.zoneSpan(lines, '埋点')) });"
+            "}"
+            "process.stdout.write(JSON.stringify(out));")
+        documents = self.READERS.parent / "document.mjs"
+        orders = [["甲成功率", "乙时延"], ["乙时延", "甲成功率"], ["乙时延", "甲成功率", "丙成功率"], ["丙成功率"]]
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, self.READERS.resolve().as_uri(),
+                               documents.resolve().as_uri(), str(self.CONTRACT), json.dumps(orders, ensure_ascii=False)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        for order, got in zip(orders, json.loads(proc.stdout)):
+            self.assertEqual([f"#### 1.1.{i} {n}" for i, n in enumerate(order, 1)], got["heads"], order)
+            self.assertIsNone(got["edited"], f"重编号后的机器区被当成手改：{order}")
 
     def test_nothing_in_the_source_projects_nothing(self) -> None:
         """真源里没有这类对象：一行都不编，由结构判据要求作者写「不涉及：<依据>」。"""
@@ -2135,13 +2164,14 @@ class RealRunCase(unittest.TestCase):
 
     REAL = REPO_ROOT / "test" / "fixtures" / "real-run" / "AR90006"
     EXTENSION = DEV_EXT
+    DESIGN = REAL_RUN_DESIGN
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature = self.root / "doc" / "features" / "AR90006"
-        designed_copy(real_with_knowledge(self.REAL), "AR90006", DRAFT_TEXT, self.root, REAL_RUN_DESIGN)
+        designed_copy(real_with_knowledge(self.REAL), "AR90006", DRAFT_TEXT, self.root, self.DESIGN)
         self.story_path = self.feature / "AR" / "story.md"
         self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
@@ -2202,6 +2232,60 @@ class RealRunCase(unittest.TestCase):
         return self.story()
 
 
+
+class MetricsAreNumberedSubsections(RealRunCase):
+    """附录·埋点：一项明细一个指标，标题按合同登记的级别成小节、由重编号编号；配置项仍加粗。
+    投影、检查与重编号认同一份表示（标题序号不算改动），机器区正文或标题文字被人改过照样拒绝。"""
+
+    DESIGN = {**REAL_RUN_DESIGN, "details": [
+        design_kit.story_detail("detail-flag", "configuration", "自动充值开关", "默认关闭，随版本放开。"),
+        design_kit.story_detail("detail-sign", "event", "签约成功率", "签约成功的尝试 ÷ 全部签约尝试。"),
+        design_kit.story_detail("detail-manage", "event", "管理操作成功率", "改档与关闭成功的尝试 ÷ 全部尝试。")]}
+
+    def landed(self) -> str:
+        self.build("skeleton")
+        self.land_appendix()
+        self.build("number")
+        return self.story()
+
+    def metric_heads(self, text: str) -> list[str]:
+        lines = text.split("\n")
+        at = next(i for i, l in enumerate(lines) if l.startswith("### ") and l.endswith(" 埋点"))
+        end = next(i for i in range(at + 1, len(lines)) if lines[i].startswith(("### ", "## ")))
+        return [lines[at][4:].split(" ")[0], [l for l in lines[at:end] if l.startswith("#### ")]]
+
+    def test_each_metric_is_a_numbered_subsection(self) -> None:
+        text = self.landed()
+        number, heads = self.metric_heads(text)
+        self.assertEqual([f"#### {number}.1 签约成功率", f"#### {number}.2 管理操作成功率"], heads)
+        self.assertIn("**自动充值开关**", text)
+        self.assertNotIn("#### 自动充值开关", text)
+
+    def test_project_and_number_again_change_nothing(self) -> None:
+        before = self.landed()
+        self.build("project")
+        self.build("number")
+        self.assertEqual(before, self.story(), "重投与重编号不幂等")
+        self.assertIn("服务端返回的受理状态决定后续处理路径。", before, "作者区被动了")
+        code, out = self.check_output()
+        self.assertNotIn("附录·埋点", out, out)
+
+    def refused(self, old: str, new: str) -> None:
+        text = self.landed()
+        self.assertEqual(1, text.count(old), old)
+        self.story_path.write_text(text.replace(old, new), encoding="utf-8")
+        before = self.story_path.read_bytes()
+        proc = self.build_raw("project")
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("有人手改过", proc.stdout + proc.stderr)
+        self.assertEqual(before, self.story_path.read_bytes(), "手改被投影盖掉了")
+
+    def test_a_hand_edit_in_a_metric_body_is_still_refused(self) -> None:
+        self.refused("签约成功的尝试 ÷ 全部签约尝试。", "签约成功的尝试 ÷ 进入页面次数。")
+
+    def test_a_renamed_metric_title_is_still_refused(self) -> None:
+        """只有序号不算改动；标题文字改了就是改了。"""
+        self.refused(" 签约成功率\n", " 签约达成率\n")
 
 class OneChapterIsJudgedWhenItIsSubmitted(RealRunCase):
     """只看本章正文就判得了的，提交这一章时判（10 §3.2）：位置是正在改的草稿与行，
