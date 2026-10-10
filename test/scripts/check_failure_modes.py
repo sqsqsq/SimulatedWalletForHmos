@@ -1509,29 +1509,19 @@ def a02_adapt_check_blind(root: Path, ctx: Ctx) -> Outcome:
 # 批次 3 子批 A：作者面通道
 # --------------------------------------------------------------------------- #
 
-#: 判据推理搬回 author.md 的形态——**整段**展开「怎么判」，而不是一句「门禁会拦什么」。
-#: 只认带标题的推理块。一句「判据是 X 不是 Y」是简洁的门禁说明，属于须知该有的内容，
-#: 拿它当推理段会把正确的写法也判掉（实测 ut/author.md 就撞在这上面）。
-REASONING_MARKERS = ("三个自问", "写每一行前", "自问：")
-
-#: author.md 的四段结构：读哪些文件 / 产出形态 / 跑哪条命令 / 门禁拦什么。
-#: 段落数明显超出，说明教材内容又搬回来了——这比关键词更能代表「不再是索引」。
-AUTHOR_DOC_MAX_SECTIONS = 6
-
-
 @checker
 def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
     """给阶段作者的要求写在了只有 verifier 读得到的地方。
 
     8 个 hook 事件全部在 harness 同一进程、verifier 子 agent 之前跑完，片段唯一去处是
     ``ai-prompt.md`` 尾部——``hooks/<phase>/*.md`` 里写什么，**写产物的那个主 agent 都看不到**。
-    基线态六份 ``on_context_load.md`` 400 行通篇是作者向文本（「spec 是什么」「三个自问」
-    「不写文档坐标」），于是作者只能靠门禁报错反推要求，内网实测 plan「仅展示」、coding「完全失效」。
+    基线态六份 ``on_context_load.md`` 400 行通篇是作者向文本，于是作者只能靠门禁报错反推要求，
+    内网实测 plan「仅展示」、coding「完全失效」。
 
-    本条守两件事：``hooks/**/*.md`` 只剩 ``author.md`` 与 ``reviewer.md``（作者与独立审查者的要求页，
-    由知识任务点名送达）；每份是**索引**不是教材（不整段展开判据推理）。页面读不读得清、有没有重复展开，
-    由维护内容评审按职责与实际信息量核，不用物理行数代替（2026-10-10 退出 60 行门）。判定基准派生自
-    ``hooks/`` 的阶段目录，不写死阶段名。
+    本条只守能确定检查的作者通道：``hooks/**/*.md`` 只能是 ``author.md`` 或 ``reviewer.md``（作者与独立审查者的
+    要求页，由知识任务点名送达），且至少一个阶段有 ``author.md``。各阶段的接线由 phase_bindings 与作者入口的
+    测试负责；页面简洁、可读、有没有重复展开判据或知识正文，由维护内容评审按职责与实际信息量核，不用行数、
+    标题数或词表代替（2026-10-10 维护设计者裁定退出这三类代理）。判定基准派生自 ``hooks/`` 的阶段目录，不写死阶段名。
     """
     hooks_dir = root / "hooks"
     if not hooks_dir.exists():
@@ -1539,31 +1529,14 @@ def a03_author_channel_broken(root: Path, ctx: Ctx) -> Outcome:
     phases = sorted(p.name for p in hooks_dir.iterdir() if p.is_dir() and p.name != "shared")
     if not phases:
         return Outcome(False, "判定基准派生为空（hooks/ 下没有阶段目录），不当作通过")
-
-    hits: list[str] = []
-    for md in sorted(hooks_dir.rglob("*.md")):
-        rel = md.relative_to(root).as_posix()
-        if md.name not in ("author.md", "reviewer.md"):
-            hits.append(f"{rel} 是给作者的文本却放在 hooks 里——它只进 ai-prompt，作者读不到")
-            continue
-        # 末尾换行是文件的正常形态，不是内容行——算进去会让每份都多 1 行。
-        lines = split_lines(read_text(md))
-        while lines and not lines[-1].strip():
-            lines.pop()
-        body = read_text(md)
-        for marker in REASONING_MARKERS:
-            if marker in body:
-                hits.append(f"{rel} 含判据推理段「{marker}」——那属于模板注释或 overlay，不属于须知")
-        sections = [ln for ln in lines if ln.startswith("## ")]
-        if len(sections) > AUTHOR_DOC_MAX_SECTIONS:
-            hits.append(f"{rel} 有 {len(sections)} 个二级段落，超过 {AUTHOR_DOC_MAX_SECTIONS}"
-                        "——须知是四段索引（读什么 / 写成什么 / 跑什么 / 拦什么），不是教材")
+    hits = [f"{md.relative_to(root).as_posix()} 是给作者的文本却放在 hooks 里——它只进 ai-prompt，作者读不到"
+            for md in sorted(hooks_dir.rglob("*.md")) if md.name not in ("author.md", "reviewer.md")]
     if hits:
         return Outcome(False, "；".join(hits[:6]))
     covered = [p for p in phases if (hooks_dir / p / "author.md").exists()]
     if not covered:
         return Outcome(False, f"{len(phases)} 个阶段一个 author.md 都没有——作者面通道不存在")
-    return Outcome(True, f"{len(covered)}/{len(phases)} 个阶段有 author.md，且无判据推理段")
+    return Outcome(True, f"hooks 下只有作者页与审查页；{len(covered)}/{len(phases)} 个阶段有 author.md")
 
 
 @checker

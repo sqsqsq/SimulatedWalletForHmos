@@ -84,6 +84,9 @@ graph TD
 | `data/repository/ShareDraftStore.ets` | 发起草稿的本地存储：落盘以扛过应用关闭，按账号分键，发出成功、退出登录、切换账号时清除 | 新增 |
 | `presentation/components/CarKeyCardSection.ets` | 卡包里的车钥匙卡片分区：本人钥匙卡片（含「分享」「分享管理」入口）、待添加的钥匙（点击进接受页）与收到的钥匙卡片（撤销中保留到收回完成） | 新增 |
 | `presentation/pages/CardPackPage.ets` | 卡包页嵌入车钥匙卡片分区；门槛（已登录且有车钥匙）不满足时不显示分享入口；每次进入或回到卡包按当前账号重新获取 | 修改 |
+| `presentation/interaction/ShareSetupPageOperates.ets` | 设置页动作表与动作枚举 `ShareSetupActions`（page-interaction 动作表、动作枚举角色） | 新增 |
+| `presentation/interaction/ShareSetupPageInteraction.ets` | 设置页交互封装：构建动作表、提供 `doOperator` 入口（page-interaction 交互封装角色） | 新增 |
+| `presentation/interaction/ShareSetupContext.ets` | 设置页交互上下文：对象、档位、有效期、配额与草稿（page-interaction 上下文角色） | 新增 |
 | `presentation/pages/ShareSetupPage.ets` | 分享设置页：给谁、权限、有效期、发出；进页回填草稿；导出 builder | 新增 |
 | `presentation/pages/ShareManagePage.ets` | 分享管理页：配额、列表；生效条目可撤销，已作废与已到期条目可重新发起；导出 builder | 新增 |
 | `presentation/pages/ShareAcceptPage.ets` | 接受页：按 shareId 取收到的分享展示车辆信息卡、添加到钱包，结束后回卡包；导出 builder | 新增 |
@@ -125,6 +128,8 @@ CardPackPage
 ```
 
 ### 4.2 ShareSetupPage
+
+交互按 page-interaction 编排：页面经 `ShareSetupPageInteraction.doOperator` 触发动作，等待用户选择处停机。
 
 ```
 ShareSetupPage
@@ -244,20 +249,61 @@ flowchart LR
 
 ---
 
-## 9. 埋点逐点表（蓝图 detail-share-events 落实）
-
-| 统计点 | 责任方法 | 结果分类 | 获知时机 |
-|---|---|---|---|
-| 分享流程 / 发起 | `KeySharingRepository.createSharing` | 成功 / 签发失败 / 请求失败 | 创建返回或通信失败 |
-| 分享流程 / 接受 | `KeySharingRepository.acceptSharing` | 凭据下发成功 / 失败 | 接受返回 |
-| 分享流程 / 撤销 | `KeySharingRepository.revokeSharing` | 立即失效 / 撤销中 / 撤销请求失败 | 撤销返回 |
-| 分享流程 / 失效 | `KeySharingRepository.listSharings` | 自然到期 / 作废 / 已撤销 | 列表拉取时首次得知 |
-
-事件只带车型类别、阶段与结果分类；一次发起到终态算一次尝试，失败后重试算新尝试，同一状态重复拉到不重复记。项目里现在只有通用模板，四类事件按项目上报协议新增登记。
-
----
-
 ## 宿主扩展（可选）
+
+### 项目知识复用
+
+| 新增能力 | 复用了什么 | 未复用的理由 | 与登记不符之处 |
+|----------|------------|--------------|----------------|
+| 对方账号打码 | `CommFunc.MaskUtil` | — | — |
+| 定位日志 | `CommFunc.Logger` | — | — |
+| 四类事件上报 | `CommFunc.WalletHAManager` 上报封装 | — | 仓内只有通用事件模板，四类事件的流程、步骤与内码按新增登记 |
+| 页面导航 | `NavPathContext`、宿主 `navDestinationMap` | — | — |
+| 登录态 | `AccountManager` | — | — |
+| 设置页交互编排 | 编排 SDK `framework`（`PageInteractionBuilderV3`、`DefaultPageInteractionContext`） | — | — |
+| 分区卡片等组件 | `CommUI` | — | — |
+| 发起草稿存储 | — | 工程里没有本地草稿能力，`ShareDraftStore` 新增 | — |
+| 英文文案 | — | 工程只有 base 资源目录，按 RES-02 新建 `en_US` | 与「中英文齐备」的现状不符，按新建承接 |
+
+### 规约落实到实体
+
+| 编号 | 落实成什么 | 落点实体 | 验证 |
+|------|------------|----------|------|
+| UX-01 | 方向与对齐参数用 start/end | `ShareSetupPage`、`ShareManagePage`、`ShareAcceptPage`、`KeyCardDetailPage`、`CarKeyCardSection` | 设备 |
+| SEC-01 | 展示内容在组装处打码；日志与事件不带账号；业务接口传可识别标识 | `KeySharingRepository` 的展示组装、`ShareDraftStore`、日志与上报调用 | 单测 + 设备 |
+| DFX-01 | 每次进页拉一次，换对象查一次，无轮询 | `KeySharingRepository` 的六个方法 | 单测 |
+| OBS-02 | 创建、接受、撤销失败写定位日志 | `KeySharingRepository.createSharing` / `acceptSharing` / `revokeSharing` | 单测 |
+| OBS-03 / OBS-05 / OBS-06 | 四个流程指标的统计点逐点落到责任方法，字段按上报协议，事件新增登记 | 本章「埋点」表里的责任方法 | 单测 |
+| RES-01 / RES-02 | 图标与文案按复用顺序取；新增文案中英文齐备 | 四个新页面；`string.json`（base、en_US） | 设备 |
+| COMPAT-01 | 六个接口字段与含义不变 | `KeySharingSource` 接口定义 | 单测 |
+| ENV-01 | 草稿清除后从头选，不崩溃 | `ShareDraftStore`、`ShareSetupPage` 回填 | 单测 |
+| ENV-02 | 幂等标识防重复创建，发出请求中禁用 | `KeySharingRepository.createSharing`、`ShareSetupPageOperates` 的发出动作 | 单测 |
+| DLV-01 | 新增文案进待翻译清单 | `string.json` 新增条目 | 人工跟踪 |
+
+不适用的四条（DFX-02、OBS-07、COMPAT-02、DLV-02）不挂实体。
+
+### 设计模式选型与角色
+
+| 单元 | 模式 | 选 / 不选 | 角色与实体 |
+|------|------|-----------|------------|
+| 分享设置页三段交互 | page-interaction | 选 | 动作表 `ShareSetupPageOperates`；动作枚举 `ShareSetupActions`（同文件）；交互封装 `ShareSetupPageInteraction`；上下文 `ShareSetupContext`；页面组件 `ShareSetupPage` |
+| 发起分享主链路 | decision-tree | 不选 | 分支都是一次请求的结果判断，由 `KeySharingRepository.createSharing` 承担 |
+
+设置页的动作链：选对象 → 查权限（等待用户选档时停机）→ 选有效期 → 发出（请求中停机，返回后按结果回到设置页或回卡包）。换对象重新进入「查权限」，原档位不可用时请车主重选。
+
+### 埋点
+
+蓝图 detail-share-events 的统计设计按四个流程指标落实。指标按流程算，一次尝试从流程开始到结果确定，重新发起算新的一次；事件只带车型类别、阶段与结果分类。查配额、查权限与进入卡包补拉收到的分享失败只写定位日志（`Logger`），不进统计。仓内只有通用事件模板，各统计点的流程、步骤与内码按项目上报协议新增登记。
+
+| 指标 | 统计点 | 责任方法 | 结果分类 | 获知时机 |
+|------|--------|----------|----------|----------|
+| 分享发起成功率 | 发起流程 / 创建分享 | `KeySharingRepository.createSharing` | 已建立 / 签发失败 / 请求失败 | 创建响应或通信失败 |
+| 分享接受成功率 | 接受流程 / 接受 | `KeySharingRepository.acceptSharing` | 生效 / 凭据下发失败 / 请求失败 | 接受响应 |
+| 分享撤销成功率 | 撤销流程 / 撤销 | `KeySharingRepository.revokeSharing` | 已受理 / 撤销请求失败 | 撤销响应 |
+| 分享被接受比例 | 分享生命周期 / 接受 | `KeySharingRepository.acceptSharing` | 生效 | 接受响应；与接受流程同一次结算，不重复上报 |
+| 分享被接受比例 | 分享生命周期 / 失效 | `KeySharingRepository.listSharings` | 作废 / 到期 / 已撤销 | 列表拉取时首次得知；同一状态重复拉到不重复记 |
+
+每个责任方法持有本次尝试，结果在方法内结算一次；重复回调不重报。
 
 ### 验证责任
 
