@@ -116,26 +116,6 @@ export function joinPosix(base, ref) {
 // --------------------------------------------------------------------------
 
 /**
- * 本次采用的冻结来源里的 Markdown：工程相对路径 → 原文。图源的 document 来源只认这些。
- *
- * 按冻结快照登记的文件逐份读，不扫目录；还没交给设计时没有冻结来源，返回空集合——
- * 图源核不到来源时报「不是本次有效采用的来源」，不回退读工作区里的新版本。
- */
-export function adoptedDocuments(ctx) {
-  const out = new Map();
-  const ref = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null)?.input?.snapshot_ref;
-  if (!ref || !ctx.projectRoot) return out;
-  const dir = path.posix.dirname(String(ref));
-  for (const row of readJson(path.join(ctx.projectRoot, ...String(ref).split('/')), null)?.files ?? []) {
-    if (!/\.md$/i.test(String(row?.path ?? ''))) continue;
-    const at = `${dir}/files/${row.path}`;
-    const text = readText(path.join(ctx.projectRoot, ...at.split('/')));
-    if (text !== null) out.set(at, text);
-  }
-  return out;
-}
-
-/**
  * 需求目录里一份上游文件在本次采用的版本：交给设计后读冻结输入里的原始字节，当前工作区的新版本不改变已采用的来源；
  * 还没交给设计时读当前文件。返回正文与它的位置（冻结副本给工程内路径，当前文件给需求目录内路径），读不到返回 null。
  *

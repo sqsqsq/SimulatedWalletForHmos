@@ -184,18 +184,28 @@ export function findByName(items, name) {
   return { hit: null, ambiguous: loose.length > 1 ? loose.map(x => x.raw ?? x.name) : null };
 }
 
+//: 原生稳定地址的形态：种类前缀加编号。写作设计「依据」行引用蓝图对象用它，附录依据核对与施工单位取片段共用这一个口径
+const ADDRESS = /\b(?:blueprint|view|relation|decision|gap|contract):[^\s`'"，、；。）)]+/g;
+
+/** 一段文字里写到的原生地址（带不带反引号都认），按出现顺序去重。 */
+export function nativeAddresses(text) {
+  return [...new Set([...String(text ?? '').matchAll(ADDRESS)].map(m => m[0]))];
+}
+
 /**
  * 一处小节在全篇里的行区间（0 起，含标题行，`end` 不含）：章，章下的 `###`，再下的 `####`。
- * 按名定位走 `findByName`；认不开返回 `{ ambiguous }`，找不到返回 null——调用方报缺口，不任选一处。
+ * 按名定位走 `findByName`；同级有两处同名、或认不开时返回 `{ ambiguous }`，找不到返回 null——调用方报缺口，不任选一处。
  */
 export function storySpan(storyText, chapterTitle, at = '', under = '') {
   const doc = parseDocument(storyText);
-  let node = doc.headings.find(h => h.level === 2 && h.name === normalizeHeading(chapterTitle));
-  if (!node) return null;
-  for (const [level, name] of [[3, at], [4, under]]) {
+  let node = null;
+  for (const [level, name] of [[2, chapterTitle], [3, at], [4, under]]) {
     if (!name) break;
-    const end = headingEnd(doc, node);
-    const { hit, ambiguous } = findByName(doc.headings.filter(h => h.level === level && h.at > node.at && h.at < end), name);
+    const end = node ? headingEnd(doc, node) : doc.lines.length;
+    const peers = doc.headings.filter(h => h.level === level && (!node || (h.at > node.at && h.at < end)));
+    const same = peers.filter(h => h.name === normalizeHeading(name));
+    if (same.length > 1) return { ambiguous: same.map(h => h.raw) };
+    const { hit, ambiguous } = level === 2 ? { hit: same[0] ?? null, ambiguous: null } : findByName(peers, name);
     if (!hit) return ambiguous ? { ambiguous } : null;
     node = hit;
   }
@@ -487,12 +497,8 @@ export function storySections(storyText) {
  * @returns {{start:number, end:number}|null}
  */
 export function subsectionSpan(storyText, chapterTitle, name) {
-  const doc = parseDocument(storyText);
-  const chapter = doc.headings.find(h => h.level === 2 && h.name === normalizeHeading(chapterTitle));
-  if (!chapter) return null;
-  const end = headingEnd(doc, chapter);
-  const { hit } = findByName(doc.headings.filter(h => h.level === 3 && h.at > chapter.at && h.at < end), name);
-  return hit ? { start: hit.at + 1, end: headingEnd(doc, hit) } : null;
+  const span = storySpan(storyText, chapterTitle, name);
+  return span && !span.ambiguous ? { start: span.start + 1, end: span.end } : null;
 }
 
 /**

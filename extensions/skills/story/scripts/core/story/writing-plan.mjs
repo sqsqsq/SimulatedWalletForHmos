@@ -14,7 +14,7 @@
  */
 import { readText } from './context.mjs';
 import {
-  DIAGRAM_SYNTAXES, fenceRanges, normalizeHeading, placeholderProblems,
+  DIAGRAM_SYNTAXES, fenceRanges, nativeAddresses, normalizeHeading, placeholderProblems,
 } from './document.mjs';
 import { relFromFeature } from './sources.mjs';
 
@@ -214,16 +214,16 @@ function readSkeleton(plan, lines, range, fenced, say) {
 }
 
 /**
- * 写作设计里写了依据的位置：章、`####` 小节、`#####` 子节各一条，`- 依据：` 行原文照给。
- * 施工单位按依据里的蓝图地址取这一处的已定表达。
+ * 写作设计里依据写了原生地址的位置：章、`####` 小节、`#####` 子节各一条，带依据行写到的地址。
+ * 施工单位按这些地址取这一处的已定表达；地址口径与附录依据核对共用 `nativeAddresses`。
  *
- * @returns {{chapter: string, at: string, under: string, basis: string[]}[]}
+ * @returns {{chapter: string, at: string, under: string, refs: string[]}[]}
  */
 export function basisSections(plan) {
   const out = [];
   const take = (chapter, at, under, notes) => {
-    const basis = notes.map(n => /^依据[:：]\s*(.+)$/.exec(n)?.[1]?.trim()).filter(Boolean);
-    if (basis.length) out.push({ chapter, at, under, basis });
+    const refs = nativeAddresses(notes.filter(n => /^依据[:：]/.test(n)).join('\n'));
+    if (refs.length) out.push({ chapter, at, under, refs });
   };
   for (const sk of plan?.skeletons?.values() ?? []) {
     take(sk.id, '', '', sk.notes);

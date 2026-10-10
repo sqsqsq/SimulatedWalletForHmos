@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import re
@@ -2560,7 +2561,8 @@ class DiagramSourcesFollowOneContract(unittest.TestCase):
         frozen = cls.root / cls.AT
         frozen.parent.mkdir(parents=True, exist_ok=True)
         frozen.write_text(cls.SR, encoding="utf-8")
-        (cls.root / rel / "snapshot.json").write_text(json.dumps({"files": [{"path": "SR/design.md"}]}), encoding="utf-8")
+        (cls.root / rel / "snapshot.json").write_text(json.dumps({"files": [
+            {"path": "SR/design.md", "sha256": hashlib.sha256(frozen.read_bytes()).hexdigest()}]}), encoding="utf-8")
         feature = cls.root / "doc" / "features" / "REQ-X"
         (feature / "AR" / "story-src" / "story-flow.json").write_text(
             json.dumps({"input": {"snapshot_ref": f"{rel}/snapshot.json"}}), encoding="utf-8")
@@ -2571,7 +2573,7 @@ class DiagramSourcesFollowOneContract(unittest.TestCase):
         proc = subprocess.run(
             ["node", "--input-type=module", "-e",
              "const m = await import(process.argv[1]);"
-             "const ctx = { projectRoot: process.argv[2], featureRoot: process.argv[3] };"
+             "const ctx = { projectRoot: process.argv[2], flowPath: process.argv[3] + '/AR/story-src/story-flow.json' };"
              "process.stdout.write(JSON.stringify(m.storyDiagramSourceProblems(ctx, process.argv[4], n => `L${n}`)));",
              IMAGES.resolve().as_uri(), str(self.root), str(self.feature), story],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -2666,7 +2668,7 @@ class BlueprintGraphsAreAdoptedByReference(StoryBuildCase):
             "const g = native.module('scripts/utils/blueprint-graph-generator.ts').generateMermaidViewGraph(bp, view);"
             "fs.writeFileSync(file, text.replace(/\\s*$/, '\\n') + YAML.stringify({ generated_graphs: [g] }));"
             "const read = fa.readBlueprint(root, 'bp-REQ-DEMO', 'draft');"
-            "const ctx = { projectRoot: root, featureRoot: root + '/doc/features/REQ-DEMO' };"
+            "const ctx = { projectRoot: root, flowPath: root + '/doc/features/REQ-DEMO/AR/story-src/story-flow.json' };"
             "const mark = id => '%% 图源 ' + JSON.stringify({ kind: 'blueprint', blueprint_ref: read.blueprint_ref, graph_id: id, mode: 'reuse' });"
             "const story = id => '## 五\\n\\n```mermaid\\n' + mark(id) + '\\n' + g.content + '```\\n';"
             "process.stdout.write(JSON.stringify([read.status, im.storyDiagramSourceProblems(ctx, story(g.graph_id), n => n),"

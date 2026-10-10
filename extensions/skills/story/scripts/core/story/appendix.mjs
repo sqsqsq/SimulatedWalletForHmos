@@ -13,7 +13,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-  chapterSpan, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames,
+  chapterSpan, findByName, headingEnd, nativeAddresses, normalizeHeading, parseDocument, sectionBody, sectionNames,
   zoneBlock, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, readJson, replaceFile } from './context.mjs';
@@ -87,8 +87,6 @@ function appendixSourceProblems(ctx) {
     ...gaps];
 }
 
-//: 原生稳定地址的形态：种类前缀加编号，写作设计「依据」行里引用蓝图对象用它
-const ADDRESS = /\b(?:blueprint|view|relation|decision|gap|contract):[^\s`'"，、；。）)]+/g;
 
 /**
  * 附录作者写的几节（接口、数据、规约、材料取舍）在写作设计骨架里的「依据」：引用的原生地址要在当前蓝图里。
@@ -102,7 +100,7 @@ export function appendixBasisProblems(ctx, plan) {
   const known = blueprintAddresses(ctx.projectRoot, source.blueprint);
   const nodes = [skeleton, ...skeleton.sections.flatMap(s => [s, ...s.sections])];
   const cited = nodes.flatMap(n => n.notes.filter(note => /^依据[:：]/.test(note))
-    .flatMap(note => [...note.matchAll(ADDRESS)].map(m => ({ at: n.title ?? appendix.id, ref: m[0] }))));
+    .flatMap(note => nativeAddresses(note).map(ref => ({ at: n.title ?? appendix.id, ref }))));
   return cited.filter(c => !known.has(c.ref)).map(c => `写作设计「${c.at}」的依据引用了 ${c.ref}，`
     + `当前蓝图 ${source.ref?.blueprint_id} r${source.ref?.revision} 里没有这个对象——依据写当前蓝图里实际的原生地址`);
 }

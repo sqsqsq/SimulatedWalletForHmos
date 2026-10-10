@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
@@ -146,9 +147,10 @@ class AdoptedDiagramsReachTheAuthor(WorkspaceCase):
         for name, text in files.items():
             f = self.root / rel / "files" / name
             f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(text, encoding="utf-8")
-        (self.root / rel / "snapshot.json").write_text(
-            json.dumps({"files": [{"path": name} for name in files]}), encoding="utf-8")
+            f.write_bytes(text.encode("utf-8"))
+        (self.root / rel / "snapshot.json").write_text(json.dumps({"files": [
+            {"path": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for name, text in files.items()]}),
+            encoding="utf-8")
         (src / "story-flow.json").write_text(json.dumps({"input": {"snapshot_ref": f"{rel}/snapshot.json"}}), encoding="utf-8")
         return rel
 
@@ -190,6 +192,12 @@ class AdoptedDiagramsReachTheAuthor(WorkspaceCase):
         section = self.section_4a(self.inputs())
         self.assertNotIn("%% 图源", section)
         self.assertIn("还没交给设计时没有冻结来源", section)
+
+    def test_a_frozen_file_whose_bytes_changed_is_not_a_source(self) -> None:
+        """冻结后被改过的文件按登记摘要核不过：不列它的图、不给标记。"""
+        rel = self.freeze({"SR/design.md": self.SR})
+        (self.root / rel / "files" / "SR" / "design.md").write_bytes(self.SR.replace("判定", "改过").encode("utf-8"))
+        self.assertNotIn("%% 图源", self.section_4a(self.inputs()))
 
     def test_no_parsable_diagram_is_not_called_no_diagram(self) -> None:
         """没解析出 Mermaid 不等于来源没有图：说明哪种格式没作结构解析，指回原文自己对照。"""

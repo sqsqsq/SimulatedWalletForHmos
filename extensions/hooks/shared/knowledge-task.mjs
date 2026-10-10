@@ -17,13 +17,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { blueprintKnowledge, carriedBy, entryOf, featureKnowledge, rolesOf } from './knowledge-application.mjs';
-import { loadNative, readBlueprint, readFeature, relatedStories } from './framework-access.mjs';
+import { loadNative, readBlueprint, readFeature } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
 import { questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
-import { extensionRoot, readJsonOrNull, readTextOrNull, relDisplay } from './paths.mjs';
-import { storySpan } from '../../skills/story/scripts/core/story/document.mjs';
+import { extensionRoot, relDisplay } from './paths.mjs';
+import { unitSources } from '../../skills/story/scripts/core/story/design-source.mjs';
+import { normalizeHeading, storySpan } from '../../skills/story/scripts/core/story/document.mjs';
 import { basisSections, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 
 const BLUEPRINT_ACTIONS = ['discovery', 'design', 'questioning'];
@@ -125,8 +126,7 @@ function blueprintTask(root, id, action) {
  * 本施工单位要履行的知识判断：承接的适用规约（带要求、落点与这条允许的 verify）与选中模式在本单位的角色，
  * 先于知识原文交给作者。判断不在这里重做，原文按条目在第 4 块。
  */
-function carriedDuties(root, feature, action, contracts, knowledge) {
-  const judged = featureKnowledge(root, feature, contracts);
+function carriedDuties(judged, action, knowledge) {
   const carried = carriedBy(judged.rows, judged.scope);
   const applied = carried.filter(d => d.knowledge.kind === 'constraints' && d.knowledge.outcome === 'applied' && !d.reviewAction);
   const selected = carried.filter(d => d.knowledge.kind === 'patterns' && ['selected', 'adjusted'].includes(d.knowledge.outcome));
@@ -150,62 +150,61 @@ function verbatim(text) {
 }
 
 /**
- * 关联 Story 里与本施工单位相关的已定表达：写作设计里某一处的依据有蓝图地址落在本单位的设计责任内，
- * 就照录 Story 里那一处（含同节的图与表）与它的身份（路径、行区间、内容摘要）。作者复用与审查核承诺用这同一份。
+ * 关联 Story 里与本施工单位相关的已定表达：写作设计里某一处的依据有原生地址落在本单位的设计责任内，
+ * 就照录 Story 里那一处（标题之下的正文，含同节的图与表）与它的身份（需求、文件、章节名与内容摘要）。
+ * 作者复用与审查核承诺用这同一份；身份不含行号，无关段落插入不改变它。
  *
- * 地址按蓝图的原生稳定地址认，归属按 `scope`（原生目标关系）判，不按字符串前缀猜；指不到的地址、
- * 在 Story 里定位不到或认不开的小节报缺口，不任选一处。多个依据指向同一处只交一次。
+ * Story 只在按成文登记仍是当前那一份时才交（`unitSources` / `storyCurrency`）；地址按蓝图的原生稳定地址认、
+ * 归属按 `judged.scope`（原生目标关系）判；指不到的地址、坏骨架、定位不到或认不开的小节报缺口，不任选一处。
  *
+ * @param {{scope: {has: (a: string) => boolean}, blueprint?: object}} judged 本命令已算好的设计判断
  * @returns {{rows: string[], gaps: string[]}}
  */
-function storyExpression(root, feature, scope) {
-  const related = relatedStories(root, feature);
-  const gaps = related.problems.map(p => `关联 Story：${p}`);
-  if (related.status !== 'ok' || !related.blueprint) return { rows: [], gaps };
-  if (!related.stories.length) return { rows: ['本施工单位的输入不来自 Story（原生直接入口），没有可复用的已定表达。'], gaps };
-  const addresses = loadNative(root).module('scripts/utils/blueprint-addressing.ts').stableAddressIndex(related.blueprint);
-  // 章节合同随本扩展一起装：与 story-build 读同一份，按本模块的位置找
-  const contract = readJsonOrNull(fileURLToPath(new URL('../../skills/story/contracts/story-chapters.json', import.meta.url)));
+function storyExpression(root, feature, judged) {
+  const src = unitSources(root, feature, judged.blueprint ?? null);
+  const gaps = src.problems.map(p => `关联 Story：${p}`);
+  if (src.status !== 'ok' || !src.blueprint) return { rows: [], gaps };
+  if (!src.stories.length) return { rows: ['本施工单位的输入不来自 Story（原生直接入口），没有可复用的已定表达。'], gaps };
+  const addresses = loadNative(root).module('scripts/utils/blueprint-addressing.ts').stableAddressIndex(src.blueprint);
   const rows = [];
-  for (const s of related.stories) {
+  for (const s of src.stories) {
     if (s.state !== 'current') {
-      rows.push(`- 需求 \`${s.requirement}\` 的 Story 不作为当前可复用的依据${s.state === 'stale' ? '，是旧表达' : ''}：${s.why}。`);
+      rows.push(`- 需求 \`${s.requirement}\` 的 Story 不作为当前可复用的依据${s.state === 'stale' ? '，是旧表达' : ''}：${s.why.join('；')}。`);
       continue;
     }
-    const abs = rel => path.join(root, ...rel.split('/'));
-    const story = readTextOrNull(abs(s.story));
-    const plan = readWritingPlan({ contract: contract ?? {}, templatePath: abs(s.template), featureRoot: abs(s.root) });
-    if (story === null || plan.text === null) {
-      gaps.push(`关联 Story：需求 ${s.requirement} 登记了成文，却读不到 ${story === null ? s.story : s.template}——需求负责方恢复`);
+    const plan = readWritingPlan(s.ctx);
+    if (plan.problems.length) {
+      gaps.push(`关联 Story：需求 ${s.requirement} 的写作设计读不全，片段取不了：${plan.problems.join('；')}——需求作者修正后重新登记`);
       continue;
     }
-    const lines = story.split(/\r?\n/);
+    const story = src.documents.get(s.story);
+    const chapters = s.ctx.contract?.chapters ?? [];
     const taken = [];
     for (const b of basisSections(plan)) {
-      const refs = [...new Set(b.basis.join(' ').match(/`[^`]+`/g) ?? [])].map(x => x.slice(1, -1)).filter(x => /^[a-z_]+:/.test(x));
-      const bad = refs.filter(r => !addresses.has(r));
-      const where = [b.chapter, b.at, b.under].filter(Boolean).join(' / ');
-      if (bad.length) gaps.push(`关联 Story：需求 ${s.requirement} 写作设计「${where}」的依据 ${bad.map(r => `\`${r}\``).join('、')} 在蓝图里解析不了——需求作者核对`);
-      if (!refs.some(r => addresses.has(r) && scope.has(r))) continue;
-      const title = (contract?.chapters ?? []).find(c => c.id === b.chapter)?.title ?? b.chapter;
-      const span = storySpan(story, title, b.at, b.under);
+      const where = [chapters.find(c => c.id === b.chapter)?.title ?? b.chapter, b.at, b.under].filter(Boolean);
+      const bad = b.refs.filter(r => !addresses.has(r));
+      if (bad.length) gaps.push(`关联 Story：需求 ${s.requirement} 写作设计「${where.join(' / ')}」的依据 ${bad.join('、')} 在蓝图里解析不了——需求作者核对`);
+      if (!b.refs.some(r => addresses.has(r) && judged.scope.has(r))) continue;
+      const span = storySpan(story, where[0], b.at, b.under);
       if (!span || span.ambiguous) {
-        gaps.push(`关联 Story：需求 ${s.requirement} 写作设计「${where}」在 ${s.story} 里${span ? `认不开（${span.ambiguous.join('、')}）` : '找不到对应的小节'}——需求作者让骨架与正文同名`);
+        gaps.push(`关联 Story：需求 ${s.requirement} 写作设计「${where.join(' / ')}」在 ${s.story} 里`
+          + `${span ? `认不开（${span.ambiguous.join('、')}）` : '找不到对应的章节'}——需求作者让骨架与正文同名`);
         continue;
       }
-      if (taken.some(t => t.start <= span.start && span.end <= t.end)) continue;
+      if (taken.some(x => x.start <= span.start && span.end <= x.end)) continue;
       for (let k = taken.length - 1; k >= 0; k--) if (span.start <= taken[k].start && taken[k].end <= span.end) taken.splice(k, 1);
-      taken.push({ ...span, where });
+      taken.push({ ...span, where: where.map(normalizeHeading).join(' / ') });
     }
     if (!taken.length) {
       rows.push(`- 需求 \`${s.requirement}\` 的 Story（\`${s.story}\`）里，写作设计的依据没有落在本施工单位设计责任内的蓝图地址：`
         + '该表达与本单位未形成可确定的复用关联，按原生设计输入施工。');
       continue;
     }
-    for (const t of taken.sort((x, y) => x.start - y.start)) {
-      const text = lines.slice(t.start, t.end).join('\n').replace(/\s+$/, '');
-      rows.push(`- 需求 \`${s.requirement}\` · ${t.where}：\`${s.story}\` 第 ${t.start + 1}–${t.end} 行，`
-        + `内容摘要 sha256:${crypto.createHash('sha256').update(text).digest('hex')}`, '', ...verbatim(text), '');
+    const lines = story.split(/\r?\n/);
+    for (const x of taken.sort((p, q) => p.start - q.start)) {
+      const text = lines.slice(x.start + 1, x.end).join('\n').trim();
+      rows.push(`- 需求 \`${s.requirement}\` · \`${s.story}\` · ${x.where}：内容摘要 sha256:${crypto.createHash('sha256').update(text).digest('hex')}`,
+        '', ...verbatim(text), '');
     }
   }
   return { rows, gaps };
@@ -225,15 +224,17 @@ function featureTask(root, feature, action, supplied, knowledge) {
   const kind = f.identity.kind === 'cu'
     ? `施工单位 \`${f.identity.changeUnitId}\`（蓝图 \`${f.identity.blueprintId}\` revision ${f.blueprint_ref?.revision}）` : '平铺维护 Feature';
   let facts = [];
+  let judged = null;
   if (f.identity.kind === 'cu') {
-    const bp = readBlueprint(root, f.identity.blueprintId, 'draft');
+    // 本命令只读一次蓝图、算一次判断：设计对象、承接义务、埋点与关联 Story 都用这一份
+    judged = featureKnowledge(root, feature, f.spec?.contracts ?? null);
     // spec / plan 在第 3 块逐条拿到本单位承接的判断，这里只给设计对象；其余动作列蓝图里的全部判断
-    facts = bp.status !== 'ok' || ['spec', 'plan'].includes(action) ? [] : decisionsOf(bp.blueprint);
-    if (bp.status !== 'ok') gaps.push(`蓝图读不到（${bp.status}）：设计负责方处理。`);
+    facts = !judged.blueprint || ['spec', 'plan'].includes(action) ? [] : decisionsOf(judged.blueprint);
+    if (!judged.blueprint) gaps.push('蓝图读不到：设计负责方处理。');
     if (!facts.length && !['spec', 'plan'].includes(action)) facts = ['蓝图里还没有知识应用的事实与决定。'];
     facts.push(`本施工单位承担的设计对象：${f.design_refs.map(r => `${r?.target?.kind}:${r?.target?.id}`).join('、') || '（无）'}`);
     if (['spec', 'plan'].includes(action)) {
-      const expression = storyExpression(root, feature, featureKnowledge(root, feature, f.spec?.contracts ?? null).scope);
+      const expression = storyExpression(root, feature, judged);
       facts.push('', '### 关联 Story 的已定表达', '',
         'Story 讲给需求评审人的整体表达与已交付承诺，不是施工设计权威：适用的表达可以复用，'
         + '与原生设计矛盾时按设计施工并报出来；照录的是原文，不另做摘要。', '', ...expression.rows);
@@ -253,7 +254,7 @@ function featureTask(root, feature, action, supplied, knowledge) {
     const contracts = f.spec?.contracts ?? null;
     const source = f.inputs.contracts;
     if (f.identity.kind === 'cu' && ['spec', 'plan'].includes(action)) {
-      const carried = carriedDuties(root, feature, action, contracts, knowledge);
+      const carried = carriedDuties(judged, action, knowledge);
       duties.push(...carried.duties);
       gaps.push(...carried.gaps.map(p => `${p}——设计负责方处理。`));
     }
@@ -266,7 +267,7 @@ function featureTask(root, feature, action, supplied, knowledge) {
     }
     const acceptance = f.spec?.acceptance ?? null;
     if (f.identity.kind === 'cu' && action !== 'spec') {
-      duties.push(...statDelivery(featureKnowledge(root, feature, contracts), contracts, acceptance));
+      duties.push(...statDelivery(judged, contracts, acceptance));
     }
     const bridged = [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])].filter(c => c?.knowledge_rule);
     duties.push(...bridged.map(c => `- 验收 \`${c.id}\` 承接 \`${c.knowledge_rule}\`${c.knowledge_decision_id ? `（决定 ${c.knowledge_decision_id}）` : ''}`));

@@ -6,9 +6,9 @@
 import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, relDisplay } from '../../../../../hooks/shared/paths.mjs';
 import { SHELL, shellArg } from './drafts.mjs';
-import { designSource } from './design-source.mjs';
+import { adoptedInputs, designSource } from './design-source.mjs';
 import { diagramBody, diagramsOf, diagramTopic, imagesIn, readablePaths } from './images.mjs';
-import { adoptedDocuments, relFromStory } from './sources.mjs';
+import { relFromStory } from './sources.mjs';
 
 /**
  * 材料里的图 —— **一张图一项任务**。
@@ -96,7 +96,7 @@ function diagramRow(title, where, mark, lines) {
  */
 function diagramSection(ctx) {
   const rows = ['## 4a. 采用来源与蓝图里的图', ''];
-  const docs = [...adoptedDocuments(ctx)].map(([at, text]) => [at, diagramsOf(text)]).filter(([, list]) => list.length);
+  const docs = [...adoptedInputs(ctx).documents].map(([at, text]) => [at, diagramsOf(text)]).filter(([, list]) => list.length);
   const source = designSource(ctx);
   const graphs = (Array.isArray(source.blueprint?.generated_graphs) ? source.blueprint.generated_graphs : [])
     .filter(g => g?.graph_id && typeof g.content === 'string');

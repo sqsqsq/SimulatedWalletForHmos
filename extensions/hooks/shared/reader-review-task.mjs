@@ -15,7 +15,8 @@ import { headingEnd, parseDocument } from '../../skills/story/scripts/core/story
 import { blueprintGraph } from './framework-access.mjs';
 import { diagramBody, diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { adoptedDocuments, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { adoptedInputs } from '../../skills/story/scripts/core/story/design-source.mjs';
+import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
@@ -137,7 +138,7 @@ function fenced(rows, lang) {
  * 没被任何图引用的采用来源图单列：它的去向由材料取舍说明交代，不要求每张都搬。
  */
 function diagramPairRows(projectRoot, root, story) {
-  const docs = adoptedDocuments({ projectRoot, featureRoot: root });
+  const docs = adoptedInputs({ projectRoot, flowPath: path.join(root, 'AR', 'story-src', 'story-flow.json') }).documents;
   const used = new Set();
   const out = [];
   for (const c of diagramsOf(story).filter(x => x.sources.length)) {

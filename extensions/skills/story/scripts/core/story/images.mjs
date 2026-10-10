@@ -5,8 +5,9 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { blueprintGraph, loadNative, relatedStories } from '../../../../../hooks/shared/framework-access.mjs';
-import { adoptedDocuments, joinPosix, readManifest, relFromFeature } from './sources.mjs';
+import { blueprintGraph, loadNative } from '../../../../../hooks/shared/framework-access.mjs';
+import { adoptedInputs, unitSources } from './design-source.mjs';
+import { joinPosix, readManifest, relFromFeature } from './sources.mjs';
 import { normalizeHeading, parseDocument } from './document.mjs';
 
 
@@ -88,7 +89,7 @@ function strayMarks(text) {
 }
 
 /** 一个 document 来源指向的那张图：路径按原生项目路径规则、在本次有效来源里，图标识在那份文档里唯一。 */
-function documentDiagram(projectRoot, v, documents) {
+function documentDiagram(projectRoot, v, documents, excluded) {
   if (typeof v.path !== 'string' || !v.path.trim() || typeof v.diagram !== 'string' || !v.diagram.trim()) {
     return { problem: '缺 path 或 diagram——document 来源写工程相对路径与图标识（`§<节> #<该节第几张>`）' };
   }
@@ -99,6 +100,8 @@ function documentDiagram(projectRoot, v, documents) {
     return { problem: `的 path 不是工程内路径（${e.message}）` };
   }
   const text = documents.get(path.posix.normalize(v.path));
+  const why = excluded.get(path.posix.normalize(v.path));
+  if (why) return { problem: `指向的 ${v.path} 现在不是有效来源：${why}` };
   if (text === undefined) {
     const known = [...documents.keys()];
     return { problem: `指向的 ${v.path} 不是本次有效采用的来源——可用的来源：${known.length ? known.map(k => `\`${k}\``).join('、') : '（没有：需求还没交给设计，或采用的材料里没有 Markdown）'}` };
@@ -133,8 +136,9 @@ function blueprintDiagram(projectRoot, v) {
  * @param {string} text 被核的正文（一章或整篇）
  * @param {Map<string,string>} documents 本次有效的 document 来源：工程相对路径 → 原文
  * @param {(line:number) => string} where 正文行号（1 起）→ 作者要改的位置
+ * @param {Map<string,string>} [excluded] 认得出但现在不能用的来源与原因（旧表达、字节不符）
  */
-function diagramSourceProblems(projectRoot, text, documents, where) {
+function diagramSourceProblems(projectRoot, text, documents, where, excluded = new Map()) {
   const problems = [];
   for (const d of diagramsOf(text)) {
     const body = diagramBody(d);
@@ -144,7 +148,7 @@ function diagramSourceProblems(projectRoot, text, documents, where) {
       if (s.error) { say(`不是一个 JSON 对象（${s.error}）——一行写一个来源：\`%% 图源 {"kind":"document","path":…,"diagram":…,"mode":…}\``); continue; }
       const v = s.value;
       if (!MODES.has(v.mode)) { say(`的 mode 是 ${JSON.stringify(v.mode)}——原样采用写 reuse，在来源上补局部关系写 refine；没有适用来源而新绘的图不写标记`); continue; }
-      const found = v.kind === 'document' ? documentDiagram(projectRoot, v, documents)
+      const found = v.kind === 'document' ? documentDiagram(projectRoot, v, documents, excluded)
         : v.kind === 'blueprint' ? blueprintDiagram(projectRoot, v)
           : { problem: `的 kind 是 ${JSON.stringify(v.kind)}——来源只有 document（文档里的图）与 blueprint（蓝图生成图）两种` };
       if (found.problem) { say(found.problem); continue; }
@@ -161,27 +165,27 @@ function diagramSourceProblems(projectRoot, text, documents, where) {
 
 /** Story 一章或整篇的图源：document 来源是本次采用的冻结 Markdown。 */
 export function storyDiagramSourceProblems(ctx, text, where) {
-  return diagramSourceProblems(ctx.projectRoot, text, adoptedDocuments(ctx), where);
+  return diagramSourceProblems(ctx.projectRoot, text, adoptedInputs(ctx).documents, where);
 }
 
 /**
- * 施工单位 spec / plan 的图源：document 来源是蓝图消费的采用来源与当前有效的关联 Story，
- * 与 Story 用同一个检查；旧表达的 Story 不算有效来源。
+ * 施工单位 spec / plan 的图源：document 来源是蓝图消费的采用来源与当前有效的关联 Story（`unitSources`），
+ * 与 Story 用同一个检查；旧表达、字节不符的来源带着原因不认。用到 document 来源时，关联来源的问题一并报；
+ * 来源取不到时这一项按 skipped 说明，不报成没有问题。
  *
  * @param {string} label 报错里的文件名（如 `spec.md`）
+ * @returns {{problems: string[], skipped: {what: string, why: string}[]}}
  */
 export function unitDiagramSourceProblems(projectRoot, feature, text, label) {
-  const related = relatedStories(projectRoot, feature);
-  const documents = new Map();
-  for (const rel of [...related.sources, ...related.stories.filter(s => s.state === 'current').map(s => s.story)]) {
-    if (!/\.md$/i.test(rel) || documents.has(rel)) continue;
-    try {
-      documents.set(rel, fs.readFileSync(path.join(projectRoot, ...rel.split('/')), 'utf-8'));
-    } catch {
-      // 读不到的来源不进集合：指向它的标记按「不是本次有效采用的来源」报
-    }
+  const marks = diagramsOf(text).flatMap(d => d.sources);
+  if (!marks.length && !strayMarks(text).length) return { problems: [], skipped: [] };
+  const src = unitSources(projectRoot, feature);
+  if (src.status !== 'ok') {
+    return { problems: [], skipped: [{ what: `${label} 的图源`, why: `本单位的来源取不到（${src.status}）：${src.problems.join('；') || '原生没给原因'}` }] };
   }
-  return diagramSourceProblems(projectRoot, text, documents, line => `${label} 第 ${line} 行`);
+  const usesDocuments = marks.some(s => s.value?.kind === 'document');
+  return { skipped: [], problems: [...(usesDocuments ? src.problems.map(p => `关联来源：${p}`) : []),
+    ...diagramSourceProblems(projectRoot, text, src.documents, line => `${label} 第 ${line} 行`, src.excluded)] };
 }
 
 /**

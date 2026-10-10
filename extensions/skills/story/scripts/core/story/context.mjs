@@ -108,10 +108,17 @@ export function createContext(args) {
   if (!fs.existsSync(featureDir)) {
     fail(`需求目录 ${featureDir} 不存在（工程根 ${projectRoot}，需求 ${args.feature}）：本命令读写的台账、正文与评审记录都在这个目录下`);
   }
+  return { args, ...requirementContext(projectRoot, featureDir, contract), idShapes, scriptPath: path.join(CORE_DIR, 'story-build.mjs') };
+}
+
+/**
+ * 一个需求目录的只读上下文：章节合同与各登记文件的位置。命令入口与施工单位取关联 Story 用同一份布局，
+ * 不另拼路径；合同读不出照样当场失败。
+ */
+export function requirementContext(projectRoot, featureDir, contract = commonInputs({ projectRoot }).contract) {
   const srcDir = path.join(featureDir, 'AR', 'story-src');
   return {
-    args, projectRoot, contract, idShapes, featureRoot: featureDir, srcDir,
-    scriptPath: path.join(CORE_DIR, 'story-build.mjs'),
+    projectRoot: path.resolve(projectRoot), contract, featureRoot: featureDir, srcDir,
     decisionsPath: path.join(srcDir, 'decisions.json'),
     templatePath: path.join(srcDir, 'story-template.md'),
     storyPath: path.join(featureDir, 'AR', 'story.md'),

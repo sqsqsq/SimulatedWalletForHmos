@@ -207,8 +207,9 @@ export default guard('plan', async (ctx) => {
 
   // ---- 图源：plan.md 里采用的图指得到本次有效来源，reuse 的图体一致（与 Story、spec 同一个检查） ----
   const planText = inputs.dir ? readTextOrNull(path.join(inputs.dir, 'plan', 'plan.md')) : null;
-  groups.push({ name: '图源', problems: planText === null ? [] : unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, planText, 'plan.md'),
-    skipped: planText === null ? [{ what: 'plan.md 的图源', why: '这一次没有 plan.md' }] : [] });
+  const diagrams = planText === null ? { problems: [], skipped: [{ what: 'plan.md 的图源', why: '这一次没有 plan.md' }] }
+    : unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, planText, 'plan.md');
+  groups.push({ name: '图源', ...diagrams });
 
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'plan'), skipped: [] });

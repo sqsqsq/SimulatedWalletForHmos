@@ -124,7 +124,9 @@ export default guard('spec', async (ctx) => {
   } else {
     const specText = fs.readFileSync(specPath, 'utf-8');
     if (acceptance) alignment.problems.push(...acceptanceAlignment(specText.split(/\r?\n/), acceptance));
-    diagrams.problems.push(...unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, specText, 'spec.md'));
+    const checked = unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, specText, 'spec.md');
+    diagrams.problems.push(...checked.problems);
+    diagrams.skipped.push(...checked.skipped);
   }
 
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'spec'), skipped: [] });

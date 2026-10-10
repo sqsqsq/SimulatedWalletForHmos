@@ -7,10 +7,10 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readBlueprint } from '../../../../../hooks/shared/framework-access.mjs';
+import { readBlueprint, relatedStories } from '../../../../../hooks/shared/framework-access.mjs';
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
 import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
-import { readJson } from './context.mjs';
+import { ledgerDigestProblems, readJson, readText, requirementContext } from './context.mjs';
 
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
@@ -138,4 +138,90 @@ export function termFacts(blueprint) {
         ref ? `{{按 ${ref} 的定义写}}` : '{{缺定义与来源：设计负责方在蓝图事实里补来源}}'];
     })
     .filter(([term]) => term);
+}
+
+/**
+ * 本次采用的冻结来源：快照登记的每份文件按登记摘要核原始字节，Markdown 交给图源检查。
+ * 读不到或字节不符的不进 `documents`，记进 `problems`——图源检查据此不认它，当前性检查按来源损坏报。
+ */
+export function adoptedInputs(ctx) {
+  const out = { documents: new Map(), problems: [] };
+  const ref = readJson(ctx.flowPath, null)?.input?.snapshot_ref;
+  if (!ref || !ctx.projectRoot) return out;
+  const dir = path.posix.dirname(String(ref));
+  for (const row of readJson(path.join(ctx.projectRoot, ...String(ref).split('/')), null)?.files ?? []) {
+    const at = `${dir}/files/${row?.path}`;
+    let bytes = null;
+    try {
+      bytes = fs.readFileSync(path.join(ctx.projectRoot, ...at.split('/')));
+    } catch {
+      bytes = null;
+    }
+    if (bytes === null || sha256(bytes) !== row?.sha256) {
+      out.problems.push(`冻结输入 ${at} ${bytes === null ? '读不到' : '的字节与快照登记的摘要不符'}`
+        + '——冻结版本不改，恢复原件；恢复不了走 reopen 或 update 后重新 complete');
+    } else if (/\.md$/i.test(at)) {
+      out.documents.set(at, bytes.toString('utf-8').replace(/^\uFEFF/, ''));
+    }
+  }
+  return out;
+}
+
+/**
+ * 这份 Story 现在还是不是成文登记的那一份 —— 与 check、交付门同一组检查：登记的文件指纹、成文依据（蓝图、输入、知识）、
+ * 冻结输入的字节。登记数据缺失或来源坏了是 `broken`（缺口，要报），登记之后改过是 `stale`（旧表达），都不作可复用的已定来源。
+ *
+ * @returns {{state: 'current'|'stale'|'unwritten'|'broken', why: string[]}}
+ */
+export function storyCurrency(ctx) {
+  const flow = readJson(ctx.flowPath, null);
+  if (flow?.status !== 'story_written') {
+    return fs.existsSync(ctx.storyPath) ? { state: 'stale', why: ['Story 没有按当前内容成文登记（修订中或还没登记）'] }
+      : { state: 'unwritten', why: ['Story 还没写'] };
+  }
+  const basis = flow.story_basis;
+  if (!basis?.files || !basis?.blueprint_ref || !basis?.input_sha256) {
+    return { state: 'broken', why: ['流程契约记着已成文登记，登记数据不完整（缺文件指纹或成文依据）——需求负责方按当前内容重新登记'] };
+  }
+  const source = [...designSource(ctx).problems, ...adoptedInputs(ctx).problems];
+  if (source.length) return { state: 'broken', why: source };
+  const changed = [...ledgerDigestProblems(ctx), ...basisDriftProblems(ctx)];
+  return changed.length ? { state: 'stale', why: changed } : { state: 'current', why: [] };
+}
+
+/**
+ * 施工单位这次能用的来源：蓝图消费的采用来源（按蓝图登记的摘要核过字节），加上当前有效的关联 Story。
+ * 关联 Story 由原生来源链定位（`relatedStories`），当前性按 `storyCurrency`；不是当前的 Story 进 `excluded` 并带原因。
+ *
+ * @param {object|null} blueprint 本命令已读到的蓝图，给了就不再读
+ * @returns {{status: string, documents: Map<string,string>, excluded: Map<string,string>, stories: object[],
+ *   problems: string[], blueprint?: object}}
+ */
+export function unitSources(projectRoot, feature, blueprint = null) {
+  const related = relatedStories(projectRoot, feature, blueprint);
+  const out = { status: related.status, documents: new Map(), excluded: new Map(), stories: [], problems: [...related.problems],
+    blueprint: related.blueprint };
+  for (const s of related.sources.filter(x => /\.md$/i.test(x.path))) {
+    let bytes = null;
+    try {
+      bytes = fs.readFileSync(path.join(projectRoot, ...s.path.split('/')));
+    } catch {
+      bytes = null;
+    }
+    if (bytes === null || `sha256:${sha256(bytes)}` !== s.sha256) {
+      out.problems.push(`采用来源 ${s.path} ${bytes === null ? '读不到' : '的字节与蓝图登记的摘要不符'}——设计负责方核对`);
+      out.excluded.set(s.path, bytes === null ? '读不到' : '字节与蓝图登记的摘要不符');
+    } else {
+      out.documents.set(s.path, bytes.toString('utf-8').replace(/^\uFEFF/, ''));
+    }
+  }
+  for (const r of related.requirements) {
+    const ctx = requirementContext(projectRoot, path.join(projectRoot, ...r.root.split('/')));
+    const entry = { ...r, ctx, story: `${r.root}/AR/story.md`, ...storyCurrency(ctx) };
+    out.stories.push(entry);
+    if (entry.state === 'broken') out.problems.push(...entry.why.map(w => `关联需求 ${r.requirement}：${w}`));
+    if (entry.state === 'current') out.documents.set(entry.story, readText(ctx.storyPath) ?? '');
+    else out.excluded.set(entry.story, entry.why.join('；'));
+  }
+  return out;
 }

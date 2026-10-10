@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -197,7 +198,9 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         frozen.parent.mkdir(parents=True, exist_ok=True)
         frozen.write_text("## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
                           "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
-        (self.root / rel / "snapshot.json").write_text(json.dumps({"files": [{"path": "SR/design.md"}]}), encoding="utf-8")
+        digest = hashlib.sha256(frozen.read_bytes()).hexdigest()
+        (self.root / rel / "snapshot.json").write_text(json.dumps({"files": [{"path": "SR/design.md", "sha256": digest}]}),
+                                                       encoding="utf-8")
         flow = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(flow.read_text(encoding="utf-8")) if flow.exists() else {}
         data["input"] = {"snapshot_ref": f"{rel}/snapshot.json"}
