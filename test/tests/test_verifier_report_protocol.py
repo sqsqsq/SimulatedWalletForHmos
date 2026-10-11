@@ -72,6 +72,11 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
         return subprocess.run(["python", str(self.FLOW), "story", "--feature", "REQ-DEMO", "--project-root", str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
+    def prepare(self) -> dict:
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+        return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
+
     def reviewed(self, kind: str = "pass") -> Path:
         prepared = self.review("prepare")
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
@@ -354,11 +359,6 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
 class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliveredCase):
     """派审载体：prepare 把完整材料键、任务与回复位置写进 dispatch.md，返修与复审的上下文也在里面；check 核它与准备记录一致。"""
 
-    def prepare(self) -> dict:
-        out = self.review("prepare")
-        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
-        return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
-
     def dispatch_file(self) -> Path:
         return self.flow_path.parent / "review" / "dispatch.md"
 
@@ -427,16 +427,112 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         first.write_bytes(kept)
         self.assertEqual("pass", self.result()["result"], "原件恢复之后正常审查结果反而不可消费")
 
-    def test_a_failed_review_is_rechecked_with_its_report_and_new_material_starts_clean(self) -> None:
+    def test_a_failed_review_is_rechecked_with_its_report(self) -> None:
         failed = self.reviewed("block")
         out = self.prepare()
         context = self.prepared()["review_context"]
         self.assertEqual(("recheck", failed.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
         self.assertIn("F-1", out["dispatch_text"], "失败报告的阻断结论没进派审载体")
         self.assertEqual("fail", self.result()["result"], "新位置还空着，原有效 fail 被撤销")
-        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n新材料的一句。\n", encoding="utf-8")
+
+
+class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """材料换了新键：紧前一次准备的原报告随派审交出作待核参考，结论只对新材料；前一份缺席或改过就完整审查，不往更早找。"""
+
+    def change(self, line: str) -> None:
+        self.story.write_text(self.story.read_text(encoding="utf-8") + f"\n{line}\n", encoding="utf-8")
+
+    def reference_only(self, kind: str) -> None:
+        old = self.reviewed(kind)
+        old_key, kept = self.prepared()["material_key"], old.read_bytes()
+        self.change("换成新材料的一句。")
+        out = self.prepare()
+        context = self.prepared()["review_context"]
+        self.assertEqual(("prior_revision", old_key, old.relative_to(self.root).as_posix()),
+                         (context["kind"], context["material_key"], context["report_file"]))
+        self.assertEqual(context["report_sha256"], self.prepared()["originals"][context["report_file"]])
+        self.assertNotEqual(old, self.root / out["report_file"], "新材料的回复写回了旧报告")
+        self.assertFalse(out["reused"], "旧材料的结论被当成新材料的结论")
+        self.assertEqual("report_missing", self.result()["result"], "新材料继承了旧材料的结论")
+        for needle in (old.relative_to(self.root).as_posix(), old_key, "只作参考", out["material_key"]):
+            self.assertIn(needle, out["dispatch_text"])
+        again = self.prepare()
+        self.assertEqual((out["report_file"], context), (again["report_file"], self.prepared()["review_context"]),
+                         "同一份新材料再准备，位置或参考变了")
+        self.assertEqual(kept, old.read_bytes(), "旧原报告被改了")
+        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.assertEqual("pass", self.result()["result"])
+
+    def test_a_passed_report_is_a_reference_not_a_pass(self) -> None:
+        self.reference_only("pass")
+
+    def test_a_failed_report_is_a_reference_not_a_fail(self) -> None:
+        self.reference_only("block")
+
+    def test_an_altered_reference_is_caught_and_replaced_by_a_full_review(self) -> None:
+        old = self.reviewed("advice")
+        self.change("换成新材料的一句。")
+        out = self.prepare()
+        old.write_text(old.read_text(encoding="utf-8").replace("MINOR", "INFO"), encoding="utf-8")
+        self.assertEqual("input_invalid", self.result()["result"], "派审带出的旧报告被改，没被认出来")
+        again = self.prepare()
+        self.assertEqual(out["report_file"], again["report_file"])
+        context = self.prepared()["review_context"]
+        self.assertEqual(("fresh_review", old.relative_to(self.root).as_posix()),
+                         (context["kind"], context["damaged"]["report_file"]))
+        self.assertEqual("report_missing", self.result()["result"])
+
+    def test_without_a_trustworthy_prior_report_the_review_is_complete(self) -> None:
+        """A 没有回复转 B；B 还没回复又转 C：都完整审查，不追溯更早的那一份。"""
         self.prepare()
-        self.assertNotIn("review_context", self.prepared(), "材料变了还带着旧审查的上下文")
+        self.change("B 的一句。")
+        b = self.prepare()
+        self.assertNotIn("review_context", self.prepared(), "前一份回复不在，却带了参考")
+        self.assertIn("没有可信的前轮审查报告", b["dispatch_text"])
+        self.reviewed("pass")
+        self.change("C 的一句。")
+        self.prepare()
+        self.change("D 的一句。")
+        d = self.prepare()
+        self.assertNotIn("review_context", self.prepared(), "C 还没回复，D 却追溯了 B 的报告")
+        self.assertIn("没有可信的前轮审查报告", d["dispatch_text"])
+
+    def test_a_failure_of_the_current_material_wins_over_a_later_reference(self) -> None:
+        """A 失败 → B → 回到 A：A 的 fail 优先，按复审交出，不被 B 的参考盖掉。"""
+        failed = self.reviewed("block")
+        a = self.story.read_bytes()
+        self.change("B 的一句。")
+        self.prepare()
+        self.assertEqual("prior_revision", self.prepared()["review_context"]["kind"])
+        self.story.write_bytes(a)
+        self.prepare()
+        context = self.prepared()["review_context"]
+        self.assertEqual(("recheck", failed.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
+        self.assertEqual("fail", self.result()["result"])
+
+
+class ABrokenPreparationRecordIsAnInputFault(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """准备记录在却读不出：prepare 在定稿写盘之前报错退出、现场不动；check 判 input_invalid。不当作首次，不换默认目录。"""
+
+    def test_a_broken_record_stops_before_anything_is_written(self) -> None:
+        self.reviewed("block")
+        record = self.flow_path.parent / "review" / "prepared.json"
+        good = record.read_bytes()
+        broken = {"坏 JSON": b"{\"material_key\": ", "缺字段": json.dumps({"material_key": "0" * 64}).encode("utf-8"),
+                  "不是对象": b"[]"}
+        for label, data in broken.items():
+            with self.subTest(case=label):
+                record.write_bytes(data)
+                before = self.tree()
+                out = self.review("prepare")
+                self.assertNotEqual(0, out.returncode, label)
+                self.assertIn("review/prepared.json", out.stderr)
+                self.assertEqual(before, self.tree(), "坏准备记录之下 prepare 仍写了盘")
+                result = self.review("check")
+                self.assertEqual(1, result.returncode)
+                self.assertEqual("input_invalid", json.loads(result.stdout.strip().splitlines()[-1])["result"])
+        record.write_bytes(good)
+        self.assertEqual("fail", self.result()["result"], "恢复原记录后，原 fail 不见了")
 
 
 class TheDesignAttachmentIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDeliveredCase):

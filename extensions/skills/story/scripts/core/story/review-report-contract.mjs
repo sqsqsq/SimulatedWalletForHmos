@@ -12,7 +12,7 @@ export const SEVERITIES = ['BLOCKER', 'MAJOR', 'MINOR', 'INFO'];
 export function reportFormat() {
   return [
     '', '### 报告怎么写', '',
-    '回复就是这份 Markdown 报告，宿主原样存下；格式不合的回复不计结论，要重给。',
+    '这份 Markdown 报告就是你的回复，写到派审载体给的回复位置，是审查原件；格式不合的回复不计结论，原件保留，另给一份新回复。',
     '',
     '1. 第一行写 `material_key: <派审时给的材料键，64 位>`，全文只这一行。',
     `2. 二级标题依次是${REPORT_HEADINGS.map(h => `「${h}」`).join('')}，各恰好一个，标题字照写。`,

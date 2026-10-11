@@ -500,7 +500,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             shutil.rmtree(suite["bundle_root"], ignore_errors=True)
 
     def test_a_step_for_another_phase_is_not_shown(self) -> None:
-        """规划条目的阶段与当前阶段对不上（这里是不在阶段表里的前提）：不给这条立场，写 plan_note。
+        """当前阶段未知、条目要的前提（已归档）不成立：只作 phase_ready 为假的候选，不能当 planned 提交。
         判据仍是「装置一个字都没发出去」，指针也不动。
         """
         record = self.record("case-alpha-fixture", "AR-ALPHA", "awaiting_reply")
@@ -529,8 +529,8 @@ class MultiCaseSchedulingTest(unittest.TestCase):
                 run_multi_case.request_host_reply(record, suite)
             request = record["last_adaptive_request"]
             self.assertEqual("adaptive_reply_required", record["interaction_state"])
-            self.assertIsNone(request["planned_intent"], "对不上的立场交到了宿主手上")
-            self.assertIn("规划里没有对应这一问", request["plan_note"])
+            self.assertEqual([("review", False)], [(c["id"], c["phase_ready"]) for c in request["candidate_steps"]])
+            self.assertEqual("候选，需按完整问题核立场", request["plan_note"])
             # 指针只由宿主 `--step` 推进，装置自己不动它
             self.assertEqual(0, record["interaction_index"])
         finally:
@@ -690,6 +690,125 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             run_multi_case.poll_one(record, 0, 1000, suite)
         args = invoke.call_args.args
         self.assertEqual("0", args[args.index("--wait-sec") + 1])
+
+
+class TheReplyLandsOnTheQuestionTheHostSaw(unittest.TestCase):
+    """回复由宿主指明目标（run、turn）：完整问题可得、候选只按阶段与类型列、一次回答可覆盖多条、
+    重入幂等、换了问题不落、失败不消费。"""
+
+    SCRIPT = [
+        {"id": "scope", "text": "不拆单。", "expected_turn": 1, "expected_kind": "story_gate",
+         "expected_phase": "story", "deliver": []},
+        {"id": "priority", "text": "先做签约。", "expected_turn": 2, "expected_kind": "story_gate",
+         "expected_phase": "story", "deliver": []},
+        {"id": "later", "text": "进 plan。", "expected_turn": 3, "expected_kind": "story_gate",
+         "expected_phase": "spec", "deliver": []},
+    ]
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.record = {"case": "c", "feature": "AR-1", "status": run_multi_case.WAITING_STATUS, "run_id": "run-1",
+                       "current_phase": "story", "interaction_script": [dict(s) for s in self.SCRIPT],
+                       "answered_steps": [], "interaction_index": 0, "supplements": [],
+                       "last_awaiting": {"turn": 4, "kind": "story_gate", "prompt": "范围怎么定？先做哪个？"}}
+        self.suite = {"bundle_root": self._tmp.name, "case_states": {"c": self.record}, "events": []}
+        self.sent: list[tuple] = []
+        self.answer: tuple = (0, {"ok": True, "delivered": []}, "", "")
+
+    def fake_invoke(self, case_id, command, *args, suite=None):
+        self.sent.append(args)
+        return self.answer
+
+    def reply(self, text: str = "不拆单，先做签约。", steps: tuple = ("scope", "priority"),
+              kind: str = "planned", run: str = "run-1", turn: str = "4") -> tuple[int, dict]:
+        with mock.patch.object(run_multi_case, "load_suite", return_value=(Path(self._tmp.name), self.suite)), \
+                mock.patch.object(run_multi_case, "refresh_record", side_effect=lambda r: r), \
+                mock.patch.object(run_multi_case, "save_suite"), \
+                mock.patch.object(run_multi_case, "invoke_case", self.fake_invoke), \
+                mock.patch("builtins.print") as printed:
+            code = run_multi_case.command_reply("s", "c", text, "adaptive", "", [], list(steps), kind, run, turn)
+        return code, json.loads(printed.call_args.args[0])
+
+    def request(self) -> dict:
+        with mock.patch.object(run_multi_case, "append_event"), \
+                mock.patch.object(run_multi_case, "append_case_observation"):
+            run_multi_case.request_host_reply(self.record, self.suite)
+        return self.record["last_adaptive_request"]
+
+    def observations(self) -> list[dict]:
+        path = Path(self._tmp.name) / "cases" / "c" / "observations.jsonl"
+        return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
+
+    def test_a_long_question_is_given_whole(self) -> None:
+        self.record["last_awaiting"]["prompt"] = "长" * 3000
+        got = self.request()
+        self.assertEqual(3000, len(got["model_prompt"]))
+        self.assertEqual((1200, True), (len(got["question"]), got["question_truncated"]))
+        self.assertEqual(("run-1", 4), (got["run_id"], got["turn"]))
+
+    def test_same_phase_steps_are_only_candidates(self) -> None:
+        got = self.request()
+        self.assertEqual([("scope", True), ("priority", True)], [(c["id"], c["phase_ready"]) for c in got["candidate_steps"]])
+        self.assertEqual({"id", "text", "deliver", "expected_kind", "expected_phase", "phase_ready"},
+                         set(got["candidate_steps"][0]))
+        self.assertEqual(("scope", "候选，需按完整问题核立场"), (got["planned_step_id"], got["plan_note"]))
+
+    def test_one_reply_covers_two_steps_and_keeps_the_unasked_one(self) -> None:
+        code, _ = self.reply()
+        self.assertEqual(0, code)
+        self.assertEqual((["scope", "priority"], 2), (self.record["answered_steps"], self.record["interaction_index"]))
+        args = self.sent[0]
+        self.assertEqual(("run-1", "4"), (args[args.index("--run-id") + 1], args[args.index("--turn") + 1]))
+        seen = self.observations()[-1]
+        self.assertEqual(("run-1", "4", ["priority", "scope"], "accepted"),
+                         (seen["run_id"], seen["turn"], seen["covered_steps"], seen["result"]))
+        self.record["last_awaiting"] = {"turn": 5, "kind": "story_gate", "prompt": "再确认一次范围？"}
+        self.assertEqual(0, self.reply("还是不拆单。", ("scope",), turn="5")[0])
+        self.assertEqual(["scope", "priority"], self.record["answered_steps"], "再次确认同一立场重复计入了")
+
+    def test_bad_input_and_stale_targets_fail_before_sending(self) -> None:
+        cases = {"重复 step": dict(steps=("scope", "scope")), "未知 step": dict(steps=("nope",)),
+                 "planned 不带 step": dict(steps=()), "answered 带 step": dict(kind="answered"),
+                 "阶段不成立": dict(steps=("later",)), "旧 turn": dict(turn="3"), "别的 run": dict(run="run-0")}
+        for label, kw in cases.items():
+            with self.subTest(case=label):
+                code, out = self.reply(**kw)
+                self.assertEqual((1, False), (code, out["ok"]))
+        self.assertEqual([], self.sent, "预检失败仍发了")
+        self.assertEqual([], self.record["answered_steps"])
+
+    def test_a_retry_of_an_answered_turn_returns_the_old_result(self) -> None:
+        self.assertEqual(0, self.reply()[0])
+        self.record.update(status="running", last_awaiting={"turn": 5, "kind": "story_gate", "prompt": "下一问"})
+        code, out = self.reply()
+        self.assertEqual((0, True), (code, out.get("already_sent")))
+        self.assertEqual(1, len(self.sent), "同一问同样的话又发了一次")
+        code, out = self.reply("改主意了，拆单。")
+        self.assertEqual((1, False), (code, out["ok"]))
+        self.assertEqual(1, len(self.sent))
+
+    def test_an_old_reply_never_lands_on_the_next_question(self) -> None:
+        self.record["last_awaiting"] = {"turn": 5, "kind": "story_gate", "prompt": "下一问"}
+        code, out = self.reply(turn="4")
+        self.assertEqual(1, code)
+        self.assertIn("不是当前在等的那一问", out["error"])
+        self.assertEqual([], self.sent)
+
+    def test_a_failed_or_unknown_send_consumes_nothing(self) -> None:
+        self.answer = (1, {"ok": False, "error": "目标已换"}, "", "")
+        self.assertEqual(1, self.reply()[0])
+        self.answer = (1, None, "", "崩了")
+        code, out = self.reply()
+        self.assertEqual(("unknown", 1), (out["result"], code))
+        self.assertIn("不自动重发", out["note"])
+        self.assertEqual([], self.record["answered_steps"])
+        self.assertEqual(["refused", "unknown"], [o["result"] for o in self.observations()])
+
+    def test_a_neutral_reply_without_a_plan_goes_through(self) -> None:
+        self.record["interaction_script"] = []
+        self.assertEqual(0, self.reply("继续。", (), "neutral")[0])
+        self.assertEqual(([], 0), (self.record["answered_steps"], self.record["interaction_index"]))
 
 
 class WorkspaceBoundaryTest(unittest.TestCase):

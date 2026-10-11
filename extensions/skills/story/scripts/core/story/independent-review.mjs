@@ -5,7 +5,7 @@
  *   （材料键、任务、回复位置与返修上下文，主执行者原样交给隔离审查者）。报告目录随材料键在首次准备时
  *   定下，同一份材料沿用它，另指目录报冲突。
  *   这份材料在报告目录里的结论与核结果同一份读取：有效通过（pass / warn）就复用那份回复，材料改走又改回来也一样；
- *   其余情况另起下一个编号的回复位置，旧回复保留。
+ *   其余情况另起下一个编号的回复位置，旧回复保留。材料换了新键时，紧前一次准备的原报告随派审交出作待核参考，结论只对新材料。
  * - **核结果**：显式 check、登记、交付门与状态共用这一份判定，只读：审的是不是现在这份、报告合不合合同、结论是什么。
  *
  * | 结果 | 含义 |
@@ -43,6 +43,32 @@ function places(ctx) {
 
 const abs = (ctx, rel) => path.join(ctx.projectRoot, ...String(rel).split('/'));
 
+const filled = v => typeof v === 'string' && v.length > 0;
+//: 准备记录里 prepare 与 check 实际要用的字段
+const PREPARED_FIELDS = [['material_key', filled], ['project_root', filled], ['report_dir', filled], ['report_file', filled],
+  ['report_dirs', v => Boolean(v) && typeof v === 'object' && !Array.isArray(v)]];
+
+/**
+ * 准备记录，prepare 与 check 共用：不存在是首次（`record` 为 null）；在却读不出、不是 JSON 对象或缺必需字段是输入故障，
+ * 给出诊断，不当首次——它记着各份材料的报告目录与派审带出过的原件。
+ *
+ * @returns {{record: object|null}|{error: string}}
+ */
+export function preparedRecord(ctx) {
+  const file = places(ctx).prepared;
+  if (!fs.existsSync(file)) return { record: null };
+  const text = readText(file);
+  let record = null;
+  try { record = text === null ? null : JSON.parse(text); } catch { record = null; }
+  const isObject = Boolean(record) && typeof record === 'object' && !Array.isArray(record);
+  const missing = isObject ? PREPARED_FIELDS.filter(([k, ok]) => !ok(record[k])).map(([k]) => k) : [];
+  if (isObject && !missing.length) return { record };
+  const rel = path.relative(ctx.projectRoot, file).split(path.sep).join('/');
+  const why = text === null ? '读不出' : !isObject ? '不是合法的 JSON 对象' : `缺 ${missing.join('、')}`;
+  return { error: `准备记录 ${rel} ${why}：它记着各份材料的报告目录与派审带出过的原件，不能当作首次准备。`
+    + '现场保留未动；恢复它的合法原记录后重跑 prepare，没有可靠的原记录交维护者处理' };
+}
+
 /**
  * 准备这一次的审查。审查对象要先成最终版：调用方已重投附录、编号、渲染 Review（含审查状态披露）并过了结构检查。
  *
@@ -51,6 +77,9 @@ const abs = (ctx, rel) => path.join(ctx.projectRoot, ...String(rel).split('/'));
  */
 export function prepareReview(ctx, reportDirArg) {
   const { dir, prepared, dispatch } = places(ctx);
+  const before = preparedRecord(ctx);
+  if (before.error) return { error: before.error };
+  const was = before.record;
   fs.mkdirSync(dir, { recursive: true });
   const task = path.join(ctx.featureRoot, ...TASK);
   // 任务是审查对象的一部分，所以不嵌入由对象算出的材料键：材料键经派审载体交给审查者
@@ -59,7 +88,6 @@ export function prepareReview(ctx, reportDirArg) {
   const object = reviewObject(ctx.projectRoot, ctx.args.feature);
   if (object.problems.length) return { error: `审查对象不全：${object.problems.join('；')}` };
   const key = materialKey(ctx.projectRoot, object.rows);
-  const was = readJson(prepared, null);
   // 报告目录随材料键定一次：同一份材料的历次回复都在这个目录里，结论按它们取
   const bound = was?.report_dirs?.[key];
   const asked = reportDirArg && String(reportDirArg).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
@@ -88,14 +116,15 @@ export function prepareReview(ctx, reportDirArg) {
 }
 
 /**
- * 这一次回复写在哪、派审要带什么上下文。
+ * 这一次回复写在哪、派审要带什么上下文。按下面的顺序取，命中即停：
  *
- * - 有可复用的 pass / warn：复用原回复，不派审；
- * - 同一份材料已准备、回复还没来：沿用这个位置与它的上下文；上下文带的原回复字节变了，改为对当前材料的完整独立审查；
- * - 当前回复不合报告合同：下一个编号，带原回复与诊断交独立格式返修；
- * - 这份材料已有有效 fail：下一个编号，带失败报告交独立复审；
- * - 其余（首审、材料变了）：下一个编号，不带上下文。
+ * 1. 这份材料的报告目录里有可复用的 pass / warn：复用原回复，不派审；
+ * 2. 同一份材料已准备、回复还没来：沿用这个位置与它的上下文；上下文带的原回复字节变了，改为对当前材料的完整独立审查；
+ * 3. 这份材料的回复不合报告合同：下一个编号，带原回复与诊断交独立格式返修；已有有效 fail：下一个编号，带失败报告交独立复审；
+ * 4. 材料换了新键，紧前一次准备的原报告还在且是原样：下一个编号，带它作待核参考（`prior_revision`），不继承它的结论；
+ * 5. 其余（首审、前一份报告缺席或改过）：下一个编号，不带上下文，完整审查。
  *
+ * 「前一次」只指紧前那次准备，不往更早的回复里找替代。
  * 派审带出去过的原回复记下原样字节（`originals`）；字节对不上的回复不再读出结论，恢复原样之后照常读。
  */
 function replyPlace(ctx, was, key, reportDir, rows) {
@@ -119,6 +148,9 @@ function replyPlace(ctx, was, key, reportDir, rows) {
     context = contextOf(ctx, 'format_repair', known);
   } else if (known?.result === 'fail') {
     context = contextOf(ctx, 'recheck', known);
+  } else if (was && was.material_key !== key && fs.existsSync(abs(ctx, was.report_file)) && !altered.has(was.report_file)) {
+    context = { kind: 'prior_revision', material_key: was.material_key, report_file: was.report_file,
+      report_sha256: sha256(fs.readFileSync(abs(ctx, was.report_file))) };
   }
   if (context) originals[context.report_file] = context.report_sha256;
   return { reportFile: next, reused: false, context, originals };
@@ -171,10 +203,17 @@ function dispatchFor(ctx, record, task) {
       `上一次的回复：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读。它的阻断结论：`, '',
       ...String(c.diagnostic.detail).split(/\r?\n/).map(l => `> ${l}`), '',
       '对当前材料做一次完整审查：每条阻断现在是否成立由你按材料独立判断，其余判据照常逐项核。');
+  } else if (c?.kind === 'prior_revision') {
+    out.push('', '## 上一版材料的审查报告（只作参考）', '',
+      `上一版材料（材料键 \`${c.material_key}\`）的原报告：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读。`
+      + '它的发现是待核的线索与背景，结论不适用于这一次：对当前材料做一次完整审查，每条旧发现现在是否成立、'
+      + '是否已改好由你按材料判断，其余判据照常逐项核；回复只对应上面的材料键。');
   } else if (c?.kind === 'fresh_review') {
     out.push('', '## 上一份回复的原件已被改动', '',
       `\`${c.damaged.report_file}\` 派审时记下的 SHA-256 是 ${c.damaged.report_sha256}，现在的字节与它不同：`
       + '它留在原处作现场，不作审查依据。对当前材料做一次完整的独立审查，判据逐项核。');
+  } else {
+    out.push('', '这一次没有可信的前轮审查报告作参考：对当前材料做一次完整的独立审查，判据逐项核。');
   }
   return `${out.join('\n')}\n`;
 }
@@ -251,8 +290,10 @@ export function waiverCheck(ctx) {
 
 /** 这一次审查的结果，只读。显式 check、登记、交付门与状态共用。 */
 export function reviewResult(ctx) {
-  const was = readJson(places(ctx).prepared, null);
-  if (!was?.material_key) {
+  const read = preparedRecord(ctx);
+  if (read.error) return { result: 'input_invalid', detail: read.error };
+  const was = read.record;
+  if (!was) {
     return { result: 'report_missing', detail: '还没准备这一次的审查——先跑 `story-build review --action prepare`' };
   }
   const object = reviewObject(ctx.projectRoot, ctx.args.feature);

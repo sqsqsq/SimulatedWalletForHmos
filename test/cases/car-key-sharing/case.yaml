@@ -27,7 +27,7 @@ supplements:
 after_initial: update
 
 # 第二段的输入：评审人在评审记录里对各议题的表态（三态 + 修改意见）。
-# 按标题里的词找到议题，只写它的人工区，不动机器区——那是脚本的地盘。
+# 宿主读过初段 Review 后为每条意见指定真实 D 议题（resume-update --review-feedback-file），只写它的人工区，不动机器区。
 update_inputs:
   - file: car-review-feedback.yaml
     kind: review_human_zone

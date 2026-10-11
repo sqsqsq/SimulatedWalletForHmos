@@ -1,5 +1,5 @@
-"""宿主装置不替模型说话、不吞模型的问题：检查点留着待答的一问，规划对上才展示，检查点不收回话，
-watch 只敲门，评审表态按原换行写进议题人工区。
+"""宿主装置不替模型说话、不吞模型的问题：检查点留着待答的一问，规划只作候选展示，检查点不收回话，
+watch 只敲门，评审表态按宿主指定的 D 议题写进人工区、写前核全、原换行不动。
 """
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ class TheCheckpointKeepsThePendingQuestion(unittest.TestCase):
 
 
 class ThePlanIsShownOnlyWhenItFits(unittest.TestCase):
-    """AC30：规划条目与当前提问不相符时不展示，标「规划里没有对应这一问」。"""
+    """AC30：类型或已知阶段对不上的条目不展示；阶段未知时只作 phase_ready 为假的候选。"""
 
     def record(self, kind: str, phase: str | None = None) -> dict:
         return {"case": "c", "status": run_multi_case.WAITING_STATUS, "current_phase": phase,
@@ -109,15 +109,14 @@ class ThePlanIsShownOnlyWhenItFits(unittest.TestCase):
         record["interaction_script"][0]["expected_phase"] = "story"
         self.assertIsNone(self.request(record)["planned_step_id"], "spec 阶段展示了 story 的立场")
 
-    def test_an_unknown_phase_does_not_get_it(self) -> None:
+    def test_an_unknown_phase_only_gets_a_candidate_not_ready(self) -> None:
         got = self.request(self.record("story_gate", None))
-        self.assertIsNone(got["planned_step_id"])
-        self.assertIn("规划里没有对应这一问", got["plan_note"])
+        self.assertEqual([("enter-plan", False)], [(c["id"], c["phase_ready"]) for c in got["candidate_steps"]])
 
-    def test_a_matching_gate_gets_the_stance(self) -> None:
+    def test_a_matching_gate_gets_the_stance_as_a_candidate(self) -> None:
         got = self.request(self.record("story_gate", "spec"))
         self.assertEqual("enter-plan", got["planned_step_id"])
-        self.assertIsNone(got["plan_note"])
+        self.assertEqual("候选，需按完整问题核立场", got["plan_note"])
 
 
 class TheCheckpointRefusesReplies(unittest.TestCase):
@@ -173,60 +172,135 @@ class WatchOnlyKnocks(unittest.TestCase):
         replied.assert_not_called()
 
 
-class TheReviewVerdictLandsInTheIssueZone(unittest.TestCase):
-    """AC32：评审表态写进对应议题的人工区，评审记录的换行保持原样。"""
+class ReviewOpinionsLandOnTheChosenIssues(unittest.TestCase):
+    """人工区意见：宿主为每条静态意见选真实 D 议题；脚本核完全部输入才一次写入，机器区不动、原换行保持。"""
 
-    def write(self, root: Path, newline: str) -> Path:
-        review = root / "AR" / "review.md"
-        review.parent.mkdir(parents=True)
-        review.write_bytes(REVIEW.replace("\n", newline).encode("utf-8"))
-        return review
+    STATIC = "- verdict: 需修改\n  opinion: 定为 36 小时。\n- verdict: 暂缓\n  opinion: 转分享这次仍不定。\n"
 
-    def feedback(self, root: Path) -> Path:
-        f = root / "feedback.yaml"
-        f.write_text("- match: [撤销]\n  verdict: 需修改\n  opinion: 定为 36 小时。\n"
-                     "- match: [不存在的议题]\n  verdict: 暂缓\n  opinion: 仍不定。\n", encoding="utf-8")
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.feature = self.root / "feature"
+        self.out = self.root / "run"
+        (self.feature / "AR").mkdir(parents=True)
+        (self.out / "checkpoints" / "initial" / "AR").mkdir(parents=True)
+        self.review = self.feature / "AR" / "review.md"
+        self.put(REVIEW)
+        self.zone = self.root / "static.yaml"
+        self.zone.write_text(self.STATIC, encoding="utf-8")
+
+    def put(self, text: str, newline: str = "\n") -> None:
+        data = text.replace("\n", newline).encode("utf-8")
+        self.review.write_bytes(data)
+        (self.out / "checkpoints" / "initial" / "AR" / "review.md").write_bytes(data)
+
+    def feedback(self, items: list[dict]) -> Path:
+        import yaml  # noqa: PLC0415
+        f = self.root / "feedback.yaml"
+        f.write_text(yaml.safe_dump(items, allow_unicode=True), encoding="utf-8")
         return f
 
-    def test_it_ticks_the_verdict_and_writes_the_opinion(self) -> None:
+    GOOD = [{"source_item": 1, "decision_id": "D2", "verdict": "需修改", "opinion": "定为 36 小时。"},
+            {"source_item": 2, "decision_id": "D3", "verdict": "暂缓", "opinion": "转分享这次仍不定。"}]
+
+    def deliver(self, items: list[dict]) -> None:
+        _, write = rc._review_zone_plan(self.feature, self.out, [self.zone], self.feedback(items))
+        write()
+
+    def test_each_opinion_lands_on_its_chosen_issue_with_the_newlines_kept(self) -> None:
         for newline in ("\n", "\r\n"):
-            with self.subTest(newline=repr(newline)), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                review = self.write(root, newline)
-                done = rc._write_review_zones(root, self.feedback(root))
-                raw = review.read_bytes().decode("utf-8")
+            with self.subTest(newline=repr(newline)):
+                self.put(REVIEW, newline)
+                self.deliver(self.GOOD)
+                raw = self.review.read_bytes().decode("utf-8")
                 self.assertEqual(REVIEW.count("\n"), raw.count(newline), "换行被改了")
-                if newline == "\n":
-                    self.assertNotIn("\r", raw)
-                text = raw.replace("\r\n", "\n")
-                first, second = text.split("#### 1.1.2", 1)
-                self.assertIn("- [x] 需修改", first)
+                first, second = raw.replace("\r\n", "\n").split("#### 1.1.2", 1)
+                self.assertIn("- [x] 需修改\n- [ ] 暂缓", first)
                 self.assertIn("修改意见：定为 36 小时。", first)
-                self.assertNotIn("- [x]", second, "写到了别的议题")
-                self.assertIn("没有写", done[1]["note"])
+                self.assertIn("- [ ] 需修改\n- [x] 暂缓", second)
+                self.assertEqual(rc._machine_view(REVIEW.split("\n")), rc._machine_view(raw.replace("\r\n", "\n").split("\n")),
+                                 "机器区被改了")
+                self.deliver(self.GOOD)
+                self.assertEqual(raw, self.review.read_bytes().decode("utf-8"), "同样的输入重投不幂等")
+
+    def test_a_retitled_issue_is_found_by_its_identity(self) -> None:
+        self.put(REVIEW.replace("撤销宽限的时长", "收回钥匙的期限"))
+        self.deliver(self.GOOD)
+        self.assertIn("修改意见：定为 36 小时。", self.review.read_text(encoding="utf-8").split("#### 1.1.2")[0])
+
+    def test_bad_inputs_write_nothing(self) -> None:
+        g1, g2 = self.GOOD
+        cases = {
+            "空": [], "漏一条": [g1], "重复 source_item": [g1, {**g2, "source_item": 1}],
+            "改了静态立场": [g1, {**g2, "verdict": "同意"}], "改了意见": [g1, {**g2, "opinion": "可以转分享。"}],
+            "未知 D": [g1, {**g2, "decision_id": "D9"}], "重复 D": [g1, {**g2, "decision_id": "D2"}],
+            "没有对应议题": [g1, {**g2, "decision_id": ""}],
+        }
+        before = self.review.read_bytes()
+        for label, items in cases.items():
+            with self.subTest(case=label), self.assertRaises(SystemExit):
+                self.deliver(items)
+            self.assertEqual(before, self.review.read_bytes(), f"{label}：写了盘")
+
+    def test_a_broken_zone_or_another_version_is_refused(self) -> None:
+        for label, text, initial in (
+                ("缺人工区", REVIEW.replace("- [ ] 暂缓\n修改意见：\n\n<!-- decision: D2", "\n<!-- decision: D2"), None),
+                ("初段不是这一份", REVIEW, REVIEW.replace("撤销后多久失效", "另一版的决策点"))):
+            with self.subTest(case=label):
+                self.put(text)
+                if initial:
+                    (self.out / "checkpoints" / "initial" / "AR" / "review.md").write_text(initial, encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    self.deliver(self.GOOD)
+                self.assertNotIn("- [x]", self.review.read_text(encoding="utf-8"))
+
+    def test_a_different_human_opinion_is_kept_as_a_conflict(self) -> None:
+        self.put(REVIEW.replace("- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n\n<!-- decision: D2",
+                                "- [x] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：评审人自己写的\n\n<!-- decision: D2"))
+        before = self.review.read_bytes()
+        with self.assertRaises(SystemExit) as stopped:
+            self.deliver(self.GOOD)
+        self.assertIn("投递冲突", str(stopped.exception))
+        self.assertEqual(before, self.review.read_bytes())
 
 
-class TheCarFeedbackHitsOneIssueEach(unittest.TestCase):
-    """car 的评审回流资产：拿第三次重跑的议题标题跑一次投放，每条表态只命中一条议题。"""
+class AllUpdateInputsAreCheckedBeforeWriting(unittest.TestCase):
+    """resume-update：Case 的全部更新输入与额外补料写前核完；执行中途失败报已投与未投、不排话。"""
 
-    TITLES = ("被分享人能否把钥匙再转给第三个人，本期不做结论",
-              "撤销后双方长期不联网是否需要车厂强制下线，本期不做结论",
-              "撤销后对方离线时的失效宽限时限定为 24 小时",
-              "车钥匙分享的六个车云/车厂云接口在模拟工程中以本地模拟仓储承载",
-              "被分享人接受侧界面不属于本轮钱包端范围")
-    FEEDBACK = REPO_ROOT / "test" / "cases" / "car-key-sharing" / "update-inputs" / "car-review-feedback.yaml"
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        (self.root / "doc" / "features" / "AR90006").mkdir(parents=True)
 
-    def test_every_verdict_lands(self) -> None:
-        zone = "请产品负责人评审。\n\n评审结论：\n- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n\n"
-        review = "# 评审记录\n\n" + "".join(f"#### 1.1.{k} {t}\n\n{zone}<!-- decision: D{k} -->\n\n"
-                                            for k, t in enumerate(self.TITLES, 1))
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "AR").mkdir()
-            (root / "AR" / "review.md").write_text(review, encoding="utf-8")
-            done = rc._write_review_zones(root, self.FEEDBACK)
-        self.assertEqual(3, len(done))
-        self.assertTrue(all("note" not in d for d in done), done)
+    def run_delivery(self, supplements: list[str], env: dict) -> list:
+        with mock.patch.object(rc, "REPO_ROOT", self.root), mock.patch.dict("os.environ", env, clear=False):
+            return rc.deliver_update_inputs("auto-topup", "AR90006", self.root / "run", None, supplements)
+
+    def test_a_bad_input_anywhere_stops_before_any_write(self) -> None:
+        system = self.root / "system"
+        for label, supplements, env in (("缺需求系统", [], {"STORY_REQUIREMENT_SYSTEM_DIR": ""}),
+                                        ("补料不存在", ["没有这份.docx"], {"STORY_REQUIREMENT_SYSTEM_DIR": str(system)})):
+            with self.subTest(case=label), self.assertRaises(SystemExit):
+                self.run_delivery(supplements, env)
+            self.assertFalse((self.root / "doc" / "features" / "AR90006" / "inbox").exists(), f"{label}：写了收件箱")
+            self.assertFalse(system.exists(), f"{label}：写了需求系统")
+
+    def test_a_failure_midway_reports_what_was_and_was_not_delivered(self) -> None:
+        real = rc.shutil.copyfile
+        calls = []
+
+        def flaky(src, dst):
+            calls.append(dst)
+            if len(calls) == 2:
+                raise OSError("磁盘写不进")
+            return real(src, dst)
+
+        with mock.patch.object(rc.shutil, "copyfile", flaky), self.assertRaises(rc.UpdateDeliveryError) as failed:
+            self.run_delivery([], {"STORY_REQUIREMENT_SYSTEM_DIR": str(self.root / "system")})
+        self.assertEqual(["local_material"], [d["kind"] for d in failed.exception.done])
+        self.assertEqual(["system"], [d["kind"] for d in failed.exception.pending])
 
 
 if __name__ == "__main__":

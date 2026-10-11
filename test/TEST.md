@@ -62,7 +62,9 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
    Case 都会被 UI kit 门禁拦在「目标目录无法解析」上；demo 的 `framework/harness/state/` 下没有属于别人的阶段状态（有则先弄清归属，
    再决定是否 clear-state）；demo 是发布基线：顶层没有维护目录（`test`、`tools`、`output`、`scratch`、`.bak`、`.git`）、没有 `doc/features`，
    git 查询成功且非忽略改动为空。Windows 上被测 CLI 在 PATH 里解析到原生可执行文件，不是 npm 的 `.cmd` 包装（配法见
-   [tools/cli/README](../tools/cli/README.md)），否则首条请求会在启动前被拒。
+   [tools/cli/README](../tools/cli/README.md)），否则首条请求会在启动前被拒。被测 CLI 的容量事实已固定并写进本轮运行证据：二进制版本、
+   请求实际用的 model 与 config 路径、生效的输入 / 上下文 / 输出上限、上下文压缩怎样触发、服务计量约束，只记非秘密字段；
+   查不清的项照实标未知，上一轮出过输入超限而它仍未知时不起跑，报容量风险未核。
 1. 创建本轮 `output/story/<suite-id>/` 控制目录。
 2. 扫描并关联 `%TEMP%/sw-story/*` 与 `output/story/*` 中的历史 suite。
 3. 整体预检终态、PID、lease、路径边界、软链接和所有权。
@@ -148,37 +150,47 @@ CLI 宿主按 `config/test.yaml > cli.configurations` 的顺序选，配置条�
 装置不自动应答。`interaction-script.yaml` 记的是需求方在每一关的**立场**和该交出的材料，宿主按当时情境用自己的话说出那个意思；逐字照抄
 会在关卡漂移时把后面的话提前送进前面的关卡。每一关三步：
 
-1. 读 `adaptive_reply_requests[]`：`question` 是模型原话，`planned_intent` 是这一关按规划该表达的立场，`planned_deliver` 是该交的材料，
-   `planned_phase` 是那句话的阶段前提（只在与当前阶段一致时给出），`script_cursor` 是规划走到第几条。规划里没有对应这一问时这几项为空，
-   `plan_note` 写明，按 `answered` 只答所问；
+1. 读 `adaptive_reply_requests[]`：`model_prompt` 是模型的完整原话，`question` 只是前 1200 字的展示摘要（`question_truncated` 为真时
+   作答前读完整的那份，不把摘要当原话）；`run_id` 与 `turn` 是这一问的身份，回话原样带回。`candidate_steps` 列出等待类型一致、
+   还没答过的规划条目，每项有 `id / text / deliver / expected_kind / expected_phase / phase_ready`：当前阶段已知时只列阶段前提成立的，
+   阶段未知时都列、`phase_ready` 为假。候选只说明阶段与类型可能相关，是不是这一问、立场等不等价由宿主读完整问题判断。
+   `planned_*` 是首个候选的派生展示，没有候选时为空并在 `plan_note` 写明，按 `answered` 只答所问；`script_cursor` 是第一个未答条目的位置；
 2. 判断属于哪一种、说什么，用 `--reply-kind` 如实标注：
 
    | `--reply-kind` | 什么时候用 | 说什么 |
    |---|---|---|
-   | `planned` | 模型问到了规划里这一条对应的事，阶段前提已满足 | 把 `planned_intent` 的意思用自己的话说出来；`--step <id>` 指名覆盖了哪一条，规划指针才前进 |
-   | `answered` | 规划之外、需求方答得上的问题（范围、优先级、口径）；framework 的术语确认与视觉 provider 询问、模型自开 update 时问补料也属这类 | 一句需求方立场，不捎带规划里别的立场 |
-   | `neutral` | 模型没有提问，只是在推进，装置照例叫了宿主 | 一句不含事实的推进（「继续」）；不替它确认材料、范围、口径，也不重放上一条的编号 |
+   | `planned` | 模型问到了规划里候选条目对应的事，`phase_ready` 为真 | 把立场用自己的话说出来；`--step <id>` 指名这次实际回答了哪几条，一个合并的问题可重复给多个 `--step`，未问到的条目不带 |
+   | `answered` | 规划之外、需求方答得上的问题（范围、优先级、口径）；framework 的术语确认与视觉 provider 询问、模型自开 update 时问补料也属这类 | 一句需求方立场，不捎带规划里别的立场；不带 `--step` |
+   | `neutral` | 模型没有提问，只是在推进，装置照例叫了宿主 | 一句不含事实的推进（「继续」）；不替它确认材料、范围、口径，也不重放上一条的编号；不带 `--step` |
    | `improvised` | 以上都不是 | 尽量不用；它会污染观测，原话要进交付报告 |
 
 3. 同一回合立即再 `poll` 确认消费。
 
 **怎么说**：需求方是在拍板，一次回话不超过一句。
 
-- 模型给了编号选项：只回编号（「1」「A」），几组选项按组号逐组写（「T1 1，T2 2」）；回选项内容会让产物分不清那句话是它写的还是宿主给的。
+- 模型给了编号选项：整个选项与需求方的既定立场等价时只回编号（「1」「A」），几组选项按组号逐组写（「T1 1，T2 2」）。
+  选项夹带了立场里没有的结论、或没有等价选项时，不选编号，用一句业务话把决定限定到立场本身（如立场是「失败后怎么处理待定」，
+  就不批准一个同时写着「可直接重走验证」的选项）。术语确认只确认需求方能确认的业务含义，工程模块怎么对应归工程事实。
 - 材料关卡：模型第一次停在材料关卡，就把该 Case `supplements/` 里 `on_request` 的补料全部 `--deliver` 进收件箱，再只回表示「已放入」的编号；
   之后再问，回表示「材料就这些」的编号。人手上的材料一次交齐，不按模型点名挑着给，也不描述文件里有什么。
 - 规划外的问题：一句立场，不点命令、文件、字段、关卡名，不复述它已说过的。
 
-`awaiting_reply` 在它出现的那次唤醒内回复完：`question` 就是原话，`case_inputs_hint` 是本 Case 的公开输入清单，当轮即可作答；推到下一个周期
-按协调失误记入观测记录。宿主只读本 Case 的公开输入，不读其他 Case、历史答案或提示遗漏项。意外行为与关键词只记录和理解；`stop` 与 `retry` 只响应用户
+`awaiting_reply` 在它出现的那次唤醒内回复完：`model_prompt` 就是原话，`case_inputs_hint` 是本 Case 的公开输入清单，当轮即可作答；推到下一个周期
+按协调失误记入观测记录，延迟在观测与成本报告里如实写明。宿主只读本 Case 的公开输入，不读其他 Case、历史答案或提示遗漏项。意外行为与关键词只记录和理解；`stop` 与 `retry` 只响应用户
 明确要求（§4.2），单个 Case 失败不停其他 Case。
 
 ```powershell
 python test/scripts/run_multi_case.py reply --suite-id story-suite-20260822-140000 `
-  --case <case-id> --reply-mode adaptive --reply-kind planned --step scope-do-both-in-one `
-  --reason "模型问范围怎么定，对应规划里的不拆单立场" `
-  --text "只做挂失，不做补卡。"
+  --case <case-id> --run-id <run> --turn <turn> --reply-mode adaptive --reply-kind planned `
+  --step <id1> --step <id2> --reason "模型问范围怎么定，对应规划里的不拆单立场" --text-file <UTF-8回复文件>
 ```
+
+`--run-id` 与 `--turn` 必给，回复只落到宿主看到的那一问：同一问已有成功回复时，同样的话、材料与条目重发返回原结果、不再发，
+不同的被拒；没有成功记录时目标必须正是当前在等的那一问，模型已换到下一问或换了 attempt 就不收。`--step` 重复或不在规划里、
+类型或阶段对不上、补料不在本 Case 的 `supplements/` 里，都在发送前拒绝，不消费条目；发送失败也不消费。发送结果不确定时输出写明，
+先核该 run 的 `events.jsonl`，不自动重发。成功的回复在 `observations.jsonl` 记下 `run_id / turn / text / deliver / covered_steps`，
+Case 的 `answered_steps` 是本 attempt 已答条目的集合（新 attempt 从空起，初段转 update 沿用），相邻两问再次确认同一立场不重复计入；
+未问到的条目收尾时标未发生，不判成败。
 
 回话要带材料时加 `--deliver <文件名>`（取自该 Case 的 `supplements/`）：文件先落进收件箱，那句话才排进队列。
 回话多行、带引号或以 `/` 开头时写进一个 UTF-8 文件，用 `--text-file <文件>` 代替 `--text`：Git Bash 会把命令行里以 `/`
@@ -262,8 +274,9 @@ python test/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-1
 
 `conclude` 在模型这一轮结束时生效：worker 在轮与轮之间读收工请求，自己退出续话循环，门禁照跑、产物齐全。
 
-模型在一轮里陷入循环（同一件事反复做、runlog 里自述绕不出去），或 poll 报一个 Case 长时间没有产出（`events_idle_sec` / `stalled`）时，
-按故障向用户报告现象与依据，由用户决定处置：
+模型没有提问、在正常推进时，按 §3.2 的 `neutral` 回一句；模型在一轮里陷入循环（同一件事反复做、重复输出同一个词、runlog 里自述绕不出去）、
+没有业务进展地生成，或 poll 报一个 Case 长时间没有产出（`events_idle_sec` / `stalled`）时，这是异常，不机械连发「继续」把它算成正常运行：
+保留原话与事件，按故障向用户报告现象与依据，由用户决定处置（宿主不自行获得停测权限）：
 
 - 重启这一个 Case：`retry --suite-id <suite> --case <case-id> --reason "<用户同意的理由>"`，走 §2.1 的干净基线链路（attempt+1），其他 Case 不动；
 - 停掉整个 suite：`stop --suite-id <suite>`，逐个强杀所有活动 Case 的进程树、不跑门禁，之后照常 finalize，终态记 `stopped`。
@@ -334,7 +347,7 @@ output/story/<suite-id>/
 | 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；需求目录、关联蓝图与需求目录外的 Story 审查报告同一刻固定，复制前后目录摘要不同则快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`；不先回流，第一段产物就只剩快照 |
-| 5 | `resume-update --case <id>`（投 case.yaml 的 `update_request`，与第一段的 `prompt` 同一条路） | 只投第二段请求；交付选择在第一段的关卡上已经答过，终点真正到了才停在检查点，这里不替模型答别的。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
+| 5 | `resume-update --case <id>`（投 case.yaml 的 `update_request`，与第一段的 `prompt` 同一条路）；Case 有 `review_human_zone` 时加 `--review-feedback-file <本次反馈文件>` | 只投第二段请求；交付选择在第一段的关卡上已经答过，终点真正到了才停在检查点，这里不替模型答别的。`update_inputs` 在这一步按下表投放，`--deliver` 只投 `supplements/` 里的补料；全部输入写前核完，一项不成立就一项不写、不发请求 |
 | 6 | 第二段起手在材料关卡停一次，按该 Case `interaction-script.yaml` 的 `update-material` 作答；之后 Case 停在第二检查点（`stop_reason: update_checkpoint`） | 终点以流程契约里这一轮 update 关闭为准，模型说「更新完成」不算 |
 | 7 | `checkpoint --point update` → 只读后评 → `conclude` | story 门禁已在进第二检查点前跑过；第二检查点的唯一出口是 conclude，不发的话 worker 一直等，最后只能被外部停掉、终态成 `worker_lost` |
 | 8 | 全部终态后 `finalize --promote` | 第二段真跑过时终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；第一段没到终点就收尾的，终态用原编号 |
@@ -343,7 +356,20 @@ output/story/<suite-id>/
 |---|---|---|
 | `local_material` | 需求目录的收件箱 | 人手上的新版文档 |
 | `system` | 需求系统里那张单（`destination` 指文件） | 上游正文或评审回稿被更新，update 取上游时取回 |
-| `review_human_zone` | 评审记录里标题含 `match` 词的那条议题的人工区 | 评审人表态；找不到或不止一条就不写并记下 |
+| `review_human_zone` | 宿主指定的那条 D 议题的人工区 | 评审人表态；静态意见只写结论与意见，见下 |
+
+**人工区意见文件**：宿主读第一检查点那份 Review，按语义为每条静态意见选它真实对应的 D 议题，写一份 UTF-8 YAML 非空列表，每项
+`{source_item: 1, decision_id: D1, verdict: 需修改, opinion: <原意见>}`。`source_item` 按 Case 里各 `review_human_zone` 源的声明顺序、
+条目顺序从 1 连续编号，只指已有输入的位置；文件要恰好覆盖每一条一次，`decision_id` 不重复，`verdict` 与 `opinion` 等于静态意见
+（按 YAML 解析后的值比，不比缩进与引号）。找不到真实对应的 D 时停下，把未投的那条意见交维护设计者裁定，不伪造 D、不塞进相似议题。
+
+脚本核：初段 Review 与工作区 Review 的机器区逐字一致、D 标记唯一、人工区三态与修改意见行齐全。都成立才一次写入：目标三态勾一项、
+其余两项不勾，写修改意见行，原换行与其余文本不动；空白人工区可写，已有完全相同的意见是幂等重投，已有不同的人工意见保留并报投递冲突。
+执行中途 IO 失败时不启动模型，输出已投与未投的明细，已写的人工区如实报出，修好后按同样输入重试。
+
+```powershell
+python test/scripts/run_multi_case.py resume-update --suite-id <suite> --case <case> --review-feedback-file <本次反馈文件>
+```
 
 本地单没有需求系统，送审件就是工作区里的 `AR/review.md` 与 `AR/story.md`。等待窗口里只固定快照、只读评测，不向被测会话发评分、缺陷清单、
 脚本路径或修法；恢复驱动后仍只扮演需求方。第一段到目标却没拿到 session 时终态是 `cli_session_lost`，不另起 run 接着跑。

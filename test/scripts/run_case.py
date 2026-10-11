@@ -2271,8 +2271,8 @@ def cmd_poll(case_id: str, cursor: int, model_cursor: int, wait_sec: int, max_ch
                     "prompt": state.get("awaiting_prompt") or None,
                     "prompt_source": state.get("awaiting_prompt_source") or "unavailable",
                     "waited_sec": state.get("awaiting_stale_sec"),
-                    "how": f"python test/scripts/run_case.py {case_id} "
-                           f"reply --text \"<以用户身份说的话>\"",
+                    "how": f"python test/scripts/run_case.py {case_id} reply --run-id {state.get('run_id')} "
+                           f"--turn {state.get('awaiting_turn')} --text \"<以用户身份说的话>\"",
                 }
             print(json.dumps(payload, ensure_ascii=False, indent=2))
             return 0
@@ -2300,20 +2300,30 @@ def deliver_supplements(case_id: str, feature: str, names: list[str]) -> list[st
     """
     if not names:
         return []
-    source_root = HERE.parent / "cases" / case_id / "supplements"
+    sources = supplement_sources(case_id, names)
     inbox = (REPO_ROOT / FEATURES_DIR / feature / "inbox").resolve()
     delivered: list[str] = []
-    for name in names:
-        source = (source_root / name).resolve()
-        if not source.is_file() or source.parent != source_root.resolve():
-            raise SystemExit(f"[runner] 找不到补料或路径越界: {case_id}: {name}")
+    for source in sources:
         inbox.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, inbox / source.name)
         delivered.append(source.name)
     return delivered
 
 
-def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
+def supplement_sources(case_id: str, names: list[str]) -> list[Path]:
+    """补料的源文件：只读核在本 Case 的 supplements/ 里、读得到、不越界。"""
+    source_root = (HERE.parent / "cases" / case_id / "supplements").resolve()
+    out = []
+    for name in names:
+        source = (source_root / name).resolve()
+        if not source.is_file() or source.parent != source_root:
+            raise SystemExit(f"[runner] 找不到补料或路径越界: {case_id}: {name}")
+        out.append(source)
+    return out
+
+
+def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None,
+              run_id: str | None = None, turn: str | None = None) -> int:
     """以用户身份回一句话给停等中的被测会话。
 
     交互用例（`interactive: true`）靠它推进；自动用例也能用它中途插话纠偏。
@@ -2322,6 +2332,8 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
 
     `--deliver` 让这句话带上附件：先把文件放进收件箱，再把话排进队列。
     顺序不能反——话先到、文件后到，模型会照着那句话去看一个还不存在的目录。
+
+    `--run-id` 与 `--turn` 是宿主看到的那一问：写入前与当前状态再核一次，已换问题就不收，回复不落到下一问上。
     """
     _, out_dir, feature = _load_case(case_id)
     text = (text or "").strip()
@@ -2352,6 +2364,13 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
         print(json.dumps({"ok": False,
                           "error": "worker lease 已过期且进程不可确认，拒绝入队"},
                          ensure_ascii=False))
+        return 1
+    if not run_id or not turn or status != "awaiting_reply" or str(state.get("run_id")) != str(run_id) \
+            or str(state.get("awaiting_turn")) != str(turn):
+        print(json.dumps({"ok": False, "error": "回复目标不是当前在等的那一问，不收",
+                          "target": {"run_id": run_id, "turn": turn},
+                          "current": {"status": status, "run_id": state.get("run_id"),
+                                      "turn": state.get("awaiting_turn")}}, ensure_ascii=False))
         return 1
     delivered = deliver_supplements(case_id, feature, list(deliver or []))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2472,96 +2491,193 @@ OPINION_HEAD = "修改意见："
 VERDICTS = ("同意", "需修改", "暂缓")
 
 
-def deliver_update_inputs(case_id: str, feature: str) -> list[dict]:
+def deliver_update_inputs(case_id: str, feature: str, out_dir: Path, review_feedback: Path | None = None,
+                          supplements: list[str] | None = None) -> list[dict]:
     """第二段起跑前把变更材料投到位 —— **按它该去的地方投，不是一律丢进收件箱**。
 
     三种落点各有各的物理动作，混成一种就测不出真实形态：
 
     - `local_material`：人手上的新版文档 → 收件箱，与正常补料同一条路；
-    - `review_human_zone`：评审人在评审记录里对各议题的表态 → 按标题里的词找到那一条议题，
-      在它的人工区勾结论、写修改意见。**找不到或找到不止一条就不写**，如实记下来——
-      宿主动机器区或猜议题等于替产物做决定；
+    - `review_human_zone`：评审人对各议题的表态。静态意见只写结论与意见；落到哪一条议题由宿主读过初段
+      Review 后在 `review_feedback` 里按真实 D 身份指定，这里只核它与静态意见、初段 Review 对得上再写；
     - `system`：需求系统上的正文被改了 → 写进系统目录那一份。
 
-    投放幂等：同一份重复投只是覆盖同样的字节。**初始那一轮绝不投**——
-    提前铺好的话，「它会不会认出变化」就永远测不到。
+    **写之前把全部输入（含额外补料）核完**，有一项不成立就一项都不写。执行中途 IO 失败时报出已投与未投，
+    已写的不回滚。投放幂等：同一份重复投只是同样的字节、同样的意见。**初始那一轮绝不投**。
     """
     case, _, _ = _load_case_definition(case_id)
     entries = case.get("update_inputs") or []
-    if not entries:
-        return []
-    source_root = HERE.parent / "cases" / case_id / "update-inputs"
+    source_root = (HERE.parent / "cases" / case_id / "update-inputs").resolve()
     feature_root = REPO_ROOT / FEATURES_DIR / feature
-    done: list[dict] = []
+    actions: list[tuple[dict, Any]] = []
+    zones: list[Path] = []
     for item in entries:
         name = str(item.get("file") or "").strip()
         kind = str(item.get("kind") or "local_material").strip()
         source = (source_root / name).resolve()
-        if not name or not source.is_file() or source.parent != source_root.resolve():
+        if not name or not source.is_file() or source.parent != source_root:
             raise SystemExit(f"[runner] 找不到更新输入或路径越界: {case_id}: {name}")
         if kind == "review_human_zone":
-            done.extend(_write_review_zones(feature_root, source))
+            zones.append(source)
         elif kind == "system":
-            done.append(_write_into_system(feature, source, item))
+            target, rel = _system_target(feature, item)
+            actions.append(({"file": source.name, "kind": "system", "destination": f"{feature}/{rel}"},
+                            lambda s=source, d=target: (d.parent.mkdir(parents=True, exist_ok=True), shutil.copyfile(s, d))))
         else:
             inbox = (feature_root / "inbox").resolve()
-            inbox.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, inbox / source.name)
-            done.append({"file": source.name, "kind": "local_material",
-                         "destination": f"inbox/{source.name}"})
+            actions.append(({"file": source.name, "kind": "local_material", "destination": f"inbox/{source.name}"},
+                            lambda s=source, d=inbox: (d.mkdir(parents=True, exist_ok=True), shutil.copyfile(s, d / s.name))))
+    if zones and review_feedback is None:
+        raise SystemExit("[runner] 这个 Case 有评审人工区意见：读过初段 Review 后用 --review-feedback-file 指定每条意见对应的 D 议题")
+    if review_feedback is not None and not zones:
+        raise SystemExit("[runner] 这个 Case 没有评审人工区意见，--review-feedback-file 无处可投")
+    if zones:
+        record, write = _review_zone_plan(feature_root, out_dir, zones, review_feedback)
+        actions.append((record, write))
+    for source in supplement_sources(case_id, list(supplements or [])):
+        actions.append(({"file": source.name, "kind": "supplement", "destination": f"inbox/{source.name}"},
+                        lambda s=source: (feature_root.joinpath("inbox").mkdir(parents=True, exist_ok=True),
+                                          shutil.copyfile(s, feature_root / "inbox" / s.name))))
+    done: list[dict] = []
+    for index, (record, write) in enumerate(actions):
+        try:
+            write()
+        except OSError as exc:
+            raise UpdateDeliveryError(done, [r for r, _ in actions[index:]], f"{record['file']}：{exc}") from exc
+        done.append(record)
     return done
 
 
-def _write_review_zones(feature_root: Path, source: Path) -> list[dict]:
-    """把评审人的表态写进各议题的人工区：勾结论、写修改意见。换行按评审记录原样。
+class UpdateDeliveryError(Exception):
+    """执行期 IO 失败：带着已投与未投的明细，不伪称零写入。"""
 
-    输入是一份 YAML 列表，每项 `match`（议题标题里要有的词，任一即可）、`verdict`（同意 /
-    需修改 / 暂缓）、`opinion`（修改意见）。标题匹配不到或匹配到不止一条，这一项不写并记下来。
-    """
+    def __init__(self, done: list[dict], pending: list[dict], error: str) -> None:
+        super().__init__(error)
+        self.done, self.pending, self.error = done, pending, error
+
+
+def _static_opinions(zones: list[Path]) -> list[dict]:
+    """全部人工区意见源按声明顺序、条目顺序连续编号（source_item 从 1 起）：只是已有输入的位置，不是业务 ID。"""
+    out = []
+    for source in zones:
+        items = yaml.safe_load(source.read_text(encoding="utf-8")) or []
+        if not isinstance(items, list):
+            raise SystemExit(f"[runner] {source.name} 要是意见列表")
+        for item in items:
+            verdict, opinion = str(item.get("verdict") or "").strip(), str(item.get("opinion") or "").strip()
+            if verdict not in VERDICTS or not opinion:
+                raise SystemExit(f"[runner] {source.name} 第 {len(out) + 1} 条：结论要是 {' / '.join(VERDICTS)}，意见不能空")
+            out.append({"source_item": len(out) + 1, "file": source.name, "verdict": verdict, "opinion": opinion})
+    return out
+
+
+def _human_zones(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """评审记录里每个 D 议题的人工区：从「评审结论：」到这一条的 decision 标记之前。D 标记重复的记成 None。"""
+    out: dict[str, tuple[int, int] | None] = {}
+    start = 0
+    for k, line in enumerate(lines):
+        if line.startswith("#### "):
+            start = k
+        m = re.match(r"^<!-- decision: (\S+) -->$", line.strip())
+        if m:
+            head = next((i for i in range(start, k) if lines[i].strip() == HUMAN_ZONE_HEAD), None)
+            out[m.group(1)] = None if m.group(1) in out else ((head, k) if head is not None else (-1, k))
+    return out
+
+
+def _machine_view(lines: list[str]) -> list[str]:
+    """人工区抹去之后的评审记录：初段与工作区的机器区按它逐字比。"""
+    masked = list(lines)
+    for span in _human_zones(lines).values():
+        if span and span[0] >= 0:
+            masked[span[0]:span[1]] = ["<人工区>"] * (span[1] - span[0])
+    return masked
+
+
+def _review_zone_plan(feature_root: Path, out_dir: Path, zones: list[Path], feedback_file: Path) -> tuple[dict, Any]:
+    """只读核完人工区意见再给出一次写入：source_item 恰好覆盖、结论与意见等于静态意见、D 身份唯一且属于初段那份 Review。"""
+    static = _static_opinions(zones)
+    try:
+        given = yaml.safe_load(Path(feedback_file).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise SystemExit(f"[runner] 人工区意见文件读不出：{exc}") from exc
+    if not isinstance(given, list) or not given:
+        raise SystemExit("[runner] 人工区意见文件要是非空列表，每条 {source_item, decision_id, verdict, opinion}")
+    problems: list[str] = []
+    by_item: dict[int, dict] = {}
+    for item in given:
+        n = item.get("source_item") if isinstance(item, dict) else None
+        if not isinstance(n, int) or n in by_item:
+            problems.append(f"source_item {n!r} 不是整数或重复")
+        else:
+            by_item[n] = item
+    want = {s["source_item"] for s in static}
+    if set(by_item) != want:
+        problems.append(f"source_item 要恰好覆盖 {sorted(want)}，给的是 {sorted(by_item)}")
+    for s in static:
+        item = by_item.get(s["source_item"]) or {}
+        if item and (str(item.get("verdict") or "").strip(), str(item.get("opinion") or "").strip()) != (s["verdict"], s["opinion"]):
+            problems.append(f"source_item {s['source_item']} 的结论或意见与 {s['file']} 里的原意见不同")
+        if item and not str(item.get("decision_id") or "").strip():
+            problems.append(f"source_item {s['source_item']}（{s['opinion']}）没有对应的 D 议题：没投，"
+                            "这条意见的正常承接路径交维护设计者裁定")
+    ids = [str((by_item.get(n) or {}).get("decision_id") or "").strip() for n in sorted(by_item)]
+    if len([i for i in ids if i]) != len({i for i in ids if i}):
+        problems.append(f"decision_id 有重复：{'、'.join(ids)}")
     review = feature_root / "AR" / "review.md"
-    if not review.is_file():
-        raise SystemExit(f"[runner] {review} 不在，写不了评审表态——第一段应当已经产出它")
-    items = yaml.safe_load(source.read_text(encoding="utf-8")) or []
+    initial = out_dir / "checkpoints" / "initial" / "AR" / "review.md"
+    if not review.is_file() or not initial.is_file():
+        raise SystemExit(f"[runner] 投人工区要工作区的 AR/review.md 与初段快照里的那份都在（{review}；{initial}）")
     raw = review.read_bytes().decode("utf-8")
     newline = "\r\n" if "\r\n" in raw else "\n"
     lines = raw.replace("\r\n", "\n").split("\n")
-    titles = [(i, l) for i, l in enumerate(lines) if l.startswith("#### ")]
-    done = []
-    for item in items:
-        words = [str(w) for w in (item.get("match") or [])]
-        verdict = str(item.get("verdict") or "").strip()
-        opinion = str(item.get("opinion") or "").strip()
-        if verdict not in VERDICTS:
-            raise SystemExit(f"[runner] {source.name} 的结论只能是 {' / '.join(VERDICTS)}：{verdict}")
-        hits = [(i, l) for i, l in titles if any(w in l for w in words)]
-        record = {"file": source.name, "kind": "review_human_zone", "match": words}
-        if len(hits) != 1:
-            record["note"] = (f"标题含 {' / '.join(words)} 的议题有 {len(hits)} 条"
-                              + (f"（{'；'.join(l[5:] for _, l in hits)}）" if hits else "")
-                              + "，这一项没有写")
-            done.append(record)
+    if _machine_view(lines) != _machine_view(initial.read_bytes().decode("utf-8").replace("\r\n", "\n").split("\n")):
+        problems.append("工作区 AR/review.md 的机器区与初段快照不一致：要投的是待 update 的那一份初段稿")
+    zones_at = _human_zones(lines)
+    edits: list[tuple[int, int, str, str]] = []
+    for s in static:
+        item = by_item.get(s["source_item"]) or {}
+        d = str(item.get("decision_id") or "").strip()
+        if not d:
             continue
-        at = hits[0][0]
-        end = next((k for k in range(at + 1, len(lines)) if lines[k].startswith("#### ")
-                    or lines[k].startswith("<!-- decision:")), len(lines))
-        head = next((k for k in range(at, end) if lines[k].strip() == HUMAN_ZONE_HEAD), None)
-        if head is None:
-            record["note"] = f"「{lines[at][5:]}」下找不到人工区，这一项没有写"
-            done.append(record)
+        span = zones_at.get(d, "missing")
+        if span == "missing" or span is None:
+            problems.append(f"{d} 在初段 Review 里{'没有' if span == 'missing' else '不止一个'}议题标记")
             continue
-        for k in range(head + 1, end):
-            if lines[k].strip() == f"- [ ] {verdict}":
-                lines[k] = lines[k].replace("- [ ]", "- [x]", 1)
-            elif lines[k].startswith(OPINION_HEAD):
-                lines[k] = OPINION_HEAD + opinion
-        record["destination"] = f"AR/review.md「{lines[at][5:]}」人工区"
-        done.append(record)
-    review.write_bytes(newline.join(lines).encode("utf-8"))
-    return done
+        head, end = span
+        boxes = {v: next((k for k in range(head + 1, end) if lines[k].strip() in (f"- [ ] {v}", f"- [x] {v}")), None)
+                 for v in VERDICTS} if head >= 0 else {}
+        note = next((k for k in range(head + 1, end) if lines[k].startswith(OPINION_HEAD)), None) if head >= 0 else None
+        if head < 0 or None in boxes.values() or note is None:
+            problems.append(f"{d} 的人工区不完整（评审结论三态或修改意见行缺）")
+            continue
+        ticked = [v for v, k in boxes.items() if lines[k].strip().startswith("- [x]")]
+        written = lines[note][len(OPINION_HEAD):].strip()
+        extra = [lines[k] for k in range(note + 1, end) if lines[k].strip()]
+        if (ticked or written or extra) and (ticked, written, extra) != ([s["verdict"]], s["opinion"], []):
+            problems.append(f"{d} 的人工区已有不同的人工意见，保留不覆盖（投递冲突）")
+            continue
+        edits.append((d, note, "opinion", s["opinion"]))
+        for v, k in boxes.items():
+            edits.append((d, k, v, s["verdict"]))
+    if problems:
+        raise SystemExit("[runner] 人工区意见没投（一项都没写）：" + "；".join(problems))
+
+    def write() -> None:
+        out = list(lines)
+        for _, k, a, b in edits:
+            if a == "opinion":
+                out[k] = OPINION_HEAD + b
+            else:
+                out[k] = out[k].replace("- [x]", "- [ ]", 1) if a != b else out[k].replace("- [ ]", "- [x]", 1)
+        review.write_bytes(newline.join(out).encode("utf-8"))
+
+    targets = sorted({d for d, *_ in edits})
+    return {"file": Path(feedback_file).name, "kind": "review_human_zone", "destination": f"AR/review.md {'、'.join(targets)} 人工区"}, write
 
 
-def _write_into_system(feature: str, source: Path, item: dict) -> dict:
-    """需求系统上的正文被改了：写进系统目录那一份。"""
+def _system_target(feature: str, item: dict) -> tuple[Path, str]:
+    """需求系统里那张单的落点：只读核环境与越界。"""
     system = os.environ.get("STORY_REQUIREMENT_SYSTEM_DIR", "").strip()
     if not system:
         raise SystemExit("[runner] 这条更新输入要写需求系统，但没有 STORY_REQUIREMENT_SYSTEM_DIR")
@@ -2569,12 +2685,11 @@ def _write_into_system(feature: str, source: Path, item: dict) -> dict:
     target = (Path(system) / feature / rel).resolve()
     if Path(system).resolve() not in target.parents:
         raise SystemExit(f"[runner] 更新输入的系统落点越界: {rel}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-    return {"file": source.name, "kind": "system", "destination": f"{feature}/{rel}"}
+    return target, rel
 
 
-def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None) -> int:
+def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
+                      review_feedback: str | None = None) -> int:
     """评完第一段，把第二段的业务请求投给还停着的那个 worker。
 
     投的是**一句正常的业务话**（`/story update <编号>`），不是测试控制语句——
@@ -2598,10 +2713,15 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None)
                                                 "没有它，第二段跑完就再也拿不到第一段的样子"},
                          ensure_ascii=False))
         return 1
-    # 先投材料、再排话：反了的话，模型会照着那句话去看一个还不存在的东西。
-    delivered = deliver_update_inputs(case_id, feature)
-    delivered += [{"file": n, "kind": "supplement", "destination": f"inbox/{n}"}
-                  for n in deliver_supplements(case_id, feature, list(deliver or []))]
+    # 先投材料、再排话：反了的话，模型会照着那句话去看一个还不存在的东西。全部输入写前已核完；
+    # 执行中途失败不排话、不启动模型，已投与未投照实报。
+    try:
+        delivered = deliver_update_inputs(case_id, feature, out_dir,
+                                          Path(review_feedback) if review_feedback else None, list(deliver or []))
+    except UpdateDeliveryError as exc:
+        print(json.dumps({"ok": False, "error": exc.error, "delivered": exc.done, "not_delivered": exc.pending},
+                         ensure_ascii=False))
+        return 1
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / RESUME_FILE).write_text(
         json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
@@ -2762,6 +2882,9 @@ def main() -> int:
                     help="checkpoint：固定哪一段的快照")
     ap.add_argument("--deliver", action="append", default=[],
                     help="reply：随这句话把 cases/<id>/supplements/ 下的补料放进收件箱，可多次")
+    ap.add_argument("--turn", default=None, help="reply：要回的那一问的 turn，与 --run-id 一起核当前等待对象")
+    ap.add_argument("--review-feedback-file", default=None,
+                    help="resume-update：人工区意见（每条 source_item / decision_id / verdict / opinion）")
     args = ap.parse_args()
 
     if args.command == "run":
@@ -2778,13 +2901,13 @@ def main() -> int:
     if args.command == "status":
         return cmd_status(args.case_id)
     if args.command == "reply":
-        return cmd_reply(args.case_id, args.text, args.deliver)
+        return cmd_reply(args.case_id, args.text, args.deliver, args.run_id, args.turn)
     if args.command == "conclude":
         return cmd_conclude(args.case_id, args.reason)
     if args.command == "checkpoint":
         return cmd_checkpoint(args.case_id, args.point)
     if args.command == "resume-update":
-        return cmd_resume_update(args.case_id, args.text, args.deliver)
+        return cmd_resume_update(args.case_id, args.text, args.deliver, args.review_feedback_file)
     return cmd_stop(args.case_id, args.force)
 
 

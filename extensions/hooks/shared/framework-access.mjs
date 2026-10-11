@@ -315,6 +315,21 @@ export function featureIdentity(projectRoot, feature) {
   }
 }
 
+/**
+ * 阶段审查报告目录：原生 `featurePhaseReportsDir` 给出的绝对路径（含工程配置的 reports_dir_pattern）。
+ * 唯一消费者是阶段报告核对；解析失败返回原生的错误，不回落默认目录。
+ *
+ * @returns {{dir: string}|{error: string}}
+ */
+export function phaseReportsDir(projectRoot, feature, phase) {
+  try {
+    const native = loadNative(projectRoot);
+    return { dir: native.module('config.ts').featurePhaseReportsDir(native.root, feature, phase, native.frameworkRoot) };
+  } catch (e) {
+    return { error: String(e?.message ?? e).split(/\r?\n/)[0] };
+  }
+}
+
 /** 本阶段产物所在的目录，取原生身份给出的位置；身份认不出时为 null，由调用方报原生给的问题，不自拼目录。 */
 export function featureDir(projectRoot, feature) {
   return featureIdentity(projectRoot, feature).dir ?? null;

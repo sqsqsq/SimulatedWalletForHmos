@@ -41,7 +41,9 @@ import {
 } from './story/context.mjs';
 import { attachDesignReview, designGaps, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
-import { discloseInStory, pendingDisclosure, prepareReview, reviewResult, waiverCheck } from './story/independent-review.mjs';
+import {
+  discloseInStory, pendingDisclosure, preparedRecord, prepareReview, reviewResult, waiverCheck,
+} from './story/independent-review.mjs';
 import {
   materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
@@ -146,6 +148,9 @@ function cmdReview(ctx) {
     process.stdout.write(`${JSON.stringify(waiverCheck(ctx))}\n`);
     return;
   }
+  // 准备记录坏了是输入故障：在定稿写盘之前停下，现场不动
+  const before = preparedRecord(ctx);
+  if (before.error) fail(before.error);
   pendingDisclosure(ctx);
   cmdProject(ctx);
   cmdNumber(ctx);
@@ -161,8 +166,8 @@ function cmdReview(ctx) {
     dispatch_file: out.dispatch_file, dispatch_text: out.dispatch_text })}\n`);
   process.stdout.write(out.reused
     ? `[story-build review] 这份材料已有通过的报告（${out.report_file}），不用重审，直接 check。\n`
-    : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为宿主隔离子代理的任务交给审查者；`,
-      `  审查者的回复在 ${out.report_file}，宿主只返回文本时原样写到那里。之后跑 story-build review --action check，`,
+    : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为宿主隔离子代理的任务交给审查者，`,
+      `  不增删、不改写；审查者把报告直接写到 ${out.report_file}。之后跑 story-build review --action check，`,
       '  结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
 }
 

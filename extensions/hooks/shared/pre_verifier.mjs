@@ -7,12 +7,13 @@
  * 会有三件事：裁决量随材料条数涨而判断不增加；证据列退化成把清单里的字抄一遍；
  * 判据从「这条要求是不是本需求的设计」滑向「这行有没有被裁过」——后者是格式，前者才是判断。
  *
- * 只给三样：判断的真源在哪、按什么判、结论写成什么。裁多少行由 verifier 按需要定，
- * 机械层不数行数、不核引文、不排相似度——那些都是拿字符串近似语义。
+ * 只给三样：判断的真源在哪、按什么判、结论写成什么。两种核对职责不同：本阶段每条判据在汇总表里恰好一行，
+ * 是逐判据的结构核对，由 post_check 核；知识条目逐条核没核、核得对不对是 verifier 的语义核验，
+ * 机械层不数知识行数、不核引文、不排相似度——那些都是拿字符串近似语义。
  *
  * ## 注入不等于执行
  *
- * 本阶段审查报告的形态由 post_check 核（`verifier-report.mjs`：结果块在不在、判据齐不齐），
+ * 本阶段审查报告的形态由 post_check 核（`verifier-report.mjs`：终态块、逐判据四格汇总），
  * 身份与结论由原生 `check-receipt` 核。审查得对不对由人抽查。
  *
  * 契约：stdin JSON ctx → stdout JSON { promptFragments: string[] }。
@@ -25,12 +26,12 @@ import { knowledgeTask } from './knowledge-task.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, readTextOrNull, relDisplay } from './paths.mjs';
 import { designStatPoints, planStatRows, pointKey, statDelivery } from './stat-points.mjs';
-import { overlayChecks } from './verifier-report.mjs';
+import { overlayChecks, summaryStructure } from './verifier-report.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
 const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
 
-/** 本阶段被审的知识判断在哪。spec 自己判，plan 冻结成契约上的 must，之后各阶段按它落实与取证。 */
+/** 本阶段被审的知识判断在哪：判断由蓝图设计形成，spec 核验收承接，plan 冻结成契约上的 must，之后各阶段按它落实与取证。 */
 const SOURCE_OF_TRUTH = {
   spec: { file: 'acceptance.yaml', what: '本施工单位承接的适用判断（设计里的知识应用决定）有没有验收条目承接（`knowledge_rule` 与 `knowledge_decision_id`）' },
   plan: { file: 'contracts.yaml', what: '每条承接的适用判断挂在哪个实体上（`must`，带 `decision_id`）、选中模式的角色由哪个实体承担（`pattern_roles`）' },
@@ -147,10 +148,7 @@ function allChecksFragment(checks) {
     const first = String(c?.description ?? '').replace(/\s+/g, ' ').trim().split(/(?<=[。；])/)[0];
     return `- \`${id}\`（${c?.severity ?? '未定级'}）：${first}`;
   });
-  return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '',
-    '**报告结构**：汇总表每条判据一行，四格 `id | status | severity | 证据`，PASS 也列、证据不空；',
-    'status ≠ PASS 的在 YAML 明细 `checks:` 里各出一条，`details` 写问题、依据与改法；',
-    '末尾恰好一个 `maison-verifier-result:v1` 终态块。缺一条判据的报告按阻断处理。'].join('\n');
+  return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '', ...summaryStructure()].join('\n');
 }
 
 /**
@@ -244,9 +242,9 @@ export default async function preVerifier(ctx) {
     '',
     '### 输出要求（BLOCKER）',
     '',
-    `在输出 YAML 的 \`checks:\` 中，为 ${knowledgeIds.map(id => `\`${id}\``).join(' 与 ')} 各追加一条，`,
+    `${knowledgeIds.map(id => `\`${id}\``).join(' 与 ')} 与其它判据一样在汇总表各一行；非 PASS 的在 \`checks:\` 明细里`,
     '`details` 写你判出问题的那几条：是哪一条、问题是什么、依据是产物或材料里的什么事实。',
-    '判不出问题就写清你按什么看过、看了哪几条。相应调整 `summary.total` 与计数。',
+    'PASS 的写进报告说明：你按什么看过、看了哪几条。',
   ].join('\n');
 
   fragments.push(fragment);

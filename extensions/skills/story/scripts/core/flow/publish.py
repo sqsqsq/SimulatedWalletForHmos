@@ -125,7 +125,8 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None) -> di
             "action": ("需求系统上这几件与上次允许覆盖的版本不同：" + named + "，不直接覆盖。"
                        "把外部改动与这次的差异摆给人——要并进来的走 `/story update`；人确认仍覆盖时带 `--reply \"<原话>\"` 再跑"
                        if conflicts else
-                       "把差异、未决议题与未验证项摆给人，人授权后执行上传，三件都读回一致再 `story_flow.py archived` 登记")}
+                       "把差异、未决议题与未验证项向人展示；这一单已有送审授权（交付选择选了送审，或明确要求 archive）就接着上传，"
+                       "还没有授权先请人授权；三件都读回一致再 `story_flow.py archived` 登记")}
 
 
 def readbacks(feature_root: Path, since: str | None) -> list[str]:

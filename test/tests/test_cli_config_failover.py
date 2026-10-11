@@ -149,7 +149,7 @@ class CleanRetryTests(unittest.TestCase):
                 "case": "clean-fixture", "feature": "AR-CLEAN",
                 "workspace": str(workspace), "supplements": [],
                 "failure_kind": "content_policy_rejected",
-                "interaction_index": 3, "last_reply_text": "old reply",
+                "interaction_index": 3, "answered_steps": ["scope"], "last_reply_text": "old reply",
             }
             suite = {
                 "isolated_workspaces": True, "bundle_root": str(bundle),
@@ -172,6 +172,7 @@ class CleanRetryTests(unittest.TestCase):
             self.assertEqual("pending", record["status"])
             self.assertIsNone(record["failure_kind"])
             self.assertEqual(0, record["interaction_index"])
+            self.assertEqual([], record["answered_steps"], "新 attempt 继承了上一次的已答条目")
             self.assertIsNone(record["last_reply_text"])
 
 

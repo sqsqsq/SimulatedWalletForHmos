@@ -496,7 +496,7 @@ def prepare_case_retry(suite: dict[str, Any], record: dict[str, Any]) -> None:
         "last_poll_at": None, "last_error": None, "last_awaiting": None,
         "last_reply_status": None, "last_reply_text": None,
         "last_replied_turn": None, "last_adaptive_request": None,
-        "interaction_index": 0, "interaction_state": "not_started",
+        "interaction_index": 0, "answered_steps": [], "interaction_state": "not_started",
         "adaptive_reply_count": 0, "source_restore_status": "not_started",
         "automation_observation_state": "not_started",
         "automation_observation_started_at": None,
@@ -939,6 +939,7 @@ def new_case_record(plan: CasePlan, target_end_at: str | None = None) -> dict[st
         "wait_for_cases": [],
         "interaction_script": list(plan.interaction_script),
         "interaction_index": 0,
+        "answered_steps": [],
         "interaction_state": "not_started",
         "last_reply_status": None,
         "last_reply_text": None,
@@ -1829,19 +1830,47 @@ def is_new_gate(record: dict[str, Any]) -> bool:
     return turn != record.get("last_replied_turn")
 
 
-def plan_matches(step: dict[str, Any] | None, awaiting: dict[str, Any],
-                 record: dict[str, Any]) -> bool:
-    """规划条目是不是这一问的：等待类型一致；条目写了阶段时，两边都已知且一致（阶段含 story）。"""
-    if not step:
-        return False
-    kind = step.get("expected_kind")
-    if kind and kind != awaiting.get("kind"):
-        return False
-    phase = step.get("expected_phase")
+def step_phase_ready(step: dict[str, Any], record: dict[str, Any]) -> bool:
+    """规划条目的阶段前提现在成立没有：没写阶段的总成立；`archived` 看流程契约；其余要当前阶段已知且一致。"""
+    phase = str(step.get("expected_phase") or "")
     if not phase:
         return True
+    if phase == "archived":
+        return gate_phase_ready(record, "archived")
     current = record.get("current_phase")
-    return phase in ALL_PHASES and current in ALL_PHASES and phase == current
+    return current in ALL_PHASES and phase == current
+
+
+def candidate_steps(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """这一问可能相关的未答规划条目：等待类型一致；当前阶段已知时只列阶段前提成立的，阶段未知时都列、`phase_ready` 为假。
+
+    候选只说明阶段与类型可能相关，不判断模型问的是不是这件事——那要宿主读完整问题定。
+    """
+    awaiting = record.get("last_awaiting") or {}
+    answered = set(record.get("answered_steps") or [])
+    known = record.get("current_phase") in ALL_PHASES
+    out = []
+    for step in record.get("interaction_script") or []:
+        kind = step.get("expected_kind")
+        if str(step.get("id") or "") in answered or (kind and kind != awaiting.get("kind")):
+            continue
+        ready = step_phase_ready(step, record)
+        if known and not ready:
+            continue
+        out.append({"id": step.get("id"), "text": step.get("text"), "deliver": list(step.get("deliver") or []),
+                    "expected_kind": kind, "expected_phase": step.get("expected_phase") or None, "phase_ready": ready})
+    return out
+
+
+def derived_interaction_index(record: dict[str, Any]) -> int:
+    """规划指针：脚本里第一个未答条目的位置，全部答过是脚本长度。"""
+    answered = set(record.get("answered_steps") or [])
+    script = list(record.get("interaction_script") or [])
+    return next((i for i, s in enumerate(script) if str(s.get("id") or "") not in answered), len(script))
+
+
+#: 交给宿主的问题摘要长度；完整原话在 `model_prompt`
+QUESTION_CHARS = 1200
 
 
 def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
@@ -1869,35 +1898,37 @@ def request_host_reply(record: dict[str, Any], suite: dict[str, Any]) -> None:
     if record.get("status") != WAITING_STATUS:
         return
     script = list(record.get("interaction_script") or [])
-    index = int(record.get("interaction_index") or 0)
+    index = derived_interaction_index(record)
     awaiting = record.get("last_awaiting") or {}
-    prompt_text = awaiting.get("prompt") or awaiting.get("message") or ""
-    next_step = script[index] if index < len(script) else None
-    # 只在规划条目与当前这一问相符时给出它：展示一条对不上的立场，宿主会把它当成这一关的答案。
-    planned = next_step if plan_matches(next_step, awaiting, record) else None
+    prompt_text = str(awaiting.get("prompt") or awaiting.get("message") or "")
+    candidates = candidate_steps(record)
+    first = candidates[0] if candidates else {}
+    remaining = index < len(script)
     request = {
         "case": record["case"],
+        # 回复目标：宿主回话时原样交回 `--run-id` 与 `--turn`，回复只落到这一问
+        "run_id": record.get("run_id"),
         "turn": awaiting.get("turn"),
         "kind": awaiting.get("kind"),
+        # model_prompt 是完整决策原文；question 只是展示摘要，长问题在这里被截断，作答前读完整的那份
         "model_prompt": prompt_text,
-        # question 是给宿主**当轮就能回**的那份原文：只给状态、要宿主再去翻 runlog，
-        # 一轮观测就变成两轮，等待时间凭空翻倍（实测一次空等约 10 分钟）。
-        "question": str(prompt_text)[:1200],
+        "question": prompt_text[:QUESTION_CHARS],
+        "question_truncated": len(prompt_text) > QUESTION_CHARS,
         "case_inputs_hint": case_public_inputs(record),
-        # 规划里下一条还没说出口的立场——宿主据它决定这一关表达什么意思。
-        # 关卡编号对不对得上不再决定任何事，只作参考。
-        "planned_step_id": (planned or {}).get("id"),
-        "planned_intent": str((planned or {}).get("text") or "") or None,
-        "planned_deliver": list((planned or {}).get("deliver") or []),
-        "planned_phase": (planned or {}).get("expected_phase"),
-        "planned_turn": (planned or {}).get("expected_turn"),
+        # 候选只按阶段与等待类型列出；是不是这一问、立场等不等价由宿主按完整问题判断
+        "candidate_steps": candidates,
+        "planned_step_id": first.get("id"),
+        "planned_intent": str(first.get("text") or "") or None,
+        "planned_deliver": list(first.get("deliver") or []),
+        "planned_phase": first.get("expected_phase"),
+        "planned_turn": next((s.get("expected_turn") for s in script if s.get("id") == first.get("id")), None),
         "script_cursor": f"{index}/{len(script)}",
-        "plan_note": (None if planned or not next_step
-                      else "规划里没有对应这一问：按 answered 只答所问"),
+        "plan_note": ("候选，需按完整问题核立场" if candidates
+                      else "规划里没有对应这一问：按 answered 只答所问" if remaining else None),
         "reply": None,
         # 「规划走完了」和「这个 Case 本来就没写规划」是两回事，分开报。
-        "reason": ("host_reply_required" if planned
-                   else "host_answer_required" if next_step
+        "reason": ("host_reply_required" if candidates
+                   else "host_answer_required" if remaining
                    else "plan_exhausted" if script else "no_plan_for_this_case"),
         "detected_at": now(),
         "reply_status": "adaptive_reply_required",
@@ -2784,72 +2815,140 @@ def command_status(suite_id: str) -> int:
 HOST_REPLY_KINDS = ("planned", "answered", "neutral", "improvised")
 
 
+def reply_input_problem(record: dict[str, Any], reply_kind: str, steps: list[str],
+                        deliver: list[str]) -> str | None:
+    """发送之前就能判定的输入问题：step 与回复类型、阶段和等待类型对得上，补料可读、不重名。"""
+    script = {str(s.get("id") or ""): s for s in record.get("interaction_script") or []}
+    if len(set(steps)) != len(steps):
+        return f"--step 有重复：{'、'.join(steps)}"
+    unknown = [s for s in steps if s not in script]
+    if unknown:
+        return f"规划里没有这些条目：{'、'.join(unknown)}（有 {'、'.join(script) or '无'}）"
+    if reply_kind == "planned" and not steps:
+        return "planned 回复要用 --step 指名这次实际回答了规划里哪几条"
+    if reply_kind != "planned" and steps:
+        return f"{reply_kind} 回复不带 --step：只有按规划立场作答才登记覆盖的条目"
+    awaiting = record.get("last_awaiting") or {}
+    for step_id in steps:
+        step = script[step_id]
+        if step.get("expected_kind") and step.get("expected_kind") != awaiting.get("kind"):
+            return f"条目 {step_id} 的等待类型是 {step.get('expected_kind')}，这一问是 {awaiting.get('kind')}"
+        if not step_phase_ready(step, record):
+            return f"条目 {step_id} 的阶段前提 {step.get('expected_phase')} 现在不成立（当前 {record.get('current_phase') or '未知'}）"
+    if len(set(deliver)) != len(deliver):
+        return f"--deliver 有重名：{'、'.join(deliver)}"
+    declared = {str(item.get("file") or "") for item in record.get("supplements") or []}
+    root = CASES_ROOT / str(record.get("case") or "") / "supplements"
+    missing = [n for n in deliver if n not in declared or not (root / n).is_file()]
+    if missing:
+        return f"补料不在本 Case 的 supplements/ 声明里或读不到：{'、'.join(missing)}"
+    return None
+
+
+def answered_reply(suite: dict[str, Any], case_id: str, run_id: str, turn: str) -> dict[str, Any] | None:
+    """这一个 run 的这一问已有的成功回复（观测记录里），没有返回 None。"""
+    path = Path(str(suite["bundle_root"])) / "cases" / case_id / "observations.jsonl"
+    if not path.is_file():
+        return None
+    hit = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if item.get("kind") == "interaction_reply" and item.get("result") == "accepted" \
+                and str(item.get("run_id")) == run_id and str(item.get("turn")) == turn:
+            hit = item
+    return hit
+
+
 def command_reply(suite_id: str, case_id: str, text: str,
                   reply_mode: str = "manual", reason: str = "",
                   deliver: list[str] | None = None,
-                  step_id: str = "", reply_kind: str = "improvised") -> int:
+                  step_ids: list[str] | None = None, reply_kind: str = "improvised",
+                  run_id: str = "", turn: str = "") -> int:
+    """把宿主这一句回给**宿主指明的那一问**（`--run-id`、`--turn`），不从发送时的最新问题猜。
+
+    分支固定：先查这一问已有的成功回复——同内容重入返回原结果、不再发；内容、材料或覆盖条目不同则拒绝。
+    没有成功记录时，目标必须正是当前在等的那一问。预检或发送失败不消费 step；结果不确定时报未知、不自动重发。
+    """
     path, suite = load_suite(suite_id)
     if case_id not in suite["case_states"]:
         raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
     record = refresh_record(suite["case_states"][case_id])
-    if record.get("status") != WAITING_STATUS:
-        print(json.dumps({"ok": False, "case": case_id,
-                          "error": f"当前状态不是 awaiting_reply: {record.get('status')}"},
+    steps = [str(s) for s in step_ids or []]
+    names = [str(n) for n in deliver or []]
+
+    def refuse(error: str, **more: Any) -> int:
+        print(json.dumps({"ok": False, "case": case_id, "run_id": run_id, "turn": turn, "error": error, **more},
                          ensure_ascii=False, indent=2))
         return 1
-    blockers: list[str] = []
-    if blockers:
-        print(json.dumps({"ok": False, "case": case_id,
-                          "error": "另一个 Case 正占用 Framework 阶段槽，暂不注入回复",
-                          "blockers": blockers}, ensure_ascii=False, indent=2))
-        return 2
+
+    problem = reply_input_problem(record, reply_kind, steps, names)
+    if problem:
+        return refuse(problem)
+    wanted = {"text": text, "deliver": sorted(set(names)), "covered_steps": sorted(set(steps))}
+    done = answered_reply(suite, case_id, run_id, turn)
+    if done:
+        same = {k: done.get(k) for k in wanted} == wanted
+        if not same:
+            return refuse("这一问已有一次成功回复，内容、材料或覆盖条目与这次不同，不覆盖", sent=done.get("text"))
+        print(json.dumps({"ok": True, "case": case_id, "already_sent": True, "run_id": run_id, "turn": turn,
+                          "at": done.get("at")}, ensure_ascii=False, indent=2))
+        return 0
+    awaiting = record.get("last_awaiting") or {}
+    if record.get("status") != WAITING_STATUS or str(record.get("run_id")) != run_id \
+            or str(awaiting.get("turn")) != turn:
+        return refuse("目标不是当前在等的那一问，回复不落到别的问题上",
+                      current={"status": record.get("status"), "run_id": record.get("run_id"),
+                               "turn": awaiting.get("turn")})
     deliver_args: list[str] = []
-    for name in deliver or []:
-        deliver_args.extend(("--deliver", str(name)))
+    for name in names:
+        deliver_args.extend(("--deliver", name))
     returncode, payload, stdout, stderr = invoke_case(
-        case_id, "reply", "--text", text, *deliver_args, suite=suite)
+        case_id, "reply", "--text", text, *deliver_args, "--run-id", run_id, "--turn", turn, suite=suite)
+    accepted = returncode == 0 and bool((payload or {}).get("ok"))
+    result = "accepted" if accepted else "refused" if payload else "unknown"
     interaction = {
         "kind": "interaction_reply",
         "mode": reply_mode,
         # 这一句是「按规划 / 答提问 / 中性推进 / 宿主自己的话」——评测要据它判断
         # 这份产物有多少受了宿主话术影响，只数次数是答不出这个问题的。
         "reply_kind": reply_kind,
-        "planned_step": step_id or None,
+        "run_id": run_id, "turn": turn, **wanted,
         "reason": reason,
         "delivered": (payload or {}).get("delivered") or [],
-        "prompt": (record.get("last_awaiting") or {}).get("prompt")
-                  or (record.get("last_awaiting") or {}).get("message"),
-        "reply": text,
+        "prompt": awaiting.get("prompt") or awaiting.get("message"),
+        "result": result,
         "returncode": returncode,
     }
-    append_event(suite, "case_reply", case=case_id, returncode=returncode,
-                 reply_mode=reply_mode, reply_kind=reply_kind,
-                 planned_step=step_id or None, reason=reason)
+    append_event(suite, "case_reply", case=case_id, returncode=returncode, result=result,
+                 reply_mode=reply_mode, reply_kind=reply_kind, run_id=run_id, turn=turn,
+                 covered_steps=wanted["covered_steps"], reason=reason)
     append_case_observation(suite, case_id, interaction)
-    if returncode != 0:
-        record["last_error"] = {"stdout": stdout[-4000:], "stderr": stderr[-4000:]}
+    if not accepted:
+        record["last_error"] = {"stdout": stdout[-4000:], "stderr": stderr[-4000:], "result": result}
     else:
         record["last_reply_status"] = "accepted"
         record["last_reply_text"] = text
-        record["last_replied_turn"] = (record.get("last_awaiting") or {}).get("turn")
+        record["last_replied_turn"] = awaiting.get("turn")
         record["last_human_reply_at"] = now()
         record["automation_observation_state"] = "reply_sent"
         record_delivery(record, (payload or {}).get("delivered") or [])
         record["interaction_state"] = (
             "adaptive_sent" if reply_mode == "adaptive" else record.get("interaction_state"))
-        # 规划指针由宿主**显式声明**推进（`--step <id>`），不再靠拿回复文本去和
-        # 脚本逐字比对。宿主是按情境把那个意思说出来的，不会逐字重合——
-        # 上一版因此几乎从不推进指针，规划条目一条条烂在后面没人知道。
-        advance_plan(record, step_id)
-        if step_id and "interaction_index" in record:
+        record_answered(record, steps)
+        if steps:
             append_event(suite, "planned_step_covered", case=case_id,
-                         step=step_id, interaction_index=record["interaction_index"])
+                         steps=wanted["covered_steps"], interaction_index=record["interaction_index"])
         record.setdefault("host_reply_kinds", []).append(reply_kind)
     save_suite(path / "suite.json", suite)
-    print(json.dumps(payload or {"ok": False, "returncode": returncode,
-                                 "stdout": stdout[-4000:], "stderr": stderr[-4000:]},
+    print(json.dumps(payload or {"ok": False, "returncode": returncode, "result": result,
+                                 "stdout": stdout[-4000:], "stderr": stderr[-4000:],
+                                 **({"note": "发送结果未知：先核这个 run 的 events.jsonl 有没有收到这句，不自动重发"}
+                                    if result == "unknown" else {})},
                      ensure_ascii=False, indent=2))
-    return returncode
+    return 0 if accepted else 1
 
 
 def command_retry(suite_id: str, case_id: str, reason: str) -> int:
@@ -2973,25 +3072,22 @@ def _promote_tree(source: Path, destination: Path) -> dict[str, Any]:
     return result
 
 
-def advance_plan(record: dict[str, Any], step_id: str) -> None:
-    """规划指针由宿主**显式声明**推进（`--step <id>`），不拿回复文本去和脚本逐字比对。"""
-    if not step_id:
-        return
+def record_answered(record: dict[str, Any], steps: list[str]) -> None:
+    """成功回复覆盖的条目并进本 attempt 的已答集合（按脚本顺序，不重复），指针由集合派生。"""
+    answered = {*(record.get("answered_steps") or []), *steps}
     script = list(record.get("interaction_script") or [])
-    hit = next((i for i, s in enumerate(script) if str(s.get("id") or "") == step_id), None)
-    if hit is None:
-        record["last_error"] = {"step": step_id, "error": "规划里没有这个条目",
-                                "known": [str(s.get("id") or "") for s in script]}
-        return
-    record["interaction_index"] = max(int(record.get("interaction_index") or 0), hit + 1)
-    record["interaction_state"] = "complete" if hit + 1 >= len(script) else "waiting"
+    record["answered_steps"] = [str(s.get("id")) for s in script if str(s.get("id") or "") in answered]
+    record["interaction_index"] = derived_interaction_index(record)
+    record["interaction_state"] = "complete" if record["interaction_index"] >= len(script) else "waiting"
 
 
 def command_resume_update(suite_id: str, case_id: str, text: str,
-                          deliver: list[str] | None = None) -> int:
+                          deliver: list[str] | None = None, review_feedback_file: str = "") -> int:
     """第一段评完、回流完，把第二段的业务请求投进去（同一次对话）。
 
     检查点是终点真正到了之后才停的（交付选择已在关卡上答过），这里只投第二段请求，不替模型答别的。
+    `review_feedback_file` 是宿主读过初段 Review 后准备的人工区意见（每条静态意见对到一个真实 D 身份），
+    解析成绝对路径交给 Case 侧；Case 声明了 review_human_zone 时必给。
     """
     path, suite = load_suite(suite_id)
     if case_id not in suite["case_states"]:
@@ -3004,6 +3100,11 @@ def command_resume_update(suite_id: str, case_id: str, text: str,
     args = ["--text", text]
     for name in deliver or []:
         args += ["--deliver", name]
+    if review_feedback_file:
+        feedback = Path(review_feedback_file).resolve()
+        if not feedback.is_file():
+            raise SystemExit(f"[multi] --review-feedback-file 读不到: {feedback}")
+        args += ["--review-feedback-file", str(feedback)]
     returncode, payload, stdout, stderr = invoke_case(case_id, "resume-update", *args, suite=suite)
     if returncode == 0:
         record["resumed_update"] = {"text": text[:400], "delivered": list(deliver or []), "at": now()}
@@ -3393,8 +3494,12 @@ def main() -> int:
     parser.add_argument("--reply-mode", choices=("scripted", "adaptive", "manual"),
                         default="manual")
     parser.add_argument("--reason", default="")
-    parser.add_argument("--step", dest="step_id", default="",
-                        help="这一句覆盖了规划里的哪一条（条目 id）——指名它，规划指针才前进")
+    parser.add_argument("--step", dest="step_ids", action="append", default=[],
+                        help="planned：这一句实际回答了规划里的哪一条（条目 id），可重复；其余回复类型不带")
+    parser.add_argument("--run-id", default="", help="reply：要回的那一问所在的 run（取自 adaptive_reply_requests）")
+    parser.add_argument("--turn", default="", help="reply：要回的那一问的 turn（取自 adaptive_reply_requests）")
+    parser.add_argument("--review-feedback-file", default="",
+                        help="resume-update：人工区意见（UTF-8 YAML，每条 source_item / decision_id / verdict / opinion）")
     parser.add_argument("--reply-kind", dest="reply_kind",
                         choices=HOST_REPLY_KINDS, default="improvised",
                         help="planned=按规划立场 / answered=答模型的提问 / "
@@ -3461,7 +3566,8 @@ def main() -> int:
     if args.command == "resume-update":
         if not args.reply_case:
             raise SystemExit("[multi] resume-update 必须提供 --case（第二段请求取 case.yaml 的 update_request）")
-        return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver)
+        return command_resume_update(args.suite_id, args.reply_case, args.text, args.deliver,
+                                     args.review_feedback_file)
     if args.command == "retry":
         if not args.reply_case:
             raise SystemExit("[multi] retry 必须提供 --case（逐 Case 重启，不动其它 Case）")
@@ -3469,9 +3575,11 @@ def main() -> int:
     if args.command == "reply":
         if not args.reply_case or not args.text.strip():
             raise SystemExit("[multi] reply 必须提供 --case 和非空 --text")
+        if not args.run_id or not args.turn:
+            raise SystemExit("[multi] reply 必须提供 --run-id 与 --turn：回复落到宿主看到的那一问，不按发送时的最新问题猜")
         return command_reply(args.suite_id, args.reply_case, args.text,
                              args.reply_mode, args.reason, args.deliver,
-                             args.step_id, args.reply_kind)
+                             args.step_ids, args.reply_kind, args.run_id, args.turn)
     return command_stop(args.suite_id, args.force)
 
 
