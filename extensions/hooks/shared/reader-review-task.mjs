@@ -355,8 +355,8 @@ export function readerReviewTask(projectRoot, feature) {
   const set = externalOriginals(requirementContext(projectRoot, root, contract));
   rows.push('', '### 附录材料清单要列的原件', '', ...(!set ? ['还没交给设计，没有冻结快照，原件集合未定。'] : [
     '逐行对着原件核「贡献」：写的是这份材料实际给了什么；没采纳的新值或冲突版本写了对比作用与裁决依据。',
-    ...[...set.originals].map(([o, via]) => `- \`${o}\`${via ? `（经收件箱导入，转换稿 \`${via}\`）` : ''}`),
-    ...(set.gap ? [`缺口：${set.gap}`] : [])]));
+    ...[...set.originals].map(([o, via]) => `- \`${o}\`${via.length ? `（经收件箱导入，转换稿 ${via.join('、')}）` : ''}`),
+    ...set.gaps.map(g => `- 缺口：${g}`)]));
 
   rows.push(...reportFormat());
   return rows.join('\n');

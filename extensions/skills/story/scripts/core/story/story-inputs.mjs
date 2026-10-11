@@ -133,8 +133,9 @@ function materialSection(ctx) {
   const rows = ['## 4b. 材料清单要列的原件', ''];
   if (!set) return [...rows, '还没交给设计，没有冻结快照：原件集合在交给设计之后定。'];
   rows.push('附录材料清单每份原件一行，材料列用下面的链接；转换稿与抽出的图归回原件，提取稿、人签导出、图片不列：', '',
-    ...[...set.originals].map(([o, via]) => `- \`[${path.posix.basename(o)}](${relFromStory(o)})\`${via ? `——经收件箱导入，转换稿是 ${via}` : ''}`));
-  return set.gap ? [...rows, '', `缺口：${set.gap}`] : rows;
+    ...[...set.originals].map(([o, via]) => `- \`[${path.posix.basename(o)}](${relFromStory(o)})\``
+      + (via.length ? `——经收件箱导入，转换稿是 ${via.join('、')}` : '')));
+  return [...rows, ...set.gaps.map(g => `- 缺口：${g}`)];
 }
 
 /**

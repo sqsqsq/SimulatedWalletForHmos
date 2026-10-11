@@ -105,8 +105,7 @@ function unitLines(judged) {
     ...(context.located.length ? [`需求里另有知识事实，与本单位的关联未明，只给定位：${context.located
       .map(f => `\`${f.fact_id}\`（${f.subject ?? ''}）`).join('、')}`] : []),
   ];
-  const gaps = [...context.undetermined.map(d => `判断 ${d.decision_id}（${d.knowledge.unit}，${d.knowledge.outcome}）没有落点，作用域未确定——设计负责方明确它归哪个设计对象。`),
-    ...context.dangling.map(r => `本单位设计的引用 ${r} 在蓝图里找不到对象或事实——设计负责方修正引用。`)];
+  const gaps = context.undetermined.map(d => `判断 ${d.decision_id}（${d.knowledge.unit}，${d.knowledge.outcome}）没有落点，作用域未确定——设计负责方明确它归哪个设计对象。`);
   return { lines, gaps };
 }
 

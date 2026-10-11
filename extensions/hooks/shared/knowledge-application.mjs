@@ -167,7 +167,7 @@ export function featureKnowledge(projectRoot, feature, contracts) {
   return { ...checked, problems: [...problems, ...checked.problems], scope, label, blueprint: read.blueprint };
 }
 
-const NOTHING = { has: () => false, refs: () => [], addressed: () => false };
+const NOTHING = { has: () => false, refs: () => [] };
 //: 设计对象里承担引用职责的字段：证据与验证引用逐项按完整标识认；理由、说明等正文不算引用
 const REF_FIELDS = ['evidence_refs', 'verification_refs'];
 
@@ -202,8 +202,7 @@ function unitScope(addressing, blueprint, refs, bad) {
   return { has: address => index.has(address) && (inside.has(index.get(address)) || holds(index.get(address))),
     // 设计责任内的对象在引用字段里写下的完整标识（事实没有原生地址，按 fact_id 整项比对）
     refs: () => (cited ??= [...new Set([...inside].flatMap(n => REF_FIELDS
-      .flatMap(k => (Array.isArray(n[k]) ? n[k].filter(r => typeof r === 'string') : []))))]),
-    addressed: address => index.has(address) };
+      .flatMap(k => (Array.isArray(n[k]) ? n[k].filter(r => typeof r === 'string') : []))))]) };
 }
 
 /** 这个施工单位要承接的判断：落点（含模式角色落点）在它的设计责任内的；scope 为 null 时全部。 */
@@ -226,21 +225,18 @@ export function unitDuties(judged) {
  * `mine` 落点或角色在设计责任内的（含不适用、拒绝、待定）；没有落点的里，不适用与拒绝是需求级公共依据（`common`），
  * 其余（待定、缺落点的适用或选中）作用域未确定（`undetermined`），交设计负责方明确，不当成对整个需求成立；
  * 落点全在别的施工单位的不给。事实：本单位设计的引用字段里按 fact_id 整项引到的在 `facts`，其余关联未明、只给定位
- * （`located`）；引用字段里的裸标识既不是原生地址也不是事实的，是指不到的引用（`dangling`）。
+ * （`located`）。引用字段是通用引用，不是事实专用列表：整项不等于已有 fact_id 的引用不当成事实，也不判它不存在。
  * scope 为 null（平铺维护 Feature）时全部是本单位的。
  */
 export function unitContext(judged) {
   const mine = carriedBy(judged.rows, judged.scope);
   const loose = judged.rows.filter(d => !mine.includes(d) && ![...(d.knowledge.target_refs ?? []), ...(d.knowledge.roles ?? [])].length);
   const settled = d => ['rejected', 'not_applicable'].includes(d.knowledge.outcome);
-  const facts = judged.blueprint?.discovery?.facts ?? [];
-  const known = facts.filter(f => f?.value?.knowledge);
+  const known = (judged.blueprint?.discovery?.facts ?? []).filter(f => f?.value?.knowledge);
   const refs = judged.scope ? judged.scope.refs() : null;
   const cited = f => !refs || refs.includes(f.fact_id);
-  const ids = new Set(facts.map(f => f?.fact_id));
   return { mine, common: loose.filter(settled), undetermined: loose.filter(d => !settled(d)),
-    facts: known.filter(cited), located: known.filter(f => !cited(f)),
-    dangling: (refs ?? []).filter(r => /^[\w-]+$/.test(r) && !ids.has(r) && !judged.scope.addressed(r)) };
+    facts: known.filter(cited), located: known.filter(f => !cited(f)) };
 }
 
 /** 选型决定里由这个施工单位承担的角色：角色自己的落点在它的设计责任内；整体角色齐不齐在蓝图层核。 */

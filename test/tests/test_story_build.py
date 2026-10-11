@@ -1543,7 +1543,7 @@ class TheMaterialListIsOneTableOfOriginals(Step8Case):
 
     def test_a_process_file_is_not_a_source(self) -> None:
         self.put_rows(self.ROWS + "| [设计草稿](story-src/design-draft.md) | 本轮提取 | 设计要点 |\n")
-        self.assertIn("AR/story-src/design-draft.md 是过程件或图片，不是外部原件", self.assert_check_names("⑫c 材料清单"))
+        self.assertIn("AR/story-src/design-draft.md 是过程件、生成件或图片，不是外部原件", self.assert_check_names("⑫c 材料清单"))
 
     def test_bullets_instead_of_the_table_are_named(self) -> None:
         self.put_rows("")
@@ -1553,23 +1553,72 @@ class TheMaterialListIsOneTableOfOriginals(Step8Case):
                                    encoding="utf-8")
         self.assertIn("要一张表，列为 材料｜来源｜贡献", self.assert_check_names("⑫c 材料清单"))
 
-    def test_an_inbox_original_replaces_its_converted_copy(self) -> None:
-        """经收件箱导入的：列收件箱里的原件；把转换稿当来源列的点名那一行。"""
-        manifest = self.src / "materials.json"
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-        data["sources"] = [{"file": "甲需求.docx", "sha256": "sha256:0", "class": "RR", "ingested": True, "target": "RR/prd.md"}]
-        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        inbox = self.root / "doc" / "features" / FEATURE / "inbox"
-        inbox.mkdir(exist_ok=True)
-        (inbox / "甲需求.docx").write_bytes(b"docx")
+    def set_origins(self, origins: dict | None) -> None:
+        """改冻结快照记下的外部来源（None 是旧版本冻结、没有这一项），并同步流程契约里登记的快照摘要。"""
+        flow_path = self.src / "story-flow.json"
+        flow = json.loads(flow_path.read_text(encoding="utf-8"))
+        snap = self.root / flow["input"]["snapshot_ref"]
+        data = json.loads(snap.read_text(encoding="utf-8"))
+        data.pop("origins", None)
+        if origins is not None:
+            data["origins"] = origins
+        snap.write_bytes((json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+        flow["input"]["snapshot_sha256"] = hashlib.sha256(snap.read_bytes()).hexdigest()
+        flow_path.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+
+    def inbox(self, name: str, data: bytes) -> dict:
+        folder = self.root / "doc" / "features" / FEATURE / "inbox"
+        folder.mkdir(exist_ok=True)
+        (folder / name).write_bytes(data)
+        return {"path": f"inbox/{name}", "sha256": "sha256:" + hashlib.sha256(data).hexdigest()[:16]}
+
+    DEV = "| [开发需求](design.md) | 需求目录（开发需求） | 业务分工与本单范围 |\n"
+
+    def test_every_original_merged_into_one_copy_is_listed(self) -> None:
+        """两份人工材料合并导入同一份正文：两份原件各一行，转换稿不算；漏一份就点名那一份。"""
+        a, b = self.inbox("甲需求-上.docx", b"a"), self.inbox("甲需求-下.docx", b"b")
+        self.set_origins({"RR/prd.md": [a, b]})
         _, out = self.check_output()
-        self.assertIn("RR/prd.md 是 inbox/甲需求.docx 的转换稿——列原件", out)
-        self.assertIn("本次采用的原件 inbox/甲需求.docx 没有列（转换稿是 RR/prd.md）", out)
-        self.put_rows("| [甲需求](../inbox/甲需求.docx) | 收件箱（人工提供） | 提交回执的业务诉求 |\n"
-                      + self.ROWS.split("\n")[1] + "\n")
+        self.assertIn("RR/prd.md 是 inbox/甲需求-上.docx、inbox/甲需求-下.docx 的转换稿——列原件", out)
+        self.put_rows("| [甲需求上半](../inbox/甲需求-上.docx) | 收件箱（人工提供） | 业务诉求 |\n" + self.DEV)
         _, out = self.check_output()
-        self.assertNotIn("转换稿", out)
-        self.assertNotIn("没有列", out)
+        self.assertIn("本次采用的原件 inbox/甲需求-下.docx 没有列（转换稿是 RR/prd.md）", out)
+        self.assertNotIn("甲需求-上.docx 没有列", out)
+        self.put_rows("| [甲需求上半](../inbox/甲需求-上.docx) | 收件箱（人工提供） | 业务诉求 |\n"
+                      "| [甲需求下半](../inbox/甲需求-下.docx) | 收件箱（人工提供） | 状态取值 |\n" + self.DEV)
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_an_original_replaced_after_adoption_is_a_gap(self) -> None:
+        """冻结后收件箱里同名原件换了版：清单链到的不是采用的那一份，报来源缺口，不静默漂移。"""
+        a = self.inbox("甲需求.docx", b"v1")
+        self.set_origins({"RR/prd.md": [a]})
+        self.put_rows("| [甲需求](../inbox/甲需求.docx) | 收件箱（人工提供） | 业务诉求 |\n" + self.DEV)
+        self.assertEqual(0, self.check_output()[0])
+        self.inbox("甲需求.docx", b"v2")
+        _, out = self.check_output()
+        self.assertIn(f"inbox/甲需求.docx 不是本次采用的那一版（采用时 {a['sha256']}，现在内容变了）", out)
+
+    def test_only_table_rows_count_and_a_row_is_one_original(self) -> None:
+        """表外的链接不算列了原件；同一份原件列两行点名。"""
+        self.put_rows(self.ROWS.split("\n")[0] + "\n\n另见 [开发需求](design.md)。\n")
+        self.assertIn("本次采用的原件 AR/design.md 没有列", self.assert_check_names("⑫c 材料清单"))
+        self.put_rows(self.ROWS + self.ROWS.split("\n")[1] + "\n")
+        self.assertIn("AR/design.md 在第", self.assert_check_names("一份原件一行"))
+
+    def test_the_init_skeleton_is_not_an_original(self) -> None:
+        """快照记作生成件的（init 落的空骨架）不要求列，列了点名。"""
+        self.set_origins({"AR/design.md": []})
+        _, out = self.check_output()
+        self.assertIn("AR/design.md 是过程件、生成件或图片，不是外部原件", out)
+        self.put_rows(self.ROWS.split("\n")[0] + "\n")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_an_old_freeze_without_origins_is_a_gap(self) -> None:
+        self.set_origins(None)
+        _, out = self.check_output()
+        self.assertIn("冻结输入没有记下采用文件的外部来源（旧版本冻结）", out)
 
     def test_a_conflicting_version_kept_for_comparison_is_allowed(self) -> None:
         """没采用的另一版若决定需要它，可以列并在贡献里写对比与裁决依据，不当成过程件拦。"""

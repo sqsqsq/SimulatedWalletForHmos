@@ -15,7 +15,7 @@ from flow import native
 from flow.state import (
     DESIGN_DRAFT, DESIGN_INPUT, FlowError, S4_STEPS, after_complete, in_update, load, log, now, require, save,
     system_requirement)
-from flow.inputs import ar_design_skeleton, read_ids
+from flow.inputs import is_ar_skeleton
 from flow.routing import material_state, scope_step
 
 
@@ -56,15 +56,6 @@ def section_numbers(text: str) -> list[int]:
         if hit:
             out.append(int(hit.group(1)))
     return out
-
-
-def is_ar_skeleton(feature_root: Path, feature: str, text: str) -> bool:
-    """这份 AR/design.md 还是 `init` 落的空骨架。
-
-    空骨架不是上游给的东西，正文只有段标题和写给模型的判定指引：它被覆盖不必备份，
-    交上来当提取稿也不算写过。
-    """
-    return text.replace("\r\n", "\n") == ar_design_skeleton(read_ids(feature_root, feature))
 
 
 def candidate_problems(feature_root: Path, feature: str, text: str) -> list[str]:

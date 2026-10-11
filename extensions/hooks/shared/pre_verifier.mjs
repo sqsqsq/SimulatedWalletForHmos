@@ -59,9 +59,8 @@ const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r
  */
 function decisionTable(projectRoot, feature, knowledge, inputs) {
   const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
-  const { mine, common, undetermined, dangling } = unitContext(judged);
-  const gaps = [...judged.problems, ...dangling.map(r => `本单位设计的引用 ${r} 在蓝图里找不到对象或事实`)]
-    .map(p => `- **设计缺口**：${p}`);
+  const { mine, common, undetermined } = unitContext(judged);
+  const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
   if (!mine.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
   // 没有落点的也列出：不适用与拒绝是公共依据（宿主扩展章引用其理由），其余作用域未确定；落点在别的单位的不列
   const where = d => (mine.includes(d) ? cell((d.knowledge.target_refs ?? []).join('、'))

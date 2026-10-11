@@ -54,7 +54,7 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     再按原生口径（蓝图原字节的摘要）更新施工单位的蓝图引用。`pattern` 是决策树的判断：selected / pending /
     rejected（与其他模式一样按夹具默认有据拒绝）/ missing（激活模式一条判断都不写，漏判反例）。
     `elsewhere` 再加一条只落在运行视图上的适用规约与一条落在那里的待定模式（另一个施工单位独有）；
-    `facts` 加两条知识事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个指不到的 fact-404，正文提到 fact-1。"""
+    `facts` 加两条知识事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     text = canonical.read_text(encoding="utf-8")
@@ -101,7 +101,7 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
 
 
 def with_facts(root: Path, text: str) -> str:
-    """两条知识事实与模块节点上的引用：验证引用里整项写 fact-10 与指不到的 fact-404，fact-1 只在正文里被提到。"""
+    """两条知识事实与模块节点上的引用：验证引用里整项写 fact-10 与裸验收编号 AC-001，fact-1 只在正文里被提到。"""
     ref = "doc/extensions/knowledge/facts/event-tracking.md"
     knowledge = {"unit": "上篇", "form": "halves", "source_sha256": sha(root / ref)}
     provenance = {"source_kind": "facts", "source_ref": ref, "observed_at": "2026-09-30T00:00:00Z",
@@ -112,7 +112,7 @@ def with_facts(root: Path, text: str) -> str:
                    for fid, subject in (("fact-1", "WalletMain.Logger"), ("fact-10", "WalletMain.WalletHAManager")))
     for old, new in (("  facts:\n", "  facts:\n" + rows),
                      ("        verification_refs:\n          - verify:wallet-main-module\n",
-                      "        verification_refs:\n          - verify:wallet-main-module\n          - fact-10\n          - fact-404\n"),
+                      "        verification_refs:\n          - verify:wallet-main-module\n          - fact-10\n          - AC-001\n"),
                      ("        current_state: no refresh trigger\n", "        current_state: no refresh trigger (see fact-1)\n")):
         assert text.count(old) == 1, old
         text = text.replace(old, new)
@@ -327,21 +327,25 @@ FACT_PROBE = """
 import { pathToFileURL } from 'node:url';
 const [root, feature] = process.argv.slice(1);
 const k = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/knowledge-application.mjs').href);
-const c = k.unitContext(k.featureKnowledge(root, feature, null));
-process.stdout.write(JSON.stringify({ facts: c.facts.map(f => f.fact_id), located: c.located.map(f => f.fact_id), dangling: c.dangling }));
+const j = k.featureKnowledge(root, feature, null);
+const c = k.unitContext(j);
+process.stdout.write(JSON.stringify({ facts: c.facts.map(f => f.fact_id), located: c.located.map(f => f.fact_id), refs: j.scope.refs() }));
 """
 
 
 class FactsBelongByTheirReferences(ChainCase):
-    """事实按设计对象引用字段里的完整标识归属：fact-10 不连带 fact-1，正文里提到不算引用，指不到的引用是缺口，
-    没被引用的事实只给定位。作者与审查同一份取数。"""
+    """事实按设计对象引用字段里的完整标识归属：fact-10 不连带 fact-1，正文里提到不算引用，没被引用的事实只给定位。
+    引用字段是通用引用：验收编号这类裸标识不当成事实，也不判它不存在。作者与审查同一份取数。"""
     FACTS = True
 
     def test_only_the_whole_cited_id_belongs_to_the_unit(self) -> None:
         proc = subprocess.run(["node", "--input-type=module", "-e", FACT_PROBE, str(self.root.as_posix()), CU],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        self.assertEqual({"facts": ["fact-10"], "located": ["fact-1"], "dangling": ["fact-404"]}, json.loads(proc.stdout))
+        out = json.loads(proc.stdout)
+        self.assertEqual(["fact-10"], out["facts"])
+        self.assertEqual(["fact-1"], out["located"])
+        self.assertIn("AC-001", out["refs"], "夹具的裸验收编号没进引用字段")
 
     def test_the_author_gets_the_cited_fact_and_a_locator_for_the_other(self) -> None:
         out = self.probe()
@@ -350,12 +354,11 @@ class FactsBelongByTheirReferences(ChainCase):
         self.assertIn("- 事实 `fact-10`：", facts)
         self.assertNotIn("- 事实 `fact-1`：", facts)
         self.assertIn("需求里另有知识事实，与本单位的关联未明，只给定位：`fact-1`（WalletMain.Logger）", facts)
-        self.assertIn("本单位设计的引用 fact-404 在蓝图里找不到对象或事实", out["author"].split("## 6. 缺口与责任", 1)[1])
         proc = subprocess.run(["node", "--input-type=module", "-e", SPEC_PROBE, str(self.root.as_posix()), CU],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        self.assertIn("本单位设计的引用 fact-404 在蓝图里找不到对象或事实", json.loads(proc.stdout)["review"])
-
+        for text in (out["author"], json.loads(proc.stdout)["review"]):
+            self.assertNotIn("找不到对象或事实", text, "合法的裸验收编号被判成指不到的事实")
 
 SPEC_PROBE = """
 import { pathToFileURL } from 'node:url';

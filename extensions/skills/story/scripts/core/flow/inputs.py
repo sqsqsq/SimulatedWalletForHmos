@@ -311,6 +311,15 @@ def read_ids(feature_root: Path, feature: str) -> dict[str, str | None]:
     }
 
 
+def is_ar_skeleton(feature_root: Path, feature: str, text: str) -> bool:
+    """这份 AR/design.md 还是 `init` 落的空骨架。
+
+    空骨架不是上游给的东西，正文只有段标题和写给模型的判定指引：它被覆盖不必备份，
+    交上来当提取稿也不算写过，冻结时也不算外部原件。
+    """
+    return text.replace("\r\n", "\n") == ar_design_skeleton(read_ids(feature_root, feature))
+
+
 def ar_design_skeleton(ids: dict[str, str | None]) -> str:
     """`AR/design.md` 空骨架——**全流程唯一真源**。
 

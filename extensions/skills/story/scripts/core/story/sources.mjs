@@ -4,6 +4,7 @@
  * 必需性只在这里判一次：起手预检与交付前的 check 读同一份结果。两处各判一次的话，
  * 同一份缺件会在一处说「本地单缺它正常」、在另一处说「它是必备来源」。
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSystemRequirement, readJson, readText } from './context.mjs';
@@ -218,33 +219,42 @@ const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
 /**
  * 这份 Story 据以写成的外部原件 —— 材料清单的检查、作者包与审查任务共用这一份。
  *
- * 取本次冻结快照里采用的原件：经收件箱导入的，按材料登记（`materials.json` 的 `sources`）归回收件箱里的那份，
- * 转换稿记在 `derived`（转换稿 → 原件）；快照里的图片、提取稿与人签导出是过程件（`internal`）。本轮 update 记下了
- * 评审人原话的，评审记录也是一份来源。没有冻结快照（还没交给设计）返回 null；材料登记读不出时 `gap` 说明转换关系定不了。
+ * 按冻结快照取：快照的 `origins` 记着每份采用文件的外部来源——收件箱导入的转换稿记它的全部原件（路径与采用时的摘要），
+ * init 落的空骨架记空列表；没记的采用原件就是外部原件本身。快照里的图片、提取稿与人签导出是过程件（`internal`）。
+ * 本轮 update 记下了评审人原话的，评审记录也是一份来源。收件箱里的原件与采用时的摘要不同、或快照没记来源
+ * （旧版本冻结），记进 `gaps`，不猜。没有冻结快照（还没交给设计）返回 null。
  *
- * @returns {{originals: Map<string, string|null>, derived: Map<string, string>, internal: Set<string>, gap: string|null}|null}
- *   `originals` 是原件 → 它的转换稿（没有为 null）
+ * @returns {{originals: Map<string, string[]>, derived: Map<string, string[]>, internal: Set<string>, gaps: string[]}|null}
+ *   `originals` 是原件 → 它的转换稿，`derived` 是转换稿 → 它的原件
  */
 export function externalOriginals(ctx) {
   const snapshot = designSource(ctx).snapshot;
   if (!snapshot) return null;
-  const manifest = readManifest(ctx);
-  const imported = new Map((manifest?.sources ?? []).filter(s => s?.ingested && s.target).map(s => [s.target, `inbox/${s.file}`]));
   const originals = new Map(), derived = new Map(), internal = new Set();
+  const gaps = snapshot.origins ? [] : ['冻结输入没有记下采用文件的外部来源（旧版本冻结），原件与转换稿分不清——重新 complete 冻结一版'];
   for (const f of snapshot.files ?? []) {
-    const from = imported.get(f.path);
-    if (f.role !== 'original') internal.add(f.path);
-    else if (from) { derived.set(f.path, from); originals.set(from, f.path); }
-    else originals.set(f.path, null);
+    const from = snapshot.origins?.[f.path];
+    if (f.role !== 'original' || (from && !from.length)) { internal.add(f.path); continue; }
+    if (!from) { originals.set(f.path, originals.get(f.path) ?? []); continue; }
+    derived.set(f.path, from.map(o => o.path));
+    for (const o of from) {
+      originals.set(o.path, [...(originals.get(o.path) ?? []), f.path]);
+      const bytes = readBytes(path.join(ctx.featureRoot, o.path));
+      if (!bytes || `sha256:${crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 16)}` !== o.sha256) {
+        gaps.push(`${o.path} 不是本次采用的那一版（采用时 ${o.sha256}${bytes ? '，现在内容变了' : '，现在读不到'}）——换了版要重新导入、round 并 complete`);
+      }
+    }
   }
-  if ((readJson(ctx.flowPath, null)?.update?.decisions ?? []).length) originals.set('AR/review.md', null);
-  return { originals, derived, internal, gap: manifest && manifest !== 'broken' ? null
-    : 'AR/story-src/materials.json 读不出，收件箱原件与转换稿的关系定不了——先跑 `story_flow.py round` 重算材料登记' };
+  if ((readJson(ctx.flowPath, null)?.update?.decisions ?? []).length) originals.set('AR/review.md', []);
+  return { originals, derived, internal, gaps };
 }
 
+const readBytes = (abs) => { try { return fs.readFileSync(abs); } catch { return null; } };
+
 /**
- * 材料清单：一张「材料｜来源｜贡献」表（列名取章节合同），链接点得开；本次采用的每份外部原件都列了，
- * 转换稿归回原件、不另列，过程件与图片不列。贡献写得对不对归独立审查。
+ * 材料清单：一张「材料｜来源｜贡献」表（列名取章节合同），一行一份外部原件，原件按材料格里的链接认；
+ * 本次采用的原件每份一行，转换稿归回原件、过程件与图片不列，同一份不列两行。节里的链接都要点得开，
+ * 表外的链接不算列了原件。贡献写得对不对归独立审查。
  */
 export function materialListProblems(ctx, storyText) {
   const problems = [];
@@ -255,15 +265,10 @@ export function materialListProblems(ctx, storyText) {
   const at = `「${appendix.title}·${name}」`;
   const lines = storyText.split(/\r?\n/);
   const fromDir = path.dirname(ctx.storyPath);
-  const cited = new Map();
   for (let i = span.start; i < span.end && i < lines.length; i++) {
     for (const m of lines[i].matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
-      if (/^(https?:|mailto:)/i.test(m[1])) continue;
-      const file = path.resolve(fromDir, m[1]);
-      if (!fs.existsSync(file)) {
-        problems.push(`${at}第 ${i + 1} 行：链接点不开，${m[1]} 解析不到文件——材料清单的链接按 AR/story.md 所在目录解析，读者据它把材料找出来`);
-      }
-      cited.set(relFromFeature(ctx, file), i + 1);
+      if (/^(https?:|mailto:)/i.test(m[1]) || fs.existsSync(path.resolve(fromDir, m[1]))) continue;
+      problems.push(`${at}第 ${i + 1} 行：链接点不开，${m[1]} 解析不到文件——材料清单的链接按 AR/story.md 所在目录解析，读者据它把材料找出来`);
     }
   }
   const cols = String(ctx.contract.chapters?.find(c => c.appendix)?.projection?.sections?.[name]?.table ?? '').split('|').filter(Boolean);
@@ -273,16 +278,24 @@ export function materialListProblems(ctx, storyText) {
     problems.push(`${at}：要一张表，列为 ${cols.join('｜')}（现在有 ${tables.length} 张）——每行一份外部原件，写它的来源与实际贡献`);
   }
   const set = externalOriginals(ctx);
-  if (!set) return { problems, notes: [] };
-  if (set.gap) problems.push(`${at}：${set.gap}`);
-  for (const [rel, line] of cited) {
-    if (set.derived.has(rel)) problems.push(`${at}第 ${line} 行：${rel} 是 ${set.derived.get(rel)} 的转换稿——列原件，转换稿与抽出的图归回原件`);
+  if (!set || tables.length !== 1) return { problems, notes: [] };
+  problems.push(...set.gaps.map(g => `${at}：${g}`));
+  const cell = tables[0].header.findIndex(h => h.includes(cols[0]));
+  const listed = new Map();
+  tables[0].rows.forEach((row, k) => {
+    const line = span.start + tables[0].line + k + 3;
+    const link = /\]\(([^)\s]+)\)/.exec(row[cell] ?? '')?.[1];
+    if (!link) { problems.push(`${at}第 ${line} 行：材料格里没有链接——每行链到一份原件`); return; }
+    const rel = relFromFeature(ctx, path.resolve(fromDir, link));
+    if (listed.has(rel)) problems.push(`${at}第 ${line} 行：${rel} 在第 ${listed.get(rel)} 行已经列过——一份原件一行`);
+    listed.set(rel, listed.get(rel) ?? line);
+    if (set.derived.has(rel)) problems.push(`${at}第 ${line} 行：${rel} 是 ${set.derived.get(rel).join('、')} 的转换稿——列原件，转换稿与抽出的图归回原件`);
     else if (set.internal.has(rel) || IMAGE.test(rel) || (rel.startsWith('AR/story-src/') && !set.originals.has(rel))) {
-      problems.push(`${at}第 ${line} 行：${rel} 是过程件或图片，不是外部原件——清单只列需求系统原件、人工提供的文件与评审反馈`);
+      problems.push(`${at}第 ${line} 行：${rel} 是过程件、生成件或图片，不是外部原件——清单只列需求系统原件、人工提供的文件与评审反馈`);
     }
-  }
-  for (const [o, via] of [...set.originals].filter(([x]) => !cited.has(x))) {
-    problems.push(`${at}：本次采用的原件 ${o} 没有列${via ? `（转换稿是 ${via}）` : ''}——每份外部原件一行，材料列链到它`);
+  });
+  for (const [o, via] of [...set.originals].filter(([x]) => !listed.has(x))) {
+    problems.push(`${at}：本次采用的原件 ${o} 没有列${via.length ? `（转换稿是 ${via.join('、')}）` : ''}——每份外部原件一行，材料格链到它`);
   }
   return { problems, notes: [] };
 }

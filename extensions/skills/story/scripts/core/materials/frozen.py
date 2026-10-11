@@ -4,7 +4,7 @@
 原件里的本地相对引用（图片、链接）必须落在选集内；外部链接不复制。
 
 冻结目录 `AR/story-src/inputs/<64 位 hex>/`：`files/<需求相对路径>` 按原始字节保存，`snapshot.json`
-写排序的文件行、语义条目、人签编号与冻结时刻。目录名 = 除 `observed_at` 之外完整快照的规范 JSON 的 SHA-256，
+写排序的文件行、语义条目、人签编号、外部来源（`origins`）与冻结时刻。目录名 = 除 `observed_at` 之外完整快照的规范 JSON 的 SHA-256，
 所以同一候选、同一采用集合、同一批人签总得到同一个版本；已有的同名目录全部核对后复用，冻结时刻沿用。
 先在临时目录写全、复核，再改名为最终版本——中断只留下临时目录，不留半个版本。
 
@@ -25,6 +25,7 @@ import uuid
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 
+from flow.inputs import is_ar_skeleton
 from materials import importer
 
 INPUTS = ("AR", "story-src", "inputs")
@@ -189,6 +190,19 @@ def scope_items(raw: list, chosen: set[str]) -> list[dict]:
     return out
 
 
+def origins(feature_root: Path, originals: list[str], files: dict[str, bytes], manifest: dict) -> dict[str, list[dict]]:
+    """采用文件的外部来源，按冻结这一刻的材料登记取：收件箱导入的转换稿记它的全部原件（路径与登记摘要，同一落点可以有几份），
+    init 落的空骨架记空列表（生成件，不是外部材料）；没记的文件就是外部原件本身。读者面的材料清单按它列原件。"""
+    out: dict[str, list[dict]] = {}
+    for s in manifest.get("sources", []):
+        if s.get("ingested") and s.get("target") in originals:
+            out.setdefault(s["target"], []).append({"path": f"inbox/{s['file']}", "sha256": s["sha256"]})
+    for rel in originals:
+        if rel not in out and is_ar_skeleton(feature_root, feature_root.name, files[rel].decode("utf-8", errors="replace")):
+            out[rel] = []
+    return {rel: sorted(out[rel], key=lambda o: o["path"]) for rel in sorted(out)}
+
+
 def selection(feature_root: Path, contract: dict, design_input: dict, manifest: dict,
               candidate_rel: str) -> tuple[dict[str, bytes], dict[str, str], dict]:
     """选集的字节、各文件角色，以及不含冻结时刻的快照主体。"""
@@ -204,7 +218,7 @@ def selection(feature_root: Path, contract: dict, design_input: dict, manifest: 
     problems, notes = closure_problems(feature_root, originals, set(files))
     if problems:
         raise FrozenError("原件引用的图没有闭合在采用集合里：" + "；".join(problems))
-    body = {
+    body = {"origins": origins(feature_root, originals, files, manifest),
         "files": [{"path": rel, "sha256": digest(files[rel]), "role": roles[rel], "provenance": PROVENANCE[roles[rel]]}
                   for rel in sorted(files)],
         "scope_items": scope_items(design_input["scope_items"], set(files)),
