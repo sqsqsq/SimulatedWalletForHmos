@@ -537,6 +537,42 @@ class SiblingUnitsInOneBlueprint(ChainCase):
                 self.assertTrue(row.endswith("| 需求级公共依据（无落点） |"), row)
 
 
+class AUnitCarryingNoJudgementStillGetsTheShared(ChainCase):
+    """只承担运行视图的施工单位：没有落在它设计责任内的判断，但需求级公共依据与作用域未确定的待定仍是它的判断依据，
+    作者任务与审查判断表都列出；三组都空才说没有相关判断。"""
+    STEPS = ()
+    PATTERN = "pending"
+    LONE = "balance-watch"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        base = cls.root / "doc" / "features" / BLUEPRINT
+        text = (base / "balance-refresh" / "change-unit.yaml").read_text(encoding="utf-8")
+        text = text.replace("change_unit_id: balance-refresh", f"change_unit_id: {cls.LONE}")
+        head, tail = text.split("design_refs:\n", 1)
+        refs, after = tail[:tail.index("touches:")], tail[tail.index("touches:"):]
+        runtime = refs[:refs.index("  - artifact: component-blueprint@1", 4)].replace(
+            "kind: node\n      id: wallet-main-module\n      view_id: development", "kind: view\n      id: runtime")
+        (base / cls.LONE).mkdir()
+        (base / cls.LONE / "change-unit.yaml").write_text(head + "design_refs:\n" + runtime + after, encoding="utf-8")
+
+    def test_the_review_table_keeps_common_and_undetermined_rows(self) -> None:
+        lone = cu_id(BLUEPRINT, self.LONE)
+        proc = subprocess.run(["node", "--input-type=module", "-e", SIBLING_PROBE, str(self.root.as_posix()), lone],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
+        out = json.loads(proc.stdout)[lone]
+        self.assertEqual([], out["decisions"], "夹具变了：这个单位不该有落在它设计责任内的判断")
+        self.assertTrue(out["global"], "夹具变了：要有需求级公共依据")
+        self.assertNotIn("没有与本施工单位相关的知识判断", out["review"])
+        row = next((line for line in out["review"].splitlines() if line.startswith(f"| {PATTERN_ID} |")), "")
+        self.assertTrue(row.endswith("| 作用域未确定（无落点，待设计负责方明确） |"), out["review"][-1500:])
+        for d in out["global"]:
+            self.assertIn(f"| {d} |", out["review"])
+        self.assertIn("作用域未确定的判断（没有落点，需设计负责方明确归属）", out["facts"], "作者任务与审查表不同源")
+
+
 class TheMaterializedContractIsReused(ChainCase):
     """先物化本地契约再冻结：原生复用本地产物，实体上的义务与角色照样被读到。"""
     STEPS = ("materialize", "freeze")

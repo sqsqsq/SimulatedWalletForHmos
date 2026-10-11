@@ -1,9 +1,10 @@
 /**
  * pre_verifier —— 告诉 verifier **本阶段的知识判断在哪份文件里、按什么判**。
  *
- * ## 只指路，不派活
+ * ## 判据全集逐条一行，知识条目只指路
  *
- * **不注入必答清单**。把判定全集拆成一张表要求逐行裁、门禁再逐行核对键与引文，
+ * 本阶段的判据全集照原文注入（`allChecksFragment`），每条在汇总表里恰好一行。**知识条目不拆成必答清单**：
+ * 把知识全集拆成一张表要求逐行裁、门禁再逐行核对键与引文，
  * 会有三件事：裁决量随材料条数涨而判断不增加；证据列退化成把清单里的字抄一遍；
  * 判据从「这条要求是不是本需求的设计」滑向「这行有没有被裁过」——后者是格式，前者才是判断。
  *
@@ -62,7 +63,7 @@ function decisionTable(projectRoot, feature, knowledge, inputs) {
   const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
   const { mine, common, undetermined } = unitContext(judged);
   const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
-  if (!mine.length) return [`${judged.label} 里没有本施工单位承接的知识判断。`, ...gaps];
+  if (!mine.length && !common.length && !undetermined.length) return [`${judged.label} 里没有与本施工单位相关的知识判断。`, ...gaps];
   // 没有落点的也列出：不适用与拒绝是公共依据（宿主扩展章引用其理由），其余作用域未确定；落点在别的单位的不列
   const where = d => (mine.includes(d) ? cell((d.knowledge.target_refs ?? []).join('、'))
     : common.includes(d) ? '需求级公共依据（无落点）' : '作用域未确定（无落点，待设计负责方明确）');

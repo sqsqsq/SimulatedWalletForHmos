@@ -120,7 +120,8 @@ export function prepareReview(ctx, reportDirArg) {
  *
  * 1. 这份材料的报告目录里有可复用的 pass / warn：复用原回复，不派审；
  * 2. 同一份材料已准备、回复还没来：沿用这个位置与它的上下文；上下文带的原回复字节变了，改为对当前材料的完整独立审查；
- * 3. 这份材料的回复不合报告合同：下一个编号，带原回复与诊断交独立格式返修；已有有效 fail：下一个编号，带失败报告交独立复审；
+ * 3. 这份材料的当前回复（换回这份材料时是它目录里最新的原样回复）不合报告合同：下一个编号，带原回复与诊断交独立格式返修；
+ *    已有有效 fail：下一个编号，带失败报告交独立复审；
  * 4. 材料换了新键，紧前一次准备的原报告还在且是原样：下一个编号，带它作待核参考（`prior_revision`），不继承它的结论；
  * 5. 其余（首审、前一份报告缺席或改过）：下一个编号，不带上下文，完整审查。
  *
@@ -197,7 +198,9 @@ function dispatchFor(ctx, record, task) {
     out.push('', '## 上一份回复不合报告合同', '',
       `原回复：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读，保持原样。核对给出的诊断原文：`, '',
       ...String(c.diagnostic.detail).split(/\r?\n/).map(l => `> ${l}`), '',
-      '按任务给一份合格的完整报告写到上面的回复位置。原回复里的每条事实与引用回材料核过再写，核不到的不写。');
+      '按任务给一份合格的完整报告写到上面的回复位置。诊断只关报告的表达、表头或字段格式时，原回复的实质判断与判据覆盖充分就照用，'
+      + '不必把每条事实重核一遍；诊断是缺判据、引用找不到、依据不足或结论自相矛盾时，回材料把这部分核验补足；'
+      + '看不出原审查是否完整时按完整范围审查。核不到的不写。');
   } else if (c?.kind === 'recheck') {
     out.push('', '## 这份材料上一次的审查结论是 fail', '',
       `上一次的回复：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读。它的阻断结论：`, '',
@@ -316,14 +319,17 @@ export function reviewResult(ctx) {
 }
 
 /**
- * 这一份材料在它的报告目录里的结论，prepare 与 check 共用：当前回复位置有回复就判它；
- * 没有就从目录里其余回复取最新的有效结论；都没有返回 null。
+ * 这一份材料在它的报告目录里的结论，prepare 与 check 共用：当前回复位置有回复就判它；换回这份材料、没有当前位置时，
+ * 它目录里最新的原样回复就是当前回复（不合合同也照判，诊断留给格式返修）；当前位置还没回复时从其余回复取最新的有效结论；
+ * 都没有返回 null。
  */
 function materialConclusion(ctx, key, reportDir, reportFile, materials, altered = new Set()) {
-  if (reportFile && fs.existsSync(abs(ctx, reportFile)) && !altered.has(reportFile)) {
-    return { ...judge(fs.readFileSync(abs(ctx, reportFile), 'utf-8'), key, materials), report_file: reportFile };
+  const at = reportFile ?? replyNumbers(ctx, reportDir).sort((a, b) => b - a).map(n => `${reportDir}/${reply(n)}`)
+    .find(f => !altered.has(f));
+  if (at && fs.existsSync(abs(ctx, at)) && !altered.has(at)) {
+    return { ...judge(fs.readFileSync(abs(ctx, at), 'utf-8'), key, materials), report_file: at };
   }
-  return earlierConclusion(ctx, key, reportDir, reportFile, materials, altered);
+  return earlierConclusion(ctx, key, reportDir, at, materials, altered);
 }
 
 /** 报告目录里已有回复的编号。 */

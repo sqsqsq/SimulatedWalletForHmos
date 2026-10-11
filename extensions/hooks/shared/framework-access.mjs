@@ -9,6 +9,7 @@
  *   node framework-access.mjs --project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery
  *        [--snapshot <冻结快照的项目相对路径>]（给了就核蓝图消费了这次交给设计的条目）
  *        [--summary]（只核状态：同一读取与校验，输出省掉蓝图正文 blueprint，其余字段照旧）
+ *        [--report-phases <阶段,阶段>]（给了就在每个施工单位上附原生阶段报告目录 phase_reports）
  *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id> --phase <阶段>
  *        [--requirement-file <文件> | --requirement <原文>]（无 run 的 spec 恢复不出需求来源时给）
  *   node framework-access.mjs --project-root <根> --action binding --component <组件 id> --blueprint <蓝图 id>
@@ -123,9 +124,10 @@ export function hostReviewer(projectRoot) {
  * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
  * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。
  * 给了冻结快照时一并回答 `consumption`：这一版蓝图消费了本次交给设计的条目没有。
- * 已准入时列出活动施工单位 `units`（原生枚举、去掉已被取代的）：身份、Feature 标识与原生目录（工程相对）。
+ * 已准入时列出活动施工单位 `units`（原生枚举、去掉已被取代的）：身份、Feature 标识与原生目录（工程相对）；
+ * 给了 `reportPhases` 时每个单位另带 `phase_reports: [{phase, dir}|{phase, error}]`（phaseReportsDir 的原生结果）。
  */
-export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snapshotRef = null) {
+export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snapshotRef = null, reportPhases = null) {
   const native = loadNative(projectRoot);
   const paths = native.module('scripts/utils/component-blueprint-path.ts');
   const check = native.module('scripts/check-component-blueprint.ts');
@@ -154,7 +156,7 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snaps
   const out = {
     status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
     blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
-    projection: readProjection(native, checked), units: admitted ? activeUnits(native, projectRoot, blueprintId) : [],
+    projection: readProjection(native, checked), units: admitted ? activeUnits(native, projectRoot, blueprintId, reportPhases) : [],
     ...(snapshotRef ? { consumption: scopeConsumption(native, checked.blueprint, snapshotRef) } : {}),
   };
   if (purpose === 'delivery' && !admitted) out.status = 'not_admitted';
@@ -162,7 +164,7 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snaps
 }
 
 /** 蓝图的活动施工单位：原生枚举，去掉被精确取代而退役的；目录取原生身份给出的位置。 */
-function activeUnits(native, projectRoot, blueprintId) {
+function activeUnits(native, projectRoot, blueprintId, reportPhases) {
   const retired = native.module('scripts/utils/component-closure-inputs.ts').retiredChangeUnitIds(native.root, blueprintId);
   const encode = native.module('scripts/utils/feature-identity.js').encodeCuFeatureId;
   return native.module('scripts/utils/change-unit-path.ts').enumerateCanonicalChangeUnits(native.root, blueprintId)
@@ -170,7 +172,8 @@ function activeUnits(native, projectRoot, blueprintId) {
     .map(id => {
       const featureId = encode(blueprintId, id);
       const dir = featureDir(projectRoot, featureId);
-      return { change_unit_id: id, feature_id: featureId, path: dir ? rel(native.root, dir) : null };
+      return { change_unit_id: id, feature_id: featureId, path: dir ? rel(native.root, dir) : null,
+        ...(reportPhases ? { phase_reports: reportPhases.map(phase => ({ phase, ...phaseReportsDir(projectRoot, featureId, phase) })) } : {}) };
     });
 }
 
@@ -354,41 +357,32 @@ export function blueprintGraph(projectRoot, ref, graphId) {
 }
 
 /**
- * 施工单位关联的需求：沿蓝图 `currentScopeItems` 实际消费的来源，认出落在需求冻结输入布局
- * （`<需求目录>/<需求>/AR/story-src/inputs/<版本>/files/…`）里的那些，按需求根去重，核需求关联的设计对象就是这份蓝图；
- * 不枚举需求目录、不按名称猜。来源不在这一布局的条目是原生直接输入，不产生需求。
- * Story 现在是否当前，由 Story 侧按成文登记判（`design-source.mjs` 的 `storyCurrency`）。
+ * 候选蓝图采用的来源：原生 `currentScopeItems` 的每条声明（原引用连同片段、声明摘要、条目身份与 provenance），
+ * 以及其中落在需求冻结输入布局（`<需求目录>/<需求>/AR/story-src/inputs/<版本>/files/…`）里的需求——按需求根去重，
+ * 核需求关联的设计对象就是这份蓝图，带出蓝图采用的那一版与它的快照位置。不读来源正文、不算摘要；不枚举需求目录、不按名称猜。
+ * 来源不在这一布局的条目是原生直接输入，不产生需求。
  *
- * @param {object|null} blueprint 调用方已读到的蓝图，给了就不再读
- * @returns {{status: string, sources: {path: string, sha256: string}[], requirements: {requirement: string, root: string}[],
- *   problems: string[], blueprint?: object}}
+ * @returns {{status: string, sources: {path: string, sha256: string, item_id: string, kind: string, provenance: object|null}[],
+ *   requirements: {requirement: string, root: string, version: string, snapshot_ref: string}[], problems: string[]}}
  */
-export function relatedStories(projectRoot, feature, blueprint = null) {
-  const out = { status: 'ok', sources: [], requirements: [], problems: [] };
-  const who = featureIdentity(projectRoot, feature);
-  if (who.status !== 'ok') return { ...out, status: who.status, problems: (who.issues ?? []).map(i => i.message) };
-  if (who.kind !== 'cu') return out;
+export function blueprintSources(projectRoot, blueprint) {
   const native = loadNative(projectRoot);
-  let bp = blueprint;
-  if (!bp) {
-    const read = readBlueprint(projectRoot, who.blueprintId, 'draft');
-    if (read.status !== 'ok') return { ...out, status: read.status, problems: [`蓝图 ${who.blueprintId} 原生读取 ${read.status}——设计负责方处理`] };
-    bp = read.blueprint;
-  }
+  const out = { status: 'ok', sources: [], requirements: [], problems: [] };
   const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
   const guard = native.module('scripts/utils/project-relative-path.ts');
   const prefix = `${path.posix.normalize(featuresDir)}/`;
   const byRequirement = new Map();
-  for (const item of native.module('scripts/utils/blueprint-requirement-traceability.ts').currentScopeItems(bp)) {
-    let ref;
+  for (const item of native.module('scripts/utils/blueprint-requirement-traceability.ts').currentScopeItems(blueprint)) {
+    let file;
     try {
-      ref = path.posix.normalize(guard.validateProjectRelativePath(native.root, String(item.source_ref ?? '').split('#')[0], 'source_ref'));
+      file = path.posix.normalize(guard.validateProjectRelativePath(native.root, String(item.source_ref ?? '').split('#')[0], 'source_ref'));
     } catch (e) {
       out.problems.push(`蓝图条目 ${item.item_id} 的来源 ${item.source_ref} 不是工程内路径（${e?.message ?? e}）——设计负责方处理`);
       continue;
     }
-    out.sources.push({ path: ref, sha256: String(item.source_sha256 ?? '') });
-    const parts = ref.startsWith(prefix) ? ref.slice(prefix.length).split('/') : [];
+    out.sources.push({ path: String(item.source_ref), sha256: String(item.source_sha256 ?? ''), item_id: String(item.item_id),
+      kind: item.kind, provenance: item.provenance ?? null });
+    const parts = file.startsWith(prefix) ? file.slice(prefix.length).split('/') : [];
     if (parts.length < 7 || parts.slice(1, 4).join('/') !== 'AR/story-src/inputs' || parts[5] !== 'files') continue;
     byRequirement.set(parts[0], new Set([...(byRequirement.get(parts[0]) ?? []), parts[4]]));
   }
@@ -404,14 +398,107 @@ export function relatedStories(projectRoot, feature, blueprint = null) {
     } catch {
       bound = null;
     }
-    if (bound?.blueprint_id !== who.blueprintId || bound?.component_id !== bp.component_id) {
+    if (bound?.blueprint_id !== blueprint.blueprint_id || bound?.component_id !== blueprint.component_id) {
       out.problems.push(`需求 ${requirement} 关联的设计对象是 ${bound ? `${bound.component_id}/${bound.blueprint_id}` : '（读不到）'}，`
-        + `不是本施工单位的 ${bp.component_id}/${who.blueprintId}——需求负责方核对`);
+        + `不是 ${blueprint.component_id}/${blueprint.blueprint_id}——需求负责方核对`);
       continue;
     }
-    out.requirements.push({ requirement, root });
+    const [version] = versions;
+    out.requirements.push({ requirement, root, version, snapshot_ref: `${root}/AR/story-src/inputs/${version}/snapshot.json` });
   }
-  return { ...out, blueprint: bp };
+  return out;
+}
+
+/**
+ * 读声明了摘要的来源：每项的原引用（可带片段）交原生 `resolveCurrentScopeSource`（工程内路径、原字节、片段定位、摘要），
+ * 实际摘要要等于声明的 `sha256:<64 位十六进制>`。成功项保留输入的字段，加去掉片段的 `file_path` 与原字节；
+ * 失败项不给字节，按原引用记进 `excluded`（原因）与 `problems`。同一引用同一声明本次只读一次。
+ *
+ * @param {{path: string, sha256: string}[]} entries
+ * @returns {{files: object[], excluded: Map<string,string>, problems: string[]}}
+ */
+export function readSourceFiles(projectRoot, entries) {
+  const native = loadNative(projectRoot);
+  const resolve = native.module('scripts/utils/blueprint-requirement-traceability.ts').resolveCurrentScopeSource;
+  const out = { files: [], excluded: new Map(), problems: [] };
+  const seen = new Map();
+  for (const entry of entries) {
+    const key = `${entry.path}\0${entry.sha256}`;
+    if (!seen.has(key)) {
+      const got = {};
+      if (!/^sha256:[0-9a-f]{64}$/.test(String(entry.sha256 ?? ''))) {
+        got.why = `声明的摘要 ${entry.sha256 || '（空）'} 不是 sha256:<64 位十六进制>`;
+      } else {
+        try {
+          const r = resolve(native.root, String(entry.path));
+          if (r.source_sha256 === entry.sha256) got.bytes = r.bytes;
+          else got.why = `原始字节摘要 ${r.source_sha256} 与声明的 ${entry.sha256} 不符`;
+        } catch (e) {
+          got.why = String(e?.message ?? e).split(/\r?\n/)[0];
+        }
+      }
+      seen.set(key, got);
+      if (got.why) out.problems.push(`${entry.path}：${got.why}`);
+    }
+    const got = seen.get(key);
+    if (got.bytes) out.files.push({ ...entry, file_path: path.posix.normalize(String(entry.path).split('#')[0]), bytes: got.bytes });
+    else out.excluded.set(entry.path, got.why);
+  }
+  return out;
+}
+
+/**
+ * 一版冻结输入：读显式给的快照（工程相对路径），files 每行换成 `<快照目录>/files/<行路径>` 与 `sha256:<行摘要>` 交 readSourceFiles。
+ * 行路径要留在包内；快照读不到、不是 JSON 或没有 files 清单报问题，不当空包。快照本身的摘要由持有登记的调用方核，这里不自证版本。
+ *
+ * @returns {{snapshot: object|null, files: object[], excluded: Map<string,string>, problems: string[]}}
+ */
+export function readFrozenInputs(projectRoot, snapshotRef) {
+  const native = loadNative(projectRoot);
+  const out = { snapshot: null, files: [], excluded: new Map(), problems: [] };
+  try {
+    const at = native.module('scripts/utils/project-relative-path.ts').validateProjectRelativePath(native.root, String(snapshotRef), 'snapshot_ref');
+    out.snapshot = JSON.parse(fs.readFileSync(path.join(native.root, ...at.split('/')), 'utf8'));
+  } catch (e) {
+    out.problems.push(`冻结快照 ${snapshotRef} 读不出来（${String(e?.message ?? e).split(/\r?\n/)[0]}）`);
+    return out;
+  }
+  if (!Array.isArray(out.snapshot?.files)) {
+    out.problems.push(`冻结快照 ${snapshotRef} 没有 files 清单`);
+    return out;
+  }
+  const dir = path.posix.dirname(String(snapshotRef));
+  const entries = [];
+  for (const row of out.snapshot.files) {
+    const name = typeof row?.path === 'string' ? path.posix.normalize(row.path) : '';
+    if (!name || name === '..' || name.startsWith('../') || path.posix.isAbsolute(name)) {
+      out.problems.push(`冻结快照 ${snapshotRef} 的文件行 ${JSON.stringify(row?.path)} 不在包内`);
+      continue;
+    }
+    entries.push({ ...row, name, path: `${dir}/files/${name}`, sha256: `sha256:${row.sha256}` });
+  }
+  const read = readSourceFiles(projectRoot, entries);
+  return { ...out, files: read.files, excluded: read.excluded, problems: [...out.problems, ...read.problems] };
+}
+
+/**
+ * 施工单位关联的需求：先按原生身份认出 CU 与它的蓝图，再取 blueprintSources。
+ * Story 现在是否当前，由 Story 侧按成文登记判（`design-source.mjs` 的 `storyCurrency`）。
+ *
+ * @param {object|null} blueprint 调用方已读到的蓝图，给了就不再读
+ */
+export function relatedStories(projectRoot, feature, blueprint = null) {
+  const out = { status: 'ok', sources: [], requirements: [], problems: [] };
+  const who = featureIdentity(projectRoot, feature);
+  if (who.status !== 'ok') return { ...out, status: who.status, problems: (who.issues ?? []).map(i => i.message) };
+  if (who.kind !== 'cu') return out;
+  let bp = blueprint;
+  if (!bp) {
+    const read = readBlueprint(projectRoot, who.blueprintId, 'draft');
+    if (read.status !== 'ok') return { ...out, status: read.status, problems: [`蓝图 ${who.blueprintId} 原生读取 ${read.status}——设计负责方处理`] };
+    bp = read.blueprint;
+  }
+  return { ...blueprintSources(projectRoot, bp), blueprint: bp };
 }
 
 /**
@@ -537,6 +624,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const action = opt('--action');
   try {
     const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery [--snapshot <快照>] [--summary]'
+      + ' [--report-phases <阶段,阶段>]'
       + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
       + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）'
       + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）'
@@ -548,6 +636,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (action === 'feature' && (!opt('--feature') || !opt('--phase'))) throw new Error(usage);
     const summary = argv.includes('--summary');
     if (summary && action !== 'blueprint') throw new Error(usage);
+    const phases = opt('--report-phases') === undefined ? null : [...new Set(opt('--report-phases').split(',').map(s => s.trim()).filter(Boolean))];
+    if (phases && (action !== 'blueprint' || !phases.length)) throw new Error(usage);
     if (action === 'binding' && (!opt('--component') || !opt('--blueprint'))) throw new Error(usage);
     let doc;
     if (['sources', 'feedback', 'feedback-related'].includes(action)) {
@@ -557,7 +647,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         throw new Error(`stdin 不是 JSON（${e?.message ?? e}）`);
       }
     }
-    const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot'))
+    const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot'), phases)
       : action === 'binding' ? checkBinding(root, opt('--component'), opt('--blueprint'))
         : action === 'sources' ? checkSources(root, doc)
           : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)

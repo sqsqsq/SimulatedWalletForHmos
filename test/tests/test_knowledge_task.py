@@ -709,6 +709,20 @@ class ANativeEntryNeedsNoStory(unittest.TestCase):
         self.assertNotIn("关联 Story：", proc.stdout, "没有 Story 被当成了缺口")
 
 
+def place_unit(root: Path, blueprint: str, ref: dict) -> tuple[Path, str]:
+    """在 `blueprint` 下放夹具施工单位 balance-refresh，引用改指这一版蓝图（`ref` 是原生读到的 blueprint_ref）。"""
+    unit = (FIXTURE / "doc" / "features" / BLUEPRINT / "balance-refresh" / "change-unit.yaml").read_text(encoding="utf-8")
+    for old, new in (("revision: 3", f"revision: {ref['revision']}"),
+                     ("sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72", ref["source_fingerprint"]),
+                     ("sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5", ref["artifact_sha256"]),
+                     (BLUEPRINT, blueprint)):
+        unit = unit.replace(old, new)
+    unit_dir = root / "doc" / "features" / blueprint / "balance-refresh"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / "change-unit.yaml").write_text(unit, encoding="utf-8")
+    return unit_dir, cu_id(blueprint, "balance-refresh")
+
+
 class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
     """施工单位按蓝图实际消费的冻结来源找到关联需求，Story 仍是成文登记的那一份时，照录依据落在本单位设计责任内的小节。
 
@@ -731,16 +745,7 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         cls.ext = DEV_EXT
         cls.access = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
         ref = cls.node("const r = fa.readBlueprint(root, process.argv[3], 'draft'); out(r.blueprint_ref);", cls.BLUEPRINT)
-        unit = (FIXTURE / "doc" / "features" / BLUEPRINT / "balance-refresh" / "change-unit.yaml").read_text(encoding="utf-8")
-        for old, new in (("revision: 3", f"revision: {ref['revision']}"),
-                         ("sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72", ref["source_fingerprint"]),
-                         ("sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5", ref["artifact_sha256"]),
-                         (BLUEPRINT, cls.BLUEPRINT)):
-            unit = unit.replace(old, new)
-        cls.unit_dir = cls.root / "doc" / "features" / cls.BLUEPRINT / "balance-refresh"
-        cls.unit_dir.mkdir(parents=True, exist_ok=True)
-        (cls.unit_dir / "change-unit.yaml").write_text(unit, encoding="utf-8")
-        cls.unit = cu_id(cls.BLUEPRINT, "balance-refresh")
+        cls.unit_dir, cls.unit = place_unit(cls.root, cls.BLUEPRINT, ref)
         # 夹具工程只装了知识与清单：阶段判据 overlay 从本次扩展补进来，审查侧的片段才按真实判据装配
         shutil.copytree(DEV_EXT / "rules", cls.root / "doc" / "extensions" / "rules", dirs_exist_ok=True)
 
@@ -910,6 +915,16 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
                 for words in ("共同设计错了或缺了", "FAIL，回设计负责方", "「错在上游」不降级", "只有 Story 的表达与有效设计矛盾", "人读交付还没同步"):
                     self.assertIn(words, rule)
 
+    def test_a_free_text_basis_reaches_no_unit(self) -> None:
+        """写作设计里只写自由文字的依据没有机器关联：不拿它给任何施工单位片段，也不当找不到小节报缺口。"""
+        plan = self.plan_file.read_bytes().decode("utf-8")
+        self.plan_file.write_bytes(plan.replace("### 07-exceptions\n", "### 07-exceptions\n#### 回执迟到\n"
+                                                "- 依据：评审会上对迟到回执的说法\n", 1).encode("utf-8"))
+        self.register()
+        out = self.task()
+        self.assertNotIn("回执迟到", out)
+        self.assertIn(self.selected_body(), self.section(out), "有地址的那一节照旧交")
+
     # ---- 不是当前那一份：旧表达或缺口 ----
 
     def test_story_or_design_changed_after_registration_is_old_expression(self) -> None:
@@ -993,6 +1008,195 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         out = self.gate("plan")
         self.assertIn("关联来源：", out)
         self.assertIn("关联的设计对象是", out)
+
+
+class AdoptedSourcesAreReadThroughOneReader(unittest.TestCase):
+    """候选声明的来源与冻结包按同一底层读取（原生 resolveCurrentScopeSource 核原字节、片段与声明摘要）：
+    蓝图设计/质询任务交真实来源索引，Story 图源（adoptedInputs）与 CU 来源（unitSources）对同一文件得到同样的结论；
+    任一份坏了蓝图任务不给半份，失败不写盘。
+    """
+
+    FEATURE = "REQ-DEMO"
+    BLUEPRINT = "bp-REQ-DEMO"
+    STORY_FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
+    PROBE = """
+const ds = await import(process.argv[1]);
+const [root, flow, feature] = process.argv.slice(2);
+const adopted = ds.adoptedInputs({ projectRoot: root, flowPath: flow });
+const unit = ds.unitSources(root, feature);
+process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(adopted.documents), problems: adopted.problems },
+  unit: { documents: Object.fromEntries(unit.documents), excluded: Object.fromEntries(unit.excluded), problems: unit.problems } }));
+"""
+
+    def setUp(self) -> None:
+        from designed_fixture import DRAFT, designed_copy  # noqa: PLC0415
+        from ext_workspace import DEV_EXT  # noqa: PLC0415
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "work"
+        designed_copy(self.STORY_FIXTURE, self.FEATURE, DRAFT, self.root)
+        self.ext = DEV_EXT
+        self.flow_file = self.root / "doc" / "features" / self.FEATURE / "AR" / "story-src" / "story-flow.json"
+        self.snapshot_ref = json.loads(self.flow_file.read_text(encoding="utf-8"))["input"]["snapshot_ref"]
+        self.pack = (self.root / self.snapshot_ref).parent
+        self.prd = f"{Path(self.snapshot_ref).parent.as_posix()}/files/RR/prd.md"
+        self.canonical = self.root / "doc" / "features" / self.BLUEPRINT / "blueprint" / "component-blueprint.yaml"
+        ref = json.loads(subprocess.run(
+            ["node", "--input-type=module", "-e",
+             "const fa = await import(process.argv[1]); process.stdout.write(JSON.stringify("
+             "fa.readBlueprint(process.argv[2], process.argv[3], 'draft').blueprint_ref));",
+             (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri(), str(self.root), self.BLUEPRINT],
+            capture_output=True, text=True, encoding="utf-8", timeout=120).stdout)
+        _, self.unit = place_unit(self.root, self.BLUEPRINT, ref)
+
+    def task(self, action: str = "design", audience: str = "author") -> subprocess.CompletedProcess:
+        return subprocess.run(["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
+                               "--blueprint", self.BLUEPRINT, "--action", action, "--audience", audience],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+    def readers(self) -> dict:
+        module = (self.ext / "skills" / "story" / "scripts" / "core" / "story" / "design-source.mjs").resolve().as_uri()
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.PROBE, module, str(self.root), str(self.flow_file), self.unit],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def snapshot(self) -> dict:
+        return json.loads((self.root / self.snapshot_ref).read_text(encoding="utf-8"))
+
+    def put_snapshot(self, data: dict) -> None:
+        (self.root / self.snapshot_ref).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    def assert_task_fails(self, *words: str) -> None:
+        before = files_under(self.root / "doc")
+        for action, audience in (("design", "author"), ("questioning", "reviewer")):
+            with self.subTest(action=action):
+                proc = self.task(action, audience)
+                self.assertEqual((1, ""), (proc.returncode, proc.stdout), "来源坏了还交了任务")
+                for word in ("候选采用的来源", *words):
+                    self.assertIn(word, proc.stderr)
+        self.assertEqual(before, files_under(self.root / "doc"), "失败时写了盘")
+
+    def test_the_design_and_questioning_tasks_index_every_adopted_source(self) -> None:
+        for action, audience in (("design", "author"), ("questioning", "reviewer")):
+            with self.subTest(action=action):
+                proc = self.task(action, audience)
+                self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+                index = proc.stdout.split("### 候选采用的来源", 1)[1].split("## 2.", 1)[0]
+                self.assertIn(f"`{self.prd}`", index)
+                self.assertIn(f"`{self.snapshot_ref}`", index, "没交候选那一版的快照位置")
+                for row in self.snapshot()["files"]:
+                    self.assertIn(f"`{Path(self.snapshot_ref).parent.as_posix()}/files/{row['path']}`（{row['role']}，"
+                                  f"{row['provenance']['evidence_strength']}），sha256:{row['sha256']}", index)
+
+    def test_the_same_good_file_reaches_all_three_readers(self) -> None:
+        got = self.readers()
+        self.assertEqual([], got["adopted"]["problems"])
+        self.assertEqual([], got["unit"]["problems"])
+        text = (self.root / self.prd).read_text(encoding="utf-8")
+        self.assertEqual(text, got["adopted"]["documents"][self.prd])
+        self.assertEqual(text, got["unit"]["documents"][self.prd])
+
+    def test_a_changed_or_missing_file_is_the_same_gap_everywhere(self) -> None:
+        target = self.root / self.prd
+        original = target.read_bytes()
+        for label, change, word in (("字节变了", lambda: target.write_bytes(original + b"\n"), "不符"),
+                                    ("读不到", target.unlink, "不存在")):
+            with self.subTest(case=label):
+                change()
+                self.assert_task_fails(self.prd, word)
+                got = self.readers()
+                self.assertNotIn(self.prd, got["adopted"]["documents"])
+                self.assertTrue(any(self.prd in p and word in p for p in got["adopted"]["problems"]), got["adopted"]["problems"])
+                self.assertIn(word, got["unit"]["excluded"][self.prd])
+                target.write_bytes(original)
+
+    def test_a_wrong_declaration_fails_even_when_the_pack_is_intact(self) -> None:
+        """冻结包逐份都对，但候选声明的片段或摘要错了：蓝图任务照样不给，不因包校验成功或草稿 status=ok 放过。"""
+        original = self.canonical.read_bytes()
+        declared = "sha256:" + hashlib.sha256((self.root / self.prd).read_bytes()).hexdigest()
+        text = original.decode("utf-8")
+        self.assertIn(declared, text, "夹具变了，用例要跟着改")
+        for label, changed, word in (
+                ("片段解析不了", text.replace(self.prd, f"{self.prd}#不存在的片段"), "fragment"),
+                ("摘要不符", text.replace(declared, "sha256:" + "0" * 64), "不符")):
+            with self.subTest(case=label):
+                self.canonical.write_bytes(changed.encode("utf-8"))
+                self.assertEqual(0, self.access_status(), "草稿读取本身应仍为 ok")
+                self.assert_task_fails(word)
+                self.canonical.write_bytes(original)
+
+    def access_status(self) -> int:
+        proc = subprocess.run(["node", str(self.ext / "hooks" / "shared" / "framework-access.mjs"), "--project-root", str(self.root),
+                               "--action", "blueprint", "--blueprint", self.BLUEPRINT, "--purpose", "draft", "--summary"],
+                              capture_output=True, text=True, encoding="utf-8", timeout=120)
+        return proc.returncode
+
+    def test_a_broken_snapshot_or_a_row_outside_the_pack_is_never_an_empty_success(self) -> None:
+        good = self.snapshot()
+        for label, write, word in (
+                ("坏 JSON", lambda: (self.root / self.snapshot_ref).write_text("{", encoding="utf-8"), "读不出来"),
+                ("没有 files", lambda: self.put_snapshot({**good, "files": "x"}), "没有 files 清单"),
+                ("越出包外", lambda: self.put_snapshot({**good, "files": [*good["files"], {**good["files"][0], "path": "../../../x.md"}]}),
+                 "不在包内")):
+            with self.subTest(case=label):
+                write()
+                self.assert_task_fails(word)
+                problems = self.readers()["adopted"]["problems"]
+                self.assertTrue(any(word in p for p in problems), problems)
+                self.put_snapshot(good)
+
+    def test_non_markdown_and_bom_files_are_checked_on_their_raw_bytes(self) -> None:
+        good = self.snapshot()
+        extra = {"RR/flow.png": b"\x89PNG\r\n\x1a\nnot-really", "RR/notes.md": "\ufeff# 备注\n人签过的边界。\n".encode("utf-8")}
+        rows = []
+        for name, data in extra.items():
+            (self.pack / "files" / name).write_bytes(data)
+            rows.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "role": "original",
+                         "provenance": good["files"][0]["provenance"]})
+        self.put_snapshot({**good, "files": [*good["files"], *rows]})
+        base = Path(self.snapshot_ref).parent.as_posix()
+        got = self.readers()["adopted"]
+        self.assertEqual([], got["problems"])
+        self.assertEqual("# 备注\n人签过的边界。\n", got["documents"][f"{base}/files/RR/notes.md"], "展示投影没去 BOM")
+        self.assertNotIn(f"{base}/files/RR/flow.png", got["documents"], "非 Markdown 被当文本交了")
+        index = self.task().stdout
+        for name in extra:
+            self.assertIn(f"`{base}/files/{name}`", index, f"{name} 没进来源索引")
+
+    def test_an_older_candidate_keeps_its_own_pack_when_the_flow_moved_on(self) -> None:
+        """候选仍采用 v1、流程已登记 v2：蓝图任务交 v1 的包，Story 侧按流程读 v2，各取各的。"""
+        v2 = self.pack.parent / "v2-later"
+        shutil.copytree(self.pack, v2)
+        prd2 = v2 / "files" / "RR" / "prd.md"
+        prd2.write_bytes(prd2.read_bytes() + "新版本补的一句。\n".encode("utf-8"))
+        snap = json.loads((v2 / "snapshot.json").read_text(encoding="utf-8"))
+        for row in snap["files"]:
+            if row["path"] == "RR/prd.md":
+                row["sha256"] = hashlib.sha256(prd2.read_bytes()).hexdigest()
+        (v2 / "snapshot.json").write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
+        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
+        flow["input"]["snapshot_ref"] = (v2 / "snapshot.json").relative_to(self.root).as_posix()
+        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+        index = self.task().stdout.split("## 2.", 1)[0]
+        self.assertIn(f"`{self.snapshot_ref}`", index)
+        self.assertNotIn("v2-later", index, "候选配上了流程里的新版本")
+        self.assertIn("新版本补的一句", self.readers()["adopted"]["documents"][f"{v2.relative_to(self.root).as_posix()}/files/RR/prd.md"])
+
+
+class ANativeSourceKeepsItsFragment(NativeCase):
+    """原生直接入口：声明带片段的需求文件按原引用交给原生定位；片段找不到时任务不给，不先去掉片段再读。"""
+
+    def test_the_fragment_is_indexed_and_a_missing_one_stops_the_task(self) -> None:
+        index = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout.split("## 2.", 1)[0]
+        self.assertIn(f"`{REQUIREMENT}#REQ-WALLET-BALANCE-REFRESH`", index)
+        canonical = self.root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
+        original = canonical.read_bytes()
+        self.addCleanup(canonical.write_bytes, original)
+        canonical.write_bytes(original.replace(b"#REQ-WALLET-BALANCE-REFRESH", b"#NO-SUCH-PART"))
+        proc = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author")
+        self.assertEqual((1, ""), (proc.returncode, proc.stdout))
+        self.assertIn("NO-SUCH-PART", proc.stderr)
 
 
 if __name__ == "__main__":

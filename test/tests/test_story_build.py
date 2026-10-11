@@ -2083,6 +2083,49 @@ class TheChapterIsCheckedBeforeItLandsPart2(TheChapterIsCheckedBeforeItLandsCase
         self.assertIn("草稿", result)
 
 
+class TheChapterTaskCarriesItsBasis(TheChapterIsCheckedBeforeItLandsCase):
+    """章接续交当前设计（投影、蓝图 revision、本体）、冻结来源与决策登记，以及写作设计里本章各处的依据原文：
+    写了地址的按当前蓝图核，自由文字原样给并标未登记机器关联，别章的依据不混进来，一处都没写就如实说。"""
+
+    PLAN = {
+        "### 02-terms\n": "### 02-terms\n- 依据：蓝图 `view:runtime` 与评审会上对等待态的说法\n"
+                          "#### 等待态\n- 依据：人签过的等待时长，见决策登记\n"
+                          "##### 超时\n- 依据：`contract:nope`\n"
+                          "#### 回执\n- 本节主线：没有登记依据的一节\n",
+        "### 05-flow\n": "### 05-flow\n- 依据：别章的依据不该出现在术语章\n",
+    }
+
+    def setUp(self) -> None:
+        super().setUp()
+        plan = self.src / "story-template.md"
+        text = plan.read_bytes().decode("utf-8")
+        for old, new in self.PLAN.items():
+            self.assertEqual(1, text.count(old), "夹具变了，用例要跟着改")
+            text = text.replace(old, new)
+        plan.write_bytes(text.encode("utf-8"))
+
+    def test_the_next_chapter_gets_the_design_and_its_basis_verbatim(self) -> None:
+        proc = self.put("背景", minimal_body("背景", "本章有效正文。"))
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        lines = proc.stdout.split("\n")
+        flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+        self.assertIn("当前设计投影 doc/features/bp-REQ-DEMO/blueprint/component-blueprint.review.md（蓝图 bp-REQ-DEMO r", lines[1])
+        self.assertIn("本体 doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml", lines[1])
+        self.assertIn(f"冻结来源 {flow['input']['snapshot_ref']}", lines[1])
+        self.assertIn("决策登记 AR/story-src/decisions.json", lines[1])
+        basis = [l for l in lines if l.startswith("  本章依据")]
+        self.assertEqual([
+            "  本章依据 （整章）：依据：蓝图 `view:runtime` 与评审会上对等待态的说法",
+            "  本章依据 等待态：依据：人签过的等待时长，见决策登记（未登记机器关联）",
+            "  本章依据 等待态 / 超时：依据：`contract:nope`（地址 contract:nope 在当前蓝图里没有——回写作设计核对）",
+        ], basis)
+
+    def test_a_chapter_without_basis_says_so(self) -> None:
+        out = self.run_build("skeleton").stdout or ""
+        self.assertIn("  本章依据：写作设计「01-background」没有登记依据——按当前设计与来源写，不等于本章不涉及", out)
+        self.assertNotIn("别章的依据", out)
+
+
 class ChaptersLandOneAtATime(Step8Case):
     """落盘只有一条路：一次一章，其余字节不动。
 

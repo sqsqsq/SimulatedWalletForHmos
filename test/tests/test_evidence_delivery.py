@@ -131,7 +131,7 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
     def test_a_missing_judgement_is_a_design_gap_not_empty(self) -> None:
         super(kp.ProtocolCase, self).write_contracts("", [])
         text = self.pre_verifier("spec")
-        self.assertIn("没有本施工单位承接的知识判断", text)
+        self.assertIn("没有与本施工单位相关的知识判断", text)
         self.assertIn("**设计缺口**", text)
         self.assertIn("没有判断激活规约 NEU-01", text)
 

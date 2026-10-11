@@ -214,16 +214,17 @@ function readSkeleton(plan, lines, range, fenced, say) {
 }
 
 /**
- * 写作设计里依据写了原生地址的位置：章、`####` 小节、`#####` 子节各一条，带依据行写到的地址。
- * 施工单位按这些地址取这一处的已定表达；地址口径与附录依据核对共用 `nativeAddresses`。
+ * 写作设计每一处（章、`####` 小节、`#####` 子节，按原文顺序）的依据：`依据：` 开头的原文行照录，`refs` 是其中写到的
+ * 原生地址（与附录依据核对共用 `nativeAddresses`），没写地址为空；没有依据行的位置两者都空，不拿上一章或父节补。
+ * 章作者按原文读依据，施工单位只按 refs 取这一处的已定表达。
  *
- * @returns {{chapter: string, at: string, under: string, refs: string[]}[]}
+ * @returns {{chapter: string, at: string, under: string, basis: string[], refs: string[]}[]}
  */
 export function basisSections(plan) {
   const out = [];
   const take = (chapter, at, under, notes) => {
-    const refs = nativeAddresses(notes.filter(n => /^依据[:：]/.test(n)).join('\n'));
-    if (refs.length) out.push({ chapter, at, under, refs });
+    const basis = notes.filter(n => /^依据[:：]/.test(n));
+    out.push({ chapter, at, under, basis, refs: nativeAddresses(basis.join('\n')) });
   };
   for (const sk of plan?.skeletons?.values() ?? []) {
     take(sk.id, '', '', sk.notes);

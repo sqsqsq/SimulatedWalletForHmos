@@ -255,6 +255,19 @@ class ReviewOpinionsLandOnTheChosenIssues(unittest.TestCase):
                     self.deliver(self.GOOD)
                 self.assertNotIn("- [x]", self.review.read_text(encoding="utf-8"))
 
+    def test_a_repeated_tick_or_opinion_line_is_refused(self) -> None:
+        """F4：同一议题的三态有重复行或意见行有两行：写前拒绝，原件不动，不替人删多余的行。"""
+        for label, old, new in (
+                ("三态重复", "- [ ] 暂缓\n修改意见：\n\n<!-- decision: D2", "- [ ] 暂缓\n- [x] 需修改\n修改意见：\n\n<!-- decision: D2"),
+                ("意见两行", "- [ ] 暂缓\n修改意见：\n\n<!-- decision: D2", "- [ ] 暂缓\n修改意见：\n修改意见：另一处\n\n<!-- decision: D2")):
+            with self.subTest(case=label):
+                self.put(REVIEW.replace(old, new))
+                before = self.review.read_bytes()
+                with self.assertRaises(SystemExit) as stopped:
+                    self.deliver(self.GOOD)
+                self.assertIn("各恰好一行", str(stopped.exception))
+                self.assertEqual(before, self.review.read_bytes())
+
     def test_a_different_human_opinion_is_kept_as_a_conflict(self) -> None:
         self.put(REVIEW.replace("- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n\n<!-- decision: D2",
                                 "- [x] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：评审人自己写的\n\n<!-- decision: D2"))
@@ -266,7 +279,8 @@ class ReviewOpinionsLandOnTheChosenIssues(unittest.TestCase):
 
 
 class AllUpdateInputsAreCheckedBeforeWriting(unittest.TestCase):
-    """resume-update：Case 的全部更新输入与额外补料写前核完；执行中途失败报已投与未投、不排话。"""
+    """resume-update：Case 的全部更新输入与额外补料先成完整计划再写——同目标不同内容整批拒绝、同字节合并；
+    执行中途失败分已投、失败（带目标现状）、未执行，不排话。"""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -287,20 +301,51 @@ class AllUpdateInputsAreCheckedBeforeWriting(unittest.TestCase):
             self.assertFalse((self.root / "doc" / "features" / "AR90006" / "inbox").exists(), f"{label}：写了收件箱")
             self.assertFalse(system.exists(), f"{label}：写了需求系统")
 
-    def test_a_failure_midway_reports_what_was_and_was_not_delivered(self) -> None:
-        real = rc.shutil.copyfile
+    def supplement_named(self, name: str, data: bytes) -> Path:
+        extra = self.root / "extra" / name
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_bytes(data)
+        return extra
+
+    def test_different_bytes_for_one_target_stop_the_whole_batch(self) -> None:
+        """F3：Case 更新输入与额外补料同名不同内容，都要写 inbox 同一份：整批拒绝，收件箱与需求系统都没写。"""
+        system = self.root / "system"
+        clash = self.supplement_named("交通卡自动充值-v2.docx", b"another version")
+        with mock.patch.object(rc, "supplement_sources", return_value=[clash]), self.assertRaises(SystemExit) as stopped:
+            self.run_delivery(["交通卡自动充值-v2.docx"], {"STORY_REQUIREMENT_SYSTEM_DIR": str(system)})
+        self.assertIn("内容不同", str(stopped.exception))
+        self.assertFalse((self.root / "doc" / "features" / "AR90006" / "inbox").exists())
+        self.assertFalse(system.exists())
+
+    def test_the_same_bytes_for_one_target_are_written_once(self) -> None:
+        source = REPO_ROOT / "test" / "cases" / "auto-topup" / "update-inputs" / "交通卡自动充值-v2.docx"
+        twin = self.supplement_named(source.name, source.read_bytes())
+        with mock.patch.object(rc, "supplement_sources", return_value=[twin]):
+            done = self.run_delivery([source.name], {"STORY_REQUIREMENT_SYSTEM_DIR": str(self.root / "system")})
+        local = [d for d in done if d["destination"] == f"inbox/{source.name}"]
+        self.assertEqual(1, len(local), "同一目标写了两次")
+        self.assertEqual([{"file": source.name, "kind": "supplement"}], local[0]["merged"], "合并后来源明细丢了")
+        self.assertEqual(source.read_bytes(), (self.root / "doc" / "features" / "AR90006" / "inbox" / source.name).read_bytes())
+
+    def test_a_failure_midway_is_told_apart_from_what_never_ran(self) -> None:
+        """F5：第二项写到一半失败：第一项已投，第二项失败并报目标现状（这里写了一部分），之后的未执行；不说成零写入。"""
+        real = Path.write_bytes
         calls = []
 
-        def flaky(src, dst):
-            calls.append(dst)
+        def flaky(path, data):
+            calls.append(path)
             if len(calls) == 2:
+                real(path, data[:3])
                 raise OSError("磁盘写不进")
-            return real(src, dst)
+            return real(path, data)
 
-        with mock.patch.object(rc.shutil, "copyfile", flaky), self.assertRaises(rc.UpdateDeliveryError) as failed:
+        with mock.patch.object(rc.Path, "write_bytes", flaky), self.assertRaises(rc.UpdateDeliveryError) as failed:
             self.run_delivery([], {"STORY_REQUIREMENT_SYSTEM_DIR": str(self.root / "system")})
-        self.assertEqual(["local_material"], [d["kind"] for d in failed.exception.done])
-        self.assertEqual(["system"], [d["kind"] for d in failed.exception.pending])
+        err = failed.exception
+        self.assertEqual(["local_material"], [d["kind"] for d in err.done])
+        self.assertEqual("system", err.failed["kind"])
+        self.assertEqual((True, 3), (err.failed["target_now"]["exists"], err.failed["target_now"]["size"]), "部分写入被说成没写")
+        self.assertEqual([], err.pending)
 
 
 if __name__ == "__main__":

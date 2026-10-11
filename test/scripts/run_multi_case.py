@@ -2817,7 +2817,7 @@ HOST_REPLY_KINDS = ("planned", "answered", "neutral", "improvised")
 
 def reply_input_problem(record: dict[str, Any], reply_kind: str, steps: list[str],
                         deliver: list[str]) -> str | None:
-    """发送之前就能判定的输入问题：step 与回复类型、阶段和等待类型对得上，补料可读、不重名。"""
+    """参数本身的形态：step 在规划里、与回复类型相符，step 与补料不重复。与现在等的是哪一问无关，重入之前就核。"""
     script = {str(s.get("id") or ""): s for s in record.get("interaction_script") or []}
     if len(set(steps)) != len(steps):
         return f"--step 有重复：{'、'.join(steps)}"
@@ -2828,6 +2828,14 @@ def reply_input_problem(record: dict[str, Any], reply_kind: str, steps: list[str
         return "planned 回复要用 --step 指名这次实际回答了规划里哪几条"
     if reply_kind != "planned" and steps:
         return f"{reply_kind} 回复不带 --step：只有按规划立场作答才登记覆盖的条目"
+    if len(set(deliver)) != len(deliver):
+        return f"--deliver 有重名：{'、'.join(deliver)}"
+    return None
+
+
+def reply_state_problem(record: dict[str, Any], steps: list[str], deliver: list[str]) -> str | None:
+    """新发送才核的当前条件：step 的等待类型与阶段前提对得上这一问，补料现在可读。"""
+    script = {str(s.get("id") or ""): s for s in record.get("interaction_script") or []}
     awaiting = record.get("last_awaiting") or {}
     for step_id in steps:
         step = script[step_id]
@@ -2835,8 +2843,6 @@ def reply_input_problem(record: dict[str, Any], reply_kind: str, steps: list[str
             return f"条目 {step_id} 的等待类型是 {step.get('expected_kind')}，这一问是 {awaiting.get('kind')}"
         if not step_phase_ready(step, record):
             return f"条目 {step_id} 的阶段前提 {step.get('expected_phase')} 现在不成立（当前 {record.get('current_phase') or '未知'}）"
-    if len(set(deliver)) != len(deliver):
-        return f"--deliver 有重名：{'、'.join(deliver)}"
     declared = {str(item.get("file") or "") for item in record.get("supplements") or []}
     root = CASES_ROOT / str(record.get("case") or "") / "supplements"
     missing = [n for n in deliver if n not in declared or not (root / n).is_file()]
@@ -2896,6 +2902,9 @@ def command_reply(suite_id: str, case_id: str, text: str,
         print(json.dumps({"ok": True, "case": case_id, "already_sent": True, "run_id": run_id, "turn": turn,
                           "at": done.get("at")}, ensure_ascii=False, indent=2))
         return 0
+    problem = reply_state_problem(record, steps, names)
+    if problem:
+        return refuse(problem)
     awaiting = record.get("last_awaiting") or {}
     if record.get("status") != WAITING_STATUS or str(record.get("run_id")) != run_id \
             or str(awaiting.get("turn")) != turn:

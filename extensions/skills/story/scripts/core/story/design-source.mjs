@@ -7,7 +7,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { readBlueprint, relatedStories } from '../../../../../hooks/shared/framework-access.mjs';
+import { readBlueprint, readFrozenInputs, readSourceFiles, relatedStories } from '../../../../../hooks/shared/framework-access.mjs';
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
 import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
 import { ledgerDigestProblems, readJson, readText, requirementContext } from './context.mjs';
@@ -34,8 +34,8 @@ function readSnapshot(ctx, input, problems) {
 }
 
 /**
- * @returns {{blueprint: object|null, ref: object|null, projection?: string, snapshot: object|null, problems: string[]}}
- *   `projection` 是原生评审投影的工程相对路径
+ * @returns {{blueprint: object|null, ref: object|null, projection?: string, canonical?: string, snapshot: object|null, problems: string[]}}
+ *   `projection` 是原生评审投影、`canonical` 是蓝图本体的工程相对路径
  */
 export function designSource(ctx) {
   if (cache.has(ctx)) return cache.get(ctx);
@@ -66,6 +66,7 @@ export function designSource(ctx) {
       out.blueprint = read.blueprint;
       out.ref = read.blueprint_ref;
       out.projection = read.projection.path;
+      out.canonical = read.canonical_path;
     }
   }
   cache.set(ctx, out);
@@ -140,30 +141,21 @@ export function termFacts(blueprint) {
     .filter(([term]) => term);
 }
 
+/** 已核字节的来源里的 Markdown：按去掉片段的文件路径给文本（展示投影去 BOM，摘要已按原字节核过）。 */
+const markdownOf = files => files.filter(f => /\.md$/i.test(f.file_path))
+  .map(f => [f.file_path, f.bytes.toString('utf-8').replace(/^\uFEFF/, '')]);
+
 /**
- * 本次采用的冻结来源：快照登记的每份文件按登记摘要核原始字节，Markdown 交给图源检查。
- * 读不到或字节不符的不进 `documents`，记进 `problems`——图源检查据此不认它，当前性检查按来源损坏报。
+ * 本次采用的冻结来源：当前流程登记的那一版快照（readFrozenInputs 按快照登记的摘要核每份文件的原始字节），Markdown 交给图源检查。
+ * 读不到或字节不符的不进 `documents`，记进 `problems`——图源检查据此不认它，当前性检查按来源损坏报。还没登记快照时两者都空。
  */
 export function adoptedInputs(ctx) {
   const out = { documents: new Map(), problems: [] };
   const ref = readJson(ctx.flowPath, null)?.input?.snapshot_ref;
   if (!ref || !ctx.projectRoot) return out;
-  const dir = path.posix.dirname(String(ref));
-  for (const row of readJson(path.join(ctx.projectRoot, ...String(ref).split('/')), null)?.files ?? []) {
-    const at = `${dir}/files/${row?.path}`;
-    let bytes = null;
-    try {
-      bytes = fs.readFileSync(path.join(ctx.projectRoot, ...at.split('/')));
-    } catch {
-      bytes = null;
-    }
-    if (bytes === null || sha256(bytes) !== row?.sha256) {
-      out.problems.push(`冻结输入 ${at} ${bytes === null ? '读不到' : '的字节与快照登记的摘要不符'}`
-        + '——冻结版本不改，恢复原件；恢复不了走 reopen 或 update 后重新 complete');
-    } else if (/\.md$/i.test(at)) {
-      out.documents.set(at, bytes.toString('utf-8').replace(/^\uFEFF/, ''));
-    }
-  }
+  const read = readFrozenInputs(ctx.projectRoot, ref);
+  out.problems.push(...read.problems.map(p => `冻结输入 ${p}——冻结版本不改，恢复原件；恢复不了走 reopen 或 update 后重新 complete`));
+  for (const [at, text] of markdownOf(read.files)) out.documents.set(at, text);
   return out;
 }
 
@@ -201,20 +193,12 @@ export function unitSources(projectRoot, feature, blueprint = null) {
   const related = relatedStories(projectRoot, feature, blueprint);
   const out = { status: related.status, documents: new Map(), excluded: new Map(), stories: [], problems: [...related.problems],
     blueprint: related.blueprint };
-  for (const s of related.sources.filter(x => /\.md$/i.test(x.path))) {
-    let bytes = null;
-    try {
-      bytes = fs.readFileSync(path.join(projectRoot, ...s.path.split('/')));
-    } catch {
-      bytes = null;
-    }
-    if (bytes === null || `sha256:${sha256(bytes)}` !== s.sha256) {
-      out.problems.push(`采用来源 ${s.path} ${bytes === null ? '读不到' : '的字节与蓝图登记的摘要不符'}——设计负责方核对`);
-      out.excluded.set(s.path, bytes === null ? '读不到' : '字节与蓝图登记的摘要不符');
-    } else {
-      out.documents.set(s.path, bytes.toString('utf-8').replace(/^\uFEFF/, ''));
-    }
+  const read = readSourceFiles(projectRoot, related.sources);
+  for (const [at, why] of read.excluded) {
+    out.problems.push(`采用来源 ${at}：${why}——设计负责方核对`);
+    out.excluded.set(at, why);
   }
+  for (const [at, text] of markdownOf(read.files)) out.documents.set(at, text);
   for (const r of related.requirements) {
     const ctx = requirementContext(projectRoot, path.join(projectRoot, ...r.root.split('/')));
     const entry = { ...r, ctx, story: `${r.root}/AR/story.md`, ...storyCurrency(ctx) };

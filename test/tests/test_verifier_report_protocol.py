@@ -511,6 +511,28 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         self.assertEqual("fail", self.result()["result"])
 
 
+    def test_an_invalid_reply_of_the_current_material_wins_over_a_later_pass(self) -> None:
+        """F1：A 的回复不合合同 → B 通过 → 回到 A：A 的格式诊断保留，按格式返修交出，不变成只带 B 参考的完整首审。"""
+        bad = self.reviewed("pass")
+        bad.write_text("看过了，整体还行。\n", encoding="utf-8")
+        kept = bad.read_bytes()
+        diagnostic = self.result()
+        self.assertEqual("report_invalid", diagnostic["result"])
+        a = self.story.read_bytes()
+        self.change("B 的一句。")
+        self.prepare()
+        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.assertEqual("pass", self.result()["result"])
+        self.story.write_bytes(a)
+        out = self.prepare()
+        context = self.prepared()["review_context"]
+        self.assertEqual(("format_repair", bad.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
+        self.assertEqual(diagnostic["detail"], context["diagnostic"]["detail"])
+        self.assertIn("上一份回复不合报告合同", out["dispatch_text"])
+        self.assertNotIn("上一版材料的审查报告", out["dispatch_text"], "A 自己的诊断被 B 的参考盖掉了")
+        self.assertNotEqual(bad, self.root / out["report_file"], "返修写回了原回复")
+        self.assertEqual(kept, bad.read_bytes(), "原回复被改了")
+
 class ABrokenPreparationRecordIsAnInputFault(TheStoryIsReviewedRegisteredAndDeliveredCase):
     """准备记录在却读不出：prepare 在定稿写盘之前报错退出、现场不动；check 判 input_invalid。不当作首次，不换默认目录。"""
 

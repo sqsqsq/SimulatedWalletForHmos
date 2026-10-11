@@ -788,6 +788,16 @@ class TheReplyLandsOnTheQuestionTheHostSaw(unittest.TestCase):
         self.assertEqual((1, False), (code, out["ok"]))
         self.assertEqual(1, len(self.sent))
 
+    def test_a_retry_after_the_phase_moved_on_still_returns_the_old_result(self) -> None:
+        """F2：回复成功后已进入别的阶段、在等别的类型：同一请求重试返回原结果，不按新阶段拒绝，也不再发。"""
+        self.assertEqual(0, self.reply()[0])
+        self.record.update(status="running", current_phase="spec",
+                           last_awaiting={"turn": 6, "kind": "spec_gate", "prompt": "进下一阶段？"})
+        code, out = self.reply()
+        self.assertEqual((0, True), (code, out.get("already_sent")), out)
+        self.assertEqual(1, len(self.sent), "重试又发了一次")
+        self.assertEqual((1, False), (self.reply(steps=("scope", "scope"))[0], False), "重入也要先过参数形态")
+
     def test_an_old_reply_never_lands_on_the_next_question(self) -> None:
         self.record["last_awaiting"] = {"turn": 5, "kind": "story_gate", "prompt": "下一问"}
         code, out = self.reply(turn="4")

@@ -35,6 +35,20 @@ prompt 作为一个参数原样交给 CLI，进程以 `shell=False` 直接启动
 - 直接调用 API 时，也可复制一份注册文件放在 `output/` 下，把 `executable` 写成原生程序的绝对路径，经 `registry_path` 传入。
   Case 驱动用默认注册，只认 PATH。
 
+### opencode：输入上限要低于服务的拒收线
+
+opencode 在已用 token 达到可用窗口时自动压缩历史。模型配置声明了 `limit.input` 时，可用窗口是 `limit.input − 20000`；
+没声明时是 `limit.context − min(limit.output, 32000)`。服务端按输入长度拒收的请求不会重试，所以可用窗口必须低于服务的
+输入上限，否则会话在两条线之间直接被拒、不压缩。
+
+在用户级配置 `~/.config/opencode/opencode.jsonc` 里给每个模型声明 `limit.input`，值不超过服务的输入上限，长期生效、不按单次运行设：
+
+```jsonc
+"limit": { "context": 1048576, "input": 1000000, "output": 131072 }
+```
+
+服务上限 1,000,000 时，可用窗口是 980,000。改完用 `opencode models <provider>` 确认配置能被加载。
+
 ## Python API
 
 ```python

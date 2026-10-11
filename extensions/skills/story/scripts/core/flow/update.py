@@ -468,8 +468,8 @@ def cmd_update_prepare(feature_root: Path, result: str | None) -> dict:
 # 施工事实：需求关联的蓝图有哪些施工单位，各阶段有没有产物、闭没闭环。**只读报告**：施工归 Framework，
 # update 不推进、不因它挡收口。
 #
-# 施工单位由原生读蓝图时列出（身份与原生目录）；阶段读 harness 自己写的 `<施工单位>/<阶段>/reports/summary.json`
-# ——它是只读投影，不是我们的账。读不出来就说读不出来：闭没闭环这件事不许猜，猜错的方向是「以为闭了」。
+# 施工单位由原生读蓝图时列出（身份、原生目录与各阶段报告目录，同一次调用）；阶段读 harness 自己写在报告目录里的
+# `summary.json`——它是只读投影，不是我们的账。读不出来就说读不出来：闭没闭环这件事不许猜，猜错的方向是「以为闭了」。
 PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 
 
@@ -480,18 +480,24 @@ def _unit_facts(feature_root: Path, project_root: Path | None = None) -> list[di
         return []
     from flow import native  # noqa: PLC0415 —— 施工单位由原生读蓝图时列出
     project_root = project_root or native.project_root_of(feature_root)
-    read = native.call(project_root, "blueprint", "--blueprint", str(blueprint), "--purpose", "draft")
+    read = native.call(project_root, "blueprint", "--blueprint", str(blueprint), "--purpose", "draft", "--summary",
+                       "--report-phases", ",".join(PHASES))
     if read.get("status") != "ok":
         return [{"blueprint_id": blueprint, "readable": False, "why": native.issues_text(read) or read.get("status")}]
     return [{"change_unit_id": u["change_unit_id"], "feature_id": u["feature_id"], "path": u["path"],
-             "phases": _phase_facts(project_root / u["path"]) if u.get("path") else []}
+             "phases": _phase_facts(u.get("phase_reports") or [])}
             for u in read.get("units") or []]
 
 
-def _phase_facts(unit_root: Path) -> list[dict]:
+def _phase_facts(reports: list[dict]) -> list[dict]:
+    """每阶段按原生报告目录读 summary；目录解析不了是读不出，还没生成的阶段不列。"""
     out = []
-    for phase in PHASES:
-        summary = unit_root / phase / "reports" / "summary.json"
+    for r in reports:
+        phase = r["phase"]
+        if r.get("error"):
+            out.append({"phase": phase, "readable": False, "why": f"报告目录解析不了：{r['error']}"})
+            continue
+        summary = Path(r["dir"]) / "summary.json"
         if not summary.is_file():
             continue
         try:

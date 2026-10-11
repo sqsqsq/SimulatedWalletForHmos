@@ -2502,14 +2502,17 @@ def deliver_update_inputs(case_id: str, feature: str, out_dir: Path, review_feed
       Review 后在 `review_feedback` 里按真实 D 身份指定，这里只核它与静态意见、初段 Review 对得上再写；
     - `system`：需求系统上的正文被改了 → 写进系统目录那一份。
 
-    **写之前把全部输入（含额外补料）核完**，有一项不成立就一项都不写。执行中途 IO 失败时报出已投与未投，
-    已写的不回滚。投放幂等：同一份重复投只是同样的字节、同样的意见。**初始那一轮绝不投**。
+    **写之前把全部输入（含额外补料）核完**，有一项不成立就一项都不写：先解析出每一份的实际目标，
+    不同内容写同一目标整批拒绝，同字节同目标合并成一次写并留来源明细。执行中途 IO 失败时分三类报：
+    已投、失败（可能写了一部分，报目标现状）、未执行；已写的不回滚。投放幂等：同一份重复投只是同样的字节、同样的意见。
+    **初始那一轮绝不投**。
     """
     case, _, _ = _load_case_definition(case_id)
     entries = case.get("update_inputs") or []
     source_root = (HERE.parent / "cases" / case_id / "update-inputs").resolve()
     feature_root = REPO_ROOT / FEATURES_DIR / feature
-    actions: list[tuple[dict, Any]] = []
+    inbox = (feature_root / "inbox").resolve()
+    copies: list[tuple[dict, Path, Path]] = []
     zones: list[Path] = []
     for item in entries:
         name = str(item.get("file") or "").strip()
@@ -2521,39 +2524,61 @@ def deliver_update_inputs(case_id: str, feature: str, out_dir: Path, review_feed
             zones.append(source)
         elif kind == "system":
             target, rel = _system_target(feature, item)
-            actions.append(({"file": source.name, "kind": "system", "destination": f"{feature}/{rel}"},
-                            lambda s=source, d=target: (d.parent.mkdir(parents=True, exist_ok=True), shutil.copyfile(s, d))))
+            copies.append(({"file": source.name, "kind": "system", "destination": f"{feature}/{rel}"}, source, target))
         else:
-            inbox = (feature_root / "inbox").resolve()
-            actions.append(({"file": source.name, "kind": "local_material", "destination": f"inbox/{source.name}"},
-                            lambda s=source, d=inbox: (d.mkdir(parents=True, exist_ok=True), shutil.copyfile(s, d / s.name))))
+            copies.append(({"file": source.name, "kind": "local_material", "destination": f"inbox/{source.name}"},
+                           source, inbox / source.name))
+    for source in supplement_sources(case_id, list(supplements or [])):
+        copies.append(({"file": source.name, "kind": "supplement", "destination": f"inbox/{source.name}"},
+                       source, inbox / source.name))
+    actions: list[tuple[dict, Path, Any]] = []
+    by_target: dict[Path, tuple[dict, bytes]] = {}
+    for record, source, target in copies:
+        data = source.read_bytes()
+        if target in by_target:
+            first, same = by_target[target]
+            if same != data:
+                raise SystemExit(f"[runner] {first['kind']} {first['file']} 与 {record['kind']} {record['file']} "
+                                 f"内容不同却都要写 {record['destination']}：一项都没写")
+            first.setdefault("merged", []).append({"file": record["file"], "kind": record["kind"]})
+            continue
+        by_target[target] = (record, data)
+        actions.append((record, target, lambda d=target, b=data: (d.parent.mkdir(parents=True, exist_ok=True), d.write_bytes(b))))
     if zones and review_feedback is None:
         raise SystemExit("[runner] 这个 Case 有评审人工区意见：读过初段 Review 后用 --review-feedback-file 指定每条意见对应的 D 议题")
     if review_feedback is not None and not zones:
         raise SystemExit("[runner] 这个 Case 没有评审人工区意见，--review-feedback-file 无处可投")
     if zones:
         record, write = _review_zone_plan(feature_root, out_dir, zones, review_feedback)
-        actions.append((record, write))
-    for source in supplement_sources(case_id, list(supplements or [])):
-        actions.append(({"file": source.name, "kind": "supplement", "destination": f"inbox/{source.name}"},
-                        lambda s=source: (feature_root.joinpath("inbox").mkdir(parents=True, exist_ok=True),
-                                          shutil.copyfile(s, feature_root / "inbox" / s.name))))
+        actions.append((record, feature_root / "AR" / "review.md", write))
     done: list[dict] = []
-    for index, (record, write) in enumerate(actions):
+    for index, (record, target, write) in enumerate(actions):
         try:
             write()
         except OSError as exc:
-            raise UpdateDeliveryError(done, [r for r, _ in actions[index:]], f"{record['file']}：{exc}") from exc
+            failed = {**record, "error": str(exc), "target_now": _target_now(target)}
+            raise UpdateDeliveryError(done, failed, [r for r, *_ in actions[index + 1:]], f"{record['file']}：{exc}") from exc
         done.append(record)
     return done
 
 
-class UpdateDeliveryError(Exception):
-    """执行期 IO 失败：带着已投与未投的明细，不伪称零写入。"""
+def _target_now(target: Path) -> dict | str:
+    """失败那一项的目标现在的样子：在不在、大小、摘要；读不到就是 unknown，不说成没写。"""
+    try:
+        if not target.exists():
+            return {"exists": False}
+        data = target.read_bytes()
+        return {"exists": True, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    except OSError:
+        return "unknown"
 
-    def __init__(self, done: list[dict], pending: list[dict], error: str) -> None:
+
+class UpdateDeliveryError(Exception):
+    """执行期 IO 失败：已投（done）、失败且可能写了一部分（failed，带目标现状）、未执行（pending），不伪称零写入。"""
+
+    def __init__(self, done: list[dict], failed: dict, pending: list[dict], error: str) -> None:
         super().__init__(error)
-        self.done, self.pending, self.error = done, pending, error
+        self.done, self.failed, self.pending, self.error = done, failed, pending, error
 
 
 def _static_opinions(zones: list[Path]) -> list[dict]:
@@ -2645,12 +2670,13 @@ def _review_zone_plan(feature_root: Path, out_dir: Path, zones: list[Path], feed
             problems.append(f"{d} 在初段 Review 里{'没有' if span == 'missing' else '不止一个'}议题标记")
             continue
         head, end = span
-        boxes = {v: next((k for k in range(head + 1, end) if lines[k].strip() in (f"- [ ] {v}", f"- [x] {v}")), None)
+        found = {v: [k for k in range(head + 1, end) if lines[k].strip() in (f"- [ ] {v}", f"- [x] {v}")]
                  for v in VERDICTS} if head >= 0 else {}
-        note = next((k for k in range(head + 1, end) if lines[k].startswith(OPINION_HEAD)), None) if head >= 0 else None
-        if head < 0 or None in boxes.values() or note is None:
-            problems.append(f"{d} 的人工区不完整（评审结论三态或修改意见行缺）")
+        notes = [k for k in range(head + 1, end) if lines[k].startswith(OPINION_HEAD)] if head >= 0 else []
+        if head < 0 or any(len(rows) != 1 for rows in found.values()) or len(notes) != 1:
+            problems.append(f"{d} 的人工区三态与修改意见行要各恰好一行（缺了或重复了）")
             continue
+        boxes, note = {v: rows[0] for v, rows in found.items()}, notes[0]
         ticked = [v for v, k in boxes.items() if lines[k].strip().startswith("- [x]")]
         written = lines[note][len(OPINION_HEAD):].strip()
         extra = [lines[k] for k in range(note + 1, end) if lines[k].strip()]
@@ -2719,8 +2745,8 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
         delivered = deliver_update_inputs(case_id, feature, out_dir,
                                           Path(review_feedback) if review_feedback else None, list(deliver or []))
     except UpdateDeliveryError as exc:
-        print(json.dumps({"ok": False, "error": exc.error, "delivered": exc.done, "not_delivered": exc.pending},
-                         ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": exc.error, "delivered": exc.done, "failed": exc.failed,
+                          "not_delivered": exc.pending}, ensure_ascii=False))
         return 1
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / RESUME_FILE).write_text(

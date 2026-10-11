@@ -17,7 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { blueprintKnowledge, entryOf, featureKnowledge, rolesOf, unitContext, unitDuties } from './knowledge-application.mjs';
-import { loadNative, readBlueprint, readFeature } from './framework-access.mjs';
+import { blueprintSources, loadNative, readBlueprint, readFeature, readFrozenInputs, readSourceFiles } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
 import { questioningRound } from './questioning.mjs';
@@ -109,6 +109,26 @@ function unitLines(judged) {
   return { lines, gaps };
 }
 
+/**
+ * 候选这一版实际采用的来源：每条声明（原引用、片段与声明摘要）按原生规则核过原字节，声明落在需求冻结输入里的，
+ * 再按候选指向的那一版快照取完整的包（角色与证据强度取快照登记）。任一份读不到、摘要不符、绑定不对或快照坏了，
+ * 不交半份任务。
+ */
+function sourceIndex(root, id, blueprint) {
+  const declared = blueprintSources(root, blueprint);
+  const read = readSourceFiles(root, declared.sources);
+  const packs = declared.requirements.map(r => ({ ...r, ...readFrozenInputs(root, r.snapshot_ref) }));
+  const problems = [...declared.problems, ...read.problems, ...packs.flatMap(p => p.problems.map(x => `需求 ${p.requirement}：${x}`))];
+  if (problems.length) {
+    stop(`蓝图 ${id} 候选采用的来源`, problems.join('；'),
+      '冻结包坏了由需求负责方恢复原件或重新 complete；声明的引用、摘要或绑定不对由设计负责方按原生修订同步');
+  }
+  return [`候选声明 ${declared.sources.length} 条来源，原字节都与声明摘要一致：`,
+    ...declared.sources.map(s => `- \`${s.item_id}\`（${s.kind}，${s.provenance?.evidence_strength ?? '未声明证据强度'}）：\`${s.path}\`，${s.sha256}`),
+    ...packs.flatMap(p => [`需求 \`${p.requirement}\` 的冻结输入 ${p.version}（\`${p.snapshot_ref}\`），共 ${p.files.length} 份，逐份读：`,
+      ...p.files.map(f => `- \`${f.path}\`（${f.role ?? '未登记角色'}，${f.provenance?.evidence_strength ?? '未声明证据强度'}），${f.sha256}`)])];
+}
+
 function blueprintTask(root, id, action) {
   let bp = readBlueprint(root, id, 'draft');
   const gaps = [];
@@ -122,6 +142,7 @@ function blueprintTask(root, id, action) {
   const object = bp ? `蓝图 \`${id}\`（\`${bp.canonical_path}\`，revision ${bp.blueprint_ref.revision}，${bp.admitted ? '已准入' : '草稿，未准入'}）`
     : `蓝图 \`${id}\`（尚未建立）`;
   if (bp?.issues?.length) gaps.push(`蓝图原生校验有 ${bp.issues.length} 项：${bp.issues.slice(0, 5).map(i => i.id ?? i.code).join('、')}——设计作者处理。`);
+  const sources = bp ? sourceIndex(root, id, bp.blueprint) : ['蓝图尚未建立，没有候选采用的来源：按 Framework 已收到的需求输入起手。'];
   const decided = bp ? decisionsOf(bp.blueprint) : [];
   if (bp) gaps.push(...blueprintKnowledge(root, bp.blueprint).problems.map(p => `${p}——设计作者处理。`));
   const duties = ['设计阶段还没有施工契约；知识判断以决定的形式落在蓝图里，施工义务在施工单位的契约中承接。'];
@@ -136,6 +157,7 @@ function blueprintTask(root, id, action) {
   }
   return {
     object,
+    sources,
     facts: decided.length ? decided : [bp ? '蓝图里还没有知识应用的事实与决定。' : '蓝图尚未建立，没有已成立的判断。'],
     duties,
     dispatch,
@@ -200,7 +222,7 @@ function storyExpression(root, feature, judged) {
     const story = src.documents.get(s.story);
     const chapters = s.ctx.contract?.chapters ?? [];
     const taken = [];
-    for (const b of basisSections(plan)) {
+    for (const b of basisSections(plan).filter(x => x.refs.length)) {
       const where = [chapters.find(c => c.id === b.chapter)?.title ?? b.chapter, b.at, b.under].filter(Boolean);
       const bad = b.refs.filter(r => !addresses.has(r));
       if (bad.length) gaps.push(`关联 Story：需求 ${s.requirement} 写作设计「${where.join(' / ')}」的依据 ${bad.join('、')} 在蓝图里解析不了——需求作者核对`);
@@ -316,6 +338,7 @@ export function knowledgeTask(root, { action, audience, blueprint, feature, requ
     : [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
   return [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）${task.preview ? '——预览，执行范围未冻结' : ''}`, '',
     '## 1. 当前动作与对象', '', `- 动作：${action}`, `- 对象：${task.object}`, '',
+    ...(task.sources ? ['### 候选采用的来源', '', ...task.sources, ''] : []),
     '## 2. 有效事实与决定', '', ...task.facts, '',
     '## 3. 当前契约与义务', '', ...task.duties, '',
     ...rows, '',

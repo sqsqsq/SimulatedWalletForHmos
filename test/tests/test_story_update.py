@@ -848,6 +848,35 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         self.assertNotIn("closure", phase)
 
 
+    def test_a_configured_report_dir_is_where_the_phase_is_read(self) -> None:
+        """工程配置了 reports_dir_pattern：按原生给的目录读，默认目录里的旧 summary 不算。"""
+        config = self.root / "framework.config.json"
+        original = config.read_bytes()
+        self.addCleanup(config.write_bytes, original)
+        data = json.loads(original)
+        data.setdefault("paths", {})["reports_dir_pattern"] = "doc/reviews/<feature>/<phase>"
+        config.write_text(json.dumps(data), encoding="utf-8")
+        self.summary(json.dumps({"verdict": "FAIL", "closure_status": "open"}))
+        custom = self.root / "doc" / "reviews" / self.unit.relative_to(self.root / "doc" / "features") / "plan"
+        custom.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, self.root / "doc" / "reviews", True)
+        (custom / "summary.json").write_text(json.dumps({"verdict": "PASS", "closure_status": "closed"}), encoding="utf-8")
+        [unit] = self.status()["units"]
+        self.assertEqual([("plan", "closed")], [(p["phase"], p["closure"]) for p in unit["phases"]],
+                         "默认目录的 summary 被当成了本阶段的，或配置目录没读")
+
+    def test_a_directory_the_framework_cannot_resolve_is_unreadable(self) -> None:
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.update import _phase_facts  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(core))
+        [phase] = _phase_facts([{"phase": "spec", "error": "配置坏了"}])
+        self.assertEqual({"phase": "spec", "readable": False}, {k: phase[k] for k in ("phase", "readable")})
+        self.assertIn("配置坏了", phase["why"])
+
+
 class TheRequestedResultDecidesTheClose(UpdateCase):
     """本轮终点照人的请求记：只取材与澄清是 materials，要同步人读件是 documents；终点不为收口降级。"""
 
@@ -917,6 +946,103 @@ class ANewVersionReplacesTheOldOriginal(UpdateCase):
         self.assertIn("单日上限 300", prd)
         self.assertNotIn("单日上限 200", prd, "旧版还拼在正文里")
         self.assertTrue((backup / "产品原稿-v1.md").is_file(), "旧原件被删了，不是移走")
+
+
+class ASameNamedOriginalGoesThroughTheRealEntries(UpdateCase):
+    """V01：同名原件换版、撤回与重新采用旧原件，只走真实入口——update inputs、材料关卡、import_sources、prepare、
+    round、complete、restore、close；旧原件按方法页移进 `.backups/local/`。不手改冻结快照或 origins。"""
+
+    NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n"
+             "| 验收口径 | 没动 |\n")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.inbox = self.feature_root / "inbox"
+        self.inbox.mkdir(exist_ok=True)
+        self.backups = self.feature_root / ".backups" / "local"
+        self.draft = self.src / "design-draft.md"
+        self.original = self.inbox / "甲需求.md"
+
+    def snapshot_ref(self) -> str:
+        return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["input"]["snapshot_ref"]
+
+    def adopt(self, data: bytes, basis: str) -> str:
+        """一次采用：材料关卡答补料 → 导入 → 开轮 → 登记本轮 → 提取稿写进依据 → complete 冻结；返回本轮 id。"""
+        self.original.write_bytes(data)
+        self.assertIn("甲需求.md", self.update("--action", "inputs")["pending"])
+        write_gaps(self.src)
+        self.assertEqual("accepted", answer(self.flow, "material_scope", "放了甲需求", "--chosen", "supplied")["outcome"])
+        (self.inbox / ".classify.json").write_text(json.dumps({"甲需求.md": "RR"}, ensure_ascii=False), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
+                               "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        rid = self.update()["update"]
+        self.assertIsNone(self.flow("round").get("error"))
+        text = self.draft.read_text(encoding="utf-8")
+        self.draft.write_text(text.split("\n<!-- 依据 -->", 1)[0] + f"\n<!-- 依据 -->\n{basis}\n", encoding="utf-8")
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.assertTrue(done.get("committed"), done)
+        return rid
+
+    def close(self, rid: str) -> None:
+        (self.updates / rid / "update-notes.md").write_text(self.NOTES, encoding="utf-8")
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+
+    def supersede(self, stamp: str) -> None:
+        """方法页：新版导入前把收件箱里那份旧原件本身移进 .backups/local/<名>-<时刻>，不删。"""
+        self.backups.mkdir(parents=True, exist_ok=True)
+        self.original.rename(self.backups / f"甲需求.md-{stamp}")
+
+    def frozen_prd(self, ref: str) -> bytes:
+        return (self.root / ref).parent.joinpath("files", "RR", "prd.md").read_bytes()
+
+    def test_an_open_round_withdrawal_keeps_inputs_and_leaves_the_design_to_sync(self) -> None:
+        v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
+        self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
+        v1_ref = self.snapshot_ref()
+        draft_v1 = self.draft.read_bytes()
+
+        self.supersede("20261012T010000")
+        self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。")
+        v2_ref = self.snapshot_ref()
+        self.assertNotEqual(v1_ref, v2_ref)
+        self.assertIn("单日上限 300", self.frozen_prd(v2_ref).decode("utf-8"))
+
+        out = self.update("--action", "restore")
+        self.assertEqual("restore_conflicted", out["status"], "complete 不是完成点：本轮改动没有登记的一版可比，应列冲突")
+        self.assertIn("AR/story-src/design-draft.md", [c["file"] for c in out["conflicts"]])
+        self.assertIn("单日上限 300", self.draft.read_text(encoding="utf-8"), "冲突的现状被覆盖了")
+        for c in out["conflicts"]:  # 人按冲突给的开轮版本定回去
+            (self.feature_root / c["file"]).write_bytes((self.feature_root / c["before"]).read_bytes())
+        out = self.update("--action", "restore")
+        self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
+        self.assertEqual(draft_v1, self.draft.read_bytes())
+        self.assertEqual(v2_ref, self.snapshot_ref(), "撤回改了已冻结的输入登记")
+        self.assertIn("单日上限 300", self.original.read_text(encoding="utf-8"), "撤回回写了收件箱")
+        self.assertIn("单日上限 200", self.frozen_prd(v1_ref).decode("utf-8"), "旧冻结包被动了")
+        self.assertEqual("design_blueprint", self.flow("status")["next"], "撤回后没要求设计按当前输入同步")
+
+    def test_a_closed_round_readopts_the_old_original_from_the_backup(self) -> None:
+        v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
+        self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
+        v1_ref = self.snapshot_ref()
+        self.supersede("20261012T010000")
+        self.close(self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。"))
+        v2_ref = self.snapshot_ref()
+
+        self.supersede("20261012T020000")
+        kept = (self.backups / "甲需求.md-20261012T010000").read_bytes()
+        self.assertEqual(v1, kept, "备份里不是旧原件的字节")
+        self.close(self.adopt(kept, "单日上限 200，按甲需求。"))
+        v3_ref = self.snapshot_ref()
+        self.assertNotEqual(v2_ref, v3_ref)
+        self.assertEqual(self.frozen_prd(v1_ref), self.frozen_prd(v3_ref), "重新采用的冻结正文不是旧版")
+        origins = json.loads((self.root / v3_ref).read_text(encoding="utf-8"))["origins"]["RR/prd.md"]
+        self.assertEqual(["inbox/甲需求.md"], [o["path"] for o in origins])
+        self.assertIn("单日上限 300", self.frozen_prd(v2_ref).decode("utf-8"), "中间那一版冻结包被覆盖了")
+        self.assertEqual(["甲需求.md-20261012T010000", "甲需求.md-20261012T020000"],
+                         sorted(p.name for p in self.backups.glob("甲需求.md-*")), "换版的旧原件没各留一份")
 
 
 class FetchOnlyWritesToTheInbox(unittest.TestCase):

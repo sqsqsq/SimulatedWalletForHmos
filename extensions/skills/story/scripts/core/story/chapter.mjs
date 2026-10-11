@@ -26,13 +26,15 @@ import {
   authoredText, chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
   parseChapter, pendingChapters, placeholderProblems, storySections, zonesByLine,
 } from './document.mjs';
-import { activeKnowledgeEntries, fail, readRaw, readText } from './context.mjs';
+import { activeKnowledgeEntries, fail, readJson, readRaw, readText } from './context.mjs';
+import { designSource } from './design-source.mjs';
+import { loadNative } from '../../../../../hooks/shared/framework-access.mjs';
 import { appendixBasisProblems, appendixChapter, projectAppendix } from './appendix.mjs';
 import { adoptedUpstreamTexts, redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
 import { chapterImageProblems, markLines, storyDiagramSourceProblems } from './images.mjs';
-import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
+import { basisSections, readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import { recheckItems, recheckRows } from './recheck.mjs';
 
 /**
@@ -258,16 +260,17 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   const storyRel = relFromFeature(ctx, ctx.storyPath);
   const planRel = relFromFeature(ctx, ctx.templatePath);
   const guide = 'doc/extensions/skills/story/phases/story-write.md';
+  const design = designInput(ctx);
   const originals = (docs ?? sourceStatus(ctx).docs).map(d => d.rel).join('、');
   const rows = [];
+  const basis = [];
   if (plan?.problems.length) {
     rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、已准入蓝图与决策登记，`
       + '写阅读主线与每章骨架；写完重跑'
       + ` node ${shellArg(ctx.scriptPath)} skeleton --feature ${shellArg(ctx.args.feature)}`
       + ` --project-root ${shellArg(ctx.projectRoot)}`);
-    rows.push(`INPUT: ${planRel}；来源 ${originals}；需求分析 `
-      + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；决策登记 `
-      + `${relFromFeature(ctx, ctx.decisionsPath)}；方法见 ${guide} 的「四、动笔前：先设计表达」`);
+    rows.push(`INPUT: ${planRel}；${design}；材料 ${originals}；需求分析 `
+      + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；方法见 ${guide} 的「四、动笔前：先设计表达」`);
   } else if (left.length) {
     const title = left[0];
     const at = (ctx.contract.chapters ?? [])
@@ -280,22 +283,41 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + ` --from ${shellArg(draft)} --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}（骨架已铺在里面）；${planRel} 里`
       + `「${ctx.contract.chapters[at]?.id ?? title}」的骨架；当前 ${storyRel} 里已写的章；`
-      + `来源 ${originals}；方法见 ${guide} 的「五、照骨架写一章」`);
+      + `${design}；材料 ${originals}；方法见 ${guide} 的「五、照骨架写一章」`);
+    basis.push(...chapterBasis(ctx, plan, ctx.contract.chapters[at]?.id ?? title));
   } else {
     rows.push('NEXT: 十章齐了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
       + '蓝图、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
       + '处置完 story-build check 通过、准备独立审查（story-build review --action prepare），再跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
-    rows.push(`INPUT: 回看清单（本输出下方）；当前 ${storyRel} 全文；写作设计 ${planRel}；决策登记 `
-      + `${relFromFeature(ctx, ctx.decisionsPath)}；来源初筛 `
-      + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；来源 ${originals}；草稿目录 `
+    rows.push(`INPUT: 回看清单（本输出下方）；当前 ${storyRel} 全文；写作设计 ${planRel}；${design}；材料 ${originals}；来源初筛 `
+      + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；草稿目录 `
       + `${relFromFeature(ctx, path.dirname(draftPath(ctx, 0, 'x')))}；`
       + `方法见 ${guide} 的「六、回看」`);
   }
-  rows.push(`RESULT: ${result}`);
+  rows.push(`RESULT: ${result}`, ...basis);
   for (const w of warnings) rows.push(`  记一笔：${w}`);
   if (!plan?.problems.length && !left.length) rows.push('', ...recheckRows(recheckItems(ctx, plan, storyText)));
   return `${rows.join('\n')}\n`;
+}
+
+/** 当前设计的位置（同一次读到的投影、蓝图 id 与 revision、canonical）与冻结来源、决策登记；设计读不出就写缺口。 */
+function designInput(ctx) {
+  const src = designSource(ctx);
+  const design = src.ref ? `当前设计投影 ${src.projection}（蓝图 ${src.ref.blueprint_id} r${src.ref.revision}，本体 ${src.canonical}）`
+    : `当前设计读不出（${src.problems.join('；')}）`;
+  return `${design}；冻结来源 ${readJson(ctx.flowPath, null)?.input?.snapshot_ref ?? '未登记'}；决策登记 ${relFromFeature(ctx, ctx.decisionsPath)}`;
+}
+
+/** 写作设计里本章各处的依据原文：写了地址的按当前蓝图核，没写地址的标未登记机器关联；一处都没写就如实说。 */
+function chapterBasis(ctx, plan, chapterId) {
+  const rows = basisSections(plan).filter(b => b.chapter === chapterId && b.basis.length);
+  if (!rows.length) return [`  本章依据：写作设计「${chapterId}」没有登记依据——按当前设计与来源写，不等于本章不涉及`];
+  const { blueprint } = designSource(ctx);
+  const known = blueprint && loadNative(ctx.projectRoot).module('scripts/utils/blueprint-addressing.ts').stableAddressIndex(blueprint);
+  return rows.map(b => `  本章依据 ${[b.at, b.under].filter(Boolean).join(' / ') || '（整章）'}：${b.basis.join(' ')}`
+    + (!b.refs.length ? '（未登记机器关联）'
+      : b.refs.filter(r => known && !known.has(r)).map(r => `（地址 ${r} 在当前蓝图里没有——回写作设计核对）`).join('')));
 }
 
 /**
