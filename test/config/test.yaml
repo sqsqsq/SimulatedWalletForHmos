@@ -46,8 +46,8 @@ cli:
       profile: build
       # 启动时交给 opencode 的上限（压过用户配置）。opencode 1.18.32 在已用 token ≥ input − reserved
       # （reserved 默认 min(20000, 输出上限)，compaction.auto 未关）时自动压缩，这里即 980000；没声明 input 时是
-      # context − min(output, 32000) = 1016576，高于这个服务 2026-10-11 拒收时报的 [1, 1000000]，会话没压缩就被拒。
-      # 服务那个 1000000 的单位未核：这个值按 token 假定，只对本配置这一个服务与模型成立。
+      # context − min(output, 32000) = 1016576。这个服务 2026-10-11 拒收时报 [1, 1000000]：仅当它也按 token 计量时，
+      # 两条线之间才有一段不压缩就被拒的区间；实际拒收原因与安全余量仍待同口径证据。值只对本配置这一个服务与模型取。
       limit: {context: 1048576, input: 1000000, output: 131072}
     - id: volcengine-glm-flash
       name: opencode
