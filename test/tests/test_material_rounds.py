@@ -23,7 +23,7 @@ FLOW = STORY_SCRIPTS / "story_flow.py"
 MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
-from flow.inputs import MATERIAL_CHOICES, MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
+from flow.inputs import MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
 from flow.state import CONTRACT, STORY_REGISTERED, file_sha256  # noqa: E402
 from materials import importer  # noqa: E402
 
@@ -856,7 +856,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
             (STORY_SCRIPTS.parents[1] / "contracts" / "story-chapters.json")
             .read_text(encoding="utf-8"))
         keys = [o["key"] for o in contract["gates"]["material_scope"]["options"]]
-        self.assertEqual(list(MATERIAL_CHOICES), keys)
+        self.assertEqual([o["key"] for o in material_options()], keys)
         for path in (FLOW, STORY_SCRIPTS / "flow" / "check.mjs", STORY_SCRIPTS / "flow" / "asks.py"):
             text = path.read_text(encoding="utf-8")
             for key in keys:
@@ -895,7 +895,7 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
             proc = subprocess.run(
                 [sys.executable, str(self.FLOW), "decide", "--feature", "AR90001",
                  "--project-root", str(root), "--gate", "material_scope",
-                 "--chosen", MATERIAL_CHOICES[0], "--by", "ai", "--reply", "他说的原话"],
+                 "--chosen", material_options()[0]["key"], "--by", "ai", "--reply", "他说的原话"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=120, cwd=str(REPO_ROOT))
             self.assertNotEqual(0, proc.returncode, "代签参数竟然被接受了")

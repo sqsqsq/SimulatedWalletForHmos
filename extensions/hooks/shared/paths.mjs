@@ -8,7 +8,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 /** 读实例配置；文件缺失或坏 JSON 都返回 null，由调用方决定降级还是出声。 */
-export function readConfig(projectRoot) {
+function readConfig(projectRoot) {
   try {
     return JSON.parse(fs.readFileSync(path.join(projectRoot, 'framework.config.json'), 'utf-8'));
   } catch {
@@ -29,7 +29,7 @@ export function extensionRoot(projectRoot) {
  * 空串/空白不是「配置了空目录」；Python 侧 `import_sources.features_dir` 是同一语义，
  * 两边必须解析出同一个目录，否则一边建的流程文件另一边找不到。
  */
-export function featuresDir(projectRoot) {
+function featuresDir(projectRoot) {
   const rel = readConfig(projectRoot)?.paths?.features_dir;
   const dir = typeof rel === 'string' && rel.trim() ? rel.trim() : 'doc/features';
   return path.join(projectRoot, ...dir.split(/[\\/]/).filter(Boolean));

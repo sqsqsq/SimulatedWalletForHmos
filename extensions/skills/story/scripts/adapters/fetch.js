@@ -131,4 +131,4 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   return { out: outDir, fetched, failed, items };
 }
 
-module.exports = { fetchOne, fetchUpstream, getDetail, getBody };
+module.exports = { fetchOne, fetchUpstream };

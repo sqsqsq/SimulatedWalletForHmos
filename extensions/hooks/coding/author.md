@@ -42,7 +42,7 @@ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <
 - 在 `pattern_roles` 里承担角色的实体，在定义文件之外**没有任何调用**。
   （注释里提到不算——门禁扫描前会把注释抹掉。）
 
-探针扫描 0 个文件时，门禁把「形态可能不匹配本工程」作为告警写进审查提示（`coding/reports/ai-prompt.md` 的 Lifecycle hooks 一节），
+探针扫描 0 个文件时，门禁把「形态可能不匹配本工程」作为告警写进审查提示（本阶段报告目录里 `ai-prompt.md` 的 Lifecycle hooks 一节），
 那说明探针或落点有一个写错了，
 **不是**代码没问题。
 

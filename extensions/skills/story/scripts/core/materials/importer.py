@@ -436,11 +436,6 @@ def backup(feature_root: Path, target: Path) -> Path | None:
     return dest
 
 
-def backups_of(feature_root: Path, target: Path) -> list[Path]:
-    """`target` 在 `.backups/local/` 里的全部副本，按文件名排序。命名只在 `backup` 这一处定。"""
-    return sorted((feature_root / ".backups" / "local").glob(f"{_backup_stem(feature_root, target)}-*.md"))
-
-
 def demote_headings(markdown: str, shift: int) -> str:
     """把文档自带的标题整体降级，使其嵌在节标题之下。
 

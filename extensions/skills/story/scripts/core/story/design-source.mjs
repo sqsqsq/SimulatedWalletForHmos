@@ -165,7 +165,7 @@ export function adoptedInputs(ctx) {
  *
  * @returns {{state: 'current'|'stale'|'unwritten'|'broken', why: string[]}}
  */
-export function storyCurrency(ctx) {
+function storyCurrency(ctx) {
   const flow = readJson(ctx.flowPath, null);
   if (flow?.status !== 'story_written') {
     return fs.existsSync(ctx.storyPath) ? { state: 'stale', why: ['Story 没有按当前内容成文登记（修订中或还没登记）'] }

@@ -39,9 +39,6 @@ def material_options() -> list[dict]:
 
 
 _MATERIAL_OPTIONS = material_options()
-#: 第一级的值域是闭合的；第二、三级的值域由本次选项集自己定义（维度名、份序号），
-#: 统一由「chosen 必须在 options 里」把关，不为每级各写一套枚举。
-MATERIAL_CHOICES = tuple(o["key"] for o in _MATERIAL_OPTIONS)
 #: 「我还要料」的那一项：缺口文件里 missing 非空时推荐它。
 MATERIAL_REQUEST_KEYS = tuple(o["key"] for o in _MATERIAL_OPTIONS if o.get("request"))
 

@@ -57,4 +57,4 @@ function timestamp() {
     + `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-module.exports = { PROJECT_ROOT, FEATURES_DIR, featureDir, levelDir, cloudBackupDir, timestamp };
+module.exports = { PROJECT_ROOT, featureDir, levelDir, cloudBackupDir, timestamp };
