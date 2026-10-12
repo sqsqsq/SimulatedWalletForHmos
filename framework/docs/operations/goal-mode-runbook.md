@@ -126,6 +126,7 @@ run 停下来之后，补上缺的那样东西，再**重新发起同一请求**
   请在请求里写明新增或变更的需求后重新发起"。显式 `--supersede <完成 run>` 照旧可用。范围不在已完成 run 手里时，"新开"行为不变。
 - 预算耗尽后：按停机说明改本 run manifest 的预算，再带 `--override-manifest` 重新发起同一请求，或显式续跑本 run（`--resume <run> --override-manifest`，说明里已填好 run id）；
   两条路都接回本 run，不起后继、不需要 `--force-resume`、不等冷却。不带 `--override-manifest` 的手改不生效。
+  只改预算不主动刷新已完成上游的 summary、evidence 或 receipt；turns 和活跃时长继续累计。真实业务/环境/门禁变化及阶段重验的新 FAIL 仍沿既有责任恢复处理，历史事件 PASS 不替代当前失败结论。
   同时提了新需求、换了型号或范围失效时照常起后继，后继上限取上面的已授权值；功能已完成且只改了预算时保持停止，要追加内容须写明需求。
 - 返修窗口里驱动方想给出修法假设时，用显式续跑附 `--repair-notes <文件>`：材料只进当前返修窗口的提示词并标明"驱动方假设，非需求"，
   不改需求、身份与接续决策，不起后继；fresh 启动带它会被拒。要改需求仍用 `--requirement-file`。
@@ -170,7 +171,7 @@ run 在某个阶段的门上发现：问题不在手写产物，而在设计权�
 
 | 分类 | 含义 | 谁来修 |
 |---|---|---|
-| **B1** | 在既有授权内、依据明确，改正不需要新的设计决定。目前只有两个原因码：蓝图里的机器内容被写成了一段文字（`authority_content_not_machine_structure`，按原文含义改回机器结构）；蓝图里的 CU 映射指向本 CU 的旧 revision（`authority_cu_mapping_stale`，删掉这条可省略的 `contracts.change_unit.change_unit_ref`、由投影按当前 CU 填入，其余映射保留；不要改指当前 CU——蓝图一升版 CU 跟着升版，引用会立刻再过期） | 有人在场：设计 owner 照 `/component-design` 直接修。无人值守且已预授权：框架先自动修一次（见「无人值守时 B1 由框架自动接手」） |
+| **B1** | 在既有授权内、依据明确，改正不需要新的设计决定。当前原因是蓝图机器内容被写成文字（`authority_content_not_machine_structure`，按原文含义改回机器结构）。施工映射归 plan，不由 B1 删改蓝图旧映射 | 有人在场：设计 owner 照 `/component-design` 直接修。无人值守且已预授权：框架先自动修一次（见「无人值守时 B1 由框架自动接手」） |
 | **B2** | 其余全部：缺内容、归属或内容冲突、未决决策、缺权威来源、扩大范围、CU 或蓝图未过校验等；没登记的原因码、B1 与 B2 混在一起时也算 B2 | 有权者先裁决或补事实，说明里写清缺什么 |
 
 **修好之后**：
@@ -224,7 +225,7 @@ run 在某个阶段的门上发现：问题不在手写产物，而在设计权�
 3. 只把蓝图文件复制到 run 目录下的草稿（`<run 目录>/design-repair/component-blueprint.yaml`），派一次"编写修复"调用：
    只许改草稿，按 [无人值守修复子契约](../../skills/reference/design-repair-unattended.md) 修；而且草稿里只许改本次 B1 发现项定位到的位置
    （停机事件 `design_authority.items[].locations`）：文字类是本 CU 所选设计目标里被写成文字的 `acceptance` / `contracts` / `use_cases`
-   字段，映射过期只许删掉 `contracts.change_unit.change_unit_ref`。框架随后覆盖的 `revision`、根 `provenance` 五个登记字段与
+   字段。Feature 施工映射回 plan，不删改蓝图旧映射。框架随后覆盖的 `revision`、根 `provenance` 五个登记字段与
    `derived_results` 不算越权。
 4. 框架作废草稿里的整份旧质询结果，登记新 revision 与修订依据（写在蓝图根 `provenance`，`source_kind: design_repair_unattended`；
    框架覆盖的只有 `revision` 和根 `provenance` 里的这五个字段：`source_kind`、`source_ref`、`source_revision`、`observed_at`、
@@ -484,10 +485,14 @@ gate、receipt/人签、设备与凭据规则不变；agent 自跑 harness 只�
   **不在多个 provider 之间 fallback**。
 - 无人值守读到已失效/不可读的旧 local 配置 → WARN + 忽略；后续 requirement/capability preflight
   决定 defer 或按 advisory 继续，不询问、不自动改选。
-- provider 调用失败/载荷不可信时：本轮视觉反馈降级为盲档，`visual_diff` 出 `{BLOCKER, SKIP}`，
-  required 轴保持 FAIL/UNVERIFIED 并重试或 defer，optional 轴才可 advisory；不得伪造 PASS。
+- provider 初始调用 unavailable：非必需检查按 advisory 披露，strict 或 release-required 走 capability-defer。载荷 invalid（含错身份/错图/字段错误）走 FAIL/retry，不能改称 unavailable、SKIP 或 PASS。
+- 格式错误最多向原 provider 纠正一次，保持同一图像/身份和共同 deadline；第二次仍无效或预算耗尽即不采信。JSON 诊断保留原生错误、候选/正文位置和有界片段，字段诊断给出路径、实际值与期望。
+- bbox 使用本次截图的归一化 `[x,y,width,height]`，四项有限且在 `[0,1]`；`must_fix_refs` 是本屏 `must_fix` 的零基索引，不接受像素坐标或 JSON 中的表达式。
+- severity 按实际影响：blocker 须有证据表明必需目标、关键操作、导航或状态理解无法成立；major 为明显偏差但主要任务可完成、信息可理解；minor 不影响操作、含义和可读性。`note` 给出影响、定位/证据和不确定性；单张截图不可见不证明操作不可达。
 - 当前 attempt/hash/identity 绑定的 deterministic/native/delegated 机器证据直接决定视觉轴，
   不再要求真人逐屏签名。
+
+本批（6e2f9a10）的格式/预算自动回归只证明当前生产路径的行为，不证明模型分级效果或宿主交付完成。干净宿主验收仍待执行，与 272acb5f H1 共用一次运行；不重建或声称恢复旧 be091c。观察复用 1dbe4fa4 六项指标和既有调用记录，并记首次可用交付耗时；同时看合法载荷、最终视觉产物与调用记录，`validation-diagnosis.json` 只覆盖非法输出。历史失败事实与旧候选约 124 分钟成本保留作参考，不能作为本批通过证据或受控提升比例。
 
 ```bash
 # 只读视觉 provider 示例（主模型盲 + 第二个能看图的 endpoint）

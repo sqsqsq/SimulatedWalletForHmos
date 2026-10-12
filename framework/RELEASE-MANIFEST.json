@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "1c5349b3fec95c23e6caae1c0a54018e2a725cfb",
-  "built_at": "2026-10-11T01:10:40.391Z",
+  "source_commit": "22a0071fedd89958c881e75428f29c30ee1ce9bc",
+  "built_at": "2026-10-12T04:50:38.328Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "dd53424a480f5483c9361fd5c7358594abcfc1a4d9c80685b16f89489aeaa3b9"
+      "sha256": "ab3d8795f4889455e9e8633292d3a99b11cb066b4b6aabe65f60c7cc066e1143"
     },
     {
       "path": "README.md",
@@ -402,7 +402,7 @@
     },
     {
       "path": "docs/DOC_INVENTORY.yaml",
-      "sha256": "941743f50ecab901953d838a4d055c5be83e90bfe97719624740063f18e1942d"
+      "sha256": "81ce7fa5d36d2cd4d75074ed62e1d1c4874e222e2c84a030b110289164ff333f"
     },
     {
       "path": "docs/README.md",
@@ -422,7 +422,7 @@
     },
     {
       "path": "docs/concepts/blueprint-design-inputs.md",
-      "sha256": "1f0113209ed7fcbbb7483dd8b52e251c7d9670a0ed802987e575a893ad048d0f"
+      "sha256": "f1d3f0e64dc1b898d7e08896026f708a173e91cde57f0c0728cbca1d6ec3941d"
     },
     {
       "path": "docs/concepts/capability-degradation.md",
@@ -498,7 +498,7 @@
     },
     {
       "path": "docs/operations/component-design-host-adaptation.md",
-      "sha256": "eca6752f28d7ba3bc77e3317b2885d3e3ef5e5527d4c34ba1ed5615a855bc2e9"
+      "sha256": "fd26187cddf592c90db982d39491a656510d816200ebfdd2d8c191f6a9536698"
     },
     {
       "path": "docs/operations/fidelity-fetch-mcp-contract.md",
@@ -506,7 +506,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "40e94e1b87386dd0c50b2527f053aefb35d43dd172fcbaefec8043d6b9d0f889"
+      "sha256": "a65989a6a635c15e3534410fb6416baec949faf5e8ad914acbaecff3d01e5f2a"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -538,11 +538,11 @@
     },
     {
       "path": "docs/operations/samples/blueprint-review-projection.invalid-added-fact.md",
-      "sha256": "bdffa5cb72dc533cd4240f91453cec2d8982443341efbaa10d29b7680f89a586"
+      "sha256": "34bdddea61e44f2823aaa012fca782227caf2d27a9c6291a2d28c678aa2e3ae9"
     },
     {
       "path": "docs/operations/samples/blueprint-review-projection.valid.md",
-      "sha256": "e76722a57cb670a7f9c945d7fa30b33fcb0f28fcd50ba8fe15f0b2e2564e81f6"
+      "sha256": "1c52193c85c6ad119e65a330b4921997a4b2f016235c057554990c1aa07c2786"
     },
     {
       "path": "docs/operations/samples/extension-m7-manifest.yaml",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "5fd86e2a9bcac512b3967347f448e3f2d2b9158abea864ccf0ebf53d2cd78297"
+      "sha256": "5fd33eaad66165e785411dbf9c8df6c8d37d7a1d1fe115bd64d39417ba89ec64"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -1150,7 +1150,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-review-inputs.ts",
-      "sha256": "1afd6cce706e929853bdc5fe5566235ebd281f1de9aae6f21a110da47dd7d15a"
+      "sha256": "88e5266ed9e798fe190b2e34e014e92b50c12ac18bfa976e5abef39bf8ec4868"
     },
     {
       "path": "harness/scripts/utils/blueprint-review-materialization.ts",
@@ -1158,11 +1158,11 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-review-projection.ts",
-      "sha256": "b2afbf881705dbee270581d55284d1ce11be991090910413b40c57eeda767c48"
+      "sha256": "aafae1a1bea1df06837487551c358708f51bd79d3cfb49a207ce833c5945e4d4"
     },
     {
       "path": "harness/scripts/utils/blueprint-skill-projection.ts",
-      "sha256": "6ed0f1bf0f2430fed3731019a7363e89d9d3f541e2315aebd29f382fe503845d"
+      "sha256": "24c562d7c2459222bde89b7efbfa3bf37cf5cf42d928931b48cfe360b4337fcd"
     },
     {
       "path": "harness/scripts/utils/blueprint-views.ts",
@@ -1182,11 +1182,11 @@
     },
     {
       "path": "harness/scripts/utils/capability-resolution-entry-input.ts",
-      "sha256": "c8c7715c69bd45d031f0851cb8d1d4a7f048363fc33d5bd5a8cbeeb3f3ddf710"
+      "sha256": "44c5ba098ba90ac6ccfaa61868a6b34c67f38d236c2a61919944a562b2ca546d"
     },
     {
       "path": "harness/scripts/utils/capability-resolution.ts",
-      "sha256": "a846127b6978241e007d36b5a654a1543972b33e7fda59b96bfb13f237241f76"
+      "sha256": "5cde4f77ed680ce19288f2f6f3a14008d1bbe58da39307406e5fd327b1da99a7"
     },
     {
       "path": "harness/scripts/utils/catalog-parser.ts",
@@ -1206,7 +1206,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-completion.ts",
-      "sha256": "30eb6baa659cfd8261bd934ccee2dcf7d7fdf0ff1de24b932b96afe211701c1f"
+      "sha256": "5fe518ab46fdb4a5a01e50c2d323a85a599827a22a12318769448b117911d05b"
     },
     {
       "path": "harness/scripts/utils/change-unit-dependencies.ts",
@@ -1214,11 +1214,11 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-design-gate.ts",
-      "sha256": "5f76561bedc9df3a48dc6f5405cc359a6be4dd48e22ce8d22253708d6c6dd321"
+      "sha256": "8db268f1f4cc2fff49e4c2aae313665365763d9d3d74085317332be06c584b23"
     },
     {
       "path": "harness/scripts/utils/change-unit-design-preparation.ts",
-      "sha256": "d97bd9211bdc3640c9a350a2a0c14ea71bb61c6537b8e8c86ff7b0db02432fca"
+      "sha256": "924bcb3fe189d7f2a96f677b60455c0f505c2ab6bd2cae8b0a19c31f3ee0ab55"
     },
     {
       "path": "harness/scripts/utils/change-unit-evolution-seam.ts",
@@ -1226,15 +1226,15 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-feature-projection.ts",
-      "sha256": "fe3ef9a344abacbad1eaf2e7e7fa9f98fc045f7e9b2023a23963bad7e0223135"
+      "sha256": "c15b0e131030315cf2f940b842fe6b6def58a66c5b2735e2227793cca1eacd68"
     },
     {
       "path": "harness/scripts/utils/change-unit-model.ts",
-      "sha256": "1991b9fef92a42a076b1e0a9836d336189c00b63c0d2ea617d8c090c66fdebe7"
+      "sha256": "b8ffa5089a264c28741580359b2da2b0ae6fcbb28f73433d308f3bd6b190fc21"
     },
     {
       "path": "harness/scripts/utils/change-unit-path.ts",
-      "sha256": "26d47a20335571d0e4dcaa0fc03ed426273d48e671fcb0dafbefcb8ede2e28c9"
+      "sha256": "496d5ba0dc2331eaffcd2dc8954375514dec84a30e69b908a99510e11a3c8a71"
     },
     {
       "path": "harness/scripts/utils/change-unit-progress-loop.ts",
@@ -1242,7 +1242,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-provider-boundary.ts",
-      "sha256": "39bee4e9400be377fa4778e4f0fb36b92055fd1ffd28e45643bbf5c48d064e85"
+      "sha256": "aab55fa1b05f224ed5d87fc14f5227291e24004d03bf9321e9df84478b2537f7"
     },
     {
       "path": "harness/scripts/utils/change-unit-ready-set.ts",
@@ -1434,7 +1434,7 @@
     },
     {
       "path": "harness/scripts/utils/design-repair-unattended.ts",
-      "sha256": "be16c10c292b73ecd7db14291e6730a39d1be49e68cff5b180fc516ae50d1c19"
+      "sha256": "e0a2606196b31e268ca87b99da817016a4d8202678c5e1186492a9a056f3c601"
     },
     {
       "path": "harness/scripts/utils/device-credential-store.ts",
@@ -1518,11 +1518,11 @@
     },
     {
       "path": "harness/scripts/utils/feature-assessment.ts",
-      "sha256": "5d510bd246a63608ce5f3c126a0c8d71859d258e24f35595d67785bc2bb610f2"
+      "sha256": "3d4253e27254d223a3078d71ebaacd20c04eb1beab2b520bfa21f4f932bfbf5d"
     },
     {
       "path": "harness/scripts/utils/feature-execution-scope.ts",
-      "sha256": "f767118ecf9af4d376b193ad44a98673e14b91dd4081ed8fb830e94abd5b306f"
+      "sha256": "cf7fdb83048aa58d2ff710b0a758f978c1096e739a3331ba22bd52a7151e4ef7"
     },
     {
       "path": "harness/scripts/utils/feature-identity.d.ts",
@@ -1534,7 +1534,7 @@
     },
     {
       "path": "harness/scripts/utils/feature-track.ts",
-      "sha256": "76533404442f7ee1e217b9f455d1541ac354e8ee15166536a240f09a24720d93"
+      "sha256": "3871cfe4b82d45159b44b58dcc0efb4aafbeaf0dbe9a3b7058c77c5efc9c7e28"
     },
     {
       "path": "harness/scripts/utils/fidelity-lock-shared.ts",
@@ -1670,7 +1670,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-run-creation.ts",
-      "sha256": "d02554b57324a3efb982dff153557461e99c2cbbee46a89df43845aa03b94c20"
+      "sha256": "f4f6318d04fe50fedc2ca7be0ecfc93efe9f873537cfed7b7ca50cbb31fc1ec4"
     },
     {
       "path": "harness/scripts/utils/goal-run-lock.ts",
@@ -2010,7 +2010,7 @@
     },
     {
       "path": "harness/scripts/utils/spec-loader.ts",
-      "sha256": "a19d4d6d77d10eb31ec3b18ecce411ba9340060fe8be19d98585cc0ce8e96622"
+      "sha256": "ab607368da1d88b037e8fd64c4eb01b00caf595fff457129008659c7aec76a26"
     },
     {
       "path": "harness/scripts/utils/summary-blockers.ts",
@@ -2138,7 +2138,7 @@
     },
     {
       "path": "harness/scripts/utils/visual-observation-sidecar.ts",
-      "sha256": "51c32f26a84482cb8ee1fe8241fefd2616222a6e8e6ca56609b9dafaa0c8d736"
+      "sha256": "101e61ef6240767da4b928d7eb29774e2602b0c73741e55e7258ea921fbc1d55"
     },
     {
       "path": "harness/scripts/utils/visual-provider-identity.ts",
@@ -2146,7 +2146,7 @@
     },
     {
       "path": "harness/scripts/utils/visual-provider-invoke.ts",
-      "sha256": "5f82c69331b46578779ab5823774db852c0b3f6bea2ee2eba15c900a51e077d4"
+      "sha256": "625544ff70949cfecc24508c07abb7c5e65325da6312ece1f1c2adfd6f9ce0a5"
     },
     {
       "path": "harness/scripts/utils/visual-rounds-ledger.ts",
@@ -2854,7 +2854,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-check.ts",
-      "sha256": "60462846b912c807e3335ee03fbfe66459e97ff583bd4c6710b46ac664dd0c0f"
+      "sha256": "dced8e03d85a0b1173fe84460dee5a3e1d79e4d65b2c0913425035738d195d32"
     },
     {
       "path": "profiles/hmos-app/harness/visual-diff-hylyre-screenshot.ts",
@@ -2890,7 +2890,7 @@
     },
     {
       "path": "profiles/hmos-app/harness/visual-provider-review.ts",
-      "sha256": "51cb42f7c2a45cf6a51ea89dd40417ab296f913482045cea6e8f041fa5865959"
+      "sha256": "f09cf2155beec1198df77edfa7a29062eb4245ba43eca6c1862df68c5d9f5050"
     },
     {
       "path": "profiles/hmos-app/harness/visual-structure-parity.ts",
@@ -2958,7 +2958,7 @@
     },
     {
       "path": "profiles/hmos-app/skills/business-ut/examples/sample-flow/use-cases.yaml",
-      "sha256": "a1baa8ecc27f6edb6b5c83ba9761f09561f55188a610bb5d346c9bbc719a346d"
+      "sha256": "c86a4300129913bf1824b2e3d56df6bf2dd787674fc685d753b027e46ccc5b9f"
     },
     {
       "path": "profiles/hmos-app/skills/business-ut/profile-addendum.md",
@@ -4490,7 +4490,7 @@
     },
     {
       "path": "skills/feature/plan/SKILL.md",
-      "sha256": "4a90f933069535ce5483afb7e8197397c53a9fd105b67a24b873ac08c689ff50"
+      "sha256": "92bb4282f5f038a6920449d9bfb39a9dc2dd7dc6e822373ec2dc9b354200dc5b"
     },
     {
       "path": "skills/feature/plan/contract.yaml",
@@ -4502,7 +4502,7 @@
     },
     {
       "path": "skills/feature/spec/SKILL.md",
-      "sha256": "06227f5618e0a79f6f29ff2caf0ff0bc471bd4f429ea4ebce343d71a7b5b7c3c"
+      "sha256": "59a5b08d93d0a76f024ed55499c4752ab8c5a53bb83fab178485ffec450710df"
     },
     {
       "path": "skills/feature/spec/contract.yaml",
@@ -4542,7 +4542,7 @@
     },
     {
       "path": "skills/project/change-unit-progression/SKILL.md",
-      "sha256": "7a5f0e7e4ab43b0cc433fb8d6754e7913d35afcdf50bd4c70ea333479ad2dcb1"
+      "sha256": "e944cef2b4ec3db66239f936559faf63470669069bdfb40be9784f3782b75dd8"
     },
     {
       "path": "skills/project/code-graph/SKILL.md",
@@ -4558,7 +4558,7 @@
     },
     {
       "path": "skills/project/component-design/SKILL.md",
-      "sha256": "900cf99fae10e8d6f54e26a7f8752c5fedc412fb14c365ab6b2355e7d581062c"
+      "sha256": "873e1050f1d150b13ee0f48f65b40eae3b34aadc3e9758e44babb16c43108cda"
     },
     {
       "path": "skills/project/conventions-bootstrap/SKILL.md",
@@ -4666,7 +4666,7 @@
     },
     {
       "path": "skills/reference/app-component-blueprint-workflow.md",
-      "sha256": "dd69415fb1499a8d292d82cc93bb323f551173b42518fd59f270d37f303b5f85"
+      "sha256": "289e3ba659dd5259265c620ff98cb5d4209f2ed458233b123a92e19300755603"
     },
     {
       "path": "skills/reference/business-ut-workflow-detail.md",
@@ -4702,7 +4702,7 @@
     },
     {
       "path": "skills/reference/design-repair-unattended.md",
-      "sha256": "7943fc023dc96d4e359aab96679e5547e34c6f4c676ffd0c8073a6b9e39a2816"
+      "sha256": "a4c7ce2036b3b5f8479de71bc8d8541db626dfeb0b4e7dff8f0c8269d40027dd"
     },
     {
       "path": "skills/reference/device-policy-gate.md",
@@ -4710,7 +4710,7 @@
     },
     {
       "path": "skills/reference/device-testing-workflow-detail.md",
-      "sha256": "193a65fcee65836d03ef837807bb46889eabac89b74f191cc092ce654e9cc06d"
+      "sha256": "148092b436a2157b183283d9f4ee0c32c0da6b94532800ed04069d20760ded98"
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
@@ -4734,7 +4734,7 @@
     },
     {
       "path": "skills/reference/plan-workflow-detail.md",
-      "sha256": "24ead77f3333f0709b839f69ce1ca9575f4240cb762d47a12f4bb553d7856acd"
+      "sha256": "4916e57ffb6eb580b8afc7ecf4f75f610aef1b3284fdeb768ee4cc002c61831b"
     },
     {
       "path": "skills/reference/real-host-admission-and-feedback.md",
