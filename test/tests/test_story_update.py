@@ -948,9 +948,9 @@ class ANewVersionReplacesTheOldOriginal(UpdateCase):
         self.assertTrue((backup / "产品原稿-v1.md").is_file(), "旧原件被删了，不是移走")
 
 
-class ASameNamedOriginalGoesThroughTheRealEntries(UpdateCase):
-    """V01：同名原件换版、撤回与重新采用旧原件，只走真实入口——update inputs、材料关卡、import_sources、prepare、
-    round、complete、restore、close；旧原件按方法页移进 `.backups/local/`。不手改冻结快照或 origins。"""
+class SameNamedOriginalSteps:
+    """V01 的真实入口步骤：update inputs、材料关卡、import_sources、prepare、round、complete、restore、close；
+    旧原件按方法页移进 `.backups/local/`。不手改冻结快照或 origins。混入 UpdateCase 一族使用。"""
 
     NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n"
              "| 验收口径 | 没动 |\n")
@@ -997,6 +997,15 @@ class ASameNamedOriginalGoesThroughTheRealEntries(UpdateCase):
     def frozen_prd(self, ref: str) -> bytes:
         return (self.root / ref).parent.joinpath("files", "RR", "prd.md").read_bytes()
 
+    def resolve_conflicts(self, out: dict) -> None:
+        """人按冲突给的开轮版本定回去。"""
+        for c in out["conflicts"]:
+            (self.feature_root / c["file"]).write_bytes((self.feature_root / c["before"]).read_bytes())
+
+
+class ASameNamedOriginalGoesThroughTheRealEntries(SameNamedOriginalSteps, UpdateCase):
+    """V01（未登记起点）：同名原件换版、撤回与重新采用旧原件。"""
+
     def test_an_open_round_withdrawal_keeps_inputs_and_leaves_the_design_to_sync(self) -> None:
         v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
         self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
@@ -1013,8 +1022,7 @@ class ASameNamedOriginalGoesThroughTheRealEntries(UpdateCase):
         self.assertEqual("restore_conflicted", out["status"], "complete 不是完成点：本轮改动没有登记的一版可比，应列冲突")
         self.assertIn("AR/story-src/design-draft.md", [c["file"] for c in out["conflicts"]])
         self.assertIn("单日上限 300", self.draft.read_text(encoding="utf-8"), "冲突的现状被覆盖了")
-        for c in out["conflicts"]:  # 人按冲突给的开轮版本定回去
-            (self.feature_root / c["file"]).write_bytes((self.feature_root / c["before"]).read_bytes())
+        self.resolve_conflicts(out)
         out = self.update("--action", "restore")
         self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
         self.assertEqual(draft_v1, self.draft.read_bytes())
@@ -1248,6 +1256,75 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
     def assert_no_hand_edit(self) -> None:
         for out in self.outputs:
             self.assertNotIn("手改", out)
+
+
+
+class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsRegisteredAgainAfterChangesCase):
+    """V01（已登记起点）：v1 走真实审查与 `story` 登记并收口后，新一轮同名换版或只改表达，再撤回。
+    撤回只退可改件；登记、冻结包、蓝图、人签与轮次记录不回写，当前资格照实报，交付门不放行。"""
+
+    def deliver(self) -> subprocess.CompletedProcess:
+        return self.run_cmd("node", str(self.BUILD), "check", "--deliver", "--feature", FEATURE, "--project-root", str(self.root))
+
+    def registered_v1(self) -> str:
+        """v1 原件经材料关卡导入、冻结，设计同步，材料清单改列原件（作者的事），审查通过后登记并收口。"""
+        rid = self.adopt("# 甲需求\n\n单日上限 200。\n".encode("utf-8"), "单日上限 200，按甲需求。")
+        self.design_syncs()
+        story = self.feature_root / "AR" / "story.md"
+        story.write_bytes(story.read_bytes().decode("utf-8").replace(
+            "| [甲需求 PRD](../RR/prd.md) | 需求目录（产品需求） |", "| [甲需求](../inbox/甲需求.md) | 收件箱（人工提供） |").encode("utf-8"))
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.close(rid)
+        self.mark_archived()
+        self.assertEqual("story_written", self.contract()["status"])
+        return self.snapshot_ref()
+
+    def kept(self) -> dict:
+        """撤回不该回写的：冻结输入登记、蓝图、关卡记录（含人的原话）、归档标记。"""
+        canonical = self.root / "doc" / "features" / "bp-REQ-DEMO" / "blueprint" / "component-blueprint.yaml"
+        contract = self.contract()
+        return {"input": contract["input"], "blueprint": canonical.read_bytes(),
+                "gates": contract["rounds"][-1]["gates"], "archived": contract.get("archived")}
+
+    def test_a_new_version_withdrawn_leaves_the_registration_to_the_design_sync(self) -> None:
+        v1_ref = self.registered_v1()
+        self.supersede("20261012T010000")
+        self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。")
+        v2_ref = self.snapshot_ref()
+        self.assertEqual(("complete", "design_blueprint"), (self.contract()["status"], self.flow("status")["next"]),
+                         "冻结了新输入，登记仍算成立")
+        before = self.kept()
+        out = self.update("--action", "restore")
+        self.assertEqual("restore_conflicted", out["status"], out)
+        self.resolve_conflicts(out)
+        out = self.update("--action", "restore")
+        self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
+        self.assertEqual(before, self.kept(), "撤回回写了冻结输入、蓝图、关卡记录或归档标记")
+        self.assertEqual(v2_ref, self.snapshot_ref())
+        self.assertIn("单日上限 200", self.frozen_prd(v1_ref).decode("utf-8"), "v1 冻结包被动了")
+        self.assertIn("单日上限 300", self.frozen_prd(v2_ref).decode("utf-8"), "v2 冻结包被动了")
+        self.assertEqual(("complete", "design_blueprint"), (self.contract()["status"], self.flow("status")["next"]),
+                         "撤回之后把旧登记当成了现在的")
+        self.assertNotEqual(0, self.deliver().returncode, "设计没按当前输入同步，交付门却放行了")
+
+    def test_a_registered_expression_change_withdrawn_needs_registering_again(self) -> None:
+        self.registered_v1()
+        story = self.feature_root / "AR" / "story.md"
+        registered = story.read_bytes()
+        rid = self.update()["update"]
+        self.rewrite_background("支付提交后用户要能看到回执状态，以服务端为准。")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        before = self.kept()
+        out = self.update("--action", "restore")
+        self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
+        self.assertEqual(registered, story.read_bytes(), "已登记的修改没退回开轮时的那一版")
+        self.assertEqual(["AR/story.md"], out["needs_sync"], "Story 回退之后与这一轮的登记不再一致，没报出来")
+        self.assertEqual(("story_written", "register_story"), (self.contract()["status"], self.flow("status")["next"]))
+        self.assertEqual(before, self.kept())
+        gate = self.deliver()
+        self.assertNotEqual(0, gate.returncode)
+        self.assertIn("登记之后改过", gate.stdout + gate.stderr)
+        self.assertIsNone(self.flow("update", "--action", "status")["open"], f"{rid} 撤回后仍开着")
 
 
 class StoryIsRegisteredAgainAfterChanges(StoryIsRegisteredAgainAfterChangesCase):

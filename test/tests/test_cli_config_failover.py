@@ -67,6 +67,19 @@ class ConfigContractTests(unittest.TestCase):
             [(item["name"], item["model"]) for item in multi.CLI_CONFIGURATIONS],
         )
 
+    def test_the_capacity_limit_is_part_of_the_configuration(self) -> None:
+        """E01：上限写在配置组里随启动交给 opencode，只声明观察过服务限额的那一组；形状不全或给别的 CLI 都拒。"""
+        from cli_config_group import load_cli_group  # noqa: PLC0415
+        limits = {item["id"]: item.get("limit") for item in multi.CLI_CONFIGURATIONS}
+        self.assertEqual({"bailian-deepseek": {"context": 1048576, "input": 1000000, "output": 131072},
+                          "volcengine-glm-flash": None, "codex-luna": None}, limits)
+        base = {"id": "x", "name": "opencode", "model": "p/m", "profile": "build"}
+        for label, item in (("缺 output", {**base, "limit": {"context": 10, "input": 5}}),
+                            ("input 大于 context", {**base, "limit": {"context": 10, "input": 11, "output": 2}}),
+                            ("不是 opencode", {**base, "name": "codex", "limit": {"context": 10, "input": 5, "output": 2}})):
+            with self.subTest(case=label), self.assertRaises(SystemExit):
+                load_cli_group({"cli": {"configurations": [item]}})
+
     def test_401_trips_configuration_for_the_suite_and_selects_next(self) -> None:
         record = failed_record("auth_required")
         suite = suite_with(record)

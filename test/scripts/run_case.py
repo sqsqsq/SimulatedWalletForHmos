@@ -918,11 +918,13 @@ def _load_case(case_id: str, run_id: str | None = None) -> tuple[dict, Path, str
     return case, out_dir, feature
 
 
-def build_cli_env(out_dir: Path, cli_name: str | None = None) -> dict[str, str]:
+def build_cli_env(out_dir: Path, cli_name: str | None = None, model: str | None = None,
+                  limit: dict | None = None) -> dict[str, str]:
     """为被测 CLI 建立每轮独立的可写运行目录。
 
     OpenCode 1.18 在 Windows 会把已存在的 XDG 子目录当作 mkdir 失败；将 config/data
     放入本轮刚创建的审计目录，可避免触碰用户目录并保留其只读 provider 配置作为 custom config。
+    配置组给了 `limit` 时，经 OPENCODE_CONFIG_CONTENT 把这个模型的上限交给 OpenCode，按层合并后压过用户配置里的同一项。
     其他 CLI 不受影响。
     """
     env = {str(k): str(v) for k, v in (CFG.get("cli", {}).get("env", {}) or {}).items()}
@@ -946,6 +948,9 @@ def build_cli_env(out_dir: Path, cli_name: str | None = None) -> dict[str, str]:
     provider_config = Path(configured) if configured else Path.home() / ".config" / "opencode" / "opencode.jsonc"
     # 不在 harness 进程预读用户配置（既会越权也会暴露内容）；仅把路径交给 OpenCode 子进程。
     env["OPENCODE_CONFIG"] = str(provider_config)
+    if limit and model and "/" in model:
+        provider, model_id = model.split("/", 1)
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"provider": {provider: {"models": {model_id: {"limit": limit}}}}})
     return env
 
 
@@ -1763,7 +1768,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                                        [u["change_unit_id"] for u in observe_target(feature, end_at, case, start_phase)["units"]]),
                     interactive),
                 cwd=TARGET, soft_timeout_sec=NO_TIME_LIMIT, hard_timeout_sec=NO_TIME_LIMIT,
-                stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir, cli_config["name"]),
+                stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir, cli_config["name"], cli_config["model"],
+                                                               cli_config.get("limit")),
                 metadata={"tool": "story-skill-test",
                           "cli_config_id": cli_config["id"]})
             run: dict = {}

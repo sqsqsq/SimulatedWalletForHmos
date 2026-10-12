@@ -27,6 +27,15 @@ def load_cli_group(config: dict[str, Any]) -> tuple[list[dict[str, str]], dict[s
         if value["id"] in seen:
             raise SystemExit(f"[runner] CLI 配置 id 重复: {value['id']}")
         seen.add(value["id"])
+        limit = item.get("limit")
+        if limit is not None:
+            # 启动时交给 opencode 的模型上限：它按层校验，context、input、output 三项都要给
+            keys = ("context", "input", "output")
+            if value["name"] != "opencode" or not isinstance(limit, dict) or set(limit) != set(keys) \
+                    or not all(isinstance(limit[k], int) and limit[k] > 0 for k in keys) or limit["input"] > limit["context"]:
+                raise SystemExit(f"[runner] cli.configurations[{index}].limit 只给 opencode，"
+                                 "要有正整数 context、input、output 三项且 input 不大于 context")
+            value["limit"] = {k: limit[k] for k in keys}
         configurations.append(value)
 
     policy = cli.get("retry_policy") or {}

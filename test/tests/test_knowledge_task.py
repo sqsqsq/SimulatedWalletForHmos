@@ -1184,6 +1184,21 @@ process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(a
         self.assertIn("新版本补的一句", self.readers()["adopted"]["documents"][f"{v2.relative_to(self.root).as_posix()}/files/RR/prd.md"])
 
 
+    def test_backslash_references_reach_the_same_project_path(self) -> None:
+        """R1：候选声明与流程快照用反斜杠写（原生判合法）：两处 documents 的键仍是正斜杠工程路径，图源按它查得到。"""
+        slash = self.readers()
+        text = self.canonical.read_bytes().decode("utf-8")
+        self.assertIn(self.prd, text, "夹具变了，用例要跟着改")
+        self.canonical.write_bytes(text.replace(self.prd, self.prd.replace("/", "\\\\")).encode("utf-8"))
+        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
+        flow["input"]["snapshot_ref"] = self.snapshot_ref.replace("/", "\\")
+        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+        back = self.readers()
+        self.assertEqual([], back["adopted"]["problems"])
+        self.assertEqual([], back["unit"]["problems"])
+        self.assertEqual(sorted(slash["adopted"]["documents"]), sorted(back["adopted"]["documents"]))
+        self.assertIn(self.prd, back["unit"]["documents"], "反斜杠声明的来源没按工程路径交出")
+
 class ANativeSourceKeepsItsFragment(NativeCase):
     """原生直接入口：声明带片段的需求文件按原引用交给原生定位；片段找不到时任务不给，不先去掉片段再读。"""
 

@@ -411,7 +411,7 @@ export function blueprintSources(projectRoot, blueprint) {
 
 /**
  * 读声明了摘要的来源：每项的原引用（可带片段）交原生 `resolveCurrentScopeSource`（工程内路径、原字节、片段定位、摘要），
- * 实际摘要要等于声明的 `sha256:<64 位十六进制>`。成功项保留输入的字段，加去掉片段的 `file_path` 与原字节；
+ * 实际摘要要等于声明的 `sha256:<64 位十六进制>`。成功项保留输入的字段，加原生校验后的无片段工程路径 `file_path` 与原字节；
  * 失败项不给字节，按原引用记进 `excluded`（原因）与 `problems`。同一引用同一声明本次只读一次。
  *
  * @param {{path: string, sha256: string}[]} entries
@@ -420,6 +420,7 @@ export function blueprintSources(projectRoot, blueprint) {
 export function readSourceFiles(projectRoot, entries) {
   const native = loadNative(projectRoot);
   const resolve = native.module('scripts/utils/blueprint-requirement-traceability.ts').resolveCurrentScopeSource;
+  const guard = native.module('scripts/utils/project-relative-path.ts');
   const out = { files: [], excluded: new Map(), problems: [] };
   const seen = new Map();
   for (const entry of entries) {
@@ -431,8 +432,10 @@ export function readSourceFiles(projectRoot, entries) {
       } else {
         try {
           const r = resolve(native.root, String(entry.path));
-          if (r.source_sha256 === entry.sha256) got.bytes = r.bytes;
-          else got.why = `原始字节摘要 ${r.source_sha256} 与声明的 ${entry.sha256} 不符`;
+          if (r.source_sha256 === entry.sha256) {
+            got.bytes = r.bytes;
+            got.file = path.posix.normalize(guard.validateProjectRelativePath(native.root, String(entry.path).split('#')[0], 'source_ref'));
+          } else got.why = `原始字节摘要 ${r.source_sha256} 与声明的 ${entry.sha256} 不符`;
         } catch (e) {
           got.why = String(e?.message ?? e).split(/\r?\n/)[0];
         }
@@ -441,7 +444,7 @@ export function readSourceFiles(projectRoot, entries) {
       if (got.why) out.problems.push(`${entry.path}：${got.why}`);
     }
     const got = seen.get(key);
-    if (got.bytes) out.files.push({ ...entry, file_path: path.posix.normalize(String(entry.path).split('#')[0]), bytes: got.bytes });
+    if (got.bytes) out.files.push({ ...entry, file_path: got.file, bytes: got.bytes });
     else out.excluded.set(entry.path, got.why);
   }
   return out;
@@ -456,8 +459,9 @@ export function readSourceFiles(projectRoot, entries) {
 export function readFrozenInputs(projectRoot, snapshotRef) {
   const native = loadNative(projectRoot);
   const out = { snapshot: null, files: [], excluded: new Map(), problems: [] };
+  let at;
   try {
-    const at = native.module('scripts/utils/project-relative-path.ts').validateProjectRelativePath(native.root, String(snapshotRef), 'snapshot_ref');
+    at = native.module('scripts/utils/project-relative-path.ts').validateProjectRelativePath(native.root, String(snapshotRef), 'snapshot_ref');
     out.snapshot = JSON.parse(fs.readFileSync(path.join(native.root, ...at.split('/')), 'utf8'));
   } catch (e) {
     out.problems.push(`冻结快照 ${snapshotRef} 读不出来（${String(e?.message ?? e).split(/\r?\n/)[0]}）`);
@@ -467,7 +471,7 @@ export function readFrozenInputs(projectRoot, snapshotRef) {
     out.problems.push(`冻结快照 ${snapshotRef} 没有 files 清单`);
     return out;
   }
-  const dir = path.posix.dirname(String(snapshotRef));
+  const dir = path.posix.dirname(path.posix.normalize(at));
   const entries = [];
   for (const row of out.snapshot.files) {
     const name = typeof row?.path === 'string' ? path.posix.normalize(row.path) : '';

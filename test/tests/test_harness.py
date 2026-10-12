@@ -460,6 +460,18 @@ class CliRuntimeIsolationTest(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_the_configured_limit_reaches_opencode_at_launch(self) -> None:
+        """E01：配置组的上限经 OPENCODE_CONFIG_CONTENT 交给这一个模型；没声明就不带，不改用户配置文件。"""
+        root = Path(tempfile.mkdtemp())
+        try:
+            limit = {"context": 1048576, "input": 1000000, "output": 131072}
+            env = rc.build_cli_env(root, "opencode", "bailian/deepseek-v4-flash-0731", limit)
+            self.assertEqual({"provider": {"bailian": {"models": {"deepseek-v4-flash-0731": {"limit": limit}}}}},
+                             json.loads(env["OPENCODE_CONFIG_CONTENT"]))
+            self.assertNotIn("OPENCODE_CONFIG_CONTENT", rc.build_cli_env(root, "opencode", "volcengine/GLM5.3-Flash", None))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_other_clis_get_no_redirected_home(self) -> None:
         """别的宿主不重定向 XDG：它们没有那个 mkdir 缺陷，改了反而会丢自己的凭据。"""
         root = Path(tempfile.mkdtemp())

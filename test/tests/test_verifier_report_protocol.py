@@ -595,6 +595,17 @@ class TheDesignAttachmentIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDe
         self.assertIn("蓝图与它的原生评审投影", reading)
         self.assertNotIn("字节相同", reading)
 
+    def test_the_reading_scope_is_chosen_before_the_full_reading_order(self) -> None:
+        """R2：入口先按载体情形定范围：格式返修照用充分的原判断、只补诊断点到的核验，其余情形与实质缺陷完整读；
+        完整读的顺序只在这之后给一次，没有末尾追加的例外条。"""
+        self.assertEqual(0, self.review("prepare").returncode)
+        reading = self.reading().strip()
+        head, order = reading.split("\n\n1. ", 1)
+        for words in ("格式返修", "照用", "完整读", "缺判据"):
+            self.assertIn(words, head)
+        self.assertNotRegex(order, r"(?m)^5\. ", "格式返修又成了末尾的例外条")
+        self.assertEqual(1, reading.count("格式返修"), "范围说明不止一处")
+
     def test_a_hand_edit_is_kept_and_stops_the_prepare(self) -> None:
         self.assertEqual(0, self.review("prepare").returncode)
         edited = self.attachment().read_bytes() + "手加的一行。\n".encode("utf-8")

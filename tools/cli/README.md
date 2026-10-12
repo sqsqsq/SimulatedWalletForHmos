@@ -35,19 +35,22 @@ prompt 作为一个参数原样交给 CLI，进程以 `shell=False` 直接启动
 - 直接调用 API 时，也可复制一份注册文件放在 `output/` 下，把 `executable` 写成原生程序的绝对路径，经 `registry_path` 传入。
   Case 驱动用默认注册，只认 PATH。
 
-### opencode：输入上限要低于服务的拒收线
+### opencode：模型上限随启动交给它
 
-opencode 在已用 token 达到可用窗口时自动压缩历史。模型配置声明了 `limit.input` 时，可用窗口是 `limit.input − 20000`；
-没声明时是 `limit.context − min(limit.output, 32000)`。服务端按输入长度拒收的请求不会重试，所以可用窗口必须低于服务的
-输入上限，否则会话在两条线之间直接被拒、不压缩。
+opencode 1.18.32（从已安装程序核过）在 `compaction.auto` 未关闭时，已用 token 达到可用窗口就自动压缩历史：
 
-在用户级配置 `~/.config/opencode/opencode.jsonc` 里给每个模型声明 `limit.input`，值不超过服务的输入上限，长期生效、不按单次运行设：
+- 模型声明了 `limit.input`：可用窗口 = `limit.input − reserved`，`reserved` 取配置的 `compaction.reserved`，没配时取
+  `min(20000, 输出上限)`；
+- 没声明：可用窗口 = `limit.context − 输出上限`；
+- 输出上限 = `min(limit.output, 32000)`，32000 可被环境变量 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` 改。
 
-```jsonc
-"limit": { "context": 1048576, "input": 1000000, "output": 131072 }
-```
+服务按输入长度拒收的请求不重试。可用窗口高于服务的拒收线时，会话在两条线之间会直接被拒，不会先压缩。
 
-服务上限 1,000,000 时，可用窗口是 980,000。改完用 `opencode models <provider>` 确认配置能被加载。
+上限的生效位置是 Case 驱动的配置组（`test/config/test.yaml` 的 `cli.configurations[].limit`）：驱动启动 opencode 时，
+经 `OPENCODE_CONFIG_CONTENT` 把这个模型的 `context`、`input`、`output` 交给它，按层合并后压过用户配置里的同一项。
+只给观察到服务限额的那一组声明，值和依据写在那一项的注释里。
+
+未核：服务报错 `[1, 1000000]` 的计量单位；其他提供商的限额。现有取值按 token 假定，换服务或模型要先取得它的限额依据。
 
 ## Python API
 
