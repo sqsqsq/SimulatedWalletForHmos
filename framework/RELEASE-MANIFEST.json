@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "22a0071fedd89958c881e75428f29c30ee1ce9bc",
-  "built_at": "2026-10-12T04:50:38.328Z",
+  "source_commit": "8cacc76574f718904a8b758e783e40ad8f2ca170",
+  "built_at": "2026-10-12T11:03:51.637Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -518,7 +518,7 @@
     },
     {
       "path": "docs/operations/project-entry.md",
-      "sha256": "8e0b5f5f6109887fc6800d2df9dc57924f59f7a00601f2e2144f0aea4a524f59"
+      "sha256": "b93fc825f2010ee4027e946aa7df8ce910f5eb9732bdb49f01ce8e874361fe6a"
     },
     {
       "path": "docs/operations/release-checklist.md",
@@ -778,7 +778,7 @@
     },
     {
       "path": "harness/scripts/check-change-unit.ts",
-      "sha256": "0a1967c7ccb82aa0cd59e3971e0c8dfa3ec706255f9c1cadf275ea68a638cee9"
+      "sha256": "f88028aeda14cebd8580aa89f81adb1d83dd0f57c10640e11750b113184cc72e"
     },
     {
       "path": "harness/scripts/check-change.ts",
@@ -902,7 +902,7 @@
     },
     {
       "path": "harness/scripts/goal-mode-entry.ts",
-      "sha256": "c4bec20f7c0d23cae49866ac3307870eee04aec60d6aefc93155cce7bf34175f"
+      "sha256": "8737c16d4713ee0b175eff67d26a4e4289885b67ddee66b8bbb657f78278c1a3"
     },
     {
       "path": "harness/scripts/goal-monitor.ts",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "5fd33eaad66165e785411dbf9c8df6c8d37d7a1d1fe115bd64d39417ba89ec64"
+      "sha256": "9283c746a7c588be9e8322983935eda6ccfeac017751770ed1d9f5da2f614f6d"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -1218,7 +1218,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-design-preparation.ts",
-      "sha256": "924bcb3fe189d7f2a96f677b60455c0f505c2ab6bd2cae8b0a19c31f3ee0ab55"
+      "sha256": "dc46f912ca102038cf8b9636dff3c805be132b35171902f9ddbad20688e51fc4"
     },
     {
       "path": "harness/scripts/utils/change-unit-evolution-seam.ts",
@@ -1433,6 +1433,10 @@
       "sha256": "845cc04f5eba78cc6d52fa05684d8795cfc2e5d22bd4a77c5234c423a9344a62"
     },
     {
+      "path": "harness/scripts/utils/design-delivery-entry.ts",
+      "sha256": "a941b65d9d8acc5b8a2a4ee87cc141272d215c0813f7de0f4c5edba0ab00379b"
+    },
+    {
       "path": "harness/scripts/utils/design-repair-unattended.ts",
       "sha256": "e0a2606196b31e268ca87b99da817016a4d8202678c5e1186492a9a056f3c601"
     },
@@ -1534,7 +1538,7 @@
     },
     {
       "path": "harness/scripts/utils/feature-track.ts",
-      "sha256": "3871cfe4b82d45159b44b58dcc0efb4aafbeaf0dbe9a3b7058c77c5efc9c7e28"
+      "sha256": "64b3dde1219d5380acab7194fe5f5508c3b95b022436a8cc7d4ec18ea6a6e8b6"
     },
     {
       "path": "harness/scripts/utils/fidelity-lock-shared.ts",
@@ -4542,7 +4546,7 @@
     },
     {
       "path": "skills/project/change-unit-progression/SKILL.md",
-      "sha256": "e944cef2b4ec3db66239f936559faf63470669069bdfb40be9784f3782b75dd8"
+      "sha256": "2b456e7c2fcd76c1c4accc3c267215e2a3310c20d6a19538395fc07bc874d094"
     },
     {
       "path": "skills/project/code-graph/SKILL.md",
@@ -4558,7 +4562,7 @@
     },
     {
       "path": "skills/project/component-design/SKILL.md",
-      "sha256": "873e1050f1d150b13ee0f48f65b40eae3b34aadc3e9758e44babb16c43108cda"
+      "sha256": "3d68baab7dfba3484f1fb6af16400c215be4f837b71a2945b8ca79658e8a537e"
     },
     {
       "path": "skills/project/conventions-bootstrap/SKILL.md",
@@ -4654,7 +4658,7 @@
     },
     {
       "path": "skills/project/goal-mode/SKILL.md",
-      "sha256": "5d361cedc83c28e37076a63df07bf28e00efadcc7d489b1c89149ae3d1ebf678"
+      "sha256": "7925c947d0e9f37fa402ec6e5dc11f54ab442d385316c69ef3779c284e812c04"
     },
     {
       "path": "skills/reference/agent-behavioral-principles.md",
@@ -4714,7 +4718,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "23b3c37de48a152afba5bffff14accfb8b01aacda2adb0f60fcf68616422d20a"
+      "sha256": "4449f143af3d8e122e22da10b5dd7cf644973e26f56aa13cfd3de6299e9f9e51"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
@@ -4922,7 +4926,7 @@
     },
     {
       "path": "templates/AGENTS.md.template",
-      "sha256": "6a4c4afe2440e6077599b181e3b50c29b1c1fa482f10f49a14a181d1066283db"
+      "sha256": "6f0a6186edcdcfe6b714cd258c41eacaae07c210e95841815c4b03cb796e9464"
     },
     {
       "path": "templates/framework.config.template.json",
