@@ -64,6 +64,7 @@
         "adapter": { "type": "string", "minLength": 1 },
         "default_profile": { "type": "string", "minLength": 1 },
         "use_cwd": { "type": "boolean" },
+        "model_in_argv": { "type": "boolean" },
         "env": { "$ref": "#/$defs/env" },
         "profiles": {
           "type": "object",

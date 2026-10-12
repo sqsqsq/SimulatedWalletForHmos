@@ -1,12 +1,5 @@
 # Unified Agent CLI Runtime
 
-> **来源**：本目录来自 `AIDefectHelpler` 仓库的 `tools/cli`，随本仓交付以避免跨项目路径依赖。
-> **与上游的关系**：**两边已分叉，不能整目录覆盖同步**。已知分叉点：`config/clis.json` 的 profile
-> 定义（本仓 Cursor Agent 用 `readonly`/`workspace_write`，上游用 `plan`/`build`）、`registry.py`
-> （上游多了 Windows npm `.CMD`/`.BAT` 包装器解析）、`runner.py` 与 `process_control.py` 的注释与实现。
-> 要取上游改动请**逐文件比对后合入**；算法层与 provider 适配仍建议回上游维护。
-> **使用方**：`test/scripts/run_case.py` 通过 `from tools.cli import CliClient, CliRunRequest` 调用。
-
 `tools/cli` provides one provider-neutral, replayable interface for
 invoking agent CLIs. It does not import business runners.
 
@@ -18,39 +11,45 @@ The central registry is `config/clis.json`. It currently declares:
 - `opencode`
 - `claude`
 - `codex`
+- `dsh` (DeepSeek Harness headless CLI)
 
 Business tools select only a registry name and model. They never pass raw CLI
-arguments or provider profile names. Each registry entry maps the common
-default behavior to the concrete CLI permissions and flags it requires.
+arguments. Each registry entry maps the common default behavior to the concrete
+CLI permissions and flags it requires.
 
-### Windows：用 CLI 的原生可执行文件
+## Permission profiles
 
-prompt 作为一个参数原样交给 CLI，进程以 `shell=False` 直接启动。npm 在 PATH 上装的 `opencode.cmd`、`codex.cmd`
-是批处理包装，Windows 会经 cmd.exe 转交参数：第一个换行之后的内容丢失，`%`、`&` 被改写。所以注册解析到
-`.cmd`/`.bat` 时在启动前报配置错误。
+Every CLI exposes the same two profile names, so callers never have to learn
+provider-specific vocabulary:
 
-本机二选一（路径含用户名，不提交）：
+| Profile | Meaning | How each provider implements it |
+|---|---|---|
+| `plan` | Read and reason only — no file writes, no command execution | `claude --permission-mode plan` / `agent --mode plan` / `codex --sandbox read-only` / `opencode --agent plan` / `dsh --profile headless` (sandbox preset lives in the DSH profile) |
+| `build` | May write the workspace and run commands | `claude --dangerously-skip-permissions` (capped at 5 USD) / `agent --force --trust` / `codex --yolo` / `opencode --auto --agent build` / `dsh --profile headless` (sandbox preset lives in the DSH profile) |
 
-- 把包内原生程序所在目录排到 PATH 中包装器之前，例如 `%APPDATA%\npm\node_modules\opencode-ai\bin`（内有 `opencode.exe`）；
-- 直接调用 API 时，也可复制一份注册文件放在 `output/` 下，把 `executable` 写成原生程序的绝对路径，经 `registry_path` 传入。
-  Case 驱动用默认注册，只认 PATH。
+`codex` additionally offers `plan_schema` (`plan` plus `--output-schema`). It has
+no `resume_args`, so it cannot be used where session continuation is required.
 
-### opencode：模型上限随启动交给它
+### `dsh` notes
 
-opencode 1.18.32（从已安装程序核过）在 `compaction.auto` 未关闭时，已用 token 达到可用窗口就自动压缩历史：
+- Both `plan` and `build` currently invoke the shipped `headless` profile; the
+  sandbox preset and model are DSH profile configuration (`agent-default-model`,
+  `dsh-permission-presets`), not argv. Point the entry at dedicated DSH
+  profiles (for example `batch-plan` / `batch-build` created with
+  `dsh --from-default-profile headless <name>` plus a patch layer) to split the
+  presets; custom OpenAI-compatible model routes are declared in the same
+  patch and resolved by route key from the DSH credential store.
+- The request `model` is recorded as metadata; headless has no `--model` flag
+  (`model_in_argv: false` in the registry entry opts out of the `{model}`
+  argv-placeholder requirement — the model selection is DSH profile config).
+- Resume adopts the persisted DSH session (`--session-id`); session state lives
+  under the DSH home directory, while this runtime keeps per-run artifacts only.
+- `dsh` failures are classified from the structured `turn_end` error payload
+  (for example `code: MISSING_CREDENTIAL` → `auth_required`).
 
-- 模型声明了 `limit.input`：可用窗口 = `limit.input − reserved`，`reserved` 取配置的 `compaction.reserved`，没配时取
-  `min(20000, 输出上限)`；
-- 没声明：可用窗口 = `limit.context − 输出上限`；
-- 输出上限 = `min(limit.output, 32000)`，32000 可被环境变量 `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` 改。
-
-服务按输入长度拒收的请求不重试。可用窗口高于服务的拒收线时，会话在两条线之间会直接被拒，不会先压缩。
-
-上限的生效位置是 Case 驱动的配置组（`test/config/test.yaml` 的 `cli.configurations[].limit`）：驱动启动 opencode 时，
-经 `OPENCODE_CONFIG_CONTENT` 把这个模型的 `context`、`input`、`output` 交给它，按层合并后压过用户配置里的同一项。
-只给观察到服务限额的那一组声明，值和依据写在那一项的注释里。
-
-未核：服务报错 `[1, 1000000]` 的计量单位；其他提供商的限额。现有取值按 token 假定，换服务或模型要先取得它的限额依据。
+> Renamed 2026-08-10 (was `readonly` / `workspace_write` / `full_access` / `build`).
+> The old names described each provider's own vocabulary rather than the shared
+> contract; callers had to know which name meant "safe" per provider.
 
 ## Python API
 
@@ -91,6 +90,22 @@ continued = client.resume(
 
 `resume` resumes an agent conversation; it does not revive an exited operating
 system process.
+
+### Detached resume
+
+`start()` also accepts a request carrying `session_id`, which continues the same
+agent conversation without blocking the caller:
+
+```python
+handle = client.start(
+    CliRunRequest(..., session_id=previous.session_id, profile=profile),
+    parent_run_id=previous.run_id,
+)
+```
+
+The new run links to `parent_run_id`, reports the same `session_id`, and is
+observed through the usual `poll`/`status` cursor. Callers that must stay
+responsive while a model works use this instead of the blocking `resume()`.
 
 ## Caller-owned runtime state
 
@@ -144,6 +159,5 @@ unmanaged process termination remain real failures.
 
 This runtime owns provider configuration, command construction, process
 lifecycle, session capture, normalized streaming, and durable run state.
-Business-specific interpretation remains with callers — case scheduling, phase
-gating, scoring, and any harness-specific telemetry rules do not belong in this
-package.
+Business-specific interpretation remains with callers. In particular, Debate
+schema decisions and DAG phase/telemetry rules do not belong in this package.

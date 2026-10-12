@@ -10,6 +10,7 @@ import pytest
 from tools.cli.process_control import (
     WindowsProcessJob,
     force_kill_tree,
+    process_identity,
     popen_group_options,
 )
 
@@ -39,7 +40,9 @@ def test_windows_job_force_kills_cli_process_tree() -> None:
     job = WindowsProcessJob.create(uuid.uuid4().hex, proc)
     try:
         time.sleep(0.2)
-        assert force_kill_tree(proc.pid, job.name) is True
+        assert force_kill_tree(
+            proc.pid, job.name, identity=process_identity(proc.pid)
+        ) is True
         proc.wait(timeout=10)
     finally:
         job.close()

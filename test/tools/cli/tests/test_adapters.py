@@ -52,6 +52,37 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual("Python 3", tool.tool_output)
         self.assertIn("usage", [event.type for event in events])
 
+    def test_dsh(self) -> None:
+        events = self.parse("dsh")
+        self.assertIn("ses-dsh", [event.session_id for event in events])
+        self.assertIn("dsh thought", [event.content for event in events])
+        self.assertIn("SMOKE-OK", [event.content for event in events])
+        usage = next(event for event in events if event.type == "usage")
+        self.assertEqual(7789, usage.usage["input"])
+        self.assertEqual(44, usage.usage["output"])
+        self.assertEqual(8729, usage.usage["context_total"])
+        self.assertEqual(896, usage.usage["cache_read"])
+
+    def test_dsh_error_turn(self) -> None:
+        adapter = get_adapter("dsh")
+        events = adapter.parse(
+            {
+                "type": "status",
+                "phase": "turn_end",
+                "turn": 1,
+                "reason": {
+                    "kind": "error",
+                    "error": {
+                        "message": "no API key for provider route \"deepseek-official\"",
+                        "code": "MISSING_CREDENTIAL",
+                    },
+                },
+            }
+        )
+        self.assertEqual(1, len(events))
+        self.assertEqual("error", events[0].type)
+        self.assertIn("no API key", events[0].content)
+
 
 if __name__ == "__main__":
     unittest.main()

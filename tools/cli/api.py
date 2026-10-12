@@ -21,25 +21,43 @@ from .models import (
     RunStatus,
     TERMINAL_STATUSES,
 )
-from .process_control import force_kill_tree, pid_alive, popen_group_options
+from .process_control import (
+    WindowsProcessJob,
+    boot_id,
+    same_boot,
+    force_kill_tree,
+    pid_alive,
+    popen_group_options,
+    process_identity,
+)
 from .registry import DEFAULT_CONFIG_PATH, CliRegistry
 from .run_store import RunStore, now_iso
 from .runner import CliRunner
 
 
-# 仓库根：tools/cli/api.py → parents[2]。start() 给子进程传的 cwd 用的是同一个值，
-# 挪动本文件的层级时两处一起改，否则 worker 起不来且只表现为超时。
-REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKER_MODULE = "tools.cli.worker"
-DEFAULT_RUNTIME_ROOT = REPO_ROOT / "output" / "cli"
+DEFAULT_RUNTIME_ROOT = Path(__file__).resolve().parents[2] / "output" / "cli"
 PRIVATE_STATE_FIELDS = {
     "runner_pid",
     "child_pid",
+    "worker_pid",
     "process_job",
+    "worker_job",
+    "child_identity",
+    "worker_identity",
+    "boot_id",
     "command",
     "effective_cwd",
     "profile",
 }
+
+
+def _is_stale_record(state: dict[str, Any]) -> bool:
+    """记录是否来自上一次系统启动——那样的 PID 一定已被复用给别人。
+
+    缺 ``boot_id`` 的旧记录同样判 stale：无从证明其新鲜度，按 fail-closed 处理。
+    """
+    recorded = str(state.get("boot_id") or "")
+    return not same_boot(recorded)
 
 
 class CliClient:
@@ -53,6 +71,10 @@ class CliClient:
         self.registry_path = self.registry.path
         self.runtime_root = Path(runtime_root).resolve()
         self._workers: dict[str, subprocess.Popen[Any]] = {}
+        # detached worker 的 Job Object 所有权凭证（Windows）。不设 KILL_ON_CLOSE：
+        # start() 承诺 worker 活过调用方，连坐会打碎这个语义。句柄在此保活，
+        # 使 worker_job 成为可按名终止的真实凭证，而不是只读不写的幽灵字段。
+        self._worker_jobs: dict[str, WindowsProcessJob] = {}
 
     def run(
         self,
@@ -89,7 +111,7 @@ class CliClient:
         command = [
             sys.executable,
             "-m",
-            WORKER_MODULE,
+            "tools.cli.worker",
             "--registry",
             str(self.registry_path),
             "--runtime-root",
@@ -99,7 +121,7 @@ class CliClient:
         ]
         handle = store.worker_log_path.open("w", encoding="utf-8")
         kwargs: dict[str, Any] = {
-            "cwd": str(REPO_ROOT),
+            "cwd": str(Path(__file__).resolve().parents[2]),
             "stdin": subprocess.DEVNULL,
             "stdout": handle,
             "stderr": subprocess.STDOUT,
@@ -122,6 +144,24 @@ class CliClient:
             raise
         finally:
             handle.close()
+        # detached worker 的 Job Object：force_kill_tree 在 Windows 上要求持有 job，
+        # 否则任何回收请求都会被 fail-closed 拒绝，worker 只能留成孤儿。
+        worker_job = ""
+        if sys.platform == "win32":
+            try:
+                job = WindowsProcessJob.create(f"worker-{run_id}", proc, kill_on_close=False)
+            except OSError:
+                job = None  # 拿不到 job 就如实留空，让 stop() 按 fail-closed 拒绝
+            if job is not None:
+                self._worker_jobs[run_id] = job
+                worker_job = job.name
+        # 落盘 worker 的身份证明：后续 stop() 必须凭它核对，PID 复用即拒绝终止。
+        store.update(
+            worker_pid=proc.pid,
+            worker_identity=process_identity(proc.pid) or {},
+            worker_job=worker_job,
+            boot_id=boot_id(),
+        )
         self._workers[run_id] = proc
         return RunHandle(run_id=run_id, status=RunStatus.STARTING.value)
 
@@ -174,8 +214,28 @@ class CliClient:
         if state.get("status") in TERMINAL_STATUSES:
             self._reap_worker(run_id)
             return RunResult.from_state(state, store.run_dir)
+
+        # 跨重启的记录里 PID 已无意义：同号进程必然是别人。判 stale 直接短路，
+        # 不做任何终止——这是切断"陈旧 PID → 误杀 → 更多陈旧 PID"循环的关键。
+        if _is_stale_record(state):
+            state = store.update(
+                status=RunStatus.STOP_FAILED.value,
+                finished_at=now_iso(),
+                failure_kind=FailureKind.STOP_FAILED.value,
+                error="stale run record from a previous boot; refused to signal any pid",
+                child_pid=0,
+                worker_pid=0,
+                process_job="",
+            )
+            self._reap_worker(run_id)
+            return RunResult.from_state(state, store.run_dir)
+
         store.request_stop(force)
         grace = float(state.get("stop_grace_sec", 0) or 0)
+        if grace <= 0:
+            grace = float(
+                ((state.get("request") or {}).get("timeout") or {}).get("stop_grace_sec", 0) or 0
+            )
         deadline = time.monotonic() + max(5.0, grace + 5.0)
         while time.monotonic() < deadline:
             state = store.state()
@@ -184,18 +244,26 @@ class CliClient:
                 return RunResult.from_state(state, store.run_dir)
             time.sleep(0.05)
 
-        # Recovery path for a crashed or unresponsive worker.
+        # 恢复路径：worker 崩溃或无响应。只终止**能证明归属**的进程。
+        # `runner_pid` 不在此列——前台运行时它就是调用方自己，从来不是可终止目标。
         child_pid = int(state.get("child_pid", 0) or 0)
-        runner_pid = int(state.get("runner_pid", 0) or 0)
+        worker_pid = int(state.get("worker_pid", 0) or 0)
         process_job = str(state.get("process_job", "") or "")
+        refusals: list[str] = []
         forced = force
-        for pid, job_name in ((child_pid, process_job), (runner_pid, "")):
-            if pid and pid != os.getpid() and pid_alive(pid):
-                force_kill_tree(pid, job_name)
+        targets = (
+            (child_pid, process_job, state.get("child_identity")),
+            (worker_pid, str(state.get("worker_job", "") or ""), state.get("worker_identity")),
+        )
+        for pid, job_name, identity in targets:
+            if not pid or not pid_alive(pid):
+                continue
+            if force_kill_tree(pid, job_name, identity=identity, reason=refusals):
                 forced = True
+
         child_alive = bool(child_pid and pid_alive(child_pid))
-        runner_alive = bool(runner_pid and runner_pid != os.getpid() and pid_alive(runner_pid))
-        stopped = not child_alive and not runner_alive
+        worker_alive = bool(worker_pid and pid_alive(worker_pid))
+        stopped = not child_alive and not worker_alive
         state = store.update(
             status=(RunStatus.STOPPED if stopped else RunStatus.STOP_FAILED).value,
             finished_at=now_iso(),
@@ -203,8 +271,9 @@ class CliClient:
             failure_kind=(
                 FailureKind.STOPPED if stopped else FailureKind.STOP_FAILED
             ).value,
+            error="; ".join(refusals) if refusals and not stopped else state.get("error", ""),
             child_pid=0 if stopped else child_pid,
-            runner_pid=0 if stopped else runner_pid,
+            worker_pid=0 if stopped else worker_pid,
             process_job="" if stopped else process_job,
         )
         self._reap_worker(run_id)
@@ -236,11 +305,59 @@ class CliClient:
         }
 
     def _reap_worker(self, run_id: str) -> None:
+        """回收已进入终态的 run 的 detached worker。
+
+        run 已终态时 worker 没有任何存在理由；旧实现在 ``wait(timeout=1)`` 超时后直接
+        ``return``，既不终止也不移出登记表——每次 start() 都可能留下一个常驻进程。
+        一次全量测试跑下来能累积上百个，最终撑破宿主的资源信封（20260813 事故根因）。
+        """
         proc = self._workers.get(run_id)
+        job = self._worker_jobs.get(run_id)
         if proc is None:
+            self._release_worker_job(run_id)
             return
         try:
             proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
-            return
+            # 终态后仍不退出：凭 identity + job 精确回收，证明不了归属就如实留孤儿。
+            state = self._store(run_id).state()
+            force_kill_tree(
+                proc.pid,
+                job.name if job else str(state.get("worker_job", "") or ""),
+                identity=state.get("worker_identity"),
+            )
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                return  # 仍在：保留登记，下次 poll/stop 再试，不静默丢弃
         self._workers.pop(run_id, None)
+        self._release_worker_job(run_id)
+
+    def _release_worker_job(self, run_id: str) -> None:
+        job = self._worker_jobs.pop(run_id, None)
+        if job is not None:
+            job.close()
+
+    def close(self) -> None:
+        """停止并回收本客户端起过的全部 detached run。
+
+        测试 fixture 与长驻编排器必须在收尾时调用：`shutil.rmtree` 只删工作目录，
+        目录没了进程还在。见 test/tools/cli/AGENTS.md 的进程终止授权模型。
+        """
+        for run_id in list(self._workers):
+            try:
+                state = self._store(run_id).state()
+                if state.get("status") not in TERMINAL_STATUSES:
+                    self.stop(run_id, force=True)
+                else:
+                    self._reap_worker(run_id)
+            except Exception:  # noqa: BLE001 - 收尾不得因单个 run 失败而中断
+                self._reap_worker(run_id)
+        for run_id in list(self._worker_jobs):
+            self._release_worker_job(run_id)
+
+    def __enter__(self) -> "CliClient":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()

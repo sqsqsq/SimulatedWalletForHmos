@@ -16,57 +16,27 @@
       "description": "Cursor Agent CLI",
       "executable": "agent",
       "adapter": "cursor_agent",
-      "default_profile": "workspace_write",
+      "default_profile": "build",
       "use_cwd": true,
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
-            "--mode",
-            "plan",
-            "-p",
-            "{prompt}",
-            "--trust",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json"
+            "--mode", "plan", "-p", "{prompt}", "--trust",
+            "--model", "{model}", "--output-format", "stream-json"
           ],
           "resume_args": [
-            "--mode",
-            "plan",
-            "-p",
-            "--resume",
-            "{session_id}",
-            "{prompt}",
-            "--trust",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json"
+            "--mode", "plan", "-p", "--resume", "{session_id}", "{prompt}",
+            "--trust", "--model", "{model}", "--output-format", "stream-json"
           ]
         },
-        "workspace_write": {
+        "build": {
           "args": [
-            "-p",
-            "{prompt}",
-            "--force",
-            "--trust",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json"
+            "-p", "{prompt}", "--force", "--trust",
+            "--model", "{model}", "--output-format", "stream-json"
           ],
           "resume_args": [
-            "-p",
-            "--resume",
-            "{session_id}",
-            "{prompt}",
-            "--force",
-            "--trust",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json"
+            "-p", "--resume", "{session_id}", "{prompt}", "--force", "--trust",
+            "--model", "{model}", "--output-format", "stream-json"
           ]
         }
       }
@@ -81,62 +51,24 @@
         "OC_AUTO": "1"
       },
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
-            "run",
-            "--dir",
-            "{cwd}",
-            "--agent",
-            "plan",
-            "--model",
-            "{model}",
-            "--format",
-            "json",
-            "{prompt}"
+            "run", "{prompt}", "--dir", "{cwd}", "--agent", "plan",
+            "--model", "{model}", "--format", "json"
           ],
           "resume_args": [
-            "run",
-            "-s",
-            "{session_id}",
-            "--dir",
-            "{cwd}",
-            "--agent",
-            "plan",
-            "--model",
-            "{model}",
-            "--format",
-            "json",
-            "{prompt}"
+            "run", "-s", "{session_id}", "{prompt}", "--dir", "{cwd}",
+            "--agent", "plan", "--model", "{model}", "--format", "json"
           ]
         },
         "build": {
           "args": [
-            "run",
-            "--dir",
-            "{cwd}",
-            "--auto",
-            "--agent",
-            "build",
-            "--model",
-            "{model}",
-            "--format",
-            "json",
-            "{prompt}"
+            "run", "{prompt}", "--dir", "{cwd}", "--auto", "--agent", "build",
+            "--model", "{model}", "--format", "json"
           ],
           "resume_args": [
-            "run",
-            "-s",
-            "{session_id}",
-            "--dir",
-            "{cwd}",
-            "--auto",
-            "--agent",
-            "build",
-            "--model",
-            "{model}",
-            "--format",
-            "json",
-            "{prompt}"
+            "run", "-s", "{session_id}", "{prompt}", "--dir", "{cwd}",
+            "--auto", "--agent", "build", "--model", "{model}", "--format", "json"
           ]
         }
       }
@@ -145,61 +77,30 @@
       "description": "Claude Code CLI",
       "executable": "claude",
       "adapter": "claude",
-      "default_profile": "workspace_write",
+      "default_profile": "build",
       "use_cwd": true,
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
-            "--print",
-            "{prompt}",
-            "--permission-mode",
-            "plan",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json",
-            "--verbose"
+            "--print", "{prompt}", "--permission-mode", "plan",
+            "--model", "{model}", "--output-format", "stream-json", "--verbose"
           ],
           "resume_args": [
-            "--print",
-            "--resume",
-            "{session_id}",
-            "{prompt}",
-            "--permission-mode",
-            "plan",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json",
-            "--verbose"
+            "--print", "--resume", "{session_id}", "{prompt}",
+            "--permission-mode", "plan", "--model", "{model}",
+            "--output-format", "stream-json", "--verbose"
           ]
         },
-        "workspace_write": {
+        "build": {
           "args": [
-            "--print",
-            "{prompt}",
-            "--dangerously-skip-permissions",
-            "--max-budget-usd",
-            "5",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json",
-            "--verbose"
+            "--print", "{prompt}", "--dangerously-skip-permissions",
+            "--max-budget-usd", "5", "--model", "{model}",
+            "--output-format", "stream-json", "--verbose"
           ],
           "resume_args": [
-            "--print",
-            "--resume",
-            "{session_id}",
-            "{prompt}",
-            "--dangerously-skip-permissions",
-            "--max-budget-usd",
-            "5",
-            "--model",
-            "{model}",
-            "--output-format",
-            "stream-json",
-            "--verbose"
+            "--print", "--resume", "{session_id}", "{prompt}",
+            "--dangerously-skip-permissions", "--max-budget-usd", "5",
+            "--model", "{model}", "--output-format", "stream-json", "--verbose"
           ]
         }
       }
@@ -208,73 +109,57 @@
       "description": "OpenAI Codex CLI",
       "executable": "codex",
       "adapter": "codex",
-      "default_profile": "full_access",
+      "default_profile": "build",
       "use_cwd": true,
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
-            "--ask-for-approval",
-            "never",
-            "exec",
-            "--sandbox",
-            "read-only",
-            "--json",
-            "--skip-git-repo-check",
-            "-m",
-            "{model}",
-            "{prompt}"
+            "--ask-for-approval", "never", "exec", "--sandbox", "read-only",
+            "--json", "--skip-git-repo-check", "-m", "{model}", "{prompt}"
           ],
           "resume_args": [
-            "--ask-for-approval",
-            "never",
-            "--sandbox",
-            "read-only",
-            "exec",
-            "resume",
-            "{session_id}",
-            "--json",
-            "--skip-git-repo-check",
-            "-m",
-            "{model}",
-            "{prompt}"
+            "--ask-for-approval", "never", "--sandbox", "read-only",
+            "exec", "resume", "{session_id}", "--json", "--skip-git-repo-check",
+            "-m", "{model}", "{prompt}"
           ]
         },
-        "readonly_schema": {
+        "plan_schema": {
           "args": [
-            "--ask-for-approval",
-            "never",
-            "exec",
-            "--sandbox",
-            "read-only",
-            "--json",
-            "--output-schema",
-            "{schema}",
-            "--skip-git-repo-check",
-            "-m",
-            "{model}",
-            "{prompt}"
+            "--ask-for-approval", "never", "exec", "--sandbox", "read-only",
+            "--json", "--output-schema", "{schema}", "--skip-git-repo-check",
+            "-m", "{model}", "{prompt}"
           ]
         },
-        "full_access": {
+        "build": {
           "args": [
-            "exec",
-            "--json",
-            "--yolo",
-            "--skip-git-repo-check",
-            "-m",
-            "{model}",
-            "{prompt}"
+            "exec", "--json", "--yolo", "--skip-git-repo-check",
+            "-m", "{model}", "{prompt}"
           ],
           "resume_args": [
-            "exec",
-            "resume",
-            "{session_id}",
-            "--json",
-            "--yolo",
-            "--skip-git-repo-check",
-            "-m",
-            "{model}",
-            "{prompt}"
+            "exec", "resume", "{session_id}", "--json", "--yolo",
+            "--skip-git-repo-check", "-m", "{model}", "{prompt}"
+          ]
+        }
+      }
+    },
+    "dsh": {
+      "description": "DeepSeek Harness headless CLI",
+      "executable": "dsh",
+      "adapter": "dsh",
+      "default_profile": "build",
+      "use_cwd": false,
+      "model_in_argv": false,
+      "profiles": {
+        "plan": {
+          "args": ["--profile", "headless", "--json", "{prompt}"],
+          "resume_args": [
+            "--profile", "headless", "--json", "--session-id", "{session_id}", "{prompt}"
+          ]
+        },
+        "build": {
+          "args": ["--profile", "headless", "--json", "{prompt}"],
+          "resume_args": [
+            "--profile", "headless", "--json", "--session-id", "{session_id}", "{prompt}"
           ]
         }
       }

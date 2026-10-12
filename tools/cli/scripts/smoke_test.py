@@ -48,7 +48,7 @@ def main() -> int:
     if result.status == "succeeded":
         verdict = "PASS"
         exit_code = 0
-    elif args.cli in {"agent", "claude"} and result.failure_kind in NON_FAILURE_ENVIRONMENT_KINDS:
+    elif args.cli in {"agent", "claude", "dsh"} and result.failure_kind in NON_FAILURE_ENVIRONMENT_KINDS:
         verdict = "SKIP_ENVIRONMENT"
         exit_code = 0
     else:

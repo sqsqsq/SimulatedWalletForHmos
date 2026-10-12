@@ -13,7 +13,6 @@ from unittest.mock import patch
 from tools.cli import CliClient, CliRunRequest
 from tools.cli.models import TERMINAL_STATUSES
 from tools.cli.run_store import RunStore
-from tools.cli.runner import classify_failure
 
 
 HERE = Path(__file__).resolve().parent
@@ -63,23 +62,12 @@ def registry_value() -> dict:
 
 
 class LifecycleTests(unittest.TestCase):
-    def test_provider_content_inspection_is_classified_without_claiming_all_400s(self) -> None:
-        rejected = (
-            '"<400> InternalError.Algo.DataInspectionFailed: '
-            'Output data may contain inappropriate content."'
-        )
-        self.assertEqual("content_policy_rejected", classify_failure(rejected).value)
-        self.assertEqual("command_failed", classify_failure("400 bad request: invalid field").value)
-
-    def test_angled_401_is_auth_required(self) -> None:
-        self.assertEqual("auth_required", classify_failure("<401> Unauthorized").value)
-
     def test_runtime_root_is_caller_owned(self) -> None:
         with self.assertRaises(TypeError):
             CliClient()  # type: ignore[call-arg]
 
     def setUp(self) -> None:
-        root = Path(__file__).resolve().parents[3] / "output" / "cli-tests" / uuid.uuid4().hex
+        root = Path(__file__).resolve().parents[4] / "output" / "cli-tests" / uuid.uuid4().hex
         root.mkdir(parents=True)
         self.root = root
         self.registry_path = root / "clis.json"
@@ -91,6 +79,9 @@ class LifecycleTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        # 先回收进程，再删目录。**只 rmtree 不算清理**：目录没了，detached worker 还在。
+        # 见 test/tools/cli/AGENTS.md 的进程终止授权模型与 reports/20260813-host-kill-safety.md 的二次复盘。
+        self.client.close()
         shutil.rmtree(self.root, ignore_errors=True)
         try:
             self.root.parent.rmdir()
@@ -134,18 +125,47 @@ class LifecycleTests(unittest.TestCase):
         state = self.client.status(resumed.run_id)
         self.assertEqual(result.run_id, state["parent_run_id"])
 
-    def test_prompt_reaches_the_cli_verbatim(self) -> None:
-        prompt = '/story update AR90006\n第一行：中文 E:/a/b c:\\d\n\n第三行 "双引号" \'单引号\' 100% %PATH% a & b | c ^ <d>\n末行'
-        result = self.client.run(self.request(prompt=prompt))
-        self.assertEqual("succeeded", result.status)
-        self.assertIn(f"prompt={prompt};model=fake-model", result.final_text or "")
+    def test_detached_resume_keeps_session_and_parent_link(self) -> None:
+        """Detached resume: start() with session_id continues the same agent session.
 
-        resumed = self.client.resume(
-            self.request(session_id=result.session_id, prompt=prompt),
-            parent_run_id=result.run_id,
+        Business tools that must stay responsive (no blocking call) rely on this path;
+        it is the asynchronous counterpart of resume().
+        """
+        first = self.client.start(self.request())
+        first_state = self.wait_terminal(first.run_id)
+        self.assertEqual("succeeded", first_state["status"])
+        session_id = first_state["session_id"]
+        self.assertTrue(session_id)
+
+        second = self.client.start(
+            self.request(session_id=session_id, prompt="continue"),
+            parent_run_id=first.run_id,
         )
-        self.assertEqual("succeeded", resumed.status)
-        self.assertIn(f"prompt={prompt};model=fake-model", resumed.final_text or "")
+        second_state = self.wait_terminal(second.run_id)
+        self.assertEqual("succeeded", second_state["status"])
+        self.assertEqual(session_id, second_state["session_id"])
+        self.assertEqual(first.run_id, second_state["parent_run_id"])
+        self.assertNotEqual(first.run_id, second.run_id)
+
+    def test_detached_resume_across_profiles_keeps_session(self) -> None:
+        """A session started under one profile can continue under a different profile.
+
+        Callers that change permission level mid-conversation rely on this: the session
+        belongs to the agent, not to the profile it was started with.
+        """
+        first = self.client.start(self.request(profile="normal"))
+        first_state = self.wait_terminal(first.run_id)
+        session_id = first_state["session_id"]
+        self.assertTrue(session_id)
+
+        second = self.client.start(
+            self.request(profile="burst", session_id=session_id, prompt="continue"),
+            parent_run_id=first.run_id,
+        )
+        second_state = self.wait_terminal(second.run_id, timeout=20)
+        self.assertEqual("succeeded", second_state["status"])
+        self.assertEqual(session_id, second_state["session_id"])
+        self.assertEqual(first.run_id, second_state["parent_run_id"])
 
     def test_start_poll_status(self) -> None:
         handle = self.client.start(self.request())
