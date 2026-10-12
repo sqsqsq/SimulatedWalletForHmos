@@ -44,11 +44,12 @@ cli:
       name: opencode
       model: bailian/deepseek-v4-flash-0731
       profile: build
-      # 启动时交给 opencode 的上限（压过用户配置）。opencode 1.18.32 在已用 token ≥ input − reserved
-      # （reserved 默认 min(20000, 输出上限)，compaction.auto 未关）时自动压缩，这里即 980000；没声明 input 时是
-      # context − min(output, 32000) = 1016576。这个服务 2026-10-11 拒收时报 [1, 1000000]：仅当它也按 token 计量时，
-      # 两条线之间才有一段不压缩就被拒的区间；实际拒收原因与安全余量仍待同口径证据。值只对本配置这一个服务与模型取。
-      limit: {context: 1048576, input: 1000000, output: 131072}
+      # 启动时交给 opencode 的上限（压过用户配置）。opencode 1.18.32 在上一步总用量 ≥ input − reserved
+      # （reserved 默认 min(20000, 输出上限)，compaction.auto 未关）时自动压缩，这里即 940000。
+      # 这个端点的输入上限是 1000000 token（2026-10-11 拒收报 [1, 1000000]；百炼错误码文档按 messages 总 token 计）。
+      # 10 月同模型 2426 对相邻步骤里，下一步输入比上一步总用量最多多 19935（output/scratch/2.0.4/e01_margin.py），
+      # 940000 留 60000 余量；单次工具结果没有上限，不保证永不超限。值只对本配置这一个服务与模型取。
+      limit: {context: 1048576, input: 960000, output: 131072}
     - id: volcengine-glm-flash
       name: opencode
       model: volcengine/GLM5.3-Flash

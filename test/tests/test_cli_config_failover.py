@@ -71,7 +71,7 @@ class ConfigContractTests(unittest.TestCase):
         """E01：上限写在配置组里随启动交给 opencode，只声明观察过服务限额的那一组；形状不全或给别的 CLI 都拒。"""
         from cli_config_group import load_cli_group  # noqa: PLC0415
         limits = {item["id"]: item.get("limit") for item in multi.CLI_CONFIGURATIONS}
-        self.assertEqual({"bailian-deepseek": {"context": 1048576, "input": 1000000, "output": 131072},
+        self.assertEqual({"bailian-deepseek": {"context": 1048576, "input": 960000, "output": 131072},
                           "volcengine-glm-flash": None, "codex-luna": None}, limits)
         base = {"id": "x", "name": "opencode", "model": "p/m", "profile": "build"}
         for label, item in (("缺 output", {**base, "limit": {"context": 10, "input": 5}}),
