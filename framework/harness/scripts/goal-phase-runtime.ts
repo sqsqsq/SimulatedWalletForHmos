@@ -1766,10 +1766,21 @@ export interface CapabilityAdvisory {
 
 /** Existing snapshots/events are the prior-review source; the diff is context, never a gate filter. */
 export function buildRereviewContext(projectRoot: string, manifest: GoalManifest, events: readonly GoalRunEvent[], frameworkRoot: string): string {
-  if (!events.some(event => event.type === 'phase_verdict' && event.phase === 'review')) return '';
-  const report = path.join(projectRoot, manifest.report_dir, 'phases', 'review', 'harness', 'review-report.md');
-  const prior = fs.existsSync(report) ? fs.readFileSync(report, 'utf-8') : null;
-  const backtrack = [...events].reverse().find(event => event.type === 'phase_backtrack_requested');
+  let report: string | null = path.join(projectRoot, manifest.report_dir, 'phases', 'review', 'harness', 'review-report.md');
+  let priorEvents = events;
+  if (!events.some(event => event.type === 'phase_verdict' && event.phase === 'review') && !fs.existsSync(report)) {
+    if (!manifest.successor_of) return '';
+    try {
+      const predecessor = loadGoalManifestFromRun(projectRoot, manifest.successor_of, {
+        feature: manifest.feature, featuresDir: loadFrameworkConfig(projectRoot).paths.features_dir,
+      });
+      report = path.join(projectRoot, predecessor.report_dir, 'phases', 'review', 'harness', 'review-report.md');
+      priorEvents = loadAuthoritativeEvents(path.join(projectRoot, predecessor.report_dir, 'events.jsonl'));
+    } catch { report = null; priorEvents = []; }
+  }
+  let prior: string | null = null;
+  try { if (report && fs.existsSync(report)) prior = fs.readFileSync(report, 'utf-8'); } catch { /* unreadable prior is disclosed below */ }
+  const backtrack = [...priorEvents].reverse().find(event => event.type === 'phase_backtrack_requested');
   const candidates = (backtrack as { candidates?: unknown } | undefined)?.candidates;
   const baseline = resolveEffectiveDiffBaseline(projectRoot, manifest.feature, manifest.run_id);
   const diff = baseline.available ? diffChangedFiles({ projectRoot, baseRef: baseline.baseSha }) : null;
@@ -1778,7 +1789,7 @@ export function buildRereviewContext(projectRoot: string, manifest: GoalManifest
     'Check whether existing findings were corrected and whether the actual changes introduce direct regressions. Do not restart an unbounded polish audit on a new attempt.',
     'A real defect outside the diff can still block; the file list is context, not an authorization or filtering gate. New blockers need concrete evidence and why the previous review could not reasonably discover them.',
     'Visual disclosure uses the same classification/strictness rules as ordinary review. Refuted or inflated findings require correcting the original report before revalidation; verifier PASS never replaces a negative product verdict.',
-    `Prior report snapshot: ${prior === null ? 'missing; no prior findings are invented' : path.relative(projectRoot, report).replace(/\\/g, '/')}`,
+    `Prior report snapshot: ${prior === null ? 'missing; no prior findings are invented' : path.relative(projectRoot, report!).replace(/\\/g, '/')}`,
     ...(prior === null ? [] : [prior]),
     `Current repair candidates from the latest backtrack: ${Array.isArray(candidates) ? JSON.stringify(candidates) : 'unavailable'}`,
     `Actual changed files against the run baseline (includes working tree): ${diff?.executed && !diff.baseIsFallback ? JSON.stringify(diff.changedFiles) : 'unavailable; do not infer PASS from missing/empty diff'}`,
@@ -9249,7 +9260,7 @@ Goal runner — tool-agnostic multi-phase orchestrator
         const freshSummary = isSummaryFresh(summaryMtimeBefore, summaryMtimeAfter);
 
         // One formatting recovery per original attempt; invoke_start consumes the opportunity even after a crash.
-        if (!dryRun && freshSummary && summary && !invoke.timed_out && (phase === 'review' || phase === 'ut')) {
+        if (!dryRun && freshSummary && summary?.next_action === 'run_verifier_for_repair' && !invoke.timed_out && (phase === 'review' || phase === 'ut')) {
           const repairInvokeId = `${phase}-verifier-format-repair-${visualAttemptId}`;
           const formatEvents = loadAuthoritativeEvents(eventsPath);
           const lastVerdict = formatEvents.map(event => event.type === 'phase_verdict' && event.phase === phase).lastIndexOf(true);
@@ -9260,7 +9271,8 @@ Goal runner — tool-agnostic multi-phase orchestrator
           });
           const requestPath = summary.verifier_request;
           const reportPath = summary.verifier_report;
-          const requestText = requestPath ? fs.readFileSync(path.resolve(projectRoot, validateProjectRelativePath(projectRoot, requestPath, 'verifier request')), 'utf-8') : null;
+          const requestAbs = requestPath ? path.resolve(projectRoot, validateProjectRelativePath(projectRoot, requestPath, 'verifier request')) : null;
+          const requestText = requestAbs && fs.existsSync(requestAbs) ? fs.readFileSync(requestAbs, 'utf-8') : null;
           const request = parseVerifierRequest(requestText);
           const evidence = loadVerifierEvidence(projectRoot, manifest.feature, String(phase), { frameworkRoot });
           const reviewArtifact = phase === 'review' ? resolveFeatureArtifact(projectRoot, manifest.feature, 'review-report.md') : null;

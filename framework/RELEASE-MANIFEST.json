@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "182a2f0b2bde2895dbfbaa0bdc20f4af0a4ce03f",
-  "built_at": "2026-10-13T06:56:34.102Z",
+  "source_commit": "fa2da16e7dfba1545839e7324acc951c42cb296b",
+  "built_at": "2026-10-13T12:51:02.699Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "ee4426a6f95b5df96c46bf101b32be1ff4543a5f3fa0918dd68a52d262bacd2a"
+      "sha256": "bd022cfbf8f1d91799ce960bc9f75322a070072e8c275cbcddb2180b2f53e438"
     },
     {
       "path": "README.md",
@@ -422,7 +422,7 @@
     },
     {
       "path": "docs/concepts/blueprint-design-inputs.md",
-      "sha256": "7670ce13cb917de325b7ed2d74169e15952e16de7e75d44ae069285d8d04cfc1"
+      "sha256": "c214ab801ccbe4143af9da514ae1605f13302608926664b102dee1396fac4988"
     },
     {
       "path": "docs/concepts/capability-degradation.md",
@@ -498,7 +498,7 @@
     },
     {
       "path": "docs/operations/component-design-host-adaptation.md",
-      "sha256": "f26e3a4534b62939cd0ceb47f2c7f172d77df9f4f904f3e8f861a9f6b866b6d0"
+      "sha256": "1a2547c94cedc5eb29a091f9885dfe1e147aa0413c4132a33d3e306ff648188e"
     },
     {
       "path": "docs/operations/fidelity-fetch-mcp-contract.md",
@@ -542,7 +542,7 @@
     },
     {
       "path": "docs/operations/samples/blueprint-review-projection.valid.md",
-      "sha256": "37ea870e105ba5e034684668ab7777e94f2dcd1694ecec52dfc5e74c1ec8e78c"
+      "sha256": "7a79a942a426622168fcf582f767ad32551864dc86ab3017b48d40f69494ab8f"
     },
     {
       "path": "docs/operations/samples/extension-m7-manifest.yaml",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "a19fa160ee3a96b751950a55869234ceece30f29ca93904d8f515c1122cc90a1"
+      "sha256": "40b7b342218b30ae7797a67c5e8d4aee864d06ed48baf1785a79f875bdb8f343"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -1122,7 +1122,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-graph-generator.ts",
-      "sha256": "4ebd27539b7b8a88a390a11d70607594e2ec00b8311eea0f9377ca899d7d2080"
+      "sha256": "277284e9d96c1fd3a94c53ce8aa9a846c6af35c62ae54b7ea239f03acda6614e"
     },
     {
       "path": "harness/scripts/utils/blueprint-host-seams.ts",
@@ -1158,7 +1158,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-review-projection.ts",
-      "sha256": "21caeb77896ab620a7cb2d38cf3ac678b33d570cafe7d125e7fe44242cd2ae19"
+      "sha256": "a3a8e92e5b5f22161b8afa7445b18b6896b5b8614f9be39073ea64f62ad4fc93"
     },
     {
       "path": "harness/scripts/utils/blueprint-skill-projection.ts",
@@ -1226,7 +1226,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-feature-projection.ts",
-      "sha256": "d67d0df59ba3f95f590fd80d71a1cc923226771dfdb355dcb7b1cc8883c53434"
+      "sha256": "c1bfc209187f9dfd0e988502faedf798e46dc47697c6d603e0c33bac666907c9"
     },
     {
       "path": "harness/scripts/utils/change-unit-model.ts",
@@ -4562,7 +4562,7 @@
     },
     {
       "path": "skills/project/component-design/SKILL.md",
-      "sha256": "a82aa373161a18507d843734571c10db2160bd6142f543b5c3937ea0f3888489"
+      "sha256": "668ece98d8da9ed7fecde71bea4d96f6fe7ee3e247f466bf6f8a7a150c3c512f"
     },
     {
       "path": "skills/project/conventions-bootstrap/SKILL.md",
@@ -4658,7 +4658,7 @@
     },
     {
       "path": "skills/project/goal-mode/SKILL.md",
-      "sha256": "0bae5c28ade9ea4f80b1c2a0f2c4dd2aaceb7948c4e5be78a47b4ab7bf4bcee3"
+      "sha256": "330dbebed3b8aaa9ca792e4e88905bd233e4729fabb5aae35b1f0b0de7fdb88d"
     },
     {
       "path": "skills/reference/agent-behavioral-principles.md",
@@ -4670,7 +4670,7 @@
     },
     {
       "path": "skills/reference/app-component-blueprint-workflow.md",
-      "sha256": "3e11994ef8e1c5397a89ef8f27110a742729544ada1c3d248669a832b5daf2bf"
+      "sha256": "c8736ebc13da3b55cc3a7cfcdfe3268e1394a664a9ff98348f8caffd1bde0a12"
     },
     {
       "path": "skills/reference/business-ut-workflow-detail.md",

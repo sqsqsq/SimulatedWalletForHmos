@@ -110,7 +110,7 @@
 - `doc/glossary.yaml` — 术语与 alias 候选；字面命中不替代语义消歧
 - `doc/architecture.md` — 架构背景；设计依据仍按原权威链引用
 - `doc/conventions.md` — 存在时读全文；review 独立选适用项并打开范例（文件缺失 / 未启用；不声称已消费）
-- `doc/component-index.yaml` — 完整组件库存；与策展按 id 联合读取并反查源码（文件缺失 / 未启用；不声称已消费）
+- `doc/component-index.yaml` — 完整组件库存；与策展按 id 联合读取并反查源码
 - `doc/component-catalog.yaml` — 组件适用/不适用与易混项；不覆盖源码事实（文件缺失 / 未启用；不声称已消费）
 - `framework/docs/README.md` — 框架背景索引，按当前任务跟随相关原始链接
 - `framework/profiles/hmos-app/skills/README.md` — 当前 profile 知识与 Skill 资产协议

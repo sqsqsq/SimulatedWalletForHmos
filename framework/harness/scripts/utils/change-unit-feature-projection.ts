@@ -655,8 +655,10 @@ export function validateChangeUnitFeatureProjection(
       issues.push(issue('change_unit_definition_copied', `contracts.change_unit 不得复制 canonical ${forbidden}。`));
     }
   }
-  if (!options.designOnly) issues.push(...changeUnitMappingIssues(projectRoot, section!, cu, phase));
-  issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
+  if (!options.designOnly) {
+    issues.push(...changeUnitMappingIssues(projectRoot, section!, cu, phase));
+    issues.push(...componentProjectionErrors(projectRoot, contracts!, cu).map(message => issue('component_asset_projection', message)));
+  }
   const warnings: string[] = [];
   try {
     const modifiable = deriveModifiableModules(projectRoot, cu);

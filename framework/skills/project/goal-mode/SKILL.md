@@ -78,4 +78,4 @@
 
 ## 默认额度与用户总上限
 
-明确“无人值守＋不要询问＋完整交付”时，主 Agent 可显式调整默认额度并沿现有 manifest/--override-manifest 恢复同一 run；普通静默不授予提额权。先核原始请求与更正，用户总上限不破，runner 照停，累计消耗和无进展熔断不重置。最终回复依据 manifest/budget_changed 披露逐次前后额度、原因、授权与累计消耗；完整口径见 [运行细则](../../reference/goal-mode-operations.md#默认额度与用户总上限)。
+明确“无人值守＋不要询问＋完整交付”时，主 Agent 可显式调整默认额度并沿现有 manifest/--override-manifest 恢复同一 run；普通静默不授予提额权。先核原始请求与更正，用户总上限不破，runner 照停，累计消耗和无进展熔断不重置。最终回复依据 manifest/budget_changed 披露逐次前后额度、原因、授权与累计消耗；完整口径见 [运行细则](../../reference/goal-mode-operations.md)。
