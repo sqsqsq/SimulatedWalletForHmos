@@ -12,13 +12,14 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from ext_workspace import link_harness_yaml, DEV_EXT
+from ext_workspace import link_harness_yaml, DEV_EXT, reader_review_details
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
@@ -136,6 +137,11 @@ class ClosureCase(unittest.TestCase):
         (self.reports / "summary.json").write_text(json.dumps(
             {"verifier_report": rel, "verifier_subject_id": SUBJECT}), encoding="utf-8")
         target = self.root / rel
+        status = re.search(r"\| story_reader_review \| (\w+) \|", text)
+        if status and "examined_inputs" not in text:
+            # 读者审查无论结论都带四键明细：照当前必审集合写一份合规的
+            text += reader_review_details(self.root, FEATURE, status.group(1),
+                                          ("第 5 章与第 8 章对不上",) if status.group(1) == "FAIL" else ())
         target.write_text(text, encoding="utf-8")
         return target
 
@@ -169,7 +175,7 @@ class OneSubjectOneConclusion(ClosureCase):
         ids = self.overlay_ids()
         target = self.put_report(report_text(ids[1:]))
         self.assertIn(f"缺判据：{ids[0]}", self.report_check())
-        target.write_text(report_text(ids), encoding="utf-8")
+        self.put_report(report_text(ids))
         out = self.report_check()
         for needle in ("缺判据", "已经有过一份合规结论", "审查回复格式不合"):
             self.assertNotIn(needle, out)
@@ -191,7 +197,7 @@ class OneSubjectOneConclusion(ClosureCase):
         ids = self.overlay_ids()
         target = self.put_report(report_text(ids))
         self.assertNotIn("已经有过一份合规结论", self.report_check())
-        target.write_text(report_text(ids, note="，重投后换了措辞"), encoding="utf-8")
+        self.put_report(report_text(ids, note="，重投后换了措辞"))
         self.assertIn("已经有过一份合规结论", self.report_check())
 
 

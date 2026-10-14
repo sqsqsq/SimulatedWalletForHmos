@@ -100,6 +100,19 @@ class AdaptCase(unittest.TestCase):
     def out(self, proc: subprocess.CompletedProcess) -> str:
         return ((proc.stdout or "") + (proc.stderr or "")).strip()
 
+    def write_review(self, *, digest: str | None = None, verdict: str = "PASS", skip: int = 0) -> None:
+        """独立审查者交回的证据块：摘要与激活清单取自 `--status`，四个维度逐份给结论。"""
+        knowledge = json.loads(self.adapt("--status").stdout)["knowledge"]
+        files = knowledge["files"][skip:]
+        dims = "".join(f"      {d}: {{verdict: {verdict}, evidence: 核过 {d}}}\n"
+                       for d in ("granularity", "fact_use", "duplication", "coding_boundary"))
+        rows = "".join(f"    - path: {f}\n{dims}" for f in files)
+        review = self.ext / ".adapt" / "knowledge-review.md"
+        review.parent.mkdir(parents=True, exist_ok=True)
+        review.write_text("# 知识独审\n\n```yaml\nknowledge_review:\n"
+                          f"  digest: \"{digest or knowledge['digest']}\"\n  executor: subagent-run-1\n"
+                          f"  files:\n{rows}  blocking: []\n  unreviewed: []\n```\n", encoding="utf-8")
+
 
 class TheTargetKeepsWhatIsItsOwn(AdaptCase):
     """`adapters/` 与 `knowledge/` 归目标，升级碰都不碰。"""
@@ -417,11 +430,44 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
 
     def test_it_writes_the_package_version_and_the_check_still_passes(self) -> None:
         self.set_manifest_line("adapted_for", "1.9.6")
+        self.write_review()
         proc = self.mark()
         self.assertEqual(0, proc.returncode, self.out(proc))
         manifest = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', manifest)
         self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
+
+    def test_knowledge_due_for_adaptation_needs_matching_independent_evidence(self) -> None:
+        """有知识演进条目时，加载通过不等于适配完成：缺审、过期、漏一份、判 FAIL 都不写 adapted_for。"""
+        self.set_manifest_line("adapted_for", "1.9.2")
+        before = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
+        cases = {"缺审": (None, "missing"), "过期": ({"digest": "sha256:0000000000000000"}, "stale"),
+                 "漏一份": ({"skip": 1}, "incomplete"), "判 FAIL": ({"verdict": "FAIL"}, "incomplete")}
+        for name, (kw, status) in cases.items():
+            with self.subTest(name):
+                review = self.ext / ".adapt" / "knowledge-review.md"
+                review.unlink(missing_ok=True)
+                if kw is not None:
+                    self.write_review(**kw)
+                status_json = json.loads(self.adapt("--status").stdout)
+                self.assertEqual(status, status_json["knowledge"]["review"]["status"])
+                proc = self.mark()
+                self.assertEqual(2, proc.returncode, self.out(proc))
+                self.assertIn("知识适配未完成", self.out(proc))
+                self.assertEqual(before, (self.ext / "manifest.yaml").read_text(encoding="utf-8"))
+        self.write_review()
+        self.assertEqual(0, self.mark().returncode)
+        fact = next((self.ext / "knowledge" / "facts").glob("*.md"))
+        fact.write_text(fact.read_text(encoding="utf-8") + "\n补一句。\n", encoding="utf-8")
+        self.assertEqual("stale", json.loads(self.adapt("--status").stdout)["knowledge"]["review"]["status"],
+                         "知识改过之后旧结论还盖着新内容")
+
+    def test_a_mechanism_only_upgrade_needs_no_review(self) -> None:
+        """没有晚于 adapted_for 的知识条目：不要求独审，照常记版本。"""
+        latest = change_versions(PKG_EXT, "知识")[-1]
+        self.set_manifest_line("adapted_for", latest)
+        proc = self.mark()
+        self.assertEqual(0, proc.returncode, self.out(proc))
 
     def test_it_stops_when_the_target_has_no_manifest(self) -> None:
         shutil.rmtree(self.ext)
@@ -545,6 +591,8 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
                          "首次没从知识基线起拿到各版知识条目")
         self.assertNotIn("在途单", items, "首次安装没有在途单，那一块不该列")
         self.commit("首次装好")
+        self.assertEqual(2, self.adapt("--mark-adapted").returncode, "首装写了知识却没独审，也记成已适配")
+        self.write_review()
         marked = self.adapt("--mark-adapted")
         self.assertEqual(0, marked.returncode, self.out(marked))
         self.assertIn(f'adapted_for: "{PKG_VERSION}"', (self.ext / "manifest.yaml").read_text(encoding="utf-8"))

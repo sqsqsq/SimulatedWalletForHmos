@@ -440,6 +440,7 @@ async function knowledgeCheck() {
     const k = api.activeKnowledge(TARGET);
     const problems = api.selfCheck(TARGET, k);
     if (problems.length) return { status: 'FAIL', problems };
+    const files = [...k.facts, ...k.constraints, ...k.patterns].map(x => x.file);
     const counts = {};
     for (const kind of ['facts', 'constraints', 'patterns']) {
       for (const x of k[kind]) counts[`${kind} × ${x.form}`] = (counts[`${kind} × ${x.form}`] ?? 0) + 1;
@@ -453,10 +454,50 @@ async function knowledgeCheck() {
     }
     const sameUse = [...byUse].filter(([, files]) => files.length > 1)
       .map(([appliesWhen, files]) => ({ appliesWhen, files }));
-    return { status: 'PASS', counts, sameUse: { note: '同用途声明候选，须语义核对', groups: sameUse } };
+    const doc = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'knowledge-use', 'document.mjs')).href);
+    const digest = doc.manifestDigest(TARGET);
+    return { status: 'PASS', counts, digest, files, review: await knowledgeReview(digest, files),
+      sameUse: { note: '同用途声明候选，须语义核对', groups: sameUse } };
   } catch (e) {
     return { status: 'FAIL', problems: [String(e?.message ?? e)] };
   }
+}
+
+//: 知识独审报告的四个维度：键名与方法页「逐份核四个维度」一一对应
+const REVIEW_DIMENSIONS = ['granularity', 'fact_use', 'duplication', 'coding_boundary'];
+
+/**
+ * `.adapt/knowledge-review.md` 里的证据块对不对得上当前知识 —— 只读派生，不是状态。
+ *
+ * 核：块读得出；`digest` 等于当前激活知识的摘要；激活清单每份都有一行、四个维度都有结论与证据；
+ * 没有 FAIL、没有阻断项、没有未核。结构有效不证明审查真由独立执行体做过——那由交回与宿主证据核。
+ */
+async function knowledgeReview(digest, files) {
+  const file = join(TDIR, '.adapt', 'knowledge-review.md');
+  if (!existsSync(file)) return { status: 'missing', problems: ['.adapt/knowledge-review.md 不在：还没有独立审查报告'] };
+  const { parseYaml } = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'yaml.mjs')).href);
+  const blocks = [...read(file).matchAll(/```ya?ml\r?\n([\s\S]*?)```/g)].map((m) => {
+    try { return parseYaml(m[1])?.knowledge_review; } catch { return undefined; }
+  }).filter(Boolean);
+  if (blocks.length !== 1) return { status: 'invalid', problems: [`证据块要恰好一个 \`knowledge_review:\` YAML 块（现在 ${blocks.length} 个）`] };
+  const r = blocks[0];
+  if (r.digest !== digest) return { status: 'stale', problems: [`报告审的是 ${r.digest ?? '（没写）'}，当前知识是 ${digest}：知识或激活清单改过，对受影响的知识重审`] };
+  const rows = new Map((Array.isArray(r.files) ? r.files : []).map(x => [String(x?.path ?? ''), x]));
+  const problems = [];
+  for (const f of files) {
+    const row = rows.get(f);
+    if (!row) { problems.push(`${f}：报告里没有这一份`); continue; }
+    const lacking = REVIEW_DIMENSIONS.filter(d => !String(row[d]?.verdict ?? '').trim() || !String(row[d]?.evidence ?? '').trim());
+    if (lacking.length) problems.push(`${f}：${lacking.join('、')} 缺结论或证据`);
+    const failed = REVIEW_DIMENSIONS.filter(d => String(row[d]?.verdict ?? '').toUpperCase() === 'FAIL');
+    if (failed.length) problems.push(`${f}：${failed.join('、')} 判 FAIL，改完这份知识再审`);
+  }
+  for (const key of ['blocking', 'unreviewed']) {
+    if (!Array.isArray(r[key])) problems.push(`\`${key}\` 不是列表（没有就写空列表）`);
+    else if (r[key].length) problems.push(`\`${key}\` 还有 ${r[key].length} 项：${r[key].map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join('；')}`);
+  }
+  if (!String(r.executor ?? '').trim()) problems.push('`executor` 没写宿主返回的独立执行或会话引用');
+  return problems.length ? { status: 'incomplete', problems } : { status: 'valid', executor: r.executor };
 }
 
 /**
@@ -517,10 +558,6 @@ if (mode === '--status') {
   const f = await followUp();
   out.items = f.items;
   out.knowledge = f.check;
-  if (f.check.status === 'PASS') {
-    const doc = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'knowledge-use', 'document.mjs')).href);
-    out.knowledge.digest = doc.manifestDigest(TARGET);
-  }
   console.log(JSON.stringify(out, null, 2));
   process.exit(f.check.status === 'PASS' ? 0 : 1);
 }
@@ -533,8 +570,14 @@ if (mode === '--mark-adapted') {
   if (INSTALLED !== PKG_VERSION) {
     die(`目标机制是 ${INSTALLED}、包是 ${PKG_VERSION}：先 --apply 把机制升到包的版本，再做适配`);
   }
-  const check = await knowledgeCheck();
-  if (check.status !== 'PASS') die(`知识不能按当前协议加载，适配还没做完：\n  ${check.problems.join('\n  ')}`);
+  const f = await followUp();
+  if (f.check.status !== 'PASS') die(`知识不能按当前协议加载，适配还没做完：\n  ${f.check.problems.join('\n  ')}`);
+  // 本次有知识演进义务时，加载通过不等于适配完成：当前知识要有对得上的独立审查证据
+  if (f.items.知识?.length && f.check.review.status !== 'valid') {
+    die(`本次有 ${f.items.知识.length} 条知识演进要适配，知识独审证据不成立（${f.check.review.status}）：\n  `
+      + `${f.check.review.problems.join('\n  ')}\n  按 reference/knowledge-review.md 发起与收回审查；`
+      + '机制已经装好，知识适配未完成，adapted_for 不写');
+  }
   writeAdaptedFor();
   console.log(`[adapt-scan] adapted_for 记为 ${PKG_VERSION}：下次升级只列晚于它的演进条目`);
   process.exit(0);

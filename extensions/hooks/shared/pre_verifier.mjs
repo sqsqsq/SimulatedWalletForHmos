@@ -171,7 +171,7 @@ function allChecksFragment(checks) {
   });
   return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '',
     '**报告结构**：汇总表每条判据一行，四格 `id | status | severity | 证据`，PASS 也列、证据不空；',
-    'status ≠ PASS 的在 YAML 明细 `checks:` 里各出一条，`details` 写问题、依据与改法；',
+    'status ≠ PASS 的在 YAML 明细 `checks:` 里各出一条，`details` 写问题、依据与改法；`story_reader_review` 无论结论都出一条，明细四个键见该判据；',
     '末尾恰好一个 `maison-verifier-result:v1` 终态块。缺一条判据的报告按阻断处理。'].join('\n');
 }
 

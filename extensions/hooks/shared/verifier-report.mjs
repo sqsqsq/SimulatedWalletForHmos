@@ -14,14 +14,13 @@
  *
  * ## 判的是形态，不是内容
  *
- * 上游的输出契约是：汇总表每个检查项一行（PASS 也列，证据一行），YAML 明细只列
- * status ≠ PASS 的项。所以这里的两条判据顺着它：
+ * 上游的输出契约是：汇总表每个检查项一行（PASS 也列，证据一行），YAML 明细列 status ≠ PASS 的项。
+ * 扩展的 `story_reader_review` 另有局部明细合同，无论结论都写：
  *
  *   ① 汇总表里有 `story_reader_review` 一行，且证据格不为空——空证据与没审同形；
- *   ② 那一行 status ≠ PASS 时，明细里有 `blocking_findings` 与 `advisories` 两个键。
- * 「不逐条对账」只写在审查任务里，不用表头形态禁一种报告写法。
+ *   ② 明细里四个键（`READER_DETAIL_KEYS`），覆盖声明对着任务书的必审集合核，结论与阻断项自洽。
  *
- * 报几条、报得对不对不判：那是资格门用成对样本量的事，不是门禁能判的。
+ * 声明全核而实际没读懂，脚本识别不了：审查能不能区分好坏稿归资格测试与真实运行。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -30,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 import { fenceRanges, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
+import { READER_DETAIL_KEYS, readerDetailProblems, reviewInputs } from './reader-review-task.mjs';
 
 /**
  * 本阶段 overlay 的全部语义判据 —— 审查请求与报告核对读同一份，不在代码里另存判据清单。
@@ -83,6 +83,14 @@ function reportProblems(projectRoot, feature, phase) {
   const { checks } = overlayChecks(projectRoot, phase);
   for (const id of Object.keys(checks)) {
     if (!ids.has(id)) problems.push(`${summary.verifier_report} 的汇总表缺判据：${id}——汇总表逐条对 rules/${phase}-rules.overlay.yaml 的 semantic_checks，缺一条的报告按阻断处理。${INVALID_EVIDENCE}`);
+  }
+  // 读者审查的明细不成立也是坏稿：先核，坏稿不占这个对象的首份合规结论
+  if (checks[STORY_REVIEW_ID]) {
+    problems.push(...judgeReport(text, summary.verifier_report, reviewInputs(projectRoot, feature)).problems);
+  }
+  const failed = rows.filter(r => r.status === 'FAIL').map(r => r.id);
+  if (block.verdict === 'PASS' && failed.length) {
+    problems.push(`${summary.verifier_report}：汇总表 ${failed.join('、')} 判 FAIL，终态块却是 PASS——结论自相矛盾，不计作结论。${INVALID_EVIDENCE}`);
   }
   const subject = block.subject;
   const ledgerPath = path.join(path.dirname(abs), 'verifier.conclusions.json');
@@ -143,9 +151,6 @@ export function reportCheck(projectRoot, feature, phase) {
 
 /** 读者审查那一项在报告里的标识 —— 判据 id 本身，不另起一个名字。 */
 const STORY_REVIEW_ID = 'story_reader_review';
-
-/** 非 PASS 时明细里必须有的两个键。可以是空列表，但不能缺席。 */
-const DETAIL_KEYS = ['blocking_findings', 'advisories'];
 
 /** 汇总表的列数：id / status / severity / 一行证据。列序见框架的输出契约。 */
 const SUMMARY_COLUMNS = 4;
@@ -312,7 +317,8 @@ export function storyReviewProblems(projectRoot, feature, phase) {
     };
   }
   const text = readTextOrNull(abs);
-  return text === null ? withoutCurrentReport(summary, abs) : judgeReport(text, summary.verifier_report);
+  return text === null ? withoutCurrentReport(summary, abs)
+    : judgeReport(text, summary.verifier_report, reviewInputs(projectRoot, feature));
 }
 
 const RESULT_BLOCK = /<!-- maison-verifier-result:v1 -->([\s\S]*?)<!-- \/maison-verifier-result:v1 -->/g;
@@ -351,8 +357,8 @@ function withoutCurrentReport(summary, abs, judgeStory = true) {
       + `${String(prior.reviewed_subject_id).slice(0, 12)}… 的审查（未重审：${(prior.current_material_not_reverified ?? []).join('、') || '未列'}）`] };
 }
 
-/** 报告正文里读者审查这一项：汇总行、证据、非 PASS 时的两类结论。 */
-function judgeReport(text, at = 'verifier 报告') {
+/** 报告正文里读者审查这一项：汇总行、证据与明细（`basis` 是当前必审集合，核历史报告时不传）。 */
+function judgeReport(text, at = 'verifier 报告', basis = null) {
   const row = summaryRow(text);
   if (!row) {
     return {
@@ -391,39 +397,15 @@ function judgeReport(text, at = 'verifier 报告') {
     };
   }
 
-  if (status !== 'PASS') {
-    const { details, unreadable } = readerReviewDetails(text);
-    if (unreadable) {
-      // 读不出结构与「缺这两个键」是两回事：说成缺键的话，作者会去补两个已经写着的键，
-      // 补完还报，他只能去翻这个脚本。
-      return {
-        status: 'FAIL',
-        problems: [`${at} 里的结构块读不出来（${unreadable}）——门禁按 YAML 读报告里的围栏块，`
-          + `${STORY_REVIEW_ID} 的两类结论在那份结构里，读不出就核不了。` + INVALID_EVIDENCE],
-        reviewVerdict,
-      detail: '结构块读不出来',
-      };
-    }
-    const missing = DETAIL_KEYS.filter(k => !(k in (details ?? {})));
-    if (!missing.length) {
-      const blocking = Array.isArray(details.blocking_findings) ? details.blocking_findings : [];
-      const advisories = Array.isArray(details.advisories) ? details.advisories : [];
-      return { status: 'PASS', problems: [], reviewVerdict, blocking, advisories,
-        detail: `读者审查已落报告（${status}）` };
-    }
-    if (missing.length) {
-      return {
-        status: 'FAIL',
-        problems: [`${at}：${STORY_REVIEW_ID} 判了 ${status}，它自己的明细里缺 ${missing.join('、')}——`
-          + '门禁在 YAML 明细 `checks` 里按 id 取这一条的 `details`，阻断问题与提醒各归各的键，'
-          + '没有发现的是空列表；缺席分不清它是没发现还是没审。' + INVALID_EVIDENCE],
-        reviewVerdict,
-      detail: `缺 ${missing.join('、')}`,
-      };
-    }
+  const { details, unreadable } = readerReviewDetails(text);
+  // 读不出结构与「缺键」是两回事：说成缺键的话，作者会去补已经写着的键，补完还报
+  const bad = unreadable ? [`里的结构块读不出来（${unreadable}）——${STORY_REVIEW_ID} 的明细在 YAML 围栏里，读不出就核不了`]
+    : !details ? [`的 YAML 明细里没有 ${STORY_REVIEW_ID} 这一条——它无论结论都在明细里写 ${READER_DETAIL_KEYS.join('、')}`]
+      : readerDetailProblems(details, status, basis).map(p => `：${STORY_REVIEW_ID} ${p}`);
+  if (bad.length) {
+    return { status: 'FAIL', problems: bad.map(p => `${at}${p}。${INVALID_EVIDENCE}`), reviewVerdict, detail: '明细不成立' };
   }
-
-  return { status: 'PASS', problems: [], reviewVerdict,
+  return { status: 'PASS', problems: [], reviewVerdict, blocking: details.blocking_findings, advisories: details.advisories,
     detail: `读者审查已落报告（${status}）` };
 }
 

@@ -76,10 +76,21 @@ verification_result:
         blocking_findings:
           - 第 5 章说未实名可下单，第 8 章验收里没有这个入口
         advisories: []
+        examined_inputs: []
+        unreviewed: []
 ```
 """
 
 DETAILS_MISSING_ADVISORIES = DETAILS.replace("        advisories: []\n", "")
+
+
+def pass_details(examined: list[str] | None = None) -> str:
+    """PASS 也写明细：四个键都在，读过的必审输入逐份列出。"""
+    items = "".join(f"          - {x}\n" for x in (examined or []))
+    return ("\n```yaml\nverification_result:\n  checks:\n    - id: story_reader_review\n      status: PASS\n"
+            "      details:\n        blocking_findings: []\n        advisories: []\n"
+            + (f"        examined_inputs:\n{items}" if items else "        examined_inputs: []\n")
+            + "        unreviewed: []\n```\n")
 
 PER_UNIT_TABLE = """
 | 单元键 | 裁决 | 引文 |
@@ -254,7 +265,7 @@ class TheCommandTellsUnreviewedFromIncomplete(unittest.TestCase):
 
 
 def row_text(status: str) -> str:
-    return row(status) + ("" if status == "PASS" else DETAILS)
+    return row(status) + (pass_details() if status == "PASS" else DETAILS)
 
 class TheSummaryRowIsTheConclusion(unittest.TestCase):
     """上游的输出契约：汇总表每项一行（PASS 也列），明细只列非 PASS。"""
@@ -276,9 +287,12 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             self.assertEqual(r.returncode, 0, f"driver 挂了：{r.stderr[:600]}")
             return json.loads(r.stdout)
 
-    def test_a_pass_row_alone_is_enough(self) -> None:
-        """判 PASS 的项按契约不写明细——要求它写就是给本项设例外，正常 PASS 会被拒。"""
+    def test_a_pass_needs_its_details_too(self) -> None:
+        """读者审查无论结论都写四键明细：PASS 只有汇总行说不出读了什么、漏了什么。"""
         out = self._run(row("PASS"))
+        self.assertEqual("FAIL", out["status"], out)
+        self.assertIn("明细里没有 story_reader_review", out["problems"][0])
+        out = self._run(row("PASS") + pass_details())
         self.assertEqual("PASS", out["status"], out)
         self.assertEqual([], out["problems"])
 
@@ -318,6 +332,8 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "      details:\n"
             "        blocking_findings: []\n"
             "        advisories: []\n"
+            "        examined_inputs: []\n"
+            "        unreviewed: []\n"
             "    - id: story_reader_review\n"
             "      status: FAIL\n"
             "      details: |\n"
@@ -325,7 +341,7 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "```\n")
         out = self._run(row("FAIL") + borrowed)
         self.assertEqual("FAIL", out["status"], f"借了别项的键就放行：{out}")
-        self.assertIn("它自己的明细里缺", out["problems"][0])
+        self.assertIn("明细缺", out["problems"][0])
 
     def test_the_fix_hint_never_asks_the_author_to_write_the_report(self) -> None:
         """读报错的是作者，而报告必须是子代理回复的原样落盘——叫他补就是叫他伪造证据。"""
@@ -360,7 +376,7 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "附注：blocking_findings 与 advisories 的写法见任务书。\n")
         out = self._run(report)
         self.assertEqual("FAIL", out["status"], f"围栏外的字样被当成了键：{out}")
-        self.assertIn("它自己的明细里缺", out["problems"][0])
+        self.assertIn("明细缺", out["problems"][0])
 
     def test_a_prose_details_is_not_two_conclusions(self) -> None:
         """`details:` 是一段话时，里面写着「未提供 blocking_findings 和 advisories」
@@ -377,7 +393,7 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "```\n")
         out = self._run(report)
         self.assertEqual("FAIL", out["status"], f"一段散文被当成了两类结论：{out}")
-        self.assertIn("它自己的明细里缺", out["problems"][0])
+        self.assertIn("明细缺", out["problems"][0])
 
     def test_a_details_entry_at_the_end_of_the_yaml_still_reads(self) -> None:
         """本项排在末尾、后面跟着 `summary:` 时，范围止于围栏，键照样读得出来。"""
@@ -391,6 +407,8 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "        blocking_findings:\n"
             "          - 第 5 章与第 8 章对不上\n"
             "        advisories: []\n"
+            "        examined_inputs: []\n"
+            "        unreviewed: []\n"
             "```\n")
         out = self._run(report)
         self.assertEqual("PASS", out["status"], f"正常的 FAIL 明细被拒了：{out}")
@@ -406,7 +424,9 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "      details:\n"
             "        blocking_findings:\n"
             "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n"
-            "        advisories: []\n")
+            "        advisories: []\n"
+            "        examined_inputs: []\n"
+            "        unreviewed: []\n")
 
     #: 别的一条，正文是块标量——真实报告里几乎每条都长这样。
     OTHER = ("    - id: visual_handoff_semantics\n"
@@ -435,8 +455,11 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
     def test_a_block_scalar_in_this_item_does_not_hide_its_keys(self) -> None:
         """本条自己也有块标量字段时，两个键照样读得出来。"""
         item = self.GOOD.replace(
-            "        advisories: []\n",
-            "        advisories: []\n      suggestion: |\n        先补第 8 章那条验收。\n")
+            "        advisories: []\n"
+            "        examined_inputs: []\n"
+            "        unreviewed: []\n",
+            "        advisories: []\n        examined_inputs: []\n        unreviewed: []\n"
+            "      suggestion: |\n        先补第 8 章那条验收。\n")
         out = self._run(self.with_checks(self.OTHER, item))
         self.assertEqual("PASS", out["status"], out)
 
@@ -453,8 +476,10 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
                 "          - |\n"
                 "            第 5 章说未实名可下单，\n"
                 "            第 8 章验收里没有这个入口。\n"
-                "          - 图 3 前面没有承接句\n")
-        out = self._run(self.with_checks(self.OTHER, item))
+                "          - 图 3 前面没有承接句\n"
+                "        examined_inputs: []\n"
+                "        unreviewed: []\n")
+        out = self._run(self.with_checks(self.OTHER, item).replace(row("FAIL"), row("WARN"), 1))
         self.assertEqual("PASS", out["status"], f"多行 advisory 被判成读不出结构：{out}")
 
     def test_yaml_that_cannot_be_parsed_is_said_so(self) -> None:
@@ -467,7 +492,9 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "      status: FAIL\n"
             "      details:\n"
             "        blocking_findings: []\n"
-            "           advisories: []\n")     # 缩进对不上，整块读不出结构
+            "           advisories: []\n"
+            "           examined_inputs: []\n"
+            "           unreviewed: []\n")     # 缩进对不上，整块读不出结构
         out = self._run(broken)
         self.assertEqual("FAIL", out["status"], out)
         self.assertIn("读不出来", out["problems"][0], out["problems"][0])
@@ -592,14 +619,20 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         if status != "PASS":
             (reports.parent / "notes.md").write_text(
                 f"# notes\n\n- story_reader_review（报告 {SUBJECT[:8]}）：按报告处置。\n", encoding="utf-8")
-        if status != "PASS":
-            body += ("\n```yaml\nverification_result:\n  checks:\n"
-                     "    - id: story_reader_review\n"
-                     f"      status: {status}\n"
-                     "      details:\n"
-                     "        blocking_findings:\n"
-                     "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n"
-                     "        advisories: []\n```\n")
+        feature = self.root / "doc" / "features" / FEATURE
+        read = [r for r in ("AR/story.md", "AR/story-src/story-template.md", "AR/story-src/story-flow.json",
+                            "AR/story-src/decisions.json", "AR/story-src/materials.json", "spec/spec.md",
+                            "acceptance.yaml") if (feature / r).is_file()]
+        body += ("\n```yaml\nverification_result:\n  checks:\n"
+                 "    - id: story_reader_review\n"
+                 f"      status: {status}\n"
+                 "      details:\n"
+                 + ("        blocking_findings: []\n" if status == "PASS" else
+                    "        blocking_findings:\n"
+                    "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n")
+                 + "        advisories: []\n"
+                 "        examined_inputs:\n" + "".join(f"          - {r}\n" for r in read)
+                 + "        unreviewed: []\n```\n")
         target = self.root / REPORT_REL
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body, encoding="utf-8")
@@ -643,6 +676,41 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self.assertNotIn("判的是", both, "审查判了 PASS 却被交付门拦住")
         self.assertNotIn("未经读者语义审查", both, "有报告却说没审过")
         self.assertNotIn("[⑭ 交付门]", both, f"交付门报了问题：{both[-600:]}")
+
+    def gate(self, edit) -> str:
+        self._stub_receipt(0, "回执通过")
+        self.write_report("PASS")
+        target = self.root / REPORT_REL
+        target.write_text(edit(target.read_text(encoding="utf-8")), encoding="utf-8")
+        out = self.check("--deliver")
+        ledger = target.parent / "verifier.conclusions.json"
+        self.assertFalse(ledger.exists(), "坏稿占了这个对象的首份合规结论")
+        return out.stdout + out.stderr
+
+    def test_a_pass_that_skipped_a_required_input_is_not_a_review(self) -> None:
+        """必审输入没出现在声明里，或列进了 unreviewed，就不能 PASS；不在表里的路径也不收。"""
+        cases = {
+            "漏报": (lambda t: t.replace("          - AR/story.md\n", ""), "既没出现在 examined_inputs 也没列进 unreviewed"),
+            "未核却 PASS": (lambda t: t.replace("          - AR/story.md\n", "").replace(
+                "        unreviewed: []", "        unreviewed:\n          - AR/story.md：只读了前两章"), "必审输入却有没核完的"),
+            "多报": (lambda t: t.replace("          - AR/story.md\n", "          - AR/story.md\n          - RR/别的.md\n"),
+                   "不在「读这些」表里"),
+            "重复": (lambda t: t.replace("          - AR/story.md\n", "          - AR/story.md\n          - ./AR/story.md\n"),
+                   "写了两次"),
+            "PASS 带阻断": (lambda t: t.replace("        blocking_findings: []", "        blocking_findings:\n          - 第 2 章缺范围"),
+                         "判了 PASS 却列了 1 条阻断项"),
+        }
+        for name, (edit, said) in cases.items():
+            with self.subTest(name):
+                both = self.gate(edit)
+                self.assertIn(said, both)
+                self.assertIn("不要自己补", both, "报错叫作者改报告")
+
+    def test_a_failed_row_under_a_passing_verdict_is_rejected(self) -> None:
+        """汇总表某条判据 FAIL、终态块却 PASS：结论自相矛盾，不计作结论。"""
+        both = self.gate(lambda t: t.replace("| acceptance_testable | PASS |", "| acceptance_testable | FAIL |"))
+        self.assertIn("判 FAIL，终态块却是 PASS", both)
+
 
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做。

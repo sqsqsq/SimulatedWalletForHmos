@@ -35,4 +35,20 @@
 
 ## 收回
 
-把审查执行体、它审的知识摘要、发现与处理写进知识块交回。问题回各自的知识文件改，改完对受影响的那几份再审一次，旧结论不覆盖新内容。审查报告可以留在目标扩展目录的 `.adapt/knowledge-review.md` 作证据；它不是状态，没有「已通过」字段。`--mark-adapted` 只核知识能否加载，内容审查做没做由交回说明。
+审查者的结论原样写进目标扩展目录的 `.adapt/knowledge-review.md`，其中恰好一个 YAML 证据块（作者传输，不改写结论）：
+
+```yaml
+knowledge_review:
+  digest: <审查时 --status 给的 knowledge.digest>
+  executor: <宿主返回的独立执行或会话引用>
+  files:                       # 激活清单里每份一项
+    - path: knowledge/<类>/<文件>.md
+      granularity: {verdict: PASS, evidence: <核过什么、证据位置>}
+      fact_use: {verdict: PASS, evidence: …}
+      duplication: {verdict: PASS, evidence: …}
+      coding_boundary: {verdict: PASS, evidence: …}
+  blocking: []                 # 阻断项，没有写空列表
+  unreviewed: []               # 没核到的知识或维度及原因
+```
+
+`--status` 的 `knowledge.review` 只读派生：缺失、过期（摘要对不上当前知识）、未核完、有 FAIL 或结构有效。本次有知识演进条目时，`--mark-adapted` 要求它结构有效才写 `adapted_for`；知识改过就按新摘要重审受影响的那几份，旧结论不覆盖新内容。结构有效不证明审查真由独立执行体做过：审查执行体、发现与处理照样写进知识块交回。没有独立执行能力时机制照常装好，交回写明知识适配未完成。

@@ -38,7 +38,7 @@
    `paths.extension_dir` 加载激活知识并做结构自检，给出按「类型 × 形态」的计数与激活知识的内容摘要 `digest`。两者分开报告；
    PASS 只证明能加载、结构成立，计数与第 2 步定的范围对得上。退出 1 是知识结构自检不通过，`knowledge.problems` 带文件与原因；
    退出 2 是输入读不出，`error.category` 区分 config / package / dependency / input，缺运行依赖按提示恢复，不算知识缺失。
-6. **独立审查**：按 `reference/knowledge-review.md` 把写好的知识交给独立执行体审，问题回各自的知识改，改完再审受影响的那几份。
+6. **独立审查**：按 `reference/knowledge-review.md` 把写好的知识交给独立执行体审，结论原样留进 `.adapt/knowledge-review.md` 的证据块；问题回各自的知识改，改完再审受影响的那几份。
 7. **交回知识块**：知识部分做完单独交回；知识、对接层、在途单三块都交回后跑 `adapt-scan --mark-adapted`，由脚本把目标 `adapted_for` 写成包的版本（SKILL「按版本跟进」），不手改这个键；下次升级据它只列更新的演进条目。
 
 ## 首次知识的质量判据

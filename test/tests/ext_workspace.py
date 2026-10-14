@@ -114,3 +114,39 @@ def change_versions(ext: Path, block: str) -> list[str]:
         elif version and line.startswith(f"- [{block}]") and version not in seen:
             seen.append(version)
     return seen
+
+
+_REQUIRED_INPUTS = """
+const [, , mod, root, feature] = process.argv;
+const m = await import(mod);
+process.stdout.write(JSON.stringify(m.reviewInputs(root, feature).inputs.filter(x => x.required).map(x => x.path)));
+"""
+
+
+def reader_review_details(root: Path, feature: str, status: str = "PASS",
+                          blocking: tuple[str, ...] = ()) -> str:
+    """一条合规的 `story_reader_review` 明细：四个键齐全，examined_inputs 照当前必审集合逐份列出。
+
+    必审集合由扩展自己派生（`reviewInputs`），夹具不另抄一份清单——扩展改了集合，夹具跟着变。
+    """
+    import json
+    import subprocess
+    root = Path(root)
+    driver = root / "required-inputs.mjs"
+    driver.write_text(_REQUIRED_INPUTS, encoding="utf-8")
+    mod = root / "doc" / "extensions" / "hooks" / "shared" / "reader-review-task.mjs"
+    if not mod.is_file():
+        mod = DEV_EXT / "hooks" / "shared" / "reader-review-task.mjs"
+    proc = subprocess.run(["node", str(driver), mod.resolve().as_uri(), str(root), feature],
+                          capture_output=True, text=True, encoding="utf-8", timeout=60)
+    if proc.returncode:
+        raise RuntimeError(proc.stderr[:600])
+    driver.unlink()
+    rows = "".join(f"          - {p}\n" for p in json.loads(proc.stdout))
+    findings = "".join(f"          - {b}\n" for b in blocking)
+    return ("\n```yaml\nverification_result:\n  checks:\n    - id: story_reader_review\n"
+            f"      status: {status}\n      details:\n"
+            + (f"        blocking_findings:\n{findings}" if findings else "        blocking_findings: []\n")
+            + "        advisories: []\n"
+            + (f"        examined_inputs:\n{rows}" if rows else "        examined_inputs: []\n")
+            + "        unreviewed: []\n```\n")

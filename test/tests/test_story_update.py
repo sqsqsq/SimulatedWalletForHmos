@@ -29,7 +29,7 @@ from test_story_build import (  # noqa: E402
 )
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
 from flow_steps import answer, write_gaps  # noqa: E402
-from ext_workspace import DEV_EXT
+from ext_workspace import DEV_EXT, reader_review_details
 
 FLOW = (DEV_EXT / "skills" / "story" / "scripts"
         / "core" / "story_flow.py")
@@ -1079,9 +1079,10 @@ class ChangedSubjectsNeedAReview(UpdateCase):
         (self.reports / f"verifier.report.{subject}.md").write_text(
             "| id | status | severity | 证据 |\n|---|---|---|---|\n" + rows + "\n\n"
             f"<!-- maison-verifier-result:v1 -->\nverifier_subject_id: {subject}\nverdict: PASS\nblocker_count: 0\n"
-            "<!-- /maison-verifier-result:v1 -->\n", encoding="utf-8")
+            "<!-- /maison-verifier-result:v1 -->\n" + reader_review_details(self.root, self.feature_root.name),
+            encoding="utf-8")
 
-    PRIOR = {"verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": "c" * 64}}
+    PRIOR ={"verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": "c" * 64}}
 
     def test_an_unchanged_subject_closes(self) -> None:
         self.summary(self.BEFORE)
