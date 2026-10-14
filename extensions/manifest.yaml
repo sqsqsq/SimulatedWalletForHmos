@@ -1,6 +1,6 @@
 schema_version: "1.0"
 name: wallet-sdk-demo
-version: "1.9.8"
+version: "1.9.9"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 # 包里的对接实现是替身：用本地目录模拟需求系统，adapt 不把它复制进目标
 adapters: stand-in
@@ -71,31 +71,43 @@ provides:
   # 的下一步文本里。
   hooks:
     spec:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/spec/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     plan:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/plan/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     coding:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/coding/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     review:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/review/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     ut:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/ut/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     testing:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/testing/post_check.mjs
       pre_verifier:

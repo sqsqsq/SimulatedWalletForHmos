@@ -163,8 +163,10 @@ flowchart TD
 
 ### 材料清单
 
-- 需求简报——产品提供的凭证下载简报：现状与问题、入口条件、格式与隐藏选项、状态与清理约定、三条验收意图。原文：[RR/prd.md](../RR/prd.md)
-- 凭证预览界面图——随简报附的界面图：凭证的三段版式与掩码在版式中的位置。原文：[assets/receipt-preview.png](../assets/receipt-preview.png)
+| 材料 | 来源 | 贡献 |
+|---|---|---|
+| 需求简报 [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 产品提供的凭证下载简报：现状与问题、入口条件、格式与隐藏选项、状态与清理约定、三条验收意图。 |
+| 凭证预览界面图 [receipt-preview.png](../assets/receipt-preview.png) | [receipt-preview.png](../assets/receipt-preview.png) | 随简报附的界面图：凭证的三段版式与掩码在版式中的位置。 |
 
 ### 数据、配置与事件
 

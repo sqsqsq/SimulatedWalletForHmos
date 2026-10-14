@@ -51,26 +51,39 @@ replies:
     expected_phase: story
     text: 参会人角色就是你列的这样。
 
-  - id: scope-do-both-in-one
+  # 交通卡云与支付部件的接口在工程里还接不上，模型问到怎么承载时的立场。只在问到时说，不提前透露工程缺什么。
+  - id: no-real-interface
     expected_turn: 9
+    expected_kind: story_gate
+    expected_phase: story
+    text: 可以先按定好的接口用模拟数据把钱包端的签约和管理交互验证起来；和卡云、支付的真实联调另算，这次不算验过。
+
+  - id: scope-do-both-in-one
+    expected_turn: 10
     expected_kind: story_gate
     expected_phase: story
     text: 不拆，整体承载。
 
   - id: terms-confirmed
-    expected_turn: 10
+    expected_turn: 11
     expected_kind: story_gate
     expected_phase: spec
     text: 术语确认，按你列的定。
 
   - id: deliver-for-review
-    expected_turn: 11
+    expected_turn: 12
     expected_kind: story_gate
     expected_phase: spec
     text: 归档送审。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material
-    expected_turn: 12
+    expected_turn: 13
     expected_kind: story_gate
     text: 不补，材料就这些。
+
+  # 第二段：改版稿把单日上限改成 300，与会上「本期 200 不动」冲突（有意保留的探针）。模型把冲突摆出来问人时的立场。
+  - id: update-daily-limit-conflict
+    expected_turn: 14
+    expected_kind: story_gate
+    text: 单日上限按会上定的，本期 200 元。

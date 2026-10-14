@@ -119,7 +119,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     if projected.returncode != 0:
         raise FlowError(
             "story-build project 跑不通，成文态不予登记：\n"
-            + (projected.stderr or projected.stdout or "").strip())
+            + _said(projected))
     numbered = subprocess.run(
         [node, str(checker), "number", "--feature", feature_root.name,
          "--project-root", str(project_root)],
@@ -127,7 +127,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     if numbered.returncode != 0:
         raise FlowError(
             "story-build number 跑不通，成文态不予登记：\n"
-            + (numbered.stderr or numbered.stdout or "").strip())
+            + _said(numbered))
     # review 也在这一步渲染：它的机器区按当前决策件重算，人工填的内容逐字节保留。
     # 不在这里渲染的话，下面那道 check 面对的是一份还不存在的 review——
     # 归档件红线（⑨）于是要等到交付门才报，报了还得回来再登记一次。
@@ -138,7 +138,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     if rendered.returncode != 0:
         raise FlowError(
             "story-build build 跑不通，成文态不予登记：\n"
-            + (rendered.stderr or rendered.stdout or "").strip())
+            + _said(rendered))
     proc = subprocess.run(
         [node, str(checker), "check", "--feature", feature_root.name,
          "--project-root", str(project_root)],
@@ -146,7 +146,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     if proc.returncode != 0:
         raise FlowError(
             "story-build check 未通过，成文态不予登记：\n"
-            + (proc.stderr or proc.stdout or "").strip())
+            + _said(proc))
 
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
@@ -164,6 +164,33 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     baseline = record_baseline(feature_root)
     return {"status": "story_written", "story": str(story),
             **({"update_baseline": baseline} if baseline else {})}
+
+
+def ensure_mermaid(feature_root: Path, project_root: Path) -> None:
+    """story 里有阅读图管理块时先切回 Mermaid：比较、登记与归档只认 Mermaid 形态。没有管理块不起进程。"""
+    story = feature_root / Path(*STORY)
+    if not story.is_file() or "<!-- story-figure:" not in story.read_text(encoding="utf-8", errors="replace"):
+        return
+    _view(feature_root, project_root, "mermaid", "读 story 之前要先切回 Mermaid，切不回来")
+
+
+def _view(feature_root: Path, project_root: Path, mode: str, why: str) -> str:
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError(f"找不到 node：{why}（视图切换由 story-build.mjs view 做）")
+    proc = subprocess.run(
+        [node, str(CORE_DIR / "story-build.mjs"), "view", "--mode", mode, "--feature", feature_root.name,
+         "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    if proc.returncode != 0:
+        raise FlowError(f"{why}：\n" + _said(proc))
+    return _said(proc)
+
+
+def _said(proc: subprocess.CompletedProcess) -> str:
+    """子进程的两路输出原样带回：问题清单常在一路、恢复入口在另一路，只取一路就丢了一半。"""
+    return "\n".join(x.strip() for x in (proc.stdout, proc.stderr) if x and x.strip()) \
+        or f"退出码 {proc.returncode}，没有任何输出"
 
 
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:
@@ -197,12 +224,17 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
          "--project-root", str(project_root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:
-        log((proc.stderr or proc.stdout).strip()[:2000])
         raise FlowError(
-            "归档件未通过交付门（详见上方输出），拒绝登记归档态。"
-            "已经传上去的那一版是不合格的：修好后重新归档，再登记")
+            "归档件未通过交付门，拒绝登记归档态。已经传上去的那一版是不合格的：修好后重新归档，再登记。"
+            "交付门原始输出：\n" + _said(proc))
 
     contract["archived"] = {"at": now()}
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
-    return {"archived": True, "at": contract["archived"]["at"]}
+    # 登记前交付门把 story 切回了 Mermaid；登记完把有合格阅读图的块切回 SVG，本地默认是阅读形态。
+    # 切不过去不影响已经成立的归档登记，如实说本地视图没恢复。
+    try:
+        view = _view(feature_root, project_root, "svg", "归档已登记，本地 SVG 没有恢复")
+    except FlowError as exc:
+        view = str(exc)
+    return {"archived": True, "at": contract["archived"]["at"], "view": view}

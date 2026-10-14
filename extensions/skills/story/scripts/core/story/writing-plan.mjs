@@ -36,8 +36,8 @@ const LINE = {
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
 };
 
-/** 形式清单那句话：四个协议词 + 图种，报错与空壳共用一处。 */
-const formWords = () => `${Object.keys(FORMS).join(' / ')} / ${ANY_DIAGRAM}`
+/** 形式清单那句话：四个协议词 + 合同登记的命名表 + 图种，报错与空壳共用一处。 */
+const formWords = (named = {}) => `${[...Object.keys(FORMS), ...Object.keys(named)].join(' / ')} / ${ANY_DIAGRAM}`
   + `（任一种图），或点名一种：${Object.values(DIAGRAM_SYNTAXES).map(v => v.name).join('、')}`;
 
 /**
@@ -50,10 +50,10 @@ export function writingPlanShell(contract) {
   const rows = ['# 写作设计', '',
     `<!-- 骨架每章一段：正文要有的每个小节写一行 \`#### 标题\`，下面用 \`- 答：\` 写这一节解决读者的`
     + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点（没有就不写）；'
-    + `要用某种形式承载就单起一行 \`形式：<${formWords()}>\`，再用 \`- 描述：\` 说明它表达的对象、`
+    + `要用某种形式承载就单起一行 \`形式：<${formWords(contract.named_tables)}>\`，再用 \`- 描述：\` 说明它表达的对象、`
     + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
     + '一处要几种形式就写几行——图讲关系、表讲属性、文字讲理由，描述里说清各自承担什么；'
-    + '选了图的，描述写两半：图前要讲的过程，图后要逐条讲的分支判断；'
+    + '选了图的，描述写两半：图前要点明的阅读目的，图后要补的图外条件、责任与结果；'
     + '本章不涉及就只写 `- 不涉及：<理由>`。方法见 story-write.md 第四节 -->', '',
     `## ${PARTS.story}`, '',
     '{{读者是谁、读完要做什么决定；哪几件事最容易误解，读者先理解哪一件才能理解后文；'
@@ -61,7 +61,7 @@ export function writingPlanShell(contract) {
   for (const ch of contract.chapters ?? []) {
     // 附录的四节由合同定、机器区由投影写，写作设计里没有要它安排的东西
     rows.push(`### ${ch.id}`, ch.appendix ? `- ${APPENDIX_NOTE}`
-      : `- {{正文章名：${ch.title}。读完这一章读者要能回答什么；哪个关系必须用图、图后要讲哪几条判断；`
+      : `- {{正文章名：${ch.title}。读完这一章读者要能回答什么；哪个关系必须用图、图后要补哪些图外的条件与结果；`
         + '其余用表、列表或叙述各讲什么}}', '');
   }
   return rows.join('\n');
@@ -78,7 +78,8 @@ export function writingPlanShell(contract) {
  */
 export function readWritingPlan(ctx) {
   const chapters = ctx.contract.chapters ?? [];
-  const plan = { text: null, chapters, skeletons: new Map(), structures: [], rechecks: [], problems: [] };
+  const plan = { text: null, chapters, named: ctx.contract.named_tables ?? {},
+    skeletons: new Map(), structures: [], rechecks: [], problems: [] };
   const rel = relFromFeature(ctx, ctx.templatePath);
   const say = (msg) => plan.problems.push(`写作设计 ${rel} ${msg}`);
   const text = readText(ctx.templatePath);
@@ -111,9 +112,10 @@ export function readWritingPlan(ctx) {
   return plan;
 }
 
-/** `形式：` 后面那个词认成什么：认不出返回 null。 */
-function parseForm(value) {
+/** `形式：` 后面那个词认成什么：认不出返回 null。命名表是带合同表头的表格，选了才核。 */
+function parseForm(value, named = {}) {
   if (FORMS[value]) return { ...FORMS[value] };
+  if (named[value]) return { kind: 'table', name: value, header: String(named[value]).split('|').map(h => h.trim()) };
   if (value === ANY_DIAGRAM) return { kind: 'diagram' };
   const syntax = Object.keys(DIAGRAM_SYNTAXES)
     .find(key => [DIAGRAM_SYNTAXES[key].name, ...DIAGRAM_SYNTAXES[key].heads].includes(value));
@@ -178,8 +180,8 @@ function readSkeleton(plan, lines, range, fenced, say) {
       if (skip) ch.notApplicable = skip[1].trim();
     } else if ((m = LINE.form.exec(line))) {
       const value = m[1].trim();
-      const form = value ? parseForm(value) : null;
-      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——认得的形式是 ${formWords()}`);
+      const form = value ? parseForm(value, plan.named) : null;
+      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——认得的形式是 ${formWords(plan.named)}`);
       else target.forms.push(form);
     } else {
       say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架按 - 说明行、形式： 与 ####、##### 标题逐行认`);
@@ -273,7 +275,8 @@ export function selectedStructure(plan, chapterId) {
         ...(!pick.at && base.diagram ? { alsoRequired: true } : {}) });
     } else if (pick.kind !== 'prose') {
       forms.push({ ...place, kind: pick.kind, selected: true,
-        ...(pick.kind === 'list' ? { ordered: pick.ordered } : {}) });
+        ...(pick.kind === 'list' ? { ordered: pick.ordered } : {}),
+        ...(pick.header ? { name: pick.name, header: pick.header } : {}) });
     }
   }
   const key = (d) => `${normalizeHeading(d.at)}|${normalizeHeading(d.under ?? '')}`;

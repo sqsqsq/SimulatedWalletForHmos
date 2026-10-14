@@ -33,25 +33,33 @@ const PYTHONS = ['python', 'python3'];
  * @returns {{data: object|null, error: string|null}} 两者恰有一个非空
  */
 export function queryFlowStatus(projectRoot, feature, { timeoutMs } = {}) {
+  const r = runPython(FLOW_SCRIPT, ['status', '--feature', feature, '--project-root', projectRoot], { timeoutMs });
+  if (r.error) return { data: null, error: r.error };
+  if (r.status !== 0) return { data: null, error: `${r.exe} status 退出码 ${r.status}：${r.output}` };
+  return parseStatus(r.stdout);
+}
+
+/**
+ * 用本机的 python 跑一个扩展脚本 —— 流程查询与图的结构检查共用这一处解释器选择。
+ *
+ * @returns {{exe?: string, status?: number, stdout?: string, output?: string, error?: string}}
+ *   `error` 非空 = 没跑起来或没跑完；否则 `output` 是两路输出原样拼起来的全文
+ */
+export function runPython(script, args, { timeoutMs } = {}) {
   const missing = [];
   for (const exe of PYTHONS) {
-    const r = spawnSync(exe, [FLOW_SCRIPT, 'status', '--feature', feature,
-      '--project-root', projectRoot],
-    { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true });
+    const r = spawnSync(exe, [script, ...args], { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true });
     if (r.error) {
       // **只有「这个解释器不在」才换候选**：超时、被杀、参数太长都说明它已经跑起来了，
       // 换一个只会得到同一句话，而原因在中途被换掉。
-      if (r.error.code !== 'ENOENT') {
-        return { data: null, error: `${exe} status 没跑完（${r.error.message}）` };
-      }
+      if (r.error.code !== 'ENOENT') return { error: `${exe} ${path.basename(script)} 没跑完（${r.error.message}）` };
       missing.push(`${exe}：${r.error.message}`);
+      continue;
     }
-    else if (r.status !== 0) {
-      return { data: null,
-        error: `${exe} status 退出码 ${r.status}：${String(r.stderr || r.stdout || '').trim()}` };
-    } else return parseStatus(r.stdout);
+    return { exe, status: r.status, stdout: r.stdout,
+      output: [r.stdout, r.stderr].map(x => String(x ?? '').trim()).filter(Boolean).join('\n') };
   }
-  return { data: null, error: `起不动 python（${missing.join('；')}）` };
+  return { error: `起不动 python（${missing.join('；')}）` };
 }
 
 /** 输出是 JSON 加可能的日志行：从第一个 `{` 起解析，形状不对要说清缺什么。 */

@@ -281,9 +281,10 @@ function tablesInSpan(view, span) {
   return (view?.tables ?? []).filter(t => t.line >= span.from && t.line < span.to);
 }
 
-/** 这个区间里有没有一张真的 Markdown 表。 */
-export function hasTable(view, span) {
-  return tablesInSpan(view, span).length > 0;
+/** 这个区间里有没有一张真的 Markdown 表；给了表头时要有一张以这几列起头的表（后面可以补列）。 */
+export function hasTable(view, span, header = null) {
+  const want = header ? header.map(c => norm(c)) : null;
+  return tablesInSpan(view, span).some(t => !want || want.every((c, i) => t.header[i] === c));
 }
 
 /**

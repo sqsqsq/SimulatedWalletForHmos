@@ -23,10 +23,11 @@ import difflib
 import json
 import re
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from materials import registry
+from materials import importer, registry
 
 from flow.routing import inputs_answer, material_state
 from flow.state import (CONTRACT, FlowError, STORY, REVIEW, system_requirement,
@@ -212,18 +213,22 @@ def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]]
 
 
 def _sources(feature_root: Path) -> list[dict]:
-    """已并入正文的原件（文件名、摘要、归类），取自材料清单。读不出清单时为空——那由 `round` 报。"""
+    """已并入正文的原件（相对 inbox 的路径、摘要、归类），取自材料清单。
+
+    读不出清单就报，不当成「没有新料」：那会让人以为上次以来什么都没并入。
+    """
     try:
         manifest = registry.read(feature_root)
-    except registry.MaterialError:
-        return []
+    except registry.MaterialError as exc:
+        raise FlowError(f"{exc}——读不出材料清单就说不出上次以来并入了哪些原件") from exc
     return [{"file": s.get("file"), "sha256": s.get("sha256"), "class": s.get("class")}
             for s in manifest.get("sources") or [] if s.get("ingested")]
 
 
 def _imported_since(feature_root: Path, records: list[tuple[str, dict]]) -> list[dict]:
     """上一次收口（或成文基准）以来新并入正文的原件，**含只取图的**：它们的正文不进八项比较，
-    是不是带来了业务变化由模型读原件判。上一次没有留原件清单时，全部列出。"""
+    是不是带来了业务变化由模型读原件判。上一次没有留原件清单时，全部列出。
+    比较键是相对路径加摘要：原件挪了位置也算新并入，是不是同一份业务内容由模型读了判，不按路径猜替代。"""
     closed = _latest(records, "closed")
     seen = {(s.get("file"), s.get("sha256")) for s in ((closed[1].get("sources") if closed else None) or [])}
     return [s for s in _sources(feature_root) if (s["file"], s["sha256"]) not in seen]
@@ -237,23 +242,19 @@ def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
     新原件自己还没归类时，列出全部已归类的原件。
     """
     inbox = feature_root / "inbox"
-    path = inbox / ".classify.json"
-    if not path.is_file():
-        return []
     try:
-        classes = json.loads(path.read_text(encoding="utf-8-sig"))
-    except ValueError as exc:
-        raise FlowError(f"inbox/.classify.json 不是合法 JSON（{exc}）：修正归类件再跑") from exc
-    if not isinstance(classes, dict):
-        raise FlowError("inbox/.classify.json 应是 {\"文件名\": \"类别\"} 对象")
-    known = {name: cls for name, cls in classes.items() if (inbox / name).is_file()}
+        classes = importer.read_classify(inbox)
+    except importer.ImportError_ as exc:
+        raise FlowError(f"{exc}：修正归类件再跑") from exc
+    known = {key: cls for key, cls in classes.items() if (inbox / key).is_file()}
     out = []
     for new in pending:
         cls = known.get(new)
         olds = sorted(n for n, c in known.items() if n != new and (cls is None or c == cls))
         if olds:
             out.append({"new": new, "same_class": olds,
-                        "note": f"若 {new} 取代其中某份，导入前先把 inbox 里那份移进 .backups/local/"})
+                        "note": f"若 {new} 取代其中某份，按 rules/inbox_import.md「新原件取代旧原件」"
+                                "移走旧原件并删掉它的归类键"})
     return out
 
 
@@ -473,6 +474,27 @@ def _report_passed(reports: Path, subject: str | None) -> bool:
             and fields.get("verdict", "").strip() == "PASS")
 
 
+REPORT_CHECK = Path(__file__).resolve().parents[5] / "hooks" / "shared" / "verifier-report.mjs"
+
+
+def _check_reports(feature_root: Path, project_root: Path, phases: list[str]) -> None:
+    """审查对象这一轮变了的阶段，核当前报告的形态、判据与处置——直接 close 不能绕过交付门那一道。
+
+    规则与命令出口都在 `hooks/shared/verifier-report.mjs`，这里只调用、原样带回它的话。
+    """
+    node = shutil.which("node")
+    if phases and node is None:
+        raise FlowError("找不到 node：收口前要按 verifier-report.mjs 核受影响阶段的审查报告，无法跳过")
+    for phase in phases:
+        proc = subprocess.run(
+            [node, str(REPORT_CHECK), "--feature", feature_root.name, "--phase", phase,
+             "--project-root", str(project_root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        if proc.returncode != 0:
+            said = "\n".join(x.strip() for x in (proc.stdout, proc.stderr) if x and x.strip())
+            raise FlowError(f"{phase} 阶段的审查报告核不过，不收口：\n{said or f'退出码 {proc.returncode}'}")
+
+
 def _reviewed_now(fact: dict) -> bool:
     """harness 的 summary 说当前对象审过：闭环 PASS，且不是沿用历史，或沿用历史而走的是修正重验。
 
@@ -524,7 +546,7 @@ def cmd_update_status(feature_root: Path, feature: str, project_root: Path) -> d
     return out
 
 
-def cmd_update_close(feature_root: Path) -> dict:
+def cmd_update_close(feature_root: Path, project_root: Path) -> dict:
     """收口这一轮：**绑定说明、记下此刻的文件摘要、留一份可比的正文**。
 
     只记录「本轮处理到这里」，**不判语义对不对，也不发布**——那两件事一个归审查、
@@ -563,6 +585,7 @@ def cmd_update_close(feature_root: Path) -> dict:
         raise FlowError(
             f"开这一轮时已闭环的阶段现在没闭环：{'、'.join(broken)}，不收口。"
             "按该阶段 summary 的 NEXT 走完（派审、返修或重跑 `harness-runner.ts --phase <阶段>`）再收口")
+    _check_reports(feature_root, project_root, [ph for ph in before if now_by[ph].get("subject") != before[ph]])
     stuck = [f["phase"] for f in phases if f.get("unadopted")]
     if stuck:
         raise FlowError(

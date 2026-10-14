@@ -157,8 +157,10 @@ flowchart TD
 
 ### 材料清单
 
-- 需求简报——产品提供的排队提醒简报：现状与问题、订阅条件、提醒方式与免打扰、状态与清理约定、三条验收意图。原文：[RR/prd.md](../RR/prd.md)
-- 取号页界面图——随简报附的界面图：订阅入口的位置、两种状态下的呈现差别、免打扰提示的位置。原文：[assets/queue-entry.png](../assets/queue-entry.png)
+| 材料 | 来源 | 贡献 |
+|---|---|---|
+| 需求简报 [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 产品提供的排队提醒简报：现状与问题、订阅条件、提醒方式与免打扰、状态与清理约定、三条验收意图。 |
+| 取号页界面图 [queue-entry.png](../assets/queue-entry.png) | [queue-entry.png](../assets/queue-entry.png) | 随简报附的界面图：订阅入口的位置、两种状态下的呈现差别、免打扰提示的位置。 |
 
 ### 数据、配置与事件
 

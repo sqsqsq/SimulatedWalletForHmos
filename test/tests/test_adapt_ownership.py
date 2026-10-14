@@ -217,37 +217,129 @@ class TheMechanismFollowsThePackage(AdaptCase):
         self.assertIn("story-adaptation", after, "机制登记没跟上包")
 
 
-class KnowledgeIsCheckedWithoutAFeature(AdaptCase):
-    """方法页第 7 步的只读检查：刚装完、没有任何需求时照样能核知识，不写文件；知识坏了非零退出。"""
+class TheStatusViewOnlyReads(AdaptCase):
+    """`--status`：刚装完、没有任何需求时照样能核知识；只读——前后文件集合与内容一致；
+    未安装、坏清单、坏配置分别是不同的事实，不能都变成「零知识且通过」。"""
 
-    def check_script(self) -> str:
-        page = (PKG_EXT / "skills" / "story-adaptation" / "reference" / "knowledge-adaptation.md").read_text(encoding="utf-8")
-        block = page.split("**确认与交回**", 1)[1].split("```js", 1)[1].split("```", 1)[0]
-        return "\n".join(l[3:] if l.startswith("   ") else l for l in block.splitlines())
+    def tree(self) -> dict[str, bytes]:
+        return {p.relative_to(self.target).as_posix(): p.read_bytes()
+                for p in self.target.rglob("*") if p.is_file() and ".git" not in p.parts}
 
-    def run_check(self) -> subprocess.CompletedProcess:
-        return subprocess.run(["node", "--input-type=module", "-e", self.check_script()], cwd=self.target,
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    def status(self) -> tuple[int, dict]:
+        before = self.tree()
+        proc = self.adapt("--status")
+        self.assertEqual(before, self.tree(), "--status 写了文件")
+        return proc.returncode, json.loads(proc.stdout)
+
+    def test_an_installed_target_reports_versions_counts_and_digest(self) -> None:
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual(PKG_VERSION, got["package"]["version"])
+        self.assertTrue(got["target"]["installed"])
+        self.assertEqual("PASS", got["knowledge"]["status"])
+        self.assertTrue(got["knowledge"]["counts"])
+        self.assertTrue(got["knowledge"]["digest"].startswith("sha256:"))
+        self.assertTrue(got["history"].startswith("unknown"), "读不到的历史没说成未知")
 
     def test_a_fresh_install_checks_clean_and_writes_nothing(self) -> None:
         shutil.rmtree(self.ext)
         self.commit("空仓")
         self.assertEqual(0, self.adapt("--apply").returncode)
         self.commit("装好")
-        proc = self.run_check()
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertIn('"status":"PASS"', proc.stdout)
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=self.target, capture_output=True, text=True)
-        self.assertEqual("", status.stdout.strip(), "检查写了文件")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("PASS", got["knowledge"]["status"])
+        self.assertEqual({}, got["knowledge"]["counts"])
+        self.assertTrue(got["items"]["知识"], "从未适配的目标没从知识基线列起")
         self.assertFalse((self.target / "doc" / "features").exists(), "检查造了需求目录")
 
-    def test_broken_knowledge_exits_non_zero_with_the_file(self) -> None:
+    def test_not_installed_is_a_fact_not_an_error(self) -> None:
+        shutil.rmtree(self.ext)
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("not_installed", got["state"])
+        self.assertNotIn("knowledge", got, "没装的目标报出了知识结果")
+
+    def test_broken_knowledge_exits_one_with_the_file(self) -> None:
         manifest = self.ext / "manifest.yaml"
         manifest.write_text(manifest.read_text(encoding="utf-8").replace(
             "  knowledge:\n", "  knowledge:\n    - knowledge/facts/gone.md\n", 1), encoding="utf-8")
-        proc = self.run_check()
-        self.assertNotEqual(0, proc.returncode)
-        self.assertIn("knowledge/facts/gone.md", proc.stderr)
+        code, got = self.status()
+        self.assertEqual(1, code)
+        self.assertEqual("FAIL", got["knowledge"]["status"])
+        self.assertIn("knowledge/facts/gone.md", "\n".join(got["knowledge"]["problems"]))
+
+    def test_an_unreadable_config_is_an_input_error(self) -> None:
+        (self.target / "framework.config.json").write_text("{坏了", encoding="utf-8")
+        code, got = self.status()
+        self.assertEqual(2, code)
+        self.assertEqual("config", got["error"]["category"])
+        self.assertIn("framework.config.json", got["error"]["message"])
+
+    def test_after_an_upgrade_the_items_follow_the_current_cursor(self) -> None:
+        manifest = self.ext / "manifest.yaml"
+        rows = [('adapted_for: "1.9.6"' if l.startswith("adapted_for:") else l)
+                for l in manifest.read_text(encoding="utf-8").split("\n")]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("1.9.6", got["target"]["adapted_for"])
+        self.assertTrue(all(tuple(map(int, i.split("：", 1)[0].split("."))) > (1, 9, 6)
+                            for i in got["items"]["知识"]), got["items"])
+        self.assertEqual([], got["items"]["在途单"], "装的就是包的版本，在途单按当前游标为空")
+
+
+class SameUseCandidatesAreOnlyHints(TheStatusViewOnlyReads):
+    """同用途声明候选只按 `applies_when` 原文相同分组，给独立审查当线索：不改 PASS，不推断相似，
+    为空也不说明没有重复。重复与否、互补与否由审查读正文判。"""
+
+    def set_applies(self, name: str, text: str) -> None:
+        f = self.ext / "knowledge" / "facts" / name
+        rows = [f"applies_when: {text}" if l.startswith("applies_when:") else l
+                for l in f.read_text(encoding="utf-8").split("\n")]
+        f.write_text("\n".join(rows), encoding="utf-8")
+
+    def test_the_same_declared_use_is_listed_without_changing_the_verdict(self) -> None:
+        """同用途但内容互补：脚本只列出来，不判它们重复。"""
+        self.set_applies("component-profile.md", "设计要用项目已有能力时：在哪、怎么用")
+        self.set_applies("engineering-capabilities.md", "  设计要用项目已有能力时：在哪、怎么用  ")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("PASS", got["knowledge"]["status"])
+        self.assertEqual("同用途声明候选，须语义核对", got["knowledge"]["sameUse"]["note"])
+        files = [g["files"] for g in got["knowledge"]["sameUse"]["groups"]]
+        self.assertIn(sorted(["knowledge/facts/component-profile.md", "knowledge/facts/engineering-capabilities.md"]),
+                      [sorted(f) for f in files])
+
+    def test_different_wording_is_not_claimed_free_of_duplicates(self) -> None:
+        """用途写法不同而正文重复：脚本不列，也不说「没有重复」——那归审查。"""
+        self.set_applies("component-profile.md", "查本部件边界时")
+        self.set_applies("engineering-capabilities.md", "查已有能力时")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        listed = [f for g in got["knowledge"]["sameUse"]["groups"] for f in g["files"]]
+        self.assertNotIn("knowledge/facts/component-profile.md", listed)
+        self.assertNotIn("无重复", json.dumps(got, ensure_ascii=False))
+
+
+class TheIndependentReviewIsDeliveredBeforeMarking(unittest.TestCase):
+    """独立审查的任务页交付四个维度，SKILL 与方法页在 --mark-adapted 之前送达它。"""
+
+    REF = PKG_EXT / "skills" / "story-adaptation"
+
+    def test_the_task_page_names_the_four_dimensions_and_its_inputs(self) -> None:
+        page = (self.REF / "reference" / "knowledge-review.md").read_text(encoding="utf-8")
+        for dim in ("条目粒度与归类", "项目事实的用途", "跨文件重复", "编码规范边界"):
+            self.assertIn(dim, page)
+        for given in ("knowledge.digest", "knowledge.sameUse", "正常需求", "未审"):
+            self.assertIn(given, page)
+
+    def test_the_review_comes_before_marking_in_both_entry_pages(self) -> None:
+        for rel in ("SKILL.md", "reference/knowledge-adaptation.md"):
+            text = (self.REF / rel).read_text(encoding="utf-8")
+            with self.subTest(page=rel):
+                self.assertIn("knowledge-review.md", text)
+                self.assertLess(text.index("knowledge-review.md"), text.rindex("--mark-adapted"))
 
 
 class TheUpgradeFollowsTheVersionRecord(AdaptCase):
@@ -282,8 +374,8 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn("停一次问人", proc.stdout)
 
     def test_nothing_to_adapt_is_one_sentence_and_records_the_version(self) -> None:
-        """上一版之后没有演进条目、知识合协议：不问人，脚本把 adapted_for 写成包的版本。"""
-        self.set_adapted("1.9.7")
+        """已按包的版本适配过、知识合协议：没有更晚的演进条目，不问人，脚本把 adapted_for 写成包的版本。"""
+        self.set_adapted(PKG_VERSION)
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("目标已按包的版本适配，知识与当前协议一致", proc.stdout)

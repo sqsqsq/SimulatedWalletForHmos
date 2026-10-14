@@ -36,9 +36,9 @@ export function guard(phase, body) {
       return {
         ok: false,
         severityOverride: 'BLOCKER',
-        message: `扩展门禁自身异常（${phase} post_check）：${e?.message ?? e}`
-          + `——异常出在门禁代码，本阶段的扩展判据没有跑完，这次 harness 结果不代表产物通过；`
-          + `门禁代码由扩展维护者修。`,
+        message: `扩展门禁自身异常（${phase} post_check）：${e?.stack ?? e}`
+          + `\n——异常出在门禁代码，本阶段的扩展判据从出错处起没有跑完，这次 harness 结果不代表产物通过；`
+          + `恢复类别是维护者处理：门禁代码由扩展维护者修，产物不用为它改。`,
       };
     }
   };

@@ -13,7 +13,7 @@ import {
   zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, specText } from './context.mjs';
-import { relFromStory } from './sources.mjs';
+import { displayTags, relFromStory, resolveTags, sourceCatalog } from './sources.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
 
 /** 附录·规约那张表的判定取值封闭；整域不适用时该域内条目不必逐条列。 */
@@ -279,7 +279,7 @@ function appendixTableHeader(ctx, name) {
  * spec 某一小节投进附录的行：整节、若干张表，或者它写出来的「不涉及」。
  * `level` 是附录里承载它的标题层级（H3 的节或 H4 的小节）：整节投影的小标题按相对源节的深度排在它之下。
  */
-function specRows(spec, def, drop, level) {
+function specRowsRaw(spec, def, drop, level) {
   if (def.whole) return wholeSection(spec, def.from, drop, def.rename, level);
   const section = specSectionAt(spec, def.from);
   const tables = section.tables.map(t => projectedTable(t, drop, def.rename)).filter(Boolean);
@@ -298,6 +298,9 @@ function specRows(spec, def, drop, level) {
  */
 function appendixZones(ctx, spec) {
   const { drop, sections } = projectionOf(ctx.contract);
+  // spec 的依据标签写的是登记名（路径、会议留存目录）：投进归档件换成读者认得的材料名与决定标题
+  const catalog = sourceCatalog(ctx.featureRoot, ctx.contract);
+  const specRows = (...a) => specRowsRaw(...a).map(line => displayTags(line, catalog));
   const out = [];
   for (const [section, def] of Object.entries(sections)) {
     if (def.kind === 'scope') {
@@ -450,8 +453,11 @@ function appendixSourceProblems(ctx, spec) {
       + '——附录的机器区由 spec 扩展章各节投影，spec 读不到时无从投影也无从核对'];
   }
   // 「不涉及：<依据>」是**写出来的结论**，`specSection` 读得到正文，不算缺节。
+  // 依据标签认不到唯一一份材料或已定决定时投不出人读名，与缺节一样拦在投影之前。
+  const tags = resolveTags(spec, sourceCatalog(ctx.featureRoot, ctx.contract)).problems
+    .map(p => `spec/spec.md ${p}——依据标签按 spec 任务包「材料与来源」列的名字与 ID 改在 spec`);
   return appendixSpecGaps(ctx.contract, spec).map(g => `${g}；`
-    + '不涉及的节写「不涉及：<依据>」一行也算有内容，投影把这一行搬进附录，评审者读得到');
+    + '不涉及的节写「不涉及：<依据>」一行也算有内容，投影把这一行搬进附录，评审者读得到').concat(tags);
 }
 
 /** 附录要从 spec 投影的小节：`[{from, to}]`，`to` 是附录里的落点名。 */

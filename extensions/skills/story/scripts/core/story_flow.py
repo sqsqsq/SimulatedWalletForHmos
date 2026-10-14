@@ -73,6 +73,7 @@ from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
 from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.rounds import cmd_reopen, cmd_round
+from flow.lifecycle import ensure_mermaid
 from flow.submission import cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
@@ -81,6 +82,9 @@ from flow.update import (cmd_update_close, cmd_update_inputs, cmd_update_prepare
 
 
 # ---------------------------------------------------------------------------
+#: 会读、比较或登记 story 的动作：动手之前先把阅读图切回 Mermaid（经同一个 JS 入口，不另写切换器）
+VIEW_READERS = {"status", "story", "archived", "update", "round", "reopen", "complete"}
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")
     ap.add_argument("mode",
@@ -121,6 +125,8 @@ def main() -> int:
         project_root = Path(args.project_root).resolve() if args.project_root \
             else importer.DEFAULT_PROJECT_ROOT
         feature_root = project_root / importer.features_dir(project_root) / args.feature
+        if args.mode in VIEW_READERS:
+            ensure_mermaid(feature_root, project_root)
 
         code = 0
         if args.mode == "init":
@@ -150,7 +156,7 @@ def main() -> int:
             if args.action == "status":
                 result.update(cmd_update_status(feature_root, args.feature, project_root))
             elif args.action == "close":
-                result.update(cmd_update_close(feature_root))
+                result.update(cmd_update_close(feature_root, project_root))
             elif args.action == "restore":
                 result.update(cmd_update_restore(feature_root))
             elif args.action == "inputs":
@@ -172,6 +178,13 @@ def main() -> int:
             result["warning"] = TAMPER_NOTES[0]
         print(json.dumps(result, ensure_ascii=False))
         return 1
+    except Exception as exc:  # noqa: BLE001  脚本自身的缺陷：原始异常全文留在 stderr
+        import traceback  # noqa: PLC0415
+        traceback.print_exc()
+        result.update(success=False, error=f"story_flow 自身异常（{type(exc).__name__}：{exc}）：这一步没有执行完，"
+                                           "不是产物或材料的问题——原始异常在 stderr，归扩展维护者处理")
+        print(json.dumps(result, ensure_ascii=False))
+        return 2
 
 
 if __name__ == "__main__":

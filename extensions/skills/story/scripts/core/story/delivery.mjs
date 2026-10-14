@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSystemRequirement, readJson } from './context.mjs';
-import { storyReviewProblems } from '../../../../../hooks/shared/verifier-report.mjs';
+import { reportCheck, storyReviewProblems } from '../../../../../hooks/shared/verifier-report.mjs';
 
 /**
  * 框架回执的入口 —— 直接用 node 起 framework 自己那份 ts-node，不经 shell。
@@ -64,30 +64,38 @@ export function deliveryProblems(ctx) {
   const receipt = path.join(harness, 'scripts', 'check-receipt.ts');
   const manual = 'cd framework/harness && npx ts-node scripts/check-receipt.ts '
     + `--feature ${ctx.args.feature} --phase spec`;
-  const fail = (msg) => ({ problems: [msg], notes: [] });
+  // 先核报告：格式、判据、一对象一结论与处置记录。回执只判身份与闭环，这几样它不判；
+  // 报告的问题与回执的问题一次报全，不因前一样没过就不跑后一样。
+  const report = reportCheck(ctx.projectRoot, ctx.args.feature, 'spec');
+  const reportIssues = report.status === 'FAIL' || report.status === 'ERROR'
+    ? report.problems.map(p => `spec 阶段审查报告：${p}`) : [];
+  const fail = (msg) => ({ problems: [...reportIssues, msg], notes: [] });
   if (!fs.existsSync(receipt)) {
     return fail('framework/harness/scripts/check-receipt.ts：找不到，交付门跑不了——'
-      + '闭环判定归框架，判不了按未通过计');
+      + '闭环判定归框架；恢复类别是 Framework 安装维护：按 framework-init 恢复 framework/harness，判不了按未通过计');
   }
   const runner = receiptRunner(harness);
   if (!runner) {
-    return fail('framework/harness 里没有 ts-node，交付门跑不了——'
-      + `回执由这份 ts-node 起 check-receipt.ts 判（等价命令 \`${manual}\`），判不了按未通过计`);
+    return fail('framework/harness 里没有 ts-node，交付门跑不了——环境依赖缺失：'
+      + `在工程里跑 \`cd framework/harness && npm install\` 后重跑交付门（回执的等价命令 \`${manual}\`），判不了按未通过计`);
   }
   const r = spawnSync(process.execPath,
     [runner, path.join('scripts', 'check-receipt.ts'),
       '--feature', ctx.args.feature, '--phase', 'spec'],
     { cwd: harness, encoding: 'utf-8', timeout: 300000, windowsHide: true });
   if (r.error) {
-    return fail(`check-receipt 起不来（${r.error.message}），交付门跑不了——等价命令是 \`${manual}\`，`
+    return fail(`check-receipt 子进程起不来（${r.error.message}），交付门跑不了——环境问题，排除后重跑；等价命令是 \`${manual}\`，`
       + '判不了按未通过计');
   }
   if (r.status !== 0) {
-    const say = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim().split(/\r?\n/)
-      .filter(Boolean).slice(-12).join(' / ');
-    return fail(`spec 阶段回执：check-receipt 未通过（${say || `退出码 ${r.status}`}）——交付门以框架判定的 spec 阶段闭环为前提`);
+    // 原样带出：框架的报告带着问题与恢复入口，截掉一段或压成一行，模型就只能去读 check-receipt 的源码
+    const said = `${r.stdout ?? ''}\n${r.stderr ?? ''}`.trim();
+    return fail(`spec 阶段闭环未成立：check-receipt 退出码 ${r.status}——交付门以框架判定的 spec 阶段闭环为前提，`
+      + '恢复按 `phases/spec.md`「闭环」那张表找当前情形的下一步，再重跑交付门。'
+      + (said ? `check-receipt 原始输出：\n${said.split(/\r?\n/).map(l => `    ${l}`).join('\n')}` : 'check-receipt 没有任何输出'));
   }
 
+  if (reportIssues.length) return { problems: reportIssues, notes: [] };
   const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
   if (review.status === 'NOT_APPLICABLE') {
     // 本宿主没有登记审查员：沿用户批准记一笔放行，但**如实说没审过**——
@@ -95,6 +103,7 @@ export function deliveryProblems(ctx) {
     return { problems: [], notes: [`story 未经读者语义审查即交付：${review.detail}`] };
   }
   if (review.problems.length) return { problems: review.problems, notes: [] };
+  review.notes = [...(review.notes ?? []), ...report.notes.filter(n => !(review.notes ?? []).includes(n))];
   // 报告的**结构**没问题不等于**审查判它过了**：交付门看审查自己的结论与阻断项。
   // 只有阻断项才拦；判 WARN 而没有阻断项时放行，建议项记进 notes（`phases/spec.md`「闭环」）。
   const blocking = review.blocking ?? [];

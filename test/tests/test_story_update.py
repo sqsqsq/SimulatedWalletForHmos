@@ -938,9 +938,10 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         # 夹具的材料清单少一份系统设计，补齐后 story 能过全篇 check
         story = self.feature_root / "AR" / "story.md"
         text = story.read_text(encoding="utf-8")
-        row = "- 开发需求：本轮从上游提取的开发需求，业务分工与本单范围。原文：[AR/design.md](design.md)\n"
+        row = "| 开发需求 [design.md](design.md) | [design.md](design.md) | 本轮从上游提取的开发需求，业务分工与本单范围。 |\n"
         self.assertIn(row, text)
-        story.write_text(text.replace(row, row + "- 系统设计：接口与端云分工。原文：[SR/design.md](../SR/design.md)\n"),
+        story.write_text(text.replace(row, row + "| 系统设计 [design.md](../SR/design.md) "
+                                      "| [design.md](../SR/design.md) | 接口与端云分工。 |\n"),
                          encoding="utf-8")
         self.outputs: list[str] = []
 
@@ -1049,6 +1050,9 @@ class ChangedSubjectsNeedAReview(UpdateCase):
 
     def setUp(self) -> None:
         super().setUp()
+        from ext_workspace import DEV_EXT, link_harness_yaml  # noqa: PLC0415
+        shutil.copytree(DEV_EXT / "rules", self.root / "doc" / "extensions" / "rules", dirs_exist_ok=True)
+        link_harness_yaml(self.root)
         self.reports = self.feature_root / "spec" / "reports"
         self.reports.mkdir(parents=True, exist_ok=True)
 
@@ -1056,10 +1060,26 @@ class ChangedSubjectsNeedAReview(UpdateCase):
         self.rid = self.update()["update"]
         (self.updates / self.rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
 
+    def landing(self, subject: str) -> str:
+        return f"doc/features/{self.feature_root.name}/spec/reports/verifier.report.{subject}.md"
+
     def summary(self, subject: str, closure: str = "closed", **extra: object) -> None:
+        """harness 写的 summary：审查对象与报告落点同进同退（verifier 启用时）。"""
         body = {"closure_status": closure, "verdict": "PASS", "verifier_subject_id": subject,
-                "readiness_signals": [], **extra}
+                "verifier_report": self.landing(subject), "readiness_signals": [], **extra}
         (self.reports / "summary.json").write_text(json.dumps(body), encoding="utf-8")
+
+    def report(self, subject: str) -> None:
+        """一份合规的 PASS 回复：overlay 每条判据一行，终态块指向这个对象。"""
+        overlay = (self.root / "doc" / "extensions" / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        body = overlay.split("semantic_checks:", 1)[1]
+        ids = [line[2:].split(":", 1)[0] for line in body.splitlines()
+               if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":")]
+        rows = "\n".join(f"| {i} | PASS | BLOCKER | 逐条核过 |" for i in ids)
+        (self.reports / f"verifier.report.{subject}.md").write_text(
+            "| id | status | severity | 证据 |\n|---|---|---|---|\n" + rows + "\n\n"
+            f"<!-- maison-verifier-result:v1 -->\nverifier_subject_id: {subject}\nverdict: PASS\nblocker_count: 0\n"
+            "<!-- /maison-verifier-result:v1 -->\n", encoding="utf-8")
 
     PRIOR = {"verifier_closure": {"mode": "completed_with_prior_review", "reviewed_subject_id": "c" * 64}}
 
@@ -1072,21 +1092,36 @@ class ChangedSubjectsNeedAReview(UpdateCase):
         self.summary(self.BEFORE)
         self.open_round()
         self.summary(self.AFTER)
+        self.report(self.AFTER)
         self.assertEqual("closed", self.update("--action", "close").get("status"))
 
     def test_a_changed_subject_carried_by_prior_review_does_not_close(self) -> None:
+        """沿用历史审查而没走修正重验：当前对象没有独立审查，收口停下。"""
         self.summary(self.BEFORE)
         self.open_round()
+        self.report(self.BEFORE)
         self.summary(self.AFTER, readiness_signals=[{"id": "semantic_not_reverified"}], **self.PRIOR)
         out = self.update("--action", "close")
-        self.assertIn("审查对象在这一轮变了", out.get("error", ""), out)
+        self.assertNotEqual("closed", out.get("status"), out)
+        self.assertIn("没有独立审查", out.get("error", ""), out)
 
     def test_an_expression_only_change_carried_by_revalidation_closes(self) -> None:
         """PASS 之后只改表达、走修正重验：summary 带 script_revalidated 的沿用就放行。"""
         self.summary(self.BEFORE)
         self.open_round()
+        self.report(self.BEFORE)
         self.summary(self.AFTER, readiness_signals=[{"id": "script_revalidated"}], **self.PRIOR)
         self.assertEqual("closed", self.update("--action", "close").get("status"))
+
+    def test_a_malformed_current_report_does_not_close(self) -> None:
+        """直接 close 不能绕过报告核对：对象变了、当前报告格式不合，收口照样停下并带回原话。"""
+        self.summary(self.BEFORE)
+        self.open_round()
+        self.summary(self.AFTER)
+        (self.reports / f"verifier.report.{self.AFTER}.md").write_text("都看过了。\n", encoding="utf-8")
+        out = self.update("--action", "close")
+        self.assertIn("审查报告核不过", out.get("error", ""), out)
+        self.assertIn("审查回复格式不合", out.get("error", ""))
 
     def test_a_phase_open_at_the_start_is_not_this_rounds_to_close(self) -> None:
         """开轮时本来没闭环的阶段不是这一轮必须推进的对象：对象变了、仍没闭环也不挡收口。"""

@@ -209,9 +209,10 @@ export function contractFiles(contracts) {
 /** acceptance.yaml 读取（知识义务的验证要求单源）。 */
 /** 验收编号的形态：唯一定义在章节合同 `id_shapes.acceptance`。 */
 const STORY_CONTRACT = new URL('../../skills/story/contracts/story-chapters.json', import.meta.url);
+/** \u7AE0\u8282\u5408\u540C\u5168\u6587\uFF1A\u7F16\u53F7\u5F62\u6001\u4E0E\u6765\u6E90\u767B\u8BB0\u90FD\u4ECE\u5B83\u53D6\u3002 */
+export const storyContract = () => JSON.parse(fs.readFileSync(STORY_CONTRACT, 'utf-8').replace(/^\uFEFF/, ''));
 
-const idShape = kind => new RegExp(`\\b(?:${JSON.parse(fs.readFileSync(STORY_CONTRACT, 'utf-8')
-  .replace(/^\uFEFF/, '')).id_shapes[kind].join('|')})\\b`, 'g');
+const idShape = kind => new RegExp(`\\b(?:${storyContract().id_shapes[kind].join('|')})\\b`, 'g');
 export const acceptanceIdRe = () => idShape('acceptance');
 /** 上游材料里读者要对照的原始验收编号形态（`id_shapes.keep`）。 */
 export const keptIdRe = () => idShape('keep');

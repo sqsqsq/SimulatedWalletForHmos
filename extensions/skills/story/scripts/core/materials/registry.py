@@ -3,7 +3,8 @@
 这份清单回答两个问题，而且**只有它**回答：
 
 1. 这个需求现在手里有什么材料——每份正文、每张图各自的身份（路径 + 内容哈希）；
-2. 收件箱里的原件哪些已经并入正文、哪些还没有。
+2. 收件箱里的原件哪些已经并入正文、哪些还没有；
+3. 本轮实际采用的输入原件各是什么、读哪一份阅读稿（`origins`，由前两问派生）。
 
 清单的 `digest` 是**材料版本**：正文或图片任何一个字节变了，digest 就变；一个字节没变，
 重算多少次都相同。轮次边界就取这个值——流程侧不另算材料哈希。
@@ -34,7 +35,9 @@ from pathlib import Path
 
 from materials import importer, meeting
 
-SCHEMA = 1
+SCHEMA = 2
+#: 来源关系的三种：远端直接给的正文、被确定性转换并入正文的收件箱原件、留存的会议版本
+ORIGIN_KINDS = ("direct", "converted-source", "meeting")
 MANIFEST = ("AR", "story-src", "materials.json")
 
 # 权威材料的正文源：章节合同 `sources` 里上游给进来的那几份（本轮派生的规格不是材料），
@@ -235,29 +238,35 @@ def _same_text(disk: str, want: str) -> bool:
     return disk.replace("\r\n", "\n") == want.replace("\r\n", "\n")
 
 
-def collect_sources(feature_root: Path) -> list[dict]:
-    """收件箱里的原件：身份 + 是否已并入正文。
+def collect_sources(feature_root: Path) -> tuple[list[dict], dict[str, list[str]], dict[str, list[str]]]:
+    """收件箱里的原件：身份（相对 inbox 的路径 + 摘要）+ 是否已并入正文。
 
     未归类的原件一定未并入——没归类就没有落点。归类件本身坏了则整份清单算不出来，
     不能当成「收件箱是空的」放过去。
+
+    另返回两份关系，都只收已并入的：``{正文落点: [源键…]}`` 哪几份原件确定性地合成了哪份正文；
+    ``{源键: [图片路径…]}`` 只抽图的原件抽出了哪些图（就是下面逐字节比对过的那几张，不再读一遍 docx）。
     """
     inbox = feature_root / INBOX
     try:
         classify = importer.read_classify(inbox)
         targets = importer.doc_targets()
+        sources = importer.scan_sources(inbox)
     except importer.ImportError_ as exc:
         raise MaterialError(str(exc)) from exc
 
-    sources = importer.scan_sources(inbox)
-    entries = {p.name: {"file": p.name, "sha256": file_digest(p),
-                        "class": classify.get(p.name) if classify.get(p.name)
+    key = {p: importer.source_key(inbox, p) for p in sources}
+    entries = {key[p]: {"file": key[p], "sha256": file_digest(p),
+                        "class": classify.get(key[p]) if classify.get(key[p])
                         in importer.CLASSES else None,
                         "ingested": False}
                for p in sources}
+    covered: dict[str, list[str]] = {}
+    pictures: dict[str, list[str]] = {}
 
     grouped: dict[str, list[Path]] = {}
     for path in sources:
-        cls = entries[path.name]["class"]
+        cls = entries[key[path]]["class"]
         if cls:
             grouped.setdefault(cls, []).append(path)
 
@@ -265,7 +274,7 @@ def collect_sources(feature_root: Path) -> list[dict]:
         if cls == "MEETING":
             # 会议材料没有正文落点：这一版的原件留过，就算导过
             for p in paths:
-                entries[p.name]["ingested"] = meeting.saved(feature_root, p)
+                entries[key[p]]["ingested"] = meeting.saved(feature_root, p)
             continue
         docs = [p for p in paths if p.suffix.lower() not in importer.IMAGE_EXTS]
         images = [p for p in paths if p.suffix.lower() in importer.IMAGE_EXTS]
@@ -273,7 +282,7 @@ def collect_sources(feature_root: Path) -> list[dict]:
         if docs:
             try:
                 sections, media, _ = importer.convert_sources(
-                    docs, {p.name: cls for p in docs})
+                    inbox, docs, {key[p]: cls for p in docs})
             except (importer.ImportError_, OSError, ValueError) as exc:
                 raise MaterialError(
                     f"读不出「{cls}」类材料的转换结果，无法判断它是否已并入正文：{exc}") from exc
@@ -282,36 +291,75 @@ def collect_sources(feature_root: Path) -> list[dict]:
                 for p in docs:
                     blobs = media.get(p.stem) or {}
                     asset_dir = feature_root / "assets" / p.stem
-                    entries[p.name]["ingested"] = bool(blobs) and all(
+                    entries[key[p]]["ingested"] = bool(blobs) and all(
                         (asset_dir / name).is_file()
                         and (asset_dir / name).read_bytes() == blob
                         for name, blob in blobs.items())
+                    if entries[key[p]]["ingested"]:
+                        pictures[key[p]] = sorted(f"assets/{p.stem}/{name}" for name in blobs)
                 docs = []
             target = feature_root / targets[cls] if docs else None
             if target is not None and target.is_file() and _same_text(
                     target.read_text(encoding="utf-8", errors="replace"),
                     importer.render_target(sections[cls])):
                 for p in docs:
-                    entries[p.name]["ingested"] = True
+                    entries[key[p]]["ingested"] = True
+                covered[targets[cls].as_posix()] = [k for k, _, _ in sections[cls]]
 
         for image in images:
             # 界面图的落点是平铺的顶层，字节相同才算并入——同名换了内容也是新料
             dest = feature_root / importer.UX_IMAGE_DIR / image.name
             if dest.is_file() and dest.read_bytes() == image.read_bytes():
-                entries[image.name]["ingested"] = True
+                entries[key[image]]["ingested"] = True
 
-    return [entries[name] for name in sorted(entries)]
+    return [entries[k] for k in sorted(entries)], covered, pictures
+
+
+def collect_origins(feature_root: Path, materials: list[dict], sources: list[dict],
+                    covered: dict[str, list[str]], pictures: dict[str, list[str]] | None = None) -> list[dict]:
+    """本轮实际采用的输入原件，各自读哪份阅读稿 —— 从材料与原件两张表派生，不是第二份清单。
+
+    - ``converted-source``：已被确定性转换并入正文的收件箱原件，阅读稿是它并入的那份正文；
+      被收件箱完全承接的正文不再算作第二份原件。只抽图的原件同属这一类：它对成文有贡献，
+      阅读稿就是原件自身（没有转换出的正文，不造一份），``image_paths`` 列它抽出的图。
+    - ``direct``：其余在盘上的正文材料（远端直接给的、不经收件箱的），阅读稿就是它自己。
+    - ``meeting``：留存的会议版本原件，阅读稿是同一版本目录里的转换文本与阅读件。
+
+    图片本身不在这里：图的身份、说明与取舍跟着图走，``image_paths`` 只记原件到图的关系。
+    没并入的原件也不在这里：它走待导入，作者表写一行替代不了导入。
+    """
+    sha = {s["file"]: s["sha256"] for s in sources}
+    origins = [{"path": f"{INBOX}/{k}", "sha256": sha[k], "kind": "converted-source",
+                "readable_paths": [target]}
+               for target, keys in covered.items() for k in keys]
+    origins += [{"path": f"{INBOX}/{k}", "sha256": sha[k], "kind": "converted-source",
+                 "readable_paths": [f"{INBOX}/{k}"], "image_paths": paths}
+                for k, paths in (pictures or {}).items()]
+    for m in materials:
+        rel = m["paths"][0]
+        if m["kind"] == "doc" and m["sha256"] and rel not in covered:
+            origins.append({"path": rel, "sha256": m["sha256"], "kind": "direct",
+                            "readable_paths": [rel]})
+        elif m["kind"] == "meeting":
+            folder = Path(rel).parent
+            readable = [(folder / name).as_posix() for name in (meeting.RAW, meeting.EVIDENCE)
+                        if (feature_root / folder / name).is_file()]
+            origins.append({"path": rel, "sha256": m["sha256"], "kind": "meeting",
+                            "readable_paths": readable})
+    return sorted(origins, key=lambda o: o["path"])
 
 
 def build(feature_root: Path) -> dict:
-    """按磁盘现状算出完整清单。不写盘。"""
+    """按磁盘现状算出完整清单。不写盘。``origins`` 不进 digest：它由已计入的事实派生。"""
     materials = collect_materials(feature_root)
+    sources, covered, pictures = collect_sources(feature_root)
     return {
         "schema": SCHEMA,
         "feature": feature_root.name,
         "digest": compute_digest(materials),
         "materials": materials,
-        "sources": collect_sources(feature_root),
+        "sources": sources,
+        "origins": collect_origins(feature_root, materials, sources, covered, pictures),
     }
 
 
@@ -346,10 +394,33 @@ def read(feature_root: Path) -> dict:
         raise MaterialError(
             f"{'/'.join(MANIFEST)} 不是合法 JSON（{exc}）：它只应由脚本写入，"
             "若曾手工编辑，删掉后重跑 `story_flow.py round`") from exc
-    if data.get("schema") != SCHEMA:
+    name = '/'.join(MANIFEST)
+    if isinstance(data, dict) and isinstance(data.get("schema"), int) and data["schema"] < SCHEMA:
         raise MaterialError(
-            f"{'/'.join(MANIFEST)} 的 schema 为 {data.get('schema')}，本版要求 {SCHEMA}")
+            f"{name} 的 schema 为 {data['schema']}，本版要求 {SCHEMA}：这是旧版生成的需求，"
+            "本版的材料清单多了来源关系 origins、附录材料表改成三列。"
+            "旧版进行中的需求在旧版收口，或从 init 重起")
+    problems = _shape_problems(data)
+    if problems:
+        raise MaterialError(
+            f"{name} 结构不对（{'；'.join(problems)}）：它只应由脚本写入，"
+            "删掉后重跑 `story_flow.py round` 按磁盘现状重建")
     return data
+
+
+def _shape_problems(data) -> list[str]:
+    """当前 schema 的清单缺了或写坏了哪些字段。一次列全，不在第一处就停。"""
+    if not isinstance(data, dict):
+        return ["顶层应是对象"]
+    problems = [] if data.get("schema") == SCHEMA else [f"schema 为 {data.get('schema')}，本版是 {SCHEMA}"]
+    for field in ("materials", "sources", "origins"):
+        if not isinstance(data.get(field), list):
+            problems.append(f"缺 {field} 列表")
+    for i, o in enumerate(data.get("origins") if isinstance(data.get("origins"), list) else []):
+        if not (isinstance(o, dict) and isinstance(o.get("path"), str)
+                and o.get("kind") in ORIGIN_KINDS and isinstance(o.get("readable_paths"), list)):
+            problems.append(f"origins 第 {i + 1} 项应有 path、kind（{'/'.join(ORIGIN_KINDS)}）与 readable_paths")
+    return problems
 
 
 def pending(manifest: dict) -> list[str]:

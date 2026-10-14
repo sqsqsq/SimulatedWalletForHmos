@@ -12,9 +12,10 @@
  * 边界这么一分，一个文件归谁看它在哪个目录，没有第三种要模型判断的情形；
  * `--check` 据此核**安装结果**——这个目标现在装的是不是包的这一版。
  * `--mark-adapted` 在各块交回后把目标的 `adapted_for` 写成包的版本——这个值只由脚本写，模型不定。
+ * `--status` 只读：版本、按当前游标可推导的跟进条目、知识加载结果与内容摘要，stdout 一份 JSON，不写任何文件。
  *
- * 用法: node adapt-scan.mjs --apply|--check|--mark-adapted --target <目标根> [--package <包根>]
- * 退出: 0 通过 / 1 核对不符 / 2 参数或前置错误
+ * 用法: node adapt-scan.mjs --apply|--check|--mark-adapted|--status --target <目标根> [--package <包根>]
+ * 退出: 0 通过（--status：事实读取成功，含未安装）/ 1 核对不符（--status：知识结构自检不通过）/ 2 参数或前置错误
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -25,7 +26,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseYaml } from '../../../hooks/shared/yaml.mjs';
 
-const MODES = ['--apply', '--check', '--mark-adapted'];
+const MODES = ['--apply', '--check', '--mark-adapted', '--status'];
 
 /** 目标仓自己实现的那一层。这个目录整个不在写入面上。 */
 const ADAPTERS = 'skills/story/scripts/adapters';
@@ -47,7 +48,15 @@ const ENTRIES = ['AGENTS.md', 'CLAUDE.md'];
 const argv = process.argv.slice(2);
 const mode = MODES.find(m => argv.includes(m));
 const opt = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
-const die = (msg, code = 2) => { console.error(`[adapt-scan] ${msg}`); process.exit(code); };
+/**
+ * 停下并说清原因。`--status` 的读者是脚本与模型，错误也给 JSON：类别（input / config / package / dependency）
+ * 加原话，原话里写着读的是哪个文件、按什么判、怎样恢复；读不出不能变成「什么都没有」的空成功。
+ */
+const die = (msg, code = 2, category = 'input') => {
+  if (mode === '--status') console.log(JSON.stringify({ mode: 'status', error: { category, message: msg } }));
+  else console.error(`[adapt-scan] ${msg}`);
+  process.exit(code);
+};
 
 const read = f => readFileSync(f, 'utf8');
 const rel = (base, f) => relative(base, f).split(sep).join('/');
@@ -68,7 +77,7 @@ function config(root) {
   } catch (e) {
     // 读不出不是「没配置」：扩展落点与需求目录都从它取，静默退回缺省值会让
     // 整个写入面悄悄挪到别的路径上，而 diff 那时看起来一切正常。
-    return die(`${f} 读不出（${e.message}）：扩展落点与需求目录都从它取`);
+    return die(`${f} 读不出（${e.message}）：扩展落点与需求目录都从它取`, 2, 'config');
   }
 }
 const extDir = root => config(root)?.paths?.extension_dir || 'doc/extensions';
@@ -261,10 +270,10 @@ function bridgesOf(manifestText) {
   try {
     items = parseYaml(manifestText)?.provides?.bridges ?? [];
   } catch (e) {
-    return die(`包的 manifest.yaml 读不出（${e.message}）`);
+    return die(`包的 manifest.yaml 读不出（${e.message}）`, 2, 'package');
   }
   const bad = items.filter(b => typeof b?.target !== 'string');
-  if (bad.length) die(`包的 provides.bridges 每项要有 target：${JSON.stringify(bad)}`);
+  if (bad.length) die(`包的 provides.bridges 每项要有 target：${JSON.stringify(bad)}`, 2, 'package');
   return items.map(b => b.target);
 }
 
@@ -363,13 +372,13 @@ const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
     console.error(`[adapt-scan] 目标还没有 ${relative(TARGET, harness)}：扩展的门禁要在接入 framework 并装好 harness 依赖之后才能跑`);
   } else if (!existsSync(yamlPkg)) {
     die(`目标的 framework harness 还没装依赖（缺 ${relative(TARGET, yamlPkg)}）：`
-      + '先在目标里跑 `cd framework/harness && npm install`，再 --apply / --check');
+      + '先在目标里跑 `cd framework/harness && npm install`，再 --apply / --check', 2, 'dependency');
   }
 }
 const SAME_TREE = resolve(PKG) === resolve(TARGET);
 
 const pkgManifest = join(PDIR, 'manifest.yaml');
-if (!existsSync(pkgManifest)) die(`包里没有 manifest.yaml：${pkgManifest}`);
+if (!existsSync(pkgManifest)) die(`包里没有 manifest.yaml：${pkgManifest}`, 2, 'package');
 const PKG_MANIFEST_TEXT = read(pkgManifest);
 const BRIDGES = bridgesOf(PKG_MANIFEST_TEXT);
 const PKG_VERSION = manifestValue(PKG_MANIFEST_TEXT, 'version');
@@ -398,16 +407,16 @@ const WITH_ADAPTERS = manifestValue(PKG_MANIFEST_TEXT, 'adapters') !== 'stand-in
  */
 function changeEntries() {
   const file = join(PDIR, ...CHANGES.split('/'));
-  if (!existsSync(file)) die(`包里没有升级演进记录：${CHANGES}`);
+  if (!existsSync(file)) die(`包里没有升级演进记录：${CHANGES}`, 2, 'package');
   const out = [];
   let version = null;
   read(file).split(/\r?\n/).forEach((line, i) => {
     const head = line.match(/^##\s+(\d+(?:\.\d+)+)\s*$/);
     if (head) { version = head[1]; return; }
-    if (version && /^\s+-\s/.test(line)) die(`${CHANGES} 第 ${i + 1} 行是缩进的子项：演进记录每条一行、不用子项`);
+    if (version && /^\s+-\s/.test(line)) die(`${CHANGES} 第 ${i + 1} 行是缩进的子项：演进记录每条一行、不用子项`, 2, 'package');
     if (!version || !/^-\s+\S/.test(line)) return;
     const m = line.match(/^-\s+\[([^\]]+)\]\s*(.+)$/);
-    if (!m || !BLOCKS.includes(m[1])) die(`${CHANGES} 第 ${i + 1} 行没有块标签（${BLOCKS.map(b => `[${b}]`).join(' / ')}）`);
+    if (!m || !BLOCKS.includes(m[1])) die(`${CHANGES} 第 ${i + 1} 行没有块标签（${BLOCKS.map(b => `[${b}]`).join(' / ')}）`, 2, 'package');
     out.push({ version, block: m[1], text: m[2].trim() });
   });
   return out;
@@ -435,7 +444,16 @@ async function knowledgeCheck() {
     for (const kind of ['facts', 'constraints', 'patterns']) {
       for (const x of k[kind]) counts[`${kind} × ${x.form}`] = (counts[`${kind} × ${x.form}`] ?? 0) + 1;
     }
-    return { status: 'PASS', counts };
+    // 同用途声明候选：只按 applies_when 去首尾空白后原文相同分组，给独立审查当线索；
+    // 不判相似、不影响 PASS，为空也不说明没有重复——重复与否由审查读正文判
+    const byUse = new Map();
+    for (const x of [...k.facts, ...k.constraints, ...k.patterns]) {
+      const use = String(x.appliesWhen ?? '').trim();
+      byUse.set(use, [...(byUse.get(use) ?? []), x.file]);
+    }
+    const sameUse = [...byUse].filter(([, files]) => files.length > 1)
+      .map(([appliesWhen, files]) => ({ appliesWhen, files }));
+    return { status: 'PASS', counts, sameUse: { note: '同用途声明候选，须语义核对', groups: sameUse } };
   } catch (e) {
     return { status: 'FAIL', problems: [String(e?.message ?? e)] };
   }
@@ -478,6 +496,33 @@ async function printFollowUp() {
   }
   writeAdaptedFor();
   console.log(`[adapt-scan] 目标已按包的版本适配，知识与当前协议一致：adapted_for 记为 ${PKG_VERSION}`);
+}
+
+// ── --status ────────────────────────────────────────────────────────────────
+
+// 只读聚合：复用 followUp 与 knowledgeCheck 的纯计算，不调 printFollowUp（它会写 adapted_for）。
+// 升级前装的是哪一版、历次做完了哪些，另起的进程读不到：照实写 unknown，以上次交回为准，不造状态文件补洞。
+if (mode === '--status') {
+  const ident = key => (existsSync(tgtManifest) ? manifestValue(read(tgtManifest), key) : null);
+  const out = {
+    mode: 'status', package: { version: PKG_VERSION },
+    target: { installed: STATE === 'upgrade', version: INSTALLED, name: ident('name'), description: ident('description'),
+      adapters: ident('adapters'), adapted_for: ident('adapted_for') },
+    history: 'unknown：升级前所装版本与历次已完成的适配读不到，以上次交回为准；items 只按当前游标推导',
+  };
+  if (STATE === 'fresh') {
+    console.log(JSON.stringify({ ...out, state: 'not_installed' }, null, 2));
+    process.exit(0);
+  }
+  const f = await followUp();
+  out.items = f.items;
+  out.knowledge = f.check;
+  if (f.check.status === 'PASS') {
+    const doc = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'knowledge-use', 'document.mjs')).href);
+    out.knowledge.digest = doc.manifestDigest(TARGET);
+  }
+  console.log(JSON.stringify(out, null, 2));
+  process.exit(f.check.status === 'PASS' ? 0 : 1);
 }
 
 // ── --mark-adapted ──────────────────────────────────────────────────────────

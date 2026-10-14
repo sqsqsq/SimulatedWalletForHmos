@@ -1654,11 +1654,17 @@ def _run_story_gates(feature: str, out_dir: Path, feed=None) -> dict[str, str]:
         return gates
 
     post_check = REPO_ROOT / CFG["gates"]["post_check"]
+    # 按产品的阶段顺序：先派发 pre_phase 的视图钩子把 story 切回 Mermaid，再跑门禁。
+    # 直接调门禁会绕过它——归档后 story 默认是阅读形态，读到的就不是登记的那一份。
+    story_view = post_check.parent.parent / "shared" / "story-view.mjs"
+    payload = f"{{phase:'spec',feature:{json.dumps(feature)},projectRoot:{json.dumps(str(REPO_ROOT))}}}"
+    pre = (f"const v=await import(pathToFileURL({json.dumps(str(story_view))}).href);"
+           f"const vr=await v.default({payload});"
+           "if(!vr.ok){console.log(JSON.stringify(vr));process.exit(0);}") if story_view.is_file() else ""
     script = (
-        "import {pathToFileURL} from 'node:url';"
-        f"const m=await import(pathToFileURL({json.dumps(str(post_check))}).href);"
-        "console.log(JSON.stringify(await m.default({phase:'spec',"
-        f"feature:{json.dumps(feature)},projectRoot:{json.dumps(str(REPO_ROOT))}}})));")
+        "import {pathToFileURL} from 'node:url';" + pre
+        + f"const m=await import(pathToFileURL({json.dumps(str(post_check))}).href);"
+        f"console.log(JSON.stringify(await m.default({payload})));")
     command = ["node", "--input-type=module", "-e", script]
     post_log = out_dir / "gate_post_check.log"
     r, post_diagnosis = _run_logged_gate(command, cwd=REPO_ROOT, log_path=post_log)

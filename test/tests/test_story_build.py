@@ -725,15 +725,18 @@ class TestFormLints(StoryBuildCase):
 
     # ---- lint 2：材料清单的行形态 ----
 
-    def test_a_material_list_written_as_a_table_is_named(self) -> None:
-        self.put_materials("| 材料 | 贡献 |\n|---|---|\n| 甲需求 PRD | 状态取值 |\n")
+    def test_the_old_list_form_is_named(self) -> None:
+        """列表写法已退出：材料与来源只写在三列表里。"""
+        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。原文：[RR/prd.md](../RR/prd.md)\n")
         self.init_audit()
-        self.assert_check_names("材料清单用列表不用表")
+        out = self.assert_check_names("表外有链接")
+        self.assertIn("材料 | 来源 | 贡献", out)
 
     def test_a_material_row_without_a_link_is_named(self) -> None:
-        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。\n")
+        self.put_materials("| 材料 | 来源 | 贡献 |\n|---|---|---|\n| 甲需求 PRD | 原件 | 状态取值 |\n")
         self.init_audit()
-        self.assert_check_names("每份材料给一条原文链接")
+        out = self.assert_check_names("材料列没有阅读稿链接")
+        self.assertIn("来源列没有原件链接", out)
 
     def test_a_link_that_cannot_be_opened_is_named(self) -> None:
         """链接得能点开——裸相对路径解析错一层就是断链。
@@ -743,16 +746,16 @@ class TestFormLints(StoryBuildCase):
         链接落在需求目录的哪一段，`RR` 在允许集里就放行。「这一段允许链」与
         「这个链接能不能点开」是两件事，得分开判。
         """
-        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
-                           "原文：[RR/prd.md](RR/prd.md)\n")
+        self.put_materials("| 材料 | 来源 | 贡献 |\n|---|---|---|\n"
+                           "| 甲需求 PRD [prd.md](RR/prd.md) | [prd.md](RR/prd.md) | 状态取值 |\n")
         self.init_audit()
         out = self.assert_check_names("链接点不开")
         self.assertIn("RR/prd.md", out, "报错要把点不开的那个目标给出来")
 
     def test_a_link_that_resolves_passes(self) -> None:
         """同一份材料写对了相对层级就该过——判的是能不能点开，不是长什么样。"""
-        self.put_materials("- 甲需求 PRD：提交回执的业务诉求与状态取值。"
-                           "原文：[RR/prd.md](../RR/prd.md)\n")
+        self.put_materials("| 材料 | 来源 | 贡献 |\n|---|---|---|\n"
+                           "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 状态取值 |\n")
         self.init_audit()
         code, out = self.check_output()
         self.assertNotIn("链接点不开", out)
@@ -1055,9 +1058,9 @@ class TestRetiredThings(unittest.TestCase):
         adapt 拿包的版本与目标的 adapted_for 比较演进记录，版本号落后，本版条目就漏报。
         """
         manifest = (self.EXT / "manifest.yaml").read_text(encoding="utf-8")
-        self.assertIn('version: "1.9.8"', manifest)
+        self.assertIn('version: "1.9.9"', manifest)
         changes = (self.EXT / "skills/story-adaptation/reference/upgrade-changes.md").read_text(encoding="utf-8")
-        self.assertIn("\n## 1.9.8\n", changes)
+        self.assertIn("\n## 1.9.9\n", changes)
         # 包不在 manifest 里记自己的演进：`version:` 上面那一段归装它的工程（那里写的是
         # 「我们这个仓怎么用它」），每一版改了什么在 doc/release/ 的发布说明里。
         # 按行找 `version:`：`schema_version:` 也含这个子串，直接 split 会切在第一行。
@@ -1495,48 +1498,74 @@ class TestImageIdentityComesFromTheManifest(Step8Case):
 
 
 class TestMaterialListMatchesTheManifest(Step8Case):
-    """材料清单列到的，与这一轮真正在手里的那几份材料对得上。"""
+    """材料表的来源与 `materials.json` 的 `origins` 对得上：漏行、重复原件、集合外的东西各被点名。
 
-    LISTED = "- 甲需求 PRD：提交回执的业务诉求与状态取值。原文：[RR/prd.md](../RR/prd.md)"
+    集合由清单派生，不由作者表定义——漏写一行不能让那份原件从核对里消失。
+    采用的版本对不对、贡献真不真，归独立审查，这里不判。
+    """
+
+    LISTED = "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 提交回执的业务诉求与状态取值。 |"
 
     def setUp(self) -> None:
         super().setUp()
         self.round_now()
         self.init_audit()
 
+    def set_origins(self, origins: list[dict], sources: list[dict] | None = None) -> None:
+        manifest = self.src / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["origins"] = origins
+        if sources is not None:
+            data["sources"] = sources
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    def put_inbox(self, *names: str) -> None:
+        for name in names:
+            path = self.feature_root() / "inbox" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("# 原件\n", encoding="utf-8")
+
+    def merged_into_prd(self, *names: str) -> None:
+        """几份收件箱原件合成了 RR/prd.md：它不再是第二份原件。"""
+        self.put_inbox(*names)
+        keep = [o for o in json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"]
+                if o["path"] != "RR/prd.md"]
+        self.set_origins(keep + [{"path": f"inbox/{n}", "sha256": "sha256:0", "kind": "converted-source",
+                                  "readable_paths": ["RR/prd.md"]} for n in names])
+
     def test_the_listed_material_passes(self) -> None:
         _, out = self.check_output()
-        self.assertNotIn("少了一份材料", out)
-        self.assertNotIn("列了不是初始资料的东西", out)
+        self.assertNotIn("少了来源", out)
+        self.assertNotIn("不在本轮来源集合里", out)
 
     def test_a_missing_material_is_named(self) -> None:
         """漏一份等于那份材料没人知道——读者据这一节把材料找出来。"""
-        self.rewrite_story(self.LISTED, "- 甲需求 PRD：提交回执的业务诉求与状态取值。"
-                                        "原文：[别的](../AR/story-src/decisions.json)")
-        out = self.assert_check_names("少了一份材料")
-        self.assertIn("RR/prd.md", out)
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) "
+                                        "| [别的](story-src/decisions.json) | 状态取值 |")
+        out = self.assert_check_names("少了来源 RR/prd.md")
+        self.assertIn("是本轮生成件", out)
 
     def test_an_intermediate_product_is_named(self) -> None:
-        """本轮自己生成的记录不是材料，进了清单就把它变成倾倒区。"""
+        """本轮自己生成的记录不是来源，进了清单就把它变成倾倒区。"""
         self.rewrite_story(self.LISTED, self.LISTED
-                           + "\n- 本轮的落点账：原文：[audit](../AR/story-src/audit.json)")
-        self.assert_check_names("列了不是初始资料的东西")
+                           + "\n| 落点账 [写作设计](story-src/story-template.md) | [写作设计](story-src/story-template.md) | 本轮记录 |")
+        out = self.assert_check_names("是本轮生成件")
+        self.assertIn("story-src/story-template.md", out)
 
     def test_without_a_manifest_the_check_says_it_did_not_run(self) -> None:
         (self.src / "materials.json").unlink()
-        self.rewrite_story(self.LISTED, "- 甲需求 PRD：提交回执的业务诉求与状态取值。"
-                                        "原文：[别的](../AR/story-src/decisions.json)")
         _, out = self.check_output()
-        self.assertIn("的集合判据未执行", out)
+        self.assertIn("来源覆盖未核", out)
 
     def test_one_wrong_row_is_reported_once(self) -> None:
         """同一行只报一次——同一件事报两遍，读的人以为是两个问题。"""
         self.rewrite_story(self.LISTED, self.LISTED
-                           + "\n- 本轮的判断：原文：[decisions](../AR/story-src/decisions.json)")
+                           + "\n| 本轮的判断 [decisions](story-src/decisions.json) "
+                           "| [decisions](story-src/decisions.json) | 判断 |")
         _, out = self.check_output()
         hits = [line for line in out.splitlines() if "story-src/decisions.json" in line]
         self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
-        self.assertIn("列了不是初始资料的东西", hits[0])
+        self.assertIn("是本轮生成件", hits[0])
 
     def register_an_image(self) -> str:
         """盘上放一张图并重算清单，返回它相对需求目录的路径。"""
@@ -1548,31 +1577,71 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         return rel
 
     def test_an_image_does_not_belong_in_this_section(self) -> None:
-        """图不进材料清单：这一节回答「据哪几份材料写成」，列的是初始资料。
-
-        图的去向（引了没有、不引为什么）跟着图的内容走，登记在材料清单里；
-        写进这一节的话，读者要在这里读到十行图，其中一半是别的需求的页面。
-        """
+        """图不进材料表：图的去向（引了没有、不引为什么）跟着图的内容走，登记在图片说明里。"""
         rel = self.register_an_image()
-        self.rewrite_story(self.LISTED,
-                           self.LISTED + "\n- 界面图：[image1.png](../" + rel + ")——参考")
-        out = self.assert_check_names("列了不是初始资料的东西")
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n| 界面图 [prd.md](../RR/prd.md) | ![image1](../" + rel + ") | 参考 |")
+        out = self.assert_check_names("图不进这张表")
         self.assertIn(rel, out)
 
     def test_an_image_on_disk_does_not_make_this_section_incomplete(self) -> None:
         """盘上有图不等于这一节少了一份材料——图压根不在这个集合里。"""
         self.register_an_image()
         _, out = self.check_output()
-        self.assertNotIn("少了一份材料", out, out[:500])
+        self.assertNotIn("少了来源", out, out[:500])
+
+    def test_an_image_only_original_is_required_and_lists_itself(self) -> None:
+        """只抽图的原件是来源（R03）：漏写报漏源；材料列与来源列都链原件自己是正例，图不逐张成行。"""
+        self.put_inbox("产品原稿.docx")
+        keep = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"]
+        self.set_origins(keep + [{"path": "inbox/产品原稿.docx", "sha256": "sha256:0123456789abcdef",
+                                  "kind": "converted-source", "readable_paths": ["inbox/产品原稿.docx"],
+                                  "image_paths": ["assets/产品原稿/image1.png"]}])
+        self.assert_check_names("少了来源 inbox/产品原稿.docx")
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n| 产品原稿 [产品原稿.docx](../inbox/产品原稿.docx) | [产品原稿.docx](../inbox/产品原稿.docx)（摘要 01234567）"
+                           " | 只采用设置页的界面图；正文以产品需求单为准，不采用 |")
+        _, out = self.check_output()
+        self.assertNotIn("少了来源", out, out[:500])
+        self.assertNotIn("不是来源列那几份原件的阅读稿", out, out[:500])
 
     def test_the_inbox_original_is_required(self) -> None:
-        """收件箱原件是人另外给的、没走需求系统——读者要知道有这份。"""
-        manifest = self.src / "materials.json"
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-        data["sources"] = [{"file": "补充说明.docx", "ingested": True}]
-        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        out = self.assert_check_names("少了一份材料")
-        self.assertIn("inbox/补充说明.docx", out)
+        """并入正文的收件箱原件是来源：表里漏了它要点名，正文自己不再顶替它。"""
+        self.merged_into_prd("补充说明.docx")
+        out = self.assert_check_names("少了来源 inbox/补充说明.docx")
+        self.assertIn("RR/prd.md", out)
+
+    def test_two_originals_merged_into_one_document_is_one_row(self) -> None:
+        """两份原件合成一稿：写在同一行是正例，带空格的路径用尖括号写。"""
+        self.merged_into_prd("1-总体.md", "2-补充 说明.md")
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) "
+                                        "| [1-总体.md](../inbox/1-总体.md)、[2-补充 说明.md](<../inbox/2-补充 说明.md>) "
+                                        "| 状态取值 |")
+        _, out = self.check_output()
+        for word in ("少了来源", "材料清单」第", "解析不了", "点不开"):
+            self.assertNotIn(word, out, out[:800])
+
+    def test_an_original_written_in_two_rows_is_named(self) -> None:
+        self.merged_into_prd("1-总体.md")
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) | [1-总体.md](../inbox/1-总体.md) | 一 |\n"
+                                        "| 总体 [prd.md](../RR/prd.md) | [1-总体.md](../inbox/1-总体.md) | 二 |")
+        self.assert_check_names("写在了 2 行")
+
+    def test_a_pending_original_cannot_be_listed_instead_of_imported(self) -> None:
+        self.put_inbox("新料.md")
+        self.set_origins(json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"],
+                         [{"file": "新料.md", "sha256": "sha256:1", "class": "RR", "ingested": False}])
+        self.rewrite_story(self.LISTED, self.LISTED + "\n| 新料 [prd.md](../RR/prd.md) | [新料.md](../inbox/新料.md) | 补充 |")
+        self.assert_check_names("还没并入正文")
+
+    def test_a_link_with_a_bare_space_is_reported_with_its_position(self) -> None:
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd](../RR/p rd.md) | 状态取值 |")
+        out = self.assert_check_names("链接写法解析不了")
+        self.assertIn("行", out)
+
+    def test_the_material_column_points_at_the_readable_copy(self) -> None:
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [design.md](design.md) | [prd.md](../RR/prd.md) | 状态取值 |")
+        self.assert_check_names("不是来源列那几份原件的阅读稿")
 
 
 class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
@@ -2311,7 +2380,8 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         draft = (self.build("skeleton"), self.draft("10-附录.md").read_text(encoding="utf-8"))[1]
         self.assertIn("节首可以有一句业务定位", draft, "定位句可写可不写，草稿只给指引")
         self.assertNotIn("{{用一句话", draft, "定位句不是必填项")
-        self.assertIn("- 产品需求：", draft, "材料清单的类别与链接该由清单给")
+        self.assertIn("| 材料 | 来源 | 贡献 |", draft, "材料清单只铺合同登记的表头")
+        self.assertIn("一行一份阅读稿", draft, "材料清单的行归作者，草稿给填写指引")
         self.assertNotIn("getAutoTopupPolicy", draft, "接口表不该进草稿")
 
     def test_the_draft_head_carries_the_contract_questions(self) -> None:
@@ -2407,7 +2477,8 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         draft = self.draft("10-附录.md")
         text = (draft.read_text(encoding="utf-8")
                 .replace("### 技术契约\n\n", "### 技术契约\n\n服务端返回的受理状态决定后续处理路径。\n\n", 1)
-                .replace("{{这份材料贡献了什么}}", "给出了业务规则"))
+                .replace("|---|---|---|\n", "|---|---|---|\n"
+                         "| 产品需求 [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 给出了业务规则 |\n", 1))
         draft.write_text(text, encoding="utf-8")
         self.build("chapter", "--chapter", "附录", "--from", str(self.fill(draft)))
         return self.story()
@@ -2511,10 +2582,9 @@ class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
 
     def test_material_links_point_from_the_story(self) -> None:
         """链接按 story.md 所在目录算——`RR/prd.md` 在 `AR/story.md` 里点不开。"""
-        self.build("skeleton")
-        draft = self.draft("10-附录.md").read_text(encoding="utf-8")
-        self.assertIn("(../RR/prd.md)", draft)
-        self.assertNotIn("](RR/prd.md)", draft)
+        out = self.build("skeleton").stdout
+        self.assertIn("(../RR/prd.md)", out, "起手输出的来源链接串不是相对 story 的")
+        self.assertNotIn("](RR/prd.md)", out)
 
 
 class ProjectionRefusesToInventContent(RealRunCase):
@@ -2744,6 +2814,28 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
 
     def use_file(self):
         return self.feature / "spec" / "knowledge-use.yaml"
+
+    def retag(self, tag: str) -> None:
+        spec = self.feature / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        old = "| 连续失败停用阈值 | 3 次（上游约束：产品需求。"
+        self.assertIn(old, text, "夹具的配置项里该有一处依据标签，这条才测得到")
+        spec.write_text(text.replace(old, f"| 连续失败停用阈值 | 3 次（{tag}。", 1), encoding="utf-8")
+
+    def test_a_registered_path_is_shown_by_its_reader_name(self) -> None:
+        """spec 写登记路径，附录投影换成读者认得的材料名；量与条件原样保留（与 spec 门禁同一份解析）。"""
+        self.retag("上游约束：RR/prd.md")
+        appendix = self.landed_appendix().split("附录", 1)[1]
+        self.assertIn("3 次（上游约束：产品需求。产品规则）", appendix)
+        self.assertNotIn("上游约束：RR/prd.md", appendix)
+
+    def test_a_tag_that_points_nowhere_stops_the_projection(self) -> None:
+        self.retag("上游约束：会上说的")
+        self.build("skeleton")
+        proc = self.build_raw("chapter", "--chapter", "附录", "--from", str(self.fill(self.draft("10-附录.md"))))
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("「上游约束：会上说的」对不上本轮任何一份材料", proc.stdout + proc.stderr)
+        self.assertIn("spec/spec.md 第 ", proc.stdout + proc.stderr, "没指回真源的位置")
 
     def test_a_domain_marked_not_applicable_projects_one_row(self) -> None:
         """整域不适用：一个域一行，域内条目不必逐条登记——那份 YAML 就是这么规定的。"""
@@ -3051,10 +3143,10 @@ class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
         text = story.read_text(encoding="utf-8")
         if "SR/design.md" in text:
             return
-        at = text.index("- 甲需求 PRD")
+        at = text.index("| 甲需求 PRD")
         story.write_text(
-            text[:at] + "- 系统设计：本单的上游系统设计。原文："
-            + "[SR/design.md](../SR/design.md)\n" + text[at:], encoding="utf-8")
+            text[:at] + "| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) "
+            + "| 本单的上游系统设计。 |\n" + text[at:], encoding="utf-8")
 
     def test_the_overwritten_ar_backup_is_not_a_required_row(self) -> None:
         """收口覆盖 `AR/design.md` 之前的备份是退路，不是本轮材料：清单不必列它。"""
@@ -3067,14 +3159,12 @@ class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
         """本轮自己生成的规格与记录不是材料——列进去就是把自证当依据。"""
         story = self.feature_root() / "AR" / "story.md"
         text = story.read_text(encoding="utf-8")
-        at = text.index("### 材料清单")
-        end = text.index("\n### ", at + 5) if "\n### " in text[at + 5:] else len(text)
-        story.write_text(
-            text[:end] + "\n- 本轮规格：这一轮写的规格。原文：[spec/spec.md](../spec/spec.md)\n"
-            + text[end:], encoding="utf-8")
+        row = "| 开发需求 [design.md](design.md) | [design.md](design.md) | 本轮从上游提取的开发需求，业务分工与本单范围。 |"
+        story.write_text(text.replace(row, row + "\n| 本轮规格 [spec.md](../spec/spec.md) "
+                                      "| [spec.md](../spec/spec.md) | 这一轮写的规格。 |"), encoding="utf-8")
         code, out = self.check_output()
         self.assertEqual(1, code, out)
-        self.assertIn("不是初始资料", out)
+        self.assertIn("是本轮生成件", out)
 
     def test_two_paragraphs_of_source_notes_are_not_flagged(self) -> None:
         """材料清单那一节写两段说明不误拦——段数配额（`proseBlocks`）已随 Q7 退场。"""

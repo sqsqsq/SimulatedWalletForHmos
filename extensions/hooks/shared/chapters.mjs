@@ -229,3 +229,44 @@ export function hostExtensionProblems(planText, sections, wanted, formDoc) {
   return [...anchorPositionProblems(doc, anchor, '9. 宿主扩展'),
     ...sectionProblems(doc, anchor, '9. 宿主扩展', sections, wanted, formDoc)];
 }
+
+/**
+ * 文档对得上 profile 模板的那两处形态 —— 文档类型标题与模板流程提示。
+ *
+ * - 标题：全文恰好一个 H1；模板 H1 里花括号占位之外的文字（文档类型）按顺序都在，占位都换成了本需求的名字。
+ *   功能名怎么叫由需求定，不与任何一份样稿比字面。
+ * - 提示：模板在章节里用引用块写的流程提示（第一个二级标题之后的 `>` 行）原样留在文档里，是没删的模板说明；
+ *   文档自己写的引用块是不是业务引用，归审查判，这里不按标点猜。
+ *
+ * @param {string} text 文档全文
+ * @param {string} template profile 的阶段模板全文
+ * @param {string} name 报错里的文档名
+ */
+export function templateFormProblems(text, template, name) {
+  const problems = [];
+  const tpl = parseDocument(template);
+  const doc = parseDocument(text);
+  const tplH1 = tpl.headings.find(h => h.level === 1);
+  if (!tplH1) return [`profile 模板没有一级标题——${name} 的文档类型标题按模板的 H1 核，模板解析不出就核不了`];
+  const h1s = doc.headings.filter(h => h.level === 1);
+  if (h1s.length !== 1) {
+    problems.push(`${name}：一级标题有 ${h1s.length} 个——全文一个 H1，形态照模板「# ${tplH1.raw}」，花括号处换成本需求的名字`);
+  } else {
+    const parts = tplH1.raw.split(/\{[^}]*\}/).map(p => p.trim()).filter(Boolean);
+    let at = 0;
+    const missing = parts.filter((p) => { const i = h1s[0].raw.indexOf(p, at); if (i < 0) return true; at = i + p.length; return false; });
+    if (missing.length || /\{[^}]*\}/.test(h1s[0].raw)) {
+      problems.push(`${name}：一级标题「${h1s[0].raw}」与模板「${tplH1.raw}」的文档类型对不上`
+        + `${missing.length ? `（缺「${missing.join('」「')}」）` : '（还留着花括号占位）'}——花括号处换成本需求的名字，其余照模板`);
+    }
+  }
+  const firstH2 = tpl.headings.find(h => h.level === 2)?.at ?? tpl.lines.length;
+  const prompts = new Set(tpl.lines.slice(firstH2).map(l => l.trim())
+    .filter(l => l.startsWith('>') && l.replace(/^>\s*/, '').length >= 8));
+  const left = doc.lines.map((l, i) => [l.trim(), i]).filter(([l, i]) => !doc.fenced.has(i) && prompts.has(l));
+  if (left.length) {
+    problems.push(`${name}：${left.length} 行是模板的流程提示原样留下（第 ${left.map(([, i]) => i + 1).join('、')} 行）`
+      + '——模板章节里的 `>` 提示是写作说明，写完正文后删掉；文档自己的引用块不受这条约束');
+  }
+  return problems;
+}

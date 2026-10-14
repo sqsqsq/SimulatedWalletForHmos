@@ -182,6 +182,14 @@ class CurrentDecisionsReachTheAuthor(WorkspaceCase):
                 self.assertIn("**推荐**：B，依据是材料未给重试上限。", got)
                 self.assertIn("该谁定：需求方", got)
 
+    def test_only_settled_decisions_are_offered_as_a_basis(self) -> None:
+        """动笔前给出可写进依据标签的 ID：已定的给，开着的不给（开着的写成条件）。"""
+        self.write(json.dumps({"decisions": [self.OPEN, self.SETTLED]}, ensure_ascii=False))
+        out = self.task_package()
+        names = out[out.index("### 依据标签能写的名字"):out.index("\n## 4.")]
+        self.assertIn("`已确认决定：D-1`", names)
+        self.assertNotIn("`已确认决定：D-2`", names)
+
     def test_the_script_does_not_infer_which_text_is_affected(self) -> None:
         self.write(json.dumps({"decisions": [self.OPEN]}, ensure_ascii=False))
         got = self.section()

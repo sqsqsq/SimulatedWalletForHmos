@@ -1,5 +1,5 @@
 /**
- * story 的登记、核对与校验 —— 六个命令，围绕**一份文档写成**这件事。
+ * story 的登记、核对与校验 —— 七个命令，围绕**一份文档写成**这件事。
  *
  * ## 成文怎么走
  *
@@ -15,7 +15,7 @@
  * ——讲清没讲清、贴不贴合、图题说的是不是这张图——都不在这里，归 verifier 的
  * 语义判据与真实结果观察。用字符串近似语义，模型只会照着字符串改。
  *
- * ## 六个命令
+ * ## 七个命令
  *
  * | 命令 | 做什么 |
  * |------|--------|
@@ -25,6 +25,9 @@
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
+ * | `view` | 图的两种形态：`--mode prepare` 给未管理的 Mermaid 图加管理标记并首次建源（`--id` 从源重建一块），`mermaid` 按源重铺，`svg` 切到合格的阅读图 |
+ *
+ * 除 `view` 外的命令读写 story 之前都先切回 Mermaid：正式的编号、登记、核对与交付只认 Mermaid 形态。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -46,8 +49,9 @@ import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
 import { storyInputs } from '../../../../hooks/spec/author.mjs';
+import { ensureMermaid, switchView, VIEW_MODES } from './story/figure-view.mjs';
 
-const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project'];
+const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'view'];
 
 function parseArgs(argv) {
   const args = { command: argv[2] && !argv[2].startsWith('--') ? argv[2] : '' };
@@ -57,6 +61,8 @@ function parseArgs(argv) {
     else if (argv[i] === '--chapter') args.chapter = argv[++i];
     else if (argv[i] === '--from') args.from = argv[++i];
     else if (argv[i] === '--deliver') args.deliver = true;
+    else if (argv[i] === '--mode') args.mode = argv[++i];
+    else if (argv[i] === '--id') args.id = argv[++i];
   }
   return args;
 }
@@ -215,6 +221,16 @@ function cmdSkeleton(ctx) {
   process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
 }
 
+/** `view`：切换或准备图的形态，结果与缺口原样报出。 */
+function cmdView(ctx) {
+  if (!VIEW_MODES.includes(ctx.args.mode)) fail(`view 要 --mode ${VIEW_MODES.join('|')}`);
+  const r = switchView(ctx.featureRoot, ctx.args.mode, { id: ctx.args.id ?? '' });
+  if (r.problems.length) fail(`view --mode ${ctx.args.mode} 没有写任何东西：\n  ${r.problems.join('\n  ')}`);
+  process.stdout.write(`[story-build view] ${ctx.args.mode}：${r.changed ? '已改写 AR/story.md' : 'AR/story.md 没有变化'}；`
+    + `图块 Mermaid ${r.counts.mermaid} 个、SVG ${r.counts.svg} 个\n`
+    + r.notes.map(n => `  - ${n}\n`).join(''));
+}
+
 function main() {
   const args = parseArgs(process.argv);
   if (!COMMANDS.includes(args.command)) {
@@ -224,6 +240,10 @@ function main() {
     fail('--deliver 只用于 check：它判的是这份 story 能不能交付');
   }
   const ctx = createContext(args);
+  if (args.command === 'view') return cmdView(ctx);
+  const back = ensureMermaid(ctx.featureRoot);
+  if (back.problems.length) fail(`读 story 之前要先切回 Mermaid，切不回来：\n  ${back.problems.join('\n  ')}`);
+  if (back.changed) process.stderr.write('[story-build] story 里的阅读图已切回 Mermaid（正式命令只认 Mermaid 形态）\n');
   if (args.command === 'skeleton') cmdSkeleton(ctx);
   else if (args.command === 'chapter') cmdChapter(ctx);
   else if (args.command === 'project') cmdProject(ctx);
@@ -235,6 +255,12 @@ function main() {
 // 直接跑才执行命令；被 import 时只导出判定函数（正面校准要拿句边界判把一份文档
 // 逐句灌一遍，那件事不该经由一个需要完整需求目录的命令行去做）。
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
+  try {
+    main();
+  } catch (e) {
+    // 脚本自身的缺陷：原始异常全文带出，并说明这一步没跑完、归谁处理
+    process.stderr.write(`[story-build] 脚本自身异常：${e?.stack ?? e}\n——这一步没有执行完，不是产物的问题，归扩展维护者处理\n`);
+    process.exit(2);
+  }
 }
 

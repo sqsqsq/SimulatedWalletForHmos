@@ -29,7 +29,8 @@ import { FLOW_SCRIPT, queryFlowStatus }
 import { SHELL, shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { relFromStory, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { citableRows, originRows, relFromStory, sourceCatalog, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
@@ -235,7 +236,7 @@ function decisionSection(projectRoot, feature, contract) {
 function imageSection(projectRoot, feature) {
   const dir = featureRoot(projectRoot, feature);
   const manifest = readJsonOrNull(path.join(dir, 'AR', 'story-src', 'materials.json'));
-  const rows = ['## 4. 材料里的图', ''];
+  const rows = ['### 材料里的图', ''];
   // **形状不对不是「没有图」**：清单不在、读不出、`materials` 不是数组、`paths` 形状不对，都是缺口。静默按零张渲染的话，
   // 作者会以为这一轮不涉及图。形状判定与全篇 check、审查任务共用 `imagesIn` 一份。
   const { images, gap } = imagesIn(manifest);
@@ -343,7 +344,7 @@ function diagramSection(heading, label, src, derived) {
 }
 
 /**
- * 成文要用的当前输入 —— 材料里的图、系统设计与 Spec 里的图。
+ * 成文要用的当前输入 —— 材料与来源、材料里的图、系统设计与 Spec 里的图。
  *
  * `story-build skeleton` 起手与恢复时打印它，本任务包也列它：两处读同一份渲染。
  * `sources` 是调用方这一刻已经取得的来源状态（`sourceStatus`）：上游正文从它取，不再读一遍；
@@ -359,6 +360,13 @@ export function storyInputs(ctx, sources) {
     ?? { rel: ctx.contract.sources?.[key]?.path ?? key };
   const derived = (key) => ctx.contract.sources?.[key]?.derived === true;
   return [
+    '## 4. 材料与来源', '',
+    '附录材料清单那张「材料 | 来源 | 贡献」表照这里写：一组一行，来源列列齐这一组的全部原件与采用版本'
+    + '（有版号或会议版本写它，没有写下面的摘要）；集合由材料清单派生，漏写一行不会让那份原件免于审查。',
+    ...originRows({ ...ctx, srcDir: ctx.srcDir ?? path.join(ctx.featureRoot, 'AR', 'story-src') }), '',
+    ...(fs.existsSync(path.join(ctx.featureRoot, 'ux-reference', 'README.md'))
+      ? ['界面交互说明在 `ux-reference/README.md`：业务流程章有人机交互的小节以它与下面的界面原图为依据，'
+        + '写作设计在那一节的「依据」里写明用哪一段、哪几张图；页面流转表照它写，材料没给的交互写待决。', ''] : []),
     ...imageSection(ctx.projectRoot, feature), '',
     ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')), '',
     ...diagramSection('## 4b. spec 里的图（搬进 story）', 'spec', of('SPEC'), derived('SPEC')),
@@ -414,6 +422,11 @@ function taskPackage(projectRoot, feature) {
     '',
     ...decisionSection(projectRoot, feature, contract),
     '',
+    '### 依据标签能写的名字',
+    '',
+    '数值与关键结论的依据照抄下面一项；门禁与附录投影按同一份解析认名字，附录里换成右边的人读名。',
+    ...citableRows(sourceCatalog(ctx.featureRoot, contract)),
+    '',
     ...storyInputs(ctx, sourceStatus(ctx)),
     '',
     ...statDesignSection(projectRoot, feature),
@@ -432,6 +445,8 @@ function main(argv) {
     process.stderr.write(USAGE + '\n');
     return 2;
   }
+  const back = ensureMermaid(featureRoot(process.cwd(), feature));
+  if (back.problems.length) throw new Error(`story 切不回 Mermaid，任务包按 Mermaid 形态读图：\n${back.problems.join('\n')}`);
   process.stdout.write(taskPackage(process.cwd(), feature) + '\n');
   return 0;
 }

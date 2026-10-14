@@ -560,10 +560,51 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                                          cwd=str(REPO)).returncode == 0
                 self.assertFalse(ignored, f"{rel} 被忽略了")
 
+    #: 待审定效果稿的登记位置（P6 S2 交回）：doc/plan/<版本>/金样候选/<Case>/，审定后切到 test/golden/
+    CANDIDATES = "金样候选"
+
+    @classmethod
+    def candidate_figure(cls, p: Path, root: Path = REPO) -> bool:
+        """待审定的效果稿配图是被审产物，不是运行证据。
+
+        只认登记的候选位置 `doc/plan/<版本>/金样候选/<Case>/ux-reference/<图>`，且这个 Case 的 story 真引用它；
+        同样的 AR/ux-reference 布局出现在别处（运行目录、工作区副本）仍按运行证据报。
+        """
+        parts = p.relative_to(root).parts
+        if not (len(parts) == 7 and parts[:2] == ("doc", "plan") and parts[3] == cls.CANDIDATES
+                and parts[5] == "ux-reference" and p.suffix == ".png"):
+            return False
+        story = p.parent.parent / "AR" / "story.md"
+        return story.is_file() and f"](../ux-reference/{p.name})" in story.read_text(encoding="utf-8")
+
     def test_run_evidence_lives_under_output(self):
         stray = [p.relative_to(REPO).as_posix() for rel in self.ROOTS for p in (REPO / rel).rglob("*")
-                 if p.is_file() and (p.suffix in self.EVIDENCE_SUFFIXES or p.name == "runlog.md")]
+                 if p.is_file() and (p.suffix in self.EVIDENCE_SUFFIXES or p.name == "runlog.md")
+                 and not self.candidate_figure(p)]
         self.assertEqual([], stray, "运行证据放到 output/story/ 下")
+
+    def test_a_candidate_figure_is_recognised_only_where_candidates_are_registered(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+
+            def case(base: Path) -> tuple[Path, Path]:
+                (base / "AR").mkdir(parents=True)
+                (base / "ux-reference").mkdir()
+                used, spare = base / "ux-reference" / "a.png", base / "ux-reference" / "b.png"
+                for f in (used, spare):
+                    f.write_bytes(b"PNG")
+                (base / "AR" / "story.md").write_text("![图 1 · 甲](../ux-reference/a.png)\n", encoding="utf-8")
+                return used, spare
+
+            used, spare = case(root / "doc" / "plan" / "1.9.9" / "金样候选" / "某案")
+            self.assertTrue(self.candidate_figure(used, root))
+            self.assertFalse(self.candidate_figure(spare, root), "story 没引用的图也被当成了产物")
+            for elsewhere in (root / "doc" / "plan" / "1.9.9" / "实跑-0101" / "某案",
+                              root / "doc" / "spec" / "1.9.9" / "金样候选" / "某案",
+                              root / "doc" / "plan" / "1.9.9" / "金样候选" / "某案" / "副本"):
+                with self.subTest(where=elsewhere.relative_to(root).as_posix()):
+                    run_used, _ = case(elsewhere)
+                    self.assertFalse(self.candidate_figure(run_used, root), "候选位置之外的同样布局被当成了产物")
 
     def test_golden_output_has_a_single_canonical_copy(self):
         """金样**输出**只有一处正本；fixture 里只留构造场景所需的原始输入。

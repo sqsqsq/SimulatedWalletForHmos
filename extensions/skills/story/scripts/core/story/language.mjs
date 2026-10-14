@@ -207,37 +207,47 @@ export function scanLanguageRedline(text, opts = {}) {
   return out;
 }
 
-/** 材料清单那一节的行形态：问题与判法。 */
-const MATERIAL_LIST_HINTS = {
-  material_row: '写成了表格行——材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
-  material_link: '这一项没有 markdown 链接——每份材料给一条原文链接，读者据此自己把那份材料找出来；'
-    + '光写「产品需求文档」他不知道该找谁要哪一份',
-};
-
 /**
- * 材料清单那一节的行形态：成列表、每行给得出原文链接。
+ * 一行里的 markdown 链接：`[文字](目标)` 与 `![文字](目标)`。
  *
- * @param {string} body 该小节正文
- * @param {number} baseLine 该小节正文首行在全篇里的行号（报错要指得回去）
+ * 目标有两种合法写法：`<…>` 包起来的（可含空格与括号），或不含空白、括号成对的。
+ * 真实文件名常带空格、中文与括号，只认 `[^)\s]+` 会把它们切断或漏掉——那一份材料就从核对里消失。
+ * 看得见 `](` 却解析不出目标的，作为 `bad` 带位置交回，由调用方报「写法解析不了」，不猜。
+ * 表格里的 `\|` 是转义竖线，目标里还原成 `|`。
+ *
+ * @returns {{links: {start:number, end:number, target:string, image:boolean}[], bad: {start:number, text:string}[]}}
  */
-export function scanMaterialList(body, baseLine = 0) {
-  const hits = [];
-  const lines = String(body ?? '').split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const s = lines[i].trim();
-    const line = baseLine + i;
-    if (s.startsWith('|')) {
-      hits.push({ line, kind: 'material_row', hit: s.slice(0, 40),
-                  hint: MATERIAL_LIST_HINTS.material_row, text: s.slice(0, 100) });
+export function markdownLinks(line) {
+  const s = String(line ?? '');
+  const links = [], bad = [];
+  let i = 0;
+  while ((i = s.indexOf('](', i)) >= 0) {
+    const open = s.lastIndexOf('[', i);
+    let j = i + 2, target = null;
+    if (s[j] === '<') {
+      const close = s.indexOf('>', j);
+      if (close > j && s[close + 1] === ')') { target = s.slice(j + 1, close); j = close + 2; }
+    } else {
+      let depth = 0, k = j;
+      for (; k < s.length; k++) {
+        const c = s[k];
+        if (c === '\\') { k++; continue; }
+        if (/\s/.test(c)) break;
+        if (c === '(') depth++;
+        else if (c === ')') { if (!depth) break; depth--; }
+      }
+      if (s[k] === ')' && k > j) { target = s.slice(j, k); j = k + 1; }
+    }
+    const from = open >= 0 && s[open - 1] === '!' ? open - 1 : Math.max(open, 0);
+    if (target === null) {
+      bad.push({ start: from, text: s.slice(from, i + 30) });
+      i += 2;
       continue;
     }
-    if (!/^[-*+]\s/.test(s)) continue;
-    if (![...s.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)].length) {
-      hits.push({ line, kind: 'material_link', hit: s.slice(0, 40),
-                  hint: MATERIAL_LIST_HINTS.material_link, text: s.slice(0, 100) });
-    }
+    links.push({ start: from, end: j, target: target.replace(/\\([|()])/g, '$1'), image: s[from] === '!' });
+    i = j;
   }
-  return hits;
+  return { links, bad };
 }
 
 /**

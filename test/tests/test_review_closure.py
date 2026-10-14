@@ -1,8 +1,9 @@
 """审查与闭环：判据全量下发、报告核对、可机械核的一致性前移到 spec 门禁。
 
-  ① 审查请求含本阶段 overlay 的全部判据；报告缺一条，门禁报「缺判据」（AC19）；
+  ① 审查请求含本阶段 overlay 的全部判据；报告缺一条，报告核对报「缺判据」（AC19）；
   ② 报告格式不合或缺判据每次都报、不计结论；同一对象已有合规结论时，换了内容的重投被拒（AC23）；
   ③ 报告里 WARN、FAIL 的判据在 notes 里要有处置记录（AC20 的记录一侧）；
+  ①–③ 由落报告之后跑的 `verifier-report.mjs` 命令核，审前的 spec 门禁不读报告；
   ④ §8 与 acceptance.yaml 的编号、关联功能、同号同义，上游原始验收编号的承接（AC24）；
   ⑤ 数值来源一次列全，序数不当数值（AC25）。
 
@@ -116,6 +117,14 @@ class ClosureCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
         return proc.stdout
 
+    def report_check(self) -> str:
+        """落报告之后的核对出口：输出与退出码一起带回，问题在哪一路都看得到。"""
+        proc = subprocess.run(
+            ["node", str(self.root / "doc/extensions/hooks/shared/verifier-report.mjs"),
+             "--feature", FEATURE, "--phase", "spec", "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        return f"exit={proc.returncode}\n{proc.stdout}{proc.stderr}"
+
     def overlay_ids(self) -> list[str]:
         import yaml
         return list(yaml.safe_load((EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8"))
@@ -144,14 +153,14 @@ class EveryCheckReachesTheReviewer(ClosureCase):
     def test_a_report_missing_a_check_is_named(self) -> None:
         ids = self.overlay_ids()
         self.put_report(report_text(ids[1:]))
-        self.assertIn(f"缺判据：{ids[0]}", self.gate())
+        self.assertIn(f"缺判据：{ids[0]}", self.report_check())
 
 
 class OneSubjectOneConclusion(ClosureCase):
     def test_a_malformed_reply_is_reported_every_run_and_not_counted(self) -> None:
         target = self.put_report("审查员说：都看过了，没问题。\n")
         for _ in range(2):
-            self.assertIn("审查回复格式不合", self.gate(), "第二次运行问题消失了")
+            self.assertIn("审查回复格式不合", self.report_check(), "第二次运行问题消失了")
         self.assertTrue(target.exists(), "门禁动了报告文件")
         self.assertFalse((self.reports / "verifier.conclusions.json").exists(), "格式不合的回复登记成了结论")
 
@@ -159,32 +168,47 @@ class OneSubjectOneConclusion(ClosureCase):
         """缺判据的回复不登记；重投完整回复之后不再报报告问题。"""
         ids = self.overlay_ids()
         target = self.put_report(report_text(ids[1:]))
-        self.assertIn(f"缺判据：{ids[0]}", self.gate())
+        self.assertIn(f"缺判据：{ids[0]}", self.report_check())
         target.write_text(report_text(ids), encoding="utf-8")
-        out = self.gate()
+        out = self.report_check()
         for needle in ("缺判据", "已经有过一份合规结论", "审查回复格式不合"):
             self.assertNotIn(needle, out)
+
+    def test_the_pre_review_gate_does_not_read_the_report(self) -> None:
+        """审前门禁跑在派审之前，不读本阶段报告：落一份坏回复不改变它的结论。"""
+        before = self.gate()
+        self.put_report("审查员说：都看过了，没问题。\n")
+        after = self.gate()
+        self.assertEqual(before, after, "spec 门禁读了报告：报告一落盘，审前结论就跟着变")
+        self.assertNotIn("审查回复格式不合", after)
+
+    def test_a_missing_summary_is_not_a_pass(self) -> None:
+        out = self.report_check()
+        self.assertIn("exit=1", out)
+        self.assertIn("summary.json 不在", out)
 
     def test_a_second_valid_reply_for_the_same_subject_is_refused(self) -> None:
         ids = self.overlay_ids()
         target = self.put_report(report_text(ids))
-        self.assertNotIn("已经有过一份合规结论", self.gate())
+        self.assertNotIn("已经有过一份合规结论", self.report_check())
         target.write_text(report_text(ids, note="，重投后换了措辞"), encoding="utf-8")
-        self.assertIn("已经有过一份合规结论", self.gate())
+        self.assertIn("已经有过一份合规结论", self.report_check())
 
 
 class EveryWarnHasADisposition(ClosureCase):
     def test_a_warn_row_needs_a_line_in_the_notes(self) -> None:
         ids = self.overlay_ids()
         self.put_report(report_text(ids, {ids[0]: "WARN"}))
-        out = self.gate()
-        self.assertIn(f"spec/notes.md：审查结论 {ids[0]}（WARN）没有处置记录", out)
-        # 门禁报错只说在哪、什么问题、机制（10 §3.3）：没有统一开头，也不追加与这条无关的处置尾巴
-        self.assertNotIn("补齐 spec 宿主扩展章节", out)
-        self.assertNotIn("先读 ", out)
+        out = self.report_check()
+        self.assertIn(f"spec/notes.md：审查结论 {ids[0]}（WARN）没有指向这份报告的处置记录", out)
+        self.assertIn("exit=1", out)
+        # 上一份报告的同号处置不替这一份豁免：处置要指向当前报告对象
         (self.fr / "spec" / "notes.md").write_text(
-            f"# notes\n\n- {ids[0]}：只改表达，已按闭环表重验。\n", encoding="utf-8")
-        self.assertNotIn(f"{ids[0]}（WARN）", self.gate())
+            f"# notes\n\n- {ids[0]}（报告 bbbbbbbb）：只改表达，已按闭环表重验。\n", encoding="utf-8")
+        self.assertIn(f"{ids[0]}（WARN）", self.report_check(), "旧报告的处置豁免了新报告")
+        (self.fr / "spec" / "notes.md").write_text(
+            f"# notes\n\n- {ids[0]}（报告 {SUBJECT[:8]}）：只改表达，已按闭环表重验。\n", encoding="utf-8")
+        self.assertNotIn(f"{ids[0]}（WARN）", self.report_check())
 
 
 class TheAcceptanceIdsLineUp(ClosureCase):
@@ -239,6 +263,168 @@ class TheNumericSourcesAreListedInFull(ClosureCase):
         for i in range(1, 8):
             self.assertIn(f"{i}0 秒", numeric[0], f"第 {i} 处没列出来")
         self.assertNotIn("第 2 次", numeric[0], "序数被当成了数值")
+
+
+    def numeric_line(self, body: str) -> str:
+        text = self.spec().read_text(encoding="utf-8")
+        self.spec().write_text(text.replace("## 8. 验收标准", body + "\n\n## 8. 验收标准", 1), encoding="utf-8")
+        message = json.loads(self.gate()).get("message", "")
+        return next((line for line in message.split("\n") if "处数值未标来源类型" in line), "")
+
+    def test_money_size_percent_and_chinese_numerals_are_values(self) -> None:
+        found = self.numeric_line("单笔不超过 200 元。\n\n缓存上限 512 KB。\n\n成功率不低于 99.5%。\n\n"
+                                  "超时三十秒后提示。\n\n最多重试三次，二十次后锁定。\n\n两小时内有效。")
+        for value in ("200 元", "512 KB", "99.5%", "三十秒", "三次", "二十次", "两小时"):
+            self.assertIn(value, found, f"{value} 没被当成要标来源的数值")
+
+    def test_counts_whose_form_is_certain_are_values_wherever_they_sit(self) -> None:
+        """形态就能确定是数量的次数，不论前后接什么词都核：阿拉伯数字与「两次」及以上。"""
+        lines = ("连续失败两次后停用。", "连续失败 2 次后停用。", "每天最多两次重试。", "每天最多 2 次重试。",
+                 "失败超过三次便停用。", "失败二十次即锁定。")
+        found = self.numeric_line("\n\n".join(lines))
+        for line in lines:
+            self.assertIn(line.rstrip("。"), found, f"「{line}」里的次数没被当成要标来源的数值")
+
+    def test_an_ambiguous_count_is_sent_to_the_review_not_judged_by_wording(self) -> None:
+        """「一次」「二次」光看形态分不出次数还是操作名：门禁不按后接什么词猜，判项写明交审查核。"""
+        found = self.numeric_line("连续失败二次后停用。\n\n每天最多二次重试。\n\n关闭前二次确认。")
+        self.assertNotIn("二次", found)
+        overlay = (DEV_EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        self.assertIn("「一次」「二次」机械门不核，由你判", overlay)
+        self.assertIn("「两次」及以上", (DEV_EXT / "hooks" / "spec" / "author.md").read_text(encoding="utf-8"))
+
+    def test_versions_ids_and_a_single_time_are_not_values(self) -> None:
+        found = self.numeric_line("这一节一次讲清，关闭前二次确认。\n\n自 1.9.9 版起生效，编号 AR90006 的需求。\n\n"
+                                  "第 3 次失败时提示。\n\n第二次进入时回填。")
+        for word in ("一次", "二次", "1.9.9", "AR90006", "第 3 次", "第二次"):
+            self.assertNotIn(word, found, f"{word} 被当成了阈值")
+
+
+class TheUpstreamNameIsALocatableMaterial(ClosureCase):
+    """依据标签要指认到本轮唯一一份材料或一条已定决定：泛称不放行，重名给唯一写法；解析与任务包、附录投影同源。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.fr / "AR" / "story-src" / "materials.json").write_text(json.dumps({
+            "schema": 2, "materials": [], "sources": [],
+            "origins": [{"path": p, "sha256": "sha256:0", "kind": "direct", "readable_paths": [p]}
+                        for p in ("RR/prd.md", "SR/design.md", "AR/design.md")]}), encoding="utf-8")
+
+    def names(self, *tags: str) -> str:
+        body = "".join(f"\n超时 {i}0 秒（上游约束：{t}）。\n" for i, t in enumerate(tags, 1))
+        text = self.spec().read_text(encoding="utf-8")
+        self.spec().write_text(text.replace("## 8. 验收标准", body + "\n## 8. 验收标准", 1), encoding="utf-8")
+        message = json.loads(self.gate()).get("message", "")
+        return next((line for line in message.split("\n") if "依据标签要指认到" in line), "")
+
+    def test_registered_names_pass(self) -> None:
+        line = self.names("产品需求", "系统设计", "SR/design.md", "prd.md")
+        for tag in ("产品需求", "系统设计", "SR/design.md", "prd.md"):
+            self.assertNotIn(f"「{tag}」", line)
+
+    def test_a_generic_name_and_an_ambiguous_one_are_named(self) -> None:
+        line = self.names("上游文档", "design.md")
+        self.assertIn("「上游约束：上游文档」对不上本轮任何一份材料", line)
+        self.assertIn("「上游约束：design.md」对上了 2 份", line)
+
+    def test_real_file_names_with_brackets_commas_and_spaces_pass(self) -> None:
+        """合同允许真实文件名带括号、逗号、空格：照登记的名字写就认，不按标点截断（G02）。"""
+        manifest = self.fr / "AR" / "story-src" / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        extra = ["inbox/规则(v2).md", "inbox/规则（终版）.md", "inbox/规则,定稿.md", "inbox/会议 纪要.md"]
+        data["origins"] += [{"path": p, "sha256": "sha256:0", "kind": "converted-source", "readable_paths": [p]}
+                            for p in extra]
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tags = ("规则(v2).md", "规则（终版）", "规则,定稿.md", "会议 纪要.md", "inbox/规则(v2).md")
+        line = self.names(*tags)
+        for tag in tags:
+            self.assertNotIn(f"「{tag}", line, f"合法的登记名被截断后判成对不上：{line}")
+        for cut in ("规则(v2", "规则（终版", "「规则」"):
+            self.assertNotIn(cut, line)
+
+    def meeting(self, stem: str, sha: str, file: str, recorded: str | None = None) -> None:
+        """留存一版会议：目录名是主名与原件摘要前 8 位，原文件名只在 source.json 里。"""
+        base = f"AR/story-src/meetings/{stem}/{sha[:8]}"
+        (self.fr / base).mkdir(parents=True, exist_ok=True)
+        (self.fr / base / "source.json").write_text(json.dumps(
+            {"file": file, "sha256": recorded or sha, "text_sha256": "0"}, ensure_ascii=False), encoding="utf-8")
+        manifest = self.fr / "AR" / "story-src" / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["origins"].append({"path": f"{base}/original.docx", "sha256": f"sha256:{sha[:16]}", "kind": "meeting",
+                                "readable_paths": [f"{base}/raw.md", f"{base}/evidence.md"]})
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    def test_a_meeting_is_cited_by_its_original_file_name(self) -> None:
+        """会议原件留存为 original.docx：作者写的是会上那份文件的原名，认得到那一版。"""
+        self.meeting("评审纪要（终版）", "ab" * 32, "评审纪要（终版）.docx")
+        line = self.names("评审纪要（终版）.docx", "评审纪要（终版）")
+        self.assertEqual("", line, "会议原名认不到")
+
+    def test_two_versions_of_one_meeting_need_the_version(self) -> None:
+        self.meeting("周会", "11" * 32, "周会.docx")
+        self.meeting("周会", "22" * 32, "周会.docx")
+        line = self.names("周会.docx", "周会.docx@11111111")
+        self.assertIn("「上游约束：周会.docx」对上了 2 份", line)
+        self.assertIn("周会.docx@22222222", line, "歧义没给出唯一写法")
+        self.assertNotIn("「周会.docx@11111111」", line)
+
+    def test_a_meeting_whose_record_does_not_match_is_reported_not_guessed(self) -> None:
+        self.meeting("周会", "33" * 32, "周会.docx", recorded="44" * 32)
+        line = self.names("周会.docx")
+        self.assertIn("对不上本轮任何一份材料", line)
+        self.assertIn("source.json", line, "元数据坏了没有点名，作者只能猜目录名")
+
+    def test_a_settled_decision_is_a_basis_and_an_open_one_is_not(self) -> None:
+        (self.fr / "AR" / "story-src" / "decisions.json").write_text(json.dumps({"decisions": [
+            {"id": "D1", "status": "settled", "title": "上限定为 200", "clarification": "会上产品负责人定", "decider": "产品负责人"},
+            {"id": "D2", "status": "open", "title": "要不要再验证", "clarification": "两种做法", "decider": "支付负责人"},
+            {"id": "D3", "status": "settled", "title": "无依据", "clarification": "", "decider": "产品负责人"},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        body = "\n上限 200 元（已确认决定：D1）。\n\n再验证 2 次（已确认决定：D2）。\n\n等 3 秒（已确认决定：D3）。\n\n等 4 秒（已确认决定：D9）。\n"
+        text = self.spec().read_text(encoding="utf-8")
+        self.spec().write_text(text.replace("## 8. 验收标准", body + "\n## 8. 验收标准", 1), encoding="utf-8")
+        message = json.loads(self.gate()).get("message", "")
+        line = next((x for x in message.split("\n") if "依据标签要指认到" in x), "")
+        self.assertNotIn("已确认决定：D1」", line)
+        self.assertIn("「已确认决定：D2」：这条是 open", line)
+        self.assertIn("「已确认决定：D3」：登记缺澄清正文或 decider", line)
+        self.assertIn("「已确认决定：D9」：decisions.json 里没有这个 id", line)
+        self.assertNotIn("：上限 200 元（已确认决定：D1）", message, "已确认决定是合法的来源类型")
+
+    def test_a_longer_unregistered_name_is_not_taken_for_a_registered_prefix(self) -> None:
+        line = self.names("产品需求说明", "规则")
+        self.assertIn("「上游约束：产品需求说明」对不上本轮任何一份材料", line)
+        self.assertIn("「上游约束：规则」对不上本轮任何一份材料", line)
+
+
+class TheDocumentFollowsItsTemplateForm(ClosureCase):
+    """H1 照模板的文档类型、占位换掉；模板章节里的 `>` 流程提示不留在文档里。文档自己的引用块不管。"""
+
+    TEMPLATE = ("# {功能模块名称} — 需求规格（Spec）\n\n> **版本**: v1.0\n\n## 0. 术语映射表\n\n"
+                "> **本节是本 spec 的第一道 BLOCKER**：\n\n| 原始术语 |\n|---|\n")
+
+    def form(self, text: str) -> list[str]:
+        driver = ("const m = await import(process.argv[1]);"
+                  "process.stdout.write(JSON.stringify(m.templateFormProblems(process.argv[2], process.argv[3], 'spec.md')));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", driver,
+                               (self.root / "doc/extensions/hooks/shared/chapters.mjs").as_uri(), text, self.TEMPLATE],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_a_named_document_with_its_own_quote_passes(self) -> None:
+        text = "# 交通卡自动充值 — 需求规格（Spec）\n\n> **版本**: v1.0\n\n## 0. 术语映射表\n\n> 用户原话：「别让我卡在闸机前」。\n"
+        self.assertEqual([], self.form(text))
+
+    def test_a_placeholder_title_and_a_left_prompt_are_named(self) -> None:
+        text = "# {功能模块名称} — 需求规格（Spec）\n\n## 0. 术语映射表\n\n> **本节是本 spec 的第一道 BLOCKER**：\n"
+        got = "\n".join(self.form(text))
+        self.assertIn("还留着花括号占位", got)
+        self.assertIn("模板的流程提示原样留下", got)
+
+    def test_two_titles_or_a_wrong_document_type_are_named(self) -> None:
+        self.assertIn("一级标题有 2 个", "\n".join(self.form("# 甲 — 需求规格（Spec）\n\n# 乙\n")))
+        self.assertIn("缺「— 需求规格（Spec）」", "\n".join(self.form("# 甲 — 实现计划\n")))
 
 
 if __name__ == "__main__":

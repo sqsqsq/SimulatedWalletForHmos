@@ -221,7 +221,7 @@ class TheFirstSkeletonAsksForTheDesign(PlanCase):
     def test_the_current_inputs_come_with_the_skeleton(self) -> None:
         """Spec 写完之后才列得出它的图：成文要用的输入在起手这一刻给。"""
         _, out = self.cmd("skeleton")
-        for heading in ("## 4. 材料里的图", "## 4a. 系统设计里的图", "## 4b. spec 里的图"):
+        for heading in ("## 4. 材料与来源", "### 材料里的图", "## 4a. 系统设计里的图", "## 4b. spec 里的图"):
             self.assertIn(heading, out)
         self.assertNotIn("还没写成", out.split("## 4b.", 1)[1], "Spec 已在，却说还没写成")
 
@@ -488,6 +488,55 @@ SEQ_FENCE = ("```mermaid\n%% 先讲受理，再讲结果回到谁\n\nsequenceDia
              "  申请方->>受理方: 提交\n  受理方-->>申请方: 受理结果\n```\n")
 
 
+PAGE_HEAD = "| 页面 | 来路/入口 | 用户操作 | 正常结果 | 异常提示与去向 |\n|---|---|---|---|---|\n"
+PAGE_PLAN = "- 本章主线：x\n形式：流程图\n#### 办理入口\n- 答：从哪进入、经过哪些页面、异常去哪\n形式：页面流转表"
+
+
+class ThePageFlowTableIsChosenNotForced(PlanCase):
+    """页面流转表是写作设计选的形式：选了才核，表头由合同给、可以在后面补列；没选不因「页面」二字强制。"""
+
+    def body(self, table: str) -> str:
+        return "提交之后等回执。\n\n" + FLOW_FENCE + "\n### 办理入口\n\n从首页进入办理。\n\n" + table
+
+    def test_the_draft_carries_the_contract_header(self) -> None:
+        self.write_plan(with_chapter("05-flow", PAGE_PLAN))
+        self.cmd("skeleton")
+        self.assertIn(PAGE_HEAD.split("\n")[0], self.draft("05").read_text(encoding="utf-8"))
+
+    def test_a_chosen_table_is_held_by_its_header(self) -> None:
+        self.write_plan(with_chapter("05-flow", PAGE_PLAN))
+        self.cmd("skeleton")
+        code, out = self.put("业务流程", self.body("没有表。\n"))
+        self.assertEqual(1, code, out)
+        self.assertIn("缺「页面流转表」", out)
+        code, out = self.put("业务流程", self.body("| 步骤 | 说明 |\n|---|---|\n| 1 | 进入 |\n"))
+        self.assertEqual(1, code, "别的表顶替了页面流转表")
+        row = "| 办理页 | 首页「办理」 | 填写并提交 | 进入结果页 | 网络失败提示重试，留在办理页 | 有原图 |\n"
+        head = PAGE_HEAD.replace("异常提示与去向 |", "异常提示与去向 | 备注 |").replace("|---|---|---|---|---|", "|---|---|---|---|---|---|")
+        self.assertEqual(0, self.put("业务流程", self.body(head + row))[0], "补在后面的列不该挡")
+
+    def test_without_choosing_it_nothing_is_forced(self) -> None:
+        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：流程图\n#### 后台对账\n- 答：没有页面，谁调用、数据怎样"))
+        self.cmd("skeleton")
+        body = ("提交之后等回执。\n\n" + FLOW_FENCE
+                + "\n### 后台对账\n\n由定时作业发起，没有页面交互：用户不参与这一步。\n")
+        self.assertEqual(0, self.put("业务流程", body)[0])
+
+    def test_the_vocabulary_names_it_and_the_ux_note_is_delivered(self) -> None:
+        feature = self.src.parents[1]
+        (feature / "ux-reference").mkdir(exist_ok=True)
+        (feature / "ux-reference" / "README.md").write_text("# 界面\n\n办理页在首页下方。\n", encoding="utf-8")
+        subprocess.run([sys.executable, str(FLOW), "round", "--feature", FEATURE, "--project-root", str(self.root)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.write_plan(with_chapter("05-flow", PAGE_PLAN))
+        code, out = self.cmd("skeleton")
+        self.assertEqual(0, code, out)
+        self.assertIn("界面交互说明在 `ux-reference/README.md`", out)
+        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：页面图鉴"))
+        _, out = self.cmd("skeleton")
+        self.assertIn("页面流转表", out, "认得的形式里没有合同登记的命名表")
+
+
 class ASkeletonDiagramTypeIsHeld(PlanCase):
     """点名时序图之后流程图顶替不了；与不点名的图或合同要求重合时，一个缺口只报一次、只给一次起点。"""
 
@@ -543,7 +592,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
 class TheExpressionScaffolding(PlanCase):
     """图三件套的脚手架、每章三问的空壳、附录章不要骨架。"""
 
-    GUIDES = ("作图：先把这段过程讲一遍", "作图：这里放", "作图：说明各分支成立的条件")
+    GUIDES = ("作图：一两句说清读者看这张图要看出什么", "作图：这里放", "作图：补图里没表达的条件")
 
     def test_a_chosen_diagram_gets_three_guides_that_are_stripped_on_submit(self) -> None:
         self.write_plan(with_chapter("07-exceptions", SEQUENCE))
@@ -551,7 +600,7 @@ class TheExpressionScaffolding(PlanCase):
         draft = self.draft("07")
         text = draft.read_text(encoding="utf-8")
         at = [text.index(g) for g in self.GUIDES]
-        self.assertEqual(sorted(at), at, "三行指引的顺序是讲过程、放图、说明分支")
+        self.assertEqual(sorted(at), at, "三行指引的顺序是点明看什么、放图、补图外的条件与结果")
         draft.write_text(text + "\n" + SEQ_FENCE, encoding="utf-8")
         code, out = self.cmd("chapter", "--chapter", "异常与恢复", "--from", str(draft))
         self.assertEqual(0, code, out)
@@ -562,7 +611,7 @@ class TheExpressionScaffolding(PlanCase):
         code, out = self.cmd("skeleton")
         shell = self.plan.read_text(encoding="utf-8")
         self.assertIn("读者是谁、读完要做什么决定；哪几件事最容易误解", shell)
-        self.assertIn("读完这一章读者要能回答什么；哪个关系必须用图、图后要讲哪几条判断", shell)
+        self.assertIn("读完这一章读者要能回答什么；哪个关系必须用图、图后要补哪些图外的条件与结果", shell)
         self.assertIn("- 附录不写骨架：", shell)
         self.assertIn("没有就不写", shell, "待核只在有时写")
 

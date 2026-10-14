@@ -9,8 +9,9 @@
     python import_sources.py --feature <AR> --caption-image <图> --caption <一句话>
     python import_sources.py --feature <AR> --caption-image <图> --unused <理由>
     python import_sources.py --feature <AR> --register-ux <图> --name <名> --caption <一句话>
+    python import_sources.py --feature <AR> --retire <相对 inbox 的路径>
 
-归类读 `inbox/.classify.json`，内容是 `{"文件名": "<类>"}`（值域见 `materials/importer.py` 的 `CLASSES`）。**归类判断不是脚本的活**：
+归类读 `inbox/.classify.json`，内容是 `{"<相对 inbox 的路径>": "<类>"}`（值域见 `materials/importer.py` 的 `CLASSES`）。**归类判断不是脚本的活**：
 它需要读文件名、内容语义与人在关卡上的说明，属语义判断，由 AI 做出后写进该文件；
 脚本只负责执行与收敛。没给归类的文件不会被默默忽略——那等于人以为导了、实际没导。
 
@@ -44,6 +45,8 @@ def main() -> int:
                     help="把这张图登记成界面参考：复制到 ux-reference/ 起名，并记下它是什么")
     ap.add_argument("--caption-image", default=None, metavar="PATH",
                     help="给材料里的一张图写说明，不复制不改名（流程图这类走它）")
+    ap.add_argument("--retire", default=None, metavar="KEY",
+                    help="被新原件取代的旧原件（相对 inbox 的路径）：按内容摘要移进 .backups/local/inbox/，删它的归类键")
     ap.add_argument("--name", default="", help="--register-ux 的语义名（不带后缀）")
     ap.add_argument("--caption", default="", help="一句「这张图是什么」")
     ap.add_argument("--unused", default="", metavar="REASON",
@@ -105,6 +108,16 @@ def main() -> int:
         else:
             importer.log(f"图片说明已记下：{args.caption_image}——{out['caption']}")
         return emit({"mode": mode, "ok": True, **out}, 0)
+
+    if args.retire:
+        if feature_root is None:
+            return emit({"mode": "retire", "ok": False, "error": "退旧原件需要 --feature"}, 1)
+        try:
+            out = importer.retire_source(feature_root, args.retire)
+        except (importer.ImportError_, OSError) as exc:
+            return emit({"mode": "retire", "ok": False, "error": str(exc)}, 1)
+        importer.log(f"旧原件已移出 inbox：{out['retired']} → {out['backup']}")
+        return emit({"mode": "retire", "ok": True, **out}, 0)
 
     if args.register_ux:
         if feature_root is None:

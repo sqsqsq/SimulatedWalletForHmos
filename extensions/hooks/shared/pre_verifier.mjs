@@ -25,7 +25,8 @@ import { contractSections } from './knowledge-use/validation.mjs';
 import { landingName } from './knowledge-use/projection.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
-import { readerReviewTask } from './reader-review-task.mjs';
+import { readerReviewTask, reviewInputs } from './reader-review-task.mjs';
+import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { overlayChecks } from './verifier-report.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from './stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
@@ -175,6 +176,11 @@ function allChecksFragment(checks) {
 }
 
 export default async function preVerifier(ctx) {
+  // 正常阶段已由 pre_phase 切回；单独调用时同样先切回，审查只读 Mermaid 形态
+  if (ctx?.feature && ctx?.projectRoot) {
+    const back = ensureMermaid(featureRoot(ctx.projectRoot, ctx.feature));
+    if (back.problems.length) throw new Error(`story 切不回 Mermaid：${back.problems.join('；')}`);
+  }
   const phase = ctx?.phase;
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
   const source = SOURCE_OF_TRUTH[phase];
@@ -212,6 +218,15 @@ export default async function preVerifier(ctx) {
   // 读者审查放在判据清单之后：它要通读整份归档件与全部材料，是这批判据里最重的一项。
   if (checkIds.includes(READER_REVIEW_ID)) {
     fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));
+  } else {
+    // 没有读者审查的阶段同样要拿到 update 的旧现场：新稿对照有效旧依据核变化权限
+    const basis = reviewInputs(ctx.projectRoot, ctx.feature);
+    const before = basis.inputs.filter(x => x.path.includes('/before/') && !x.missing);
+    if (basis.update) {
+      fragments.push(['## 本轮 update：新稿对照有效旧依据', '',
+        ...before.map(x => `- \`${x.path}\`（摘要 ${x.digest}）`), ...basis.gaps.map(g => `- **输入有缺口**：${g}`), '',
+        '改掉的旧约束、旧决定与旧验收，依据是谁给的、有没有权限；与仍有效的旧约束冲突而没经有权人裁定的，相关判据 FAIL。'].join('\n'));
+    }
   }
   if (!knowledgeIds.length) return { promptFragments: fragments };
 

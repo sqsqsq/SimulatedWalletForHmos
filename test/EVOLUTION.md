@@ -5,6 +5,16 @@
 
 ## 1. 演进记录
 
+2026-10-12 **1.9.9 两 Case 输入承接 2.x 业务补充**（用户确认「承接业务补充，保留 1.x 协议」，方案 `doc/plan/1.9.9/2026-10-12-整体设计/07-R6-两Case金样.md` §2；外线工作区 `E:\Project\SimulatedWalletForHmos` 的 `test/cases`，最近改动提交 `ce3677ad`，逐文件按实际 diff 合入，没有整体复制）：
+两份系统设计补接口字段、单位、可空性、判重与错误结构；交互脚本补「问到才答」的业务立场——auto-topup 的模拟验证边界、update 单日上限按会上 200；
+car-key 的初始宽限 48 小时口径、车钥匙卡片范围、模拟验证边界、草稿续办、接受比例由车云统计；auto-topup 答案卷补上限冲突的立场；
+两份评审回稿的意见按 2.x 措辞（car-key 保留本线 match/verdict/opinion 投放结构）；car-key `case.yaml` 只同步覆盖说明。
+不承接：命令起手 prompt、`end_at`/施工单位终点、`expected_phase` 改 story 的阶段语义、「已放入」与「实现方案」等 2.x 关卡措辞。
+原始字节 SHA-256 前 16 位（前 → 后）：auto-topup `interaction-script.yaml` 4edad2077fedb3e7 → 16f68d3fe7f5c5c3、`meeting-answer-key.md` 7fac2fd1d8629ca9 → 999e5cc4b578744d、
+`system/SR90006/design.md` f5c62ba06b98ef91 → d8a0e00cddf1ca0e（与外线锁定摘要相同）、`update-inputs/review-feedback.md` 51cb3825f9d06af0 → cd08cce794c2db2b；
+car-key-sharing `interaction-script.yaml` f327d7b08700361a → 0f5d24ed81a0c93c、`workspace/SR/design.md` 967a69233f70c43e → 68ff916dff8a6b00（与外线锁定摘要相同）、
+`update-inputs/car-review-feedback.yaml` a03ca13d07a13952 → f3cfaecdb956a21a、`case.yaml` 4c32321267803f14 → 11b3a91ed3bea3f1。初始 prompt 未改，update 材料仍只在第二段投放。
+
 2026-09-30 **1.9.8 发布后补充：首次知识质量判据与功能一览**（提交 `2e872e7d`，版本号不变；提交后全量 1512 passed，唯一失败为既有金样指纹）：内网首次适配产出的知识质量不高（规约罗列未归纳、模块私有内容当成项目知识、事实写成实现说明、模式自行归纳）。知识协议补范围与形态判据，适配方法页新增四条质量判据（首批每份最多 3 项、模式只在已用承载 SDK 时写、扩充归目标维护者），新增按主题写法页 `knowledge-topics.md`（13 主题 × 六项），基线条目改为指向主题页；README 新增功能一览与「评审 AI 起草的知识」；根 AGENTS §2/§3.3 同步。demo 按 §7 重装，失效形态 FAIL 0，预算 14027→14132。方案与交回见 [知识质量判据与README](../doc/plan/1.9.8/2026-09-30-知识质量判据与README/00-方案.md)。
 
 2026-09-29 **1.9.8 发布后修复：adapt 已适配版本与新仓知识**（发布提交 `a0627c9c`，自检修正 `8f60778f`：在途单整块不列、基线条目只写主题、AGENTS §2 同步；版本号不变；提交后全量 1512 passed，金样 `AR90004/ux-reference/README.md` 指纹为既有失败）：内网试用发现 adapt 有时不写 `adapted_for`、新仓被模型判为 0.1.0 且知识只做 1.9.4 起的增量。`adapted_for` 改为只由脚本写（新增 `--mark-adapted`，无事可做时 `--apply` 自动写）；升级演进记录补 `1.9.3` 知识基线（12 个主题，1.9.4 以前不分小版本），没有 `adapted_for` 的目标从基线列起、首次安装也打印跟进；demo 按 §7 重装（5 个文件，117 个同源），失效形态 FAIL 0，预算 13993→14027 收口。方案与交回见 [adapt修复](../doc/plan/1.9.8/2026-09-29-adapt修复/00-方案.md)，发布说明见 [1.9.8](../doc/release/1.9.8.md)。
