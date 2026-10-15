@@ -32,7 +32,12 @@ export function guard(phase, body) {
     try {
       return await body(ctx);
     } catch (e) {
-      // 崩栈不是「通过」，也不该被降级成 MAJOR 悄悄放行。
+      // 崩栈不是「通过」，也不该被降级成 MAJOR 悄悄放行。环境缺依赖不是门禁代码的错，恢复入口不同。
+      if (e?.category === 'environment') {
+        return { ok: false, severityOverride: 'BLOCKER',
+          message: `扩展门禁没能运行（${phase} post_check）：环境依赖缺失——${e.message}`
+            + '\n——本阶段的扩展判据一条都没跑，这次 harness 结果不代表产物通过；按上面的提示恢复依赖后重跑 harness，产物不用改。' };
+      }
       return {
         ok: false,
         severityOverride: 'BLOCKER',

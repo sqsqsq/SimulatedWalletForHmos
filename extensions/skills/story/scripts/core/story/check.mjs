@@ -14,7 +14,7 @@ import {
   appendixChapter, appendixStructureProblems, appendixZoneProblems,
 } from './appendix.mjs';
 import {
-  activeKnowledgeEntries, fail, ledgerDigestProblems, readText, requireLedgers,
+  activeKnowledgeEntries, CommandFailure, fail, ledgerDigestProblems, readText, requireLedgers,
   strayFileProblems,
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
@@ -300,7 +300,7 @@ export function cmdCheck(ctx) {
         process.stderr.write(`  ${n}. ${item}\n`);
       }
     }
-    process.exit(1);
+    throw new CommandFailure('check 未通过');
   }
   process.stdout.write(`[story-build check] 通过：${sections.length} 章\n`);
   // 交付门通过 = 这份 story 可以交出去了。往下有两条路，**由人选**——

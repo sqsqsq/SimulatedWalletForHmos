@@ -15,6 +15,7 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
+import { inputRows, reviewInputs } from './review-inputs.mjs';
 import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 
@@ -173,102 +174,6 @@ function imageRows(projectRoot, feature) {
 }
 
 /**
- * 读者审查必读的输入 —— **从登记事实派生，任务书与报告核对共用这一份**。
- *
- * 审查对象与写作设计、范围与登记、Spec 与验收、材料清单 `origins` 的每份阅读稿（只取图的原件由图片登记一节核，
- * 不进这张表）、会议判断与刷新结果、界面说明，以及 update 开着时这一轮的 `before/` 与 update-notes。
- * `digest` 是这一刻的内容摘要，进入审查片段：依据变了片段跟着变；story 按作者区另算、流程状态与 notes 不算身份。
- *
- * @returns {{inputs: {path:string, purpose:string, digest:string|null, missing:boolean}[], update: string|null, gaps: string[]}}
- */
-export function reviewInputs(projectRoot, feature) {
-  const root = featureRoot(projectRoot, feature);
-  const inputs = [];
-  const gaps = [];
-  const add = (rel, purpose, { identity = true, optional = false } = {}) => {
-    if (inputs.some(x => x.path === rel)) return;
-    let bytes = null;
-    try { bytes = fs.readFileSync(path.join(root, rel)); } catch { bytes = null; }
-    if (bytes === null && optional) return;
-    inputs.push({ path: rel, purpose, missing: bytes === null,
-      digest: bytes && identity ? crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 12) : null });
-  };
-  add('AR/story.md', '审查对象', { identity: false });
-  add('AR/story-src/story-template.md', '作者的写作设计');
-  add('AR/story-src/story-flow.json', '已确认的本 AR 范围', { identity: false });
-  add('AR/story-src/decisions.json', '已登记的决定：哪些定了、哪些开着');
-  add('AR/story-src/materials.json', '材料清单与图片登记');
-  add('spec/spec.md', '已经成立的产品约束');
-  add('acceptance.yaml', '验收条目');
-  const manifest = readJsonOrNull(path.join(root, 'AR', 'story-src', 'materials.json'));
-  if (manifest && !Array.isArray(manifest.origins)) gaps.push('AR/story-src/materials.json 读不出 `origins`，原材料集合未取得');
-  for (const o of manifest?.origins ?? []) {
-    if ((o.image_paths ?? []).length) continue;
-    for (const r of o.readable_paths ?? []) add(r, `原材料阅读稿（来源 ${o.path}）`);
-  }
-  const contract = contractOf(projectRoot);
-  for (const decl of Object.values(contract?.sources ?? {})) {
-    if (decl?.path && !decl.derived) add(decl.path, decl.label ?? '合同来源', { optional: true });
-  }
-  add('AR/story-src/meeting-notes.json', '会议判断', { optional: true });
-  add('AR/story-src/doc-refresh.md', '会议与材料刷新后的当前结果', { optional: true });
-  add('ux-reference/README.md', '界面交互说明', { optional: true });
-  const flow = readJsonOrNull(path.join(root, 'AR', 'story-src', 'story-flow.json'));
-  const rid = flow?.update?.open ?? null;
-  if (rid) {
-    const base = `AR/story-src/updates/${rid}`;
-    if (!fs.existsSync(path.join(root, base, 'before'))) {
-      gaps.push(`update ${rid} 开着，却没有 \`${base}/before/\`——这一轮缺比较基准，不是没有变化`);
-    }
-    for (const rel of ['AR/story.md', 'AR/review.md', 'spec/spec.md', 'plan/plan.md', 'acceptance.yaml', 'AR/story-src/decisions.json']) {
-      add(`${base}/before/${rel}`, `update 前的 ${rel}`, { optional: true });
-    }
-    add(`${base}/update-notes.md`, '作者对这一轮变化与影响的判断（待核，不是依据）', { identity: false, optional: true });
-  }
-  // notes 是可读的作者判断，不是必审依据：审查之后再写它不让一份有效报告失效
-  for (const x of inputs) x.required = !x.missing && !x.path.endsWith('/update-notes.md');
-  return { inputs, update: rid, gaps };
-}
-
-/** 读者审查明细的四个键 —— 无论结论都写，任务书与报告核对共用这一份定义。 */
-export const READER_DETAIL_KEYS = ['blocking_findings', 'advisories', 'examined_inputs', 'unreviewed'];
-
-/** 明细里写的路径规范成表里的写法：去反引号、反斜杠换正斜杠、去开头的 `./`。 */
-const inputPath = v => String(v ?? '').replace(/`/g, '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
-
-/**
- * 明细与必审集合、结论自洽吗 —— 机器核声明与集合，读懂了没有它判不了。
- *
- * 核：四个键都在且是列表；examined_inputs 不重复、每份都在表里；必审输入要么读过要么列进 unreviewed；
- * PASS 不带阻断项、不带未核的必审输入；FAIL 要列出阻断项。`basis` 缺席（核历史报告）时不核覆盖。
- */
-export function readerDetailProblems(details, status, basis) {
-  const missing = READER_DETAIL_KEYS.filter(k => !(k in (details ?? {})));
-  if (missing.length) return [`判了 ${status}，明细缺 ${missing.join('、')}——四个键无论结论都写，没有内容的写空列表`];
-  const wrong = READER_DETAIL_KEYS.filter(k => !Array.isArray(details[k]));
-  if (wrong.length) return [`明细的 ${wrong.join('、')} 不是列表`];
-  const out = [];
-  const blocking = details.blocking_findings;
-  if (status === 'PASS' && blocking.length) out.push(`判了 PASS 却列了 ${blocking.length} 条阻断项，结论与明细矛盾`);
-  if (status === 'FAIL' && !blocking.length) out.push('判了 FAIL 却没有阻断项，说不出拦在哪');
-  if (!basis) return out;
-  const table = new Map(basis.inputs.map(x => [x.path, x]));
-  const seen = new Set();
-  for (const raw of details.examined_inputs) {
-    const p = inputPath(typeof raw === 'string' ? raw : raw?.path);
-    if (!p || !table.has(p)) out.push(`examined_inputs 里的「${p || JSON.stringify(raw)}」不在「读这些」表里——照抄表里的路径`);
-    else if (seen.has(p)) out.push(`examined_inputs 里「${p}」写了两次`);
-    seen.add(p);
-  }
-  const skipped = new Set(details.unreviewed.map(u => inputPath(typeof u === 'string' ? u.split(/[：:]/)[0] : (u?.path ?? u?.item))));
-  const silent = basis.inputs.filter(x => x.required && !seen.has(x.path) && !skipped.has(x.path)).map(x => x.path);
-  if (silent.length) out.push(`必审输入既没出现在 examined_inputs 也没列进 unreviewed：${silent.join('、')}`);
-  const open = basis.inputs.filter(x => x.required && skipped.has(x.path)).map(x => x.path);
-  if (status === 'PASS' && open.length) out.push(`判了 PASS，必审输入却有没核完的：${open.join('、')}——读完再判，或如实不判 PASS`);
-  return out;
-}
-
-/**
  * 任务书正文。
  *
  * @param {string} projectRoot
@@ -288,10 +193,8 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '从原件反查成果：先读原材料与已定决定，再读作者产物；大文件分段读齐，读不到或没读完的写进 unreviewed。',
     '',
   ];
-  const basis = reviewInputs(projectRoot, feature);
-  rows.push(...basis.inputs.map(x => `- \`${x.path}\`${x.digest ? `（摘要 ${x.digest}）` : ''} —— ${x.purpose}`
-    + (x.missing ? '　**读不到**：与它有关的判断写未验证' : '')),
-  ...basis.gaps.map(g => `- **输入有缺口**：${g}`));
+  const basis = reviewInputs(projectRoot, feature, 'story');
+  rows.push(...inputRows(basis));
   if (basis.update) {
     rows.push('', `### 本轮 update ${basis.update}：新稿对照有效旧依据`, '',
       '`before/` 是这一轮动手前的现场。逐处核：新稿改掉的旧约束、旧决定与旧验收，改动依据是谁给的、他有没有这个权限；'

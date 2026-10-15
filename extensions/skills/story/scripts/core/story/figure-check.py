@@ -81,10 +81,35 @@ def problems_of(svg: Path, fid: str) -> list[str]:
     return out
 
 
+def local_deps(svg: Path) -> tuple[list[str], list[str]]:
+    """阅读图实际用到的本地资源（相对 AR/），样式表里再引用的也跟进去；去重、防循环。缺件或越界列进问题。"""
+    base = svg.parent.parent.resolve()
+    deps: list[str] = []
+    problems: list[str] = []
+    queue = [(svg.parent, ref) for ref in references(ET.parse(svg).getroot())]
+    while queue:
+        at, ref = queue.pop(0)
+        if not ref or ref.startswith(("#", "data:")) or re.match(r"^[a-z][a-z0-9+.-]*:", ref, re.I):
+            continue
+        target = (at / ref.split("#", 1)[0]).resolve()
+        if not target.is_relative_to(base) or not target.is_file():
+            problems.append(f"资源「{ref}」{'逃出了 AR/ 目录' if not target.is_relative_to(base) else '读不到'}")
+            continue
+        rel = target.relative_to(base).as_posix()
+        if rel in deps:
+            continue
+        deps.append(rel)
+        if target.suffix.lower() == ".css":
+            css = target.read_text(encoding="utf-8", errors="replace")
+            queue.extend((target.parent, first(m)) for m in [*CSS_URL.finditer(css), *CSS_IMPORT.finditer(css)])
+    return deps, problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="阅读图的结构检查")
     ap.add_argument("svg")
     ap.add_argument("--id", required=True)
+    ap.add_argument("--deps", action="store_true", help="输出本地资源依赖（JSON），供局部阅读验收请求绑定")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -95,6 +120,14 @@ def main() -> int:
     if not svg.is_file():
         print(f"读不到 {svg}")
         return 2
+    if args.deps:
+        import json
+        try:
+            deps, problems = local_deps(svg)
+        except ET.ParseError as exc:
+            deps, problems = [], [f"不是合法 XML（{exc}）"]
+        print(json.dumps({"deps": deps, "problems": problems}, ensure_ascii=False))
+        return 1 if problems else 0
     found = problems_of(svg, args.id)
     print("\n".join(found) if found else "结构检查通过（文字可读、连线与语义等值仍要渲染核与对照审）")
     return 1 if found else 0

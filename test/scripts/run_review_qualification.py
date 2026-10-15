@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -42,6 +43,13 @@ CONTRACT_SRC = REPO / "extensions" / "skills" / "story" / "contracts" / "story-c
 CONTRACT_REL = "doc/extensions/skills/story/contracts/story-chapters.json"
 FLOW = REPO / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 FEATURE = "AR90001"
+#: 必审集合与明细合同的真源：资格门交给审查者的「读这些」表与四键要求从它现取，与生产任务同源
+REVIEW_INPUTS = REPO / "extensions" / "hooks" / "shared" / "review-inputs.mjs"
+INPUT_TABLE = """
+const [, , mod, root, feature] = process.argv;
+const m = await import(mod);
+process.stdout.write(m.inputRows(m.reviewInputs(root, feature, 'story')).join('\\n') + '\\n\\n明细四个键：' + m.DETAIL_KEYS.join('、'));
+"""
 
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO))
@@ -101,12 +109,31 @@ def build_workspace(root: Path, sample: dict) -> Path:
         assets_dst.mkdir(parents=True, exist_ok=True)
         for png in sorted(assets_src.glob("*.png")):
             (assets_dst / png.name).write_bytes(png.read_bytes())
-    (ws / TASK_FILE).write_text(task_document(sample), encoding="utf-8", newline="\n")
     # 材料清单由机制层命令按磁盘现状生成，与真实链路同一条路
     subprocess.run([sys.executable, str(FLOW), "round", "--feature", FEATURE,
                     "--project-root", str(ws)],
                    capture_output=True, text=True, encoding="utf-8", timeout=120)
+    (ws / TASK_FILE).write_text(task_document(sample, input_table(ws)), encoding="utf-8", newline="\n")
     return ws
+
+
+def input_table(ws: Path) -> str:
+    """生产派生的必审输入表与明细键（与正式任务书同源）；取不到如实写进任务，不当作没有。"""
+    driver = ws / ".input-table.mjs"
+    driver.write_text(INPUT_TABLE, encoding="utf-8")
+    proc = subprocess.run(["node", str(driver), REVIEW_INPUTS.resolve().as_uri(), str(ws), FEATURE],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    driver.unlink()
+    return proc.stdout if proc.returncode == 0 else f"（必审输入表没取到：{proc.stderr.strip()[:400]}）"
+
+
+def identity(sample: dict, entry: dict) -> str:
+    """这次资格读数对应的对象：判据原文、章节合同、必审集合与明细合同的实现、执行配置、样本本身。
+    任一变化都是新对象，续跑不借旧读数。"""
+    parts = [review_task(), CONTRACT_SRC.read_text(encoding="utf-8"), REVIEW_INPUTS.read_text(encoding="utf-8"),
+             json.dumps({k: entry.get(k) for k in ("id", "name", "model", "profile")}, sort_keys=True),
+             sample["text"], sample["material"], json.dumps(DECISIONS[sample["base"]], ensure_ascii=False, sort_keys=True)]
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 def reader_questions() -> str:
@@ -127,7 +154,7 @@ def reader_questions() -> str:
 TASK_FILE = "REVIEW-TASK.md"
 
 
-def task_document(sample: dict) -> str:
+def task_document(sample: dict, inputs: str = "") -> str:
     """审查任务的全文：判据原文 + 读者问题 + 材料 + 已登记判断 + 待审稿。
 
     让它自己去工作区翻文件，预算会花在找文件上（实测一次 300 秒还没读完就超时），
@@ -153,6 +180,10 @@ def task_document(sample: dict) -> str:
         "## 已登记的判断",
         "",
         f"- {decision['title']}：{decision['clarification']}",
+        "",
+        "## 读这些（必审输入，报告的 examined_inputs 按这张表逐份声明）",
+        "",
+        inputs,
         "",
         "## 待审查的归档叙事件",
         "",
@@ -228,7 +259,7 @@ def run_one(sample: dict, ws: Path, entry: dict) -> dict:
     else:
         verdict = "blocking" if has_blocking else "clean"
     return {
-        "id": sample["id"], "family": sample["family"], "expect": sample["expect"],
+        "id": sample["id"], "identity": identity(sample, entry), "family": sample["family"], "expect": sample["expect"],
         "base": sample["base"], "domain": sample["domain"],
         "cli_status": status, "verdict": verdict,
         "seconds": round(elapsed, 1), "output_chars": len(text),
@@ -286,7 +317,10 @@ def main() -> int:
     if summary.is_file():
         try:
             rows = json.loads(summary.read_text(encoding="utf-8")).get("samples", [])
-            done = {r["id"] for r in rows if r.get("verdict") != "no_output"}
+            # 只认对象身份一致的旧读数：判据、合同、必审实现、配置或样本变了就是新对象，要重跑
+            current = {s["id"]: identity(s, entry) for s in chosen}
+            done = {r["id"] for r in rows if r.get("verdict") != "no_output"
+                    and r.get("identity") == current.get(r["id"])}
         except ValueError:
             rows, done = [], set()
 

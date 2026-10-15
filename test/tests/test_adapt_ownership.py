@@ -100,13 +100,18 @@ class AdaptCase(unittest.TestCase):
     def out(self, proc: subprocess.CompletedProcess) -> str:
         return ((proc.stdout or "") + (proc.stderr or "")).strip()
 
-    def write_review(self, *, digest: str | None = None, verdict: str = "PASS", skip: int = 0) -> None:
-        """独立审查者交回的证据块：摘要与激活清单取自 `--status`，四个维度逐份给结论。"""
+    def write_review(self, *, digest: str | None = None, verdict: str = "PASS", skip: int = 0,
+                     dup_pass: bool = False) -> None:
+        """独立审查者交回的证据块：摘要与激活清单取自 `--status`，四个维度逐份给结论。
+
+        `dup_pass` 在末尾给第一份知识再补一项全 PASS——重复项不能盖住前面的结论。"""
         knowledge = json.loads(self.adapt("--status").stdout)["knowledge"]
         files = knowledge["files"][skip:]
-        dims = "".join(f"      {d}: {{verdict: {verdict}, evidence: 核过 {d}}}\n"
-                       for d in ("granularity", "fact_use", "duplication", "coding_boundary"))
-        rows = "".join(f"    - path: {f}\n{dims}" for f in files)
+        dims = lambda v: "".join(f"      {d}: {{verdict: {v}, evidence: 核过 {d}}}\n"  # noqa: E731
+                                 for d in ("granularity", "fact_use", "duplication", "coding_boundary"))
+        rows = "".join(f"    - path: {f}\n{dims(verdict)}" for f in files)
+        if dup_pass:
+            rows += f"    - path: {files[0]}\n{dims('PASS')}"
         review = self.ext / ".adapt" / "knowledge-review.md"
         review.parent.mkdir(parents=True, exist_ok=True)
         review.write_text("# 知识独审\n\n```yaml\nknowledge_review:\n"
@@ -442,7 +447,9 @@ class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
         self.set_manifest_line("adapted_for", "1.9.2")
         before = (self.ext / "manifest.yaml").read_text(encoding="utf-8")
         cases = {"缺审": (None, "missing"), "过期": ({"digest": "sha256:0000000000000000"}, "stale"),
-                 "漏一份": ({"skip": 1}, "incomplete"), "判 FAIL": ({"verdict": "FAIL"}, "incomplete")}
+                 "漏一份": ({"skip": 1}, "incomplete"), "判 FAIL": ({"verdict": "FAIL"}, "incomplete"),
+                 "未知": ({"verdict": "UNKNOWN"}, "incomplete"), "非法值": ({"verdict": "OK"}, "incomplete"),
+                 "重复盖住 FAIL": ({"verdict": "FAIL", "dup_pass": True}, "incomplete")}
         for name, (kw, status) in cases.items():
             with self.subTest(name):
                 review = self.ext / ".adapt" / "knowledge-review.md"

@@ -4,14 +4,16 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
+from contextlib import contextmanager
 import subprocess
 from pathlib import Path
 
 from flow.state import (
     CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_REGISTERED, ledger_digest, load, log,
     now, require, round_gates, save)
-from flow.routing import live_materials, material_state, next_step, sidecar_shape
+from flow.routing import live_materials, material_state, next_step, reading_work, sidecar_shape
 from flow import asks
 from flow.update import record_baseline
 from flow.meetings import topic_digest
@@ -49,6 +51,8 @@ def cmd_status(feature_root: Path) -> dict:
         "status": contract.get("status"),
         # 最近一次成文登记的时刻；重跑 `story` 就是重新登记
         "story_written_at": contract.get("story_written_at"),
+        # 本地阅读与业务闭环分开报：成文之后才有阅读图要做
+        **({"reading": reading_work(feature_root)} if contract.get("status") == "story_written" else {}),
         "round": current.get("round"),
         "positioning": current.get("positioning"),
         "gates": [{"gate": g.get("gate"), "chosen": g.get("chosen"),
@@ -128,6 +132,8 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
         raise FlowError(
             "story-build number 跑不通，成文态不予登记：\n"
             + _said(numbered))
+    # 图源随这次登记一起成立：还没管理的 Mermaid 图加稳定标记、首次写 .mmd，之后的阅读图按它重述
+    _view(feature_root, project_root, "prepare", "story-build view --mode prepare 跑不通，成文态不予登记")
     # review 也在这一步渲染：它的机器区按当前决策件重算，人工填的内容逐字节保留。
     # 不在这里渲染的话，下面那道 check 面对的是一份还不存在的 review——
     # 归档件红线（⑨）于是要等到交付门才报，报了还得回来再登记一次。
@@ -164,6 +170,34 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     baseline = record_baseline(feature_root)
     return {"status": "story_written", "story": str(story),
             **({"update_baseline": baseline} if baseline else {})}
+
+
+#: 外层持有视图的标记：story_flow 与 story-build 共用，子进程继承它就不各自恢复
+VIEW_OWNER = "STORY_VIEW_OWNER"
+
+
+@contextmanager
+def reading_view(feature_root: Path, project_root: Path, outcome: dict):
+    """最外层动作持有视图：动手前切回 Mermaid，结束或失败后按当前源恢复可用的阅读图。
+
+    被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不各自恢复。恢复失败只补视图，
+    写进 `outcome["view"]`，不遮住原来的结果或错误。
+    """
+    owner = not os.environ.get(VIEW_OWNER)
+    if owner:
+        os.environ[VIEW_OWNER] = "1"
+    try:
+        ensure_mermaid(feature_root, project_root)
+        yield
+    finally:
+        if owner:
+            os.environ.pop(VIEW_OWNER, None)
+            story = feature_root / Path(*STORY)
+            if story.is_file() and "<!-- story-figure:" in story.read_text(encoding="utf-8", errors="replace"):
+                try:
+                    outcome["view"] = _view(feature_root, project_root, "svg", "本地阅读图没有恢复，story 保持 Mermaid")
+                except FlowError as exc:
+                    outcome["view"] = str(exc)
 
 
 def ensure_mermaid(feature_root: Path, project_root: Path) -> None:
@@ -231,10 +265,4 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     contract["archived"] = {"at": now()}
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
-    # 登记前交付门把 story 切回了 Mermaid；登记完把有合格阅读图的块切回 SVG，本地默认是阅读形态。
-    # 切不过去不影响已经成立的归档登记，如实说本地视图没恢复。
-    try:
-        view = _view(feature_root, project_root, "svg", "归档已登记，本地 SVG 没有恢复")
-    except FlowError as exc:
-        view = str(exc)
-    return {"archived": True, "at": contract["archived"]["at"], "view": view}
+    return {"archived": True, "at": contract["archived"]["at"]}

@@ -117,36 +117,54 @@ def change_versions(ext: Path, block: str) -> list[str]:
 
 
 _REQUIRED_INPUTS = """
-const [, , mod, root, feature] = process.argv;
+const [, , mod, root, feature, purpose] = process.argv;
 const m = await import(mod);
-process.stdout.write(JSON.stringify(m.reviewInputs(root, feature).inputs.filter(x => x.required).map(x => x.path)));
+process.stdout.write(JSON.stringify(m.reviewInputs(root, feature, purpose).inputs.filter(x => x.required).map(x => x.path)));
 """
 
+#: 夹具补齐必审输入时各类文件的占位内容：形状合法、不带业务内容
+_PLACEHOLDER = {".json": "{}\n", ".yaml": "{}\n", ".md": "# 占位\n"}
 
-def reader_review_details(root: Path, feature: str, status: str = "PASS",
-                          blocking: tuple[str, ...] = ()) -> str:
-    """一条合规的 `story_reader_review` 明细：四个键齐全，examined_inputs 照当前必审集合逐份列出。
 
-    必审集合由扩展自己派生（`reviewInputs`），夹具不另抄一份清单——扩展改了集合，夹具跟着变。
-    """
+def required_inputs(root: Path, feature: str, purpose: str = "story", fill: bool = True) -> list[str]:
+    """扩展派生的必审输入（相对工程根）。`fill` 时把盘上缺的补成占位文件——完整工作区里它们本来就在。"""
     import json
     import subprocess
     root = Path(root)
     driver = root / "required-inputs.mjs"
     driver.write_text(_REQUIRED_INPUTS, encoding="utf-8")
-    mod = root / "doc" / "extensions" / "hooks" / "shared" / "reader-review-task.mjs"
-    if not mod.is_file():
-        mod = DEV_EXT / "hooks" / "shared" / "reader-review-task.mjs"
-    proc = subprocess.run(["node", str(driver), mod.resolve().as_uri(), str(root), feature],
+    mod = DEV_EXT / "hooks" / "shared" / "review-inputs.mjs"
+    proc = subprocess.run(["node", str(driver), mod.resolve().as_uri(), str(root), feature, purpose],
                           capture_output=True, text=True, encoding="utf-8", timeout=60)
+    driver.unlink()
     if proc.returncode:
         raise RuntimeError(proc.stderr[:600])
-    driver.unlink()
-    rows = "".join(f"          - {p}\n" for p in json.loads(proc.stdout))
+    paths = json.loads(proc.stdout)
+    for rel in paths if fill else []:
+        target = root / rel
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(_PLACEHOLDER.get(target.suffix, "占位\n"), encoding="utf-8")
+    return paths
+
+
+def cover_report(text: str, root: Path, feature: str, purpose: str = "story") -> str:
+    """报告里每处 `examined_inputs: []` 换成当前必审集合逐份列出（同缩进），缺的必审件先补成占位。"""
+    import re
+    paths = required_inputs(root, feature, purpose)
+
+    def listed(m: "re.Match[str]") -> str:
+        ind = m.group(1)
+        return f"{ind}examined_inputs:\n" + "".join(f"{ind}  - {p}\n" for p in paths) if paths else m.group(0)
+    return re.sub(r"(?m)^([ \t]*)examined_inputs: \[\]\n", listed, text)
+
+
+def reader_review_details(root: Path, feature: str, status: str = "PASS",
+                          blocking: tuple[str, ...] = ()) -> str:
+    """一条合规的 `story_reader_review` 明细：四个键齐全，必审集合逐份列进 examined_inputs。"""
     findings = "".join(f"          - {b}\n" for b in blocking)
-    return ("\n```yaml\nverification_result:\n  checks:\n    - id: story_reader_review\n"
-            f"      status: {status}\n      details:\n"
-            + (f"        blocking_findings:\n{findings}" if findings else "        blocking_findings: []\n")
-            + "        advisories: []\n"
-            + (f"        examined_inputs:\n{rows}" if rows else "        examined_inputs: []\n")
-            + "        unreviewed: []\n```\n")
+    return cover_report("\n```yaml\nverification_result:\n  checks:\n    - id: story_reader_review\n"
+                        f"      status: {status}\n      details:\n"
+                        + (f"        blocking_findings:\n{findings}" if findings else "        blocking_findings: []\n")
+                        + "        advisories: []\n        examined_inputs: []\n        unreviewed: []\n```\n",
+                        root, feature)

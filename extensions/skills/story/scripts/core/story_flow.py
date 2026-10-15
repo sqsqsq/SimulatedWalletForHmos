@@ -65,6 +65,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 from materials import importer
@@ -73,7 +74,7 @@ from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
 from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.rounds import cmd_reopen, cmd_round
-from flow.lifecycle import ensure_mermaid
+from flow.lifecycle import reading_view
 from flow.submission import cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
@@ -82,7 +83,7 @@ from flow.update import (cmd_update_close, cmd_update_inputs, cmd_update_prepare
 
 
 # ---------------------------------------------------------------------------
-#: 会读、比较或登记 story 的动作：动手之前先把阅读图切回 Mermaid（经同一个 JS 入口，不另写切换器）
+#: 会读、比较或登记 story 的动作：最外层持有视图——动手前切回 Mermaid，结束或失败后恢复可用的阅读图
 VIEW_READERS = {"status", "story", "archived", "update", "round", "reopen", "complete"}
 
 def main() -> int:
@@ -120,14 +121,8 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
 
-    result: dict = {"mode": args.mode, "reqNo": args.feature}
-    try:
-        project_root = Path(args.project_root).resolve() if args.project_root \
-            else importer.DEFAULT_PROJECT_ROOT
-        feature_root = project_root / importer.features_dir(project_root) / args.feature
-        if args.mode in VIEW_READERS:
-            ensure_mermaid(feature_root, project_root)
-
+    def dispatch(feature_root: Path, project_root: Path) -> int:
+        """按 mode 执行一个命令，结果并进 result；返回退出码。"""
         code = 0
         if args.mode == "init":
             result.update(cmd_init(feature_root, args.feature))
@@ -165,7 +160,17 @@ def main() -> int:
                 result.update(cmd_update_prepare(feature_root))
         else:
             result.update(cmd_complete(feature_root, args.feature, args.from_path))
+        return code
 
+    result: dict = {"mode": args.mode, "reqNo": args.feature}
+    try:
+        project_root = Path(args.project_root).resolve() if args.project_root \
+            else importer.DEFAULT_PROJECT_ROOT
+        feature_root = project_root / importer.features_dir(project_root) / args.feature
+        code = 0
+        with (reading_view(feature_root, project_root, result) if args.mode in VIEW_READERS
+              else nullcontext()):
+            code = dispatch(feature_root, project_root)
         result["success"] = code == 0
         if TAMPER_NOTES:
             result["warning"] = TAMPER_NOTES[0]

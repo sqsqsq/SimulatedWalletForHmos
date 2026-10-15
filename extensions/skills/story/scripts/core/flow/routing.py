@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from materials import meeting, registry
@@ -342,6 +344,9 @@ def next_step(feature_root: Path, contract: dict | None,
         reregister = registration_step(feature_root, contract)
         if reregister:
             return reregister
+    reading = reading_todo(feature_root) if stage in ("archived", "story_written") else None
+    if stage == "archived" and reading:
+        return ("local_reading", reading + closed_tail(feature_root, contract, manifest))
     if stage == "archived":
         # 归档之后收口过一轮 update：本地已按它更新，回写需求系统等人确认（`phases/update.md`「已归档」一行）
         closed = str((contract.get("update") or {}).get("last_closed") or "")
@@ -356,6 +361,7 @@ def next_step(feature_root: Path, contract: dict | None,
                 "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
                 "check-receipt → `story-build check --deliver` 交付门；交付门通过后按停等表问一次"
                 "「归档送审 / 进入 plan」（本地单只有进 plan）"
+                + (f"。业务闭环之后：{reading}" if reading else "")
                 + closed_tail(feature_root, contract, manifest))
     if stage == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
@@ -510,3 +516,32 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     return ("run_complete",
             "提取稿已在。跑 `story_flow.py complete --feature <名> "
             f"--from {'/'.join(DESIGN_DRAFT)}` 提交并收口")
+
+
+def reading_work(feature_root: Path) -> dict:
+    """本地阅读的工作集合：由 `story-build view --mode status` 从 Story 实际内容派生，不另存状态。读不出返回带 error 的结果。"""
+    node = shutil.which("node")
+    if node is None:
+        return {"error": "找不到 node，本地阅读状态读不出"}
+    root = next((p for p in feature_root.parents if (p / "framework.config.json").is_file()), None)
+    proc = subprocess.run([node, str(Path(__file__).resolve().parents[1] / "story-build.mjs"), "view", "--mode", "status",
+                           "--feature", feature_root.name, *(["--project-root", str(root)] if root else [])],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return {"error": (proc.stderr or proc.stdout).strip() or f"退出码 {proc.returncode}"}
+
+
+def reading_todo(feature_root: Path) -> str | None:
+    """本地阅读还没完成时要做什么；没有图或都已可用返回 None。读不出按未知说，不当完成。"""
+    work = reading_work(feature_root)
+    if work.get("error"):
+        return f"本地阅读状态读不出（{work['error']}），没有确认阅读图是否完成——跑 `story-build view --mode status` 查"
+    if not work.get("applicable") or work.get("complete"):
+        return None
+    rows = [f"第 {n} 行的 Mermaid 图还没建源（`story-build view --mode prepare`）" for n in work.get("unmanaged", [])]
+    rows += [f"{i['id']}：{i['reason']}" for i in work.get("items", []) if i.get("state") != "ready"]
+    rows += work.get("problems", [])
+    return ("完成本地阅读（本需求的交付包括可读的本地阅读图）：" + "；".join(rows)
+            + "——按 `reference/svg.md` 依据 .mmd 重述、渲染、交独立审查，`view --mode review-check` 通过后 `view --mode svg`")

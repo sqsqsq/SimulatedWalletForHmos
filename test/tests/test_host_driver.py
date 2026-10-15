@@ -109,10 +109,10 @@ class ThePlanIsShownOnlyWhenItFits(unittest.TestCase):
 
 
 class TheCheckpointRefusesReplies(unittest.TestCase):
-    """AC30：检查点等待期间 reply 被拒，说明该用哪个命令。"""
+    """第二检查点等待期间 reply 被拒，说明该用哪个命令；第一检查点上的回话见 test_update_checkpoints（S4 §2：答完仍在第一段）。"""
 
     def test_a_reply_at_the_checkpoint_is_refused(self) -> None:
-        for kind in ("initial_checkpoint", "update_checkpoint"):
+        for kind in ("update_checkpoint",):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp, \
                     mock.patch.object(rc, "_load_case", return_value=({}, Path(tmp), "AR1")), \
                     mock.patch.object(rc, "reconcile_worker_state",

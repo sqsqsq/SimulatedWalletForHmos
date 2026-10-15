@@ -515,7 +515,8 @@ def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int,
     CLI session 也要重新拉起——那是「重启一个新会话冒充续行」，不是同一次对话里的更新。
     所以这里与等人回话同构：无上限地等，每隔一阵出一次声，租约照常续。
 
-    两个出口：宿主投来续跑请求（第二段开始），或宿主判收工（这一轮到此为止）。
+    三个出口：宿主回答检查点上那一问（`reply`，仍在第一段：模型照答复把授权的动作做完，到目标后再停一次），
+    宿主投来续跑请求（第二段开始），或宿主判收工（这一轮到此为止）。
 
     模型到目标时最后一句常是一个提问（例如交付门问归档送审还是进入 plan）：它原样留在
     `pending_question` 里交给宿主，续跑时先答它，不拿装置的文案盖掉。
@@ -530,6 +531,11 @@ def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int,
     runlog.event("第一检查点", "到目标未终止，等宿主评完第一段")
     waited = 0
     while True:
+        answer = pop_pending_reply(out_dir)
+        if answer:
+            runlog.event("检查点回话", answer[:200])
+            feed.emit("initial_checkpoint_reply", turn=turn, text=observe.shorten(answer, 300))
+            return {"reply": answer}
         request = pop_resume_request(out_dir)
         if request:
             runlog.event("续跑", (request["answer"] + " / " if request["answer"] else "") + request["text"][:200])
@@ -2005,6 +2011,13 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         result["conclude_reason"] = "第一检查点等待期间收到收工判定"
                         feed.emit("host_concluded", turn=turns)
                         break
+                    if "reply" in resumed:
+                        # 答检查点上那一问：仍是第一段，模型做完被授权的动作（如归档）后再停在第一检查点
+                        state.update(status="running", awaiting_kind=None, awaiting_prompt=None, pending_question=None)
+                        refresh_worker_lease(out_dir, state, force=True, event="initial_checkpoint_reply")
+                        request = replace(request, prompt=driver_prompt(resumed["reply"], interactive),
+                                          session_id=session_id)
+                        continue
                     # 进第二段：记下此刻的更新操作，第二段的终点靠它与之后的比。
                     entry = update_round(feature)
                     # 先答检查点上那一问，业务请求排在它之后：答完那一轮结束时再投。
@@ -2490,12 +2503,15 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
         print(json.dumps({"ok": False, "error": f"运行已终止（{status}），无人接收"},
                          ensure_ascii=False))
         return 1
-    # 检查点在等宿主评测，不在等回话：这时收下的话会在续跑后被当成下一关的回答。
-    if state.get("awaiting_kind") in ("initial_checkpoint", "update_checkpoint"):
-        print(json.dumps({"ok": False, "error": (
-            "正停在检查点上，不收回话：第一检查点评完用 resume-update（模型那一问用 --answer 先答），"
-            "第二检查点评完用 conclude")}, ensure_ascii=False))
+    # 第二检查点只等宿主收工；第一检查点上模型留的那一问可以答，答完仍在第一段（如归档送审）。
+    if state.get("awaiting_kind") == "update_checkpoint":
+        print(json.dumps({"ok": False, "error": "正停在第二检查点上，不收回话：评完用 conclude"}, ensure_ascii=False))
         return 1
+    superseded = None
+    if state.get("awaiting_kind") == "initial_checkpoint" and (out_dir / "checkpoints" / "initial").is_dir():
+        # 已固定的第一段快照不再是第一段的终稿：留着作证据，答完之后重新固定
+        superseded = out_dir / "checkpoints" / f"initial.superseded-{time.strftime('%Y%m%d-%H%M%S')}"
+        (out_dir / "checkpoints" / "initial").rename(superseded)
     # 只要 worker 仍处于 awaiting_reply 且 lease 未过期，就允许入队。
     # Windows 的进程查询可能被权限策略拒绝，不能把诊断失败变成“无人接收”。
     lease_expires = float(state.get("lease_expires_epoch") or 0)
@@ -2511,6 +2527,7 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
                    ensure_ascii=False), encoding="utf-8")
     print(json.dumps({
         "ok": True, "queued": text, "delivered": delivered,
+        **({"superseded_checkpoint": str(superseded)} if superseded else {}),
         "reply_status": "accepted",
         "note": "被测会话本轮结束时取用；它仍在说话时不会被打断",
     }, ensure_ascii=False, indent=2))

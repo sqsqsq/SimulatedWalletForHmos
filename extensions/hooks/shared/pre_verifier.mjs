@@ -25,7 +25,8 @@ import { contractSections } from './knowledge-use/validation.mjs';
 import { landingName } from './knowledge-use/projection.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
-import { readerReviewTask, reviewInputs } from './reader-review-task.mjs';
+import { readerReviewTask } from './reader-review-task.mjs';
+import { COVERED_CHECKS, DETAIL_KEYS, inputRows, reviewInputs } from './review-inputs.mjs';
 import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { overlayChecks } from './verifier-report.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from './stat-points.mjs';
@@ -171,7 +172,7 @@ function allChecksFragment(checks) {
   });
   return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '',
     '**报告结构**：汇总表每条判据一行，四格 `id | status | severity | 证据`，PASS 也列、证据不空；',
-    'status ≠ PASS 的在 YAML 明细 `checks:` 里各出一条，`details` 写问题、依据与改法；`story_reader_review` 无论结论都出一条，明细四个键见该判据；',
+    `status ≠ PASS 的在 YAML 明细 \`checks:\` 里各出一条，\`details\` 写问题、依据与改法；${Object.keys(COVERED_CHECKS).filter(id => checks[id]).map(id => `\`${id}\``).join('、') || '局部明细判据'} 无论结论都出一条，明细四个键见各自的必审输入表；`,
     '末尾恰好一个 `maison-verifier-result:v1` 终态块。缺一条判据的报告按阻断处理。'].join('\n');
 }
 
@@ -218,15 +219,14 @@ export default async function preVerifier(ctx) {
   // 读者审查放在判据清单之后：它要通读整份归档件与全部材料，是这批判据里最重的一项。
   if (checkIds.includes(READER_REVIEW_ID)) {
     fragments.push(readerReviewTask(ctx.projectRoot, ctx.feature, READER_REVIEW_ID));
-  } else {
-    // 没有读者审查的阶段同样要拿到 update 的旧现场：新稿对照有效旧依据核变化权限
-    const basis = reviewInputs(ctx.projectRoot, ctx.feature);
-    const before = basis.inputs.filter(x => x.path.includes('/before/') && !x.missing);
-    if (basis.update) {
-      fragments.push(['## 本轮 update：新稿对照有效旧依据', '',
-        ...before.map(x => `- \`${x.path}\`（摘要 ${x.digest}）`), ...basis.gaps.map(g => `- **输入有缺口**：${g}`), '',
-        '改掉的旧约束、旧决定与旧验收，依据是谁给的、有没有权限；与仍有效的旧约束冲突而没经有权人裁定的，相关判据 FAIL。'].join('\n'));
-    }
+  }
+  // 其余走局部明细合同的判据（Plan 的义务审查）：同一份必审集合，当前回稿、说明与旧现场一起送达
+  for (const id of checkIds.filter(c => COVERED_CHECKS[c] && c !== READER_REVIEW_ID)) {
+    const basis = reviewInputs(ctx.projectRoot, ctx.feature, COVERED_CHECKS[id]);
+    fragments.push([`## \`${id}\` 的必审输入（报告的 examined_inputs 按这张表逐份声明）`, '', ...inputRows(basis), '',
+      ...(basis.update ? ['update 开着：改掉的旧约束、旧决定与旧验收，依据是谁给的、有没有权限；'
+        + '与仍有效的旧约束冲突而没经有权人裁定的，这一条 FAIL。', ''] : []),
+      `明细四个键（${DETAIL_KEYS.join('、')}）无论结论都写：读不到或没读完的列进 unreviewed 并写原因，必审没核完不能判 PASS 或 WARN。`].join('\n'));
   }
   if (!knowledgeIds.length) return { promptFragments: fragments };
 

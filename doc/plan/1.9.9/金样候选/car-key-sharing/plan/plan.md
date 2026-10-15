@@ -2,10 +2,10 @@
 
 > **模块标识**: `ISSUE-206`
 > **对应 spec**: `doc/features/ISSUE-206/spec/spec.md`
-> **版本**: v1.0
+> **版本**: v1.1
 > **创建日期**: 2026-10-13
-> **最后更新**: 2026-10-13
-> **状态**: 已确认
+> **最后更新**: 2026-10-14
+> **状态**: 已确认（F4 草稿跨重启续办阻断，待端侧负责人确认受保护存储，见 9.1）
 >
 > **真源说明**：`plan.md` = 契约草案/来源（ephemeral）；`contracts.yaml` / `use-cases.yaml` = **机器契约真源**（coding / review / UT / harness 优先读取）。
 
@@ -105,7 +105,7 @@ graph TD
 | `GrantPermissionView` | `granteeId`, `shareable: boolean`, `permissionLevels: string[]`, `reason?` | 某对象在这辆车上可用的权限档位，对应 `queryGranteePermission` |
 | `QuotaView` | `canShare: boolean`, `remaining: number`, `reason?` | 配额，对应 `queryKeySharingQuota` |
 | `ShareItem` | `shareId`, `status: ShareState`, `permissionLevel`, `validUntil`, `granteeMasked` | 管理页一条分享，打码标识取车云返回 |
-| `ShareDraft` | `accountKey`, `vehicleId`, `granteeId`, `granteeDisplay`, `permissionLevel`, `validUntil`, `idempotencyKey` | 发起草稿；`granteeId` 是可识别的对方账号标识，只用于续办请求；`granteeDisplay` 是打码后的展示值；`idempotencyKey` 发出前写入，留着表示上次发出结果未知，车云明确拒绝时清掉 |
+| `ShareDraft` | `accountKey`, `vehicleId`, `granteeId`, `granteeDisplay`, `permissionLevel`, `validUntil`, `idempotencyKey` | 发起草稿，按 `accountKey` + `vehicleId` 定位；`granteeId` 是可识别的对方账号标识，只用于续办请求；`granteeDisplay` 是打码后的展示值；`idempotencyKey` 发出前写入，留着表示上次发出结果未知——此时其余字段就是那次请求的原样，确认之前不改；车云明确拒绝时清掉 |
 | `ShareState` | `pending` / `active` / `voided` / `expired` / `revoking` / `revoked` | 六态，取值与车云返回一致 |
 
 ## 4. 页面组件树
@@ -132,7 +132,7 @@ ShareSetupPage
 ├── 权限：随对象查得的档位单选；对象不可分享时不呈现档位并给原因
 ├── 有效期：7 天 / 30 天 / 自定义至多 180 天
 ├── 原因提示条：对象不可分享、配额已满或原档位不可用时显示接口给的原因
-└── 发出：新建时三项齐且配额未满才可点、满额置灰；草稿留着幂等标识时用来确认上次发出，不受满额置灰；请求中禁用
+└── 发出：新建时三项齐且配额未满才可点、满额置灰；草稿留着幂等标识时三项按上次请求只读，按钮用来确认上次发出，不受满额置灰；请求中禁用
 ```
 
 ### 4.3 ShareManagePage
@@ -170,7 +170,7 @@ KeyCardDetailPage（参数二选一：vehicleId 为本人钥匙，shareId 为收
 |--------|----------|----------|------|
 | 分享功能开关 | `ShareConstants` 的 `static readonly` 常量 | 随版本 | 默认关闭 |
 | 登录态与账号 | `AccountManager` 在 `AppStorage` 里的登录键（只读） | 既有 | 未登录不显示入口、不发起、不接受 |
-| 发起草稿 | `ShareDraftStore`：工程里没有现成的持久化封装，用系统轻量键值存储，按账号分键 | 发出成功、退出登录、切换账号时清除；车云明确拒绝时只清幂等标识 | 清除数据后不存在则从头选；回到设置页时，留着幂等标识的先用它确认上次发出、不做端侧满额前置，其余先查配额、满额按满额处理；只读当前账号的键，不会串号 |
+| 发起草稿 | `ShareDraftStore`：每个账号一条记录、内按车辆分草稿。非敏感字段用系统轻量键值存储；`granteeId` 与 `idempotencyKey` 用受保护存储，候选与阻断见 9.1 | 发出成功清这辆车的草稿；退出登录、切换账号清本账号全部；车云明确拒绝时只清幂等标识 | 清除数据后不存在则从头选；进设置页只读当前账号、当前车辆的草稿；留着幂等标识的先用原请求确认上次发出、不做端侧满额前置，确认前三项只读，其余先查配额、满额按满额处理 |
 | 设置页表单 | `ShareSetupContext`（页面级 `@State`） | 页面内 | 换对象时重查权限并作废旧档位 |
 | 分享列表与配额 | `ShareManagePage` 页面级状态，不落地缓存 | 每次进页 | 断网给网络失败态 |
 | 本人钥匙与收到的分享 | `CardPackPage` 页面级状态，每次进入或回到卡包从 `CarKeyRepository` 取 | 每次进入；账号变化后重新获取 | 不串账号 |
@@ -191,7 +191,8 @@ KeyCardDetailPage（参数二选一：vehicleId 为本人钥匙，shareId 为收
 | `KeySharingRepository.revokeSharing` | `shareId` | `status`, `graceHours`，或明确拒绝，或结果未知 | 对应 `revokeKeySharing`；只对状态为生效的条目调用；没得到回应返回结果未知，管理页随后经 `listSharings` 重拉，仍是生效才再提供撤销；每次调用新建尝试标识，结果经 `settleRevoke` 结算 |
 | `KeySharingRepository.listSharings` | `vehicleId` | `ShareItem[]` | 对应 `queryKeySharingList`；打码标识取车云返回的 `granteeMasked` |
 | `KeySharingRepository.settleCreate` / `settleAccept` / `settleRevoke` | 尝试标识、业务结果、描述关键值、外码 | — | 一次尝试只结算一次：已结算即返回，否则置位后按 `KeySharingChartCodes` 报一条 Chart；取值见「9.4 埋点」 |
-| `ShareDraftStore.load` / `save` / `clear` | 账号 | `ShareDraft` / — | 草稿续办与清除 |
+| `ShareDraftStore.load` / `save` / `clear` | 账号、`vehicleId` | `ShareDraft` / — | 草稿续办与这辆车的清除；`save` 在留着幂等标识时拒绝改对象、权限、有效期 |
+| `ShareDraftStore.clearAccount` | 账号 | — | 退出登录、切换账号时清本账号全部车辆的草稿 |
 | `ShareSetupPageInteraction.doOperator` | `ShareSetupActions` | — | 设置页动作入口；等待用户选择处停机，用户动作恢复 |
 
 六个车云接口的字段与 spec「端云接口」一致；沿用车云错误码，不新增。
@@ -212,7 +213,7 @@ flowchart LR
 
 | 页面 | 路由名 | 参数 | 说明 |
 |------|--------|------|------|
-| 分享设置页 | `ShareSetupPage` | `vehicleId` | 进页回填当前账号的草稿 |
+| 分享设置页 | `ShareSetupPage` | `vehicleId` | 进页只回填当前账号、这辆车的草稿 |
 | 分享管理页 | `ShareManagePage` | `vehicleId` | 每次进页拉取 |
 | 接受页 | `ShareAcceptPage` | `shareId` | 本单从卡包待添加的钥匙进入 |
 | 钥匙卡片详情 | `KeyCardDetailPage` | `vehicleId` 或 `shareId`（二选一） | 本人钥匙带 vehicleId，收到的钥匙带 shareId；进入时按带来的身份取当前状态，两样都带或都不带按取不到处理 |
@@ -226,7 +227,7 @@ flowchart LR
 | F1 | 卡包车钥匙卡片 | P0 | WalletMain | presentation、data | `CarKeyCardSection.ets`、`CardPackPage.ets`、`CarKeyRepository.ets` | 卡包嵌入分区；本人钥匙来自模拟数据 |
 | F2 | 分享入口与门槛 | P0 | WalletMain | presentation、shared | `CarKeyCardSection.ets`、`ShareConstants.ets` | 已登录且有车钥匙才显示；开关关闭时发起入口不可用 |
 | F3 | 分享设置 | P0 | WalletMain | presentation、data | `ShareSetupPage.ets`、`ShareSetupPageInteraction.ets`、`KeySharingRepository.ets` | 对象选定后查档位，换对象重查；满额置灰 |
-| F4 | 创建分享与草稿续办 | P0 | WalletMain | data | `KeySharingRepository.ets`、`ShareDraftStore.ets` | 幂等创建；草稿落盘、按账号隔离；没发出过或上次明确失败的草稿续办前查配额，留着幂等标识的直接确认上次发出 |
+| F4 | 创建分享与草稿续办 | P0 | WalletMain | data | `KeySharingRepository.ets`、`ShareDraftStore.ets` | 幂等创建；草稿按账号与车辆定位；没发出过或上次明确失败的草稿续办前查配额，留着幂等标识的按原请求确认上次发出；**跨重启落盘阻断**：受保护存储确认前不落盘 granteeId，跨应用关闭的续办与确认不交付 |
 | F5 | 分享管理与撤销 | P0 | WalletMain | presentation、data | `ShareManagePage.ets`、`KeySharingRepository.ets` | 进页拉取；仅生效条目撤销，已作废与已到期可重新发起 |
 | F6 | 接受页 | P0 | WalletMain | presentation | `ShareAcceptPage.ets` | 下发失败保持待接受 |
 | F7 | 钥匙卡片详情 | P1 | WalletMain | presentation、data | `KeyCardDetailPage.ets`、`CarKeyRepository.ets` | 本人钥匙按 vehicleId 经 `getOwnerKey` 取，收到的钥匙按 shareId 经 `getReceivedKey` 取；权限外功能不出现；不可用时回卡包 |
@@ -251,7 +252,7 @@ flowchart LR
 | 设置页交互编排 | 编排 SDK `framework`（`PageInteractionBuilderV3`、`DefaultPageInteractionContext`） | — | — |
 | 分区卡片等组件 | `CommUI` | — | — |
 | 分享功能开关 | 先例 `HomeConstants.SHOW_LOCAL_CARD_SECTION` | — | — |
-| 发起草稿存储 | — | 工程里没有本地草稿能力，`ShareDraftStore` 新增 | 工程里也没有受保护的持久化封装：草稿含 `granteeId`，用系统轻量键值存储落盘的保护方式没有现成依据，列为缺口，由端侧负责人按目标仓的存储安全规范定，定之前不声明 SEC-01 已落实 |
+| 发起草稿存储 | — | 工程里没有本地草稿能力，`ShareDraftStore` 新增 | 工程里没有受保护的持久化封装，仓内也没有 Asset 或密钥存储的用法。候选是系统的关键资产存储 Asset Store Kit（`@kit.AssetStoreKit`，首批接口 API 11 起，要求 SystemCapability.Security.Asset，设备不支持时返回 24000017）：`granteeId` 与 `idempotencyKey` 作为关键资产按账号与车辆存，可访问性取设备首次解锁后、不设卸载保留，清除时同步删除。本仓 spec 的平台基线是 API 12，接口版本够用；目标设备是否具备该系统能力、模块是否已声明依赖都没有取到依据。**定案前阻断**：不落盘 `granteeId`，F4 跨应用关闭的续办与上次结果未知的确认不交付（AC-13 中跨重启部分、AC-30），由端侧负责人按目标设备与仓内安全规范确认后解除；不改用普通键值存储顶替，也不删 `granteeId` |
 | 英文文案 | — | 工程只有 base 资源目录，按 RES-02 新建 `en_US` | 与「中英文齐备」的现状不符，按新建承接 |
 
 ### 9.2 规约
@@ -259,7 +260,7 @@ flowchart LR
 | 条目编号 | 本次要落实成什么 | 落点实体 | 承载设计章 |
 |---|---|---|---|
 | UX-01 | 方向与对齐参数用 start/end，文本对齐用 TextAlign.Start/End | `ShareSetupPage`、`ShareManagePage`、`ShareAcceptPage`、`KeyCardDetailPage`、`CarKeyCardSection` | 4. 页面组件树 |
-| SEC-01 | 业务接口传可识别的 `granteeId`，只给车云的查权限与创建分享；展示内容在组装处另生成打码值，列表用车云返回的 `granteeMasked`，短于 5 位的账号只显示昵称；日志与事件不带对方账号；草稿只存续办字段、按账号分键并按时清除，落盘保护方式是缺口（见 9.1） | `KeySharingRepository` 的展示组装与结算方法、`ShareDraft`、`ShareDraftStore` | 3. 数据模型定义、6. 服务层接口定义 |
+| SEC-01 | 业务接口传可识别的 `granteeId`，只给车云的查权限与创建分享；展示内容在组装处另生成打码值，列表用车云返回的 `granteeMasked`，短于 5 位的账号只显示昵称；日志与事件不带对方账号；草稿只存续办字段、按账号与车辆定位并按时清除，`granteeId` 只进受保护存储，定案前不落盘（见 9.1） | `KeySharingRepository` 的展示组装与结算方法、`ShareDraft`、`ShareDraftStore` | 3. 数据模型定义、6. 服务层接口定义 |
 | DFX-01 | 配额与列表每次进页拉一次，换对象查一次权限，无轮询 | `KeySharingRepository.queryQuota` / `queryGranteePermission` / `listSharings` | 6. 服务层接口定义 |
 | OBS-02 | 创建、接受、撤销失败经 `Logger` 写到失败步骤 | `KeySharingRepository.createSharing` / `acceptSharing` / `revokeSharing` | 6. 服务层接口定义 |
 | OBS-03 | 三个流程每种结果在结算方法里结算一次，同次不重复 | `KeySharingRepository.settleCreate` / `settleAccept` / `settleRevoke` | 9. 宿主扩展 |
@@ -327,4 +328,5 @@ flowchart LR
 
 | 日期 | 版本 | 变更内容 | 变更人 |
 |------|------|----------|--------|
+| 2026-10-14 | v1.1 | 转正前修订：草稿按账号与车辆定位、待确认请求冻结（G05）；受保护存储取证，候选 Asset Store Kit，定案前阻断 F4 跨重启续办（G04） | AI |
 | 2026-10-13 | v1.0 | 初始版本：继承 spec Scope（WalletMain、Phone，无扩展）；数据源接口加模拟实现承载六个车云接口与被分享人一侧查询（spec D3）；草稿用系统轻量键值存储、按账号分键（spec D6）；设计模式选 page-interaction、decision-tree 不选；三个流程的埋点编号以候选值登记 | AI |

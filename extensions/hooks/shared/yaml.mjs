@@ -56,6 +56,9 @@ function load() {
  */
 export function parseYaml(text) {
   load();
-  if (!YAML) throw new Error(`YAML 读取器不可用：${unavailable}`);
+  if (!YAML) {
+    throw Object.assign(new Error(`YAML 读取器不可用（环境依赖问题，不是文件内容写错，产物不用改）：${unavailable}`),
+      { category: 'environment' });
+  }
   return YAML.parse(String(text ?? '')) ?? {};
 }

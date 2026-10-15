@@ -30,7 +30,7 @@ from pathlib import Path
 from materials import importer, registry
 
 from flow.routing import inputs_answer, material_state
-from flow.state import (CONTRACT, FlowError, STORY, REVIEW, system_requirement,
+from flow.state import (CONTRACT, FlowError, STORY, REVIEW, STORY_CONTRACT, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -125,8 +125,19 @@ def _compare(current: dict[str, str], base: dict[str, str] | None,
             "unknown": []}
 
 
+def _launcher() -> str:
+    """一键切换入口的文件名：章节合同登记的那一个。"""
+    return str(json.loads(STORY_CONTRACT.read_text(encoding="utf-8").lstrip("\ufeff")).get("local_reading_entry") or "")
+
+
 def _skipped(rel: Path) -> bool:
-    return bool(set(rel.parts[:-1]) & MIRROR_SKIP) or rel.name in MIRROR_SKIP_FILES
+    """镜像与还原都不碰的：过程目录、framework 重验件、一键入口与局部阅读证据（`figures/<ID>.reading/`）。
+
+    阅读证据按当前源重新核：还原之后对得上的照用，对不上的自然过期，不把旧的「已通过」带回来。
+    """
+    reading = len(rel.parts) > 4 and rel.parts[:3] == ("AR", "story-src", "figures") and rel.parts[3].endswith(".reading")
+    launcher = rel.parts[:1] == ("AR",) and len(rel.parts) == 2 and rel.name == _launcher()
+    return bool(set(rel.parts[:-1]) & MIRROR_SKIP) or rel.name in MIRROR_SKIP_FILES or reading or launcher
 
 
 def _mirror(feature_root: Path, dest: Path) -> int:

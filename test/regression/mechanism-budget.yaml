@@ -266,40 +266,40 @@ requirement:
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
-    interim_ceiling: 4420
-    target: 4320
-    approved_by: "用户（2026-10-12 批准 1.9.9 预算，R4 收减后按 01-实施总览 §4 分类表）"
-    reason: "1.9.9 基线 3910；新增 510、预计退出 100；无退出峰值 4420，完成预计 4320。"
+    interim_ceiling: 4590
+    target: 4540
+    approved_by: "维护设计者（2026-10-14 需求覆盖与S1-S2交回复评、全功能优化实施方案总览 §6.1；初始批准 G2000 分母不变）"
+    reason: "S1/S2 返修与 S3 剩余按职责重分配：当前实测 4401，返修+S3 预计 G170/X40，完成 4531；原 1.9.9 分类额度（峰值 4420、完成 4320）为历史签字。"
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
-    interim_ceiling: 3494
-    target: 3439
-    approved_by: "用户（2026-10-12 批准 1.9.9 预算，R4 收减后按 01-实施总览 §4 分类表）"
-    reason: "1.9.9 基线 3149；新增 345、预计退出 55；无退出峰值 3494，完成预计 3439。"
+    interim_ceiling: 3550
+    target: 3520
+    approved_by: "维护设计者（2026-10-14 需求覆盖与S1-S2交回复评、全功能优化实施方案总览 §6.1；初始批准 G2000 分母不变）"
+    reason: "当前实测 3481，S3 预计 G50/X20，完成 3511；原 1.9.9 分类额度（峰值 3494、完成 3439）为历史签字。"
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
-    interim_ceiling: 4329
-    target: 4264
-    approved_by: "用户（2026-10-12 批准 1.9.9 预算，R4 收减后按 01-实施总览 §4 分类表）"
-    reason: "1.9.9 基线 4019；新增 310、预计退出 65；无退出峰值 4329，完成预计 4264。"
+    interim_ceiling: 4340
+    target: 4290
+    approved_by: "维护设计者（2026-10-14 需求覆盖与S1-S2交回复评、全功能优化实施方案总览 §6.1；初始批准 G2000 分母不变）"
+    reason: "当前实测 4230（S2 交回时），返修+S3 预计 G100/X50，完成 4280；原 1.9.9 分类额度（峰值 4329、完成 4264）为历史签字。"
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
-    interim_ceiling: 2849
-    target: 2684
-    approved_by: "用户（2026-10-12 批准 1.9.9 预算，R4 收减后按 01-实施总览 §4 分类表）"
-    reason: "1.9.9 基线 2324；新增 525、预计退出 165；无退出峰值 2849，完成预计 2684。"
+    interim_ceiling: 2620
+    target: 2470
+    approved_by: "维护设计者（2026-10-14 需求覆盖与S1-S2交回复评、全功能优化实施方案总览 §6.1；初始批准 G2000 分母不变）"
+    reason: "当前实测 2425，返修+S3 预计 G65/X25，完成 2465；原 1.9.9 分类额度（峰值 2849、完成 2684）为历史签字。"
   data:
     description: contracts/*.json、rules/*.yaml、manifest.yaml
-    interim_ceiling: 812
-    target: 782
-    approved_by: "用户（2026-10-12 批准 1.9.9 预算，R4 收减后按 01-实施总览 §4 分类表）"
-    reason: "1.9.9 基线 722；新增 90、预计退出 30；无退出峰值 812，完成预计 782。"
+    interim_ceiling: 804
+    target: 780
+    approved_by: "维护设计者（2026-10-14 需求覆盖与S1-S2交回复评、全功能优化实施方案总览 §6.1；初始批准 G2000 分母不变）"
+    reason: "当前实测 758，返修+S3 预计 G15/X0，完成 773；原 1.9.9 分类额度（峰值 812、完成 782）为历史签字。"
 
 total:
   interim_ceiling: 15904
-  target: 15489
+  target: 15600
   approved_by: "用户（2026-10-12 批准 1.9.9 预算 G2000/X430，R4 收减为执行额度 G1780/X415）"
-  reason: "1.9.9 基线 14124；新增 1780、预计退出 415；峰值 15904，完成预计 15489。"
+  reason: "1.9.9 基线 14124；初始批准 G2000/X430。2026-10-14 复评按已复现遗漏职责把完成容量 15489 修为 15600（+111），峰值 15904 不扩（总览 §6.1）。"
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
 # 它本来就只数可执行行，口径不变。

@@ -465,6 +465,8 @@ async function knowledgeCheck() {
 
 //: 知识独审报告的四个维度：键名与方法页「逐份核四个维度」一一对应
 const REVIEW_DIMENSIONS = ['granularity', 'fact_use', 'duplication', 'coding_boundary'];
+//: 每维的合法结论；只有 PASS 与带具体建议的 WARN 算这一维审完
+const REVIEW_VERDICTS = ['PASS', 'WARN', 'FAIL', 'UNKNOWN', 'SKIP'];
 
 /**
  * `.adapt/knowledge-review.md` 里的证据块对不对得上当前知识 —— 只读派生，不是状态。
@@ -482,15 +484,24 @@ async function knowledgeReview(digest, files) {
   if (blocks.length !== 1) return { status: 'invalid', problems: [`证据块要恰好一个 \`knowledge_review:\` YAML 块（现在 ${blocks.length} 个）`] };
   const r = blocks[0];
   if (r.digest !== digest) return { status: 'stale', problems: [`报告审的是 ${r.digest ?? '（没写）'}，当前知识是 ${digest}：知识或激活清单改过，对受影响的知识重审`] };
-  const rows = new Map((Array.isArray(r.files) ? r.files : []).map(x => [String(x?.path ?? ''), x]));
+  const listed = Array.isArray(r.files) ? r.files.map(x => String(x?.path ?? '')) : [];
   const problems = [];
+  const twice = [...new Set(listed.filter((f, i) => listed.indexOf(f) !== i))];
+  if (twice.length) problems.push(`同一份知识写了多项：${twice.join('、')}——一份一项，不让后一项盖住前一项`);
+  const extra = listed.filter(f => !files.includes(f));
+  if (extra.length) problems.push(`报告里有激活清单之外的条目：${extra.join('、')}`);
   for (const f of files) {
-    const row = rows.get(f);
-    if (!row) { problems.push(`${f}：报告里没有这一份`); continue; }
-    const lacking = REVIEW_DIMENSIONS.filter(d => !String(row[d]?.verdict ?? '').trim() || !String(row[d]?.evidence ?? '').trim());
-    if (lacking.length) problems.push(`${f}：${lacking.join('、')} 缺结论或证据`);
-    const failed = REVIEW_DIMENSIONS.filter(d => String(row[d]?.verdict ?? '').toUpperCase() === 'FAIL');
-    if (failed.length) problems.push(`${f}：${failed.join('、')} 判 FAIL，改完这份知识再审`);
+    const rows = (Array.isArray(r.files) ? r.files : []).filter(x => String(x?.path ?? '') === f);
+    if (!rows.length) { problems.push(`${f}：报告里没有这一份`); continue; }
+    for (const row of rows) {
+      const lacking = REVIEW_DIMENSIONS.filter(d => !String(row[d]?.evidence ?? '').trim());
+      if (lacking.length) problems.push(`${f}：${lacking.join('、')} 没写证据`);
+      for (const d of REVIEW_DIMENSIONS) {
+        const v = String(row[d]?.verdict ?? '').trim().toUpperCase();
+        if (!REVIEW_VERDICTS.includes(v)) problems.push(`${f}：${d} 的结论「${row[d]?.verdict ?? ''}」不在 ${REVIEW_VERDICTS.join(' / ')} 里`);
+        else if (!['PASS', 'WARN'].includes(v)) problems.push(`${f}：${d} 判 ${v}——${v === 'FAIL' ? '改完这份知识再审' : '没有审完，不算适配完成'}`);
+      }
+    }
   }
   for (const key of ['blocking', 'unreviewed']) {
     if (!Array.isArray(r[key])) problems.push(`\`${key}\` 不是列表（没有就写空列表）`);

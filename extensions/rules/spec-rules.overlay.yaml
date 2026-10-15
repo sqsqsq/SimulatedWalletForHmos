@@ -234,7 +234,8 @@ semantic_checks:
       `blocking_findings`、`advisories`（没有就写空列表——空列表是结论）；
       `examined_inputs` 逐份写你实际读过的「读这些」表里的路径（照抄表里的写法）；
       `unreviewed` 写没读到、没读完或判不了的输入与判项，每项写清是哪一份、为什么（都读了就写空列表）。
-      必审输入没读完不能判 PASS；判 PASS 就不能有阻断项，判 FAIL 要列出阻断项。
+      必审输入没读完（缺件、读不到、宿主看不了图）不能判 PASS 或 WARN：写进 unreviewed 并判 FAIL，把缺什么写成阻断项；
+      判 PASS 或 WARN 就不能有阻断项，判 FAIL 要列出阻断项；UNKNOWN 不算审完，SKIP 只用于 `AR/story.md` 不存在。
       保持正确性的表达改善才是 WARN，不把会让读者得出错误结论的问题降成建议。
 
 # 作者起手内容的读没读过：唯一的机械留痕。

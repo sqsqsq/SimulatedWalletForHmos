@@ -245,6 +245,8 @@
     "gates": ["material_scope", "scope_decision", "split_carrier", "meeting"],
     "carry_all": "carry_all"
   },
+  "local_reading_entry": "切换视图.cmd",
+  "system_archive_entry": "skills/story/scripts/adapters/story.js",
   "pending_mark": "待写",
   "heading_counters": [
     "种",

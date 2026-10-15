@@ -135,14 +135,12 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 - **archive 不修改工作区任何文件**
 
 ```
-node doc/extensions/skills/story/scripts/core/story-build.mjs check --deliver --feature <AR>   # ① 交付门
-node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-token>        # ② 上传
-python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ③ 登记（自带 ① 的门禁，不可逆）
+node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token>
 ```
 
-② 失败就停下，不做 ③ 登记；② 报读回核验失败（`verified` 不成立）时远端写了但不算成功，重跑 ② 再登记。
-① 把 story 里的阅读图切回 Mermaid，② 上传与读回的是这一份 Mermaid，①② 之间不打开阅读窗口；③ 登记完把有合格阅读图的块切回 SVG，
-本地默认是阅读形态，切不过去时它如实说「归档已登记，本地 SVG 没有恢复」，只补视图，不重新归档。
+一条命令走完：交付门 → 对接层上传并读回核验 → 核回执 → 登记归档态（不可逆）；全程按 Mermaid 上传，结束后恢复可用的本地阅读图。
+交付门没过不调用需求系统；回执不全不登记，按它报的远端状态核清后重跑。报「需求系统已写入、本地登记失败」时不要重新上传，
+按它给的补登记命令只补登记；报「本地阅读图没有恢复」时只补视图（`story-build view --mode svg`）。
 
 **③ 登记之后**，`AR/review.md` **归人所有**：再渲染时人工区逐字保留，机器区按当前决策件重算。决策件带着未勾的议题去归档是常态路径：
 评审的形态就是评审人在线上批注表态，归档时提示一句即可，**不停等确认**。

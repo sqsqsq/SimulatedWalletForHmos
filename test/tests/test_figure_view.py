@@ -21,6 +21,7 @@ CHECK = CORE / "story" / "figure-check.py"
 FLOW = CORE / "story_flow.py"
 FEATURE = "FIG90001"
 FLOW_SRC = "flowchart TD\n  A[提交] --> B{受理?}\n  B -->|是| C[等回执]\n  B -->|否| D[提示重试]\n"
+PNG = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
 STORY = ("# FIG90001 甲需求\n\n## 业务流程\n\n### 提交与回执\n\n看这张图要看出受理失败去哪。\n\n"
          "```mermaid\n" + FLOW_SRC + "```\n\n图后：回执超时由服务端重试。\n")
 
@@ -57,6 +58,20 @@ class FigureViewCase(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+    def make_ready(self, fid: str, verdict: str = "PASS", **report: object) -> dict:
+        """走完局部阅读验收：存一张渲染图、生成请求、放一份独立审查报告（替身，只为绑定与结论自洽）。"""
+        shot = self.root / "shot.png"
+        shot.write_bytes(PNG + b"render")
+        proc = self.view("review-request", "--id", fid, "--render", str(shot))
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        reading = self.fr / "AR" / "story-src" / "figures" / f"{fid}.reading"
+        request = json.loads((reading / "request.json").read_text(encoding="utf-8"))
+        body = {"request_id": request["request_id"], "executor": "subagent-7",
+                "checks": [{"id": c, "verdict": verdict, "evidence": f"核过 {c}"} for c in request["checks"]],
+                "blocking_findings": [], "advisories": [], "unreviewed": [], **report}
+        (reading / "report.json").write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        return request
+
 
 class PrepareAndSwitch(FigureViewCase):
     def test_prepare_wraps_the_figure_and_writes_its_source(self) -> None:
@@ -71,6 +86,7 @@ class PrepareAndSwitch(FigureViewCase):
     def test_svg_and_back_is_exact_and_leaves_the_prose_alone(self) -> None:
         fid = self.prepared_id()
         self.put_svg(fid, svg(FLOW_SRC))
+        self.make_ready(fid)
         self.story.write_text(self.story.read_text(encoding="utf-8").replace("图后：", "图后（人改过）："), encoding="utf-8")
         mermaid = self.story.read_bytes()
         proc = self.view("svg")
@@ -102,6 +118,7 @@ class PrepareAndSwitch(FigureViewCase):
         """已经显示的阅读图被改坏而来源快照没变：再跑 svg 也要过结构核，不合格就切回 Mermaid。"""
         fid = self.prepared_id()
         self.put_svg(fid, svg(FLOW_SRC))
+        self.make_ready(fid)
         self.assertEqual(0, self.view("svg").returncode)
         self.assertNotIn("```mermaid", self.story.read_text(encoding="utf-8"))
         self.put_svg(fid, svg(FLOW_SRC, view_box="0 0 0 200"))
@@ -191,6 +208,7 @@ class TheSourceOwnsTheMeaning(FigureViewCase):
         changed = FLOW_SRC.replace("提示重试", "转人工")
         self.src(fid).write_text(changed, encoding="utf-8")
         self.put_svg(fid, svg(changed))
+        self.make_ready(fid)
         proc = self.view("svg")
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn(f"](figures/{fid}.svg)", self.story.read_text(encoding="utf-8"))
@@ -255,15 +273,25 @@ class FormalEntriesReadMermaid(FigureViewCase):
     def to_svg(self) -> str:
         fid = self.prepared_id()
         self.put_svg(fid, svg(FLOW_SRC))
+        self.make_ready(fid)
         self.assertEqual(0, self.view("svg").returncode)
         self.assertNotIn("```mermaid", self.story.read_text(encoding="utf-8"))
         return fid
 
     def test_other_story_build_commands_switch_back_first(self) -> None:
-        self.to_svg()
-        subprocess.run(["node", str(BUILD), "number", "--feature", FEATURE, "--project-root", str(self.root)],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertIn("```mermaid", self.story.read_text(encoding="utf-8"), "正式命令没先切回 Mermaid")
+        """正式命令在 Mermaid 上做事，结束后恢复可用的阅读图；块坏了切不回来就不做事。"""
+        fid = self.to_svg()
+        proc = subprocess.run(["node", str(BUILD), "number", "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertIn("已恢复 1 张可用的本地阅读图", proc.stderr)
+        self.assertIn(f"](figures/{fid}.svg)", self.story.read_text(encoding="utf-8"), "命令结束没有恢复阅读图")
+        self.assertEqual(0, self.view("mermaid").returncode)
+        self.story.write_text(self.story.read_text(encoding="utf-8").replace(
+            f"<!-- story-figure:{fid}:end -->", f"夹进来的一句。\n<!-- story-figure:{fid}:end -->"), encoding="utf-8")
+        proc = subprocess.run(["node", str(BUILD), "number", "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("切不回来", proc.stderr)
 
     def test_the_phase_hook_switches_back_and_blocks_on_a_broken_block(self) -> None:
         self.to_svg()
@@ -283,10 +311,13 @@ class FormalEntriesReadMermaid(FigureViewCase):
         self.assertEqual("BLOCKER", got["severityOverride"])
 
     def test_the_flow_reader_switches_back(self) -> None:
-        self.to_svg()
-        subprocess.run([sys.executable, str(FLOW), "status", "--feature", FEATURE, "--project-root", str(self.root)],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertIn("```mermaid", self.story.read_text(encoding="utf-8"), "story_flow 读 story 前没切回")
+        """story_flow 读 story 的动作同样由最外层持有视图：结束后恢复，结果里说清视图去向。"""
+        fid = self.to_svg()
+        proc = subprocess.run([sys.executable, str(FLOW), "status", "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        out = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertIn("view", out, "story_flow 没有交回视图的去向")
+        self.assertIn(f"](figures/{fid}.svg)", self.story.read_text(encoding="utf-8"))
 
 
 class TheStructureCheck(FigureViewCase):
@@ -336,3 +367,209 @@ class TheStructureCheck(FigureViewCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheLocalReadingContract(FigureViewCase):
+    """局部阅读验收：请求绑定源、SVG、本地资源与渲染图的字节，报告绑定请求；任一变化只让这张图的证据失效。"""
+
+    def reading(self, fid: str) -> Path:
+        return self.fr / "AR" / "story-src" / "figures" / f"{fid}.reading"
+
+    def state(self, fid: str) -> str:
+        work = json.loads(self.view("status").stdout)
+        return next(i["state"] for i in work["items"] if i["id"] == fid)
+
+    def ready_figure(self) -> str:
+        fid = self.prepared_id()
+        self.put_svg(fid, svg(FLOW_SRC, extra='<image href="../assets/icon.png"/>'))
+        (self.fr / "AR" / "assets").mkdir(parents=True, exist_ok=True)
+        (self.fr / "AR" / "assets" / "icon.png").write_bytes(PNG + b"icon")
+        self.make_ready(fid)
+        self.assertEqual("ready", self.state(fid))
+        return fid
+
+    def test_work_is_derived_from_the_story_itself(self) -> None:
+        """普通 Story 的 Mermaid 图自动成为阅读工作；没有图才不适用，有图却没管理不是零项通过。"""
+        work = json.loads(self.view("status").stdout)
+        self.assertTrue(work["applicable"])
+        self.assertFalse(work["complete"])
+        self.assertEqual(1, len(work["unmanaged"]), "没管理的图没被列出来")
+        self.story.write_text("# FIG90001 甲需求\n\n## 业务流程\n\n只有文字。\n", encoding="utf-8")
+        self.assertFalse(json.loads(self.view("status").stdout)["applicable"])
+
+    def test_the_request_is_stable_and_each_input_change_makes_it_stale(self) -> None:
+        fid = self.ready_figure()
+        request = (self.reading(fid) / "request.json").read_bytes()
+        self.assertEqual(0, self.view("review-request", "--id", fid).returncode)
+        self.assertEqual(request, (self.reading(fid) / "request.json").read_bytes(), "输入没变请求却重写了")
+        icon = self.fr / "AR" / "assets" / "icon.png"
+        render = self.reading(fid) / "render.png"
+        for name, change, undo in (
+            ("资源", lambda: icon.write_bytes(PNG + b"icon2"), lambda: icon.write_bytes(PNG + b"icon")),
+            ("渲染图", lambda: render.write_bytes(PNG + b"other"), lambda: render.write_bytes(PNG + b"render")),
+        ):
+            with self.subTest(name):
+                change()
+                self.assertEqual("stale", self.state(fid))
+                undo()
+                self.assertEqual("ready", self.state(fid))
+        svg_path = self.fr / "AR" / "figures" / f"{fid}.svg"
+        svg_path.write_text(svg_path.read_text(encoding="utf-8").replace(">提交<", ">提交 <"), encoding="utf-8")
+        self.assertEqual("stale", self.state(fid), "同源改过的 SVG 还沿用旧报告")
+        (self.fr / "AR" / "story-src" / "figures" / f"{fid}.mmd").write_text(FLOW_SRC + "  C --> E[完成]\n", encoding="utf-8")
+        self.assertEqual("svg-stale", self.state(fid), "源改了阅读图还当可用")
+
+    def test_reports_that_do_not_complete_the_review_are_not_usable(self) -> None:
+        fid = self.ready_figure()
+        cases = {
+            "FAIL": ({}, "FAIL", "failed"),
+            "UNKNOWN": ({}, "UNKNOWN", "incomplete"),
+            "非法值": ({}, "OK", "invalid"),
+            "阻断项": ({"blocking_findings": ["分支丢了"]}, "PASS", "failed"),
+            "未核": ({"unreviewed": ["visual_readability：看不了图"]}, "PASS", "incomplete"),
+            "没有执行引用": ({"executor": ""}, "PASS", "invalid"),
+        }
+        for name, (extra, verdict, want) in cases.items():
+            with self.subTest(name):
+                self.make_ready(fid, verdict, **extra)
+                self.assertEqual(want, self.state(fid))
+                self.assertEqual(1, self.view("review-check", "--id", fid).returncode)
+        request = self.make_ready(fid)
+        report = json.loads((self.reading(fid) / "report.json").read_text(encoding="utf-8"))
+        report["checks"].append({"id": "semantic_equivalence", "verdict": "FAIL", "evidence": "又审了一次"})
+        (self.reading(fid) / "report.json").write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual("invalid", self.state(fid), "同一必核项两个结论没有拒收")
+        report["checks"].pop()
+        report["request_id"] = "0" * 16
+        (self.reading(fid) / "report.json").write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual("invalid", self.state(fid), "审的不是当前请求也收了")
+        self.assertNotEqual(request["request_id"], report["request_id"])
+
+    def test_an_unknown_request_contract_and_a_fake_render_are_refused(self) -> None:
+        fid = self.ready_figure()
+        req = self.reading(fid) / "request.json"
+        req.write_text(req.read_text(encoding="utf-8").replace('"version": 1', '"version": 0'), encoding="utf-8")
+        self.assertEqual("invalid", self.state(fid))
+        fake = self.root / "fake.png"
+        fake.write_text("not a png", encoding="utf-8")
+        proc = self.view("review-request", "--id", fid, "--render", str(fake))
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("不是 PNG", proc.stderr)
+
+    def test_toggle_flips_the_whole_story(self) -> None:
+        fid = self.ready_figure()
+        self.assertEqual(0, self.view("toggle").returncode)
+        self.assertIn(f"](figures/{fid}.svg)", self.story.read_text(encoding="utf-8"))
+        self.assertEqual(0, self.view("toggle").returncode)
+        self.assertIn("```mermaid", self.story.read_text(encoding="utf-8"))
+
+    def test_a_failed_formal_command_still_restores_the_view(self) -> None:
+        """业务命令失败也在 finally 里恢复可用阅读图，原来的失败照样报出、退出码不变。"""
+        fid = self.ready_figure()
+        self.assertEqual(0, self.view("svg").returncode)
+        proc = subprocess.run(["node", str(BUILD), "check", "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(1, proc.returncode, proc.stdout)
+        self.assertIn(f"](figures/{fid}.svg)", self.story.read_text(encoding="utf-8"), "失败之后没有恢复阅读图")
+
+
+class TheOneClickEntry(FigureViewCase):
+    """AR 下的一键切换入口：合同登记的唯一文件名，只覆盖自己生成的同名文件，不依赖 cwd 与机器路径。"""
+
+    NAME = "切换视图.cmd"
+
+    def test_prepare_writes_it_once_and_keeps_a_users_file(self) -> None:
+        self.prepared_id()
+        entry = self.fr / "AR" / self.NAME
+        self.assertTrue(entry.is_file())
+        body = entry.read_bytes()
+        self.assertNotIn(str(self.root).encode("utf-8"), body, "入口里写死了机器路径")
+        self.assertNotIn(FEATURE.encode("utf-8"), body, "入口里写死了需求名")
+        self.assertEqual(0, self.view("prepare").returncode)
+        self.assertEqual(body, entry.read_bytes())
+        entry.write_text("@echo off\nrem 我自己的脚本\n", encoding="utf-8")
+        proc = self.view("prepare")
+        self.assertIn("不是本机制生成的", proc.stdout)
+        self.assertEqual("@echo off\nrem 我自己的脚本\n", entry.read_text(encoding="utf-8"))
+
+    @unittest.skipUnless(sys.platform == "win32", "一键入口是 Windows 批处理")
+    def test_double_click_from_any_cwd_in_a_path_with_spaces(self) -> None:
+        import shutil  # noqa: PLC0415
+        moved = Path(self._tmp.name) / "带 空格 (副本)" / "work"
+        (moved / "doc").mkdir(parents=True)
+        shutil.copytree(DEV_EXT, moved / "doc" / "extensions")
+        shutil.copytree(self.fr, moved / "doc" / "features" / FEATURE)
+        link_harness_yaml(moved)
+        build = moved / "doc/extensions/skills/story/scripts/core/story-build.mjs"
+        subprocess.run(["node", str(build), "view", "--mode", "prepare", "--feature", FEATURE, "--project-root", str(moved)],
+                       capture_output=True, timeout=120)
+        entry = moved / "doc" / "features" / FEATURE / "AR" / self.NAME
+        proc = subprocess.run(["cmd", "/c", str(entry)], cwd=str(Path(self._tmp.name)), input="\n",
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        said = proc.stdout + proc.stderr
+        self.assertIn("view] toggle", said, said[-800:])
+        self.assertIn("还没有阅读图", said)
+
+
+class TheCoreArchiveEntry(FigureViewCase):
+    """归档只有一个核心入口：交付门不过零系统调用；本地单与缺 token 不调；token 不出现在输出里。"""
+
+    FEATURE_AR = "AR90009"
+
+    def fake_adapter(self) -> Path:
+        """站在合同登记的对接入口位置：被调用就留一个标记文件，回一份成功回执。"""
+        adapter = self.root / "doc" / "extensions" / "skills" / "story" / "scripts" / "adapters" / "story.js"
+        adapter.parent.mkdir(parents=True, exist_ok=True)
+        marker = self.root / "adapter-called"
+        adapter.write_text(
+            "require('fs').writeFileSync(" + json.dumps(str(marker)) + ", process.argv.slice(2).join(' '));"
+            "process.stdout.write(JSON.stringify({mode:'archive',reqNo:process.argv[3],archived:true,verified:true,"
+            "reviewArchived:true,success:true}));", encoding="utf-8")
+        return marker
+
+    def archive(self, feature: str, *extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["node", str(BUILD), "archive", "--feature", feature, "--project-root", str(self.root), *extra],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+
+    def test_a_local_requirement_and_a_missing_token_never_reach_the_system(self) -> None:
+        marker = self.fake_adapter()
+        proc = self.archive(FEATURE, "--mcp-token", "secret-123")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("本地需求", proc.stderr)
+        ar = self.root / "doc" / "features" / self.FEATURE_AR / "AR"
+        ar.mkdir(parents=True)
+        (ar / "story.md").write_text(STORY.replace(FEATURE, self.FEATURE_AR), encoding="utf-8")
+        proc = self.archive(self.FEATURE_AR)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("--mcp-token", proc.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_a_failed_delivery_gate_makes_no_system_call(self) -> None:
+        marker = self.fake_adapter()
+        ar = self.root / "doc" / "features" / self.FEATURE_AR / "AR"
+        ar.mkdir(parents=True)
+        (ar / "story.md").write_text(STORY.replace(FEATURE, self.FEATURE_AR), encoding="utf-8")
+        proc = self.archive(self.FEATURE_AR, "--mcp-token", "secret-123")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("交付门没过，没有调用需求系统", proc.stderr)
+        self.assertFalse(marker.exists(), "交付门没过却调用了对接层")
+        self.assertNotIn("secret-123", proc.stdout + proc.stderr)
+
+
+class DerivedReadingEvidenceStaysOutOfUpdates(unittest.TestCase):
+    """update 的镜像与还原精确排除一键入口与局部阅读证据；图源与正文照常进镜像。"""
+
+    def test_only_the_launcher_and_reading_evidence_are_skipped(self) -> None:
+        sys.path.insert(0, str(CORE))
+        try:
+            from flow import update  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(CORE))
+        skipped = {rel: update._skipped(Path(rel)) for rel in (
+            "AR/story-src/figures/fig-1.reading/report.json", "AR/story-src/figures/fig-1.reading/render.png",
+            "AR/切换视图.cmd", "AR/story.md", "AR/story-src/figures/fig-1.mmd", "AR/figures/fig-1.svg",
+            "assets/doc/a.png", "AR/story-src/reading/report.json")}
+        self.assertEqual({"AR/story-src/figures/fig-1.reading/report.json": True,
+                          "AR/story-src/figures/fig-1.reading/render.png": True, "AR/切换视图.cmd": True,
+                          "AR/story.md": False, "AR/story-src/figures/fig-1.mmd": False, "AR/figures/fig-1.svg": False,
+                          "assets/doc/a.png": False, "AR/story-src/reading/report.json": False}, skipped)

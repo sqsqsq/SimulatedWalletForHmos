@@ -321,11 +321,12 @@ output/story/<suite-id>/
 
 | 步 | 动作 | 为什么在这一步 |
 |---|---|---|
-| 1 | Case 自己停在第一检查点（`awaiting_kind: initial_checkpoint`），模型最后那一问在 `question` 与 `pending_question` 里；等待期间 `reply` 一律被拒 | 到目标就终止只能另起 run，那是重启新会话冒充续行 |
+| 1 | Case 自己停在第一检查点（`awaiting_kind: initial_checkpoint`），模型最后那一问在 `question` 与 `pending_question` 里 | 到目标就终止只能另起 run，那是重启新会话冒充续行 |
+| 1a | 那一问是第一段里的业务动作（系统单交付门问「归档送审 / 进入 plan」）时，按 `interaction-script.yaml` 的立场用 `reply` 回答；模型在第一段里把它做完（归档以核心 archive 的回执、读回与本地登记为准）后再停到第一检查点。已固定的快照随之作废留证（`initial.superseded-*`），从第 2 步重来 | 归档是第一段的终点动作，和第二段的投料不合成一轮；本地单没有归档，不为凑覆盖调对接层 |
 | 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；复制前后目录摘要不同则快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`；不先回流，第一段产物就只剩快照 |
-| 5 | `resume-update --case <id> --text "<case.yaml 的 update_request>"`，不传 `--answer` | 只投第二段的业务请求；检查点上模型留的那一问属于第一段收尾，不单独作答。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
+| 5 | `resume-update --case <id> --text "<case.yaml 的 update_request>"`，不传 `--answer` | 只投第二段的业务请求；第一段回流之后 `reply` 被拒，不再在第一段里继续。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
 | 6 | 第二段起手在材料关卡停一次，按该 Case `interaction-script.yaml` 的 `update-material` 作答；之后 Case 停在第二检查点（`stop_reason: update_checkpoint`） | 终点以流程契约里这一轮 update 关闭为准，模型说「更新完成」不算 |
 | 7 | `checkpoint --point update` → 只读后评 → `conclude` | story 门禁已在进第二检查点前跑过；第二检查点的唯一出口是 conclude，不发的话 worker 一直等，最后只能被外部停掉、终态成 `worker_lost` |
 | 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段那份不被覆盖 |

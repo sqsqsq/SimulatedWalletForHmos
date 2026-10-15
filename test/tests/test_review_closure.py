@@ -403,6 +403,30 @@ class TheUpstreamNameIsALocatableMaterial(ClosureCase):
         self.assertIn("「上游约束：规则」对不上本轮任何一份材料", line)
 
 
+    def test_a_tag_without_a_material_list_is_named(self) -> None:
+        (self.fr / "AR" / "story-src" / "materials.json").unlink()
+        line = self.names("产品需求")
+        self.assertIn("还没有材料清单", line)
+
+    def test_a_duplicated_decision_is_not_a_basis(self) -> None:
+        (self.fr / "AR" / "story-src" / "decisions.json").write_text(json.dumps({"decisions": [
+            {"id": "D1", "status": "open", "title": "甲", "clarification": "两种做法", "decider": "产品负责人"},
+            {"id": "D1", "status": "settled", "title": "甲", "clarification": "会上定了", "decider": "产品负责人"},
+        ]}, ensure_ascii=False), encoding="utf-8")
+        body = "\n上限 200 元（已确认决定：D1）。\n"
+        text = self.spec().read_text(encoding="utf-8")
+        self.spec().write_text(text.replace("## 8. 验收标准", body + "\n## 8. 验收标准", 1), encoding="utf-8")
+        message = json.loads(self.gate()).get("message", "")
+        line = next((x for x in message.split("\n") if "依据标签要指认到" in x), "")
+        self.assertIn("D1 各登记了不止一条", line)
+        self.assertIn("「已确认决定：", line, "重复的 D1 被当成了已定依据")
+
+    def test_a_broken_meeting_record_is_reported_without_any_bad_tag(self) -> None:
+        self.meeting("周会", "55" * 32, "周会.docx", recorded="66" * 32)
+        line = self.names("产品需求")
+        self.assertIn("source.json", line, "登记缺口要等标签报错才出现")
+
+
 class TheDocumentFollowsItsTemplateForm(ClosureCase):
     """H1 照模板的文档类型、占位换掉；模板章节里的 `>` 流程提示不留在文档里。文档自己的引用块不管。"""
 
@@ -435,3 +459,42 @@ class TheDocumentFollowsItsTemplateForm(ClosureCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
+    """Plan 的义务审查与读者审查同一份局部明细合同：无明细、漏必审、未核却 PASS 都拒收，完整报告收下。"""
+
+    def plan_report(self, details: str) -> str:
+        import yaml
+        ids = list(yaml.safe_load((EXT / "rules" / "plan-rules.overlay.yaml").read_text(encoding="utf-8"))["semantic_checks"])
+        rows = "\n".join(f"| {i} | PASS | MAJOR | 看过设计章 |" for i in ids)
+        reports = self.fr / "plan" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        rel = f"doc/features/{FEATURE}/plan/reports/verifier.report.{SUBJECT}.md"
+        (reports / "summary.json").write_text(json.dumps({"verifier_report": rel, "verifier_subject_id": SUBJECT}),
+                                              encoding="utf-8")
+        (self.root / rel).write_text("| 检查项 | 状态 | 级别 | 证据 |\n|---|---|---|---|\n" + rows
+                                     + "\n\n<!-- maison-verifier-result:v1 -->\n"
+                                     f"verifier_subject_id: {SUBJECT}\nverdict: PASS\nblocker_count: 0\n"
+                                     "<!-- /maison-verifier-result:v1 -->\n" + details, encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(self.root / "doc/extensions/hooks/shared/verifier-report.mjs"),
+             "--feature", FEATURE, "--phase", "plan", "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        return f"exit={proc.returncode}\n{proc.stdout}{proc.stderr}"
+
+    DETAILS = ("\n```yaml\nverification_result:\n  checks:\n    - id: knowledge_obligation_substance\n"
+               "      status: PASS\n      details:\n        blocking_findings: []\n        advisories: []\n"
+               "        examined_inputs: []\n        unreviewed: []\n```\n")
+
+    def test_no_details_and_silent_inputs_are_refused(self) -> None:
+        self.assertIn("明细里没有 knowledge_obligation_substance", self.plan_report(""))
+        out = self.plan_report(self.DETAILS)
+        self.assertIn("既没出现在 examined_inputs 也没列进 unreviewed", out)
+        self.assertIn("plan/plan.md", out, "Plan 自己的审查对象不在必审集合里")
+
+    def test_a_complete_plan_report_is_accepted(self) -> None:
+        from ext_workspace import cover_report  # noqa: PLC0415
+        out = self.plan_report(cover_report(self.DETAILS, self.root, FEATURE, "plan"))
+        self.assertTrue(out.startswith("exit=0"), out[-800:])
+

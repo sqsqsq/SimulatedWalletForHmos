@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from ext_workspace import link_harness_yaml, DEV_EXT
+from ext_workspace import link_harness_yaml, DEV_EXT, cover_report
 
 REPO = Path(__file__).resolve().parents[2]
 MODULE = DEV_EXT / "hooks" / "shared" / "verifier-report.mjs"
@@ -115,7 +115,7 @@ class TheReportIsReadAtItsDeclaredLanding(unittest.TestCase):
                 (reports / "summary.json").write_text(
                     json.dumps(summary, ensure_ascii=False), encoding="utf-8")
             if report is not None:
-                (root / REPORT_REL).write_text(report, encoding="utf-8")
+                (root / REPORT_REL).write_text(cover_report(report, root, "SMPFEAT"), encoding="utf-8")
             for name, text in (extra or {}).items():
                 (reports / name).write_text(text, encoding="utf-8")
 
@@ -277,7 +277,7 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             reports.mkdir(parents=True)
             (reports / "summary.json").write_text(
                 json.dumps({"verifier_report": REPORT_REL}), encoding="utf-8")
-            (root / REPORT_REL).write_text(report, encoding="utf-8")
+            (root / REPORT_REL).write_text(cover_report(report, root, "SMPFEAT"), encoding="utf-8")
             driver = root / "driver.mjs"
             driver.write_text(DRIVER, encoding="utf-8")
             r = subprocess.run(
@@ -619,10 +619,6 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         if status != "PASS":
             (reports.parent / "notes.md").write_text(
                 f"# notes\n\n- story_reader_review（报告 {SUBJECT[:8]}）：按报告处置。\n", encoding="utf-8")
-        feature = self.root / "doc" / "features" / FEATURE
-        read = [r for r in ("AR/story.md", "AR/story-src/story-template.md", "AR/story-src/story-flow.json",
-                            "AR/story-src/decisions.json", "AR/story-src/materials.json", "spec/spec.md",
-                            "acceptance.yaml") if (feature / r).is_file()]
         body += ("\n```yaml\nverification_result:\n  checks:\n"
                  "    - id: story_reader_review\n"
                  f"      status: {status}\n"
@@ -630,12 +626,10 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
                  + ("        blocking_findings: []\n" if status == "PASS" else
                     "        blocking_findings:\n"
                     "          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n")
-                 + "        advisories: []\n"
-                 "        examined_inputs:\n" + "".join(f"          - {r}\n" for r in read)
-                 + "        unreviewed: []\n```\n")
+                 + "        advisories: []\n        examined_inputs: []\n        unreviewed: []\n```\n")
         target = self.root / REPORT_REL
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(body, encoding="utf-8")
+        target.write_text(cover_report(body, self.root, FEATURE), encoding="utf-8")
 
     def test_a_complete_report_that_failed_is_not_a_pass(self) -> None:
         """报告的**结构**齐备不等于**审查判它过了**。
@@ -688,15 +682,25 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         return out.stdout + out.stderr
 
     def test_a_pass_that_skipped_a_required_input_is_not_a_review(self) -> None:
+        STORY = f"          - doc/features/{FEATURE}/AR/story.md\n"  # noqa: N806
         """必审输入没出现在声明里，或列进了 unreviewed，就不能 PASS；不在表里的路径也不收。"""
         cases = {
-            "漏报": (lambda t: t.replace("          - AR/story.md\n", ""), "既没出现在 examined_inputs 也没列进 unreviewed"),
-            "未核却 PASS": (lambda t: t.replace("          - AR/story.md\n", "").replace(
-                "        unreviewed: []", "        unreviewed:\n          - AR/story.md：只读了前两章"), "必审输入却有没核完的"),
-            "多报": (lambda t: t.replace("          - AR/story.md\n", "          - AR/story.md\n          - RR/别的.md\n"),
-                   "不在「读这些」表里"),
-            "重复": (lambda t: t.replace("          - AR/story.md\n", "          - AR/story.md\n          - ./AR/story.md\n"),
-                   "写了两次"),
+            "漏报": (lambda t: t.replace(STORY, ""), "既没出现在 examined_inputs 也没列进 unreviewed"),
+            "未核却 PASS": (lambda t: t.replace(STORY, "").replace(
+                "        unreviewed: []", f"        unreviewed:\n          - doc/features/{FEATURE}/AR/story.md：只读了前两章"),
+                "必审输入却有没核完的"),
+            "WARN 未核": (lambda t: t.replace(STORY, "").replace("status: PASS", "status: WARN").replace(
+                "| story_reader_review | PASS |", "| story_reader_review | WARN |").replace(
+                "        unreviewed: []", f"        unreviewed:\n          - doc/features/{FEATURE}/AR/story.md：只读了前两章"),
+                "必审输入却有没核完的"),
+            "未核无原因": (lambda t: t.replace(STORY, "").replace(
+                "        unreviewed: []", f"        unreviewed:\n          - doc/features/{FEATURE}/AR/story.md"), "没写原因"),
+            "未核未知项": (lambda t: t.replace("        unreviewed: []", "        unreviewed:\n          - RR/别的.md：没读"),
+                      "既不是表里的输入也不是本阶段判据"),
+            "多报": (lambda t: t.replace(STORY, STORY + "          - RR/别的.md\n"), "不在「读这些」表里"),
+            "重复": (lambda t: t.replace(STORY, STORY + STORY.replace("- doc", "- ./doc")), "写了两次"),
+            "UNKNOWN": (lambda t: t.replace("status: PASS", "status: UNKNOWN").replace(
+                "| story_reader_review | PASS |", "| story_reader_review | UNKNOWN |"), "没有审完"),
             "PASS 带阻断": (lambda t: t.replace("        blocking_findings: []", "        blocking_findings:\n          - 第 2 章缺范围"),
                          "判了 PASS 却列了 1 条阻断项"),
         }
@@ -1001,56 +1005,128 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         self.assertIn("写作设计缺口", section)
         self.assertNotIn("```", section, "拿一段空围栏冒充审过了设计")
 
+    INPUTS = """
+    const [, , mod, root, feature, purpose] = process.argv;
+    const m = await import(mod);
+    const b = m.reviewInputs(root, feature, purpose);
+    process.stdout.write(JSON.stringify({ inputs: b.inputs, gaps: b.gaps, update: b.update }));
+    """
+
+    def basis(self, purpose: str = "story", feature: str = FEATURE) -> dict:
+        """生产派生的必审集合，交给测试按**独立写下的期望**核。"""
+        script = self.root / "inputs.mjs"
+        script.write_text(self.INPUTS, encoding="utf-8")
+        mod = self.root / "doc/extensions/hooks/shared/review-inputs.mjs"
+        r = subprocess.run(["node", str(script), mod.resolve().as_uri(), str(self.root), feature, purpose],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        out = json.loads(r.stdout)
+        out["by"] = {x["path"]: x for x in out["inputs"]}
+        return out
+
+    def at(self, rel: str) -> str:
+        return f"doc/features/{FEATURE}/{rel}"
+
     def test_the_task_points_at_the_original_materials(self) -> None:
         """审查要能回到原件：必审输入逐份给位置与摘要；该有而读不到的点名，不替它下结论。"""
         feature = self.root / "doc" / "features" / FEATURE
         (feature / "RR").mkdir(parents=True, exist_ok=True)
-        (feature / "RR" / "prd.md").write_text("# 产品需求\n", encoding="utf-8")
-        reads = lambda text: text.split("### 读这些", 1)[1].split("\n### ", 1)[0]
+        (feature / "RR" / "prd.md").write_text("# 产品需求\\n", encoding="utf-8")
+        reads = lambda text: text.split("### 读这些", 1)[1].split("\\n### ", 1)[0]  # noqa: E731
         section = reads(self.inject())
-        self.assertIn("`RR/prd.md`（摘要 ", section)
-        self.assertIn("acceptance.yaml", section)
-        self.assertNotIn("读不到 `SR/design.md`", self.inject(), "本地单没有系统设计是正常的")
-        (feature / "AR" / "detail.json").write_text("{}", encoding="utf-8")
-        self.assertNotIn("读不到 `SR/design.md`", self.inject(), "本地需求留着 detail.json 仍是本地需求")
+        self.assertIn(f"`{self.at('RR/prd.md')}`（摘要 ", section)
+        self.assertIn(self.at("acceptance.yaml"), section)
+        self.assertNotIn(f"`{self.at('SR/design.md')}`", section, "本地单没有系统设计是正常的，不进必审")
         remote = f"AR{FEATURE}"
         shutil.copytree(feature, feature.parent / remote)
-        self.assertIn("读不到 `SR/design.md`", self.inject(remote), "系统需求缺必备来源没点名")
+        got = self.basis(feature=remote)["by"][f"doc/features/{remote}/SR/design.md"]
+        self.assertTrue(got["required"] and got["missing"], "系统需求缺必备来源，没留成必审缺件")
 
-    def test_every_registered_reading_copy_is_a_required_input(self) -> None:
-        """必审集合从 origins 派生：作者表漏写一行，那份原件仍在审查者面前；只取图的原件由图片登记核。"""
+    def test_a_missing_required_input_stays_required(self) -> None:
+        """存在性只决定 missing，不改变义务：缺件仍是必审，坏清单与坏 origin 报缺口而不是空集合。"""
+        expected = {"AR/story.md", "AR/story-src/story-template.md", "AR/story-src/decisions.json",
+                    "AR/story-src/story-flow.json", "AR/story-src/materials.json", "AR/review.md",
+                    "spec/spec.md", "acceptance.yaml"}
+        got = self.basis()
+        required = {x["path"] for x in got["inputs"] if x["required"]}
+        self.assertLessEqual({self.at(r) for r in expected}, required, "没有文件时必审集合缩小了")
+        self.assertTrue(got["by"][self.at("spec/spec.md")]["missing"])
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
-        (src / "materials.json").write_text(json.dumps({"materials": [], "origins": [
-            {"path": "inbox/规则 (终版).docx", "kind": "converted-source", "readable_paths": ["AR/story-src/upstream.md"]},
-            {"path": "inbox/截图.docx", "kind": "converted-source", "readable_paths": ["inbox/截图.docx"],
-             "image_paths": ["assets/截图/a.png"]},
-        ]}, ensure_ascii=False), encoding="utf-8")
-        section = self.inject().split("### 读这些", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("`AR/story-src/upstream.md`", section)
-        self.assertIn("**读不到**", section, "登记了却不在盘上的阅读稿没点名")
-        self.assertNotIn("inbox/截图.docx`", section)
+        (src / "materials.json").write_text(json.dumps({"materials": [], "origins": {"path": "x"}}), encoding="utf-8")
+        self.assertTrue(any("origins" in g for g in self.basis()["gaps"]), "origins 不是列表却没报缺口")
 
-    def test_an_open_update_brings_its_before_and_a_missing_one_is_a_gap(self) -> None:
+    def test_text_and_pictures_of_one_original_are_both_required(self) -> None:
+        """图文混合的原件：阅读稿正文与每张登记图都进必审；同一张图的另一落点不另算。看不了图是未核，不是不适用。"""
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
-        (src / "story-flow.json").write_text(json.dumps({"update": {"open": "20260101-000000"}}), encoding="utf-8")
-        task = self.inject()
-        self.assertIn("缺比较基准，不是没有变化", task)
-        before = src / "updates" / "20260101-000000" / "before" / "AR"
-        before.mkdir(parents=True)
-        (before / "story.md").write_text("# 旧稿\n", encoding="utf-8")
-        task = self.inject()
-        self.assertIn("`AR/story-src/updates/20260101-000000/before/AR/story.md`（摘要 ", task)
-        self.assertIn("### 本轮 update 20260101-000000：新稿对照有效旧依据", task)
+        (src / "materials.json").write_text(json.dumps({
+            "materials": [{"kind": "image", "paths": ["assets/doc/a.png", "ux-reference/a.png"], "caption": "签约页"},
+                          {"kind": "image", "paths": ["assets/doc/b.png"], "caption": "管理页"}],
+            "origins": [
+                {"path": "inbox/规则 (终版).docx", "kind": "converted-source", "readable_paths": ["AR/story-src/upstream.md"]},
+                {"path": "inbox/图文.docx", "kind": "converted-source", "readable_paths": ["AR/story-src/图文.md"],
+                 "image_paths": ["assets/doc/a.png", "assets/doc/b.png"]},
+            ]}, ensure_ascii=False), encoding="utf-8")
+        by = self.basis()["by"]
+        for rel in ("AR/story-src/upstream.md", "AR/story-src/图文.md", "assets/doc/a.png", "assets/doc/b.png"):
+            self.assertTrue(by[self.at(rel)]["required"], f"{rel} 没进必审")
+            self.assertTrue(by[self.at(rel)]["missing"], f"{rel} 盘上没有却没标缺件")
+        self.assertNotIn(self.at("ux-reference/a.png"), by, "同一张图的别名被当成另一份")
+
+    def open_update(self, files: dict | None = None, *, status: str = "open") -> Path:
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        rid = "20260101-000000"
+        (src / "story-flow.json").write_text(json.dumps({"update": {"open": rid}}), encoding="utf-8")
+        base = src / "updates" / rid
+        (base / "before").mkdir(parents=True, exist_ok=True)
+        (base / "record.json").write_text(json.dumps({
+            "id": rid, "status": status, "phases_before": {}, "files": files or {},
+            "mirror": {"path": f"AR/story-src/updates/{rid}/before", "files": 1}}), encoding="utf-8")
+        return base
+
+    def test_an_open_update_brings_its_recorded_before_and_notes(self) -> None:
+        import hashlib  # noqa: PLC0415
+        old = "# 旧稿\\n".encode("utf-8")
+        base = self.open_update({"AR/story.md": "sha256:" + hashlib.sha256(old).hexdigest()[:16]})
+        got = self.basis()
+        self.assertTrue(any("缺比较基准" in g for g in got["gaps"]), "before 是空目录却算完整")
+        before = self.at("AR/story-src/updates/20260101-000000/before/AR/story.md")
+        self.assertTrue(got["by"][before]["required"] and got["by"][before]["missing"], "记录里的旧件丢了却变可选")
+        (base / "before" / "AR").mkdir(parents=True)
+        (base / "before" / "AR" / "story.md").write_bytes(old)
+        (base / "update-notes.md").write_text("# 变化\\n", encoding="utf-8")
+        got = self.basis()
+        self.assertFalse(got["by"][before]["missing"])
+        self.assertFalse([g for g in got["gaps"] if "update" in g or "before" in g or "对不上" in g], got["gaps"])
+        notes = got["by"][self.at("AR/story-src/updates/20260101-000000/update-notes.md")]
+        self.assertTrue(notes["required"] and notes["digest"], "本轮变化说明不是必审依据")
+        self.assertIn(before, self.basis("plan")["by"], "Plan 审查没拿到 update 的旧现场")
+        (base / "before" / "AR" / "story.md").write_text("# 被改过\\n", encoding="utf-8")
+        self.assertTrue(any("对不上" in g for g in self.basis()["gaps"]), "旧现场被改过没发现")
+        self.assertIn("### 本轮 update 20260101-000000：新稿对照有效旧依据", self.inject())
+
+    def test_a_bad_update_record_is_refused_not_guessed(self) -> None:
+        self.open_update(status="closed")
+        self.assertTrue(any("record.json" in g for g in self.basis()["gaps"]))
 
     def test_the_fragment_follows_the_basis_not_the_flow_bookkeeping(self) -> None:
-        """依据变了审查片段跟着变；流程状态记一笔、notes 改写不制造新的审查对象。"""
+        """依据变了审查片段跟着变；流程簿记、阶段处置与时间戳不制造新的审查对象。"""
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
-        (src / "story-flow.json").write_text(json.dumps({"rounds": []}), encoding="utf-8")
+        (src / "story-flow.json").write_text(json.dumps({"rounds": [], "split": {"scope_text": "甲"}}), encoding="utf-8")
         first = self.inject()
-        (src / "story-flow.json").write_text(json.dumps({"rounds": [], "closed_at": "x"}), encoding="utf-8")
+        (src / "story-flow.json").write_text(json.dumps({"rounds": [], "split": {"scope_text": "甲"}, "closed_at": "x"}),
+                                             encoding="utf-8")
         self.assertEqual(first, self.inject(), "流程簿记变化换了审查对象")
+        (src / "story-flow.json").write_text(json.dumps({"rounds": [], "split": {"scope_text": "乙"}}), encoding="utf-8")
+        self.assertNotEqual(first, self.inject(), "范围变了，审查对象却没变")
+        second = self.inject()
         (src / "decisions.json").write_text(json.dumps({"decisions": []}), encoding="utf-8")
-        self.assertNotEqual(first, self.inject(), "登记的决定变了，审查对象却没变")
+        self.assertNotEqual(second, self.inject(), "登记的决定变了，审查对象却没变")
+
+    def test_the_plan_review_reads_its_own_basis(self) -> None:
+        by = self.basis("plan")["by"]
+        for rel in ("plan/plan.md", "contracts.yaml", "use-cases.yaml", "spec/spec.md", "AR/review.md"):
+            self.assertTrue(by[self.at(rel)]["required"], f"Plan 审查没把 {rel} 列为必审")
+        self.assertTrue(any(p.startswith("doc/extensions/knowledge/") for p in by), "Plan 审查没拿到激活知识")
 
     def test_the_overlay_judges_against_sources_not_the_design(self) -> None:
         """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在 overlay。"""
@@ -1119,3 +1195,39 @@ class TheTaskMovesOnlyWithTheAuthorsInput(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheGuardTellsItsOwnErrorFromAMissingEnvironment(unittest.TestCase):
+    """门禁跑不完时分清是谁的事：环境缺依赖按恢复依赖重跑、产物不用改；门禁代码异常归维护者。"""
+
+    DRIVE = """
+    const [, , gatePath, kind] = process.argv;
+    const { guard } = await import(gatePath);
+    const hook = guard('plan', () => {
+      if (kind === 'env') throw Object.assign(new Error('yaml 包不可用：先装依赖'), { category: 'environment' });
+      throw new Error('门禁代码里的空指针');
+    });
+    process.stdout.write(JSON.stringify(await hook({ phase: 'plan', feature: 'X', projectRoot: '.' })));
+    """
+
+    def run_guard(self, kind: str) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "drive.mjs"
+            script.write_text(self.DRIVE, encoding="utf-8")
+            gate = DEV_EXT / "hooks" / "shared" / "gate.mjs"
+            r = subprocess.run(["node", str(script), gate.as_uri(), kind],
+                               capture_output=True, text=True, encoding="utf-8", timeout=60)
+            self.assertEqual(0, r.returncode, r.stderr)
+            return json.loads(r.stdout)
+
+    def test_a_missing_dependency_is_not_reported_as_a_gate_bug(self) -> None:
+        out = self.run_guard("env")
+        self.assertFalse(out["ok"])
+        self.assertIn("环境依赖缺失", out["message"])
+        self.assertIn("产物不用改", out["message"])
+        self.assertNotIn("门禁自身异常", out["message"])
+
+    def test_a_gate_bug_is_still_a_gate_bug(self) -> None:
+        out = self.run_guard("bug")
+        self.assertIn("门禁自身异常", out["message"])
+        self.assertIn("扩展维护者", out["message"])

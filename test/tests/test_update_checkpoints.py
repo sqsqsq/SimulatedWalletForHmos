@@ -568,3 +568,49 @@ class TheOldFakePhaseIsGone(unittest.TestCase):
     def test_story_review_is_not_an_end_phase_anymore(self) -> None:
         self.assertFalse(hasattr(rc, "STORY_REVIEW"))
         self.assertNotIn("story-review", rmc.VALID_END)
+
+
+class TheInitialQuestionIsAnsweredInsideTheInitialSegment(unittest.TestCase):
+    """第一检查点上模型那一问（如归档送审）按回话答，仍在第一段：被授权的动作做完再停、再固定快照；
+    已固定的旧快照不当终稿；第二检查点只收工；第一段回流后不再在第一段里继续。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.out = Path(self._tmp.name) / "run"
+        self.out.mkdir()
+
+    def reply(self, kind: str) -> dict:
+        state = {"status": "awaiting_reply", "awaiting_kind": kind, "lease_expires_epoch": 0, "pid": os.getpid()}
+        with unittest.mock.patch.object(rc, "_load_case", return_value=(None, self.out, "AR1")), \
+                unittest.mock.patch.object(rc, "reconcile_worker_state", return_value=state), \
+                unittest.mock.patch.object(rc, "deliver_supplements", return_value=[]), \
+                unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as said:
+            code = rc.cmd_reply("case", "1 归档送审")
+        return {"code": code, **json.loads(said.getvalue())}
+
+    def test_a_reply_at_the_first_checkpoint_continues_the_first_segment(self) -> None:
+        (self.out / "checkpoints" / "initial").mkdir(parents=True)
+        got = self.reply("initial_checkpoint")
+        self.assertEqual(0, got["code"], got)
+        self.assertFalse((self.out / "checkpoints" / "initial").exists(), "答复前的快照仍当第一段终稿")
+        self.assertTrue(Path(got["superseded_checkpoint"]).is_dir(), "旧快照没留作证据")
+        feed = unittest.mock.Mock()
+        runlog = unittest.mock.Mock()
+        resumed = rc.wait_for_resume(self.out, feed, runlog, {}, turn=3, pending="归档送审还是进入 plan？")
+        self.assertEqual({"reply": "1 归档送审"}, resumed, "回话没有交回第一段")
+
+    def test_the_second_checkpoint_only_takes_a_conclusion(self) -> None:
+        got = self.reply("update_checkpoint")
+        self.assertEqual(1, got["code"])
+        self.assertIn("conclude", got["error"])
+
+    def test_a_promoted_first_segment_is_not_continued(self) -> None:
+        record = {"case": "c", "status": rmc.WAITING_STATUS, "promotions": {"initial": {"status": "promoted"}}}
+        suite = {"case_states": {"c": record}}
+        with unittest.mock.patch.object(rmc, "load_suite", return_value=(Path(self._tmp.name), suite)), \
+                unittest.mock.patch.object(rmc, "refresh_record", side_effect=lambda r: r), \
+                unittest.mock.patch.object(rmc, "invoke_case") as invoke, \
+                unittest.mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(1, rmc.command_reply("s", "c", "1"))
+        invoke.assert_not_called()

@@ -18,7 +18,8 @@
  * 扩展的 `story_reader_review` 另有局部明细合同，无论结论都写：
  *
  *   ① 汇总表里有 `story_reader_review` 一行，且证据格不为空——空证据与没审同形；
- *   ② 明细里四个键（`READER_DETAIL_KEYS`），覆盖声明对着任务书的必审集合核，结论与阻断项自洽。
+ *   ② 明细里四个键（`DETAIL_KEYS`），覆盖声明对着任务书的必审集合核，结论与阻断项自洽。
+ * Plan 的义务审查（`COVERED_CHECKS` 登记的判据）走同一份局部明细合同。
  *
  * 声明全核而实际没读懂，脚本识别不了：审查能不能区分好坏稿归资格测试与真实运行。
  */
@@ -29,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 import { fenceRanges, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
-import { READER_DETAIL_KEYS, readerDetailProblems, reviewInputs } from './reader-review-task.mjs';
+import { COVERED_CHECKS, DETAIL_KEYS, detailProblems, reviewInputs } from './review-inputs.mjs';
 
 /**
  * 本阶段 overlay 的全部语义判据 —— 审查请求与报告核对读同一份，不在代码里另存判据清单。
@@ -85,8 +86,10 @@ function reportProblems(projectRoot, feature, phase) {
     if (!ids.has(id)) problems.push(`${summary.verifier_report} 的汇总表缺判据：${id}——汇总表逐条对 rules/${phase}-rules.overlay.yaml 的 semantic_checks，缺一条的报告按阻断处理。${INVALID_EVIDENCE}`);
   }
   // 读者审查的明细不成立也是坏稿：先核，坏稿不占这个对象的首份合规结论
-  if (checks[STORY_REVIEW_ID]) {
-    problems.push(...judgeReport(text, summary.verifier_report, reviewInputs(projectRoot, feature)).problems);
+  for (const [id, purpose] of Object.entries(COVERED_CHECKS)) {
+    if (!checks[id]) continue;
+    problems.push(...judgeReport(text, summary.verifier_report, id,
+      reviewInputs(projectRoot, feature, purpose), Object.keys(checks)).problems);
   }
   const failed = rows.filter(r => r.status === 'FAIL').map(r => r.id);
   if (block.verdict === 'PASS' && failed.length) {
@@ -228,12 +231,12 @@ function missingReport(summary, abs) {
  * 后者在讲这一项，不是这一项的结论。**不在这里判够不够格**：格子少了是一种
  * 具体的写法问题，要能与「压根没这一行」分开报。
  */
-function summaryRow(text) {
+function summaryRow(text, id) {
   for (const line of text.split(/\r?\n/)) {
     const raw = line.trim();
     if (!raw.startsWith('|')) continue;
     const cells = tableCells(raw);
-    if (cells.length && cells[0].replace(/`/g, '') === STORY_REVIEW_ID) return cells;
+    if (cells.length && cells[0].replace(/`/g, '') === id) return cells;
   }
   return null;
 }
@@ -271,7 +274,7 @@ function checksIn(doc) {
  * @returns {{details: object|null, unreadable: string|null}}
  *   `unreadable` 非空 = 这份 YAML 读不出结构，与「缺键」是两回事，要分开报。
  */
-function readerReviewDetails(text) {
+function readerReviewDetails(text, id) {
   let unreadable = null;
   for (const body of yamlBlocks(text)) {
     let doc;
@@ -284,7 +287,7 @@ function readerReviewDetails(text) {
     const checks = checksIn(doc);
     if (!checks) continue;
     const entry = checks.find(c => c
-      && String(c.id ?? '').replace(/`/g, '').trim() === STORY_REVIEW_ID);
+      && String(c.id ?? '').replace(/`/g, '').trim() === id);
     if (!entry) continue;
     const details = entry.details;
     return {
@@ -318,7 +321,8 @@ export function storyReviewProblems(projectRoot, feature, phase) {
   }
   const text = readTextOrNull(abs);
   return text === null ? withoutCurrentReport(summary, abs)
-    : judgeReport(text, summary.verifier_report, reviewInputs(projectRoot, feature));
+    : judgeReport(text, summary.verifier_report, STORY_REVIEW_ID, reviewInputs(projectRoot, feature, 'story'),
+      Object.keys(overlayChecks(projectRoot, phase).checks));
 }
 
 const RESULT_BLOCK = /<!-- maison-verifier-result:v1 -->([\s\S]*?)<!-- \/maison-verifier-result:v1 -->/g;
@@ -347,7 +351,7 @@ function withoutCurrentReport(summary, abs, judgeStory = true) {
   }
   const history = readTextOrNull(path.join(path.dirname(abs), `verifier.report.${prior.reviewed_subject_id}.md`));
   const block = resultBlock(history);
-  const judged = history === null || !judgeStory ? null : judgeReport(history);
+  const judged = history === null || !judgeStory ? null : judgeReport(history, undefined, STORY_REVIEW_ID);
   if (block?.subject !== prior.reviewed_subject_id || block?.verdict !== 'PASS'
     || (judged && (judged.problems.length || judged.reviewVerdict !== 'PASS'))) {
     return fail('沿用的历史审查无效', `；修正重验沿用的 ${String(prior.reviewed_subject_id).slice(0, 12)}… 报告（同目录 verifier.report.<对象>.md）缺席或不是有效的 PASS——沿用只在那份历史报告是 reviewed_subject_id 的有效 PASS 时成立`);
@@ -357,13 +361,13 @@ function withoutCurrentReport(summary, abs, judgeStory = true) {
       + `${String(prior.reviewed_subject_id).slice(0, 12)}… 的审查（未重审：${(prior.current_material_not_reverified ?? []).join('、') || '未列'}）`] };
 }
 
-/** 报告正文里读者审查这一项：汇总行、证据与明细（`basis` 是当前必审集合，核历史报告时不传）。 */
-function judgeReport(text, at = 'verifier 报告', basis = null) {
-  const row = summaryRow(text);
+/** 报告正文里一条局部明细判据：汇总行、证据与明细（`basis` 是当前必审集合，核历史报告时不传）。 */
+function judgeReport(text, at = 'verifier 报告', id = STORY_REVIEW_ID, basis = null, checkIds = []) {
+  const row = summaryRow(text, id);
   if (!row) {
     return {
       status: 'FAIL',
-      problems: [`${at} 的汇总表里没有 ${STORY_REVIEW_ID} 这一行——门禁按第一格等于这个 id 的表格行认它；`
+      problems: [`${at} 的汇总表里没有 ${id} 这一行——门禁按第一格等于这个 id 的表格行认它；`
         + '这一项是 story 语义质量的发现者，汇总表里找不到它就等于这一轮没审。'
         + INVALID_EVIDENCE],
       reviewVerdict: null,
@@ -375,7 +379,7 @@ function judgeReport(text, at = 'verifier 报告', basis = null) {
   if (row.length < SUMMARY_COLUMNS) {
     return {
       status: 'FAIL',
-      problems: [`${at} 的汇总表：${STORY_REVIEW_ID} 那一行只有 ${row.length} 格，少了证据列——`
+      problems: [`${at} 的汇总表：${id} 那一行只有 ${row.length} 格，少了证据列——`
         + '汇总表每行四格（id、status、severity、一行证据），证据取第 4 格。' + INVALID_EVIDENCE],
       reviewVerdict: null,
       detail: `汇总表只有 ${row.length} 列`,
@@ -390,18 +394,18 @@ function judgeReport(text, at = 'verifier 报告', basis = null) {
   if (!evidence || /^[-—–]+$/.test(evidence)) {
     return {
       status: 'FAIL',
-      problems: [`${at} 的汇总表：${STORY_REVIEW_ID} 那一行的证据格是空的——`
+      problems: [`${at} 的汇总表：${id} 那一行的证据格是空的——`
         + '证据取第 4 格，空或只有横线都算空；空证据与没审长得一样。' + INVALID_EVIDENCE],
       reviewVerdict,
       detail: '证据格为空',
     };
   }
 
-  const { details, unreadable } = readerReviewDetails(text);
+  const { details, unreadable } = readerReviewDetails(text, id);
   // 读不出结构与「缺键」是两回事：说成缺键的话，作者会去补已经写着的键，补完还报
-  const bad = unreadable ? [`里的结构块读不出来（${unreadable}）——${STORY_REVIEW_ID} 的明细在 YAML 围栏里，读不出就核不了`]
-    : !details ? [`的 YAML 明细里没有 ${STORY_REVIEW_ID} 这一条——它无论结论都在明细里写 ${READER_DETAIL_KEYS.join('、')}`]
-      : readerDetailProblems(details, status, basis).map(p => `：${STORY_REVIEW_ID} ${p}`);
+  const bad = unreadable ? [`里的结构块读不出来（${unreadable}）——${id} 的明细在 YAML 围栏里，读不出就核不了`]
+    : !details ? [`的 YAML 明细里没有 ${id} 这一条——它无论结论都在明细里写 ${DETAIL_KEYS.join('、')}`]
+      : detailProblems(details, status, basis, checkIds).map(p => `：${id} ${p}`);
   if (bad.length) {
     return { status: 'FAIL', problems: bad.map(p => `${at}${p}。${INVALID_EVIDENCE}`), reviewVerdict, detail: '明细不成立' };
   }

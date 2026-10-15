@@ -240,9 +240,13 @@ export function sourceCatalog(featureRoot, contract) {
   const register = fs.existsSync(path.join(featureRoot, 'AR', 'story-src', 'decisions.json'))
     ? decisionList(json('AR/story-src/decisions.json')) : [];
   if (!register) gaps.push('AR/story-src/decisions.json 读不出登记列表');
-  const decisions = register ?? [];
+  const decisions = (register ?? []).filter(d => d?.id);
+  // 同一个 id 登记了几条：哪条算数说不清，引用它的标签一律不认，不让后一条盖住前一条
+  const ids = decisions.map(d => String(d.id));
+  const twice = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+  if (twice.length) gaps.push(`AR/story-src/decisions.json 里 ${twice.join('、')} 各登记了不止一条——一个议题一条`);
   return { names, shown, gaps, registered: manifest !== null, primary: [...new Set([...origins.map(o => o.path), ...labeled])],
-    decisions: new Map(decisions.filter(d => d?.id).map(d => [String(d.id), d])) };
+    decisions: new Map(decisions.filter(d => !twice.includes(String(d.id))).map(d => [String(d.id), d])) };
 }
 
 /** 这个对象给作者照抄的唯一写法：人读名、完整文件名、带版本的会议名，都不唯一时写登记路径。 */
@@ -280,8 +284,10 @@ export function resolveTags(text, catalog) {
       if (d) hits.push({ from, to: from + id.length, display: `${id}（${String(d.title ?? '').trim()}）` });
       continue;
     }
-    // 还没有材料清单（没跑过 round）：材料名无从认，这一处不判，不是判过了
-    if (!catalog.registered) continue;
+    if (!catalog.registered) {
+      problems.push(`${where}「上游约束：${wrote}」：还没有材料清单 AR/story-src/materials.json，材料名无从核——先跑 \`story_flow.py round\``);
+      continue;
+    }
     const name = pick(known);
     const keys = name ? catalog.names.get(name) : null;
     if (!keys) {
@@ -292,8 +298,8 @@ export function resolveTags(text, catalog) {
       hits.push({ from, to: from + name.length, display: catalog.shown.get([...keys][0]) ?? name });
     }
   }
-  if (problems.length && catalog.gaps.length) problems.push(...catalog.gaps);
-  return { hits, problems };
+  // 清单与登记的结构缺口自己就是问题：不等标签报错才顺带出现
+  return { hits, problems: [...problems, ...catalog.gaps] };
 }
 
 /** 认到的标签换成读者认得的名字：会议写原文件名、合同来源写显示名，决定带上标题。 */

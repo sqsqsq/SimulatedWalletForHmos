@@ -25,12 +25,15 @@
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
- * | `view` | 图的两种形态：`--mode prepare` 给未管理的 Mermaid 图加管理标记并首次建源（`--id` 从源重建一块），`mermaid` 按源重铺，`svg` 切到合格的阅读图 |
+ * | `view` | 图的两种形态：`--mode prepare` 给未管理的 Mermaid 图加管理标记并首次建源（`--id` 从源重建一块），`mermaid` 按源重铺，`svg` 切到合格的阅读图，`toggle` 一键切换；`status` 列本地阅读工作，`review-request` / `review-check` 生成与核对局部阅读验收 |
+ * | `archive` | 唯一的归档入口：交付门 → 对接层上传与读回 → 核回执 → 登记归档态 |
  *
- * 除 `view` 外的命令读写 story 之前都先切回 Mermaid：正式的编号、登记、核对与交付只认 Mermaid 形态。
+ * 除 `view` 外的命令都由最外层一次持有视图：动手前切回 Mermaid（正式的编号、登记、核对、交付与上传只认它），
+ * 结束或失败后恢复可用的阅读图；被它调起的子命令（环境变量 `STORY_VIEW_OWNER`）不各自恢复。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { flowProblems } from './flow/check.mjs';
 import {
@@ -38,7 +41,7 @@ import {
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {
-  createContext, fail, readJson, readText, specText,
+  CommandFailure, createContext, fail, isSystemRequirement, readJson, readText, specText,
 } from './story/context.mjs';
 import { materialSubsectionName, projectAppendix, specGaps, specTerms } from './story/appendix.mjs';
 import {
@@ -49,9 +52,16 @@ import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
 import { storyInputs } from '../../../../hooks/spec/author.mjs';
-import { ensureMermaid, switchView, VIEW_MODES } from './story/figure-view.mjs';
+import {
+  ensureMermaid, readingWork, reviewRequest, switchView, VIEW_MODES, writeLauncher,
+} from './story/figure-view.mjs';
+import { readingState } from './story/figure-reading.mjs';
+import { runPython } from './flow/client.mjs';
+import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
 
-const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'view'];
+const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'view', 'archive'];
+//: 外层持有视图的标记：子进程继承它就不各自恢复
+const VIEW_OWNER = 'STORY_VIEW_OWNER';
 
 function parseArgs(argv) {
   const args = { command: argv[2] && !argv[2].startsWith('--') ? argv[2] : '' };
@@ -63,6 +73,8 @@ function parseArgs(argv) {
     else if (argv[i] === '--deliver') args.deliver = true;
     else if (argv[i] === '--mode') args.mode = argv[++i];
     else if (argv[i] === '--id') args.id = argv[++i];
+    else if (argv[i] === '--render') args.render = argv[++i];
+    else if (argv[i] === '--mcp-token') args.token = argv[++i];
   }
   return args;
 }
@@ -221,14 +233,103 @@ function cmdSkeleton(ctx) {
   process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
 }
 
-/** `view`：切换或准备图的形态，结果与缺口原样报出。 */
+/** `view`：切换、准备、查看或验收图的形态，结果与缺口原样报出。 */
 function cmdView(ctx) {
-  if (!VIEW_MODES.includes(ctx.args.mode)) fail(`view 要 --mode ${VIEW_MODES.join('|')}`);
-  const r = switchView(ctx.featureRoot, ctx.args.mode, { id: ctx.args.id ?? '' });
-  if (r.problems.length) fail(`view --mode ${ctx.args.mode} 没有写任何东西：\n  ${r.problems.join('\n  ')}`);
-  process.stdout.write(`[story-build view] ${ctx.args.mode}：${r.changed ? '已改写 AR/story.md' : 'AR/story.md 没有变化'}；`
+  const { mode, id = '' } = ctx.args;
+  if (!VIEW_MODES.includes(mode)) fail(`view 要 --mode ${VIEW_MODES.join('|')}`);
+  if (mode === 'status') {
+    process.stdout.write(`${JSON.stringify(readingWork(ctx.featureRoot), null, 2)}\n`);
+    return;
+  }
+  if (mode === 'review-request' || mode === 'review-check') {
+    if (!id) fail(`view --mode ${mode} 要 --id <图块 ID>`);
+    if (mode === 'review-check') {
+      const r = readingState(ctx.featureRoot, id);
+      if (r.state !== 'ready') fail(`图 ${id} 的局部阅读验收没有成立（${r.state}）：${r.reason}`);
+      process.stdout.write(`[story-build view] 图 ${id} 的局部阅读验收成立：当前 SVG 可作本地阅读图\n`);
+      return;
+    }
+    const r = reviewRequest(ctx.featureRoot, id, ctx.args.render ?? '');
+    if (r.problems.length) fail(`图 ${id} 的验收请求没有生成：\n  ${r.problems.join('\n  ')}`);
+    process.stdout.write(`[story-build view] 验收请求 ${r.request.request_id}${r.written ? '已写入' : '没有变化'}\n${r.task.join('\n')}\n`);
+    return;
+  }
+  const r = switchView(ctx.featureRoot, mode, { id });
+  if (r.problems.length) fail(`view --mode ${mode} 没有写任何东西：\n  ${r.problems.join('\n  ')}`);
+  const launcher = mode === 'prepare' ? writeLauncher(ctx.featureRoot, ctx.contract.local_reading_entry) : null;
+  process.stdout.write(`[story-build view] ${mode}：${r.changed ? '已改写 AR/story.md' : 'AR/story.md 没有变化'}；`
     + `图块 Mermaid ${r.counts.mermaid} 个、SVG ${r.counts.svg} 个\n`
-    + r.notes.map(n => `  - ${n}\n`).join(''));
+    + [...r.notes, ...(launcher ? [launcher] : [])].map(n => `  - ${n}\n`).join(''));
+}
+
+/** 跑本入口的另一个命令或另一个脚本：参数数组传递、不经 shell，两路输出原样带回。 */
+function child(args) {
+  const r = spawnSync(process.execPath, args, { encoding: 'utf-8', windowsHide: true });
+  return { status: r.status, error: r.error, out: [r.stdout, r.stderr].map(x => String(x ?? '').trim()).filter(Boolean).join('\n') };
+}
+
+/**
+ * 归档：交付门 → 对接层上传并读回 → 核回执 → 登记归档态。交付门不过零系统调用；回执不全不登记；
+ * 远端已成功而本地登记失败时说清已发生的副作用与补登记入口，不自动重传。token 只作参数传给对接层，不打印。
+ */
+function cmdArchive(ctx) {
+  const feature = ctx.args.feature;
+  if (!isSystemRequirement(feature)) fail(`${feature} 是本地需求：本地单没有归档环节，交付终点是仓内三件`);
+  if (!ctx.args.token) fail('archive 要 --mcp-token <token>：上传与读回由对接层用它访问需求系统');
+  const gate = child([ctx.scriptPath, 'check', '--deliver', '--feature', feature, '--project-root', ctx.projectRoot]);
+  if (gate.status !== 0) fail(`交付门没过，没有调用需求系统：\n${gate.out}`);
+  // 对接层入口登记在章节合同（相对扩展根），core 只按归档协议调它
+  const adapter = path.join(extensionRoot(ctx.projectRoot), ...String(ctx.contract.system_archive_entry ?? '').split('/'));
+  if (!ctx.contract.system_archive_entry || !fs.existsSync(adapter)) fail(`章节合同登记的归档对接入口读不到（${adapter}）：对接层由目标仓按所有权维护`);
+  const up = child([adapter, 'archive', feature, ctx.args.token, '--project-root', ctx.projectRoot]);
+  let receipt = null;
+  try { receipt = JSON.parse(up.out.slice(up.out.indexOf('{'), up.out.lastIndexOf('}') + 1)); } catch { receipt = null; }
+  const ok = up.status === 0 && receipt?.mode === 'archive' && receipt?.reqNo === feature
+    && ['success', 'verified', 'archived', 'reviewArchived'].every(k => receipt?.[k] === true);
+  if (!ok) {
+    fail(`对接层上传或读回核验没有成立（退出码 ${up.status ?? up.error?.message}），没有登记归档态；远端状态以对接层的话为准，`
+      + `核清后重跑 archive：\n${up.out.split(ctx.args.token).join('<token>')}`);
+  }
+  const flow = path.join(path.dirname(ctx.scriptPath), 'story_flow.py');
+  const reg = runPython(flow, ['archived', '--feature', feature, '--project-root', ctx.projectRoot]);
+  if (reg.error || reg.status !== 0) {
+    fail('需求系统已经写入并读回核验通过，本地归档态登记失败——不要重新上传；修好原因后只补登记：'
+      + `\`python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature ${feature}\`\n`
+      + (reg.error ?? reg.output));
+  }
+  process.stdout.write(`[story-build archive] 已归档并登记：${feature}（上传、读回核验、评审记录附件都成立；覆盖前的系统正文备份在 ${receipt.backupPath ?? '对接层记录处'}）\n`);
+}
+
+/**
+ * 最外层持有视图：动手前切回 Mermaid，结束或失败后按当前源恢复可用的阅读图。恢复失败只补视图，
+ * 附在业务结果之后报出来，不遮住原来的错误。子进程继承持有标记，不各自恢复。
+ */
+function withView(ctx, body) {
+  const owner = !process.env[VIEW_OWNER];
+  if (owner) process.env[VIEW_OWNER] = '1';
+  try {
+    const back = ensureMermaid(ctx.featureRoot);
+    if (back.problems.length) fail(`读 story 之前要先切回 Mermaid，切不回来：\n  ${back.problems.join('\n  ')}`);
+    return body();
+  } finally {
+    if (owner) {
+      delete process.env[VIEW_OWNER];
+      restoreView(ctx);
+    }
+  }
+}
+
+function restoreView(ctx) {
+  try {
+    const r = switchView(ctx.featureRoot, 'svg');
+    if (r.problems.length) {
+      process.stderr.write(`[story-build] 本地阅读图没有恢复，story 保持 Mermaid（业务结果不受影响）：\n  ${r.problems.join('\n  ')}\n`);
+    } else if (r.counts.svg) {
+      process.stderr.write(`[story-build] 已恢复 ${r.counts.svg} 张可用的本地阅读图；其余保持 Mermaid 的原因见 \`view --mode status\`\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`[story-build] 本地阅读图恢复时出错（${e?.message ?? e}），story 保持 Mermaid；只补视图：\`story-build view --mode svg\`\n`);
+  }
 }
 
 function main() {
@@ -241,15 +342,19 @@ function main() {
   }
   const ctx = createContext(args);
   if (args.command === 'view') return cmdView(ctx);
-  const back = ensureMermaid(ctx.featureRoot);
-  if (back.problems.length) fail(`读 story 之前要先切回 Mermaid，切不回来：\n  ${back.problems.join('\n  ')}`);
-  if (back.changed) process.stderr.write('[story-build] story 里的阅读图已切回 Mermaid（正式命令只认 Mermaid 形态）\n');
-  if (args.command === 'skeleton') cmdSkeleton(ctx);
-  else if (args.command === 'chapter') cmdChapter(ctx);
-  else if (args.command === 'project') cmdProject(ctx);
-  else if (args.command === 'check') cmdCheck(ctx);
-  else if (args.command === 'number') cmdNumber(ctx);
-  else cmdBuild(ctx);
+  return withView(ctx, () => {
+    if (args.command === 'skeleton') cmdSkeleton(ctx);
+    else if (args.command === 'chapter') cmdChapter(ctx);
+    else if (args.command === 'project') cmdProject(ctx);
+    else if (args.command === 'check') cmdCheck(ctx);
+    else if (args.command === 'number') cmdNumber(ctx);
+    else if (args.command === 'archive') cmdArchive(ctx);
+    else {
+      cmdBuild(ctx);
+      const launcher = writeLauncher(ctx.featureRoot, ctx.contract.local_reading_entry);
+      if (launcher) process.stderr.write(`[story-build] ${launcher}\n`);
+    }
+  });
 }
 
 // 直接跑才执行命令；被 import 时只导出判定函数（正面校准要拿句边界判把一份文档
@@ -258,6 +363,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     main();
   } catch (e) {
+    // 判定没过：原因已经写到 stderr，按 1 结束（finally 已恢复视图）
+    if (e instanceof CommandFailure) process.exit(1);
     // 脚本自身的缺陷：原始异常全文带出，并说明这一步没跑完、归谁处理
     process.stderr.write(`[story-build] 脚本自身异常：${e?.stack ?? e}\n——这一步没有执行完，不是产物的问题，归扩展维护者处理\n`);
     process.exit(2);

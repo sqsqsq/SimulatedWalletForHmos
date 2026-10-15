@@ -257,6 +257,35 @@ def install_dev_source(template: Path) -> dict[str, Any]:
     return {"status": result.status, "source_version": result.source_version, "changed": len(result.completed)}
 
 
+def tree_identity(root: Path) -> dict[str, Any]:
+    """一棵 Extension 树的身份：按正式安装的源枚举规则逐文件取 sha256，再合成一个摘要。读不到的如实记。"""
+    try:
+        files = {rel: hashlib.sha256((root / rel).read_bytes()).hexdigest()
+                 for rel in publish_to_demo.enumerate_source(root)}
+    except Exception as exc:  # noqa: BLE001
+        return {"readable": False, "reason": str(exc)}
+    digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest()
+    return {"readable": True, "digest": digest, "files": files}
+
+
+def identity_drift(before: dict[str, Any] | None, after: dict[str, Any]) -> dict[str, Any]:
+    """两次身份的差：改了、多了、少了哪几份（带前后摘要）。基线缺失或读不出标「无法核实」，不当干净。"""
+    if not before or not before.get("readable") or not after.get("readable"):
+        return {"verified": False, "reason": (before or {}).get("reason") or after.get("reason") or "没有起跑基线"}
+    old, new = before["files"], after["files"]
+    changed = [{"path": k, "before": old[k][:12], "after": new[k][:12]} for k in sorted(old) if k in new and old[k] != new[k]]
+    return {"verified": True, "clean": before["digest"] == after["digest"], "changed": changed,
+            "added": sorted(set(new) - set(old)), "removed": sorted(set(old) - set(new))}
+
+
+def framework_identity(root: Path) -> dict[str, Any]:
+    """接入的 Framework 发布身份：取发布件清单本身，读不到如实记。"""
+    manifest = read_json(root / "framework" / "RELEASE-MANIFEST.json", None)
+    if not isinstance(manifest, dict):
+        return {"readable": False}
+    return {"readable": True, **{k: manifest.get(k) for k in ("version", "source_commit", "build_id") if k in manifest}}
+
+
 def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Path]:
     """建一份短路径的工作区模板：demo 消费工程减去运行态，再装上当前开发源。
 
@@ -288,6 +317,9 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
             + [f"{rel}/**" for rel in WORKSPACE_EXCLUDED_DIRS]
             + ["other Case inputs", "historical suite data"]),
         "installed": installed,
+        # 被测对象的身份：开发源、装进 template 的、发布的 Framework；结束时与它比较
+        "identity": {"dev_source": tree_identity(DEV_SOURCE), "template_extension": tree_identity(template / "doc" / "extensions"),
+                     "framework": framework_identity(template)},
         "case_seeded": {},
         "created_at": now(),
     })
@@ -455,6 +487,8 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
     baseline = snapshot_workspace_sources(workspace)
     case["workspace_baseline"] = str(case_root / "workspace-baseline.json")
     write_json(Path(case["workspace_baseline"]), baseline)
+    # 这个 Case 起跑时的机制身份：结束时核被测模型有没有改过它
+    write_json(case_root / "mechanism-baseline.json", tree_identity(workspace / "doc" / "extensions"))
     return workspace
 
 
@@ -2182,35 +2216,26 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
     ]
 
 
-def mechanism_contamination() -> dict[str, Any]:
-    """机制层有没有在本轮被改过 —— **哨兵，不是拦截器**。
+def mechanism_contamination(suite: dict[str, Any] | None = None) -> dict[str, Any]:
+    """被测对象在本轮有没有变 —— 与起跑基线比身份，**哨兵，不是拦截器**。
 
-    隔离已经是唯一形态，被测模型按设计够不着主仓。但「够不着」是设计意图，
-    这里核的是事实：开发源 `extensions/` 一旦有未提交改动，本轮读数就不再是
-    「那个机制」的读数——它可能是被测方自己改过之后的机制。
-
-    拦不住也不该拦（改动可能来自维护者自己）：它的职责是让这件事**永远不会
-    悄悄混进读数**。实测撞到过一次：非隔离那一轮，被测模型改了判据所在目录，
-    如果不是 `git status` 恰好露了出来，那一轮的结论会被当成干净的。
+    分三件报，互不推断：维护仓开发源与起跑时比；每个 Case 工作区里的机制与它起跑时比（被测模型改了机制）；
+    业务源码变化另有工作区快照管。主仓原本就有未提交改动不等于污染——只比本轮前后。
+    基线缺失或读不出标「无法核实」，不当干净。
     """
-    try:
-        proc = subprocess.run(
-            ["git", "status", "--porcelain", "--", "extensions"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(REPO_ROOT))
-        dirty = (proc.stdout or "").strip()
-    except Exception as exc:  # noqa: BLE001
-        return {"checked": False, "reason": str(exc)}
-    if not dirty:
-        return {"checked": True, "clean": True}
-    try:
-        diff = subprocess.run(
-            ["git", "diff", "--", "extensions"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(REPO_ROOT)).stdout or ""
-    except Exception:  # noqa: BLE001
-        diff = ""
-    return {"checked": True, "clean": False, "status": dirty, "diff": diff}
+    suite = suite or {}
+    boundary = read_json(Path(str(suite.get("bundle_root", ""))) / "workspace-boundary.json", {}) or {}
+    base = (boundary.get("identity") or {})
+    dev = identity_drift(base.get("dev_source"), tree_identity(DEV_SOURCE))
+    cases = {}
+    for case_id, record in (suite.get("case_states") or {}).items():
+        workspace = record.get("workspace")
+        before = read_json(Path(str(suite.get("bundle_root", ""))) / "cases" / str(case_id) / "mechanism-baseline.json", None)
+        cases[case_id] = identity_drift(before, tree_identity(Path(str(workspace)) / "doc" / "extensions")) \
+            if workspace else {"verified": False, "reason": "没有工作区"}
+    checked = dev.get("verified") and all(c.get("verified") for c in cases.values())
+    clean = bool(checked) and dev.get("clean") and all(c.get("clean") for c in cases.values())
+    return {"checked": bool(checked), "clean": bool(clean), "dev_source": dev, "case_mechanism": cases}
 
 
 def finalize_suite_status(suite: dict[str, Any]) -> str:
@@ -2227,7 +2252,7 @@ def finalize_suite_status(suite: dict[str, Any]) -> str:
         return "failed"
     if any(status not in TERMINAL_STATUS for status in statuses):
         return "failed"
-    contamination = mechanism_contamination()
+    contamination = mechanism_contamination(suite)
     suite["mechanism_contamination"] = contamination
     if contamination.get("checked") and not contamination.get("clean"):
         return "harness_contaminated"
@@ -2420,6 +2445,25 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
     return path, suite
 
 
+def host_capabilities(template: Path) -> dict[str, Any]:
+    """起跑前的宿主能力：适配声明与实际调用证据分开记。声明不是能力证明；实际证据要由起跑确认时的真实调用补上。
+
+    本地阅读的局部验收要渲染、看图与独立执行三样；任何一样没有实际证据，视觉维度按未覆盖交回。
+    """
+    adapter = template / "framework" / "agents" / "opencode" / "adapter.yaml"
+    declared: dict[str, Any] = {}
+    try:
+        for line in adapter.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition(":")
+            if key.strip() in ("image_input", "verifier_subagent") and value.strip():
+                declared[key.strip()] = value.strip()
+    except OSError as exc:
+        declared = {"unreadable": str(exc)}
+    return {"declared": declared, "verified": {"render": None, "image_input": None, "independent_execution": None},
+            "note": "verified 只认起跑确认时的实际调用证据；null 是未核，不是不具备也不是具备",
+            "visual_review_possible": declared.get("image_input") not in (None, "none")}
+
+
 def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
     """Prepare every isolated workspace before the first model worker starts."""
     checks: dict[str, Any] = {
@@ -2427,6 +2471,7 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
         "suite_id": suite["suite_id"],
         "cases": [],
         "forbidden_workspace_entries": [*sorted(MAINTENANCE_TOP_LEVEL), "doc/features (history)"],
+        "capabilities": host_capabilities(Path(str(suite.get("workspace_template", "")))),
         "checked_at": now(),
     }
     workspace_paths: set[str] = set()
@@ -2794,6 +2839,12 @@ def command_reply(suite_id: str, case_id: str, text: str,
                           "error": f"当前状态不是 awaiting_reply: {record.get('status')}"},
                          ensure_ascii=False, indent=2))
         return 1
+    if (record.get("promotions") or {}).get("initial") and not record.get("resumed_update"):
+        # 第一段已经回流成终稿：再在第一段里继续会让工作区与回流的那一份分叉
+        print(json.dumps({"ok": False, "case": case_id,
+                          "error": "第一段已回流，不再在第一段里继续；要进第二段用 resume-update"},
+                         ensure_ascii=False, indent=2))
+        return 1
     blockers: list[str] = []
     if blockers:
         print(json.dumps({"ok": False, "case": case_id,
@@ -2828,6 +2879,11 @@ def command_reply(suite_id: str, case_id: str, text: str,
     else:
         record["last_reply_status"] = "accepted"
         record["last_reply_text"] = text
+        if (payload or {}).get("superseded_checkpoint"):
+            # 第一段在答复后继续：之前固定的快照不是终稿，作废记录留证据，答完重新 checkpoint
+            stale = (record.get("checkpoints") or {}).pop("initial", None)
+            record.setdefault("superseded_checkpoints", []).append(
+                {**(stale or {}), "moved_to": payload["superseded_checkpoint"], "at": now()})
         record["last_replied_turn"] = (record.get("last_awaiting") or {}).get("turn")
         record["last_human_reply_at"] = now()
         record["automation_observation_state"] = "reply_sent"
@@ -2976,8 +3032,8 @@ def command_resume_update(suite_id: str, case_id: str, text: str,
                           answer: str = "", step_id: str = "") -> int:
     """第一段评完、回流完，把第二段的业务请求投进去（同一次对话）。
 
-    模型停在检查点时常留着一问（交付门问归档送审还是进入 plan）：`answer` 先答它，
-    按规划立场记为 planned（`step_id` 指名条目），答完那一轮再投 `text`。
+    模型停在检查点时常留着一问（交付门问归档送审还是进入 plan）。要它在第一段里把被授权的动作做完（如归档），
+    用 `reply` 回答、等它再停到第一检查点后重新固定快照；`answer` 只用于答完不再需要第一段继续做事的那一问。
     """
     path, suite = load_suite(suite_id)
     if case_id not in suite["case_states"]:

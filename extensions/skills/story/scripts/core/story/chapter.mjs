@@ -26,7 +26,7 @@ import {
   chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
   parseChapter, pendingChapters, placeholderProblems, storySections, zonesByLine,
 } from './document.mjs';
-import { activeKnowledgeEntries, fail, readRaw, readText } from './context.mjs';
+import { activeKnowledgeEntries, CommandFailure, fail, readRaw, readText } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
 import { redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
@@ -376,7 +376,7 @@ export function cmdChapter(ctx) {
       + `${path.basename(ctx.storyPath)} 与候选文件都没动：\n`);
     bad.forEach((b, i) => process.stderr.write(`  ${i + 1}. ${b}\n`));
     process.stderr.write('  章提交在写盘前核对，草稿里的改动经这条命令提交后才进 story.md。\n');
-    process.exit(1);
+    throw new CommandFailure('章内判据未通过');
   }
   fs.writeFileSync(ctx.storyPath, next, 'utf-8');
   // **写入到此成立。** 往下只是算接续（下一章是哪一章、草稿在哪），

@@ -36,7 +36,10 @@ semantic_checks:
       先按业务流程读设计章与 use-cases，记下走不通或绑定不上的地方；再看每个出现过的 `rule`：从激活清单里那份规约文件
       读一次条目原文，对着挂着它的每条 `must` 与所在实体判，并看设计章里是否真的因它多出了字段、方法、状态或校验——
       只在扩展章的项目知识、规约、设计模式三节声明、设计章里看不出痕迹的，是没落地。
-      details 写判出问题的那几条与依据（指到 plan.md、contracts.yaml 或 use-cases.yaml 的具体位置）；
+      **无论结论**都在 YAML 明细里出这一条，`details` 下四个键都是列表：`blocking_findings` 写判出问题的那几条与依据
+      （指到 plan.md、contracts.yaml 或 use-cases.yaml 的具体位置），`advisories` 写非阻断建议，
+      `examined_inputs` 照抄任务书本判据必审输入表里你读过的路径，`unreviewed` 写没读到或没核完的输入与原因；
+      必审没核完不能判 PASS 或 WARN，判 FAIL 要列阻断项，UNKNOWN 不算审完；
       **不逐行对账、不出裁决表、不为每条找引文**。
 
   knowledge_facts_reuse:

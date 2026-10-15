@@ -19,7 +19,8 @@
  *
  * - `mermaid`：把每块还原成 `.mmd` 的原文；合法的 Mermaid 块文字与源不同，也按源重铺并说明（不猜是谁改的）。
  *   正式登记、审查、update 比较与归档都先走这一步。
- * - `svg`：只把有阅读图、结构核过、来源快照与当前 `.mmd` 相同的那几块切过去；其余保持 Mermaid 并说明原因。
+ * - `svg`：只把有阅读图、结构核过、来源快照与当前 `.mmd` 相同、且局部阅读验收通过的那几块切过去；其余保持 Mermaid 并说明原因。
+ * - `toggle`：任何一块是 SVG 就整篇切回 Mermaid，全是 Mermaid 就切到可用的阅读图（一键入口用它）。
  * - `prepare`：给还没管理的 Mermaid 围栏加标记、首次写 `.mmd`（同 ID 的源已在且不同就停）；
  *   带 `--id` 时从已有 `.mmd` 重建这一块，从不拿正文覆盖源。
  *   不编造 SVG——阅读图由作者按六类指导重述，再过结构、渲染与对照三道核。
@@ -33,8 +34,9 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { fenceRanges } from './document.mjs';
 import { runPython } from '../flow/client.mjs';
+import { readingRequest, readingState, reviewTask } from './figure-reading.mjs';
 
-export const VIEW_MODES = ['prepare', 'mermaid', 'svg'];
+export const VIEW_MODES = ['prepare', 'mermaid', 'svg', 'toggle', 'status', 'review-request', 'review-check'];
 const MARK = /^<!-- story-figure:([A-Za-z0-9][\w-]*):(begin|end) -->$/;
 const FIGURE_CHECK = path.join(path.dirname(fileURLToPath(import.meta.url)), 'figure-check.py');
 const RECOVER = '改图义改 AR/story-src/figures/<ID>.mmd，它是唯一真源，正文管理块按它重铺；'
@@ -147,6 +149,10 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
     out.problems = out.problems.map(p => `AR/story.md：${p}——${RECOVER}`);
     return out;
   }
+  if (mode === 'toggle') {
+    if (!blocks.length) return { ...out, notes: ['这份 story 还没有管理的图：先跑 `story-build view --mode prepare` 给图建源'] };
+    return switchView(featureRoot, blocks.some(b => formOf(b) === 'svg') ? 'mermaid' : 'svg');
+  }
 
   const next = [...lines];
   const replace = [];
@@ -193,11 +199,11 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
         continue;
       }
       // 已经显示着的阅读图也过同一道前置：快照相同只说明来源版本相同，图本身可能已被改坏
-      const why = viewGap(featureRoot, b.id, src);
+      const why = viewGap(featureRoot, b.id, src)?.reason;
       if (form === 'svg') {
         if (why) {
           replace.push({ from: b.from + 1, to: b.to - 1, rows: mermaidBody(src) });
-          out.notes.push(`${b.id}：${why}，已切回 Mermaid——修好阅读图并过三道核后再切`);
+          out.notes.push(`${b.id}：${why}，已切回 Mermaid——修好阅读图并过局部阅读验收后再切`);
         }
         continue;
       }
@@ -226,19 +232,89 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
 }
 
 /**
- * 这块能不能切到阅读图：有 SVG、结构核过、来源快照就是当前源。返回缺什么，没有缺口返回 null。
- * 语义等值（多画分支、漏去向）不在这里判——那是对照审的事，快照相同只说明来源版本相同。
+ * 这块能不能切到阅读图：有 SVG、结构核过、来源快照就是当前源、局部阅读验收通过。没有缺口返回 null。
+ * 语义等值与可读不在这里判——那是独立审查对着真实渲染图的事，这里只认它的报告绑定当前输入且结论成立。
  */
 function viewGap(featureRoot, id, src) {
+  const svgGap = svgProblem(featureRoot, id, src);
+  if (svgGap) return svgGap;
+  const r = readingState(featureRoot, id);
+  return r.state === 'ready' ? null : { state: r.state, reason: r.reason };
+}
+
+/** SVG 本身立不立得住：在不在、来源快照是不是当前源、结构检查过没过。 */
+function svgProblem(featureRoot, id, src) {
   const { svg } = paths(featureRoot, id);
   const text = readOr(svg);
-  if (text === null) return `还没有阅读图 AR/figures/${id}.svg`;
-  if (snapshotOf(text) !== src.trim()) return `阅读图 ${id}.svg 的来源快照（<metadata> 里的 Mermaid 原文）与当前源不同，要按当前源重新重述`;
+  if (text === null) return { state: 'no-svg', reason: `还没有阅读图 AR/figures/${id}.svg：按 reference/svg.md 依据当前 .mmd 重述` };
+  if (snapshotOf(text) !== src.trim()) return { state: 'svg-stale', reason: `阅读图 ${id}.svg 的来源快照（<metadata> 里的 Mermaid 原文）与当前源不同，要按当前源重新重述` };
   const r = runPython(FIGURE_CHECK, [svg, '--id', id]);
-  if (r.error) return `结构检查跑不起来（${r.error}）`;
-  if (r.status !== 0) return `结构检查没过：${r.output}`;
+  if (r.error) return { state: 'svg-invalid', reason: `结构检查跑不起来（${r.error}）` };
+  if (r.status !== 0) return { state: 'svg-invalid', reason: `结构检查没过：${r.output}` };
   return null;
 }
+
+/**
+ * 本地阅读的工作集合 —— 每次从 Story 实际内容派生，不另存状态：管理块逐张给状态与下一步，
+ * 还没管理的 Mermaid 围栏单列（有图却零管理块是「未准备」，不是「不适用」）。没有图才不适用。
+ */
+export function readingWork(featureRoot) {
+  const raw = readOr(path.join(featureRoot, 'AR', 'story.md'));
+  if (raw === null) return { applicable: false, complete: false, items: [], unmanaged: [], problems: ['AR/story.md 不在'] };
+  const lines = raw.split(/\r?\n/);
+  const { blocks, problems } = figureBlocks(lines);
+  const managed = new Set(blocks.flatMap(b => Array.from({ length: b.to - b.from + 1 }, (_, k) => b.from + k)));
+  const unmanaged = fenceRanges(lines).filter(f => f.lang === 'mermaid' && f.closed && !managed.has(f.from)).map(f => f.from + 1);
+  const items = blocks.map((b) => {
+    const src = lf(readOr(paths(featureRoot, b.id).src));
+    const gap = src === null ? { state: 'no-source', reason: `源 ${b.id}.mmd 不在` } : viewGap(featureRoot, b.id, src);
+    return { id: b.id, line: b.from + 1, state: gap?.state ?? 'ready', reason: gap?.reason ?? '' };
+  });
+  return { applicable: items.length > 0 || unmanaged.length > 0,
+    complete: !problems.length && !unmanaged.length && items.every(i => i.state === 'ready'), items, unmanaged, problems };
+}
+
+/** 生成某张图的局部验收请求：块与源在、SVG 本身立得住才发；返回请求与交给独立审查者的任务。 */
+export function reviewRequest(featureRoot, id, render) {
+  const src = lf(readOr(paths(featureRoot, id).src));
+  if (src === null) return { problems: [`没有图 ${id} 的源 AR/story-src/figures/${id}.mmd`] };
+  const gap = svgProblem(featureRoot, id, src);
+  if (gap) return { problems: [gap.reason] };
+  const r = readingRequest(featureRoot, id, render);
+  return r.problems.length ? r : { ...r, task: reviewTask(featureRoot, r.request) };
+}
+
+/**
+ * 一键切换入口：AR/ 下按合同登记的文件名生成，只覆盖带生成标记的同名文件；用户自己的同名文件保留并报冲突。
+ * 入口从自身位置向上找工程配置，按 features_dir 核需求位置、extension_dir 找核心，不依赖 cwd 与绝对路径。
+ */
+export function writeLauncher(featureRoot, name) {
+  if (!name) return null;
+  const file = path.join(featureRoot, 'AR', name);
+  const body = LAUNCHER.join('\r\n') + '\r\n';
+  const have = readOr(file);
+  if (have === body) return null;
+  if (have !== null && !have.includes(LAUNCHER_MARK)) return `AR/${name} 已存在且不是本机制生成的，保留不动——一键切换入口没有写`;
+  fs.writeFileSync(file, body, 'utf-8');
+  return null;
+}
+
+const LAUNCHER_MARK = 'story-reading-launcher';
+//: 入口脚本只用 node 内联：不拼 shell、不要求改执行策略；参数逐个传，路径带空格与特殊字符照样成立
+const LAUNCHER = [
+  '@echo off',
+  'chcp 65001 >nul',
+  `rem ${LAUNCHER_MARK}：由 story-build 生成，双击在 Mermaid 与本地阅读图之间切换`,
+  'node -e "const p=require(\'path\'),fs=require(\'fs\'),cp=require(\'child_process\');'
+    + 'const ar=p.resolve(process.argv[1]);let d=ar;'
+    + 'while(!fs.existsSync(p.join(d,\'framework.config.json\'))){const u=p.dirname(d);if(u===d){console.error(\'找不到 framework.config.json：入口要放在接入了 framework 的工程里\');process.exit(2)}d=u}'
+    + 'let c;try{c=JSON.parse(fs.readFileSync(p.join(d,\'framework.config.json\'),\'utf8\')).paths??{}}catch(e){console.error(\'framework.config.json 读不出：\'+e.message);process.exit(2)}'
+    + 'const f=p.dirname(ar);if(p.resolve(d,c.features_dir??\'doc/features\')!==p.dirname(f)){console.error(\'这个需求不在工程配置的需求目录下：\'+f);process.exit(2)}'
+    + 'const s=p.join(d,c.extension_dir??\'doc/extensions\',\'skills\',\'story\',\'scripts\',\'core\',\'story-build.mjs\');'
+    + 'const r=cp.spawnSync(process.execPath,[s,\'view\',\'--mode\',\'toggle\',\'--feature\',p.basename(f),\'--project-root\',d],{stdio:\'inherit\'});'
+    + 'process.exit(r.status??2)" "%~dp0."',
+  'pause',
+];
 
 /** 正式入口用：先切回 Mermaid，坏了按原话报。 */
 export function ensureMermaid(featureRoot) {

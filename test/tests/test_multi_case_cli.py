@@ -1373,3 +1373,56 @@ class MechanismContaminationIsAlwaysVisible(unittest.TestCase):
         with mock.patch.object(run_multi_case, "mechanism_contamination",
                                return_value={"checked": False, "reason": "git 不可用"}):
             self.assertEqual("finished", run_multi_case.finalize_suite_status(suite))
+
+
+class TheTestedObjectIsComparedWithItsOwnBaseline(unittest.TestCase):
+    """污染按本轮前后身份比：开发源与每个 Case 的机制各自比起跑基线；基线缺失是「无法核实」，不是干净。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def tree(self, name: str, files: dict[str, str]) -> Path:
+        base = self.root / name
+        for rel, text in files.items():
+            (base / rel).parent.mkdir(parents=True, exist_ok=True)
+            (base / rel).write_text(text, encoding="utf-8")
+        return base
+
+    def test_drift_names_changed_added_and_removed_files(self) -> None:
+        ext = self.tree("ext", {"manifest.yaml": "version: 1\n", "hooks/a.mjs": "a\n", "hooks/b.mjs": "b\n"})
+        with mock.patch.object(run_multi_case.publish_to_demo, "enumerate_source",
+                               side_effect=lambda r: sorted(p.relative_to(r).as_posix() for p in Path(r).rglob("*") if p.is_file())):
+            before = run_multi_case.tree_identity(ext)
+            (ext / "hooks/a.mjs").write_text("a2\n", encoding="utf-8")
+            (ext / "hooks/b.mjs").unlink()
+            (ext / "hooks/c.mjs").write_text("c\n", encoding="utf-8")
+            drift = run_multi_case.identity_drift(before, run_multi_case.tree_identity(ext))
+        self.assertTrue(drift["verified"])
+        self.assertFalse(drift["clean"])
+        self.assertEqual(["hooks/a.mjs"], [c["path"] for c in drift["changed"]])
+        self.assertEqual(["hooks/c.mjs"], drift["added"])
+        self.assertEqual(["hooks/b.mjs"], drift["removed"])
+
+    def test_a_missing_baseline_is_unverified_not_clean(self) -> None:
+        drift = run_multi_case.identity_drift(None, {"readable": True, "digest": "x", "files": {}})
+        self.assertFalse(drift["verified"])
+        self.assertNotIn("clean", drift)
+
+    def test_a_case_that_changed_its_own_mechanism_contaminates_the_suite(self) -> None:
+        bundle = self.root / "suite"
+        workspace = self.tree("ws", {"doc/extensions/manifest.yaml": "version: 1\n"})
+        listing = lambda r: sorted(p.relative_to(r).as_posix() for p in Path(r).rglob("*") if p.is_file())  # noqa: E731
+        with mock.patch.object(run_multi_case.publish_to_demo, "enumerate_source", side_effect=listing), \
+                mock.patch.object(run_multi_case, "DEV_SOURCE", workspace / "doc" / "extensions"):
+            ident = run_multi_case.tree_identity(workspace / "doc" / "extensions")
+            run_multi_case.write_json(bundle / "workspace-boundary.json", {"identity": {"dev_source": ident}})
+            run_multi_case.write_json(bundle / "cases" / "c" / "mechanism-baseline.json", ident)
+            suite = {"bundle_root": str(bundle), "case_states": {"c": {"workspace": str(workspace)}}}
+            self.assertTrue(run_multi_case.mechanism_contamination(suite)["clean"])
+            (workspace / "doc/extensions/manifest.yaml").write_text("version: 2\n", encoding="utf-8")
+            got = run_multi_case.mechanism_contamination(suite)
+        self.assertTrue(got["checked"])
+        self.assertFalse(got["clean"])
+        self.assertEqual(["manifest.yaml"], [c["path"] for c in got["case_mechanism"]["c"]["changed"]])
