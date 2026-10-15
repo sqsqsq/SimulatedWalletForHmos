@@ -659,12 +659,31 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
     return {
         "target_phase": end_phase,
         "target_closed": target_reached(feature, end_phase),
+        # 本地阅读按产品自己的派生结果记，与业务闭环分开；读不出如实记 error，不当完成
+        "reading": reading_facts(feature_root),
         "target_missing": [] if ok else list(missing),
         "artifacts_ready": artifacts_ready(feature),
         "next_unclosed_phase": next_unclosed_phase(feature, end_phase),
         "beyond_target_evidence": beyond,
         "applicable_phases": list(applicable_phases(start_phase, end_phase)),
     }
+
+
+def reading_facts(feature_root: Path) -> dict:
+    """产品 `story-build view --mode status` 给的本地阅读结果；没有 story 时不适用。"""
+    if not (feature_root / "AR" / "story.md").is_file():
+        return {"applicable": False}
+    build = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+    try:
+        proc = subprocess.run(["node", str(build), "view", "--mode", "status", "--feature", feature_root.name,
+                               "--project-root", str(REPO_ROOT)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=120)
+        work = json.loads(proc.stdout)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"本地阅读状态读不出（{exc}）"}
+    return {"applicable": work.get("applicable"), "complete": work.get("complete"),
+            "pending": [i["id"] for i in work.get("items", []) if i.get("state") != "ready"],
+            "unmanaged": work.get("unmanaged", [])}
 
 
 def publish_closure(out_dir: Path, state: dict, feature: str,
@@ -2507,13 +2526,7 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
     if state.get("awaiting_kind") == "update_checkpoint":
         print(json.dumps({"ok": False, "error": "正停在第二检查点上，不收回话：评完用 conclude"}, ensure_ascii=False))
         return 1
-    superseded = None
-    if state.get("awaiting_kind") == "initial_checkpoint" and (out_dir / "checkpoints" / "initial").is_dir():
-        # 已固定的第一段快照不再是第一段的终稿：留着作证据，答完之后重新固定
-        superseded = out_dir / "checkpoints" / f"initial.superseded-{time.strftime('%Y%m%d-%H%M%S')}"
-        (out_dir / "checkpoints" / "initial").rename(superseded)
-    # 只要 worker 仍处于 awaiting_reply 且 lease 未过期，就允许入队。
-    # Windows 的进程查询可能被权限策略拒绝，不能把诊断失败变成“无人接收”。
+    # 先做完所有校验与投放，再在一处替换检查点并入队：中途失败时原快照仍在、回话没入队，状态一致
     lease_expires = float(state.get("lease_expires_epoch") or 0)
     if lease_expires and lease_expires < time.time() and not _pid_alive(state.get("pid")):
         print(json.dumps({"ok": False,
@@ -2522,9 +2535,27 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None) -> int:
         return 1
     delivered = deliver_supplements(case_id, feature, list(deliver or []))
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / REPLY_FILE).write_text(
-        json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
-                   ensure_ascii=False), encoding="utf-8")
+    initial = out_dir / "checkpoints" / "initial"
+    superseded = None
+    if state.get("awaiting_kind") == "initial_checkpoint" and initial.is_dir():
+        # 已固定的第一段快照不再是第一段的终稿：留着作证据，答完之后重新固定
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        superseded = out_dir / "checkpoints" / f"initial.superseded-{stamp}"
+        n = 1
+        while superseded.exists():
+            n += 1
+            superseded = out_dir / "checkpoints" / f"initial.superseded-{stamp}-{n}"
+        initial.rename(superseded)
+    try:
+        (out_dir / REPLY_FILE).write_text(
+            json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
+                       ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        if superseded is not None:
+            superseded.rename(initial)
+        print(json.dumps({"ok": False, "error": f"回话没能入队（{exc}），第一段快照原样保留", "delivered": delivered},
+                         ensure_ascii=False))
+        return 1
     print(json.dumps({
         "ok": True, "queued": text, "delivered": delivered,
         **({"superseded_checkpoint": str(superseded)} if superseded else {}),

@@ -56,12 +56,10 @@ import {
   ensureMermaid, readingWork, reviewRequest, switchView, VIEW_MODES, writeLauncher,
 } from './story/figure-view.mjs';
 import { readingState } from './story/figure-reading.mjs';
-import { runPython } from './flow/client.mjs';
+import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
 
 const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'view', 'archive'];
-//: 外层持有视图的标记：子进程继承它就不各自恢复
-const VIEW_OWNER = 'STORY_VIEW_OWNER';
 
 function parseArgs(argv) {
   const args = { command: argv[2] && !argv[2].startsWith('--') ? argv[2] : '' };
@@ -249,7 +247,7 @@ function cmdView(ctx) {
       process.stdout.write(`[story-build view] 图 ${id} 的局部阅读验收成立：当前 SVG 可作本地阅读图\n`);
       return;
     }
-    const r = reviewRequest(ctx.featureRoot, id, ctx.args.render ?? '');
+    const r = reviewRequest(ctx.projectRoot, ctx.featureRoot, id, ctx.args.render ?? '');
     if (r.problems.length) fail(`图 ${id} 的验收请求没有生成：\n  ${r.problems.join('\n  ')}`);
     process.stdout.write(`[story-build view] 验收请求 ${r.request.request_id}${r.written ? '已写入' : '没有变化'}\n${r.task.join('\n')}\n`);
     return;
@@ -305,15 +303,18 @@ function cmdArchive(ctx) {
  * 附在业务结果之后报出来，不遮住原来的错误。子进程继承持有标记，不各自恢复。
  */
 function withView(ctx, body) {
-  const owner = !process.env[VIEW_OWNER];
-  if (owner) process.env[VIEW_OWNER] = '1';
+  const key = viewOwnerKey(ctx.featureRoot);
+  const before = process.env[VIEW_OWNER];
+  const owner = before !== key;
+  if (owner) process.env[VIEW_OWNER] = key;
   try {
     const back = ensureMermaid(ctx.featureRoot);
     if (back.problems.length) fail(`读 story 之前要先切回 Mermaid，切不回来：\n  ${back.problems.join('\n  ')}`);
     return body();
   } finally {
     if (owner) {
-      delete process.env[VIEW_OWNER];
+      if (before === undefined) delete process.env[VIEW_OWNER];
+      else process.env[VIEW_OWNER] = before;
       restoreView(ctx);
     }
   }
@@ -324,8 +325,13 @@ function restoreView(ctx) {
     const r = switchView(ctx.featureRoot, 'svg');
     if (r.problems.length) {
       process.stderr.write(`[story-build] 本地阅读图没有恢复，story 保持 Mermaid（业务结果不受影响）：\n  ${r.problems.join('\n  ')}\n`);
-    } else if (r.counts.svg) {
-      process.stderr.write(`[story-build] 已恢复 ${r.counts.svg} 张可用的本地阅读图；其余保持 Mermaid 的原因见 \`view --mode status\`\n`);
+      return;
+    }
+    const kept = r.notes.filter(n => /保持 Mermaid|切回 Mermaid/.test(n));
+    if (r.counts.svg) process.stderr.write(`[story-build] 已恢复 ${r.counts.svg} 张可用的本地阅读图\n`);
+    if (kept.length) {
+      process.stderr.write(`[story-build] 本地阅读还没完成（业务结果不受影响），${kept.length} 张图保持 Mermaid：\n  ${kept.join('\n  ')}\n`
+        + '  只修图：按 reference/svg.md 重述或重新验收后跑 `story-build view --mode svg`；全部待办见 `view --mode status`\n');
     }
   } catch (e) {
     process.stderr.write(`[story-build] 本地阅读图恢复时出错（${e?.message ?? e}），story 保持 Mermaid；只补视图：\`story-build view --mode svg\`\n`);

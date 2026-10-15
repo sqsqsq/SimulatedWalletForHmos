@@ -580,14 +580,41 @@ class TheInitialQuestionIsAnsweredInsideTheInitialSegment(unittest.TestCase):
         self.out = Path(self._tmp.name) / "run"
         self.out.mkdir()
 
-    def reply(self, kind: str) -> dict:
-        state = {"status": "awaiting_reply", "awaiting_kind": kind, "lease_expires_epoch": 0, "pid": os.getpid()}
+    def reply(self, kind: str, **state_extra) -> dict:
+        state = {"status": "awaiting_reply", "awaiting_kind": kind, "lease_expires_epoch": 0, "pid": os.getpid(),
+                 **state_extra}
         with unittest.mock.patch.object(rc, "_load_case", return_value=(None, self.out, "AR1")), \
                 unittest.mock.patch.object(rc, "reconcile_worker_state", return_value=state), \
                 unittest.mock.patch.object(rc, "deliver_supplements", return_value=[]), \
                 unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as said:
             code = rc.cmd_reply("case", "1 归档送审")
         return {"code": code, **json.loads(said.getvalue())}
+
+    def test_a_reply_that_cannot_be_queued_keeps_the_snapshot(self) -> None:
+        """回话写不进队列：第一段快照原样留在原位，状态与「没答过」一致。"""
+        (self.out / "checkpoints" / "initial").mkdir(parents=True)
+        (self.out / rc.REPLY_FILE).mkdir()  # 回话文件位置被目录占着，写入必然失败
+        got = self.reply("initial_checkpoint")
+        self.assertEqual(1, got["code"], got)
+        self.assertTrue((self.out / "checkpoints" / "initial").is_dir(), "写失败后第一段快照没回到原位")
+        self.assertFalse(list((self.out / "checkpoints").glob("initial.superseded-*")), "失败留下了改名的快照")
+
+    def test_two_replies_in_one_second_keep_both_snapshots(self) -> None:
+        for _ in range(2):
+            (self.out / "checkpoints" / "initial").mkdir(parents=True)
+            with unittest.mock.patch.object(rc.time, "strftime", return_value="20261015-120000"):
+                self.assertEqual(0, self.reply("initial_checkpoint")["code"])
+        kept = sorted(p.name for p in (self.out / "checkpoints").glob("initial.superseded-*"))
+        self.assertEqual(["initial.superseded-20261015-120000", "initial.superseded-20261015-120000-2"], kept)
+
+    def test_an_expired_lease_is_refused_before_anything_moves(self) -> None:
+        (self.out / "checkpoints" / "initial").mkdir(parents=True)
+        with unittest.mock.patch.object(rc, "_pid_alive", return_value=False):
+            got = self.reply("initial_checkpoint", lease_expires_epoch=1)
+        self.assertEqual(1, got["code"])
+        self.assertIn("lease", got["error"])
+        self.assertTrue((self.out / "checkpoints" / "initial").is_dir(), "拒收前就把快照挪走了")
+        self.assertFalse((self.out / rc.REPLY_FILE).exists())
 
     def test_a_reply_at_the_first_checkpoint_continues_the_first_segment(self) -> None:
         (self.out / "checkpoints" / "initial").mkdir(parents=True)

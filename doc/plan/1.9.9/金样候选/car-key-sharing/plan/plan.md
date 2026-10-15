@@ -252,7 +252,7 @@ flowchart LR
 | 设置页交互编排 | 编排 SDK `framework`（`PageInteractionBuilderV3`、`DefaultPageInteractionContext`） | — | — |
 | 分区卡片等组件 | `CommUI` | — | — |
 | 分享功能开关 | 先例 `HomeConstants.SHOW_LOCAL_CARD_SECTION` | — | — |
-| 发起草稿存储 | — | 工程里没有本地草稿能力，`ShareDraftStore` 新增 | 工程里没有受保护的持久化封装，仓内也没有 Asset 或密钥存储的用法。候选是系统的关键资产存储 Asset Store Kit（`@kit.AssetStoreKit`，首批接口 API 11 起，要求 SystemCapability.Security.Asset，设备不支持时返回 24000017）：`granteeId` 与 `idempotencyKey` 作为关键资产按账号与车辆存，可访问性取设备首次解锁后、不设卸载保留，清除时同步删除。本仓 spec 的平台基线是 API 12，接口版本够用；目标设备是否具备该系统能力、模块是否已声明依赖都没有取到依据。**定案前阻断**：不落盘 `granteeId`，F4 跨应用关闭的续办与上次结果未知的确认不交付（AC-13 中跨重启部分、AC-30），由端侧负责人按目标设备与仓内安全规范确认后解除；不改用普通键值存储顶替，也不删 `granteeId` |
+| 发起草稿存储 | — | 工程里没有本地草稿能力，`ShareDraftStore` 新增 | 工程里没有受保护的持久化封装，仓内也没有 Asset 或密钥存储的用法。候选是系统的关键资产存储 Asset Store Kit（`@kit.AssetStoreKit`，首批接口 API 11 起，要求 SystemCapability.Security.Asset，设备不支持时返回 24000017）：`granteeId` 与 `idempotencyKey` 作为关键资产按账号与车辆存，可访问性取设备首次解锁后、不设卸载保留，清除时同步删除。本仓 spec 的平台基线是 API 12，接口版本够用；目标设备是否具备该系统能力、模块是否已声明依赖都没有取到依据。**定案前阻断**：不落盘 `granteeId`，F4 跨应用关闭的续办与上次结果未知的确认不交付（AC-6 中关掉应用再打开的部分，AC-30、AC-32 中经过应用关闭的部分），由端侧负责人按目标设备与仓内安全规范确认后解除；不改用普通键值存储顶替，也不删 `granteeId` |
 | 英文文案 | — | 工程只有 base 资源目录，按 RES-02 新建 `en_US` | 与「中英文齐备」的现状不符，按新建承接 |
 
 ### 9.2 规约

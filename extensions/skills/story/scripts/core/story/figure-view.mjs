@@ -275,13 +275,13 @@ export function readingWork(featureRoot) {
 }
 
 /** 生成某张图的局部验收请求：块与源在、SVG 本身立得住才发；返回请求与交给独立审查者的任务。 */
-export function reviewRequest(featureRoot, id, render) {
+export function reviewRequest(projectRoot, featureRoot, id, render) {
   const src = lf(readOr(paths(featureRoot, id).src));
   if (src === null) return { problems: [`没有图 ${id} 的源 AR/story-src/figures/${id}.mmd`] };
   const gap = svgProblem(featureRoot, id, src);
   if (gap) return { problems: [gap.reason] };
   const r = readingRequest(featureRoot, id, render);
-  return r.problems.length ? r : { ...r, task: reviewTask(featureRoot, r.request) };
+  return r.problems.length ? r : { ...r, task: reviewTask(projectRoot, featureRoot, r.request) };
 }
 
 /**

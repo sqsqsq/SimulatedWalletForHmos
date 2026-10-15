@@ -131,6 +131,11 @@ def required_inputs(root: Path, feature: str, purpose: str = "story", fill: bool
     import json
     import subprocess
     root = Path(root)
+    materials = root / "doc" / "features" / feature / "AR" / "story-src" / "materials.json"
+    if fill and not materials.exists():
+        # 完整工作区里 round 总会生成这份清单；缺了它必审集合本身就是缺口
+        materials.parent.mkdir(parents=True, exist_ok=True)
+        materials.write_text('{"materials": [], "origins": []}\n', encoding="utf-8")
     driver = root / "required-inputs.mjs"
     driver.write_text(_REQUIRED_INPUTS, encoding="utf-8")
     mod = DEV_EXT / "hooks" / "shared" / "review-inputs.mjs"

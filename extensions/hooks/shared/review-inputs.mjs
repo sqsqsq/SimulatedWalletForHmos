@@ -27,6 +27,10 @@ const REVIEW_STATUSES = ['PASS', 'WARN', 'FAIL', 'UNKNOWN', 'SKIP'];
 
 const sha12 = bytes => crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 12);
 
+/** 登记里的相对路径是否落在需求目录内：字符串、相对、规范化后不出界。 */
+const ownRel = rel => typeof rel === 'string' && rel.trim() && !path.isAbsolute(rel) && !/^[\\/]/.test(rel)
+  && !rel.split(/[\\/]/).includes('..');
+
 /** story-flow 里与范围有关的稳定部分：拆分与各关卡的选择、原话与依据；时间与登记标记不进来。 */
 function scopeProjection(flow) {
   const gates = (flow?.rounds ?? []).flatMap(r => (Array.isArray(r?.gates) ? r.gates : []))
@@ -58,6 +62,7 @@ function updateInputs(root, flow, add, gaps) {
   const expected = new Set(Object.keys(files));
   if (Object.keys(record.phases_before ?? {}).length) ['acceptance.yaml', 'AR/story-src/decisions.json'].forEach(x => expected.add(x));
   for (const rel of [...expected].sort()) {
+    if (!ownRel(rel)) { gaps.push(`${base}/record.json 记的文件「${rel}」不是需求目录内的相对路径`); continue; }
     const abs = path.join(beforeAbs, ...rel.split('/'));
     add(abs, `update 前的 ${rel}`);
     let bytes = null;
@@ -122,8 +127,14 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
     if (manifest && !Array.isArray(origins)) gaps.push('AR/story-src/materials.json 读不出 `origins`——原材料集合未取得，重跑 `story_flow.py round`');
     const meetings = [];
     for (const o of Array.isArray(origins) ? origins : []) {
-      if (!o || typeof o.path !== 'string' || !Array.isArray(o.readable_paths)) { gaps.push(`AR/story-src/materials.json 有一条 origin 形状不对：${JSON.stringify(o)}`); continue; }
-      for (const r of o.readable_paths) add(at(r), `原材料阅读稿（来源 ${o.path}）`);
+      if (!o || !ownRel(o.path) || !Array.isArray(o.readable_paths) || !o.readable_paths.every(ownRel)) {
+        gaps.push(`AR/story-src/materials.json 有一条 origin 形状不对或路径出了需求目录：${JSON.stringify(o)}`);
+        continue;
+      }
+      // 只取图的原件：正文没有采用，原件本身不作语义阅读稿（取的图由图片登记逐张审）；原件在不在照核
+      const picturesOnly = (o.image_paths ?? []).length > 0;
+      if (picturesOnly && !fs.existsSync(at(o.path))) gaps.push(`只取图的原件 ${o.path} 不在盘上：取图的来源无从核对`);
+      for (const r of o.readable_paths) if (!(picturesOnly && r === o.path)) add(at(r), `原材料阅读稿（来源 ${o.path}）`);
       if (o.kind === 'meeting') meetings.push(path.posix.dirname(o.path));
     }
     for (const dir of meetings) add(at(`${dir}/corrections.json`), '会议纠偏留痕');
@@ -135,6 +146,7 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
       const { images, gap } = imagesIn(manifest);
       if (gap) gaps.push(gap);
       for (const img of images) {
+        if (!img.paths.every(ownRel)) { gaps.push(`AR/story-src/materials.json 有图片路径出了需求目录：${img.paths.join('、')}`); continue; }
         const main = relDisplay(projectRoot, at(img.paths[0]));
         add(at(img.paths[0]), `原材料图：${String(img.caption ?? '').trim() || '（没写说明）'}`);
         for (const other of img.paths.slice(1)) alias.set(relDisplay(projectRoot, at(other)), main);
@@ -203,6 +215,13 @@ export function detailProblems(details, status, basis, checkIds = []) {
     else if (!reason) out.push(`unreviewed 里的「${key}」没写原因`);
     else if (seen.has(k)) out.push(`「${k}」同时写在 examined_inputs 与 unreviewed`);
     skipped.add(k);
+  }
+  const openChecks = [...skipped].filter(k => !table.has(k) && checkIds.includes(k));
+  if ((status === 'PASS' || status === 'WARN') && openChecks.length) {
+    out.push(`判了 ${status}，判项却没核完：${openChecks.join('、')}——判项没核完不能判 PASS 或 WARN`);
+  }
+  if ((status === 'PASS' || status === 'WARN') && basis.gaps.length) {
+    out.push(`判了 ${status}，必审输入还有缺口没有清零：${basis.gaps.join('；')}——缺口在的时候判 FAIL 并写成阻断原因`);
   }
   const silent = basis.inputs.filter(x => x.required && !seen.has(x.path) && !skipped.has(x.path)).map(x => x.path);
   if (silent.length) out.push(`必审输入既没出现在 examined_inputs 也没列进 unreviewed：${silent.join('、')}`);

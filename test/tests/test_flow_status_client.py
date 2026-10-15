@@ -115,8 +115,12 @@ class BadAnswersAreNamed(ClientCase):
     """
 
     def stub(self, body: str) -> Path:
-        stub_root = Path(self._tmp.name) / "stub" / "core"
+        # 替身按扩展的实际分层摆：客户端还要从扩展根取需求目录的解析（hooks/shared/paths.mjs）
+        ext = Path(self._tmp.name) / "stub-ext"
+        stub_root = ext / "skills" / "story" / "scripts" / "core"
         (stub_root / "flow").mkdir(parents=True, exist_ok=True)
+        (ext / "hooks" / "shared").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(DEV_EXT / "hooks" / "shared" / "paths.mjs", ext / "hooks" / "shared" / "paths.mjs")
         shutil.copy2(CLIENT, stub_root / "flow" / "client.mjs")
         (stub_root / "story_flow.py").write_text(body, encoding="utf-8")
         return stub_root / "flow" / "client.mjs"

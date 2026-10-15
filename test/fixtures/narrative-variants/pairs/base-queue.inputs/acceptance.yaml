@@ -1,0 +1,11 @@
+# 资格门中性基底：逐条承接 RR/prd.md「验收意图」，不另加条件
+criteria:
+  - id: AC-1
+    upstream: QUEUE-001
+    criterion: 等待中的号可订阅，被叫到时按所选方式收到提醒。
+  - id: AC-2
+    upstream: QUEUE-002
+    criterion: 夜间免打扰生效时不推送，应用内仍可查到叫号记录。
+  - id: AC-3
+    upstream: QUEUE-003
+    criterion: 已办理与已过号无订阅入口；取消或下发失败后本地不留订阅记录。

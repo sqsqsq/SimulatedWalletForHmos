@@ -172,7 +172,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
             **({"update_baseline": baseline} if baseline else {})}
 
 
-#: 外层持有视图的标记：story_flow 与 story-build 共用，子进程继承它就不各自恢复
+#: 外层持有视图的标记：值是需求目录（小写绝对路径），story_flow 与 story-build 共用；带着同一需求的值进来就是子调用，不各自恢复
 VIEW_OWNER = "STORY_VIEW_OWNER"
 
 
@@ -183,15 +183,20 @@ def reading_view(feature_root: Path, project_root: Path, outcome: dict):
     被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不各自恢复。恢复失败只补视图，
     写进 `outcome["view"]`，不遮住原来的结果或错误。
     """
-    owner = not os.environ.get(VIEW_OWNER)
+    key = os.path.realpath(feature_root).lower()
+    before = os.environ.get(VIEW_OWNER)
+    owner = before != key
     if owner:
-        os.environ[VIEW_OWNER] = "1"
+        os.environ[VIEW_OWNER] = key
     try:
         ensure_mermaid(feature_root, project_root)
         yield
     finally:
         if owner:
-            os.environ.pop(VIEW_OWNER, None)
+            if before is None:
+                os.environ.pop(VIEW_OWNER, None)
+            else:
+                os.environ[VIEW_OWNER] = before
             story = feature_root / Path(*STORY)
             if story.is_file() and "<!-- story-figure:" in story.read_text(encoding="utf-8", errors="replace"):
                 try:

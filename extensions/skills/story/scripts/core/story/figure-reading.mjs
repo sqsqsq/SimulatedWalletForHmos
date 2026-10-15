@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { runPython } from '../flow/client.mjs';
+import { headingEnd, parseDocument } from './document.mjs';
 
 /** 每张图必核的三件：语义等值、实际渲染可读、与业务位置是否相称。 */
 const READING_CHECKS = ['semantic_equivalence', 'visual_readability', 'placement'];
@@ -28,9 +29,34 @@ const entry = (featureRoot, rel) => {
 };
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return undefined; } };
 
-/** 这张图此刻的验收输入：源、SVG、它引用的本地资源（递归）、渲染图。缺什么列进 problems。 */
+/**
+ * 这张图在 Story 里的业务位置：所在小节的标题路径与正文摘要（去掉全部图块，切换形态不改它）。
+ * 位置是 placement 的审查依据：小节正文变了，这张图的验收随之失效；重编号（标题序号、图序号）只是排版，不算变化。
+ */
+function placement(featureRoot, id) {
+  let doc;
+  try { doc = parseDocument(fs.readFileSync(path.join(featureRoot, 'AR', 'story.md'), 'utf-8')); } catch { return null; }
+  const at = doc.lines.findIndex(l => l.trim() === `<!-- story-figure:${id}:begin -->`);
+  if (at < 0) return null;
+  const heads = [];
+  for (const h of doc.headings.filter(x => x.at < at)) { while (heads.at(-1)?.level >= h.level) heads.pop(); heads.push(h); }
+  const own = heads.at(-1);
+  const from = own?.at ?? 0;
+  const byLine = new Map(doc.headings.map(h => [h.at, h]));
+  let inFigure = false;
+  const body = doc.lines.slice(from, own ? headingEnd(doc, own) : doc.lines.length).flatMap((l, k) => {
+    if (/^<!-- story-figure:[\w-]+:(begin|end) -->$/.test(l.trim())) { inFigure = l.includes(':begin'); return []; }
+    const h = byLine.get(from + k);
+    return inFigure ? [] : [h ? `${'#'.repeat(h.level)} ${h.name}` : l.replace(/!\[图 \d+(?: · )?/g, '![')];
+  });
+  return { story: 'AR/story.md', section: heads.map(h => h.name).join(' › ') || '（文首）', sha256: sha(body.join('\n')) };
+}
+
+/** 这张图此刻的验收输入：源、SVG、它引用的本地资源（递归）、渲染图、所在业务位置。缺什么列进 problems。 */
 function currentInputs(featureRoot, id) {
   const problems = [];
+  const context = placement(featureRoot, id);
+  if (!context) problems.push(`AR/story.md 里找不到图块 ${id}，它的业务位置确定不了`);
   const mmd = entry(featureRoot, `AR/story-src/figures/${id}.mmd`);
   const svg = entry(featureRoot, `AR/figures/${id}.svg`);
   const render = entry(featureRoot, `AR/story-src/figures/${id}.reading/render.png`);
@@ -48,7 +74,7 @@ function currentInputs(featureRoot, id) {
       resources = deps.deps.map(d => entry(featureRoot, `AR/${d}`)).filter(Boolean);
     }
   }
-  return { inputs: { mmd, svg, resources, render }, problems };
+  return { inputs: { mmd, svg, resources, render, context }, problems };
 }
 
 const requestBody = (id, inputs) => ({ version: 1, id, method: METHOD, inputs, checks: READING_CHECKS });
@@ -93,8 +119,13 @@ export function readingState(featureRoot, id) {
   if (request?.version !== 1 || request?.method !== METHOD) {
     return { state: 'invalid', reason: 'request.json 不是当前的局部验收合同（版本或方法不认）：重新生成请求' };
   }
+  const { request_id: claimed, ...body } = request;
+  if (claimed !== requestId(body)) {
+    return { state: 'invalid', reason: 'request.json 的内容与它自己的 request_id 对不上（请求被改过）：重新生成请求' };
+  }
   const { inputs, problems } = currentInputs(featureRoot, id);
-  if (problems.length || request.request_id !== requestId(requestBody(id, inputs))) {
+  const expected = requestBody(id, inputs);
+  if (problems.length || claimed !== requestId(expected)) {
     return { state: 'stale', reason: `请求绑定的输入已经变了${problems.length ? `（${problems.join('；')}）` : ''}：重新渲染、生成请求并交独立审查` };
   }
   const report = readJson(path.join(dir, 'report.json'));
@@ -134,17 +165,23 @@ function reportProblems(report, requestIdNow) {
   return out;
 }
 
-/** 交给独立审查者的任务：请求、要打开的文件、必核项与报告形状。作者的「已正确」结论不进来。 */
-export function reviewTask(featureRoot, request) {
-  const rel = p => `doc/…/${path.basename(featureRoot)}/${p}`;
+/**
+ * 交给独立审查者的任务：工程根、请求与输入的真实路径、这张图所在的业务位置、必核项与报告形状。
+ * 作者的「已正确」结论不进来；路径是这一次运行时的实际位置，不写进任何模板。
+ */
+export function reviewTask(projectRoot, featureRoot, request) {
+  const fromRoot = p => path.relative(projectRoot, path.join(featureRoot, ...p.split('/'))).split(path.sep).join('/');
+  const { inputs } = request;
   return [
     `局部阅读验收请求 ${request.request_id}（图 ${request.id}）：交给不是作者的独立执行体，只传这份任务，不传你的结论。`,
-    `审查者自己打开：${[request.inputs.mmd, request.inputs.svg, request.inputs.render, ...request.inputs.resources].map(x => rel(x.path)).join('、')}`,
+    `工程根：${projectRoot}；下面的路径都相对工程根。请求文件：${fromRoot(`AR/story-src/figures/${request.id}.reading/request.json`)}`,
+    `审查者自己打开：${[inputs.mmd, inputs.svg, inputs.render, ...inputs.resources].map(x => fromRoot(x.path)).join('、')}`,
+    `这张图在 ${fromRoot(inputs.context.story)} 的「${inputs.context.section}」一节：placement 读这一节的正文，判图与这里的业务是否相称。`,
     `逐项给结论（PASS / WARN / FAIL / UNKNOWN / SKIP）与证据：semantic_equivalence 角色、关系、方向、条件、状态、去向、顺序与 Mermaid 一致；`
-      + 'visual_readability 看真实渲染图有没有裁切、遮挡、连线难辨、文字看不清；placement 这张图放在业务位置上是否相称。',
-    `报告原样存为 ${rel(`AR/story-src/figures/${request.id}.reading/report.json`)}：`
+      + 'visual_readability 看真实渲染图有没有裁切、遮挡、连线难辨、文字看不清；placement 这张图放在这一节是否相称。',
+    `报告原样存为 ${fromRoot(`AR/story-src/figures/${request.id}.reading/report.json`)}：`
       + '{"request_id", "executor": "<宿主返回的执行或会话引用>", "checks": [{"id","verdict","evidence"}], '
       + '"blocking_findings": [], "advisories": [], "unreviewed": []}；看不了图就把 visual_readability 判 UNKNOWN 并写进 unreviewed。',
-    `存好后跑 view --mode review-check --id ${request.id} 核对。`,
+    `存好后跑 story-build view --mode review-check --id ${request.id} 核对。`,
   ];
 }

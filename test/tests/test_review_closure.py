@@ -102,6 +102,10 @@ class ClosureCase(unittest.TestCase):
         link_harness_yaml(self.root)
         self.fr = self.root / "doc" / "features" / FEATURE
         shutil.copytree(REAL, self.fr)
+        # 留存的运行产物是旧清单形态（没有 origins）；现行 round 生成的清单带原材料集合，缺了它审查输入就有缺口
+        manifest = self.fr / "AR" / "story-src" / "materials.json"
+        manifest.write_text(json.dumps({**json.loads(manifest.read_text(encoding="utf-8")), "origins": []},
+                                       ensure_ascii=False), encoding="utf-8")
         (self.fr / "acceptance.yaml").write_text(ACCEPTANCE, encoding="utf-8")
         # 走过 /story 的需求才判上游承接与数值来源
         (self.fr / "AR" / "story-src" / "story-flow.json").write_text(json.dumps(

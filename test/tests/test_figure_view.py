@@ -86,8 +86,8 @@ class PrepareAndSwitch(FigureViewCase):
     def test_svg_and_back_is_exact_and_leaves_the_prose_alone(self) -> None:
         fid = self.prepared_id()
         self.put_svg(fid, svg(FLOW_SRC))
-        self.make_ready(fid)
         self.story.write_text(self.story.read_text(encoding="utf-8").replace("图后：", "图后（人改过）："), encoding="utf-8")
+        self.make_ready(fid)
         mermaid = self.story.read_bytes()
         proc = self.view("svg")
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -573,3 +573,118 @@ class DerivedReadingEvidenceStaysOutOfUpdates(unittest.TestCase):
                           "AR/story-src/figures/fig-1.reading/render.png": True, "AR/切换视图.cmd": True,
                           "AR/story.md": False, "AR/story-src/figures/fig-1.mmd": False, "AR/figures/fig-1.svg": False,
                           "assets/doc/a.png": False, "AR/story-src/reading/report.json": False}, skipped)
+
+
+class TheSecondReviewFindings(FigureViewCase):
+    """复评 N02–N05：正式读取里的内部查询不提前恢复、请求正文与传递资源完整绑定、任务给真实位置、阅读缺口总被说出来。"""
+
+    def ready(self) -> str:
+        fid = self.prepared_id()
+        self.put_svg(fid, svg(FLOW_SRC))
+        self.make_ready(fid)
+        return fid
+
+    def reading(self, fid: str) -> Path:
+        return self.fr / "AR" / "story-src" / "figures" / f"{fid}.reading"
+
+    def state(self, fid: str) -> str:
+        work = json.loads(self.view("status").stdout)
+        return next(i["state"] for i in work["items"] if i["id"] == fid)
+
+    def test_an_internal_status_query_keeps_the_callers_mermaid(self) -> None:
+        """阶段里作者包、预检调的状态查询归调用方持有：它结束不把 story 切回 SVG；用户直接跑 status 照常恢复。"""
+        fid = self.ready()
+        self.assertEqual(0, self.view("mermaid").returncode)
+        client = CORE / "flow" / "client.mjs"
+        driver = ("const m = await import(process.argv[1]);"
+                  "const r = m.queryFlowStatus(process.argv[2], process.argv[3], { timeoutMs: 120000 });"
+                  "process.stdout.write(JSON.stringify({ error: r.error }));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", driver, client.as_uri(), str(self.root), FEATURE],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("```mermaid", self.story.read_text(encoding="utf-8"), "内部查询把正式读取的 Mermaid 换成了 SVG")
+        subprocess.run([sys.executable, str(FLOW), "status", "--feature", FEATURE, "--project-root", str(self.root)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertIn(f"](figures/{fid}.svg)", self.story.read_text(encoding="utf-8"), "用户直接跑 status 没恢复阅读图")
+
+    def test_an_edited_request_with_its_old_id_is_refused(self) -> None:
+        fid = self.ready()
+        req_file = self.reading(fid) / "request.json"
+        req = json.loads(req_file.read_text(encoding="utf-8"))
+        for name, change in (("改图号", lambda r: r.update(id="fig-other")),
+                             ("改源路径", lambda r: r["inputs"]["mmd"].update(path="AR/story-src/figures/other.mmd")),
+                             ("删必核项", lambda r: r.update(checks=r["checks"][:1]))):
+            with self.subTest(name):
+                bad = json.loads(json.dumps(req))
+                change(bad)
+                req_file.write_text(json.dumps(bad), encoding="utf-8")
+                self.assertEqual("invalid", self.state(fid))
+                self.assertEqual(1, self.view("review-check", "--id", fid).returncode)
+        req_file.write_text(json.dumps(req, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual("ready", self.state(fid))
+
+    def test_a_resource_reached_through_a_nested_svg_is_bound(self) -> None:
+        fid = self.prepared_id()
+        figs = self.fr / "AR" / "figures"
+        figs.mkdir(parents=True, exist_ok=True)
+        (figs / "nested.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><image href="../assets/deep.png"/></svg>',
+                                         encoding="utf-8")
+        (self.fr / "AR" / "assets").mkdir(parents=True, exist_ok=True)
+        deep = self.fr / "AR" / "assets" / "deep.png"
+        deep.write_bytes(PNG + b"deep")
+        self.put_svg(fid, svg(FLOW_SRC, extra='<image href="nested.svg"/>'))
+        request = self.make_ready(fid)
+        self.assertIn("assets/deep.png", json.dumps(request["inputs"]["resources"]), "嵌套 SVG 引用的资源没进请求")
+        deep.write_bytes(PNG + b"deep2")
+        self.assertEqual("stale", self.state(fid), "改了嵌套资源，旧验收照样成立")
+
+    def test_the_task_names_real_paths_and_the_business_place(self) -> None:
+        fid = self.prepared_id()
+        self.put_svg(fid, svg(FLOW_SRC))
+        shot = self.root / "shot.png"
+        shot.write_bytes(PNG + b"render")
+        out = self.view("review-request", "--id", fid, "--render", str(shot)).stdout
+        self.assertIn(f"工程根：{self.root}", out)
+        self.assertIn(f"doc/features/{FEATURE}/AR/story-src/figures/{fid}.reading/report.json", out)
+        self.assertNotIn("doc/…", out)
+        self.assertIn("「FIG90001 甲需求 › 业务流程 › 提交与回执」一节", out)
+        self.make_ready(fid)
+        self.story.write_text(self.story.read_text(encoding="utf-8").replace("图后：", "图后（改了业务说明）："), encoding="utf-8")
+        self.assertEqual("stale", self.state(fid), "图所在小节的业务说明变了，位置结论还在复用")
+
+    def test_a_formal_command_says_which_figures_stay_unread(self) -> None:
+        fid = self.ready()
+        (self.reading(fid) / "render.png").write_bytes(PNG + b"other")
+        proc = subprocess.run(["node", str(BUILD), "number", "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("本地阅读还没完成", proc.stderr)
+        self.assertIn(fid, proc.stderr)
+        self.assertIn("view --mode svg", proc.stderr)
+
+    def test_a_closed_spec_still_routes_to_the_unfinished_reading(self) -> None:
+        """spec 闭环后本地阅读没完成：路由把阅读作为下一步，而不是停在业务闭环说明里。
+
+        路由在最外层动作持有的 Mermaid 形态下判（登记指纹也按 Mermaid 记），这里照此切换。
+        """
+        fid = self.prepared_id()
+        sys.path.insert(0, str(CORE))
+        from flow import routing, state  # noqa: PLC0415
+        contract = {"rounds": [{"round": 1}], "status": "story_written",
+                    "story_digests": {rel: state.ledger_digest(self.fr / rel) for rel in state.STORY_REGISTERED}}
+        step, action = routing.next_step(self.fr, contract)
+        self.assertEqual("run_archived", step, "spec 没闭环时先走闭环")
+        reports = self.fr / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text("{ 坏了", encoding="utf-8")
+        with self.assertRaises(state.FlowError, msg="summary 读不出却当成没闭环"):
+            routing.next_step(self.fr, contract)
+        (reports / "summary.json").write_text(json.dumps({"closure_status": "closed"}), encoding="utf-8")
+        step, action = routing.next_step(self.fr, contract)
+        self.assertEqual("local_reading", step)
+        self.assertIn(fid, action)
+        self.put_svg(fid, svg(FLOW_SRC))
+        self.make_ready(fid)
+        self.assertEqual(0, self.view("svg").returncode)
+        self.assertEqual(0, self.view("mermaid").returncode)
+        self.assertEqual("run_archived", routing.next_step(self.fr, contract)[0], "阅读完成后还卡在阅读")

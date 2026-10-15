@@ -356,6 +356,10 @@ def next_step(feature_root: Path, contract: dict | None,
                          else "本轮已归档送审。")
                 + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
                 + closed_tail(feature_root, contract, manifest))
+    if stage == "story_written" and reading and spec_closed(feature_root):
+        return ("local_reading", "spec 阶段已闭环。" + reading
+                + "；交付门与「归档送审 / 进入 plan」照常可走，本地阅读未完成时如实交回"
+                + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",
                 "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
@@ -545,3 +549,16 @@ def reading_todo(feature_root: Path) -> str | None:
     rows += work.get("problems", [])
     return ("完成本地阅读（本需求的交付包括可读的本地阅读图）：" + "；".join(rows)
             + "——按 `reference/svg.md` 依据 .mmd 重述、渲染、交独立审查，`view --mode review-check` 通过后 `view --mode svg`")
+
+
+def spec_closed(feature_root: Path) -> bool:
+    """spec 阶段闭环了没有：framework 写的 summary 说的。还没有 summary 就是没闭环；有却读不出要说出来。"""
+    path = feature_root / "spec" / "reports" / "summary.json"
+    if not path.is_file():
+        return False
+    try:
+        summary = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FlowError(f"spec/reports/summary.json 读不出（{exc}），spec 闭环状态判不了：它由 framework 写，"
+                        "按 `phases/spec.md`「闭环」重跑 harness 让它重写") from exc
+    return summary.get("closure_status") == "closed"

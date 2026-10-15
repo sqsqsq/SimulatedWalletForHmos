@@ -42,7 +42,8 @@ PAIRS_DIR = (REPO / "test" / "fixtures" / "narrative-variants" / "pairs")
 CONTRACT_SRC = REPO / "extensions" / "skills" / "story" / "contracts" / "story-chapters.json"
 CONTRACT_REL = "doc/extensions/skills/story/contracts/story-chapters.json"
 FLOW = REPO / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
-FEATURE = "AR90001"
+#: 样本是本地简报（只有 RR 一份材料），按本地需求装配：系统需求号会让生产合同要求系统设计与提取件
+FEATURE = "QUAL-001"
 #: 必审集合与明细合同的真源：资格门交给审查者的「读这些」表与四键要求从它现取，与生产任务同源
 REVIEW_INPUTS = REPO / "extensions" / "hooks" / "shared" / "review-inputs.mjs"
 INPUT_TABLE = """
@@ -50,6 +51,17 @@ const [, , mod, root, feature] = process.argv;
 const m = await import(mod);
 process.stdout.write(m.inputRows(m.reviewInputs(root, feature, 'story')).join('\\n') + '\\n\\n明细四个键：' + m.DETAIL_KEYS.join('、'));
 """
+COVERAGE = """
+const [, , mod, root, feature] = process.argv;
+const m = await import(mod);
+const b = m.reviewInputs(root, feature, 'story');
+process.stdout.write(JSON.stringify({ missing: b.inputs.filter(x => x.required && x.missing).map(x => x.path), gaps: b.gaps }));
+"""
+#: 每个基底的中性必审输入（提取件、写作设计、Spec、验收、决策与评审记录）：只复述材料已写明的事实，不另加业务信息。
+#: 生产必审合同要求这几份在场，样本缺了它们，审查者面对的就不是完整的生产任务。
+BASE_INPUTS = {"story-template.md": "AR/story-src/story-template.md", "spec.md": "spec/spec.md",
+               "acceptance.yaml": "acceptance.yaml", "review.md": "AR/review.md",
+               "design.md": "AR/design.md"}
 
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO))
@@ -98,6 +110,10 @@ def build_workspace(root: Path, sample: dict) -> Path:
     (feature_root / "AR" / "story-src" / "decisions.json").write_text(
         json.dumps({"decisions": [DECISIONS[sample["base"]]]}, ensure_ascii=False, indent=2),
         encoding="utf-8", newline="\n")
+    for name, rel in BASE_INPUTS.items():
+        target = feature_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((PAIRS_DIR / f"base-{sample['base']}.inputs" / name).read_bytes())
     contract_dst = ws / CONTRACT_REL
     contract_dst.parent.mkdir(parents=True, exist_ok=True)
     contract_dst.write_text(CONTRACT_SRC.read_text(encoding="utf-8"),
@@ -127,12 +143,24 @@ def input_table(ws: Path) -> str:
     return proc.stdout if proc.returncode == 0 else f"（必审输入表没取到：{proc.stderr.strip()[:400]}）"
 
 
-def identity(sample: dict, entry: dict) -> str:
-    """这次资格读数对应的对象：判据原文、章节合同、必审集合与明细合同的实现、执行配置、样本本身。
-    任一变化都是新对象，续跑不借旧读数。"""
-    parts = [review_task(), CONTRACT_SRC.read_text(encoding="utf-8"), REVIEW_INPUTS.read_text(encoding="utf-8"),
-             json.dumps({k: entry.get(k) for k in ("id", "name", "model", "profile")}, sort_keys=True),
-             sample["text"], sample["material"], json.dumps(DECISIONS[sample["base"]], ensure_ascii=False, sort_keys=True)]
+def coverage(ws: Path) -> dict:
+    """生产必审合同在这个样本工作区上的实际结果：缺的必审件与输入缺口。资格门只在两者都为空时才测区分力。"""
+    driver = ws / ".coverage.mjs"
+    driver.write_text(COVERAGE, encoding="utf-8")
+    proc = subprocess.run(["node", str(driver), REVIEW_INPUTS.resolve().as_uri(), str(ws), FEATURE],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    driver.unlink()
+    if proc.returncode:
+        return {"missing": [], "gaps": [f"必审合同没跑起来：{proc.stderr.strip()[:400]}"]}
+    return json.loads(proc.stdout)
+
+
+def identity(sample: dict, ws: Path, entry: dict) -> str:
+    """这次资格读数对应的对象：交给审查者的实际任务全文（判据、读者问题、材料、已登记判断、带摘要的必审表、待审稿）、
+    命令行指引、完整执行配置，以及决定必审表的实现与章节合同。任一变化都是新对象，续跑不借旧读数。"""
+    parts = [(ws / TASK_FILE).read_text(encoding="utf-8"), prompt_for(sample),
+             json.dumps(entry, ensure_ascii=False, sort_keys=True, default=str),
+             REVIEW_INPUTS.read_text(encoding="utf-8"), CONTRACT_SRC.read_text(encoding="utf-8")]
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
@@ -259,7 +287,7 @@ def run_one(sample: dict, ws: Path, entry: dict) -> dict:
     else:
         verdict = "blocking" if has_blocking else "clean"
     return {
-        "id": sample["id"], "identity": identity(sample, entry), "family": sample["family"], "expect": sample["expect"],
+        "id": sample["id"], "identity": identity(sample, ws, entry), "family": sample["family"], "expect": sample["expect"],
         "base": sample["base"], "domain": sample["domain"],
         "cli_status": status, "verdict": verdict,
         "seconds": round(elapsed, 1), "output_chars": len(text),
@@ -283,6 +311,7 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="工作区与结果的落点")
     ap.add_argument("--base", default=None, help="只跑这个基底的样本")
     ap.add_argument("--id", default=None, help="只跑这一个样本")
+    ap.add_argument("--check", action="store_true", help="只装配样本并跑必审覆盖检查，不起审查会话")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -303,6 +332,17 @@ def main() -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     summary = out_dir / "qualification.json"
+    # 先按生产必审合同装配并核覆盖：有缺件或缺口的样本测出来的不是区分力，整批不起会话
+    spaces = {s["id"]: build_workspace(out_dir, s) for s in chosen}
+    covered = {sid: coverage(ws) for sid, ws in spaces.items()}
+    bad = {sid: c for sid, c in covered.items() if c["missing"] or c["gaps"]}
+    (out_dir / "coverage.json").write_text(json.dumps(covered, ensure_ascii=False, indent=2) + "\n",
+                                           encoding="utf-8", newline="\n")
+    print(f"必审覆盖：{len(chosen) - len(bad)}/{len(chosen)} 份齐全", file=sys.stderr, flush=True)
+    for sid, c in sorted(bad.items()):
+        print(f"  {sid}：缺 {c['missing']}；缺口 {c['gaps']}", file=sys.stderr, flush=True)
+    if bad or args.check:
+        return 1 if bad else 0
 
     def flush(rows: list[dict]) -> None:
         """每份跑完就落一次盘——中途停掉时已跑的读数与正文都还在。"""
@@ -318,7 +358,7 @@ def main() -> int:
         try:
             rows = json.loads(summary.read_text(encoding="utf-8")).get("samples", [])
             # 只认对象身份一致的旧读数：判据、合同、必审实现、配置或样本变了就是新对象，要重跑
-            current = {s["id"]: identity(s, entry) for s in chosen}
+            current = {s["id"]: identity(s, spaces[s["id"]], entry) for s in chosen}
             done = {r["id"] for r in rows if r.get("verdict") != "no_output"
                     and r.get("identity") == current.get(r["id"])}
         except ValueError:
@@ -328,7 +368,7 @@ def main() -> int:
         if sample["id"] in done:
             print(f"[{i}/{len(chosen)}] {sample['id']} 已有读数，跳过", file=sys.stderr, flush=True)
             continue
-        ws = build_workspace(out_dir, sample)
+        ws = spaces[sample["id"]]
         print(f"[{i}/{len(chosen)}] {sample['id']}（期望 {sample['expect']}）……",
               file=sys.stderr, flush=True)
         row = run_one(sample, ws, entry)

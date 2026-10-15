@@ -2292,6 +2292,9 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
                 "last_phase": record.get("last_phase"),
                 "current_phase": record.get("current_phase"),
                 "highest_phase_reached": record.get("highest_phase_reached"),
+                # 业务闭环与本地阅读分开交回：阅读未完成不因业务闭环就算整体完成
+                "target_closed": (record.get("closure") or {}).get("target_closed"),
+                "reading": (record.get("closure") or {}).get("reading"),
                 "phase_source": record.get("phase_source"),
                 "phase_observed_at": record.get("phase_observed_at"),
                 "spec_entered_at": record.get("spec_entered_at"),

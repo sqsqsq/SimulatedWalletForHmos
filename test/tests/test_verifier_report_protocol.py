@@ -703,12 +703,23 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
                 "| story_reader_review | PASS |", "| story_reader_review | UNKNOWN |"), "没有审完"),
             "PASS 带阻断": (lambda t: t.replace("        blocking_findings: []", "        blocking_findings:\n          - 第 2 章缺范围"),
                          "判了 PASS 却列了 1 条阻断项"),
+            "未核判项": (lambda t: t.replace("        unreviewed: []", "        unreviewed:\n          - split_boundary_consistency：没核"),
+                     "判项却没核完"),
         }
         for name, (edit, said) in cases.items():
             with self.subTest(name):
                 both = self.gate(edit)
                 self.assertIn(said, both)
                 self.assertIn("不要自己补", both, "报错叫作者改报告")
+
+    def test_an_input_gap_blocks_a_pass_until_it_is_cleared(self) -> None:
+        """生产者已发现的输入缺口（坏 origins、越界路径）不清零就不能 PASS；合规的 FAIL 照样可存。"""
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        (src / "materials.json").write_text(json.dumps({"materials": [], "origins": [
+            {"path": "../外面.md", "kind": "direct", "readable_paths": ["../外面.md"]}]}, ensure_ascii=False), encoding="utf-8")
+        both = self.gate(lambda t: t)
+        self.assertIn("必审输入还有缺口没有清零", both)
+        self.assertIn("出了需求目录", both)
 
     def test_a_failed_row_under_a_passing_verdict_is_rejected(self) -> None:
         """汇总表某条判据 FAIL、终态块却 PASS：结论自相矛盾，不计作结论。"""
@@ -1071,6 +1082,31 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
             self.assertTrue(by[self.at(rel)]["required"], f"{rel} 没进必审")
             self.assertTrue(by[self.at(rel)]["missing"], f"{rel} 盘上没有却没标缺件")
         self.assertNotIn(self.at("ux-reference/a.png"), by, "同一张图的别名被当成另一份")
+
+    def test_a_pictures_only_original_is_checked_but_not_read(self) -> None:
+        """只取图的 docx：原件不作阅读稿，取的图照审；原件不在盘上是缺口。越界的 origin 路径也是缺口。"""
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        origin = {"path": "inbox/只有图.docx", "kind": "converted-source", "readable_paths": ["inbox/只有图.docx"],
+                  "image_paths": ["assets/doc/c.png"]}
+        (src / "materials.json").write_text(json.dumps({
+            "materials": [{"kind": "image", "paths": ["assets/doc/c.png"], "caption": "页"}], "origins": [origin]},
+            ensure_ascii=False), encoding="utf-8")
+        got = self.basis()
+        self.assertNotIn(self.at("inbox/只有图.docx"), got["by"], "只取图的原件被当成阅读稿")
+        self.assertTrue(got["by"][self.at("assets/doc/c.png")]["required"], "取的图没进必审")
+        self.assertTrue(any("只有图.docx" in g for g in got["gaps"]), "原件不在却没报缺口")
+        (self.root / "doc" / "features" / FEATURE / "inbox").mkdir(parents=True, exist_ok=True)
+        (self.root / "doc" / "features" / FEATURE / "inbox" / "只有图.docx").write_bytes(b"PK")
+        self.assertFalse([g for g in self.basis()["gaps"] if "只有图" in g], "原件在了缺口还在")
+        for bad in ("../外面.docx", "/abs.docx", "inbox\\..\\..\\x.docx"):
+            with self.subTest(bad):
+                (src / "materials.json").write_text(json.dumps({"materials": [], "origins": [
+                    dict(origin, path=bad, readable_paths=[bad])]}, ensure_ascii=False), encoding="utf-8")
+                self.assertTrue(any("出了需求目录" in g for g in self.basis()["gaps"]), f"{bad} 没报越界")
+
+    def test_an_update_record_naming_a_file_outside_is_a_gap(self) -> None:
+        self.open_update({"../../外面.md": "sha256:00"})
+        self.assertTrue(any("不是需求目录内的相对路径" in g for g in self.basis()["gaps"]))
 
     def open_update(self, files: dict | None = None, *, status: str = "open") -> Path:
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"

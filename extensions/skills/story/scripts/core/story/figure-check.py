@@ -82,14 +82,19 @@ def problems_of(svg: Path, fid: str) -> list[str]:
 
 
 def local_deps(svg: Path) -> tuple[list[str], list[str]]:
-    """阅读图实际用到的本地资源（相对 AR/），样式表里再引用的也跟进去；去重、防循环。缺件或越界列进问题。"""
+    """阅读图实际用到的本地资源（相对 AR/），样式表与嵌套 SVG 里再引用的也跟进去；去重、防循环。
+
+    缺件、越界、外部地址或解析不了的嵌套文件都列进问题：依赖确定不了，就不能签这张图已验。"""
     base = svg.parent.parent.resolve()
     deps: list[str] = []
     problems: list[str] = []
     queue = [(svg.parent, ref) for ref in references(ET.parse(svg).getroot())]
     while queue:
         at, ref = queue.pop(0)
-        if not ref or ref.startswith(("#", "data:")) or re.match(r"^[a-z][a-z0-9+.-]*:", ref, re.I):
+        if not ref or ref.startswith(("#", "data:")):
+            continue
+        if re.match(r"^[a-z][a-z0-9+.-]*:", ref, re.I) or ref.startswith(("/", "\\")):
+            problems.append(f"资源「{ref}」不是本地相对路径，依赖确定不了")
             continue
         target = (at / ref.split("#", 1)[0]).resolve()
         if not target.is_relative_to(base) or not target.is_file():
@@ -102,6 +107,11 @@ def local_deps(svg: Path) -> tuple[list[str], list[str]]:
         if target.suffix.lower() == ".css":
             css = target.read_text(encoding="utf-8", errors="replace")
             queue.extend((target.parent, first(m)) for m in [*CSS_URL.finditer(css), *CSS_IMPORT.finditer(css)])
+        elif target.suffix.lower() == ".svg":
+            try:
+                queue.extend((target.parent, ref2) for ref2 in references(ET.parse(target).getroot()))
+            except ET.ParseError as exc:
+                problems.append(f"嵌套的「{ref}」不是合法 XML（{exc}），它的依赖确定不了")
     return deps, problems
 
 
