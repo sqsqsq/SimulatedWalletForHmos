@@ -58,27 +58,27 @@
 <text x="1000" y="381" font-size="28" fill="#1D3551" font-weight="700">3.1</text>
 <rect x="1000" y="397" width="138" height="30" rx="15" fill="#FFF2DD" stroke="none" />
 <text x="1013" y="418" font-size="16" fill="#AC6A0C" font-weight="700">开发与验证中</text>
-<text x="1000" y="455" font-size="22" fill="#AC6A0C" font-weight="700">解决：复杂需求缺少共同设计</text>
-<text x="1000" y="487" font-size="20" fill="#263D59" font-weight="700">整体设计 → 施工单元 → 部件闭环</text>
-<text x="1000" y="515" font-size="19" fill="#61738B" font-weight="400">蓝图统一设计，CU 拆分施工责任</text>
-<text x="1000" y="555" font-size="20" fill="#263D59" font-weight="700">按任务需要组合阶段</text>
+<text x="1000" y="455" font-size="22" fill="#AC6A0C" font-weight="700">目标：AI 主导复杂任务交付</text>
+<text x="1000" y="487" font-size="20" fill="#263D59" font-weight="700">蓝图组织设计，AI 推进交付</text>
+<text x="1000" y="515" font-size="19" fill="#61738B" font-weight="400">CU 拆分施工，衔接实现、审查与测试</text>
+<text x="1000" y="555" font-size="20" fill="#263D59" font-weight="700">动态执行与失败恢复</text>
 <text x="1000" y="583" font-size="19" fill="#61738B" font-weight="400">动态工作流、统一知识、人读蓝图</text>
-<text x="1000" y="610" font-size="19" fill="#61738B" font-weight="400">强化恢复；部分宿主验收仍待完成</text>
+<text x="1000" y="610" font-size="19" fill="#61738B" font-weight="400">人保留关键决策；真实验收仍待完成</text>
 <line x1="1000" x2="1376" y1="641" y2="641" stroke="#E6ECF3"/>
 <text x="1000" y="672" font-size="18" fill="#AC6A0C" font-weight="600">边界：有实现与构建件，未整体发布</text>
 <rect x="1432" y="336" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
 <rect x="1432" y="336" width="424" height="7" rx="3" fill="#78608E" stroke="none" />
 <text x="1456" y="381" font-size="28" fill="#1D3551" font-weight="700">3.2 及后续</text>
 <rect x="1456" y="397" width="96" height="30" rx="15" fill="#F0EAF6" stroke="none" />
-<text x="1469" y="418" font-size="16" fill="#78608E" font-weight="700">计划已登记</text>
+<text x="1469" y="418" font-size="16" fill="#78608E" font-weight="700">规划方向</text>
 <text x="1456" y="455" font-size="22" fill="#78608E" font-weight="700">方向：扩大适用面与证据深度</text>
-<text x="1456" y="487" font-size="20" fill="#263D59" font-weight="700">Android 工程支持</text>
-<text x="1456" y="515" font-size="19" fill="#61738B" font-weight="400">新增平台适配与工程拓扑支持</text>
+<text x="1456" y="487" font-size="20" fill="#263D59" font-weight="700">Android 与 Web 工程支持</text>
+<text x="1456" y="515" font-size="19" fill="#61738B" font-weight="400">扩展移动端与 Web 的工程适用范围</text>
 <text x="1456" y="555" font-size="20" fill="#263D59" font-weight="700">证据与运行机制深化</text>
 <text x="1456" y="583" font-size="19" fill="#61738B" font-weight="400">逐用例证据绑定、视觉与构建指纹</text>
 <text x="1456" y="610" font-size="19" fill="#61738B" font-weight="400">旧基线清理、完整性与授权增强</text>
 <line x1="1456" x2="1832" y1="641" y2="641" stroke="#E6ECF3"/>
-<text x="1456" y="672" font-size="18" fill="#78608E" font-weight="600">边界：后续计划，尚未发布</text>
+<text x="1456" y="672" font-size="18" fill="#78608E" font-weight="600">Android 已有计划；Web 范围版本待定</text>
 <rect x="64" y="738" width="6" height="40" rx="3" fill="#087F87" stroke="none" />
 <text x="82" y="765" font-size="27" fill="#087F87" font-weight="700">Story Extension</text>
 <text x="430" y="764" font-size="20" fill="#586D87" font-weight="400">需求理解与知识应用：材料、决定、评审与变化</text>
