@@ -28,6 +28,7 @@ description: Create or continue a component design from the user's request and e
 - 已有草稿未 admitted：继续尚未完成的发现、设计与独立质询；用户只要求局部操作时到此结束。
 - 查看、解释、检查或评审：读取当前设计，复用 P1 质询与既有 publication/feedback 接缝。
   **只读请求不修改 canonical 设计**，发现问题先报告；不得因已有蓝图就自动执行调和。
+- 仅补写评审说明：读取 canonical 蓝图/CU 与已登记设计材料，按 [P1 写作指引](../../reference/app-component-blueprint-workflow.md#按评审问题写说明) 直接使用已可读的原字段，仅改表达时优先写可选 reader_guide；修改原字段属于设计修订，会使说明摘要过期，也可能改变整蓝图引用的 CU 摘要。复核后计算摘要，在 `framework/harness` 运行 `npm run check:change-unit -- --project-root <宿主根> --blueprint <blueprint-id> --readiness --json` 完成既有指针调和与文档物化，非 busy 后实际读成品，不重做产品源码发现或启动施工。发现新事实先回原设计承载，不能只写 guide。
 - 仅重入、查看或重跑 checker **不增加 revision**。新事实、被接受的权威裁决或冲突解决才按
   P1 调和规则形成正式修订；意见、建议与未接受反馈不自动升 revision。下游由各自权责重新派生。
 - 用户要求完成设计交接且蓝图已 admitted：0 CU 从第 3 步首次分解；已有 CU 复用并在第 4 步
@@ -45,7 +46,7 @@ description: Create or continue a component design from the user's request and e
 ②**信息不足由人确认**——判据不足时问人并等待确认，不猜测、不默认按任一侧处理；③**不加机器门**
 ——不新增 `track_scoring` 条目、不新增档位、不加机器 BLOCKER，判定结果不是可手改的持久状态字段。
 
-判定为**非正式维护动作** → 不建蓝图，按本次维护范围执行适用原生校验，本 Skill 到此结束。
+判定为**非正式维护动作** → 不建蓝图，按本次维护范围执行适用原生校验，本 Skill 到此结束。恢复明确既有预期、未改变验收/契约且不需新设计决定的普通 bug 修复也属于维护；已完成 Feature 的此类维护不自动创建后继 run。
 
 ## 支持范围（诚实声明）
 
@@ -89,9 +90,7 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图并由既有 runtime 独立质询核图文一致，修订时同步刷新派生身份。App lens/质询用项目语言，整个 contracts.change_unit 交 plan，交接不物化 Feature；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。
-
-内容深度及条件式设计义务遵循上述 P1 内部工作流；只有一种蓝图协议，不设 compact/full 档位。小正式需求按实际影响展开必要细节，未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
+编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图。原设计 agent 完成可渲染草稿、图、说明与摘要后，先 `check:component-blueprint --write-review --json`，再派既有独立质询先读首屏/正文答八问、后核原 scope 与来源及图文一致；正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区，之后再核参考/YAML；不提前读 YAML 或继承父上下文 YAML/设计摘要，作者一轮修订后重渲，派生身份同步刷新，详见 P1 §4/§5。App lens/质询用项目语言，整个 contracts.change_unit 交 plan，交接不物化 Feature；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。深度及条件式义务按实际影响展开，只有一种协议、不设档位；未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 
@@ -127,9 +126,9 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 
 ### 5. 默认本地人读文档与可选宿主接入
 
-完整交接默认交付同目录 `component-blueprint.review.md`，同页展示蓝图与 canonical CU 的设计、拆分与风险验收。**本次改了 canonical 蓝图/CU 内容，结束前必须执行 `check:component-blueprint --write-review`**（草稿、质询写回、局部修改、新增/替代同规则）；CU 仍经既有 consumer 接受。
+供人评审的蓝图交付（含仅定稿蓝图、尚无 CU）默认包含同目录 `component-blueprint.review.md`，已有 canonical CU 同页展示拆分与风险验收。**本次改了 canonical 蓝图/CU 内容，结束前必须执行 `check:component-blueprint --write-review --json`**（草稿、质询写回、局部修改、新增/替代同规则）；CU 仍经既有 consumer 接受。
 
-最终回复链接当前文档并概述变化/未决项，单独报告 readiness；文档失败如实说明未交付/过期，仅重试物化、不改变原接受或施工结论。只读请求不落盘；当生成、刷新或检查文档时读 [P1 工作流 §5](../../reference/app-component-blueprint-workflow.md#5-写作检查与本地交付) 的命令、写作与失败细则。
+生成、刷新或检查文档时，按 [P1 工作流 §5](../../reference/app-component-blueprint-workflow.md#5-写作检查与本地交付) 执行写作、摘要、图与截图、独立阅读及失败恢复细则。质询前先渲染，不要求先通过含质询结果的完整准入；checker FAIL 与 `review_document` current/refreshed 分别报告，尚待质询的草稿可读，真实解析/来源 BLOCKER 仍按原规则处理。定向修订后以正常宽度读成品；无图像仍审 Markdown 内 Mermaid 是否一图一事，仅字号/布局/放大未核验。readiness 与阅读效果分别报告。只读请求不落盘；缺 guide 或过期展示当前事实，生成器不代写/盖摘要。最终链接当前文档，概述变化/未决项与阅读缺口；文档失败说明未交付/过期，仅重试物化，不改变原业务结论。
 
 - **publication（Maison → 宿主，optional）**：输出指定 admitted revision 的确定性评审投影 （同一 `component-blueprint.review.md`），供宿主装配 Story Document / 归档件。投影 `derived_from` 精确绑定蓝图与有效 CU 内容、**相对两者零新设计事实**；宿主仍可附 spec 等附件，但**附件不成为 部件内设计的事实来源**。宿主未接该接缝 → 诚实降级，不宣称已归档。校验：`--projection <path>`。
 - **feedback（宿主 → Maison，optional）**：结构化评审反馈必须区分**意见 / 事实补充 / 建议 / 授权裁决**四类。只有同时具备 `authority`、`source_revision` 与明确 `decision` 语义的 `authoritative_ruling` 才能进入 `decided_with_authority`。**校验只判候选资格，不代表已被 接受**——是否接受由蓝图 write owner 裁决；被接受的事实补充与授权裁决才按既有 reconciliation 生成**新** revision，**不得回写旧 revision**；意见与建议永不触发 revision 递进。契约 schema `framework/harness/schemas/blueprint-review-feedback.schema.json`；校验：`--feedback <path>`。

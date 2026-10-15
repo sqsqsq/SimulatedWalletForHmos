@@ -1,6 +1,6 @@
 # AGENTS.md 入口模板详细规则（条件加载：需要展开某条红线细则时读）
 
-> **输入协议边界**：以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。默认入口尚未切换，不能自行补造调用上下文。
+> **输入协议边界（仅正式阶段与机器 request）**：只审查、解释或设计用例仍先阅读真实代码和依据，但不建立身份/facts、不创建正式产物、不进入阶段确认/闭环。以下落盘与量化要求只用于正式或机器请求；以下 full=spec / lite=change 的 facts 建立与固定上游阅读口径仅适用于 1.0。收到 runtime/专项入口明确提供的 1.1 调用上下文时，按[输入契约与 Facts 1.1](../../docs/concepts/skill-contracts.md#facts-11)读取真实内容与来源：首个实际 Skill 在主产出前建立 facts，后续或成功前驱基线只补本次 phase_delta；不补跑 spec/change、不伪造建立身份。无 Feature 时只用入口指定的 request report-dir/context/facts.md。调用上下文由实际入口解析，不自行补造。
 
 > SSOT 索引见实例根 `AGENTS.md`（由 `framework/templates/AGENTS.md.template` 渲染）。本文承载该模板 §三 红线清单每条的完整判据文本、§4.1 主 agent/verifier 职责切分反误读全文、§4.2 实例扩展生命周期钩子细则、§5 交付凭证与闭环判定/会话边界/跨会话恢复完整机制、§六 交互硬规则完整表述。实例路径（架构文档/模块画像/术语表等）以渲染后 AGENTS.md §二 SSOT 表为准，本文不重复模板占位符。
 
@@ -76,10 +76,12 @@
 
 ## §4.1 主 agent 与 verifier 子 agent 的职责切分（明示授权，反误读全文）
 
+本节“主 agent”指当前阶段执行者：直接交互时为会话主 agent，受管 Goal 时为阶段 agent。外层调度者只编排和观察，不与活跃阶段重复派 verifier、写其报告或执行产品修复；接管先确认原 owner 已让出。closure-only attempt 仅执行当前 request 所缺核验及原回执/关环，不重新 Research、重写产品或重复完整审查。
+
 > 弱模型经常把"verifier 子 agent 执行 verify-*.md"误读为"任何 harness 类的事都不该主 agent 干"。本节是反误读的明示授权，BLOCKER 级，必须遵守：
 
 1. **结构级 harness**（`framework/harness/harness-runner.ts`）：必须由主 agent 自己执行。它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。主 agent 在阶段产物完成后，第一时间通过 Shell 工具运行该命令，读取退出码与报告文件。
-2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；主 agent 必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
+2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；该阶段执行者必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
 4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
 5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式重新发起同一请求即重新接入原 run 并重检放行）。
@@ -104,7 +106,7 @@
 
 ## §5 交付凭证：闭环判定完整机制
 
-每次完成某个阶段任务，必须在 `<features_dir>/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（配置了 `paths.reports_dir_pattern` 时归入该模式；遗留实例为 `framework/harness/reports/<feature>/<phase>/`）。字段见 `framework/harness/trace/trace.schema.json`；痛点回填见 `framework/harness/trace/gap-notes.template.md`——这是弱模型回传问题的唯一渠道，不要省略。
+每次完成正式 Feature 的某个阶段任务，必须在 `<features_dir>/<feature>/<phase>/reports/<timestamp>/<model>-<phase>/trace.json` 产出凭证（配置了 `paths.reports_dir_pattern` 时归入该模式；遗留实例为 `framework/harness/reports/<feature>/<phase>/`）。字段见 `framework/harness/trace/trace.schema.json`；痛点回填见 `framework/harness/trace/gap-notes.template.md`——这是弱模型回传问题的唯一渠道，不要省略。
 
 **阶段闭环判定（trace.json 缺失 = 阶段未完成）**：本节是 Layer 2（完成回执）+ Layer 3（Stop hook）的 SSOT。物理拦截层若存在，由具备 hooks 能力的 adapter 在实例根下发的脚本读取本节定义的判据决定能否放行 stop（细节见 `framework/agents/README.md`）。
 
@@ -143,7 +145,9 @@
 3. `check-receipt` exit 1/2 → 按 BLOCKER 列表补齐缺失项；禁止仅凭 `.current-phase.json` 的 `receipt.status=missing` 或 `summary.json` 的 `next_action=run_verifier_then_receipt` 宣告「未闭环」——二者可能滞后于 receipt 磁盘真相。
 4. `summary.json.closure_status=closed` 与 `state.receipt.status=passed` 可作为辅助信号；SSOT 仍是 `check-receipt.ts` exit 码。
 
-**已闭环 feature 的修正（plan 07a41ec6 T8）**：修正 = 直接改根因层 SSOT/代码/测试输入 → 一次 `harness-runner.ts --revalidate --feature <feature> [--from <phase>]`（检查执行器：按链找 stale 阶段逐个重跑脚本门禁并按既有闭环路径收口；FAIL 即停并打印 blocker 与改法；语义 verifier 不重审，结果标 `script_revalidated` / `semantic_not_reverified`，账本落 `<feature>/revalidation.json`）→ 按漂移分级补一次复核（文档不复审；测试代码只跑相关测试；导航/状态/交互做 scoped diff review；布局/字号/颜色/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review）→ 完。不重新进入六阶段流程，不重写 spec/plan/review 全文（只追加"修正记录"小节），不为修正另建 feature 或状态。
+**在途 feature 的已闭环阶段修正（plan 07a41ec6 T8）**：修正 = 直接改根因层 SSOT/代码/测试输入 → 一次 `harness-runner.ts --revalidate --feature <feature> [--from <phase>]`（检查执行器：按链找 stale 阶段逐个重跑脚本门禁并按既有闭环路径收口；FAIL 即停并打印 blocker 与改法；语义 verifier 不重审，结果标 `script_revalidated` / `semantic_not_reverified`，账本落 `<feature>/revalidation.json`）→ 按漂移分级补一次复核（文档不复审；测试代码只跑相关测试；导航/状态/交互做 scoped diff review；布局/字号/颜色/资源做真机截图或 `--measure`；多类同时变化做一次最终合并 diff review）→ 完。不重新进入六阶段流程，不重写 spec/plan/review 全文（只追加"修正记录"小节），不为修正另建 feature 或状态。
+
+普通维护不进入修正登记；恢复明确既有预期、未改变验收/契约且不需新设计决定的普通 bug 修复也属于维护；已完成 Feature 的此类维护不自动创建后继 run。未点名 Feature 时，只排除 `inspectCompletionRecord` 判为 VALID 的旧指针，drift 不改变此判定；receipt-only 历史 Feature 保持现有归属。独立 compile/request 不写 Feature completion，不能据此推进正式交付。
 
 ## §六 交互硬规则完整表述
 
