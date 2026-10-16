@@ -32,6 +32,10 @@ no `resume_args`, so it cannot be used where session continuation is required.
 
 ### `dsh` notes
 
+- The process runs in the requested workspace. Windows Electron launchers are
+  resolved to the executable and entry script; `ELECTRON_RUN_AS_NODE=1` preserves
+  their CLI behavior and multiline tasks remain a single argument.
+
 - Both `plan` and `build` currently invoke the shipped `headless` profile; the
   sandbox preset and model are DSH profile configuration (`agent-default-model`,
   `dsh-permission-presets`), not argv. Point the entry at dedicated DSH
@@ -46,6 +50,11 @@ no `resume_args`, so it cannot be used where session continuation is required.
   under the DSH home directory, while this runtime keeps per-run artifacts only.
 - `dsh` failures are classified from the structured `turn_end` error payload
   (for example `code: MISSING_CREDENTIAL` → `auth_required`).
+
+Request timeout overrides may set both `soft_timeout_sec` and `hard_timeout_sec`
+to zero to disable elapsed-time limits. Registry defaults remain finite; mixed
+zero/positive, negative, or reversed limits are rejected. Explicit stop requests
+and process ownership checks continue to apply to unlimited requests.
 
 > Renamed 2026-08-10 (was `readonly` / `workspace_write` / `full_access` / `build`).
 > The old names described each provider's own vocabulary rather than the shared

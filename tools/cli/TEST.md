@@ -7,7 +7,7 @@ Run from the repository root:
 
 ```powershell
 python -m tools.cli.scripts.validate_clis
-python -m unittest discover -s tools/cli/tests -v
+python -m pytest test/tools/cli -n auto --dist loadscope
 python -m compileall -q tools/cli
 ```
 

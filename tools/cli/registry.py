@@ -19,6 +19,10 @@ from .models import CliRunRequest
 #   ② 经 node 跑脚本：      "%_prog%"  "%dp0%\node_modules\pkg\bin\foo.js" %*
 _WRAPPER_EXE = re.compile(r'"%~?dp0%\\?([^"\r\n]+?\.exe)"\s+%\*', re.IGNORECASE)
 _WRAPPER_NODE = re.compile(r'"%_prog%"\s+"%~?dp0%\\?([^"\r\n]+?)"\s+%\*', re.IGNORECASE)
+_WRAPPER_ELECTRON = re.compile(
+    r'"%~dp0([^"\r\n]+?\.exe)"\s+--expose-internals\s+"%~dp0([^"\r\n]+?\.js)"\s+%\*',
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=64)
@@ -45,6 +49,17 @@ def resolve_batch_wrapper(executable: str) -> tuple[str, tuple[str, ...]]:
     try:
         content = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        return unchanged
+
+    # Electron CLI wrappers launch a script with a fixed Node flag. Preserve
+    # both paths and the flag while removing cmd.exe from the argv path.
+    match = _WRAPPER_ELECTRON.search(content)
+    if match:
+        target, script = [(path.parent / value).resolve() for value in match.groups()]
+        # Electron reads entry scripts from ASAR archives as virtual files.
+        script_exists = script.is_file() or any(parent.suffix.lower() == ".asar" and parent.is_file() for parent in script.parents)
+        if target.is_file() and script_exists:
+            return str(target), ("--expose-internals", str(script))
         return unchanged
 
     match = _WRAPPER_EXE.search(content)
@@ -287,9 +302,10 @@ class CliRegistry:
         soft = float(timeout["soft_sec"] if soft is None else soft)
         hard = float(timeout["hard_sec"] if hard is None else hard)
         grace = float(timeout["stop_grace_sec"] if grace is None else grace)
-        if soft <= 0 or hard <= soft or grace < 0:
+        if not ((soft == hard == 0) or (0 < soft < hard)) or grace < 0:
             raise CliConfigurationError(
-                "Request timeouts require 0 < soft_timeout_sec < hard_timeout_sec "
+                "Request timeouts require both limits to be 0 (unlimited), or "
+                "0 < soft_timeout_sec < hard_timeout_sec, "
                 "and stop_grace_sec >= 0"
             )
         env = {

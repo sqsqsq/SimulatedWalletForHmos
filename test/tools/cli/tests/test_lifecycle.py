@@ -271,6 +271,13 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(any("soft timeout" in (event.content or "") for event in events))
         self.assertTrue(any("hard timeout" in (event.content or "") for event in events))
 
+    def test_explicit_zero_timeouts_run_without_timeout_events(self) -> None:
+        result = self.client.run(self.request(soft_timeout_sec=0, hard_timeout_sec=0))
+        self.assertEqual("succeeded", result.status)
+        self.assertFalse(result.forced)
+        events = self.client.poll(result.run_id).events
+        self.assertFalse(any("timeout" in (event.content or "") for event in events))
+
     def test_subscription_failure_is_classified(self) -> None:
         result = self.client.run(self.request(profile="subscription"))
         self.assertEqual("failed", result.status)

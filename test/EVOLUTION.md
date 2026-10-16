@@ -5,6 +5,8 @@
 
 ## 1. 演进记录
 
+2026-10-16 **CLI runtime 中心同步 v1.0.2**：同步提交 `d90425786cf8a54497d8ea0ebff2bef539b6ee75`，保留既有 keep 清单；修正 verify.py 与 CLI TEST 的旧测试路径，Codex 配置档位 `full_access` 改为 `build`，CLI/模型顺序不变。固定 verify 入口相关离线回归 167 passed、27 subtests passed，两个 Case 只读 plan、注册表、worker 模块、编译与同源检查 CLEAN。未启动真实模型，未修改 Extension 或 demo；其他任务在途修改保留；本次按用户要求提交，未推送。结果与备份在 `E:/Project/SimulatedWalletForHmos-Story-1.0/output/scratch/cli-runtime-business-sync-20261016/`。
+
 2026-09-29 **Framework 3.1.0 基线接入 demo**（提交 `74196422`，2.0.0 分册 06 §3）：来源为 main `025d1b6b` 的 framework/（3.1.0，source_commit `074a4c3c`，清单 1225 文件逐字节一致），替换原 3.0.0/`0143e21e`；opencode adapter 的 `commands.subagents`/`verifier_subagent` 与 verifier 子代理模板两处定制在新文件上加回；demo 内 framework-init UPDATE（智能模式、7 个 adapter，executed 24/skipped 5/failed 0，active_workflow→obligation-driven，change-lite 等 9 项旧入口备份后清理，Codex Stop 钩子随之退出）；UPDATE 重写的 AGENTS/CLAUDE 只放回 Extension 1.9.8 的 story-ext 段，六份 story 入口未触及。验证：harness npm test PASS（doc_freshness 按提交时刻误报、catalog key_exports 业务漂移各 1 条非阻断），check_framework_drift same_version，全量 1506 passed，失效形态 FAIL 0；两条测试随 3.1 事实更新（Codex 不再登记 Stop 钩子、feature.track 关卡随 change-lite 退出）。Extension 仍为 1.9.8，Framework 3.1 + Extension 1.9.8 组合未经真实 CLI 验收。证据在 `output/story/2.0.0/fw31-baseline/`（不入库）。
 
 2026-09-29 **1.9.8 发布**（发布提交 `d19b26f7`）：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](../doc/release/1.9.8.md)，证据在 `output/story/1.9.8-release/`（不入库）。

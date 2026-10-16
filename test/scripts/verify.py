@@ -64,7 +64,7 @@ def failure_mode_steps(template: str) -> list[tuple[str, list[str]]]:
 def other_offline_steps() -> list[tuple[str, list[str]]]:
     mjs = sorted(str(p) for p in (REPO / "extensions").rglob("*.mjs") if "node_modules" not in p.parts)
     return [
-        pytest_step("cli-tests", [str(REPO / "tools" / "cli" / "tests")]),
+        pytest_step("cli-tests", [str(REPO / "test" / "tools" / "cli")]),
         ("compileall", [sys.executable, "-m", "compileall", "-q", "-j", "0", "tools/cli", "test/scripts"]),
         ("validate-clis", [sys.executable, "-m", "tools.cli.scripts.validate_clis"]),
         # 每个 .mjs 各跑一次 `node --check`，由 run() 逐个执行

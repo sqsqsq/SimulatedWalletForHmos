@@ -30,6 +30,8 @@ AUTH_PATTERNS = (
     "please login",
     "unauthorized",
     "invalid api key",
+    "invalid_api_key",
+    "incorrect api key",
     "no api key",
     "missing credential",
     "status 401",
@@ -54,6 +56,8 @@ MODEL_PATTERNS = (
 
 def classify_failure(text: str) -> FailureKind:
     lowered = text.lower()
+    if "datainspectionfailed" in lowered or "output data may contain inappropriate content" in lowered:
+        return FailureKind.CONTENT_POLICY_REJECTED
     if any(pattern in lowered for pattern in SUBSCRIPTION_PATTERNS):
         return FailureKind.SUBSCRIPTION_UNAVAILABLE
     if any(pattern in lowered for pattern in AUTH_PATTERNS):
@@ -263,14 +267,14 @@ class CliRunner:
                     )
                     stop_failed = not stopped_ok
                     break
-                if not soft_notified and elapsed > resolved.soft_timeout_sec:
+                if resolved.soft_timeout_sec > 0 and not soft_notified and elapsed > resolved.soft_timeout_sec:
                     soft_notified = True
                     store.update(status=RunStatus.OVERTIME.value, overtime_at=now_iso())
                     emit(
                         event_type="lifecycle",
                         content="soft timeout reached; continuing",
                     )
-                if elapsed > resolved.hard_timeout_sec:
+                if resolved.hard_timeout_sec > 0 and elapsed > resolved.hard_timeout_sec:
                     timed_out = True
                     store.update(status=RunStatus.STOPPING.value, hard_timeout_at=now_iso())
                     emit(

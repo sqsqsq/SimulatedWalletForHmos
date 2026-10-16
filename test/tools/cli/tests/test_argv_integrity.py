@@ -80,6 +80,29 @@ class BatchWrapperResolutionTest(unittest.TestCase):
         exe.write_bytes(b"stub")
         self.assertEqual((str(exe), ()), resolve_batch_wrapper(str(exe)))
 
+    def test_electron_wrapper_preserves_script_and_node_flag(self) -> None:
+        exe = self.tmp / "host app.exe"
+        script = self.tmp / "entry.js"
+        exe.write_bytes(b"stub")
+        script.write_text("// stub", encoding="utf-8")
+        wrapper = self._write("desktop.cmd", 'set "ELECTRON_RUN_AS_NODE=1"\n"%~dp0host app.exe" --expose-internals "%~dp0entry.js" %*\n')
+        self.assertEqual((str(exe.resolve()), ("--expose-internals", str(script.resolve()))), resolve_batch_wrapper(str(wrapper)))
+
+    def test_electron_wrapper_with_missing_script_is_not_unwrapped(self) -> None:
+        exe = self.tmp / "host.exe"
+        exe.write_bytes(b"stub")
+        wrapper = self._write("missing-script.cmd", '"%~dp0host.exe" --expose-internals "%~dp0missing.js" %*\n')
+        self.assertEqual((str(wrapper), ()), resolve_batch_wrapper(str(wrapper)))
+
+    def test_electron_wrapper_accepts_virtual_asar_entry(self) -> None:
+        exe = self.tmp / "host.exe"
+        archive = self.tmp / "bundle.asar"
+        exe.write_bytes(b"stub")
+        archive.write_bytes(b"asar stub")
+        wrapper = self._write("archive.cmd", '"%~dp0host.exe" --expose-internals "%~dp0bundle.asar/plugin/entry.js" %*\n')
+        expected_script = str((archive / "plugin/entry.js").resolve())
+        self.assertEqual((str(exe.resolve()), ("--expose-internals", expected_script)), resolve_batch_wrapper(str(wrapper)))
+
 
 class MultilineArgvTest(unittest.TestCase):
     """直接执行程序时，含换行的参数与其后的参数必须逐字送达。"""
