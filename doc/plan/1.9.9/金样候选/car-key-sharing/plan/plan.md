@@ -197,7 +197,7 @@ KeyCardDetailPage（参数二选一：vehicleId 为本人钥匙，shareId 为收
 |---|---|---|
 | 一项选择完成（对象确认、档位选定、有效期选定） | 读改写这辆车的 SECRET | 停在本页提示保存失败；不影响已选值的显示，发出不可用直到保存成功 |
 | 点发出（新建） | 进同车串行队列：读草稿 → 生成幂等标识 → 把 `request` 与 `idempotencyKey` 写进 SECRET → 写入成功才调 `createKeySharing` | 写入失败不发送；序列化超过 1024 字节（本工程设定，无上游依据：按 Asset SECRET 上限设的 Case 前提）按保存失败处理，不截断、不分片、不改存明文 |
-| 进设置页 | 取当前 `AccountSession` → 按 `accountKey` + `vehicleId` 读 | `absent` 空表单；`found` 无原请求恢复选择并重查配额与权限；`found` 有原请求三项只读、用同一请求确认；`unavailable` 恢复失败、可重试；`corrupted` 说明可能已发出、引导到管理页核对，车主显式删除后才重新开始 |
+| 进设置页 | 取当前 `AccountSession` → 按 `accountKey` + `vehicleId` 读 | `absent` 空表单；`found` 无原请求恢复选择并重查配额与权限；`found` 有原请求三项只读、用同一请求确认；`unavailable` 恢复失败、可重试；`corrupted` 进入受限：这辆车在当前账号下暂停新发起、管理页照常，不提供删除后重建；受限只随主动退出、切换账号或清除应用数据的草稿清除结束 |
 | 创建已建立 | 删除这辆车的 Asset | 删除失败：显示已建立并写待清理标记；之后只能确认同一请求或重试清理，不把旧草稿当新请求 |
 | 车云明确拒绝（含满额、签发失败） | 把 `request` 与 `idempotencyKey` 从 SECRET 里删掉并写回 | 写回成功才开放编辑；失败保持只读并提示，可重试 |
 | 没得到回应 | 原请求保留 | —— |
@@ -215,12 +215,12 @@ Asset 属性：ALIAS 为本机随机盐加 `accountKey` 与 `vehicleId` 的摘�
 | `SimulatedIdentitySource.onSessionChanged` | 回调 | — | 登录、主动退出、切换账号时通知 |
 | `CarKeyRepository.listOwnerKeys` | — | `OwnerCarKey[]` | 本人钥匙；本单来自模拟数据 |
 | `CarKeyRepository.listReceivedKeys` | 当前会话 | `ReceivedCarKey[]` | 待接受、生效与撤销中的分享；已撤销、已到期、已作废的不列入卡包；对应的车云查询不在六个接口内，本单由模拟数据源提供 |
-| `CarKeyRepository.getReceivedKey` | `shareId` | `ReceivedCarKey` 或空，或查询失败 | 接受页与详情页取一条分享的当前状态；接受失败或没得到回应后也用它重取 |
+| `CarKeyRepository.getReceivedKey` | `shareId` | `ReceivedCarKey`（六态之一）、不存在（当前账号下没有这条）或查询失败，三种结果分开返回 | 接受页与详情页取一条分享的当前状态；接受失败或没得到回应后也用它重取，按与 `listReceivedKeys` 同一套六态分流，不存在按已不可用、查询失败按结果待确认 |
 | `CarKeyRepository.getOwnerKey` | `vehicleId` | `OwnerCarKey` 或空 | 详情页取本人钥匙；当前账号下没有这辆车返回空 |
 | `KeySharingRepository.queryQuota` | `vehicleId` | `QuotaView` | 对应 `queryKeySharingQuota` |
 | `KeySharingRepository.queryGranteePermission` | `vehicleId`, `granteeId` | `GrantPermissionView` | `granteeId` 传可识别的对方账号标识，不传打码值；联系人缺账号时不调用 |
 | `KeySharingRepository.createSharing` | `AccountSession`, `vehicleId`, 表单或原请求 | `shareId`, `status`，或明确拒绝，或结果未知，或进行中 | 在同车串行队列里执行 §5.1 的点发出与确认；草稿留着原请求时直接用它确认，不做端侧满额前置；已有进行中的同车请求时返回进行中；每次调用新建尝试标识，结果经 `settleCreate` 结算；回调到达时会话不匹配就只结算、不改页面与草稿 |
-| `KeySharingRepository.acceptSharing` | `shareId` | `credentialStatus`, `status`，或失败，或结果未知 | 对应 `acceptKeySharing`；`failed` 加 `pending` 保持待接受；其他失败与没得到回应由接受页随后经 `getReceivedKey` 重取，按待接受、生效、已结束分流，重取失败为结果待确认；每次调用新建尝试标识，结果经 `settleAccept` 结算 |
+| `KeySharingRepository.acceptSharing` | `shareId` | `credentialStatus`, `status`，或失败，或结果未知 | 对应 `acceptKeySharing`；`failed` 加 `pending` 保持待接受；其他失败与没得到回应由接受页随后经 `getReceivedKey` 重取，按六态分流（撤销中保留卡片到收回完成、不再添加），不存在按已不可用，查询失败为结果待确认；每次调用新建尝试标识，结果经 `settleAccept` 结算 |
 | `KeySharingRepository.revokeSharing` | `shareId` | `status`, `graceHours`，或失败，或结果未知 | 对应 `revokeKeySharing`；只对状态为生效的条目调用；失败与没得到回应由管理页随后经 `listSharings` 重拉，按车云状态显示，仍是生效才再提供撤销；每次调用新建尝试标识，结果经 `settleRevoke` 结算 |
 | `KeySharingRepository.listSharings` | `vehicleId` | `ShareItem[]` | 对应 `queryKeySharingList`；打码标识取车云返回的 `granteeMasked` |
 | `KeySharingRepository.settleCreate` / `settleAccept` / `settleRevoke` | 尝试标识、业务结果、描述关键值、外码 | — | 一次尝试只结算一次：已结算即返回，否则置位后按 `KeySharingChartCodes` 报一条 Chart；取值见「9.4 埋点」 |
@@ -301,7 +301,7 @@ flowchart LR
 |---|---|---|---|
 | UX-01 | 方向与对齐参数用 start/end，文本对齐用 TextAlign.Start/End | `ShareSetupPage`、`ShareManagePage`、`ShareAcceptPage`、`KeyCardDetailPage`、`CarKeyCardSection` | 4. 页面组件树 |
 | SEC-01 | 业务接口传可识别的 `granteeId`，只给车云的查权限与创建分享；展示内容在组装处另生成打码值，列表用车云返回的 `granteeMasked`，短于 5 位的账号只显示昵称；日志与事件不带对方账号与 `accountKey`；失败说明只用映射后的安全说明；草稿按 §5.1 存进 Asset、按账号与车辆隔离、按事件清除 | `KeySharingRepository` 的展示组装与结算方法、`KeySharingErrorMapper`、`ShareDraft`、`ShareDraftStore` | 3. 数据模型定义、5. 状态管理方案、6. 服务层接口定义 |
-| DFX-01 | 配额与列表每次进页拉一次，换对象查一次权限，无轮询；草稿只在进页读、选择完成写、发出前写、结束时删改 | `KeySharingRepository.queryQuota` / `queryGranteePermission` / `listSharings`、`ShareDraftStore` | 5. 状态管理方案、6. 服务层接口定义 |
+| DFX-01 | 车云调用：配额与列表每次进页拉一次，换对象查一次权限，无轮询。草稿读写：进设置页恢复时读一次，一项选择完成时写一次，点发出时保存原请求一次，建立后删除、明确拒绝后清标识、主动退出与换账号时删本账号全部各一次 | `KeySharingRepository.queryQuota` / `queryGranteePermission` / `listSharings`、`ShareDraftStore` | 5. 状态管理方案、6. 服务层接口定义 |
 | DFX-02 | 新增的 base 与 en_US 字符串资源按条数与 UTF-8 字节数给出体积增量，随待翻译清单产出；不新增图片与 SDK | `string.json`（base、en_US）、`translation-list.md` | 2. 目录/文件结构规划 |
 | OBS-02 | 创建、接受、撤销失败经 `Logger` 写到失败步骤；草稿读写失败只写定位日志 | `KeySharingRepository.createSharing` / `acceptSharing` / `revokeSharing`、`ShareDraftStore` | 6. 服务层接口定义 |
 | OBS-03 | 三个流程每种结果在结算方法里结算一次，同次不重复 | `KeySharingRepository.settleCreate` / `settleAccept` / `settleRevoke` | 9. 宿主扩展 |
