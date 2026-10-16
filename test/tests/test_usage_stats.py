@@ -250,6 +250,10 @@ class Publishing(StatsRepo):
             "去掉分隔行": "\n".join(x for x in good.splitlines() if not x.startswith("|---")),
             "报告头多一行范围": "**统计范围：** 业务版本 9.9 的全部数据\n\n" + good,
             "标题全提前": self.headings_first(facts),
+            "整篇放进注释": "<!--\n" + good + "\n-->",
+            "正文缩进成代码块": good[:good.index("## 1.")] + "\n".join("    " + line for line in
+                                                                   good[good.index("## 1."):].splitlines()),
+            "报告头放进注释": good.replace("**统计范围：**", "<!-- **统计范围：**", 1).replace("\n\n## 1.", " -->\n\n## 1.", 1),
         }
         for name, text in rejected.items():
             with self.subTest(name):

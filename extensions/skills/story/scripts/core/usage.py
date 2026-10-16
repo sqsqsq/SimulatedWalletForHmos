@@ -49,7 +49,9 @@ def now() -> datetime:
 
 
 def iso(at: datetime) -> str:
-    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """UTC 时刻；保留原值的小数秒（Framework 写毫秒），游标与原生事件同精度。"""
+    at = at.astimezone(timezone.utc)
+    return at.strftime("%Y-%m-%dT%H:%M:%S") + (f".{at.microsecond:06d}" if at.microsecond else "") + "Z"
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +267,7 @@ def take_terminal(entry: dict, found: list[dict], sources: int) -> None:
     if ties:
         entry["completed"] = entry["completed"] or any(e["kind"] == "complete" for e in ties)
         entry["spent"] = None
-    fresh = sorted((e for e in found if cur_at is None or e["ended_at"] > cur_at),
+    fresh = sorted((e for e in found if cur is None or (e["id"] != cur["id"] and e["ended_at"] > cur_at)),
                    key=lambda e: (e["ended_at"], e["id"]))
     if not fresh:
         return
@@ -350,7 +352,7 @@ def apply(project_root: Path, data: dict, req: dict, errors: list[str]) -> tuple
     if action == "begin" and entry["start"] is None:
         if entry["spent"] is None and entry["last_result"] is None:
             entry["spent"] = 0      # 还没有任何结束的轮次：已结束累计是 0，不是未知
-        entry["start"] = iso(now())
+        entry["start"] = iso(now().replace(microsecond=0))   # 起点取整秒（不晚于实际开始）：原生结束时刻最细到秒的也比得上
     return key, consumed
 
 

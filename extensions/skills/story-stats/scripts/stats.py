@@ -209,14 +209,16 @@ def write_index(base: Path, data: dict) -> None:
     os.replace(tmp, base / "current.json")
 
 
-def outline(text: str) -> tuple[list[dict], list[str]]:
-    """报告的节结构：代码块之外的 1–3 级标题把正文分节，每节收它下面的合法 Markdown 表（表头 + 数据行）。
+def outline(text: str) -> tuple[list[dict], list[str], list[str]]:
+    """报告实际可见的结构：HTML 注释、围栏代码块、缩进 4 格起的代码行都不算；其余行里 1–3 级标题把正文分节，
+    每节收它下面的合法 Markdown 表（表头 + 数据行）。同时返回这些可见行，报告头也只从中找。
 
-    第一项是首个标题之前的部分。表要有与表头同列数的分隔行、每行列数相同；代码块里的内容不算标题也不算表。
+    第一项是首个标题之前的部分。表要有与表头同列数的分隔行、每行列数相同。
     """
-    parts, bad = [{"level": 0, "title": None, "tables": []}], []
+    parts, bad, shown = [{"level": 0, "title": None, "tables": []}], [], []
     block: list[tuple[int, str]] = []
     fenced = False
+    text = re.sub(r"<!--.*?(?:-->|\Z)", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)  # 保留行号
 
     def close() -> None:
         if not block:
@@ -231,12 +233,14 @@ def outline(text: str) -> tuple[list[dict], list[str]]:
 
     for no, line in enumerate(text.splitlines(), 1):
         s = line.strip()
-        if re.match(r"(```|~~~)", s):
+        if re.match(r" {0,3}(```|~~~)", line):
             close()
             fenced = not fenced
             continue
-        if fenced:
+        if fenced or re.match(r"( {4}|\t)", line):
+            close()
             continue
+        shown.append(s)
         if s.startswith("|") and s.endswith("|") and len(s) > 1:
             block.append((no, s))
             continue
@@ -245,15 +249,15 @@ def outline(text: str) -> tuple[list[dict], list[str]]:
         if m:
             parts.append({"level": len(m.group(1)), "title": m.group(2), "tables": []})
     close()
-    return parts, bad
+    return parts, bad, shown
 
 
 def report_problems(text: str, facts: dict) -> list[str]:
-    """候选报告按模板结构核 facts：报告头每项一行且值相同；标题逐节等于 facts.sections（级别与原文）；
+    """候选报告按模板的可见结构核 facts：报告头每项一行且值相同；标题逐节等于 facts.sections（级别与原文）；
     每节下面恰好是该节的表、按顺序逐格相同；节外不放表。正文文字不核。"""
-    parts, bad = outline(text)
+    parts, bad, shown = outline(text)
     for label, value in facts["info"]:
-        got = [line.split("：**", 1)[1].strip() for line in text.splitlines() if line.startswith(f"**{label}：**")]
+        got = [line.split("：**", 1)[1].strip() for line in shown if line.startswith(f"**{label}：**")]
         if got != [value]:
             bad.append(f"报告头「{label}」应只有一行「**{label}：** {value}」，报告里是 {got or '没有'}")
     if parts[0]["tables"]:

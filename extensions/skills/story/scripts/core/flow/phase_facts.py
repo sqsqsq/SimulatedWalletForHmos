@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from materials import importer
@@ -89,8 +89,10 @@ def moment(value: object) -> datetime | None:
 
 
 def event(source: str, kind: str, ended_at: datetime, *identity: object) -> dict:
-    """一个终态事件：稳定指纹由来源、终态类型、原生对象身份与结束时刻组成，不含对账时刻或报告格式。"""
-    raw = json.dumps([source, kind, *[str(x) for x in identity], ended_at.isoformat()], ensure_ascii=False)
+    """一个终态事件：稳定指纹由来源、终态类型、原生对象身份与结束时刻（换算到 UTC，同一时刻换个时区写法仍是同一事件）
+    组成，不含对账时刻或报告格式。"""
+    raw = json.dumps([source, kind, *[str(x) for x in identity], ended_at.astimezone(timezone.utc).isoformat()],
+                     ensure_ascii=False)
     return {"id": "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest(), "kind": kind, "ended_at": ended_at}
 
 

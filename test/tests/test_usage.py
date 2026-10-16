@@ -25,6 +25,11 @@ def at(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def native(dt: datetime) -> str:
+    """Framework 闭环时刻的写法（JS toISOString）：UTC、毫秒。"""
+    return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 class UsageCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -302,10 +307,27 @@ class Settlement(UsageCase):
         s = self.step("spec")
         self.assertEqual((True, None, None), (s["completed"], s["spent"], s["start"]), "A 的起点配给了 B 的闭环")
 
+    def test_a_native_millisecond_closure_settles_once_in_any_time_zone(self) -> None:
+        start = self.begun()
+        end = start + timedelta(seconds=60, milliseconds=500)
+        self.close_phase("spec", native(end))
+        self.assertTrue(self.call("reconcile")["changed"])
+        settled = self.record.read_bytes()
+        self.assertEqual((60, True), (self.step("spec")["spent"], self.step("spec")["completed"]))
+        for _ in range(2):
+            self.assertFalse(self.call("reconcile")["changed"], "同一个带毫秒的闭环被当成新事件")
+        self.close_phase("spec", end.astimezone(timezone(timedelta(hours=8))).isoformat(timespec="milliseconds"))
+        self.assertFalse(self.call("reconcile")["changed"], "同一时刻换成东八区写法被当成新事件")
+        self.assertEqual(settled, self.record.read_bytes())
+        second = self.begun(minutes_ago=10)
+        self.close_phase("spec", native(second + timedelta(seconds=30, milliseconds=250)), subject="s2")
+        self.call("reconcile")
+        self.assertEqual((90, None), (self.step("spec")["spent"], self.step("spec")["start"]), "更晚的一轮没推进")
+
     def test_simultaneous_closures_settle_once_and_a_later_one_still_moves_on(self) -> None:
         start = self.begun()
         self.call("observe", "spec", feature="AR1-b", requirement="AR1")
-        same = at(start + timedelta(seconds=60))
+        same = native(start + timedelta(seconds=60, milliseconds=500))
         self.close_phase("spec", same)
         self.close_phase("spec", same, feature="AR1-b", subject="b")
         self.assertTrue(self.call("reconcile")["changed"])
