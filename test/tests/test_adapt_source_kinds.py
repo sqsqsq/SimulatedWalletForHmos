@@ -342,6 +342,36 @@ class SourceKindCase(unittest.TestCase):
         check = self.adapt("--check", target, PKG_ROOT)
         self.assertEqual(0, check.returncode, self.out(check))
 
+    def test_disabled_lifecycle_hooks_are_named_and_left_as_the_target_set_them(self) -> None:
+        """目标关掉生命周期钩子：apply / check 都说出采集限制，不改它的设置；恢复后提示消失；缺件照样判。"""
+        target = self.blank_repo("BizH")
+        self.assertEqual(0, self.adapt("--apply", target, PKG_ROOT).returncode)
+        self.commit(target, "装好")
+        on = self.adapt("--check", target, PKG_ROOT)
+        self.assertEqual(0, on.returncode, self.out(on))
+        self.assertNotIn("采集限制", self.out(on))
+        cfg_file = target / "framework.config.json"
+        cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+        cfg_file.write_text(json.dumps({**cfg, "lifecycle_hooks_enabled": False}, ensure_ascii=False), encoding="utf-8")
+        off = self.adapt("--check", target, PKG_ROOT)
+        self.assertIn("采集限制", off.stdout, "钩子被关了，检查却和开着时一样")
+        self.assertIn("lifecycle_hooks_enabled", off.stdout)
+        self.commit(target, "目标关掉生命周期钩子")
+        applied = self.adapt("--apply", target, PKG_ROOT)
+        self.assertIn("采集限制", applied.stdout, self.out(applied))
+        self.assertIs(False, json.loads(cfg_file.read_text(encoding="utf-8"))["lifecycle_hooks_enabled"], "adapt 改了目标的设置")
+        hook = target / "doc" / "extensions" / "hooks" / "shared" / "usage.mjs"
+        hook.unlink()
+        missing = self.adapt("--check", target, PKG_ROOT)
+        self.assertNotEqual(0, missing.returncode)
+        self.assertIn("① 机制面缺文件：hooks/shared/usage.mjs", self.out(missing))
+        self.commit(target, "缺件")
+        self.assertEqual(0, self.adapt("--apply", target, PKG_ROOT).returncode)
+        cfg_file.write_text(json.dumps({**cfg, "lifecycle_hooks_enabled": True}, ensure_ascii=False), encoding="utf-8")
+        back = self.adapt("--check", target, PKG_ROOT)
+        self.assertEqual(0, back.returncode, self.out(back))
+        self.assertNotIn("采集限制", self.out(back))
+
     def test_a_parent_directory_rule_is_named_not_papered_over(self) -> None:
         """父目录整个被忽略时，单条放行不起作用：点名挡住它的规则，不报装好。"""
         target = self.blank_repo("BizV")

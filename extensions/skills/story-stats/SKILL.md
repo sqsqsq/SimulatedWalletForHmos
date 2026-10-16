@@ -15,7 +15,7 @@ description: 本仓 Framework + Extension 使用情况统计（/story stats [--v
    - 输出 `{"ok": true, "analysis_id", "facts", "draft", "template"}`：记下这三个路径与 id。
    - `ok: false`：把 `error` 原话转告用户（坏记录、对账失败、不是 Git 仓等），不出报告，不拿旧报告充当本次结果。
 2. **成文**：读 `facts` 与 `template`，按模板把报告写到 `draft` 指定的位置（只写这个文件）。
-   - 表格从 `facts.tables` 按 id 原样写成 Markdown 表，表头与每一格逐字照抄；标题用 `facts.headings` 原文。
+   - 报告头取 `facts.info`；正文按 `facts.sections` 逐节写标题，每节下面放该节列出的表，从 `facts.tables` 按 id 原样写成 Markdown 表，表头与每一格逐字照抄。
    - 文字只陈述表里已有的事实；不补算、不改数、不增加逐需求明细或模板之外的指标。
 3. **发布**：跑 `python doc/extensions/skills/story-stats/scripts/stats.py publish --project-root . --analysis-id <id>`。
    - `ok: true` 时把 `report` 路径与两三句要点告诉用户。

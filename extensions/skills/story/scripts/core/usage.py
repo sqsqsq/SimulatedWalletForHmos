@@ -58,8 +58,12 @@ def iso(at: datetime) -> str:
 @contextmanager
 def locked(record: Path):
     lock = record.with_name(record.name + ".lock")
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock, "a+b") as fh:
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(lock, "a+b")  # noqa: SIM115  下面的 with 负责关
+    except OSError as exc:
+        raise UsageError(f"{lock.name} 打不开（{exc}）：原记录没动，修好目录或文件权限后重跑原操作即可补记") from exc
+    with fh:
         deadline = time.monotonic() + LOCK_WAIT
         while True:
             try:
@@ -86,22 +90,71 @@ def _lock(fh, on: bool) -> None:
 
 
 def load(record: Path) -> dict:
-    """读 usage；没有文件是空表。坏 JSON、冲突标记、不支持的 schema 都报错，不重置。"""
+    return snapshot(record)[1]
+
+
+def snapshot(record: Path) -> tuple[bytes, dict]:
+    """读 usage 的完整字节并解析（统计用这份字节算摘要与数字）；没有文件是空表。
+    坏 JSON、冲突标记、不支持的 schema、节点不合合同都报错，不重置。"""
     if not record.exists():
-        return {"schema": SCHEMA, "requirements": {}}
+        return b"", {"schema": SCHEMA, "requirements": {}}
     try:
-        text = record.read_text(encoding="utf-8")
+        raw = record.read_bytes()
     except OSError as exc:
         raise UsageError(f"{record.name} 读不出（{exc}）") from exc
+    return raw, parse(raw, record.name)
+
+
+def parse(raw: bytes, name: str) -> dict:
+    """从一份完整字节解析并按合同校验；统计用同一份字节算摘要与数字。"""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise UsageError(f"{name} 不是 UTF-8 文本（{exc}）") from exc
     if re.search(r"^(<<<<<<<|=======|>>>>>>>)", text, re.M):
-        raise UsageError(f"{record.name} 里有合并冲突标记：按 Git 正常解决冲突后重跑，同一需求的 spent 不自动相加")
+        raise UsageError(f"{name} 里有合并冲突标记：按 Git 正常解决冲突后重跑，同一需求的 spent 不自动相加")
     try:
         data = json.loads(text)
     except ValueError as exc:
-        raise UsageError(f"{record.name} 不是合法 JSON（{exc}）：修好后重跑，不会把它重置成空表") from exc
+        raise UsageError(f"{name} 不是合法 JSON（{exc}）：修好后重跑，不会把它重置成空表") from exc
     if not isinstance(data, dict) or data.get("schema") != SCHEMA or not isinstance(data.get("requirements"), dict):
-        raise UsageError(f"{record.name} 不是 schema {SCHEMA} 的使用记录：不支持的格式不改写")
+        raise UsageError(f"{name} 不是 schema {SCHEMA} 的使用记录：不支持的格式不改写")
+    bad = shape_problems(data["requirements"])
+    if bad:
+        raise UsageError(f"{name} 的节点不合合同（{'；'.join(bad[:5])}{' 等' if len(bad) > 5 else ''}）："
+                         "字段合同见 doc/extensions/skills/story/contracts/usage.json，修好后重跑，原文件不改写")
     return data
+
+
+_KINDS = {
+    "string": lambda v: isinstance(v, str),
+    "string[]": lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v),
+    "object": lambda v: isinstance(v, dict),
+    "datetime": lambda v: phase_facts.moment(v) is not None,
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+    "{id, ended_at}": lambda v: isinstance(v, dict) and isinstance(v.get("id"), str)
+    and phase_facts.moment(v.get("ended_at")) is not None,
+}
+
+
+def _fields(where: str, node: object, spec: dict) -> list[str]:
+    if not isinstance(node, dict):
+        return [f"{where} 不是对象"]
+    return [f"{where} 缺 {f}" if f not in node else f"{where}.{f} 应为 {k}" for f, k in spec.items()
+            if f not in node or not ((k.endswith("|null") and node[f] is None) or _KINDS[k.removesuffix("|null")](node[f]))]
+
+
+def shape_problems(reqs: dict) -> list[str]:
+    """按合同的 requirement / step 字段核每个节点；记录器与统计实际消费的就是这些字段。"""
+    bad = []
+    for key, node in reqs.items():
+        bad += _fields(key, node, CONTRACT["requirement"])
+        steps = node.get("steps") if isinstance(node, dict) else None
+        for step, entry in (steps if isinstance(steps, dict) else {}).items():
+            bad += (_fields(f"{key}.steps.{step}", entry, CONTRACT["step"]) if step in STEPS
+                    else [f"{key}.steps 有合同外的步骤 {step}"])
+    return bad
 
 
 def save(record: Path, data: dict) -> None:
@@ -199,12 +252,21 @@ def events(project_root: Path, features: list[str], step: str) -> tuple[list[dic
     return found, verdict, errors
 
 
-def take_terminal(entry: dict, found: list[dict]) -> None:
-    """按终态游标结算一个步骤（规则见模块说明与 S1 §4）。"""
+def take_terminal(entry: dict, found: list[dict], sources: int) -> None:
+    """按终态游标结算一个步骤（规则见模块说明与 S1 §4）。
+
+    只采纳严格晚于游标的终态；与游标同一时刻的别的终态分不出先后，是稳定的未知边界：
+    完成事实照记、耗时记未知、游标不动，再对账字节不变。起点只有一个、不带来源，
+    所以需求关联了多个 feature 时，起点与终态是否同属一个来源证明不了，耗时一律未知。
+    """
     cur = entry["last_result"]
     cur_at = phase_facts.moment(cur["ended_at"]) if cur else None
-    fresh = sorted((e for e in found if not cur or (e["id"] != cur["id"] and e["ended_at"] >= cur_at)),
-                   key=lambda e: e["ended_at"])
+    ties = [e for e in found if cur and e["id"] != cur["id"] and e["ended_at"] == cur_at]
+    if ties:
+        entry["completed"] = entry["completed"] or any(e["kind"] == "complete" for e in ties)
+        entry["spent"] = None
+    fresh = sorted((e for e in found if cur_at is None or e["ended_at"] > cur_at),
+                   key=lambda e: (e["ended_at"], e["id"]))
     if not fresh:
         return
     last, start = fresh[-1], phase_facts.moment(entry["start"])
@@ -212,7 +274,7 @@ def take_terminal(entry: dict, found: list[dict]) -> None:
         entry["completed"] = True
         if last["kind"] == "complete" and entry["verdict"] is None:
             entry["verdict"] = "PASS"
-    proven = len(fresh) == 1 and (cur_at is None or last["ended_at"] > cur_at)
+    proven = len(fresh) == 1 and sources == 1
     if start is not None and last["ended_at"] < start:
         entry["spent"] = None                       # 早于本轮起点的旧终态：只补历史，不结束本轮
     elif start is None:
@@ -236,7 +298,7 @@ def reconcile_node(project_root: Path, node: dict, steps: list[str], errors: lis
         errors += bad
         if verdict is not None:
             entry["verdict"] = verdict
-        take_terminal(entry, found)
+        take_terminal(entry, found, len(node["features"]))
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +393,9 @@ def record(project_root: Path, action: str, *, feature: str | None = None, step:
                 consumed.unlink(missing_ok=True)
     except UsageError as exc:
         out["errors"].append(str(exc))
+        return out
+    except OSError as exc:      # 文件系统层面的失败（权限、占用）：记录没做成，原业务结果不受影响
+        out["errors"].append(f"使用记录没写成（{exc}）：修好环境后重跑原操作即可补记")
         return out
     node = data["requirements"].get(key) if key else None
     out.update(ok=not out["errors"], requirement=key, pending_init=bool(node) and node["name"] is None)

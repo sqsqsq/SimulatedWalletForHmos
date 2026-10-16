@@ -110,6 +110,8 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 | ④ `.gitignore` | 章草稿目录、使用记录的一次性输入（`.usage-input.json`）、统计输出（`.usage-stats/`）与记录器锁/临时文件被挡住；`doc/usage.json` 能随普通 `git add` 入库（它归目标，升级不覆盖） |
 | ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/` 两个目录，根下没有文件 |
 
+目标的 `framework.config.json` 把 `lifecycle_hooks_enabled` 设为 `false` 时，`--apply` 与 `--check` 都另打一行「采集限制」：阶段钩子不执行，直接走 Framework 阶段的使用记不下来。这是目标的设置，照原样转告人，不替它改。
+
 ### 升级之后：按版本跟进
 
 升级的 `--apply` 最后打印「按版本跟进」：演进记录里晚于目标 `adapted_for` 的知识与对接层条目、晚于目标升级前所装版本（`installed`）的在途单条目，按块分组（包带对接实现时，对接层已整份换过，那一块不列），

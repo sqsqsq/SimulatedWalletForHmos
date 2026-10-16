@@ -374,6 +374,13 @@ const PDIR = join(PKG, ...extDir(PKG).split('/'));
 //: 使用记录合同（story 包里的那一份）：记录位置、一次性输入文件名
 const USAGE = JSON.parse(read(join(PDIR, 'skills', 'story', 'contracts', 'usage.json')));
 const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
+// 目标关掉了 Framework 生命周期钩子：阶段钩子（含使用记录采集）不执行。这是目标自己的决定，adapt 不改它，
+// --apply 与 --check 都把这个限制说出来，不拿「机制面装对了」代替「采集能成立」。
+const HOOKS_OFF = config(TARGET)?.lifecycle_hooks_enabled === false
+  ? '[adapt-scan] 采集限制：目标 framework.config.json 的 lifecycle_hooks_enabled 是 false，Framework 不执行扩展的阶段钩子，'
+    + `直接走 Framework 阶段的使用不会记进 ${USAGE.record}（Story 命令照常记）；`
+    + '恢复采集要把它改成 true 或删掉这个键（Framework 默认开启）'
+  : null;
 
 // 扩展的 YAML 读取借目标 framework harness 的 `yaml` 包（hooks/shared/yaml.mjs）：装之前先确认它在。
 // 缺了也能把文件复制过去，但目标跑第一道门禁就会抛「读取器不可用」——那时人看到的是门禁坏了，不是没装依赖。
@@ -718,6 +725,7 @@ if (mode === '--apply') {
   // 那句话看起来像什么都没做成，而事实是没有可做的。
   if (!written.length && !removed.length) {
     console.log('[adapt-scan] 机制已在包的版本上，没有机制文件要写');
+    if (HOOKS_OFF) console.log(HOOKS_OFF);
     await printFollowUp();
     process.exit(0);
   }
@@ -729,6 +737,7 @@ if (mode === '--apply') {
       ? '首次安装接着按 SKILL.md：写部件定位知识并摆给人确认一次 → 按下面列出的知识条目逐题判适用、'
         + '按目标仓写 → 知识交回后跑 --mark-adapted 记下适配版本'
       : '`git diff` 看这次动了哪些文件'));
+  if (HOOKS_OFF) console.log(HOOKS_OFF);
   await printFollowUp();
   process.exit(0);
 }
@@ -903,11 +912,12 @@ for (const line of missingGitignoreLines(TARGET)) {
   }
 }
 
+if (HOOKS_OFF) console.log(HOOKS_OFF);
 if (bad.length) {
   console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`);
   bad.forEach(b => console.error(`  ${b}`));
   process.exit(1);
 }
 console.log('[adapt-scan] 核对通过：机制面与包一致 / manifest 按所有权合成 / '
-  + '入口文件含扩展段与标记区 / .gitignore 有章草稿那一行 / 包的 scripts 只有 core 与 adapters'
+  + '入口文件含扩展段与标记区 / 工作件被 .gitignore 挡住、使用记录能入库 / 包的 scripts 只有 core 与 adapters'
   + (WITH_ADAPTERS ? '（来源带对接实现）' : ''));

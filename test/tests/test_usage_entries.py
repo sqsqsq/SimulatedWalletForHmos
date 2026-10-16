@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import _winapi
 import json
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -66,6 +68,25 @@ class StoryCommandsRecordUse(UpdateCase):
         self.assertTrue(out.get("update"), "业务没开成轮")
         self.assertTrue(any("不是合法 JSON" in e for e in out.get("usage_errors", [])), out)
         self.assertEqual("{ 坏了", record.read_text(encoding="utf-8"))
+
+    def test_a_lock_that_cannot_open_is_a_record_error_and_a_later_entry_catches_up(self) -> None:
+        record = self.root / "doc" / "usage.json"
+        lock = record.with_name("usage.json.lock")
+        before = record.read_bytes()
+        os.chmod(lock, stat.S_IREAD)
+        try:
+            out = self.update()
+        finally:
+            os.chmod(lock, stat.S_IREAD | stat.S_IWRITE)
+        self.assertTrue(out.get("success"), out)
+        self.assertTrue(out.get("update"), "业务没开成轮")
+        self.assertTrue(any("usage.json.lock" in e for e in out.get("usage_errors", [])), out)
+        self.assertEqual(before, record.read_bytes(), "记录失败却改了原文件")
+        (self.updates / out["update"] / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        closed = self.update("--action", "close")
+        self.assertNotIn("usage_errors", closed)
+        s = self.steps()["story update"]
+        self.assertEqual((True, None), (s["completed"], s["spent"]), "缺了起点的一轮被编出了耗时")
 
 
 class StatusCreatesNothing(unittest.TestCase):

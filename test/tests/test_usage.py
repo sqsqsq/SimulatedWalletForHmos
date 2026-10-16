@@ -138,7 +138,12 @@ class Writing(UsageCase):
         self.fr()
         self.record.parent.mkdir(parents=True, exist_ok=True)
         for name, text in {"坏 JSON": "{ 坏了", "冲突标记": '<<<<<<< HEAD\n{"schema": 1}\n=======\n{}\n>>>>>>> b\n',
-                           "不支持的 schema": '{"schema": 9, "requirements": {}}'}.items():
+                           "不支持的 schema": '{"schema": 9, "requirements": {}}',
+                "节点是数组": '{"schema": 1, "requirements": {"AR1": []}}',
+                "步骤字段错类型": '{"schema": 1, "requirements": {"AR1": {"name": null, "version": null, "fw": null, '
+                                  '"ext": null, "agent": null, "model": null, "features": ["AR1"], "steps": {"spec": '
+                                  '{"start": null, "spent": "60", "verdict": null, "completed": false, '
+                                  '"last_result": null}}}}}'}.items():
             with self.subTest(name):
                 self.record.write_text(text, encoding="utf-8")
                 out = self.call("observe", "spec")
@@ -153,6 +158,17 @@ class Writing(UsageCase):
         out = self.call("observe", "plan")
         self.assertFalse(out["ok"])
         self.assertIn("写不进去", out["errors"][0])
+        self.assertEqual(before, self.record.read_bytes())
+
+    def test_a_lock_that_cannot_open_is_an_ordinary_record_error(self) -> None:
+        self.call("observe", "spec")
+        before = self.record.read_bytes()
+        lock = self.record.with_name("usage.json.lock")
+        os.chmod(lock, stat.S_IREAD)
+        self.addCleanup(os.chmod, lock, stat.S_IWRITE | stat.S_IREAD)
+        out = self.call("observe", "plan")
+        self.assertEqual((False, False), (out["ok"], out["changed"]), out)
+        self.assertIn("usage.json.lock", out["errors"][0])
         self.assertEqual(before, self.record.read_bytes())
 
 
@@ -277,6 +293,46 @@ class Settlement(UsageCase):
         self.assertEqual(["AR1"], list(data["requirements"]))
         s = data["requirements"]["AR1"]["steps"]["spec"]
         self.assertEqual((True, None), (s["completed"], s["spent"]), "两个来源的区间归属证明不了却相加了")
+
+    def test_one_features_start_is_not_paired_with_another_features_closure(self) -> None:
+        start = self.begun()
+        self.call("observe", "spec", feature="AR1-b", requirement="AR1")
+        self.close_phase("spec", at(start + timedelta(seconds=60)), feature="AR1-b", subject="b")
+        self.call("reconcile")
+        s = self.step("spec")
+        self.assertEqual((True, None, None), (s["completed"], s["spent"], s["start"]), "A 的起点配给了 B 的闭环")
+
+    def test_simultaneous_closures_settle_once_and_a_later_one_still_moves_on(self) -> None:
+        start = self.begun()
+        self.call("observe", "spec", feature="AR1-b", requirement="AR1")
+        same = at(start + timedelta(seconds=60))
+        self.close_phase("spec", same)
+        self.close_phase("spec", same, feature="AR1-b", subject="b")
+        self.assertTrue(self.call("reconcile")["changed"])
+        settled, cursor = self.record.read_bytes(), self.step("spec")["last_result"]
+        for _ in range(3):
+            self.assertFalse(self.call("reconcile")["changed"], "同时刻的两个终态来回切换游标")
+        self.assertEqual(settled, self.record.read_bytes())
+        self.assertEqual((True, None), (self.step("spec")["completed"], self.step("spec")["spent"]))
+        self.close_phase("spec", at(start + timedelta(seconds=300)), subject="s2")
+        self.call("reconcile")
+        self.assertNotEqual(cursor, self.step("spec")["last_result"], "真实更晚的终态推进不了游标")
+
+    def test_a_tie_with_the_settled_closure_makes_time_unknown_once(self) -> None:
+        start = self.begun("story update")
+        same = at(start + timedelta(seconds=60))
+        updates = self.fr() / "AR" / "story-src" / "updates"
+        for rid in ("r1", "r2"):
+            (updates / rid).mkdir(parents=True)
+        (updates / "r1" / "record.json").write_text(json.dumps({"id": "r1", "status": "closed", "closed_at": same}),
+                                                    encoding="utf-8")
+        self.call("reconcile")
+        self.assertEqual(60, self.step("story update")["spent"])
+        (updates / "r2" / "record.json").write_text(json.dumps({"id": "r2", "status": "closed", "closed_at": same}),
+                                                    encoding="utf-8")
+        self.assertTrue(self.call("reconcile")["changed"])
+        self.assertIsNone(self.step("story update")["spent"], "分不出先后的同刻终态却保留了精确耗时")
+        self.assertFalse(self.call("reconcile")["changed"])
 
 
 if __name__ == "__main__":
