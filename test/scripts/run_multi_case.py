@@ -2295,6 +2295,7 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
                 # 业务闭环与本地阅读分开交回：阅读未完成不因业务闭环就算整体完成
                 "target_closed": (record.get("closure") or {}).get("target_closed"),
                 "reading": (record.get("closure") or {}).get("reading"),
+                "target_complete": (record.get("closure") or {}).get("target_complete"),
                 "phase_source": record.get("phase_source"),
                 "phase_observed_at": record.get("phase_observed_at"),
                 "spec_entered_at": record.get("spec_entered_at"),

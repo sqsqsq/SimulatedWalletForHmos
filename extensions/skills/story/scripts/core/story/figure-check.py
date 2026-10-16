@@ -66,19 +66,7 @@ def problems_of(svg: Path, fid: str) -> list[str]:
     meta = next((e for e in root.iter() if e.tag.endswith("metadata")), None)
     if meta is None or not "".join(meta.itertext()).strip():
         out.append("<metadata> 里没有来源快照：写生成它时采用的 Mermaid 原文，切换按它认视图是不是当前源的")
-    base = svg.parent.parent.resolve()
-    for ref in references(root):
-        if not ref or ref.startswith(("#", "data:")):
-            continue
-        if re.match(r"^[a-z][a-z0-9+.-]*:", ref, re.I) or ref.startswith(("/", "\\")):
-            out.append(f"引用「{ref}」不是本地相对路径：阅读图只用内嵌或 AR/ 下的本地资源")
-            continue
-        target = (svg.parent / ref.split("#", 1)[0]).resolve()
-        if not target.is_relative_to(base):
-            out.append(f"引用「{ref}」逃出了 AR/ 目录")
-        elif not target.is_file():
-            out.append(f"引用「{ref}」读不到")
-    return out
+    return out + local_deps(svg)[1]
 
 
 def local_deps(svg: Path) -> tuple[list[str], list[str]]:
@@ -94,11 +82,11 @@ def local_deps(svg: Path) -> tuple[list[str], list[str]]:
         if not ref or ref.startswith(("#", "data:")):
             continue
         if re.match(r"^[a-z][a-z0-9+.-]*:", ref, re.I) or ref.startswith(("/", "\\")):
-            problems.append(f"资源「{ref}」不是本地相对路径，依赖确定不了")
+            problems.append(f"引用「{ref}」不是本地相对路径：阅读图只用内嵌或 AR/ 下的本地资源")
             continue
         target = (at / ref.split("#", 1)[0]).resolve()
         if not target.is_relative_to(base) or not target.is_file():
-            problems.append(f"资源「{ref}」{'逃出了 AR/ 目录' if not target.is_relative_to(base) else '读不到'}")
+            problems.append(f"引用「{ref}」{'逃出了 AR/ 目录' if not target.is_relative_to(base) else '读不到'}")
             continue
         rel = target.relative_to(base).as_posix()
         if rel in deps:
@@ -119,7 +107,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="阅读图的结构检查")
     ap.add_argument("svg")
     ap.add_argument("--id", required=True)
-    ap.add_argument("--deps", action="store_true", help="输出本地资源依赖（JSON），供局部阅读验收请求绑定")
+    ap.add_argument("--json", action="store_true", help="结构问题与本地资源依赖一次给出（JSON）：视图与局部阅读验收共用这一份")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -130,15 +118,12 @@ def main() -> int:
     if not svg.is_file():
         print(f"读不到 {svg}")
         return 2
-    if args.deps:
-        import json
-        try:
-            deps, problems = local_deps(svg)
-        except ET.ParseError as exc:
-            deps, problems = [], [f"不是合法 XML（{exc}）"]
-        print(json.dumps({"deps": deps, "problems": problems}, ensure_ascii=False))
-        return 1 if problems else 0
     found = problems_of(svg, args.id)
+    if args.json:
+        import json
+        deps = [] if any(p.startswith("不是合法 XML") for p in found) else local_deps(svg)[0]
+        print(json.dumps({"problems": found, "deps": deps}, ensure_ascii=False))
+        return 1 if found else 0
     print("\n".join(found) if found else "结构检查通过（文字可读、连线与语义等值仍要渲染核与对照审）")
     return 1 if found else 0
 

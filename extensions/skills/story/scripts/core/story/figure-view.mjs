@@ -31,14 +31,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import { fenceRanges } from './document.mjs';
-import { runPython } from '../flow/client.mjs';
-import { readingRequest, readingState, reviewTask } from './figure-reading.mjs';
+import { readingRequest, readingState, reviewTask, svgFacts } from './figure-reading.mjs';
 
 export const VIEW_MODES = ['prepare', 'mermaid', 'svg', 'toggle', 'status', 'review-request', 'review-check'];
 const MARK = /^<!-- story-figure:([A-Za-z0-9][\w-]*):(begin|end) -->$/;
-const FIGURE_CHECK = path.join(path.dirname(fileURLToPath(import.meta.url)), 'figure-check.py');
 const RECOVER = '改图义改 AR/story-src/figures/<ID>.mmd，它是唯一真源，正文管理块按它重铺；'
   + '管理块结构坏了而边界还认得出、源还在，跑 `story-build view --mode prepare --id <ID>` 从源重建这一块；'
   + '源丢了从备份或真实依据恢复 .mmd，不从正文反写。管理块是脚本管理区，不要手改'
@@ -93,6 +90,25 @@ function formOf(block) {
   return null;
 }
 
+/**
+ * story 里图的结构事实，一次读出：配对与 ID（`problems`）、每块的形态、源与它自己的问题。
+ * 切换、阅读状态与正式入口都消费这一份，同一块合不合法只在这里判。
+ */
+function inspect(featureRoot) {
+  const raw = readOr(path.join(featureRoot, 'AR', 'story.md'));
+  if (raw === null) return { raw };
+  const lines = raw.split(/\r?\n/);
+  const { blocks, problems } = figureBlocks(lines);
+  for (const b of blocks) {
+    b.form = formOf(b);
+    b.src = lf(readOr(paths(featureRoot, b.id).src));
+    const at = `图块 ${b.id}（第 ${b.from + 1}–${b.to + 1} 行）`;
+    b.problem = b.src === null ? `${at} 的源 AR/story-src/figures/${b.id}.mmd 不在：从备份或真实依据恢复源，不从正文反写`
+      : b.form ? null : `${at} 里既不是一个 Mermaid 围栏，也不是 figures/${b.id}.svg 的引用`;
+  }
+  return { raw, lines, blocks, problems };
+}
+
 /** 视图记下的来源快照：`<metadata>` 里的 Mermaid 原文（可包在 CDATA 里）。 */
 function snapshotOf(svgText) {
   const m = /<metadata[^>]*>([\s\S]*?)<\/metadata>/.exec(svgText ?? '');
@@ -121,29 +137,18 @@ function titleAt(lines, at) {
  */
 export function switchView(featureRoot, mode, { id = '' } = {}) {
   const storyPath = path.join(featureRoot, 'AR', 'story.md');
-  const raw = readOr(storyPath);
-  const out = { changed: false, problems: [], notes: [], counts: { mermaid: 0, svg: 0 } };
+  const out = { changed: false, problems: [], notes: [], kept: [], counts: { mermaid: 0, svg: 0 } };
+  const { raw, lines, blocks, problems } = inspect(featureRoot);
   if (raw === null) {
     if (mode !== 'mermaid') out.problems.push('AR/story.md 不在：视图作用在成文的 story 上');
     return out;
   }
   const eol = raw.includes('\r\n') ? '\r\n' : '\n';
-  const lines = raw.split(/\r?\n/);
-  const { blocks, problems } = figureBlocks(lines);
   out.problems.push(...problems);
   if (id && !/^[A-Za-z0-9][\w-]*$/.test(id)) out.problems.push(`--id ${id} 不是合法的图块 ID（字母或数字开头，只含字母、数字、-、_）`);
-  const sources = new Map();
-  for (const b of blocks) {
-    const form = formOf(b);
-    const src = lf(readOr(paths(featureRoot, b.id).src));
-    const at = `图块 ${b.id}（第 ${b.from + 1}–${b.to + 1} 行）`;
-    if (src === null) out.problems.push(`${at} 的源 AR/story-src/figures/${b.id}.mmd 不在：从备份或真实依据恢复源，不从正文反写`);
-    // 显式重建这一块时，块里是什么都按源重铺；其余入口只认两种合法形态
-    else if (!form && !(mode === 'prepare' && id === b.id)) {
-      out.problems.push(`${at} 里既不是一个 Mermaid 围栏，也不是 figures/${b.id}.svg 的引用`);
-    }
-    sources.set(b.id, src);
-  }
+  // 显式重建这一块时，块里是什么都按源重铺；其余入口只认两种合法形态
+  for (const b of blocks) if (b.problem && !(mode === 'prepare' && id === b.id && b.src !== null)) out.problems.push(b.problem);
+  const sources = new Map(blocks.map(b => [b.id, b.src]));
   if (mode === 'prepare' && id && !blocks.some(b => b.id === id)) out.problems.push(`没有 ID 为 ${id} 的图块`);
   if (out.problems.length) {
     out.problems = out.problems.map(p => `AR/story.md：${p}——${RECOVER}`);
@@ -200,6 +205,7 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
       }
       // 已经显示着的阅读图也过同一道前置：快照相同只说明来源版本相同，图本身可能已被改坏
       const why = viewGap(featureRoot, b.id, src)?.reason;
+      if (why) out.kept.push({ id: b.id, reason: why });
       if (form === 'svg') {
         if (why) {
           replace.push({ from: b.from + 1, to: b.to - 1, rows: mermaidBody(src) });
@@ -244,34 +250,38 @@ function viewGap(featureRoot, id, src) {
 
 /** SVG 本身立不立得住：在不在、来源快照是不是当前源、结构检查过没过。 */
 function svgProblem(featureRoot, id, src) {
-  const { svg } = paths(featureRoot, id);
-  const text = readOr(svg);
+  const text = readOr(paths(featureRoot, id).svg);
   if (text === null) return { state: 'no-svg', reason: `还没有阅读图 AR/figures/${id}.svg：按 reference/svg.md 依据当前 .mmd 重述` };
   if (snapshotOf(text) !== src.trim()) return { state: 'svg-stale', reason: `阅读图 ${id}.svg 的来源快照（<metadata> 里的 Mermaid 原文）与当前源不同，要按当前源重新重述` };
-  const r = runPython(FIGURE_CHECK, [svg, '--id', id]);
-  if (r.error) return { state: 'svg-invalid', reason: `结构检查跑不起来（${r.error}）` };
-  if (r.status !== 0) return { state: 'svg-invalid', reason: `结构检查没过：${r.output}` };
+  const facts = svgFacts(featureRoot, id);
+  if (facts.error) return { state: 'svg-invalid', reason: `结构检查跑不起来（${facts.error}）` };
+  if (facts.problems.length) return { state: 'svg-invalid', reason: `结构检查没过：${facts.problems.join('；')}` };
   return null;
 }
 
 /**
- * 本地阅读的工作集合 —— 每次从 Story 实际内容派生，不另存状态：管理块逐张给状态与下一步，
+ * 本地阅读的工作集合 —— 每次从 Story 实际内容派生，不另存状态：管理块逐张给状态与原因，
  * 还没管理的 Mermaid 围栏单列（有图却零管理块是「未准备」，不是「不适用」）。没有图才不适用。
+ * 结构坏了的块与切换器同一判据（`inspect`）：坏块不算完成。`next` 是没完成时的下一动作，路由与装置照它走。
  */
 export function readingWork(featureRoot) {
-  const raw = readOr(path.join(featureRoot, 'AR', 'story.md'));
-  if (raw === null) return { applicable: false, complete: false, items: [], unmanaged: [], problems: ['AR/story.md 不在'] };
-  const lines = raw.split(/\r?\n/);
-  const { blocks, problems } = figureBlocks(lines);
+  const { raw, lines, blocks, problems } = inspect(featureRoot);
+  if (raw === null) return { applicable: false, complete: false, items: [], unmanaged: [], problems: ['AR/story.md 不在'], next: null };
   const managed = new Set(blocks.flatMap(b => Array.from({ length: b.to - b.from + 1 }, (_, k) => b.from + k)));
   const unmanaged = fenceRanges(lines).filter(f => f.lang === 'mermaid' && f.closed && !managed.has(f.from)).map(f => f.from + 1);
   const items = blocks.map((b) => {
-    const src = lf(readOr(paths(featureRoot, b.id).src));
-    const gap = src === null ? { state: 'no-source', reason: `源 ${b.id}.mmd 不在` } : viewGap(featureRoot, b.id, src);
+    const gap = b.src === null ? { state: 'no-source', reason: b.problem }
+      : b.problem ? { state: 'invalid-block', reason: `${b.problem}：跑 \`story-build view --mode prepare --id ${b.id}\` 从源重建这一块` }
+        : viewGap(featureRoot, b.id, b.src);
     return { id: b.id, line: b.from + 1, state: gap?.state ?? 'ready', reason: gap?.reason ?? '' };
   });
-  return { applicable: items.length > 0 || unmanaged.length > 0,
-    complete: !problems.length && !unmanaged.length && items.every(i => i.state === 'ready'), items, unmanaged, problems };
+  const applicable = items.length > 0 || unmanaged.length > 0 || problems.length > 0;
+  const complete = !problems.length && !unmanaged.length && items.every(i => i.state === 'ready');
+  const rows = [...unmanaged.map(n => `第 ${n} 行的 Mermaid 图还没建源（\`story-build view --mode prepare\`）`),
+    ...items.filter(i => i.state !== 'ready').map(i => `${i.id}：${i.reason}`), ...problems];
+  return { applicable, complete, items, unmanaged, problems,
+    next: complete || !applicable ? null : `完成本地阅读（本需求的交付包括可读的本地阅读图）：${rows.join('；')}`
+      + '——按 `reference/svg.md` 依据 .mmd 重述、渲染、交独立审查，`view --mode review-check` 通过后 `view --mode svg`' };
 }
 
 /** 生成某张图的局部验收请求：块与源在、SVG 本身立得住才发；返回请求与交给独立审查者的任务。 */

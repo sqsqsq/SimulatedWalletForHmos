@@ -102,17 +102,36 @@ def log(msg: str) -> None:
 DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[7]
 
 
-def features_dir(project_root: Path) -> str:
-    """需求目录叫什么，由工程自己的 framework.config.json 说了算；没有这份配置用默认目录。"""
+def _config_paths(project_root: Path) -> dict:
+    """工程 framework.config.json 的 paths；没有这份配置是空表，坏 JSON 报出来。"""
     path = project_root / "framework.config.json"
     if not path.is_file():
-        return "doc/features"
+        return {}
     try:
         cfg = json.loads(path.read_text(encoding="utf-8-sig"))
     except ValueError as exc:
-        raise ImportError_(f"{path} 不是合法 JSON（{exc}）：需求目录登记在它的 paths.features_dir") from exc
-    value = (cfg.get("paths") or {}).get("features_dir")
+        raise ImportError_(f"{path} 不是合法 JSON（{exc}）：需求目录与阶段报告目录登记在它的 paths 里") from exc
+    return cfg.get("paths") or {}
+
+
+def features_dir(project_root: Path) -> str:
+    """需求目录叫什么，由工程自己的 framework.config.json 说了算；没有这份配置用默认目录。"""
+    value = _config_paths(project_root).get("features_dir")
     return value.strip() if isinstance(value, str) and value.strip() else "doc/features"
+
+
+def project_root_of(feature_root: Path) -> Path:
+    """需求目录所在的工程根：向上第一个有 framework.config.json 的目录；没有配置按默认需求目录（doc/features/<名>）回推。"""
+    return next((p for p in feature_root.parents if (p / "framework.config.json").is_file()), feature_root.parents[2])
+
+
+def phase_reports_dir(feature_root: Path, phase: str) -> Path:
+    """framework 写阶段报告与 summary.json 的目录，与 framework `featurePhaseReportsDir` 同一口径：
+    `paths.reports_dir_pattern`（占位 <feature>、<phase>），没配用 framework 默认；它不随 features_dir 变。"""
+    root = project_root_of(feature_root)
+    value = _config_paths(root).get("reports_dir_pattern")
+    pattern = value if isinstance(value, str) and value.strip() else "doc/features/<feature>/<phase>/reports"
+    return root / pattern.replace("<feature>", feature_root.name).replace("<phase>", phase)
 
 
 # ---------------------------------------------------------------------------

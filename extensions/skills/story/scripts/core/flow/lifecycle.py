@@ -26,7 +26,9 @@ def cmd_status(feature_root: Path) -> dict:
     # 各自再 build 一次的话，同一条命令里会出现两份「现在的材料」，而消费者不知道
     # 自己拿的是哪一份。算不出来沿 FlowError 退出，不伪造 false。
     manifest = live_materials(feature_root) if (contract or {}).get("rounds") else None
-    step, action = next_step(feature_root, contract, manifest)
+    # 本地阅读同理：成文之后派生一次，路由与输出共用
+    reading = reading_work(feature_root) if (contract or {}).get("status") == "story_written" else None
+    step, action = next_step(feature_root, contract, manifest, reading)
     shape = sidecar_shape(step)
     # 到了停等点就生成问法并写侧车：人看到的选项块与 `decide` 核对的是同一份
     ask = asks.build(feature_root, contract, step) if contract and contract.get("rounds") else None
@@ -52,7 +54,7 @@ def cmd_status(feature_root: Path) -> dict:
         # 最近一次成文登记的时刻；重跑 `story` 就是重新登记
         "story_written_at": contract.get("story_written_at"),
         # 本地阅读与业务闭环分开报：成文之后才有阅读图要做
-        **({"reading": reading_work(feature_root)} if contract.get("status") == "story_written" else {}),
+        **({"reading": reading} if reading is not None else {}),
         "round": current.get("round"),
         "positioning": current.get("positioning"),
         "gates": [{"gate": g.get("gate"), "chosen": g.get("chosen"),

@@ -688,3 +688,114 @@ class TheSecondReviewFindings(FigureViewCase):
         self.assertEqual(0, self.view("svg").returncode)
         self.assertEqual(0, self.view("mermaid").returncode)
         self.assertEqual("run_archived", routing.next_step(self.fr, contract)[0], "阅读完成后还卡在阅读")
+
+
+
+class OneBlockOneVerdict(FigureViewCase):
+    """第二轮返修 Q01/Q03：同一块合不合法在各入口结论一致；阶段闭环按工程配置的报告目录判。"""
+
+    def ready_svg(self) -> str:
+        fid = self.prepared_id()
+        self.put_svg(fid, svg(FLOW_SRC))
+        self.make_ready(fid)
+        self.assertEqual(0, self.view("svg").returncode)
+        return fid
+
+    def device_reading(self) -> dict:
+        """装置读阅读状态的那条路：把这个临时工程当仓库根，扩展按运行态位置挂进去。"""
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import run_case as rc  # noqa: PLC0415
+        ext = self.root / "doc" / "extensions"
+        if not ext.exists():
+            import shutil  # noqa: PLC0415
+            shutil.copytree(DEV_EXT, ext, ignore=shutil.ignore_patterns("__pycache__"))
+        from unittest import mock  # noqa: PLC0415
+        with mock.patch.object(rc, "REPO_ROOT", self.root):
+            return rc.reading_facts(self.fr)
+
+    def test_a_broken_block_is_refused_everywhere_and_nothing_is_written(self) -> None:
+        fid = self.ready_svg()
+        good = self.story.read_text(encoding="utf-8")
+        begin, end = f"<!-- story-figure:{fid}:begin -->", f"<!-- story-figure:{fid}:end -->"
+        block = good[good.index(begin):good.index(end) + len(end)]
+        variants = {
+            "块体不是图": good.replace(block, f"{begin}\n这里被改成了普通文字\n{end}"),
+            "重复 ID": good.replace(block, f"{block}\n\n{block}"),
+            "孤立开始标记": good.replace(end, ""),
+        }
+        for name, text in variants.items():
+            with self.subTest(name):
+                self.story.write_text(text, encoding="utf-8")
+                before = self.story.read_bytes()
+                work = json.loads(self.view("status").stdout)
+                self.assertFalse(work["complete"], f"{name}：状态说阅读已完成")
+                self.assertTrue(work["next"], f"{name}：没给下一动作")
+                for mode in ("mermaid", "svg", "toggle"):
+                    self.assertEqual(1, self.view(mode).returncode, f"{name}：view {mode} 没拒绝坏块")
+                formal = subprocess.run(["node", str(BUILD), "number", "--feature", FEATURE, "--project-root", str(self.root)],
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                self.assertEqual(1, formal.returncode, f"{name}：正式命令带着坏块照常执行")
+                self.assertEqual(before, self.story.read_bytes(), f"{name}：坏块时写了 story")
+                self.assertEqual("pending", self.device_reading()["state"], f"{name}：装置把坏块读成完成")
+        self.story.write_text(good, encoding="utf-8")
+        (self.fr / "AR" / "story-src" / "figures" / f"{fid}.mmd").unlink()
+        work = json.loads(self.view("status").stdout)
+        self.assertEqual("no-source", work["items"][0]["state"])
+        self.assertEqual(1, self.view("mermaid").returncode)
+
+    def test_a_story_without_figures_is_not_applicable_anywhere(self) -> None:
+        self.story.write_text("# FIG90001 甲需求\n\n## 背景\n\n没有图。\n", encoding="utf-8")
+        work = json.loads(self.view("status").stdout)
+        self.assertEqual((False, None), (work["applicable"], work["next"]))
+        got = self.device_reading()
+        self.assertEqual("not_applicable", got["state"], got)
+
+    def closed_at(self, rel: str) -> bool:
+        sys.path.insert(0, str(CORE))
+        from flow import routing  # noqa: PLC0415
+        target = self.root / rel / "summary.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"closure_status": "closed"}), encoding="utf-8")
+        try:
+            return routing.spec_closed(self.fr)
+        finally:
+            target.unlink()
+
+    def test_spec_closure_is_read_where_the_project_puts_reports(self) -> None:
+        config = self.root / "framework.config.json"
+        self.assertTrue(self.closed_at(f"doc/features/{FEATURE}/spec/reports"), "默认布局没认出闭环")
+        config.write_text(json.dumps({"paths": {"reports_dir_pattern": "audit/<feature>/<phase>"}}), encoding="utf-8")
+        self.assertTrue(self.closed_at(f"audit/{FEATURE}/spec"), "自定义 reports_dir_pattern 没认出闭环")
+        self.assertFalse(self.closed_at(f"doc/features/{FEATURE}/spec/reports"), "配置了别处却去读默认位置")
+        sys.path.insert(0, str(CORE))
+        from flow import routing, state  # noqa: PLC0415
+        broken = self.root / "audit" / FEATURE / "spec" / "summary.json"
+        broken.parent.mkdir(parents=True, exist_ok=True)
+        broken.write_text("{ 坏了", encoding="utf-8")
+        with self.assertRaises(state.FlowError):
+            routing.spec_closed(self.fr)
+        broken.write_text(json.dumps({"closure_status": "open"}), encoding="utf-8")
+        self.assertFalse(routing.spec_closed(self.fr), "没闭环判成闭环")
+
+    def test_the_report_check_reads_the_configured_place(self) -> None:
+        """交付门的报告核对与路由同一处取 summary：自定义布局下找得到，坏 summary 说读不出。"""
+        (self.root / "framework.config.json").write_text(
+            json.dumps({"paths": {"reports_dir_pattern": "audit/<feature>/<phase>"}}), encoding="utf-8")
+        driver = ("const m = await import(process.argv[1]);"
+                  "process.stdout.write(JSON.stringify(m.reportCheck(process.argv[2], process.argv[3], 'spec')));")
+        mod = DEV_EXT / "hooks" / "shared" / "verifier-report.mjs"
+
+        def check() -> dict:
+            proc = subprocess.run(["node", "--input-type=module", "-e", driver, mod.as_uri(), str(self.root), FEATURE],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            self.assertEqual(0, proc.returncode, proc.stderr)
+            return json.loads(proc.stdout)
+        self.assertIn(f"audit/{FEATURE}/spec/summary.json 不在", check()["problems"][0])
+        summary = self.root / "audit" / FEATURE / "spec" / "summary.json"
+        summary.parent.mkdir(parents=True)
+        summary.write_text(json.dumps({"phase": "spec", "verdict": "PASS"}), encoding="utf-8")
+        self.assertEqual("NOT_REVIEWED", check()["status"], "自定义位置的 summary 没被读到")
+        summary.write_text("{ 坏了", encoding="utf-8")
+        got = check()
+        self.assertEqual("ERROR", got["status"])
+        self.assertIn("读不出", got["problems"][0])

@@ -29,6 +29,28 @@ const entry = (featureRoot, rel) => {
 };
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return undefined; } };
 
+//: 同一次命令里同一份 SVG 只核一次：按内容记，内容变了就重核；进程结束即失效，不跨命令留存
+const checked = new Map();
+
+/**
+ * 阅读图的确定性事实：结构问题与它实际用到的本地资源，由 figure-check 一次给出。视图切换与局部验收共用这一份。
+ *
+ * @returns {{missing?: true, error?: string, problems?: string[], deps?: string[]}}
+ */
+export function svgFacts(featureRoot, id) {
+  const file = path.join(featureRoot, 'AR', 'figures', `${id}.svg`);
+  let bytes;
+  try { bytes = fs.readFileSync(file); } catch { return { missing: true }; }
+  const key = `${file}\0${sha(bytes)}`;
+  if (!checked.has(key)) {
+    const r = runPython(FIGURE_CHECK, [file, '--id', id, '--json']);
+    let facts = null;
+    try { facts = JSON.parse(r.stdout ?? ''); } catch { facts = null; }
+    checked.set(key, r.error || !Array.isArray(facts?.problems) ? { error: r.error ?? r.output } : facts);
+  }
+  return checked.get(key);
+}
+
 /**
  * 这张图在 Story 里的业务位置：所在小节的标题路径与正文摘要（去掉全部图块，切换形态不改它）。
  * 位置是 placement 的审查依据：小节正文变了，这张图的验收随之失效；重编号（标题序号、图序号）只是排版，不算变化。
@@ -65,13 +87,11 @@ function currentInputs(featureRoot, id) {
   if (!render) problems.push(`渲染图 ${id}.reading/render.png 不在：用宿主的浏览器或渲染工具实际打开当前 SVG，存完整图像`);
   let resources = [];
   if (svg) {
-    const r = runPython(FIGURE_CHECK, [path.join(featureRoot, 'AR', 'figures', `${id}.svg`), '--id', id, '--deps']);
-    let deps = null;
-    try { deps = JSON.parse(r.stdout ?? ''); } catch { deps = null; }
-    if (r.error || !deps) problems.push(`本地资源枚举不了（${r.error ?? r.output}）：依赖确定不了就不发请求`);
+    const facts = svgFacts(featureRoot, id);
+    if (facts.error) problems.push(`本地资源枚举不了（${facts.error}）：依赖确定不了就不发请求`);
     else {
-      problems.push(...deps.problems);
-      resources = deps.deps.map(d => entry(featureRoot, `AR/${d}`)).filter(Boolean);
+      problems.push(...facts.problems);
+      resources = facts.deps.map(d => entry(featureRoot, `AR/${d}`)).filter(Boolean);
     }
   }
   return { inputs: { mmd, svg, resources, render, context }, problems };

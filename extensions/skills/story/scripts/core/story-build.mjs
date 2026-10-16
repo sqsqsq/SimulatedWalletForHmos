@@ -327,10 +327,10 @@ function restoreView(ctx) {
       process.stderr.write(`[story-build] 本地阅读图没有恢复，story 保持 Mermaid（业务结果不受影响）：\n  ${r.problems.join('\n  ')}\n`);
       return;
     }
-    const kept = r.notes.filter(n => /保持 Mermaid|切回 Mermaid/.test(n));
     if (r.counts.svg) process.stderr.write(`[story-build] 已恢复 ${r.counts.svg} 张可用的本地阅读图\n`);
-    if (kept.length) {
-      process.stderr.write(`[story-build] 本地阅读还没完成（业务结果不受影响），${kept.length} 张图保持 Mermaid：\n  ${kept.join('\n  ')}\n`
+    if (r.kept.length) {
+      process.stderr.write(`[story-build] 本地阅读还没完成（业务结果不受影响），${r.kept.length} 张图保持 Mermaid：\n`
+        + r.kept.map(k => `  ${k.id}：${k.reason}\n`).join('')
         + '  只修图：按 reference/svg.md 重述或重新验收后跑 `story-build view --mode svg`；全部待办见 `view --mode status`\n');
     }
   } catch (e) {

@@ -40,6 +40,16 @@ export function featureRoot(projectRoot, feature) {
   return path.join(featuresDir(projectRoot), feature);
 }
 
+/**
+ * framework 写阶段报告与 summary.json 的目录，与 framework `featurePhaseReportsDir` 同一口径：
+ * `paths.reports_dir_pattern`（占位 `<feature>`、`<phase>`），没配用 framework 默认；它不随 features_dir 变。
+ */
+export function phaseReportsDir(projectRoot, feature, phase) {
+  const value = readConfig(projectRoot)?.paths?.reports_dir_pattern;
+  const pattern = typeof value === 'string' && value.trim() ? value : 'doc/features/<feature>/<phase>/reports';
+  return path.resolve(projectRoot, pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase));
+}
+
 /** 相对仓库根的展示路径（报错文案里用，跨平台统一正斜杠）。 */
 export function relDisplay(projectRoot, abs) {
   return path.relative(projectRoot, abs).replace(/\\/g, '/');

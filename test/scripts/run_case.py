@@ -656,10 +656,10 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
     feature_root = REPO_ROOT / FEATURES_DIR / feature
     beyond = [phase for phase in PHASE_ORDER[phase_index(end_phase) + 1:]
               if phase_was_reached(feature_root, phase)]
-    return {
+    facts = {
         "target_phase": end_phase,
         "target_closed": target_reached(feature, end_phase),
-        # 本地阅读按产品自己的派生结果记，与业务闭环分开；读不出如实记 error，不当完成
+        # 本地阅读按产品自己的派生结果记，与业务闭环分开；读不出如实记 unknown，不当完成
         "reading": reading_facts(feature_root),
         "target_missing": [] if ok else list(missing),
         "artifacts_ready": artifacts_ready(feature),
@@ -667,23 +667,62 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
         "beyond_target_evidence": beyond,
         "applicable_phases": list(applicable_phases(start_phase, end_phase)),
     }
+    return {**facts, "target_complete": target_complete(facts)}
 
 
 def reading_facts(feature_root: Path) -> dict:
-    """产品 `story-build view --mode status` 给的本地阅读结果；没有 story 时不适用。"""
+    """产品 `story-build view --mode status`（只读）给的本地阅读结果，逐图原因、结构问题与下一动作原样保留。
+
+    `state`：complete / not_applicable / pending / unknown。没有 story 才不适用；子命令起不来、退出码非 0
+    或输出不是约定形状都是 unknown——读不出不等于没有待办。
+    """
     if not (feature_root / "AR" / "story.md").is_file():
-        return {"applicable": False}
+        return {"state": "not_applicable", "why": "还没有 AR/story.md"}
     build = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
     try:
         proc = subprocess.run(["node", str(build), "view", "--mode", "status", "--feature", feature_root.name,
                                "--project-root", str(REPO_ROOT)], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=120)
-        work = json.loads(proc.stdout)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": f"本地阅读状态读不出（{exc}）"}
-    return {"applicable": work.get("applicable"), "complete": work.get("complete"),
-            "pending": [i["id"] for i in work.get("items", []) if i.get("state") != "ready"],
-            "unmanaged": work.get("unmanaged", [])}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"state": "unknown", "error": f"本地阅读状态读不出（{exc}）"}
+    try:
+        work = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except ValueError:
+        work = None
+    if not isinstance(work, dict) or not isinstance(work.get("complete"), bool) or not isinstance(work.get("items"), list):
+        said = (proc.stderr or proc.stdout).strip()[:400]
+        return {"state": "unknown", "error": f"本地阅读状态读不出（退出码 {proc.returncode}：{said or '没有输出'}）"}
+    state = "not_applicable" if not work.get("applicable") else "complete" if work["complete"] else "pending"
+    return {"state": state, **{k: work.get(k) for k in ("items", "unmanaged", "problems", "next")}}
+
+
+#: 同一份阅读待办连续几次没有变化就不再续话：模型做不下去（例如宿主没有看图能力）时如实记未完成，不无限续
+READING_ATTEMPTS = 2
+
+
+def reading_followup(feature: str, watch: dict, result: dict) -> str | None:
+    """业务收口这一刻本地阅读还没完成：返回续话（转交产品给的下一动作，不加修法）。
+
+    完成或不适用返回 None；同一待办连续超过 `READING_ATTEMPTS` 次没变化也返回 None，并在 result 记未完成。
+    """
+    reading = reading_facts(REPO_ROOT / FEATURES_DIR / feature)
+    result["reading"] = reading
+    if reading["state"] not in ("pending", "unknown"):
+        return None
+    key = json.dumps(reading, sort_keys=True, ensure_ascii=False)
+    watch["repeats"] = watch["repeats"] + 1 if key == watch.get("seen") else 1
+    watch["seen"] = key
+    if watch["repeats"] > READING_ATTEMPTS:
+        result["reading_stopped"] = f"同一份阅读待办连续 {READING_ATTEMPTS} 次续话后仍没有变化"
+        return None
+    todo = reading.get("next") if reading["state"] == "pending" else (
+        f"{reading['error']}，没有确认阅读图是否完成——跑 `story-build view --mode status` 查")
+    return f"业务阶段已收口，本地阅读还没完成：{todo}"
+
+
+def target_complete(closure: dict) -> bool:
+    """本轮任务目标成没成：业务阶段闭环，且本地阅读完成或不适用。读不出的阅读状态不算完成。"""
+    return bool(closure.get("target_closed")) and (closure.get("reading") or {}).get("state") in ("complete", "not_applicable")
 
 
 def publish_closure(out_dir: Path, state: dict, feature: str,
@@ -1939,6 +1978,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             turns = 0
             # 同一阶段连续续话了几次——只用于报告里的可读性，不作上限
             stuck_phase, stuck_turns = None, 0
+            # 业务收口时本地阅读待办的观察：连续没变化就不再续
+            reading_watch: dict = {"seen": None, "repeats": 0}
 
             # story 是多轮交互流程：材料确认时会停下来等待补料、拆分或进入 spec。
             # 单轮驱动会把它卡死在那儿（产物一个不产），但那不是 skill 的缺陷——
@@ -2014,6 +2055,13 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
                     break
                 if target_reached(feature, end_phase) and state.get("checkpoint_stage") != "update":
+                    # 业务闭环不等于交付完成：阅读待办在就把产品给的下一动作交回同一段，做完才停
+                    follow = reading_followup(feature, reading_watch, result)
+                    if follow and run.get("status") == "succeeded" and session_id:
+                        feed.emit("reading_pending", turn=turns, todo=observe.shorten(follow, 300))
+                        runlog.event("阅读待办", follow[:200])
+                        request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)
+                        continue
                     if not after_initial:
                         result["stop_reason"] = "target_reached"
                         break
@@ -2061,6 +2109,12 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         state["update_closed_round"] = closed
                         result["update_round"] = closed
                         why = f"更新 {closed} 已收口"
+                    follow = reading_followup(feature, reading_watch, result) if why else None
+                    if follow and run.get("status") == "succeeded" and session_id:
+                        feed.emit("reading_pending", turn=turns, todo=observe.shorten(follow, 300))
+                        runlog.event("阅读待办", follow[:200])
+                        request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)
+                        continue
                     if why:
                         result["stop_reason"] = "update_checkpoint"
                         if start_phase == "story":
@@ -2141,11 +2195,13 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         result["elapsed_sec"] = round(time.time() - t0, 1)
         result["target_reached"] = target_reached(feature, end_phase)
         result["closure"] = closure_facts(feature, start_phase, end_phase)
+        result["target_complete"] = result["closure"]["target_complete"]
         next_phase = PHASE_ORDER[end_idx + 1] if end_idx + 1 < len(PHASE_ORDER) else None
         result["pipeline"] = {
             "requested_start_phase": start_phase,
             "requested_end_phase": end_phase,
-            "status": ("completed_at_requested_end" if result["target_reached"]
+            "status": ("completed_at_requested_end" if result["target_complete"]
+                       else "business_closed_reading_incomplete" if result["target_reached"]
                        else "requested_end_not_reached"),
             "next_phase": next_phase,
             "next_phase_status": "not_started_by_scope" if next_phase else "not_applicable",

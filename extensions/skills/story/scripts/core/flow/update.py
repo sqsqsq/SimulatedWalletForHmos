@@ -444,7 +444,8 @@ PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 def _phase_facts(feature_root: Path) -> list[dict]:
     out = []
     for phase in PHASES:
-        summary = feature_root / phase / "reports" / "summary.json"
+        reports = importer.phase_reports_dir(feature_root, phase)
+        summary = reports / "summary.json"
         if not summary.is_file():
             continue
         try:
@@ -461,7 +462,7 @@ def _phase_facts(feature_root: Path) -> list[dict]:
                     "signals": [x.get("id") if isinstance(x, dict) else x
                                 for x in data.get("readiness_signals") or []],
                     "unadopted": mode == "completed_with_prior_review"
-                    and _report_passed(feature_root / phase / "reports", subject)})
+                    and _report_passed(reports, subject)})
     return out
 
 

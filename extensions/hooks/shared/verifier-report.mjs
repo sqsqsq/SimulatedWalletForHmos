@@ -27,7 +27,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
+import { extensionRoot, featureRoot, phaseReportsDir, readJsonOrNull, readTextOrNull, relDisplay } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 import { fenceRanges, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 import { COVERED_CHECKS, DETAIL_KEYS, detailProblems, reviewInputs } from './review-inputs.mjs';
@@ -131,9 +131,10 @@ function reportProblems(projectRoot, feature, phase) {
  * @returns {{status: 'PASS'|'FAIL'|'NOT_REVIEWED'|'ERROR', problems: string[], notes: string[]}}
  */
 export function reportCheck(projectRoot, feature, phase) {
-  const { summaryFound, abs, summary } = reportLocation(projectRoot, feature, phase);
+  const { summaryFound, abs, summary, where, unreadable } = reportLocation(projectRoot, feature, phase);
+  if (unreadable) return { status: 'ERROR', notes: [], problems: [`${unreadable}：本阶段审没审过判不了，不拿别处的报告顶——重跑 harness 让它重写`] };
   if (!summaryFound) {
-    return { status: 'FAIL', notes: [], problems: [`${phase}/reports/summary.json 不在：报告落点与审查请求由 harness 写进 summary——`
+    return { status: 'FAIL', notes: [], problems: [`${where} 不在：报告落点与审查请求由 harness 写进 summary——`
       + `先完整跑一次 \`harness-runner.ts --phase ${phase} --feature ${feature}\`，按它末尾的 NEXT 派审`] };
   }
   if (!abs) {
@@ -175,9 +176,12 @@ const INVALID_EVIDENCE =
  * 全都没有 = verifier 未启用，如实披露的状态；只缺这一项 = summary 不完整。
  */
 function reportLocation(projectRoot, feature, phase) {
-  const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
-  const summary = readJsonOrNull(path.join(dir, 'summary.json'));
-  if (!summary) return { summaryFound: false, abs: null, summary: null };
+  const file = path.join(phaseReportsDir(projectRoot, feature, phase), 'summary.json');
+  const where = relDisplay(projectRoot, file);
+  const text = readTextOrNull(file);
+  if (text === null) return { summaryFound: false, abs: null, summary: null, where };
+  const summary = readJsonOrNull(file);
+  if (!summary) return { summaryFound: false, abs: null, summary: null, where, unreadable: `${where} 在却读不出（不是合法 JSON）` };
   const rel = typeof summary.verifier_report === 'string' ? summary.verifier_report.trim() : '';
   return { summaryFound: true, abs: rel ? path.resolve(projectRoot, rel) : null, summary };
 }
@@ -304,7 +308,8 @@ function readerReviewDetails(text, id) {
  * @returns {{status: string, problems: string[], detail: string}}
  */
 export function storyReviewProblems(projectRoot, feature, phase) {
-  const { summaryFound, abs, summary } = reportLocation(projectRoot, feature, phase);
+  const { summaryFound, abs, summary, unreadable } = reportLocation(projectRoot, feature, phase);
+  if (unreadable) return { status: 'FAIL', problems: [unreadable], reviewVerdict: null, detail: unreadable };
   if (!summaryFound) {
     return { status: 'NOT_APPLICABLE', problems: [], reviewVerdict: null,
       detail: 'harness 尚未运行，本项还轮不到判' };

@@ -381,6 +381,21 @@ class StatusReportsFactsNotJudgement(UpdateCase):
         out = self.update("--action", "status")
         self.assertEqual("closed", out["phases"][0]["closure"])
 
+    def test_phase_facts_follow_the_configured_report_place(self) -> None:
+        """工程把阶段报告放到别处（reports_dir_pattern）时，update 读的是那一处，不读默认位置。"""
+        config = self.root / "framework.config.json"
+        cfg = json.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
+        cfg.setdefault("paths", {})["reports_dir_pattern"] = "audit/<feature>/<phase>"
+        config.write_text(json.dumps(cfg), encoding="utf-8")
+        default = self.feature_root / "spec" / "reports"
+        default.mkdir(parents=True, exist_ok=True)
+        (default / "summary.json").write_text(json.dumps({"phase": "spec", "closure_status": "open"}), encoding="utf-8")
+        moved = self.root / "audit" / FEATURE / "spec"
+        moved.mkdir(parents=True)
+        (moved / "summary.json").write_text(json.dumps({"phase": "spec", "closure_status": "closed"}), encoding="utf-8")
+        out = self.update("--action", "status")
+        self.assertEqual("closed", out["phases"][0]["closure"], "读了默认位置的旧 summary")
+
     def test_an_unreadable_summary_is_not_guessed(self) -> None:
         """闭没闭环不许猜——猜错的方向永远是「以为闭了」。"""
         reports = self.feature_root / "spec" / "reports"

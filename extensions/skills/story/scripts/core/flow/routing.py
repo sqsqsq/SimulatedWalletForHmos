@@ -13,7 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from materials import meeting, registry
+from materials import importer, meeting, registry
 
 from flow.state import (
     CARRY_ALL, DESIGN_DRAFT, FlowError, STORY_CONTRACT, after_complete,
@@ -316,14 +316,14 @@ def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | N
 
 
 def next_step(feature_root: Path, contract: dict | None,
-              manifest: dict | None = None) -> tuple[str, str]:
+              manifest: dict | None = None, reading: dict | None = None) -> tuple[str, str]:
     """流程位置的唯一判据：读契约，回答下一步该干什么。
 
     位置由数据回答而不由记忆回答——skill 正文因此不必维护成篇的「如果……那么……」，
     恢复一个中断的 feature 也不用靠翻对话。每个返回值都对应 SKILL.md 里的一个具体动作。
 
-    `manifest` 是调用方这个时点已经取到的材料清单：路由与它给出的动作要跟同一份事实，
-    消费者（`status` 的 JSON、起手预检）读的也是这一份，不在下游再各判一次。
+    `manifest` 是调用方这个时点已经取到的材料清单，`reading` 是已经取到的本地阅读工作集合：
+    路由与它给出的动作要跟同一份事实，消费者（`status` 的 JSON、起手预检）读的也是这一份，不在下游再各判一次。
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
@@ -344,7 +344,8 @@ def next_step(feature_root: Path, contract: dict | None,
         reregister = registration_step(feature_root, contract)
         if reregister:
             return reregister
-    reading = reading_todo(feature_root) if stage in ("archived", "story_written") else None
+    reading = (reading_todo(reading if reading is not None else reading_work(feature_root))
+               if stage in ("archived", "story_written") else None)
     if stage == "archived" and reading:
         return ("local_reading", reading + closed_tail(feature_root, contract, manifest))
     if stage == "archived":
@@ -527,9 +528,8 @@ def reading_work(feature_root: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         return {"error": "找不到 node，本地阅读状态读不出"}
-    root = next((p for p in feature_root.parents if (p / "framework.config.json").is_file()), None)
     proc = subprocess.run([node, str(Path(__file__).resolve().parents[1] / "story-build.mjs"), "view", "--mode", "status",
-                           "--feature", feature_root.name, *(["--project-root", str(root)] if root else [])],
+                           "--feature", feature_root.name, "--project-root", str(importer.project_root_of(feature_root))],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     try:
         return json.loads(proc.stdout)
@@ -537,28 +537,23 @@ def reading_work(feature_root: Path) -> dict:
         return {"error": (proc.stderr or proc.stdout).strip() or f"退出码 {proc.returncode}"}
 
 
-def reading_todo(feature_root: Path) -> str | None:
-    """本地阅读还没完成时要做什么；没有图或都已可用返回 None。读不出按未知说，不当完成。"""
-    work = reading_work(feature_root)
-    if work.get("error"):
-        return f"本地阅读状态读不出（{work['error']}），没有确认阅读图是否完成——跑 `story-build view --mode status` 查"
-    if not work.get("applicable") or work.get("complete"):
-        return None
-    rows = [f"第 {n} 行的 Mermaid 图还没建源（`story-build view --mode prepare`）" for n in work.get("unmanaged", [])]
-    rows += [f"{i['id']}：{i['reason']}" for i in work.get("items", []) if i.get("state") != "ready"]
-    rows += work.get("problems", [])
-    return ("完成本地阅读（本需求的交付包括可读的本地阅读图）：" + "；".join(rows)
-            + "——按 `reference/svg.md` 依据 .mmd 重述、渲染、交独立审查，`view --mode review-check` 通过后 `view --mode svg`")
+def reading_todo(work: dict) -> str | None:
+    """本地阅读还没完成时要做什么（产品状态给的 `next`）；没有图或都已可用返回 None。读不出按未知说，不当完成。"""
+    if work.get("error") or not isinstance(work.get("complete"), bool):
+        return (f"本地阅读状态读不出（{work.get('error') or '状态里没有 complete'}），没有确认阅读图是否完成"
+                "——跑 `story-build view --mode status` 查")
+    return None if work["complete"] or not work.get("applicable") else work.get("next")
 
 
 def spec_closed(feature_root: Path) -> bool:
-    """spec 阶段闭环了没有：framework 写的 summary 说的。还没有 summary 就是没闭环；有却读不出要说出来。"""
-    path = feature_root / "spec" / "reports" / "summary.json"
+    """spec 阶段闭环了没有：framework 写在本阶段报告目录（按工程配置）里的 summary 说的。
+    还没有 summary 就是没闭环；有却读不出要说出来，不拿别处的旧报告顶。"""
+    path = importer.phase_reports_dir(feature_root, "spec") / "summary.json"
     if not path.is_file():
         return False
     try:
-        summary = json.loads(path.read_text(encoding="utf-8"))
+        summary = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
-        raise FlowError(f"spec/reports/summary.json 读不出（{exc}），spec 闭环状态判不了：它由 framework 写，"
+        raise FlowError(f"{path.as_posix()} 读不出（{exc}），spec 闭环状态判不了：它由 framework 写，"
                         "按 `phases/spec.md`「闭环」重跑 harness 让它重写") from exc
     return summary.get("closure_status") == "closed"
