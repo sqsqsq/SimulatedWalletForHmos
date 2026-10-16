@@ -251,8 +251,8 @@ class Publishing(StatsRepo):
             "报告头多一行范围": "**统计范围：** 业务版本 9.9 的全部数据\n\n" + good,
             "标题全提前": self.headings_first(facts),
             "整篇放进注释": "<!--\n" + good + "\n-->",
-            "正文缩进成代码块": good[:good.index("## 1.")] + "\n".join("    " + line for line in
-                                                                   good[good.index("## 1."):].splitlines()),
+            **{f"正文以 {lead!r} 缩进成代码块": self.indent_body(good, lead)
+               for lead in ("    ", "\t", " \t", "  \t", "   \t")},
             "报告头放进注释": good.replace("**统计范围：**", "<!-- **统计范围：**", 1).replace("\n\n## 1.", " -->\n\n## 1.", 1),
         }
         for name, text in rejected.items():
@@ -272,6 +272,11 @@ class Publishing(StatsRepo):
         left = sorted(p.name for p in (self.root / "doc" / "features" / ".usage-stats").iterdir() if p.is_dir())
         self.assertEqual([b["analysis_id"]], left, "旧的未引用输出没清")
 
+    @staticmethod
+    def indent_body(text: str, lead: str) -> str:
+        at = text.index("## 1.")
+        return text[:at] + "\n".join(lead + line for line in text[at:].splitlines())
+
     def headings_first(self, facts: dict) -> str:
         """交回样本那种拼法：先列完全部标题、表全堆在最后一节下面。"""
         text = self.render(facts)
@@ -286,6 +291,9 @@ class Publishing(StatsRepo):
             with self.subTest(args):
                 facts = self.facts(*args)
                 self.assertEqual([], stats.report_problems(self.render(facts), facts))
+                for lead in (" ", "   "):
+                    self.assertEqual([], stats.report_problems(self.indent_body(self.render(facts), lead), facts),
+                                     f"正文以 {lead!r} 缩进仍是可见结构")
         facts = self.facts()
         swapped = dict(facts, tables=[dict(t, rows=self.rows_of(facts, "steps:4.3.0")) if t["id"] == "steps:4.2.0"
                                       else dict(t, rows=self.rows_of(facts, "steps:4.2.0")) if t["id"] == "steps:4.3.0"

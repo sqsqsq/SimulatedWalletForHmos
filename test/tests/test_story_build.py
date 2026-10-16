@@ -21,8 +21,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from ext_workspace import link_harness_yaml, DEV_EXT, DEV_ROOT
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import golden_workspace  # noqa: E402
 from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -913,6 +911,31 @@ class TestNumbering(StoryBuildCase):
         self.assertIn("![图 1 · 提交入口页面布局](entry.png)", text)
         self.assertIn("![图 2 · 状态走向](flow.png)", text)
 
+    def test_a_de_numbered_document_comes_back_byte_for_byte(self) -> None:
+        """编好号的整篇是固定点：去掉章节号与图号再编一次，逐字节还原；围栏里的行和正文里的数字不动。"""
+        import re
+        self.put_features("### 提交与回执\n\n提交之后停在等待态，回执沿用 3.2 节的约定。\n\n"
+                          "#### 回执\n\n回执里有单号。\n\n"
+                          "```text\n### 9.9 围栏里的标题行\n## 不是章\n```\n\n"
+                          "![入口布局](entry.png)\n\n"
+                          "### 失败与重试\n\n1. 第一步\n2. 第二步\n")
+        numbered = self.number()
+        self.assertEqual(numbered, self.number(), "编好号的整篇重跑变了")
+        self.assertIn("```text\n### 9.9 围栏里的标题行\n## 不是章\n```", numbered, "围栏里的行被当成标题编号了")
+        self.assertIn("回执沿用 3.2 节的约定。", numbered)
+        fenced, lines = False, []
+        for line in numbered.split("\n"):
+            if line.startswith("```"):
+                fenced = not fenced
+            elif not fenced:
+                line = re.sub(r"!\[图\s*\d+\s*[·・]\s*", "![",
+                              re.sub(r"^(#{2,6})\s+\d+(?:\.\d+)*\.?\s+", r"\1 ", line))
+            lines.append(line)
+        stripped = "\n".join(lines)
+        self.assertNotEqual(numbered, stripped, "去号版该和编号版不一样，否则这条什么都没验")
+        self.story_path.write_text(stripped, encoding="utf-8")
+        self.assertEqual(numbered, self.number())
+
     def test_any_depth_is_numbered(self) -> None:
         """编号不设层级上限：几级小标题就几段号；换上级时下级从 1 重来。"""
         self.put_features("### 提交与回执\n\n#### 回执\n\n##### 超时\n\n###### 重试\n\n#### 撤回\n")
@@ -933,42 +956,6 @@ class TestNumbering(StoryBuildCase):
         self.rewrite_story("## 功能说明", "## " + CHAPTER_OUT_OF_CONTRACT)
         text = self.number()
         self.assertIn("## " + CHAPTER_OUT_OF_CONTRACT, text)
-
-
-class TestGoldenNumbering(unittest.TestCase):
-    """金样是编号的仲裁锚：跑一遍不变，去掉号再跑还原成它。"""
-
-    GOLDEN = REPO_ROOT / "test" / "golden" / "story-金样-AR90004.md"
-
-    def renumber(self, text: str) -> str:
-        script = (
-            "import * as fs from 'node:fs';"
-            "import { renumberStory } from './doc/extensions/skills/story/scripts/core/story/document.mjs';"
-            "const c = JSON.parse(fs.readFileSync("
-            "'doc/extensions/skills/story/contracts/story-chapters.json','utf-8'));"
-            "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>"
-            "process.stdout.write(renumberStory(s, c.chapters)));"
-        )
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e", script],
-            input=text, capture_output=True, text=True, encoding="utf-8",
-            cwd=str(DEV_ROOT), timeout=60)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        return proc.stdout
-
-    def test_the_golden_is_a_fixed_point(self) -> None:
-        text = self.GOLDEN.read_text(encoding="utf-8")
-        self.assertEqual(text, self.renumber(text), "编号拦金样即编号错")
-
-    def test_a_de_numbered_golden_comes_back_byte_for_byte(self) -> None:
-        import re
-        text = self.GOLDEN.read_text(encoding="utf-8")
-        stripped = "\n".join(
-            re.sub(r"!\[图\s*\d+\s*[·・]\s*", "![",
-                   re.sub(r"^(#{2,4})\s+\d+(?:\.\d+)*\.?\s+", r"\1 ", line))
-            for line in text.split("\n"))
-        self.assertNotEqual(text, stripped, "去号版该和金样不一样，否则这条什么都没验")
-        self.assertEqual(text, self.renumber(stripped))
 
 
 class TestSmallLedgerItems(StoryBuildCase):
@@ -1798,16 +1785,21 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
                          / "story-chapters.json")
         self.build = (self.mech / "skills" / "story" / "scripts" / "core"
                       / "story-build.mjs")
-        self.story = REPO_ROOT / "test" / "golden" / "story-金样-AR90004.md"
 
     def check(self) -> str:
-        """金样放进用这份副本机制搭的需求工作区，经生产入口 check。"""
+        """中性需求工作区经这份副本机制的生产入口 check；输出与错误一起带回。"""
         with tempfile.TemporaryDirectory() as ws:
-            golden_workspace.build(Path(ws), extensions=self.mech)
-            return golden_workspace.check(Path(ws))[1]
+            root = Path(ws) / "work"
+            shutil.copytree(FIXTURE, root)
+            proc = subprocess.run(
+                ["node", str(self.build), "check", "--feature", FEATURE, "--project-root", str(root)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            return (proc.stdout or "") + (proc.stderr or "")
 
     def test_a_good_contract_says_nothing_about_id_shapes(self) -> None:
-        self.assertNotIn("id_shapes", self.check())
+        out = self.check()
+        self.assertIn("[story-build check]", out, "check 没有真正跑起来")
+        self.assertNotIn("id_shapes", out)
 
     def test_a_bad_drop_shape_is_named(self) -> None:
         data = json.loads(self.contract.read_text(encoding="utf-8"))

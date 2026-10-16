@@ -3,24 +3,18 @@
 金样是给人对照效果用的正本，替换要经用户审定（候选在 doc/plan/1.9.9/金样候选/）；
 在新正本审定之前，旧正本与输入夹具原样保留。判据不以「拦不拦金样」定对错——
 判据的对错按它的真实依据与中性正反例判（结构、图源承接、人工区等回归在中性夹具里）。
-这份测试守：
-
-  ① 金样正本与构造场景所需的同轮材料内容没变（指纹按 LF 归一后比，行尾不算改动；另核形态数）；
-  ② 输入夹具经 spec 门禁时，承接、知识登记、埋点形状这几类合法输入不被误报。
+这份测试守金样正本与构造场景所需的同轮材料内容没变：指纹按 LF 归一后比，行尾不算改动，另核形态数。
+正本的文件身份只在这里登记一处；spec 门禁对上游承接、知识登记与埋点结构的正反例在
+test_review_closure.py、test_knowledge_forms.py、test_knowledge_use.py、test_indicator_reporting.py。
 """
 from __future__ import annotations
 
 import hashlib
-import subprocess
-import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "test" / "scripts"))
-import golden_workspace  # noqa: E402
 GOLDEN = REPO_ROOT / "test" / "golden"
 INPUT_FIXTURE = REPO_ROOT / "test" / "fixtures" / "golden" / "AR90004"
 GOLDEN_STORY = GOLDEN / "story-金样-AR90004.md"
@@ -54,6 +48,9 @@ GOLDEN_FINGERPRINTS = {
     # 2026-09-25 过程件目录 design 改名 plan：说明里的历史分析链接改到 plan/1.9.1/ 下的实际位置，正文未动。
     # 2026-09-28 方案目录迁到仓根 doc/plan（1.9.8 P3 目录归属纠正）：同一条链接改到 doc/plan/1.9.1/，正文未动。
     "story-金样-AR90006-说明.md": "27c234bb7b3a8a26",
+    # 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别、D 编号）。
+    # 2026-10-16 从 test_review_golden.py 移入本登记：渲染测试改用中性登记表，正本身份只在这里登记一处。
+    "review-金样-AR90006.md": "c2055c1dcbca18ad",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
     "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
     "assets/AR90006/manage-page.png": "24fbb597b158d849",
@@ -164,27 +161,6 @@ class GoldenIsFrozen(unittest.TestCase):
             "images": sum(x.count("![") for x in lines),
         }
         self.assertEqual(SHAPE, actual)
-
-
-class TheSpecGateReadsTheFrozenInputs(unittest.TestCase):
-    """冻结输入夹具是一份合法的需求工作区：spec 门禁对它的承接、知识登记与埋点形状不误报。"""
-
-    def test_the_spec_gate_accepts_the_golden_inputs(self) -> None:
-        """金样的输入夹具经 spec 门禁：上游编号承接、知识登记、埋点形状都不报。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            golden_workspace.build(root)
-            gate = root / "doc" / "extensions" / "hooks" / "spec" / "post_check.mjs"
-            proc = subprocess.run(
-                ["node", "--input-type=module", "-e",
-                 f"const m = (await import({json.dumps(gate.as_uri())})).default;"
-                 f"const out = await m({{ phase: 'spec', feature: 'AR90004', projectRoot: {json.dumps(root.as_posix())} }});"
-                 "process.stdout.write(JSON.stringify(out));"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        for needle in ("门禁自身异常", "上游材料的验收编号没有承接", "没有篇", "没有面", "manifest_digest",
-                       "缺定义段", "下没有统计点"):
-            self.assertNotIn(needle, proc.stdout)
 
 
 if __name__ == "__main__":

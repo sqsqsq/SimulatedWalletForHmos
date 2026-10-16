@@ -1,15 +1,16 @@
-"""review 金样是评审记录的效果定义——渲染器渲不出它，改的是渲染器。
+"""评审记录渲染：用本文件里的中性登记表核 review 的结构、人工区与字段诊断。
 
-形态从金样正推：带序号的陈述句标题、带小标题分段的正文、一行「请<角色>评审。」、
-三态加修改意见的人工区。本文件守三件事：
+结构预期按评审记录合同写出，不从渲染结果反推：
+- 待确认在前、已定在后；
+- 每类成一节，节号、项号按登记顺序编；
+- 议题标题是陈述句；
+- 澄清正文按加粗段首分段，之后一行「请<角色>评审。」；
+- 三态加修改意见的人工区不预选，最后是议题锚。
 
-  ① 金样一个字节没变（指纹）；
-  ② 拿金样自己的条目倒推登记表，`build` 渲出来的与金样结构一致（标题与编号、段首、人工区、议题锚）；
-  ③ 人写在人工区里的内容，重渲染时一个字节不动。
+金样正本的文件身份由 `test_golden_sample.py` 登记，本文件不读金样。
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -20,92 +21,72 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from flow_steps import HUMAN_ZONE  # noqa: E402
-from ext_workspace import DEV_EXT
+from flow_steps import HUMAN_ZONE, open_decision, settled_decision  # noqa: E402
+from ext_workspace import DEV_EXT  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GOLDEN = REPO_ROOT / "test" / "golden" / "review-金样-AR90006.md"
 BUILD = DEV_EXT / "skills/story/scripts/core/story-build.mjs"
 FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
 
-#: 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别、D 编号）。sha256 前 16 位。
-FINGERPRINT = "c2055c1dcbca18ad"
-HUMAN_ZONE_HEAD = "评审结论："
+
+def neutral_decisions() -> list[dict]:
+    """会议室预订的四条议题：两条待确认、两条已定，类别交错，登记顺序与类别顺序不同。"""
+    return [
+        open_decision("D1", "超时未签到的预订是否自动释放待定",
+                      "预订开始后十五分钟没人签到，会议室要不要自动放给别人。",
+                      [("自动释放并通知预订人", "空置减少；预订人迟到时会被占走"),
+                       ("保留到预订结束", "迟到的人照常能用；空置时间更长")],
+                      "选择方案 1；行政确认迟到投诉可接受后定稿。",
+                      category="业务规则", decider="行政负责人"),
+        settled_decision("D2", "预订记录只对本部门可见",
+                         "其他部门能不能看到某间会议室被谁预订。", "预订人姓名只对本部门显示，其他部门只看到已占用。",
+                         said="别的部门看到占用就行，看不到人名", who="安全负责人在评审会上",
+                         category="数据与隐私", decider="安全负责人"),
+        open_decision("D3", "新功能先对哪几层楼开放待定",
+                      "灰度时先开哪几层楼。",
+                      [("先开一层楼", "问题暴露面小；样本少"),
+                       ("全楼同时开", "样本足；出问题影响全楼")],
+                      "选择方案 1。", category="上线与开关", decider="运维负责人"),
+        settled_decision("D4", "同一时段同一会议室只能有一条预订",
+                         "两人同时提交同一时段时以谁为准。", "以先到服务器的为准，后到的提示已被占用。",
+                         said="先到先得", category="业务规则", decider="产品负责人"),
+    ]
 
 
-def golden_body() -> str:
-    """金样的正文——顶部那段 HTML 注释是它自己的效果口径，不是渲染产物。"""
-    text = GOLDEN.read_text(encoding="utf-8")
-    return text[text.index("# 评审记录"):]
+ZONE = ["评审结论：", "- [ ] 同意", "- [ ] 需修改", "- [ ] 暂缓", "修改意见："]
+OPEN_HEADS = ["**决策点**：", "**可选的做法**：", "**建议**："]
+SETTLED_HEADS = ["**决策点**：", "**依据**：", "**结论与影响**："]
+
+#: 上面四条按合同应渲成的骨架：章、节、项的标题与编号，各项的段首、人工区与锚
+EXPECTED_SKELETON = [
+    "## 1. 待确认事项",
+    "### 1.1 业务规则",
+    "#### 1.1.1 超时未签到的预订是否自动释放待定", *OPEN_HEADS,
+    "请行政负责人评审。", *ZONE, "<!-- decision: D1 -->",
+    "### 1.2 上线与开关",
+    "#### 1.2.1 新功能先对哪几层楼开放待定", *OPEN_HEADS,
+    "请运维负责人评审。", *ZONE, "<!-- decision: D3 -->",
+    "## 2. 已定事项",
+    "### 2.1 数据与隐私",
+    "#### 2.1.1 预订记录只对本部门可见", *SETTLED_HEADS,
+    "请安全负责人评审。", *ZONE, "<!-- decision: D2 -->",
+    "### 2.2 业务规则",
+    "#### 2.2.1 同一时段同一会议室只能有一条预订", *SETTLED_HEADS,
+    "请产品负责人评审。", *ZONE, "<!-- decision: D4 -->",
+    "## 3. 其他意见",
+]
 
 
-def parse_golden() -> list[dict]:
-    """把金样倒推成登记表。
-
-    倒推而不是另写一份样本：另写一份就有了第二个真源。三级分层各承载一个字段：
-    一级章名给 `status`、二级章名给 `category`、三级标题给 `title`；「请…评审。」之前是
-    `clarification`，之后是人工区。形态由状态定：待确认是 choice，已定是 confirm。
-    """
-    out: list[dict] = []
-    status, category, cur = "open", "", None
-
-    def flush() -> None:
-        nonlocal cur
-        if cur is not None:
-            cur["clarification"] = "\n".join(cur["clarification"]).strip()
-            out.append(cur)
-        cur = None
-
-    for line in golden_body().split("\n"):
-        if line.startswith("## "):
-            flush()
-            status = "settled" if "已定事项" in line else "open"
-            continue
-        if line.startswith("### "):
-            flush()
-            category = re.sub(r"^###\s+\d+(?:\.\d+)*\s+", "", line).strip()
-            continue
-        if line.startswith("#### "):
-            flush()
-            cur = {"id": "", "status": status, "category": category,
-                   "review_mode": "confirm" if status == "settled" else "choice",
-                   "title": re.sub(r"^####\s+\d+(?:\.\d+)*\s+", "", line).strip(),
-                   "clarification": [], "decider": ""}
-            continue
-        if cur is None:
-            continue
-        ask = re.fullmatch(r"请(.+)评审。", line.strip())
-        if ask:
-            cur["decider"] = ask.group(1)
-            continue
-        mark = re.fullmatch(r"<!-- decision: (\S+) -->", line.strip())
-        if mark:
-            cur["id"] = mark.group(1)
-            continue
-        if cur["decider"]:
-            continue                      # 「请…评审。」之后到锚之间是人工区
-        cur["clarification"].append(line)
-    flush()
+def skeleton(text: str) -> list[str]:
+    """review 里的结构行：编号标题、段首小标题、请谁评审、人工区五行、议题锚。机器标记里的摘要不比。"""
+    keep = re.compile(r"^(#{2,4} \d|\*\*[^*]+\*\*：|请.+评审。$|评审结论：|- \[ \] |修改意见：|<!-- decision: )")
+    out = []
+    for line in text.split("\n"):
+        if keep.match(line):
+            out.append(line.split("：", 1)[0] + "：" if line.startswith("**") else line)
     return out
-
-
-class ReviewGoldenIsFrozen(unittest.TestCase):
-    def test_fingerprint(self) -> None:
-        self.assertTrue(GOLDEN.is_file(), "review 金样正本不存在")
-        actual = hashlib.sha256(GOLDEN.read_bytes()).hexdigest()[:16]
-        self.assertEqual(FINGERPRINT, actual,
-                         "review 金样变了——只有维护者能改，改了要同步这里的指纹")
-
-    def test_it_parses_into_ten_entries(self) -> None:
-        """倒推得出的登记表要真的有内容——解析坏掉时下面两条会静默空转。"""
-        entries = parse_golden()
-        self.assertTrue(entries, "金样倒推不出登记表")
-        self.assertTrue(all(e["title"] and e["clarification"] and e["decider"]
-                            for e in entries))
-        self.assertIn("settled", {e["status"] for e in entries})
-        self.assertIn("open", {e["status"] for e in entries})
 
 
 class RendererCase(unittest.TestCase):
@@ -129,46 +110,42 @@ class RendererCase(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
 
-class RenderMatchesGolden(RendererCase):
-    """渲染器渲不出金样，改的是渲染器。"""
-
-    @staticmethod
-    def structure(text: str) -> list[str]:
-        """按结构比：章节与议题标题（含编号）、段首小标题、人工区五行、议题锚。机器标记里的摘要不比。"""
-        keep = re.compile(r"^(#{2,4} |\*\*[^*]+\*\*：|评审结论：|- \[ \] |修改意见：|<!-- decision: )")
-        return [line.split("：", 1)[0] + "：" if line.startswith("**") else line
-                for line in text.split("\n") if keep.match(line)]
-
-    def test_the_rendered_structure_matches_the_golden(self) -> None:
-        self.write_decisions(parse_golden())
+class RenderFollowsTheContract(RendererCase):
+    def test_open_before_settled_numbered_in_registration_order(self) -> None:
+        self.write_decisions(neutral_decisions())
         proc = self.run_build()
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual(self.structure(golden_body()), self.structure(self.review.read_text(encoding="utf-8")))
+        self.assertEqual(EXPECTED_SKELETON, skeleton(self.review.read_text(encoding="utf-8")))
 
-    def test_a_settled_and_an_open_entry_share_one_human_zone(self) -> None:
+    def test_each_entry_carries_its_text_and_an_empty_human_zone(self) -> None:
         """已定与待定的机器区按形态不同，人工区是同一个样子：三态与修改意见，不预选。"""
-        entries = parse_golden()
-        pick = [next(e for e in entries if e["status"] == "settled"),
-                next(e for e in entries if e["status"] == "open")]
-        self.write_decisions(pick)
+        entries = neutral_decisions()
+        self.write_decisions(entries)
         self.assertEqual(0, self.run_build().returncode)
         out = self.review.read_text(encoding="utf-8")
-        self.assertIn("## 1. 待确认事项", out)
-        self.assertIn("## 2. 已定事项", out)
-        for entry in pick:
-            self.assertIn(f"{entry['title']}\n", out)
-            self.assertIn(entry["clarification"], out)
-            self.assertIn(f"请{entry['decider']}评审。\n\n{HUMAN_ZONE}\n"
-                          f"<!-- decision: {entry['id']} -->", out)
+        for entry in entries:
+            with self.subTest(entry["id"]):
+                self.assertIn(entry["clarification"], out)
+                self.assertIn(f"请{entry['decider']}评审。\n\n{HUMAN_ZONE}\n"
+                              f"<!-- decision: {entry['id']} -->", out)
         self.assertNotIn("- [x]", out, "替人预选了")
+        self.assertIn("## 3. 其他意见", out)
+
+    def test_a_single_settled_entry_has_no_open_items(self) -> None:
+        """条目数与类别都跟着登记表走：只有一条已定时，待确认章下没有议题。"""
+        self.write_decisions([neutral_decisions()[1]])
+        self.assertEqual(0, self.run_build().returncode)
+        lines = skeleton(self.review.read_text(encoding="utf-8"))
+        self.assertEqual(["### 2.1 数据与隐私", "#### 2.1.1 预订记录只对本部门可见"],
+                         [x for x in lines if x.startswith("###")])
 
 
 class HumanZoneSurvivesRerender(RendererCase):
     def test_what_the_reviewer_wrote_is_kept_byte_for_byte(self) -> None:
-        entries = parse_golden()[:2]
+        entries = neutral_decisions()[:2]
         self.write_decisions(entries)
         self.assertEqual(0, self.run_build().returncode)
-        said = "修改意见：页面要显示这个数是云侧给的。"
+        said = "修改意见：释放前先给预订人推一次提醒。"
         anchor = "<!-- decision: {} -->".format(entries[0]["id"])
         text = self.review.read_text(encoding="utf-8")
         self.review.write_text(
@@ -185,7 +162,7 @@ class HumanZoneSurvivesRerender(RendererCase):
 
     def test_rerender_is_idempotent(self) -> None:
         """连渲两次要一模一样——不然计划外意见区每 build 一次就多一个空行。"""
-        self.write_decisions(parse_golden())
+        self.write_decisions(neutral_decisions())
         self.assertEqual(0, self.run_build().returncode)
         once = self.review.read_text(encoding="utf-8")
         self.assertEqual(0, self.run_build().returncode)
@@ -204,7 +181,7 @@ class FieldsAreRequired(RendererCase):
                               ("clarification", "澄清正文"),
                               ("decider", "请谁评审")):
             with self.subTest(field=field):
-                entry = dict(parse_golden()[0])
+                entry = dict(neutral_decisions()[0])
                 entry[field] = ""
                 self.write_decisions([entry])
                 code, out = self.run_check()
@@ -213,7 +190,7 @@ class FieldsAreRequired(RendererCase):
 
     def test_a_category_outside_the_word_list_is_named(self) -> None:
         """类别决定它成章落在哪一节——不在词表里，成章就成不出自然名。"""
-        entry = dict(parse_golden()[0])
+        entry = dict(neutral_decisions()[0])
         entry["category"] = "我自己起的类别"
         self.write_decisions([entry])
         code, out = self.run_check()
@@ -221,7 +198,7 @@ class FieldsAreRequired(RendererCase):
         self.assertIn("不在词表里", out)
 
     def test_a_missing_category_is_named(self) -> None:
-        entry = dict(parse_golden()[0])
+        entry = dict(neutral_decisions()[0])
         entry.pop("category")
         self.write_decisions([entry])
         code, out = self.run_check()
@@ -230,8 +207,7 @@ class FieldsAreRequired(RendererCase):
 
     def test_the_word_list_is_a_map_not_a_quota(self) -> None:
         """决策类别是词表：机器不判每类有没有条目、不判空类要不要解释。"""
-        entries = [e for e in parse_golden() if e["category"] == parse_golden()[0]["category"]]
-        self.write_decisions(entries)
+        self.write_decisions([e for e in neutral_decisions() if e["category"] == "业务规则"])
         _, out = self.run_check()
         for quota in ("每类", "空类", "十一类都要", "类别齐"):
             self.assertNotIn(quota, out, f"出现了按类别配额的判据：\n{out}")

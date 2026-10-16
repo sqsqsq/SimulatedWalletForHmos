@@ -210,7 +210,7 @@ def write_index(base: Path, data: dict) -> None:
 
 
 def outline(text: str) -> tuple[list[dict], list[str], list[str]]:
-    """报告实际可见的结构：HTML 注释、围栏代码块、缩进 4 格起的代码行都不算；其余行里 1–3 级标题把正文分节，
+    """报告实际可见的结构：HTML 注释、围栏代码块、前导空白达 4 列的代码行（Tab 按 CommonMark 的 4 列制表位计）都不算；其余行里 1–3 级标题把正文分节，
     每节收它下面的合法 Markdown 表（表头 + 数据行）。同时返回这些可见行，报告头也只从中找。
 
     第一项是首个标题之前的部分。表要有与表头同列数的分隔行、每行列数相同。
@@ -233,11 +233,12 @@ def outline(text: str) -> tuple[list[dict], list[str], list[str]]:
 
     for no, line in enumerate(text.splitlines(), 1):
         s = line.strip()
-        if re.match(r" {0,3}(```|~~~)", line):
+        width = len(line[:len(line) - len(line.lstrip(" \t"))].expandtabs(4))   # 前导空白列宽，Tab 到 4 列制表位
+        if width <= 3 and s.startswith(("```", "~~~")):
             close()
             fenced = not fenced
             continue
-        if fenced or re.match(r"( {4}|\t)", line):
+        if fenced or width >= 4:
             close()
             continue
         shown.append(s)
