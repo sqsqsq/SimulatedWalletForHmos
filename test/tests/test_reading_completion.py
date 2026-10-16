@@ -94,13 +94,37 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
             p(rc, "derive_phase_state", return_value={}),
             p(rc, "wait_for_human_reply", side_effect=ask),
             p(rc, "wait_for_resume", side_effect=lambda *a, **k: resumed.append(len(client.prompts)) or resume),
-            unittest.mock.patch("sys.stdout", new_callable=io.StringIO),
+            unittest.mock.patch("sys.stdout", new=io.StringIO()),
         ):
             patch.start()
             self.addCleanup(patch.stop)
         self.resumed = resumed
         rc.foreground("case", prepared=False)
+        self.result = json.loads(sys.stdout.getvalue())
         return json.loads((out / "state.json").read_text(encoding="utf-8"))
+
+    def update_segment(self) -> list[int]:
+        """第二段的替身：第一段收口时更新号是 u0，之后收口成 u1；第二检查点记下进入时跑过几轮。"""
+        stopped: list[int] = []
+        p = unittest.mock.patch.object
+        for patch in (
+            p(rc, "update_round", side_effect=lambda _f: {"readable": True, "open": None,
+                                                        "last_closed": "u0" if len(self.client.prompts) <= 1 else "u1"}),
+            p(rc, "_run_story_gates", return_value={}),
+            p(rc, "review_closure", return_value={}),
+            p(rc, "wait_at_update_checkpoint", side_effect=lambda *a, **k: stopped.append(len(self.client.prompts))),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+        return stopped
+
+    def assert_concluded_once(self, state: dict, rounds: int) -> None:
+        self.assertEqual(rounds, len(self.client.prompts), "宿主收工后又起了 CLI 轮次")
+        self.assertEqual(1, len(self.asked), "收工被要求了不止一次")
+        self.assertEqual(("host_concluded", "host_concluded"),
+                         (self.result["stop_reason"], self.result["reading_handoff"]))
+        self.assertFalse(self.result["closure"]["target_complete"])
+        self.assertEqual("business_closed_reading_incomplete", state["pipeline"]["status"])
 
     def test_legitimate_work_takes_as_many_rounds_as_it_needs(self) -> None:
         stages = ["no-svg", "no-request", "no-report", "incomplete"]
@@ -162,19 +186,25 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
         self.assertEqual([2], self.resumed, "阅读没做完就停到了第一检查点")
         self.assertIn("fig-a no-svg", self.client.prompts[1])
 
+    def test_a_conclusion_during_the_first_reading_wait_ends_the_run(self) -> None:
+        """阅读停等里宿主收工：这就是结束运行，不再进第一检查点等第二次收工。"""
+        stopped = self.update_segment()
+        state = self.drive([pending("no-report")], after_initial="update", host=[None])
+        self.assertEqual([], self.resumed, "收工之后还进了第一检查点")
+        self.assertEqual([], stopped)
+        self.assert_concluded_once(state, rounds=2)
+
+    def test_a_conclusion_during_the_update_reading_wait_ends_the_run(self) -> None:
+        stopped = self.update_segment()
+        state = self.drive([DONE, pending("svg-stale")], after_initial="update", host=[None],
+                           resume={"answer": "", "text": "按评审改"})
+        self.assertEqual([1], self.resumed, "第一段本该正常停到第一检查点")
+        self.assertEqual([], stopped, "收工之后还进了第二检查点")
+        self.assert_concluded_once(state, rounds=3)
+
     def test_the_second_checkpoint_waits_for_the_reading_too(self) -> None:
         """update 改了图之后阅读又有待办：第二段收口时同样续同一段，做完再停到第二检查点。"""
-        stopped: list[int] = []
-        p = unittest.mock.patch.object
-        for patch in (
-            p(rc, "update_round", side_effect=lambda _f: {"readable": True, "open": None,
-                                                        "last_closed": "u0" if len(self.client.prompts) <= 1 else "u1"}),
-            p(rc, "_run_story_gates", return_value={}),
-            p(rc, "review_closure", return_value={}),
-            p(rc, "wait_at_update_checkpoint", side_effect=lambda *a, **k: stopped.append(len(self.client.prompts))),
-        ):
-            patch.start()
-            self.addCleanup(patch.stop)
+        stopped = self.update_segment()
         self.drive([DONE, pending("svg-stale"), DONE], after_initial="update", resume={"answer": "", "text": "按评审改"})
         self.assertEqual([3], stopped, "update 后阅读没做完就停到了第二检查点")
         self.assertIn("按评审改", self.client.prompts[1])

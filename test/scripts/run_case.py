@@ -746,7 +746,8 @@ def reading_turn(feature: str, story_required: bool, seen: dict, result: dict, *
     - 完成或不适用、会话续不了：None（阅读按事实记，没完成就是未完成）；
     - 自动用例里产品给了可执行的下一动作，且这份待办与上次转交时不同（第一次，或之后有了可见变化）：原样转交；
     - 其余（交互用例、状态读不出、转交后没有可见变化）都交宿主：`ask(原因)` 带着模型原话停等，
-      宿主回话就用它续；宿主收工记 `reading_handoff`，返回 None。
+      宿主回话就用它续；宿主收工就是结束这次运行——记进既有的 `stop_reason=host_concluded`，返回 None，
+      调用方据它走收工出口，不再进检查点（那道收工已被这次停等消费，检查点等不到第二次）。
     """
     reading = reading_facts(REPO_ROOT / FEATURES_DIR / feature, story_required=story_required)
     result["reading"] = reading
@@ -760,7 +761,8 @@ def reading_turn(feature: str, story_required: bool, seen: dict, result: dict, *
            else f"本地阅读还没完成，{'上次转交下一动作之后没有可见变化' if key == seen.get('forwarded') else '交宿主决定'}：{reading['next']}")
     reply = ask(why)
     if reply is None:
-        result["reading_handoff"] = "host_concluded"
+        result.update(reading_handoff="host_concluded", stop_reason="host_concluded",
+                      conclude_reason="本地阅读停等期间宿主收工")
     return reply
 
 
@@ -2113,6 +2115,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         runlog.event("阅读待办", follow[:200])
                         request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)
                         continue
+                    if result.get("stop_reason") == "host_concluded":
+                        runlog.event("宿主收工", result["conclude_reason"])
+                        feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
+                        break
                     if not after_initial:
                         result["stop_reason"] = "target_reached"
                         break
@@ -2168,6 +2174,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         runlog.event("阅读待办", follow[:200])
                         request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)
                         continue
+                    if result.get("stop_reason") == "host_concluded":
+                        runlog.event("宿主收工", result["conclude_reason"])
+                        feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
+                        break
                     if why:
                         result["stop_reason"] = "update_checkpoint"
                         if start_phase == "story":
