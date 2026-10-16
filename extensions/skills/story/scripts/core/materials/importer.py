@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -126,12 +127,18 @@ def project_root_of(feature_root: Path) -> Path:
 
 
 def phase_reports_dir(feature_root: Path, phase: str) -> Path:
-    """framework 写阶段报告与 summary.json 的目录，与 framework `featurePhaseReportsDir` 同一口径：
-    `paths.reports_dir_pattern`（占位 <feature>、<phase>），没配用 framework 默认；它不随 features_dir 变。"""
+    """framework 写阶段报告与 summary.json 的目录，按 framework `featurePhaseReportsDir` 的语义（与 hooks/shared/paths.mjs
+    `phaseReportsDir` 同一份规则）：字段缺失用默认 doc/features/<feature>/<phase>/reports；非空字符串按占位展开；
+    显式空串、空白或 null 落到框架根下 harness/reports/<feature>/<phase>。配置坏了、要回退却认不出框架根都报错。"""
     root = project_root_of(feature_root)
-    value = _config_paths(root).get("reports_dir_pattern")
-    pattern = value if isinstance(value, str) and value.strip() else "doc/features/<feature>/<phase>/reports"
-    return root / pattern.replace("<feature>", feature_root.name).replace("<phase>", phase)
+    paths = _config_paths(root)
+    pattern = paths["reports_dir_pattern"] if "reports_dir_pattern" in paths else "doc/features/<feature>/<phase>/reports"
+    if isinstance(pattern, str) and pattern.strip():
+        return Path(os.path.abspath(root / pattern.replace("<feature>", feature_root.name).replace("<phase>", phase)))
+    framework = next((r for r in (root / "framework", root) if (r / "skills").exists() or (r / "workflows").exists()), None)
+    if framework is None:
+        raise ImportError_(f"{root} 下认不出 framework 树（framework/skills 或 skills）：reports_dir_pattern 为空时的报告目录判不了")
+    return Path(os.path.abspath(framework)) / "harness" / "reports" / feature_root.name / phase
 
 
 # ---------------------------------------------------------------------------

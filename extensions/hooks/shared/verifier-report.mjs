@@ -176,7 +176,12 @@ const INVALID_EVIDENCE =
  * 全都没有 = verifier 未启用，如实披露的状态；只缺这一项 = summary 不完整。
  */
 function reportLocation(projectRoot, feature, phase) {
-  const file = path.join(phaseReportsDir(projectRoot, feature, phase), 'summary.json');
+  let file;
+  try {
+    file = path.join(phaseReportsDir(projectRoot, feature, phase), 'summary.json');
+  } catch (e) {
+    return { summaryFound: false, abs: null, summary: null, unreadable: `${phase} 阶段报告目录判不了（framework.config.json：${e.message}）` };
+  }
   const where = relDisplay(projectRoot, file);
   const text = readTextOrNull(file);
   if (text === null) return { summaryFound: false, abs: null, summary: null, where };

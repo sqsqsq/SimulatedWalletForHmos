@@ -234,7 +234,7 @@ def pop_conclude_request(out_dir: Path) -> dict | None:
 
 
 def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
-                         turn: int, prompt: str = "") -> str | None:
+                         turn: int, prompt: str = "", kind: str = "story_gate") -> str | None:
     """交互模式：停下来等宿主回话。**无限等，不设上限。**
 
     上一版等 `REPLY_WAIT`（1 小时）就 break，结果被折叠成 `target_not_reached`——
@@ -251,7 +251,7 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
     @returns 宿主的回话；`None` 表示宿主判定本轮到此为止（conclude）。
     """
     state.update(status="awaiting_reply", awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"),
-                 awaiting_turn=turn, awaiting_kind="story_gate",
+                 awaiting_turn=turn, awaiting_kind=kind,
                  awaiting_prompt=(prompt or "")[:PROMPT_LIMIT],
                  awaiting_prompt_source="cli_text_event" if prompt else "unavailable")
     refresh_worker_lease(out_dir, state, force=True, event="awaiting_reply")
@@ -660,7 +660,7 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
         "target_phase": end_phase,
         "target_closed": target_reached(feature, end_phase),
         # 本地阅读按产品自己的派生结果记，与业务闭环分开；读不出如实记 unknown，不当完成
-        "reading": reading_facts(feature_root),
+        "reading": reading_facts(feature_root, story_required=start_phase == "story" and target_reached(feature, end_phase)),
         "target_missing": [] if ok else list(missing),
         "artifacts_ready": artifacts_ready(feature),
         "next_unclosed_phase": next_unclosed_phase(feature, end_phase),
@@ -670,14 +670,54 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
     return {**facts, "target_complete": target_complete(facts)}
 
 
-def reading_facts(feature_root: Path) -> dict:
+def reading_contract(work: object) -> list[str]:
+    """产品 `story-build view --mode status` 的输出合同：字段、类型与相互关系。不合的逐条列出，空表才可信。
+
+    不适用 = 没有图、没有未建源的图、没有结构问题、没有下一动作；已完成 = 适用且一处待办都没有；
+    没完成 = 至少一处待办，且给了下一动作。缺字段、类型错、自相矛盾都不能拿来判完成或不适用。
+    """
+    if not isinstance(work, dict):
+        return ["输出不是 JSON 对象"]
+    bad = [f"{key} 缺失或不是 {kind.__name__}" for key, kind in
+           (("applicable", bool), ("complete", bool), ("items", list), ("unmanaged", list), ("problems", list))
+           if not isinstance(work.get(key), kind)]
+    nxt = work.get("next")
+    if nxt is not None and not (isinstance(nxt, str) and nxt.strip()):
+        bad.append("next 不是非空文字或 null")
+    if bad:
+        return bad
+    items, unmanaged, problems = work["items"], work["unmanaged"], work["problems"]
+    for i, it in enumerate(items):
+        if not (isinstance(it, dict) and all(isinstance(it.get(k), str) and it[k] for k in ("id", "state"))
+                and isinstance(it.get("reason"), str)):
+            bad.append(f"items 第 {i + 1} 项缺 id、state 或 reason")
+        elif it["state"] != "ready" and not it["reason"].strip():
+            bad.append(f"图 {it['id']} 没就绪却没写原因")
+    if not all(isinstance(n, int) and not isinstance(n, bool) for n in unmanaged):
+        bad.append("unmanaged 不全是行号")
+    if not all(isinstance(x, str) and x.strip() for x in problems):
+        bad.append("problems 有空条目或不是文字")
+    if bad:
+        return bad
+    todo = bool(unmanaged or problems or any(it["state"] != "ready" for it in items))
+    if not work["applicable"]:
+        bad += ["说不适用却列了待办"] * todo + ["说不适用却又说没完成"] * (not work["complete"]) + ["说不适用却给了下一动作"] * bool(nxt)
+    elif work["complete"]:
+        bad += ["说已完成却还有待办"] * todo + ["说已完成却给了下一动作"] * bool(nxt)
+    else:
+        bad += ["说没完成却没有任何待办"] * (not todo) + ["没完成却没给下一动作"] * (not nxt)
+    return bad
+
+
+def reading_facts(feature_root: Path, *, story_required: bool = False) -> dict:
     """产品 `story-build view --mode status`（只读）给的本地阅读结果，逐图原因、结构问题与下一动作原样保留。
 
-    `state`：complete / not_applicable / pending / unknown。没有 story 才不适用；子命令起不来、退出码非 0
-    或输出不是约定形状都是 unknown——读不出不等于没有待办。
+    `state`：complete / not_applicable / pending / unknown。本轮还没到成文、没有 story 才不适用；业务已收口而
+    story 不在（`story_required`）、子命令起不来、退出码非 0、输出不合 `reading_contract` 都是 unknown。
     """
     if not (feature_root / "AR" / "story.md").is_file():
-        return {"state": "not_applicable", "why": "还没有 AR/story.md"}
+        return ({"state": "unknown", "error": "业务已收口却没有 AR/story.md，本地阅读判不了"} if story_required
+                else {"state": "not_applicable", "why": "还没有 AR/story.md（本轮还没到成文）"})
     build = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
     try:
         proc = subprocess.run(["node", str(build), "view", "--mode", "status", "--feature", feature_root.name,
@@ -689,35 +729,39 @@ def reading_facts(feature_root: Path) -> dict:
         work = json.loads(proc.stdout) if proc.returncode == 0 else None
     except ValueError:
         work = None
-    if not isinstance(work, dict) or not isinstance(work.get("complete"), bool) or not isinstance(work.get("items"), list):
+    if work is None:
         said = (proc.stderr or proc.stdout).strip()[:400]
         return {"state": "unknown", "error": f"本地阅读状态读不出（退出码 {proc.returncode}：{said or '没有输出'}）"}
-    state = "not_applicable" if not work.get("applicable") else "complete" if work["complete"] else "pending"
-    return {"state": state, **{k: work.get(k) for k in ("items", "unmanaged", "problems", "next")}}
+    bad = reading_contract(work)
+    if bad:
+        return {"state": "unknown", "error": f"本地阅读状态不合产品输出合同：{'；'.join(bad)}"}
+    state = "not_applicable" if not work["applicable"] else "complete" if work["complete"] else "pending"
+    return {"state": state, **{k: work[k] for k in ("items", "unmanaged", "problems")}, "next": work.get("next")}
 
 
-#: 同一份阅读待办连续几次没有变化就不再续话：模型做不下去（例如宿主没有看图能力）时如实记未完成，不无限续
-READING_ATTEMPTS = 2
+def reading_turn(feature: str, story_required: bool, seen: dict, result: dict, *,
+                 interactive: bool, can_continue: bool, ask) -> str | None:
+    """业务收口这一刻本地阅读的去向：返回同一段的续话；None 表示这一段不再为阅读续话。
 
-
-def reading_followup(feature: str, watch: dict, result: dict) -> str | None:
-    """业务收口这一刻本地阅读还没完成：返回续话（转交产品给的下一动作，不加修法）。
-
-    完成或不适用返回 None；同一待办连续超过 `READING_ATTEMPTS` 次没变化也返回 None，并在 result 记未完成。
+    - 完成或不适用、会话续不了：None（阅读按事实记，没完成就是未完成）；
+    - 自动用例里产品给了可执行的下一动作，且这份待办与上次转交时不同（第一次，或之后有了可见变化）：原样转交；
+    - 其余（交互用例、状态读不出、转交后没有可见变化）都交宿主：`ask(原因)` 带着模型原话停等，
+      宿主回话就用它续；宿主收工记 `reading_handoff`，返回 None。
     """
-    reading = reading_facts(REPO_ROOT / FEATURES_DIR / feature)
+    reading = reading_facts(REPO_ROOT / FEATURES_DIR / feature, story_required=story_required)
     result["reading"] = reading
-    if reading["state"] not in ("pending", "unknown"):
+    if reading["state"] in ("complete", "not_applicable") or not can_continue:
         return None
     key = json.dumps(reading, sort_keys=True, ensure_ascii=False)
-    watch["repeats"] = watch["repeats"] + 1 if key == watch.get("seen") else 1
-    watch["seen"] = key
-    if watch["repeats"] > READING_ATTEMPTS:
-        result["reading_stopped"] = f"同一份阅读待办连续 {READING_ATTEMPTS} 次续话后仍没有变化"
-        return None
-    todo = reading.get("next") if reading["state"] == "pending" else (
-        f"{reading['error']}，没有确认阅读图是否完成——跑 `story-build view --mode status` 查")
-    return f"业务阶段已收口，本地阅读还没完成：{todo}"
+    if reading["state"] == "pending" and not interactive and key != seen.get("forwarded"):
+        seen["forwarded"] = key
+        return f"业务阶段已收口，本地阅读还没完成：{reading['next']}"
+    why = (f"本地阅读状态判不了：{reading['error']}" if reading["state"] == "unknown"
+           else f"本地阅读还没完成，{'上次转交下一动作之后没有可见变化' if key == seen.get('forwarded') else '交宿主决定'}：{reading['next']}")
+    reply = ask(why)
+    if reply is None:
+        result["reading_handoff"] = "host_concluded"
+    return reply
 
 
 def target_complete(closure: dict) -> bool:
@@ -1978,8 +2022,13 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             turns = 0
             # 同一阶段连续续话了几次——只用于报告里的可读性，不作上限
             stuck_phase, stuck_turns = None, 0
-            # 业务收口时本地阅读待办的观察：连续没变化就不再续
-            reading_watch: dict = {"seen": None, "repeats": 0}
+            # 业务收口时转交过的阅读待办：再收口时与它比，看得出有没有进展
+            reading_seen: dict = {}
+
+            def reading_reply(why: str) -> str | None:
+                """阅读交宿主：带着模型本轮原话与阅读证据停等（既有停等，宿主回话或收工）。"""
+                return wait_for_human_reply(out_dir, feed, runlog, state, turn=turns, kind="local_reading",
+                                            prompt=f"{last_text}\n\n——{why}" if last_text else why)
 
             # story 是多轮交互流程：材料确认时会停下来等待补料、拆分或进入 spec。
             # 单轮驱动会把它卡死在那儿（产物一个不产），但那不是 skill 的缺陷——
@@ -2055,9 +2104,11 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
                     break
                 if target_reached(feature, end_phase) and state.get("checkpoint_stage") != "update":
-                    # 业务闭环不等于交付完成：阅读待办在就把产品给的下一动作交回同一段，做完才停
-                    follow = reading_followup(feature, reading_watch, result)
-                    if follow and run.get("status") == "succeeded" and session_id:
+                    # 业务闭环不等于交付完成：阅读待办在就按 reading_turn 续同一段，做完或宿主定了才停
+                    follow = reading_turn(feature, start_phase == "story", reading_seen, result, interactive=interactive,
+                                          can_continue=run.get("status") == "succeeded" and bool(session_id),
+                                          ask=reading_reply)
+                    if follow:
                         feed.emit("reading_pending", turn=turns, todo=observe.shorten(follow, 300))
                         runlog.event("阅读待办", follow[:200])
                         request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)
@@ -2109,8 +2160,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         state["update_closed_round"] = closed
                         result["update_round"] = closed
                         why = f"更新 {closed} 已收口"
-                    follow = reading_followup(feature, reading_watch, result) if why else None
-                    if follow and run.get("status") == "succeeded" and session_id:
+                    follow = reading_turn(feature, start_phase == "story", reading_seen, result, interactive=interactive,
+                                          can_continue=run.get("status") == "succeeded" and bool(session_id),
+                                          ask=reading_reply) if why else None
+                    if follow:
                         feed.emit("reading_pending", turn=turns, todo=observe.shorten(follow, 300))
                         runlog.event("阅读待办", follow[:200])
                         request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)

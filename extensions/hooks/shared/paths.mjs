@@ -41,13 +41,22 @@ export function featureRoot(projectRoot, feature) {
 }
 
 /**
- * framework 写阶段报告与 summary.json 的目录，与 framework `featurePhaseReportsDir` 同一口径：
- * `paths.reports_dir_pattern`（占位 `<feature>`、`<phase>`），没配用 framework 默认；它不随 features_dir 变。
+ * framework 写阶段报告与 summary.json 的目录，按 framework `featurePhaseReportsDir` 的语义：
+ * 工程配置的 `paths` 与 framework 默认浅合并——`reports_dir_pattern` 字段缺失用默认 `doc/features/<feature>/<phase>/reports`
+ * （不随 features_dir 变）；非空字符串按占位展开；显式空串、空白或 null 落到框架根下 `harness/reports/<feature>/<phase>`。
+ * 配置不是合法 JSON、要回退却认不出框架根都抛错（不退回默认位置），消费者把它说成「报告目录判不了」。
  */
 export function phaseReportsDir(projectRoot, feature, phase) {
-  const value = readConfig(projectRoot)?.paths?.reports_dir_pattern;
-  const pattern = typeof value === 'string' && value.trim() ? value : 'doc/features/<feature>/<phase>/reports';
-  return path.resolve(projectRoot, pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase));
+  const file = path.join(projectRoot, 'framework.config.json');
+  const paths = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8'))?.paths ?? {} : {};
+  const pattern = 'reports_dir_pattern' in paths ? paths.reports_dir_pattern : 'doc/features/<feature>/<phase>/reports';
+  if (typeof pattern === 'string' && pattern.trim()) {
+    return path.resolve(projectRoot, pattern.replace(/<feature>/g, feature).replace(/<phase>/g, phase));
+  }
+  const root = [path.join(projectRoot, 'framework'), projectRoot]
+    .find(r => fs.existsSync(path.join(r, 'skills')) || fs.existsSync(path.join(r, 'workflows')));
+  if (!root) throw new Error('reports_dir_pattern 为空，而工程下认不出 framework 树（framework/skills 或 skills）');
+  return path.join(path.resolve(root), 'harness', 'reports', feature, phase);
 }
 
 /** 相对仓库根的展示路径（报错文案里用，跨平台统一正斜杠）。 */
