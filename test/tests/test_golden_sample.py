@@ -1,14 +1,12 @@
-"""金样是判据的仲裁锚——改它就是挪掉仲裁源。
+"""已定稿金样正本与它的冻结输入：内容不被悄悄改动。
 
-四轮机制迭代的判据全部从「病」反推：见到一种坏产物就加一条判据，从不存在
-「期望的 story 长什么样」的具体定义。后果是判据之间互相打架时没有仲裁源——
-批次 4 首跑就撞上了：一边要求人读的改写，一边要求逐字命中，倾倒成了唯一合法解。
+金样是给人对照效果用的正本，替换要经用户审定（候选在 doc/plan/1.9.9/金样候选/）；
+在新正本审定之前，旧正本与输入夹具原样保留。判据不以「拦不拦金样」定对错——
+判据的对错按它的真实依据与中性正反例判（结构、图源承接、人工区等回归在中性夹具里）。
+这份测试守：
 
-所以先有金样，再有判据。规则只有一条：**任何判据若拦金样，错的是判据**。
-这份测试守两件事：
-
-  ① 唯一金样正本与构造场景所需的同轮材料一个字节没变（指纹 + 形态数）；
-  ② 现行判据对金样零 FAIL——判据改动先跑这一行。
+  ① 金样正本与构造场景所需的同轮材料内容没变（指纹按 LF 归一后比，行尾不算改动；另核形态数）；
+  ② 输入夹具经 spec 门禁时，承接、知识登记、埋点形状这几类合法输入不被误报。
 """
 from __future__ import annotations
 
@@ -76,7 +74,9 @@ INPUT_FINGERPRINTS = {
     # 2026-09-27 步骤 9（U55）：扩展章平列——埋点提为 9.4、依赖变更为 9.1.4，规约与设计模式两节改名。
     # 同日步骤 9 返修 R3：「规约」生成区的落点前缀写名字所在的节（技术契约 / 埋点）。
     "spec/spec.md": "4a2b81e36d35c45f",
-    "ux-reference/README.md": "b7d62b1835408302",
+    # 2026-10-16 指纹改按 LF 归一后计：原登记 b7d62b1835408302 是同一内容的 CRLF 字节（现文件转 CRLF 后
+    # 逐字节复算即得该值），内容自 d1ecf903 入库未变，仓库按 LF 存储。
+    "ux-reference/README.md": "18602db64f0fd154",
     "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
     "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",
 }
@@ -95,7 +95,7 @@ EXPECTED_CANONICAL_FILES = {
     "assets/AR90006/signup-page.png",
     "assets/AR90006/verify-page.png",
     # 设计者的候选样稿（2026-09-22，上报的多流程、多指标组织方式）：只供效果审视，
-    # 不是定稿金样，不进形态比对与否决锚；逐个登记，不放行整个目录。
+    # 不是定稿金样，不进形态比对；逐个登记，不放行整个目录。
     "bank-card-opening-reporting-candidate/README.md",
     "bank-card-opening-reporting-candidate/spec.md",
     "bank-card-opening-reporting-candidate/story.md",
@@ -107,15 +107,15 @@ SHAPE = {"lines": 476, "chapters": 10, "subsections": 35,
          "table_rows": 174, "diagrams": 1, "images": 2}
 
 
+#: 按文本比的后缀：行尾在不同检出里可能是 CRLF，那不是内容改动
+TEXT_SUFFIXES = {".md", ".json", ".yaml", ".yml", ".txt"}
+
+
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
-
-
-def workspace_check(story: str | None = None) -> tuple[int, str]:
-    """金样放进它的需求工作区，经 `story-build check --feature` 判。"""
-    with tempfile.TemporaryDirectory() as tmp:
-        golden_workspace.build(Path(tmp), story)
-        return golden_workspace.check(Path(tmp))
+    data = path.read_bytes()
+    if path.suffix in TEXT_SUFFIXES:
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()[:16]
 
 
 class GoldenIsFrozen(unittest.TestCase):
@@ -166,51 +166,8 @@ class GoldenIsFrozen(unittest.TestCase):
         self.assertEqual(SHAPE, actual)
 
 
-class TheGoldenCarriesEveryUpstreamDiagram(unittest.TestCase):
-    """章首那张时序图同时承接两份上游，两行标记写在同一个围栏里。
-
-    「对应」的含义是标记指向它，不是照抄：SR §3 画的端到端时序与 spec §5.1 的
-    流程图讲的是同一件事，金样把它们合成一张、改画成时序——一个围栏、两行标记。
-    这正是「重复来源可以合并」的形态，也是它唯一能被机器核到的形态。
-
-    **只核图对应这一类**：去掉标记后整篇还有别的类会不会报，与这一类无关。
-    """
-
-    MARKS = "%% 图源 SR §3 #1\n%% 图源 spec §5.1 #1\n"
-
-    def diagram_complaints(self, story: str) -> list[str]:
-        out = self.check_output(story)
-        return [l.strip() for l in out.split("\n") if "在 story 里没有" in l]
-
-    def check_output(self, story: str) -> str:
-        return workspace_check(story)[1]
-
-    def test_both_upstream_diagrams_are_carried(self) -> None:
-        complaints = self.diagram_complaints(
-            GOLDEN_STORY.read_text(encoding="utf-8"))
-        self.assertEqual([], complaints, "上游有图没被金样带着")
-
-    def test_dropping_the_marks_is_caught(self) -> None:
-        """去掉标记就该报——不然上一条是在空跑。"""
-        story = GOLDEN_STORY.read_text(encoding="utf-8")
-        self.assertIn(self.MARKS, story, "金样的两行标记不在了")
-        complaints = self.diagram_complaints(story.replace(self.MARKS, ""))
-        self.assertEqual(2, len(complaints), f"该报两条，实报 {len(complaints)}：{complaints}")
-        self.assertTrue(any("SR §3" in c for c in complaints))
-        self.assertTrue(any("spec §5.1" in c for c in complaints))
-
-    def test_missing_carry_is_its_own_class_one_line_per_diagram(self) -> None:
-        """缺承接归自己的一类「⑫d 上游图承接」，一张图一行——不混进机器区一致性，也不逐张重复写法。"""
-        story = GOLDEN_STORY.read_text(encoding="utf-8").replace(self.MARKS, "")
-        out = self.check_output(story)
-        self.assertIn("[⑫d 上游图承接] 2 处", out)
-        lines = [l for l in out.split("\n") if "在 story 里没有" in l]
-        self.assertEqual(2, len(lines), lines)
-        self.assertTrue(all("%% 图源" in l for l in lines), "去向写法要在同一行里")
-
-
-class JudgementsDoNotBlockTheGolden(unittest.TestCase):
-    """判据改动先跑这一行：拦住金样的判据，错的是判据。"""
+class TheSpecGateReadsTheFrozenInputs(unittest.TestCase):
+    """冻结输入夹具是一份合法的需求工作区：spec 门禁对它的承接、知识登记与埋点形状不误报。"""
 
     def test_the_spec_gate_accepts_the_golden_inputs(self) -> None:
         """金样的输入夹具经 spec 门禁：上游编号承接、知识登记、埋点形状都不报。"""
@@ -228,22 +185,6 @@ class JudgementsDoNotBlockTheGolden(unittest.TestCase):
         for needle in ("门禁自身异常", "上游材料的验收编号没有承接", "没有篇", "没有面", "manifest_digest",
                        "缺定义段", "下没有统计点"):
             self.assertNotIn(needle, proc.stdout)
-
-    def test_the_golden_passes_in_its_workspace(self) -> None:
-        code, out = workspace_check()
-        self.assertEqual(0, code, f"判据拦住了金样——修判据，不修金样：\n{out[:1500]}")
-
-    def test_the_judgements_actually_run(self) -> None:
-        """零 FAIL 要是「真的判过了」，不是「一条都没跑」。
-
-        往主叙事里塞一个工程标识与一个模板占位，两条判据都该点名。
-        """
-        text = GOLDEN_STORY.read_text(encoding="utf-8")
-        marker = "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。"
-        code, out = workspace_check(text.replace("## 2. 术语", "## 2. 术语" + marker, 1))
-        self.assertEqual(1, code)
-        self.assertIn("工程标识", out)
-        self.assertIn("模板占位符", out)
 
 
 if __name__ == "__main__":

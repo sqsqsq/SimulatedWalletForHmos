@@ -10,6 +10,7 @@ provides:
   skills:
     - story
     - story-adaptation
+    - story-stats
 
   # 扩展自有的宿主入口文件。升级直接覆盖、首次安装写入——它们是本扩展的产物，
   # 不是目标工程的。宿主目录里的**其它**东西一概不在覆盖范围。
@@ -73,6 +74,7 @@ provides:
     spec:
       pre_phase:
         - hooks/shared/story-view.mjs
+        - hooks/shared/usage.mjs
       post_check:
         - hooks/spec/post_check.mjs
       pre_verifier:
@@ -80,6 +82,7 @@ provides:
     plan:
       pre_phase:
         - hooks/shared/story-view.mjs
+        - hooks/shared/usage.mjs
       post_check:
         - hooks/plan/post_check.mjs
       pre_verifier:
@@ -87,6 +90,7 @@ provides:
     coding:
       pre_phase:
         - hooks/shared/story-view.mjs
+        - hooks/shared/usage.mjs
       post_check:
         - hooks/coding/post_check.mjs
       pre_verifier:
@@ -94,6 +98,7 @@ provides:
     review:
       pre_phase:
         - hooks/shared/story-view.mjs
+        - hooks/shared/usage.mjs
       post_check:
         - hooks/review/post_check.mjs
       pre_verifier:
@@ -101,6 +106,7 @@ provides:
     ut:
       pre_phase:
         - hooks/shared/story-view.mjs
+        - hooks/shared/usage.mjs
       post_check:
         - hooks/ut/post_check.mjs
       pre_verifier:
@@ -108,6 +114,7 @@ provides:
     testing:
       pre_phase:
         - hooks/shared/story-view.mjs
+        - hooks/shared/usage.mjs
       post_check:
         - hooks/testing/post_check.mjs
       pre_verifier:

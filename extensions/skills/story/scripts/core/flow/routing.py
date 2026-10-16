@@ -21,6 +21,7 @@ from flow.state import (
 from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
 from flow.meetings import meeting_basis, pending_asks, refresh_problems
+from flow import phase_facts
 
 def closed_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
@@ -548,12 +549,8 @@ def reading_todo(work: dict) -> str | None:
 def spec_closed(feature_root: Path) -> bool:
     """spec 阶段闭环了没有：framework 写在本阶段报告目录（按工程配置）里的 summary 说的。
     还没有 summary 就是没闭环；有却读不出要说出来，不拿别处的旧报告顶。"""
-    path = importer.phase_reports_dir(feature_root, "spec") / "summary.json"
-    if not path.is_file():
-        return False
-    try:
-        summary = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as exc:
-        raise FlowError(f"{path.as_posix()} 读不出（{exc}），spec 闭环状态判不了：它由 framework 写，"
-                        "按 `phases/spec.md`「闭环」重跑 harness 让它重写") from exc
-    return summary.get("closure_status") == "closed"
+    s = phase_facts.summary(feature_root, "spec")
+    if s["state"] == "unreadable":
+        raise FlowError(f"{s['path'].as_posix()} 读不出（{s['why']}），spec 闭环状态判不了：它由 framework 写，"
+                        "按 `phases/spec.md`「闭环」重跑 harness 让它重写")
+    return s["state"] == "closed"

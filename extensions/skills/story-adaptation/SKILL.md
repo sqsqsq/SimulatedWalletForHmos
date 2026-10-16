@@ -72,7 +72,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 
 ### 3 写入
 
-`--apply` 一次做完全部确定性写入：删掉退场文件、复制机制面、合成 manifest、覆盖跳板、重写入口标记区、补 `.gitignore` 那一行。
+`--apply` 一次做完全部确定性写入：删掉退场文件、复制机制面、合成 manifest、覆盖跳板、重写入口标记区、补 `.gitignore` 缺的工作件忽略行（使用记录被目标规则挡住时补一条精确放行并复查）。
 你只下命令、读结果。
 
 **升级不停等**：一次升级指令授权到写入完成加自检，只有失败才回头问人。写入面已由目录边界完全确定，没有可拍板的选项。
@@ -107,7 +107,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 | ① 机制面 | 这一次覆盖范围内的文件与包逐字一致，包里没有的目标也不该有 |
 | ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `adapters` / `adapted_for` / `provides.knowledge` 跟目标 |
 | ③ 入口文件 | `AGENTS.md` / `CLAUDE.md` 含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
-| ④ `.gitignore` | 有章草稿目录那一行——本命令自己不落工作件，没有第二行要挡的 |
+| ④ `.gitignore` | 章草稿目录、使用记录的一次性输入（`.usage-input.json`）、统计输出（`.usage-stats/`）与记录器锁/临时文件被挡住；`doc/usage.json` 能随普通 `git add` 入库（它归目标，升级不覆盖） |
 | ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/` 两个目录，根下没有文件 |
 
 ### 升级之后：按版本跟进

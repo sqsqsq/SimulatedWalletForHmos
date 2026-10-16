@@ -306,17 +306,52 @@ class SourceKindCase(unittest.TestCase):
     # ---- 装到一个真实仓里 ----
 
     def test_it_adds_nothing_to_a_gitignore_that_already_covers_the_drafts(self) -> None:
-        """需求目录整个不入库时，不再补那一行——一条永远不起作用的规则只是噪声。\n\n        目标怎么挡不管：自己写了那一行、或者 `doc/features/` 一行盖住底下的一切，\n        都算挡住了。两条模式等不等价，字符串比不出来，问 git。\n        """
+        """需求目录整个不入库时，不再补需求目录下的那几行——一条永远不起作用的规则只是噪声。\n\n        目标怎么挡不管：自己写了那一行、或者 `doc/features/` 一行盖住底下的一切，\n        都算挡住了。两条模式等不等价，字符串比不出来，问 git。需求目录之外的记录器锁与临时文件照补。\n        """
         target = self.blank_repo("BizA")
         (target / ".gitignore").write_text("doc/features/\nbuild/\n", encoding="utf-8")
         self.commit(target, "需求目录整个不入库")
 
         proc = self.adapt("--apply", target, PKG_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertEqual("doc/features/\nbuild/\n",
+        self.assertEqual("doc/features/\nbuild/\n/doc/usage.json.lock\n/doc/.usage.json.*.tmp\n",
                          (target / ".gitignore").read_text(encoding="utf-8"),
                          "已经被挡住了还往 .gitignore 里加")
         self.assertEqual(0, self.adapt("--check", target, PKG_ROOT).returncode)
+
+    def git_add_takes(self, target: Path, rel: str) -> bool:
+        path = target / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n", encoding="utf-8")
+        return subprocess.run(["git", "-C", str(target), "add", "--dry-run", rel], capture_output=True,
+                              text=True, encoding="utf-8").returncode == 0
+
+    def test_the_usage_record_can_be_added_and_its_work_files_cannot(self) -> None:
+        """使用记录归目标、随普通 git add 入库；一次性输入、统计输出、锁与临时文件挡住。"""
+        target = self.blank_repo("BizU")
+        (target / ".gitignore").write_text("doc/*\n!doc/features/\n", encoding="utf-8")
+        self.commit(target, "doc 下的文件默认不入库")
+        self.assertFalse(self.git_add_takes(target, "doc/usage.json"), "前提不成立：规则本来就没挡住")
+        self.assertNotEqual(0, self.adapt("--check", target, PKG_ROOT).returncode, "挡住了却说核对通过")
+        proc = self.adapt("--apply", target, PKG_ROOT)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertTrue(self.git_add_takes(target, "doc/usage.json"), "放行之后普通 git add 仍纳入不了")
+        for rel in ("doc/features/AR1/.usage-input.json", "doc/features/.usage-stats/a1/facts.json",
+                    "doc/usage.json.lock", "doc/.usage.json.123.tmp"):
+            with self.subTest(rel):
+                self.assertFalse(self.git_add_takes(target, rel), f"{rel} 没被挡住")
+        check = self.adapt("--check", target, PKG_ROOT)
+        self.assertEqual(0, check.returncode, self.out(check))
+
+    def test_a_parent_directory_rule_is_named_not_papered_over(self) -> None:
+        """父目录整个被忽略时，单条放行不起作用：点名挡住它的规则，不报装好。"""
+        target = self.blank_repo("BizV")
+        (target / ".gitignore").write_text("doc/\n", encoding="utf-8")
+        self.commit(target, "doc 整个不入库")
+        proc = self.adapt("--apply", target, PKG_ROOT)
+        self.assertIn("仍被 .gitignore:1:doc/", self.out(proc))
+        check = self.adapt("--check", target, PKG_ROOT)
+        self.assertNotEqual(0, check.returncode)
+        self.assertIn("使用记录 doc/usage.json 被", self.out(check))
 
     def test_the_section_lands_inside_the_extension_chapter(self) -> None:
         """扩展段落在讲实例扩展的那一节里，不是文件末尾。\n\n        入口文件是给读者的路标；追加在末尾的那一段，人打开文件时早就走过了。\n        原有内容不被打断，后面的章节也不该跑到它前面去。\n        """

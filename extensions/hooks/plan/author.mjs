@@ -14,6 +14,7 @@ import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/d
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
+import { recordUsage } from '../shared/usage.mjs';
 
 const SELF = 'doc/extensions/hooks/plan/author.md';
 const TEMPLATE = 'doc/extensions/skills/story/templates/plan-sections.md';
@@ -87,6 +88,9 @@ function main(argv) {
     process.stderr.write('用法：node doc/extensions/hooks/plan/author.mjs --feature <名>\n');
     return 2;
   }
+  // 本轮作者工作的可观察起点：记录失败不挡任务包，另报一句
+  const used = recordUsage(process.cwd(), 'begin', { feature, step: 'plan' });
+  if (!used.ok) process.stderr.write(`[usage] 使用记录没写成（任务包照常给出）：${(used.errors ?? []).join('；')}\n`);
   const root = process.cwd();
   process.stdout.write([`# plan 阶段 · 本次任务包（${feature}）`, '',
     `\`context-exploration\` 的 \`key_inputs_read\` 要含 \`${SELF}\`——本任务包是它的展开。`, '',

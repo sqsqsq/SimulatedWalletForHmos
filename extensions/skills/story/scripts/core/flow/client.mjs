@@ -57,10 +57,10 @@ export function queryFlowStatus(projectRoot, feature, { timeoutMs } = {}) {
  * @returns {{exe?: string, status?: number, stdout?: string, output?: string, error?: string}}
  *   `error` 非空 = 没跑起来或没跑完；否则 `output` 是两路输出原样拼起来的全文
  */
-export function runPython(script, args, { timeoutMs, env } = {}) {
+export function runPython(script, args, { timeoutMs, env, input } = {}) {
   const missing = [];
   for (const exe of PYTHONS) {
-    const r = spawnSync(exe, [script, ...args], { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true, ...(env ? { env } : {}) });
+    const r = spawnSync(exe, [script, ...args], { encoding: 'utf-8', timeout: timeoutMs, windowsHide: true, ...(env ? { env } : {}), ...(input === undefined ? {} : { input }) });
     if (r.error) {
       // **只有「这个解释器不在」才换候选**：超时、被杀、参数太长都说明它已经跑起来了，
       // 换一个只会得到同一句话，而原因在中途被换掉。

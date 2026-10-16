@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto';
 import {
   copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseYaml } from '../../../hooks/shared/yaml.mjs';
 
@@ -282,7 +282,7 @@ function bridgesOf(manifestText) {
 /**
  * 目标 `.gitignore` 还缺哪几行。
  *
- * 要挡的只有章草稿目录——本命令自己不落工作件，没有第二样东西。
+ * 要挡的是不入库的工作件：章草稿目录、使用记录的一次性初始化输入与统计运行输出、记录器的锁与临时文件。
  *
  * **先问 git 它是不是已经被挡住了**：需求目录整个不入库是常见做法（`doc/features/`
  * 一行就盖住了它下面的一切），那时再加一条只是噪声——一条永远不起作用的规则，
@@ -292,12 +292,23 @@ function bridgesOf(manifestText) {
  * 按「没挡住」处理，照常补。
  */
 function missingGitignoreLines(root) {
-  const want = `${featuresDir(root)}/**/AR/story-src/drafts/`;
-  const probe = `${featuresDir(root)}/_probe/AR/story-src/drafts/x.md`;
-  if (git(root, ['check-ignore', '-q', '--no-index', probe]).ok) return [];
+  const fd = featuresDir(root);
+  const [dir, name] = [dirname(USAGE.record), basename(USAGE.record)];
+  const wants = [[`${fd}/**/AR/story-src/drafts/`, `${fd}/_probe/AR/story-src/drafts/x.md`],
+    [`${fd}/**/${USAGE.input_file}`, `${fd}/_probe/${USAGE.input_file}`],
+    [`${fd}/.usage-stats/`, `${fd}/.usage-stats/x/facts.json`],
+    [`/${USAGE.record}.lock`, `${USAGE.record}.lock`], [`/${dir}/.${name}.*.tmp`, `${dir}/.${name}.1.tmp`]];
   const f = join(root, '.gitignore');
   const have = existsSync(f) ? read(f).split(/\r?\n/).map(l => l.trim()) : [];
-  return have.includes(want) ? [] : [want];
+  return wants.filter(([want, probe]) => !have.includes(want)
+    && !git(root, ['check-ignore', '-q', '--no-index', probe]).ok).map(([want]) => want);
+}
+
+/** 使用记录被哪条忽略规则挡住（来源:行号:模式），没挡住为空串——它归目标，要能随普通 git add 入库。 */
+function usageBlockedBy(root) {
+  const r = git(root, ['check-ignore', '-v', '--no-index', USAGE.record]);
+  const rule = r.ok ? r.out.trim().split('	')[0] : '';
+  return rule.split(':').slice(2).join(':').startsWith('!') ? '' : rule;   // 最后命中的是放行规则就没挡住
 }
 
 /**
@@ -360,6 +371,8 @@ const PKG = opt('--package')
 if (!PKG) die('包不是有效仓库根（找不到 framework.config.json）');
 
 const PDIR = join(PKG, ...extDir(PKG).split('/'));
+//: 使用记录合同（story 包里的那一份）：记录位置、一次性输入文件名
+const USAGE = JSON.parse(read(join(PDIR, 'skills', 'story', 'contracts', 'usage.json')));
 const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
 
 // 扩展的 YAML 读取借目标 framework harness 的 `yaml` 包（hooks/shared/yaml.mjs）：装之前先确认它在。
@@ -675,15 +688,19 @@ if (mode === '--apply') {
     }
   }
 
-  // 5. `.gitignore`：真的还没被挡住才补
+  // 5. `.gitignore`：真的还没被挡住才补；使用记录被目标规则挡住时补一条精确放行再复查
   {
     const f = join(TARGET, '.gitignore');
     const have = existsSync(f) ? read(f) : '';
     const missing = missingGitignoreLines(TARGET);
+    if (usageBlockedBy(TARGET).startsWith('.gitignore:')) missing.push(`!/${USAGE.record}`);
     if (missing.length) {
       writeFileSync(f, `${have.replace(/\n*$/, '\n')}${missing.join('\n')}\n`, 'utf8');
       written.push('.gitignore');
     }
+    const still = usageBlockedBy(TARGET);
+    if (still) console.error(`[adapt-scan] ${USAGE.record} 仍被 ${still} 挡住，使用记录进不了库：`
+      + '放行它的父路径与这个文件（其余过程目录保持忽略），或按规则来源找它的维护者；未解决前统计能力不算装好');
   }
 
   // 6. 首次安装另做一件：配置键。升级不碰。知识不建骨架，由模型按方法页从部件定位知识写起。
@@ -854,10 +871,14 @@ if (existsSync(tgtManifest)) {
   }
 }
 
-// ④ 章草稿目录被挡住了：它是临时件，不挡就会被提交进目标的库。
-// 目标怎么挡不管——自己写了那一行、或者整个需求目录都不入库，都算挡住了。
+// ④ 工作件被挡住了：章草稿、使用记录的一次性输入、统计输出、锁与临时文件不挡就会被提交进目标的库。
+// 目标怎么挡不管——自己写了那一行、或者整个需求目录都不入库，都算挡住了。使用记录本身反过来必须能入库。
 for (const line of missingGitignoreLines(TARGET)) {
-  bad.push(`④ 章草稿目录没被 .gitignore 挡住：补一行 ${line}`);
+  bad.push(`④ 工作件没被 .gitignore 挡住：补一行 ${line}`);
+}
+{
+  const blocked = usageBlockedBy(TARGET);
+  if (blocked) bad.push(`④ 使用记录 ${USAGE.record} 被 ${blocked} 挡住：它归目标，要能随普通 git add 入库`);
 }
 
 // ⑤ 包的 `scripts/` 这一层只有 core/ 与 adapters/ 两个目录

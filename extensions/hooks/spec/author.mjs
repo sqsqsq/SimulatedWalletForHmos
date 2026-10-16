@@ -32,6 +32,7 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
 import { citableRows, originRows, relFromStory, sourceCatalog, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
 import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
+import { recordUsage } from '../shared/usage.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const TEMPLATE = 'doc/extensions/skills/story/templates/spec-sections.md';
@@ -445,6 +446,9 @@ function main(argv) {
     process.stderr.write(USAGE + '\n');
     return 2;
   }
+  // 本轮作者工作的可观察起点：记录失败不挡任务包，另报一句
+  const used = recordUsage(process.cwd(), 'begin', { feature, step: 'spec' });
+  if (!used.ok) process.stderr.write(`[usage] 使用记录没写成（任务包照常给出）：${(used.errors ?? []).join('；')}\n`);
   const back = ensureMermaid(featureRoot(process.cwd(), feature));
   if (back.problems.length) throw new Error(`story 切不回 Mermaid，任务包按 Mermaid 形态读图：\n${back.problems.join('\n')}`);
   process.stdout.write(taskPackage(process.cwd(), feature) + '\n');

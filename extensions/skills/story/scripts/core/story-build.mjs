@@ -58,6 +58,7 @@ import {
 import { readingState } from './story/figure-reading.mjs';
 import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
+import { recordUsage } from '../../../../hooks/shared/usage.mjs';
 
 const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'view', 'archive'];
 
@@ -348,6 +349,11 @@ function main() {
   }
   const ctx = createContext(args);
   if (args.command === 'view') return cmdView(ctx);
+  if (args.command === 'skeleton' || args.command === 'chapter') {
+    // 真实写作入口：Story 本轮的可观察起点。记录失败不挡写作，另报一句
+    const used = recordUsage(ctx.projectRoot, 'begin', { feature: args.feature, step: 'story' });
+    if (!used.ok) process.stderr.write(`[usage] 使用记录没写成（写作照常进行）：${(used.errors ?? []).join('；')}\n`);
+  }
   return withView(ctx, () => {
     if (args.command === 'skeleton') cmdSkeleton(ctx);
     else if (args.command === 'chapter') cmdChapter(ctx);

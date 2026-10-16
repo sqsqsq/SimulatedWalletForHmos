@@ -1,2 +1,6 @@
 doc/extensions/.adapt-*/
 doc/features/**/AR/story-src/drafts/
+doc/features/**/.usage-input.json
+doc/features/.usage-stats/
+/doc/usage.json.lock
+/doc/.usage.json.*.tmp

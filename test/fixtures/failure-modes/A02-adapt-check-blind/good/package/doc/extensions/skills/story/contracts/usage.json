@@ -1,0 +1,28 @@
+{
+  "_note": "使用记录合同：story 记录器（scripts/core/usage.py）与 story-stats 共用。record 相对工程根；input_file 在需求目录下，原任务写、记录器读后清理。",
+  "schema": 1,
+  "record": "doc/usage.json",
+  "input_file": ".usage-input.json",
+  "steps": ["story", "story update", "spec", "plan", "coding", "review", "ut", "testing"],
+  "input": {
+    "required": ["requirement", "name", "version"],
+    "optional": ["agent", "model"]
+  },
+  "requirement": {
+    "name": "string|null",
+    "version": "string|null",
+    "fw": "string|null",
+    "ext": "string|null",
+    "agent": "string|null",
+    "model": "string|null",
+    "features": "string[]",
+    "steps": "object"
+  },
+  "step": {
+    "start": "datetime|null",
+    "spent": "integer|null",
+    "verdict": "string|null",
+    "completed": "boolean",
+    "last_result": "{id, ended_at}|null"
+  }
+}

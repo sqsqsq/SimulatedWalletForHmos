@@ -3470,6 +3470,21 @@ class SourceMarksPointAtRealUpstreamFigures(StoryBuildCase):
         self.add_before_terms("```mermaid\n%% 图源 story §1 #1\ngraph TD\nA-->B\n```")
         self.assertIn("指向的不是直接上游", self.assert_check_names("图源标记"))
 
+    UPSTREAM_FIGURES = ("\n\n## 9. 补充流程\n\n### 9.1 提交\n\n```mermaid\ngraph TD\nA[提交] --> B[受理]\n```\n\n"
+                        "### 9.2 回执\n\n```mermaid\ngraph TD\nC[回执] --> D[展示]\n```\n")
+
+    def test_missing_carry_is_its_own_class_one_line_per_figure(self) -> None:
+        """上游有图而 story 没带：归「⑫d 上游图承接」一类、一张图一行，写法在同一行；一个围栏两行标记即算带过来。"""
+        self.init_audit()
+        spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
+        spec.write_text(spec.read_text(encoding="utf-8") + self.UPSTREAM_FIGURES, encoding="utf-8")
+        out = self.assert_check_names("[⑫d 上游图承接] 2 处")
+        lines = [l for l in out.split("\n") if "在 story 里没有" in l]
+        self.assertEqual(2, len(lines), lines)
+        self.assertTrue(all("%% 图源" in l for l in lines), "去向写法要在同一行里")
+        self.add_before_terms("```mermaid\n%% 图源 spec §9.1 #1\n%% 图源 spec §9.2 #1\ngraph TD\nA-->B\n```")
+        self.assertNotIn("⑫d", self.check_output()[1], "一个围栏两行标记没认成两张都带过来")
+
     def test_a_mark_outside_the_fence_is_one_report(self) -> None:
         self.init_audit()
         self.add_before_terms("%% 图源 SR §99 #1")

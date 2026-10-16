@@ -9,7 +9,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 
 本文件只讲**链条怎么走、在哪停、产物各是什么**。各步的作业规则在 `rules/` 与 `phases/`，
 命令由脚本自己打印，不在这里复述第二遍。`/story adapt` 是把本扩展装到别的工程的运维动作，
-见 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)。
+见 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)；`/story stats` 是本仓使用情况统计，见 [../story-stats/SKILL.md](../story-stats/SKILL.md)。
 
 ## 链条
 

@@ -68,6 +68,7 @@ import sys
 from contextlib import nullcontext
 from pathlib import Path
 
+import usage
 from materials import importer
 
 from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
@@ -171,6 +172,11 @@ def main() -> int:
         with (reading_view(feature_root, project_root, result) if args.mode in VIEW_READERS
               else nullcontext()):
             code = dispatch(feature_root, project_root)
+        if code == 0:
+            # 使用记录在命令成功之后采集；记录失败另列，不改业务结果
+            errors = usage.after_command(project_root, args.feature, args.mode, args.action)
+            if errors:
+                result["usage_errors"] = errors
         result["success"] = code == 0
         if TAMPER_NOTES:
             result["warning"] = TAMPER_NOTES[0]

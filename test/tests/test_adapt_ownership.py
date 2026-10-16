@@ -58,7 +58,8 @@ class AdaptCase(unittest.TestCase):
             json.dumps({"paths": {"extension_dir": "doc/extensions"}}, ensure_ascii=False),
             encoding="utf-8")
         (self.target / ".gitignore").write_text(
-            "doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
+            "doc/features/**/AR/story-src/drafts/\ndoc/features/**/.usage-input.json\ndoc/features/.usage-stats/\n"
+            "/doc/usage.json.lock\n/doc/.usage.json.*.tmp\n", encoding="utf-8")
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
         link_harness_yaml(self.target)

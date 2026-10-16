@@ -30,11 +30,11 @@ from pathlib import Path
 from materials import importer, registry
 
 from flow.routing import inputs_answer, material_state
+from flow.phase_facts import UPDATES, phase_facts as _phase_facts, update_records as _records
 from flow.state import (CONTRACT, FlowError, STORY, REVIEW, STORY_CONTRACT, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
 
 #: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
-UPDATES = ("AR", "story-src", "updates")
 #: 镜像不复制的目录：本层自己的落点（复制它等于把镜像套进镜像），以及阶段报告与导入备份——
 #: 它们不是业务内容，而报告带 64 位哈希的文件名，套进更深的目录会超 Windows 的路径上限。
 MIRROR_SKIP = {UPDATES[-1], "reports", ".backups"}
@@ -52,25 +52,6 @@ PRODUCTS = (STORY, REVIEW, ("spec", "spec.md"), ("plan", "plan.md"))
 
 def _updates_dir(feature_root: Path) -> Path:
     return feature_root / Path(*UPDATES)
-
-
-def _records(feature_root: Path) -> list[tuple[str, dict]]:
-    """盘上已有的操作记录，按 id 排序。读不出来的那一条要出声，不静默跳过。"""
-    base = _updates_dir(feature_root)
-    if not base.is_dir():
-        return []
-    out = []
-    for d in sorted(base.iterdir()):
-        path = d / "record.json"
-        if not path.is_file():
-            continue
-        try:
-            out.append((d.name, json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))))
-        except ValueError as exc:
-            raise FlowError(f"{path} 不是合法 JSON（{exc}）：它由本脚本写入，"
-                            "若曾手工编辑请修正语法，或把整个 "
-                            f"{d.name} 目录移走再重跑") from exc
-    return out
 
 
 def _scan(feature_root: Path) -> tuple[dict[str, str], dict[str, str]]:
@@ -430,60 +411,6 @@ def cmd_update_prepare(feature_root: Path) -> dict:
             "mirror": record["mirror"]["path"],
             "action": "；".join(lines) + f"。原貌留在 AR/story-src/updates/{rid}/before/，"
                       "处置方法见 phases/update.md"}
-
-
-# ---------------------------------------------------------------------------
-# 阶段事实：哪些阶段有产物、闭没闭环。
-#
-# 读的是 harness 自己写的 `<阶段>/reports/summary.json`——它是**只读投影**，
-# 不是我们的账。自己另记一份的话，两边迟早对不上，而人会信错的那一份。
-# 读不出来就说读不出来：闭没闭环这件事不许猜，猜错的方向是「以为闭了」。
-PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
-
-
-def _phase_facts(feature_root: Path) -> list[dict]:
-    out = []
-    for phase in PHASES:
-        reports = importer.phase_reports_dir(feature_root, phase)
-        summary = reports / "summary.json"
-        if not summary.is_file():
-            continue
-        try:
-            data = json.loads(summary.read_text(encoding="utf-8").lstrip("﻿"))
-        except (OSError, ValueError) as exc:
-            out.append({"phase": phase, "readable": False, "why": str(exc)})
-            continue
-        subject = data.get("verifier_subject_id")
-        mode = (data.get("verifier_closure") or {}).get("mode")
-        out.append({"phase": phase, "readable": True,
-                    "closure": data.get("closure_status"),
-                    "verdict": data.get("verdict"),
-                    "subject": subject, "closure_mode": mode,
-                    "signals": [x.get("id") if isinstance(x, dict) else x
-                                for x in data.get("readiness_signals") or []],
-                    "unadopted": mode == "completed_with_prior_review"
-                    and _report_passed(reports, subject)})
-    return out
-
-
-#: 审查报告的终态块（framework `verifier-subject.ts::parseResultBlock` 读的那一段）。
-RESULT_BLOCK = re.compile(r"<!-- maison-verifier-result:v1 -->(.*?)<!-- /maison-verifier-result:v1 -->", re.S)
-
-
-def _report_passed(reports: Path, subject: str | None) -> bool:
-    """当前 subject 的报告在盘上、终态块回显的就是它、判的是 PASS。"""
-    if not subject:
-        return False
-    try:
-        text = (reports / f"verifier.report.{subject}.md").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    blocks = RESULT_BLOCK.findall(text)
-    if len(blocks) != 1:
-        return False
-    fields = dict(line.split(":", 1) for line in blocks[0].strip().splitlines() if ":" in line)
-    return (fields.get("verifier_subject_id", "").strip() == subject
-            and fields.get("verdict", "").strip() == "PASS")
 
 
 REPORT_CHECK = Path(__file__).resolve().parents[5] / "hooks" / "shared" / "verifier-report.mjs"

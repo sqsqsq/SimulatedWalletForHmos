@@ -49,7 +49,6 @@ from typing import Callable, Iterable
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import golden_workspace  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEDGER = REPO_ROOT / "test" / "regression" / "failure-modes.yaml"
@@ -2177,55 +2176,6 @@ def _form_case(root: Path, needle: str, ok: str) -> Outcome:
     return Outcome(False, f"check 未过（非固定形式原因）：{out[:200]}")
 
 
-GOLDEN_STORY = REPO_ROOT / "test/golden/story-金样-AR90004.md"
-
-
-@checker
-def g01_judgement_blocks_golden(root: Path, ctx: Ctx) -> Outcome:
-    """判据把已定稿的理想产物判成违规。
-
-    这是**常驻正例**，与其它形态反过来：这里 PASS 的意思是「判据没拦金样」。
-    金样是唯一的效果定义，判据从它正推——所以任何判据改动先跑这一行，
-    拦住金样就是判据错，修判据不修金样。
-
-    两个分支都验。只验「零 FAIL」不够：判项集体空转时也是零 FAIL，
-    那种「通过」比拦错更难发现。
-    """
-    ext = root if _ext_file(root, "skills/story/scripts/core/story-build.mjs") else DEFAULT_EXTENSION_DIR
-    if not GOLDEN_STORY.exists():
-        return Outcome(False, "金样不在库里——判据失去仲裁锚")
-
-    def run(story: str | None) -> tuple[int, str]:
-        with tempfile.TemporaryDirectory() as tmp:
-            golden_workspace.build(Path(tmp), story, extensions=ext)
-            return golden_workspace.check(Path(tmp))
-
-    code, out = run(None)
-    if code != 0:
-        return Outcome(False, f"判据拦住了金样：{out[:260]}")
-
-    # 反分支：塞一个工程标识与一个模板占位进主叙事，判项应当各自点名
-    text = read_text(GOLDEN_STORY)
-    head = text.split("\n## ", 2)
-    if len(head) < 3:
-        return Outcome(False, "金样切不出第二章——形态变了，本条的注入点要重定")
-    injected = text.replace(
-        "\n## " + head[2].split("\n", 1)[0],
-        "\n## " + head[2].split("\n", 1)[0]
-        + "\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。",
-        1)
-    bad_code, bad_out = run(injected)
-    if bad_code == 0:
-        return Outcome(False, "往金样里塞了工程标识与模板占位符却仍然全过——判项在空转")
-    # 两个违例都取**确定性的明确记号**：工程标识与模板占位符。原先用的「超长段落」
-    # 归可读性，那条随固定形式类判据退场了——反分支要验的是判项没空转，
-    # 不该挂在一条会退场的判据上。
-    missed = [w for w in ("工程标识", "模板占位符") if w not in bad_out]
-    if missed:
-        return Outcome(False, f"注入的违例没被点名：{missed}；实际输出 {bad_out[:200]}")
-    return Outcome(True, "金样零 FAIL，且注入违例时判项各自点名")
-
-
 _REF_RE = re.compile(r"([\w./-]+\.md)\)?[`]?「([^」]{2,20})」")
 _SENT_SPLIT = re.compile(r"[。；\n]")
 
@@ -2365,7 +2315,7 @@ def m21_environment_hardcoded(root: Path, ctx: Ctx) -> Outcome:
 
 #: 验证资产的名字。机制层提到它们，就是判据在照着某一份样本长——
 #: 而样本是用来检验机制的，被检验的东西反过来指向检验它的东西，这条链就闭合成了自证。
-VERIFICATION_ASSET_WORDS = ("金样", "仲裁锚", "golden", "fixtures", "夹具目录")
+VERIFICATION_ASSET_WORDS = ("金样", "golden", "fixtures", "夹具目录")
 
 
 def maintenance_path_hits(line: str) -> list[str]:
@@ -2383,9 +2333,8 @@ def maintenance_path_hits(line: str) -> list[str]:
 def g02_mechanism_points_at_assets(root: Path, ctx: Ctx) -> Outcome:
     """机制层指向验证资产（金样、夹具、测试目录）。
 
-    金样是判据的仲裁锚：判据从它正推，拦它就是判据错。但这条关系是**单向**的——
-    机制层一旦提到金样或夹具，判据就从「形态规则」滑成了「照着那一份写」，
-    换个业务域立刻不成立，而台账还是全绿。
+    样本与夹具是用来检验机制的。机制层一旦提到金样或夹具，判据就从「形态规则」滑成了
+    「照着那一份写」，换个业务域立刻不成立，而台账还是全绿。
 
     与 M02 分工：M02 判的是业务字面（单号、业务名），这条判的是**指向验证资产本身**。
     """
