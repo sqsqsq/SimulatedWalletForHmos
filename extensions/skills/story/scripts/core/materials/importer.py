@@ -560,7 +560,7 @@ def retire_source(feature_root: Path, key: str) -> dict:
     """
     inbox = feature_root / "inbox"
     refuse = f"--retire「{key}」不动任何文件："
-    # 键只认 .classify.json 的写法：`/` 分隔的相对路径。盘符（E:/、E:x）、UNC、反斜杠、`..` 都不是。
+    # 键只认 .classify.json 的写法：`/` 分隔的相对路径。盘符绝对路径、驱动器相对路径、UNC、反斜杠、`..` 都不是。
     pure = PurePosixPath(key or "")
     if (not key or key != pure.as_posix() or "\\" in key or ":" in key or pure.is_absolute()
             or {".", ".."} & set(pure.parts)):

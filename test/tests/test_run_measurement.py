@@ -8,6 +8,8 @@
 每个指标都配**能改变结果的正反样本**：只测「有数据时算得出」，测不出「没数据时会不会凭空造数」。
 """
 import json
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -577,11 +579,104 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         story = p.parent.parent / "AR" / "story.md"
         return story.is_file() and f"](../ux-reference/{p.name})" in story.read_text(encoding="utf-8")
 
+    #: 已确认的分析归档：维护者写作的评价参照，性质由 MANIFEST.md 声明（1.9.9 稳定性与性能分析）。
+    #: 每个对象一个子目录（story.md、spec.md 与 assets/、ux-reference/ 下的图）。
+    ANALYSIS_ARCHIVE = "doc/spec/1.9.9/04-稳定性与性能分析/data/golden"
+
+    @staticmethod
+    def archive_references(obj: Path) -> dict[Path, str]:
+        """对象自身引用的图：story 的 Markdown 图片（相对 story 所在目录），spec Visual Handoff 的
+        authoritative_refs（消费工程路径 `doc/features/<对象>/…` 映射到对象子目录）。目标 → 引用原文。"""
+        import yaml  # noqa: PLC0415
+        refs: dict[Path, str] = {}
+        story = obj / "story.md"
+        if story.is_file():
+            for target in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", story.read_text(encoding="utf-8")):
+                refs[(obj / target).resolve()] = f"story.md {target}"
+        spec = obj / "spec.md"
+        if spec.is_file():
+            prefix = f"doc/features/{obj.name}/"
+            for block in re.findall(r"```yaml\n(.*?)```", spec.read_text(encoding="utf-8"), re.S):
+                data = yaml.safe_load(block)
+                handoff = data.get("visual_handoff") if isinstance(data, dict) else None
+                for ref in (handoff or {}).get("authoritative_refs") or []:
+                    path = str(ref.get("path", ""))
+                    target = obj / path[len(prefix):] if path.startswith(prefix) else obj / "（对象外）" / path
+                    refs[target.resolve()] = f"spec.md visual_handoff {path}"
+        return refs
+
+    @classmethod
+    def analysis_reference(cls, p: Path, root: Path = REPO) -> bool:
+        """分析归档里被所属对象 story 或 spec 实际引用的 PNG 是评价参照，不是运行截图。
+
+        只认这一份归档：MANIFEST.md 在，图在 `<对象>/assets|ux-reference/` 下，且所属对象的引用映射到它。
+        不按目录名放行，未引用、映射错的图与其它后缀照常按运行证据报。
+        """
+        base = root / cls.ANALYSIS_ARCHIVE
+        if p.suffix != ".png" or not p.is_relative_to(base) or not (base / "MANIFEST.md").is_file():
+            return False
+        parts = p.relative_to(base).parts
+        if len(parts) != 3 or parts[1] not in ("assets", "ux-reference"):
+            return False
+        return p.resolve() in cls.archive_references(base / parts[0])
+
+    @classmethod
+    def stray_evidence(cls, root: Path = REPO) -> list[str]:
+        return [p.relative_to(root).as_posix() for rel in cls.ROOTS for p in (root / rel).rglob("*")
+                if p.is_file() and (p.suffix in cls.EVIDENCE_SUFFIXES or p.name == "runlog.md")
+                and not cls.candidate_figure(p, root) and not cls.analysis_reference(p, root)]
+
+    @classmethod
+    def broken_archive_references(cls, root: Path = REPO) -> list[str]:
+        base = root / cls.ANALYSIS_ARCHIVE
+        return [f"{obj.name}/{src}" for obj in sorted(base.iterdir()) if obj.is_dir()
+                for target, src in cls.archive_references(obj).items() if not target.is_file()] if base.is_dir() else []
+
     def test_run_evidence_lives_under_output(self):
-        stray = [p.relative_to(REPO).as_posix() for rel in self.ROOTS for p in (REPO / rel).rglob("*")
-                 if p.is_file() and (p.suffix in self.EVIDENCE_SUFFIXES or p.name == "runlog.md")
-                 and not self.candidate_figure(p)]
-        self.assertEqual([], stray, "运行证据放到 output/story/ 下")
+        self.assertEqual([], self.stray_evidence(), "运行证据放到 output/story/ 下")
+        self.assertEqual([], self.broken_archive_references(), "分析归档的图片引用指不到实际文件")
+
+    def test_analysis_archive_references_are_classified_by_their_owner(self):
+        base = REPO / self.ANALYSIS_ARCHIVE
+        if not base.is_dir():
+            self.skipTest("本工作区没有这份分析归档")
+        pngs = sorted(base.rglob("*.png"))
+        self.assertTrue(pngs)
+        self.assertEqual([], [p.relative_to(base).as_posix() for p in pngs if not self.analysis_reference(p)])
+
+        def broken(mutate) -> tuple[list[str], list[str]]:
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                shutil.copytree(base, root / self.ANALYSIS_ARCHIVE)
+                (root / "doc" / "plan").mkdir(parents=True)
+                mutate(root / self.ANALYSIS_ARCHIVE)
+                return self.stray_evidence(root), self.broken_archive_references(root)
+
+        def edit(f: Path, a: str, b: str) -> None:
+            text = f.read_text(encoding="utf-8")
+            self.assertIn(a, text)
+            f.write_text(text.replace(a, b, 1), encoding="utf-8")
+
+        story_ref = next(p for p in pngs if p.parent.name == "assets")
+        spec_ref = next(p for p in pngs if p.parent.name == "ux-reference")
+        obj, other = spec_ref.parent.parent.name, next(o.name for o in base.iterdir() if o.is_dir() and o.name != spec_ref.parent.parent.name)
+        cases = {
+            "story 不再引用": (lambda a: edit(a / story_ref.parent.parent.name / "story.md", f"(assets/{story_ref.name})", "(assets/去掉.png)"),
+                              story_ref.name, "去掉.png"),
+            "Visual Handoff 映射到别的对象": (lambda a: edit(a / obj / "spec.md", f"doc/features/{obj}/ux-reference/{spec_ref.name}",
+                                                       f"doc/features/{other}/ux-reference/{spec_ref.name}"),
+                                         spec_ref.name, spec_ref.name),
+            "删掉 MANIFEST": (lambda a: (a / "MANIFEST.md").unlink(), spec_ref.name, None),
+            "多一张未引用的图": (lambda a: (a / obj / "ux-reference" / "多余.png").write_bytes(b"PNG"), "多余.png", None),
+            "图放在对象子目录之外": (lambda a: (a / "散图.png").write_bytes(b"PNG"), "散图.png", None),
+            "混进运行日志": (lambda a: (a / obj / "assets" / "run.log").write_text("x", encoding="utf-8"), "run.log", None),
+        }
+        for name, (mutate, stray_name, broken_ref) in cases.items():
+            with self.subTest(name):
+                stray, refs = broken(mutate)
+                self.assertTrue(any(s.endswith(stray_name) for s in stray), stray)
+                if broken_ref:
+                    self.assertTrue(any(broken_ref in r for r in refs), refs)
 
     def test_a_candidate_figure_is_recognised_only_where_candidates_are_registered(self):
         with tempfile.TemporaryDirectory() as d:
