@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 1090" width="1300" height="1090" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>签约路径：从详情页入口到签约建成</title>
+<metadata><![CDATA[%% 图源 SR §1 #1
+%% 图源 spec §5.1 #1
+flowchart TD
+  A[打开交通卡详情页] --> S{本账号这张卡的云侧签约状态}
+  S -->|生效或停用| MG[入口进管理页]
+  S -->|状态未知| UN[显示未知或副本旧值，点入重新查询]
+  S -->|未签约| G{开关开且支付能力可用}
+  G -->|否| H[不显示入口]
+  G -->|是| RC{点入：恢复确认}
+  RC -->|授权后未建成| F
+  RC -->|有未结束的创建| U
+  RC -->|取不到恢复信息| RF[留在详情页，提示重查]
+  RC -->|没有未结束操作与待处理授权| R{实名结果}
+  R -->|未实名或读不到| RN[引导实名]
+  RN -->|实名完成| P
+  R -->|已实名| P{取策略}
+  P -->|signable=false| NS[留在详情页，说明不可签约]
+  P -->|策略查询失败| PF[留在详情页，提示稍后重试]
+  P -->|signable=true| B[签约页选门限与面额]
+  B --> C[免密验证]
+  C -->|取消或未通过| B
+  C -->|通过，返回协议号| D[卡云建签约关系]
+  D -->|成功| E[详情页显示已开启]
+  D -->|卡片已有生效签约| MG
+  D -->|明确失败| F[未建成：保留选择与已知结果，再次尝试方式待 D4]
+  D -->|超时，结果未知| Q{查询云侧签约状态}
+  Q -->|已生效| E
+  Q -->|云侧无签约或仍为原停用关系| F
+  Q -->|查询也失败| U[结果待确认，可稍后再查]
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1300" height="1090" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">签约路径：从详情页入口到签约建成</text>
+<rect x="24" y="49" width="22" height="14" rx="4" fill="#ffffff" stroke="#5b7fc7"/>
+<text x="52" y="60" font-size="12" fill="#5a6684">起点</text>
+<rect x="142" y="49" width="22" height="14" rx="4" fill="#eef4ff" stroke="#5b7fc7"/>
+<text x="170" y="60" font-size="12" fill="#5a6684">步骤</text>
+<rect x="260" y="49" width="22" height="14" rx="4" fill="#fff6e0" stroke="#c99a2e"/>
+<text x="288" y="60" font-size="12" fill="#5a6684">判断</text>
+<rect x="378" y="49" width="22" height="14" rx="4" fill="#e6f6ea" stroke="#3f9a5a"/>
+<text x="406" y="60" font-size="12" fill="#5a6684">正常结束</text>
+<rect x="496" y="49" width="22" height="14" rx="4" fill="#fdecea" stroke="#c8554b"/>
+<text x="524" y="60" font-size="12" fill="#5a6684">受限或失败</text>
+<rect x="614" y="49" width="22" height="14" rx="4" fill="#fff3c4" stroke="#b38f00"/>
+<text x="642" y="60" font-size="12" fill="#5a6684">待确认</text>
+<rect x="732" y="49" width="22" height="14" rx="4" fill="#f3ecfb" stroke="#8a63c2" stroke-dasharray="5 3"/>
+<text x="760" y="60" font-size="12" fill="#5a6684">待定（未裁定）</text>
+<path d="M 500.0,972.5 L 500.0,1027.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 560.0,972.5 L 560.0,1005.0 L 1150.0,1005.0 L 1150.0,845.0 L 1075.5,845.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 605.0,950.0 L 888.0,950.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,862.5 L 500.0,927.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 560.0,862.5 L 560.0,902.0 L 960.0,902.0 L 960.0,932.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 380.0,845.0 L 32.0,845.0 L 32.0,90.0 L 960.0,90.0 L 960.0,172.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 620.0,845.0 L 844.5,845.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,777.5 L 500.0,827.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 425.0,760.0 L 380.0,760.0 L 380.0,680.0 L 420.8,680.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,697.5 L 500.0,742.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,557.5 L 500.0,662.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 440.0,557.5 L 440.0,600.0 L 266.0,600.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 400.0,535.0 L 266.0,535.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,467.5 L 500.0,512.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 250.0,462.5 L 250.0,496.0 L 440.0,496.0 L 440.0,512.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 425.0,445.0 L 293.0,445.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,377.5 L 500.0,422.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 600.0,348.0 L 1260.0,348.0 L 1260.0,1045.0 L 593.8,1045.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 600.0,362.0 L 1235.0,362.0 L 1235.0,795.0 L 960.0,795.0 L 960.0,818.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 400.0,355.0 L 251.5,355.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,292.5 L 500.0,332.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 380.0,270.0 L 215.2,270.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,212.5 L 500.0,247.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 365.0,190.0 L 251.5,190.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 635.0,190.0 L 902.5,190.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,137.5 L 500.0,167.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="428.0" y="102.5" width="144.0" height="35" rx="6" fill="#ffffff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="125.0" font-size="14" fill="#1d2b4f" text-anchor="middle">打开交通卡详情页</text>
+<polygon points="379.0,167.5 621.0,167.5 635.0,190 621.0,212.5 379.0,212.5 365.0,190" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="195.0" font-size="14" fill="#4a3505" text-anchor="middle">本账号这张卡的云侧签约状态</text>
+<polygon points="394.0,247.5 606.0,247.5 620.0,270 606.0,292.5 394.0,292.5 380.0,270" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="275.0" font-size="14" fill="#4a3505" text-anchor="middle">开关开且支付能力可用</text>
+<polygon points="414.0,332.5 586.0,332.5 600.0,355 586.0,377.5 414.0,377.5 400.0,355" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="360.0" font-size="14" fill="#4a3505" text-anchor="middle">点入：恢复确认</text>
+<polygon points="439.0,422.5 561.0,422.5 575.0,445 561.0,467.5 439.0,467.5 425.0,445" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="450.0" font-size="14" fill="#4a3505" text-anchor="middle">实名结果</text>
+<polygon points="414.0,512.5 586.0,512.5 600.0,535 586.0,557.5 414.0,557.5 400.0,535" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="540.0" font-size="14" fill="#4a3505" text-anchor="middle">取策略</text>
+<rect x="420.75" y="662.5" width="158.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="685.0" font-size="14" fill="#1d2b4f" text-anchor="middle">签约页选门限与面额</text>
+<rect x="425.0" y="742.5" width="150" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="765.0" font-size="14" fill="#1d2b4f" text-anchor="middle">免密验证</text>
+<rect x="380.0" y="827.5" width="240" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="850.0" font-size="14" fill="#1d2b4f" text-anchor="middle">卡云建签约关系</text>
+<polygon points="409.0,927.5 591.0,927.5 605.0,950 591.0,972.5 409.0,972.5 395.0,950" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="955.0" font-size="14" fill="#4a3505" text-anchor="middle">查询云侧签约状态</text>
+<rect x="78.5" y="163.0" width="173.0" height="54" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="165" y="185.5" font-size="14" fill="#4a3b00" text-anchor="middle">显示未知或副本旧值，</text>
+<text x="165" y="204.5" font-size="14" fill="#4a3b00" text-anchor="middle">点入重新查询</text>
+<rect x="114.75" y="252.5" width="100.5" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="165" y="275.0" font-size="14" fill="#561712" text-anchor="middle">不显示入口</text>
+<rect x="78.5" y="337.5" width="173.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="165" y="360.0" font-size="14" fill="#561712" text-anchor="middle">留在详情页，提示重查</text>
+<rect x="207.0" y="427.5" width="86.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="250" y="450.0" font-size="14" fill="#1d2b4f" text-anchor="middle">引导实名</text>
+<rect x="64.0" y="517.5" width="202.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="165" y="540.0" font-size="14" fill="#561712" text-anchor="middle">留在详情页，说明不可签约</text>
+<rect x="64.0" y="582.5" width="202.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="165" y="605.0" font-size="14" fill="#561712" text-anchor="middle">留在详情页，提示稍后重试</text>
+<rect x="902.5" y="172.5" width="115.0" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="960" y="195.0" font-size="14" fill="#123d20" text-anchor="middle">入口进管理页</text>
+<rect x="844.5" y="818.0" width="231.0" height="54" rx="18" fill="#f3ecfb" stroke="#8a63c2" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="960" y="840.5" font-size="14" fill="#3a1f60" text-anchor="middle">未建成：保留选择与已知结果，</text>
+<text x="960" y="859.5" font-size="14" fill="#3a1f60" text-anchor="middle">再次尝试方式待 D4</text>
+<rect x="888.0" y="932.5" width="144.0" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="960" y="955.0" font-size="14" fill="#123d20" text-anchor="middle">详情页显示已开启</text>
+<rect x="406.25" y="1027.5" width="187.5" height="35" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="500" y="1050.0" font-size="14" fill="#4a3b00" text-anchor="middle">结果待确认，可稍后再查</text>
+<rect x="731.4" y="179.0" width="74.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="768.75" y="194.5" font-size="12.5" fill="#34405c" text-anchor="middle">生效或停用</text>
+<rect x="277.4" y="179.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="308.25" y="194.5" font-size="12.5" fill="#34405c" text-anchor="middle">状态未知</text>
+<rect x="529.0" y="221.0" width="48.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="534" y="236.5" font-size="12.5" fill="#34405c" text-anchor="start">未签约</text>
+<rect x="286.2" y="259.0" width="22.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="297.625" y="274.5" font-size="12.5" fill="#34405c" text-anchor="middle">否</text>
+<rect x="517.0" y="307.0" width="22.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="522" y="322.5" font-size="12.5" fill="#34405c" text-anchor="start">是</text>
+<rect x="275.4" y="344.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="325.75" y="359.5" font-size="12.5" fill="#34405c" text-anchor="middle">取不到恢复信息</text>
+<rect x="1036.2" y="351.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1080" y="366.5" font-size="12.5" fill="#34405c" text-anchor="middle">授权后未建成</text>
+<rect x="809.7" y="337.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="860" y="352.5" font-size="12.5" fill="#34405c" text-anchor="middle">有未结束的创建</text>
+<rect x="509.0" y="379.0" width="100.6" height="38" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="394.5" font-size="12.5" fill="#34405c" text-anchor="start">没有未结束操作</text>
+<text x="514" y="410.5" font-size="12.5" fill="#34405c" text-anchor="start">与待处理授权</text>
+<rect x="301.7" y="417.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="352" y="432.5" font-size="12.5" fill="#34405c" text-anchor="middle">未实名或读不到</text>
+<rect x="299.1" y="485.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="330" y="500.5" font-size="12.5" fill="#34405c" text-anchor="middle">实名完成</text>
+<rect x="509.0" y="477.0" width="48.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="492.5" font-size="12.5" fill="#34405c" text-anchor="start">已实名</text>
+<rect x="300.2" y="509.0" width="109.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="355" y="524.5" font-size="12.5" fill="#34405c" text-anchor="middle">signable=false</text>
+<rect x="311.2" y="589.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="355" y="604.5" font-size="12.5" fill="#34405c" text-anchor="middle">策略查询失败</text>
+<rect x="509.0" y="639.0" width="102.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="654.5" font-size="12.5" fill="#34405c" text-anchor="start">signable=true</text>
+<rect x="287.3" y="709.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="370" y="724.5" font-size="12.5" fill="#34405c" text-anchor="end">取消或未通过</text>
+<rect x="377.4" y="791.0" width="113.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="486" y="806.5" font-size="12.5" fill="#34405c" text-anchor="end">通过，返回协议号</text>
+<rect x="709.1" y="834.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="740" y="849.5" font-size="12.5" fill="#34405c" text-anchor="middle">明确失败</text>
+<rect x="143.2" y="834.0" width="113.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="200" y="849.5" font-size="12.5" fill="#34405c" text-anchor="middle">卡片已有生效签约</text>
+<rect x="742.1" y="891.0" width="35.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="760" y="906.5" font-size="12.5" fill="#34405c" text-anchor="middle">成功</text>
+<rect x="390.4" y="885.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="486" y="900.5" font-size="12.5" fill="#34405c" text-anchor="end">超时，结果未知</text>
+<rect x="715.6" y="939.0" width="48.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="740" y="954.5" font-size="12.5" fill="#34405c" text-anchor="middle">已生效</text>
+<rect x="1099.7" y="911.0" width="100.6" height="38" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1150" y="926.5" font-size="12.5" fill="#34405c" text-anchor="middle">云侧无签约或</text>
+<text x="1150" y="942.5" font-size="12.5" fill="#34405c" text-anchor="middle">仍为原停用关系</text>
+<rect x="416.3" y="994.0" width="74.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="486" y="1009.5" font-size="12.5" fill="#34405c" text-anchor="end">查询也失败</text>
+</svg>

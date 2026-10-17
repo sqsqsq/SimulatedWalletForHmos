@@ -1,0 +1,34 @@
+sequenceDiagram
+  actor U as 用户
+  participant W as 钱包端
+  participant P as 支付部件
+  participant C as 交通卡云
+  U->>W: 从入口进入签约
+  W->>C: 恢复确认（本账号这张卡）
+  C-->>W: 没有未结束的操作与待处理授权
+  Note over W,C: 有未结束的操作、授权后未建成或取不到恢复信息时不往下走，见 7.4
+  W->>C: 取可签约性与门限面额档位
+  alt 不可签约或查询失败
+    C-->>W: signable=false（可带原因），或失败
+    Note over W: 留在详情页提示，不拉起验证
+  else 可签约
+    C-->>W: 档位与单日上限
+    U->>W: 选门限与面额，同意协议，点开启
+    W->>P: 拉起免密验证（单笔额度按所选面额）
+    alt 验证通过
+      P-->>W: 协议号
+      W->>C: 创建签约（协议号只透传）
+      alt 成功
+        C-->>W: 签约号
+      else 明确失败
+        C-->>W: 失败原因
+        Note over W: 未建成，再次开启方式待 D4
+      else 超时
+        W->>C: 查询签约状态
+        C-->>W: 已生效、无签约，或查询失败
+      end
+    else 取消或未通过
+      P-->>W: 没有协议号
+      Note over W: 回签约页，已选门限面额保留，不创建签约
+    end
+  end

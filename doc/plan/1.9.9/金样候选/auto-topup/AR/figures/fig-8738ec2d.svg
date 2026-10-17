@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 960" width="1200" height="960" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>管理路径：写操作前的恢复确认、改档关闭与停用重签</title>
+<metadata><![CDATA[%% 图源 SR §1 #2
+%% 图源 spec §5.2 #1
+flowchart TD
+  M[管理页，云侧状态已确认] --> P[停用：查看停用原因与记录]
+  M --> W{提交改档、关闭或重新签约前：恢复确认}
+  W -->|有未结束的改档或关闭| PD
+  W -->|授权后未建成| AF[未建成：再次开启方式待 D4，不拉起验证]
+  W -->|取不到恢复信息| RQ[写操作暂不可用，提示重查]
+  W -->|没有未结束操作与待处理授权| CH{用户提交的操作}
+  CH --> N1[只改门限：不需验证]
+  CH --> N2[改面额：更新前是否重新验证待定 D3]
+  CH --> O[关闭自动充值]
+  CH --> RE{重新签约：重查开通条件}
+  N1 --> UP[卡云更新签约，原关系不断]
+  N2 --> UP
+  O --> CC[卡云解约]
+  UP --> RS{本次结果}
+  CC --> RS
+  RS -->|明确成功| OK[按新状态展示]
+  RS -->|明确拒绝| NO[保持原状态，说明这次没有生效]
+  RS -->|结果未知| PD[操作确认中：再次查询状态与恢复确认]
+  PD -->|原操作已终结| CUR[解除确认中，按云侧当前状态展示]
+  PD -->|仍未结束或查询失败| WT[保持确认中，不能发起冲突操作]
+  WT -->|用户再次查询| PD
+  RE -->|满足| SG[走签约路径]
+  RE -->|不满足，如开关关闭| NA[说明暂不能重新签约]
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1200" height="960" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">管理路径：写操作前的恢复确认、改档关闭与停用重签</text>
+<rect x="24" y="49" width="22" height="14" rx="4" fill="#eef4ff" stroke="#5b7fc7"/>
+<text x="52" y="60" font-size="12" fill="#5a6684">步骤</text>
+<rect x="142" y="49" width="22" height="14" rx="4" fill="#fff6e0" stroke="#c99a2e"/>
+<text x="170" y="60" font-size="12" fill="#5a6684">判断</text>
+<rect x="260" y="49" width="22" height="14" rx="4" fill="#e6f6ea" stroke="#3f9a5a"/>
+<text x="288" y="60" font-size="12" fill="#5a6684">正常结束</text>
+<rect x="378" y="49" width="22" height="14" rx="4" fill="#fdecea" stroke="#c8554b"/>
+<text x="406" y="60" font-size="12" fill="#5a6684">受限或失败</text>
+<rect x="496" y="49" width="22" height="14" rx="4" fill="#fff3c4" stroke="#b38f00"/>
+<text x="524" y="60" font-size="12" fill="#5a6684">待确认</text>
+<rect x="614" y="49" width="22" height="14" rx="4" fill="#f3ecfb" stroke="#8a63c2" stroke-dasharray="5 3"/>
+<text x="642" y="60" font-size="12" fill="#5a6684">待定（未裁定）</text>
+<path d="M 985.0,422.5 L 985.0,455.0 L 1060.0,455.0 L 1060.0,482.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 895.0,422.5 L 895.0,455.0 L 845.0,455.0 L 845.0,482.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 815.5,890.0 L 900.0,890.0 L 900.0,790.0 L 602.2,790.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 525.0,807.5 L 525.0,845.0 L 700.0,845.0 L 700.0,872.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 405.0,807.5 L 405.0,845.0 L 230.0,845.0 L 230.0,872.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 465.0,612.5 L 465.0,772.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 510.0,612.5 L 510.0,640.0 L 700.0,640.0 L 700.0,672.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 420.0,612.5 L 420.0,640.0 L 230.0,640.0 L 230.0,672.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 650.0,517.5 L 650.0,590.0 L 545.0,590.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 280.0,517.5 L 280.0,590.0 L 385.0,590.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 650.0,417.5 L 650.0,482.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 400.0,427.0 L 400.0,470.0 L 420.0,470.0 L 420.0,500.0 L 381.0,500.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 160.0,417.5 L 160.0,500.0 L 179.0,500.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 680.0,300.0 L 940.0,300.0 L 940.0,377.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 610.0,322.5 L 610.0,350.0 L 650.0,350.0 L 650.0,382.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 550.0,322.5 L 550.0,350.0 L 400.0,350.0 L 400.0,373.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 480.0,300.0 L 160.0,300.0 L 160.0,382.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 580.0,227.5 L 580.0,277.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 430.0,227.5 L 430.0,250.0 L 60.0,250.0 L 60.0,790.0 L 327.8,790.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 760.0,205.0 L 939.0,205.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 400.0,205.0 L 273.0,205.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 580.0,127.5 L 580.0,182.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 486.2,110.0 L 271.0,110.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="486.25" y="92.5" width="187.5" height="35" rx="6" fill="#ffffff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="580" y="115.0" font-size="14" fill="#1d2b4f" text-anchor="middle">管理页，云侧状态已确认</text>
+<rect x="69.0" y="92.5" width="202.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="170" y="115.0" font-size="14" fill="#1d2b4f" text-anchor="middle">停用：查看停用原因与记录</text>
+<polygon points="414.0,182.5 746.0,182.5 760.0,205 746.0,227.5 414.0,227.5 400.0,205" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="580" y="210.0" font-size="14" fill="#4a3505" text-anchor="middle">提交改档、关闭或重新签约前：恢复确认</text>
+<rect x="47.03750000000001" y="178.0" width="225.92499999999998" height="54" rx="18" fill="#f3ecfb" stroke="#8a63c2" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="160" y="200.5" font-size="14" fill="#3a1f60" text-anchor="middle">未建成：再次开启方式待 D4，</text>
+<text x="160" y="219.5" font-size="14" fill="#3a1f60" text-anchor="middle">不拉起验证</text>
+<rect x="939.0" y="187.5" width="202.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="1040" y="210.0" font-size="14" fill="#561712" text-anchor="middle">写操作暂不可用，提示重查</text>
+<polygon points="494.0,277.5 666.0,277.5 680.0,300 666.0,322.5 494.0,322.5 480.0,300" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="580" y="305.0" font-size="14" fill="#4a3505" text-anchor="middle">用户提交的操作</text>
+<rect x="80.75" y="382.5" width="158.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="160" y="405.0" font-size="14" fill="#1d2b4f" text-anchor="middle">只改门限：不需验证</text>
+<rect x="320.75" y="373.0" width="158.5" height="54" rx="18" fill="#f3ecfb" stroke="#8a63c2" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="400" y="395.5" font-size="14" fill="#3a1f60" text-anchor="middle">改面额：更新前是否</text>
+<text x="400" y="414.5" font-size="14" fill="#3a1f60" text-anchor="middle">重新验证待定 D3</text>
+<rect x="592.5" y="382.5" width="115.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="650" y="405.0" font-size="14" fill="#1d2b4f" text-anchor="middle">关闭自动充值</text>
+<polygon points="829.0,377.5 1051.0,377.5 1065.0,400 1051.0,422.5 829.0,422.5 815.0,400" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="940" y="405.0" font-size="14" fill="#4a3505" text-anchor="middle">重新签约：重查开通条件</text>
+<rect x="794.75" y="482.5" width="100.5" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="845" y="505.0" font-size="14" fill="#123d20" text-anchor="middle">走签约路径</text>
+<rect x="980.75" y="482.5" width="158.5" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="1060" y="505.0" font-size="14" fill="#561712" text-anchor="middle">说明暂不能重新签约</text>
+<rect x="179.0" y="482.5" width="202.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="280" y="505.0" font-size="14" fill="#1d2b4f" text-anchor="middle">卡云更新签约，原关系不断</text>
+<rect x="607.0" y="482.5" width="86.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="650" y="505.0" font-size="14" fill="#1d2b4f" text-anchor="middle">卡云解约</text>
+<polygon points="399.0,567.5 531.0,567.5 545.0,590 531.0,612.5 399.0,612.5 385.0,590" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="465" y="595.0" font-size="14" fill="#4a3505" text-anchor="middle">本次结果</text>
+<rect x="172.5" y="672.5" width="115.0" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="230" y="695.0" font-size="14" fill="#123d20" text-anchor="middle">按新状态展示</text>
+<rect x="584.5" y="672.5" width="231.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="700" y="695.0" font-size="14" fill="#561712" text-anchor="middle">保持原状态，说明这次没有生效</text>
+<rect x="327.75" y="772.5" width="274.5" height="35" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="465" y="795.0" font-size="14" fill="#4a3b00" text-anchor="middle">操作确认中：再次查询状态与恢复确认</text>
+<rect x="107.25" y="872.5" width="245.5" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="230" y="895.0" font-size="14" fill="#123d20" text-anchor="middle">解除确认中，按云侧当前状态展示</text>
+<rect x="584.5" y="872.5" width="231.0" height="35" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="700" y="895.0" font-size="14" fill="#4a3b00" text-anchor="middle">保持确认中，不能发起冲突操作</text>
+<rect x="292.6" y="194.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="336.48125" y="209.5" font-size="12.5" fill="#34405c" text-anchor="middle">授权后未建成</text>
+<rect x="799.2" y="194.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="849.5" y="209.5" font-size="12.5" fill="#34405c" text-anchor="middle">取不到恢复信息</text>
+<rect x="65.0" y="729.0" width="139.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="70" y="744.5" font-size="12.5" fill="#34405c" text-anchor="start">有未结束的改档或关闭</text>
+<rect x="589.0" y="241.0" width="178.3" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="594" y="256.5" font-size="12.5" fill="#34405c" text-anchor="start">没有未结束操作与待处理授权</text>
+<rect x="289.1" y="629.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="320" y="644.5" font-size="12.5" fill="#34405c" text-anchor="middle">明确成功</text>
+<rect x="579.1" y="629.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="610" y="644.5" font-size="12.5" fill="#34405c" text-anchor="middle">明确拒绝</text>
+<rect x="474.0" y="719.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="479" y="734.5" font-size="12.5" fill="#34405c" text-anchor="start">结果未知</text>
+<rect x="276.2" y="834.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="320" y="849.5" font-size="12.5" fill="#34405c" text-anchor="middle">原操作已终结</text>
+<rect x="548.7" y="834.0" width="126.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="612" y="849.5" font-size="12.5" fill="#34405c" text-anchor="middle">仍未结束或查询失败</text>
+<rect x="856.2" y="829.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="900" y="844.5" font-size="12.5" fill="#34405c" text-anchor="middle">用户再次查询</text>
+<rect x="849.1" y="444.0" width="35.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="880" y="459.5" font-size="12.5" fill="#34405c" text-anchor="end">满足</text>
+<rect x="995.0" y="444.0" width="126.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1000" y="459.5" font-size="12.5" fill="#34405c" text-anchor="start">不满足，如开关关闭</text>
+</svg>

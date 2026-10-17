@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1060" width="1500" height="1060" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>中断续办与草稿保护：保存、恢复、创建恢复与清除</title>
+<metadata><![CDATA[%% 图源 spec §5.3 #1
+flowchart TD
+    A[完成一项选择：对象、权限或有效期] --> S[按账号与车辆保存草稿]
+    S --> P[点发出：写入原请求与新幂等标识]
+    P -->|写入失败| PF[停在本页提示，不发送]
+    P -->|写入成功| SEND[发送或确认]
+    I[退出页面、断网或关闭应用后回来] --> ID[先取当前登录身份]
+    ID --> R{按账号与车辆读草稿}
+    R -->|明确不存在| RC{按账号与车辆向车云做创建恢复}
+    R -->|有选择，没有幂等标识| RS[恢复选择，重新查配额与权限]
+    R -->|有原请求与幂等标识| K[三项只读，用同一请求确认]
+    R -->|不可访问或服务失败| RF[恢复失败，可重试，不当成没有草稿]
+    R -->|内容损坏| BR[隔离损坏草稿，不当成没有]
+    BR --> RC
+    RC -->|pending：返回原请求| PS[受保护保存原请求]
+    PS -->|保存成功| K
+    PS -->|保存失败| LIM
+    RC -->|established：返回原分享| EST[显示已建立与当前状态，清本地旧草稿]
+    RC -->|clear：原创建已终结| CLR[清掉旧草稿]
+    CLR -->|清除成功| NEW[空表单]
+    CLR -->|清除失败| LIM
+    RC -->|unknown 或查询失败| LIM[这辆车暂停新发起，管理只读可重查]
+    K --> SEND
+    SEND --> D{车云返回}
+    D -->|已建立| C[清除这辆车的草稿]
+    C -->|清除失败| PC[显示已建立并待清理，只能重试清理或确认同一请求]
+    D -->|明确拒绝，含满额| X[持久清掉幂等标识后才开放编辑]
+    D -->|又没得到回应| KEEP[原请求保留，回来或再点时确认]
+    L[主动退出或切换账号] --> M[先记下旧账号不可恢复，隔离旧页面与请求]
+    M --> CL[删除旧账号全部车辆的草稿]
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1500" height="1060" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">中断续办与草稿保护：保存、恢复、创建恢复与清除</text>
+<rect x="24" y="49" width="22" height="14" rx="4" fill="#ffffff" stroke="#5b7fc7"/>
+<text x="52" y="60" font-size="12" fill="#5a6684">起点</text>
+<rect x="142" y="49" width="22" height="14" rx="4" fill="#eef4ff" stroke="#5b7fc7"/>
+<text x="170" y="60" font-size="12" fill="#5a6684">步骤</text>
+<rect x="260" y="49" width="22" height="14" rx="4" fill="#fff6e0" stroke="#c99a2e"/>
+<text x="288" y="60" font-size="12" fill="#5a6684">判断</text>
+<rect x="378" y="49" width="22" height="14" rx="4" fill="#e6f6ea" stroke="#3f9a5a"/>
+<text x="406" y="60" font-size="12" fill="#5a6684">正常结束</text>
+<rect x="496" y="49" width="22" height="14" rx="4" fill="#fdecea" stroke="#c8554b"/>
+<text x="524" y="60" font-size="12" fill="#5a6684">受限或失败</text>
+<rect x="614" y="49" width="22" height="14" rx="4" fill="#fff3c4" stroke="#b38f00"/>
+<text x="642" y="60" font-size="12" fill="#5a6684">待确认</text>
+<rect x="20" y="82" width="1460" height="230" rx="10" fill="#f7f9fc" stroke="#d5dceb"/>
+<text x="32" y="104" font-size="13" font-weight="bold" fill="#5a6684">保存、发送与车云返回</text>
+<rect x="20" y="322" width="1460" height="610" rx="10" fill="#f7f9fc" stroke="#d5dceb"/>
+<text x="32" y="344" font-size="13" font-weight="bold" fill="#5a6684">回来时：先认账号，再读草稿；本地没有或损坏时先请车云做创建恢复</text>
+<rect x="20" y="942" width="1460" height="100" rx="10" fill="#f7f9fc" stroke="#d5dceb"/>
+<text x="32" y="964" font-size="13" font-weight="bold" fill="#5a6684">主动退出或切换账号</text>
+<path d="M 711.8,992.0 L 899.0,992.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 269.2,992.0 L 408.2,992.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 320.0,682.5 L 320.0,905.0 L 1080.0,905.0 L 1080.0,797.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 470.2,770.0 L 1000.8,770.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 420.0,787.5 L 420.0,852.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 420.0,682.5 L 420.0,752.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 270.0,660.0 L 160.0,660.0 L 160.0,743.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 872.0,700.0 L 1080.0,700.0 L 1080.0,743.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 800.0,682.5 L 800.0,497.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 520.0,682.5 L 520.0,700.0 L 728.0,700.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 650.0,607.0 L 650.0,620.0 L 540.0,620.0 L 540.0,637.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 420.0,502.5 L 420.0,637.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 490.0,502.5 L 490.0,580.0 L 585.2,580.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 350.0,502.5 L 350.0,580.0 L 269.2,580.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 800.0,462.5 L 800.0,177.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 530.0,480.0 L 699.0,480.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 420.0,457.5 L 420.0,402.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 212.0,480.0 L 310.0,480.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 140.0,417.0 L 140.0,462.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 1000.0,182.5 L 1000.0,200.0 L 1150.0,200.0 L 1150.0,238.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 960.0,182.5 L 960.0,238.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 1360.0,177.5 L 1360.0,238.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 1025.0,160.0 L 1288.0,160.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 850.2,160.0 L 895.0,160.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 649.2,160.0 L 749.8,160.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 570.0,187.0 L 570.0,247.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 426.5,160.0 L 490.8,160.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 199.2,160.0 L 253.5,160.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="40.75" y="133.0" width="158.5" height="54" rx="6" fill="#ffffff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="120" y="155.5" font-size="14" fill="#1d2b4f" text-anchor="middle">完成一项选择：</text>
+<text x="120" y="174.5" font-size="14" fill="#1d2b4f" text-anchor="middle">对象、权限或有效期</text>
+<rect x="253.5" y="142.5" width="173.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="340" y="165.0" font-size="14" fill="#1d2b4f" text-anchor="middle">按账号与车辆保存草稿</text>
+<rect x="490.75" y="133.0" width="158.5" height="54" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="570" y="155.5" font-size="14" fill="#1d2b4f" text-anchor="middle">点发出：写入原请求</text>
+<text x="570" y="174.5" font-size="14" fill="#1d2b4f" text-anchor="middle">与新幂等标识</text>
+<rect x="483.5" y="247.5" width="173.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="570" y="270.0" font-size="14" fill="#561712" text-anchor="middle">停在本页提示，不发送</text>
+<rect x="749.75" y="142.5" width="100.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="800" y="165.0" font-size="14" fill="#1d2b4f" text-anchor="middle">发送或确认</text>
+<polygon points="909.0,137.5 1011.0,137.5 1025.0,160 1011.0,182.5 909.0,182.5 895.0,160" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="960" y="165.0" font-size="14" fill="#4a3505" text-anchor="middle">车云返回</text>
+<rect x="1288.0" y="142.5" width="144.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="1360" y="165.0" font-size="14" fill="#1d2b4f" text-anchor="middle">清除这辆车的草稿</text>
+<rect x="1251.75" y="238.0" width="216.5" height="54" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="1360" y="260.5" font-size="14" fill="#4a3b00" text-anchor="middle">显示已建立并待清理，</text>
+<text x="1360" y="279.5" font-size="14" fill="#4a3b00" text-anchor="middle">只能重试清理或确认同一请求</text>
+<rect x="888.0" y="238.0" width="144.0" height="54" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="960" y="260.5" font-size="14" fill="#1d2b4f" text-anchor="middle">持久清掉幂等标识</text>
+<text x="960" y="279.5" font-size="14" fill="#1d2b4f" text-anchor="middle">后才开放编辑</text>
+<rect x="1078.0" y="238.0" width="144.0" height="54" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="1150" y="260.5" font-size="14" fill="#4a3b00" text-anchor="middle">原请求保留，</text>
+<text x="1150" y="279.5" font-size="14" fill="#4a3b00" text-anchor="middle">回来或再点时确认</text>
+<rect x="68.0" y="363.0" width="144.0" height="54" rx="6" fill="#ffffff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="140" y="385.5" font-size="14" fill="#1d2b4f" text-anchor="middle">退出页面、断网或</text>
+<text x="140" y="404.5" font-size="14" fill="#1d2b4f" text-anchor="middle">关闭应用后回来</text>
+<rect x="68.0" y="462.5" width="144.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="140" y="485.0" font-size="14" fill="#1d2b4f" text-anchor="middle">先取当前登录身份</text>
+<polygon points="324.0,457.5 516.0,457.5 530.0,480 516.0,502.5 324.0,502.5 310.0,480" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="420" y="485.0" font-size="14" fill="#4a3505" text-anchor="middle">按账号与车辆读草稿</text>
+<rect x="311.75" y="367.5" width="216.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="420" y="390.0" font-size="14" fill="#1d2b4f" text-anchor="middle">恢复选择，重新查配额与权限</text>
+<rect x="699.0" y="462.5" width="202.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="800" y="485.0" font-size="14" fill="#1d2b4f" text-anchor="middle">三项只读，用同一请求确认</text>
+<rect x="110.75" y="553.0" width="158.5" height="54" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="190" y="575.5" font-size="14" fill="#561712" text-anchor="middle">恢复失败，可重试，</text>
+<text x="190" y="594.5" font-size="14" fill="#561712" text-anchor="middle">不当成没有草稿</text>
+<rect x="585.25" y="553.0" width="129.5" height="54" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="650" y="575.5" font-size="14" fill="#1d2b4f" text-anchor="middle">隔离损坏草稿，</text>
+<text x="650" y="594.5" font-size="14" fill="#1d2b4f" text-anchor="middle">不当成没有</text>
+<polygon points="284.0,637.5 556.0,637.5 570.0,660 556.0,682.5 284.0,682.5 270.0,660" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="420" y="665.0" font-size="14" fill="#4a3505" text-anchor="middle">按账号与车辆向车云做创建恢复</text>
+<rect x="728.0" y="682.5" width="144.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="800" y="705.0" font-size="14" fill="#1d2b4f" text-anchor="middle">受保护保存原请求</text>
+<rect x="66.25" y="743.0" width="187.5" height="54" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="160" y="765.5" font-size="14" fill="#123d20" text-anchor="middle">显示已建立与当前状态，</text>
+<text x="160" y="784.5" font-size="14" fill="#123d20" text-anchor="middle">清本地旧草稿</text>
+<rect x="369.75" y="752.5" width="100.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="420" y="775.0" font-size="14" fill="#1d2b4f" text-anchor="middle">清掉旧草稿</text>
+<rect x="384.25" y="852.5" width="71.5" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="420" y="875.0" font-size="14" fill="#123d20" text-anchor="middle">空表单</text>
+<rect x="1000.75" y="743.0" width="158.5" height="54" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="1080" y="765.5" font-size="14" fill="#561712" text-anchor="middle">这辆车暂停新发起，</text>
+<text x="1080" y="784.5" font-size="14" fill="#561712" text-anchor="middle">管理只读可重查</text>
+<rect x="110.75" y="974.5" width="158.5" height="35" rx="6" fill="#ffffff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="190" y="997.0" font-size="14" fill="#1d2b4f" text-anchor="middle">主动退出或切换账号</text>
+<rect x="408.25" y="974.5" width="303.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="560" y="997.0" font-size="14" fill="#1d2b4f" text-anchor="middle">先记下旧账号不可恢复，隔离旧页面与请求</text>
+<rect x="899.0" y="974.5" width="202.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="1000" y="997.0" font-size="14" fill="#1d2b4f" text-anchor="middle">删除旧账号全部车辆的草稿</text>
+<rect x="579.0" y="211.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="584" y="226.5" font-size="12.5" fill="#34405c" text-anchor="start">写入失败</text>
+<rect x="668.6" y="149.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="699.5" y="164.5" font-size="12.5" fill="#34405c" text-anchor="middle">写入成功</text>
+<rect x="1132.1" y="149.0" width="48.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1156.5" y="164.5" font-size="12.5" fill="#34405c" text-anchor="middle">已建立</text>
+<rect x="1369.0" y="204.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1374" y="219.5" font-size="12.5" fill="#34405c" text-anchor="start">清除失败</text>
+<rect x="837.4" y="211.0" width="113.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="946" y="226.5" font-size="12.5" fill="#34405c" text-anchor="end">明确拒绝，含满额</text>
+<rect x="1066.2" y="189.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1110" y="204.5" font-size="12.5" fill="#34405c" text-anchor="middle">又没得到回应</text>
+<rect x="429.0" y="423.0" width="139.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="434" y="438.5" font-size="12.5" fill="#34405c" text-anchor="start">有选择，没有幂等标识</text>
+<rect x="536.7" y="469.0" width="126.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="600" y="484.5" font-size="12.5" fill="#34405c" text-anchor="middle">有原请求与幂等标识</text>
+<rect x="286.7" y="529.0" width="126.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="350" y="544.5" font-size="12.5" fill="#34405c" text-anchor="middle">不可访问或服务失败</text>
+<rect x="459.1" y="529.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="490" y="544.5" font-size="12.5" fill="#34405c" text-anchor="middle">内容损坏</text>
+<rect x="429.0" y="589.0" width="74.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="434" y="604.5" font-size="12.5" fill="#34405c" text-anchor="start">明确不存在</text>
+<rect x="563.2" y="689.0" width="137.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="632" y="704.5" font-size="12.5" fill="#34405c" text-anchor="middle">pending：返回原请求</text>
+<rect x="809.0" y="579.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="814" y="594.5" font-size="12.5" fill="#34405c" text-anchor="start">保存成功</text>
+<rect x="929.1" y="689.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="960" y="704.5" font-size="12.5" fill="#34405c" text-anchor="middle">保存失败</text>
+<rect x="77.0" y="701.0" width="166.0" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="160" y="716.5" font-size="12.5" fill="#34405c" text-anchor="middle">established：返回原分享</text>
+<rect x="429.0" y="721.0" width="136.2" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="434" y="736.5" font-size="12.5" fill="#34405c" text-anchor="start">clear：原创建已终结</text>
+<rect x="429.0" y="809.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="434" y="824.5" font-size="12.5" fill="#34405c" text-anchor="start">清除成功</text>
+<rect x="669.1" y="759.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="700" y="774.5" font-size="12.5" fill="#34405c" text-anchor="middle">清除失败</text>
+<rect x="694.2" y="894.0" width="131.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="760" y="909.5" font-size="12.5" fill="#34405c" text-anchor="middle">unknown 或查询失败</text>
+</svg>

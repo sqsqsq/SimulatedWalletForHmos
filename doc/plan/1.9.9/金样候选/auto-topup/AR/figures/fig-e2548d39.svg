@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 1030" width="1060" height="1030" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>签约时序：恢复确认、取策略、免密验证与创建签约</title>
+<metadata><![CDATA[sequenceDiagram
+  actor U as 用户
+  participant W as 钱包端
+  participant P as 支付部件
+  participant C as 交通卡云
+  U->>W: 从入口进入签约
+  W->>C: 恢复确认（本账号这张卡）
+  C-->>W: 没有未结束的操作与待处理授权
+  Note over W,C: 有未结束的操作、授权后未建成或取不到恢复信息时不往下走，见 7.4
+  W->>C: 取可签约性与门限面额档位
+  alt 不可签约或查询失败
+    C-->>W: signable=false（可带原因），或失败
+    Note over W: 留在详情页提示，不拉起验证
+  else 可签约
+    C-->>W: 档位与单日上限
+    U->>W: 选门限与面额，同意协议，点开启
+    W->>P: 拉起免密验证（单笔额度按所选面额）
+    alt 验证通过
+      P-->>W: 协议号
+      W->>C: 创建签约（协议号只透传）
+      alt 成功
+        C-->>W: 签约号
+      else 明确失败
+        C-->>W: 失败原因
+        Note over W: 未建成，再次开启方式待 D4
+      else 超时
+        W->>C: 查询签约状态
+        C-->>W: 已生效、无签约，或查询失败
+      end
+    else 取消或未通过
+      P-->>W: 没有协议号
+      Note over W: 回签约页，已选门限面额保留，不创建签约
+    end
+  end
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1060" height="1030" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">签约时序：恢复确认、取策略、免密验证与创建签约</text>
+<line x1="110" y1="102" x2="110" y2="1010" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="390" y1="102" x2="390" y2="1010" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="680" y1="102" x2="680" y2="1010" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="940" y1="102" x2="940" y2="1010" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<rect x="40" y="325" width="980" height="675" rx="6" fill="none" stroke="#8a97b5" stroke-width="1.2"/>
+<rect x="40" y="325" width="39.925" height="20" rx="4" fill="#e3e8f3" stroke="#8a97b5"/>
+<text x="48" y="340" font-size="12" font-weight="bold" fill="#34405c">alt</text>
+<text x="89.925" y="340" font-size="12.5" fill="#5a3c00" font-weight="bold">［不可签约或查询失败］</text>
+<line x1="40" y1="428" x2="1020" y2="428" stroke="#8a97b5" stroke-dasharray="6 4"/>
+<text x="50" y="443" font-size="12.5" fill="#5a3c00" font-weight="bold">［可签约］</text>
+<rect x="70" y="552" width="930" height="433" rx="6" fill="none" stroke="#8a97b5" stroke-width="1.2"/>
+<rect x="70" y="552" width="39.925" height="20" rx="4" fill="#e3e8f3" stroke="#8a97b5"/>
+<text x="78" y="567" font-size="12" font-weight="bold" fill="#34405c">alt</text>
+<text x="119.925" y="567" font-size="12.5" fill="#5a3c00" font-weight="bold">［验证通过］</text>
+<line x1="70" y1="895" x2="1000" y2="895" stroke="#8a97b5" stroke-dasharray="6 4"/>
+<text x="80" y="910" font-size="12.5" fill="#5a3c00" font-weight="bold">［取消或未通过］</text>
+<rect x="300" y="642" width="685" height="238" rx="6" fill="none" stroke="#8a97b5" stroke-width="1.2"/>
+<rect x="300" y="642" width="39.925" height="20" rx="4" fill="#e3e8f3" stroke="#8a97b5"/>
+<text x="308" y="657" font-size="12" font-weight="bold" fill="#34405c">alt</text>
+<text x="349.925" y="657" font-size="12.5" fill="#5a3c00" font-weight="bold">［成功］</text>
+<line x1="300" y1="705" x2="985" y2="705" stroke="#8a97b5" stroke-dasharray="6 4"/>
+<text x="310" y="720" font-size="12.5" fill="#5a3c00" font-weight="bold">［明确失败］</text>
+<line x1="300" y1="800" x2="985" y2="800" stroke="#8a97b5" stroke-dasharray="6 4"/>
+<text x="310" y="815" font-size="12.5" fill="#5a3c00" font-weight="bold">［超时］</text>
+<path d="M 680.0,930.0 L 390.0,930.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 940.0,865.0 L 390.0,865.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 390.0,835.0 L 940.0,835.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 940.0,745.0 L 390.0,745.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 940.0,685.0 L 390.0,685.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 390.0,625.0 L 940.0,625.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 680.0,590.0 L 390.0,590.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 390.0,535.0 L 680.0,535.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 110.0,500.0 L 390.0,500.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 940.0,465.0 L 390.0,465.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 940.0,365.0 L 390.0,365.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 390.0,305.0 L 940.0,305.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 940.0,215.0 L 390.0,215.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 390.0,180.0 L 940.0,180.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 110.0,140.0 L 390.0,140.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="55.0" y="60.0" width="110" height="40" rx="8" fill="#f4f6fa" stroke="#6b7a99" stroke-width="1.5"/>
+<text x="110" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">用户</text>
+<rect x="335.0" y="60.0" width="110" height="40" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="390" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">钱包端</text>
+<rect x="625.0" y="60.0" width="110" height="40" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="680" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">支付部件</text>
+<rect x="885.0" y="60.0" width="110" height="40" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="940" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">交通卡云</text>
+<text x="250.0" y="133" font-size="13" fill="#1d2b4f" text-anchor="middle">从入口进入签约</text>
+<text x="665.0" y="173" font-size="13" fill="#1d2b4f" text-anchor="middle">恢复确认（本账号这张卡）</text>
+<text x="665.0" y="208" font-size="13" fill="#1d2b4f" text-anchor="middle">没有未结束的操作与待处理授权</text>
+<rect x="320" y="241.0" width="690" height="28" rx="4" fill="#fffbe6" stroke="#d6b84a"/>
+<text x="665.0" y="259.5" font-size="13" fill="#4a3b00" text-anchor="middle">有未结束的操作、授权后未建成或取不到恢复信息时不往下走，见 7.4</text>
+<text x="665.0" y="298" font-size="13" fill="#1d2b4f" text-anchor="middle">取可签约性与门限面额档位</text>
+<text x="665.0" y="358" font-size="13" fill="#1d2b4f" text-anchor="middle">signable=false（可带原因），或失败</text>
+<rect x="280" y="386.0" width="220" height="28" rx="4" fill="#fffbe6" stroke="#d6b84a"/>
+<text x="390.0" y="404.5" font-size="13" fill="#4a3b00" text-anchor="middle">留在详情页提示，不拉起验证</text>
+<text x="665.0" y="458" font-size="13" fill="#1d2b4f" text-anchor="middle">档位与单日上限</text>
+<text x="250.0" y="493" font-size="13" fill="#1d2b4f" text-anchor="middle">选门限与面额，同意协议，点开启</text>
+<text x="535.0" y="528" font-size="13" fill="#1d2b4f" text-anchor="middle">拉起免密验证（单笔额度按所选面额）</text>
+<text x="535.0" y="583" font-size="13" fill="#1d2b4f" text-anchor="middle">协议号</text>
+<text x="665.0" y="618" font-size="13" fill="#1d2b4f" text-anchor="middle">创建签约（协议号只透传）</text>
+<text x="665.0" y="678" font-size="13" fill="#1d2b4f" text-anchor="middle">签约号</text>
+<text x="665.0" y="738" font-size="13" fill="#1d2b4f" text-anchor="middle">失败原因</text>
+<rect x="315" y="764.0" width="235" height="28" rx="4" fill="#fffbe6" stroke="#d6b84a"/>
+<text x="432.5" y="782.5" font-size="13" fill="#4a3b00" text-anchor="middle">未建成，再次开启方式待 D4</text>
+<text x="665.0" y="828" font-size="13" fill="#1d2b4f" text-anchor="middle">查询签约状态</text>
+<text x="665.0" y="858" font-size="13" fill="#1d2b4f" text-anchor="middle">已生效、无签约，或查询失败</text>
+<text x="535.0" y="923" font-size="13" fill="#1d2b4f" text-anchor="middle">没有协议号</text>
+<rect x="240" y="948.0" width="300" height="28" rx="4" fill="#fffbe6" stroke="#d6b84a"/>
+<text x="390.0" y="966.5" font-size="13" fill="#4a3b00" text-anchor="middle">回签约页，已选门限面额保留，不创建签约</text>
+</svg>

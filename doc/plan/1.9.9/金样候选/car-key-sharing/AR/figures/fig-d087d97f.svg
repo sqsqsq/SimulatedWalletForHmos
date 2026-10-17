@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 760" width="1160" height="760" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>发起分享的时序：查权限、创建与签发</title>
+<metadata><![CDATA[%% 图源 SR §2 #1
+sequenceDiagram
+    actor O as 车主
+    participant W as 钱包端
+    participant C as 车云
+    participant M as 车厂云
+    participant G as 接受方钱包
+    O->>W: 选定要分享给谁
+    W->>C: 查这个对象能给哪几档权限
+    C-->>W: 该对象可用的权限档位
+    Note over W: 权限区按返回的档位呈现；换对象则重新查
+    O->>W: 选好权限、有效期，确认发出
+    W->>C: 创建分享（带幂等标识）
+    C->>M: 请求签发凭据
+    alt 车厂云签发成功
+      M-->>C: 凭据就绪
+      C-->>W: 分享已建立（待接受）
+      C->>G: 经推送送达待接受钥匙
+      Note over C,G: 推送没送到不改变创建结果；本期推送不接入，对方从卡包补拉
+    else 车厂云签发失败
+      M-->>C: 失败
+      C->>C: 回滚分享关系
+      C-->>W: 建立失败，提示可重试
+    end
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1160" height="760" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">发起分享的时序：查权限、创建与签发</text>
+<line x1="100" y1="102" x2="100" y2="740" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="330" y1="102" x2="330" y2="740" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="590" y1="102" x2="590" y2="740" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="840" y1="102" x2="840" y2="740" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<line x1="1060" y1="102" x2="1060" y2="740" stroke="#b7c0d4" stroke-width="1.5" stroke-dasharray="4 4"/>
+<rect x="40" y="400" width="1090" height="328" rx="6" fill="none" stroke="#8a97b5" stroke-width="1.2"/>
+<rect x="40" y="400" width="39.925" height="20" rx="4" fill="#e3e8f3" stroke="#8a97b5"/>
+<text x="48" y="415" font-size="12" font-weight="bold" fill="#34405c">alt</text>
+<text x="89.925" y="415" font-size="12.5" fill="#5a3c00" font-weight="bold">［车厂云签发成功］</text>
+<line x1="40" y1="588" x2="1130" y2="588" stroke="#8a97b5" stroke-dasharray="6 4"/>
+<text x="50" y="603" font-size="12.5" fill="#5a3c00" font-weight="bold">［车厂云签发失败］</text>
+<path d="M 590.0,705.0 L 330.0,705.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 590.0,652.0 L 630.0,652.0 L 630.0,670.0 L 590.0,670.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 840.0,625.0 L 590.0,625.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 590.0,510.0 L 1060.0,510.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 590.0,475.0 L 330.0,475.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 840.0,440.0 L 590.0,440.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 590.0,380.0 L 840.0,380.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 330.0,340.0 L 590.0,340.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 100.0,300.0 L 330.0,300.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 590.0,215.0 L 330.0,215.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 330.0,180.0 L 590.0,180.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 100.0,140.0 L 330.0,140.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="45.0" y="60.0" width="110" height="40" rx="8" fill="#f4f6fa" stroke="#6b7a99" stroke-width="1.5"/>
+<text x="100" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">车主</text>
+<rect x="275.0" y="60.0" width="110" height="40" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="330" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">钱包端</text>
+<rect x="535.0" y="60.0" width="110" height="40" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="590" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">车云</text>
+<rect x="785.0" y="60.0" width="110" height="40" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="840" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">车厂云</text>
+<rect x="1004.0" y="60.0" width="112" height="40" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="1060" y="85.0" font-size="14" fill="#1d2b4f" text-anchor="middle">接受方钱包</text>
+<text x="215.0" y="133" font-size="13" fill="#1d2b4f" text-anchor="middle">选定要分享给谁</text>
+<text x="460.0" y="173" font-size="13" fill="#1d2b4f" text-anchor="middle">查这个对象能给哪几档权限</text>
+<text x="460.0" y="208" font-size="13" fill="#1d2b4f" text-anchor="middle">该对象可用的权限档位</text>
+<rect x="180" y="241.0" width="300" height="28" rx="4" fill="#fffbe6" stroke="#d6b84a"/>
+<text x="330.0" y="259.5" font-size="13" fill="#4a3b00" text-anchor="middle">权限区按返回的档位呈现；换对象则重新查</text>
+<text x="215.0" y="293" font-size="13" fill="#1d2b4f" text-anchor="middle">选好权限、有效期，确认发出</text>
+<text x="460.0" y="333" font-size="13" fill="#1d2b4f" text-anchor="middle">创建分享（带幂等标识）</text>
+<text x="715.0" y="373" font-size="13" fill="#1d2b4f" text-anchor="middle">请求签发凭据</text>
+<text x="715.0" y="433" font-size="13" fill="#1d2b4f" text-anchor="middle">凭据就绪</text>
+<text x="460.0" y="468" font-size="13" fill="#1d2b4f" text-anchor="middle">分享已建立（待接受）</text>
+<text x="825.0" y="503" font-size="13" fill="#1d2b4f" text-anchor="middle">经推送送达待接受钥匙</text>
+<rect x="530" y="539.0" width="590" height="28" rx="4" fill="#fffbe6" stroke="#d6b84a"/>
+<text x="825.0" y="557.5" font-size="13" fill="#4a3b00" text-anchor="middle">推送没送到不改变创建结果；本期推送不接入，对方从卡包补拉</text>
+<text x="715.0" y="618" font-size="13" fill="#1d2b4f" text-anchor="middle">失败</text>
+<text x="638" y="665" font-size="13" fill="#1d2b4f">回滚分享关系</text>
+<text x="460.0" y="698" font-size="13" fill="#1d2b4f" text-anchor="middle">建立失败，提示可重试</text>
+</svg>

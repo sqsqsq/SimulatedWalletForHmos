@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 580" width="1160" height="580" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>退出登录或清除数据之后：先取恢复确认再写入</title>
+<metadata><![CDATA[flowchart TD
+  A[退出登录、换号或清除应用数据] --> B[钱包端清掉这个账号的副本与暂存]
+  B --> C[同一账号再登录]
+  C --> D[点入签约、重新签约、改档或关闭]
+  D --> RC{对端的恢复确认}
+  RC -->|有未结束的操作| P[显示确认中，只能查看与再次查询]
+  RC -->|授权后未建成| F[显示未建成，再次开启待 D4，不拉起验证]
+  RC -->|没有未结束操作与待处理授权| OK[按开通条件或管理规则正常继续]
+  RC -->|取不到恢复信息| X[写操作暂不开放，提示重查]
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1160" height="580" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">退出登录或清除数据之后：先取恢复确认再写入</text>
+<rect x="24" y="49" width="22" height="14" rx="4" fill="#eef4ff" stroke="#5b7fc7"/>
+<text x="52" y="60" font-size="12" fill="#5a6684">步骤</text>
+<rect x="142" y="49" width="22" height="14" rx="4" fill="#fff6e0" stroke="#c99a2e"/>
+<text x="170" y="60" font-size="12" fill="#5a6684">判断</text>
+<rect x="260" y="49" width="22" height="14" rx="4" fill="#e6f6ea" stroke="#3f9a5a"/>
+<text x="288" y="60" font-size="12" fill="#5a6684">正常结束</text>
+<rect x="378" y="49" width="22" height="14" rx="4" fill="#fdecea" stroke="#c8554b"/>
+<text x="406" y="60" font-size="12" fill="#5a6684">受限或失败</text>
+<rect x="496" y="49" width="22" height="14" rx="4" fill="#fff3c4" stroke="#b38f00"/>
+<text x="524" y="60" font-size="12" fill="#5a6684">待确认</text>
+<rect x="614" y="49" width="22" height="14" rx="4" fill="#f3ecfb" stroke="#8a63c2" stroke-dasharray="5 3"/>
+<text x="642" y="60" font-size="12" fill="#5a6684">待定（未裁定）</text>
+<path d="M 640.0,292.5 L 640.0,340.0 L 990.0,340.0 L 990.0,473.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 600.0,292.5 L 600.0,370.0 L 730.0,370.0 L 730.0,473.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 560.0,292.5 L 560.0,370.0 L 440.0,370.0 L 440.0,473.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 520.0,292.5 L 520.0,340.0 L 160.0,340.0 L 160.0,473.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 940.0,157.0 L 940.0,270.0 L 680.0,270.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 744.8,130.0 L 853.5,130.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 516.5,130.0 L 615.2,130.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 229.8,130.0 L 343.5,130.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="100.25" y="103.0" width="129.5" height="54" rx="6" fill="#ffffff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="165" y="125.5" font-size="14" fill="#1d2b4f" text-anchor="middle">退出登录、换号</text>
+<text x="165" y="144.5" font-size="14" fill="#1d2b4f" text-anchor="middle">或清除应用数据</text>
+<rect x="343.5" y="103.0" width="173.0" height="54" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="430" y="125.5" font-size="14" fill="#1d2b4f" text-anchor="middle">钱包端清掉这个账号的</text>
+<text x="430" y="144.5" font-size="14" fill="#1d2b4f" text-anchor="middle">副本与暂存</text>
+<rect x="615.25" y="112.5" width="129.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="680" y="135.0" font-size="14" fill="#1d2b4f" text-anchor="middle">同一账号再登录</text>
+<rect x="853.5" y="103.0" width="173.0" height="54" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="940" y="125.5" font-size="14" fill="#1d2b4f" text-anchor="middle">点入签约、重新签约、</text>
+<text x="940" y="144.5" font-size="14" fill="#1d2b4f" text-anchor="middle">改档或关闭</text>
+<polygon points="494.0,247.5 666.0,247.5 680.0,270 666.0,292.5 494.0,292.5 480.0,270" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="580" y="275.0" font-size="14" fill="#4a3505" text-anchor="middle">对端的恢复确认</text>
+<rect x="80.75" y="473.0" width="158.5" height="54" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="160" y="495.5" font-size="14" fill="#4a3b00" text-anchor="middle">显示确认中，</text>
+<text x="160" y="514.5" font-size="14" fill="#4a3b00" text-anchor="middle">只能查看与再次查询</text>
+<rect x="327.0375" y="473.0" width="225.92499999999998" height="54" rx="18" fill="#f3ecfb" stroke="#8a63c2" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="440" y="495.5" font-size="14" fill="#3a1f60" text-anchor="middle">显示未建成，再次开启待 D4，</text>
+<text x="440" y="514.5" font-size="14" fill="#3a1f60" text-anchor="middle">不拉起验证</text>
+<rect x="643.5" y="473.0" width="173.0" height="54" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="730" y="495.5" font-size="14" fill="#123d20" text-anchor="middle">按开通条件或管理规则</text>
+<text x="730" y="514.5" font-size="14" fill="#123d20" text-anchor="middle">正常继续</text>
+<rect x="918.0" y="473.0" width="144.0" height="54" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="990" y="495.5" font-size="14" fill="#561712" text-anchor="middle">写操作暂不开放，</text>
+<text x="990" y="514.5" font-size="14" fill="#561712" text-anchor="middle">提示重查</text>
+<rect x="109.7" y="409.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="160" y="424.5" font-size="12.5" fill="#34405c" text-anchor="middle">有未结束的操作</text>
+<rect x="396.2" y="409.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="440" y="424.5" font-size="12.5" fill="#34405c" text-anchor="middle">授权后未建成</text>
+<rect x="679.7" y="401.0" width="100.6" height="38" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="730" y="416.5" font-size="12.5" fill="#34405c" text-anchor="middle">没有未结束操作</text>
+<text x="730" y="432.5" font-size="12.5" fill="#34405c" text-anchor="middle">与待处理授权</text>
+<rect x="939.7" y="409.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="990" y="424.5" font-size="12.5" fill="#34405c" text-anchor="middle">取不到恢复信息</text>
+</svg>

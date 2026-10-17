@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 980" width="1040" height="980" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>发起主路径：从卡片入口到对方收到待接受钥匙</title>
+<metadata><![CDATA[%% 图源 spec §5.1 #1
+flowchart TD
+    A[卡包车钥匙卡片点分享] --> G0{已登录、有车钥匙、开关开启}
+    G0 -->|否| X[看不到入口或不能发起]
+    G0 -->|是| B[分享设置：给谁]
+    B --> C[查该对象可用的权限档位]
+    C -->|对象不可分享| E[给原因，不呈现档位，换一个人]
+    E --> B
+    C -->|对象可分享| D[选权限与有效期]
+    D --> Q{三项齐且配额未满}
+    Q -->|配额已满| QF[发出置灰并给原因]
+    Q -->|是| SV[保存原请求与幂等标识]
+    SV -->|保存失败| SF[停在本页提示，不发送]
+    SV -->|保存成功| F[带幂等标识创建分享]
+    F --> H{车云返回}
+    H -->|已建立| I[待接受：以车云返回为准]
+    H -->|签发失败或其他明确拒绝| J[不留关系，清掉幂等标识，可再发]
+    H -->|没得到回应| UK[结果未知：留着原请求，回来先确认]
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1040" height="980" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">发起主路径：从卡片入口到对方收到待接受钥匙</text>
+<rect x="24" y="49" width="22" height="14" rx="4" fill="#eef4ff" stroke="#5b7fc7"/>
+<text x="52" y="60" font-size="12" fill="#5a6684">步骤</text>
+<rect x="142" y="49" width="22" height="14" rx="4" fill="#fff6e0" stroke="#c99a2e"/>
+<text x="170" y="60" font-size="12" fill="#5a6684">判断</text>
+<rect x="260" y="49" width="22" height="14" rx="4" fill="#e6f6ea" stroke="#3f9a5a"/>
+<text x="288" y="60" font-size="12" fill="#5a6684">正常结束</text>
+<rect x="378" y="49" width="22" height="14" rx="4" fill="#fdecea" stroke="#c8554b"/>
+<text x="406" y="60" font-size="12" fill="#5a6684">受限或失败</text>
+<rect x="496" y="49" width="22" height="14" rx="4" fill="#fff3c4" stroke="#b38f00"/>
+<text x="524" y="60" font-size="12" fill="#5a6684">待确认</text>
+<path d="M 575.0,800.0 L 840.0,800.0 L 840.0,883.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,822.5 L 500.0,883.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 425.0,800.0 L 170.0,800.0 L 170.0,892.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,727.5 L 500.0,777.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,637.5 L 500.0,692.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 413.5,620.0 L 246.5,620.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,552.5 L 500.0,602.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 385.0,530.0 L 232.0,530.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,462.5 L 500.0,507.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,372.5 L 500.0,427.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 840.0,328.0 L 840.0,275.0 L 564.8,275.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 593.8,355.0 L 753.5,355.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,292.5 L 500.0,337.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,212.5 L 500.0,257.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 355.0,190.0 L 236.5,190.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 500.0,127.5 L 500.0,167.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="413.5" y="92.5" width="173.0" height="35" rx="6" fill="#ffffff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="115.0" font-size="14" fill="#1d2b4f" text-anchor="middle">卡包车钥匙卡片点分享</text>
+<polygon points="369.0,167.5 631.0,167.5 645.0,190 631.0,212.5 369.0,212.5 355.0,190" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="195.0" font-size="14" fill="#4a3505" text-anchor="middle">已登录、有车钥匙、开关开启</text>
+<rect x="435.25" y="257.5" width="129.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="280.0" font-size="14" fill="#1d2b4f" text-anchor="middle">分享设置：给谁</text>
+<rect x="406.25" y="337.5" width="187.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="360.0" font-size="14" fill="#1d2b4f" text-anchor="middle">查该对象可用的权限档位</text>
+<rect x="435.25" y="427.5" width="129.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="450.0" font-size="14" fill="#1d2b4f" text-anchor="middle">选权限与有效期</text>
+<polygon points="399.0,507.5 601.0,507.5 615.0,530 601.0,552.5 399.0,552.5 385.0,530" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="535.0" font-size="14" fill="#4a3505" text-anchor="middle">三项齐且配额未满</text>
+<rect x="413.5" y="602.5" width="173.0" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="625.0" font-size="14" fill="#1d2b4f" text-anchor="middle">保存原请求与幂等标识</text>
+<rect x="420.75" y="692.5" width="158.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="500" y="715.0" font-size="14" fill="#1d2b4f" text-anchor="middle">带幂等标识创建分享</text>
+<polygon points="439.0,777.5 561.0,777.5 575.0,800 561.0,822.5 439.0,822.5 425.0,800" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="500" y="805.0" font-size="14" fill="#4a3505" text-anchor="middle">车云返回</text>
+<rect x="63.5" y="172.5" width="173.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="150" y="195.0" font-size="14" fill="#561712" text-anchor="middle">看不到入口或不能发起</text>
+<rect x="753.5" y="328.0" width="173.0" height="54" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="840" y="350.5" font-size="14" fill="#1d2b4f" text-anchor="middle">给原因，不呈现档位，</text>
+<text x="840" y="369.5" font-size="14" fill="#1d2b4f" text-anchor="middle">换一个人</text>
+<rect x="88.0" y="512.5" width="144.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="160" y="535.0" font-size="14" fill="#561712" text-anchor="middle">发出置灰并给原因</text>
+<rect x="73.5" y="602.5" width="173.0" height="35" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="160" y="625.0" font-size="14" fill="#561712" text-anchor="middle">停在本页提示，不发送</text>
+<rect x="76.25" y="892.5" width="187.5" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="170" y="915.0" font-size="14" fill="#123d20" text-anchor="middle">待接受：以车云返回为准</text>
+<rect x="399.0" y="883.0" width="202.0" height="54" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="500" y="905.5" font-size="14" fill="#561712" text-anchor="middle">不留关系，清掉幂等标识，</text>
+<text x="500" y="924.5" font-size="14" fill="#561712" text-anchor="middle">可再发</text>
+<rect x="746.25" y="883.0" width="187.5" height="54" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="840" y="905.5" font-size="14" fill="#4a3b00" text-anchor="middle">结果未知：留着原请求，</text>
+<text x="840" y="924.5" font-size="14" fill="#4a3b00" text-anchor="middle">回来先确认</text>
+<rect x="284.3" y="179.0" width="22.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="295.75" y="194.5" font-size="12.5" fill="#34405c" text-anchor="middle">否</text>
+<rect x="509.0" y="224.0" width="22.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="239.5" font-size="12.5" fill="#34405c" text-anchor="start">是</text>
+<rect x="629.8" y="344.0" width="87.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="673.625" y="359.5" font-size="12.5" fill="#34405c" text-anchor="middle">对象不可分享</text>
+<rect x="509.0" y="389.0" width="74.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="404.5" font-size="12.5" fill="#34405c" text-anchor="start">对象可分享</text>
+<rect x="277.6" y="519.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="308.5" y="534.5" font-size="12.5" fill="#34405c" text-anchor="middle">配额已满</text>
+<rect x="509.0" y="567.0" width="22.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="582.5" font-size="12.5" fill="#34405c" text-anchor="start">是</text>
+<rect x="299.1" y="609.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="330.0" y="624.5" font-size="12.5" fill="#34405c" text-anchor="middle">保存失败</text>
+<rect x="509.0" y="654.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="669.5" font-size="12.5" fill="#34405c" text-anchor="start">保存成功</text>
+<rect x="275.6" y="789.0" width="48.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="300" y="804.5" font-size="12.5" fill="#34405c" text-anchor="middle">已建立</text>
+<rect x="509.0" y="841.0" width="152.4" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="514" y="856.5" font-size="12.5" fill="#34405c" text-anchor="start">签发失败或其他明确拒绝</text>
+<rect x="662.6" y="789.0" width="74.7" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="700" y="804.5" font-size="12.5" fill="#34405c" text-anchor="middle">没得到回应</text>
+</svg>

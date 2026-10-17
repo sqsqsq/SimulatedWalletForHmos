@@ -2,7 +2,7 @@
 
 > **模块标识**: `ISSUE-206`
 > **对应 spec**: `doc/features/ISSUE-206/spec/spec.md`
-> **版本**: v1.2
+> **版本**: v1.3
 > **创建日期**: 2026-10-13
 > **最后更新**: 2026-10-16
 > **状态**: 已确认
@@ -76,10 +76,10 @@ graph TD
 |------|------|-----------|
 | `data/model/KeySharing.ets` | 分享领域模型：本人钥匙、被分享人收到的分享、权限视图、配额视图、分享条目、草稿、六态枚举、草稿读取结果 | 新增 |
 | `data/model/WalletIdentity.ets` | 身份模型：`AccountSession`（`accountKey`、`sessionId`）、`ShareContact`（联系人名、可空的可识别账号） | 新增 |
-| `data/source/KeySharingSource.ets` | 分享数据源接口：本人钥匙列表、按当前账号取收到的分享（六个车云接口里没有对应接口），以及六个车云接口的同名方法 | 新增 |
-| `data/source/SimulatedKeySharingSource.ets` | 数据源的模拟实现：模拟本人钥匙（带 `modelCategory`）、分享关系与车云返回，覆盖签发失败、凭据下发失败、其他接受与撤销错误、满额、对象不可分享、撤销中等分支；按幂等标识的分享记录存在模拟对端自己的文件里，钱包进程重建后仍在 | 新增 |
+| `data/source/KeySharingSource.ets` | 分享数据源接口：本人钥匙列表、按当前账号取收到的分享与创建恢复（这两项六个车云接口里没有），以及六个车云接口的同名方法 | 新增 |
+| `data/source/SimulatedKeySharingSource.ets` | 数据源的模拟实现：模拟本人钥匙（带 `modelCategory`）、分享关系与车云返回，覆盖签发失败、凭据下发失败、其他接受与撤销错误、满额、对象不可分享、撤销中等分支；按幂等标识的分享记录与按账号加车辆的未终结创建存在模拟对端自己的文件里，钱包进程重建后仍在；给出创建恢复结果，受理新的创建时再核未决请求 | 新增 |
 | `data/source/SimulatedIdentitySource.ets` | 模拟身份源：模拟账号的稳定 `accountKey`（重开相同、展示相同的不同账号不同）、身份选择与角色切换、冷启动后取得同一身份；模拟联系人列表（含缺账号的联系人）；发出登录、主动退出、切换账号事件 | 新增 |
-| `data/repository/KeySharingRepository.ets` | 分享仓储：经数据源调用六个接口，组装页面视图；打码在组装展示内容时做；同账号同车辆的创建串行；三个流程的尝试持有与结算 | 新增 |
+| `data/repository/KeySharingRepository.ets` | 分享仓储：经数据源调用六个接口与创建恢复，组装页面视图；打码在组装展示内容时做；同账号同车辆的创建与恢复串行；三个流程的尝试持有与结算 | 新增 |
 | `data/repository/CarKeyRepository.ets` | 卡包车钥匙卡片的数据：本人钥匙与收到的分享（待接受、生效与撤销中列入卡包，已结束的不列入）；按分享标识取一条的当前状态 | 新增 |
 | `data/repository/ShareDraftStore.ets` | 发起草稿的受保护存储：每账号每车辆一条 Asset，完整草稿放在一个 SECRET；普通键值只存盐、初始化与待清理标记；读取结果分不存在、有草稿、不可访问、损坏；退出清理与遗留清理 | 新增 |
 | `data/repository/KeySharingErrorMapper.ets` | 失败说明映射：已知车云错误码映射为安全说明，未知码给通用分类，外码按协议格式校验；不读取 message 原文 | 新增 |
@@ -115,7 +115,8 @@ graph TD
 | `QuotaView` | `canShare: boolean`, `remaining: number`, `reason?` | 配额，对应 `queryKeySharingQuota` |
 | `ShareItem` | `shareId`, `status: ShareState`, `permissionLevel`, `validUntil`, `granteeMasked` | 管理页一条分享，打码标识取车云返回 |
 | `ShareDraft` | `accountKey`, `vehicleId`, `granteeId`, `granteeDisplay`, `permissionLevel`, `validUntil`, `request?`, `idempotencyKey?` | 一个 SECRET 的完整内容；`request` 与 `idempotencyKey` 在发出前一起写入，留着就表示上次发出结果未知，此时其余字段就是那次请求的原样，确认之前不改；车云明确拒绝时一起清掉 |
-| `DraftReadResult` | `absent` / `found(ShareDraft)` / `unavailable(原因)` / `corrupted` | 草稿读取结果；只有 `absent` 才从空表单开始 |
+| `DraftReadResult` | `absent` / `found(ShareDraft)` / `unavailable(原因)` / `corrupted` | 草稿读取结果；`absent` 与 `corrupted` 先经创建恢复，结果为 clear 才从空表单开始 |
+| `CreationRecovery` | `pending(request, idempotencyKey)` / `established(shareId, status)` / `clear` / `unknown(原因)` | 创建恢复结果，由模拟车云按账号与车辆给出；多条可能相关、数据不完整或对应不上当前账号车辆都是 `unknown` |
 | `ShareState` | `pending` / `active` / `voided` / `expired` / `revoking` / `revoked` | 六态，取值与车云返回一致 |
 
 ## 4. 页面组件树
@@ -141,7 +142,7 @@ ShareSetupPage
 ├── 给谁：模拟联系人列表或手输账号，展示昵称与打码账号；取消、不可用或缺账号时说明且不查权限
 ├── 权限：随对象查得的选项原样单选；对象不可分享时不呈现并给原因；为空或无法解释时提示重新获取
 ├── 有效期：7 天 / 30 天 / 自定义至多 180 天
-├── 原因提示条：对象不可分享、配额已满、原档位不可用、草稿恢复失败、草稿损坏、保存失败、待清理、进行中
+├── 原因提示条：对象不可分享、配额已满、原档位不可用、草稿恢复失败、草稿损坏、确认上次创建、上次已建立、恢复受限、保存失败、待清理、进行中
 └── 发出：新建时三项齐且配额未满才可点、满额置灰；草稿留着原请求时三项只读，按钮用来确认上次发出，不受满额置灰；请求中、保存中或同车进行中禁用
 ```
 
@@ -183,9 +184,9 @@ KeyCardDetailPage（参数二选一：vehicleId 为本人钥匙，shareId 为收
 | 分享功能开关 | `ShareConstants` 的 `static readonly` 常量 | 随版本 | 默认关闭 |
 | 登录态 | `AccountManager` 在 `AppStorage` 里的登录键（只读） | 既有 | 未登录不显示入口、不发起、不接受、不恢复草稿 |
 | 当前身份与会话 | `SimulatedIdentitySource` 提供的 `AccountSession` | 每次登录 | 冷启动的初始未登录不清草稿；同一模拟账号登录后取回同一 `accountKey` |
-| 发起草稿 | `ShareDraftStore`：每账号每车辆一条 Asset | 选择完成时写；发出前写原请求；创建成功删；明确拒绝清原请求；退出与换账号删本账号全部 | 读取先取当前身份；读取结果按 `DraftReadResult` 分流，只有 `absent` 才从空表单开始 |
+| 发起草稿 | `ShareDraftStore`：每账号每车辆一条 Asset | 选择完成时写；发出前写原请求；创建成功删；明确拒绝清原请求；退出与换账号删本账号全部 | 读取先取当前身份；读取结果按 `DraftReadResult` 分流，`absent` 与 `corrupted` 先经 `recoverCreation`，结果为 clear 才从空表单开始 |
 | 草稿索引与标记 | 普通键值存储：盐、`initialized`、待清理的账号摘要 | 随应用，不参与备份恢复 | 不放请求副本或任何账号、车辆原值 |
-| 同车进行中 | `KeySharingRepository` 内按 `accountKey` + `vehicleId` 的串行队列 | 一次「读原请求—保存—发起或确认」 | 不同车辆不同队列 |
+| 同车进行中 | `KeySharingRepository` 内按 `accountKey` + `vehicleId` 的串行队列 | 一次「读原请求—创建恢复—保存—发起或确认」 | 不同车辆不同队列 |
 | 设置页表单 | `ShareSetupContext`（页面级 `@State`） | 页面内 | 换对象时作废旧档位并重查 |
 | 分享列表与配额 | `ShareManagePage` 页面级状态，不落地缓存 | 每次进页 | 断网给网络失败态 |
 | 本人钥匙与收到的分享 | `CardPackPage` 页面级状态，每次进入或回到卡包从 `CarKeyRepository` 取 | 每次进入；账号变化后重新获取 | 不串账号 |
@@ -197,7 +198,7 @@ KeyCardDetailPage（参数二选一：vehicleId 为本人钥匙，shareId 为收
 |---|---|---|
 | 一项选择完成（对象确认、档位选定、有效期选定） | 读改写这辆车的 SECRET | 停在本页提示保存失败；不影响已选值的显示，发出不可用直到保存成功 |
 | 点发出（新建） | 进同车串行队列：读草稿 → 生成幂等标识 → 把 `request` 与 `idempotencyKey` 写进 SECRET → 写入成功才调 `createKeySharing` | 写入失败不发送；序列化超过 1024 字节（本工程设定，无上游依据：按 Asset SECRET 上限设的 Case 前提）按保存失败处理，不截断、不分片、不改存明文 |
-| 进设置页 | 取当前 `AccountSession` → 按 `accountKey` + `vehicleId` 读 | `absent` 空表单；`found` 无原请求恢复选择并重查配额与权限；`found` 有原请求三项只读、用同一请求确认；`unavailable` 恢复失败、可重试；`corrupted` 进入受限：这辆车在当前账号下暂停新发起、管理页照常，不提供删除后重建；受限只随主动退出、切换账号或清除应用数据的草稿清除结束 |
+| 进设置页 | 取当前 `AccountSession` → 按 `accountKey` + `vehicleId` 读 | `found` 无原请求恢复选择并重查配额与权限；`found` 有原请求三项只读、用同一请求确认；`unavailable` 恢复失败、可重试；`absent` 与 `corrupted` 先调 `KeySharingRepository.recoverCreation`（`corrupted` 的原件隔离、不复制进日志）：`pending` 经 `saveRequest` 受保护写回原请求，成功后三项只读、用同一请求确认，失败保持受限；`established` 显示已建立与当前状态，并 `remove` 本车旧草稿；`clear` 先 `remove` 旧草稿，成功才开放空表单，失败保持受限；`unknown` 或查询失败这辆车暂停新发起、管理页照常、可重查；不提供删除后重建 |
 | 创建已建立 | 删除这辆车的 Asset | 删除失败：显示已建立并写待清理标记；之后只能确认同一请求或重试清理，不把旧草稿当新请求 |
 | 车云明确拒绝（含满额、签发失败） | 把 `request` 与 `idempotencyKey` 从 SECRET 里删掉并写回 | 写回成功才开放编辑；失败保持只读并提示，可重试 |
 | 没得到回应 | 原请求保留 | —— |
@@ -219,7 +220,8 @@ Asset 属性：ALIAS 为本机随机盐加 `accountKey` 与 `vehicleId` 的摘�
 | `CarKeyRepository.getOwnerKey` | `vehicleId` | `OwnerCarKey` 或空 | 详情页取本人钥匙；当前账号下没有这辆车返回空 |
 | `KeySharingRepository.queryQuota` | `vehicleId` | `QuotaView` | 对应 `queryKeySharingQuota` |
 | `KeySharingRepository.queryGranteePermission` | `vehicleId`, `granteeId` | `GrantPermissionView` | `granteeId` 传可识别的对方账号标识，不传打码值；联系人缺账号时不调用 |
-| `KeySharingRepository.createSharing` | `AccountSession`, `vehicleId`, 表单或原请求 | `shareId`, `status`，或明确拒绝，或结果未知，或进行中 | 在同车串行队列里执行 §5.1 的点发出与确认；草稿留着原请求时直接用它确认，不做端侧满额前置；已有进行中的同车请求时返回进行中；每次调用新建尝试标识，结果经 `settleCreate` 结算；回调到达时会话不匹配就只结算、不改页面与草稿 |
+| `KeySharingRepository.recoverCreation` | `AccountSession`, `vehicleId` | `CreationRecovery` | 在同车串行队列里经数据源取这个账号这辆车的创建恢复结果；不读管理列表、不按打码昵称匹配、不依赖已丢失的本地幂等标识；多条可能相关返回 `unknown`；会话已不匹配的晚到响应丢弃 |
+| `KeySharingRepository.createSharing` | `AccountSession`, `vehicleId`, 表单或原请求 | `shareId`, `status`，或明确拒绝，或结果未知，或进行中 | 在同车串行队列里执行 §5.1 的点发出与确认；模拟车云受理新的创建时再核这个账号这辆车的未决创建，有就明确拒绝，设置页随后改走 `recoverCreation`；草稿留着原请求时直接用它确认，不做端侧满额前置；已有进行中的同车请求时返回进行中；每次调用新建尝试标识，结果经 `settleCreate` 结算；回调到达时会话不匹配就只结算、不改页面与草稿 |
 | `KeySharingRepository.acceptSharing` | `shareId` | `credentialStatus`, `status`，或失败，或结果未知 | 对应 `acceptKeySharing`；`failed` 加 `pending` 保持待接受；其他失败与没得到回应由接受页随后经 `getReceivedKey` 重取，按六态分流（撤销中保留卡片到收回完成、不再添加），不存在按已不可用，查询失败为结果待确认；每次调用新建尝试标识，结果经 `settleAccept` 结算 |
 | `KeySharingRepository.revokeSharing` | `shareId` | `status`, `graceHours`，或失败，或结果未知 | 对应 `revokeKeySharing`；只对状态为生效的条目调用；失败与没得到回应由管理页随后经 `listSharings` 重拉，按车云状态显示，仍是生效才再提供撤销；每次调用新建尝试标识，结果经 `settleRevoke` 结算 |
 | `KeySharingRepository.listSharings` | `vehicleId` | `ShareItem[]` | 对应 `queryKeySharingList`；打码标识取车云返回的 `granteeMasked` |
@@ -263,7 +265,7 @@ flowchart LR
 | F1 | 卡包车钥匙卡片 | P0 | WalletMain | presentation、data | `CarKeyCardSection.ets`、`CardPackPage.ets`、`CarKeyRepository.ets` | 卡包嵌入分区；本人钥匙来自模拟数据 |
 | F2 | 分享入口与门槛 | P0 | WalletMain | presentation、shared | `CarKeyCardSection.ets`、`ShareConstants.ets` | 已登录且有车钥匙才显示；开关关闭或上一个账号待清理时发起入口不可用 |
 | F3 | 分享设置 | P0 | WalletMain | presentation、data | `ShareSetupPage.ets`、`ShareSetupPageInteraction.ets`、`KeySharingRepository.ets`、`SimulatedIdentitySource.ets` | 模拟联系人或手输；对象选定后查档位，换对象作废并重查；档位原样显示与传回；满额置灰 |
-| F4 | 创建分享与草稿续办 | P0 | WalletMain | data | `KeySharingRepository.ets`、`ShareDraftStore.ets` | 幂等创建；草稿每账号每车辆一条 Asset，发出前持久化原请求；同车串行；读写失败、损坏、待清理、退出与初始化按 §5.1；跨应用关闭续办交付 |
+| F4 | 创建分享与草稿续办 | P0 | WalletMain | data | `KeySharingRepository.ets`、`ShareDraftStore.ets` | 幂等创建；草稿每账号每车辆一条 Asset，发出前持久化原请求；同车串行；读写失败、损坏、待清理、退出与初始化按 §5.1，本地没有或损坏草稿时先 `recoverCreation`；跨应用关闭续办交付 |
 | F5 | 分享管理与撤销 | P0 | WalletMain | presentation、data | `ShareManagePage.ets`、`KeySharingRepository.ets` | 进页拉取；仅生效条目撤销，失败后重拉；已作废与已到期可重新发起；待接受撤回待 D8 |
 | F6 | 接受页 | P0 | WalletMain | presentation | `ShareAcceptPage.ets` | 凭据下发失败保持待接受；其他失败重取后分流 |
 | F7 | 钥匙卡片详情 | P1 | WalletMain | presentation、data | `KeyCardDetailPage.ets`、`CarKeyRepository.ets` | 本人钥匙按 vehicleId 经 `getOwnerKey` 取，收到的钥匙按 shareId 经 `getReceivedKey` 取；权限外功能不出现；不可用时回卡包 |
@@ -294,6 +296,7 @@ flowchart LR
 | 发起草稿存储 | 系统 Asset 存储（`@kit.AssetStoreKit`，异步 add / query / update / remove 自 API 11 起） | 工程里没有受保护的持久化封装，也没有 Asset 用法 | 新增本业务的 `ShareDraftStore`，不造通用加密或草稿框架；API 12 与设备能力是本 Case 前提，未在目标设备验证 |
 | 联系人 | — | 工程里没有联系人能力 | 本单用模拟联系人承载原需求的「通讯录选择」路径，不读设备通讯录、不申请权限；真实系统联系人接入列为依赖 |
 | 英文文案 | — | 工程只有 base 资源目录，按 RES-02 新建 `en_US` | 与「中英文齐备」的现状不符，按新建承接 |
+| 创建恢复 | — | 车云六个接口没有按账号与车辆回查创建的能力 | 本单在 `SimulatedKeySharingSource` 按 spec §5.3 的模拟业务合同提供；真实接入需要车云的等价能力，缺它时清除后的新建不能正式开放 |
 
 ### 9.2 规约
 
@@ -310,7 +313,7 @@ flowchart LR
 | RES-01 | 图标按系统符号、已归档、新引入的顺序取 | 四个新页面与 `CarKeyCardSection` | 4. 页面组件树 |
 | RES-02 | 文案复用已有一致的中文资源，新增的中英文齐备 | `string.json`（base、en_US） | 2. 目录/文件结构规划 |
 | COMPAT-01 | 四问结论：不删旧字段（新增调用）；类型不变；必有与可空按系统设计，`acceptKeySharing` 只有 failed 加 pending 表示凭据下发失败，其他错误按重取处理；不改车云字段，模拟能力不算车云接口 | `KeySharingSource` 接口定义、`KeySharingRepository.acceptSharing` | 6. 服务层接口定义 |
-| ENV-01 | 清除数据后先清遗留草稿再开放；草稿读不出或损坏不当成没有；列表不落盘 | `ShareDraftStore.initialize` / `read`、`ShareSetupPage` | 5. 状态管理方案 |
+| ENV-01 | 清除数据后先清遗留草稿再开放；草稿读不出或损坏不当成没有；本地没有或损坏草稿时先做创建恢复；列表不落盘 | `ShareDraftStore.initialize` / `read`、`KeySharingRepository.recoverCreation`、`ShareSetupPage` | 5. 状态管理方案 |
 | ENV-02 | 幂等标识防重复创建，发出请求中禁用；同账号同车辆串行；旧会话回调不写新页面、不重建草稿 | `KeySharingRepository.createSharing`、`ShareSetupPageOperates` 的发出动作 | 5. 状态管理方案、6. 服务层接口定义 |
 | DLV-01 | 新增文案进待翻译清单 `doc/features/ISSUE-206/plan/translation-list.md`：每条资源键、中文、英文与回稿状态；编码新增文案时同步写，提交测试前完成首版，回稿后合入 `en_US` | `translation-list.md`、`string.json` 新增条目 | 2. 目录/文件结构规划 |
 
@@ -371,6 +374,7 @@ flowchart LR
 
 | 日期 | 版本 | 变更内容 | 变更人 |
 |------|------|----------|--------|
+| 2026-10-16 | v1.3 | 创建恢复落到模拟车云与仓储（§5.1、§6）：新增 `CreationRecovery` 与 `KeySharingRepository.recoverCreation`，本地没有或损坏草稿时先恢复，pending 写回原请求、established 显示原分享、clear 清旧草稿后开放、unknown 保持受限；受理新创建时模拟车云再核未决请求；取代「受限随清除结束」 | 维护设计 |
 | 2026-10-16 | v1.2 | 草稿保护按系统 Asset 完成设计并交付跨应用关闭续办（§5.1）：每账号每车辆一条 SECRET、发出前持久化原请求、读取结果四分、清理失败与退出、冷启动与初始化；新增模拟身份源（稳定 accountKey、联系人）与退出衔接；同账号同车辆串行、旧会话回调不写新页面；接受与撤销失败按重取的状态分流；车型类别与失败说明映射；待接受撤回待 D8；规约落点按 COMPAT-01 四问、DFX-01 草稿读写、DFX-02 字符串资源量化、DLV-01 翻译清单文件；说明开发源与 demo 的 SEC-01 差异 | 维护设计 |
 | 2026-10-14 | v1.1 | 转正前修订：草稿按账号与车辆定位、待确认请求冻结（G05）；受保护存储取证，候选 Asset Store Kit，定案前阻断 F4 跨重启续办（G04） | AI |
 | 2026-10-13 | v1.0 | 初始版本：继承 spec Scope（WalletMain、Phone，无扩展）；数据源接口加模拟实现承载六个车云接口与被分享人一侧查询（spec D3）；草稿用系统轻量键值存储、按账号分键（spec D6）；设计模式选 page-interaction、decision-tree 不选；三个流程的埋点编号以候选值登记 | AI |

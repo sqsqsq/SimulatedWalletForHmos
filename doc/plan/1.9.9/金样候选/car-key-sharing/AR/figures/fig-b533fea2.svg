@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 460" width="1180" height="460" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>分享状态机：六个状态与迁移条件</title>
+<metadata><![CDATA[%% 图源 SR §3 #1
+%% 图源 spec §5.2 #1
+flowchart LR
+    P[待接受] -->|对方接受| A[生效]
+    P -->|72 小时未接受| E[已作废]
+    A -->|有效期满| X[已到期]
+    A -->|撤销·对方在线| R[已撤销]
+    A -->|撤销·对方离线| RP[撤销中]
+    RP -->|对方回网或 48 小时到| R
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1180" height="460" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">分享状态机：六个状态与迁移条件</text>
+<text x="24" y="62" font-size="12.5" fill="#5a6684" text-anchor="start">黄色：过程中的状态　绿色：生效　灰色：已结束的状态</text>
+<path d="M 820.0,360.0 L 1060.0,360.0 L 1060.0,254.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 450.0,254.0 L 450.0,360.0 L 700.0,360.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 510.0,230.0 L 1000.0,230.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 450.0,206.0 L 450.0,115.0 L 700.0,115.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 140.0,254.0 L 140.0,356.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 200.0,230.0 L 390.0,230.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="80.0" y="206.0" width="120" height="48" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="140" y="235.0" font-size="14" fill="#4a3b00" text-anchor="middle">待接受</text>
+<rect x="80.0" y="356.0" width="120" height="48" rx="18" fill="#eef0f4" stroke="#7a8399" stroke-width="1.5"/>
+<text x="140" y="385.0" font-size="14" fill="#2a3142" text-anchor="middle">已作废</text>
+<rect x="390.0" y="206.0" width="120" height="48" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="450" y="235.0" font-size="14" fill="#123d20" text-anchor="middle">生效</text>
+<rect x="700.0" y="91.0" width="120" height="48" rx="18" fill="#eef0f4" stroke="#7a8399" stroke-width="1.5"/>
+<text x="760" y="120.0" font-size="14" fill="#2a3142" text-anchor="middle">已到期</text>
+<rect x="700.0" y="336.0" width="120" height="48" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="760" y="365.0" font-size="14" fill="#4a3b00" text-anchor="middle">撤销中</text>
+<rect x="1000.0" y="206.0" width="120" height="48" rx="18" fill="#eef0f4" stroke="#7a8399" stroke-width="1.5"/>
+<text x="1060" y="235.0" font-size="14" fill="#2a3142" text-anchor="middle">已撤销</text>
+<rect x="264.1" y="219.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="295.0" y="234.5" font-size="12.5" fill="#34405c" text-anchor="middle">对方接受</text>
+<rect x="149.0" y="294.0" width="96.1" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="154" y="309.5" font-size="12.5" fill="#34405c" text-anchor="start">72 小时未接受</text>
+<rect x="529.1" y="104.0" width="61.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="560" y="119.5" font-size="12.5" fill="#34405c" text-anchor="middle">有效期满</text>
+<rect x="712.6" y="219.0" width="94.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="760" y="234.5" font-size="12.5" fill="#34405c" text-anchor="middle">撤销·对方在线</text>
+<rect x="512.6" y="349.0" width="94.8" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="560" y="364.5" font-size="12.5" fill="#34405c" text-anchor="middle">撤销·对方离线</text>
+<rect x="859.0" y="349.0" width="142.1" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="930" y="364.5" font-size="12.5" fill="#34405c" text-anchor="middle">对方回网或 48 小时到</text>
+</svg>
