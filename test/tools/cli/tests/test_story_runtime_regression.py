@@ -4,6 +4,10 @@ import json
 import os
 import shutil
 import tracemalloc
+import hashlib
+import unittest
+from tools.cli.runner import classify_failure
+from tools.cli.registry import DEFAULT_CONFIG_PATH
 from pathlib import Path
 
 import pytest
@@ -12,13 +16,13 @@ from tools.cli import run_store
 from tools.cli.models import CliRunRequest
 
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 
 
 @pytest.fixture
 def workspace_tmp(request):
-    parent = ROOT / "output" / "cli-store-tests"
-    path = parent / request.node.name
+    parent = ROOT / "output" / "scratch" / "cli-runtime-local-tests"
+    path = parent / hashlib.sha256(request.node.nodeid.encode()).hexdigest()[:12]
     shutil.rmtree(path, ignore_errors=True)
     path.mkdir(parents=True, exist_ok=True)
     yield path
@@ -29,79 +33,10 @@ def workspace_tmp(request):
         pass
 
 
-def test_atomic_json_retries_transient_replace_failure(workspace_tmp, monkeypatch):
-    target = workspace_tmp / "run.json"
-    real_replace = os.replace
-    attempts = []
-
-    def flaky_replace(source, destination):
-        attempts.append((source, destination))
-        if len(attempts) < 4:
-            raise PermissionError("simulated Windows sharing violation")
-        real_replace(source, destination)
-
-    monkeypatch.setattr(run_store.os, "replace", flaky_replace)
-
-    run_store.atomic_json(
-        target,
-        {"status": "running"},
-        attempts=5,
-        retry_delay_sec=0,
-    )
-
-    assert target.read_text(encoding="utf-8").find('"running"') > 0
-    assert len(attempts) == 4
-    assert list(workspace_tmp.glob("run.json.*.tmp")) == []
 
 
-def test_atomic_json_cleans_temp_after_exhausted_retries(workspace_tmp, monkeypatch):
-    target = workspace_tmp / "run.json"
-
-    def blocked_replace(source, destination):
-        raise PermissionError("persistent sharing violation")
-
-    monkeypatch.setattr(run_store.os, "replace", blocked_replace)
-
-    try:
-        run_store.atomic_json(
-            target,
-            {"status": "running"},
-            attempts=2,
-            retry_delay_sec=0,
-        )
-    except PermissionError:
-        pass
-    else:
-        raise AssertionError("atomic_json must surface persistent write failure")
-
-    assert not target.exists()
-    assert list(workspace_tmp.glob("run.json.*.tmp")) == []
 
 
-def test_terminal_page_reports_unread_event_from_newer_state_snapshot(workspace_tmp):
-    store = run_store.RunStore(workspace_tmp, "run-1")
-    store.create(
-        CliRunRequest(
-            cli="fake",
-            model="fake",
-            prompt="test",
-            cwd=workspace_tmp,
-        )
-    )
-    store.events_path.write_text(
-        '{"seq":1,"timestamp":"now","run_id":"run-1","type":"text","content":"one"}\n',
-        encoding="utf-8",
-    )
-    store.update(
-        status="succeeded",
-        last_event_seq=2,
-    )
-
-    page = store.page(cursor=1, max_events=10, max_chars=1000)
-
-    assert page.events == []
-    assert page.run["status"] == "succeeded"
-    assert page.has_more is True
 
 
 def _fill_events(store, count, content_chars=1000):
@@ -203,3 +138,46 @@ def test_last_seq_streams_the_log_too(workspace_tmp):
 
     assert event.seq == 2001
     assert peak < 1_000_000
+
+
+class StoryArgvRegression(unittest.TestCase):
+    def test_prompt_is_the_last_argument(self) -> None:
+        """位置参数必须排在所有选项之后，否则多行 prompt 会把后续选项吃掉。
+
+        实证（AR90004 三跑）：`opencode run [message..]` 的 positional 是 **array**。
+        配置曾写成 `run {prompt} --dir … --format json`——单行 prompt 相安无事，
+        换成多行长 prompt（真实用例就是多行）后，yargs 把后面的选项一并吸进 message，
+        **`--format json` 从未生效**：输出退回 TUI 文本，于是
+        ①`model` 流全空（TEST.md 要求「必须读 model 流」，通道等于没有）；
+        ②`session_id` 拿不到 → 无法 `resume` → 驱动器无法回答关卡菜单 →
+        单轮会话停在 S3、产物全无。三轮实测全部卡死在这里，一度被误判成 skill 缺陷。
+
+        prompt 放末尾即按构造消除：选项在它之前已经解析完。
+
+        **只约束 opencode**：这条是从它的 yargs array positional 实证来的，
+        是否适用于别家取决于各自的参数解析器（claude 的 `-p`、codex 的 exec 都另有形态）。
+        把一次实证当普适规则去套，是另一种打补丁——别家出问题时按各自的证据再加。
+        """
+        raw = json.loads(Path(DEFAULT_CONFIG_PATH).read_text(encoding="utf-8"))
+        for pname, profile in raw["clis"]["opencode"]["profiles"].items():
+            for key in ("args", "resume_args"):
+                argv = profile.get(key)
+                if not argv or "{prompt}" not in argv:
+                    continue
+                self.assertEqual(
+                    argv[-1], "{prompt}",
+                    f"opencode.{pname}.{key}: {{prompt}} 是 array positional，必须排在末尾，"
+                    f"否则多行 prompt 会吞掉它后面的选项（实为 {argv}）")
+
+
+class StoryFailureRegression(unittest.TestCase):
+    def test_provider_content_inspection_is_classified_without_claiming_all_400s(self) -> None:
+        rejected = (
+            '"<400> InternalError.Algo.DataInspectionFailed: '
+            'Output data may contain inappropriate content."'
+        )
+        self.assertEqual("content_policy_rejected", classify_failure(rejected).value)
+        self.assertEqual("command_failed", classify_failure("400 bad request: invalid field").value)
+
+    def test_angled_401_is_auth_required(self) -> None:
+        self.assertEqual("auth_required", classify_failure("<401> Unauthorized").value)

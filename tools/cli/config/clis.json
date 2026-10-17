@@ -16,10 +16,10 @@
       "description": "Cursor Agent CLI",
       "executable": "agent",
       "adapter": "cursor_agent",
-      "default_profile": "workspace_write",
+      "default_profile": "build",
       "use_cwd": true,
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
             "--mode",
             "plan",
@@ -45,7 +45,7 @@
             "stream-json"
           ]
         },
-        "workspace_write": {
+        "build": {
           "args": [
             "-p",
             "{prompt}",
@@ -81,7 +81,7 @@
         "OC_AUTO": "1"
       },
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
             "run",
             "--dir",
@@ -145,10 +145,10 @@
       "description": "Claude Code CLI",
       "executable": "claude",
       "adapter": "claude",
-      "default_profile": "workspace_write",
+      "default_profile": "build",
       "use_cwd": true,
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
             "--print",
             "{prompt}",
@@ -174,7 +174,7 @@
             "--verbose"
           ]
         },
-        "workspace_write": {
+        "build": {
           "args": [
             "--print",
             "{prompt}",
@@ -208,10 +208,10 @@
       "description": "OpenAI Codex CLI",
       "executable": "codex",
       "adapter": "codex",
-      "default_profile": "full_access",
+      "default_profile": "build",
       "use_cwd": true,
       "profiles": {
-        "readonly": {
+        "plan": {
           "args": [
             "--ask-for-approval",
             "never",
@@ -239,7 +239,7 @@
             "{prompt}"
           ]
         },
-        "readonly_schema": {
+        "plan_schema": {
           "args": [
             "--ask-for-approval",
             "never",
@@ -255,7 +255,7 @@
             "{prompt}"
           ]
         },
-        "full_access": {
+        "build": {
           "args": [
             "exec",
             "--json",
@@ -277,6 +277,51 @@
             "{prompt}"
           ]
         }
+      }
+    },
+    "dsh": {
+      "description": "DeepSeek Harness headless CLI",
+      "executable": "dsh",
+      "adapter": "dsh",
+      "default_profile": "build",
+      "use_cwd": true,
+      "model_in_argv": false,
+      "profiles": {
+        "plan": {
+          "args": [
+            "--profile",
+            "headless",
+            "--json",
+            "{prompt}"
+          ],
+          "resume_args": [
+            "--profile",
+            "headless",
+            "--json",
+            "--session-id",
+            "{session_id}",
+            "{prompt}"
+          ]
+        },
+        "build": {
+          "args": [
+            "--profile",
+            "headless",
+            "--json",
+            "{prompt}"
+          ],
+          "resume_args": [
+            "--profile",
+            "headless",
+            "--json",
+            "--session-id",
+            "{session_id}",
+            "{prompt}"
+          ]
+        }
+      },
+      "env": {
+        "ELECTRON_RUN_AS_NODE": "1"
       }
     }
   }

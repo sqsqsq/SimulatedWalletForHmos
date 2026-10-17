@@ -1,12 +1,5 @@
 # Unified Agent CLI Runtime
 
-> **来源**：本目录来自 `AIDefectHelpler` 仓库的 `tools/cli`，随本仓交付以避免跨项目路径依赖。
-> **与上游的关系**：**两边已分叉，不能整目录覆盖同步**。已知分叉点：`config/clis.json` 的 profile
-> 定义（本仓 Cursor Agent 用 `readonly`/`workspace_write`，上游用 `plan`/`build`）、`registry.py`
-> （上游多了 Windows npm `.CMD`/`.BAT` 包装器解析）、`runner.py` 与 `process_control.py` 的注释与实现。
-> 要取上游改动请**逐文件比对后合入**；算法层与 provider 适配仍建议回上游维护。
-> **使用方**：`test/scripts/run_case.py` 通过 `from tools.cli import CliClient, CliRunRequest` 调用。
-
 `tools/cli` provides one provider-neutral, replayable interface for
 invoking agent CLIs. It does not import business runners.
 
@@ -18,10 +11,54 @@ The central registry is `config/clis.json`. It currently declares:
 - `opencode`
 - `claude`
 - `codex`
+- `dsh` (DeepSeek Harness headless CLI)
 
 Business tools select only a registry name and model. They never pass raw CLI
-arguments or provider profile names. Each registry entry maps the common
-default behavior to the concrete CLI permissions and flags it requires.
+arguments. Each registry entry maps the common default behavior to the concrete
+CLI permissions and flags it requires.
+
+## Permission profiles
+
+Every CLI exposes the same two profile names, so callers never have to learn
+provider-specific vocabulary:
+
+| Profile | Meaning | How each provider implements it |
+|---|---|---|
+| `plan` | Read and reason only — no file writes, no command execution | `claude --permission-mode plan` / `agent --mode plan` / `codex --sandbox read-only` / `opencode --agent plan` / `dsh --profile headless` (sandbox preset lives in the DSH profile) |
+| `build` | May write the workspace and run commands | `claude --dangerously-skip-permissions` (capped at 5 USD) / `agent --force --trust` / `codex --yolo` / `opencode --auto --agent build` / `dsh --profile headless` (sandbox preset lives in the DSH profile) |
+
+`codex` additionally offers `plan_schema` (`plan` plus `--output-schema`). It has
+no `resume_args`, so it cannot be used where session continuation is required.
+
+### `dsh` notes
+
+- The process runs in the requested workspace. Windows Electron launchers are
+  resolved to the executable and entry script; `ELECTRON_RUN_AS_NODE=1` preserves
+  their CLI behavior and multiline tasks remain a single argument.
+
+- Both `plan` and `build` currently invoke the shipped `headless` profile; the
+  sandbox preset and model are DSH profile configuration (`agent-default-model`,
+  `dsh-permission-presets`), not argv. Point the entry at dedicated DSH
+  profiles (for example `batch-plan` / `batch-build` created with
+  `dsh --from-default-profile headless <name>` plus a patch layer) to split the
+  presets; custom OpenAI-compatible model routes are declared in the same
+  patch and resolved by route key from the DSH credential store.
+- The request `model` is recorded as metadata; headless has no `--model` flag
+  (`model_in_argv: false` in the registry entry opts out of the `{model}`
+  argv-placeholder requirement — the model selection is DSH profile config).
+- Resume adopts the persisted DSH session (`--session-id`); session state lives
+  under the DSH home directory, while this runtime keeps per-run artifacts only.
+- `dsh` failures are classified from the structured `turn_end` error payload
+  (for example `code: MISSING_CREDENTIAL` → `auth_required`).
+
+Request timeout overrides may set both `soft_timeout_sec` and `hard_timeout_sec`
+to zero to disable elapsed-time limits. Registry defaults remain finite; mixed
+zero/positive, negative, or reversed limits are rejected. Explicit stop requests
+and process ownership checks continue to apply to unlimited requests.
+
+> Renamed 2026-08-10 (was `readonly` / `workspace_write` / `full_access` / `build`).
+> The old names described each provider's own vocabulary rather than the shared
+> contract; callers had to know which name meant "safe" per provider.
 
 ## Python API
 
@@ -62,6 +99,22 @@ continued = client.resume(
 
 `resume` resumes an agent conversation; it does not revive an exited operating
 system process.
+
+### Detached resume
+
+`start()` also accepts a request carrying `session_id`, which continues the same
+agent conversation without blocking the caller:
+
+```python
+handle = client.start(
+    CliRunRequest(..., session_id=previous.session_id, profile=profile),
+    parent_run_id=previous.run_id,
+)
+```
+
+The new run links to `parent_run_id`, reports the same `session_id`, and is
+observed through the usual `poll`/`status` cursor. Callers that must stay
+responsive while a model works use this instead of the blocking `resume()`.
 
 ## Caller-owned runtime state
 
@@ -115,6 +168,5 @@ unmanaged process termination remain real failures.
 
 This runtime owns provider configuration, command construction, process
 lifecycle, session capture, normalized streaming, and durable run state.
-Business-specific interpretation remains with callers — case scheduling, phase
-gating, scoring, and any harness-specific telemetry rules do not belong in this
-package.
+Business-specific interpretation remains with callers. In particular, Debate
+schema decisions and DAG phase/telemetry rules do not belong in this package.

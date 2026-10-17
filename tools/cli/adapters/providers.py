@@ -280,11 +280,61 @@ class CodexAdapter(BaseAdapter):
         return []
 
 
+class DshAdapter(BaseAdapter):
+    """dsh headless `--json` run events (protocol verified 2026-10-12).
+
+    Stream shape (one JSON object per line on stdout):
+      {"type":"session","sessionId":"...","cwd":"..."}
+      {"type":"status","phase":"turn_start"|"step_start"|"step_end"|"turn_end",...}
+      {"type":"thinking","text":"..."} / {"type":"text","text":"..."} / {"type":"final","text":"..."}
+    `step_end` carries usage {inputTokens, outputTokens, totalTokens, cacheReadTokens};
+    `turn_end` with reason.kind == "error" carries {"message", "code"}.
+    Model and sandbox preset live in DSH profile config, not in argv.
+    """
+
+    def parse(self, event: dict[str, Any]) -> list[AdapterEvent]:
+        kind = str(event.get("type") or "")
+        if kind == "session":
+            sid = str(event.get("sessionId") or "") or None
+            return [AdapterEvent("session", session_id=sid)] if sid else []
+        if kind == "status":
+            return self._status(event)
+        if kind in {"thinking", "text", "final"}:
+            text = str(event.get("text") or "")
+            if not text:
+                return []
+            event_type = "reasoning" if kind == "thinking" else "text"
+            return [AdapterEvent(event_type, content=text)]
+        return super().parse(event)
+
+    def _status(self, event: dict[str, Any]) -> list[AdapterEvent]:
+        phase = str(event.get("phase") or "")
+        if phase == "step_end" and isinstance(event.get("usage"), dict):
+            raw = event["usage"]
+            usage = _usage(
+                {
+                    "input": raw.get("inputTokens", 0),
+                    "output": raw.get("outputTokens", 0),
+                    "cache_read": raw.get("cacheReadTokens", 0),
+                    "total": raw.get("totalTokens", 0),
+                }
+            )
+            return [AdapterEvent("usage", usage=usage)]
+        if phase == "turn_end":
+            reason = event.get("reason") if isinstance(event.get("reason"), dict) else {}
+            if str(reason.get("kind") or "") == "error":
+                error = reason.get("error") if isinstance(reason.get("error"), dict) else {}
+                message = str(error.get("message") or error or reason)
+                return [AdapterEvent("error", content=message)]
+        return []
+
+
 ADAPTERS: dict[str, BaseAdapter] = {
     "opencode": OpenCodeAdapter(),
     "cursor_agent": CursorAgentAdapter(),
     "claude": ClaudeAdapter(),
     "codex": CodexAdapter(),
+    "dsh": DshAdapter(),
 }
 
 

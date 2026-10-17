@@ -13,8 +13,9 @@ from .adapters import AdapterEvent, get_adapter
 from .models import EventCallback, FailureKind, RunResult, RunStatus
 from .process_control import (
     WindowsProcessJob,
-    force_kill_tree,
+    boot_id,
     popen_group_options,
+    process_identity,
     stop_popen,
 )
 from .registry import CliConfigurationError, CliNotFoundError, CliRegistry
@@ -29,19 +30,11 @@ AUTH_PATTERNS = (
     "please login",
     "unauthorized",
     "invalid api key",
-    # Providers spell the same failure several ways.  Alibaba Model Studio answers
-    # `{"code":"invalid_api_key","message":"Incorrect API key provided."}` — neither
-    # spelling matches the spaced form above, so without these two the run is
-    # classified as a plain command failure and the config group never trips.
     "invalid_api_key",
     "incorrect api key",
+    "no api key",
+    "missing credential",
     "status 401",
-    "<401>",
-)
-CONTENT_POLICY_PATTERNS = (
-    "internalerror.algo.datainspectionfailed",
-    "output data may contain inappropriate content",
-    "data inspection failed",
 )
 SUBSCRIPTION_PATTERNS = (
     "subscription",
@@ -63,9 +56,7 @@ MODEL_PATTERNS = (
 
 def classify_failure(text: str) -> FailureKind:
     lowered = text.lower()
-    # A bare HTTP 400 is not enough: malformed requests are configuration
-    # failures, while these provider messages specifically mean content review.
-    if any(pattern in lowered for pattern in CONTENT_POLICY_PATTERNS):
+    if "datainspectionfailed" in lowered or "output data may contain inappropriate content" in lowered:
         return FailureKind.CONTENT_POLICY_REJECTED
     if any(pattern in lowered for pattern in SUBSCRIPTION_PATTERNS):
         return FailureKind.SUBSCRIPTION_UNAVAILABLE
@@ -139,7 +130,9 @@ class CliRunner:
         try:
             store.update(
                 status=RunStatus.STARTING.value,
+                # 信息性字段：前台执行时它就是调用方自己，**永不作为终止目标**。
                 runner_pid=os.getpid(),
+                boot_id=boot_id(),
                 started_at=now_iso(),
             )
             resolved = self.registry.build(request)
@@ -180,6 +173,8 @@ class CliRunner:
             store.update(
                 status=RunStatus.RUNNING.value,
                 child_pid=proc.pid,
+                # 身份证明：stop() 的恢复路径凭它核对，PID 复用即拒绝终止。
+                child_identity=process_identity(proc.pid) or {},
                 process_job=process_job.name if process_job else "",
             )
             emit(
@@ -272,8 +267,7 @@ class CliRunner:
                     )
                     stop_failed = not stopped_ok
                     break
-                if (resolved.soft_timeout_sec > 0 and not soft_notified
-                        and elapsed > resolved.soft_timeout_sec):
+                if resolved.soft_timeout_sec > 0 and not soft_notified and elapsed > resolved.soft_timeout_sec:
                     soft_notified = True
                     store.update(status=RunStatus.OVERTIME.value, overtime_at=now_iso())
                     emit(
@@ -301,10 +295,8 @@ class CliRunner:
                 try:
                     proc.wait(timeout=max(1.0, resolved.stop_grace_sec + 1.0))
                 except subprocess.TimeoutExpired:
-                    killed = force_kill_tree(
-                        proc.pid,
-                        process_job.name if process_job else "",
-                    )
+                    # 句柄即所有权证明：这里绝不走 PID 路径
+                    _, killed = stop_popen(proc, 0.0, force=True, job=process_job)
                     forced = True
                     stop_failed = not killed
             reader_thread.join(timeout=10)
@@ -357,16 +349,16 @@ class CliRunner:
             except Exception:
                 pass
             if proc and proc.poll() is None:
-                killed = force_kill_tree(
-                    proc.pid,
-                    process_job.name if process_job else "",
-                )
+                _, killed = stop_popen(proc, 0.0, force=True, job=process_job)
                 forced = True
                 if not killed:
                     status = RunStatus.STOP_FAILED
                     failure_kind = FailureKind.STOP_FAILED
 
         process_job_name = process_job.name if process_job else ""
+        child_identity_snapshot = (
+            process_identity(proc.pid) if proc and status == RunStatus.STOP_FAILED else {}
+        ) or {}
         if process_job:
             process_job.close()
 
@@ -391,6 +383,7 @@ class CliRunner:
             final_text=final_text or "",
             reader_error=reader_error_text,
             child_pid=0 if status != RunStatus.STOP_FAILED else (proc.pid if proc else 0),
+            child_identity={} if status != RunStatus.STOP_FAILED else child_identity_snapshot,
             process_job="" if status != RunStatus.STOP_FAILED else process_job_name,
         )
         return RunResult.from_state(state, store.run_dir)

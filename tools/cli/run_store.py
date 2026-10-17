@@ -78,6 +78,9 @@ def open_text_retry(path: Path, *, attempts: int = 50) -> TextIO:
 
     Truncation and rotation need no special handling: each call opens the file as
     it is now, so a truncated log simply reads short and refills as it grows.
+
+    (Ported from the SimulatedWalletForHmos fork during the 2026-10-12
+    centralization audit; the incident is recorded in that fork's run_store.)
     """
     last_error: OSError | None = None
     for _ in range(attempts):

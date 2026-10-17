@@ -364,7 +364,7 @@ python test/scripts/run_multi_case.py finalize `
 
 ```powershell
 python -m pytest test/tests -n auto --dist loadscope
-python -m pytest tools/cli/tests -n auto --dist loadscope
+python -m pytest test/tools/cli -n auto --dist loadscope
 python -m compileall -q -j 0 tools/cli test/scripts
 python -m tools.cli.scripts.validate_clis
 python test/scripts/run_multi_case.py plan --all --jobs <实际Case数>

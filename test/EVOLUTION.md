@@ -5,6 +5,12 @@
 
 ## 1. 演进记录
 
+2026-10-17 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。
+
+2026-10-16 **dsh 正式 CLI 链路测通**：用户最终范围为正常工作后停止。中心 runtime 修复不限时请求、dsh cwd 与 Windows Electron/ASAR 启动，并补回 OpenCode 参数顺序、内容审查与百炼鉴权分类；中心提交 `2934b83`、`d904257`，本地标签 `v1.0.1`、`v1.0.2`，已同步本仓、未推送。中心最终离线 72 passed；本仓相关回归 155 passed、12 subtests passed，已消除上次同步发现的兼容缺口。正式 suite `story-suite-20261016-dsh-full-01` 的 car-key-sharing 使用 dsh + 百炼 DeepSeek；有效 attempt 3 已验证工具执行、材料关卡回复、两份补料投放及同 session 续行（41 次原始 tool_call/result），随后按用户要求 stop/finalize，相关进程已退出。前两 attempt 的注册表漂移和沙箱 ACL 故障保留，不归责消费模型。临时测试配置与 dsh profile 均已恢复；未完成阶段验收，不评分。证据见 `output/story/story-suite-20261016-dsh-full-01/startup-verification.md`。
+
+2026-10-16 **CLI runtime 接入中心仓同步版**：从 `C:/Users/kangz/.agents/tools/cli-runtime` 同步提交 `0e8defa910e36dbbe4bbf91febbada57a00f411d`，身份见 `tools/cli/.sync-stamp.json`；运行时新增 dsh 适配，契约测试迁至 `test/tools/cli/tests`，原有未被中心测试覆盖的七项回归保留于 `test/tools/cli/test_story_runtime_regression.py`，验证入口迁至 `test/tools/cli/TEST.md`，Codex 配置档位由 `full_access` 改为中心版的 `build`。同步检查 CLEAN、注册表校验、worker 入口、编译与两 Case 的只读 plan 通过；离线运行时回归 60 passed / 2 failed，消费方相关回归 107 passed / 39 subtests passed / 3 failed（含两项 subtest）。待中心仓修复：OpenCode prompt 参数顺序、内容审查拒绝分类、百炼鉴权报文识别。本仓副本保持同源，未启动真实模型；日志与同步前备份见 `output/scratch/cli-runtime-sync-20261016/`。
+
 2026-10-12 **1.9.9 两 Case 输入承接 2.x 业务补充**（用户确认「承接业务补充，保留 1.x 协议」，方案 `doc/plan/1.9.9/2026-10-12-整体设计/07-R6-两Case金样.md` §2；外线工作区 `E:\Project\SimulatedWalletForHmos` 的 `test/cases`，最近改动提交 `ce3677ad`，逐文件按实际 diff 合入，没有整体复制）：
 两份系统设计补接口字段、单位、可空性、判重与错误结构；交互脚本补「问到才答」的业务立场——auto-topup 的模拟验证边界、update 单日上限按会上 200；
 car-key 的初始宽限 48 小时口径、车钥匙卡片范围、模拟验证边界、草稿续办、接受比例由车云统计；auto-topup 答案卷补上限冲突的立场；

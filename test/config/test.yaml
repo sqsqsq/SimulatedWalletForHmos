@@ -51,7 +51,7 @@ cli:
     - id: codex-luna
       name: codex
       model: gpt-5.6-luna
-      profile: full_access
+      profile: build
   retry_policy:
     # 内容审查 400 只在当前配置上干净重跑一次；再次命中即结束该 Case。
     content_rejection_retries_per_config: 1

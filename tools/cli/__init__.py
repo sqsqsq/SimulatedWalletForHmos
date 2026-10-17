@@ -1,8 +1,7 @@
 """Unified runtime for invoking supported agent CLIs.
 
-This package is intentionally independent from any business harness: it knows
-nothing about cases, phases, or scoring.  Callers should depend only on the
-public objects exported here.
+This package is intentionally independent from the debate and DAG harness
+tools.  Business tools should depend only on the public objects exported here.
 """
 
 from .api import CliClient
