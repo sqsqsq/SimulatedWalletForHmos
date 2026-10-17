@@ -132,7 +132,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 ### 归档
 
 - **前置**：spec 阶段已闭环，`AR/story.md` 与 `AR/review.md` 齐备；不适用于本地单
-- **archive 不修改工作区任何文件**
+- **archive 不改业务正文**：交付门期间切换本地阅读视图，需求系统写入并读回核验后在流程契约里登记归档态；远端已写入而本地登记失败时按输出只补登记，不重复上传
 
 ```
 node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token>

@@ -60,21 +60,84 @@ import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
 import { recordUsage } from '../../../../hooks/shared/usage.mjs';
 
-const COMMANDS = ['check', 'build', 'number', 'skeleton', 'chapter', 'project', 'view', 'archive'];
+/** 命令与它做什么、要哪些命令参数（必需的写在 need）；解析与帮助读同一张表。 */
+const COMMANDS = {
+  skeleton: { what: '预检流程、材料、Spec 与决策登记，全过才建写作设计空壳、十章骨架与章草稿，并给出当前输入与下一步' },
+  chapter: { what: '把草稿里的一章原子替换进 AR/story.md，其余章一个字节不动', need: ['--chapter', '--from'] },
+  project: { what: '附录机器区按当前真源（spec 扩展章、knowledge-use.yaml）重投' },
+  number: { what: '给 AR/story.md 重编号：章序按合同，小节与图题按出现顺序' },
+  check: { what: '只读核对确定性不变量；加 --deliver 判能不能交付', opts: ['--deliver'] },
+  build: { what: '由 decisions.json 渲染 AR/review.md（人工区逐字节保留）' },
+  view: { what: `切换、准备、查看或验收图的形态（--mode ${VIEW_MODES.join('|')}）`, need: ['--mode'], opts: ['--id', '--render'] },
+  archive: { what: '交付门 → 对接层上传与读回 → 核回执 → 登记归档态（只用于需求系统单）', need: ['--mcp-token'] },
+};
+/** 选项：值的写法与作用；值以 -- 开头时写成 `--选项=值`。 */
+const OPTIONS = {
+  '--feature': ['<需求名>', '需求目录名（doc/features/<需求名>）'],
+  '--project-root': ['<路径>', '工程根，不给时按入口所在工程'],
+  '--chapter': ['<章名>', '要替换的章，按章节合同的章名'],
+  '--from': ['<文件>', '这一章的正文文件（草稿）'],
+  '--deliver': [null, '交付门：在 check 之上再核回执与读者审查'],
+  '--mode': ['<模式>', '图的形态或动作'],
+  '--id': ['<图块 ID>', '只作用于这一块图'],
+  '--render': ['<渲染图路径>', 'review-request 用的渲染图'],
+  '--mcp-token': ['<token>', '对接层访问需求系统用，不打印'],
+};
+const KEY = { '--project-root': 'projectRoot', '--mcp-token': 'token' };
+const SCRIPT = 'node doc/extensions/skills/story/scripts/core/story-build.mjs';
 
-function parseArgs(argv) {
-  const args = { command: argv[2] && !argv[2].startsWith('--') ? argv[2] : '' };
-  for (let i = 3; i < argv.length; i++) {
-    if (argv[i] === '--feature') args.feature = argv[++i];
-    else if (argv[i] === '--project-root') args.projectRoot = argv[++i];
-    else if (argv[i] === '--chapter') args.chapter = argv[++i];
-    else if (argv[i] === '--from') args.from = argv[++i];
-    else if (argv[i] === '--deliver') args.deliver = true;
-    else if (argv[i] === '--mode') args.mode = argv[++i];
-    else if (argv[i] === '--id') args.id = argv[++i];
-    else if (argv[i] === '--render') args.render = argv[++i];
-    else if (argv[i] === '--mcp-token') args.token = argv[++i];
+function usage(command) {
+  if (!COMMANDS[command]) {
+    return [`用法: ${SCRIPT} <命令> --feature <需求名> [--project-root <路径>] [命令参数]`, '命令:',
+      ...Object.entries(COMMANDS).map(([c, d]) => `  ${c.padEnd(9)}${d.what}`),
+      `各命令的参数: ${SCRIPT} <命令> --help`].join('\n');
   }
+  const { what, need = [], opts = [] } = COMMANDS[command];
+  const line = (o, req) => `  ${o}${OPTIONS[o][0] ? ` ${OPTIONS[o][0]}` : ''}${req ? '  必需' : ''}  ${OPTIONS[o][1]}`;
+  return [`用法: ${SCRIPT} ${command} --feature <需求名> ${need.map(o => `${o} ${OPTIONS[o][0]}`).join(' ')}`.trimEnd()
+      + ` [--project-root <路径>]${opts.map(o => ` [${o}${OPTIONS[o][0] ? ` ${OPTIONS[o][0]}` : ''}]`).join('')}`,
+    what, '参数:', line('--feature', true), ...need.map(o => line(o, true)), line('--project-root'),
+    ...opts.map(o => line(o)), '值以 -- 开头时写成 --选项=值；参数含空格或引号时按所用 shell 的规则加引号'].join('\n');
+}
+
+/**
+ * 解析在任何动作之前完成：未知选项、重复、缺值、不适用于这个命令、缺必需项都在这里报，
+ * 什么都不执行——拼错 `--deliver` 不会悄悄跑成普通 check。错误只点选项名，不回显值。
+ */
+function parseArgs(argv) {
+  const command = argv[2] ?? '';
+  const rest = argv.slice(3);
+  if (command === '--help' || command === '-h' || rest.includes('--help') || rest.includes('-h')) {
+    return { help: usage(command) };
+  }
+  if (!COMMANDS[command]) fail(`不认识的命令${command ? '' : '（没给）'}——${usage('')}`);
+  const { need = [], opts = [] } = COMMANDS[command];
+  const allowed = new Set(['--feature', '--project-root', ...need, ...opts]);
+  const args = { command };
+  const seen = new Set();
+  const bad = (why) => fail(`${command}：${why}——用法见 \`${SCRIPT} ${command} --help\``);
+  for (let i = 0; i < rest.length; i++) {
+    const [name, inline] = rest[i].startsWith('--') && rest[i].includes('=')
+      ? [rest[i].slice(0, rest[i].indexOf('=')), rest[i].slice(rest[i].indexOf('=') + 1)] : [rest[i], undefined];
+    if (!OPTIONS[name]) bad(name.startsWith('-') ? `不认识的选项 ${name}` : `第 ${i + 1} 个参数不属于任何选项`);
+    if (!allowed.has(name)) bad(`${name} 不用于 ${command}`);
+    if (seen.has(name)) bad(`${name} 给了两次`);
+    seen.add(name);
+    const key = KEY[name] ?? name.slice(2);
+    if (OPTIONS[name][0] === null) {
+      if (inline !== undefined) bad(`${name} 不带值`);
+      args[key] = true;
+    } else if (inline !== undefined) {
+      if (!inline) bad(`${name}= 后面缺值`);
+      args[key] = inline;
+    } else if (i + 1 >= rest.length || rest[i + 1].startsWith('--')) {
+      bad(`${name} 后面缺值（值以 -- 开头时写成 ${name}=<值>）`);
+    } else {
+      args[key] = rest[++i];
+    }
+  }
+  const missing = ['--feature', ...need].filter(o => !seen.has(o));
+  if (missing.length) bad(`缺 ${missing.join('、')}`);
   return args;
 }
 
@@ -121,58 +184,67 @@ function cmdProject(ctx) {
  * **预检全部读完、判完、算完，才开始写盘**。顺序不是风格问题：一边建决策骨架一边
  * 才发现 Spec 缺了的话，盘上留下的是半份起手，而作者拿到的报错说的是另一件事——
  * 他要先弄清哪些已经建了，才知道重跑安不安全。
+ *
+ * 互不依赖的几组前置一次核完、一起报：作者补一个跑一次才知道下一个，是白跑。
+ * 依赖缺口的那几组不判、明说没判，不拿缺口推出来的伪错误凑数。
  */
-function cmdSkeleton(ctx) {
-  // ---- 预检 ①：流程走到位了没有 ----
-  const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
-  if (!flow) {
-    fail('AR/story-src/story-flow.json：不存在，本需求还没走过 /story 的 S1–S3'
-      + '——流程契约由 `story_flow.py init` 起单、按关卡收口时写成，story 骨架在范围收口之后起');
-  }
+function skeletonPreflight(ctx) {
+  const problems = [];
+  const skipped = [];
+  // ① 流程走到位了没有
+  const flow = readJson(path.join(ctx.srcDir, 'story-flow.json'), null);
   const flowGaps = flowProblems(ctx.featureRoot);
-  if (flowGaps.length) fail(flowGaps.join('\n'));
-  if (flow.status !== 'complete' && flow.status !== 'story_written') {
-    fail(`AR/story-src/story-flow.json：status 是 ${flow.status}，本轮还没有收口——story 骨架在 complete 或 story_written 时起，当前动作由 \`story_flow.py status\` 给出`);
+  if (flowGaps.length) problems.push(...flowGaps);
+  else if (!flow) {
+    problems.push('AR/story-src/story-flow.json：不存在，本需求还没走过 /story 的 S1–S3'
+      + '——流程契约由 `story_flow.py init` 起单、按关卡收口时写成，story 骨架在范围收口之后起');
+  } else if (flow.status !== 'complete' && flow.status !== 'story_written') {
+    problems.push(`AR/story-src/story-flow.json：status 是 ${flow.status}，本轮还没有收口——story 骨架在 complete 或 story_written 时起，当前动作由 \`story_flow.py status\` 给出`);
   }
-
-  // ---- 预检 ②：材料 —— 清单在、与本轮基准一致、且磁盘现状仍是这批料 ----
+  // ② 材料：清单在、与本轮基准一致、且磁盘现状仍是这批料（基准在流程契约里）
   const manifest = readJson(path.join(ctx.srcDir, 'materials.json'), null);
-  const base = (flow.rounds?.[flow.rounds.length - 1]?.materials) ?? {};
   if (!manifest) {
-    fail('AR/story-src/materials.json：不存在——材料清单由 `story_flow.py round` 生成');
+    problems.push('AR/story-src/materials.json：不存在或读不出——材料清单由 `story_flow.py round` 生成');
+  } else if (problems.length) {
+    skipped.push('材料清单与本轮基准是否一致、原件导没导、材料变没变（要先有收口的流程契约）');
+  } else if (manifest.digest !== (flow.rounds?.at(-1)?.materials ?? {}).digest) {
+    problems.push('AR/story-src/materials.json：digest 与 story-flow.json 本轮登记的材料基准对不上——两者都由 `story_flow.py round` 按磁盘现状写入，骨架按本轮基准起');
+  } else {
+    const notReady = materialsNotReady(ctx);
+    if (notReady) problems.push(`材料还不能起稿：${notReady}`);
   }
-  if (manifest.digest !== base.digest) {
-    fail('AR/story-src/materials.json：digest 与 story-flow.json 本轮登记的材料基准对不上——两者都由 `story_flow.py round` 按磁盘现状写入，骨架按本轮基准起');
-  }
-  const notReady = materialsNotReady(ctx);
-  if (notReady) fail(`材料还不能起稿：${notReady}`);
-
-  // ---- 预检 ③：来源必需性（与交付前的 check 同一份判定） ----
+  // ③ 来源必需性（与交付前的 check 同一份判定）
   const { docs, missing, blocking } = sourceStatus(ctx);
   if (!docs.length) {
-    fail(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {})
+    problems.push(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {})
       .map(x => (typeof x === 'string' ? x : x?.path)).filter(Boolean).join('、')}）——骨架据合同 sources 声明的材料起`);
+  } else if (blocking.length) {
+    problems.push(`必备来源缺失：${blocking.map(m => missingSourceLine(m)).join('；')}`);
   }
-  if (blocking.length) {
-    fail('必备来源缺失，骨架没起：'
-      + blocking.map(m => missingSourceLine(m)).join('；'));
-  }
-
-  // ---- 预检 ④：Spec 可读、非空，本步要消费的那几节都在 ----
+  // ④ Spec 可读、非空，本步要消费的那几节都在
   const spec = specText(ctx);
-  if (spec !== null && !spec.trim()) {
-    fail('spec/spec.md：是空的——story 骨架从 spec 的术语映射表与扩展章各节派生');
+  if (spec === null) skipped.push('Spec 的章节、术语与附录派生（spec/spec.md 读不到）');
+  else if (!spec.trim()) problems.push('spec/spec.md：是空的——story 骨架从 spec 的术语映射表与扩展章各节派生');
+  else {
+    const gaps = specGaps(ctx.contract, spec);
+    if (gaps.length) {
+      problems.push(`spec/spec.md：缺起手要读的这几节：\n  · ${gaps.join('\n  · ')}\n`
+        + '  不涉及的节写「不涉及：<依据>」一行也算有内容——'
+        + '起手按这一节有没有正文判，写出来的结论评审者读得到');
+    }
   }
-  const gaps = spec === null ? [] : specGaps(ctx.contract, spec);
-  if (gaps.length) {
-    fail(`spec/spec.md：缺起手要读的这几节，骨架没起：\n  · ${gaps.join('\n  · ')}\n`
-      + '  不涉及的节写「不涉及：<依据>」一行也算有内容——'
-      + '起手按这一节有没有正文判，写出来的结论评审者读得到');
-  }
-
-  // ---- 预检 ⑤：决策登记起手前就有议题，或写明本单无待决（只读，不写） ----
+  // ⑤ 决策登记起手前就有议题，或写明本单无待决（只读）
   const gap = registrationGap(ctx);
-  if (gap) fail(gap);
+  if (gap) problems.push(gap);
+  if (problems.length) {
+    fail(`起手预检没过，骨架没起，Story、草稿与写作设计都没写：\n${problems.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
+      + (skipped.length ? `\n没判（依赖上面的缺口，补齐后重跑 skeleton 再核）：\n${skipped.map(s => `  · ${s}`).join('\n')}` : ''));
+  }
+  return { docs, missing, spec };
+}
+
+function cmdSkeleton(ctx) {
+  const { docs, missing, spec } = skeletonPreflight(ctx);
 
   // ---- 内容计算：也在写盘之前 ----
   const facts = {
@@ -341,11 +413,9 @@ function restoreView(ctx) {
 
 function main() {
   const args = parseArgs(process.argv);
-  if (!COMMANDS.includes(args.command)) {
-    fail(`用法: story-build.mjs <${COMMANDS.join('|')}> --feature <需求名> [--project-root <路径>]`);
-  }
-  if (args.deliver && args.command !== 'check') {
-    fail('--deliver 只用于 check：它判的是这份 story 能不能交付');
+  if (args.help) {
+    process.stdout.write(`${args.help}\n`);
+    return;
   }
   const ctx = createContext(args);
   if (args.command === 'view') return cmdView(ctx);

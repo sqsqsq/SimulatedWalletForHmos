@@ -3279,6 +3279,114 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
         self.assertTrue(self.story_path.is_file(), out)
 
 
+class TheSkeletonListsEveryIndependentGap(SkeletonPreflightCase):
+    """互不依赖的缺口一次报全；依赖缺口的判据不跑、明说没判；补齐后照常起手。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink(missing_ok=True)
+
+    def test_two_independent_gaps_come_in_one_run(self) -> None:
+        spec = self.feature_root() / "spec" / "spec.md"
+        good_spec = spec.read_text(encoding="utf-8")
+        decisions = self.src / "decisions.json"
+        good_decisions = decisions.read_text(encoding="utf-8")
+        spec.unlink()
+        decisions.write_text("{ 坏了", encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("必备来源缺失", out)
+        self.assertIn("spec/spec.md", out)
+        self.assertIn("decisions.json", out, "第二个独立缺口要等补完第一个才报")
+        self.assertIn("没判", out)
+        self.assertIn("Spec 的章节、术语与附录派生", out)
+        self.assertNotIn("术语映射表", out, "Spec 不在却报了由它推出来的缺节")
+        self.assert_wrote_nothing(before)
+        spec.write_text(good_spec, encoding="utf-8")
+        decisions.write_text(good_decisions, encoding="utf-8")
+        code, out = self.skeleton()
+        self.assertEqual(0, code, out)
+        self.assertTrue(self.story_path.is_file(), out)
+
+    def test_without_a_flow_contract_the_material_baseline_is_not_judged(self) -> None:
+        (self.src / "story-flow.json").unlink()
+        (self.src / "decisions.json").write_text("{ 坏了", encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("story-flow.json：不存在", out)
+        self.assertIn("decisions.json", out)
+        self.assertIn("材料清单与本轮基准是否一致", out)
+        self.assertNotIn("digest 与 story-flow.json", out, "没有流程契约却拿基准比了清单")
+        self.assert_wrote_nothing(before)
+
+
+class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
+    """帮助与参数错误在任何动作之前处理：帮助退出 0，错误退出 1，两者都不写盘、不跑命令。"""
+
+    SECRET = "tok-should-not-print"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink(missing_ok=True)
+
+    def run_build(self, *args: str) -> tuple[int, str]:
+        proc = subprocess.run(["node", str(BUILD), *args], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60, cwd=str(self.root))
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+    def common(self) -> list[str]:
+        return ["--feature", FEATURE, "--project-root", str(self.root)]
+
+    def test_help_answers_without_acting(self) -> None:
+        before = self.files_now()
+        for argv in (["--help"], ["skeleton", "--help"], ["chapter", *self.common(), "-h"]):
+            with self.subTest(argv=argv[:2]):
+                code, out = self.run_build(*argv)
+                self.assertEqual(0, code, out)
+                self.assertIn("用法", out)
+        code, out = self.run_build("chapter", "--help")
+        self.assertIn("--chapter <章名>  必需", out)
+        self.assertIn("--from <文件>  必需", out)
+        self.assert_wrote_nothing(before)
+
+    def test_bad_usage_stops_before_anything_runs(self) -> None:
+        before = self.files_now()
+        cases = {
+            "不认识的选项 --form": ["skeleton", *self.common(), "--form", "x.md"],
+            "不认识的选项 --delvier": ["check", *self.common(), "--delvier"],
+            "--from 后面缺值": ["chapter", *self.common(), "--chapter", "背景", "--from"],
+            "--from 后面缺值（": ["chapter", *self.common(), "--from", "--chapter", "背景"],
+            "--feature 给了两次": ["check", *self.common(), "--feature", FEATURE],
+            "--deliver 不用于 build": ["build", *self.common(), "--deliver"],
+            "缺 --from": ["chapter", *self.common(), "--chapter", "背景"],
+            "不认识的命令": ["chek", *self.common()],
+        }
+        for expected, argv in cases.items():
+            with self.subTest(expected=expected):
+                code, out = self.run_build(*argv)
+                self.assertEqual(1, code, out)
+                self.assertIn(expected, out)
+                self.assertIn("--help", out, "没给用法入口")
+                self.assertNotIn("[story-build check]", out, "拼错了参数却照样跑了检查")
+        self.assert_wrote_nothing(before)
+
+    def test_values_are_not_echoed(self) -> None:
+        for argv in (["archive", *self.common(), "--mcp-token", self.SECRET, "--bogus"],
+                     ["archive", *self.common(), self.SECRET]):
+            with self.subTest(argv=argv[-1]):
+                code, out = self.run_build(*argv)
+                self.assertEqual(1, code, out)
+                self.assertNotIn(self.SECRET, out)
+
+    def test_a_value_that_starts_with_dashes_uses_the_explicit_form(self) -> None:
+        code, out = self.run_build("chapter", *self.common(), "--chapter", "背景", "--from=--背景.md")
+        self.assertNotIn("后面缺值", out)
+        self.assertNotIn("不认识的选项", out)
+        self.assertIn("--背景.md", out, "显式写法的值没有原样交给命令")
+
+
 class TestTheSubmitCommandRunsAsWritten(StoryBuildCase):
     """草稿里那条提交命令**原样跑得通**——带上真实的工程根，参数按当前 shell 引用。
 

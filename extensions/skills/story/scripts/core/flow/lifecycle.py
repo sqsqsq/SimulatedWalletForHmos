@@ -13,7 +13,8 @@ from pathlib import Path
 from flow.state import (
     CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_REGISTERED, ledger_digest, load, log,
     now, require, round_gates, save)
-from flow.routing import live_materials, material_state, next_step, reading_work, sidecar_shape
+from flow.routing import (live_materials, material_state, next_step, reading_work, register_command,
+                          sidecar_shape)
 from flow import asks
 from flow.update import record_baseline
 from flow.meetings import topic_digest
@@ -96,7 +97,8 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if status == "story_written":
+    invalidated = status == "story_written"
+    if invalidated:
         for key in ("story_written_at", "story_digests"):
             contract.pop(key, None)
         contract["status"] = status = "complete"
@@ -118,43 +120,28 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     node = shutil.which("node")
     if node is None:
         raise FlowError("找不到 node：成文态登记要先重跑 story-build check，无法跳过")
-    projected = subprocess.run(
-        [node, str(checker), "project", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if projected.returncode != 0:
-        raise FlowError(
-            "story-build project 跑不通，成文态不予登记：\n"
-            + _said(projected))
-    numbered = subprocess.run(
-        [node, str(checker), "number", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if numbered.returncode != 0:
-        raise FlowError(
-            "story-build number 跑不通，成文态不予登记：\n"
-            + _said(numbered))
-    # 图源随这次登记一起成立：还没管理的 Mermaid 图加稳定标记、首次写 .mmd，之后的阅读图按它重述
-    _view(feature_root, project_root, "prepare", "story-build view --mode prepare 跑不通，成文态不予登记")
-    # review 也在这一步渲染：它的机器区按当前决策件重算，人工填的内容逐字节保留。
-    # 不在这里渲染的话，下面那道 check 面对的是一份还不存在的 review——
-    # 归档件红线（⑨）于是要等到交付门才报，报了还得回来再登记一次。
-    rendered = subprocess.run(
-        [node, str(checker), "build", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if rendered.returncode != 0:
-        raise FlowError(
-            "story-build build 跑不通，成文态不予登记：\n"
-            + _said(rendered))
-    proc = subprocess.run(
-        [node, str(checker), "check", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if proc.returncode != 0:
-        raise FlowError(
-            "story-build check 未通过，成文态不予登记：\n"
-            + _said(proc))
+    # 每一步按真源改派生件，check 只读。图源随这次登记一起成立（还没管理的 Mermaid 图加稳定标记、首次写 .mmd）；
+    # review 也在这里渲染（机器区按当前决策件重算、人工区逐字节保留），下面那道 check 才核得到归档件红线（⑨）。
+    steps = (("project", ["project"], "附录机器区已按当前真源重投"),
+             ("number", ["number"], "编号已重铺"),
+             ("view --mode prepare", ["view", "--mode", "prepare"], "图源管理标记与 .mmd 已就位"),
+             ("build", ["build"], "review 已按决策登记重新渲染"),
+             ("check", ["check"], "全篇检查通过"))
+    done: list[str] = []
+    for i, (name, argv, effect) in enumerate(steps):
+        proc = subprocess.run(
+            [node, str(checker), *argv, "--feature", feature_root.name, "--project-root", str(project_root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if proc.returncode != 0:
+            this = "只读，没有改正文" if name == "check" else "改没改文件不确定"
+            raise FlowError(
+                f"story-build {name} 没通过（退出码 {proc.returncode}），成文登记没有提交"
+                + ("，上一次登记已作废" if invalidated else "") + "。\n"
+                + f"已完成：{'；'.join(done) or '无'}。{name} 这一步{this}。"
+                + f"没跑：{'、'.join(s[0] for s in steps[i + 1:]) or '无'}。\n"
+                "已更新的派生件按真源算出，不用删也不用还原；按下面报的问题改真源或草稿（正文经 chapter 提交），"
+                f"再跑 `{register_command(feature_root)}` 重新登记：\n" + _said(proc))
+        done.append(effect)
 
     contract["status"] = "story_written"
     contract["story_written_at"] = now()

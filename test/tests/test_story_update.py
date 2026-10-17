@@ -30,7 +30,7 @@ from test_story_build import (  # noqa: E402
     FEATURE, FIXTURE, REPO_ROOT, StoryBuildCase, ensure_flow_state,
 )
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
-from flow_steps import answer, write_gaps  # noqa: E402
+from flow_steps import answer, open_decision, write_gaps  # noqa: E402
 from ext_workspace import DEV_EXT, reader_review_details
 
 FLOW = (DEV_EXT / "skills" / "story" / "scripts"
@@ -1041,6 +1041,92 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assertTrue(changed[0].startswith("10."), changed[0][:20])
         self.assertEqual(0, self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE,
                                          "--project-root", str(self.root)).returncode)
+
+    def failed_registration(self) -> str:
+        out = self.register()
+        self.assertFalse(out.get("success"), out)
+        self.assertEqual("complete", self.contract()["status"], "没登记成却记了成文态")
+        self.assertIn("story_flow.py story --feature", out["error"], "没给重新登记的入口")
+        return out["error"]
+
+    def test_a_failed_first_step_says_nothing_else_ran(self) -> None:
+        """登记链第一步就没过：说清前面什么都没做、后面四步没跑，原输出带出来；修好后重跑即收口。"""
+        spec = self.feature_root / "spec" / "spec.md"
+        good = spec.read_text(encoding="utf-8")
+        spec.write_text(good.replace("#### 9.1.1 端云接口", "#### 9.1.1 接口草稿"), encoding="utf-8")
+        story = self.feature_root / "AR" / "story.md"
+        before = story.read_bytes()
+        error = self.failed_registration()
+        self.assertIn("story-build project 没通过", error)
+        self.assertIn("已完成：无", error)
+        self.assertIn("没跑：number、view --mode prepare、build、check", error)
+        self.assertIn("端云接口", error, "子步骤自己的报错没带出来")
+        self.assertEqual(before, story.read_bytes())
+        spec.write_text(good, encoding="utf-8")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+
+    def test_a_failed_build_names_what_already_changed(self) -> None:
+        """前三步已经按真源改了派生件：列出来，不说「没有任何写入」，也不让人删派生件重来。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        decisions = self.src / "decisions.json"
+        good = decisions.read_text(encoding="utf-8")
+        data = json.loads(good)
+        data["decisions"] = [{"id": "D1", "title": "回执超时后怎样提示"}]
+        decisions.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        error = self.failed_registration()
+        self.assertIn("story-build build 没通过", error)
+        self.assertIn("上一次登记已作废", error)
+        self.assertIn("已完成：附录机器区已按当前真源重投；编号已重铺；图源管理标记与 .mmd 已就位", error)
+        self.assertIn("没跑：check", error)
+        self.assertIn("不用删也不用还原", error)
+        decisions.write_text(good, encoding="utf-8")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+
+    def test_a_failed_check_leaves_the_rest_and_resumes(self) -> None:
+        """最后的 check 没过：四步都做了、check 只读；改草稿重新提交后再登记即收口，没动的章保持原样。"""
+        contract = json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))
+        story = self.feature_root / "AR" / "story.md"
+        text = story.read_text(encoding="utf-8")
+        head, rest = text.split("\n## ", 1)
+        first, others = rest.split("\n## ", 1)
+        story.write_text(f"{head}\n## {first}\n<!-- {contract['pending_mark']}：背景 -->\n\n## {others}",
+                         encoding="utf-8")
+        error = self.failed_registration()
+        self.assertIn("story-build check 没通过", error)
+        self.assertIn("review 已按决策登记重新渲染", error)
+        self.assertIn("check 这一步只读", error)
+        self.assertIn("没跑：无", error)
+        untouched = story.read_text(encoding="utf-8").split("\n## ")[2:]
+        self.rewrite_background("支付提交后用户要能看到回执状态。")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        self.assertEqual(untouched[:-1], story.read_text(encoding="utf-8").split("\n## ")[2:-1],
+                         "只改了背景，别的正文章却变了")
+
+    def test_the_review_human_zone_survives_a_failed_registration(self) -> None:
+        """评审人填过的意见：登记中途失败、修好再登记，都一个字节不丢。"""
+        decisions = self.src / "decisions.json"
+        data = json.loads(decisions.read_text(encoding="utf-8"))
+        data.pop("no_pending", None)
+        data["decisions"] = [open_decision("D1", "回执超时后是否自动重查待定", "回执超时后要不要自动再查一次。",
+                                           [("自动重查一次", "少一次手动操作；多一次请求"),
+                                            ("提示用户手动刷新", "请求少；用户多点一下")],
+                                           "选择方案 1。", category="业务规则")]
+        decisions.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        review = self.feature_root / "AR" / "review.md"
+        filled = review.read_text(encoding="utf-8").replace("- [ ] 同意", "- [x] 同意").replace(
+            "修改意见：\n", "修改意见：\n重查间隔写进规格。\n")
+        review.write_text(filled, encoding="utf-8")
+        spec = self.feature_root / "spec" / "spec.md"
+        good = spec.read_text(encoding="utf-8")
+        spec.write_text(good.replace("#### 9.1.1 端云接口", "#### 9.1.1 接口草稿"), encoding="utf-8")
+        self.failed_registration()
+        self.assertEqual(filled, review.read_text(encoding="utf-8"))
+        spec.write_text(good, encoding="utf-8")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        human = filled[filled.index("评审结论："):filled.index("<!-- decision: D1 -->")]
+        self.assertIn("重查间隔写进规格。", human)
+        self.assertIn(human, review.read_text(encoding="utf-8"))
 
     def test_update_round_change_is_registered_before_close(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
