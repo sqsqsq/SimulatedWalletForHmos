@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1720 850" width="1720" height="850" font-family="'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC',sans-serif">
+<title>撤销时的分享、车辆与卡片：受理那一刻车辆就拒绝，卡片稍后收回</title>
+<metadata><![CDATA[综合阅读图 car-key-revocation-responsibility（数字车钥匙分享：撤销时的分享、车辆与卡片）
+依据（业务事实以这些位置为准，本图只把它们放到同一视图）：
+- AR/story.md 2.1 术语「宽限」与易混项「卡片还在不等于还能用车」「72 小时与 48 小时是两种计时」
+- AR/story.md 4.2 规则表「撤销」行（D1）；5.2 生命周期；5.4 状态显示表；5.5 管理与撤销
+- AR/story.md 1.4 还没定的三件事（D5、D8）
+- 系统设计 SR §3 分享状态机后的说明：撤销中期间车辆侧已按车厂云下发的失效指令拒绝该钥匙，宽限只影响对方卡片的消失时间
+- spec/spec.md 撤销相关规则、`revokeKeySharing` 的 revoked / revoking 与 graceHours
+横向只表示先后，不按时间比例。不是任何一张 Mermaid 的等值副本；改动依据后重画并重做独立审查。
+]]></metadata>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#55607a"/></marker></defs>
+<rect x="0" y="0" width="1720" height="850" fill="#ffffff"/>
+<text x="20" y="30" font-size="17" font-weight="bold" fill="#1d2b4f">撤销时的分享、车辆与卡片：受理那一刻车辆就拒绝，卡片稍后收回</text>
+<text x="20" y="54" font-size="13" fill="#5a6684" text-anchor="start">三行是三样不同的东西，沿同一个撤销事件对齐；横向只表示先后，不按时间比例。</text>
+<rect x="20" y="252" width="1680" height="100" rx="10" fill="#f7f9fc" stroke="#d5dceb"/>
+<text x="32" y="274" font-size="13" font-weight="bold" fill="#5a6684">车云里的分享状态</text>
+<rect x="20" y="372" width="1680" height="120" rx="10" fill="#fdf5f4" stroke="#d5dceb"/>
+<text x="32" y="394" font-size="13" font-weight="bold" fill="#5a6684">车辆还认不认这把钥匙</text>
+<rect x="20" y="512" width="1680" height="160" rx="10" fill="#f6f8f2" stroke="#d5dceb"/>
+<text x="32" y="534" font-size="13" font-weight="bold" fill="#5a6684">接受方手机上的卡片</text>
+<line x1="640" y1="248" x2="640" y2="680" stroke="#c8554b" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="810" y="244" font-size="13" fill="#5a6684" text-anchor="middle" font-weight="bold">对方在线</text>
+<text x="1330" y="244" font-size="13" fill="#5a6684" text-anchor="middle" font-weight="bold">对方离线</text>
+<rect x="30" y="823" width="22" height="14" rx="4" fill="#e6f6ea" stroke="#3f9a5a"/>
+<text x="58" y="834" font-size="12" fill="#5a6684">撤销前</text>
+<rect x="148" y="823" width="22" height="14" rx="4" fill="#fff3c4" stroke="#b38f00"/>
+<text x="176" y="834" font-size="12" fill="#5a6684">过渡中</text>
+<rect x="266" y="823" width="22" height="14" rx="4" fill="#eef0f4" stroke="#7a8399"/>
+<text x="294" y="834" font-size="12" fill="#5a6684">已结束</text>
+<rect x="384" y="823" width="22" height="14" rx="4" fill="#fdecea" stroke="#c8554b"/>
+<text x="412" y="834" font-size="12" fill="#5a6684">车辆拒绝</text>
+<rect x="502" y="823" width="22" height="14" rx="4" fill="#f3ecfb" stroke="#8a63c2" stroke-dasharray="5 3"/>
+<text x="530" y="834" font-size="12" fill="#5a6684">未定（不承诺）</text>
+<rect x="620" y="823" width="22" height="14" rx="4" fill="#fffbe6" stroke="#d6b84a"/>
+<text x="648" y="834" font-size="12" fill="#5a6684">说明</text>
+<path d="M 1330.0,727.0 L 1330.0,672.0" fill="none" stroke="#55607a" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<path d="M 1186.5,566.0 L 1495.2,566.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 420.0,548.5 L 420.0,530.0 L 1100.0,530.0 L 1100.0,539.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 484.8,566.0 L 752.5,566.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 484.8,432.0 L 670.0,432.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 1135.8,302.0 L 1524.2,302.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 420.0,284.5 L 420.0,274.0 L 1100.0,274.0 L 1100.0,284.5" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 448.5,302.0 L 774.2,302.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 640.0,132.5 L 640.0,222.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 707.5,110.0 L 880.0,110.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 453.8,110.0 L 572.5,110.0" fill="none" stroke="#55607a" stroke-width="1.4" marker-end="url(#arrow)"/>
+<rect x="266.25" y="92.5" width="187.5" height="35" rx="6" fill="#eef4ff" stroke="#5b7fc7" stroke-width="1.5"/>
+<text x="360" y="115.0" font-size="14" fill="#1d2b4f" text-anchor="middle">车主对生效的分享点撤销</text>
+<polygon points="586.5,87.5 693.5,87.5 707.5,110 693.5,132.5 586.5,132.5 572.5,110" fill="#fff6e0" stroke="#c99a2e" stroke-width="1.5"/>
+<text x="640" y="115.0" font-size="14" fill="#4a3505" text-anchor="middle">车云受理了吗</text>
+<rect x="880.0" y="83.0" width="260.0" height="54" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="1010" y="105.5" font-size="14" fill="#4a3b00" text-anchor="middle">重拉列表，按车云返回的状态显示；</text>
+<text x="1010" y="124.5" font-size="14" fill="#4a3b00" text-anchor="middle">点了撤销不等于撤销完成</text>
+<rect x="232.5375" y="159.0" width="254.925" height="54" rx="18" fill="#f3ecfb" stroke="#8a63c2" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="360" y="181.5" font-size="14" fill="#3a1f60" text-anchor="middle">D8 未定：待接受的分享能否撤回；</text>
+<text x="360" y="200.5" font-size="14" fill="#3a1f60" text-anchor="middle">这里只画生效分享的撤销</text>
+<rect x="391.5" y="284.5" width="57.0" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="420" y="307.0" font-size="14" fill="#123d20" text-anchor="middle">生效</text>
+<rect x="774.25" y="284.5" width="71.5" height="35" rx="18" fill="#eef0f4" stroke="#7a8399" stroke-width="1.5"/>
+<text x="810" y="307.0" font-size="14" fill="#2a3142" text-anchor="middle">已撤销</text>
+<rect x="1064.25" y="284.5" width="71.5" height="35" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="1100" y="307.0" font-size="14" fill="#4a3b00" text-anchor="middle">撤销中</text>
+<rect x="1524.25" y="284.5" width="71.5" height="35" rx="18" fill="#eef0f4" stroke="#7a8399" stroke-width="1.5"/>
+<text x="1560" y="307.0" font-size="14" fill="#2a3142" text-anchor="middle">已撤销</text>
+<rect x="355.25" y="414.5" width="129.5" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="420" y="437.0" font-size="14" fill="#123d20" text-anchor="middle">车辆认这把钥匙</text>
+<rect x="670.0" y="405.0" width="1000" height="54" rx="18" fill="#fdecea" stroke="#c8554b" stroke-width="1.5"/>
+<text x="1170" y="427.5" font-size="14" fill="#561712" text-anchor="middle">自撤销受理起，车辆按车厂云的失效指令拒绝这把钥匙</text>
+<text x="1170" y="446.5" font-size="14" fill="#561712" text-anchor="middle">在线、离线都一样，不等 48 小时（D1 已定）</text>
+<rect x="355.25" y="548.5" width="129.5" height="35" rx="18" fill="#e6f6ea" stroke="#3f9a5a" stroke-width="1.5"/>
+<text x="420" y="571.0" font-size="14" fill="#123d20" text-anchor="middle">可用的钥匙卡片</text>
+<rect x="752.5" y="548.5" width="115.0" height="35" rx="18" fill="#eef0f4" stroke="#7a8399" stroke-width="1.5"/>
+<text x="810" y="571.0" font-size="14" fill="#2a3142" text-anchor="middle">卡片立即移除</text>
+<rect x="1013.5" y="539.0" width="173.0" height="54" rx="18" fill="#fff3c4" stroke="#b38f00" stroke-width="1.5"/>
+<text x="1100" y="561.5" font-size="14" fill="#4a3b00" text-anchor="middle">卡片还在：</text>
+<text x="1100" y="580.5" font-size="14" fill="#4a3b00" text-anchor="middle">不能据此认为还能用车</text>
+<rect x="1495.25" y="548.5" width="129.5" height="35" rx="18" fill="#eef0f4" stroke="#7a8399" stroke-width="1.5"/>
+<text x="1560" y="571.0" font-size="14" fill="#2a3142" text-anchor="middle">卡片收回、移除</text>
+<line x1="1100" y1="636" x2="1560" y2="636" stroke="#b38f00" stroke-width="2"/>
+<line x1="1100" y1="628" x2="1100" y2="644" stroke="#b38f00" stroke-width="2"/>
+<line x1="1560" y1="628" x2="1560" y2="644" stroke="#b38f00" stroke-width="2"/>
+<rect x="262.75" y="717.5" width="274.5" height="73" rx="6" fill="#fffbe6" stroke="#d6b84a" stroke-width="1.5"/>
+<text x="400" y="740.0" font-size="14" fill="#4a3b00" text-anchor="middle">72 小时是另一种计时：</text>
+<text x="400" y="759.0" font-size="14" fill="#4a3b00" text-anchor="middle">管待接受的分享多久没人添加就作废，</text>
+<text x="400" y="778.0" font-size="14" fill="#4a3b00" text-anchor="middle">不是撤销前要等的时间</text>
+<rect x="1217.0375" y="727.0" width="225.925" height="54" rx="18" fill="#f3ecfb" stroke="#8a63c2" stroke-width="1.5" stroke-dasharray="5 3"/>
+<text x="1330" y="749.5" font-size="14" fill="#3a1f60" text-anchor="middle">D5 未定：对方长期不联网时，</text>
+<text x="1330" y="768.5" font-size="14" fill="#3a1f60" text-anchor="middle">要不要请车厂强制下线</text>
+<rect x="726.7" y="81.0" width="126.5" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="790" y="96.5" font-size="12.5" fill="#34405c" text-anchor="middle">没受理或没得到回应</text>
+<rect x="589.7" y="229.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="640" y="244.5" font-size="12.5" fill="#34405c" text-anchor="middle">撤销被车云受理</text>
+<rect x="542.1" y="291.0" width="35.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="560" y="306.5" font-size="12.5" fill="#34405c" text-anchor="middle">在线</text>
+<rect x="942.1" y="263.0" width="35.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="960" y="278.5" font-size="12.5" fill="#34405c" text-anchor="middle">离线</text>
+<rect x="1252.5" y="291.0" width="155.0" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1330" y="306.5" font-size="12.5" fill="#34405c" text-anchor="middle">对方回网，或 48 小时到</text>
+<rect x="542.1" y="555.0" width="35.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="560" y="570.5" font-size="12.5" fill="#34405c" text-anchor="middle">在线</text>
+<rect x="942.1" y="519.0" width="35.9" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="960" y="534.5" font-size="12.5" fill="#34405c" text-anchor="middle">离线</text>
+<rect x="1279.7" y="545.0" width="100.6" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1330" y="560.5" font-size="12.5" fill="#34405c" text-anchor="middle">对方回网即收回</text>
+<rect x="1181.3" y="641.0" width="297.4" height="22" rx="4" fill="#ffffff" stroke="#e1e5ee"/>
+<text x="1330" y="656.5" font-size="12.5" fill="#34405c" text-anchor="middle">最长 48 小时：期限到也收回（只约束这张卡片）</text>
+</svg>
