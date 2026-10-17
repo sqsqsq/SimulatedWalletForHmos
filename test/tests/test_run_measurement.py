@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from ext_workspace import DEV_EXT
 
 REPO = Path(__file__).resolve().parents[2]
@@ -584,15 +584,31 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     ANALYSIS_ARCHIVE = "doc/spec/1.9.9/04-稳定性与性能分析/data/golden"
 
     @staticmethod
-    def archive_references(obj: Path) -> dict[Path, str]:
+    def archive_references(obj: Path) -> tuple[dict[Path, str], list[str]]:
         """对象自身引用的图：story 的 Markdown 图片（相对 story 所在目录），spec Visual Handoff 的
-        authoritative_refs（消费工程路径 `doc/features/<对象>/…` 映射到对象子目录）。目标 → 引用原文。"""
+        authoritative_refs（消费工程路径 `doc/features/<对象>/…` 映射到对象子目录）。
+
+        返回（合法引用的目标 → 引用原文，非法引用）。绝对路径、不带本对象前缀的 Visual Handoff 路径、
+        映射后逃出本对象子目录的引用都是非法引用，不进允许集合；文件碰巧存在也不算。"""
         import yaml  # noqa: PLC0415
+        home = obj.resolve()
         refs: dict[Path, str] = {}
+        bad: list[str] = []
+
+        def take(rel: str, src: str) -> None:
+            if PureWindowsPath(rel).drive or rel.startswith(("/", "\\")):
+                bad.append(f"{src}：不是相对路径")
+                return
+            target = (obj / rel).resolve()
+            if target.is_relative_to(home):
+                refs[target] = src
+            else:
+                bad.append(f"{src}：逃出了对象目录")
+
         story = obj / "story.md"
         if story.is_file():
             for target in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", story.read_text(encoding="utf-8")):
-                refs[(obj / target).resolve()] = f"story.md {target}"
+                take(target, f"story.md {target}")
         spec = obj / "spec.md"
         if spec.is_file():
             prefix = f"doc/features/{obj.name}/"
@@ -600,10 +616,12 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                 data = yaml.safe_load(block)
                 handoff = data.get("visual_handoff") if isinstance(data, dict) else None
                 for ref in (handoff or {}).get("authoritative_refs") or []:
-                    path = str(ref.get("path", ""))
-                    target = obj / path[len(prefix):] if path.startswith(prefix) else obj / "（对象外）" / path
-                    refs[target.resolve()] = f"spec.md visual_handoff {path}"
-        return refs
+                    path, src = str(ref.get("path", "")), f"spec.md visual_handoff {ref.get('path', '')}"
+                    if path.startswith(prefix):
+                        take(path[len(prefix):], src)
+                    else:
+                        bad.append(f"{src}：不是 {prefix} 下的消费工程路径")
+        return refs, bad
 
     @classmethod
     def analysis_reference(cls, p: Path, root: Path = REPO) -> bool:
@@ -618,7 +636,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         parts = p.relative_to(base).parts
         if len(parts) != 3 or parts[1] not in ("assets", "ux-reference"):
             return False
-        return p.resolve() in cls.archive_references(base / parts[0])
+        return p.resolve() in cls.archive_references(base / parts[0])[0]
 
     @classmethod
     def stray_evidence(cls, root: Path = REPO) -> list[str]:
@@ -628,9 +646,14 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
 
     @classmethod
     def broken_archive_references(cls, root: Path = REPO) -> list[str]:
+        """非法引用逐条报（同一张图另有合法引用也报），合法引用指不到文件的也报。"""
         base = root / cls.ANALYSIS_ARCHIVE
-        return [f"{obj.name}/{src}" for obj in sorted(base.iterdir()) if obj.is_dir()
-                for target, src in cls.archive_references(obj).items() if not target.is_file()] if base.is_dir() else []
+        out: list[str] = []
+        for obj in (sorted(o for o in base.iterdir() if o.is_dir()) if base.is_dir() else []):
+            refs, bad = cls.archive_references(obj)
+            out += [f"{obj.name}/{b}" for b in bad]
+            out += [f"{obj.name}/{src}：指不到文件" for target, src in refs.items() if not target.is_file()]
+        return out
 
     def test_run_evidence_lives_under_output(self):
         self.assertEqual([], self.stray_evidence(), "运行证据放到 output/story/ 下")
@@ -670,6 +693,14 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
             "多一张未引用的图": (lambda a: (a / obj / "ux-reference" / "多余.png").write_bytes(b"PNG"), "多余.png", None),
             "图放在对象子目录之外": (lambda a: (a / "散图.png").write_bytes(b"PNG"), "散图.png", None),
             "混进运行日志": (lambda a: (a / obj / "assets" / "run.log").write_text("x", encoding="utf-8"), "run.log", None),
+            "Visual Handoff 写绝对路径指向同对象真实存在的图": (
+                lambda a: edit(a / obj / "spec.md", f"doc/features/{obj}/ux-reference/{spec_ref.name}",
+                               (a / obj / "ux-reference" / spec_ref.name).as_posix()),
+                spec_ref.name, "不是 doc/features/"),
+            "合法前缀后用 ../ 逃出所属对象": (
+                lambda a: edit(a / obj / "spec.md", f"doc/features/{obj}/ux-reference/{spec_ref.name}",
+                               f"doc/features/{obj}/../{obj}-外/ux-reference/{spec_ref.name}"),
+                spec_ref.name, "逃出了对象目录"),
         }
         for name, (mutate, stray_name, broken_ref) in cases.items():
             with self.subTest(name):
@@ -677,6 +708,18 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                 self.assertTrue(any(s.endswith(stray_name) for s in stray), stray)
                 if broken_ref:
                     self.assertTrue(any(broken_ref in r for r in refs), refs)
+
+        with self.subTest("同一张图另有合法引用，非法引用照样报"):
+            owner = story_ref.parent.parent.name
+
+            def add_absolute(a: Path) -> None:
+                story = a / owner / "story.md"
+                absolute = (a / owner / "assets" / story_ref.name).as_posix()
+                story.write_text(story.read_text(encoding="utf-8") + f"\n![重复]({absolute})\n", encoding="utf-8")
+
+            stray, refs = broken(add_absolute)
+            self.assertFalse(any(s.endswith(story_ref.name) for s in stray), "合法引用的图被误报")
+            self.assertTrue(any("不是相对路径" in r and story_ref.name in r for r in refs), refs)
 
     def test_a_candidate_figure_is_recognised_only_where_candidates_are_registered(self):
         with tempfile.TemporaryDirectory() as d:
