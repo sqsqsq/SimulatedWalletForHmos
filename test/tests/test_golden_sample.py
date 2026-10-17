@@ -1,111 +1,74 @@
-"""已定稿金样正本与它的冻结输入：内容不被悄悄改动。
+"""两组金样正本的文件身份、引用与图源：内容不被悄悄改动，引用都落得到地方。
 
-金样是给人对照效果用的正本，替换要经用户审定（候选在 doc/plan/1.9.9/金样候选/）；
-在新正本审定之前，旧正本与输入夹具原样保留。判据不以「拦不拦金样」定对错——
-判据的对错按它的真实依据与中性正反例判（结构、图源承接、人工区等回归在中性夹具里）。
-这份测试守金样正本与构造场景所需的同轮材料内容没变：指纹按 LF 归一后比，行尾不算改动，另核形态数。
-正本的文件身份只在这里登记一处；spec 门禁对上游承接、知识登记与埋点结构的正反例在
-test_review_closure.py、test_knowledge_forms.py、test_knowledge_use.py、test_indicator_reporting.py。
+金样是用户审定过的目标效果（2026-10-17 认可，记录在 doc/plan/1.9.9/2026-10-17-R3页面交互金样修订/06）：
+`test/golden/auto-topup/`（止于 Spec）与 `test/golden/car-key-sharing/`（止于 Plan）。它给人对照效果，
+不当判据的机器否决锚——判据对错按真实依据与中性正反例判。替换或实质修改要重新经用户审定，
+机械路径调整也要在交回里列出前后差异再改这里的指纹。
+
+正本的文件身份只在这里登记一处（`REGISTRY`），单正本检查（test_run_measurement）读同一份登记。
+指纹取 sha256 前 16 位：Markdown、Mermaid 源与 SVG 按 LF 归一后算（检出时的行尾不算改动），图片按字节算。
 """
 from __future__ import annotations
 
 import hashlib
+import re
+import shutil
 import sys
+import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = REPO_ROOT / "test" / "golden"
-INPUT_FIXTURE = REPO_ROOT / "test" / "fixtures" / "golden" / "AR90004"
-GOLDEN_STORY = GOLDEN / "story-金样-AR90004.md"
 
-#: 定稿时点 2026-08-30（用户逐轮批注后认可）；同日二次修订：材料清单每行带原文链接
-#: ——原文链接是仓内路径唯一允许出现的位置，读者据它把那份材料找出来。sha256 前 16 位。
-#: 金样正文与归档图片只在 test/golden 维护；原始材料夹具保留自己的来源图片。
-GOLDEN_FINGERPRINTS = {
-    # 2026-09-27 附录·改动边界的机器区不再投 Scope 的切分理由（plan/1.9.7/2026-09-25-整体设计/10 §3.4），
-    # 只替换那一个机器区，作者写的部分不动。
-    # 2026-09-26 附录按合同改成「定位句 + 机器区 + 作者说明」，机器区由输入夹具投影
-    # （plan/1.9.7/2026-09-25-整体设计/06 §3.4）；埋点改按指标组织，8.6 末段与灰度观察随之按两个指标写。
-    # 2026-09-23 附录改为登记处（plan/1.9.5/2026-09-23-第三轮结果与表达正向设计/01 §2.1）：
-    # 两份金样的附录合为四节，A 技术约定下分接口 / 数据 / 配置 / 埋点四个 H4，埋点按指标分 H5；正文未动。
-    # 2026-09-07 用户裁定：章首那张时序图补两行来源标记——它同时承接
-    # SR §3 的端到端时序与 spec §5.1 的流程图（改画成了时序），
-    # 正是「重复来源合并、一个围栏多行标记」的形态。
-    # 2026-09-05 步骤 16 S2：形态收紧后金样跟上——异常章拆 7.1/7.2 两节、
-    # 9.3 回退设计改三标签段。正文一个字没删，只是把已经分好的两张表与三件事摆明。
-    # 2026-09-27 步骤 9（U55，用户同日确认）：附录改为技术契约（端云接口、数据存储、配置项、依赖变更）、规约、埋点、
-    # 改动边界、材料清单平列，机器区按当前真源重投；只改标题层级、编号与节名。
-    "story-金样-AR90004.md": "eb78b66b0f7e97a5",
-    "assets/image1.png": "7a0b672988d707e2",
-    "assets/image2.png": "da8a096f4a859ddb",
-    # 2026-09-26 AR90006 按 0903 澄清会结论与答案卷更新（签约更新接口、AC-R1 与开关口径、两件待定），
-    # 埋点标题只写指标名，材料清单按归档件的相对位置并补澄清会记录；说明里的来源与编号事实随之修正。
-    # 2026-09-11 A段回退保留：AR90006 Story效果金样、编写说明与归档图片，
-    # 供维护侧评价参照；不自动获得AR90004金样的判据锚地位。
-    # 2026-09-27 步骤 9（U55，用户同日确认）：附录节名与层级按平列形态重排，内容未动。
-    "story-金样-AR90006.md": "216e138ed4667f8d",
-    # 2026-09-25 过程件目录 design 改名 plan：说明里的历史分析链接改到 plan/1.9.1/ 下的实际位置，正文未动。
-    # 2026-09-28 方案目录迁到仓根 doc/plan（1.9.8 P3 目录归属纠正）：同一条链接改到 doc/plan/1.9.1/，正文未动。
-    "story-金样-AR90006-说明.md": "27c234bb7b3a8a26",
-    # 2026-09-26 按现行载体重立（三态人工区、议题形态随状态、通用决策类别、D 编号）。
-    # 2026-10-16 从 test_review_golden.py 移入本登记：渲染测试改用中性登记表，正本身份只在这里登记一处。
-    "review-金样-AR90006.md": "c2055c1dcbca18ad",
-    "assets/AR90006/detail-entry.png": "328419dced4a2be5",
-    "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
-    "assets/AR90006/manage-page.png": "24fbb597b158d849",
-    "assets/AR90006/signup-page.png": "6c8da20cbbc6fdd4",
-    "assets/AR90006/verify-page.png": "c8b62984ec0018e2",
+#: 审定身份（05 最终审定清单逐文件 SHA256 的前 16 位）。两份 README 的 test/cases 链接随迁移
+#: 从 `../../../../../test/cases/` 改为 `../../cases/`，只改这一处路径，指纹随之重算。
+REGISTRY = {
+    "auto-topup/AR/figures/auto-topup-recovery-boundary.svg": "c49a33b258870a63",
+    "auto-topup/AR/review.md": "b5a414978bcb812a",
+    "auto-topup/AR/story-src/figures/fig-22c28d5a.mmd": "3716cccb9c98a565",
+    "auto-topup/AR/story-src/figures/fig-55cee031.mmd": "ef47d929de5321eb",
+    "auto-topup/AR/story-src/figures/fig-e2548d39.mmd": "42b3ff445246c298",
+    "auto-topup/AR/story.md": "ef66e5c49f6568ec",
+    "auto-topup/README.md": "384a6d4981531eea",
+    "auto-topup/spec/spec.md": "c79aadc3bdba2c2a",
+    "auto-topup/ux-reference/detail-entry.png": "328419dced4a2be5",
+    "auto-topup/ux-reference/disabled-state.png": "adeefcff56af7d05",
+    "auto-topup/ux-reference/manage-page.png": "24fbb597b158d849",
+    "auto-topup/ux-reference/signup-page.png": "6c8da20cbbc6fdd4",
+    "auto-topup/ux-reference/verify-page.png": "c8b62984ec0018e2",
+    "car-key-sharing/AR/figures/car-key-revocation-responsibility.svg": "ab3ff231526400cd",
+    "car-key-sharing/AR/review.md": "4d2e3274a521d368",
+    "car-key-sharing/AR/story-src/figures/fig-0169f210.mmd": "04a0b4e034a12572",
+    "car-key-sharing/AR/story-src/figures/fig-b533fea2.mmd": "61b471f393a30158",
+    "car-key-sharing/AR/story-src/figures/fig-d087d97f.mmd": "0b4e7f9fa87f45bc",
+    "car-key-sharing/AR/story.md": "171b6e7dd19fe063",
+    "car-key-sharing/plan/plan.md": "383c599fda4993e4",
+    "car-key-sharing/README.md": "aa750fa51d7faf36",
+    "car-key-sharing/spec/spec.md": "a4850d055370a378",
+    "car-key-sharing/ux-reference/accept-page.png": "2508945f90164274",
+    "car-key-sharing/ux-reference/key-card-detail.png": "87d832fadbce16ad",
+    "car-key-sharing/ux-reference/share-manage.png": "6353c699bfb9ac48",
+    "car-key-sharing/ux-reference/share-setup.png": "15056c761f98905d",
+}
+#: 正本目录里除登记文件外只有入口说明
+ENTRY = "README.md"
+
+CASES = ("auto-topup", "car-key-sharing")
+#: 每组的正文：情景终点决定有没有 plan
+DOCUMENTS = {
+    "auto-topup": ("AR/story.md", "AR/review.md", "spec/spec.md"),
+    "car-key-sharing": ("AR/story.md", "AR/review.md", "spec/spec.md", "plan/plan.md"),
+}
+#: 每组登记的综合阅读图：不与某一张 .mmd 等值，metadata 写依据位置
+COMPOSITE = {
+    "auto-topup": ("auto-topup-recovery-boundary",),
+    "car-key-sharing": ("car-key-revocation-responsibility",),
 }
 
-INPUT_FINGERPRINTS = {
-    # 2026-09-26 夹具补成可由现行机制检查的需求工作区（06 §3.5）：spec 9.1.4 按指标组织、
-    # 9.2/9.3 由新增的知识判断投影；补写作设计、决策登记与界面原型原件。
-    "AR/design.md": "ed2119f15893b568",
-    "AR/story-src/decisions.json": "36d7a7c82f3822a6",
-    "AR/story-src/story-template.md": "e4b02703194c89bd",
-    "inbox/紧急挂失界面原型说明.docx": "5fa860eb01b25972",
-    "RR/prd.md": "ff0013420c4c0741",
-    "SR/design.md": "d9ccbd10489f89d1",
-    "spec/knowledge-use.yaml": "073dcaed046304a7",
-    # 2026-09-27 步骤 9（U55）：扩展章平列——埋点提为 9.4、依赖变更为 9.1.4，规约与设计模式两节改名。
-    # 同日步骤 9 返修 R3：「规约」生成区的落点前缀写名字所在的节（技术契约 / 埋点）。
-    "spec/spec.md": "4a2b81e36d35c45f",
-    # 2026-10-16 指纹改按 LF 归一后计：原登记 b7d62b1835408302 是同一内容的 CRLF 字节（现文件转 CRLF 后
-    # 逐字节复算即得该值），内容自 d1ecf903 入库未变，仓库按 LF 存储。
-    "ux-reference/README.md": "18602db64f0fd154",
-    "assets/紧急挂失界面原型说明/image1.png": "7a0b672988d707e2",
-    "assets/紧急挂失界面原型说明/image2.png": "da8a096f4a859ddb",
-}
-
-EXPECTED_CANONICAL_FILES = {
-    "README.md",
-    "story-金样-AR90004.md",
-    "review-金样-AR90006.md",
-    "story-金样-AR90006.md",
-    "story-金样-AR90006-说明.md",
-    "assets/image1.png",
-    "assets/image2.png",
-    "assets/AR90006/detail-entry.png",
-    "assets/AR90006/disabled-state.png",
-    "assets/AR90006/manage-page.png",
-    "assets/AR90006/signup-page.png",
-    "assets/AR90006/verify-page.png",
-    # 设计者的候选样稿（2026-09-22，上报的多流程、多指标组织方式）：只供效果审视，
-    # 不是定稿金样，不进形态比对；逐个登记，不放行整个目录。
-    "bank-card-opening-reporting-candidate/README.md",
-    "bank-card-opening-reporting-candidate/spec.md",
-    "bank-card-opening-reporting-candidate/story.md",
-    "bank-card-opening-reporting-candidate/plan.md",
-}
-
-#: 定稿时点的形态。验收拿新产物与它并排比：任一项显著低于它就是缩水。
-SHAPE = {"lines": 476, "chapters": 10, "subsections": 35,
-         "table_rows": 174, "diagrams": 1, "images": 2}
-
-
-#: 按文本比的后缀：行尾在不同检出里可能是 CRLF，那不是内容改动
-TEXT_SUFFIXES = {".md", ".json", ".yaml", ".yml", ".txt"}
+TEXT_SUFFIXES = {".md", ".mmd", ".svg"}
+SVG_NS = "{http://www.w3.org/2000/svg}"
 
 
 def digest(path: Path) -> str:
@@ -115,52 +78,269 @@ def digest(path: Path) -> str:
     return hashlib.sha256(data).hexdigest()[:16]
 
 
-class GoldenIsFrozen(unittest.TestCase):
-    def test_every_file_matches_its_fingerprint(self) -> None:
-        for root, fingerprints in ((GOLDEN, GOLDEN_FINGERPRINTS),
-                                   (INPUT_FIXTURE, INPUT_FINGERPRINTS)):
-            for rel, want in fingerprints.items():
-                path = root / rel
-                with self.subTest(file=path.relative_to(REPO_ROOT)):
-                    self.assertTrue(path.is_file(), f"金样或输入夹具少了 {path}")
-                    self.assertEqual(
-                        want, digest(path),
-                        f"{path} 变了——金样正本或冻结输入只有维护者能改，改了要同步指纹")
+def lf(path: Path) -> str:
+    return path.read_bytes().decode("utf-8").replace("\r\n", "\n")
 
-    def test_no_duplicate_golden_outputs_in_fixture(self) -> None:
-        for rel in ("AR/story.md", "AR/review.md", "AR/assets/image1.png", "AR/assets/image2.png"):
-            with self.subTest(file=rel):
-                path = INPUT_FIXTURE / rel
-                self.assertFalse(path.exists(), f"{path} 重复保存金样输出；测试须直接读取 test/golden")
 
-    def test_input_fixture_has_only_frozen_inputs(self) -> None:
-        """输入夹具只保存构造场景需要的材料，不保存 story/review 金样副本。"""
-        actual = {p.relative_to(INPUT_FIXTURE).as_posix()
-                  for p in INPUT_FIXTURE.rglob("*") if p.is_file()}
-        self.assertEqual(set(INPUT_FINGERPRINTS), actual)
+def registry_problems(root: Path) -> list[str]:
+    """登记的文件在不在、指纹对不对，目录里有没有未登记的文件。"""
+    problems = []
+    for rel, want in REGISTRY.items():
+        path = root / rel
+        if not path.is_file():
+            problems.append(f"{rel}：登记的正本文件不在")
+        elif digest(path) != want:
+            problems.append(f"{rel}：内容与审定身份不同（登记 {want}，现在 {digest(path)}）")
+    actual = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+    for rel in sorted(actual - set(REGISTRY) - {ENTRY}):
+        problems.append(f"{rel}：正本目录里有未登记的文件")
+    return problems
 
-    def test_canonical_golden_files_exist(self) -> None:
-        for rel in GOLDEN_FINGERPRINTS:
-            with self.subTest(file=rel):
-                path = GOLDEN / rel
-                self.assertTrue(path.is_file(), f"金样少了 {rel}")
 
-    def test_canonical_directory_has_no_unregistered_files(self) -> None:
-        actual = {p.relative_to(GOLDEN).as_posix()
-                  for p in GOLDEN.rglob("*") if p.is_file()}
-        self.assertEqual(EXPECTED_CANONICAL_FILES, actual)
+def source_mapping(case_root: Path) -> list[dict]:
+    """README 来源对照表：Story 里的产品形态链接 → 仓内权威输入。「同上一行」沿用上一行的输入。"""
+    rows, previous = [], None
+    for line in lf(case_root / "README.md").splitlines():
+        m = re.match(r"\s*\| `([^`]+)` \| [^|]+ \| ([^|]+) \| ([^|]+) \| [^|]+ \|", line)
+        if not m:
+            continue
+        target = re.search(r"\]\(([^)]+)\)", m.group(2))
+        written = re.search(r"`([0-9a-f]{16})`", m.group(3))
+        rows.append({"link": m.group(1), "target": target.group(1) if target else previous,
+                     "own_target": bool(target), "digest": written.group(1) if written else None})
+        if target:
+            previous = target.group(1)
+    return rows
 
-    def test_shape_is_unchanged(self) -> None:
-        lines = GOLDEN_STORY.read_text(encoding="utf-8").split("\n")
-        actual = {
-            "lines": len(lines) - (1 if lines and lines[-1] == "" else 0),
-            "chapters": sum(1 for x in lines if x.startswith("## ")),
-            "subsections": sum(1 for x in lines if x.startswith("### ")),
-            "table_rows": sum(1 for x in lines if x.startswith("|")),
-            "diagrams": sum(1 for x in lines if x.startswith("```mermaid")),
-            "images": sum(x.count("![") for x in lines),
-        }
-        self.assertEqual(SHAPE, actual)
+
+def link_problems(case_root: Path) -> list[str]:
+    """正文里的链接：本目录里能解析的直接核存在；产品形态的材料链接逐条要在 README 对照里有一行，
+    对照的权威输入要存在、写的摘要与实际文件相符；对照里的行都要真被正文用到。"""
+    case = case_root.name
+    rows = {r["link"]: r for r in source_mapping(case_root)}
+    used, problems = set(), []
+    for rel in DOCUMENTS[case]:
+        doc = case_root / rel
+        for link in re.findall(r"\]\(([^)\s]+)\)", lf(doc)):
+            if link.startswith(("http://", "https://", "#")):
+                continue
+            if (doc.parent / link).exists():
+                continue
+            if link not in rows:
+                problems.append(f"{case}/{rel}：链接 {link} 在正本目录里点不开，README 来源对照也没有这一行")
+                continue
+            used.add(link)
+    for link, row in rows.items():
+        target = case_root / row["target"] if row["target"] else None
+        if target is None or not target.is_file():
+            problems.append(f"{case}/README.md：对照 {link} 的权威输入 {row['target']} 不存在")
+        elif row["own_target"] and row["digest"] != hashlib.sha256(target.read_bytes()).hexdigest()[:16]:
+            problems.append(f"{case}/README.md：对照 {link} 写的摘要 {row['digest']} 与权威输入不符")
+        if link not in used:
+            problems.append(f"{case}/README.md：对照 {link} 在正文里没有用到")
+    return problems
+
+
+def figure_problems(case_root: Path) -> list[str]:
+    """Story 的管理块都有同名 .mmd 且逐字一致、没有多余图源；登记的综合阅读图存在、是合法 SVG、
+    metadata 写了依据、Story 链到它；Story 链到的 SVG 都登记过。普通 Mermaid 不要求 SVG。"""
+    case = case_root.name
+    story = lf(case_root / "AR" / "story.md")
+    problems = []
+    blocks = re.findall(r"<!-- story-figure:([\w-]+):begin -->\n```mermaid\n(.*?)```\n"
+                        r"<!-- story-figure:\1:end -->", story, re.S)
+    outside = re.sub(r"<!-- story-figure:([\w-]+):begin -->.*?<!-- story-figure:\1:end -->", "", story, flags=re.S)
+    if "```mermaid" in outside:
+        problems.append(f"{case}：Story 里有没带管理标记的 Mermaid 图")
+    sources = case_root / "AR" / "story-src" / "figures"
+    for fid, body in blocks:
+        mmd = sources / f"{fid}.mmd"
+        if not mmd.is_file():
+            problems.append(f"{case}/{fid}：图源 AR/story-src/figures/{fid}.mmd 不在")
+        elif body.rstrip("\n") != lf(mmd).rstrip("\n"):
+            problems.append(f"{case}/{fid}：Story 里的 Mermaid 与图源不同")
+    for mmd in sorted(sources.glob("*.mmd")):
+        if mmd.stem not in {fid for fid, _ in blocks}:
+            problems.append(f"{case}：图源 {mmd.name} 在 Story 里没有对应的图")
+    links = set(re.findall(r"\]\(figures/([\w-]+)\.svg\)", story))
+    for sid in COMPOSITE[case]:
+        svg = case_root / "AR" / "figures" / f"{sid}.svg"
+        if not svg.is_file():
+            problems.append(f"{case}：登记的综合阅读图 AR/figures/{sid}.svg 不在")
+            continue
+        try:
+            el = ET.parse(svg).getroot()
+        except ET.ParseError as exc:
+            problems.append(f"{case}/{sid}.svg：不是合法 XML（{exc}）")
+            continue
+        if el.tag != f"{SVG_NS}svg" or len((el.get("viewBox") or "").split()) != 4:
+            problems.append(f"{case}/{sid}.svg：不是带 viewBox 的 SVG")
+        meta = next((e for e in el.iter() if e.tag.endswith("metadata")), None)
+        if meta is None or not "".join(meta.itertext()).strip():
+            problems.append(f"{case}/{sid}.svg：metadata 里没有依据说明")
+        if sid not in links:
+            problems.append(f"{case}/{sid}.svg：Story 里没有链到它")
+    for svg in sorted((case_root / "AR" / "figures").glob("*.svg")):
+        if svg.stem not in COMPOSITE[case]:
+            problems.append(f"{case}：AR/figures/{svg.name} 不是登记的综合阅读图")
+    for sid in sorted(links - set(COMPOSITE[case])):
+        problems.append(f"{case}：Story 链到的 figures/{sid}.svg 没有登记")
+    return problems
+
+
+def cross_problems(case_root: Path) -> list[str]:
+    """正文互相对得上：Story 引用的 Spec 验收编号在 Spec 里，Spec 治理表引用的决策在 Review 里。"""
+    case = case_root.name
+    story, spec = lf(case_root / "AR" / "story.md"), lf(case_root / "spec" / "spec.md")
+    review = lf(case_root / "AR" / "review.md")
+    problems = []
+    defined = set(re.findall(r"\*\*(AC-[\w]+)\*\*", spec))
+    cited = set(re.findall(r"AC-[\w]+", " ".join(re.findall(r"Spec (AC-[\w]+(?:、AC-[\w]+)*)", story))))
+    for ac in sorted(cited - defined):
+        problems.append(f"{case}：Story 引用 Spec {ac}，Spec 里没有")
+    governed = set(re.findall(r"《决策与评审记录》(D\d+)", spec))
+    decided = set(re.findall(r"<!-- decision: (D\d+) -->", review))
+    for d in sorted(governed - decided):
+        problems.append(f"{case}：Spec 治理表引用的 {d} 不在 Review 里")
+    return problems
+
+
+class TheApprovedSetIsIntact(unittest.TestCase):
+    def test_every_registered_file_matches_its_approved_identity(self) -> None:
+        self.assertEqual([], registry_problems(GOLDEN))
+
+    def test_each_case_has_its_documents(self) -> None:
+        for case, docs in DOCUMENTS.items():
+            for rel in docs:
+                with self.subTest(file=f"{case}/{rel}"):
+                    self.assertIn(f"{case}/{rel}", REGISTRY)
+
+
+class TheRegistryCheckNamesWhatChanged(unittest.TestCase):
+    """在临时副本上改，正式正本不动；每种改动报出那一个路径。"""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "golden"
+        shutil.copytree(GOLDEN, self.root)
+
+    def assert_named(self, rel: str) -> None:
+        problems = registry_problems(self.root)
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn(rel, problems[0])
+
+    def test_a_missing_file(self) -> None:
+        (self.root / "car-key-sharing/plan/plan.md").unlink()
+        self.assert_named("car-key-sharing/plan/plan.md")
+
+    def test_an_edited_document(self) -> None:
+        story = self.root / "auto-topup/AR/story.md"
+        story.write_bytes(story.read_bytes().replace("单日充值上限".encode(), "单日充值额度".encode(), 1))
+        self.assert_named("auto-topup/AR/story.md")
+
+    def test_an_edited_image(self) -> None:
+        png = self.root / "car-key-sharing/ux-reference/share-setup.png"
+        png.write_bytes(png.read_bytes() + b"\0")
+        self.assert_named("car-key-sharing/ux-reference/share-setup.png")
+
+    def test_an_unregistered_file(self) -> None:
+        (self.root / "auto-topup/AR/story-副本.md").write_bytes(b"# copy\n")
+        self.assert_named("auto-topup/AR/story-副本.md")
+
+    def test_line_endings_are_not_a_change(self) -> None:
+        spec = self.root / "auto-topup/spec/spec.md"
+        spec.write_bytes(spec.read_bytes().replace(b"\n", b"\r\n"))
+        self.assertEqual([], registry_problems(self.root))
+
+
+class LinksAndFiguresResolve(unittest.TestCase):
+    def test_the_approved_set_has_no_reference_problems(self) -> None:
+        for case in CASES:
+            with self.subTest(case=case):
+                root = GOLDEN / case
+                self.assertEqual([], link_problems(root) + figure_problems(root) + cross_problems(root))
+
+    def test_every_case_maps_its_product_links(self) -> None:
+        for case in CASES:
+            with self.subTest(case=case):
+                self.assertTrue(source_mapping(GOLDEN / case), "README 没有来源对照")
+
+
+class TheReferenceChecksNameWhatBroke(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "golden"
+        shutil.copytree(GOLDEN, self.root)
+        # README 的权威输入在 ../../cases：副本旁边放同样的相对位置
+        shutil.copytree(REPO_ROOT / "test" / "cases", Path(tmp.name) / "cases")
+
+    def edit(self, rel: str, old: str, new: str) -> None:
+        path = self.root / rel
+        text = path.read_bytes().decode("utf-8")
+        self.assertIn(old, text)
+        path.write_bytes(text.replace(old, new, 1).encode("utf-8"))
+
+    def test_the_copy_is_clean(self) -> None:
+        for case in CASES:
+            root = self.root / case
+            self.assertEqual([], link_problems(root) + figure_problems(root) + cross_problems(root))
+
+    def test_a_dropped_mapping_row_names_the_link(self) -> None:
+        readme = self.root / "auto-topup/README.md"
+        lines = readme.read_bytes().decode("utf-8").split("\n")
+        readme.write_bytes("\n".join(l for l in lines if not l.lstrip().startswith("| `../RR/prd.md`"))
+                           .encode("utf-8"))
+        problems = link_problems(self.root / "auto-topup")
+        self.assertTrue(problems)
+        self.assertTrue(all("../RR/prd.md" in p for p in problems), problems)
+
+    def test_a_broken_authoritative_input_is_named(self) -> None:
+        (self.root.parent / "cases/car-key-sharing/workspace/SR/design.md").unlink()
+        problems = link_problems(self.root / "car-key-sharing")
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("workspace/SR/design.md", problems[0])
+
+    def test_a_wrong_digest_is_named(self) -> None:
+        self.edit("auto-topup/README.md", "`e90230c22fec374c`", "`0000000000000000`")
+        problems = link_problems(self.root / "auto-topup")
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("../RR/prd.md", problems[0])
+
+    def test_a_missing_reference_image_is_named(self) -> None:
+        (self.root / "auto-topup/ux-reference/manage-page.png").unlink()
+        problems = link_problems(self.root / "auto-topup")
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("manage-page.png", problems[0])
+
+    def test_a_drifted_figure_source_is_named(self) -> None:
+        mmd = self.root / "car-key-sharing/AR/story-src/figures/fig-b533fea2.mmd"
+        mmd.write_bytes(mmd.read_bytes() + b"    X --> Y\n")
+        self.assertEqual(["car-key-sharing/fig-b533fea2：Story 里的 Mermaid 与图源不同"],
+                         figure_problems(self.root / "car-key-sharing"))
+
+    def test_an_extra_reading_figure_is_named(self) -> None:
+        shutil.copy(self.root / "auto-topup/AR/figures/auto-topup-recovery-boundary.svg",
+                    self.root / "auto-topup/AR/figures/extra.svg")
+        self.assertEqual(["auto-topup：AR/figures/extra.svg 不是登记的综合阅读图"],
+                         figure_problems(self.root / "auto-topup"))
+
+    def test_a_missing_composite_figure_is_named(self) -> None:
+        (self.root / "car-key-sharing/AR/figures/car-key-revocation-responsibility.svg").unlink()
+        problems = link_problems(self.root / "car-key-sharing") + figure_problems(self.root / "car-key-sharing")
+        self.assertTrue(problems)
+        self.assertTrue(all("car-key-revocation-responsibility" in p for p in problems), problems)
+
+    def test_a_plain_mermaid_needs_no_svg(self) -> None:
+        story = lf(self.root / "auto-topup/AR/story.md")
+        self.assertNotIn("figures/fig-", story)
+        self.assertEqual([], figure_problems(self.root / "auto-topup"))
+
+    def test_an_unknown_acceptance_reference_is_named(self) -> None:
+        self.edit("auto-topup/AR/story.md", "（Spec AC-1b）", "（Spec AC-1z）")
+        self.assertEqual(["auto-topup：Story 引用 Spec AC-1z，Spec 里没有"],
+                         cross_problems(self.root / "auto-topup"))
 
 
 if __name__ == "__main__":

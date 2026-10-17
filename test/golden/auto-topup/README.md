@@ -37,12 +37,12 @@
 
   | Story 中的链接 | 性质 | 仓内权威输入 | 版本或摘要 | 派生方式 |
   |---|---|---|---|---|
-  | `../RR/prd.md` | 原件：需求系统单据快照，取材时原样拉取 | [system/RR90006/prd.md](../../../../../test/cases/auto-topup/system/RR90006/prd.md) | RR90006 v1.0，`e90230c22fec374c` | —— |
-  | `../SR/design.md` | 原件：需求系统单据快照 | [system/SR90006/design.md](../../../../../test/cases/auto-topup/system/SR90006/design.md) | `d8a0e00cddf1ca0e` | —— |
-  | `design.md` | 原件：需求系统 AR90006 的上游预填版 | [system/AR90006/design.md](../../../../../test/cases/auto-topup/system/AR90006/design.md) | `e3c9a0c6933f8917` | —— |
-  | `story-src/meetings/交通卡澄清会记录-0903/23fdc64d/original.docx` | 原件：会议记录在需求目录里的留存副本 | [supplements/交通卡澄清会记录-0903.docx](../../../../../test/cases/auto-topup/supplements/交通卡澄清会记录-0903.docx) | `23fdc64db20cedfa` | —— |
+  | `../RR/prd.md` | 原件：需求系统单据快照，取材时原样拉取 | [system/RR90006/prd.md](../../cases/auto-topup/system/RR90006/prd.md) | RR90006 v1.0，`e90230c22fec374c` | —— |
+  | `../SR/design.md` | 原件：需求系统单据快照 | [system/SR90006/design.md](../../cases/auto-topup/system/SR90006/design.md) | `d8a0e00cddf1ca0e` | —— |
+  | `design.md` | 原件：需求系统 AR90006 的上游预填版 | [system/AR90006/design.md](../../cases/auto-topup/system/AR90006/design.md) | `e3c9a0c6933f8917` | —— |
+  | `story-src/meetings/交通卡澄清会记录-0903/23fdc64d/original.docx` | 原件：会议记录在需求目录里的留存副本 | [supplements/交通卡澄清会记录-0903.docx](../../cases/auto-topup/supplements/交通卡澄清会记录-0903.docx) | `23fdc64db20cedfa` | —— |
   | `story-src/meetings/交通卡澄清会记录-0903/23fdc64d/raw.md` | 导入阅读稿 | 同上一行的会议原件 | 正文 `b14a6e304ac548c8` | 补料交齐后 `import_sources.py --feature AR90006` 按会议分类导入：原件按摘要前 8 位留存，正文转成 raw.md，`source.json` 记原件与正文摘要 |
-  | `../inbox/交通卡自动充值.docx` | 原件：补料，只取图 | [supplements/交通卡自动充值.docx](../../../../../test/cases/auto-topup/supplements/交通卡自动充值.docx) | v0.4，`3fe17f794ac2120e` | 同一导入按只取图分类抽出十张图到 `assets/`，五张登记进 `ux-reference/`，另五张登记为不用 |
+  | `../inbox/交通卡自动充值.docx` | 原件：补料，只取图 | [supplements/交通卡自动充值.docx](../../cases/auto-topup/supplements/交通卡自动充值.docx) | v0.4，`3fe17f794ac2120e` | 同一导入按只取图分类抽出十张图到 `assets/`，五张登记进 `ux-reference/`，另五张登记为不用 |
 
   阅读稿的摘要来自 2026-10-16 在临时模板里按真实导入链重跑的结果（证据见本轮交回）；原件改了，阅读稿摘要随之变化，要重跑导入核对。
 - **图源与综合阅读图**：Story 的三张 Mermaid 带 `story-figure` 管理标记，图义真源是 `AR/story-src/figures/<ID>.mmd`，正文块与源逐字一致，正本里保持 Mermaid 形态。`AR/figures/auto-topup-recovery-boundary.svg` 是 7.2 的综合阅读图：把钱包本地、交通卡云、支付部件各自持有的事实与四种恢复结果对齐，依据 Story 7.2 与第 3 章、spec 5.3 与 9.1.2；它不是哪一张 Mermaid 的等值副本，`<metadata>` 写依据位置，业务事实以 Spec 与正文为准。

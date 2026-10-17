@@ -562,3 +562,4 @@ python test/scripts/run_review_qualification.py --config <当前配置> --out <�
 金样入口为 [golden/README.md](golden/README.md)。使用前核用户认可的用途、版本与尚未确定的业务口径，区分效果对照与已冻结业务结论；
 金样不作判据的机器否决锚，判据对错按真实依据与中性正反例判。对比金样看需求是否完整准确、关系是否清楚、形式是否适合、责任与交付是否可判断，不要求同名小节、同字数或同句式；
 正文里有依据的新增解释不因模板没列而判错。金样与维护分析留在评价域，不进入被测 Case。
+当前正本是 `golden/auto-topup/`（止于 Spec）与 `golden/car-key-sharing/`（止于 Plan），只在这一处维护；文件身份、引用与图源由 `test_golden_sample.py` 核，第二份副本由 `test_run_measurement.py` 核。

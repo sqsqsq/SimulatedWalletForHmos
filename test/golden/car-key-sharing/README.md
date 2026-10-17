@@ -45,11 +45,11 @@
 
   | Story 中的链接 | 性质 | 仓内权威输入 | 版本或摘要 | 派生方式 |
   |---|---|---|---|---|
-  | `../inbox/数字车钥匙分享.docx` | 原件：补料，产品需求说明 | [supplements/数字车钥匙分享.docx](../../../../../test/cases/car-key-sharing/supplements/数字车钥匙分享.docx) | v0.4，`2a5b166b8b3e6ab4` | —— |
+  | `../inbox/数字车钥匙分享.docx` | 原件：补料，产品需求说明 | [supplements/数字车钥匙分享.docx](../../cases/car-key-sharing/supplements/数字车钥匙分享.docx) | v0.4，`2a5b166b8b3e6ab4` | —— |
   | `../RR/prd.md` | 导入阅读稿 | 同上一行的产品原件 | `08191c0b44384c12` | 补料交齐后 `import_sources.py --feature ISSUE-206` 按产品需求分类导入：docx 转成正文，图抽到 `assets/` |
-  | `../SR/design.md` | 原件：车云同事放进需求目录的系统设计 | [workspace/SR/design.md](../../../../../test/cases/car-key-sharing/workspace/SR/design.md) | `68ff916dff8a6b00` | —— |
-  | `design.md` | 运行中写出的开发需求提取件；Case 与金样都不归档这份文件 | [workspace/AR/detail.json](../../../../../test/cases/car-key-sharing/workspace/AR/detail.json)（本地问题单登记） | `cb653fff6d3367be` | story 初析读问题单与已交材料、确认整单承载后写出 |
-  | `../inbox/车钥匙接受侧界面说明.docx` | 原件：补料，接受侧界面说明 | [supplements/车钥匙接受侧界面说明.docx](../../../../../test/cases/car-key-sharing/supplements/车钥匙接受侧界面说明.docx) | `fbc813c5206c9b52` | —— |
+  | `../SR/design.md` | 原件：车云同事放进需求目录的系统设计 | [workspace/SR/design.md](../../cases/car-key-sharing/workspace/SR/design.md) | `68ff916dff8a6b00` | —— |
+  | `design.md` | 运行中写出的开发需求提取件；Case 与金样都不归档这份文件 | [workspace/AR/detail.json](../../cases/car-key-sharing/workspace/AR/detail.json)（本地问题单登记） | `cb653fff6d3367be` | story 初析读问题单与已交材料、确认整单承载后写出 |
+  | `../inbox/车钥匙接受侧界面说明.docx` | 原件：补料，接受侧界面说明 | [supplements/车钥匙接受侧界面说明.docx](../../cases/car-key-sharing/supplements/车钥匙接受侧界面说明.docx) | `fbc813c5206c9b52` | —— |
   | `../ux-reference/README.md` | 导入阅读稿 | 同上一行的界面说明原件 | `f70ca30fc6000186` | 同一导入按界面参考分类：正文并入界面参考说明，图登记进 `ux-reference/` |
 
   阅读稿的摘要来自 2026-10-16 在临时模板里按真实导入链重跑的结果（证据见本轮交回）；原件改了，阅读稿摘要随之变化，要重跑导入核对。

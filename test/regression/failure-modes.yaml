@@ -991,7 +991,7 @@ modes:
       「任何判据若拦金样，错的是判据」这条单向仲裁与现行金样职责冲突：金样是给人对照效果的正本，
       替换要经用户审定，不再充当判据的机器否决锚。判据对错按真实依据与中性正反例判——
       上游图承接（⑫d 一类一张图一行）迁到 test_story_build 的中性夹具，工程标识与模板占位符的点名
-      由 test_story_build、test_negative_guards 覆盖。旧正本与输入夹具在新正本审定前原样保留（test_golden_sample 守冻结）。
+      由 test_story_build、test_negative_guards 覆盖。2026-10-17 起正本是用户审定的两组金样 test/golden/auto-topup、car-key-sharing，身份由 test_golden_sample 登记。
 
   - id: G02-mechanism-points-at-assets
     dimension: knowledge

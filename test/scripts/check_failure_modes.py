@@ -17,7 +17,7 @@
 用法::
 
     python test/scripts/check_failure_modes.py                # 默认目标集
-    python test/scripts/check_failure_modes.py --feature AR90004 --feature ISSUE-206
+    python test/scripts/check_failure_modes.py --feature AR90006 --feature ISSUE-206
     python test/scripts/check_failure_modes.py --feature-root <dir>
     python test/scripts/check_failure_modes.py --self-check   # 只跑夹具自检
     python test/scripts/check_failure_modes.py --list         # 列台账
@@ -667,14 +667,14 @@ def _case_numbers() -> list[str]:
 
 
 def _golden_titles() -> list[str]:
-    """金样与候选样稿的业务名：大标题去掉单号与括注。"""
+    """金样的业务名：各组 Story 的大标题去掉单号与括注。"""
     golden = REPO_ROOT / "test" / "golden"
     names: set[str] = set()
-    for f in [*(f for f in golden.glob("story-*.md") if "说明" not in f.name), *golden.glob("*/README.md")]:
+    for f in golden.glob("*/AR/story.md"):
         first = split_lines(read_text(f))[0] if read_text(f) else ""
         if not first.startswith("# "):
             continue
-        name = re.sub(r"^#\s*(?:AR\d+\s*)?", "", first).split("（")[0].split("：")[0].strip()
+        name = re.sub(r"^#\s*(?:[A-Z]+-?\d+\s*)?", "", first).split("（")[0].split("：")[0].strip()
         if len(name) >= 4 and re.search(r"[\u4e00-\u9fff]", name):
             names.add(name)
     return sorted(names)

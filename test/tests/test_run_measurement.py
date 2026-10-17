@@ -744,22 +744,56 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                     run_used, _ = case(elsewhere)
                     self.assertFalse(self.candidate_figure(run_used, root), "候选位置之外的同样布局被当成了产物")
 
-    def test_golden_output_has_a_single_canonical_copy(self):
-        """金样**输出**只有一处正本；fixture 里只留构造场景所需的原始输入。
+    @staticmethod
+    def golden_copies(root: Path) -> list[str]:
+        """审定正文在 `test/golden/` 之外的第二份：内容与登记的正文相同的文件，以及审定后还留着正文的候选目录。
 
-        两者区别不是目录名而是性质：`golden/` 是被对照的成品（story / review / 归档图），
-        `fixtures/golden/AR90004/` 是喂进去的单据与素材。输出一旦有第二份副本，
-        改了哪一份、对照的又是哪一份，就再也说不清。
+        判的是性质不是文件名：中性夹具自己的 story.md、历史报告里对正本的引文与链接都不算；
+        同一份审定正文换个位置存着才算——改了哪一份、对照的又是哪一份，就再也说不清。
         """
-        golden = REPO / "test/golden"
-        for canonical in ("assets/image1.png", "assets/image2.png",
-                          "story-金样-AR90004.md", "review-金样-AR90006.md"):
-            self.assertTrue((golden / canonical).exists(), f"金样正本缺 {canonical}")
+        from test_golden_sample import DOCUMENTS, REGISTRY, digest  # noqa: PLC0415
+        approved = {REGISTRY[f"{case}/{rel}"]: f"{case}/{rel}" for case, docs in DOCUMENTS.items() for rel in docs}
+        golden = root / "test" / "golden"
+        found = []
+        for top in ("doc", "test"):
+            for p in (root / top).rglob("*.md"):
+                if golden in p.parents or "node_modules" in p.parts:
+                    continue
+                if digest(p) in approved:
+                    found.append(f"{p.relative_to(root).as_posix()}：与正本 {approved[digest(p)]} 相同")
+        for case, docs in DOCUMENTS.items():
+            for cand in (root / "doc" / "plan").glob(f"*/{ProcessArtifactsEnterTheIndex.CANDIDATES}/{case}"):
+                for rel in docs:
+                    if (cand / rel).is_file():
+                        found.append(f"{(cand / rel).relative_to(root).as_posix()}：审定后的候选目录还留着正文")
+        return found
 
-        fixture_root = REPO / "test/fixtures/golden"
-        strays = [p.relative_to(REPO).as_posix() for p in fixture_root.rglob("*")
-                  if p.is_file() and p.name in {"story.md", "review.md"}]
-        self.assertEqual([], strays, f"fixture 里出现了金样输出副本：{strays}")
+    def test_golden_output_has_a_single_canonical_copy(self):
+        self.assertEqual([], self.golden_copies(REPO))
+
+    def test_a_second_copy_is_found_and_neutral_texts_are_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("auto-topup/AR/story.md", "car-key-sharing/plan/plan.md"):
+                (root / "test/golden" / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(REPO / "test/golden" / rel, root / "test/golden" / rel)
+            fixture = root / "test/fixtures/neutral/AR/story.md"
+            fixture.parent.mkdir(parents=True)
+            fixture.write_text("# 中性夹具\n\n## 1. 背景\n", encoding="utf-8")
+            report = root / "doc/plan/9.9/评审.md"
+            report.parent.mkdir(parents=True)
+            report.write_text("正本见 [story](../../../test/golden/auto-topup/AR/story.md)。\n", encoding="utf-8")
+            self.assertEqual([], self.golden_copies(root), "中性夹具或历史引用被当成了副本")
+
+            copy = root / "test/fixtures/neutral/copy.md"
+            shutil.copy(REPO / "test/golden/auto-topup/AR/story.md", copy)
+            cand = root / "doc/plan/9.9" / self.CANDIDATES / "car-key-sharing/plan/plan.md"
+            cand.parent.mkdir(parents=True)
+            cand.write_text("候选时期的另一稿\n", encoding="utf-8")
+            found = self.golden_copies(root)
+            self.assertEqual(2, len(found), found)
+            self.assertIn("test/fixtures/neutral/copy.md", found[0])
+            self.assertIn("car-key-sharing/plan/plan.md", found[1])
 
 
 if __name__ == "__main__":
