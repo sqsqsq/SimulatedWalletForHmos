@@ -8,9 +8,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from materials import importer, meeting, registry
@@ -120,8 +122,18 @@ SPEC_STAGE_ORDER = (
     "story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
     "回看清单逐条处置 → "
     "story_flow.py story 登记"
-    "（它自己跑 number / build / check，review 一并渲染并核过归档件红线）→ harness → verifier。"
+    "（它自己跑 project / number / build / check，review 一并渲染并核过归档件红线）→ harness → verifier。"
     "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
+
+
+def register_command(feature_root: Path) -> str:
+    """这张单的成文登记命令，复制即可运行：参数包法与 story-build 的 `shellArg` 同一规则。"""
+    posix = bool(os.environ.get("SHELL")) or sys.platform != "win32"
+    def arg(value) -> str:
+        text = str(value)
+        return "'" + (text.replace("'", "'\\''") if posix else text.replace("'", "''")) + "'"
+    return ("python doc/extensions/skills/story/scripts/core/story_flow.py story"
+            f" --feature {arg(feature_root.name)} --project-root {arg(importer.project_root_of(feature_root))}")
 
 
 def pending_chapters(feature_root: Path) -> int:
@@ -168,7 +180,8 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
     return ("register_story",
             "十章齐了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
             "（业务结论改 Spec 或决策登记，骨架改写作设计，正文改草稿再 chapter 提交），"
-            "`story-build check` 通过之后跑 `story_flow.py story` 登记成文"
+            f"处置完直接跑 `{register_command(feature_root)}` 登记成文"
+            "（它自己重投附录、编号、渲染 review 并全篇 check，不必先跑 check）"
             "——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
 
 
@@ -312,7 +325,7 @@ def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | N
     drift = registration_drift(feature_root, contract)
     if drift or contract.get("status") == "complete":
         return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")
-                + "改完跑 `story_flow.py story` 重新登记（它会重投附录、编号、渲染 review 并全篇 check）")
+                + f"改完跑 `{register_command(feature_root)}` 重新登记（它会重投附录、编号、渲染 review 并全篇 check）")
     return None
 
 

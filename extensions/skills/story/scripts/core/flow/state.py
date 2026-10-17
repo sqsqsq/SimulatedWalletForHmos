@@ -40,12 +40,14 @@ DESIGN_DRAFT = ("AR", "story-src", "design-draft.md")
 # 到了这两步就意味着**本轮范围已定**，S4 可以做。候选稿在不在由 `complete` 自己核，
 # 不借道 next_step——候选可以由 `--from` 指到别处，而 next_step 只认默认落点。
 S4_STEPS = ("generate_design", "run_complete")
-# 成文登记时记指纹的文件（相对需求目录）：story 与它据以成文的决策登记、写作设计。
+# 成文登记时记指纹的文件（相对需求目录）：story 与它据以成文的决策登记、写作设计，以及附录机器区的两份真源。
 # 登记之后任一份再改，`story-build check` 报「登记之后改过」，重跑 `story` 重新登记。
 STORY_REGISTERED = (
     "AR/story.md",
     "AR/story-src/decisions.json",
     "AR/story-src/story-template.md",
+    "spec/spec.md",
+    "spec/knowledge-use.yaml",
 )
 #: 章节合同。第一级的选项集登记在它的 `gates.material_scope.options` 里，流程侧与
 #: `flow/check.mjs` 都从那里读——两边各存一份字面的话，只改一处，`decide` 写进契约的

@@ -170,7 +170,12 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     }
     save(feature_root, contract)
     baseline = record_baseline(feature_root)
-    return {"status": "story_written", "story": str(story),
+    # 登记之后真正的下一步与 `status` 同一条路由给出，不在这里另写一份；算不出来不遮住已成功的登记
+    try:
+        step, action = next_step(feature_root, contract, live_materials(feature_root))
+    except FlowError as exc:
+        step, action = "status", f"成文已登记；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
+    return {"status": "story_written", "story": str(story), "next": step, "action": action,
             **({"update_baseline": baseline} if baseline else {})}
 
 

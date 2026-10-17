@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1002,6 +1004,43 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assertEqual("story_written", self.contract()["status"])
         self.assertNotEqual("register_story", self.flow("status")["next"])
         self.assert_no_hand_edit()
+
+    def test_a_spec_change_needs_only_the_command_status_gives(self) -> None:
+        """登记之后合法改 Spec 扩展章：status 给的登记命令带着本单名与工程根，跑它一次就重投并登记；
+        没改的章一个字节不动，纯 check 只报不写，登记输出说出真正的下一步。"""
+        first = self.register()
+        self.assertTrue(first.get("success"), self.outputs[-1])
+        self.assertEqual("run_archived", first.get("next"), first)
+        self.assertIn("harness", first.get("action", ""), "登记成功却没说下一步")
+        spec = self.feature_root / "spec" / "spec.md"
+        old = "本需求复用既有提交接口，没有新增或变更的端云契约。"
+        text = spec.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        spec.write_text(text.replace(old, "本需求复用既有提交接口，本次没有新增端云契约，沿用当前提交能力。"),
+                        encoding="utf-8")
+        story = self.feature_root / "AR" / "story.md"
+        before = story.read_text(encoding="utf-8")
+        checked = self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE,
+                               "--project-root", str(self.root))
+        self.assertEqual(1, checked.returncode, "真源改了机器区却没报")
+        self.assertEqual(before, story.read_text(encoding="utf-8"), "纯 check 写了盘")
+
+        status = self.flow("status")
+        self.assertEqual("register_story", status["next"])
+        command = re.search(r"`python (\S+story_flow\.py) story ([^`]*)`", status["action"])
+        self.assertIsNotNone(command, status["action"])
+        args = shlex.split(command.group(2))
+        self.assertEqual(["--feature", FEATURE, "--project-root", str(self.root)], args)
+        again = subprocess.run([sys.executable, str(FLOW), "story", *args], capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, again.returncode, again.stdout + again.stderr)
+        after = story.read_text(encoding="utf-8")
+        self.assertIn("本次没有新增端云契约", after)
+        changed = [a for a, b in zip(before.split("\n## "), after.split("\n## ")) if a != b]
+        self.assertEqual(1, len(changed), "改的是附录真源，却动了别的章")
+        self.assertTrue(changed[0].startswith("10."), changed[0][:20])
+        self.assertEqual(0, self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE,
+                                         "--project-root", str(self.root)).returncode)
 
     def test_update_round_change_is_registered_before_close(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
