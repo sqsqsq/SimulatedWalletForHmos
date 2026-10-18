@@ -90,18 +90,18 @@ npm run check:component-blueprint -- --project-root <宿主根> --blueprint <blu
 调用 [P1 蓝图内部工作流](../../reference/app-component-blueprint-workflow.md) 的既有流程，含组件资产读取、live 检索、decision 与 optional provider 可用性裁决；CU design_refs 引用选型，Feature 仅投影。术语确认（`spec.terminology`，写 `term:` 事实）与架构影响决策（`architecture_impact`，一条一项）在此裁决一次，spec/plan 只投影；changed development 节点须填获准模块 `module`。
 current-facts-discovery 前解析 `paths.conventions`（缺失用框架默认值）；文件存在时完整读取，只将适用条目交给既有 fact/provenance/decision 链。`conventions-knowledge` 未启用记 `available=false + not_applicable`，显式配置却不可读记 `unknown|degraded`，不得声称已消费。
 
-编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图。原设计 agent 完成可渲染草稿、图、说明与摘要后，先 `check:component-blueprint --write-review --json`，再派既有独立质询先读首屏/正文答八问、后核原 scope 与来源及图文一致；正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区，之后再核参考/YAML；不提前读 YAML 或继承父上下文 YAML/设计摘要，作者一轮修订后重渲，派生身份同步刷新，详见 P1 §4/§5。App lens/质询用项目语言，整个 contracts.change_unit 交 plan，交接不物化 Feature；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。深度及条件式义务按实际影响展开，只有一种协议、不设档位；未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
+编写、质询或修订时按 [P1 工作流 §2](../../reference/app-component-blueprint-workflow.md#2-写入同一蓝图) 完成 4+1、七问与设计期 acceptance/contracts/use_cases，保留术语、存储、失败/中断、幂等与质量结论；在现有 ordered_steps 写清完整调用/返回，同次生成 generated_graphs 时序图。原设计 agent 完成可渲染草稿、图、说明与摘要后，先 `check:component-blueprint --write-review --json`，再派既有独立质询先读首屏/正文答八问、后核原 scope 与来源及图文一致；正文止于“技术与追溯参考”入口，八问作答前不读同文档参考区，之后再核参考/YAML；不提前读 YAML 或继承父上下文 YAML/设计摘要，作者一轮修订后重渲，派生身份同步刷新，详见 P1 §4/§5。App lens/质询用中文（代码/API 名可保留），整个 contracts.change_unit 交 plan，交接不物化 Feature；缺图或坏图不加 readiness 门，坏时序仅 WARN 并原位说明。深度及条件式义务按实际影响展开，只有一种协议、不设档位；未触发义务按合法空集/不适用表达，不按行数压缩设计或凑空章节。
 
 ### 3. 分解为 1..N canonical Change Unit（经 P2 设计准备子流程）
 
 仅在用户要求完成设计交接且尚无 canonical CU 时进行首次分解；已有 CU 直接复用并转第 4 步。
-**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。主 Agent 写 JSON 数组 `[{providerId, artifact}]` 到临时候选文件，然后在 `framework/harness` 调用公开 consumer 命令；`--accept-candidates` 相对路径按 `--project-root` 解析：
+**本 Skill 自身不写 canonical CU。** 仅调用 [P2 设计准备段](../change-unit-progression/SKILL.md)，不执行该 Skill 的施工流程。主 Agent 写 JSON 数组 `[{providerId, artifact}]` 到既有蓝图目录的 `<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json`（`<features_dir>` 从 `paths.features_dir` 解析）；蓝图工作区根不放临时件，材料归属见[边界细则](../../reference/consumer-framework-boundary.md#材料归属与临时文件清理)。然后在 `framework/harness` 调用公开 consumer 命令；`--accept-candidates` 相对路径按 `--project-root` 解析：
 ```bash
-npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --accept-candidates <candidates.json> --json
+npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --accept-candidates "<features_dir>/<blueprint_id>/blueprint/change-unit-candidates.json" --json
 npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --readiness --json
 ```
 
-已有 CU 或接受成功但未就绪时只用 `--readiness`，不重复接受。结果分别报告 accepted ids/paths、readiness/perUnit/原因、人读文档与 canonical Feature id；readiness 含既有指针调和与文档物化副作用。内部实现见 [`change-unit-design-preparation.ts`](../../../harness/scripts/utils/change-unit-design-preparation.ts)，宿主无需 import TS 或写交接脚本。
+命令接受成功后立即删除本次候选文件，即使后续 readiness 未就绪或文档物化失败；拒绝时保留供修复，清理失败只提示、不撤销接受结果。已有 CU 或接受成功但未就绪时只用 `--readiness`，不重复接受。结果分别报告 accepted ids/paths、readiness/perUnit/原因、人读文档与 canonical Feature id；readiness 含既有指针调和与文档物化副作用。内部实现见 [`change-unit-design-preparation.ts`](../../../harness/scripts/utils/change-unit-design-preparation.ts)，宿主无需 import TS 或写交接脚本。
 
 1. 入口 = admitted blueprint —— **canonical CU 数量为 0 是合法入口**；
 2. decomposition provider / 设计者只提出**临时候选**（内存 / 临时报告）；

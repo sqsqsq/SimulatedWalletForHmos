@@ -39,7 +39,7 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import { checkFactsArtifact } from './utils/context-facts';
 import { runAcceptanceYamlStructureChecks } from './utils/check-acceptance';
-import { checkTypedConstructionContent, designScopeRevisionChecks } from './utils/blueprint-skill-projection';
+import { checkTypedConstructionContent, designScopeRevisionChecks, deriveBlueprintSkillInput, designWriteSetExpansion } from './utils/blueprint-skill-projection';
 import * as path from 'path';
 import { architectureImpactIssues, checkChangeUnitFeatureProjection, loadChangeUnitBlueprintScope } from './utils/change-unit-feature-projection';
 import { asRecord, asRecords } from './utils/component-blueprint-model';
@@ -1188,14 +1188,18 @@ export function checkContractFileReferenceClosure(ctx: CheckContext): CheckResul
 
   const shown = violations.slice(0, CONTRACT_REFERENCE_DIAGNOSTIC_LIMIT);
   const omitted = violations.length - shown.length;
+  const projected = ctx.feature.startsWith('cu-') ? deriveBlueprintSkillInput(ctx.projectRoot, ctx.feature, ctx.frameworkRoot, 'contracts') : undefined;
+  const expansion = projected?.state === 'resolved' ? designWriteSetExpansion(ctx.projectRoot, projected.value as typeof contracts, contracts).filter(file => violations.some(v => v.path === file)) : [];
   return [{
     id: 'contract_file_reference_closure',
     category: 'traceability',
     description: ruleDesc(ctx, 'traceability_checks', 'contract_file_reference_closure'),
     severity: 'BLOCKER',
     status: 'FAIL',
+    ...(expansion.length ? { repair_owner: 'external' as const, structured: { kind: 'design_authority', reason: 'other', codes: ['authority_contract_write_set_open'] } } : {}),
     details: [
       `${violations.length} 个文件引用未列入 contracts.files（唯一授权集合）：`,
+      ...(expansion.length ? [`需扩大蓝图/CU 写集：${expansion.join(', ')}；须先取得用户确认，由设计 owner 裁定。`] : []),
       ...shown.map(violation => {
         const sources = violation.sources
           .slice(0, 3)
@@ -1206,7 +1210,7 @@ export function checkContractFileReferenceClosure(ctx: CheckContext): CheckResul
       ...(omitted > 0 ? [`- …另有 ${omitted} 个路径未展示`] : []),
     ].join('\n'),
     affected_files: [contractsRel],
-    suggestion: '回到 plan，将确需交付的路径加入 contracts.files，重新生成/关闭 contracts，再重跑 plan closure；现有文件、字节相同或其他字段均不构成授权。',
+    suggestion: '回到 plan 区分资源引用与施工文件：仅使用已有资源时，在 resource_keys.value 写资源键（如 app.media.bank_logo），来源沿 spec/asset-manifest 保留，不把只读引用写成待交付的 path/media。确需新建或修改的文件才声明 path/media 并由 contracts.files 授权；CU 已冻结写集时，缺少授权须回设计 owner 裁定，不能在 plan 自行扩写集。修正后重跑 plan closure；文件已存在不构成写授权。',
   }];
 }
 

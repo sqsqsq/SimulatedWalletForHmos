@@ -17,13 +17,13 @@ import { validateRuntimeDataFlows } from './runtime-data-flow-check';
 import { validateCrossViewRelations } from './blueprint-cross-view';
 import { validateBlueprintQuestioning } from './blueprint-questioning';
 import { validateBlueprintAdmission } from './blueprint-admission';
-import { validateGeneratedBlueprintGraphs } from './blueprint-graph-generator';
+import { inspectGeneratedBlueprintGraphs } from './blueprint-graph-generator';
 import { validateBlueprintReconciliation } from './blueprint-reconciliation';
 import { validateEvolutionDecisions } from './blueprint-evolution-decisions';
 import { validateBlueprintProviders } from './blueprint-provider-boundary';
 import { fingerprintDiscoverySources, validateTerminologyFacts } from './blueprint-discovery';
 import { currentScopeItems, validateRequirementTraceability } from './blueprint-requirement-traceability';
-import { inspectBlueprintReaderGuide } from './blueprint-reader-guide';
+import { BlueprintGraphDisplayInspection, inspectBlueprintGraphDisplay } from './blueprint-reader-guide';
 import { inspectAcceptanceItem, inspectPerformanceItem, inspectTypedConstructionContent, inspectUseCaseItem, inspectDesignContentCollections, type DesignContentIssue } from './design-content-checks';
 
 export interface ComponentBlueprintValidationContext {
@@ -72,6 +72,7 @@ export function validateComponentBlueprintUpstream(
       `来源指纹必须由 discovery facts 确定性计算：computed=${computedSourceFingerprint}, discovery=${String(discovery?.source_fingerprint)}, root=${String(blueprint.source_fingerprint)}。`,
     ));
   }
+  const generatedGraphs = inspectGeneratedBlueprintGraphs(blueprint);
   const upstream = [
     ...validateBlueprintProvenance(blueprint),
     ...validateRequirementTraceability(blueprint, context.projectRoot),
@@ -80,20 +81,20 @@ export function validateComponentBlueprintUpstream(
     ...validateRuntimeDataFlows(blueprint),
     ...validateCrossViewRelations(blueprint),
     ...validateBlueprintQuestioning(blueprint),
-    ...validateGeneratedBlueprintGraphs(blueprint),
+    ...generatedGraphs.issues,
     ...validateBlueprintReconciliation(blueprint),
     ...validateEvolutionDecisions(blueprint, context.projectRoot),
     ...validateTerminologyFacts(blueprint, context.projectRoot),
     ...validateBlueprintProviders(blueprint, { projectRoot: context.projectRoot }),
   ];
   out.push(...upstream);
-  out.push(...diagnoseBlueprintPresentationShape(blueprint));
+  out.push(...diagnoseBlueprintPresentationShape(blueprint, inspectBlueprintGraphDisplay(blueprint, generatedGraphs.graphIssues)));
   return out;
 }
 
 /** 可选设计表达的形状与承载位置诊断；缺失/空数组合法，坏形状也仅 WARN。 */
-export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord): BlueprintIssue[] {
-  const out: BlueprintIssue[] = [...inspectBlueprintReaderGuide(blueprint).diagnostics, ...diagnoseBlueprintContent(blueprint)];
+export function diagnoseBlueprintPresentationShape(blueprint: BlueprintRecord, graphDisplay: BlueprintGraphDisplayInspection = inspectBlueprintGraphDisplay(blueprint)): BlueprintIssue[] {
+  const out: BlueprintIssue[] = [...graphDisplay.diagnostics, ...diagnoseBlueprintContent(blueprint)];
   const visit = (value: unknown, at: string): void => {
     if (Array.isArray(value)) { value.forEach((item, i) => visit(item, `${at}[${i}]`)); return; }
     const record = asRecord(value);
@@ -144,10 +145,20 @@ export function diagnoseBlueprintContent(blueprint: BlueprintRecord): BlueprintI
   };
   locate(blueprint, '$');
   const found: DesignContentIssue[] = [];
+  const useCaseFragments = new Set<BlueprintRecord>();
+  let firstUseCasePath: string | undefined;
+  let hasUseCaseVersion = false;
   for (const [address, target] of targets) {
-    // 根 contracts 为业务 operation/DTO 集合；gap 不是可消费的设计目标。
-    if (address.startsWith('blueprint:') || address.startsWith('gap:')) continue;
+    if (address.startsWith('gap:')) continue;
     const targetPath = paths.get(target)!;
+    const useCases = asRecord(target.use_cases);
+    if (useCases && !useCaseFragments.has(useCases)) {
+      useCaseFragments.add(useCases);
+      hasUseCaseVersion ||= !!useCases.schema_version; // 与原 usecase_spec_schema 的真值判据一致。
+      if (!firstUseCasePath && Array.isArray(useCases.use_cases) && useCases.use_cases.length) firstUseCasePath = `${targetPath}.use_cases`;
+    }
+    // 根 contracts 为业务 operation/DTO 集合；根目标只参与整图用例版本诊断。
+    if (address.startsWith('blueprint:')) continue;
     for (const kind of ['acceptance', 'contracts', 'use_cases'] as const) {
       const content = asRecord(target[kind]);
       if (!content) continue;
@@ -163,6 +174,10 @@ export function diagnoseBlueprintContent(blueprint: BlueprintRecord): BlueprintI
       else if (Array.isArray(content.use_cases)) content.use_cases.forEach((item, i) => found.push(...inspectUseCaseItem(item, `${at}.use_cases[${i}]`)));
     }
   }
+  if (firstUseCasePath && !hasUseCaseVersion) found.push({
+    path: `${firstUseCasePath}.schema_version`,
+    message: '整份蓝图的可消费用例片段均缺少 schema_version；最终用例产物须提供版本，派生不会自动补写。',
+  });
   const seen = new Set<string>();
   return found.flatMap(problem => {
     const message = `${problem.message}${problem.fields?.length ? `；字段：${problem.fields.join(', ')}` : ''}`;
