@@ -7,6 +7,7 @@
 **/__pycache__/
 .bak/
 output/
+/.playwright-mcp/
 
 # 回流的需求产物（CLI 测试 finalize / 检查点回流到这里）：运行产物，不入库。
 # doc/spec、doc/plan、doc/release 是维护文档，照常入库。

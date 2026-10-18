@@ -1,0 +1,261 @@
+{
+ "a1": {
+  "auto-topup": {
+   "duration": {
+    "n": 47,
+    "min": 11,
+    "p50": 3837,
+    "p90": 8870,
+    "max": 53897,
+    "mean": 5774
+   },
+   "human_wait": {
+    "n": 40,
+    "min": 49,
+    "p50": 125,
+    "p90": 321,
+    "max": 5538,
+    "mean": 294
+   }
+  },
+  "car-key-sharing": {
+   "duration": {
+    "n": 31,
+    "min": 9,
+    "p50": 7474,
+    "p90": 28947,
+    "max": 55444,
+    "mean": 12585
+   },
+   "human_wait": {
+    "n": 25,
+    "min": 58,
+    "p50": 391,
+    "p90": 6199,
+    "max": 41031,
+    "mean": 4585
+   }
+  },
+  "local-issue-autotopup": {
+   "duration": {
+    "n": 1,
+    "min": 10341,
+    "p50": 10341,
+    "p90": 10341,
+    "max": 10341,
+    "mean": 10341
+   },
+   "human_wait": null
+  },
+  "pattern-image-review": {
+   "duration": {
+    "n": 7,
+    "min": 1588,
+    "p50": 4068,
+    "p90": 5964,
+    "max": 11508,
+    "mean": 5023
+   },
+   "human_wait": null
+  },
+  "source-conflict-review": {
+   "duration": {
+    "n": 5,
+    "min": 3159,
+    "p50": 10461,
+    "p90": 11034,
+    "max": 15906,
+    "mean": 8960
+   },
+   "human_wait": null
+  },
+  "split-interactive": {
+   "duration": {
+    "n": 9,
+    "min": 1521,
+    "p50": 5859,
+    "p90": 15905,
+    "max": 16145,
+    "mean": 7167
+   },
+   "human_wait": null
+  },
+  "split-two-ar": {
+   "duration": {
+    "n": 3,
+    "min": 3052,
+    "p50": 10480,
+    "p90": 10480,
+    "max": 15911,
+    "mean": 9814
+   },
+   "human_wait": null
+  },
+  "traffic-card-loss": {
+   "duration": {
+    "n": 2,
+    "min": 24,
+    "p50": 4119,
+    "p90": 24,
+    "max": 8214,
+    "mean": 4119
+   },
+   "human_wait": null
+  }
+ },
+ "a3_top": [
+  [
+   "terminology_high_without_glossary",
+   387
+  ],
+  [
+   "ui_spec_structure",
+   97
+  ],
+  [
+   "glossary_terms_used_in_body",
+   66
+  ],
+  [
+   "ui_spec_fidelity_gate",
+   57
+  ],
+  [
+   "page_description_completeness",
+   54
+  ],
+  [
+   "ux_reference_mapping",
+   53
+  ],
+  [
+   "mapping_to_file",
+   17
+  ],
+  [
+   "capture_completeness_external_ocr_unavailable",
+   16
+  ],
+  [
+   "acceptance_flow_contract",
+   13
+  ],
+  [
+   "visual_parity_coverage",
+   12
+  ],
+  [
+   "asset_acquisition",
+   11
+  ],
+  [
+   "capture_completeness_external",
+   11
+  ],
+  [
+   "lifecycle_hook_post_check_extension",
+   4
+  ],
+  [
+   "verifier_provider_unavailable",
+   4
+  ],
+  [
+   "file_structure_per_module",
+   4
+  ],
+  [
+   "fidelity_target_intent_nudge",
+   3
+  ],
+  [
+   "context_exploration_inputs_coverage",
+   3
+  ],
+  [
+   "visual_handoff_refs",
+   3
+  ],
+  [
+   "nfr_quantified",
+   3
+  ],
+  [
+   "interface_signatures_complete",
+   3
+  ],
+  [
+   "visual_handoff",
+   2
+  ],
+  [
+   "framework_integrity",
+   2
+  ],
+  [
+   "capture_completeness",
+   2
+  ],
+  [
+   "visual_handoff_ui_change",
+   1
+  ],
+  [
+   "visual_handoff_heuristic",
+   1
+  ],
+  [
+   "context_exploration_source_code_paths_min",
+   1
+  ],
+  [
+   "context_exploration_files_inspected_min",
+   1
+  ],
+  [
+   "context_exploration_searches_min",
+   1
+  ],
+  [
+   "context_exploration_code_facts_min",
+   1
+  ],
+  [
+   "lifecycle_hook_post_verifier_extension",
+   1
+  ],
+  [
+   "scope_matches_catalog",
+   1
+  ],
+  [
+   "context_exploration_decisions_unlocked",
+   1
+  ],
+  [
+   "context_exploration_facts_established_by_invalid",
+   1
+  ],
+  [
+   "fidelity_intent_reconciliation",
+   1
+  ],
+  [
+   "acceptance_flow_structure",
+   1
+  ],
+  [
+   "component_tree_per_page",
+   1
+  ],
+  [
+   "acceptance_criteria_format",
+   1
+  ],
+  [
+   "spec_file_exists",
+   1
+  ]
+ ],
+ "b1_drift_count": 25
+}

@@ -737,10 +737,10 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     实跑的运行证据（事件流、运行日志、截图、材料原件、压缩包）放在 `output/story/`，不进过程件目录。
     """
 
-    ROOTS = ("doc/spec", "doc/plan")
+    ROOTS = ("doc/spec", "doc/plan", "docs/archive/legacy-2.x/spec", "docs/archive/legacy-2.x/plan")
     EVIDENCE_SUFFIXES = {".jsonl", ".log", ".zip", ".docx", ".png"}
 
-    def test_both_roots_are_on_disk_and_not_ignored(self):
+    def test_process_roots_are_on_disk_and_not_ignored(self):
         for rel in self.ROOTS:
             with self.subTest(root=rel):
                 self.assertTrue((REPO / rel).is_dir(), f"{rel} 不在盘上")
@@ -749,18 +749,19 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                 self.assertFalse(ignored, f"{rel} 被忽略了")
 
     #: 已授权保留的历史原稿：迁移清单按确切路径与原始字节摘要登记，登记在内且字节没变的原件不是新的运行证据
-    HISTORY_MANIFEST = "doc/spec/2.1.0/历史参考/迁移清单.json"
+    HISTORY_MANIFEST = "docs/archive/legacy-2.x/spec/2.1.0/历史参考/迁移清单.json"
     #: 金样候选的登记位置（2.0.3 的 05 合同 §2：`实施反馈/金样候选/<case>/<情景>/`）。目标稿自带的配图在情景的
     #: `assets/` 下、被本情景文档引用、且是产品支持的图片类型（`materials.frozen.IMAGE_SUFFIXES`）；
     #: 日志、事件、原件附件与压缩包被引用也不算。图里画的是否适用于该情景由评审者核，这里不看字节
-    CANDIDATE_ROOTS = "doc/plan/*/*/实施反馈/金样候选"
+    CANDIDATE_ROOTS = ("doc/plan/*/*/实施反馈/金样候选",
+                       "docs/archive/legacy-2.x/plan/*/*/实施反馈/金样候选")
 
     @classmethod
     def candidate_assets(cls, repo: Path) -> set[str]:
         """各候选情景文档实际引用、落在本情景 assets/ 下的图片。"""
         link = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")
         out: set[str] = set()
-        for root in repo.glob(cls.CANDIDATE_ROOTS):
+        for root in (root for pattern in cls.CANDIDATE_ROOTS for root in repo.glob(pattern)):
             for scene in (s for s in root.glob("*/*") if s.is_dir()):
                 assets = (scene / "assets").resolve()
                 for doc in scene.rglob("*.md"):
@@ -798,66 +799,67 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         """清单内且字节没变的原件放过；新增的图片、字节被改的原件照样算运行证据。"""
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            history = repo / "doc/spec/2.1.0/历史参考"
+            history = repo / "docs/archive/legacy-2.x/spec/2.1.0/历史参考"
             original = history / "原1.9.9/data/a.png"
             original.parent.mkdir(parents=True)
             original.write_bytes(b"original")
             (repo / "doc/plan").mkdir(parents=True)
             (history / "迁移清单.json").write_text(json.dumps({
-                "destination_root": "doc/spec/2.1.0/历史参考/原1.9.9",
+                "destination_root": "docs/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9",
                 "files": [{"path": "data/a.png", "sha256": hashlib.sha256(b"original").hexdigest()}]}),
                 encoding="utf-8")
             self.assertEqual([], self.stray_evidence(repo))
             (history / "原1.9.9/data/b.png").write_bytes(b"new")
             (repo / "doc/plan/run.log").write_text("x", encoding="utf-8")
-            self.assertEqual({"doc/spec/2.1.0/历史参考/原1.9.9/data/b.png", "doc/plan/run.log"},
+            self.assertEqual({"docs/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/data/b.png", "doc/plan/run.log"},
                              set(self.stray_evidence(repo)))
             original.write_bytes(b"edited")
-            self.assertIn("doc/spec/2.1.0/历史参考/原1.9.9/data/a.png", self.stray_evidence(repo))
+            self.assertIn("docs/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/data/a.png", self.stray_evidence(repo))
 
     def test_candidate_assets_are_recognised_by_place_and_reference(self):
         """候选情景 assets/ 下、被本情景文档引用的配图是目标稿的一部分，新画的也算；
         引用不到的、放在候选范围外的（哪怕与已审原图同字节）、运行截图，都还是运行证据。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            (repo / "doc/spec").mkdir(parents=True)
-            scene = repo / "doc/plan/2.0.3/设计/实施反馈/金样候选/demo-case/initial"
-            (scene / "AR").mkdir(parents=True)
-            (scene / "assets/页面").mkdir(parents=True)
-            (scene / "assets/页面/新画的图.png").write_bytes(b"brand-new")
-            (scene / "AR/story.md").write_text("![提交页](../assets/%E9%A1%B5%E9%9D%A2/新画的图.png)\n",
-                                               encoding="utf-8")
-            self.assertEqual([], self.stray_evidence(repo), "被引用的新候选配图不是运行证据")
+        for base in ("doc/plan/2.0.0/设计/实施反馈/",
+                     "docs/archive/legacy-2.x/plan/2.0.3/设计/实施反馈/"):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                repo = Path(tmp)
+                (repo / "doc/spec").mkdir(parents=True)
+                scene = repo / base / "金样候选/demo-case/initial"
+                (scene / "AR").mkdir(parents=True)
+                (scene / "assets/页面").mkdir(parents=True)
+                (scene / "assets/页面/新画的图.png").write_bytes(b"brand-new")
+                (scene / "AR/story.md").write_text("![提交页](../assets/%E9%A1%B5%E9%9D%A2/新画的图.png)\n",
+                                                   encoding="utf-8")
+                self.assertEqual([], self.stray_evidence(repo), "被引用的新候选配图不是运行证据")
 
-            (scene / "assets/页面/没人引用.png").write_bytes(b"x")
-            (scene / "AR/截图.png").write_bytes(b"shot")
-            (scene / "AR/run.log").write_text("x", encoding="utf-8")
-            elsewhere = repo / "doc/plan/2.0.3/设计/实施反馈/别处/assets/新画的图.png"
-            elsewhere.parent.mkdir(parents=True)
-            elsewhere.write_bytes(b"brand-new")
-            (elsewhere.parent.parent / "说明.md").write_text("![图](assets/新画的图.png)\n", encoding="utf-8")
-            base = "doc/plan/2.0.3/设计/实施反馈/"
-            self.assertEqual({base + "金样候选/demo-case/initial/assets/页面/没人引用.png",
-                              base + "金样候选/demo-case/initial/AR/截图.png",
-                              base + "金样候选/demo-case/initial/AR/run.log",
-                              base + "别处/assets/新画的图.png"},
-                             set(self.stray_evidence(repo)))
+                (scene / "assets/页面/没人引用.png").write_bytes(b"x")
+                (scene / "AR/截图.png").write_bytes(b"shot")
+                (scene / "AR/run.log").write_text("x", encoding="utf-8")
+                elsewhere = repo / base / "别处/assets/新画的图.png"
+                elsewhere.parent.mkdir(parents=True)
+                elsewhere.write_bytes(b"brand-new")
+                (elsewhere.parent.parent / "说明.md").write_text("![图](assets/新画的图.png)\n", encoding="utf-8")
+                self.assertEqual({base + "金样候选/demo-case/initial/assets/页面/没人引用.png",
+                                  base + "金样候选/demo-case/initial/AR/截图.png",
+                                  base + "金样候选/demo-case/initial/AR/run.log",
+                                  base + "别处/assets/新画的图.png"},
+                                 set(self.stray_evidence(repo)))
 
-            # 文档引用了 assets/ 外的文件也不放行：引用不是放行理由，位置与引用要同时成立
-            (scene / "AR/story.md").write_text("![截图](截图.png)\n", encoding="utf-8")
-            self.assertIn(base + "金样候选/demo-case/initial/AR/截图.png", self.stray_evidence(repo))
+                # 文档引用了 assets/ 外的文件也不放行：引用不是放行理由，位置与引用要同时成立
+                (scene / "AR/story.md").write_text("![截图](截图.png)\n", encoding="utf-8")
+                self.assertIn(base + "金样候选/demo-case/initial/AR/截图.png", self.stray_evidence(repo))
 
-            # 放在 assets/ 里、被正文链接的日志、原件与压缩包也不放行：例外只给图片
-            for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
-                (scene / "assets" / name).write_text("x", encoding="utf-8")
-            (scene / "AR/story.md").write_text(
-                "![提交页](../assets/%E9%A1%B5%E9%9D%A2/新画的图.png)\n\n"
-                + "".join(f"[{n}](../assets/{n})\n" for n in ("run.log", "原稿.docx", "包.zip", "events.jsonl")),
-                encoding="utf-8")
-            stray = set(self.stray_evidence(repo))
-            for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
-                self.assertIn(base + f"金样候选/demo-case/initial/assets/{name}", stray, name)
-            self.assertNotIn(base + "金样候选/demo-case/initial/assets/页面/新画的图.png", stray)
+                # 放在 assets/ 里、被正文链接的日志、原件与压缩包也不放行：例外只给图片
+                for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
+                    (scene / "assets" / name).write_text("x", encoding="utf-8")
+                (scene / "AR/story.md").write_text(
+                    "![提交页](../assets/%E9%A1%B5%E9%9D%A2/新画的图.png)\n\n"
+                    + "".join(f"[{n}](../assets/{n})\n" for n in ("run.log", "原稿.docx", "包.zip", "events.jsonl")),
+                    encoding="utf-8")
+                stray = set(self.stray_evidence(repo))
+                for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
+                    self.assertIn(base + f"金样候选/demo-case/initial/assets/{name}", stray, name)
+                self.assertNotIn(base + "金样候选/demo-case/initial/assets/页面/新画的图.png", stray)
 
     def test_golden_output_has_a_single_canonical_copy(self):
         """金样成品只有 `test/golden/` 一处正本；夹具里出现逐字节副本，改了哪一份、对照的又是哪一份就说不清。"""
