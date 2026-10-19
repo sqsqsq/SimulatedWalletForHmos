@@ -138,7 +138,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token>
 ```
 
-一条命令走完：交付门 → 对接层上传并读回核验 → 核回执 → 登记归档态（不可逆）；全程按 Mermaid 上传，结束后恢复可用的本地阅读图。
+一条命令走完：交付门 → 对接层上传并读回核验 → 核回执 → 登记归档态（不可逆）；全程按正式形态上传（阅读槽为空，本地阅读图不上传），结束后恢复可用的本地阅读图。
 交付门没过不调用需求系统；回执不全不登记，按它报的远端状态核清后重跑。报「需求系统已写入、本地登记失败」时不要重新上传，
 按它给的补登记命令只补登记；报「本地阅读图没有恢复」时只补视图（`story-build view --mode svg`）。
 

@@ -29,6 +29,7 @@ from pathlib import Path
 import yaml
 from ext_workspace import change_versions, installed_package, link_harness_yaml
 
+REPO = Path(__file__).resolve().parents[2]
 #: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
 PKG_ROOT = installed_package()
 PKG_EXT = PKG_ROOT / "doc" / "extensions"
@@ -740,6 +741,7 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
         self.assertNotIn("升级完成", proc.stdout)
 
     def test_a_record_that_cannot_be_written_gives_the_one_repair(self) -> None:
+        """写不进去：说清机制已写完、使用记录没建，给出原样可跑的补建一行；照它补完 --check 通过。"""
         self.without_record()
         lock = self.target / "doc" / "usage.json.lock"
         lock.mkdir()
@@ -748,16 +750,92 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
         self.assertIn("没有建立", proc.stdout)
         self.assertIn("不用重跑 --apply", proc.stdout)
         self.assertFalse(self.record.exists())
-        repair = proc.stdout.split("只补这一份：", 1)[1].split("，再跑 --check", 1)[0]
-        self.assertIn("usage.py --project-root", repair)
         lock.rmdir()
-        script = self.target / repair.split("python ", 1)[1].split(" --project-root", 1)[0]
-        done = subprocess.run([sys.executable, str(script), "--project-root", str(self.target)],
-                              input='{"action":"ensure"}', capture_output=True, text=True, encoding="utf-8", timeout=60)
+        line = repair_line(proc.stdout)
+        done = run_in_shell(line, cwd=PKG_ROOT)
         self.assertEqual(0, done.returncode, done.stdout + done.stderr)
         self.assertEqual(self.EMPTY, json.loads(self.record.read_text(encoding="utf-8")))
         self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
 
+
+def repair_line(stdout: str) -> str:
+    """apply 输出里那一行补建命令：提示句的下一行，原样取出。"""
+    lines = stdout.splitlines()
+    at = next(i for i, l in enumerate(lines) if "只补这一份" in l)
+    return lines[at + 1].strip()
+
+
+def run_in_shell(line: str, *, cwd: Path, shell: str | None = None) -> subprocess.CompletedProcess:
+    """按命令打印时所针对的宿主 shell 原样执行，不拆参数。"""
+    shell = shell or ("bash" if __import__("os").environ.get("SHELL") else "powershell")
+    argv = ["powershell", "-NoProfile", "-Command", line] if shell == "powershell" else ["bash", "-c", line]
+    return subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120)
+
+
+class TheRepairLineRunsAsPrinted(unittest.TestCase):
+    """补建那一行在两种宿主 shell 下原样可跑：目标根带单引号、空格与中文，扩展目录自定义且带空格，从别的目录执行。"""
+
+    def setUp(self) -> None:  # noqa: D102
+        import os  # noqa: PLC0415
+        for tool in ("node", "git"):
+            if shutil.which(tool) is None:
+                self.skipTest(f"环境里没有 {tool}")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.os = os
+
+    def make_target(self, name: str) -> Path:
+        target = Path(self._tmp.name) / name
+        target.mkdir(parents=True)
+        (target / "framework.config.json").write_text(
+            json.dumps({"paths": {"extension_dir": "doc/my ext"}}, ensure_ascii=False), encoding="utf-8")
+        (target / "AGENTS.md").write_text("# 目标\n\n## 实例扩展\n", encoding="utf-8")
+        link_harness_yaml(target)
+        for args in (["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]):
+            subprocess.run(["git", "-C", str(target), *args], capture_output=True)
+        (target / "doc").mkdir(exist_ok=True)
+        (target / "doc" / "usage.json.lock").mkdir()
+        return target
+
+    def adapt(self, target: Path, mode: str, env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(["node", str(SCAN), mode, "--target", str(target), "--package", str(PKG_ROOT)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env)
+
+    def check_shell(self, shell: str) -> None:
+        if shutil.which(shell) is None:
+            self.skipTest(f"环境里没有 {shell}")
+        env = dict(self.os.environ)
+        if shell == "powershell":
+            env.pop("SHELL", None)
+        else:
+            env["SHELL"] = "/bin/bash"
+        target = self.make_target(f"O'Brien 目标 {shell}")
+        proc = self.adapt(target, "--apply", env)
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        (target / "doc" / "usage.json.lock").rmdir()
+        line = repair_line(proc.stdout)
+        self.assertIn("python -B", line)
+        done = run_in_shell(line, cwd=REPO, shell=shell)
+        self.assertEqual(0, done.returncode, f"{line}\n{done.stdout}{done.stderr}")
+        record = target / "doc" / "usage.json"
+        self.assertEqual({"schema": 1, "requirements": {}}, json.loads(record.read_text(encoding="utf-8")))
+        ext = target / "doc" / "my ext"
+        self.assertTrue((ext / "manifest.yaml").is_file(), "扩展没装到自定义目录")
+        self.assertEqual([], [p for p in ext.rglob("__pycache__")], "补建命令在机制目录里留了字节码")
+        check = self.adapt(target, "--check", env)
+        self.assertEqual(0, check.returncode, check.stdout + check.stderr)
+        for args in (["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "装好"]):
+            subprocess.run(["git", "-C", str(target), *args], capture_output=True)
+        again = self.adapt(target, "--apply", env)
+        self.assertEqual(0, again.returncode, again.stdout + again.stderr)
+        self.assertIn("已在且合法，保留未动", again.stdout)
+
+    def test_powershell(self) -> None:
+        self.check_shell("powershell")
+
+    def test_posix_shell(self) -> None:
+        self.check_shell("bash")
 
 if __name__ == "__main__":
     unittest.main()

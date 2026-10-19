@@ -449,7 +449,8 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
     try:
-        req = json.loads(sys.stdin.read() or "{}")
+        # 按 UTF-8 读原始字节：不随控制台代码页变，PowerShell 管道在开头带的 BOM 一并去掉
+        req = json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
     except ValueError as exc:
         print(json.dumps({"ok": False, "changed": False, "errors": [f"stdin 不是 JSON（{exc}）"]}, ensure_ascii=False))
         return 2

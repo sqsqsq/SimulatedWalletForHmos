@@ -88,6 +88,125 @@ def read_plan(text: str) -> dict:
     return json.loads(proc.stdout)
 
 
+def plan_in(text: str, files: dict | None = None) -> dict:
+    """在一个临时需求目录里放上游原件与写作设计，调 `readWritingPlan`，取问题、承接与阅读图选择。"""
+    import tempfile  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for rel, body in (files or {}).items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(body.encode("utf-8"))
+        (root / "plan.md").write_bytes(text.encode("utf-8"))
+        script = (
+            "import {pathToFileURL} from 'node:url'; import * as fs from 'node:fs'; import * as path from 'node:path';"
+            "const m = await import(pathToFileURL(process.argv[1]).href);"
+            "const contract = JSON.parse(fs.readFileSync(process.argv[2], 'utf-8'));"
+            "const root = process.argv[3];"
+            "const plan = m.readWritingPlan({contract, featureRoot: root, srcDir: path.join(root, 'AR', 'story-src'),"
+            " templatePath: path.join(root, 'plan.md')});"
+            "process.stdout.write(JSON.stringify({problems: plan.problems, carry: plan.carry, reading: plan.reading}));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, "--", str(PLAN_MODULE), str(CONTRACT_PATH), str(root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, cwd=str(REPO_ROOT))
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+UPSTREAM = {
+    "spec/spec.md": "## 5. 业务流程\n\n### 5.1 受理\n\n```mermaid\ngraph TD\nA[提交] --> B[受理]\n```\n\n"
+                    "### 5.2 回执\n\n```mermaid\ngraph TD\nC[回执] --> D[展示]\n```\n",
+    "SR/design.md": "## 3. 协作\n\n```mermaid\ngraph TD\nE[发起] --> F[处理]\n```\n",
+}
+FLOW_CARRY = ("- 本章主线：x\n- 承接上游图：spec §5.1 #1\n#### 回执\n- 答：回执到了以后怎样\n"
+              "- 承接上游图：spec §5.2 #1\n- 承接上游图：SR §3 #1\n")
+
+
+class UpstreamDiagramsAreRegisteredInTheDesign(unittest.TestCase):
+    """写作设计登记上游每张图由哪一节承接：一源多处、多源一节都合法，漏登、错身份、重复、空值点名。"""
+
+    def test_each_upstream_diagram_needs_a_place(self) -> None:
+        problems = plan_in(BASE, UPSTREAM)["problems"]
+        for source, topic in (("spec §5.1 #1", "提交 → 受理"), ("spec §5.2 #1", "回执 → 展示"), ("SR §3 #1", "发起 → 处理")):
+            self.assertTrue(any(f"没有登记 {source}（" in p and topic in p for p in problems), (source, problems))
+
+    def test_one_source_many_places_and_many_sources_one_place(self) -> None:
+        plan = with_chapter("07-exceptions", "- 本章主线：y\n- 承接上游图：spec §5.1 #1",
+                            with_chapter("05-flow", FLOW_CARRY))
+        got = plan_in(plan, UPSTREAM)
+        self.assertEqual([], got["problems"])
+        places = {(c["source"], c["chapter"], c["at"]) for c in got["carry"]}
+        self.assertEqual({("spec §5.1 #1", "05-flow", ""), ("spec §5.2 #1", "05-flow", "回执"),
+                          ("SR §3 #1", "05-flow", "回执"), ("spec §5.1 #1", "07-exceptions", "")}, places)
+
+    def test_line_endings_do_not_matter(self) -> None:
+        plan = with_chapter("05-flow", FLOW_CARRY).replace("\n", "\r\n")
+        self.assertEqual([], plan_in(plan, {k: v.replace("\n", "\r\n") for k, v in UPSTREAM.items()})["problems"])
+
+    def test_bad_registrations_are_named(self) -> None:
+        cases = {"不是当前上游里的图": FLOW_CARRY + "- 承接上游图：spec §9.9 #1\n",
+                 "同一位置登记了两次": FLOW_CARRY + "- 承接上游图：SR §3 #1\n",
+                 "没写图身份": FLOW_CARRY + "- 承接上游图：\n"}
+        for needle, block in cases.items():
+            with self.subTest(needle):
+                problems = plan_in(with_chapter("05-flow", block), UPSTREAM)["problems"]
+                self.assertTrue(any(needle in p for p in problems), problems)
+
+
+READING_OK = ("## 阅读图选择\n\n### order-recovery\n- 阅读问题：清掉本地记录后靠什么恢复\n"
+              "- 增益：把本地记录与远端事实放在一起对比\n- 放置：07-exceptions\n"
+              "- 依据：spec/spec.md > 业务流程 > 回执\n- 依据：AR/story-src/figures/fig-a.mmd\n")
+
+
+def reading(section: str) -> str:
+    return BASE.split("## 阅读图选择", 1)[0] + section
+
+
+class TheReadingChoiceIsDeclared(unittest.TestCase):
+    """阅读图选择必须有结论：不采用要理由，候选要齐全、放置在骨架里、依据可取。是否合理归独立审查。"""
+
+    FILES = {**UPSTREAM, "AR/story-src/figures/fig-a.mmd": "graph TD\nA-->B\n",
+             "inbox/原稿.docx": "x", "AR/story-src/materials.json": '{"origins": [{"path": "inbox/原稿.docx"}], "materials": []}'}
+
+    def check(self, section: str) -> list[str]:
+        return [p for p in plan_in(reading(section), self.FILES)["problems"] if "承接" not in p]
+
+    def test_no_reading_figure_is_a_valid_choice(self) -> None:
+        got = plan_in(BASE)
+        self.assertEqual([], got["problems"])
+        self.assertTrue(got["reading"]["declared"])
+        self.assertTrue(got["reading"]["noneReason"])
+
+    def test_a_candidate_with_several_bases_is_valid(self) -> None:
+        got = plan_in(reading(READING_OK), self.FILES)
+        self.assertEqual([], [p for p in got["problems"] if "承接" not in p])
+        item = got["reading"]["items"][0]
+        self.assertEqual(("order-recovery", "07-exceptions"), (item["id"], item["placement"]))
+        self.assertEqual(2, len(item["basis"]))
+
+    def test_a_missing_or_empty_choice_is_not_a_choice(self) -> None:
+        self.assertTrue(any("缺「## 阅读图选择」" in p for p in plan_in(BASE.split("## 阅读图选择", 1)[0])["problems"]))
+        self.assertTrue(any("没写理由" in p for p in self.check("## 阅读图选择\n\n不采用：\n")))
+        self.assertTrue(any("没有结论" in p for p in self.check("## 阅读图选择\n\n")))
+        self.assertTrue(any("同时写了不采用与候选" in p for p in self.check(READING_OK + "不采用：x\n")))
+
+    def test_bad_candidates_are_named(self) -> None:
+        cases = {
+            "ID 只能用": READING_OK.replace("order-recovery", "a/b"),
+            "重复（大小写不同也算同一个）": READING_OK + READING_OK.split("\n", 2)[2].replace("order-recovery", "Order-Recovery")
+            .join(["### Order-Recovery\n", ""]) if False else READING_OK + "\n### Order-Recovery\n" + READING_OK.split("### order-recovery\n", 1)[1],
+            "缺「- 增益：」": READING_OK.replace("- 增益：把本地记录与远端事实放在一起对比\n", ""),
+            "放置「99-x」在骨架里找不到": READING_OK.replace("- 放置：07-exceptions", "- 放置：99-x"),
+            "不是可作依据的文件": READING_OK + "- 依据：AR/figures/order-recovery.svg\n",
+            "不是本需求目录里的相对路径": READING_OK + "- 依据：../别的需求/spec/spec.md\n",
+            "是二进制原件": READING_OK + "- 依据：inbox/原稿.docx\n",
+            "读不到这个文件": READING_OK + "- 依据：plan/plan.md\n",
+            "只有 Markdown 文件能按标题路径取一节": READING_OK + "- 依据：AR/story-src/figures/fig-a.mmd > 甲\n",
+        }
+        for needle, section in cases.items():
+            with self.subTest(needle):
+                problems = self.check(section)
+                self.assertTrue(any(needle in p for p in problems), problems)
+
+
 class TheSkeletonIsReadInOnePlace(unittest.TestCase):
     """骨架缺在哪，一次报全、指得到位置；形状合法的标题、表、图原样交给核对与打底。"""
 

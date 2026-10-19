@@ -186,7 +186,7 @@ VIEW_OWNER = "STORY_VIEW_OWNER"
 
 @contextmanager
 def reading_view(feature_root: Path, project_root: Path, outcome: dict):
-    """最外层动作持有视图：动手前切回 Mermaid，结束或失败后按当前源恢复可用的阅读图。
+    """最外层动作持有视图：动手前回到正式形态（Mermaid 按源、阅读槽置空），结束或失败后恢复当前可用的阅读图。
 
     被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不各自恢复。恢复失败只补视图，
     写进 `outcome["view"]`，不遮住原来的结果或错误。
@@ -206,19 +206,25 @@ def reading_view(feature_root: Path, project_root: Path, outcome: dict):
             else:
                 os.environ[VIEW_OWNER] = before
             story = feature_root / Path(*STORY)
-            if story.is_file() and "<!-- story-figure:" in story.read_text(encoding="utf-8", errors="replace"):
+            if story.is_file() and _managed(story):
                 try:
                     outcome["view"] = _view(feature_root, project_root, "svg", "本地阅读图没有恢复，story 保持 Mermaid")
                 except FlowError as exc:
                     outcome["view"] = str(exc)
 
 
+def _managed(story: Path) -> bool:
+    """story 里有没有脚本管理区：正式图块或阅读图槽，任一种都要经视图处理。"""
+    text = story.read_text(encoding="utf-8", errors="replace")
+    return "<!-- story-figure:" in text or "<!-- story-reading:" in text
+
+
 def ensure_mermaid(feature_root: Path, project_root: Path) -> None:
-    """story 里有阅读图管理块时先切回 Mermaid：比较、登记与归档只认 Mermaid 形态。没有管理块不起进程。"""
+    """story 里有管理区时先回到正式形态：比较、登记与归档只认 Mermaid 按源、阅读槽为空的文本。没有管理区不起进程。"""
     story = feature_root / Path(*STORY)
-    if not story.is_file() or "<!-- story-figure:" not in story.read_text(encoding="utf-8", errors="replace"):
+    if not story.is_file() or not _managed(story):
         return
-    _view(feature_root, project_root, "mermaid", "读 story 之前要先切回 Mermaid，切不回来")
+    _view(feature_root, project_root, "mermaid", "读 story 之前要先回到正式形态，回不去")
 
 
 def _view(feature_root: Path, project_root: Path, mode: str, why: str) -> str:

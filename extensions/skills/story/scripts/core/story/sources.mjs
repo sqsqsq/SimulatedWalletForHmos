@@ -106,6 +106,12 @@ export function readManifest(ctx) {
   try { return JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
 }
 
+/** 材料清单登记过的路径（原件与它们的阅读稿）；清单不在或读不出时为空。 */
+export function registeredPaths(ctx) {
+  const m = readManifest(ctx);
+  return m && m !== 'broken' ? [...(m.origins ?? []).map(o => o.path), ...(m.materials ?? []).flatMap(x => x.paths ?? [])] : [];
+}
+
 /**
  * 本轮实际采用的输入原件 —— `materials.json` 的 `origins`（registry 按磁盘现状派生）。
  *
@@ -355,7 +361,7 @@ export function joinPosix(base, ref) {
  */
 export function upstreamDocs(ctx) {
   const out = [];
-  // 标签是图源标记里写的那个名字；路径以合同 `sources` 为准
+  // 标签是承接登记里写的那个名字（`SR §3 #1`）；路径以合同 `sources` 为准
   for (const [label, key] of [['SR', 'SE'], ['spec', 'SPEC']]) {
     const rel = ctx.contract.sources?.[key]?.path;
     const text = rel ? readText(path.join(ctx.featureRoot, rel)) : null;

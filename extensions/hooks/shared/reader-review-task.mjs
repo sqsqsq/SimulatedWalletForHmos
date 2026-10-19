@@ -16,7 +16,7 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
 import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { inputRows, reviewInputs } from './review-inputs.mjs';
-import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
+import { carryTargets, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 
 /**
@@ -123,26 +123,33 @@ function fenced(rows, lang) {
 }
 
 /**
- * 上游每张图与 story 里带同一图源标记的图并排：源图内容、承接图内容逐张给，多源合一时列全来源。
- * 判的是关系保没保持，不是节点同不同名——并排才看得出来。
+ * 上游每张图与写作设计登记承接它的全部小节并排：原图，加每一节的正文、表与图。
+ * 判的是关系保没保持，不是节点同不同名；没登记、定不到、空着的位置列成缺口。审查仍从全部原件反查，不受登记集合限制。
  */
-function diagramPairRows(root, story, contract) {
-  const carried = diagramsOf(story);
+function diagramPairRows(planCtx, plan, story) {
   const out = [];
-  for (const [label, text] of upstreamDocs({ contract, featureRoot: root })) {
+  const targets = plan ? carryTargets(plan, story) : [];
+  for (const [label, text] of upstreamDocs(planCtx)) {
     for (const d of diagramsOf(text)) {
       const tag = `${label} ${d.id}`;
       out.push('', `#### ${tag}（${diagramTopic(d)}）`, '', '上游原图：', '', ...fenced(d.lines, 'mermaid'));
-      const hits = carried.filter(c => c.sources.includes(tag));
-      if (!hits.length) out.push('', 'story 里没有带这个图源标记的图。');
+      const hits = targets.filter(c => c.source === tag);
+      if (!hits.length) out.push('', '写作设计没有登记承接这张图的小节。');
       for (const c of hits) {
-        const others = c.sources.filter(x => x !== tag);
-        out.push('', `story 里承接它的图（${c.title || '章首'}${others.length ? `；同一张还承接 ${others.join('、')}` : ''}）：`,
-          '', ...fenced(c.lines, 'mermaid'));
+        out.push('', `承接它的「${c.where}」：`, '', ...(c.problem ? [`（${c.problem}）`] : fenced(c.body.split(/\r?\n/), 'markdown')));
       }
     }
   }
   return out.length ? out : ['', '上游（系统设计、spec）里没有图。'];
+}
+
+/** 写作设计里的阅读图选择：不采用的理由，或每个候选的问题、增益、放置与依据（依据由审查者按路径读原文）。 */
+function readingChoiceRows(plan) {
+  const r = plan?.reading;
+  if (!r?.declared) return ['', '写作设计没有写阅读图选择。'];
+  if (r.noneReason !== null) return ['', `不采用：${r.noneReason}`];
+  return r.items.flatMap(x => ['', `- **${x.id}**：阅读问题「${x.question}」；增益「${x.gain}」；放置 ${x.placement}`,
+    ...x.basis.map(b => `  - 依据：${b}`)]);
 }
 
 function contractOf(projectRoot) {
@@ -210,7 +217,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 
   // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
   // 摘要只算作者区（机器区整段换成区名）：投影刷新不换审查对象，作者改一个字就换。正式审查前 pre_phase
-  // 已把阅读图切回 Mermaid，盘上读到的就是被审的那一份。
+  // 已把 story 放回正式形态（阅读槽为空），盘上读到的就是被审的那一份。
   rows.push('', '### 审查对象：当前 `AR/story.md`（按下面的段落顺序读盘上原文）', '',
     ...readingRows('AR/story.md', authorZone(story)));
 
@@ -229,8 +236,9 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   const src = path.join(root, 'AR', 'story-src');
   const planCtx = { contract, featureRoot: root, srcDir: src, storyPath,
     decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
+  const parsed = contract ? readWritingPlan(planCtx) : null;
   rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',
-    ...recheckRows(recheckItems(planCtx, contract ? readWritingPlan(planCtx) : null, story)));
+    ...recheckRows(recheckItems(planCtx, parsed, story)));
 
   // 原材料原文逐份给位置：审查要能回到原件，不只看作者转述之后的样子。该有而读不到的说成缺口。
   const { blocking } = sourceStatus({ contract, featureRoot: root });
@@ -260,9 +268,13 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 
   rows.push(...decisionRows(planCtx.decisionsPath));
 
-  rows.push('', '### 上游图与 story 里承接它的图', '',
-    '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；图种可以换，声称承接却丢了关系才算问题。',
-    ...diagramPairRows(root, story, contract));
+  rows.push('', '### 上游图与 story 里承接它的小节', '',
+    '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；可以换图种、拆成表与正文，声称承接却丢了关系才算问题。',
+    ...diagramPairRows(planCtx, parsed, story));
+  rows.push('', '### 阅读图选择', '',
+    '核这个判断合不合理：不采用时，正文、表与已有的图是否已经讲清关键关系；选了的，相对它们有没有真实的理解增益'
+    + '（只改颜色、方向不算），依据是否只组合已确认的事实、未决是否只作边界。',
+    ...readingChoiceRows(parsed));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
   if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {

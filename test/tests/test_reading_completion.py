@@ -196,7 +196,7 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
 
     def test_a_conclusion_during_the_update_reading_wait_ends_the_run(self) -> None:
         stopped = self.update_segment()
-        state = self.drive([DONE, pending("svg-stale")], after_initial="update", host=[None],
+        state = self.drive([DONE, pending("stale")], after_initial="update", host=[None],
                            resume={"answer": "", "text": "按评审改"})
         self.assertEqual([1], self.resumed, "第一段本该正常停到第一检查点")
         self.assertEqual([], stopped, "收工之后还进了第二检查点")
@@ -205,13 +205,13 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
     def test_the_second_checkpoint_waits_for_the_reading_too(self) -> None:
         """update 改了图之后阅读又有待办：第二段收口时同样续同一段，做完再停到第二检查点。"""
         stopped = self.update_segment()
-        self.drive([DONE, pending("svg-stale"), DONE], after_initial="update", resume={"answer": "", "text": "按评审改"})
+        self.drive([DONE, pending("stale"), DONE], after_initial="update", resume={"answer": "", "text": "按评审改"})
         self.assertEqual([3], stopped, "update 后阅读没做完就停到了第二检查点")
         self.assertIn("按评审改", self.client.prompts[1])
-        self.assertIn("fig-a svg-stale", self.client.prompts[2])
+        self.assertIn("fig-a stale", self.client.prompts[2])
 
 
-GOOD_PENDING = {"applicable": True, "complete": False, "items": [{"id": "f", "line": 3, "state": "invalid-block",
+GOOD_PENDING = {"applicable": True, "complete": False, "items": [{"id": "f", "line": 3, "state": "blocked",
                 "reason": "块坏了"}], "unmanaged": [7], "problems": ["孤立标记"], "next": "去修"}
 
 
@@ -237,7 +237,7 @@ class TheReadingFactsKeepTheProductsContract(unittest.TestCase):
 
     def test_each_variant_has_one_conclusion_down_the_chain(self) -> None:
         variants = {
-            "合法无图": (json.dumps({"applicable": False, "complete": True, "items": [], "unmanaged": [], "problems": [],
+            "明确不采用": (json.dumps({"applicable": False, "complete": True, "items": [], "unmanaged": [], "problems": [],
                                   "next": None}), "not_applicable"),
             "全部就绪": (json.dumps({"applicable": True, "complete": True, "items": [{"id": "f", "line": 3, "state": "ready",
                                   "reason": ""}], "unmanaged": [], "problems": [], "next": None}), "complete"),

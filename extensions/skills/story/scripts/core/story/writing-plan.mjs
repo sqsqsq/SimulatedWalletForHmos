@@ -3,7 +3,8 @@
  *
  * 这份文件由作者在 Spec 与决策登记之后写，交付的是**表达设计**：第一次读的人按什么顺序理解
  * 这件事（阅读主线），正文将要有哪些小节、每节解决什么理解问题（`- 答：`/`- 依据：`/`- 待核：`），
- * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）。
+ * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）；
+ * 上游每张图讲的关系落在哪一节（`- 承接上游图：`），以及要不要另做阅读图（`## 阅读图选择`）。
  * **内容不在这里定**：表格的列、图里的节点与分支、列表的项目，都由写章的人按原文决定。
  *
  * 脚本在这里只做确定的事：建空壳、指出协议缺了什么、把骨架换成章节合同能消费的结构。
@@ -12,14 +13,21 @@
  * skeleton、章提交、全篇 check 与回看清单读同一份解析结果。
  * 本模块不写盘、不输出 stdout；围栏按 document 的规则认，不另写 Markdown 解析。
  */
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { readText } from './context.mjs';
 import {
-  DIAGRAM_SYNTAXES, fenceRanges, normalizeHeading, placeholderProblems,
+  DIAGRAM_SYNTAXES, fenceRanges, headingPath, normalizeHeading, placeholderProblems,
 } from './document.mjs';
-import { relFromFeature } from './sources.mjs';
+import { diagramsOf, diagramTopic } from './images.mjs';
+import { registeredPaths, relFromFeature, upstreamDocs } from './sources.mjs';
 
-//: 两个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
-const PARTS = { story: '阅读主线', skeleton: '骨架' };
+//: 三个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
+const PARTS = { story: '阅读主线', skeleton: '骨架', reading: '阅读图选择' };
+//: 阅读图候选的四个字段：依据可以有多行，其余各一行
+const READING = { question: '阅读问题', gain: '增益', placement: '放置', basis: '依据' };
+//: 阅读图的依据只认本需求里有业务事实的文件：正式产物、图源、决策登记、登记过的材料
+const BASIS_FILES = ['AR/story.md', 'plan/plan.md', 'AR/story-src/decisions.json'];
 //: 形式协议的四个词。它们是协议词，不是业务分类；图种另从 DIAGRAM_SYNTAXES 派生。
 const FORMS = {
   表格: { kind: 'table' },
@@ -34,6 +42,7 @@ const APPENDIX_NOTE = '附录不写骨架：写章时补说明段与材料贡献
 const LINE = {
   note: /^-\s+(.+)$/, form: /^形式[:：]\s*(.*)$/,
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
+  carry: /^承接上游图[:：]\s*(.*)$/, none: /^不采用[:：]\s*(.*)$/,
 };
 
 /** 形式清单那句话：四个协议词 + 合同登记的命名表 + 图种，报错与空壳共用一处。 */
@@ -54,7 +63,8 @@ export function writingPlanShell(contract) {
     + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
     + '一处要几种形式就写几行——图讲关系、表讲属性、文字讲理由，描述里说清各自承担什么；'
     + '选了图的，描述写两半：图前要点明的阅读目的，图后要补的图外条件、责任与结果；'
-    + '本章不涉及就只写 `- 不涉及：<理由>`。方法见 story-write.md 第四节 -->', '',
+    + '本章不涉及就只写 `- 不涉及：<理由>`；上游图讲的关系由哪一节承接，就在那一节写 `- 承接上游图：<skeleton 列出的图身份>`，'
+    + '一行一张，正文、表或图都可以承接。方法见 story-write.md 第四节 -->', '',
     `## ${PARTS.story}`, '',
     '{{读者是谁、读完要做什么决定；哪几件事最容易误解，读者先理解哪一件才能理解后文；'
     + '依据在哪、哪些未决限制后文}}', '', `## ${PARTS.skeleton}`, ''];
@@ -64,6 +74,9 @@ export function writingPlanShell(contract) {
       : `- {{正文章名：${ch.title}。读完这一章读者要能回答什么；哪个关系必须用图、图后要补哪些图外的条件与结果；`
         + '其余用表、列表或叙述各讲什么}}', '');
   }
+  rows.push(`## ${PARTS.reading}`, '',
+    '{{正文写成之后判断另做一张阅读图有没有理解增益：没有就写「不采用：<理由>」；'
+    + `有就每张写「### <ID>」与 ${Object.values(READING).map(w => `- ${w}：`).join(' ')}（依据可多行）}}`, '');
   return rows.join('\n');
 }
 
@@ -79,13 +92,15 @@ export function writingPlanShell(contract) {
 export function readWritingPlan(ctx) {
   const chapters = ctx.contract.chapters ?? [];
   const plan = { text: null, chapters, named: ctx.contract.named_tables ?? {},
-    skeletons: new Map(), structures: [], rechecks: [], problems: [] };
+    skeletons: new Map(), structures: [], rechecks: [], carry: [],
+    reading: { declared: false, noneReason: null, items: [], problems: [] }, problems: [] };
   const rel = relFromFeature(ctx, ctx.templatePath);
   const say = (msg) => plan.problems.push(`写作设计 ${rel} ${msg}`);
   const text = readText(ctx.templatePath);
   if (text === null || !text.trim()) {
     say(`${text === null ? '不在' : '是空的'}——空壳由 skeleton 建；阅读主线与每章骨架由作者对照原材料、需求分析里的来源初筛、`
       + 'Spec 与决策登记写成，章提交按它核结构');
+    plan.reading.problems.push(plan.problems.at(-1));
     return plan;
   }
   plan.text = text;
@@ -108,8 +123,124 @@ export function readWritingPlan(ctx) {
   if (story && !lines.slice(story.from, story.to).join('\n').trim()) say(`的「${PARTS.story}」是空的——这一部分按有无正文判`);
   const skeleton = part(PARTS.skeleton);
   if (skeleton) readSkeleton(plan, lines, skeleton, fenced, say);
+  // 阅读图选择的问题另记一份：阅读状态只看这一部分，不被别的骨架问题挡住
+  const mark = plan.problems.length;
+  const reading = part(PARTS.reading);
+  if (reading) readReading(ctx, plan, lines, reading, fenced, say);
+  plan.reading.problems.push(...plan.problems.slice(mark));
+  if (skeleton) carryProblems(ctx, plan, say);
   plan.problems.push(...placeholderProblems(text, `写作设计 ${rel} `));
   return plan;
+}
+
+/** 承接登记对不对得上上游：每张图至少登记一处，登记的身份真实，同一位置不重复登记同一张。 */
+function carryProblems(ctx, plan, say) {
+  const known = new Map();
+  for (const [label, text] of upstreamDocs(ctx)) for (const d of diagramsOf(text)) known.set(`${label} ${d.id}`, d);
+  const seen = new Set();
+  for (const c of plan.carry) {
+    const key = `${c.source}|${c.chapter}|${normalizeHeading(c.at)}|${normalizeHeading(c.under)}`;
+    if (!known.has(c.source)) say(`的「承接上游图：${c.source}」不是当前上游里的图——图身份按 skeleton 列出的「<SR|spec> §<节> #<第几张>」写`);
+    else if (seen.has(key)) say(`的「承接上游图：${c.source}」在同一位置登记了两次`);
+    seen.add(key);
+  }
+  for (const [source, d] of known) {
+    if (!plan.carry.some(c => c.source === source)) {
+      say(`没有登记 ${source}（${diagramTopic(d)}）承接在哪一节——在讲这件事的小节下写「- 承接上游图：${source}」，正文、表或图都可以承接它讲的关系`);
+    }
+  }
+}
+
+/** 登记的承接位置在 story 里的那一节：按章名与小节名逐层精确定位，给出那一节的正文或定位问题。 */
+export function carryTargets(plan, storyText, chapterId = null) {
+  return (plan?.carry ?? []).filter(c => !chapterId || c.chapter === chapterId).map((c) => {
+    const title = plan.chapters.find(x => x.id === c.chapter)?.title ?? c.chapter;
+    const names = [title, c.at, c.under].filter(Boolean);
+    const hit = headingPath(storyText, names);
+    const where = names.join(' > ');
+    const problem = hit.problem ?? (hit.body.trim() ? null : '这一节没有正文');
+    return { ...c, where, body: hit.body ?? '', problem };
+  });
+}
+
+/**
+ * `## 阅读图选择`：要么一句「不采用：<理由>」，要么一个个候选（`### <ID>` 加四个字段）。
+ * 这里核协议与依据能不能取到；采不采用合不合理、增益真不真，归独立审查。
+ */
+function readReading(ctx, plan, lines, range, fenced, say) {
+  const r = plan.reading;
+  let item = null;
+  let placeholder = false;
+  for (let at = range.from; at < range.to; at++) {
+    const line = fenced.has(at) ? '' : lines[at].trim();
+    if (!line) continue;
+    let m;
+    if (/^\{\{.*\}\}$/.test(line)) {
+      placeholder = true;                  // 空壳里的占位：由占位符那条报，这里不另报
+    } else if ((m = LINE.none.exec(line))) {
+      r.declared = true;
+      r.noneReason = m[1].trim();
+      if (!r.noneReason) say(`的「不采用：」没写理由——不采用阅读图是一个表达判断，理由给独立审查核`);
+    } else if ((m = /^###\s+(.+?)\s*$/.exec(line))) {
+      const id = m[1];
+      r.declared = true;
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) say(`的阅读图「### ${id}」ID 只能用字母、数字、- 与 _，且以字母或数字开头`);
+      if (r.items.some(x => x.id.toLowerCase() === id.toLowerCase())) say(`的阅读图「### ${id}」重复（大小写不同也算同一个）`);
+      r.items.push(item = { id, question: '', gain: '', placement: '', basis: [] });
+    } else if ((m = /^-\s*([^:：]+)[:：]\s*(.*)$/.exec(line)) && item && Object.values(READING).includes(m[1].trim())) {
+      const field = Object.keys(READING).find(k => READING[k] === m[1].trim());
+      if (field === 'basis') item.basis.push(m[2].trim());
+      else if (item[field]) say(`的阅读图「${item.id}」的「${m[1].trim()}」写了两次`);
+      else item[field] = m[2].trim();
+    } else {
+      say(`的「## ${PARTS.reading}」有一行认不出：「${line.slice(0, 30)}」——这一部分只写「不采用：<理由>」或「### <ID>」与 ${Object.values(READING).join('、')}`);
+    }
+  }
+  if (!r.declared && !placeholder) say(`的「## ${PARTS.reading}」没有结论——没有阅读图写「不采用：<理由>」，有就逐张写候选`);
+  if (r.noneReason !== null && r.items.length) say(`的「## ${PARTS.reading}」同时写了不采用与候选——两个结论只能有一个`);
+  for (const x of r.items) {
+    for (const [field, word] of Object.entries(READING)) {
+      if (field === 'basis' ? !x.basis.filter(Boolean).length : !x[field]) say(`的阅读图「${x.id}」缺「- ${word}：」`);
+    }
+    if (x.placement) {
+      const [id, ...names] = x.placement.split('>').map(s => s.trim()).filter(Boolean);
+      const sk = plan.skeletons.get(id);
+      const sec = sk && names[0] ? sk.sections.find(s => normalizeHeading(s.title) === normalizeHeading(names[0])) : null;
+      const sub = sec && names[1] ? sec.sections.find(s => normalizeHeading(s.title) === normalizeHeading(names[1])) : null;
+      if (!sk || (names[0] && !sec) || (names[1] && !sub) || names.length > 2) {
+        say(`的阅读图「${x.id}」放置「${x.placement}」在骨架里找不到——写「<章 ID> > <小节> [> <子节>]」，小节名与骨架一致`);
+      }
+    }
+    for (const b of x.basis.filter(Boolean)) {
+      const why = basisProblem(ctx, b);
+      if (why) say(`的阅读图「${x.id}」依据「${b}」${why}`);
+    }
+  }
+}
+
+/** 一条依据能不能当业务事实取到：本需求内、允许的文件种类、文件在；标题路径只给 Markdown。 */
+function basisProblem(ctx, basis) {
+  const [rel, ...names] = basis.split('>').map(s => s.trim());
+  if (!rel || /^([A-Za-z]:|[\\/])/.test(rel) || rel.split(/[\\/]/).includes('..')) return '不是本需求目录里的相对路径';
+  const materials = registeredPaths(ctx);
+  const sources = Object.values(ctx.contract.sources ?? {}).map(s => (typeof s === 'string' ? s : s?.path)).filter(Boolean);
+  const allowed = BASIS_FILES.includes(rel) || sources.includes(rel) || materials.includes(rel)
+    || /^AR\/story-src\/figures\/[^/]+\.mmd$/.test(rel);
+  if (!allowed) return '不是可作依据的文件——依据只认正式产物、正式图源、决策登记与登记过的材料（阅读图、审查报告与临时文件不算）';
+  if (/\.(docx?|pdf|xlsx?|pptx?)$/i.test(rel)) return '是二进制原件——依据写它导入后的阅读稿';
+  if (!fs.existsSync(path.join(ctx.featureRoot, ...rel.split('/')))) return '读不到这个文件';
+  if (names.length && !rel.endsWith('.md')) return '只有 Markdown 文件能按标题路径取一节';
+  return null;
+}
+
+/** 依据里的标题路径在当前内容里定不定得到（正文写成之后才核：选择时 story 可能还没有那一节）。 */
+export function basisTargets(ctx, plan) {
+  return (plan?.reading?.items ?? []).flatMap(x => x.basis.filter(Boolean).map((b) => {
+    const [rel, ...names] = b.split('>').map(s => s.trim());
+    const text = names.length ? readText(path.join(ctx.featureRoot, ...rel.split('/'))) : null;
+    const hit = text === null ? {} : headingPath(text, names);
+    return { id: x.id, basis: b, rel, body: hit.body ?? null, problem: hit.problem ?? null };
+  }));
 }
 
 /** `形式：` 后面那个词认成什么：认不出返回 null。命名表是带合同表头的表格，选了才核。 */
@@ -174,6 +305,13 @@ function readSkeleton(plan, lines, range, fenced, say) {
         continue;
       }
       target.notes.push(note);
+      const carried = LINE.carry.exec(note);
+      if (carried) {
+        const source = carried[1].trim();
+        if (!source) say(`${where()}的「- 承接上游图：」没写图身份`);
+        else plan.carry.push({ source, chapter: ch.id, at: node ? (node === parent ? node.title : parent.title) : '',
+          under: node && node !== parent ? node.title : '' });
+      }
       const open = LINE.recheck.exec(note);
       if (open) plan.rechecks.push({ chapter: ch.id, at: node?.title ?? '', text: open[1].trim() });
       const skip = !node && LINE.notApplicable.exec(note);

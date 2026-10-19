@@ -348,7 +348,7 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
                          "「把表压成散文都是降级」与「表格转成散文时每一列都要有落点」相反")
         self.assertIn("有损", guide, "留下的那条要说清什么才算有损")
         self.assertIn("每一列都要有落点", guide)
-        self.assertIn("把流程图压成箭头文字是降级", guide, "源图的义务不因此撤销")
+        self.assertIn("把流程图压成一行箭头文字是降级", guide, "源图的义务不因此撤销")
 
     def test_every_chapter_declares_its_boundary(self) -> None:
         """章头唯一化之后，boundary 是草稿章头与读者审查的合同数据，一章不能缺。"""

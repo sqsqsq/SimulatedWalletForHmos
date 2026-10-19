@@ -1,9 +1,10 @@
-"""阅读图的结构检查：一份 SVG 能不能当 story 里那张图的本地阅读视图。
+"""阅读图的结构检查：一份 SVG 能不能当写作设计选中的那张本地阅读图。
 
 只核确定性事实：是合法 XML、根元素是 SVG 命名空间下的 svg、viewBox 是四个有限数且宽高为正、
-`<metadata>` 里有来源快照、文件名就是图块 ID、引用的资源在本地读得到且不出 `AR/` 目录——
-引用包括 href、属性与样式里的 `url(...)` 和样式里的 `@import`。不按字数估算可读性——
-文字有没有裁切、遮挡，连线对不对，归渲染核（人看）与对照审（独立审查者对着 Mermaid 源读）。
+文件名就是阅读图 ID、引用的资源在本地读得到且不出 `AR/` 目录——
+引用包括 href、属性与样式里的 `url(...)` 和样式里的 `@import`。`<metadata>` 可写依据说明，不核它：
+权威绑定是验收请求里实际读取的依据。不按字数估算可读性——文字有没有裁切、遮挡，关系对不对、
+有没有阅读增益，归渲染核与独立审查（对着写作设计选的全部依据读）。
 
     python figure-check.py <AR/figures/<ID>.svg> --id <ID>
 
@@ -48,7 +49,7 @@ def references(root: ET.Element) -> list[str]:
 def problems_of(svg: Path, fid: str) -> list[str]:
     out: list[str] = []
     if svg.stem != fid:
-        out.append(f"文件名 {svg.name} 与图块 ID {fid} 不一致：阅读图按 AR/figures/<ID>.svg 认")
+        out.append(f"文件名 {svg.name} 与阅读图 ID {fid} 不一致：阅读图按 AR/figures/<ID>.svg 认")
     try:
         root = ET.parse(svg).getroot()
     except ET.ParseError as exc:
@@ -63,9 +64,6 @@ def problems_of(svg: Path, fid: str) -> list[str]:
         nums = []
     if len(nums) != 4 or not all(math.isfinite(n) for n in nums) or nums[2] <= 0 or nums[3] <= 0:
         out.append(f"viewBox「{root.get('viewBox') or '（缺）'}」要是四个有限数、宽高为正：缩放与裁切按它算")
-    meta = next((e for e in root.iter() if e.tag.endswith("metadata")), None)
-    if meta is None or not "".join(meta.itertext()).strip():
-        out.append("<metadata> 里没有来源快照：写生成它时采用的 Mermaid 原文，切换按它认视图是不是当前源的")
     return out + local_deps(svg)[1]
 
 
@@ -107,7 +105,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="阅读图的结构检查")
     ap.add_argument("svg")
     ap.add_argument("--id", required=True)
-    ap.add_argument("--json", action="store_true", help="结构问题与本地资源依赖一次给出（JSON）：视图与局部阅读验收共用这一份")
+    ap.add_argument("--json", action="store_true", help="结构问题与本地资源依赖一次给出（JSON）：视图与阅读图验收共用这一份")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -124,7 +122,7 @@ def main() -> int:
         deps = [] if any(p.startswith("不是合法 XML") for p in found) else local_deps(svg)[0]
         print(json.dumps({"problems": found, "deps": deps}, ensure_ascii=False))
         return 1 if found else 0
-    print("\n".join(found) if found else "结构检查通过（文字可读、连线与语义等值仍要渲染核与对照审）")
+    print("\n".join(found) if found else "结构检查通过（文字可读、关系忠实与阅读增益仍要渲染核与独立审查）")
     return 1 if found else 0
 
 

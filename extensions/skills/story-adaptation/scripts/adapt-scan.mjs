@@ -25,6 +25,7 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseYaml } from '../../../hooks/shared/yaml.mjs';
+import { shellArg } from '../../story/scripts/core/story/drafts.mjs';
 
 const MODES = ['--apply', '--check', '--mark-adapted', '--status'];
 
@@ -352,8 +353,9 @@ async function ensureUsage() {
       : `[adapt-scan] 使用记录 ${USAGE.record} 已在且合法，保留未动`);
   } else {
     lines.push(`[adapt-scan] 使用记录 ${USAGE.record} 没有建立（${(r.errors ?? []).join('；')}）。机制文件已按上面写完，不用重跑 --apply；`
-      + `修好原因后只补这一份：echo '{"action":"ensure"}' | python ${extDir(TARGET)}/skills/story/scripts/core/usage.py`
-      + ` --project-root '${TARGET}'，再跑 --check`);
+      + '修好原因后只补这一份（下面一行原样复制，在哪个目录跑都行，-B 不留字节码），补完再跑 --check：');
+    lines.push(`  echo '{"action":"ensure"}' | python -B ${shellArg(join(TDIR, 'skills', 'story', 'scripts', 'core', 'usage.py'))}`
+      + ` --project-root ${shellArg(TARGET)}`);
   }
   if (still) {
     lines.push(`[adapt-scan] ${USAGE.record} 仍被 ${still} 挡住，使用记录进不了库：`

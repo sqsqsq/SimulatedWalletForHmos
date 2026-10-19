@@ -33,6 +33,16 @@ FLOW = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 #: 一份协议齐全的最小写作设计（十章各一段、结构选择为空）——测正文路径的用例起手前放它。
 PLAN_FIXTURE = FIXTURE / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
 
+
+def with_carry(plan: str, sources, chapter: str = "05-flow", section: str | None = None) -> str:
+    """写作设计里给一章（或它的一个 #### 小节）登记承接上游图：每个来源一行 `- 承接上游图：<身份>`。"""
+    head = f"#### {section}\n" if section else f"### {chapter}\n"
+    at = plan.index(f"### {chapter}\n")
+    if section:
+        at = plan.index(head, at)
+    end = plan.index("\n", at + len(head))
+    return plan[:end + 1] + "".join(f"- 承接上游图：{s}\n" for s in sources) + plan[end + 1:]
+
 CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
 
@@ -2191,6 +2201,8 @@ class RealRunCase(unittest.TestCase):
 
     REAL = REPO_ROOT / "test" / "fixtures" / "real-run" / "AR90006"
     EXTENSION = DEV_EXT
+    #: 这份产物的上游（SR 与 spec）里画过的图：写作设计按身份登记它们由业务流程章承接
+    CARRIED = ("SR §1 #1", "SR §1 #2", "spec §5.1 #1", "spec §5.2 #1")
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -2215,7 +2227,8 @@ class RealRunCase(unittest.TestCase):
                               DRAFT_TEXT)
             plan = self.feature / "AR" / "story-src" / "story-template.md"
             if not plan.exists():
-                shutil.copy2(PLAN_FIXTURE, plan)
+                text = PLAN_FIXTURE.read_text(encoding="utf-8")
+                plan.write_text(with_carry(text, self.CARRIED), encoding="utf-8")
         return subprocess.run(
             ["node", str(BUILD), *args, "--feature", "AR90006",
              "--project-root", str(self.root)],
@@ -2614,94 +2627,6 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertNotIn("story-build:begin 旧节", story, "合同外的旧机器区没被删")
         self.assertIn("story-build:begin 技术契约·端云接口", story)
 
-
-
-class UpstreamDiagramsAreCarriedByIdentity(unittest.TestCase):
-    """图属于哪块内容，内容落在哪，图就该在哪——机械只核「每张各有一个围栏带着」。
-
-    身份由位置给（`§<节> #<该节内第几张>`），来源由围栏第一行自报。
-    不核位置、不核张数：放哪一章由作者按内容定，判据管不了也不该管。
-    """
-
-    SPEC = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
-            "```mermaid\ngraph TD\nA[进入签约页] --> B[免密验证]\n```\n\n"
-            "### 5.2 自动充值触发\n\n"
-            "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
-
-    UPSTREAM = {"SR": "SR/design.md", "spec": "spec/spec.md"}
-
-    def missing(self, upstream: dict[str, str], story: str) -> list[tuple[str, str, str]]:
-        """经 check 用的 `carriedDiagramProblems` 取「在 story 里没有」的那几张：(来源, 身份, 主题)。"""
-        with tempfile.TemporaryDirectory() as tmp:
-            for label, text in upstream.items():
-                f = Path(tmp) / self.UPSTREAM[label]
-                f.parent.mkdir(parents=True, exist_ok=True)
-                f.write_text(text, encoding="utf-8")
-            proc = subprocess.run(
-                ["node", "--input-type=module", "-e",
-                 "const m = await import(process.argv[1]);"
-                 "const ctx = { featureRoot: process.argv[2], contract: { sources: {"
-                 " SE: { path: 'SR/design.md' }, SPEC: { path: 'spec/spec.md' } } } };"
-                 "process.stdout.write(JSON.stringify(m.carriedDiagramProblems(ctx, process.argv[3])));",
-                 IMAGES.resolve().as_uri(), tmp, story],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        out = []
-        for line in json.loads(proc.stdout):
-            m = re.match(r"^(\S+) (§\S+ #\d+)（(.*?)）在 story 里没有", line)
-            self.assertIsNotNone(m, line)
-            out.append(m.groups())
-        return out
-
-    def carried_for(self, upstream: str, label: str, story: str):
-        return [i for _, i, _ in self.missing({label: upstream}, story)]
-
-    def carried(self, story: str):
-        return [[i, topic] for _, i, topic in self.missing({"spec": self.SPEC}, story)]
-
-    def test_identity_comes_from_the_position(self) -> None:
-        """作者不用给图起名：它在哪一节、是那一节的第几张，就是它的身份。"""
-        missing = dict(self.carried(""))
-        self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(missing))
-
-    def test_only_the_first_line_of_the_fence_counts(self) -> None:
-        """标记只认围栏第一行——正文里提一句「图源 spec §5.2 #1」不算带过来。"""
-        story = ("## 五\n\n```mermaid\n%% 图源 spec §5.1 #1\ngraph TD\nA-->B\n```\n"
-                 "\n这一节的图来自 图源 spec §5.2 #1。\n")
-        self.assertEqual(["§5.2 #1"], [i for i, _ in self.carried(story)])
-
-    def test_the_report_names_the_topic_not_the_count(self) -> None:
-        """缺了指向的是那件事，不是「少了一张图」——所以报的是主题。"""
-        topics = dict(self.carried(""))
-        self.assertIn("余额上报", topics["§5.2 #1"])
-        self.assertIn("自动充值触发", topics["§5.2 #1"])
-
-    def test_one_fence_can_carry_two_upstream_marks(self) -> None:
-        """同一张图两份上游都画过时，story 里只该有一张——两行标记写在同一个围栏开头。
-
-        一个围栏只认一个标记的话，作者要么把同一张图贴两遍，要么必然被报一条
-        「在 story 里没有」。判据逼出重复内容，那是设计问题不是作者问题。
-        """
-        sr = "## 1. 协作\n\n```mermaid\ngraph TD\nA[入口] --> B[签约]\n```\n"
-        spec_one = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
-                    "```mermaid\n%% 图源 SR §1 #1\ngraph TD\nA[入口] --> B[签约]\n```\n")
-        story = ("## 五\n\n签约这条路径这样走。\n\n```mermaid\n"
-                 "%% 图源 SR §1 #1\n%% 图源 spec §5.1 #1\n"
-                 "graph TD\nA --> B\n```\n")
-        self.assertEqual([], self.carried_for(sr, "SR", story), "SR 那份登记没认")
-        self.assertEqual([], self.carried_for(spec_one, "spec", story), "spec 那份登记没认")
-
-    def test_a_marker_inside_the_body_is_not_a_registration(self) -> None:
-        """只认开头连续那几行：图正文里再出现的 `%%` 是注释，不是登记。"""
-        story = ("## 五\n\n```mermaid\ngraph TD\nA --> B\n"
-                 "%% 图源 spec §5.1 #1\n```\n")
-        self.assertEqual(["§5.1 #1", "§5.2 #1"], sorted(i for i, _ in self.carried(story)))
-
-    def test_an_upstream_marker_riding_along_does_not_confuse_it(self) -> None:
-        """上一环的标记随围栏带过来无妨：换成指向直接上游的那一行即可。"""
-        story = ("## 五\n\n```mermaid\n%% 图源 spec §5.2 #1\n%% 图源 SR §3 #1\n"
-                 "graph TD\nC-->D\n```\n")
-        self.assertEqual(["§5.1 #1"], [i for i, _ in self.carried(story)])
 
 
 class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
@@ -3591,42 +3516,70 @@ class TheTitleCarriesTheName(StoryBuildCase):
         self.assertIn("没有需求名", self.assert_check_names("只有需求编号、没有需求名"))
 
 
-class SourceMarksPointAtRealUpstreamFigures(StoryBuildCase):
-    """AC24：来源标记只核引用——指到上游真有的图、不指向 story 自己；写在围栏外只报一处。"""
-
-    def add_before_terms(self, block: str) -> None:
-        self.rewrite_story("本需求不涉及。\n\n## 术语", "本需求不涉及。\n\n" + block + "\n\n## 术语")
-
-    def test_a_mark_to_a_missing_figure_is_named(self) -> None:
-        self.init_audit()
-        self.add_before_terms("```mermaid\n%% 图源 SR §99 #1\ngraph TD\nA-->B\n```")
-        self.assertIn("「SR §99 #1」", self.assert_check_names("图源标记"))
-
-    def test_a_mark_to_the_story_itself_is_named(self) -> None:
-        self.init_audit()
-        self.add_before_terms("```mermaid\n%% 图源 story §1 #1\ngraph TD\nA-->B\n```")
-        self.assertIn("指向的不是直接上游", self.assert_check_names("图源标记"))
+class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
+    """上游图讲的关系由写作设计登记的小节承接：正文、表、图都可以；登记全、位置定得到、有正文才过。"""
 
     UPSTREAM_FIGURES = ("\n\n## 9. 补充流程\n\n### 9.1 提交\n\n```mermaid\ngraph TD\nA[提交] --> B[受理]\n```\n\n"
                         "### 9.2 回执\n\n```mermaid\ngraph TD\nC[回执] --> D[展示]\n```\n")
 
-    def test_missing_carry_is_its_own_class_one_line_per_figure(self) -> None:
-        """上游有图而 story 没带：归「⑫d 上游图承接」一类、一张图一行，写法在同一行；一个围栏两行标记即算带过来。"""
+    def setUp(self) -> None:
+        super().setUp()
         self.init_audit()
         spec = self.root / "doc" / "features" / FEATURE / "spec" / "spec.md"
         spec.write_text(spec.read_text(encoding="utf-8") + self.UPSTREAM_FIGURES, encoding="utf-8")
-        out = self.assert_check_names("[⑫d 上游图承接] 2 处")
-        lines = [l for l in out.split("\n") if "在 story 里没有" in l]
-        self.assertEqual(2, len(lines), lines)
-        self.assertTrue(all("%% 图源" in l for l in lines), "去向写法要在同一行里")
-        self.add_before_terms("```mermaid\n%% 图源 spec §9.1 #1\n%% 图源 spec §9.2 #1\ngraph TD\nA-->B\n```")
-        self.assertNotIn("⑫d", self.check_output()[1], "一个围栏两行标记没认成两张都带过来")
+        self.plan = self.src / "story-template.md"
 
-    def test_a_mark_outside_the_fence_is_one_report(self) -> None:
-        self.init_audit()
-        self.add_before_terms("%% 图源 SR §99 #1")
-        out = self.assert_check_names("写在了围栏外")
-        self.assertNotIn("文档坐标", out, "同一行又按文档坐标报了一遍")
+    def design(self, text: str) -> None:
+        self.plan.write_text(text, encoding="utf-8")
+
+    def test_an_unregistered_diagram_is_named_with_its_topic(self) -> None:
+        out = self.assert_check_names("没有登记 spec §9.1 #1（")
+        self.assertIn("提交 → 受理", out, "缺口要说出那张图讲的事")
+        self.assertIn("没有登记 spec §9.2 #1（", out)
+
+    def test_prose_and_tables_can_carry_the_relation(self) -> None:
+        """业务流程章只有正文、没有下游 Mermaid：登记在这一章即合法。"""
+        self.design(with_carry(self.plan.read_text(encoding="utf-8"), ["spec §9.1 #1", "spec §9.2 #1"]))
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_a_place_that_is_not_in_the_story_is_named(self) -> None:
+        plan = self.plan.read_text(encoding="utf-8").replace("### 05-flow\n", "### 05-flow\n#### 回执展示\n- 答：回执到了用户看到什么\n", 1)
+        self.design(with_carry(plan, ["spec §9.1 #1", "spec §9.2 #1"], section="回执展示"))
+        out = self.assert_check_names("由「业务流程 > 回执展示」承接")
+        self.assertIn("找不到「回执展示」", out)
+
+    def test_same_named_sections_are_not_guessed(self) -> None:
+        plan = self.plan.read_text(encoding="utf-8").replace("### 05-flow\n", "### 05-flow\n#### 甲\n- 答：x\n", 1)
+        self.design(with_carry(plan, ["spec §9.1 #1", "spec §9.2 #1"], section="甲"))
+        self.rewrite_story("## 功能说明", "### 甲\n\n第一处。\n\n### 甲\n\n第二处。\n\n## 功能说明")
+        self.assertIn("「甲」有 2 处同名", self.assert_check_names("承接"))
+
+    def test_a_reading_basis_that_cannot_be_found_is_named(self) -> None:
+        """阅读图依据的标题路径在全篇检查时按当前内容找：找不到报出，找得到不报。"""
+        plan = with_carry(self.plan.read_text(encoding="utf-8"), ["spec §9.1 #1", "spec §9.2 #1"])
+        head = plan.split("## 阅读图选择", 1)[0]
+        item = ("## 阅读图选择\n\n### flow-overview\n- 阅读问题：提交到回执怎样走\n- 增益：一张图看全提交、受理与回执\n"
+                "- 放置：05-flow\n- 依据：AR/story.md > 业务流程\n- 依据：AR/story.md > 不存在的章\n")
+        self.design(head + item)
+        out = self.assert_check_names("依据「AR/story.md > 不存在的章」：找不到「不存在的章」")
+        self.assertNotIn("依据「AR/story.md > 业务流程」", out)
+
+    def test_the_chapter_input_carries_the_original_diagram(self) -> None:
+        """写到承接它的那一章时，NEXT 下面给出原图全文、原件位置与要落的小节；同一张只给一次。"""
+        plan = with_carry(self.plan.read_text(encoding="utf-8"), ["spec §9.1 #1", "spec §9.2 #1"])
+        last = "- 承接上游图：spec §9.2 #1\n"
+        self.design(plan.replace(last, last + "#### 甲\n- 答：x\n- 承接上游图：spec §9.1 #1\n", 1))
+        mark = json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))["pending_mark"]
+        text = self.story()
+        head, rest = text.split("## 业务流程\n", 1)
+        body, tail = rest.split("\n## ", 1)
+        self.story_path.write_text(f"{head}## 业务流程\n\n<!-- {mark}：业务流程 -->\n\n## {tail}", encoding="utf-8")
+        out = self.run_build("skeleton").stdout
+        self.assertIn("NEXT: 写「业务流程」", out)
+        self.assertIn("本章登记承接的上游图", out)
+        self.assertIn("A[提交] --> B[受理]", out)
+        self.assertEqual(1, out.count("- spec §9.1 #1（"), "同一张图给了两遍")
 
 
 class TheProjectionRefreshesAfterRegistration(Step8Case):

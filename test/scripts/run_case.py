@@ -673,7 +673,7 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
 def reading_contract(work: object) -> list[str]:
     """产品 `story-build view --mode status` 的输出合同：字段、类型与相互关系。不合的逐条列出，空表才可信。
 
-    不适用 = 没有图、没有未建源的图、没有结构问题、没有下一动作；已完成 = 适用且一处待办都没有；
+    不适用 = 写作设计明确不采用阅读图且没有问题、没有待办、没有下一动作，同时算完成；已完成 = 选中的阅读图一处待办都没有；
     没完成 = 至少一处待办，且给了下一动作。缺字段、类型错、自相矛盾都不能拿来判完成或不适用。
     """
     if not isinstance(work, dict):

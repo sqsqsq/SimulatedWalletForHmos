@@ -229,19 +229,25 @@ class FencesCloseOnlyOnTheirOwnMarker(ViewCase):
 class SameNameSectionsKeepTheirOwnTables(ViewCase):
     """两个同名小节各管自己的表：按名字记归属，后一节的表会被算给前一节。
 
-    形状是第一个「交付物」只有一句话、第二个才有完整表：查正文得到第一节，查表却拿到
-    第二节的——缺表的那一节因此通过，而别的消费者读到的还是缺表的那一份。
+    形状是第一个「交付物」只有一句话、第二个才有完整表。同一父节下精确同名就是两处认不开：
+    取第一个是替作者猜，前一节缺表被后一节的表顶替通过——两处都不取，按歧义报。
     """
 
-    def test_the_body_and_the_tables_come_from_the_same_section(self) -> None:
+    def test_two_exact_same_names_are_not_guessed(self) -> None:
         text = chr(10).join([
             "### 交付物", "", "前节无表。", "",
             "### 交付物", "",
             "| 交付物 | 给谁 | 做什么用 |", "|---|---|---|", "| 说明 | 评审人 | 过目 |",
         ])
         got = self.section(text, "交付物")
-        self.assertIn("前节无表。", got["body"])
-        self.assertEqual([], got["tables"], "拿到的是后一个同名小节的表")
+        self.assertIsNone(got["body"], "同名两处却取了一处的正文")
+        self.assertIsNone(got["tables"], "同名两处却取了一处的表")
+        ambiguous = node_eval(
+            "import {pathToFileURL} from 'node:url';"
+            "const m = await import(pathToFileURL(process.argv[1]).href);"
+            "process.stdout.write(JSON.stringify(m.ambiguousSection(m.parseChapter(process.argv[2]), process.argv[3])));",
+            str(DOCUMENT), text, "交付物")
+        self.assertEqual(["交付物", "交付物"], ambiguous)
 
     def test_another_section_still_has_its_own(self) -> None:
         """范围限定不等于只认第一个节：别的节自己那张表照样查得到。"""

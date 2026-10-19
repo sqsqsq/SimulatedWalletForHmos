@@ -9,7 +9,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chapterProblems } from './chapter.mjs';
-import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
+import { basisTargets, carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import {
   appendixChapter, appendixStructureProblems, appendixZoneProblems,
 } from './appendix.mjs';
@@ -21,7 +21,8 @@ import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
   EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
-import { carriedDiagramProblems, imageProblems, strayMarks } from './images.mjs';
+import { strayReadingLinks } from './figure-view.mjs';
+import { imageProblems } from './images.mjs';
 import { decisionProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
@@ -150,10 +151,7 @@ export function cmdCheck(ctx) {
   const reviewText = readText(ctx.reviewPath) ?? '';
   // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
   // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
-  // 围栏外的图源标记由 ⑫d 一处报，这里先抹掉，同一行不再按文档坐标报第二遍
-  const stray = new Set(strayMarks(storyText));
-  const storyForPaths = redactMaterialLinks(storyText, ctx).split(/\r?\n/)
-    .map((line, i) => (stray.has(i + 1) ? '' : line)).join('\n');
+  const storyForPaths = redactMaterialLinks(storyText, ctx);
   const storyLines = storyText.split(/\r?\n/);
   const zones = zonesByLine(storyLines);
   const zoneHits = [];
@@ -262,9 +260,17 @@ export function cmdCheck(ctx) {
   }
 
   mark('⑫d 上游图承接');
-  // 上游每张图在 story 里各有一个围栏带着它的来源标记——一图一行报缺的那张讲的是什么。
-  // 标记本身指不指得到、写没写在围栏里，是本章的事，由 ⑪ 判。
-  problems.push(...carriedDiagramProblems(ctx, storyText));
+  // 上游每张图登记在写作设计的哪一节（登记全不全由写作设计那条报）：那一节在 story 里定得到、有正文。
+  // 关系讲没讲全要读内容，归独立审查。阅读图依据里的标题路径也在这里按当前内容核。
+  for (const c of plan ? carryTargets(plan, storyText) : []) {
+    if (c.problem) problems.push(`写作设计登记 ${c.source} 由「${c.where}」承接：${c.problem}——这一节要讲出那张图的关系（正文、表或图都可以），或在写作设计里改登记位置`);
+  }
+  for (const b of plan ? basisTargets(ctx, plan) : []) {
+    if (b.problem) problems.push(`写作设计的阅读图「${b.id}」依据「${b.basis}」：${b.problem}——依据按完整标题路径逐层找，同级同名或找不到都取不到`);
+  }
+
+  mark('⑫e 正式稿不带本地阅读图');
+  problems.push(...strayReadingLinks(ctx, storyText));
 
   mark('⑮ AR 根下只有交付文档');
   problems.push(...strayFileProblems(ctx));

@@ -80,7 +80,7 @@ WARN、FAIL 的判据要在 notes 里有处置记录。退出 0 通过（本宿�
 | 当前事实 | 下一动作 | 不能混淆 |
 |---|---|---|
 | harness 或扩展门禁没过 | 读这一次的完整输出：门禁一次列全问题与因前置缺失未执行的判据，完整报告在 `<阶段>/reports/` 的 summary 与它指向的报告文件；按问题改真源，再完整跑一次 | 不为看另一段输出反复重跑；报「门禁自身异常」或「环境依赖缺失」的不改产物，按它写的恢复类别处理 |
-| 当前请求首次审完，业务材料没变，阶段还没闭环 | `story-build view --mode mermaid` → 报告核对 → `check-receipt` → `harness-runner.ts --sync-closure --phase <阶段> --feature <名>` → 交付门 | 只落了报告，不再完整跑审前链造新问题；独立跑回执与收口不经阶段钩子，先自己切回 Mermaid |
+| 当前请求首次审完，业务材料没变，阶段还没闭环 | `story-build view --mode mermaid` → 报告核对 → `check-receipt` → `harness-runner.ts --sync-closure --phase <阶段> --feature <名>` → 交付门 | 只落了报告，不再完整跑审前链造新问题；独立跑回执与收口不经阶段钩子，先自己回到正式形态 |
 | 报告格式不合或缺判据 | 同一份 request 交审查者重投，原样落盘后再核 | 你不改报告内容 |
 | 阶段已沿旧报告闭环，之后补了当前对象的独立审查 | 完整跑一次 harness 采纳，读 summary 确认 `verifier_subject_id` 与报告终态块对得上、`readiness_signals` 没有 `semantic_not_reverified` | `--sync-closure` 对已闭环的阶段不改写旧的审查绑定 |
 

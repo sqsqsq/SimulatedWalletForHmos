@@ -552,11 +552,20 @@ def reading_work(feature_root: Path) -> dict:
 
 
 def reading_todo(work: dict) -> str | None:
-    """本地阅读还没完成时要做什么（产品状态给的 `next`）；没有图或都已可用返回 None。读不出按未知说，不当完成。"""
-    if work.get("error") or not isinstance(work.get("complete"), bool):
-        return (f"本地阅读状态读不出（{work.get('error') or '状态里没有 complete'}），没有确认阅读图是否完成"
+    """本地阅读还没完成时要做什么（产品状态给的 `next`）；完成（含明确不采用）返回 None。
+
+    先认读取错误与状态自洽，再接受完成：读不出、缺字段、带着问题说完成，都按未知说，不当完成。
+    """
+    problems = work.get("problems")
+    if (work.get("error") or not isinstance(work.get("complete"), bool) or not isinstance(work.get("applicable"), bool)
+            or not isinstance(problems, list)):
+        return (f"本地阅读状态读不出（{work.get('error') or '状态缺 applicable、complete 或 problems'}），没有确认阅读图是否完成"
                 "——跑 `story-build view --mode status` 查")
-    return None if work["complete"] or not work.get("applicable") else work.get("next")
+    if work["complete"] and not problems:
+        return None
+    if work["complete"]:
+        return f"本地阅读状态自相矛盾（说完成却列了问题：{'；'.join(map(str, problems))}）——跑 `story-build view --mode status` 查"
+    return work.get("next") or f"本地阅读没有完成：{'；'.join(map(str, problems)) or '状态没给原因'}"
 
 
 def spec_closed(feature_root: Path) -> bool:

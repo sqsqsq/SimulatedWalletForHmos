@@ -25,10 +25,10 @@
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
- * | `view` | 图的两种形态：`--mode prepare` 给未管理的 Mermaid 图加管理标记并首次建源（`--id` 从源重建一块），`mermaid` 按源重铺，`svg` 切到合格的阅读图，`toggle` 一键切换；`status` 列本地阅读工作，`review-request` / `review-check` 生成与核对局部阅读验收 |
+ * | `view` | 正式图与阅读图：`--mode prepare` 给未管理的 Mermaid 图建源（`--id` 从源重建一块）并按写作设计同步阅读槽，`mermaid` 按源重铺、清空阅读槽，`svg` 展开验收成立的阅读图，`toggle` 一键显隐；`status` 列本地阅读工作，`review-request` / `review-check` 生成与核对阅读图验收 |
  * | `archive` | 唯一的归档入口：交付门 → 对接层上传与读回 → 核回执 → 登记归档态 |
  *
- * 除 `view` 外的命令都由最外层一次持有视图：动手前切回 Mermaid（正式的编号、登记、核对、交付与上传只认它），
+ * 除 `view` 外的命令都由最外层一次持有视图：动手前回到正式形态（正式的编号、登记、核对、交付与上传只认它），
  * 结束或失败后恢复可用的阅读图；被它调起的子命令（环境变量 `STORY_VIEW_OWNER`）不各自恢复。
  */
 import * as fs from 'node:fs';
@@ -53,9 +53,8 @@ import { cmdCheck } from './story/check.mjs';
 import { readWritingPlan, writingPlanShell } from './story/writing-plan.mjs';
 import { storyInputs } from '../../../../hooks/spec/author.mjs';
 import {
-  ensureMermaid, readingWork, reviewRequest, switchView, VIEW_MODES, writeLauncher,
+  ensureMermaid, readingWork, reviewCheck, reviewRequest, switchView, VIEW_MODES, writeLauncher,
 } from './story/figure-view.mjs';
-import { readingState } from './story/figure-reading.mjs';
 import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
 import { recordUsage } from '../../../../hooks/shared/usage.mjs';
@@ -307,7 +306,7 @@ function cmdSkeleton(ctx) {
   process.stdout.write(`\n${storyInputs(ctx, { docs, missing }).join('\n')}\n`);
 }
 
-/** `view`：切换、准备、查看或验收图的形态，结果与缺口原样报出。 */
+/** `view`：准备、显示或隐藏阅读图，查看或验收它们，结果与缺口原样报出。 */
 function cmdView(ctx) {
   const { mode, id = '' } = ctx.args;
   if (!VIEW_MODES.includes(mode)) fail(`view 要 --mode ${VIEW_MODES.join('|')}`);
@@ -316,15 +315,15 @@ function cmdView(ctx) {
     return;
   }
   if (mode === 'review-request' || mode === 'review-check') {
-    if (!id) fail(`view --mode ${mode} 要 --id <图块 ID>`);
+    if (!id) fail(`view --mode ${mode} 要 --id <阅读图 ID>`);
     if (mode === 'review-check') {
-      const r = readingState(ctx.featureRoot, id);
-      if (r.state !== 'ready') fail(`图 ${id} 的局部阅读验收没有成立（${r.state}）：${r.reason}`);
-      process.stdout.write(`[story-build view] 图 ${id} 的局部阅读验收成立：当前 SVG 可作本地阅读图\n`);
+      const r = reviewCheck(ctx.featureRoot, id);
+      if (r.state !== 'ready') fail(`阅读图 ${id} 的验收没有成立（${r.state}）：${r.reason}`);
+      process.stdout.write(`[story-build view] 阅读图 ${id} 的验收成立：可以用 view --mode svg 显示它\n`);
       return;
     }
     const r = reviewRequest(ctx.projectRoot, ctx.featureRoot, id, ctx.args.render ?? '');
-    if (r.problems.length) fail(`图 ${id} 的验收请求没有生成：\n  ${r.problems.join('\n  ')}`);
+    if (r.problems.length) fail(`阅读图 ${id} 的验收请求没有生成：\n  ${r.problems.join('\n  ')}`);
     process.stdout.write(`[story-build view] 验收请求 ${r.request.request_id}${r.written ? '已写入' : '没有变化'}\n${r.task.join('\n')}\n`);
     return;
   }
@@ -332,7 +331,7 @@ function cmdView(ctx) {
   if (r.problems.length) fail(`view --mode ${mode} 没有写任何东西：\n  ${r.problems.join('\n  ')}`);
   const launcher = mode === 'prepare' ? writeLauncher(ctx.featureRoot, ctx.contract.local_reading_entry) : null;
   process.stdout.write(`[story-build view] ${mode}：${r.changed ? '已改写 AR/story.md' : 'AR/story.md 没有变化'}；`
-    + `图块 Mermaid ${r.counts.mermaid} 个、SVG ${r.counts.svg} 个\n`
+    + `正式图块 ${r.counts.mermaid} 个、展开的阅读图 ${r.counts.svg} 张\n`
     + [...r.notes, ...(launcher ? [launcher] : [])].map(n => `  - ${n}\n`).join(''));
 }
 
@@ -375,7 +374,7 @@ function cmdArchive(ctx) {
 }
 
 /**
- * 最外层持有视图：动手前切回 Mermaid，结束或失败后按当前源恢复可用的阅读图。恢复失败只补视图，
+ * 最外层持有视图：动手前回到正式形态（Mermaid 按源、阅读槽置空），结束或失败后恢复当前可用的阅读图。恢复失败只补视图，
  * 附在业务结果之后报出来，不遮住原来的错误。子进程继承持有标记，不各自恢复。
  */
 function withView(ctx, body) {
@@ -385,7 +384,7 @@ function withView(ctx, body) {
   if (owner) process.env[VIEW_OWNER] = key;
   try {
     const back = ensureMermaid(ctx.featureRoot);
-    if (back.problems.length) fail(`读 story 之前要先切回 Mermaid，切不回来：\n  ${back.problems.join('\n  ')}`);
+    if (back.problems.length) fail(`读 story 之前要先回到正式形态（Mermaid 按源、阅读槽置空），回不去：\n  ${back.problems.join('\n  ')}`);
     return body();
   } finally {
     if (owner) {
@@ -401,17 +400,17 @@ function restoreView(ctx) {
   try {
     const r = switchView(ctx.featureRoot, 'svg');
     if (r.problems.length) {
-      process.stderr.write(`[story-build] 本地阅读图没有恢复，story 保持 Mermaid（业务结果不受影响）：\n  ${r.problems.join('\n  ')}\n`);
+      process.stderr.write(`[story-build] 本地阅读图没有恢复，story 保持正式形态（业务结果不受影响）：\n  ${r.problems.join('\n  ')}\n`);
       return;
     }
     if (r.counts.svg) process.stderr.write(`[story-build] 已恢复 ${r.counts.svg} 张可用的本地阅读图\n`);
     if (r.kept.length) {
-      process.stderr.write(`[story-build] 本地阅读还没完成（业务结果不受影响），${r.kept.length} 张图保持 Mermaid：\n`
+      process.stderr.write(`[story-build] 本地阅读还没完成（业务结果不受影响），${r.kept.length} 张阅读图没有显示：\n`
         + r.kept.map(k => `  ${k.id}：${k.reason}\n`).join('')
-        + '  只修图：按 reference/svg.md 重述或重新验收后跑 `story-build view --mode svg`；全部待办见 `view --mode status`\n');
+        + '  只修图：按 reference/svg.md 画图或重新验收后跑 `story-build view --mode svg`；全部待办见 `view --mode status`\n');
     }
   } catch (e) {
-    process.stderr.write(`[story-build] 本地阅读图恢复时出错（${e?.message ?? e}），story 保持 Mermaid；只补视图：\`story-build view --mode svg\`\n`);
+    process.stderr.write(`[story-build] 本地阅读图恢复时出错（${e?.message ?? e}），story 保持正式形态；只补视图：\`story-build view --mode svg\`\n`);
   }
 }
 

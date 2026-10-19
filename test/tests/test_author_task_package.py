@@ -229,8 +229,8 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         """身份、标记写法、原件位置之外，源图内容就在这里：作者对着原图的关系画，不必再去翻原件。"""
         package = self.package_with_spec()
         self.assertIn("spec 里的图", package)
-        self.assertIn("spec §5.2 #1", package, "没给身份，作者不知道标记写什么")
-        self.assertIn("`%% 图源 spec §5.2 #1`", package, "没给标记的写法，搬过去就核不到")
+        self.assertIn("spec §5.2 #1", package, "没给身份，作者不知道登记写什么")
+        self.assertIn("`- 承接上游图：spec §5.2 #1`", package, "没给登记的写法，承接位置就核不到")
         self.assertIn("spec/spec.md", package, "没给原件路径")
         self.assertRegex(package, r"第 \d+–\d+ 行", "没给围栏在原件里的行范围")
         self.assertIn("C[余额上报]", package, "源图内容没送到，作者只能按行号自己去读")
@@ -267,13 +267,14 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         """放哪一节由作者按内容定——任务包不预设位置。"""
         package = self.package_with_spec()
         self.assertIn("自动充值触发", package)
-        self.assertIn("放哪一节按它讲的内容定", package)
+        self.assertIn("安排在讲这件事的小节", package)
+        self.assertIn("正文、表或图承接", package, "承接不限于图")
 
     def test_both_upstreams_get_their_own_section(self) -> None:
         """上游两份各一节，下游都是 story——spec 的内容归框架管，扩展不往那边搬图。"""
         package = self.package_with_spec()
-        self.assertIn("系统设计里的图（搬进 story）", package)
-        self.assertIn("spec 里的图（搬进 story）", package)
+        self.assertIn("系统设计里的图（在 story 里的去向）", package)
+        self.assertIn("spec 里的图（在 story 里的去向）", package)
         self.assertNotIn("搬进 spec", package)
 
     def test_no_diagrams_says_so(self) -> None:

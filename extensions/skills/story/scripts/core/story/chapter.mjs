@@ -28,11 +28,11 @@ import {
 } from './document.mjs';
 import { activeKnowledgeEntries, CommandFailure, fail, readRaw, readText } from './context.mjs';
 import { appendixChapter, projectAppendix } from './appendix.mjs';
-import { redactMaterialLinks, relFromFeature, sourceStatus } from './sources.mjs';
+import { redactMaterialLinks, relFromFeature, sourceStatus, upstreamDocs } from './sources.mjs';
 import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
-import { chapterImageProblems, chapterSourceMarkProblems, strayMarks } from './images.mjs';
-import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
+import { chapterImageProblems, diagramsOf, diagramTopic } from './images.mjs';
+import { carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import { recheckItems, recheckRows } from './recheck.mjs';
 
 /**
@@ -190,7 +190,7 @@ export function chapterProblems(ctx, chapter, candidateBody, getView = null, whe
 }
 
 /**
- * 本章正文逐行能判的红线：仓内路径、语言红线、图片身份、图源标记。
+ * 本章正文逐行能判的红线：仓内路径、语言红线、图片身份。
  *
  * 扫描函数与整篇检查同一套，按本章正文调用：补上本章标题再扫，作用域（附录、节号）
  * 照整篇的口径判，行号减一回到正文。附录的机器区不在这里判——它由真源投影而来，
@@ -201,11 +201,8 @@ function chapterLineProblems(ctx, chapter, body, at) {
   const zones = zonesByLine(body.split(/\r?\n/));
   const text = [`## ${chapter.title}`, ...body.split(/\r?\n/).map((l, i) => (zones.has(i) ? '' : l))].join('\n');
   const line = n => at(n - 1);                   // 扫描行号含标题行
-  out.push(...chapterSourceMarkProblems(ctx, text, line));
   out.push(...chapterImageProblems(ctx, text, line));
-  // 围栏外的图源标记已由上面报，这几行不再按路径、坐标各报一遍
-  const stray = new Set(strayMarks(text));
-  const scan = redactMaterialLinks(text.split(/\r?\n/).map((l, i) => (stray.has(i + 1) ? '' : l)).join('\n'), ctx);
+  const scan = redactMaterialLinks(text, ctx);
   for (const h of scanLocalPaths(scan, ctx.projectRoot)) {
     out.push(`${line(h.line)}：含仓内路径「${h.path}」——评审人手上没有这个仓，仓内路径在归档件里打不开；`
       + '材料清单里的原文链接是唯一允许的位置');
@@ -254,6 +251,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   const guide = 'doc/extensions/skills/story/phases/story-write.md';
   const originals = (docs ?? sourceStatus(ctx).docs).map(d => d.rel).join('、');
   const rows = [];
+  const carried = [];
   if (plan?.problems.length) {
     rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、Spec 与决策登记，`
       + '写阅读主线与每章骨架；写完重跑'
@@ -275,6 +273,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
     rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}（骨架已铺在里面）；${planRel} 里`
       + `「${ctx.contract.chapters[at]?.id ?? title}」的骨架；当前 ${storyRel} 里已写的章；`
       + `来源 ${originals}；方法见 ${guide} 的「五、照骨架写一章」`);
+    carried.push(...carryRows(ctx, plan, ctx.contract.chapters[at]?.id));
   } else {
     rows.push('NEXT: 十章齐了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
       + 'Spec、验收、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
@@ -288,8 +287,26 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   }
   rows.push(`RESULT: ${result}`);
   for (const w of warnings) rows.push(`  记一笔：${w}`);
+  rows.push(...carried);
   if (!plan?.problems.length && !left.length) rows.push('', ...recheckRows(recheckItems(ctx, plan, storyText)));
   return `${rows.join('\n')}\n`;
+}
+
+/** 写作设计登记由这一章承接的上游图：原图全文、原件位置与要落的小节，同一张只给一次（按当前原件现取）。 */
+function carryRows(ctx, plan, chapterId) {
+  const mine = (plan?.carry ?? []).filter(c => c.chapter === chapterId);
+  if (!mine.length) return [];
+  const rel = { SR: ctx.contract.sources?.SE?.path, spec: ctx.contract.sources?.SPEC?.path };
+  const graphs = new Map(upstreamDocs(ctx).flatMap(([label, text]) => diagramsOf(text).map(d => [`${label} ${d.id}`, { label, d }])));
+  const rows = ['', '本章登记承接的上游图（写进下面这些小节，正文、表或图都可以，原图的关系不能丢）：'];
+  for (const source of new Set(mine.map(c => c.source))) {
+    const g = graphs.get(source);
+    if (!g) continue;
+    const places = mine.filter(c => c.source === source).map(c => [c.at, c.under].filter(Boolean).join(' > ') || '本章开头');
+    rows.push('', `- ${source}（${diagramTopic(g.d)}）→ ${places.join('、')}；原件 ${rel[g.label]} 第 ${g.d.at.from}–${g.d.at.to} 行`,
+      '', '````mermaid', ...g.d.lines, '````');
+  }
+  return rows;
 }
 
 /**
@@ -369,8 +386,10 @@ export function cmdChapter(ctx) {
 
   // 逐行判据判作者写的那份（与 story 里本章正文同形：标题下空一行再接正文），行号按剥离时记下的对应指回草稿
   const draftRel = relFromFeature(ctx, path.resolve(from));
-  const bad = chapterProblems(ctx, planned, chapterBodyIn(next, title), null,
-    n => `草稿 ${draftRel} 第 ${origin[n - 2] ?? '?'} 行`, `\n${trimmed}`);
+  // 写作设计登记由本章承接的上游图：那一节在候选稿里定得到、有正文
+  const bad = [...chapterProblems(ctx, planned, chapterBodyIn(next, title), null,
+    n => `草稿 ${draftRel} 第 ${origin[n - 2] ?? '?'} 行`, `\n${trimmed}`),
+  ...carryTargets(plan, next, chapter.id).filter(c => c.problem).map(c => `写作设计登记 ${c.source} 由「${c.where}」承接：${c.problem}——这一节要讲出那张图的关系（正文、表或图都可以），或在写作设计里改登记位置`)];
   if (bad.length) {
     process.stderr.write(`[story-build chapter] 「${title}」${bad.length} 处未通过，`
       + `${path.basename(ctx.storyPath)} 与候选文件都没动：\n`);

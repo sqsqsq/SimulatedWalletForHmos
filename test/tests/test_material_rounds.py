@@ -398,7 +398,13 @@ class CompleteThenMaterialChanged(MaterialRoundCase):
         self.assertEqual(before, len(self.contract()["rounds"]))
 
     def test_an_archived_story_routes_to_done(self) -> None:
-        """归档之后下一步是 done：不再引导跑 harness 与交付门，回流与补料各有出口。"""
+        """归档之后下一步是 done：不再引导跑 harness 与交付门，回流与补料各有出口。
+
+        已成文的单有 story，写作设计写明不采用阅读图——阅读不适用，才轮得到 done。"""
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "AR" / "story.md").write_text(f"# {FEATURE} 甲需求\n\n## 背景\n\n没有图。\n", encoding="utf-8")
+        (self.feature_root / "AR" / "story-src" / "story-template.md").write_text(
+            "# 写作设计\n\n## 阅读主线\n\n主线。\n\n## 骨架\n\n## 阅读图选择\n\n不采用：正文已经讲清\n", encoding="utf-8")
         self.complete_it("story_written")
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))

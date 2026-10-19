@@ -207,21 +207,43 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             self.assertIn(option, section, "选项原文没带到审查者手上")
         self.assertNotIn("D-1", section, "已定的归下一节")
 
-    def test_upstream_diagrams_sit_next_to_the_story_diagram_that_carries_them(self) -> None:
+    def test_the_reading_choice_reaches_the_reviewer(self) -> None:
+        """写作设计里的阅读图选择送到审查：不采用给理由，候选给问题、增益、放置与每一条依据。"""
+        plan = self.feature_root / "AR" / "story-src" / "story-template.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 业务流程\n\n甲交给乙。\n", encoding="utf-8")
+        plan.write_text("# 写作设计\n\n## 阅读图选择\n\n不采用：正文与表已讲清。\n", encoding="utf-8")
+        section = self.reader_task().split("### 阅读图选择", 1)[1]
+        self.assertIn("不采用：正文与表已讲清。", section)
+        self.assertIn("理解增益", section, "没告诉审查者判什么")
+        plan.write_text("# 写作设计\n\n## 阅读图选择\n\n### recovery\n- 阅读问题：清掉记录后靠什么恢复\n"
+                        "- 增益：一张图对比两边的事实\n- 放置：07-exceptions\n"
+                        "- 依据：spec/spec.md > 业务流程\n- 依据：AR/story.md > 异常与恢复\n", encoding="utf-8")
+        section = self.reader_task().split("### 阅读图选择", 1)[1]
+        for needle in ("**recovery**", "清掉记录后靠什么恢复", "一张图对比两边的事实",
+                       "依据：spec/spec.md > 业务流程", "依据：AR/story.md > 异常与恢复"):
+            self.assertIn(needle, section)
+
+    def test_upstream_diagrams_sit_next_to_every_section_that_carries_them(self) -> None:
+        """原图与写作设计登记承接它的小节并排：那一节的正文、表、图都给；没登记的明说。"""
         (self.feature_root / "SR").mkdir(parents=True, exist_ok=True)
         (self.feature_root / "SR" / "design.md").write_text(
             "## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
             "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
         (self.feature_root / "AR" / "story.md").parent.mkdir(parents=True, exist_ok=True)
         (self.feature_root / "AR" / "story.md").write_text(
-            "# NK90001 中性需求\n\n## 业务流程\n\n```mermaid\n%% 图源 SR §3 #1\nflowchart TD\n  甲 --> 乙\n```\n",
-            encoding="utf-8")
-        text = self.reader_task().split("### 上游图与 story 里承接它的图", 1)[1]
+            "# NK90001 中性需求\n\n## 业务流程\n\n### 受理\n\n甲交给乙；乙失败时交丙处理。\n\n"
+            "| 结果 | 谁接手 |\n|---|---|\n| 失败 | 丙 |\n", encoding="utf-8")
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "AR" / "story-src" / "story-template.md").write_text(
+            "# 写作设计\n\n## 骨架\n\n### 05-flow\n#### 受理\n- 承接上游图：SR §3 #1\n", encoding="utf-8")
+        text = self.reader_task().split("### 上游图与 story 里承接它的小节", 1)[1]
         first = text.split("#### SR §3 #1", 1)[1].split("#### ", 1)[0]
         self.assertIn("乙 -->|失败| 丙", first, "上游原图内容没给")
-        self.assertIn("story 里承接它的图", first)
-        self.assertIn("%% 图源 SR §3 #1", first)
-        self.assertIn("story 里没有带这个图源标记的图", text.split("#### SR §4 #1", 1)[1])
+        self.assertIn("承接它的「业务流程 > 受理」", first)
+        self.assertIn("乙失败时交丙处理", first, "承接小节的正文没给")
+        self.assertIn("| 失败 | 丙 |", first, "承接小节里的表没给")
+        self.assertIn("写作设计没有登记承接这张图的小节", text.split("#### SR §4 #1", 1)[1])
 
 
 class AChoiceNeedsASuggestion(ModesCase):

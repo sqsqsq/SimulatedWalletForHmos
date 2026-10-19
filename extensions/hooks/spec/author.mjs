@@ -297,9 +297,9 @@ function imageSection(projectRoot, feature) {
 /**
  * 上游某一份文档里的图 —— 身份、主题、原件路径与围栏行范围，附这一刻的原件内容。
  *
- * 作者按身份写来源标记、按行范围回原件核对；附上的内容取自原件，改图改的是下游自己的那一张。
+ * 作者按身份在写作设计里登记承接的小节、按行范围回原件核对；附上的内容取自原件。
  *
- * **不指定放哪一节**：图属于哪块内容，内容在下游落在哪，图就该在哪。
+ * **不指定放哪一节**：图讲的事属于哪块内容，内容在下游落在哪，承接就在哪。
  * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
  *
  * 读不到分三种说：本轮自己产出的那一份（Spec）还没写成、本需求本来没有这一份（可选来源）、
@@ -325,20 +325,15 @@ function diagramSection(heading, label, src, derived) {
     rows.push(`${label} 里现在没有图。`);
     return rows;
   }
-  const downstream = 'story';
   rows.push(`原件在 \`${rel}\`，每张图的内容附在下面（取自这一刻的原件）。`,
-    `每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
-    + '搬的时候**围栏第一行写来源标记**（`%% 图源 ' + label + ' §<节> #<第几张>`），'
-    + '机器核的就是它。周围的文字自己写。',
-    '**对应的含义是标记指向它，不是照抄**：把上游的流程改画成时序、'
-    + '按本需求补上它没画的分支，都算对应，改的是画法、讲的是同一件事。',
-    '两节列的是同一张图时（系统设计画过、spec 的流程图就是它），'
-    + `${downstream} 里只放一张，两行标记都写在这个围栏开头；`
-    + '章首那张同时承接上游某张时，标记就写在它的围栏里。', '');
+    '每一张讲的关系都要在 story 里有去向：安排在讲这件事的小节，由正文、表或图承接，几节共同承接也可以；'
+    + '在写作设计那一节下写 `- 承接上游图：<身份>` 登记，机器核的就是登记与那一节的正文。',
+    '**承接是关系还在，不是照抄**：改画成时序、拆成表与段落、按本需求补上它没画的分支都可以，'
+    + '原图里的角色、条件、调用与返回、失败归属不能丢。两份上游画的是同一件事时，两行登记写在同一节。', '');
   for (const d of list) {
     rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`
       + `——原件 \`${rel}\` 第 ${d.at.from}–${d.at.to} 行；`
-      + `标记写 \`%% 图源 ${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
+      + `登记写 \`- 承接上游图：${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
   }
   rows.push('');
   return rows;
@@ -369,8 +364,8 @@ export function storyInputs(ctx, sources) {
       ? ['界面交互说明在 `ux-reference/README.md`：业务流程章有人机交互的小节以它与下面的界面原图为依据，'
         + '写作设计在那一节的「依据」里写明用哪一段、哪几张图；页面流转表照它写，材料没给的交互写待决。', ''] : []),
     ...imageSection(ctx.projectRoot, feature), '',
-    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')), '',
-    ...diagramSection('## 4b. spec 里的图（搬进 story）', 'spec', of('SPEC'), derived('SPEC')),
+    ...diagramSection('## 4a. 系统设计里的图（在 story 里的去向）', 'SR', of('SE'), derived('SE')), '',
+    ...diagramSection('## 4b. spec 里的图（在 story 里的去向）', 'spec', of('SPEC'), derived('SPEC')),
   ];
 }
 
@@ -450,7 +445,7 @@ function main(argv) {
   const used = recordUsage(process.cwd(), 'begin', { feature, step: 'spec' });
   if (!used.ok) process.stderr.write(`[usage] 使用记录没写成（任务包照常给出）：${(used.errors ?? []).join('；')}\n`);
   const back = ensureMermaid(featureRoot(process.cwd(), feature));
-  if (back.problems.length) throw new Error(`story 切不回 Mermaid，任务包按 Mermaid 形态读图：\n${back.problems.join('\n')}`);
+  if (back.problems.length) throw new Error(`story 回不到正式形态，任务包按正式正文读图：\n${back.problems.join('\n')}`);
   process.stdout.write(taskPackage(process.cwd(), feature) + '\n');
   return 0;
 }

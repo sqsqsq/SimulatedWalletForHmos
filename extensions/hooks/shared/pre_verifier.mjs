@@ -177,10 +177,10 @@ function allChecksFragment(checks) {
 }
 
 export default async function preVerifier(ctx) {
-  // 正常阶段已由 pre_phase 切回；单独调用时同样先切回，审查只读 Mermaid 形态
+  // 正常阶段已由 pre_phase 处理；单独调用时同样先回到正式形态，审查只读正式正文
   if (ctx?.feature && ctx?.projectRoot) {
     const back = ensureMermaid(featureRoot(ctx.projectRoot, ctx.feature));
-    if (back.problems.length) throw new Error(`story 切不回 Mermaid：${back.problems.join('；')}`);
+    if (back.problems.length) throw new Error(`story 回不到正式形态：${back.problems.join('；')}`);
   }
   const phase = ctx?.phase;
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};

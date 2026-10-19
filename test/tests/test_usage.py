@@ -406,6 +406,14 @@ class TheRecordFileIsSetUpOnce(UsageCase):
         self.assertEqual((True, False), (result["ok"], result["changed"]), result)
         self.assertEqual('{"schema":1,"requirements":{}}', self.record.read_text(encoding="utf-8"))
 
+    def test_stdin_is_read_as_utf8_with_or_without_a_bom(self) -> None:
+        """PowerShell 管道可能在开头带 BOM；输入按 UTF-8 字节读，不随控制台代码页变。"""
+        for prefix in (b"", b"\xef\xbb\xbf"):
+            with self.subTest(bom=bool(prefix)):
+                proc = subprocess.run([sys.executable, str(USAGE), "--project-root", str(self.root)],
+                                      input=prefix + b'{"action": "inspect"}', capture_output=True, timeout=60)
+                self.assertNotIn("stdin 不是 JSON", proc.stdout.decode("utf-8"))
+
     def test_real_use_appends_to_the_set_up_record(self) -> None:
         self.ensure()
         self.call("observe", "spec")

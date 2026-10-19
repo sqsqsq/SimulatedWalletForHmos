@@ -99,7 +99,7 @@ export function fencedLines(text) {
   return maskOf(lines, fenceRanges(lines));
 }
 
-/** 围栏里首个有效声明：跳过空行与 `%%` 注释行（图源标记也是注释）。图类型由它认。 */
+/** 围栏里首个有效声明：跳过空行与 `%%` 注释行。图类型由它认。 */
 function firstStatement(lines, fence) {
   const end = fence.closed ? fence.to : fence.to + 1;
   for (let i = fence.from + 1; i < end && i < lines.length; i++) {
@@ -176,18 +176,101 @@ export function childHeading(doc, parent, nameRe) {
  * 合同给的是这一节要讲什么，作者按业务命名（「与上游单的交接约定」），只认精确名会把后者
  * 判成缺节。但包含命中两个以上时（「参与方」同时像「参与方与分工」与「参与方不在本轮」），
  * 取第一个就是替作者猜——那一节的表与图会被算到另一节头上。这时报歧义，让作者改名。
+ * 精确同名两处同样是歧义；`exact` 只认完整名（作者在写作设计里登记的位置用它，不按包含猜）。
  *
  * @param {{name: string}[]} items 已规范化名字的候选（标题、小节）
  * @returns {{hit: object|null, ambiguous: string[]|null}}
  */
-export function findByName(items, name) {
+export function findByName(items, name, { exact: only = false } = {}) {
   const want = normalizeHeading(name);
   const list = items ?? [];
-  const exact = list.find(x => x.name === want);
-  if (exact) return { hit: exact, ambiguous: null };
+  const exact = list.filter(x => x.name === want);
+  if (exact.length === 1) return { hit: exact[0], ambiguous: null };
+  if (exact.length > 1) return { hit: null, ambiguous: exact.map(x => x.raw ?? x.name) };
+  if (only) return { hit: null, ambiguous: null };
   const loose = list.filter(x => x.name.includes(want));
   if (loose.length === 1) return { hit: loose[0], ambiguous: null };
   return { hit: null, ambiguous: loose.length > 1 ? loose.map(x => x.raw ?? x.name) : null };
+}
+
+/**
+ * 按完整标题路径逐层精确定位：每一层在上一层管辖的范围里找名字完全一致的标题，取命中里最浅的那一级，
+ * 同级两处同名是歧义。返回那一节的正文区间 `{from, to, body}`（0 起，不含标题行），或 `{problem}`。
+ */
+export function headingPath(text, names) {
+  const doc = parseDocument(text);
+  let scope = { level: 0, at: -1, end: doc.lines.length };
+  for (const name of names) {
+    const want = normalizeHeading(name);
+    const hits = doc.headings.filter(h => h.at > scope.at && h.at < scope.end && h.level > scope.level && h.name === want);
+    const level = Math.min(...hits.map(h => h.level));
+    const top = hits.filter(h => h.level === level);
+    if (top.length !== 1) return { problem: top.length ? `「${name}」有 ${top.length} 处同名` : `找不到「${name}」` };
+    scope = { level, at: top[0].at, end: headingEnd(doc, top[0]) };
+  }
+  return { from: scope.at + 1, to: scope.end, body: doc.lines.slice(scope.at + 1, scope.end).join('\n') };
+}
+
+//: Story 里两类脚本管理区的成对标记：正式图块（Mermaid 与它的 .mmd）与阅读图槽（补充 SVG 的显示位）
+export const FIGURE_MARK = /^<!-- story-figure:([A-Za-z0-9][\w-]*):(begin|end) -->$/;
+const READING_MARK = /^<!-- story-reading:([A-Za-z0-9][\w-]*):(begin|end) -->$/;
+
+/**
+ * 成对标记与之间的行：配对与唯一（不分大小写——ID 也是文件名）一次核完，问题按 `noun` 点名。围栏里的标记是样例，不算。
+ *
+ * @returns {{spans: {id, from, to, body: string[]}[], problems: string[]}}
+ */
+export function markPairs(lines, mark, noun) {
+  const fenced = new Set(fenceRanges(lines).flatMap(f => Array.from({ length: f.to - f.from + 1 }, (_, k) => f.from + k)));
+  const spans = [];
+  const problems = [];
+  let open = null;
+  lines.forEach((line, i) => {
+    const m = !fenced.has(i) && mark.exec(line.trim());
+    if (!m) return;
+    const [, id, side] = m;
+    if (side === 'begin') {
+      if (open) problems.push(`第 ${open.from + 1} 行的${noun} ${open.id} 没有结束标记就又开了 ${id}`);
+      open = { id, from: i };
+    } else if (!open || open.id !== id) {
+      problems.push(`第 ${i + 1} 行是${noun} ${id} 的结束标记，前面没有对应的开始标记`);
+    } else {
+      spans.push({ ...open, to: i, body: lines.slice(open.from + 1, i) });
+      open = null;
+    }
+  });
+  if (open) problems.push(`第 ${open.from + 1} 行的${noun} ${open.id} 没有结束标记`);
+  const seen = new Set();
+  for (const s of spans) {
+    if (seen.has(s.id.toLowerCase())) problems.push(`${noun} ${s.id} 出现了不止一次——ID 是它在文档里的身份，一个 ID 一处`);
+    seen.add(s.id.toLowerCase());
+  }
+  return { spans, problems };
+}
+
+/**
+ * Story 里的阅读图槽：成对标记之外再核内容——只认空或 `![…](figures/<ID>.svg)` 一行；
+ * 别的内容属于作者，不能当生成内容清掉。
+ *
+ * @returns {{slots: {id, from, to, body: string[], shown: boolean}[], problems: string[]}}
+ */
+export function readingSlots(lines) {
+  const { spans: slots, problems } = markPairs(lines, READING_MARK, '阅读槽');
+  for (const s of slots) {
+    const ref = new RegExp(`^!\\[(?:[^\\]\\\\]|\\\\.)*\\]\\(figures/${s.id}\\.svg\\)$`);
+    s.shown = s.body.length === 1 && ref.test(s.body[0].trim());
+    if (s.body.length && !s.shown) {
+      problems.push(`阅读槽 ${s.id}（第 ${s.from + 1}–${s.to + 1} 行）里有不是本机制生成的内容——槽只放空或 figures/${s.id}.svg 的一行引用，作者的文字移到槽外`);
+    }
+  }
+  return { slots, problems };
+}
+
+/** 正式文本：在内存里去掉全部阅读槽（槽结构要先核过）。正文与 Mermaid 一个字不动。 */
+export function withoutReadingSlots(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  const drop = new Set(readingSlots(lines).slots.flatMap(s => Array.from({ length: s.to - s.from + 1 }, (_, k) => s.from + k)));
+  return lines.filter((_, i) => !drop.has(i)).join('\n');
 }
 
 /** 一张表是否落在 `[from, to)` 里。 */
