@@ -117,9 +117,6 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
         raise FlowError("AR/story.md 不存在：没有成文，无可登记的成文态")
 
     checker = CORE_DIR / "story-build.mjs"
-    node = shutil.which("node")
-    if node is None:
-        raise FlowError("找不到 node：成文态登记要先重跑 story-build check，无法跳过")
     # 每一步按真源改派生件，check 只读。图源随这次登记一起成立（还没管理的 Mermaid 图加稳定标记、首次写 .mmd）；
     # review 也在这里渲染（机器区按当前决策件重算、人工区逐字节保留），下面那道 check 才核得到归档件红线（⑨）。
     steps = (("project", ["project"], "附录机器区已按当前真源重投"),
@@ -128,19 +125,38 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
              ("build", ["build"], "review 已按决策登记重新渲染"),
              ("check", ["check"], "全篇检查通过"))
     done: list[str] = []
+    rerun = f"再跑 `{register_command(feature_root)}` 重新登记"
+
+    def stopped(i: int, what: str, this: str, todo: str) -> FlowError:
+        """登记停在第 i 步：已完成、这一步、没跑的步骤与下一动作，都只取本次调用里的事实。"""
+        return FlowError(
+            f"{what}，成文登记没有提交" + ("，上一次登记已作废" if invalidated else "") + "。\n"
+            + f"已完成：{'；'.join(done) or '无'}。{this}。没跑：{'、'.join(s[0] for s in steps[i:]) or '无'}。\n"
+            + todo)
+
+    node = shutil.which("node")
+    if node is None:
+        raise stopped(0, "找不到 node", "story-build 一步都没启动",
+                      f"这是运行环境问题，业务稿与派生件都不用改：装好 node 后{rerun}")
     for i, (name, argv, effect) in enumerate(steps):
-        proc = subprocess.run(
-            [node, str(checker), *argv, "--feature", feature_root.name, "--project-root", str(project_root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        try:
+            proc = subprocess.run(
+                [node, str(checker), *argv, "--feature", feature_root.name, "--project-root", str(project_root)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise stopped(i, f"story-build {name} 没能启动（{exc}）", f"{name} 没有启动",
+                          f"这是运行环境问题，业务稿与派生件都不用改：环境恢复后{rerun}") from exc
+        if proc.returncode == 1:
+            this = f"{name} 只读，没有改正文" if name == "check" else f"{name} 改没改文件不确定"
+            raise stopped(i + 1, f"story-build {name} 没通过（退出码 1）", this,
+                          "已更新的派生件按真源算出，不用删也不用还原；按下面 story-build 的报告处理它点名的真源、草稿或环境"
+                          f"（正文经 chapter 提交），{rerun}：\n" + _said(proc))
         if proc.returncode != 0:
-            this = "只读，没有改正文" if name == "check" else "改没改文件不确定"
-            raise FlowError(
-                f"story-build {name} 没通过（退出码 {proc.returncode}），成文登记没有提交"
-                + ("，上一次登记已作废" if invalidated else "") + "。\n"
-                + f"已完成：{'；'.join(done) or '无'}。{name} 这一步{this}。"
-                + f"没跑：{'、'.join(s[0] for s in steps[i + 1:]) or '无'}。\n"
-                "已更新的派生件按真源算出，不用删也不用还原；按下面报的问题改真源或草稿（正文经 chapter 提交），"
-                f"再跑 `{register_command(feature_root)}` 重新登记：\n" + _said(proc))
+            raise stopped(i + 1, f"story-build {name} 没有正常结束（退出码 {proc.returncode}）", f"{name} 改没改文件不确定",
+                          "这不是业务稿的问题，不要为它改真源或草稿："
+                          + ("这是 story-build 自身异常，归扩展维护者处理，修好后" if proc.returncode == 2
+                             else "进程被中断或运行环境出错，查清后")
+                          + f"{rerun}。原始输出：\n" + _said(proc))
         done.append(effect)
 
     contract["status"] = "story_written"

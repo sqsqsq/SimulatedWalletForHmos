@@ -1094,13 +1094,96 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         error = self.failed_registration()
         self.assertIn("story-build check 没通过", error)
         self.assertIn("review 已按决策登记重新渲染", error)
-        self.assertIn("check 这一步只读", error)
+        self.assertIn("check 只读，没有改正文", error)
+        self.assertIn("按下面 story-build 的报告处理", error)
         self.assertIn("没跑：无", error)
         untouched = story.read_text(encoding="utf-8").split("\n## ")[2:]
         self.rewrite_background("支付提交后用户要能看到回执状态。")
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.assertEqual(untouched[:-1], story.read_text(encoding="utf-8").split("\n## ")[2:-1],
                          "只改了背景，别的正文章却变了")
+
+    def registration_broken_at(self, step: int, outcome) -> tuple[str, list]:
+        """在本进程里跑登记，第 step 个子进程换成 outcome（异常就抛，整数就是那个退出码），其余照真跑。"""
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow import lifecycle  # noqa: PLC0415
+            from flow.state import FlowError  # noqa: PLC0415
+            real, calls = subprocess.run, []
+
+            def run(cmd, *args, **kwargs):
+                calls.append(cmd)
+                if len(calls) - 1 != step:
+                    return real(cmd, *args, **kwargs)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return subprocess.CompletedProcess(cmd, outcome, "", "[story-build] 脚本自身异常：注入的故障")
+
+            with unittest.mock.patch.object(lifecycle.subprocess, "run", run), \
+                    self.assertRaises(FlowError) as caught:
+                lifecycle.cmd_story(self.feature_root, self.root)
+            return str(caught.exception), calls
+        finally:
+            sys.path.remove(str(core))
+
+    def test_a_step_that_cannot_start_keeps_the_progress(self) -> None:
+        """第三步进程起不来：前两步做了什么、这一步与后面都没跑、登记已作废，下一动作是恢复环境不是改稿。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        error, calls = self.registration_broken_at(2, FileNotFoundError("node 不见了"))
+        self.assertIn("story-build view --mode prepare 没能启动", error)
+        self.assertIn("上一次登记已作废", error)
+        self.assertIn("已完成：附录机器区已按当前真源重投；编号已重铺。", error)
+        self.assertIn("没跑：view --mode prepare、build、check", error)
+        self.assertIn("运行环境问题，业务稿与派生件都不用改", error)
+        self.assertEqual(3, len(calls), "起不来之后还接着跑了后面的步骤")
+        self.assertEqual("complete", self.contract()["status"])
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+
+    def test_an_internal_error_is_not_sent_to_the_author(self) -> None:
+        """前三步做完、build 退出 2（脚本自身异常）：归维护者，不让作者改稿；check 没跑。"""
+        error, calls = self.registration_broken_at(3, 2)
+        self.assertIn("story-build build 没有正常结束（退出码 2）", error)
+        self.assertIn("已完成：附录机器区已按当前真源重投；编号已重铺；图源管理标记与 .mmd 已就位。", error)
+        self.assertIn("没跑：check", error)
+        self.assertIn("不要为它改真源或草稿", error)
+        self.assertIn("扩展维护者", error)
+        self.assertNotIn("按下面 story-build 的报告处理", error)
+        self.assertIn("注入的故障", error, "原始输出没带出来")
+        self.assertEqual(4, len(calls))
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+
+    def test_without_node_nothing_runs(self) -> None:
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow import lifecycle  # noqa: PLC0415
+            from flow.state import FlowError  # noqa: PLC0415
+            with unittest.mock.patch.object(lifecycle.shutil, "which", lambda _name: None), \
+                    unittest.mock.patch.object(lifecycle.subprocess, "run") as run, \
+                    self.assertRaises(FlowError) as caught:
+                lifecycle.cmd_story(self.feature_root, self.root)
+            run.assert_not_called()
+        finally:
+            sys.path.remove(str(core))
+        error = str(caught.exception)
+        self.assertIn("找不到 node，成文登记没有提交，上一次登记已作废", error)
+        self.assertIn("已完成：无", error)
+        self.assertIn("没跑：project、number、view --mode prepare、build、check", error)
+        self.assertNotIn("重跑 story-build check", error)
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+
+    def test_an_interrupted_step_is_an_environment_matter(self) -> None:
+        """退出码既不是 1 也不是 2（进程被杀之类）：查进程与环境，不让作者改稿，也不说成脚本缺陷。"""
+        error, calls = self.registration_broken_at(1, 137)
+        self.assertIn("story-build number 没有正常结束（退出码 137）", error)
+        self.assertIn("进程被中断或运行环境出错", error)
+        self.assertNotIn("扩展维护者", error)
+        self.assertNotIn("按下面 story-build 的报告处理", error)
+        self.assertIn("没跑：view --mode prepare、build、check", error)
+        self.assertEqual(2, len(calls))
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
 
     def test_the_review_human_zone_survives_a_failed_registration(self) -> None:
         """评审人填过的意见：登记中途失败、修好再登记，都一个字节不丢。"""

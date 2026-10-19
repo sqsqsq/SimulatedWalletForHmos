@@ -60,8 +60,8 @@ import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
 import { recordUsage } from '../../../../hooks/shared/usage.mjs';
 
-/** 命令与它做什么、要哪些命令参数（必需的写在 need）；解析与帮助读同一张表。 */
-const COMMANDS = {
+/** 命令与它做什么、要哪些命令参数（必需的写在 need）；解析与帮助读同一张表。无原型：只认表里自己的键。 */
+const COMMANDS = Object.assign(Object.create(null), {
   skeleton: { what: '预检流程、材料、Spec 与决策登记，全过才建写作设计空壳、十章骨架与章草稿，并给出当前输入与下一步' },
   chapter: { what: '把草稿里的一章原子替换进 AR/story.md，其余章一个字节不动', need: ['--chapter', '--from'] },
   project: { what: '附录机器区按当前真源（spec 扩展章、knowledge-use.yaml）重投' },
@@ -70,9 +70,9 @@ const COMMANDS = {
   build: { what: '由 decisions.json 渲染 AR/review.md（人工区逐字节保留）' },
   view: { what: `切换、准备、查看或验收图的形态（--mode ${VIEW_MODES.join('|')}）`, need: ['--mode'], opts: ['--id', '--render'] },
   archive: { what: '交付门 → 对接层上传与读回 → 核回执 → 登记归档态（只用于需求系统单）', need: ['--mcp-token'] },
-};
+});
 /** 选项：值的写法与作用；值以 -- 开头时写成 `--选项=值`。 */
-const OPTIONS = {
+const OPTIONS = Object.assign(Object.create(null), {
   '--feature': ['<需求名>', '需求目录名（doc/features/<需求名>）'],
   '--project-root': ['<路径>', '工程根，不给时按入口所在工程'],
   '--chapter': ['<章名>', '要替换的章，按章节合同的章名'],
@@ -82,7 +82,7 @@ const OPTIONS = {
   '--id': ['<图块 ID>', '只作用于这一块图'],
   '--render': ['<渲染图路径>', 'review-request 用的渲染图'],
   '--mcp-token': ['<token>', '对接层访问需求系统用，不打印'],
-};
+});
 const KEY = { '--project-root': 'projectRoot', '--mcp-token': 'token' };
 const SCRIPT = 'node doc/extensions/skills/story/scripts/core/story-build.mjs';
 
@@ -276,7 +276,7 @@ function cmdSkeleton(ctx) {
       + `${made.length ? `补建草稿 ${made.length} 份（已写完的章按现稿补回，可直接改）`
         : '草稿齐备，一份未覆盖'}`;
   } else {
-    // 大标题「编号 需求名」：名称取自需求详情；本地单没有详情，作者照 check 的提示补上名称
+    // 大标题「编号 需求名」：名称取自需求详情；本地单没有详情，只写编号，下面的接续提示作者补名称
     const title = String(readJson(path.join(ctx.featureRoot, 'AR', 'detail.json'), {})?.title ?? '').trim();
     const body = [`# ${path.basename(ctx.featureRoot)}${title ? ` ${title}` : ''}`, ''];
     for (const ch of ctx.contract.chapters) {
@@ -292,8 +292,11 @@ function cmdSkeleton(ctx) {
   if (seeded.length) result += `；按写作设计骨架给 ${seeded.length} 份没动过的草稿铺好小节与表图`;
   // 首屏接续与 chapter 共用一处：各写一份的话，恢复那条路上的提示总比正常路径旧一轮。
   // 刚建的空壳不逐条报占位——下一步就是写它；已有的设计读不了才把缺在哪列出来。
-  process.stdout.write(nextSteps(ctx, readText(ctx.storyPath) ?? '', result, {
-    warnings: [...missing.map(m => missingSourceLine(m)), ...(hadPlan ? plan.problems : [])],
+  const current = readText(ctx.storyPath) ?? '';
+  const bare = current.split(/\r?\n/, 1)[0].trim() === `# ${path.basename(ctx.featureRoot)}`;
+  process.stdout.write(nextSteps(ctx, current, result, {
+    warnings: [...missing.map(m => missingSourceLine(m)), ...(hadPlan ? plan.problems : []),
+      ...(bare ? [`大标题只有需求编号，还缺需求名：直接改 AR/story.md 第 1 行，写成 \`# ${path.basename(ctx.featureRoot)} <需求名>\`；大标题不在任何章里，不经 chapter 提交`] : [])],
     plan, docs,
   }));
   for (const { file, rows } of starts) {
@@ -431,7 +434,7 @@ function main() {
     else if (args.command === 'check') cmdCheck(ctx);
     else if (args.command === 'number') cmdNumber(ctx);
     else if (args.command === 'archive') cmdArchive(ctx);
-    else {
+    else if (args.command === 'build') {
       cmdBuild(ctx);
       const launcher = writeLauncher(ctx.featureRoot, ctx.contract.local_reading_entry);
       if (launcher) process.stderr.write(`[story-build] ${launcher}\n`);

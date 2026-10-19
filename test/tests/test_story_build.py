@@ -3372,6 +3372,41 @@ class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
                 self.assertNotIn("[story-build check]", out, "拼错了参数却照样跑了检查")
         self.assert_wrote_nothing(before)
 
+    def test_a_bare_title_is_flagged_where_it_starts(self) -> None:
+        """本地单的大标题只有编号：起手当场说补哪里，check 的报错也说同一处，不必登记撞一次才知道。"""
+        code, out = self.run_build("skeleton", *self.common())
+        self.assertEqual(0, code, out)
+        self.assertEqual(f"# {FEATURE}", self.story_path.read_text(encoding="utf-8").split("\n", 1)[0])
+        self.assertIn("大标题只有需求编号", out)
+        self.assertIn("AR/story.md 第 1 行", out)
+        code, out = self.run_build("check", *self.common())
+        self.assertIn("只有需求编号、没有需求名", out)
+        self.assertIn("第 1 行", out)
+        text = self.story_path.read_text(encoding="utf-8")
+        self.story_path.write_text(text.replace(f"# {FEATURE}\n", f"# {FEATURE} 甲需求\n", 1), encoding="utf-8")
+        _, out = self.run_build("skeleton", *self.common())
+        self.assertNotIn("大标题只有需求编号", out, "补上名称之后还在提示")
+
+    def test_inherited_names_are_not_commands(self) -> None:
+        """表是无原型字典：`constructor` 一类名字不是命令，不会落进任何命令分支。"""
+        review = self.feature_root() / "AR" / "review.md"
+        review_before = review.read_bytes() if review.exists() else None
+        before = self.files_now()
+        for name in ("constructor", "toString", "__proto__", "hasOwnProperty"):
+            with self.subTest(name=name):
+                code, out = self.run_build(name, *self.common())
+                self.assertEqual(1, code, out)
+                self.assertIn("不认识的命令", out)
+                self.assertNotIn("[story-build build]", out, "落进了渲染")
+                self.assertNotIn("本地阅读", out, "动作开始了：视图被切换过")
+                code, out = self.run_build(name, "--help")
+                self.assertEqual(0, code, out)
+                self.assertIn("命令:", out, "帮助应回到顶层命令清单")
+        code, out = self.run_build("check", *self.common(), "--constructor")
+        self.assertIn("不认识的选项 --constructor", out)
+        self.assert_wrote_nothing(before)
+        self.assertEqual(review_before, review.read_bytes() if review.exists() else None)
+
     def test_values_are_not_echoed(self) -> None:
         for argv in (["archive", *self.common(), "--mcp-token", self.SECRET, "--bogus"],
                      ["archive", *self.common(), self.SECRET]):
