@@ -5,8 +5,9 @@
  * `request.json`（本模块按当前选择、依据实际内容、放置小节、SVG、本地资源与渲染图生成）、
  * `report.json`（独立执行体返回、作者原样留存）。它们是派生阅读证据：不进材料原件、成文登记、正式业务审查与上传。
  *
- * 依据按写作设计逐条实际读取：整份文件绑定全文，选定章节绑定那一节（含全部子节）；Story 依据取去掉阅读槽的正式文本，
- * 正文与 Mermaid 都在。依据里的正式图块与它的 `.mmd` 不一致就是依据未同步，不出请求。
+ * 依据由 `sources.mjs::basisFiles` 逐条解析（真实位置、允许来源、登记身份、原件到阅读稿与原图），这里按类型绑定：
+ * 文本整份绑定全文、选定章节绑定那一节（含全部子节），Story 取去掉阅读槽的正式文本；图片与其它二进制按原始字节；
+ * 同组的原件、阅读稿与原图各按字节绑定。依据里的正式图块与它的 `.mmd` 不一致就是依据未同步，不出请求。
  * 脚本只核文件、绑定与结论自洽；图对不对、有没有增益、看不看得清由独立审查者判断，
  * 报告里的执行引用证明不了一段对话真的发生——那由宿主事件与会话证据核。
  */
@@ -16,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { runPython } from '../flow/client.mjs';
 import { FIGURE_MARK, headingPath, markPairs, normalizeHeading, parseDocument } from './document.mjs';
+import { basisFiles } from './sources.mjs';
 
 /** 每张阅读图必核的四件：事实与关系忠实、阅读增益、实际渲染可读、与放置位置相称。 */
 const READING_CHECKS = ['semantic_fidelity', 'reading_gain', 'visual_readability', 'placement'];
@@ -86,24 +88,26 @@ const driftProblem = (featureRoot, text, what) => {
 
 /**
  * 这张图实际依据的内容：写作设计逐条取，同一路径与标题路径只绑定一次、保留它对应的全部依据写法。
- * `subject.formal` 是去掉阅读槽的正式 Story 文本。
+ * `subject.formal` 是去掉阅读槽的正式 Story 文本。`text` 为 null 的是图片或其它二进制，审查者自己打开看。
  */
 function basisOf(featureRoot, subject) {
   const problems = [];
   const found = new Map();
   for (const b of subject.item.basis.filter(Boolean)) {
-    const [rel, ...names] = b.split('>').map(s => s.trim());
-    const key = [rel, ...names.map(normalizeHeading)].join(' > ');
+    const r = basisFiles(subject.item.ctx, b);
+    if (r.problem) { problems.push(`依据「${b}」${r.problem}`); continue; }
+    const key = [r.rel, ...r.names.map(normalizeHeading)].join(' > ');
     if (found.has(key)) { found.get(key).entry.from.push(b); continue; }
-    if (!rel || /^([A-Za-z]:|[\\/])/.test(rel) || rel.split(/[\\/]/).includes('..')) { problems.push(`依据「${b}」不在本需求目录里`); continue; }
-    const whole = rel === STORY ? subject.formal : lf(readOr(path.join(featureRoot, ...rel.split('/'))));
-    if (whole === null) { problems.push(`依据「${b}」读不到`); continue; }
-    const hit = names.length ? headingPath(whole, names) : { body: whole };
+    const { primary } = r;
+    const story = primary.rel === STORY;
+    const whole = story ? subject.formal : primary.text ? lf(primary.bytes.toString('utf-8')) : null;
+    const hit = r.names.length ? headingPath(whole, r.names) : { body: whole };
     if (hit.problem) { problems.push(`依据「${b}」${hit.problem}`); continue; }
-    const drift = rel === STORY ? driftProblem(featureRoot, hit.body, `依据「${b}」`) : null;
+    const drift = story ? driftProblem(featureRoot, hit.body, `依据「${b}」`) : null;
     if (drift) { problems.push(drift); continue; }
-    found.set(key, { text: hit.body, entry: { path: rel, section: names.join(' › ') || null,
-      sha256: sha(rel === STORY ? stable(hit.body) : hit.body), from: [b] } });
+    found.set(key, { text: hit.body, entry: { path: r.rel, read: primary.rel, section: r.names.join(' › ') || null,
+      sha256: hit.body === null ? sha(primary.bytes) : sha(story ? stable(hit.body) : hit.body), from: [b],
+      related: r.files.filter(f => f !== primary).map(f => ({ path: f.rel, role: f.role, sha256: sha(f.bytes) })) } });
   }
   return { basis: [...found.values()], problems };
 }
@@ -261,9 +265,11 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
     `它放在 ${fromRoot(context.story)} 的「${context.section}」一节末尾的阅读槽里${order}。`,
     `审查者自己打开：${[inputs.svg, inputs.render, ...inputs.resources].map(x => fromRoot(x.path)).join('、')}`,
     '依据（脚本按写作设计当前实际读到的内容；一张图可以综合多段文字、表与图）：',
-    ...contents.basis.flatMap(b => (b.entry.section
-      ? [`- ${fromRoot(b.entry.path)}「${b.entry.section}」：`, ...fenced(b.text)]
-      : [`- ${fromRoot(b.entry.path)}（全文，自己打开读）`])),
+    ...contents.basis.flatMap(b => [
+      `- ${fromRoot(b.entry.read)}${b.entry.read === b.entry.path ? '' : `（${fromRoot(b.entry.path)} 的阅读稿）`}`
+        + (b.entry.section ? `「${b.entry.section}」：` : b.text === null ? '（图片，自己打开看）' : '（全文，自己打开读）'),
+      ...(b.entry.section ? fenced(b.text) : []),
+      ...b.entry.related.map(f => `  - 同组${f.role}：${fromRoot(f.path)}${f.role === '原件' ? '（只作身份，正文以阅读稿为准）' : '（自己打开看）'}`)]),
     `放置小节「${context.section}」的正文（含正式 Mermaid）：`, ...fenced(contents.context),
     '逐项给结论（PASS / WARN / FAIL / UNKNOWN / SKIP）与证据：',
     '- semantic_fidelity：相对全部依据，责任、条件、时序、结果、数量与未决是否准确；可以补出依据里已有的关系，'

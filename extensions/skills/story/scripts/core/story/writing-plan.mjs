@@ -13,21 +13,17 @@
  * skeleton、章提交、全篇 check 与回看清单读同一份解析结果。
  * 本模块不写盘、不输出 stdout；围栏按 document 的规则认，不另写 Markdown 解析。
  */
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { readText } from './context.mjs';
 import {
   DIAGRAM_SYNTAXES, fenceRanges, headingPath, normalizeHeading, placeholderProblems,
 } from './document.mjs';
 import { diagramsOf, diagramTopic } from './images.mjs';
-import { registeredPaths, relFromFeature, upstreamDocs } from './sources.mjs';
+import { basisFiles, relFromFeature, upstreamDocs } from './sources.mjs';
 
 //: 三个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
 const PARTS = { story: '阅读主线', skeleton: '骨架', reading: '阅读图选择' };
 //: 阅读图候选的四个字段：依据可以有多行，其余各一行
 const READING = { question: '阅读问题', gain: '增益', placement: '放置', basis: '依据' };
-//: 阅读图的依据只认本需求里有业务事实的文件：正式产物、图源、决策登记、登记过的材料
-const BASIS_FILES = ['AR/story.md', 'plan/plan.md', 'AR/story-src/decisions.json'];
 //: 形式协议的四个词。它们是协议词，不是业务分类；图种另从 DIAGRAM_SYNTAXES 派生。
 const FORMS = {
   表格: { kind: 'table' },
@@ -212,34 +208,18 @@ function readReading(ctx, plan, lines, range, fenced, say) {
       }
     }
     for (const b of x.basis.filter(Boolean)) {
-      const why = basisProblem(ctx, b);
+      const why = basisFiles(ctx, b).problem;
       if (why) say(`的阅读图「${x.id}」依据「${b}」${why}`);
     }
   }
 }
 
-/** 一条依据能不能当业务事实取到：本需求内、允许的文件种类、文件在；标题路径只给 Markdown。 */
-function basisProblem(ctx, basis) {
-  const [rel, ...names] = basis.split('>').map(s => s.trim());
-  if (!rel || /^([A-Za-z]:|[\\/])/.test(rel) || rel.split(/[\\/]/).includes('..')) return '不是本需求目录里的相对路径';
-  const materials = registeredPaths(ctx);
-  const sources = Object.values(ctx.contract.sources ?? {}).map(s => (typeof s === 'string' ? s : s?.path)).filter(Boolean);
-  const allowed = BASIS_FILES.includes(rel) || sources.includes(rel) || materials.includes(rel)
-    || /^AR\/story-src\/figures\/[^/]+\.mmd$/.test(rel);
-  if (!allowed) return '不是可作依据的文件——依据只认正式产物、正式图源、决策登记与登记过的材料（阅读图、审查报告与临时文件不算）';
-  if (/\.(docx?|pdf|xlsx?|pptx?)$/i.test(rel)) return '是二进制原件——依据写它导入后的阅读稿';
-  if (!fs.existsSync(path.join(ctx.featureRoot, ...rel.split('/')))) return '读不到这个文件';
-  if (names.length && !rel.endsWith('.md')) return '只有 Markdown 文件能按标题路径取一节';
-  return null;
-}
-
-/** 依据里的标题路径在当前内容里定不定得到（正文写成之后才核：选择时 story 可能还没有那一节）。 */
+/** 依据里的标题路径在当前内容里定不定得到（正文写成之后才核）。依据本身取不到由声明检查那条报，这里不重报。 */
 export function basisTargets(ctx, plan) {
   return (plan?.reading?.items ?? []).flatMap(x => x.basis.filter(Boolean).map((b) => {
-    const [rel, ...names] = b.split('>').map(s => s.trim());
-    const text = names.length ? readText(path.join(ctx.featureRoot, ...rel.split('/'))) : null;
-    const hit = text === null ? {} : headingPath(text, names);
-    return { id: x.id, basis: b, rel, body: hit.body ?? null, problem: hit.problem ?? null };
+    const r = basisFiles(ctx, b);
+    const hit = r.problem || !r.names.length ? {} : headingPath(r.primary.bytes.toString('utf-8'), r.names);
+    return { id: x.id, basis: b, problem: hit.problem ?? null };
   }));
 }
 

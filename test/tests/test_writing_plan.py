@@ -197,9 +197,9 @@ class TheReadingChoiceIsDeclared(unittest.TestCase):
             "放置「99-x」在骨架里找不到": READING_OK.replace("- 放置：07-exceptions", "- 放置：99-x"),
             "不是可作依据的文件": READING_OK + "- 依据：AR/figures/order-recovery.svg\n",
             "不是本需求目录里的相对路径": READING_OK + "- 依据：../别的需求/spec/spec.md\n",
-            "是二进制原件": READING_OK + "- 依据：inbox/原稿.docx\n",
+            "还没经导入链并入": READING_OK + "- 依据：inbox/原稿.docx\n",
             "读不到这个文件": READING_OK + "- 依据：plan/plan.md\n",
-            "只有 Markdown 文件能按标题路径取一节": READING_OK + "- 依据：AR/story-src/figures/fig-a.mmd > 甲\n",
+            "只有 Markdown 能按标题路径取一节": READING_OK + "- 依据：AR/story-src/figures/fig-a.mmd > 甲\n",
         }
         for needle, section in cases.items():
             with self.subTest(needle):

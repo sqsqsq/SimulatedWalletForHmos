@@ -7,8 +7,12 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
@@ -436,6 +440,164 @@ class SlotsBelongToTheScript(FigureViewCase):
         self.assertNotIn("本地阅读资产 AR/figures/shot.png", proc.stderr, "登记过的原始材料图片被误拦")
         self.assertEqual(1, proc.stderr.count("本地阅读资产 AR/figures/recovery.svg"), "槽里的阅读图也被当成了槽外引用")
         self.assertTrue(self.slot(), "check 之后没有恢复阅读图")
+
+
+class TheBasisIsWhatItSays(FigureViewCase):
+    """依据按真实位置、登记身份与原件链解析：声明检查、请求生成与重验用同一份结果。"""
+
+    TEXT_ONLY = STORY.replace("```mermaid\n" + FLOW_SRC + "```\n\n", "")
+    PRD = "# 产品需求\n\n## 恢复规则\n\n清掉之后按远端事实恢复。\n\n## 其它\n\n无关的一节。\n"
+
+    @staticmethod
+    def bmp(blue: int) -> bytes:
+        """一份合法的 1×1 24 位 BMP，只有像素的蓝色字节不同。"""
+        pixel = bytes([blue, 0, 0, 0])
+        return (b"BM" + struct.pack("<IHHI", 14 + 40 + len(pixel), 0, 0, 54)
+                + struct.pack("<IiiHHIIiiII", 40, 1, 1, 1, 24, 0, len(pixel), 2835, 2835, 0, 0) + pixel)
+
+    @staticmethod
+    def registered(data: bytes) -> str:
+        return "sha256:" + hashlib.sha256(data).hexdigest()[:16]
+
+    def put(self, rel: str, data: bytes) -> bytes:
+        path = self.fr / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return data
+
+    def manifest(self, origins: list, materials: list) -> None:
+        (self.fr / "AR" / "story-src" / "materials.json").write_text(
+            json.dumps({"schema": 2, "origins": origins, "materials": materials, "sources": []}, ensure_ascii=False), encoding="utf-8")
+
+    def link(self, link: Path, target: Path) -> None:
+        if os.path.lexists(link):
+            os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
+        if sys.platform == "win32":
+            import _winapi  # noqa: PLC0415
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(target, link, target_is_directory=True)
+
+    def choose(self, *basis: str) -> None:
+        self.story.write_text(self.TEXT_ONLY, encoding="utf-8")
+        self.design(candidate(basis=basis))
+
+    def test_a_linked_basis_counts_where_it_really_is(self) -> None:
+        shot = self.bmp(128)
+        self.manifest([], [{"kind": "image", "paths": ["assets/shots/a.bmp"], "sha256": self.registered(shot)}])
+        inside = self.fr / "assets-real"
+        self.put("assets-real/a.bmp", shot)
+        (self.fr / "assets").mkdir()
+        self.link(self.fr / "assets" / "shots", inside)
+        self.choose("assets/shots/a.bmp")
+        self.ready()
+        outside = Path(self._tmp.name) / "outside"
+        outside.mkdir()
+        (outside / "a.bmp").write_bytes(shot)
+        self.link(self.fr / "assets" / "shots", outside)
+        item = self.item()
+        self.assertEqual("stale", item["state"], "联接改指到需求目录外，旧验收照样成立")
+        self.assertIn("不在本需求的来源范围里", item["reason"])
+        self.assertIn("不在本需求的来源范围里", "；".join(self.work()["problems"]), "写作设计的声明检查没发现改指")
+        proc = self.view("review-request", "--id", "recovery")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("不在本需求的来源范围里", proc.stderr)
+        shutil.rmtree(outside)
+        item = self.item()
+        self.assertEqual("stale", item["state"])
+        self.assertIn("读不到", item["reason"], "断开的联接没被说出来")
+
+    def test_an_image_basis_is_bound_by_its_bytes(self) -> None:
+        first, second = self.bmp(128), self.bmp(129)
+        self.manifest([], [{"kind": "image", "paths": ["ux-reference/a.bmp"], "sha256": self.registered(first)}])
+        self.put("ux-reference/a.bmp", first)
+        self.choose("ux-reference/a.bmp")
+        self.ready()
+        request = json.loads((self.reading() / "request.json").read_text(encoding="utf-8"))
+        self.assertEqual(hashlib.sha256(first).hexdigest(), request["inputs"]["basis"][0]["sha256"])
+        self.assertIn("ux-reference/a.bmp（图片，自己打开看）", self.ok("review-request", "--id", "recovery").stdout)
+        self.put("ux-reference/a.bmp", second)
+        item = self.item()
+        self.assertEqual("stale", item["state"], "换了一张图，旧验收照样成立")
+        self.assertIn("登记之后变了", item["reason"])
+        self.manifest([], [{"kind": "image", "paths": ["ux-reference/a.bmp"], "sha256": self.registered(second)}])
+        self.assertEqual("stale", self.state(), "重新登记之后旧报告还算数")
+        self.put("ux-reference/a.bmp", first)
+        self.manifest([], [{"kind": "image", "paths": ["ux-reference/a.bmp"], "sha256": self.registered(first)}])
+        self.assertEqual("ready", self.state())
+
+    def test_an_original_is_read_through_its_registered_readable(self) -> None:
+        docx = self.put("inbox/需求.docx", b"PK\x03\x04 fake docx v1")
+        prd = self.put("RR/prd.md", self.PRD.encode("utf-8"))
+        origin = {"path": "inbox/需求.docx", "sha256": self.registered(docx), "kind": "converted-source", "readable_paths": ["RR/prd.md"]}
+        self.manifest([origin], [{"kind": "doc", "paths": ["RR/prd.md"], "sha256": self.registered(prd)}])
+        self.choose("inbox/需求.docx > 恢复规则", "RR/prd.md > 恢复规则")
+        self.ready()
+        basis = json.loads((self.reading() / "request.json").read_text(encoding="utf-8"))["inputs"]["basis"]
+        self.assertEqual([("inbox/需求.docx", "RR/prd.md"), ("RR/prd.md", "RR/prd.md")], [(b["path"], b["read"]) for b in basis])
+        self.assertEqual([[("inbox/需求.docx", "原件")]] * 2, [[(f["path"], f["role"]) for f in b["related"]] for b in basis],
+                         "选原件或选阅读稿都要带上原件身份")
+        out = self.ok("review-request", "--id", "recovery").stdout
+        self.assertIn("清掉之后按远端事实恢复。", out, "任务里没有阅读稿的实际段落")
+        self.assertIn("同组原件", out)
+        self.assertNotIn("fake docx", out, "原件按文本塞进了任务")
+        prd = self.put("RR/prd.md", self.PRD.replace("无关的一节", "另一件事").encode("utf-8"))
+        self.manifest([origin], [{"kind": "doc", "paths": ["RR/prd.md"], "sha256": self.registered(prd)}])
+        self.assertEqual("ready", self.state(), "阅读稿里无关的一节变了也让它过期")
+        self.put("inbox/需求.docx", b"PK\x03\x04 fake docx v2")
+        item = self.item()
+        self.assertEqual("stale", item["state"], "原件变了、阅读稿没重新并入，旧验收照样成立")
+        self.assertIn("登记之后变了", item["reason"])
+
+    def test_a_really_imported_original_is_bound_with_its_readable(self) -> None:
+        """正例走真实导入与 round 生成的材料清单：选原件就读它并入的那份正文，原件变了没重新导入就过期。"""
+        import zipfile  # noqa: PLC0415
+        for rel, text in (("SR/design.md", "# 系统设计\n\n分工。\n"), ("AR/design.md", "# 提取件\n\n范围。\n")):
+            self.put(rel, text.encode("utf-8"))
+        inbox = self.fr / "inbox"
+        inbox.mkdir()
+        (inbox / ".classify.json").write_text(json.dumps({"原稿.docx": "RR"}, ensure_ascii=False), encoding="utf-8")
+
+        def docx(words: str) -> None:
+            with zipfile.ZipFile(inbox / "原稿.docx", "w") as zf:
+                zf.writestr("word/document.xml", '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+                            f'wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{words}</w:t></w:r></w:p></w:body></w:document>')
+        docx("清掉之后按远端事实恢复")
+        for script, extra in (("import_sources.py", ()), ("story_flow.py", ("round",))):
+            proc = subprocess.run([sys.executable, str(CORE / script), *extra, "--feature", FEATURE, "--project-root", str(self.root)],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.choose("inbox/原稿.docx")
+        self.ready()
+        basis = json.loads((self.reading() / "request.json").read_text(encoding="utf-8"))["inputs"]["basis"][0]
+        self.assertEqual(("RR/prd.md", [("inbox/原稿.docx", "原件")]), (basis["read"], [(f["path"], f["role"]) for f in basis["related"]]))
+        docx("清掉之后转人工")
+        item = self.item()
+        self.assertEqual("stale", item["state"], "原件换了内容、没重新导入，旧验收照样成立")
+        self.assertIn("登记之后变了", item["reason"])
+
+    def test_a_missing_readable_or_a_broken_list_is_not_an_empty_answer(self) -> None:
+        docx = self.put("inbox/需求.docx", b"PK\x03\x04 fake docx")
+        self.put("RR/prd.md", self.PRD.encode("utf-8"))
+        cases = {
+            "阅读稿不在": ([{"path": "inbox/需求.docx", "sha256": self.registered(docx), "kind": "converted-source",
+                         "readable_paths": ["RR/missing.md"]}], "登记的阅读稿 RR/missing.md 读不到"),
+            "没有阅读稿": ([{"path": "inbox/需求.docx", "sha256": self.registered(docx), "kind": "converted-source",
+                         "readable_paths": []}], "还没经导入链并入"),
+            "没有摘要": ([{"path": "inbox/需求.docx", "kind": "converted-source", "readable_paths": ["RR/prd.md"]}],
+                     "没有原件 inbox/需求.docx 的摘要"),
+        }
+        self.choose("inbox/需求.docx")
+        for name, (origins, needle) in cases.items():
+            with self.subTest(name):
+                self.manifest(origins, [])
+                work = self.work()
+                self.assertFalse(work["complete"])
+                self.assertIn(needle, "；".join(work["problems"]))
+        (self.fr / "AR" / "story-src" / "materials.json").write_text("{ 坏了", encoding="utf-8")
+        self.assertIn("读不出来源关系", "；".join(self.work()["problems"]))
+        self.design(candidate(basis=BASIS[:1]))
+        self.assertEqual([], self.work()["problems"], "清单坏了也挡住了只用正式 Story 的依据")
 
 
 class TheFormalFormHasNoReadingFigures(FigureViewCase):

@@ -85,13 +85,15 @@ function selection(featureRoot) {
   try { contract = JSON.parse(fs.readFileSync(CONTRACT, 'utf-8')); } catch { contract = null; }
   if (!contract) return { declared: false, none: null, items: [], problems: ['contracts/story-chapters.json 读不出：阅读图的选择与放置定不了'] };
   const srcDir = path.join(featureRoot, 'AR', 'story-src');
-  const plan = readWritingPlan({ contract, featureRoot, srcDir, storyPath: path.join(featureRoot, 'AR', 'story.md'),
-    decisionsPath: path.join(srcDir, 'decisions.json'), templatePath: path.join(srcDir, 'story-template.md') });
+  const ctx = { contract, featureRoot, srcDir, storyPath: path.join(featureRoot, 'AR', 'story.md'),
+    decisionsPath: path.join(srcDir, 'decisions.json'), templatePath: path.join(srcDir, 'story-template.md') };
+  const plan = readWritingPlan(ctx);
   const r = plan.reading;
   const items = r.items.filter(x => ID.test(x.id)).map((x) => {
     const [chapter, ...names] = x.placement.split('>').map(s => s.trim()).filter(Boolean);
     const title = plan.chapters.find(c => c.id === chapter)?.title;
-    return { ...x, where: title ? [title, ...names] : null };
+    // ctx 随候选带给验收：依据按同一份上下文解析
+    return { ...x, where: title ? [title, ...names] : null, ctx };
   });
   return { declared: r.declared, none: r.noneReason, items, problems: [...r.problems] };
 }
