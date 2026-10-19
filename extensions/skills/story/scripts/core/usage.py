@@ -7,7 +7,9 @@
 - observe：登记确实发生的使用与 feature 关联，接收首份初始化输入；检查观测不形成可信起点；
 - begin：真实工作入口，先对账旧结果再开本轮起点，同轮重复进入保留原起点；
 - reconcile：按已登记的 features/steps 读现存原生事实，更新结果与计时，不创造需求或步骤；
-- finish-own / abort-own：Story 与 update 自有操作落盘后结算对应步骤（结果从文件核，不收调用方自报）。
+- finish-own / abort-own：Story 与 update 自有操作落盘后结算对应步骤（结果从文件核，不收调用方自报）；
+- ensure：适配时确保记录文件在——缺了建空表，在了只校验不重写，不创建需求；
+- inspect：只读校验记录文件，缺失明说，不建目录、锁或临时文件。
 
 结算只认终态事件（原生闭环、Story 成文且 spec 闭环、update 关轮或撤回）；`last_result` 是最近采纳的终态游标，
 中间结论、文件暂缺与格式变化不推进它。同一终态反复出现不重复计；判不清区间归属就记耗时未知，不猜。
@@ -35,7 +37,7 @@ EXT_ROOT = Path(__file__).resolve().parents[4]
 CONTRACT = json.loads((Path(__file__).resolve().parents[2] / "contracts" / "usage.json").read_text(encoding="utf-8"))
 SCHEMA, STEPS = CONTRACT["schema"], CONTRACT["steps"]
 OWN = {"story", "story update"}
-ACTIONS = ("observe", "begin", "reconcile", "finish-own", "abort-own")
+ACTIONS = ("observe", "begin", "reconcile", "finish-own", "abort-own", "ensure", "inspect")
 #: 等锁的上限（秒）：记录是短读改写，等不到说明另一次记录卡住了，报出来让原操作重试
 LOCK_WAIT = 10.0
 
@@ -379,6 +381,8 @@ def record(project_root: Path, action: str, *, feature: str | None = None, step:
         out["errors"].append(f"未知动作 {action}：可用 {' / '.join(ACTIONS)}")
         return out
     path = Path(project_root) / Path(*CONTRACT["record"].split("/"))
+    if action in ("ensure", "inspect"):
+        return ensure(path, out) if action == "ensure" else inspect(path, out)
     if action == "reconcile" and not path.exists():
         out["ok"] = True            # 对账不创造记录：没有 usage 就没有要补的事实，也不建锁
         return out
@@ -401,6 +405,37 @@ def record(project_root: Path, action: str, *, feature: str | None = None, step:
         return out
     node = data["requirements"].get(key) if key else None
     out.update(ok=not out["errors"], requirement=key, pending_init=bool(node) and node["name"] is None)
+    return out
+
+
+def ensure(path: Path, out: dict) -> dict:
+    """锁内重判：缺文件就以空表原子建立；已有文件只按合同校验，一个字节不改。"""
+    try:
+        with locked(path):
+            if path.exists():
+                parse(path.read_bytes(), path.name)
+            else:
+                save(path, load(path))
+                out["changed"] = True
+    except UsageError as exc:
+        out["errors"].append(str(exc))
+    except OSError as exc:
+        out["errors"].append(f"{path.name} 建不起来（{exc}）：修好目录权限后重跑")
+    out["ok"] = not out["errors"]
+    return out
+
+
+def inspect(path: Path, out: dict) -> dict:
+    """只读：文件在不在、合不合合同。"""
+    try:
+        if not path.is_file():
+            raise UsageError(f"{CONTRACT['record']} 不存在：使用记录还没建立")
+        parse(path.read_bytes(), path.name)
+    except UsageError as exc:
+        out["errors"].append(str(exc))
+    except OSError as exc:
+        out["errors"].append(f"{path.name} 读不出（{exc}）")
+    out["ok"] = not out["errors"]
     return out
 
 

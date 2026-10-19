@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -355,6 +356,62 @@ class Settlement(UsageCase):
         self.assertTrue(self.call("reconcile")["changed"])
         self.assertIsNone(self.step("story update")["spent"], "分不出先后的同刻终态却保留了精确耗时")
         self.assertFalse(self.call("reconcile")["changed"])
+
+
+class TheRecordFileIsSetUpOnce(UsageCase):
+    """ensure 缺了建空表、在了只核；inspect 只读；真实记录照常追加。"""
+
+    def ensure(self) -> dict:
+        return self.call("ensure", feature=None)
+
+    def test_ensure_creates_the_empty_table_once(self) -> None:
+        out = self.ensure()
+        self.assertEqual((True, True), (out["ok"], out["changed"]), out)
+        self.assertEqual({"schema": 1, "requirements": {}}, self.usage())
+        before = self.record.read_bytes(), self.record.stat().st_mtime_ns
+        self.assertFalse(self.ensure()["changed"])
+        self.assertEqual(before, (self.record.read_bytes(), self.record.stat().st_mtime_ns))
+
+    def test_inspect_only_reads(self) -> None:
+        out = self.call("inspect", feature=None)
+        self.assertFalse(out["ok"])
+        self.assertIn("不存在", out["errors"][0])
+        self.assertFalse((self.root / "doc").exists(), "只读检查建了目录")
+        self.ensure()
+        self.assertTrue(self.call("inspect", feature=None)["ok"])
+
+    def test_ensure_never_rewrites_an_existing_record(self) -> None:
+        self.record.parent.mkdir(parents=True, exist_ok=True)
+        for text in ('{"schema":1,"requirements":{}}', "{ 坏了", '{"schema": 9, "requirements": {}}'):
+            with self.subTest(text=text):
+                self.record.write_text(text, encoding="utf-8")
+                out = self.ensure()
+                self.assertFalse(out["changed"])
+                self.assertEqual(text.startswith('{"schema":1'), out["ok"], out)
+                self.assertEqual(text, self.record.read_text(encoding="utf-8"))
+
+    def test_ensure_waits_for_a_real_write_and_keeps_it(self) -> None:
+        sys.path.insert(0, str(USAGE.parent))
+        try:
+            import usage as writer  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(USAGE.parent))
+        result: dict = {}
+        with writer.locked(self.record):
+            worker = threading.Thread(target=lambda: result.update(self.ensure()))
+            worker.start()
+            time.sleep(0.5)
+            self.record.write_text('{"schema":1,"requirements":{}}', encoding="utf-8")   # 真实记录先写进来
+        worker.join()
+        self.assertEqual((True, False), (result["ok"], result["changed"]), result)
+        self.assertEqual('{"schema":1,"requirements":{}}', self.record.read_text(encoding="utf-8"))
+
+    def test_real_use_appends_to_the_set_up_record(self) -> None:
+        self.ensure()
+        self.call("observe", "spec")
+        self.assertEqual(["AR1"], list(self.usage()["requirements"]))
+        self.assertEqual(["usage.json", "usage.json.lock"],
+                         sorted(p.name for p in self.record.parent.iterdir() if p.name.startswith("usage")), "多出第二份记录")
 
 
 if __name__ == "__main__":

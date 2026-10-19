@@ -321,7 +321,8 @@ class SourceKindCase(unittest.TestCase):
     def git_add_takes(self, target: Path, rel: str) -> bool:
         path = target / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}\n", encoding="utf-8")
+        if not path.exists():           # 探针只补缺的文件，不盖掉已有的使用记录
+            path.write_text("{}\n", encoding="utf-8")
         return subprocess.run(["git", "-C", str(target), "add", "--dry-run", rel], capture_output=True,
                               text=True, encoding="utf-8").returncode == 0
 
@@ -331,6 +332,7 @@ class SourceKindCase(unittest.TestCase):
         (target / ".gitignore").write_text("doc/*\n!doc/features/\n", encoding="utf-8")
         self.commit(target, "doc 下的文件默认不入库")
         self.assertFalse(self.git_add_takes(target, "doc/usage.json"), "前提不成立：规则本来就没挡住")
+        (target / "doc" / "usage.json").unlink()      # 探针文件不是使用记录：适配前撤掉
         self.assertNotEqual(0, self.adapt("--check", target, PKG_ROOT).returncode, "挡住了却说核对通过")
         proc = self.adapt("--apply", target, PKG_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))

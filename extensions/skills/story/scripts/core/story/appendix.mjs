@@ -637,7 +637,7 @@ export function appendixZoneProblems(ctx, storyText) {
       + `${diff.at === null ? '' : `，第 ${diff.at + 1} 行`}）：`
       + `${diff.have === null ? '' : `盘上是「${cut(diff.have)}」，`}`
       + `${diff.want === null ? '' : `${z.source}投出来是「${cut(diff.want)}」`}`
-      + `——机器区由 \`story-build project\` 从 ${z.source} 投影，内容以真源为准，手改会被下一次投影覆盖`);
+      + `——机器区从 ${z.source} 投影，内容以真源为准，手改会被下一次投影覆盖：改真源后跑 \`story_flow.py story\` 登记（它重投附录并全篇检查）；只想先看投影结果用 \`story-build project\``);
   }
   // **集合两向都核**：上面走的是合同要的那几区；盘上多出来的名字在这里报。
   // 合同里没有它，就没有真源与它比——既不受投影约束，也不是作者说明，它会长期冒充现行投影。

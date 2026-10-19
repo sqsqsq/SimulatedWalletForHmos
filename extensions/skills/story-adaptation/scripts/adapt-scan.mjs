@@ -326,6 +326,42 @@ function inWriteFace(root, p, bridges, withAdapters) {
   return true;
 }
 
+/**
+ * 使用记录归目标、由记录器（story 的 usage.py）唯一写：这里只经扩展里的桥接调它。
+ * `ensure` 缺了建空表、在了只校验；`inspect` 只读。`root` 是哪一份扩展的桥接（包或目标已装的）。
+ */
+async function usageWriter(root, action) {
+  const bridge = join(root, 'hooks', 'shared', 'usage.mjs');
+  if (!existsSync(bridge)) return { ok: false, errors: [`没有使用记录桥接 ${relative(TARGET, bridge)}`] };
+  process.env.PYTHONDONTWRITEBYTECODE = '1';     // 记录器不在目标的机制目录里留字节码，下一次 --apply 的写入面才是干净的
+  try {
+    return (await import(pathToFileURL(bridge).href)).recordUsage(TARGET, action);
+  } catch (e) {
+    return { ok: false, errors: [`使用记录桥接加载失败（${e?.message ?? e}）`] };
+  }
+}
+
+/** apply 收尾：确保目标有可入库的使用记录。返回 {ok, lines}；失败时机制已写完的事实由调用方照常报出。 */
+async function ensureUsage() {
+  const r = await usageWriter(TDIR, 'ensure');
+  const still = usageBlockedBy(TARGET);
+  const lines = [];
+  if (r.ok) {
+    lines.push(r.changed
+      ? `[adapt-scan] 已建立使用记录 ${USAGE.record}（schema ${USAGE.schema}，还没有需求）：它归目标，与这次升级改动一起提交`
+      : `[adapt-scan] 使用记录 ${USAGE.record} 已在且合法，保留未动`);
+  } else {
+    lines.push(`[adapt-scan] 使用记录 ${USAGE.record} 没有建立（${(r.errors ?? []).join('；')}）。机制文件已按上面写完，不用重跑 --apply；`
+      + `修好原因后只补这一份：echo '{"action":"ensure"}' | python ${extDir(TARGET)}/skills/story/scripts/core/usage.py`
+      + ` --project-root '${TARGET}'，再跑 --check`);
+  }
+  if (still) {
+    lines.push(`[adapt-scan] ${USAGE.record} 仍被 ${still} 挡住，使用记录进不了库：`
+      + '放行它的父路径与这个文件（其余过程目录保持忽略），或按规则来源找它的维护者；未解决前适配不算完成');
+  }
+  return { ok: r.ok && !still, lines };
+}
+
 // ── git ─────────────────────────────────────────────────────────────────────
 
 function git(root, args) {
@@ -641,6 +677,11 @@ if (mode === '--apply') {
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
 
+  if (existsSync(join(TARGET, ...USAGE.record.split('/')))) {
+    const u = await usageWriter(PDIR, 'inspect');
+    if (!u.ok) die(`使用记录 ${USAGE.record} 不合法（${(u.errors ?? []).join('；')}）：它不会被当成空表覆盖。机制一个字节没写，修好后重跑 --apply`, 2);
+  }
+
   const pkgFiles = coveredFiles(PDIR, WITH_ADAPTERS);
   const written = [];
   const removed = [];
@@ -705,9 +746,6 @@ if (mode === '--apply') {
       writeFileSync(f, `${have.replace(/\n*$/, '\n')}${missing.join('\n')}\n`, 'utf8');
       written.push('.gitignore');
     }
-    const still = usageBlockedBy(TARGET);
-    if (still) console.error(`[adapt-scan] ${USAGE.record} 仍被 ${still} 挡住，使用记录进不了库：`
-      + '放行它的父路径与这个文件（其余过程目录保持忽略），或按规则来源找它的维护者；未解决前统计能力不算装好');
   }
 
   // 6. 首次安装另做一件：配置键。升级不碰。知识不建骨架，由模型按方法页从部件定位知识写起。
@@ -723,13 +761,16 @@ if (mode === '--apply') {
 
   // 一个字节都没动 = 这个目标已经在包的版本上。说出来，不要报「写入 0 个文件」——
   // 那句话看起来像什么都没做成，而事实是没有可做的。
+  // 7. 使用记录：机制写完之后经目标已装的记录器建立；首装、升级、同版本补文件都走这一处
+  const usage = await ensureUsage();
   if (!written.length && !removed.length) {
     console.log('[adapt-scan] 机制已在包的版本上，没有机制文件要写');
+    usage.lines.forEach(l => console.log(l));
     if (HOOKS_OFF) console.log(HOOKS_OFF);
     await printFollowUp();
-    process.exit(0);
+    process.exit(usage.ok ? 0 : 1);
   }
-  console.log(`[adapt-scan] ${STATE === 'fresh' ? '首次安装' : '升级'}完成：`
+  console.log(`[adapt-scan] ${usage.ok ? `${STATE === 'fresh' ? '首次安装' : '升级'}完成` : '机制文件写完，适配没有全部完成（见下）'}：`
     + `写入 ${written.length} 个文件，清除 ${removed.length} 个包里不再有的文件`);
   if (removed.length) removed.forEach(p => console.log(`  - ${p}`));
   console.log('[adapt-scan] 下一步：跑 --check 自检；'
@@ -737,9 +778,10 @@ if (mode === '--apply') {
       ? '首次安装接着按 SKILL.md：写部件定位知识并摆给人确认一次 → 按下面列出的知识条目逐题判适用、'
         + '按目标仓写 → 知识交回后跑 --mark-adapted 记下适配版本'
       : '`git diff` 看这次动了哪些文件'));
+  usage.lines.forEach(l => console.log(l));
   if (HOOKS_OFF) console.log(HOOKS_OFF);
   await printFollowUp();
-  process.exit(0);
+  process.exit(usage.ok ? 0 : 1);
 }
 
 /** 剥掉正文里已有的标记行——包里那一份带不带标记，写出去都只包一层。 */
@@ -888,6 +930,8 @@ for (const line of missingGitignoreLines(TARGET)) {
 {
   const blocked = usageBlockedBy(TARGET);
   if (blocked) bad.push(`④ 使用记录 ${USAGE.record} 被 ${blocked} 挡住：它归目标，要能随普通 git add 入库`);
+  const u = await usageWriter(existsSync(join(TDIR, 'hooks')) ? TDIR : PDIR, 'inspect');
+  if (!u.ok) bad.push(`④ 使用记录：${(u.errors ?? []).join('；')}——缺了跑 --apply 建立；坏了修好后重验，不重置成空表`);
 }
 
 // ⑤ 包的 `scripts/` 这一层只有 core/ 与 adapters/ 两个目录
@@ -919,5 +963,5 @@ if (bad.length) {
   process.exit(1);
 }
 console.log('[adapt-scan] 核对通过：机制面与包一致 / manifest 按所有权合成 / '
-  + '入口文件含扩展段与标记区 / 工作件被 .gitignore 挡住、使用记录能入库 / 包的 scripts 只有 core 与 adapters'
+  + '入口文件含扩展段与标记区 / 工作件被 .gitignore 挡住、使用记录在且合法能入库 / 包的 scripts 只有 core 与 adapters'
   + (WITH_ADAPTERS ? '（来源带对接实现）' : ''));

@@ -73,4 +73,5 @@
 - [在途单] 材料清单 `AR/story-src/materials.json` 升到 schema 2（新增来源关系 `origins`，收件箱原件以相对 inbox 的路径为键），附录材料清单改为作者维护的「材料 | 来源 | 贡献」三列表。用旧版做到一半的单在旧版收口；要在本版继续的，从 init 重起。
 - [对接层] `story.js archive` 与 `restore` 读回的系统正文（与附件）和上传内容不一致时（`verified` 不成立），stdout 写 `success: false` 与原因并非零退出，不再报成功。验证：让读回内容与上传不同各跑一次，核退出码与 JSON。
 - [在途单] 本地阅读图成为交付的一部分：已登记成文的单在本版重跑一次 `story_flow.py story`，给图建源 `.mmd`；之后按 `story_flow.py status` 的「完成本地阅读」逐张做阅读图并过局部阅读验收。核：`story-build view --mode status` 的 complete 为 true，或逐张写明缺什么能力。
+- [在途单] `--apply` 在业务仓没有 `doc/usage.json` 时建立空的使用记录（schema 1，还没有需求），已有的合法记录逐字节保留：把它与本次升级改动一起提交；记录坏格式、带冲突标记或是旧 schema 时 `--apply` 不覆盖并停下，修好后重跑。核：`--check` ④ 通过。
 - [对接层] 归档改由核心入口 `story-build archive --feature <AR> --mcp-token <token>` 调对接层的 `archive` 协议（入口路径登记在章节合同 `system_archive_entry`），对接层的参数与回执不变，不需要改。核：用对接层的测试替身跑一次归档，回执字段齐全时登记成功。

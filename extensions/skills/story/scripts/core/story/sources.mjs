@@ -46,10 +46,18 @@ function scanSources(ctx) {
 }
 
 /** 缺失来源报成一句话。必备与可选两种措辞，降级的那几份带上「为什么不算缺」。 */
+//: 必备来源由谁产出：缺了的时候恢复入口就是它
+const PRODUCED_BY = {
+  PRD: '它是需求系统的单据，`/story init` 取材时拉进需求目录',
+  SE: '它是需求系统的单据，`/story init` 取材时拉进需求目录',
+  SPEC: '它在本阶段写成：先写 spec/spec.md',
+  DESIGN: '它在收口时由 `story_flow.py complete` 提交提取稿写成',
+};
+
 export function missingSourceLine(m) {
   return `${m.rel}：合同声明的来源 ${m.doc} 不存在`
     + (m.required
-      ? '——它是必备来源，缺了这一轮的材料就不完整'
+      ? `——它是必备来源，缺了这一轮的材料就不完整${PRODUCED_BY[m.doc] ? `；${PRODUCED_BY[m.doc]}` : ''}`
       : `（${m.why ?? '可选来源'}，缺了是正常的）`);
 }
 

@@ -3302,6 +3302,8 @@ class TheSkeletonListsEveryIndependentGap(SkeletonPreflightCase):
         self.assertIn("没判", out)
         self.assertIn("Spec 的章节、术语与附录派生", out)
         self.assertNotIn("术语映射表", out, "Spec 不在却报了由它推出来的缺节")
+        self.assertIn("它在本阶段写成：先写 spec/spec.md", out, "必备来源缺失没给恢复入口")
+        self.assertNotIn("本地阅读图没有恢复", out, "还没有 story 却报阅读图恢复失败")
         self.assert_wrote_nothing(before)
         spec.write_text(good_spec, encoding="utf-8")
         decisions.write_text(good_decisions, encoding="utf-8")

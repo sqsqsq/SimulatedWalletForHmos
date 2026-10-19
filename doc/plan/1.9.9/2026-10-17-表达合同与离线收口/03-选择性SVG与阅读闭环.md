@@ -1,6 +1,6 @@
 # P3：选择性SVG、真实独审与阅读闭环
 
-2026-10-17。依赖P2和00额度确认。沿用figure-view/figure-reading、VIEW_OWNER、现有flow与装置，不新增阅读调度器或后台服务。本页选择**保留一键显示/隐藏补充图**，不删除仍有效的用户能力，也不保留旧单图替换的并行模式。
+2026-10-17制定，2026-10-19核定。依赖P2和00本次额度确认。沿用figure-view/figure-reading、VIEW_OWNER、现有flow与装置，不新增阅读调度器或后台服务。本页选择**保留一键显示/隐藏补充图**，不删除仍有效的用户能力，也不保留旧单图替换的并行模式。
 
 ## 1. 正式图与阅读图是不同对象
 
@@ -42,9 +42,13 @@ alt取选择项阅读问题，正确转义Markdown特殊字符。SVG支持多段
 
 prepare是这一同步的明确修复入口：允许移除已取消项的成对合法槽，允许将仍选项的合法槽迁到声明的新位置并重排；正式处理/status检查仍报告孤立/错位，不能自行忽略。若边界坏、ID重复、槽内混入非脚本内容或新目标缺失/歧义，则整次零写，先修对应原因；不能因“改选择使旧槽非法”让prepare也永远拒绝合法迁位。
 
+`prepare`不带id时同时处理正式图源与全部阅读槽，作为选型改变后的唯一同步入口；带`--id`时按当前对象类型处理，ID同时属于正式图和阅读图而有歧义则要求不带id执行整体prepare，不猜对象。`review-request/review-check`的id只认reading选择集合。`svg/mermaid/toggle`不带id按表定义处理全部槽；带id只操作该阅读候选，其他槽保持，不把它解释成旧Mermaid替换。无选择且无遗留槽时正常无操作。
+
+prepare和切换只接受槽内为空或本机制按该候选生成的单个图片引用；不能把任意文字当生成内容删除。移槽/取消前先核完整文档再一次写盘。取消后的未使用SVG与报告留在原证据目录，不参与完成判定；槽外引用与孤立槽仍必须处理，不能删选择后隐藏事实。
+
 ## 2. 多依据与请求身份
 
-复用figure-reading现有目录：`AR/story-src/figures/<ID>.reading/{render.png,request.json,report.json}`。请求升为新version/METHOD，旧格式明确不支持，不并行维护v1分支。
+复用figure-reading现有目录：`AR/story-src/figures/<ID>.reading/{render.png,request.json,report.json}`。请求固定为`version:2`、`method:story-reading-review/2`，旧格式明确不支持，不并行维护v1分支。沿用现有request_id派生与报告结构；inputs以basis集合替换单mmd，svg/resources/render/context职责保留，context与basis均取真实内容；不增加第二份批准状态。
 
 请求由脚本生成并绑定：
 
@@ -59,6 +63,8 @@ prepare是这一同步的明确修复入口：允许移除已取消项的成对�
 **避免切换自激且不漏语义变化：**先验证story-reading标记配对、唯一、属于当前选择且放置正确，再在内存剔除整个阅读槽以计算正式Story依据；保留全部普通正文和Mermaid内容。不能像旧placement那样把所有图内容都剔除。切换槽的显示状态不改请求身份；改选择目的/依据、正式图源、正文事实、相关位置、SVG/资源/PNG会过期。status不为算摘要临时改盘。
 
 所选Story范围包含story-figure块时，读取依据前只读核块内Mermaid与其权威mmd一致。只改mmd而正文未重铺时，报告“依据未同步”、旧图不得ready；不为计算哈希偷偷改正文，也不继续绑定旧正文假称当前。按现有正式重铺入口同步后重新取得依据与审查。
+
+读取依据的标题范围含其全部子节；多个重叠依据允许，绑定按规范化路径/标题路径去重，同一内容只给独审一次但保留其选择关系。context使用放置小节的完整正文与正式Mermaid，不把所有图剔除。以章级依据声明时，该章任意事实变化使图过期是有意的保守粒度，不为减少重审猜哪些句子“可能无关”。
 
 metadata只写可读依据说明，不再是权威来源或必须等于某份mmd；权威绑定是当前请求中实际取得的依据集合。XML、命名空间、有限正viewBox、受限本地引用及递归资源检查继续由现有figure-check一次产生，多个消费者复用同一结果，不能重复各写一套资源扫描。
 
@@ -79,20 +85,34 @@ metadata只写可读依据说明，不再是权威来源或必须等于某份mmd
 
 | 选择/证据 | readingWork结果 |
 |---|---|
-| 明确不采用、理由有效、声明/槽无冲突 | `applicable=false, complete=true, items=[]`；有Mermaid也不派补SVG任务 |
+| 明确不采用、理由非空、声明/槽无冲突 | `applicable=false, complete=true, items=[], unmanaged=[], problems=[], next=null`；有Mermaid也不派补SVG任务；不采用是否合理仍由正式独审判断 |
 | 选择n项且全部当前ready | `applicable=true, complete=true` |
 | 选择项缺SVG/渲染/报告、失败或过期 | `applicable=true, complete=false`，按项给恢复动作 |
-| 缺选择节、坏声明、依据错误、标记/源结构坏、读失败 | `complete=false`及problems；不能当作不适用或零候选成功 |
+| 缺选择节、坏声明、依据错误、标记/源结构坏、读失败 | `applicable=true, complete=false`，problems及非空next点明修复入口；items只列已能确定的候选，不能用空集合冒充合法零候选 |
+
+接口保持`applicable/complete/items/unmanaged/problems/next`。items只列reading候选，state/原因仍沿现有ready/缺件/过期/失败分类；unmanaged保留现有整数行号类型，用于正式Mermaid未建源的结构问题，不把这些图变成必做SVG。无Story的早期阶段由现有story_required判适用时机：要求Story而缺失为unknown，不能因文件不存在得出无须阅读；不要强迫尚未到Story阶段的业务生成文件。
 
 complete只表示阅读集合，不能代替正式业务完成。删除选择或修改增益/依据会改变已有story-template正式输入身份，必须由原成文/审查链处理，不能因把失败候选删成零就绕过正式审查。写作设计已经进入登记与必审输入，沿原指纹责任，不新建签章状态。
 
 `flow/routing.py::reading_work/reading_todo`、lifecycle/status/归档路由、test worker reading_facts/target_complete继续消费这一个生产结果；保持缺字段/矛盾状态不完成的既有反例。C01的host_concluded结束语义保持，不引入等待次数或重试上限。
 
+`reading_todo`必须先判读取错误/problems和状态自洽，再接受合法不适用；禁止`not applicable`掩盖坏声明。`test/scripts/run_case.py::reading_contract/reading_facts/target_complete`同步语义与错误传播，仍只消费生产结果，不另推一份选择集合。业务完成＋本次阅读目标完成才报整体目标完成；缺渲染能力/独立执行能力要交具体缺口，不能限次后宣称完成。
+
 保留VIEW_OWNER与现有正式前/后视图恢复：spec/plan author、pre-verifier、Story正式命令先隐藏补充SVG，完成或失败后只恢复当前可用的选择项；不吞业务错误。选择/依据变化使旧报告过期时恢复为正式空槽，说明哪些图需更新，不展示旧SVG。跨嵌套入口只由已有最外层所有者处理，避免二次往返。
 
 必须检查并替换ensureMermaid及Python lifecycle中“没有story-figure就提前返回”的旧守卫：没有Mermaid、只有文字/表及选中reading槽也是合法输入，正式前隐藏和结束恢复照常执行。入口以实际两类标记/声明判断，不把无Mermaid当无阅读图或无须处理。
 
+首次起稿的恢复入口不能被新声明要求锁死：Story/写作设计刚创建或尚缺reading节、且没有reading槽时，ensureMermaid可以对已有正式图作安全还原或无操作，不能在skeleton执行前就以“没有阅读声明”拒绝。声明完整性由P2章提交/正式check和readingWork判；skeleton必须仍能给出空壳、当前输入与补齐动作。有槽而结构/归属不成立时按明确错误回设计或prepare，不能清掉作者文字求过。保留“没有Story时不输出阅读图恢复失败”的已修行为。
+
 update/归档/restore仍使用正式形态，保留所需mmd、写作设计和既有内容快照；reading证据保持派生、恢复后重新按当前对象验。SVG未上传的事实写清楚；不要在archive适配器加未经授权的系统附件接口。仅本地可读不冒称远端SVG已交付。
+
+### 正式身份与恢复顺序（沿已有机制，不新造hash协议）
+
+- Python的status/story/archived/update/round/reopen/complete已有reading_view，MJS正式命令已有withView：二者都在读正式身份前隐藏阅读槽、按源恢复Mermaid；结束/失败由已有最外层所有者恢复当前ready项。修守卫使纯reading槽同样被处理。
+- `ledger_digest`与JS登记摘要继续按正式落盘文本/LF归一，不各自实现第二份槽剥除算法。它们的所有实际调用入口必须先取得正式视图；普通view status只读计算阅读状态，不偷偷重写Story。
+- 原生pre_phase/author/pre_verifier调用ensureMermaid时同样清空阅读槽。不要增加框架缺少的post_phase hook；独立harness结束后维持正式形态可接受，现有Extension的下一次有明确恢复职责的入口再显示可用阅读图。
+- request身份的纯内存归一由现有document/figure-view的一处槽解析提供；先校验合法槽再剔除槽，正式mmd/正文仍绑定。prepare仅机械改标记/位置后，正式登记据新文本成立；单纯svg/mermaid显隐后再走正式登记比较，不应报业务材料漂移。
+- update先保存正式before，restore先按原机制恢复业务文件再依据恢复后的选择/内容判阅读证据；旧报告仅在实际请求身份仍匹配时可复用，不靠“以前PASS”恢复ready。归档远端已写入而本地登记失败继续只补登记，不重新上传，保持10-19原包已关闭语义。
 
 ## 5. 文件动作与退场
 

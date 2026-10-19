@@ -397,6 +397,7 @@ function withView(ctx, body) {
 }
 
 function restoreView(ctx) {
+  if (!fs.existsSync(ctx.storyPath)) return;     // 还没有 story：没有可恢复的阅读图
   try {
     const r = switchView(ctx.featureRoot, 'svg');
     if (r.problems.length) {

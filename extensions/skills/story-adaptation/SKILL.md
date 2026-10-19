@@ -72,7 +72,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --apply --target <目�
 
 ### 3 写入
 
-`--apply` 一次做完全部确定性写入：删掉退场文件、复制机制面、合成 manifest、覆盖跳板、重写入口标记区、补 `.gitignore` 缺的工作件忽略行（使用记录被目标规则挡住时补一条精确放行并复查）。
+`--apply` 一次做完全部确定性写入：删掉退场文件、复制机制面、合成 manifest、覆盖跳板、重写入口标记区、补 `.gitignore` 缺的工作件忽略行（使用记录被目标规则挡住时补一条精确放行并复查），最后经目标已装的记录器确保 `doc/usage.json` 在：缺了建空表，已有的合法记录一个字节不动，坏了不覆盖、在写任何机制文件之前停下。
 你只下命令、读结果。
 
 **升级不停等**：一次升级指令授权到写入完成加自检，只有失败才回头问人。写入面已由目录边界完全确定，没有可拍板的选项。
@@ -107,7 +107,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 | ① 机制面 | 这一次覆盖范围内的文件与包逐字一致，包里没有的目标也不该有 |
 | ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `adapters` / `adapted_for` / `provides.knowledge` 跟目标 |
 | ③ 入口文件 | `AGENTS.md` / `CLAUDE.md` 含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
-| ④ `.gitignore` | 章草稿目录、使用记录的一次性输入（`.usage-input.json`）、统计输出（`.usage-stats/`）与记录器锁/临时文件被挡住；`doc/usage.json` 能随普通 `git add` 入库（它归目标，升级不覆盖） |
+| ④ `.gitignore` | 章草稿目录、使用记录的一次性输入（`.usage-input.json`）、统计输出（`.usage-stats/`）与记录器锁/临时文件被挡住；`doc/usage.json` 在、合法、能随普通 `git add` 入库（缺了由 `--apply` 建立；它归目标，升级不覆盖） |
 | ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/` 两个目录，根下没有文件 |
 
 目标的 `framework.config.json` 把 `lifecycle_hooks_enabled` 设为 `false` 时，`--apply` 与 `--check` 都另打一行「采集限制」：阶段钩子不执行，直接走 Framework 阶段的使用记不下来。这是目标的设置，照原样转告人，不替它改。

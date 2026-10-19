@@ -1,6 +1,6 @@
 /**
  * 使用记录的 MJS 桥接：默认导出是 Framework 六阶段的 pre_phase 钩子，具名 `recordUsage` 给已有 MJS 入口
- * （spec/plan 作者任务包、story-build 写作入口）调用；都经 stdin JSON 调 story 记录器（scripts/core/usage.py），
+ * （spec/plan 作者任务包、story-build 写作入口、adapt 建立与检查记录文件的 ensure / inspect）调用；都经 stdin JSON 调 story 记录器（scripts/core/usage.py），
  * 不读写第二份 usage。
  *
  * 钩子只登记「确实进入了这一阶段检查」并对账本需求已有步骤：检查时刻不是开工时刻，不写起点。

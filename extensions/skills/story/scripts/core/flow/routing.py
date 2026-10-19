@@ -126,13 +126,13 @@ SPEC_STAGE_ORDER = (
     "**harness 放在成文登记之后**——之前跑它一定红在「三份产物不齐」")
 
 
-def register_command(feature_root: Path) -> str:
-    """这张单的成文登记命令，复制即可运行：参数包法与 story-build 的 `shellArg` 同一规则。"""
+def register_command(feature_root: Path, mode: str = "story") -> str:
+    """这张单的登记命令（成文 story / 归档 archived），复制即可运行：参数包法与 story-build 的 `shellArg` 同一规则。"""
     posix = bool(os.environ.get("SHELL")) or sys.platform != "win32"
     def arg(value) -> str:
         text = str(value)
         return "'" + (text.replace("'", "'\\''") if posix else text.replace("'", "''")) + "'"
-    return ("python doc/extensions/skills/story/scripts/core/story_flow.py story"
+    return (f"python doc/extensions/skills/story/scripts/core/story_flow.py {mode}"
             f" --feature {arg(feature_root.name)} --project-root {arg(importer.project_root_of(feature_root))}")
 
 

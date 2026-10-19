@@ -23,6 +23,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 import yaml
@@ -77,6 +78,8 @@ class AdaptCase(unittest.TestCase):
         (self.target / "AGENTS.md").write_text(
             "# 目标工程\n\n## 实例扩展\n\n<!-- story-ext:begin -->\n"
             + body.strip() + "\n<!-- story-ext:end -->\n", encoding="utf-8")
+        # 已适配到本版的目标有使用记录：由适配建立的空表（没有使用记录的情形由各用例自己删掉）
+        (self.target / "doc" / "usage.json").write_text('{\n  "schema": 1,\n  "requirements": {}\n}\n', encoding="utf-8")
         self.commit("baseline")
 
     # ---- 驱动 ----
@@ -639,6 +642,121 @@ class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(1, proc.returncode, "包的 scripts 根下有脚本却判通过了")
         self.assertIn("loose.mjs", self.out(proc))
+
+
+class TheUsageRecordIsSetUpByApply(AdaptCase):
+    """adapt 给业务仓建立可入库的 `doc/usage.json`：缺了建空表，在了逐字节保留，检查只读，坏了不覆盖。"""
+
+    EMPTY = {"schema": 1, "requirements": {}}
+    REAL = ('{"schema":1,"requirements":{"AR1":{"name":"甲需求","version":null,"fw":null,"ext":null,'
+            '"agent":null,"model":null,"features":["AR1"],"steps":{"story":{"start":null,"spent":0,'
+            '"verdict":null,"completed":false,"last_result":null}}}}}')
+
+    def setUp(self) -> None:  # noqa: D102
+        super().setUp()
+        self.record = self.target / "doc" / "usage.json"
+
+    def without_record(self, message: str = "还没有使用记录") -> None:
+        self.record.unlink()
+        self.commit(message)
+
+    def doc_listing(self) -> list[str]:
+        return sorted(p.name for p in (self.target / "doc").iterdir())
+
+    def assert_set_up(self, proc: subprocess.CompletedProcess) -> None:
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertEqual(self.EMPTY, json.loads(self.record.read_text(encoding="utf-8")))
+        self.assertIn("已建立使用记录 doc/usage.json", proc.stdout)
+        self.assertIn("一起提交", proc.stdout)
+        self.git("add", "doc/usage.json")
+        self.assertIn("A  doc/usage.json", self.git("status", "--porcelain", "doc/usage.json").stdout, "普通 git add 加不进去")
+        self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
+
+    def test_an_upgrade_from_an_older_version_sets_it_up(self) -> None:
+        core = next(self.core.rglob("*.py"))
+        core.write_text(core.read_text(encoding="utf-8") + "\n# 旧版本\n", encoding="utf-8")
+        manifest = self.ext / "manifest.yaml"
+        manifest.write_text("\n".join('version: "1.9.8"' if l.startswith("version:") else l
+                                      for l in manifest.read_text(encoding="utf-8").split("\n")), encoding="utf-8")
+        self.without_record("1.9.8 的仓")
+        proc = self.adapt("--apply")
+        self.assertIn("升级完成", proc.stdout)
+        self.assert_set_up(proc)
+
+    def test_a_fresh_install_and_a_same_version_rerun_set_it_up(self) -> None:
+        shutil.rmtree(self.ext)
+        self.without_record("空仓")
+        self.assert_set_up(self.adapt("--apply"))
+        self.commit("装好")
+        self.without_record("使用记录被删了")
+        proc = self.adapt("--apply")
+        self.assertIn("没有机制文件要写", proc.stdout)
+        self.assert_set_up(proc)
+
+    def test_an_existing_record_is_kept_byte_for_byte(self) -> None:
+        for text in ('{\n  "schema": 1,\n  "requirements": {}\n}\n', self.REAL):
+            with self.subTest(text=text[:20]):
+                self.record.write_text(text, encoding="utf-8")      # 未提交的改动也照样保留
+                proc = self.adapt("--apply")
+                self.assertEqual(0, proc.returncode, self.out(proc))
+                self.assertIn("已在且合法，保留未动", proc.stdout)
+                self.assertEqual(text, self.record.read_text(encoding="utf-8"))
+                self.git("checkout", "--", "AGENTS.md")       # 入口文件归 apply 重写，下一轮保持写入面干净
+
+    def test_status_and_check_only_read(self) -> None:
+        self.without_record()
+        before = self.doc_listing()
+        check = self.adapt("--check")
+        self.assertEqual(1, check.returncode, self.out(check))
+        self.assertIn("④ 使用记录：doc/usage.json 不存在", self.out(check))
+        self.assertIn("跑 --apply 建立", self.out(check))
+        self.adapt("--status")
+        self.assertEqual(before, self.doc_listing(), "检查命令建了文件、锁或临时文件")
+
+    def test_a_bad_record_stops_apply_before_anything_is_written(self) -> None:
+        core = next(self.core.rglob("*.py"))
+        stale = core.read_text(encoding="utf-8") + "\n# 旧版本\n"
+        for name, text in {"坏 JSON": "{ 坏了", "冲突标记": '<<<<<<< HEAD\n{"schema": 1}\n=======\n{}\n>>>>>>> b\n',
+                           "旧 schema": '{"schema": 0, "requirements": {}}'}.items():
+            with self.subTest(name):
+                core.write_text(stale, encoding="utf-8")
+                self.record.write_text(text, encoding="utf-8")
+                self.commit(name)
+                proc = self.adapt("--apply")
+                self.assertEqual(2, proc.returncode, self.out(proc))
+                self.assertIn("不合法", self.out(proc))
+                self.assertIn("机制一个字节没写", self.out(proc))
+                self.assertEqual(text, self.record.read_text(encoding="utf-8"))
+                self.assertEqual(stale, core.read_text(encoding="utf-8"), "坏记录却先写了机制文件")
+
+    def test_an_ignored_record_is_not_called_a_finished_adaptation(self) -> None:
+        self.without_record()
+        exclude = self.target / ".git" / "info" / "exclude"
+        exclude.write_text(exclude.read_text(encoding="utf-8") + "\n/doc/usage.json\n", encoding="utf-8")
+        proc = self.adapt("--apply")
+        self.assertEqual(1, proc.returncode, self.out(proc))
+        self.assertIn("仍被", proc.stdout)
+        self.assertIn("未解决前适配不算完成", proc.stdout)
+        self.assertNotIn("升级完成", proc.stdout)
+
+    def test_a_record_that_cannot_be_written_gives_the_one_repair(self) -> None:
+        self.without_record()
+        lock = self.target / "doc" / "usage.json.lock"
+        lock.mkdir()
+        proc = self.adapt("--apply")
+        self.assertEqual(1, proc.returncode, self.out(proc))
+        self.assertIn("没有建立", proc.stdout)
+        self.assertIn("不用重跑 --apply", proc.stdout)
+        self.assertFalse(self.record.exists())
+        repair = proc.stdout.split("只补这一份：", 1)[1].split("，再跑 --check", 1)[0]
+        self.assertIn("usage.py --project-root", repair)
+        lock.rmdir()
+        script = self.target / repair.split("python ", 1)[1].split(" --project-root", 1)[0]
+        done = subprocess.run([sys.executable, str(script), "--project-root", str(self.target)],
+                              input='{"action":"ensure"}', capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertEqual(self.EMPTY, json.loads(self.record.read_text(encoding="utf-8")))
+        self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
 
 
 if __name__ == "__main__":

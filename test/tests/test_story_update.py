@@ -1023,6 +1023,8 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         checked = self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE,
                                "--project-root", str(self.root))
         self.assertEqual(1, checked.returncode, "真源改了机器区却没报")
+        self.assertIn("改真源后跑 `story_flow.py story` 登记", checked.stdout + checked.stderr,
+                      "机器区漂移的恢复提示与 status 不一致")
         self.assertEqual(before, story.read_text(encoding="utf-8"), "纯 check 写了盘")
 
         status = self.flow("status")
@@ -1184,6 +1186,49 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         self.assertIn("没跑：view --mode prepare、build、check", error)
         self.assertEqual(2, len(calls))
         self.assertTrue(self.register().get("success"), self.outputs[-1])
+
+    def archived_with(self, outcome, *, node: bool = True) -> str | None:
+        """需求系统已写入之后的本地归档登记：交付门子进程换成 outcome（异常就抛，整数是退出码）。成功返回 None。"""
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow import lifecycle  # noqa: PLC0415
+            from flow.state import FlowError  # noqa: PLC0415
+
+            def run(cmd, *args, **kwargs):
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return subprocess.CompletedProcess(cmd, outcome, "", "[story-build] 交付门的原始输出")
+
+            which = (lambda _n: "node") if node else (lambda _n: None)
+            with unittest.mock.patch.object(lifecycle.subprocess, "run", run), \
+                    unittest.mock.patch.object(lifecycle.shutil, "which", which):
+                try:
+                    lifecycle.cmd_archived(self.feature_root, self.root)
+                except FlowError as exc:
+                    return str(exc)
+            return None
+        finally:
+            sys.path.remove(str(core))
+
+    def test_a_failed_local_archive_registration_never_asks_for_another_upload(self) -> None:
+        """远端已写入后本地登记失败：哪一类失败都只补登记、不重新上传，也不断言远端那一份不合格；恢复后补登记即成。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        cases = {"自身异常": (2, True, "扩展维护者"), "进程起不来": (FileNotFoundError("node 不见了"), True, "运行环境问题"),
+                 "没有 node": (0, False, "装好 node"), "被中断": (137, True, "进程被中断"),
+                 "交付门没过": (1, True, "不是需求系统里那一份")}
+        for name, (outcome, node, why) in cases.items():
+            with self.subTest(name):
+                error = self.archived_with(outcome, node=node)
+                self.assertIsNotNone(error)
+                self.assertIn(why, error)
+                self.assertIn("只补登记：`python doc/extensions/skills/story/scripts/core/story_flow.py archived", error)
+                self.assertIn("不要重新上传", error)
+                self.assertNotIn("重新归档", error)
+                self.assertNotIn("不合格", error)
+                self.assertNotIn("archived", self.contract(), "没登记成却记了归档态")
+        self.assertIsNone(self.archived_with(0))
+        self.assertIn("archived", self.contract())
 
     def test_the_review_human_zone_survives_a_failed_registration(self) -> None:
         """评审人填过的意见：登记中途失败、修好再登记，都一个字节不丢。"""
