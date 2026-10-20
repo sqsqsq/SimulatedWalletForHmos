@@ -55,7 +55,8 @@
   阅读稿的摘要来自 2026-10-16 在临时模板里按真实导入链重跑的结果（证据见本轮交回）；原件改了，阅读稿摘要随之变化，要重跑导入核对。
 - **图源与综合阅读图**：Story 的三张 Mermaid 带 `story-figure` 管理标记，图义真源是 `AR/story-src/figures/<ID>.mmd`，正文块与源逐字一致，正本里保持 Mermaid 形态。`AR/figures/car-key-revocation-responsibility.svg` 是 5.4 的综合阅读图：沿同一个撤销事件对齐车云里的分享状态、车辆使用权与接受方手机卡片，依据 Story 6.3、5.4 与 4.2、spec 的撤销规则；它不是哪一张 Mermaid 的等值副本，`<metadata>` 写依据位置，业务事实以 Spec 与正文为准。
   - 改图义只改 `.mmd`，再用 `story-build view --mode mermaid` 重铺正文块；综合阅读图的依据变了要重画并重做独立审查。
-  - 现行产品的阅读视图按「每张 Mermaid 一张等值 SVG」切换，综合阅读图不走这条路径：Story 里给的是普通链接，`story-build view --mode status` 对三张 Mermaid 报「还没有阅读图」属于这项运行机制差异，不是金样缺件。
+  - Story 正本保存正式形态：5.4 末尾是这张图的空阅读槽 `story-reading:car-key-revocation-responsibility`，正式稿里没有本地 SVG 链接；阅读形态由 `story-build view --mode svg` 在槽里显示它。三张 Mermaid 不需要 SVG。
+  - 独立阅读入口：[car-key-revocation-responsibility.svg](AR/figures/car-key-revocation-responsibility.svg)，回答「撤销受理、对方回网和 48 小时期限上，车云的分享状态、车辆认不认钥匙与接受方卡片各自何时变化」。
   - 渲染图、独立审查请求与报告、绘图脚本不进金样，留在本轮证据目录。
 - **机器区与生成区**：同 auto-topup，spec 9.2 / 9.3、story 附录机器区与 review 都由真实工具生成。2026-10-17 修订后在临时模板按真实导入链重跑 render、project、number、build，再跑一次与候选逐字节一致；`story-build check` 除上面那 1 处「上游图承接」外通过。
 - **门禁**：

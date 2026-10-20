@@ -276,8 +276,8 @@ python test/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-1
 | 检查器给出不通过结论 | `gate_failed` | 1 | 被测对象的账 |
 | 进程真的不在了 | `worker_lost` | — | 进程丢失 |
 
-story 门禁按产品的阶段顺序跑：先派发 `pre_phase` 的视图钩子把 story 切回 Mermaid，再跑 spec 门禁——归档后本地 story 默认是阅读形态，
-直接读会读到与登记不同的那一份。`gate_diagnostics.json` 里四种情形分开记：没到达的阶段 `skipped`、检查没跑成 `not_run`、
+story 门禁按产品的阶段顺序跑：先派发 `pre_phase` 的视图钩子把 story 放回正式形态（Mermaid 按源、阅读槽置空），再跑 spec 门禁——
+本地阅读图展开时直接读，会读到与登记不同的那一份。`gate_diagnostics.json` 里四种情形分开记：没到达的阶段 `skipped`、检查没跑成 `not_run`、
 已闭环只读复核 `pass`（`source: existing_summary`）、harness 自己的结论；完整输出在对应的 `gate_*.log`。
 
 **本域不设时限与轮次上限**：`soft_timeout` / `hard_timeout` / `phase_hard_timeout` / `max_turns` / `reply_wait_sec` 写进配置会被

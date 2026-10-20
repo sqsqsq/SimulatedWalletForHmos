@@ -61,10 +61,10 @@ DOCUMENTS = {
     "auto-topup": ("AR/story.md", "AR/review.md", "spec/spec.md"),
     "car-key-sharing": ("AR/story.md", "AR/review.md", "spec/spec.md", "plan/plan.md"),
 }
-#: 每组登记的综合阅读图：不与某一张 .mmd 等值，metadata 写依据位置
+#: 每组登记的综合阅读图：不与某一张 .mmd 等值，metadata 写依据位置；值是它的阅读槽所在的小节标题
 COMPOSITE = {
-    "auto-topup": ("auto-topup-recovery-boundary",),
-    "car-key-sharing": ("car-key-revocation-responsibility",),
+    "auto-topup": {"auto-topup-recovery-boundary": "7.2 写操作前的共同恢复规则"},
+    "car-key-sharing": {"car-key-revocation-responsibility": "5.4 车主管理、撤销与重新发起"},
 }
 
 TEXT_SUFFIXES = {".md", ".mmd", ".svg"}
@@ -141,9 +141,26 @@ def link_problems(case_root: Path) -> list[str]:
     return problems
 
 
+def reading_slots(story: str) -> dict[str, tuple[str, bool]]:
+    """Story 里的阅读槽：ID → (所在小节标题, 是否在该小节末尾且为空)。正本保存正式形态，槽是空的。"""
+    lines = story.split("\n")
+    out = {}
+    for i, line in enumerate(lines):
+        m = re.fullmatch(r"<!-- story-reading:([\w-]+):begin -->", line.strip())
+        if not m:
+            continue
+        sid = m.group(1)
+        heading = next((re.sub(r"^#+\s*", "", h) for h in reversed(lines[:i]) if re.match(r"#{2,6}\s", h)), "")
+        empty = i + 1 < len(lines) and lines[i + 1].strip() == f"<!-- story-reading:{sid}:end -->"
+        rest = next((h for h in lines[i + 2:] if h.strip()), "")
+        out[sid] = (heading, empty and (not rest or rest.startswith("#")))
+    return out
+
+
 def figure_problems(case_root: Path) -> list[str]:
-    """Story 的管理块都有同名 .mmd 且逐字一致、没有多余图源；登记的综合阅读图存在、是合法 SVG、
-    metadata 写了依据、Story 链到它；Story 链到的 SVG 都登记过。普通 Mermaid 不要求 SVG。"""
+    """Story 的管理块都有同名 .mmd 且逐字一致、没有多余图源；登记的综合阅读图存在、是合法 SVG、metadata 写了依据、
+    在登记的小节末尾有一个空阅读槽、README 给了独立阅读入口；正式 Story 里没有指向 figures/ 的链接，槽都登记过。
+    普通 Mermaid 不要求 SVG。"""
     case = case_root.name
     story = lf(case_root / "AR" / "story.md")
     problems = []
@@ -162,8 +179,11 @@ def figure_problems(case_root: Path) -> list[str]:
     for mmd in sorted(sources.glob("*.mmd")):
         if mmd.stem not in {fid for fid, _ in blocks}:
             problems.append(f"{case}：图源 {mmd.name} 在 Story 里没有对应的图")
-    links = set(re.findall(r"\]\(figures/([\w-]+)\.svg\)", story))
-    for sid in COMPOSITE[case]:
+    slots = reading_slots(story)
+    readme = lf(case_root / "README.md")
+    for link in re.findall(r"\]\((figures/[^)]+)\)", story):
+        problems.append(f"{case}：Story 正本里有指向 {link} 的链接——正式形态只留空阅读槽")
+    for sid, section in COMPOSITE[case].items():
         svg = case_root / "AR" / "figures" / f"{sid}.svg"
         if not svg.is_file():
             problems.append(f"{case}：登记的综合阅读图 AR/figures/{sid}.svg 不在")
@@ -178,13 +198,18 @@ def figure_problems(case_root: Path) -> list[str]:
         meta = next((e for e in el.iter() if e.tag.endswith("metadata")), None)
         if meta is None or not "".join(meta.itertext()).strip():
             problems.append(f"{case}/{sid}.svg：metadata 里没有依据说明")
-        if sid not in links:
-            problems.append(f"{case}/{sid}.svg：Story 里没有链到它")
+        if sid not in slots:
+            problems.append(f"{case}/{sid}：Story 里没有它的阅读槽")
+        elif slots[sid] != (section, True):
+            problems.append(f"{case}/{sid}：阅读槽应在「{section}」末尾且为空，现在在「{slots[sid][0]}」"
+                            f"{'' if slots[sid][1] else '，不在末尾或槽里有内容'}")
+        if f"](AR/figures/{sid}.svg)" not in readme:
+            problems.append(f"{case}/{sid}：README 没有它的独立阅读入口")
     for svg in sorted((case_root / "AR" / "figures").glob("*.svg")):
         if svg.stem not in COMPOSITE[case]:
             problems.append(f"{case}：AR/figures/{svg.name} 不是登记的综合阅读图")
-    for sid in sorted(links - set(COMPOSITE[case])):
-        problems.append(f"{case}：Story 链到的 figures/{sid}.svg 没有登记")
+    for sid in sorted(set(slots) - set(COMPOSITE[case])):
+        problems.append(f"{case}：Story 里的阅读槽 {sid} 没有登记")
     return problems
 
 
@@ -217,16 +242,17 @@ class TheApprovedSetIsIntact(unittest.TestCase):
 
 
 class TheRegistryCheckNamesWhatChanged(unittest.TestCase):
-    """在临时副本上改，正式正本不动；每种改动报出那一个路径。"""
+    """在临时副本上改，正式正本不动；每种改动在副本原有结论之外只多报出那一个路径。"""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name) / "golden"
         shutil.copytree(GOLDEN, self.root)
+        self.before = registry_problems(self.root)
 
     def assert_named(self, rel: str) -> None:
-        problems = registry_problems(self.root)
+        problems = [p for p in registry_problems(self.root) if p not in self.before]
         self.assertEqual(1, len(problems), problems)
         self.assertIn(rel, problems[0])
 
@@ -251,7 +277,7 @@ class TheRegistryCheckNamesWhatChanged(unittest.TestCase):
     def test_line_endings_are_not_a_change(self) -> None:
         spec = self.root / "auto-topup/spec/spec.md"
         spec.write_bytes(spec.read_bytes().replace(b"\n", b"\r\n"))
-        self.assertEqual([], registry_problems(self.root))
+        self.assertEqual(self.before, registry_problems(self.root))
 
 
 class LinksAndFiguresResolve(unittest.TestCase):
@@ -331,6 +357,29 @@ class TheReferenceChecksNameWhatBroke(unittest.TestCase):
         problems = link_problems(self.root / "car-key-sharing") + figure_problems(self.root / "car-key-sharing")
         self.assertTrue(problems)
         self.assertTrue(all("car-key-revocation-responsibility" in p for p in problems), problems)
+
+    def test_a_link_left_outside_the_slot_is_named(self) -> None:
+        self.edit("auto-topup/AR/story.md", "结果不明的操作这样收口：", "见[图](figures/auto-topup-recovery-boundary.svg)。结果不明的操作这样收口：")
+        self.assertEqual(["auto-topup：Story 正本里有指向 figures/auto-topup-recovery-boundary.svg 的链接——正式形态只留空阅读槽"],
+                         figure_problems(self.root / "auto-topup"))
+
+    def test_a_shown_or_moved_slot_is_named(self) -> None:
+        begin = "<!-- story-reading:car-key-revocation-responsibility:begin -->\n"
+        self.edit("car-key-sharing/AR/story.md", begin, begin + "![x](figures/car-key-revocation-responsibility.svg)\n")
+        problems = figure_problems(self.root / "car-key-sharing")
+        self.assertIn("car-key-sharing/car-key-revocation-responsibility：阅读槽应在「5.4 车主管理、撤销与重新发起」末尾且为空，"
+                      "现在在「5.4 车主管理、撤销与重新发起」，不在末尾或槽里有内容", problems)
+        shutil.copytree(GOLDEN, self.root, dirs_exist_ok=True)
+        slot = begin + "<!-- story-reading:car-key-revocation-responsibility:end -->\n"
+        self.edit("car-key-sharing/AR/story.md", "\n" + slot, "")
+        self.edit("car-key-sharing/AR/story.md", "### 5.3 接受方添加与查看\n", "### 5.3 接受方添加与查看\n" + slot)
+        self.assertEqual(["car-key-sharing/car-key-revocation-responsibility：阅读槽应在「5.4 车主管理、撤销与重新发起」末尾且为空，"
+                          "现在在「5.3 接受方添加与查看」，不在末尾或槽里有内容"], figure_problems(self.root / "car-key-sharing"))
+
+    def test_a_missing_reading_entry_is_named(self) -> None:
+        self.edit("auto-topup/README.md", "](AR/figures/auto-topup-recovery-boundary.svg)", "](AR/figures/other.svg)")
+        self.assertEqual(["auto-topup/auto-topup-recovery-boundary：README 没有它的独立阅读入口"],
+                         figure_problems(self.root / "auto-topup"))
 
     def test_a_plain_mermaid_needs_no_svg(self) -> None:
         story = lf(self.root / "auto-topup/AR/story.md")

@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { runPython } from '../flow/client.mjs';
 import { FIGURE_MARK, headingPath, markPairs, normalizeHeading, parseDocument } from './document.mjs';
 import { basisFiles } from './sources.mjs';
+import { shellArg } from './drafts.mjs';
 
 /** 每张阅读图必核的四件：事实与关系忠实、阅读增益、实际渲染可读、与放置位置相称。 */
 const READING_CHECKS = ['semantic_fidelity', 'reading_gain', 'visual_readability', 'placement'];
@@ -99,14 +100,14 @@ function basisOf(featureRoot, subject) {
     const key = [r.rel, ...r.names.map(normalizeHeading)].join(' > ');
     if (found.has(key)) { found.get(key).entry.from.push(b); continue; }
     const { primary } = r;
-    const story = primary.rel === STORY;
-    const whole = story ? subject.formal : primary.text ? lf(primary.bytes.toString('utf-8')) : null;
+    const story = primary?.rel === STORY;
+    const whole = story ? subject.formal : primary?.text ? lf(primary.bytes.toString('utf-8')) : null;
     const hit = r.names.length ? headingPath(whole, r.names) : { body: whole };
     if (hit.problem) { problems.push(`依据「${b}」${hit.problem}`); continue; }
     const drift = story ? driftProblem(featureRoot, hit.body, `依据「${b}」`) : null;
     if (drift) { problems.push(drift); continue; }
-    found.set(key, { text: hit.body, entry: { path: r.rel, read: primary.rel, section: r.names.join(' › ') || null,
-      sha256: hit.body === null ? sha(primary.bytes) : sha(story ? stable(hit.body) : hit.body), from: [b],
+    found.set(key, { text: hit.body, entry: { path: r.rel, read: primary?.rel ?? null, section: r.names.join(' › ') || null,
+      sha256: hit.body === null ? sha((primary ?? r.files[0]).bytes) : sha(story ? stable(hit.body) : hit.body), from: [b],
       related: r.files.filter(f => f !== primary).map(f => ({ path: f.rel, role: f.role, sha256: sha(f.bytes) })) } });
   }
   return { basis: [...found.values()], problems };
@@ -266,10 +267,12 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
     `审查者自己打开：${[inputs.svg, inputs.render, ...inputs.resources].map(x => fromRoot(x.path)).join('、')}`,
     '依据（脚本按写作设计当前实际读到的内容；一张图可以综合多段文字、表与图）：',
     ...contents.basis.flatMap(b => [
-      `- ${fromRoot(b.entry.read)}${b.entry.read === b.entry.path ? '' : `（${fromRoot(b.entry.path)} 的阅读稿）`}`
+      !b.entry.read ? `- ${fromRoot(b.entry.path)}（只抽了图的原件，正文没有采用，只作身份；要看的是下面的原图）`
+        : `- ${fromRoot(b.entry.read)}${b.entry.read === b.entry.path ? '' : `（${fromRoot(b.entry.path)} 的阅读稿）`}`
         + (b.entry.section ? `「${b.entry.section}」：` : b.text === null ? '（图片，自己打开看）' : '（全文，自己打开读）'),
       ...(b.entry.section ? fenced(b.text) : []),
-      ...b.entry.related.map(f => `  - 同组${f.role}：${fromRoot(f.path)}${f.role === '原件' ? '（只作身份，正文以阅读稿为准）' : '（自己打开看）'}`)]),
+      ...b.entry.related.filter(f => f.path !== b.entry.path || b.entry.read).map(f => `  - 同组${f.role}：${fromRoot(f.path)}`
+        + (f.role === '原件' ? '（只作身份，不按正文或图片读）' : f.role === '阅读稿' ? '（自己打开读）' : '（自己打开看）'))]),
     `放置小节「${context.section}」的正文（含正式 Mermaid）：`, ...fenced(contents.context),
     '逐项给结论（PASS / WARN / FAIL / UNKNOWN / SKIP）与证据：',
     '- semantic_fidelity：相对全部依据，责任、条件、时序、结果、数量与未决是否准确；可以补出依据里已有的关系，'
@@ -281,6 +284,7 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
     `报告原样存为 ${fromRoot(`AR/story-src/figures/${id}.reading/report.json`)}：`
       + '{"request_id", "executor": "<宿主返回的执行或会话引用>", "checks": [{"id","verdict","evidence"}], '
       + '"blocking_findings": [], "advisories": [], "unreviewed": []}。',
-    `存好后跑 story-build view --mode review-check --id ${id} 核对。`,
+    `存好后在工程根跑 \`node doc/extensions/skills/story/scripts/core/story-build.mjs view --mode review-check --id ${id} `
+      + `--feature ${shellArg(path.basename(featureRoot))} --project-root ${shellArg(projectRoot)}\` 核对。`,
   ];
 }

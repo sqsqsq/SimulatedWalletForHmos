@@ -129,8 +129,9 @@ const registeredDigest = bytes => `sha256:${createHash('sha256').update(bytes).d
  * - 登记过的件核当前字节与登记摘要：登记之后变了（含原件变了而阅读稿没随之重新并入）就不成立。
  * - 选原件：取它登记的阅读稿（标题路径在阅读稿里取）与抽出的原图，同时绑定原件字节；选阅读稿或原图：带上所属原件。
  *
- * @returns {{problem: string} | {rel: string, names: string[], primary: object,
- *   files: {rel: string, role: string, text: boolean, bytes: Buffer}[]}} `primary` 是取正文或标题段的那一份
+ * @returns {{problem: string} | {rel: string, names: string[], primary: object|null,
+ *   files: {rel: string, role: string, text: boolean, bytes: Buffer}[]}} `primary` 是要阅读的那一份：文本阅读稿、
+ *   正式文件或直接选的图片；只抽图的原件没有语义阅读对象（null），要看的是它的原图，原件只作身份
  */
 export function basisFiles(ctx, basis) {
   const [rel, ...names] = String(basis).split('>').map(s => s.trim());
@@ -178,8 +179,8 @@ export function basisFiles(ctx, basis) {
       return { problem: `${f.role} ${f.rel} 与材料清单登记的不是同一份（登记之后变了）——跑 \`story_flow.py round\` 按导入链重新登记，原件变了阅读稿要随之重新并入` };
     }
   }
-  const primary = files.find(f => f.role === '阅读稿' && f.text) ?? files[0];
-  if (names.length && !primary.rel.endsWith('.md')) return { problem: '只有 Markdown 能按标题路径取一节' };
+  const primary = files.find(f => f.role === '阅读稿' && f.text) ?? (files[0].role === '原件' && !files[0].text ? null : files[0]);
+  if (names.length && !primary?.rel.endsWith('.md')) return { problem: '只有 Markdown 能按标题路径取一节' };
   return { rel, names, primary, files };
 }
 

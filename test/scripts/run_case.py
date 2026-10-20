@@ -1764,8 +1764,8 @@ def _run_story_gates(feature: str, out_dir: Path, feed=None) -> dict[str, str]:
         return gates
 
     post_check = REPO_ROOT / CFG["gates"]["post_check"]
-    # 按产品的阶段顺序：先派发 pre_phase 的视图钩子把 story 切回 Mermaid，再跑门禁。
-    # 直接调门禁会绕过它——归档后 story 默认是阅读形态，读到的就不是登记的那一份。
+    # 按产品的阶段顺序：先派发 pre_phase 的视图钩子把 story 放回正式形态，再跑门禁。
+    # 直接调门禁会绕过它——阅读图展开时读到的就不是登记的那一份。
     story_view = post_check.parent.parent / "shared" / "story-view.mjs"
     payload = f"{{phase:'spec',feature:{json.dumps(feature)},projectRoot:{json.dumps(str(REPO_ROOT))}}}"
     pre = (f"const v=await import(pathToFileURL({json.dumps(str(story_view))}).href);"

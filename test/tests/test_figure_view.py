@@ -233,6 +233,8 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
         self.assertIn("「业务流程 › 提交与回执」", out)
         self.assertIn("本地记录清掉后按远端事实恢复。", out, "任务里没有另一章依据的原文")
         self.assertIn("reading_gain", out)
+        command = next(line for line in out.splitlines() if "review-check" in line)
+        self.assertIn(f"--feature '{FEATURE}' --project-root '{self.root}'", command, "核对命令照抄跑不起来")
 
     def test_each_input_change_makes_it_stale_and_display_or_unrelated_edits_do_not(self) -> None:
         self.ready()
@@ -575,6 +577,55 @@ class TheBasisIsWhatItSays(FigureViewCase):
         item = self.item()
         self.assertEqual("stale", item["state"], "原件换了内容、没重新导入，旧验收照样成立")
         self.assertIn("登记之后变了", item["reason"])
+
+    def test_an_image_only_original_hands_over_its_pictures(self) -> None:
+        """只抽图的原件：真实导入与 round 之后，要看的是抽出的每张原图，原件只作身份；原件或任一张图变了都过期。"""
+        import zipfile  # noqa: PLC0415
+        for rel, text in (("RR/prd.md", self.PRD), ("SR/design.md", "# 系统设计\n\n分工。\n"), ("AR/design.md", "# 提取件\n\n范围。\n")):
+            self.put(rel, text.encode("utf-8"))
+        inbox = self.fr / "inbox"
+        inbox.mkdir()
+        (inbox / ".classify.json").write_text(json.dumps({"界面稿.docx": "IMAGES"}, ensure_ascii=False), encoding="utf-8")
+        ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+        with zipfile.ZipFile(inbox / "界面稿.docx", "w") as zf:
+            zf.writestr("word/document.xml", '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+                        'wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                        '<w:body><w:p><w:r><w:t>草稿正文不采用</w:t></w:r></w:p>'
+                        + "".join(f'<w:p><w:r><w:drawing><a:blip {ns} r:embed="rId{i}"/></w:drawing></w:r></w:p>' for i in (1, 2))
+                        + '</w:body></w:document>')
+            zf.writestr("word/_rels/document.xml.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/'
+                        'package/2006/relationships">' + "".join(
+                            f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"'
+                            f' Target="media/image{i}.png"/>' for i in (1, 2)) + '</Relationships>')
+            for i in (1, 2):
+                zf.writestr(f"word/media/image{i}.png", PNG + f"picture-{i}".encode())
+        for script, extra in (("import_sources.py", ()), ("story_flow.py", ("round",))):
+            proc = subprocess.run([sys.executable, str(CORE / script), *extra, "--feature", FEATURE, "--project-root", str(self.root)],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        manifest = json.loads((self.fr / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
+        pictures = next(o for o in manifest["origins"] if o["path"] == "inbox/界面稿.docx")["image_paths"]
+        self.assertEqual(2, len(pictures))
+        self.choose("inbox/界面稿.docx")
+        self.ready()
+        basis = json.loads((self.reading() / "request.json").read_text(encoding="utf-8"))["inputs"]["basis"][0]
+        self.assertIsNone(basis["read"], "只抽图的原件被当成了要阅读的对象")
+        self.assertEqual({"inbox/界面稿.docx": "原件", **{p: "原图" for p in pictures}}, {f["path"]: f["role"] for f in basis["related"]})
+        task = self.ok("review-request", "--id", "recovery").stdout.splitlines()
+        shown = [line for line in task if line.startswith("  - 同组原图：")]
+        self.assertEqual(sorted(pictures), sorted(line.split("：", 1)[1].split("/", 3)[-1].split("（")[0] for line in shown))
+        self.assertTrue(all((self.fr / p).is_file() for p in pictures))
+        head = next(line for line in task if "界面稿.docx" in line and line.startswith("- "))
+        self.assertNotIn("图片，自己打开看", head, "原件被要求按图片阅读")
+        picture = self.fr / pictures[1]
+        before = picture.read_bytes()
+        picture.write_bytes(PNG + b"redrawn")
+        self.assertEqual("stale", self.state(), "抽出的一张图换了，旧验收照样成立")
+        picture.write_bytes(before)
+        self.assertEqual("ready", self.state())
+        with zipfile.ZipFile(inbox / "界面稿.docx", "a") as zf:
+            zf.writestr("word/comments.xml", "<c/>")
+        self.assertEqual("stale", self.state(), "原件换了，旧验收照样成立")
 
     def test_a_missing_readable_or_a_broken_list_is_not_an_empty_answer(self) -> None:
         docx = self.put("inbox/需求.docx", b"PK\x03\x04 fake docx")
