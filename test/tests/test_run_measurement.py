@@ -9,6 +9,7 @@
 """
 import json
 import re
+from dataclasses import asdict
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,8 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
 from materials import registry  # noqa: E402
 import measure_run  # noqa: E402
+sys.path.insert(0, str(REPO))
+from tools.cli.adapters import get_adapter  # noqa: E402
 import phase_state  # noqa: E402
 
 # 真实门禁控制台输出的形态（report-generator.printReportToConsole）。
@@ -419,13 +422,160 @@ class EachSegmentIsMeasured(unittest.TestCase):
             (run / "state.json").write_text(json.dumps({"resumed_at": "2026-09-02T10:04:00+00:00"}), encoding="utf-8")
             r = measure_run.measure(run / "events.jsonl", run_dir=run)
         first, second = r["segments"]["initial"], r["segments"]["update"]
-        self.assertEqual({"fail_count": 2}, first["first_harness"])
+        self.assertEqual({"fail_count": 2, "status": "completed"}, first["first_harness"])
         self.assertEqual(1, first["verifier_runs"])
         self.assertEqual(2.0, first["rework_min"], "门禁 10:01 没过、10:03 通过")
-        self.assertEqual({"fail_count": 1}, second["first_story_register"])
+        self.assertEqual({"fail_count": 1, "status": "completed"}, second["first_story_register"])
         self.assertEqual(1.0, second["rework_min"])
         for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "verifier_gap_sec"):
             self.assertIn(key, second)
+
+
+def _public_events(provider: str, runs: list[tuple[str, list[dict]]], *, minute: int = 0) -> list[dict]:
+    """宿主原始事件经**当前中央 adapter** 投影成公共事件，再加 runner 写进 events.jsonl 的 run_id 与时刻。"""
+    adapter = get_adapter(provider)
+    out = []
+    for run_id, raws in runs:
+        for raw in raws:
+            for event in adapter.parse(raw):
+                record = asdict(event)
+                record.update(run_id=run_id, timestamp=f"2026-10-20T10:{minute:02d}:00+00:00")
+                out.append(record)
+                minute += 1
+    return out
+
+
+def _dsh_call(call_id: str, tool: str, **tool_input) -> dict:
+    return {"type": "tool_call", "callId": call_id, "tool": tool, "input": tool_input}
+
+
+def _dsh_result(call_id: str, result: str, status: str = "completed") -> dict:
+    return {"type": "tool_result", "callId": call_id, "status": status, "result": result}
+
+
+HARNESS_PWSH = "cd framework/harness; npx ts-node harness-runner.ts --phase spec --feature SAMPLE"
+
+
+class ToolCallsArePairedFromPublicEvents(unittest.TestCase):
+    """开始与结果两条事件是一次调用：按 run 与调用编号配，不按条数、相邻行或工具名。"""
+
+    def _measure(self, events: list[dict], *, state: dict | None = None) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d)
+            (run / "events.jsonl").write_text(
+                "\n".join(json.dumps(e, ensure_ascii=False) for e in events), encoding="utf-8")
+            if state is not None:
+                (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            return measure_run.measure(run / "events.jsonl", run_dir=run)
+
+    def test_pwsh_reads_harness_and_the_verifier_tool_are_recognised_once_each(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("r", "pwsh", command="Get-Content framework/harness/scripts/check-spec.ts"),
+            _dsh_result("r", "file contents"),
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h", "  FAIL [BLOCKER] sample_rule"),
+            _dsh_call("v", "verifier", description="阶段独立审查", prompt="{}"),
+            _dsh_result("v", "review report"),
+            _dsh_call("s", "subagent", description="研究工程", prompt="读源码"),
+            _dsh_result("s", "started subagent child-1"),
+        ])]))
+        self.assertEqual(4, r["tool_calls"], "四次调用，八条事件")
+        self.assertEqual({"pwsh": 2, "verifier": 1, "subagent": 1}, dict(r["tools"]))
+        self.assertEqual((1, 1, 1), (r["reads_rule_text"], r["reads_checker_source"], r["harness_runs"]))
+        self.assertEqual([["sample_rule", 1]], [list(x) for x in r["repeated_check_fails"]])
+        whole = r["segments"]["whole"]
+        self.assertEqual({"fail_count": 1, "status": "completed"}, whole["first_harness"])
+        self.assertEqual((1, 1), (whole["verifier_runs"], whole["delegations_unresolved"]),
+                         "普通 subagent 研究不是审查")
+        self.assertEqual([], r["incomplete_tool_events"])
+
+    def test_interleaved_calls_pair_by_id_and_outcomes_follow_arrival(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h1", "pwsh", command=HARNESS_PWSH),
+            _dsh_call("h2", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h2", GATE_PASS),
+            _dsh_result("h1", GATE_FAIL),
+        ])]))
+        self.assertEqual((2, 2, 1), (r["tool_calls"], r["harness_runs"], r["gate_rounds_with_fail"]))
+        self.assertEqual({"fail_count": 0, "status": "completed"}, r["segments"]["whole"]["first_harness"],
+                         "先到的结果是 h2 的全绿")
+
+    def test_a_call_id_reused_by_another_run_is_another_call(self):
+        events = _public_events("dsh", [
+            ("run-a", [_dsh_call("c1", "pwsh", command=HARNESS_PWSH), _dsh_result("c1", GATE_FAIL)]),
+            ("run-b", [_dsh_call("c1", "pwsh", command=HARNESS_PWSH), _dsh_result("c1", GATE_PASS)]),
+        ])
+        r = self._measure(events)
+        self.assertEqual((2, 2, 1), (r["tool_calls"], r["harness_runs"], r["gate_rounds_with_fail"]))
+        self.assertEqual(2.0, r["segments"]["whole"]["rework_min"], "run-a 10:01 没过、run-b 10:03 通过")
+
+    def test_an_error_result_is_not_a_pass(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h1", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h1", "Error: harness crashed", status="error"),
+            _dsh_call("h2", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h2", GATE_PASS),
+        ])]))
+        whole = r["segments"]["whole"]
+        self.assertEqual({"fail_count": 0, "status": "error"}, whole["first_harness"])
+        self.assertEqual(2.0, whole["rework_min"], "报错那轮到全绿那轮是返工")
+
+    def test_reading_a_failed_report_again_is_not_another_gate_round(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h", GATE_FAIL),
+            _dsh_call("c", "pwsh", command="Get-Content doc/features/X/spec/reports/harness.txt"),
+            _dsh_result("c", GATE_FAIL),
+        ])]))
+        self.assertEqual((1, 1), (r["harness_runs"], r["gate_rounds_with_fail"]))
+        self.assertEqual(1, dict(r["repeated_check_fails"])["feature_to_acceptance"])
+
+    def test_a_lone_start_or_a_lone_result_is_reported_not_guessed(self):
+        events = _public_events("dsh", [("run-a", [
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("ghost", GATE_FAIL),
+        ])])
+        r = self._measure(events)
+        self.assertEqual((1, 1), (r["tool_calls"], r["harness_runs"]), "开始了就算跑过门禁")
+        self.assertIsNone(r["segments"]["whole"]["first_harness"], "没有结果就没有门禁结论")
+        self.assertEqual(0, r["gate_rounds_with_fail"], "孤立结果不造一次调用、不造一轮失败")
+        self.assertNotIn("", dict(r["tools"]))
+        self.assertEqual([("no_result", "h"), ("result_without_call", "ghost")],
+                         [(i["reason"], i["tool_call_id"]) for i in r["incomplete_tool_events"]])
+        self.assertIn("统计不完整", measure_run.render(r))
+
+    def test_a_repeated_result_counts_once_and_a_conflicting_one_is_listed(self):
+        call = _dsh_call("h", "pwsh", command=HARNESS_PWSH)
+        twice = self._measure(_public_events("dsh", [("run-a", [call, _dsh_result("h", GATE_FAIL),
+                                                                _dsh_result("h", GATE_FAIL)])]))
+        self.assertEqual((1, 1, []), (twice["tool_calls"], twice["gate_rounds_with_fail"],
+                                      twice["incomplete_tool_events"]))
+        clash = self._measure(_public_events("dsh", [("run-a", [call, _dsh_result("h", GATE_FAIL),
+                                                                _dsh_result("h", GATE_PASS)])]))
+        self.assertEqual(1, clash["tool_calls"])
+        self.assertEqual(["conflicting_events"], [i["reason"] for i in clash["incomplete_tool_events"]])
+        self.assertEqual(0, clash["gate_rounds_with_fail"], "两个结果互相矛盾，不任取一个")
+        self.assertIsNone(clash["segments"]["whole"]["first_harness"])
+
+    def test_codex_started_and_completed_items_are_one_call(self):
+        item = {"id": "item_1", "type": "command_execution", "command": "bash -lc 'npx ts-node harness-runner.ts'"}
+        r = self._measure(_public_events("codex", [("run-a", [
+            {"type": "item.started", "item": {**item, "status": "in_progress"}},
+            {"type": "item.completed", "item": {**item, "status": "completed", "aggregated_output": GATE_FAIL}},
+        ])]))
+        self.assertEqual({"command_execution": 1}, dict(r["tools"]))
+        self.assertEqual([], r["incomplete_tool_events"])
+
+    def test_a_call_spanning_the_checkpoint_belongs_to_where_it_started(self):
+        events = _public_events("dsh", [("run-a", [
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h", GATE_FAIL),
+        ])])
+        r = self._measure(events, state={"resumed_at": "2026-10-20T10:01:00+00:00"})
+        first, second = r["segments"]["initial"], r["segments"]["update"]
+        self.assertEqual({"fail_count": 2, "status": "completed"}, first["first_harness"])
+        self.assertIsNone(second["first_harness"], "同一结果不在两段各算一轮")
+        self.assertEqual(["crosses_checkpoint"], [i["reason"] for i in r["incomplete_tool_events"]])
 
 
 class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):

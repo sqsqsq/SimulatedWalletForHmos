@@ -12,14 +12,23 @@
 
 ## 读数口径（TEST.md §6.1 六项）
 
-- 第 2、3 项只看工具**入参**（读了什么），**含 bash 里的读**：``cat`` / ``sed`` / ``grep``，以及
+- 第 2、3 项只看工具**入参**（读了什么），**含 shell 里的读**（bash / pwsh 等）：``cat`` / ``sed`` / ``grep`` / ``Get-Content``，以及
   ``node -e "readFileSync(...)"``（一轮实跑读判据脚本 68 次全走最后这一种，当时口径只认前几种，报表上写着 0）。
 - 第 3 项的对象是机制源码：``framework/`` 下的 ``.ts`` 与 ``doc/extensions/`` 下的 ``.mjs``/``.py``，
   读取类动作的参数里出现就计一次；知识层是 ``.md``，不在其内——读知识是正当的。
-- 第 4 项只看工具**输出**（门禁报了什么），同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 ``cat`` 一次不算两轮。
+- 第 4 项只看门禁调用的**输出**（门禁报了什么），同一 check id 按**门禁轮次**去重——一份报告被 console 打一次、又被 ``cat`` 一次不算两轮，
+  读一份旧报告也不是一轮门禁。
 - 三个字段：``gate_rounds_with_fail``（有 FAIL 的门禁轮次）；``gap_sec_by_kind``（门禁 / verifier / 成文 / 其它的时间去向，
-  **按事件间隔归属的近似值**——事件流里没有工具开始事件，拿不到真实 span，字段名如实标注）；``human_wait_sec``（**由驱动器累计**，
+  **按事件间隔归属的近似值**，字段名如实标注；并发调用的区间相互重叠，不能相加成墙钟）；``human_wait_sec``（**由驱动器累计**，
   与模型耗时分开；读不到时报 ``null`` 而不是 0——「这轮没人等过」和「这份记录里没这个字段」是两件事）。
+- verifier 只认专用 ``verifier`` 工具与 ``subagent_type=verifier`` 的 task；其它委派计进 ``delegations_unresolved``，是不是审查由人判断。
+
+## 一次调用
+
+所有计数按**调用**算，不按事件条数。有的宿主一次调用只发一条完成事件，有的先发开始、再发不带工具名的结果；
+``tool_call_view`` 把两种都归并成调用：同一 run 里同一 ``tool_call_id`` 的开始与终态是一次调用，名称与入参取开始，输出与终态取结果。
+归并不了的条目进 ``incomplete_tool_events``（只有结果、只有开始、同键冲突、跨检查点），有这类条目时计数只是已观察到的次数。
+只开始没结果的调用计用了什么、读了什么，不计门禁结论。
 - 第 5 项按本次实际执行体和阶段取值，说明 input/output/cache/context 字段的含义与累计方式。run_id 变化不证明上下文重置，
   上下文大小不证明是否派过独立作者；无法取得的轨迹标未知。
 - 第 6 项分开记录装配内容和消费模型实际收到的内容，字节不直接当 token。耗时拆分要标工具时间、事件间隔估计或人工等待，
@@ -37,6 +46,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 #: 读「规则文本」的路径形态——判它是不是在猜门禁要什么，而不是在读自己的产物。
 RULE_PATH_RE = re.compile(r"(framework/|doc/extensions/)")
@@ -212,6 +222,121 @@ def _output_text(event: dict) -> str:
     return ANSI_RE.sub("", str(out or ""))
 
 
+#: 宿主的 shell 工具：命令里的读取、门禁与登记都从它们的入参认
+SHELL_TOOLS = {"bash", "pwsh", "shell", "shell_command"}
+#: 委派类工具：只有专用 verifier 工具、或 task 指明 subagent_type=verifier 才算独立审查
+DELEGATION_TOOLS = {"task", "subagent", "subagent_fork"}
+AUTHORING_TOOLS = {"write", "edit", "patch", "multiedit"}
+#: 调用还没结束的状态；其余（completed / error / cancelled …）都是终态
+OPEN_STATUSES = {"started", "pending", "running", "in_progress"}
+#: 调用正常结束的状态；历史单事件记录没写状态时按正常结束读
+SUCCESS_STATUSES = {"completed", "success", ""}
+
+
+def _facts(event: dict) -> tuple[str, str]:
+    return (str(event.get("tool_name") or "").lower(),
+            json.dumps(event.get("tool_input") or {}, ensure_ascii=False, sort_keys=True))
+
+
+def _outcome(event: dict) -> tuple[str, str]:
+    return str(event.get("tool_status") or ""), _output_text(event)
+
+
+def tool_call_view(events: list[dict]) -> tuple[list[dict], list[dict]]:
+    """公共 tool 事件归并成调用：返回（按开始先后排列的调用，归并不了的条目）。
+
+    键是 (run_id, tool_call_id)：并发交错按键配，不按相邻行或工具名；不同 run 复用的编号各算各的。
+    没有编号的事件自身带名字就是一次调用（单事件宿主与历史记录），不和别的无编号事件猜配。
+    每个调用记下它名下所有事件的位置，事件间隔按它归属。
+    """
+    calls: list[dict] = []
+    incomplete: list[dict] = []
+    by_key: dict[tuple[Any, str], dict] = {}
+
+    def note(reason: str, index: int, event: dict) -> None:
+        incomplete.append({"reason": reason, "index": index, "run_id": event.get("run_id"),
+                           "tool_call_id": event.get("tool_call_id"),
+                           "tool_name": event.get("tool_name") or None})
+
+    def open_call(index: int, event: dict) -> dict:
+        ended = str(event.get("tool_status") or "").lower() not in OPEN_STATUSES
+        call = {"name": _facts(event)[0], "start": event, "start_index": index,
+                "end": event if ended else None, "end_index": index if ended else None,
+                "indices": [index], "conflict": False}
+        calls.append(call)
+        return call
+
+    for index, event in enumerate(events):
+        if event.get("type") != "tool":
+            continue
+        named = bool(event.get("tool_name"))
+        is_open = str(event.get("tool_status") or "").lower() in OPEN_STATUSES
+        call_id = event.get("tool_call_id")
+        if not call_id:
+            if named:
+                open_call(index, event)
+            else:
+                note("result_without_call", index, event)
+            continue
+        key = (event.get("run_id"), str(call_id))
+        call = by_key.get(key)
+        if call is None:
+            if named:
+                by_key[key] = open_call(index, event)
+            else:
+                note("result_without_call", index, event)
+            continue
+        call["indices"].append(index)
+        if is_open:
+            if not named or _facts(event) == _facts(call["start"]):
+                continue                                 # 同一开始重复上报
+            if (call["end"] is None and _facts(event)[0] == call["name"]
+                    and not call["start"].get("tool_input")):
+                call["start"] = event                    # 先报名字、后补入参的宿主
+                continue
+        elif call["end"] is None:
+            call["end"], call["end_index"] = event, index
+            continue
+        elif _outcome(event) == _outcome(call["end"]):
+            continue                                     # 同一结果重复上报
+        call["conflict"] = True
+        note("conflicting_events", index, event)
+    for call in calls:
+        call["kind"] = _call_kind(call)
+        if call["end"] is None:
+            note("no_result", call["start_index"], call["start"])
+    incomplete.sort(key=lambda item: item["index"])
+    return calls, incomplete
+
+
+def _is_verifier(call: dict) -> bool:
+    if call["name"] == "verifier":
+        return True
+    subagent = str((call["start"].get("tool_input") or {}).get("subagent_type") or "").lower()
+    return call["name"] == "task" and subagent == "verifier"
+
+
+def _call_kind(call: dict) -> str:
+    """调用在做什么：harness / story_register / verifier / delegation / authoring / other。"""
+    name, request = call["name"], _request_text(call["start"])
+    if name in SHELL_TOOLS and HARNESS_CMD_RE.search(request):
+        return "harness"
+    if name in SHELL_TOOLS and STORY_REGISTER_RE.search(request):
+        return "story_register"
+    if _is_verifier(call):
+        return "verifier"
+    if name in DELEGATION_TOOLS:
+        return "delegation"
+    return "authoring" if name in AUTHORING_TOOLS else "other"
+
+
+def _result(call: dict) -> str | None:
+    """调用的输出；没有结果或同键冲突时为 None，门禁结论不从它推。"""
+    if call["end"] is None or call["conflict"]:
+        return None
+    return _output_text(call["end"])
+
+
 def split_at_checkpoint(events: list[dict], run_dir: Path | None) -> int | None:
     """第一段与第二段的分界 —— **按续跑那一刻切，不按时间猜**。
 
@@ -239,20 +364,25 @@ def split_at_checkpoint(events: list[dict], run_dir: Path | None) -> int | None:
     return len(events)
 
 
-def segment_metrics(rows: list[dict]) -> dict:
-    """一段的效率观测：时长、模型与工具时间、verifier 次数与耗时、首次门禁与首次登记、返工时长。
+def _owners(calls: list[dict]) -> dict[int, dict]:
+    """事件位置 → 它所属的调用；事件间隔按调用的用途归属。"""
+    return {index: call for call in calls for index in call["indices"]}
 
+
+def segment_metrics(events: list[dict], calls: list[dict], lo: int, hi: int) -> dict:
+    """一段（``events[lo:hi]``）的效率观测：时长、模型与工具时间、verifier 次数与耗时、首次门禁与首次登记、返工时长。
+
+    调用先在整份输入里归并，再按**开始**所在的段归属，跨段的调用不拆成两次。
     模型与工具时间都是**事件间隔归属的近似值**（间隔归给本条事件：工具事件记工具，其余记模型）；
-    返工时长是一次门禁或登记没过到下一次同类通过之间的分钟数，各次相加。等人时间由驱动器累计，只有全程数。
+    首次门禁、登记与返工只看有结果的调用，按结果到达的先后算；返工时长是一次门禁或登记没过到下一次同类通过之间的分钟数，
+    各次相加。等人时间由驱动器累计，只有全程数。
     """
-    stamps = [t for t in (_ts(e.get("timestamp")) for e in rows) if t]
+    owners = _owners(calls)
+    stamps = [t for t in (_ts(e.get("timestamp")) for e in events[lo:hi]) if t]
     model_gap = tool_gap = verifier_gap = 0.0
-    verifier_runs = 0
-    first = {"harness": None, "story_register": None}
-    failing_since: dict[str, datetime] = {}
-    rework_sec = 0.0
     prev = None
-    for e in rows:
+    for index in range(lo, hi):
+        e = events[index]
         ts = _ts(e.get("timestamp"))
         gap = (ts - prev).total_seconds() if (ts and prev) else 0.0
         prev = ts or prev
@@ -260,30 +390,35 @@ def segment_metrics(rows: list[dict]) -> dict:
             model_gap += gap
             continue
         tool_gap += gap
-        name = str(e.get("tool_name") or "").lower()
-        request, output = _request_text(e), _output_text(e)
-        if name == "task":
-            verifier_runs += 1
+        if index in owners and owners[index]["kind"] == "verifier":
             verifier_gap += gap
+    mine = [call for call in calls if lo <= call["start_index"] < hi]
+    first = {"harness": None, "story_register": None}
+    failing_since: dict[str, datetime] = {}
+    rework_sec = 0.0
+    for call in sorted(mine, key=lambda c: c["end_index"] if c["end_index"] is not None else c["start_index"]):
+        kind, output = call["kind"], _result(call)
+        if kind not in first or output is None:
             continue
-        kind = ("harness" if name == "bash" and HARNESS_CMD_RE.search(request)
-                else "story_register" if name == "bash" and STORY_REGISTER_RE.search(request) else None)
-        if not kind:
-            continue
+        ts = _ts(call["end"].get("timestamp"))
+        status = str(call["end"].get("tool_status") or "")
         fails = (len({m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"})
                  if kind == "harness" else len(REGISTER_FAIL_RE.findall(output)))
         if first[kind] is None:
-            first[kind] = {"fail_count": fails}
-        if fails and kind not in failing_since and ts:
+            first[kind] = {"fail_count": fails, "status": status}
+        # 命令本身报错（error / failed / cancelled）也是没过，不因输出里没有 FAIL 行就当通过
+        passed = not fails and status in SUCCESS_STATUSES
+        if not passed and kind not in failing_since and ts:
             failing_since[kind] = ts
-        elif not fails and kind in failing_since and ts:
+        elif passed and kind in failing_since and ts:
             rework_sec += (ts - failing_since.pop(kind)).total_seconds()
     return {
         "duration_min": round((stamps[-1] - stamps[0]).total_seconds() / 60, 1) if len(stamps) > 1 else None,
         "model_gap_sec": round(model_gap, 1),
         "tool_gap_sec": round(tool_gap, 1),
-        "verifier_runs": verifier_runs,
+        "verifier_runs": sum(call["kind"] == "verifier" for call in mine),
         "verifier_gap_sec": round(verifier_gap, 1),
+        "delegations_unresolved": sum(call["kind"] == "delegation" for call in mine),
         "first_harness": first["harness"],
         "first_story_register": first["story_register"],
         "rework_min": round(rework_sec / 60, 1),
@@ -295,26 +430,28 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     if not events:
         raise SystemExit(f"[measure_run] {events_path} 里没有可解析的事件——不是「指标为零」，是读不到数据")
 
+    calls, incomplete = tool_call_view(events)
+    owners = _owners(calls)
     reads_rule = 0            # 读框架/扩展的规则文本
     reads_own = 0             # 读自己的产物
     reads_checker = 0         # 读 checker 源码
-    bash_unclassified = 0     # 提到规则路径、却既不是读也不是跑门禁的 bash（执行脚本等）
-    tools = Counter()
+    bash_unclassified = 0     # 提到规则路径、却既不是读也不是跑门禁的 shell 调用（执行脚本等）
+    tools = Counter(call["name"] for call in calls)
     context_first = context_last = None
     harness_runs = 0
     gate_rounds_with_fail = 0
     check_fail_counts: Counter[str] = Counter()
-    # 分段耗时：事件流里**没有工具开始事件**（一次调用只有一条 completed/error），
-    # 所以拿不到真实 span。这里用「上一条事件到本条事件的间隔」归给本条，是**近似**，
+    # 分段耗时：「上一条事件到本条事件的间隔」按本条所属调用的用途归属，是**近似**，
     # 字段名带 _gap_sec 明说这一点——不把近似值包装成实测值。
     gap_by_kind: dict[str, float] = {"gate": 0.0, "verifier": 0.0, "authoring": 0.0, "other": 0.0}
+    gap_bucket = {"harness": "gate", "verifier": "verifier", "authoring": "authoring"}
     prev_ts = None
     conservation: tuple[int, int] | None = None
     first_ts = last_ts = None
     # 模型动的第一下——装置起跑当场就写事件，用它算空档量到的是装置自己
     first_model_ts = None
 
-    for e in events:
+    for index, e in enumerate(events):
         ts = _ts(e.get("timestamp"))
         if ts:
             first_ts = first_ts or ts
@@ -332,19 +469,15 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
                 if context_first is None:
                     context_first = total
                 context_last = total
-            continue
+        elif etype == "tool":
+            kind = owners[index]["kind"] if index in owners else "other"
+            gap_by_kind[gap_bucket.get(kind, "other")] += gap
 
-        if etype != "tool":
-            continue
-
-        name = str(e.get("tool_name") or "").lower()
-        tools[name] += 1
-        request = _request_text(e)
-        output = _output_text(e)
-
+    for call in calls:
+        name, request = call["name"], _request_text(call["start"])
         if name in {"read", "grep", "glob"}:
             segments = [request]
-        elif name == "bash":
+        elif name in SHELL_TOOLS:
             segments = _read_segments(request)
         else:
             segments = []
@@ -357,32 +490,25 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
                 reads_rule += 1
             elif "doc/features/" in read_text:
                 reads_own += 1
-
-        is_harness = name == "bash" and HARNESS_CMD_RE.search(request)
-        if (name == "bash" and not is_harness and RULE_PATH_RE.search(request)
+        is_harness = call["kind"] == "harness"
+        if (name in SHELL_TOOLS and not is_harness and RULE_PATH_RE.search(request)
                 and not RULE_PATH_RE.search(read_text)):
             bash_unclassified += 1
-        if is_harness:
-            harness_runs += 1
+        harness_runs += is_harness
 
-        # 门禁报出的 check id 只在**输出**里。按「这一次工具调用」去重后再计数：
+    for call in sorted(calls, key=lambda c: c["end_index"] if c["end_index"] is not None else c["start_index"]):
+        output = _result(call)
+        if output is None:
+            continue
+        # 门禁报出的 check id 只在**门禁调用的输出**里。按「这一次调用」去重后再计数：
         # 同一份报告在 console 打一次、被 cat 再打一次，按文本次数算就会翻倍，
         # 而判据问的是「同一个 id 在多少**轮**门禁里失败」。
-        failed_ids = {m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"}
-        for cid in failed_ids:
-            check_fail_counts[cid] += 1
-        if failed_ids:
-            gate_rounds_with_fail += 1
-
-        if is_harness:
-            gap_by_kind["gate"] += gap
-        elif name == "task":
-            gap_by_kind["verifier"] += gap
-        elif name in {"write", "edit", "patch", "multiedit"}:
-            gap_by_kind["authoring"] += gap
-        else:
-            gap_by_kind["other"] += gap
-
+        if call["kind"] == "harness":
+            failed_ids = {m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"}
+            for cid in failed_ids:
+                check_fail_counts[cid] += 1
+            if failed_ids:
+                gate_rounds_with_fail += 1
         # story 守恒的两层各担多少条——取最后一次通过时的数（也在输出面）
         hit = CONSERVATION_RE.search(output)
         if hit:
@@ -395,16 +521,26 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     # 双检查点单：两段各自多少事件、各自多长。混在一起算的话，第二段那几分钟的增量
     # 会被摊进第一段的总量，「这次更新花了多少」就再也分不出来。
     cut = split_at_checkpoint(events, run_dir)
-    segments = ({"whole": {"events": len(events), **segment_metrics(events)}} if cut is None else
-                {"initial": {"events": cut, **segment_metrics(events[:cut])},
-                 "update": {"events": len(events) - cut, **segment_metrics(events[cut:])}})
+    if cut is None:
+        segments = {"whole": {"events": len(events), **segment_metrics(events, calls, 0, len(events))}}
+    else:
+        segments = {"initial": {"events": cut, **segment_metrics(events, calls, 0, cut)},
+                    "update": {"events": len(events) - cut, **segment_metrics(events, calls, cut, len(events))}}
+        for call in calls:
+            if call["start_index"] < cut <= max(call["indices"]):
+                incomplete.append({"reason": "crosses_checkpoint", "index": call["start_index"],
+                                   "run_id": call["start"].get("run_id"),
+                                   "tool_call_id": call["start"].get("tool_call_id"),
+                                   "tool_name": call["name"] or None})
+        incomplete.sort(key=lambda item: item["index"])
 
     return {
         "events": len(events),
         "duration_min": duration_min,
         "segments": segments,
-        "tool_calls": sum(tools.values()),
+        "tool_calls": len(calls),
         "tools": tools.most_common(8),
+        "incomplete_tool_events": incomplete,
         "reads_rule_text": reads_rule,
         "reads_own_artifacts": reads_own,
         "reads_checker_source": reads_checker,
@@ -495,6 +631,10 @@ def render(result: dict) -> str:
     lines = [
         "[measure_run] 实跑效率度量（只报数，达标与否由人判断）",
         f"  事件 {result['events']}｜工具调用 {result['tool_calls']}｜时长 {result['duration_min']} 分钟",
+        *([f"  统计不完整，仅为已观察到的次数：归并不了的工具事件 "
+           + "、".join(f"{reason} {count}" for reason, count in
+                      Counter(item["reason"] for item in result["incomplete_tool_events"]).most_common())]
+          if result.get("incomplete_tool_events") else []),
         "",
         "  ── 作者在读什么 ──",
         f"    读规则文本（framework/ 与 doc/extensions/）：{result['reads_rule_text']} 次   目标 ≤20/阶段",
@@ -532,7 +672,7 @@ def render(result: dict) -> str:
     for name, seg in (result.get("segments") or {}).items():
         lines.append(
             f"    {name}：{seg['duration_min']} 分钟｜模型 {seg['model_gap_sec']}s｜工具 {seg['tool_gap_sec']}s"
-            f"｜verifier {seg['verifier_runs']} 次 {seg['verifier_gap_sec']}s"
+            f"｜verifier {seg['verifier_runs']} 次 {seg['verifier_gap_sec']}s｜其它委派 {seg['delegations_unresolved']} 次"
             f"｜首次门禁 {seg['first_harness']}｜首次登记 {seg['first_story_register']}｜返工 {seg['rework_min']} 分钟")
     return "\n".join(lines)
 

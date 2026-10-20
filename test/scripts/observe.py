@@ -95,7 +95,7 @@ def tool_summary(event) -> str:
     lower = tool.lower()
     if lower in {"read", "write", "edit"}:
         detail: Any = ti.get("filePath") or ti.get("file_path") or ti.get("path") or ""
-    elif lower in {"bash", "shell", "shell_command"}:
+    elif lower in {"bash", "pwsh", "shell", "shell_command"}:
         detail = ti.get("command") or ""
     elif lower in {"grep", "search"}:
         detail = {"pattern": ti.get("pattern"), "path": ti.get("path")}

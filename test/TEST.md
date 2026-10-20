@@ -493,7 +493,16 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
 
 `segments` 按段给出（双检查点单分 `initial` / `update`，普通单一段 `whole`）：`duration_min`、`model_gap_sec`、`tool_gap_sec`、`verifier_runs`、
-`verifier_gap_sec`、`first_harness`、`first_story_register`、`rework_min`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
+`verifier_gap_sec`、`delegations_unresolved`、`first_harness`、`first_story_register`、`rework_min`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
+
+计数按调用：同一 run 里同一调用编号的开始与结果事件归并成一次，名称与入参取开始，输出与终态取结果。
+- shell 工具认 bash / pwsh / shell / shell_command。
+- verifier 只认专用 `verifier` 工具与 `subagent_type=verifier` 的 task；其它委派记进 `delegations_unresolved`，是不是审查由人判断。
+- 首次门禁、登记与返工只看有结果的调用，命令报错也算没过；读一份旧门禁报告不是一轮门禁。
+- 归并不了的条目（只有开始、只有结果、同键冲突、跨检查点）列在 `incomplete_tool_events`，此时计数只是已观察到的次数。
+- `*_gap_sec` 仍是事件间隔估计；并发调用相互重叠，不能相加成墙钟。
+
+旧运行要按新口径看，在评审证据目录另存重投影与重测结果，不改原运行记录。
 
 第 3 项是调查信号：记录作者为何读 checker、读后做了什么，与产物、性能、Knowledge 应用及跨 Case 重复情况一起判断（AGENTS §1）。
 
