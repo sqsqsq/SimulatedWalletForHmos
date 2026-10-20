@@ -51,7 +51,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HOST_ROOT))
 
 import run_layout
-from cli_config_group import load_cli_group, select_cli
+from cli_config_group import load_cli_group, registry_for, select_cli
 from phase_state import derive_phase_state
 
 
@@ -1978,7 +1978,9 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     runlog.header({"case": case_id, "feature": feature, "cli": cli_config["name"],
                    "model": cli_config["model"], "target": TARGET,
                    "start": result["start"]})
-    client = CliClient(runtime_root=out_dir / "cli-runtime")
+    registry = registry_for(cli_config["name"])
+    client = (CliClient(runtime_root=out_dir / "cli-runtime", registry_path=registry) if registry
+              else CliClient(runtime_root=out_dir / "cli-runtime"))
     t0 = time.time()
     # 正式多 Case 使用不含 .git 的隔离 workspace；其源码基线与差异由宿主
     # run_multi_case.py 的白名单快照负责，不能再调用 demo 的 Git 源码事务。

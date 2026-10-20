@@ -50,6 +50,11 @@ no `resume_args`, so it cannot be used where session continuation is required.
   under the DSH home directory, while this runtime keeps per-run artifacts only.
 - `dsh` failures are classified from the structured `turn_end` error payload
   (for example `code: MISSING_CREDENTIAL` → `auth_required`).
+- Native `tool_call {callId, tool, input}` becomes a `tool` event with status
+  `started`; `tool_result {callId, status, result}` becomes a `tool` event with
+  the same `tool_call_id`, the provider status unchanged (`completed`, `error`,
+  …; missing → `unknown`) and `result` as `tool_output`. The result names no
+  tool, so consumers pair calls and results by run and `tool_call_id`.
 
 Request timeout overrides may set both `soft_timeout_sec` and `hard_timeout_sec`
 to zero to disable elapsed-time limits. Registry defaults remain finite; mixed

@@ -5,7 +5,17 @@ selectors that the unified ``tools.cli`` registry consumes.
 """
 from __future__ import annotations
 
+import copy
+import json
+import os
+from pathlib import Path
 from typing import Any
+
+#: Framework 的 dsh adapter 把独立审查员物化成工程里的配置层；dsh 不扫描工程目录，
+#: 启动与续跑都要显式 ``--patch`` 装载它。
+DSH_VERIFIER_OVERLAY = ".dsh/framework-verifier.patch.yml"
+#: suite 生成的调用配置快照；只收需要改调用参数的宿主，其余宿主照用中央注册表。
+CLI_REGISTRY_ENV = "STORY_CLI_REGISTRY"
 
 
 def load_cli_group(config: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any]]:
@@ -48,3 +58,32 @@ def select_cli(configurations: list[dict[str, str]], config_id: str | None) -> d
         if item["id"] == selected:
             return dict(item)
     raise SystemExit(f"[runner] 未知 CLI 配置: {selected}")
+
+
+def registry_snapshot(configurations: list[dict[str, str]],
+                      central: dict[str, Any]) -> dict[str, Any] | None:
+    """本组用到 dsh 时，给出只含 dsh 一项、启动与续跑都装载审查员配置层的调用配置。"""
+    if not any(item["name"] == "dsh" for item in configurations):
+        return None
+    entry = copy.deepcopy((central.get("clis") or {}).get("dsh") or {})
+    if not entry.get("profiles"):
+        raise SystemExit("[runner] 中央注册表没有 dsh 条目，无法生成 suite 调用配置")
+    for name, profile in entry["profiles"].items():
+        for key in ("args", "resume_args"):
+            argv = list(profile.get(key) or [])
+            if "--profile" not in argv:
+                raise SystemExit(f"[runner] dsh 档位 {name}.{key} 没有 --profile，找不到配置层插入位置")
+            at = argv.index("--profile") + 2
+            profile[key] = argv[:at] + ["--patch", "{cwd}/" + DSH_VERIFIER_OVERLAY] + argv[at:]
+    return {**{key: value for key, value in central.items() if key != "clis"},
+            "clis": {"dsh": entry}}
+
+
+def registry_for(cli_name: str, environ: dict[str, str] | None = None) -> Path | None:
+    """suite 快照里有这个宿主就用快照，否则返回 None（照用中央注册表）。"""
+    snapshot = (environ if environ is not None else os.environ).get(CLI_REGISTRY_ENV, "").strip()
+    if not snapshot:
+        return None
+    path = Path(snapshot)
+    clis = json.loads(path.read_text(encoding="utf-8")).get("clis") or {}
+    return path if cli_name in clis else None

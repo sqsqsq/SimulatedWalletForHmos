@@ -252,8 +252,9 @@ const fenced = (text) => {
 };
 
 /**
- * 交给独立审查者的任务：工程根、请求与输入的真实路径、阅读问题与增益、依据原文、放置小节正文、必核项与报告形状。
- * 作者的「已正确」结论不进来；路径是这一次运行时的实际位置，不写进任何模板。
+ * 验收任务分两段：【交给审查者】是独立只读审查执行体要读的全部输入、必核项与要返回的报告形状——它只返回报告，
+ * 不写文件、不跑命令；【作者收尾】是作者把返回的报告原样落盘并核对。作者的「已正确」结论不进来；
+ * 路径是这一次运行时的实际位置，不写进任何模板。
  */
 export function reviewTask(projectRoot, featureRoot, { request, contents }) {
   const fromRoot = p => path.relative(projectRoot, path.join(featureRoot, ...p.split('/'))).split(path.sep).join('/');
@@ -261,7 +262,9 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
   const { selection, context } = inputs;
   const order = context.order.length > 1 ? `（这一处有 ${context.order.length} 张，顺序 ${context.order.join('、')}）` : '';
   return [
-    `阅读图验收请求 ${request.request_id}（阅读图 ${id}）：交给不是作者的独立执行体，只传这份任务，不传你的结论。`,
+    `阅读图验收请求 ${request.request_id}（阅读图 ${id}）。作者：把下面【交给审查者】一段原样交给不是作者的独立只读审查执行体，`
+      + '不附你的结论；它返回报告后按【作者收尾】做。',
+    '【交给审查者】',
     `工程根：${projectRoot}；下面的路径都相对工程根。请求文件：${fromRoot(`AR/story-src/figures/${id}.reading/request.json`)}`,
     `这张图要回答的阅读问题：${selection.question}；作者说的增益：${selection.gain}`,
     `它放在 ${fromRoot(context.story)} 的「${context.section}」一节末尾的阅读槽里${order}。`,
@@ -282,11 +285,13 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
       + '只换颜色或方向不算增益——没有增益判 FAIL，建议作者回写作设计取消这张图；',
     '- visual_readability：亲自打开渲染图，核标签、箭头、布局与裁切；看不了图判 UNKNOWN 并写进 unreviewed，不拿 XML 结构代替；',
     '- placement：图在这一节是否服务叙述，不替代必要正文，不与别处规则矛盾。',
-    `报告原样存为 ${fromRoot(`AR/story-src/figures/${id}.reading/report.json`)}：`
-      + '{"request_id", "executor": "<宿主返回的执行或会话引用>", "checks": [{"id","verdict","evidence"}], '
-      + '"blocking_findings": [], "advisories": [], "unreviewed": []}。',
+    `把报告作为你的最终回复返回，只返回这一个 JSON，不写文件、不跑命令：{"request_id": "${request.request_id}", "executor": "", `
+      + '"checks": [{"id","verdict","evidence"}], "blocking_findings": [], "advisories": [], "unreviewed": []}',
+    '【作者收尾】',
+    `1. 把审查者返回的 JSON 原样存为 ${fromRoot(`AR/story-src/figures/${id}.reading/report.json`)}，只把 executor 填成宿主返回的`
+      + '这次审查执行或会话引用，其余一字不改；',
     // 入口按工程配置的扩展目录取，与核心归档同一解析；参数逐个按宿主 shell 引好，照抄即可跑
-    `存好后跑 \`node ${shellArg(path.join(extensionRoot(projectRoot), 'skills', 'story', 'scripts', 'core', 'story-build.mjs'))} `
+    `2. 跑 \`node ${shellArg(path.join(extensionRoot(projectRoot), 'skills', 'story', 'scripts', 'core', 'story-build.mjs'))} `
       + `view --mode review-check --id ${id} --feature ${shellArg(path.basename(featureRoot))} --project-root ${shellArg(projectRoot)}\` 核对。`,
   ];
 }

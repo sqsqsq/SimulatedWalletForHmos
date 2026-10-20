@@ -1,0 +1,45 @@
+adapter_name: dsh
+description: |
+  DeepSeek Harness（dsh）adapter——共享 `.agents` bridge bundle（AGENTS.md + .agents/skills/.agents/rules 跳板），
+  与 generic / chrys 字节一致、可幂等共存；另物化独立审查员的 dsh 配置层 `.dsh/framework-verifier.patch.yml`。
+
+agent_entry_file:
+  template_path: templates/AGENTS.md.template
+  target_path: AGENTS.md
+
+# dsh 不自动发现 Markdown 子 agent：独立审查员是 `@deepseek-ai/dsh-tool-subagent` 的一个具名工具实例
+# （toolName=verifier，spawn 后端空上下文，toolFilter 只放 read/glob/grep/read_image），persona 内联在
+# 配置层里。dsh 不扫描 `.dsh/`，启动与续跑都显式带 `--patch <工程根>/.dsh/framework-verifier.patch.yml`；
+# 未带该层启动的会话里没有 verifier 工具，须新开会话。
+commands:
+  subagents:
+    target_dir: .dsh
+    template_dir: templates/agents
+    update_policy: auto_overwrite               # verifier 为协议级子 agent 配置
+
+skill_bridge:
+  target_dir: .agents/skills
+  template_dir: ../shared/agent-bundle/templates/skills-bridge
+
+rules:
+  target_dir: .agents/rules
+  template_dir: ../shared/agent-bundle/templates/rules
+
+user_confirmation:
+  structured_widget: unsupported
+  portable_required: true
+  interaction_renderer_rule: templates/rules/interaction-renderer.md
+
+# 读图能力取 dsh profile 选定的模型路由；read_image 工具存在不代表模型有图像输入，按 none 定档
+image_input: none
+
+# verifier 子代理能力（plan d2f7a9c4）：调用为 `verifier({description, prompt: <request JSON 整段>})`，
+# 报告由调用方原样写入 summary.verifier_report。入册纪律：宿主实跑观测（父子会话不同、子级空上下文、
+# 写工具不可用、读材料交回终态块）之前保持 false。
+verifier_subagent: false
+
+post_install_hooks: []
+
+notes: |
+  - 只承接 interactive 运行模式，不声明 goal_capability。
+  - dsh 原生工具为小写 read / glob / grep / read_image / pwsh / write / edit；verifier 工具实例只放前四个。

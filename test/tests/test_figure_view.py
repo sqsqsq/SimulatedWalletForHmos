@@ -235,6 +235,13 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
         self.assertIn("reading_gain", out)
         command = next(line for line in out.splitlines() if "review-check" in line)
         self.assertIn(f"--feature '{FEATURE}' --project-root '{self.root}'", command, "核对命令照抄跑不起来")
+        lines = out.splitlines()
+        reviewer = "\n".join(lines[lines.index("【交给审查者】") + 1:lines.index("【作者收尾】")])
+        author = "\n".join(lines[lines.index("【作者收尾】") + 1:])
+        self.assertIn("只返回这一个 JSON，不写文件、不跑命令", reviewer)
+        self.assertNotIn("review-check", reviewer, "让只读审查者去跑核对命令")
+        self.assertIn("report.json", author)
+        self.assertIn("review-check", author, "落盘与核对不在作者那一段")
 
     def test_each_input_change_makes_it_stale_and_display_or_unrelated_edits_do_not(self) -> None:
         self.ready()

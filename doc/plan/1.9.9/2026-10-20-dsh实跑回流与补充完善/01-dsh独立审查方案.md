@@ -1,6 +1,6 @@
 # S1：DSH独立审查接入
 
-2026-10-20，维护设计者。本稿已补齐本地配置、加载和消费者动作；上游兼容发布件及真实资格未就绪，不代表整条链当前即可起跑。事实与方案自查见00；新增需求见`doc/spec/1.9.9/13-dsh独立审查/需求.md`。
+2026-10-20，维护设计者。按用户最新决定，DSH审查员作为demo本地定制归档，不改上游、不等待上游发布件。当前两项返修以[04集中返修](04-R1R2集中返修.md)为执行依据；真实资格未完成，不代表整条链当前即可起跑。
 
 ## 1. 定案与所有权
 
@@ -26,7 +26,7 @@ OpenCode的现行模板只接收阶段request；阅读图任务不是这个JSON�
 
 采用DSH现有spawn后端，加一个专用只读审查工具实例`verifier`。不采用fork，不允许通用subagent的默认工具权限承担正式审查。复用DSH已安装包，不增加npm依赖、Agent层级或审查调度器。
 
-Framework在`E:/Project/agent-maison`实现dsh adapter及对应的物化、调用指引；本仓仅从经验证且与本仓兼容的发布件接入，不直接修改`demo/framework`。当前本仓Framework为3.0.0，上游已存在3.1变化，不能借本项无条件接入3.1并混入2.x适配。上游需交付兼容当前Extension合同的发布件与变更说明；若做不到，S1保持依赖未就绪，不用本地补丁伪装完成。
+用户已将交付方式定为与OpenCode同类的demo本地定制：adapter/子级模板保存在`demo/framework/agents/dsh/`，物化配置在`demo/.dsh/`，父模型沿既有入口与宿主原生工具调用，不新增AGENTS.local.md。归档与升级保持范围记入本仓AGENTS，不改上游agent-maison、共享Framework逻辑或现有审查算法，也不升级3.1。原先“等上游兼容发布件”的前置撤回。
 
 本项补的是一个已存在公共职责的宿主适配：仅有布尔声明无法让DSH理解Task调用协议，因此必须同步指引消费者。仅在generic上改true、在Extension额外编排verifier、让worker替模型审查均不采用。
 
@@ -52,9 +52,9 @@ Framework在`E:/Project/agent-maison`实现dsh adapter及对应的物化、调�
 
 该格式已从DSH的`dsh-base/cordis.patch.yml`核实；加载层已从`dsh/lib/profile-boot-*.js::composeProfile`确认支持`--patch`。不改用户`cordis.patch.yml`，不编辑每次启动都会重写的`cordis.yml`。`--dump-config`本身也会重写profile根配置，不当作无副作用探针在用户profile反复调用。
 
-**交付位置与入口定案：** 上游`agents/dsh/templates/agents/framework-verifier.patch.yml`由3.0基线adapter已有`commands.subagents`物化能力安装到工程`.dsh/framework-verifier.patch.yml`，与该基线OpenCode的登记位置同构，不引入main才有的顶层subagents协议。这是显式加载文件，不假设DSH会自动扫描`.dsh`。实际启动与resume都使用`dsh --profile headless --patch <工程绝对路径>/.dsh/framework-verifier.patch.yml ...`；一个进程只装载一次。若该profile已有同名verifier或相同id，起跑配置核对报冲突，不静默覆盖。
+**交付位置与入口定案：** 本地`demo/framework/agents/dsh/templates/agents/framework-verifier.patch.yml`由3.0基线adapter已有`commands.subagents`物化能力安装到工程`.dsh/framework-verifier.patch.yml`，与该基线OpenCode的登记位置同构。这是显式加载文件，不假设DSH会自动扫描`.dsh`。实际启动与resume都使用`dsh --profile headless --patch <工程绝对路径>/.dsh/framework-verifier.patch.yml ...`；一个进程只装载一次。不额外增加父级提示文件或Case任务注入。若profile已有同名工具或相同id，明确冲突，不静默覆盖。
 
-**本仓测试接线：** suite装配后复制现有CLI registry到`suite/cli-registry.json`，只在DSH的start/resume argv中加入本Case绝对overlay路径；Case专属路径在创建Case时解析。`run_case.py`用已有`CliClient(registry_path=...)`读该Case专属registry（存为`cases/<case>/cli-registry.json`），不修改中央registry的其它宿主和用户profile。suite级文件是未绑定Case的基底，Case文件是其一次派生；两个文件不分别人工维护。stop/poll同样使用state记录的registry路径。一般业务仓由DSH启动说明给出同一带overlay的调用入口。未加载overlay的旧DSH会话需要新开，不能在旧会话中宣称已升级。
+**本仓测试接线：** 复用中央registry已支持的`{cwd}`参数，DSH start/resume的overlay参数均写`{cwd}/.dsh/framework-verifier.patch.yml`。无需为每个Case另生成registry。suite只保存一份DSH调用配置快照`cli-registry.json`：从当前中央defaults与选中DSH条目派生，在本suite使用的profile argv中插入`--patch`及上述参数，不修改中央默认调用、不复制其它宿主条目。所有Case的`CliClient(registry_path=...)`消费这一份，cwd仍取各Case自身工程；stop/poll读相同配置来源。快照由suite装配一次生成，不允许人工分别修改。一般业务仓由DSH启动说明给出同一带overlay的调用入口。未加载overlay的旧DSH会话需要新开，不能在旧会话中宣称已升级。
 
 **persona完整职责：** 独立只读、不继承作者结论；阶段request读取prompt_path、以其检查项为准、回显subject并返回现行终态块；其它自足只读任务读取任务列出的依据并按其指定格式返回；缺输入或无法看图如实报告，不造PASS；不写文件、不执行shell、不再派子代理。报告落盘与检查命令始终归父作者。实现时从现行OpenCode正文提取阶段分支，不改其已有效的报告合同。
 
@@ -66,31 +66,31 @@ Framework在`E:/Project/agent-maison`实现dsh adapter及对应的物化、调�
 
 阅读图独审复用同一个只读执行工具，输入为现有`review-request`生成的任务全文，并返回现行四项JSON报告。`figure-reading.mjs::reviewTask`须把“审查者返回报告”与“父作者原样保存、运行review-check”分成明确动作；修正现有任务中容易让只读子级去写报告/跑命令的表述。同步`reference/svg.md`，不改变报告schema与身份。两个原件路径和验真消费者保持，不合并schema、不将阶段PASS代替阅读图PASS。
 
-## 3. Framework最小文件动作
+## 3. demo本地定制文件动作
 
-上游实施者先读取上游AGENTS及其现行维护入口，按以下边界落实：
+本仓实施者按AGENTS中的本地定制约定落实，当前已完成的部分不重做：
 
-- 新增`agents/dsh/adapter.yaml`及必要模板：AGENTS/Skill桥接、宿主调用说明、DSH profile配置片段与verifier persona。身份登记为dsh，不伪装generic或opencode。
-- 在现有adapter schema/catalog中增加一个宿主调用说明文件引用`verifier_instruction`，由adapter持有工具名称、参数形态与报告留存方法；内容在调用前随已有next-step/入口规则送达。现有Task宿主提供同义说明，退出共享正文里硬编码“所有宿主都用Task”的解释。它是指引的单一真源，不建立动态工具路由平台。
-- 核`templates/AGENTS.md.template`、`skills/reference/agents-entry-detail.md`、共享framework-agent-execution规则及harness的下一步文本、`receipt-scaffold.ts`：调用方法读同一adapter说明，回执不继续谎写DSH经Task调用。现有request/material/subject/报告验证算法不变。
+- `demo/framework/agents/dsh/adapter.yaml`及子级模板、confirmation-registry选项与物化配置维持已交回范围，身份为dsh，不伪装generic或opencode。
+- 不新增verifier_instruction字段，不修改共享规则或其它宿主。不新增AGENTS.local.md；Task字样差异按04-B验证正常调用，不预判为必修。
+- 现有request/material/subject/报告验证算法及回执代码不变。静态通用Task字样不作为实际渠道证据，实际调用由DSH会话/工具事件证明，不伪造执行引用。
 - `verifier_subagent`仍只在资格实跑后登记true；开发中的adapter可先为false。不能让模型通过失败循环来发现宿主尚未配置。
 - dsh现有读取/图片工具权限通过离线配置检查和真实只读负例验证；主agent的写权限不自动继承为verifier权限。
 
-Framework构建、发布与本仓§6接入是独立依赖。交回需列全部调用文本消费者；不能仅新增adapter目录而旧入口仍指导调用不存在的Task。
+本地定制随demo归档并在Framework升级时按本仓约定保持，不另设上游发布依赖。交回必须包含父模型实际获得映射的证据；仅有adapter注释、子级persona或文件存在不算送达。
 
-**兼容基线与资格顺序：** 本仓基线来自Framework发布件source_commit `0143e21ecacf679fcb021d36243ab0372b71a305`。上游从该发布基线的维护分支实施本项最小增量，不直接取main的整包3.1；审查算法/业务工作流不随DSH接入更换。上游先在隔离消费工程临时选dsh并启用声明取得资格证据，随后将具备证据的声明纳入正式发布件；这一步是受控资格试验，不对未验证用户工程发布true。发布版本号由上游现行发布规则确定，兼容验收必须包含本仓Extension离线消费者。未交出兼容件前，本仓S1标“待上游交付”，不能写已实现。
+**资格顺序：** 先完成本地说明与配置装配离线检查；获授权后，在隔离工程临时启用dsh声明取得正常调用链资格证据，随后交审决定是否把本地声明登记true。临时资格试验不等于正式demo已可用，未实跑时保持false，不直接起跑完整Case。
 
-Extension侧只检查并按其manifest已有桥接机制补dsh入口映射；沿通用AGENTS/Skill可用时直接复用，不制造同内容第二份Skill。阅读图作者页仍指向现行独立审查职责，具体工具由宿主说明承担。新增/替换预计G30/X10；不存在必要改动时如实零计。
+Extension侧只检查并按其manifest已有桥接机制补dsh入口映射；沿通用AGENTS/Skill可用时直接复用，不制造同内容第二份Skill。阅读图作者页仍指向现行独立审查职责，具体工具由宿主说明承担。原阅读图父子职责缺陷记原图文包返修；真正DSH新增单列实际文件动作，不预申请G30/X10，归属见99。
 
 ## 4. 顺序与完成条件
 
-1. 离线完成上游adapter/指引、DSH配置片段与本仓桥接核对；正常和坏配置有明确结果。用桩验证request原样交接、报告原样存储和过期/错对象拒绝，不称独立审查实跑。
-2. 获用户授权后在隔离工程做最小资格：父子会话不同、子级空上下文、写工具实际不可用、读实际中性材料并交报告，调用日志带可核执行身份；错误关系负例被报告发现，合法正例不被固定词句误拒。确认后才登记true并接入合格发布件。
+1. 离线核对demo本地adapter/子级配置及装配，完成04-A返修并按04-B准备资格验证；用桩验证请求与报告交接，不称独立审查实跑。
+2. 获用户授权后在隔离工程做最小资格：父子会话不同、子级空上下文、写工具实际不可用、父模型沿正常Framework任务调用并取得报告；错误关系负例被发现，合法正例不被固定词句误拒。交审确认后才登记本地true。
 3. 正式两Case起跑前检查dsh adapter实际选择、专用verifier工具实例/路由、文本及图像能力，缺任一适用资格在模型业务工作前指出，不跑到末尾才发现“无报告”。不放宽装置的verifier完成条件去适配generic降级。
 
 ### 图文效果的具体交回
 
-由维护设计者先准备四组中性正反例，仅用于隔离资格与事后评审，不送进正常Case输入：
+以下四类是验收关注点，不要求另建四套测试框架或每次重新造稿。先复用P4已有“表漏分支/无增益SVG”材料及现有qualification入口；仅对未覆盖的页面路径和重复主题补最小中性变体。材料仅用于隔离资格与事后评审，不送进正常Case输入：
 
 | 主题 | 合法稿 | 缺陷稿 | 必须看到的审查结果 |
 |---|---|---|---|
@@ -99,7 +99,7 @@ Extension侧只检查并按其manifest已有桥接机制补dsh入口映射；沿
 | 图的职责 | 时序/状态/旅程各承担不同关系，纯表承接也完整 | 总览重画相邻两图、箭头把未知结果连成可重试 | 分别指出冗余与无依据的失败去向，不强迫固定图数 |
 | SVG选择 | 无跨载体增益时明确不采用；有分散责任/时序时综合表达 | 因“已经有三张图”直接不采用，或只换颜色 | 区分真无增益与理由不成立；有价值但不能看图保持未完成 |
 
-四组材料与实际发现对应后，作者在独立资格副本按发现修订一次，再由独立审查复核；保留原稿、任务、报告、修订稿，不能只看报告字段PASS。Mermaid用宿主现有解析/渲染入口核实际语法和画面，未取得渲染证据不写已可读。业务风险只按本次材料及实际用户决定处理，不从金样搬恢复接口。
+材料与实际发现对应后，作者在独立资格副本按发现修订，再由独立审查复核；保留原稿、任务、报告、修订稿，不能只看报告字段PASS。这里不规定固定返修次数，不要求把历史缺陷稿补成“本轮通过”。Mermaid用宿主现有解析/渲染入口核实际语法和画面，未取得渲染证据不写已可读。业务风险只按本次材料及实际用户决定处理，不从金样搬恢复接口。
 
 若上述合法稿被误拒或缺陷稿漏审，先核任务是否实际收到现行要求。缺的是送达就修任务生产者；判据有歧义则在原判据位置改一处并同步消费者；契约已充分而模型漏判则记录为模型效果失败，不追加案例特例或“多跑几轮”来掩盖。此分类及负例交回是S1完成条件，不能整体留给未来正式CLI。
 

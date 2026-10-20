@@ -82,10 +82,14 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统；提
 
 - `demo/framework/` 是 AgentMaison 3.0.0 的 vendored 副本（`demo/framework/RELEASE-MANIFEST.json`）。正式交付落在上游，经 framework-init UPDATE
   进入消费仓；本仓副本只在用户明确授权的单步验证中临时修改，交付时保留上游基线、可复现补丁和临时放行的失效条件。
-- 本仓对 framework 有两处本地定制：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与
-  `demo/framework/agents/opencode/templates/agents/verifier.md` 子代理模板（物化为 `demo/.opencode/agent/verifier.md`，根 `.opencode/agent/verifier.md`
-  是维护装置的拷贝）。它们不含逻辑改动、不交上游，接入新发布件时按 §6 重新加回；不随 story-adaptation 进目标仓，进目标仓的只有 manifest
-  `provides.bridges` 登记的入口。
+- 本仓对 framework 有两组本地定制，都不含逻辑改动：
+  - opencode：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与 `templates/agents/verifier.md` 子代理模板
+    （物化为 `demo/.opencode/agent/verifier.md`，根 `.opencode/agent/verifier.md` 是维护装置的拷贝）。
+  - dsh：`demo/framework/agents/dsh/` 整个 adapter，加上 `skills/reference/confirmation-registry.yaml` 里的 dsh 选项。
+    审查员模板 `templates/agents/framework-verifier.patch.yml` 由 opencode 子代理正文生成，物化为 `demo/.dsh/framework-verifier.patch.yml`，
+    dsh 启动与续跑须带 `--patch` 装载它。`verifier_subagent` 在宿主实跑观测前保持 false。
+
+  它们不交上游，接入新发布件时按 §6 重新加回；不随 story-adaptation 进目标仓，进目标仓的只有 manifest `provides.bridges` 登记的入口。
 - `demo/.opencode/` 同时是 CLI 测试装置（Case 工作区从 demo 复制）：外网实跑用 opencode，内网用 codex。
 
 ## 3. 不变量

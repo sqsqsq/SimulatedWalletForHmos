@@ -133,11 +133,25 @@ class TheOrderIsSnapshotThenPromoteThenResume(unittest.TestCase):
 
 
 class TheTwoSegmentsLandInDifferentPlaces(unittest.TestCase):
-    def test_the_final_documents_use_a_separate_directory(self) -> None:
-        """终态文档另名：原编号那一份是第一段回流的，两段分开才比得出更新改了什么。"""
-        src = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
-        self.assertIn('f"{record[\'feature\']}-update"', src)
-        self.assertIn('after_initial") == "update"', src)
+    def test_the_segment_comes_from_what_actually_happened(self) -> None:
+        """回流身份按实际走到的那一段：计划了 update 而只跑了第一段，仍是第一段（并标未走完）；续跑过才是 update。"""
+        sys.path.insert(0, str(SCRIPTS))
+        import run_multi_case  # noqa: PLC0415
+        cases = {
+            "只跑了第一段、没到检查点": ({"after_initial": "update", "status": "stop_failed"}, ("initial", True)),
+            "第一段到了检查点": ({"after_initial": "update", "checkpoints": {"initial": {"path": "x"}}}, ("initial", False)),
+            "续跑了第二段、没到检查点": ({"after_initial": "update", "resumed_update": {"text": "t"},
+                                  "checkpoints": {"initial": {"path": "x"}}}, ("update", True)),
+            "第二段到了检查点": ({"after_initial": "update", "resumed_update": {"text": "t"},
+                            "checkpoints": {"initial": {"path": "x"}, "update": {"path": "y"}}}, ("update", False)),
+            "单段单自然到达目标": ({"status": "finished"}, ("initial", False)),
+            "单段单被停": ({"status": "stopped"}, ("initial", True)),
+        }
+        for name, (record, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(want, run_multi_case.finalize_segment(record))
+        self.assertEqual(("AR-1", "AR-1-update"), (run_multi_case.promoted_feature_name("AR-1", "initial"),
+                                                     run_multi_case.promoted_feature_name("AR-1", "update")))
 
     def test_the_terminal_sets_agree_between_the_two_sides(self) -> None:
         """两边的终态名单要一致：Case 已经收尾，宿主却判它还活着就拒绝回灌。"""

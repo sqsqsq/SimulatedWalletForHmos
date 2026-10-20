@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .base import AdapterEvent, BaseAdapter, part_input, session_id
@@ -25,6 +26,7 @@ def _tool_call_id(value: dict[str, Any], state: dict[str, Any] | None = None) ->
     result = (
         value.get("id")
         or value.get("callID")
+        or value.get("callId")
         or value.get("call_id")
         or value.get("tool_use_id")
         or state.get("id")
@@ -287,8 +289,12 @@ class DshAdapter(BaseAdapter):
       {"type":"session","sessionId":"...","cwd":"..."}
       {"type":"status","phase":"turn_start"|"step_start"|"step_end"|"turn_end",...}
       {"type":"thinking","text":"..."} / {"type":"text","text":"..."} / {"type":"final","text":"..."}
+      {"type":"tool_call","callId":"...","tool":"read","input":{...}}
+      {"type":"tool_result","callId":"...","status":"completed"|"error","result":"..."}
     `step_end` carries usage {inputTokens, outputTokens, totalTokens, cacheReadTokens};
     `turn_end` with reason.kind == "error" carries {"message", "code"}.
+    Calls and results pair by `callId` and several may be open at once; a result
+    names no tool, and its status passes through unchanged.
     Model and sandbox preset live in DSH profile config, not in argv.
     """
 
@@ -305,6 +311,34 @@ class DshAdapter(BaseAdapter):
                 return []
             event_type = "reasoning" if kind == "thinking" else "text"
             return [AdapterEvent(event_type, content=text)]
+        if kind == "tool_call":
+            name = str(event.get("tool") or "")
+            return [
+                AdapterEvent(
+                    "tool",
+                    content=name,
+                    tool_call_id=_tool_call_id(event),
+                    tool_name=name,
+                    tool_status="started",
+                    tool_input=event.get("input") if isinstance(event.get("input"), dict) else {},
+                )
+            ]
+        if kind == "tool_result":
+            result = event.get("result")
+            output = (
+                result
+                if isinstance(result, str) or result is None
+                else json.dumps(result, ensure_ascii=False)
+            )
+            return [
+                AdapterEvent(
+                    "tool",
+                    content=output,
+                    tool_call_id=_tool_call_id(event),
+                    tool_status=str(event.get("status") or "unknown"),
+                    tool_output=output,
+                )
+            ]
         return super().parse(event)
 
     def _status(self, event: dict[str, Any]) -> list[AdapterEvent]:

@@ -108,7 +108,7 @@ python test/scripts/run_multi_case.py poll --suite-id story-suite-20260822-14000
 ```
 
 `plan` 只读确认选中的 Case、feature、目标阶段；`start` 起跑并返回 `next_action=poll_after_interval`、`next_interval_sec=15`。宿主随即创建绑定
-suite-id 的 heartbeat（§3.5），启动回合可以结束，之后由定时唤醒驱动。`status` 只做只读诊断：不消费事件、不回复、不计观测，不能替代 `poll`。
+suite-id 的 heartbeat（§3.5），启动回合可以结束，之后由定时唤醒驱动。`status` 只做只读诊断：不消费事件、不回复、不计观测，不能替代 `poll`；它的 `runs` 给出每个 Case 当前运行目录，以及每一轮 CLI 会话的回合、runtime 目录、session 与状态（由 `live.jsonl` 的 `cli_run_started` 对上 `cli-runtime/<id>/run.json`，对不上如实标出）。不给 `--suite-id` 时套件名是 `story-suite-YYYYMMDD-HHMMSS`，同秒已有就加两位递增后缀。
 
 Case 严格顺序启动：前一个取得有效 run-id、worker/lease 和活动状态后才启动下一个，启动后的 worker 并行运行。启动失败时检查活动指针、run、
 worker、lease、workspace 和原始输出，最多恢复重试 3 次；仍失败则保留完整事实并继续启动其余 Case。启动重试与租约判的是进程起没起来、
@@ -127,6 +127,10 @@ CLI 宿主按 `config/test.yaml > cli.configurations` 的顺序选，配置条�
 「干净基线」同时重建该 Case 的隔离 workspace、需求系统快照、补料投放状态、交互规划游标和阶段观测游标；失败 attempt 的 artifact、事件、
 原始输出与记录保留在本 suite。重跑是原 suite 内的单 Case attempt，回到相同业务起点后仍等宿主逐关回复。`poll` 快照展示 attempt、
 `cli_config_id`、`failure_kind` 与配置健康状态，宿主不用手工执行重跑。
+
+配置组里有 dsh 时，`start` 在 suite 根写一份 `cli-registry.json`：只含 dsh 一项，启动与续跑都在 `--profile` 后插入
+`--patch {cwd}/.dsh/framework-verifier.patch.yml`，各 Case 的 cwd 仍是自己的工程，其余宿主照用中央 `tools/cli/config/clis.json`。
+demo 没物化这层配置时 `start` 在装配后、任何 Case 起跑前停下。
 
 ## 3. 观察与回复
 
@@ -290,6 +294,7 @@ story 门禁按产品的阶段顺序跑：先派发 `pre_phase` 的视图钩子�
 ```text
 output/story/<suite-id>/
 ├─ suite.json
+├─ cli-registry.json            # 配置组有 dsh 时才有（§2.1）
 ├─ previous-run-cleanup.json
 ├─ feature-migration.json
 ├─ workspace-boundary.json
@@ -308,6 +313,8 @@ output/story/<suite-id>/
       ├─ gate_*.log
       ├─ gate_diagnostics.json
       ├─ phase-results/
+      ├─ cli-runtime/<runtime-id>/{request.json,run.json,raw.jsonl,events.jsonl}
+      ├─ usage/<point>/usage.json   # 该运行工作区全局 doc/usage.json 的原字节快照，point 为 initial / update / final
       └─ artifact/
 ```
 
@@ -329,7 +336,7 @@ output/story/<suite-id>/
 | 5 | `resume-update --case <id> --text "<case.yaml 的 update_request>"`，不传 `--answer` | 只投第二段的业务请求；第一段回流之后 `reply` 被拒，不再在第一段里继续。`update_inputs` 在这一步按下表自动投放，`--deliver` 只投 `supplements/` 里的补料 |
 | 6 | 第二段起手在材料关卡停一次，按该 Case `interaction-script.yaml` 的 `update-material` 作答；之后 Case 停在第二检查点（`stop_reason: update_checkpoint`） | 终点以流程契约里这一轮 update 关闭为准，模型说「更新完成」不算 |
 | 7 | `checkpoint --point update` → 只读后评 → `conclude` | story 门禁已在进第二检查点前跑过；第二检查点的唯一出口是 conclude，不发的话 worker 一直等，最后只能被外部停掉、终态成 `worker_lost` |
-| 8 | 全部终态后 `finalize --promote` | 终态文档落到 `<需求编号>-update`，第一段那份不被覆盖 |
+| 8 | 全部终态后 `finalize --promote` | 实际续跑过第二段，终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；只跑了第一段则回原编号，`promotion-manifest.json` 的 `segment` / `partial` 说明是哪一段、走没走到检查点 |
 
 | `update_inputs` 的 `kind` | 投到哪 | 模拟的是 |
 |---|---|---|
@@ -349,8 +356,8 @@ python test/scripts/run_multi_case.py finalize `
   --suite-id story-suite-20260822-140000 --promote
 ```
 
-- Case 已终态且 workspace 存在就回灌；成功或失败 Case 的 `doc/features/<feature>` 都独立复制到维护仓 `doc/features/`（双检查点单的终态
-  另名 `<feature>-update`），目标已存在时仅内容完全相同视为已回灌，否则保留双方并记录冲突。
+- Case 已终态且 workspace 存在就回灌；成功或失败 Case 的 `doc/features/<feature>` 都独立复制到维护仓 `doc/features/`（实际续跑过第二段的
+  终态另名 `<feature>-update`，回流身份按实际走到的段落定，不按计划的 `after_initial` 推断），目标已存在时仅内容完全相同视为已回灌，否则保留双方并记录冲突。检查点与 finalize 各把工作区全局 `doc/usage.json` 原字节留到该运行的 `usage/<point>/`，缺失记 missing、已固定的不覆盖。
 - 受控源码差异逐文件回灌 demo，做三方检查：目标仍等于 suite 基线时写入，已等于该 Case 结果时记幂等完成，同时不同于两者时记冲突；
   删除只记录不执行；不因同批其他 Case 已写入源码而跳过。
 - 每个 Case 生成不可变的 `observations.jsonl` 与汇总 `observation-record.md`：启动与恢复、阶段和状态变化、观测、交互、CLI/gate/基础设施错误、
@@ -392,9 +399,10 @@ print(m.create_workspace_template(d, '$id')[0])
 - pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录。
 - 串行只在排障时用，且只串行跑那一条：`python -m unittest discover test/tests`。测试隔离与慢用例的编写纪律见 [tests/README.md](tests/README.md)。
 
-### 5.1 verifier 通道（OpenCode）
+### 5.1 verifier 通道（OpenCode / dsh）
 
-opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`，报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
+opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的只读工具实例，
+启动时经 `--patch` 装载（§2.1）。报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
 
 ```powershell
 python -m unittest discover -s test/tests -p "test_verifier_chain_in_workspace.py"

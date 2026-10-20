@@ -5,6 +5,7 @@ the existing per-case runner and its immutable run evidence.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import unittest
@@ -733,17 +734,73 @@ class WorkspaceBoundaryTest(unittest.TestCase):
                                    return_value=(True, [], None)), \
                     mock.patch.object(
                         run_multi_case, "_remove_tree_with_recovery",
-                        side_effect=OSError("residual snapshot")):
+                        return_value={"removed": False, "error": "OSError: residual snapshot",
+                                      "remaining": ["a/b"],
+                                      "attempts": [{"attempt": 1, "status": "retry",
+                                                    "error": "OSError: residual snapshot"}]}):
                 report = run_multi_case.cleanup_previous_test_runs(
                     new_output, "story-suite-new")
             self.assertEqual("completed_with_warnings", report["status"])
             self.assertEqual(1, len(report["warnings"]))
+            kept = report["targets"][0]["deletion_attempts"][0]
+            self.assertEqual((False, ["a/b"], 1), (kept["removed"], kept["remaining"], len(kept["attempts"])),
+                             "失败时的尝试记录没进清理报告")
             self.assertTrue(old_output.exists())
             self.assertTrue(new_output.exists())
         finally:
             run_multi_case.OUT_ROOT = original_out
             tempfile.gettempdir = original_gettempdir
             shutil.rmtree(root, ignore_errors=True)
+
+    def test_status_lists_each_turn_with_its_runtime_record(self) -> None:
+        """status 的运行视图从已有记录派生：回合来自 cli_run_started，会话与状态来自 run.json；缺的如实标。"""
+        root = Path(tempfile.mkdtemp(prefix="story-run-view-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        run_dir = root / "run-1"
+        (run_dir / "cli-runtime" / "r1").mkdir(parents=True)
+        (run_dir / "live.jsonl").write_text(
+            '{"seq": 1, "type": "cli_run_started", "cli_run_id": "r1", "turn": 1}\n'
+            '{"seq": 2, "type": "text"}\n'
+            '{"seq": 3, "type": "cli_run_started", "cli_run_id": "r2", "turn": 2}\n', encoding="utf-8")
+        run_multi_case.write_json(run_dir / "cli-runtime" / "r1" / "run.json",
+                                  {"session_id": "s-1", "status": "succeeded"})
+        with mock.patch.object(run_multi_case, "run_pointer_state",
+                               return_value={"run_dir": str(run_dir), "cli_run_id": "r2"}):
+            view = run_multi_case.run_view({"case": "c", "run_id": "run-1"})
+        self.assertEqual([(1, "r1", "succeeded", "s-1"), (2, "r2", "runtime_record_missing", None)],
+                         [(r["turn"], r["runtime_id"], r["status"], r.get("session_id")) for r in view["cli_runs"]])
+        self.assertEqual((str(run_dir), "r2"), (view["run_dir"], view["cli_run_id"]))
+
+    def test_the_default_suite_name_is_dated_and_suffixed_on_collision(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-suite-name-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        at = datetime(2026, 10, 20, 9, 17, 31)
+        with mock.patch.object(run_multi_case, "SUITES_ROOT", root):
+            first = run_multi_case.default_suite_id(at)
+            (root / first).mkdir()
+            second = run_multi_case.default_suite_id(at)
+            (root / second).mkdir()
+            third = run_multi_case.default_suite_id(at)
+        self.assertEqual(("story-suite-20261020-091731", "story-suite-20261020-091731-01",
+                          "story-suite-20261020-091731-02"), (first, second, third))
+
+    def test_a_failed_delete_returns_every_attempt_instead_of_raising(self) -> None:
+        """删不掉时不抛异常带走记录：每次尝试与剩余路径都回给调用方，removed 以目录确实不在为准。"""
+        root = Path(tempfile.mkdtemp(prefix="story-rm-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "tree" / "sub").mkdir(parents=True)
+        (root / "tree" / "sub" / "f.txt").write_text("x", encoding="utf-8")
+        with mock.patch.object(run_multi_case, "_process_inventory", return_value=(True, [], None)), \
+                mock.patch.object(run_multi_case.shutil, "rmtree", side_effect=OSError(145, "目录不是空的")), \
+                mock.patch.object(run_multi_case.time, "sleep"):
+            outcome = run_multi_case._remove_tree_with_recovery(root / "tree", attempts=3)
+        self.assertFalse(outcome["removed"])
+        self.assertEqual(["retry"] * 3, [a["status"] for a in outcome["attempts"]])
+        self.assertIn("目录不是空的", outcome["error"])
+        self.assertIn(str(Path("sub") / "f.txt"), outcome["remaining"])
+        with mock.patch.object(run_multi_case, "_process_inventory", return_value=(True, [], None)):
+            done = run_multi_case._remove_tree_with_recovery(root / "tree")
+        self.assertEqual((True, [], None), (done["removed"], done["remaining"], done["error"]))
 
     def test_active_historical_suite_blocks_cleanup_before_delete(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-active-"))
@@ -937,6 +994,8 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         boundary = run_multi_case.read_json(root / "suite" / "workspace-boundary.json")
         self.assertEqual("installed", boundary["installed"]["status"])
         self.assertTrue(boundary["demo"]["head"], "没记下装配所用的 demo 提交")
+        self.assertEqual((str(template.parent), str(run_multi_case.REPO_ROOT)),
+                         (boundary["workspace_root"], boundary["owner_repo"]), "装配记录反查不到现场与所属仓")
 
     def test_a_maintenance_directory_in_demo_stops_the_assembly(self) -> None:
         for name in sorted(run_multi_case.MAINTENANCE_TOP_LEVEL):
@@ -1134,10 +1193,10 @@ class FeaturesFlowBackToTheMaintenanceDoc(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    def workspace_with(self, name: str, text: str) -> Path:
+    def workspace_with(self, name: str, text: str, feature: str = "AR-9") -> Path:
         workspace = self.root / name
-        (workspace / "doc/features/AR-9").mkdir(parents=True)
-        (workspace / "doc/features/AR-9/story.md").write_text(text, encoding="utf-8")
+        (workspace / "doc/features" / feature).mkdir(parents=True)
+        (workspace / "doc/features" / feature / "story.md").write_text(text, encoding="utf-8")
         return workspace
 
     def test_the_checkpoint_snapshot_lands_in_the_maintenance_doc(self) -> None:
@@ -1160,23 +1219,54 @@ class FeaturesFlowBackToTheMaintenanceDoc(unittest.TestCase):
         self.assertEqual("第一段", (self.features / "AR-9/story.md").read_text(encoding="utf-8"))
         self.assertFalse((self.demo / "doc/features").exists(), "检查点快照回流进了 demo")
 
+    def test_the_global_usage_is_kept_per_run(self) -> None:
+        """全局 usage 不随需求回流：按运行留一份原字节快照；重复幂等，内容变了不覆盖已固定的，缺失如实记。"""
+        suite = {"bundle_root": str(self.root / "bundle")}
+        workspace = self.workspace_with("ws-usage", "终态")
+        record = {"case": "case-u", "run_id": "run-1", "workspace": str(workspace)}
+        usage = workspace / "doc" / "usage.json"
+        with mock.patch.object(run_multi_case, "run_pointer_state", return_value=None):
+            missing = run_multi_case.snapshot_usage(suite, record, "final")
+            usage.write_bytes(b'{"schema": 1, "requirements": {}}\n')
+            first = run_multi_case.snapshot_usage(suite, record, "initial")
+            again = run_multi_case.snapshot_usage(suite, record, "initial")
+            usage.write_bytes(b'{"schema": 1, "requirements": {"AR-9": {}}}\n')
+            changed = run_multi_case.snapshot_usage(suite, record, "initial")
+        target = self.root / "bundle/cases/case-u/run-1/usage/initial/usage.json"
+        self.assertEqual("missing", missing["status"])
+        self.assertFalse((self.root / "bundle/cases/case-u/run-1/usage/final").exists(), "缺失时造了空记录")
+        self.assertEqual(("captured", "already_captured", "conflict"), (first["status"], again["status"], changed["status"]))
+        self.assertEqual(b'{"schema": 1, "requirements": {}}\n', target.read_bytes(), "已固定的快照被覆盖")
+        self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), first["sha256"])
+
     def test_the_update_terminal_lands_under_its_own_name_and_conflicts_keep_both(self) -> None:
         suite = {"bundle_root": str(self.root / "bundle"),
                  "main_source_baseline": run_multi_case.snapshot_workspace_sources(self.demo)}
 
-        def record(workspace: Path, case: str, after_initial: str = "") -> dict:
+        def record(workspace: Path, case: str, after_initial: str = "", feature: str = "AR-9", **extra) -> dict:
             baseline = self.root / "bundle/cases" / case / "workspace-baseline.json"
             run_multi_case.write_json(baseline, run_multi_case.snapshot_workspace_sources(workspace))
-            return {"case": case, "feature": "AR-9", "workspace": str(workspace),
+            return {"case": case, "feature": feature, "workspace": str(workspace),
                     "workspace_baseline": str(baseline), "status": "finished",
-                    "execution_status": "finished", "after_initial": after_initial}
+                    "execution_status": "finished", "after_initial": after_initial, **extra}
 
         plain = record(self.workspace_with("ws-plain", "普通终态"), "case-plain")
-        update = record(self.workspace_with("ws-update", "更新后的终态"), "case-update", "update")
+        update = record(self.workspace_with("ws-update", "更新后的终态"), "case-update", "update",
+                        resumed_update={"text": "按评审更新"},
+                        checkpoints={"initial": {"path": "a"}, "update": {"path": "b"}})
         self.assertEqual("promoted", run_multi_case.promote_case_workspace(suite, plain)["status"])
-        self.assertEqual("promoted", run_multi_case.promote_case_workspace(suite, update)["status"])
+        landed = run_multi_case.promote_case_workspace(suite, update)
+        self.assertEqual(("promoted", "update", False), (landed["status"], landed["segment"], landed["partial"]))
         self.assertEqual("普通终态", (self.features / "AR-9/story.md").read_text(encoding="utf-8"))
         self.assertEqual("更新后的终态", (self.features / "AR-9-update/story.md").read_text(encoding="utf-8"))
+
+        # 计划了 update 但只跑了第一段就停：回流到原编号并标未走完，不冒称 update
+        stopped = record(self.workspace_with("ws-stopped", "只有第一段", "AR-8"), "case-stopped", "update",
+                         feature="AR-8", status="stop_failed")
+        landed = run_multi_case.promote_case_workspace(suite, stopped)
+        self.assertEqual(("promoted", "initial", True), (landed["status"], landed["segment"], landed["partial"]))
+        self.assertEqual("只有第一段", (self.features / "AR-8/story.md").read_text(encoding="utf-8"))
+        self.assertFalse((self.features / "AR-8-update").exists(), "只跑了第一段却按 update 命名")
 
         other = record(self.workspace_with("ws-other", "另一份普通终态"), "case-other")
         result = run_multi_case.promote_case_workspace(suite, other)
