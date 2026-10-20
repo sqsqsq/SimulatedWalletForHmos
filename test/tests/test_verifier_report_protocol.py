@@ -823,6 +823,91 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self.assertIn("capability-snapshot.json", task, "能力事实没进「读这些」表")
 
 
+class TheVisualRulingIsReadWhereFrameworkWritesIt(unittest.TestCase):
+    """视觉裁定只在 Framework 写它的位置读：`<features_dir>/<需求>/spec/reports/`，不随 `reports_dir_pattern` 走。
+
+    Framework 的 `capabilitySnapshotPath` / `fidelityIntentSsotPath` 都是 `featureFilePath(…, 'spec/reports/…')`；
+    阶段报告目录可以配到别处，这两份不会跟过去。读错位置的两种后果都要拦：
+    当前裁定读不到（自定义需求目录时被误拦），或拿别处一份过期的「看不了图」放行。
+    """
+    FEATURE = "NEUTRAL42"
+    DRIVER = """
+    const [, , mod, root, feature] = process.argv;
+    const m = await import(mod);
+    const b = m.reviewInputs(root, feature, 'story');
+    process.stdout.write(JSON.stringify({ visual: b.visual ? [...b.visual.deferred] : null, gaps: b.gaps }));
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def ruling(self, rel_dir: str, *, vision: bool) -> None:
+        identity = f"phase:{self.FEATURE}:spec"
+        d = self.root / rel_dir
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "capability-snapshot.json").write_text(json.dumps(
+            {"execution_identity": identity, "decision_id": "d1", "vision": {"verdict": vision}}), encoding="utf-8")
+        (d / "fidelity-intent.json").write_text(json.dumps(
+            {"execution_identity": identity, "decision": {"decision_id": "d1"},
+             "effective_fidelity": "semantic_layout", "acceptance_strictness": "best_effort"}), encoding="utf-8")
+
+    def run_inputs(self, paths: dict | None, features_dir: str = "doc/features", config_text: str | None = None) -> dict:
+        feature = self.root / features_dir / self.FEATURE
+        (feature / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
+        (feature / "AR" / "story-src" / "materials.json").write_text(json.dumps(
+            {"materials": [{"kind": "image", "paths": ["assets/a.png"], "caption": "状态示意"}], "origins": []},
+            ensure_ascii=False), encoding="utf-8")
+        (feature / "assets").mkdir(exist_ok=True)
+        (feature / "assets" / "a.png").write_bytes(b"x")
+        cfg = config_text if config_text is not None else json.dumps(
+            {"paths": {"extension_dir": str(DEV_EXT), **(paths or {})}})
+        (self.root / "framework.config.json").write_text(cfg, encoding="utf-8")
+        driver = self.root / "drive.mjs"
+        driver.write_text(self.DRIVER, encoding="utf-8")
+        mod = (DEV_EXT / "hooks/shared/review-inputs.mjs").resolve().as_uri()
+        r = subprocess.run(["node", str(driver), mod, str(self.root), self.FEATURE],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        return json.loads(r.stdout)
+
+    def test_the_ruling_follows_the_features_dir_not_the_reports_pattern(self) -> None:
+        picture = f"doc/features/{self.FEATURE}/assets/a.png"
+        for name, pattern in {"默认": {}, "自定义报告目录": {"reports_dir_pattern": "evidence/<feature>/<phase>"},
+                              "报告目录空串": {"reports_dir_pattern": ""}, "报告目录 null": {"reports_dir_pattern": None}}.items():
+            with self.subTest(name):
+                self.ruling(f"doc/features/{self.FEATURE}/spec/reports", vision=False)
+                self.assertEqual([picture], self.run_inputs(pattern)["visual"])
+
+    def test_a_ruling_left_in_the_reports_dir_is_not_the_frameworks(self) -> None:
+        """Framework 现裁定看得了图，报告目录里另有一份「看不了」：不延期。"""
+        self.ruling(f"doc/features/{self.FEATURE}/spec/reports", vision=True)
+        self.ruling(f"evidence/{self.FEATURE}/spec", vision=False)
+        self.assertIsNone(self.run_inputs({"reports_dir_pattern": "evidence/<feature>/<phase>"})["visual"])
+
+    def test_a_custom_features_dir_is_followed(self) -> None:
+        self.ruling(f"doc/features/{self.FEATURE}/spec/reports", vision=False)
+        self.assertIsNone(self.run_inputs({"features_dir": "specs/features"}, "specs/features")["visual"],
+                          "读了默认需求目录下的裁定")
+        self.ruling(f"specs/features/{self.FEATURE}/spec/reports", vision=False)
+        self.assertEqual([f"specs/features/{self.FEATURE}/assets/a.png"],
+                         self.run_inputs({"features_dir": "specs/features"}, "specs/features")["visual"])
+
+    def test_an_unreadable_config_is_a_gap_not_a_default(self) -> None:
+        self.ruling(f"doc/features/{self.FEATURE}/spec/reports", vision=False)
+        got = self.run_inputs(None, config_text="{坏 JSON")
+        self.assertIsNone(got["visual"])
+        self.assertTrue(any("framework.config.json 读不出" in g for g in got["gaps"]), got["gaps"])
+
+    def test_the_framework_still_writes_the_ruling_there(self) -> None:
+        """Framework 改了这两份的写入位置时这条先红：读取位置要跟着改。"""
+        source = (REPO / "demo/framework/harness/scripts/utils/fidelity-shared.ts").read_text(encoding="utf-8")
+        for name in ("capability-snapshot.json", "fidelity-intent.json"):
+            with self.subTest(name):
+                self.assertIn(f"featureFilePath(projectRoot, feature, path.join('spec', 'reports', '{name}'))", source)
+
+
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做。
 

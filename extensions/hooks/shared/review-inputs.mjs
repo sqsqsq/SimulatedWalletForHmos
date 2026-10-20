@@ -12,7 +12,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { extensionRoot, featureRoot, readJsonOrNull, relDisplay } from './paths.mjs';
+import { extensionRoot, featureRoot, readConfig, readJsonOrNull, relDisplay } from './paths.mjs';
 import { knowledgeFiles } from './knowledge.mjs';
 import { imagesIn } from '../../skills/story/scripts/core/story/images.mjs';
 import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
@@ -81,6 +81,8 @@ function updateInputs(root, flow, add, gaps) {
  * Framework 对本需求 Spec 的视觉裁定：看不了图，且保真只按语义布局尽力验收时，登记图片的图面核对可以按能力缺口延期。
  * 能力快照与保真意图都在、都对本需求的 spec、`decision_id` 一致，`vision.verdict` 为 false、
  * `effective_fidelity` 为 semantic_layout、`acceptance_strictness` 为 best_effort，才成立；缺文件、对不上或别的取值都不延期。
+ * 两份文件只在 Framework 写它们的位置读：`capabilitySnapshotPath` / `fidelityIntentSsotPath` 固定是
+ * `<features_dir>/<需求>/spec/reports/`，不随 `reports_dir_pattern` 走。
  *
  * @returns {{files: string[], fact: string}|null}
  */
@@ -122,6 +124,9 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
     if (!bytes && !required) return;  // 可选且本单没有：不进表
     inputs.push({ path: p, purpose: why, required, missing: bytes === null, digest: bytes && identity ? sha12(bytes) : null });
   };
+  // 配置读不出时需求目录只能按默认推导：整份集合与视觉裁定都可能不是这个工程的，报缺口，也不延期图面核对
+  const configBroken = fs.existsSync(path.join(projectRoot, 'framework.config.json')) && !readConfig(projectRoot);
+  if (configBroken) gaps.push('framework.config.json 读不出——需求目录判不了，必审集合按默认目录推导，不能当作这个工程的');
   const flow = readJsonOrNull(at('AR/story-src/story-flow.json'));
   add(at('AR/story-src/story-flow.json'), '已确认的范围与关卡选择（摘要按范围与选择的稳定投影算）', { text: scopeProjection(flow) });
   add(at('AR/story-src/decisions.json'), '已登记的决定：哪些定了、哪些开着');
@@ -177,7 +182,7 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
     }
     // 只延期盘上在的图：图不在是取材问题，照缺件处理
     const pictures = inputs.filter(x => x.purpose.startsWith('原材料图：'));
-    const deferral = pictures.length ? visualDeferral(projectRoot, feature) : null;
+    const deferral = pictures.length && !configBroken ? visualDeferral(projectRoot, feature) : null;
     if (deferral) {
       for (const f of deferral.files) add(f, '视觉能力事实：Framework 对本阶段看图能力与保真验收的裁定');
       visual = { fact: deferral.fact, deferred: new Set(pictures.filter(x => !x.missing).map(x => x.path)) };

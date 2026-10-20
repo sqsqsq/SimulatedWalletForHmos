@@ -40,7 +40,7 @@
 
 允许延期须同时满足：
 
-1. 使用现有phaseReportsDir定位的`capability-snapshot.json`与`fidelity-intent.json`合法、对应当前feature/spec；execution_identity与decision_id相互匹配。
+1. 按Framework真实生产者`fidelity-shared.ts::capabilitySnapshotPath/fidelityIntentSsotPath`定位：两份均在`<features_dir>/<feature>/spec/reports/`，由featureFilePath决定，不随reports_dir_pattern变化。Extension复用featureRoot读取；配置不可读时交付明确缺口、不得按默认旧件允许延期。两件合法、对应当前feature/spec，execution_identity与decision_id匹配。
 2. Framework已裁定vision.verdict=false，effective_fidelity为semantic_layout，acceptance_strictness为best_effort；其它值、缺文件或冲突不自动降级。
 3. 对象是材料清单按现有imagesIn登记的真实存在图片，非扩展名猜测；文件缺失、摘要失配仍是取材问题。
 
@@ -67,6 +67,6 @@
 | 原任务输出示意+精确类型反馈 | details字符串当空对象、作者补审查结论 | 本轮原生错误回复副本明确报类型；合法对象通过；已有报告shape测试保留 |
 | 同一reviewInputs能力投影 | 图片未核一律等同业务缺件 | 以上四类矩阵、能力文件坏/过期、图片缺失、文本漏读、假报PASS正反例 |
 
-离线通过只说明生产者/消费者合同闭合。新造报告桩不能称为独立语义通过。交回文件diff、本地物化一致性、正反例、预算实际G/X与真实资格未验项，等待评审再进S2。
+离线通过只说明生产者/消费者合同闭合。新造报告桩不能称为独立语义通过。交回文件diff、本地物化一致性、正反例、预算实际G/X与真实资格未验项，按99的第一批集中交回；S1完整复核状态保持，无依赖的S2/S3已定工作可继续。
 
-相关spec与TEST由本步同步当前合同，旧运行与历史报告不改。改本地Framework发布内容需按AGENTS跑相关harness检查，不用只测Extension来证明未影响其他宿主；普通发布与完整Case不在本步授权内。
+相关spec与TEST由本步同步当前合同，旧运行与历史报告不改。C1后续收敛同次命令解析职责，不改变本步视觉事实的生产者、目录与降级边界。改本地Framework发布内容需按AGENTS跑相关harness检查，不用只测Extension来证明未影响其他宿主；普通发布与完整Case不在本步授权内。
