@@ -19,6 +19,7 @@ import { runPython } from '../flow/client.mjs';
 import { FIGURE_MARK, headingPath, markPairs, normalizeHeading, parseDocument } from './document.mjs';
 import { basisFiles } from './sources.mjs';
 import { shellArg } from './drafts.mjs';
+import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
 
 /** 每张阅读图必核的四件：事实与关系忠实、阅读增益、实际渲染可读、与放置位置相称。 */
 const READING_CHECKS = ['semantic_fidelity', 'reading_gain', 'visual_readability', 'placement'];
@@ -284,7 +285,8 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
     `报告原样存为 ${fromRoot(`AR/story-src/figures/${id}.reading/report.json`)}：`
       + '{"request_id", "executor": "<宿主返回的执行或会话引用>", "checks": [{"id","verdict","evidence"}], '
       + '"blocking_findings": [], "advisories": [], "unreviewed": []}。',
-    `存好后在工程根跑 \`node doc/extensions/skills/story/scripts/core/story-build.mjs view --mode review-check --id ${id} `
-      + `--feature ${shellArg(path.basename(featureRoot))} --project-root ${shellArg(projectRoot)}\` 核对。`,
+    // 入口按工程配置的扩展目录取，与核心归档同一解析；参数逐个按宿主 shell 引好，照抄即可跑
+    `存好后跑 \`node ${shellArg(path.join(extensionRoot(projectRoot), 'skills', 'story', 'scripts', 'core', 'story-build.mjs'))} `
+      + `view --mode review-check --id ${id} --feature ${shellArg(path.basename(featureRoot))} --project-root ${shellArg(projectRoot)}\` 核对。`,
   ];
 }

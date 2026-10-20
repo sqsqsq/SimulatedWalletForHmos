@@ -885,6 +885,46 @@ class TheStructureCheck(FigureViewCase):
         self.assertIn("与阅读图 ID fig-b 不一致", renamed.stdout)
 
 
+class TheCheckCommandRunsAsPrinted(unittest.TestCase):
+    """审查任务末尾的核对命令照抄就能跑：入口按工程配置的扩展目录，工程与扩展路径带空格，从别的目录执行。"""
+
+    def run_printed(self, project: Path, ext_dir: str | None) -> subprocess.CompletedProcess:
+        fr = project / "doc" / "features" / FEATURE
+        (fr / "AR" / "story-src").mkdir(parents=True)
+        link_harness_yaml(project)
+        if ext_dir:
+            (project / "framework.config.json").write_text(json.dumps({"paths": {"extension_dir": ext_dir}}), encoding="utf-8")
+        ext = project / (ext_dir or "doc/extensions")
+        shutil.copytree(DEV_EXT, ext, ignore=shutil.ignore_patterns("__pycache__"))
+        (fr / "AR" / "story.md").write_text(STORY, encoding="utf-8")
+        (fr / "AR" / "story-src" / "story-template.md").write_text(SKELETON + candidate(), encoding="utf-8")
+        build = ext / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+        run = lambda *a: subprocess.run(["node", str(build), "view", *a, "--feature", FEATURE, "--project-root", str(project)],  # noqa: E731
+                                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, run("--mode", "prepare").returncode)
+        (fr / "AR" / "figures").mkdir(parents=True)
+        (fr / "AR" / "figures" / "recovery.svg").write_text(svg(), encoding="utf-8")
+        shot = project / "shot.png"
+        shot.write_bytes(PNG + b"render")
+        out = run("--mode", "review-request", "--id", "recovery", "--render", str(shot))
+        self.assertEqual(0, out.returncode, out.stderr)
+        line = next(l for l in out.stdout.splitlines() if "review-check" in l)
+        command = line[line.index("`") + 1:line.rindex("`")]
+        self.assertIn(str(build), command)
+        sys.path.insert(0, str(Path(__file__).parent))
+        from test_adapt_ownership import run_in_shell  # noqa: PLC0415
+        return run_in_shell(command, cwd=Path(tempfile.gettempdir()))
+
+    def test_default_and_custom_extension_dirs_with_spaces(self) -> None:
+        for name, ext_dir in (("work", None), ("带 空格 (副本)", "custom ext/extensions")):
+            with self.subTest(ext_dir=ext_dir), tempfile.TemporaryDirectory() as tmp:
+                done = self.run_printed(Path(tmp) / name, ext_dir)
+                said = done.stdout + done.stderr
+                self.assertNotIn("Cannot find module", said, said)
+                self.assertEqual(1, done.returncode, said)
+                self.assertIn("阅读图 recovery 的验收没有成立（no-report）", said, "核对命令没到达正确的入口")
+
+
 class TheOneClickEntry(FigureViewCase):
     """AR 下的一键切换入口：合同登记的唯一文件名，只覆盖自己生成的同名文件，不依赖 cwd 与机器路径。"""
 

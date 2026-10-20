@@ -24,14 +24,16 @@ GOLDEN = REPO_ROOT / "test" / "golden"
 
 #: 审定身份（05 最终审定清单逐文件 SHA256 的前 16 位）。两份 README 的 test/cases 链接随迁移
 #: 从 `../../../../../test/cases/` 改为 `../../cases/`，只改这一处路径，指纹随之重算。
+#: 2026-10-20 阅读槽展示接线：两份 Story 与两份 README 按 P4 集中复核 §3 认可的差异重登（Story 移出指路句、
+#: 放空阅读槽；README 给独立阅读入口与旧验证记录口径），其余文件身份不变。
 REGISTRY = {
     "auto-topup/AR/figures/auto-topup-recovery-boundary.svg": "c49a33b258870a63",
     "auto-topup/AR/review.md": "b5a414978bcb812a",
     "auto-topup/AR/story-src/figures/fig-22c28d5a.mmd": "3716cccb9c98a565",
     "auto-topup/AR/story-src/figures/fig-55cee031.mmd": "ef47d929de5321eb",
     "auto-topup/AR/story-src/figures/fig-e2548d39.mmd": "42b3ff445246c298",
-    "auto-topup/AR/story.md": "ef66e5c49f6568ec",
-    "auto-topup/README.md": "384a6d4981531eea",
+    "auto-topup/AR/story.md": "772dd4e93861a834",
+    "auto-topup/README.md": "599366d9a1261f00",
     "auto-topup/spec/spec.md": "c79aadc3bdba2c2a",
     "auto-topup/ux-reference/detail-entry.png": "328419dced4a2be5",
     "auto-topup/ux-reference/disabled-state.png": "adeefcff56af7d05",
@@ -43,9 +45,9 @@ REGISTRY = {
     "car-key-sharing/AR/story-src/figures/fig-0169f210.mmd": "04a0b4e034a12572",
     "car-key-sharing/AR/story-src/figures/fig-b533fea2.mmd": "61b471f393a30158",
     "car-key-sharing/AR/story-src/figures/fig-d087d97f.mmd": "0b4e7f9fa87f45bc",
-    "car-key-sharing/AR/story.md": "171b6e7dd19fe063",
+    "car-key-sharing/AR/story.md": "2e77243447b97810",
     "car-key-sharing/plan/plan.md": "383c599fda4993e4",
-    "car-key-sharing/README.md": "aa750fa51d7faf36",
+    "car-key-sharing/README.md": "910d119afc41c59a",
     "car-key-sharing/spec/spec.md": "a4850d055370a378",
     "car-key-sharing/ux-reference/accept-page.png": "2508945f90164274",
     "car-key-sharing/ux-reference/key-card-detail.png": "87d832fadbce16ad",

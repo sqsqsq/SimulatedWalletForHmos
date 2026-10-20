@@ -47,7 +47,7 @@
   阅读稿的摘要来自 2026-10-16 在临时模板里按真实导入链重跑的结果（证据见本轮交回）；原件改了，阅读稿摘要随之变化，要重跑导入核对。
 - **图源与综合阅读图**：Story 的三张 Mermaid 带 `story-figure` 管理标记，图义真源是 `AR/story-src/figures/<ID>.mmd`，正文块与源逐字一致，正本里保持 Mermaid 形态。`AR/figures/auto-topup-recovery-boundary.svg` 是 7.2 的综合阅读图：把钱包本地、交通卡云、支付部件各自持有的事实与四种恢复结果对齐，依据 Story 7.2 与第 3 章、spec 5.3 与 9.1.2；它不是哪一张 Mermaid 的等值副本，`<metadata>` 写依据位置，业务事实以 Spec 与正文为准。
   - 改图义只改 `.mmd`，再用 `story-build view --mode mermaid` 重铺正文块；综合阅读图的依据变了要重画并重做独立审查。
-  - Story 正本保存正式形态：7.2 末尾是这张图的空阅读槽 `story-reading:auto-topup-recovery-boundary`，正式稿里没有本地 SVG 链接；阅读形态由 `story-build view --mode svg` 在槽里显示它。三张 Mermaid 不需要 SVG。
+  - Story 正本保存正式形态：7.2 末尾是这张图的空阅读槽 `story-reading:auto-topup-recovery-boundary`，正式稿里没有本地 SVG 链接；在产品运行态的需求目录里，阅读形态由 `story-build view --mode svg` 在槽里显示它；金样是效果参照，不含写作设计、验收请求与报告，不能在本目录直接切换，阅读这张图用下面的独立入口。三张 Mermaid 不需要 SVG。
   - 独立阅读入口：[auto-topup-recovery-boundary.svg](AR/figures/auto-topup-recovery-boundary.svg)，回答「钱包本地、交通卡云与支付部件各自持有哪些事实、清除只改了哪一份、关系为未签约或停用时为什么仍可能不能写」。
   - 渲染图、独立审查请求与报告、绘图脚本不进金样，留在本轮证据目录。
 - **机器区与生成区**：
