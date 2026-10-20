@@ -402,14 +402,15 @@ print(m.create_workspace_template(d, '$id')[0])
 ### 5.1 verifier 通道（OpenCode / dsh）
 
 opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的只读工具实例，
-启动时经 `--patch` 装载（§2.1）。报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
+启动时经 `--patch` 装载（§2.1）。作者读到的调用指引统一指向宿主登记的专用 verifier 角色，通用研究/开发子 agent 不顶替（AGENTS §2 本地定制）。
+报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
 
 ```powershell
 python -m unittest discover -s test/tests -p "test_verifier_chain_in_workspace.py"
 npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓根>\demo\framework   # 在 demo/framework/harness 下跑
 ```
 
-第一条核工作区带没带上子代理定义与作者入口、定义是不是当前协议；第二条用 `demo/framework/harness/node_modules/ts-node`。
+第一条核工作区带没带上子代理定义与作者入口、定义是不是当前协议、调用指引是否都指向专用角色；第二条用 `demo/framework/harness/node_modules/ts-node`。
 
 ### 5.2 verifier smoke（真实 CLI，独立于 Story）
 

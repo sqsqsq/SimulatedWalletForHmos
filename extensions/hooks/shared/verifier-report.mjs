@@ -277,11 +277,11 @@ function checksIn(doc) {
  * 启发式，而报告里每条 check 的 `details` 都可能是块标量，块里出现什么字样都是正文——
  * 边界一旦被块里的内容带偏，读出来的就是另一条的结论，判据却照样给出答案。
  *
- * **能读出结构不等于这一条写全了**：`details` 是一段文本（`details: |`）时它下面
- * 没有任何键，照样按缺键报——那正是「没有这两类结论」。
+ * **能读出结构不等于这一条写全了**：`details` 要是映射。它是一段文本（`details: |`）、列表或缺席时，
+ * 按 `shape` 说清它实际是什么——说成「缺四个键」的话，作者会去补已经写在文字里的键。
  *
- * @returns {{details: object|null, unreadable: string|null}}
- *   `unreadable` 非空 = 这份 YAML 读不出结构，与「缺键」是两回事，要分开报。
+ * @returns {{details: object|null, shape: string|null, unreadable: string|null}}
+ *   `unreadable` 非空 = 这份 YAML 读不出结构；`shape` 非空 = 找到了这一条，`details` 却不是映射。
  */
 function readerReviewDetails(text, id) {
   let unreadable = null;
@@ -299,12 +299,12 @@ function readerReviewDetails(text, id) {
       && String(c.id ?? '').replace(/`/g, '').trim() === id);
     if (!entry) continue;
     const details = entry.details;
-    return {
-      details: details && typeof details === 'object' && !Array.isArray(details) ? details : {},
-      unreadable: null,
-    };
+    const mapping = details && typeof details === 'object' && !Array.isArray(details);
+    const shape = mapping ? null : typeof details === 'string' ? '是一段文字（YAML 块字符串）'
+      : Array.isArray(details) ? '是一个列表' : details === undefined ? '没有写' : `是 ${JSON.stringify(details)}`;
+    return { details: mapping ? details : null, shape, unreadable: null };
   }
-  return { details: null, unreadable };
+  return { details: null, shape: null, unreadable };
 }
 
 /**
@@ -411,11 +411,12 @@ function judgeReport(text, at = 'verifier 报告', id = STORY_REVIEW_ID, basis =
     };
   }
 
-  const { details, unreadable } = readerReviewDetails(text, id);
-  // 读不出结构与「缺键」是两回事：说成缺键的话，作者会去补已经写着的键，补完还报
+  const { details, shape, unreadable } = readerReviewDetails(text, id);
+  // 读不出结构、details 不是映射与「缺键」是三回事：说成缺键的话，作者会去补已经写着的键，补完还报
   const bad = unreadable ? [`里的结构块读不出来（${unreadable}）——${id} 的明细在 YAML 围栏里，读不出就核不了`]
-    : !details ? [`的 YAML 明细里没有 ${id} 这一条——它无论结论都在明细里写 ${DETAIL_KEYS.join('、')}`]
-      : detailProblems(details, status, basis, checkIds).map(p => `：${id} ${p}`);
+    : shape ? [`：${id} 的 details ${shape}，不是映射——details 下写 ${DETAIL_KEYS.join('、')} 四个键，值都是列表`]
+      : !details ? [`的 YAML 明细里没有 ${id} 这一条——它无论结论都在明细里写 ${DETAIL_KEYS.join('、')}`]
+        : detailProblems(details, status, basis, checkIds).map(p => `：${id} ${p}`);
   if (bad.length) {
     return { status: 'FAIL', problems: bad.map(p => `${at}${p}。${INVALID_EVIDENCE}`), reviewVerdict, detail: '明细不成立' };
   }

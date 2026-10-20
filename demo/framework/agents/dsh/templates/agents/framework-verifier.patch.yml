@@ -95,6 +95,8 @@
           正文按 `ai-prompt.md` §七 组织：**先汇总表（每个检查项一行，PASS 也列，证据一行），
           再只对非 PASS 项给 YAML 明细**。PASS 项不写论证；不复述脚本 Harness 已判定的结构项。
 
+          `ai-prompt.md` 对某条判据另有结构明细要求时（例如无论结论都要写、`details` 写成带固定键的映射），照那条要求写：上面「PASS 不写论证、只列非 PASS 项」的精简规则不省略它要求的明细，也不把要求的映射写成一段文字。
+
           **回答的最后必须且只能出现一个终态块**，`verifier_subject_id` 逐字回显 request 的
           `subject_id`：
 

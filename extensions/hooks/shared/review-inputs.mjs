@@ -3,7 +3,8 @@
  *
  * 必审集合按阶段用途、章节合同、材料登记与 update 记录**推导应有的输入**，再逐项读：
  * 文件在不在只决定 `missing`，不改变它是不是必审。缺件、不适用与宿主读不了是三件事，
- * 前两者在这里分开，最后一件由审查者写进 `unreviewed`。
+ * 前两者在这里分开，最后一件由审查者写进 `unreviewed`；Framework 裁定看不了图时，
+ * 登记图片的图面未核按能力缺口算（`visualDeferral`），其余读不了的仍是没审完。
  *
  * 明细合同只覆盖登记在 `COVERED_CHECKS` 里的扩展判据：它们无论结论都在 YAML 明细里写四个键，
  * 脚本核声明与集合、结论与阻断项是否自洽；声明读全而实际没读懂，脚本识别不了。
@@ -77,17 +78,39 @@ function updateInputs(root, flow, add, gaps) {
 }
 
 /**
+ * Framework 对本需求 Spec 的视觉裁定：看不了图，且保真只按语义布局尽力验收时，登记图片的图面核对可以按能力缺口延期。
+ * 能力快照与保真意图都在、都对本需求的 spec、`decision_id` 一致，`vision.verdict` 为 false、
+ * `effective_fidelity` 为 semantic_layout、`acceptance_strictness` 为 best_effort，才成立；缺文件、对不上或别的取值都不延期。
+ *
+ * @returns {{files: string[], fact: string}|null}
+ */
+function visualDeferral(projectRoot, feature) {
+  const dir = path.join(featureRoot(projectRoot, feature), 'spec', 'reports');
+  const files = ['capability-snapshot.json', 'fidelity-intent.json'].map(f => path.join(dir, f));
+  const [cap, intent] = files.map(readJsonOrNull);
+  const identity = `phase:${feature}:spec`;
+  if (cap?.execution_identity !== identity || intent?.execution_identity !== identity
+    || !cap.decision_id || cap.decision_id !== intent.decision?.decision_id) return null;
+  if (cap.vision?.verdict !== false || intent.effective_fidelity !== 'semantic_layout'
+    || intent.acceptance_strictness !== 'best_effort') return null;
+  return { files, fact: `Framework 裁定本阶段看不了图（capability-snapshot vision=false，决定 ${cap.decision_id}），`
+    + '保真按 semantic_layout / best_effort 验收' };
+}
+
+/**
  * 必审输入：`purpose` 是 `story`（Spec 阶段的读者审查）或 `plan`（Plan 阶段的义务审查）。
  * 路径一律相对工程根；同一张图的其它落点记进 `alias`，声明哪一个都算这张图。
+ * `visual` 在 Framework 裁定可以延期图面核对时给出：那条能力事实与可以按能力缺口写进 unreviewed 的图片。
  *
  * @returns {{inputs: {path:string, purpose:string, required:boolean, missing:boolean, digest:string|null}[],
- *   update: string|null, gaps: string[], alias: Map<string,string>}}
+ *   update: string|null, gaps: string[], alias: Map<string,string>, visual: {fact: string, deferred: Set<string>}|null}}
  */
 export function reviewInputs(projectRoot, feature, purpose = 'story') {
   const root = featureRoot(projectRoot, feature);
   const inputs = [];
   const gaps = [];
   const alias = new Map();
+  let visual = null;
   const at = rel => path.join(root, ...rel.split('/'));
   const add = (abs, why, { identity = true, text = null, required = true } = {}) => {
     const p = relDisplay(projectRoot, abs);
@@ -152,10 +175,17 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
         for (const other of img.paths.slice(1)) alias.set(relDisplay(projectRoot, at(other)), main);
       }
     }
+    // 只延期盘上在的图：图不在是取材问题，照缺件处理
+    const pictures = inputs.filter(x => x.purpose.startsWith('原材料图：'));
+    const deferral = pictures.length ? visualDeferral(projectRoot, feature) : null;
+    if (deferral) {
+      for (const f of deferral.files) add(f, '视觉能力事实：Framework 对本阶段看图能力与保真验收的裁定');
+      visual = { fact: deferral.fact, deferred: new Set(pictures.filter(x => !x.missing).map(x => x.path)) };
+    }
     add(at('ux-reference/README.md'), '界面交互说明', { required: fs.existsSync(at('ux-reference/README.md')) });
   }
   const update = updateInputs(root, flow, add, gaps);
-  return { inputs, update, gaps, alias };
+  return { inputs, update, gaps, alias, visual };
 }
 
 /** 任务书里的「读这些」表：路径、摘要、用途，读不到的点名。 */
@@ -183,11 +213,13 @@ function skippedItem(u) {
  * @param {string[]} checkIds 当前任务里的判据 id：unreviewed 可以写判据而不是文件
  */
 export function detailProblems(details, status, basis, checkIds = []) {
-  if (!REVIEW_STATUSES.includes(status)) return [`结论「${status}」不在 ${REVIEW_STATUSES.join(' / ')} 里`];
+  // 结构问题一次列齐：结论取值、缺的键、不是列表的键
+  const shape = REVIEW_STATUSES.includes(status) ? [] : [`结论「${status}」不在 ${REVIEW_STATUSES.join(' / ')} 里`];
   const missing = DETAIL_KEYS.filter(k => !(k in (details ?? {})));
-  if (missing.length) return [`判了 ${status}，明细缺 ${missing.join('、')}——四个键无论结论都写，没有内容的写空列表`];
-  const wrong = DETAIL_KEYS.filter(k => !Array.isArray(details[k]));
-  if (wrong.length) return [`明细的 ${wrong.join('、')} 不是列表`];
+  if (missing.length) shape.push(`明细缺 ${missing.join('、')}——四个键无论结论都写，没有内容的写空列表`);
+  const wrong = DETAIL_KEYS.filter(k => k in (details ?? {}) && !Array.isArray(details[k]));
+  if (wrong.length) shape.push(`明细的 ${wrong.join('、')} 不是列表`);
+  if (shape.length) return shape;
   const out = [];
   const blocking = details.blocking_findings;
   if (status === 'UNKNOWN') out.push('判了 UNKNOWN：这一项没有审完——读完再判，判不了写清缺什么并判 FAIL');
@@ -225,9 +257,16 @@ export function detailProblems(details, status, basis, checkIds = []) {
   }
   const silent = basis.inputs.filter(x => x.required && !seen.has(x.path) && !skipped.has(x.path)).map(x => x.path);
   if (silent.length) out.push(`必审输入既没出现在 examined_inputs 也没列进 unreviewed：${silent.join('、')}`);
+  // Framework 裁定看不了图时，登记图片的图面未核是能力缺口：允许 WARN，不允许 PASS；其余没核完的照旧不能判 PASS 或 WARN
+  const deferred = basis.visual?.deferred ?? new Set();
   const open = basis.inputs.filter(x => x.required && skipped.has(x.path)).map(x => x.path);
-  if ((status === 'PASS' || status === 'WARN') && open.length) {
-    out.push(`判了 ${status}，必审输入却有没核完的：${open.join('、')}——读完再判；缺件或读不了就判 FAIL 并把它写成阻断原因`);
+  const unread = open.filter(p => !deferred.has(p));
+  const blind = open.filter(p => deferred.has(p));
+  if ((status === 'PASS' || status === 'WARN') && unread.length) {
+    out.push(`判了 ${status}，必审输入却有没核完的：${unread.join('、')}——读完再判；缺件或读不了就判 FAIL 并把它写成阻断原因`);
+  }
+  if (status === 'PASS' && blind.length) {
+    out.push(`判了 PASS，图面却没核：${blind.join('、')}——${basis.visual.fact}；图面未核时这一项最高判 WARN，写明文本已核、图面未核`);
   }
   return out;
 }

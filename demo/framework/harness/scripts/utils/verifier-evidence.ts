@@ -76,7 +76,7 @@ export interface LoadVerifierEvidenceOptions {
 /** 恢复话术**唯一出处**：只指向重跑 verifier + 重写报告，绝不指向改文书。 */
 function rerunGuidance(): string {
   return (
-    '恢复：把 summary.verifier_request 指向的 request JSON **整段**作为 Task prompt 投给 verifier' +
+    '恢复：把 summary.verifier_request 指向的 request JSON **整段**作为 prompt 投给当前宿主登记的专用 verifier 角色（不用通用子 agent）' +
     '（verifier 自行 Read 其中的 prompt_path），再把它的回复**原样**写入 summary.verifier_report ' +
     '指向的路径，然后重跑本检查。'
   );

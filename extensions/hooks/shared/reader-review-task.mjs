@@ -304,8 +304,22 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   } else {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
+  if (basis.visual) rows.push('', `**本阶段看图能力**：${basis.visual.fact}。这几张图的图面核对按规则里「Framework 裁定看不了图」那一款处理。`);
 
-  // 方法与结论要求只在 overlay 的 `story_reader_review` 维护一份，宿主把它装配进 verifier 的任务。
+  // 方法与结论要求只在 overlay 的 `story_reader_review` 维护一份，宿主把它装配进 verifier 的任务；
+  // 这里只给这一条在明细里的结构——框架通用输出只列非 PASS 项、details 写成文字，本条不同
+  rows.push('', `### ${checkId} 在 YAML 明细里的结构`, '',
+    `无论结论，\`verification_result.checks\` 里都有 ${checkId} 这一条；它的 \`details\` 是映射，四个键都是列表：`, '',
+    '```yaml',
+    `- id: ${checkId}`,
+    '  status: FAIL        # 按你的结论写 PASS、WARN 或 FAIL',
+    '  details:',
+    '    blocking_findings: ["5.2 节写失败后回到签约页，7.1 节写停在结果页：同一失败两处去向不同"]',
+    '    advisories: []',
+    '    examined_inputs: ["doc/features/<需求>/AR/story.md", "doc/features/<需求>/AR/review.md"]',
+    '    unreviewed: [{path: "doc/features/<需求>/RR/prd.md", reason: "只读到第 3 节，后面没读完"}]',
+    '```',
+    '`examined_inputs` 与 `unreviewed` 合起来覆盖「读这些」表里的每一份，路径照抄表里的写法；没有内容的键写 `[]`。');
   return rows.join('\n');
 }
 

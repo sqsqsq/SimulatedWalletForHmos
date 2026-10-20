@@ -170,7 +170,7 @@ doc/features/<feature>/
 | `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
 | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
 | `ai-prompt.md`          | verifier 子 agent（自读） | 本轮要审的材料全文。**不作为 Task prompt 投递**——verifier 按 request 里的 `prompt_path` 自己 Read（可达上百 KB，刻意不走传输面）。仅在该 phase 的 verifier 能力 enabled 时生成 |
-| `verifier.request.<subject>.json` | 调用方（phase executor / 主 agent） | **唯一调用侧凭证**（几十行）：整段作为 Task prompt 投给 `subagent_type=verifier`。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配 |
+| `verifier.request.<subject>.json` | 调用方（phase executor / 主 agent） | **唯一调用侧凭证**（几十行）：整段作为 prompt 投给专用 verifier 角色（Task 宿主显式选 `subagent_type=verifier`，原生 verifier 工具直接调用）。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配 |
 | `verifier.report.<subject>.md` | check-receipt / 全部机器消费者 | verifier 的**唯一机器真源**（plan d2f7a9c4）。**写者是调用方**：把 verifier 回复原样全文写到 `summary.verifier_report` 指向的这个路径（verifier 自己只读，不写盘）。文件**按 subject 分区**，`summary.verifier_subject_id` 单独决定当前证据是哪一份，旧 subject 的遗留文件不在任何读取面内、也不清理。校验只三条：文件在、终态块回显 subject 相符、verdict 与 blocker_count 自洽。**不进 evidence manifest、不进 closure attestation 哈希**——报告刻意不做防篡改，不能同时充当 stale 绊线 |
 | `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
 

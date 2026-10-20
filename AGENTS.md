@@ -82,12 +82,13 @@ Framework + Extension 是指导模型完成需求开发的 AI Agent 系统；提
 
 - `demo/framework/` 是 AgentMaison 3.0.0 的 vendored 副本（`demo/framework/RELEASE-MANIFEST.json`）。正式交付落在上游，经 framework-init UPDATE
   进入消费仓；本仓副本只在用户明确授权的单步验证中临时修改，交付时保留上游基线、可复现补丁和临时放行的失效条件。
-- 本仓对 framework 有两组本地定制，都不含逻辑改动：
+- 本仓对 framework 有三组本地定制，都不含逻辑改动：
   - opencode：`demo/framework/agents/opencode/adapter.yaml` 的 `verifier_subagent` 登记与 `templates/agents/verifier.md` 子代理模板
     （物化为 `demo/.opencode/agent/verifier.md`，根 `.opencode/agent/verifier.md` 是维护装置的拷贝）。
   - dsh：`demo/framework/agents/dsh/` 整个 adapter，加上 `skills/reference/confirmation-registry.yaml` 里的 dsh 选项。
     审查员模板 `templates/agents/framework-verifier.patch.yml` 由 opencode 子代理正文生成，物化为 `demo/.dsh/framework-verifier.patch.yml`，
     dsh 启动与续跑须带 `--patch` 装载它。`verifier_subagent` 在宿主实跑观测前保持 false。
+  - verifier 调用文字：作者读到的调用指引统一为「调用当前宿主登记的专用 verifier 角色（Task 宿主显式选 verifier，原生 verifier 工具直接调用），不用通用研究/开发子 agent 顶替」。涉及 `templates/AGENTS.md.template`（及渲染出的 demo `AGENTS.md`、`CLAUDE.md`）、`skills/reference/agents-entry-detail.md`、共享规则 `framework-agent-execution.mdc`（及 `.agents/.codex/.cursor/.opencode` 下的已装副本）、六个阶段 SKILL 的 AI Harness 段、`harness-runner.ts` 与 `verifier-evidence.ts` 的调用提示、回执的静态 `invoked_via`。上游已提供同义指引时去掉这组差异。
 
   它们不交上游，接入新发布件时按 §6 重新加回；不随 story-adaptation 进目标仓，进目标仓的只有 manifest `provides.bridges` 登记的入口。
 - `demo/.opencode/` 同时是 CLI 测试装置（Case 工作区从 demo 复制）：外网实跑用 opencode，内网用 codex。
@@ -217,7 +218,7 @@ R 的分级计算与确认检查尚未接线，现有测试通过不代表分级
 
 1. demo 先干净：`git status --porcelain -- demo` 为空。
 2. 把发布件解压到 demo 根，替换 `demo/framework/`；用 `git diff --stat -- demo/framework` 核改动面与发布件的 `MIGRATION.md` 相符。
-3. 两处本地定制（§2）被发布件覆盖时，在新文件上重新加回定制内容，不整文件回退到旧版。
+3. 三组本地定制（§2）被发布件覆盖时，在新文件上重新加回定制内容，不整文件回退到旧版；上游已带同义内容的那组不再加回。
 4. 在 demo 根按 [framework-init](demo/framework/skills/project/framework-init/SKILL.md) 做 UPDATE（S1–S4），物化清单按本轮实际选择。
 5. 用 demo 已装版本的 manifest 判断 diff 里的入口是否属于 Extension；已登记入口或 AGENTS/CLAUDE 的 story-ext 扩展段被换成通用内容时，
    只把该文件恢复为已装版本的内容，不重装 Extension（方案 1.9.8 分册 03 §2.2）。

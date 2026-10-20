@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from ext_workspace import link_harness_yaml, DEV_EXT, cover_report
+from ext_workspace import link_harness_yaml, DEV_EXT, cover_report, required_inputs
 
 REPO = Path(__file__).resolve().parents[2]
 MODULE = DEV_EXT / "hooks" / "shared" / "verifier-report.mjs"
@@ -296,6 +296,25 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
         self.assertEqual("PASS", out["status"], out)
         self.assertEqual([], out["problems"])
 
+    def test_the_real_block_string_reply_is_named_as_such(self) -> None:
+        """剪自 10-20 车钥匙首轮原生回复：四个键写在 `details: |` 的文字里。报错说它是一段文字、要映射；
+        同样内容写成映射时，结构核得过（结论 FAIL 是审查自己的事）。缺键与不是列表一次列齐。"""
+        prose = ("\n```yaml\nverification_result:\n  checks:\n    - id: story_reader_review\n"
+                 "      status: FAIL\n      severity: BLOCKER\n      details: |\n"
+                 "        blocking_findings:\n"
+                 "          - 已定取舍 D5 未落到 story 任何一章：decisions.json:40-47 D5 settled\n"
+                 "        advisories: []\n        examined_inputs: []\n        unreviewed: []\n```\n")
+        out = self._run(row("FAIL") + prose)
+        self.assertIn("details 是一段文字（YAML 块字符串），不是映射", out["problems"][0])
+        self.assertNotIn("明细缺", " ".join(out["problems"]))
+        mapping = prose.replace("      details: |\n", "      details:\n")
+        out = self._run(row("FAIL") + mapping)
+        self.assertEqual(("PASS", "FAIL", []), (out["status"], out.get("reviewVerdict"), out["problems"]))
+        broken = mapping.replace("        advisories: []\n", "").replace("        unreviewed: []\n", "        unreviewed: 无\n")
+        problems = " ".join(self._run(row("FAIL") + broken)["problems"])
+        self.assertIn("明细缺 advisories", problems)
+        self.assertIn("明细的 unreviewed 不是列表", problems)
+
     def test_a_report_without_the_row_fails(self) -> None:
         out = self._run("| id | status | severity | 证据 |\n|---|---|---|---|\n"
                         "| acceptance_testable | PASS | BLOCKER | §8 每条都可判 |\n")
@@ -341,7 +360,7 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "```\n")
         out = self._run(row("FAIL") + borrowed)
         self.assertEqual("FAIL", out["status"], f"借了别项的键就放行：{out}")
-        self.assertIn("明细缺", out["problems"][0])
+        self.assertIn("details 是一段文字", out["problems"][0])
 
     def test_the_fix_hint_never_asks_the_author_to_write_the_report(self) -> None:
         """读报错的是作者，而报告必须是子代理回复的原样落盘——叫他补就是叫他伪造证据。"""
@@ -380,7 +399,8 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
 
     def test_a_prose_details_is_not_two_conclusions(self) -> None:
         """`details:` 是一段话时，里面写着「未提供 blocking_findings 和 advisories」
-        恰恰说明这两类结论**没有**——子串搜却会判它有。
+        恰恰说明这两类结论**没有**——子串搜却会判它有。报错说清它是一段文字、要的是映射，
+        不说成「缺四个键」：那会让作者去补已经写在文字里的键。
         """
         report = row("FAIL") + (
             "\n```yaml\n"
@@ -393,7 +413,8 @@ class TheSummaryRowIsTheConclusion(unittest.TestCase):
             "```\n")
         out = self._run(report)
         self.assertEqual("FAIL", out["status"], f"一段散文被当成了两类结论：{out}")
-        self.assertIn("明细缺", out["problems"][0])
+        self.assertIn("details 是一段文字（YAML 块字符串），不是映射", out["problems"][0])
+        self.assertNotIn("明细缺", out["problems"][0])
 
     def test_a_details_entry_at_the_end_of_the_yaml_still_reads(self) -> None:
         """本项排在末尾、后面跟着 `summary:` 时，范围止于围栏，键照样读得出来。"""
@@ -726,6 +747,81 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         both = self.gate(lambda t: t.replace("| acceptance_testable | PASS |", "| acceptance_testable | FAIL |"))
         self.assertIn("判 FAIL，终态块却是 PASS", both)
 
+    def blind(self, *, vision: bool = False, fidelity: str = "semantic_layout", strictness: str = "best_effort",
+              decision: str = "d1", picture: bool = True) -> str:
+        """登记一张图，并放 Framework 的视觉裁定（能力快照与保真意图）；返回图在「读这些」表里的路径。"""
+        feature = self.root / "doc" / "features" / FEATURE
+        (feature / "AR" / "story-src" / "materials.json").write_text(json.dumps({
+            "materials": [{"kind": "image", "paths": ["assets/a.png"], "caption": "签约页"}], "origins": []},
+            ensure_ascii=False), encoding="utf-8")
+        (feature / "assets").mkdir(parents=True, exist_ok=True)
+        (feature / "assets" / "a.png").write_bytes(b"\x89PNG")
+        self.picture_missing = not picture
+        reports = feature / "spec" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        identity = f"phase:{FEATURE}:spec"
+        (reports / "capability-snapshot.json").write_text(json.dumps({
+            "execution_identity": identity, "decision_id": "d1", "vision": {"verdict": vision}}), encoding="utf-8")
+        (reports / "fidelity-intent.json").write_text(json.dumps({
+            "execution_identity": identity, "effective_fidelity": fidelity, "acceptance_strictness": strictness,
+            "decision": {"decision_id": decision}}), encoding="utf-8")
+        return f"doc/features/{FEATURE}/assets/a.png"
+
+    def review_with_picture_unread(self, status: str, also_unread: str = "") -> str:
+        """图列进 unreviewed、写能力缺口原因的一份报告；返回交付门输出。"""
+        self._stub_receipt(0, "回执通过")
+        self.write_report("WARN" if status == "WARN" else "PASS")
+        target = self.root / REPORT_REL
+        text = target.read_text(encoding="utf-8")
+        if status == "WARN":
+            text = text.replace("        blocking_findings:\n          - 第 5 章说未实名可下单，第 8 章验收里没有这个入口\n",
+                                "        blocking_findings: []\n")
+        unread = [f"doc/features/{FEATURE}/assets/a.png"] + ([also_unread] if also_unread else [])
+        for path in unread:
+            text = text.replace(f"          - {path}\n", "")
+        text = text.replace("        unreviewed: []", "        unreviewed:\n" + "".join(
+            f"          - {path}：Framework 裁定本阶段看不了图，图面未核\n" for path in unread).rstrip("\n"))
+        target.write_text(text, encoding="utf-8")
+        if self.picture_missing:  # 报告夹具会给缺的必审件补占位，写完报告再拿掉
+            (self.root / "doc" / "features" / FEATURE / "assets" / "a.png").unlink()
+        out = self.check("--deliver")
+        return out.stdout + out.stderr
+
+    def test_a_blind_host_gets_a_bounded_text_review(self) -> None:
+        """Framework 裁定看不了图、保真只按语义布局尽力验收：图面未核记能力缺口，文本审完可以判 WARN。"""
+        picture = self.blind()
+        both = self.review_with_picture_unread("WARN")
+        self.assertNotIn("必审输入却有没核完的", both, both[-800:])
+        self.assertNotIn("[⑭ 交付门]", both, f"能力缺口按 WARN 披露却被交付门拦住：{both[-800:]}")
+        self.assertIn(picture, required_inputs(self.root, FEATURE), "图被从必审集合里删掉了")
+
+    def test_a_blind_host_still_cannot_claim_pass_or_skip_the_text(self) -> None:
+        """能力缺口不升格成 PASS；文字材料没读完仍按没审完报。"""
+        self.blind()
+        self.assertIn("图面却没核", self.review_with_picture_unread("PASS"))
+        self.blind()
+        both = self.review_with_picture_unread("WARN", also_unread=f"doc/features/{FEATURE}/AR/story.md")
+        self.assertIn(f"必审输入却有没核完的：doc/features/{FEATURE}/AR/story.md", both)
+
+    def test_the_deferral_holds_only_on_the_frameworks_matching_ruling(self) -> None:
+        """看得了图、严格视觉、两份裁定对不上、图本身不在：都不延期，图没核就是没审完。"""
+        cases = {"看得了图": dict(vision=True), "像素级保真": dict(fidelity="pixel_1to1"),
+                 "严格验收": dict(strictness="strict"), "裁定对不上": dict(decision="d2"),
+                 "图不在盘上": dict(picture=False)}
+        for name, kwargs in cases.items():
+            with self.subTest(name):
+                self.blind(**kwargs)
+                self.assertIn("必审输入却有没核完的", self.review_with_picture_unread("WARN"))
+
+    def test_the_task_states_the_ruling_only_when_it_holds(self) -> None:
+        """能力事实随任务送达，审查者照规则里那一款处理；没有裁定时任务里不出现这句。"""
+        self.blind(vision=True)
+        self.assertNotIn("本阶段看图能力", ReviewTaskReachesTheVerifier.inject(self))
+        self.blind()
+        task = ReviewTaskReachesTheVerifier.inject(self)
+        self.assertIn("本阶段看图能力", task)
+        self.assertIn("capability-snapshot.json", task, "能力事实没进「读这些」表")
+
 
 class ReviewTaskReachesTheVerifier(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做。
@@ -871,8 +967,10 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
                        "跨章对着读", "blocking_findings", "advisories", "不许空"):
             self.assertIn(needle, method, f"overlay 里没有「{needle}」")
         fragment = self.inject()
-        for needle in ("总览与局部加起来", "端到端过程", "理由成不成立", "blocking_findings"):
+        for needle in ("总览与局部加起来", "端到端过程", "理由成不成立", "无论 PASS、WARN 还是 FAIL"):
             self.assertNotIn(needle, fragment, f"构造器又复制了一份方法：{needle}")
+        # 构造器只给这一条在明细里的结构（框架通用输出把 details 写成文字，本条要映射），一处
+        self.assertEqual(1, fragment.count("在 YAML 明细里的结构"))
 
     def test_the_collaboration_order_is_judged_by_relation_not_headcount(self) -> None:
         """两方之间也可能有复杂往返，多方单向直通反而不需要——不设人数门槛。"""

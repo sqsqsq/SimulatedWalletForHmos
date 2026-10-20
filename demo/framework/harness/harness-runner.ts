@@ -1995,8 +1995,8 @@ function resolveVerifierEvidenceState(
  * plan a9d4e7c2 T2：生成本轮 run 的 verifier **调用凭证**（短 request JSON）。
  *
  * 只在 `resolveVerifierPlan` 判 enabled 时调用。产物两样：
- *   · `verifier.request.<subject>.json`——主 agent 把它**整段**当 Task prompt 投给
- *     verifier；verifier 按 `prompt_path` 自己 Read 磁盘 ai-prompt.md（大文件不过传输面）；
+ *   · `verifier.request.<subject>.json`——主 agent 把它**整段**当 prompt 投给
+ *     专用 verifier 角色；verifier 按 `prompt_path` 自己 Read 磁盘 ai-prompt.md（大文件不过传输面）；
  *   · `summary.verifier_subject_id` / `summary.verifier_request`——闭环侧的身份锚。
  *
  * subject 按**实际审查材料**寻址：`prompt_sha256` 直接哈希磁盘 ai-prompt.md 原文，
@@ -2161,7 +2161,7 @@ export function buildPassGuidanceLines(
     case 'rerun_verifier_with_current_request':
       return [
         '  📤 verifier 已启用，三步（plan d2f7a9c4）：',
-        `     ① 把这份 request JSON **整段**作为 Task prompt 投给 subagent_type=verifier：${summary.verifier_request ?? '(本轮未生成 request，请检查 Step 4 是否失败)'}`,
+        `     ① 把这份 request JSON **整段**作为 prompt 投给当前宿主登记的专用 verifier 角色（Task 宿主显式选 subagent_type=verifier，原生 verifier 工具直接调用，不用通用子 agent）：${summary.verifier_request ?? '(本轮未生成 request，请检查 Step 4 是否失败)'}`,
         '        （verifier 自行 Read 其中的 prompt_path；不要投递 ai-prompt.md 全文，也不要改写任何字段）',
         `     ② 把它的回复**原样全文**写入：${summary.verifier_report ?? '(本轮未生成报告路径)'}`,
         '        （不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入）',
@@ -2218,7 +2218,7 @@ export function buildNextLine(
     case 'run_verifier_then_receipt':
     case 'rerun_verifier_with_current_request':
       return (
-        `NEXT: 把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给 subagent_type=verifier，同步等它返回；` +
+        `NEXT: 把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给专用 verifier 角色（Task 宿主选 subagent_type=verifier，原生 verifier 工具直接调用，不用通用子 agent），同步等它返回；` +
         `把回复原样写入 ${summary.verifier_report ?? 'verifier.report.<subject>.md'}；然后跑 check-receipt --phase ${phase} --feature ${feature}`
       );
     case 'fill_receipt_then_sync_closure':

@@ -133,8 +133,10 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
                        "verifier_subject_id: <request.subject_id>", "## 其它独立只读审查任务"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, persona)
-        output = stage.split("## 输出格式\n", 1)[1].split("## 硬性规则", 1)[0]
-        self.assertIn(output, persona, "阶段报告合同与 opencode 子代理不是同一版")
+        # 终态块合同与 opencode 子代理逐字同一版；任务另有结构明细要求时不被通用精简规则省掉
+        ending = stage.split("**回答的最后必须且只能出现一个终态块**", 1)[1].split("## 硬性规则", 1)[0]
+        self.assertIn(ending, persona, "阶段报告合同与 opencode 子代理不是同一版")
+        self.assertIn("精简规则不省略它要求的明细", persona)
 
     def test_dependencies_ride_along_so_nothing_needs_installing(self) -> None:
         """依赖跟着进工作区（用户 2026-09-04 裁定）——工作区就是一个能直接跑的工程。
@@ -185,6 +187,41 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
             with self.subTest(root=str(root)):
                 self.assertTrue((root / script).is_file(), f"{root} 下找不到 {script}")
 
+
+
+class TheVerifierCallTextNamesTheDedicatedRole(unittest.TestCase):
+    """作者读到的调用指引都指向宿主登记的专用 verifier 角色，不让通用研究/开发子 agent 顶替（本地定制，AGENTS §2）。"""
+
+    RULE = "framework/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc"
+    CALL_TEXTS = (
+        "AGENTS.md", "CLAUDE.md", "framework/templates/AGENTS.md.template",
+        "framework/skills/reference/agents-entry-detail.md", RULE,
+        "framework/harness/harness-runner.ts", "framework/harness/scripts/utils/verifier-evidence.ts",
+        *(f"framework/skills/feature/{s}/SKILL.md"
+          for s in ("business-ut", "code-review", "coding", "device-testing", "plan", "spec")),
+    )
+
+    def test_every_call_text_names_the_dedicated_role(self) -> None:
+        for rel in self.CALL_TEXTS:
+            with self.subTest(rel):
+                text = (DEMO / rel).read_text(encoding="utf-8")
+                self.assertIn("专用 verifier 角色", text)
+                for stale in ("通过 Task 工具触发", "Task 触发 verifier", "作为 Task prompt 投给", "投给 subagent_type=verifier"):
+                    self.assertNotIn(stale, text, "还把任意 Task 调用当成审查入口")
+
+    def test_the_installed_rule_copies_are_the_template(self) -> None:
+        template = (DEMO / self.RULE).read_bytes()
+        for host in (".agents", ".codex", ".cursor", ".opencode"):
+            with self.subTest(host):
+                self.assertEqual(template, (DEMO / host / "rules" / "framework-agent-execution.mdc").read_bytes())
+
+    def test_the_receipt_does_not_claim_a_task_call(self) -> None:
+        for rel in ("framework/harness/scripts/utils/receipt-scaffold.ts",
+                    "framework/harness/templates/phase-completion-receipt.md"):
+            with self.subTest(rel):
+                text = (DEMO / rel).read_text(encoding="utf-8")
+                self.assertNotIn("Task(subagent_type=verifier)", text)
+                self.assertIn("host_verifier_role", text)
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,7 @@ claimed_completion_at: "<ISO 8601，生成时刻>"
 claimed_completion_commit_sha: "<summary.source_commit_sha>"
 claimed_attempt_id: ""
 verifier_subagent:
-  invoked_via: "Task(subagent_type=verifier)"
+  invoked_via: "host_verifier_role"
   prompt_template: "framework/harness/prompts/verify-<phase>.md"
   report_path: "<summary.verifier_report，即 doc/features/<feature>/<phase>/reports/verifier.report.<subject>.md 或空>"
   verdict: "<PASS | FAIL | 空>"
