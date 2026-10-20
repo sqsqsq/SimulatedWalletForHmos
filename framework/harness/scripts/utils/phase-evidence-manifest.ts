@@ -1,3 +1,4 @@
+import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // phase-evidence-manifest.ts — 阶段 closure 证据快照（goal-fakepass-hardening t8）
 // ============================================================================
@@ -77,7 +78,7 @@ export const IDENTITY_NEUTRAL_EVIDENCE = 'ref-content@1';
  * null = 登记路径但算不出（不能证明等价）。登记：canonical CU、Feature 目录的三份派生投影文件、CU 所属蓝图——
  * 蓝图条目在本 Feature 里只代表「本 CU 消费的权威内容」，摘要取 CU 中立视图（已展开全部消费目标，所有权引用不展开）。
  */
-function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string): string | null | undefined {
+function identityNeutralEvidenceDigest(projectRoot: string, feature: string, absPath: string, authorityReaders?: IdentityNeutralDigestReaders): string | null | undefined {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { tryParseCuFeatureId } = require('./feature-identity') as typeof import('./feature-identity');
   const identity = tryParseCuFeatureId(feature);
@@ -87,9 +88,12 @@ function identityNeutralEvidenceDigest(projectRoot: string, feature: string, abs
   const { componentBlueprintPath } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
   const { BLUEPRINT_PROJECTION_FILES } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
   /* eslint-enable @typescript-eslint/no-require-imports */
+  authorityReaders ??= createIdentityNeutralDigestReaders();
   const target = path.resolve(absPath);
   const digestOf = (artifact: string, file: string): string | null => {
-    try { return identityNeutralDigest(projectRoot, artifact, YAML.parse(fs.readFileSync(file, 'utf8'))); } catch { return null; }
+    try { return identityNeutralDigest(projectRoot, artifact, artifact === 'change-unit@1' && authorityReaders?.loadChangeUnit
+      ? authorityReaders.loadChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId).changeUnit
+      : authorityReaders?.readArtifact ? authorityReaders.readArtifact(file) : YAML.parse(fs.readFileSync(file, 'utf8')), authorityReaders); } catch { return null; }
   };
   const cuFile = changeUnitPath(projectRoot, identity.blueprintId, identity.changeUnitId);
   if (target === path.resolve(cuFile) || target === path.resolve(componentBlueprintPath(projectRoot, identity.blueprintId))) return digestOf('change-unit@1', cuFile);
@@ -220,17 +224,19 @@ export function evidenceEntryMatchesCurrentFile(
   projectRoot: string,
   entry: EvidenceEntry,
   feature: string,
+  authorityReaders?: IdentityNeutralDigestReaders,
 ): boolean {
   const absPath = path.join(projectRoot, entry.path);
   if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase) === entry.sha256;
   if (entry.identity_neutral !== undefined) {
     return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE && entry.sha256 !== null
-      && identityNeutralEvidenceDigest(projectRoot, feature, absPath) === entry.sha256;
+      && identityNeutralEvidenceDigest(projectRoot, feature, absPath, authorityReaders) === entry.sha256;
   }
   return sha256File(absPath) === entry.sha256;
 }
 
 export interface EvidenceSemanticOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   runId?: string;
   currentRequirementSha?: string | null;
   frameworkRoot?: string;
@@ -293,13 +299,24 @@ function evidenceSemanticContext(projectRoot: string, feature: string, phase: st
 /** Old entries lack collection provenance: retire only the former collector's bounded control surface. */
 export function phaseEvidenceBusinessInputs(projectRoot: string, feature: string, manifest: PhaseEvidenceManifest,
   opts: EvidenceSemanticOptions = {}): EvidenceEntry[] {
-  if (!manifest.inputs.some(entry => /\/goal-runs\/[^/]+\/manifest\.json$/.test(entry.path))) return manifest.inputs;
+  const inputs = manifest.inputs.filter(entry => {
+    if (entry.role !== 'input' || sha256File(path.join(projectRoot, entry.path)) === entry.sha256) return true;
+    const { componentIndexPath } = require('../../config') as typeof import('../../config');
+    if (path.resolve(projectRoot, entry.path) !== path.resolve(componentIndexPath(projectRoot))) return true;
+    try {
+      const { isCurrentComponentInventory } = require('./component-assets') as typeof import('./component-assets');
+      // A rebuilt inventory is a projection of the source, not a new design decision.
+      // Missing/corrupt/stale inventory and human curation still retain their checks.
+      return !isCurrentComponentInventory(projectRoot, entry.path);
+    } catch { return true; }
+  });
+  if (!inputs.some(entry => /\/goal-runs\/[^/]+\/manifest\.json$/.test(entry.path))) return inputs;
   const context = evidenceSemanticContext(projectRoot, feature, manifest.phase, opts);
   const now = resolveEnvironment(projectRoot, manifest.phase, opts.frameworkRoot);
   if (!context?.requirementSha || context.requirementSha !== manifest.environment.requirement_sha256
     || ['framework_version', 'gate_fingerprint', 'framework_config_sha256', 'workflow_sha256'].some(key =>
-      now[key as keyof EvidenceEnvironment] !== manifest.environment[key as keyof EvidenceEnvironment])) return manifest.inputs;
-  return manifest.inputs.filter(entry => entry.role !== 'input' || entry.facts_phase !== undefined || entry.identity_neutral !== undefined
+      now[key as keyof EvidenceEnvironment] !== manifest.environment[key as keyof EvidenceEnvironment])) return inputs;
+  return inputs.filter(entry => entry.role !== 'input' || entry.facts_phase !== undefined || entry.identity_neutral !== undefined
     || entry.owner_phase !== undefined || !entry.exists || entry.sha256 === null
     || !context.controlPaths.has(path.resolve(projectRoot, entry.path)) || context.businessPaths.has(path.resolve(projectRoot, entry.path)));
 }
@@ -859,19 +876,64 @@ export function recomputePhaseEvidenceStaleness(
   chain: string[],
   opts?: EvidenceSemanticOptions & { pendingOwnerPhase?: string; pendingOwnerPaths?: string[] },
 ): PhaseStalenessResult[] {
+  opts = { ...opts, authorityReaders: opts?.authorityReaders ?? createIdentityNeutralDigestReaders() };
   const results: PhaseStalenessResult[] = [];
   let upstreamBad: string | null = null;
   const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
+  // A live checker may use its admitted owner; read-only consumers require an observed write.
+  const pendingOwners = new Set<string>(opts?.pendingOwnerPhase ? [opts.pendingOwnerPhase] : []);
+  const sourceTransitions = new Map<string, Array<{ phase: string; before: string | null; after: string | null }>>();
+  let evidenceRunId = opts?.runId;
+  if (!evidenceRunId && chain.length) {
+    try { evidenceRunId = evidenceRequirementContext(projectRoot, feature, chain[0], opts ?? {}).runId; } catch { /* Independent evidence has no run authority. */ }
+  }
+  if (evidenceRunId) {
+    try {
+      const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
+      const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+      const manifest = loadGoalManifestFromRun(projectRoot, evidenceRunId, { feature });
+      const events = loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
+      const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
+      const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
+      const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
+      if (framework) {
+        const contracts = readRunBoundContracts(projectRoot, framework, feature, evidenceRunId, opts.authorityReaders);
+        const sourceOwners = new Set([...phaseContractIndex(loadFeatureContracts(framework))]
+          .filter(([, contract]) => contract.phase.produces.some(output => output.kind === 'source')).map(([phase]) => phase));
+        const declared = new Set(contracts.files.filter(file => contracts.modules.some(module => {
+          const rel = path.relative(path.resolve(projectRoot, module.package_path), path.resolve(projectRoot, file));
+          return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+        })));
+        for (const event of events) {
+          if (event.type !== 'phase_write_observed' || !event.phase || !sourceOwners.has(event.phase)) continue;
+          const owned = (event as unknown as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? [];
+          for (const write of owned) if (declared.has(write.path)) {
+            const transitions = sourceTransitions.get(write.path) ?? [];
+            transitions.push({ phase: event.phase, before: write.pre_sha256, after: write.post_sha256 });
+            sourceTransitions.set(write.path, transitions);
+          }
+        }
+      }
+    } catch { /* Unavailable run identity grants no additional source ownership. */ }
+  }
   const ownedOutputIsCurrent = (entry: EvidenceEntry, manifestPhase: string): boolean => {
+    // Old manifests may lack a resource owner. Existing authorized write events supply
+    // the same fact without rewriting the historical manifest or trusting a new file hash.
+    let expected = entry.sha256;
+    let advanced = false;
+    for (const change of sourceTransitions.get(entry.path) ?? []) {
+      if (change.phase !== manifestPhase && change.before === expected) { expected = change.after; advanced = true; }
+    }
+    if (advanced && expected === sha256File(path.join(projectRoot, entry.path))) return true;
     if (pendingOwnerPaths.has(entry.path)) return true;
     if (!entry.owner_phase || entry.owner_phase === manifestPhase) return false;
-    if (entry.owner_phase === opts?.pendingOwnerPhase) return true;
+    if (pendingOwners.has(entry.owner_phase)) return true;
     const owner = loadPhaseEvidenceManifest(projectRoot, feature, entry.owner_phase);
     // The owner validates its own result. A later failure there must not reopen an upstream
     // observation when the declared output still has the exact bytes that owner recorded.
     return !!owner?.integrityOk && owner.manifest.outputs.some(output =>
       output.path === entry.path && output.owner_phase === entry.owner_phase
-      && evidenceEntryMatchesCurrentFile(projectRoot, output, feature));
+      && evidenceEntryMatchesCurrentFile(projectRoot, output, feature, opts?.authorityReaders));
   };
 
   for (const phase of chain) {
@@ -903,8 +965,8 @@ export function recomputePhaseEvidenceStaleness(
       upstreamBad = phase;
       continue;
     }
-    if (opts?.pendingOwnerPhase) for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
-      if (entry.owner_phase === opts.pendingOwnerPhase) pendingOwnerPaths.add(entry.path);
+    for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
+      if (entry.owner_phase && pendingOwners.has(entry.owner_phase)) pendingOwnerPaths.add(entry.path);
     }
     // ② plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 的 schema/aggregate/条目哈希已自证完整性，
     //    回执是闭环后的人读投影（可被 harness 随时重生成），不再作为 freshness 锚。
@@ -943,7 +1005,7 @@ export function recomputePhaseEvidenceStaleness(
     const { manifest } = loaded;
     const changed = new Set<string>();
     for (const entry of [...phaseEvidenceBusinessInputs(projectRoot, feature, manifest, opts), ...manifest.outputs]) {
-      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature, opts?.authorityReaders) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
     }
     if (changed.size > 0) {
       results.push({ phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: false });

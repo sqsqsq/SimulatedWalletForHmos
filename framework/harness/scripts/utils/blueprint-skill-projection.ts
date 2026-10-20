@@ -17,6 +17,7 @@ import { parseChangeUnitFeatureId, loadCanonicalChangeUnit, asChangeUnitArtifact
 import { validateChangeUnitDesign } from './change-unit-design-gate';
 import { validateChangeUnit } from './change-unit-validator';
 import { checkChangeUnitFeatureProjection, validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
+import { projectComponentSelections } from './component-selection-check';
 import { resolveContractFileReferences, findUnauthorizedContractFileReferences, CONTRACT_FILE_REFERENCE_FIELDS } from './contract-reference-closure';
 import { checkAcceptanceContent, checkAcceptanceUtLayerComplete, checkAcceptanceDeviceFocusPresent, checkAcceptanceLinkedUseCases, extractAcceptanceIdRefs } from './check-acceptance';
 import { isInsideProjectRoot, existingProjectPathSpelling } from './project-relative-path';
@@ -27,7 +28,7 @@ import { checkUseCaseSpecSchema } from '../check-ut';
 import type { AcceptanceSpec, CheckContext, CheckResult, ContractsSpec } from './types';
 import type { ResolutionDependency } from './capability-resolution';
 import { resolveCheckDisposition } from './check-disposition';
-import { identityNeutralDigest } from './identity-neutral-digest';
+import { identityNeutralDigest, type IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { resolveProbeFrameworkRoot } from '../../repo-layout';
 
@@ -306,7 +307,7 @@ export function blueprintSourceRefFiles(projectRoot: string, blueprint: unknown)
  * 投影只读取 canonical CU/design 来源；阶段产物由责任阶段的对齐门与 materialize writer 检查，
  * 不拿待比较的 use-cases.yaml 反向判定设计权威是否有效。
  */
-export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind): BlueprintSkillProjection {
+export function deriveBlueprintSkillInput(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, authorityReaders?: IdentityNeutralDigestReaders): BlueprintSkillProjection {
   const dependencies: ResolutionDependency[] = [];
   const depend = (file: string): void => {
     const actual = existingProjectPathSpelling(projectRoot, file);
@@ -322,25 +323,26 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
   const fail: (failed: string | string[], message: string, at?: DesignAuthorityLocation[]) => never = (failed, message, at = []) => { codes = [failed].flat(); locations = at; throw new Error(message); };
   try {
     const identity = parseChangeUnitFeatureId(feature);
-    const loaded = loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId);
+    const loaded = (authorityReaders?.loadChangeUnit ?? loadCanonicalChangeUnit)(projectRoot, identity.blueprintId, identity.changeUnitId);
     depend(loaded.canonicalPath);
     const cu = asChangeUnitArtifact(loaded.changeUnit);
-    const cuIssues = validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath }).filter(issue => issue.severity === 'BLOCKER');
+    const cuIssues = (authorityReaders?.changeUnitIssues ? authorityReaders.changeUnitIssues(projectRoot, loaded) : validateChangeUnit(loaded.changeUnit, { projectRoot, canonicalPath: loaded.canonicalPath, resolveBlueprintRef: authorityReaders?.blueprint })).filter(issue => issue.severity === 'BLOCKER');
     if (cuIssues.length) {
       if (cuIssues.every(issue => issue.id === BLUEPRINT_REF_STALE_ISSUE)) reason = 'blueprint_ref_stale';
       fail(cuIssues.map(issue => issue.id), 'component-design: ' + cuIssues.map(issue => issue.message).join('; '));
     }
-    const parent = resolveComponentBlueprintRef(projectRoot, cu.component_blueprint_ref);
+    const parent = (authorityReaders?.blueprint ?? resolveComponentBlueprintRef)(projectRoot, cu.component_blueprint_ref);
     depend(parent.canonicalPath);
     for (const file of blueprintSourceRefFiles(projectRoot, parent.blueprint)) depend(file);
-    const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit);
+    const design = validateChangeUnitDesign(projectRoot, loaded.changeUnit, { resolveBlueprintRef: authorityReaders?.blueprint });
     if (design.verdict !== 'constructable') fail(design.issues.map(i => i.id), `component-design: ${design.issues.map(i => i.message).join('; ')}`);
-    for (const ref of cu.design_refs) depend(resolveComponentBlueprintRef(projectRoot, ref).canonicalPath);
+    for (const ref of cu.design_refs) depend((authorityReaders?.blueprint ?? resolveComponentBlueprintRef)(projectRoot, ref).canonicalPath);
     const bundle = selectBlueprintSkillContent(parent.blueprint, cu);
     const selected = bundle.selected;
     const source = `derive.blueprint-${kind}:${loaded.artifactSha256}:${cu.component_blueprint_ref.artifact_sha256}`;
     const acceptance = bundle.acceptance;
-    const construction = kind === 'contracts' ? bundle.contracts : undefined;
+    const construction = kind === 'contracts' && bundle.contracts
+      ? projectComponentSelections(projectRoot, bundle.contracts as unknown as ContractsSpec, cu, authorityReaders?.blueprint) as unknown as BlueprintRecord : undefined;
     const useCases = bundle.useCases;
     const raw = kind === 'acceptance' ? acceptance : construction;
     const absent: BlueprintSkillProjection = { state: 'absent', dependencies, detail: `${kind === 'acceptance' ? 'spec' : 'plan'}: 缺精确 ${kind} 内容，design_refs/verification_refs 不等价于设计` };
@@ -381,7 +383,7 @@ export function deriveBlueprintSkillInput(projectRoot: string, feature: string, 
       }
       const violations = findUnauthorizedContractFileReferences(closure);
       if (closure.invalid_paths.length || violations.length) fail('authority_contract_write_set_open', 'plan: contracts.files 写集未闭合：' + [...closure.invalid_paths.map(i => i.message), ...violations.map(i => i.path)].join('; '));
-      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true });
+      const projection = validateChangeUnitFeatureProjection(projectRoot, feature, contracts, parsed.acceptance, !!parsed.useCases, 'plan', [], { changeUnitOverride: cu, designOnly: true, resolveBlueprintRef: authorityReaders?.blueprint });
       if (projection.issues.length) fail(projection.issues.flatMap(i => i.codes ?? [i.id]), 'plan/component-design: ' + projection.issues.map(i => i.message).join('; '));
     }
     const normalized = { ...(parsed.acceptance ? { 'acceptance@1': parsed.acceptance } : {}), ...(parsed.contracts ? { 'contracts@1': parsed.contracts } : {}), ...(parsed.useCases ? { 'use-cases@1': parsed.useCases } : {}) };
@@ -427,7 +429,14 @@ function alignNode(expected: unknown, actual: unknown, id: string, field: string
     let wholeArray = false;
     for (const item of expected) {
       const identity = projectionRowIdentity(item);
-      const matches = (row: unknown): boolean => identity !== undefined ? projectionRowIdentity(row) === identity : canonical(row) === canonical(item);
+      const matches = (row: unknown): boolean => {
+        if (identity !== undefined) return projectionRowIdentity(row) === identity;
+        if (!asRecord(item) || !asRecord(row)) return canonical(row) === canonical(item);
+        // Unkeyed records obey the same owned-field comparison as keyed records; extra declarations are not identity drift.
+        const differences: AuthoritativeDriftItem[] = [];
+        alignNode(item, row, id, field, key, differences);
+        return differences.length === 0;
+      };
       const at = actual.findIndex((row, index) => index >= cursor && matches(row));
       const found = at >= 0 ? at : actual.findIndex(matches);
       if (found < 0) {
@@ -469,11 +478,16 @@ export function compareAuthoritativeContent(projected: unknown, actual: unknown)
 }
 
 export function authoritativeContentDrift(projectRoot: string, feature: string, frameworkRoot: string, kind: BlueprintProjectionKind, handwritten: unknown, outputs?: { useCases: unknown }): AuthoritativeContentDrift {
-  const record = asRecord(handwritten);
+  let record = asRecord(handwritten);
   if (!record) return { state: 'not_applicable' };
   const projected = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, kind);
   if (projected.state === 'absent' && !projected.artifacts?.['use-cases@1']) return { state: 'not_applicable' };
   if (projected.state === 'invalid') return { state: 'invalid', detail: projected.detail ?? 'blueprint projection invalid', reason: projected.reason ?? 'other', codes: projected.codes ?? [], ...(projected.locations ? { locations: projected.locations } : {}) };
+  if (kind === 'contracts' && feature.startsWith('cu-')) {
+    const identity = parseChangeUnitFeatureId(feature);
+    const cu = asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, identity.blueprintId, identity.changeUnitId).changeUnit);
+    record = projectComponentSelections(projectRoot, record as unknown as ContractsSpec, cu) as unknown as BlueprintRecord;
+  }
   const primary = projected.artifacts?.[`${kind}@1`];
   const drift = primary ? compareAuthoritativeContent(primary, record) : { state: 'aligned' as const };
   if (kind !== 'contracts' || !projected.artifacts?.['use-cases@1']) return primary ? drift : { state: 'not_applicable' };
@@ -523,7 +537,7 @@ export function checkAuthoritativeContentAligned(ctx: CheckContext, kind: Bluepr
     const expansion = projected.state === 'resolved' ? designWriteSetExpansion(ctx.projectRoot, projected.value as ContractsSpec, ctx.featureSpec.contracts) : [];
     if (expansion.length) return [{ ...base, status: 'FAIL', repair_owner: 'external',
       structured: { kind: 'design_authority', reason: 'other', codes: ['authority_contract_write_set_open'] },
-      details: `${details}\n需扩大蓝图/CU 写集：${expansion.join(', ')}`, suggestion: '须先取得用户确认，再由设计 owner 修订蓝图/CU；plan 不自行扩大写集。' }];
+      details: `${details}\n需扩大蓝图/CU 写集：${expansion.join(', ')}`, suggestion: '交设计 owner 正式修订蓝图/CU；无人值守原需求内由框架静默处理，有人在场沿原确认流程；plan 不自行扩大写集。' }];
   }
   return [{ ...base, status: 'FAIL', details, suggestion: `按设计权威改写 ${file}，保留不冲突的补充。` }];
 }

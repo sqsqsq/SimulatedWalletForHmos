@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { resolveExecutionScope, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, scopeRevisionInvalidations, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
 import * as path from 'path';
@@ -866,7 +867,7 @@ export function featureScopePhaseHealth(
  */
 export function resolveCurrentScopeView(input: {
   projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
-  currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string;
+  currentRunId?: string; completedPhases?: ReadonlySet<string>; currentPhase?: string; reopen?: string; authorityReaders?: IdentityNeutralDigestReaders;
 }): ExecutionScope {
   const { projectRoot, frameworkRoot, feature } = input;
   const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
@@ -888,7 +889,7 @@ export function resolveCurrentScopeView(input: {
     const evidence = loadPhaseEvidenceManifest(projectRoot, feature, phase);
     const { collectPhaseCompletionIssues } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
     const fresh = evidence?.integrityOk && collectPhaseCompletionIssues({ projectRoot, feature, chain: [phase],
-      frameworkRoot, runId: input.currentRunId, pendingOwnerPhase }).length === 0;
+      frameworkRoot, runId: input.currentRunId, pendingOwnerPhase, authorityReaders: input.authorityReaders }).length === 0;
     if (!fresh) { stale.add(phase); continue; }
     const after = history.invalidatedAt.get(phase);
     const eligible = input.currentRunId ? history.passed.has(phase) : !after || Date.parse(evidence!.manifest.generated_at) > Date.parse(after);
@@ -940,6 +941,11 @@ export function resolveScopeRevisionProposal(input: {
   if (!input.repairCandidates?.length && lastRevision?.revision_input
     && executionScopeFingerprint(lastRevision.revision_input) === executionScopeFingerprint(proposal)) return null;
   const progress = resolveCurrentScopeView(input);
+  const { SCOPE_REVISION_FACT_KIND } = require('./repair-candidates') as typeof import('./repair-candidates');
+  const repairFactIds = new Set((input.repairCandidates ?? []).map(candidate => {
+    const kind = SCOPE_REVISION_FACT_KIND[candidate.category as keyof typeof SCOPE_REVISION_FACT_KIND];
+    return kind ? `${kind}:${candidate.id}` : '';
+  }));
   for (const obligation of previous.obligations) {
     if (obligation.applicability !== 'required') continue;
     const existing = proposal.facts.find(fact => fact.id === obligation.id);
@@ -947,6 +953,9 @@ export function resolveScopeRevisionProposal(input: {
     if (!existing) proposal.facts.push(structuredClone(effective));
     else if (acceptsDefinitionInputProof(existing.kind) && existing.satisfied_by?.length && existing.satisfied_by.every(ref => 'input_id' in ref)) {
       // The owner supplied a definition binding; the common binding validator below judges it.
+    }
+    else if (repairFactIds.has(existing.id) && !existing.satisfied_by?.length) {
+      // A current trusted finding reopens its owner even if the last recorded scope predates its PASS.
     }
     else if (!obligation.satisfied_by?.length || existing.satisfied_by?.length) {
       if (effective.satisfied_by?.length) existing.satisfied_by = structuredClone(effective.satisfied_by);
@@ -986,13 +995,12 @@ export function resolveScopeRevisionProposal(input: {
     && !resolved.obligations.find(after => after.id === before.id)?.satisfied_by?.length);
   if (!withdrawsRecordedProof && executionScopeFingerprint(resolved) === executionScopeFingerprint(progress)) return null;
   const confirmedRepair = previous.completion_target === 'feature' && input.repairCandidates?.some(candidate => {
-    const { SCOPE_REVISION_FACT_KIND } = require('./repair-candidates') as typeof import('./repair-candidates');
     const kind = SCOPE_REVISION_FACT_KIND[candidate.category as keyof typeof SCOPE_REVISION_FACT_KIND];
     const fact = proposal.facts.find(item => item.id === kind + ':' + candidate.id && item.kind === kind && item.applicability === 'required');
     return !!kind && candidate.files.length > 0 && !!fact?.basis.length && !previous.obligations.some(item => item.id === fact.id);
   });
-  const reopened = input.repairCandidates?.some(candidate => proposal.facts.some(fact => fact.id.endsWith(`:${candidate.id}`)
-    && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length)));
+  const reopened = proposal.facts.some(fact => repairFactIds.has(fact.id)
+    && !fact.satisfied_by?.length && progress.obligations.some(prior => prior.id === fact.id && prior.satisfied_by?.length));
   // A current trusted finding is new knowledge; its unchanged product file need not be rewritten to earn recovery.
   if (!hasNewSourcedFact(previous, proposal.facts, input.currentRunId ?? '') && !confirmedRepair && !reopened
     && !previous.obligations.some(prior => prior.satisfied_by?.length && !progress.obligations.find(o => o.id === prior.id)?.satisfied_by?.length)) throw new Error('[execution-scope] revision requires new sourced facts');

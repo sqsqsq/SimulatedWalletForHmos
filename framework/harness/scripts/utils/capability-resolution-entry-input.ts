@@ -1,3 +1,4 @@
+import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 // ============================================================================
 // capability-resolution-entry-input.ts — goal/CLI input bridge for pre-check resolution
 // ============================================================================
@@ -181,6 +182,7 @@ export function prepareExplicitRequest(options: { projectRoot: string; framework
 }
 
 export interface CapabilityResolutionEntryInputOptions {
+  authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   feature: string;
   phase: string;
@@ -217,19 +219,21 @@ export function loadFactsInvocationContext(options: {
 }
 
 /** The runtime write boundary for facts ownership; throws without a construction binding. */
-function resolveFactsWriteBoundary(options: { projectRoot: string; frameworkRoot: string; feature: string; runId?: string; phase?: string },
-  scope: import('./execution-scope').ExecutionScope) {
+function resolveFactsWriteBoundary(options: { projectRoot: string; frameworkRoot: string; feature: string; runId?: string; phase?: string; authorityReaders?: IdentityNeutralDigestReaders },
+  scope: import('./execution-scope').ExecutionScope, constructionModules?: Array<{ name: string; package_path: string }>) {
   const config = loadFrameworkConfig(options.projectRoot);
   const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
   return resolvePhaseWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, feature: options.feature, runId: options.runId,
-    pendingOwnerPhase: options.phase, phaseOrder: executionCompletionPhases(scope), track: 'full',
+    authorityReaders: options.authorityReaders, pendingOwnerPhase: options.phase, phaseOrder: [...new Set([...executionCompletionPhases(scope),
+      ...(constructionModules ? scope.obligations.filter(obligation => obligation.applicability === 'required').map(obligation => obligation.owner_phase) : [])])], track: 'full',
+    ...(constructionModules ? { constructionModules } : {}),
     profileDir: profile.profileDir, productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
     resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
 }
 
 /** Existing source ownership and write authorization, shared by admission and the final facts check. */
 export function resolveFactsPhaseOwnedSources(options: {
-  projectRoot: string; frameworkRoot: string; feature: string; phase: string; runId?: string;
+  projectRoot: string; frameworkRoot: string; feature: string; phase: string; runId?: string; authorityReaders?: IdentityNeutralDigestReaders;
 }, context: FactsInvocationContext): Set<string> {
   try {
     const scope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
@@ -329,7 +333,7 @@ function loadCompletedFactsBaseline(options: CapabilityResolutionEntryInputOptio
   if (!changed.size && !interrupted) return undefined;
   const evidence = loadPhaseEvidenceManifest(options.projectRoot, options.feature, context.baseline.established_by);
   const requirement = options.requirement ?? manifest.requirement;
-  const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId,
+  const freshness = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, [context.baseline.established_by], { frameworkRoot, runId, authorityReaders: options.authorityReaders,
     pendingOwnerPaths: [...changed],
     ...(typeof requirement === 'string' ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) })[0];
   if (!evidence?.integrityOk || !freshness || !['fresh', 'stale'].includes(freshness.verdict)
@@ -393,7 +397,7 @@ export function resolveCapabilityResolutionEntryInput(
       requirement = manifest.requirement?.trim() || undefined;
       requirementSourceFiles = manifest.requirement_source_files;
     }
-    const scope = goalRunId ? loadEffectiveExecutionScope(options.projectRoot, options.feature, goalRunId, options.frameworkRoot, options.phase) : authority?.scope;
+    const scope = goalRunId ? loadEffectiveExecutionScope(options.projectRoot, options.feature, goalRunId, options.frameworkRoot, options.phase, options.authorityReaders) : authority?.scope;
     if (scope) {
       const frameworkRoot = options.frameworkRoot ?? path.resolve(__dirname, '../../..');
       const contractIndex = phaseContractIndex(loadFeatureContracts(frameworkRoot));
@@ -416,7 +420,7 @@ export function resolveCapabilityResolutionEntryInput(
           .filter(dep => dep.role === 'derive' && dep.exists)
           .map(dep => path.relative(options.projectRoot, resolveDependencyPath(options.projectRoot, dep.path, inferLegacyProjectRoot(options.projectRoot, scope))).replace(/\\/g, '/')))))];
       if (options.phase === 'review' && scope.obligations.some(obligation => obligation.kind === 'implementation' && obligation.applicability === 'required')) {
-        const contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
+        const contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId, options.authorityReaders);
         // G5：基线走统一来源选择（无 run 时是既有 HARNESS_DIFF_BASE_REF 三态，不是 FAIL）
         const baseline = resolveEffectiveDiffBaseline(options.projectRoot, options.feature, goalRunId);
         if (!baseline.available) throw new Error(baseline.reason);
@@ -475,7 +479,7 @@ export function resolveCapabilityResolutionEntryInput(
               source_owners: Object.fromEntries([...evidence.manifest.inputs, ...evidence.manifest.outputs]
                 .filter(entry => entry.owner_phase === options.phase && entry.exists && sha256File(path.join(options.projectRoot, entry.path)))
                 .map(entry => [entry.path, options.phase])) })] : [];
-          const semanticOptions = { frameworkRoot, runId: goalRunId,
+          const semanticOptions = { frameworkRoot, runId: goalRunId, authorityReaders: options.authorityReaders,
             ...(requirement ? { currentRequirementSha: computeRequirementShaFromText(options.projectRoot, options.feature, requirement, options.featuresDir) } : {}) };
           const fresh = recomputePhaseEvidenceStaleness(options.projectRoot, options.feature, evidenceChain, { ...semanticOptions,
             ...(pendingOwnerPaths.length ? { pendingOwnerPaths } : {}) })
@@ -496,7 +500,7 @@ export function resolveCapabilityResolutionEntryInput(
               const abs = path.join(options.projectRoot, entry.path);
               // plan c4e7a9b2 B2：身份中立条目存的是摘要；等价成立时基线依赖按当前字节登记（下游按字节核对）。
               const recorded = owner ?? entry;
-              const neutralCurrent = recorded.identity_neutral !== undefined && evidenceEntryMatchesCurrentFile(options.projectRoot, recorded, options.feature);
+              const neutralCurrent = recorded.identity_neutral !== undefined && evidenceEntryMatchesCurrentFile(options.projectRoot, recorded, options.feature, options.authorityReaders);
               return neutralCurrent
                 ? { path: abs, exists: fs.existsSync(abs), sha256: sha256File(abs), role: 'derive' }
                 : { path: abs, exists: owner?.exists ?? entry.exists, sha256: owner?.sha256 ?? entry.sha256, role: 'derive' };
@@ -506,6 +510,11 @@ export function resolveCapabilityResolutionEntryInput(
               factsContext.baseline.dependencies.push({ path: configPath, exists: evidence.manifest.environment.framework_config_sha256 !== null,
                 sha256: evidence.manifest.environment.framework_config_sha256, role: 'derive' });
             }
+            // An upstream observation can remain valid after its downstream owner writes.
+            // Carrying that invocation's original baseline still requires the admission above.
+            const changedDependencies = factsContext.baseline.dependencies.filter(dep =>
+              fs.existsSync(dep.path) !== dep.exists || sha256File(dep.path) !== dep.sha256);
+            if (goalRunId && changedDependencies.length) throw new Error(`facts baseline stale: invocation admission required for changed sources: ${changedDependencies.map(dep => path.relative(options.projectRoot, dep.path)).join(', ')}`);
             for (const source of paths) {
               const safe = validateProjectRelativePath(options.projectRoot, source, 'facts source');
               researchPaths.add(safe);
@@ -541,21 +550,34 @@ export function resolveCapabilityResolutionEntryInput(
       }
       let contractFiles: string[] = [];
       let contractModules: Array<{ name: string; package_path: string }> = [];
+      let observedConstruction = false;
       const producesContracts = indexed.phase.produces.some(output => output.artifact === 'contracts@1');
       const currentContracts = new SpecLoader(options.projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(options.feature).contracts;
       try {
         let contracts: import('./types').ContractsSpec;
         try {
-          contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId);
+          contracts = readRunBoundContracts(options.projectRoot, frameworkRoot, options.feature, goalRunId, options.authorityReaders);
         } catch (error) {
+          if (options.feature.startsWith('cu-')) throw error;
           if (!producesContracts) throw error;
           if (!currentContracts) throw error;
           contracts = currentContracts;
         }
         contractFiles = (contracts.files ?? []).map(file => validateProjectRelativePath(options.projectRoot, file, 'contracts.files'));
         contractModules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+        observedConstruction = ['spec', 'plan'].includes(options.phase);
       } catch {
-        // A missing construction binding is the plan-owned definition gap already carried by scope.
+        // Research may observe admitted construction targets before plan signs the binding.
+        // This assigns evidence responsibility, not coding write permission.
+        if (['spec', 'plan'].includes(options.phase)) {
+          const projected = deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts', options.authorityReaders);
+          if (projected.state === 'resolved' && projected.value) {
+            const contracts = projected.value as unknown as import('./types').ContractsSpec;
+            contractFiles = (contracts.files ?? []).map(file => validateProjectRelativePath(options.projectRoot, file, 'contracts.files'));
+            contractModules = (contracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
+            observedConstruction = true;
+          }
+        }
       }
       if (contractModules.length === 0 && currentContracts) {
         contractModules = (currentContracts.modules ?? []).map(module => ({ name: module.name, package_path: module.package_path }));
@@ -623,7 +645,7 @@ export function resolveCapabilityResolutionEntryInput(
       );
       const inventory = loadArtifactInventory(frameworkRoot);
       const projectedUseCases = options.phase === 'plan'
-        ? deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts').artifacts?.['use-cases@1']
+        ? deriveBlueprintSkillInput(options.projectRoot, options.feature, frameworkRoot, 'contracts', options.authorityReaders).artifacts?.['use-cases@1']
         : undefined;
       const requiredOutputs = indexed.phase.produces.flatMap(output => inventory.artifacts.find(artifact => artifact.id === output.artifact)?.paths ?? []).filter(name => {
         const base = path.basename(name);
@@ -676,7 +698,8 @@ export function resolveCapabilityResolutionEntryInput(
       const inCodeWriteBoundary = (file: string): boolean => {
         try {
           if (codeBoundary === undefined) {
-            const boundary = resolveFactsWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: goalRunId, phase: options.phase }, scope);
+            const boundary = resolveFactsWriteBoundary({ projectRoot: options.projectRoot, frameworkRoot, feature: options.feature, runId: goalRunId, phase: options.phase, authorityReaders: options.authorityReaders }, scope,
+              observedConstruction ? contractModules : undefined);
             codeBoundary = boundary.unresolvedSourcePhases.includes(codeOwner!) ? null : boundary;
           }
           const granted = codeBoundary && resolvePhasePathOwnership(codeBoundary, file);
