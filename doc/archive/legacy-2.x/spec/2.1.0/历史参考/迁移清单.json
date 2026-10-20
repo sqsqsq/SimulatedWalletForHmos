@@ -2,7 +2,7 @@
   "date": "2026-09-30",
   "baseline_commit": "02e4b7d9414bb7ff14cdef4c33e60c9490d8336b",
   "source_root": "doc/spec/1.9.9",
-  "destination_root": "docs/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9",
+  "destination_root": "doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9",
   "file_count": 46,
   "total_bytes": 7633021,
   "files": [

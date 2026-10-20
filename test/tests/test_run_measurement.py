@@ -737,7 +737,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     实跑的运行证据（事件流、运行日志、截图、材料原件、压缩包）放在 `output/story/`，不进过程件目录。
     """
 
-    ROOTS = ("doc/spec", "doc/plan", "docs/archive/legacy-2.x/spec", "docs/archive/legacy-2.x/plan")
+    ROOTS = ("doc/spec", "doc/plan", "doc/archive/legacy-2.x/spec", "doc/archive/legacy-2.x/plan")
     EVIDENCE_SUFFIXES = {".jsonl", ".log", ".zip", ".docx", ".png"}
 
     def test_process_roots_are_on_disk_and_not_ignored(self):
@@ -749,12 +749,12 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                 self.assertFalse(ignored, f"{rel} 被忽略了")
 
     #: 已授权保留的历史原稿：迁移清单按确切路径与原始字节摘要登记，登记在内且字节没变的原件不是新的运行证据
-    HISTORY_MANIFEST = "docs/archive/legacy-2.x/spec/2.1.0/历史参考/迁移清单.json"
+    HISTORY_MANIFEST = "doc/archive/legacy-2.x/spec/2.1.0/历史参考/迁移清单.json"
     #: 金样候选的登记位置（2.0.3 的 05 合同 §2：`实施反馈/金样候选/<case>/<情景>/`）。目标稿自带的配图在情景的
     #: `assets/` 下、被本情景文档引用、且是产品支持的图片类型（`materials.frozen.IMAGE_SUFFIXES`）；
     #: 日志、事件、原件附件与压缩包被引用也不算。图里画的是否适用于该情景由评审者核，这里不看字节
     CANDIDATE_ROOTS = ("doc/plan/*/*/实施反馈/金样候选",
-                       "docs/archive/legacy-2.x/plan/*/*/实施反馈/金样候选")
+                       "doc/archive/legacy-2.x/plan/*/*/实施反馈/金样候选")
 
     @classmethod
     def candidate_assets(cls, repo: Path) -> set[str]:
@@ -799,28 +799,28 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         """清单内且字节没变的原件放过；新增的图片、字节被改的原件照样算运行证据。"""
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            history = repo / "docs/archive/legacy-2.x/spec/2.1.0/历史参考"
+            history = repo / "doc/archive/legacy-2.x/spec/2.1.0/历史参考"
             original = history / "原1.9.9/data/a.png"
             original.parent.mkdir(parents=True)
             original.write_bytes(b"original")
             (repo / "doc/plan").mkdir(parents=True)
             (history / "迁移清单.json").write_text(json.dumps({
-                "destination_root": "docs/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9",
+                "destination_root": "doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9",
                 "files": [{"path": "data/a.png", "sha256": hashlib.sha256(b"original").hexdigest()}]}),
                 encoding="utf-8")
             self.assertEqual([], self.stray_evidence(repo))
             (history / "原1.9.9/data/b.png").write_bytes(b"new")
             (repo / "doc/plan/run.log").write_text("x", encoding="utf-8")
-            self.assertEqual({"docs/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/data/b.png", "doc/plan/run.log"},
+            self.assertEqual({"doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/data/b.png", "doc/plan/run.log"},
                              set(self.stray_evidence(repo)))
             original.write_bytes(b"edited")
-            self.assertIn("docs/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/data/a.png", self.stray_evidence(repo))
+            self.assertIn("doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/data/a.png", self.stray_evidence(repo))
 
     def test_candidate_assets_are_recognised_by_place_and_reference(self):
         """候选情景 assets/ 下、被本情景文档引用的配图是目标稿的一部分，新画的也算；
         引用不到的、放在候选范围外的（哪怕与已审原图同字节）、运行截图，都还是运行证据。"""
         for base in ("doc/plan/2.0.0/设计/实施反馈/",
-                     "docs/archive/legacy-2.x/plan/2.0.3/设计/实施反馈/"):
+                     "doc/archive/legacy-2.x/plan/2.0.3/设计/实施反馈/"):
             with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
                 repo = Path(tmp)
                 (repo / "doc/spec").mkdir(parents=True)

@@ -14,7 +14,7 @@ Story Extension 是挂在 AgentMaison Framework 上的需求开发流程：从�
 
 文中的路径都指目标工程里的位置：每个需求的目录默认是 `doc/features/<编号>/`，实际以 AI 给出的路径为准。本仓 `story-1.0` 分支的 `demo/` 是装好 Framework 3.0.0 与 Story 1.9.8 的示例工程。`story` 分支是 2.0 开发线，它的 `demo/` 已换成 Framework 3.1、仍装 Story 1.9.8，这一组合在适配中、未经验证，不作示例或安装来源。
 
-维护者从[新 2.0.0 范围](doc/spec/2.0.0/00-版本范围.md)和[重写方案](doc/plan/2.0.0/00-重写准备与适配总览.md)继续工作；旧 2.x spec/plan 已迁至[归档区](docs/archive/README.md)。main 的新版 Framework 已完成[身份与合同核对](doc/plan/2.0.0/10-Framework-main新版核对与方案调整.md)，产品源码仍待 1.9.9 正式发布基线和适配方案定案后切换。
+维护者从[新 2.0.0 范围](doc/spec/2.0.0/00-版本范围.md)和[重写方案](doc/plan/2.0.0/00-重写准备与适配总览.md)继续工作；旧 2.x spec/plan 已迁至[归档区](doc/archive/README.md)。main 的新版 Framework 已完成[身份与合同核对](doc/plan/2.0.0/10-Framework-main新版核对与方案调整.md)，产品源码仍待 1.9.9 正式发布基线和适配方案定案后切换。
 
 ### 1.1 命令
 

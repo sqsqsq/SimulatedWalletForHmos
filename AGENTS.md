@@ -1,7 +1,7 @@
 # SimulatedWalletForHmos 维护契约
 
 > 本仓维护 Story Extension。本文是项目级唯一维护契约，写给维护设计者与维护实施者；消费模型在 `demo/` 或隔离 workspace 里工作，
-> 不读本文件、`doc/`、`docs/archive/` 与 `test/`。角色定义、方法和交付要求按用户级 AGENTS，本文只写本项目特有的对象、事实、约束和入口。
+> 不读本文件、`doc/`、`doc/archive/` 与 `test/`。角色定义、方法和交付要求按用户级 AGENTS，本文只写本项目特有的对象、事实、约束和入口。
 
 ## 0. 入口
 
@@ -10,7 +10,7 @@
 | `extensions/` | Story Extension 开发源（机制、知识样板；宿主入口由 Framework 按 manifest 物化） |
 | `demo/` | 完整消费工程：业务代码与业务文档、`framework/` 发布件、消费配置、宿主物化与已安装的 Extension（发布版） |
 | `doc/` | 项目文档：`spec/` 需求与版本范围，`plan/` 方案、评审与交回，`release/` 按版本的发布说明（只写本版增量）与 AI 交付流程说明；`features/` 是 CLI 测试回流的需求产物（不入库） |
-| `docs/archive/` | 旧轮次维护资料；追溯旧设计、评审和未完成项时从 [归档入口](docs/archive/README.md) 查找，当前任务仍从 `doc/spec/`、`doc/plan/` 进入 |
+| `doc/archive/` | 旧轮次维护资料；追溯旧设计、评审和未完成项时从 [归档入口](doc/archive/README.md) 查找，当前任务仍从 `doc/spec/`、`doc/plan/` 进入 |
 | `README.md` | 项目说明与使用指南，只写当前状态；维护者据此分发给使用者 |
 | `test/` | 测试域：测试协议、脚本、Case、夹具、回归台账、金样、演进记录与本地需求系统 |
 | `tools/cli/` | 实跑用的 CLI runtime |
@@ -22,7 +22,7 @@
 
 - 维护任务以用户本次给定的目标、需求、计划和状态为输入，在 `doc/spec/`、`doc/plan/` 中按该任务查找已有材料；对应不上时先补齐歧义。
   `doc/features/*` 是测试回流的运行产物，其下 `archive/` 按批次存历轮起跑前的归档；维护需求在 `doc/spec/`。
-- `doc/spec/`、`doc/plan/`、`doc/release/` 与 `docs/archive/` 随提交留下历史；归档版本号属于对应旧轮次，复用前核当前需求与实际接口。运行证据（事件流、运行日志、截图、材料原件、压缩包）放 `output/story/` 并在过程件里按路径引用；
+- `doc/spec/`、`doc/plan/`、`doc/release/` 与 `doc/archive/` 随提交留下历史；归档版本号属于对应旧轮次，复用前核当前需求与实际接口。运行证据（事件流、运行日志、截图、材料原件、压缩包）放 `output/story/` 并在过程件里按路径引用；
   临时脚本与临时工作区放 `output/scratch/<本次任务>/`。
 - 运行、修改或评价测试按 [test/TEST.md](test/TEST.md)，命令、状态、证据与评分只在那里维护；测试命令从仓根执行。
 - [test/EVOLUTION.md](test/EVOLUTION.md) 记录演进与规则来源，是追溯证据，不是当前实现依据。
