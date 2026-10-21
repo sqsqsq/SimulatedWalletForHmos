@@ -106,6 +106,7 @@ class CliRunner:
                     "tool_input": adapter_event.tool_input,
                     "tool_output": adapter_event.tool_output,
                     "usage": adapter_event.usage,
+                    "source_truncated": adapter_event.source_truncated,
                 }
             event_type = str(values.pop("event_type"))
             sid = values.get("session_id")

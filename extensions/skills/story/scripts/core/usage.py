@@ -334,15 +334,16 @@ def apply(project_root: Path, data: dict, req: dict, errors: list[str]) -> tuple
     node = reqs.get(key)
     if node is None:
         fw, ext = versions(project_root)
-        raw = given or {}
         node = reqs[key] = {"name": None, "version": None, "fw": fw, "ext": ext,
-                            "agent": raw.get("agent"), "model": raw.get("model"), "features": [], "steps": {}}
+                            "agent": None, "model": None, "features": [], "steps": {}}
     if feature not in node["features"]:
         node["features"].append(feature)
     consumed = None
     if given:
+        # 语义初始化一次接收四项：name 为 null 表示还没接收过；接收后四项都不再覆盖（显式 null 也固定）
         if node["name"] is None:
             node["name"], node["version"] = given["name"].strip(), given["version"]
+            node["agent"], node["model"] = given.get("agent"), given.get("model")
             consumed = fr / CONTRACT["input_file"]
         elif (node["name"], node["version"]) == (given["name"].strip(), given["version"]):
             consumed = fr / CONTRACT["input_file"]

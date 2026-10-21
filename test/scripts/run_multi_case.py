@@ -496,6 +496,41 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
     return workspace
 
 
+def seed_agent_adapter(suite: dict[str, Any], case: dict[str, Any], cli_name: str) -> dict[str, Any]:
+    """把本 Case 已选 CLI 对应的 adapter 写进隔离工程的个人设置，被测模型不再重新选 adapter。
+
+    走 Framework 现有入口 `check-personal-setup --ensure --select-adapter`，只写这个隔离工程的
+    `framework.local.json`，DevEco 等其它本地配置原样保留。CLI 名与已物化的同名 adapter 对得上才写；
+    对不上（例如 `agent`）记缺口、不猜 generic，由被测会话按原流程处理。结果写进起跑记录。
+    """
+    workspace = Path(str(case["workspace"]))
+    config = read_json(workspace / "framework.config.json", {}) or {}
+    materialized = config.get("materialized_adapters") or []
+    seed: dict[str, Any] = {"cli": cli_name, "adapter": None, "at": now()}
+    if cli_name not in materialized or not (workspace / "framework" / "agents" / cli_name / "adapter.yaml").is_file():
+        seed.update(status="unmapped", reason=f"CLI {cli_name} 没有已物化的同名 adapter（已物化：{materialized}）")
+    else:
+        proc = subprocess.run(
+            f'npx ts-node scripts/check-personal-setup.ts --json --ensure --select-adapter {cli_name} '
+            f'--project-root "{workspace}"', cwd=str(workspace / "framework" / "harness"), shell=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        try:
+            payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+        except ValueError:
+            payload = {}
+        active = payload.get("activeAdapter")
+        seed.update(adapter=active, returncode=proc.returncode, code=payload.get("code"),
+                    status="seeded" if payload.get("ok") and active == cli_name else "failed")
+        if seed["status"] == "failed":
+            seed["reason"] = (proc.stderr or proc.stdout)[-800:]
+    case["adapter_seed"] = seed
+    boundary_path = Path(str(suite["bundle_root"])) / "workspace-boundary.json"
+    boundary = read_json(boundary_path, {}) or {}
+    boundary.setdefault("adapter_seed", {})[str(case["case"])] = seed
+    write_json(boundary_path, boundary)
+    return seed
+
+
 def _complete_current_attempt(record: dict[str, Any], *, status: str,
                               failure_kind: str, retry_action: str) -> None:
     current = record.get("current_attempt")
@@ -529,7 +564,7 @@ def prepare_case_retry(suite: dict[str, Any], record: dict[str, Any]) -> None:
         shutil.rmtree(system, onexc=_clear_readonly_and_retry)
 
     record.update({
-        "workspace": None, "workspace_status": "recreating",
+        "workspace": None, "workspace_status": "recreating", "adapter_seed": None,
         "run_id": None, "worker_pid": None, "cursor": 0, "model_cursor": 0,
         "last_phase": None, "current_phase": None,
         "highest_phase_reached": None, "phase_source": None,
@@ -1400,13 +1435,16 @@ def _remove_tree_with_recovery(path: Path, *, attempts: int = 4) -> dict[str, An
 
     每次尝试（含进程复核失败与最后一次失败）都留在 `attempts` 里交给调用方先落清理报告；
     失败不再用抛异常的方式带走已有的尝试记录。重试次数不是「清干净」的证明，`removed` 以目录确实不在为准。
+    归属与进程按原始路径核；删除与剩余枚举走 `_long`——深层路径超过 260 字符时，普通路径删不掉叶子，
+    外层报「目录不是空的」。报告里的剩余路径仍按相对原树写。
     """
     evidence: list[dict[str, Any]] = []
+    target = _long(path)
 
     def result(error: str | None) -> dict[str, Any]:
         remaining = evidence[-1].get("remaining", []) if evidence else []
-        return {"removed": not path.exists(), "attempts": evidence,
-                "remaining": [] if not path.exists() else remaining, "error": error}
+        return {"removed": not target.exists(), "attempts": evidence,
+                "remaining": [] if not target.exists() else remaining, "error": error}
 
     delays = (0.0, 0.15, 0.4, 0.8)
     for attempt in range(1, attempts + 1):
@@ -1422,18 +1460,18 @@ def _remove_tree_with_recovery(path: Path, *, attempts: int = 4) -> dict[str, An
             evidence.append(item)
             return result(f"删除前进程复核失败或仍有进程引用: {path}")
         try:
-            if path.exists():
-                shutil.rmtree(path, onexc=_clear_readonly_and_retry)
+            if target.exists():
+                shutil.rmtree(target, onexc=_clear_readonly_and_retry)
             item["status"] = "deleted"
             item["remaining"] = []
             evidence.append(item)
             return result(None)
         except OSError as exc:
             remaining = []
-            if path.exists():
+            if target.exists():
                 try:
-                    remaining = [str(item.relative_to(path))
-                                 for item in list(path.rglob("*"))[-50:]]
+                    remaining = [str(item.relative_to(target))
+                                 for item in list(target.rglob("*"))[-50:]]
                 except OSError:
                     remaining = ["<enumeration-failed>"]
             item.update({"status": "retry", "error": f"{type(exc).__name__}: {exc}",
@@ -1782,6 +1820,9 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
             case["last_error"] = {"workspace": str(exc)}
             append_event(suite, "case_workspace_failed", case=case_id, error=str(exc))
             return
+    cli_name = suite_cli_configurations(suite)[config_index]["name"]
+    if (case.get("adapter_seed") or {}).get("cli") != cli_name:
+        append_event(suite, "case_adapter_seeded", case=case_id, **seed_agent_adapter(suite, case, cli_name))
     override_args: list[str] = []
     if case.get("requested_start_phase") and case["requested_start_phase"] != case.get("start_phase"):
         override_args.extend(("--start-phase", str(case["requested_start_phase"])))
@@ -3321,6 +3362,76 @@ def finalize_segment(record: dict[str, Any]) -> tuple[str, bool]:
     return segment, not reached
 
 
+DSH_SESSION_READER = HERE / "dsh_session.mjs"
+
+
+def _dsh_session(path: Path) -> dict[str, Any]:
+    proc = subprocess.run(["node", str(DSH_SESSION_READER), str(path)], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False)
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return {"error": (proc.stderr or proc.stdout or "读取器没有输出")[-400:]}
+
+
+def _copy_session(source: Path, destination: Path) -> dict[str, Any]:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    return {"source": str(source), "copy": str(destination),
+            "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(), "size": destination.stat().st_size}
+
+
+def capture_native_sessions(suite: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """把这次 run 的 dsh 原生会话原件留到 `<run>/native-sessions/<session-id>/`，供维护复核核对原样性与子级工具。
+
+    只按本 run 的 runtime 记录里的 session_id 找 `$DSH_HOME/sessions/*/<id>/`，恰好一个候选才取；
+    先复制原字节、记源路径与摘要，再解析副本，核头部 id 与 cwd；子会话只认父会话 `subagent/catalog`
+    里登记的 childId，并核它的 parentSession。缺失、多候选、解不出都如实列，不按目录时间猜，不生成业务报告。
+    """
+    state = run_pointer_state(str(record["case"]), record.get("run_id")) or {}
+    run_dir = Path(str(state.get("run_dir") or Path(str(suite["bundle_root"])) / "cases"
+                       / str(record["case"]) / str(record.get("run_id") or "no-run")))
+    workspace = str(Path(str(record.get("workspace") or "")).resolve()).lower()
+    home = Path(os.environ.get("DSH_HOME") or Path.home() / ".dsh") / "sessions"
+    ids = sorted({str(rj["session_id"]) for rj in (read_json(p) for p in run_dir.glob("cli-runtime/*/run.json"))
+                  if isinstance(rj, dict) and rj.get("cli") == "dsh" and rj.get("session_id")})
+    out: dict[str, Any] = {"status": "captured" if ids else "no_dsh_session", "sessions": [], "not_captured": []}
+
+    def find(session_id: str) -> Path | None:
+        found = sorted(home.glob(f"*/{session_id}/session.v4.jsonl.zstd"))
+        if len(found) != 1:
+            out["not_captured"].append({"session_id": session_id, "reason": f"候选 {len(found)} 个"})
+            return None
+        return found[0]
+
+    for sid in ids:
+        source = find(sid)
+        if source is None:
+            continue
+        dest = run_dir / "native-sessions" / sid
+        entry = _copy_session(source, dest / source.name)
+        info = _dsh_session(dest / source.name)
+        header = info.get("header") or {}
+        entry.update(session_id=sid, error=info.get("error"), lines=info.get("lines"),
+                     header_matches=header.get("id") == sid and str(header.get("cwd", "")).lower() == workspace,
+                     children=[])
+        for child in info.get("children") or []:
+            child_source = find(str(child["childId"]))
+            if child_source is None:
+                continue
+            copied = _copy_session(child_source, dest / "children" / str(child["childId"]) / child_source.name)
+            child_info = _dsh_session(Path(copied["copy"]))
+            copied.update(child_id=child["childId"], label=child.get("label"), error=child_info.get("error"),
+                          parent_matches=(child_info.get("header") or {}).get("parentSession") == sid)
+            entry["children"].append(copied)
+        out["sessions"].append(entry)
+    if out["not_captured"] or any(s.get("error") or not s["header_matches"] for s in out["sessions"]):
+        out["status"] = "incomplete"
+    if ids:
+        write_json(run_dir / "native-sessions" / "manifest.json", out)
+    return out
+
+
 def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     """Archive and promote every terminal Case with a retained workspace."""
     workspace = Path(str(record.get("workspace") or "")).resolve()
@@ -3440,6 +3551,7 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
               "execution_status": record.get("execution_status"),
               "segment": segment, "partial": partial,
               "usage": snapshot_usage(suite, record, "final"),
+              "native_sessions": capture_native_sessions(suite, record),
               **evidence,
               "promoted": promoted, "already_promoted": already_promoted,
               "conflicts": conflicts, "promoted_at": now()}

@@ -802,6 +802,191 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             done = run_multi_case._remove_tree_with_recovery(root / "tree")
         self.assertEqual((True, [], None), (done["removed"], done["remaining"], done["error"]))
 
+    def _deep_tree(self, root: Path) -> tuple[Path, Path]:
+        """一棵叶子路径超过 300 字符的树（用长路径前缀建，普通路径够不着叶子）。"""
+        tree = root / "tree"
+        leaf = tree.joinpath(*[ch * 60 for ch in "abcde"])
+        run_multi_case._long(leaf).mkdir(parents=True)
+        (run_multi_case._long(leaf) / "f.txt").write_text("x", encoding="utf-8")
+        self.assertGreater(len(str(leaf / "f.txt")), 300)
+        return tree, leaf
+
+    def test_a_long_tree_is_really_deleted(self) -> None:
+        """355 字符级的深树：普通路径删到叶子报「目录不是空的」，走长路径前缀后确实删掉。"""
+        root = Path(tempfile.mkdtemp(prefix="story-rm-long-"))
+        self.addCleanup(shutil.rmtree, run_multi_case._long(root), True)
+        tree, _ = self._deep_tree(root)
+        with mock.patch.object(run_multi_case, "_process_inventory", return_value=(True, [], None)):
+            out = run_multi_case._remove_tree_with_recovery(tree)
+        self.assertEqual((True, None), (out["removed"], out["error"]), out)
+        self.assertFalse(run_multi_case._long(tree).exists())
+
+    def test_read_only_and_busy_files_and_retry_after_release(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-rm-busy-"))
+        self.addCleanup(shutil.rmtree, run_multi_case._long(root), True)
+        tree, leaf = self._deep_tree(root)
+        locked = run_multi_case._long(leaf) / "f.txt"
+        os.chmod(locked, 0o400)
+        if os.name == "nt":
+            handle = open(locked, "rb")  # noqa: SIM115 —— Windows 上打开着的文件删不掉，模拟被占用
+            with mock.patch.object(run_multi_case, "_process_inventory", return_value=(True, [], None)), \
+                    mock.patch.object(run_multi_case.time, "sleep"):
+                busy = run_multi_case._remove_tree_with_recovery(tree, attempts=2)
+            self.assertFalse(busy["removed"])
+            self.assertEqual(["retry", "retry"], [a["status"] for a in busy["attempts"]])
+            self.assertTrue(busy["remaining"], "残留路径没留下")
+            handle.close()
+        with mock.patch.object(run_multi_case, "_process_inventory", return_value=(True, [], None)):
+            done = run_multi_case._remove_tree_with_recovery(tree)
+        self.assertEqual((True, None), (done["removed"], done["error"]), "只读件或半删后的重试没删干净")
+
+    def test_a_link_inside_the_tree_does_not_reach_its_target(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-rm-link-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        outside = root / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("keep", encoding="utf-8")
+        tree = root / "tree"
+        tree.mkdir()
+        if os.name == "nt":
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", str(tree / "link"), str(outside)],
+                                  capture_output=True, text=True)
+            if made.returncode:
+                self.skipTest(f"建不了目录联接：{made.stderr}")
+        else:
+            (tree / "link").symlink_to(outside, target_is_directory=True)
+        with mock.patch.object(run_multi_case, "_process_inventory", return_value=(True, [], None)):
+            out = run_multi_case._remove_tree_with_recovery(tree)
+        self.assertTrue(out["removed"], out)
+        self.assertEqual("keep", (outside / "keep.txt").read_text(encoding="utf-8"), "删树时穿过链接删了外部目录")
+
+    def test_an_unreadable_process_list_blocks_the_delete(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="story-rm-inv-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        (root / "tree").mkdir()
+        with mock.patch.object(run_multi_case, "_process_inventory", return_value=(False, [], "枚举失败")):
+            out = run_multi_case._remove_tree_with_recovery(root / "tree")
+        self.assertEqual((False, "blocked_process_recheck"), (out["removed"], out["attempts"][0]["status"]))
+        self.assertTrue((root / "tree").exists())
+
+    def test_one_failed_target_does_not_stop_the_others(self) -> None:
+        """一处删除失败留证、记 warning，其它可删的旧现场照删，新 suite 的起跑不被拦。"""
+        root = Path(tempfile.mkdtemp(prefix="story-cleanup-mixed-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        output_root = root / "output/story"
+        for name in ("story-suite-old1", "story-suite-old2", "story-suite-new"):
+            (output_root / name).mkdir(parents=True)
+        for name in ("story-suite-old1", "story-suite-old2"):
+            run_multi_case.write_json(output_root / name / "suite.json",
+                                      {"suite_id": name, "status": "finished", "case_states": {}})
+        real = run_multi_case._remove_tree_with_recovery
+
+        def remove(path: Path, **kw):
+            if "old1" in str(path):
+                return {"removed": False, "error": "OSError: 注入的删除失败", "remaining": ["x"],
+                        "attempts": [{"attempt": 1, "status": "retry", "error": "OSError: 注入的删除失败"}]}
+            return real(path, **kw)
+        with mock.patch.object(run_multi_case, "OUT_ROOT", output_root), \
+                mock.patch.object(tempfile, "gettempdir", return_value=str(root / "temp")), \
+                mock.patch.object(run_multi_case, "_process_inventory", return_value=(True, [], None)), \
+                mock.patch.object(run_multi_case, "_remove_tree_with_recovery", side_effect=remove):
+            report = run_multi_case.cleanup_previous_test_runs(output_root / "story-suite-new", "story-suite-new")
+        self.assertEqual("completed_with_warnings", report["status"])
+        self.assertTrue((output_root / "story-suite-old1").exists(), "删除失败的现场被当成清掉了")
+        self.assertFalse((output_root / "story-suite-old2").exists(), "一处失败拦住了其它可删的旧现场")
+        self.assertTrue((output_root / "story-suite-new").exists())
+
+    def _seed_workspace(self, materialized: list[str]) -> tuple[dict, dict, Path]:
+        root = Path(tempfile.mkdtemp(prefix="story-seed-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        ws = root / "ws"
+        for name in materialized:
+            (ws / "framework" / "agents" / name).mkdir(parents=True)
+            (ws / "framework" / "agents" / name / "adapter.yaml").write_text(f"adapter_name: {name}\n", encoding="utf-8")
+        (ws / "framework" / "harness").mkdir(parents=True, exist_ok=True)
+        run_multi_case.write_json(ws / "framework.config.json", {"materialized_adapters": materialized})
+        (root / "suite").mkdir()
+        return {"bundle_root": str(root / "suite")}, {"case": "c1", "workspace": str(ws)}, root
+
+    def test_the_known_cli_is_seeded_as_the_active_adapter(self) -> None:
+        """已选 CLI 有同名已物化 adapter：走 Framework 的 --select-adapter，只对这个隔离工程，结果进起跑记录。"""
+        suite, case, root = self._seed_workspace(["generic", "dsh", "opencode"])
+        done = subprocess.CompletedProcess([], 0, stdout='{"ok": true, "code": "ok", "activeAdapter": "dsh"}', stderr="")
+        with mock.patch.object(run_multi_case.subprocess, "run", return_value=done) as run:
+            seed = run_multi_case.seed_agent_adapter(suite, case, "dsh")
+        command = run.call_args.args[0]
+        self.assertIn("--select-adapter dsh", command)
+        self.assertIn(f'--project-root "{case["workspace"]}"', command)
+        self.assertEqual(("seeded", "dsh"), (seed["status"], seed["adapter"]))
+        boundary = run_multi_case.read_json(root / "suite" / "workspace-boundary.json", {})
+        self.assertEqual("seeded", boundary["adapter_seed"]["c1"]["status"])
+
+    def test_an_unmatched_cli_is_a_gap_not_a_guess(self) -> None:
+        suite, case, _ = self._seed_workspace(["generic", "cursor"])
+        with mock.patch.object(run_multi_case.subprocess, "run") as run:
+            seed = run_multi_case.seed_agent_adapter(suite, case, "agent")
+        run.assert_not_called()
+        self.assertEqual(("unmapped", None), (seed["status"], seed["adapter"]))
+
+    def test_a_refused_selection_is_recorded_as_failed(self) -> None:
+        suite, case, _ = self._seed_workspace(["dsh"])
+        refused = subprocess.CompletedProcess([], 1, stdout='{"ok": false, "code": "needs_adapter_choice"}', stderr="坏了")
+        with mock.patch.object(run_multi_case.subprocess, "run", return_value=refused):
+            seed = run_multi_case.seed_agent_adapter(suite, case, "dsh")
+        self.assertEqual(("failed", "needs_adapter_choice"), (seed["status"], seed["code"]))
+
+    def _session_file(self, path: Path, rows: list[dict]) -> None:
+        """用 Node 内置 zstd 写一个两帧的会话文件（dsh 的 session.v4.jsonl.zstd 就是多帧首尾相接）。"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps(r, ensure_ascii=False) + "\n" for r in rows]
+        script = ("const fs=require('fs'),z=require('zlib');const p=JSON.parse(process.argv[2]);"
+                  "fs.writeFileSync(process.argv[1],Buffer.concat(p.map(s=>z.zstdCompressSync(Buffer.from(s)))));")
+        halves = ["".join(lines[:1]), "".join(lines[1:])]
+        subprocess.run(["node", "-e", script, str(path), json.dumps(halves)], check=True)
+
+    def _native_fixture(self) -> tuple[dict, dict, Path, Path]:
+        root = Path(tempfile.mkdtemp(prefix="story-native-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        ws, run_dir, home = root / "ws", root / "run", root / "dsh"
+        ws.mkdir()
+        (run_dir / "cli-runtime" / "r1").mkdir(parents=True)
+        run_multi_case.write_json(run_dir / "cli-runtime" / "r1" / "run.json", {"cli": "dsh", "session_id": "session-p1"})
+        sessions = home / "sessions" / "--ws--"
+        self._session_file(sessions / "session-p1" / "session.v4.jsonl.zstd", [
+            {"type": "session", "version": 4, "id": "session-p1", "cwd": str(ws)},
+            {"type": "subagent/catalog", "data": {"childId": "c1", "label": "审查"}}])
+        self._session_file(sessions / "c1" / "session.v4.jsonl.zstd", [
+            {"type": "session", "version": 4, "id": "c1", "parentSession": "session-p1", "cwd": str(ws)}])
+        return {"bundle_root": str(root)}, {"case": "c", "run_id": "r", "workspace": str(ws)}, run_dir, home
+
+    def _capture(self, suite: dict, record: dict, run_dir: Path, home: Path) -> dict:
+        with mock.patch.object(run_multi_case, "run_pointer_state", return_value={"run_dir": str(run_dir)}), \
+                mock.patch.dict(os.environ, {"DSH_HOME": str(home)}):
+            return run_multi_case.capture_native_sessions(suite, record)
+
+    def test_native_sessions_are_copied_by_their_recorded_id(self) -> None:
+        suite, record, run_dir, home = self._native_fixture()
+        out = self._capture(suite, record, run_dir, home)
+        self.assertEqual("captured", out["status"], out)
+        session = out["sessions"][0]
+        self.assertEqual((True, 2, None), (session["header_matches"], session["lines"], session["error"]))
+        self.assertEqual([("c1", True)], [(c["child_id"], c["parent_matches"]) for c in session["children"]])
+        copy = run_dir / "native-sessions" / "session-p1" / "session.v4.jsonl.zstd"
+        self.assertEqual((home / "sessions" / "--ws--" / "session-p1" / "session.v4.jsonl.zstd").read_bytes(), copy.read_bytes())
+        self.assertTrue((run_dir / "native-sessions" / "manifest.json").is_file())
+
+    def test_missing_ambiguous_or_foreign_sessions_are_reported_not_guessed(self) -> None:
+        suite, record, run_dir, home = self._native_fixture()
+        shutil.copytree(home / "sessions" / "--ws--" / "c1", home / "sessions" / "--other--" / "c1")
+        out = self._capture(suite, record, run_dir, home)
+        self.assertEqual("incomplete", out["status"])
+        self.assertEqual([("c1", "候选 2 个")], [(x["session_id"], x["reason"]) for x in out["not_captured"]])
+        out = self._capture(suite, dict(record, workspace=str(home)), run_dir, home)
+        self.assertFalse(out["sessions"][0]["header_matches"], "别的工程的会话被当成本 run 的")
+        shutil.rmtree(home / "sessions" / "--ws--" / "session-p1")
+        out = self._capture(suite, record, run_dir, home)
+        self.assertEqual([("session-p1", "候选 0 个")], [(x["session_id"], x["reason"]) for x in out["not_captured"]])
+
     def test_active_historical_suite_blocks_cleanup_before_delete(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-active-"))
         original_out = run_multi_case.OUT_ROOT

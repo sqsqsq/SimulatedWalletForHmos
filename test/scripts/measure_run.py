@@ -303,8 +303,11 @@ def tool_call_view(events: list[dict]) -> tuple[list[dict], list[dict]]:
         note("conflicting_events", index, event)
     for call in calls:
         call["kind"] = _call_kind(call)
+        call["shortened"] = any(events[i].get("source_truncated") is True for i in call["indices"])
         if call["end"] is None:
             note("no_result", call["start_index"], call["start"])
+        if call["shortened"]:
+            note("source_truncated", call["start_index"], call["start"])
     incomplete.sort(key=lambda item: item["index"])
     return calls, incomplete
 
@@ -331,8 +334,9 @@ def _call_kind(call: dict) -> str:
 
 
 def _result(call: dict) -> str | None:
-    """调用的输出；没有结果或同键冲突时为 None，门禁结论不从它推。"""
-    if call["end"] is None or call["conflict"]:
+    """调用的输出；没有结果、同键冲突或宿主输出把它截断了时为 None，门禁结论不从它推
+    （截断的输出里没看到 FAIL 不等于通过）。"""
+    if call["end"] is None or call["conflict"] or call["shortened"]:
         return None
     return _output_text(call["end"])
 
@@ -629,7 +633,7 @@ def _human_wait(run_dir: Path) -> dict:
 
 def render(result: dict) -> str:
     lines = [
-        "[measure_run] 实跑效率度量（只报数，达标与否由人判断）",
+        "[measure_run] 实跑效率度量（只报数，达标与否由人判断；范围是整份 events.jsonl，分段按实际 checkpoint）",
         f"  事件 {result['events']}｜工具调用 {result['tool_calls']}｜时长 {result['duration_min']} 分钟",
         *([f"  统计不完整，仅为已观察到的次数：归并不了的工具事件 "
            + "、".join(f"{reason} {count}" for reason, count in
@@ -644,7 +648,7 @@ def render(result: dict) -> str:
         "",
         "  ── 上下文 ──",
         f"    context_total：{result['context_first']} → {result['context_last']}"
-        f"（增量 {result['context_growth']}）   spec 阶段目标 ≤150K",
+        f"（首末两次请求读数之差 {result['context_growth']}，不是单阶段净增）   spec 阶段目标 ≤150K",
         "",
         "  ── 门禁 ──",
         f"    harness 运行 {result['harness_runs']} 次",

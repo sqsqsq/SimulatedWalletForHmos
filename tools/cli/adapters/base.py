@@ -18,6 +18,9 @@ class AdapterEvent:
     tool_input: dict[str, Any] | None = None
     tool_output: str | None = None
     usage: dict[str, Any] | None = None
+    # Provider projection integrity: True/False when the provider says whether this event was
+    # shortened in its output stream, None when the provider does not report it.
+    source_truncated: bool | None = None
 
 
 def session_id(event: dict[str, Any]) -> str | None:

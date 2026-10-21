@@ -55,6 +55,12 @@ no `resume_args`, so it cannot be used where session continuation is required.
   the same `tool_call_id`, the provider status unchanged (`completed`, `error`,
   …; missing → `unknown`) and `result` as `tool_output`. The result names no
   tool, so consumers pair calls and results by run and `tool_call_id`.
+- The DSH JSON stream bounds long strings (8 KiB per string, 32 KiB per event)
+  and marks such events `truncated: true`; the model itself received the full
+  value. Every DSH event carries this as `source_truncated` (true/false) so
+  readers know the stored text may be shortened. Providers that do not report
+  it leave `source_truncated` null, and older records without the field read as
+  null too.
 
 Request timeout overrides may set both `soft_timeout_sec` and `hard_timeout_sec`
 to zero to disable elapsed-time limits. Registry defaults remain finite; mixed

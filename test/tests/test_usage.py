@@ -98,13 +98,27 @@ class Initialisation(UsageCase):
         node = self.usage()["requirements"]["AR1"]
         self.assertTrue(out["ok"] and not out["pending_init"], out)
         self.assertEqual(("通知订阅设置", None), (node["name"], node["version"]), "显式 null 是已判断未知")
-        self.assertEqual((None, None), (node["agent"], node["model"]), "晚到的 agent/model 冒充了首次环境")
+        self.assertEqual(("opencode", "m1"), (node["agent"], node["model"]),
+                         "首份合法输入的 agent/model 要和名称、版本同一次接收")
         self.assertFalse((self.fr() / ".usage-input.json").exists(), "接收后没清理输入")
         kept = self.put_input(requirement="AR1", name="改了名字", version="4.0")
         out = self.call("observe", "coding")
         self.assertTrue(any("已固定" in e for e in out["errors"]), out)
         self.assertEqual("通知订阅设置", self.usage()["requirements"]["AR1"]["name"])
         self.assertTrue(kept.exists())
+
+    def test_the_four_values_freeze_together_and_later_switches_do_not_count(self) -> None:
+        """接收后换会话、换模型都不改；首份里显式写的 null 也固定，不被后来的值补上。"""
+        self.put_input(requirement="AR1", name="甲", version="2.7.0", agent=None, model="m1")
+        self.call("observe", "spec")
+        for agent, model in (("dsh", "m2"), (None, None)):
+            with self.subTest(agent=agent, model=model):
+                self.put_input(requirement="AR1", name="甲", version="2.7.0", agent=agent, model=model)
+                out = self.call("observe", "spec")
+                self.assertTrue(out["ok"], out)
+                node = self.usage()["requirements"]["AR1"]
+                self.assertEqual(("甲", "2.7.0", None, "m1"), (node["name"], node["version"], node["agent"], node["model"]))
+                self.assertFalse((self.fr() / ".usage-input.json").exists(), "同名同版本的再写入没被收走")
 
     def test_the_first_observation_brings_its_environment(self) -> None:
         self.put_input(requirement="AR1", name="甲", version="4.2.0", agent="opencode", model=None)

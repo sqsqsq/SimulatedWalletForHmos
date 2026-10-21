@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 
 from .base import AdapterEvent, BaseAdapter, part_input, session_id
@@ -295,10 +296,16 @@ class DshAdapter(BaseAdapter):
     `turn_end` with reason.kind == "error" carries {"message", "code"}.
     Calls and results pair by `callId` and several may be open at once; a result
     names no tool, and its status passes through unchanged.
+    The JSON stream bounds long strings and marks the event `truncated: true`; the model still
+    received the full value, so the flag is passed on as `source_truncated` and nothing else changes.
     Model and sandbox preset live in DSH profile config, not in argv.
     """
 
     def parse(self, event: dict[str, Any]) -> list[AdapterEvent]:
+        shortened = event.get("truncated") is True
+        return [replace(item, source_truncated=shortened) for item in self._parse(event)]
+
+    def _parse(self, event: dict[str, Any]) -> list[AdapterEvent]:
         kind = str(event.get("type") or "")
         if kind == "session":
             sid = str(event.get("sessionId") or "") or None

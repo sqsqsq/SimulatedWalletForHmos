@@ -82,6 +82,7 @@ class AdapterTests(unittest.TestCase):
                     tool_name=line["tool"],
                     tool_status="started",
                     tool_input=line["input"],
+                    source_truncated=line.get("truncated") is True,
                 )
             else:
                 expected = AdapterEvent(
@@ -90,6 +91,7 @@ class AdapterTests(unittest.TestCase):
                     tool_call_id=line["callId"],
                     tool_status=line["status"],
                     tool_output=line["result"],
+                    source_truncated=line.get("truncated") is True,
                 )
             self.assertEqual(expected, event)
         # 两个读图调用都先开出、再各自收到失败结果，失败不投影为完成
@@ -121,6 +123,18 @@ class AdapterTests(unittest.TestCase):
         )[0]
         self.assertEqual('{"n": 1}', structured.tool_output)
         self.assertEqual([], [e for e in adapter.parse({"type": "plan_update"}) if e.type == "tool"])
+
+    def test_dsh_stream_shortening_is_flagged_and_other_hosts_stay_unknown(self) -> None:
+        # 夹具里那条被 dsh 投影截断的读取结果带 truncated=true；其余都没截
+        flags = [event.source_truncated for event in self.parse("dsh", "dsh_tools") if event.type == "tool"]
+        self.assertEqual(1, flags.count(True))
+        self.assertTrue(all(flag in (True, False) for flag in flags))
+        adapter = get_adapter("dsh")
+        text = adapter.parse({"type": "text", "text": "很长的回复", "truncated": True})
+        self.assertEqual([("text", "很长的回复", True)], [(e.type, e.content, e.source_truncated) for e in text])
+        for name in ("opencode", "codex", "claude"):
+            with self.subTest(provider=name):
+                self.assertTrue(all(e.source_truncated is None for e in self.parse(name)))
 
     def test_dsh_error_turn(self) -> None:
         adapter = get_adapter("dsh")

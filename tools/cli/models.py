@@ -101,6 +101,7 @@ class CliEvent:
     tool_input: dict[str, Any] | None = None
     tool_output: str | None = None
     usage: dict[str, Any] | None = None
+    source_truncated: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

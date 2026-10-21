@@ -65,8 +65,9 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 1. 创建本轮 `output/story/<suite-id>/` 控制目录。
 2. 扫描并关联 `%TEMP%/sw-story/*` 与 `output/story/*` 中的历史 suite。
 3. 整体预检终态、PID、lease、路径边界、软链接和所有权。
-4. 全部安全后删除历史 workspace/output，写入 `previous-run-cleanup.json`。个别目录删除失败时逐个记录 `retained_cleanup_warning`
-   与残留路径，下一轮重试，本轮照常继续。
+4. 全部安全后删除历史 workspace/output，写入 `previous-run-cleanup.json`。删除与剩余枚举走 Windows 长路径前缀（深层报告路径常超过
+   260 字符），归属、进程与证据仍按原始路径。个别目录删除失败时逐个记录 `retained_cleanup_warning` 与残留路径，其它可删的照删，
+   下一轮重试，本轮照常继续。
 5. 将维护仓 `doc/features/` 下的需求目录（上一轮回流的需求产物）归档到 `doc/features/archive/Story-Features-<时间戳>/`，本轮结束不恢复；
    `archive` 自身不搬，意外出现的文件留在原处并记入 `feature-migration.json`。`archive` 是保留名，需求编号与它同名的 Case 在读取时即被拒绝。
    单个 Case 新链起跑时，工作区里同名的旧产物存进该次运行输出目录的 `feature-history/`。
@@ -80,7 +81,9 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 装进模板的 `doc/extensions/`、写入口与扩展段 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步不成立，模板作废、
 不建 Case、不起跑，修好后重新装配。各 Case 工作区从模板复制，
 再放入该 Case 的输入；启动前检查路径边界与软链接，并在 `workspace-boundary.json` 记录 demo 提交、`copied`、`excluded`、安装结果和各 Case 的
-`case_seeded`。
+`case_seeded`。每次启动 Case 前，按这次选中的 CLI 用 Framework 的 `check-personal-setup --ensure --select-adapter <CLI 名>` 写好这个隔离工程的
+个人 adapter（只在 CLI 与已物化的同名 adapter 对得上时写，DevEco 等本地配置保留；对不上记 `unmapped` 不猜），结果记在 `adapter_seed`，
+被测模型不再为个人设置停下来问。
 
 ### 1.3 人手试用
 
@@ -315,6 +318,7 @@ output/story/<suite-id>/
       ├─ phase-results/
       ├─ cli-runtime/<runtime-id>/{request.json,run.json,raw.jsonl,events.jsonl}
       ├─ usage/<point>/usage.json   # 该运行工作区全局 doc/usage.json 的原字节快照，point 为 initial / update / final
+      ├─ native-sessions/<session-id>/  # finalize 时按 run.json 的 dsh session_id 复制的原生会话原件与子会话（manifest.json 记来源与摘要）
       └─ artifact/
 ```
 
@@ -357,7 +361,7 @@ python test/scripts/run_multi_case.py finalize `
 ```
 
 - Case 已终态且 workspace 存在就回灌；成功或失败 Case 的 `doc/features/<feature>` 都独立复制到维护仓 `doc/features/`（实际续跑过第二段的
-  终态另名 `<feature>-update`，回流身份按实际走到的段落定，不按计划的 `after_initial` 推断），目标已存在时仅内容完全相同视为已回灌，否则保留双方并记录冲突。检查点与 finalize 各把工作区全局 `doc/usage.json` 原字节留到该运行的 `usage/<point>/`，缺失记 missing、已固定的不覆盖。
+  终态另名 `<feature>-update`，回流身份按实际走到的段落定，不按计划的 `after_initial` 推断），目标已存在时仅内容完全相同视为已回灌，否则保留双方并记录冲突。检查点与 finalize 各把工作区全局 `doc/usage.json` 原字节留到该运行的 `usage/<point>/`，缺失记 missing、已固定的不覆盖。finalize 还把 dsh 原生会话原件（父会话按记录的 session_id，子会话按父会话登记的 childId）复制到 `native-sessions/`，缺失、多候选或解不出如实列在 manifest；dsh 的 JSON 流会截断长字符串，事件里的 `source_truncated` 标出哪些记录不完整，原样核对以会话原件为准。
 - 受控源码差异逐文件回灌 demo，做三方检查：目标仍等于 suite 基线时写入，已等于该 Case 结果时记幂等完成，同时不同于两者时记冲突；
   删除只记录不执行；不因同批其他 Case 已写入源码而跳过。
 - 每个 Case 生成不可变的 `observations.jsonl` 与汇总 `observation-record.md`：启动与恢复、阶段和状态变化、观测、交互、CLI/gate/基础设施错误、
@@ -500,7 +504,8 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 - shell 工具认 bash / pwsh / shell / shell_command。
 - verifier 只认专用 `verifier` 工具与 `subagent_type=verifier` 的 task；其它委派记进 `delegations_unresolved`，是不是审查由人判断。
 - 首次门禁、登记与返工只看有结果的调用，命令报错也算没过；读一份旧门禁报告不是一轮门禁。
-- 归并不了的条目（只有开始、只有结果、同键冲突、跨检查点）列在 `incomplete_tool_events`，此时计数只是已观察到的次数。
+- 归并不了或被宿主输出截断的条目（只有开始、只有结果、同键冲突、跨检查点、`source_truncated`）列在 `incomplete_tool_events`，此时计数只是已观察到的次数；被截断的门禁结果不出结论。
+- `context_growth` 是首末两次请求的 context_total 读数之差，不是单阶段净上下文。
 - `*_gap_sec` 仍是事件间隔估计；并发调用相互重叠，不能相加成墙钟。
 
 旧运行要按新口径看，在评审证据目录另存重投影与重测结果，不改原运行记录。

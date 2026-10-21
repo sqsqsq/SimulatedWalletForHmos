@@ -557,6 +557,19 @@ class ToolCallsArePairedFromPublicEvents(unittest.TestCase):
         self.assertEqual(0, clash["gate_rounds_with_fail"], "两个结果互相矛盾，不任取一个")
         self.assertIsNone(clash["segments"]["whole"]["first_harness"])
 
+    def test_a_result_shortened_by_the_host_gives_no_gate_verdict(self):
+        """dsh 把长输出截断后，没看到 FAIL 不等于通过：这次门禁不出结论，列进不完整条目；没截断的照常判。"""
+        shortened = dict(_dsh_result("h1", "  Harness Script Report …（后面被截掉）"), truncated=True)
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h1", "pwsh", command=HARNESS_PWSH), shortened,
+            _dsh_call("h2", "pwsh", command=HARNESS_PWSH), _dsh_result("h2", GATE_FAIL),
+        ])]))
+        self.assertEqual(2, r["harness_runs"])
+        self.assertEqual({"fail_count": 2, "status": "completed"}, r["segments"]["whole"]["first_harness"],
+                         "被截断的那次不能当成一次全绿门禁")
+        self.assertEqual([("source_truncated", "h1")],
+                         [(i["reason"], i["tool_call_id"]) for i in r["incomplete_tool_events"]])
+
     def test_codex_started_and_completed_items_are_one_call(self):
         item = {"id": "item_1", "type": "command_execution", "command": "bash -lc 'npx ts-node harness-runner.ts'"}
         r = self._measure(_public_events("codex", [("run-a", [
