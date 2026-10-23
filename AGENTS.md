@@ -13,15 +13,15 @@
 | `README.md` | 项目说明与使用指南，只写当前状态；维护者据此分发给使用者 |
 | `test/` | 测试域：测试协议、脚本、Case、夹具、回归台账、金样、演进记录与本地需求系统 |
 | `tools/cli/` | 实跑用的 CLI runtime |
-| `output/` | 不入库：`output/story/` 放运行证据，`output/scratch/` 放临时脚本、临时工作区与 pytest 缓存 |
+| `output/` | 不入库：`output/story/` 放 CLI 运行记录（永不清理），`output/evidence/` 放维护过程证据，`output/scratch/` 放临时脚本、临时工作区与 pytest 缓存；分工与清理规则见 [TEST §0.4](test/TEST.md#04-东西放在哪) |
 
 `extensions/` 是当前开发版；测试时它被装进从 demo 复制的一次性 template；demo 只在正式发布时更新，平时保持上一个发布版。
 
 - 维护任务以用户本次给定的目标、需求、计划和状态为输入，在 `doc/spec/`、`doc/plan/` 中按该任务查找已有材料；对应不上时先补齐歧义。
   `doc/features/*` 是测试回流的运行产物，其下 `archive/` 按批次存历轮起跑前的归档；维护需求在 `doc/spec/`。
 - 制定/修改方案、开始实现或评审时，先读 [TEST §6.5](test/TEST.md#65-维护标准与评审)、[全量评价标准](test/regression/extension-acceptance.md)及本版 `doc/spec/<版本>/评价标准变更.md`。需求目标确定后先更新并核对标准，再开始受影响的实现；评审绑定对应修订，结论按实际证据范围交回。
-- `doc/spec/`、`doc/plan/`、`doc/release/` 随提交留下历史；运行证据（事件流、运行日志、截图、材料原件、压缩包）放 `output/story/` 并在过程件里按路径引用；
-  临时脚本与临时工作区放 `output/scratch/<本次任务>/`。
+- `doc/spec/`、`doc/plan/`、`doc/release/` 随提交留下历史；CLI 运行记录在 `output/story/`，评审、实施交回引用的过程证据（重放、计量、截图、材料原件、压缩包）
+  放 `output/evidence/<题>/` 并在过程件里按路径引用；临时脚本与临时工作区放 `output/scratch/<本次任务>/`。具体分工以 TEST §0.4 为准。
 - 运行、修改或评价测试按 [test/TEST.md](test/TEST.md)，命令、状态、证据与评分只在那里维护；测试命令从仓根执行。
 - [test/EVOLUTION.md](test/EVOLUTION.md) 记录演进与规则来源，是追溯证据，不是当前实现依据。
 - `demo/framework/` 是 AgentMaison 发布件，只读，变化只经 §6 进入 demo。本仓根不挂 Framework 的阶段钩子与写保护钩子，只读边界由维护者遵守。
