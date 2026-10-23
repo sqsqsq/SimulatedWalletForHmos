@@ -116,11 +116,12 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 - **输出**：`doc/features/<AR>/` 下的 `RR/` `SR/` `AR/` `inbox/` 四个目录与骨架文件
 
 ```
+python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <AR> --begin --step story   # ⓪ 开始计时
 node doc/extensions/skills/story/scripts/adapters/story.js init <AR> <mcp-token>   # ① 取材
 python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架（唯一写入者，重跑安全）
 ```
 
-① 失败就停下，报出它的 `error`，不建骨架。
+⓪ 在取 token、取材之前跑：它建本需求的使用记录身份，Story 的耗时从这一刻算；已有身份时重跑不改。漏了它，② 不补身份，Story 记为耗时缺口。① 失败就停下，报出它的 `error`，不建骨架。
 
 **看骨架判材料**：`RR/prd.md`、`SR/design.md` 是正文还是占位件（正文写着「本文档未从需求系统拉取到」）。
 有占位件就当缺料，请用户把对应文档放进 `inbox/` 走导入。
@@ -138,9 +139,9 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token>
 ```
 
-一条命令走完：交付门 → 对接层上传并读回核验 → 核回执 → 登记归档态（不可逆）；全程按正式形态上传（阅读槽为空，本地阅读图不上传），结束后恢复可用的本地阅读图。
+一条命令走完：交付门 → 对接层上传并读回核验 → 核回执 → 登记归档态（不可逆）；全程按正式形态上传（图块是 Mermaid，增强 SVG 不上传），结束后恢复可用的增强 SVG。
 交付门没过不调用需求系统；回执不全不登记，按它报的远端状态核清后重跑。报「需求系统已写入、本地登记失败」时不要重新上传，
-按它给的补登记命令只补登记；报「本地阅读图没有恢复」时只补视图（`story-build view --mode svg`）。
+按它给的补登记命令只补登记；报「增强 SVG 没有恢复」时只补视图（`story-build view --mode svg`）。
 
 **③ 登记之后**，`AR/review.md` **归人所有**：再渲染时人工区逐字保留，机器区按当前决策件重算。决策件带着未勾的议题去归档是常态路径：
 评审的形态就是评审人在线上批注表态，归档时提示一句即可，**不停等确认**。
@@ -164,6 +165,7 @@ node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature 
 - **取材不写业务文件**：取回的只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
 ```
+python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <编号> --begin --step "story update"   # ⓪ 开始计时
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 续行状态与本需求的 paths
 node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游（系统需求必做）
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料
@@ -171,6 +173,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action close     # ⑤ 写好 update-notes.md 后收口
 ```
 
+- **⓪** 用户要求更新时先跑，再查状态、取材；这一轮的耗时从这一刻算，④ 开轮时记进这一轮。已开着的轮次重跑不换开始时刻。
 - **①** 有开着的更新（`open`）时按它的记录续做，本轮已经取过材的不再重复取。
 - **②** 只对 AR 开头的系统需求执行，先按「需求系统 Token」取 token；两个路径取自 ① 返回的 `paths`，按当前 shell 加引号。
   这一轮没取过上游，③ 会停下并指回这一步。本地需求跳过 token 与 ②。取材成功与否以这一次调用 stdout 末行的

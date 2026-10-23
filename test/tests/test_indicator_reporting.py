@@ -420,6 +420,25 @@ class ThePlanAuthorSeesOpenDecisionsFirst(ReportingCase):
         self.assertLess(package.index("仍未定的决定"), package.index("命中的规约与项目事实"))
         self.assertIn("问人取得裁定", package)
         self.assertIn("不为它另造人工确认", package, "局部选型也被要求人工确认")
+        # 两个方向都送到：评审没回填不等于缺依据、已有人答不重问；真缺依据的那一件仍走现有路径确认
+        self.assertIn("评审记录人工区空着、议题还开着，本身不说明依据不够", package)
+        self.assertIn("还没回填的）定得了当前这一步就照常推进，不重问", package)
+        self.assertIn("真正影响当前工作又定不了的那一件", package)
+
+    def test_an_unfilled_review_is_not_a_gate_and_the_revalidate_example_runs(self) -> None:
+        """Plan 审查不把空的评审人工区当 FAIL、对话人答照常算数；评审未回填仍只记 MINOR；重验命令照真实 CLI 带 --from。"""
+        from pathlib import Path  # noqa: PLC0415
+        import yaml  # noqa: PLC0415
+        ext = Path(__file__).resolve().parents[2] / "extensions"
+        overlay = (ext / "rules" / "plan-rules.overlay.yaml").read_text(encoding="utf-8")
+        self.assertIn("评审记录没回填、人工区空着或写着「待定」都不是 FAIL 的依据", overlay)
+        self.assertIn("一句「待定」也不豁免已经写成具体承诺的无依据业务内容", overlay, "反方向的口子没堵")
+        gate = yaml.safe_load(overlay)
+        found = json.dumps(gate, ensure_ascii=False)
+        self.assertIn("review_gate_acknowledged", found)
+        self.assertIn("本项不阻断", found, "评审未回填被升成了审批门")
+        spec = (ext / "skills" / "story" / "phases" / "spec.md").read_text(encoding="utf-8")
+        self.assertIn("harness-runner.ts --revalidate --feature <名> --from <本阶段>", spec)
 
     def test_an_unreadable_decision_file_is_a_gap_not_zero_decisions(self) -> None:
         self.decisions().write_text("{坏的", encoding="utf-8")

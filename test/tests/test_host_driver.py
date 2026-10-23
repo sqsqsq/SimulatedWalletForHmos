@@ -194,27 +194,49 @@ class TheReviewVerdictLandsInTheIssueZone(unittest.TestCase):
                 self.assertIn("没有写", done[1]["note"])
 
 
-class TheCarFeedbackHitsOneIssueEach(unittest.TestCase):
-    """car 的评审回流资产：拿第三次重跑的议题标题跑一次投放，每条表态只命中一条议题。"""
+class TheCarFeedbackReachesTheRealIssues(unittest.TestCase):
+    """car 的评审回流资产投到 S23 实际产出的评审记录：标题措辞由模型定，宽限只写在决策点里；
+    两件暂缓被模型合成一条议题时两段意见都保留。同一议题结论不一致、零命中都不写并留下原因。"""
 
-    TITLES = ("被分享人能否把钥匙再转给第三个人，本期不做结论",
-              "撤销后双方长期不联网是否需要车厂强制下线，本期不做结论",
-              "撤销后对方离线时的失效宽限时限定为 24 小时",
-              "车钥匙分享的六个车云/车厂云接口在模拟工程中以本地模拟仓储承载",
-              "被分享人接受侧界面不属于本轮钱包端范围")
     FEEDBACK = REPO_ROOT / "test" / "cases" / "car-key-sharing" / "update-inputs" / "car-review-feedback.yaml"
+    REAL = REPO_ROOT / "test" / "fixtures" / "update-delivery" / "car-key-review-s23.md"
 
-    def test_every_verdict_lands(self) -> None:
-        zone = "请产品负责人评审。\n\n评审结论：\n- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n\n"
-        review = "# 评审记录\n\n" + "".join(f"#### 1.1.{k} {t}\n\n{zone}<!-- decision: D{k} -->\n\n"
-                                            for k, t in enumerate(self.TITLES, 1))
+    def deliver(self, review: str, feedback: Path | str) -> tuple[list[dict], str]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "AR").mkdir()
             (root / "AR" / "review.md").write_text(review, encoding="utf-8")
-            done = rc._write_review_zones(root, self.FEEDBACK)
-        self.assertEqual(3, len(done))
-        self.assertTrue(all("note" not in d for d in done), done)
+            if isinstance(feedback, str):
+                (root / "f.yaml").write_text(feedback, encoding="utf-8")
+                feedback = root / "f.yaml"
+            done = rc._write_review_zones(root, feedback)
+            return done, (root / "AR" / "review.md").read_text(encoding="utf-8")
+
+    @staticmethod
+    def issue(text: str, head: str) -> str:
+        at = text.index(head)
+        return text[at:text.index("<!-- decision:", at)]
+
+    def test_every_planned_verdict_reaches_the_s23_review(self) -> None:
+        done, text = self.deliver(self.REAL.read_text(encoding="utf-8"), self.FEEDBACK)
+        self.assertEqual([True, True, True], [d["delivered"] for d in done], done)
+        grace = self.issue(text, "#### 1.2.1 ")
+        self.assertIn("- [x] 需修改", grace)
+        self.assertIn("撤销宽限定为 36 小时", grace, "36 小时与仍可开门的冲突没送进被测输入")
+        safety = self.issue(text, "#### 1.2.2 ")
+        self.assertEqual(1, safety.count("- [x]"))
+        self.assertIn("被分享人能否再转分享这次仍不定", safety, "前一条暂缓的意见被覆盖了")
+        self.assertIn("是否由车厂强制下线这次仍不定", safety)
+
+    def test_conflicting_or_missing_targets_write_nothing_and_say_so(self) -> None:
+        review = self.REAL.read_text(encoding="utf-8")
+        done, text = self.deliver(review, "- match: [宽限]\n  verdict: 需修改\n  opinion: 改成 36 小时。\n"
+                                          "- match: [生效时限]\n  verdict: 同意\n  opinion: 维持。\n"
+                                          "- match: [不存在的事]\n  verdict: 暂缓\n  opinion: 不定。\n")
+        self.assertEqual([False, False, False], [d["delivered"] for d in done])
+        self.assertIn("不一致的结论", done[0]["note"])
+        self.assertIn("有 0 条", done[2]["note"])
+        self.assertEqual(review, text, "没送达也改了评审记录")
 
 
 if __name__ == "__main__":

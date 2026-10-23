@@ -211,12 +211,12 @@ export function headingPath(text, names) {
   return { from: scope.at + 1, to: scope.end, body: doc.lines.slice(scope.at + 1, scope.end).join('\n') };
 }
 
-//: Story 里两类脚本管理区的成对标记：正式图块（Mermaid 与它的 .mmd）与阅读图槽（补充 SVG 的显示位）
+//: Story 里正式图块的成对标记：块里是按 .mmd 的 Mermaid，或同 ID 增强 SVG 的一行引用
 export const FIGURE_MARK = /^<!-- story-figure:([A-Za-z0-9][\w-]*):(begin|end) -->$/;
-const READING_MARK = /^<!-- story-reading:([A-Za-z0-9][\w-]*):(begin|end) -->$/;
 
 /**
  * 成对标记与之间的行：配对与唯一（不分大小写——ID 也是文件名）一次核完，问题按 `noun` 点名。围栏里的标记是样例，不算。
+ * `body` 不含标记内侧的分隔空行（`separateMarks` 铺的格式）。
  *
  * @returns {{spans: {id, from, to, body: string[]}[], problems: string[]}}
  */
@@ -235,7 +235,7 @@ export function markPairs(lines, mark, noun) {
     } else if (!open || open.id !== id) {
       problems.push(`第 ${i + 1} 行是${noun} ${id} 的结束标记，前面没有对应的开始标记`);
     } else {
-      spans.push({ ...open, to: i, body: lines.slice(open.from + 1, i) });
+      spans.push({ ...open, to: i, body: zoneBody(lines, { start: open.from, end: i + 1 }) });
       open = null;
     }
   });
@@ -248,29 +248,30 @@ export function markPairs(lines, mark, noun) {
   return { spans, problems };
 }
 
-/**
- * Story 里的阅读图槽：成对标记之外再核内容——只认空或 `![…](figures/<ID>.svg)` 一行；
- * 别的内容属于作者，不能当生成内容清掉。
- *
- * @returns {{slots: {id, from, to, body: string[], shown: boolean}[], problems: string[]}}
- */
-export function readingSlots(lines) {
-  const { spans: slots, problems } = markPairs(lines, READING_MARK, '阅读槽');
-  for (const s of slots) {
-    const ref = new RegExp(`^!\\[(?:[^\\]\\\\]|\\\\.)*\\]\\(figures/${s.id}\\.svg\\)$`);
-    s.shown = s.body.length === 1 && ref.test(s.body[0].trim());
-    if (s.body.length && !s.shown) {
-      problems.push(`阅读槽 ${s.id}（第 ${s.from + 1}–${s.to + 1} 行）里有不是本机制生成的内容——槽只放空或 figures/${s.id}.svg 的一行引用，作者的文字移到槽外`);
-    }
-  }
-  return { slots, problems };
-}
+//: 生成块的成对标记：story 与 review 的机器区、spec 的知识区（名字在标记里，配对只看前缀）。
+const ZONE_MARK = /^<!-- (story-build|knowledge-use):(begin|end)\b/;
 
-/** 正式文本：在内存里去掉全部阅读槽（槽结构要先核过）。正文与 Mermaid 一个字不动。 */
-export function withoutReadingSlots(text) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  const drop = new Set(readingSlots(lines).slots.flatMap(s => Array.from({ length: s.to - s.from + 1 }, (_, k) => s.from + k)));
-  return lines.filter((_, i) => !drop.has(i)).join('\n');
+/**
+ * 生成块（机器区、知识区、正式图块）的标记与两侧内容各隔一个空行：注释紧贴表格、围栏或图片引用时，
+ * 有的渲染器认不出块。
+ *
+ * 只在缺空行处补一行，已有的不动，重跑不长；围栏里的标记是样例，不碰。
+ * 生成器写盘前过一遍，块怎么拼不用各自操心分隔。
+ */
+export function separateMarks(lines) {
+  const fenced = new Set(fenceRanges(lines).flatMap(f => Array.from({ length: f.to - f.from + 1 }, (_, k) => f.from + k)));
+  const markOf = (line, i) => (fenced.has(i) ? null
+    : FIGURE_MARK.test(line.trim()) || ZONE_MARK.test(line.trim()));
+  const out = [];
+  lines.forEach((line, i) => {
+    const m = markOf(line, i);
+    const prev = out[out.length - 1];
+    if (m && prev !== undefined && prev.trim()) out.push('');
+    out.push(line);
+    const next = lines[i + 1];
+    if (m && next !== undefined && next.trim() && !markOf(next, i + 1)) out.push('');
+  });
+  return out;
 }
 
 /** 一张表是否落在 `[from, to)` 里。 */
@@ -701,13 +702,26 @@ export const zoneBlock = (name, source, rows) =>
     ...rows, ZONE_END];
 
 /**
+ * 区里的正文行：去掉首尾标记，也去掉标记内侧的分隔空行（`separateMarks` 铺的格式）。
+ *
+ * 只剥首尾的空白行——那是生成器的格式，不是内容；正文内部的空行原样留着，删了它照样算改动。
+ */
+export function zoneBody(lines, at) {
+  let from = at.start + 1;
+  let to = at.end - 1;
+  while (from < to && !lines[from].trim()) from += 1;
+  while (to > from && !lines[to - 1].trim()) to -= 1;
+  return lines.slice(from, to);
+}
+
+/**
  * 盘上这一段，是不是有人动过手 —— 动过就返回它现在的样子，没动过返回 null。
  *
  * 标记里的摘要与盘上内容比，相等就是没人动过（真源变没变不影响这个判断，那是下一步的事）。
  * 标记里没有摘要就无从分辨「真源变了」与「有人改了」，按改过处理——让人自己说哪一种。
  */
 export function zoneHandEdited(lines, at) {
-  const body = lines.slice(at.start + 1, at.end - 1);
+  const body = zoneBody(lines, at);
   const recorded = recordedDigest(lines[at.start]);
   return recorded && projectionDigest(body) === recorded ? null : body;
 }

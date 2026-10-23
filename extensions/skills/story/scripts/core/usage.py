@@ -4,21 +4,27 @@
 节点只存最后活动的 ext/fw、模型自报的 agent/model 与做完过的步骤：`spent` 是可核实轮次的累计秒数，
 `story update` 另有收口轮数 `rounds`。没做完过的步骤没有行；缺起点的完成轮只让行出现，不补耗时。
 
-时间全取机器真源，保留毫秒、求差后取整秒：story 从身份时刻到 `story_written_at`；Framework 阶段首轮直接读 `trace.json` 的
-`started_at`，重试轮从那一轮 pre_phase 的时刻，到 summary 的 `closure_commit.committed_at`；update 一轮从 record 的
-`opened_at` 到 `closed_at`，轮数与耗时直接由 update 记录重算。本地运行态 `<需求根>/.usage-state.json`（不入库）只留两样：
-已完成阶段再跑一轮时的起点（结算即清），与已算好、待写进 usage 的那几步（写 usage 失败后下一次照它赋值，不重复累加）；
-都没有时不留这个文件。同一完成事实反复读到不会再加。
+计的是模型实际执行一个步骤的日历时长（含本轮等待与中断）：起点是开始工作前的 begin，终点是工作结束后的收尾请求，
+时间全取记录器的机器时刻，保留毫秒、求差后取整秒。story 从身份时刻（`/story init` 取材前的 begin 建立）到 `story_written_at`，
+身份只由 begin 建：漏了这一步，init 不补身份，之后第一次 begin 建身份时 Story 已经开始过，Story 记为耗时缺口；
+Framework 阶段从 begin 到 finalize 那一刻，原生闭环只作完成资格——此刻有有效闭环、且不早于本轮开始；
+update 一轮从 record 的 `started_at`（prepare 时由 begin 的暂存移入）到 `closed_at`。漏了 begin 不拿检查、trace 或文件时刻补：
+完成行照出、这一轮记为耗时缺口。本地运行态 `<需求根>/.usage-state.json`（不入库）只留两样：还没收尾的那一轮起点
+（结算或移交即清），与已算好、待写进 usage 的那几步（写 usage 失败后下一次照它赋值，不重复累加）；都没有时不留这个文件。
+重复 begin 保留最早的起点，重复收尾不再加。
 
 动作：
-- init：story init 成功后；没有身份件就建，并替换本地未提交的同编号旧节点；
-- phase：Framework 阶段 pre_phase；没有身份件就建（纯框架需求的首次活动），结算后登记重试轮的起点；
-- refresh：其它 story 命令成功后；已有身份才刷新；
+- begin：一个步骤开始实际工作之前（Spec / Plan 的作者任务包入口自动调，其余由作者页与 Skill 的第一步执行）：
+  没有身份件就建（本地未提交的同编号旧节点替换掉，已提交的保留）；阶段与 update 登记这一轮的起点，已有就保留最早的；
+- init：story init 成功后；沿用开始时 begin 建的身份并刷新；没有身份不补建，报 Story 开始记录缺口；
+- refresh：其它 story 命令成功后；已有身份才刷新版本、自报身份、Story 与 update，不结算 Framework 阶段；
 - finalize：阶段原生闭环之后的 Extension 收尾，由消费模型在交付、进下一阶段或提交代码之前执行，Story 交付门也调它：
-  核本阶段已闭环、身份在，结算并读回落盘的 usage 确认这一步已记；失败时按报出的原因处理（没闭环先完成阶段，写不进先修环境）再重跑同一命令；
+  核本阶段已闭环、身份在，结算这一轮并读回落盘的 usage 确认这一步已记；失败时按报出的原因处理（没闭环先完成阶段，写不进先修环境）再重跑同一命令；
+- close：update 收口之后，对这一轮进入过、此刻有效闭环的阶段同样收尾；
 - ensure / inspect：适配时确保记录文件在 / 只读校验。
 
-入口：`python usage.py --project-root <根> --feature <需求编号> --finalize --phase <阶段>`；其余动作由钩子与 story 命令
+入口：`python usage.py --project-root <根> --feature <需求编号> --begin --step <步骤>` 与 `... --finalize --phase <阶段>`；
+其余动作由 story 命令
 经 stdin 一个 JSON（action、feature、step）调用。stdout `{ok, changed, errors, requirement, pending_identity, note}`，
 收尾另有 `phase`、`recorded`、`timing_gap`。只用标准库与 git。
 """
@@ -42,7 +48,7 @@ from flow import phase_facts, state  # noqa: E402
 EXT_ROOT = Path(__file__).resolve().parents[4]
 CONTRACT = json.loads((Path(__file__).resolve().parents[2] / "contracts" / "usage.json").read_text(encoding="utf-8"))
 SCHEMA, STEPS, UPDATE = CONTRACT["schema"], CONTRACT["steps"], "story update"
-ACTIONS = ("init", "phase", "refresh", "finalize", "ensure", "inspect")
+ACTIONS = ("init", "begin", "refresh", "finalize", "close", "ensure", "inspect")
 NODE_FIELDS = ("ext", "fw", "agent", "model", "steps")
 STAMP = re.compile(r"\d{8}T\d{6}\.\d{3}Z")
 KEY = re.compile(r"(.+)-(\d{8}T\d{6}\.\d{3}Z)")
@@ -266,7 +272,7 @@ def fw_version(feature_root: Path) -> str | None:
 
 
 def take_input(feature_root: Path, node: dict, done: list) -> None:
-    """模型在原任务里写的 `{agent, model}`：节点还没有自报身份时接收，之后不改；记录落盘后删掉这份输入。"""
+    """模型在原任务里写的 `{agent, model}`：按字段接收，已有非空值的不改，不知道的保持 null；记录落盘后删掉这份输入。"""
     path = feature_root / CONTRACT["input_file"]
     if not path.is_file():
         return
@@ -277,9 +283,9 @@ def take_input(feature_root: Path, node: dict, done: list) -> None:
     except (OSError, ValueError) as exc:
         raise UsageError(f'{feature_root.name}/{path.name} 读不出（{exc}）：写成 {{"agent": "<宿主>", "model": "<模型>"}}，'
                          '不知道的写 null') from exc
-    if node["agent"] is None and node["model"] is None:
-        node["agent"], node["model"] = [v.strip() or None if isinstance(v := data.get(k), str) else None
-                                        for k in ("agent", "model")]
+    for k in ("agent", "model"):
+        if node[k] is None and isinstance(v := data.get(k), str) and v.strip():
+            node[k] = v.strip()
     done.append(lambda: path.unlink(missing_ok=True))
 
 
@@ -294,35 +300,29 @@ def closed_at(feature_root: Path, phase: str) -> datetime | None:
     return phase_facts.moment(commit.get("committed_at")) if s["state"] == "closed" and isinstance(commit, dict) else None
 
 
-def trace_start(feature_root: Path, phase: str) -> datetime | None:
-    """首轮起点：Framework 首次进入阶段时写的 `trace.json`。没有这份文件是 None；在却读不出就报出来。"""
-    path = importer.phase_reports_dir(feature_root, phase) / "trace.json"
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return phase_facts.moment(data.get("started_at"))
-    except (OSError, ValueError, AttributeError) as exc:
-        raise UsageError(f"{path.as_posix()} 读不出（{exc}）：{phase} 首轮的起点取不到") from exc
-
-
 def add(row: dict | None, start: datetime, end: datetime) -> dict:
     row = dict(row or {})
     row["spent"] = row.get("spent", 0) + round((end - start).total_seconds())
     return row
 
 
-def tally_phase(fr: Path, phase: str, steps: dict, starts: dict) -> None:
-    """有起点且完成不早于它：累计并清起点；有完成而没行：行出现、耗时缺。首轮起点可取 trace（还没有行时）。"""
-    end = closed_at(fr, phase)
-    if end is None:
-        return
-    start = phase_facts.moment(starts.get(phase)) or (trace_start(fr, phase) if phase not in steps else None)
-    if start is not None and end >= start:
-        steps[phase] = add(steps.get(phase), start, end)
-        starts.pop(phase, None)
-    elif phase not in steps:
+def finish_round(fr: Path, phase: str, steps: dict, starts: dict) -> str | None:
+    """收尾结算一轮：begin 的起点到此刻；此刻要有有效闭环且不早于本轮开始，否则旧闭环不结算、起点保留。
+    没有起点的首次完成只让行出现、记为缺口，不拿 trace 或检查时刻补。返回不结算或缺口的说明，结算了返回 None。"""
+    closed = closed_at(fr, phase)
+    start = phase_facts.moment(starts.get(phase))
+    if closed is None:
+        return f"{phase} 此刻没有有效闭环"
+    if start is None:
+        if phase in steps:
+            return None                     # 这一轮已经收过尾
         steps[phase] = {}
+        return f"{phase} 这一轮没有开始记录（工作前没跑 begin）：完成行已记，耗时是缺口"
+    if closed < start:
+        return f"{phase} 重新开始之后还没有新的闭环（闭环早于本轮开始），这一轮没有结算，起点保留到闭环后收尾"
+    steps[phase] = add(steps.get(phase), start, now())
+    starts.pop(phase, None)
+    return None
 
 
 def tally_story(fr: Path, stamp: str, steps: dict) -> None:
@@ -336,35 +336,34 @@ def tally_story(fr: Path, stamp: str, steps: dict) -> None:
 
 def tally_update(fr: Path, steps: dict) -> None:
     """update 的完成事实全在原生 record 里：有 `closed_at` 的一轮就是收口过一轮（之后撤回也不抹掉），
-    轮数按记录数，耗时只累计起止都合法的那几轮；从没收口的不计。每次按全部记录重算后赋值，重复刷新不会多加；
-    盘上记录比已记的轮数少时不拿较少的结果覆盖已有累计。"""
+    轮数按记录数，耗时只累计有 `started_at`（begin 移入）且起止合法的那几轮；从没收口的不计。每次按全部记录重算后赋值，
+    重复刷新不会多加；盘上记录比已记的轮数少、或算出的耗时少于已记的（没有开始记录的轮次）时不拿较少的结果覆盖已有累计。"""
     rounds, spent, timed = 0, 0, False
     for _, rec in phase_facts.update_records(fr):
         closed = phase_facts.moment(rec.get("closed_at"))
         if rec.get("kind") == "story_baseline" or closed is None:
             continue
         rounds += 1
-        opened = phase_facts.moment(rec.get("opened_at"))
-        if opened is not None and closed >= opened:
-            spent, timed = spent + int((closed - opened).total_seconds()), True
-    if rounds and rounds >= steps.get(UPDATE, {}).get("rounds", 0):
-        steps[UPDATE] = {**({"spent": spent} if timed else {}), "rounds": rounds}
+        started = phase_facts.moment(rec.get("started_at"))
+        # 收口时刻只记到秒、起点带毫秒：同一秒里收口不算起止颠倒
+        if started is not None and closed >= started.replace(microsecond=0):
+            spent, timed = spent + max(0, int((closed - started).total_seconds())), True
+    known = steps.get(UPDATE, {})
+    if rounds and rounds >= known.get("rounds", 0):
+        spent = max(spent, known.get("spent", 0))
+        steps[UPDATE] = {**({"spent": spent} if timed or "spent" in known else {}), "rounds": rounds}
 
 
-def refresh(fr: Path, stamp: str, node: dict, slot: dict, phase: str | None, done: list) -> None:
-    """一个节点按当前真源刷新：版本、自报身份、各步骤结算；`phase` 给了就在结算后登记这一轮的起点。"""
+def refresh(fr: Path, stamp: str, node: dict, slot: dict, done: list) -> None:
+    """一个节点按当前真源刷新：版本、自报身份、Story 与 update。Framework 阶段不在这里结算，也不在这里开始。"""
     steps, starts = node["steps"], slot.setdefault("starts", {})
     for step, row in slot.pop("pending", {}).items():      # 上次写 usage 没成的结算行：赋值，不再加
         steps[step] = row
     node["ext"] = ext_version()
     node["fw"] = fw_version(fr) or node["fw"]
     take_input(fr, node, done)
-    for p in phase_facts.PHASES:
-        tally_phase(fr, p, steps, starts)
     tally_story(fr, stamp, steps)
     tally_update(fr, steps)
-    if phase and phase in steps and phase not in starts:     # 首轮起点由 trace 给，只有重试轮记起点
-        starts[phase] = iso(now())
 
 
 # ---------------------------------------------------------------------------
@@ -375,22 +374,28 @@ def feature_dir(project_root: Path, number: str) -> Path:
 
 
 def apply(project_root: Path, data: dict, st: dict, action: str, feature: str | None, step: str | None,
-          errors: list[str], done: list) -> list[str]:
+          errors: list[str], done: list, notes: list[str]) -> list[str]:
     """在已读出的 usage 与运行态上执行一个动作，返回动过的节点键；`done` 收记录落盘之后才做的写入。"""
     reqs = data["requirements"]
-    staged = action in ("phase", "finalize")
-    if not feature or (staged and step not in phase_facts.PHASES):
-        raise UsageError(f"{action} 要 feature{'与阶段 step（' + ' / '.join(phase_facts.PHASES) + '）' if staged else ''}")
+    allowed = phase_facts.PHASES if action == "finalize" else STEPS if action == "begin" else None
+    if not feature or (allowed and step not in allowed):
+        raise UsageError(f"{action} 要 feature{'与步骤 step（' + ' / '.join(allowed) + '）' if allowed else ''}")
     fr = feature_dir(project_root, feature)
     stamp = read_identity(fr)
     if action == "finalize" and stamp is None:
         raise UsageError(f"{feature} 没有使用记录身份（{CONTRACT['identity_file']}）：收尾不新建身份，"
-                         "阶段的 pre_phase 或 story 命令会建它")
+                         "开始工作时的 begin 会建它")
     if action == "finalize" and closed_at(fr, step) is None:
         raise UsageError(f"{feature} 的 {step} 还没有原生有效闭环（summary 没有 closure_commit）：先完成阶段闭环再收尾")
+    late = False
     if stamp is None:
-        if action == "refresh":
+        if action == "init":            # 身份只由开始工作前的 begin 建：init 时刻晚于取材，拿它当起点会少算还像是完整的
+            notes.append("这次 Story 没有开始记录（取材前没跑 begin --step story）：不拿 init 时刻补，Story 的耗时记为缺口；"
+                         "业务照常继续，之后各阶段开始前照常 begin")
+        if action != "begin":
             return []
+        # Story 已经 init 过（收件箱骨架或流程契约在）：它的开始早于这个身份
+        late = (fr / "inbox").is_dir() or (fr / Path(*state.CONTRACT)).is_file()
         moment = now()
         stamp = moment.strftime("%Y%m%dT%H%M%S.") + f"{moment.microsecond // 1000:03d}Z"
         same = [k for k in reqs if KEY.fullmatch(k).group(1) == feature]
@@ -407,11 +412,64 @@ def apply(project_root: Path, data: dict, st: dict, action: str, feature: str | 
                              (fr / CONTRACT["identity_file"]).write_text(stamp + "\n", encoding="utf-8")))
     key = f"{feature}-{stamp}"
     node = reqs.setdefault(key, {"ext": None, "fw": None, "agent": None, "model": None, "steps": {}})
+    slot = st.setdefault(key, {})
+    if late and "story" not in node["steps"]:
+        node["steps"]["story"] = {}
+        notes.append("Story 在这个使用记录身份之前已经开始（取材前没跑 begin --step story）：Story 记为耗时缺口")
     try:
-        refresh(fr, stamp, node, st.setdefault(key, {}), step if action == "phase" else None, done)
+        refresh(fr, stamp, node, slot, done)
+        starts = slot.setdefault("starts", {})
+        if action == "begin" and step == UPDATE and not open_update(fr):
+            stale, last = phase_facts.moment(starts.get(UPDATE)), last_closed(fr)
+            if stale is not None and last is not None and stale.replace(microsecond=0) <= phase_facts.moment(last["closed_at"]):
+                starts.pop(UPDATE)          # 上一轮收口时没移成的起点（当时已报）：那一轮已是缺口，不带进新一轮
+                notes.append(f"上一轮 update（{last.get('id')}）的开始时刻没移进它的记录，那一轮记为耗时缺口；这一轮从现在开始")
+        if action == "begin" and step != "story" and not (step == UPDATE and open_update(fr)):
+            starts.setdefault(step, iso(now()))        # story 的起点是身份时刻；开着的 update 轮次已有 started_at
+        elif action == "finalize":
+            notes.extend(filter(None, [finish_round(fr, step, node["steps"], starts)]))
+        elif action == "close":             # update 收口：这一轮开始过、此刻有效闭环的阶段
+            if (last_closed(fr) or {}).get("started_at"):
+                starts.pop(UPDATE, None)    # 起点已在刚收口的那一轮里：剩下的暂存是残留；还没移交的不清
+            for p in [p for p in phase_facts.PHASES if p in starts and closed_at(fr, p) is not None]:
+                notes.extend(filter(None, [finish_round(fr, p, node["steps"], starts)]))
     except (UsageError, state.FlowError, importer.ImportError_) as exc:     # 已结算的步骤各自成立，照常落盘
         errors.append(str(exc))
     return [key]
+
+
+def last_closed(fr: Path) -> dict | None:
+    """最近收口过的那一轮 update 记录（之后撤回的也算）；没有返回 None。"""
+    return next((rec for _, rec in reversed(phase_facts.update_records(fr))
+                 if rec.get("kind") != "story_baseline" and phase_facts.moment(rec.get("closed_at"))), None)
+
+
+def open_update(fr: Path) -> dict | None:
+    """开着的那一轮 update 记录；没有返回 None。"""
+    return next((rec for _, rec in reversed(phase_facts.update_records(fr)) if rec.get("status") == "open"), None)
+
+
+def update_start(feature_root: Path) -> str | None:
+    """begin 暂存的 update 起点（只读）：prepare 开轮时把它写进 record 的 `started_at`。"""
+    stamp = read_identity(feature_root)
+    project_root = importer.project_root_of(feature_root)
+    path = Path(project_root) / importer.features_dir(project_root) / CONTRACT["state_file"]
+    slot = load_state(path).get(f"{feature_root.name}-{stamp}", {}) if stamp else {}
+    return (slot.get("starts") or {}).get(UPDATE)
+
+
+def drop_update_start(feature_root: Path) -> None:
+    """起点已经在 record 里了：清掉运行态里的暂存，稳定状态只留一处。"""
+    stamp = read_identity(feature_root)
+    project_root = importer.project_root_of(feature_root)
+    path = Path(project_root) / importer.features_dir(project_root) / CONTRACT["state_file"]
+    if not stamp or not path.exists():
+        return
+    with locked(record_path(project_root)):
+        st = load_state(path)
+        (st.get(f"{feature_root.name}-{stamp}", {}).get("starts") or {}).pop(UPDATE, None)
+        tidy(st)
+        save_state(path, st)
 
 
 def tidy(st: dict) -> None:
@@ -436,9 +494,11 @@ def save_state(path: Path, st: dict) -> None:
             raise UsageError(f"{path.name} 清不掉（{exc}）：它只剩空内容，删掉它不影响已记的使用记录") from exc
 
 
-def after_command(project_root: Path, feature: str, mode: str) -> dict:
-    """Story 命令成功之后的采集：init 建身份，其余已有身份才刷新。记录错误与提示另列，不改业务结果。"""
-    return record(project_root, "init" if mode == "init" else "refresh", feature=feature)
+def after_command(project_root: Path, feature: str, mode: str, action: str | None = None) -> dict:
+    """Story 命令成功之后的采集：init 沿用开始时的身份（没有就报缺口），update 收口结算这一轮进入过的阶段，其余已有身份才刷新。
+    记录错误与提示另列，不改业务结果。"""
+    which = "init" if mode == "init" else "close" if (mode, action) == ("update", "close") else "refresh"
+    return record(project_root, which, feature=feature)
 
 
 def record(project_root: Path, action: str, *, feature: str | None = None, step: str | None = None) -> dict:
@@ -456,10 +516,10 @@ def record(project_root: Path, action: str, *, feature: str | None = None, step:
     state_path = Path(project_root) / importer.features_dir(project_root) / CONTRACT["state_file"]
     try:
         with locked(path):
-            data, st, done = load(path), load_state(state_path), []
+            data, st, done, notes = load(path), load_state(state_path), [], []
             before = json.dumps([data, st], sort_keys=True)
             old = json.loads(json.dumps(data["requirements"]))
-            keys = apply(Path(project_root), data, st, action, feature, step, out["errors"], done)
+            keys = apply(Path(project_root), data, st, action, feature, step, out["errors"], done, notes)
             tidy(st)
             if json.dumps([data, st], sort_keys=True) != before:
                 # 先把这次变了的步骤行记进运行态（起点已清），再写 usage，最后清待写——任一步失败，下一次刷新都不会重复累计
@@ -495,8 +555,10 @@ def record(project_root: Path, action: str, *, feature: str | None = None, step:
     out.update(ok=not out["errors"], requirement=keys[0] if len(keys) == 1 else None, pending_identity=pending)
     if pending:     # Story 需求有模型在场：自报身份是它的任务，缺了就说，不当成纯框架的未知
         rel = (feature_dir(project_root, feature) / CONTRACT["input_file"]).relative_to(project_root).as_posix()
-        out["note"] = (f"使用记录还没有本需求的 agent 与模型：在 {rel} 写 "
-                       '{"agent": "<你所在的宿主>", "model": "<你的模型>"}（不知道的写 null），下一次 story 命令或阶段检查自动接收')
+        notes.append(f"使用记录还没有本需求的 agent 与模型：在 {rel} 写 "
+                       '{"agent": "<你所在的宿主>", "model": "<你的模型>"}（不知道的写 null），下一次 begin、finalize 或 story 命令自动接收')
+    if notes:
+        out["note"] = "；".join(notes)
     return out
 
 
@@ -534,6 +596,8 @@ def inspect(path: Path, out: dict) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description="使用记录：阶段闭环后的收尾，或内部入口（stdin 一个 JSON）")
     ap.add_argument("--project-root", required=True)
+    ap.add_argument("--begin", action="store_true", help="一个步骤开始实际工作之前")
+    ap.add_argument("--step", default=None, choices=STEPS)
     ap.add_argument("--finalize", action="store_true", help="阶段原生闭环之后的 Extension 收尾")
     ap.add_argument("--feature", default=None)
     ap.add_argument("--phase", default=None, choices=phase_facts.PHASES)
@@ -546,6 +610,7 @@ def main() -> int:
     try:
         # 按 UTF-8 读原始字节：不随控制台代码页变，PowerShell 管道在开头带的 BOM 一并去掉
         req = {"action": "finalize", "feature": args.feature, "step": args.phase} if args.finalize \
+            else {"action": "begin", "feature": args.feature, "step": args.step} if args.begin \
             else json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
     except ValueError as exc:
         print(json.dumps({"ok": False, "changed": False, "errors": [f"stdin 不是 JSON（{exc}）"]}, ensure_ascii=False))

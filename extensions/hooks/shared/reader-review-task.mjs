@@ -140,15 +140,6 @@ function diagramPairRows(planCtx, plan, story) {
   return out.length ? out : ['', '上游（系统设计、spec）里没有图。'];
 }
 
-/** 写作设计里的阅读图选择：不采用的理由，或每个候选的问题、增益、放置与依据（依据由审查者按路径读原文）。 */
-function readingChoiceRows(plan) {
-  const r = plan?.reading;
-  if (!r?.declared) return ['', '写作设计没有写阅读图选择。'];
-  if (r.noneReason !== null) return ['', `不采用：${r.noneReason}`];
-  return r.items.flatMap(x => ['', `- **${x.id}**：阅读问题「${x.question}」；增益「${x.gain}」；放置 ${x.placement}`,
-    ...x.basis.map(b => `  - 依据：${b}`)]);
-}
-
 function contractOf(projectRoot) {
   return readJsonOrNull(path.join(extensionRoot(projectRoot),
     'skills', 'story', 'contracts', 'story-chapters.json'));
@@ -218,7 +209,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 
   // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
   // 摘要只算作者区（机器区整段换成区名）：投影刷新不换审查对象，作者改一个字就换。正式审查前 pre_phase
-  // 已把 story 放回正式形态（阅读槽为空），盘上读到的就是被审的那一份。
+  // 已把 story 放回正式形态（正式图块都是按源的 Mermaid），盘上读到的就是被审的那一份。
   rows.push('', '### 审查对象：当前 `AR/story.md`（按下面的段落顺序读盘上原文）', '',
     ...readingRows('AR/story.md', authorZone(story)));
 
@@ -266,7 +257,6 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   }
 
   rows.push('', '### 上游图与 story 里承接它的小节', '', ...diagramPairRows(planCtx, parsed, story));
-  rows.push('', '### 阅读图选择', '', ...readingChoiceRows(parsed));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
   if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {

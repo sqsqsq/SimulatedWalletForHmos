@@ -74,7 +74,6 @@ provides:
     spec:
       pre_phase:
         - hooks/shared/story-view.mjs
-        - hooks/shared/usage.mjs
       post_check:
         - hooks/spec/post_check.mjs
       pre_verifier:
@@ -82,7 +81,6 @@ provides:
     plan:
       pre_phase:
         - hooks/shared/story-view.mjs
-        - hooks/shared/usage.mjs
       post_check:
         - hooks/plan/post_check.mjs
       pre_verifier:
@@ -90,7 +88,6 @@ provides:
     coding:
       pre_phase:
         - hooks/shared/story-view.mjs
-        - hooks/shared/usage.mjs
       post_check:
         - hooks/coding/post_check.mjs
       pre_verifier:
@@ -98,7 +95,6 @@ provides:
     review:
       pre_phase:
         - hooks/shared/story-view.mjs
-        - hooks/shared/usage.mjs
       post_check:
         - hooks/review/post_check.mjs
       pre_verifier:
@@ -106,7 +102,6 @@ provides:
     ut:
       pre_phase:
         - hooks/shared/story-view.mjs
-        - hooks/shared/usage.mjs
       post_check:
         - hooks/ut/post_check.mjs
       pre_verifier:
@@ -114,7 +109,6 @@ provides:
     testing:
       pre_phase:
         - hooks/shared/story-view.mjs
-        - hooks/shared/usage.mjs
       post_check:
         - hooks/testing/post_check.mjs
       pre_verifier:

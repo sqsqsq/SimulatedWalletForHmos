@@ -31,6 +31,7 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { citableRows, originRows, relFromStory, sourceCatalog, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
 import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
+import { recordUsage } from '../shared/usage.mjs';
 import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { signedGateRows } from '../shared/review-inputs.mjs';
 
@@ -449,6 +450,9 @@ function main(argv) {
     process.stderr.write(USAGE + '\n');
     return 2;
   }
+  // 取任务包就是开始本阶段的工作：先记起点（只在这条 CLI 入口记，被导入的渲染函数不写 usage）
+  const begun = recordUsage(process.cwd(), 'begin', { feature, step: 'spec' });
+  if (!begun.ok) process.stderr.write(`[usage] 本阶段的开始没有记上（任务包照常给出）：${(begun.errors ?? []).join('；')}——修好原因后重跑本命令补记\n`);
   const back = ensureMermaid(featureRoot(process.cwd(), feature));
   if (back.problems.length) throw new Error(`story 回不到正式形态，任务包按正式正文读图：\n${back.problems.join('\n')}`);
   process.stdout.write(taskPackage(process.cwd(), feature) + '\n');

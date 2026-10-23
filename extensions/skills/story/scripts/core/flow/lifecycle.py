@@ -54,7 +54,7 @@ def cmd_status(feature_root: Path) -> dict:
         "status": contract.get("status"),
         # 最近一次成文登记的时刻；重跑 `story` 就是重新登记
         "story_written_at": contract.get("story_written_at"),
-        # 本地阅读与业务闭环分开报：成文之后才有阅读图要做
+        # 本地阅读与业务闭环分开报：成文之后才有增强 SVG 要做
         **({"reading": reading} if reading is not None else {}),
         "round": current.get("round"),
         "positioning": current.get("positioning"),
@@ -188,7 +188,7 @@ VIEW_OWNER = "STORY_VIEW_OWNER"
 
 @contextmanager
 def reading_view(feature_root: Path, project_root: Path, outcome: dict):
-    """最外层动作持有视图：动手前回到正式形态（Mermaid 按源、阅读槽置空），结束或失败后恢复当前可用的阅读图。
+    """最外层动作持有视图：动手前回到正式形态（图块按源的 Mermaid），结束或失败后恢复当前可用的增强 SVG。
 
     被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不再切入，也不各自恢复。恢复失败只补视图，
     写进 `outcome["view"]`，不遮住原来的结果或错误。
@@ -211,19 +211,19 @@ def reading_view(feature_root: Path, project_root: Path, outcome: dict):
             story = feature_root / Path(*STORY)
             if story.is_file() and _managed(story):
                 try:
-                    outcome["view"] = _view(feature_root, project_root, "svg", "本地阅读图没有恢复，story 保持 Mermaid")
+                    outcome["view"] = _view(feature_root, project_root, "svg", "增强 SVG 没有恢复，story 保持 Mermaid")
                 except FlowError as exc:
                     outcome["view"] = str(exc)
 
 
 def _managed(story: Path) -> bool:
-    """story 里有没有脚本管理区：正式图块或阅读图槽，任一种都要经视图处理。"""
+    """story 里有没有脚本管理区：正式图块要经视图处理；旧版阅读槽也送去视图，由它报出来。"""
     text = story.read_text(encoding="utf-8", errors="replace")
     return "<!-- story-figure:" in text or "<!-- story-reading:" in text
 
 
 def ensure_mermaid(feature_root: Path, project_root: Path) -> None:
-    """story 里有管理区时先回到正式形态：比较、登记与归档只认 Mermaid 按源、阅读槽为空的文本。没有管理区不起进程。"""
+    """story 里有管理区时先回到正式形态：比较、登记与归档只认图块按源 Mermaid 的文本。没有管理区不起进程。"""
     story = feature_root / Path(*STORY)
     if not story.is_file() or not _managed(story):
         return

@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import {
   chapterSpan, childHeading, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames, tablesWithin, zoneBlock,
-  zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
+  separateMarks, zoneBody, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, specText } from './context.mjs';
 import { displayTags, relFromStory, resolveTags, sourceCatalog } from './sources.mjs';
@@ -368,7 +368,7 @@ export function projectAppendix(ctx, storyText) {
     if (h4) lines = [...lines.slice(0, h4.at + 1), '', ...block, ...lines.slice(h4.at + 1)];
     else lines = [...lines.slice(0, end), ...(z.h4 ? [`#### ${z.h4}`, ''] : []), ...block, '', ...lines.slice(end)];
   }
-  return { text: storyText.slice(0, span.start) + lines.join('\n') + storyText.slice(span.end),
+  return { text: storyText.slice(0, span.start) + separateMarks(lines).join('\n') + storyText.slice(span.end),
     zones: count };
 }
 
@@ -613,7 +613,7 @@ export function appendixZoneProblems(ctx, storyText) {
         + '机器标记之外的目的句与说明归作者，投影不碰');
       continue;
     }
-    const have = lines.slice(at.start + 1, at.end - 1);
+    const have = zoneBody(lines, at);
     const diff = firstDiff(have, z.rows);
     if (!diff) continue;
     problems.push(`「${appendix.title}·${z.zone}」的机器区与${z.source}对不上（${diff.why}`

@@ -149,15 +149,17 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
             self.assertIn(needle, picks, f"表达选择那一节少了「{needle}」")
         self.assertNotIn("图从要解释的关系出发", body, "图的选法又在写章那一节抄了一份")
 
-    def test_the_reading_choice_starts_from_what_readers_confuse(self) -> None:
-        """阅读图从读者容易混淆的关系出发：汇聚分散事实也是增益；已讲清时零图合法，理由针对具体问题而不是图数。"""
-        design = section(read("phases/story-write.md"), "动笔前：先设计表达")
-        for needle in ("最容易混淆什么", "不需要新的业务事实", "不采用完全合法",
-                       "不以「已有几张图」「再画一张没有新信息」代替"):
-            self.assertIn(needle, design, f"阅读图选择少了「{needle}」")
+    def test_the_expression_order_and_the_same_figure_svg_are_stated_once(self) -> None:
+        """载体按 图＞表格＞列表＞章节＞文字 先后考虑，重要时序与状态不被散文替代；SVG 是同一张图的增强形态，没有补图候选。"""
+        guide = read("phases/story-write.md")
+        picks = section(guide, "表达选择：先选用途，再选载体")
+        for needle in ("图＞表格＞列表＞章节＞文字", "参与方、先后、调用与返回、等待与失败责任", "触发条件与终态"):
+            self.assertIn(needle, picks, f"表达选择那一节少了「{needle}」")
+        self.assertNotIn("阅读图选择", guide, "补图候选的写法还在")
         svg = read("reference/svg.md")
-        self.assertIn("把已有但分散的关系放到一处也算", svg, "svg.md 的增益定义与选择方法不一致")
-        self.assertIn("「阅读图选择」", svg, "svg.md 没指回选择方法的那一处")
+        for needle in ("同一张图的另一种形态", "不追加业务关系", "不是不做的理由"):
+            self.assertIn(needle, svg, f"svg.md 少了「{needle}」")
+        self.assertNotIn("阅读槽", svg)
 
     def test_a_trade_off_needs_a_real_alternative_only_when_there_is_one(self) -> None:
         guide = read("phases/story-write.md")

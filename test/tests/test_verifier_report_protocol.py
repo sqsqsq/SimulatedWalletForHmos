@@ -541,7 +541,7 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         (src / "decisions.json").write_text("[]", encoding="utf-8")
         shutil.copy2(REPO / "test/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
                      "/REQ-DEMO/AR/story-src/story-template.md", src / "story-template.md")
-        # story init 建的使用记录身份与登记过的流程契约：交付门在回执通过后为 spec 收尾，按它们结算
+        # 取材前 begin 建的使用记录身份与登记过的流程契约：交付门在回执通过后为 spec 收尾，按它们结算
         (src.parents[1] / ".usage-id").write_text("20261022T080000.000Z\n", encoding="utf-8")
         sys.path.insert(0, str(DEV_EXT / "skills" / "story" / "scripts" / "core"))
         from flow import state  # noqa: PLC0415

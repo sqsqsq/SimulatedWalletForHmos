@@ -16,6 +16,7 @@ import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { signedGateRows } from '../shared/review-inputs.mjs';
+import { recordUsage } from '../shared/usage.mjs';
 import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 
 const SELF = 'doc/extensions/hooks/plan/author.md';
@@ -37,7 +38,9 @@ function openDecisionSection(projectRoot, feature) {
     ...(open.length ? open.map(d => `- ${d.id ?? '（无 id）'}：${d.title ?? ''}（该谁定：${d.decider ?? '—'}）`) : ['没有 open 的决定。']), '',
     '选知识、定契约实体之前，先对着人签原文判断每条 open 影响哪些实体与通路：授权内的共有实体照常设计，受影响处按「待它定」设计或写明受阻部分；'
       + '它会改变批准的模块范围、业务承载或交付承诺时，问人取得裁定再按它设计——mock、「默认方案」或「候选」注释都不代替批准，也不按它承诺验收。'
-      + '只影响局部实现、可替换的选型由你定，不为它另造人工确认。', ''];
+      + '只影响局部实现、可替换的选型由你定，不为它另造人工确认。'
+      + '评审记录人工区空着、议题还开着，本身不说明依据不够：材料与有效人答（含对话里已确认、还没回填的）定得了当前这一步就照常推进，不重问；'
+      + '真正影响当前工作又定不了的那一件，说清影响后沿现有询问或 `decide` 路径确认，或先做不依赖它的部分。', ''];
 }
 
 function knowledgeSection(projectRoot, feature) {
@@ -109,6 +112,9 @@ function main(argv) {
     process.stderr.write('用法：node doc/extensions/hooks/plan/author.mjs --feature <名>\n');
     return 2;
   }
+  // 取任务包就是开始本阶段的工作：先记起点（只在这条 CLI 入口记，被导入的渲染函数不写 usage）
+  const begun = recordUsage(process.cwd(), 'begin', { feature, step: 'plan' });
+  if (!begun.ok) process.stderr.write(`[usage] 本阶段的开始没有记上（任务包照常给出）：${(begun.errors ?? []).join('；')}——修好原因后重跑本命令补记\n`);
   const root = process.cwd();
   process.stdout.write([`# plan 阶段 · 本次任务包（${feature}）`, '',
     `\`context-exploration\` 的 \`key_inputs_read\` 要含 \`${SELF}\`——本任务包是它的展开。`, '',

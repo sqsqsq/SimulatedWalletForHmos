@@ -408,18 +408,21 @@ function issueZones(reviewText, id, fresh) {
   // 找不到当前形态的人工区起点：整块当机器区交摘要核，有人写过字（含不是当前形态的人工区）就对不上
   if (!starts.length) {
     if (head < 0) return { machine: null, human: null, ambiguous: false };
-    const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
+    const markLine = markAbove(reviewText, from, head);
     return { machine: { mark: markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null,
       body: reviewText.slice(head + 1, end) }, human: null, ambiguous: false, noZone: true };
   }
   if (head < 0) return { machine: null, human: reviewText.slice(starts[0], end + anchor.length), ambiguous: false };
-  const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
+  const markLine = markAbove(reviewText, from, head);
   const mark = markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null;
   const want = recordedDigest(mark);
   const at = (want && starts.find(s => projectionDigest(reviewText.slice(head + 1, s)) === want)) ?? starts[0];
   return { machine: { mark, body: reviewText.slice(head + 1, at) },
     human: reviewText.slice(at, end + anchor.length), ambiguous: starts.length > 1 };
 }
+
+/** 标题上方第一行非空行：标记与标题之间隔着分隔空行；只在本议题范围 `[from, head)` 里找。 */
+const markAbove = (text, from, head) => text.slice(from, head).trimEnd().split(/\r?\n/).pop();
 
 /**
  * 这一段有人动过手吗。
@@ -661,7 +664,7 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
             + 'build 按决策点的摘要判问题换没换，换了就不把旧表态带到新问题下；评审人确认沿用上一版表态时，由 `story_flow.py decide --update 沿用上一版表态 --issue <议题 id> --reply <原话>` 记下原话，build 据这条记录沿用。');
         }
         const human = keptHumanZone(zones, dec) ?? renderHumanZone(dec);
-        parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n${machine}\n${human}\n`);
+        parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n\n${machine}\n${human}\n`);
       });
     });
     out.push(parts.join('\n'));

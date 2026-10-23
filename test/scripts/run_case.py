@@ -676,7 +676,7 @@ def closure_facts(feature: str, start_phase: str, end_phase: str) -> dict:
 def reading_contract(work: object) -> list[str]:
     """产品 `story-build view --mode status` 的输出合同：字段、类型与相互关系。不合的逐条列出，空表才可信。
 
-    不适用 = 写作设计明确不采用阅读图且没有问题、没有待办、没有下一动作，同时算完成；已完成 = 选中的阅读图一处待办都没有；
+    不适用 = story 里没有正式图且没有问题、没有待办、没有下一动作，同时算完成；已完成 = 每张正式图的增强 SVG 都验收成立；
     没完成 = 至少一处待办，且给了下一动作。缺字段、类型错、自相矛盾都不能拿来判完成或不适用。
     """
     if not isinstance(work, dict):
@@ -2785,9 +2785,9 @@ def deliver_update_inputs(case_id: str, feature: str) -> list[dict]:
     三种落点各有各的物理动作，混成一种就测不出真实形态：
 
     - `local_material`：人手上的新版文档 → 收件箱，与正常补料同一条路；
-    - `review_human_zone`：评审人在评审记录里对各议题的表态 → 按标题里的词找到那一条议题，
-      在它的人工区勾结论、写修改意见。**找不到或找到不止一条就不写**，如实记下来——
-      宿主动机器区或猜议题等于替产物做决定；
+    - `review_human_zone`：评审人在评审记录里对各议题的表态 → 按议题标题与决策点里的词找到那一条议题，
+      在它的人工区勾结论、写修改意见；同一议题几项表态结论一致就合在一处写。**找不到、找到不止一条、
+      同题结论不一致都不写**，逐项记下没送达的原因——宿主动机器区或猜议题等于替产物做决定；
     - `system`：需求系统上的正文被改了 → 写进系统目录那一份。
 
     投放幂等：同一份重复投只是覆盖同样的字节。**初始那一轮绝不投**——
@@ -2822,8 +2822,10 @@ def deliver_update_inputs(case_id: str, feature: str) -> list[dict]:
 def _write_review_zones(feature_root: Path, source: Path) -> list[dict]:
     """把评审人的表态写进各议题的人工区：勾结论、写修改意见。换行按评审记录原样。
 
-    输入是一份 YAML 列表，每项 `match`（议题标题里要有的词，任一即可）、`verdict`（同意 /
-    需修改 / 暂缓）、`opinion`（修改意见）。标题匹配不到或匹配到不止一条，这一项不写并记下来。
+    输入是一份 YAML 列表，每项 `match`（议题里要有的词，任一即可）、`verdict`（同意 / 需修改 / 暂缓）、`opinion`（修改意见）。
+    **先预检、再写**：每项在议题标题与「决策点」那一行里找——标题措辞每轮会变，决策点说的是同一件事；
+    零命中或多命中不猜。同一议题收到几项时，结论一致就把意见按顺序合在一处写，结论不一致就一项都不写。
+    没送达的逐项记下原因（`delivered: false`），装置据此如实报告这一轮哪条探针没进被测输入。
     """
     review = feature_root / "AR" / "review.md"
     if not review.is_file():
@@ -2832,39 +2834,45 @@ def _write_review_zones(feature_root: Path, source: Path) -> list[dict]:
     raw = review.read_bytes().decode("utf-8")
     newline = "\r\n" if "\r\n" in raw else "\n"
     lines = raw.replace("\r\n", "\n").split("\n")
-    titles = [(i, l) for i, l in enumerate(lines) if l.startswith("#### ")]
-    done = []
+    ends = lambda at: next((k for k in range(at + 1, len(lines)) if lines[k].startswith("#### ")  # noqa: E731
+                            or lines[k].startswith("<!-- decision:")), len(lines))
+    topics = {i: l + "\n" + next((x for x in lines[i + 1:ends(i)] if x.startswith("**决策点**")), "")
+              for i, l in enumerate(lines) if l.startswith("#### ")}
+    done, groups = [], {}
     for item in items:
         words = [str(w) for w in (item.get("match") or [])]
         verdict = str(item.get("verdict") or "").strip()
-        opinion = str(item.get("opinion") or "").strip()
         if verdict not in VERDICTS:
             raise SystemExit(f"[runner] {source.name} 的结论只能是 {' / '.join(VERDICTS)}：{verdict}")
-        hits = [(i, l) for i, l in titles if any(w in l for w in words)]
-        record = {"file": source.name, "kind": "review_human_zone", "match": words}
+        record = {"file": source.name, "kind": "review_human_zone", "match": words, "delivered": False}
+        done.append(record)
+        hits = [i for i, text in topics.items() if any(w in text for w in words)]
         if len(hits) != 1:
-            record["note"] = (f"标题含 {' / '.join(words)} 的议题有 {len(hits)} 条"
-                              + (f"（{'；'.join(l[5:] for _, l in hits)}）" if hits else "")
-                              + "，这一项没有写")
-            done.append(record)
+            record["note"] = (f"议题标题与决策点含 {' / '.join(words)} 的有 {len(hits)} 条"
+                              + (f"（{'；'.join(lines[i][5:] for i in hits)}）" if hits else "") + "，这一项没有写")
             continue
-        at = hits[0][0]
-        end = next((k for k in range(at + 1, len(lines)) if lines[k].startswith("#### ")
-                    or lines[k].startswith("<!-- decision:")), len(lines))
-        head = next((k for k in range(at, end) if lines[k].strip() == HUMAN_ZONE_HEAD), None)
-        if head is None:
-            record["note"] = f"「{lines[at][5:]}」下找不到人工区，这一项没有写"
-            done.append(record)
+        groups.setdefault(hits[0], []).append((item, record))
+    for at, group in groups.items():
+        title = lines[at][5:]
+        verdicts = sorted({str(it["verdict"]).strip() for it, _ in group})
+        head = next((k for k in range(at, ends(at)) if lines[k].strip() == HUMAN_ZONE_HEAD), None)
+        why = (f"「{title}」收到不一致的结论（{' / '.join(verdicts)}），都没有写" if len(verdicts) > 1
+               else f"「{title}」下找不到人工区，这一项没有写" if head is None else None)
+        if why:
+            for _, record in group:
+                record["note"] = why
             continue
-        for k in range(head + 1, end):
-            if lines[k].strip() == f"- [ ] {verdict}":
+        opinion = "；".join(str(it.get("opinion") or "").strip() for it, _ in group if str(it.get("opinion") or "").strip())
+        for k in range(head + 1, ends(at)):
+            if lines[k].strip() == f"- [ ] {verdicts[0]}":
                 lines[k] = lines[k].replace("- [ ]", "- [x]", 1)
             elif lines[k].startswith(OPINION_HEAD):
                 lines[k] = OPINION_HEAD + opinion
-        record["destination"] = f"AR/review.md「{lines[at][5:]}」人工区"
-        done.append(record)
+        for _, record in group:
+            record.update(delivered=True, destination=f"AR/review.md「{title}」人工区")
     review.write_bytes(newline.join(lines).encode("utf-8"))
     return done
+
 
 
 def _write_into_system(feature: str, source: Path, item: dict) -> dict:
@@ -2913,13 +2921,16 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
     delivered = deliver_update_inputs(case_id, feature)
     delivered += [{"file": n, "kind": "supplement", "destination": f"inbox/{n}"}
                   for n in deliver_supplements(case_id, feature, list(deliver or []))]
+    # 没送达的探针随续行一起留档：这一轮不能据它称覆盖了那条冲突
+    missed = [d for d in delivered if d.get("delivered") is False]
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / RESUME_FILE).write_text(
-        json.dumps({"text": text, "answer": (answer or "").strip(),
+        json.dumps({"text": text, "answer": (answer or "").strip(), "delivered": delivered,
                     "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
         encoding="utf-8")
     print(json.dumps({"ok": True, "case": case_id, "answer": (answer or "").strip() or None,
-                      "queued": text[:200], "delivered": delivered}, ensure_ascii=False))
+                      "queued": text[:200], "delivered": delivered, "complete": not missed,
+                      **({"undelivered": [d.get("note") for d in missed]} if missed else {})}, ensure_ascii=False))
     return 0
 
 

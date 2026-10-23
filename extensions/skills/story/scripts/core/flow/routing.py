@@ -548,7 +548,7 @@ def reading_work(feature_root: Path) -> dict:
 
 
 def reading_todo(work: dict) -> str | None:
-    """本地阅读还没完成时要做什么（产品状态给的 `next`）；完成（含明确不采用）返回 None。
+    """本地阅读还没完成时要做什么（产品状态给的 `next`）；完成（含没有正式图）返回 None。
 
     先认读取错误与状态自洽，再接受完成：读不出、缺字段、带着问题说完成，都按未知说，不当完成。
     """

@@ -63,7 +63,7 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 | `doc/features/` | 测试完回流的需求产物，上一轮的先归档到 `doc/features/archive/`（§1.2、§4.5） | finalize / 检查点 | 不入库，按回流规则覆盖与归档 |
 | `output/story/` | **CLI 运行记录**：每轮 suite `story-suite-<时刻>/`（`suite.json`、`cases/<case>/<run>/` 事件流与 `cli-runtime/`、usage 快照、原生会话、回流清单）；不属于 suite 的单次真实 CLI 运行（启动核验、看图冒烟、verifier smoke）一次一目录 `<用途>-<日期>[-序号]/`，属于某轮 suite 的放进那一轮的子目录 | 测试装置；手工跑真实 CLI 时按下面的约定 | **永不清理**：任何脚本都不删；同一轮 finalize 只重写本轮派生的快照 |
 | `output/evidence/` | **维护过程证据**：评审复验、实施交回引用的重放、探针、计量、截图与原件副本；一题一目录 `<版本>-<主题>-<日期>/`，复现它的驱动脚本放该目录 `scripts/` | 维护者 | 不自动清理；方案、评审与交回按路径引用 |
-| `output/scratch/` | **临时**：一次性脚本、pytest 缓存与 basetemp、离线模板的装配记录 `offline-<时刻>/`、临时工作区 | 维护者、pytest、§5 | 不作证据引用，可以随时删；交回要引用的脚本先复制进 `output/evidence/<题>/scripts/` |
+| `output/scratch/` | **临时**：一次性脚本、pytest 缓存与 basetemp、离线验证的日志与模板装配记录 `verify/<时刻>-<场景>/`、临时工作区 | 维护者、pytest、§5 | 不作证据引用，可以随时删；交回要引用的脚本先复制进 `output/evidence/<题>/scripts/` |
 | `output/cli-tests/` | 中央 runtime 同步来的单测（`test/tools/cli/tests`）的临时根 | runtime 单测 | 可以随时删 |
 
 手工跑真实 CLI 时把运行记录放进 `output/story/`：
@@ -384,7 +384,7 @@ output/story/<suite-id>/
 |---|---|---|
 | `local_material` | 需求目录的收件箱 | 人手上的新版文档 |
 | `system` | 需求系统里那张单（`destination` 指文件） | 上游正文或评审回稿被更新，update 取上游时取回 |
-| `review_human_zone` | 评审记录里标题含 `match` 词的那条议题的人工区 | 评审人表态；找不到或不止一条就不写并记下 |
+| `review_human_zone` | 评审记录里标题或决策点含 `match` 词的那条议题的人工区；同一议题几项结论一致就合在一处 | 评审人表态；零命中、多命中或同题结论不一致都不写，`resume-update` 输出 `complete: false` 与 `undelivered`，并留在续行记录里——那条探针本轮没进被测输入，交回如实写明，不据它称覆盖了对应冲突 |
 
 本地单没有需求系统，送审件就是工作区里的 `AR/review.md` 与 `AR/story.md`。等待窗口里只固定快照、只读评测，不向被测会话发评分、缺陷清单、
 脚本路径或修法；恢复驱动后仍只扮演需求方。第一段到目标却没拿到 session 时终态是 `cli_session_lost`，不另起 run 接着跑。
@@ -409,33 +409,20 @@ python test/scripts/run_multi_case.py finalize `
 
 ## 5. 离线验证
 
-命令从仓根执行，并行参数照抄不删（`-n auto --dist loadscope`、`--jobs`、`-j`；`--dist loadscope` 让同一个类的用例共用夹具、不互相踩）：
+离线验证用 `test/scripts/verify.py`，从仓根执行，只选场景。并行参数（`-n auto --dist loadscope`）、模板装配与先后顺序都写在脚本里，不手拼 pytest 或检查命令：
 
-```powershell
-python -m pytest test/tests -n auto --dist loadscope
-python -m pytest test/tools/cli -n auto --dist loadscope
-python -m compileall -q -j 0 tools/cli test/scripts
-python -m tools.cli.scripts.validate_clis
-python test/scripts/run_multi_case.py plan --all --jobs <实际Case数>
-python test/scripts/check_failure_modes.py --project-root <装好开发源的模板>
-node --check <每个 extensions 下的 .mjs>      # 彼此无依赖，可同时起
-```
+| 场景 | 命令 | 什么时候跑 |
+|---|---|---|
+| 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
+| 全量 | `python test/scripts/verify.py full` | 提交或交回前一次 |
+| 失效形态 | `python test/scripts/verify.py failure-modes` | 按 §1.2 同一装配函数现建装好开发源的模板，再跑 §5.4 |
+| 交回 | `python test/scripts/verify.py handback` | 交回前一次：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑 |
+| Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
 
-`--project-root` 给装好开发源的模板：用最近一次 `start` 的 `%TEMP%/sw-story/<suite-id>/workspace-template`，或不起 CLI、按 §1.2 同一装配顺序
-现建一份（`<id>` 每次取新值，打印的是模板路径）：
+每步的完整输出写到 `output/scratch/verify/<时刻>-<场景>/<步骤>.log`，控制台按完成先后打印每步的结论行与耗时，多步时最后按固定顺序汇总；有一步失败退出码非 0。
+同时跑的前提是各步只写自己的位置：每次现建自己的模板，测试与失效形态各用自己的临时目录。新写的测试或失效形态检查要守这一条。
 
-```powershell
-$id = "offline-" + (Get-Date -Format yyyyMMdd-HHmmss)
-python -c @"
-import sys, pathlib
-sys.path.insert(0, 'test/scripts')
-import run_multi_case as m
-d = pathlib.Path('output/scratch/$id'); d.mkdir(parents=True)
-print(m.create_workspace_template(d, '$id')[0])
-"@
-```
-
-- 相关修改先跑有区分力的用例（`-k <关键词>`，看慢项加 `-q --durations 10`），通过后在完整需求收口跑必要全量；无新改动不重复刷全量。
+- 按影响范围分层跑：改一处用 `affected`；全量与失效形态回归只在提交或交回前跑一次（`handback` 同时跑完）；无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明。这些命令不启动真实被测 CLI。
 - 运行证据的位置由 `test_run_measurement.py::ProcessArtifactsEnterTheIndex` 核：`doc/spec`、`doc/plan` 下的截图、日志、事件流、压缩包按运行证据报：CLI 运行记录放 `output/story/`，维护过程证据放 `output/evidence/`（§0.4）。两类图是评价参照而不是运行证据：待审定金样候选里被该 Case story 引用的 `ux-reference` 图；已确认的分析归档 `doc/spec/1.9.9/04-稳定性与性能分析/data/golden/`（性质由其 MANIFEST 声明）里被所属对象 story 图片或 spec Visual Handoff 实际引用的 PNG。归档里未引用、映射到别的对象、缺 MANIFEST 的图与其它后缀照常报，断开的引用逐条报出。
 - pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录（§0.4）。
@@ -590,6 +577,8 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 三项各 100 分，不加权、不互相补偿：`90–100` 达到目标；`70–89` 未达目标，记录主要缺口继续优化；`<70` 本次测试失败，回对应所有者定位。
 代表性测试三项均达到 90 且经用户确认，才能宣布达到评分目标；已结束轮次保持其用户裁定。
 
+2026-10-23用户确认：性能先消除已证无效循环，不为半小时继续扩机制。未达到性能期望仍如实评分；用户可接受剩余耗时作为版本限制，发布决定与“已达评分目标”分别记录，不因此改写旧分或自动判高分。
+
 #### 评分锚
 
 - **产物结果**：高分表示 Story/Review 在范围内完整、正确、无编造，详略符合实际需求，决策已定/未定清楚，图文与章节便于评审；
@@ -621,6 +610,10 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 金样入口为 [golden/README.md](golden/README.md)。使用前核用户认可的用途、版本与尚未确定的业务口径，区分效果对照与已冻结业务结论；
 金样不作判据的机器否决锚，判据对错按真实依据与中性正反例判。对比金样看需求是否完整准确、关系是否清楚、形式是否适合、责任与交付是否可判断，不要求同名小节、同字数或同句式；
 正文里有依据的新增解释不因模板没列而判错。金样与维护分析留在评价域，不进入被测 Case。
+2026-10-23用户确认：每次评测必须以金样为目标并排核图、表/文字、形态、内容、叙述逻辑、条件/异常、知识及成本；不要求完全相同。每项差距给出金样效果、实际位置、输入与人答差异、作者得到的信息和决定、独审反应、最终结果，判断合理变体、模型波动、机制缺陷、装置问题或证据不足。机制归因须有实际生产/消费位置，不把未覆盖当失败、不将所有差距归随机性、不用金样额外前提代替授权。
+
+测试探针仅用于检验所声明的能力，不是产品规则：不要求模型问完交互脚本中所有备选问题，不要求固定议题标题/D号、图数或金样额外方案。Review未处理不自动构成失败；只核当前工作是否因真实缺依据而需要确认。意见未投放与产品漏处理分开，前者列未覆盖并回测试装置，不追加通用审批或范围外实跑。
+
 当前正本是 `golden/auto-topup/`（止于 Spec）与 `golden/car-key-sharing/`（止于 Plan），只在这一处维护；文件身份、引用与图源由 `test_golden_sample.py` 核，第二份副本由 `test_run_measurement.py` 核。
 
 ### 6.5 维护标准与评审

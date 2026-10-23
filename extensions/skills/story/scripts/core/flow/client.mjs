@@ -43,7 +43,7 @@ const PYTHONS = ['python', 'python3'];
  * @returns {{data: object|null, error: string|null}} 两者恰有一个非空
  */
 export function queryFlowStatus(projectRoot, feature, { timeoutMs } = {}) {
-  // 这是正式读取里的内部查询：视图归调用方持有，status 不在结束时恢复阅读图
+  // 这是正式读取里的内部查询：视图归调用方持有，status 不在结束时恢复增强 SVG
   const r = runPython(FLOW_SCRIPT, ['status', '--feature', feature, '--project-root', projectRoot],
     { timeoutMs, env: { ...process.env, [VIEW_OWNER]: viewOwnerKey(featureRoot(projectRoot, feature)) } });
   if (r.error) return { data: null, error: r.error };

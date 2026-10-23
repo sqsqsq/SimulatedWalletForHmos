@@ -6,7 +6,6 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
 import { isSystemRequirement, readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
 import { markdownLinks } from './language.mjs';
@@ -111,77 +110,6 @@ export function readManifest(ctx) {
 export function registeredPaths(ctx) {
   const m = readManifest(ctx);
   return m && m !== 'broken' ? [...(m.origins ?? []).map(o => o.path), ...(m.materials ?? []).flatMap(x => x.paths ?? [])] : [];
-}
-
-//: 阅读图依据里直接认的正式文件；合同来源、正式图源与材料清单登记的件另按各自规则认
-const BASIS_FILES = ['AR/story.md', 'plan/plan.md', 'AR/story-src/decisions.json'];
-//: 按文本读的扩展名：其余（图片、DOCX、PDF…）只按原始字节绑定身份，不当文本解析
-const TEXT_FILE = /\.(md|mmd|json|txt|ya?ml|csv)$/i;
-//: 阅读图自己与它的验收证据是派生物，不能借路径或联接回来当业务依据
-const DERIVED = /^AR\/figures\/|\.reading\//;
-const registeredDigest = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex').slice(0, 16)}`;
-
-/**
- * 一条阅读图依据实际指向哪些文件 —— 写作设计声明检查、全篇 check 取标题段、验收请求与重验共用这一份。
- *
- * - 路径相对需求目录；目录联接与符号链接按真实位置判，必须仍在需求目录里、不是阅读图派生物。每次调用都重新解析，联接改指照样发现。
- * - 允许的来源：正式 Story / Plan、决策登记、合同来源、正式图源 `.mmd`，以及材料清单登记过的原件、阅读稿与图片。
- * - 登记过的件核当前字节与登记摘要：登记之后变了（含原件变了而阅读稿没随之重新并入）就不成立。
- * - 选原件：取它登记的阅读稿（标题路径在阅读稿里取）与抽出的原图，同时绑定原件字节；选阅读稿或原图：带上所属原件。
- *
- * @returns {{problem: string} | {rel: string, names: string[], primary: object|null,
- *   files: {rel: string, role: string, text: boolean, bytes: Buffer}[]}} `primary` 是要阅读的那一份：文本阅读稿、
- *   正式文件或直接选的图片；只抽图的原件没有语义阅读对象（null），要看的是它的原图，原件只作身份
- */
-export function basisFiles(ctx, basis) {
-  const [rel, ...names] = String(basis).split('>').map(s => s.trim());
-  if (!rel || /^([A-Za-z]:|[\\/])/.test(rel) || rel.split(/[\\/]/).includes('..')) return { problem: '不是本需求目录里的相对路径' };
-  const contract = Object.values(ctx.contract?.sources ?? {}).map(s => (typeof s === 'string' ? s : s?.path)).filter(Boolean);
-  const formal = BASIS_FILES.includes(rel) || contract.includes(rel) || /^AR\/story-src\/figures\/[^/]+\.mmd$/.test(rel);
-  const m = readManifest(ctx);
-  const broken = m === 'broken' || (m && !Array.isArray(m.origins));
-  if (broken && !formal) return { problem: '要按材料清单认，而 AR/story-src/materials.json 读不出来源关系——它由 `story_flow.py round` 按磁盘现状生成' };
-  const [origins, materials] = broken ? [[], []] : [m?.origins ?? [], m?.materials ?? []];
-  const shaOf = r => origins.find(o => o.path === r)?.sha256 ?? materials.find(x => (x.paths ?? []).includes(r))?.sha256 ?? null;
-  const origin = origins.find(o => o.path === rel);
-  // 导入的阅读稿与抽出的图都带上它们的原件：选哪一份，原件身份都一起绑定
-  const owners = origins.filter(o => o.path !== rel && [...(o.readable_paths ?? []), ...(o.image_paths ?? [])].includes(rel));
-  let files;
-  if (origin) {
-    files = [{ rel, role: '原件' }, ...(origin.readable_paths ?? []).filter(r => r !== rel).map(r => ({ rel: r, role: '阅读稿' })),
-      ...(origin.image_paths ?? []).map(r => ({ rel: r, role: '原图' }))];
-    if (!TEXT_FILE.test(rel) && files.length === 1) {
-      return { problem: '是原件，材料清单里没有它的阅读稿或抽出的图——它还没经导入链并入，按 `story_flow.py status` 的材料动作导入' };
-    }
-  } else if (formal || owners.length || shaOf(rel)) {
-    files = [{ rel, role: formal ? '依据' : TEXT_FILE.test(rel) ? '阅读稿' : '图片' }, ...owners.map(o => ({ rel: o.path, role: '原件' }))];
-  } else {
-    return { problem: m === null ? '不是正式产物，而本需求还没有材料清单可认登记过的材料——先跑 `story_flow.py round`'
-      : '不是可作依据的文件——依据只认正式产物、正式图源、决策登记与材料清单登记过的原件、阅读稿和图片（阅读图、审查报告与临时文件不算）' };
-  }
-  files.forEach((f) => { f.sha = shaOf(f.rel); });
-  const unsigned = files.find(f => !f.sha && (f.role === '原件' || f.role === '图片' || f.role === '原图'));
-  if (unsigned) return { problem: `材料清单里没有${unsigned.role} ${unsigned.rel} 的摘要，身份核不了——清单由 \`story_flow.py round\` 按磁盘现状重建` };
-  let root;
-  try { root = fs.realpathSync.native(ctx.featureRoot); } catch { return { problem: '需求目录读不到' }; }
-  for (const f of files) {
-    let real;
-    try { real = fs.realpathSync.native(path.join(ctx.featureRoot, ...f.rel.split('/'))); } catch {
-      return { problem: f.rel === rel ? '读不到这个文件' : `登记的${f.role} ${f.rel} 读不到——它由原件按导入链生成，按 \`story_flow.py status\` 的材料动作补齐` };
-    }
-    const inside = path.relative(root, real).split(path.sep).join('/');
-    if (!inside || inside.startsWith('../') || path.isAbsolute(inside) || DERIVED.test(inside)) {
-      return { problem: `${f.rel} 实际位置是 ${real}，不在本需求的来源范围里（目录联接与符号链接按真实位置判）` };
-    }
-    f.bytes = fs.readFileSync(real);
-    f.text = TEXT_FILE.test(f.rel);
-    if (f.sha && registeredDigest(f.bytes) !== f.sha) {
-      return { problem: `${f.role} ${f.rel} 与材料清单登记的不是同一份（登记之后变了）——跑 \`story_flow.py round\` 按导入链重新登记，原件变了阅读稿要随之重新并入` };
-    }
-  }
-  const primary = files.find(f => f.role === '阅读稿' && f.text) ?? (files[0].role === '原件' && !files[0].text ? null : files[0]);
-  if (names.length && !primary?.rel.endsWith('.md')) return { problem: '只有 Markdown 能按标题路径取一节' };
-  return { rel, names, primary, files };
 }
 
 /**

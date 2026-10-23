@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 import os
 import re
 import shutil
@@ -218,25 +219,22 @@ class TheArchivedRecordIsSelfContained(GitRepo):
         cls.git("init", "-q", "-b", "main")
         # 目标仓的做法：需求目录整体不入库，随代码归档的使用记录只有 doc/usage.json
         cls.commit("项目起点", {"src/app.txt": "1\n", ".gitignore": "doc/features/\n"})
-        # 纯 Framework 需求：plan 阶段的 pre_phase 钩子建身份；Framework 写下首轮 trace 与闭环
-        hook = (root / "doc" / "extensions" / "hooks" / "shared" / "usage.mjs").as_uri()
-        subprocess.run(["node", "--input-type=module", "-e",
-                        f"const h = (await import({json.dumps(hook)})).default;"
-                        f"await h({{ phase: 'plan', feature: 'AR77', projectRoot: {json.dumps(str(root))} }});"],
-                       check=True, capture_output=True, env=cls.env())
+        # 纯 Framework 需求：消费模型照扩展段开始 plan 的工作（begin 建身份），做完、闭环后照同一段收尾——两条命令原样
+        section = (root / "AGENTS.md").read_text(encoding="utf-8")
+        commands = re.findall(r"`(python doc/extensions/skills/story/scripts/core/usage\.py [^`]+)`", section)
+
+        def run(flag: str) -> subprocess.CompletedProcess:
+            command = next(c for c in commands if flag in c)
+            args = command.replace("<需求编号>", "AR77").replace("<本阶段>", "plan").split()
+            return subprocess.run([sys.executable, *args[1:]], cwd=root, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", env=cls.env())
+        cls.begun = run("--begin")
         reports = root / "doc" / "features" / "AR77" / "plan" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
-        (reports / "trace.json").write_text(json.dumps({"phase": "plan", "started_at": "2026-10-22T08:00:00.300Z"}),
-                                            encoding="utf-8")
         (reports / "summary.json").write_text(json.dumps({
             "closure_status": "closed", "gate_fingerprint": "3.0.0:abc",
-            "closure_commit": {"committed_at": "2026-10-22T08:02:05.900Z"}}), encoding="utf-8")
-        # 消费模型照扩展段写的那一条收尾，原样
-        section = (root / "AGENTS.md").read_text(encoding="utf-8")
-        command = re.search(r"`(python doc/extensions/skills/story/scripts/core/usage\.py [^`]+)`", section).group(1)
-        args = command.replace("<需求编号>", "AR77").replace("<本阶段>", "plan").split()
-        cls.closed = subprocess.run([sys.executable, *args[1:]], cwd=root, capture_output=True, text=True,
-                                    encoding="utf-8", errors="replace", env=cls.env())
+            "closure_commit": {"committed_at": datetime.now(timezone.utc).isoformat()}}), encoding="utf-8")
+        cls.closed = run("--finalize")
         cls.commit("plan 设计落地", {"src/app.txt": "1\n2\n3\n"})
         # 需求目录不入库：工作区里 doc/features 一直在，提交里只有代码与 usage
         # 比的是「同一份 usage 字节与 HEAD」：检出不做换行转换
@@ -257,10 +255,14 @@ class TheArchivedRecordIsSelfContained(GitRepo):
         """业务事实：去掉采集时刻与工程目录名这两样随调用变的。"""
         return {k: v for k, v in facts.items() if k not in ("collected_at", "project")}
 
+    def steps(self) -> dict:
+        return next(iter(json.loads((self.root / "doc" / "usage.json").read_text(encoding="utf-8"))["requirements"].values()))["steps"]
+
     def test_the_closing_command_records_the_last_step(self) -> None:
+        self.assertEqual(0, self.begun.returncode, self.begun.stderr)
         self.assertEqual(0, self.closed.returncode, self.closed.stderr)
-        self.assertEqual({"plan": {"spent": 126}}, next(iter(json.loads(
-            (self.root / "doc" / "usage.json").read_text(encoding="utf-8"))["requirements"].values()))["steps"])
+        self.assertEqual(["plan"], list(self.steps()))
+        self.assertIsInstance(self.steps()["plan"]["spent"], int, "从开始工作到收尾没有算出耗时")
 
     def test_a_clone_without_requirement_folders_gives_the_same_facts(self) -> None:
         self.assertFalse((self.clone / "doc" / "features").exists())
@@ -268,14 +270,13 @@ class TheArchivedRecordIsSelfContained(GitRepo):
         clone, here = self.stats(self.clone), self.stats(self.root)
         self.assertEqual(self.business(here), self.business(clone))
         row = clone["requirements"][0]
-        self.assertEqual(("AR77", {"plan": {"spent": 126}}), (row["number"], row["steps"]))
+        self.assertEqual(("AR77", self.steps()), (row["number"], row["steps"]))
         self.assertNotIn("无提交", row["gaps"], "代码与 usage 的那笔提交没归到需求上")
 
     def test_the_live_folders_do_not_matter_and_are_not_touched(self) -> None:
         before = self.business(self.stats(self.root))
         fr = self.root / "doc" / "features" / "AR77"
         (fr / "plan" / "reports" / "summary.json").write_text("{坏", encoding="utf-8")
-        (fr / "plan" / "reports" / "trace.json").unlink()
         (fr / ".usage-id").write_text("坏了\n", encoding="utf-8")
         (fr / "detail.json").write_text("{坏", encoding="utf-8")
         (self.root / "doc" / "features" / ".usage-state.json").write_text("{坏", encoding="utf-8")

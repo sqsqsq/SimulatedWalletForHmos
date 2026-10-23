@@ -52,4 +52,4 @@
 
 ## 跑哪条命令
 
-`cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature <需求名>`。走 `/story` 链时，这一段的顺序由 `story_flow.py status` 逐步打印（它也给出这一步要写的文件长什么样）。**harness 放在三份产物齐备之后**——之前跑它一定红。派审、采纳与报告回来之后的处置见 [phases/spec.md](../../skills/story/phases/spec.md)「闭环」。取证与结论写法见 [`evidence-rules.md`](../../skills/story/reference/evidence-rules.md)。阶段闭环之后先按 AGENTS 扩展段「阶段收尾与代码归档」收尾（`--phase spec`），走 `/story` 的交付门自动收尾；直接跑 spec 的成功后再交付、进下一阶段或提交代码。
+`cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature <需求名>`。走 `/story` 链时，这一段的顺序由 `story_flow.py status` 逐步打印（它也给出这一步要写的文件长什么样）。**harness 放在三份产物齐备之后**——之前跑它一定红。派审、采纳与报告回来之后的处置见 [phases/spec.md](../../skills/story/phases/spec.md)「闭环」。取证与结论写法见 [`evidence-rules.md`](../../skills/story/reference/evidence-rules.md)。阶段闭环之后先按 AGENTS 扩展段「阶段起止与代码归档」收尾（`--phase spec`），走 `/story` 的交付门自动收尾；直接跑 spec 的成功后再交付、进下一阶段或提交代码。

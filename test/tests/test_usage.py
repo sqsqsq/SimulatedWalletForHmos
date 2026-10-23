@@ -1,7 +1,8 @@
 """使用记录（core/usage.py）按 V5：身份件与复合键、完成态与累计耗时、版本与自报身份、两文件写入保护。
 
-隔离目标工程里放 framework 树、原生 summary / trace / update 记录与 Story 流程契约，经正式机器入口（stdin JSON）调用，
-不写维护仓的 usage。时间区间由落盘的原生时刻与运行态起点构造。
+隔离目标工程里放 framework 树、原生 summary / update 记录与 Story 流程契约，经正式机器入口（stdin JSON / CLI）调用，
+不写维护仓的 usage。阶段的起止是 begin 与收尾那一刻的机器时刻：算术用例在进程内固定记录器的时钟（`at_time`），
+起点仍由 begin 动作产生，不往运行态里手填。
 """
 from __future__ import annotations
 
@@ -115,10 +116,12 @@ class UsageCase(unittest.TestCase):
                                       "story_written_at": at(when), "story_digests": {}})
 
     def update_record(self, rid: str, opened: datetime, closed: datetime | None = None, status: str | None = None,
-                      feature: str = "AR1") -> None:
+                      feature: str = "AR1", begun: bool = True) -> None:
+        """一轮 update 的原生记录；`begun` 表示开轮时有 begin 的起点移进来（记成 started_at，取开轮时刻）。"""
         folder = self.fr(feature) / "AR" / "story-src" / "updates" / rid
         folder.mkdir(parents=True, exist_ok=True)
-        rec = {"id": rid, "opened_at": at(opened), "status": status or ("closed" if closed else "open")}
+        rec = {"id": rid, "opened_at": at(opened), **({"started_at": at(opened)} if begun else {}),
+               "status": status or ("closed" if closed else "open")}
         if closed:
             rec["closed_at"] = at(closed)
         (folder / "record.json").write_text(json.dumps(rec), encoding="utf-8")
@@ -126,10 +129,19 @@ class UsageCase(unittest.TestCase):
     def git(self, *args: str) -> None:
         subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True, env=self.env)
 
+    def at_time(self, action: str, step: str | None = None, when: datetime = T0, feature: str = "AR1") -> dict:
+        """进程内调正式记录器，机器时钟固定在 `when`：begin 与收尾各取这一刻，耗时就能复算。"""
+        sys.path.insert(0, str(CORE))
+        import usage  # noqa: PLC0415
+        self.fr(feature)
+        with unittest.mock.patch.object(usage, "now", return_value=when), \
+                unittest.mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": self.env["GIT_CEILING_DIRECTORIES"]}):
+            return usage.record(self.root, action, feature=feature, step=step)
+
 
 class IdentityAndNodes(UsageCase):
-    def test_init_writes_the_identity_once_and_refreshes_keep_the_key(self) -> None:
-        out = self.call("init")
+    def test_begin_writes_the_identity_once_and_init_or_refresh_keep_the_key(self) -> None:
+        out = self.call("begin", "story")
         self.assertTrue(out["ok"], out)
         key = self.key()
         self.assertRegex(key, r"^AR1-\d{8}T\d{6}\.\d{3}Z$")
@@ -137,7 +149,14 @@ class IdentityAndNodes(UsageCase):
                          self.usage()["requirements"])
         for action in ("init", "refresh"):
             self.call(action)
-        self.assertEqual([key], list(self.usage()["requirements"]), "刷新换了身份")
+        self.assertEqual([key], list(self.usage()["requirements"]), "init 或刷新换了身份")
+
+    def test_init_without_a_begin_makes_no_identity_and_says_the_gap(self) -> None:
+        out = self.call("init")
+        self.assertTrue(out["ok"], out)
+        self.assertIn("没有开始记录", out["note"], "漏了 begin 没说")
+        self.assertFalse((self.fr() / ".usage-id").exists(), "init 补建了身份")
+        self.assertFalse(self.record.exists(), "init 补建了节点")
 
     def test_a_framework_phase_creates_the_identity_and_refresh_or_finalize_do_not(self) -> None:
         self.assertTrue(self.call("refresh", feature="AR2")["ok"])
@@ -147,32 +166,34 @@ class IdentityAndNodes(UsageCase):
         self.assertNotEqual(0, out.returncode, "没有身份时收尾造了一个")
         self.assertIn("没有使用记录身份", out.stdout)
         self.assertFalse((self.fr("AR2") / ".usage-id").exists())
-        self.call("phase", "coding", feature="AR2")
+        self.call("begin", "coding", feature="AR2")          # 纯框架需求：开始工作就建身份
         node = self.node("AR2")
         self.assertEqual((None, None), (node["agent"], node["model"]), "纯框架使用没有自报身份")
         self.assertEqual(1, len(self.usage()["requirements"]))
-        self.assertIn("未知动作 reconcile", self.call("reconcile")["errors"][0], "对账动作还在")
+        self.assertIn("coding", self.state()[self.key("AR2")]["starts"])
+        for retired in ("reconcile", "phase"):
+            self.assertIn(f"未知动作 {retired}", self.call(retired, "coding")["errors"][0], f"{retired} 动作还在")
 
     def test_the_same_number_started_twice_keeps_both_once_committed(self) -> None:
         self.git("init", "-q")
         self.git("config", "user.email", "a@b")
         self.git("config", "user.name", "A")
-        self.call("init")
+        self.call("begin", "story")
         first = self.key()
         self.git("add", "-A")
         self.git("commit", "-qm", "first")
         (self.fr() / ".usage-id").unlink()
-        self.call("init")
+        self.call("begin", "story")
         self.assertIn(first, self.usage()["requirements"], "已提交的同编号节点被删了")
         self.assertEqual(2, len(self.usage()["requirements"]))
 
     def test_a_local_restart_replaces_only_its_uncommitted_node(self) -> None:
         self.git("init", "-q")
-        self.call("init")
-        self.call("init", feature="AR10")
+        self.call("begin", "story")
+        self.call("begin", "story", feature="AR10")
         old, other = self.key(), self.key("AR10")
         (self.fr() / ".usage-id").unlink()
-        out = self.call("init")
+        out = self.call("begin", "story")
         self.assertTrue(out["ok"], out)
         reqs = self.usage()["requirements"]
         self.assertNotIn(old, reqs, "本地重启没替换未提交的旧节点")
@@ -180,97 +201,149 @@ class IdentityAndNodes(UsageCase):
         self.assertIn(self.key(), reqs)
 
     def test_without_git_an_old_node_is_kept_and_said(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         old = self.key()
         (self.fr() / ".usage-id").unlink()
-        out = self.call("init")
+        out = self.call("begin", "story")
         self.assertIn(old, self.usage()["requirements"], "查不了 Git 却当成未提交删了")
         self.assertTrue(any("同编号旧节点" in e for e in out["errors"]), out)
 
 
 class Completion(UsageCase):
-    def test_a_round_is_timed_from_its_start_and_repeated_closures_count_once(self) -> None:
-        self.call("init")
-        self.trace("spec", T0)
-        self.call("phase", "spec")
-        self.assertEqual({}, self.state(), "首轮把 trace 的起点又抄了一份")
-        self.close_phase("spec", T0 + timedelta(seconds=900))
+    """阶段一轮从 begin 到收尾请求那一刻；原生闭环只是完成资格（此刻有、且不早于本轮开始）。中途的检查、刷新与闭环
+    不开始也不结算；闭环早于开始的旧事实不结算；漏了 begin 的完成只出行、记缺口；重复 begin 保留最早，重复收尾不加。"""
+
+    def test_a_round_runs_from_begin_to_the_finalize_request(self) -> None:
+        """T0 开始工作，T1 写稿，T2 第一次检查，T3 闭环，T4 收尾：记 T4−T0，不是 T3−T2。"""
+        self.at_time("begin", "spec", T0)
+        self.trace("spec", T0 + timedelta(seconds=1200))            # 检查不是开始
+        self.close_phase("spec", T0 + timedelta(seconds=1500))
         for _ in range(2):
             self.call("refresh")
-        self.assertEqual({"spent": 900}, self.steps()["spec"])
+        self.assertNotIn("spec", self.steps(), "刷新提前结算了阶段")
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=1800))
+        self.assertEqual({"spent": 1800}, self.steps()["spec"])
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=2500))
+        self.assertEqual({"spent": 1800}, self.steps()["spec"], "重复收尾多记了")
         self.assertFalse(self.state_file.exists(), "结算后留下了空的运行态")
 
-    def test_unfinished_steps_have_no_row_and_a_retry_keeps_its_start(self) -> None:
-        self.call("init")
-        self.trace("plan", T0)
-        self.call("phase", "plan")
-        self.call("phase", "plan")
-        self.assertNotIn("plan", self.steps(), "没做完的步骤出了行")
-        self.close_phase("plan", T0 + timedelta(seconds=30))
-        self.call("phase", "plan")          # 闭环后再跑一轮：这一轮才要自己的起点
-        first = self.state()[self.key()]["starts"]["plan"]
-        self.call("phase", "plan")
-        self.assertEqual(first, self.state()[self.key()]["starts"]["plan"], "同一轮重复进入换了起点")
-        self.assertEqual({"spent": 30}, self.steps()["plan"], "重试轮没结束就计进了 spent")
+    def test_an_intermediate_closure_and_rework_stay_in_the_round(self) -> None:
+        self.at_time("begin", "spec", T0)
+        self.close_phase("spec", T0 + timedelta(seconds=2143))
+        self.call("refresh")
+        self.at_time("begin", "spec", T0 + timedelta(seconds=2200))   # 返修时又跑了一次入口：起点不换
+        self.close_phase("spec", T0 + timedelta(seconds=5046))
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=5100))
+        self.assertEqual({"spent": 5100}, self.steps()["spec"], "中途闭环切掉了后面的返修")
 
-    def test_a_retry_adds_and_an_old_closure_never_ends_the_new_round(self) -> None:
-        self.call("init")
-        self.trace("testing", T0)
-        self.call("phase", "testing")
-        self.close_phase("testing", T0 + timedelta(seconds=600))
-        self.call("refresh")
-        self.call("phase", "testing")       # 真机没过，重进：旧闭环还在盘上
-        self.set_start("testing", T0 + timedelta(seconds=1000))
-        self.call("refresh")
-        self.assertEqual({"spent": 600}, self.steps()["testing"], "旧闭环结算了新一轮")
-        self.close_phase("testing", T0 + timedelta(seconds=1300))
-        self.call("refresh")
+    def test_an_unclosed_round_is_not_settled_and_keeps_its_start(self) -> None:
+        self.at_time("begin", "plan", T0)
+        self.assertNotIn("plan", self.steps(), "没做完的步骤出了行")
+        out = self.at_time("finalize", "plan", T0 + timedelta(seconds=20))
+        self.assertFalse(out["ok"], "没闭环却收了尾")
+        self.close_phase("plan", T0 + timedelta(seconds=25))
+        self.at_time("finalize", "plan", T0 + timedelta(seconds=30))
+        self.assertEqual({"spent": 30}, self.steps()["plan"])
+
+    def test_a_new_round_needs_a_new_closure(self) -> None:
+        self.at_time("begin", "testing", T0)
+        self.close_phase("testing", T0 + timedelta(seconds=500))
+        self.at_time("finalize", "testing", T0 + timedelta(seconds=600))
+        self.at_time("begin", "testing", T0 + timedelta(seconds=1000))      # 真机没过，重新开始：旧闭环还在盘上
+        out = self.at_time("finalize", "testing", T0 + timedelta(seconds=1100))
+        self.assertTrue(out["ok"], out)
+        self.assertIn("还没有新的闭环", out["note"], "旧闭环被当成新一轮的完成")
+        self.assertEqual({"spent": 600}, self.steps()["testing"])
+        self.close_phase("testing", T0 + timedelta(seconds=1250))
+        self.at_time("finalize", "testing", T0 + timedelta(seconds=1300))
         self.assertEqual({"spent": 900}, self.steps()["testing"])
 
-    def test_a_revalidation_after_a_closure_keeps_the_known_time(self) -> None:
-        """闭环后改稿、重新登记、再跑阶段检查：耗时累计这一段，已知的数字不被抹成未知。"""
-        self.call("init")
-        self.trace("spec", T0)
-        self.call("phase", "spec")
-        self.close_phase("spec", T0 + timedelta(seconds=2094))
-        self.call("refresh")
-        self.call("refresh")                # 改稿与 Story 重登记之间的刷新
-        self.call("phase", "spec")          # revalidate 进入阶段检查
-        self.set_start("spec", T0 + timedelta(seconds=2500))
-        self.close_phase("spec", T0 + timedelta(seconds=2560))
-        self.call("refresh")
-        self.assertEqual({"spent": 2154}, self.steps()["spec"])
-
-    def test_a_closure_without_any_start_shows_the_row_and_keeps_known_time(self) -> None:
-        self.call("init")
-        self.close_phase("review", T0)
-        self.call("refresh")
-        self.assertEqual({}, self.steps()["review"], "完成过却没有行，或编了耗时")
-        self.call("phase", "review")
-        self.set_start("review", T0 + timedelta(seconds=100))
-        self.close_phase("review", T0 + timedelta(seconds=160))
-        self.call("refresh")
+    def test_a_missing_begin_is_a_gap_and_nothing_fills_it(self) -> None:
+        self.call("begin", "story")
+        self.trace("review", T0)                                        # trace 与检查不能当起点
+        self.close_phase("review", T0 + timedelta(seconds=60))
+        out = self.at_time("finalize", "review", T0 + timedelta(seconds=90))
+        self.assertEqual({}, self.steps()["review"], "缺起点的完成编了耗时或没出行")
+        self.assertIn("没有开始记录", out["note"])
+        self.at_time("begin", "review", T0 + timedelta(seconds=100))
+        self.close_phase("review", T0 + timedelta(seconds=150))
+        self.at_time("finalize", "review", T0 + timedelta(seconds=160))
         self.assertEqual({"spent": 60}, self.steps()["review"], "只累计可核实的轮次")
-        self.state_file.unlink(missing_ok=True)     # 运行态丢了：已累计的不受影响
+        self.state_file.unlink(missing_ok=True)                         # 运行态丢了：已累计的不受影响
         self.close_phase("review", T0 + timedelta(seconds=400))
-        self.call("refresh")
+        self.at_time("finalize", "review", T0 + timedelta(seconds=410))
         self.assertEqual({"spent": 60}, self.steps()["review"])
 
-    def test_an_interruption_keeps_the_start_and_counts_once_closed(self) -> None:
-        """首轮被中断：起点仍是 trace，不计 spent；闭环后这一轮从 trace 起点算到闭环，中间的等待与中断都在里面。"""
-        self.call("init")
-        self.trace("coding", T0)
-        self.call("phase", "coding")
+    def test_waiting_and_interruptions_are_inside_the_round(self) -> None:
+        self.at_time("begin", "coding", T0)
         self.close_phase("coding", None)
         self.call("refresh")
-        self.assertNotIn("coding", self.steps())
-        self.call("phase", "coding")        # 中断后重进同一轮
-        self.close_phase("coding", T0 + timedelta(hours=2))
-        self.call("refresh")
+        self.at_time("begin", "coding", T0 + timedelta(hours=1))        # 中断后回来
+        self.close_phase("coding", T0 + timedelta(hours=1, minutes=50))
+        self.at_time("finalize", "coding", T0 + timedelta(hours=2))
         self.assertEqual({"spent": 7200}, self.steps()["coding"])
 
+    def test_an_update_close_settles_only_the_phases_this_round_began(self) -> None:
+        self.at_time("begin", "spec", T0)
+        self.close_phase("spec", T0 + timedelta(seconds=50))
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=100))
+        self.close_phase("plan", T0 + timedelta(seconds=50))            # 这一轮没开始过的阶段
+        self.at_time("begin", "spec", T0 + timedelta(seconds=200))      # update 里重新做 spec
+        self.at_time("begin", "ut", T0 + timedelta(seconds=210))        # 开始了还没闭环
+        self.close_phase("spec", T0 + timedelta(seconds=250))
+        out = self.at_time("close", None, T0 + timedelta(seconds=260))
+        self.assertTrue(out["ok"], out)
+        self.assertEqual({"spent": 160}, self.steps()["spec"], "update 收口没结算这一轮做过的阶段")
+        self.assertNotIn("plan", self.steps(), "没开始的阶段也被收了尾")
+        self.assertNotIn("ut", self.steps(), "没闭环的阶段被收了尾")
+        self.assertIn("ut", self.state()[self.key()]["starts"], "没闭环的阶段丢了起点")
+        self.at_time("close", None, T0 + timedelta(seconds=300))
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=310))
+        self.assertEqual({"spent": 160}, self.steps()["spec"], "update 收口与收尾重复累计")
+
+    def test_story_starts_at_its_identity_and_begin_never_restarts_it(self) -> None:
+        self.at_time("begin", "story", T0)
+        key = self.key()
+        self.assertEqual("20261021T080000.000Z", key.split("-", 1)[1], "身份时刻不是开始工作的那一刻")
+        self.assertFalse(self.state_file.exists(), "story 的起点另存了一份")
+        self.at_time("begin", "story", T0 + timedelta(seconds=30))
+        self.at_time("init", None, T0 + timedelta(seconds=400))        # 取材之后才 init：起点不是它
+        self.assertEqual(key, self.key(), "后来的 begin 或 init 重启了身份")
+        self.story_written(T0 + timedelta(seconds=900))
+        self.call("refresh")
+        self.assertEqual({"spent": 900}, self.steps()["story"], "Story 不是从开始工作算起")
+        self.at_time("begin", "story", T0 + timedelta(seconds=1000))   # 重复 begin / init：不重启、不清已记的
+        self.at_time("init", None, T0 + timedelta(seconds=1010))
+        self.assertEqual((key, {"spent": 900}), (self.key(), self.steps()["story"]))
+
+    def test_a_story_without_its_begin_is_a_gap_not_a_shorter_time(self) -> None:
+        """漏了取材前的 begin：init 不补身份；成文后没有正常耗时；之后第一次 begin（迟到的 story 或下一阶段）
+        建身份时 Story 记缺口，阶段照常计时。"""
+        for late, written_first in (("story", False), ("spec", True)):
+            with self.subTest(late=late):
+                feature = f"G{late}"
+                out = self.at_time("init", None, T0, feature=feature)
+                self.assertTrue(out["ok"], out)
+                self.assertIn("没有开始记录", out["note"])
+                (self.fr(feature) / "inbox").mkdir()                     # story init 建的收件箱骨架
+                if written_first:
+                    self.story_written(T0 + timedelta(seconds=120), feature=feature)
+                    out = self.at_time("refresh", None, T0 + timedelta(seconds=130), feature=feature)
+                    self.assertIsNone(out["requirement"], "没有开始记录却出了节点")
+                out = self.at_time("begin", late, T0 + timedelta(seconds=200), feature=feature)
+                self.assertIn("耗时缺口", out["note"])
+                self.assertEqual({}, self.steps(feature)["story"], "Story 拿迟到的身份时刻算了耗时")
+                if not written_first:
+                    self.story_written(T0 + timedelta(seconds=500), feature=feature)
+                self.at_time("init", None, T0 + timedelta(seconds=510), feature=feature)
+                self.call("refresh", feature=feature)
+                self.assertEqual({}, self.steps(feature)["story"], "后来的刷新给缺口补了耗时")
+        self.close_phase("spec", T0 + timedelta(seconds=250), feature="Gspec")
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=300), feature="Gspec")
+        self.assertEqual({"spent": 100}, self.steps("Gspec")["spec"], "阶段计时受了 Story 缺口的影响")
+
     def test_story_counts_from_the_identity_to_its_first_registration(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         self.set_identity(T0)
         self.story_written(T0 + timedelta(seconds=1656))
         self.call("refresh")
@@ -280,7 +353,7 @@ class Completion(UsageCase):
         self.assertEqual({"spent": 1656}, self.steps()["story"], "重新登记重复计了")
 
     def test_update_rounds_come_from_the_records_even_without_local_state(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         self.update_record("u1", T0)
         self.call("refresh")
         self.assertNotIn("story update", self.steps(), "没收口就出了行")
@@ -296,9 +369,30 @@ class Completion(UsageCase):
         self.call("refresh")
         self.assertEqual({"spent": 400, "rounds": 2}, self.steps()["story update"])
 
+    def test_an_opened_round_without_begin_has_no_time(self) -> None:
+        """开轮时刻是业务事实，不是工作起点：没有 begin 移入的 started_at，这一轮只计轮数，不拿 opened_at 补。"""
+        self.call("begin", "story")
+        self.update_record("u1", T0, T0 + timedelta(seconds=300), begun=False)
+        self.call("refresh")
+        self.assertEqual({"rounds": 1}, self.steps()["story update"])
+        self.update_record("u2", T0 + timedelta(seconds=1000), T0 + timedelta(seconds=1100))
+        self.call("refresh")
+        self.assertEqual({"spent": 100, "rounds": 2}, self.steps()["story update"])
+
+    def test_a_round_closed_within_its_start_second_is_still_timed(self) -> None:
+        """起点带毫秒、收口时刻只到秒：同一秒里收口的一轮照常计时（0 秒），不当成起止颠倒丢掉。"""
+        self.call("begin", "story")
+        folder = self.fr() / "AR" / "story-src" / "updates" / "u1"
+        folder.mkdir(parents=True)
+        (folder / "record.json").write_text(json.dumps({"id": "u1", "status": "closed", "opened_at": at(T0),
+                                                        "started_at": native(T0 + timedelta(milliseconds=700)),
+                                                        "closed_at": at(T0)}), encoding="utf-8")
+        self.call("refresh")
+        self.assertEqual({"spent": 0, "rounds": 1}, self.steps()["story update"])
+
     def test_restores_baselines_and_missing_starts(self) -> None:
         """没收口就撤回不计；收口后再撤回仍是收口过一轮；缺起点的轮只计轮数；baseline 不算一轮。"""
-        self.call("init")
+        self.call("begin", "story")
         self.update_record("u1", T0, T0 + timedelta(seconds=60), status="restored")      # 收口后撤回：closed_at 留着
         self.update_record("u2", T0 + timedelta(seconds=500), status="restored")          # 没收口就撤回
         folder = self.fr() / "AR" / "story-src" / "updates"
@@ -312,7 +406,7 @@ class Completion(UsageCase):
         self.assertEqual({"spent": 60, "rounds": 2}, self.steps()["story update"])
 
     def test_a_failed_usage_write_keeps_the_update_round_once(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         self.update_record("u1", T0, T0 + timedelta(seconds=120))
         sys.path.insert(0, str(CORE))
         import usage  # noqa: PLC0415
@@ -335,41 +429,40 @@ class Completion(UsageCase):
 
 
 class TheExtensionClosesTheStep(UsageCase):
-    """阶段原生闭环后的 Extension 收尾：最后一步不靠下一阶段、story 命令或 stats 就进 usage；失败重跑同一命令即收敛。"""
+    """阶段的 Extension 收尾：最后一步不靠下一阶段、story 命令或 stats 就进 usage；失败重跑同一命令即收敛。"""
 
     PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 
-    def test_every_phase_can_be_the_last_one(self) -> None:
+    def test_every_phase_can_be_the_last_one_through_the_cli(self) -> None:
         for phase in self.PHASES:
             with self.subTest(phase=phase):
                 feature = f"F-{phase}"
-                self.trace(phase, T0, feature=feature)
-                self.call("phase", phase, feature=feature)       # 纯框架需求：pre_phase 建身份
-                self.close_phase(phase, T0 + timedelta(seconds=75), feature=feature)
+                begun = subprocess.run([sys.executable, str(USAGE), "--project-root", str(self.root), "--feature", feature,
+                                        "--begin", "--step", phase], capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", timeout=60, env=self.env)
+                self.assertEqual(0, begun.returncode, begun.stderr)
+                self.close_phase(phase, datetime.now(timezone.utc), feature=feature)
                 out = self.finalize(phase, feature=feature)
                 self.assertEqual(0, out.returncode, out.stderr)
                 said = json.loads(out.stdout)
-                self.assertEqual((phase, {"spent": 75}, False), (said["phase"], said["recorded"], said["timing_gap"]))
-                self.assertEqual({"spent": 75}, self.steps(feature)[phase], "最后一步没落进 usage")
+                self.assertEqual((phase, False), (said["phase"], said["timing_gap"]))
+                self.assertIsInstance(said["recorded"]["spent"], int)
+                self.assertEqual(said["recorded"], self.steps(feature)[phase], "最后一步没落进 usage")
         self.assertFalse(self.state_file.exists(), "收尾之后留着运行态")
 
     def test_the_finalize_is_idempotent_and_never_reopens(self) -> None:
-        self.call("init")
-        self.trace("spec", T0)
-        self.call("phase", "spec")
-        self.call("phase", "spec")                  # 同一轮门禁又跑了一次
-        self.close_phase("spec", T0 + timedelta(seconds=600))
-        for _ in range(3):
-            self.assertEqual(0, self.finalize("spec").returncode)
+        self.at_time("begin", "spec", T0)
+        self.close_phase("spec", T0 + timedelta(seconds=500))
+        for k in range(3):
+            self.assertTrue(self.at_time("finalize", "spec", T0 + timedelta(seconds=600 + k))["ok"])
             self.call("refresh")
         self.assertEqual({"spent": 600}, self.steps()["spec"], "重复收尾或刷新多记了")
         summary = json.loads((self.reports("spec") / "summary.json").read_text(encoding="utf-8"))
         self.assertEqual("closed", summary["closure_status"], "收尾改了原生闭环")
 
     def test_an_unclosed_phase_is_refused_and_records_nothing(self) -> None:
-        self.call("init")
-        self.trace("ut", T0)
-        self.call("phase", "ut")
+        self.call("begin", "story")
+        self.call("begin", "ut")
         out = self.finalize("ut")
         self.assertNotEqual(0, out.returncode)
         self.assertIn("还没有原生有效闭环", out.stdout)
@@ -379,8 +472,7 @@ class TheExtensionClosesTheStep(UsageCase):
 
     def test_a_closed_phase_that_cannot_be_written_says_why(self) -> None:
         """闭环成立而记录写不进：报出写不进的原因，不说没闭环；修好后重跑同一条就记上。"""
-        self.call("init")
-        self.trace("ut", T0)
+        self.at_time("begin", "ut", T0)
         self.close_phase("ut", T0 + timedelta(seconds=20))
         lock = self.record.with_name("usage.json.lock")
         lock.unlink(missing_ok=True)
@@ -392,23 +484,20 @@ class TheExtensionClosesTheStep(UsageCase):
         self.assertIn("重跑同一条收尾命令", out.stderr)
         lock.rmdir()
         self.assertEqual(0, self.finalize("ut").returncode)
-        self.assertEqual({"spent": 20}, self.steps()["ut"])
+        self.assertIsInstance(self.steps()["ut"]["spent"], int)
 
-    def test_a_closure_without_a_start_is_recorded_without_inventing_time(self) -> None:
-        self.call("init")
+    def test_a_closure_without_a_begin_is_recorded_without_inventing_time(self) -> None:
+        self.call("begin", "story")
         self.close_phase("review", T0)
         said = json.loads(self.finalize("review").stdout)
         self.assertEqual(({}, True), (said["recorded"], said["timing_gap"]), "缺起点的完成行编了耗时或没出现")
 
     def test_milliseconds_are_kept_until_the_difference(self) -> None:
-        self.call("init")
-        (self.reports("spec") / "trace.json").write_text(json.dumps(
-            {"phase": "spec", "started_at": "2026-10-21T08:00:00.900Z"}), encoding="utf-8")
-        self.close_phase("spec", T0 + timedelta(seconds=10, milliseconds=600))
-        self.finalize("spec")
+        self.at_time("begin", "spec", T0 + timedelta(milliseconds=900))
+        self.assertRegex(self.state()[self.key()]["starts"]["spec"], r"\.900Z$", "起点丢了毫秒")
+        self.close_phase("spec", T0 + timedelta(seconds=5))
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=10, milliseconds=600))
         self.assertEqual({"spent": 10}, self.steps()["spec"], "起止各截到秒再相减，差出 1 秒")
-        self.call("phase", "spec")
-        self.assertRegex(self.state()[self.key()]["starts"]["spec"], r"\.\d{3}Z$", "重试轮起点丢了毫秒")
 
     def inject(self, fail_on: str):
         """进程内调记录器，让 `fail_on` 那份文件第一次写失败；返回模块与撤掉注入的函数。"""
@@ -428,32 +517,28 @@ class TheExtensionClosesTheStep(UsageCase):
         return usage, restore
 
     def test_failures_converge_by_retrying_the_finalize(self) -> None:
-        """usage 写失败、运行态写失败：业务闭环不回退，重跑收尾后只记一次，不需要 stats 补。"""
-        for fail_on in ("usage.json", ".usage-state.json"):
+        """usage 写失败、运行态写失败：业务闭环不回退，重跑收尾后只记一次，不需要 stats 补。
+        usage 没写成时待写行已在运行态，重跑照它赋值（终点是那次算好的）；运行态本身没写成时这次收尾整个没落盘，
+        起点还在，终点是重跑成功的那一刻。两种都不重复累加。"""
+        for fail_on, want in (("usage.json", 40), (".usage-state.json", 90)):
             with self.subTest(fail_on=fail_on):
                 feature = f"R{len(fail_on)}"
-                self.call("init", feature=feature)
-                self.call("phase", "spec", feature=feature)
-                self.close_phase("spec", T0, feature=feature)
-                self.call("phase", "spec", feature=feature)           # 闭环后再跑一轮：有了重试起点
-                start = self.state()[self.key(feature)]["starts"]["spec"]
-                self.close_phase("spec", datetime.fromisoformat(start.replace("Z", "+00:00")) + timedelta(seconds=40),
-                                 feature=feature)
-                usage, restore = self.inject(fail_on)
-                out = usage.record(self.root, "finalize", feature=feature, step="spec")
+                self.at_time("begin", "spec", T0, feature=feature)
+                self.close_phase("spec", T0 + timedelta(seconds=30), feature=feature)
+                _, restore = self.inject(fail_on)
+                out = self.at_time("finalize", "spec", T0 + timedelta(seconds=40), feature=feature)
                 self.assertFalse(out["ok"], "写失败却报收尾成功")
                 restore()
-                for _ in range(2):
-                    self.assertEqual(0, self.finalize("spec", feature=feature).returncode)
-                self.assertEqual({"spent": 40}, self.steps(feature)["spec"], "失败后重试重复累加或丢了")
+                for k in range(2):
+                    self.assertTrue(self.at_time("finalize", "spec", T0 + timedelta(seconds=90 + k), feature=feature)["ok"])
+                self.assertEqual({"spent": want}, self.steps(feature)["spec"], "失败后重试重复累加或丢了")
 
     def test_a_cleanup_failure_is_reported_and_converges(self) -> None:
-        self.call("init")
-        self.trace("spec", T0)
+        self.at_time("begin", "spec", T0)
         self.close_phase("spec", T0 + timedelta(seconds=5))
-        self.call("phase", "spec")
-        start = datetime.fromisoformat(self.state()[self.key()]["starts"]["spec"].replace("Z", "+00:00"))
-        self.close_phase("spec", start + timedelta(seconds=7))
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=5))
+        self.at_time("begin", "spec", T0 + timedelta(seconds=100))
+        self.close_phase("spec", T0 + timedelta(seconds=105))
         sys.path.insert(0, str(CORE))
         import usage  # noqa: PLC0415
         real = Path.unlink
@@ -464,17 +549,17 @@ class TheExtensionClosesTheStep(UsageCase):
             return real(path, *a, **k)
 
         with unittest.mock.patch.object(Path, "unlink", busy):
-            out = usage.record(self.root, "finalize", feature="AR1", step="spec")
+            out = self.at_time("finalize", "spec", T0 + timedelta(seconds=107))
         self.assertFalse(out["ok"])
         self.assertTrue(any("清不掉" in e for e in out["errors"]), out)
-        self.assertEqual(0, self.finalize("spec").returncode)
+        self.at_time("finalize", "spec", T0 + timedelta(seconds=200))
         self.assertEqual({"spent": 12}, self.steps()["spec"])
         self.assertFalse(self.state_file.exists())
 
 
 class TheLocalStateIsMinimal(UsageCase):
     def test_init_story_and_update_leave_no_empty_state(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         self.set_identity(T0)
         self.story_written(T0 + timedelta(seconds=30))
         self.call("refresh")
@@ -484,17 +569,17 @@ class TheLocalStateIsMinimal(UsageCase):
         self.assertFalse(self.state_file.exists(), "init / Story / update 留下了运行态")
 
     def test_pending_only_carries_what_this_settlement_changed(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         self.close_phase("plan", T0)
         self.finalize("plan")
-        self.trace("spec", T0)
-        self.close_phase("spec", T0 + timedelta(seconds=9))
-        usage, _ = TheExtensionClosesTheStep.inject(self, "usage.json")
-        self.assertFalse(usage.record(self.root, "finalize", feature="AR1", step="spec")["ok"])
+        self.at_time("begin", "spec", T0)
+        self.close_phase("spec", T0 + timedelta(seconds=5))
+        TheExtensionClosesTheStep.inject(self, "usage.json")
+        self.assertFalse(self.at_time("finalize", "spec", T0 + timedelta(seconds=9))["ok"])
         self.assertEqual({"spec": {"spent": 9}}, self.state()[self.key()]["pending"], "待写里带了别的完成历史")
 
     def test_a_version_or_input_change_alone_does_not_stage_steps(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         self.close_phase("plan", T0)
         self.finalize("plan")
         (self.fr() / ".usage-input.json").write_text('{"agent": "a", "model": "m"}', encoding="utf-8")
@@ -505,7 +590,7 @@ class TheLocalStateIsMinimal(UsageCase):
 
 class VersionsAndIdentity(UsageCase):
     def test_versions_follow_the_last_activity(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         node = self.node()
         self.assertIsNone(node["fw"], "没有 summary 却填了 Framework 版本")
         manifest = (DEV_EXT / "manifest.yaml").read_text(encoding="utf-8")
@@ -516,7 +601,7 @@ class VersionsAndIdentity(UsageCase):
         self.assertEqual("3.0.0", self.node()["fw"])
 
     def test_the_self_report_is_taken_once_and_story_needs_it(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         (self.fr() / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
         self.story_written(T0)
         out = self.call("refresh")
@@ -531,14 +616,38 @@ class VersionsAndIdentity(UsageCase):
         self.call("refresh")
         self.assertEqual(("dsh", "m1"), (self.node()["agent"], self.node()["model"]), "换会话改了已固定的身份")
 
+    def test_each_field_is_fixed_once_known_and_unknown_stays_null(self) -> None:
+        """宿主不知道就是 null：按字段固定已知值，后来补上的另一项照收，不为一半未知再催。"""
+        self.call("begin", "story")
+        (self.fr() / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
+        self.story_written(T0)
+        path = self.fr() / ".usage-input.json"
+        path.write_text(json.dumps({"agent": None, "model": "m1"}), encoding="utf-8")
+        out = self.call("refresh")
+        self.assertEqual((None, "m1"), (self.node()["agent"], self.node()["model"]))
+        self.assertFalse(out["pending_identity"], "一半已知又催了一轮")
+        path.write_text(json.dumps({"agent": "dsh", "model": "m2"}), encoding="utf-8")
+        self.call("refresh")
+        self.assertEqual(("dsh", "m1"), (self.node()["agent"], self.node()["model"]), "已固定的字段被改，或补上的字段没收")
+
+    def test_the_update_close_from_story_flow_is_the_close_action(self) -> None:
+        sys.path.insert(0, str(CORE))
+        import usage  # noqa: PLC0415
+        from unittest import mock  # noqa: PLC0415
+        for (mode, action), want in ((("update", "close"), "close"), (("update", "status"), "refresh"),
+                                     (("init", None), "init"), (("story", None), "refresh")):
+            with self.subTest(mode=mode, action=action), mock.patch.object(usage, "record") as rec:
+                usage.after_command(self.root, "AR1", mode, action)
+                rec.assert_called_once_with(self.root, want, feature="AR1")
+
     def test_a_pure_framework_requirement_is_not_asked(self) -> None:
-        out = self.call("phase", "coding")
+        out = self.call("begin", "coding")
         self.assertFalse(out["pending_identity"], "纯框架使用没有填写时机，不该催")
 
 
 class WriteProtection(UsageCase):
     def test_two_requirements_written_at_once_both_survive(self) -> None:
-        threads = [threading.Thread(target=self.call, args=("init", None, f"AR{i}")) for i in range(1, 5)]
+        threads = [threading.Thread(target=self.call, args=("begin", "story", f"AR{i}")) for i in range(1, 5)]
         for t in threads:
             t.start()
         for t in threads:
@@ -558,35 +667,21 @@ class WriteProtection(UsageCase):
                 self.assertEqual(text, self.record.read_text(encoding="utf-8"))
 
     def test_a_failed_usage_write_does_not_count_twice(self) -> None:
-        """运行态已清起点、usage 没写成：下一次刷新按运行态里的待写行赋值，不再加一遍。"""
-        self.call("init")
-        self.trace("spec", T0)
-        self.call("phase", "spec")
-        self.close_phase("spec", T0 + timedelta(seconds=500))
-        sys.path.insert(0, str(CORE))
-        import usage  # noqa: PLC0415
-        real = usage.write_json
-        calls = []
-
-        def flaky(path, data):
-            calls.append(path.name)
-            if path.name == "usage.json" and calls.count("usage.json") == 1:
-                raise usage.UsageError("磁盘写保护（注入）")
-            return real(path, data)
-
-        usage.write_json = flaky
-        try:
-            first = usage.record(self.root, "refresh", feature="AR1")
-        finally:
-            usage.write_json = real
+        """运行态已清起点、usage 没写成：重跑收尾按运行态里的待写行赋值，不再加一遍、也不换成重跑那一刻。"""
+        self.at_time("begin", "spec", T0)
+        self.close_phase("spec", T0 + timedelta(seconds=400))
+        _, restore = TheExtensionClosesTheStep.inject(self, "usage.json")
+        first = self.at_time("finalize", "spec", T0 + timedelta(seconds=500))
+        restore()
         self.assertFalse(first["ok"])
         self.assertNotIn("spec", self.steps(), "失败的那次写进了 usage")
         self.call("refresh")
-        self.call("refresh")
+        self.finalize("spec")
+        self.finalize("spec")
         self.assertEqual({"spent": 500}, self.steps()["spec"])
 
     def test_a_lock_that_cannot_open_is_an_ordinary_record_error(self) -> None:
-        self.call("init")
+        self.call("begin", "story")
         before = self.record.read_bytes()
         lock = self.record.with_name("usage.json.lock")
         lock.unlink(missing_ok=True)
@@ -607,7 +702,7 @@ class TheRecordFileIsSetUpOnce(UsageCase):
     def test_ensure_creates_the_empty_table_once_and_never_rewrites(self) -> None:
         self.assertTrue(self.call("ensure", feature=None)["changed"])
         self.assertEqual({"schema": 1, "requirements": {}}, self.usage())
-        self.call("init")
+        self.call("begin", "story")
         before = self.record.read_bytes()
         out = self.call("ensure", feature=None)
         self.assertEqual((True, False), (out["ok"], out["changed"]))

@@ -1,10 +1,10 @@
-"""阅读图的结构检查：一份 SVG 能不能当写作设计选中的那张本地阅读图。
+"""增强阅读 SVG 的结构检查：一份 SVG 能不能当同 ID 正式图的阅读形态。
 
 只核确定性事实：是合法 XML、根元素是 SVG 命名空间下的 svg、viewBox 是四个有限数且宽高为正、
-文件名就是阅读图 ID、引用的资源在本地读得到且不出 `AR/` 目录——
+文件名就是正式图 ID、引用的资源在本地读得到且不出 `AR/` 目录——
 引用包括 href、属性与样式里的 `url(...)` 和样式里的 `@import`。`<metadata>` 可写依据说明，不核它：
-权威绑定是验收请求里实际读取的依据。不按字数估算可读性——文字有没有裁切、遮挡，关系对不对、
-有没有阅读增益，归渲染核与独立审查（对着写作设计选的全部依据读）。
+权威绑定是验收请求里的图源 `.mmd`。不按字数估算可读性——文字有没有裁切、遮挡，与图源的关系对不对、
+增强后好不好读，归实际显示与独立审查（对着同 ID 的 `.mmd` 读）。
 
     python figure-check.py <AR/figures/<ID>.svg> --id <ID>
 
@@ -49,7 +49,7 @@ def references(root: ET.Element) -> list[str]:
 def problems_of(svg: Path, fid: str) -> list[str]:
     out: list[str] = []
     if svg.stem != fid:
-        out.append(f"文件名 {svg.name} 与阅读图 ID {fid} 不一致：阅读图按 AR/figures/<ID>.svg 认")
+        out.append(f"文件名 {svg.name} 与正式图 ID {fid} 不一致：增强阅读 SVG 按 AR/figures/<ID>.svg 认")
     try:
         root = ET.parse(svg).getroot()
     except ET.ParseError as exc:
@@ -68,7 +68,7 @@ def problems_of(svg: Path, fid: str) -> list[str]:
 
 
 def local_deps(svg: Path) -> tuple[list[str], list[str]]:
-    """阅读图实际用到的本地资源（相对 AR/），样式表与嵌套 SVG 里再引用的也跟进去；去重、防循环。
+    """SVG 实际用到的本地资源（相对 AR/），样式表与嵌套 SVG 里再引用的也跟进去；去重、防循环。
 
     缺件、越界、外部地址或解析不了的嵌套文件都列进问题：依赖确定不了，就不能签这张图已验。"""
     base = svg.parent.parent.resolve()
@@ -80,7 +80,7 @@ def local_deps(svg: Path) -> tuple[list[str], list[str]]:
         if not ref or ref.startswith(("#", "data:")):
             continue
         if re.match(r"^[a-z][a-z0-9+.-]*:", ref, re.I) or ref.startswith(("/", "\\")):
-            problems.append(f"引用「{ref}」不是本地相对路径：阅读图只用内嵌或 AR/ 下的本地资源")
+            problems.append(f"引用「{ref}」不是本地相对路径：增强阅读 SVG 只用内嵌或 AR/ 下的本地资源")
             continue
         target = (at / ref.split("#", 1)[0]).resolve()
         if not target.is_relative_to(base) or not target.is_file():
@@ -102,10 +102,10 @@ def local_deps(svg: Path) -> tuple[list[str], list[str]]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="阅读图的结构检查")
+    ap = argparse.ArgumentParser(description="增强阅读 SVG 的结构检查")
     ap.add_argument("svg")
     ap.add_argument("--id", required=True)
-    ap.add_argument("--json", action="store_true", help="结构问题与本地资源依赖一次给出（JSON）：视图与阅读图验收共用这一份")
+    ap.add_argument("--json", action="store_true", help="结构问题与本地资源依赖一次给出（JSON）：视图与 SVG 验收共用这一份")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -122,7 +122,7 @@ def main() -> int:
         deps = [] if any(p.startswith("不是合法 XML") for p in found) else local_deps(svg)[0]
         print(json.dumps({"problems": found, "deps": deps}, ensure_ascii=False))
         return 1 if found else 0
-    print("\n".join(found) if found else "结构检查通过（文字可读、关系忠实与阅读增益仍要渲染核与独立审查）")
+    print("\n".join(found) if found else "结构检查通过（文字可读、与图源一致与增强效果仍要实际显示与独立审查）")
     return 1 if found else 0
 
 

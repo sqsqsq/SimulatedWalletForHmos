@@ -9,7 +9,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chapterProblems } from './chapter.mjs';
-import { basisTargets, carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
+import { carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import {
   appendixChapter, appendixStructureProblems, appendixZoneProblems,
 } from './appendix.mjs';
@@ -261,12 +261,9 @@ export function cmdCheck(ctx) {
 
   mark('⑫d 上游图承接');
   // 上游每张图登记在写作设计的哪一节（登记全不全由写作设计那条报）：那一节在 story 里定得到、有正文。
-  // 关系讲没讲全要读内容，归独立审查。阅读图依据里的标题路径也在这里按当前内容核。
+  // 关系讲没讲全要读内容，归独立审查。
   for (const c of plan ? carryTargets(plan, storyText) : []) {
     if (c.problem) problems.push(`写作设计登记 ${c.source} 由「${c.where}」承接：${c.problem}——这一节要讲出那张图的关系（正文、表或图都可以），或在写作设计里改登记位置`);
-  }
-  for (const b of plan ? basisTargets(ctx, plan) : []) {
-    if (b.problem) problems.push(`写作设计的阅读图「${b.id}」依据「${b.basis}」：${b.problem}——依据按完整标题路径逐层找，同级同名或找不到都取不到`);
   }
 
   mark('⑫e 正式稿不带本地阅读图');

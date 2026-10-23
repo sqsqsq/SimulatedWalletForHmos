@@ -85,7 +85,7 @@ from flow.update import (cmd_update_close, cmd_update_inputs, cmd_update_prepare
 
 
 # ---------------------------------------------------------------------------
-#: 会读、比较或登记 story 的动作：最外层持有视图——动手前回到正式形态，结束或失败后恢复可用的阅读图
+#: 会读、比较或登记 story 的动作：最外层持有视图——动手前回到正式形态，结束或失败后恢复可用的增强 SVG
 VIEW_READERS = {"status", "story", "archived", "update", "round", "reopen", "complete"}
 
 def main() -> int:
@@ -175,7 +175,7 @@ def main() -> int:
             code = dispatch(feature_root, project_root)
         if code == 0:
             # 使用记录在命令成功之后采集；记录失败另列，不改业务结果
-            used = usage.after_command(project_root, args.feature, args.mode)
+            used = usage.after_command(project_root, args.feature, args.mode, getattr(args, "action", None))
             if used["errors"]:
                 result["usage_errors"] = used["errors"]
             if used["note"]:

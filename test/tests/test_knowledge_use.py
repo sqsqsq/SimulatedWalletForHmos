@@ -379,6 +379,33 @@ class TestTheGeneratedZoneIsNotASecondSource(KnowledgeUseCase):
         text = self.render_ok()
         self.assertLess(text.index("判定产生的代码要求"), text.index("knowledge-use:begin"))
 
+    def test_the_zone_stands_apart_and_rerendering_does_not_grow(self) -> None:
+        """标记与正文、与两侧内容（含多行的模板说明注释）各隔一个空行（B4）；重跑字节不变。"""
+        self.write_use()
+        first = self.render_ok()
+        lines = first.split("\n")
+        marks = [i for i, l in enumerate(lines) if l.startswith("<!-- knowledge-use:")]
+        self.assertEqual(4, len(marks), marks)
+        for i in marks:
+            with self.subTest(line=lines[i][:40]):
+                self.assertEqual("", lines[i - 1], "标记紧贴上面的内容")
+                self.assertTrue(i + 1 == len(lines) or lines[i + 1] == "", "标记紧贴下面的内容")
+                self.assertTrue(lines[i - 2].strip() and (i + 2 >= len(lines) or lines[i + 2].strip()),
+                                "分隔空行不止一行")
+        for _ in range(2):
+            self.assertEqual(first, self.render_ok())
+
+    def test_an_old_tight_zone_still_matches_and_rerenders_apart(self) -> None:
+        """紧贴标记的旧形态正文不变就仍与 YAML 对得上；重跑换成分隔形态，内容不动。"""
+        self.write_use()
+        first = self.render_ok()
+        tight = re.sub(r"(<!-- knowledge-use:begin [^\n]*-->)\n\n", r"\1\n", first)
+        tight = tight.replace("\n\n<!-- knowledge-use:end -->", "\n<!-- knowledge-use:end -->")
+        self.assertNotEqual(first, tight)
+        self.spec_path.write_bytes(tight.encode("utf-8"))
+        self.assertEqual([], self.zone_problems())
+        self.assertEqual(first, self.render_ok())
+
 
 class TestTheJudgementKnowsWhichKnowledgeItWasMadeAgainst(KnowledgeUseCase):
     """知识改了而判断没重做，要看得出来——否则「判过了」指的是哪一版没人知道。"""

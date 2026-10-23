@@ -52,8 +52,12 @@ class UpdateCase(unittest.TestCase):
         shutil.copytree(FIXTURE, self.root)
         self.feature_root = self.root / "doc" / "features" / FEATURE
         self.src = self.feature_root / "AR" / "story-src"
+        self.before_init()
         ensure_flow_state(self.root, FEATURE, self.src, StoryBuildCase.DRAFT)
         self.updates = self.src / "updates"
+
+    def before_init(self) -> None:
+        """夹具走 story init 之前的一步：多数用例什么也不做。"""
 
     def update(self, *extra: str) -> dict:
         """不写 `--action` 就是 prepare：多数用例测的是比较本身，输入阶段另有一组。"""

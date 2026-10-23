@@ -1,166 +1,90 @@
 /**
- * story.md 里由脚本管理的两类图 —— 正式图与阅读图，各有自己的成对标记。
+ * story.md 里由脚本管理的正式图 —— 一张图一个 ID，`AR/story-src/figures/<ID>.mmd` 是唯一语义真源。
  *
- * 正式图是业务正文的一部分：标记之间恰好一个 Mermaid 围栏，与 `AR/story-src/figures/<ID>.mmd` 逐字相同。
- * `.mmd` 一建成就是这张图唯一的语义真源，正文块按它派生：
+ * 图块里一次只放一种形态：与源逐字相同的一个 Mermaid 围栏（正式形态），或同 ID 增强阅读 SVG 的一行引用（阅读形态）：
  *
  *     <!-- story-figure:<ID>:begin -->
- *     ```mermaid
+ *
+ *     ```mermaid                      或      ![<ID>](figures/<ID>.svg)
  *     …
  *     ```
+ *
  *     <!-- story-figure:<ID>:end -->
  *
- * 阅读图是写作设计「## 阅读图选择」选中的补充 SVG（`AR/figures/<ID>.svg`），可以综合多段文字、表与图。
- * 每个选择项在放置小节末尾（同级下一节之前）有一个槽，同一处多张按写作设计顺序排。正式形态槽是空的，
- * 阅读形态槽里只有一行图片引用，alt 是这张图的阅读问题；正文与 Mermaid 始终都在：
+ * SVG 是同一张图的增强阅读形态：同样的事实，布局、分组、层次与标注更清楚，不追加业务关系；
+ * 它过了独立文本审查（`figure-reading.mjs`）才显示。标记与两侧内容的分隔空行由 `separateMarks` 统一铺。
  *
- *     <!-- story-reading:<ID>:begin -->
- *     ![<阅读问题>](figures/<ID>.svg)
- *     <!-- story-reading:<ID>:end -->
+ * - `prepare`：给还没管理的 Mermaid 围栏加标记、首次写 `.mmd`（同 ID 的源已在且不同就停）；带 `--id` 从已有 `.mmd`
+ *   重建这一块（从不拿正文覆盖源）。
+ * - `mermaid`：全部图块按源还原 Mermaid（合法块文字与源不同也按源重铺并说明）。正式登记、审查、update 比较与归档都先走这一步。
+ * - `svg`：审查成立的图换成 SVG 引用，其余保持 Mermaid 并说明原因。
+ * - `toggle`：有任一块在 SVG 就全部还原，否则显示可用的（一键入口用它）。
  *
- * - `prepare`：给还没管理的 Mermaid 围栏加标记、首次写 `.mmd`（同 ID 的源已在且不同就停）；按当前选择同步阅读槽——
- *   移除全部合法槽，按写作设计顺序在各自放置小节末尾重建空槽。带 `--id` 时按对象类型处理：正式图从已有 `.mmd`
- *   重建这一块（从不拿正文覆盖源），阅读图同步全部阅读槽；一个 ID 同时属于两类就要求不带 id 整体执行。
- * - `mermaid`：正式块按源还原（合法块文字与源不同也按源重铺并说明）；全部阅读槽置空。正式登记、审查、update 比较与归档都先走这一步。
- * - `svg`：正式块不动；只把独立审查有效的选中图放进自己的槽，其余槽置空并说明原因。
- * - `toggle`：有任一槽展开就全部隐藏，否则展开可用的（一键入口用它）。
- *
- * 结构坏了（孤立标记、重复 ID、块里不是一个 Mermaid 围栏、源缺失、槽里有作者文字、放置小节找不到或有歧义）整次不写，
- * 点名 ID 与行号；不按相似文本猜配对，不覆盖块外正文。
+ * 结构坏了（孤立标记、重复 ID、块里既不是一个 Mermaid 围栏也不是本图的 SVG 引用、源缺失）整次不写，点名 ID 与行号；
+ * 不按相似文本猜配对，不覆盖块外正文。旧版的补充阅读槽（`story-reading`）本版不认：旧版收口或从 init 重起。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fenceRanges, FIGURE_MARK, headingPath, markPairs, readingSlots, withoutReadingSlots } from './document.mjs';
+import { fenceRanges, FIGURE_MARK, markPairs, separateMarks } from './document.mjs';
 import { markdownLinks } from './language.mjs';
 import { joinPosix, registeredPaths } from './sources.mjs';
-import { readWritingPlan } from './writing-plan.mjs';
 import { lf, mermaidBody, readOr, readingRequest, readingState, reviewTask, srcPath, svgFacts } from './figure-reading.mjs';
 
 export const VIEW_MODES = ['prepare', 'mermaid', 'svg', 'toggle', 'status', 'review-request', 'review-check'];
 const ID = /^[A-Za-z0-9][\w-]*$/;
+const OLD_SLOT = /^<!-- story-reading:[A-Za-z0-9][\w-]*:(begin|end) -->$/;
 const RECOVER = '改图义改 AR/story-src/figures/<ID>.mmd，它是唯一真源，正文管理块按它重铺；'
   + '管理块结构坏了而边界还认得出、源还在，跑 `story-build view --mode prepare --id <ID>` 从源重建这一块；'
   + '源丢了从备份或真实依据恢复 .mmd，不从正文反写。管理块是脚本管理区，不要手改';
-const SYNC = '阅读槽按写作设计「## 阅读图选择」由 `story-build view --mode prepare` 同步：改了选择或放置就跑一次';
-const CONTRACT = new URL('../../../contracts/story-chapters.json', import.meta.url);
 
 const rowsOf = x => Array.from({ length: x.to - x.from + 1 }, (_, k) => x.from + k);
-//: alt 里的 Markdown 特殊字符逐个转义：阅读问题原样显示，不被解析成链接或强调
-const refLine = item => `![${item.question.replace(/[\\`*_[\]<>]/g, '\\$&')}](figures/${item.id}.svg)`;
+const refLine = id => `![${id}](figures/${id}.svg)`;
 
-/** 块现在是什么：一个完整 Mermaid 围栏、旧版的 SVG 引用（不再支持）、或别的。 */
+/** 块现在是什么：一个完整 Mermaid 围栏、本图 SVG 的一行引用、或别的。 */
 function formOf(block) {
   const b = block.body;
   // 块内恰好一个完整围栏、从第一行到最后一行：首尾像围栏而中间已闭合、夹着正文或第二段围栏的，是结构坏了
   const fences = fenceRanges(b);
   if (b[0] === '```mermaid' && b[b.length - 1] === '```' && fences.length === 1
       && fences[0].closed && fences[0].from === 0 && fences[0].to === b.length - 1) return 'mermaid';
-  if (b.length === 1 && /^!\[.*\]\(figures\/[^)]+\.svg\)$/.test(b[0].trim())) return 'old-svg';
+  if (b.length === 1 && b[0].trim() === refLine(block.id)) return 'svg';
   return null;
 }
 
-/** story 里两类管理区的结构事实，一次读出。切换、阅读状态与正式入口都消费这一份。 */
+/** story 里正式图块的结构事实，一次读出。切换、阅读状态与正式入口都消费这一份。 */
 function inspect(featureRoot) {
   const raw = readOr(path.join(featureRoot, 'AR', 'story.md'));
   if (raw === null) return { raw };
   const lines = raw.split(/\r?\n/);
   const { spans: blocks, problems } = markPairs(lines, FIGURE_MARK, '图块');
+  const fenced = new Set(fenceRanges(lines).flatMap(rowsOf));
+  const old = lines.findIndex((l, i) => !fenced.has(i) && OLD_SLOT.test(l.trim()));
+  if (old >= 0) {
+    problems.push(`第 ${old + 1} 行是旧版的补充阅读槽：本版的增强阅读是正式图的同图 SVG，不再有阅读槽——`
+      + '用旧版 `view --mode mermaid` 收起后在旧版收口，或从 init 重起');
+  }
   for (const b of blocks) {
     b.form = formOf(b);
     b.src = lf(readOr(srcPath(featureRoot, b.id)));
     const at = `图块 ${b.id}（第 ${b.from + 1}–${b.to + 1} 行）`;
-    b.problem = b.form === 'old-svg' ? `${at} 是旧版阅读形态（SVG 引用替换了 Mermaid），本版不再读它：`
-        + '用旧版切回 Mermaid，或从 init 重起；源还在时 `prepare --id` 从源重建这一块'
-      : b.src === null ? `${at} 的源 AR/story-src/figures/${b.id}.mmd 不在：从备份或真实依据恢复源，不从正文反写`
-        : b.form ? null : `${at} 里不是一个 Mermaid 围栏`;
+    b.problem = b.src === null ? `${at} 的源 AR/story-src/figures/${b.id}.mmd 不在：从备份或真实依据恢复源，不从正文反写`
+      : b.form ? null : `${at} 里不是一个 Mermaid 围栏，也不是 ${refLine(b.id)} 这一行`;
   }
-  const { slots, problems: slotProblems } = readingSlots(lines);
-  return { raw, lines, blocks, problems, slots, slotProblems };
+  return { raw, lines, blocks, problems };
 }
-
-/** 写作设计里的阅读图选择：候选、每项放置小节的完整标题路径、选择本身的问题。 */
-function selection(featureRoot) {
-  let contract;
-  try { contract = JSON.parse(fs.readFileSync(CONTRACT, 'utf-8')); } catch { contract = null; }
-  if (!contract) return { declared: false, none: null, items: [], problems: ['contracts/story-chapters.json 读不出：阅读图的选择与放置定不了'] };
-  const srcDir = path.join(featureRoot, 'AR', 'story-src');
-  const ctx = { contract, featureRoot, srcDir, storyPath: path.join(featureRoot, 'AR', 'story.md'),
-    decisionsPath: path.join(srcDir, 'decisions.json'), templatePath: path.join(srcDir, 'story-template.md') };
-  const plan = readWritingPlan(ctx);
-  const r = plan.reading;
-  const items = r.items.filter(x => ID.test(x.id)).map((x) => {
-    const [chapter, ...names] = x.placement.split('>').map(s => s.trim()).filter(Boolean);
-    const title = plan.chapters.find(c => c.id === chapter)?.title;
-    // ctx 随候选带给验收：依据按同一份上下文解析
-    return { ...x, where: title ? [title, ...names] : null, ctx };
-  });
-  return { declared: r.declared, none: r.noneReason, items, problems: [...r.problems] };
-}
-
-/**
- * 槽的规范布局：去掉全部合法槽（连同紧挨在前的一个空行），再把 `items` 的槽按写作设计顺序放回各自放置小节末尾——
- * 最后一行非空内容之后、同级下一节之前。`body(id)` 给槽里的内容。重排同一份文本得到同一结果。
- *
- * @returns {{lines: string[], problems: string[], order: Map<string, string[]>}}
- */
-function layout(lines, slots, items, body) {
-  const drop = new Set(slots.flatMap(s => [...rowsOf(s), ...(s.from > 0 && !lines[s.from - 1].trim() ? [s.from - 1] : [])]));
-  const base = lines.filter((_, i) => !drop.has(i));
-  const text = base.join('\n');
-  const [groups, order, problems] = [new Map(), new Map(), []];
-  for (const x of items) {
-    if (!x.where) continue;                 // 章 ID 认不出：写作设计那条已报
-    const hit = headingPath(text, x.where);
-    if (hit.problem) {
-      problems.push(`阅读图 ${x.id} 的放置「${x.placement}」在 AR/story.md 里${hit.problem}——放置写正文里实际的章名与小节名`);
-      continue;
-    }
-    let at = hit.to - 1;
-    while (at >= hit.from && !base[at].trim()) at -= 1;
-    groups.set(at, [...(groups.get(at) ?? []), x.id]);
-  }
-  const out = [...base];
-  for (const at of [...groups.keys()].sort((a, b) => b - a)) {
-    const ids = groups.get(at);
-    ids.forEach(id => order.set(id, ids));
-    out.splice(at + 1, 0, ...ids.flatMap(id => ['', `<!-- story-reading:${id}:begin -->`, ...body(id), `<!-- story-reading:${id}:end -->`]));
-  }
-  return { lines: out, problems, order };
-}
-
-/** 当前槽与选择对不对得上：放置问题、孤立槽、缺槽、错位，与每项在同一处的顺序。槽结构坏了不调。 */
-function syncOf(v, sel) {
-  const byId = new Map(v.slots.map(s => [s.id, s]));
-  const chosen = new Set(sel.items.map(x => x.id));
-  const canon = layout(v.lines, v.slots, sel.items, id => byId.get(id)?.body ?? []);
-  const orphans = v.slots.filter(s => !chosen.has(s.id));
-  const missing = new Set(sel.items.filter(x => x.where && !byId.has(x.id)).map(x => x.id));
-  // 槽齐全、位置都定得到时才比位置：规范布局里它该在的行与现在不同，就是错位
-  const at = new Map(readingSlots(canon.lines).slots.map(s => [s.id, s.from]));
-  const misplaced = new Set(orphans.length || missing.size || canon.problems.length ? []
-    : v.slots.filter(s => at.get(s.id) !== s.from).map(s => s.id));
-  const problems = [...canon.problems, ...orphans.map(s => `阅读槽 ${s.id}（第 ${s.from + 1} 行）不在当前选择里——${SYNC}；`
-    + '它的 SVG 与验收证据留在原处、不参与完成判定，不再用由作者清理')];
-  if (misplaced.size) problems.push(`阅读槽 ${[...misplaced].join('、')} 不在写作设计指定的位置或顺序上——${SYNC}`);
-  return { problems, missing, misplaced, order: canon.order };
-}
-
-/** 交给验收的对象：候选、去掉阅读槽的正式 Story、放置小节路径、同一处的顺序。 */
-const subjectOf = (v, item, sync) => ({ item, formal: withoutReadingSlots(v.raw), where: item.where ?? [],
-  order: sync?.order.get(item.id) ?? [item.id] });
 
 /** SVG 本身立不立得住：在不在、结构检查过没过。没有缺口返回 null。 */
 function svgGap(featureRoot, id) {
   const facts = svgFacts(featureRoot, id);
-  if (facts.missing) return { state: 'no-svg', reason: `还没有阅读图 AR/figures/${id}.svg：按 reference/svg.md 依据所选内容画` };
+  if (facts.missing) return { state: 'no-svg', reason: `还没有增强阅读图 AR/figures/${id}.svg：按 reference/svg.md 依 ${id}.mmd 制作` };
   return facts.error || facts.problems.length ? { state: 'svg-invalid',
     reason: facts.error ? `结构检查跑不起来（${facts.error}）` : `结构检查没过：${facts.problems.join('；')}` } : null;
 }
 
-/** 这张阅读图的证据缺口：SVG 立得住、验收绑定当前输入且结论成立。没有缺口返回 null。 */
-function evidenceGap(featureRoot, v, item, sync) {
-  const r = svgGap(featureRoot, item.id) ?? readingState(featureRoot, subjectOf(v, item, sync));
+/** 这张图的证据缺口：SVG 立得住、验收绑定当前图源与 SVG 且结论成立。没有缺口返回 null。 */
+function evidenceGap(featureRoot, id) {
+  const r = svgGap(featureRoot, id) ?? readingState(featureRoot, id);
   return r.state === 'ready' ? null : r;
 }
 
@@ -182,40 +106,25 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
   }
   const eol = v.raw.includes('\r\n') ? '\r\n' : '\n';
   if (id && !ID.test(id)) out.problems.push(`--id ${id} 不是合法的 ID（字母或数字开头，只含字母、数字、-、_）`);
-  const sel = mode === 'mermaid' ? null : selection(featureRoot);
-  const formalId = Boolean(id) && v.blocks.some(b => b.id === id);
-  const readingId = Boolean(id) && ((sel?.items.some(x => x.id === id) ?? false) || v.slots.some(s => s.id === id));
-  if (id && formalId && readingId) out.problems.push(`${id} 同时是正式图块与阅读图的 ID：不带 --id 跑整体 prepare`);
-  if (id && !formalId && !readingId) out.problems.push(`没有 ID 为 ${id} 的${mode === 'prepare' ? '图块或' : ''}阅读图`);
-  if (id && formalId && mode !== 'prepare') out.problems.push(`${id} 是正式图块：--id 只在 prepare 里用于从源重建它，切换按阅读图 ID 操作`);
+  else if (id && !v.blocks.some(b => b.id === id)) out.problems.push(`没有 ID 为 ${id} 的图块`);
   // 显式重建这一块时，块里是什么都按源重铺；其余入口只认合法形态
-  const formal = [...v.problems, ...v.blocks.filter(b => b.problem && !(mode === 'prepare' && id === b.id && b.src !== null)).map(b => b.problem)];
-  out.problems.push(...formal.map(p => `AR/story.md：${p}——${RECOVER}`), ...v.slotProblems.map(p => `AR/story.md：${p}——${SYNC}`));
-  const sync = sel && !v.slotProblems.length ? syncOf(v, sel) : null;
-  if (sel && (mode !== 'prepare' || !formalId)) {
-    out.problems.push(...sel.problems);
-    // prepare 本身就是同步入口：孤立与错位由它修；svg 只往自己的槽里放
-    if (sync && mode !== 'prepare') out.problems.push(...sync.problems);
-  }
+  const broken = [...v.problems, ...v.blocks.filter(b => b.problem && !(mode === 'prepare' && id === b.id && b.src !== null)).map(b => b.problem)];
+  out.problems.push(...broken.map(p => `AR/story.md：${p}——${RECOVER}`));
   if (out.problems.length) return out;
   if (mode === 'toggle') {
-    if (!sel.items.length && !v.slots.length) return { ...out, notes: ['写作设计没有选阅读图：这份 story 不需要 SVG'] };
-    return switchView(featureRoot, v.slots.some(s => s.shown && (!id || s.id === id)) ? 'mermaid' : 'svg', { id });
+    if (!v.blocks.length) return { ...out, notes: ['story 里没有正式图：不需要 SVG'] };
+    return switchView(featureRoot, v.blocks.some(b => b.form === 'svg' && (!id || b.id === id)) ? 'mermaid' : 'svg', { id });
   }
 
   let next = [...v.lines];
   const replace = [];
   const writes = [];
-  const sources = new Map(v.blocks.map(b => [b.id, b.src]));
-  //: 合法的 Mermaid 块与源文字不同：不猜是谁改的，按源重铺并说出来，不静默丢掉差异
-  const refresh = (b) => {
-    replace.push({ from: b.from + 1, to: b.to - 1, rows: mermaidBody(sources.get(b.id)) });
-    out.notes.push(`${b.id}：正文里的图与源 ${b.id}.mmd 不同，已按源刷新——正文块里的改动没有保留，改图义改 .mmd`);
-  };
-  if (mode === 'prepare' && formalId) {
-    replace.push({ from: v.blocks.find(x => x.id === id).from + 1, to: v.blocks.find(x => x.id === id).to - 1, rows: mermaidBody(sources.get(id)) });
+  const body = (b, rows) => replace.push({ from: b.from + 1, to: b.to - 1, rows });
+  const mine = v.blocks.filter(b => !id || b.id === id);
+  if (mode === 'prepare' && id) {
+    body(mine[0], mermaidBody(mine[0].src));
     out.notes.push(`${id}：已从源 ${id}.mmd 重建这一块`);
-  } else if (mode === 'prepare' && !id) {
+  } else if (mode === 'prepare') {
     const managed = new Set(v.blocks.flatMap(rowsOf));
     const used = new Set(v.blocks.map(x => x.id));
     for (const f of fenceRanges(v.lines)) {
@@ -233,41 +142,29 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
       writes.push([srcPath(featureRoot, fid), `${inner}\n`]);
     }
     if (out.problems.length) return out;
-  } else if (mode === 'mermaid' && !id) {
-    for (const b of v.blocks) if (mermaidBody(sources.get(b.id)).join('\n') !== b.body.join('\n')) refresh(b);
+  } else if (mode === 'mermaid') {
+    //: 合法的 Mermaid 块与源文字不同：不猜是谁改的，按源重铺并说出来，不静默丢掉差异
+    for (const b of mine) {
+      const drift = b.form === 'mermaid' && mermaidBody(b.src).join('\n') !== b.body.join('\n');
+      if (b.form === 'svg' || drift) body(b, mermaidBody(b.src));
+      if (drift) out.notes.push(`${b.id}：正文里的图与源 ${b.id}.mmd 不同，已按源刷新——正文块里的改动没有保留，改图义改 .mmd`);
+    }
+  } else if (mode === 'svg') {
+    for (const b of mine) {
+      const gap = evidenceGap(featureRoot, b.id);
+      if (!gap) {
+        if (b.form !== 'svg') body(b, [refLine(b.id)]);
+        continue;
+      }
+      out.kept.push({ id: b.id, reason: gap.reason });
+      out.notes.push(`${b.id}：${gap.reason}${b.form === 'svg' ? '，已收回 Mermaid' : '，保持 Mermaid'}`);
+      if (b.form === 'svg') body(b, mermaidBody(b.src));
+    }
   }
+  //: 从下往上换：哪一段行数变了，都不挪上面还没换的行号
   for (const r of replace.sort((a, b) => b.from - a.from)) next.splice(r.from, r.to - r.from + 1, ...r.rows);
-
-  if (mode === 'prepare' && !formalId) {
-    // 正式块的替换可能挪了行号：在替换后的文本上重读槽，再按选择整体重排成空槽
-    const placed = layout(next, readingSlots(next).slots, sel.items, () => []);
-    if (placed.problems.length) return { ...out, problems: placed.problems };
-    next = placed.lines;
-    const now = new Set(sel.items.map(x => x.id));
-    const gone = v.slots.filter(s => !now.has(s.id)).map(s => s.id);
-    if (gone.length) out.notes.push(`已移除不在当前选择里的阅读槽 ${gone.join('、')}；它们的 SVG 与验收证据留在原处，不再用由作者清理`);
-    if (!sel.items.length && !sel.problems.length && sel.none === null) out.notes.push('写作设计还没有阅读图选择的结论');
-  } else if (mode === 'mermaid' || mode === 'svg') {
-    const items = new Map((sel?.items ?? []).map(x => [x.id, x]));
-    const rows = new Map();
-    for (const s of v.slots) {
-      if (id && s.id !== id) continue;
-      if (mode === 'mermaid') { rows.set(s.id, []); continue; }
-      const item = items.get(s.id);
-      const gap = evidenceGap(featureRoot, v, item, sync);
-      if (gap) {
-        out.kept.push({ id: s.id, reason: gap.reason });
-        out.notes.push(`${s.id}：${gap.reason}${s.shown ? '，已收起这张图' : '，槽保持空'}`);
-        rows.set(s.id, []);
-      } else rows.set(s.id, [refLine(item)]);
-    }
-    const unslotted = mode === 'svg' ? sel.items.filter(x => (!id || x.id === id) && sync.missing.has(x.id)) : [];
-    out.kept.push(...unslotted.map(x => ({ id: x.id, reason: `Story 里还没有它的阅读槽——${SYNC}` })));
-    // 从下往上换：槽内行数变化不影响上面的行号
-    for (const s of [...v.slots].sort((a, b) => b.from - a.from)) {
-      if (rows.has(s.id)) next.splice(s.from + 1, s.to - s.from - 1, ...rows.get(s.id));
-    }
-  }
+  // 分隔空行只在本来就要写盘时铺：正式入口收回 Mermaid 而无可改时，只读命令一个字节都不写
+  if (mode === 'prepare' || replace.length) next = separateMarks(next);
   for (const [file, text] of writes) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (readOr(file) !== text) fs.writeFileSync(file, text, 'utf-8');
@@ -277,83 +174,72 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
     fs.writeFileSync(storyPath, after, 'utf-8');
     out.changed = true;
   }
-  out.counts = { mermaid: markPairs(next, FIGURE_MARK, '图块').spans.length, svg: readingSlots(next).slots.filter(s => s.shown).length };
+  for (const b of markPairs(next, FIGURE_MARK, '图块').spans) {
+    const form = formOf(b);
+    if (form) out.counts[form] += 1;
+  }
   return out;
 }
 
 /**
- * 本地阅读的工作集合 —— 每次从写作设计的选择与 Story 实际内容派生，不另存状态。
+ * 本地阅读的工作集合 —— 每次从 story 里实际的正式图派生，不另存清单。
  *
- * 明确不采用且声明、槽与正式图结构都没有问题：不适用、已完成。选了图：逐项给状态与原因，全部 ready 才完成。
- * 缺选择、坏声明、依据或放置定不了、标记或源结构坏：没完成，problems 与 `next` 点明修复入口；items 只列已能确定的候选。
- * 没建源的内联 Mermaid 是合法正文，不算阅读待办；选中图依据里的正式图缺源或与源不同，由该图的验收输入报。
+ * 没有正式图：不适用、已完成。有图：逐张给状态与原因，全部 ready 才完成；Mermaid 始终可读，没完成如实列出。
+ * 结构坏了（标记、源、旧版阅读槽）：没完成，problems 与 `next` 点明修复入口。没建源的内联 Mermaid 由正式登记的 prepare 管理。
  */
 export function readingWork(featureRoot) {
   const v = inspect(featureRoot);
   if (v.raw === null) {
     return { applicable: true, complete: false, items: [], problems: ['AR/story.md 不在'], next: '本地阅读判不了：AR/story.md 不在' };
   }
-  const sel = selection(featureRoot);
-  const sync = v.slotProblems.length ? null : syncOf(v, sel);
-  const problems = [...v.problems, ...v.blocks.filter(b => b.problem).map(b => b.problem), ...v.slotProblems,
-    ...sel.problems, ...(sync?.problems ?? [])];
-  if (!sel.declared && !sel.problems.length) {
-    problems.push('写作设计「## 阅读图选择」还没有结论——没有阅读图写「不采用：<理由>」，有就逐张写候选');
-  }
-  if (!problems.length && sel.none !== null && !sel.items.length) {
-    return { applicable: false, complete: true, items: [], problems: [], next: null };
-  }
-  const items = sel.items.map((x) => {
-    const slot = v.slots.find(s => s.id === x.id);
-    const gap = !sync ? { state: 'blocked', reason: 'Story 的阅读槽结构坏了，先修（见 problems）' }
-      : sync.missing.has(x.id) || !x.where ? { state: 'no-slot', reason: `Story 里还没有它的阅读槽——${SYNC}` }
-        : sync.misplaced.has(x.id) ? { state: 'misplaced', reason: `阅读槽不在写作设计指定的位置——${SYNC}` }
-          : evidenceGap(featureRoot, v, x, sync);
-    return { id: x.id, line: slot ? slot.from + 1 : null, state: gap?.state ?? 'ready', reason: gap?.reason ?? '' };
+  const problems = [...v.problems, ...v.blocks.filter(b => b.problem).map(b => b.problem)];
+  if (!v.blocks.length && !problems.length) return { applicable: false, complete: true, items: [], problems: [], next: null };
+  const items = v.blocks.map((b) => {
+    const gap = b.problem ? { state: 'blocked', reason: '图块结构或源有问题，先修（见 problems）' } : evidenceGap(featureRoot, b.id);
+    return { id: b.id, line: b.from + 1, state: gap?.state ?? 'ready', reason: gap?.reason ?? '' };
   });
   const complete = !problems.length && items.every(i => i.state === 'ready');
   const rows = [...problems, ...items.filter(i => i.state !== 'ready').map(i => `${i.id}：${i.reason}`)];
   return { applicable: true, complete, items, problems,
-    next: complete ? null : `完成本地阅读（写作设计选了 ${sel.items.length} 张阅读图）：${rows.join('；')}`
-      + '——选择或依据的问题回写作设计改；每张图按上面给的动作做（新图按 `reference/svg.md` 画、交独立审查，'
+    next: complete ? null : `完成同图增强阅读（正式图 ${v.blocks.length} 张）：${rows.join('；')}`
+      + '——每张按上面给的动作做（缺 SVG 的按 `reference/svg.md` 依同 ID 的 .mmd 制作、交独立审查，'
       + '改过的按它的恢复表），`view --mode review-check` 通过后 `view --mode svg`' };
 }
 
-/** 选中候选的验收对象：不在当前选择里的 ID 明确拒绝，选择或槽结构有问题先报。 */
-function candidate(featureRoot, id) {
+/** 验收对象：只认 story 里现有的正式图块，结构有问题先报。 */
+function figureOf(featureRoot, id) {
   const v = inspect(featureRoot);
   if (v.raw === null) return { problems: ['AR/story.md 不在'] };
-  const sel = selection(featureRoot);
-  const item = sel.items.find(x => x.id === id);
-  if (!item) return { problems: [`${id} 不在写作设计「## 阅读图选择」的候选里——验收只认当前选中的阅读图`] };
-  if (v.slotProblems.length || sel.problems.length) return { problems: [...v.slotProblems, ...sel.problems] };
-  return { v, item, sync: syncOf(v, sel), problems: [] };
+  const b = v.blocks.find(x => x.id === id);
+  if (!b) return { problems: [`story 里没有 ID 为 ${id} 的正式图块——增强阅读只做已有正式图的同图 SVG`] };
+  const problems = [...v.problems, ...(b.problem ? [b.problem] : [])];
+  return { problems };
 }
 
-/** 生成某张阅读图的验收请求：SVG 本身立得住、依据都取得到才发；返回请求与交给独立审查者的任务。 */
+/** 生成某张图的验收请求：SVG 本身立得住、图源在才发；返回请求与交给独立审查者的任务。 */
 export function reviewRequest(projectRoot, featureRoot, id) {
-  const c = candidate(featureRoot, id);
+  const c = figureOf(featureRoot, id);
   if (c.problems.length) return c;
   const gap = svgGap(featureRoot, id);
   if (gap) return { problems: [gap.reason] };
-  const r = readingRequest(featureRoot, subjectOf(c.v, c.item, c.sync));
+  const r = readingRequest(featureRoot, id);
   return r.problems.length ? r : { ...r, task: reviewTask(projectRoot, featureRoot, r) };
 }
 
-/** 某张选中阅读图的验收是否成立（只读）：不在选择里的 ID 不算。 */
+/** 某张图的验收是否成立（只读）：不是 story 里正式图的 ID 不算。 */
 export function reviewCheck(featureRoot, id) {
-  const c = candidate(featureRoot, id);
+  const c = figureOf(featureRoot, id);
   return c.problems.length ? { state: 'invalid', reason: c.problems.join('；') }
-    : evidenceGap(featureRoot, c.v, c.item, c.sync) ?? { state: 'ready', reason: '' };
+    : evidenceGap(featureRoot, id) ?? { state: 'ready', reason: '' };
 }
 
 /**
- * 正式稿里不能有本地阅读图：阅读槽之外指向 `AR/figures/` 的链接、图片引用或引用式定义逐处点名。
- * 包括已取消候选留下的引用；登记过的原始材料图片走材料合同，不在这条里判。脚本不替作者删槽外内容。
+ * 正式稿里不能有本地阅读图：正式图块之外指向 `AR/figures/` 的链接、图片引用或引用式定义逐处点名。
+ * 登记过的原始材料图片走材料合同，不在这条里判。脚本不替作者删块外内容。
  */
 export function strayReadingLinks(ctx, storyText) {
   const lines = String(storyText ?? '').split(/\r?\n/);
-  const skip = new Set([...fenceRanges(lines).flatMap(rowsOf), ...readingSlots(lines).slots.flatMap(rowsOf)]);
+  const skip = new Set([...fenceRanges(lines).flatMap(rowsOf), ...markPairs(lines, FIGURE_MARK, '图块').spans.flatMap(rowsOf)]);
   const registered = new Set(registeredPaths(ctx));
   const problems = [];
   lines.forEach((line, i) => {
@@ -363,8 +249,8 @@ export function strayReadingLinks(ctx, storyText) {
     for (const t of targets) {
       const rel = joinPosix('AR', t.split(/[#?]/)[0]);
       if (rel.startsWith('AR/figures/') && !registered.has(rel)) {
-        problems.push(`story.md 第 ${i + 1} 行在阅读槽之外引用了本地阅读资产 ${rel}——正式稿不带本地阅读图，`
-          + '补充图只在写作设计选中、`view --mode prepare` 建的阅读槽里由视图显隐，上传只交正式 Markdown');
+        problems.push(`story.md 第 ${i + 1} 行在正式图块之外引用了本地阅读资产 ${rel}——增强阅读 SVG 只在同 ID 的正式图块里`
+          + '由视图切换显示，上传只交正式 Markdown');
       }
     }
   });
@@ -391,7 +277,8 @@ const LAUNCHER_MARK = 'story-reading-launcher';
 const LAUNCHER = [
   '@echo off',
   'chcp 65001 >nul',
-  `rem ${LAUNCHER_MARK}：由 story-build 生成，双击显示或隐藏写作设计选中的本地阅读图`,
+  //: 这一行只用 ASCII：chcp 65001 下 cmd 按字节数续读批处理，前面行里的多字节字会让后面的行从半截开始执行
+  `rem ${LAUNCHER_MARK}: generated by story-build; double-click to switch figures between Mermaid and reviewed SVG`,
   'node -e "const p=require(\'path\'),fs=require(\'fs\'),cp=require(\'child_process\');'
     + 'const ar=p.resolve(process.argv[1]);let d=ar;'
     + 'while(!fs.existsSync(p.join(d,\'framework.config.json\'))){const u=p.dirname(d);if(u===d){console.error(\'找不到 framework.config.json：入口要放在接入了 framework 的工程里\');process.exit(2)}d=u}'
@@ -404,8 +291,7 @@ const LAUNCHER = [
 ];
 
 /**
- * 正式入口用：正式块按源还原、阅读槽全部置空，坏了按原话报。两类标记都没有就不动——
- * 首次起稿时写作设计还没有阅读图选择，这里不读选择，不会被它锁住。
+ * 正式入口用：正式图块按源还原 Mermaid，坏了按原话报。没有管理标记就不动；旧版阅读槽也在这里报出来。
  */
 export function ensureMermaid(featureRoot) {
   const raw = readOr(path.join(featureRoot, 'AR', 'story.md'));

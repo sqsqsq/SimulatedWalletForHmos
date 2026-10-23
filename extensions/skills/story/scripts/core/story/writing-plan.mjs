@@ -5,7 +5,7 @@
  * 这件事（阅读主线），正文将要有哪些小节、每节解决什么理解问题（`- 答：`/`- 依据：`/`- 待核：`），
  * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）。行首的列表前缀只是排版，
  * 带不带都按同一行读；协议字段之外的说明文字按说明消费，不进结构约束；
- * 上游每张图讲的关系落在哪一节（`- 承接上游图：`），以及要不要另做阅读图（`## 阅读图选择`）。
+ * 上游每张图讲的关系落在哪一节（`- 承接上游图：`）。
  * **内容不在这里定**：表格的列、图里的节点与分支、列表的项目，都由写章的人按原文决定。
  *
  * 脚本在这里只做确定的事：建空壳、指出协议缺了什么、把骨架换成章节合同能消费的结构。
@@ -19,12 +19,10 @@ import {
   DIAGRAM_SYNTAXES, fenceRanges, headingPath, normalizeHeading, placeholderProblems,
 } from './document.mjs';
 import { diagramsOf, diagramTopic } from './images.mjs';
-import { basisFiles, relFromFeature, upstreamDocs } from './sources.mjs';
+import { relFromFeature, upstreamDocs } from './sources.mjs';
 
-//: 三个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
-const PARTS = { story: '阅读主线', skeleton: '骨架', reading: '阅读图选择' };
-//: 阅读图候选的四个字段：依据可以有多行，其余各一行
-const READING = { question: '阅读问题', gain: '增益', placement: '放置', basis: '依据' };
+//: 两个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
+const PARTS = { story: '阅读主线', skeleton: '骨架' };
 //: 形式协议的四个词。它们是协议词，不是业务分类；图种另从 DIAGRAM_SYNTAXES 派生。
 const FORMS = {
   表格: { kind: 'table' },
@@ -41,7 +39,7 @@ const LISTED = /^[-*+]\s+/;
 const LINE = {
   form: /^形式[:：]\s*(.*)$/,
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
-  carry: /^承接上游图[:：]\s*(.*)$/, none: /^不采用[:：]\s*(.*)$/,
+  carry: /^承接上游图[:：]\s*(.*)$/,
 };
 
 /** 形式清单那句话：四个协议词 + 合同登记的命名表 + 图种，报错与空壳共用一处。 */
@@ -60,7 +58,8 @@ export function writingPlanShell(contract) {
     + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点（没有就不写）；'
     + `要用某种形式承载就写一行 \`形式：<${formWords(contract.named_tables)}>\`，再用 \`- 描述：\` 说明它表达的对象、`
     + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
-    + '一处要几种形式就写几行——图讲关系、表讲属性、文字讲理由，描述里说清各自承担什么；'
+    + '形式按 图＞表格＞列表＞章节＞文字 先后考虑：关系先试图，图讲不全的精确条件用表或列表补，文字解释理由；'
+    + '一处要几种形式就写几行，描述里说清各自承担什么；'
     + '选了图的，描述写两半：图前要点明的阅读目的，图后要补的图外条件、责任与结果；'
     + '本章不涉及就只写 `- 不涉及：<理由>`；上游图讲的关系由哪一节承接，就在那一节写 `- 承接上游图：<skeleton 列出的图身份>`，'
     + '一行一张，正文、表或图都可以承接。方法见 story-write.md 第四节 -->', '',
@@ -73,9 +72,6 @@ export function writingPlanShell(contract) {
       : `- {{正文章名：${ch.title}。读完这一章读者要能回答什么；哪个关系必须用图、图后要补哪些图外的条件与结果；`
         + '其余用表、列表或叙述各讲什么}}', '');
   }
-  rows.push(`## ${PARTS.reading}`, '',
-    '{{正文写成之后先找读者最容易混淆的关系，再看现有正文、表与图是否已在一处讲清：讲清了写「不采用：<理由>」，理由指出这个问题在哪得到回答；'
-    + `有就每张写「### <ID>」与 ${Object.values(READING).map(w => `- ${w}：`).join(' ')}（依据可多行）}}`, '');
   return rows.join('\n');
 }
 
@@ -91,15 +87,13 @@ export function writingPlanShell(contract) {
 export function readWritingPlan(ctx) {
   const chapters = ctx.contract.chapters ?? [];
   const plan = { text: null, chapters, named: ctx.contract.named_tables ?? {},
-    skeletons: new Map(), structures: [], rechecks: [], carry: [],
-    reading: { declared: false, noneReason: null, items: [], problems: [] }, problems: [] };
+    skeletons: new Map(), structures: [], rechecks: [], carry: [], problems: [] };
   const rel = relFromFeature(ctx, ctx.templatePath);
   const say = (msg) => plan.problems.push(`写作设计 ${rel} ${msg}`);
   const text = readText(ctx.templatePath);
   if (text === null || !text.trim()) {
     say(`${text === null ? '不在' : '是空的'}——空壳由 skeleton 建；阅读主线与每章骨架由作者对照原材料、需求分析里的来源初筛、`
       + 'Spec 与决策登记写成，章提交按它核结构');
-    plan.reading.problems.push(plan.problems.at(-1));
     return plan;
   }
   plan.text = text;
@@ -122,11 +116,6 @@ export function readWritingPlan(ctx) {
   if (story && !lines.slice(story.from, story.to).join('\n').trim()) say(`的「${PARTS.story}」是空的——这一部分按有无正文判`);
   const skeleton = part(PARTS.skeleton);
   if (skeleton) readSkeleton(plan, lines, skeleton, fenced, say);
-  // 阅读图选择的问题另记一份：阅读状态只看这一部分，不被别的骨架问题挡住
-  const mark = plan.problems.length;
-  const reading = part(PARTS.reading);
-  if (reading) readReading(ctx, plan, lines, reading, fenced, say);
-  plan.reading.problems.push(...plan.problems.slice(mark));
   if (skeleton) carryProblems(ctx, plan, say);
   plan.problems.push(...placeholderProblems(text, `写作设计 ${rel} `));
   return plan;
@@ -160,69 +149,6 @@ export function carryTargets(plan, storyText, chapterId = null) {
     const problem = hit.problem ?? (hit.body.trim() ? null : '这一节没有正文');
     return { ...c, where, body: hit.body ?? '', problem };
   });
-}
-
-/**
- * `## 阅读图选择`：要么一句「不采用：<理由>」，要么一个个候选（`### <ID>` 加四个字段）。
- * 这里核协议与依据能不能取到；采不采用合不合理、增益真不真，归独立审查。
- */
-function readReading(ctx, plan, lines, range, fenced, say) {
-  const r = plan.reading;
-  let item = null;
-  let placeholder = false;
-  for (let at = range.from; at < range.to; at++) {
-    const line = fenced.has(at) ? '' : lines[at].trim().replace(LISTED, '');
-    if (!line) continue;
-    let m;
-    if (/^\{\{.*\}\}$/.test(line)) {
-      placeholder = true;                  // 空壳里的占位：由占位符那条报，这里不另报
-    } else if ((m = LINE.none.exec(line))) {
-      r.declared = true;
-      r.noneReason = m[1].trim();
-      if (!r.noneReason) say(`的「不采用：」没写理由——不采用阅读图是一个表达判断，理由给独立审查核`);
-    } else if ((m = /^###\s+(.+?)\s*$/.exec(line))) {
-      const id = m[1];
-      r.declared = true;
-      if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) say(`的阅读图「### ${id}」ID 只能用字母、数字、- 与 _，且以字母或数字开头`);
-      if (r.items.some(x => x.id.toLowerCase() === id.toLowerCase())) say(`的阅读图「### ${id}」重复（大小写不同也算同一个）`);
-      r.items.push(item = { id, question: '', gain: '', placement: '', basis: [] });
-    } else if ((m = /^([^:：]+)[:：]\s*(.*)$/.exec(line)) && Object.values(READING).includes(m[1].trim())) {
-      const field = Object.keys(READING).find(k => READING[k] === m[1].trim());
-      if (!item) say(`的「${m[1].trim()}：」写在任何「### <ID>」之前——候选的字段写在它的 ### 下面`);
-      else if (field === 'basis') item.basis.push(m[2].trim());
-      else if (item[field]) say(`的阅读图「${item.id}」的「${m[1].trim()}」写了两次`);
-      else item[field] = m[2].trim();
-    }                                       // 其余是说明文字，不进协议
-  }
-  if (!r.declared && !placeholder) say(`的「## ${PARTS.reading}」没有结论——没有阅读图写「不采用：<理由>」，有就逐张写候选`);
-  if (r.noneReason !== null && r.items.length) say(`的「## ${PARTS.reading}」同时写了不采用与候选——两个结论只能有一个`);
-  for (const x of r.items) {
-    for (const [field, word] of Object.entries(READING)) {
-      if (field === 'basis' ? !x.basis.filter(Boolean).length : !x[field]) say(`的阅读图「${x.id}」缺「- ${word}：」`);
-    }
-    if (x.placement) {
-      const [id, ...names] = x.placement.split('>').map(s => s.trim()).filter(Boolean);
-      const sk = plan.skeletons.get(id);
-      const sec = sk && names[0] ? sk.sections.find(s => normalizeHeading(s.title) === normalizeHeading(names[0])) : null;
-      const sub = sec && names[1] ? sec.sections.find(s => normalizeHeading(s.title) === normalizeHeading(names[1])) : null;
-      if (!sk || (names[0] && !sec) || (names[1] && !sub) || names.length > 2) {
-        say(`的阅读图「${x.id}」放置「${x.placement}」在骨架里找不到——写「<章 ID> > <小节> [> <子节>]」，小节名与骨架一致`);
-      }
-    }
-    for (const b of x.basis.filter(Boolean)) {
-      const why = basisFiles(ctx, b).problem;
-      if (why) say(`的阅读图「${x.id}」依据「${b}」${why}`);
-    }
-  }
-}
-
-/** 依据里的标题路径在当前内容里定不定得到（正文写成之后才核）。依据本身取不到由声明检查那条报，这里不重报。 */
-export function basisTargets(ctx, plan) {
-  return (plan?.reading?.items ?? []).flatMap(x => x.basis.filter(Boolean).map((b) => {
-    const r = basisFiles(ctx, b);
-    const hit = r.problem || !r.names.length ? {} : headingPath(r.primary.bytes.toString('utf-8'), r.names);
-    return { id: x.id, basis: b, problem: hit.problem ?? null };
-  }));
 }
 
 /** `形式：` 后面那个词认成什么：认不出返回 null。命名表是带合同表头的表格，选了才核。 */

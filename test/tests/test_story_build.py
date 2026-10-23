@@ -511,6 +511,20 @@ class TheEventDesignIsProjectedWhole(StoryBuildCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertIn("分母是全部进入开户页的用户", self.zone())
 
+    def test_removing_an_inner_blank_line_is_an_edit(self) -> None:
+        """区里有段落、小标题与表，内部空行是内容：删一行照样是手改，与首尾分隔空行不同。"""
+        text = self.story()
+        at = text.index("<!-- story-build:begin 埋点 ")
+        inner = text.index("\n\n#### 开户成功率", at)
+        self.story_path.write_text(text[:inner] + text[inner + 1:], encoding="utf-8")
+        code, out = self.check_output()
+        self.assertEqual(1, code, "区内删了一行空行，核对没发现：" + out)
+        self.assertIn("埋点", out)
+        before = self.story_path.read_bytes()
+        proc = self.run_build("project")
+        self.assertEqual(1, proc.returncode, "区内删了一行空行，重投没当手改")
+        self.assertEqual(before, self.story_path.read_bytes())
+
 
 class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
     """附录的机器区与真源逐区逐行比 —— **不先 project 再比**。
@@ -3476,6 +3490,147 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
         self.assertEqual(0, code, f"按标题名判把业务名起的标题说成缺了：{out}")
 
 
+ZONE_BEGIN = "<!-- story-build:begin "
+ZONE_END = "<!-- story-build:end -->"
+
+
+def zone_bounds(lines: list[str], prefix: str = ZONE_BEGIN) -> list[tuple[int, int]]:
+    """每段机器区的起止行号（含首尾标记）。"""
+    out = []
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            out.append((i, next(k for k in range(i + 1, len(lines)) if lines[k].strip() == ZONE_END)))
+    return out
+
+
+class TheMachineZoneStandsApart(StoryBuildCase):
+    """附录机器区的首尾标记与正文、与两侧作者文字各隔一个空行（B4）。
+
+    空行是生成器铺的格式，不是内容：盘上是紧贴的旧形态照样认作没人改过，重投后换成分隔形态、
+    再投多少次字节都不变；区里真正的内容（表格单元、行、内部空行）改了照旧报出来。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_audit()
+        code, out = self.check_output()
+        self.assertEqual(0, code, "夹具起点本该是干净的：" + out)
+
+    def project(self) -> None:
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def put(self, lines: list[str]) -> None:
+        self.story_path.write_bytes("\n".join(lines).encode("utf-8"))
+
+    def test_an_old_tight_zone_is_not_an_edit_and_reprojects_apart_then_stays(self) -> None:
+        before = self.story()
+        old = before.split("\n")
+        bounds = zone_bounds(old)
+        self.assertTrue(bounds)
+        self.assertTrue(any(old[a + 1].strip() for a, _ in bounds), "夹具不再是紧贴的旧形态，这条测不到兼容")
+        bodies = [[l for l in old[a + 1:b] if l.strip()] for a, b in bounds]
+        self.project()
+        first = self.story_path.read_bytes()
+        lines = self.story().split("\n")
+        for (a, b), body in zip(zone_bounds(lines), bodies):
+            with self.subTest(zone=lines[a][:40]):
+                self.assertEqual(("", ""), (lines[a + 1], lines[b - 1]), "标记内侧没有分隔空行")
+                self.assertFalse(lines[a - 1].strip(), "开始标记紧贴上面的内容")
+                self.assertTrue(b + 1 == len(lines) or not lines[b + 1].strip(), "结束标记紧贴下面的内容")
+                self.assertEqual(body, [l for l in lines[a + 1:b] if l.strip()], "重投改了区里的内容")
+        # 作者区原有的空行不动；生成器只在缺空行处补一行，不叠出新的连续空行
+        self.assertLessEqual(self.story().count("\n\n\n"), before.count("\n\n\n"), "分隔空行叠成了两行")
+        for _ in range(2):
+            self.project()
+            self.assertEqual(first, self.story_path.read_bytes(), "重投又改了 story")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_boundary_blank_lines_are_format_but_a_cell_is_content(self) -> None:
+        self.project()
+        canon = self.story_path.read_bytes()
+        lines = self.story().split("\n")
+        a, b = zone_bounds(lines, ZONE_BEGIN + "规约 ")[0]
+        tight = lines[:a + 1] + lines[a + 2:b - 1] + ["", "  ", ""] + lines[b:]
+        self.put(tight)
+        code, out = self.check_output()
+        self.assertEqual(0, code, "首尾空行的多少被当成了改动：" + out)
+        self.project()
+        self.assertEqual(canon, self.story_path.read_bytes(), "首尾空行没回到分隔形态")
+        target = next(i for i in range(a + 1, b) if "SMP-01" in lines[i])
+        lines[target] = "| 甲域约束 | SMP-01 | 不命中 | 改成了别的说法 |"
+        self.put(lines)
+        before = self.story_path.read_bytes()
+        proc = self.run_build("project")
+        self.assertEqual(1, proc.returncode, "区里的单元格被改了却没报")
+        self.assertIn("手改过", proc.stdout + proc.stderr)
+        self.assertEqual(before, self.story_path.read_bytes(), "发现手改还是写了盘")
+
+    def test_the_authors_words_touching_a_zone_get_one_blank_line(self) -> None:
+        lines = self.story().split("\n")
+        a, b = zone_bounds(lines)[-1]
+        above, below = "这一节的取舍见业务方案章。", "上面这张表只列本单新增。"
+        while not lines[a - 1].strip():
+            del lines[a - 1]
+            a, b = a - 1, b - 1
+        self.put(lines[:a] + [above] + lines[a:b + 1] + [below] + lines[b + 1:])
+        self.project()
+        text = self.story()
+        self.assertIn(above + "\n\n" + ZONE_BEGIN, text, "作者文字与开始标记之间没有空行")
+        self.assertIn(ZONE_END + "\n\n" + below, text, "结束标记与作者文字之间没有空行")
+        first = self.story_path.read_bytes()
+        self.project()
+        self.assertEqual(first, self.story_path.read_bytes())
+
+
+class TheIssueMarkStandsApart(Step8Case):
+    """评审议题的标记与 `####` 标题之间隔一个空行；紧贴的旧形态照样认作原样，人写的字一个字节都不动。"""
+
+    MARK = "<!-- story-build:begin 议题 submit-boundary "
+    ANCHOR = "<!-- decision: submit-boundary -->"
+
+    def build_ok(self) -> str:
+        proc = self.run_build("build")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return self.review_path.read_text(encoding="utf-8")
+
+    def test_the_mark_and_the_heading_are_apart_and_rebuilds_are_stable(self) -> None:
+        self.write_decision()
+        text = self.build_ok()
+        line = text[text.index(self.MARK):]
+        self.assertRegex(line, r"^[^\n]*-->\n\n#### ", "议题标记紧贴标题")
+        self.assertNotIn("\n\n\n", text)
+        first = self.review_path.read_bytes()
+        for _ in range(2):
+            self.build_ok()
+            self.assertEqual(first, self.review_path.read_bytes())
+
+    def test_an_old_tight_mark_with_human_words_rebuilds_without_a_conflict(self) -> None:
+        self.write_decision()
+        canon = self.build_ok()
+        opinion = "修改意见：范围要含补卡入口。\n这一行也是人写的。  "
+        filled = canon.replace("修改意见：\n\n" + self.ANCHOR, opinion + "\n\n" + self.ANCHOR)
+        at = filled.index(self.MARK)
+        head_end = filled.index("\n", at)
+        tight = filled[:head_end + 1] + filled[head_end + 2:]
+        self.assertIn("-->\n#### ", tight, "没造出紧贴的旧形态")
+        self.review_path.write_text(tight, encoding="utf-8")
+        again = self.build_ok()
+        self.assertIn(opinion + "\n\n" + self.ANCHOR, again, "人写的字被改了")
+        self.assertEqual(filled, again, "旧形态重建后不是分隔形态，或动了别处")
+
+    def test_a_hand_edit_after_the_blank_line_is_still_caught(self) -> None:
+        self.write_decision()
+        text = self.build_ok()
+        self.review_path.write_text(text.replace("提交入口与补卡由两张开发单分别承接", "手改过的标题"),
+                                    encoding="utf-8")
+        before = self.review_path.read_bytes()
+        proc = self.run_build("build")
+        self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
+        self.assertEqual(before, self.review_path.read_bytes())
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -3528,16 +3683,6 @@ class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
         self.design(with_carry(plan, ["spec §9.1 #1", "spec §9.2 #1"], section="甲"))
         self.rewrite_story("## 功能说明", "### 甲\n\n第一处。\n\n### 甲\n\n第二处。\n\n## 功能说明")
         self.assertIn("「甲」有 2 处同名", self.assert_check_names("承接"))
-
-    def test_a_reading_basis_that_cannot_be_found_is_named(self) -> None:
-        """阅读图依据的标题路径在全篇检查时按当前内容找：找不到报出，找得到不报。"""
-        plan = with_carry(self.plan.read_text(encoding="utf-8"), ["spec §9.1 #1", "spec §9.2 #1"])
-        head = plan.split("## 阅读图选择", 1)[0]
-        item = ("## 阅读图选择\n\n### flow-overview\n- 阅读问题：提交到回执怎样走\n- 增益：一张图看全提交、受理与回执\n"
-                "- 放置：05-flow\n- 依据：AR/story.md > 业务流程\n- 依据：AR/story.md > 不存在的章\n")
-        self.design(head + item)
-        out = self.assert_check_names("依据「AR/story.md > 不存在的章」：找不到「不存在的章」")
-        self.assertNotIn("依据「AR/story.md > 业务流程」", out)
 
     def test_the_chapter_input_carries_the_original_diagram(self) -> None:
         """写到承接它的那一章时，NEXT 下面给出原图全文、原件位置与要落的小节；同一张只给一次。"""

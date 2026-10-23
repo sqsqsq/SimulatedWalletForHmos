@@ -30,6 +30,7 @@ from pathlib import Path
 from materials import importer, registry
 
 from flow.routing import inputs_answer, material_state
+import usage
 from flow.phase_facts import UPDATES, phase_facts as _phase_facts, update_records as _records
 from flow.state import (CONTRACT, FlowError, STORY, REVIEW, STORY_CONTRACT, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
@@ -315,6 +316,23 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path) -> d
                       "收件箱有新原件先导入 → `round` 登记到本轮 → `update --action prepare`"}
 
 
+def _carry_start(feature_root: Path, rid: str, rec: dict) -> str | None:
+    """把 begin 暂存的开始时刻移进这一轮 record：record 已有就只清暂存；没有就读暂存、写进 record 存盘成功后再清。
+    读不出或写不进都保留暂存、返回原因——下一次 prepare 或收口照原值再移，不换成重试那一刻；业务照常继续。"""
+    try:
+        if not rec.get("started_at"):
+            started = usage.update_start(feature_root)
+            if not started:
+                return None                 # 本来就没有 begin：这一轮的计时缺口，不拿开轮时刻补
+            (_updates_dir(feature_root) / rid / "record.json").write_text(
+                json.dumps({**rec, "started_at": started}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            rec["started_at"] = started
+        usage.drop_update_start(feature_root)
+    except (usage.UsageError, OSError) as exc:
+        return f"这一轮 update 的开始时刻还没移进记录（{exc}）：暂存保留着，下一次 prepare 或收口时照原值再移"
+    return None
+
+
 def cmd_update_prepare(feature_root: Path) -> dict:
     """输入定了之后比一遍、开这一轮、该留的留下、该说的说清楚。
 
@@ -338,7 +356,8 @@ def cmd_update_prepare(feature_root: Path) -> dict:
     records = _records(feature_root)
     resumed = _resume(records)
     if resumed:
-        return resumed
+        gap = _carry_start(feature_root, resumed["update"], dict(records)[resumed["update"]])
+        return {**resumed, **({"usage_error": gap} if gap else {})}
 
     facts = _collect(feature_root, contract, records)
     if facts["pending"]:
@@ -383,6 +402,8 @@ def cmd_update_prepare(feature_root: Path) -> dict:
               "mirror": {"path": f"AR/story-src/updates/{rid}/before", "files": mirrored}}
     (root / "record.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
+    # 这一轮的工作起点由 update 开头的 begin 暂存，开轮时移进 record（opened_at 仍是开轮这一刻）
+    gap = _carry_start(feature_root, rid, record)
 
     material = bool(pending or facts["materials_changed"] or imported)
     kind = ("changed" if (changed or material)
@@ -410,7 +431,7 @@ def cmd_update_prepare(feature_root: Path) -> dict:
             "unreadable": unreadable, "baseline": diff["complete"], "diffs": diffs,
             "mirror": record["mirror"]["path"],
             "action": "；".join(lines) + f"。原貌留在 AR/story-src/updates/{rid}/before/，"
-                      "处置方法见 phases/update.md"}
+                      "处置方法见 phases/update.md", **({"usage_error": gap} if gap else {})}
 
 
 REPORT_CHECK = Path(__file__).resolve().parents[5] / "hooks" / "shared" / "verifier-report.mjs"
@@ -553,6 +574,7 @@ def cmd_update_close(feature_root: Path, project_root: Path) -> dict:
     kept = _keep(feature_root, current, root / "after")
 
     contract = load(feature_root) or {}
+    gap = _carry_start(feature_root, rid, rec)      # 开轮时没移成的开始时刻，收口前再移一次
     # 人在这一轮的原话随轮次留档：契约只清「开着的那一轮」（还原同样如此）
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
                sources=_sources(feature_root),
@@ -564,7 +586,7 @@ def cmd_update_close(feature_root: Path, project_root: Path) -> dict:
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
-    return {"update": rid, "status": "closed", "compared_next_time": kept,
+    return {"update": rid, "status": "closed", "compared_next_time": kept, **({"usage_error": gap} if gap else {}),
             "unreadable": unreadable, "phases": phases,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"

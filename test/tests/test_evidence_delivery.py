@@ -284,26 +284,6 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             self.assertIn(option, section, "选项原文没带到审查者手上")
         self.assertNotIn("D-1", section, "已定的归下一节")
 
-    def test_the_reading_choice_reaches_the_reviewer(self) -> None:
-        """写作设计里的阅读图选择送到审查：不采用给理由，候选给问题、增益、放置与每一条依据。"""
-        plan = self.feature_root / "AR" / "story-src" / "story-template.md"
-        plan.parent.mkdir(parents=True, exist_ok=True)
-        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 业务流程\n\n甲交给乙。\n", encoding="utf-8")
-        plan.write_text("# 写作设计\n\n## 阅读图选择\n\n不采用：正文与表已讲清。\n", encoding="utf-8")
-        section = self.reader_task().split("### 阅读图选择", 1)[1]
-        self.assertIn("不采用：正文与表已讲清。", section)
-        overlay = (self.ext / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
-        for needle in ("③ **阅读增益**", "先独立提出当前最容易混淆的关系", "赞成零阅读图时写出现有呈现已回答的问题",
-                       "反对「不采用」时写出具体的阅读问题", "是不是装饰"):
-            self.assertIn(needle, overlay, f"阅读增益的判法少了「{needle}」")
-        plan.write_text("# 写作设计\n\n## 阅读图选择\n\n### recovery\n- 阅读问题：清掉记录后靠什么恢复\n"
-                        "- 增益：一张图对比两边的事实\n- 放置：07-exceptions\n"
-                        "- 依据：spec/spec.md > 业务流程\n- 依据：AR/story.md > 异常与恢复\n", encoding="utf-8")
-        section = self.reader_task().split("### 阅读图选择", 1)[1]
-        for needle in ("**recovery**", "清掉记录后靠什么恢复", "一张图对比两边的事实",
-                       "依据：spec/spec.md > 业务流程", "依据：AR/story.md > 异常与恢复"):
-            self.assertIn(needle, section)
-
     def test_upstream_diagrams_sit_next_to_every_section_that_carries_them(self) -> None:
         """原图与写作设计登记承接它的小节并排：那一节的正文、表、图都给；没登记的明说。"""
         (self.feature_root / "SR").mkdir(parents=True, exist_ok=True)

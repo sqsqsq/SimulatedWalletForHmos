@@ -89,7 +89,7 @@ WARN、FAIL 的判据要在 notes 里有处置记录。退出 0 通过（本宿�
 | 报告结论 | 你做什么 | 闭环方式 |
 |---|---|---|
 | 有阻断项 | 按阻断项返修：改最早出错的那一处（Spec、决策登记、写作设计或章草稿）→ 改了章草稿的 `chapter` 提交 → `story` 重新登记 | 完整 harness → 取新请求再派审 |
-| PASS，改动只影响表达（措辞、格式、补说明、补可回查依据） | 改完跑 `harness-runner.ts --revalidate --feature <名>` | summary 记 `completed_with_prior_review` 与 `script_revalidated`；notes 写「按 <对象> 报告的建议修改，未独立重审」；交付门放行 |
+| PASS，改动只影响表达（措辞、格式、补说明、补可回查依据） | 改完在 `framework/harness` 下跑 `npx ts-node harness-runner.ts --revalidate --feature <名> --from <本阶段>`（阶段已闭环时不带 `--from` 什么都不重跑） | summary 记 `completed_with_prior_review` 与 `script_revalidated`；notes 写「按 <对象> 报告的建议修改，未独立重审」；交付门放行 |
 | PASS，改动改变业务口径、范围、验收、契约实体 | 改完完整跑 harness | 取新请求再派审 |
 | PASS，建议不在本阶段修 | 不改材料 | notes 逐条记建议与去处（下一阶段或评审） |
 
