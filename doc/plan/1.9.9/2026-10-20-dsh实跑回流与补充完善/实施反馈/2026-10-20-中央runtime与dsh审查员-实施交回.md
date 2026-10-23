@@ -7,7 +7,7 @@
 - 实施前确认：「不改framework」指不改上游 agent-maison，做法是 demo 本地定制 dsh adapter，与 opencode 的本地定制同一做法。
 - [03](../03-测试装置与证据修正.md) §中央runtime；[01](../01-dsh独立审查方案.md) §1–§4。
 
-**开工基线**：`de968bf4` 加上[上一份交回](2026-10-20-本仓可继续项-实施交回.md)的未提交改动。证据在 `output/story/1.9.9-dsh-verifier-20261020/`。
+**开工基线**：`de968bf4` 加上[上一份交回](2026-10-20-本仓可继续项-实施交回.md)的未提交改动。证据在 `output/evidence/1.9.9-dsh-verifier-20261020/`。
 
 **与 01 的偏差（用户决定）**：01 原定 dsh adapter 由上游 Framework 交付、本仓不改 `demo/framework`。用户改为不动上游，在 demo 本地定制。01 §1 末段、§3「Framework最小文件动作」与「兼容基线与资格顺序」中关于上游交付的表述需设计者同步；本轮不改方案正文。
 
