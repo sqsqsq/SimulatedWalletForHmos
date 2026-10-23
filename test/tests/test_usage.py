@@ -22,6 +22,7 @@ from ext_workspace import DEV_EXT
 
 CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
 USAGE = CORE / "usage.py"
+FLOW = CORE / "story_flow.py"
 T0 = datetime(2026, 10, 21, 8, 0, 0, tzinfo=timezone.utc)
 
 
@@ -126,6 +127,17 @@ class UsageCase(unittest.TestCase):
             rec["closed_at"] = at(closed)
         (folder / "record.json").write_text(json.dumps(rec), encoding="utf-8")
 
+    def story_init(self, feature: str = "AR1") -> dict:
+        """真实的 `story_flow.py init`：建骨架，成功后由它调记录器的 init 动作（时刻取真实时钟，init 不记时刻）。"""
+        proc = subprocess.run([sys.executable, str(FLOW), "init", "--feature", feature, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90, env=self.env)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
+
+    def story_start(self, feature: str = "AR1") -> object:
+        """运行态里 Story 的起点：没有这个键时返回字符串 "absent"，好和 null 分开。"""
+        return self.state().get(self.key(feature), {}).get("starts", {}).get("story", "absent")
+
     def git(self, *args: str) -> None:
         subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True, env=self.env)
 
@@ -151,12 +163,13 @@ class IdentityAndNodes(UsageCase):
             self.call(action)
         self.assertEqual([key], list(self.usage()["requirements"]), "init 或刷新换了身份")
 
-    def test_init_without_a_begin_makes_no_identity_and_says_the_gap(self) -> None:
+    def test_init_without_a_begin_makes_the_identity_but_not_a_start(self) -> None:
+        """身份只标识需求：init 可以建它，但 Story 的起点记成未知（null），不写 init 时刻，也不出完成行。"""
         out = self.call("init")
         self.assertTrue(out["ok"], out)
         self.assertIn("没有开始记录", out["note"], "漏了 begin 没说")
-        self.assertFalse((self.fr() / ".usage-id").exists(), "init 补建了身份")
-        self.assertFalse(self.record.exists(), "init 补建了节点")
+        self.assertEqual({}, self.steps(), "还没成文就出了 Story 行")
+        self.assertIsNone(self.story_start(), "init 写了一个起点，或没记下起点未知")
 
     def test_a_framework_phase_creates_the_identity_and_refresh_or_finalize_do_not(self) -> None:
         self.assertTrue(self.call("refresh", feature="AR2")["ok"])
@@ -301,50 +314,77 @@ class Completion(UsageCase):
         self.at_time("finalize", "spec", T0 + timedelta(seconds=310))
         self.assertEqual({"spent": 160}, self.steps()["spec"], "update 收口与收尾重复累计")
 
-    def test_story_starts_at_its_identity_and_begin_never_restarts_it(self) -> None:
+    def test_story_runs_from_its_begin_to_the_first_registration(self) -> None:
+        """用户预放了材料，模型照常取材前 begin、再真实 init、成文：计完整跨度。预放的材料不是开工证据；
+        重复 begin / init / refresh / 重新登记不重启身份、不改起点、不重复计。"""
+        (self.fr() / "inbox").mkdir()
+        (self.fr() / "inbox" / "requirements.md").write_text("用户预放的需求材料\n", encoding="utf-8")
         self.at_time("begin", "story", T0)
         key = self.key()
-        self.assertEqual("20261021T080000.000Z", key.split("-", 1)[1], "身份时刻不是开始工作的那一刻")
-        self.assertFalse(self.state_file.exists(), "story 的起点另存了一份")
+        self.assertEqual(native(T0), self.story_start(), "正常 begin 没记下起点")
         self.at_time("begin", "story", T0 + timedelta(seconds=30))
-        self.at_time("init", None, T0 + timedelta(seconds=400))        # 取材之后才 init：起点不是它
-        self.assertEqual(key, self.key(), "后来的 begin 或 init 重启了身份")
+        self.story_init()                                               # 取材之后才 init：起点不是它
+        self.assertEqual((key, native(T0)), (self.key(), self.story_start()), "init 或重复 begin 改了身份或起点")
+        self.assertNotIn("story", self.steps(), "还没成文就出了 Story 行")
         self.story_written(T0 + timedelta(seconds=900))
         self.call("refresh")
         self.assertEqual({"spent": 900}, self.steps()["story"], "Story 不是从开始工作算起")
-        self.at_time("begin", "story", T0 + timedelta(seconds=1000))   # 重复 begin / init：不重启、不清已记的
-        self.at_time("init", None, T0 + timedelta(seconds=1010))
-        self.assertEqual((key, {"spent": 900}), (self.key(), self.steps()["story"]))
+        self.assertEqual("absent", self.story_start(), "结算后起点还留着")
+        self.at_time("begin", "story", T0 + timedelta(seconds=1000))   # 成文过的 Story 不再开始
+        self.story_init()
+        self.story_written(T0 + timedelta(seconds=9000))                 # 修稿后重新登记
+        self.call("refresh")
+        self.assertEqual((key, {"spent": 900}, "absent"), (self.key(), self.steps()["story"], self.story_start()))
 
-    def test_a_story_without_its_begin_is_a_gap_not_a_shorter_time(self) -> None:
-        """漏了取材前的 begin：init 不补身份；成文后没有正常耗时；之后第一次 begin（迟到的 story 或下一阶段）
-        建身份时 Story 记缺口，阶段照常计时。"""
-        for late, written_first in (("story", False), ("spec", True)):
-            with self.subTest(late=late):
-                feature = f"G{late}"
-                out = self.at_time("init", None, T0, feature=feature)
-                self.assertTrue(out["ok"], out)
-                self.assertIn("没有开始记录", out["note"])
-                (self.fr(feature) / "inbox").mkdir()                     # story init 建的收件箱骨架
-                if written_first:
-                    self.story_written(T0 + timedelta(seconds=120), feature=feature)
-                    out = self.at_time("refresh", None, T0 + timedelta(seconds=130), feature=feature)
-                    self.assertIsNone(out["requirement"], "没有开始记录却出了节点")
-                out = self.at_time("begin", late, T0 + timedelta(seconds=200), feature=feature)
-                self.assertIn("耗时缺口", out["note"])
-                self.assertEqual({}, self.steps(feature)["story"], "Story 拿迟到的身份时刻算了耗时")
-                if not written_first:
-                    self.story_written(T0 + timedelta(seconds=500), feature=feature)
-                self.at_time("init", None, T0 + timedelta(seconds=510), feature=feature)
+    def test_a_missed_begin_leaves_the_story_start_unknown(self) -> None:
+        """漏了取材前的 begin：真实 init 记起点未知；迟到的 begin 保持未知；成文之前没有 Story 行，
+        成文后只出缺口行，不拿 init 或迟到 begin 的时刻补。usage 写失败时缺口行照待写赋值。"""
+        for late in (True, False):
+            with self.subTest(late_begin=late):
+                feature = f"M{int(late)}"
+                said = self.story_init(feature)
+                self.assertIn("没有开始记录", said.get("usage_note", ""), said)
+                self.assertIsNone(self.story_start(feature))
+                if late:
+                    out = self.at_time("begin", "story", T0 + timedelta(seconds=60), feature=feature)
+                    self.assertIn("起点不可核", out["note"])
+                    self.assertIsNone(self.story_start(feature), "迟到的 begin 补成了时刻")
+                self.story_init(feature)                                 # 重复 init：未知保持未知
+                self.assertIsNone(self.story_start(feature))
+                self.assertNotIn("story", self.steps(feature), "还没成文就出了 Story 行")
+                self.story_written(T0 + timedelta(seconds=500), feature=feature)
+                _, restore = TheExtensionClosesTheStep.inject(self, "usage.json")
+                self.assertFalse(self.at_time("refresh", None, T0 + timedelta(seconds=510), feature=feature)["ok"])
+                restore()
+                self.assertEqual({"story": {}}, self.state()[self.key(feature)]["pending"], "缺口行没进待写")
                 self.call("refresh", feature=feature)
-                self.assertEqual({}, self.steps(feature)["story"], "后来的刷新给缺口补了耗时")
-        self.close_phase("spec", T0 + timedelta(seconds=250), feature="Gspec")
-        self.at_time("finalize", "spec", T0 + timedelta(seconds=300), feature="Gspec")
-        self.assertEqual({"spent": 100}, self.steps("Gspec")["spec"], "阶段计时受了 Story 缺口的影响")
+                self.assertEqual({}, self.steps(feature)["story"], "缺起点的 Story 编了耗时")
+                self.assertEqual("absent", self.story_start(feature), "结算后未知起点还留着")
 
-    def test_story_counts_from_the_identity_to_its_first_registration(self) -> None:
-        self.call("begin", "story")
-        self.set_identity(T0)
+    def test_only_a_registered_story_is_complete(self) -> None:
+        """成文登记是完成的唯一证据：已成文、却从没被记录器看到开始的，第一次看到就记缺口、不补现在；
+        只有 story.md 文件在、没有成文登记的，不算完成。"""
+        self.story_written(T0, feature="W1")
+        self.at_time("begin", "story", T0 + timedelta(seconds=100), feature="W1")
+        self.assertEqual(({}, "absent"), (self.steps("W1")["story"], self.story_start("W1")), "已成文的拿现在补了起点")
+        story_md = self.fr("W2") / "AR" / "story.md"
+        story_md.parent.mkdir(parents=True)
+        story_md.write_text("# 只有文件\n", encoding="utf-8")
+        self.at_time("begin", "spec", T0, feature="W2")
+        self.assertNotIn("story", self.steps("W2"), "文件在就当成文了")
+
+    def test_a_framework_identity_is_not_the_story_start(self) -> None:
+        """纯 Framework 先开始建了身份，后来才第一次做 Story：Story 只从自己的 begin 算。"""
+        self.at_time("begin", "spec", T0)
+        self.assertEqual("20261021T080000.000Z", self.key().split("-", 1)[1])
+        self.assertNotIn("story", self.steps(), "没做 Story 却出了行")
+        self.at_time("begin", "story", T0 + timedelta(seconds=500))
+        self.story_written(T0 + timedelta(seconds=800))
+        self.call("refresh")
+        self.assertEqual({"spent": 300}, self.steps()["story"], "Story 从需求身份时刻算了")
+
+    def test_story_counts_from_its_start_to_its_first_registration(self) -> None:
+        self.at_time("begin", "story", T0)
         self.story_written(T0 + timedelta(seconds=1656))
         self.call("refresh")
         self.assertEqual({"spent": 1656}, self.steps()["story"], "Story 不等 Spec 闭环就算完成")
@@ -559,8 +599,7 @@ class TheExtensionClosesTheStep(UsageCase):
 
 class TheLocalStateIsMinimal(UsageCase):
     def test_init_story_and_update_leave_no_empty_state(self) -> None:
-        self.call("begin", "story")
-        self.set_identity(T0)
+        self.at_time("begin", "story", T0)
         self.story_written(T0 + timedelta(seconds=30))
         self.call("refresh")
         self.update_record("u1", T0, T0 + timedelta(seconds=60))
@@ -585,7 +624,7 @@ class TheLocalStateIsMinimal(UsageCase):
         (self.fr() / ".usage-input.json").write_text('{"agent": "a", "model": "m"}', encoding="utf-8")
         self.call("refresh")
         self.assertEqual(("a", "m"), (self.node()["agent"], self.node()["model"]))
-        self.assertFalse(self.state_file.exists(), "只改自报身份也建了运行态")
+        self.assertNotIn("pending", self.state().get(self.key(), {}), "只改自报身份也记了待写行")
 
 
 class VersionsAndIdentity(UsageCase):

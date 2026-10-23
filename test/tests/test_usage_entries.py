@@ -249,14 +249,14 @@ class AuthorEntriesBeginTheirPhase(StoryBuildCase):
         self.init_audit()
         self.assertEqual(0, self.run_build("skeleton").returncode)     # 起手夹具在这里走 story init，建了节点
         self.assertEqual(0, self.run_build("skeleton").returncode)
-        self.assertEqual({}, self.starts(), "写作入口开始了阶段计时")
+        self.assertFalse({"spec", "plan"} & set(self.starts()), "写作入口开始了阶段计时")
         for phase in ("spec", "plan"):        # 预检与独审装配会导入作者模块：导入本身不开始计时
             driver = "await import(process.argv[1]); process.stdout.write('imported');"
             imported = subprocess.run(["node", "--input-type=module", "-e", driver,
                                        (DEV_EXT / f"hooks/{phase}/author.mjs").as_uri()], cwd=self.root,
                                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
             self.assertEqual("imported", imported.stdout, imported.stderr)
-        self.assertEqual({}, self.starts(), "导入作者模块就写了使用记录")
+        self.assertFalse({"spec", "plan"} & set(self.starts()), "导入作者模块就写了使用记录")
         for phase in ("spec", "plan"):
             with self.subTest(phase=phase):
                 self.assertEqual(0, self.author(phase).returncode)

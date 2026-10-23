@@ -5,8 +5,9 @@
 `story update` 另有收口轮数 `rounds`。没做完过的步骤没有行；缺起点的完成轮只让行出现，不补耗时。
 
 计的是模型实际执行一个步骤的日历时长（含本轮等待与中断）：起点是开始工作前的 begin，终点是工作结束后的收尾请求，
-时间全取记录器的机器时刻，保留毫秒、求差后取整秒。story 从身份时刻（`/story init` 取材前的 begin 建立）到 `story_written_at`，
-身份只由 begin 建：漏了这一步，init 不补身份，之后第一次 begin 建身份时 Story 已经开始过，Story 记为耗时缺口；
+时间全取记录器的机器时刻，保留毫秒、求差后取整秒。身份只标识需求、不作计时依据。story 从 `starts.story`（`/story init`
+取材前的 begin 记下）到第一次成文登记的 `story_written_at`；init 时还没有 Story 起点就记 `starts.story = null`（开始了、起点不可核），
+不拿 init 或之后的时刻补，成文后 Story 记为耗时缺口。成文之前不出 Story 行；
 Framework 阶段从 begin 到 finalize 那一刻，原生闭环只作完成资格——此刻有有效闭环、且不早于本轮开始；
 update 一轮从 record 的 `started_at`（prepare 时由 begin 的暂存移入）到 `closed_at`。漏了 begin 不拿检查、trace 或文件时刻补：
 完成行照出、这一轮记为耗时缺口。本地运行态 `<需求根>/.usage-state.json`（不入库）只留两样：还没收尾的那一轮起点
@@ -15,8 +16,9 @@ update 一轮从 record 的 `started_at`（prepare 时由 begin 的暂存移入�
 
 动作：
 - begin：一个步骤开始实际工作之前（Spec / Plan 的作者任务包入口自动调，其余由作者页与 Skill 的第一步执行）：
-  没有身份件就建（本地未提交的同编号旧节点替换掉，已提交的保留）；阶段与 update 登记这一轮的起点，已有就保留最早的；
-- init：story init 成功后；沿用开始时 begin 建的身份并刷新；没有身份不补建，报 Story 开始记录缺口；
+  没有身份件就建（本地未提交的同编号旧节点替换掉，已提交的保留）；阶段、Story 与 update 登记这一轮的起点，已有就保留最早的
+  （已是 null 的 Story 起点保持 null）；
+- init：story init 成功后；没有身份件就照 begin 的边界建；Story 还没有起点就记 null 并报缺口，不写 init 时刻；
 - refresh：其它 story 命令成功后；已有身份才刷新版本、自报身份、Story 与 update，不结算 Framework 阶段；
 - finalize：阶段原生闭环之后的 Extension 收尾，由消费模型在交付、进下一阶段或提交代码之前执行，Story 交付门也调它：
   核本阶段已闭环、身份在，结算这一轮并读回落盘的 usage 确认这一步已记；失败时按报出的原因处理（没闭环先完成阶段，写不进先修环境）再重跑同一命令；
@@ -226,10 +228,6 @@ def read_identity(feature_root: Path) -> str | None:
     return stamp
 
 
-def stamp_time(stamp: str) -> datetime:
-    return datetime.strptime(stamp, "%Y%m%dT%H%M%S.%fZ").replace(tzinfo=timezone.utc)
-
-
 def committed_keys(project_root: Path) -> set[str]:
     """HEAD 里 usage 已有的节点键；新仓没有 HEAD 或 HEAD 里没有这份文件时是空集。查不了就报原因，不许当成未提交。"""
     def git(*args: str) -> subprocess.CompletedProcess:
@@ -325,13 +323,14 @@ def finish_round(fr: Path, phase: str, steps: dict, starts: dict) -> str | None:
     return None
 
 
-def tally_story(fr: Path, stamp: str, steps: dict) -> None:
-    """Story 只在第一次成文时计：身份时刻到 `story_written_at`；之后再登记不再加。"""
+def tally_story(fr: Path, steps: dict, starts: dict) -> None:
+    """Story 只在第一次成文时计：`starts.story` 到 `story_written_at`，结算后清起点；之后再登记不再加。
+    起点是 null、没有或晚于成文：完成行照出、记为耗时缺口。"""
     written = phase_facts.moment((state.load(fr) or {}).get("story_written_at"))
     if written is None or "story" in steps:
         return
-    start = stamp_time(stamp)
-    steps["story"] = add(None, start, written) if written >= start else {}
+    start = phase_facts.moment(starts.pop("story", None))
+    steps["story"] = add(None, start, written) if start is not None and written >= start else {}
 
 
 def tally_update(fr: Path, steps: dict) -> None:
@@ -354,7 +353,7 @@ def tally_update(fr: Path, steps: dict) -> None:
         steps[UPDATE] = {**({"spent": spent} if timed or "spent" in known else {}), "rounds": rounds}
 
 
-def refresh(fr: Path, stamp: str, node: dict, slot: dict, done: list) -> None:
+def refresh(fr: Path, node: dict, slot: dict, done: list) -> None:
     """一个节点按当前真源刷新：版本、自报身份、Story 与 update。Framework 阶段不在这里结算，也不在这里开始。"""
     steps, starts = node["steps"], slot.setdefault("starts", {})
     for step, row in slot.pop("pending", {}).items():      # 上次写 usage 没成的结算行：赋值，不再加
@@ -362,7 +361,7 @@ def refresh(fr: Path, stamp: str, node: dict, slot: dict, done: list) -> None:
     node["ext"] = ext_version()
     node["fw"] = fw_version(fr) or node["fw"]
     take_input(fr, node, done)
-    tally_story(fr, stamp, steps)
+    tally_story(fr, steps, starts)
     tally_update(fr, steps)
 
 
@@ -387,15 +386,9 @@ def apply(project_root: Path, data: dict, st: dict, action: str, feature: str | 
                          "开始工作时的 begin 会建它")
     if action == "finalize" and closed_at(fr, step) is None:
         raise UsageError(f"{feature} 的 {step} 还没有原生有效闭环（summary 没有 closure_commit）：先完成阶段闭环再收尾")
-    late = False
     if stamp is None:
-        if action == "init":            # 身份只由开始工作前的 begin 建：init 时刻晚于取材，拿它当起点会少算还像是完整的
-            notes.append("这次 Story 没有开始记录（取材前没跑 begin --step story）：不拿 init 时刻补，Story 的耗时记为缺口；"
-                         "业务照常继续，之后各阶段开始前照常 begin")
-        if action != "begin":
+        if action not in ("begin", "init"):
             return []
-        # Story 已经 init 过（收件箱骨架或流程契约在）：它的开始早于这个身份
-        late = (fr / "inbox").is_dir() or (fr / Path(*state.CONTRACT)).is_file()
         moment = now()
         stamp = moment.strftime("%Y%m%dT%H%M%S.") + f"{moment.microsecond // 1000:03d}Z"
         same = [k for k in reqs if KEY.fullmatch(k).group(1) == feature]
@@ -413,19 +406,23 @@ def apply(project_root: Path, data: dict, st: dict, action: str, feature: str | 
     key = f"{feature}-{stamp}"
     node = reqs.setdefault(key, {"ext": None, "fw": None, "agent": None, "model": None, "steps": {}})
     slot = st.setdefault(key, {})
-    if late and "story" not in node["steps"]:
-        node["steps"]["story"] = {}
-        notes.append("Story 在这个使用记录身份之前已经开始（取材前没跑 begin --step story）：Story 记为耗时缺口")
     try:
-        refresh(fr, stamp, node, slot, done)
+        refresh(fr, node, slot, done)       # 先按已有成文事实结算 Story：成文过的不再登记开始
         starts = slot.setdefault("starts", {})
+        story_open = "story" not in node["steps"]
+        if action == "init" and story_open and "story" not in starts:
+            starts["story"] = None          # init 真的发生了、Story 起点却没记：开始了，起点不可核
+            notes.append("这次 Story 没有开始记录（取材前没跑 begin --step story）：不拿 init 时刻补，成文后 Story 记为耗时缺口；"
+                         "业务照常继续，之后各阶段开始前照常 begin")
+        elif action == "begin" and step == "story" and story_open and starts.get("story", "") is None:
+            notes.append("Story 在 init 时就已开始、起点不可核：这次 begin 不补起点，成文后 Story 记为耗时缺口")
         if action == "begin" and step == UPDATE and not open_update(fr):
             stale, last = phase_facts.moment(starts.get(UPDATE)), last_closed(fr)
             if stale is not None and last is not None and stale.replace(microsecond=0) <= phase_facts.moment(last["closed_at"]):
                 starts.pop(UPDATE)          # 上一轮收口时没移成的起点（当时已报）：那一轮已是缺口，不带进新一轮
                 notes.append(f"上一轮 update（{last.get('id')}）的开始时刻没移进它的记录，那一轮记为耗时缺口；这一轮从现在开始")
-        if action == "begin" and step != "story" and not (step == UPDATE and open_update(fr)):
-            starts.setdefault(step, iso(now()))        # story 的起点是身份时刻；开着的 update 轮次已有 started_at
+        if action == "begin" and not (step == "story" and not story_open) and not (step == UPDATE and open_update(fr)):
+            starts.setdefault(step, iso(now()))        # 已有的（含 Story 的 null）保留；开着的 update 轮次已有 started_at
         elif action == "finalize":
             notes.extend(filter(None, [finish_round(fr, step, node["steps"], starts)]))
         elif action == "close":             # update 收口：这一轮开始过、此刻有效闭环的阶段
@@ -495,7 +492,7 @@ def save_state(path: Path, st: dict) -> None:
 
 
 def after_command(project_root: Path, feature: str, mode: str, action: str | None = None) -> dict:
-    """Story 命令成功之后的采集：init 沿用开始时的身份（没有就报缺口），update 收口结算这一轮进入过的阶段，其余已有身份才刷新。
+    """Story 命令成功之后的采集：init 确保身份、Story 没有起点就记未知，update 收口结算这一轮进入过的阶段，其余已有身份才刷新。
     记录错误与提示另列，不改业务结果。"""
     which = "init" if mode == "init" else "close" if (mode, action) == ("update", "close") else "refresh"
     return record(project_root, which, feature=feature)
