@@ -39,7 +39,7 @@
 2. **逐文件闭环**：写一个文件 → 立刻 `ReadLints` → 零 error 才能写下一个。**严禁批量生成多文件后再统一 lint**。
 3. 不允许出现 `any`、硬编码字符串、未定义资源 key、以及在跨模块导出入口文件（由实例 `architecture.cross_module_exports_file` 指定文件名）中遗漏本应导出的符号。 | compile capabilities |
 | 5 | 文档与代码同步 | contracts.yaml/use-cases.yaml 为强契约真源；架构影响声明非 none 才更新架构文档 | plan Step 12 |
-| 6 | Context Facts Gate | 该 track 首个 phase（full=spec/lite=change）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
+| 6 | Context Facts Gate | 该 track 首个 phase（旧出生协议为 spec）建立 `context/facts.md` 全量事实，后续各 phase 只追加 `## phase_delta: <phase>` 节，不重做全量探索 | context-facts |
 | 7 | Agent 行为规约 | Research First / Minimum Viable / Surgical / Verify Before Proceed 四原则 | agent-behavioral-principles + Layer 2 量化门禁 |
 | 8 | 阶段边界推进 | 四件套 PASS ≠ 授权下一 Skill；须 `phase.next_step` 或明示授权才可推进 | user-confirmation-ux §8 |
 | 9 | framework 只读 | `framework/` 是 Maison 发布件，不就地修改；升级由用户/CI 明确集成新发布件，需求临时件放所属蓝图 `blueprint/` 或 Feature `tmp/`，无关需求诊断放系统临时目录，用完清理（[材料归属细则](framework/skills/reference/consumer-framework-boundary.md#材料归属与临时文件清理)） | task sandbox / 只读挂载 / 受限 OS token；无强隔离时仅 PreToolUse 合作守卫（shell/脚本/场外进程为明确盲区，无 Git/hash 兜底） |
