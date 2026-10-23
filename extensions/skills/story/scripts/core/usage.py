@@ -1,21 +1,26 @@
-"""使用记录：目标工程 `doc/usage.json` 的唯一写入者。
+"""使用记录：目标工程 `doc/usage.json` 与需求目录身份件 `.usage-id` 的唯一写入者。
 
-正式入口（六阶段 pre_phase、作者任务包、Story 与 update 命令、stats 前对账）在内部调用；模型只在原任务里
-写 `<需求目录>/.usage-input.json` 提供名称与业务版本，不额外运行本脚本。
+一个需求目录一个节点，键是 `<目录编号>-<身份时刻>`；身份时刻在需求目录的 `.usage-id` 里，创建一次不再改。
+节点只存最后活动的 ext/fw、模型自报的 agent/model 与做完过的步骤：`spent` 是可核实轮次的累计秒数，
+`story update` 另有收口轮数 `rounds`。没做完过的步骤没有行；缺起点的完成轮只让行出现，不补耗时。
+
+时间全取机器真源，保留毫秒、求差后取整秒：story 从身份时刻到 `story_written_at`；Framework 阶段首轮直接读 `trace.json` 的
+`started_at`，重试轮从那一轮 pre_phase 的时刻，到 summary 的 `closure_commit.committed_at`；update 一轮从 record 的
+`opened_at` 到 `closed_at`，轮数与耗时直接由 update 记录重算。本地运行态 `<需求根>/.usage-state.json`（不入库）只留两样：
+已完成阶段再跑一轮时的起点（结算即清），与已算好、待写进 usage 的那几步（写 usage 失败后下一次照它赋值，不重复累加）；
+都没有时不留这个文件。同一完成事实反复读到不会再加。
 
 动作：
-- observe：登记确实发生的使用与 feature 关联，接收首份初始化输入；检查观测不形成可信起点；
-- begin：真实工作入口，先对账旧结果再开本轮起点，同轮重复进入保留原起点；
-- reconcile：按已登记的 features/steps 读现存原生事实，更新结果与计时，不创造需求或步骤；
-- finish-own / abort-own：Story 与 update 自有操作落盘后结算对应步骤（结果从文件核，不收调用方自报）；
-- ensure：适配时确保记录文件在——缺了建空表，在了只校验不重写，不创建需求；
-- inspect：只读校验记录文件，缺失明说，不建目录、锁或临时文件。
+- init：story init 成功后；没有身份件就建，并替换本地未提交的同编号旧节点；
+- phase：Framework 阶段 pre_phase；没有身份件就建（纯框架需求的首次活动），结算后登记重试轮的起点；
+- refresh：其它 story 命令成功后；已有身份才刷新；
+- finalize：阶段原生闭环之后的 Extension 收尾，由消费模型在交付、进下一阶段或提交代码之前执行，Story 交付门也调它：
+  核本阶段已闭环、身份在，结算并读回落盘的 usage 确认这一步已记；失败时按报出的原因处理（没闭环先完成阶段，写不进先修环境）再重跑同一命令；
+- ensure / inspect：适配时确保记录文件在 / 只读校验。
 
-结算只认终态事件（原生闭环、Story 成文且 spec 闭环、update 关轮或撤回）；`last_result` 是最近采纳的终态游标，
-中间结论、文件暂缺与格式变化不推进它。同一终态反复出现不重复计；判不清区间归属就记耗时未知，不猜。
-
-机器入口：`python usage.py --project-root <根>`，stdin 一个 JSON（action、feature、step、requirement），
-stdout 一个结果 JSON `{ok, changed, errors, requirement, pending_init}`，不经 shell 拼接。只用标准库。
+入口：`python usage.py --project-root <根> --feature <需求编号> --finalize --phase <阶段>`；其余动作由钩子与 story 命令
+经 stdin 一个 JSON（action、feature、step）调用。stdout `{ok, changed, errors, requirement, pending_identity, note}`，
+收尾另有 `phase`、`recorded`、`timing_gap`。只用标准库与 git。
 """
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -35,9 +41,13 @@ from flow import phase_facts, state  # noqa: E402
 
 EXT_ROOT = Path(__file__).resolve().parents[4]
 CONTRACT = json.loads((Path(__file__).resolve().parents[2] / "contracts" / "usage.json").read_text(encoding="utf-8"))
-SCHEMA, STEPS = CONTRACT["schema"], CONTRACT["steps"]
-OWN = {"story", "story update"}
-ACTIONS = ("observe", "begin", "reconcile", "finish-own", "abort-own", "ensure", "inspect")
+SCHEMA, STEPS, UPDATE = CONTRACT["schema"], CONTRACT["steps"], "story update"
+ACTIONS = ("init", "phase", "refresh", "finalize", "ensure", "inspect")
+NODE_FIELDS = ("ext", "fw", "agent", "model", "steps")
+STAMP = re.compile(r"\d{8}T\d{6}\.\d{3}Z")
+KEY = re.compile(r"(.+)-(\d{8}T\d{6}\.\d{3}Z)")
+OLD = ("旧合同的使用记录（编号直作键，或含 name/version/features、start/verdict/completed/last_result）："
+       "本版不支持，也不自动转换——旧版进行中的需求在旧版收口，或从 init 重起；原文件不改写")
 #: 等锁的上限（秒）：记录是短读改写，等不到说明另一次记录卡住了，报出来让原操作重试
 LOCK_WAIT = 10.0
 
@@ -51,13 +61,15 @@ def now() -> datetime:
 
 
 def iso(at: datetime) -> str:
-    """UTC 时刻；保留原值的小数秒（Framework 写毫秒），游标与原生事件同精度。"""
-    at = at.astimezone(timezone.utc)
-    return at.strftime("%Y-%m-%dT%H:%M:%S") + (f".{at.microsecond:06d}" if at.microsecond else "") + "Z"
+    return at.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def record_path(project_root: Path) -> Path:
+    return Path(project_root) / Path(*CONTRACT["record"].split("/"))
 
 
 # ---------------------------------------------------------------------------
-# 单文件事务：OS 互斥 → 锁后重读 → 只改本次条目 → 同目录临时文件原子替换
+# 单文件事务：OS 互斥 → 锁后重读 → 只改本次节点 → 同目录临时文件原子替换
 
 @contextmanager
 def locked(record: Path):
@@ -93,13 +105,24 @@ def _lock(fh, on: bool) -> None:
         fcntl.flock(fh, (fcntl.LOCK_EX | fcntl.LOCK_NB) if on else fcntl.LOCK_UN)
 
 
+def write_json(path: Path, data: dict) -> None:
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp") if path.name.startswith(".") \
+        else path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes((json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+        os.replace(tmp, path)
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        raise UsageError(f"{path.name} 写不进去（{exc}）：原文件保持不变，修好环境后重跑原操作即可补记") from exc
+
+
 def load(record: Path) -> dict:
     return snapshot(record)[1]
 
 
 def snapshot(record: Path) -> tuple[bytes, dict]:
-    """读 usage 的完整字节并解析（统计用这份字节算摘要与数字）；没有文件是空表。
-    坏 JSON、冲突标记、不支持的 schema、节点不合合同都报错，不重置。"""
+    """读 usage 的完整字节并解析（统计用这份字节算摘要与数字）；没有文件是空表。"""
     if not record.exists():
         return b"", {"schema": SCHEMA, "requirements": {}}
     try:
@@ -110,7 +133,7 @@ def snapshot(record: Path) -> tuple[bytes, dict]:
 
 
 def parse(raw: bytes, name: str) -> dict:
-    """从一份完整字节解析并按合同校验；统计用同一份字节算摘要与数字。"""
+    """坏 JSON、冲突标记、不支持的 schema、旧合同或节点不合合同都报错，不重置。"""
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -123,289 +146,357 @@ def parse(raw: bytes, name: str) -> dict:
         raise UsageError(f"{name} 不是合法 JSON（{exc}）：修好后重跑，不会把它重置成空表") from exc
     if not isinstance(data, dict) or data.get("schema") != SCHEMA or not isinstance(data.get("requirements"), dict):
         raise UsageError(f"{name} 不是 schema {SCHEMA} 的使用记录：不支持的格式不改写")
-    bad = shape_problems(data["requirements"])
+    old, bad = shape_problems(data["requirements"])
+    if old:
+        raise UsageError(f"{name} 是{OLD}")
     if bad:
         raise UsageError(f"{name} 的节点不合合同（{'；'.join(bad[:5])}{' 等' if len(bad) > 5 else ''}）："
                          "字段合同见 doc/extensions/skills/story/contracts/usage.json，修好后重跑，原文件不改写")
     return data
 
 
-_KINDS = {
-    "string": lambda v: isinstance(v, str),
-    "string[]": lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v),
-    "object": lambda v: isinstance(v, dict),
-    "datetime": lambda v: phase_facts.moment(v) is not None,
-    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
-    "boolean": lambda v: isinstance(v, bool),
-    "{id, ended_at}": lambda v: isinstance(v, dict) and isinstance(v.get("id"), str)
-    and phase_facts.moment(v.get("ended_at")) is not None,
-}
-
-
-def _fields(where: str, node: object, spec: dict) -> list[str]:
-    if not isinstance(node, dict):
-        return [f"{where} 不是对象"]
-    return [f"{where} 缺 {f}" if f not in node else f"{where}.{f} 应为 {k}" for f, k in spec.items()
-            if f not in node or not ((k.endswith("|null") and node[f] is None) or _KINDS[k.removesuffix("|null")](node[f]))]
-
-
-def shape_problems(reqs: dict) -> list[str]:
-    """按合同的 requirement / step 字段核每个节点；记录器与统计实际消费的就是这些字段。"""
-    bad = []
+def shape_problems(reqs: dict) -> tuple[bool, list[str]]:
+    """(是不是旧合同, 不合合同的地方)。"""
+    old, bad = False, []
+    text = lambda v: v is None or isinstance(v, str)  # noqa: E731
+    count = lambda v, low: isinstance(v, int) and not isinstance(v, bool) and v >= low  # noqa: E731
     for key, node in reqs.items():
-        bad += _fields(key, node, CONTRACT["requirement"])
-        steps = node.get("steps") if isinstance(node, dict) else None
-        for step, entry in (steps if isinstance(steps, dict) else {}).items():
-            bad += (_fields(f"{key}.steps.{step}", entry, CONTRACT["step"]) if step in STEPS
-                    else [f"{key}.steps 有合同外的步骤 {step}"])
-    return bad
+        if not isinstance(node, dict):
+            bad.append(f"{key} 不是对象")
+            continue
+        steps = node.get("steps")
+        rows = steps.values() if isinstance(steps, dict) else []
+        if not KEY.fullmatch(key) or {"name", "version", "features"} & set(node) \
+                or any(isinstance(r, dict) and {"start", "verdict", "completed", "last_result"} & set(r) for r in rows):
+            old = True
+            continue
+        bad += [f"{key} 缺 {f}" for f in NODE_FIELDS if f not in node]
+        bad += [f"{key} 有合同外的字段 {f}" for f in node if f not in NODE_FIELDS]
+        bad += [f"{key}.{f} 应为文字或 null" for f in ("ext", "fw", "agent", "model") if f in node and not text(node[f])]
+        if not isinstance(steps, dict):
+            bad.append(f"{key}.steps 不是对象")
+            continue
+        for step, row in steps.items():
+            where = f"{key}.steps.{step}"
+            allowed = {"spent", "rounds"} if step == UPDATE else {"spent"}
+            if step not in STEPS:
+                bad.append(f"{key}.steps 有合同外的步骤 {step}")
+            elif not isinstance(row, dict) or set(row) - allowed:
+                bad.append(f"{where} 只能有 {' / '.join(sorted(allowed))}")
+            elif "spent" in row and not count(row["spent"], 0):
+                bad.append(f"{where}.spent 应为非负整数秒")
+            elif "rounds" in row and not count(row["rounds"], 1):
+                bad.append(f"{where}.rounds 应为正整数")
+    return old, bad
 
 
-def save(record: Path, data: dict) -> None:
-    tmp = record.with_name(f".{record.name}.{os.getpid()}.tmp")
+def load_state(path: Path) -> dict:
+    """本地运行态：`{需求键: {"starts": {阶段: 重试轮起点}, "pending": {步骤: 待写的行}}}`。坏了报出来，不当成空的。"""
+    if not path.exists():
+        return {}
     try:
-        tmp.write_bytes((json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-        os.replace(tmp, record)
-    except OSError as exc:
-        tmp.unlink(missing_ok=True)
-        raise UsageError(f"{record.name} 写不进去（{exc}）：原文件保持不变，修好环境后重跑原操作即可补记") from exc
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise UsageError(f"{path.name} 读不出（{exc}）：它是本地运行态，删掉它只丢未结算轮次的起点，已累计的耗时不受影响") from exc
+    if not isinstance(data, dict):
+        raise UsageError(f"{path.name} 不是 JSON 对象：删掉它只丢未结算轮次的起点")
+    return data
 
 
 # ---------------------------------------------------------------------------
-# 初始化输入与环境
+# 身份、版本与自报身份
 
-def read_input(feature_root: Path) -> tuple[dict | None, list[str]]:
-    """`.usage-input.json`：requirement、name、version 必有（version 可为 null 表示已判断未知），agent/model 可空。"""
-    path = feature_root / CONTRACT["input_file"]
+def read_identity(feature_root: Path) -> str | None:
+    path = feature_root / CONTRACT["identity_file"]
     if not path.is_file():
-        return None, []
-    where = f"{feature_root.name}/{path.name}"
+        return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError) as exc:
-        return None, [f"{where} 读不出（{exc}）"]
-    if not isinstance(data, dict):
-        return None, [f"{where} 不是 JSON 对象"]
-    bad = [f"缺 {k}" for k in CONTRACT["input"]["required"] if k not in data]
-    text = lambda v: isinstance(v, str) and bool(v.strip())  # noqa: E731
-    if "requirement" in data and not text(data["requirement"]):
-        bad.append("requirement 要是非空文字")
-    if "name" in data and not text(data["name"]):
-        bad.append("name 要是非空文字")
-    if "version" in data and not (data["version"] is None or text(data["version"])):
-        bad.append("version 要是非空文字，或 null 表示已判断为未知")
-    bad += [f"{k} 要是文字或 null" for k in CONTRACT["input"]["optional"]
-            if k in data and not (data[k] is None or isinstance(data[k], str))]
-    if bad:
-        return None, [f"{where}：{'；'.join(bad)}——字段合同见 doc/extensions/skills/story/contracts/usage.json，修好后重跑原操作"]
-    return data, []
+        stamp = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise UsageError(f"{feature_root.name}/{path.name} 读不出（{exc}）") from exc
+    if not STAMP.fullmatch(stamp):
+        raise UsageError(f"{feature_root.name}/{path.name} 不是身份时刻（形如 20261021T080102.123Z）：它一次写成后不改，"
+                         "被改坏了按版本库里的那份恢复")
+    return stamp
 
 
-def versions(project_root: Path) -> tuple[str | None, str | None]:
-    """实际安装的 Framework（框架根 package.json）与 Extension（已安装 manifest）版本；读不到为 null。"""
-    fw = None
-    root = next((r for r in (project_root / "framework", project_root)
-                 if (r / "skills").exists() or (r / "workflows").exists()), None)
-    if root is not None:
-        try:
-            fw = json.loads((root / "package.json").read_text(encoding="utf-8")).get("version")
-        except (OSError, ValueError):
-            fw = None
+def stamp_time(stamp: str) -> datetime:
+    return datetime.strptime(stamp, "%Y%m%dT%H%M%S.%fZ").replace(tzinfo=timezone.utc)
+
+
+def committed_keys(project_root: Path) -> set[str]:
+    """HEAD 里 usage 已有的节点键；新仓没有 HEAD 或 HEAD 里没有这份文件时是空集。查不了就报原因，不许当成未提交。"""
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(project_root), *args], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+    try:
+        if git("rev-parse", "--git-dir").returncode:
+            raise UsageError("工程不在 Git 仓里")
+        if git("rev-parse", "--verify", "-q", "HEAD").returncode:
+            return set()
+        shown = git("show", f"HEAD:./{CONTRACT['record']}")       # ./ 按工程目录解析，工程不必在仓根
+        if shown.returncode:
+            return set()                                         # HEAD 里还没有这份文件
+        reqs = json.loads(shown.stdout).get("requirements")
+    except (OSError, ValueError, AttributeError) as exc:
+        raise UsageError(f"读不出 HEAD 里的 {CONTRACT['record']}（{exc}）") from exc
+    if not isinstance(reqs, dict):
+        raise UsageError(f"HEAD 里的 {CONTRACT['record']} 没有 requirements 对象")
+    return set(reqs)
+
+
+def ext_version() -> str | None:
     try:
         m = re.search(r'^version:\s*"?([^"\s]+)"?', (EXT_ROOT / "manifest.yaml").read_text(encoding="utf-8"), re.M)
     except OSError:
-        m = None
-    return fw, (m.group(1) if m else None)
+        return None
+    return m.group(1) if m else None
+
+
+def fw_version(feature_root: Path) -> str | None:
+    """最近写过的阶段 summary 里 `gate_fingerprint` 的版本前缀；没有 summary 就是 None（不猜）。"""
+    found = []
+    for phase in phase_facts.PHASES:
+        s = phase_facts.summary(feature_root, phase)
+        gate = (s.get("data") or {}).get("gate_fingerprint")
+        gate = gate.get("fingerprint") if isinstance(gate, dict) else gate
+        if isinstance(gate, str) and ":" in gate:
+            found.append((s["path"].stat().st_mtime, gate.split(":", 1)[0]))
+    return max(found)[1] if found else None
+
+
+def take_input(feature_root: Path, node: dict, done: list) -> None:
+    """模型在原任务里写的 `{agent, model}`：节点还没有自报身份时接收，之后不改；记录落盘后删掉这份输入。"""
+    path = feature_root / CONTRACT["input_file"]
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if not isinstance(data, dict):
+            raise ValueError("不是 JSON 对象")
+    except (OSError, ValueError) as exc:
+        raise UsageError(f'{feature_root.name}/{path.name} 读不出（{exc}）：写成 {{"agent": "<宿主>", "model": "<模型>"}}，'
+                         '不知道的写 null') from exc
+    if node["agent"] is None and node["model"] is None:
+        node["agent"], node["model"] = [v.strip() or None if isinstance(v := data.get(k), str) else None
+                                        for k in ("agent", "model")]
+    done.append(lambda: path.unlink(missing_ok=True))
 
 
 # ---------------------------------------------------------------------------
-# 终态事件与结算
+# 结算：每类步骤一个真源
 
-def events(project_root: Path, features: list[str], step: str) -> tuple[list[dict], str | None, list[str]]:
-    """这个步骤在已登记 features 上的终态事件、当前检查结论与读不出的证据。"""
-    found, verdict, errors = [], None, []
-    base = project_root / importer.features_dir(project_root)
-    for feature in features:
-        fr = base / feature
-        try:
-            if step in phase_facts.PHASES:
-                s = phase_facts.summary(fr, step)
-                if s["state"] == "unreadable":
-                    errors.append(f"{s['path'].as_posix()} 读不出（{s['why']}）：{step} 的结果判不了")
-                elif s["state"] != "missing":
-                    verdict = s["data"].get("verdict") or verdict
-                found += [e for e in [phase_facts.closure_event(fr, step)] if e]
-            elif step == "story":
-                contract = state.load(fr) or {}
-                written = phase_facts.moment(contract.get("story_written_at"))
-                spec = phase_facts.closure_event(fr, "spec")
-                if contract.get("status") == "story_written" and written and spec:
-                    found.append(phase_facts.event("story", "complete", max(written, spec["ended_at"]),
-                                                   fr.resolve().as_posix(), contract["story_written_at"], spec["id"]))
-            else:
-                for rid, rec in phase_facts.update_records(fr):
-                    if rec.get("kind") == "story_baseline":
-                        continue
-                    kind, at = {"closed": ("complete", rec.get("closed_at")),
-                                "restored": ("abort", rec.get("restored_at"))}.get(rec.get("status"), (None, None))
-                    at = phase_facts.moment(at)
-                    if kind and at:
-                        found.append(phase_facts.event("update", kind, at, fr.resolve().as_posix(), rid))
-        except (state.FlowError, importer.ImportError_) as exc:
-            errors.append(str(exc))
-    return found, verdict, errors
+def closed_at(feature_root: Path, phase: str) -> datetime | None:
+    s = phase_facts.summary(feature_root, phase)
+    if s["state"] == "unreadable":
+        raise UsageError(f"{s['path'].as_posix()} 读不出（{s['why']}）：{phase} 的完成判不了")
+    commit = (s.get("data") or {}).get("closure_commit")
+    return phase_facts.moment(commit.get("committed_at")) if s["state"] == "closed" and isinstance(commit, dict) else None
 
 
-def take_terminal(entry: dict, found: list[dict], sources: int) -> None:
-    """按终态游标结算一个步骤（规则见模块说明与 S1 §4）。
+def trace_start(feature_root: Path, phase: str) -> datetime | None:
+    """首轮起点：Framework 首次进入阶段时写的 `trace.json`。没有这份文件是 None；在却读不出就报出来。"""
+    path = importer.phase_reports_dir(feature_root, phase) / "trace.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return phase_facts.moment(data.get("started_at"))
+    except (OSError, ValueError, AttributeError) as exc:
+        raise UsageError(f"{path.as_posix()} 读不出（{exc}）：{phase} 首轮的起点取不到") from exc
 
-    只采纳严格晚于游标的终态；与游标同一时刻的别的终态分不出先后，是稳定的未知边界：
-    完成事实照记、耗时记未知、游标不动，再对账字节不变。起点只有一个、不带来源，
-    所以需求关联了多个 feature 时，起点与终态是否同属一个来源证明不了，耗时一律未知。
-    """
-    cur = entry["last_result"]
-    cur_at = phase_facts.moment(cur["ended_at"]) if cur else None
-    ties = [e for e in found if cur and e["id"] != cur["id"] and e["ended_at"] == cur_at]
-    if ties:
-        entry["completed"] = entry["completed"] or any(e["kind"] == "complete" for e in ties)
-        entry["spent"] = None
-    fresh = sorted((e for e in found if cur is None or (e["id"] != cur["id"] and e["ended_at"] > cur_at)),
-                   key=lambda e: (e["ended_at"], e["id"]))
-    if not fresh:
+
+def add(row: dict | None, start: datetime, end: datetime) -> dict:
+    row = dict(row or {})
+    row["spent"] = row.get("spent", 0) + round((end - start).total_seconds())
+    return row
+
+
+def tally_phase(fr: Path, phase: str, steps: dict, starts: dict) -> None:
+    """有起点且完成不早于它：累计并清起点；有完成而没行：行出现、耗时缺。首轮起点可取 trace（还没有行时）。"""
+    end = closed_at(fr, phase)
+    if end is None:
         return
-    last, start = fresh[-1], phase_facts.moment(entry["start"])
-    if any(e["kind"] == "complete" for e in fresh):
-        entry["completed"] = True
-        if last["kind"] == "complete" and entry["verdict"] is None:
-            entry["verdict"] = "PASS"
-    proven = len(fresh) == 1 and sources == 1
-    if start is not None and last["ended_at"] < start:
-        entry["spent"] = None                       # 早于本轮起点的旧终态：只补历史，不结束本轮
-    elif start is None:
-        if last["kind"] == "complete":
-            entry["spent"] = None                   # 有完成、没有本轮起点：完成成立，耗时未知
-    else:
-        if proven and isinstance(entry["spent"], int):
-            entry["spent"] += int((last["ended_at"] - start).total_seconds())
-        else:
-            entry["spent"] = None                   # 区间归属证明不了
-        entry["start"] = None
-    entry["last_result"] = {"id": last["id"], "ended_at": iso(last["ended_at"])}
+    start = phase_facts.moment(starts.get(phase)) or (trace_start(fr, phase) if phase not in steps else None)
+    if start is not None and end >= start:
+        steps[phase] = add(steps.get(phase), start, end)
+        starts.pop(phase, None)
+    elif phase not in steps:
+        steps[phase] = {}
 
 
-def reconcile_node(project_root: Path, node: dict, steps: list[str], errors: list[str]) -> None:
-    for step in steps:
-        entry = node["steps"].get(step)
-        if entry is None:
+def tally_story(fr: Path, stamp: str, steps: dict) -> None:
+    """Story 只在第一次成文时计：身份时刻到 `story_written_at`；之后再登记不再加。"""
+    written = phase_facts.moment((state.load(fr) or {}).get("story_written_at"))
+    if written is None or "story" in steps:
+        return
+    start = stamp_time(stamp)
+    steps["story"] = add(None, start, written) if written >= start else {}
+
+
+def tally_update(fr: Path, steps: dict) -> None:
+    """update 的完成事实全在原生 record 里：有 `closed_at` 的一轮就是收口过一轮（之后撤回也不抹掉），
+    轮数按记录数，耗时只累计起止都合法的那几轮；从没收口的不计。每次按全部记录重算后赋值，重复刷新不会多加；
+    盘上记录比已记的轮数少时不拿较少的结果覆盖已有累计。"""
+    rounds, spent, timed = 0, 0, False
+    for _, rec in phase_facts.update_records(fr):
+        closed = phase_facts.moment(rec.get("closed_at"))
+        if rec.get("kind") == "story_baseline" or closed is None:
             continue
-        found, verdict, bad = events(project_root, node["features"], step)
-        errors += bad
-        if verdict is not None:
-            entry["verdict"] = verdict
-        take_terminal(entry, found, len(node["features"]))
+        rounds += 1
+        opened = phase_facts.moment(rec.get("opened_at"))
+        if opened is not None and closed >= opened:
+            spent, timed = spent + int((closed - opened).total_seconds()), True
+    if rounds and rounds >= steps.get(UPDATE, {}).get("rounds", 0):
+        steps[UPDATE] = {**({"spent": spent} if timed else {}), "rounds": rounds}
+
+
+def refresh(fr: Path, stamp: str, node: dict, slot: dict, phase: str | None, done: list) -> None:
+    """一个节点按当前真源刷新：版本、自报身份、各步骤结算；`phase` 给了就在结算后登记这一轮的起点。"""
+    steps, starts = node["steps"], slot.setdefault("starts", {})
+    for step, row in slot.pop("pending", {}).items():      # 上次写 usage 没成的结算行：赋值，不再加
+        steps[step] = row
+    node["ext"] = ext_version()
+    node["fw"] = fw_version(fr) or node["fw"]
+    take_input(fr, node, done)
+    for p in phase_facts.PHASES:
+        tally_phase(fr, p, steps, starts)
+    tally_story(fr, stamp, steps)
+    tally_update(fr, steps)
+    if phase and phase in steps and phase not in starts:     # 首轮起点由 trace 给，只有重试轮记起点
+        starts[phase] = iso(now())
 
 
 # ---------------------------------------------------------------------------
 # 动作
 
-def apply(project_root: Path, data: dict, req: dict, errors: list[str]) -> tuple[str | None, Path | None]:
-    """在已读出的 usage 上执行一个动作；返回需求键与本次已接收、待清理的初始化输入。"""
-    action, feature, step = req.get("action"), req.get("feature"), req.get("step")
+def feature_dir(project_root: Path, number: str) -> Path:
+    return Path(project_root) / importer.features_dir(project_root) / number
+
+
+def apply(project_root: Path, data: dict, st: dict, action: str, feature: str | None, step: str | None,
+          errors: list[str], done: list) -> list[str]:
+    """在已读出的 usage 与运行态上执行一个动作，返回动过的节点键；`done` 收记录落盘之后才做的写入。"""
     reqs = data["requirements"]
-    owner = next((k for k, v in reqs.items() if feature and feature in v.get("features", [])), None)
-    if action == "reconcile":
-        keys = [req.get("requirement") or owner] if (req.get("requirement") or feature) else list(reqs)
-        for key in [k for k in keys if k in reqs]:
-            reconcile_node(project_root, reqs[key], STEPS, errors)
-        return (keys[0] if len(keys) == 1 else None), None
-    if not feature or step not in STEPS:
-        raise UsageError(f"{action} 要 feature 与 step（{' / '.join(STEPS)}）")
-    if action in ("finish-own", "abort-own") and step not in OWN:
-        raise UsageError(f"{action} 只结算 Story 自有步骤（{' / '.join(sorted(OWN))}）")
-    fr = project_root / importer.features_dir(project_root) / feature
-    given, problems = read_input(fr)
-    errors += problems
-    key = req.get("requirement") or owner or (given or {}).get("requirement") or feature
-    if owner and owner != key:
-        raise UsageError(f"feature {feature} 已属于需求 {owner}，这次给的是 {key}：不跨需求改写")
-    if given and given["requirement"] != key:
-        errors.append(f"{feature}/{CONTRACT['input_file']} 写的需求是 {given['requirement']}，实际是 {key}：不接收")
-        given = None
-    node = reqs.get(key)
-    if node is None:
-        fw, ext = versions(project_root)
-        node = reqs[key] = {"name": None, "version": None, "fw": fw, "ext": ext,
-                            "agent": None, "model": None, "features": [], "steps": {}}
-    if feature not in node["features"]:
-        node["features"].append(feature)
-    consumed = None
-    if given:
-        # 语义初始化一次接收四项：name 为 null 表示还没接收过；接收后四项都不再覆盖（显式 null 也固定）
-        if node["name"] is None:
-            node["name"], node["version"] = given["name"].strip(), given["version"]
-            node["agent"], node["model"] = given.get("agent"), given.get("model")
-            consumed = fr / CONTRACT["input_file"]
-        elif (node["name"], node["version"]) == (given["name"].strip(), given["version"]):
-            consumed = fr / CONTRACT["input_file"]
-        else:
-            errors.append(f"{key} 的名称与业务版本已固定为 {node['name']} / {node['version']}：初始化输入不覆盖")
-    entry = node["steps"].setdefault(step, {"start": None, "spent": None, "verdict": None,
-                                            "completed": False, "last_result": None})
-    reconcile_node(project_root, node, STEPS if action in ("observe", "begin") else [step], errors)
-    if action == "begin" and entry["start"] is None:
-        if entry["spent"] is None and entry["last_result"] is None:
-            entry["spent"] = 0      # 还没有任何结束的轮次：已结束累计是 0，不是未知
-        entry["start"] = iso(now().replace(microsecond=0))   # 起点取整秒（不晚于实际开始）：原生结束时刻最细到秒的也比得上
-    return key, consumed
+    staged = action in ("phase", "finalize")
+    if not feature or (staged and step not in phase_facts.PHASES):
+        raise UsageError(f"{action} 要 feature{'与阶段 step（' + ' / '.join(phase_facts.PHASES) + '）' if staged else ''}")
+    fr = feature_dir(project_root, feature)
+    stamp = read_identity(fr)
+    if action == "finalize" and stamp is None:
+        raise UsageError(f"{feature} 没有使用记录身份（{CONTRACT['identity_file']}）：收尾不新建身份，"
+                         "阶段的 pre_phase 或 story 命令会建它")
+    if action == "finalize" and closed_at(fr, step) is None:
+        raise UsageError(f"{feature} 的 {step} 还没有原生有效闭环（summary 没有 closure_commit）：先完成阶段闭环再收尾")
+    if stamp is None:
+        if action == "refresh":
+            return []
+        moment = now()
+        stamp = moment.strftime("%Y%m%dT%H%M%S.") + f"{moment.microsecond // 1000:03d}Z"
+        same = [k for k in reqs if KEY.fullmatch(k).group(1) == feature]
+        try:
+            committed = committed_keys(project_root) if same else set()
+        except UsageError as exc:
+            errors.append(f"{exc}：同编号旧节点 {'、'.join(same)} 是否已提交判不了，保留未删")
+            committed = set(same)
+        for k in same:
+            if k not in committed:          # 本地重启：未提交的旧尝试丢弃；已提交的（含别人的）保留
+                reqs.pop(k)
+                st.pop(k, None)
+        done.append(lambda: (fr.mkdir(parents=True, exist_ok=True),
+                             (fr / CONTRACT["identity_file"]).write_text(stamp + "\n", encoding="utf-8")))
+    key = f"{feature}-{stamp}"
+    node = reqs.setdefault(key, {"ext": None, "fw": None, "agent": None, "model": None, "steps": {}})
+    try:
+        refresh(fr, stamp, node, st.setdefault(key, {}), step if action == "phase" else None, done)
+    except (UsageError, state.FlowError, importer.ImportError_) as exc:     # 已结算的步骤各自成立，照常落盘
+        errors.append(str(exc))
+    return [key]
 
 
-#: Story 命令 → 使用记录动作：init/round 记使用，story 登记后结算成文，update 起手与开轮是起点、
-#: 关轮结算、撤回终止，status 与归档只对账已有记录
-COMMANDS = {"init": ("observe", "story"), "round": ("observe", "story"), "story": ("finish-own", "story"),
-            "status": ("reconcile", None), "archived": ("reconcile", None),
-            "update:inputs": ("begin", "story update"), "update:prepare": ("begin", "story update"),
-            "update:close": ("finish-own", "story update"), "update:restore": ("abort-own", "story update"),
-            "update:status": ("reconcile", None)}
+def tidy(st: dict) -> None:
+    """运行态只留有内容的部分：空的起点表、待写表与需求槽都去掉。"""
+    for key in list(st):
+        slot = st[key] if isinstance(st[key], dict) else {}
+        for part in ("starts", "pending"):
+            if not slot.get(part):
+                slot.pop(part, None)
+        if not slot:
+            st.pop(key)
 
 
-def after_command(project_root: Path, feature: str, mode: str, action: str | None = None) -> list[str]:
-    """Story 命令成功之后的采集；返回记录错误（业务结果不受影响，另列给调用方）。"""
-    act = COMMANDS.get(f"{mode}:{action}" if mode == "update" else mode)
-    return record(project_root, act[0], feature=feature, step=act[1])["errors"] if act else []
+def save_state(path: Path, st: dict) -> None:
+    """有内容才写；最后一项必要状态没了就删掉文件，不留空壳。"""
+    if st:
+        write_json(path, st)
+    elif path.exists():
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise UsageError(f"{path.name} 清不掉（{exc}）：它只剩空内容，删掉它不影响已记的使用记录") from exc
 
 
-def record(project_root: Path, action: str, *, feature: str | None = None, step: str | None = None,
-           requirement: str | None = None) -> dict:
-    """执行一个动作并原子落盘；失败不改原文件。返回 `{ok, changed, errors, requirement, pending_init}`。"""
-    out = {"ok": False, "changed": False, "errors": [], "requirement": None, "pending_init": False}
+def after_command(project_root: Path, feature: str, mode: str) -> dict:
+    """Story 命令成功之后的采集：init 建身份，其余已有身份才刷新。记录错误与提示另列，不改业务结果。"""
+    return record(project_root, "init" if mode == "init" else "refresh", feature=feature)
+
+
+def record(project_root: Path, action: str, *, feature: str | None = None, step: str | None = None) -> dict:
+    """执行一个动作并落盘；失败不改原文件。返回 `{ok, changed, errors, requirement, pending_identity, note}`。"""
+    out = {"ok": False, "changed": False, "errors": [], "requirement": None, "pending_identity": False, "note": None}
     if action not in ACTIONS:
         out["errors"].append(f"未知动作 {action}：可用 {' / '.join(ACTIONS)}")
         return out
-    path = Path(project_root) / Path(*CONTRACT["record"].split("/"))
+    path = record_path(project_root)
     if action in ("ensure", "inspect"):
         return ensure(path, out) if action == "ensure" else inspect(path, out)
-    if action == "reconcile" and not path.exists():
-        out["ok"] = True            # 对账不创造记录：没有 usage 就没有要补的事实，也不建锁
+    if action == "refresh" and not path.exists():
+        out["ok"] = True            # 刷新不创造记录：没有 usage 就没有要补的事实，也不建锁
         return out
+    state_path = Path(project_root) / importer.features_dir(project_root) / CONTRACT["state_file"]
     try:
         with locked(path):
-            data = load(path)
-            before = json.dumps(data, sort_keys=True)
-            key, consumed = apply(Path(project_root), data, {"action": action, "feature": feature, "step": step,
-                                                            "requirement": requirement}, out["errors"])
-            if json.dumps(data, sort_keys=True) != before:
-                save(path, data)
+            data, st, done = load(path), load_state(state_path), []
+            before = json.dumps([data, st], sort_keys=True)
+            old = json.loads(json.dumps(data["requirements"]))
+            keys = apply(Path(project_root), data, st, action, feature, step, out["errors"], done)
+            tidy(st)
+            if json.dumps([data, st], sort_keys=True) != before:
+                # 先把这次变了的步骤行记进运行态（起点已清），再写 usage，最后清待写——任一步失败，下一次刷新都不会重复累计
+                for key in keys:
+                    steps = data["requirements"].get(key, {}).get("steps", {})
+                    moved = {k: v for k, v in steps.items() if old.get(key, {}).get("steps", {}).get(k) != v}
+                    if moved:
+                        st.setdefault(key, {})["pending"] = moved
+                save_state(state_path, st)
+                write_json(path, data)
+                for key in keys:
+                    st.get(key, {}).pop("pending", None)
+                tidy(st)
+                save_state(state_path, st)
                 out["changed"] = True
-            if consumed is not None:
-                consumed.unlink(missing_ok=True)
+            if action == "finalize" and not out["errors"]:
+                # 读回盘上那一份核这一步已记：写进去了才算收尾完成
+                row = load(path)["requirements"].get(keys[0], {}).get("steps", {}).get(step)
+                if row is None:
+                    out["errors"].append(f"{CONTRACT['record']} 读回没有 {step} 这一行")
+                out.update(phase=step, recorded=row, timing_gap=row is not None and "spent" not in row)
+            for later in done:      # 身份件与已接收的输入在记录落盘之后才写、才删：落盘失败时下一次照样能接上
+                later()
     except UsageError as exc:
         out["errors"].append(str(exc))
         return out
     except OSError as exc:      # 文件系统层面的失败（权限、占用）：记录没做成，原业务结果不受影响
         out["errors"].append(f"使用记录没写成（{exc}）：修好环境后重跑原操作即可补记")
         return out
-    node = data["requirements"].get(key) if key else None
-    out.update(ok=not out["errors"], requirement=key, pending_init=bool(node) and node["name"] is None)
+    node = data["requirements"].get(keys[0]) if len(keys) == 1 else None
+    story = node is not None and feature and (feature_dir(project_root, feature) / Path(*state.CONTRACT)).is_file()
+    pending = bool(story) and node["agent"] is None and node["model"] is None
+    out.update(ok=not out["errors"], requirement=keys[0] if len(keys) == 1 else None, pending_identity=pending)
+    if pending:     # Story 需求有模型在场：自报身份是它的任务，缺了就说，不当成纯框架的未知
+        rel = (feature_dir(project_root, feature) / CONTRACT["input_file"]).relative_to(project_root).as_posix()
+        out["note"] = (f"使用记录还没有本需求的 agent 与模型：在 {rel} 写 "
+                       '{"agent": "<你所在的宿主>", "model": "<你的模型>"}（不知道的写 null），下一次 story 命令或阶段检查自动接收')
     return out
 
 
@@ -416,7 +507,7 @@ def ensure(path: Path, out: dict) -> dict:
             if path.exists():
                 parse(path.read_bytes(), path.name)
             else:
-                save(path, load(path))
+                write_json(path, load(path))
                 out["changed"] = True
     except UsageError as exc:
         out["errors"].append(str(exc))
@@ -441,8 +532,11 @@ def inspect(path: Path, out: dict) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="使用记录（内部入口，stdin 一个 JSON）")
+    ap = argparse.ArgumentParser(description="使用记录：阶段闭环后的收尾，或内部入口（stdin 一个 JSON）")
     ap.add_argument("--project-root", required=True)
+    ap.add_argument("--finalize", action="store_true", help="阶段原生闭环之后的 Extension 收尾")
+    ap.add_argument("--feature", default=None)
+    ap.add_argument("--phase", default=None, choices=phase_facts.PHASES)
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -451,15 +545,18 @@ def main() -> int:
             pass
     try:
         # 按 UTF-8 读原始字节：不随控制台代码页变，PowerShell 管道在开头带的 BOM 一并去掉
-        req = json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
+        req = {"action": "finalize", "feature": args.feature, "step": args.phase} if args.finalize \
+            else json.loads(sys.stdin.buffer.read().decode("utf-8-sig") or "{}")
     except ValueError as exc:
         print(json.dumps({"ok": False, "changed": False, "errors": [f"stdin 不是 JSON（{exc}）"]}, ensure_ascii=False))
         return 2
-    out = record(Path(args.project_root), str(req.get("action")), feature=req.get("feature"),
-                 step=req.get("step"), requirement=req.get("requirement"))
+    out = record(Path(args.project_root), str(req.get("action")), feature=req.get("feature"), step=req.get("step"))
     print(json.dumps(out, ensure_ascii=False))
     for err in out["errors"]:
         print(f"[usage] {err}", file=sys.stderr)
+    if args.finalize and not out["ok"]:
+        print(f"[usage] {args.feature} 的 {args.phase} 使用记录没有收尾：按上面的原因处理（阶段还没闭环就先完成阶段），"
+              "再重跑同一条收尾命令；成功前不要说使用记录可以归档", file=sys.stderr)
     return 0 if out["ok"] else 1
 
 

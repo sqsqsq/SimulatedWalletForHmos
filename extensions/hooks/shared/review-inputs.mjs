@@ -32,11 +32,43 @@ const sha12 = bytes => crypto.createHash('sha256').update(bytes).digest('hex').s
 const ownRel = rel => typeof rel === 'string' && rel.trim() && !path.isAbsolute(rel) && !/^[\\/]/.test(rel)
   && !rel.split(/[\\/]/).includes('..');
 
-/** story-flow 里与范围有关的稳定部分：拆分与各关卡的选择、原话与依据；时间与登记标记不进来。 */
+/** 一笔关卡记录里决定授权含义的部分：关卡与会议话题身份、当时摆出的选项原文、人选的、原话、谁定、是否生效。 */
+const gateFacts = g => ({ gate: g?.gate, meeting: g?.meeting, item: g?.item,
+  options: (Array.isArray(g?.options) ? g.options : []).map(o => ({ key: o?.key, label: o?.label })),
+  chosen: g?.chosen, reply: g?.reply, by: g?.by, outcome: g?.outcome });
+
+/** story-flow 里与范围有关的稳定部分：拆分与各关卡的授权含义；时间、排版序号与登记标记不进来。 */
 function scopeProjection(flow) {
-  const gates = (flow?.rounds ?? []).flatMap(r => (Array.isArray(r?.gates) ? r.gates : []))
-    .map(g => ({ gate: g?.gate, item: g?.item, meeting: g?.meeting, chosen: g?.chosen, reply: g?.reply, basis: g?.basis }));
+  const gates = (flow?.rounds ?? []).flatMap(r => (Array.isArray(r?.gates) ? r.gates : [])).map(gateFacts);
   return JSON.stringify({ scope_text: flow?.split?.scope_text ?? null, parts: flow?.split?.parts ?? [], gates });
+}
+
+/**
+ * 人签原文：关卡记录里人表过态且生效（`by: human`、`outcome: accepted`）的每一笔，给当时摆出的选项、人选的与原话。
+ * 作者登记的决定是对它们的解释；模型提议与被退回的回话不在这里。没有流程契约就没有这类人签，契约读不出是缺口。
+ *
+ * @param {string} root 需求目录
+ */
+export function signedGateRows(root) {
+  const file = path.join(root, 'AR', 'story-src', 'story-flow.json');
+  if (!fs.existsSync(file)) return ['本需求没有走 `/story` 的关卡，没有这类人签。'];
+  const flow = readJsonOrNull(file);
+  if (!Array.isArray(flow?.rounds)) {
+    return ['**`AR/story-src/story-flow.json` 读不出关卡记录**：人签原文未取得，涉及授权的判断写未验证。'];
+  }
+  const rows = [];
+  for (const r of flow.rounds) {
+    for (const g of Array.isArray(r?.gates) ? r.gates : []) {
+      if (g?.by !== 'human' || g?.outcome !== 'accepted') continue;
+      const { options, chosen, reply } = gateFacts(g);
+      const label = options.find(o => o.key === chosen)?.label ?? '';
+      rows.push(`- 第 ${r.round ?? '?'} 轮 \`${g.gate}\`${g.meeting ? ` · 会议 ${g.meeting} 话题 ${g.item}` : ''}`
+        + `：选了「${chosen}」${label}`,
+      `  - 当时摆出的选项：${options.map(o => `「${o.key}」${o.label}`).join('；') || '（记录里没有选项）'}`,
+      '  - 人的原话：', ...String(reply ?? '').split(/\r?\n/).map(l => `    > ${l}`));
+    }
+  }
+  return rows.length ? rows : ['关卡记录里还没有生效的人签。'];
 }
 
 /** update 开着时这一轮的依据：record、before 与本轮 update-notes。记录坏了明确报，不扫别的轮次。 */
@@ -128,8 +160,8 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
   const configBroken = fs.existsSync(path.join(projectRoot, 'framework.config.json')) && !readConfig(projectRoot);
   if (configBroken) gaps.push('framework.config.json 读不出——需求目录判不了，必审集合按默认目录推导，不能当作这个工程的');
   const flow = readJsonOrNull(at('AR/story-src/story-flow.json'));
-  add(at('AR/story-src/story-flow.json'), '已确认的范围与关卡选择（摘要按范围与选择的稳定投影算）', { text: scopeProjection(flow) });
-  add(at('AR/story-src/decisions.json'), '已登记的决定：哪些定了、哪些开着');
+  add(at('AR/story-src/story-flow.json'), '已确认的范围与关卡人签（摘要按范围、选项原文与人签的稳定投影算）', { text: scopeProjection(flow) });
+  add(at('AR/story-src/decisions.json'), '作者登记的决定：哪些定了、哪些开着（待按人签与原件核的解释）');
   add(at('AR/review.md'), '决策与评审记录：人的原话与表态');
   add(at('spec/spec.md'), purpose === 'plan' ? '有效 Spec：要履行的业务条件与验收' : '已经成立的产品约束');
   add(at('acceptance.yaml'), '验收条目');
@@ -193,11 +225,12 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
   return { inputs, update, gaps, alias, visual };
 }
 
-/** 任务书里的「读这些」表：路径、摘要、用途，读不到的点名。 */
+/** 任务书里的「读这些」表：路径、摘要、用途，读不到的点名；明细按它逐份声明。 */
 export function inputRows(basis) {
   return [...basis.inputs.map(x => `- \`${x.path}\`${x.digest ? `（摘要 ${x.digest}）` : ''} —— ${x.purpose}`
     + (x.missing ? '　**读不到**：它是必审输入，缺了不能判 PASS，写进 unreviewed 并作为阻断原因' : '')),
-  ...basis.gaps.map(g => `- **输入有缺口**：${g}`)];
+  ...basis.gaps.map(g => `- **输入有缺口**：${g}`),
+  '', 'examined_inputs 与 unreviewed 一项一份，照抄上面的路径（unreviewed 也可以写判据 id）；不用 `*` 通配，也不把几份合成一项。'];
 }
 
 /** 明细里写的路径规范成表里的写法：去反引号、反斜杠换正斜杠、去开头的 `./`。 */

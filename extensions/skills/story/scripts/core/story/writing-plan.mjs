@@ -3,7 +3,8 @@
  *
  * 这份文件由作者在 Spec 与决策登记之后写，交付的是**表达设计**：第一次读的人按什么顺序理解
  * 这件事（阅读主线），正文将要有哪些小节、每节解决什么理解问题（`- 答：`/`- 依据：`/`- 待核：`），
- * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）；
+ * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）。行首的列表前缀只是排版，
+ * 带不带都按同一行读；协议字段之外的说明文字按说明消费，不进结构约束；
  * 上游每张图讲的关系落在哪一节（`- 承接上游图：`），以及要不要另做阅读图（`## 阅读图选择`）。
  * **内容不在这里定**：表格的列、图里的节点与分支、列表的项目，都由写章的人按原文决定。
  *
@@ -35,8 +36,10 @@ const FORMS = {
 const ANY_DIAGRAM = '图';
 //: 附录章在空壳里的那一行：它不要骨架，这一行只是说明，删掉也不报缺。
 const APPENDIX_NOTE = '附录不写骨架：写章时补说明段与材料贡献，节首可以有一句业务定位';
+//: 列表前缀（- * +）只是排版：一行带不带它，协议上是同一行
+const LISTED = /^[-*+]\s+/;
 const LINE = {
-  note: /^-\s+(.+)$/, form: /^形式[:：]\s*(.*)$/,
+  form: /^形式[:：]\s*(.*)$/,
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
   carry: /^承接上游图[:：]\s*(.*)$/, none: /^不采用[:：]\s*(.*)$/,
 };
@@ -55,7 +58,7 @@ export function writingPlanShell(contract) {
   const rows = ['# 写作设计', '',
     `<!-- 骨架每章一段：正文要有的每个小节写一行 \`#### 标题\`，下面用 \`- 答：\` 写这一节解决读者的`
     + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点（没有就不写）；'
-    + `要用某种形式承载就单起一行 \`形式：<${formWords(contract.named_tables)}>\`，再用 \`- 描述：\` 说明它表达的对象、`
+    + `要用某种形式承载就写一行 \`形式：<${formWords(contract.named_tables)}>\`，再用 \`- 描述：\` 说明它表达的对象、`
     + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
     + '一处要几种形式就写几行——图讲关系、表讲属性、文字讲理由，描述里说清各自承担什么；'
     + '选了图的，描述写两半：图前要点明的阅读目的，图后要补的图外条件、责任与结果；'
@@ -65,13 +68,13 @@ export function writingPlanShell(contract) {
     '{{读者是谁、读完要做什么决定；哪几件事最容易误解，读者先理解哪一件才能理解后文；'
     + '依据在哪、哪些未决限制后文}}', '', `## ${PARTS.skeleton}`, ''];
   for (const ch of contract.chapters ?? []) {
-    // 附录的四节由合同定、机器区由投影写，写作设计里没有要它安排的东西
+    // 附录的小节由合同定、机器区由投影写，写作设计里没有要它安排的东西
     rows.push(`### ${ch.id}`, ch.appendix ? `- ${APPENDIX_NOTE}`
       : `- {{正文章名：${ch.title}。读完这一章读者要能回答什么；哪个关系必须用图、图后要补哪些图外的条件与结果；`
         + '其余用表、列表或叙述各讲什么}}', '');
   }
   rows.push(`## ${PARTS.reading}`, '',
-    '{{正文写成之后判断另做一张阅读图有没有理解增益：没有就写「不采用：<理由>」；'
+    '{{正文写成之后先找读者最容易混淆的关系，再看现有正文、表与图是否已在一处讲清：讲清了写「不采用：<理由>」，理由指出这个问题在哪得到回答；'
     + `有就每张写「### <ID>」与 ${Object.values(READING).map(w => `- ${w}：`).join(' ')}（依据可多行）}}`, '');
   return rows.join('\n');
 }
@@ -168,7 +171,7 @@ function readReading(ctx, plan, lines, range, fenced, say) {
   let item = null;
   let placeholder = false;
   for (let at = range.from; at < range.to; at++) {
-    const line = fenced.has(at) ? '' : lines[at].trim();
+    const line = fenced.has(at) ? '' : lines[at].trim().replace(LISTED, '');
     if (!line) continue;
     let m;
     if (/^\{\{.*\}\}$/.test(line)) {
@@ -183,14 +186,13 @@ function readReading(ctx, plan, lines, range, fenced, say) {
       if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(id)) say(`的阅读图「### ${id}」ID 只能用字母、数字、- 与 _，且以字母或数字开头`);
       if (r.items.some(x => x.id.toLowerCase() === id.toLowerCase())) say(`的阅读图「### ${id}」重复（大小写不同也算同一个）`);
       r.items.push(item = { id, question: '', gain: '', placement: '', basis: [] });
-    } else if ((m = /^-\s*([^:：]+)[:：]\s*(.*)$/.exec(line)) && item && Object.values(READING).includes(m[1].trim())) {
+    } else if ((m = /^([^:：]+)[:：]\s*(.*)$/.exec(line)) && Object.values(READING).includes(m[1].trim())) {
       const field = Object.keys(READING).find(k => READING[k] === m[1].trim());
-      if (field === 'basis') item.basis.push(m[2].trim());
+      if (!item) say(`的「${m[1].trim()}：」写在任何「### <ID>」之前——候选的字段写在它的 ### 下面`);
+      else if (field === 'basis') item.basis.push(m[2].trim());
       else if (item[field]) say(`的阅读图「${item.id}」的「${m[1].trim()}」写了两次`);
       else item[field] = m[2].trim();
-    } else {
-      say(`的「## ${PARTS.reading}」有一行认不出：「${line.slice(0, 30)}」——这一部分只写「不采用：<理由>」或「### <ID>」与 ${Object.values(READING).join('、')}`);
-    }
+    }                                       // 其余是说明文字，不进协议
   }
   if (!r.declared && !placeholder) say(`的「## ${PARTS.reading}」没有结论——没有阅读图写「不采用：<理由>」，有就逐张写候选`);
   if (r.noneReason !== null && r.items.length) say(`的「## ${PARTS.reading}」同时写了不采用与候选——两个结论只能有一个`);
@@ -238,7 +240,7 @@ function readSkeleton(plan, lines, range, fenced, say) {
   const known = new Map(plan.chapters.map(c => [c.id, c]));
   const blank = () => ({ notes: [], forms: [], sections: [] });
   const same = (list, title) => list.some(s => normalizeHeading(s.title) === normalizeHeading(title));
-  let ch = null, parent = null, node = null, started = false;
+  let ch = null, parent = null, node = null;
   const where = () => `「### ${ch.id}${node ? `·${node.title}` : ''}」`;
   for (let at = range.from; at < range.to; at++) {
     const line = fenced.has(at) ? '' : lines[at].trim();
@@ -246,18 +248,13 @@ function readSkeleton(plan, lines, range, fenced, say) {
     const head = /^(#{3,5})\s+(.+?)\s*$/.exec(line);
     if (head?.[1].length === 3) {
       const id = head[2];
-      started = true;
       ch = null; parent = null; node = null;
       if (!known.has(id)) say(`的「### ${id}」不是章节合同里的章 ID（${[...known.keys()].join('、')}）——骨架按合同章 ID 分章`);
       else if (plan.skeletons.has(id)) say(`的「### ${id}」出现了两次——一章一段骨架`);
       else plan.skeletons.set(id, (ch = { id, ...blank(), notApplicable: null }));
       continue;
     }
-    if (!ch) {
-      if (!started) say(`的「## ${PARTS.skeleton}」第一行不是 \`### <章 ID>\`——骨架按 ### 章 ID 分章，章 ID 之前的行归不到任何一章`);
-      started = true;
-      continue;
-    }
+    if (!ch) continue;              // 第一个章 ID 之前的说明，或认不出的章 ID 下面的行（那条已报）
     if (head) {
       const section = { title: head[2], ...blank() };
       // 重名只在同一个父节下算重名：两个 #### 各自的 ##### 同名是两处不同的位置
@@ -276,14 +273,15 @@ function readSkeleton(plan, lines, range, fenced, say) {
       continue;
     }
     const target = node ?? ch;
+    const body = line.replace(LISTED, '');
     let m;
-    if ((m = LINE.note.exec(line))) {
-      const note = m[1].trim();
-      if (LINE.form.test(note)) {
-        // 写成说明行的形式声明脚本不接管：说一次，别让作者以为已经定了
-        say(`${where()}的「- ${note}」：形式声明写成了说明行——形式要单起一行写「形式：<类型>」，带「- 」的行按说明行读，脚本不接管`);
-        continue;
-      }
+    if ((m = LINE.form.exec(body))) {
+      const value = m[1].trim();
+      const form = value ? parseForm(value, plan.named) : null;
+      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——认得的形式是 ${formWords(plan.named)}`);
+      else target.forms.push(form);
+    } else {
+      const note = body.trim();
       target.notes.push(note);
       const carried = LINE.carry.exec(note);
       if (carried) {
@@ -296,13 +294,6 @@ function readSkeleton(plan, lines, range, fenced, say) {
       if (open) plan.rechecks.push({ chapter: ch.id, at: node?.title ?? '', text: open[1].trim() });
       const skip = !node && LINE.notApplicable.exec(note);
       if (skip) ch.notApplicable = skip[1].trim();
-    } else if ((m = LINE.form.exec(line))) {
-      const value = m[1].trim();
-      const form = value ? parseForm(value, plan.named) : null;
-      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——认得的形式是 ${formWords(plan.named)}`);
-      else target.forms.push(form);
-    } else {
-      say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架按 - 说明行、形式： 与 ####、##### 标题逐行认`);
     }
   }
   for (const [id, c] of known) {

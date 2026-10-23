@@ -32,6 +32,8 @@
 cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature <需求名>
 ```
 
+阶段闭环之后先按 AGENTS 扩展段「阶段收尾与代码归档」收尾（`--phase coding`），成功后再交付、进下一阶段或提交代码。
+
 ## 四、门禁会拦什么
 
 - `must` 挂着的实体在代码里找不到（文件建了，但里面没有那个类 / 字段 / 枚举；只写在注释里不算）。

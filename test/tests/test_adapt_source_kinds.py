@@ -327,7 +327,7 @@ class SourceKindCase(unittest.TestCase):
                               text=True, encoding="utf-8").returncode == 0
 
     def test_the_usage_record_can_be_added_and_its_work_files_cannot(self) -> None:
-        """使用记录归目标、随普通 git add 入库；一次性输入、统计输出、锁与临时文件挡住。"""
+        """使用记录归目标、随普通 git add 入库；一次性输入、本地运行态、锁与临时文件挡住（统计输出不在工程里）。"""
         target = self.blank_repo("BizU")
         (target / ".gitignore").write_text("doc/*\n!doc/features/\n", encoding="utf-8")
         self.commit(target, "doc 下的文件默认不入库")
@@ -337,7 +337,7 @@ class SourceKindCase(unittest.TestCase):
         proc = self.adapt("--apply", target, PKG_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertTrue(self.git_add_takes(target, "doc/usage.json"), "放行之后普通 git add 仍纳入不了")
-        for rel in ("doc/features/AR1/.usage-input.json", "doc/features/.usage-stats/a1/facts.json",
+        for rel in ("doc/features/AR1/.usage-input.json", "doc/features/.usage-state.json",
                     "doc/usage.json.lock", "doc/.usage.json.123.tmp"):
             with self.subTest(rel):
                 self.assertFalse(self.git_add_takes(target, rel), f"{rel} 没被挡住")

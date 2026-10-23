@@ -27,8 +27,8 @@
 | `RR` | 要解决的问题、给谁用、业务规则是什么——**用户与业务视角**（问题单、产品需求、运营规则都在此） | 背景、范围、业务流程、交付与上线各章按 PRD 读 | `RR/prd.md` |
 | `SR` | 系统怎么分工、接口/时序/数据/异常怎么定——**系统与端云视角** | 业务方案、业务流程、异常与恢复、附录各章按 SE 读 | `SR/design.md` |
 | `AR` | 本部件侧的补充说明、历史结论、部件内约束 | 初析与 `AR/design.md` 生成 | `AR/story-src/upstream.md`（**不写 `AR/design.md`**——那是会被重生成的草稿） |
-| `UX` | 界面长什么样（设计图、视觉稿、交互说明） | 视觉链路 | 图片（含子目录里的）平铺进 `ux-reference/` 顶层，经 `--register-ux` 带上说明；文档并入 `ux-reference/README.md`（这个目录下的文件逐个登记为材料） |
-| `IMAGES` | **这份料是为了补图**：正文系统上已经有了，它是原稿或参考稿，值钱的是里面的图 | 各章按图取用 | 图抽进 `assets/<源文档名>/`，**正文一个字节不动** |
+| `UX` | 界面长什么样（设计图、视觉稿、交互说明） | 视觉链路 | 图片（含子目录里的）平铺进 `ux-reference/` 顶层，名字是 `<主名>.<路径摘要><扩展名>`，经 `--register-ux` 带上说明；文档并入 `ux-reference/README.md`（这个目录下的文件逐个登记为材料） |
+| `IMAGES` | **这份料是为了补图**：正文系统上已经有了，它是原稿或参考稿，值钱的是里面的图 | 各章按图取用 | 图抽进 `assets/<主名>.<路径摘要>/`，**正文一个字节不动** |
 | `MEETING` | **需求澄清会议的记录**：人的讨论，有发言人、时间和来回说的话 | 读会（[phases/meeting-read.md](../phases/meeting-read.md)），人确认后的结果经 `AR/story-src/doc-refresh.md` 进提取稿 | 原件与转换文本按版本留在 `AR/story-src/meetings/<主名>/<版本>/`，**不并入任何正文**；只收原始 `.docx` |
 
 **什么时候选 `MEETING`**：内容是人的讨论记录而不是文档——有发言人、时间和来回说的话。
@@ -62,12 +62,10 @@ python doc/extensions/skills/story/scripts/core/import_sources.py --preview <doc
 这条对本 Skill 的所有脚本一致：**结构化数据走文件，参数只放标量**。
 
 **导入是整体覆盖**：某类的目标文件全文 = 该类材料按相对路径排序拼接的转换结果；
-旧内容自动进 `.backups/local/`。某类没有材料则该类目标不动。每份原件在正文里占一节，节标题取主名（不含扩展名）；
-图片抽到 `assets/<主名>/`，正文用 `../assets/<主名>/…` 引用。
-
-落点按名字取，所以**不同目录下的同名原件、主名相同而落点相撞的原件**（同类正文同节名、两份 docx 同抽图目录、
-同名界面图，只差大小写也算）在写盘之前一次报全、一个字节不动：按报告改名或整理后再导，脚本不替你改名。
-写盘中途出了 I/O 故障，报告会列出已写的目标与旧版备份，排除故障后按备份恢复再重导。
+旧内容自动进 `.backups/local/`。某类没有材料则该类目标不动。每份原件在正文里占一节，节标题是它相对 inbox 的路径；
+图片抽到 `assets/<主名>.<路径摘要>/`，正文用相对路径引用；界面图平铺成 `ux-reference/<主名>.<路径摘要><扩展名>`。
+路径摘要由相对路径算出，所以不同目录下的同名原件各落各的、互不覆盖，不用请人改名；同一路径改了内容重导，只替换它自己的那一节与那几张图。
+导入打印的图片路径就是下面命令要的写法，照抄即可。写盘中途出了 I/O 故障，报告会列出已写的目标与旧版备份，排除故障后按备份恢复再重导。
 
 **新原件取代旧原件**：是不是取代由你读内容判——主名相同、换了位置都不等于取代，也不等于人授权删掉它讲的业务。确是取代时，导入前先退掉旧原件，新原件再放进来：
 
@@ -92,20 +90,20 @@ docx 里的图混着流程图与界面图。判据以**图在正文中的上下�
 然后报它没映射到任何页面。
 
 ```
-python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --caption "<这张图是什么>"
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<导入打印的图片目录>/<图> --caption "<这张图是什么>"
 ```
 
 这张图不属于本需求（废弃的对照稿、别的单据的页面）时，在同一处登记不用它的理由；后来又要用它，撤掉理由：
 
 ```
-python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --unused "<为什么它不属于本需求>"
-python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<源文档名>/<图> --used
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<导入打印的图片目录>/<图> --unused "<为什么它不属于本需求>"
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --caption-image assets/<导入打印的图片目录>/<图> --used
 ```
 
 判为界面设计图的**再多一步当场登记**，一张一条命令：
 
 ```
-python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --register-ux assets/<源文档名>/<图> --name <语义名> --caption "<这张图是什么>"
+python doc/extensions/skills/story/scripts/core/import_sources.py --feature <需求名>   --register-ux assets/<导入打印的图片目录>/<图> --name <语义名> --caption "<这张图是什么>"
 ```
 
 你给两样：**语义名**（文件名是视觉链路的匹配键，`image1.png` 没有匹配价值）与**一句说明**。

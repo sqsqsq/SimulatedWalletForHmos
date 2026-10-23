@@ -52,7 +52,7 @@
   - 渲染图、独立审查请求与报告、绘图脚本不进金样，留在本轮证据目录。
 - **机器区与生成区**：
   - spec 9.2 / 9.3 由 `knowledge-use.mjs render` 按判断件生成；
-  - story 附录 10.1–10.4 由 `story-build project` 投影、`number` 编号；
+  - story 附录 10.1–10.3 由 `story-build project` 投影、`number` 编号；
   - review 由 `story-build build` 从登记表渲染；
   - 2026-10-17 修订后，在临时模板按真实导入链重跑 render、project、number、build，再跑一次与候选逐字节一致；`story-build check` 10 章通过；spec 门禁除临时目录里的流程契约占位外无内容问题。
 - **未核**：人签、读者审查与交付门（`check --deliver`）不在金样范围；Mermaid 的逐图渲染查看见本轮交审记录。

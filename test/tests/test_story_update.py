@@ -995,6 +995,25 @@ class StoryIsRegisteredAgainAfterChanges(UpdateCase):
         for out in self.outputs:
             self.assertNotIn("手改", out)
 
+    def test_registering_unchanged_content_again_keeps_the_registration_time(self) -> None:
+        """内容没变的重新登记仍跑完整检查，登记时刻不换；内容变了才换（使用记录据它认出同一次成文）。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        sys.path.insert(0, str(FLOW.parent))
+        from flow.state import load, save  # noqa: PLC0415
+        contract = load(self.feature_root)
+        contract["story_written_at"] = earlier = "2026-01-01T00:00:00+00:00"   # 与本次登记分得开的较早时刻
+        save(self.feature_root, contract)
+        first = self.contract()
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        again = self.contract()
+        self.assertEqual((earlier, first["story_digests"]),
+                         (again["story_written_at"], again["story_digests"]), "同内容重新登记换了登记时刻")
+        self.rewrite_background("支付提交后用户要能看到回执状态。登记之后补的一句。")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        changed = self.contract()
+        self.assertNotEqual(first["story_digests"], changed["story_digests"])
+        self.assertGreater(changed["story_written_at"], earlier, "内容变了登记时刻却没换")
+
     def test_spec_stage_change_is_registered_again(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.rewrite_background("支付提交后用户要能看到回执状态。登记之后补的一句。")

@@ -119,6 +119,26 @@ class TheOrderIsSnapshotThenPromoteThenResume(unittest.TestCase):
         self.assertIn('awaiting_kind") != "initial_checkpoint"', src,
                       "没有检查 worker 是不是停在第一检查点上")
 
+    def test_a_case_without_a_second_segment_refuses_resume(self) -> None:
+        """没配 after_initial 的交互用例也停在第一检查点，但那里只能答本段的交付选择或收工，不投第二段。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "checkpoints" / "initial").mkdir(parents=True)
+            for after, ok in ((None, False), ("update", True)):
+                with self.subTest(after_initial=after), \
+                        unittest.mock.patch.object(rc, "_load_case", return_value=(None, out, "AR1")), \
+                        unittest.mock.patch.object(rc, "reconcile_worker_state", side_effect=lambda _o, st: st), \
+                        unittest.mock.patch.object(rc, "read_state", return_value={
+                            "awaiting_kind": "initial_checkpoint", "after_initial": after}), \
+                        unittest.mock.patch.object(rc, "deliver_update_inputs", return_value=[]), \
+                        unittest.mock.patch.object(rc, "deliver_supplements", return_value=[]), \
+                        unittest.mock.patch("sys.stdout", new=io.StringIO()) as out_text:
+                    code = rc.cmd_resume_update("c", "/story update AR1")
+                    self.assertEqual(0 if ok else 1, code, out_text.getvalue())
+                    if not ok:
+                        self.assertIn("没有第二段", out_text.getvalue())
+                        self.assertFalse((out / rc.RESUME_FILE).exists(), "拒绝了却仍排了续跑请求")
+
     def test_the_suite_side_requires_a_promotion(self) -> None:
         src = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
         self.assertIn("第一段还没回流", src)

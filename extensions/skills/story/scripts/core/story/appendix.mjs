@@ -176,21 +176,6 @@ function notApplicableLine(text) {
 }
 
 /**
- * 附录·改动边界 —— 这次需求在工程上动到哪些模块、哪些相关模块保证不动：**一个模块一行**，
- * 值只有「改动」「不改」。来源是 spec 的 Scope 声明：`in_scope_modules` 改动，`out_of_scope_modules` 不改
- * （复用其已有出口也是不改）。新引入的依赖在技术契约·依赖变更一节。
- * Scope 的切分理由留在 spec：它是写给 plan 与工程的说明；归档件讲为什么这么切，
- * 归「范围」「业务方案」两章，用业务语言。
- */
-function scopeBoundary(ctx, spec, section) {
-  const rows = [
-    ...scopeList(spec, 'in_scope_modules').map(m => [m, '改动']),
-    ...scopeList(spec, 'out_of_scope_modules').map(m => [m, '不改']),
-  ];
-  return rows.length ? renderTable(appendixTableHeader(ctx, section), rows) : [];
-}
-
-/**
  * spec 里的相对引用换成从归档件出发的写法：spec 在 `spec/`，归档件在 `AR/`。
  *
  * 行内链接、图片与引用式定义都换；外链（带协议）、根路径与内嵌数据不动；
@@ -303,9 +288,7 @@ function appendixZones(ctx, spec) {
   const specRows = (...a) => specRowsRaw(...a).map(line => displayTags(line, catalog));
   const out = [];
   for (const [section, def] of Object.entries(sections)) {
-    if (def.kind === 'scope') {
-      out.push({ zone: section, section, source: 'spec 的 Scope 声明', rows: scopeBoundary(ctx, spec, section) });
-    } else if (def.kind === 'knowledge_use') {
+    if (def.kind === 'knowledge_use') {
       out.push({ zone: section, section, source: KNOWLEDGE_USE_SOURCE, rows: verdictSkeleton(ctx, section) });
     } else if (def.from) {
       out.push({ zone: section, section, source: `spec ${sourceName(def.from)}`, rows: specRows(spec, def, drop, 3) });
@@ -464,7 +447,7 @@ function appendixSourceProblems(ctx, spec) {
 function appendixSpecSources(contract) {
   const out = [];
   for (const [section, def] of Object.entries(projectionOf(contract).sections)) {
-    if (def.from && def.kind !== 'scope') out.push({ from: def.from, to: section });
+    if (def.from) out.push({ from: def.from, to: section });
     for (const h4 of def.h4 ?? []) out.push({ from: h4.from, to: `${section}·${h4.title}` });
   }
   return out;

@@ -1,9 +1,9 @@
 """使用记录的入口接线：正常产品入口被执行就采集，测试不手工调用记录器垫数据。
 
-- Story 命令（init/round 记使用，update 起手与开轮为起点、关轮结算、撤回终止，status 只对账）；
-- spec 作者任务包与 story-build 写作入口是本轮工作的起点；
-- 真实 harness-runner 触发扩展 pre_phase：未建 Story 流程的直接 Coding 起手也登记，名称待补由 post_check 提醒，
-  补齐后冻结；pre_phase 不往审查提示里放统计内容。
+- Story 命令（init 建身份与节点，其余命令刷新；update 一轮从开轮到关轮计时，撤回不计，status 不建记录）；
+- spec 作者任务包与 story-build 写作入口不再是计时起点，不写 usage；
+- 真实 harness-runner 触发扩展 pre_phase：未建 Story 流程的直接 Coding 起手也建身份与节点，
+  自报身份由下一次阶段检查接收；pre_phase 不往审查提示里放统计内容。
 """
 from __future__ import annotations
 
@@ -32,33 +32,32 @@ def usage(root: Path) -> dict:
 
 
 class StoryCommandsRecordUse(UpdateCase):
-    def steps(self) -> dict:
-        return usage(self.root)["requirements"][FEATURE]["steps"]
+    def node(self) -> dict:
+        stamp = (self.feature_root / ".usage-id").read_text(encoding="utf-8").strip()
+        return usage(self.root)["requirements"][f"{FEATURE}-{stamp}"]
 
-    def test_the_story_flow_walk_already_recorded_story_use(self) -> None:
-        self.assertIn("story", self.steps(), "init/round 走过了却没记 story 的使用")
-        self.assertIsNone(usage(self.root)["requirements"][FEATURE]["name"], "没有初始化输入却填了名称")
+    def test_init_made_the_identity_and_the_node(self) -> None:
+        node = self.node()
+        self.assertEqual((None, None), (node["agent"], node["model"]), "没有自报却填了身份")
+        self.assertEqual({"ext", "fw", "agent", "model", "steps"}, set(node))
 
     def test_an_update_round_is_timed_from_opening_to_closing(self) -> None:
         rid = self.update()["update"]
-        s = self.steps()["story update"]
-        self.assertTrue(s["start"] and s["spent"] == 0, s)
+        self.assertNotIn("story update", self.node()["steps"], "没收口就出了行")
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         out = self.update("--action", "close")
         self.assertEqual("closed", out.get("status"), out)
-        s = self.steps()["story update"]
-        self.assertEqual((True, None), (s["completed"], s["start"]))
-        self.assertIsInstance(s["spent"], int)
+        row = self.node()["steps"]["story update"]
+        self.assertEqual(1, row["rounds"])
+        self.assertIsInstance(row["spent"], int)
         before = (self.root / "doc" / "usage.json").read_bytes()
         self.assertTrue(self.update("--action", "status").get("success"))
-        self.assertEqual(before, (self.root / "doc" / "usage.json").read_bytes(), "对账把已结算的一轮又算了一遍")
+        self.assertEqual(before, (self.root / "doc" / "usage.json").read_bytes(), "刷新把已结算的一轮又算了一遍")
 
     def test_a_restore_ends_the_round_without_completing_it(self) -> None:
         self.update()
         self.assertEqual("restored", self.update("--action", "restore")["status"])
-        s = self.steps()["story update"]
-        self.assertEqual((False, None), (s["completed"], s["start"]))
-        self.assertIsInstance(s["spent"], int)
+        self.assertNotIn("story update", self.node()["steps"])
 
     def test_a_broken_record_does_not_undo_the_business_result(self) -> None:
         record = self.root / "doc" / "usage.json"
@@ -85,8 +84,9 @@ class StoryCommandsRecordUse(UpdateCase):
         (self.updates / out["update"] / "update-notes.md").write_text(NOTES, encoding="utf-8")
         closed = self.update("--action", "close")
         self.assertNotIn("usage_errors", closed)
-        s = self.steps()["story update"]
-        self.assertEqual((True, None), (s["completed"], s["spent"]), "缺了起点的一轮被编出了耗时")
+        row = self.node()["steps"]["story update"]
+        self.assertEqual(1, row["rounds"], "开轮时没记上，收口轮数就丢了")
+        self.assertIsInstance(row["spent"], int, "耗时由原生记录的开轮与收口时刻得出")
 
 
 class StatusCreatesNothing(unittest.TestCase):
@@ -100,23 +100,18 @@ class StatusCreatesNothing(unittest.TestCase):
             self.assertEqual([], [p.name for p in (root / "doc").iterdir() if p.name != "features"])
 
 
-class WorkEntriesBegin(StoryBuildCase):
-    def steps(self) -> dict:
-        return usage(self.root)["requirements"][FEATURE]["steps"]
+class WritingEntriesDoNotTime(StoryBuildCase):
+    """作者任务包与写作入口不是 V5 的计时真源：跑它们不动使用记录。"""
 
-    def test_the_writing_entry_starts_the_story_round_and_check_does_not(self) -> None:
+    def test_skeleton_and_the_spec_author_package_leave_usage_alone(self) -> None:
         self.init_audit()
+        self.assertEqual(0, self.run_build("skeleton").returncode)     # 起手夹具在这里走 story init，建了节点
+        record = self.root / "doc" / "usage.json"
+        before = record.read_bytes()
         self.assertEqual(0, self.run_build("skeleton").returncode)
-        start = self.steps()["story"]["start"]
-        self.assertTrue(start, "写作入口没记起点")
-        self.run_build("check")
-        self.run_build("skeleton")
-        self.assertEqual(start, self.steps()["story"]["start"], "同轮重复进入覆盖了起点")
-
-    def test_the_spec_author_package_starts_the_spec_round(self) -> None:
         subprocess.run(["node", str(DEV_EXT / "hooks/spec/author.mjs"), "--feature", FEATURE], cwd=self.root,
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertTrue(self.steps()["spec"]["start"], "作者任务包没记 spec 起点")
+        self.assertEqual(before, record.read_bytes(), "写作入口或作者包动了使用记录")
 
 
 def demo_toolchain() -> dict | None:
@@ -163,26 +158,17 @@ class TheRealHarnessRecordsUse(unittest.TestCase):
                                "--phase", phase, "--feature", self.FEATURE], cwd=self.root / "framework" / "harness",
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
 
-    def test_direct_coding_then_review_records_use_and_freezes_the_name_once(self) -> None:
+    def test_direct_coding_creates_the_identity_and_a_later_phase_takes_the_self_report(self) -> None:
         proc = self.harness("coding")
-        node = usage(self.root)["requirements"][self.FEATURE]
-        self.assertIn("coding", node["steps"], proc.stdout[-1500:])
-        coding = node["steps"]["coding"]
-        self.assertEqual((None, None, None), (node["name"], coding["start"], coding["spent"]),
-                         "检查时刻冒充了开工，或没有输入却填了名称")
+        stamp = (self.fr / ".usage-id").read_text(encoding="utf-8").strip()
+        node = usage(self.root)["requirements"][f"{self.FEATURE}-{stamp}"]
+        self.assertEqual((None, None), (node["agent"], node["model"]), proc.stdout[-1500:])
         text = (self.fr / "coding" / "reports" / "merged-report.md").read_text(encoding="utf-8")
-        self.assertIn("使用记录待补", text, "待补初始化没送到本阶段报告")
-        self.assertIn(".usage-input.json", text, "提醒没给输入位置")
         self.assertNotIn('"spent"', text, "统计内容进了阶段报告")
-        checks = json.loads((self.fr / "coding" / "reports" / "script-report.json").read_text(encoding="utf-8"))["checks"]
-        pending = [c for c in checks if "使用记录待补" in str(c.get("details"))]
-        self.assertEqual(["MINOR"], [c["severity"] for c in pending], "待补提醒的级别会改阶段结论")
-        (self.fr / ".usage-input.json").write_text(json.dumps(
-            {"requirement": self.FEATURE, "name": "通知订阅设置", "version": "4.2.0"}, ensure_ascii=False), encoding="utf-8")
+        (self.fr / ".usage-input.json").write_text(json.dumps({"agent": "opencode", "model": "m1"}), encoding="utf-8")
         self.harness("review")
-        node = usage(self.root)["requirements"][self.FEATURE]
-        self.assertEqual(("通知订阅设置", "4.2.0"), (node["name"], node["version"]))
-        self.assertIn("review", node["steps"])
+        node = usage(self.root)["requirements"][f"{self.FEATURE}-{stamp}"]
+        self.assertEqual(("opencode", "m1"), (node["agent"], node["model"]))
         self.assertFalse((self.fr / ".usage-input.json").exists())
 
 

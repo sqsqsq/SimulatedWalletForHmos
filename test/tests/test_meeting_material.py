@@ -373,6 +373,40 @@ class EachVersionKeepsItsOwnOriginal(MeetingCase):
         self.assertIn("只收原始", log)
 
 
+class SameNamesThatDifferOnlyInCase(MeetingCase):
+    """两个子目录里的 Review.docx 与 review.docx：不改名、不多问一次，判断照 source.json 填写就对得上各自的版本。"""
+
+    def test_each_version_is_keyed_by_its_registered_source(self) -> None:
+        for sub in ("a", "b"):
+            (self.inbox / sub).mkdir()
+        one = self.place(name="a/Review.docx", xml=SAME_LINE)
+        two = self.place(name="b/review.docx", xml=NO_TIME)
+        code, _, log = self.cli("import_sources.py")
+        self.assertEqual(0, code, log)
+        sections = []
+        for docx in (one, two):
+            src = meeting.read_json(meeting.version_dir(self.fr, docx) / meeting.SOURCE)
+            self.assertEqual(docx.name, src["file"], "原件名没按原样登记")
+            sections.append({"source": src["file"], "source_sha": src["sha256"], "topics": []})
+        self.notes_path().write_text(json.dumps({"meetings": sections}, ensure_ascii=False), encoding="utf-8")
+        found = meeting.versions(self.fr)
+        self.assertEqual(set(meeting.read_notes(self.fr, [])), set(found))
+        self.assertEqual(2, len(found), "两份不同内容的会议并成了一版")
+        problems = meeting.inspect(self.fr)["problems"]
+        self.assertFalse([p for p in problems if "对不上任何会议版本" in p], problems)
+        for docx in (one, two):
+            folder = meeting.version_dir(self.fr, docx)
+            self.assertEqual(docx.read_bytes(), (folder / meeting.ORIGINAL).read_bytes(), "原件没各自留住")
+
+    def test_an_unreadable_registration_is_reported_not_guessed(self) -> None:
+        docx = self.imported()
+        folder = meeting.version_dir(self.fr, docx)
+        (folder / meeting.SOURCE).write_text("{坏", encoding="utf-8")
+        self.assertEqual({}, meeting.versions(self.fr), "读不出登记却按目录名猜了身份")
+        problems = meeting.inspect(self.fr)["problems"]
+        self.assertTrue(any(meeting.SOURCE in p for p in problems), problems)
+
+
 class TheCorrectionsAreDiffsOnly(MeetingCase):
     """模型只交差异，阅读件由脚本出；问题一次报全，报了就不出件。"""
 

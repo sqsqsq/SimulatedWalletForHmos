@@ -327,8 +327,8 @@ class TestRedlineScope(StoryBuildCase):
     """逐类作用域：工程标识只管附录之外，文档坐标全篇判；一行命中几种坐标只报一条。"""
 
     def _put_in_appendix(self, line: str) -> None:
-        """作者说明写在改动边界那一节之前：机器区之外。"""
-        anchor = "### 改动边界"
+        """作者说明写在材料清单那一节之前（埋点一节末尾）：机器区之外。"""
+        anchor = "### 材料清单"
         self.assertIn(anchor, self.story())
         self.rewrite_story(anchor, line + "\n\n" + anchor)
 
@@ -959,7 +959,8 @@ class TestNumbering(StoryBuildCase):
         text = self.number()
         self.assertIn("### 10.1 技术契约", text)
         self.assertIn("#### 10.1.1 端云接口", text)
-        self.assertIn("### 10.5 材料清单", text)
+        self.assertIn("### 10.4 材料清单", text)
+        self.assertNotIn("改动边界", text, "附录还有工程模块边界一节")
 
     def test_a_chapter_outside_the_contract_is_left_alone(self) -> None:
         """合同里没有的章原样留着：那是 check ① 要点名的事，不是编号该悄悄接受的。"""
@@ -2489,13 +2490,14 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         return self.story()
 
     def test_landing_the_appendix_projects_every_zone(self) -> None:
-        """技术契约下端云接口、数据存储、配置项、依赖变更各一区，规约、埋点、改动边界各一区。"""
+        """技术契约下端云接口、数据存储、配置项、依赖变更各一区，规约、埋点各一区；Spec 的模块 Scope 不投进 Story。"""
         self.build("skeleton")
         appendix = self.author_appendix().split("## 附录", 1)[1]
-        self.assertEqual(7, appendix.count("story-build:begin"), "机器区没投全")
+        self.assertEqual(6, appendix.count("story-build:begin"), "机器区没投全")
         for name in ("技术契约·端云接口", "技术契约·数据存储", "技术契约·配置项", "技术契约·依赖变更",
-                     "规约", "埋点", "改动边界"):
+                     "规约", "埋点"):
             self.assertIn(f"story-build:begin {name} ", appendix)
+        self.assertNotIn("改动边界", appendix, "工程模块边界又投进了 Story")
         self.assertIn("getAutoTopupPolicy", appendix)
         self.assertIn("服务端返回的受理状态决定后续处理路径。", appendix, "作者写的那一句丢了")
         self.assertIn("给出了业务规则", appendix, "材料贡献句丢了")
@@ -2527,7 +2529,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         self.build("project")
         story = self.story()
         self.assertIn("改过的依据", story, "重投影没跟上真源")
-        self.assertEqual(7, story.count("story-build:begin"), "重投影后机器区数量变了")
+        self.assertEqual(6, story.count("story-build:begin"), "重投影后机器区数量变了")
         self.assertIn("服务端返回的受理状态决定后续处理路径。", story)
         self.assertIn("给出了业务规则", story)
 
@@ -2541,7 +2543,7 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         """每张投影表前面是空行、标题或机器区起始标记——连着写会被 markdown 并成一张错表。"""
         self.build("skeleton")
         story = self.author_appendix()
-        data = story.split("### 技术契约", 1)[1].split("改动边界", 1)[0]
+        data = story.split("### 技术契约", 1)[1].split("### 材料清单", 1)[0]
         lines = [l.strip() for l in data.split("\n")]
         # 表头 = 下一行是分隔行的那一行。分隔行必须**非空**且只由 | - : 空格组成——
         # 少了「非空」这一条，空行也满足，于是表后的第一行数据被当成新表头。
@@ -2668,31 +2670,33 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
+    ZONE = "技术契约·依赖变更"
+
     def edit_zone(self, text: str) -> str:
-        """在改动边界那一段机器区里加一行——作者会做的事。"""
-        at = text.index("story-build:begin 改动边界")
+        """在依赖变更那一段机器区里加一行——作者会做的事。"""
+        at = text.index(f"story-build:begin {self.ZONE}")
         end = text.index("story-build:end", at)
         cut = text.rindex("\n", at, end)
-        return text[:cut] + "\n| 我加的一行 | 改动 |" + text[cut:]
+        return text[:cut] + "\n| 我加的一行 | 新增 | 无 | 无 |" + text[cut:]
 
     def test_a_hand_edit_stops_the_reprojection(self) -> None:
         self.story_path.write_text(self.edit_zone(self.land()), encoding="utf-8")
         proc = self.project()
         self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
         out = proc.stdout + proc.stderr
-        self.assertIn("改动边界", out, "没说清是哪一节")
+        self.assertIn("依赖变更", out, "没说清是哪一节")
         self.assertIn("不在时投影重新写出", out, "拒绝了却没给撤销的出口")
         self.assertIn("我加的一行", self.story(), "拒绝了却还是把文件改了")
 
     def test_deleting_the_zone_lets_it_be_written_again(self) -> None:
         """撤销手改的出口：连同首尾标记删掉这一节，重跑就重新写出来。"""
         text = self.edit_zone(self.land())
-        at = text.index("<!-- story-build:begin 改动边界")
+        at = text.index(f"<!-- story-build:begin {self.ZONE}")
         end = text.index("story-build:end -->", at) + len("story-build:end -->")
         self.story_path.write_text(text[:at] + text[end:], encoding="utf-8")
         self.assertEqual(0, self.project().returncode, "删干净了还是不让过")
         story = self.story()
-        self.assertIn("story-build:begin 改动边界", story, "投影没有重新写出来")
+        self.assertIn(f"story-build:begin {self.ZONE}", story, "投影没有重新写出来")
         self.assertNotIn("我加的一行", story)
 
     def test_a_source_change_reprojects_as_usual(self) -> None:
@@ -2700,16 +2704,17 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
         self.land()
         spec = self.feature / "spec" / "spec.md"
         text = spec.read_text(encoding="utf-8")
-        spec.write_text(text.replace("out_of_scope_modules:",
-                                     "out_of_scope_modules:\n    - NewlyExcluded", 1),
-                        encoding="utf-8")
+        self.assertIn("支付免密能力", text)
+        spec.write_text(text.replace("支付免密能力", "支付免密能力二期"), encoding="utf-8")
         self.assertEqual(0, self.project().returncode)
-        self.assertIn("| NewlyExcluded | 不改 |", self.story(), "真源改了却没重投")
+        story = self.story()
+        at = story.index(f"<!-- story-build:begin {self.ZONE}")
+        self.assertIn("支付免密能力二期", story[at:story.index("story-build:end", at)], "真源改了却没重投")
 
     def test_a_zone_without_a_digest_counts_as_edited(self) -> None:
         """标记里没有摘要：无从分辨「真源变了」与「有人改了」，按改过处理，停下问人。"""
         text = self.land()
-        at = text.index("<!-- story-build:begin 改动边界")
+        at = text.index(f"<!-- story-build:begin {self.ZONE}")
         end = text.index("-->", at) + 3
         marker = text[at:end]
         stripped = marker[:marker.index(" · sha256:")] + " -->"
@@ -2829,8 +2834,6 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
                         + text[end:], encoding="utf-8")
         story = self.landed_appendix()
         self.assertIn("不涉及：本需求不新增任何三方依赖。", self.zone(story, "技术契约·依赖变更"))
-        boundary = story.split("### 改动边界", 1)[1].split("###", 1)[0]
-        self.assertIn("| 改动 |", boundary, "Scope 的模块行也要在")
 
     def zone(self, story: str, name: str) -> str:
         at = story.index(f"<!-- story-build:begin {name} ")
@@ -2863,43 +2866,18 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         self.build("project")
         self.assertIn("错误码上游未给出，联调时补齐失败语义。", self.story())
 
-    def boundary_zone(self) -> str:
-        """只取机器区——目的句在它外面，那一句归作者。"""
-        section = self.landed_appendix().split("### 改动边界", 1)[1].split("###", 1)[0]
-        return section.split("story-build:begin", 1)[1].split("story-build:end", 1)[0]
-
-    def test_the_boundary_is_one_table_with_one_row_per_module(self) -> None:
-        """一个模块一行。两份清单各挤成一格的话，评审者要在一串顿号里找自己那个模块。"""
-        zone = self.boundary_zone()
-        self.assertIn("| 模块 | 本单怎么动 |", zone)
-        for module in ("WalletMain", "AccountManager"):
-            self.assertIn(f"| {module} |", zone, f"{module} 没有自己那一行")
-        seps = [l for l in zone.split("\n") if set(l.replace("|", "").strip()) <= {"-"}
-                and l.strip()]
-        self.assertEqual(1, len(seps), f"改动边界应当只有一张表，实际 {len(seps)} 张")
-
-    def test_the_scope_rationale_stays_in_the_spec(self) -> None:
-        """Scope 的切分理由写给 plan 与工程（这份夹具里带 `navDestinationMap`），留在 spec；
-        归档件讲为什么这么切归范围与业务方案两章。机器区只有模块表，⑩b 不因它报红线。"""
-        spec = (self.feature / "spec" / "spec.md").read_text(encoding="utf-8")
-        self.assertIn("navDestinationMap", spec, "夹具的切分理由里该有工程标识，这条才测得到")
-        zone = self.boundary_zone()
-        self.assertNotIn("navDestinationMap", zone)
-        self.assertNotIn("自动充值端侧能力", zone, "切分理由被投进了归档件")
-        self.assertTrue(all(l.startswith("|") for l in zone.split("\n")[1:]
-                            if l.strip() and not l.strip().startswith("<!--")), zone)
-
-    def test_the_table_has_only_columns_that_carry_something(self) -> None:
-        """两列。第三列「依据」逐行重复同一句来源，读者读它读不出任何新东西。"""
-        zone = self.boundary_zone()
-        header = next(l for l in zone.split("\n") if l.startswith("| 模块 |"))
-        self.assertEqual(2, header.count("|") - 1, f"表不是两列：{header}")
-
-    def test_the_boundary_only_says_changed_or_unchanged(self) -> None:
-        """改动边界只回答模块怎么动：值只有「改动」「不改」，新引入的依赖不混进来。"""
-        rows = [l for l in self.boundary_zone().split("\n") if l.startswith("| ") and not l.startswith("| 模块 |")]
-        self.assertTrue(rows, "改动边界没有模块行")
-        self.assertEqual({"改动", "不改"} >= {r.split("|")[2].strip() for r in rows}, True, rows)
+    def test_a_scope_change_in_the_spec_no_longer_reaches_the_story(self) -> None:
+        """模块 Scope 是写给 plan 与工程的，留在 spec；改了它，Story 附录不长出模块表，spec 里照旧在。"""
+        self.landed_appendix()
+        spec = self.feature / "spec" / "spec.md"
+        text = spec.read_text(encoding="utf-8")
+        spec.write_text(text.replace("out_of_scope_modules:", "out_of_scope_modules:\n    - NewlyExcluded", 1),
+                        encoding="utf-8")
+        self.assertEqual(0, self.build_raw("project").returncode)
+        story = self.story()
+        self.assertNotIn("NewlyExcluded", story, "Spec 的模块清单又投进了 Story")
+        self.assertNotIn("改动边界", story)
+        self.assertIn("NewlyExcluded", spec.read_text(encoding="utf-8"))
 
     def test_the_dependency_changes_keep_every_column(self) -> None:
         """依赖变更与 spec 同名同列投到技术契约下：体积影响与兼容风险都带过去，「代码现状」不投。"""
@@ -2912,10 +2890,6 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertNotIn("依赖变更」：", proc.stdout + proc.stderr)
-
-    def test_the_machine_zone_leaves_no_slot_for_the_author(self) -> None:
-        """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""
-        self.assertNotIn("{{", self.boundary_zone(), "机器区还留着作者要填的格子")
 
     def test_every_machine_zone_passes_the_archive_redlines(self) -> None:
         """投影吐出来的每一个字都随归档走，所以它自己要过红线。

@@ -174,18 +174,88 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             encoding="utf-8")
         (src / "story-flow.json").write_text(json.dumps({"rounds": [{"gates": [{
             "gate": "meeting", "meeting": "澄清会@abcdef12", "item": "T1", "chosen": "defer",
-            "options": topic["options"], "basis": "用户回复：T1 保持待定"}]}]}, ensure_ascii=False), encoding="utf-8")
+            "options": topic["options"], "reply": "T1 保持待定", "by": "human", "outcome": "accepted"}]}]},
+            ensure_ascii=False), encoding="utf-8")
         (src / "doc-refresh.md").write_text("### 澄清会@abcdef12/T1 重试标识\n\n本期换标识。\n", encoding="utf-8")
         text = self.reader_task()
         section = text.split("#### 澄清会@abcdef12/T1", 1)[1].split("####", 1)[0]
         self.assertIn("**会议判断**：重试是否换标识未定", section)
         self.assertIn("> 乙 10:01：重试要不要换标识，先别写死。", section)
-        self.assertIn("选了「defer」保持待定；没选：「a」换标识", section)
+        self.assertIn("选了「defer」保持待定；没选：「a」换标识；原话见「人签原文」", section)
+        self.assertEqual(1, text.count("> T1 保持待定"), "同一笔人签的原话在一份任务里贴了两遍")
         self.assertIn("> 本期换标识。", section)
         t2 = text.split("#### 澄清会@abcdef12/T2", 1)[1]
         self.assertIn("同 T1", t2, "同一范围的原话取了两次")
         self.assertIn("未裁决", t2)
         self.assertIn("doc-refresh.md 里没有这个话题的段落", t2)
+
+    def signed(self, label: str = "后续由负责人定", **gate) -> dict:
+        record = {"gate": "scope_decision", "ask_id": "a1", "no": 2, "at": "2026-01-01T00:00:00Z",
+                  "options": [{"no": 1, "key": "retry", "label": "失败后允许再试"},
+                              {"no": 2, "key": "later", "label": label}],
+                  "chosen": "later", "label": label, "reply": "失败怎么处理先不定，后面负责人定",
+                  "mapped_by": "reply", "by": "human", "outcome": "accepted"}
+        record.update(gate)
+        return record
+
+    def write_flow(self, *gates: dict) -> None:
+        (self.src() / "story-flow.json").write_text(json.dumps({"rounds": [{"round": 1, "gates": list(gates)}]},
+                                                               ensure_ascii=False), encoding="utf-8")
+
+    def test_the_signed_original_comes_before_the_authors_reading(self) -> None:
+        """人选了「后续定」，作者登记却写成可再试：任务同时交两份不同内容，人签在前，原话取 reply。"""
+        src = self.src()
+        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
+        self.write_flow(self.signed())
+        (src / "decisions.json").write_text(json.dumps({"decisions": [
+            {"id": "D-4", "status": "settled", "title": "失败处理", "decider": "需求方",
+             "clarification": "失败后可默认再试一次"}]}, ensure_ascii=False), encoding="utf-8")
+        task = self.reader_task()
+        signed = task.split("### 人签原文", 1)[1].split("\n### ", 1)[0]
+        self.assertLess(task.index("### 人签原文"), task.index("### 登记成已定"), "作者解释排在人签前面")
+        self.assertIn("选了「later」后续由负责人定", signed)
+        self.assertIn("「retry」失败后允许再试；「later」后续由负责人定", signed, "当时摆出的选项没带全")
+        self.assertIn("> 失败怎么处理先不定，后面负责人定", signed, "人答不是 reply 原文")
+        self.assertNotIn("可默认再试", signed, "作者解释混进了人签原文")
+        self.assertIn("失败后可默认再试一次", task.split("### 登记成已定", 1)[1], "作者解释没作为待核对象送到")
+        for phrase in ("—", "basis"):
+            self.assertNotIn(phrase, signed)
+
+    def test_only_effective_human_answers_are_signatures(self) -> None:
+        """模型提议、被退回的回话不呈为人签；没有流程契约是没有这类人签，契约坏了是缺口。"""
+        self.write_flow(self.signed(by="model"), self.signed(outcome="rejected", reply="放好了"))
+        rows = self.signed_rows()
+        self.assertIn("还没有生效的人签", rows)
+        self.assertNotIn("后面负责人定", rows)
+        self.assertNotIn("放好了", rows)
+        (self.src() / "story-flow.json").write_text("{ 坏", encoding="utf-8")
+        self.assertIn("读不出关卡记录", self.signed_rows())
+        (self.src() / "story-flow.json").unlink()
+        self.assertIn("没有这类人签", self.signed_rows())
+
+    def signed_rows(self) -> str:
+        proc = nk.node("--input-type=module", "-e",
+                       f"const m = await import({nk.as_url(self.ext / 'hooks/shared/review-inputs.mjs')});"
+                       f"process.stdout.write(m.signedGateRows({json.dumps(self.feature_root.as_posix())}).join('\\n'));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout
+
+    def test_both_author_packages_carry_the_same_signatures(self) -> None:
+        """spec 与 plan 作者包在作者登记之前给同一份人签原文；作者登记仍在，标成待核解释。"""
+        self.write_flow(self.signed())
+        (self.src() / "decisions.json").write_text(json.dumps({"decisions": [
+            {"id": "D-4", "status": "open", "title": "失败处理", "decider": "需求方", "clarification": "待定"}]},
+            ensure_ascii=False), encoding="utf-8")
+        rows = self.signed_rows()
+        for phase, mine in (("spec", "### 作者登记"), ("plan", "### 作者登记里仍开着的")):
+            with self.subTest(phase):
+                proc = subprocess.run(["node", str(self.ext / "hooks" / phase / "author.mjs"), "--feature", nk.FEATURE],
+                                      cwd=self.root, capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                out = proc.stdout
+                self.assertIn(rows, out, "两个作者包的人签不是同一份渲染")
+                self.assertLess(out.index("### 人签原文"), out.index(mine))
+                self.assertIn("D-4", out.split(mine, 1)[1])
 
     def test_each_open_decision_comes_with_its_options_for_a_verdict(self) -> None:
         """U41：每条 open 议题带澄清原文，审查逐条给结论——只给标题时两个用例都放过了替人选边的正文。"""
@@ -198,9 +268,16 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
              "clarification": "**要定的事**：宽限期。\n\n1. 24 小时\n2. 48 小时"},
             {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方", "clarification": "依据"}]},
             ensure_ascii=False), encoding="utf-8")
-        section = self.reader_task().split("### 仍开着的选择", 1)[1].split("### 登记成已定", 1)[0]
-        self.assertIn("每一条都写一句结论", section)
-        self.assertIn("各选项（含保持待定）都会有的行为才是共同要求", section)
+        task = self.reader_task()
+        self.assertLess(task.index("### 先核：仍开着的选择与正文的冲突"), task.index("### 审查对象"),
+                        "决定冲突要在逐章阅读之前核")
+        section = task.split("### 先核：仍开着的选择与正文的冲突", 1)[1].split("### 登记成已定", 1)[0]
+        self.assertIn("「核的先后」①逐条给结论", section, "没指到判法所在")
+        overlay = (self.ext / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        for needle in ("每条 open 写一句结论", "不按作者声称已覆盖的位置缩小范围", "稍后问人",
+                       "各选项（含保持待定）都会有的行为才是共同要求", "不授权其中任何一个备选"):
+            self.assertIn(needle, overlay, f"判法里少了「{needle}」")
+            self.assertNotIn(needle, task, f"任务书又抄了一份判法：{needle}")
         for head, option in (("#### D-2 超时后是否自动重试", "  > 1. 自动重试一次"),
                              ("#### D-3 宽限期多长", "  > 2. 48 小时")):
             self.assertIn(head, section)
@@ -215,7 +292,10 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         plan.write_text("# 写作设计\n\n## 阅读图选择\n\n不采用：正文与表已讲清。\n", encoding="utf-8")
         section = self.reader_task().split("### 阅读图选择", 1)[1]
         self.assertIn("不采用：正文与表已讲清。", section)
-        self.assertIn("理解增益", section, "没告诉审查者判什么")
+        overlay = (self.ext / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
+        for needle in ("③ **阅读增益**", "先独立提出当前最容易混淆的关系", "赞成零阅读图时写出现有呈现已回答的问题",
+                       "反对「不采用」时写出具体的阅读问题", "是不是装饰"):
+            self.assertIn(needle, overlay, f"阅读增益的判法少了「{needle}」")
         plan.write_text("# 写作设计\n\n## 阅读图选择\n\n### recovery\n- 阅读问题：清掉记录后靠什么恢复\n"
                         "- 增益：一张图对比两边的事实\n- 放置：07-exceptions\n"
                         "- 依据：spec/spec.md > 业务流程\n- 依据：AR/story.md > 异常与恢复\n", encoding="utf-8")

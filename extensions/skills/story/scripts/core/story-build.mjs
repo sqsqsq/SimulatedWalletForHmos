@@ -43,7 +43,7 @@ import { writeDrafts } from './story/drafts.mjs';
 import {
   CommandFailure, createContext, fail, isSystemRequirement, readJson, readText, specText,
 } from './story/context.mjs';
-import { materialSubsectionName, projectAppendix, specGaps, specTerms } from './story/appendix.mjs';
+import { appendixChapter, materialSubsectionName, projectAppendix, specGaps, specTerms } from './story/appendix.mjs';
 import {
   materialListSkeleton, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
@@ -57,7 +57,6 @@ import {
 } from './story/figure-view.mjs';
 import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
-import { recordUsage } from '../../../../hooks/shared/usage.mjs';
 
 /** 命令与它做什么、要哪些命令参数（必需的写在 need）；解析与帮助读同一张表。无原型：只认表里自己的键。 */
 const COMMANDS = Object.assign(Object.create(null), {
@@ -67,7 +66,7 @@ const COMMANDS = Object.assign(Object.create(null), {
   number: { what: '给 AR/story.md 重编号：章序按合同，小节与图题按出现顺序' },
   check: { what: '只读核对确定性不变量；加 --deliver 判能不能交付', opts: ['--deliver'] },
   build: { what: '由 decisions.json 渲染 AR/review.md（人工区逐字节保留）' },
-  view: { what: `切换、准备、查看或验收图的形态（--mode ${VIEW_MODES.join('|')}）`, need: ['--mode'], opts: ['--id', '--render'] },
+  view: { what: `切换、准备、查看或验收图的形态（--mode ${VIEW_MODES.join('|')}）`, need: ['--mode'], opts: ['--id'] },
   archive: { what: '交付门 → 对接层上传与读回 → 核回执 → 登记归档态（只用于需求系统单）', need: ['--mcp-token'] },
 });
 /** 选项：值的写法与作用；值以 -- 开头时写成 `--选项=值`。 */
@@ -79,7 +78,6 @@ const OPTIONS = Object.assign(Object.create(null), {
   '--deliver': [null, '交付门：在 check 之上再核回执与读者审查'],
   '--mode': ['<模式>', '图的形态或动作'],
   '--id': ['<图块 ID>', '只作用于这一块图'],
-  '--render': ['<渲染图路径>', 'review-request 用的渲染图'],
   '--mcp-token': ['<token>', '对接层访问需求系统用，不打印'],
 });
 const KEY = { '--project-root': 'projectRoot', '--mcp-token': 'token' };
@@ -285,7 +283,7 @@ function cmdSkeleton(ctx) {
     fs.writeFileSync(ctx.storyPath, `${body.join('\n').trimEnd()}\n`, 'utf-8');
     result = `${ctx.contract.chapters.length} 章骨架 + ${made.length} 份章草稿`
       + '（`AR/story-src/drafts/`，每份开头是读者读完这一章要能回答的问题与必要种子）；'
-      + '附录的技术契约、规约、埋点、改动边界四节由 project 从真源投影，不用你写';
+      + `附录的${Object.keys(appendixChapter(ctx.contract)?.projection?.sections ?? {}).join('、')}由 project 从真源投影，不用你写`;
   }
   if (!hadPlan) result += `；写作设计空壳 ${relFromFeature(ctx, ctx.templatePath)}`;
   if (seeded.length) result += `；按写作设计骨架给 ${seeded.length} 份没动过的草稿铺好小节与表图`;
@@ -319,10 +317,10 @@ function cmdView(ctx) {
     if (mode === 'review-check') {
       const r = reviewCheck(ctx.featureRoot, id);
       if (r.state !== 'ready') fail(`阅读图 ${id} 的验收没有成立（${r.state}）：${r.reason}`);
-      process.stdout.write(`[story-build view] 阅读图 ${id} 的验收成立：可以用 view --mode svg 显示它\n`);
+      process.stdout.write(`[story-build view] 阅读图 ${id} 的验收成立（源码语义审查完成，本结论不含渲染外观验收）：可以用 view --mode svg 显示它\n`);
       return;
     }
-    const r = reviewRequest(ctx.projectRoot, ctx.featureRoot, id, ctx.args.render ?? '');
+    const r = reviewRequest(ctx.projectRoot, ctx.featureRoot, id);
     if (r.problems.length) fail(`阅读图 ${id} 的验收请求没有生成：\n  ${r.problems.join('\n  ')}`);
     process.stdout.write(`[story-build view] 验收请求 ${r.request.request_id}${r.written ? '已写入' : '没有变化'}\n${r.task.join('\n')}\n`);
     return;
@@ -375,7 +373,7 @@ function cmdArchive(ctx) {
 
 /**
  * 最外层持有视图：动手前回到正式形态（Mermaid 按源、阅读槽置空），结束或失败后恢复当前可用的阅读图。恢复失败只补视图，
- * 附在业务结果之后报出来，不遮住原来的错误。子进程继承持有标记，不各自恢复。
+ * 附在业务结果之后报出来，不遮住原来的错误。同一需求的外层已切入并持有时，子进程不再切入，也不各自恢复。
  */
 function withView(ctx, body) {
   const key = viewOwnerKey(ctx.featureRoot);
@@ -383,7 +381,7 @@ function withView(ctx, body) {
   const owner = before !== key;
   if (owner) process.env[VIEW_OWNER] = key;
   try {
-    const back = ensureMermaid(ctx.featureRoot);
+    const back = owner ? ensureMermaid(ctx.featureRoot) : { problems: [] };
     if (back.problems.length) fail(`读 story 之前要先回到正式形态（Mermaid 按源、阅读槽置空），回不去：\n  ${back.problems.join('\n  ')}`);
     return body();
   } finally {
@@ -422,11 +420,6 @@ function main() {
   }
   const ctx = createContext(args);
   if (args.command === 'view') return cmdView(ctx);
-  if (args.command === 'skeleton' || args.command === 'chapter') {
-    // 真实写作入口：Story 本轮的可观察起点。记录失败不挡写作，另报一句
-    const used = recordUsage(ctx.projectRoot, 'begin', { feature: args.feature, step: 'story' });
-    if (!used.ok) process.stderr.write(`[usage] 使用记录没写成（写作照常进行）：${(used.errors ?? []).join('；')}\n`);
-  }
   return withView(ctx, () => {
     if (args.command === 'skeleton') cmdSkeleton(ctx);
     else if (args.command === 'chapter') cmdChapter(ctx);

@@ -1,15 +1,15 @@
 /**
- * 阅读图验收 —— 写作设计选中的一张补充 SVG 是否真经过渲染与独立审查：请求绑定输入，报告绑定请求。
+ * 阅读图验收 —— 写作设计选中的一张补充 SVG 是否经过源码语义的独立审查：请求绑定输入，报告绑定请求。
  *
- * 证据放在 `AR/story-src/figures/<ID>.reading/`：`render.png`（宿主渲染当前 SVG 的完整图像）、
- * `request.json`（本模块按当前选择、依据实际内容、放置小节、SVG、本地资源与渲染图生成）、
+ * 证据放在 `AR/story-src/figures/<ID>.reading/`：
+ * `request.json`（本模块按当前选择、依据实际内容、放置小节、SVG 与本地资源生成）、
  * `report.json`（独立执行体返回、作者原样留存）。它们是派生阅读证据：不进材料原件、成文登记、正式业务审查与上传。
  *
  * 依据由 `sources.mjs::basisFiles` 逐条解析（真实位置、允许来源、登记身份、原件到阅读稿与原图），这里按类型绑定：
  * 文本整份绑定全文、选定章节绑定那一节（含全部子节），Story 取去掉阅读槽的正式文本；图片与其它二进制按原始字节；
  * 同组的原件、阅读稿与原图各按字节绑定。依据里的正式图块与它的 `.mmd` 不一致就是依据未同步，不出请求。
- * 脚本只核文件、绑定与结论自洽；图对不对、有没有增益、看不看得清由独立审查者判断，
- * 报告里的执行引用证明不了一段对话真的发生——那由宿主事件与会话证据核。
+ * 脚本只核文件、绑定与结论自洽；图对不对、有没有增益、放得合不合适由独立审查者读 SVG 源码判断，
+ * 结论不含实际渲染外观；报告里的执行引用证明不了一段对话真的发生——那由宿主事件与会话证据核。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -21,12 +21,11 @@ import { basisFiles } from './sources.mjs';
 import { shellArg } from './drafts.mjs';
 import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
 
-/** 每张阅读图必核的四件：事实与关系忠实、阅读增益、实际渲染可读、与放置位置相称。 */
-const READING_CHECKS = ['semantic_fidelity', 'reading_gain', 'visual_readability', 'placement'];
-const METHOD = 'story-reading-review/2';
+/** 每张阅读图必核的三件：事实与关系忠实、阅读增益、与放置位置相称。都读 SVG 源码判，不要求渲染图。 */
+const READING_CHECKS = ['semantic_fidelity', 'reading_gain', 'placement'];
+const METHOD = 'story-reading-review/3';
 const VERDICTS = ['PASS', 'WARN', 'FAIL', 'UNKNOWN', 'SKIP'];
 const FIGURE_CHECK = path.join(path.dirname(fileURLToPath(import.meta.url)), 'figure-check.py');
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const STORY = 'AR/story.md';
 
 const readingDir = (featureRoot, id) => path.join(featureRoot, 'AR', 'story-src', 'figures', `${id}.reading`);
@@ -115,7 +114,7 @@ function basisOf(featureRoot, subject) {
 }
 
 /**
- * 这张图此刻的验收输入：选择本身、依据实际内容、放置小节、SVG、它引用的本地资源（递归）、渲染图。缺什么列进 problems。
+ * 这张图此刻的验收输入：选择本身、依据实际内容、放置小节、SVG、它引用的本地资源（递归）。缺什么列进 problems。
  *
  * @param {{item: object, formal: string, where: string[], order: string[]}} subject figure-view 给出的候选与正式 Story
  */
@@ -134,9 +133,7 @@ function currentInputs(featureRoot, subject) {
     context = { story: STORY, section, sha256: sha(stable(place.body)), order: subject.order };
   }
   const svg = entry(featureRoot, `AR/figures/${item.id}.svg`);
-  const render = entry(featureRoot, `AR/story-src/figures/${item.id}.reading/render.png`);
   if (!svg) problems.push(`阅读图 AR/figures/${item.id}.svg 不在`);
-  if (!render) problems.push(`渲染图 ${item.id}.reading/render.png 不在：用宿主的浏览器或渲染工具实际打开当前 SVG，存完整图像`);
   let resources = [];
   if (svg) {
     const facts = svgFacts(featureRoot, item.id);
@@ -147,30 +144,21 @@ function currentInputs(featureRoot, subject) {
     }
   }
   const selection = { question: item.question, gain: item.gain, placement: item.placement, basis: item.basis };
-  return { inputs: { selection, basis: basis.map(b => b.entry), context, svg, resources, render },
+  return { inputs: { selection, basis: basis.map(b => b.entry), context, svg, resources },
     contents: { basis, context: place.body ?? '' }, problems };
 }
 
-const requestBody = (id, inputs) => ({ version: 2, id, method: METHOD, inputs, checks: READING_CHECKS });
+const requestBody = (id, inputs) => ({ version: 3, id, method: METHOD, inputs, checks: READING_CHECKS });
 const requestId = body => sha(JSON.stringify(body)).slice(0, 16);
 
 /**
- * 生成这张图的验收请求。`renderFrom` 给了就把那份渲染图存进证据目录（必须是 PNG）。
- * 请求只由输入决定：同样的输入得到同一个请求，不重写文件。`contents` 是交给审查者的依据原文。
+ * 生成这张图的验收请求。请求只由输入决定：同样的输入得到同一个请求，不重写文件。`contents` 是交给审查者的依据原文。
  *
  * @returns {{problems: string[], request?: object, written?: boolean, contents?: object}}
  */
-export function readingRequest(featureRoot, subject, renderFrom = '') {
+export function readingRequest(featureRoot, subject) {
   const { id } = subject.item;
   const dir = readingDir(featureRoot, id);
-  if (renderFrom) {
-    let bytes = null;
-    try { bytes = fs.readFileSync(path.resolve(renderFrom)); } catch { bytes = null; }
-    if (!bytes || !bytes.subarray(0, 8).equals(PNG)) return { problems: [`--render ${renderFrom} 读不到或不是 PNG 图像`] };
-    fs.mkdirSync(dir, { recursive: true });
-    const target = path.join(dir, 'render.png');
-    if (!fs.existsSync(target) || !fs.readFileSync(target).equals(bytes)) fs.writeFileSync(target, bytes);
-  }
   const { inputs, contents, problems } = currentInputs(featureRoot, subject);
   if (problems.length) return { problems };
   const body = requestBody(id, inputs);
@@ -178,12 +166,18 @@ export function readingRequest(featureRoot, subject, renderFrom = '') {
   const text = `${JSON.stringify(request, null, 2)}\n`;
   const file = path.join(dir, 'request.json');
   const written = !fs.existsSync(file) || fs.readFileSync(file, 'utf-8') !== text;
-  if (written) fs.writeFileSync(file, text, 'utf-8');
+  if (written) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, text, 'utf-8');
+  }
   return { problems: [], request, written, contents };
 }
 
+const REQUEST_AGAIN = id => `\`view --mode review-request --id ${id}\``;
+
 /**
- * 这张图的验收到哪一步了（只读）：`ready` 才能当可用的阅读图。
+ * 这张图的验收到哪一步了（只读）：`ready` 才能当可用的阅读图。`reason` 给出这一状态下最小的恢复动作，
+ * 与 `reference/svg.md` 一致：语义输入变了重发请求重审，缺报告只补同一请求的报告。
  *
  * @returns {{state: 'no-request'|'invalid'|'stale'|'no-report'|'incomplete'|'failed'|'ready', reason: string}}
  */
@@ -191,26 +185,33 @@ export function readingState(featureRoot, subject) {
   const { id } = subject.item;
   const dir = readingDir(featureRoot, id);
   const request = readJson(path.join(dir, 'request.json'));
-  if (request === undefined) return { state: 'no-request', reason: '还没有验收请求：渲染当前 SVG 后跑 view --mode review-request' };
-  if (request?.version !== 2 || request?.method !== METHOD) {
-    return { state: 'invalid', reason: `request.json 是 ${request?.method ?? '认不出的'} 合同，当前验收方法是 ${METHOD}`
-      + '（按写作设计的选择与多依据绑定）：按当前选择重新生成请求并交独立审查' };
+  if (request === undefined) return { state: 'no-request', reason: `还没有验收请求：跑 ${REQUEST_AGAIN(id)}，交独立审查` };
+  if (request?.version !== 3 || request?.method !== METHOD) {
+    return { state: 'invalid', reason: `request.json 是 ${request?.method ?? '认不出的'} 合同，本版验收方法是 ${METHOD}`
+      + '（读 SVG 源码核三项，不再要渲染图）：旧版的请求与报告本版不支持，不转换——旧版进行中的需求在旧版收口，或从 init 重起' };
   }
   const { request_id: claimed, ...body } = request;
   if (claimed !== requestId(body)) {
-    return { state: 'invalid', reason: 'request.json 的内容与它自己的 request_id 对不上（请求被改过）：重新生成请求' };
+    return { state: 'invalid', reason: 'request.json 的内容与它自己的 request_id 对不上（请求被改过）：'
+      + `跑 ${REQUEST_AGAIN(id)} 按当前输入重新生成，交独立审查` };
   }
   const { inputs, problems } = currentInputs(featureRoot, subject);
-  const expected = requestBody(id, inputs);
-  if (problems.length || claimed !== requestId(expected)) {
-    return { state: 'stale', reason: `请求绑定的输入已经变了${problems.length ? `（${problems.join('；')}）` : ''}：重新渲染、生成请求并交独立审查` };
+  if (problems.length || claimed !== requestId(requestBody(id, inputs))) {
+    return { state: 'stale', reason: `请求绑定的输入已经变了${problems.length ? `（${problems.join('；')}）` : ''}：`
+      + `跑 ${REQUEST_AGAIN(id)} 生成新请求，交独立审查` };
   }
   const report = readJson(path.join(dir, 'report.json'));
-  if (report === undefined) return { state: 'no-report', reason: `请求 ${request.request_id} 还没有独立审查报告 report.json` };
+  if (report === undefined) {
+    return { state: 'no-report', reason: `请求 ${request.request_id} 还没有独立审查报告 report.json：输入没变，`
+      + `跑 ${REQUEST_AGAIN(id)} 取任务（请求不变），交独立审查后把回复原样存下` };
+  }
   const bad = reportProblems(report, request.request_id);
-  if (bad.invalid.length) return { state: 'invalid', reason: `report.json 不成立：${bad.invalid.join('；')}` };
+  if (bad.invalid.length) {
+    return { state: 'invalid', reason: `report.json 不成立：${bad.invalid.join('；')}——请求还有效，向独立审查者取回`
+      + '这一请求的合规原始回复原样存下，不重建输入，作者不改结论' };
+  }
   if (bad.failed.length) {
-    return { state: 'failed', reason: `独立审查判了不通过：${bad.failed.join('；')}——改图或依据后重新渲染与审查；`
+    return { state: 'failed', reason: `独立审查判了不通过：${bad.failed.join('；')}——按意见改图或依据再生成请求交独立审查；`
       + '没有阅读增益就回写作设计取消这张图，再走正式内容审查' };
   }
   if (bad.open.length) return { state: 'incomplete', reason: `独立审查没有核完：${bad.open.join('；')}` };
@@ -262,13 +263,17 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
   const { selection, context } = inputs;
   const order = context.order.length > 1 ? `（这一处有 ${context.order.length} 张，顺序 ${context.order.join('、')}）` : '';
   return [
-    `阅读图验收请求 ${request.request_id}（阅读图 ${id}）。作者：把下面【交给审查者】一段原样交给不是作者的独立只读审查执行体，`
-      + '不附你的结论；它返回报告后按【作者收尾】做。',
+    `阅读图验收请求 ${request.request_id}（阅读图 ${id}）。作者：用宿主现有的专用独立只读审查入口（如 verifier 子代理）同步调用一次，`
+      + '把下面【交给审查者】一段原样作为完整任务交给它，不附你的结论，取它的最终回复后按【作者收尾】做。'
+      + '不走后台通用子代理、不轮询催收、不另拟报告格式；只收阶段审查请求的入口不能用，也不伪造阶段请求。'
+      + '宿主没有能收这种自足任务并原样返回回复的独立入口时，如实报「独立审查入口缺失」，请求与已做的图保留。',
     '【交给审查者】',
     `工程根：${projectRoot}；下面的路径都相对工程根。请求文件：${fromRoot(`AR/story-src/figures/${id}.reading/request.json`)}`,
     `这张图要回答的阅读问题：${selection.question}；作者说的增益：${selection.gain}`,
     `它放在 ${fromRoot(context.story)} 的「${context.section}」一节末尾的阅读槽里${order}。`,
-    `审查者自己打开：${[inputs.svg, inputs.render, ...inputs.resources].map(x => fromRoot(x.path)).join('、')}`,
+    `审查者自己打开读源码：${[inputs.svg, ...inputs.resources].map(x => fromRoot(x.path)).join('、')}。`
+      + '核图里实际的文字、图元与连线，不拿 title、metadata 或作者说法代替；不需要渲染图或看图能力。'
+      + '必要的业务事实只在嵌入位图或转曲路径里、依据也没写的，写进 unreviewed，不猜它的内容。',
     '依据（脚本按写作设计当前实际读到的内容；一张图可以综合多段文字、表与图）：',
     ...contents.basis.flatMap(b => [
       !b.entry.read ? `- ${fromRoot(b.entry.path)}（只抽了图的原件，正文没有采用，只作身份；要看的是下面的原图）`
@@ -283,7 +288,6 @@ export function reviewTask(projectRoot, featureRoot, { request, contents }) {
       + '不须与哪张单图逐节点相同，不得编造依据里没有的规则；',
     '- reading_gain：是否回答上面的阅读问题；与这一节已有的文字、表与 Mermaid 比，是否把隐含或分散的关系讲清。'
       + '只换颜色或方向不算增益——没有增益判 FAIL，建议作者回写作设计取消这张图；',
-    '- visual_readability：亲自打开渲染图，核标签、箭头、布局与裁切；看不了图判 UNKNOWN 并写进 unreviewed，不拿 XML 结构代替；',
     '- placement：图在这一节是否服务叙述，不替代必要正文，不与别处规则矛盾。',
     `把报告作为你的最终回复返回，只返回这一个 JSON，不写文件、不跑命令：{"request_id": "${request.request_id}", "executor": "", `
       + '"checks": [{"id","verdict","evidence"}], "blocking_findings": [], "advisories": [], "unreviewed": []}',

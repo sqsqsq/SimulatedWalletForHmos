@@ -107,7 +107,7 @@ node <包>/skills/story-adaptation/scripts/adapt-scan.mjs --check --target <目�
 | ① 机制面 | 这一次覆盖范围内的文件与包逐字一致，包里没有的目标也不该有 |
 | ② manifest | 合成一遍等于盘上那份——机制登记跟包，`name` / `description` / `adapters` / `adapted_for` / `provides.knowledge` 跟目标 |
 | ③ 入口文件 | `AGENTS.md` / `CLAUDE.md` 含扩展段与 `<!-- story-ext:begin -->` … `<!-- story-ext:end -->` 标记区 |
-| ④ `.gitignore` | 章草稿目录、使用记录的一次性输入（`.usage-input.json`）、统计输出（`.usage-stats/`）与记录器锁/临时文件被挡住；`doc/usage.json` 在、合法、能随普通 `git add` 入库（缺了由 `--apply` 建立；它归目标，升级不覆盖） |
+| ④ `.gitignore` | 章草稿目录、使用记录的一次性输入（`.usage-input.json`）、本地运行态（`.usage-state.json`）与记录器锁/临时文件被挡住；`doc/usage.json` 在、合法、能随普通 `git add` 入库（缺了由 `--apply` 建立；它归目标，升级不覆盖） |
 | ⑤ 包的脚本层 | **包**的 `skills/story/scripts/` 这一层只有 `core/` 与 `adapters/` 两个目录，根下没有文件 |
 
 目标的 `framework.config.json` 把 `lifecycle_hooks_enabled` 设为 `false` 时，`--apply` 与 `--check` 都另打一行「采集限制」：阶段钩子不执行，直接走 Framework 阶段的使用记不下来。这是目标的设置，照原样转告人，不替它改。
@@ -133,7 +133,6 @@ diff 照样把那处算到 adapt 头上；反过来目标把上一次升级提�
 
 ## 不做的事
 
-- **不做历史兼容**：旧结构、混合目录、部分迁移状态都不进设计、不进分支、不进验收。已有产物由用户手动调整。
 - **脚本不动 knowledge**：升级不读不写，首次不放包里的正文；知识内容只由你在人定的范围内按方法页改。
 - **不动 framework**：包不依赖任何 framework 改动。
 - **不动目标 `framework.config.json` 的其它键**：它是目标工程的架构 DSL 真源，adapt 只在首次安装时确保 `paths.extension_dir` 存在。

@@ -14,7 +14,7 @@
 只用标准库：docx 是 zip + OOXML，图片抽取本就要走 `zipfile` + XML；再引第三方解析器
 等于结构走一套、图片走另一套，还给交付件添一项部署依赖。
 
-输入与格式的失败（读不开、没归类、路径冲突、转换缺口）都在写盘之前报出，一个字节不动；
+输入与格式的失败（读不开、没归类、链接越界、转换缺口）都在写盘之前报出，一个字节不动；
 写盘中途的 I/O 失败不冒称「整批没变」，如实报出已写的目标、旧版备份与失败位置。
 导入也不留回执：材料现在是什么、哪些原件已经并入正文，一律去 `materials/registry.py`
 的清单里按磁盘现状问。同一事实两处写，其中一处过期或被清掉时，两边都还理直气壮。
@@ -149,6 +149,25 @@ def source_key(inbox: Path, path: Path) -> str:
     return path.relative_to(inbox).as_posix()
 
 
+def derived_name(key: str) -> str:
+    """原件派生物的名字：主名 + 身份键 UTF-8 的 SHA256 前 16 位。
+
+    不同目录下的同名原件身份键不同，派生物各落各的，不用人改名；主名留着给人和视觉链路看。
+    只看路径不看内容：原件改了内容，派生物仍在原处整份替换。导入写盘与清单判并入都调这一处。
+    """
+    return f"{PurePosixPath(key).stem}.{sha256(key.encode('utf-8')).hexdigest()[:16]}"
+
+
+def assets_for(key: str) -> Path:
+    """docx 内嵌图抽到哪个目录（相对需求目录）。"""
+    return Path("assets") / derived_name(key)
+
+
+def ux_image_target(key: str) -> Path:
+    """界面图平铺到哪个文件（相对需求目录）：派生名加原后缀。"""
+    return UX_IMAGE_DIR / f"{derived_name(key)}{PurePosixPath(key).suffix}"
+
+
 def check_inbox_root(inbox: Path) -> None:
     """收件箱根本身得是需求目录下的实目录：根是链接或目录联接，等于把别处的文件当成本需求的原件。
 
@@ -246,46 +265,13 @@ def validate(inbox: Path, sources: list[Path], classify: dict[str, str]) -> None
                             "：原件要按版本留住，引用才指得回同一段原文")
     for key in sorted(set(classify) - keys):
         problems.append(f"inbox/{CLASSIFY_FILE} 的键「{key}」没有对应的原件：移走或改名的原件把它的归类键一并删掉或改掉")
-    problems += _collisions(inbox, sources, classify)
+    assets = inbox.parent / "assets"
+    for old in sorted(p.name for p in assets.iterdir() if p.is_dir()) if assets.is_dir() else []:
+        if not re.fullmatch(r".+\.[0-9a-f]{16}", old):
+            problems.append(f"assets/{old}/ 是旧版导入按主名落的图片目录，本版按原件路径派生目录"
+                            "：旧版进行中的需求在旧版收口，或从 init 重起")
     if problems:
         raise ImportError_("\n".join(problems))
-
-
-def _collisions(inbox: Path, sources: list[Path], classify: dict[str, str]) -> list[str]:
-    """写入前的落点冲突：两份原件会写到同一个地方，就点名全部相关原件与目标，不自动改名。
-
-    原件身份是相对路径，而落点只取文件名或主名——正文分节标题、抽图目录 `assets/<主名>/`、
-    界面图 `ux-reference/<文件名>`、会议版本目录都按名字落。不同目录下同名的文件，
-    或主名相同、落点相撞的文件，写下去就会互相覆盖或拼错节；按不区分大小写比，目标平台上它们是同一个位置。
-    """
-    targets: dict[str, list[str]] = {}
-    names: dict[str, list[str]] = {}
-    doc = {cls: rel.as_posix() for cls, rel in doc_targets().items()}
-    for path in sources:
-        key = source_key(inbox, path)
-        names.setdefault(path.name.casefold(), []).append(key)
-        cls, ext = classify.get(key), path.suffix.lower()
-        if cls not in CLASSES:
-            continue
-        spots = []
-        if cls == "MEETING":
-            spots.append(f"AR/story-src/meetings/{path.stem}/")
-        elif ext in IMAGE_EXTS:
-            spots.append(f"{UX_IMAGE_DIR.as_posix()}/{path.name}")
-        else:
-            if cls in doc:
-                spots.append(f"{doc[cls]} 的「## {path.stem}」一节")
-            if ext == DOC_EXT:
-                spots.append(f"assets/{path.stem}/")
-        for spot in spots:
-            targets.setdefault(spot.casefold(), []).append(f"{key} → {spot}")
-    out = [f"不同目录下有同名原件：{'、'.join(keys)}——导入落点按文件名取，请改名或整理后再导"
-           for keys in names.values() if len(keys) > 1]
-    # 文件名相同的那几份上面已经点过名；这里报的是名字不同、落点却相撞的（同主名、只差大小写）
-    out += [f"几份原件会写到同一个落点：{'；'.join(hits)}——请改名或整理后再导"
-            for hits in targets.values()
-            if len({PurePosixPath(h.split(' → ')[0]).name for h in hits}) > 1]
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +609,7 @@ def demote_headings(markdown: str, shift: int) -> str:
 
 
 def render_target(sections: list[tuple[str, str, str]]) -> str:
-    """目标文件 = 本类材料按相对路径排序拼接（每节 `(源键, 标题, 正文)`）。无时间戳等易变量，保证重跑字节一致。"""
+    """目标文件 = 本类材料按相对路径排序拼接（每节 `(源键, 标题, 正文)`，标题就是源键）。无时间戳等易变量，保证重跑字节一致。"""
     parts = [GENERATED_MARK, ""]
     for _key, title, body in sections:
         parts.append(f"## {title}")
@@ -656,11 +642,12 @@ def preview(path: Path) -> dict:
 def convert_sources(inbox: Path, sources: list[Path], classify: dict[str, str]
                     ) -> tuple[dict[str, list[tuple[str, str, str]]],
                                dict[str, dict[str, bytes]], list[Path]]:
-    """把这批材料整批转换到内存：正文按类分节、docx 内嵌图按源文档归组、界面图单列。
+    """把这批材料整批转换到内存：正文按类分节、docx 内嵌图按源键归组、界面图单列。
 
     返回的就是「这批料落盘后该长成什么样」。`registry.py` 反过来拿它问磁盘：正文是不是
     这批料的转换结果——判「已并入」与真正写进去的东西必须出自同一个算法，否则两边会分叉。
-    每节带着源键：哪几份原件合成了哪份正文，清单的来源关系照它派生，不另算一遍。
+    每节带着源键、节标题就是源键：哪几份原件合成了哪份正文，清单的来源关系照它派生，不另算一遍；
+    不同目录下的同名原件各占一节。图的落点按源键派生（`assets_for`、`ux_image_target`）。
     """
     doc_sections: dict[str, list[tuple[str, str, str]]] = {c: [] for c in CLASSES}
     media: dict[str, dict[str, bytes]] = {}
@@ -677,22 +664,21 @@ def convert_sources(inbox: Path, sources: list[Path], classify: dict[str, str]
                     f"「{key}」是图片但归类为 {cls}：图片只能归 UX（界面设计）")
             ux_images.append(path)
             continue
-        stem = path.stem
         if path.suffix.lower() == DOC_EXT:
             # docx 是压缩包，必须脚本转：zip + OOXML，顺带把内嵌图抽出来
-            markdown, blobs = docx_to_markdown(path, f"../assets/{stem}")
+            markdown, blobs = docx_to_markdown(path, f"../{assets_for(key).as_posix()}")
             if blobs:
-                media[stem] = blobs
+                media[key] = blobs
         else:
             # 文本原样并入——它已经是可读格式，任何"转换"都只会丢东西
             markdown = path.read_text(encoding="utf-8").strip()
         if cls == "IMAGES":
-            if not media.get(stem):
+            if not media.get(key):
                 raise ImportError_(
                     f"「{key}」归类为 IMAGES（只抽图）但里面没有图——"
                     "要并入正文的话改归 RR / SR / AR / UX")
             continue          # 图已经在 media 里，正文丢掉：这一档就是不动正文
-        doc_sections[cls].append((key, stem, markdown))
+        doc_sections[cls].append((key, key, markdown))
 
     return doc_sections, media, ux_images
 
@@ -888,9 +874,9 @@ def _write_all(feature_root: Path, project_root: Path, sources: list[Path], inbo
                progress: "_Progress", meeting) -> dict:
     """按内存里已转换好的结果落盘；每一处开始、进行到哪、做完都记进 ``progress``，失败时调用方据此如实报告。"""
     doc_steps = [(cls, rel) for cls, rel in doc_targets().items() if doc_sections[cls]]
-    progress.plan = ([rel.as_posix() for _, rel in doc_steps] + [f"assets/{stem}/" for stem in media]
-                     + [f"{UX_IMAGE_DIR.as_posix()}/{p.name}" for p in ux_images]
-                     + [f"会议留存 {p.name}" for p, _, _ in meetings])
+    progress.plan = ([rel.as_posix() for _, rel in doc_steps] + [f"{assets_for(key).as_posix()}/" for key in media]
+                     + [ux_image_target(source_key(inbox, p)).as_posix() for p in ux_images]
+                     + [f"会议留存 {source_key(inbox, p)}" for p, _, _ in meetings])
     targets: list[str] = []
     for cls, rel in doc_steps:                      # 只有有正文落点、且该类有材料的才写盘
         target = feature_root / rel
@@ -912,9 +898,9 @@ def _write_all(feature_root: Path, project_root: Path, sources: list[Path], inbo
             return path.resolve().as_posix()
 
     images: list[str] = []
-    for stem, blobs in media.items():
-        asset_dir = feature_root / "assets" / stem
-        progress.start(f"assets/{stem}/", "正在清掉旧图")
+    for key, blobs in media.items():
+        asset_dir = feature_root / assets_for(key)
+        progress.start(f"{assets_for(key).as_posix()}/", "正在清掉旧图")
         if asset_dir.exists():
             shutil.rmtree(asset_dir)  # 收敛：源文档改了，旧图不该留下
         asset_dir.mkdir(parents=True, exist_ok=True)
@@ -926,19 +912,20 @@ def _write_all(feature_root: Path, project_root: Path, sources: list[Path], inbo
         log(f"图片 → {shown(asset_dir)}/（{len(blobs)} 张）")
 
     for path in ux_images:
+        rel = ux_image_target(source_key(inbox, path))
         dest_dir = feature_root / UX_IMAGE_DIR
-        progress.start(f"{UX_IMAGE_DIR.as_posix()}/{path.name}", "正在覆盖写入")
+        progress.start(rel.as_posix(), "正在覆盖写入")
         dest_dir.mkdir(parents=True, exist_ok=True)
         # 顶层平铺：框架对 ux-reference 的扫描非递归，放子目录等于隐形
-        # 子目录里的界面图同样平铺到顶层：同名冲突已在写入前拦下
-        shutil.copyfile(path, dest_dir / path.name)
+        # 子目录里的同名界面图按派生名各落一处，互不覆盖
+        shutil.copyfile(path, feature_root / rel)
         progress.finish()
-        targets.append(f"{UX_IMAGE_DIR.as_posix()}/{path.name}")
-        images.append(shown(dest_dir / path.name))
-        log(f"UX 参考图 → {shown(dest_dir / path.name)}")
+        targets.append(rel.as_posix())
+        images.append(shown(feature_root / rel))
+        log(f"UX 参考图 → {shown(feature_root / rel)}")
     for path, text, blobs in meetings:
         # 一个源版本一个目录：同名换了内容落新目录，旧版本的原文与读会产物原样留着
-        progress.start(f"会议留存 {path.name}", "正在写这一版的原件、转换文本与图")
+        progress.start(f"会议留存 {source_key(inbox, path)}", "正在写这一版的原件、转换文本与图")
         folder, fresh = meeting.save_version(feature_root, path, text, blobs)
         progress.finish()
         rel = folder.relative_to(feature_root).as_posix()

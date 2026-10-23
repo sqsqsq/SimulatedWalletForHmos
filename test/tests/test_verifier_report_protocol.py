@@ -27,8 +27,10 @@ blocker 数一致不一致，都是 `check-receipt` 的判断，扩展不重复�
 落盘那一步就没有对象。这两道也在这一份里锚住。
 """
 import json
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -539,6 +541,15 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         (src / "decisions.json").write_text("[]", encoding="utf-8")
         shutil.copy2(REPO / "test/fixtures/failure-modes/R01-verdict-echo/good/doc/features"
                      "/REQ-DEMO/AR/story-src/story-template.md", src / "story-template.md")
+        # story init 建的使用记录身份与登记过的流程契约：交付门在回执通过后为 spec 收尾，按它们结算
+        (src.parents[1] / ".usage-id").write_text("20261022T080000.000Z\n", encoding="utf-8")
+        sys.path.insert(0, str(DEV_EXT / "skills" / "story" / "scripts" / "core"))
+        from flow import state  # noqa: PLC0415
+        state.save(src.parents[1], {"schema": state.SCHEMA, "rounds": [{"round": 1}], "status": "story_written",
+                                    "story_written_at": "2026-10-22T08:30:00Z", "story_digests": {}})
+
+    #: 回执通过时 Framework 写下的闭环事实
+    CLOSED = {"closure_status": "closed", "closure_commit": {"committed_at": "2026-10-22T09:00:00.000Z"}}
 
     def check(self, *extra: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -613,7 +624,8 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self._stub_receipt(0, "回执通过")
         reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
         reports.mkdir(parents=True)
-        (reports / "summary.json").write_text(json.dumps({"phase": "spec", "verdict": "PASS"}), encoding="utf-8")
+        (reports / "summary.json").write_text(json.dumps({"phase": "spec", "verdict": "PASS", **self.CLOSED}),
+                                              encoding="utf-8")
 
         out = self.check("--deliver")
         self.assertIn("未经读者语义审查即交付", out.stdout,
@@ -628,7 +640,7 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         reports = self.root / "doc" / "features" / FEATURE / "spec" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
         (reports / "summary.json").write_text(
-            json.dumps({"phase": "spec", "verifier_report": REPORT_REL}),
+            json.dumps({"phase": "spec", "verifier_report": REPORT_REL, **self.CLOSED}),
             encoding="utf-8")
         ids = list(yaml.safe_load((DEV_EXT / "rules" / "spec-rules.overlay.yaml")
                                   .read_text(encoding="utf-8"))["semantic_checks"])
@@ -691,6 +703,27 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self.assertNotIn("判的是", both, "审查判了 PASS 却被交付门拦住")
         self.assertNotIn("未经读者语义审查", both, "有报告却说没审过")
         self.assertNotIn("[⑭ 交付门]", both, f"交付门报了问题：{both[-600:]}")
+
+    def test_a_passing_gate_has_already_recorded_the_spec_step(self) -> None:
+        """交付门放行时 spec 这一步已经在 usage 里：之后归档、提交或停在这里都不缺最后一步。"""
+        self._stub_receipt(0, "回执通过")
+        self.write_report("PASS")
+        self.check("--deliver")
+        usage = json.loads((self.root / "doc" / "usage.json").read_text(encoding="utf-8"))
+        node = usage["requirements"][f"{FEATURE}-20261022T080000.000Z"]
+        self.assertIn("spec", node["steps"], "交付门没为 spec 收尾")
+
+    def test_usage_not_ready_holds_the_delivery(self) -> None:
+        """使用记录收不了尾（身份丢了）：业务已闭环，但不交付，原因与重试入口说清。"""
+        self._stub_receipt(0, "回执通过")
+        self.write_report("PASS")
+        (self.root / "doc" / "features" / FEATURE / ".usage-id").unlink()
+        out = self.check("--deliver")
+        both = out.stdout + out.stderr
+        self.assertNotEqual(0, out.returncode)
+        self.assertIn("spec 业务已闭环，使用记录未完成", both)
+        self.assertIn("重跑交付门", both)
+        self.assertNotIn("交付门通过", both, "使用记录没成却说可以交付")
 
     def gate(self, edit) -> str:
         self._stub_receipt(0, "回执通过")
@@ -1057,6 +1090,17 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         # 构造器只给这一条在明细里的结构（框架通用输出把 details 写成文字，本条要映射），一处
         self.assertEqual(1, fragment.count("在 YAML 明细里的结构"))
 
+    def test_the_example_paths_are_rows_of_the_table(self) -> None:
+        """照抄示例就是合法写法：示例路径取自「读这些」表，没有要替换的占位；一项一份、不通配写在表下。"""
+        task = self.inject()
+        example = task.split("在 YAML 明细里的结构", 1)[1]
+        self.assertNotIn("<需求>", example, "示例里还有占位路径")
+        paths = set(re.findall(r'"(doc/features/[^"]+)"', example))
+        self.assertTrue(paths, "示例里没有路径")
+        self.assertLessEqual(paths, {x["path"] for x in self.basis()["inputs"]}, "示例路径不在表里")
+        reads = task.split("### 读这些", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("不用 `*` 通配，也不把几份合成一项", reads)
+
     def test_the_collaboration_order_is_judged_by_relation_not_headcount(self) -> None:
         """两方之间也可能有复杂往返，多方单向直通反而不需要——不设人数门槛。"""
         method = self.overlay_method()
@@ -1340,6 +1384,30 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
         second = self.inject()
         (src / "decisions.json").write_text(json.dumps({"decisions": []}), encoding="utf-8")
         self.assertNotEqual(second, self.inject(), "登记的决定变了，审查对象却没变")
+
+    def test_the_flow_digest_follows_what_the_human_signed(self) -> None:
+        """选项原文、人答、谁定与是否生效变了，审查依据跟着变；时刻与显示序号变了不换对象。"""
+        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        gate = {"gate": "scope_decision", "ask_id": "a1", "no": 2, "at": "2026-01-01T00:00:00Z", "chosen": "later",
+                "options": [{"no": 1, "key": "now", "label": "本期做"}, {"no": 2, "key": "later", "label": "后续定"}],
+                "reply": "后续定", "mapped_by": "reply", "by": "human", "outcome": "accepted"}
+
+        def digest(**change) -> str:
+            g = json.loads(json.dumps(gate))
+            g.update(change)
+            (src / "story-flow.json").write_text(json.dumps({"rounds": [{"round": 1, "gates": [g]}]},
+                                                            ensure_ascii=False), encoding="utf-8")
+            return self.basis()["by"][self.at("AR/story-src/story-flow.json")]["digest"]
+
+        first = digest()
+        renumbered = [{"no": 2, "key": "now", "label": "本期做"}, {"no": 1, "key": "later", "label": "后续定"}]
+        self.assertEqual(first, digest(at="2026-02-02T00:00:00Z", no=1, options=renumbered, ask_id="a2"),
+                         "时刻与显示序号变了，审查对象却换了")
+        relabelled = [{"no": 1, "key": "now", "label": "本期做"}, {"no": 2, "key": "later", "label": "默认先做再说"}]
+        for name, change in (("选项原文", {"options": relabelled}), ("人答", {"reply": "先不定"}),
+                             ("谁定", {"by": "model"}), ("是否生效", {"outcome": "rejected"})):
+            with self.subTest(name):
+                self.assertNotEqual(first, digest(**change), f"{name}变了，审查对象没跟着变")
 
     def test_the_plan_review_reads_its_own_basis(self) -> None:
         by = self.basis("plan")["by"]

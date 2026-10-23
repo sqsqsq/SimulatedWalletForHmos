@@ -32,7 +32,7 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
 import { citableRows, originRows, relFromStory, sourceCatalog, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
 import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
-import { recordUsage } from '../shared/usage.mjs';
+import { signedGateRows } from '../shared/review-inputs.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const TEMPLATE = 'doc/extensions/skills/story/templates/spec-sections.md';
@@ -183,19 +183,21 @@ function currentDecisions(projectRoot, feature) {
       + '先修好它再动笔，读不出不等于没有议题。'];
   }
   if (!list.length) return ['**当前登记为空**：按业务流程走的时候认出要人定的事，照上面的字段登记。'];
-  const rows = ['当前登记（原文照列；仍 open 的选择只写共同要求与受影响的条件，不写成确定的行为或验收）：', ''];
+  const rows = ['当前登记（原文照列，是待按上面人签原文核的作者解释）。**动笔写功能、流程、异常与验收之前**，先拿每条 open 找它影响的用户动作、状态去向与验收：'
+    + '这些位置只写各备选都成立的共同部分，受影响的行为写成待它定的条件，不写成默认可用、可重试、已开放或本期不做；'
+    + '没被它影响的部分照常写完。人已选择保持待定的不再重复问，也不替他选一边。', ''];
   for (const status of ['open', 'settled']) {
     const items = list.filter(d => String(d?.status ?? '') === status);
     if (!items.length) continue;
-    rows.push(`### ${status}`, '');
+    rows.push(`#### ${status}`, '');
     for (const d of items) {
-      rows.push(`#### ${d.id ?? '（无 id）'}：${d.title ?? ''}`, '', `该谁定：${d.decider ?? '—'}`, '',
+      rows.push(`##### ${d.id ?? '（无 id）'}：${d.title ?? ''}`, '', `该谁定：${d.decider ?? '—'}`, '',
         String(d.clarification ?? '').trim() || '（澄清正文空）', '');
     }
   }
   const other = list.filter(d => !['open', 'settled'].includes(String(d?.status ?? '')));
   if (other.length) rows.push(`状态不是 open / settled 的：${other.map(d => d?.id ?? '（无 id）').join('、')}——按字段要求改正。`, '');
-  rows.push('写完正文后按当时的登记再对一遍：新增或改过的议题，影响有没有写回功能、流程与验收处。');
+  rows.push('写完正文后按当时的登记再对一遍：每条 open 影响的那几处有没有被写成默认行为；新增或改过的议题，影响有没有写回功能、流程与验收处。');
   return rows;
 }
 
@@ -217,6 +219,12 @@ function decisionSection(projectRoot, feature, contract) {
     + '`decider` 写该谁定。`decider` 有名字只说明该谁定，不说明他定过。',
     '',
     '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。',
+    '',
+    '### 人签原文（关卡记录）',
+    '',
+    ...signedGateRows(featureRoot(projectRoot, feature)),
+    '',
+    '### 作者登记',
     '',
     ...currentDecisions(projectRoot, feature)];
 }
@@ -326,10 +334,8 @@ function diagramSection(heading, label, src, derived) {
     return rows;
   }
   rows.push(`原件在 \`${rel}\`，每张图的内容附在下面（取自这一刻的原件）。`,
-    '每一张讲的关系都要在 story 里有去向：安排在讲这件事的小节，由正文、表或图承接，几节共同承接也可以；'
-    + '在写作设计那一节下写 `- 承接上游图：<身份>` 登记，机器核的就是登记与那一节的正文。',
-    '**承接是关系还在，不是照抄**：改画成时序、拆成表与段落、按本需求补上它没画的分支都可以，'
-    + '原图里的角色、条件、调用与返回、失败归属不能丢。两份上游画的是同一件事时，两行登记写在同一节。', '');
+    '每一张讲的关系在 story 里由讲这件事的小节承接，在写作设计那一节下写 `- 承接上游图：<身份>` 登记；'
+    + '怎样换载体而不丢关系见 `story-write.md` 第三节「换图种可以，丢关系不行」。两份上游画的是同一件事时，两行登记写在同一节。', '');
   for (const d of list) {
     rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`
       + `——原件 \`${rel}\` 第 ${d.at.from}–${d.at.to} 行；`
@@ -428,6 +434,8 @@ function taskPackage(projectRoot, feature) {
     ...statDesignSection(projectRoot, feature),
     '',
     '数值怎么标来源、验收怎么接回规约，见 `author.md`。',
+    '',
+    `阶段闭环之后收尾（走 \`/story\` 的由交付门自动做）：\`python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature ${shellArg(feature)} --finalize --phase spec\``,
   ];
   return rows.join('\n');
 }
@@ -441,9 +449,6 @@ function main(argv) {
     process.stderr.write(USAGE + '\n');
     return 2;
   }
-  // 本轮作者工作的可观察起点：记录失败不挡任务包，另报一句
-  const used = recordUsage(process.cwd(), 'begin', { feature, step: 'spec' });
-  if (!used.ok) process.stderr.write(`[usage] 使用记录没写成（任务包照常给出）：${(used.errors ?? []).join('；')}\n`);
   const back = ensureMermaid(featureRoot(process.cwd(), feature));
   if (back.problems.length) throw new Error(`story 回不到正式形态，任务包按正式正文读图：\n${back.problems.join('\n')}`);
   process.stdout.write(taskPackage(process.cwd(), feature) + '\n');

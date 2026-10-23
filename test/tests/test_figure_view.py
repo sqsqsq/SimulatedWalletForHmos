@@ -113,10 +113,8 @@ class FigureViewCase(unittest.TestCase):
         return path
 
     def make_ready(self, cid: str = "recovery", verdict: str = "PASS", **report: object) -> dict:
-        """走完验收：存一张渲染图、生成请求、放一份独立审查报告（替身，只为绑定与结论自洽）。"""
-        shot = self.root / "shot.png"
-        shot.write_bytes(PNG + b"render")
-        self.ok("review-request", "--id", cid, "--render", str(shot))
+        """走完验收：生成请求、放一份独立审查报告（替身，只为绑定与结论自洽）。"""
+        self.ok("review-request", "--id", cid)
         request = json.loads((self.reading(cid) / "request.json").read_text(encoding="utf-8"))
         body = {"request_id": request["request_id"], "executor": "subagent-7",
                 "checks": [{"id": c, "verdict": verdict, "evidence": f"核过 {c}"} for c in request["checks"]],
@@ -136,7 +134,7 @@ class ZeroOrManyReadingFigures(FigureViewCase):
         self.design(NONE)
         self.ok("prepare")
         self.assertTrue(self.src(self.fig_id()).is_file(), "正式图没有建源")
-        self.assertEqual({"applicable": False, "complete": True, "items": [], "unmanaged": [], "problems": [], "next": None},
+        self.assertEqual({"applicable": False, "complete": True, "items": [], "problems": [], "next": None},
                          self.work())
         before = self.story.read_bytes()
         for mode in ("svg", "mermaid"):
@@ -216,18 +214,21 @@ class ZeroOrManyReadingFigures(FigureViewCase):
 
 
 class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
-    def test_the_request_binds_every_basis_the_place_and_the_render(self) -> None:
+    def test_the_request_binds_every_basis_the_place_and_the_svg_without_a_render(self) -> None:
         self.ready()
+        self.assertFalse((self.reading() / "render.png").exists(), "没有渲染图也该能走完验收")
         request = json.loads((self.reading() / "request.json").read_text(encoding="utf-8"))
-        self.assertEqual((2, "story-reading-review/2"), (request["version"], request["method"]))
-        self.assertEqual(["semantic_fidelity", "reading_gain", "visual_readability", "placement"], request["checks"])
+        self.assertEqual((3, "story-reading-review/3"), (request["version"], request["method"]))
+        self.assertEqual(["semantic_fidelity", "reading_gain", "placement"], request["checks"])
         inputs = request["inputs"]
         self.assertEqual([("AR/story.md", "业务流程 › 提交与回执"), ("AR/story.md", "异常与恢复 › 共同恢复规则")],
                          [(b["path"], b["section"]) for b in inputs["basis"]])
         self.assertEqual(("业务流程 › 提交与回执", ["recovery"]), (inputs["context"]["section"], inputs["context"]["order"]))
         self.assertEqual("受理失败之后靠什么恢复", inputs["selection"]["question"])
-        self.assertEqual("AR/story-src/figures/recovery.reading/render.png", inputs["render"]["path"])
+        self.assertEqual("AR/figures/recovery.svg", inputs["svg"]["path"])
+        self.assertNotIn("render", inputs, "请求里还绑着渲染图")
         out = self.ok("review-request", "--id", "recovery").stdout
+        self.assertNotIn("visual_readability", out)
         self.assertIn(f"工程根：{self.root}", out)
         self.assertIn(f"doc/features/{FEATURE}/AR/story-src/figures/recovery.reading/report.json", out)
         self.assertIn("「业务流程 › 提交与回执」", out)
@@ -239,6 +240,12 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
         reviewer = "\n".join(lines[lines.index("【交给审查者】") + 1:lines.index("【作者收尾】")])
         author = "\n".join(lines[lines.index("【作者收尾】") + 1:])
         self.assertIn("只返回这一个 JSON，不写文件、不跑命令", reviewer)
+        self.assertIn("读源码", reviewer, "审查者不知道要读 SVG 源码")
+        self.assertIn("不需要渲染图", reviewer)
+        self.assertIn("嵌入位图", reviewer, "位图里的必要事实没有交代写进未核")
+        intro = "\n".join(lines[:lines.index("【交给审查者】")])
+        self.assertIn("同步调用", intro, "没有交代用专用独立审查入口同步取回")
+        self.assertIn("独立审查入口缺失", intro, "没有入口时的去向没交代")
         self.assertNotIn("review-check", reviewer, "让只读审查者去跑核对命令")
         self.assertIn("report.json", author)
         self.assertIn("review-check", author, "落盘与核对不在作者那一段")
@@ -246,11 +253,9 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
     def test_each_input_change_makes_it_stale_and_display_or_unrelated_edits_do_not(self) -> None:
         self.ready()
         svg_path = self.fr / "AR" / "figures" / "recovery.svg"
-        render = self.reading() / "render.png"
         story = self.story.read_bytes()
         changes = {
             "SVG": (lambda: self.put_svg(text=svg("<text>多一句</text>")), lambda: self.put_svg()),
-            "渲染图": (lambda: render.write_bytes(PNG + b"other"), lambda: render.write_bytes(PNG + b"render")),
             "另一章依据的正文": (lambda: self.edit("按远端事实恢复。", "按远端事实与客服记录恢复。"), lambda: self.story.write_bytes(story)),
             "放置小节的正文": (lambda: self.edit("图后：", "图后（改了）："), lambda: self.story.write_bytes(story)),
             "阅读问题": (lambda: self.design(candidate(question="谁负责恢复")), lambda: self.design(candidate())),
@@ -263,12 +268,68 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
                 undo()
                 self.assertEqual("ready", self.state())
         self.assertEqual(svg_path.read_text(encoding="utf-8"), svg())
+        (self.reading() / "render.png").write_bytes(PNG + b"left over")
+        self.assertEqual("ready", self.state(), "遗留的渲染图参与了验收")
         self.edit("取消后退款。", "取消后原路退款。")
         self.assertEqual("ready", self.state(), "无关章节的改动让阅读图过期")
         self.ok("svg")
         self.assertEqual("ready", self.state(), "显示阅读图改了请求身份")
         self.ok("mermaid")
         self.assertEqual("ready", self.state())
+
+    def test_an_unrelated_inline_mermaid_does_not_hold_up_a_selected_figure(self) -> None:
+        self.ready()
+        self.edit("取消后退款。", "取消后退款。\n\n```mermaid\nflowchart LR\n  X[取消] --> Y[退款]\n```")
+        work = self.work()
+        self.assertEqual((True, [], None), (work["complete"], work["problems"], work["next"]), "无关的内联 Mermaid 被当成阅读待办")
+        self.ok("svg")
+        self.assertTrue(self.slot(), "选中且验收成立的图没有显示")
+        self.assertIn("X[取消]", self.text(), "合法正文被改了")
+
+    def test_each_change_names_the_smallest_recovery(self) -> None:
+        self.ready()
+        story = self.story.read_bytes()
+        changes = {
+            "SVG": (lambda: self.put_svg(text=svg("<text>多一句</text>")), lambda: self.put_svg()),
+            "另一章依据的正文": (lambda: self.edit("按远端事实恢复。", "按远端事实与客服记录恢复。"), lambda: self.story.write_bytes(story)),
+            "放置小节的正文": (lambda: self.edit("图后：", "图后（改了）："), lambda: self.story.write_bytes(story)),
+            "阅读问题": (lambda: self.design(candidate(question="谁负责恢复")), lambda: self.design(candidate())),
+        }
+        for name, (change, undo) in changes.items():
+            with self.subTest(name):
+                change()
+                item = self.item()
+                self.assertEqual("stale", item["state"])
+                self.assertIn("生成新请求，交独立审查", item["reason"], f"{name}变了，恢复动作不对")
+                self.assertNotIn("渲染", item["reason"])
+                undo()
+                self.assertEqual("ready", self.state())
+
+        before = json.loads((self.reading() / "request.json").read_text(encoding="utf-8"))["request_id"]
+        self.edit("按远端事实恢复。", "按远端事实与客服记录恢复。")
+        self.ok("review-request", "--id", "recovery")
+        after = json.loads((self.reading() / "request.json").read_text(encoding="utf-8"))["request_id"]
+        self.assertNotEqual(before, after, "依据变了却没换请求")
+        item = self.item()
+        self.assertEqual("invalid", item["state"], "旧报告被当成新请求的结论")
+        self.assertIn("不重建输入", item["reason"])
+        (self.reading() / "report.json").unlink()
+        item = self.item()
+        self.assertEqual("no-report", item["state"])
+        self.assertIn("请求不变", item["reason"])
+        self.make_ready()
+        self.assertEqual("ready", self.state())
+
+        self.make_ready(executor="")
+        self.assertIn("不重建输入", self.item()["reason"], "报告不合规时让人重建输入")
+        self.make_ready(verdict="FAIL")
+        self.assertIn("按意见改图或依据", self.item()["reason"])
+        req_file = self.reading() / "request.json"
+        req = json.loads(req_file.read_text(encoding="utf-8"))
+        req_file.write_text(json.dumps({**req, "id": "other"}), encoding="utf-8")
+        item = self.item()
+        self.assertEqual("invalid", item["state"])
+        self.assertIn("重新生成", item["reason"])
 
     def test_a_source_edit_not_yet_laid_into_the_story_is_not_ready(self) -> None:
         self.ready()
@@ -288,7 +349,7 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
             "UNKNOWN": ({}, "UNKNOWN", "incomplete"),
             "非法值": ({}, "OK", "invalid"),
             "阻断项": ({"blocking_findings": ["没有增益"]}, "PASS", "failed"),
-            "未核": ({"unreviewed": ["visual_readability：看不了图"]}, "PASS", "incomplete"),
+            "未核": ({"unreviewed": ["关键状态名只在嵌入位图里，依据没写"]}, "PASS", "incomplete"),
             "没有执行引用": ({"executor": ""}, "PASS", "invalid"),
         }
         for name, (extra, verdict, want) in cases.items():
@@ -304,15 +365,23 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
         report["checks"] = [c for c in report["checks"][:-1] if c["id"] != "reading_gain"]
         (self.reading() / "report.json").write_text(json.dumps(report), encoding="utf-8")
         self.assertEqual("incomplete", self.state(), "缺阅读增益的结论也收了")
+        self.make_ready()
+        report = json.loads((self.reading() / "report.json").read_text(encoding="utf-8"))
+        report["checks"].append({"id": "visual_readability", "verdict": "PASS", "evidence": "旧四项报告"})
+        (self.reading() / "report.json").write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual("invalid", self.state(), "旧合同的看图项被当成本版结论")
 
-    def test_the_old_contract_an_edited_request_and_a_fake_render_are_refused(self) -> None:
+    def test_the_old_contract_an_edited_request_and_the_render_option_are_refused(self) -> None:
         self.ready()
         req_file = self.reading() / "request.json"
         req = json.loads(req_file.read_text(encoding="utf-8"))
-        old = {**req, "version": 1, "method": "story-reading-review/1"}
+        old = {**req, "version": 2, "method": "story-reading-review/2"}
         req_file.write_text(json.dumps(old), encoding="utf-8")
         self.assertEqual("invalid", self.state())
-        self.assertIn("story-reading-review/2", self.item()["reason"])
+        reason = self.item()["reason"]
+        self.assertIn("story-reading-review/3", reason)
+        self.assertIn("旧版收口", reason)
+        self.assertIn("init", reason)
         for name, change in (("改 ID", lambda r: r.update(id="other")),
                              ("改依据路径", lambda r: r["inputs"]["basis"][0].update(path="plan/plan.md")),
                              ("删必核项", lambda r: r.update(checks=r["checks"][:1]))):
@@ -323,11 +392,9 @@ class EvidenceFollowsWhatTheFigureSays(FigureViewCase):
                 self.assertEqual("invalid", self.state())
         req_file.write_text(json.dumps(req, indent=2) + "\n", encoding="utf-8")
         self.assertEqual("ready", self.state())
-        fake = self.root / "fake.png"
-        fake.write_text("not a png", encoding="utf-8")
-        proc = self.view("review-request", "--id", "recovery", "--render", str(fake))
+        proc = self.view("review-request", "--id", "recovery", "--render", str(self.root / "shot.png"))
         self.assertEqual(1, proc.returncode)
-        self.assertIn("不是 PNG", proc.stderr)
+        self.assertIn("不认识的选项 --render", proc.stderr)
 
     def test_a_resource_reached_through_a_nested_svg_is_bound(self) -> None:
         self.ok("prepare")
@@ -725,14 +792,16 @@ class TheFormalFormHasNoReadingFigures(FigureViewCase):
         self.assertIn("view", out, "story_flow 没有交回视图的去向")
         self.assertTrue(self.slot(), "用户直接跑 status 没恢复阅读图")
 
-    def test_a_closed_spec_still_routes_to_the_unfinished_reading(self) -> None:
-        """spec 闭环后选中的阅读图没完成：路由把阅读作为下一步。路由在最外层持有的正式形态下判，这里照此切换。"""
+    def test_the_business_step_leads_and_the_unfinished_reading_is_listed_aside(self) -> None:
+        """spec 闭环后、归档后阅读图没完成：下一步仍是业务动作（交付门 / 已归档），阅读待办另列、不当主动作。"""
         self.ok("prepare")
         sys.path.insert(0, str(CORE))
         from flow import routing, state  # noqa: PLC0415
         contract = {"rounds": [{"round": 1}], "status": "story_written",
                     "story_digests": {rel: state.ledger_digest(self.fr / rel) for rel in state.STORY_REGISTERED}}
-        self.assertEqual("run_archived", routing.next_step(self.fr, contract)[0], "spec 没闭环时先走闭环")
+        step, action = routing.next_step(self.fr, contract)
+        self.assertEqual("run_archived", step, "spec 没闭环时先走闭环")
+        self.assertIn("harness", action)
         reports = self.fr / "spec" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
         (reports / "summary.json").write_text("{ 坏了", encoding="utf-8")
@@ -740,20 +809,50 @@ class TheFormalFormHasNoReadingFigures(FigureViewCase):
             routing.next_step(self.fr, contract)
         (reports / "summary.json").write_text(json.dumps({"closure_status": "closed"}), encoding="utf-8")
         step, action = routing.next_step(self.fr, contract)
-        self.assertEqual("local_reading", step)
-        self.assertIn("recovery", action)
+        self.assertEqual("run_archived", step, "阅读待办顶替了业务下一动作")
+        self.assertTrue(action.startswith("spec 阶段已闭环：跑 `story-build check --deliver` 交付门"), action)
+        self.assertNotIn("harness", action, "已闭环还让人重跑闭环")
+        self.assertIn("本地阅读另列", action)
+        self.assertIn("recovery", action, "已选的阅读图没验完却没说")
+        archived = {**contract, "archived": {"at": "2026-10-21T00:00:00+00:00"}}
+        step, action = routing.next_step(self.fr, archived)
+        self.assertEqual("done", step)
+        self.assertIn("本地阅读另列", action)
         self.put_svg()
         self.make_ready()
         self.ok("svg")
         self.ok("mermaid")
-        self.assertEqual("run_archived", routing.next_step(self.fr, contract)[0], "阅读完成后还卡在阅读")
+        step, action = routing.next_step(self.fr, contract)
+        self.assertEqual("run_archived", step)
+        self.assertNotIn("本地阅读", action, "阅读完成后还挂着阅读待办")
+
+    def test_an_outer_owner_switches_once_and_nested_calls_do_not_switch_again(self) -> None:
+        """外层持有同一需求的视图时，嵌套的 story-build 与 story_flow 不再切入、也不恢复；没有外层的独立调用照常切入。"""
+        self.ready()
+        self.ok("svg")
+        fid = self.fig_id()
+        self.edit("D[提示重试]", "D[提示稍后重试]")       # 正文块与源不同：切入正式形态就会按源重铺
+        drifted = self.story.read_bytes()
+        env = {**os.environ, "STORY_VIEW_OWNER": os.path.realpath(self.fr).lower()}
+        nested = [["node", str(BUILD), "check", "--feature", FEATURE, "--project-root", str(self.root)],
+                  [sys.executable, str(FLOW), "status", "--feature", FEATURE, "--project-root", str(self.root)]]
+        for argv in nested:
+            with self.subTest(argv[1]):
+                proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                      timeout=180, env=env)
+                self.assertEqual(drifted, self.story.read_bytes(), f"{Path(argv[1]).name} 在外层持有时又切了一次")
+                self.assertNotIn("已恢复", proc.stderr, "嵌套调用自己恢复了阅读图")
+        self.build("check")
+        self.assertNotIn("D[提示稍后重试]", self.text(), "独立调用没有先回到正式形态")
+        self.assertEqual(FLOW_SRC, self.src(fid).read_text(encoding="utf-8"), "切换把正文改动写回了源")
+        self.assertTrue(self.slot(), "独立调用结束没有恢复阅读图")
 
 
 class TheReadingTodoNeverHidesAProblem(unittest.TestCase):
     def test_only_a_consistent_finish_is_done(self) -> None:
         sys.path.insert(0, str(CORE))
         from flow import routing  # noqa: PLC0415
-        base = {"items": [], "unmanaged": [], "next": None}
+        base = {"items": [], "next": None}
         self.assertIsNone(routing.reading_todo({**base, "applicable": False, "complete": True, "problems": []}))
         masked = routing.reading_todo({**base, "applicable": False, "complete": False, "problems": ["阅读图选择没写"]})
         self.assertIn("阅读图选择没写", masked, "不适用掩盖了坏声明")
@@ -911,9 +1010,7 @@ class TheCheckCommandRunsAsPrinted(unittest.TestCase):
         self.assertEqual(0, run("--mode", "prepare").returncode)
         (fr / "AR" / "figures").mkdir(parents=True)
         (fr / "AR" / "figures" / "recovery.svg").write_text(svg(), encoding="utf-8")
-        shot = project / "shot.png"
-        shot.write_bytes(PNG + b"render")
-        out = run("--mode", "review-request", "--id", "recovery", "--render", str(shot))
+        out = run("--mode", "review-request", "--id", "recovery")
         self.assertEqual(0, out.returncode, out.stderr)
         line = next(l for l in out.stdout.splitlines() if "review-check" in l)
         command = line[line.index("`") + 1:line.rindex("`")]

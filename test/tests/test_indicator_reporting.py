@@ -395,6 +395,39 @@ class TheSpecAuthorIsToldWhatTheStatisticDesignOwes(ReportingCase):
         self.assertNotIn("这次要交：", section)
 
 
+class ThePlanAuthorSeesOpenDecisionsFirst(ReportingCase):
+    """Plan 任务包在知识与契约之前列出仍 open 的决定，并说明扩范围或业务承载要先问人。"""
+
+    def decisions(self) -> Path:
+        path = self.feature_root / "AR" / "story-src" / "decisions.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def test_no_decision_file_keeps_the_package_as_it_was(self) -> None:
+        path = self.decisions()
+        if path.exists():
+            path.unlink()
+        self.assertNotIn("仍未定的决定", self.task_package())
+
+    def test_open_decisions_come_before_the_knowledge(self) -> None:
+        self.decisions().write_text(json.dumps({"decisions": [
+            {"id": "D-7", "status": "open", "title": "入口放在哪个模块", "decider": "产品负责人"},
+            {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方"}]}, ensure_ascii=False),
+            encoding="utf-8")
+        package = self.task_package()
+        self.assertIn("- D-7：入口放在哪个模块（该谁定：产品负责人）", package)
+        self.assertNotIn("D-1", package, "已定的不该混进未定清单")
+        self.assertLess(package.index("仍未定的决定"), package.index("命中的规约与项目事实"))
+        self.assertIn("问人取得裁定", package)
+        self.assertIn("不为它另造人工确认", package, "局部选型也被要求人工确认")
+
+    def test_an_unreadable_decision_file_is_a_gap_not_zero_decisions(self) -> None:
+        self.decisions().write_text("{坏的", encoding="utf-8")
+        package = self.task_package()
+        self.assertIn("读不出条目", package)
+        self.assertNotIn("没有 open 的决定", package)
+
+
 class TheAuthorAndReviewerGetThePoints(ReportingCase):
     """③ 任务包逐条列问题；④ 审查按名并列；⑤ 没有项目事实时照常。"""
 

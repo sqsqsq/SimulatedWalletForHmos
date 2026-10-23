@@ -15,13 +15,14 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
-import { inputRows, reviewInputs } from './review-inputs.mjs';
+import { inputRows, reviewInputs, signedGateRows } from './review-inputs.mjs';
 import { carryTargets, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 
 /**
  * 会议逐话题四栏并列：会议判断、原话（按引用的行范围从 raw.md 取，同一范围只取一次）、
- * 人的裁决（选了哪一项、没选哪几项、原话）、当前结果（doc-refresh.md 里这一话题的段落）。
+ * 人的裁决（关卡记录里生效的人签选了哪一项、没选哪几项；原话只在「人签原文」给一份）、
+ * 当前结果（doc-refresh.md 里这一话题的段落）。
  * 取不到的一栏写「未取得，未验证」，不给空对象。
  */
 function meetingTopicRows(src) {
@@ -29,7 +30,8 @@ function meetingTopicRows(src) {
   const meetings = Array.isArray(notes?.meetings) ? notes.meetings : null;
   if (!meetings) return ['`AR/story-src/meeting-notes.json` 读不出 `meetings` 列表——逐话题核对未取得，未验证。'];
   const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
-  const gates = (flow?.rounds ?? []).flatMap(r => r?.gates ?? []).filter(g => g?.gate === 'meeting');
+  const gates = (flow?.rounds ?? []).flatMap(r => r?.gates ?? [])
+    .filter(g => g?.gate === 'meeting' && g?.by === 'human' && g?.outcome === 'accepted');
   const refresh = readOrNull(path.join(src, 'doc-refresh.md'));
   const doc = refresh === null ? null : parseDocument(refresh);
   const quoted = new Map();
@@ -54,7 +56,7 @@ function meetingTopicRows(src) {
         const opts = Array.isArray(g.options) ? g.options : [];
         const chosen = opts.find(o => o.key === g.chosen);
         out.push(`- **人的裁决**：选了「${g.chosen}」${chosen?.label ?? ''}；没选：`
-          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话：${g.basis || '—'}`);
+          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话见「人签原文」`);
       } else {
         out.push(`- **人的裁决**：${t.question ? '未裁决——这个话题要问人，关卡记录里没有它' : '没有单独摆给人，随材料关卡一并确认'}`);
       }
@@ -83,12 +85,8 @@ function decisionRows(decisionsPath) {
   if (!all) return ['', '### 登记成已定的那几条', '', '`AR/story-src/decisions.json` 读不出登记列表——这一节未取得，未验证。'];
   const open = all.filter(d => d?.status === 'open');
   const settled = all.filter(d => d?.status === 'settled');
-  const out = ['', '### 仍开着的选择：受影响的行为有没有被写成已定', '',
-    open.length
-      ? '**每一条都写一句结论**，写在读者审查这一条的证据格：依赖这个选择的行为在 Spec、Story 与 `acceptance.yaml` 的哪几处，'
-        + '那几处只写了共同要求与条件，还是已经替人选了一边。各选项（含保持待定）都会有的行为才是共同要求；'
-        + '只属于某一个选项的做法或数值出现在正文与验收里，就是替人选了一边，同时记进 blocking_findings。判的是后果，不是正文里有没有「待定」二字。'
-      : '本轮没有仍开着的条目。'];
+  const out = ['', '### 先核：仍开着的选择与正文的冲突（逐章核查之前做）', '',
+    open.length ? '按规则「核的先后」①逐条给结论，写在读者审查这一条的证据格。' : '本轮没有仍开着的条目。'];
   for (const d of open) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
       `- **该谁定**：${String(d.decider ?? '').trim() || '（没写）'}`,
@@ -100,8 +98,7 @@ function decisionRows(decisionsPath) {
 
 function settledDetail(settled) {
   const out = ['', '### 登记成已定的那几条：结论是谁给的', '',
-    '逐条回材料、会议原话与评审记录核：这个结论有没有人真的表过态。'
-    + '`decider` 有名字只说明该谁定；依据要指得到那个人表态的位置，转述与计划都不是表态。'];
+    '按规则「核的先后」①回人签原文、材料与评审记录核。'];
   if (!settled.length) {
     out.push('', '本轮没有登记成已定的条目。');
     return out;
@@ -215,6 +212,10 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     return rows.join('\n');
   }
 
+  // 人签原文先于作者登记，二者都先于逐章：作者登记是对人签的解释，要拿原话核
+  rows.push('', '### 人签原文：人当时看到的选项与回答', '', ...signedGateRows(root));
+  rows.push(...decisionRows(path.join(root, 'AR', 'story-src', 'decisions.json')));
+
   // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
   // 摘要只算作者区（机器区整段换成区名）：投影刷新不换审查对象，作者改一个字就换。正式审查前 pre_phase
   // 已把 story 放回正式形态（阅读槽为空），盘上读到的就是被审的那一份。
@@ -255,9 +256,7 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   // 会议逐话题把会议判断、原话、人的裁决与当前结果并排：审查要对着原话判，不只读模型写的结果。
   // 版本位置取必审输入里登记的会议阅读稿，纠偏留痕仍回原件看。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
-    rows.push('', '### 会议材料：逐话题并列', '',
-      '每个话题核三句：原话里哪些是确定的；人选了什么、没选什么；当前结果里每个确定的行为有没有依据'
-      + '（没选的那一项的做法出现在结果里，算问题）。');
+    rows.push('', '### 会议材料：逐话题并列', '');
     for (const x of basis.inputs.filter(i => /\/meetings\/.+\/raw\.md$/.test(i.path))) {
       const dir = path.posix.dirname(x.path);
       rows.push(`- \`${x.path}\` —— 原文，行号指它；`
@@ -266,21 +265,13 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     rows.push(...meetingTopicRows(src));
   }
 
-  rows.push(...decisionRows(planCtx.decisionsPath));
-
-  rows.push('', '### 上游图与 story 里承接它的小节', '',
-    '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；可以换图种、拆成表与正文，声称承接却丢了关系才算问题。',
-    ...diagramPairRows(planCtx, parsed, story));
-  rows.push('', '### 阅读图选择', '',
-    '核这个判断合不合理：不采用时，正文、表与已有的图是否已经讲清关键关系；选了的，相对它们有没有真实的理解增益'
-    + '（只改颜色、方向不算），依据是否只组合已确认的事实、未决是否只作边界。',
-    ...readingChoiceRows(parsed));
+  rows.push('', '### 上游图与 story 里承接它的小节', '', ...diagramPairRows(planCtx, parsed, story));
+  rows.push('', '### 阅读图选择', '', ...readingChoiceRows(parsed));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
   if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {
     rows.push('', '### 写作设计的调整记录', '',
-      '- `AR/story-src/template-adjustments.md` —— 作者改掉了原来的安排与原因。'
-      + '核改动之后原来要解释的关系有没有丢；理由写了不等于成立，按正文与原材料判。');
+      '- `AR/story-src/template-adjustments.md` —— 作者改掉了原来的安排与原因（待核的作者判断）。');
   }
 
   rows.push('', '### 逐章过读者会问的问题', '');
@@ -308,6 +299,8 @@ export function readerReviewTask(projectRoot, feature, checkId) {
 
   // 方法与结论要求只在 overlay 的 `story_reader_review` 维护一份，宿主把它装配进 verifier 的任务；
   // 这里只给这一条在明细里的结构——框架通用输出只列非 PASS 项、details 写成文字，本条不同
+  // 示例路径取「读这些」表里真实的前两份：照抄示例就是合法写法，不留要替换的占位
+  const [seen, skipped] = basis.inputs.map(x => x.path);
   rows.push('', `### ${checkId} 在 YAML 明细里的结构`, '',
     `无论结论，\`verification_result.checks\` 里都有 ${checkId} 这一条；它的 \`details\` 是映射，四个键都是列表：`, '',
     '```yaml',
@@ -316,10 +309,10 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     '  details:',
     '    blocking_findings: ["5.2 节写失败后回到签约页，7.1 节写停在结果页：同一失败两处去向不同"]',
     '    advisories: []',
-    '    examined_inputs: ["doc/features/<需求>/AR/story.md", "doc/features/<需求>/AR/review.md"]',
-    '    unreviewed: [{path: "doc/features/<需求>/RR/prd.md", reason: "只读到第 3 节，后面没读完"}]',
+    `    examined_inputs: [${JSON.stringify(seen)}]`,
+    `    unreviewed: [{path: ${JSON.stringify(skipped ?? seen)}, reason: "只读到第 3 节，后面没读完"}]`,
     '```',
-    '`examined_inputs` 与 `unreviewed` 合起来覆盖「读这些」表里的每一份，路径照抄表里的写法；没有内容的键写 `[]`。');
+    '`examined_inputs` 与 `unreviewed` 合起来覆盖「读这些」表里的每一份；没有内容的键写 `[]`。');
   return rows.join('\n');
 }
 

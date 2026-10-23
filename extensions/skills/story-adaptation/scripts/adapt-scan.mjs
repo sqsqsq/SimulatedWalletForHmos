@@ -283,7 +283,7 @@ function bridgesOf(manifestText) {
 /**
  * 目标 `.gitignore` 还缺哪几行。
  *
- * 要挡的是不入库的工作件：章草稿目录、使用记录的一次性初始化输入与统计运行输出、记录器的锁与临时文件。
+ * 要挡的是不入库的工作件：章草稿目录、使用记录的一次性输入与本地运行态、记录器的锁与临时文件。
  *
  * **先问 git 它是不是已经被挡住了**：需求目录整个不入库是常见做法（`doc/features/`
  * 一行就盖住了它下面的一切），那时再加一条只是噪声——一条永远不起作用的规则，
@@ -297,7 +297,7 @@ function missingGitignoreLines(root) {
   const [dir, name] = [dirname(USAGE.record), basename(USAGE.record)];
   const wants = [[`${fd}/**/AR/story-src/drafts/`, `${fd}/_probe/AR/story-src/drafts/x.md`],
     [`${fd}/**/${USAGE.input_file}`, `${fd}/_probe/${USAGE.input_file}`],
-    [`${fd}/.usage-stats/`, `${fd}/.usage-stats/x/facts.json`],
+    [`${fd}/${USAGE.state_file}*`, `${fd}/${USAGE.state_file}`],
     [`/${USAGE.record}.lock`, `${USAGE.record}.lock`], [`/${dir}/.${name}.*.tmp`, `${dir}/.${name}.1.tmp`]];
   const f = join(root, '.gitignore');
   const have = existsSync(f) ? read(f).split(/\r?\n/).map(l => l.trim()) : [];
@@ -924,7 +924,7 @@ if (existsSync(tgtManifest)) {
   }
 }
 
-// ④ 工作件被挡住了：章草稿、使用记录的一次性输入、统计输出、锁与临时文件不挡就会被提交进目标的库。
+// ④ 工作件被挡住了：章草稿、使用记录的一次性输入、锁与临时文件不挡就会被提交进目标的库。
 // 目标怎么挡不管——自己写了那一行、或者整个需求目录都不入库，都算挡住了。使用记录本身反过来必须能入库。
 for (const line of missingGitignoreLines(TARGET)) {
   bad.push(`④ 工作件没被 .gitignore 挡住：补一行 ${line}`);

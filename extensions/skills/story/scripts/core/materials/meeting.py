@@ -54,11 +54,21 @@ def version_dir(feature_root: Path, docx: Path) -> Path:
     return feature_root.joinpath(*MEETINGS, docx.stem, digest(docx.read_bytes())[:8])
 
 
-def versions(feature_root: Path) -> dict[str, Path]:
-    """盘上每个会议版本：`<主名>@<sha8>` → 版本目录。"""
-    base = feature_root.joinpath(*MEETINGS)
-    return {f"{p.parent.parent.name}@{p.parent.name}": p.parent
-            for p in sorted(base.glob(f"*/*/{SOURCE}"))}
+def versions(feature_root: Path, problems: list[str] | None = None) -> dict[str, Path]:
+    """盘上每个会议版本：`<主名>@<sha8>` → 版本目录。
+
+    键取这一版 source.json 登记的原文件主名与原件摘要——会议判断的 source / source_sha 抄的就是它们；
+    目录名的大小写在不区分大小写的盘上可能来自另一份同名原件，不拿它当身份。登记读不出的版本记进 problems。
+    """
+    out = {}
+    for path in sorted(feature_root.joinpath(*MEETINGS).glob(f"*/*/{SOURCE}")):
+        meta = read_json(path, problems)
+        if not (isinstance(meta, dict) and meta.get("file") and str(meta.get("sha256") or "")):
+            if problems is not None and meta is not None:
+                problems.append(f"{path.parent.name}/{SOURCE} 缺原文件名或原件摘要：{RECOVER}")
+            continue
+        out[f"{Path(str(meta['file'])).stem}@{str(meta['sha256'])[:8]}"] = path.parent
+    return out
 
 
 def save_version(feature_root: Path, docx: Path, markdown: str,
@@ -319,7 +329,7 @@ def inspect(feature_root: Path) -> dict:
     """
     problems: list[str] = []
     notes = read_notes(feature_root, problems)
-    found = versions(feature_root)
+    found = versions(feature_root, problems)
     missing: list[str] = []
     stale: list[str] = []
     for key in sorted(set(notes) - set(found)):

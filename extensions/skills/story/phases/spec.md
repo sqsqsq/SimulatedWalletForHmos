@@ -58,7 +58,7 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 #                              ⑥ 报告核对 → check-receipt → 收口 → check --deliver 交付门
 ```
 
-- **附录的技术契约、规约、埋点、改动边界四节不用你写**：它们是 spec 扩展章与
+- **附录的技术契约、规约、埋点三节不用你写**：它们是 spec 扩展章与
   `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。登记之后 spec 改了，重跑 `story_flow.py story`：
   它先重投这几节，再重新登记。
 - **③ 登记在 story 写完之后**：判断在成文过程中还会长出来，先登记进 `decisions.json` 再登记成文，台账才完整。

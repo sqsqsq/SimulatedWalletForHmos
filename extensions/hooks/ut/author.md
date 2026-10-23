@@ -31,6 +31,8 @@
 cd framework/harness && npx ts-node harness-runner.ts --phase ut --feature <需求名>
 ```
 
+阶段闭环之后先按 AGENTS 扩展段「阶段收尾与代码归档」收尾（`--phase ut`），成功后再交付、进下一阶段或提交代码。
+
 ## 四、门禁会拦什么
 
 - `verify` 为 `ut` / `both` 的义务在本阶段没有覆盖，也没有说法。

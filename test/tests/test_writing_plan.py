@@ -188,6 +188,25 @@ class TheReadingChoiceIsDeclared(unittest.TestCase):
         self.assertTrue(any("没有结论" in p for p in self.check("## 阅读图选择\n\n")))
         self.assertTrue(any("同时写了不采用与候选" in p for p in self.check(READING_OK + "不采用：x\n")))
 
+    def test_the_same_candidate_in_another_legal_layout_reads_the_same(self) -> None:
+        want = plan_in(reading(READING_OK), self.FILES)["reading"]["items"]
+        variants = {
+            "字段不带前缀": READING_OK.replace("- 阅读问题：", "阅读问题：").replace("- 放置：", "放置："),
+            "换成 *": READING_OK.replace("- 依据：", "* 依据："),
+            "夹说明文字": READING_OK.replace("### order-recovery\n", "下面这张图帮助核对恢复。\n\n### order-recovery\n"),
+        }
+        for name, section in variants.items():
+            with self.subTest(name):
+                got = plan_in(reading(section), self.FILES)
+                self.assertEqual([], [p for p in got["problems"] if "承接" not in p], name)
+                self.assertEqual(want, got["reading"]["items"])
+        self.assertTrue(any("写在任何「### <ID>」之前" in p
+                            for p in self.check(READING_OK.replace("### order-recovery\n",
+                                                                   "- 阅读问题：没有候选的字段\n### order-recovery\n"))),
+                        "候选之前的字段定位不了却没报")
+        misspelled = READING_OK.replace("- 增益：", "- 增意：")
+        self.assertTrue(any("缺「- 增益：」" in p for p in self.check(misspelled)), "写错的字段名让必需字段静默缺失")
+
     def test_bad_candidates_are_named(self) -> None:
         cases = {
             "ID 只能用": READING_OK.replace("order-recovery", "a/b"),
@@ -243,16 +262,12 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
                      ["「形式：（空）」不认识", "表格", "有序列表"]),
             "不认识的形式": (with_chapter("06-features", "#### 本地数据\n形式：随手画"),
                         ["「形式：随手画」不认识", "流程图", "时序图", "状态图"]),
-            "形式写成说明行": (with_chapter("06-features", "#### 本地数据\n- 形式：表格"),
-                         ["形式要单起一行"]),
             "不涉及还留小节": (with_chapter("06-features", "- 不涉及：没有功能变化\n#### 本地数据\n- 答：x"),
                           ["写了不涉及，却还留着"]),
             "五级标题没有上级": (with_chapter("06-features", "##### 重试入口\n- 答：x"),
                            ["前面没有 #### 小节"]),
             "小节重名": (with_chapter("06-features", "#### 本地数据\n- 答：x\n#### 本地数据\n- 答：y"),
                       ["「本地数据」重复"]),
-            "不是骨架写法": (with_chapter("06-features", "#### 本地数据\n这一节讲本机数据。"),
-                         ["不是骨架写法"]),
             "附录外小节": (with_chapter("10-appendix", "#### 补充说明\n- 答：x"), ["附录只有合同那几节"]),
         }
         for name, (text, needles) in cases.items():
@@ -260,6 +275,28 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
                 problems = "\n".join(read_plan(text)["problems"])
                 for needle in needles:
                     self.assertIn(needle, problems)
+
+    def test_the_same_design_in_another_legal_layout_reads_the_same(self) -> None:
+        """列表前缀带不带、换成 * 或 +，普通说明段落夹在中间：读出来的结构、待核与小节完全一样，不报格式错误。"""
+        plain = read_plan(with_chapter("06-features", FEATURES))
+        self.assertEqual([], plain["problems"])
+        variants = {
+            "形式带 - 前缀": FEATURES.replace("形式：表格", "- 形式：表格"),
+            "说明行不带前缀": FEATURES.replace("- 答：哪些数据", "答：哪些数据").replace("- 待核：", "待核："),
+            "换成 * 与 +": FEATURES.replace("- 答：", "* 答：").replace("- 描述：", "+ 描述："),
+            "夹一段普通说明": FEATURES.replace("#### 失败提示\n", "这一章先讲数据，再讲失败。\n#### 失败提示\n"),
+        }
+        before_chapter = BASE.replace("## 骨架\n", "## 骨架\n\n下面按章写，每章一段。\n", 1)
+        for name, block in variants.items():
+            with self.subTest(name):
+                got = read_plan(with_chapter("06-features", block))
+                self.assertEqual([], got["problems"], name)
+                for key in ("structures", "rechecks", "ids"):
+                    self.assertEqual(plain[key], got[key], f"{name}：{key} 不同")
+                self.assertEqual([h["title"] for h in plain["features"]["h3"]], [h["title"] for h in got["features"]["h3"]])
+        self.assertEqual([], read_plan(before_chapter)["problems"], "第一个章 ID 之前的说明被当成格式错误")
+        broken = read_plan(with_chapter("06-features", FEATURES.replace("形式：表格", "- 形式：随手画")))
+        self.assertTrue(any("「形式：随手画」不认识" in p for p in broken["problems"]), "带前缀的非法形式值没报")
 
     def test_the_skeleton_carries_titles_forms_and_open_questions(self) -> None:
         block = FEATURES + "形式：时序图\n"          # 挂在「重试入口」这一小节下

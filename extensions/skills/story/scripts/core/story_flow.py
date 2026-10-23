@@ -175,9 +175,11 @@ def main() -> int:
             code = dispatch(feature_root, project_root)
         if code == 0:
             # 使用记录在命令成功之后采集；记录失败另列，不改业务结果
-            errors = usage.after_command(project_root, args.feature, args.mode, args.action)
-            if errors:
-                result["usage_errors"] = errors
+            used = usage.after_command(project_root, args.feature, args.mode)
+            if used["errors"]:
+                result["usage_errors"] = used["errors"]
+            if used["note"]:
+                result["usage_note"] = used["note"]
         result["success"] = code == 0
         if TAMPER_NOTES:
             result["warning"] = TAMPER_NOTES[0]

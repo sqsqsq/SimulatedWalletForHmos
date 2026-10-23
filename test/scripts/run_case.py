@@ -508,7 +508,7 @@ def update_round(feature: str) -> dict:
 
 
 def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int,
-                    pending: str = "") -> dict | None:
+                    pending: str = "", next_segment: bool = True) -> dict | None:
     """第一段到目标之后停在这里 —— **不终止、不覆写、保住 session**。
 
     终止的话，第二段就只能另起一个 run：`events.jsonl` 每次启动都被截断、游标归零，
@@ -516,15 +516,18 @@ def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int,
     所以这里与等人回话同构：无上限地等，每隔一阵出一次声，租约照常续。
 
     三个出口：宿主回答检查点上那一问（`reply`，仍在第一段：模型照答复把授权的动作做完，到目标后再停一次），
-    宿主投来续跑请求（第二段开始），或宿主判收工（这一轮到此为止）。
+    宿主投来续跑请求（第二段开始，只在 `next_segment` 时有），或宿主判收工（这一轮到此为止）。
 
     模型到目标时最后一句常是一个提问（例如交付门问归档送审还是进入 plan）：它原样留在
-    `pending_question` 里交给宿主，续跑时先答它，不拿装置的文案盖掉。
+    `pending_question` 里交给宿主，续跑时先答它，不拿装置的文案盖掉。没配第二段的交互用例同样停在这里，
+    宿主答完本段的交付选择或确认无事可做后收工。
     """
+    idle = ("第一段已到目标并闭环，等宿主固定快照、评测、回流，再投续跑请求" if next_segment
+            else "已到目标并闭环；本段还有交付选择就回答它，没有就收工")
     state.update(status="awaiting_reply", checkpoint_stage="initial",
                  awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"), awaiting_turn=turn,
                  awaiting_kind="initial_checkpoint",
-                 awaiting_prompt=pending or "第一段已到目标并闭环，等宿主固定快照、评测、回流，再投续跑请求",
+                 awaiting_prompt=pending or idle,
                  pending_question=pending or None)
     refresh_worker_lease(out_dir, state, force=True, event="awaiting_initial_checkpoint")
     feed.emit("initial_checkpoint", turn=turn, pending_question=observe.shorten(pending, 1200) or None)
@@ -679,27 +682,25 @@ def reading_contract(work: object) -> list[str]:
     if not isinstance(work, dict):
         return ["输出不是 JSON 对象"]
     bad = [f"{key} 缺失或不是 {kind.__name__}" for key, kind in
-           (("applicable", bool), ("complete", bool), ("items", list), ("unmanaged", list), ("problems", list))
+           (("applicable", bool), ("complete", bool), ("items", list), ("problems", list))
            if not isinstance(work.get(key), kind)]
     nxt = work.get("next")
     if nxt is not None and not (isinstance(nxt, str) and nxt.strip()):
         bad.append("next 不是非空文字或 null")
     if bad:
         return bad
-    items, unmanaged, problems = work["items"], work["unmanaged"], work["problems"]
+    items, problems = work["items"], work["problems"]
     for i, it in enumerate(items):
         if not (isinstance(it, dict) and all(isinstance(it.get(k), str) and it[k] for k in ("id", "state"))
                 and isinstance(it.get("reason"), str)):
             bad.append(f"items 第 {i + 1} 项缺 id、state 或 reason")
         elif it["state"] != "ready" and not it["reason"].strip():
             bad.append(f"图 {it['id']} 没就绪却没写原因")
-    if not all(isinstance(n, int) and not isinstance(n, bool) for n in unmanaged):
-        bad.append("unmanaged 不全是行号")
     if not all(isinstance(x, str) and x.strip() for x in problems):
         bad.append("problems 有空条目或不是文字")
     if bad:
         return bad
-    todo = bool(unmanaged or problems or any(it["state"] != "ready" for it in items))
+    todo = bool(problems or any(it["state"] != "ready" for it in items))
     if not work["applicable"]:
         bad += ["说不适用却列了待办"] * todo + ["说不适用却又说没完成"] * (not work["complete"]) + ["说不适用却给了下一动作"] * bool(nxt)
     elif work["complete"]:
@@ -736,7 +737,7 @@ def reading_facts(feature_root: Path, *, story_required: bool = False) -> dict:
     if bad:
         return {"state": "unknown", "error": f"本地阅读状态不合产品输出合同：{'；'.join(bad)}"}
     state = "not_applicable" if not work["applicable"] else "complete" if work["complete"] else "pending"
-    return {"state": state, **{k: work[k] for k in ("items", "unmanaged", "problems")}, "next": work.get("next")}
+    return {"state": state, **{k: work[k] for k in ("items", "problems")}, "next": work.get("next")}
 
 
 def reading_turn(feature: str, story_required: bool, seen: dict, result: dict, *,
@@ -1982,7 +1983,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     client = (CliClient(runtime_root=out_dir / "cli-runtime", registry_path=registry) if registry
               else CliClient(runtime_root=out_dir / "cli-runtime"))
     t0 = time.time()
-    # 正式多 Case 使用不含 .git 的隔离 workspace；其源码基线与差异由宿主
+    # 正式多 Case 使用隔离 workspace（根下的 .git 只是本 Case 的起跑基线）；其源码基线与差异由宿主
     # run_multi_case.py 的白名单快照负责，不能再调用 demo 的 Git 源码事务。
     isolated_workspace = os.environ.get("STORY_ISOLATED_WORKSPACE", "").strip() == "1"
     source_transaction_required = (
@@ -2121,17 +2122,19 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         runlog.event("宿主收工", result["conclude_reason"])
                         feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
                         break
-                    if not after_initial:
+                    # 自动用例到目标即止；交互用例到目标停在第一检查点，宿主先处理本段还没做完的交付选择
+                    #（按公开任务与交互规划回话），做完或无事可做再收工。第二段只在配了 after_initial 时才有。
+                    if not after_initial and not interactive:
                         result["stop_reason"] = "target_reached"
                         break
                     if not session_id:
-                        # 没有 session 就续不了同一次对话。**说清楚是这个原因**，
-                        # 不要退而求其次另起一个 run——那是重启新会话冒充续行。
+                        # 没有 session 就续不了同一次对话，本段的交付选择也就做不完。**说清楚是这个原因**，
+                        # 不报成到达目标，也不另起一个 run——那是重启新会话冒充续行。
                         result["stop_reason"] = "cli_session_lost"
-                        runlog.event("续跑不了", "第一段到目标，但 CLI 没给回 session id")
+                        runlog.event("续跑不了", "到目标，但 CLI 没给回 session id")
                         break
                     resumed = wait_for_resume(out_dir, feed, runlog, state, turn=turns,
-                                              pending=last_text)
+                                              pending=last_text, next_segment=bool(after_initial))
                     if resumed is None:
                         result["stop_reason"] = "host_concluded"
                         result["conclude_reason"] = "第一检查点等待期间收到收工判定"
@@ -2896,6 +2899,10 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
         print(json.dumps({"ok": False, "error": "worker 没有停在第一检查点上"
                                                 f"（现在 {state.get('awaiting_kind') or state.get('status') or '没在跑'}）"},
                          ensure_ascii=False))
+        return 1
+    if state.get("after_initial") != "update":
+        print(json.dumps({"ok": False, "error": "这个 Case 没配 after_initial: update，没有第二段："
+                                                "检查点上只能 reply 本段的交付选择或 conclude"}, ensure_ascii=False))
         return 1
     if not (out_dir / "checkpoints" / "initial").is_dir():
         print(json.dumps({"ok": False, "error": "第一段的快照还没固定：先 checkpoint --point initial。"

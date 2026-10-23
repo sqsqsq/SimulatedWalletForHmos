@@ -61,7 +61,7 @@ class AdaptCase(unittest.TestCase):
             encoding="utf-8")
         (self.target / ".gitignore").write_text(
             "doc/features/**/AR/story-src/drafts/\ndoc/features/**/.usage-input.json\ndoc/features/.usage-stats/\n"
-            "/doc/usage.json.lock\n/doc/.usage.json.*.tmp\n", encoding="utf-8")
+            "doc/features/.usage-state.json*\n/doc/usage.json.lock\n/doc/.usage.json.*.tmp\n", encoding="utf-8")
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
         link_harness_yaml(self.target)
@@ -649,9 +649,8 @@ class TheUsageRecordIsSetUpByApply(AdaptCase):
     """adapt 给业务仓建立可入库的 `doc/usage.json`：缺了建空表，在了逐字节保留，检查只读，坏了不覆盖。"""
 
     EMPTY = {"schema": 1, "requirements": {}}
-    REAL = ('{"schema":1,"requirements":{"AR1":{"name":"甲需求","version":null,"fw":null,"ext":null,'
-            '"agent":null,"model":null,"features":["AR1"],"steps":{"story":{"start":null,"spent":0,'
-            '"verdict":null,"completed":false,"last_result":null}}}}}')
+    REAL = ('{"schema":1,"requirements":{"AR1-20261021T080102.123Z":{"ext":"1.9.9","fw":null,'
+            '"agent":null,"model":null,"steps":{"story":{"spent":1656}}}}}')
 
     def setUp(self) -> None:  # noqa: D102
         super().setUp()

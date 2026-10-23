@@ -711,7 +711,8 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
 
 class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     """过程件入库（用户 2026-09-25 裁定）：spec 与 plan 各版本的方案、评审与交回都随提交留下历史；
-    实跑的运行证据（事件流、运行日志、截图、材料原件、压缩包）放在 `output/story/`，不进过程件目录。
+    运行证据（事件流、运行日志、截图、材料原件、压缩包）不进过程件目录：CLI 运行记录在 `output/story/`，
+    维护过程证据在 `output/evidence/`（TEST §0.4）。
     """
 
     ROOTS = ("doc/spec", "doc/plan")
@@ -819,7 +820,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         return out
 
     def test_run_evidence_lives_under_output(self):
-        self.assertEqual([], self.stray_evidence(), "运行证据放到 output/story/ 下")
+        self.assertEqual([], self.stray_evidence(), "运行证据放到 output/story/（CLI 运行）或 output/evidence/（维护证据）下")
         self.assertEqual([], self.broken_archive_references(), "分析归档的图片引用指不到实际文件")
 
     def test_analysis_archive_references_are_classified_by_their_owner(self):

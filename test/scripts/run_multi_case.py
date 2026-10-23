@@ -312,8 +312,6 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
         raise SystemExit("[multi] 装配前后 demo 的提交变了：装配只应写 template，先查清是谁动了 demo")
     write_json(suite_root / "workspace-boundary.json", {
         "schema_version": 3,
-        # 反查用：这份现场在哪、归哪个仓——离线装配没有 suite.json，下一轮起跑清理只凭这两项认领
-        "workspace_root": str(workspace_root), "owner_repo": str(REPO_ROOT),
         "demo": {"head": demo_head},
         "copied": sorted(copied),
         "excluded": sorted(
@@ -354,10 +352,14 @@ def requirement_system_path(workspace_root: Path, case_id: str) -> Path:
     目录名 = suite 名 + workspace_root 全路径短摘要：同一 suite 的 seed 与 env
     两处推导一致，不同 workspace_root（含单测夹具）互不碰撞。
     """
+    return requirement_system_root(workspace_root) / case_id
+
+
+def requirement_system_root(workspace_root: Path) -> Path:
+    """一个 suite（同一 workspace_root）的全部需求系统快照所在的那一层。"""
     root = Path(workspace_root).resolve()
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:8]
-    return (Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING
-            / f"{root.name}-{digest}" / case_id)
+    return Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING / f"{root.name}-{digest}"
 
 
 def seed_requirement_system(case_id: str, workspace_root: Path) -> list[dict[str, Any]]:
@@ -409,15 +411,22 @@ def _case_seed_manifest(case_id: str, feature: str) -> list[dict[str, Any]]:
     return seeded
 
 
-def _verify_workspace_boundary(workspace: Path, feature: str) -> dict[str, Any]:
+def _verify_workspace_boundary(workspace: Path, feature: str, *, own_git: bool = False) -> dict[str, Any]:
+    """`own_git`：Case 根下由 `ensure_case_git` 建的那个 `.git` 目录是唯一例外，内部不扫；
+    其它位置的 `.git`、根下的 `.git` 文件或链接（指向别处的仓）照拒。模板与刚复制的 Case 不带例外。"""
     violations: list[str] = []
     symlinks: list[str] = []
+    own = workspace / ".git"
+    if own_git and (own.is_symlink() or own.is_junction() or not own.is_dir()):
+        violations.append(".git")
     for path in workspace.rglob("*"):
+        if own_git and path.is_relative_to(own):
+            continue
         relative = path.relative_to(workspace).as_posix()
         if path.is_symlink():
             symlinks.append(relative)
             continue
-        if path.is_dir() and path.name.casefold() in WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES:
+        if path.name.casefold() in WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES:
             violations.append(relative)
         if path.is_dir() and path.parent == workspace and path.name.casefold() in MAINTENANCE_TOP_LEVEL:
             violations.append(relative)
@@ -531,6 +540,86 @@ def seed_agent_adapter(suite: dict[str, Any], case: dict[str, Any], cli_name: st
     return seed
 
 
+#: Case 基线提交只用这次命令的测试身份，不读写用户的 global 配置
+CASE_GIT_IDENTITY = ("-c", "user.name=story-suite", "-c", "user.email=story-suite@localhost",
+                     "-c", "commit.gpgsign=false")
+
+
+def _git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=str(workspace), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False)
+
+
+def _case_git_problem(workspace: Path) -> str | None:
+    """Case 根是不是它自己的 Git 仓：`.git` 是根下的真目录，git 认的仓根与 gitdir 都在这里。"""
+    git_dir = workspace / ".git"
+    if git_dir.is_symlink() or git_dir.is_junction() or not git_dir.is_dir():
+        return ".git 不是 Case 根下的真目录（文件或链接指向别处的仓）"
+    proc = _git(workspace, "rev-parse", "--show-toplevel", "--absolute-git-dir")
+    lines = proc.stdout.splitlines()
+    if proc.returncode != 0 or len(lines) != 2:
+        return f"git rev-parse 失败: {(proc.stderr or proc.stdout).strip()[-300:]}"
+    if Path(lines[0]).resolve() != workspace or Path(lines[1]).resolve() != git_dir.resolve():
+        return f"git 认的仓根 {lines[0]}、gitdir {lines[1]} 不是这个 Case 根"
+    return None
+
+
+def ensure_case_git(suite: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
+    """给 Case 根建它自己的 Git 仓和起跑基线，被测工程不再继承外层目录所在的仓。
+
+    隔离工作区在系统临时目录下，而那里可能本身在某个仓里（实测落在用户配置仓下），
+    Framework 会把那个仓的 HEAD 当源码提交。新工作区在这里 init 并提交一次；
+    已建过的（续跑）只核现存身份，不重新 init 或提交，免得覆盖模型的工作。
+    按消费工程自己的忽略规则提交；关键文件被忽略时如实记进 `ignored_key_files`，不强行 add。
+    这里的 HEAD 只代表隔离基线，维护源身份仍是 demo 提交与 Extension 指纹。
+    """
+    workspace = Path(str(case["workspace"])).resolve()
+    recorded = case.get("git_boundary") or {}
+    result: dict[str, Any] = {"root": str(workspace), "at": now()}
+    problem: str | None = None
+    try:
+        if recorded.get("status") == "ready":
+            result = {**recorded, "verified_at": now()}
+            problem = _case_git_problem(workspace)
+            if problem is None and _git(workspace, "cat-file", "-e",
+                                        f"{recorded['initial_head']}^{{commit}}").returncode != 0:
+                problem = f"起跑基线 {recorded['initial_head']} 不在这个仓里"
+        elif (workspace / ".git").exists():
+            problem = "Case 根已有 .git，不是本次装配建的"
+        else:
+            inherited = _git(workspace, "rev-parse", "--show-toplevel")
+            result["inherited_toplevel"] = inherited.stdout.strip() if inherited.returncode == 0 else None
+            for name, args in (("init", ("init", "-q")), ("add", ("add", "-A")),
+                               ("commit", (*CASE_GIT_IDENTITY, "commit", "-q", "--no-verify",
+                                           "-m", "story-suite case baseline"))):
+                proc = _git(workspace, *args)
+                if proc.returncode != 0:
+                    problem = f"git {name} 失败: {(proc.stderr or proc.stdout).strip()[-300:]}"
+                    break
+            problem = problem or _case_git_problem(workspace)
+            if problem is None:
+                _verify_workspace_boundary(workspace, str(case["feature"]), own_git=True)
+                tracked = set(_git(workspace, "ls-files", "-z").stdout.split("\0")) - {""}
+                keys = ["framework.config.json", "framework/RELEASE-MANIFEST.json", "doc/extensions/",
+                        *(item["target"] for item in case.get("case_seeded") or [])]
+                result.update(
+                    initial_head=_git(workspace, "rev-parse", "HEAD").stdout.strip(),
+                    tracked_files=len(tracked),
+                    ignored_key_files=[key for key in keys if not any(
+                        path == key or (key.endswith("/") and path.startswith(key)) for path in tracked)])
+    except (OSError, RuntimeError) as exc:
+        problem = f"Case Git 边界建立失败: {exc}"
+    result["status"] = "failed" if problem else "ready"
+    if problem:
+        result["reason"] = problem
+    case["git_boundary"] = result
+    boundary_path = Path(str(suite["bundle_root"])) / "workspace-boundary.json"
+    boundary = read_json(boundary_path, {}) or {}
+    boundary.setdefault("git_boundary", {})[str(case["case"])] = result
+    write_json(boundary_path, boundary)
+    return result
+
+
 def _complete_current_attempt(record: dict[str, Any], *, status: str,
                               failure_kind: str, retry_action: str) -> None:
     current = record.get("current_attempt")
@@ -564,7 +653,7 @@ def prepare_case_retry(suite: dict[str, Any], record: dict[str, Any]) -> None:
         shutil.rmtree(system, onexc=_clear_readonly_and_retry)
 
     record.update({
-        "workspace": None, "workspace_status": "recreating", "adapter_seed": None,
+        "workspace": None, "workspace_status": "recreating", "adapter_seed": None, "git_boundary": None,
         "run_id": None, "worker_pid": None, "cursor": 0, "model_cursor": 0,
         "last_phase": None, "current_phase": None,
         "highest_phase_reached": None, "phase_source": None,
@@ -1506,58 +1595,37 @@ def _state_evidence(output_path: Path) -> list[dict[str, Any]]:
 
 
 def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict[str, Any]:
-    """Delete owned historical workspace/output pairs before feature migration."""
+    """起跑前清理本机临时根 `sw-story/` 下的旧现场：旧 Case 工作区、离线模板，不论名字。
+
+    每个子目录先核：在临时根内、不是链接；`output/story/<名>/suite.json` 在的，按它核终态与 worker；
+    不在的，进程清单里不能有引用它的命令；任何 state/lease 仍活动的保留现场并在删除前停下。
+    全部安全才删；它的需求系统副本按 `requirement_system_root` 由同一工作区根算出确切位置一并删。
+    某项删不掉记 warning，其它照删，本次照常继续。`output/` 下的运行证据不删。
+    """
     output_root = OUT_ROOT.resolve()
     workspace_parent = (Path(tempfile.gettempdir()) / "sw-story").resolve()
-    system_parent = (Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING).resolve()
     new_bundle_root = new_bundle_root.resolve()
     inventory_ok, processes, inventory_error = _process_inventory()
-    names: set[str] = set()
-    if output_root.is_dir():
-        names.update(path.name for path in output_root.iterdir()
-                     if path.is_dir() and path.resolve() != new_bundle_root)
-    if workspace_parent.is_dir():
-        names.update(path.name for path in workspace_parent.iterdir() if path.is_dir())
-    # 需求系统快照在 suite 树之外（sw-sys/<suite>-<hash>），剥掉摘要后缀按 suite 名收进来
-    if system_parent.is_dir():
-        names.update(path.name.rsplit("-", 1)[0]
-                     for path in system_parent.iterdir() if path.is_dir())
+    names = sorted(path.name for path in workspace_parent.iterdir()
+                   if path.is_dir() and path.name != new_suite_id) if workspace_parent.is_dir() else []
     report: dict[str, Any] = {
-        "schema_version": 1, "new_suite_id": new_suite_id,
-        "output_root": str(output_root), "workspace_root": str(workspace_parent),
+        "schema_version": 1, "new_suite_id": new_suite_id, "workspace_root": str(workspace_parent),
         "process_inventory_ok": inventory_ok,
         "process_inventory_error": inventory_error,
-        "targets": [], "ignored": [], "status": "preflight", "started_at": now(),
+        "targets": [], "status": "preflight", "started_at": now(),
     }
     blockers: list[str] = []
-    for name in sorted(names):
-        output_path = (output_root / name).resolve()
-        workspace_path = (workspace_parent / name).resolve()
-        output_exists = output_path.is_dir()
-        workspace_exists = workspace_path.is_dir()
-        suite_file = output_path / "suite.json"
-        suite = read_json(suite_file)
-        owned = isinstance(suite, dict) or bool(OWNED_SUITE_DIR.fullmatch(name))
-        if not owned:
-            report["ignored"].append({"name": name, "reason": "not_story_suite"})
-            continue
-        target = {
-            "suite_id": name, "output": str(output_path) if output_exists else None,
-            "workspace": str(workspace_path) if workspace_exists else None,
-            "has_suite_json": isinstance(suite, dict), "ownership": "suite_json"
-            if isinstance(suite, dict) else "orphan_name_pattern", "status": "checked",
-        }
-        report["targets"].append(target)
-        if output_path.parent != output_root or workspace_path.parent != workspace_parent:
-            target["status"] = "blocked_path_boundary"
-            blockers.append(f"{name}: path boundary")
-            continue
-        raw_output = output_root / name
+    for name in names:
         raw_workspace = workspace_parent / name
-        if (raw_output.exists() and raw_output.is_symlink()) \
-                or (raw_workspace.exists() and raw_workspace.is_symlink()):
-            target["status"] = "blocked_symlink"
-            blockers.append(f"{name}: symlink")
+        workspace_path = raw_workspace.resolve()
+        output_path = output_root / name
+        suite = read_json(output_path / "suite.json")
+        target = {"suite_id": name, "workspace": str(workspace_path),
+                  "has_suite_json": isinstance(suite, dict), "status": "checked"}
+        report["targets"].append(target)
+        if raw_workspace.is_symlink() or workspace_path.parent != workspace_parent:
+            target["status"] = "blocked_path_boundary"
+            blockers.append(f"{name}: link or path boundary")
             continue
         states = _state_evidence(output_path)
         target["state_evidence"] = states
@@ -1601,11 +1669,7 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
                 target["status"] = "blocked_process_inventory"
                 blockers.append(f"{name}: process inventory unavailable")
                 continue
-            needles = [name.lower()]
-            if output_exists:
-                needles.append(str(output_path).lower())
-            if workspace_exists:
-                needles.append(str(workspace_path).lower())
+            needles = [name.lower(), str(workspace_path).lower()]
             matches = [row for row in processes if any(
                 needle in str(row.get("command") or "").lower() for needle in needles)]
             target["process_matches"] = matches
@@ -1626,10 +1690,8 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
     for target in report["targets"]:
         removed: list[str] = []
         target["deletion_attempts"] = []
-        paths = [Path(text) for text in (target.get("workspace"), target.get("output"))
-                 if text and Path(text).is_dir()]
-        if system_parent.is_dir():
-            paths += [p for p in sorted(system_parent.glob(f"{target['suite_id']}-*")) if p.is_dir()]
+        workspace_path = Path(target["workspace"])
+        paths = [p for p in (workspace_path, requirement_system_root(workspace_path)) if p.is_dir()]
         failure = None
         for target_path in paths:
             # 每一次删除的全部尝试先进报告，再看成没成：失败不能把已有的尝试记录一起带走
@@ -1823,6 +1885,12 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
     cli_name = suite_cli_configurations(suite)[config_index]["name"]
     if (case.get("adapter_seed") or {}).get("cli") != cli_name:
         append_event(suite, "case_adapter_seeded", case=case_id, **seed_agent_adapter(suite, case, cli_name))
+    git_boundary = ensure_case_git(suite, case)
+    append_event(suite, "case_git_boundary", case=case_id, **git_boundary)
+    if git_boundary["status"] != "ready":
+        case["status"] = "coordinator_start_failed"
+        case["last_error"] = {"git_boundary": git_boundary["reason"]}
+        return
     override_args: list[str] = []
     if case.get("requested_start_phase") and case["requested_start_phase"] != case.get("start_phase"):
         override_args.extend(("--start-phase", str(case["requested_start_phase"])))
@@ -2578,7 +2646,8 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
             if len(str(workspace)) > 180:
                 raise RuntimeError(f"workspace 路径过长: {workspace}")
             boundary = _verify_workspace_boundary(
-                workspace, str(record["feature"]))
+                workspace, str(record["feature"]),
+                own_git=(record.get("git_boundary") or {}).get("status") == "ready")
             record["workspace_status"] = "preflight_pass"
             checks["cases"].append({"case": record["case"], "ar": record["feature"],
                                      "workspace": str(workspace), "status": "pass",
@@ -3366,8 +3435,11 @@ DSH_SESSION_READER = HERE / "dsh_session.mjs"
 
 
 def _dsh_session(path: Path) -> dict[str, Any]:
-    proc = subprocess.run(["node", str(DSH_SESSION_READER), str(path)], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", check=False)
+    try:
+        proc = subprocess.run(["node", str(DSH_SESSION_READER), str(path)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", check=False)
+    except OSError as exc:
+        return {"error": f"读取器起不来（{exc}）"}
     try:
         return json.loads(proc.stdout)
     except ValueError:
@@ -3375,10 +3447,12 @@ def _dsh_session(path: Path) -> dict[str, Any]:
 
 
 def _copy_session(source: Path, destination: Path) -> dict[str, Any]:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
+    # 子会话落在 <run>/native-sessions/<父>/children/<子>/ 下，整条路径常过 260 字符：复制与读回都走长路径前缀
+    target = _long(destination)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_long(source), target)
     return {"source": str(source), "copy": str(destination),
-            "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(), "size": destination.stat().st_size}
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "size": target.stat().st_size}
 
 
 def capture_native_sessions(suite: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
@@ -3386,7 +3460,9 @@ def capture_native_sessions(suite: dict[str, Any], record: dict[str, Any]) -> di
 
     只按本 run 的 runtime 记录里的 session_id 找 `$DSH_HOME/sessions/*/<id>/`，恰好一个候选才取；
     先复制原字节、记源路径与摘要，再解析副本，核头部 id 与 cwd；子会话只认父会话 `subagent/catalog`
-    里登记的 childId，并核它的 parentSession。缺失、多候选、解不出都如实列，不按目录时间猜，不生成业务报告。
+    里登记的 childId，并核它的头部 id 与 parentSession。缺失、多候选、复制失败、解不出、身份不符都如实列进
+    `not_captured` 或该会话的 `problems`，任一项都让整体 incomplete——拷到了文件不等于取得了本次可信的原件。
+    父会话头部不是本 run 的，它的 catalog 不当子级来源；已复制的原字节与摘要都留着。不按目录时间猜，不生成业务报告。
     """
     state = run_pointer_state(str(record["case"]), record.get("run_id")) or {}
     run_dir = Path(str(state.get("run_dir") or Path(str(suite["bundle_root"])) / "cases"
@@ -3397,38 +3473,63 @@ def capture_native_sessions(suite: dict[str, Any], record: dict[str, Any]) -> di
                   if isinstance(rj, dict) and rj.get("cli") == "dsh" and rj.get("session_id")})
     out: dict[str, Any] = {"status": "captured" if ids else "no_dsh_session", "sessions": [], "not_captured": []}
 
-    def find(session_id: str) -> Path | None:
+    def missed(session_id: str, reason: str) -> None:
+        out["not_captured"].append({"session_id": session_id, "reason": reason})
+
+    def take(session_id: str, folder: Path) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """找到唯一候选、复制原字节并解析副本；做不到就记未取得。"""
         found = sorted(home.glob(f"*/{session_id}/session.v4.jsonl.zstd"))
         if len(found) != 1:
-            out["not_captured"].append({"session_id": session_id, "reason": f"候选 {len(found)} 个"})
+            missed(session_id, f"候选 {len(found)} 个")
             return None
-        return found[0]
+        try:
+            entry = _copy_session(found[0], folder / found[0].name)
+        except OSError as exc:
+            missed(session_id, f"复制失败（{exc}）")
+            return None
+        info = _dsh_session(Path(entry["copy"]))
+        entry["problems"] = [f"解不开（{info['error']}）"] if info.get("error") else []
+        entry["error"] = info.get("error")
+        return entry, info
 
     for sid in ids:
-        source = find(sid)
-        if source is None:
-            continue
         dest = run_dir / "native-sessions" / sid
-        entry = _copy_session(source, dest / source.name)
-        info = _dsh_session(dest / source.name)
+        taken = take(sid, dest)
+        if taken is None:
+            continue
+        entry, info = taken
         header = info.get("header") or {}
-        entry.update(session_id=sid, error=info.get("error"), lines=info.get("lines"),
-                     header_matches=header.get("id") == sid and str(header.get("cwd", "")).lower() == workspace,
-                     children=[])
-        for child in info.get("children") or []:
-            child_source = find(str(child["childId"]))
-            if child_source is None:
-                continue
-            copied = _copy_session(child_source, dest / "children" / str(child["childId"]) / child_source.name)
-            child_info = _dsh_session(Path(copied["copy"]))
-            copied.update(child_id=child["childId"], label=child.get("label"), error=child_info.get("error"),
-                          parent_matches=(child_info.get("header") or {}).get("parentSession") == sid)
-            entry["children"].append(copied)
+        entry.update(session_id=sid, lines=info.get("lines"), children=[],
+                     header_matches=header.get("id") == sid and str(header.get("cwd", "")).lower() == workspace)
         out["sessions"].append(entry)
-    if out["not_captured"] or any(s.get("error") or not s["header_matches"] for s in out["sessions"]):
+        if not entry["header_matches"]:
+            entry["problems"].append("头部 id 或 cwd 不是本 run 的会话，它登记的子会话不采")
+            continue
+        for child in info.get("children") or []:
+            cid = str(child.get("childId") or "")
+            if not cid:
+                entry["problems"].append("subagent/catalog 有一条没有 childId")
+                continue
+            taken = take(cid, dest / "children" / cid)
+            if taken is None:
+                continue
+            copied, child_info = taken
+            child_header = child_info.get("header") or {}
+            copied.update(child_id=cid, label=child.get("label"),
+                          parent_matches=child_header.get("parentSession") == sid)
+            if child_header.get("id") != cid:
+                copied["problems"].append("头部 id 与 catalog 的 childId 不符")
+            if not copied["parent_matches"]:
+                copied["problems"].append("parentSession 不是本会话")
+            entry["children"].append(copied)
+    if out["not_captured"] or any(s["problems"] or any(c["problems"] for c in s["children"])
+                                  for s in out["sessions"]):
         out["status"] = "incomplete"
     if ids:
-        write_json(run_dir / "native-sessions" / "manifest.json", out)
+        try:
+            write_json(run_dir / "native-sessions" / "manifest.json", out)
+        except OSError as exc:
+            out.update(status="incomplete", manifest_error=str(exc))
     return out
 
 

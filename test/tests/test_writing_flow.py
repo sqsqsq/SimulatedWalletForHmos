@@ -132,14 +132,32 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
         guide = read("phases/story-write.md")
         body = section(guide, "照骨架写一章")
         for needle in ("先答骨架里的问题，再补骨架没列的", "骨架已铺在里面", "写着写着认识变了",
-                       "回 Spec 或 `decisions.json` 改", "依赖它的行为不能同时写成已定"):
+                       "回 Spec 或 `decisions.json` 改", "不写成默认可重试、已开放或本期不做", "「先认出关系」那份作业"):
             self.assertIn(needle, body, f"写一章那一节少了「{needle}」")
+        # 关系作业只在第四节写一份，写章与回看引用它，不各抄一遍
+        design = section(guide, "动笔前：先设计表达")
+        for needle in ("说了「稍后问」就要真问", "操作开始不等于状态迁移完成", "不授权其中任何一个备选",
+                       "不因「当前还没实现」另造人工取舍", "只给名词落点不算承接", "不算修复"):
+            self.assertIn(needle, design, f"关系作业少了「{needle}」")
+        for needle in ("说了「稍后问」就要真问", "操作开始不等于状态迁移完成"):
+            self.assertEqual(1, guide.count(needle), f"「{needle}」又在别处抄了一份")
+        self.assertIn("第四节第 4 步", section(guide, "回看：十章齐后逐条处置回看清单"))
         # 图怎么选归「表达选择」一节，写章这里只说落盘；两处并存过一轮（可改画 / 一律原样搬入），
         # 作者读到哪句走哪条，car 那一轮的时序图就这么被改画成流程图、丢了失败责任。
         picks = section(guide, "表达选择：先选用途，再选载体")
         for needle in ("照搬它不等于讲清了", "不硬造页面", "换图种可以，丢关系不行"):
             self.assertIn(needle, picks, f"表达选择那一节少了「{needle}」")
         self.assertNotIn("图从要解释的关系出发", body, "图的选法又在写章那一节抄了一份")
+
+    def test_the_reading_choice_starts_from_what_readers_confuse(self) -> None:
+        """阅读图从读者容易混淆的关系出发：汇聚分散事实也是增益；已讲清时零图合法，理由针对具体问题而不是图数。"""
+        design = section(read("phases/story-write.md"), "动笔前：先设计表达")
+        for needle in ("最容易混淆什么", "不需要新的业务事实", "不采用完全合法",
+                       "不以「已有几张图」「再画一张没有新信息」代替"):
+            self.assertIn(needle, design, f"阅读图选择少了「{needle}」")
+        svg = read("reference/svg.md")
+        self.assertIn("把已有但分散的关系放到一处也算", svg, "svg.md 的增益定义与选择方法不一致")
+        self.assertIn("「阅读图选择」", svg, "svg.md 没指回选择方法的那一处")
 
     def test_a_trade_off_needs_a_real_alternative_only_when_there_is_one(self) -> None:
         guide = read("phases/story-write.md")

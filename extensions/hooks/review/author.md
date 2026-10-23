@@ -35,6 +35,8 @@
 cd framework/harness && npx ts-node harness-runner.ts --phase review --feature <需求名>
 ```
 
+阶段闭环之后先按 AGENTS 扩展段「阶段收尾与代码归档」收尾（`--phase review`），成功后再交付、进下一阶段或提交代码。
+
 ## 四、门禁会拦什么
 
 - 缺 `## 知识义务复核` 节，或某条 `must`（按 rule + 落点）没有行；结论列不是三者之一。

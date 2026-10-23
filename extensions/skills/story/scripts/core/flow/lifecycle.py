@@ -84,7 +84,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
     不在这里重实现——两处各判各的，迟早对不上。
 
-    **编号之前先重投影**：附录的技术契约、规约、埋点、改动边界四节是机器区，
+    **编号之前先重投影**：附录里按章节合同投影的几节是机器区，
     真源（spec 扩展章、knowledge-use.yaml）在成文期间还会变——补一条规约判断、改一个
     接口出参。以登记这一次为准，`story-build project` 从当前真源重算一遍。
 
@@ -98,6 +98,8 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     contract = require(load(feature_root))
     status = contract.get("status")
     invalidated = status == "story_written"
+    #: 上一次登记的时刻与指纹：这次检查通过且登记内容逐份相同，仍是那一次成文
+    prior = (contract.get("story_written_at"), contract.get("story_digests")) if invalidated else (None, None)
     if invalidated:
         for key in ("story_written_at", "story_digests"):
             contract.pop(key, None)
@@ -157,8 +159,10 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
                           f"修好后{rerun}。原始输出：\n" + _said(proc))
         done.append(effect)
 
+    digests = {rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}
     contract["status"] = "story_written"
-    contract["story_written_at"] = now()
+    # 内容没变的重新登记不换登记时刻：使用记录据它认出同一次成文，不把重登当成新的完成
+    contract["story_written_at"] = prior[0] if prior[0] and digests == prior[1] else now()
     # 登记记下 story 与它据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
     # 与流程路由拿它核「登记之后改过没有」，改过就重跑 `story` 重新登记。
     #
@@ -166,9 +170,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
-    contract["story_digests"] = {
-        rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED
-    }
+    contract["story_digests"] = digests
     save(feature_root, contract)
     baseline = record_baseline(feature_root)
     # 登记之后真正的下一步与 `status` 同一条路由给出，不在这里另写一份；算不出来不遮住已成功的登记
@@ -188,7 +190,7 @@ VIEW_OWNER = "STORY_VIEW_OWNER"
 def reading_view(feature_root: Path, project_root: Path, outcome: dict):
     """最外层动作持有视图：动手前回到正式形态（Mermaid 按源、阅读槽置空），结束或失败后恢复当前可用的阅读图。
 
-    被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不各自恢复。恢复失败只补视图，
+    被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不再切入，也不各自恢复。恢复失败只补视图，
     写进 `outcome["view"]`，不遮住原来的结果或错误。
     """
     key = os.path.realpath(feature_root).lower()
@@ -197,7 +199,8 @@ def reading_view(feature_root: Path, project_root: Path, outcome: dict):
     if owner:
         os.environ[VIEW_OWNER] = key
     try:
-        ensure_mermaid(feature_root, project_root)
+        if owner:       # 同一需求的外层已切入并持有：不再切一遍
+            ensure_mermaid(feature_root, project_root)
         yield
     finally:
         if owner:

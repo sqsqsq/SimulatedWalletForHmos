@@ -1,4 +1,4 @@
-"""Framework 阶段与 update 轮次的原生事实（只读）：update 收口与 usage 记录共用这一份读取。
+"""Framework 阶段与 update 轮次的原生事实（只读）：update 收口、路由与 usage 记录共用这一份读取。
 
 读的是 harness 自己写的 `<阶段报告目录>/summary.json` 与 update 自己落盘的 record.json——
 它们是**只读投影**，不是我们的账。自己另记一份的话，两边迟早对不上，而人会信错的那一份。
@@ -6,10 +6,9 @@
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from materials import importer
@@ -86,26 +85,6 @@ def moment(value: object) -> datetime | None:
     except ValueError:
         return None
     return at if at.tzinfo else None
-
-
-def event(source: str, kind: str, ended_at: datetime, *identity: object) -> dict:
-    """一个终态事件：稳定指纹由来源、终态类型、原生对象身份与结束时刻（换算到 UTC，同一时刻换个时区写法仍是同一事件）
-    组成，不含对账时刻或报告格式。"""
-    raw = json.dumps([source, kind, *[str(x) for x in identity], ended_at.astimezone(timezone.utc).isoformat()],
-                     ensure_ascii=False)
-    return {"id": "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest(), "kind": kind, "ended_at": ended_at}
-
-
-def closure_event(feature_root: Path, phase: str) -> dict | None:
-    """原生阶段的完成事件：summary 有效、PASS、已闭环且闭环时刻合法；否则 None。"""
-    s = summary(feature_root, phase)
-    data = s.get("data") or {}
-    commit = data.get("closure_commit") if isinstance(data.get("closure_commit"), dict) else {}
-    at = moment(commit.get("committed_at"))
-    if s["state"] != "closed" or data.get("verdict") != "PASS" or at is None:
-        return None
-    return event("framework", "complete", at, phase, s["path"].resolve().as_posix(),
-                 data.get("verifier_subject_id"), commit.get("receipt_path"))
 
 
 def update_records(feature_root: Path) -> list[tuple[str, dict]]:

@@ -378,7 +378,7 @@ export function cmdChapter(ctx) {
       + '章内小节是 `###`，代码围栏里的标题按样例算');
   }
   let next = `${story.slice(0, span.start)}## ${title}\n\n${trimmed}\n\n${story.slice(span.end)}`;
-  // 附录章 = 作者区 + 当前真源投影出的机器区。**投在写前核对之前**：那四节本就
+  // 附录章 = 作者区 + 当前真源投影出的机器区。**投在写前核对之前**：投影的那几节本就
   // 不该由他写，不投的话写前核对会因为它们空着而拦下一份合法的附录。
   if (normalizeHeading(title) === normalizeHeading(appendixChapter(ctx.contract)?.title ?? '')) {
     next = projectAppendix(ctx, next).text;

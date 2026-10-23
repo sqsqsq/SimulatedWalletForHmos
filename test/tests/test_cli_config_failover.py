@@ -150,6 +150,7 @@ class CleanRetryTests(unittest.TestCase):
                 "workspace": str(workspace), "supplements": [],
                 "failure_kind": "content_policy_rejected",
                 "interaction_index": 3, "last_reply_text": "old reply",
+                "git_boundary": {"status": "ready", "initial_head": "old"},
             }
             suite = {
                 "isolated_workspaces": True, "bundle_root": str(bundle),
@@ -173,6 +174,7 @@ class CleanRetryTests(unittest.TestCase):
             self.assertIsNone(record["failure_kind"])
             self.assertEqual(0, record["interaction_index"])
             self.assertIsNone(record["last_reply_text"])
+            self.assertIsNone(record["git_boundary"], "重建的工作区沿用了旧 Git 基线，起跑会只核不建")
 
 
 if __name__ == "__main__":

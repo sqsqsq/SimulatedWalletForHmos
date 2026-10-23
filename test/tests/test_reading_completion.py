@@ -22,20 +22,20 @@ import run_case as rc  # noqa: E402
 
 def pending(fig_state: str) -> dict:
     return {"state": "pending", "items": [{"id": "fig-a", "state": fig_state, "reason": f"fig-a {fig_state}"}],
-            "unmanaged": [], "problems": [], "next": f"完成本地阅读：fig-a {fig_state}"}
+            "problems": [], "next": f"完成本地阅读：fig-a {fig_state}"}
 
 
 DONE = {"state": "complete", "items": [{"id": "fig-a", "state": "ready", "reason": ""}],
-        "unmanaged": [], "problems": [], "next": None}
+        "problems": [], "next": None}
 UNKNOWN = {"state": "unknown", "error": "本地阅读状态读不出（退出码 1：node 起不来）"}
 
 
 class FakeClient:
     """每次 start 记下 prompt；每个 run 一页事件就结束，带模型这一轮说的话与 session。"""
 
-    def __init__(self, said: str = "这一轮做完了", status: str = "succeeded") -> None:
+    def __init__(self, said: str = "这一轮做完了", status: str = "succeeded", session: str | None = "s1") -> None:
         self.prompts: list[str] = []
-        self.said, self.status = said, status
+        self.said, self.status, self.session = said, status, session
 
     def start(self, request):
         self.prompts.append(request.prompt)
@@ -44,7 +44,7 @@ class FakeClient:
     def poll(self, run_id, **_):
         event = SimpleNamespace(type="text", content=self.said, session_id=None, to_dict=lambda: {"type": "text"})
         return SimpleNamespace(events=[event], next_cursor=1, has_more=False,
-                               run={"status": self.status, "session_id": "s1"})
+                               run={"status": self.status, "session_id": self.session})
 
     def stop(self, *_, **__):
         return None
@@ -52,8 +52,9 @@ class FakeClient:
 
 class TheWorkerFinishesTheReading(unittest.TestCase):
     def drive(self, readings: list[dict], *, after_initial: str = "", interactive: bool = False,
-              resume: dict | None = None, host: list | None = None, client: FakeClient | None = None) -> dict:
-        """`readings[n]` 是模型跑完第 n+1 轮之后读到的阅读状态；`host` 依次是宿主在阅读停等上的回话（None = 收工）。"""
+              resume: dict | list | None = None, host: list | None = None, client: FakeClient | None = None) -> dict:
+        """`readings[n]` 是模型跑完第 n+1 轮之后读到的阅读状态；`host` 依次是宿主在阅读停等上的回话（None = 收工）；
+        `resume` 是宿主在第一检查点上的动作，给列表时依次取（None = 收工）。"""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "run"
@@ -68,6 +69,14 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
         case = {"prompt": "执行 /story init", "end_phase": "spec", "after_initial": after_initial,
                 "interactive": interactive}
         resumed: list = []
+        self.checkpoints: list[dict] = []
+        plan = list(resume) if isinstance(resume, list) else None
+
+        def at_checkpoint(*_a, **k):
+            resumed.append(len(client.prompts))
+            self.checkpoints.append(k)
+            return (plan.pop(0) if plan else None) if plan is not None else resume
+
         p = unittest.mock.patch.object
         for patch in (
             p(rc, "_load_case_definition", return_value=(case, None, "AR1")),
@@ -93,7 +102,7 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
             p(rc, "publish_phase_results", return_value=[]),
             p(rc, "derive_phase_state", return_value={}),
             p(rc, "wait_for_human_reply", side_effect=ask),
-            p(rc, "wait_for_resume", side_effect=lambda *a, **k: resumed.append(len(client.prompts)) or resume),
+            p(rc, "wait_for_resume", side_effect=at_checkpoint),
             unittest.mock.patch("sys.stdout", new=io.StringIO()),
         ):
             patch.start()
@@ -181,6 +190,41 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
         self.assertEqual(1, len(self.client.prompts))
         self.assertNotEqual("completed_at_requested_end", state["pipeline"]["status"])
 
+    def test_an_interactive_initial_stops_at_the_checkpoint_for_the_delivery_choice(self) -> None:
+        """没配第二段的交互用例到目标不立即终止：宿主按交互规划答交付选择，模型做完再停，宿主收工。"""
+        client = FakeClient(said="Spec 已闭环。要归档送审，还是先进入 plan？")
+        state = self.drive([DONE, DONE], interactive=True, client=client,
+                           resume=[{"reply": "归档送审"}, None])
+        self.assertEqual([1, 2], self.resumed, "到目标没有停在检查点，或答完后没再停一次")
+        self.assertEqual([False, False], [k.get("next_segment") for k in self.checkpoints], "没有第二段却当成有")
+        self.assertEqual("归档送审", client.prompts[1], "检查点上的回话没交给同一次对话")
+        self.assertEqual("host_concluded", self.result["stop_reason"])
+        self.assertTrue(self.result["closure"]["target_complete"])
+        self.assertEqual(("finished", "completed_at_requested_end"), (state["status"], state["pipeline"]["status"]))
+        self.assertIsNone(state.get("resumed_at"), "没配第二段却进了第二段")
+
+    def test_an_interactive_initial_with_nothing_left_is_concluded(self) -> None:
+        """交付已无待办：宿主按原规则在检查点收工，一轮也不多跑。"""
+        state = self.drive([DONE], interactive=True, resume=None)
+        self.assertEqual([1], self.resumed)
+        self.assertEqual(1, len(self.client.prompts))
+        self.assertEqual(("host_concluded", "finished"), (self.result["stop_reason"], state["status"]))
+
+    def test_an_interactive_initial_without_a_session_is_not_reported_finished(self) -> None:
+        """交付选择还在等人答而 CLI 没给回 session：如实报会话丢失，不报到达目标，也不另起一轮冒充续行。"""
+        client = FakeClient(said="Spec 已闭环。1 归档送审 / 2 进入 plan，请选择", session=None)
+        state = self.drive([DONE], interactive=True, client=client, resume={"reply": "归档送审"})
+        self.assertEqual([], self.resumed, "续不了的会话停到了检查点")
+        self.assertEqual(1, len(client.prompts), "另起了一轮")
+        self.assertEqual("cli_session_lost", self.result["stop_reason"])
+        self.assertNotEqual("finished", state["status"], "阶段闭环冒充了本段交付完成")
+        self.assertIsNone(state.get("cli_session_id"))
+
+    def test_an_automatic_initial_still_ends_at_the_target(self) -> None:
+        state = self.drive([DONE])
+        self.assertEqual([], self.resumed, "自动用例到目标不该停在检查点")
+        self.assertEqual(("target_reached", "finished"), (self.result["stop_reason"], state["status"]))
+
     def test_the_first_checkpoint_waits_for_the_reading(self) -> None:
         self.drive([pending("no-svg"), DONE], after_initial="update")
         self.assertEqual([2], self.resumed, "阅读没做完就停到了第一检查点")
@@ -212,7 +256,7 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
 
 
 GOOD_PENDING = {"applicable": True, "complete": False, "items": [{"id": "f", "line": 3, "state": "blocked",
-                "reason": "块坏了"}], "unmanaged": [7], "problems": ["孤立标记"], "next": "去修"}
+                "reason": "块坏了"}], "problems": ["孤立标记"], "next": "去修"}
 
 
 class TheReadingFactsKeepTheProductsContract(unittest.TestCase):
@@ -237,19 +281,19 @@ class TheReadingFactsKeepTheProductsContract(unittest.TestCase):
 
     def test_each_variant_has_one_conclusion_down_the_chain(self) -> None:
         variants = {
-            "明确不采用": (json.dumps({"applicable": False, "complete": True, "items": [], "unmanaged": [], "problems": [],
+            "明确不采用": (json.dumps({"applicable": False, "complete": True, "items": [], "problems": [],
                                   "next": None}), "not_applicable"),
             "全部就绪": (json.dumps({"applicable": True, "complete": True, "items": [{"id": "f", "line": 3, "state": "ready",
-                                  "reason": ""}], "unmanaged": [], "problems": [], "next": None}), "complete"),
+                                  "reason": ""}], "problems": [], "next": None}), "complete"),
             "有待办": (json.dumps(GOOD_PENDING), "pending"),
             "读取失败": ("{}", "unknown"),
             "缺 applicable": (json.dumps({"complete": False, "items": [], "problems": ["unresolved"]}), "unknown"),
             "applicable 是文字": (json.dumps({**GOOD_PENDING, "applicable": "yes"}), "unknown"),
             "说完成却有问题": (json.dumps({**GOOD_PENDING, "complete": True, "next": None}), "unknown"),
-            "说不适用却有问题": (json.dumps({"applicable": False, "complete": True, "items": [], "unmanaged": [],
+            "说不适用却有问题": (json.dumps({"applicable": False, "complete": True, "items": [],
                                      "problems": ["unresolved"], "next": None}), "unknown"),
             "没完成却没下一动作": (json.dumps({**GOOD_PENDING, "next": None}), "unknown"),
-            "没完成却没有待办": (json.dumps({"applicable": True, "complete": False, "items": [], "unmanaged": [],
+            "没完成却没有待办": (json.dumps({"applicable": True, "complete": False, "items": [],
                                      "problems": [], "next": "去做"}), "unknown"),
             "没就绪却没原因": (json.dumps({**GOOD_PENDING, "items": [{"id": "f", "line": 3, "state": "no-svg", "reason": ""}]}),
                          "unknown"),
@@ -262,8 +306,8 @@ class TheReadingFactsKeepTheProductsContract(unittest.TestCase):
                 if want == "unknown":
                     self.assertTrue(got["error"])
         kept = self.facts(json.dumps(GOOD_PENDING))
-        self.assertEqual(("块坏了", [7], ["孤立标记"], "去修"),
-                         (kept["items"][0]["reason"], kept["unmanaged"], kept["problems"], kept["next"]))
+        self.assertEqual(("块坏了", ["孤立标记"], "去修"),
+                         (kept["items"][0]["reason"], kept["problems"], kept["next"]))
 
     def test_a_missing_story_is_not_applicable_only_before_the_story_is_due(self) -> None:
         self.assertEqual("not_applicable", self.facts("", story=False)["state"])

@@ -360,8 +360,8 @@ def next_step(feature_root: Path, contract: dict | None,
             return reregister
     reading = (reading_todo(reading if reading is not None else reading_work(feature_root))
                if stage in ("archived", "story_written") else None)
-    if stage == "archived" and reading:
-        return ("local_reading", reading + closed_tail(feature_root, contract, manifest))
+    # 本地阅读是附属待办：业务下一动作在前，阅读如实另列，不挡交付
+    aside = f"。本地阅读另列（不挡交付，未完成时如实交回）：{reading}" if reading else ""
     if stage == "archived":
         # 归档之后收口过一轮 update：本地已按它更新，回写需求系统等人确认（`phases/update.md`「已归档」一行）
         closed = str((contract.get("update") or {}).get("last_closed") or "")
@@ -370,18 +370,14 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("done", ("本地已按 update 更新；回写需求系统等人确认，确认后走 `/story archive`。" if updated
                          else "本轮已归档送审。")
                 + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
-                + closed_tail(feature_root, contract, manifest))
-    if stage == "story_written" and reading and spec_closed(feature_root):
-        return ("local_reading", "spec 阶段已闭环。" + reading
-                + "；交付门与「归档送审 / 进入 plan」照常可走，本地阅读未完成时如实交回"
-                + closed_tail(feature_root, contract, manifest))
+                + aside + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",
-                "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
-                "check-receipt → `story-build check --deliver` 交付门；交付门通过后按停等表问一次"
-                "「归档送审 / 进入 plan」（本地单只有进 plan）"
-                + (f"。业务闭环之后：{reading}" if reading else "")
-                + closed_tail(feature_root, contract, manifest))
+                ("spec 阶段已闭环：跑 `story-build check --deliver` 交付门" if spec_closed(feature_root) else
+                 "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
+                 "check-receipt → `story-build check --deliver` 交付门")
+                + "；交付门通过后按停等表问一次「归档送审 / 进入 plan」（本地单只有进 plan）"
+                + aside + closed_tail(feature_root, contract, manifest))
     if stage == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
         # 而 spec 与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后

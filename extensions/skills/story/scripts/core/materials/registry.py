@@ -46,7 +46,7 @@ MANIFEST = ("AR", "story-src", "materials.json")
 # 目录形态的材料源：目录下每个文件各自进清单，加一张图就是材料变了。
 #
 # 两个目录都是图片的落点，也都是**权威落点**：界面参考图由导入平铺进 `ux-reference/`，
-# 文档内嵌图由导入抽进 `assets/<源文档名>/`。图片的登记只有清单这一处：
+# 文档内嵌图由导入抽进 `assets/<源文档主名>.<路径摘要>/`。图片的登记只有清单这一处：
 # 多一处就要人同步，对不上时下游只能挑一份信。
 SOURCE_DIRS = ("ux-reference", "assets")
 INBOX = "inbox"
@@ -289,14 +289,14 @@ def collect_sources(feature_root: Path) -> tuple[list[dict], dict[str, list[str]
             if cls not in targets:
                 # 只抽图那一档没有正文落点：图落地了就算并入
                 for p in docs:
-                    blobs = media.get(p.stem) or {}
-                    asset_dir = feature_root / "assets" / p.stem
+                    blobs = media.get(key[p]) or {}
+                    asset_dir = feature_root / importer.assets_for(key[p])
                     entries[key[p]]["ingested"] = bool(blobs) and all(
                         (asset_dir / name).is_file()
                         and (asset_dir / name).read_bytes() == blob
                         for name, blob in blobs.items())
                     if entries[key[p]]["ingested"]:
-                        pictures[key[p]] = sorted(f"assets/{p.stem}/{name}" for name in blobs)
+                        pictures[key[p]] = sorted(f"{importer.assets_for(key[p]).as_posix()}/{name}" for name in blobs)
                 docs = []
             target = feature_root / targets[cls] if docs else None
             if target is not None and target.is_file() and _same_text(
@@ -307,8 +307,8 @@ def collect_sources(feature_root: Path) -> tuple[list[dict], dict[str, list[str]
                 covered[targets[cls].as_posix()] = [k for k, _, _ in sections[cls]]
 
         for image in images:
-            # 界面图的落点是平铺的顶层，字节相同才算并入——同名换了内容也是新料
-            dest = feature_root / importer.UX_IMAGE_DIR / image.name
+            # 界面图的落点是平铺的顶层，按源键派生；字节相同才算并入——同一路径换了内容也是新料
+            dest = feature_root / importer.ux_image_target(key[image])
             if dest.is_file() and dest.read_bytes() == image.read_bytes():
                 entries[key[image]]["ingested"] = True
 

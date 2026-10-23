@@ -286,11 +286,12 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
  *
  * 明确不采用且声明、槽与正式图结构都没有问题：不适用、已完成。选了图：逐项给状态与原因，全部 ready 才完成。
  * 缺选择、坏声明、依据或放置定不了、标记或源结构坏：没完成，problems 与 `next` 点明修复入口；items 只列已能确定的候选。
+ * 没建源的内联 Mermaid 是合法正文，不算阅读待办；选中图依据里的正式图缺源或与源不同，由该图的验收输入报。
  */
 export function readingWork(featureRoot) {
   const v = inspect(featureRoot);
   if (v.raw === null) {
-    return { applicable: true, complete: false, items: [], unmanaged: [], problems: ['AR/story.md 不在'], next: '本地阅读判不了：AR/story.md 不在' };
+    return { applicable: true, complete: false, items: [], problems: ['AR/story.md 不在'], next: '本地阅读判不了：AR/story.md 不在' };
   }
   const sel = selection(featureRoot);
   const sync = v.slotProblems.length ? null : syncOf(v, sel);
@@ -300,11 +301,8 @@ export function readingWork(featureRoot) {
     problems.push('写作设计「## 阅读图选择」还没有结论——没有阅读图写「不采用：<理由>」，有就逐张写候选');
   }
   if (!problems.length && sel.none !== null && !sel.items.length) {
-    return { applicable: false, complete: true, items: [], unmanaged: [], problems: [], next: null };
+    return { applicable: false, complete: true, items: [], problems: [], next: null };
   }
-  const managed = new Set(v.blocks.flatMap(rowsOf));
-  const unmanaged = sel.items.length
-    ? fenceRanges(v.lines).filter(f => f.lang === 'mermaid' && f.closed && !managed.has(f.from)).map(f => f.from + 1) : [];
   const items = sel.items.map((x) => {
     const slot = v.slots.find(s => s.id === x.id);
     const gap = !sync ? { state: 'blocked', reason: 'Story 的阅读槽结构坏了，先修（见 problems）' }
@@ -313,13 +311,12 @@ export function readingWork(featureRoot) {
           : evidenceGap(featureRoot, v, x, sync);
     return { id: x.id, line: slot ? slot.from + 1 : null, state: gap?.state ?? 'ready', reason: gap?.reason ?? '' };
   });
-  const complete = !problems.length && !unmanaged.length && items.every(i => i.state === 'ready');
-  const rows = [...problems, ...unmanaged.map(n => `第 ${n} 行的 Mermaid 图还没建源（\`story-build view --mode prepare\` 一并建）`),
-    ...items.filter(i => i.state !== 'ready').map(i => `${i.id}：${i.reason}`)];
-  return { applicable: true, complete, items, unmanaged, problems,
+  const complete = !problems.length && items.every(i => i.state === 'ready');
+  const rows = [...problems, ...items.filter(i => i.state !== 'ready').map(i => `${i.id}：${i.reason}`)];
+  return { applicable: true, complete, items, problems,
     next: complete ? null : `完成本地阅读（写作设计选了 ${sel.items.length} 张阅读图）：${rows.join('；')}`
-      + '——选择或依据的问题回写作设计改；图按 `reference/svg.md` 依据所选内容画、渲染、交独立审查，'
-      + '`view --mode review-check` 通过后 `view --mode svg`' };
+      + '——选择或依据的问题回写作设计改；每张图按上面给的动作做（新图按 `reference/svg.md` 画、交独立审查，'
+      + '改过的按它的恢复表），`view --mode review-check` 通过后 `view --mode svg`' };
 }
 
 /** 选中候选的验收对象：不在当前选择里的 ID 明确拒绝，选择或槽结构有问题先报。 */
@@ -334,12 +331,12 @@ function candidate(featureRoot, id) {
 }
 
 /** 生成某张阅读图的验收请求：SVG 本身立得住、依据都取得到才发；返回请求与交给独立审查者的任务。 */
-export function reviewRequest(projectRoot, featureRoot, id, render) {
+export function reviewRequest(projectRoot, featureRoot, id) {
   const c = candidate(featureRoot, id);
   if (c.problems.length) return c;
   const gap = svgGap(featureRoot, id);
   if (gap) return { problems: [gap.reason] };
-  const r = readingRequest(featureRoot, subjectOf(c.v, c.item, c.sync), render);
+  const r = readingRequest(featureRoot, subjectOf(c.v, c.item, c.sync));
   return r.problems.length ? r : { ...r, task: reviewTask(projectRoot, featureRoot, r) };
 }
 

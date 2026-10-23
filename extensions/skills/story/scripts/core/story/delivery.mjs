@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSystemRequirement, readJson } from './context.mjs';
 import { reportCheck, storyReviewProblems } from '../../../../../hooks/shared/verifier-report.mjs';
+import { recordUsage } from '../../../../../hooks/shared/usage.mjs';
 
 /**
  * 框架回执的入口 —— 直接用 node 起 framework 自己那份 ts-node，不经 shell。
@@ -95,6 +96,12 @@ export function deliveryProblems(ctx) {
       + (said ? `check-receipt 原始输出：\n${said.split(/\r?\n/).map(l => `    ${l}`).join('\n')}` : 'check-receipt 没有任何输出'));
   }
 
+  // 原生闭环成立后由同一记录器结算 spec 并读回核落盘：使用记录没写成就不交付，归档的代码与 usage 不缺这一步
+  const used = recordUsage(ctx.projectRoot, 'finalize', { feature: ctx.args.feature, step: 'spec' });
+  if (!used.ok) {
+    reportIssues.push(`spec 业务已闭环，使用记录未完成：${(used.errors ?? []).join('；')}——修好原因后重跑交付门，`
+      + '它重做同一收尾，不重跑审查');
+  }
   if (reportIssues.length) return { problems: reportIssues, notes: [] };
   const review = storyReviewProblems(ctx.projectRoot, ctx.args.feature, 'spec');
   if (review.status === 'NOT_APPLICABLE') {

@@ -176,8 +176,11 @@ class CurrentDecisionsReachTheAuthor(WorkspaceCase):
             with self.subTest(shape=raw[:1]):
                 self.write(raw)
                 got = self.section()
-                self.assertLess(got.index("### open"), got.index("### settled"))
-                self.assertIn("#### D-2：超时后是否自动重试", got)
+                self.assertLess(got.index("### 人签原文"), got.index("### 作者登记"), "作者解释排在人签原文前面")
+                self.assertIn("没有这类人签", got, "没有关卡记录时没说清")
+                self.assertLess(got.index("#### open"), got.index("#### settled"))
+                self.assertIn("##### D-2：超时后是否自动重试", got)
+                self.assertIn("待按上面人签原文核的作者解释", got)
                 self.assertIn("A 自动重试一次；B 提示用户手动重试", got, "选项原文要在")
                 self.assertIn("**推荐**：B，依据是材料未给重试上限。", got)
                 self.assertIn("该谁定：需求方", got)
@@ -267,8 +270,10 @@ class SpecDiagramsReachTheAuthor(WorkspaceCase):
         """放哪一节由作者按内容定——任务包不预设位置。"""
         package = self.package_with_spec()
         self.assertIn("自动充值触发", package)
-        self.assertIn("安排在讲这件事的小节", package)
-        self.assertIn("正文、表或图承接", package, "承接不限于图")
+        self.assertIn("由讲这件事的小节承接", package)
+        self.assertIn("「换图种可以，丢关系不行」", package, "怎样承接没有指回作业书里唯一的那一段")
+        self.assertIn("换图种可以，丢关系不行", (self.root / "doc/extensions/skills/story/phases/story-write.md")
+                      .read_text(encoding="utf-8"), "任务包指向的那一段不存在")
 
     def test_both_upstreams_get_their_own_section(self) -> None:
         """上游两份各一节，下游都是 story——spec 的内容归框架管，扩展不往那边搬图。"""
