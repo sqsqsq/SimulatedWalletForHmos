@@ -181,7 +181,7 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         section = text.split("#### 澄清会@abcdef12/T1", 1)[1].split("####", 1)[0]
         self.assertIn("**会议判断**：重试是否换标识未定", section)
         self.assertIn("> 乙 10:01：重试要不要换标识，先别写死。", section)
-        self.assertIn("选了「defer」保持待定；没选：「a」换标识；原话见「人签原文」", section)
+        self.assertIn("选了「defer」保持待定；没选：「a」换标识；原话见「关卡人签」", section)
         self.assertEqual(1, text.count("> T1 保持待定"), "同一笔人签的原话在一份任务里贴了两遍")
         self.assertIn("> 本期换标识。", section)
         t2 = text.split("#### 澄清会@abcdef12/T2", 1)[1]
@@ -211,13 +211,15 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             {"id": "D-4", "status": "settled", "title": "失败处理", "decider": "需求方",
              "clarification": "失败后可默认再试一次"}]}, ensure_ascii=False), encoding="utf-8")
         task = self.reader_task()
-        signed = task.split("### 人签原文", 1)[1].split("\n### ", 1)[0]
-        self.assertLess(task.index("### 人签原文"), task.index("### 登记成已定"), "作者解释排在人签前面")
+        signed = task.split("### 关卡人签", 1)[1].split("\n### ", 1)[0]
+        self.assertLess(task.index("### 关卡人签"), task.index("### 登记成已定"), "作者解释排在人签前面")
         self.assertIn("选了「later」后续由负责人定", signed)
         self.assertIn("「retry」失败后允许再试；「later」后续由负责人定", signed, "当时摆出的选项没带全")
         self.assertIn("> 失败怎么处理先不定，后面负责人定", signed, "人答不是 reply 原文")
-        self.assertNotIn("可默认再试", signed, "作者解释混进了人签原文")
+        self.assertNotIn("可默认再试", signed, "作者解释混进了关卡人签")
         self.assertIn("失败后可默认再试一次", task.split("### 登记成已定", 1)[1], "作者解释没作为待核对象送到")
+        self.assertIn("引用的问答原话是依据，其余是作者的解释", task, "澄清正文里引用的人答没被当作可用依据送到")
+        self.assertIn("没有已开始的同图增强", task.split("### 已有的同图增强（机械事实）", 1)[1], "已有增强的机械事实没送到")
         for phrase in ("—", "basis"):
             self.assertNotIn(phrase, signed)
 

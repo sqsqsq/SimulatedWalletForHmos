@@ -1,7 +1,7 @@
 # 需求方按实际停等顺序说的话；不注入初始 prompt。
 # 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
-# 一条只答一个关卡的一个问题；只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.2）。
-# expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
+# 一条记一个业务决定及它适用的问题，按实际问到的事取用；一次问几件就逐项具名答，带上议题与结果（TEST.md §3.2）。
+# expected_turn 只是预估顺序，不是必问清单；没问到的不预送。
 # 模型第一次停在材料关卡时，产品稿与接受侧界面说明一次交齐；之后材料关卡再问才答「材料就这些」（TEST §3.2）。
 # 下面几条业务立场只在模型实际问到那件事时才说；没问到就不说，也不提前透露工程里缺什么。
 replies:
@@ -19,13 +19,13 @@ replies:
     expected_turn: 2
     expected_kind: story_gate
     expected_phase: story
-    text: 材料就这些。
+    text: 本单的材料就这些。
 
   - id: scope-no-split
     expected_turn: 3
     expected_kind: story_gate
     expected_phase: story
-    text: 不拆单。
+    text: 本单的钱包发起侧和接受侧整体承载，不拆单。
 
   # 产品稿撤销宽限写 24 小时、系统设计写 48 小时，模型把冲突摆出来问人时的立场（第二段评审会再改成 36 小时）。
   - id: grace-window-initial
@@ -62,23 +62,24 @@ replies:
     expected_phase: story
     text: 分享被接受比例按车云的分享记录统计，钱包端只报发起、接受、撤销三个流程的结果，不另报失效。
 
+  # 宿主先核过模型列出的表里的事实，再用这条确认；有错就指出那一行。
   - id: terms-confirmed
     expected_turn: 9
     expected_kind: story_gate
     expected_phase: spec
-    text: 术语确认，按你列的定。
+    text: 你列出的这些术语映射确认。
 
   - id: enter-plan
     expected_turn: 10
     expected_kind: story_gate
     expected_phase: spec
-    text: 进入 plan。
+    text: 继续准备本单的交付方案。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material
     expected_turn: 11
     expected_kind: story_gate
-    text: 不补。
+    text: 本次没有其他材料。
 
   # 模型把评审意见里「36 小时内对方仍可开门」与「撤销起车辆侧即拒绝」的冲突摆出来问人时的立场。
   - id: grace-window-conflict

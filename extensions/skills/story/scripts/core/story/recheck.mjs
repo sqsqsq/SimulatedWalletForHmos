@@ -57,7 +57,8 @@ export function recheckItems(ctx, plan, storyText) {
       .map(d => item('已定取舍', String(d?.id ?? '（无编号）'), String(d?.title ?? ''), '取舍落在哪一章，依据写了没有')),
     ...(plan?.rechecks ?? [])
       .map(r => item('骨架待核', r.at ? `${r.chapter}·${r.at}` : r.chapter, r.text, '在正文或决策登记里有去向')),
-    ...storyDiagrams(storyText).map(where => item('图', where, '', '图前声称覆盖的去向，图里有没有')),
+    ...storyDiagrams(storyText).map(where => item('图', where, '',
+      '图前说明与图后列表在不在，图前声称覆盖的去向图里有没有；按 reference/svg.md 看值不值得做同图增强')),
   ];
 }
 

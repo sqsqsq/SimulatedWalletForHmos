@@ -302,4 +302,5 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     contract["archived"] = {"at": now()}
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
-    return {"archived": True, "at": contract["archived"]["at"]}
+    step, action = next_step(feature_root, contract)     # 归档成立不回滚；本轮还有没做完的工作同源说出来
+    return {"archived": True, "at": contract["archived"]["at"], "next": step, "action": action}

@@ -29,7 +29,7 @@ from pathlib import Path
 
 from materials import importer, registry
 
-from flow.routing import inputs_answer, material_state
+from flow.routing import inputs_answer, material_state, next_step
 import usage
 from flow.phase_facts import UPDATES, phase_facts as _phase_facts, update_records as _records
 from flow.state import (CONTRACT, FlowError, STORY, REVIEW, STORY_CONTRACT, system_requirement,
@@ -586,11 +586,13 @@ def cmd_update_close(feature_root: Path, project_root: Path) -> dict:
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
+    # 收口成立不回滚；本轮还有没做完的工作（如已开始的同图增强）由同一路由说出来，不以 closed 结束整个任务
+    step, follow = next_step(feature_root, contract)
     return {"update": rid, "status": "closed", "compared_next_time": kept, **({"usage_error": gap} if gap else {}),
-            "unreadable": unreadable, "phases": phases,
+            "unreadable": unreadable, "phases": phases, "next": step,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
-                         if unreadable else "")}
+                         if unreadable else "") + f"下一步：{follow}"}
 
 
 #: 「不变项与理由」那一节：标题里有「不变项」，下面至少一行表格数据。

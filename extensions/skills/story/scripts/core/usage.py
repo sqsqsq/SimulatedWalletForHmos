@@ -5,9 +5,10 @@
 `story update` 另有收口轮数 `rounds`。没做完过的步骤没有行；缺起点的完成轮只让行出现，不补耗时。
 
 计的是模型实际执行一个步骤的日历时长（含本轮等待与中断）：起点是开始工作前的 begin，终点是工作结束后的收尾请求，
-时间全取记录器的机器时刻，保留毫秒、求差后取整秒。身份只标识需求、不作计时依据。story 从 `starts.story`（`/story init`
-取材前的 begin 记下）到第一次成文登记的 `story_written_at`；init 时还没有 Story 起点就记 `starts.story = null`（开始了、起点不可核），
-不拿 init 或之后的时刻补，成文后 Story 记为耗时缺口。成文之前不出 Story 行；
+时间全取记录器的机器时刻，保留毫秒、求差后取整秒。身份只标识需求、不作计时依据。Story 一轮从 `starts.story`（取材前或返修前的
+begin 记下）到这一轮 `story_flow.py story` 登记成功的那一刻（成功回调当场取时，不读盘上旧的成文时间），多轮累计；
+init 时还没有 Story 起点就记 `starts.story = null`（开始了、起点不可核），不拿 init 或之后的时刻补，这一轮成功后记为耗时缺口。
+没有新 begin 的重复登记不加；成文之前不出 Story 行；
 Framework 阶段从 begin 到 finalize 那一刻，原生闭环只作完成资格——此刻有有效闭环、且不早于本轮开始；
 update 一轮从 record 的 `started_at`（prepare 时由 begin 的暂存移入）到 `closed_at`。漏了 begin 不拿检查、trace 或文件时刻补：
 完成行照出、这一轮记为耗时缺口。本地运行态 `<需求根>/.usage-state.json`（不入库）只留两样：还没收尾的那一轮起点
@@ -18,8 +19,9 @@ update 一轮从 record 的 `started_at`（prepare 时由 begin 的暂存移入�
 - begin：一个步骤开始实际工作之前（Spec / Plan 的作者任务包入口自动调，其余由作者页与 Skill 的第一步执行）：
   没有身份件就建（本地未提交的同编号旧节点替换掉，已提交的保留）；阶段、Story 与 update 登记这一轮的起点，已有就保留最早的
   （已是 null 的 Story 起点保持 null）；
-- init：story init 成功后；没有身份件就照 begin 的边界建；Story 还没有起点就记 null 并报缺口，不写 init 时刻；
-- refresh：其它 story 命令成功后；已有身份才刷新版本、自报身份、Story 与 update，不结算 Framework 阶段；
+- init：story init 成功后；没有身份件就照 begin 的边界建；Story 从没完成过、也没有起点时记 null 并报缺口，不写 init 时刻；
+- refresh：其它 story 命令成功后；已有身份才刷新版本、自报身份与 update，不结算 Framework 阶段；
+  `story` 登记成功的那一次另带本次成功时刻，结算这一轮 Story；
 - finalize：阶段原生闭环之后的 Extension 收尾，由消费模型在交付、进下一阶段或提交代码之前执行，Story 交付门也调它：
   核本阶段已闭环、身份在，结算这一轮并读回落盘的 usage 确认这一步已记；失败时按报出的原因处理（没闭环先完成阶段，写不进先修环境）再重跑同一命令；
 - close：update 收口之后，对这一轮进入过、此刻有效闭环的阶段同样收尾；
@@ -323,14 +325,25 @@ def finish_round(fr: Path, phase: str, steps: dict, starts: dict) -> str | None:
     return None
 
 
-def tally_story(fr: Path, steps: dict, starts: dict) -> None:
-    """Story 只在第一次成文时计：`starts.story` 到 `story_written_at`，结算后清起点；之后再登记不再加。
-    起点是 null、没有或晚于成文：完成行照出、记为耗时缺口。"""
-    written = phase_facts.moment((state.load(fr) or {}).get("story_written_at"))
-    if written is None or "story" in steps:
-        return
-    start = phase_facts.moment(starts.pop("story", None))
-    steps["story"] = add(None, start, written) if start is not None and written >= start else {}
+def tally_story(steps: dict, starts: dict, completed_at: datetime) -> str | None:
+    """这一次 story 登记成功结算一轮 Story：可靠起点到本次成功时刻累加进旧值并清起点；
+    没有进行中的一轮时，已完成过的不再加，从没完成过的记完成缺口；起点不可核（null）的一轮记缺口、旧累计不动；
+    成功早于起点的不结算、起点保留。返回要披露的说明，正常结算返回 None。"""
+    if "story" not in starts:
+        if "story" in steps:
+            return None
+        steps["story"] = {}
+        return "Story 这一轮没有开始记录（工作前没跑 begin --step story）：完成行已记，耗时是缺口"
+    start = phase_facts.moment(starts["story"])
+    if start is None:
+        starts.pop("story")
+        steps["story"] = steps.get("story") or {}
+        return "Story 这一轮起点不可核：完成已记，这一轮耗时是缺口，已记的累计不变"
+    if completed_at < start:
+        return "Story 登记成功早于这一轮开始，这一轮没有结算，起点保留到下一次登记"
+    steps["story"] = add(steps.get("story"), start, completed_at)
+    starts.pop("story")
+    return None
 
 
 def tally_update(fr: Path, steps: dict) -> None:
@@ -354,14 +367,13 @@ def tally_update(fr: Path, steps: dict) -> None:
 
 
 def refresh(fr: Path, node: dict, slot: dict, done: list) -> None:
-    """一个节点按当前真源刷新：版本、自报身份、Story 与 update。Framework 阶段不在这里结算，也不在这里开始。"""
+    """一个节点按当前真源刷新：版本、自报身份与 update。Story 只在登记成功那一次结算，Framework 阶段在收尾结算。"""
     steps, starts = node["steps"], slot.setdefault("starts", {})
     for step, row in slot.pop("pending", {}).items():      # 上次写 usage 没成的结算行：赋值，不再加
         steps[step] = row
     node["ext"] = ext_version()
     node["fw"] = fw_version(fr) or node["fw"]
     take_input(fr, node, done)
-    tally_story(fr, steps, starts)
     tally_update(fr, steps)
 
 
@@ -373,7 +385,7 @@ def feature_dir(project_root: Path, number: str) -> Path:
 
 
 def apply(project_root: Path, data: dict, st: dict, action: str, feature: str | None, step: str | None,
-          errors: list[str], done: list, notes: list[str]) -> list[str]:
+          errors: list[str], done: list, notes: list[str], story_completed_at: datetime | None = None) -> list[str]:
     """在已读出的 usage 与运行态上执行一个动作，返回动过的节点键；`done` 收记录落盘之后才做的写入。"""
     reqs = data["requirements"]
     allowed = phase_facts.PHASES if action == "finalize" else STEPS if action == "begin" else None
@@ -407,21 +419,22 @@ def apply(project_root: Path, data: dict, st: dict, action: str, feature: str | 
     node = reqs.setdefault(key, {"ext": None, "fw": None, "agent": None, "model": None, "steps": {}})
     slot = st.setdefault(key, {})
     try:
-        refresh(fr, node, slot, done)       # 先按已有成文事实结算 Story：成文过的不再登记开始
+        refresh(fr, node, slot, done)
         starts = slot.setdefault("starts", {})
-        story_open = "story" not in node["steps"]
-        if action == "init" and story_open and "story" not in starts:
+        if story_completed_at is not None:
+            notes.extend(filter(None, [tally_story(node["steps"], starts, story_completed_at)]))
+        if action == "init" and "story" not in node["steps"] and "story" not in starts:
             starts["story"] = None          # init 真的发生了、Story 起点却没记：开始了，起点不可核
             notes.append("这次 Story 没有开始记录（取材前没跑 begin --step story）：不拿 init 时刻补，成文后 Story 记为耗时缺口；"
                          "业务照常继续，之后各阶段开始前照常 begin")
-        elif action == "begin" and step == "story" and story_open and starts.get("story", "") is None:
-            notes.append("Story 在 init 时就已开始、起点不可核：这次 begin 不补起点，成文后 Story 记为耗时缺口")
+        elif action == "begin" and step == "story" and starts.get("story", "") is None:
+            notes.append("Story 在 init 时就已开始、起点不可核：这次 begin 不补起点，这一轮成功后记为耗时缺口")
         if action == "begin" and step == UPDATE and not open_update(fr):
             stale, last = phase_facts.moment(starts.get(UPDATE)), last_closed(fr)
             if stale is not None and last is not None and stale.replace(microsecond=0) <= phase_facts.moment(last["closed_at"]):
                 starts.pop(UPDATE)          # 上一轮收口时没移成的起点（当时已报）：那一轮已是缺口，不带进新一轮
                 notes.append(f"上一轮 update（{last.get('id')}）的开始时刻没移进它的记录，那一轮记为耗时缺口；这一轮从现在开始")
-        if action == "begin" and not (step == "story" and not story_open) and not (step == UPDATE and open_update(fr)):
+        if action == "begin" and not (step == UPDATE and open_update(fr)):
             starts.setdefault(step, iso(now()))        # 已有的（含 Story 的 null）保留；开着的 update 轮次已有 started_at
         elif action == "finalize":
             notes.extend(filter(None, [finish_round(fr, step, node["steps"], starts)]))
@@ -492,13 +505,15 @@ def save_state(path: Path, st: dict) -> None:
 
 
 def after_command(project_root: Path, feature: str, mode: str, action: str | None = None) -> dict:
-    """Story 命令成功之后的采集：init 确保身份、Story 没有起点就记未知，update 收口结算这一轮进入过的阶段，其余已有身份才刷新。
-    记录错误与提示另列，不改业务结果。"""
+    """Story 命令成功之后的采集：init 确保身份、Story 没有起点就记未知，story 登记成功结算这一轮 Story，
+    update 收口结算这一轮进入过的阶段，其余已有身份才刷新。记录错误与提示另列，不改业务结果。"""
     which = "init" if mode == "init" else "close" if (mode, action) == ("update", "close") else "refresh"
-    return record(project_root, which, feature=feature)
+    completed = now() if mode == "story" else None      # 成功的这一刻在进记录事务之前取定，重试不换
+    return record(project_root, which, feature=feature, story_completed_at=completed)
 
 
-def record(project_root: Path, action: str, *, feature: str | None = None, step: str | None = None) -> dict:
+def record(project_root: Path, action: str, *, feature: str | None = None, step: str | None = None,
+           story_completed_at: datetime | None = None) -> dict:
     """执行一个动作并落盘；失败不改原文件。返回 `{ok, changed, errors, requirement, pending_identity, note}`。"""
     out = {"ok": False, "changed": False, "errors": [], "requirement": None, "pending_identity": False, "note": None}
     if action not in ACTIONS:
@@ -516,7 +531,8 @@ def record(project_root: Path, action: str, *, feature: str | None = None, step:
             data, st, done, notes = load(path), load_state(state_path), [], []
             before = json.dumps([data, st], sort_keys=True)
             old = json.loads(json.dumps(data["requirements"]))
-            keys = apply(Path(project_root), data, st, action, feature, step, out["errors"], done, notes)
+            keys = apply(Path(project_root), data, st, action, feature, step, out["errors"], done, notes,
+                         story_completed_at)
             tidy(st)
             if json.dumps([data, st], sort_keys=True) != before:
                 # 先把这次变了的步骤行记进运行态（起点已清），再写 usage，最后清待写——任一步失败，下一次刷新都不会重复累计

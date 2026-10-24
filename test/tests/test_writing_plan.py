@@ -700,7 +700,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
 class TheExpressionScaffolding(PlanCase):
     """图三件套的脚手架、每章三问的空壳、附录章不要骨架。"""
 
-    GUIDES = ("作图：一两句说清读者看这张图要看出什么", "作图：这里放", "作图：补图里没表达的条件")
+    GUIDES = ("作图：一两句说清读者看这张图要看出什么", "作图：这里放", "作图：图后用列表补图里没表达的条件")
 
     def test_a_chosen_diagram_gets_three_guides_that_are_stripped_on_submit(self) -> None:
         self.write_plan(with_chapter("07-exceptions", SEQUENCE))

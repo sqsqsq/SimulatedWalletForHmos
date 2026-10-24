@@ -34,6 +34,7 @@ import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './languag
 import { chapterImageProblems, diagramsOf, diagramTopic } from './images.mjs';
 import { carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import { recheckItems, recheckRows } from './recheck.mjs';
+import { readingWork } from './figure-view.mjs';
 
 /**
  * 草稿 → 本章正文：剥掉指导行、开头属于本章自己的标题与末尾空白，同时记下留下的每一行在草稿里是第几行。
@@ -275,9 +276,12 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + `来源 ${originals}；方法见 ${guide} 的「五、照骨架写一章」`);
     carried.push(...carryRows(ctx, plan, ctx.contract.chapters[at]?.id));
   } else {
+    const work = readingWork(ctx.featureRoot);
     rows.push('NEXT: 十章齐了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
       + 'Spec、验收、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
-      + '处置完跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
+      + '图源写定后按 doc/extensions/skills/story/reference/svg.md「值不值得做」判断每张图，值得的先做完同图增强并过源码审查'
+      + (work.complete ? '' : `（已开始的还没做完：${work.next}）`)
+      + '；处置完跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: 回看清单（本输出下方）；当前 ${storyRel} 全文；写作设计 ${planRel}；决策登记 `
       + `${relFromFeature(ctx, ctx.decisionsPath)}；来源初筛 `

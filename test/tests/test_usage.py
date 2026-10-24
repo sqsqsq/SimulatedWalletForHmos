@@ -134,6 +134,15 @@ class UsageCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
+    def story_done(self, when: datetime, feature: str = "AR1") -> dict:
+        """`story_flow.py story` 登记成功之后的那次回调（`after_command` 的 story 分支），成功时刻固定在 `when`。"""
+        sys.path.insert(0, str(CORE))
+        import usage  # noqa: PLC0415
+        self.fr(feature)
+        with unittest.mock.patch.object(usage, "now", return_value=when), \
+                unittest.mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": self.env["GIT_CEILING_DIRECTORIES"]}):
+            return usage.after_command(self.root, feature, "story")
+
     def story_start(self, feature: str = "AR1") -> object:
         """运行态里 Story 的起点：没有这个键时返回字符串 "absent"，好和 null 分开。"""
         return self.state().get(self.key(feature), {}).get("starts", {}).get("story", "absent")
@@ -314,9 +323,10 @@ class Completion(UsageCase):
         self.at_time("finalize", "spec", T0 + timedelta(seconds=310))
         self.assertEqual({"spent": 160}, self.steps()["spec"], "update 收口与收尾重复累计")
 
-    def test_story_runs_from_its_begin_to_the_first_registration(self) -> None:
+    def test_story_runs_from_its_begin_to_each_successful_registration(self) -> None:
         """用户预放了材料，模型照常取材前 begin、再真实 init、成文：计完整跨度。预放的材料不是开工证据；
-        重复 begin / init / refresh / 重新登记不重启身份、不改起点、不重复计。"""
+        重复 begin / init / refresh 不重启身份、不改起点。之后真正再开一轮（begin）并登记成功，累计；
+        内容没变、盘上成文时间也没变的那一轮同样累计；没有新 begin 的重复登记不加。"""
         (self.fr() / "inbox").mkdir()
         (self.fr() / "inbox" / "requirements.md").write_text("用户预放的需求材料\n", encoding="utf-8")
         self.at_time("begin", "story", T0)
@@ -328,17 +338,24 @@ class Completion(UsageCase):
         self.assertNotIn("story", self.steps(), "还没成文就出了 Story 行")
         self.story_written(T0 + timedelta(seconds=900))
         self.call("refresh")
+        self.assertNotIn("story", self.steps(), "刷新拿盘上的成文时间结算了 Story")
+        self.story_done(T0 + timedelta(seconds=900))
         self.assertEqual({"spent": 900}, self.steps()["story"], "Story 不是从开始工作算起")
         self.assertEqual("absent", self.story_start(), "结算后起点还留着")
-        self.at_time("begin", "story", T0 + timedelta(seconds=1000))   # 成文过的 Story 不再开始
+        self.story_done(T0 + timedelta(seconds=950))                    # 没有新 begin 的重复登记
+        self.assertEqual({"spent": 900}, self.steps()["story"], "重复登记多记了")
+        self.at_time("begin", "story", T0 + timedelta(seconds=1000))   # 返修：再开一轮
         self.story_init()
-        self.story_written(T0 + timedelta(seconds=9000))                 # 修稿后重新登记
-        self.call("refresh")
-        self.assertEqual((key, {"spent": 900}, "absent"), (self.key(), self.steps()["story"], self.story_start()))
+        self.call("refresh")                                            # 盘上旧成文时间 + 刷新：不收这一轮
+        self.assertEqual(({"spent": 900}, native(T0 + timedelta(seconds=1000))), (self.steps()["story"], self.story_start()))
+        self.story_done(T0 + timedelta(seconds=1100))                   # 内容没变、成文时间没变也算这一轮
+        self.at_time("begin", "story", T0 + timedelta(seconds=2000))
+        self.story_done(T0 + timedelta(seconds=2010))
+        self.assertEqual((key, {"spent": 1010}, "absent"), (self.key(), self.steps()["story"], self.story_start()))
 
     def test_a_missed_begin_leaves_the_story_start_unknown(self) -> None:
         """漏了取材前的 begin：真实 init 记起点未知；迟到的 begin 保持未知；成文之前没有 Story 行，
-        成文后只出缺口行，不拿 init 或迟到 begin 的时刻补。usage 写失败时缺口行照待写赋值。"""
+        登记成功后只出缺口行，不拿 init 或迟到 begin 的时刻补。usage 写失败时缺口行照待写赋值。"""
         for late in (True, False):
             with self.subTest(late_begin=late):
                 feature = f"M{int(late)}"
@@ -352,21 +369,38 @@ class Completion(UsageCase):
                 self.story_init(feature)                                 # 重复 init：未知保持未知
                 self.assertIsNone(self.story_start(feature))
                 self.assertNotIn("story", self.steps(feature), "还没成文就出了 Story 行")
-                self.story_written(T0 + timedelta(seconds=500), feature=feature)
                 _, restore = TheExtensionClosesTheStep.inject(self, "usage.json")
-                self.assertFalse(self.at_time("refresh", None, T0 + timedelta(seconds=510), feature=feature)["ok"])
+                self.assertFalse(self.story_done(T0 + timedelta(seconds=510), feature=feature)["ok"])
                 restore()
                 self.assertEqual({"story": {}}, self.state()[self.key(feature)]["pending"], "缺口行没进待写")
                 self.call("refresh", feature=feature)
                 self.assertEqual({}, self.steps(feature)["story"], "缺起点的 Story 编了耗时")
                 self.assertEqual("absent", self.story_start(feature), "结算后未知起点还留着")
 
-    def test_only_a_registered_story_is_complete(self) -> None:
-        """成文登记是完成的唯一证据：已成文、却从没被记录器看到开始的，第一次看到就记缺口、不补现在；
-        只有 story.md 文件在、没有成文登记的，不算完成。"""
+    def test_an_unknown_later_round_keeps_what_was_counted(self) -> None:
+        """已有累计后，又一轮起点不可核（例如 begin 记了 null）：这一轮记缺口，已记的累计不抹。
+        登记成功早于起点（时钟异常）不结算、起点保留到下一次。"""
+        self.at_time("begin", "story", T0)
+        self.story_done(T0 + timedelta(seconds=100))
+        st = self.state()
+        st.setdefault(self.key(), {}).setdefault("starts", {})["story"] = None
+        self.state_file.write_text(json.dumps(st), encoding="utf-8")
+        out = self.story_done(T0 + timedelta(seconds=300))
+        self.assertIn("起点不可核", out["note"])
+        self.assertEqual(({"spent": 100}, "absent"), (self.steps()["story"], self.story_start()))
+        self.at_time("begin", "story", T0 + timedelta(seconds=500))
+        out = self.story_done(T0 + timedelta(seconds=400))
+        self.assertIn("早于", out["note"])
+        self.assertEqual(({"spent": 100}, native(T0 + timedelta(seconds=500))), (self.steps()["story"], self.story_start()))
+
+    def test_only_a_successful_registration_completes_the_story(self) -> None:
+        """登记成功是完成的唯一事件：从没被看到开始、第一次登记成功只记缺口，不补现在；
+        盘上只有成文时间或只有 story.md 文件、没有这一次成功的，不算完成。"""
         self.story_written(T0, feature="W1")
-        self.at_time("begin", "story", T0 + timedelta(seconds=100), feature="W1")
-        self.assertEqual(({}, "absent"), (self.steps("W1")["story"], self.story_start("W1")), "已成文的拿现在补了起点")
+        self.at_time("begin", "spec", T0 + timedelta(seconds=100), feature="W1")
+        self.assertNotIn("story", self.steps("W1"), "盘上旧成文时间被当成了完成")
+        self.story_done(T0 + timedelta(seconds=200), feature="W1")
+        self.assertEqual({}, self.steps("W1")["story"], "没有开始记录的完成编了耗时")
         story_md = self.fr("W2") / "AR" / "story.md"
         story_md.parent.mkdir(parents=True)
         story_md.write_text("# 只有文件\n", encoding="utf-8")
@@ -379,18 +413,17 @@ class Completion(UsageCase):
         self.assertEqual("20261021T080000.000Z", self.key().split("-", 1)[1])
         self.assertNotIn("story", self.steps(), "没做 Story 却出了行")
         self.at_time("begin", "story", T0 + timedelta(seconds=500))
-        self.story_written(T0 + timedelta(seconds=800))
-        self.call("refresh")
+        self.story_done(T0 + timedelta(seconds=800))
         self.assertEqual({"spent": 300}, self.steps()["story"], "Story 从需求身份时刻算了")
 
-    def test_story_counts_from_its_start_to_its_first_registration(self) -> None:
+    def test_a_failed_story_command_is_not_a_completion(self) -> None:
+        """story 命令失败不调成功回调：经真实 story_flow 入口，登记没成就没有完成、起点保留。"""
         self.at_time("begin", "story", T0)
-        self.story_written(T0 + timedelta(seconds=1656))
-        self.call("refresh")
-        self.assertEqual({"spent": 1656}, self.steps()["story"], "Story 不等 Spec 闭环就算完成")
-        self.story_written(T0 + timedelta(seconds=9000))   # 修稿后重新登记
-        self.call("refresh")
-        self.assertEqual({"spent": 1656}, self.steps()["story"], "重新登记重复计了")
+        proc = subprocess.run([sys.executable, str(FLOW), "story", "--feature", "AR1", "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90, env=self.env)
+        self.assertNotEqual(0, proc.returncode, proc.stdout)
+        self.assertEqual(native(T0), self.story_start(), "失败的登记清了起点")
+        self.assertNotIn("story", self.steps(), "失败的登记记成了完成")
 
     def test_update_rounds_come_from_the_records_even_without_local_state(self) -> None:
         self.call("begin", "story")
@@ -600,8 +633,7 @@ class TheExtensionClosesTheStep(UsageCase):
 class TheLocalStateIsMinimal(UsageCase):
     def test_init_story_and_update_leave_no_empty_state(self) -> None:
         self.at_time("begin", "story", T0)
-        self.story_written(T0 + timedelta(seconds=30))
-        self.call("refresh")
+        self.story_done(T0 + timedelta(seconds=30))
         self.update_record("u1", T0, T0 + timedelta(seconds=60))
         self.call("refresh")
         self.assertEqual({"story": {"spent": 30}, "story update": {"spent": 60, "rounds": 1}}, self.steps())
@@ -675,9 +707,11 @@ class VersionsAndIdentity(UsageCase):
         from unittest import mock  # noqa: PLC0415
         for (mode, action), want in ((("update", "close"), "close"), (("update", "status"), "refresh"),
                                      (("init", None), "init"), (("story", None), "refresh")):
-            with self.subTest(mode=mode, action=action), mock.patch.object(usage, "record") as rec:
+            with self.subTest(mode=mode, action=action), mock.patch.object(usage, "record") as rec, \
+                    mock.patch.object(usage, "now", return_value=T0):
                 usage.after_command(self.root, "AR1", mode, action)
-                rec.assert_called_once_with(self.root, want, feature="AR1")
+                rec.assert_called_once_with(self.root, want, feature="AR1",
+                                            story_completed_at=T0 if mode == "story" else None)
 
     def test_a_pure_framework_requirement_is_not_asked(self) -> None:
         out = self.call("begin", "coding")

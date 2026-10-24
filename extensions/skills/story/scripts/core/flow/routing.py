@@ -177,10 +177,13 @@ def spec_stage_step(feature_root: Path) -> tuple[str, str]:
                 "逐章在草稿上写、`story-build chapter --from <草稿>` 落盘——"
                 "每次落盘先核这一章能确定的那几条，判不过时盘上什么都不变；"
                 "落盘之后它会给出下一章。" + SPEC_STAGE_ORDER)
+    reading = reading_todo(reading_work(feature_root))
     return ("register_story",
             "十章齐了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
-            "（业务结论改 Spec 或决策登记，骨架改写作设计，正文改草稿再 chapter 提交），"
-            f"处置完直接跑 `{register_command(feature_root)}` 登记成文"
+            "（业务结论改 Spec 或决策登记，骨架改写作设计，正文改草稿再 chapter 提交）；"
+            "图源写定后按 `reference/svg.md`「值不值得做」判断每张图，值得的先做完同图增强并过源码审查"
+            + (f"（已开始的还没做完：{reading}）" if reading else "") +
+            f"，处置完直接跑 `{register_command(feature_root)}` 登记成文"
             "（它自己重投附录、编号、渲染 review 并全篇 check，不必先跑 check）"
             "——**登记之前跑 harness 一定红**。" + SPEC_STAGE_ORDER)
 
@@ -360,8 +363,10 @@ def next_step(feature_root: Path, contract: dict | None,
             return reregister
     reading = (reading_todo(reading if reading is not None else reading_work(feature_root))
                if stage in ("archived", "story_written") else None)
-    # 本地阅读是附属待办：业务下一动作在前，阅读如实另列，不挡交付
-    aside = f"。本地阅读另列（不挡交付，未完成时如实交回）：{reading}" if reading else ""
+    if reading:
+        # 已开始的同图增强是本轮工作：先做完再回原接续；读不出时给诊断动作，不当完成。不是业务许可，不挡交付门与归档
+        return ("finish_reading", f"已开始的同图增强还没做完，先在本轮做完：{reading}。"
+                "做完后按 `story_flow.py status` 的下一步回到原来的收尾" + closed_tail(feature_root, contract, manifest))
     if stage == "archived":
         # 归档之后收口过一轮 update：本地已按它更新，回写需求系统等人确认（`phases/update.md`「已归档」一行）
         closed = str((contract.get("update") or {}).get("last_closed") or "")
@@ -370,14 +375,14 @@ def next_step(feature_root: Path, contract: dict | None,
         return ("done", ("本地已按 update 更新；回写需求系统等人确认，确认后走 `/story archive`。" if updated
                          else "本轮已归档送审。")
                 + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
-                + aside + closed_tail(feature_root, contract, manifest))
+                + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_archived",
                 ("spec 阶段已闭环：跑 `story-build check --deliver` 交付门" if spec_closed(feature_root) else
                  "叙事件已登记成文。按 `phases/spec.md`「闭环」一节走完：harness → verifier → "
                  "check-receipt → `story-build check --deliver` 交付门")
                 + "；交付门通过后按停等表问一次「归档送审 / 进入 plan」（本地单只有进 plan）"
-                + aside + closed_tail(feature_root, contract, manifest))
+                + closed_tail(feature_root, contract, manifest))
     if stage == "complete":
         # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
         # 而 spec 与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后

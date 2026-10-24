@@ -78,6 +78,7 @@ class StoryCommandsRecordUse(UpdateCase):
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         out = self.update("--action", "close")
         self.assertEqual("closed", out.get("status"), out)
+        self.assertTrue(out.get("next") and "下一步：" in out.get("action", ""), f"收口只报 closed，没给本轮下一步：{out}")
         row = self.node()["steps"]["story update"]
         self.assertEqual(1, row["rounds"])
         self.assertIsInstance(row["spent"], int)

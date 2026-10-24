@@ -1,7 +1,7 @@
 """story 里由脚本管理的正式图：一张图一个 ID，`.mmd` 是唯一真源，同一块里在 Mermaid 与同 ID 的增强 SVG 之间切换。
 
 锁的是视图合同：正式图源的建立、按源重铺与坏块零写入；一块一次只放一种形态，块外正文一个字节不动；
-没有正式图就不适用，有图时逐张列增强进度；验收请求只绑图源、SVG 与本地资源，任一变化让这一张过期，
+没有正式图就不适用；有图时只列已开始的增强（已有 SVG 或图审工作目录），普通 Mermaid 不是待办；验收请求只绑图源、SVG 与本地资源，任一变化让这一张过期，
 别的章节、编号、分隔空行与显隐不让它过期；旧版补充阅读槽与旧补充图报告不被当成本版对象；
 正式入口（story-build 其它命令、阶段钩子、预检、story_flow）先回到 Mermaid，结束或失败后恢复可用的 SVG。
 SVG 与源对不对、好不好读不在这里——那是独立审查的事。
@@ -142,18 +142,21 @@ class OneFigureTwoForms(FigureViewCase):
         self.assertEqual(before, self.story.read_bytes(), "没有图时视图改了 story")
         self.assertFalse((self.fr / "AR" / "figures").exists())
 
-    def test_every_figure_is_work_until_its_svg_is_reviewed(self) -> None:
+    def test_a_plain_mermaid_figure_is_not_work_and_a_started_one_is_until_reviewed(self) -> None:
+        """不是每张图都要做：只有 Mermaid 的图不进工作集合；放了 SVG 或开了图审工作就是本轮要做完的工作。"""
         self.ok("prepare")
         fid = self.fig_id()
-        work = self.work()
-        self.assertEqual((True, False), (work["applicable"], work["complete"]))
-        self.assertEqual([(fid, "no-svg")], [(i["id"], i["state"]) for i in work["items"]])
-        self.assertIn(f"{fid}.mmd 制作", work["next"], "没指向同 ID 的图源")
+        self.assertEqual({"applicable": True, "complete": True, "items": [], "problems": [], "next": None}, self.work(),
+                         "普通 Mermaid 图被当成了待办")
         self.put_svg()
-        self.assertEqual("no-request", self.state())
+        work = self.work()
+        self.assertEqual((False, [(fid, "no-request")]), (work["complete"], [(i["id"], i["state"]) for i in work["items"]]))
+        self.assertIn(fid, work["next"])
         self.make_ready()
         work = self.work()
         self.assertEqual((True, None), (work["complete"], work["next"]))
+        (self.fr / "AR" / "figures" / f"{fid}.svg").unlink()           # 图审工作还在、SVG 丢了：仍是没做完的增强
+        self.assertEqual("no-svg", self.state())
 
     def test_svg_replaces_mermaid_in_the_same_block_and_comes_back_byte_for_byte(self) -> None:
         self.ready()
@@ -181,10 +184,12 @@ class OneFigureTwoForms(FigureViewCase):
         self.make_ready(seq)
         proc = self.ok("svg")
         self.assertTrue(self.shown(seq))
-        self.assertEqual("```mermaid", self.block(flow)[0], "没审过的图也换成了 SVG")
-        self.assertIn(f"{flow}：还没有增强阅读图", proc.stdout, "没说清哪张为什么没显示")
+        self.assertEqual("```mermaid", self.block(flow)[0], "没做增强的图也换成了 SVG")
+        self.assertNotIn(flow, proc.stdout, "没做增强的图被报成待办")
         work = self.work()
-        self.assertEqual((False, {flow: "no-svg", seq: "ready"}), (work["complete"], {i["id"]: i["state"] for i in work["items"]}))
+        self.assertEqual((True, {seq: "ready"}), (work["complete"], {i["id"]: i["state"] for i in work["items"]}))
+        self.put_svg(flow)                                                  # 开始做这一张、还没审：如实说
+        self.assertIn(f"{flow}：", self.ok("svg").stdout, "已开始却没审完的图没说清为什么没显示")
         self.ok("mermaid", "--id", seq)
         self.assertEqual("```mermaid", self.block(seq)[0], "--id 只收回这一张")
         self.ok("svg", "--id", seq)
@@ -511,6 +516,7 @@ class TheFormalFormIsMermaid(FigureViewCase):
         flow, seq = self.fig_id(FLOW_SRC), self.fig_id(SEQ_SRC)
         self.put_svg(flow)
         self.make_ready(flow)
+        self.put_svg(seq)                                                   # 已开始、还没审
         self.ok("svg")
         proc = self.build("number")
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -534,8 +540,9 @@ class TheFormalFormIsMermaid(FigureViewCase):
         self.assertIn("view", out, "story_flow 没有交回视图的去向")
         self.assertTrue(self.shown(), "用户直接跑 status 没恢复 SVG")
 
-    def test_the_business_step_leads_and_the_unfinished_enhancement_is_listed_aside(self) -> None:
-        """spec 闭环后、归档后增强 SVG 没完成：下一步仍是业务动作（交付门 / 已归档），阅读待办另列、不当主动作。"""
+    def test_a_started_enhancement_is_finished_before_the_usual_next_step(self) -> None:
+        """没做增强：spec 闭环后、归档后照常是交付门 / 已归档，不挂阅读待办。已开始的增强没做完：下一步先把它做完（不是 done 加附注），
+        做完回到原接续。这只改下一步的说法，不挡交付门与归档。"""
         self.ok("prepare")
         fid = self.fig_id()
         sys.path.insert(0, str(CORE))
@@ -546,21 +553,29 @@ class TheFormalFormIsMermaid(FigureViewCase):
         reports.mkdir(parents=True, exist_ok=True)
         (reports / "summary.json").write_text(json.dumps({"closure_status": "closed"}), encoding="utf-8")
         step, action = routing.next_step(self.fr, contract)
-        self.assertEqual("run_archived", step, "阅读待办顶替了业务下一动作")
+        self.assertEqual("run_archived", step, "普通 Mermaid 图被当成了待办")
         self.assertTrue(action.startswith("spec 阶段已闭环：跑 `story-build check --deliver` 交付门"), action)
-        self.assertIn("本地阅读另列", action)
-        self.assertIn(fid, action, "图还没有增强 SVG 却没说")
         archived = {**contract, "archived": {"at": "2026-10-21T00:00:00+00:00"}}
-        step, action = routing.next_step(self.fr, archived)
-        self.assertEqual("done", step)
-        self.assertIn("本地阅读另列", action)
+        self.assertEqual("done", routing.next_step(self.fr, archived)[0])
+        self.put_svg()
+        for c in (contract, archived):
+            step, action = routing.next_step(self.fr, c)
+            self.assertEqual("finish_reading", step, "已开始的增强没做完却直接 done 或只挂附注")
+            self.assertIn(fid, action, "没说是哪张图")
+        driver = ("const m = await import(process.argv[1]);"
+                  "process.stdout.write(m.deliveryNextSteps({ featureRoot: process.argv[2], flowPath: process.argv[3],"
+                  " args: { feature: process.argv[4] } }));")
+        said = subprocess.run(["node", "--input-type=module", "-e", driver, (CORE / "story" / "delivery.mjs").as_uri(),
+                               str(self.fr), str(self.fr / "AR" / "story-src" / "story-flow.json"), FEATURE],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertIn("已开始的同图增强还没做完", said.stdout, f"交付门之后的下一步吞掉了没做完的增强：{said.stderr}")
         self.put_svg()
         self.make_ready()
         self.ok("svg")
         self.ok("mermaid")
         step, action = routing.next_step(self.fr, contract)
         self.assertEqual("run_archived", step)
-        self.assertNotIn("本地阅读", action, "增强完成后还挂着阅读待办")
+        self.assertNotIn("同图增强", action, "增强完成后还挂着阅读待办")
 
     def test_an_outer_owner_switches_once_and_nested_calls_do_not_switch_again(self) -> None:
         """外层持有同一需求的视图时，嵌套的 story-build 与 story_flow 不再切入、也不恢复；没有外层的独立调用照常切入。"""
@@ -799,7 +814,7 @@ class TheOneClickEntry(FigureViewCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         said = proc.stdout + proc.stderr
         self.assertIn("view] toggle", said, said[-800:])
-        self.assertIn("还没有增强阅读图", said)
+        self.assertIn("显示增强 SVG 的 0 张", said)
 
 
 class TheCoreArchiveEntry(FigureViewCase):

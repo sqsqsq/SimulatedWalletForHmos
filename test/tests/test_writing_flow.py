@@ -414,7 +414,7 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
 
     def test_the_reviewer_asks_the_three_figure_questions(self) -> None:
         overlay = (self.EXT / "rules" / "spec-rules.overlay.yaml").read_text(encoding="utf-8")
-        for q in ("图前是不是说清了读者看这张图要看出什么", "图后是不是补上了图里没表达的条件", "图种合不合读者要判断的那件事",
+        for q in ("图前是不是说清了读者看这张图要看出什么", "图后是不是用列表补上了图里没表达的条件", "没做同图增强算遗漏", "图种合不合读者要判断的那件事",
                   "一段是不是讲了几件独立的事"):
             with self.subTest(q=q):
                 self.assertIn(q, overlay)

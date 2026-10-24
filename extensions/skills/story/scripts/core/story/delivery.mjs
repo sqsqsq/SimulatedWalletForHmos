@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSystemRequirement, readJson } from './context.mjs';
+import { readingWork } from './figure-view.mjs';
 import { reportCheck, storyReviewProblems } from '../../../../../hooks/shared/verifier-report.mjs';
 import { recordUsage } from '../../../../../hooks/shared/usage.mjs';
 
@@ -34,6 +35,12 @@ function receiptRunner(harness) {
  * 这是脚本给的确定性文本，与 `story_flow.py status` 同一口径。
  */
 export function deliveryNextSteps(ctx) {
+  // 已开始的同图增强没做完：交付门照样通过，下一步先把本轮这份工作做完，做完再问人
+  const work = readingWork(ctx.featureRoot);
+  if (!work.complete) {
+    return ['', `[story-build check] 交付门通过。已开始的同图增强还没做完，这是本轮工作，先做完：${work.next}`,
+      '做完后再跑一次交付门，按它给的停等问人。', ''].join('\n');
+  }
   const remote = readJson(ctx.flowPath, null) !== null && isSystemRequirement(ctx.args.feature);
   const rows = remote
     ? ['  1  归档送审：`/story archive <AR>`',

@@ -121,7 +121,7 @@ node doc/extensions/skills/story/scripts/adapters/story.js init <AR> <mcp-token>
 python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架（唯一写入者，重跑安全）
 ```
 
-⓪ 在取 token、取材之前跑：它记下 Story 的开始，耗时从这一刻算到成文登记；重跑保留最早的。漏了它，② 只记「开始了、起点不可核」，成文后 Story 记为耗时缺口。① 失败就停下，报出它的 `error`，不建骨架。
+⓪ 在取 token、取材之前跑：它记下 Story 这一轮的开始，耗时从这一刻算到 `story` 登记成功；重跑保留最早的。成文后回头返修，动手前再跑它开新一轮，多轮累计。漏了它，② 只记「开始了、起点不可核」，那一轮成功后记为耗时缺口。① 失败就停下，报出它的 `error`，不建骨架。
 
 **看骨架判材料**：`RR/prd.md`、`SR/design.md` 是正文还是占位件（正文写着「本文档未从需求系统拉取到」）。
 有占位件就当缺料，请用户把对应文档放进 `inbox/` 走导入。

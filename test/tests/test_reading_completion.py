@@ -52,9 +52,11 @@ class FakeClient:
 
 class TheWorkerFinishesTheReading(unittest.TestCase):
     def drive(self, readings: list[dict], *, after_initial: str = "", interactive: bool = False,
-              resume: dict | list | None = None, host: list | None = None, client: FakeClient | None = None) -> dict:
+              resume: dict | list | None = None, host: list | None = None, client: FakeClient | None = None,
+              facts=None) -> dict:
         """`readings[n]` 是模型跑完第 n+1 轮之后读到的阅读状态；`host` 依次是宿主在阅读停等上的回话（None = 收工）；
-        `resume` 是宿主在第一检查点上的动作，给列表时依次取（None = 收工）。"""
+        `resume` 是宿主在第一检查点上的动作，给列表时依次取（None = 收工）。
+        `host` 里的 "RECHECK" 表示宿主没回话、停等里装置用传进来的重探回调读到了什么；`facts` 给出就按调用顺序取阅读状态。"""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         out = Path(tmp.name) / "run"
@@ -62,9 +64,14 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
         answers = list(host or [])
         self.asked: list[tuple[int, str, str]] = []
 
-        def ask(*_, prompt: str = "", kind: str = "story_gate", **__):
+        def ask(*_, prompt: str = "", kind: str = "story_gate", recheck=None, **__):
             self.asked.append((len(client.prompts), kind, prompt))
-            return answers.pop(0) if answers else None
+            answer = answers.pop(0) if answers else None
+            if answer == "RECHECK":
+                self.assertIsNotNone(recheck, "读不出的停等没给重探回调")
+                got = recheck()
+                return rc.READING_RECHECK_COMPLETE if got["state"] in ("complete", "not_applicable") else None
+            return answer
 
         case = {"prompt": "执行 /story init", "end_phase": "spec", "after_initial": after_initial,
                 "interactive": interactive}
@@ -95,7 +102,7 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
             p(rc, "artifacts_ready", return_value=True),
             p(rc, "phase_evidence_complete", return_value=(True, [])),
             p(rc, "phase_was_reached", return_value=False),
-            p(rc, "reading_facts", side_effect=lambda *_a, **_k: readings[min(len(client.prompts), len(readings)) - 1]),
+            p(rc, "reading_facts", side_effect=facts or (lambda *_a, **_k: readings[min(len(client.prompts), len(readings)) - 1])),
             p(rc, "run_gates", return_value={}),
             p(rc, "expected_gate_names", return_value=()),
             p(rc, "build_phase_results", return_value={}),
@@ -177,6 +184,22 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
         self.assertIn("判不了", self.asked[0][2])
         self.assertEqual("business_closed_reading_incomplete", state["pipeline"]["status"])
 
+    def test_a_recovered_unreadable_status_needs_no_human_reply(self) -> None:
+        """读不出是技术故障：停等里装置重探到完成，就停到第一检查点，不要宿主回一句「收到」、不多起一轮 CLI。"""
+        seq = [UNKNOWN]             # 第一次读不出，之后（停等里的重探及以后）都读得出、已完成
+        state = self.drive([], interactive=True, after_initial="update", host=["RECHECK"], resume=None,
+                           facts=lambda *_a, **_k: seq.pop(0) if seq else DONE)
+        self.assertEqual(1, len(self.client.prompts), "重探恢复后又续了一轮")
+        self.assertEqual([1], self.resumed, "恢复后没有停到第一检查点")
+        self.assertEqual("complete", self.result["closure"]["reading"]["state"])
+        self.assertNotEqual("host_concluded", self.result.get("reading_handoff"), "技术恢复被记成了宿主收工")
+        self.assertEqual(0, int(state.get("human_wait_events") or 0), "技术恢复被记成了人答")
+
+    def test_a_pending_status_is_not_rechecked_into_completion(self) -> None:
+        """读得出、确实没做完：不给重探回调，照常交宿主；装置不替产品宣布完成。"""
+        self.drive([pending("no-report")], interactive=True, host=[None])
+        self.assertEqual(1, len(self.asked))
+
     def test_a_session_that_cannot_continue_is_not_continued(self) -> None:
         client = FakeClient(status="failed")
         state = self.drive([pending("no-svg")], client=client)
@@ -253,6 +276,55 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
         self.assertEqual([3], stopped, "update 后阅读没做完就停到了第二检查点")
         self.assertIn("按评审改", self.client.prompts[1])
         self.assertIn("fig-a stale", self.client.prompts[2])
+
+
+class TheTechnicalWaitRechecks(unittest.TestCase):
+    """停等本身：读不出时按间隔重探，恢复了返回哨兵；宿主的回话与收工先于探针；读得出但没做完就停止重探。"""
+
+    def wait(self, recheck, *, before=None, conclude_after: int = 0):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = Path(tmp.name)
+        state: dict = {}
+        events: list[str] = []
+        feed = SimpleNamespace(emit=lambda name, **_: events.append(name))
+        runlog = SimpleNamespace(event=lambda *_: None)
+        if before:
+            before(out)
+        p = unittest.mock.patch.object
+        slept: list[int] = []
+
+        def sleep(_s):
+            slept.append(1)
+            if conclude_after and len(slept) == conclude_after:
+                (out / rc.CONCLUDE_FILE).write_text(json.dumps({"reason": "够了"}), encoding="utf-8")
+        with p(rc, "refresh_worker_lease", return_value=None), p(rc.time, "sleep", side_effect=sleep), \
+                p(rc, "READING_RECHECK_SEC", 1), unittest.mock.patch("sys.stderr", new=io.StringIO()):
+            got = rc.wait_for_human_reply(out, feed, runlog, state, turn=3, kind="local_reading", recheck=recheck)
+        return got, state, events, out
+
+    def test_a_recovered_probe_returns_without_a_human_answer(self) -> None:
+        seq = iter([UNKNOWN, DONE])
+        got, state, events, _ = self.wait(lambda: next(seq))
+        self.assertIs(rc.READING_RECHECK_COMPLETE, got)
+        self.assertEqual(("running", None), (state["status"], state["awaiting_kind"]))
+        self.assertNotIn("human_reply", events)
+        self.assertEqual(0, int(state.get("human_wait_events") or 0))
+
+    def test_a_reply_that_arrives_during_the_probe_wins(self) -> None:
+        def probe() -> dict:
+            (out_dir[0] / rc.REPLY_FILE).write_text(json.dumps({"text": "先停一下"}), encoding="utf-8")
+            return DONE
+        out_dir: list[Path] = []
+        got, state, _, _ = self.wait(probe, before=out_dir.append)
+        self.assertEqual("先停一下", got, "探针期间到达的回话被吞掉了")
+        self.assertEqual(1, state["human_wait_events"])
+
+    def test_a_pending_probe_stops_rechecking_and_waits_for_the_host(self) -> None:
+        calls: list[int] = []
+        got, _, _, _ = self.wait(lambda: calls.append(1) or pending("no-report"), conclude_after=6)
+        self.assertIsNone(got, "宿主收工没收到")
+        self.assertEqual(1, len(calls), "读得出、没做完之后还在重探")
 
 
 GOOD_PENDING = {"applicable": True, "complete": False, "items": [{"id": "f", "line": 3, "state": "blocked",

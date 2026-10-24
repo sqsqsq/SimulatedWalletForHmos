@@ -233,8 +233,14 @@ def pop_conclude_request(out_dir: Path) -> dict | None:
     return payload
 
 
+#: 技术重探恢复成完成的结果：既不是宿主回话（str）也不是收工（None）。只在进程内传，不落盘、不算人答
+READING_RECHECK_COMPLETE = object()
+#: 阅读状态读不出时停等期间重探的间隔（秒）
+READING_RECHECK_SEC = 15
+
+
 def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
-                         turn: int, prompt: str = "", kind: str = "story_gate") -> str | None:
+                         turn: int, prompt: str = "", kind: str = "story_gate", recheck=None) -> object:
     """交互模式：停下来等宿主回话。**无限等，不设上限。**
 
     上一版等 `REPLY_WAIT`（1 小时）就 break，结果被折叠成 `target_not_reached`——
@@ -248,7 +254,11 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
     `prompt` 是模型本轮最后说的那段话，随停等一起交给宿主：他据它当轮就能回，
     不必再去 events.jsonl 尾部捞。
 
-    @returns 宿主的回话；`None` 表示宿主判定本轮到此为止（conclude）。
+    `recheck` 只在阅读状态读不出（技术故障）的停等里传：每隔 `READING_RECHECK_SEC` 秒同步重探一次，
+    恢复成完成或不适用就不等人，返回 `READING_RECHECK_COMPLETE`；变成真实未完成就停止重探、照常等宿主。
+    探针前后先看宿主的回话与收工，它们优先。
+
+    @returns 宿主的回话；`None` 表示宿主判定本轮到此为止（conclude）；`READING_RECHECK_COMPLETE` 表示技术重探已恢复完成。
     """
     state.update(status="awaiting_reply", awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"),
                  awaiting_turn=turn, awaiting_kind=kind,
@@ -262,6 +272,7 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
           f"用 run_case.py <case> reply --text \"…\" 回话", file=sys.stderr, flush=True)
     waited = 0.0
     nudged = 0
+    rechecked = 0
     while True:
         refresh_worker_lease(out_dir, state)
         text = pop_pending_reply(out_dir)
@@ -278,6 +289,21 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
             return text
         if pop_conclude_request(out_dir) is not None:
             return None
+        if recheck is not None and waited >= READING_RECHECK_SEC * (rechecked + 1):
+            rechecked += 1
+            facts = recheck()
+            queued = (out_dir / REPLY_FILE).exists() or (out_dir / CONCLUDE_FILE).exists()
+            if not queued and facts.get("state") in ("complete", "not_applicable"):
+                state.update(status="running", awaiting_since=None, awaiting_kind=None,
+                             awaiting_prompt=None, awaiting_prompt_source=None)
+                refresh_worker_lease(out_dir, state, force=True, event="reading_recheck_complete")
+                feed.emit("reading_recheck_complete", turn=turn, state=facts.get("state"))
+                runlog.event("阅读状态重探", f"恢复为 {facts.get('state')}，不需要人回话")
+                return READING_RECHECK_COMPLETE
+            if facts.get("state") == "pending":
+                recheck = None          # 读得出了、确实没做完：技术等待结束，照常等宿主
+                feed.emit("reading_recheck_pending", turn=turn)
+                runlog.event("阅读状态重探", "读得出了，增强确实没做完；停止重探，照常等宿主")
         time.sleep(1.0)
         waited += 1.0
         # 等久了要出声——「一直等」不等于「没人知道它在等」。
@@ -760,7 +786,16 @@ def reading_turn(feature: str, story_required: bool, seen: dict, result: dict, *
         return f"业务阶段已收口，本地阅读还没完成：{reading['next']}"
     why = (f"本地阅读状态判不了：{reading['error']}" if reading["state"] == "unknown"
            else f"本地阅读还没完成，{'上次转交下一动作之后没有可见变化' if key == seen.get('forwarded') else '交宿主决定'}：{reading['next']}")
-    reply = ask(why)
+
+    def recheck() -> dict:
+        seen["rechecked"] = reading_facts(REPO_ROOT / FEATURES_DIR / feature, story_required=story_required)
+        return seen["rechecked"]
+
+    # 读不出是技术故障：停等期间装置自己重探，恢复了不需要人回一句假话
+    reply = ask(why, recheck=recheck if reading["state"] == "unknown" else None)
+    if reply is READING_RECHECK_COMPLETE:
+        result["reading"] = seen["rechecked"]
+        return None
     if reply is None:
         result.update(reading_handoff="host_concluded", stop_reason="host_concluded",
                       conclude_reason="本地阅读停等期间宿主收工")
@@ -2030,10 +2065,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             # 业务收口时转交过的阅读待办：再收口时与它比，看得出有没有进展
             reading_seen: dict = {}
 
-            def reading_reply(why: str) -> str | None:
-                """阅读交宿主：带着模型本轮原话与阅读证据停等（既有停等，宿主回话或收工）。"""
+            def reading_reply(why: str, recheck=None) -> object:
+                """阅读交宿主：带着模型本轮原话与阅读证据停等（既有停等，宿主回话或收工；读不出时装置自己重探）。"""
                 return wait_for_human_reply(out_dir, feed, runlog, state, turn=turns, kind="local_reading",
-                                            prompt=f"{last_text}\n\n——{why}" if last_text else why)
+                                            prompt=f"{last_text}\n\n——{why}" if last_text else why, recheck=recheck)
 
             # story 是多轮交互流程：材料确认时会停下来等待补料、拆分或进入 spec。
             # 单轮驱动会把它卡死在那儿（产物一个不产），但那不是 skill 的缺陷——

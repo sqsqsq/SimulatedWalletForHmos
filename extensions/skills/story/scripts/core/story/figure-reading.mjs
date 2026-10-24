@@ -36,6 +36,10 @@ const entry = (featureRoot, rel) => {
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return undefined; } };
 
 /** 正式图块的 Mermaid 形态：与 `.mmd` 逐字相同的一个 Mermaid 围栏。视图重铺与一致性核共用这一份。 */
+/** 这张图开始过同图增强：已有 SVG，或已有图审工作目录（review-request 建的）。普通 Mermaid 图不是增强工作。 */
+export const enhanced = (featureRoot, id) => fs.existsSync(path.join(featureRoot, 'AR', 'figures', `${id}.svg`))
+  || fs.existsSync(readingDir(featureRoot, id));
+
 export const mermaidBody = (src) => ['```mermaid', ...src.replace(/\r?\n$/, '').split(/\r?\n/), '```'];
 
 //: 同一次命令里同一份 SVG 只核一次：按内容记，内容变了就重核；进程结束即失效，不跨命令留存

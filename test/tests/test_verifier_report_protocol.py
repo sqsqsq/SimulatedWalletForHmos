@@ -737,7 +737,7 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
 
     def test_a_pass_that_skipped_a_required_input_is_not_a_review(self) -> None:
         STORY = f"          - doc/features/{FEATURE}/AR/story.md\n"  # noqa: N806
-        """必审输入没出现在声明里，或列进了 unreviewed，就不能 PASS；不在表里的路径也不收。"""
+        """必审输入没出现在声明里，或列进了 unreviewed，就不能 PASS；额外读的路径顶替不了漏掉的必审。"""
         cases = {
             "漏报": (lambda t: t.replace(STORY, ""), "既没出现在 examined_inputs 也没列进 unreviewed"),
             "未核却 PASS": (lambda t: t.replace(STORY, "").replace(
@@ -751,7 +751,7 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
                 "        unreviewed: []", f"        unreviewed:\n          - doc/features/{FEATURE}/AR/story.md"), "没写原因"),
             "未核未知项": (lambda t: t.replace("        unreviewed: []", "        unreviewed:\n          - RR/别的.md：没读"),
                       "既不是表里的输入也不是本阶段判据"),
-            "多报": (lambda t: t.replace(STORY, STORY + "          - RR/别的.md\n"), "不在「读这些」表里"),
+            "多读却漏必审": (lambda t: t.replace(STORY, "          - RR/别的.md\n"), "既没出现在 examined_inputs 也没列进 unreviewed"),
             "重复": (lambda t: t.replace(STORY, STORY + STORY.replace("- doc", "- ./doc")), "写了两次"),
             "UNKNOWN": (lambda t: t.replace("status: PASS", "status: UNKNOWN").replace(
                 "| story_reader_review | PASS |", "| story_reader_review | UNKNOWN |"), "没有审完"),
@@ -765,6 +765,19 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
                 both = self.gate(edit)
                 self.assertIn(said, both)
                 self.assertIn("不要自己补", both, "报错叫作者改报告")
+
+    def test_extra_reading_beside_every_required_input_is_accepted(self) -> None:
+        """「读这些」是必审集合，不是阅读白名单：必审一份不漏、另外多读了相关代码或目录，报告照样合规。"""
+        self._stub_receipt(0, "回执通过")
+        self.write_report("PASS")
+        target = self.root / REPORT_REL
+        story = f"          - doc/features/{FEATURE}/AR/story.md\n"
+        target.write_text(target.read_text(encoding="utf-8").replace(
+            story, story + "          - entry/src/main/ets/pages/HomeConstants.ets\n          - doc/knowledge/\n"), encoding="utf-8")
+        out = self.check("--deliver")
+        said = out.stdout + out.stderr
+        self.assertNotIn("examined_inputs", said, f"额外读的路径被当成问题：{said[-600:]}")
+        self.assertNotIn("[⑭ 交付门]", said, f"交付门报了问题：{said[-600:]}")
 
     def test_an_input_gap_blocks_a_pass_until_it_is_cleared(self) -> None:
         """生产者已发现的输入缺口（坏 origins、越界路径）不清零就不能 PASS；合规的 FAIL 照样可存。"""

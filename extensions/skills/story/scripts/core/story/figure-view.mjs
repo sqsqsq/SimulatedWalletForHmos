@@ -29,7 +29,7 @@ import { createHash } from 'node:crypto';
 import { fenceRanges, FIGURE_MARK, markPairs, separateMarks } from './document.mjs';
 import { markdownLinks } from './language.mjs';
 import { joinPosix, registeredPaths } from './sources.mjs';
-import { lf, mermaidBody, readOr, readingRequest, readingState, reviewTask, srcPath, svgFacts } from './figure-reading.mjs';
+import { enhanced, lf, mermaidBody, readOr, readingRequest, readingState, reviewTask, srcPath, svgFacts } from './figure-reading.mjs';
 
 export const VIEW_MODES = ['prepare', 'mermaid', 'svg', 'toggle', 'status', 'review-request', 'review-check'];
 const ID = /^[A-Za-z0-9][\w-]*$/;
@@ -151,6 +151,7 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
     }
   } else if (mode === 'svg') {
     for (const b of mine) {
+      if (b.form !== 'svg' && !enhanced(featureRoot, b.id)) continue;   // 没做增强的图就是 Mermaid，不是待办
       const gap = evidenceGap(featureRoot, b.id);
       if (!gap) {
         if (b.form !== 'svg') body(b, [refLine(b.id)]);
@@ -182,28 +183,29 @@ export function switchView(featureRoot, mode, { id = '' } = {}) {
 }
 
 /**
- * 本地阅读的工作集合 —— 每次从 story 里实际的正式图派生，不另存清单。
+ * 本地阅读的工作集合 —— 每次从 story 里实际的正式图与已有增强资产派生，不另存清单。
  *
- * 没有正式图：不适用、已完成。有图：逐张给状态与原因，全部 ready 才完成；Mermaid 始终可读，没完成如实列出。
+ * 没有正式图：不适用、已完成。有图：只列已开始增强的那几张（已有 SVG 或图审工作目录），逐张给状态与原因；
+ * 没做增强的图保持 Mermaid，不是待办。complete 只说现存增强资产没有未处理的验证缺口，不说哪些图该做、选得对不对。
  * 结构坏了（标记、源、旧版阅读槽）：没完成，problems 与 `next` 点明修复入口。没建源的内联 Mermaid 由正式登记的 prepare 管理。
  */
 export function readingWork(featureRoot) {
   const v = inspect(featureRoot);
   if (v.raw === null) {
-    return { applicable: true, complete: false, items: [], problems: ['AR/story.md 不在'], next: '本地阅读判不了：AR/story.md 不在' };
+    return { applicable: false, complete: true, items: [], problems: [], next: null };   // 还没有 story：没有图，也就没有增强
   }
   const problems = [...v.problems, ...v.blocks.filter(b => b.problem).map(b => b.problem)];
   if (!v.blocks.length && !problems.length) return { applicable: false, complete: true, items: [], problems: [], next: null };
-  const items = v.blocks.map((b) => {
+  const items = v.blocks.filter(b => enhanced(featureRoot, b.id)).map((b) => {
     const gap = b.problem ? { state: 'blocked', reason: '图块结构或源有问题，先修（见 problems）' } : evidenceGap(featureRoot, b.id);
     return { id: b.id, line: b.from + 1, state: gap?.state ?? 'ready', reason: gap?.reason ?? '' };
   });
   const complete = !problems.length && items.every(i => i.state === 'ready');
   const rows = [...problems, ...items.filter(i => i.state !== 'ready').map(i => `${i.id}：${i.reason}`)];
   return { applicable: true, complete, items, problems,
-    next: complete ? null : `完成同图增强阅读（正式图 ${v.blocks.length} 张）：${rows.join('；')}`
-      + '——每张按上面给的动作做（缺 SVG 的按 `reference/svg.md` 依同 ID 的 .mmd 制作、交独立审查，'
-      + '改过的按它的恢复表），`view --mode review-check` 通过后 `view --mode svg`' };
+    next: complete ? null : `做完已开始的同图增强：${rows.join('；')}`
+      + '——按上面给的动作做（缺件的按 `reference/svg.md` 依同 ID 的 .mmd 补齐、交独立审查，改过的按它的恢复表），'
+      + '`view --mode review-check` 通过后 `view --mode svg`' };
 }
 
 /** 验收对象：只认 story 里现有的正式图块，结构有问题先报。 */

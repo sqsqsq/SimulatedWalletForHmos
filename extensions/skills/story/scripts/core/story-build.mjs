@@ -369,6 +369,11 @@ function cmdArchive(ctx) {
       + (reg.error ?? reg.output));
   }
   process.stdout.write(`[story-build archive] 已归档并登记：${feature}（上传、读回核验、评审记录附件都成立；覆盖前的系统正文备份在 ${receipt.backupPath ?? '对接层记录处'}）\n`);
+  // 登记返回的下一步原样带出：本轮还有没做完的工作（如已开始的同图增强）不被归档成功吞掉
+  const said = String(reg.stdout ?? '');
+  let after = null;
+  try { after = JSON.parse(said.slice(said.indexOf('{'))); } catch { after = null; }
+  if (after?.next && after.next !== 'done') process.stdout.write(`[story-build archive] 下一步（${after.next}）：${after.action}\n`);
 }
 
 /**

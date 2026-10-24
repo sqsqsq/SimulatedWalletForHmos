@@ -1,7 +1,7 @@
 # 需求方按实际停等顺序说的话；不注入初始 prompt。
 # 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
-# 一条只答一个关卡的一个问题；只回选项或一句短语：这里记的是立场，不是台词（TEST.md §3.2）。
-# expected_turn 按预估顺序编号；实跑发现顺序漂移时按 adaptive 事件校准这里，不改话术。
+# 一条记一个业务决定及它适用的问题，按实际问到的事取用；一次问几件就逐项具名答，带上议题与结果（TEST.md §3.2）。
+# expected_turn 只是预估顺序，不是必问清单；没问到的不预送。
 # 顺序：问料 → 交料（含会议记录）→ 读会后逐个话题问人 → 参会人角色 → 范围 → 术语 → 交付门。
 replies:
   - id: hand-over-the-ui-doc
@@ -49,7 +49,7 @@ replies:
     expected_turn: 8
     expected_kind: story_gate
     expected_phase: story
-    text: 参会人角色就是你列的这样。
+    text: 参会人角色：王磊产品、陈静卡云、刘洋支付、赵敏运营、孙浩钱包开发、周婷测试。
 
   # 交通卡云与支付部件的接口在工程里还接不上，模型问到怎么承载时的立场。只在问到时说，不提前透露工程缺什么。
   - id: no-real-interface
@@ -62,28 +62,29 @@ replies:
     expected_turn: 10
     expected_kind: story_gate
     expected_phase: story
-    text: 不拆，整体承载。
+    text: 策略查询与签约、状态查询与解约由本单整体承载，不拆。
 
+  # 宿主先核过模型列出的表里的事实，再用这条确认；有错就指出那一行。
   - id: terms-confirmed
     expected_turn: 11
     expected_kind: story_gate
     expected_phase: spec
-    text: 术语确认，按你列的定。
+    text: 你列出的这些术语映射确认。
 
   - id: deliver-for-review
     expected_turn: 12
     expected_kind: story_gate
     expected_phase: spec
-    text: 归档送审。
+    text: 规格定稿后归档送审。
 
   # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
   - id: update-material
     expected_turn: 13
     expected_kind: story_gate
-    text: 不补，材料就这些。
+    text: 本次没有其他材料。
 
-  # 第二段：改版稿把单日上限改成 300，与会上「本期 200 不动」冲突（有意保留的探针）。模型把冲突摆出来问人时的立场。
+  # 第二段：新版产品需求明确把单日上限由会上保留的 200 上调到 300（有权的新决定正例）。模型真去确认这次改版上限时的立场；不问而有据按 300 更新同样合法。
   - id: update-daily-limit-conflict
     expected_turn: 14
     expected_kind: story_gate
-    text: 单日上限按会上定的，本期 200 元。
+    text: 这版产品需求已经把本期单日上限调整为 300 元，协议文案也按 300 元更新。

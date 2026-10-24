@@ -18,10 +18,11 @@ import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story
 import { inputRows, reviewInputs, signedGateRows } from './review-inputs.mjs';
 import { carryTargets, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
+import { readingWork } from '../../skills/story/scripts/core/story/figure-view.mjs';
 
 /**
  * 会议逐话题四栏并列：会议判断、原话（按引用的行范围从 raw.md 取，同一范围只取一次）、
- * 人的裁决（关卡记录里生效的人签选了哪一项、没选哪几项；原话只在「人签原文」给一份）、
+ * 人的裁决（关卡记录里生效的人签选了哪一项、没选哪几项；原话只在「关卡人签」给一份）、
  * 当前结果（doc-refresh.md 里这一话题的段落）。
  * 取不到的一栏写「未取得，未验证」，不给空对象。
  */
@@ -56,7 +57,7 @@ function meetingTopicRows(src) {
         const opts = Array.isArray(g.options) ? g.options : [];
         const chosen = opts.find(o => o.key === g.chosen);
         out.push(`- **人的裁决**：选了「${g.chosen}」${chosen?.label ?? ''}；没选：`
-          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话见「人签原文」`);
+          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话见「关卡人签」`);
       } else {
         out.push(`- **人的裁决**：${t.question ? '未裁决——这个话题要问人，关卡记录里没有它' : '没有单独摆给人，随材料关卡一并确认'}`);
       }
@@ -98,7 +99,7 @@ function decisionRows(decisionsPath) {
 
 function settledDetail(settled) {
   const out = ['', '### 登记成已定的那几条：结论是谁给的', '',
-    '按规则「核的先后」①回人签原文、材料与评审记录核。'];
+    '按规则「核的先后」①回关卡人签、澄清正文里引用的问答原话、材料与评审记录核；引用的原话与作者的解释分开看。'];
   if (!settled.length) {
     out.push('', '本轮没有登记成已定的条目。');
     return out;
@@ -107,7 +108,7 @@ function settledDetail(settled) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
       `- **该谁定**：${String(d.decider ?? '').trim() || '（没写）'}`,
       `- **评审时要人做什么**：${String(d.review_mode ?? '').trim() || '（没写）'}`,
-      '- **作者写的澄清正文**：',
+      '- **澄清正文**（引用的问答原话是依据，其余是作者的解释）：',
       ...String(d.clarification ?? '（没写）').split(/\r?\n/).map(l => `  > ${l}`));
   }
   return out;
@@ -203,8 +204,8 @@ export function readerReviewTask(projectRoot, feature, checkId) {
     return rows.join('\n');
   }
 
-  // 人签原文先于作者登记，二者都先于逐章：作者登记是对人签的解释，要拿原话核
-  rows.push('', '### 人签原文：人当时看到的选项与回答', '', ...signedGateRows(root));
+  // 人答先于逐章：关卡人签是来源之一，对话里答过的问题由登记条目的澄清正文引用原话，二者都拿原话核
+  rows.push('', '### 关卡人签：流程关卡上人看到的选项与回答（人答的来源之一）', '', ...signedGateRows(root));
   rows.push(...decisionRows(path.join(root, 'AR', 'story-src', 'decisions.json')));
 
   // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
@@ -212,6 +213,11 @@ export function readerReviewTask(projectRoot, feature, checkId) {
   // 已把 story 放回正式形态（正式图块都是按源的 Mermaid），盘上读到的就是被审的那一份。
   rows.push('', '### 审查对象：当前 `AR/story.md`（按下面的段落顺序读盘上原文）', '',
     ...readingRows('AR/story.md', authorZone(story)));
+  // 已有的同图增强只给机械事实（哪几张、文件在哪、核到哪一步）；值不值得做、做得好不好按判据看图与 SVG 源码
+  const work = readingWork(root);
+  rows.push('', '### 已有的同图增强（机械事实）', '', ...(work.items.length
+    ? work.items.map(i => `- ${i.id}：\`AR/figures/${i.id}.svg\`，图审工作 \`AR/story-src/figures/${i.id}.reading/\`——${i.state}${i.reason ? `（${i.reason}）` : ''}`)
+    : ['没有已开始的同图增强：所有正式图都是 Mermaid。']));
 
   // 写作设计：作者这一版的阅读主线与骨架。读不到不能拿空设计当审过，说成缺口。
   const plan = readOrNull(path.join(root, 'AR', 'story-src', 'story-template.md'));

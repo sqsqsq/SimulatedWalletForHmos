@@ -45,8 +45,9 @@ function scopeProjection(flow) {
 }
 
 /**
- * 人签原文：关卡记录里人表过态且生效（`by: human`、`outcome: accepted`）的每一笔，给当时摆出的选项、人选的与原话。
- * 作者登记的决定是对它们的解释；模型提议与被退回的回话不在这里。没有流程契约就没有这类人签，契约读不出是缺口。
+ * 关卡人签：关卡记录里人表过态且生效（`by: human`、`outcome: accepted`）的每一笔，给当时摆出的选项、人选的与原话。
+ * 它是人答的来源之一，不是全集：对话里明确答过的问题由作者在登记条目的澄清正文里引用原话；模型提议与被退回的回话不在这里。
+ * 没有流程契约就没有这类人签，契约读不出是缺口。
  *
  * @param {string} root 需求目录
  */
@@ -168,7 +169,7 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
   if (isStoryFeature(root) && !flow) gaps.push('AR/story-src/story-flow.json 在却读不出——范围与关卡人签未取得');
   add(at('AR/story-src/story-flow.json'), '已确认的范围与关卡人签（摘要按范围、选项原文与人签的稳定投影算）',
     { text: scopeProjection(flow), required: story });
-  add(at('AR/story-src/decisions.json'), '作者登记的决定：哪些定了、哪些开着（待按人签与原件核的解释）', own('AR/story-src/decisions.json'));
+  add(at('AR/story-src/decisions.json'), '登记的决定：哪些定了、哪些开着；澄清正文里引用的人答原话与作者解释分开核', own('AR/story-src/decisions.json'));
   add(at('AR/review.md'), '决策与评审记录：人的原话与表态', own('AR/review.md'));
   add(at('spec/spec.md'), purpose === 'plan' ? '有效 Spec：要履行的业务条件与验收' : '已经成立的产品约束');
   add(at('acceptance.yaml'), '验收条目');
@@ -237,7 +238,8 @@ export function inputRows(basis) {
   return [...basis.inputs.map(x => `- \`${x.path}\`${x.digest ? `（摘要 ${x.digest}）` : ''} —— ${x.purpose}`
     + (x.missing ? '　**读不到**：它是必审输入，缺了不能判 PASS，写进 unreviewed 并作为阻断原因' : '')),
   ...basis.gaps.map(g => `- **输入有缺口**：${g}`),
-  '', 'examined_inputs 与 unreviewed 一项一份，照抄上面的路径（unreviewed 也可以写判据 id）；不用 `*` 通配，也不把几份合成一项。'];
+  '', '上面每一份照抄路径写进 examined_inputs 或 unreviewed（unreviewed 也可以写判据 id），一项一份；不用 `*` 通配，也不把几份合成一项。'
+    + '为核实额外读过的相关文件也可以列进 examined_inputs，它不顶替任何一份必审。'];
 }
 
 /** 明细里写的路径规范成表里的写法：去反引号、反斜杠换正斜杠、去开头的 `./`。 */
@@ -279,9 +281,10 @@ export function detailProblems(details, status, basis, checkIds = []) {
   const seen = new Set();
   for (const raw of details.examined_inputs) {
     const p = canon(inputPath(typeof raw === 'string' ? raw : raw?.path));
-    if (!p || !table.has(p)) out.push(`examined_inputs 里的「${p || JSON.stringify(raw)}」不在「读这些」表里——照抄表里的路径`);
+    // 表是必审集合，不是阅读白名单：额外取证读过的相关文件可以声明，但顶替不了任何一份必审
+    if (!p) out.push(`examined_inputs 里有一项没有路径：${JSON.stringify(raw)}`);
     else if (seen.has(p)) out.push(`examined_inputs 里「${p}」写了两次`);
-    else if (table.get(p).missing) out.push(`examined_inputs 声明读过「${p}」，它在盘上读不到`);
+    else if (table.get(p)?.missing) out.push(`examined_inputs 声明读过「${p}」，它在盘上读不到`);
     seen.add(p);
   }
   const skipped = new Set();

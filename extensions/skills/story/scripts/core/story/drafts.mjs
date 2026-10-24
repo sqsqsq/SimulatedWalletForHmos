@@ -63,7 +63,7 @@ const diagramHint = (at, syntax) => [
   guideLine(`这里放${at ? `「${at}」这一节` : '这一章'}选定的`
     + (syntax ? `${DIAGRAM_SYNTAXES[syntax].name}——mermaid 围栏首个声明写 ${DIAGRAM_SYNTAXES[syntax].heads[0]}`
       : '图——用画图语言的围栏'), '作图'),
-  guideLine('补图里没表达的条件、责任与结果；图已讲清不凑话，单一路径一句话说明后续去向', '作图'),
+  guideLine('图后用列表补图里没表达的条件、责任、结果或去向，有几条写几条；图已讲清的不凑话', '作图'),
 ];
 
 /**
