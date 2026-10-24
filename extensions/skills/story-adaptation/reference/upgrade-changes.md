@@ -1,6 +1,6 @@
 # 升级演进记录
 
-> 读者：执行 `/story adapt` 升级的维护模型。时机：`--apply` 末尾按块列出条目时，逐条在目标仓做完并验证。知识与对接层列晚于目标 `adapted_for` 的条目，在途单列晚于目标升级前所装版本的条目；目标没有 `adapted_for`（首次安装或从未适配）时从最早一节列起，首次安装不列在途单。
+> 读者：执行 `/story adapt` 升级的维护模型。时机：`--apply` 末尾按块列出条目时，逐条在目标仓做完并验证。知识与对接层列晚于目标 `adapted_for` 的条目；目标没有 `adapted_for`（首次安装或从未适配）时从最早一节列起。
 
 按扩展版本分节，每条一行、以块开头，不用子项：
 
@@ -8,7 +8,6 @@
 |---|---|---|
 | `[知识]` | 按 `reference/knowledge-adaptation.md` 改目标知识 | 协议或约定变了什么、目标知识要改什么、怎样核 |
 | `[对接层]` | 目标仓自己的 `skills/story/scripts/adapters/` | 扩展调用或读取的命令、参数、stdout、写盘落点与失败语义变了什么，怎样验证 |
-| `[在途单]` | 需求负责人 | 升级前做到一半的单怎样处理 |
 
 同一目标跨几个版本升级时，按版本顺序读完再动手：后一版改掉前一版做法的，直接做到后一版。协议正文在 `skills/story/reference/knowledge/protocol.md`，调用方式以 `skills/story/SKILL.md` 为准。
 
@@ -32,7 +31,6 @@
 ## 1.9.4
 
 - [对接层] 命令 `review` 退出，新增 `fetch <AR单号> <token> --project-root <工程根> --out <本单 inbox>`：只读取回这张单现在关联的 AR / SR / RR 正文与评审回稿，业务文件（`AR/design.md`、`AR/review.md`、Spec、Story、Plan）不写。三份正文写进 `--out`，文件名 `AR-design.md` / `SR-design.md` / `RR-prd.md`，与本地对应文件逐字相同的不落盘；评审回稿写 `AR/story-src/review-feedback.md`；回执写 `AR/story-src/fetched.json`，逐份记 `name`、`label`、`ticket`、`status`、`digest`、`origin`、`bytes`，`status` 取 `fetched`（取到）/ `same`（与本地相同）/ `absent`（系统上没有）/ `failed`（读取故障）之一，有 `failed` 时 `success: false` 并非零退出；stdout 返回 `{ out, fetched, failed, items }`。验证：四态各造一次，`/story update` 读得到回执、`failed` 报为失败，写入范围只有 inbox 与 `AR/story-src/` 下两个文件。
-- [在途单] 用 `/story review` 回流评审意见的单，改用 `/story update` 承接；review 流程留下的处置台账不再读取。
 
 ## 1.9.5
 
@@ -47,7 +45,6 @@
 - [知识] 每份知识的 frontmatter 写 `name`、`kind`、`applies_when`；`applies_when` 写成「什么情况下读：它回答什么」，任务包与审查据它交给读者。`knowledge/README.md` 与 `knowledge/{facts,constraints,design-patterns}/README.md` 从激活清单与目录中删去：其中目标自己加的说明并入相应知识文件。验证：只读检查（方法页「确认与交回」）PASS。
 - [知识] 面标题只写 `## <面名>`，去掉 `— confirmed: …`；标着「未确认」的面改写成确定陈述：已核的写上依据位置，依据在别人手里的写明向谁取得什么。知识使用记录按面名引用。
 - [知识] 上报知识按「上篇读者 spec、下篇读者 plan、coding、review」分两篇：上篇讲指标、统计点与边界，下篇讲 SDK 行为、角色与结构、怎样用与怎样判完成；指标是由事件结果算出的比率，失败原因是随上报带的字段，耗时只在时延类指标里带。
-- [在途单] spec 的扩展章挂到「## 9. 宿主扩展治理项」下（9.1 技术契约、9.2 规约约束要求、9.3 设计模式候选登记，附录是全文最后一章），plan 的扩展章挂到「## 9. 宿主扩展」下（9.1 知识决策、9.2 埋点）。按旧章号写的单在旧版本收口，或清掉需求目录后从 `/story init` 重起。
 
 ## 1.9.7
 
@@ -58,9 +55,6 @@
 - [知识] spec 统计点表与 plan 埋点表的列由上报知识给出：机制只认 spec 表的「统计点」列、plan 表的「统计点」「责任方法」列，上篇写 spec 统计点表要哪些列，下篇写 plan 埋点表要哪些列与每列的取值来源。验证：按知识写出两张表，spec 与 plan 门禁通过。
 - [知识] 上报知识下篇逐结果要给的值加「外码来源」：外部错误码取自哪个响应或回调，这种结果拿不到外部错误码写「无」。验证：按知识写 plan 埋点表，每行都有外码来源。
 - [对接层] `fetch` 回执 `AR/story-src/fetched.json` 带取材时刻 `fetchedAt`（带时区的 ISO 8601，如 `2026-09-26T08:30:00.000Z`），扩展据它判断这一轮取过上游没有，读不出直接报错。验证：update 取材后回执有 `fetchedAt`，扩展判为本轮已取。
-- [在途单] 流程契约只读当前 schema（4），评审记录人工区只认「同意 / 需修改 / 暂缓」加修改意见，知识使用登记按新登记单元核；旧格式直接报错。升级前做到一半的单在旧版本收口，或清掉需求目录后从 `/story init` 重起，不手改契约、评审记录或登记去凑新格式。
-- [在途单] spec、plan 的扩展章与 story 附录的小节平列、按节名认：spec「9. 宿主扩展治理项」下是技术契约（端云接口、数据存储、配置项、依赖变更）、规约、设计模式、埋点；plan「9. 宿主扩展」下是项目知识、规约、设计模式、埋点；story 附录是技术契约（与 spec 同名的四个小节）、规约、埋点、改动边界、材料清单，改动边界只列模块改动或不改。升级前写好的扩展章按新节名与层级重排后重新登记（spec 重跑 `knowledge-use.mjs render`，story 重跑 `story`），或在旧版本收口。验证：在途单的 spec、plan 门禁不报扩展章结构，`story-build check` 通过。
-- [在途单] 升级时开着的 `/story update` 先在旧版本收口再升级；升级之后，已成文登记的单要改 story 就改完重跑 `story` 重新登记，要重拍范围才 `reopen`。验证：在途单 `status` 的下一步与这两条一致，改一章后重跑 `story` 登记成功。
 
 ## 1.9.8
 
@@ -70,13 +64,5 @@
 
 - [知识] 知识独立审查：已有知识按 `reference/knowledge-review.md` 交独立执行体审一遍——条目粒度与归类、项目事实的用途、跨文件重复、编码规范边界四个维度，问题回各自知识修正。核：`.adapt/knowledge-review.md` 的证据块对得上当前知识摘要、逐份四维结论完整，交回写明审查执行体。
 - [知识] 敏感数据的必要业务使用与输出边界，按用途分面核实（业务处理、展示与观察性输出、跨重启存储、缺依据）。目标仓按自己的隐私规范回答：哪些业务身份必须以可识别形式交给哪些对端；展示与日志、事件出口在哪一处排除或脱敏；需要跨重启留存的敏感字段有哪些、保护方式与清除时机的依据是什么；现有脱敏封装对短标识的行为。核：规约条目与项目事实各有回答，没有依据的写成缺口。
-- [在途单] 材料清单 `AR/story-src/materials.json` 升到 schema 2（新增来源关系 `origins`，收件箱原件以相对 inbox 的路径为键），附录材料清单改为作者维护的「材料 | 来源 | 贡献」三列表。用旧版做到一半的单在旧版收口；要在本版继续的，从 init 重起。
 - [对接层] `story.js archive` 与 `restore` 读回的系统正文（与附件）和上传内容不一致时（`verified` 不成立），stdout 写 `success: false` 与原因并非零退出，不再报成功。验证：让读回内容与上传不同各跑一次，核退出码与 JSON。
-- [在途单] 增强阅读改为正式图的同图 SVG：作者按 `reference/svg.md`「值不值得做」逐张判断，值得的正式图（`story-figure` 块）在登记前做完、在原位切换 Mermaid 与同 ID 的 `AR/figures/<ID>.svg`，不是每张都做，验收请求 `story-figure-svg/1` 只绑定图源 `.mmd`、SVG 与本地资源，独立审查读 SVG 源码核与图源一致和增强后的可读性，不要渲染图。写作设计的「## 阅读图选择」、补充阅读槽 `story-reading` 与 `story-reading-review/3` 退出；旧写作设计里写好的那一节不再读；还留着空壳占位的，删掉那一节。story 里还有旧版阅读槽的单，本版报旧版阅读槽：用旧版 `view --mode mermaid` 收起后在旧版收口，或从 init 重起；旧的 `<ID>.reading/` 补充图证据留在原处，不能当同图验收。已开始的增强没做完时按 `story_flow.py status` 的下一步做完。核：`story-build view --mode status` 的 complete 为 true（只看已开始的增强；没有正式图时 applicable 为 false），或逐张写明缺什么。
-- [在途单] `--apply` 在业务仓没有 `doc/usage.json` 时建立空的使用记录（schema 1，还没有需求），已有的合法记录逐字节保留：把它与本次升级改动一起提交；记录坏格式、带冲突标记或不是本版字段（编号直作键、带 name/version/features 或 start/verdict/completed/last_result）时 `--apply` 不覆盖并停下，在旧版本收口或删掉这份测试期记录后重跑。需求目录的身份件 `.usage-id` 是执行现场的身份真源，需求目录不随代码归档，需求根下的 `.usage-state.json` 是本地运行态，`--apply` 补忽略行。核：`--check` ④ 通过。
-- [在途单] 使用记录的最后一步由阶段收尾补齐：每个阶段原生闭环后执行 `python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <需求编号> --finalize --phase <阶段>`（见 AGENTS 扩展段「阶段起止与代码归档」），Story 交付门自动做 spec 这一步；`/story stats` 只读 `doc/usage.json` 与 Git，输出在系统临时目录，不再写 `<需求目录根>/.usage-stats/`，也不再替缺的步骤补记。升级前已闭环却还没记进使用记录的阶段，对它跑一次收尾再提交代码与 `doc/usage.json`。耗时改为模型实际执行一个步骤的时长：开始工作前跑 `--begin --step <步骤>`（Spec / Plan 取任务包时自动做，Story 在 init 取材前、update 在查状态与取材前），收尾时结束；Story 每一轮从 begin 记下的起点算到那一轮 `story` 登记成功、多轮累计，需求身份不再作 Story 起点；漏了 begin 时 `story_flow.py init` 只记起点未知，不拿 init 时刻补，那一轮成功后记缺口；阶段检查不再登记起点，update 的耗时从这一轮 record 的 `started_at` 算。升级前开着、没有开始记录的那一轮记为耗时缺口，不拿检查或文件时刻补；已记进 usage 的旧数字不改写。旧的 `.usage-stats/` 目录与它的忽略行 `--apply` 不动，维护者可自行删除。核：收尾命令返回 ok，`doc/usage.json` 里有该步骤。
-- [在途单] 收件箱导入的派生物按原件相对路径命名：正文节标题是相对路径，docx 内嵌图落 `assets/<主名>.<路径摘要>/`，界面图落 `ux-reference/<主名>.<路径摘要><扩展名>`，不同目录下的同名原件不再要求改名。还留着旧版按主名落的 `assets/<主名>/` 的单，导入会报旧格式：在旧版本收口，或从 init 重起。核：重新导入成功，材料清单没有待导入的原件。
-- [在途单] story 附录去掉「改动边界」一节，材料清单由 10.5 改为 10.4；Spec / Plan 的 Scope 照旧。旧稿里还有这一节的，`story-build check` 报合同外的节：删掉这一节（其中要人裁决的范围变化写进第 3、9 章或评审记录）后重跑 `story` 登记，或在旧版本收口。核：`story-build check` 通过。
-- [在途单] 写作设计 `AR/story-src/story-template.md` 新增一项：上游每张图在承接它的小节下写 `- 承接上游图：<身份>`（正文、表或图都可以承接）。Story 图里的 `%% 图源` 行不再算承接登记。在途单补齐后重跑 `story_flow.py story` 登记；核：`story-build check` 不再报写作设计缺登记。
-- [在途单] 生成的 HTML 注释块（story 附录与 review 议题的机器区、spec 的知识生成区、正式图块）与两侧内容各隔一个空行。旧稿里紧贴的生成区照样认作原样（摘要与比对只看正文，不看首尾空行），下一次 `story_flow.py story` 登记、`story-build build`、`knowledge-use.mjs render` 或 `view --mode prepare` 时换成分隔形态，内容不变，不用手改；增强 SVG 的验收只绑图源与 SVG，换格式不用重审。核：同一条命令连跑两次，文件字节不再变化。
 - [对接层] 归档改由核心入口 `story-build archive --feature <AR> --mcp-token <token>` 调对接层的 `archive` 协议（入口路径登记在章节合同 `system_archive_entry`），对接层的参数与回执不变，不需要改。核：用对接层的测试替身跑一次归档，回执字段齐全时登记成功。

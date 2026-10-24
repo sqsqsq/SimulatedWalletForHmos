@@ -38,8 +38,8 @@ const SCRIPTS_DIR = 'skills/story/scripts';
 const CORE = 'core';
 /** 升级演进记录：按扩展版本分节、每条标块，升级后据它列出目标这次要做什么。 */
 const CHANGES = 'skills/story-adaptation/reference/upgrade-changes.md';
-/** 演进记录的三块；对接层只在目标自己维护对接层时列出。 */
-const BLOCKS = ['知识', '对接层', '在途单'];
+/** 演进记录的两块；对接层只在目标自己维护对接层时列出。 */
+const BLOCKS = ['知识', '对接层'];
 
 const EXT_BEGIN = '<!-- story-ext:begin -->';
 const EXT_END = '<!-- story-ext:end -->';
@@ -210,7 +210,7 @@ function withVersionNotes(composed, tgtText) {
 }
 
 /**
- * manifest 里归目标的键：这个仓叫什么、是什么、对接层是不是替身、知识对接层与在途单已按哪一版适配。
+ * manifest 里归目标的键：这个仓叫什么、是什么、对接层是不是替身、知识与对接层已按哪一版适配。
  * 升级不改，首次按目标仓生成；目标没写的不从包里带过去。
  */
 const TARGET_OWNED_KEYS = ['name', 'description', 'adapters', 'adapted_for'];
@@ -443,8 +443,8 @@ const PKG_VERSION = manifestValue(PKG_MANIFEST_TEXT, 'version');
 
 const tgtManifest = join(TDIR, 'manifest.yaml');
 /**
- * 目标升级前装的是哪一版：写目标之前读，写完 `version` 就是包的了。
- * 在途单条目只跟「从哪一版升上来」有关，按它列；知识与对接层按目标的 `adapted_for` 列。
+ * 目标升级前装的是哪一版：写目标之前读，写完 `version` 就是包的了。版本事实与 mark 前核安装版本用它；
+ * 演进条目按目标的 `adapted_for` 列。
  */
 const INSTALLED = existsSync(tgtManifest) ? manifestValue(read(tgtManifest), 'version') ?? '0' : null;
 /** 两态，就这一条判据：目标有没有 manifest.yaml。历史版本识别不存在于本实现。 */
@@ -570,19 +570,17 @@ async function knowledgeReview(digest, files) {
 }
 
 /**
- * 按版本跟进：演进记录里晚于目标 `adapted_for` 的知识与对接层条目、晚于升级前所装版本的在途单条目，按块分组，
+ * 按版本跟进：演进记录里晚于目标 `adapted_for` 的知识与对接层条目，按块分组，
  * 加上按当前协议加载目标知识的结果。只报事实，问不问人由模型照 SKILL 走。
  *
  * 没有 `adapted_for` 的目标从最早一节（知识基线）列起——首次安装拿到的就是完整的知识主题清单。
- * 不列的块整块不出现：包带对接实现时（业务仓来源）对接层已整份换成包的；首次安装没有在途单。
+ * 包带对接实现时（业务仓来源）对接层已整份换成包的，那一块整块不出现。
  */
 async function followUp() {
   const since = manifestValue(read(tgtManifest), 'adapted_for') ?? '0';
-  const from = { 在途单: INSTALLED ?? '0' };
-  const skip = new Set([...(WITH_ADAPTERS ? ['对接层'] : []), ...(STATE === 'fresh' ? ['在途单'] : [])]);
-  const items = Object.fromEntries(BLOCKS.filter(b => !skip.has(b)).map(b => [b, []]));
+  const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
   for (const e of CHANGE_ENTRIES) {
-    if (newer(e.version, from[e.block] ?? since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
+    if (newer(e.version, since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
   }
   return { since, installed: INSTALLED, items, check: await knowledgeCheck() };
 }
@@ -601,7 +599,7 @@ async function printFollowUp() {
   console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
   if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS') {
     console.log('[adapt-scan] 有演进条目或知识不合当前协议：按块摆出来，停一次问人「现在做这些适配吗」；'
-      + '选稍后就不写任何东西；选中的各块都交回后跑 --mark-adapted');
+      + '选稍后就不写任何东西；选中的知识与对接适配都交回后跑 --mark-adapted');
     return;
   }
   writeAdaptedFor();

@@ -2066,9 +2066,22 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             reading_seen: dict = {}
 
             def reading_reply(why: str, recheck=None) -> object:
-                """阅读交宿主：带着模型本轮原话与阅读证据停等（既有停等，宿主回话或收工；读不出时装置自己重探）。"""
+                """阅读交宿主：带着模型本轮原话与阅读证据停等（既有停等，宿主回话或收工；读不出时装置自己重探）。
+
+                重探读得出了就经原发布入口刷新宿主看到的 closure；读到的是真实未完时，等待提示换成这份待办。"""
+                def probe() -> dict:
+                    facts = recheck()
+                    if facts.get("state") == "unknown":
+                        return facts
+                    publish_closure(out_dir, state, feature, start_phase, end_phase)
+                    if facts.get("state") == "pending":
+                        said = f"本地阅读读得出了，还没完成：{facts.get('next') or '；'.join(map(str, facts.get('problems') or []))}"
+                        state["awaiting_prompt"] = (f"{last_text}\n\n——{said}" if last_text else said)[:PROMPT_LIMIT]
+                    refresh_worker_lease(out_dir, state, force=True, event="reading_recheck_published")
+                    return facts
                 return wait_for_human_reply(out_dir, feed, runlog, state, turn=turns, kind="local_reading",
-                                            prompt=f"{last_text}\n\n——{why}" if last_text else why, recheck=recheck)
+                                            prompt=f"{last_text}\n\n——{why}" if last_text else why,
+                                            recheck=probe if recheck else None)
 
             # story 是多轮交互流程：材料确认时会停下来等待补料、拆分或进入 spec。
             # 单轮驱动会把它卡死在那儿（产物一个不产），但那不是 skill 的缺陷——

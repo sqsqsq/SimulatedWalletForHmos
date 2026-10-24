@@ -586,8 +586,12 @@ def cmd_update_close(feature_root: Path, project_root: Path) -> dict:
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
-    # 收口成立不回滚；本轮还有没做完的工作（如已开始的同图增强）由同一路由说出来，不以 closed 结束整个任务
-    step, follow = next_step(feature_root, contract)
+    # 收口成立不回滚；本轮还有没做完的工作（如已开始的同图增强）由同一路由说出来，不以 closed 结束整个任务。
+    # 算不出来不遮住已写盘的收口（同 cmd_story），命令照常成功、使用记录照常收尾
+    try:
+        step, follow = next_step(feature_root, contract)
+    except FlowError as exc:
+        step, follow = "status", f"暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
     return {"update": rid, "status": "closed", "compared_next_time": kept, **({"usage_error": gap} if gap else {}),
             "unreadable": unreadable, "phases": phases, "next": step,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"

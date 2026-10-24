@@ -69,7 +69,9 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
             answer = answers.pop(0) if answers else None
             if answer == "RECHECK":
                 self.assertIsNotNone(recheck, "读不出的停等没给重探回调")
+                self.rechecking = True
                 got = recheck()
+                self.published = json.loads((out / "state.json").read_text(encoding="utf-8"))
                 return rc.READING_RECHECK_COMPLETE if got["state"] in ("complete", "not_applicable") else None
             return answer
 
@@ -186,14 +188,24 @@ class TheWorkerFinishesTheReading(unittest.TestCase):
 
     def test_a_recovered_unreadable_status_needs_no_human_reply(self) -> None:
         """读不出是技术故障：停等里装置重探到完成，就停到第一检查点，不要宿主回一句「收到」、不多起一轮 CLI。"""
-        seq = [UNKNOWN]             # 第一次读不出，之后（停等里的重探及以后）都读得出、已完成
+        self.rechecking = False     # 停等里重探之前一直读不出，重探起读得出、已完成
         state = self.drive([], interactive=True, after_initial="update", host=["RECHECK"], resume=None,
-                           facts=lambda *_a, **_k: seq.pop(0) if seq else DONE)
+                           facts=lambda *_a, **_k: DONE if self.rechecking else UNKNOWN)
         self.assertEqual(1, len(self.client.prompts), "重探恢复后又续了一轮")
         self.assertEqual([1], self.resumed, "恢复后没有停到第一检查点")
         self.assertEqual("complete", self.result["closure"]["reading"]["state"])
+        self.assertEqual("complete", self.published["closure"]["reading"]["state"],
+                         "重探恢复了，宿主看到的 closure 还是读不出")
         self.assertNotEqual("host_concluded", self.result.get("reading_handoff"), "技术恢复被记成了宿主收工")
         self.assertEqual(0, int(state.get("human_wait_events") or 0), "技术恢复被记成了人答")
+
+    def test_a_pending_probe_is_published_to_the_host(self) -> None:
+        """重探读得出了、但确实没做完：宿主看到的 closure 与等待提示换成这份真实待办，不再是读不出。"""
+        self.rechecking = False
+        self.drive([], interactive=True, after_initial="update", host=["RECHECK"],
+                   facts=lambda *_a, **_k: pending("no-report") if self.rechecking else UNKNOWN)
+        self.assertEqual("pending", self.published["closure"]["reading"]["state"], "宿主看到的 closure 没跟上重探")
+        self.assertIn("fig-a no-report", self.published["awaiting_prompt"], "等待提示还是读不出，没换成真实待办")
 
     def test_a_pending_status_is_not_rechecked_into_completion(self) -> None:
         """读得出、确实没做完：不给重探回调，照常交宿主；装置不替产品宣布完成。"""

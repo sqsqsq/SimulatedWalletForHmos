@@ -161,7 +161,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
 
     digests = {rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}
     contract["status"] = "story_written"
-    # 内容没变的重新登记不换登记时刻：使用记录据它认出同一次成文，不把重登当成新的完成
+    # 内容没变的重新登记不换登记时刻：成文时刻是这份稿的业务事实，重登不改它
     contract["story_written_at"] = prior[0] if prior[0] and digests == prior[1] else now()
     # 登记记下 story 与它据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
     # 与流程路由拿它核「登记之后改过没有」，改过就重跑 `story` 重新登记。
@@ -302,5 +302,9 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     contract["archived"] = {"at": now()}
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
-    step, action = next_step(feature_root, contract)     # 归档成立不回滚；本轮还有没做完的工作同源说出来
+    # 归档成立不回滚；本轮还有没做完的工作同源说出来，算不出来不遮住已成功的登记（同 cmd_story）
+    try:
+        step, action = next_step(feature_root, contract)
+    except FlowError as exc:
+        step, action = "status", f"归档态已登记；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
     return {"archived": True, "at": contract["archived"]["at"], "next": step, "action": action}

@@ -165,7 +165,7 @@ class SourceKindCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         got = self.follow_up(proc)
         self.assertEqual("0", got["since"])
-        self.assertEqual({"知识", "对接层", "在途单"}, set(got["items"]))
+        self.assertEqual({"知识", "对接层"}, set(got["items"]), "跟进只有知识与对接层两块")
         for block, items in got["items"].items():
             with self.subTest(block=block):
                 self.assertTrue(items, f"{block} 一条都没列")
@@ -181,17 +181,15 @@ class SourceKindCase(unittest.TestCase):
         manifest.write_text("\n".join(rows), encoding="utf-8")
         self.commit(target, f"装的是 {version}")
 
-    def test_in_flight_entries_follow_the_installed_version(self) -> None:
-        """在途单只跟从哪一版升上来有关：装的是上一版就只列本版；知识与对接层没写 adapted_for 仍从头列。"""
+    def test_the_installed_version_is_a_fact_not_a_filter(self) -> None:
+        """升级前装的版本照实回报，但不用它筛条目：没写 adapted_for 时知识与对接层仍从头列，没有旧需求的块。"""
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, PKG_ROOT)
         self.set_version(target, "1.9.6")
         got = self.follow_up(self.adapt("--apply", target, PKG_ROOT))
         self.assertEqual("1.9.6", got["installed"])
-        self.assertTrue(got["items"]["在途单"])
-        later = [tuple(map(int, i.split("：", 1)[0].split("."))) > (1, 9, 6) for i in got["items"]["在途单"]]
-        self.assertTrue(all(later), got["items"]["在途单"])
-        self.assertTrue(any(i.startswith("1.9.5：") for i in got["items"]["知识"]))
+        self.assertEqual({"知识", "对接层"}, set(got["items"]))
+        self.assertTrue(any(i.startswith("1.9.5：") for i in got["items"]["知识"]), "按装的版本筛掉了知识条目")
 
     def test_a_business_source_leaves_out_the_adapter_block(self) -> None:
         """业务仓来源整份换了对接层，那一块不用目标再做。"""

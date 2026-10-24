@@ -165,6 +165,21 @@ class StoryCommandsRecordUse(UpdateCase):
         self.assertEqual(held, self.record(out["update"])["started_at"], "清理重试改了已移交的值")
         self.assertIsNone(self.stash(), "重试后还剩两份")
 
+    def test_a_failed_next_step_after_closing_does_not_hide_the_close(self) -> None:
+        """收口写盘之后算下一步失败：收口照样成功、使用记录照样记这一轮，下一步给 status；之后 status 照常续行。"""
+        from flow import state as flow_state, update as flow_update  # noqa: PLC0415
+        self.begin()
+        rid = self.update()["update"]
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        broken = unittest.mock.patch.object(flow_update, "next_step",
+                                            side_effect=flow_state.FlowError("路由读不出（注入）"))
+        out = self.update_in_process("--action", "close", patch=broken)
+        self.assertEqual((True, "closed", "status"), (out.get("success"), out.get("status"), out.get("next")), out)
+        self.assertEqual("closed", self.record(rid)["status"])
+        self.assertEqual(1, self.node()["steps"]["story update"]["rounds"], "收口成功却没记使用记录")
+        self.assertTrue(self.update("--action", "status").get("success"), "恢复后 status 续不上")
+        self.assertEqual(1, self.node()["steps"]["story update"]["rounds"], "重跑多记了一轮")
+
     def test_a_start_that_cannot_move_by_closing_is_kept_and_not_carried_on(self) -> None:
         """收口时也没移成：记录动作不清这份暂存、报出来；下一轮 begin 不把它当成新一轮的起点。"""
         import usage as recorder  # noqa: PLC0415

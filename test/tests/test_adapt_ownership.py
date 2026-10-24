@@ -309,7 +309,7 @@ class TheStatusViewOnlyReads(AdaptCase):
         self.assertEqual("1.9.6", got["target"]["adapted_for"])
         self.assertTrue(all(tuple(map(int, i.split("：", 1)[0].split("."))) > (1, 9, 6)
                             for i in got["items"]["知识"]), got["items"])
-        self.assertEqual([], got["items"]["在途单"], "装的就是包的版本，在途单按当前游标为空")
+        self.assertNotIn("在途单", got["items"], "adapt 不处理旧需求，跟进里不该有在途单块")
 
 
 class SameUseCandidatesAreOnlyHints(TheStatusViewOnlyReads):
@@ -592,7 +592,7 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
 
     def test_a_fresh_install_lists_the_knowledge_baseline_and_leaves_adapted_for_to_the_script(self) -> None:
-        """首次安装就列出从基线起的知识条目、不列在途单，不带 adapted_for；交回后 `--mark-adapted` 写成包的版本。"""
+        """首次安装就列出从基线起的知识条目，不带 adapted_for；交回后 `--mark-adapted` 写成包的版本。"""
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertNotIn("adapted_for", (self.ext / "manifest.yaml").read_text(encoding="utf-8"))
@@ -601,7 +601,7 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         items = json.loads(line.split("按版本跟进：", 1)[1])["items"]
         self.assertEqual(set(change_versions(PKG_EXT, "知识")), {i.split("：", 1)[0] for i in items["知识"]},
                          "首次没从知识基线起拿到各版知识条目")
-        self.assertNotIn("在途单", items, "首次安装没有在途单，那一块不该列")
+        self.assertNotIn("在途单", items, "adapt 不处理旧需求，跟进里不该有在途单块")
         self.commit("首次装好")
         self.assertEqual(2, self.adapt("--mark-adapted").returncode, "首装写了知识却没独审，也记成已适配")
         self.write_review()

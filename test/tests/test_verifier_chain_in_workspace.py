@@ -111,23 +111,26 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         self.assertIn("write: deny", text, "只读来自逐工具 deny 的声明，不是模型自述")
 
     def test_the_dsh_verifier_is_a_read_only_spawn_with_the_same_protocol(self) -> None:
-        """dsh 审查员：Framework dsh adapter 物化的配置层，空上下文、工具白名单只读、前台等结果，
-        阶段协议与 opencode 子代理同一版，另有自足审查任务的分支。"""
+        """dsh 审查员（DSH 0.2.1 写法）：根目录与 demo 同一份配置层，人设放在 Agent Preset，子级 in-process spawn，
+        preset 只装读与检索工具；registry 默认空 preset，主会话不受影响。阶段协议与 opencode 子代理同一版，另有自足审查任务的分支。
+        Framework dsh adapter 模板还是旧写法（tool-subagent 直接带 persona / toolFilter，新版加载即失败），这里不再要求 demo 与它逐字相同。"""
         import yaml
         layer = DEMO / DSH_LAYER
-        template = DEMO / DSH_ADAPTER / "templates" / "agents" / DSH_LAYER.name
-        self.assertEqual(template.read_bytes(), layer.read_bytes(), "demo 物化件不是 adapter 模板原样")
+        self.assertEqual((REPO_ROOT / DSH_LAYER).read_bytes(), layer.read_bytes(), "根目录与 demo 的 dsh 配置层不是同一份")
         adapter = yaml.safe_load((DEMO / DSH_ADAPTER / "adapter.yaml").read_text(encoding="utf-8"))
         self.assertEqual({"target_dir": ".dsh", "template_dir": "templates/agents", "update_policy": "auto_overwrite"},
                          adapter["commands"]["subagents"])
         self.assertIs(False, adapter["verifier_subagent"], "宿主实跑观测之前不入册")
-        rows = yaml.safe_load(layer.read_text(encoding="utf-8"))[0]["insert"]
-        self.assertEqual(["maison-verifier"], [row["id"] for row in rows])
-        config = rows[0]["config"]
-        persona = config.pop("persona")
-        self.assertEqual({"provider": "spawn", "toolName": "verifier", "backgroundMode": "one-shot",
-                          "enableRunInBackground": False, "maxDepth": 1,
-                          "toolFilter": {"allow": ["read", "glob", "grep", "read_image"]}}, config)
+        rows = {row["id"]: row for row in yaml.safe_load(layer.read_text(encoding="utf-8"))[0]["insert"]}
+        self.assertEqual(["agent-preset-registry", "preset-standard", "preset-maison-verifier", "maison-verifier"], list(rows))
+        self.assertEqual({"default": "standard"}, rows["agent-preset-registry"]["config"])
+        self.assertEqual({"id": "standard", "plugins": []}, rows["preset-standard"]["config"])
+        self.assertEqual({"provider": "spawn", "toolName": "verifier", "maxDepth": 1, "agentPreset": "maison-verifier"},
+                         rows["maison-verifier"]["config"])
+        plugins = {row["id"]: row for row in rows["preset-maison-verifier"]["config"]["plugins"]}
+        self.assertEqual(["persona", "tool-fs", "tool-fs-search"], list(plugins))
+        self.assertEqual({"write": False, "edit": False}, plugins["tool-fs"]["config"], "审查员 preset 带了写工具")
+        persona = plugins["persona"]["config"]["prefix"]
         stage = (DEMO / VERIFIER_DEF).read_text(encoding="utf-8")
         for needle in ('"schema_version": "1.1"', "material_sha256", "maison-verifier-result:v1",
                        "verifier_subject_id: <request.subject_id>", "## 其它独立只读审查任务"):
