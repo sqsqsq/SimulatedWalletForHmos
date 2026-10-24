@@ -10,14 +10,15 @@
 | 维护需求与方案 | `doc/spec/`、`doc/plan/`；按本次目标找有效入口，新需求命名按用户级约定，旧任务原位接续 |
 | 使用与发布说明 | `README.md` 只写当前状态；`doc/release/<版本>.md` 只写本版增量 |
 | 维护设计/评审与执行 | 用户级 maintenance-designer / maintenance-executor；维护Spec/Plan与消费产物不同 |
-| 定方案、开工、doctor、review | 先读[TEST §6.5](test/TEST.md#65-维护标准与评审)、[全量标准](test/regression/extension-acceptance.md)及本版`doc/spec/<版本>/评价标准变更.md`；先核标准再实现，按对象取证 |
+| 定方案、开工、review | 先读[TEST §6.5](test/TEST.md#65-维护标准与评审)、[全量标准](test/regression/extension-acceptance.md)及本版`doc/spec/<版本>/评价标准变更.md`；先核标准再实现，按对象取证 |
 | 运行、修改或评价测试 | [TEST](test/TEST.md)是命令、取证、评分真源；运行器在`tools/cli/`，命令从仓根执行 |
 | 环境/Framework接入/安装发布 | 行动前按[维护操作](doc/release/维护操作.md)任务表读对应章节；普通设计评审不必全读 |
+| 项目使用诊断 / 环境检查 | `doctor` 默认按[TEST §6.5](test/TEST.md#65-维护标准与评审)建立全貌并复查使用证据，报告在`doc/diagnosis/`；`doctor env`仅查接入，诊断不修复或提交 |
 | 历史追溯 | [EVOLUTION](test/EVOLUTION.md)与既有报告，不作为当前实施依据 |
 
 `doc/features/`是测试回流产物，不是维护需求；archive按批次保留。`doc/spec/plan/release`按本仓约定随提交留历史。运行记录在`output/story/`且永不清理；交回引用的原件、重放、计量等在`output/evidence/<题>/`，临时脚本/工作区在`output/scratch/<题>/`；具体以[TEST §0.4](test/TEST.md#04-东西放在哪)为准。
 
-维护范围仅 interactive。Framework headless/goal 不纳入兼容、状态和测试，用户明确提出时另立需求；doctor/review读取现有证据，不自动启动真实运行。
+维护范围仅 interactive。Framework headless/goal 不纳入兼容、状态和测试，用户明确提出时另立需求；doctor/review读取现有证据，不自动启动真实运行；doctor仅新增本次诊断报告及必要证据副本，不改被审对象。
 
 ## 1. 本项目的角色职责
 
