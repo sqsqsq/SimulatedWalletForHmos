@@ -1,3 +1,4 @@
+import { phaseInvocationStart } from './goal-runner-phase';
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { readRepairDependencyContext } from './repair-responsibility';
 // ============================================================================
@@ -28,6 +29,7 @@ import { validateExecutionScope, executionScopeFingerprint, executionCompletionP
 import { FEATURE_PHASE_ORDER } from './phase-transition-policy';
 import { loadGoalManifestFromRun } from './goal-manifest';
 import { assertGoalRunAttachable, loadFrozenExecutionScope, loadEffectiveExecutionScope, resolveEffectiveScopeSource, loadScopeRevisions, loadAuthoritativeRunEvents, applyScopeRevisions } from './goal-run-creation';
+import { requiredSummaryCheckGaps } from './check-disposition';
 import { readFeatureFrozenScope, featureEffectiveScope } from './feature-execution-scope';
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEventsJsonl, resolveEffectiveRunEnd } from './goal-runner-phase';
@@ -425,7 +427,14 @@ export function collectPhaseCompletionIssues(opts: CleanPassOptions): CleanPassI
   for (const phase of chain) {
     const v = summaryVerdict(projectRoot, feature, phase);
     if (v !== 'PASS') {
-      issues.push({ phase, condition: 'verdict_pass', detail: `summary verdict=${v ?? '缺失'}`, kind: 'needs_fix' });
+      issues.push({ phase, condition: v === 'INCOMPLETE' ? 'required_check_conclusion' : 'verdict_pass', detail: `summary verdict=${v ?? '缺失'}`, kind: 'needs_fix' });
+    }
+    const summaryPath = path.join(featurePhaseReportsDir(projectRoot, feature, phase), 'summary.json');
+    if (fs.existsSync(summaryPath)) {
+      try {
+        const missing = requiredSummaryCheckGaps(JSON.parse(fs.readFileSync(summaryPath, 'utf8')));
+        if (missing.length) issues.push({ phase, condition: 'required_check_conclusion', detail: `必需检查尚无结论：${missing.map(check => check.id).join(', ')}`, kind: 'needs_fix' });
+      } catch { /* Unreadable summaries are reported by the existing verdict/schema checks. */ }
     }
   }
 
@@ -884,10 +893,12 @@ export function resolvePhaseRunIds(
   const latest: Record<string, { run_id: string; ts: string }> = {};
   // plan e7c2a4d8 T1d：权威枚举单一入口——更晚的 .dry run/残留不得被选为最新阶段证据。
   for (const runId of classifyGoalRunsDir(runsDir).runs) {
-    for (const ev of readRunEventLines(projectRoot, feature, runId)) {
-      if (ev.type !== 'phase_start' || typeof ev.phase !== 'string' || typeof ev.ts !== 'string') continue;
-      const cur = latest[ev.phase];
-      if (!cur || ev.ts > cur.ts) latest[ev.phase] = { run_id: runId, ts: ev.ts };
+    const events = readRunEventLines(projectRoot, feature, runId);
+    for (const phase of chain) {
+      const ev = phaseInvocationStart(events, phase);
+      if (!ev?.ts) continue;
+      const cur = latest[phase];
+      if (!cur || ev.ts > cur.ts) latest[phase] = { run_id: runId, ts: ev.ts };
     }
   }
   const runIds: Record<string, string> = {};

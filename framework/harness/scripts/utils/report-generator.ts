@@ -32,7 +32,7 @@ import {
   RequestCheckContext,
 } from './types';
 import { applyCompatDowngrade } from '../../compat-loader';
-import { collectDisclosedFailures, dropRedundantAggregates, isBlockingCheck, resolveCheckDisposition } from './check-disposition';
+import { collectDisclosedFailures, dropRedundantAggregates, isBlockingCheck, isRequiredCheckGap, resolveCheckDisposition } from './check-disposition';
 import { fillCompatMessage, SUGGESTION_COMPAT_APPLIED, SUGGESTION_COMPAT_EXPIRED } from '../../compat-messages';
 import { collectBlockedCapabilityFacts } from './capability-resolution';
 import type { CapabilityResolutionReport } from './capability-resolution';
@@ -115,17 +115,13 @@ export function finalizeChecksForScriptReport(
   return { checks: results, compat_applied, compat_expired };
 }
 
-export function generateScriptReport(
-  _harnessRoot: string,
+export function buildScriptReport(
   phase: Phase,
   feature: string,
   projectRoot: string,
   checks: CheckResult[],
-  frameworkRoot?: string,
   capabilityReport?: CapabilityResolutionReport,
 ): ScriptReport {
-  void _harnessRoot;
-  void frameworkRoot;
   const finalized = finalizeChecksForScriptReport(checks, phase, feature, projectRoot);
   const summary = computeSummary(finalized.checks);
   const report: ScriptReport = {
@@ -146,7 +142,19 @@ export function generateScriptReport(
   if (finalized.compat_expired) {
     report.compat_expired = finalized.compat_expired;
   }
+  return report;
+}
 
+export function generateScriptReport(
+  _harnessRoot: string,
+  phase: Phase,
+  feature: string,
+  projectRoot: string,
+  checks: CheckResult[],
+  frameworkRoot?: string,
+  capabilityReport?: CapabilityResolutionReport,
+): ScriptReport {
+  const report = buildScriptReport(phase, feature, projectRoot, checks, capabilityReport);
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   const reportPath = path.join(dir, 'script-report.json');
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf-8');
@@ -158,7 +166,7 @@ export function generateScriptReport(
 export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
   const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
   const summary = { ...computeSummary(finalized), disclosed_failures: collectDisclosedFailures(finalized) };
-  if (finalized.some(check => (check.status === 'FAIL' && resolveCheckDisposition(check).action !== 'disclose') || (check.status === 'SKIP' && check.severity === 'BLOCKER' && (check.structured as { applicability?: unknown } | undefined)?.applicability !== 'not_applicable'))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  if (finalized.some(check => (check.status === 'FAIL' && resolveCheckDisposition(check).action !== 'disclose') || isRequiredCheckGap(check))) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
   const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
     requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
     timestamp: new Date().toISOString(), project_root: ctx.projectRoot };
@@ -821,7 +829,7 @@ export function resolveVerdictFromChecks(checks: CheckResult[]): Verdict {
       blockers++;
     }
   }
-  if (blockers === 0) return 'PASS';
+  if (blockers === 0) return checks.some(check => isRequiredCheckGap(check)) ? 'INCOMPLETE' : 'PASS';
   if (areBlockersOnlyUtDeviceExternal(checks) && isUtDeviceExternalBlocked(checks)) {
     return 'INCOMPLETE';
   }

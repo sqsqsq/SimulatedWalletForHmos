@@ -480,7 +480,7 @@ export interface AcceptanceSpec {
 
 export interface UseCaseUserAction {
   trigger: string;       // 用户动作的自然语言描述
-  calls: string;         // UT 要调用的命名函数符号（如 "flow.chooseCard"）
+  calls: string[];       // 有序命名入口引用；保留重复，UI 声明可定位不等于 UT 可直接调用
 }
 
 export interface UseCaseUiBinding {
@@ -1010,6 +1010,7 @@ export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' |
   subject: 'request';
   request: import('./capability-resolution-entry-input').PreparedRequest;
   reportDir: string;
+  forceDevice?: boolean;
   resolvedInputs: import('./capability-resolution').ResolvedPhaseInputs;
   factsContext: import('./context-facts').FactsInvocationContext;
 }

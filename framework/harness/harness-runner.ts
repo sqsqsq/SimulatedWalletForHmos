@@ -1,3 +1,4 @@
+import { isRequiredCheckGap, requiredSummaryCheckGaps } from './scripts/utils/check-disposition';
 import { implementationChangeContext } from './scripts/utils/diff-scope';
 // ============================================================================
 // Harness 统一运行入口
@@ -657,8 +658,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const exitCode = runSyncClosure(harnessRoot, projectRoot, syncFeature, syncPhase, resolvedFrameworkRoot);
-    // D1 §6.5 出口②：同一条三步顺序。晚到候选（§5.1.2 ②）正是在这条路上才成立，
-    // 所以这里**同样要先应用修订再判完成**，不能只接生成函数。
+    // Independent closure reports its result; full delivery must transfer to the shared runtime.
     if (exitCode === 0 && !hasGoalExecutionSignal()) {
       try {
         const outcome = applyFeatureScopeRevisionsThenMaybeComplete({
@@ -669,8 +669,7 @@ async function main(): Promise<void> {
           workflowTrack: resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, syncFeature)),
           runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
         });
-        if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
-        if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+        if (outcome.skippedReason === 'goal-runtime-required') console.log('   → 本次仅完成独立阶段检查；完整交付须经 goal-mode-entry --prepare-run 正式承接既有范围，再用 --next / --report-result。');
       } catch (error) {
         // 第四轮阻断 4：`--sync-closure` 出口同样「写 BLOCKER 进失败报告 + 非零退出」。
         // 这条出口的报告面就是本阶段的 script-report，用既有 writer 追加一条 BLOCKER。
@@ -1585,9 +1584,7 @@ async function main(): Promise<void> {
       resolvedFrameworkRoot,
     );
   }
-  // D1 §6.5/§6.7 出口①（普通阶段尾部）：**先应用修订、再重读有效范围、最后判完成并生成原件**。
-  // 有 run 身份时整段是 no-op（run 有自己的 runtime 收尾）。三步顺序与判据与 `--sync-closure`
-  // 出口**同一个函数**，不复制。
+  // Same independent-check exit as --sync-closure; no runless orchestration or completion writer.
   let featureScopeClosingFailure: Error | undefined;
   if (!phaseIsGlobal && feature !== GLOBAL_FEATURE_SENTINEL && !hasGoalExecutionSignal()) {
     try {
@@ -1599,8 +1596,7 @@ async function main(): Promise<void> {
         workflowTrack: closureTrack,
         runId: process.env.MAISON_GOAL_RUN_ID?.trim(),
       });
-      if (outcome.revisionApplied) console.log('   ✓ feature 范围修订已应用（无 run 载体）');
-      if (outcome.completionPath) console.log(`   ✓ feature 完成原件已生成: ${path.relative(projectRoot, outcome.completionPath).replace(/\\/g, '/')}`);
+      if (outcome.skippedReason === 'goal-runtime-required') console.log('   → 本次仅完成独立阶段检查；完整交付须经 goal-mode-entry --prepare-run 正式承接既有范围，再用 --next / --report-result。');
     } catch (error) {
       // D1.2（第四轮阻断 4）：收尾失败**两件事都要做**——把 BLOCKER 写进既有失败报告路径
       //（宿主 agent 才看得到原因），并让进程非零退出（脚本调用方才拦得住）。
@@ -2165,6 +2161,11 @@ export function writeRunSummaryBase(
   // legacy receipt 不参与；未清偿债务 → visual 轴 UNVERIFIED/needs_fix
   //（advance 不受影响——visual 非推进阻断轴，等价性保持；release 由此 BLOCKED）。
   applyVisualDebtPipeline(projectRoot, report, lattice);
+  // 债务管线会重投影 release/completion；明确执行缺口仍须保持未完成。
+  if (report.checks.some(check => isRequiredCheckGap(check))) {
+    lattice.release_readiness = 'BLOCKED';
+    lattice.completion_status = 'INCOMPLETE';
+  }
   // Existing handoff deferrals remain the source; review disclosure never verifies device visuals.
   const fidelityDeferrals = resolveFidelityContextFromFeature(projectRoot, report.feature).fidelityDeferrals;
   const fidelity = loadFidelityIntentSsot(projectRoot, report.feature);
@@ -2253,9 +2254,10 @@ export function writeRunSummaryBase(
   // harness 反复复用同一份坏正文、恒零候选。仍走 run_verifier_for_repair（NEXT 在该
   // 分支里给出"先按原始回复重写报告"的出口），不新增动作字符串/状态机。
   const unreadableDiagnosisChecks =
-    (eligibility.kind === 'repair_diagnosis' || carriedVerifierSubjectId !== null) && verifierReportText
-      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText, !phaseIssues ? undefined : {
-        reportText: phaseIssues.reportText, rows: phaseIssues.rows, declinedFingerprints, declinedIssues, verifierSubjectCurrent: carriedVerifierSubjectId === null,
+    (eligibility.kind === 'repair_diagnosis' || carriedVerifierSubjectId !== null || report.phase === 'spec' || report.phase === 'plan') && verifierReportText
+      ? findUnreadableDiagnosisChecks(report.phase, verifierReportText, !(verifiedPhaseIssues ?? phaseIssues) ? undefined : {
+        reportText: (verifiedPhaseIssues ?? phaseIssues)!.reportText, rows: (verifiedPhaseIssues ?? phaseIssues)!.rows,
+        diagnostics: (verifiedPhaseIssues ?? phaseIssues)!.diagnostics, declinedFingerprints, declinedIssues, verifierSubjectCurrent: carriedVerifierSubjectId === null,
       })
       : [];
   if (unreadableDiagnosisChecks.length > 0) {
@@ -2270,7 +2272,9 @@ export function writeRunSummaryBase(
       id: 'verifier_repair_diagnosis', status: 'incomplete' as const,
       message: [
         ...(unreadableDiagnosisChecks.length > 0 ? [`逐条诊断：${unreadableDiagnosisChecks.join('；')}`] : []),
-        verifierIssued ? '已签发当前 request：按原回复修正转录，确无有效回复才重投当前 verifier。'
+        verifierIssued ? (report.phase === 'spec' || report.phase === 'plan'
+          ? '已签发当前 request：请原独立 verifier 在同次材料中补核具体验收、修复目标、事实与责任；不能仅重抄缺字段的旧报告。'
+          : '已签发当前 request：按原回复修正转录，确无有效回复才重投当前 verifier。')
           : `当前 verifier request 未签发：${eligibility.reason} `
             + (carriedVerifierSubjectId ? `沿用 subject=${carriedVerifierSubjectId}，保留旧负面结论与拒修依据。` : '')
             + '先修当前阶段可合法修复的资格缺口；若能力已禁用，不自动改配置，需新的逐条判断时用既有配置入口启用。真实 FAIL/open 不由人签放行。',
@@ -2806,6 +2810,7 @@ export function buildNextLine(
     script_report?: string;
     verifier_request?: string;
     blockers?: ReadonlyArray<{ id: string; details_excerpt?: string; suggestion?: string }>;
+    blocking_skips?: ReadonlyArray<{ id: string; blocking_class?: string; details_excerpt?: string; suggestion?: string }>;
     readiness_signals?: ReadonlyArray<{ id: string; message: string }>;
   },
   phase: string,
@@ -2847,6 +2852,8 @@ export function buildNextLine(
     );
   }
   if (summary.verdict !== 'PASS') {
+    const gaps = requiredSummaryCheckGaps(summary).filter(check => check.blocking_class === 'framework_internal');
+    if (!(summary.blockers?.length) && gaps.length) return `NEXT: 必需检查未取得结论（${gaps.map(check => check.id).join(', ')}），产品结论未知；请 AgentMaison 维护者修复检查后重新发起同一请求，保留有效产物并复验受影响阶段，勿无变化重试。`;
     // codex review：一轮处理全部已知阻断再重跑——列出全部 blocker（最多 6 条），不是只给第一个。
     const blockers = summary.blockers ?? [];
     if (blockers.length > 0) {
@@ -2940,6 +2947,9 @@ function decideNextAction(
   // plan c8e5b3f1 t2：effective verdict = 顶层钳制后的最终值（capability blocked 时 ≠ legacy PASS）。
   // 开头的 legacy INCOMPLETE/device-external 分支保持原语义（legacy 变 INCOMPLETE 的唯一路径就是
   // device-external 例外），不得换成 effective。
+  if (report.summary.verdict === 'INCOMPLETE' && report.checks.some(check => isRequiredCheckGap(check))) {
+    return 'resolve_blocking_skips_then_rerun';
+  }
   if (report.summary.verdict === 'INCOMPLETE') {
     return report.phase === 'testing' ? 'device_ready_then_rerun_testing' : 'device_ready_then_rerun_ut';
   }
@@ -3481,7 +3491,8 @@ export function collectContextFiles(
     subject: feature === GLOBAL_FEATURE_SENTINEL ? 'global' : 'feature', role: 'verifier', contracts: featureSpec.contracts });
   const files: import('./scripts/utils/types').ContextFileEntry[] = knowledgeContextFiles(knowledge);
   const phaseIssues = readPhaseRepairIssues(projectRoot, feature, phase);
-  if (phaseIssues) files.push({ label: phaseIssues.reportPath, content: phaseIssues.reportText }, ...phaseIssues.evidenceFiles);
+  if (phaseIssues) files.push({ label: phase === 'spec' || phase === 'plan' ? '(prior semantic findings)' : phaseIssues.reportPath,
+    content: [phaseIssues.reportText, ...(phaseIssues.diagnostics ?? [])].join('\n') }, ...phaseIssues.evidenceFiles);
   if (phaseIssues && phase !== 'review' && phaseIssues.rows.length) files.push({ label: '(upstream issues to verify)', content:
     '逐条读当前问题表与证据；issue-verification 的 evidence 包含责任文件名，并原样复制下列完整问题/依据＋修复建议，再给事实与责任判断。\n'
       + phaseIssues.rows.map(row => `${row.id} → 责任产物 ${row.files.join('、')}\nevidence 原文：${row.summary}`).join('\n') });

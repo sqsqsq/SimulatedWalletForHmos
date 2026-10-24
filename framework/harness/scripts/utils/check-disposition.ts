@@ -41,6 +41,9 @@ export interface DispositionEntry {
  * 38e5a7c2 再将必读登记与三条模式声明归入披露；`origin_tag_required`、`seed_no_technical_words` 仍暂缓。
  */
 export const DISPOSITION_TABLE: readonly DispositionEntry[] = [
+  { match: { id: 'request_provider_unavailable' }, protects: 'capability_gap',
+    basis: '1804ac3b §4.5：既有 request provider 缺口在能力生产点明确分类',
+    consequence: '专项测试缺少实际执行能力，不能将未执行当作产品通过；补齐能力后重发同一请求' },
   { match: { id: 'coding_existing_test_preserved' }, protects: 'product_truth',
     basis: 'c2f7a91e §5.3.1；179a73 兼容修补需保留旧用例和断言',
     consequence: 'coding 可通过删改测试或新增跳过掩盖回归；无法确认原件时不得授有限写权' },
@@ -159,6 +162,9 @@ export interface DispositionCheck {
   id: string;
   status: string;
   severity?: string;
+  structured?: unknown;
+  failure_kind?: string;
+  blocking_class?: string;
 }
 
 export type CheckDisposition =
@@ -206,6 +212,29 @@ export function isBlockingCheck(
   table: readonly DispositionEntry[] = activeTable,
 ): boolean {
   return resolveCheckDisposition(check, table).action === 'block';
+}
+
+/** 只承接生产点明确分类的必需执行缺口；旧未分类 SKIP 仍由原检查与 verifier 处置。 */
+export function isRequiredCheckGap(check: DispositionCheck, table: readonly DispositionEntry[] = activeTable): boolean {
+  if (check.status !== 'SKIP' || check.severity !== 'BLOCKER') return false;
+  return requiresCheckConclusion(check, table);
+}
+
+function requiresCheckConclusion(check: { id?: string; structured?: unknown; failure_kind?: string; blocking_class?: string }, table: readonly DispositionEntry[] = activeTable): boolean {
+  if ((check.structured as { applicability?: unknown } | undefined)?.applicability === 'not_applicable') return false;
+  if (findDispositionEntry(check.id ?? '', table)?.protects === 'ledger_shape') return false;
+  return check.failure_kind === 'framework_bug' || check.blocking_class === 'framework_internal'
+    || check.failure_kind === 'device_blocked' || check.blocking_class === 'externalBlocked'
+    || check.failure_kind === 'capability_missing';
+}
+
+export function isFrameworkExecutionGap(check: DispositionCheck): boolean {
+  return isRequiredCheckGap(check) && (check.failure_kind === 'framework_bug' || check.blocking_class === 'framework_internal');
+}
+
+/** blocking_skips 保留旧的完整复核清单；仅明确分类的执行缺口参与新增的完成约束。 */
+export function requiredSummaryCheckGaps<T extends { id?: string; blocking_class?: string }>(summary: { blocking_skips?: readonly T[] } | null | undefined): T[] {
+  return (summary?.blocking_skips ?? []).filter(check => requiresCheckConclusion(check));
 }
 
 /** summary 的被披露失败清单一条（§4.3）。 */
