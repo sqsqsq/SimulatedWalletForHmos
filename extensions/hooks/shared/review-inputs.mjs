@@ -16,6 +16,7 @@ import { extensionRoot, featureRoot, readConfig, readJsonOrNull, relDisplay } fr
 import { knowledgeFiles } from './knowledge.mjs';
 import { imagesIn } from '../../skills/story/scripts/core/story/images.mjs';
 import { sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
 
 /** 走局部明细合同的判据 → 它的必审集合用途。 */
 export const COVERED_CHECKS = { story_reader_review: 'story', knowledge_obligation_substance: 'plan' };
@@ -159,10 +160,16 @@ export function reviewInputs(projectRoot, feature, purpose = 'story') {
   // 配置读不出时需求目录只能按默认推导：整份集合与视觉裁定都可能不是这个工程的，报缺口，也不延期图面核对
   const configBroken = fs.existsSync(path.join(projectRoot, 'framework.config.json')) && !readConfig(projectRoot);
   if (configBroken) gaps.push('framework.config.json 读不出——需求目录判不了，必审集合按默认目录推导，不能当作这个工程的');
+  // Story 三件只在走 /story 的需求里必有（流程契约在即是，读坏了也是）；直接 spec→plan 没有义务生产它们，
+  // 但本单实际有的决定与评审记录仍是依据，在就必审
+  const story = purpose === 'story' || isStoryFeature(root);
+  const own = rel => ({ required: story || fs.existsSync(at(rel)) });
   const flow = readJsonOrNull(at('AR/story-src/story-flow.json'));
-  add(at('AR/story-src/story-flow.json'), '已确认的范围与关卡人签（摘要按范围、选项原文与人签的稳定投影算）', { text: scopeProjection(flow) });
-  add(at('AR/story-src/decisions.json'), '作者登记的决定：哪些定了、哪些开着（待按人签与原件核的解释）');
-  add(at('AR/review.md'), '决策与评审记录：人的原话与表态');
+  if (isStoryFeature(root) && !flow) gaps.push('AR/story-src/story-flow.json 在却读不出——范围与关卡人签未取得');
+  add(at('AR/story-src/story-flow.json'), '已确认的范围与关卡人签（摘要按范围、选项原文与人签的稳定投影算）',
+    { text: scopeProjection(flow), required: story });
+  add(at('AR/story-src/decisions.json'), '作者登记的决定：哪些定了、哪些开着（待按人签与原件核的解释）', own('AR/story-src/decisions.json'));
+  add(at('AR/review.md'), '决策与评审记录：人的原话与表态', own('AR/review.md'));
   add(at('spec/spec.md'), purpose === 'plan' ? '有效 Spec：要履行的业务条件与验收' : '已经成立的产品约束');
   add(at('acceptance.yaml'), '验收条目');
   if (purpose === 'plan') {

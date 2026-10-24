@@ -502,3 +502,47 @@ class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
         out = self.plan_report(cover_report(self.DETAILS, self.root, FEATURE, "plan"))
         self.assertTrue(out.startswith("exit=0"), out[-800:])
 
+    STORY_ONLY = ("AR/story-src/story-flow.json", "AR/story-src/decisions.json", "AR/review.md")
+
+    def required(self) -> list[str]:
+        from ext_workspace import required_inputs  # noqa: PLC0415
+        return required_inputs(self.root, FEATURE, "plan", fill=False)
+
+    def test_a_direct_plan_owes_no_story_artifacts(self) -> None:
+        """直接 spec→plan：没有 /story 契约就不要求从未生产的 Story 三件，本阶段输入齐了照常收下（G3@6）。"""
+        from ext_workspace import cover_report  # noqa: PLC0415
+        for rel in self.STORY_ONLY:
+            (self.fr / rel).unlink(missing_ok=True)
+        required = self.required()
+        for rel in self.STORY_ONLY:
+            self.assertNotIn(f"doc/features/{FEATURE}/{rel}", required)
+        self.assertIn(f"doc/features/{FEATURE}/plan/plan.md", required)
+        out = self.plan_report(cover_report(self.DETAILS, self.root, FEATURE, "plan"))
+        self.assertTrue(out.startswith("exit=0"), out[-800:])
+        for rel in self.STORY_ONLY:
+            self.assertFalse((self.fr / rel).exists(), "核对补出了本单不该有的 Story 件")
+
+    def test_a_direct_plan_still_reads_the_decisions_it_has(self) -> None:
+        """直接 Plan 已有的决定与评审记录是依据：在就必审，漏声明照样拒收。"""
+        (self.fr / self.STORY_ONLY[0]).unlink()
+        (self.fr / "AR" / "review.md").write_text("# 评审记录\n\n范围已定。\n", encoding="utf-8")
+        required = self.required()
+        for rel in self.STORY_ONLY[1:]:
+            self.assertIn(f"doc/features/{FEATURE}/{rel}", required)
+        out = self.plan_report(self.DETAILS)
+        self.assertIn("既没出现在 examined_inputs 也没列进 unreviewed", out)
+        self.assertIn("AR/review.md", out)
+
+    def test_a_story_plan_still_needs_its_story_artifacts(self) -> None:
+        """走过 /story 的需求：契约在，决定或评审记录缺了仍是必审缺件；契约读坏了是缺口，不当成直接 Plan。"""
+        from ext_workspace import cover_report  # noqa: PLC0415
+        for rel in self.STORY_ONLY[1:]:
+            (self.fr / rel).unlink(missing_ok=True)
+        required = self.required()
+        for rel in self.STORY_ONLY:
+            self.assertIn(f"doc/features/{FEATURE}/{rel}", required)
+        (self.fr / self.STORY_ONLY[0]).write_text("{坏了", encoding="utf-8")
+        out = self.plan_report(cover_report(self.DETAILS, self.root, FEATURE, "plan"))
+        self.assertFalse(out.startswith("exit=0"), out[-800:])
+        self.assertIn("story-flow.json 在却读不出", out)
+

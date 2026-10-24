@@ -53,12 +53,15 @@ export function overlayChecks(projectRoot, phase) {
   return { checks, error: null };
 }
 
-/** 报告里的表格行：`[{id, status}]`，id 是第一格、status 是第二格。 */
+/** 报告里的表格行：`[{id, status, severity}]`，按框架输出契约的列序取前三格。 */
 function tableRows(text) {
   return String(text ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('|'))
     .map(l => tableCells(l).map(c => c.replace(/`|\*/g, '').trim()))
-    .filter(c => c[0]).map(c => ({ id: c[0], status: String(c[1] ?? '').toUpperCase() }));
+    .filter(c => c[0]).map(c => ({ id: c[0], status: String(c[1] ?? '').toUpperCase(), severity: String(c[2] ?? '').toUpperCase() }));
 }
+
+/** 框架输出契约的严重度：只有 BLOCKER 级 FAIL 阻断，终态 PASS 当且仅当 blocker_count=0。 */
+const SEVERITIES = new Set(['BLOCKER', 'MAJOR', 'MINOR']);
 
 /**
  * 当前审查报告立不立得住 —— 格式、判据全不全、同一对象是不是只有一个结论、WARN 行有没有处置记录。
@@ -91,9 +94,19 @@ function reportProblems(projectRoot, feature, phase) {
     problems.push(...judgeReport(text, summary.verifier_report, id,
       reviewInputs(projectRoot, feature, purpose), Object.keys(checks)).problems);
   }
-  const failed = rows.filter(r => r.status === 'FAIL').map(r => r.id);
-  if (block.verdict === 'PASS' && failed.length) {
-    problems.push(`${summary.verifier_report}：汇总表 ${failed.join('、')} 判 FAIL，终态块却是 PASS——结论自相矛盾，不计作结论。${INVALID_EVIDENCE}`);
+  // 阻断与否取报告自己的严重度格；缺、非法或与 overlay 声明不符都判不了，不能借它绕过阻断
+  const failed = rows.filter(r => r.status === 'FAIL');
+  for (const r of failed) {
+    const declared = String(checks[r.id]?.severity ?? '').toUpperCase();
+    if (!SEVERITIES.has(r.severity) || (declared && declared !== r.severity)) {
+      problems.push(`${summary.verifier_report}：汇总表 ${r.id} 判 FAIL，严重度格「${r.severity}」`
+        + (SEVERITIES.has(r.severity) ? `与 rules/${phase}-rules.overlay.yaml 声明的 ${declared} 不符` : '不是 BLOCKER、MAJOR、MINOR 之一')
+        + `——阻断与否按这一格判。${INVALID_EVIDENCE}`);
+    }
+  }
+  const blocking = failed.filter(r => r.severity === 'BLOCKER').map(r => r.id);
+  if (block.verdict === 'PASS' && blocking.length) {
+    problems.push(`${summary.verifier_report}：汇总表 ${blocking.join('、')} 是 BLOCKER 级 FAIL，终态块却是 PASS——结论自相矛盾，不计作结论。${INVALID_EVIDENCE}`);
   }
   const subject = block.subject;
   const ledgerPath = path.join(path.dirname(abs), 'verifier.conclusions.json');

@@ -215,7 +215,7 @@ export function scanLanguageRedline(text, opts = {}) {
  * 看得见 `](` 却解析不出目标的，作为 `bad` 带位置交回，由调用方报「写法解析不了」，不猜。
  * 表格里的 `\|` 是转义竖线，目标里还原成 `|`。
  *
- * @returns {{links: {start:number, end:number, target:string, image:boolean}[], bad: {start:number, text:string}[]}}
+ * @returns {{links: {start:number, end:number, text:string, target:string, image:boolean}[], bad: {start:number, text:string}[]}}
  */
 export function markdownLinks(line) {
   const s = String(line ?? '');
@@ -244,10 +244,35 @@ export function markdownLinks(line) {
       i += 2;
       continue;
     }
-    links.push({ start: from, end: j, target: target.replace(/\\([|()])/g, '$1'), image: s[from] === '!' });
+    links.push({ start: from, end: j, text: s.slice(open + 1, i), target: target.replace(/\\([|()])/g, '$1'),
+      image: s[from] === '!' });
     i = j;
   }
   return { links, bad };
+}
+
+/**
+ * 一行里的图片引用 —— 身份、去处与断链核对都从这里取完整目标，不各写一套正则。
+ *
+ * `path` 按 URL 读法取文件名：未编码的 `#`、`?` 之后是片段与查询，不属于路径；路径段的 `%xx` 全部还原一次，
+ * 才与登记的原名对得上。编码本身坏了或路径为空时为 null，由断链检查报。
+ * 外链与内嵌数据 `external` 为真：不是仓内文件，不核身份与断链。
+ */
+export function imageLinks(line) {
+  const { links, bad } = markdownLinks(line);
+  const images = links.filter(l => l.image).map(l => ({ alt: l.text, target: l.target,
+    external: /^(https?:|data:)/i.test(l.target), path: decodedPath(l.target) }));
+  return { images, bad: bad.filter(b => b.text.startsWith('!')) };
+}
+
+function decodedPath(target) {
+  try { return decodeURIComponent(target.split(/[?#]/)[0]) || null; } catch { return null; }
+}
+
+/** 文件路径写成合法的链接目标，与 `imageLinks` 的还原互逆：`%`、`#`、`?` 与尖括号编码，含空白或括号时包进 `<…>`，原名不改。 */
+export function markdownTarget(file) {
+  const s = String(file ?? '').replace(/[%#?<>]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return /[\s()]/.test(s) ? `<${s}>` : s;
 }
 
 /**
@@ -282,17 +307,17 @@ export function formatHits(hits, kind) {
  * 归档件是交出去给评审者看的——引用写成裸文件名或指向源材料目录，本地打开是红叉，
  * 而正文与装配都不会因此报错：形态守恒只数图的条数，数得到「有一张图」，看不出它打不开。
  *
- * 外链（http/https）与内嵌数据不判：那不是仓内文件。
+ * 外链（http/https）与内嵌数据不判：那不是仓内文件。`%xx` 编码坏了的同样打不开，照命中报。
  */
 export function scanBrokenImages(text, baseDir, fsMod, pathMod) {
   const hits = [];
   const rows = String(text ?? '').split(/\r?\n/);
   for (let i = 0; i < rows.length; i++) {
-    for (const m of rows[i].matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
-      const ref = m[1];
-      if (/^(https?:|data:)/i.test(ref)) continue;
-      const abs = pathMod.resolve(baseDir, decodeURIComponent(ref.replace(/^<|>$/g, '')));
-      if (!fsMod.existsSync(abs)) hits.push({ line: i + 1, path: ref });
+    for (const img of imageLinks(rows[i]).images) {
+      if (img.external) continue;
+      if (img.path === null || !fsMod.existsSync(pathMod.resolve(baseDir, img.path))) {
+        hits.push({ line: i + 1, path: img.target });
+      }
     }
   }
   return hits;

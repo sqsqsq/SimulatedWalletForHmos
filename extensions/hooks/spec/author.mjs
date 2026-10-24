@@ -30,6 +30,7 @@ import { SHELL, shellArg } from '../../skills/story/scripts/core/story/drafts.mj
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { citableRows, originRows, relFromStory, sourceCatalog, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { markdownTarget } from '../../skills/story/scripts/core/story/language.mjs';
 import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { recordUsage } from '../shared/usage.mjs';
 import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
@@ -279,7 +280,7 @@ function imageSection(projectRoot, feature) {
     }
     const unused = String(img.unused ?? '').trim();
     const aliases = paths.filter(rel => rel !== main);
-    rows.push(`- \`![${caption || '这张图是什么'}](${relFromStory(main)})\``
+    rows.push(`- \`![${caption || '这张图是什么'}](${markdownTarget(relFromStory(main))})\``
       + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
       + (unused ? ` ← **已登记不用**：${unused}` : ' ← 还没登记取舍'));
     if (aliases.length) {
@@ -369,7 +370,7 @@ export function storyInputs(ctx, sources) {
     ...originRows({ ...ctx, srcDir: ctx.srcDir ?? path.join(ctx.featureRoot, 'AR', 'story-src') }), '',
     ...(fs.existsSync(path.join(ctx.featureRoot, 'ux-reference', 'README.md'))
       ? ['界面交互说明在 `ux-reference/README.md`：业务流程章有人机交互的小节以它与下面的界面原图为依据，'
-        + '写作设计在那一节的「依据」里写明用哪一段、哪几张图；页面流转表照它写，材料没给的交互写待决。', ''] : []),
+        + '写作设计在那一节的「依据」里写明用哪一段、哪几张图；页面流转图与表照它写，它没覆盖的普通交互在已定业务内补齐。', ''] : []),
     ...imageSection(ctx.projectRoot, feature), '',
     ...diagramSection('## 4a. 系统设计里的图（在 story 里的去向）', 'SR', of('SE'), derived('SE')), '',
     ...diagramSection('## 4b. spec 里的图（在 story 里的去向）', 'spec', of('SPEC'), derived('SPEC')),

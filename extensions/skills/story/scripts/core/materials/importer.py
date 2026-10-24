@@ -361,7 +361,14 @@ def _images_in(node: ET.Element, rel_map: dict[str, str], asset_ref: str) -> lis
     """一处图形里引用到的图片：新式 DrawingML 与旧式 VML 都认。"""
     names = [rel_map.get(blip.get(f"{R}embed", "")) for blip in node.iter(f"{A}blip")]
     names += [rel_map.get(data.get(f"{R}id", "")) for data in node.iter(f"{V}imagedata")]
-    return [f"![{name}]({asset_ref}/{name})" for name in names if name]
+    return [f"![{name}]({md_target(f'{asset_ref}/{name}')})" for name in names if name]
+
+
+def md_target(path: str) -> str:
+    """路径写成合法的 Markdown 链接目标：`%`、`#`、`?` 与尖括号编码（读者把未编码的 `#`、`?` 当片段与查询），
+    含空白或括号时包进 `<…>`——派生目录随原件主名，名字不改。"""
+    s = re.sub(r"[%#?<>]", lambda m: f"%{ord(m.group()):02X}", path)
+    return f"<{s}>" if re.search(r"[\s()]", s) else s
 
 
 def _run_text(run: ET.Element, rel_map: dict[str, str], asset_ref: str) -> str:

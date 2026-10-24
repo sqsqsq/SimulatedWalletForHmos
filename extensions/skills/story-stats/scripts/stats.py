@@ -34,35 +34,36 @@ class StatsError(Exception):
     """统计做不成：原因原样报给 Skill，不出一份看似完整的事实。"""
 
 
-def git(root: Path, *args: str, ok: bool = False) -> str | None:
-    p = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+def git(root: Path, *args: str, ok: bool = False, raw: bool = False) -> str | bytes | None:
+    """`raw` 原样返回字节：记录正文交给 usage 自己校验编码，不先替换坏字节。"""
+    p = subprocess.run(["git", "-C", str(root), *args], capture_output=True)
     if p.returncode:
         if ok:
             return None
-        raise StatsError(f"git {args[0]} 失败（{p.stderr.strip()[:300]}）：统计要在目标 Git 仓里跑")
-    return p.stdout
+        raise StatsError(f"git {args[0]} 失败（{p.stderr.decode('utf-8', 'replace').strip()[:300]}）：统计要在目标 Git 仓里跑")
+    return p.stdout if raw else p.stdout.decode("utf-8", "replace")
 
 
 class History:
     """HEAD 可达历史里 usage 的每一版节点与每笔提交的变更量；同一提交只读一次。"""
 
     def __init__(self, root: Path, record: str):
-        self.root, self.record, self.nodes, self.stats, self.unreadable = root, record, {}, {}, []
+        self.root, self.record, self.nodes, self.stats = root, record, {}, {}
 
     def at(self, sha: str) -> dict:
-        """这一版的节点；这一版没有文件是空的，读不出的记进 `unreadable`（它的下一笔提交会把全部节点算成新增）。"""
+        """这一版的节点：这一版确实没有文件是空的；Git 查不了、文件在却读不出或不合合同，统计停下，不当作空表。"""
         if sha not in self.nodes:
-            text = git(self.root, "show", f"{sha}:./{self.record}", ok=True)      # ./ 按工程目录解析
-            reqs = {}
-            if text:
-                try:
-                    reqs = json.loads(text)["requirements"]
-                    if not isinstance(reqs, dict):
-                        raise TypeError("requirements 不是对象")
-                except (ValueError, KeyError, TypeError, AttributeError) as exc:
-                    self.unreadable.append({"sha": sha, "why": str(exc)[:200]})
-                    reqs = {}
-            self.nodes[sha] = reqs
+            where = f"提交 {sha[:12]} 的 {self.record}"
+            try:
+                listed = git(self.root, "ls-tree", "--name-only", sha, "--", self.record)   # 按工程目录解析
+                blob = git(self.root, "show", f"{sha}:./{self.record}", raw=True) if listed.strip() else None
+            except StatsError as exc:
+                raise StatsError(f"{where}查不了：{exc}") from exc
+            try:
+                self.nodes[sha] = usage.parse(blob, where)["requirements"] if blob is not None else {}
+            except usage.UsageError as exc:
+                raise StatsError(f"{exc}——这一版读不出，它之后那笔提交改了哪些需求就算不出；"
+                                 "本次不出统计，按提交号核对那一版的记录") from exc
         return self.nodes[sha]
 
     def numstat(self, sha: str) -> tuple[int, int]:
@@ -128,7 +129,6 @@ def collect(root: Path) -> dict:
                        **({"rounds_total": sum(x.get("rounds", 0) for x in done)} if step == usage.UPDATE else {})}
     return {"project": root.name, "collected_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "head": head, "record": record, "record_tracked": tracked, "usage_sha256": hashlib.sha256(raw).hexdigest(),
-            "unreadable_versions": history.unreadable,
             "requirements": rows,
             "summary": {"requirements": len(rows), "developers": [{"author": n, "email": e} for e, n in sorted(devs.items())],
                         "commits": len(shas), "added": sum(r["added"] for r in rows),

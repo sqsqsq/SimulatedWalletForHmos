@@ -13,6 +13,7 @@ import {
   separateMarks, zoneBody, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, specText } from './context.mjs';
+import { imageLinks } from './language.mjs';
 import { displayTags, relFromStory, resolveTags, sourceCatalog } from './sources.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
 
@@ -542,8 +543,8 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
     //
     // 与集合一致那一条合起来看：登记的图要有去处，而附录不是去处。用它就放在讲它的那一章，
     // 不用它就在材料清单那一行写明理由——理由是文字，不是把图挪到附录充数。
-    const inAppendix = [...appendixSection.text.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
-      .map(m => m[1]);
+    const inAppendix = appendixSection.text.split(/\r?\n/).flatMap(line => imageLinks(line).images)
+      .map(img => img.target);
     if (inAppendix.length) {
       problems.push(`「${appendixDef.title}」：有 ${inAppendix.length} 张图`
         + `（${inAppendix.slice(0, 3).join('、')}${inAppendix.length > 3 ? '…' : ''}）`

@@ -7,6 +7,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { joinPosix, readManifest, relFromFeature } from './sources.mjs';
 import { normalizeHeading, parseDocument } from './document.mjs';
+import { imageLinks } from './language.mjs';
 
 
 /**
@@ -67,12 +68,16 @@ export function chapterImageProblems(ctx, text, where) {
   const byPath = new Map();
   (usable ?? []).forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
   String(text ?? '').split(/\r?\n/).forEach((line, i) => {
-    for (const [, alt, src] of line.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)) {
+    const { images, bad } = imageLinks(line);
+    for (const b of bad) {
+      problems.push(`${where(i + 1)}：图片链接写法解析不了（${b.text}）——带空格或括号的路径写成 \`![说明](<路径>)\``);
+    }
+    for (const { alt, target: src, external, path: ref } of images) {
       if (!alt.trim()) problems.push(`${where(i + 1)}：图片 ${src} 没有 alt 文本——alt 是评审人看不到图时读到的那句话`);
-      if (!usable || /^(https?:|data:)/i.test(src)) continue;
-      const idx = byPath.get(joinPosix(storyDir, src));
+      if (!usable || external || ref === null) continue;
+      const idx = byPath.get(joinPosix(storyDir, ref));
       if (idx === undefined) {
-        const name = path.posix.basename(src);
+        const name = path.posix.basename(ref);
         const same = [...byPath.keys()].filter(rel => path.posix.basename(rel) === name)
           .map(rel => path.posix.relative(storyDir, rel));
         problems.push(`${where(i + 1)}：图片「${src}」不在材料的图片登记里——story 里的图按登记的引用认`
@@ -98,11 +103,10 @@ export function chapterImageProblems(ctx, text, where) {
 export function imageProblems(ctx, storyText) {
   const problems = [];
   const notes = [];
-  const imgs = [...storyText.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
-  const seen = new Set();
-  for (const [, , src] of imgs) {
-    if (seen.has(src)) problems.push(`story.md：图片 ${src} 被引用了不止一次——同一张图只在一处引，那一处说清它画的是什么`);
-    seen.add(src);
+  const seen = new Map();              // 引用写法 → 那一张
+  for (const img of String(storyText).split(/\r?\n/).flatMap(line => imageLinks(line).images)) {
+    if (seen.has(img.target)) problems.push(`story.md：图片 ${img.target} 被引用了不止一次——同一张图只在一处引，那一处说清它画的是什么`);
+    seen.set(img.target, img);
   }
   const registered = materialImages(ctx);
   if (registered?.gap) {
@@ -118,9 +122,9 @@ export function imageProblems(ctx, storyText) {
   const byPath = new Map();
   registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
   const usedBy = new Map();            // 登记序号 → story 里引到它的那些路径
-  for (const src of seen) {
-    if (/^(https?:|data:)/i.test(src)) continue;
-    const idx = byPath.get(joinPosix(storyDir, src));
+  for (const { target: src, external, path: ref } of seen.values()) {
+    if (external || ref === null) continue;
+    const idx = byPath.get(joinPosix(storyDir, ref));
     if (idx === undefined) continue;   // 不在登记里的由本章判据报
     if (!usedBy.has(idx)) usedBy.set(idx, []);
     usedBy.get(idx).push(src);
