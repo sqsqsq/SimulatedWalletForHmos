@@ -9,7 +9,7 @@
 | 开发与消费 | `extensions/` 是开发源；`demo/` 是完整消费工程与上一正式发布版。测试装一次性template，平时不更新demo |
 | 维护需求与方案 | `doc/spec/`、`doc/plan/`；按本次目标找有效入口，新需求命名按用户级约定，旧任务原位接续 |
 | 使用与发布说明 | `README.md` 只写当前状态；`doc/release/<版本>.md` 只写本版增量 |
-| 维护设计/评审与执行 | 用户级 maintenance-designer / maintenance-executor；维护Spec/Plan与消费产物不同 |
+| 维护设计/评审与执行 | 用户级 maintenance-designer / maintenance-executor；维护Spec/Plan与消费产物不同，过程依据按用户级文档约定留存 |
 | 定方案、开工、review | 先读[TEST §6.5](test/TEST.md#65-维护标准与评审)、[全量标准](test/regression/extension-acceptance.md)及本版`doc/spec/<版本>/评价标准变更.md`；先核标准再实现，按对象取证 |
 | 运行、修改或评价测试 | [TEST](test/TEST.md)是命令、取证、评分真源；运行器在`tools/cli/`，命令从仓根执行 |
 | 环境/Framework接入/安装发布 | 行动前按[维护操作](doc/release/维护操作.md)任务表读对应章节；普通设计评审不必全读 |
