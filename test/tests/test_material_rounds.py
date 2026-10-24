@@ -1794,6 +1794,95 @@ class SubdirectoryOriginalsThroughUpdate(TheInboxIsReadRecursively):
         self.assertIn("说不出上次以来并入了哪些原件", str(caught.exception))
 
 
+class ImageLinksKeepTheirFullTarget(TheManifestIsTheOnlyMaterialTruth):
+    """原件名带空格与括号不要求改名：导入生成合法的图片引用，身份、去处与断链三处核对都按完整目标认出登记的那一张（A4@2）。"""
+
+    NAME = "界面稿/申请 页（一）(v2).docx"
+    STORY_JS = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story"
+
+    def prepare(self) -> None:
+        """真实导入一份带图原件（不放 setUp：父类的清单用例在空工作区上跑）。"""
+        self.docx(self.NAME, {"image1.png": self.PNG + b"a"}, cls="RR")
+        proc = self.import_now()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.round_now()
+        self.registered = f"{importer.assets_for(self.NAME).as_posix()}/image1.png"
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.generated = next(line.strip() for line in prd.splitlines() if "![" in line)
+
+    def node(self, script: str, *args: str) -> object:
+        head = "".join(f"const {n} = await import({json.dumps((self.STORY_JS / f).resolve().as_uri())});"
+                       for n, f in (("img", "images.mjs"), ("lang", "language.mjs")))
+        proc = subprocess.run(["node", "--input-type=module", "-e", head + script, "--", *args],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def check(self, story: str) -> dict:
+        """正文交给三处真实核对：本章身份、整篇去处与重复、断链。"""
+        ar = self.feature_root / "AR"
+        return self.node(
+            "import * as fs from 'node:fs'; import * as path from 'node:path';"
+            f"const ctx = {{srcDir: {json.dumps(str(ar / 'story-src'))}, featureRoot: {json.dumps(str(self.feature_root))},"
+            f" storyPath: {json.dumps(str(ar / 'story.md'))}}};"
+            "const t = process.argv[1];"
+            "process.stdout.write(JSON.stringify({chapter: img.chapterImageProblems(ctx, t, n => `L${n}`),"
+            f" whole: img.imageProblems(ctx, t).problems, broken: lang.scanBrokenImages(t, {json.dumps(str(ar))}, fs, path)}}));",
+            story)
+
+    def test_the_importer_writes_a_legal_target_for_the_real_name(self) -> None:
+        self.prepare()
+        self.assertIn(" ", self.registered)
+        self.assertIn("(v2)", self.registered)
+        self.assertEqual(f"![image1.png](<../{self.registered}>)", self.generated)
+
+    def test_every_legal_spelling_reaches_the_registered_image(self) -> None:
+        self.prepare()
+        plain = "../" + self.registered
+        spellings = {
+            "导入生成的引用": self.generated,
+            "空格编码、成对括号": "![申请页](" + plain.replace(" ", "%20") + ")",
+            "空格编码、括号转义": "![申请页](" + plain.replace(" ", "%20").replace("(", "\\(").replace(")", "\\)") + ")",
+            "尖括号里再编码": "![申请页](<" + plain.replace("（", "%EF%BC%88") + ">)",
+        }
+        for label, ref in spellings.items():
+            with self.subTest(label):
+                out = self.check(f"申请页如下。\n\n{ref}\n")
+                self.assertEqual([], out["chapter"], ref)
+                self.assertEqual([], out["broken"], ref)
+                self.assertEqual([], out["whole"], f"{ref} 没认作登记的那张，或误报没被引用")
+
+    def test_real_problems_are_still_reported(self) -> None:
+        self.prepare()
+        plain = "../" + self.registered
+        out = self.check("![别的图](<../assets/别的 图.png>)\n")
+        self.assertTrue(any("不在材料的图片登记里" in p for p in out["chapter"]), out)
+        self.assertTrue(out["broken"], "真实不存在的文件没报断链")
+        self.assertTrue(any("没被引用" in p for p in out["whole"]), "登记的图没去处却没报")
+        out = self.check(f"{self.generated}\n\n{self.generated}\n")
+        self.assertTrue(any("被引用了不止一次" in p for p in out["whole"]), out)
+        out = self.check(f"{self.generated}\n\n![申请页]({plain.replace(' ', '%20')})\n")
+        self.assertTrue(any("同一张图被两个路径引用" in p for p in out["whole"]), out)
+        out = self.check(f"![申请页]({plain})\n")
+        self.assertTrue(any("写法解析不了" in p for p in out["chapter"]), "空格没包尖括号的写法被静默跳过")
+        out = self.check("![坏编码](../assets/%E4%ZZ.png)\n")
+        self.assertTrue(out["broken"], "坏编码既没报也不该抛栈")
+        importer.mark_unused(self.feature_root, self.feature_root / self.registered, "旧稿，不属于本单")
+        self.round_now()
+        out = self.check(f"申请页如下。\n\n{self.generated}\n")
+        self.assertTrue(any("登记着不用的理由" in p for p in out["chapter"]), out)
+
+    def test_both_producers_share_one_spelling_that_round_trips(self) -> None:
+        names = ["ux-reference/首页 (旧).0123456789abcdef.png", "assets/a%20b<c>.png", "assets/plain.png"]
+        js = self.node("process.stdout.write(JSON.stringify(process.argv.slice(1).map(p => {"
+                       " const t = lang.markdownTarget(p); return [t, lang.imageLinks(`![x](${t})`).images[0]?.path]; })));",
+                       *names)
+        for name, (target, back) in zip(names, js):
+            with self.subTest(name):
+                self.assertEqual(importer.md_target(name), target, "导入端与作者任务包的写法不一致")
+                self.assertEqual(name, back, "写出去的目标还原不回原名")
+
+
 class OnlyTheManifestModuleHashesMaterial(unittest.TestCase):
     """材料哈希只有一处算法；对接层不知道清单的存在。"""
 

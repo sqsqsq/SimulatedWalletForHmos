@@ -776,9 +776,47 @@ class TheDeliveryGateIsWiredToTheFramework(unittest.TestCase):
         self.assertIn("出了需求目录", both)
 
     def test_a_failed_row_under_a_passing_verdict_is_rejected(self) -> None:
-        """汇总表某条判据 FAIL、终态块却 PASS：结论自相矛盾，不计作结论。"""
+        """汇总表某条判据 BLOCKER 级 FAIL、终态块却 PASS：结论自相矛盾，不计作结论。"""
         both = self.gate(lambda t: t.replace("| acceptance_testable | PASS |", "| acceptance_testable | FAIL |"))
-        self.assertIn("判 FAIL，终态块却是 PASS", both)
+        self.assertIn("是 BLOCKER 级 FAIL，终态块却是 PASS", both)
+
+    def disposed(self, *ids: str) -> None:
+        notes = self.root / "doc" / "features" / FEATURE / "spec" / "notes.md"
+        notes.parent.mkdir(parents=True, exist_ok=True)
+        notes.write_text("# notes\n\n" + "".join(f"- {i}（报告 {SUBJECT[:8]}）：留给 plan 处理。\n" for i in ids),
+                         encoding="utf-8")
+
+    def test_a_non_blocking_failure_stands_beside_a_pass(self) -> None:
+        """框架契约只让 BLOCKER 级 FAIL 阻断：MAJOR/MINOR 的 FAIL 与终态 PASS 并存，处置过就是合规结论（G3@6）。"""
+        self._stub_receipt(0, "回执通过")
+        self.write_report("PASS")
+        target = self.root / REPORT_REL
+        target.write_text(target.read_text(encoding="utf-8")
+                          .replace("| split_boundary_consistency | PASS | MAJOR |", "| split_boundary_consistency | FAIL | MAJOR |")
+                          .replace("| acceptance_testable | PASS | BLOCKER |", "| acceptance_testable | FAIL | MINOR |"),
+                          encoding="utf-8")
+        undisposed = self.check("--deliver")
+        self.assertIn("没有指向这份报告的处置记录", undisposed.stdout + undisposed.stderr, "非阻断 FAIL 不需要处置了")
+        self.disposed("split_boundary_consistency", "acceptance_testable")
+        out = self.check("--deliver")
+        both = out.stdout + out.stderr
+        self.assertNotIn("终态块却是 PASS", both)
+        self.assertNotIn("[⑭ 交付门]", both, f"非阻断 FAIL 被当成全局阻断：{both[-800:]}")
+        self.assertTrue((target.parent / "verifier.conclusions.json").exists(), "合规报告没登记成首份结论")
+
+    def test_a_failure_whose_severity_cannot_be_trusted_is_rejected(self) -> None:
+        """严重度缺、写错，或已知判据被写低：判不了阻断与否，不能借它绕过（G3@6）。"""
+        cases = {
+            "缺严重度": ("| split_boundary_consistency | PASS | MAJOR |", "| split_boundary_consistency | FAIL |  |", "不是 BLOCKER、MAJOR、MINOR 之一"),
+            "非法严重度": ("| split_boundary_consistency | PASS | MAJOR |", "| split_boundary_consistency | FAIL | HIGH |", "不是 BLOCKER、MAJOR、MINOR 之一"),
+            "写低已知判据": ("| knowledge_spec_exit_substance | PASS | MAJOR |", "| knowledge_spec_exit_substance | FAIL | MINOR |", "声明的 BLOCKER 不符"),
+        }
+        for name, (old, new, said) in cases.items():
+            with self.subTest(name):
+                self.disposed("split_boundary_consistency", "knowledge_spec_exit_substance")
+                both = self.gate(lambda t, old=old, new=new: t.replace(old, new))
+                self.assertIn(said, both)
+                self.assertIn("不要自己补", both)
 
     def blind(self, *, vision: bool = False, fidelity: str = "semantic_layout", strictness: str = "best_effort",
               decision: str = "d1", picture: bool = True) -> str:
@@ -1411,9 +1449,16 @@ class ReviewTaskReachesTheVerifier(unittest.TestCase):
 
     def test_the_plan_review_reads_its_own_basis(self) -> None:
         by = self.basis("plan")["by"]
-        for rel in ("plan/plan.md", "contracts.yaml", "use-cases.yaml", "spec/spec.md", "AR/review.md"):
+        for rel in ("plan/plan.md", "contracts.yaml", "use-cases.yaml", "spec/spec.md"):
             self.assertTrue(by[self.at(rel)]["required"], f"Plan 审查没把 {rel} 列为必审")
         self.assertTrue(any(p.startswith("doc/extensions/knowledge/") for p in by), "Plan 审查没拿到激活知识")
+        self.assertNotIn(self.at("AR/review.md"), by, "没走 /story 的 Plan 被要求它从未生产的评审记录")
+        # 走过 /story 的需求：流程契约在，人签与评审记录就是 Plan 的依据
+        flow = self.root / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-flow.json"
+        flow.write_text(json.dumps({"schema": 4, "rounds": []}), encoding="utf-8")
+        by = self.basis("plan")["by"]
+        for rel in ("AR/story-src/story-flow.json", "AR/story-src/decisions.json", "AR/review.md"):
+            self.assertTrue(by[self.at(rel)]["required"], f"Story 需求的 Plan 审查没把 {rel} 列为必审")
 
     def test_the_overlay_judges_against_sources_not_the_design(self) -> None:
         """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在 overlay。"""

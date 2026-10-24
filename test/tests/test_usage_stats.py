@@ -325,5 +325,80 @@ class Installed(GitRepo):
                         "已安装的脚本没指向随包模板")
 
 
+class HistoryVersions(GitRepo):
+    """历史里确实没有 usage 才是空基线；文件在却读不出、Git 查不了，统计停下，不当作空表继续精确归属（I5@3/I6@3）。"""
+
+    def setUp(self) -> None:
+        self.make_repo()
+        self.addCleanup(type(self)._tmp.cleanup)
+
+    def failed(self) -> str:
+        raw = (self.root / "doc" / "usage.json").read_bytes()
+        out = self.collect()
+        self.assertFalse(out["ok"], out)
+        self.assertNotIn("facts", out, "失败了还给出成功的事实路径")
+        self.assertEqual(raw, (self.root / "doc" / "usage.json").read_bytes(), "统计改了 usage")
+        return out["error"]
+
+    def test_a_project_in_a_subdirectory_reads_its_own_history(self) -> None:
+        """工程在仓内子目录：根提交还没有 usage；新增、改动、未变与混合各按节点归属，仓根同名文件不相干。"""
+        decoy = {"doc/usage.json": "{坏"}
+        self.commit("c0", {**decoy, "app/a.txt": "1\n"})
+        c1 = self.commit("c1", {"app/doc/usage.json": usage({A: node()})})
+        c2 = self.commit("c2", {"app/doc/usage.json": usage({A: node({"spec": {"spent": 60}}), B: node()})})
+        c3 = self.commit("c3", {"app/doc/usage.json": usage({A: node({"spec": {"spent": 60}}), B: node(), C: node()})})
+        out = self.collect(self.root / "app")
+        self.assertTrue(out["ok"], out)
+        rows = {r["key"]: [c["sha"] for c in r["commits"]]
+                for r in json.loads(Path(out["facts"]).read_text(encoding="utf-8"))["requirements"]}
+        self.assertEqual({A: [c2, c1], B: [c2], C: [c3]}, rows)
+
+    def test_a_broken_version_stops_the_statistics(self) -> None:
+        for name, text in (("空文件", ""), ("坏 JSON", "{坏"),
+                           ("requirements 不是对象", json.dumps({"schema": 1, "requirements": []}))):
+            with self.subTest(name):
+                self.setUp()
+                self.commit("c1", {"doc/usage.json": usage({A: node()})})
+                bad = self.commit("c2", {"doc/usage.json": text})
+                self.commit("c3", {"doc/usage.json": usage({A: node(), B: node()})})
+                error = self.failed()
+                self.assertIn(bad[:12], error)
+                self.assertIn("doc/usage.json", error)
+                self.assertIn("本次不出统计", error)
+
+    def test_a_blob_git_cannot_read_is_an_error_not_an_absent_file(self) -> None:
+        self.commit("c1", {"doc/usage.json": usage({A: node()})})
+        c2 = self.commit("c2", {"doc/usage.json": usage({A: node({"spec": {"spent": 60}})})})
+        self.commit("c3", {"doc/usage.json": usage({A: node({"spec": {"spent": 60}}), B: node()})})
+        blob = self.git("rev-parse", f"{c2}:doc/usage.json").strip()
+        obj = self.root / ".git" / "objects" / blob[:2] / blob[2:]
+        obj.chmod(0o644)                       # Git 把对象写成只读
+        obj.unlink()
+        error = self.failed()
+        self.assertIn(c2[:12], error)
+        self.assertIn("查不了", error)
+
+    def test_a_tree_query_that_fails_is_an_error_not_an_absent_file(self) -> None:
+        """读树失败用受控替身：被测的是 History 对失败的处理，不是 Git 本身。"""
+        import importlib.util  # noqa: PLC0415
+        from unittest import mock  # noqa: PLC0415
+        self.commit("c1", {"doc/usage.json": usage({A: node()})})
+        spec = importlib.util.spec_from_file_location("stats_under_test", STATS)
+        stats = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stats)
+        real = stats.git
+
+        def git(root, *args, ok=False):
+            if args[0] == "ls-tree":
+                raise stats.StatsError("git ls-tree 失败（fatal: 替身）")
+            return real(root, *args, ok=ok)
+
+        with mock.patch.dict(os.environ, self.env()), mock.patch.object(stats, "git", git):
+            with self.assertRaises(stats.StatsError) as caught:
+                stats.run(self.root)
+        self.assertIn("查不了", str(caught.exception))
+        self.assertIn("doc/usage.json", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

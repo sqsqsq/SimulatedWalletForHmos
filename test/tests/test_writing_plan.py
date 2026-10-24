@@ -591,7 +591,25 @@ class ThePageFlowTableIsChosenNotForced(PlanCase):
     def test_the_draft_carries_the_contract_header(self) -> None:
         self.write_plan(with_chapter("05-flow", PAGE_PLAN))
         self.cmd("skeleton")
-        self.assertIn(PAGE_HEAD.split("\n")[0], self.draft("05").read_text(encoding="utf-8"))
+        draft = self.draft("05").read_text(encoding="utf-8")
+        self.assertIn(PAGE_HEAD.split("\n")[0], draft)
+        # 章头问题与选表提示送达同一边界：业务已定时普通交互由作者补齐，改变业务承诺才要依据
+        self.assertIn("由作者补齐", draft)
+        self.assertIn("普通交互细节由你补齐", draft)
+        self.assertIn("改变权限、资金或安全承诺", draft)
+        for old in ("保持待决", "不替人补设计"):
+            self.assertNotIn(old, draft)
+
+    def test_a_page_journey_told_by_a_diagram_needs_no_table(self) -> None:
+        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：流程图\n#### 办理入口\n"
+                                     "- 答：从哪进入、经过哪些页面、异常去哪\n形式：流程图"))
+        self.cmd("skeleton")
+        page_flow = ("```mermaid\nflowchart TD\n首页 -->|点办理| 办理页\n办理页 -->|提交成功| 结果页\n"
+                     "办理页 -->|网络失败| 办理页\n结果页 -->|返回| 首页\n```\n")
+        body = ("提交之后等回执。\n\n" + FLOW_FENCE + "\n### 办理入口\n\n从首页进入办理，失败留在办理页重试：\n\n"
+                + page_flow + "\n成功后回到首页可见最新状态。\n")
+        code, out = self.put("业务流程", body)
+        self.assertEqual(0, code, out)
 
     def test_a_chosen_table_is_held_by_its_header(self) -> None:
         self.write_plan(with_chapter("05-flow", PAGE_PLAN))
