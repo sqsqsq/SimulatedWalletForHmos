@@ -130,7 +130,7 @@ function originSet(ctx) {
   if (data === 'broken') return { gap: `AR/story-src/materials.json：读不出材料清单${fix}` };
   if (!Array.isArray(data.origins)) {
     return { gap: 'AR/story-src/materials.json：没有来源关系 `origins`（本版材料清单 schema 2）'
-      + `${fix}；旧版做到一半的单按升级演进记录在旧版收口或从 init 重起` };
+      + `${fix}；旧版做到一半的单在旧版收口或从 init 重起` };
   }
   const pending = (Array.isArray(data.sources) ? data.sources : [])
     .filter(s => s?.file && !s.ingested).map(s => `inbox/${s.file}`);
