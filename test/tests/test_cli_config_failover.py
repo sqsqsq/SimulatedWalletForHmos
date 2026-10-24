@@ -51,7 +51,8 @@ class ConfigContractTests(unittest.TestCase):
     def test_declared_priority_and_models(self) -> None:
         """配置组的顺序就是熔断切换的顺序，所以它是契约、要锁住。
 
-        首位是 deepseek（用户 2026-09-04 裁定）。依据是步骤 7 资格实跑的实测：
+        首位是 dsh 跑 bailian 的 deepseek（用户 2026-10-24 裁定默认 dsh）；其后是此前的 deepseek > glm > luna（用户 2026-09-04 裁定）。
+        deepseek 先于 GLM 的依据是步骤 7 资格实跑的实测：
         同一份任务上 deepseek 每份 100–265 秒，GLM 275–600 秒且出过一份 600 秒超时零输出。
         换配置的代价是与 GLM 跑的旧成品不再同模型可比——步骤 11 的产物验收对照的是金样
         （固定仲裁锚，与模型无关），结论按 `cli_config_id` 记、不外推。
@@ -60,6 +61,7 @@ class ConfigContractTests(unittest.TestCase):
         """
         self.assertEqual(
             [
+                ("dsh", "bailian/deepseek-v4-flash-0731"),
                 ("opencode", "bailian/deepseek-v4-flash-0731"),
                 ("opencode", "volcengine/GLM5.3-Flash"),
                 ("codex", "gpt-5.6-luna"),
