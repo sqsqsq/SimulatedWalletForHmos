@@ -366,6 +366,23 @@ class HistoryVersions(GitRepo):
                 self.assertIn("doc/usage.json", error)
                 self.assertIn("本次不出统计", error)
 
+    def test_a_version_with_invalid_utf8_bytes_stops_the_statistics(self) -> None:
+        """坏字节原样进校验：读取时先替换成 U+FFFD 就成了一份“合法”的历史，照样参与归属。"""
+        record = self.root / "doc" / "usage.json"
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_bytes(usage({A: node(agent="AGENT")}).encode("utf-8").replace(b"AGENT", b"ag\xffent"))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "c1")
+        bad = self.git("rev-parse", "HEAD").strip()
+        self.assertIn(b"\xff", subprocess.run(["git", "-C", str(self.root), "show", f"{bad}:doc/usage.json"],
+                                              capture_output=True, env=self.env()).stdout, "夹具没把坏字节写进历史")
+        self.commit("c2", {"doc/usage.json": usage({A: node(), B: node()})})
+        head = self.git("rev-parse", "HEAD")
+        error = self.failed()
+        self.assertIn(bad[:12], error)
+        self.assertIn("UTF-8", error)
+        self.assertEqual(head, self.git("rev-parse", "HEAD"), "统计动了 Git")
+
     def test_a_blob_git_cannot_read_is_an_error_not_an_absent_file(self) -> None:
         self.commit("c1", {"doc/usage.json": usage({A: node()})})
         c2 = self.commit("c2", {"doc/usage.json": usage({A: node({"spec": {"spent": 60}})})})

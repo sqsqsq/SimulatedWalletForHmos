@@ -365,8 +365,9 @@ def _images_in(node: ET.Element, rel_map: dict[str, str], asset_ref: str) -> lis
 
 
 def md_target(path: str) -> str:
-    """路径写成合法的 Markdown 链接目标：`%` 与尖括号编码，含空白或括号时包进 `<…>`——派生目录随原件主名，名字不改。"""
-    s = path.replace("%", "%25").replace("<", "%3C").replace(">", "%3E")
+    """路径写成合法的 Markdown 链接目标：`%`、`#`、`?` 与尖括号编码（读者把未编码的 `#`、`?` 当片段与查询），
+    含空白或括号时包进 `<…>`——派生目录随原件主名，名字不改。"""
+    s = re.sub(r"[%#?<>]", lambda m: f"%{ord(m.group()):02X}", path)
     return f"<{s}>" if re.search(r"[\s()]", s) else s
 
 

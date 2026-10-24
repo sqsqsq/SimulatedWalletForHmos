@@ -254,7 +254,8 @@ export function markdownLinks(line) {
 /**
  * 一行里的图片引用 —— 身份、去处与断链核对都从这里取完整目标，不各写一套正则。
  *
- * `path` 把 URL 写法的 `%xx` 还原成文件名，才与登记的原名对得上；编码本身坏了为 null，由断链检查报。
+ * `path` 按 URL 读法取文件名：未编码的 `#`、`?` 之后是片段与查询，不属于路径；路径段的 `%xx` 全部还原一次，
+ * 才与登记的原名对得上。编码本身坏了或路径为空时为 null，由断链检查报。
  * 外链与内嵌数据 `external` 为真：不是仓内文件，不核身份与断链。
  */
 export function imageLinks(line) {
@@ -265,12 +266,12 @@ export function imageLinks(line) {
 }
 
 function decodedPath(target) {
-  try { return decodeURI(target); } catch { return null; }
+  try { return decodeURIComponent(target.split(/[?#]/)[0]) || null; } catch { return null; }
 }
 
-/** 文件路径写成合法的链接目标，与 `imageLinks` 的还原互逆：`%` 与尖括号编码，含空白或括号时包进 `<…>`，原名不改。 */
+/** 文件路径写成合法的链接目标，与 `imageLinks` 的还原互逆：`%`、`#`、`?` 与尖括号编码，含空白或括号时包进 `<…>`，原名不改。 */
 export function markdownTarget(file) {
-  const s = String(file ?? '').replace(/%/g, '%25').replace(/</g, '%3C').replace(/>/g, '%3E');
+  const s = String(file ?? '').replace(/[%#?<>]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return /[\s()]/.test(s) ? `<${s}>` : s;
 }
 

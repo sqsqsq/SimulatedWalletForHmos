@@ -34,13 +34,14 @@ class StatsError(Exception):
     """统计做不成：原因原样报给 Skill，不出一份看似完整的事实。"""
 
 
-def git(root: Path, *args: str, ok: bool = False) -> str | None:
-    p = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+def git(root: Path, *args: str, ok: bool = False, raw: bool = False) -> str | bytes | None:
+    """`raw` 原样返回字节：记录正文交给 usage 自己校验编码，不先替换坏字节。"""
+    p = subprocess.run(["git", "-C", str(root), *args], capture_output=True)
     if p.returncode:
         if ok:
             return None
-        raise StatsError(f"git {args[0]} 失败（{p.stderr.strip()[:300]}）：统计要在目标 Git 仓里跑")
-    return p.stdout
+        raise StatsError(f"git {args[0]} 失败（{p.stderr.decode('utf-8', 'replace').strip()[:300]}）：统计要在目标 Git 仓里跑")
+    return p.stdout if raw else p.stdout.decode("utf-8", "replace")
 
 
 class History:
@@ -55,11 +56,11 @@ class History:
             where = f"提交 {sha[:12]} 的 {self.record}"
             try:
                 listed = git(self.root, "ls-tree", "--name-only", sha, "--", self.record)   # 按工程目录解析
-                text = git(self.root, "show", f"{sha}:./{self.record}") if listed.strip() else None
+                blob = git(self.root, "show", f"{sha}:./{self.record}", raw=True) if listed.strip() else None
             except StatsError as exc:
                 raise StatsError(f"{where}查不了：{exc}") from exc
             try:
-                self.nodes[sha] = usage.parse(text.encode("utf-8"), where)["requirements"] if text is not None else {}
+                self.nodes[sha] = usage.parse(blob, where)["requirements"] if blob is not None else {}
             except usage.UsageError as exc:
                 raise StatsError(f"{exc}——这一版读不出，它之后那笔提交改了哪些需求就算不出；"
                                  "本次不出统计，按提交号核对那一版的记录") from exc

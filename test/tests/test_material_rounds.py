@@ -1800,13 +1800,13 @@ class ImageLinksKeepTheirFullTarget(TheManifestIsTheOnlyMaterialTruth):
     NAME = "界面稿/申请 页（一）(v2).docx"
     STORY_JS = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story"
 
-    def prepare(self) -> None:
+    def prepare(self, name: str = NAME) -> None:
         """真实导入一份带图原件（不放 setUp：父类的清单用例在空工作区上跑）。"""
-        self.docx(self.NAME, {"image1.png": self.PNG + b"a"}, cls="RR")
+        self.docx(name, {"image1.png": self.PNG + b"a"}, cls="RR")
         proc = self.import_now()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.round_now()
-        self.registered = f"{importer.assets_for(self.NAME).as_posix()}/image1.png"
+        self.registered = f"{importer.assets_for(name).as_posix()}/image1.png"
         prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
         self.generated = next(line.strip() for line in prd.splitlines() if "![" in line)
 
@@ -1872,8 +1872,30 @@ class ImageLinksKeepTheirFullTarget(TheManifestIsTheOnlyMaterialTruth):
         out = self.check(f"申请页如下。\n\n{self.generated}\n")
         self.assertTrue(any("登记着不用的理由" in p for p in out["chapter"]), out)
 
+    def test_url_separators_in_the_real_name_stay_part_of_the_path(self) -> None:
+        """原名带 `#`、`&`、`;`：生成目标编码 `#`，读者不把后半截当片段；三者的百分编码都还原回原名。"""
+        self.prepare("界面稿/方案#2 & 补充;v3.docx")
+        self.assertIn("#", self.registered)
+        self.assertNotIn("#", self.generated.split("](", 1)[1], "未编码的 # 在读者那里是片段分隔")
+        plain = "../" + self.registered
+        encoded = plain.replace(" ", "%20").replace("#", "%23").replace("&", "%26").replace(";", "%3B")
+        for ref in (self.generated, f"![方案页]({encoded})"):
+            with self.subTest(ref):
+                out = self.check(f"方案页如下。\n\n{ref}\n")
+                self.assertEqual([], out["chapter"], ref)
+                self.assertEqual([], out["broken"], ref)
+                self.assertEqual([], out["whole"], ref)
+        out = self.check(f"![方案页]({plain.replace(' ', '%20')})\n")
+        self.assertTrue(out["broken"], "未编码的 # 之后是片段，路径只剩前半截，该报断链")
+        self.assertTrue(any("不在材料的图片登记里" in p for p in out["chapter"]), out)
+        importer.mark_unused(self.feature_root, self.feature_root / self.registered, "旧稿，不属于本单")
+        self.round_now()
+        out = self.check(f"方案页如下。\n\n{self.generated}\n")
+        self.assertTrue(any("登记着不用的理由" in p for p in out["chapter"]), out)
+
     def test_both_producers_share_one_spelling_that_round_trips(self) -> None:
-        names = ["ux-reference/首页 (旧).0123456789abcdef.png", "assets/a%20b<c>.png", "assets/plain.png"]
+        names = ["ux-reference/首页 (旧).0123456789abcdef.png", "assets/a%20b<c>.png", "assets/plain.png",
+                 "assets/a#b?c&d;e.png", "assets/100%25.png"]
         js = self.node("process.stdout.write(JSON.stringify(process.argv.slice(1).map(p => {"
                        " const t = lang.markdownTarget(p); return [t, lang.imageLinks(`![x](${t})`).images[0]?.path]; })));",
                        *names)
