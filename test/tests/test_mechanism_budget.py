@@ -6,10 +6,8 @@
 
 它不按步骤拦中间态：需求进行中只核「没超过方案自己声明的峰值 interim_ceiling」；需求完成
 （requirement.status = closed）时核「回到完成后上限 target 以内」。语义代理标识不分进行中与完成——
-那是方向不是规模，任何时候都不得增长。分级比例管相对净增（AGENTS §5：R = 净增 / 批准幅度），
-峰值 interim_ceiling = 基线 + 批准幅度，所以进行中「总量不超峰值」就是 R ≤ 100%，更高的档由确认角色改签峰值；
-完成后核的是签定的完成上限 target，与 R 的分级线不同。
-绝对增长与退场不在这里算，由交回列出、reviewer 核。
+那是方向不是规模，任何时候都不得增长。新增预算的 R 分级由 test/scripts/budget_report.py 只报告不拦，
+不能将这里的总量比例当成维护规约的 100%/125%/150% 的新增实现比例。
 """
 import ast
 import re
@@ -25,8 +23,7 @@ REMINDER = (
     "\n\n【预算用于防走偏，不用于裁剪正常功能】按 AGENTS.md §5，核重复实现、补丁叠加、旧机制未退与功能干扰；"
     "同时核方案是否错误、遗漏或不够直接。不要删能力、测试或说明凑数，也不要只抬预算换绿。"
     "记录实际新增、退出与差额，按本项目维护分级规则交对应角色复核。"
-    "进行中总量超过峰值 interim_ceiling 即净增超过批准幅度（R > 100%），分类超峰值说明分类组成偏离估算，都按分级交确认、由确认角色改签；"
-    "完成后超过 target 即超出签定的完成上限，交设计者复核。两种都列出本次与累计的绝对增长、退场与净增。"
+    "本测试只查总量；新增实现的 G/X 与 R 分级用 test/scripts/budget_report.py 查，不得用总量比例代替新增实现比例。"
 )
 EXT = REPO / "extensions"
 BUDGET = REPO / "test" / "regression" / "mechanism-budget.yaml"
@@ -38,6 +35,12 @@ def classify(path: Path) -> str | None:
         rel = path.relative_to(EXT).as_posix()
     except ValueError:
         return None
+    return classify_rel(rel)
+
+
+def classify_rel(rel: str) -> str | None:
+    """同 classify，入参是相对 extensions/ 的 posix 路径——读 git 快照时没有盘上路径。"""
+    path = Path(rel)
     if rel.startswith(("knowledge/", "skills/story/scripts/adapters/")):
         return None
     if rel == "skills/story-adaptation/reference/upgrade-changes.md":
@@ -72,8 +75,11 @@ def code_lines(path: Path) -> int:
       · `.json`—— 说明键（键名以 `_` 开头或以 `note` 结尾）；
       · `.md`  —— 提示词正文本身就是内容，只去空行。
     """
-    text = path.read_text(encoding="utf-8", errors="replace")
-    suffix = path.suffix
+    return len(effective_rows(path.suffix, path.read_text(encoding="utf-8", errors="replace")))
+
+
+def effective_rows(suffix: str, text: str) -> list[str]:
+    """有效行本身（计数与差分共用这一个算法）：按 code_lines 说明逐类剥注释，去空行与行尾 \\r。"""
     if suffix in (".mjs", ".js"):
         text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
         rows = [ln for ln in text.split("\n") if not ln.lstrip().startswith("//")]
@@ -86,7 +92,7 @@ def code_lines(path: Path) -> int:
                 if not re.match(r'\s*"(?:_[^"]*|[^"]*note)"\s*:', ln)]
     else:
         rows = text.split("\n")
-    return sum(1 for ln in rows if ln.strip())
+    return [ln.rstrip("\r") for ln in rows if ln.strip()]
 
 
 def _python_code_rows(text: str) -> list[str]:
@@ -217,6 +223,27 @@ class MechanismBudget(unittest.TestCase):
             total, sp["ceiling"],
             f"语义代理标识 {total} 处，预算 {sp['ceiling']}：{hits}。"
             "这些词出现在脚本里，说明有人又在用字符串近似「讲清没讲清」——不合入" + REMINDER)
+
+    def test_release_and_packages_are_structured(self):
+        """budget_report 的整版对照与包 R 只读这两段：字段齐、签名在、ref 能解析，分母不能藏在注释里。"""
+        import subprocess
+        rel = self.budget["release"]
+        for key in ("id", "baseline_ref", "control_g", "approved_by", "reason"):
+            self.assertTrue(str(rel.get(key) or "").strip(), f"release 缺 {key}")
+        self.assertIsInstance(rel["control_g"], int)
+        refs = [rel["baseline_ref"]]
+        for p in self.budget["packages"]:
+            with self.subTest(package=p.get("id")):
+                for key in ("id", "start_ref", "approved_g", "approved_by"):
+                    self.assertTrue(str(p.get(key) or "").strip(), f"package 缺 {key}")
+                self.assertIsInstance(p["approved_g"], int)
+                for c in p.get("confirmations") or []:
+                    self.assertIn(c.get("band"), ("125–150%", ">150%"))
+                    self.assertTrue(str(c.get("by") or "").strip())
+                refs.append(p["start_ref"])
+        for ref in refs:
+            r = subprocess.run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=REPO, capture_output=True)
+            self.assertEqual(0, r.returncode, f"{ref} 不是本仓提交")
 
     def test_interim_is_not_below_target(self):
         """峰值不能低于完成上限——否则「进行中」比「完成」还严，说明两个数写反了。"""

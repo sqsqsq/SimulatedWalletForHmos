@@ -1,7 +1,7 @@
 {
  "source_commit": "44cba622ba4acc277528430f639af5d9a0513ac0",
  "source_repo": "story-1.0 完整反合源 B",
- "selection": "doc/spec/<版本>/**、doc/plan/<版本>/**、doc/release/<版本>.md、test/golden/**、test/cases/**",
+ "selection": "doc/spec/<版本>/**、doc/plan/<版本>/**、doc/release/<版本>.md、test/golden/**、test/cases/**、test/regression/extension-acceptance.md（@17，2.0.0 批次一03 补入）",
  "files": [
   {
    "original": "doc/plan/1.10.0/00-目标与评审体系实施方案.md",
@@ -10642,6 +10642,14 @@
    "mode": "100644",
    "sha256": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc",
    "bytes": 3188
+  },
+  {
+   "original": "test/regression/extension-acceptance.md",
+   "archive": "doc/archive/story-1.0/44cba622/test/regression/extension-acceptance.md",
+   "blob": "c9a612011db26b2330eafa851b81dd9bad7472f0",
+   "mode": "100644",
+   "sha256": "ad8e891fef773aca1fdd34ee7f108ba494efab4f6b993e0ce476d441ab02efa2",
+   "bytes": 77074
   }
  ]
 }

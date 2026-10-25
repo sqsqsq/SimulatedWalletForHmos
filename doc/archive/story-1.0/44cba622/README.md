@@ -8,6 +8,7 @@
 | `doc/plan/<版本>/`：同上 | 1148 |
 | `doc/release/<版本>.md`：1.9.0–1.9.9发布说明 | 10 |
 | `test/golden/`、`test/cases/`：1.9.9金样正本、审定说明与Case输入 | 60 |
+| `test/regression/extension-acceptance.md`：评价标准@17原文（批次一03补入，当前@18接替） | 1 |
 
 每件按B原blob写入、保持原仓相对路径，逐件的原路径、blob、SHA256与字节数见 [manifest.json](manifest.json)。本目录配置 `-text`，检出不改换行。
 
