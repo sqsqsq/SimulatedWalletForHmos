@@ -37,6 +37,9 @@ CHAIN = (
 )
 
 VERIFIER_DEF = Path(".opencode/agent/verifier.md")
+#: dsh 的只读审查员是配置层里的一个工具实例，模板随被测 Framework 的本地补丁进来
+DSH_LAYER = Path(".dsh/framework-verifier.patch.yml")
+DSH_TEMPLATE = Path("framework/agents/dsh/templates/agents/framework-verifier.patch.yml")
 
 
 def load_runner():
@@ -50,26 +53,117 @@ def load_runner():
     return module
 
 
-class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
-    """模板一个类建一次：它是只读夹具，而建一次要复制一份带依赖的完整工程。"""
+def demo_state() -> tuple[str, str]:
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(DEMO), capture_output=True, text=True).stdout
+    status = subprocess.run(["git", "status", "--porcelain", "-uall", "--", "."], cwd=str(DEMO),
+                            capture_output=True, text=True, encoding="utf-8").stdout
+    return head.strip(), status
+
+
+def framework_blob(cfg: dict, rel: str) -> bytes | None:
+    proc = subprocess.run(["git", "cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/{rel}"],
+                          cwd=str(REPO_ROOT), capture_output=True)
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def framework_plus_patch(cfg: dict) -> dict[str, bytes]:
+    """独立推算补丁涉及的文件：只取这些文件的发布原件放进空目录，单独打一次补丁，得到期望字节。"""
+    rels = [line[len("+++ b/"):] for line in Path(cfg["patch_path"]).read_text(encoding="utf-8").splitlines()
+            if line.startswith("+++ b/")]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pkg"
+        for rel in rels:
+            body = framework_blob(cfg, rel)
+            if body is not None:
+                (root / "framework" / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / "framework" / rel).write_bytes(body)
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "-c", "core.autocrlf=false", "apply", "--directory=framework", str(cfg["patch_path"])],
+                       cwd=str(root), check=True, capture_output=True,
+                       env={**os.environ, "GIT_CEILING_DIRECTORIES": str(root.parent)})
+        return {rel: (root / "framework" / rel).read_bytes() for rel in rels}
+
+
+class AssembledFromTheFixedInputs:
+    """一次装配的身份核对：被测 Framework、本地补丁与物化、开发源、demo 都按固定输入推算，不拿另一次装配互证。
+    两个类各从空目录建一份 template，各自过这组核对，即两次重建结果一致。"""
 
     template: Path
+    runner: object
     _tmp: tempfile.TemporaryDirectory
 
     @classmethod
-    def setUpClass(cls) -> None:
+    def build(cls, label: str) -> None:
         cls.runner = load_runner()
+        cls.cfg = cls.runner.load_framework_under_test()
         cls._tmp = tempfile.TemporaryDirectory()
-        suite_root = Path(cls._tmp.name) / "suite"
-        suite_root.mkdir(parents=True)
+        cls.suite_root = Path(cls._tmp.name) / "suite"
+        cls.suite_root.mkdir(parents=True)
+        cls.demo_before = demo_state()
         # suite-id 带进程号：模板落在共享的系统临时目录下，并行跑时几个 worker 会撞同一条路径
-        cls.template, _ = cls.runner.create_workspace_template(
-            suite_root, f"verifier-chain-test-{os.getpid()}")
+        cls.template, _ = cls.runner.create_workspace_template(cls.suite_root, f"{label}-{os.getpid()}")
+        cls.demo_after = demo_state()
 
     @classmethod
     def tearDownClass(cls) -> None:
         shutil.rmtree(cls.template.parent, ignore_errors=True)
         cls._tmp.cleanup()
+
+    def test_the_template_carries_the_framework_under_test(self) -> None:
+        """template 的 Framework 是固定发布树加本地补丁：发布清单原样，补丁没碰的文件按清单摘要，补丁动过的等于单独打补丁的结果。"""
+        import hashlib
+        manifest_bytes = framework_blob(self.cfg, "RELEASE-MANIFEST.json")
+        self.assertEqual(manifest_bytes, (self.template / "framework/RELEASE-MANIFEST.json").read_bytes())
+        expected = framework_plus_patch(self.cfg)
+        for rel, body in expected.items():
+            with self.subTest(patched=rel):
+                self.assertEqual(body, (self.template / "framework" / rel).read_bytes())
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        differ = [f["path"] for f in manifest["files"] if f["path"] not in expected
+                  and hashlib.sha256((self.template / "framework" / f["path"]).read_bytes()).hexdigest() != f["sha256"]]
+        self.assertEqual([], differ, "template 的 Framework 与被测发布件不是同一份")
+
+    def test_patched_subagents_are_materialised_from_their_templates(self) -> None:
+        """模板 → 物化产物逐字节同源：dsh 的审查员配置层与 opencode 的只读子代理。"""
+        for materialised, source in ((DSH_LAYER, DSH_TEMPLATE),
+                                     (VERIFIER_DEF, Path("framework/agents/opencode/templates/agents/verifier.md"))):
+            with self.subTest(materialised=str(materialised)):
+                self.assertEqual((self.template / source).read_bytes(), (self.template / materialised).read_bytes())
+
+    def test_the_dev_source_is_installed_byte_for_byte(self) -> None:
+        publish = self.runner.publish_to_demo
+        files = publish.enumerate_source(self.runner.DEV_SOURCE)
+        self.assertEqual(files, publish.enumerate_source(self.template / "doc/extensions"))
+        for rel in files:
+            with self.subTest(rel):
+                self.assertEqual((self.runner.DEV_SOURCE / rel).read_bytes(),
+                                 (self.template / "doc/extensions" / rel).read_bytes())
+
+    def test_the_assembly_leaves_demo_untouched_and_records_its_inputs(self) -> None:
+        self.assertEqual(self.demo_before, self.demo_after, "装配前后 demo 的提交或工作区变了")
+        record = json.loads((self.suite_root / "workspace-boundary.json").read_text(encoding="utf-8"))["framework"]
+        for key in ("release_commit", "tree_oid", "local_patch"):
+            with self.subTest(key):
+                self.assertEqual(self.cfg[key], record[key])
+        self.assertEqual(self.cfg["patch_sha256"], record["local_patch_sha256"])
+        self.assertIn("dsh", record["materialized_adapters"])
+        self.assertIn(str(DSH_LAYER.as_posix()), record["subagents"])
+
+
+class ASecondEmptyDirectoryRebuildsTheSameCombination(AssembledFromTheFixedInputs, unittest.TestCase):
+    """第二次从空目录经同一入口重建：身份核对与第一次相同，不复用第一次的任何产物。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.build("assembly-rebuild-test")
+
+
+class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.TestCase):
+    """模板一个类建一次：它是只读夹具，而建一次要复制一份带依赖的完整工程。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.build("verifier-chain-test")
 
     def test_the_repo_has_the_chain_materialised(self) -> None:
         """先看 demo：它没物化的话，工作区带什么都带不出来。"""
@@ -122,16 +216,76 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         """根的 verifier 维护装置是 demo 物化件的拷贝，两份逐字节相同。"""
         self.assertEqual((DEMO / VERIFIER_DEF).read_bytes(), (REPO_ROOT / VERIFIER_DEF).read_bytes())
 
-    def test_the_template_carries_the_demo_framework_release_file_by_file(self) -> None:
-        """template 的 Framework 就是 demo 接入的那一版发布件：按发布清单逐文件核摘要，不拿版本号相同代替。"""
-        import hashlib
-        manifest = json.loads((DEMO / "framework" / "RELEASE-MANIFEST.json").read_text(encoding="utf-8"))
-        self.assertEqual((DEMO / "framework" / "RELEASE-MANIFEST.json").read_bytes(),
-                         (self.template / "framework" / "RELEASE-MANIFEST.json").read_bytes())
-        customised = {"agents/opencode/adapter.yaml"}   # 根 AGENTS §2 的本地定制
-        differ = [f["path"] for f in manifest["files"] if f["path"] not in customised
-                  and hashlib.sha256((self.template / "framework" / f["path"]).read_bytes()).hexdigest() != f["sha256"]]
-        self.assertEqual([], differ, "template 的 Framework 与 demo 接入的发布件不是同一份")
+    def test_the_dsh_verifier_is_a_read_only_spawn_with_the_framework_protocol(self) -> None:
+        """dsh 审查员按 DSH 0.2.1 Preset 写法：人设在 Agent Preset，子级 in-process spawn，preset 只装读与检索工具；
+        registry 默认空 preset，主会话不受影响。人设沿用被测 Framework 的阶段协议（含产品失败诊断例外与物理路径规则），
+        另有自足审查任务的分支。"""
+        import yaml
+        adapter = yaml.safe_load((self.template / "framework/agents/dsh/adapter.yaml").read_text(encoding="utf-8"))
+        self.assertIsNone(adapter["commands"])
+        self.assertEqual({"target_dir": ".dsh", "template_dir": "templates/agents", "update_policy": "auto_overwrite"},
+                         adapter["subagents"])
+        self.assertIs(True, adapter["verifier_subagent"])
+        self.assertNotIn("goal_capability", adapter, "dsh 只承接 interactive")
+        config = json.loads((self.template / "framework.config.json").read_text(encoding="utf-8"))
+        self.assertIn("dsh", config["materialized_adapters"])
+        rows = {row["id"]: row for row in yaml.safe_load((self.template / DSH_LAYER).read_text(encoding="utf-8"))[0]["insert"]}
+        self.assertEqual(["agent-preset-registry", "preset-standard", "preset-maison-verifier", "maison-verifier"], list(rows))
+        self.assertEqual({"default": "standard"}, rows["agent-preset-registry"]["config"])
+        self.assertEqual({"id": "standard", "plugins": []}, rows["preset-standard"]["config"])
+        self.assertEqual({"provider": "spawn", "toolName": "verifier", "maxDepth": 1, "agentPreset": "maison-verifier"},
+                         rows["maison-verifier"]["config"], "审查员工具带了已退的 persona / toolFilter 等字段")
+        plugins = {row["id"]: row for row in rows["preset-maison-verifier"]["config"]["plugins"]}
+        self.assertEqual(["persona", "tool-fs", "tool-fs-search"], list(plugins))
+        self.assertEqual({"write": False, "edit": False}, plugins["tool-fs"]["config"], "审查员 preset 带了写工具")
+        persona = plugins["persona"]["config"]["prefix"]
+        stage = (self.template / "framework/agents/claude/templates/agents/verifier.md").read_text(encoding="utf-8")
+        for needle in ('"schema_version": "1.1"', "material_sha256", "verifier_subject_id: <request.subject_id>",
+                       "本轮为产品失败诊断", "路径解析（BLOCKER）", "## 其它独立只读审查任务", "精简规则不省略它要求的明细"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, persona)
+        ending = stage.split("**回答的最后必须且只能出现一个终态块**", 1)[1].split("## 硬性规则", 1)[0]
+        self.assertIn(ending, persona, "阶段报告合同与被测 Framework 的 verifier 不是同一版")
+
+    def test_the_init_registry_offers_exactly_the_adapters_on_disk(self) -> None:
+        """framework-init 的物化选项与 framework/agents 下的 adapter 双向对上：本地补丁加了 dsh 就要有它的选项。"""
+        import yaml
+        registry = yaml.safe_load((self.template / "framework/skills/reference/confirmation-registry.yaml")
+                                  .read_text(encoding="utf-8"))
+        entry = next(e for e in registry["entries"] if e["id"] == "init.materialized_adapters")
+        on_disk = {p.parent.name for p in (self.template / "framework/agents").glob("*/adapter.yaml")}
+        self.assertEqual(on_disk, {o["value"] for o in entry["options"]})
+
+    #: 作者读到的 verifier 调用指引：本地补丁统一为「专用 verifier 角色」
+    CALL_TEXTS = (
+        "framework/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc",
+        "framework/skills/reference/agents-entry-detail.md",
+        "framework/skills/feature/spec/SKILL.md",
+        "framework/skills/feature/plan/SKILL.md",
+        "framework/skills/feature/coding/SKILL.md",
+        "framework/skills/reference/code-review-workflow-detail.md",
+        "framework/skills/reference/business-ut-workflow-detail.md",
+        "framework/skills/reference/device-testing-workflow-detail.md",
+        "framework/harness/harness-runner.ts",
+        "framework/harness/scripts/utils/verifier-evidence.ts",
+    )
+
+    def test_every_call_text_names_the_dedicated_role(self) -> None:
+        for rel in self.CALL_TEXTS:
+            with self.subTest(rel):
+                text = (self.template / rel).read_text(encoding="utf-8")
+                self.assertIn("专用 verifier 角色", text)
+                for stale in ("通过 Task 工具触发", "Task 触发 verifier", "作为 Task prompt 投给", "投给 subagent_type=verifier"):
+                    self.assertNotIn(stale, text, "还把任意 Task 调用当成审查入口")
+
+    def test_the_receipt_does_not_claim_a_task_call(self) -> None:
+        for rel in ("framework/harness/scripts/utils/receipt-scaffold.ts",
+                    "framework/harness/templates/phase-completion-receipt.md"):
+            with self.subTest(rel):
+                text = (self.template / rel).read_text(encoding="utf-8")
+                self.assertNotIn("Task(subagent_type=verifier)", text)
+                self.assertIn("host_verifier_role", text)
+
 
     def test_the_two_agents_entries_follow_their_owners(self) -> None:
         """demo 装着 1.9.8：story 入口等于它已装包登记的来源。template 装着开发版：两个 Skill 入口都由
@@ -187,6 +341,26 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
             for script in scripts:
                 with self.subTest(root=str(root), script=script):
                     self.assertTrue((root / script).is_file(), f"{root} 下找不到 {script}")
+
+
+class AFrameworkInputThatDoesNotMatchStopsTheAssembly(unittest.TestCase):
+    """固定输入登记的树 OID 与发布提交对不上：装配在写任何东西之前停下，不拿别的版本顶替。"""
+
+    def test_a_wrong_tree_oid_stops(self) -> None:
+        runner = load_runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = json.loads(runner.FRAMEWORK_UNDER_TEST.read_text(encoding="utf-8"))
+            cfg["tree_oid"] = "0" * 40
+            wrong = Path(tmp) / "framework-under-test.json"
+            wrong.write_text(json.dumps(cfg), encoding="utf-8")
+            original = runner.FRAMEWORK_UNDER_TEST
+            runner.FRAMEWORK_UNDER_TEST = wrong
+            try:
+                with self.assertRaises(SystemExit) as caught:
+                    runner.load_framework_under_test()
+            finally:
+                runner.FRAMEWORK_UNDER_TEST = original
+        self.assertIn("被测 Framework 发布树", str(caught.exception))
 
 
 if __name__ == "__main__":

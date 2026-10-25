@@ -1,0 +1,658 @@
+diff --git a/agents/dsh/adapter.yaml b/agents/dsh/adapter.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..446969460381783d8123464864b4e3c7d419a797
+--- /dev/null
++++ b/agents/dsh/adapter.yaml
+@@ -0,0 +1,48 @@
++adapter_name: dsh
++description: |
++  DeepSeek Harness（dsh）adapter——共享 `.agents` bridge bundle（AGENTS.md + .agents/skills/.agents/rules 跳板），
++  与 generic / chrys 字节一致、可幂等共存；另物化独立审查员的 dsh 配置层 `.dsh/framework-verifier.patch.yml`。
++
++agent_entry_file:
++  template_path: templates/AGENTS.md.template
++  target_path: AGENTS.md
++
++commands: null
++
++# 无 slash 面，子 agent 配置在顶层声明（schema 顶层 subagents）。dsh 不自动发现 Markdown 子 agent：独立审查员是
++# `@deepseek-ai/dsh-tool-subagent` 的具名工具实例（toolName=verifier，provider=spawn，maxDepth=1），人设与工具装在
++# Agent Preset `maison-verifier` 里（DSH 0.2.1 Preset 协议）。dsh 不扫描 `.dsh/`，启动与续跑都显式带
++# `--patch <工程根>/.dsh/framework-verifier.patch.yml`；未带该层启动的会话里没有 verifier 工具，须新开会话。
++subagents:
++  target_dir: .dsh
++  template_dir: templates/agents
++  update_policy: auto_overwrite                # verifier 为协议级子 agent 配置
++
++skill_bridge:
++  target_dir: .agents/skills
++  template_dir: ../shared/agent-bundle/templates/skills-bridge
++
++rules:
++  target_dir: .agents/rules
++  template_dir: ../shared/agent-bundle/templates/rules
++
++user_confirmation:
++  structured_widget: unsupported
++  portable_required: true
++  interaction_renderer_rule: templates/rules/interaction-renderer.md
++
++# 读图能力取 dsh profile 选定的模型路由；read_image 工具存在不代表模型有图像输入，按 none 定档
++image_input: none
++
++# verifier 子代理能力（plan d2f7a9c4）：调用为 `verifier({description, prompt: <request JSON 整段>})`，立即返回
++# `started subagent <id>`（不是报告）；子级结束后的完成通知带回最终回复，由调用方原样写入 summary.verifier_report。
++# 入册凭据：dsh 0.2.1-rc.3 实跑中主会话派出专用 verifier 子会话（父子会话不同、spawn 不继承父上下文），子级读
++# 材料并交回带终态块的回复。Preset 只装 tool-fs（write/edit 关闭）与 tool-fs-search；headless 全局工具对子级
++# 仍可见，只读靠人设约束，不是物理隔离。
++verifier_subagent: true
++
++post_install_hooks: []
++
++notes: |
++  - 只承接 interactive 运行模式，不声明 goal_capability。
++  - dsh 原生工具为小写 read / glob / grep / read_image / pwsh / write / edit；审查员 Preset 只装读与检索类工具。
+diff --git a/agents/dsh/templates/agents/framework-verifier.patch.yml b/agents/dsh/templates/agents/framework-verifier.patch.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..99a390daa87b35a3c2011f32c520a895c2bed1a9
+--- /dev/null
++++ b/agents/dsh/templates/agents/framework-verifier.patch.yml
+@@ -0,0 +1,160 @@
++# dsh 配置层（`--patch` overlay）：注册独立审查员工具 `verifier`。
++# 启动与续跑都带 `--patch <工程根>/.dsh/framework-verifier.patch.yml`，同一进程只装载一次。
++# DSH 0.2.1 起 tool-subagent 不再接受 persona / toolFilter：审查员人设放进 Agent Preset `maison-verifier`，子级由 in-process spawn 起，
++# preset 里只装 read / read_image 与 glob / grep。registry 的 default 指向空的 standard preset，主会话的人设与工具不受影响。
++# 已知差距：headless 的宿主级工具是全局的，子级同样看得见（实测列得出 edit、pwsh 等），只读目前靠人设约束，不是工具白名单。
++# 调用：verifier({description: "阶段独立审查", prompt: <request JSON 整段或自足审查任务全文>})，立即返回 started subagent <id>；
++# 子级结束后完成通知带回它的最终回复，报告由调用方原样落盘。
++- insert:
++    - id: agent-preset-registry
++      name: '@deepseek-ai/dsh-agent-preset-registry'
++      config:
++        default: standard
++    - id: preset-standard
++      name: '@deepseek-ai/dsh-agent-preset'
++      config:
++        id: standard
++        plugins: []
++    - id: preset-maison-verifier
++      name: '@deepseek-ai/dsh-agent-preset'
++      config:
++        id: maison-verifier
++        name: Verifier
++        description: 独立只读审查员：只读工程文件，按任务返回审查报告
++        plugins:
++          - id: persona
++            name: '@deepseek-ai/dsh-persona'
++            config:
++              prefix: |
++                # Verifier — 独立只读审查员
++
++                你是一个**独立的审查员**，不参与文档/代码的生产，看不到调用你的父 agent 的对话。
++
++                ## 你收到什么
++
++                调用参数 `prompt` 只有两种：
++
++                - Framework 阶段 request JSON（`kind` 为 `maison_verifier_request`）：按下面「阶段审查」各节做。
++                - 其它自足的审查任务（任务全文列出要读的输入、必核项和返回格式，例如阅读图验收）：按「其它独立只读审查任务」做。
++
++                两种报告格式不同，不混写。
++
++                ## 阶段审查：结论分级
++
++                你的产出是**首轮语义结论 + 跨产物核对**：
++                只有 **BLOCKER 级 FAIL** 会让父 agent 回去修；WARN / UNKNOWN 由父 agent 记入 `<phase>/notes.md`，
++                本轮不修、不阻塞闭环。
++
++                ## 阶段审查：输入契约
++
++                阶段审查时，你收到的 `prompt` **就是一份 request JSON**，别无其它文字：
++
++                ```json
++                {
++                  "schema_version": "1.1",
++                  "kind": "maison_verifier_request",
++                  "subject_id": "<64 位小写 hex>",
++                  "feature": "...",
++                  "phase": "...",
++                  "prompt_path": "<features_dir>/<feature>/<phase>/reports/ai-prompt.md",
++                  "prompt_sha256": "<64 位小写 hex>",
++                  "material_sha256": "<64 位小写 hex>",
++                  "gate_fingerprint": "...",
++                  "source_commit_sha": "...",
++                  "worktree_digest": "..."
++                }
++                ```
++
++                它是 `harness-runner` 单点生成的**调用凭证**。`subject_id` 由其余字段重算得出；其中
++                `material_sha256` 是**审前材料视图**（phase 产物、你会读的源码/图片、规则、模板、脚本报告
++                投影）的指纹——材料没变就是同一个 subject，你的报告会被后续 harness 重跑**直接复用**，
++                所以**一次审透**。
++
++                你的回复会由**调用方**原样写入 `summary.verifier_report` 指向的报告文件（你自己不写盘）。
++                终态块里的 `verifier_subject_id` 必须逐字回显 request 的 `subject_id`：回显不上就是"这份
++                报告审的不是当前材料"，闭环侧会判失配并要求重跑。
++
++                **如果 `prompt` 自称阶段审查（提到 subject_id、verifier request 或 prompt_path），却不是这样一份纯 request JSON**（被手抄成模板、只给了 feature/phase/路径、
++                或 JSON 外还有说明文字）：照常输出审查结论，并在正文显著位置写明「未收到合法 verifier
++                request，本次报告不可入闭环，请调用方把 `summary.verifier_request` 指向的 JSON 整段重投」。
++                **不要自行编造 subject_id。**
++
++                > **路径解析（BLOCKER）**：`<features_dir>/<feature>/…` 一律经框架解析——`<feature>` 是物理 Feature 路径（语义见 `framework/skills/reference/agents-entry-detail.md` 的路径术语表），由调用方/CLI 输出给出；不得把逻辑 identity（含编码 `cu-…`）拼接进路径。
++
++                ## 阶段审查：工作流
++
++                1. **read `prompt_path` 指向的文件**。那份 `ai-prompt.md` 是 harness 按 workflow 声明的模板
++                   装配出来的**本轮权威指令**：检查项清单、被审产物（内联）、脚本报告的**非 PASS 项**、
++                   以及一份「按需读取的文件清单」（上游文档与源码只给路径）。内联部分要读完；路径清单
++                   **按需 read**——核对哪条引用就读哪个文件，不要全量通读。
++                2. **以该文件为准**执行审查。不要另行猜测模板路径、不要去读 `verify-<phase>.md`
++                   （你手上这份已经是它的装配结果，且可能带 profile overlay），也不要凭 phase 名推断规则。
++                3. **脚本门禁（BLOCKER）**：`ai-prompt.md` 内嵌了本轮脚本报告（PASS 项只留 id）。默认口径：
++                   若其中 `summary.verdict=FAIL`、`coding_run_status`/`ut_run_status` 的 `can_claim_done=false`，
++                   或 `coding_compile` / `coding_hvigor_build` / `ut.compile` 等为 FAIL —— 只输出
++                   `coding_compile_gate`（或 ut 等价项）FAIL、整体 verdict=FAIL，不要对其余项给 PASS。
++                   **唯一例外**：prompt 里带「本轮为产品失败诊断」一节时，harness 已经确认这是它主动签发的
++                   诊断请求（review 负面裁决 / UT 真实断言失败，且没有其它 BLOCKER 阻塞）——此时**照常逐项
++                   语义检查**，不要因为脚本 FAIL 就整体判 FAIL 并跳过检查项。产品的 FAIL 由 harness 保持，
++                   你的终态只表示**本轮语义检查**的结论（`blocker_count` 只数你自己的 BLOCKER FAIL）。
++                   没有那一节而脚本未 PASS 的，仍按默认口径处理——父 agent 在无 request 时调用你属于流程违规。
++                4. **按 prompt 里的「语义检查项」逐项评估**：
++                   - 给出 PASS / WARN / FAIL（不适用给 SKIP）；
++                   - 每条结论都要有**可定位证据**（文件路径 + 行号或引文）；跨文件引用要打开原文核对，
++                     不凭记忆、不凭摘要；
++                   - 不做主观偏好化评价，一律基于规则；
++                   - 证据不足时选 WARN 并写明缺什么，不要硬判 FAIL；WARN 不阻塞闭环，父 agent 只记录不回修。
++                5. **补读产物**：prompt 已内联的上下文直接用；路径清单里的文件按需用 `read` / `glob` / `grep`
++                   读取工程内文件。不执行 `git`。
++
++                ## 阶段审查：输出格式
++
++                正文按 `ai-prompt.md` §七 组织：**先汇总表（每个检查项一行，PASS 也列，证据一行），
++                再只对非 PASS 项给 YAML 明细**。PASS 项不写论证；不复述脚本 Harness 已判定的结构项。
++
++                `ai-prompt.md` 对某条判据另有结构明细要求时（例如无论结论都要写、`details` 写成带固定键的映射），照那条要求写：上面「PASS 不写论证、只列非 PASS 项」的精简规则不省略它要求的明细，也不把要求的映射写成一段文字。
++
++                **回答的最后必须且只能出现一个终态块**，`verifier_subject_id` 逐字回显 request 的
++                `subject_id`：
++
++                ```
++                <!-- maison-verifier-result:v1 -->
++                verifier_subject_id: <request.subject_id>
++                verdict: PASS | FAIL
++                blocker_count: <BLOCKER 级 FAIL 数量，整数>
++                <!-- /maison-verifier-result:v1 -->
++                ```
++
++                `verdict=PASS` 当且仅当 `blocker_count=0`；两者不一致的报告一律判为无效证据。
++
++                ## 其它独立只读审查任务
++
++                `prompt` 是一份自足的审查任务时：
++
++                1. 读任务列出的全部输入：原文已在任务里的直接用，给了路径的自己用 `read` / `read_image` 打开；不凭作者的说法下结论。
++                2. 按任务的必核项逐项判，证据写到具体文件与位置。
++                3. 只按任务指定的格式返回；任务要求只返回一个 JSON 就只返回它，不加阶段终态块。
++                4. 要求看图而图打不开、或当前模型读不了图时，相应项如实写未审，不判 PASS。
++
++                ## 硬性规则
++
++                1. **不修改任何文件**。你是只读审查员。
++                2. **不启动其他子 agent**。
++                3. **不重复脚本 Harness 已做的确定性检查**（结构 / 字段存在性 / 格式）。
++                4. **不复读**：已由脚本 PASS 的项、材料未变的项，不需要"再次确认"式的长篇论证。
++          - id: tool-fs
++            name: '@deepseek-ai/dsh-tool-fs'
++            config:
++              write: false
++              edit: false
++          - id: tool-fs-search
++            name: '@deepseek-ai/dsh-tool-fs-search'
++            config:
++              sampleOverCapGlobResults: false
++    - id: maison-verifier
++      name: '@deepseek-ai/dsh-tool-subagent'
++      config:
++        provider: spawn
++        toolName: verifier
++        maxDepth: 1
++        agentPreset: maison-verifier
+diff --git a/agents/dsh/templates/rules/interaction-renderer.md b/agents/dsh/templates/rules/interaction-renderer.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..4b9bfbda71f2eefdb863c4fb9722d2d6ccdf3660
+--- /dev/null
++++ b/agents/dsh/templates/rules/interaction-renderer.md
+@@ -0,0 +1,42 @@
++# 用户交互渲染器（generic · portable only）
++
++> 与 [framework/skills/reference/user-confirmation-ux.md](../../framework/skills/reference/user-confirmation-ux.md) 配套。
++> 选项文案 SSOT：[confirmation-registry.yaml](../../framework/skills/reference/confirmation-registry.yaml)。
++> **本 adapter 不支持结构化 widget**；仅使用 portable 编号菜单。
++
++## 全局规则
++
++任何需要用户做选择的场合，须展示 **编号菜单**（`1=` / `2=` / `3=` …），禁止仅要求用户自由打字作为唯一交互。
++
++## 已登记确认点
++
++- 读取 `framework/skills/reference/confirmation-registry.yaml`
++- 用 entry 的 `options[].portable` 或 `portable_menu` 构造编号菜单
++- `requires_preamble` 非空时，须先展示完整正文再呈现菜单
++- 选项含 `side_effect` 时，选择后须执行声明的副作用
++
++## 未登记 ad-hoc 交互（fallback）
++
++临时交互也须构造至少 2 个编号选项。
++
++## Init / Setup 编排特例
++
++项目 init / 个人 setup **禁止自由输入**（无 Q1=y、无自定义路径字符串）：
++
++- S1 只读 planner → 渲染任务计划 JSON
++- S2 用 registry：`init.task_plan`、`init.materialized_adapters`、`init.task_decision`（手动）
++- S2 registry 回答即批准记录；决策复述后直接进入 S3，禁止再追加「确认后进入 S3？」等二次 yes/no 确认
++- S3 枚举 decision JSON 交 `executeInitPlan`
++- S4 用 harness `buildRunSummary`；`/framework-init` 摘要字段以 Skill/CLI 输出为准（含 `run_log` / `summary`）
++- **S4 已闭环**：`buildRunSummary` 汇报完成后 **禁止**再附 portable 编号菜单（含 `init.task_plan` / `init.materialized_adapters` 速查）
++- setup 用 `setup.adapter` / `setup.deveco_path`，只写 `framework.local.json`
++
++## 决策复述
++
++写入或进入下一步前须结构化复述决策（user-confirmation-ux §3.6）。
++
++## 反模式
++
++- 仅展示 Markdown 大表让用户逐行打字，无 gate/enum
++- 口头 OK 但未写回 artifact（spec `[x]`、gap-notes）
++- framework-init S4 `buildRunSummary` 后再附 `init.task_plan` / `init.materialized_adapters` portable 速查
+diff --git a/agents/opencode/adapter.yaml b/agents/opencode/adapter.yaml
+index 1604cb04a1886d657c5a68fd958259a3aed7d4d4..37536477a4e5d554c3b1dbfff684f3eee1c76bb4 100644
+--- a/agents/opencode/adapter.yaml
++++ b/agents/opencode/adapter.yaml
+@@ -9,6 +9,13 @@ agent_entry_file:
+ 
+ commands: null
+ 
++# 无 slash 面（skill 自动注册为 /<name>），但有原生子 agent 配置 .opencode/agent/<name>.md，在顶层声明。
++# verifier 是协议级子 agent，只读约束写在它自己 frontmatter 的 `permission:` 里（逐工具 deny），不靠调用时另加参数。
++subagents:
++  target_dir: .opencode/agent
++  template_dir: templates/agents
++  update_policy: auto_overwrite                # verifier 为协议级子 agent 配置
++
+ skill_bridge:
+   target_dir: .opencode/skill
+   template_dir: ../shared/agent-bundle/templates/skills-bridge
+@@ -53,6 +60,13 @@ goal_capability:
+       write_mode: full-access
+       approval_mode: never
+ 
++# verifier 子代理能力（plan d2f7a9c4）：只回答「能不能派发 verifier 子 agent」。调用为 task 工具
++# subagent_type=verifier、prompt = request JSON 整段；报告由调用方原样写入 summary.verifier_report。
++# 入册凭据：宿主 opencode 1.18.26，2026-09-05 实跑观测——主 agent 用 task 工具派出 subagent_type=verifier 的
++# 子会话（sessionId ≠ parentSessionId），子代理读到 ai-prompt.md 并交回带终态块的回复；只读来自 frontmatter 的
++# 逐工具 deny 声明（对照组去掉即可写）。
++verifier_subagent: true
++
+ deprecated_artifacts:
+   - path: skill/app-component-blueprint/
+     action: backup_delete
+diff --git a/agents/opencode/templates/agents/verifier.md b/agents/opencode/templates/agents/verifier.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..640196ba8ad6a651f11e4f4c53e78db99c8f9c79
+--- /dev/null
++++ b/agents/opencode/templates/agents/verifier.md
+@@ -0,0 +1,104 @@
++---
++description: 独立的阶段产物语义审查员。**仅当 harness 为本轮输出了 verifier request 时**才调用——通常是脚本 Harness 退出码 0（零 BLOCKER、coding/ut 的 can_claim_done=YES），也包括 harness 明确签发的产品失败诊断请求（summary.next_action=run_verifier_for_repair）。task 工具的 prompt 参数 必须是 `verifier.request.<subject>.json` 的完整 JSON 正文，不得附加任何文字。没有 request 就禁止调用；不得手抄或改写 request 造一个。
++mode: subagent
++permission:
++  edit: deny
++  write: deny
++  patch: deny
++  bash: deny
++  webfetch: deny
++  task: deny
++---
++
++# Verifier — 阶段产物独立语义审查员
++
++你是一个**独立的审查员**，不参与文档/代码的生产。你的产出是**首轮语义结论 + 跨产物核对**：
++只有 **BLOCKER 级 FAIL** 会让父 agent 回去修；WARN / UNKNOWN 由父 agent 记入 `<phase>/notes.md`，
++本轮不修、不阻塞闭环。
++
++## 输入契约（唯一形态）
++
++你收到的 Task prompt **就是一份 request JSON**，别无其它文字：
++
++```json
++{
++  "schema_version": "1.1",
++  "kind": "maison_verifier_request",
++  "subject_id": "<64 位小写 hex>",
++  "feature": "...",
++  "phase": "...",
++  "prompt_path": "<features_dir>/<feature>/<phase>/reports/ai-prompt.md",
++  "prompt_sha256": "<64 位小写 hex>",
++  "material_sha256": "<64 位小写 hex>",
++  "gate_fingerprint": "...",
++  "source_commit_sha": "...",
++  "worktree_digest": "..."
++}
++```
++
++它是 `harness-runner` 单点生成的**调用凭证**。`subject_id` 由其余字段重算得出；其中
++`material_sha256` 是**审前材料视图**（phase 产物、你会读的源码/图片、规则、模板、脚本报告
++投影）的指纹——材料没变就是同一个 subject，你的报告会被后续 harness 重跑**直接复用**，
++所以**一次审透**。
++
++你的回复会由**调用方**原样写入 `summary.verifier_report` 指向的报告文件（你自己不写盘）。
++终态块里的 `verifier_subject_id` 必须逐字回显 request 的 `subject_id`：回显不上就是"这份
++报告审的不是当前材料"，闭环侧会判失配并要求重跑。
++
++**如果你收到的不是这样一份纯 request JSON**（被手抄成模板、只给了 feature/phase/路径、
++或 JSON 外还有说明文字）：照常输出审查结论，并在正文显著位置写明「未收到合法 verifier
++request，本次报告不可入闭环，请调用方把 `summary.verifier_request` 指向的 JSON 整段重投」。
++**不要自行编造 subject_id。**
++
++> **路径解析（BLOCKER）**：`<features_dir>/<feature>/…` 一律经框架解析——`<feature>` 是物理 Feature 路径（语义见 [路径术语表](../../framework/skills/reference/agents-entry-detail.md)），由调用方/CLI 输出给出；不得把逻辑 identity（含编码 `cu-…`）拼接进路径。
++
++## 工作流
++
++1. **Read `prompt_path` 指向的文件**。那份 `ai-prompt.md` 是 harness 按 workflow 声明的模板
++   装配出来的**本轮权威指令**：检查项清单、被审产物（内联）、脚本报告的**非 PASS 项**、
++   以及一份「按需读取的文件清单」（上游文档与源码只给路径）。内联部分要读完；路径清单
++   **按需 Read**——核对哪条引用就读哪个文件，不要全量通读。
++2. **以该文件为准**执行审查。不要另行猜测模板路径、不要去读 `verify-<phase>.md`
++   （你手上这份已经是它的装配结果，且可能带 profile overlay），也不要凭 phase 名推断规则。
++3. **脚本门禁（BLOCKER）**：`ai-prompt.md` 内嵌了本轮脚本报告（PASS 项只留 id）。默认口径：
++   若其中 `summary.verdict=FAIL`、`coding_run_status`/`ut_run_status` 的 `can_claim_done=false`，
++   或 `coding_compile` / `coding_hvigor_build` / `ut.compile` 等为 FAIL —— 只输出
++   `coding_compile_gate`（或 ut 等价项）FAIL、整体 verdict=FAIL，不要对其余项给 PASS。
++   **唯一例外**：prompt 里带「本轮为产品失败诊断」一节时，harness 已经确认这是它主动签发的
++   诊断请求（review 负面裁决 / UT 真实断言失败，且没有其它 BLOCKER 阻塞）——此时**照常逐项
++   语义检查**，不要因为脚本 FAIL 就整体判 FAIL 并跳过检查项。产品的 FAIL 由 harness 保持，
++   你的终态只表示**本轮语义检查**的结论（`blocker_count` 只数你自己的 BLOCKER FAIL）。
++   没有那一节而脚本未 PASS 的，仍按默认口径处理——父 agent 在无 request 时调用你属于流程违规。
++4. **按 prompt 里的「语义检查项」逐项评估**：
++   - 给出 PASS / WARN / FAIL（不适用给 SKIP）；
++   - 每条结论都要有**可定位证据**（文件路径 + 行号或引文）；跨文件引用要打开原文核对，
++     不凭记忆、不凭摘要；
++   - 不做主观偏好化评价，一律基于规则；
++   - 证据不足时选 WARN 并写明缺什么，不要硬判 FAIL；WARN 不阻塞闭环，父 agent 只记录不回修。
++5. **补读产物**：prompt 已内联的上下文直接用；路径清单里的文件按需用 `Read` / `Glob` / `Grep`
++   读取工程内文件。不执行 `git`。
++
++## 输出格式
++
++正文按 `ai-prompt.md` §七 组织：**先汇总表（每个检查项一行，PASS 也列，证据一行），
++再只对非 PASS 项给 YAML 明细**。PASS 项不写论证；不复述脚本 Harness 已判定的结构项。
++
++**回答的最后必须且只能出现一个终态块**，`verifier_subject_id` 逐字回显 request 的
++`subject_id`：
++
++```
++<!-- maison-verifier-result:v1 -->
++verifier_subject_id: <request.subject_id>
++verdict: PASS | FAIL
++blocker_count: <BLOCKER 级 FAIL 数量，整数>
++<!-- /maison-verifier-result:v1 -->
++```
++
++`verdict=PASS` 当且仅当 `blocker_count=0`；两者不一致的报告一律判为无效证据。
++
++## 硬性规则
++
++1. **不修改任何文件**。你是只读审查员。
++2. **不启动其他子 agent**。
++3. **不重复脚本 Harness 已做的确定性检查**（结构 / 字段存在性 / 格式）。
++4. **不复读**：已由脚本 PASS 的项、材料未变的项，不需要"再次确认"式的长篇论证。
+diff --git a/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc b/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc
+index 752803e4677ed790cf8c3cfcc8700c00edf615d1..2398c51e8855e0840005a4fa7b282f0558238848 100644
+--- a/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc
++++ b/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc
+@@ -35,7 +35,7 @@ alwaysApply: true
+ 
+ 1. 读 `framework/skills/feature/device-testing/SKILL.md`（及 profile addendum）
+ 2. **主 agent 自己**跑结构级 harness、修 BLOCKER、更新产物
+-3. **Task 触发 verifier**（`subagent_type: verifier`）——**仅当 harness 为本阶段输出了 verifier request**；prompt = `summary.verifier_request` 指向的那份 `verifier.request.<subject>.json` **整段 JSON**，verifier 自读其中的 `prompt_path`；不得手抄、改写或附加说明（plan a9d4e7c2）。verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入）——**写报告的是你，不是 verifier**（plan d2f7a9c4）。harness 未输出 request = 本阶段无此环，不是缺件
++3. **调用专用 verifier 角色**（宿主以 Task 承载时显式选 `subagent_type: verifier`；宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）——**仅当 harness 为本阶段输出了 verifier request**；prompt = `summary.verifier_request` 指向的那份 `verifier.request.<subject>.json` **整段 JSON**，verifier 自读其中的 `prompt_path`；不得手抄、改写或附加说明（plan a9d4e7c2）。verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入）——**写报告的是你，不是 verifier**（plan d2f7a9c4）。harness 未输出 request = 本阶段无此环，不是缺件
+ 4. 填写并通过 `check-receipt.ts`
+ 
+ 用户说「解锁手机」「手机准备好了吗」「唤醒设备」等**设备就绪类**请求：agent 自跑 `npx ts-node scripts/device-policy.ts --ready --json`，按 `framework/skills/reference/device-policy-gate.md` 的正道节处置（`code=ready` 才按 `target_kind` 说结论，`device_policy_unset` 才问四选一）；**不需要** feature / bundle / acceptance，也不要先要求用户提供这些。
+@@ -49,7 +49,7 @@ alwaysApply: true
+ | 情况 | 错误 | 正确 |
+ |------|------|------|
+ | harness FAIL | 「请运行 `npx ts-node harness-runner.ts …`」 | agent 修因后**自己重跑**；仅当缺物理前置时说明「请连接设备」，并在用户确认后继续**由 agent 重跑** |
+-| 缺 verifier | 「请启动 verifier」 | 先看 harness 有没有输出 verifier request：有则 agent 用 Task 工具触发 `subagent_type: verifier`（prompt = 那份 request JSON 整段），并把回复原样写入 `summary.verifier_report`；没有则该阶段本就不要求 verifier，不得补造 |
++| 缺 verifier | 「请启动 verifier」 | 先看 harness 有没有输出 verifier request：有则 agent 调用专用 verifier 角色（Task 宿主显式选 `subagent_type: verifier`，原生 verifier 工具直接调用；prompt = 那份 request JSON 整段），并把回复原样写入 `summary.verifier_report`；没有则该阶段本就不要求 verifier，不得补造 |
+ | vendor/venv 未对齐 | 「请 pip install / 删 venv」 | agent 自跑 testing harness（ensure 对齐）或按 device-testing 协议自处理；不向用户抛 install 命令 |
+ | 设备锁屏 | 「我不能解锁设备」/「请你先解锁」 | agent 自跑 `--ready --json`；`code=device_policy_unset` 才问四选一；`code=ready` 且 `target_kind=physical` 才说「手机已解锁」 |
+ | 即席 / 外部 bundle | 「Hylyre 未安装，选手动或你去 pip」 | agent 自跑 `npm run adhoc-device-test`；失败则 Read `hylyre-doctor.log` / `hylyre-ready.meta.json` 后在本对话修宿主因素并重跑 |
+diff --git a/docs/operations/harness-runbook.md b/docs/operations/harness-runbook.md
+index d3fc121392c9d12d08febf0ecd52f886ca78f8cd..fbadbe3a76a66671f11f58943f9f9a374d07dec4 100644
+--- a/docs/operations/harness-runbook.md
++++ b/docs/operations/harness-runbook.md
+@@ -170,7 +170,7 @@ doc/features/<feature>/
+ | `summary.json`          | agent / CI / 调试          | 稳定读取 verdict、blockers、run_statuses、next_action，替代 grep 控制台 |
+ | `merged-report.md`      | 人类                      | 排查"为什么 FAIL"                                       |
+ | `ai-prompt.md`          | verifier 子 agent（自读） | 本轮要审的材料全文。**不作为 Task prompt 投递**——verifier 按 request 里的 `prompt_path` 自己 Read（可达上百 KB，刻意不走传输面）。仅在该 phase 的 verifier 能力 enabled 时生成 |
+-| `verifier.request.<subject>.json` | 调用方（phase executor / 主 agent） | **唯一调用侧凭证**（几十行）：整段作为 Task prompt 投给 `subagent_type=verifier`。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配 |
++| `verifier.request.<subject>.json` | 调用方（phase executor / 主 agent） | **唯一调用侧凭证**（几十行）：整段作为 prompt 投给专用 verifier 角色（Task 宿主显式选 `subagent_type=verifier`，原生 verifier 工具直接调用）。`subject_id` 由其余字段重算，手抄/改写/前后夹带即失配 |
+ | `verifier.report.<subject>.md` | check-receipt / 全部机器消费者 | verifier 的**唯一机器真源**（plan d2f7a9c4）。**写者是调用方**：把 verifier 回复原样全文写到 `summary.verifier_report` 指向的这个路径（verifier 自己只读，不写盘）。文件**按 subject 分区**，`summary.verifier_subject_id` 单独决定当前证据是哪一份，旧 subject 的遗留文件不在任何读取面内、也不清理。校验只三条：文件在、终态块回显 subject 相符、verdict 与 blocker_count 自洽。**不进 evidence manifest、不进 closure attestation 哈希**——报告刻意不做防篡改，不能同时充当 stale 绊线 |
+ | `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
+ 
+diff --git a/harness/harness-runner.ts b/harness/harness-runner.ts
+index 80d4082f1407a6c44665ca7a7524491d48423417..98fb3236503d18c5a33dc5eb684cc70a9a93155a 100644
+--- a/harness/harness-runner.ts
++++ b/harness/harness-runner.ts
+@@ -2575,8 +2575,8 @@ function carriedMaterialStillCurrent(
+  * plan a9d4e7c2 T2：生成本轮 run 的 verifier **调用凭证**（短 request JSON）。
+  *
+  * 只在 `resolveVerifierPlan` 判 enabled 时调用。产物两样：
+- *   · `verifier.request.<subject>.json`——主 agent 把它**整段**当 Task prompt 投给
+- *     verifier；verifier 按 `prompt_path` 自己 Read 磁盘 ai-prompt.md（大文件不过传输面）；
++ *   · `verifier.request.<subject>.json`——主 agent 把它**整段**当 prompt 投给
++ *     专用 verifier 角色；verifier 按 `prompt_path` 自己 Read 磁盘 ai-prompt.md（大文件不过传输面）；
+  *   · `summary.verifier_subject_id` / `summary.verifier_request`——闭环侧的身份锚。
+  *
+  * subject 按**实际审查材料**寻址：`prompt_sha256` 直接哈希磁盘 ai-prompt.md 原文，
+@@ -2758,7 +2758,7 @@ export function buildPassGuidanceLines(
+     case 'rerun_verifier_with_current_request':
+       return [
+         '  📤 verifier 已启用，三步（plan d2f7a9c4）：',
+-        `     ① 把这份 request JSON **整段**作为 Task prompt 投给 subagent_type=verifier：${summary.verifier_request ?? '(本轮未生成 request，请检查 Step 4 是否失败)'}`,
++        `     ① 把这份 request JSON **整段**作为 prompt 投给当前宿主登记的专用 verifier 角色（Task 宿主显式选 subagent_type=verifier，原生 verifier 工具直接调用，不用通用子 agent）：${summary.verifier_request ?? '(本轮未生成 request，请检查 Step 4 是否失败)'}`,
+         '        （verifier 自行 Read 其中的 prompt_path；不要投递 ai-prompt.md 全文，也不要改写任何字段）',
+         `     ② 把它的回复**原样全文**写入：${summary.verifier_report ?? '(本轮未生成报告路径)'}`,
+         '        （不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入）',
+@@ -2822,7 +2822,7 @@ export function buildNextLine(
+       : `写完后重跑一次本阶段 harness 以重算回修候选：npx ts-node harness-runner.ts --phase ${phase} --feature ${feature}`;
+     return (
+       `NEXT: 本轮产品 FAIL 但失败可诊断（脚本 FAIL 仍签发了 verifier request）——` +
+-      `把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给 subagent_type=verifier，同步等它返回；` +
++      `把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给专用 verifier 角色（Task 宿主选 subagent_type=verifier，原生 verifier 工具直接调用，不用通用子 agent），同步等它返回；` +
+       `把回复原样全文写入 ${summary.verifier_report ?? 'verifier.report.<subject>.md'}；${after}。` +
+       // D3/D4：报告已在但读不出必需检查项时，出路是**修报告格式**而不是改产品——
+       // 上面的 warn 已点名是哪几项；重投 request 只是没有原始回复时的兜底。
+@@ -2852,7 +2852,7 @@ export function buildNextLine(
+     case 'run_verifier_then_receipt':
+     case 'rerun_verifier_with_current_request':
+       return (
+-        `NEXT: 把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给 subagent_type=verifier，同步等它返回；` +
++        `NEXT: 把 ${summary.verifier_request ?? 'verifier.request.<subject>.json'} 整段投给专用 verifier 角色（Task 宿主选 subagent_type=verifier，原生 verifier 工具直接调用，不用通用子 agent），同步等它返回；` +
+         `把回复原样写入 ${summary.verifier_report ?? 'verifier.report.<subject>.md'}；然后跑 check-receipt --phase ${phase} --feature ${feature}`
+       );
+     case 'fill_receipt_then_sync_closure':
+diff --git a/harness/scripts/utils/receipt-scaffold.ts b/harness/scripts/utils/receipt-scaffold.ts
+index 23442a461c79d69ee43ff54a0ed60641391c5639..daa02f053b8c7d516badc69e4d58757b2f343e94 100644
+--- a/harness/scripts/utils/receipt-scaffold.ts
++++ b/harness/scripts/utils/receipt-scaffold.ts
+@@ -201,7 +201,7 @@ export function renderReceiptProjection(f: ReceiptProjectionFacts): string {
+     `claimed_completion_commit_sha: ${q(f.claimed_completion_commit_sha)}`,
+     `claimed_attempt_id: ${q(f.claimed_attempt_id)}`,
+     'verifier_subagent:',
+-    '  invoked_via: "Task(subagent_type=verifier)"',
++    '  invoked_via: "host_verifier_role"',
+     `  prompt_template: ${q(f.verifier.prompt_template)}`,
+     `  report_path: ${q(f.verifier.report_path)}`,
+     `  verdict: ${q(f.verifier.verdict)}`,
+diff --git a/harness/scripts/utils/verifier-evidence.ts b/harness/scripts/utils/verifier-evidence.ts
+index b2e80901b391f8bae926854dd9b34a65fe9eb86e..d65e4863b96b56089bd0ce942b0d135e5b5da728 100644
+--- a/harness/scripts/utils/verifier-evidence.ts
++++ b/harness/scripts/utils/verifier-evidence.ts
+@@ -76,7 +76,7 @@ export interface LoadVerifierEvidenceOptions {
+ /** 恢复话术**唯一出处**：只指向重跑 verifier + 重写报告，绝不指向改文书。 */
+ function rerunGuidance(): string {
+   return (
+-    '恢复：把 summary.verifier_request 指向的 request JSON **整段**作为 Task prompt 投给 verifier' +
++    '恢复：把 summary.verifier_request 指向的 request JSON **整段**作为 prompt 投给当前宿主登记的专用 verifier 角色（不用通用子 agent）' +
+     '（verifier 自行 Read 其中的 prompt_path），再把它的回复**原样**写入 summary.verifier_report ' +
+     '指向的路径，然后重跑本检查。'
+   );
+diff --git a/harness/templates/phase-completion-receipt.md b/harness/templates/phase-completion-receipt.md
+index c3be4ec6317f982c46b1004d37b65544cc9c5eb1..d95c9931931a2a1f9e0cc28c87083498cd1a9c25 100644
+--- a/harness/templates/phase-completion-receipt.md
++++ b/harness/templates/phase-completion-receipt.md
+@@ -20,7 +20,7 @@ claimed_completion_at: "<ISO 8601，生成时刻>"
+ claimed_completion_commit_sha: "<summary.source_commit_sha>"
+ claimed_attempt_id: ""
+ verifier_subagent:
+-  invoked_via: "Task(subagent_type=verifier)"
++  invoked_via: "host_verifier_role"
+   prompt_template: "framework/harness/prompts/verify-<phase>.md"
+   report_path: "<summary.verifier_report，即 doc/features/<feature>/<phase>/reports/verifier.report.<subject>.md 或空>"
+   verdict: "<PASS | FAIL | 空>"
+diff --git a/skills/feature/coding/SKILL.md b/skills/feature/coding/SKILL.md
+index 1b06e9b55af32608db84c6b81bb03eb5414bb113..2f43ea76b93471bbab08d223cb5e099f1d346e52 100644
+--- a/skills/feature/coding/SKILL.md
++++ b/skills/feature/coding/SKILL.md
+@@ -90,9 +90,9 @@
+ cd framework/harness && npx ts-node harness-runner.ts --phase coding --feature {module-name} --summary --failures-only
+ ```
+ 
+-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-coding.md`（业务逻辑正确性/异常处理完整性/接口签名一致性 BLOCKER/组件 Props 一致性/数据所有权合规/模拟数据隔离/验收标准覆盖）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
++**AI Harness**：harness 输出 verifier request 时，主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-coding.md`（业务逻辑正确性/异常处理完整性/接口签名一致性 BLOCKER/组件 Props 一致性/数据所有权合规/模拟数据隔离/验收标准覆盖）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+ 
+-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
++**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+ 
+ **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+ 
+diff --git a/skills/feature/plan/SKILL.md b/skills/feature/plan/SKILL.md
+index 19f0a228822d8f6911a4b968db295c1682af9152..25de7a1be6ef70dac3c59db04150b74cb64ff787 100644
+--- a/skills/feature/plan/SKILL.md
++++ b/skills/feature/plan/SKILL.md
+@@ -92,9 +92,9 @@ coding/review/UT/harness **一律优先读 `contracts.yaml`**，避免与 plan.m
+ cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature {module-name}
+ ```
+ 
+-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-plan.md`（9 项语义检查：外层依赖/模块内分层/模块最小性/拆分合理性/数据类型/P0P1 未决/架构一致/导航一致/验收追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
++**AI Harness**：harness 输出 verifier request 时，主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-plan.md`（9 项语义检查：外层依赖/模块内分层/模块最小性/拆分合理性/数据类型/P0P1 未决/架构一致/导航一致/验收追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+ 
+-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
++**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。**报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+ 
+ **harness 没有输出 request 时先看 `summary.next_action`，别急着下结论**：①能力未启用（policy/workflow/profile 判定）→ 本阶段就没有 verifier 这一环，不要去找、不要补造，闭环也不要求它；②当前 adapter 未登记 `verifier_subagent`（起不了 verifier 子代理）→ 本阶段无此环，闭环照常进行，`check-receipt` 会以 WARN 如实标注 `not_reviewed`；③脚本尚未 PASS → 本轮**通常**刻意不产出 verifier 调用面，先修 BLOCKER 再说；**例外**是 `next_action=run_verifier_for_repair`——review 负面裁决与 UT 真实断言失败（`code_regression`）这两类已复现的可诊断产品失败，harness 会在脚本 FAIL 下照样签发 request，因为它们的回修候选本就依赖 verifier 逐条确认。照常投 request、原样写报告；**产品 FAIL 与 open 闭环状态不因此改变**，别在拿到逐条结论前改产品。
+ 
+diff --git a/skills/feature/spec/SKILL.md b/skills/feature/spec/SKILL.md
+index 3bed63e75c5292cf2add7acdab8a0a6e0985c75b..8244355498471f6c876a4b3d1c4c350f51763ee9 100644
+--- a/skills/feature/spec/SKILL.md
++++ b/skills/feature/spec/SKILL.md
+@@ -84,9 +84,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase spec --feature {mo
+ 
+ 若本轮来自 attended `phase_execute_request`，上述阶段入口还必须追加同一组 `--goal-run-id <run_id> --goal-attempt-id <attempt_id> --goal-owner-id <owner_id> --goal-owner-epoch <owner_epoch>`；不得扫描 feature 下的 active run 自动绑定。完成 verifier 与 receipt 自证后，以**同一组参数**再次运行 `harness-runner.ts --sync-closure --phase spec --feature <feature>`；只有 exit 0 才可向 attended bridge 回传 `passed`。
+ 
+-**AI Harness**：harness 输出 verifier request 时，agent 必须主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权，不得仅"告知用户可运行"），prompt 模板 `framework/harness/prompts/verify-spec.md`。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
++**AI Harness**：harness 输出 verifier request 时，agent 必须主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）（全局入口 §4.1 明示授权，不得仅"告知用户可运行"），prompt 模板 `framework/harness/prompts/verify-spec.md`。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+ 
+-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
++**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+ 
+ **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+ 
+diff --git a/skills/reference/agents-entry-detail.md b/skills/reference/agents-entry-detail.md
+index 102971556ccf0c3b6979086439f609b9b76dbabd..a4151770e03c1ff225fc7d8164895db1293c87b2 100644
+--- a/skills/reference/agents-entry-detail.md
++++ b/skills/reference/agents-entry-detail.md
+@@ -83,7 +83,7 @@
+ > 弱模型经常把"verifier 子 agent 执行 verify-*.md"误读为"任何 harness 类的事都不该主 agent 干"。本节是反误读的明示授权，BLOCKER 级，必须遵守：
+ 
+ 1. **结构级 harness**（`framework/harness/harness-runner.ts`）：必须由主 agent 自己执行。它会自动调用 `hvigor` 编译、各阶段 `check-*.ts` 等，不得借口"等 verifier"或"等用户"跳过。主 agent 在阶段产物完成后，第一时间通过 Shell 工具运行该命令，读取退出码与报告文件。
+-2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；该阶段执行者必须主动通过 Task 工具触发 verifier（`subagent_type: verifier`），不得仅"提示用户去跑"或"等用户启动"。**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
++2. **语义级 verify**（`framework/harness/prompts/verify-*.md`）：在结构级 harness PASS 之后，由独立 verifier 子 agent 执行；该阶段执行者必须主动调用当前宿主登记的专用 verifier 角色——宿主以 Task 承载角色时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不得换成通用研究/开发子 agent，也不得仅"提示用户去跑"或"等用户启动"。**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）——`summary.verifier_request` 指向的 `verifier.request.<subject>.json` 就是唯一调用侧凭证，verifier 按其中的 `prompt_path` 自行 Read 磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）；手抄、改写字段或在 JSON 前后附加说明 → subject 重算失配 → 阶段不闭环。**报告由你写，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，把它的回复**原样全文**写入 `summary.verifier_report` 指向的路径（不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入），然后跑 check-receipt。**verifier 是按能力启用的**：harness 没有为该阶段输出 request 就是不适用（policy/workflow/profile 判定），既不要去找也不要补造，闭环不要求它。
+ 3. AGENTS.md 全文未禁止主 agent 调用 shell/执行命令；空白处一律按"允许"理解。若你以为某条规则限制了你执行命令，请先核对反假设条款。
+ 4. **生产型（会写/改文件的）子 agent 派发纪律**：framework 不禁止派发写码子 agent，但**不信任其报告**。派发 prompt 最低纪律——前置「先 Read 目标文件验证改造对象存在；不存在立即 STOP 报告，禁止善意改造」；后置「完成后运行自验命令」；报告要求「实际修改文件清单 + 自验命令输出，禁用"应该/可能"模糊词」。**子 agent 报告不构成任何闭环凭证**：主 agent 必须以 `git diff` 对账实际改动后才可声明完成；门禁/凭证责任不可下放（verifier 除外，见上文 2）。
+ 5. **环境能力判定纪律**：凡断言"环境缺少某工具链"（hvigor/SDK/设备等），必须先运行 framework 探测命令（`detect-deveco.ts --json` / `check-personal-setup.ts --ensure`）并在结论中引用其输出；禁止凭 `command -v`/PATH 检查自报「沙箱无 X」——**未探测 = 未知，不是没有**。遇 `HARNESS_PREFLIGHT` 能力缺口时按其双出口处置：修环境（默认）或经用户确认后诚实停止——停止不放行不绕过，环境修好后用原命令 resume 即可继续（goal 模式重新发起同一请求即重新接入原 run 并重检放行）。
+diff --git a/skills/reference/business-ut-workflow-detail.md b/skills/reference/business-ut-workflow-detail.md
+index 8f9719f0edb176e63a19e56d5c1d1bcb51fadd57..95b1af7bc59d8b3df4fa54c4cea4c99bf4e8a238 100644
+--- a/skills/reference/business-ut-workflow-detail.md
++++ b/skills/reference/business-ut-workflow-detail.md
+@@ -286,9 +286,9 @@ cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_
+ 11. **Step 7.5/7.6 编译与装机运行闭环**（必要出口，详见 reference）：`ut.compile`/`ut.run` 是必要出口非可选；自闭环修复策略按错误类型分类；**触及业务源码进约束#12 HARD STOP**；设备失败按 selfHealable/needsConfirmation/externalBlocked/clear 四类分流；绝不允许把"无设备"标 SKIP/PASS。
+ 12. **Step 8 Harness 验证门禁**：见下方门禁清单表；`stale_diff_base` 自动 `HARNESS_DIFF_BASE_REF=working` 重跑（**仅 review 未闭环的 git fallback 域**会出现该 failure_kind）；`summary.verdict=INCOMPLETE`（device 阻塞）不满足闭环；状态面板须完整贴给用户。
+ 13. **Step 8.0 Core 节点闭环闸门**：改动触及 Code Graph `core: true` 节点时启动可行性探测+更新图谱+同步 characterization/spec-driven UT（详见 reference）。
+-14. **Step 8.2 AI Harness**：主动通过 Task 工具触发 `subagent_type: verifier`，prompt 模板 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
++14. **Step 8.2 AI Harness**：主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替），prompt 模板 `framework/harness/prompts/verify-ut.md`（state_model_completeness / ui_bindings_completeness / end_to_end_driving(BLOCKER) / branch_coverage_semantic / device_ac_delegation / stub_reasonableness / test_isolation）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+ 
+-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
++**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+ 
+ **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+ 
+diff --git a/skills/reference/code-review-workflow-detail.md b/skills/reference/code-review-workflow-detail.md
+index 6da5b2346e38b854b911b3bf9fed1e22cf011608..0ca2ae009feb47b4379237169a3cb9cd8c7fe409 100644
+--- a/skills/reference/code-review-workflow-detail.md
++++ b/skills/reference/code-review-workflow-detail.md
+@@ -141,9 +141,9 @@ review 阶段不执行宿主包管理器依赖安装命令，也不使用 `HARNE
+ cd framework/harness && npx ts-node harness-runner.ts --phase review --feature {module-name}
+ ```
+ 
+-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
++**AI Harness**：harness 输出 verifier request 时，主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-review.md`（审查维度覆盖度/问题准确性 BLOCKER/修复建议可操作性/误报率/BLOCKER 与结论一致性 BLOCKER/编码规则追溯）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+ 
+-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
++**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+ 
+ **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+ 
+diff --git a/skills/reference/confirmation-registry.yaml b/skills/reference/confirmation-registry.yaml
+index 057a77ea98040fd7101de92d8d621236cb2a9d26..56a72ab891a18af84f9ae2b85aa8df47905bb498 100644
+--- a/skills/reference/confirmation-registry.yaml
++++ b/skills/reference/confirmation-registry.yaml
+@@ -26,7 +26,7 @@ entries:
+     ssot_anchor: "user-confirmation-ux.md §3.4"
+     skill_step: "S2 计划批准"
+     portable_menu: "多选 adapter 目录名（候选见 S1 InitTaskPlan.adapter_catalog）；须至少 1 项"
+-    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys 默认 `.agents` bridge bundle 字节一致、可幂等共存；opencode 用自有 `.opencode/skill` bundle（AGENTS.md 共享，像 cursor 各用各目录）；codex 默认 `.codex` bundle；差异仅在 headless 运行器与 skill 落盘目录。仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
++    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys/dsh 默认 `.agents` bridge bundle 字节一致、可幂等共存；opencode 用自有 `.opencode/skill` bundle（AGENTS.md 共享，像 cursor 各用各目录）；codex 默认 `.codex` bundle；差异仅在 headless 运行器与 skill 落盘目录。仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
+     options:
+       - value: claude
+         label: "claude — 物化 Claude Code 入口与 .claude/ 产物"
+@@ -49,6 +49,9 @@ entries:
+       - value: codeagent
+         label: "codeagent — 物化 AGENTS.md + .cac/ 产物（Claude Code 内核；hooks 硬门禁；headless = codeagentcli -p）"
+         portable: "codeagent"
++      - value: dsh
++        label: "dsh — 物化 AGENTS.md + .agents/ bundle + .dsh/ 独立审查员配置层（启动带 --patch）"
++        portable: "dsh"
+ 
+   - id: init.task_plan
+     skill: "framework-init"
+diff --git a/skills/reference/device-testing-workflow-detail.md b/skills/reference/device-testing-workflow-detail.md
+index cf09bcada0421c68f62c3a1b556b4502ac9f3781..77f6f1ce6ea3f400ba6c335f50177b4ad7f7b8f5 100644
+--- a/skills/reference/device-testing-workflow-detail.md
++++ b/skills/reference/device-testing-workflow-detail.md
+@@ -253,9 +253,9 @@ cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature
+ 
+ 优先读 `summary.json`，`testing_run_status.can_claim_done` 须为 `YES` 才能宣称阶段完成。
+ 
+-**AI Harness**：harness 输出 verifier request 时，主动通过 Task 工具触发 `subagent_type: verifier`（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
++**AI Harness**：harness 输出 verifier request 时，主动调用专用 verifier 角色（宿主以 Task 承载时显式选 `subagent_type: verifier`，宿主原生登记了 verifier 工具时直接调用它；不用通用研究/开发子 agent 顶替）（全局入口 §4.1 明示授权），prompt 模板 `framework/harness/prompts/verify-testing.md`（测试用例完整性/步骤可重复性/预期结果具体性/NFR 覆盖/缺陷严重程度一致性/通过标准与结论一致性）。 verifier 的 WARN/UNKNOWN 本轮不修（记入 `<phase>/notes.md` 带到下一阶段），只有 **BLOCKER 级 FAIL** 才触发修正与重审；材料未变时 harness 复用既有 verifier 报告，材料变了但历史有 PASS 时闭环标 `completed_with_prior_review`（不重跑 verifier，未重审差异登记在 `summary.verifier_closure`）。
+ 
+-**Task prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 Task prompt 投给 verifier——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
++**调用的 prompt = harness 写出的短 request JSON 整段**（plan a9d4e7c2）：verifier 能力启用时，`harness-runner` 会在结尾打印 `verifier.request.<subject>.json` 的路径，并把它记进 `summary.verifier_request`。把**那份 JSON 的完整正文**作为 prompt 投给专用 verifier 角色——verifier 自己按其中的 `prompt_path` 读磁盘原件（`ai-prompt.md` 可达上百 KB，不过传输面）。不要投递 `ai-prompt.md` 全文、不要手抄或改写任何字段、不要在 JSON 前后附加说明：subject 由字段重算，抄错一处即失配 → 阶段不闭环。
+ 
+ **报告由你写入，不是 verifier 写**（plan d2f7a9c4）：verifier 返回后，用 Write 把它的回复**原样全文**写进 `summary.verifier_report` 指向的路径（`<reports>/verifier.report.<subject>.md`），再跑 `check-receipt`。不摘要、不只贴终态块——正文里的发现是 repair candidates 与多模态审查的输入；只有终态块的报告能通过校验，却会把这些全部丢掉。
+ 

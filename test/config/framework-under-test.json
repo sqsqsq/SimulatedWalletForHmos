@@ -1,0 +1,7 @@
+{
+  "release_commit": "24ea6aeb9915a32d982407c0747da0c2835eb3d6",
+  "framework_path": "framework",
+  "tree_oid": "dd50d724810ff304d3594f44515e1161ce736c7b",
+  "local_patch": "test/fixtures/framework-local/3.1.0-dsh.patch",
+  "materialized_adapters": ["dsh"]
+}

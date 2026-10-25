@@ -252,11 +252,166 @@ def install_dev_source(template: Path) -> dict[str, Any]:
     return {"status": result.status, "source_version": result.source_version, "changed": len(result.completed)}
 
 
-def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Path]:
-    """建一份短路径的工作区模板：demo 消费工程减去运行态，再装上当前开发源。
+#: 本轮被测 Framework 组合的固定输入：发布提交里的 framework 子树、树 OID、相对它的本地宿主补丁、须纳入物化的 adapter。
+#: 它只指定 template 装哪一版，不是 Framework 版本真源；demo 的接入仍按 AGENTS §6。
+FRAMEWORK_UNDER_TEST = TEST_ROOT / "config" / "framework-under-test.json"
+#: 换 Framework 发布树时留下的消费侧运行态（依赖、锁文件、运行报告与状态）；其余旧文件连同旧本地定制一律移除，由补丁重加
+FRAMEWORK_RUNTIME_KEEP = ("harness/node_modules/", "harness/package-lock.json", "harness/reports/", "harness/state/")
 
-    顺序固定：核 demo（结构正确、git 干净）→ 复制 → 装开发源 → 核同源 → 核 demo 仍干净。任一步不成立即停，
-    template 作废、不建 Case。发布基线（demo）与开发版（template）不混装。
+
+def _git_out(*args: str, cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "core.quotepath=off", *args], cwd=str(cwd),
+                          capture_output=True, env=env)
+
+
+def load_framework_under_test() -> dict[str, Any]:
+    """读固定输入并核它指向的发布树与补丁都在：树 OID 对不上或对象缺失即停，不退回 demo 旧版冒称被测版本。"""
+    try:
+        cfg = json.loads(FRAMEWORK_UNDER_TEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"[multi] 读不到被测 Framework 固定输入 {FRAMEWORK_UNDER_TEST}：{exc}") from exc
+    missing = [k for k in ("release_commit", "framework_path", "tree_oid", "local_patch", "materialized_adapters")
+               if not cfg.get(k)]
+    if missing:
+        raise SystemExit(f"[multi] {FRAMEWORK_UNDER_TEST.name} 缺字段 {missing}")
+    spec = f"{cfg['release_commit']}:{cfg['framework_path']}"
+    tree = _git_out("rev-parse", "--verify", "--quiet", spec)
+    actual = tree.stdout.decode().strip()
+    if tree.returncode != 0 or actual != cfg["tree_oid"]:
+        raise SystemExit(f"[multi] 被测 Framework 发布树 {spec} 在本仓{'缺失' if tree.returncode else f'是 {actual}'}，"
+                         f"登记为 {cfg['tree_oid']}：先取得该固定发布提交（git fetch）或核对固定输入，不装配")
+    patch = (REPO_ROOT / cfg["local_patch"]).resolve()
+    if not patch.is_file() or not patch.is_relative_to(TEST_ROOT):
+        raise SystemExit(f"[multi] 本地宿主补丁 {cfg['local_patch']} 不在测试域或不存在")
+    return {**cfg, "patch_path": patch, "patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest()}
+
+
+def _harness_dependencies(package_json: bytes) -> dict[str, Any]:
+    data = json.loads(package_json.decode("utf-8"))
+    return {k: data.get(k) for k in ("dependencies", "devDependencies", "optionalDependencies")}
+
+
+def _write_framework_release(framework: Path, cfg: dict[str, Any]) -> list[str]:
+    """把 template 的 Framework 换成固定发布树的原始 blob：先清掉运行态以外的旧文件，再逐文件写入并按发布清单核摘要。
+
+    返回被清掉的、旧发布清单之外的文件（旧本地定制等），供装配记录核对。
+    """
+    old_manifest = framework / "RELEASE-MANIFEST.json"
+    old_release = ({f["path"] for f in json.loads(old_manifest.read_text(encoding="utf-8"))["files"]}
+                   if old_manifest.is_file() else set()) | {"RELEASE-MANIFEST.json", "RELEASE-MANIFEST.sha256"}
+    removed: list[str] = []
+    for dirpath, _dirs, files in os.walk(framework, topdown=False):
+        for name in files:
+            rel = (Path(dirpath) / name).relative_to(framework).as_posix()
+            if not rel.startswith(FRAMEWORK_RUNTIME_KEEP):
+                (Path(dirpath) / name).unlink()
+                if rel not in old_release:
+                    removed.append(rel)
+        if Path(dirpath) != framework and not os.listdir(dirpath):
+            os.rmdir(dirpath)
+    listing = _git_out("ls-tree", "-r", "-z", f"{cfg['release_commit']}:{cfg['framework_path']}")
+    entries = []
+    for record in listing.stdout.split(b"\0"):
+        if record:
+            meta, rel = record.split(b"\t", 1)
+            entries.append((meta.split()[2].decode(), rel.decode("utf-8")))
+    reader = subprocess.Popen(["git", "cat-file", "--batch"], cwd=str(REPO_ROOT),
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    written: dict[str, bytes] = {}
+    for oid, rel in entries:
+        reader.stdin.write(oid.encode() + b"\n")
+        reader.stdin.flush()
+        size = int(reader.stdout.readline().split()[2])
+        body = reader.stdout.read(size)
+        reader.stdout.read(1)
+        (framework / rel).parent.mkdir(parents=True, exist_ok=True)
+        (framework / rel).write_bytes(body)
+        written[rel] = body
+    reader.stdin.close()
+    reader.wait()
+    manifest_bytes = written.get("RELEASE-MANIFEST.json", b"")
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    sidecar = written.get("RELEASE-MANIFEST.sha256", b"").decode().split()
+    bad = [f["path"] for f in manifest["files"]
+           if hashlib.sha256(written.get(f["path"], b"")).hexdigest() != f["sha256"]]
+    if bad or not sidecar or sidecar[0] != hashlib.sha256(manifest_bytes).hexdigest():
+        raise SystemExit(f"[multi] 被测 Framework 发布树与它自己的发布清单不符：{bad[:5] or 'RELEASE-MANIFEST.sha256'}")
+    return removed
+
+
+def install_framework_under_test(template: Path) -> dict[str, Any]:
+    """在 template 里装被测 Framework：换固定发布树 → 核并应用本地宿主补丁 → 配置纳入要物化的 adapter → 原生 UPDATE 物化。
+
+    只写 template。补丁以 framework 子树为根、不得越出；git 只当补丁工具用（不找外层仓、不转换换行）。
+    依赖声明与 template 已带的不同就停，按维护环境准备另装，不在这里联网装依赖。
+    """
+    cfg = load_framework_under_test()
+    framework = template / "framework"
+    pkg = _git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/harness/package.json")
+    current = framework / "harness" / "package.json"
+    if not current.is_file() or _harness_dependencies(pkg.stdout) != _harness_dependencies(current.read_bytes()):
+        raise SystemExit("[multi] 被测 Framework 的 harness 依赖声明与 demo 已装的不同：先按维护环境准备装好它的依赖，不装配")
+    if not (framework / "harness" / "node_modules").is_dir():
+        raise SystemExit("[multi] template 没带 framework/harness/node_modules：先按维护环境准备装 harness 依赖")
+    removed_outside_release = _write_framework_release(framework, cfg)
+    env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(template.parent)}
+    for action in (["--check"], []):
+        applied = _git_out("apply", *action, "--directory=framework", str(cfg["patch_path"]), cwd=template, env=env)
+        if applied.returncode != 0:
+            raise SystemExit(f"[multi] 本地宿主补丁不适用于被测 Framework（git apply {' '.join(action)}）："
+                             f"{applied.stderr.decode('utf-8', 'replace').strip()[:800]}——修补丁或固定输入后从新 template 重建")
+    patched = sorted(line[len("+++ b/"):] for line in cfg["patch_path"].read_text(encoding="utf-8").splitlines()
+                     if line.startswith("+++ b/"))
+    config_path = template / "framework.config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    adapters = list(dict.fromkeys([*config.get("materialized_adapters", []), *cfg["materialized_adapters"]]))
+    if adapters != config.get("materialized_adapters"):
+        config["materialized_adapters"] = adapters
+        config_path.write_bytes((json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    # 原生 UPDATE 在干净进程环境里跑：维护域给 node 的预加载（如测试的转译缓存）会被 Framework 门禁判为进程注入
+    clean_env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
+    init = subprocess.run(
+        ["npx", "ts-node", "scripts/init-orchestrate.ts", "--scope", "project", "--project-root", str(template),
+         "--execute", "--smart-auto", "--materialized-adapters", ",".join(adapters)],
+        cwd=str(framework / "harness"), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        shell=os.name == "nt", env=clean_env)
+    run_log = re.search(r"run-log: (.+run-log\.json)", init.stdout + init.stderr)
+    if init.returncode != 0:
+        raise SystemExit(f"[multi] 被测 Framework 的原生 UPDATE 失败（退出 {init.returncode}）："
+                         f"{run_log.group(1) if run_log else (init.stdout + init.stderr)[-800:]}")
+    adapter_root = framework / "agents"
+    materialized = {}
+    # 补丁动过的 adapter 都核一遍：模板 → 物化产物逐字节同源（本地定制的子代理就在这里落地）
+    patched_adapters = sorted({rel.split("/")[1] for rel in patched
+                               if rel.startswith("agents/") and (adapter_root / rel.split("/")[1] / "adapter.yaml").is_file()})
+    for name in patched_adapters:
+        spec = yaml.safe_load((adapter_root / name / "adapter.yaml").read_text(encoding="utf-8"))
+        sub = spec.get("subagents") or (spec.get("commands") or {}).get("subagents")
+        if not sub:
+            continue
+        source_dir = adapter_root / name / sub["template_dir"]
+        for source in sorted(p for p in source_dir.rglob("*") if p.is_file()):
+            target = template / sub["target_dir"] / source.relative_to(source_dir)
+            if not target.is_file() or target.read_bytes() != source.read_bytes():
+                raise SystemExit(f"[multi] {name} 的子代理物化与模板不同源：{target.relative_to(template)}")
+            materialized[target.relative_to(template).as_posix()] = hashlib.sha256(target.read_bytes()).hexdigest()
+    manifest = json.loads((framework / "RELEASE-MANIFEST.json").read_text(encoding="utf-8"))
+    return {
+        "release_commit": cfg["release_commit"], "tree_oid": cfg["tree_oid"],
+        "version": manifest.get("version"), "source_commit": manifest.get("source_commit"),
+        "built_at": manifest.get("built_at"),
+        "local_patch": cfg["local_patch"], "local_patch_sha256": cfg["patch_sha256"], "patched_files": patched,
+        "materialized_adapters": adapters, "subagents": materialized,
+        "removed_outside_release": sorted(removed_outside_release),
+        "init_run_log": run_log.group(1) if run_log else None,
+    }
+
+
+def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Path]:
+    """建一份短路径的工作区模板：demo 消费工程减去运行态，换上被测 Framework，再装上当前开发源。
+
+    顺序固定：核 demo（结构正确、git 干净）→ 复制 → 换被测 Framework 并原生物化 → 装开发源 → 核同源 →
+    核 demo 仍干净。任一步不成立即停，template 作废、不建 Case。发布基线（demo）与开发版（template）不混装。
     """
     demo_head = demo_check()
     workspace_root = (Path(tempfile.gettempdir()) / "sw-story" / suite_id).resolve()
@@ -271,12 +426,14 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     (template / WORKSPACE_SEARCH_IGNORE).write_text(WORKSPACE_SEARCH_RULE, encoding="utf-8")
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
+    framework = install_framework_under_test(template)
     installed = install_dev_source(template)
     if demo_check() != demo_head:
         raise SystemExit("[multi] 装配前后 demo 的提交变了：装配只应写 template，先查清是谁动了 demo")
     write_json(suite_root / "workspace-boundary.json", {
-        "schema_version": 3,
+        "schema_version": 4,
         "demo": {"head": demo_head},
+        "framework": framework,
         "copied": sorted(copied),
         "excluded": sorted(
             [f"{name}/**" for name in WORKSPACE_EXCLUDED_DIR_NAMES]

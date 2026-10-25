@@ -79,11 +79,14 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 非 suite 的长期目录不自动清理。
 
 模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除 `doc/features`、Framework 活动状态、
-`oh_modules`、`build`、`.hvigor`、`__pycache__` 等运行态，业务模块自己的单测目录照常带上）→ 把根 `extensions/` 的当前开发源（含未提交改动）
-装进模板的 `doc/extensions/`、按原生物化写宿主入口 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步不成立，模板作废、
-不建 Case、不起跑，修好后重新装配。各 Case 工作区从模板复制，
-再放入该 Case 的输入；启动前检查路径边界与软链接，并在 `workspace-boundary.json` 记录 demo 提交、`copied`、`excluded`、安装结果和各 Case 的
-`case_seeded`。
+`oh_modules`、`build`、`.hvigor`、`__pycache__` 等运行态，业务模块自己的单测目录照常带上）→ 换上被测 Framework：按
+[`test/config/framework-under-test.json`](config/framework-under-test.json) 从维护仓 Git 的固定发布提交取 framework 子树原始字节（核树 OID 与发布清单，
+只留 harness 依赖、锁文件、运行报告与状态等运行态，依赖声明变了就停），核并应用同一文件登记的本地宿主补丁，配置的 `materialized_adapters`
+纳入登记的 adapter，在干净进程环境里跑原生 UPDATE 物化，核补丁动过的子代理模板与物化产物逐字节同源 → 把根 `extensions/` 的当前开发源
+（含未提交改动）装进模板的 `doc/extensions/`、按原生物化写宿主入口 → 核模板与开发源逐字节同源 → 再核 demo 提交与干净状态未变。任一步
+不成立，模板作废、不建 Case、不起跑，修好后重新装配。demo 平时保持其已接入的 Framework；被测组合只存在于模板。各 Case 工作区从模板复制，
+再放入该 Case 的输入；启动前检查路径边界与软链接，并在 `workspace-boundary.json` 记录 demo 提交、被测 Framework（发布提交、树 OID、版本与
+source_commit、补丁及其摘要、物化清单、子代理产物摘要）、`copied`、`excluded`、安装结果和各 Case 的 `case_seeded`。
 
 ### 1.3 人手试用
 

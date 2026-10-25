@@ -1078,6 +1078,16 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         patcher = mock.patch.object(run_multi_case.publish_to_demo, "_entries", fake_entries)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # 换被测 Framework 与原生物化同理：真发布树上的装配由 test_verifier_chain_in_workspace 从空目录建两次核过
+        self.framework_calls: list[str] = []
+
+        def fake_framework(template):
+            self.framework_calls.append(str(template))
+            return {"release_commit": "fake"}
+
+        framework_patcher = mock.patch.object(run_multi_case, "install_framework_under_test", fake_framework)
+        framework_patcher.start()
+        self.addCleanup(framework_patcher.stop)
 
     def build_template(self, demo: Path, suite_id: str) -> Path:
         root = demo.parent
@@ -1110,6 +1120,7 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         self.assertFalse((ext / "hooks/retired/old.mjs").exists(), "demo 里上一版的机制文件残留在 template")
         self.assertEqual([str(template)] * 2, [call[0] for call in self.entry_calls],
                          "宿主入口没有按「写前核 → 物化」在 template 上各走一次")
+        self.assertEqual([str(template)], self.framework_calls, "被测 Framework 没有装进 template")
         after = {p.relative_to(demo).as_posix(): p.read_bytes() for p in demo.rglob("*") if p.is_file()}
         self.assertEqual(snapshot, after, "装配写了 demo")
         boundary = run_multi_case.read_json(root / "suite" / "workspace-boundary.json")

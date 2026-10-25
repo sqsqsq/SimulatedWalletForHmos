@@ -29,3 +29,6 @@ doc/archive/2.0.0-before-three-batches-20261025/plan/** -text whitespace=blank-a
 doc/archive/2.0.0-before-three-batches-20261025/spec/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 doc/archive/story-1.0/44cba622/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 doc/archive/story-before-rewrite/19d26cad/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+
+# 被测 Framework 的本地宿主补丁按原字节应用，检出不转换换行。
+test/fixtures/framework-local/*.patch -text
