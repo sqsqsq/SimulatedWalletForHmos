@@ -1,3 +1,6 @@
+# 2026-10-25 1.9.9 收口（用户确认1.9.9结项，设计者复评通过）：按发布提交b4fbf433实测重签五类与总target，status改closed。
+#    实测17042（mjs 4962 / py 4283 / hooks 4503 / prompts 2513 / data 781）；整版endpoint G3866/X948对G3900，均由 test/scripts/budget_report.py 复算。
+#    interim_ceiling保留原值（均不低于实测）；下方各条“当前/预测”均为当时状态。
 # 2026-10-24 Bug收缩：当前整版控制G3900，工作预测G110/X90，峰值17098/完成17008；不以本包G直接加整版G。
 # 原G250累计分母和真实G4100确认保留历史，不援用旧上限扩大实现；当前依据发布前方案00/05及标准@13。
 # 历史：2026-10-24 13:06用户确曾确认G250/X105与G4100，原答复已核；最新Bug收缩要求取代当前执行范围，见方案05。
@@ -42,7 +45,7 @@
 # 2026-09-29 1.9.8 收口（用户指令「准备发布 1.9.8」，设计者发布条件复核通过）：实测 13993（py 3149 / mjs 3881 / hooks 4019 / prompts 2222 / data 722），
 #    与签定完成目标一致，status 改 closed。R197 基线 13809：新增 79、退出 13，另 118 行因计量覆盖安装器移入；峰值 14167 未触及。发布说明 doc/release/1.9.8.md。
 # 接线现状（规则在根 AGENTS.md §5，此处只记检查实现到哪）：本文件与 test_mechanism_budget.py 检查分类总量、峰值与完成目标；
-#    R=累计新增/初始新增预算的 100%/125%/150% 分级计算与确认检查尚未接线，由 reviewer 按 AGENTS §5 人工执行。
+#    多维统计与R分级由 test/scripts/budget_report.py 按 release/packages 段计算，只报告不拦；确认与必要性仍由 reviewer 按 AGENTS §5 判断。
 #    已在执行的需求不回退重启、不重置既有额度，也不把历史总量当新增预算；reviewer 在下一次预算复核时补齐新增/退出账与适用起点。
 #    原维护代码/测试的 700 基准与 1300 执行额度随 2026-09-28 计量范围裁定退出，下方相关记录只作历史。
 # 2026-09-28 按用户新计量范围签认；旧日志/签字为历史，不再决定当前范围。
@@ -286,49 +289,62 @@ version: 2
 frozen_at: "2026-09-04"
 frozen_commit: "a1026080"
 
+# 整版控制：budget_report 的 control.version 用它。baseline_ref 是上一正式版的计量提交，control_g 对照 endpoint.G。
+release:
+  id: "1.9.9"
+  baseline_ref: "2fb4c304"
+  control_g: 3900
+  approved_by: 用户2026-10-24确认整版G3900；见发布前方案00 §4及05
+  reason: 1.9.8基线14124；发布实测endpoint G3866/X948。
+
+# 实施包：R=该包起点以来逐提交累计G（budget_report 的 package.invested）/ approved_g，分母不因改签重置。
+# 每项 id、start_ref、approved_g、approved_by；可选 predicted（total 或责任项名 → {g, x}）、scopes（责任项 → extensions 内路径 glob）、
+# confirmations（band 为 125–150% 或 >150%，写 by/at/ref）。1.9.9 及以前的包不回填，分母见注释与方案。
+packages: []
+
 # 当前进行中的需求。status 由该需求收口那一步改为 closed；closed 后 target 即长期上限。
 requirement:
   id: 1.9.9-材料图文交互适配与可靠性
-  status: in_progress
-  approved_by: 用户2026-10-24要求按Bug修复收缩且不直接抬高上限；设计者Codex核本次必要预测，原G250批准分母保留；见发布前方案00及05
-  reason: 当前整版结构G3900；原G4100确认保留历史但不作扩量依据。Bug修复预测G110/X90，当前16988，实际整版端点按原算法重算。
+  status: closed
+  approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+  reason: 1.9.9已发布（b4fbf433）；按实测17042收口，整版G3866在G3900内。closed后target为长期上限，下一需求开工时按其方案重签。
 
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan）
     interim_ceiling: 4976
-    target: 4948
-    approved_by: 用户2026-10-24要求按Bug修复收缩且不直接抬高上限；设计者Codex核本次必要预测，原G250批准分母保留；见发布前方案00及05
-    reason: 当前4946；就地修复职责预计G30/X28，分类仅定位，旧机制退场及整版G3900另核；未实施预测不作完成实测。
+    target: 4962
+    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+    reason: 1.9.9发布实测4962，原完成预测4948。
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
     interim_ceiling: 4289
-    target: 4269
-    approved_by: 用户2026-10-24要求按Bug修复收缩且不直接抬高上限；设计者Codex核本次必要预测，原G250批准分母保留；见发布前方案00及05
-    reason: 当前4257；就地修复职责预计G32/X20，分类仅定位，旧机制退场及整版G3900另核；未实施预测不作完成实测。
+    target: 4283
+    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+    reason: 1.9.9发布实测4283，原完成预测4269。
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
     interim_ceiling: 4516
-    target: 4501
-    approved_by: 用户2026-10-24要求按Bug修复收缩且不直接抬高上限；设计者Codex核本次必要预测，原G250批准分母保留；见发布前方案00及05
-    reason: 当前4497；就地修复职责预计G19/X15，分类仅定位，旧机制退场及整版G3900另核；未实施预测不作完成实测。
+    target: 4503
+    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+    reason: 1.9.9发布实测4503，原完成预测4501。
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
     interim_ceiling: 2531
-    target: 2510
-    approved_by: 用户2026-10-24要求按Bug修复收缩且不直接抬高上限；设计者Codex核本次必要预测，原G250批准分母保留；见发布前方案00及05
-    reason: 当前2509；就地修复职责预计G22/X21，分类仅定位，旧机制退场及整版G3900另核；未实施预测不作完成实测。
+    target: 2513
+    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+    reason: 1.9.9发布实测2513，原完成预测2510。
   data:
     description: contracts/*.json、rules/*.yaml、manifest.yaml
     interim_ceiling: 786
-    target: 780
-    approved_by: 用户2026-10-24要求按Bug修复收缩且不直接抬高上限；设计者Codex核本次必要预测，原G250批准分母保留；见发布前方案00及05
-    reason: 当前779；就地修复职责预计G7/X6，分类仅定位，旧机制退场及整版G3900另核；未实施预测不作完成实测。
+    target: 781
+    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+    reason: 1.9.9发布实测781，原完成预测780。
 total:
   interim_ceiling: 17098
-  target: 17008
-  approved_by: 用户2026-10-24要求按Bug修复收缩且不直接抬高上限；设计者Codex核本次必要预测，原G250批准分母保留；见发布前方案00及05
-  reason: 16988+110-90=17008，先增峰值17098；由原17238/17133下调。G110为修复预测而非新批准分母，原G250累计不重置；整版当前G3900，基线端点重算后判断。
+  target: 17042
+  approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+  reason: 1.9.9发布实测17042，原完成预测17008、峰值预测17098；实际逐提交峰值见 budget_report peak。
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
 # 它本来就只数可执行行，口径不变。

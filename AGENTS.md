@@ -116,8 +116,12 @@
 评审或预算记录，注明范围、额度、理由与确认角色；初始预算与累计变化保留，连续小幅改签不能规避 150% 人工确认。完成时同时核功能质量、
 实际新增、旧机制退出与最终总量：预算以内但旧实现未退出不能完成；超预算但必要合理的按上表权限调整。§3 的质量要求不能通过增加预算豁免。
 
-**现有检查只覆盖一部分**：`test/regression/mechanism-budget.yaml` 与 `test/tests/test_mechanism_budget.py` 按上述范围检查分类总量、峰值与完成目标；
-R 的分级计算与确认检查尚未接线，现有测试通过不代表分级复核已做，由 reviewer 按本节执行。接线现状与历史额度见台账文件头。
+**统计与检查**：计量只用 `python test/scripts/budget_report.py`（只读；`--package <id>` 出包维度，`--out` 存证据），不另写计量脚本。它按类型、模块、文件、
+文件状态、提交与责任项给出固定指标，交回和评审用指标名引用：`endpoint` 是基线到对象一次差分的 G/X，**整版判定用它**，对照台账 `release.control_g`；
+`invested` 是逐提交累计，**包的 R 分子用包起点以来的它**，分母是台账 `packages[].approved_g`，不因改签重置；`churn`（invested−endpoint）、
+`relocated`（移动或改缩进）、X 的来源（退出上一正式版保留行或本版新增行）与 `peak` 只用于定位与解释。`control` 只报告 R 档位、缺失的具名确认
+与各类型对台账的差额，不拦提交；必要性、替代方案与旧路径退出仍由 reviewer 按本节判断。`test_mechanism_budget.py` 检查分类总量对台账生效上限
+（进行中看 interim_ceiling，closed 看 target）及 release/packages 字段，测试通过不代表分级复核已做。历史额度与确认见台账文件头注释。
 
 ## 6. framework 接入
 
