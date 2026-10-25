@@ -7,7 +7,7 @@
 | 对象/任务 | 权威位置及读取时机 |
 |---|---|
 | 开发与消费 | `extensions/` 是开发源；`demo/` 是完整消费工程与上一正式发布版。测试装一次性template，平时不更新demo |
-| 维护需求与方案 | `doc/spec/`、`doc/plan/`；按本次目标找有效入口，新需求命名按用户级约定，旧任务原位接续 |
+| 维护需求与方案 | `doc/spec/`、`doc/plan/`；按本次目标找有效入口，新需求命名与批次/步骤按用户级约定，旧任务原位接续 |
 | 使用与发布说明 | `README.md` 只写当前状态；`doc/release/<版本>.md` 只写本版增量 |
 | 维护设计/评审与执行 | 用户级 maintenance-designer / maintenance-executor；维护Spec/Plan与消费产物不同，过程依据按用户级文档约定留存 |
 | 定方案、开工、review | 先读[TEST §6.5](test/TEST.md#65-维护标准与评审)、[全量标准](test/regression/extension-acceptance.md)及本版`doc/spec/<版本>/评价标准变更.md`；先核标准再实现，按对象取证 |
@@ -91,7 +91,7 @@
 
 **计量范围（唯一来源，用户裁定）**：只计 `extensions/` 中交付的实现与指令内容，排除 `knowledge/`、`skills/story/scripts/adapters/`
 和安装器的升级演进记录 `skills/story-adaptation/reference/upgrade-changes.md`；安装器 `skills/story-adaptation/` 的其余部分计入。依赖、缓存和
-适配现场等运行态不计；`test/`、`tools/` 的维护脚本、测试和文档不计，方案不另设预算域。有效行剥离注释/空行的算法由现有计量函数维护。
+适配现场等运行态不计；`test/`、`tools/` 的维护脚本、测试和文档不计，方案不另设预算域；执行批次不重置预算包起点或累计值，实际映射写Plan。有效行剥离注释/空行的算法由现有计量函数维护。
 
 | 触点 | 必须带到当前工作中的内容 |
 |---|---|
