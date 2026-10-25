@@ -1,0 +1,104 @@
+{
+  "snapshot": "before authorized Plan rewrite on 2026-10-25 Asia/Shanghai",
+  "base_commit": "19d26cad2eb77a70f4ea40bfe4b14c4cf3395aa6",
+  "files": [
+    {
+      "original": "doc/plan/2.0.0/00-重写准备与适配总览.md",
+      "archive": "plan/2.0.0/00-重写准备与适配总览.md",
+      "sha256": "c7d042ad988ed2cb2c59ede90b06221e852c61f91feeb9de460485fb4415f948",
+      "bytes": 10453,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/01-成果保全与基线切换.md",
+      "archive": "plan/2.0.0/01-成果保全与基线切换.md",
+      "sha256": "045edfbc927c259cb71282d302bc3d64931cd51c58632694eac270c30540e908",
+      "bytes": 10060,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/02-新版合同与适配定案.md",
+      "archive": "plan/2.0.0/02-新版合同与适配定案.md",
+      "sha256": "83ef3c72c7e2d7d6842f1541af00901a7a107f187746d7c7ac3bb0cd3e9648f5",
+      "bytes": 7395,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/03-重写实施与验收.md",
+      "archive": "plan/2.0.0/03-重写实施与验收.md",
+      "sha256": "e97004fe66a99d0a351dcb35a8da86984c568b42b17442ae07c459c4de64ef5b",
+      "bytes": 11048,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/04-旧成果与能力承接清单.md",
+      "archive": "plan/2.0.0/04-旧成果与能力承接清单.md",
+      "sha256": "735d4e234a7c839a52082a28f42c4240eb57bddbb85b0cacff010da990e6e2e1",
+      "bytes": 10136,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/05-准备盘点与保全交回.md",
+      "archive": "plan/2.0.0/05-准备盘点与保全交回.md",
+      "sha256": "1ef4e2328e0677a8f8db46b9d3344caa85f4380daa09612581f434f8c872db35",
+      "bytes": 5111,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/06-1.9.9能力实际盘点.md",
+      "archive": "plan/2.0.0/06-1.9.9能力实际盘点.md",
+      "sha256": "d59f1af0327ea6d4609e6a6f093b4f7a3b675bdebfbbd2247896bec92d26164b",
+      "bytes": 13395,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/07-旧2.x成果保全与复用盘点.md",
+      "archive": "plan/2.0.0/07-旧2.x成果保全与复用盘点.md",
+      "sha256": "0905d60be2d94f22af5f6696c3ded303fa141fafb290570f1f31174048b9f008",
+      "bytes": 9604,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/08-测试基线迁移实际清单.md",
+      "archive": "plan/2.0.0/08-测试基线迁移实际清单.md",
+      "sha256": "35ce162d25e81aa0babf4d7eb409bc2d5b7490d92ddf7519aacdfa7437906b00",
+      "bytes": 13431,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/09-旧轮次归档与新版本起点.md",
+      "archive": "plan/2.0.0/09-旧轮次归档与新版本起点.md",
+      "sha256": "d158e5124640c3e7d7d40132af371011c79579c59846720faeb93e2886a0ba5c",
+      "bytes": 3928,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/10-Framework-main新版核对与方案调整.md",
+      "archive": "plan/2.0.0/10-Framework-main新版核对与方案调整.md",
+      "sha256": "8af86708050f3884bba9122e855a908c9ddf7ba865ac8adda496cb28810afb58",
+      "bytes": 14662,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/plan/2.0.0/评审意见/2026-10-18-重写方案整体审视.md",
+      "archive": "plan/2.0.0/评审意见/2026-10-18-重写方案整体审视.md",
+      "sha256": "ddf232095a24318a19eb399b88794b3873579f24859edcda60af4b03c8e2c115",
+      "bytes": 15917,
+      "source": "working-tree plan, unchanged from 19d26cad"
+    },
+    {
+      "original": "doc/spec/2.0.0/00-版本范围.md",
+      "archive": "spec/2.0.0/00-版本范围.md",
+      "sha256": "2a8c8cdc540e3cf720e7841b6a59038ce9e1694452bd08ab7621005be25c1759",
+      "bytes": 6652,
+      "source": "19d26cad"
+    },
+    {
+      "original": "doc/spec/2.0.0/01-蓝图与Story职责讨论.md",
+      "archive": "spec/2.0.0/01-蓝图与Story职责讨论.md",
+      "sha256": "ca86acf4a7718d8da769e477a2e4c32cbfaf83033a9844f2f274c835f9434ca3",
+      "bytes": 9966,
+      "source": "19d26cad"
+    }
+  ]
+}

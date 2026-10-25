@@ -1,0 +1,119 @@
+{
+  "event": "user-authorized three-deliverable batch reorganization on 2026-10-25",
+  "files": [
+    {
+      "original": "doc/plan/2.0.0/00-重写准备与适配总览.md",
+      "archive": "plan/2.0.0/00-重写准备与适配总览.md",
+      "sha256": "ba2f92b96d9c84e9161be041bbebc3c06e3088b9f3aa07ed2a2f879e836cbfe5",
+      "bytes": 9197
+    },
+    {
+      "original": "doc/plan/2.0.0/01-成果保全与基线切换.md",
+      "archive": "plan/2.0.0/01-成果保全与基线切换.md",
+      "sha256": "551481c147d36d36bdc85f2d294b2070af97b90e6a6d4faa1532ad568846725e",
+      "bytes": 18463
+    },
+    {
+      "original": "doc/plan/2.0.0/02-新版合同与适配定案.md",
+      "archive": "plan/2.0.0/02-新版合同与适配定案.md",
+      "sha256": "e5f306f98a0da7c46fc232da80fad8d68ff1a53993fde8a3ced4871cb38c9624",
+      "bytes": 25568
+    },
+    {
+      "original": "doc/plan/2.0.0/03-重写实施与验收.md",
+      "archive": "plan/2.0.0/03-重写实施与验收.md",
+      "sha256": "a41255b84cd611672160c82e87845b892da0fd47270f67af1ca15f8c357dd1f6",
+      "bytes": 12915
+    },
+    {
+      "original": "doc/plan/2.0.0/04-旧成果与能力承接清单.md",
+      "archive": "plan/2.0.0/04-旧成果与能力承接清单.md",
+      "sha256": "079afe52c7405d0c5bcca9031c5cc3df6d0cb98bcdad7e5c95d5a1ac6e3921fa",
+      "bytes": 7027
+    },
+    {
+      "original": "doc/plan/2.0.0/05-准备盘点与保全交回.md",
+      "archive": "plan/2.0.0/05-准备盘点与保全交回.md",
+      "sha256": "2762f33a2168dd7d9eaae8b9eecf5f9f044b2c3519186cd4feff8a4ad8c2f689",
+      "bytes": 644
+    },
+    {
+      "original": "doc/plan/2.0.0/06-1.9.9能力实际盘点.md",
+      "archive": "plan/2.0.0/06-1.9.9能力实际盘点.md",
+      "sha256": "3553771cc8f4cf35a17825dbf77b22535fa2b9b8656b126faad2b9767f8ee1e3",
+      "bytes": 631
+    },
+    {
+      "original": "doc/plan/2.0.0/07-旧2.x成果保全与复用盘点.md",
+      "archive": "plan/2.0.0/07-旧2.x成果保全与复用盘点.md",
+      "sha256": "7e8ee043c1e5c5309c920ff5315789c57b72624d673c49259fd3dd1f47c4a595",
+      "bytes": 651
+    },
+    {
+      "original": "doc/plan/2.0.0/08-测试基线迁移实际清单.md",
+      "archive": "plan/2.0.0/08-测试基线迁移实际清单.md",
+      "sha256": "0833ac7049eacf7013bb6e0d6c93d1891f1e9f5d84e5152cd780e888d09dd629",
+      "bytes": 645
+    },
+    {
+      "original": "doc/plan/2.0.0/09-旧轮次归档与新版本起点.md",
+      "archive": "plan/2.0.0/09-旧轮次归档与新版本起点.md",
+      "sha256": "a00e9c34e8f2e87617712bb6d2e39d04654db9be1d411d25e6ef397daadf055e",
+      "bytes": 650
+    },
+    {
+      "original": "doc/plan/2.0.0/10-Framework-main新版核对与方案调整.md",
+      "archive": "plan/2.0.0/10-Framework-main新版核对与方案调整.md",
+      "sha256": "523248b561cfc309777a2a6eda9589a9ef05076eef7bb618cc2b25e6ec1ac040",
+      "bytes": 667
+    },
+    {
+      "original": "doc/plan/2.0.0/11-最新输入与调查依据.md",
+      "archive": "plan/2.0.0/11-最新输入与调查依据.md",
+      "sha256": "2094c4d39df3ed2bd1ae045e57dea98ad20abe377cd9af6a1681420248da69a0",
+      "bytes": 15780
+    },
+    {
+      "original": "doc/plan/2.0.0/12-测试基线迁移与验收.md",
+      "archive": "plan/2.0.0/12-测试基线迁移与验收.md",
+      "sha256": "f1792a85b30c2b46f4c9fe870a6b9eec49cc7a40c4eafffe755005ab56be235d",
+      "bytes": 13122
+    },
+    {
+      "original": "doc/plan/2.0.0/13-预算估算与记账.md",
+      "archive": "plan/2.0.0/13-预算估算与记账.md",
+      "sha256": "9150230728725e88991f1a4b282893cd979ad6122f8099e239b6340b2da1b725",
+      "bytes": 14926
+    },
+    {
+      "original": "doc/plan/2.0.0/14-DSH宿主接入.md",
+      "archive": "plan/2.0.0/14-DSH宿主接入.md",
+      "sha256": "c3f80aef8992141611c50a389d7b63cd7e34b0b8d7739b08dc8cf6a83c620304",
+      "bytes": 8343
+    },
+    {
+      "original": "doc/plan/2.0.0/15-测试模块迁移清单.csv",
+      "archive": "plan/2.0.0/15-测试模块迁移清单.csv",
+      "sha256": "4f3f2877b88cbb75d34c24c71c5afd85aea4df5c89d988d292f107e3f1cd320c",
+      "bytes": 33162
+    },
+    {
+      "original": "doc/plan/2.0.0/评审意见/2026-10-25-141258-完整适配方案整体复核.md",
+      "archive": "plan/2.0.0/评审意见/2026-10-25-141258-完整适配方案整体复核.md",
+      "sha256": "384dfd55e47b0f4e990e30f2b3936edb62f5effbaabf382454f66dfb7595aae4",
+      "bytes": 10862
+    },
+    {
+      "original": "doc/spec/2.0.0/00-版本范围.md",
+      "archive": "spec/2.0.0/00-版本范围.md",
+      "sha256": "5a5590d0a0e68663312f973c4dfaa9401d762ea108f4b088d1d464c5f42c96fc",
+      "bytes": 26407
+    },
+    {
+      "original": "doc/spec/2.0.0/01-蓝图与Story职责讨论.md",
+      "archive": "spec/2.0.0/01-蓝图与Story职责讨论.md",
+      "sha256": "e8253dbd00a7f780a39dacaffe8f331a22ea795c5c8f7791c9a4b7a1095d1c44",
+      "bytes": 10412
+    }
+  ]
+}
