@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1000" viewBox="0 176 1920 1000" role="img" aria-labelledby="title desc">
+<title id="title">Framework 与 Story Extension 版本及能力演进</title>
+<desc id="desc">两条产品线按基础流程、能力增强、在研深化和后续方向排列。Framework 已发布至3.0，Extension已发布至1.9.8；3.1与1.9.9、2.x仍在开发验证。阶段对齐不表示同期发布。</desc>
+<defs>
+ <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#F3F6FC"/><stop offset="1" stop-color="#E8EEF7"/></linearGradient>
+ <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#183459" flood-opacity="0.08"/></filter>
+ <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L7 4 L0 8" fill="none" stroke="#A4B3C6" stroke-width="1.4"/></marker>
+</defs>
+<style>text {font-family:'Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif;} .small{font-size:18px} .body{font-size:21px} .muted{fill:#60718A} .strong{font-weight:700}</style>
+<rect x="0" y="176" width="1920" height="1000" fill="url(#bg)"/>
+
+<text x="64" y="220" font-size="29" fill="#2467BD" font-weight="700">01</text>
+<text x="120" y="219" font-size="26" fill="#203956" font-weight="700">建立基础</text>
+<text x="120" y="249" font-size="18" fill="#6B7C92" font-weight="400">流程与职责明确</text>
+<path d="M455 217 H502" stroke="#A4B3C6" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="520" y="220" font-size="29" fill="#2467BD" font-weight="700">02</text>
+<text x="576" y="219" font-size="26" fill="#203956" font-weight="700">增强能力</text>
+<text x="576" y="249" font-size="18" fill="#6B7C92" font-weight="400">跨工程复用与可靠性</text>
+<path d="M911 217 H958" stroke="#A4B3C6" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="976" y="220" font-size="29" fill="#B87517" font-weight="700">03</text>
+<text x="1032" y="219" font-size="26" fill="#203956" font-weight="700">在研深化</text>
+<text x="1032" y="249" font-size="18" fill="#6B7C92" font-weight="400">复杂需求协作与交付</text>
+<path d="M1367 217 H1414" stroke="#A4B3C6" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1432" y="220" font-size="29" fill="#7E6BA4" font-weight="700">04</text>
+<text x="1488" y="219" font-size="26" fill="#203956" font-weight="700">后续方向</text>
+<text x="1488" y="249" font-size="18" fill="#6B7C92" font-weight="400">按真实效果继续演进</text>
+<rect x="64" y="280" width="6" height="40" rx="3" fill="#2467BD" stroke="none" />
+<text x="82" y="307" font-size="27" fill="#2467BD" font-weight="700">Framework</text>
+<text x="430" y="306" font-size="20" fill="#586D87" font-weight="400">AI 研发执行与质量保障：设计、开发、验证与恢复</text>
+<rect x="64" y="336" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="64" y="336" width="424" height="7" rx="3" fill="#2467BD" stroke="none" />
+<text x="88" y="381" font-size="28" fill="#1D3551" font-weight="700">1.x</text>
+<rect x="88" y="397" width="96" height="30" rx="15" fill="#EAF3FF" stroke="none" />
+<text x="101" y="418" font-size="16" fill="#2467BD" font-weight="700">已发布</text>
+<text x="88" y="455" font-size="22" fill="#2467BD" font-weight="700">解决：步骤与完成标准不统一</text>
+<text x="88" y="487" font-size="20" fill="#263D59" font-weight="700">研发全流程</text>
+<text x="88" y="515" font-size="19" fill="#61738B" font-weight="400">需求 → 设计 → 编码 → 审查 → 测试</text>
+<text x="88" y="555" font-size="20" fill="#263D59" font-weight="700">质量控制起步</text>
+<text x="88" y="583" font-size="19" fill="#61738B" font-weight="400">自动检查 + 独立审查 + 完成回执</text>
+<text x="88" y="610" font-size="19" fill="#61738B" font-weight="400">鸿蒙真实编译、单元测试执行</text>
+<line x1="88" x2="464" y1="641" y2="641" stroke="#E6ECF3"/>
+<text x="88" y="672" font-size="18" fill="#2467BD" font-weight="600">形成：可检查、可追溯的研发流程</text>
+<rect x="520" y="336" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="520" y="336" width="424" height="7" rx="3" fill="#2467BD" stroke="none" />
+<text x="544" y="381" font-size="28" fill="#1D3551" font-weight="700">2.x → 3.0</text>
+<rect x="544" y="397" width="96" height="30" rx="15" fill="#EAF3FF" stroke="none" />
+<text x="557" y="418" font-size="16" fill="#2467BD" font-weight="700">已发布</text>
+<text x="544" y="455" font-size="22" fill="#2467BD" font-weight="700">解决：难复用、执行失败难恢复</text>
+<text x="544" y="487" font-size="20" fill="#263D59" font-weight="700">2.0–2.2｜通用化与工程接入</text>
+<text x="544" y="515" font-size="19" fill="#61738B" font-weight="400">平台分层、扩展点、配置与真机自动化</text>
+<text x="544" y="555" font-size="20" fill="#263D59" font-weight="700">2.3 → 3.0｜目标执行与证据</text>
+<text x="544" y="583" font-size="19" fill="#61738B" font-weight="400">Goal 推进、测试证据、分层完成</text>
+<text x="544" y="610" font-size="19" fill="#61738B" font-weight="400">跨阶段恢复，减少重复执行</text>
+<line x1="544" x2="920" y1="641" y2="641" stroke="#E6ECF3"/>
+<text x="544" y="672" font-size="18" fill="#2467BD" font-weight="600">形成：可复用、有证据的研发底座</text>
+<rect x="976" y="336" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="976" y="336" width="424" height="7" rx="3" fill="#AC6A0C" stroke="none" />
+<text x="1000" y="381" font-size="28" fill="#1D3551" font-weight="700">3.1</text>
+<rect x="1000" y="397" width="138" height="30" rx="15" fill="#FFF2DD" stroke="none" />
+<text x="1013" y="418" font-size="16" fill="#AC6A0C" font-weight="700">开发与验证中</text>
+<text x="1000" y="455" font-size="22" fill="#AC6A0C" font-weight="700">目标：AI 主导复杂任务交付</text>
+<text x="1000" y="487" font-size="20" fill="#263D59" font-weight="700">蓝图组织设计，AI 推进交付</text>
+<text x="1000" y="515" font-size="19" fill="#61738B" font-weight="400">CU 拆分施工，衔接实现、审查与测试</text>
+<text x="1000" y="555" font-size="20" fill="#263D59" font-weight="700">动态执行与失败恢复</text>
+<text x="1000" y="583" font-size="19" fill="#61738B" font-weight="400">动态工作流、统一知识、人读蓝图</text>
+<text x="1000" y="610" font-size="19" fill="#61738B" font-weight="400">人保留关键决策；真实验收仍待完成</text>
+<line x1="1000" x2="1376" y1="641" y2="641" stroke="#E6ECF3"/>
+<text x="1000" y="672" font-size="18" fill="#AC6A0C" font-weight="600">边界：有实现与构建件，未整体发布</text>
+<rect x="1432" y="336" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="1432" y="336" width="424" height="7" rx="3" fill="#78608E" stroke="none" />
+<text x="1456" y="381" font-size="28" fill="#1D3551" font-weight="700">3.2 及后续</text>
+<rect x="1456" y="397" width="96" height="30" rx="15" fill="#F0EAF6" stroke="none" />
+<text x="1469" y="418" font-size="16" fill="#78608E" font-weight="700">规划方向</text>
+<text x="1456" y="455" font-size="22" fill="#78608E" font-weight="700">方向：扩大适用面与证据深度</text>
+<text x="1456" y="487" font-size="20" fill="#263D59" font-weight="700">Android 与 Web 工程支持</text>
+<text x="1456" y="515" font-size="19" fill="#61738B" font-weight="400">扩展移动端与 Web 的工程适用范围</text>
+<text x="1456" y="555" font-size="20" fill="#263D59" font-weight="700">证据与运行机制深化</text>
+<text x="1456" y="583" font-size="19" fill="#61738B" font-weight="400">逐用例证据绑定、视觉与构建指纹</text>
+<text x="1456" y="610" font-size="19" fill="#61738B" font-weight="400">旧基线清理、完整性与授权增强</text>
+<line x1="1456" x2="1832" y1="641" y2="641" stroke="#E6ECF3"/>
+<text x="1456" y="672" font-size="18" fill="#78608E" font-weight="600">Android 已有计划；Web 范围版本待定</text>
+<rect x="64" y="738" width="6" height="40" rx="3" fill="#087F87" stroke="none" />
+<text x="82" y="765" font-size="27" fill="#087F87" font-weight="700">Story Extension</text>
+<text x="430" y="764" font-size="20" fill="#586D87" font-weight="400">需求理解与知识应用：材料、决定、评审与变化</text>
+<rect x="64" y="794" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="64" y="794" width="424" height="7" rx="3" fill="#2467BD" stroke="none" />
+<text x="88" y="839" font-size="28" fill="#1D3551" font-weight="700">早期演进</text>
+<rect x="88" y="855" width="138" height="30" rx="15" fill="#EAF3FF" stroke="none" />
+<text x="101" y="876" font-size="16" fill="#2467BD" font-weight="700">1.9.3 之前</text>
+<text x="88" y="913" font-size="22" fill="#2467BD" font-weight="700">解决：输入分散、需求难读难审</text>
+<text x="88" y="945" font-size="20" fill="#263D59" font-weight="700">材料与需求基础</text>
+<text x="88" y="973" font-size="19" fill="#61738B" font-weight="400">取材、范围确认、Story 与 Review</text>
+<text x="88" y="1013" font-size="20" fill="#263D59" font-weight="700">理解与表达增强</text>
+<text x="88" y="1041" font-size="19" fill="#61738B" font-weight="400">整篇写作设计、图文材料、会议转写</text>
+<text x="88" y="1068" font-size="19" fill="#61738B" font-weight="400">项目知识进入设计与后续阶段</text>
+<line x1="88" x2="464" y1="1099" y2="1099" stroke="#E6ECF3"/>
+<text x="88" y="1130" font-size="18" fill="#2467BD" font-weight="600">形成：从材料到需求评审的基本链</text>
+<rect x="520" y="794" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="520" y="794" width="424" height="7" rx="3" fill="#2467BD" stroke="none" />
+<text x="544" y="839" font-size="28" fill="#1D3551" font-weight="700">1.9.3–1.9.8</text>
+<rect x="544" y="855" width="96" height="30" rx="15" fill="#EAF3FF" stroke="none" />
+<text x="557" y="876" font-size="16" fill="#2467BD" font-weight="700">已发布</text>
+<text x="544" y="913" font-size="22" fill="#2467BD" font-weight="700">解决：变化不同步、知识难落实</text>
+<text x="544" y="945" font-size="20" fill="#263D59" font-weight="700">1.9.3–1.9.4｜交互与变化</text>
+<text x="544" y="973" font-size="19" fill="#61738B" font-weight="400">会议裁决、停等收敛、统一 update</text>
+<text x="544" y="1013" font-size="20" fill="#263D59" font-weight="700">1.9.5–1.9.8｜知识与分发</text>
+<text x="544" y="1041" font-size="19" fill="#61738B" font-weight="400">指标 / 埋点设计、跨阶段知识承接</text>
+<text x="544" y="1068" font-size="19" fill="#61738B" font-weight="400">人签与审查、跨仓适配与发布分离</text>
+<line x1="544" x2="920" y1="1099" y2="1099" stroke="#E6ECF3"/>
+<text x="544" y="1130" font-size="18" fill="#2467BD" font-weight="600">形成：可更新、可迁移的需求交付</text>
+<rect x="976" y="794" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="976" y="794" width="424" height="7" rx="3" fill="#AC6A0C" stroke="none" />
+<text x="1000" y="839" font-size="28" fill="#1D3551" font-weight="700">1.9.9 ／ 2.x</text>
+<rect x="1000" y="855" width="138" height="30" rx="15" fill="#FFF2DD" stroke="none" />
+<text x="1013" y="876" font-size="16" fill="#AC6A0C" font-weight="700">两线并行开发</text>
+<text x="1000" y="913" font-size="22" fill="#AC6A0C" font-weight="700">两条主线：能力优化与蓝图适配</text>
+<text x="1000" y="945" font-size="20" fill="#263D59" font-weight="700">1.9.9｜能力优化</text>
+<text x="1000" y="973" font-size="19" fill="#61738B" font-weight="400">图文表达、递归收料、页面交互与效率</text>
+<text x="1000" y="1013" font-size="20" fill="#263D59" font-weight="700">2.x｜适配 Framework 蓝图版本</text>
+<text x="1000" y="1041" font-size="19" fill="#61738B" font-weight="400">需求依据与知识进入共同设计</text>
+<text x="1000" y="1068" font-size="19" fill="#61738B" font-weight="400">Story / Review 与 CU 施工单元衔接</text>
+<line x1="1000" x2="1376" y1="1099" y2="1099" stroke="#E6ECF3"/>
+<text x="1000" y="1130" font-size="18" fill="#AC6A0C" font-weight="600">边界：仍有返修与真实行为验证</text>
+<rect x="1432" y="794" width="424" height="362" rx="18" fill="#FFFFFF" stroke="#DCE4EF" filter="url(#shadow)"/>
+<rect x="1432" y="794" width="424" height="7" rx="3" fill="#78608E" stroke="none" />
+<text x="1456" y="839" font-size="28" fill="#1D3551" font-weight="700">后续能力规划</text>
+<rect x="1456" y="855" width="138" height="30" rx="15" fill="#F0EAF6" stroke="none" />
+<text x="1469" y="876" font-size="16" fill="#78608E" font-weight="700">澄清 / 建议阶段</text>
+<text x="1456" y="913" font-size="22" fill="#78608E" font-weight="700">方向：可度量、可把关、少干预</text>
+<text x="1456" y="945" font-size="20" fill="#263D59" font-weight="700">使用与效果可度量</text>
+<text x="1456" y="969" font-size="19" fill="#61738B" font-weight="400">需求记录 + Git，跨项目分析使用效果</text>
+<text x="1456" y="999" font-size="20" fill="#263D59" font-weight="700">AI 提交前 Review</text>
+<text x="1456" y="1023" font-size="19" fill="#61738B" font-weight="400">AI 检视修复，committer 聚焦架构设计</text>
+<text x="1456" y="1053" font-size="20" fill="#263D59" font-weight="700">更可靠的 AI 交付</text>
+<text x="1456" y="1077" font-size="19" fill="#61738B" font-weight="400">自动取材、同步与恢复，保留关键人决策</text>
+<line x1="1456" x2="1832" y1="1099" y2="1099" stroke="#E6ECF3"/>
+<text x="1456" y="1130" font-size="18" fill="#78608E" font-weight="600">度量需求澄清中；其余为建议规划</text>
+</svg>
