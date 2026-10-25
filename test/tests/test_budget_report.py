@@ -64,6 +64,10 @@ class SyntheticHistory(unittest.TestCase):
                  "scopes": {"钩子": ["hooks/*"], "技能": ["skills/*"]}},
                 {"id": "p-ok", "start_ref": cls.c1, "approved_g": 2,
                  "confirmations": [{"band": "125–150%", "by": "reviewer", "at": "2026-10-25"}]},
+                {"id": "p-no-by", "start_ref": cls.c1, "approved_g": 2,
+                 "confirmations": [{"band": "125–150%", "at": "2026-10-25"}]},
+                {"id": "p-blank-by", "start_ref": cls.c1, "approved_g": 2,
+                 "confirmations": [{"band": "125–150%", "by": "  ", "at": "2026-10-25"}]},
             ]}, allow_unicode=True), encoding="utf-8")
         cls.r = br.build(root, cls.ledger, None, br.WORKTREE, "p", None)
 
@@ -111,6 +115,14 @@ class SyntheticHistory(unittest.TestCase):
     def test_named_confirmation_closes_the_band(self):
         r = br.build(self.root, self.ledger, None, br.WORKTREE, "p-ok", None)
         self.assertFalse(r["package"]["control"]["confirmation_missing"])
+        self.assertEqual(1, len(r["package"]["control"]["confirmations"]))
+
+    def test_confirmation_without_a_name_is_still_missing(self):
+        for pid in ("p-no-by", "p-blank-by"):
+            with self.subTest(pid):
+                c = br.build(self.root, self.ledger, None, br.WORKTREE, pid, None)["package"]["control"]
+                self.assertEqual(("125–150%", True, []), (c["band"], c["confirmation_missing"], c["confirmations"]))
+                self.assertIn("缺具名确认", br.markdown(br.build(self.root, self.ledger, None, br.WORKTREE, pid, None)))
 
     def test_control_only_reports(self):
         c = self.r["control"]

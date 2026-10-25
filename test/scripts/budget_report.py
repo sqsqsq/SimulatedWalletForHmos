@@ -295,7 +295,8 @@ def package_report(repo: Path, ledger: dict, pid: str, to: str, base: Snapshot, 
         ratio = inv["total"]["G"] / approved
         name, action = band(ratio)
         need = {"125–150%": ("125–150%", ">150%"), ">150%": (">150%",)}.get(name, ())
-        got = [c for c in entry.get("confirmations") or [] if str(c.get("band")) in need]
+        got = [c for c in entry.get("confirmations") or []   # 具名：没写确认人的不算确认
+               if str(c.get("band")) in need and str(c.get("by") or "").strip()]
         ctl.update({"R": round(ratio, 4), "band": name, "action": action,
                     "confirmations": got, "confirmation_missing": bool(need) and not got})
     pred = entry.get("predicted") or {}
