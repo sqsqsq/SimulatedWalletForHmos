@@ -1,0 +1,88 @@
+# 需求方按实际停等顺序说的话；不注入初始 prompt。
+# 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
+# 一条记一个业务决定及它适用的问题，按实际问到的事取用；一次问几件就逐项具名答，带上议题与结果（TEST.md §3.2）。
+# expected_turn 只是预估顺序，不是必问清单；没问到的不预送。
+# 模型第一次停在材料关卡时，产品稿与接受侧界面说明一次交齐；之后材料关卡再问才答「材料就这些」（TEST §3.2）。
+# 下面几条业务立场只在模型实际问到那件事时才说；没问到就不说，也不提前透露工程里缺什么。
+replies:
+  - id: hand-over-the-product-doc
+    expected_turn: 1
+    expected_kind: story_gate
+    expected_phase: story
+    # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
+    deliver:
+      - 数字车钥匙分享.docx
+      - 车钥匙接受侧界面说明.docx
+    text: 补充材料，产品需求稿和接受侧界面说明都已放入需求目录。
+
+  - id: materials-complete
+    expected_turn: 2
+    expected_kind: story_gate
+    expected_phase: story
+    text: 本单的材料就这些。
+
+  - id: scope-no-split
+    expected_turn: 3
+    expected_kind: story_gate
+    expected_phase: story
+    text: 本单的钱包发起侧和接受侧整体承载，不拆单。
+
+  # 产品稿撤销宽限写 24 小时、系统设计写 48 小时，模型把冲突摆出来问人时的立场（第二段评审会再改成 36 小时）。
+  - id: grace-window-initial
+    expected_turn: 4
+    expected_kind: story_gate
+    expected_phase: story
+    text: 宽限按 48 小时，指对方设备上的卡片多久收回；车辆那边一撤销就拒绝，这个不变。
+
+  # 产品稿假设车钥匙卡片已经上线，工程里却没有这张卡片（有意保留的工程事实探针）。模型问到入口挂在哪、卡片由谁展示时的立场。
+  - id: car-key-card-scope
+    expected_turn: 5
+    expected_kind: story_gate
+    expected_phase: story
+    text: 这次钱包端把车钥匙卡片在卡包里的展示和分享入口一起补上，对方接受成功的钥匙也在卡包里展示；真车开锁、凭据签发和设备上的能力不在这次做。
+
+  # 车云接口在工程里还用不了，模型问到怎么承载时的立场。
+  - id: no-real-interface
+    expected_turn: 6
+    expected_kind: story_gate
+    expected_phase: story
+    text: 可以先按定好的接口用模拟数据把钱包端的交互和状态验证起来；和车云的真实联调另算，这次不算验过。
+
+  # 模型问到发起分享中途被打断能不能接着办时的立场。
+  - id: draft-resume-boundary
+    expected_turn: 7
+    expected_kind: story_gate
+    expected_phase: story
+    text: 退出页面、断网、把应用关掉再打开，回来都要能接着办；发出成功、退出登录或者换了账号就清掉，不能串到别的账号。
+
+  # 系统设计列了失效事件，但分享被接受比例要一条分享算一次，两侧钱包的事件拼不出来。模型问到这个比例由谁统计、要不要报失效时的立场。
+  - id: acceptance-ratio-owner
+    expected_turn: 8
+    expected_kind: story_gate
+    expected_phase: story
+    text: 分享被接受比例按车云的分享记录统计，钱包端只报发起、接受、撤销三个流程的结果，不另报失效。
+
+  # 宿主先核过模型列出的表里的事实，再用这条确认；有错就指出那一行。
+  - id: terms-confirmed
+    expected_turn: 9
+    expected_kind: story_gate
+    expected_phase: spec
+    text: 你列出的这些术语映射确认。
+
+  - id: enter-plan
+    expected_turn: 10
+    expected_kind: story_gate
+    expected_phase: spec
+    text: 继续准备本单的交付方案。
+
+  # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
+  - id: update-material
+    expected_turn: 11
+    expected_kind: story_gate
+    text: 本次没有其他材料。
+
+  # 模型把评审意见里「36 小时内对方仍可开门」与「撤销起车辆侧即拒绝」的冲突摆出来问人时的立场。
+  - id: grace-window-conflict
+    expected_turn: 12
+    expected_kind: story_gate
+    text: 车辆侧撤销即拒绝不变，36 小时是对方设备上卡片收回的期限。

@@ -1,0 +1,90 @@
+# 需求方按实际停等顺序说的话；不注入初始 prompt。
+# 说人话：不点命令、不点文件名、不说该怎么处置——那些是要观测的东西。
+# 一条记一个业务决定及它适用的问题，按实际问到的事取用；一次问几件就逐项具名答，带上议题与结果（TEST.md §3.2）。
+# expected_turn 只是预估顺序，不是必问清单；没问到的不预送。
+# 顺序：问料 → 交料（含会议记录）→ 读会后逐个话题问人 → 参会人角色 → 范围 → 术语 → 交付门。
+replies:
+  - id: hand-over-the-ui-doc
+    expected_turn: 1
+    expected_kind: story_gate
+    expected_phase: story
+    # 说「放进去了」的同时文件就得在那儿，所以这一条带着补料一起送。
+    deliver:
+      - 交通卡自动充值.docx
+      - 交通卡澄清会记录-0903.docx
+    text: 补充材料，产品原稿和九月初澄清会的会议记录都放入需求目录了。
+
+  # 会议话题逐个摆出来要人拍板时的立场：它问哪一个就答哪一个，没问到的不说。
+  - id: meeting-update-interface
+    expected_turn: 2
+    expected_kind: story_gate
+    expected_phase: story
+    text: 加更新接口，按会上定的。
+  - id: meeting-ac-r1
+    expected_turn: 3
+    expected_kind: story_gate
+    expected_phase: story
+    text: AC-R1 按会上改。
+  - id: meeting-switch
+    expected_turn: 4
+    expected_kind: story_gate
+    expected_phase: story
+    text: 开关那条按会上改。
+  - id: meeting-monthly-filter
+    expected_turn: 5
+    expected_kind: story_gate
+    expected_phase: story
+    text: 充值记录按月筛选不算这张单。
+  - id: meeting-raise-amount
+    expected_turn: 6
+    expected_kind: story_gate
+    expected_phase: story
+    text: 调高面额要不要重新验证，保持待定。
+  - id: meeting-failed-contract
+    expected_turn: 7
+    expected_kind: story_gate
+    expected_phase: story
+    text: 授权后建约失败怎么处理，保持待定。
+  - id: meeting-roles
+    expected_turn: 8
+    expected_kind: story_gate
+    expected_phase: story
+    text: 参会人角色：王磊产品、陈静卡云、刘洋支付、赵敏运营、孙浩钱包开发、周婷测试。
+
+  # 交通卡云与支付部件的接口在工程里还接不上，模型问到怎么承载时的立场。只在问到时说，不提前透露工程缺什么。
+  - id: no-real-interface
+    expected_turn: 9
+    expected_kind: story_gate
+    expected_phase: story
+    text: 可以先按定好的接口用模拟数据把钱包端的签约和管理交互验证起来；和卡云、支付的真实联调另算，这次不算验过。
+
+  - id: scope-do-both-in-one
+    expected_turn: 10
+    expected_kind: story_gate
+    expected_phase: story
+    text: 策略查询与签约、状态查询与解约由本单整体承载，不拆。
+
+  # 宿主先核过模型列出的表里的事实，再用这条确认；有错就指出那一行。
+  - id: terms-confirmed
+    expected_turn: 11
+    expected_kind: story_gate
+    expected_phase: spec
+    text: 你列出的这些术语映射确认。
+
+  - id: deliver-for-review
+    expected_turn: 12
+    expected_kind: story_gate
+    expected_phase: spec
+    text: 规格定稿后归档送审。
+
+  # 第二段（update）起手在材料关卡问一次要不要补料时的回答（TEST §4.4 第 6 步）。
+  - id: update-material
+    expected_turn: 13
+    expected_kind: story_gate
+    text: 本次没有其他材料。
+
+  # 第二段：新版产品需求明确把单日上限由会上保留的 200 上调到 300（有权的新决定正例）。模型真去确认这次改版上限时的立场；不问而有据按 300 更新同样合法。
+  - id: update-daily-limit-conflict
+    expected_turn: 14
+    expected_kind: story_gate
+    text: 这版产品需求已经把本期单日上限调整为 300 元，协议文案也按 300 元更新。

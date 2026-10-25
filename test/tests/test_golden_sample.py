@@ -51,7 +51,8 @@ GOLDEN_FINGERPRINTS = {
     # 2026-09-25 过程件目录 design 改名 plan：说明里的历史分析链接改到 plan/1.9.1/ 下的实际位置，正文未动。
     # 2026-09-28 方案目录迁到仓根 doc/plan（1.9.8 P3 目录归属纠正）：同一条链接改到 doc/plan/1.9.1/，正文未动。
     # 2026-10-09 第四轮复核：退出已失效的「拦金样即判据错」门禁与「单向否决锚」说法，改为冲突时先定位来源、样本或规则；只是职责说明变更，不是业务正本审定。
-    "story-金样-AR90006-说明.md": "5b110699df7606c6",
+    # 2026-10-25 2.0.0 批次一01：1.x 版本资料移入 doc/archive/story-1.0/44cba622/，同一条历史分析链接改到归档位置，正文未动。
+    "story-金样-AR90006-说明.md": "58c6deedf49bdaa3",
     "assets/AR90006/detail-entry.png": "328419dced4a2be5",
     "assets/AR90006/disabled-state.png": "adeefcff56af7d05",
     "assets/AR90006/manage-page.png": "24fbb597b158d849",

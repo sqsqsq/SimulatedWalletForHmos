@@ -1,0 +1,34 @@
+{
+ "source_commit": "19d26cad2eb77a70f4ea40bfe4b14c4cf3395aa6",
+ "head_at_archive": "32e0a8392f7f9abd72d0732bb028aa4a85d42cb8",
+ "selection": "story 当前 doc/spec/1.x/**、doc/plan/1.x/**、doc/release/1.x.md 中与 B 同路径不同或 B 没有的原件；与 B 同 blob 的见 active-path-map.json",
+ "files": [
+  {
+   "original": "doc/release/1.9.8.md",
+   "archive": "doc/archive/story-before-rewrite/19d26cad/doc/release/1.9.8.md",
+   "blob": "829ab3fed063e44e09d1a26a056f5fe0d2471734",
+   "mode": "100644",
+   "relation": "differs_from_story-1.0",
+   "sha256": "4ebc2ddcd1e423eb8a318913fb5ef514adf0958135699564f91fa8b98578d14b",
+   "bytes": 6653
+  },
+  {
+   "original": "doc/spec/1.9.9/00-版本范围.md",
+   "archive": "doc/archive/story-before-rewrite/19d26cad/doc/spec/1.9.9/00-版本范围.md",
+   "blob": "8f5c25f052237c172ac25ddf525150d779c03e39",
+   "mode": "100644",
+   "relation": "differs_from_story-1.0",
+   "sha256": "163dcd0518834da9094edb9af12cb3a76bac665e711bb918c0c2f0aaf5e41a13",
+   "bytes": 540
+  },
+  {
+   "original": "doc/spec/1.9.9/04-稳定性与性能分析/01-分析报告.md",
+   "archive": "doc/archive/story-before-rewrite/19d26cad/doc/spec/1.9.9/04-稳定性与性能分析/01-分析报告.md",
+   "blob": "1a526a5142a845264f3ec4cf042049ed0faff597",
+   "mode": "100644",
+   "relation": "differs_from_story-1.0",
+   "sha256": "79a4340573e0d88c27d2bec65f02b25d4014dcaf41478edbcaf1278eae9489a5",
+   "bytes": 522
+  }
+ ]
+}

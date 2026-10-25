@@ -207,4 +207,4 @@ Story 是十章需求叙事（背景、术语、范围、业务方案、业务�
   - 材料里写明还没定的事项，可能没在 Story 与评审记录里露出来；
   - AI 读机制源码的次数仍然偏多，会拖长耗时。
 
-延伸阅读（链接指 Story Extension 维护仓内的文件）：[AI 交付流程与演进方向](doc/release/需求交付流程.md)；各版变化见 [`doc/release/`](doc/release/) 下的版本说明；维护本仓见 [AGENTS.md](AGENTS.md)。
+延伸阅读（链接指 Story Extension 维护仓内的文件）：[AI 交付流程与演进方向](doc/release/需求交付流程.md)；1.x 各版变化见归档的[版本说明](doc/archive/story-1.0/44cba622/doc/release/)；维护本仓见 [AGENTS.md](AGENTS.md)。
