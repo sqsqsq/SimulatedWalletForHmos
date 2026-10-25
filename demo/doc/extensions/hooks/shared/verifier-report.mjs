@@ -7,27 +7,30 @@
  * 的 `verifier_report`（仓内相对路径）。派 verifier 的那个 agent 把子代理的回复**原样全文**
  * 写到那里——写报告的是调用方，不是 verifier 自己，也没有钩子代它发布。
  *
- * 唯一调用方是交付门（`story-build check --deliver`，`delivery.mjs`）。身份归框架：报告在不在、
- * 终态块回显的 subject 对不对、verdict 与 blocker 数一致不一致，由 `check-receipt` 判。
- * 这里不重复核，只判**读者审查这一项的形态**。
+ * 报告落盘之后才核它：`reportCheck` 由本文件的命令出口、交付门（`delivery.mjs`）与 update 收口调用，
+ * 审前门禁（post_check）不读报告——它跑在派审之前，把自己的报告拉回那里就成了反向依赖。
+ * 身份归框架：报告在不在、终态块回显的 subject 对不对、verdict 与 blocker 数一致不一致，由 `check-receipt` 判。
+ * 这里只判报告形态、判据全不全、一对象一结论、处置记录，与**读者审查这一项的形态**。
  *
  * ## 判的是形态，不是内容
  *
- * 上游的输出契约是：汇总表每个检查项一行（PASS 也列，证据一行），YAML 明细只列
- * status ≠ PASS 的项。所以这里的两条判据顺着它：
+ * 上游的输出契约是：汇总表每个检查项一行（PASS 也列，证据一行），YAML 明细列 status ≠ PASS 的项。
+ * 扩展的 `story_reader_review` 另有局部明细合同，无论结论都写：
  *
  *   ① 汇总表里有 `story_reader_review` 一行，且证据格不为空——空证据与没审同形；
- *   ② 那一行 status ≠ PASS 时，明细里有 `blocking_findings` 与 `advisories` 两个键。
- * 「不逐条对账」只写在审查任务里，不用表头形态禁一种报告写法。
+ *   ② 明细里四个键（`DETAIL_KEYS`），覆盖声明对着任务书的必审集合核，结论与阻断项自洽。
+ * Plan 的义务审查（`COVERED_CHECKS` 登记的判据）走同一份局部明细合同。
  *
- * 报几条、报得对不对不判：那是资格门用成对样本量的事，不是门禁能判的。
+ * 声明全核而实际没读懂，脚本识别不了：审查能不能区分好坏稿，从真实运行的原报告对照产物判。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
+import { fileURLToPath } from 'node:url';
+import { extensionRoot, featureRoot, phaseReportsDir, readJsonOrNull, readTextOrNull, relDisplay } from './paths.mjs';
 import { parseYaml } from './yaml.mjs';
 import { fenceRanges, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
+import { COVERED_CHECKS, DETAIL_KEYS, detailProblems, reviewInputs } from './review-inputs.mjs';
 
 /**
  * 本阶段 overlay 的全部语义判据 —— 审查请求与报告核对读同一份，不在代码里另存判据清单。
@@ -50,24 +53,26 @@ export function overlayChecks(projectRoot, phase) {
   return { checks, error: null };
 }
 
-/** 报告里的表格行：`[{id, status}]`，id 是第一格、status 是第二格。 */
+/** 报告里的表格行：`[{id, status, severity}]`，按框架输出契约的列序取前三格。 */
 function tableRows(text) {
   return String(text ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('|'))
     .map(l => tableCells(l).map(c => c.replace(/`|\*/g, '').trim()))
-    .filter(c => c[0]).map(c => ({ id: c[0], status: String(c[1] ?? '').toUpperCase() }));
+    .filter(c => c[0]).map(c => ({ id: c[0], status: String(c[1] ?? '').toUpperCase(), severity: String(c[2] ?? '').toUpperCase() }));
 }
+
+/** 框架输出契约的严重度：只有 BLOCKER 级 FAIL 阻断，终态 PASS 当且仅当 blocker_count=0。 */
+const SEVERITIES = new Set(['BLOCKER', 'MAJOR', 'MINOR']);
 
 /**
  * 当前审查报告立不立得住 —— 格式、判据全不全、同一对象是不是只有一个结论、WARN 行有没有处置记录。
  *
  * 报告由调用方原样落盘在 `summary.verifier_report`。格式不合或缺判据的回复每次运行都报，不计作结论；
  * 合规的第一份登记进 `verifier.conclusions.json`，同一对象之后换了内容的回复被拒——对象没变，结论就不换。
- * 门禁写盘只有这一处登记。
- * 还没派审（报告不在）不在这里报：派不派由 framework 的 NEXT 行说。
+ * 写盘只有这一处登记。报告不在由 `reportCheck` 分情形报。
  *
  * @returns {string[]}
  */
-export function reportProblems(projectRoot, feature, phase) {
+function reportProblems(projectRoot, feature, phase) {
   const { summaryFound, abs, summary } = reportLocation(projectRoot, feature, phase);
   if (!summaryFound || !abs) return [];
   const text = readTextOrNull(abs);
@@ -83,6 +88,26 @@ export function reportProblems(projectRoot, feature, phase) {
   for (const id of Object.keys(checks)) {
     if (!ids.has(id)) problems.push(`${summary.verifier_report} 的汇总表缺判据：${id}——汇总表逐条对 rules/${phase}-rules.overlay.yaml 的 semantic_checks，缺一条的报告按阻断处理。${INVALID_EVIDENCE}`);
   }
+  // 读者审查的明细不成立也是坏稿：先核，坏稿不占这个对象的首份合规结论
+  for (const [id, purpose] of Object.entries(COVERED_CHECKS)) {
+    if (!checks[id]) continue;
+    problems.push(...judgeReport(text, summary.verifier_report, id,
+      reviewInputs(projectRoot, feature, purpose), Object.keys(checks)).problems);
+  }
+  // 阻断与否取报告自己的严重度格；缺、非法或与 overlay 声明不符都判不了，不能借它绕过阻断
+  const failed = rows.filter(r => r.status === 'FAIL');
+  for (const r of failed) {
+    const declared = String(checks[r.id]?.severity ?? '').toUpperCase();
+    if (!SEVERITIES.has(r.severity) || (declared && declared !== r.severity)) {
+      problems.push(`${summary.verifier_report}：汇总表 ${r.id} 判 FAIL，严重度格「${r.severity}」`
+        + (SEVERITIES.has(r.severity) ? `与 rules/${phase}-rules.overlay.yaml 声明的 ${declared} 不符` : '不是 BLOCKER、MAJOR、MINOR 之一')
+        + `——阻断与否按这一格判。${INVALID_EVIDENCE}`);
+    }
+  }
+  const blocking = failed.filter(r => r.severity === 'BLOCKER').map(r => r.id);
+  if (block.verdict === 'PASS' && blocking.length) {
+    problems.push(`${summary.verifier_report}：汇总表 ${blocking.join('、')} 是 BLOCKER 级 FAIL，终态块却是 PASS——结论自相矛盾，不计作结论。${INVALID_EVIDENCE}`);
+  }
   const subject = block.subject;
   const ledgerPath = path.join(path.dirname(abs), 'verifier.conclusions.json');
   const ledger = readJsonOrNull(ledgerPath) ?? {};
@@ -93,21 +118,56 @@ export function reportProblems(projectRoot, feature, phase) {
   } else if (subject && !ledger[subject] && !problems.length) {
     fs.writeFileSync(ledgerPath, `${JSON.stringify({ ...ledger, [subject]: digest }, null, 2)}\n`, 'utf-8');
   }
-  const notes = readTextOrNull(path.join(featureRoot(projectRoot, feature), phase, 'notes.md')) ?? '';
-  const undisposed = rows.filter(r => /^(WARN|FAIL)$/.test(r.status) && !notes.includes(r.id));
+  // 处置要指向这一份报告：同一行里有判据编号与报告对象的前 8 位。旧报告的同号处置不替新报告豁免；
+  // 处置写得对不对、问题是不是真解决了，归审查与作者的说明，这里只核引用在、指向当前报告。
+  const notes = (readTextOrNull(path.join(featureRoot(projectRoot, feature), phase, 'notes.md')) ?? '').split(/\r?\n/);
+  const tag = String(subject ?? '').slice(0, 8);
+  const undisposed = rows.filter(r => /^(WARN|FAIL)$/.test(r.status)
+    && !notes.some(l => l.includes(r.id) && (!tag || l.includes(tag))));
   if (undisposed.length) {
-    problems.push(`${phase}/notes.md：审查结论 ${undisposed.map(r => `${r.id}（${r.status}）`).join('、')}没有处置记录`
-      + '——门禁按判据编号在 notes.md 里找它的处置；处置的几类（返修、只改表达已重验、改了业务已再审、留给哪一阶段）'
-      + '在 phases/spec.md「闭环」');
+    problems.push(`${phase}/notes.md：审查结论 ${undisposed.map(r => `${r.id}（${r.status}）`).join('、')}没有指向这份报告的处置记录`
+      + `——同一行写判据编号与报告对象前 8 位（${tag || '终态块里的 verifier_subject_id'}）再写处置；`
+      + '处置的几类（返修、只改表达已重验、改了业务已再审、留给哪一阶段）在 phases/spec.md「闭环」');
   }
   return problems;
 }
 
+/**
+ * 当前报告核得过吗 —— 命令出口、交付门与 update 收口共用这一份判定。
+ *
+ * - summary 不在：harness 还没给出请求与落点，判不了，按失败报；
+ * - summary 里审查字段全都没有：本宿主未启用 verifier，如实是「未审」，不说成 PASS；
+ * - 有审查对象或请求而没有报告落点：summary 不完整，判不了，按核对没执行完报；
+ * - 落点上没有报告：只有修正重验沿用了有效的历史 PASS 才放行并写明未独立重审，其余按缺报告报；
+ * - 报告在：格式、判据、一对象一结论与处置记录逐项核，问题一次列全。
+ *
+ * @returns {{status: 'PASS'|'FAIL'|'NOT_REVIEWED'|'ERROR', problems: string[], notes: string[]}}
+ */
+export function reportCheck(projectRoot, feature, phase) {
+  const { summaryFound, abs, summary, where, unreadable } = reportLocation(projectRoot, feature, phase);
+  if (unreadable) return { status: 'ERROR', notes: [], problems: [`${unreadable}：本阶段审没审过判不了，不拿别处的报告顶——重跑 harness 让它重写`] };
+  if (!summaryFound) {
+    return { status: 'FAIL', notes: [], problems: [`${where} 不在：报告落点与审查请求由 harness 写进 summary——`
+      + `先完整跑一次 \`harness-runner.ts --phase ${phase} --feature ${feature}\`，按它末尾的 NEXT 派审`] };
+  }
+  if (!abs) {
+    const broken = incompleteSummary(summary, phase, feature);
+    if (broken) return { status: 'ERROR', notes: [], problems: [broken] };
+    return { status: 'NOT_REVIEWED', problems: [], notes: ['summary 里没有任何审查字段：本宿主未启用 verifier，本阶段没有独立审查，不是 PASS'] };
+  }
+  if (readTextOrNull(abs) === null) {
+    const prior = withoutCurrentReport(summary, abs, phase === 'spec');
+    return prior.status === 'PASS' ? { status: 'PASS', problems: [], notes: prior.notes ?? [] }
+      : { status: 'FAIL', problems: prior.problems, notes: [] };
+  }
+  const { error } = overlayChecks(projectRoot, phase);
+  if (error) return { status: 'ERROR', problems: [`${error}；判据读不出就核不了报告——归扩展维护者处理`], notes: [] };
+  const problems = reportProblems(projectRoot, feature, phase);
+  return { status: problems.length ? 'FAIL' : 'PASS', problems, notes: [] };
+}
+
 /** 读者审查那一项在报告里的标识 —— 判据 id 本身，不另起一个名字。 */
 const STORY_REVIEW_ID = 'story_reader_review';
-
-/** 非 PASS 时明细里必须有的两个键。可以是空列表，但不能缺席。 */
-const DETAIL_KEYS = ['blocking_findings', 'advisories'];
 
 /** 汇总表的列数：id / status / severity / 一行证据。列序见框架的输出契约。 */
 const SUMMARY_COLUMNS = 4;
@@ -125,16 +185,45 @@ const INVALID_EVIDENCE =
 /**
  * 本轮报告落在哪 —— 唯一来源是 harness 写的 `summary.verifier_report`。
  *
- * 返回 null 有两种含义，调用方按 `summary` 在不在区分：summary 都没有 = harness
- * 还没跑；summary 在而这个字段没有 = 本宿主没有审查员（verifier plan disabled），
- * 那是如实披露的状态，不是缺件。
+ * 返回 null 有几种含义，调用方区分：summary 都没有 = harness 还没跑；summary 在而审查字段
+ * 全都没有 = verifier 未启用，如实披露的状态；只缺这一项 = summary 不完整。
  */
 function reportLocation(projectRoot, feature, phase) {
-  const dir = path.join(featureRoot(projectRoot, feature), phase, 'reports');
-  const summary = readJsonOrNull(path.join(dir, 'summary.json'));
-  if (!summary) return { summaryFound: false, abs: null, summary: null };
+  let file;
+  try {
+    file = path.join(phaseReportsDir(projectRoot, feature, phase), 'summary.json');
+  } catch (e) {
+    return { summaryFound: false, abs: null, summary: null, unreadable: `${phase} 阶段报告目录判不了（framework.config.json：${e.message}）` };
+  }
+  const where = relDisplay(projectRoot, file);
+  const text = readTextOrNull(file);
+  if (text === null) return { summaryFound: false, abs: null, summary: null, where };
+  const summary = readJsonOrNull(file);
+  if (!summary) return { summaryFound: false, abs: null, summary: null, where, unreadable: `${where} 在却读不出（不是合法 JSON）` };
   const rel = typeof summary.verifier_report === 'string' ? summary.verifier_report.trim() : '';
   return { summaryFound: true, abs: rel ? path.resolve(projectRoot, rel) : null, summary };
+}
+
+/**
+ * 没有报告落点时，是「未启用审查员」还是还轮不到审、或 summary 不完整。
+ *
+ * harness-runner 只在 verifier 启用**且**本轮脚本 verdict 为 PASS 时写出审查对象、请求、报告落点三项
+ * （装配失败会把 verdict 改成 FAIL）。所以三项全缺只在 verdict 为 PASS 时才说明未启用；
+ * verdict 不是 PASS 时是脚本还没过、没派审，能力有没有判不了。只缺落点而对象或请求在，是 summary 不完整。
+ * 返回要报的问题；确属未启用返回 null。
+ */
+function incompleteSummary(summary, phase, feature) {
+  const rerun = `重新完整跑一次 \`harness-runner.ts --phase ${phase} --feature ${feature}\``;
+  const present = ['verifier_subject_id', 'verifier_request'].filter(k => typeof summary?.[k] === 'string' && summary[k].trim());
+  if (present.length) {
+    return `${phase}/reports/summary.json 有 ${present.join('、')} 却没有 verifier_report：summary 不完整，判不了本阶段审没审过`
+      + `——这三项由 harness 同时写出，${rerun}，不要手补字段`;
+  }
+  if (summary?.verdict !== 'PASS') {
+    return `${phase}/reports/summary.json 的脚本结论是 ${summary?.verdict ?? '（缺）'}：脚本门禁没过时 harness 不派审，`
+      + `本阶段还轮不到审查，也看不出宿主有没有审查员——按 harness 报的问题返修后${rerun}`;
+  }
+  return null;
 }
 
 /**
@@ -164,12 +253,12 @@ function missingReport(summary, abs) {
  * 后者在讲这一项，不是这一项的结论。**不在这里判够不够格**：格子少了是一种
  * 具体的写法问题，要能与「压根没这一行」分开报。
  */
-function summaryRow(text) {
+function summaryRow(text, id) {
   for (const line of text.split(/\r?\n/)) {
     const raw = line.trim();
     if (!raw.startsWith('|')) continue;
     const cells = tableCells(raw);
-    if (cells.length && cells[0].replace(/`/g, '') === STORY_REVIEW_ID) return cells;
+    if (cells.length && cells[0].replace(/`/g, '') === id) return cells;
   }
   return null;
 }
@@ -201,13 +290,13 @@ function checksIn(doc) {
  * 启发式，而报告里每条 check 的 `details` 都可能是块标量，块里出现什么字样都是正文——
  * 边界一旦被块里的内容带偏，读出来的就是另一条的结论，判据却照样给出答案。
  *
- * **能读出结构不等于这一条写全了**：`details` 是一段文本（`details: |`）时它下面
- * 没有任何键，照样按缺键报——那正是「没有这两类结论」。
+ * **能读出结构不等于这一条写全了**：`details` 要是映射。它是一段文本（`details: |`）、列表或缺席时，
+ * 按 `shape` 说清它实际是什么——说成「缺四个键」的话，作者会去补已经写在文字里的键。
  *
- * @returns {{details: object|null, unreadable: string|null}}
- *   `unreadable` 非空 = 这份 YAML 读不出结构，与「缺键」是两回事，要分开报。
+ * @returns {{details: object|null, shape: string|null, unreadable: string|null}}
+ *   `unreadable` 非空 = 这份 YAML 读不出结构；`shape` 非空 = 找到了这一条，`details` 却不是映射。
  */
-function readerReviewDetails(text) {
+function readerReviewDetails(text, id) {
   let unreadable = null;
   for (const body of yamlBlocks(text)) {
     let doc;
@@ -220,15 +309,15 @@ function readerReviewDetails(text) {
     const checks = checksIn(doc);
     if (!checks) continue;
     const entry = checks.find(c => c
-      && String(c.id ?? '').replace(/`/g, '').trim() === STORY_REVIEW_ID);
+      && String(c.id ?? '').replace(/`/g, '').trim() === id);
     if (!entry) continue;
     const details = entry.details;
-    return {
-      details: details && typeof details === 'object' && !Array.isArray(details) ? details : {},
-      unreadable: null,
-    };
+    const mapping = details && typeof details === 'object' && !Array.isArray(details);
+    const shape = mapping ? null : typeof details === 'string' ? '是一段文字（YAML 块字符串）'
+      : Array.isArray(details) ? '是一个列表' : details === undefined ? '没有写' : `是 ${JSON.stringify(details)}`;
+    return { details: mapping ? details : null, shape, unreadable: null };
   }
-  return { details: null, unreadable };
+  return { details: null, shape: null, unreadable };
 }
 
 /**
@@ -237,21 +326,26 @@ function readerReviewDetails(text) {
  * @returns {{status: string, problems: string[], detail: string}}
  */
 export function storyReviewProblems(projectRoot, feature, phase) {
-  const { summaryFound, abs, summary } = reportLocation(projectRoot, feature, phase);
+  const { summaryFound, abs, summary, unreadable } = reportLocation(projectRoot, feature, phase);
+  if (unreadable) return { status: 'FAIL', problems: [unreadable], reviewVerdict: null, detail: unreadable };
   if (!summaryFound) {
     return { status: 'NOT_APPLICABLE', problems: [], reviewVerdict: null,
       detail: 'harness 尚未运行，本项还轮不到判' };
   }
   if (!abs) {
+    const broken = incompleteSummary(summary, phase, feature);
+    if (broken) return { status: 'FAIL', problems: [broken], reviewVerdict: null, detail: broken };
     return {
       status: 'NOT_APPLICABLE',
       problems: [],
       reviewVerdict: null,
-      detail: '本宿主没有登记审查员（verifier 未启用），本轮没有报告可核',
+      detail: 'summary 里没有任何审查字段：本宿主未启用 verifier，本轮没有报告可核',
     };
   }
   const text = readTextOrNull(abs);
-  return text === null ? withoutCurrentReport(summary, abs) : judgeReport(text, summary.verifier_report);
+  return text === null ? withoutCurrentReport(summary, abs)
+    : judgeReport(text, summary.verifier_report, STORY_REVIEW_ID, reviewInputs(projectRoot, feature, 'story'),
+      Object.keys(overlayChecks(projectRoot, phase).checks));
 }
 
 const RESULT_BLOCK = /<!-- maison-verifier-result:v1 -->([\s\S]*?)<!-- \/maison-verifier-result:v1 -->/g;
@@ -270,7 +364,7 @@ function resultBlock(text) {
  * 且那份历史报告就是 `reviewed_subject_id` 的有效 PASS 时，按沿用交付并留一笔说明。
  * update 收口怎么核见 `phases/update.md`「二、一条线」第 9 步（flow/update.py 读 summary 实现）。
  */
-function withoutCurrentReport(summary, abs) {
+function withoutCurrentReport(summary, abs, judgeStory = true) {
   const prior = summary.verifier_closure;
   const fail = (detail, extra = '') => ({ status: 'FAIL', problems: [missingReport(summary, abs) + extra], reviewVerdict: null, detail });
   const signals = (summary.readiness_signals ?? []).map(s => s?.id ?? s);
@@ -280,9 +374,9 @@ function withoutCurrentReport(summary, abs) {
   }
   const history = readTextOrNull(path.join(path.dirname(abs), `verifier.report.${prior.reviewed_subject_id}.md`));
   const block = resultBlock(history);
-  const judged = history === null ? null : judgeReport(history);
+  const judged = history === null || !judgeStory ? null : judgeReport(history, undefined, STORY_REVIEW_ID);
   if (block?.subject !== prior.reviewed_subject_id || block?.verdict !== 'PASS'
-    || judged.problems.length || judged.reviewVerdict !== 'PASS') {
+    || (judged && (judged.problems.length || judged.reviewVerdict !== 'PASS'))) {
     return fail('沿用的历史审查无效', `；修正重验沿用的 ${String(prior.reviewed_subject_id).slice(0, 12)}… 报告（同目录 verifier.report.<对象>.md）缺席或不是有效的 PASS——沿用只在那份历史报告是 reviewed_subject_id 的有效 PASS 时成立`);
   }
   return { status: 'PASS', problems: [], reviewVerdict: 'PASS', detail: '修正重验沿用历史审查',
@@ -290,13 +384,13 @@ function withoutCurrentReport(summary, abs) {
       + `${String(prior.reviewed_subject_id).slice(0, 12)}… 的审查（未重审：${(prior.current_material_not_reverified ?? []).join('、') || '未列'}）`] };
 }
 
-/** 报告正文里读者审查这一项：汇总行、证据、非 PASS 时的两类结论。 */
-function judgeReport(text, at = 'verifier 报告') {
-  const row = summaryRow(text);
+/** 报告正文里一条局部明细判据：汇总行、证据与明细（`basis` 是当前必审集合，核历史报告时不传）。 */
+function judgeReport(text, at = 'verifier 报告', id = STORY_REVIEW_ID, basis = null, checkIds = []) {
+  const row = summaryRow(text, id);
   if (!row) {
     return {
       status: 'FAIL',
-      problems: [`${at} 的汇总表里没有 ${STORY_REVIEW_ID} 这一行——门禁按第一格等于这个 id 的表格行认它；`
+      problems: [`${at} 的汇总表里没有 ${id} 这一行——门禁按第一格等于这个 id 的表格行认它；`
         + '这一项是 story 语义质量的发现者，汇总表里找不到它就等于这一轮没审。'
         + INVALID_EVIDENCE],
       reviewVerdict: null,
@@ -308,7 +402,7 @@ function judgeReport(text, at = 'verifier 报告') {
   if (row.length < SUMMARY_COLUMNS) {
     return {
       status: 'FAIL',
-      problems: [`${at} 的汇总表：${STORY_REVIEW_ID} 那一行只有 ${row.length} 格，少了证据列——`
+      problems: [`${at} 的汇总表：${id} 那一行只有 ${row.length} 格，少了证据列——`
         + '汇总表每行四格（id、status、severity、一行证据），证据取第 4 格。' + INVALID_EVIDENCE],
       reviewVerdict: null,
       detail: `汇总表只有 ${row.length} 列`,
@@ -323,45 +417,55 @@ function judgeReport(text, at = 'verifier 报告') {
   if (!evidence || /^[-—–]+$/.test(evidence)) {
     return {
       status: 'FAIL',
-      problems: [`${at} 的汇总表：${STORY_REVIEW_ID} 那一行的证据格是空的——`
+      problems: [`${at} 的汇总表：${id} 那一行的证据格是空的——`
         + '证据取第 4 格，空或只有横线都算空；空证据与没审长得一样。' + INVALID_EVIDENCE],
       reviewVerdict,
       detail: '证据格为空',
     };
   }
 
-  if (status !== 'PASS') {
-    const { details, unreadable } = readerReviewDetails(text);
-    if (unreadable) {
-      // 读不出结构与「缺这两个键」是两回事：说成缺键的话，作者会去补两个已经写着的键，
-      // 补完还报，他只能去翻这个脚本。
-      return {
-        status: 'FAIL',
-        problems: [`${at} 里的结构块读不出来（${unreadable}）——门禁按 YAML 读报告里的围栏块，`
-          + `${STORY_REVIEW_ID} 的两类结论在那份结构里，读不出就核不了。` + INVALID_EVIDENCE],
-        reviewVerdict,
-      detail: '结构块读不出来',
-      };
-    }
-    const missing = DETAIL_KEYS.filter(k => !(k in (details ?? {})));
-    if (!missing.length) {
-      const blocking = Array.isArray(details.blocking_findings) ? details.blocking_findings : [];
-      const advisories = Array.isArray(details.advisories) ? details.advisories : [];
-      return { status: 'PASS', problems: [], reviewVerdict, blocking, advisories,
-        detail: `读者审查已落报告（${status}）` };
-    }
-    if (missing.length) {
-      return {
-        status: 'FAIL',
-        problems: [`${at}：${STORY_REVIEW_ID} 判了 ${status}，它自己的明细里缺 ${missing.join('、')}——`
-          + '门禁在 YAML 明细 `checks` 里按 id 取这一条的 `details`，阻断问题与提醒各归各的键，'
-          + '没有发现的是空列表；缺席分不清它是没发现还是没审。' + INVALID_EVIDENCE],
-        reviewVerdict,
-      detail: `缺 ${missing.join('、')}`,
-      };
-    }
+  const { details, shape, unreadable } = readerReviewDetails(text, id);
+  // 读不出结构、details 不是映射与「缺键」是三回事：说成缺键的话，作者会去补已经写着的键，补完还报
+  const bad = unreadable ? [`里的结构块读不出来（${unreadable}）——${id} 的明细在 YAML 围栏里，读不出就核不了`]
+    : shape ? [`：${id} 的 details ${shape}，不是映射——details 下写 ${DETAIL_KEYS.join('、')} 四个键，值都是列表`]
+      : !details ? [`的 YAML 明细里没有 ${id} 这一条——它无论结论都在明细里写 ${DETAIL_KEYS.join('、')}`]
+        : detailProblems(details, status, basis, checkIds).map(p => `：${id} ${p}`);
+  if (bad.length) {
+    return { status: 'FAIL', problems: bad.map(p => `${at}${p}。${INVALID_EVIDENCE}`), reviewVerdict, detail: '明细不成立' };
   }
-
-  return { status: 'PASS', problems: [], reviewVerdict,
+  return { status: 'PASS', problems: [], reviewVerdict, blocking: details.blocking_findings, advisories: details.advisories,
     detail: `读者审查已落报告（${status}）` };
+}
+
+const USAGE = '用法：node <ext>/hooks/shared/verifier-report.mjs --feature <名> --phase <阶段> [--project-root <工程根>]';
+
+/** 命令出口：审查回复原样落盘之后、check-receipt 与收口之前跑。0 通过（含未启用审查员时的「未审」）/ 1 有问题 / 2 参数或前置错误。 */
+function main(argv) {
+  const arg = k => { const i = argv.indexOf(k); return i >= 0 ? String(argv[i + 1] ?? '').trim() : ''; };
+  const feature = arg('--feature');
+  const phase = arg('--phase');
+  if (!feature || !phase) {
+    process.stderr.write(`${USAGE}\n`);
+    return 2;
+  }
+  const r = reportCheck(arg('--project-root') || process.cwd(), feature, phase);
+  const head = {
+    PASS: `[verifier-report] ${phase} 阶段审查报告核对通过`,
+    NOT_REVIEWED: `[verifier-report] ${phase} 阶段没有独立审查（未审，不是 PASS）`,
+    FAIL: `[verifier-report] ${phase} 阶段审查报告未通过，${r.problems.length} 处。恢复：格式不合或缺判据——同一份 request 交审查者重投、原样落盘，作者不改报告；`
+      + `缺处置记录——在 ${phase}/notes.md 按 phases/spec.md「闭环」写处置；缺报告或 summary——按下面写的入口补跑；改完重跑本命令`,
+    ERROR: `[verifier-report] ${phase} 阶段报告核对没有执行完`,
+  }[r.status];
+  const out = [head, ...r.problems.map((p, i) => `${i + 1}. ${p}`), ...r.notes.map(n => `- ${n}`)].join('\n');
+  (r.status === 'PASS' || r.status === 'NOT_REVIEWED' ? process.stdout : process.stderr).write(`${out}\n`);
+  return { PASS: 0, NOT_REVIEWED: 0, FAIL: 1, ERROR: 2 }[r.status];
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  try {
+    process.exit(main(process.argv.slice(2)));
+  } catch (e) {
+    process.stderr.write(`[verifier-report] 报告核对自身异常（${e?.stack ?? e}）：没有核完，这不是报告的问题——归扩展维护者处理\n`);
+    process.exit(2);
+  }
 }

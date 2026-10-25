@@ -5,6 +5,8 @@
 
 ## 1. 演进记录
 
+2026-10-25 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](../doc/release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
+
 2026-10-17 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。
 
 2026-10-16 **dsh 正式 CLI 链路测通**：用户最终范围为正常工作后停止。中心 runtime 修复不限时请求、dsh cwd 与 Windows Electron/ASAR 启动，并补回 OpenCode 参数顺序、内容审查与百炼鉴权分类；中心提交 `2934b83`、`d904257`，本地标签 `v1.0.1`、`v1.0.2`，已同步本仓、未推送。中心最终离线 72 passed；本仓相关回归 155 passed、12 subtests passed，已消除上次同步发现的兼容缺口。正式 suite `story-suite-20261016-dsh-full-01` 的 car-key-sharing 使用 dsh + 百炼 DeepSeek；有效 attempt 3 已验证工具执行、材料关卡回复、两份补料投放及同 session 续行（41 次原始 tool_call/result），随后按用户要求 stop/finalize，相关进程已退出。前两 attempt 的注册表漂移和沙箱 ACL 故障保留，不归责消费模型。临时测试配置与 dsh profile 均已恢复；未完成阶段验收，不评分。证据见 `output/story/story-suite-20261016-dsh-full-01/startup-verification.md`。

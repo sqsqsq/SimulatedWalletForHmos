@@ -31,8 +31,8 @@ const PICKED = '——这是写作设计骨架里定的结构，章提交按骨�
 const SKELETON_EXITS = '——写作设计骨架里列了它，章提交按骨架核';
 
 /** 一处选定形式叫什么：给人看的那半句。 */
-const formName = (form) => (form.kind === 'table' ? '一张表'
-  : `${form.ordered ? '有序' : '无序'}列表`);
+const formName = (form) => (form.header ? `「${form.name}」（表头 ${form.header.join(' | ')}）`
+  : form.kind === 'table' ? '一张表' : `${form.ordered ? '有序' : '无序'}列表`);
 
 /** 形式落在哪个范围：章级、某一节，或某一节下的子节。 */
 const formWhere = (ch, form) => `「${ch.title}${form.at ? `·${form.at}` : ''}`
@@ -46,7 +46,7 @@ const formWhere = (ch, form) => `「${ch.title}${form.at ? `·${form.at}` : ''}`
  * 同一范围固定合同已经要求一张表时，由合同那条报（它连锚列一起核），这里不重复。
  */
 function contractCovers(ch, form) {
-  return form.kind === 'table' && !form.under && requiredTables(ch)
+  return form.kind === 'table' && !form.header && !form.under && requiredTables(ch)
     .some(t => normalizeHeading(t.at ?? '') === normalizeHeading(form.at ?? ''));
 }
 
@@ -54,6 +54,10 @@ function formProblem(ch, view, form) {
   const span = scopeSpan(view, form.at ?? '', form.under ?? '');
   if (!span) return null;                 // 那一节/子节缺席由必要 H3、H4 那条报
   if (contractCovers(ch, form)) return null;   // 同范围合同已经要一张表：由它那条连锚列一起报
+  if (form.header) {
+    return hasTable(view, span, form.header) ? null
+      : `${formWhere(ch, form)}缺${formName(form)}——写作设计在这里选了它，表头按合同 named_tables 核，列可以按需要补在后面${PICKED}`;
+  }
   if (form.kind === 'table') {
     return hasTable(view, span) ? null
       : `${formWhere(ch, form)}缺${formName(form)}——写作设计在这里选了表格${PICKED}`;
@@ -211,7 +215,7 @@ export function chapterSeedRows(ch, facts, { diagramHint, formHint, guide } = {}
     ...(ch.structure?.diagrams ?? []).filter(d => same(d.at, at) && same(d.under, under))
       .flatMap(d => (diagramHint ? [...diagramHint(under || at, d.syntax), ''] : [])),
     ...(ch.structure?.forms ?? []).filter(f => same(f.at, at) && same(f.under, under))
-      .flatMap(f => (formHint ? [formHint(under || at, f), ''] : [])),
+      .flatMap(f => (formHint ? [formHint(under || at, f), ...(f.header ? renderTable(f.header, []) : []), ''] : [])),
   ];
   // 合同没指定位置的章级表，模板在某一节选了表格时就铺在那一节：同一用途只播一张，
   // 章头与小节各铺一张的话作者要删一张，而锚列按整章核，放哪一张都过。指定了 `at` 的表留在原位。
@@ -291,7 +295,7 @@ function tableSeed(t, facts) {
   return renderTable(cells, [cells.map(c => `{{${c || '　'}}}`)]);
 }
 
-/** 附录：各节标题（节首可以有一句业务定位，写草稿时给一行指引）；有 H4 的节铺出 H4 标题；材料清单那一节多给贡献行。 */
+/** 附录：各节标题（节首可以有一句业务定位，写草稿时给一行指引）；有 H4 的节铺出 H4 标题；材料清单那一节铺表头与填写指引。 */
 function appendixSeedRows(ch, facts, guide) {
   const out = [];
   for (const name of ch.subsections ?? []) {
@@ -300,8 +304,9 @@ function appendixSeedRows(ch, facts, guide) {
     // H4 标题与机器区之后的说明归作者；机器区由 `project` 投在标题下，草稿里不放——
     // 放了他就要在两处维护同一张表。
     for (const h4 of ch.projection?.sections?.[name]?.h4 ?? []) out.push(`#### ${h4.title}`, '');
-    // 材料清单是作者种子：类别与链接由清单给，「贡献了什么」只有他知道。
+    // 材料清单的行归作者：来源集合在任务包里，采用了什么、版本与贡献只有他知道。
     if (normalizeHeading(name) === normalizeHeading(facts?.materialListName ?? '')) {
+      if (guide) out.push(guide('一行一份阅读稿：照任务包「材料与来源」列齐它的全部原件与采用版本，贡献写采用了什么、未采用写原因'), '');
       out.push(...(facts?.materialListRows ?? []), '');
     }
   }

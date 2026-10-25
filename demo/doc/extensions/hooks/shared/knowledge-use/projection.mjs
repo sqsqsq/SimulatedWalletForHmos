@@ -6,6 +6,7 @@
  */
 import { fail, requirements, text } from './document.mjs';
 import { contractSections } from './validation.mjs';
+import { separateMarks } from '../../../skills/story/scripts/core/story/document.mjs';
 
 /** 生成区的边界标记。两个标记之间的每一个字节都由本模块写。 */
 const BEGIN = '<!-- knowledge-use:begin ';
@@ -130,7 +131,8 @@ function zoneOf(specText, zone) {
   if (bodyStart < 0 || end < 0) return { found: false, body: null, start, end: -1 };
   return {
     found: true,
-    body: specText.slice(bodyStart + 4, end).replace(/\n$/, ''),
+    // 只剥首尾的分隔空行（`separateMarks` 铺的格式）；正文内部原样，逐字比对照旧
+    body: specText.slice(bodyStart + 3, end).replace(/^(?:[ \t]*\r?\n)+/, '').replace(/(?:\r?\n[ \t]*)+$/, ''),
     start,
     end: end + END.length,
   };
@@ -166,7 +168,7 @@ export function applyZones(specText, rendered) {
     rows.splice(insert, 0, '', block);
     out = rows.join('\n');
   }
-  return out;
+  return separateMarks(out.split(/\r?\n/)).join('\n');
 }
 
 /**

@@ -10,10 +10,11 @@ import * as path from 'node:path';
 import { renderTable } from './chapter-contract.mjs';
 import {
   chapterSpan, childHeading, findByName, headingEnd, normalizeHeading, parseDocument, sectionBody, sectionNames, tablesWithin, zoneBlock,
-  zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
+  separateMarks, zoneBody, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, activeKnowledgeEntries, specText } from './context.mjs';
-import { relFromStory } from './sources.mjs';
+import { imageLinks } from './language.mjs';
+import { displayTags, relFromStory, resolveTags, sourceCatalog } from './sources.mjs';
 import { readUse, UseError } from '../../../../../hooks/shared/knowledge-use/document.mjs';
 
 /** 附录·规约那张表的判定取值封闭；整域不适用时该域内条目不必逐条列。 */
@@ -176,21 +177,6 @@ function notApplicableLine(text) {
 }
 
 /**
- * 附录·改动边界 —— 这次需求在工程上动到哪些模块、哪些相关模块保证不动：**一个模块一行**，
- * 值只有「改动」「不改」。来源是 spec 的 Scope 声明：`in_scope_modules` 改动，`out_of_scope_modules` 不改
- * （复用其已有出口也是不改）。新引入的依赖在技术契约·依赖变更一节。
- * Scope 的切分理由留在 spec：它是写给 plan 与工程的说明；归档件讲为什么这么切，
- * 归「范围」「业务方案」两章，用业务语言。
- */
-function scopeBoundary(ctx, spec, section) {
-  const rows = [
-    ...scopeList(spec, 'in_scope_modules').map(m => [m, '改动']),
-    ...scopeList(spec, 'out_of_scope_modules').map(m => [m, '不改']),
-  ];
-  return rows.length ? renderTable(appendixTableHeader(ctx, section), rows) : [];
-}
-
-/**
  * spec 里的相对引用换成从归档件出发的写法：spec 在 `spec/`，归档件在 `AR/`。
  *
  * 行内链接、图片与引用式定义都换；外链（带协议）、根路径与内嵌数据不动；
@@ -279,7 +265,7 @@ function appendixTableHeader(ctx, name) {
  * spec 某一小节投进附录的行：整节、若干张表，或者它写出来的「不涉及」。
  * `level` 是附录里承载它的标题层级（H3 的节或 H4 的小节）：整节投影的小标题按相对源节的深度排在它之下。
  */
-function specRows(spec, def, drop, level) {
+function specRowsRaw(spec, def, drop, level) {
   if (def.whole) return wholeSection(spec, def.from, drop, def.rename, level);
   const section = specSectionAt(spec, def.from);
   const tables = section.tables.map(t => projectedTable(t, drop, def.rename)).filter(Boolean);
@@ -298,11 +284,12 @@ function specRows(spec, def, drop, level) {
  */
 function appendixZones(ctx, spec) {
   const { drop, sections } = projectionOf(ctx.contract);
+  // spec 的依据标签写的是登记名（路径、会议留存目录）：投进归档件换成读者认得的材料名与决定标题
+  const catalog = sourceCatalog(ctx.featureRoot, ctx.contract);
+  const specRows = (...a) => specRowsRaw(...a).map(line => displayTags(line, catalog));
   const out = [];
   for (const [section, def] of Object.entries(sections)) {
-    if (def.kind === 'scope') {
-      out.push({ zone: section, section, source: 'spec 的 Scope 声明', rows: scopeBoundary(ctx, spec, section) });
-    } else if (def.kind === 'knowledge_use') {
+    if (def.kind === 'knowledge_use') {
       out.push({ zone: section, section, source: KNOWLEDGE_USE_SOURCE, rows: verdictSkeleton(ctx, section) });
     } else if (def.from) {
       out.push({ zone: section, section, source: `spec ${sourceName(def.from)}`, rows: specRows(spec, def, drop, 3) });
@@ -382,7 +369,7 @@ export function projectAppendix(ctx, storyText) {
     if (h4) lines = [...lines.slice(0, h4.at + 1), '', ...block, ...lines.slice(h4.at + 1)];
     else lines = [...lines.slice(0, end), ...(z.h4 ? [`#### ${z.h4}`, ''] : []), ...block, '', ...lines.slice(end)];
   }
-  return { text: storyText.slice(0, span.start) + lines.join('\n') + storyText.slice(span.end),
+  return { text: storyText.slice(0, span.start) + separateMarks(lines).join('\n') + storyText.slice(span.end),
     zones: count };
 }
 
@@ -450,15 +437,18 @@ function appendixSourceProblems(ctx, spec) {
       + '——附录的机器区由 spec 扩展章各节投影，spec 读不到时无从投影也无从核对'];
   }
   // 「不涉及：<依据>」是**写出来的结论**，`specSection` 读得到正文，不算缺节。
+  // 依据标签认不到唯一一份材料或已定决定时投不出人读名，与缺节一样拦在投影之前。
+  const tags = resolveTags(spec, sourceCatalog(ctx.featureRoot, ctx.contract)).problems
+    .map(p => `spec/spec.md ${p}——依据标签按 spec 任务包「材料与来源」列的名字与 ID 改在 spec`);
   return appendixSpecGaps(ctx.contract, spec).map(g => `${g}；`
-    + '不涉及的节写「不涉及：<依据>」一行也算有内容，投影把这一行搬进附录，评审者读得到');
+    + '不涉及的节写「不涉及：<依据>」一行也算有内容，投影把这一行搬进附录，评审者读得到').concat(tags);
 }
 
 /** 附录要从 spec 投影的小节：`[{from, to}]`，`to` 是附录里的落点名。 */
 function appendixSpecSources(contract) {
   const out = [];
   for (const [section, def] of Object.entries(projectionOf(contract).sections)) {
-    if (def.from && def.kind !== 'scope') out.push({ from: def.from, to: section });
+    if (def.from) out.push({ from: def.from, to: section });
     for (const h4 of def.h4 ?? []) out.push({ from: h4.from, to: `${section}·${h4.title}` });
   }
   return out;
@@ -553,8 +543,8 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
     //
     // 与集合一致那一条合起来看：登记的图要有去处，而附录不是去处。用它就放在讲它的那一章，
     // 不用它就在材料清单那一行写明理由——理由是文字，不是把图挪到附录充数。
-    const inAppendix = [...appendixSection.text.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
-      .map(m => m[1]);
+    const inAppendix = appendixSection.text.split(/\r?\n/).flatMap(line => imageLinks(line).images)
+      .map(img => img.target);
     if (inAppendix.length) {
       problems.push(`「${appendixDef.title}」：有 ${inAppendix.length} 张图`
         + `（${inAppendix.slice(0, 3).join('、')}${inAppendix.length > 3 ? '…' : ''}）`
@@ -624,14 +614,14 @@ export function appendixZoneProblems(ctx, storyText) {
         + '机器标记之外的目的句与说明归作者，投影不碰');
       continue;
     }
-    const have = lines.slice(at.start + 1, at.end - 1);
+    const have = zoneBody(lines, at);
     const diff = firstDiff(have, z.rows);
     if (!diff) continue;
     problems.push(`「${appendix.title}·${z.zone}」的机器区与${z.source}对不上（${diff.why}`
       + `${diff.at === null ? '' : `，第 ${diff.at + 1} 行`}）：`
       + `${diff.have === null ? '' : `盘上是「${cut(diff.have)}」，`}`
       + `${diff.want === null ? '' : `${z.source}投出来是「${cut(diff.want)}」`}`
-      + `——机器区由 \`story-build project\` 从 ${z.source} 投影，内容以真源为准，手改会被下一次投影覆盖`);
+      + `——机器区从 ${z.source} 投影，内容以真源为准，手改会被下一次投影覆盖：改真源后跑 \`story_flow.py story\` 登记（它重投附录并全篇检查）；只想先看投影结果用 \`story-build project\``);
   }
   // **集合两向都核**：上面走的是合同要的那几区；盘上多出来的名字在这里报。
   // 合同里没有它，就没有真源与它比——既不受投影约束，也不是作者说明，它会长期冒充现行投影。

@@ -23,12 +23,11 @@ import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, ver
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { featureRoot, lines, readTextOrNull } from '../shared/paths.mjs';
 import { readAcceptance, readContracts, resourceEntries } from '../shared/contracts.mjs';
-import { chapterNumberProblems, chapterRefProblems, chapterTemplates, hostExtensionProblems, templateSections } from '../shared/chapters.mjs';
+import { chapterNumberProblems, chapterRefProblems, chapterTemplates, hostExtensionProblems, templateFormProblems, templateSections } from '../shared/chapters.mjs';
 import { parseYaml } from '../shared/yaml.mjs';
 import { planStatRows, pointKey, specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { cellByHeader, parseDocument, tableCells } from '../../skills/story/scripts/core/story/document.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
-import { reportProblems } from '../shared/verifier-report.mjs';
 
 const SECTIONS_DOC = 'doc/extensions/skills/story/templates/plan-sections.md';
 
@@ -230,7 +229,8 @@ export default guard('plan', async (ctx) => {
   const chapters = chapterTemplates(ctx.projectRoot, 'plan', 'plan_template', 'skills/story/templates/plan-sections.md');
   reference.problems.push(...chapters.problems);
   reference.skipped.push(...chapters.skipped);
-  if (chapters.templates) reference.problems.push(...chapterNumberProblems(planText, chapters.templates));
+  if (chapters.templates) reference.problems.push(...chapterNumberProblems(planText, chapters.templates),
+    ...templateFormProblems(planText, chapters.templates[0], 'plan.md'));
   reference.problems.push(...chapterRefProblems(planText, '承载设计章'));
   reference.problems.push(...acceptanceRefProblems(ctx.projectRoot, ctx.feature, reference));
 
@@ -457,9 +457,6 @@ export default guard('plan', async (ctx) => {
       }
     }
   }
-
-  // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
-  groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'plan'), skipped: [] });
 
   return gate(ctx, { groups });
 });

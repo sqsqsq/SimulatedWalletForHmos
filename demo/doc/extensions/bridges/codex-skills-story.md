@@ -1,9 +1,9 @@
 ---
 name: story
-description: 需求开发流程编排——story init / archive / restore / update / adapt / help（完整定义见仓库 doc/extensions/skills/story/SKILL.md）
+description: 需求开发流程编排——story init / archive / restore / update / adapt / stats / help（完整定义见仓库 doc/extensions/skills/story/SKILL.md）
 ---
 
-用法：`/story <init|archive|restore|update|adapt|help> [AR|目标工程]`
+用法：`/story <init|archive|restore|update|adapt|stats|help> [AR|目标工程]`
 
 ## 命令转化
 
@@ -16,6 +16,7 @@ description: 需求开发流程编排——story init / archive / restore / upda
 | `restore <AR>` | 「需求系统 Token」+「恢复」 |
 | `update <编号>` | 「更新」（要从需求系统取新内容时还需先读「需求系统 Token」） |
 | `adapt [<目标工程>]` | **改读** [story-adaptation/SKILL.md](../../../doc/extensions/skills/story-adaptation/SKILL.md)（不读 story 的 SKILL）——把本扩展装到／升级到另一个工程，与需求流程无关 |
+| `stats` | **改读** [story-stats/SKILL.md](../../../doc/extensions/skills/story-stats/SKILL.md)（不读 story 的 SKILL）——本仓使用情况统计，不需要需求编号，不改业务产物 |
 | `help` | **勿读 SKILL**——直接输出下方「工作流程」 |
 
 `init` 的编号可以是 AR 单号，也可以是问题单号／工单号——按前缀自动分派，详见「初始化」章。
@@ -31,6 +32,7 @@ description: 需求开发流程编排——story init / archive / restore / upda
 | 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物；取回的材料进收件箱，改完、受影响的阶段重新闭环后收口 |
 | — | `/story adapt [<目标工程>]` | 工程运维（不在开发顺序内）：把 Story Extension 装到／升级到另一个工程 |
+| — | `/story stats` | 工程运维：本仓 Framework + Extension 使用情况统计（逐需求明细与汇总） |
 | — | `/story help` | 输出本流程说明 |
 
 `init` 之后不需要人再敲命令——中断后用

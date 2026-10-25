@@ -5,16 +5,14 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { joinPosix, readManifest, relFromFeature, upstreamDocs } from './sources.mjs';
+import { joinPosix, readManifest, relFromFeature } from './sources.mjs';
 import { normalizeHeading, parseDocument } from './document.mjs';
+import { imageLinks } from './language.mjs';
 
 
 /**
- * 一份文档里的每张图 —— 身份由**位置**给，来源由**围栏第一行**自报。
- *
- * 身份 `§<节> #<该节内第几张>`：图不需要作者起名，位置就是它的名字。
- * 来源标记 `%% 图源 <文档> §<节> #<序>` 指向**直接上游**那一张；只有围栏第一行算标记，
- * 所以一张图从 SR 经 spec 到 story，每一环换一次标记，上一环的那行随围栏带过去也无妨。
+ * 一份文档里的每张图 —— 身份由**位置**给：`§<节> #<该节内第几张>`，图不需要作者起名。
+ * 下游哪一节承接它讲的关系，登记在写作设计里（`- 承接上游图：<来源> <身份>`），不写在图里。
  *
  * 节取标题的前导编号（`### 5.2 异常回收` → `5.2`）；没有编号就用业务名——
  * 编号是给人对位用的，取不到时身份仍要唯一。
@@ -31,20 +29,9 @@ export function diagramsOf(text) {
     const body = doc.lines.slice(fence.from + 1, fence.closed ? fence.to : fence.to + 1);
     const index = (seq.get(section) ?? 0) + 1;
     seq.set(section, index);
-    // 围栏开头**连续的**几行 `%% 图源` 都算标记：同一张图常常两份上游都画过
-    // （系统设计画一遍，spec 的业务流程图就是它），story 里只该有一张——
-    // 两行标记写在同一个围栏里，两处的登记各自成立。只认开头那几行：
-    // 图正文里再出现的 `%%` 是注释，不是登记。
-    const marks = [];
-    for (const line of body) {
-      const m = line.trim().match(/^%%\s*图源\s+(.+?)\s*$/);
-      if (!m) break;
-      marks.push(m[1]);
-    }
     out.push({
       section, index, title,
       id: `§${section} #${index}`,
-      sources: marks,
       //: 围栏在原件里的行范围（**1 起，含首尾标记行**）——作者据它去读原件，
       //: 而不是读一份被复制进任务包的副本：副本一旦与原件不同步，他改的是副本。
       at: { from: fence.from + 1, to: fence.to + 1 },
@@ -65,55 +52,6 @@ export function diagramTopic(d) {
 }
 
 /**
- * 上游每张图，下游有没有一个围栏带着它的来源标记。
- *
- * 只核登记对应：图搬没搬对、周围文字写没写好由语义审查判。
- * 缺了指向的是**功能**不是图——图漏了先找它讲的那件事在下游哪里。
- */
-function diagramsNotCarried(upstreamText, upstreamLabel, downstreamText) {
-  const carried = new Set(diagramsOf(downstreamText).flatMap(d => d.sources));
-  return diagramsOf(upstreamText).filter(d => !carried.has(`${upstreamLabel} ${d.id}`));
-}
-
-/** 围栏外的图源标记行（1 起）：标记只在图的围栏第一行算数。 */
-export function strayMarks(text) {
-  const doc = parseDocument(text);
-  return doc.lines.flatMap((line, i) => (!doc.fenced.has(i) && /^\s*%%\s*图源/.test(line) ? [i + 1] : []));
-}
-
-/**
- * 本章的图源标记指得到吗 —— 指向的图在直接上游里存在、不是指向 story 自己，且写在围栏第一行。
- *
- * 只看本章就判得了，所以在提交本章时判（章提交与整篇检查的 ⑪ 共用）。
- * 只核引用本身：图是不是承接了那张图的关系，要读内容，归读者审查的图文一致判据。
- *
- * @param {string} text 本章正文，第一行是本章标题（图的节号按标题认）
- * @param {(line:number) => string} where 正文行号（1 起，含标题行）→ 作者要改的位置
- */
-export function chapterSourceMarkProblems(ctx, text, where) {
-  const problems = [];
-  const known = new Set();
-  const labels = new Set();
-  for (const [label, upstream] of upstreamDocs(ctx)) {
-    labels.add(label);
-    for (const d of diagramsOf(upstream)) known.add(`${label} ${d.id}`);
-  }
-  for (const d of diagramsOf(text)) {
-    for (const mark of d.sources) {
-      if (known.has(mark)) continue;
-      const label = mark.split(/\s+/)[0];
-      problems.push(`${where(d.at.from)}：图源标记「${mark}」` + (labels.has(label)
-        ? `指向的图在 ${label} 里没有——标记按上游文档的节号与该节内第几张认，${label} 现有的图见 skeleton 输出`
-        : `指向的不是直接上游（上游是 ${[...labels].join('、') || '无'}）——标记登记的是 story 这张图承接了上游哪一张`));
-    }
-  }
-  for (const line of strayMarks(text)) {
-    problems.push(`${where(line)}：图源标记写在了围栏外——只有图的围栏里开头那几行 \`%% 图源\` 算登记`);
-  }
-  return problems;
-}
-
-/**
  * 本章引的每一张图：有 alt、是材料里登记过的那一张、没有同时登记成不用。
  *
  * 只看本章就判得了，在提交本章时判；全篇才判得了的（同一张图引了两次、两个路径指同一张、
@@ -130,12 +68,16 @@ export function chapterImageProblems(ctx, text, where) {
   const byPath = new Map();
   (usable ?? []).forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
   String(text ?? '').split(/\r?\n/).forEach((line, i) => {
-    for (const [, alt, src] of line.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)) {
+    const { images, bad } = imageLinks(line);
+    for (const b of bad) {
+      problems.push(`${where(i + 1)}：图片链接写法解析不了（${b.text}）——带空格或括号的路径写成 \`![说明](<路径>)\``);
+    }
+    for (const { alt, target: src, external, path: ref } of images) {
       if (!alt.trim()) problems.push(`${where(i + 1)}：图片 ${src} 没有 alt 文本——alt 是评审人看不到图时读到的那句话`);
-      if (!usable || /^(https?:|data:)/i.test(src)) continue;
-      const idx = byPath.get(joinPosix(storyDir, src));
+      if (!usable || external || ref === null) continue;
+      const idx = byPath.get(joinPosix(storyDir, ref));
       if (idx === undefined) {
-        const name = path.posix.basename(src);
+        const name = path.posix.basename(ref);
         const same = [...byPath.keys()].filter(rel => path.posix.basename(rel) === name)
           .map(rel => path.posix.relative(storyDir, rel));
         problems.push(`${where(i + 1)}：图片「${src}」不在材料的图片登记里——story 里的图按登记的引用认`
@@ -161,11 +103,10 @@ export function chapterImageProblems(ctx, text, where) {
 export function imageProblems(ctx, storyText) {
   const problems = [];
   const notes = [];
-  const imgs = [...storyText.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
-  const seen = new Set();
-  for (const [, , src] of imgs) {
-    if (seen.has(src)) problems.push(`story.md：图片 ${src} 被引用了不止一次——同一张图只在一处引，那一处说清它画的是什么`);
-    seen.add(src);
+  const seen = new Map();              // 引用写法 → 那一张
+  for (const img of String(storyText).split(/\r?\n/).flatMap(line => imageLinks(line).images)) {
+    if (seen.has(img.target)) problems.push(`story.md：图片 ${img.target} 被引用了不止一次——同一张图只在一处引，那一处说清它画的是什么`);
+    seen.set(img.target, img);
   }
   const registered = materialImages(ctx);
   if (registered?.gap) {
@@ -181,9 +122,9 @@ export function imageProblems(ctx, storyText) {
   const byPath = new Map();
   registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
   const usedBy = new Map();            // 登记序号 → story 里引到它的那些路径
-  for (const src of seen) {
-    if (/^(https?:|data:)/i.test(src)) continue;
-    const idx = byPath.get(joinPosix(storyDir, src));
+  for (const { target: src, external, path: ref } of seen.values()) {
+    if (external || ref === null) continue;
+    const idx = byPath.get(joinPosix(storyDir, ref));
     if (idx === undefined) continue;   // 不在登记里的由本章判据报
     if (!usedBy.has(idx)) usedBy.set(idx, []);
     usedBy.get(idx).push(src);
@@ -256,27 +197,6 @@ export function readablePaths(featureRoot, paths) {
       throw err;
     }
   });
-}
-
-/** 上游每张图，story 里各有一个围栏带着它的来源标记。 */
-export function carriedDiagramProblems(ctx, storyText) {
-  const problems = [];
-  // 上游每张图，story 里各有一个围栏带着它的来源标记。
-  //
-  // story 的上游有两份：系统设计（SR）与 spec。图属于哪块内容，内容在 story 落在哪，
-  // 图就该在哪——不是「上游有几张图，story 就派生几节」。所以这里不判位置、不判张数，
-  // **只判登记对应**：标记在，说明这张图被登记着搬过来了；它搬得对不对、
-  // 周围那句话说的是不是它，要读上下文，归独立审查。
-  // 缺了报的是**这张图讲的那件事**，作者据此去找内容，而不是去补一张图。
-  // 一张图一行：来源位置、它讲的那件事、去向。怎么搬（围栏第一行写 `%% 图源 <来源> <编号>`、
-  // 周围文字自己写）是整类共同的写法，不逐张重复。
-  for (const [label, upstream] of upstreamDocs(ctx)) {
-    for (const d of diagramsNotCarried(upstream, label, storyText)) {
-      problems.push(`${label} ${d.id}（${diagramTopic(d)}）在 story 里没有——没有围栏带着它的图源标记；`
-        + '上游每张图按 story 围栏开头的 `%% 图源 ' + `${label} ${d.id}` + '` 认承接；这张图讲的那件事落在 story 哪一章，图就在那一章');
-    }
-  }
-  return problems;
 }
 
 

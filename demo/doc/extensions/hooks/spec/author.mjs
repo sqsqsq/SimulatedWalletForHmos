@@ -29,8 +29,12 @@ import { FLOW_SCRIPT, queryFlowStatus }
 import { SHELL, shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { relFromStory, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { citableRows, originRows, relFromStory, sourceCatalog, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
+import { markdownTarget } from '../../skills/story/scripts/core/story/language.mjs';
+import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
+import { recordUsage } from '../shared/usage.mjs';
 import { DECISION_FIELDS, decisionList } from '../../skills/story/scripts/core/story/review.mjs';
+import { signedGateRows } from '../shared/review-inputs.mjs';
 
 const SELF = 'doc/extensions/hooks/spec/author.md';
 const TEMPLATE = 'doc/extensions/skills/story/templates/spec-sections.md';
@@ -181,19 +185,21 @@ function currentDecisions(projectRoot, feature) {
       + '先修好它再动笔，读不出不等于没有议题。'];
   }
   if (!list.length) return ['**当前登记为空**：按业务流程走的时候认出要人定的事，照上面的字段登记。'];
-  const rows = ['当前登记（原文照列；仍 open 的选择只写共同要求与受影响的条件，不写成确定的行为或验收）：', ''];
+  const rows = ['当前登记（原文照列：引用的问答原话是人答依据，其余是待按上面人签原文核的作者解释）。**动笔写功能、流程、异常与验收之前**，先拿每条 open 找它影响的用户动作、状态去向与验收：'
+    + '这些位置只写各备选都成立的共同部分，受影响的行为写成待它定的条件，不写成默认可用、可重试、已开放或本期不做；'
+    + '没被它影响的部分照常写完。人已选择保持待定的不再重复问，也不替他选一边。', ''];
   for (const status of ['open', 'settled']) {
     const items = list.filter(d => String(d?.status ?? '') === status);
     if (!items.length) continue;
-    rows.push(`### ${status}`, '');
+    rows.push(`#### ${status}`, '');
     for (const d of items) {
-      rows.push(`#### ${d.id ?? '（无 id）'}：${d.title ?? ''}`, '', `该谁定：${d.decider ?? '—'}`, '',
+      rows.push(`##### ${d.id ?? '（无 id）'}：${d.title ?? ''}`, '', `该谁定：${d.decider ?? '—'}`, '',
         String(d.clarification ?? '').trim() || '（澄清正文空）', '');
     }
   }
   const other = list.filter(d => !['open', 'settled'].includes(String(d?.status ?? '')));
   if (other.length) rows.push(`状态不是 open / settled 的：${other.map(d => d?.id ?? '（无 id）').join('、')}——按字段要求改正。`, '');
-  rows.push('写完正文后按当时的登记再对一遍：新增或改过的议题，影响有没有写回功能、流程与验收处。');
+  rows.push('写完正文后按当时的登记再对一遍：每条 open 影响的那几处有没有被写成默认行为；新增或改过的议题，影响有没有写回功能、流程与验收处。');
   return rows;
 }
 
@@ -216,6 +222,12 @@ function decisionSection(projectRoot, feature, contract) {
     '',
     '澄清正文怎么分段，见 `story-write.md` 的「决策登记」。',
     '',
+    '### 人签原文（关卡记录）',
+    '',
+    ...signedGateRows(featureRoot(projectRoot, feature)),
+    '',
+    '### 作者登记',
+    '',
     ...currentDecisions(projectRoot, feature)];
 }
 
@@ -235,7 +247,7 @@ function decisionSection(projectRoot, feature, contract) {
 function imageSection(projectRoot, feature) {
   const dir = featureRoot(projectRoot, feature);
   const manifest = readJsonOrNull(path.join(dir, 'AR', 'story-src', 'materials.json'));
-  const rows = ['## 4. 材料里的图', ''];
+  const rows = ['### 材料里的图', ''];
   // **形状不对不是「没有图」**：清单不在、读不出、`materials` 不是数组、`paths` 形状不对，都是缺口。静默按零张渲染的话，
   // 作者会以为这一轮不涉及图。形状判定与全篇 check、审查任务共用 `imagesIn` 一份。
   const { images, gap } = imagesIn(manifest);
@@ -268,7 +280,7 @@ function imageSection(projectRoot, feature) {
     }
     const unused = String(img.unused ?? '').trim();
     const aliases = paths.filter(rel => rel !== main);
-    rows.push(`- \`![${caption || '这张图是什么'}](${relFromStory(main)})\``
+    rows.push(`- \`![${caption || '这张图是什么'}](${markdownTarget(relFromStory(main))})\``
       + (caption ? '' : ' ← **没有说明**：跑 `import_sources.py --caption-image` 补一句')
       + (unused ? ` ← **已登记不用**：${unused}` : ' ← 还没登记取舍'));
     if (aliases.length) {
@@ -295,9 +307,9 @@ function imageSection(projectRoot, feature) {
 /**
  * 上游某一份文档里的图 —— 身份、主题、原件路径与围栏行范围，附这一刻的原件内容。
  *
- * 作者按身份写来源标记、按行范围回原件核对；附上的内容取自原件，改图改的是下游自己的那一张。
+ * 作者按身份在写作设计里登记承接的小节、按行范围回原件核对；附上的内容取自原件。
  *
- * **不指定放哪一节**：图属于哪块内容，内容在下游落在哪，图就该在哪。
+ * **不指定放哪一节**：图讲的事属于哪块内容，内容在下游落在哪，承接就在哪。
  * 文字不搬：每一环讲的事情不同，spec 讲给下游的是契约，story 讲给评审者的是来龙去脉。
  *
  * 读不到分三种说：本轮自己产出的那一份（Spec）还没写成、本需求本来没有这一份（可选来源）、
@@ -323,27 +335,20 @@ function diagramSection(heading, label, src, derived) {
     rows.push(`${label} 里现在没有图。`);
     return rows;
   }
-  const downstream = 'story';
   rows.push(`原件在 \`${rel}\`，每张图的内容附在下面（取自这一刻的原件）。`,
-    `每一张都要在 ${downstream} 里对应一张，放哪一节按它讲的内容定——`
-    + '搬的时候**围栏第一行写来源标记**（`%% 图源 ' + label + ' §<节> #<第几张>`），'
-    + '机器核的就是它。周围的文字自己写。',
-    '**对应的含义是标记指向它，不是照抄**：把上游的流程改画成时序、'
-    + '按本需求补上它没画的分支，都算对应，改的是画法、讲的是同一件事。',
-    '两节列的是同一张图时（系统设计画过、spec 的流程图就是它），'
-    + `${downstream} 里只放一张，两行标记都写在这个围栏开头；`
-    + '章首那张同时承接上游某张时，标记就写在它的围栏里。', '');
+    '每一张讲的关系在 story 里由讲这件事的小节承接，在写作设计那一节下写 `- 承接上游图：<身份>` 登记；'
+    + '怎样换载体而不丢关系见 `story-write.md` 第三节「换图种可以，丢关系不行」。两份上游画的是同一件事时，两行登记写在同一节。', '');
   for (const d of list) {
     rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）`
       + `——原件 \`${rel}\` 第 ${d.at.from}–${d.at.to} 行；`
-      + `标记写 \`%% 图源 ${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
+      + `登记写 \`- 承接上游图：${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
   }
   rows.push('');
   return rows;
 }
 
 /**
- * 成文要用的当前输入 —— 材料里的图、系统设计与 Spec 里的图。
+ * 成文要用的当前输入 —— 材料与来源、材料里的图、系统设计与 Spec 里的图。
  *
  * `story-build skeleton` 起手与恢复时打印它，本任务包也列它：两处读同一份渲染。
  * `sources` 是调用方这一刻已经取得的来源状态（`sourceStatus`）：上游正文从它取，不再读一遍；
@@ -359,9 +364,16 @@ export function storyInputs(ctx, sources) {
     ?? { rel: ctx.contract.sources?.[key]?.path ?? key };
   const derived = (key) => ctx.contract.sources?.[key]?.derived === true;
   return [
+    '## 4. 材料与来源', '',
+    '附录材料清单那张「材料 | 来源 | 贡献」表照这里写：一组一行，来源列列齐这一组的全部原件与采用版本'
+    + '（有版号或会议版本写它，没有写下面的摘要）；集合由材料清单派生，漏写一行不会让那份原件免于审查。',
+    ...originRows({ ...ctx, srcDir: ctx.srcDir ?? path.join(ctx.featureRoot, 'AR', 'story-src') }), '',
+    ...(fs.existsSync(path.join(ctx.featureRoot, 'ux-reference', 'README.md'))
+      ? ['界面交互说明在 `ux-reference/README.md`：业务流程章有人机交互的小节以它与下面的界面原图为依据，'
+        + '写作设计在那一节的「依据」里写明用哪一段、哪几张图；页面流转图与表照它写，它没覆盖的普通交互在已定业务内补齐。', ''] : []),
     ...imageSection(ctx.projectRoot, feature), '',
-    ...diagramSection('## 4a. 系统设计里的图（搬进 story）', 'SR', of('SE'), derived('SE')), '',
-    ...diagramSection('## 4b. spec 里的图（搬进 story）', 'spec', of('SPEC'), derived('SPEC')),
+    ...diagramSection('## 4a. 系统设计里的图（在 story 里的去向）', 'SR', of('SE'), derived('SE')), '',
+    ...diagramSection('## 4b. spec 里的图（在 story 里的去向）', 'spec', of('SPEC'), derived('SPEC')),
   ];
 }
 
@@ -414,11 +426,18 @@ function taskPackage(projectRoot, feature) {
     '',
     ...decisionSection(projectRoot, feature, contract),
     '',
+    '### 依据标签能写的名字',
+    '',
+    '数值与关键结论的依据照抄下面一项；门禁与附录投影按同一份解析认名字，附录里换成右边的人读名。',
+    ...citableRows(sourceCatalog(ctx.featureRoot, contract)),
+    '',
     ...storyInputs(ctx, sourceStatus(ctx)),
     '',
     ...statDesignSection(projectRoot, feature),
     '',
     '数值怎么标来源、验收怎么接回规约，见 `author.md`。',
+    '',
+    `阶段闭环之后收尾（走 \`/story\` 的由交付门自动做）：\`python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature ${shellArg(feature)} --finalize --phase spec\``,
   ];
   return rows.join('\n');
 }
@@ -432,6 +451,11 @@ function main(argv) {
     process.stderr.write(USAGE + '\n');
     return 2;
   }
+  // 取任务包就是开始本阶段的工作：先记起点（只在这条 CLI 入口记，被导入的渲染函数不写 usage）
+  const begun = recordUsage(process.cwd(), 'begin', { feature, step: 'spec' });
+  if (!begun.ok) process.stderr.write(`[usage] 本阶段的开始没有记上（任务包照常给出）：${(begun.errors ?? []).join('；')}——修好原因后重跑本命令补记\n`);
+  const back = ensureMermaid(featureRoot(process.cwd(), feature));
+  if (back.problems.length) throw new Error(`story 回不到正式形态，任务包按正式正文读图：\n${back.problems.join('\n')}`);
   process.stdout.write(taskPackage(process.cwd(), feature) + '\n');
   return 0;
 }

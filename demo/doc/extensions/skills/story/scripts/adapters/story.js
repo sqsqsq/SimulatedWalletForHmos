@@ -74,8 +74,16 @@ async function main() {
     if (rrNo) await fetchOne(rrNo, 'RR', mcpToken, stamp, reqNo);
     return { parentNo: srNo, rrNo };
   }
-  if (mode === 'archive') return archiveOne(reqNo, mcpToken);
-  if (mode === 'restore') return restoreOne(reqNo, mcpToken);
+  if (mode === 'archive' || mode === 'restore') {
+    const result = await (mode === 'archive' ? archiveOne(reqNo, mcpToken) : restoreOne(reqNo, mcpToken));
+    if (!result.verified) {
+      // 读回与上传内容不一致：远端写了但核验不成立，不记整体成功
+      console.log(JSON.stringify({ mode, reqNo, ...result, success: false,
+        error: '归档核验失败：系统侧读回的内容与上传的不一致，重跑这一条命令后再登记' }));
+      process.exit(1);
+    }
+    return result;
+  }
   const out = option('--out');
   if (!out) usageError('fetch 要 --out <本单 inbox>：它只往那里写，不碰任何业务文件');
   const result = await fetchUpstream(reqNo, mcpToken, { outDir: path.resolve(PROJECT_ROOT, out) });

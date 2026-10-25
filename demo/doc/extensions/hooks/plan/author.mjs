@@ -11,12 +11,37 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { activeKnowledge, factsByName, HALVES, knowledgeGuide } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
-import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from '../shared/paths.mjs';
+import { extensionRoot, featureRoot, readJsonOrNull, readTextOrNull, relDisplay } from '../shared/paths.mjs';
 import { specStatPoints, statDesignState } from '../shared/stat-points.mjs';
 import { isStoryFeature } from '../../skills/story/scripts/core/flow/check.mjs';
+import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
+import { signedGateRows } from '../shared/review-inputs.mjs';
+import { recordUsage } from '../shared/usage.mjs';
+import { shellArg } from '../../skills/story/scripts/core/story/drafts.mjs';
 
 const SELF = 'doc/extensions/hooks/plan/author.md';
 const TEMPLATE = 'doc/extensions/skills/story/templates/plan-sections.md';
+
+/**
+ * 人签原文与仍 open 的决定：设计受影响的实体前先看见它们。人签与 spec 任务包同一份渲染；登记只列编号、标题与该谁定，
+ * 澄清原文在 `AR/review.md` 与 decisions.json。没有决定文件的非 Story 需求不出这一节；文件在而读不出是输入缺口，不当成没有未决。
+ */
+function openDecisionSection(projectRoot, feature) {
+  const file = path.join(featureRoot(projectRoot, feature), 'AR', 'story-src', 'decisions.json');
+  if (readTextOrNull(file) === null) return [];
+  const signed = ['### 人签原文（关卡记录）', '', ...signedGateRows(featureRoot(projectRoot, feature)), '',
+    '### 作者登记里仍开着的', ''];
+  const list = decisionList(readJsonOrNull(file));
+  if (!list) return ['## 0. 仍未定的决定', '', ...signed, `\`${relDisplay(projectRoot, file)}\` 读不出条目：先修好它再选型，读不出不等于没有未决。`, ''];
+  const open = list.filter(d => String(d?.status ?? '') === 'open');
+  return ['## 0. 仍未定的决定', '', ...signed,
+    ...(open.length ? open.map(d => `- ${d.id ?? '（无 id）'}：${d.title ?? ''}（该谁定：${d.decider ?? '—'}）`) : ['没有 open 的决定。']), '',
+    '选知识、定契约实体之前，先对着人签原文判断每条 open 影响哪些实体与通路：授权内的共有实体照常设计，受影响处按「待它定」设计或写明受阻部分；'
+      + '它会改变批准的模块范围、业务承载或交付承诺时，问人取得裁定再按它设计——mock、「默认方案」或「候选」注释都不代替批准，也不按它承诺验收。'
+      + '只影响局部实现、可替换的选型由你定，不为它另造人工确认。'
+      + '评审记录人工区空着、议题还开着，本身不说明依据不够：材料与有效人答（含对话里已确认、还没回填的）定得了当前这一步就照常推进，不重问；'
+      + '真正影响当前工作又定不了的那一件，说清影响后沿现有询问或 `decide` 路径确认，或先做不依赖它的部分。', ''];
+}
 
 function knowledgeSection(projectRoot, feature) {
   const knowledge = activeKnowledge(projectRoot);
@@ -87,13 +112,18 @@ function main(argv) {
     process.stderr.write('用法：node doc/extensions/hooks/plan/author.mjs --feature <名>\n');
     return 2;
   }
+  // 取任务包就是开始本阶段的工作：先记起点（只在这条 CLI 入口记，被导入的渲染函数不写 usage）
+  const begun = recordUsage(process.cwd(), 'begin', { feature, step: 'plan' });
+  if (!begun.ok) process.stderr.write(`[usage] 本阶段的开始没有记上（任务包照常给出）：${(begun.errors ?? []).join('；')}——修好原因后重跑本命令补记\n`);
   const root = process.cwd();
   process.stdout.write([`# plan 阶段 · 本次任务包（${feature}）`, '',
     `\`context-exploration\` 的 \`key_inputs_read\` 要含 \`${SELF}\`——本任务包是它的展开。`, '',
-    ...knowledgeSection(root, feature), '', ...statPointSection(root, feature), '',
+    ...openDecisionSection(root, feature), ...knowledgeSection(root, feature), '', ...statPointSection(root, feature), '',
     '动笔前先想清项目知识、规约、设计模式三项设计输入，设计章 1–8 里的实体与方法照它们定；'
       + '它们与埋点平列写在文末「## 9. 宿主扩展」下（第 8 章之后，其后只有附录）。',
-    `宿主扩展章骨架与契约挂法见 \`${TEMPLATE}\`。`].join('\n') + '\n');
+    `宿主扩展章骨架与契约挂法见 \`${TEMPLATE}\`。`, '',
+    `阶段闭环之后收尾：\`python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature ${shellArg(feature)} --finalize --phase plan\``,
+  ].join('\n') + '\n');
   return 0;
 }
 

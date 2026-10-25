@@ -40,7 +40,8 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
 退出码（`decide` 的退出码回答「能不能按这个选择往下走」）：
 
     0  成功
-    1  用法/参数/前置不满足——**没有任何写入**
+    1  用法/参数/前置不满足，或命令中途没走完——错误信息说明这次已经做了什么、还没做什么
+       （`story` 登记失败时列出已完成的派生步骤与没跑的步骤，派生件不用删，改好后重跑登记）
     2  仅 decide：选择已记录，但校验不通过，**不得前进**（如说了料已放进 inbox，盘上却没有）
 
 核心不变量：
@@ -65,14 +66,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
+import usage
 from materials import importer
 
 from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
 from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.rounds import cmd_reopen, cmd_round
+from flow.lifecycle import reading_view
 from flow.submission import cmd_complete
 from flow.lifecycle import cmd_archived, cmd_status, cmd_story
 from flow.meetings import cmd_meeting_refresh
@@ -81,6 +85,9 @@ from flow.update import (cmd_update_close, cmd_update_inputs, cmd_update_prepare
 
 
 # ---------------------------------------------------------------------------
+#: 会读、比较或登记 story 的动作：最外层持有视图——动手前回到正式形态，结束或失败后恢复可用的增强 SVG
+VIEW_READERS = {"status", "story", "archived", "update", "round", "reopen", "complete"}
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="story init→spec 流程契约的唯一写入者")
     ap.add_argument("mode",
@@ -116,12 +123,8 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
 
-    result: dict = {"mode": args.mode, "reqNo": args.feature}
-    try:
-        project_root = Path(args.project_root).resolve() if args.project_root \
-            else importer.DEFAULT_PROJECT_ROOT
-        feature_root = project_root / importer.features_dir(project_root) / args.feature
-
+    def dispatch(feature_root: Path, project_root: Path) -> int:
+        """按 mode 执行一个命令，结果并进 result；返回退出码。"""
         code = 0
         if args.mode == "init":
             result.update(cmd_init(feature_root, args.feature))
@@ -150,7 +153,7 @@ def main() -> int:
             if args.action == "status":
                 result.update(cmd_update_status(feature_root, args.feature, project_root))
             elif args.action == "close":
-                result.update(cmd_update_close(feature_root))
+                result.update(cmd_update_close(feature_root, project_root))
             elif args.action == "restore":
                 result.update(cmd_update_restore(feature_root))
             elif args.action == "inputs":
@@ -159,7 +162,24 @@ def main() -> int:
                 result.update(cmd_update_prepare(feature_root))
         else:
             result.update(cmd_complete(feature_root, args.feature, args.from_path))
+        return code
 
+    result: dict = {"mode": args.mode, "reqNo": args.feature}
+    try:
+        project_root = Path(args.project_root).resolve() if args.project_root \
+            else importer.DEFAULT_PROJECT_ROOT
+        feature_root = project_root / importer.features_dir(project_root) / args.feature
+        code = 0
+        with (reading_view(feature_root, project_root, result) if args.mode in VIEW_READERS
+              else nullcontext()):
+            code = dispatch(feature_root, project_root)
+        if code == 0:
+            # 使用记录在命令成功之后采集；记录失败另列，不改业务结果
+            used = usage.after_command(project_root, args.feature, args.mode, getattr(args, "action", None))
+            if used["errors"]:
+                result["usage_errors"] = used["errors"]
+            if used["note"]:
+                result["usage_note"] = used["note"]
         result["success"] = code == 0
         if TAMPER_NOTES:
             result["warning"] = TAMPER_NOTES[0]
@@ -172,6 +192,13 @@ def main() -> int:
             result["warning"] = TAMPER_NOTES[0]
         print(json.dumps(result, ensure_ascii=False))
         return 1
+    except Exception as exc:  # noqa: BLE001  脚本自身的缺陷：原始异常全文留在 stderr
+        import traceback  # noqa: PLC0415
+        traceback.print_exc()
+        result.update(success=False, error=f"story_flow 自身异常（{type(exc).__name__}：{exc}）：这一步没有执行完，"
+                                           "不是产物或材料的问题——原始异常在 stderr，归扩展维护者处理")
+        print(json.dumps(result, ensure_ascii=False))
+        return 2
 
 
 if __name__ == "__main__":

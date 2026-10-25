@@ -4,14 +4,17 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
+from contextlib import contextmanager
 import subprocess
 from pathlib import Path
 
 from flow.state import (
     CORE_DIR, DESIGN, FlowError, REVIEW, STORY, STORY_REGISTERED, ledger_digest, load, log,
     now, require, round_gates, save)
-from flow.routing import live_materials, material_state, next_step, sidecar_shape
+from flow.routing import (live_materials, material_state, next_step, reading_work, register_command,
+                          sidecar_shape)
 from flow import asks
 from flow.update import record_baseline
 from flow.meetings import topic_digest
@@ -24,7 +27,9 @@ def cmd_status(feature_root: Path) -> dict:
     # 各自再 build 一次的话，同一条命令里会出现两份「现在的材料」，而消费者不知道
     # 自己拿的是哪一份。算不出来沿 FlowError 退出，不伪造 false。
     manifest = live_materials(feature_root) if (contract or {}).get("rounds") else None
-    step, action = next_step(feature_root, contract, manifest)
+    # 本地阅读同理：成文之后派生一次，路由与输出共用
+    reading = reading_work(feature_root) if (contract or {}).get("status") == "story_written" else None
+    step, action = next_step(feature_root, contract, manifest, reading)
     shape = sidecar_shape(step)
     # 到了停等点就生成问法并写侧车：人看到的选项块与 `decide` 核对的是同一份
     ask = asks.build(feature_root, contract, step) if contract and contract.get("rounds") else None
@@ -49,6 +54,8 @@ def cmd_status(feature_root: Path) -> dict:
         "status": contract.get("status"),
         # 最近一次成文登记的时刻；重跑 `story` 就是重新登记
         "story_written_at": contract.get("story_written_at"),
+        # 本地阅读与业务闭环分开报：成文之后才有增强 SVG 要做
+        **({"reading": reading} if reading is not None else {}),
         "round": current.get("round"),
         "positioning": current.get("positioning"),
         "gates": [{"gate": g.get("gate"), "chosen": g.get("chosen"),
@@ -77,7 +84,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     **登记自带门禁**：先重跑 `story-build check`，通过才记。守恒判据在那里，
     不在这里重实现——两处各判各的，迟早对不上。
 
-    **编号之前先重投影**：附录的技术契约、规约、埋点、改动边界四节是机器区，
+    **编号之前先重投影**：附录里按章节合同投影的几节是机器区，
     真源（spec 扩展章、knowledge-use.yaml）在成文期间还会变——补一条规约判断、改一个
     接口出参。以登记这一次为准，`story-build project` 从当前真源重算一遍。
 
@@ -90,7 +97,10 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if status == "story_written":
+    invalidated = status == "story_written"
+    #: 上一次登记的时刻与指纹：这次检查通过且登记内容逐份相同，仍是那一次成文
+    prior = (contract.get("story_written_at"), contract.get("story_digests")) if invalidated else (None, None)
+    if invalidated:
         for key in ("story_written_at", "story_digests"):
             contract.pop(key, None)
         contract["status"] = status = "complete"
@@ -109,47 +119,50 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
         raise FlowError("AR/story.md 不存在：没有成文，无可登记的成文态")
 
     checker = CORE_DIR / "story-build.mjs"
+    # 每一步按真源改派生件，check 只读。图源随这次登记一起成立（还没管理的 Mermaid 图加稳定标记、首次写 .mmd）；
+    # review 也在这里渲染（机器区按当前决策件重算、人工区逐字节保留），下面那道 check 才核得到归档件红线（⑨）。
+    steps = (("project", ["project"], "附录机器区已按当前真源重投"),
+             ("number", ["number"], "编号已重铺"),
+             ("view --mode prepare", ["view", "--mode", "prepare"], "图源管理标记与 .mmd 已就位"),
+             ("build", ["build"], "review 已按决策登记重新渲染"),
+             ("check", ["check"], "全篇检查通过"))
+    done: list[str] = []
+    rerun = f"再跑 `{register_command(feature_root)}` 重新登记"
+
+    def stopped(i: int, what: str, this: str, todo: str) -> FlowError:
+        """登记停在第 i 步：已完成、这一步、没跑的步骤与下一动作，都只取本次调用里的事实。"""
+        return FlowError(
+            f"{what}，成文登记没有提交" + ("，上一次登记已作废" if invalidated else "") + "。\n"
+            + f"已完成：{'；'.join(done) or '无'}。{this}。没跑：{'、'.join(s[0] for s in steps[i:]) or '无'}。\n"
+            + todo)
+
     node = shutil.which("node")
     if node is None:
-        raise FlowError("找不到 node：成文态登记要先重跑 story-build check，无法跳过")
-    projected = subprocess.run(
-        [node, str(checker), "project", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if projected.returncode != 0:
-        raise FlowError(
-            "story-build project 跑不通，成文态不予登记：\n"
-            + (projected.stderr or projected.stdout or "").strip())
-    numbered = subprocess.run(
-        [node, str(checker), "number", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if numbered.returncode != 0:
-        raise FlowError(
-            "story-build number 跑不通，成文态不予登记：\n"
-            + (numbered.stderr or numbered.stdout or "").strip())
-    # review 也在这一步渲染：它的机器区按当前决策件重算，人工填的内容逐字节保留。
-    # 不在这里渲染的话，下面那道 check 面对的是一份还不存在的 review——
-    # 归档件红线（⑨）于是要等到交付门才报，报了还得回来再登记一次。
-    rendered = subprocess.run(
-        [node, str(checker), "build", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if rendered.returncode != 0:
-        raise FlowError(
-            "story-build build 跑不通，成文态不予登记：\n"
-            + (rendered.stderr or rendered.stdout or "").strip())
-    proc = subprocess.run(
-        [node, str(checker), "check", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if proc.returncode != 0:
-        raise FlowError(
-            "story-build check 未通过，成文态不予登记：\n"
-            + (proc.stderr or proc.stdout or "").strip())
+        raise stopped(0, "找不到 node", "story-build 一步都没启动",
+                      f"这是运行环境问题，业务稿与派生件都不用改：装好 node 后{rerun}")
+    for i, (name, argv, effect) in enumerate(steps):
+        try:
+            proc = subprocess.run(
+                [node, str(checker), *argv, "--feature", feature_root.name, "--project-root", str(project_root)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise stopped(i, f"story-build {name} 没能启动（{exc}）", f"{name} 没有启动",
+                          f"这是运行环境问题，业务稿与派生件都不用改：环境恢复后{rerun}") from exc
+        if proc.returncode == 1:
+            this = f"{name} 只读，没有改正文" if name == "check" else f"{name} 改没改文件不确定"
+            raise stopped(i + 1, f"story-build {name} 没通过（退出码 1）", this,
+                          "已更新的派生件按真源算出，不用删也不用还原；按下面 story-build 的报告处理它点名的真源、草稿或环境"
+                          f"（正文经 chapter 提交），{rerun}：\n" + _said(proc))
+        if proc.returncode != 0:
+            raise stopped(i + 1, f"story-build {name} 没有正常结束（退出码 {proc.returncode}）", f"{name} 改没改文件不确定",
+                          f"这不是业务稿的问题，不要为它改真源或草稿：{_not_the_product(proc.returncode)}，"
+                          f"修好后{rerun}。原始输出：\n" + _said(proc))
+        done.append(effect)
 
+    digests = {rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}
     contract["status"] = "story_written"
-    contract["story_written_at"] = now()
+    # 内容没变的重新登记不换登记时刻：成文时刻是这份稿的业务事实，重登不改它
+    contract["story_written_at"] = prior[0] if prior[0] and digests == prior[1] else now()
     # 登记记下 story 与它据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
     # 与流程路由拿它核「登记之后改过没有」，改过就重跑 `story` 重新登记。
     #
@@ -157,13 +170,88 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 它们走不漏到读者手上——归档只上传 story.md 与 review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
-    contract["story_digests"] = {
-        rel: ledger_digest(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED
-    }
+    contract["story_digests"] = digests
     save(feature_root, contract)
     baseline = record_baseline(feature_root)
-    return {"status": "story_written", "story": str(story),
+    # 登记之后真正的下一步与 `status` 同一条路由给出，不在这里另写一份；算不出来不遮住已成功的登记
+    try:
+        step, action = next_step(feature_root, contract, live_materials(feature_root))
+    except FlowError as exc:
+        step, action = "status", f"成文已登记；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
+    return {"status": "story_written", "story": str(story), "next": step, "action": action,
             **({"update_baseline": baseline} if baseline else {})}
+
+
+#: 外层持有视图的标记：值是需求目录（小写绝对路径），story_flow 与 story-build 共用；带着同一需求的值进来就是子调用，不各自恢复
+VIEW_OWNER = "STORY_VIEW_OWNER"
+
+
+@contextmanager
+def reading_view(feature_root: Path, project_root: Path, outcome: dict):
+    """最外层动作持有视图：动手前回到正式形态（图块按源的 Mermaid），结束或失败后恢复当前可用的增强 SVG。
+
+    被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不再切入，也不各自恢复。恢复失败只补视图，
+    写进 `outcome["view"]`，不遮住原来的结果或错误。
+    """
+    key = os.path.realpath(feature_root).lower()
+    before = os.environ.get(VIEW_OWNER)
+    owner = before != key
+    if owner:
+        os.environ[VIEW_OWNER] = key
+    try:
+        if owner:       # 同一需求的外层已切入并持有：不再切一遍
+            ensure_mermaid(feature_root, project_root)
+        yield
+    finally:
+        if owner:
+            if before is None:
+                os.environ.pop(VIEW_OWNER, None)
+            else:
+                os.environ[VIEW_OWNER] = before
+            story = feature_root / Path(*STORY)
+            if story.is_file() and _managed(story):
+                try:
+                    outcome["view"] = _view(feature_root, project_root, "svg", "增强 SVG 没有恢复，story 保持 Mermaid")
+                except FlowError as exc:
+                    outcome["view"] = str(exc)
+
+
+def _managed(story: Path) -> bool:
+    """story 里有没有脚本管理区：正式图块要经视图处理；旧版阅读槽也送去视图，由它报出来。"""
+    text = story.read_text(encoding="utf-8", errors="replace")
+    return "<!-- story-figure:" in text or "<!-- story-reading:" in text
+
+
+def ensure_mermaid(feature_root: Path, project_root: Path) -> None:
+    """story 里有管理区时先回到正式形态：比较、登记与归档只认图块按源 Mermaid 的文本。没有管理区不起进程。"""
+    story = feature_root / Path(*STORY)
+    if not story.is_file() or not _managed(story):
+        return
+    _view(feature_root, project_root, "mermaid", "读 story 之前要先回到正式形态，回不去")
+
+
+def _view(feature_root: Path, project_root: Path, mode: str, why: str) -> str:
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError(f"找不到 node：{why}（视图切换由 story-build.mjs view 做）")
+    proc = subprocess.run(
+        [node, str(CORE_DIR / "story-build.mjs"), "view", "--mode", mode, "--feature", feature_root.name,
+         "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    if proc.returncode != 0:
+        raise FlowError(f"{why}：\n" + _said(proc))
+    return _said(proc)
+
+
+def _not_the_product(code: int) -> str:
+    """story-build 退出码既不是 0 也不是 1：归谁处理。"""
+    return "这是 story-build 自身异常，归扩展维护者处理" if code == 2 else "进程被中断或运行环境出错"
+
+
+def _said(proc: subprocess.CompletedProcess) -> str:
+    """子进程的两路输出原样带回：问题清单常在一路、恢复入口在另一路，只取一路就丢了一半。"""
+    return "\n".join(x.strip() for x in (proc.stdout, proc.stderr) if x and x.strip()) \
+        or f"退出码 {proc.returncode}，没有任何输出"
 
 
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:
@@ -187,22 +275,36 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
             raise FlowError(f"{name} 不存在：归档件不全，无可登记的归档态")
 
     checker = CORE_DIR / "story-build.mjs"
+    # 走到这里需求系统那边已经写入并读回：失败只说本地登记没完成，下一步只补登记，不重新上传
+    again = (f"只补登记：`{register_command(feature_root, 'archived')}`；需求系统里已上传的那一份不受影响，不要重新上传")
     node = shutil.which("node")
     if node is None:
-        raise FlowError("找不到 node：归档态登记要先重跑交付门，无法跳过")
+        raise FlowError(f"找不到 node，交付门没跑，归档态没有登记。这是运行环境问题：装好 node 后{again}")
     # 交付门而不是普通 check：走到这里 spec 该已经闭环，读者审查也该已经落报告。
     # 普通 check 判不到那两样，用它登记归档态等于把「审没审过」这一格空着送审。
-    proc = subprocess.run(
-        [node, str(checker), "check", "--deliver", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    if proc.returncode != 0:
-        log((proc.stderr or proc.stdout).strip()[:2000])
+    try:
+        proc = subprocess.run(
+            [node, str(checker), "check", "--deliver", "--feature", feature_root.name,
+             "--project-root", str(project_root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    except OSError as exc:
+        raise FlowError(f"交付门没能启动（{exc}），归档态没有登记。这是运行环境问题：环境恢复后{again}") from exc
+    if proc.returncode == 1:
         raise FlowError(
-            "归档件未通过交付门（详见上方输出），拒绝登记归档态。"
-            "已经传上去的那一版是不合格的：修好后重新归档，再登记")
+            "交付门这次没通过，归档态没有登记。它核的是本地工作区当前的 AR/story.md、AR/review.md 与审查回执，"
+            f"不是需求系统里那一份；按下面的输出处理它点名的问题后{again}。本地业务稿确实要改的，走 `/story update`。"
+            "交付门原始输出：\n" + _said(proc))
+    if proc.returncode != 0:
+        raise FlowError(f"交付门没有正常结束（退出码 {proc.returncode}），归档态没有登记。"
+                        f"这不是归档件的问题：{_not_the_product(proc.returncode)}，修好后{again}。原始输出：\n"
+                        + _said(proc))
 
     contract["archived"] = {"at": now()}
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
-    return {"archived": True, "at": contract["archived"]["at"]}
+    # 归档成立不回滚；本轮还有没做完的工作同源说出来，算不出来不遮住已成功的登记（同 cmd_story）
+    try:
+        step, action = next_step(feature_root, contract)
+    except FlowError as exc:
+        step, action = "status", f"归档态已登记；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
+    return {"archived": True, "at": contract["archived"]["at"], "next": step, "action": action}

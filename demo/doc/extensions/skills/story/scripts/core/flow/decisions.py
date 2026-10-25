@@ -140,8 +140,8 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
         state = material_state(feature_root, current, manifest)
         if not state["pending"] and not state["changed"]:
             outcome, code = "rejected", 2
-            reason = ("收件箱里没有新文件、材料也没变：把文档或界面设计图放进 "
-                      f"{feature_root.name}/inbox/ 后再答一次")
+            reason = ("收件箱（含子目录）里没有待导入的原件、材料也没变：把文档或界面设计图放进 "
+                      f"{feature_root.name}/inbox/（可以整个文件夹放）后再答一次")
 
     record = {
         "gate": gate, "ask_id": ask["ask_id"],

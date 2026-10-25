@@ -25,15 +25,15 @@ import { childHeading, fenceRanges, headingEnd, parseDocument, tableCells }
   from '../../skills/story/scripts/core/story/document.mjs';
 import { flowProblems, isStoryFeature, storyProduced } from '../../skills/story/scripts/core/flow/check.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
+import { resolveTags, sourceCatalog } from '../../skills/story/scripts/core/story/sources.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge, selfCheck } from '../shared/knowledge.mjs';
 import { codeRequirementIds, readUse, UseError } from '../shared/knowledge-use/document.mjs';
 import { coverageProblems } from '../shared/knowledge-use/validation.mjs';
 import { renderZones, zoneProblems } from '../shared/knowledge-use/projection.mjs';
-import { acceptanceIdRe, functionIdRe, keptIdRe, knowledgeCriteria, readAcceptance } from '../shared/contracts.mjs';
-import { reportProblems } from '../shared/verifier-report.mjs';
+import { acceptanceIdRe, functionIdRe, keptIdRe, knowledgeCriteria, readAcceptance, storyContract } from '../shared/contracts.mjs';
 import { featureRoot, readJsonOrNull, readTextOrNull } from '../shared/paths.mjs';
-import { chapterNumberProblems, chapterTemplates } from '../shared/chapters.mjs';
+import { chapterNumberProblems, chapterTemplates, templateFormProblems } from '../shared/chapters.mjs';
 import { indicatorShape } from '../shared/stat-points.mjs';
 import { hostAnchorProblems, templateSections } from '../shared/chapters.mjs';
 
@@ -127,14 +127,29 @@ function scanDocCoords(text) {
 
 /**
  * 数值来源校验（spec-sections 红线：数值必须标来源类型）。
- * 阈值/时长一类数字必须三选一标明来源：上游约束 / 本工程设定 / 平台基线。
+ * 阈值/时长一类数字必须标明来源：上游约束 / 已确认决定 / 本工程设定 / 平台基线。
  * 机械层只核**标没标**；标「上游约束」的是不是真有出处、换算是否成立，
  * 由 spec overlay 的语义判据回查原文承担——字面命中不等于同一个量，
  * 未命中也不等于没有真实来源，脚本裁不了这个真假。
  */
-//: 序数（第 N 次、第 N 轮）是位置不是数值，不核来源。
-const NUMERIC_RE = /(?<!第\s*)(\d+(?:\.\d+)?)\s*(ms|毫秒|秒|s|分钟|min|次)(?![A-Za-z])/gi;
-const SOURCE_TAG_RE = /(上游约束|本工程设定|平台基线|无上游依据)/;
+//: 序数（第 N 次、第 N 轮）是位置不是数值，不核来源；版本号、编号、代码里的数字不带这些单位，不会命中。
+//: 只核形态就能确定是数量的写法：阿拉伯数字配时长、次数、金额、容量与百分比；汉字数字配时长与金额单位；
+//: 「两次」「三次」「二十次」这类次数。「一次」「二次」光看形态分不出是次数还是操作名（二次确认、一次性），
+//: 机械层不判，由 spec overlay 的数值判项送审查核；作者要让机械层核到，次数写成阿拉伯数字或「两次」及以上。
+const NUMERIC_RE = new RegExp('(?<!第\\s*)(?:\\d+(?:\\.\\d+)?\\s*(?:ms|毫秒|秒|s|分钟|min|小时|天|次|元|KB|MB|GB|%)'
+  + '|[一二两三四五六七八九十百千万]+\\s*(?:秒|分钟|小时|天|元)'
+  + '|(?:[两三四五六七八九十百千万]|[一二][十百千万])[一二三四五六七八九十百千万]*\\s*次)(?![A-Za-z])', 'gi');
+const SOURCE_TAG_RE = /(上游约束|已确认决定|本工程设定|平台基线|无上游依据)/;
+
+/**
+ * 「上游约束：<名称>」「已确认决定：<ID>」能不能指认到本轮唯一一份材料或一条已定决定 —— 泛称不放行。
+ * 名字与决定的解析和作者任务包、附录投影共用 `sourceCatalog`；指得到不等于数值真在那份里，真假归审查回原文核。
+ */
+function upstreamNameProblems(featureDir, contract, text) {
+  const { problems } = resolveTags(text, sourceCatalog(featureDir, contract));
+  return problems.length ? [`spec.md：依据标签要指认到本轮唯一一份材料或一条已定决定：${problems.join('；')}`
+    + '——可写的名字与 ID 见 spec 任务包「材料与来源」；数值是否真在那份里由审查回原文核'] : [];
+}
 
 function scanNumericSources(text) {
   const rows = [];
@@ -149,8 +164,8 @@ function scanNumericSources(text) {
       rows.push(`第 ${i + 1} 行「${nums.map(m => m[0]).join('、')}」：${line.trim().slice(0, 60)}`);
     }
   }
-  return rows.length ? [`spec.md：${rows.length} 处数值未标来源类型：${rows.join('；')}——带单位（毫秒、秒、分钟、次）的数值按阈值与时长判，`
-    + '所在行要写明来源类型「上游约束：<文档名>」「本工程设定，无上游依据」「平台基线」之一；门禁只核这一行标没标，来源真假归审查'] : [];
+  return rows.length ? [`spec.md：${rows.length} 处数值未标来源类型：${rows.join('；')}——带单位（时长、次数、金额、容量、百分比）的数值按阈值判，`
+    + '所在行要写明来源类型「上游约束：<材料名>」「已确认决定：<ID>」「本工程设定，无上游依据」「平台基线」之一；门禁只核这一行标没标，来源真假归审查'] : [];
 }
 
 /**
@@ -422,7 +437,8 @@ export default guard('spec', async (ctx) => {
   // ---- 主章号以目标 profile 的模板为准，模板里不编号的章不计入序号 ----
   const chapters = chapterTemplates(ctx.projectRoot, 'spec', 'spec_template', 'skills/story/templates/spec-sections.md');
   problems.push(...chapters.problems);
-  if (chapters.templates) problems.push(...chapterNumberProblems(text, chapters.templates));
+  if (chapters.templates) problems.push(...chapterNumberProblems(text, chapters.templates),
+    ...templateFormProblems(text, chapters.templates[0], 'spec.md'));
 
   // ---- 宿主扩展的位置与小节：扩展内容挂在 framework 模板的锚点下，各节按节名平列、顺序同模板，附录最后 ----
   const sections = templateSections('skills/story/templates/spec-sections.md');
@@ -530,13 +546,11 @@ export default guard('spec', async (ctx) => {
 
     // 数值来源：机械层只核标没标（结构门）；真假归 overlay 的数值依据判项。
     problems.push(...scanNumericSources(text));
+    problems.push(...upstreamNameProblems(featureDir, storyContract(), text));
   }
 
   // ---- 可机械核的一致性：§8 与 acceptance.yaml、上游原始验收编号 ----
   problems.push(...acceptanceAlignment(ctx, lines, featureDir, isStory));
-
-  // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----
-  problems.push(...reportProblems(ctx.projectRoot, ctx.feature, 'spec'));
 
   return gate(ctx, { problems, groups, skipped: chapters.skipped });
 });

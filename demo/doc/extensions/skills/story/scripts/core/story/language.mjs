@@ -207,37 +207,72 @@ export function scanLanguageRedline(text, opts = {}) {
   return out;
 }
 
-/** 材料清单那一节的行形态：问题与判法。 */
-const MATERIAL_LIST_HINTS = {
-  material_row: '写成了表格行——材料清单用列表不用表：读者只需要知道本文据哪几份材料写成、各自贡献了什么',
-  material_link: '这一项没有 markdown 链接——每份材料给一条原文链接，读者据此自己把那份材料找出来；'
-    + '光写「产品需求文档」他不知道该找谁要哪一份',
-};
-
 /**
- * 材料清单那一节的行形态：成列表、每行给得出原文链接。
+ * 一行里的 markdown 链接：`[文字](目标)` 与 `![文字](目标)`。
  *
- * @param {string} body 该小节正文
- * @param {number} baseLine 该小节正文首行在全篇里的行号（报错要指得回去）
+ * 目标有两种合法写法：`<…>` 包起来的（可含空格与括号），或不含空白、括号成对的。
+ * 真实文件名常带空格、中文与括号，只认 `[^)\s]+` 会把它们切断或漏掉——那一份材料就从核对里消失。
+ * 看得见 `](` 却解析不出目标的，作为 `bad` 带位置交回，由调用方报「写法解析不了」，不猜。
+ * 表格里的 `\|` 是转义竖线，目标里还原成 `|`。
+ *
+ * @returns {{links: {start:number, end:number, text:string, target:string, image:boolean}[], bad: {start:number, text:string}[]}}
  */
-export function scanMaterialList(body, baseLine = 0) {
-  const hits = [];
-  const lines = String(body ?? '').split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const s = lines[i].trim();
-    const line = baseLine + i;
-    if (s.startsWith('|')) {
-      hits.push({ line, kind: 'material_row', hit: s.slice(0, 40),
-                  hint: MATERIAL_LIST_HINTS.material_row, text: s.slice(0, 100) });
+export function markdownLinks(line) {
+  const s = String(line ?? '');
+  const links = [], bad = [];
+  let i = 0;
+  while ((i = s.indexOf('](', i)) >= 0) {
+    const open = s.lastIndexOf('[', i);
+    let j = i + 2, target = null;
+    if (s[j] === '<') {
+      const close = s.indexOf('>', j);
+      if (close > j && s[close + 1] === ')') { target = s.slice(j + 1, close); j = close + 2; }
+    } else {
+      let depth = 0, k = j;
+      for (; k < s.length; k++) {
+        const c = s[k];
+        if (c === '\\') { k++; continue; }
+        if (/\s/.test(c)) break;
+        if (c === '(') depth++;
+        else if (c === ')') { if (!depth) break; depth--; }
+      }
+      if (s[k] === ')' && k > j) { target = s.slice(j, k); j = k + 1; }
+    }
+    const from = open >= 0 && s[open - 1] === '!' ? open - 1 : Math.max(open, 0);
+    if (target === null) {
+      bad.push({ start: from, text: s.slice(from, i + 30) });
+      i += 2;
       continue;
     }
-    if (!/^[-*+]\s/.test(s)) continue;
-    if (![...s.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)].length) {
-      hits.push({ line, kind: 'material_link', hit: s.slice(0, 40),
-                  hint: MATERIAL_LIST_HINTS.material_link, text: s.slice(0, 100) });
-    }
+    links.push({ start: from, end: j, text: s.slice(open + 1, i), target: target.replace(/\\([|()])/g, '$1'),
+      image: s[from] === '!' });
+    i = j;
   }
-  return hits;
+  return { links, bad };
+}
+
+/**
+ * 一行里的图片引用 —— 身份、去处与断链核对都从这里取完整目标，不各写一套正则。
+ *
+ * `path` 按 URL 读法取文件名：未编码的 `#`、`?` 之后是片段与查询，不属于路径；路径段的 `%xx` 全部还原一次，
+ * 才与登记的原名对得上。编码本身坏了或路径为空时为 null，由断链检查报。
+ * 外链与内嵌数据 `external` 为真：不是仓内文件，不核身份与断链。
+ */
+export function imageLinks(line) {
+  const { links, bad } = markdownLinks(line);
+  const images = links.filter(l => l.image).map(l => ({ alt: l.text, target: l.target,
+    external: /^(https?:|data:)/i.test(l.target), path: decodedPath(l.target) }));
+  return { images, bad: bad.filter(b => b.text.startsWith('!')) };
+}
+
+function decodedPath(target) {
+  try { return decodeURIComponent(target.split(/[?#]/)[0]) || null; } catch { return null; }
+}
+
+/** 文件路径写成合法的链接目标，与 `imageLinks` 的还原互逆：`%`、`#`、`?` 与尖括号编码，含空白或括号时包进 `<…>`，原名不改。 */
+export function markdownTarget(file) {
+  const s = String(file ?? '').replace(/[%#?<>]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return /[\s()]/.test(s) ? `<${s}>` : s;
 }
 
 /**
@@ -272,17 +307,17 @@ export function formatHits(hits, kind) {
  * 归档件是交出去给评审者看的——引用写成裸文件名或指向源材料目录，本地打开是红叉，
  * 而正文与装配都不会因此报错：形态守恒只数图的条数，数得到「有一张图」，看不出它打不开。
  *
- * 外链（http/https）与内嵌数据不判：那不是仓内文件。
+ * 外链（http/https）与内嵌数据不判：那不是仓内文件。`%xx` 编码坏了的同样打不开，照命中报。
  */
 export function scanBrokenImages(text, baseDir, fsMod, pathMod) {
   const hits = [];
   const rows = String(text ?? '').split(/\r?\n/);
   for (let i = 0; i < rows.length; i++) {
-    for (const m of rows[i].matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
-      const ref = m[1];
-      if (/^(https?:|data:)/i.test(ref)) continue;
-      const abs = pathMod.resolve(baseDir, decodeURIComponent(ref.replace(/^<|>$/g, '')));
-      if (!fsMod.existsSync(abs)) hits.push({ line: i + 1, path: ref });
+    for (const img of imageLinks(rows[i]).images) {
+      if (img.external) continue;
+      if (img.path === null || !fsMod.existsSync(pathMod.resolve(baseDir, img.path))) {
+        hits.push({ line: i + 1, path: img.target });
+      }
     }
   }
   return hits;

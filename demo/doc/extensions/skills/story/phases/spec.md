@@ -55,10 +55,10 @@ node .../story-build.mjs skeleton --feature <feature>  # ① 当前输入 + 写�
 python .../story_flow.py story --feature <feature>   # ③ 登记（自带 project / number / build / check）
 #                              ④ 跑 spec harness
 #                              ⑤ 按 harness 末尾 NEXT: 行派 verifier
-#                              ⑥ check-receipt → check --deliver 交付门
+#                              ⑥ 报告核对 → check-receipt → 收口 → check --deliver 交付门
 ```
 
-- **附录的技术契约、规约、埋点、改动边界四节不用你写**：它们是 spec 扩展章与
+- **附录的技术契约、规约、埋点三节不用你写**：它们是 spec 扩展章与
   `knowledge-use.yaml` 的投影，要改投影出来的内容，改真源。登记之后 spec 改了，重跑 `story_flow.py story`：
   它先重投这几节，再重新登记。
 - **③ 登记在 story 写完之后**：判断在成文过程中还会长出来，先登记进 `decisions.json` 再登记成文，台账才完整。
@@ -72,21 +72,31 @@ python .../story_flow.py story --feature <feature>   # ③ 登记（自带 proje
 请求与报告的路径都由 summary 的 `verifier_request`、`verifier_report` 给：不要自己拼 subject、不复用上一轮的文件名——
 拿错了 `check-receipt` 判 `report_missing`，退回沿用历史 PASS，表面闭环、实际没审。
 调用只带 request JSON；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件，
-再完整跑一次 harness 采纳它（不用 `--sync-closure`：它对已闭环的阶段不改写）。读 summary 确认
-`verifier_subject_id` 与报告终态块对得上、`readiness_signals` 里没有 `semantic_not_reverified`。
-门禁核这份报告：格式不合或缺判据的回复每次运行都报、不计结论，重投同一份 request 拿完整回复；
-同一审查对象只认第一份合规结论，之后换了内容的重投不算。
+再跑报告核对 `node doc/extensions/hooks/shared/verifier-report.mjs --feature <名> --phase <阶段>`。它在报告落盘之后核，
+审前门禁不读报告：格式不合或缺判据的回复每次都报、不计结论；同一审查对象只认第一份合规结论，之后换了内容的重投不算；
+WARN、FAIL 的判据要在 notes 里有处置记录。退出 0 通过（本宿主未启用审查员时如实说「未审」），1 有问题，2 前置读不出、脚本还没过（没过时不派审，返修后重跑 harness）或 summary 不完整（有审查对象却没有报告落点时，重跑 harness，不手补）。
+落盘之后按当前事实走一行：
+
+| 当前事实 | 下一动作 | 不能混淆 |
+|---|---|---|
+| harness 或扩展门禁没过 | 读这一次的完整输出：门禁一次列全问题与因前置缺失未执行的判据，完整报告在 `<阶段>/reports/` 的 summary 与它指向的报告文件；按问题改真源，再完整跑一次 | 不为看另一段输出反复重跑；报「门禁自身异常」或「环境依赖缺失」的不改产物，按它写的恢复类别处理 |
+| 当前请求首次审完，业务材料没变，阶段还没闭环 | `story-build view --mode mermaid` → 报告核对 → `check-receipt` → `harness-runner.ts --sync-closure --phase <阶段> --feature <名>` → 交付门 | 只落了报告，不再完整跑审前链造新问题；独立跑回执与收口不经阶段钩子，先自己回到正式形态 |
+| 报告格式不合或缺判据 | 同一份 request 交审查者重投，原样落盘后再核 | 你不改报告内容 |
+| 阶段已沿旧报告闭环，之后补了当前对象的独立审查 | 完整跑一次 harness 采纳，读 summary 确认 `verifier_subject_id` 与报告终态块对得上、`readiness_signals` 没有 `semantic_not_reverified` | `--sync-closure` 对已闭环的阶段不改写旧的审查绑定 |
 
 **报告回来之后怎么处置，全扩展只有这一张表**：
 
 | 报告结论 | 你做什么 | 闭环方式 |
 |---|---|---|
 | 有阻断项 | 按阻断项返修：改最早出错的那一处（Spec、决策登记、写作设计或章草稿）→ 改了章草稿的 `chapter` 提交 → `story` 重新登记 | 完整 harness → 取新请求再派审 |
-| PASS，改动只影响表达（措辞、格式、补说明、补可回查依据） | 改完跑 `harness-runner.ts --revalidate --feature <名>` | summary 记 `completed_with_prior_review` 与 `script_revalidated`；notes 写「按 <对象> 报告的建议修改，未独立重审」；交付门放行 |
+| PASS，改动只影响表达（措辞、格式、补说明、补可回查依据） | 改完在 `framework/harness` 下跑 `npx ts-node harness-runner.ts --revalidate --feature <名> --from <本阶段>`（阶段已闭环时不带 `--from` 什么都不重跑） | summary 记 `completed_with_prior_review` 与 `script_revalidated`；notes 写「按 <对象> 报告的建议修改，未独立重审」；交付门放行 |
 | PASS，改动改变业务口径、范围、验收、契约实体 | 改完完整跑 harness | 取新请求再派审 |
 | PASS，建议不在本阶段修 | 不改材料 | notes 逐条记建议与去处（下一阶段或评审） |
 
-- 改动属于哪一类由你判断，写进 `<阶段>/notes.md`；门禁核报告里每条 WARN、FAIL 在 notes 里都有处置记录。
+- 改动属于哪一类由你判断，写进 `<阶段>/notes.md`：每条处置一行，写判据编号与所处置报告的对象前 8 位（summary 的 `verifier_subject_id`），
+  再写怎么处置；报告核对认这两样，上一份报告的同号处置不替新报告豁免。
+- harness 自己的 WARN 提醒（如术语置信度）同样有去向：改实际事实让它不再报（改置信度、维护 glossary），或在 notes 写为什么暂缓、
+  交给谁；事实没变就不反复处理同一条，事实变了重新判断。不为消告警改判断。
 - 读者审查判 WARN 而没有阻断项时交付门放行，建议项进 notes；只有阻断项才拦。
 - 审查之后改了知识判断或决策状态，notes 写新依据——只为消掉审查意见而改判断不算处置。
 - 门禁反复报同一问题而你判断改不动时，停下向人说明缺什么、需要谁提供，不靠多跑几次过关。
