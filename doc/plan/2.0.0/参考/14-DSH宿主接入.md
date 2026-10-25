@@ -44,6 +44,8 @@ DSH的 `verifier` 启动返回 `started subagent <childId>`，它不是审查报
 
 ## 4. 测试装置修正
 
+批次一02只完成template级部分（补丁、原生物化、Preset模板与物化同源）；下列runner级项只存在于B装置，按批次一集中评审（01-批次-基线承接与装配/评审意见/2026-10-25-202802-批次一集中评审.md）§4-2随第二批01测试域合并在B代码上完成，首次DSH起跑前核配置与工作区身份。
+
 - `test/scripts/cli_config_group.py::registry_snapshot`保留启动和续跑均带 `--patch {cwd}/.dsh/framework-verifier.patch.yml`；不直接改中央CLI镜像拼参。
 - `run_multi_case.py::seed_agent_adapter`显式project-root，使用原生check-personal-setup选择dsh；不能在framework/harness cwd误定位工程。
 - `host_capabilities`当前硬读opencode，改按实际Case的cli/activeAdapter读取并保存；preflight、template、最终workspace三者身份核一致。读取失败报前置问题，不借别的宿主true代替。
