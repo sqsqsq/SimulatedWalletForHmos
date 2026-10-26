@@ -5,17 +5,17 @@ description: 进入一个 Feature 阶段或蓝图设计动作之前，取当前�
 
 # story-knowledge — 动作前取知识任务
 
-读者：进入 Feature 阶段或蓝图设计动作的主 agent。时机：阶段作业开始之前（manifest 的 phase_bindings 把本 Skill 登记在每个 Feature 阶段之前）；蓝图的来源发现与设计之前由设计作者调用；质询任务由主执行者取来交给隔离的质询者，由质询者完成质询。
+读者：进入 Feature 阶段或蓝图设计动作的主 agent。时机：阶段作业开始之前（manifest 的 phase_bindings 把本 Skill 登记在每个 Feature 阶段之前）；蓝图的来源发现与设计之前由设计作者调用；质询任务由主执行者取来存好，交给隔离质询者的是任务第 7 块的首读载体：质询者先首读人读稿答八问，再读这份任务核源。
 
 | 场景 | 命令 |
 |---|---|
 | Feature 阶段（spec / plan / coding / review / ut / testing） | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --feature <当前 Feature id> --action <当前阶段> --audience author` |
 | 蓝图来源发现与设计 | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --blueprint <蓝图 id> --action discovery --audience author`（写设计时 `--action design`） |
-| 蓝图独立质询（主执行者取，交给隔离的质询者） | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --blueprint <蓝图 id> --action questioning --audience reviewer` |
+| 蓝图独立质询（主执行者取并存好，派首读载体） | `node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> --blueprint <蓝图 id> --action questioning --audience reviewer` |
 
 Feature id 与阶段取当前阶段上下文里 Framework 给出的原生值，蓝图 id 取本次设计请求里的值。
 
-输出分六块。完整读完再动手：第 2、3 块是已成立的判断与本动作要履行的义务，第 4 块是知识原文，第 5 块是本次完成条件，第 6 块的缺口交给其中写明的责任方。
+输出分六块（质询任务另有第 7 块派审与留存）。完整读完再动手：第 2、3 块是已成立的判断与本动作要履行的义务，第 4 块是知识原文，第 5 块是本次完成条件，第 6 块的缺口交给其中写明的责任方。
 
 退出 1 时 stderr 写明对象、缺口与责任，按它交给责任方或向人说明；退出 2 是参数或依赖问题，修正调用后重取。判断与落点写在本动作自己的产物里。作者取 Feature 阶段的正式任务（不是预览）同时记下这一阶段的开始（使用记录 begin），所以在读知识与动手之前取；审查者取任务、取预览都不记。
 

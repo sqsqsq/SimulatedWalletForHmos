@@ -11,7 +11,7 @@
 再完整跑一次 harness 采纳它（不用 `--sync-closure`：它对已闭环的阶段不改写）。读 summary 确认
 `verifier_subject_id` 与报告终态块对得上、`readiness_signals` 里没有 `semantic_not_reverified`。
 门禁核这份报告：格式不合、判据缺行重复或取值不合的回复每次运行都报、不计结论，重投同一份 request 拿完整回复。
-回复只原样落盘，不改结论、不补行；重新派审得到的新回复按同样判据核。回执是 harness 的只读投影，`check-receipt` 自己先生成再校验；
+回复只原样落盘，不改结论、不补行；同一审查对象只认第一份合规回复（登记在报告目录的 `verifier.conclusions.json`），之后换了内容的回复被拒，材料改过才有新的请求与对象。回执是 harness 的只读投影，`check-receipt` 自己先生成再校验；
 要写备注写 `<阶段>/notes.md`。
 
 阶段原生闭环、本轮工作做完后跑 `python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <Feature id> --finalize --phase <阶段>`，返回 ok 才算记进 `doc/usage.json`；只有原生有效闭环才收尾，失败按它报的原因处理后重跑同一条。

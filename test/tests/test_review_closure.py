@@ -170,17 +170,18 @@ class TheReportIsCheckedReadOnly(ClosureCase):
         target.write_text(report_text(ids), encoding="utf-8")
         self.assertNotIn("不合合同的报告", self.gate())
 
-    def test_a_new_reply_from_a_real_rereview_is_not_refused_as_a_second_copy(self) -> None:
-        """重新派审拿回的新报告照常核，不因「同一对象已有过一份」被拒；门禁只读，不留结论账本。"""
+    def test_the_first_compliant_conclusion_of_a_subject_stands(self) -> None:
+        """同一审查对象的第一份合规回复登记成结论；原位改写成另一份仍合规的回复被拒，改回原样照常认。"""
         ids = self.overlay_ids()
         target = self.put_report(report_text(ids))
-        first = self.gate()
-        target.write_text(report_text(ids, note="，重新派审后的回复"), encoding="utf-8")
-        second = self.gate()
-        for out in (first, second):
-            for needle in ("不合合同的报告", "合规结论"):
-                self.assertNotIn(needle, out)
-        self.assertEqual([], sorted(p.name for p in self.reports.glob("*.conclusions.json")), "门禁写了结论账本")
+        original = target.read_bytes()
+        self.assertNotIn("合规结论", self.gate())
+        ledger = self.reports / "verifier.conclusions.json"
+        self.assertEqual([SUBJECT], list(json.loads(ledger.read_text(encoding="utf-8"))), "合规回复没登记成首份结论")
+        target.write_text(report_text(ids, note="，原位改写的另一份"), encoding="utf-8")
+        self.assertIn("已经有过一份合规结论", self.gate())
+        target.write_bytes(original)
+        self.assertNotIn("合规结论", self.gate())
 
 
 DIRECT = """

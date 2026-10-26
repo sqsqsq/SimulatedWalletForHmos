@@ -2014,6 +2014,21 @@ def start_block_reason(case: dict[str, Any], suite: dict[str, Any]) -> str | Non
     return None
 
 
+def dsh_host_problem(cli_name: str, seed: dict[str, Any], capabilities: dict[str, Any]) -> str | None:
+    """固定 DSH 路径的起跑前置（参考14 §4）：所选是 dsh 时，这个 Case 的实际宿主必须就是 dsh——播种成功、activeAdapter 是 dsh、
+    adapter 的必需声明读得出。不满足返回原因，起跑在启动工作进程之前停下；其它宿主不在这里判。"""
+    if cli_name != "dsh":
+        return None
+    if seed.get("status") != "seeded":
+        return f"dsh 的个人 adapter 没播种成功（{seed.get('status') or '没有结果'}）：{str(seed.get('reason') or '').strip()[-300:]}"
+    if seed.get("adapter") != "dsh":
+        return f"所选宿主是 dsh，工程的 activeAdapter 却是 {seed.get('adapter')}：不拿另一个宿主的能力起跑"
+    declared = capabilities.get("declared") or {}
+    if "unreadable" in declared or "verifier_subagent" not in declared:
+        return f"dsh adapter 的声明读不出或缺 verifier_subagent：{declared.get('unreadable') or declared}"
+    return None
+
+
 def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
     """Start one Case and confirm it before the scheduler advances.
 
@@ -2044,16 +2059,25 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
             append_event(suite, "case_workspace_failed", case=case_id, error=str(exc))
             return
     cli_name = suite_cli_configurations(suite)[config_index]["name"]
-    if (case.get("adapter_seed") or {}).get("cli") != cli_name:
-        append_event(suite, "case_adapter_seeded", case=case_id, **seed_agent_adapter(suite, case, cli_name))
+    seed = case.get("adapter_seed") or {}
+    # 换了 CLI 或上次没播成都重新播种：失败的播种不是可沿用的结果
+    if seed.get("cli") != cli_name or seed.get("status") == "failed":
+        seed = seed_agent_adapter(suite, case, cli_name)
+        append_event(suite, "case_adapter_seeded", case=case_id, **seed)
     # 这个 Case 实际的宿主能力：按播种后的 activeAdapter 读（没播成按所选 CLI 名），随起跑记录保存
-    actual = (case.get("adapter_seed") or {}).get("adapter") or cli_name
+    actual = seed.get("adapter") or cli_name
     case["host_capabilities"] = host_capabilities(Path(str(case["workspace"])), actual)
     git_boundary = ensure_case_git(suite, case)
     append_event(suite, "case_git_boundary", case=case_id, **git_boundary)
     if git_boundary["status"] != "ready":
         case["status"] = "coordinator_start_failed"
         case["last_error"] = {"git_boundary": git_boundary["reason"]}
+        return
+    host = dsh_host_problem(cli_name, seed, case["host_capabilities"])
+    if host:
+        case["status"] = "coordinator_start_failed"
+        case["last_error"] = {"adapter_seed": host}
+        append_event(suite, "case_host_mismatch", case=case_id, reason=host)
         return
     override_args: list[str] = []
     if case.get("requested_start_phase") and case["requested_start_phase"] != case.get("start_phase"):

@@ -1222,11 +1222,14 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
         return proc
 
     def register(self) -> dict:
-        """定稿并准备审查，夹具审查者给出通过的回复，再登记。"""
+        """定稿并准备审查，夹具审查者给出通过的回复，重跑 prepare 接收，再登记。"""
         prepared = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--feature", FEATURE,
                                 "--project-root", str(self.root))
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         design_kit.write_review(self.root, FEATURE, "pass")
+        received = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--feature", FEATURE,
+                                "--project-root", str(self.root))
+        self.assertEqual(0, received.returncode, received.stdout + received.stderr)
         out = self.flow("story")
         self.outputs.append(json.dumps(out, ensure_ascii=False))
         return out

@@ -112,7 +112,7 @@ STORY_STAGE_ORDER = (
     "顺序：story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
     "回看清单逐条处置 → 图源写定后按 `reference/svg.md` 判断哪些图值得做同图增强 → check 通过 → "
     "`story-build review --action prepare` 定稿（重投附录、编号、渲染 review）"
-    "并准备独立审查 → 派审 → `story-build review --action check` → `story_flow.py story` 登记 → 交付门 → 交付选择")
+    "并准备独立审查 → 派审 → 回复落盘后重跑 prepare 接收 → `story-build review --action check` → `story_flow.py story` 登记 → 交付门 → 交付选择")
 
 
 def register_command(feature_root: Path, mode: str = "story") -> str:

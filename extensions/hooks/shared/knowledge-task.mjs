@@ -22,7 +22,7 @@ import { blueprintKnowledge, entryOf, featureKnowledge, rolesOf, unitContext, un
 import { blueprintSources, loadNative, readBlueprint, readFeature, readFrozenInputs, readSourceFiles } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
-import { questioningRound } from './questioning.mjs';
+import { firstReadCarrier, nativeEightQuestions, questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
 import { extensionRoot, relDisplay } from './paths.mjs';
 import { recordUsage } from './usage.mjs';
@@ -156,7 +156,17 @@ function blueprintTask(root, id, action) {
     `原生质询范围，逐项唯一覆盖：${round.scopes.map(([ref, kind]) => `\`${ref}\`（${kind}）`).join('、')}。`,
     '每项回：问题、回答、证据、处置（answered_with_evidence / decided_with_authority / open_decision / blocker / not_applicable）、'
       + '责任方、验证去向，以及未决项与处置建议。');
-    dispatch.push(`把本任务交给宿主的隔离子代理；派审时的候选与回复原样留存，建议位置 \`${round.candidate}\`、\`${round.reply}\`。`);
+    // 首读之后才读本任务：派给子代理的是只含人读稿、八问与阅读规则的载体，不是本任务
+    dispatch.push(`把本任务全文原样存到 \`${round.task}\`，被评候选的原始字节存到 \`${round.candidate}\`；`
+      + `子代理的最终回复原样存到 \`${round.reply}\`。三份都一字不改。`);
+    if (bp.projection?.status === 'valid') {
+      dispatch.push('下面的首读载体原样作为宿主隔离子代理的任务交出，不增删、不附本任务正文、来源或作者判断：', '',
+        '````markdown', firstReadCarrier({ draft: bp.projection.path, task: round.task, reply: round.reply,
+          questions: nativeEightQuestions(loadNative(root)) }), '````');
+    } else {
+      gaps.push(`人读稿 \`${bp.projection?.path ?? 'component-blueprint.review.md'}\` ${bp.projection?.status === 'missing' ? '还没生成' : '与当前 revision 对不上'}：`
+        + '质询先读人读稿——设计负责方先跑原生 `check:component-blueprint --write-review --json` 渲染，再重取本任务派审。');
+    }
   }
   return {
     object,

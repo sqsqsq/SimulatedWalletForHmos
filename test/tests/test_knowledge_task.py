@@ -643,6 +643,32 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         dispatch = proc.stdout.split("## 7. 派审与留存（主执行者）", 1)[1]
         self.assertIn(f"`{base}/reply.md`", dispatch, "派审与留存没单列给主执行者")
 
+    def test_the_questioner_reads_the_draft_first_and_the_task_after(self) -> None:
+        """R1：派给质询者的首读载体只有人读稿、原生八问、阅读规则与之后读的任务路径；来源、作者判断与质询范围留在任务里。
+        人读稿没生成时不给载体，缺口指回渲染。"""
+        canonical = self.root / "doc/features" / BLUEPRINT / "blueprint/component-blueprint.yaml"
+        key = hashlib.sha256(canonical.read_bytes()).hexdigest()[:16]
+        base = f"doc/features/{BLUEPRINT}/blueprint/questioning/{key}"
+        draft = canonical.with_name("component-blueprint.review.md")
+        draft.unlink(missing_ok=True)
+        out = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer").stdout
+        self.assertNotIn("# 蓝图独立质询 · 派审", out, "人读稿没生成却给了首读载体")
+        self.assertIn("还没生成", out.split("## 6. 缺口与责任", 1)[1])
+        self.assertIn(f"`{base}/task.md`", out)
+        import design_kit  # noqa: PLC0415
+        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        self.addCleanup(draft.unlink, True)
+        out = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer").stdout
+        carrier = out.split("# 蓝图独立质询 · 派审", 1)[1].split("````", 1)[0]
+        self.assertIn(f"`doc/features/{BLUEPRINT}/blueprint/component-blueprint.review.md`", carrier)
+        self.assertIn(f"`{base}/task.md`", carrier)
+        self.assertIn(f"`{base}/reply.md`", carrier)
+        self.assertIn("「技术与追溯参考」", carrier)
+        self.assertEqual(8, sum(1 for line in carrier.splitlines() if re.match(r"^[1-8]\. ", line)), "原生八问没有逐条转达")
+        for leaked in ("候选声明", "view:", "relation:", "knowledge/", "doc/requirements"):
+            self.assertNotIn(leaked, carrier, f"首读载体提前给了「{leaked}」")
+        self.assertIn("`view:", out.split("## 3. 当前契约与义务", 1)[1], "质询范围不在任务里了")
+
     def test_questioning_without_a_draft_fails_without_half_a_task(self) -> None:
         proc = self.task("--blueprint", "new-thing", "--action", "questioning", "--audience", "reviewer")
         self.assertEqual(1, proc.returncode)

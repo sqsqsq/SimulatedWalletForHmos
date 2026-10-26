@@ -204,7 +204,8 @@ function cmdBasis(ctx) {
  * 独立人读审查（`story/independent-review.mjs`）。
  *
  * - `prepare`：先把审查对象定成最终版——正式图建源、附录重投、编号、渲染 Review，全篇结构检查通过——再写审查任务，
- *   给出材料键与这一份回复的位置；同一份材料已有有效通过的报告时给出原位置（reused）。
+ *   给出材料键与这一份回复的位置；同一份材料已有有效通过的报告时给出原位置（reused）。审查者的回复原样落盘后再跑一次，
+ *   它接收这份回复（记下原样字节的摘要）并按结论给下一步。
  * - `check`：只读核这一次的审查报告，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
  * - `waiver-check`：只读，给 `story_flow.py unreviewed` 记授权之前核宿主能力与这一版的审查结果，一行 JSON。
@@ -249,7 +250,8 @@ function cmdReview(ctx) {
   process.stdout.write(out.reused
     ? `[story-build review] 这份材料已有通过的报告（${out.report_file}），不用重审，直接 check。\n`
     : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为宿主隔离子代理的任务交给审查者，`,
-      `  不增删、不改写；等它完成，把它的最终回复全文原样写到 ${out.report_file}（审查者只读，不自己写文件）。之后跑 story-build review --action check，`,
+      `  不增删、不改写；等它完成，把它的最终回复全文原样写到 ${out.report_file}（审查者只读，不自己写文件）。`,
+      '  之后重跑 story-build review --action prepare 接收这份回复（记下原样字节的摘要），再跑 story-build review --action check，',
       '  结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
 }
 

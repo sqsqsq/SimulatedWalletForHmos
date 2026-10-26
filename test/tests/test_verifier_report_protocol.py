@@ -78,10 +78,42 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
         return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
 
-    def reviewed(self, kind: str = "pass") -> Path:
+    def replied(self, kind: str = "pass", mutate=None) -> Path:
+        """准备、审查者原样回复（还没接收）。`mutate` 改的是审查者给出的回复本身：造合同反例用。返回回复原件。"""
         prepared = self.review("prepare")
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
-        return design_kit.write_review(self.root, "REQ-DEMO", kind)
+        reply = design_kit.write_review(self.root, "REQ-DEMO", kind)
+        if mutate:
+            reply.write_text(mutate(reply.read_text(encoding="utf-8")), encoding="utf-8")
+        return reply
+
+    def reviewed(self, kind: str = "pass", mutate=None) -> Path:
+        """正常一轮：准备、审查者原样回复、主执行者重跑 prepare 接收。返回回复原件。"""
+        reply = self.replied(kind, mutate)
+        self.receive()
+        return reply
+
+    def answer(self, kind: str = "pass") -> Path:
+        """审查者按当前派审载体回复，主执行者接收。"""
+        reply = design_kit.write_review(self.root, "REQ-DEMO", kind)
+        self.receive()
+        return reply
+
+    def context_text(self) -> str:
+        """前轮上下文：首读之后读，没有就是空串。"""
+        f = self.flow_path.parent / "review" / "context.md"
+        return f.read_text(encoding="utf-8") if f.exists() else ""
+
+    def fresh(self) -> None:
+        """回到没准备过的审查状态：准备记录、载体与报告目录都清掉。"""
+        for name in ("prepared.json", "dispatch.md", "context.md"):
+            (self.flow_path.parent / "review" / name).unlink(missing_ok=True)
+        shutil.rmtree(self.root / "doc" / "reports", ignore_errors=True)
+
+    def receive(self) -> None:
+        """回复落盘后重跑 prepare 接收它（记下原样字节的摘要）。"""
+        out = self.review("prepare")
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
 
     def flow(self) -> dict:
         return json.loads(self.flow_path.read_text(encoding="utf-8"))
@@ -173,8 +205,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart2(TheStoryIsReviewedRegistered
 
     def test_a_reply_out_of_the_report_format_is_kept_and_not_registered(self) -> None:
         """审查者的回复不合报告合同：判 report_invalid，原回复一字不改地留着，不登记。"""
-        original = self.reviewed("pass")
-        original.write_text("看过了，整体还行。\n", encoding="utf-8")
+        original = self.replied("pass", lambda _t: "看过了，整体还行。\n")
         kept = original.read_bytes()
         result = self.result()
         self.assertEqual("report_invalid", result["result"], result)
@@ -264,6 +295,28 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegistered
 class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
     """报告按合同只读核对：显式 check 与交付门共用一份判定，同材料通过复用，重新派审的新报告不因不是第一份被拒。"""
 
+    def test_a_received_first_reply_rewritten_in_place_is_not_consumed(self) -> None:
+        """R3：合法的首份 PASS / WARN 经正常接收后，原位改写成另一份仍合合同、材料键不变的回复：不再读出结论；
+        改回原样照常复用；重新准备另起编号，改过的那份留作现场。"""
+        for kind, want in (("pass", "pass"), ("advice", "warn")):
+            with self.subTest(kind=kind):
+                self.fresh()
+                reply = self.reviewed(kind)
+                self.assertEqual(want, self.result()["result"])
+                kept = reply.read_bytes()
+                rewritten = kept.decode("utf-8").replace("逐章对着来源读过", "逐章读过").encode("utf-8")
+                self.assertNotEqual(kept, rewritten, "夹具变了，用例要跟着改")
+                reply.write_bytes(rewritten)
+                self.assertEqual("report_invalid", self.result()["result"], "接收后原位改写的回复仍被当作结论")
+                self.assertNotEqual(0, self.register().returncode, "改写过的回复被登记了")
+                reply.write_bytes(kept)
+                self.assertEqual(want, self.result()["result"], "改回原样后不能复用")
+                reply.write_bytes(rewritten)
+                out = self.prepare()
+                self.assertNotEqual(reply, self.root / out["report_file"], "改写过的回复位置又被复用")
+                self.assertFalse(out["reused"])
+                self.assertEqual(rewritten, reply.read_bytes(), "现场被改了")
+
     def test_checking_writes_nothing(self) -> None:
         self.reviewed("pass")
         before = self.tree()
@@ -299,7 +352,7 @@ class TheReportIsCheckedReadOnlyPart2(TheStoryIsReviewedRegisteredAndDeliveredCa
         self.assertFalse(prepared["reused"], prepared)
         self.assertNotEqual(original, self.root / prepared["report_file"])
         self.assertEqual("fail", result["result"])
-        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.answer("pass")
         self.assertEqual("pass", self.result()["result"])
 
     def test_a_new_reply_after_a_failing_one_is_judged_on_its_own(self) -> None:
@@ -332,8 +385,8 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
         }
         for label, (kind, mutate, want) in cases.items():
             with self.subTest(case=label):
-                original = self.reviewed(kind)
-                original.write_text(mutate(original.read_text(encoding="utf-8")), encoding="utf-8")
+                self.fresh()
+                self.reviewed(kind, mutate)
                 self.assertEqual(want, self.result()["result"])
 
     def test_locations_keep_their_quoting(self) -> None:
@@ -352,8 +405,8 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
         }
         for label, (where, want) in cases.items():
             with self.subTest(case=label):
-                original = self.reviewed("advice")
-                original.write_text(original.read_text(encoding="utf-8").replace(f"`{story}`", where), encoding="utf-8")
+                self.fresh()
+                self.reviewed("advice", lambda t, where=where: t.replace(f"`{story}`", where))
                 self.assertEqual(want, self.result()["result"], self.result())
 
 
@@ -379,8 +432,7 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertEqual("report_missing", self.result()["result"])
 
     def test_a_bad_reply_goes_back_to_an_isolated_reviewer_with_its_diagnosis(self) -> None:
-        first = self.reviewed("pass")
-        first.write_text("看过了，整体还行。\n", encoding="utf-8")
+        first = self.replied("pass", lambda _t: "看过了，整体还行。\n")
         kept = first.read_bytes()
         diagnosis = self.result()
         self.assertEqual("report_invalid", diagnosis["result"])
@@ -389,22 +441,24 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         context = self.prepared()["review_context"]
         self.assertEqual(("format_repair", first.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
         self.assertEqual(diagnosis["detail"], context["diagnostic"]["detail"])
-        self.assertIn(diagnosis["detail"].splitlines()[0], out["dispatch_text"], "诊断没原样进派审载体")
-        self.assertIn(context["report_sha256"], out["dispatch_text"])
+        self.assertIn(diagnosis["detail"].splitlines()[0], self.context_text(), "诊断没原样进前轮上下文")
+        self.assertIn(context["report_sha256"], self.context_text())
+        self.assertNotIn(diagnosis["detail"].splitlines()[0], out["dispatch_text"], "诊断又进了首读载体")
+        self.assertIn("context.md", out["dispatch_text"], "载体没列首读之后读的前轮上下文")
+        self.assertEqual("report_invalid", self.result()["result"], "接收之后诊断不见了")
         again = self.prepare()
         self.assertEqual(out["report_file"], again["report_file"], "同一次返修再准备，回复位置递增了")
         self.assertEqual(context, self.prepared()["review_context"], "再准备丢了返修上下文")
         self.assertEqual(kept, first.read_bytes(), "原回复被改了")
-        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.answer("pass")
         self.assertEqual("pass", self.result()["result"])
         first.write_text("改过的原回复\n", encoding="utf-8")
-        self.assertEqual("input_invalid", self.result()["result"], "派审带着的原回复被改，没被认出来")
+        self.assertEqual("pass", self.result()["result"], "接收过的新结论被旧回复的改动带偏了")
 
     def test_an_altered_original_leads_to_a_fresh_independent_review(self) -> None:
         """格式返修带出去的原回复被改成一份「通过」：check 报 input_invalid；重新 prepare 改为对当前材料的完整独立审查，
         位置不变、改过的那份留作现场且不被读出结论；新回复到了才可消费。"""
-        first = self.reviewed("pass")
-        first.write_text("看过了，整体还行。\n", encoding="utf-8")
+        first = self.replied("pass", lambda _t: "看过了，整体还行。\n")
         kept = first.read_bytes()
         out = self.prepare()
         pending = self.root / out["report_file"]
@@ -420,10 +474,10 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         context = self.prepared()["review_context"]
         self.assertEqual(("fresh_review", first.relative_to(self.root).as_posix()),
                          (context["kind"], context["damaged"]["report_file"]))
-        self.assertIn("原件已被改动", again["dispatch_text"])
+        self.assertIn("原件已被改动", self.context_text())
         self.assertEqual("report_missing", self.result()["result"], "新回复没到，却借改过的历史放行了")
         self.assertEqual(forged, first.read_bytes(), "现场被改了")
-        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.answer("pass")
         self.assertEqual("pass", self.result()["result"])
         first.write_bytes(kept)
         self.assertEqual("pass", self.result()["result"], "原件恢复之后正常审查结果反而不可消费")
@@ -433,7 +487,8 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         out = self.prepare()
         context = self.prepared()["review_context"]
         self.assertEqual(("recheck", failed.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
-        self.assertIn("F-1", out["dispatch_text"], "失败报告的阻断结论没进派审载体")
+        self.assertIn("F-1", self.context_text(), "失败报告的阻断结论没进前轮上下文")
+        self.assertNotIn("F-1", out["dispatch_text"], "阻断结论又进了首读载体")
         self.assertEqual("fail", self.result()["result"], "新位置还空着，原有效 fail 被撤销")
 
 
@@ -455,13 +510,15 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         self.assertNotEqual(old, self.root / out["report_file"], "新材料的回复写回了旧报告")
         self.assertFalse(out["reused"], "旧材料的结论被当成新材料的结论")
         self.assertEqual("report_missing", self.result()["result"], "新材料继承了旧材料的结论")
-        for needle in (old.relative_to(self.root).as_posix(), old_key, "只作参考", out["material_key"]):
-            self.assertIn(needle, out["dispatch_text"])
+        for needle in (old.relative_to(self.root).as_posix(), old_key, "只作参考"):
+            self.assertIn(needle, self.context_text())
+        self.assertIn(out["material_key"], out["dispatch_text"])
+        self.assertNotIn(old_key, out["dispatch_text"], "上一版报告又进了首读载体")
         again = self.prepare()
         self.assertEqual((out["report_file"], context), (again["report_file"], self.prepared()["review_context"]),
                          "同一份新材料再准备，位置或参考变了")
         self.assertEqual(kept, old.read_bytes(), "旧原报告被改了")
-        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.answer("pass")
         self.assertEqual("pass", self.result()["result"])
 
     def test_a_passed_report_is_a_reference_not_a_pass(self) -> None:
@@ -489,14 +546,16 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         self.change("B 的一句。")
         b = self.prepare()
         self.assertNotIn("review_context", self.prepared(), "前一份回复不在，却带了参考")
-        self.assertIn("没有可信的前轮审查报告", b["dispatch_text"])
+        self.assertEqual("", self.context_text())
+        self.assertNotIn("context.md", b["dispatch_text"])
         self.reviewed("pass")
         self.change("C 的一句。")
         self.prepare()
         self.change("D 的一句。")
         d = self.prepare()
         self.assertNotIn("review_context", self.prepared(), "C 还没回复，D 却追溯了 B 的报告")
-        self.assertIn("没有可信的前轮审查报告", d["dispatch_text"])
+        self.assertEqual("", self.context_text())
+        self.assertNotIn("context.md", d["dispatch_text"])
 
     def test_a_failure_of_the_current_material_wins_over_a_later_reference(self) -> None:
         """A 失败 → B → 回到 A：A 的 fail 优先，按复审交出，不被 B 的参考盖掉。"""
@@ -514,23 +573,22 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
 
     def test_an_invalid_reply_of_the_current_material_wins_over_a_later_pass(self) -> None:
         """F1：A 的回复不合合同 → B 通过 → 回到 A：A 的格式诊断保留，按格式返修交出，不变成只带 B 参考的完整首审。"""
-        bad = self.reviewed("pass")
-        bad.write_text("看过了，整体还行。\n", encoding="utf-8")
+        bad = self.replied("pass", lambda _t: "看过了，整体还行。\n")
         kept = bad.read_bytes()
         diagnostic = self.result()
         self.assertEqual("report_invalid", diagnostic["result"])
         a = self.story.read_bytes()
         self.change("B 的一句。")
         self.prepare()
-        design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        self.answer("pass")
         self.assertEqual("pass", self.result()["result"])
         self.story.write_bytes(a)
         out = self.prepare()
         context = self.prepared()["review_context"]
         self.assertEqual(("format_repair", bad.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
         self.assertEqual(diagnostic["detail"], context["diagnostic"]["detail"])
-        self.assertIn("上一份回复不合报告合同", out["dispatch_text"])
-        self.assertNotIn("上一版材料的审查报告", out["dispatch_text"], "A 自己的诊断被 B 的参考盖掉了")
+        self.assertIn("上一份回复不合报告合同", self.context_text())
+        self.assertNotIn("上一版材料的审查报告", self.context_text(), "A 自己的诊断被 B 的参考盖掉了")
         self.assertNotEqual(bad, self.root / out["report_file"], "返修写回了原回复")
         self.assertEqual(kept, bad.read_bytes(), "原回复被改了")
 
@@ -770,6 +828,8 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         self.assertIn("/files/ux-reference/home.png`", task)
         self.assertIn("`doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml`", task)
         design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        received = self.run_node("review", "--action", "prepare")
+        self.assertEqual(0, received.returncode, received.stdout + received.stderr)
         registered = subprocess.run(["python", str(self.FLOW), "story", "--feature", "REQ-DEMO", "--project-root", str(self.root)],
                                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, registered.returncode, registered.stdout + registered.stderr)
@@ -831,6 +891,8 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         text = text.replace("  unreviewed: []", "  unreviewed: " + json.dumps(
             [{"path": e, "reason": "宿主看不了图，图面未核" if e.endswith(".png") else "没读完"} for e in moved], ensure_ascii=False))
         report.write_text(text, encoding="utf-8")
+        received = self.run_node("review", "--action", "prepare")
+        self.assertEqual(0, received.returncode, received.stdout + received.stderr)
         return self.result()
 
     def test_the_task_states_the_native_ruling(self) -> None:
@@ -1223,8 +1285,9 @@ class TheTaskMovesOnlyWithTheAuthorsInput(unittest.TestCase):
     def test_a_report_and_its_check_leave_the_object_unchanged(self) -> None:
         first = self.prepared()
         design_kit.write_review(self.root, "REQ-DEMO", "pass")
-        self.assertEqual("pass", self.result()["result"])
+        self.assertEqual("report_unreceived", self.result()["result"], "没接收的回复被当成了结论")
         again = self.prepared()
+        self.assertEqual("pass", self.result()["result"])
         self.assertEqual((first["material_key"], first["report_file"]), (again["material_key"], again["report_file"]),
                          "报告落盘换了审查对象，或通过的报告没有复用")
 

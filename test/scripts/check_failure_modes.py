@@ -2379,6 +2379,9 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
         if prepared.returncode != 0:
             return Outcome(False, f"审查准备不了：{(prepared.stdout + prepared.stderr).strip()[:200]}", infra=True)
         design_fixture.write_review(work, feature, "pass")
+        # 回复落盘后重跑 prepare 接收（记下原件摘要），再核结果
+        if run("node", str(build), "review", "--action", "prepare").returncode != 0:
+            return Outcome(False, "接收审查回复的 prepare 报错", infra=True)
         if run("node", str(build), "review", "--action", "check").returncode != 0:
             return Outcome(False, "夹具审查结果不可消费", infra=True)
         registered = run(sys.executable, str(flow), "story")

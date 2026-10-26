@@ -7,11 +7,12 @@
  *
  * 身份归框架：报告在不在、终态块回显的 subject 对不对、verdict 与 blocker 数一致不一致，由 `check-receipt` 判。
  * 这里核的是本阶段 overlay 的每条判据在四格汇总表里恰好一行、取值合法、证据不空，FAIL 的严重度与判据声明一致、
- * 终态不与 BLOCKER 级 FAIL 矛盾，WARN/FAIL 有指向这份报告的处置记录；
+ * 终态不与 BLOCKER 级 FAIL 矛盾，同一审查对象只认第一份合规结论，WARN/FAIL 有指向这份报告的处置记录；
  * 走局部明细合同的判据（`COVERED_CHECKS`）另核明细四个键与必审集合。
  * 这是逐判据的结构核对；知识条目逐条核没核、核得对不对是审查者的语义职责，不在这里数。
  * Story 的独立人读审查不在这里：判据在 `rules/story-reader-rules.yaml`，任务由 `reader-review-task.mjs` 生成。
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureDir, phaseReportsDir } from './framework-access.mjs';
@@ -84,8 +85,10 @@ function summaryRows(text) {
 /**
  * 当前审查报告立不立得住 —— 格式合同、局部明细与处置记录，问题一次列全。
  *
- * 报告由调用方原样落盘在 `summary.verifier_report`。不合合同的回复每次运行都报，不计作结论；门禁只读，不写盘、不留结论账本，
- * 重新派审拿回的新回复照同样判据核。报告的身份与有效性（对象回显、过期）由原生 `check-receipt` 判；同行的 Framework 自有判据也归原生核。
+ * 报告由调用方原样落盘在 `summary.verifier_report`。不合合同的回复每次运行都报，不计作结论；合规的第一份按审查对象登记进
+ * 同目录 `verifier.conclusions.json`（这一核对唯一的写盘），同一对象之后换了内容的回复被拒——对象没变，结论就不换；
+ * 材料改过之后 harness 给出新的请求与对象。报告的身份与有效性（对象回显、过期）由原生 `check-receipt` 判；
+ * 同行的 Framework 自有判据也归原生核。登记只能发现登记之后的改动，证明不了第一次落盘之前的字节。
  * 还没派审（summary 或报告不在）不在这里报：派不派由 framework 的 NEXT 行说。
  *
  * @returns {string[]}
@@ -133,6 +136,14 @@ export function reportProblems(projectRoot, feature, phase) {
     + `不合合同的报告按阻断处理。${INVALID_EVIDENCE}`];
 
   const subject = block.subject;
+  const ledgerPath = path.join(path.dirname(where.abs), 'verifier.conclusions.json');
+  const ledger = readJsonOrNull(ledgerPath) ?? {};
+  const digest = crypto.createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 16);
+  if (subject && ledger[subject] && ledger[subject] !== digest) {
+    return [`${name}：审查对象 ${String(subject).slice(0, 12)}… 已经有过一份合规结论，这份是换了内容的回复——同一审查对象只认第一份合规结论`
+      + `（同目录 verifier.conclusions.json）；审查对象随材料变化，材料改过之后 harness 给出新的请求与对象。${INVALID_EVIDENCE}`];
+  }
+  if (subject && !ledger[subject]) fs.writeFileSync(ledgerPath, `${JSON.stringify({ ...ledger, [subject]: digest }, null, 2)}\n`, 'utf-8');
 
   // 处置要指向这一份报告：同一行里有判据编号与报告对象的前 8 位。旧报告的同号处置不替新报告豁免；
   // 处置写得对不对、问题是不是真解决了，归审查与作者的说明，这里只核引用在、指向当前报告。

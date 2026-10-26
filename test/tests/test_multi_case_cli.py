@@ -347,6 +347,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
         try:
             with mock.patch.object(run_multi_case, "invoke_case", return_value=failed), \
                     mock.patch.object(run_multi_case, "ensure_case_git", return_value={"status": "ready"}), \
+                    mock.patch.object(run_multi_case, "dsh_host_problem", return_value=None), \
                     mock.patch.object(run_multi_case, "run_pointer_state", return_value=None):
                 run_multi_case.start_one(record, suite)
             self.assertEqual("coordinator_start_failed", record["status"])
@@ -366,6 +367,7 @@ class MultiCaseSchedulingTest(unittest.TestCase):
             with mock.patch.object(run_multi_case, "invoke_case",
                                    return_value=(1, None, "", "response lost")), \
                     mock.patch.object(run_multi_case, "ensure_case_git", return_value={"status": "ready"}), \
+                    mock.patch.object(run_multi_case, "dsh_host_problem", return_value=None), \
                     mock.patch.object(run_multi_case, "run_pointer_state", return_value={
                         "status": "running", "run_id": "run-1", "pid": 123}):
                 run_multi_case.start_one(record, suite)
@@ -1134,6 +1136,40 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         with mock.patch.object(run_multi_case.subprocess, "run", return_value=refused):
             seed = run_multi_case.seed_agent_adapter(suite, case, "dsh")
         self.assertEqual(("failed", "needs_adapter_choice"), (seed["status"], seed["code"]))
+
+    def _start_dsh(self, suite: dict, case: dict, seed_result: str) -> mock.MagicMock:
+        """真实 start_one，Git 边界与 CLI 调用换替身；播种走真实 seed_agent_adapter，只把 Framework 的选择命令换成给定回答。"""
+        answer = subprocess.CompletedProcess([], 0 if '"ok": true' in seed_result else 1, stdout=seed_result, stderr="")
+        with mock.patch.object(run_multi_case, "select_healthy_cli", return_value=(0, "dsh-1")), \
+                mock.patch.object(run_multi_case, "suite_cli_configurations", return_value=[{"name": "dsh"}]), \
+                mock.patch.object(run_multi_case.subprocess, "run", return_value=answer), \
+                mock.patch.object(run_multi_case, "append_event"), \
+                mock.patch.object(run_multi_case, "ensure_case_git", return_value={"status": "ready"}), \
+                mock.patch.object(run_multi_case, "invoke_case", side_effect=RuntimeError("到了启动 CLI 这一步")) as invoke:
+            try:
+                run_multi_case.start_one(case, suite)
+            except RuntimeError:
+                pass
+        return invoke
+
+    def test_a_dsh_case_starts_only_on_the_dsh_host(self) -> None:
+        """R4：所选 dsh 而播种失败或实际 adapter 不是 dsh：停在 coordinator_start_failed，不启动工作进程；
+        修好后重试重新播种（失败的播种不当缓存），身份一致时才走到启动 CLI。"""
+        suite, case, root = self._seed_workspace(["dsh", "opencode"])
+        (Path(case["workspace"]) / "framework/agents/dsh/adapter.yaml").write_text(
+            "adapter_name: dsh\nverifier_subagent: true\n", encoding="utf-8")
+        for label, answer in (("播种失败", '{"ok": false, "code": "needs_adapter_choice"}'),
+                              ("实际是 opencode", '{"ok": true, "code": "ok", "activeAdapter": "opencode"}')):
+            with self.subTest(label):
+                case.pop("status", None)
+                invoke = self._start_dsh(suite, case, answer)
+                invoke.assert_not_called()
+                self.assertEqual("coordinator_start_failed", case["status"])
+                self.assertIn("adapter_seed", case["last_error"])
+        invoke = self._start_dsh(suite, case, '{"ok": true, "code": "ok", "activeAdapter": "dsh"}')
+        invoke.assert_called_once()
+        self.assertEqual(("seeded", "dsh"), (case["adapter_seed"]["status"], case["adapter_seed"]["adapter"]))
+        self.assertEqual("dsh", case["host_capabilities"]["adapter"])
 
     def _session_file(self, path: Path, rows: list[dict]) -> None:
         """用 Node 内置 zstd 写一个两帧的会话文件（dsh 的 session.v4.jsonl.zstd 就是多帧首尾相接）。"""
