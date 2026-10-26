@@ -196,7 +196,8 @@ class TheWriteFaceIsExact(PublishCase):
         self.assertEqual(sorted(pub.enumerate_source(self.source)), sorted(pub.enumerate_source(ext)))
 
     def test_the_entries_match_what_the_installed_adapt_materializes(self) -> None:
-        """同一份扩展、同一个 Framework：维护安装与装好的 adapt 物化出的宿主入口逐字节相同。"""
+        """同一份扩展、同一个 Framework：维护安装与装好的 adapt 物化出的技能入口逐字节相同；AGENTS/CLAUDE 带各自清单的
+        知识路由（维护安装换整份清单，adapt 保留目标的知识清单），两边都与原生按自己清单渲染的一致。"""
         other = self.root / "by-adapt"
         shutil.copytree(self.target, other, ignore=shutil.ignore_patterns("framework"))
         link_framework(other)
@@ -208,8 +209,13 @@ class TheWriteFaceIsExact(PublishCase):
         proc = subprocess.run(["node", str(scan), "--apply", "--target", str(other)],
                               capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        for rel in (*ENTRY_FILES, ".claude/commands/story.md", ".codex/skills/story-adaptation/SKILL.md"):
+        for rel in (".claude/commands/story.md", ".codex/skills/story-adaptation/SKILL.md"):
             self.assertEqual((other / rel).read_bytes(), (self.target / rel).read_bytes(), rel)
+        entries = self.target / "doc/extensions/skills/story-adaptation/scripts/entries.mjs"
+        for root in (self.target, other):
+            check = subprocess.run(["node", str(entries), "--project-root", str(root), "--action", "check"],
+                                   capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(0, check.returncode, f"{root.name}：{check.stdout}{check.stderr}")
 
     def test_a_write_failure_reports_what_was_actually_done(self) -> None:
         """物化中途写不进去：报失败并保留原始错误，此前真实写出或删掉的宿主入口一个不漏，不留安装日志。"""

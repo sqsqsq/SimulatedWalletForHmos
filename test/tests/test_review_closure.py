@@ -287,12 +287,15 @@ class EveryWarnHasADisposition(ClosureCase):
         ids = self.overlay_ids()
         self.put_report(report_text(ids, {ids[0]: "WARN"}))
         out = self.gate()
-        self.assertIn(f"spec/notes.md：审查结论 {ids[0]}（WARN）没有处置记录", out)
+        self.assertIn(f"spec/notes.md：审查结论 {ids[0]}（WARN）没有指向这份报告的处置记录", out)
         # 门禁报错只说在哪、什么问题、机制（10 §3.3）：没有统一开头，也不追加与这条无关的处置尾巴
         self.assertNotIn("补齐 spec 宿主扩展章节", out)
         self.assertNotIn("先读 ", out)
         (self.fr / "spec" / "notes.md").write_text(
             f"# notes\n\n- {ids[0]}：只改表达，已按闭环表重验。\n", encoding="utf-8")
+        self.assertIn(f"{ids[0]}（WARN）", self.gate(), "没指向这份报告的同号处置替它豁免了")
+        (self.fr / "spec" / "notes.md").write_text(
+            f"# notes\n\n- {ids[0]} {SUBJECT[:8]}：只改表达，已按闭环表重验。\n", encoding="utf-8")
         self.assertNotIn(f"{ids[0]}（WARN）", self.gate())
 
 

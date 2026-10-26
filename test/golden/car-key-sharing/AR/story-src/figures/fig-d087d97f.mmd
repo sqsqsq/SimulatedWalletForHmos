@@ -1,0 +1,23 @@
+%% 图源 SR §2 #1
+sequenceDiagram
+    actor O as 车主
+    participant W as 钱包端
+    participant C as 车云
+    participant M as 车厂云
+    participant G as 接受方钱包
+    O->>W: 选定要分享给谁
+    W->>C: 查这个对象能给哪几档权限
+    C-->>W: 车云按对象与车辆的关系给出可用档位
+    O->>W: 选好权限与有效期，确认发出
+    W->>C: 创建分享（带幂等标识）
+    C->>M: 请求签发凭据
+    alt 车厂云签发成功
+      M-->>C: 凭据就绪
+      C-->>W: 分享已建立（待接受）
+      C-)G: 经推送送达待接受的钥匙
+      Note over C,G: 推送没送到不改变创建结果；接受方进入卡包补拉
+    else 车厂云签发失败
+      M-->>C: 失败
+      C->>C: 回滚分享关系
+      C-->>W: 建立失败，可以再发
+    end

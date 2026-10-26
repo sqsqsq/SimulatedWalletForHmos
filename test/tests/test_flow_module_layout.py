@@ -30,15 +30,16 @@ IMPORT_CLI = CORE / "import_sources.py"
 #: state 一个兄弟都不 import；lifecycle/decisions/rounds/submission 是命令，谁也不 import 它们。
 ALLOWED = {
     "state": set(),
+    "phase_facts": {"state"},
     "inputs": {"state"},
     "meetings": {"state"},
-    "routing": {"state", "inputs", "meetings"},
+    "routing": {"state", "inputs", "meetings", "phase_facts"},
     "asks": {"state", "inputs", "meetings"},
-    "update": {"state", "routing"},
+    "update": {"state", "routing", "phase_facts"},
     "decisions": {"state", "inputs", "routing", "meetings", "asks"},
     "rounds": {"state", "inputs", "routing", "meetings"},
     "submission": {"state", "inputs", "routing"},
-    "lifecycle": {"state", "inputs", "routing", "meetings", "asks", "update"},
+    "lifecycle": {"state", "inputs", "routing", "meetings", "asks", "update", "phase_facts"},
 }
 
 

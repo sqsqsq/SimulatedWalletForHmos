@@ -1,17 +1,19 @@
 /**
- * 正文的来源 —— 这份 story 据哪几份材料写成，哪一份还没在手里；附录材料清单里的链接点不点得开。
+ * 正文的来源与材料贡献清单 —— 这份 story 据哪几份材料写成，哪一份还没在手里。
  *
  * 必需性只在这里判一次：起手预检与交付前的 check 读同一份结果。两处各判一次的话，
  * 同一份缺件会在一处说「本地单缺它正常」、在另一处说「它是必备来源」。
  */
+
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSystemRequirement, readJson, readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
+import { markdownLinks } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
 import { designSource } from './design-source.mjs';
-import { parseDocument, subsectionSpan } from './document.mjs';
+import { normalizeHeading, parseDocument, subsectionSpan } from './document.mjs';
 
 /**
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
@@ -45,16 +47,24 @@ function scanSources(ctx) {
   return { docs, missing };
 }
 
+//: 必备来源由谁产出：缺了的时候恢复入口就是它
+const PRODUCED_BY = {
+  PRD: '它是需求系统的单据，`/story init` 取材时拉进需求目录',
+  SE: '它是需求系统的单据，`/story init` 取材时拉进需求目录',
+  DESIGN: '它是上游的开发需求原件：系统单由 `/story init` 取材拉进需求目录，本地单由 init 建骨架、人把文档放进 inbox 导入',
+};
+
 /** 缺失来源报成一句话。必备与可选两种措辞，降级的那几份带上「为什么不算缺」。 */
+
 export function missingSourceLine(m) {
   return `${m.rel}：合同声明的来源 ${m.doc} 不存在`
     + (m.required
-      ? '——它是必备来源，缺了这一轮的材料就不完整'
+      ? `——它是必备来源，缺了这一轮的材料就不完整${PRODUCED_BY[m.doc] ? `；${PRODUCED_BY[m.doc]}` : ''}`
       : `（${m.why ?? '可选来源'}，缺了是正常的）`);
 }
 
 //: 需求系统给的单才有的那两份。本地单没有它们是正常的——把本地单的 PRD 判成缺件，
-//: 作者除了造一份假的没有别的路。本轮自己派生的产物（AR 提取稿）两种单都必需：
+//: 作者除了造一份假的没有别的路。开发需求原件（AR 提取稿）两种单都必需：
 //: 跳过它等于拿不全的输入成文。
 const REMOTE_ONLY_SOURCES = ['PRD', 'SE'];
 
@@ -75,10 +85,6 @@ export function sourceStatus(ctx) {
   return { docs, missing: adjusted, blocking: adjusted.filter(m => m.required) };
 }
 
-// --------------------------------------------------------------------------
-// 正文定位：章、小节与附录机器区
-// --------------------------------------------------------------------------
-
 /**
  * 材料里的图片登记 —— 唯一来源是材料清单（`AR/story-src/materials.json`）。
  *
@@ -98,6 +104,78 @@ export function readManifest(ctx) {
   try { return JSON.parse(text.replace(/^\ufeff/, '')); } catch { return 'broken'; }
 }
 
+/** 材料清单登记过的路径（原件与它们的阅读稿）；清单不在或读不出时为空。 */
+export function registeredPaths(ctx) {
+  const m = readManifest(ctx);
+  return m && m !== 'broken' ? [...(m.origins ?? []).map(o => o.path), ...(m.materials ?? []).flatMap(x => x.paths ?? [])] : [];
+}
+
+/**
+ * 本轮实际采用的输入原件 —— `materials.json` 的 `origins`（registry 按磁盘现状派生）。
+ *
+ * 作者表不定义这个集合：漏写一行不能让那份原件从核对与审查里消失。集合三种来源：
+ * 远端直接给的正文（`direct`）、已确定性并入正文的收件箱原件（`converted-source`，只抽图的原件也在内，
+ * 阅读稿是它自己、`image_paths` 列抽出的图）、留存的会议版本（`meeting`）。
+ * 图片本身跟着图片说明与取舍走，不逐张进来；没并入的原件走待导入。
+ *
+ * @returns {{origins: object[], pending: string[]} | null | {gap: string}}
+ *   null = 还没有清单（没跑过 round）；gap = 清单在但读不出来源关系
+ */
+function originSet(ctx) {
+  const data = readManifest(ctx);
+  if (data === null) return null;
+  const fix = '——这份清单由 `story_flow.py round` 按磁盘现状生成';
+  if (data === 'broken') return { gap: `AR/story-src/materials.json：读不出材料清单${fix}` };
+  if (!Array.isArray(data.origins)) {
+    return { gap: 'AR/story-src/materials.json：没有来源关系 `origins`（本版材料清单 schema 2）'
+      + `${fix}；旧版做到一半的单在旧版收口或从 init 重起` };
+  }
+  const pending = (Array.isArray(data.sources) ? data.sources : [])
+    .filter(s => s?.file && !s.ingested).map(s => `inbox/${s.file}`);
+  return { origins: data.origins, pending };
+}
+
+/** 相对 story 的 markdown 链接串：带空格或括号的路径用 `<…>` 包起来，照抄即可。 */
+function mdLink(rel) {
+  const to = relFromStory(rel);
+  const name = String(rel).split('/').pop();
+  return `[${name}](${/[\s()]/.test(to) ? `<${to}>` : to})`;
+}
+
+/**
+ * 来源集合按阅读稿分组渲染 —— 作者任务包与读者审查任务读同一份。
+ *
+ * 一组是作者表的一行候选：一份阅读稿，列齐合成它的全部原件与各自的内容摘要；
+ * 版本有版号或会议版本时作者写那个，没有就写摘要。链接串相对 story，可以直接粘。
+ */
+export function originRows(ctx) {
+  const set = originSet(ctx);
+  if (set === null) return ['还没有材料清单 `AR/story-src/materials.json`——先跑 `story_flow.py round`。'];
+  if (set.gap) return [`**输入有缺口**：${set.gap}。`];
+  const groups = new Map();
+  for (const o of set.origins) {
+    const key = (o.readable_paths ?? []).join('、') || o.path;
+    if (!groups.has(key)) groups.set(key, { readable: o.readable_paths ?? [], items: [] });
+    groups.get(key).items.push(o);
+  }
+  const KIND = { direct: '远端直接给的正文', 'converted-source': '收件箱原件，确定性并入', meeting: '会议留存版本' };
+  const digest = o => String(o.sha256 ?? '').replace(/^sha256:/, '').slice(0, 8);
+  const rows = [...groups.values()].map((g) => {
+    const pictures = g.items.flatMap(o => o.image_paths ?? []);
+    if (pictures.length) {
+      // 只抽图的原件：一份原件一行，材料列与来源列都指它自己；图不逐张成行，说明与取舍见图片登记
+      return `- 原件 ${g.items.map(o => `\`${mdLink(o.path)}\`（摘要 ${digest(o)}）`).join('、')}只取图，正文没有并入：`
+        + `抽出 ${pictures.length} 张（${pictures.map(p => p.split('/').pop()).join('、')}），用了哪几张、不用的理由见图片登记；`
+        + '贡献写采用了哪些视觉信息，全部不用也写理由';
+    }
+    return `- 阅读稿 ${g.readable.map(r => `\`${mdLink(r)}\``).join('、') || '（读不到）'}`
+      + ` ← 来源 ${g.items.map(o => `\`${mdLink(o.path)}\`（${KIND[o.kind] ?? o.kind}，摘要 ${digest(o)}）`).join('、')}`;
+  });
+  if (!rows.length) rows.push('- （本轮没有可采用的正文来源）');
+  for (const rel of set.pending) rows.push(`- **还没并入正文**：\`${rel}\`——先按 inbox 导入规则导入，作者表写一行替代不了导入`);
+  return rows;
+}
+
 export function relFromFeature(ctx, target) {
   return path.relative(ctx.featureRoot, target).split(path.sep).join('/');
 }
@@ -112,10 +190,6 @@ export function joinPosix(base, ref) {
   }
   return parts.join('/');
 }
-
-// --------------------------------------------------------------------------
-// 上游带图的文档：图由作者按内容搬进 story
-// --------------------------------------------------------------------------
 
 /**
  * 需求目录里一份上游文件在本次采用的版本：交给设计后读冻结输入里的原始字节，当前工作区的新版本不改变已采用的来源；
@@ -143,10 +217,20 @@ export function adoptedUpstreamTexts(ctx) {
 }
 
 /**
+ * 带图的上游文档在本次采用的版本：写作设计登记「承接上游图：<名> §<节> #<第几张>」时，名就是这里的标签。
+ * 系统设计取冻结输入里的原始字节（交给设计之前取当前文件）；蓝图里的图由设计来源给出，不在这里。
+ */
+export function upstreamDocs(ctx) {
+  const rel = ctx.contract.sources?.SE?.path;
+  const got = rel ? adoptedText(ctx, rel) : null;
+  return got ? [['SR', got.text]] : [];
+}
+
+/**
  * 把材料清单那一节里的 markdown 链接换成一个占位词，再交给仓内路径与文档坐标扫描。
  *
  * **原文链接是仓内路径唯一允许出现的位置**：归档件的读者打不开这个仓，但他要能
- *据这一行把那份材料找出来——链接是「据哪几份材料写成」这件事唯一可核的形态。
+ * 据这一行把那份材料找出来——链接是「据哪几份材料写成」这件事唯一可核的形态。
  * 豁免范围只到这一节的链接语法：同一行链接之外的文字照扫，别的章节照扫。
  */
 export function redactMaterialLinks(storyText, ctx) {
@@ -157,7 +241,8 @@ export function redactMaterialLinks(storyText, ctx) {
   if (!span) return storyText;
   const lines = String(storyText).split(/\r?\n/);
   for (let i = span.start; i < span.end && i < lines.length; i++) {
-    lines[i] = lines[i].replace(/\[[^\]]*\]\([^)\s]*\)/g, '原文链接');
+    const { links } = markdownLinks(lines[i]);
+    for (const l of [...links].reverse()) lines[i] = lines[i].slice(0, l.start) + '原文链接' + lines[i].slice(l.end);
   }
   return lines.join('\n');
 }
@@ -213,91 +298,123 @@ export function sourceProblems(ctx) {
   return { problems, notes };
 }
 
-//: 图片按扩展名认：同一张图的另一处落点不在快照里，也不是外部原件
-const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
-
-/**
- * 这份 Story 据以写成的外部原件 —— 材料清单的检查、作者包与审查任务共用这一份。
- *
- * 按冻结快照取：快照的 `origins` 记着每份采用文件的外部来源——收件箱导入的转换稿记它的全部原件（路径与采用时的摘要），
- * init 落的空骨架记空列表；没记的采用原件就是外部原件本身。快照里的图片、提取稿与人签导出是过程件（`internal`）。
- * 本轮 update 记下了评审人原话的，评审记录也是一份来源。收件箱里的原件与采用时的摘要不同、或快照没记来源
- * （旧版本冻结），记进 `gaps`，不猜。没有冻结快照（还没交给设计）返回 null。
- *
- * @returns {{originals: Map<string, string[]>, derived: Map<string, string[]>, internal: Set<string>, gaps: string[]}|null}
- *   `originals` 是原件 → 它的转换稿，`derived` 是转换稿 → 它的原件
- */
-export function externalOriginals(ctx) {
-  const snapshot = designSource(ctx).snapshot;
-  if (!snapshot) return null;
-  const originals = new Map(), derived = new Map(), internal = new Set();
-  const gaps = snapshot.origins ? [] : ['冻结输入没有记下采用文件的外部来源（旧版本冻结），原件与转换稿分不清——重新 complete 冻结一版'];
-  for (const f of snapshot.files ?? []) {
-    const from = snapshot.origins?.[f.path];
-    if (f.role !== 'original' || (from && !from.length)) { internal.add(f.path); continue; }
-    if (!from) { originals.set(f.path, originals.get(f.path) ?? []); continue; }
-    derived.set(f.path, from.map(o => o.path));
-    for (const o of from) {
-      originals.set(o.path, [...(originals.get(o.path) ?? []), f.path]);
-      const bytes = readBytes(path.join(ctx.featureRoot, o.path));
-      if (!bytes || `sha256:${crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 16)}` !== o.sha256) {
-        gaps.push(`${o.path} 不是本次采用的那一版（采用时 ${o.sha256}${bytes ? '，现在内容变了' : '，现在读不到'}）——换了版要重新导入、round 并 complete`);
-      }
-    }
-  }
-  if ((readJson(ctx.flowPath, null)?.update?.decisions ?? []).length) originals.set('AR/review.md', []);
-  return { originals, derived, internal, gaps };
-}
 
 const readBytes = (abs) => { try { return fs.readFileSync(abs); } catch { return null; } };
 
+/** 附录·材料清单那张表的表头：章节合同附录投影里这一节登记的 `table`，脚本不留字面。 */
+function materialTableHeader(contract) {
+  const name = materialSubsectionName(contract);
+  const raw = appendixChapter(contract)?.projection?.sections?.[name ?? '']?.table;
+  return raw ? String(raw).split('|').map(h => h.trim()) : null;
+}
+
 /**
- * 材料清单：一张「材料｜来源｜贡献」表（列名取章节合同），一行一份外部原件，原件按材料格里的链接认；
- * 本次采用的原件每份一行，转换稿归回原件、过程件与图片不列，同一份不列两行。节里的链接都要点得开，
- * 表外的链接不算列了原件。贡献写得对不对归独立审查。
+ * 材料清单那一节：一张「材料 | 来源 | 贡献」表，链接点得开，来源与 `origins` 对得上。
+ *
+ * 机器只核身份与覆盖：漏了哪份原件、哪份原件写了两行、列了集合外的东西（生成件、没导入的原件、图）、
+ * 链接指不到文件、材料列不是这几份原件的阅读稿。贡献写得真不真、采用版本对不对、该不该采用，
+ * 归独立审查——机械覆盖通过不等于忠实。问题一次列全。
  */
 export function materialListProblems(ctx, storyText) {
   const problems = [];
+  const notes = [];
   const appendix = appendixChapter(ctx.contract);
   const name = materialSubsectionName(ctx.contract);
   const span = appendix && name ? subsectionSpan(storyText, appendix.title, name) : null;
-  if (!span) return { problems, notes: [] };
-  const at = `「${appendix.title}·${name}」`;
-  const lines = storyText.split(/\r?\n/);
+  if (!span) return { problems, notes };
+  const where = `「${appendix.title}·${name}」`;
+  const header = materialTableHeader(ctx.contract);
+  if (!header) {
+    problems.push(`章节合同附录投影没登记「${name}」的表头（projection.sections.${name}.table）——这张表按合同登记的列核，维护者补合同`);
+    return { problems, notes };
+  }
+  const lines = storyText.split(/\r?\n/).slice(span.start, span.end);
+  const doc = parseDocument(lines.join('\n'));
+  const lineNo = i => span.start + 1 + i;
+  const tables = doc.tables.filter(t => t.header.map(normalizeHeading).join('|') === header.map(normalizeHeading).join('|'));
+  const inTable = new Set(tables.flatMap(t => Array.from({ length: t.rows.length + 2 }, (_, k) => t.line + k)));
+  if (tables.length !== 1) {
+    problems.push(`${where}：要${tables.length ? '只有' : ''}一张表头为「${header.join(' | ')}」的表（现在 ${tables.length} 张）`
+      + '——一行一份阅读稿：材料列写名称与阅读稿链接，来源列列齐它的全部原件链接与采用版本，贡献列写采用了什么、未采用写原因');
+  }
+  lines.forEach((line, i) => {
+    if (inTable.has(i) || doc.fenced.has(i) || !markdownLinks(line).links.length) return;
+    problems.push(`${where}第 ${lineNo(i)} 行：表外有链接——材料与来源只写在「${header.join(' | ')}」表里，列表写法已退出`);
+  });
+
+  const set = originSet(ctx);
+  if (set === null) notes.push('AR/story-src/materials.json：不在，来源覆盖未核——这份清单由 `story_flow.py round` 生成');
+  if (set?.gap) problems.push(`${set.gap}；${where}的来源覆盖按它核`);
+  const origins = new Map((set?.origins ?? []).map(o => [o.path, o]));
+  const pending = new Set(set?.pending ?? []);
+  const generated = new Set([relFromFeature(ctx, ctx.storyPath),
+    ...Object.values(ctx.contract.sources ?? {}).filter(d => d?.derived && d.path).map(d => d.path)]);
+  const srcDir = ctx.srcDir ? `${relFromFeature(ctx, ctx.srcDir)}/` : null;
+  const storyDir = path.dirname(relFromFeature(ctx, ctx.storyPath));
   const fromDir = path.dirname(ctx.storyPath);
-  for (let i = span.start; i < span.end && i < lines.length; i++) {
-    for (const m of lines[i].matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
-      if (/^(https?:|mailto:)/i.test(m[1]) || fs.existsSync(path.resolve(fromDir, m[1]))) continue;
-      problems.push(`${at}第 ${i + 1} 行：链接点不开，${m[1]} 解析不到文件——材料清单的链接按 AR/story.md 所在目录解析，读者据它把材料找出来`);
+  const rowsOf = new Map();
+
+  const table = tables[0];
+  (table?.rows ?? []).forEach((cells, r) => {
+    const at = `${where}第 ${lineNo(table.line + 2 + r)} 行`;
+    if (cells.length !== header.length) {
+      problems.push(`${at}：${cells.length} 格，表头是 ${header.length} 列——格里的竖线写成 \`\\|\``);
+      return;
     }
-  }
-  const cols = String(ctx.contract.chapters?.find(c => c.appendix)?.projection?.sections?.[name]?.table ?? '').split('|').filter(Boolean);
-  const tables = parseDocument(lines.slice(span.start, span.end).join('\n')).tables
-    .filter(tb => cols.every(c => tb.header.some(h => h.includes(c))));
-  if (cols.length && tables.length !== 1) {
-    problems.push(`${at}：要一张表，列为 ${cols.join('｜')}（现在有 ${tables.length} 张）——每行一份外部原件，写它的来源与实际贡献`);
-  }
-  const set = externalOriginals(ctx);
-  if (!set || tables.length !== 1) return { problems, notes: [] };
-  problems.push(...set.gaps.map(g => `${at}：${g}`));
-  const cell = tables[0].header.findIndex(h => h.includes(cols[0]));
-  const listed = new Map();
-  tables[0].rows.forEach((row, k) => {
-    const line = span.start + tables[0].line + k + 3;
-    const link = /\]\(([^)\s]+)\)/.exec(row[cell] ?? '')?.[1];
-    if (!link) { problems.push(`${at}第 ${line} 行：材料格里没有链接——每行链到一份原件`); return; }
-    const rel = relFromFeature(ctx, path.resolve(fromDir, link));
-    if (listed.has(rel)) problems.push(`${at}第 ${line} 行：${rel} 在第 ${listed.get(rel)} 行已经列过——一份原件一行`);
-    listed.set(rel, listed.get(rel) ?? line);
-    if (set.derived.has(rel)) problems.push(`${at}第 ${line} 行：${rel} 是 ${set.derived.get(rel).join('、')} 的转换稿——列原件，转换稿与抽出的图归回原件`);
-    else if (set.internal.has(rel) || IMAGE.test(rel) || (rel.startsWith('AR/story-src/') && !set.originals.has(rel))) {
-      problems.push(`${at}第 ${line} 行：${rel} 是过程件、生成件或图片，不是外部原件——清单只列需求系统原件、人工提供的文件与评审反馈`);
+    const cell = k => markdownLinks(cells[k]);
+    const [mat, src] = [cell(0), cell(1)];
+    for (const b of [...mat.bad, ...src.bad]) {
+      problems.push(`${at}：链接写法解析不了（${b.text}）——带空格或括号的路径写成 \`[名称](<路径>)\``);
+    }
+    if (!mat.links.length) problems.push(`${at}：材料列没有阅读稿链接`);
+    if (!src.links.length) problems.push(`${at}：来源列没有原件链接`);
+    if (!cells[2].replace(/\{\{[^}]*\}\}/g, '').trim()) problems.push(`${at}：贡献列是空的——写采用了什么，未采用写原因`);
+    const resolve = (l) => {
+      let rel;
+      try { rel = joinPosix(storyDir, decodeURI(l.target)); } catch { rel = joinPosix(storyDir, l.target); }
+      if (/^(https?:|mailto:)/i.test(l.target)) return null;
+      if (!fs.existsSync(path.resolve(fromDir, l.target)) && !fs.existsSync(path.join(ctx.featureRoot, rel))) {
+        problems.push(`${at}：链接点不开，${l.target} 解析不到文件——链接按 ${relFromFeature(ctx, ctx.storyPath)} 所在目录解析`);
+        return null;
+      }
+      return rel;
+    };
+    const readable = new Set();
+    for (const l of src.links) {
+      const rel = resolve(l);
+      if (!rel || !set || set.gap) continue;
+      if (l.image || /\.(png|jpe?g|webp|bmp|gif|svg)$/i.test(rel)) {
+        problems.push(`${at}：来源列放了图 ${rel}——图不进这张表，图的说明与不用的理由走图片登记`);
+      } else if (origins.has(rel)) {
+        if (!rowsOf.has(rel)) rowsOf.set(rel, []);
+        rowsOf.get(rel).push(at);
+        for (const x of origins.get(rel).readable_paths ?? []) readable.add(x);
+      } else if (pending.has(rel)) {
+        problems.push(`${at}：${rel} 还没并入正文——先导入，作者表写一行替代不了导入`);
+      } else if (generated.has(rel) || (srcDir && rel.startsWith(srcDir))) {
+        problems.push(`${at}：${rel} 是本轮生成件，不是来源——来源列只收 materials.json 的 origins`);
+      } else {
+        problems.push(`${at}：${rel} 不在本轮来源集合里——来源列只收 materials.json 的 origins`
+          + '（远端直接给的正文、已并入正文的收件箱原件、会议留存版本）');
+      }
+    }
+    for (const l of mat.links) {
+      const rel = resolve(l);
+      if (rel && readable.size && !readable.has(rel)) {
+        problems.push(`${at}：材料列链到 ${rel}，不是来源列那几份原件的阅读稿（${[...readable].join('、')}）`);
+      }
     }
   });
-  for (const [o, via] of [...set.originals].filter(([x]) => !listed.has(x))) {
-    problems.push(`${at}：本次采用的原件 ${o} 没有列${via.length ? `（转换稿是 ${via.join('、')}）` : ''}——每份外部原件一行，材料格链到它`);
+  for (const [rel, ats] of rowsOf) {
+    if (ats.length > 1) problems.push(`${where}：原件 ${rel} 写在了 ${ats.length} 行（${ats.join('、')}）——一份原件只在它的阅读稿那一行出现`);
   }
-  return { problems, notes: [] };
+  for (const o of set?.origins ?? []) {
+    if (!rowsOf.has(o.path)) {
+      problems.push(`${where}：少了来源 ${o.path}（阅读稿 ${(o.readable_paths ?? []).join('、')}）`
+        + '——集合按 materials.json 的 origins 核，任务包「材料与来源」一节逐份列着');
+    }
+  }
+  return { problems, notes };
 }
 
 /**

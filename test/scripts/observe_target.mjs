@@ -3,7 +3,7 @@
  *
  * 读的是被测工程里装好的扩展（`doc/extensions/hooks/shared/framework-access.mjs`）：蓝图读取与准入、评审投影、活动施工单位，
  * 再经它加载原生模块取各施工单位的设计可施工判定与执行范围，逐阶段给出原生事实：
- * - 阶段在冻结范围的 `phase_chain` 里（要执行）：`collectCompletionEvidence`——summary 的 feature/phase 与本施工单位一致、
+ * - 阶段在冻结范围的 `phase_chain` 里（要执行）：原生报告目录里的 summary——feature/phase 与本施工单位一致、
  *   已正式收口，质量结论 verdict 另列；`--settle` 时再按 `recomputePhaseEvidenceStaleness` 核阶段物证仍当前有效；
  * - 不在链上：本阶段拥有的义务——必需义务由 `satisfied_by` 承接时，用 `executionScopeEvidenceIssues` 核承接证据仍成立；
  *   全部不适用时如实记为不适用。
@@ -11,6 +11,7 @@
  *
  * 用法：node observe_target.mjs <工程根> <蓝图 id> <逗号分隔的阶段，可为空> [--settle]
  */
+import * as fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import * as path from 'node:path';
 
@@ -26,11 +27,31 @@ const read = access.readBlueprint(root, blueprintId, 'draft');
 out.blueprint = { status: read.status, admitted: Boolean(read.admitted), projection: read.projection?.status ?? null,
   canonical_path: read.canonical_path ?? null, issues: issueText(read.issues) };
 
+/**
+ * 一个阶段的收口证据（只读，fail-safe）：原生报告目录里的 summary 身份显式吻合（feature、phase）且 closure_status=closed；
+ * verdict 只记录，完成不等于通过。半写入或读不出按未完成。被测 Framework 不再带只读完成探针，这里按同一判据读。
+ */
+function completionEvidence(featureId, phase) {
+  const out = { summary: false, closure: false, verdict: null };
+  try {
+    const dir = access.phaseReportsDir(root, featureId, phase);
+    const file = dir.dir ? path.join(dir.dir, 'summary.json') : null;
+    if (file && fs.existsSync(file)) {
+      const doc = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      out.summary = doc.phase === phase && doc.feature === featureId;
+      if (typeof doc.verdict === 'string') out.verdict = doc.verdict;
+      out.closure = doc.closure_status === 'closed';
+    }
+  } catch {
+    out.summary = false; out.closure = false; out.verdict = null;
+  }
+  return { ...out, missing: [...(out.summary ? [] : ['summary']), ...(out.closure ? [] : ['closure_status'])] };
+}
+
 /** 一个施工单位一个阶段的原生事实。 */
 function phaseFacts(native, featureId, scope, phase) {
   if (scope.phase_chain.includes(phase)) {
-    const { collectCompletionEvidence } = native.module('scripts/utils/phase-completion-probe.ts');
-    const ev = collectCompletionEvidence(native.root, featureId, phase);
+    const ev = completionEvidence(featureId, phase);
     const entry = { kind: 'executed', completion: { summary: ev.summary, closure: ev.closure, verdict: ev.verdict ?? null,
       missing: ev.missing ?? [] } };
     if (settle && ev.summary && ev.closure) {

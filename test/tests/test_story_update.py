@@ -259,7 +259,7 @@ class UnreadableIsAGapNotADeletion(UpdateCase):
                 return real(path)
 
             with unittest.mock.patch.object(update_mod.registry, "file_digest", flaky):
-                return update_mod.cmd_update_prepare(self.feature_root, "documents")
+                return update_mod.cmd_update_prepare(self.feature_root, FEATURE, "documents")
         finally:
             sys.path.remove(str(core))
 
@@ -872,7 +872,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
             from flow.update import _phase_facts  # noqa: PLC0415
         finally:
             sys.path.remove(str(core))
-        [phase] = _phase_facts([{"phase": "spec", "error": "配置坏了"}])
+        [phase] = _phase_facts([{"phase": "spec", "error": "配置坏了"}], {})
         self.assertEqual({"phase": "spec", "readable": False}, {k: phase[k] for k in ("phase", "readable")})
         self.assertIn("配置坏了", phase["why"])
 
@@ -1272,7 +1272,8 @@ class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsR
         self.design_syncs()
         story = self.feature_root / "AR" / "story.md"
         story.write_bytes(story.read_bytes().decode("utf-8").replace(
-            "| [甲需求 PRD](../RR/prd.md) | 需求目录（产品需求） |", "| [甲需求](../inbox/甲需求.md) | 收件箱（人工提供） |").encode("utf-8"))
+            "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) |",
+            "| 甲需求 PRD [prd.md](../RR/prd.md) | [甲需求.md](../inbox/甲需求.md) |").encode("utf-8"))
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.close(rid)
         self.mark_archived()
@@ -1635,7 +1636,7 @@ class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
         topic = {**self.TOPIC, "design_target": {"target_ref": "view:logical/node:no-such-node"}}
         (self.src / "decisions.json").write_text(json.dumps({"decisions": [topic]}, ensure_ascii=False), encoding="utf-8")
         proc = self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE, "--project-root", str(self.root))
-        self.assertIn("不是已准入蓝图", proc.stdout + proc.stderr)
+        self.assertIn("不是当前蓝图", proc.stdout + proc.stderr)
 
 
 class PublishChecksTheExternalVersion(RegisteredCase):

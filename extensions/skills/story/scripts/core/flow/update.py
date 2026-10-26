@@ -31,14 +31,15 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from materials import frozen, registry
+from materials import frozen, importer, registry
 
-from flow.routing import basis_drift, inputs_answer, material_state
+import usage
+from flow.phase_facts import UPDATES, update_records as _records
+from flow.routing import basis_drift, inputs_answer, material_state, next_step
 from flow.state import (CONTRACT, CORE_DIR, DESIGN_INPUT, FlowError, STORY, REVIEW, STORY_CONTRACT, file_sha256, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
 
-#: 本层全部落点的根。放在 story-src 下面：它是过程目录，AR 根只留交付件。
-UPDATES = ("AR", "story-src", "updates")
+#: 本层全部落点的根（`UPDATES`）放在 story-src 下面：它是过程目录，AR 根只留交付件。
 #: 除材料正文之外，判「跟上次比变了没有」要看的交付件——**人会直接动的那两份人读件**。
 #:
 #: 连同合同登记的三份上游正文（`registry.source_docs()`）与收件箱（由材料事实回答，
@@ -74,38 +75,26 @@ def owner(rel: str, sets: dict[str, list[str]] | None = None) -> str:
     return "protected"
 
 
+def _reading_evidence(rel: str) -> bool:
+    """同图增强的局部阅读证据（`AR/story-src/figures/<ID>.reading/`）：按当前源重新核，撤回不把旧的「已通过」带回来。"""
+    parts = rel.split("/")
+    return len(parts) > 4 and parts[:3] == ["AR", "story-src", "figures"] and parts[3].endswith(".reading")
+
+
 def _owned(feature_root: Path) -> dict[str, str]:
-    """盘上本扩展拥有的文件（可改件与可重生件）→ 原始字节的 SHA-256。"""
+    """盘上本扩展拥有的文件（可改件与可重生件，阅读证据除外）→ 原始字节的 SHA-256。"""
     sets = update_files()
     out = {}
     for path in sorted(feature_root.rglob("*")):
         rel = path.relative_to(feature_root).as_posix()
-        if path.is_file() and not path.is_symlink() and owner(rel, sets) in ("editable", "regenerate"):
+        if (path.is_file() and not path.is_symlink() and not _reading_evidence(rel)
+                and owner(rel, sets) in ("editable", "regenerate")):
             out[rel] = file_sha256(path)
     return out
 
 
 def _updates_dir(feature_root: Path) -> Path:
     return feature_root / Path(*UPDATES)
-
-
-def _records(feature_root: Path) -> list[tuple[str, dict]]:
-    """盘上已有的操作记录，按 id 排序。读不出来的那一条要出声，不静默跳过。"""
-    base = _updates_dir(feature_root)
-    if not base.is_dir():
-        return []
-    out = []
-    for d in sorted(base.iterdir()):
-        path = d / "record.json"
-        if not path.is_file():
-            continue
-        try:
-            out.append((d.name, json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))))
-        except ValueError as exc:
-            raise FlowError(f"{path} 不是合法 JSON（{exc}）：它由本脚本写入，"
-                            "若曾手工编辑请修正语法，或把整个 "
-                            f"{d.name} 目录移走再重跑") from exc
-    return out
 
 
 def _scan(feature_root: Path) -> tuple[dict[str, str], dict[str, str]]:
@@ -238,18 +227,22 @@ def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]]
 
 
 def _sources(feature_root: Path) -> list[dict]:
-    """已并入正文的原件（文件名、摘要、归类），取自材料清单。读不出清单时为空——那由 `round` 报。"""
+    """已并入正文的原件（相对 inbox 的路径、摘要、归类），取自材料清单。
+
+    读不出清单就报，不当成「没有新料」：那会让人以为上次以来什么都没并入。
+    """
     try:
         manifest = registry.read(feature_root)
-    except registry.MaterialError:
-        return []
+    except registry.MaterialError as exc:
+        raise FlowError(f"{exc}——读不出材料清单就说不出上次以来并入了哪些原件") from exc
     return [{"file": s.get("file"), "sha256": s.get("sha256"), "class": s.get("class")}
             for s in manifest.get("sources") or [] if s.get("ingested")]
 
 
 def _imported_since(feature_root: Path, records: list[tuple[str, dict]]) -> list[dict]:
     """上一次收口（或成文基准）以来新并入正文的原件，**含只取图的**：它们的正文不进六项比较，
-    是不是带来了业务变化由模型读原件判。上一次没有留原件清单时，全部列出。"""
+    是不是带来了业务变化由模型读原件判。上一次没有留原件清单时，全部列出。
+    比较键是相对路径加摘要：原件挪了位置也算新并入，是不是同一份业务内容由模型读了判，不按路径猜替代。"""
     closed = _latest(records, "closed")
     seen = {(s.get("file"), s.get("sha256")) for s in ((closed[1].get("sources") if closed else None) or [])}
     return [s for s in _sources(feature_root) if (s["file"], s["sha256"]) not in seen]
@@ -263,23 +256,19 @@ def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
     新原件自己还没归类时，列出全部已归类的原件。
     """
     inbox = feature_root / "inbox"
-    path = inbox / ".classify.json"
-    if not path.is_file():
-        return []
     try:
-        classes = json.loads(path.read_text(encoding="utf-8-sig"))
-    except ValueError as exc:
-        raise FlowError(f"inbox/.classify.json 不是合法 JSON（{exc}）：修正归类件再跑") from exc
-    if not isinstance(classes, dict):
-        raise FlowError("inbox/.classify.json 应是 {\"文件名\": \"类别\"} 对象")
-    known = {name: cls for name, cls in classes.items() if (inbox / name).is_file()}
+        classes = importer.read_classify(inbox)
+    except importer.ImportError_ as exc:
+        raise FlowError(f"{exc}：修正归类件再跑") from exc
+    known = {key: cls for key, cls in classes.items() if (inbox / key).is_file()}
     out = []
     for new in pending:
         cls = known.get(new)
         olds = sorted(n for n, c in known.items() if n != new and (cls is None or c == cls))
         if olds:
             out.append({"new": new, "same_class": olds,
-                        "note": f"若 {new} 取代其中某份，导入前先把 inbox 里那份移进 .backups/local/"})
+                        "note": f"若 {new} 取代其中某份，按 rules/inbox_import.md「新原件取代旧原件」"
+                                "移走旧原件并删掉它的归类键"})
     return out
 
 
@@ -359,7 +348,24 @@ def _set_result(root: Path, rec: dict, result: str) -> None:
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def cmd_update_prepare(feature_root: Path, result: str | None) -> dict:
+def _carry_start(feature_root: Path, feature: str, rid: str, rec: dict) -> str | None:
+    """把 begin 暂存的开始时刻移进这一轮 record：record 已有就只清暂存；没有就读暂存、写进 record 存盘成功后再清。
+    读不出或写不进都保留暂存、返回原因——下一次 prepare 或收口照原值再移，不换成重试那一刻；业务照常继续。"""
+    try:
+        if not rec.get("started_at"):
+            started = usage.update_start(feature_root, feature)
+            if not started:
+                return None                 # 本来就没有 begin：这一轮的计时缺口，不拿开轮时刻补
+            (_updates_dir(feature_root) / rid / "record.json").write_text(
+                json.dumps({**rec, "started_at": started}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            rec["started_at"] = started
+        usage.drop_update_start(feature_root, feature)
+    except (usage.UsageError, FlowError, OSError) as exc:
+        return f"这一轮 update 的开始时刻还没移进记录（{exc}）：暂存保留着，下一次 prepare 或收口时照原值再移"
+    return None
+
+
+def cmd_update_prepare(feature_root: Path, feature: str, result: str | None) -> dict:
     """输入定了之后比一遍、开这一轮、该留的留下、该说的说清楚。
 
     `result` 是这一轮请求的终点，照人的请求记：只取材与澄清、没有已有人读件受影响的是 materials，
@@ -390,7 +396,8 @@ def cmd_update_prepare(feature_root: Path, result: str | None) -> dict:
     if resumed:
         rid, rec = _latest(records, None, ACTIVE)
         _set_result(_updates_dir(feature_root) / rid, rec, result)
-        return {**resumed, "requested_result": rec.get("requested_result")}
+        gap = _carry_start(feature_root, feature, rid, rec)
+        return {**resumed, "requested_result": rec.get("requested_result"), **({"usage_error": gap} if gap else {})}
 
     facts = _collect(feature_root, contract, records)
     if facts["pending"]:
@@ -434,6 +441,8 @@ def cmd_update_prepare(feature_root: Path, result: str | None) -> dict:
               "mirror": {"path": f"AR/story-src/updates/{rid}/before", "files": mirrored}}
     (root / "record.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
+    # 这一轮的工作起点由 update 开头的 begin 暂存，开轮时移进 record（opened_at 仍是开轮这一刻）
+    gap = _carry_start(feature_root, feature, rid, record)
 
     material = bool(pending or facts["materials_changed"] or imported)
     kind = ("changed" if (changed or material)
@@ -461,7 +470,7 @@ def cmd_update_prepare(feature_root: Path, result: str | None) -> dict:
             "unreadable": unreadable, "baseline": diff["complete"], "diffs": diffs,
             "mirror": record["mirror"]["path"],
             "action": "；".join(lines) + f"。原貌留在 AR/story-src/updates/{rid}/before/，"
-                      "处置方法见 phases/update.md"}
+                      "处置方法见 phases/update.md", **({"usage_error": gap} if gap else {})}
 
 
 # ---------------------------------------------------------------------------
@@ -485,12 +494,22 @@ def _unit_facts(feature_root: Path, project_root: Path | None = None) -> list[di
     if read.get("status") != "ok":
         return [{"blueprint_id": blueprint, "readable": False, "why": native.issues_text(read) or read.get("status")}]
     return [{"change_unit_id": u["change_unit_id"], "feature_id": u["feature_id"], "path": u["path"],
-             "phases": _phase_facts(u.get("phase_reports") or [])}
+             "phases": _phase_facts(u.get("phase_reports") or [], _evidence(project_root, u["feature_id"]))}
             for u in read.get("units") or []]
 
 
-def _phase_facts(reports: list[dict]) -> list[dict]:
-    """每阶段按原生报告目录读 summary；目录解析不了是读不出，还没生成的阶段不列。"""
+def _evidence(project_root: Path, feature_id: str) -> dict[str, str]:
+    """施工单位各阶段的原生证据此刻是否仍有效（按阶段顺序重算，上游不新鲜传染下游）；读不出整体记为 unknown。"""
+    from flow import native  # noqa: PLC0415
+    got = native.call(project_root, "phase-evidence", "--feature", feature_id, "--phases", ",".join(PHASES))
+    if got.get("status") != "ok":
+        return {p: "unknown" for p in PHASES}
+    return {r.get("phase"): str(r.get("verdict")) for r in got.get("results") or []}
+
+
+def _phase_facts(reports: list[dict], evidence: dict[str, str]) -> list[dict]:
+    """每阶段按原生报告目录读 summary；目录解析不了是读不出，还没生成的阶段不列。
+    `current` 是闭环且原生证据此刻新鲜：历史闭环保留，证据变了的不算这一轮的完成，交回里照实列出过期阶段。"""
     out = []
     for r in reports:
         phase = r["phase"]
@@ -505,8 +524,10 @@ def _phase_facts(reports: list[dict]) -> list[dict]:
         except (OSError, ValueError) as exc:
             out.append({"phase": phase, "readable": False, "why": str(exc)})
             continue
+        fresh = evidence.get(phase, "unknown")
         out.append({"phase": phase, "readable": True, "closure": data.get("closure_status"),
-                    "verdict": data.get("verdict"), "subject": data.get("verifier_subject_id")})
+                    "verdict": data.get("verdict"), "subject": data.get("verifier_subject_id"), "evidence": fresh,
+                    "current": data.get("closure_status") == "closed" and fresh == "fresh"})
     return out
 
 
@@ -685,7 +706,7 @@ def registered_input_stale(feature_root: Path, contract: dict) -> str | None:
     return None
 
 
-def cmd_update_close(feature_root: Path) -> dict:
+def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> dict:
     """收口这一轮：**绑定说明、记下此刻的文件摘要、留一份可比的正文**。
 
     共同条件：说明与不变项表在、人的原话归进本轮记录、没有未处理的恢复冲突。
@@ -747,7 +768,9 @@ def cmd_update_close(feature_root: Path) -> dict:
     current, unreadable = _scan(feature_root)
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
     kept = _keep(feature_root, current, root / "after")
-    units = _unit_facts(feature_root)
+    units = _unit_facts(feature_root, project_root)
+    contract = load(feature_root) or {}
+    gap = _carry_start(feature_root, feature, rid, rec)      # 开轮时没移成的开始时刻，收口前再移一次
     # 人在这一轮的原话随轮次留档：契约只清「开着的那一轮」（还原同样如此）
     rec.update(status="closed", closed_at=now(), files=current, unreadable=unreadable,
                sources=_sources(feature_root),
@@ -759,14 +782,21 @@ def cmd_update_close(feature_root: Path) -> dict:
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
+    # 收口成立不回滚；本轮还有没做完的工作（如已开始的同图增强）由同一路由说出来，不以 closed 结束整个任务。
+    # 算不出来不遮住已写盘的收口（同 cmd_story），命令照常成功、使用记录照常收尾
+    try:
+        step, follow = next_step(feature_root, contract)
+    except FlowError as exc:
+        step, follow = "status", f"暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
     return {"update": rid, "status": "closed", "requested_result": result, "compared_next_time": kept,
-            "unreadable": unreadable, "units": units, "design_feedback": feedback,
+            **({"usage_error": gap} if gap else {}),
+            "unreadable": unreadable, "units": units, "design_feedback": feedback, "next": step,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("本轮终点是取材与澄清：还没有设计或成文，按需求进展接着走。" if result == "materials" else "")
                       + (f"设计反馈 {len(feedback)} 条交蓝图负责方，接受与否待确认（负责方回复记在 update-notes）；施工授权另由人给。"
                          if feedback else "")
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
-                         if unreadable else "")}
+                         if unreadable else "") + f"下一步：{follow}"}
 
 
 #: 「不变项与理由」那一节：标题里有「不变项」，下面至少一行表格数据。

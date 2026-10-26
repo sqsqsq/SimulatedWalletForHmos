@@ -1,11 +1,11 @@
 /**
- * 附录 —— 已准入蓝图与冻结输入的投影、手改保护、附录自己的结构判据，以及设计附件。
+ * 附录 —— 当前蓝图与冻结输入的投影、手改保护、附录自己的结构判据，以及设计附件。
  *
  * 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。这里管三件事：
  * 机器区**从真源重算**（不读旧 story，读旧的就成了真源加一份会漂的副本），
  * 作者区与机器区的分界——有人在机器区写过字就停下，不静默盖掉——以及设计附件 `AR/design-review.md`。
  *
- * 机器区的真源是原生读取、已准入且评审投影对得上的蓝图（开发视图与架构影响、精确明细 `story_details` 里的
+ * 机器区的真源是原生读取、消费了本次输入且评审投影对得上的当前蓝图（开发视图与架构影响、精确明细 `story_details` 里的
  * 配置与埋点）。接口、数据与规约由作者按蓝图写业务摘要，完整技术契约在设计附件。
  * 每个机器区由章节合同登记的具名读取器算出，生成与核对共用同一份计算；表头与文字标签登记在合同，本文件不写业务词。
  */
@@ -14,9 +14,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   chapterSpan, findByName, headingEnd, nativeAddresses, normalizeHeading, parseDocument, sectionBody, sectionNames,
-  zoneBlock, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
+  separateMarks, zoneBlock, zoneBody, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
 import { fail, readJson, replaceFile } from './context.mjs';
+import { imageLinks } from './language.mjs';
 import { blueprintAddresses, blueprintKnowledge } from '../../../../../hooks/shared/knowledge-application.mjs';
 import { designSource } from './design-source.mjs';
 import { READERS } from './appendix-readers.mjs';
@@ -111,18 +112,6 @@ export function designGaps(ctx) {
 }
 
 /**
- * 精确明细里的专项设计（`special_design`）写在正文：逐字出现在 story 里，不在附录重复。
- */
-function specialDesignProblems(ctx, storyText) {
-  const source = designSource(ctx);
-  const text = String(storyText ?? '').replace(/\r\n/g, '\n');
-  return (source.blueprint?.story_details ?? []).filter(d => d?.kind === 'special_design')
-    .filter(d => !text.includes(String(d.body ?? '').replace(/\r\n/g, '\n').trim()))
-    .map(d => `蓝图精确明细 ${d.id}（${d.title ?? '专项设计'}）的正文没有逐字写进 story——专项设计在讲它的那一章原样呈现，`
-      + '表达可以组织，内容不改写、不删减');
-}
-
-/**
  * 把附录的机器区投影进 story —— **投影的唯一入口**，两个时点都走它。
  *
  * ① `chapter` 落盘附录章之后：作者的草稿里只有目的句、H4 标题与作者写的几节，机器区由这里投出来，
@@ -184,7 +173,7 @@ export function projectAppendix(ctx, storyText) {
     if (h4) lines = [...lines.slice(0, h4.at + 1), '', ...block, ...lines.slice(h4.at + 1)];
     else lines = [...lines.slice(0, end), ...(z.h4 ? [`#### ${z.h4}`, ''] : []), ...block, '', ...lines.slice(end)];
   }
-  return { text: storyText.slice(0, span.start) + lines.join('\n') + storyText.slice(span.end),
+  return { text: storyText.slice(0, span.start) + separateMarks(lines).join('\n') + storyText.slice(span.end),
     zones: count };
 }
 
@@ -246,8 +235,8 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
     //
     // 与集合一致那一条合起来看：登记的图要有去处，而附录不是去处。用它就放在讲它的那一章，
     // 不用它就在材料清单那一行写明理由——理由是文字，不是把图挪到附录充数。
-    const inAppendix = [...appendixSection.text.matchAll(/!\[[^\]]*\]\(([^)\s]+)/g)]
-      .map(m => m[1]);
+    const inAppendix = appendixSection.text.split(/\r?\n/).flatMap(line => imageLinks(line).images)
+      .map(img => img.target);
     if (inAppendix.length) {
       problems.push(`「${appendixDef.title}」：有 ${inAppendix.length} 张图`
         + `（${inAppendix.slice(0, 3).join('、')}${inAppendix.length > 3 ? '…' : ''}）`
@@ -304,16 +293,15 @@ export function appendixZoneProblems(ctx, storyText) {
         + '机器标记之外的目的句与说明归作者，投影不碰');
       continue;
     }
-    const have = lines.slice(at.start + 1, at.end - 1);
+    const have = zoneBody(lines, at);
     const diff = firstDiff(have, z.rows);
     if (!diff) continue;
     problems.push(`「${appendix.title}·${z.zone}」的机器区与${z.source}对不上（${diff.why}`
       + `${diff.at === null ? '' : `，第 ${diff.at + 1} 行`}）：`
       + `${diff.have === null ? '' : `盘上是「${cut(diff.have)}」，`}`
       + `${diff.want === null ? '' : `${z.source}投出来是「${cut(diff.want)}」`}`
-      + `——机器区由 \`story-build project\` 从 ${z.source} 投影，内容以真源为准，手改会被下一次投影覆盖`);
+      + `——机器区从 ${z.source} 投影，内容以真源为准，手改会被下一次投影覆盖：改真源后跑 \`story_flow.py story\` 登记（它重投附录并全篇检查）；只想先看投影结果用 \`story-build project\``);
   }
-  problems.push(...specialDesignProblems(ctx, storyText));
   // **集合两向都核**：上面走的是合同要的那几区；盘上多出来的名字在这里报。
   // 合同里没有它，就没有真源与它比：它来自旧版本的章合同，或是手写的标记。
   const known = new Set(zones.map(z => z.zone));

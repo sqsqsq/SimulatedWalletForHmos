@@ -176,6 +176,7 @@ class RunStore:
         tool_input: dict[str, Any] | None = None,
         tool_output: str | None = None,
         usage: dict[str, Any] | None = None,
+        source_truncated: bool | None = None,
     ) -> CliEvent:
         with self._lock:
             if self._seq == 0 and self.events_path.is_file():
@@ -195,6 +196,7 @@ class RunStore:
                 tool_input=tool_input,
                 tool_output=tool_output,
                 usage=usage,
+                source_truncated=source_truncated,
             )
             with self.events_path.open("a", encoding="utf-8") as handle:
                 handle.write(

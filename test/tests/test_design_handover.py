@@ -329,18 +329,15 @@ class TheDesignConsumesThisInput(HandoverCase):
         self.assertEqual(before, self.tree(), "status 是只读查询，却写了需求或蓝图工作区")
         self.assertEqual([], self.source_problems())
 
-    def test_an_unadmitted_blueprint_waits_and_status_writes_nothing(self) -> None:
-        """蓝图在、读得过，但准入没过：等设计继续到准入，不成文；status 不写任何东西。"""
+    def test_an_unadmitted_blueprint_is_written_from_its_draft_and_status_writes_nothing(self) -> None:
+        """蓝图在、读得过、投影有效，但准入没过：成文读原生草稿，照样到成文（准入只管施工单位开工）；status 不写任何东西。"""
         self.handed()
-        canonical = design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
-        text = canonical.read_text(encoding="utf-8")
-        self.assertEqual(1, text.count("  admission:\n    status: pass\n"))
-        canonical.write_bytes(text.replace("  admission:\n    status: pass\n", "  admission:\n    status: blocked\n").encode("utf-8"))
+        design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
+        design_kit.change_blueprint(self.root, self.feature, self.ACCESS,
+                                    "  admission:\n    status: pass\n", "  admission:\n    status: blocked\n")
         before = self.tree()
-        status = self.ok("status")
-        self.assertEqual(("waiting_for_design", "design_blueprint"), (status["state"], status["next"]))
-        self.assertIn("还没准入", status["action"])
-        self.assertEqual(before, self.tree())
+        self.assertEqual("ready_to_write", self.ok("status")["state"])
+        self.assertEqual(before, self.tree(), "status 是只读查询，却写了需求或蓝图工作区")
 
     def test_an_admitted_blueprint_of_another_requirement_waits_for_the_design(self) -> None:
         """同组件、换成本需求标识的准入蓝图，来源仍是另一份需求：等设计同步，不成文。"""

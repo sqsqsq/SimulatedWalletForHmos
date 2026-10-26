@@ -2,6 +2,8 @@
 
 > 读者：真机测试阶段的作者。时机：动笔前读一遍；门禁报错时回到「门禁会拦什么」。
 
+开始本阶段的实际工作之前（读代码、设计、改动之前），先取本阶段的作者知识任务（story-knowledge Skill，`--audience author`）：它同时记下本阶段的开始。第一次开始前在本 Feature 的目录（知识任务第 1 块写的位置）写 `.usage-input.json`：`{"agent": "<宿主>", "model": "<模型>"}`，不知道的写 null。本阶段原生闭环、本轮工作做完后跑 `python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <Feature id> --finalize --phase testing`，返回 ok 才算记进 `doc/usage.json`，再交付、问下一阶段或提交代码（带上 `doc/usage.json`）；失败按它报的原因处理后重跑同一条。
+
 **契约实体上的 `must` 定本次义务**：plan 已经把每条规约要求挂到扛着它的实体上，本阶段不重新判断适用性、不改选型。要弄清义务背后的方法、语义或项目协议时，查它指回的原知识（`must.rule` 的规约、选中的模式、相关项目事实，都在激活清单里）；真实接口以代码为准。契约与知识、代码对不上时回 plan 改，不在本阶段绕过。
 
 **本阶段是最后一道关**——这些约束再往后就没有验证环节了。
@@ -35,6 +37,8 @@
 ```
 cd framework/harness && npx ts-node harness-runner.ts --phase testing --feature <需求名>
 ```
+
+阶段闭环之后按本页开头的收尾命令记完（`--finalize --phase testing`），成功后再交付、进下一阶段或提交代码。
 
 ## 四、门禁会拦什么
 

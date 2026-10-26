@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -431,7 +432,13 @@ class CompleteThenMaterialChangedPart2(CompleteThenMaterialChangedCase):
         self.assertEqual(before, len(self.contract()["rounds"]))
 
     def test_an_archived_story_routes_to_done(self) -> None:
-        """归档之后下一步是 done：不再引导跑 harness 与交付门，回流与补料各有出口。"""
+        """归档之后下一步是 done：不再引导跑 harness 与交付门，回流与补料各有出口。
+
+        已成文的单有 story，写作设计写明不采用阅读图——阅读不适用，才轮得到 done。"""
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "AR" / "story.md").write_text(f"# {FEATURE} 甲需求\n\n## 背景\n\n没有图。\n", encoding="utf-8")
+        (self.feature_root / "AR" / "story-src" / "story-template.md").write_text(
+            "# 写作设计\n\n## 阅读主线\n\n主线。\n\n## 骨架\n\n## 阅读图选择\n\n不采用：正文已经讲清\n", encoding="utf-8")
         self.complete_it("story_written")
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -815,7 +822,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.asked()
         proc = self.sign_supplied()
         self.assertEqual(2, proc.returncode)
-        self.assertIn("收件箱里没有新文件", self.out_of(proc))
+        self.assertIn("没有待导入的原件", self.out_of(proc))
         self.assertEqual("await_gate:material_scope", self.next_of())
 
     # -- 导入之后：还缺什么才再停 --------------------------------------------
@@ -950,6 +957,29 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
         inbox = self.feature_root / "inbox"
         inbox.mkdir(exist_ok=True)
         (inbox / name).write_text(body, encoding="utf-8")
+        cf = inbox / ".classify.json"
+        classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
+        classify[name] = cls
+        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+
+    PNG = b"\x89PNG\r\n\x1a\n"
+
+    def docx(self, name: str, pictures: dict[str, bytes], cls: str = "IMAGES", text: str = "原稿正文") -> None:
+        import zipfile  # noqa: PLC0415
+        inbox = self.feature_root / "inbox"
+        (inbox / name).parent.mkdir(parents=True, exist_ok=True)
+        body = "".join(f'<w:p><w:r><w:drawing><a:blip xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" r:embed="rId{i}"/></w:drawing></w:r></w:p>'
+                       for i in range(1, len(pictures) + 1))
+        rels = "".join(f'<Relationship Id="rId{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/{n}"/>'
+                       for i, n in enumerate(pictures, start=1))
+        with zipfile.ZipFile(inbox / name, "w") as zf:
+            zf.writestr("word/document.xml", '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+                        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>'
+                        f'<w:p><w:r><w:t>{text}</w:t></w:r></w:p>{body}</w:body></w:document>')
+            zf.writestr("word/_rels/document.xml.rels", '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                        f'{rels}</Relationships>')
+            for n, blob in pictures.items():
+                zf.writestr(f"word/media/{n}", blob)
         cf = inbox / ".classify.json"
         classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
         classify[name] = cls
@@ -1092,6 +1122,799 @@ class TheManifestIsTheOnlyMaterialTruth(MaterialRoundCase):
         body = json.dumps(self.contract(), ensure_ascii=False)
         for word in ("highest_phase", "phase_source", "spec_done"):
             self.assertNotIn(word, body, "契约里长出了 Framework 阶段状态：%s" % word)
+
+
+class OriginsAreDerivedNotListed(TheManifestIsTheOnlyMaterialTruth):
+    """`origins` 回答「本轮实际采用了哪些原件、各读哪份阅读稿」，从材料与收件箱两张表派生。
+
+    远端直接给的正文是原件本身；收件箱原件确定性并入的正文不再算第二份原件；
+    没导入的原件不进来，走待导入；身份是相对 inbox 的路径加内容摘要。
+    """
+
+    def origins(self) -> dict[str, dict]:
+        return {o["path"]: o for o in self.manifest()["origins"]}
+
+    def test_remote_documents_are_direct_origins(self) -> None:
+        self.round_now()
+        origins = self.origins()
+        self.assertEqual({"RR/prd.md", "SR/design.md", "AR/design.md"}, set(origins))
+        self.assertEqual({"direct"}, {o["kind"] for o in origins.values()})
+        self.assertEqual(["RR/prd.md"], origins["RR/prd.md"]["readable_paths"])
+
+    def test_several_originals_merged_into_one_document(self) -> None:
+        """同类两份原件合成一份正文：两份各自是来源，合成的正文不再算第三份。"""
+        self.put_inbox("2-补充 说明.md", "# 补充\n\n规则二。\n", "RR")
+        self.put_inbox("1-总体.md", "# 总体\n\n规则一。\n", "RR")
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        origins = self.origins()
+        self.assertNotIn("RR/prd.md", origins, "被收件箱完全承接的正文又算成了一份原件")
+        for key in ("inbox/1-总体.md", "inbox/2-补充 说明.md"):
+            self.assertEqual("converted-source", origins[key]["kind"])
+            self.assertEqual(["RR/prd.md"], origins[key]["readable_paths"])
+            self.assertTrue(origins[key]["sha256"])
+        self.assertEqual("direct", origins["SR/design.md"]["kind"])
+
+    def test_a_pending_original_is_not_an_origin(self) -> None:
+        """没导入的原件不进来源关系：远端正文仍是来源，原件走待导入。"""
+        self.put_inbox("产品原稿.md", "# 原稿\n", "RR")
+        self.round_now()
+        origins = self.origins()
+        self.assertNotIn("inbox/产品原稿.md", origins)
+        self.assertEqual("direct", origins["RR/prd.md"]["kind"])
+        self.assertEqual(["产品原稿.md"], [s["file"] for s in self.manifest()["sources"]
+                                          if not s["ingested"]])
+
+    def test_a_missing_source_is_not_invented(self) -> None:
+        (self.feature_root / "SR" / "design.md").unlink()
+        self.round_now()
+        self.assertNotIn("SR/design.md", self.origins())
+
+    def test_images_themselves_stay_with_the_image_chain(self) -> None:
+        self.add_ux("签约页.png")
+        self.put_inbox("首页.png", "PNG", "UX")
+        self.round_now()
+        self.assertFalse([p for p in self.origins() if p.endswith(".png")])
+
+
+class ImageOnlyOriginalsAreOrigins(TheManifestIsTheOnlyMaterialTruth):
+    """只抽图的原件（IMAGES）也是来源（R03）：原件一行，阅读稿是它自己，`image_paths` 是它抽出的图。
+
+    图本身仍只在材料的图片条目里（按内容身份），取舍走图片登记；漏写这份原件照样报漏源。
+    """
+
+    def origins(self) -> dict[str, dict]:
+        return {o["path"]: o for o in self.manifest()["origins"]}
+
+    def test_an_image_only_original_is_one_origin_with_its_pictures(self) -> None:
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"a", "image2.png": self.PNG + b"b"})
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        o = self.origins()["inbox/产品原稿.docx"]
+        self.assertEqual("converted-source", o["kind"])
+        self.assertEqual(["inbox/产品原稿.docx"], o["readable_paths"], "没有正文转换稿，阅读稿是原件自己")
+        folder = importer.assets_for("产品原稿.docx").as_posix()
+        self.assertRegex(folder, r"^assets/产品原稿\.[0-9a-f]{16}$", "图片目录要留主名、带路径摘要")
+        self.assertEqual([f"{folder}/image1.png", f"{folder}/image2.png"], o["image_paths"])
+        self.assertTrue(o["sha256"])
+        self.assertEqual("direct", self.origins()["RR/prd.md"]["kind"], "只抽图不动正文，正文仍是远端原件")
+
+    def test_all_pictures_unused_still_keeps_the_original(self) -> None:
+        from materials import importer  # noqa: PLC0415
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"a"})
+        self.assertEqual(0, self.import_now().returncode)
+        importer.mark_unused(self.feature_root, self.feature_root / importer.assets_for("产品原稿.docx") / "image1.png", "旧稿，不属于本单")
+        self.round_now()
+        self.assertIn("inbox/产品原稿.docx", self.origins(), "图全不用，原件就从来源里消失了")
+
+    def test_two_originals_sharing_a_picture_both_stay_traceable(self) -> None:
+        same = self.PNG + b"same"
+        self.docx("甲稿.docx", {"image1.png": same})
+        self.docx("乙稿.docx", {"image1.png": same})
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        jia, yi = (f"{importer.assets_for(k).as_posix()}/image1.png" for k in ("甲稿.docx", "乙稿.docx"))
+        self.assertEqual([jia], self.origins()["inbox/甲稿.docx"]["image_paths"])
+        self.assertEqual([yi], self.origins()["inbox/乙稿.docx"]["image_paths"])
+        images = [m for m in self.manifest()["materials"] if m["kind"] == "image" and jia in m["paths"]]
+        self.assertEqual(1, len(images))
+        self.assertIn(yi, images[0]["paths"], "同一张图没有按内容身份合在一起")
+
+    def test_a_missing_or_unimported_picture_is_pending_not_an_origin(self) -> None:
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"a", "image2.png": self.PNG + b"b"})
+        self.round_now()
+        self.assertNotIn("inbox/产品原稿.docx", self.origins(), "没导入就成了来源")
+        self.assertEqual(["产品原稿.docx"], [x["file"] for x in self.manifest()["sources"] if not x["ingested"]])
+        self.assertEqual(0, self.import_now().returncode)
+        (self.feature_root / importer.assets_for("产品原稿.docx") / "image2.png").unlink()
+        self.round_now()
+        self.assertNotIn("inbox/产品原稿.docx", self.origins(), "少一张抽取图仍算并入")
+        self.assertEqual(["产品原稿.docx"], [x["file"] for x in self.manifest()["sources"] if not x["ingested"]])
+
+    def test_a_failure_inside_one_picture_directory_says_how_far_it_got(self) -> None:
+        """同一图片目录写到第二张坏了：旧图已删、第一张已写，报错照实说，且说清图没有旧版备份、重跑导入即可（G01）。"""
+        from unittest import mock  # noqa: PLC0415
+        from materials import importer  # noqa: PLC0415
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"a", "image2.png": self.PNG + b"b"})
+        self.assertEqual(0, self.import_now().returncode)
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"a2", "image2.png": self.PNG + b"b2"})
+        real = Path.write_bytes
+
+        def flaky(path, data):
+            if path.name == "image2.png" and "assets" in path.parts:
+                raise OSError("磁盘写保护（注入）")
+            return real(path, data)
+
+        with mock.patch.object(Path, "write_bytes", flaky):
+            with self.assertRaises(importer.ImportError_) as caught:
+                importer.cmd_import(self.feature_root, self.root)
+        msg = str(caught.exception)
+        folder = self.feature_root / importer.assets_for("产品原稿.docx")
+        self.assertTrue((folder / "image1.png").is_file())
+        self.assertFalse((folder / "image2.png").exists())
+        self.assertIn(f"中断在：{importer.assets_for('产品原稿.docx').as_posix()}/（旧图已删，新图写成 1/2 张", msg)
+        self.assertIn("已完成：无", msg)
+        self.assertIn("没有旧版备份", msg)
+        self.assertIn("重跑导入", msg)
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertEqual(self.PNG + b"b2", (folder / "image2.png").read_bytes(), "重跑导入没有把图写全")
+
+    def test_a_failure_while_saving_a_meeting_version_is_named_and_rerun_recovers(self) -> None:
+        from unittest import mock  # noqa: PLC0415
+        from materials import importer  # noqa: PLC0415
+        self.docx("澄清会.docx", {}, cls="MEETING")
+        real = Path.write_text
+
+        def flaky(path, *args, **kwargs):
+            if path.name == "raw.md" and "meetings" in path.parts:
+                raise OSError("磁盘写保护（注入）")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "write_text", flaky):
+            with self.assertRaises(importer.ImportError_) as caught:
+                importer.cmd_import(self.feature_root, self.root)
+        self.assertIn("中断在：会议留存 澄清会.docx", str(caught.exception))
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertTrue(list(self.feature_root.glob("AR/story-src/meetings/澄清会/*/raw.md")), "重跑导入没有补全会议留存")
+
+    def test_an_overwrite_failure_of_a_ux_image_is_named(self) -> None:
+        from unittest import mock  # noqa: PLC0415
+        from materials import importer  # noqa: PLC0415
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(exist_ok=True)
+        (inbox / "首页.png").write_bytes(self.PNG + b"ux")
+        (inbox / ".classify.json").write_text(json.dumps({"首页.png": "UX"}, ensure_ascii=False), encoding="utf-8")
+
+        def broken(*args, **kwargs):
+            raise OSError("目标被占用（注入）")
+
+        with mock.patch.object(importer.shutil, "copyfile", broken):
+            with self.assertRaises(importer.ImportError_) as caught:
+                importer.cmd_import(self.feature_root, self.root)
+        msg = str(caught.exception)
+        target = importer.ux_image_target("首页.png")
+        self.assertRegex(target.as_posix(), r"^ux-reference/首页\.[0-9a-f]{16}\.png$", "界面图要留主名、带路径摘要")
+        self.assertIn(f"中断在：{target.as_posix()}（正在覆盖写入", msg)
+        self.assertIn("未执行：无", msg)
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertTrue((self.feature_root / target).is_file())
+
+    def test_a_new_version_of_the_original_shows_up(self) -> None:
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"a"})
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        first = self.origins()["inbox/产品原稿.docx"]["sha256"]
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"v2"})
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        self.assertNotEqual(first, self.origins()["inbox/产品原稿.docx"]["sha256"], "原件换了版本，来源关系没跟着变")
+
+    def test_origins_do_not_move_the_material_version(self) -> None:
+        """digest 只算材料：重算不变，改作者贡献说明不变，改有效输入内容才变。"""
+        self.put_inbox("1-总体.md", "# 总体\n\n规则一。\n", "RR")
+        self.assertEqual(0, self.import_now().returncode)
+        first = self.round_now()["materials"]
+        self.assertEqual(first, self.round_now()["materials"])
+        (self.feature_root / "AR" / "story.md").write_text(
+            "| 材料 | 来源 | 贡献 |\n|---|---|---|\n| 总体 | 原件 | 换了一种说法 |\n", encoding="utf-8")
+        self.assertEqual(first, self.round_now()["materials"])
+        self.put_inbox("1-总体.md", "# 总体\n\n规则一改了。\n", "RR")
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertNotEqual(first, self.round_now()["materials"])
+
+    def test_an_old_schema_and_a_broken_one_are_told_apart(self) -> None:
+        from materials import registry  # noqa: PLC0415
+        self.round_now()
+        path = self.feature_root / "AR" / "story-src" / "materials.json"
+        data = self.manifest()
+        path.write_text(json.dumps({**data, "schema": 1}), encoding="utf-8")
+        with self.assertRaises(registry.MaterialError) as old:
+            registry.read(self.feature_root)
+        self.assertIn("旧版", str(old.exception))
+        self.assertIn("init", str(old.exception))
+        broken = {k: v for k, v in data.items() if k != "origins"}
+        broken["sources"] = "坏了"
+        path.write_text(json.dumps(broken), encoding="utf-8")
+        with self.assertRaises(registry.MaterialError) as bad:
+            registry.read(self.feature_root)
+        self.assertIn("缺 sources 列表", str(bad.exception))
+        self.assertIn("缺 origins 列表", str(bad.exception))
+        self.assertIn("story_flow.py round", str(bad.exception))
+        self.assertNotIn("旧版", str(bad.exception))
+
+
+class TheInboxIsReadRecursively(TheManifestIsTheOnlyMaterialTruth):
+    """收件箱按目录原样收料：子目录里的原件按相对路径识别、归类、导入与登记。
+
+    派生物也按相对路径落：正文节标题是源键，图片目录与界面图名带路径摘要。
+    不同目录下的同名原件各落各的，不请人改名，也不互相覆盖。
+    """
+
+    def put(self, rel: str, body: str = "# 原件\n\n正文。\n", cls: str | None = "RR") -> Path:
+        path = self.feature_root / "inbox" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        if cls:
+            cf = self.feature_root / "inbox" / ".classify.json"
+            classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
+            classify[rel] = cls
+            cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def snapshot(self) -> dict[str, bytes]:
+        return {p.relative_to(self.feature_root).as_posix(): p.read_bytes()
+                for p in self.feature_root.rglob("*") if p.is_file() and "inbox" not in p.parts}
+
+    def refused(self, *needles: str) -> str:
+        before = self.snapshot()
+        proc = self.import_now()
+        out = proc.stdout + proc.stderr
+        self.assertEqual(1, proc.returncode, out)
+        for needle in needles:
+            self.assertIn(needle, out)
+        self.assertEqual(before, self.snapshot(), "冲突没在写入前拦下，盘上已经动了")
+        return out
+
+    def test_nested_and_flat_originals_import_together_in_path_order(self) -> None:
+        self.put("2026-09 评审/第二轮/补充 说明.md", "# 补充\n\n规则二。\n")
+        self.put("总体.md", "# 总体\n\n规则一。\n")
+        self.put("界面稿/首页说明.md", "# 首页\n\n入口在顶部。\n", "UX")
+        self.put("系统/接口.md", "# 接口\n\n字段。\n", "SR")
+        (self.feature_root / "inbox" / "空目录" / "更深").mkdir(parents=True)
+        self.put(".git/废料.md", cls=None)
+        self.put("界面稿/.草稿.md", cls=None)
+        self.put("界面稿/README.md", "说明书", cls=None)
+        proc = self.import_now()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout[proc.stdout.index("{"):])
+        self.assertEqual(["2026-09 评审/第二轮/补充 说明.md", "总体.md", "界面稿/首页说明.md", "系统/接口.md"],
+                         result["converted"])
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.assertLess(prd.index("## 2026-09 评审/第二轮/补充 说明.md"), prd.index("## 总体.md"), "正文没按相对路径排序拼接")
+        self.assertIn("入口在顶部", (self.feature_root / "ux-reference" / "README.md").read_text(encoding="utf-8"))
+        def products() -> dict[str, bytes]:
+            return {k: v for k, v in self.snapshot().items() if not k.startswith(".backups/")}
+        first = products()
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertEqual(first, products(), "重跑不是字节一致")
+        self.round_now()
+        sources = {s["file"]: s for s in self.manifest()["sources"]}
+        self.assertTrue(sources["2026-09 评审/第二轮/补充 说明.md"]["ingested"])
+        self.assertNotIn(".git/废料.md", sources)
+        self.assertNotIn("界面稿/README.md", sources)
+        origins = {o["path"] for o in self.manifest()["origins"]}
+        self.assertIn("inbox/2026-09 评审/第二轮/补充 说明.md", origins)
+
+    def test_an_inbox_root_link_is_refused_by_import_and_the_manifest(self) -> None:
+        """inbox 根本身指到别处：导入、材料清单都在写入前拒绝，与退原件同一条边界（G03）。"""
+        outside = self.root / "外面"
+        outside.mkdir()
+        (outside / "别处原件.md").write_text("# 别处\n\n不属于这张单。\n", encoding="utf-8")
+        (outside / ".classify.json").write_text(json.dumps({"别处原件.md": "RR"}, ensure_ascii=False), encoding="utf-8")
+        inbox = self.feature_root / "inbox"
+        if inbox.exists():
+            shutil.rmtree(inbox)
+        try:
+            import _winapi  # noqa: PLC0415
+            _winapi.CreateJunction(str(outside), str(inbox))
+        except (ImportError, OSError):
+            try:
+                inbox.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                self.skipTest("这台机器建不了目录联接或符号链接")
+        before = self.snapshot()
+        proc = self.import_now()
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        self.assertIn("需求目录之外", proc.stdout + proc.stderr)
+        self.assertEqual(before, self.snapshot(), "根联接被跟随，别处的原件进了正文")
+        flow = self.run_flow("round")
+        self.assertNotEqual(0, flow.returncode, flow.stdout)
+        self.assertIn("需求目录之外", flow.stdout + flow.stderr)
+
+    def test_a_linked_file_inside_the_inbox_is_refused(self) -> None:
+        outside = self.root / "外面.md"
+        outside.write_text("# 别处\n", encoding="utf-8")
+        link = self.feature_root / "inbox" / "链接.md"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            self.skipTest("这台机器建不了文件符号链接")
+        self.refused("链接.md", "是链接或指到收件箱之外")
+
+    def test_a_new_original_in_a_subdirectory_is_pending(self) -> None:
+        self.round_now()
+        self.put("补料/第三轮/新规则.md")
+        self.round_now()
+        pending = [s["file"] for s in self.manifest()["sources"] if not s["ingested"]]
+        self.assertEqual(["补料/第三轮/新规则.md"], pending)
+
+    def test_the_same_name_in_two_directories_imports_both_without_overwriting(self) -> None:
+        """两份同名 docx 各带不同的图：各占一节、各有图片目录，正文图片引用指回各自的图。"""
+        self.docx("产品/说明.docx", {"image1.png": self.PNG + b"product"}, cls="RR", text="产品侧规则")
+        self.docx("研发/说明.docx", {"image1.png": self.PNG + b"dev"}, cls="RR", text="研发侧规则")
+        proc = self.import_now()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        for key, text, blob in (("产品/说明.docx", "产品侧规则", b"product"), ("研发/说明.docx", "研发侧规则", b"dev")):
+            folder = importer.assets_for(key).as_posix()
+            section = prd[prd.index(f"## {key}"):]
+            self.assertIn(text, section.split("\n## ")[0], f"{key} 的正文没落在自己那一节")
+            self.assertIn(f"../{folder}/image1.png", section.split("\n## ")[0], f"{key} 的图片引用没指回它自己的目录")
+            self.assertEqual(self.PNG + blob, (self.feature_root / folder / "image1.png").read_bytes())
+        self.round_now()
+        self.assertEqual([], [x["file"] for x in self.manifest()["sources"] if not x["ingested"]])
+
+    def test_a_case_only_difference_imports_both(self) -> None:
+        self.put("甲/Flow.md", "# 甲\n\n大写那份。\n")
+        self.put("乙/flow.md", "# 乙\n\n小写那份。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("## 甲/Flow.md", prd)
+        self.assertIn("## 乙/flow.md", prd)
+
+    def test_the_same_stem_with_another_extension_gets_its_own_section(self) -> None:
+        self.put("规则.md", "# 规则\n\nmd 那份。\n")
+        self.put("规则.txt", "txt 那份。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("## 规则.md", prd)
+        self.assertIn("## 规则.txt", prd)
+        self.assertIn("md 那份", prd)
+        self.assertIn("txt 那份", prd)
+
+    def test_two_same_name_ux_images_land_side_by_side(self) -> None:
+        inbox = self.feature_root / "inbox"
+        for rel, blob in (("界面 稿/产品/首页.png", b"product"), ("界面 稿/研发/首页.png", b"dev")):
+            (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+            (inbox / rel).write_bytes(self.PNG + blob)
+        (inbox / ".classify.json").write_text(json.dumps(
+            {"界面 稿/产品/首页.png": "UX", "界面 稿/研发/首页.png": "UX"}, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(0, self.import_now().returncode)
+        product, dev = (self.feature_root / importer.ux_image_target(k) for k in ("界面 稿/产品/首页.png", "界面 稿/研发/首页.png"))
+        self.assertNotEqual(product, dev)
+        self.assertEqual("ux-reference", product.parent.name, "界面图要平铺在 ux-reference 顶层")
+        self.assertEqual(self.PNG + b"product", product.read_bytes())
+        self.assertEqual(self.PNG + b"dev", dev.read_bytes())
+        self.round_now()
+        self.assertEqual([], [x["file"] for x in self.manifest()["sources"] if not x["ingested"]])
+
+    def test_changing_one_same_name_original_leaves_the_other_alone(self) -> None:
+        """重导字节稳定；改其中一份，重导后只换它的节与图，另一份的图一个字节不动。"""
+        self.docx("产品/说明.docx", {"image1.png": self.PNG + b"product"}, cls="RR", text="产品侧规则")
+        self.docx("研发/说明.docx", {"image1.png": self.PNG + b"dev"}, cls="RR", text="研发侧规则")
+        self.assertEqual(0, self.import_now().returncode)
+
+        def products() -> dict[str, bytes]:
+            return {k: v for k, v in self.snapshot().items() if not k.startswith(".backups/")}
+        first = products()
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertEqual(first, products(), "重导不是字节一致")
+        self.docx("研发/说明.docx", {"image1.png": self.PNG + b"dev v2"}, cls="RR", text="研发侧规则第二版")
+        self.round_now()
+        # 同类正文是一份整体：改其中一份，这一类就待重导（按类判并入，不是逐份）
+        self.assertIn("研发/说明.docx", [x["file"] for x in self.manifest()["sources"] if not x["ingested"]])
+        self.assertEqual(0, self.import_now().returncode)
+        after = products()
+        kept = f"{importer.assets_for('产品/说明.docx').as_posix()}/image1.png"
+        changed = f"{importer.assets_for('研发/说明.docx').as_posix()}/image1.png"
+        self.assertEqual(first[kept], after[kept], "改了研发那份，产品那份的图也被动了")
+        self.assertEqual(self.PNG + b"dev v2", after[changed])
+        prd = after["RR/prd.md"].decode("utf-8")
+        self.assertIn("产品侧规则", prd)
+        self.assertIn("研发侧规则第二版", prd)
+        self.round_now()
+        self.assertEqual([], [x["file"] for x in self.manifest()["sources"] if not x["ingested"]])
+
+    def test_an_old_picture_directory_named_by_stem_is_refused(self) -> None:
+        """旧版按主名落的 assets/<主名>/：读到旧格式直接报错，指明旧版收口或从 init 重起，一个字节不动。"""
+        (self.feature_root / "assets" / "说明").mkdir(parents=True)
+        (self.feature_root / "assets" / "说明" / "image1.png").write_bytes(self.PNG)
+        self.put("产品/说明.md")
+        self.refused("assets/说明/", "旧版", "init")
+
+    def test_a_key_that_is_not_canonical_is_refused(self) -> None:
+        self.put("甲/说明.md", cls=None)
+        cf = self.feature_root / "inbox" / ".classify.json"
+        for key in ("./甲/说明.md", "甲//说明.md", "../说明.md", "/甲/说明.md", "甲\\说明.md"):
+            with self.subTest(key=key):
+                cf.write_text(json.dumps({key: "RR"}, ensure_ascii=False), encoding="utf-8")
+                self.refused("不是规范的相对路径")
+
+    def test_a_key_without_its_original_is_refused(self) -> None:
+        self.put("甲/说明.md")
+        cf = self.feature_root / "inbox" / ".classify.json"
+        classify = json.loads(cf.read_text(encoding="utf-8"))
+        classify["旧/挪走了.md"] = "RR"
+        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+        self.refused("没有对应的原件", "旧/挪走了.md")
+
+    def test_all_input_problems_come_in_one_report(self) -> None:
+        self.put("甲/说明.md")
+        self.put("乙/说明.md")
+        self.put("没归类.md", cls=None)
+        cf = self.feature_root / "inbox" / ".classify.json"
+        cf.write_text(json.dumps({**json.loads(cf.read_text(encoding="utf-8")), "旧/挪走了.md": "RR"},
+                                 ensure_ascii=False), encoding="utf-8")
+        out = self.refused("「没归类.md」未给出归类", "旧/挪走了.md")
+        self.assertNotIn("同名", out, "同名原件不是问题，不该进报告")
+
+    def test_a_linked_directory_is_not_followed(self) -> None:
+        import os  # noqa: PLC0415
+        outside = self.root / "inbox 之外"
+        outside.mkdir()
+        (outside / "外部.md").write_text("# 外部\n", encoding="utf-8")
+        (self.feature_root / "inbox").mkdir(exist_ok=True)
+        link = self.feature_root / "inbox" / "链过去"
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except OSError as exc:
+            try:
+                import _winapi  # noqa: PLC0415  Windows 无符号链接权限时用目录联接
+                _winapi.CreateJunction(str(outside), str(link))
+            except (ImportError, OSError):
+                self.skipTest(f"本机建不了目录链接：{exc}")
+        self.refused("是链接或指到收件箱之外", "链过去")
+
+    def test_a_write_failure_midway_says_what_was_written(self) -> None:
+        """写盘中途坏了：报出已写的目标与旧版备份，不冒称整批没变。"""
+        from unittest import mock  # noqa: PLC0415
+        self.put("总体.md")
+        self.put("系统/接口.md", cls="SR")
+        real = Path.write_text
+
+        def flaky(path, *args, **kwargs):
+            if path.as_posix().endswith("SR/design.md"):
+                raise OSError("磁盘写保护（注入）")
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "write_text", flaky):
+            with self.assertRaises(importer.ImportError_) as caught:
+                importer.cmd_import(self.feature_root, self.root)
+        msg = str(caught.exception)
+        self.assertIn("写盘中途失败", msg)
+        self.assertIn("已完成：RR/prd.md", msg)
+        self.assertIn("中断在：SR/design.md", msg)
+        self.assertIn(".backups/local/RR-prd.md-", msg)
+        self.assertIn("磁盘写保护（注入）", msg)
+
+
+class SubdirectoryOriginalsThroughUpdate(TheInboxIsReadRecursively):
+    """update 对子目录原件同样按相对路径比较、提示替代与恢复；读不出清单不说成「没有新料」。"""
+
+    def test_changed_content_and_a_new_path_are_both_seen(self) -> None:
+        from flow import update  # noqa: PLC0415
+        self.put("评审/第一轮.md", "# 一\n\n旧。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        closed = [("u1", {"status": "closed", "sources": [
+            {"file": s["file"], "sha256": s["sha256"]} for s in self.manifest()["sources"]]})]
+        self.put("评审/第一轮.md", "# 一\n\n改了。\n")
+        self.put("评审/第二轮.md", "# 二\n\n新增。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        got = sorted(s["file"] for s in update._imported_since(self.feature_root, closed))
+        self.assertEqual(["评审/第一轮.md", "评审/第二轮.md"], got)
+
+    def test_the_superseded_hint_lists_relative_paths_and_points_at_the_rule(self) -> None:
+        from flow import update  # noqa: PLC0415
+        self.put("旧版/规则.md")
+        self.put("新版/规则 v2.md")
+        self.put("系统/接口.md", cls="SR")
+        hint = update._superseded_hint(self.feature_root, ["新版/规则 v2.md"])
+        self.assertEqual(["旧版/规则.md"], hint[0]["same_class"], "只列同类的已归类原件")
+        self.assertIn("新原件取代旧原件", hint[0]["note"])
+
+    def test_same_name_originals_stay_apart_through_update_and_retire(self) -> None:
+        """同名原件在 update 比较、来源关系与退原件里都按完整路径各算各的。"""
+        from flow import update  # noqa: PLC0415
+        self.put("产品/说明.md", "# 说明\n\n产品那份。\n")
+        self.put("研发/说明.md", "# 说明\n\n研发那份。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        self.assertTrue({"inbox/产品/说明.md", "inbox/研发/说明.md"} <= {o["path"] for o in self.manifest()["origins"]})
+        closed = [("u1", {"status": "closed", "sources": [
+            {"file": s["file"], "sha256": s["sha256"]} for s in self.manifest()["sources"]]})]
+        self.put("研发/说明.md", "# 说明\n\n研发那份改了。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        self.round_now()
+        self.assertEqual(["研发/说明.md"], [s["file"] for s in update._imported_since(self.feature_root, closed)])
+        out = self.retire("产品/说明.md")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(".backups/local/inbox/产品", (self.feature_root / out["backup"]).parent.relative_to(self.feature_root).as_posix())
+        self.assertEqual(0, self.import_now().returncode)
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("研发那份改了", prd)
+        self.assertNotIn("产品那份", prd, "退掉的同名原件又拼回了正文")
+        self.round_now()
+        origins = {o["path"] for o in self.manifest()["origins"]}
+        self.assertIn("inbox/研发/说明.md", origins)
+        self.assertNotIn("inbox/产品/说明.md", origins)
+
+    def retire(self, key: str) -> dict:
+        proc = subprocess.run(
+            [sys.executable, str(STORY_SCRIPTS / "import_sources.py"),
+             "--feature", FEATURE, "--project-root", str(self.root), "--retire", key],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, cwd=str(REPO_ROOT))
+        return json.loads(proc.stdout[proc.stdout.index("{"):])
+
+    def test_a_replaced_original_is_moved_with_its_directory_and_no_longer_merged(self) -> None:
+        self.put("旧版/规则.md", "# 规则\n\n第一版。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        out = self.retire("旧版/规则.md")
+        self.assertTrue(out["ok"], out)
+        backup = self.feature_root / out["backup"]
+        self.assertEqual(".backups/local/inbox/旧版", backup.parent.relative_to(self.feature_root).as_posix())
+        self.assertNotIn("旧版/规则.md", json.loads((self.feature_root / "inbox" / ".classify.json").read_text(encoding="utf-8")))
+        self.put("新版/规则 v2.md", "# 规则\n\n第二版。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("第二版", prd)
+        self.assertNotIn("第一版", prd, "移走的旧原件又拼回了正文")
+        self.assertIn("第一版", backup.read_text(encoding="utf-8"))
+        old = [b for b in (self.feature_root / ".backups" / "local").glob("RR-prd.md-*.md")
+               if "第一版" in b.read_text(encoding="utf-8")]
+        self.assertTrue(old, "被覆盖的旧正文没有备份可恢复")
+
+    def test_three_versions_at_one_path_each_keep_a_backup_and_can_come_back(self) -> None:
+        """同一路径连续替代：每一版各留一份、互不覆盖；任一版能移回原路径、补回归类键再导入。"""
+        backups = []
+        for n in ("一", "二"):
+            self.put("规则.md", f"# 规则\n\n第{n}版。\n")
+            self.assertEqual(0, self.import_now().returncode)
+            out = self.retire("规则.md")
+            self.assertTrue(out["ok"], out)
+            backups.append(self.feature_root / out["backup"])
+        self.put("规则.md", "# 规则\n\n第三版。\n")
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertEqual(2, len(set(backups)), f"两版落到了同一个备份名：{backups}")
+        self.assertEqual(["第一版", "第二版"], [("第一版" if "第一版" in b.read_text(encoding="utf-8") else "第二版") for b in backups])
+        for b in backups:
+            self.assertEqual("inbox", b.parent.name)
+            self.assertTrue(b.name.startswith("规则.") and b.suffix == ".md", b.name)
+        # 恢复第一版：退掉当前的第三版，第一版移回原路径、补回归类键
+        self.assertTrue(self.retire("规则.md")["ok"])
+        self.put("规则.md", backups[0].read_text(encoding="utf-8"))  # 移回原路径、补回归类键
+        backups[0].unlink()
+        self.assertEqual(0, self.import_now().returncode)
+        self.assertIn("第一版", (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"))
+
+    def test_retiring_the_same_content_twice_does_not_overwrite_and_bad_keys_are_refused(self) -> None:
+        self.put("规则.md", "# 规则\n\n同一份。\n")
+        first = self.retire("规则.md")
+        self.put("规则.md", "# 规则\n\n同一份。\n")
+        second = self.retire("规则.md")
+        self.assertEqual(first["backup"], second["backup"])
+        self.assertFalse((self.feature_root / "inbox" / "规则.md").exists())
+        for key in ("../外面.md", "/规则.md", "没有这份.md", "./规则.md"):
+            with self.subTest(key=key):
+                out = self.retire(key)
+                self.assertFalse(out["ok"], out)
+
+    def everything(self) -> dict[str, bytes]:
+        return {p.relative_to(self.root).as_posix(): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+
+    def assert_refused_untouched(self, key: str, *needles: str) -> None:
+        before = self.everything()
+        out = self.retire(key)
+        self.assertFalse(out["ok"], out)
+        for needle in needles:
+            self.assertIn(needle, out["error"])
+        self.assertEqual(before, self.everything(), f"「{key}」被拒，盘上却动了")
+
+    def test_a_drive_or_linked_path_moves_nothing(self) -> None:
+        """盘符路径、盘符相对路径、反斜杠与经链接逃出 inbox 的路径：一律拒绝，一个文件都不动。"""
+        outside = self.root / "外面" / "文档.md"
+        outside.parent.mkdir(parents=True)
+        outside.write_text("不属于这张单。", encoding="utf-8")
+        self.put("规则.md")
+        drive = outside.resolve().as_posix()
+        for key in (drive, drive[:2] + "文档.md", "子目录\\规则.md", "//server/share/a.md"):
+            with self.subTest(key=key):
+                self.assert_refused_untouched(key, "不动任何文件")
+        link = self.feature_root / "inbox" / "链接"
+        try:
+            import _winapi  # noqa: PLC0415
+            _winapi.CreateJunction(str(outside.parent), str(link))
+        except (ImportError, OSError):
+            try:
+                link.symlink_to(outside.parent, target_is_directory=True)
+            except OSError:
+                self.skipTest("这台机器建不了目录联接或符号链接")
+        self.assert_refused_untouched("链接/文档.md", "inbox 之外")
+        self.assertTrue(outside.is_file())
+        self.assertTrue(self.retire("规则.md")["ok"], "正常输入不该被链接检查误伤")
+
+    def test_an_inbox_that_is_itself_a_link_moves_nothing(self) -> None:
+        """inbox 根本身是指到别处的联接：合法的相对键也不能把别处的文件纳入退原件。"""
+        outside = self.root / "外面"
+        outside.mkdir()
+        (outside / "source.md").write_text("别处的文件。", encoding="utf-8")
+        inbox = self.feature_root / "inbox"
+        if inbox.exists():
+            import shutil as sh  # noqa: PLC0415
+            sh.rmtree(inbox)
+        try:
+            import _winapi  # noqa: PLC0415
+            _winapi.CreateJunction(str(outside), str(inbox))
+        except (ImportError, OSError):
+            try:
+                inbox.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                self.skipTest("这台机器建不了目录联接或符号链接")
+        self.assert_refused_untouched("source.md", "需求目录之外")
+        self.assertTrue((outside / "source.md").is_file())
+
+    def test_a_broken_classify_file_moves_nothing(self) -> None:
+        self.put("规则.md")
+        (self.feature_root / "inbox" / ".classify.json").write_text("{坏了", encoding="utf-8")
+        self.assert_refused_untouched("规则.md", "不是合法 JSON")
+
+    def test_an_unwritable_backup_place_leaves_the_original(self) -> None:
+        self.put("规则.md")
+        blocker = self.feature_root / ".backups" / "local" / "inbox"
+        blocker.parent.mkdir(parents=True)
+        blocker.write_text("这里本该是目录", encoding="utf-8")
+        out = self.retire("规则.md")
+        self.assertFalse(out["ok"], out)
+        self.assertIn("没有移动", out["error"])
+        self.assertTrue((self.feature_root / "inbox" / "规则.md").is_file())
+
+    def test_a_classify_write_failure_says_where_the_original_went(self) -> None:
+        import os  # noqa: PLC0415
+        import stat  # noqa: PLC0415
+        self.put("规则.md", "# 规则\n\n写不回。\n")
+        cf = self.feature_root / "inbox" / ".classify.json"
+        os.chmod(cf, stat.S_IREAD)
+        self.addCleanup(os.chmod, cf, stat.S_IWRITE | stat.S_IREAD)
+        out = self.retire("规则.md")
+        self.assertFalse(out["ok"], out)
+        self.assertIn("归类件写不回", out["error"])
+        backups = list((self.feature_root / ".backups" / "local" / "inbox").glob("规则.*.md"))
+        self.assertEqual(1, len(backups))
+        self.assertIn(backups[0].relative_to(self.feature_root).as_posix(), out["error"], "没说原件去了哪")
+
+    def test_an_unreadable_manifest_is_not_reported_as_nothing_new(self) -> None:
+        from flow import update  # noqa: PLC0415
+        from flow.state import FlowError  # noqa: PLC0415
+        self.round_now()
+        path = self.feature_root / "AR" / "story-src" / "materials.json"
+        path.write_text("{坏了", encoding="utf-8")
+        with self.assertRaises(FlowError) as caught:
+            update._imported_since(self.feature_root, [])
+        self.assertIn("说不出上次以来并入了哪些原件", str(caught.exception))
+
+
+class ImageLinksKeepTheirFullTarget(TheManifestIsTheOnlyMaterialTruth):
+    """原件名带空格与括号不要求改名：导入生成合法的图片引用，身份、去处与断链三处核对都按完整目标认出登记的那一张（A4@2）。"""
+
+    NAME = "界面稿/申请 页（一）(v2).docx"
+    STORY_JS = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story"
+
+    def prepare(self, name: str = NAME) -> None:
+        """真实导入一份带图原件（不放 setUp：父类的清单用例在空工作区上跑）。"""
+        self.docx(name, {"image1.png": self.PNG + b"a"}, cls="RR")
+        proc = self.import_now()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.round_now()
+        self.registered = f"{importer.assets_for(name).as_posix()}/image1.png"
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.generated = next(line.strip() for line in prd.splitlines() if "![" in line)
+
+    def node(self, script: str, *args: str) -> object:
+        head = "".join(f"const {n} = await import({json.dumps((self.STORY_JS / f).resolve().as_uri())});"
+                       for n, f in (("img", "images.mjs"), ("lang", "language.mjs")))
+        proc = subprocess.run(["node", "--input-type=module", "-e", head + script, "--", *args],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def check(self, story: str) -> dict:
+        """正文交给三处真实核对：本章身份、整篇去处与重复、断链。"""
+        ar = self.feature_root / "AR"
+        return self.node(
+            "import * as fs from 'node:fs'; import * as path from 'node:path';"
+            f"const ctx = {{projectRoot: {json.dumps(str(self.root))}, srcDir: {json.dumps(str(ar / 'story-src'))},"
+            f" featureRoot: {json.dumps(str(self.feature_root))},"
+            f" storyPath: {json.dumps(str(ar / 'story.md'))}}};"
+            "const t = process.argv[1];"
+            "process.stdout.write(JSON.stringify({chapter: img.chapterImageProblems(ctx, t, n => `L${n}`),"
+            f" whole: img.imageProblems(ctx, t).problems, broken: lang.scanBrokenImages(t, {json.dumps(str(ar))}, fs, path)}}));",
+            story)
+
+    def test_the_importer_writes_a_legal_target_for_the_real_name(self) -> None:
+        self.prepare()
+        self.assertIn(" ", self.registered)
+        self.assertIn("(v2)", self.registered)
+        self.assertEqual(f"![image1.png](<../{self.registered}>)", self.generated)
+
+    def test_every_legal_spelling_reaches_the_registered_image(self) -> None:
+        self.prepare()
+        plain = "../" + self.registered
+        spellings = {
+            "导入生成的引用": self.generated,
+            "空格编码、成对括号": "![申请页](" + plain.replace(" ", "%20") + ")",
+            "空格编码、括号转义": "![申请页](" + plain.replace(" ", "%20").replace("(", "\\(").replace(")", "\\)") + ")",
+            "尖括号里再编码": "![申请页](<" + plain.replace("（", "%EF%BC%88") + ">)",
+        }
+        for label, ref in spellings.items():
+            with self.subTest(label):
+                out = self.check(f"申请页如下。\n\n{ref}\n")
+                self.assertEqual([], out["chapter"], ref)
+                self.assertEqual([], out["broken"], ref)
+                self.assertEqual([], out["whole"], f"{ref} 没认作登记的那张，或误报没被引用")
+
+    def test_real_problems_are_still_reported(self) -> None:
+        self.prepare()
+        plain = "../" + self.registered
+        out = self.check("![别的图](<../assets/别的 图.png>)\n")
+        self.assertTrue(any("不在材料的图片登记里" in p for p in out["chapter"]), out)
+        self.assertTrue(out["broken"], "真实不存在的文件没报断链")
+        self.assertTrue(any("没被引用" in p for p in out["whole"]), "登记的图没去处却没报")
+        out = self.check(f"{self.generated}\n\n{self.generated}\n")
+        self.assertTrue(any("被引用了不止一次" in p for p in out["whole"]), out)
+        out = self.check(f"{self.generated}\n\n![申请页]({plain.replace(' ', '%20')})\n")
+        self.assertTrue(any("同一张图被两个路径引用" in p for p in out["whole"]), out)
+        out = self.check(f"![申请页]({plain})\n")
+        self.assertTrue(any("写法解析不了" in p for p in out["chapter"]), "空格没包尖括号的写法被静默跳过")
+        out = self.check("![坏编码](../assets/%E4%ZZ.png)\n")
+        self.assertTrue(out["broken"], "坏编码既没报也不该抛栈")
+        importer.mark_unused(self.feature_root, self.feature_root / self.registered, "旧稿，不属于本单")
+        self.round_now()
+        out = self.check(f"申请页如下。\n\n{self.generated}\n")
+        self.assertTrue(any("登记着不用的理由" in p for p in out["chapter"]), out)
+
+    def test_url_separators_in_the_real_name_stay_part_of_the_path(self) -> None:
+        """原名带 `#`、`&`、`;`：生成目标编码 `#`，读者不把后半截当片段；三者的百分编码都还原回原名。"""
+        self.prepare("界面稿/方案#2 & 补充;v3.docx")
+        self.assertIn("#", self.registered)
+        self.assertNotIn("#", self.generated.split("](", 1)[1], "未编码的 # 在读者那里是片段分隔")
+        plain = "../" + self.registered
+        encoded = plain.replace(" ", "%20").replace("#", "%23").replace("&", "%26").replace(";", "%3B")
+        for ref in (self.generated, f"![方案页]({encoded})"):
+            with self.subTest(ref):
+                out = self.check(f"方案页如下。\n\n{ref}\n")
+                self.assertEqual([], out["chapter"], ref)
+                self.assertEqual([], out["broken"], ref)
+                self.assertEqual([], out["whole"], ref)
+        out = self.check(f"![方案页]({plain.replace(' ', '%20')})\n")
+        self.assertTrue(out["broken"], "未编码的 # 之后是片段，路径只剩前半截，该报断链")
+        self.assertTrue(any("不在材料的图片登记里" in p for p in out["chapter"]), out)
+        importer.mark_unused(self.feature_root, self.feature_root / self.registered, "旧稿，不属于本单")
+        self.round_now()
+        out = self.check(f"方案页如下。\n\n{self.generated}\n")
+        self.assertTrue(any("登记着不用的理由" in p for p in out["chapter"]), out)
+
+    def test_both_producers_share_one_spelling_that_round_trips(self) -> None:
+        names = ["ux-reference/首页 (旧).0123456789abcdef.png", "assets/a%20b<c>.png", "assets/plain.png",
+                 "assets/a#b?c&d;e.png", "assets/100%25.png"]
+        js = self.node("process.stdout.write(JSON.stringify(process.argv.slice(1).map(p => {"
+                       " const t = lang.markdownTarget(p); return [t, lang.imageLinks(`![x](${t})`).images[0]?.path]; })));",
+                       *names)
+        for name, (target, back) in zip(names, js):
+            with self.subTest(name):
+                self.assertEqual(importer.md_target(name), target, "导入端与作者任务包的写法不一致")
+                self.assertEqual(name, back, "写出去的目标还原不回原名")
 
 
 class OnlyTheManifestModuleHashesMaterial(unittest.TestCase):

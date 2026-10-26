@@ -38,6 +38,36 @@ FLOW = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 #: 一份协议齐全的最小写作设计（十章各一段、结构选择为空）——测正文路径的用例起手前放它。
 PLAN_FIXTURE = FIXTURE / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
 
+
+def with_carry(plan: str, sources, chapter: str = "05-flow", section: str | None = None) -> str:
+    """写作设计里给一章（或它的一个 #### 小节）登记承接上游图：每个来源一行 `- 承接上游图：<身份>`。"""
+    head = f"#### {section}\n" if section else f"### {chapter}\n"
+    at = plan.index(f"### {chapter}\n")
+    if section:
+        at = plan.index(head, at)
+    end = plan.index("\n", at + len(head))
+    return plan[:end + 1] + "".join(f"- 承接上游图：{s}\n" for s in sources) + plan[end + 1:]
+
+
+ZONE_BEGIN = "<!-- story-build:begin "
+ZONE_END = "<!-- story-build:end -->"
+#: 附录有机器区的设计：两条配置明细投进「技术契约·配置项」，一条埋点明细投进「埋点」
+ZONE_DESIGN = {"details": [
+    design_kit.story_detail("detail-flag", "configuration", "自动充值开关", "默认关闭，随版本放开。"),
+    design_kit.story_detail("detail-limit", "configuration", "单日发起上限", "单日最多三次，超过当天不再发起。"),
+    design_kit.story_detail("detail-sign", "event", "签约成功率", "签约成功的尝试 ÷ 全部签约尝试。")]}
+CONFIG_ZONE = "技术契约·配置项"
+
+
+def zone_bounds(lines: list[str], prefix: str | None = None) -> list[tuple[int, int]]:
+    """每段机器区的起止行号（含首尾标记）。"""
+    prefix = prefix or ZONE_BEGIN
+    out = []
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            out.append((i, next(k for k in range(i + 1, len(lines)) if lines[k].strip() == ZONE_END)))
+    return out
+
 CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
 
@@ -122,10 +152,13 @@ def _appendix_title() -> str:
 class StoryBuildCase(unittest.TestCase):
     """每个用例一份新工作区（交给设计、蓝图已准入）；子类只关心自己那一条判据。"""
 
+    #: 蓝图带的设计内容（`designed_copy` 的 design）；要附录机器区的子类给 ZONE_DESIGN
+    DESIGN: dict | None = None
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(FIXTURE, FEATURE, self.DRAFT, self.root)
+        designed_copy(FIXTURE, FEATURE, self.DRAFT, self.root, self.DESIGN)
         self.addCleanup(self._tmp.cleanup)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
@@ -318,8 +351,8 @@ class TestRedlineScope(StoryBuildCase):
     """逐类作用域：工程标识只管附录之外，文档坐标全篇判；一行命中几种坐标只报一条。"""
 
     def _put_in_appendix(self, line: str) -> None:
-        """作者说明写在改动边界那一节之前：机器区之外。"""
-        anchor = "### 改动边界"
+        """作者说明写在规约一节末尾：作者区，机器区之外。"""
+        anchor = "### 埋点"
         self.assertIn(anchor, self.story())
         self.rewrite_story(anchor, line + "\n\n" + anchor)
 
@@ -395,11 +428,13 @@ class TestDecisionUnits(StoryBuildCase):
 
 
 class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
-    """附录的机器区与真源（已准入蓝图）逐区逐行比 —— **不先 project 再比**。
+    """附录的机器区与真源（当前蓝图）逐区逐行比 —— **不先 project 再比**。
 
     先 project 再比是必绿的：那等于拿刚写下去的东西跟自己比。这一组直接改盘上的机器区
-    （非首列、删行、换序、破标记）与真源，check 必须发现，且**一个字节都不许写**。
+    （改字、删行、换序、破标记）与真源，check 必须发现，且**一个字节都不许写**。
     """
+
+    DESIGN = ZONE_DESIGN
 
     def setUp(self) -> None:
         super().setUp()
@@ -425,37 +460,40 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.assertIn(needle, out)
         self.assertEqual(before, self.story_path.read_bytes(), "只读检查写了盘")
 
-    def test_a_change_outside_the_first_column_is_caught(self) -> None:
-        """只比首列的老判据看不见这一类：标识没动，说明被改了。"""
-        at, end, lines = self.zone_lines("改动边界")
-        target = next(i for i in range(at + 1, end) if " → " in lines[i])
-        lines[target] = lines[target].replace(" → ", " ⇒ ", 1)
+    def body(self, at: int, end: int, lines: list[str]) -> list[int]:
+        return [i for i in range(at + 1, end) if lines[i].strip()]
+
+    def test_a_change_outside_the_title_is_caught(self) -> None:
+        """只比标题的老判据看不见这一类：明细名没动，说明被改了。"""
+        at, end, lines = self.zone_lines(CONFIG_ZONE)
+        target = next(i for i in range(at + 1, end) if "默认关闭" in lines[i])
+        lines[target] = lines[target].replace("默认关闭", "默认打开", 1)
         self.rewrite(lines)
         self.expect_caught()
 
     def test_a_deleted_row_is_caught(self) -> None:
-        at, end, lines = self.zone_lines("改动边界")
-        del lines[end - 1]
+        at, end, lines = self.zone_lines(CONFIG_ZONE)
+        del lines[self.body(at, end, lines)[-1]]
         self.rewrite(lines)
         self.expect_caught()
 
     def test_a_reordered_pair_of_rows_is_caught(self) -> None:
         """行序算在内：拿 Set 比集合的老判据换了顺序也看不见。"""
-        at, end, lines = self.zone_lines("改动边界")
-        body = list(range(at + 1, end))
+        at, end, lines = self.zone_lines(CONFIG_ZONE)
+        body = self.body(at, end, lines)
         self.assertGreaterEqual(len(body), 2)
         lines[body[-1]], lines[body[-2]] = lines[body[-2]], lines[body[-1]]
         self.rewrite(lines)
         self.expect_caught()
 
     def test_a_broken_end_marker_is_caught(self) -> None:
-        at, end, lines = self.zone_lines("改动边界")
+        at, end, lines = self.zone_lines(CONFIG_ZONE)
         lines[end] = "<!-- 结束标记被改坏了 -->"
         self.rewrite(lines)
         self.expect_caught("结束标记")
 
     def test_a_duplicated_zone_is_caught(self) -> None:
-        at, end, lines = self.zone_lines("改动边界")
+        at, end, lines = self.zone_lines(CONFIG_ZONE)
         self.rewrite(lines[:end + 1] + lines[at:end + 1] + lines[end + 1:])
         self.expect_caught("两段机器区")
 
@@ -467,28 +505,28 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
 
     def test_an_unknown_machine_zone_is_not_author_text(self) -> None:
         """合同里没有这个名字的机器区：它没有真源可比，会一直冒充现行投影。"""
-        at, endline, lines = self.zone_lines("改动边界")
+        at, endline, lines = self.zone_lines(CONFIG_ZONE)
         extra = ["<!-- story-build:begin obsolete · 由某处生成，改它请改真源 -->",
                  "| 旧 | 行 |", "|---|---|", "| 1 | 2 |", "<!-- story-build:end -->"]
         self.rewrite(lines[:endline + 1] + [""] + extra + lines[endline + 1:])
         self.expect_caught("obsolete")
 
     def test_an_orphan_end_marker_is_caught(self) -> None:
-        at, endline, lines = self.zone_lines("改动边界")
+        at, endline, lines = self.zone_lines(CONFIG_ZONE)
         self.rewrite(lines[:endline + 1] + ["", "<!-- story-build:end -->"]
                      + lines[endline + 1:])
         self.expect_caught("孤立")
 
     def test_a_nested_begin_marker_is_caught(self) -> None:
         """一个结束只配一个开始：两个开始都去认后面同一行，其中一段的边界是编的。"""
-        at, endline, lines = self.zone_lines("改动边界")
+        at, endline, lines = self.zone_lines(CONFIG_ZONE)
         inner = "<!-- story-build:begin 材料清单 · 由登记的冻结输入生成，改它请改真源 -->"
         self.rewrite(lines[:at + 1] + [inner] + lines[at + 1:])
         self.expect_caught("还没关上")
 
     def test_a_changed_source_is_caught(self) -> None:
         """蓝图修订了而机器区没跟着重投——报的是区与它的责任真源，不是让作者改机器区。"""
-        design_kit.change_blueprint(self.root, FEATURE, ACCESS, "target_state: refresh trigger", "target_state: refresh trigger and badge")
+        design_kit.change_blueprint(self.root, FEATURE, ACCESS, "默认关闭，随版本放开。", "默认关闭，灰度后放开。")
         before = self.story_path.read_bytes()
         code, out = self.check_output()
         self.assertEqual(1, code, out)
@@ -496,16 +534,19 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.assertIn("内容以真源为准", out, "没有指出内容以真源为准")
         self.assertEqual(before, self.story_path.read_bytes(), "只读检查写了盘")
 
-    def test_an_unadmitted_blueprint_stops_the_check_of_every_zone(self) -> None:
-        """蓝图没准入不等于「期望是空的」：那会让缺一整节的附录静默通过。"""
+    def test_an_unadmitted_blueprint_is_still_the_source_of_every_zone(self) -> None:
+        """当前蓝图没准入照样是成文来源：机器区仍逐行与它比，不因准入状态停下，也不按「期望为空」放行。"""
         design_kit.change_blueprint(self.root, FEATURE, ACCESS, "  admission:\n    status: pass", "  admission:\n    status: fail")
-        code, out = self.check_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("成文按已准入的蓝图写", out)
+        self.assertEqual(0, self.check_output()[0])
+        at, end, lines = self.zone_lines(CONFIG_ZONE)
+        target = next(i for i in range(at + 1, end) if "默认关闭" in lines[i])
+        lines[target] = "默认打开。"
+        self.rewrite(lines)
+        self.expect_caught()
 
     def test_the_authors_own_words_next_to_the_zone_are_left_alone(self) -> None:
         """作者解释区在机器标记之外：不参加比较，也不被生成器重写。"""
-        at, end, lines = self.zone_lines("改动边界")
+        at, end, lines = self.zone_lines(CONFIG_ZONE)
         note = "这一节的取舍见业务方案章。"
         self.rewrite(lines[:at] + [note, ""] + lines[at:])
         code, out = self.check_output()
@@ -546,28 +587,6 @@ class TheAuthorSectionsTakeAnyForm(StoryBuildCase):
         self.assertIn("段落、表或列表都可以", out)
 
 
-class TheSpecialDesignIsCarriedVerbatim(StoryBuildCase):
-    """蓝图里的专项设计（`story_details` 的 special_design）写在正文：逐字出现，表达可以组织，内容不改写。"""
-
-    BODY = "单日自动充值上限 300 元，按自然日重置。"
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.init_audit()
-        design_kit.install_blueprint(self.root, FEATURE, ACCESS, decisions=FIXTURE_DECISIONS,
-                                     details=[design_kit.story_detail("detail-limit", "special_design", "充值上限", self.BODY)])
-
-    def test_a_missing_special_design_is_reported(self) -> None:
-        code, out = self.check_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("detail-limit", out)
-
-    def test_the_verbatim_body_in_the_story_passes(self) -> None:
-        self.rewrite_story("### 技术契约", f"{self.BODY}\n\n### 技术契约")
-        code, out = self.check_output()
-        self.assertNotIn("detail-limit", out, out)
-
-
 class TheReadersRenderTheNativeObjects(unittest.TestCase):
     """附录读取器：原生对象的字段原样排出，不补、不改写、不推断；表头与标签来自章节合同。
 
@@ -598,17 +617,6 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
         self.gaps = out["gaps"]
         return out["rows"]
 
-    def test_structured_node_states_are_reported_not_dashed(self) -> None:
-        """开发视图节点的状态写成结构：附录没有它的写法就报出位置，不显示成「— → —」。"""
-        bp = {"design_views": [{"view_id": "development", "nodes": [
-            {"node_id": "wallet", "module": "WalletMain", "current_state": "无余额刷新",
-             "target_state": {"summary": "首页按需刷新余额", "trigger": "回到首页"}}]}]}
-        text = "\n".join(self.rows("改动边界", bp))
-        self.assertIn("| WalletMain | 无余额刷新 → — |", text)
-        self.assertEqual(["design_views.development.nodes.wallet.target_state.summary",
-                          "design_views.development.nodes.wallet.target_state.trigger"],
-                         [g.split("蓝图 ", 1)[1].split(" ", 1)[0] for g in self.gaps])
-
     def test_details_take_only_their_kind_and_keep_the_body_verbatim(self) -> None:
         body = "开关名 `balance.refresh.enabled`。\n\n- 默认开启\n- 灰度 10%"
         bp = {"story_details": [{"id": "c1", "kind": "configuration", "title": "刷新开关", "body": body, "evidence_refs": ["n1"]},
@@ -628,15 +636,6 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
         for body in ("分子提交成功，分母提交次数。", "分子恢复成功，分母取消中断。"):
             self.assertEqual(1, text.count(body))
         self.assertEqual([], self.gaps)
-
-    def test_the_boundary_lists_modules_and_architecture_changes(self) -> None:
-        bp = {"design_views": [{"view_id": "development", "nodes": [
-            {"node_id": "n", "module": "WalletMain", "current_state": "无刷新", "target_state": "可刷新"}]}],
-            "decisions_and_gaps": {"decisions": [{"decision_id": "a", "change": "dependency_edge", "from": "WalletMain",
-                                                  "to": "NetKit", "direction": "add", "rationale": "取余额"}]}}
-        text = "\n".join(self.rows("改动边界", bp))
-        self.assertIn("| WalletMain | 无刷新 → 可刷新 |", text)
-        self.assertIn("| WalletMain → NetKit | dependency_edge：add：取余额 |", text)
 
     def test_metric_numbers_follow_the_source_order(self) -> None:
         """指标换序、增删后重投再重编号：编号按蓝图次序连续，机器区摘要仍认得出是投影原样（编号不算改动）。"""
@@ -668,7 +667,7 @@ class TheReadersRenderTheNativeObjects(unittest.TestCase):
 
     def test_nothing_in_the_source_projects_nothing(self) -> None:
         """真源里没有这类对象：一行都不编，由结构判据要求作者写「不涉及：<依据>」。"""
-        for zone in ("技术契约·配置项", "埋点", "改动边界"):
+        for zone in ("技术契约·配置项", "埋点"):
             with self.subTest(zone=zone):
                 self.assertEqual([], self.rows(zone, {}))
 
@@ -919,7 +918,7 @@ class TestNumbering(StoryBuildCase):
         text = self.number()
         self.assertIn("### 10.1 技术契约", text)
         self.assertIn("#### 10.1.1 端云接口", text)
-        self.assertIn("### 10.5 材料清单", text)
+        self.assertIn("### 10.4 材料清单", text)
 
     def test_a_chapter_outside_the_contract_is_left_alone(self) -> None:
         """合同里没有的章原样留着：那是 check ① 要点名的事，不是编号该悄悄接受的。"""
@@ -1511,131 +1510,6 @@ class TestImageIdentityComesFromTheManifest(Step8Case):
         _, out = self.check_output()
         self.assertIn("图片身份与落点判据未执行", out)
         self.assertIn("story_flow.py round", out)
-
-
-class TheMaterialListIsOneTableOfOriginals(Step8Case):
-    """材料清单是作者写的一张「材料｜来源｜贡献」表：本次采用的每份外部原件一行；经收件箱导入的列原件、
-    转换稿不另列；提取稿、人签导出与图片不列；本轮 update 记下评审人原话的，评审记录也是一份来源。
-    原件集合取冻结快照与材料登记，起手输出、审查任务与检查是同一份。"""
-
-    ROWS = ("| [甲需求 PRD](../RR/prd.md) | 需求目录（产品需求） | 提交回执的业务诉求与状态取值 |\n"
-            "| [开发需求](design.md) | 需求目录（开发需求） | 本轮从上游提取的开发需求，业务分工与本单范围 |\n")
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.init_audit()
-        code, out = self.check_output()
-        self.assertEqual(0, code, "夹具起点本该是干净的：" + out)
-
-    def put_rows(self, rows: str) -> None:
-        text = self.story()
-        head = "| 材料 | 来源 | 贡献 |\n|---|---|---|\n"
-        self.story_path.write_text(text[:text.index(head) + len(head)] + rows, encoding="utf-8")
-
-    def test_a_missing_original_is_named(self) -> None:
-        self.put_rows(self.ROWS.split("\n")[0] + "\n")
-        self.assertIn("本次采用的原件 AR/design.md 没有列", self.assert_check_names("⑫c 材料清单"))
-
-    def test_a_process_file_is_not_a_source(self) -> None:
-        self.put_rows(self.ROWS + "| [设计草稿](story-src/design-draft.md) | 本轮提取 | 设计要点 |\n")
-        self.assertIn("AR/story-src/design-draft.md 是过程件、生成件或图片，不是外部原件", self.assert_check_names("⑫c 材料清单"))
-
-    def test_bullets_instead_of_the_table_are_named(self) -> None:
-        self.put_rows("")
-        text = self.story()
-        self.story_path.write_text(text.replace("| 材料 | 来源 | 贡献 |\n|---|---|---|\n",
-                                                "- 甲需求 PRD：[RR/prd.md](../RR/prd.md)\n- 开发需求：[AR/design.md](design.md)\n"),
-                                   encoding="utf-8")
-        self.assertIn("要一张表，列为 材料｜来源｜贡献", self.assert_check_names("⑫c 材料清单"))
-
-    def set_origins(self, origins: dict | None) -> None:
-        """改冻结快照记下的外部来源（None 是旧版本冻结、没有这一项），并同步流程契约里登记的快照摘要。"""
-        flow_path = self.src / "story-flow.json"
-        flow = json.loads(flow_path.read_text(encoding="utf-8"))
-        snap = self.root / flow["input"]["snapshot_ref"]
-        data = json.loads(snap.read_text(encoding="utf-8"))
-        data.pop("origins", None)
-        if origins is not None:
-            data["origins"] = origins
-        snap.write_bytes((json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-        flow["input"]["snapshot_sha256"] = hashlib.sha256(snap.read_bytes()).hexdigest()
-        flow_path.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
-
-    def inbox(self, name: str, data: bytes) -> dict:
-        folder = self.root / "doc" / "features" / FEATURE / "inbox"
-        folder.mkdir(exist_ok=True)
-        (folder / name).write_bytes(data)
-        return {"path": f"inbox/{name}", "sha256": "sha256:" + hashlib.sha256(data).hexdigest()[:16]}
-
-    DEV = "| [开发需求](design.md) | 需求目录（开发需求） | 业务分工与本单范围 |\n"
-
-    def test_every_original_merged_into_one_copy_is_listed(self) -> None:
-        """两份人工材料合并导入同一份正文：两份原件各一行，转换稿不算；漏一份就点名那一份。"""
-        a, b = self.inbox("甲需求-上.docx", b"a"), self.inbox("甲需求-下.docx", b"b")
-        self.set_origins({"RR/prd.md": [a, b]})
-        _, out = self.check_output()
-        self.assertIn("RR/prd.md 是 inbox/甲需求-上.docx、inbox/甲需求-下.docx 的转换稿——列原件", out)
-        self.put_rows("| [甲需求上半](../inbox/甲需求-上.docx) | 收件箱（人工提供） | 业务诉求 |\n" + self.DEV)
-        _, out = self.check_output()
-        self.assertIn("本次采用的原件 inbox/甲需求-下.docx 没有列（转换稿是 RR/prd.md）", out)
-        self.assertNotIn("甲需求-上.docx 没有列", out)
-        self.put_rows("| [甲需求上半](../inbox/甲需求-上.docx) | 收件箱（人工提供） | 业务诉求 |\n"
-                      "| [甲需求下半](../inbox/甲需求-下.docx) | 收件箱（人工提供） | 状态取值 |\n" + self.DEV)
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-
-    def test_an_original_replaced_after_adoption_is_a_gap(self) -> None:
-        """冻结后收件箱里同名原件换了版：清单链到的不是采用的那一份，报来源缺口，不静默漂移。"""
-        a = self.inbox("甲需求.docx", b"v1")
-        self.set_origins({"RR/prd.md": [a]})
-        self.put_rows("| [甲需求](../inbox/甲需求.docx) | 收件箱（人工提供） | 业务诉求 |\n" + self.DEV)
-        self.assertEqual(0, self.check_output()[0])
-        self.inbox("甲需求.docx", b"v2")
-        _, out = self.check_output()
-        self.assertIn(f"inbox/甲需求.docx 不是本次采用的那一版（采用时 {a['sha256']}，现在内容变了）", out)
-
-    def test_only_table_rows_count_and_a_row_is_one_original(self) -> None:
-        """表外的链接不算列了原件；同一份原件列两行点名。"""
-        self.put_rows(self.ROWS.split("\n")[0] + "\n\n另见 [开发需求](design.md)。\n")
-        self.assertIn("本次采用的原件 AR/design.md 没有列", self.assert_check_names("⑫c 材料清单"))
-        self.put_rows(self.ROWS + self.ROWS.split("\n")[1] + "\n")
-        self.assertIn("AR/design.md 在第", self.assert_check_names("一份原件一行"))
-
-    def test_the_init_skeleton_is_not_an_original(self) -> None:
-        """快照记作生成件的（init 落的空骨架）不要求列，列了点名。"""
-        self.set_origins({"AR/design.md": []})
-        _, out = self.check_output()
-        self.assertIn("AR/design.md 是过程件、生成件或图片，不是外部原件", out)
-        self.put_rows(self.ROWS.split("\n")[0] + "\n")
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-
-    def test_an_old_freeze_without_origins_is_a_gap(self) -> None:
-        self.set_origins(None)
-        _, out = self.check_output()
-        self.assertIn("冻结输入没有记下采用文件的外部来源（旧版本冻结）", out)
-
-    def test_a_conflicting_version_kept_for_comparison_is_allowed(self) -> None:
-        """没采用的另一版若决定需要它，可以列并在贡献里写对比与裁决依据，不当成过程件拦。"""
-        (self.root / "doc" / "features" / FEATURE / "RR" / "prd-v0.md").write_text("旧版\n", encoding="utf-8")
-        self.put_rows(self.ROWS + "| [甲需求旧版](../RR/prd-v0.md) | 需求目录（旧版） | 状态取值与新版不同，按新版裁决 |\n")
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-
-    def test_review_feedback_is_a_source_after_an_update_reply(self) -> None:
-        flow_path = self.src / "story-flow.json"
-        flow = json.loads(flow_path.read_text(encoding="utf-8"))
-        flow.setdefault("update", {})["decisions"] = [{"issue": "D1", "reply": "改成 36 小时"}]
-        flow_path.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
-        _, out = self.check_output()
-        self.assertIn("本次采用的原件 AR/review.md 没有列", out)
-
-    def test_the_author_is_told_which_originals_to_list(self) -> None:
-        proc = self.run_build("skeleton")
-        out = proc.stdout + proc.stderr
-        self.assertIn("## 4b. 材料清单要列的原件", out)
-        self.assertIn("`[prd.md](../RR/prd.md)`", out)
-        self.assertIn("`[design.md](design.md)`", out)
 
 
 class TestNonPlaceholderChecksOnlyTwoThings(Step8Case):
@@ -2281,6 +2155,8 @@ class RealRunCase(unittest.TestCase):
     REAL = REPO_ROOT / "test" / "fixtures" / "real-run" / "AR90006"
     EXTENSION = DEV_EXT
     DESIGN = REAL_RUN_DESIGN
+    #: 这份产物的上游（SR）里画过的图：写作设计按身份登记它们由业务流程章承接
+    CARRIED = ("SR §1 #1", "SR §1 #2")
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -2301,7 +2177,8 @@ class RealRunCase(unittest.TestCase):
                               DRAFT_TEXT)
             plan = self.feature / "AR" / "story-src" / "story-template.md"
             if not plan.exists():
-                shutil.copy2(PLAN_FIXTURE, plan)
+                text = PLAN_FIXTURE.read_text(encoding="utf-8")
+                plan.write_text(with_carry(text, self.CARRIED), encoding="utf-8")
         return subprocess.run(
             ["node", str(BUILD), *args, "--feature", "AR90006",
              "--project-root", str(self.root)],
@@ -2616,17 +2493,16 @@ class TheContractCarriesTheKeptSeeds(RealRunCase):
         self.assertNotIn("### ", scope, "范围章没有要机器定位的小节，不预置标题")
 
 class TheMachineZoneComesFromTheSource(RealRunCase):
-    """附录的机器区每次都从当前真源（已准入蓝图）重算，不读旧 story、不含占位。
+    """附录的机器区每次都从当前真源（当前蓝图）重算，不读旧 story、不含占位。
 
     读旧的就成了「真源 + 一份会漂移的副本」；含占位则作者填了会被下一次投影打回。
     """
 
     def test_landing_the_appendix_projects_every_zone_the_blueprint_has(self) -> None:
-        """蓝图里有埋点明细与开发视图：埋点、改动边界各一区；接口、数据、规约与材料清单归作者。"""
+        """蓝图里有埋点明细：埋点一区；接口、数据、规约与材料清单归作者。"""
         self.build("skeleton")
         appendix = self.land_appendix().split("## 附录", 1)[1]
-        for name in ("埋点", "改动边界"):
-            self.assertIn(f"story-build:begin {name} ", appendix)
+        self.assertIn("story-build:begin 埋点 ", appendix)
         for name in ("技术契约·端云接口", "技术契约·数据存储", "规约 ", "材料清单"):
             self.assertNotIn(f"story-build:begin {name}", appendix, f"{name} 又成了机器区")
         self.assertIn("服务端返回的受理状态决定后续处理路径。", appendix, "作者写的那一句丢了")
@@ -2643,10 +2519,10 @@ class TheMachineZoneComesFromTheSource(RealRunCase):
         """蓝图修订了，重投影跟上；作者区一个字节不动。"""
         self.build("skeleton")
         self.land_appendix()
-        design_kit.change_blueprint(self.root, "AR90006", ACCESS, "target_state: refresh trigger", "target_state: refresh trigger and badge")
+        design_kit.change_blueprint(self.root, "AR90006", ACCESS, "统计点：签约成功时上报一次。", "统计点：签约成功时上报一次，失败不报。")
         self.build("project")
         story = self.story()
-        self.assertIn("refresh trigger and badge", story, "重投影没跟上真源")
+        self.assertIn("签约成功时上报一次，失败不报。", story, "重投影没跟上真源")
         self.assertIn("服务端返回的受理状态决定后续处理路径。", story)
         self.assertIn("产品需求给出了业务规则。", story)
 
@@ -2732,159 +2608,6 @@ class ProjectionRefusesToInventContent(RealRunCase):
         self.assertEqual(before, self.story_path.read_bytes())
 
 
-class DiagramSourcesFollowOneContract(unittest.TestCase):
-    """图源只有一种写法：围栏开头的 `%% 图源 {JSON}`，document 指本次有效来源里的一张图，blueprint 指蓝图生成图。
-
-    机械只核来源身份与 reuse 的图体；不要求每张来源图都有去处、不数图——那是表达选择，归独立审查。
-    """
-
-    SR = ("## 5. 业务流程\n\n### 5.1 签约流程\n\n"
-          "```mermaid\ngraph TD\nA[进入签约页] --> B[免密验证]\n```\n\n"
-          "### 5.2 自动充值触发\n\n"
-          "```mermaid\ngraph TD\nC[余额上报] --> D[判定] --> E[扣款]\n```\n")
-    AT = "doc/features/REQ-X/AR/story-src/inputs/v1/files/SR/design.md"
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls._tmp = tempfile.TemporaryDirectory()
-        cls.root = Path(cls._tmp.name)
-        link_framework(cls.root)
-        cls.feature = cls.freeze()
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls._tmp.cleanup()
-
-    @classmethod
-    def freeze(cls) -> Path:
-        """需求 REQ-X 交给设计时冻结的来源：系统设计一份。"""
-        rel = cls.AT.rsplit("/files/", 1)[0]
-        frozen = cls.root / cls.AT
-        frozen.parent.mkdir(parents=True, exist_ok=True)
-        frozen.write_text(cls.SR, encoding="utf-8")
-        (cls.root / rel / "snapshot.json").write_text(json.dumps({"files": [
-            {"path": "SR/design.md", "sha256": hashlib.sha256(frozen.read_bytes()).hexdigest()}]}), encoding="utf-8")
-        feature = cls.root / "doc" / "features" / "REQ-X"
-        (feature / "AR" / "story-src" / "story-flow.json").write_text(
-            json.dumps({"input": {"snapshot_ref": f"{rel}/snapshot.json"}}), encoding="utf-8")
-        return feature
-
-    def problems(self, story: str) -> list[str]:
-        """经章提交与整篇检查用的同一个入口核：来源是需求冻结的采用材料。"""
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e",
-             "const m = await import(process.argv[1]);"
-             "const ctx = { projectRoot: process.argv[2], flowPath: process.argv[3] + '/AR/story-src/story-flow.json' };"
-             "process.stdout.write(JSON.stringify(m.storyDiagramSourceProblems(ctx, process.argv[4], n => `L${n}`)));",
-             IMAGES.resolve().as_uri(), str(self.root), str(self.feature), story],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(0, proc.returncode, proc.stderr[-600:])
-        return json.loads(proc.stdout)
-
-    @staticmethod
-    def fence(body: str, *marks: dict) -> str:
-        head = "".join(f"%% 图源 {json.dumps(m, ensure_ascii=False)}\n" for m in marks)
-        return f"## 五\n\n```mermaid\n{head}{body}```\n"
-
-    def mark(self, diagram: str = "§5.1 #1", mode: str = "reuse", **extra) -> dict:
-        return {"kind": "document", "path": self.AT, "diagram": diagram, "mode": mode, **extra}
-
-    def test_a_reused_diagram_with_the_same_body_passes(self) -> None:
-        self.assertEqual([], self.problems(self.fence("graph TD\nA[进入签约页] --> B[免密验证]\n", self.mark())))
-
-    def test_reuse_with_one_label_changed_is_named(self) -> None:
-        out = self.problems(self.fence("graph TD\nA[进入签约页] --> B[支付验证]\n", self.mark()))
-        self.assertEqual(1, len(out), out)
-        self.assertIn("图体与来源不一致", out[0])
-
-    def test_a_refined_diagram_may_differ(self) -> None:
-        """refine 只核来源指得到；增量讲没讲清归审查。"""
-        body = "graph TD\nA[进入签约页] --> B[免密验证]\nB -->|取消| A\n"
-        self.assertEqual([], self.problems(self.fence(body, self.mark(mode="refine"))))
-
-    def test_a_new_diagram_needs_no_mark_and_unused_sources_are_not_reported(self) -> None:
-        """新绘不写标记；来源里没被用的图不报——不是一源一图。"""
-        self.assertEqual([], self.problems("## 五\n\n```mermaid\ngraph TD\nX --> Y\n```\n"))
-
-    def test_a_missing_diagram_names_the_ones_that_exist(self) -> None:
-        out = self.problems(self.fence("graph TD\nA-->B\n", self.mark(diagram="§9 #1")))
-        self.assertIn("§9 #1", out[0])
-        self.assertIn("§5.1 #1、§5.2 #1", out[0])
-
-    def test_a_path_outside_the_adopted_sources_is_named(self) -> None:
-        """工作区里同名的新版本、别的需求的文件都不是本次有效来源。"""
-        out = self.problems(self.fence("graph TD\nA-->B\n", self.mark(path="doc/features/REQ-X/SR/design.md")))
-        self.assertIn("不是本次有效采用的来源", out[0])
-        self.assertIn(self.AT, out[0], "没列出可用的来源")
-
-    def test_a_path_escaping_the_project_is_named(self) -> None:
-        out = self.problems(self.fence("graph TD\nA-->B\n", self.mark(path="../outside/design.md")))
-        self.assertIn("不是工程内路径", out[0])
-
-    def test_broken_json_unknown_kind_and_mode_are_each_named(self) -> None:
-        story = "## 五\n\n```mermaid\n%% 图源 SR §5.1 #1\ngraph TD\nA-->B\n```\n"
-        self.assertIn("不是一个 JSON 对象", self.problems(story)[0], "旧标签写法不再被认")
-        self.assertIn("kind", self.problems(self.fence("graph TD\nA-->B\n", {**self.mark(), "kind": "spec"}))[0])
-        self.assertIn("mode", self.problems(self.fence("graph TD\nA-->B\n", {**self.mark(), "mode": "copy"}))[0])
-
-    def test_two_sources_in_one_fence_are_each_checked(self) -> None:
-        out = self.problems(self.fence("graph TD\nA[进入签约页] --> B[免密验证]\n",
-                                       self.mark(mode="refine"), self.mark(diagram="§7 #1", mode="refine")))
-        self.assertEqual(1, len(out), out)
-        self.assertIn("§7 #1", out[0])
-
-    def test_only_the_leading_lines_are_sources(self) -> None:
-        """图正文里再出现的 `%%` 是注释；围栏外的标记报一处。"""
-        inside = f"## 五\n\n```mermaid\ngraph TD\nA-->B\n%% 图源 {json.dumps(self.mark(diagram='§9 #1'), ensure_ascii=False)}\n```\n"
-        self.assertEqual([], self.problems(inside))
-        stray = f"## 五\n\n%% 图源 {json.dumps(self.mark(), ensure_ascii=False)}\n"
-        out = self.problems(stray)
-        self.assertEqual(1, len(out), out)
-        self.assertIn("围栏外", out[0])
-
-    def test_a_blueprint_source_is_resolved_by_the_native_reference(self) -> None:
-        """蓝图来源经原生 resolver 核：引用的版本与内容对不上就报，不猜图号。"""
-        stale = {"artifact": "component-blueprint@1", "component_id": "x", "blueprint_id": "bp-none", "revision": 1,
-                 "source_fingerprint": "sha256:0", "artifact_sha256": "sha256:0", "target": {"kind": "blueprint", "id": "bp-none"}}
-        out = self.problems(self.fence("flowchart TD\n  n1[\"A\"]\n", {"kind": "blueprint", "blueprint_ref": stale,
-                                                                        "graph_id": "graph:runtime", "mode": "reuse"}))
-        self.assertEqual(1, len(out), out)
-        self.assertIn("核不过", out[0])
-
-
-class BlueprintGraphsAreAdoptedByReference(StoryBuildCase):
-    """蓝图生成图的来源：同一版蓝图里存在的 graph_id 通过，reuse 比的是生成图的内容。"""
-
-    def test_an_existing_graph_passes_and_a_missing_one_is_named(self) -> None:
-        script = (
-            "import * as fs from 'node:fs';"
-            "const [, root, access, images] = process.argv;"
-            "const fa = await import(access); const im = await import(images);"
-            "const native = fa.loadNative(root);"
-            "const YAML = native.require('yaml');"
-            "const file = root + '/doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml';"
-            "const text = fs.readFileSync(file, 'utf8');"
-            "const bp = YAML.parse(text);"
-            "const view = bp.design_views[0].view_id;"
-            "const g = native.module('scripts/utils/blueprint-graph-generator.ts').generateMermaidViewGraph(bp, view);"
-            "fs.writeFileSync(file, text.replace(/\\s*$/, '\\n') + YAML.stringify({ generated_graphs: [g] }));"
-            "const read = fa.readBlueprint(root, 'bp-REQ-DEMO', 'draft');"
-            "const ctx = { projectRoot: root, flowPath: root + '/doc/features/REQ-DEMO/AR/story-src/story-flow.json' };"
-            "const mark = id => '%% 图源 ' + JSON.stringify({ kind: 'blueprint', blueprint_ref: read.blueprint_ref, graph_id: id, mode: 'reuse' });"
-            "const story = id => '## 五\\n\\n```mermaid\\n' + mark(id) + '\\n' + g.content + '```\\n';"
-            "process.stdout.write(JSON.stringify([read.status, im.storyDiagramSourceProblems(ctx, story(g.graph_id), n => n),"
-            " im.storyDiagramSourceProblems(ctx, story('graph:none'), n => n)]));")
-        proc = subprocess.run(["node", "--input-type=module", "-e", script, str(self.root),
-                               ACCESS.resolve().as_uri(), IMAGES.resolve().as_uri()],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
-        status, good, missing = json.loads(proc.stdout)
-        self.assertEqual("ok", status)
-        self.assertEqual([], good)
-        self.assertEqual(1, len(missing), missing)
-        self.assertIn("没有生成图 graph:none", missing[0])
-
-
 class DraftsFollowWhatIsAlreadyWritten(RealRunCase):
     """恢复时缺哪章补哪章，但**已落盘的章补的是现稿**，不是起点。
 
@@ -2924,8 +2647,8 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     def edit_zone(self, text: str) -> str:
-        """在改动边界那一段机器区里加一行——作者会做的事。"""
-        at = text.index("story-build:begin 改动边界")
+        """在埋点那一段机器区里加一行——作者会做的事。"""
+        at = text.index("story-build:begin 埋点")
         end = text.index("story-build:end", at)
         cut = text.rindex("\n", at, end)
         return text[:cut] + "\n| 我加的一行 | 改动 |" + text[cut:]
@@ -2935,32 +2658,32 @@ class TheProjectedBytesBelongToTheProjection(RealRunCase):
         proc = self.project()
         self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
         out = proc.stdout + proc.stderr
-        self.assertIn("改动边界", out, "没说清是哪一节")
+        self.assertIn("埋点", out, "没说清是哪一节")
         self.assertIn("不在时投影重新写出", out, "拒绝了却没给撤销的出口")
         self.assertIn("我加的一行", self.story(), "拒绝了却还是把文件改了")
 
     def test_deleting_the_zone_lets_it_be_written_again(self) -> None:
         """撤销手改的出口：连同首尾标记删掉这一节，重跑就重新写出来。"""
         text = self.edit_zone(self.land())
-        at = text.index("<!-- story-build:begin 改动边界")
+        at = text.index("<!-- story-build:begin 埋点")
         end = text.index("story-build:end -->", at) + len("story-build:end -->")
         self.story_path.write_text(text[:at] + text[end:], encoding="utf-8")
         self.assertEqual(0, self.project().returncode, "删干净了还是不让过")
         story = self.story()
-        self.assertIn("story-build:begin 改动边界", story, "投影没有重新写出来")
+        self.assertIn("story-build:begin 埋点", story, "投影没有重新写出来")
         self.assertNotIn("我加的一行", story)
 
     def test_a_source_change_reprojects_as_usual(self) -> None:
         """蓝图修订了照常重投——这条纪律拦的是手改，不是拦更新。"""
         self.land()
-        design_kit.change_blueprint(self.root, "AR90006", ACCESS, "target_state: refresh trigger", "target_state: refresh trigger and badge")
+        design_kit.change_blueprint(self.root, "AR90006", ACCESS, "统计点：签约成功时上报一次。", "统计点：签约成功时上报一次，失败不报。")
         self.assertEqual(0, self.project().returncode)
-        self.assertIn("refresh trigger and badge", self.story(), "真源改了却没重投")
+        self.assertIn("签约成功时上报一次，失败不报。", self.story(), "真源改了却没重投")
 
     def test_a_zone_without_a_digest_counts_as_edited(self) -> None:
         """标记里没有摘要：无从分辨「真源变了」与「有人改了」，按改过处理，停下问人。"""
         text = self.land()
-        at = text.index("<!-- story-build:begin 改动边界")
+        at = text.index("<!-- story-build:begin 埋点")
         end = text.index("-->", at) + 3
         marker = text[at:end]
         stripped = marker[:marker.index(" · sha256:")] + " -->"
@@ -2996,25 +2719,20 @@ class TheProjectionSpeaksTheSourceLanguage(RealRunCase):
         return story[at:story.index("<!-- story-build:end -->", at)]
 
     def test_an_author_note_after_a_zone_is_left_alone(self) -> None:
-        """H4 下机器区之后是作者说明：不参加比较，重投也不动它。"""
+        """机器区之后是作者说明：不参加比较，重投也不动它。"""
         story = self.landed_appendix()
-        end = story.index("<!-- story-build:end -->", story.index("<!-- story-build:begin 改动边界 "))
+        end = story.index("<!-- story-build:end -->", story.index("<!-- story-build:begin 埋点 "))
         cut = end + len("<!-- story-build:end -->")
         note = "\n\n错误码上游未给出，联调时补齐失败语义。"
         self.story_path.write_text(story[:cut] + note + story[cut:], encoding="utf-8")
         code, out = self.check_output()           # 别的章还没写，整篇不过；只看这一区有没有被报
-        self.assertNotIn("「附录·改动边界」的机器区", out, out)
+        self.assertNotIn("「附录·埋点」的机器区", out, out)
         self.build("project")
         self.assertIn("错误码上游未给出，联调时补齐失败语义。", self.story())
 
-    def boundary_zone(self) -> str:
-        """只取机器区——目的句在它外面，那一句归作者。"""
-        section = self.landed_appendix().split("### 改动边界", 1)[1].split("###", 1)[0]
-        return section.split("story-build:begin", 1)[1].split("story-build:end", 1)[0]
-
     def test_the_machine_zone_leaves_no_slot_for_the_author(self) -> None:
-        """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。"""
-        self.assertNotIn("{{", self.boundary_zone(), "机器区还留着作者要填的格子")
+        """机器区里的占位，作者填了会被下一次投影打回，不填就一直挂着。目的句在机器区外，归作者。"""
+        self.assertNotIn("{{", self.zone(self.landed_appendix(), "埋点"), "机器区还留着作者要填的格子")
 
     def test_every_machine_zone_passes_the_archive_redlines(self) -> None:
         """投影吐出来的每一个字都随归档走，所以它自己要过红线。
@@ -3160,9 +2878,9 @@ class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
         text = story.read_text(encoding="utf-8")
         if "SR/design.md" in text:
             return
-        at = text.index("| [甲需求 PRD]")
+        at = text.index("| 甲需求 PRD [prd.md]")
         story.write_text(
-            text[:at] + "| [系统设计](../SR/design.md) | 需求目录（系统设计） | 本单的上游系统设计 |\n" + text[at:],
+            text[:at] + "| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) | 本单的上游系统设计。 |\n" + text[at:],
             encoding="utf-8")
 
     def test_the_overwritten_ar_backup_is_not_a_required_row(self) -> None:
@@ -3443,8 +3161,6 @@ class TestRequiredStructureIsMinimalButReal(StoryBuildCase):
         self.assertEqual(0, code, f"按标题名判把业务名起的标题说成缺了：{out}")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TheTitleCarriesTheName(StoryBuildCase):
@@ -3455,38 +3171,6 @@ class TheTitleCarriesTheName(StoryBuildCase):
         first = self.story().split("\n", 1)[0]
         self.rewrite_story(first, f"# {FEATURE}")
         self.assertIn("没有需求名", self.assert_check_names("只有需求编号、没有需求名"))
-
-
-class SourceMarksPointAtAdoptedSources(StoryBuildCase):
-    """章提交与整篇检查用同一个图源检查：标记指到本次冻结来源里真有的图；写在围栏外只报一处。"""
-
-    def add_before_terms(self, block: str) -> None:
-        self.rewrite_story("本需求不涉及。\n\n## 术语", "本需求不涉及。\n\n" + block + "\n\n## 术语")
-
-    def frozen(self, name: str) -> str:
-        ref = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["input"]["snapshot_ref"]
-        return f"{ref.rsplit('/', 1)[0]}/files/{name}"
-
-    def mark(self, path: str, diagram: str = "§99 #1") -> str:
-        return "%% 图源 " + json.dumps({"kind": "document", "path": path, "diagram": diagram, "mode": "reuse"}, ensure_ascii=False)
-
-    def test_a_mark_to_a_missing_figure_is_named(self) -> None:
-        self.init_audit()
-        self.add_before_terms(f"```mermaid\n{self.mark(self.frozen('RR/prd.md'))}\ngraph TD\nA-->B\n```")
-        out = self.assert_check_names("图源标记")
-        self.assertIn("§99 #1", out)
-
-    def test_a_mark_to_the_working_copy_is_named(self) -> None:
-        self.init_audit()
-        self.add_before_terms(f"```mermaid\n{self.mark('doc/features/REQ-DEMO/RR/prd.md')}\ngraph TD\nA-->B\n```")
-        self.assertIn("不是本次有效采用的来源", self.assert_check_names("图源标记"))
-
-    def test_a_mark_outside_the_fence_is_one_report(self) -> None:
-        self.init_audit()
-        self.add_before_terms(self.mark(self.frozen("RR/prd.md")))
-        out = self.assert_check_names("写在了围栏外")
-        self.assertNotIn("文档坐标", out, "同一行又按文档坐标报了一遍")
-        self.assertNotIn("含仓内路径", out, "标记里的来源路径被当成正文里的仓内路径")
 
 
 class TheProjectionRefreshesAfterRegistration(Step8Case):
@@ -3501,3 +3185,501 @@ class TheProjectionRefreshesAfterRegistration(Step8Case):
         proc = self.run_build("project")
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("重投", proc.stdout)
+class TestMaterialListMatchesTheManifest(Step8Case):
+    """材料表的来源与 `materials.json` 的 `origins` 对得上：漏行、重复原件、集合外的东西各被点名。
+
+    集合由清单派生，不由作者表定义——漏写一行不能让那份原件从核对里消失。
+    采用的版本对不对、贡献真不真，归独立审查，这里不判。
+    """
+
+    LISTED = "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 提交回执的业务诉求与状态取值。 |"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.round_now()
+        self.init_audit()
+
+    def set_origins(self, origins: list[dict], sources: list[dict] | None = None) -> None:
+        manifest = self.src / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["origins"] = origins
+        if sources is not None:
+            data["sources"] = sources
+        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    def put_inbox(self, *names: str) -> None:
+        for name in names:
+            path = self.feature_root() / "inbox" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("# 原件\n", encoding="utf-8")
+
+    def merged_into_prd(self, *names: str) -> None:
+        """几份收件箱原件合成了 RR/prd.md：它不再是第二份原件。"""
+        self.put_inbox(*names)
+        keep = [o for o in json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"]
+                if o["path"] != "RR/prd.md"]
+        self.set_origins(keep + [{"path": f"inbox/{n}", "sha256": "sha256:0", "kind": "converted-source",
+                                  "readable_paths": ["RR/prd.md"]} for n in names])
+
+    def test_the_listed_material_passes(self) -> None:
+        _, out = self.check_output()
+        self.assertNotIn("少了来源", out)
+        self.assertNotIn("不在本轮来源集合里", out)
+
+    def test_a_missing_material_is_named(self) -> None:
+        """漏一份等于那份材料没人知道——读者据这一节把材料找出来。"""
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) "
+                                        "| [别的](story-src/decisions.json) | 状态取值 |")
+        out = self.assert_check_names("少了来源 RR/prd.md")
+        self.assertIn("是本轮生成件", out)
+
+    def test_an_intermediate_product_is_named(self) -> None:
+        """本轮自己生成的记录不是来源，进了清单就把它变成倾倒区。"""
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n| 落点账 [写作设计](story-src/story-template.md) | [写作设计](story-src/story-template.md) | 本轮记录 |")
+        out = self.assert_check_names("是本轮生成件")
+        self.assertIn("story-src/story-template.md", out)
+
+    def test_without_a_manifest_the_check_says_it_did_not_run(self) -> None:
+        (self.src / "materials.json").unlink()
+        _, out = self.check_output()
+        self.assertIn("来源覆盖未核", out)
+
+    def test_one_wrong_row_is_reported_once(self) -> None:
+        """同一行只报一次——同一件事报两遍，读的人以为是两个问题。"""
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n| 本轮的判断 [decisions](story-src/decisions.json) "
+                           "| [decisions](story-src/decisions.json) | 判断 |")
+        _, out = self.check_output()
+        hits = [line for line in out.splitlines() if "story-src/decisions.json" in line]
+        self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
+        self.assertIn("是本轮生成件", hits[0])
+
+    def register_an_image(self) -> str:
+        """盘上放一张图并重算清单，返回它相对需求目录的路径。"""
+        rel = "assets/入口原型说明/image1.png"
+        image = self.feature_root() / rel
+        image.parent.mkdir(parents=True, exist_ok=True)
+        image.write_bytes(b"PNGDATA1")
+        self.round_now()
+        return rel
+
+    def test_an_image_does_not_belong_in_this_section(self) -> None:
+        """图不进材料表：图的去向（引了没有、不引为什么）跟着图的内容走，登记在图片说明里。"""
+        rel = self.register_an_image()
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n| 界面图 [prd.md](../RR/prd.md) | ![image1](../" + rel + ") | 参考 |")
+        out = self.assert_check_names("图不进这张表")
+        self.assertIn(rel, out)
+
+    def test_an_image_on_disk_does_not_make_this_section_incomplete(self) -> None:
+        """盘上有图不等于这一节少了一份材料——图压根不在这个集合里。"""
+        self.register_an_image()
+        _, out = self.check_output()
+        self.assertNotIn("少了来源", out, out[:500])
+
+    def test_an_image_only_original_is_required_and_lists_itself(self) -> None:
+        """只抽图的原件是来源（R03）：漏写报漏源；材料列与来源列都链原件自己是正例，图不逐张成行。"""
+        self.put_inbox("产品原稿.docx")
+        keep = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"]
+        self.set_origins(keep + [{"path": "inbox/产品原稿.docx", "sha256": "sha256:0123456789abcdef",
+                                  "kind": "converted-source", "readable_paths": ["inbox/产品原稿.docx"],
+                                  "image_paths": ["assets/产品原稿/image1.png"]}])
+        self.assert_check_names("少了来源 inbox/产品原稿.docx")
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + "\n| 产品原稿 [产品原稿.docx](../inbox/产品原稿.docx) | [产品原稿.docx](../inbox/产品原稿.docx)（摘要 01234567）"
+                           " | 只采用设置页的界面图；正文以产品需求单为准，不采用 |")
+        _, out = self.check_output()
+        self.assertNotIn("少了来源", out, out[:500])
+        self.assertNotIn("不是来源列那几份原件的阅读稿", out, out[:500])
+
+    def test_the_inbox_original_is_required(self) -> None:
+        """并入正文的收件箱原件是来源：表里漏了它要点名，正文自己不再顶替它。"""
+        self.merged_into_prd("补充说明.docx")
+        out = self.assert_check_names("少了来源 inbox/补充说明.docx")
+        self.assertIn("RR/prd.md", out)
+
+    def test_two_originals_merged_into_one_document_is_one_row(self) -> None:
+        """两份原件合成一稿：写在同一行是正例，带空格的路径用尖括号写。"""
+        self.merged_into_prd("1-总体.md", "2-补充 说明.md")
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) "
+                                        "| [1-总体.md](../inbox/1-总体.md)、[2-补充 说明.md](<../inbox/2-补充 说明.md>) "
+                                        "| 状态取值 |")
+        _, out = self.check_output()
+        for word in ("少了来源", "材料清单」第", "解析不了", "点不开"):
+            self.assertNotIn(word, out, out[:800])
+
+    def test_an_original_written_in_two_rows_is_named(self) -> None:
+        self.merged_into_prd("1-总体.md")
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) | [1-总体.md](../inbox/1-总体.md) | 一 |\n"
+                                        "| 总体 [prd.md](../RR/prd.md) | [1-总体.md](../inbox/1-总体.md) | 二 |")
+        self.assert_check_names("写在了 2 行")
+
+    def test_a_pending_original_cannot_be_listed_instead_of_imported(self) -> None:
+        self.put_inbox("新料.md")
+        self.set_origins(json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"],
+                         [{"file": "新料.md", "sha256": "sha256:1", "class": "RR", "ingested": False}])
+        self.rewrite_story(self.LISTED, self.LISTED + "\n| 新料 [prd.md](../RR/prd.md) | [新料.md](../inbox/新料.md) | 补充 |")
+        self.assert_check_names("还没并入正文")
+
+    def test_a_link_with_a_bare_space_is_reported_with_its_position(self) -> None:
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd](../RR/p rd.md) | 状态取值 |")
+        out = self.assert_check_names("链接写法解析不了")
+        self.assertIn("行", out)
+
+    def test_the_material_column_points_at_the_readable_copy(self) -> None:
+        self.rewrite_story(self.LISTED, "| 甲需求 PRD [design.md](design.md) | [prd.md](../RR/prd.md) | 状态取值 |")
+        self.assert_check_names("不是来源列那几份原件的阅读稿")
+
+
+class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
+    """帮助与参数错误在任何动作之前处理：帮助退出 0，错误退出 1，两者都不写盘、不跑命令。"""
+
+    SECRET = "tok-should-not-print"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink(missing_ok=True)
+
+    def run_build(self, *args: str) -> tuple[int, str]:
+        proc = subprocess.run(["node", str(BUILD), *args], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60, cwd=str(self.root))
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+    def common(self) -> list[str]:
+        return ["--feature", FEATURE, "--project-root", str(self.root)]
+
+    def test_help_answers_without_acting(self) -> None:
+        before = self.files_now()
+        for argv in (["--help"], ["skeleton", "--help"], ["chapter", *self.common(), "-h"]):
+            with self.subTest(argv=argv[:2]):
+                code, out = self.run_build(*argv)
+                self.assertEqual(0, code, out)
+                self.assertIn("用法", out)
+        code, out = self.run_build("chapter", "--help")
+        self.assertIn("--chapter <章名>  必需", out)
+        self.assertIn("--from <文件>  必需", out)
+        self.assert_wrote_nothing(before)
+
+    def test_bad_usage_stops_before_anything_runs(self) -> None:
+        before = self.files_now()
+        cases = {
+            "不认识的选项 --form": ["skeleton", *self.common(), "--form", "x.md"],
+            "不认识的选项 --delvier": ["check", *self.common(), "--delvier"],
+            "--from 后面缺值": ["chapter", *self.common(), "--chapter", "背景", "--from"],
+            "--from 后面缺值（": ["chapter", *self.common(), "--from", "--chapter", "背景"],
+            "--feature 给了两次": ["check", *self.common(), "--feature", FEATURE],
+            "--deliver 不用于 build": ["build", *self.common(), "--deliver"],
+            "缺 --from": ["chapter", *self.common(), "--chapter", "背景"],
+            "不认识的命令": ["chek", *self.common()],
+        }
+        for expected, argv in cases.items():
+            with self.subTest(expected=expected):
+                code, out = self.run_build(*argv)
+                self.assertEqual(1, code, out)
+                self.assertIn(expected, out)
+                self.assertIn("--help", out, "没给用法入口")
+                self.assertNotIn("[story-build check]", out, "拼错了参数却照样跑了检查")
+        self.assert_wrote_nothing(before)
+
+    def test_a_bare_title_is_flagged_where_it_starts(self) -> None:
+        """本地单的大标题只有编号：起手当场说补哪里，check 的报错也说同一处，不必登记撞一次才知道。"""
+        code, out = self.run_build("skeleton", *self.common())
+        self.assertEqual(0, code, out)
+        self.assertEqual(f"# {FEATURE}", self.story_path.read_text(encoding="utf-8").split("\n", 1)[0])
+        self.assertIn("大标题只有需求编号", out)
+        self.assertIn("AR/story.md 第 1 行", out)
+        code, out = self.run_build("check", *self.common())
+        self.assertIn("只有需求编号、没有需求名", out)
+        self.assertIn("第 1 行", out)
+        text = self.story_path.read_text(encoding="utf-8")
+        self.story_path.write_text(text.replace(f"# {FEATURE}\n", f"# {FEATURE} 甲需求\n", 1), encoding="utf-8")
+        _, out = self.run_build("skeleton", *self.common())
+        self.assertNotIn("大标题只有需求编号", out, "补上名称之后还在提示")
+
+    def test_inherited_names_are_not_commands(self) -> None:
+        """表是无原型字典：`constructor` 一类名字不是命令，不会落进任何命令分支。"""
+        review = self.feature_root() / "AR" / "review.md"
+        review_before = review.read_bytes() if review.exists() else None
+        before = self.files_now()
+        for name in ("constructor", "toString", "__proto__", "hasOwnProperty"):
+            with self.subTest(name=name):
+                code, out = self.run_build(name, *self.common())
+                self.assertEqual(1, code, out)
+                self.assertIn("不认识的命令", out)
+                self.assertNotIn("[story-build build]", out, "落进了渲染")
+                self.assertNotIn("本地阅读", out, "动作开始了：视图被切换过")
+                code, out = self.run_build(name, "--help")
+                self.assertEqual(0, code, out)
+                self.assertIn("命令:", out, "帮助应回到顶层命令清单")
+        code, out = self.run_build("check", *self.common(), "--constructor")
+        self.assertIn("不认识的选项 --constructor", out)
+        self.assert_wrote_nothing(before)
+        self.assertEqual(review_before, review.read_bytes() if review.exists() else None)
+
+    def test_values_are_not_echoed(self) -> None:
+        for argv in (["archive", *self.common(), "--mcp-token", self.SECRET, "--bogus"],
+                     ["archive", *self.common(), self.SECRET]):
+            with self.subTest(argv=argv[-1]):
+                code, out = self.run_build(*argv)
+                self.assertEqual(1, code, out)
+                self.assertNotIn(self.SECRET, out)
+
+    def test_a_value_that_starts_with_dashes_uses_the_explicit_form(self) -> None:
+        code, out = self.run_build("chapter", *self.common(), "--chapter", "背景", "--from=--背景.md")
+        self.assertNotIn("后面缺值", out)
+        self.assertNotIn("不认识的选项", out)
+        self.assertIn("--背景.md", out, "显式写法的值没有原样交给命令")
+
+
+class TheIssueMarkStandsApart(Step8Case):
+    """评审议题的标记与 `####` 标题之间隔一个空行；紧贴的旧形态照样认作原样，人写的字一个字节都不动。"""
+
+    MARK = "<!-- story-build:begin 议题 submit-boundary "
+    ANCHOR = "<!-- decision: submit-boundary -->"
+
+    def build_ok(self) -> str:
+        proc = self.run_build("build")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return self.review_path.read_text(encoding="utf-8")
+
+    def test_the_mark_and_the_heading_are_apart_and_rebuilds_are_stable(self) -> None:
+        self.write_decision()
+        text = self.build_ok()
+        line = text[text.index(self.MARK):]
+        self.assertRegex(line, r"^[^\n]*-->\n\n#### ", "议题标记紧贴标题")
+        self.assertNotIn("\n\n\n", text)
+        first = self.review_path.read_bytes()
+        for _ in range(2):
+            self.build_ok()
+            self.assertEqual(first, self.review_path.read_bytes())
+
+    def test_an_old_tight_mark_with_human_words_rebuilds_without_a_conflict(self) -> None:
+        self.write_decision()
+        canon = self.build_ok()
+        opinion = "修改意见：范围要含补卡入口。\n这一行也是人写的。  "
+        filled = canon.replace("修改意见：\n\n" + self.ANCHOR, opinion + "\n\n" + self.ANCHOR)
+        at = filled.index(self.MARK)
+        head_end = filled.index("\n", at)
+        tight = filled[:head_end + 1] + filled[head_end + 2:]
+        self.assertIn("-->\n#### ", tight, "没造出紧贴的旧形态")
+        self.review_path.write_text(tight, encoding="utf-8")
+        again = self.build_ok()
+        self.assertIn(opinion + "\n\n" + self.ANCHOR, again, "人写的字被改了")
+        self.assertEqual(filled, again, "旧形态重建后不是分隔形态，或动了别处")
+
+    def test_a_hand_edit_after_the_blank_line_is_still_caught(self) -> None:
+        self.write_decision()
+        text = self.build_ok()
+        self.review_path.write_text(text.replace("提交入口与补卡由两张开发单分别承接", "手改过的标题"),
+                                    encoding="utf-8")
+        before = self.review_path.read_bytes()
+        proc = self.run_build("build")
+        self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
+        self.assertEqual(before, self.review_path.read_bytes())
+
+
+class TheMachineZoneStandsApart(StoryBuildCase):
+    """附录机器区的首尾标记与正文、与两侧作者文字各隔一个空行（B4）。
+
+    空行是生成器铺的格式，不是内容：盘上是紧贴的旧形态照样认作没人改过，重投后换成分隔形态、
+    再投多少次字节都不变；区里真正的内容（行、内部空行）改了照旧报出来。
+    """
+
+    DESIGN = ZONE_DESIGN
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.init_audit()
+        code, out = self.check_output()
+        self.assertEqual(0, code, "夹具起点本该是干净的：" + out)
+
+    def project(self) -> None:
+        proc = self.run_build("project")
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def put(self, lines: list[str]) -> None:
+        self.story_path.write_bytes("\n".join(lines).encode("utf-8"))
+
+    def test_an_old_tight_zone_is_not_an_edit_and_reprojects_apart_then_stays(self) -> None:
+        apart = self.story().split("\n")
+        # 旧形态：标记内侧不留空行
+        tight = list(apart)
+        for a, b in reversed(zone_bounds(apart)):
+            if not tight[b - 1].strip():
+                del tight[b - 1]
+            if not tight[a + 1].strip():
+                del tight[a + 1]
+        self.put(tight)
+        before = self.story()
+        old = before.split("\n")
+        bounds = zone_bounds(old)
+        self.assertTrue(bounds)
+        self.assertTrue(all(old[a + 1].strip() for a, _ in bounds), "旧形态没造出来")
+        code, out = self.check_output()
+        self.assertEqual(0, code, "紧贴的旧形态被当成了改动：" + out)
+        bodies = [[l for l in old[a + 1:b] if l.strip()] for a, b in bounds]
+        self.project()
+        first = self.story_path.read_bytes()
+        lines = self.story().split("\n")
+        for (a, b), body in zip(zone_bounds(lines), bodies):
+            with self.subTest(zone=lines[a][:40]):
+                self.assertEqual(("", ""), (lines[a + 1], lines[b - 1]), "标记内侧没有分隔空行")
+                self.assertFalse(lines[a - 1].strip(), "开始标记紧贴上面的内容")
+                self.assertTrue(b + 1 == len(lines) or not lines[b + 1].strip(), "结束标记紧贴下面的内容")
+                self.assertEqual(body, [l for l in lines[a + 1:b] if l.strip()], "重投改了区里的内容")
+        # 作者区原有的空行不动；生成器只在缺空行处补一行，不叠出新的连续空行
+        self.assertLessEqual(self.story().count("\n\n\n"), before.count("\n\n\n"), "分隔空行叠成了两行")
+        for _ in range(2):
+            self.project()
+            self.assertEqual(first, self.story_path.read_bytes(), "重投又改了 story")
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_boundary_blank_lines_are_format_but_a_line_is_content(self) -> None:
+        self.project()
+        canon = self.story_path.read_bytes()
+        lines = self.story().split("\n")
+        a, b = zone_bounds(lines, ZONE_BEGIN + CONFIG_ZONE + " ")[0]
+        tight = lines[:a + 1] + lines[a + 2:b - 1] + ["", "  ", ""] + lines[b:]
+        self.put(tight)
+        code, out = self.check_output()
+        self.assertEqual(0, code, "首尾空行的多少被当成了改动：" + out)
+        self.project()
+        self.assertEqual(canon, self.story_path.read_bytes(), "首尾空行没回到分隔形态")
+        target = next(i for i in range(a + 1, b) if "默认关闭" in lines[i])
+        lines[target] = "默认打开，改成了别的说法。"
+        self.put(lines)
+        before = self.story_path.read_bytes()
+        proc = self.run_build("project")
+        self.assertEqual(1, proc.returncode, "区里的一行被改了却没报")
+        self.assertIn("手改过", proc.stdout + proc.stderr)
+        self.assertEqual(before, self.story_path.read_bytes(), "发现手改还是写了盘")
+
+    def test_the_authors_words_touching_a_zone_get_one_blank_line(self) -> None:
+        lines = self.story().split("\n")
+        a, b = zone_bounds(lines)[-1]
+        above, below = "这一节的取舍见业务方案章。", "上面这张表只列本单新增。"
+        while not lines[a - 1].strip():
+            del lines[a - 1]
+            a, b = a - 1, b - 1
+        self.put(lines[:a] + [above] + lines[a:b + 1] + [below] + lines[b + 1:])
+        self.project()
+        text = self.story()
+        self.assertIn(above + "\n\n" + ZONE_BEGIN, text, "作者文字与开始标记之间没有空行")
+        self.assertIn(ZONE_END + "\n\n" + below, text, "结束标记与作者文字之间没有空行")
+        first = self.story_path.read_bytes()
+        self.project()
+        self.assertEqual(first, self.story_path.read_bytes())
+
+
+class TheSkeletonListsEveryIndependentGap(SkeletonPreflightCase):
+    """互不依赖的缺口一次报全；依赖缺口的判据不跑、明说没判；补齐后照常起手。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.story_path.unlink(missing_ok=True)
+
+    def test_two_independent_gaps_come_in_one_run(self) -> None:
+        design = self.feature_root() / "AR" / "design.md"
+        good_design = design.read_bytes()
+        decisions = self.src / "decisions.json"
+        good_decisions = decisions.read_text(encoding="utf-8")
+        design.unlink()
+        decisions.write_text("{ 坏了", encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("必备来源缺失", out)
+        self.assertIn("AR/design.md", out)
+        self.assertIn("decisions.json", out, "第二个独立缺口要等补完第一个才报")
+        self.assertIn("人把文档放进 inbox 导入", out, "必备来源缺失没给恢复入口")
+        self.assertNotIn("本地阅读图没有恢复", out, "还没有 story 却报阅读图恢复失败")
+        self.assert_wrote_nothing(before)
+        design.write_bytes(good_design)
+        decisions.write_text(good_decisions, encoding="utf-8")
+        code, out = self.skeleton()
+        self.assertEqual(0, code, out)
+        self.assertTrue(self.story_path.is_file(), out)
+
+    def test_without_a_flow_contract_the_material_baseline_is_not_judged(self) -> None:
+        (self.src / "story-flow.json").unlink()
+        (self.src / "decisions.json").write_text("{ 坏了", encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, out)
+        self.assertIn("story-flow.json：不存在", out)
+        self.assertIn("decisions.json", out)
+        self.assertIn("材料清单与本轮基准是否一致", out)
+        self.assertNotIn("digest 与 story-flow.json", out, "没有流程契约却拿基准比了清单")
+        self.assert_wrote_nothing(before)
+
+
+class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
+    """上游图讲的关系由写作设计登记的小节承接：正文、表、图都可以；登记全、位置定得到、有正文才过。"""
+
+    UPSTREAM_FIGURES = ("\n\n## 9. 补充流程\n\n### 9.1 提交\n\n```mermaid\ngraph TD\nA[提交] --> B[受理]\n```\n\n"
+                        "### 9.2 回执\n\n```mermaid\ngraph TD\nC[回执] --> D[展示]\n```\n")
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        fixture = Path(self._tmp.name) / "fixture"
+        shutil.copytree(FIXTURE, fixture)
+        sr = fixture / "doc" / "features" / FEATURE / "SR" / "design.md"
+        sr.parent.mkdir(parents=True)
+        sr.write_text("# 甲需求 系统设计" + self.UPSTREAM_FIGURES, encoding="utf-8")
+        self.root = Path(self._tmp.name) / "work"
+        designed_copy(fixture, FEATURE, self.DRAFT, self.root)
+        self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
+        self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
+        self.init_audit()
+        row = "| 开发需求 [design.md](design.md) |"
+        self.rewrite_story(row, "| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) | 补充流程的提交与回执两张图。 |\n" + row)
+        self.plan = self.src / "story-template.md"
+
+    def design(self, text: str) -> None:
+        self.plan.write_text(text, encoding="utf-8")
+
+    def test_an_unregistered_diagram_is_named_with_its_topic(self) -> None:
+        out = self.assert_check_names("没有登记 SR §9.1 #1（")
+        self.assertIn("提交 → 受理", out, "缺口要说出那张图讲的事")
+        self.assertIn("没有登记 SR §9.2 #1（", out)
+
+    def test_prose_and_tables_can_carry_the_relation(self) -> None:
+        """业务流程章只有正文、没有下游 Mermaid：登记在这一章即合法。"""
+        self.design(with_carry(self.plan.read_text(encoding="utf-8"), ["SR §9.1 #1", "SR §9.2 #1"]))
+        code, out = self.check_output()
+        self.assertEqual(0, code, out)
+
+    def test_a_place_that_is_not_in_the_story_is_named(self) -> None:
+        plan = self.plan.read_text(encoding="utf-8").replace("### 05-flow\n", "### 05-flow\n#### 回执展示\n- 答：回执到了用户看到什么\n", 1)
+        self.design(with_carry(plan, ["SR §9.1 #1", "SR §9.2 #1"], section="回执展示"))
+        out = self.assert_check_names("由「业务流程 > 回执展示」承接")
+        self.assertIn("找不到「回执展示」", out)
+
+    def test_same_named_sections_are_not_guessed(self) -> None:
+        plan = self.plan.read_text(encoding="utf-8").replace("### 05-flow\n", "### 05-flow\n#### 甲\n- 答：x\n", 1)
+        self.design(with_carry(plan, ["SR §9.1 #1", "SR §9.2 #1"], section="甲"))
+        self.rewrite_story("## 功能说明", "### 甲\n\n第一处。\n\n### 甲\n\n第二处。\n\n## 功能说明")
+        self.assertIn("「甲」有 2 处同名", self.assert_check_names("承接"))
+
+    def test_the_chapter_input_carries_the_original_diagram(self) -> None:
+        """写到承接它的那一章时，NEXT 下面给出原图全文、原件位置与要落的小节；同一张只给一次。"""
+        plan = with_carry(self.plan.read_text(encoding="utf-8"), ["SR §9.1 #1", "SR §9.2 #1"])
+        last = "- 承接上游图：SR §9.2 #1\n"
+        self.design(plan.replace(last, last + "#### 甲\n- 答：x\n- 承接上游图：SR §9.1 #1\n", 1))
+        mark = json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))["pending_mark"]
+        text = self.story()
+        head, rest = text.split("## 业务流程\n", 1)
+        body, tail = rest.split("\n## ", 1)
+        self.story_path.write_text(f"{head}## 业务流程\n\n<!-- {mark}：业务流程 -->\n\n## {tail}", encoding="utf-8")
+        out = self.run_build("skeleton").stdout
+        self.assertIn("NEXT: 写「业务流程」", out)
+        self.assertIn("本章登记承接的上游图", out)
+        self.assertIn("A[提交] --> B[受理]", out)
+        self.assertEqual(1, out.count("- SR §9.1 #1（"), "同一张图给了两遍")
+
+
+if __name__ == "__main__":
+    unittest.main()

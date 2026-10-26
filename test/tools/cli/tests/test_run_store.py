@@ -76,6 +76,17 @@ def test_atomic_json_cleans_temp_after_exhausted_retries(workspace_tmp, monkeypa
     assert list(workspace_tmp.glob("run.json.*.tmp")) == []
 
 
+def test_the_projection_flag_is_stored_and_old_records_read_as_unknown(workspace_tmp):
+    store = run_store.RunStore(workspace_tmp, "run-1")
+    store.create(CliRunRequest(cli="fake", model="fake", prompt="test", cwd=workspace_tmp))
+    store.append_event("tool", tool_call_id="c1", tool_status="completed", tool_output="x", source_truncated=True)
+    store.append_event("text", content="ok")
+    store.events_path.open("a", encoding="utf-8").write(
+        '{"seq":3,"timestamp":"now","run_id":"run-1","type":"text","content":"old"}\n')
+    events = store.page(cursor=0, max_events=10, max_chars=10000).events
+    assert [e.source_truncated for e in events] == [True, None, None]
+
+
 def test_terminal_page_reports_unread_event_from_newer_state_snapshot(workspace_tmp):
     store = run_store.RunStore(workspace_tmp, "run-1")
     store.create(

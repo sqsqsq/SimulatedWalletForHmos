@@ -45,6 +45,8 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
         assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
+    # 流程按原生身份找需求目录：先接被测 Framework
+    design_kit.ensure_framework(root)
     if (src / "story-flow.json").is_file():
         # 已交给设计的工程：起手前 init 照常为没拉到的上游补占位件，round 把它登记进本轮
         flow("init")
@@ -54,7 +56,7 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
 
 
 
-#: 夹具激活的两条规约在蓝图里的判断：成文按已准入蓝图写，附录·规约由它投影
+#: 夹具激活的两条规约在蓝图里的判断：成文按当前蓝图写，附录·规约按它写
 FIXTURE_DECISIONS = [
     design_kit.knowledge_decision("knowledge-smp-01", "SMP-01", "applied", "本需求新增提交入口",
                                   requirement="受理单编号在入口生成"),

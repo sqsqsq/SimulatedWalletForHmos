@@ -37,6 +37,7 @@ TEST_ROOT = HERE.parent
 REPO_ROOT = TEST_ROOT.parent
 #: 维护仓里的完整消费工程：Case 工作区从它复制，源码回灌回到它
 DEMO_ROOT = REPO_ROOT / "demo"
+CENTRAL_CLI_REGISTRY = REPO_ROOT / "tools" / "cli" / "config" / "clis.json"
 #: 开发源：装配时装进隔离 template（含未提交的修改与新文件）
 DEV_SOURCE = REPO_ROOT / "extensions"
 CASES_ROOT = TEST_ROOT / "cases"
@@ -58,7 +59,8 @@ _configure_console()
 sys.path.insert(0, str(HERE))
 import publish_to_demo  # noqa: E402
 import run_layout  # noqa: E402
-from cli_config_group import load_cli_group  # noqa: E402
+from cli_config_group import (  # noqa: E402
+    CLI_REGISTRY_ENV, DSH_VERIFIER_OVERLAY, load_cli_group, registry_snapshot)
 from phase_state import ALL_PHASES, derive_phase_state, phase_rank  # noqa: E402
 import end_target  # noqa: E402
 
@@ -259,6 +261,37 @@ FRAMEWORK_UNDER_TEST = TEST_ROOT / "config" / "framework-under-test.json"
 FRAMEWORK_RUNTIME_KEEP = ("harness/node_modules/", "harness/package-lock.json", "harness/reports/", "harness/state/")
 
 
+def tree_identity(root: Path) -> dict[str, Any]:
+    """一棵 Extension 树的身份：按正式安装的源枚举规则逐文件取 sha256，再合成一个摘要。读不到的如实记。"""
+    try:
+        files = {rel: hashlib.sha256((root / rel).read_bytes()).hexdigest()
+                 for rel in publish_to_demo.enumerate_source(root)}
+    except Exception as exc:  # noqa: BLE001
+        return {"readable": False, "reason": str(exc)}
+    digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest()
+    return {"readable": True, "digest": digest, "files": files}
+
+
+def identity_drift(before: dict[str, Any] | None, after: dict[str, Any]) -> dict[str, Any]:
+    """两次身份的差：改了、多了、少了哪几份（带前后摘要）。基线缺失或读不出标「无法核实」，不当干净。"""
+    if not before or not before.get("readable") or not after.get("readable"):
+        return {"verified": False, "reason": (before or {}).get("reason") or after.get("reason") or "没有起跑基线"}
+    old, new = before["files"], after["files"]
+    changed = [{"path": k, "before": old[k][:12], "after": new[k][:12]} for k in sorted(old) if k in new and old[k] != new[k]]
+    return {"verified": True, "clean": before["digest"] == after["digest"], "changed": changed,
+            "added": sorted(set(new) - set(old)), "removed": sorted(set(old) - set(new))}
+
+
+def framework_identity(root: Path) -> dict[str, Any]:
+    """接入的 Framework 发布身份：取发布件清单本身，读不到如实记。"""
+    manifest = read_json(root / "framework" / "RELEASE-MANIFEST.json", None)
+    if not isinstance(manifest, dict):
+        return {"readable": False}
+    return {"readable": True, **{k: manifest.get(k) for k in ("version", "source_commit", "build_id") if k in manifest}}
+
+
+
+
 def _git_out(*args: str, cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "core.quotepath=off", *args], cwd=str(cwd),
                           capture_output=True, env=env)
@@ -440,6 +473,9 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
             + [f"{rel}/**" for rel in WORKSPACE_EXCLUDED_DIRS]
             + ["other Case inputs", "historical suite data"]),
         "installed": installed,
+        # 被测对象的身份：开发源、装进 template 的、发布的 Framework；结束时与它比较
+        "identity": {"dev_source": tree_identity(DEV_SOURCE), "template_extension": tree_identity(template / "doc" / "extensions"),
+                     "framework": framework_identity(template)},
         "case_seeded": {},
         "created_at": now(),
     })
@@ -470,10 +506,14 @@ def requirement_system_path(workspace_root: Path, case_id: str) -> Path:
     目录名 = suite 名 + workspace_root 全路径短摘要：同一 suite 的 seed 与 env
     两处推导一致，不同 workspace_root（含单测夹具）互不碰撞。
     """
+    return requirement_system_root(workspace_root) / case_id
+
+
+def requirement_system_root(workspace_root: Path) -> Path:
+    """一个 suite（同一 workspace_root）的全部需求系统快照所在的那一层。"""
     root = Path(workspace_root).resolve()
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:8]
-    return (Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING
-            / f"{root.name}-{digest}" / case_id)
+    return Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING / f"{root.name}-{digest}"
 
 
 def seed_requirement_system(case_id: str, workspace_root: Path) -> list[dict[str, Any]]:
@@ -525,15 +565,22 @@ def _case_seed_manifest(case_id: str, feature: str) -> list[dict[str, Any]]:
     return seeded
 
 
-def _verify_workspace_boundary(workspace: Path, feature: str) -> dict[str, Any]:
+def _verify_workspace_boundary(workspace: Path, feature: str, *, own_git: bool = False) -> dict[str, Any]:
+    """`own_git`：Case 根下由 `ensure_case_git` 建的那个 `.git` 目录是唯一例外，内部不扫；
+    其它位置的 `.git`、根下的 `.git` 文件或链接（指向别处的仓）照拒。模板与刚复制的 Case 不带例外。"""
     violations: list[str] = []
     symlinks: list[str] = []
+    own = workspace / ".git"
+    if own_git and (own.is_symlink() or own.is_junction() or not own.is_dir()):
+        violations.append(".git")
     for path in workspace.rglob("*"):
+        if own_git and path.is_relative_to(own):
+            continue
         relative = path.relative_to(workspace).as_posix()
         if path.is_symlink():
             symlinks.append(relative)
             continue
-        if path.is_dir() and path.name.casefold() in WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES:
+        if path.name.casefold() in WORKSPACE_FORBIDDEN_RUNTIME_DIR_NAMES:
             violations.append(relative)
         if path.is_dir() and path.parent == workspace and path.name.casefold() in MAINTENANCE_TOP_LEVEL:
             violations.append(relative)
@@ -607,7 +654,124 @@ def create_case_workspace(suite: dict[str, Any], case: dict[str, Any]) -> Path:
     baseline = snapshot_workspace_sources(workspace)
     case["workspace_baseline"] = str(case_root / "workspace-baseline.json")
     write_json(Path(case["workspace_baseline"]), baseline)
+    # 这个 Case 起跑时的机制身份：结束时核被测模型有没有改过它
+    write_json(case_root / "mechanism-baseline.json", tree_identity(workspace / "doc" / "extensions"))
     return workspace
+
+
+def seed_agent_adapter(suite: dict[str, Any], case: dict[str, Any], cli_name: str) -> dict[str, Any]:
+    """把本 Case 已选 CLI 对应的 adapter 写进隔离工程的个人设置，被测模型不再重新选 adapter。
+
+    走 Framework 现有入口 `check-personal-setup --ensure --select-adapter`，只写这个隔离工程的
+    `framework.local.json`，DevEco 等其它本地配置原样保留。CLI 名与已物化的同名 adapter 对得上才写；
+    对不上（例如 `agent`）记缺口、不猜 generic，由被测会话按原流程处理。结果写进起跑记录。
+    """
+    workspace = Path(str(case["workspace"]))
+    config = read_json(workspace / "framework.config.json", {}) or {}
+    materialized = config.get("materialized_adapters") or []
+    seed: dict[str, Any] = {"cli": cli_name, "adapter": None, "at": now()}
+    if cli_name not in materialized or not (workspace / "framework" / "agents" / cli_name / "adapter.yaml").is_file():
+        seed.update(status="unmapped", reason=f"CLI {cli_name} 没有已物化的同名 adapter（已物化：{materialized}）")
+    else:
+        proc = subprocess.run(
+            f'npx ts-node scripts/check-personal-setup.ts --json --ensure --select-adapter {cli_name} '
+            f'--project-root "{workspace}"', cwd=str(workspace / "framework" / "harness"), shell=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        try:
+            payload = json.loads(proc.stdout[proc.stdout.index("{"):])
+        except ValueError:
+            payload = {}
+        active = payload.get("activeAdapter")
+        seed.update(adapter=active, returncode=proc.returncode, code=payload.get("code"),
+                    status="seeded" if payload.get("ok") and active == cli_name else "failed")
+        if seed["status"] == "failed":
+            seed["reason"] = (proc.stderr or proc.stdout)[-800:]
+    case["adapter_seed"] = seed
+    boundary_path = Path(str(suite["bundle_root"])) / "workspace-boundary.json"
+    boundary = read_json(boundary_path, {}) or {}
+    boundary.setdefault("adapter_seed", {})[str(case["case"])] = seed
+    write_json(boundary_path, boundary)
+    return seed
+
+
+#: Case 基线提交只用这次命令的测试身份，不读写用户的 global 配置
+CASE_GIT_IDENTITY = ("-c", "user.name=story-suite", "-c", "user.email=story-suite@localhost",
+                     "-c", "commit.gpgsign=false")
+
+
+def _git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=str(workspace), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False)
+
+
+def _case_git_problem(workspace: Path) -> str | None:
+    """Case 根是不是它自己的 Git 仓：`.git` 是根下的真目录，git 认的仓根与 gitdir 都在这里。"""
+    git_dir = workspace / ".git"
+    if git_dir.is_symlink() or git_dir.is_junction() or not git_dir.is_dir():
+        return ".git 不是 Case 根下的真目录（文件或链接指向别处的仓）"
+    proc = _git(workspace, "rev-parse", "--show-toplevel", "--absolute-git-dir")
+    lines = proc.stdout.splitlines()
+    if proc.returncode != 0 or len(lines) != 2:
+        return f"git rev-parse 失败: {(proc.stderr or proc.stdout).strip()[-300:]}"
+    if Path(lines[0]).resolve() != workspace or Path(lines[1]).resolve() != git_dir.resolve():
+        return f"git 认的仓根 {lines[0]}、gitdir {lines[1]} 不是这个 Case 根"
+    return None
+
+
+def ensure_case_git(suite: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
+    """给 Case 根建它自己的 Git 仓和起跑基线，被测工程不再继承外层目录所在的仓。
+
+    隔离工作区在系统临时目录下，而那里可能本身在某个仓里（实测落在用户配置仓下），
+    Framework 会把那个仓的 HEAD 当源码提交。新工作区在这里 init 并提交一次；
+    已建过的（续跑）只核现存身份，不重新 init 或提交，免得覆盖模型的工作。
+    按消费工程自己的忽略规则提交；关键文件被忽略时如实记进 `ignored_key_files`，不强行 add。
+    这里的 HEAD 只代表隔离基线，维护源身份仍是 demo 提交与 Extension 指纹。
+    """
+    workspace = Path(str(case["workspace"])).resolve()
+    recorded = case.get("git_boundary") or {}
+    result: dict[str, Any] = {"root": str(workspace), "at": now()}
+    problem: str | None = None
+    try:
+        if recorded.get("status") == "ready":
+            result = {**recorded, "verified_at": now()}
+            problem = _case_git_problem(workspace)
+            if problem is None and _git(workspace, "cat-file", "-e",
+                                        f"{recorded['initial_head']}^{{commit}}").returncode != 0:
+                problem = f"起跑基线 {recorded['initial_head']} 不在这个仓里"
+        elif (workspace / ".git").exists():
+            problem = "Case 根已有 .git，不是本次装配建的"
+        else:
+            inherited = _git(workspace, "rev-parse", "--show-toplevel")
+            result["inherited_toplevel"] = inherited.stdout.strip() if inherited.returncode == 0 else None
+            for name, args in (("init", ("init", "-q")), ("add", ("add", "-A")),
+                               ("commit", (*CASE_GIT_IDENTITY, "commit", "-q", "--no-verify",
+                                           "-m", "story-suite case baseline"))):
+                proc = _git(workspace, *args)
+                if proc.returncode != 0:
+                    problem = f"git {name} 失败: {(proc.stderr or proc.stdout).strip()[-300:]}"
+                    break
+            problem = problem or _case_git_problem(workspace)
+            if problem is None:
+                _verify_workspace_boundary(workspace, str(case["feature"]), own_git=True)
+                tracked = set(_git(workspace, "ls-files", "-z").stdout.split("\0")) - {""}
+                keys = ["framework.config.json", "framework/RELEASE-MANIFEST.json", "doc/extensions/",
+                        *(item["target"] for item in case.get("case_seeded") or [])]
+                result.update(
+                    initial_head=_git(workspace, "rev-parse", "HEAD").stdout.strip(),
+                    tracked_files=len(tracked),
+                    ignored_key_files=[key for key in keys if not any(
+                        path == key or (key.endswith("/") and path.startswith(key)) for path in tracked)])
+    except (OSError, RuntimeError) as exc:
+        problem = f"Case Git 边界建立失败: {exc}"
+    result["status"] = "failed" if problem else "ready"
+    if problem:
+        result["reason"] = problem
+    case["git_boundary"] = result
+    boundary_path = Path(str(suite["bundle_root"])) / "workspace-boundary.json"
+    boundary = read_json(boundary_path, {}) or {}
+    boundary.setdefault("git_boundary", {})[str(case["case"])] = result
+    write_json(boundary_path, boundary)
+    return result
 
 
 def _complete_current_attempt(record: dict[str, Any], *, status: str,
@@ -643,7 +807,7 @@ def prepare_case_retry(suite: dict[str, Any], record: dict[str, Any]) -> None:
         shutil.rmtree(system, onexc=_clear_readonly_and_retry)
 
     record.update({
-        "workspace": None, "workspace_status": "recreating",
+        "workspace": None, "workspace_status": "recreating", "adapter_seed": None, "git_boundary": None,
         "run_id": None, "worker_pid": None, "cursor": 0, "model_cursor": 0,
         "last_phase": None, "current_phase": None,
         "highest_phase_reached": None, "phase_source": None,
@@ -1510,9 +1674,22 @@ def _clear_readonly_and_retry(function: Any, path: str, _error: Any) -> None:
     function(path)
 
 
-def _remove_tree_with_recovery(path: Path, *, attempts: int = 4) -> list[dict[str, Any]]:
-    """Remove a preflight-approved tree, recovering Windows snapshot residue."""
+def _remove_tree_with_recovery(path: Path, *, attempts: int = 4) -> dict[str, Any]:
+    """删除预检通过的一棵树，返回 `{removed, attempts, remaining, error}`。
+
+    每次尝试（含进程复核失败与最后一次失败）都留在 `attempts` 里交给调用方先落清理报告；
+    失败不再用抛异常的方式带走已有的尝试记录。重试次数不是「清干净」的证明，`removed` 以目录确实不在为准。
+    归属与进程按原始路径核；删除与剩余枚举走 `_long`——深层路径超过 260 字符时，普通路径删不掉叶子，
+    外层报「目录不是空的」。报告里的剩余路径仍按相对原树写。
+    """
     evidence: list[dict[str, Any]] = []
+    target = _long(path)
+
+    def result(error: str | None) -> dict[str, Any]:
+        remaining = evidence[-1].get("remaining", []) if evidence else []
+        return {"removed": not target.exists(), "attempts": evidence,
+                "remaining": [] if not target.exists() else remaining, "error": error}
+
     delays = (0.0, 0.15, 0.4, 0.8)
     for attempt in range(1, attempts + 1):
         item: dict[str, Any] = {"attempt": attempt, "at": now()}
@@ -1525,29 +1702,29 @@ def _remove_tree_with_recovery(path: Path, *, attempts: int = 4) -> list[dict[st
         if not inventory_ok or matches:
             item["status"] = "blocked_process_recheck"
             evidence.append(item)
-            raise OSError(f"删除前进程复核失败或仍有进程引用: {path}")
+            return result(f"删除前进程复核失败或仍有进程引用: {path}")
         try:
-            if path.exists():
-                shutil.rmtree(path, onexc=_clear_readonly_and_retry)
+            if target.exists():
+                shutil.rmtree(target, onexc=_clear_readonly_and_retry)
             item["status"] = "deleted"
             item["remaining"] = []
             evidence.append(item)
-            return evidence
+            return result(None)
         except OSError as exc:
             remaining = []
-            if path.exists():
+            if target.exists():
                 try:
-                    remaining = [str(item.relative_to(path))
-                                 for item in list(path.rglob("*"))[-50:]]
+                    remaining = [str(item.relative_to(target))
+                                 for item in list(target.rglob("*"))[-50:]]
                 except OSError:
                     remaining = ["<enumeration-failed>"]
-            item.update({"status": "retry", "error": str(exc),
+            item.update({"status": "retry", "error": f"{type(exc).__name__}: {exc}",
                          "remaining": remaining})
             evidence.append(item)
             if attempt >= attempts:
-                raise
+                return result(item["error"])
             time.sleep(delays[min(attempt, len(delays) - 1)])
-    return evidence
+    return result("删除没有在限定尝试内完成")
 
 
 def _state_evidence(output_path: Path) -> list[dict[str, Any]]:
@@ -1573,58 +1750,37 @@ def _state_evidence(output_path: Path) -> list[dict[str, Any]]:
 
 
 def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict[str, Any]:
-    """Delete owned historical workspace/output pairs before feature migration."""
+    """起跑前清理本机临时根 `sw-story/` 下的旧现场：旧 Case 工作区、离线模板，不论名字。
+
+    每个子目录先核：在临时根内、不是链接；`output/story/<名>/suite.json` 在的，按它核终态与 worker；
+    不在的，进程清单里不能有引用它的命令；任何 state/lease 仍活动的保留现场并在删除前停下。
+    全部安全才删；它的需求系统副本按 `requirement_system_root` 由同一工作区根算出确切位置一并删。
+    某项删不掉记 warning，其它照删，本次照常继续。`output/` 下的运行证据不删。
+    """
     output_root = OUT_ROOT.resolve()
     workspace_parent = (Path(tempfile.gettempdir()) / "sw-story").resolve()
-    system_parent = (Path(tempfile.gettempdir()) / REQUIREMENT_SYSTEM_SIBLING).resolve()
     new_bundle_root = new_bundle_root.resolve()
     inventory_ok, processes, inventory_error = _process_inventory()
-    names: set[str] = set()
-    if output_root.is_dir():
-        names.update(path.name for path in output_root.iterdir()
-                     if path.is_dir() and path.resolve() != new_bundle_root)
-    if workspace_parent.is_dir():
-        names.update(path.name for path in workspace_parent.iterdir() if path.is_dir())
-    # 需求系统快照在 suite 树之外（sw-sys/<suite>-<hash>），剥掉摘要后缀按 suite 名收进来
-    if system_parent.is_dir():
-        names.update(path.name.rsplit("-", 1)[0]
-                     for path in system_parent.iterdir() if path.is_dir())
+    names = sorted(path.name for path in workspace_parent.iterdir()
+                   if path.is_dir() and path.name != new_suite_id) if workspace_parent.is_dir() else []
     report: dict[str, Any] = {
-        "schema_version": 1, "new_suite_id": new_suite_id,
-        "output_root": str(output_root), "workspace_root": str(workspace_parent),
+        "schema_version": 1, "new_suite_id": new_suite_id, "workspace_root": str(workspace_parent),
         "process_inventory_ok": inventory_ok,
         "process_inventory_error": inventory_error,
-        "targets": [], "ignored": [], "status": "preflight", "started_at": now(),
+        "targets": [], "status": "preflight", "started_at": now(),
     }
     blockers: list[str] = []
-    for name in sorted(names):
-        output_path = (output_root / name).resolve()
-        workspace_path = (workspace_parent / name).resolve()
-        output_exists = output_path.is_dir()
-        workspace_exists = workspace_path.is_dir()
-        suite_file = output_path / "suite.json"
-        suite = read_json(suite_file)
-        owned = isinstance(suite, dict) or bool(OWNED_SUITE_DIR.fullmatch(name))
-        if not owned:
-            report["ignored"].append({"name": name, "reason": "not_story_suite"})
-            continue
-        target = {
-            "suite_id": name, "output": str(output_path) if output_exists else None,
-            "workspace": str(workspace_path) if workspace_exists else None,
-            "has_suite_json": isinstance(suite, dict), "ownership": "suite_json"
-            if isinstance(suite, dict) else "orphan_name_pattern", "status": "checked",
-        }
-        report["targets"].append(target)
-        if output_path.parent != output_root or workspace_path.parent != workspace_parent:
-            target["status"] = "blocked_path_boundary"
-            blockers.append(f"{name}: path boundary")
-            continue
-        raw_output = output_root / name
+    for name in names:
         raw_workspace = workspace_parent / name
-        if (raw_output.exists() and raw_output.is_symlink()) \
-                or (raw_workspace.exists() and raw_workspace.is_symlink()):
-            target["status"] = "blocked_symlink"
-            blockers.append(f"{name}: symlink")
+        workspace_path = raw_workspace.resolve()
+        output_path = output_root / name
+        suite = read_json(output_path / "suite.json")
+        target = {"suite_id": name, "workspace": str(workspace_path),
+                  "has_suite_json": isinstance(suite, dict), "status": "checked"}
+        report["targets"].append(target)
+        if raw_workspace.is_symlink() or workspace_path.parent != workspace_parent:
+            target["status"] = "blocked_path_boundary"
+            blockers.append(f"{name}: link or path boundary")
             continue
         states = _state_evidence(output_path)
         target["state_evidence"] = states
@@ -1668,11 +1824,7 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
                 target["status"] = "blocked_process_inventory"
                 blockers.append(f"{name}: process inventory unavailable")
                 continue
-            needles = [name.lower()]
-            if output_exists:
-                needles.append(str(output_path).lower())
-            if workspace_exists:
-                needles.append(str(workspace_path).lower())
+            needles = [name.lower(), str(workspace_path).lower()]
             matches = [row for row in processes if any(
                 needle in str(row.get("command") or "").lower() for needle in needles)]
             target["process_matches"] = matches
@@ -1693,34 +1845,25 @@ def cleanup_previous_test_runs(new_bundle_root: Path, new_suite_id: str) -> dict
     for target in report["targets"]:
         removed: list[str] = []
         target["deletion_attempts"] = []
-        try:
-            workspace_text = target.get("workspace")
-            if workspace_text and Path(workspace_text).is_dir():
-                attempts = _remove_tree_with_recovery(Path(workspace_text))
-                target["deletion_attempts"].append(
-                    {"path": workspace_text, "attempts": attempts})
-                removed.append(workspace_text)
-            output_text = target.get("output")
-            if output_text and Path(output_text).is_dir():
-                attempts = _remove_tree_with_recovery(Path(output_text))
-                target["deletion_attempts"].append(
-                    {"path": output_text, "attempts": attempts})
-                removed.append(output_text)
-            if system_parent.is_dir():
-                for system_path in sorted(system_parent.glob(
-                        f"{target['suite_id']}-*")):
-                    if not system_path.is_dir():
-                        continue
-                    attempts = _remove_tree_with_recovery(system_path)
-                    target["deletion_attempts"].append(
-                        {"path": str(system_path), "attempts": attempts})
-                    removed.append(str(system_path))
-            target["status"] = "deleted"
-            target["removed"] = removed
-        except OSError as exc:
+        workspace_path = Path(target["workspace"])
+        paths = [p for p in (workspace_path, requirement_system_root(workspace_path)) if p.is_dir()]
+        failure = None
+        for target_path in paths:
+            # 每一次删除的全部尝试先进报告，再看成没成：失败不能把已有的尝试记录一起带走
+            outcome = _remove_tree_with_recovery(target_path)
+            target["deletion_attempts"].append({"path": str(target_path), **outcome})
+            write_json(new_bundle_root / "previous-run-cleanup.json", report)
+            if not outcome["removed"]:
+                failure = outcome["error"] or f"删除后仍在: {target_path}"
+                break
+            removed.append(str(target_path))
+        target["removed"] = removed
+        if failure:
             target["status"] = "retained_cleanup_warning"
-            target["warning"] = str(exc)
-            cleanup_warnings.append(f"{target['suite_id']}: {exc}")
+            target["warning"] = failure
+            cleanup_warnings.append(f"{target['suite_id']}: {failure}")
+        else:
+            target["status"] = "deleted"
         write_json(new_bundle_root / "previous-run-cleanup.json", report)
     report["status"] = "completed_with_warnings" if cleanup_warnings else "completed"
     report["warnings"] = cleanup_warnings
@@ -1819,6 +1962,10 @@ def suite_environment(suite: dict[str, Any], case_id: str | None = None) -> dict
             environment[run_layout.RUN_CONTROL_ENV] = str(Path(control_root).resolve())
         else:
             environment.pop(run_layout.RUN_CONTROL_ENV, None)
+    if suite.get("cli_registry"):
+        environment[CLI_REGISTRY_ENV] = str(suite["cli_registry"])
+    else:
+        environment.pop(CLI_REGISTRY_ENV, None)
     environment.pop(REQUIREMENT_SYSTEM_ENV, None)
     if case_id:
         case = suite.get("case_states", {}).get(case_id) or {}
@@ -1896,6 +2043,18 @@ def start_one(case: dict[str, Any], suite: dict[str, Any]) -> None:
             case["last_error"] = {"workspace": str(exc)}
             append_event(suite, "case_workspace_failed", case=case_id, error=str(exc))
             return
+    cli_name = suite_cli_configurations(suite)[config_index]["name"]
+    if (case.get("adapter_seed") or {}).get("cli") != cli_name:
+        append_event(suite, "case_adapter_seeded", case=case_id, **seed_agent_adapter(suite, case, cli_name))
+    # 这个 Case 实际的宿主能力：按播种后的 activeAdapter 读（没播成按所选 CLI 名），随起跑记录保存
+    actual = (case.get("adapter_seed") or {}).get("adapter") or cli_name
+    case["host_capabilities"] = host_capabilities(Path(str(case["workspace"])), actual)
+    git_boundary = ensure_case_git(suite, case)
+    append_event(suite, "case_git_boundary", case=case_id, **git_boundary)
+    if git_boundary["status"] != "ready":
+        case["status"] = "coordinator_start_failed"
+        case["last_error"] = {"git_boundary": git_boundary["reason"]}
+        return
     override_args: list[str] = []
     if case.get("requested_start_phase") and case["requested_start_phase"] != case.get("start_phase"):
         override_args.extend(("--start-phase", str(case["requested_start_phase"])))
@@ -2372,35 +2531,26 @@ def poll_suite(suite: dict[str, Any], wait_sec: int, max_chars: int,
     ]
 
 
-def mechanism_contamination() -> dict[str, Any]:
-    """机制层有没有在本轮被改过 —— **哨兵，不是拦截器**。
+def mechanism_contamination(suite: dict[str, Any] | None = None) -> dict[str, Any]:
+    """被测对象在本轮有没有变 —— 与起跑基线比身份，**哨兵，不是拦截器**。
 
-    隔离已经是唯一形态，被测模型按设计够不着主仓。但「够不着」是设计意图，
-    这里核的是事实：开发源 `extensions/` 一旦有未提交改动，本轮读数就不再是
-    「那个机制」的读数——它可能是被测方自己改过之后的机制。
-
-    拦不住也不该拦（改动可能来自维护者自己）：它的职责是让这件事**永远不会
-    悄悄混进读数**。实测撞到过一次：非隔离那一轮，被测模型改了判据所在目录，
-    如果不是 `git status` 恰好露了出来，那一轮的结论会被当成干净的。
+    分三件报，互不推断：维护仓开发源与起跑时比；每个 Case 工作区里的机制与它起跑时比（被测模型改了机制）；
+    业务源码变化另有工作区快照管。主仓原本就有未提交改动不等于污染——只比本轮前后。
+    基线缺失或读不出标「无法核实」，不当干净。
     """
-    try:
-        proc = subprocess.run(
-            ["git", "status", "--porcelain", "--", "extensions"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(REPO_ROOT))
-        dirty = (proc.stdout or "").strip()
-    except Exception as exc:  # noqa: BLE001
-        return {"checked": False, "reason": str(exc)}
-    if not dirty:
-        return {"checked": True, "clean": True}
-    try:
-        diff = subprocess.run(
-            ["git", "diff", "--", "extensions"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, cwd=str(REPO_ROOT)).stdout or ""
-    except Exception:  # noqa: BLE001
-        diff = ""
-    return {"checked": True, "clean": False, "status": dirty, "diff": diff}
+    suite = suite or {}
+    boundary = read_json(Path(str(suite.get("bundle_root", ""))) / "workspace-boundary.json", {}) or {}
+    base = (boundary.get("identity") or {})
+    dev = identity_drift(base.get("dev_source"), tree_identity(DEV_SOURCE))
+    cases = {}
+    for case_id, record in (suite.get("case_states") or {}).items():
+        workspace = record.get("workspace")
+        before = read_json(Path(str(suite.get("bundle_root", ""))) / "cases" / str(case_id) / "mechanism-baseline.json", None)
+        cases[case_id] = identity_drift(before, tree_identity(Path(str(workspace)) / "doc" / "extensions")) \
+            if workspace else {"verified": False, "reason": "没有工作区"}
+    checked = dev.get("verified") and all(c.get("verified") for c in cases.values())
+    clean = bool(checked) and dev.get("clean") and all(c.get("clean") for c in cases.values())
+    return {"checked": bool(checked), "clean": bool(clean), "dev_source": dev, "case_mechanism": cases}
 
 
 def finalize_suite_status(suite: dict[str, Any]) -> str:
@@ -2417,7 +2567,7 @@ def finalize_suite_status(suite: dict[str, Any]) -> str:
         return "failed"
     if any(status not in TERMINAL_STATUS for status in statuses):
         return "failed"
-    contamination = mechanism_contamination()
+    contamination = mechanism_contamination(suite)
     suite["mechanism_contamination"] = contamination
     if contamination.get("checked") and not contamination.get("clean"):
         return "harness_contaminated"
@@ -2458,6 +2608,10 @@ def summary(suite: dict[str, Any]) -> dict[str, Any]:
                 "last_phase": record.get("last_phase"),
                 "current_phase": record.get("current_phase"),
                 "highest_phase_reached": record.get("highest_phase_reached"),
+                # 业务闭环与本地阅读分开交回：阅读未完成不因业务闭环就算整体完成
+                "target_closed": (record.get("closure") or {}).get("target_closed"),
+                "reading": (record.get("closure") or {}).get("reading"),
+                "target_complete": (record.get("closure") or {}).get("target_complete"),
                 "phase_source": record.get("phase_source"),
                 "phase_observed_at": record.get("phase_observed_at"),
                 "story_done_at": record.get("story_done_at"),
@@ -2494,6 +2648,38 @@ def ensure_no_external_active(plans: list[CasePlan]) -> None:
             "先用对应 run_case status/stop 处理，拒绝混入当前 suite。")
 
 
+def default_suite_id(at: datetime | None = None) -> str:
+    """没给 --suite-id 时的正式套件名：`story-suite-YYYYMMDD-HHMMSS`，同秒已有就加两位递增后缀。
+
+    宿主、模型等身份记在 suite 元数据里，不进目录名；显式 --suite-id 照旧按已有规则校验。
+    """
+    base = f"story-suite-{(at or datetime.now()).strftime('%Y%m%d-%H%M%S')}"
+    for candidate in (base, *(f"{base}-{n:02d}" for n in range(1, 100))):
+        if not suite_path(candidate).exists():
+            return candidate
+    raise SystemExit(f"[multi] 同一秒内已有 100 个 suite：{base}")
+
+
+def write_cli_registry(suite_dir: Path, workspace_source: Path) -> Path | None:
+    """本组用到需要改调用参数的宿主时，生成整个 suite 共用的一份调用配置快照。
+
+    各 Case 的 CLI 进程都从这一份启动与续跑，cwd 仍是各自的工程；快照只收这些宿主，
+    别的宿主照用中央注册表。dsh 引用工程里物化的审查员配置层，起跑前就核它在不在，
+    不让模型跑到阶段末尾才发现没有审查员。
+    """
+    central = json.loads(CENTRAL_CLI_REGISTRY.read_text(encoding="utf-8"))
+    snapshot = registry_snapshot(CLI_CONFIGURATIONS, central)
+    if snapshot is None:
+        return None
+    if not (workspace_source / DSH_VERIFIER_OVERLAY).is_file():
+        raise SystemExit(
+            f"[multi] dsh 需要工程里的审查员配置层 {DSH_VERIFIER_OVERLAY}，"
+            f"{workspace_source} 里没有（工作区模板没物化 dsh adapter：被测 Framework 的本地补丁或原生 UPDATE 物化没装上）")
+    target = suite_dir / "cli-registry.json"
+    target.write_bytes((json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    return target
+
+
 def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
                  base_end_at: str | None = None,
                  continue_case: str | None = None,
@@ -2511,9 +2697,11 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
             f"[multi] 隔离并行 suite 要求 jobs >= Case 数量（{jobs} < {len(plans)}），"
             "避免把已设计的并行轮次静默降级为排队")
     path = suite_path(suite_id)
-    if path.exists():
-        raise SystemExit(f"[multi] suite 结果目录已存在，拒绝覆盖: {path}")
-    path.mkdir(parents=True)
+    try:
+        # 占目录是原子的：同名已在（含同秒另一个起跑抢先建好）就拒绝，不覆盖
+        path.mkdir(parents=True)
+    except FileExistsError:
+        raise SystemExit(f"[multi] suite 结果目录已存在，拒绝覆盖: {path}") from None
     if preserve_current_features:
         raise SystemExit(
             "[multi] --preserve-current-features 已停用；正式测试必须先迁移现有 doc/features")
@@ -2521,6 +2709,7 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
     migration = migrate_existing_features(path)
     feature_archive_path = migration.get("destination_root")
     workspace_template, workspace_root = create_workspace_template(path, suite_id)
+    cli_registry = write_cli_registry(path, Path(workspace_template or DEMO_ROOT))
     plan_map = {plan.case_id: plan for plan in plans}
     suite: dict[str, Any] = {
         "schema_version": 1,
@@ -2536,6 +2725,7 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
         "preserve_current_features": preserve_current_features,
         "workspace_template": str(workspace_template) if workspace_template else None,
         "workspace_root": str(workspace_root) if workspace_root else None,
+        "cli_registry": str(cli_registry) if cli_registry else None,
         "execution_authorization": {
             "non_sandbox": True,
             "granted_by": "user",
@@ -2611,6 +2801,27 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
     return path, suite
 
 
+def host_capabilities(root: Path, adapter_name: str) -> dict[str, Any]:
+    """起跑前的宿主能力：按实际选用的 adapter 读它的声明，与实际调用证据分开记。声明不是能力证明；
+    实际证据要由起跑确认时的真实调用补上。
+
+    本地阅读的局部验收要渲染、看图与独立执行三样；任何一样没有实际证据，视觉维度按未覆盖交回。
+    """
+    adapter = root / "framework" / "agents" / adapter_name / "adapter.yaml"
+    declared: dict[str, Any] = {"adapter": adapter_name}
+    try:
+        for line in adapter.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition(":")
+            if key.strip() in ("image_input", "verifier_subagent") and value.strip():
+                declared[key.strip()] = value.strip()
+    except OSError as exc:
+        declared = {"unreadable": str(exc)}
+    return {"adapter": adapter_name, "declared": declared,
+            "verified": {"render": None, "image_input": None, "independent_execution": None},
+            "note": "verified 只认起跑确认时的实际调用证据；null 是未核，不是不具备也不是具备",
+            "visual_review_possible": declared.get("image_input") not in (None, "none")}
+
+
 def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
     """Prepare every isolated workspace before the first model worker starts."""
     checks: dict[str, Any] = {
@@ -2618,6 +2829,8 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
         "suite_id": suite["suite_id"],
         "cases": [],
         "forbidden_workspace_entries": [*sorted(MAINTENANCE_TOP_LEVEL), "doc/features (history)"],
+        "capabilities": {name: host_capabilities(Path(str(suite.get("workspace_template", ""))), name)
+                         for name in sorted({c["name"] for c in suite_cli_configurations(suite)})},
         "checked_at": now(),
     }
     workspace_paths: set[str] = set()
@@ -2632,7 +2845,8 @@ def prepare_suite_preflight(path: Path, suite: dict[str, Any]) -> None:
             if len(str(workspace)) > 180:
                 raise RuntimeError(f"workspace 路径过长: {workspace}")
             boundary = _verify_workspace_boundary(
-                workspace, str(record["feature"]))
+                workspace, str(record["feature"]),
+                own_git=(record.get("git_boundary") or {}).get("status") == "ready")
             record["workspace_status"] = "preflight_pass"
             checks["cases"].append({"case": record["case"], "ar": record["feature"],
                                      "workspace": str(workspace), "status": "pass",
@@ -2948,6 +3162,45 @@ def command_watch(suite_id: str, interval: int, max_chars: int) -> int:
         time.sleep(interval)
 
 
+def run_view(record: dict[str, Any]) -> dict[str, Any]:
+    """一个 Case 当前运行在哪、每一轮 CLI 会话的原始记录在哪 —— 只读，从已有记录派生，不另存一份运行列表。
+
+    当前运行目录按 latest/active 指针解析；每一轮按 `live.jsonl` 里的 `cli_run_started`（回合与 runtime id）
+    对上 `cli-runtime/<id>/run.json`（会话、状态、起止时间）。对不上的如实标出来，不按文件修改时间猜。
+    """
+    state = run_pointer_state(str(record["case"]), record.get("run_id")) or {}
+    run_dir = Path(str(state["run_dir"])) if state.get("run_dir") else None
+    view: dict[str, Any] = {"run_id": record.get("run_id"), "run_dir": str(run_dir) if run_dir else None,
+                            "cli_run_id": state.get("cli_run_id"), "cli_runs": []}
+    if run_dir is None:
+        view["problem"] = "当前运行目录解析不到"
+        return view
+    live = run_dir / "live.jsonl"
+    try:
+        lines = live.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        view["problem"] = "live.jsonl 读不到，回合与会话对不上"
+        return view
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "cli_run_started":
+            continue
+        runtime_id = str(event.get("cli_run_id") or "")
+        runtime_dir = run_dir / "cli-runtime" / runtime_id
+        record_json = read_json(runtime_dir / "run.json")
+        item: dict[str, Any] = {"turn": event.get("turn"), "runtime_id": runtime_id, "path": str(runtime_dir)}
+        if isinstance(record_json, dict):
+            item.update({key: record_json.get(key) for key in
+                         ("session_id", "status", "started_at", "finished_at", "failure_kind")})
+        else:
+            item["status"] = "runtime_record_missing"
+        view["cli_runs"].append(item)
+    return view
+
+
 def command_status(suite_id: str) -> int:
     path, suite = load_suite(suite_id)
     del path
@@ -2957,6 +3210,7 @@ def command_status(suite_id: str) -> int:
     for record in suite.get("case_states", {}).values():
         reconcile_record_phase(record)
     payload = summary(suite)
+    payload["runs"] = {case: run_view(record) for case, record in suite.get("case_states", {}).items()}
     payload["read_only"] = True
     payload["driver_hint"] = "status 不消费事件或发送回复；正式驱动使用 start 后连续 poll"
     print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
@@ -3046,6 +3300,9 @@ def command_reply(suite_id: str, case_id: str, text: str,
         print(json.dumps({"ok": False, "case": case_id, "run_id": run_id, "turn": turn, "error": error, **more},
                          ensure_ascii=False, indent=2))
         return 1
+    if (record.get("promotions") or {}).get("initial") and not record.get("resumed_update"):
+        # 第一段已经回流成终稿：再在第一段里继续会让工作区与回流的那一份分叉
+        return refuse("第一段已回流，不再在第一段里继续；要进第二段用 resume-update")
 
     problem = reply_input_problem(record, reply_kind, steps, names)
     if problem:
@@ -3097,6 +3354,11 @@ def command_reply(suite_id: str, case_id: str, text: str,
     else:
         record["last_reply_status"] = "accepted"
         record["last_reply_text"] = text
+        if (payload or {}).get("superseded_checkpoint"):
+            # 第一段在答复后继续：之前固定的快照不是终稿，作废记录留证据，答完重新 checkpoint
+            stale = (record.get("checkpoints") or {}).pop("initial", None)
+            record.setdefault("superseded_checkpoints", []).append(
+                {**(stale or {}), "moved_to": payload["superseded_checkpoint"], "at": now()})
         record["last_replied_turn"] = awaiting.get("turn")
         record["last_human_reply_at"] = now()
         record["automation_observation_state"] = "reply_sent"
@@ -3176,7 +3438,8 @@ def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
             "path": payload.get("path"), "digest": payload.get("digest"),
             **({"blueprint": payload["blueprint"], "blueprint_path": payload.get("blueprint_path")}
                if payload.get("blueprint") else {}),
-            "session": payload.get("session"), "at": now()}
+            "session": payload.get("session"), "at": now(),
+            "usage": snapshot_usage(suite, record, point)}
     else:
         record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
     append_event(suite, "case_checkpoint", case=case_id, point=point, returncode=returncode)
@@ -3188,7 +3451,7 @@ def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
 
 
 def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
-    """把**固定下来的那一份**回流到维护仓 doc/features，按原编号。
+    """把**固定下来的那一份**回流到维护仓 doc/features：第一段按原编号，第二段另名 `<编号>-update`。
 
     回流的是快照不是工作区：工作区还在跑第二段，拿它回流等于把两段混成一份。
     目的地已经有内容不同的东西时不覆盖，两边都留着并报冲突——这条复用 finalize 的口径。
@@ -3206,7 +3469,7 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
         raise SystemExit(f"[multi] {case_id} 的需求编号与归档目录 doc/features/archive 同名，拒绝回流")
     checkpoint = (record.get("checkpoints") or {}).get(point) or {}
     result: dict[str, Any] = {"case": case_id, "point": point,
-                              **_promote_tree(source, FEATURES_ROOT / str(record["feature"]))}
+                              **_promote_tree(source, FEATURES_ROOT / promoted_feature_name(str(record["feature"]), point))}
     # 需求关联的蓝图工作区与需求目录分开固定，按它自己的身份回流
     if checkpoint.get("blueprint_path"):
         design = _promote_tree(Path(checkpoint["blueprint_path"]), FEATURES_ROOT / str(checkpoint["blueprint"]))
@@ -3394,9 +3657,155 @@ def _tree_digest(root: Path) -> str | None:
     return hashlib.sha256(json.dumps(files, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def segment_name(record: dict[str, Any], name: str) -> str:
-    """终态回流的目录名：第二段真跑过（resume-update 投进去了）才另名 `<名>-update`。"""
-    return f"{name}-update" if record.get("resumed_update") else name
+def snapshot_usage(suite: dict[str, Any], record: dict[str, Any], point: str) -> dict[str, Any]:
+    """把这次运行工作区的全局 `doc/usage.json` 原样留一份证据：`cases/<case>/<run-id>/usage/<point>/usage.json`。
+
+    usage 是工程级的一份记录，不随需求目录回流；下一轮起跑清理工作区后就核不到了，所以按运行留快照。
+    一次读全字节，摘要与复制用同一份；缺失如实记 missing，不造空记录。已固定的快照不覆盖：
+    内容相同即幂等，不同就报冲突、原快照不动。
+    """
+    state = run_pointer_state(str(record["case"]), record.get("run_id")) or {}
+    run_dir = Path(str(state.get("run_dir") or Path(str(suite["bundle_root"])) / "cases"
+                       / str(record["case"]) / str(record.get("run_id") or "no-run")))
+    source = Path(str(record.get("workspace") or "")) / "doc" / "usage.json"
+    target = run_dir / "usage" / point / "usage.json"
+    meta: dict[str, Any] = {"source": str(source), "path": str(target), "at": now()}
+    try:
+        data = source.read_bytes()
+    except FileNotFoundError:
+        return {**meta, "status": "missing"}
+    except OSError as exc:
+        return {**meta, "status": "unreadable", "error": str(exc)}
+    digest = hashlib.sha256(data).hexdigest()
+    if target.is_file():
+        have = hashlib.sha256(target.read_bytes()).hexdigest()
+        if have == digest:
+            return {**meta, "sha256": digest, "status": "already_captured"}
+        return {**meta, "sha256": digest, "status": "conflict", "existing_sha256": have}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return {**meta, "sha256": digest, "status": "captured"}
+
+
+def promoted_feature_name(feature: str, segment: str) -> str:
+    """回流目录名：第一段沿原编号，第二段另名 `<编号>-update`。两段分开看才比得出更新改了什么。"""
+    return f"{feature}-update" if segment == "update" else feature
+
+
+def finalize_segment(record: dict[str, Any]) -> tuple[str, bool]:
+    """finalize 回流的是哪一段、这一段走没走到它的终点。
+
+    按实际发生的事判：续跑过第二段才是 update，否则是第一段；双检查点单以那一段的检查点是否固定为准，
+    其余以 Case 是否自然到达目标为准。不按计划里的 `after_initial` 推断——只跑了第一段的单不能被标成 update。
+    """
+    segment = "update" if record.get("resumed_update") else "initial"
+    if record.get("after_initial") == "update":
+        reached = bool((record.get("checkpoints") or {}).get(segment))
+    else:
+        reached = record.get("status") == "finished"
+    return segment, not reached
+
+
+DSH_SESSION_READER = HERE / "dsh_session.mjs"
+
+
+def _dsh_session(path: Path) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(["node", str(DSH_SESSION_READER), str(path)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", check=False)
+    except OSError as exc:
+        return {"error": f"读取器起不来（{exc}）"}
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return {"error": (proc.stderr or proc.stdout or "读取器没有输出")[-400:]}
+
+
+def _copy_session(source: Path, destination: Path) -> dict[str, Any]:
+    # 子会话落在 <run>/native-sessions/<父>/children/<子>/ 下，整条路径常过 260 字符：复制与读回都走长路径前缀
+    target = _long(destination)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_long(source), target)
+    return {"source": str(source), "copy": str(destination),
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "size": target.stat().st_size}
+
+
+def capture_native_sessions(suite: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """把这次 run 的 dsh 原生会话原件留到 `<run>/native-sessions/<session-id>/`，供维护复核核对原样性与子级工具。
+
+    只按本 run 的 runtime 记录里的 session_id 找 `$DSH_HOME/sessions/*/<id>/`，恰好一个候选才取；
+    先复制原字节、记源路径与摘要，再解析副本，核头部 id 与 cwd；子会话只认父会话 `subagent/catalog`
+    里登记的 childId，并核它的头部 id 与 parentSession。缺失、多候选、复制失败、解不出、身份不符都如实列进
+    `not_captured` 或该会话的 `problems`，任一项都让整体 incomplete——拷到了文件不等于取得了本次可信的原件。
+    父会话头部不是本 run 的，它的 catalog 不当子级来源；已复制的原字节与摘要都留着。不按目录时间猜，不生成业务报告。
+    """
+    state = run_pointer_state(str(record["case"]), record.get("run_id")) or {}
+    run_dir = Path(str(state.get("run_dir") or Path(str(suite["bundle_root"])) / "cases"
+                       / str(record["case"]) / str(record.get("run_id") or "no-run")))
+    workspace = str(Path(str(record.get("workspace") or "")).resolve()).lower()
+    home = Path(os.environ.get("DSH_HOME") or Path.home() / ".dsh") / "sessions"
+    ids = sorted({str(rj["session_id"]) for rj in (read_json(p) for p in run_dir.glob("cli-runtime/*/run.json"))
+                  if isinstance(rj, dict) and rj.get("cli") == "dsh" and rj.get("session_id")})
+    out: dict[str, Any] = {"status": "captured" if ids else "no_dsh_session", "sessions": [], "not_captured": []}
+
+    def missed(session_id: str, reason: str) -> None:
+        out["not_captured"].append({"session_id": session_id, "reason": reason})
+
+    def take(session_id: str, folder: Path) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """找到唯一候选、复制原字节并解析副本；做不到就记未取得。"""
+        found = sorted(home.glob(f"*/{session_id}/session.v4.jsonl.zstd"))
+        if len(found) != 1:
+            missed(session_id, f"候选 {len(found)} 个")
+            return None
+        try:
+            entry = _copy_session(found[0], folder / found[0].name)
+        except OSError as exc:
+            missed(session_id, f"复制失败（{exc}）")
+            return None
+        info = _dsh_session(Path(entry["copy"]))
+        entry["problems"] = [f"解不开（{info['error']}）"] if info.get("error") else []
+        entry["error"] = info.get("error")
+        return entry, info
+
+    for sid in ids:
+        dest = run_dir / "native-sessions" / sid
+        taken = take(sid, dest)
+        if taken is None:
+            continue
+        entry, info = taken
+        header = info.get("header") or {}
+        entry.update(session_id=sid, lines=info.get("lines"), children=[],
+                     header_matches=header.get("id") == sid and str(header.get("cwd", "")).lower() == workspace)
+        out["sessions"].append(entry)
+        if not entry["header_matches"]:
+            entry["problems"].append("头部 id 或 cwd 不是本 run 的会话，它登记的子会话不采")
+            continue
+        for child in info.get("children") or []:
+            cid = str(child.get("childId") or "")
+            if not cid:
+                entry["problems"].append("subagent/catalog 有一条没有 childId")
+                continue
+            taken = take(cid, dest / "children" / cid)
+            if taken is None:
+                continue
+            copied, child_info = taken
+            child_header = child_info.get("header") or {}
+            copied.update(child_id=cid, label=child.get("label"),
+                          parent_matches=child_header.get("parentSession") == sid)
+            if child_header.get("id") != cid:
+                copied["problems"].append("头部 id 与 catalog 的 childId 不符")
+            if not copied["parent_matches"]:
+                copied["problems"].append("parentSession 不是本会话")
+            entry["children"].append(copied)
+    if out["not_captured"] or any(s["problems"] or any(c["problems"] for c in s["children"])
+                                  for s in out["sessions"]):
+        out["status"] = "incomplete"
+    if ids:
+        try:
+            write_json(run_dir / "native-sessions" / "manifest.json", out)
+        except OSError as exc:
+            out.update(status="incomplete", manifest_error=str(exc))
+    return out
 
 
 def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
@@ -3463,10 +3872,9 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     # Feature documents are independent Case outputs.  They must not be blocked
     # by source changes promoted by an earlier Case in the same finalize batch.
     feature_source = workspace / "doc" / "features" / str(record["feature"])
-    # 第二段真跑过（resume-update 投进去了）时，终态文档**另名落地**：原编号那一份是第一段回流的，
-    # 两段分开看才比得出「更新改了什么」。只配了 after_initial、第一段没到终点的，终态仍是第一段的产物，用原名。
-    # 目录名换了不改里面的需求编号，也不动报告与引用。
-    feature_destination = FEATURES_ROOT / segment_name(record, str(record["feature"]))
+    # 回流身份按实际走到的那一段定：真的续跑过第二段才另名 `-update`；目录名换了不改里面的需求编号
+    segment, partial = finalize_segment(record)
+    feature_destination = FEATURES_ROOT / promoted_feature_name(str(record["feature"]), segment)
     if feature_source.is_dir() and is_archive_name(feature_destination.name):
         conflicts.append({"kind": "feature", "source": str(feature_source),
                           "destination": str(feature_destination),
@@ -3488,7 +3896,7 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     # 需求关联的蓝图工作区在另一个目录，按它自己的身份回流；双检查点单的终态同样另名落地
     blueprint = run_layout.linked_blueprint(workspace / "doc" / "features", str(record["feature"]))
     if blueprint and feature_source.is_dir():
-        name = segment_name(record, blueprint)
+        name = promoted_feature_name(blueprint, segment)
         design = {"kind": "blueprint", **_promote_tree(workspace / "doc" / "features" / blueprint, FEATURES_ROOT / name)}
         if design["status"] == "destination_conflict":
             conflicts.append({**design, "reason": "blueprint_destination_conflict"})
@@ -3534,6 +3942,9 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
     result = {"status": status, "accepted": not conflicts,
               "case_status": record.get("status"),
               "execution_status": record.get("execution_status"),
+              "segment": segment, "partial": partial,
+              "usage": snapshot_usage(suite, record, "final"),
+              "native_sessions": capture_native_sessions(suite, record),
               **evidence,
               "promoted": promoted, "already_promoted": already_promoted,
               "conflicts": conflicts, "promoted_at": now()}
@@ -3699,7 +4110,7 @@ def main() -> int:
         if args.command == "plan":
             return command_plan(plans, args.jobs, base_end_at,
                                 continue_case, continue_end_at)
-        suite_id = args.suite_id or datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{os.getpid()}"
+        suite_id = args.suite_id or default_suite_id()
         return command_start(plans, suite_id, args.jobs, base_end_at,
                              continue_case, continue_end_at,
                              args.authorize_non_sandbox,

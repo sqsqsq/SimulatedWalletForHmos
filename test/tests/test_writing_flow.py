@@ -133,14 +133,35 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
         guide = read("phases/story-write.md")
         body = section(guide, "照骨架写一章")
         for needle in ("先答骨架里的问题，再补骨架没列的", "骨架已铺在里面", "写着写着认识变了",
-                       "回蓝图或 `decisions.json` 改", "依赖它的行为不能同时写成已定"):
+                       "回蓝图或 `decisions.json` 改", "依赖它的行为不能同时写成已定",
+                       "不写成默认可重试、已开放或本期不做", "「先认出关系」那份作业"):
             self.assertIn(needle, body, f"写一章那一节少了「{needle}」")
+        # 关系作业只在第四节写一份，写章与回看引用它，不各抄一遍
+        design = section(guide, "动笔前：先设计表达")
+        for needle in ("说了「稍后问」就要真问", "操作开始不等于状态迁移完成", "不授权其中任何一个备选",
+                       "不因「当前还没实现」另造人工取舍", "只给名词落点不算承接", "不算修复"):
+            self.assertIn(needle, design, f"关系作业少了「{needle}」")
+        for needle in ("说了「稍后问」就要真问", "操作开始不等于状态迁移完成"):
+            self.assertEqual(1, guide.count(needle), f"「{needle}」又在别处抄了一份")
+        self.assertIn("第四节第 4 步", section(guide, "回看：十章齐后逐条处置回看清单"))
         # 图怎么选归「表达选择」一节，写章这里只说落盘；两处并存过一轮（可改画 / 一律原样搬入），
         # 作者读到哪句走哪条，car 那一轮的时序图就这么被改画成流程图、丢了失败责任。
         picks = section(guide, "表达选择：先选用途，再选载体")
         for needle in ("照搬它不等于讲清了", "不硬造页面", "换图种可以，丢关系不行"):
             self.assertIn(needle, picks, f"表达选择那一节少了「{needle}」")
         self.assertNotIn("图从要解释的关系出发", body, "图的选法又在写章那一节抄了一份")
+
+    def test_the_expression_order_and_the_same_figure_svg_are_stated_once(self) -> None:
+        """载体按 图＞表格＞列表＞章节＞文字 先后考虑，重要时序与状态不被散文替代；SVG 是同一张图的增强形态，没有补图候选。"""
+        guide = read("phases/story-write.md")
+        picks = section(guide, "表达选择：先选用途，再选载体")
+        for needle in ("图＞表格＞列表＞章节＞文字", "参与方、先后、调用与返回、等待与失败责任", "触发条件与终态"):
+            self.assertIn(needle, picks, f"表达选择那一节少了「{needle}」")
+        self.assertNotIn("阅读图选择", guide, "补图候选的写法还在")
+        svg = read("reference/svg.md")
+        for needle in ("同一张图的另一种形态", "不追加业务关系", "不是不做的理由"):
+            self.assertIn(needle, svg, f"svg.md 少了「{needle}」")
+        self.assertNotIn("阅读槽", svg)
 
     def test_a_trade_off_needs_a_real_alternative_only_when_there_is_one(self) -> None:
         guide = read("phases/story-write.md")
@@ -348,7 +369,7 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
                          "「把表压成散文都是降级」与「表格转成散文时每一列都要有落点」相反")
         self.assertIn("有损", guide, "留下的那条要说清什么才算有损")
         self.assertIn("每一列都要有落点", guide)
-        self.assertIn("把流程图压成箭头文字是降级", guide, "源图的义务不因此撤销")
+        self.assertIn("把流程图压成一行箭头文字是降级", guide, "源图的义务不因此撤销")
 
     def test_every_chapter_declares_its_boundary(self) -> None:
         """章头唯一化之后，boundary 是草稿章头与读者审查的合同数据，一章不能缺。"""
@@ -387,18 +408,19 @@ class TheFigureTripleAndTheReviewSplitAreSaidOnce(unittest.TestCase):
         text = (SKILL / "phases" / "story-write.md").read_text(encoding="utf-8")
         self.assertIn("**每张图三件套**", text)
         for old in ("图前一句承接", "图前那一句说清", "逐条复述箭头而没有新信息的那句话删掉", "不是常用推荐",
+                    "图前先把这段过程讲一遍", "附录的材料清单用列表",
                     "数据、配置与事件", "图后逐条讲判断", "一句收束"):
             with self.subTest(old=old):
                 self.assertNotIn(old, text)
 
     def test_the_reviewer_asks_the_three_figure_questions(self) -> None:
         overlay = (self.EXT / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
-        for q in ("图种合不合读者要判断的那件事", "一段是不是讲了几件独立的事", "verdicts.chapter_dimensions"):
+        for q in ("图前是不是说清了读者看这张图要看出什么", "图后是不是用列表补上了图里没表达的条件", "没做同图增强算遗漏",
+                  "图种合不合读者要判断的那件事", "一段是不是讲了几件独立的事", "verdicts.chapter_dimensions"):
             with self.subTest(q=q):
                 self.assertIn(q, overlay)
-        # 图前说明过程、图后列表补条件只在章级维度写一份，判据按合同审、不再复述
-        self.assertTrue(any("图后用列表补图上没讲清的条件、责任与结果" in d for d in CONTRACT["verdicts"]["chapter_dimensions"]))
-        self.assertNotIn("图前是不是把这段过程讲了一遍", overlay)
+        self.assertTrue(any("图前一两句说清读者看这张图要看出什么" in d
+                            for d in CONTRACT["verdicts"]["chapter_dimensions"]))
 
 
 if __name__ == "__main__":

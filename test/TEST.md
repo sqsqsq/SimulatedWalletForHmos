@@ -10,9 +10,12 @@
 | 启动、恢复或驱动真实 Story CLI | §0–§4 完整读；结束后按 §6 评价 |
 | 维护脚本或做离线验证 | §5 及本次涉及的运行分支 |
 | 评估已有测试、比较历史或对照金样 | §4.3 证据、§6 |
+| 制定/修改维护方案、开工核对、实现或版本评审 | 先读§6.5、全量评价标准及本版评价标准变更；按条目取得原件，再核具体实现/运行证据 |
+| 用户级维护 Skill 的 doctor / doctor env / review 接入 | §6.5按调用分流：env仅检查接入；doctor核使用证据并新增报告；效果评审再读§4.3、§6.2—§6.4及金样入口 |
 | 定位 verifier 链路故障 | §5.1；真实 smoke 另按 §5.2 与 §0 的授权边界 |
-| 排查真实稿件与审查结论不符 | 先按 §6.2 还原证据，确需专项诊断再读 §6.3 |
+| 排查真实稿件与审查结论不符 | §6.2 还原证据，§6.3 核审查效果 |
 | 人手试用 `/story` | §1.3 |
+| 决定测试现场、运行记录、维护证据放哪 | §0.4 |
 | 编写或修改 Case | [cases/README.md](cases/README.md) |
 
 命令参数与配置以当前入口及配置文件为准。
@@ -33,6 +36,7 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 这条只管宿主，不写进 Case prompt。宿主自身的权限层拦下某条命令时请用户放行，不改写命令绕开；绕过去的那一跑不算数。
 
 真实 CLI 只在用户启动或明确授权时运行；重复运行与换场景按本轮方案与用户授权安排。
+模型参与的验证（审查是否判对、作者是否做对、收尾是否被执行等）统一在正式 Case 里取得；维护者不另起样本诊断，也不用自己的会话或子代理代跑。
 
 ### 0.3 宿主在实跑期间是需求方 / 评审人
 
@@ -47,6 +51,30 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 
 这是硬规则：说出解法的那一刻，测的就成了宿主知不知道答案。heartbeat 与 `watch` 只负责唤醒观测（§3.5），不另派 Agent 研究或改写被测产物；
 评测在 finalize 之后做，实跑期间不切换成实现维护职责。
+
+### 0.4 东西放在哪
+
+本节是测试现场、回流产物与 `output/` 分工的唯一规则；其它章节与根 AGENTS 只引用这里。
+
+| 位置 | 放什么 | 谁写 | 清理 |
+|---|---|---|---|
+| `%TEMP%/sw-story/<名>/` | 可丢弃的测试现场：每轮 suite 的模板与 Case 工作区、§5 现建的离线模板 | 测试装置 | 每次起跑先清掉其中全部无活动的子目录（§1.2），活动的保留并停下 |
+| `%TEMP%/sw-sys/<名>-<根摘要>/` | 正式 Case 的需求系统副本 | 测试装置 | 随它的 sw-story 工作区一起清 |
+| `doc/features/` | 测试完回流的需求产物，上一轮的先归档到 `doc/features/archive/`（§1.2、§4.5） | finalize / 检查点 | 不入库，按回流规则覆盖与归档 |
+| `output/story/` | **CLI 运行记录**：每轮 suite `story-suite-<时刻>/`（`suite.json`、`cases/<case>/<run>/` 事件流与 `cli-runtime/`、usage 快照、原生会话、回流清单）；不属于 suite 的单次真实 CLI 运行（启动核验、看图冒烟、verifier smoke）一次一目录 `<用途>-<日期>[-序号]/`，属于某轮 suite 的放进那一轮的子目录 | 测试装置；手工跑真实 CLI 时按下面的约定 | **永不清理**：任何脚本都不删；同一轮 finalize 只重写本轮派生的快照 |
+| `output/evidence/` | **维护过程证据**：评审复验、实施交回引用的重放、探针、计量、截图与原件副本；一题一目录 `<版本>-<主题>-<日期>/`，复现它的驱动脚本放该目录 `scripts/` | 维护者 | 不自动清理；方案、评审与交回按路径引用 |
+| `output/scratch/` | **临时**：一次性脚本、pytest 缓存与 basetemp、离线验证的日志与模板装配记录 `verify/<时刻>-<场景>/`、临时工作区 | 维护者、pytest、§5 | 不作证据引用，可以随时删；交回要引用的脚本先复制进 `output/evidence/<题>/scripts/` |
+| `output/cli-tests/` | 中央 runtime 同步来的单测（`test/tools/cli/tests`）的临时根 | runtime 单测 | 可以随时删 |
+
+手工跑真实 CLI 时把运行记录放进 `output/story/`：
+
+- `python -m tools.cli ...`、`tools.cli.scripts.cli_runtime`、`smoke_test` 一律带 `--runtime-root output/story/<用途>-<日期>/cli-runtime`。
+  不带时，中央 runtime 默认写到 `output/cli/`；那里出现运行就是漏带了参数，挪进 `output/story/` 对应目录。
+- verifier smoke（§5.2）的 `--workspace` 与 `--evidence` 给 `output/story/<用途>-<日期>/` 下的路径：
+  这个入口把 runtime 记录写进这个目录（`.smoke-cli/`）。
+
+`output/` 整体不入库。2026-10-21 按本节做过一次迁移：维护证据从 `output/story/` 迁到 `output/evidence/`，文档引用已按新路径改写。
+旧路径与新路径的对照在 `output/evidence/MIGRATION-20261021.json`。
 
 ## 1. 准备
 
@@ -66,17 +94,18 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
    请求实际用的 model 与 config 路径、生效的输入 / 上下文 / 输出上限、上下文压缩怎样触发、服务计量约束，只记非秘密字段；
    查不清的项照实标未知，上一轮出过输入超限而它仍未知时不起跑，报容量风险未核。
 1. 创建本轮 `output/story/<suite-id>/` 控制目录。
-2. 扫描并关联 `%TEMP%/sw-story/*` 与 `output/story/*` 中的历史 suite。
-3. 整体预检终态、PID、lease、路径边界、软链接和所有权。
-4. 全部安全后删除历史 workspace/output，写入 `previous-run-cleanup.json`。个别目录删除失败时逐个记录 `retained_cleanup_warning`
-   与残留路径，下一轮重试，本轮照常继续。
+2. 枚举本机临时根 `%TEMP%/sw-story/` 下的全部旧现场（旧 Case 工作区、离线模板，不论名字）；`output/story/<名>/suite.json` 在的按它核终态。
+3. 整体预检终态、PID、lease、路径边界与链接；没有 suite.json 的核进程清单里没有引用它的命令。
+4. 全部安全后删除这些临时现场，以及由同一工作区根算出的需求系统副本（`sw-sys/<名>-<根摘要>`），写入 `previous-run-cleanup.json`；`output/` 一概不碰（§0.4）。删除与剩余枚举走 Windows 长路径前缀（深层报告路径常超过
+   260 字符），归属、进程与证据仍按原始路径。个别目录删除失败时逐个记录 `retained_cleanup_warning` 与残留路径，其它可删的照删，
+   下一轮重试，本轮照常继续。
 5. 将维护仓 `doc/features/` 下的需求目录（上一轮回流的需求产物）归档到 `doc/features/archive/Story-Features-<时间戳>/`，本轮结束不恢复；
    `archive` 自身不搬，意外出现的文件留在原处并记入 `feature-migration.json`。`archive` 是保留名，需求编号与它同名的 Case 在读取时即被拒绝。
    单个 Case 新链起跑时，工作区里同名的旧产物存进该次运行输出目录的 `feature-history/`。
 6. 创建模板及各 Case workspace，再顺序启动 CLI。
 
-活动 PID、有效 lease、路径越界、软链接风险、未知目录类型、所有权不明或无法可靠枚举进程时，保留现场并在第 5 步之前停止。
-非 suite 的长期目录不自动清理。
+活动 PID、有效 lease、路径越界、链接风险或无法可靠枚举进程时，保留现场并在第 5 步之前停止。
+`sw-story/` 只放可丢弃的临时现场，要长期保留的东西不放在那里。
 
 模板按固定顺序装配：核 demo（结构、没有 `doc/features`、git 干净、记下提交）→ 复制 demo（排除 `doc/features`、Framework 活动状态、
 `oh_modules`、`build`、`.hvigor`、`__pycache__` 等运行态，业务模块自己的单测目录照常带上）→ 换上被测 Framework：按
@@ -87,6 +116,13 @@ CLI 测试一律以非沙箱启动（用户长期授权，每轮不必重新征�
 不成立，模板作废、不建 Case、不起跑，修好后重新装配。demo 平时保持其已接入的 Framework；被测组合只存在于模板。各 Case 工作区从模板复制，
 再放入该 Case 的输入；启动前检查路径边界与软链接，并在 `workspace-boundary.json` 记录 demo 提交、被测 Framework（发布提交、树 OID、版本与
 source_commit、补丁及其摘要、物化清单、子代理产物摘要）、`copied`、`excluded`、安装结果和各 Case 的 `case_seeded`。
+每次启动 Case 前，按这次选中的 CLI 用 Framework 的 `check-personal-setup --ensure --select-adapter <CLI 名>` 写好这个隔离工程的
+个人 adapter（只在 CLI 与已物化的同名 adapter 对得上时写，DevEco 等本地配置保留；对不上记 `unmapped` 不猜），结果记在 `adapter_seed`，
+被测模型不再为个人设置停下来问。随后在 Case 根 `git init` 并按工程自己的忽略规则提交一次起跑基线，`rev-parse --show-toplevel` 必须
+正好是这个 Case 根，被测工程不再继承外层目录所在的仓（临时目录可能落在用户配置仓里）；提交只用本次命令的测试身份，不配 remote。
+根、初始 HEAD、外层原本会认的仓根和被忽略的关键文件记在 `git_boundary`（`doc/features/` 被工程规则忽略，Case 输入如实列为未跟踪）。
+这个 HEAD 只代表隔离基线，维护源身份仍是 demo 提交与 Extension 指纹。续跑只核现存身份不重新提交；建不起来就不起跑。
+边界检查只放行这个根 `.git` 目录，其它位置的 `.git` 以及根下的 `.git` 文件或链接照拒。
 
 ### 1.3 人手试用
 
@@ -104,7 +140,7 @@ cd "<回执里的 trial_root>"                                         # 在副�
 
 ## 2. 起跑
 
-正式测试统一使用 `scripts/run_multi_case.py`，只跑一个 Case 也一样，不直接运行 `run_case.py`。以下都在非沙箱环境执行（§0.2）：
+正式测试统一使用 `test/scripts/run_multi_case.py`，只跑一个 Case 也一样，不直接运行 `run_case.py`。以下都在非沙箱环境执行（§0.2）：
 
 ```powershell
 python test/scripts/run_multi_case.py plan --all --jobs <实际Case数>
@@ -114,7 +150,7 @@ python test/scripts/run_multi_case.py poll --suite-id story-suite-20260822-14000
 ```
 
 `plan` 只读确认选中的 Case、feature、目标阶段；`start` 起跑并返回 `next_action=poll_after_interval`、`next_interval_sec=15`。宿主随即创建绑定
-suite-id 的 heartbeat（§3.5），启动回合可以结束，之后由定时唤醒驱动。`status` 只做只读诊断：不消费事件、不回复、不计观测，不能替代 `poll`。
+suite-id 的 heartbeat（§3.5），启动回合可以结束，之后由定时唤醒驱动。`status` 只做只读诊断：不消费事件、不回复、不计观测，不能替代 `poll`；它的 `runs` 给出每个 Case 当前运行目录，以及每一轮 CLI 会话的回合、runtime 目录、session 与状态（由 `live.jsonl` 的 `cli_run_started` 对上 `cli-runtime/<id>/run.json`，对不上如实标出）。不给 `--suite-id` 时套件名是 `story-suite-YYYYMMDD-HHMMSS`，同秒已有就加两位递增后缀。
 
 Case 严格顺序启动：前一个取得有效 run-id、worker/lease 和活动状态后才启动下一个，启动后的 worker 并行运行。启动失败时检查活动指针、run、
 worker、lease、workspace 和原始输出，最多恢复重试 3 次；仍失败则保留完整事实并继续启动其余 Case。启动重试与租约判的是进程起没起来、
@@ -133,6 +169,10 @@ CLI 宿主按 `config/test.yaml > cli.configurations` 的顺序选，配置条�
 「干净基线」同时重建该 Case 的隔离 workspace、需求系统快照、补料投放状态、交互规划游标和阶段观测游标；失败 attempt 的 artifact、事件、
 原始输出与记录保留在本 suite。重跑是原 suite 内的单 Case attempt，回到相同业务起点后仍等宿主逐关回复。`poll` 快照展示 attempt、
 `cli_config_id`、`failure_kind` 与配置健康状态，宿主不用手工执行重跑。
+
+配置组里有 dsh 时，`start` 在 suite 根写一份 `cli-registry.json`：只含 dsh 一项，启动与续跑都在 `--profile` 后插入
+`--patch {cwd}/.dsh/framework-verifier.patch.yml`，各 Case 的 cwd 仍是自己的工程，其余宿主照用中央 `tools/cli/config/clis.json`。
+这层配置由被测 Framework（固定发布树 + `test/fixtures/framework-local/` 补丁）的原生 UPDATE 物化进工作区模板，不在 demo；模板里没有它时 `start` 在装配后、任何 Case 起跑前停下。
 
 ## 3. 观察与回复
 
@@ -164,19 +204,22 @@ CLI 宿主按 `config/test.yaml > cli.configurations` 的顺序选，配置条�
    |---|---|---|
    | `planned` | 模型问到了规划里候选条目对应的事，`phase_ready` 为真 | 把立场用自己的话说出来；`--step <id>` 指名这次实际回答了哪几条，一个合并的问题可重复给多个 `--step`，未问到的条目不带 |
    | `answered` | 规划之外、需求方答得上的问题（范围、优先级、口径）；framework 的术语确认与视觉 provider 询问、模型自开 update 时问补料也属这类 | 一句需求方立场，不捎带规划里别的立场；不带 `--step` |
-   | `neutral` | 模型没有提问，只是在推进，装置照例叫了宿主 | 一句不含事实的推进（「继续」）；不替它确认材料、范围、口径，也不重放上一条的编号；不带 `--step` |
+   | `neutral` | 模型没有提问，只是在推进，装置照例叫了宿主 | 一句不含事实的推进（「继续」）；不替它确认材料、范围、口径，也不重放上一条的编号。同一件事连续没有进展时不刷「继续」，报用户定；不带 `--step` |
    | `improvised` | 以上都不是 | 尽量不用；它会污染观测，原话要进交付报告 |
 
 3. 同一回合立即再 `poll` 确认消费。
 
-**怎么说**：需求方是在拍板，一次回话不超过一句。
+**怎么说**：需求方是在拍板，只答模型实际问到的业务问题，话说短。
 
-- 模型给了编号选项：整个选项与需求方的既定立场等价时只回编号（「1」「A」），几组选项按组号逐组写（「T1 1，T2 2」）。
-  选项夹带了立场里没有的结论、或没有等价选项时，不选编号，用一句业务话把决定限定到立场本身（如立场是「失败后怎么处理待定」，
-  就不批准一个同时写着「可直接重走验证」的选项）。术语确认只确认需求方能确认的业务含义，工程模块怎么对应归工程事实。
+- 模型给了编号选项：整个选项与需求方的既定立场等价时只回编号（「1」「A」）。选项夹带了立场里没有的结论、或没有等价选项时，不选编号，用一句业务话把决定限定到立场本身（如立场是「失败后怎么处理待定」，就不批准一个同时写着「可直接重走验证」的选项）。术语确认只确认需求方能确认的业务含义，工程模块怎么对应归工程事实。
+- 一次问了几件：同一次回话逐项具名答，带上议题与结果（「T1 加更新接口；T2 保持待定」），可以带编号但不裸回几组编号；没被问到的立场不预送。
+- 已经有效答过的问题被再问：指回已有的决定并继续，记成额外确认，不当成新的批准；没有依据的真实选择交用户或保持未决。
 - 材料关卡：模型第一次停在材料关卡，就把该 Case `supplements/` 里 `on_request` 的补料全部 `--deliver` 进收件箱，再只回表示「已放入」的编号；
   之后再问，回表示「材料就这些」的编号。人手上的材料一次交齐，不按模型点名挑着给，也不描述文件里有什么。
 - 规划外的问题：一句立场，不点命令、文件、字段、关卡名，不复述它已说过的。
+- 同图增强是产品自己的工作：不回「补不补」「补上吧」替它决定；做不完、读不出是产品或装置的事实，如实记录，诊断性的救场要有用户授权并记 `improvised`。
+- 业务终点之后的推进（例如方案做完问要不要编码）：明确「本轮停在方案，不进入编码」，同一条消息里的其他问题照常逐项答。
+- 本地阅读状态读不出是技术故障：装置在停等里自己重探，恢复了直接往下走，宿主不用回「收到」；读得出而没做完时才交宿主。
 
 `awaiting_reply` 在它出现的那次唤醒内回复完：`model_prompt` 就是原话，`case_inputs_hint` 是本 Case 的公开输入清单，当轮即可作答；推到下一个周期
 按协调失误记入观测记录，延迟在观测与成本报告里如实写明。宿主只读本 Case 的公开输入，不读其他 Case、历史答案或提示遗漏项。意外行为与关键词只记录和理解；`stop` 与 `retry` 只响应用户
@@ -231,6 +274,11 @@ python test/scripts/run_multi_case.py watch --suite-id story-suite-20260822-1400
 `watch` 不回话、不判断：宿主读结果按 §3.2 作答，答完再起一次。`watch` 没打印原因就结束了（后台任务被回收、终端被关）时直接恢复：
 先零等待 poll，有要回的回完，再以 `--interval 60` 重起，并在给用户的回复里用一句话说明。
 
+Claude Code 在系统内存紧张时会回收空闲的后台任务，并提示「不要自行重启、等用户要求」。**用户已长期授权（2026-10-24）：
+CLI 测试的后台 `watch` 因内存被回收时，宿主直接按上一段恢复，不再逐次征求同意。** 授权只覆盖重起这一个敲门器：
+不重启被测 Case、不 `retry`/`stop`、不改配置；回收后先零等待 poll 补回漏掉的回话，再重起，并在回复里说明是内存回收后的重启。
+同一 suite 反复被回收、或 poll 本身失败时停下报告用户。
+
 ## 4. 收工与回流
 
 ### 4.1 终点：`case.yaml` 的 `end_at`
@@ -251,6 +299,12 @@ Case 里必须写明 `local` 或 `submitted`，命令行的 `story` 简写取 `l
 `end_at` 决定驱动器的推进目标、跑哪几个 gate（需求交付门，加每个施工单位每个负责阶段的 `harness_<阶段>@<施工单位>`）。
 终点到了装置自己停；没到而宿主判断本轮已到位时用 `conclude`（§4.2），逐 Case 生效。
 
+交互 Case（`interactive: true`）目标闭环后不立即终止，停在第一检查点（`awaiting_kind: initial_checkpoint`），模型最后那一问在 `pending_question`：
+它是本段的交付选择（系统单交付门的交付选择，如送审）时，按该 Case 公开任务与 `interaction-script.yaml` 的立场 `reply`，模型做完被授权的动作
+后再停一次；本段没有待办或已做完，按 §4.2 `conclude`，终态 `finished`。是否归档只看公开任务、交互规划与真实人答，系统单不因到了 spec 就算授权上传；
+用户仍在选择时不提前收工为已送审。没配 `after_initial: update` 的 Case 在这里没有第二段，`resume-update` 被拒、不投 update 输入；配了的按 §4.4。
+到目标却没拿到 session 时本段续不了，终态 `cli_session_lost`，不报完成、不另起 run。
+
 ### 4.2 何时 `conclude`
 
 装置只报事实，收不收工由宿主判定。每次 poll 的 Case 条目里有 `closure`：
@@ -265,7 +319,7 @@ Case 里必须写明 `local` 或 `submitted`，命令行的 `story` 简写取 `l
 
 | 看到 | 做什么 |
 |---|---|
-| `target_closed = true` | 装置自己停，不用 conclude |
+| `target_closed = true` | 自动 Case 装置自己停；交互 Case 停在第一检查点，按 §4.1 答完本段交付选择或无待办后 conclude |
 | `target_closed = false`，模型宣告本轮已完成，且 `target_missing` 只剩宿主已判为不属本轮的项 | 判定本轮到位 → `conclude` |
 | `target_closed = false`，`target_missing` 还差凭证、模型也没宣告 | 按需求方身份继续回话 |
 | 拿不准 | 再 poll 一轮 |
@@ -305,6 +359,10 @@ python test/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-1
 | 检查器给出不通过结论 | `gate_failed` | 1 | 被测对象的账 |
 | 进程真的不在了 | `worker_lost` | — | 进程丢失 |
 
+story 门禁按产品的阶段顺序跑：先派发 `pre_phase` 的视图钩子把 story 放回正式形态（Mermaid 按源、阅读槽置空），再跑 spec 门禁——
+本地阅读图展开时直接读，会读到与登记不同的那一份。`gate_diagnostics.json` 里四种情形分开记：没到达的阶段 `skipped`、检查没跑成 `not_run`、
+已闭环只读复核 `pass`（`source: existing_summary`）、harness 自己的结论；完整输出在对应的 `gate_*.log`。
+
 **本域不设时限与轮次上限**：`soft_timeout` / `hard_timeout` / `phase_hard_timeout` / `max_turns` / `reply_wait_sec` 写进配置会被
 `run_case.py` 启动即拒绝。worker 停在 `awaiting_reply` 会一直等，每 5 分钟发一条 `awaiting_reply_stale` 事件、Case 条目带 `waited_sec`，
 出口只有宿主回话或 `conclude`。出现 `timed_out` 说明有人把时限重新引进来了。
@@ -315,6 +373,7 @@ python test/scripts/run_multi_case.py conclude --suite-id story-suite-20260822-1
 ```text
 output/story/<suite-id>/
 ├─ suite.json
+├─ cli-registry.json            # 配置组有 dsh 时才有（§2.1）
 ├─ previous-run-cleanup.json
 ├─ feature-migration.json
 ├─ workspace-boundary.json
@@ -333,6 +392,9 @@ output/story/<suite-id>/
       ├─ gate_*.log
       ├─ gate_diagnostics.json
       ├─ phase-results/
+      ├─ cli-runtime/<runtime-id>/{request.json,run.json,raw.jsonl,events.jsonl}
+      ├─ usage/<point>/usage.json   # 该运行工作区全局 doc/usage.json 的原字节快照，point 为 initial / update / final
+      ├─ native-sessions/<session-id>/  # finalize 时按 run.json 的 dsh session_id 复制的原生会话原件与子会话（manifest.json 记来源与摘要）
       └─ artifact/
 ```
 
@@ -346,14 +408,15 @@ output/story/<suite-id>/
 
 | 步 | 动作 | 为什么在这一步 |
 |---|---|---|
-| 1 | Case 自己停在第一检查点（`awaiting_kind: initial_checkpoint`），模型最后那一问在 `question` 与 `pending_question` 里；等待期间 `reply` 一律被拒 | 到目标就终止只能另起 run，那是重启新会话冒充续行 |
+| 1 | Case 自己停在第一检查点（`awaiting_kind: initial_checkpoint`），模型最后那一问在 `question` 与 `pending_question` 里 | 到目标就终止只能另起 run，那是重启新会话冒充续行 |
+| 1a | 那一问是第一段里的业务动作（系统单交付门的交付选择，如送审）时，按 `interaction-script.yaml` 的立场用 `reply` 回答；模型在第一段里把它做完（归档以核心 archive 的回执、读回与本地登记为准）后再停到第一检查点。已固定的快照随之作废留证（`initial.superseded-*`），从第 2 步重来 | 归档是第一段的终点动作，和第二段的投料不合成一轮；本地单没有归档，不为凑覆盖调对接层 |
 | 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；需求目录、关联蓝图与需求目录外的 Story 审查报告同一刻固定，复制前后目录摘要不同则快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段 |
 | 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`；不先回流，第一段产物就只剩快照 |
-| 5 | `resume-update --case <id>`（投 case.yaml 的 `update_request`，与第一段的 `prompt` 同一条路）；Case 有 `review_human_zone` 时加 `--review-feedback-file <本次反馈文件>` | 只投第二段请求；交付选择在第一段的关卡上已经答过，终点真正到了才停在检查点，这里不替模型答别的。`update_inputs` 在这一步按下表投放，`--deliver` 只投 `supplements/` 里的补料；全部输入写前核完，一项不成立就一项不写、不发请求 |
+| 5 | `resume-update --case <id>`（投 case.yaml 的 `update_request`，与第一段的 `prompt` 同一条路）；Case 有 `review_human_zone` 时加 `--review-feedback-file <本次反馈文件>` | 只投第二段请求；第一段回流之后 `reply` 被拒，不再在第一段里继续。`update_inputs` 在这一步按下表投放，`--deliver` 只投 `supplements/` 里的补料；全部输入写前核完，一项不成立就一项不写、不发请求 |
 | 6 | 第二段起手在材料关卡停一次，按该 Case `interaction-script.yaml` 的 `update-material` 作答；之后 Case 停在第二检查点（`stop_reason: update_checkpoint`） | 终点以流程契约里这一轮 update 关闭为准，模型说「更新完成」不算 |
 | 7 | `checkpoint --point update` → 只读后评 → `conclude` | story 门禁已在进第二检查点前跑过；第二检查点的唯一出口是 conclude，不发的话 worker 一直等，最后只能被外部停掉、终态成 `worker_lost` |
-| 8 | 全部终态后 `finalize --promote` | 第二段真跑过时终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；第一段没到终点就收尾的，终态用原编号 |
+| 8 | 全部终态后 `finalize --promote` | 实际续跑过第二段，终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；只跑了第一段则回原编号，`promotion-manifest.json` 的 `segment` / `partial` 说明是哪一段、走没走到检查点 |
 
 | `update_inputs` 的 `kind` | 投到哪 | 模拟的是 |
 |---|---|---|
@@ -386,18 +449,18 @@ python test/scripts/run_multi_case.py finalize `
   --suite-id story-suite-20260822-140000 --promote
 ```
 
-- Case 已终态且 workspace 存在就回灌；成功或失败 Case 的 `doc/features/<feature>` 都独立复制到维护仓 `doc/features/`（双检查点单的终态
-  另名 `<feature>-update`），目标已存在时仅内容完全相同视为已回灌，否则保留双方并记录冲突。
+- Case 已终态且 workspace 存在就回灌；成功或失败 Case 的 `doc/features/<feature>` 都独立复制到维护仓 `doc/features/`（实际续跑过第二段的
+  终态另名 `<feature>-update`，回流身份按实际走到的段落定，不按计划的 `after_initial` 推断），目标已存在时仅内容完全相同视为已回灌，否则保留双方并记录冲突。检查点与 finalize 各把工作区全局 `doc/usage.json` 原字节留到该运行的 `usage/<point>/`，缺失记 missing、已固定的不覆盖。finalize 还把 dsh 原生会话原件（父会话按记录的 session_id，子会话按父会话登记的 childId）复制到 `native-sessions/`。缺失、多候选、复制失败记在 manifest 的 `not_captured`，解不出、头部 id/cwd 或 parentSession 不符记在该会话的 `problems`（父会话头部不符时不采它登记的子会话），任一项都让 `status` 为 `incomplete`：拷到文件不等于取得本次可信原件，已复制的原字节照留；dsh 的 JSON 流会截断长字符串，事件里的 `source_truncated` 标出哪些记录不完整，原样核对以会话原件为准。
 - 受控源码差异逐文件回灌 demo，做三方检查：目标仍等于 suite 基线时写入，已等于该 Case 结果时记幂等完成，同时不同于两者时记冲突；
   删除只记录不执行；不因同批其他 Case 已写入源码而跳过。
 - 每个 Case 生成不可变的 `observations.jsonl` 与汇总 `observation-record.md`：启动与恢复、阶段和状态变化、观测、交互、CLI/gate/基础设施错误、
   回灌结果和保留路径。
-- `finalize --cleanup` 已停用并明确报错；本轮 workspace 与 suite output 保留到下一轮起跑时清理。
+- `finalize --cleanup` 已停用并明确报错；本轮 workspace 保留到下一轮起跑时清理，suite 的运行记录留在 `output/story/`，永不清理（§0.4）。
 - finalize 前确认 demo 的阶段状态文件不存在或不属于本次 feature；否则宿主会话的 hook 会把报告写进回灌后的产物。
 
 ## 5. 离线验证
 
-离线验证用 `test/scripts/verify.py`，从仓根执行，只选场景。并行参数、模板装配与先后顺序都写在脚本里，不手拼 pytest 或检查命令：
+离线验证用 `test/scripts/verify.py`，从仓根执行，只选场景。并行参数（`-n auto --dist loadscope`）、模板装配与先后顺序都写在脚本里，不手拼 pytest 或检查命令：
 
 | 场景 | 命令 | 什么时候跑 |
 |---|---|---|
@@ -406,6 +469,7 @@ python test/scripts/run_multi_case.py finalize `
 | 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4；各条形态按进程并行，结果按台账顺序输出 |
 | 交回 | `python test/scripts/verify.py handback` | 交回前一次：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑 |
 | Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
+| 装配专项 | `python test/scripts/verify.py assembly` | 第二次从空目录经同一入口重建工作区模板，身份核对与第一次相同。`test/config/framework-under-test.json`、`test/fixtures/framework-local/` 补丁或 `create_workspace_template` 装配代码相对上次专项证据有变时必跑，交回引用该次 `output/verify/<时刻>-assembly/`；没变时复用上次证据并写明被测 Framework 与补丁的身份。全量只保留一次当前装配与协议核对，不选这一类 |
 
 每步的完整输出写到 `output/verify/<时刻>-<场景>/<步骤>.log`，控制台按完成先后打印每步的结论行与耗时，多步时最后按固定顺序汇总；有一步失败退出码非 0。
 同时跑的前提是各步只写自己的位置：每次现建自己的模板，测试与失效形态各用自己的临时目录，跨进程共享的重夹具（`tests/shared_state.py`）有锁、造好再改名。
@@ -416,19 +480,22 @@ python test/scripts/run_multi_case.py finalize `
 
 - 按影响范围分层跑：改一处用 `affected`；全量与失效形态回归只在提交或交回前跑一次（`handback` 同时跑完）；无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明。这些命令不启动真实被测 CLI。
-- pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录。
+- 运行证据的位置由 `test_run_measurement.py::ProcessArtifactsEnterTheIndex` 核：`doc/spec`、`doc/plan` 下的截图、日志、事件流、压缩包按运行证据报：CLI 运行记录放 `output/story/`，维护过程证据放 `output/evidence/`（§0.4）。两类图是评价参照而不是运行证据：待审定金样候选里被该 Case story 引用的 `ux-reference` 图；已确认的分析归档 `doc/spec/1.9.9/04-稳定性与性能分析/data/golden/`（性质由其 MANIFEST 声明）里被所属对象 story 图片或 spec Visual Handoff 实际引用的 PNG。归档里未引用、映射到别的对象、缺 MANIFEST 的图与其它后缀照常报，断开的引用逐条报出。
+- pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录（§0.4）。
 - 串行只在排障时用，且只串行跑那一条：`python -m unittest discover test/tests`。测试隔离与慢用例的编写纪律见 [tests/README.md](tests/README.md)。
 
-### 5.1 verifier 通道（OpenCode）
+### 5.1 verifier 通道（OpenCode / dsh）
 
-opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`，报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
+opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的只读工具实例，
+启动时经 `--patch` 装载（§2.1）。作者读到的调用指引统一指向宿主登记的专用 verifier 角色，通用研究/开发子 agent 不顶替（[维护操作§2](../doc/release/维护操作.md#2-framework-本地定制)）。
+报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
 
 ```powershell
 python -m unittest discover -s test/tests -p "test_verifier_chain_in_workspace.py"
 npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓根>\demo\framework   # 在 demo/framework/harness 下跑
 ```
 
-第一条核工作区带没带上子代理定义与作者入口、定义是不是当前协议；第二条用 `demo/framework/harness/node_modules/ts-node`。
+第一条核工作区带没带上子代理定义与作者入口、定义是不是当前协议、调用指引是否都指向专用角色；第二条用 `demo/framework/harness/node_modules/ts-node`。
 
 ### 5.2 verifier smoke（真实 CLI，独立于 Story）
 
@@ -436,10 +503,10 @@ npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓�
 不挂 Extension，`build` 调真正的 init 物化 `.opencode/`：
 
 ```powershell
-python test/verifier-smoke/run_smoke.py build  --workspace <隔离目录> --force
-python test/verifier-smoke/run_smoke.py run    --workspace <隔离目录> `
-  --cli-config <config/test.yaml 里的配置 id> --evidence <隔离目录>\smoke-evidence.json
-python test/verifier-smoke/run_smoke.py verify  --workspace <隔离目录>
+python test/verifier-smoke/run_smoke.py build  --workspace output/story/verifier-smoke-<日期>/workspace --force
+python test/verifier-smoke/run_smoke.py run    --workspace output/story/verifier-smoke-<日期>/workspace `
+  --cli-config <config/test.yaml 里的配置 id> --evidence output/story/verifier-smoke-<日期>/smoke-evidence.json
+python test/verifier-smoke/run_smoke.py verify  --workspace output/story/verifier-smoke-<日期>/workspace
 python -m unittest discover -s test/tests -p "test_verifier_smoke.py"   # 离线判据，不启动 CLI
 ```
 
@@ -511,21 +578,19 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 | 5 | spec 阶段上下文增量 | ≤ 150K |
 | 6 | verifier 扩展注入 | ≤ 15KB/阶段 |
 
-`segments` 按段给出（双检查点单分 `initial` / `update`，普通单一段 `whole`）：`duration_min`、`model_gap_sec`、`tool_gap_sec`、
-`task_runs_inferred`、`task_gap_sec_inferred`、`first_gate`、`first_story_register`、`gate_rounds_with_fail`、`gate_rounds_unknown`、
-`rework_min`、`rework_open`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
+`segments` 按段给出（双检查点单分 `initial` / `update`，普通单一段 `whole`）：`duration_min`、`model_gap_sec`、`tool_gap_sec`、`verifier_runs`、
+`verifier_gap_sec`、`delegations_unresolved`、`first_harness`、`first_story_register`、`rework_min`；等人时间只有全程数 `human_wait_sec`。各项读数口径见 `measure_run.py` 文件头。
 
-- **门禁**：harness-runner 与 Story 的 `story-build check`、`review --action check`、`story_flow.py story`，只认实际执行的
-  （脚本名前只有解释器；`cat` 这类读取源码不算），参数顺序不论。结论只在输出能可靠归给这一次门禁时才给：只执行一个门禁，
-  前面只有切目录、设变量这类不出输出的步骤，后面只经管道接截取它输出的过滤（tail、head、grep、sed 等），输出里的结论不矛盾。
-  这时算一轮，结果只读输出里的结构化结论，读不到记未知（`gate_rounds_unknown`），不当成零失败。其余组合（多个门禁、
-  门禁前后还有别的命令出输出、结论矛盾）按调用单列在 `gate_calls_unattributed`（带候选与原因），不算任何对象的通过或失败，
-  由维护者看原始记录核定。返工按同一动作、同一对象从失败算到下一次通过，
-  没修好的列在 `rework_open`；归属不了的调用不开始也不结束返工。全程与分段用同一份计算，轮次与调用计数可相加，
-  返工时长按段各自计算。
-- **子任务**：`tasks` 逐次列出说明、子代理类型、引用的文件与时间间隔。角色只按引用的任务文件（Story 审查任务、蓝图质询目录）或子代理类型
-  **推断**，没有依据或依据冲突记 `unknown`；独立作者、格式修正等正式角色与成本，由维护者对照真实派遣在后评里核定。
-- 耗时都是事件间隔归属的近似值，不是实测执行时长。
+计数按调用：同一 run 里同一调用编号的开始与结果事件归并成一次，名称与入参取开始，输出与终态取结果。
+- shell 工具认 bash / pwsh / shell / shell_command。
+- verifier 只认专用 `verifier` 工具与 `subagent_type=verifier` 的 task；其它委派记进 `delegations_unresolved`，是不是审查由人判断。
+- 首次门禁、登记与返工只看有结果的调用，命令报错也算没过；读一份旧门禁报告不是一轮门禁。
+- 归并不了或被宿主输出截断的条目（只有开始、只有结果、同键冲突、跨检查点、`source_truncated`）列在 `incomplete_tool_events`，此时计数只是已观察到的次数；被截断的门禁结果不出结论。
+- 门禁结论另按种类给全程数：`gate_fail_by_kind`、`gate_unknown_by_kind`（harness / story_register 分计，没结果、冲突或截断记判不了）；`gate_rounds_with_fail` 只数原生 harness，不能用它为 0 概括本轮没有 FAIL。
+- `context_growth` 是首末两次请求的 context_total 读数之差，不是单阶段净上下文。
+- `*_gap_sec` 仍是事件间隔估计；并发调用相互重叠，不能相加成墙钟。
+
+旧运行要按新口径看，在评审证据目录另存重投影与重测结果，不改原运行记录。
 
 第 3 项是调查信号：记录作者为何读 checker、读后做了什么，与产物、性能、Knowledge 应用及跨 Case 重复情况一起判断（AGENTS §1）。
 
@@ -542,21 +607,17 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 | 内容正确 | 原始义务、已确认决策与成品对照 | 门禁绿、来源 ID 齐、与模板一致 |
 | 审查有效 | 实际缺陷与报告发现对应，对象版本一致 | 报告结构 PASS、来源列表 |
 
-先找最早偏离点，再区分输入/职责错误、执行偏离、语义判断、机械误判和外部故障；报告分别写观察事实、解释假设与待验证项。
+先判结果缺陷，再找最早偏离点；归因方法按用户级维护review，报告区分机制缺失/错误或未送达、实现偏离、输入/装置/环境故障、合法变体、支持模型波动的证据及原因未知。机制存在或一次成功不证明此次送达，模型波动也不使错误产物变正确。
 
-### 6.3 审查故障诊断
+历史反复差距关联原报告及原件，核版本、输入、人答、宿主/模型、干预和终点的可比性，说明影响、已核事实、未排除解释及下一责任。不可比或证据缺失保留未知，不按少量样本计算稳定概率；反复影响目标须报告可靠性差距，不能长期用不确定性豁免。
 
-只在真实产物与审查结论明显不符、且 §6.2 不足以定位原因时使用；调用模型的步骤须用户授权。先保留原稿，在独立临时副本上复现具体问题：
+风险接续写当前评审和获准测试安排：要覆盖的差距/合法变体、既有独审与恢复是否有效、需观察的复现/纠正/最终影响/成本，以及继续观察、关闭风险或转机制整改的证据条件。未覆盖风险保留，不自动追加轮数或重跑到绿，不向Case注入金样答案。机制调整须有缺口或合理收益证据，按职责比较最小修法；运行结果和发布/评分仍按各自权限。
 
-```powershell
-python test/scripts/make_narrative_variants.py --list
-python test/scripts/make_narrative_variants.py --out <独立临时目录>
-```
+### 6.3 审查效果从正式运行取证
 
-审查走现行 Story 审查链：把变体放进独立副本的需求目录，`story-build review --action prepare` 生成派审载体，
-`dispatch_text` 原样交隔离审查者（调用模型，须本次诊断授权），回复落到载体给的位置后 `review --action check`。
-变体与预期以当前 index 为准，拿报告的「发现」对照变体注入的缺陷；保留输入改动、配置、派审载体、原始回复与发现位置。
-结果只说明这次诊断现象，正式效果仍按 §6.4 评价。
+审查判没判对，只从正式 Case 取证：按原生事件核实际调用的工具与子会话、请求对象和原报告（§4.3），再对照产物与原件逐处核——
+真实问题有没有点中、合法写法有没有被拒、错误建议有没有被采纳扩散。作者这次没写错的地方，看不出审查能否拦住，如实记未覆盖，
+不另造样本补测。
 
 ### 6.4 Story init 三轴评分
 
@@ -572,6 +633,8 @@ python test/scripts/make_narrative_variants.py --out <独立临时目录>
 
 三项各 100 分，不加权、不互相补偿：`90–100` 达到目标；`70–89` 未达目标，记录主要缺口继续优化；`<70` 本次测试失败，回对应所有者定位。
 代表性测试三项均达到 90 且经用户确认，才能宣布达到评分目标；已结束轮次保持其用户裁定。
+
+2026-10-23用户确认：性能先消除已证无效循环，不为半小时继续扩机制。未达到性能期望仍如实评分；用户可接受剩余耗时作为版本限制，发布决定与“已达评分目标”分别记录，不因此改写旧分或自动判高分。
 
 #### 评分锚
 
@@ -597,13 +660,18 @@ python test/scripts/make_narrative_variants.py --out <独立临时目录>
 少量重复通过不等于高成功率，同时看最差一轮与关键缺陷。
 每轮并列记录目标变化、非重点能力变化、成本变化与证据缺口，重点核「优化 A 是否损害 B」。历史检索先查 output 中的 artifact 与保留记录，
 再查 `doc/features/archive/` 的归档批次；维护仓 `doc/features` 下的需求目录只是最近一次回流，找不到的证据标不可比。被长期评价引用的材料要有明确保留位置，
-下一轮起跑会清理的 suite 目录不能当档案。
+下一轮起跑会清理的 `sw-story/` 工作区不能当档案；运行记录看 `output/story/`，维护证据看 `output/evidence/`（§0.4）。
 
 #### 金样
 
 金样入口为 [golden/README.md](golden/README.md)。使用前核用户认可的用途、版本与尚未确定的业务口径，区分效果对照与已冻结业务结论；
-金样只定义期望结果，确定性机制由专项夹具验证。对比金样看需求是否完整准确、关系是否清楚、形式是否适合、责任与交付是否可判断，不要求同名小节、同字数或同句式；
+金样不作判据的机器否决锚，判据对错按真实依据与中性正反例判。对比金样看需求是否完整准确、关系是否清楚、形式是否适合、责任与交付是否可判断，不要求同名小节、同字数或同句式；
 正文里有依据的新增解释不因模板没列而判错。金样与维护分析留在评价域，不进入被测 Case。
+2026-10-23用户确认：每次评测必须以金样为目标并排核图、表/文字、形态、内容、叙述逻辑、条件/异常、知识及成本；不要求完全相同。每项差距给出金样效果、实际位置、输入与人答差异、作者得到的信息和决定、独审反应、最终结果，判断合理变体、模型波动、机制缺陷、装置问题或证据不足。机制归因须有实际生产/消费位置，不把未覆盖当失败、不将所有差距归随机性、不用金样额外前提代替授权。
+
+测试探针仅用于检验所声明的能力，不是产品规则：不要求模型问完交互脚本中所有备选问题，不要求固定议题标题/D号、图数或金样额外方案。Review未处理不自动构成失败；只核当前工作是否因真实缺依据而需要确认。意见未投放与产品漏处理分开，前者列未覆盖并回测试装置，不追加通用审批或范围外实跑。
+
+当前正本是 `golden/auto-topup/`（止于 Spec）与 `golden/car-key-sharing/`（止于 Plan），只在这一处维护；文件身份、引用与图源由 `test_golden_sample.py` 核，第二份副本由 `test_run_measurement.py` 核。
 
 ### 6.5 维护标准与评审
 
@@ -613,7 +681,7 @@ python test/scripts/make_narrative_variants.py --out <独立临时目录>
 
 `maintenance-designer review` 按下方对象分流取得材料，不缩成代码diff检查。两个维护Skill共用doctor方法：`doctor env`只检查根AGENTS、标准/任务入口、§5验证和证据引用是否可读一致，不深入业务历史、不写诊断报告；没有具体任务版本时仅列任务级前提，不猜版本或判全环境损坏。
 
-默认 `doctor` 先核环境，再从README项目定位、`doc/spec/`有效版本范围和`doc/plan/`当前入口建立全貌；沿需求/方案、答疑、实施反馈、评审/返修、实际`extensions/`与相关配置/消费者，核目标、协作及规则/Skill使用。读取相关未提交、未跟踪及指向的被忽略材料；旧目录可接续，不按时间或目录名断定有效性。索引全貌与深入核查分别报告，不要求无差别读所有历史。
+默认 `doctor` 先核环境，再从README项目定位、`doc/spec/`有效版本范围和`doc/plan/`当前入口建立全貌；沿需求/方案、答疑、实施反馈、评审/返修、实际`extensions/`与相关配置/消费者，核目标、协作及规则/Skill使用。读取相关未提交、未跟踪及指向的被忽略材料；按有效总览定位批次/步骤及各批实施反馈、评审，跨批返修沿原问题引用复查；旧目录可接续，不按时间或目录名断定有效性。索引全貌与深入核查分别报告，不要求无差别读所有历史。
 
 维护讨论先读相关Spec/Plan、交回和评审的“讨论与修订依据”或等价章节，沿原诉求、当时处理、纠正和落实核原话、修改前对象及实际差异；缺记录列未知，不据最终成功推断无需干预。它们是维护协作证据，不替代消费模型正式运行证据，也不投放给消费模型。记录方法由用户级共享文档约定维护，doctor只报告缺口，不补写被审材料。
 

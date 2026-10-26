@@ -9,6 +9,7 @@
     python test/scripts/verify.py failure-modes                      # 现建装好开发源的模板，跑失效形态
     python test/scripts/verify.py handback                           # 交回前：全量、失效形态、其余离线检查三条通道同时跑
     python test/scripts/verify.py cases                              # 多 Case 计划（全部 Case，并行数取 Case 数）
+    python test/scripts/verify.py assembly                           # 装配专项：第二次从空目录重建同一组合（触发条件见 TEST §5）
 
 每一步的完整输出写到 ``output/verify/<时刻>/<步骤>.log``，控制台按完成先后打印每步的结论行与耗时，
 最后按固定顺序汇总一次；有一步失败，退出码非 0。场景与层次的用法见 test/TEST.md §5。
@@ -34,6 +35,8 @@ REPO = HERE.parents[1]
 TESTS = REPO / "test" / "tests"
 #: pytest 的并行参数：loadscope 让同一个类的用例落在同一个 worker，类级夹具只建一次
 PARALLEL = ["-n", "auto", "--dist", "loadscope"]
+#: 第二次从空目录重建：装配专项，只在被测 Framework 登记、本地补丁或模板装配代码变了时跑；full 不选它
+SECOND_REBUILD = "test/tests/test_verifier_chain_in_workspace.py::ASecondEmptyDirectoryRebuildsTheSameCombination"
 
 
 def pytest_step(name: str, targets: list[str], extra: list[str] | None = None) -> tuple[str, list[str]]:
@@ -54,7 +57,11 @@ def affected_steps(targets: list[str], keyword: str | None) -> list[tuple[str, l
 
 
 def full_steps() -> list[tuple[str, list[str]]]:
-    return [pytest_step("full", [str(TESTS)], ["--durations", "10"])]
+    return [pytest_step("full", [str(TESTS)], ["--durations", "10", "--deselect", SECOND_REBUILD])]
+
+
+def assembly_steps() -> list[tuple[str, list[str]]]:
+    return [pytest_step("assembly", [SECOND_REBUILD])]
 
 
 def failure_mode_steps(template: str) -> list[tuple[str, list[str]]]:
@@ -146,6 +153,7 @@ def scenario(args: argparse.Namespace) -> list[list]:
         "full": [[lambda _: full_steps()]],
         "failure-modes": [[template_steps]],
         "cases": [[lambda _: case_steps()]],
+        "assembly": [[lambda _: assembly_steps()]],
         "handback": [[lambda _: full_steps()], [template_steps], [lambda _: other_offline_steps()]],
     }[args.scenario]
 
@@ -160,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     affected = sub.add_parser("affected")
     affected.add_argument("targets", nargs="+")
     affected.add_argument("-k", dest="keyword")
-    for name in ("full", "failure-modes", "handback", "cases"):
+    for name in ("full", "failure-modes", "handback", "cases", "assembly"):
         sub.add_parser(name)
     args = parser.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")

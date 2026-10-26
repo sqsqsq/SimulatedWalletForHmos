@@ -31,15 +31,21 @@ HOOK_CONFIGS =(".claude/settings.json", ".cac/settings.json", ".codex/hooks.json
 
 # verifier 链的两件：只读子代理、作者入口。
 # 报告由调用方原样写出，没有第三件——发布器那一环整体退场了。
+# dsh 的只读子代理是配置层里的一个工具实例，作者入口与 generic 共用 `.agents`。
 CHAIN = (
     Path(".opencode/agent/verifier.md"),
     Path(".opencode/skill/story/SKILL.md"),
+    Path(".dsh/framework-verifier.patch.yml"),
+    Path(".agents/skills/story/SKILL.md"),
 )
+#: demo 发布版随仓交付的那几件；dsh 审查员层由被测 Framework 的本地补丁在工作区模板里生成，不在 demo
+DEMO_CHAIN = tuple(rel for rel in CHAIN if rel.parts[0] != ".dsh")
 
 VERIFIER_DEF = Path(".opencode/agent/verifier.md")
 #: dsh 的只读审查员是配置层里的一个工具实例，模板随被测 Framework 的本地补丁进来
 DSH_LAYER = Path(".dsh/framework-verifier.patch.yml")
 DSH_TEMPLATE = Path("framework/agents/dsh/templates/agents/framework-verifier.patch.yml")
+DSH_ADAPTER = Path("framework/agents/dsh")
 
 
 def load_runner():
@@ -167,7 +173,7 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
 
     def test_the_repo_has_the_chain_materialised(self) -> None:
         """先看 demo：它没物化的话，工作区带什么都带不出来。"""
-        for rel in CHAIN:
+        for rel in DEMO_CHAIN:
             with self.subTest(file=str(rel)):
                 self.assertTrue((DEMO / rel).is_file(),
                                 f"demo 里没有 {rel}——按 framework/agents/opencode/adapter.yaml 落它")
@@ -175,7 +181,7 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
     def test_the_chain_is_not_git_ignored(self) -> None:
         """`.opencode/.gitignore` 忽略了它们的话，换台机器 clone 出来就又没有了。"""
         import subprocess
-        for rel in CHAIN:
+        for rel in DEMO_CHAIN:
             with self.subTest(file=str(rel)):
                 proc = subprocess.run(
                     ["git", "check-ignore", "-q", str(rel)],
@@ -362,6 +368,48 @@ class AFrameworkInputThatDoesNotMatchStopsTheAssembly(unittest.TestCase):
                 runner.FRAMEWORK_UNDER_TEST = original
         self.assertIn("被测 Framework 发布树", str(caught.exception))
 
+
+
+class TheVerifierCallTextNamesTheDedicatedRole(unittest.TestCase):
+    """作者读到的调用指引都指向宿主登记的专用 verifier 角色，不让通用研究/开发子 agent 顶替（本地定制，维护操作§2）。
+    核的是被测 Framework（固定发布树 + 本地补丁）：写到 verifier 调用的指引都点名专用角色，任何一份都不留旧说法。"""
+
+    RULE = "agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc"
+    CALLS = ("skills/reference/agents-entry-detail.md", RULE, "harness/harness-runner.ts",
+             "harness/scripts/utils/verifier-evidence.ts",
+             *(f"skills/feature/{s}/SKILL.md" for s in ("coding", "plan", "spec")))
+    OTHERS = ("templates/AGENTS.md.template",
+              *(f"skills/feature/{s}/SKILL.md" for s in ("business-ut", "code-review", "device-testing")))
+
+    @staticmethod
+    def framework() -> Path:
+        sys.path.insert(0, str(SCRIPTS))
+        from design_fixture import framework_under_test  # noqa: PLC0415
+        return framework_under_test()
+
+    def test_every_call_text_names_the_dedicated_role(self) -> None:
+        root = self.framework()
+        for rel in (*self.CALLS, *self.OTHERS):
+            with self.subTest(rel):
+                text = (root / rel).read_text(encoding="utf-8")
+                if rel in self.CALLS:
+                    self.assertIn("专用 verifier 角色", text)
+                for stale in ("通过 Task 工具触发", "Task 触发 verifier", "作为 Task prompt 投给", "投给 subagent_type=verifier"):
+                    self.assertNotIn(stale, text, "还把任意 Task 调用当成审查入口")
+
+    def test_the_installed_rule_copies_are_the_template(self) -> None:
+        template = (DEMO / "framework" / self.RULE).read_bytes()
+        for host in (".agents", ".codex", ".cursor", ".opencode"):
+            with self.subTest(host):
+                self.assertEqual(template, (DEMO / host / "rules" / "framework-agent-execution.mdc").read_bytes())
+
+    def test_the_receipt_does_not_claim_a_task_call(self) -> None:
+        root = self.framework()
+        for rel in ("harness/scripts/utils/receipt-scaffold.ts", "harness/templates/phase-completion-receipt.md"):
+            with self.subTest(rel):
+                text = (root / rel).read_text(encoding="utf-8")
+                self.assertNotIn("Task(subagent_type=verifier)", text)
+                self.assertIn("host_verifier_role", text)
 
 if __name__ == "__main__":
     unittest.main()

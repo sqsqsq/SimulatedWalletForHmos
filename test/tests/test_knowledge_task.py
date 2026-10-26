@@ -332,6 +332,38 @@ class FreshProject(unittest.TestCase):
         return proc.returncode, json.loads(proc.stdout)
 
 
+class TheAuthorTaskBeginsThePhase(FreshProject):
+    """作者取 Feature 阶段的正式任务就是开始这一阶段：命令入口记使用记录的 begin，重取保留最早的起点；
+    预览、审查者与被导入的渲染函数都不记。"""
+
+    def starts(self) -> dict:
+        path = self.root / "doc" / "features" / ".usage-state.json"
+        state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        return {k: v for node in state.values() for k, v in (node.get("starts") or {}).items()}
+
+    def task(self, action: str, audience: str = "author") -> subprocess.CompletedProcess:
+        return self.run_script("knowledge-task.mjs", "--feature", CU, "--action", action, "--audience", audience)
+
+    def test_a_preview_does_not_begin(self) -> None:
+        self.use("candidate")
+        self.assertEqual(0, self.task("spec").returncode)
+        self.assertNotIn("spec", self.starts(), "预览任务开始了阶段计时")
+
+    def test_the_formal_author_task_begins_once_and_the_rest_do_not(self) -> None:
+        self.use("freeze")
+        module = (self.root / "doc/extensions/hooks/shared/knowledge-task.mjs").resolve().as_uri()
+        imported = subprocess.run(["node", "--input-type=module", "-e",
+                                   "await import(process.argv[1]); process.stdout.write('imported');", module],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual("imported", imported.stdout, imported.stderr)
+        self.assertEqual(0, self.task("plan", "reviewer").returncode)
+        self.assertEqual({}, self.starts(), "导入模块或取审查者任务就写了使用记录")
+        self.assertEqual(0, self.task("plan").returncode)
+        first = self.starts()["plan"]
+        self.assertEqual(0, self.task("plan").returncode)
+        self.assertEqual(first, self.starts()["plan"], "重取任务换了起点")
+
+
 class PhaseInputsBeforeLocalContracts(FreshProject):
     """范围冻结、还没有本地施工输入：本阶段输入照原生阶段解析——蓝图派生，或原生判缺必需能力。"""
 
@@ -363,23 +395,32 @@ class PhaseInputsFromMaterializedContracts(FreshProject):
         self.assertEqual((0, "ok"), (code, out["status"]), out)
         self.assertEqual({"kind": "artifact", "artifact": "contracts@1"}, out["inputs"]["contracts"]["binding"])
 
-    def test_a_local_contract_changed_after_freezing_is_not_replaced_by_the_blueprint(self) -> None:
-        """原生判过期的本地契约，不能借蓝图派生变绿；知识任务失败、不给半份，读取不写任何东西。"""
+    def test_a_local_contract_changed_after_freezing_follows_the_native_owner(self) -> None:
+        """冻结后改了本地契约：契约归 plan 产出，plan 读到的就是改后的本地契约；下游 review 原生判过期，
+        不能借蓝图派生变绿，知识任务失败、不给半份。读取不写任何东西。"""
         self.use("materialize", "freeze")
         prepare(self.root, "edit")
         features = self.root / "doc" / "features"
-        state = REPO_ROOT / "demo" / "framework" / "harness" / "state"
-        before, state_before = files_under(features), sorted(p.name for p in state.iterdir())
-        for phase in ("plan", "review"):
-            with self.subTest(phase=phase):
-                code, out = self.feature(phase)
-                self.assertEqual((1, "invalid"), (code, out["status"]), out)
-                self.assertIn("stale", json.dumps(out["issues"], ensure_ascii=False))
-                task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", phase, "--audience", "author")
-                self.assertEqual((1, ""), (task.returncode, task.stdout))
-                self.assertIn("缺口：", task.stderr)
-        self.assertEqual(before, files_under(features), "读取写了需求目录")
-        self.assertEqual(state_before, sorted(p.name for p in state.iterdir()), "读取写了 harness 状态")
+        state = self.root / "framework" / "harness" / "state"
+        listed = lambda: sorted(p.name for p in state.iterdir()) if state.is_dir() else []  # noqa: E731
+        before, state_before = files_under(features), listed()
+        code, out = self.feature("plan")
+        self.assertEqual((0, "ok"), (code, out["status"]), out)
+        self.assertEqual({"kind": "artifact", "artifact": "contracts@1"}, out["inputs"]["contracts"]["binding"])
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "plan", "--audience", "author")
+        self.assertEqual(0, task.returncode, task.stderr)
+        self.assertIn("LOCAL-1", task.stdout, "plan 没读到它自己改过的本地契约")
+        code, out = self.feature("review")
+        self.assertEqual((1, "invalid"), (code, out["status"]), out)
+        self.assertIn("stale", json.dumps(out["issues"], ensure_ascii=False))
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "review", "--audience", "author")
+        self.assertEqual((1, ""), (task.returncode, task.stdout))
+        self.assertIn("缺口：", task.stderr)
+        # 作者取正式任务唯一的副作用是使用记录的开始（运行态与身份件），其余一个字节不写
+        business = lambda files: {k: v for k, v in files.items()  # noqa: E731
+                                  if not k.endswith((".usage-state.json", ".usage-id"))}
+        self.assertEqual(business(before), business(files_under(features)), "读取写了需求目录")
+        self.assertEqual(state_before, listed(), "读取写了 harness 状态")
 
     def test_the_reviewer_is_told_when_its_task_cannot_be_read(self) -> None:
         self.use("materialize", "freeze")
@@ -720,6 +761,10 @@ def place_unit(root: Path, blueprint: str, ref: dict) -> tuple[Path, str]:
     unit_dir = root / "doc" / "features" / blueprint / "balance-refresh"
     unit_dir.mkdir(parents=True, exist_ok=True)
     (unit_dir / "change-unit.yaml").write_text(unit, encoding="utf-8")
+    # 评审投影随施工单位集合变化：放进单位后按原生物化重出，与设计职责的产物一致
+    import design_kit  # noqa: PLC0415
+    from ext_workspace import DEV_EXT  # noqa: PLC0415
+    design_kit.render_projection(root, blueprint, DEV_EXT / "hooks" / "shared" / "framework-access.mjs")
     return unit_dir, cu_id(blueprint, "balance-refresh")
 
 
@@ -879,27 +924,6 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         self.register()
         self.assertNotEqual(base, self.material_sha(), "相关片段变了，审查对象没换")
 
-    def test_another_unit_split_gets_only_what_it_carries(self) -> None:
-        """同一蓝图换一种施工单位划分：只承担逻辑视图余额节点的单位，取不到挂在开发视图模块上的那一节。"""
-        unit = (self.unit_dir / "change-unit.yaml").read_text(encoding="utf-8")
-        other = unit.replace("change_unit_id: balance-refresh", "change_unit_id: balance-view").replace(
-            "      kind: node\n      id: wallet-main-module\n      view_id: development",
-            "      kind: node\n      id: wallet-balance\n      view_id: logical")
-        self.assertNotEqual(unit, other, "夹具变了，用例要跟着改")
-        target = self.unit_dir.parent / "balance-view" / "change-unit.yaml"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(other, encoding="utf-8")
-        self.addCleanup(shutil.rmtree, target.parent, True)
-        proc = subprocess.run(
-            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
-             "--action", "spec", "--audience", "author", "--feature", cu_id(self.BLUEPRINT, "balance-view")],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
-        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
-        section = self.section(proc.stdout)
-        self.assertNotIn(self.selected_body(), section)
-        self.assertIn("未形成可确定的复用关联", section)
-        self.assertIn(self.selected_body(), self.section(), "原来的单位仍取得到它承担的那一节")
-
     def test_both_phases_receive_the_consistency_contract(self) -> None:
         """spec 与 plan 的审查任务都列出这条判据；判据把「共同设计错影响本单位」判 FAIL，与「只有 Story 表达错」分开。"""
         import yaml  # noqa: PLC0415
@@ -951,7 +975,8 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
 
     def test_a_bad_skeleton_and_a_repeated_chapter_are_gaps(self) -> None:
         plan = self.plan_file.read_bytes()
-        self.plan_file.write_bytes(plan + "\n### 99-unknown\n- 本章主线：不在合同里\n".encode("utf-8"))
+        self.plan_file.write_bytes(plan.replace(b"### 10-appendix\n", "### 99-unknown\n- 本章主线：不在合同里\n\n### 10-appendix\n"
+                                                .encode("utf-8"), 1))
         self.register()
         self.assertIn("写作设计读不全", self.task())
         self.plan_file.write_bytes(plan)
@@ -971,48 +996,10 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         self.assertIn("关联的设计对象是", out)
         self.assertNotIn(self.selected_body(), self.section(out))
 
-    # ---- 阶段入口：spec / plan 的图源组 ----
-
-    def gate(self, phase: str) -> str:
-        proc = subprocess.run(
-            ["node", "--input-type=module", "-e",
-             "const m = await import(process.argv[1]);"
-             "const r = await m.default({ phase: process.argv[2], feature: process.argv[3], projectRoot: process.argv[4] });"
-             "process.stdout.write(JSON.stringify(r));",
-             (self.ext / "hooks" / phase / "post_check.mjs").resolve().as_uri(), phase, self.unit, str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
-        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
-        return json.loads(proc.stdout).get("message", "")
-
-    def write_doc(self, phase: str, body: str) -> None:
-        mark = json.dumps({"kind": "document", "path": f"doc/features/{self.FEATURE}/AR/story.md",
-                           "diagram": "§6.1 #1", "mode": "reuse"}, ensure_ascii=False)
-        doc = self.unit_dir / phase / f"{phase}.md"
-        doc.parent.mkdir(parents=True, exist_ok=True)
-        doc.write_bytes(f"## 5. 业务流程\n\n```mermaid\n%% 图源 {mark}\n{body}```\n".encode("utf-8"))
-
-    def test_spec_and_plan_gates_check_story_diagrams_through_the_same_sources(self) -> None:
-        for phase in ("spec", "plan"):
-            with self.subTest(phase=phase):
-                self.write_doc(phase, self.DIAGRAM)
-                self.assertNotIn(f"{phase}.md 第", self.gate(phase), "当前 Story 的原样图被报了")
-                self.write_doc(phase, self.DIAGRAM.replace("回执到达", "回执超时"))
-                self.assertIn("图体与来源不一致", self.gate(phase))
-
-    def test_the_gates_report_an_old_story_and_a_broken_binding(self) -> None:
-        self.write_doc("spec", self.DIAGRAM)
-        self.story_file.write_bytes(self.story_file.read_bytes() + "\n补一行。\n".encode("utf-8"))
-        self.assertIn("现在不是有效来源", self.gate("spec"))
-        self.write_doc("plan", self.DIAGRAM)
-        self.edit_flow(lambda f: f["design_binding"].update(blueprint_id="bp-other"))
-        out = self.gate("plan")
-        self.assertIn("关联来源：", out)
-        self.assertIn("关联的设计对象是", out)
-
 
 class AdoptedSourcesAreReadThroughOneReader(unittest.TestCase):
     """候选声明的来源与冻结包按同一底层读取（原生 resolveCurrentScopeSource 核原字节、片段与声明摘要）：
-    蓝图设计/质询任务交真实来源索引，Story 图源（adoptedInputs）与 CU 来源（unitSources）对同一文件得到同样的结论；
+    蓝图设计/质询任务交真实来源索引，CU 来源（unitSources）对同一文件得到同样的结论；
     任一份坏了蓝图任务不给半份，失败不写盘。
     """
 
@@ -1022,9 +1009,8 @@ class AdoptedSourcesAreReadThroughOneReader(unittest.TestCase):
     PROBE = """
 const ds = await import(process.argv[1]);
 const [root, flow, feature] = process.argv.slice(2);
-const adopted = ds.adoptedInputs({ projectRoot: root, flowPath: flow });
 const unit = ds.unitSources(root, feature);
-process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(adopted.documents), problems: adopted.problems },
+process.stdout.write(JSON.stringify({
   unit: { documents: Object.fromEntries(unit.documents), excluded: Object.fromEntries(unit.excluded), problems: unit.problems } }));
 """
 
@@ -1091,10 +1077,8 @@ process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(a
 
     def test_the_same_good_file_reaches_all_three_readers(self) -> None:
         got = self.readers()
-        self.assertEqual([], got["adopted"]["problems"])
         self.assertEqual([], got["unit"]["problems"])
         text = (self.root / self.prd).read_text(encoding="utf-8")
-        self.assertEqual(text, got["adopted"]["documents"][self.prd])
         self.assertEqual(text, got["unit"]["documents"][self.prd])
 
     def test_a_changed_or_missing_file_is_the_same_gap_everywhere(self) -> None:
@@ -1106,8 +1090,6 @@ process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(a
                 change()
                 self.assert_task_fails(self.prd, word)
                 got = self.readers()
-                self.assertNotIn(self.prd, got["adopted"]["documents"])
-                self.assertTrue(any(self.prd in p and word in p for p in got["adopted"]["problems"]), got["adopted"]["problems"])
                 self.assertIn(word, got["unit"]["excluded"][self.prd])
                 target.write_bytes(original)
 
@@ -1142,8 +1124,6 @@ process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(a
             with self.subTest(case=label):
                 write()
                 self.assert_task_fails(word)
-                problems = self.readers()["adopted"]["problems"]
-                self.assertTrue(any(word in p for p in problems), problems)
                 self.put_snapshot(good)
 
     def test_non_markdown_and_bom_files_are_checked_on_their_raw_bytes(self) -> None:
@@ -1156,10 +1136,7 @@ process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(a
                          "provenance": good["files"][0]["provenance"]})
         self.put_snapshot({**good, "files": [*good["files"], *rows]})
         base = Path(self.snapshot_ref).parent.as_posix()
-        got = self.readers()["adopted"]
-        self.assertEqual([], got["problems"])
-        self.assertEqual("# 备注\n人签过的边界。\n", got["documents"][f"{base}/files/RR/notes.md"], "展示投影没去 BOM")
-        self.assertNotIn(f"{base}/files/RR/flow.png", got["documents"], "非 Markdown 被当文本交了")
+        self.assertEqual([], self.readers()["unit"]["problems"])
         index = self.task().stdout
         for name in extra:
             self.assertIn(f"`{base}/files/{name}`", index, f"{name} 没进来源索引")
@@ -1181,11 +1158,10 @@ process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(a
         index = self.task().stdout.split("## 2.", 1)[0]
         self.assertIn(f"`{self.snapshot_ref}`", index)
         self.assertNotIn("v2-later", index, "候选配上了流程里的新版本")
-        self.assertIn("新版本补的一句", self.readers()["adopted"]["documents"][f"{v2.relative_to(self.root).as_posix()}/files/RR/prd.md"])
 
 
     def test_backslash_references_reach_the_same_project_path(self) -> None:
-        """R1：候选声明与流程快照用反斜杠写（原生判合法）：两处 documents 的键仍是正斜杠工程路径，图源按它查得到。"""
+        """R1：候选声明与流程快照用反斜杠写（原生判合法）：施工单位来源的键仍是正斜杠工程路径。"""
         slash = self.readers()
         text = self.canonical.read_bytes().decode("utf-8")
         self.assertIn(self.prd, text, "夹具变了，用例要跟着改")
@@ -1194,9 +1170,8 @@ process.stdout.write(JSON.stringify({ adopted: { documents: Object.fromEntries(a
         flow["input"]["snapshot_ref"] = self.snapshot_ref.replace("/", "\\")
         self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
         back = self.readers()
-        self.assertEqual([], back["adopted"]["problems"])
         self.assertEqual([], back["unit"]["problems"])
-        self.assertEqual(sorted(slash["adopted"]["documents"]), sorted(back["adopted"]["documents"]))
+        self.assertEqual(sorted(slash["unit"]["documents"]), sorted(back["unit"]["documents"]))
         self.assertIn(self.prd, back["unit"]["documents"], "反斜杠声明的来源没按工程路径交出")
 
 class ANativeSourceKeepsItsFragment(NativeCase):

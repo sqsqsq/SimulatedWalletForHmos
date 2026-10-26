@@ -3,7 +3,7 @@
  *
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算：三处用同一份，审的就是要交付的那一份。
  * 待审的是 Story、Review 与设计附件；其余是只读对照：写作设计、决策登记、会议记录、交给设计的冻结输入（采用版本的原件、
- * 图、提取稿与人签）、已准入蓝图与评审投影、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
+ * 图、提取稿与人签）、当前蓝图与评审投影、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
  * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
  */
 import * as crypto from 'node:crypto';
@@ -33,8 +33,9 @@ export const TASK = ['AR', 'story-src', 'review', 'task.md'];
 /**
  * `withTask` 为假时不含审查任务本身（生成任务时列材料用）。
  *
- * @returns {{rows: {path: string, role: 'object'|'source', label: string}[], problems: string[]}}
- *   路径相对工程根；缺了该有的材料写进 problems，不当作没有。
+ * @returns {{rows: {path: string, role: 'object'|'source', label: string}[], problems: string[],
+ *   design: {admitted: boolean, issues: object[]}|null}}
+ *   路径相对工程根；缺了该有的材料写进 problems，不当作没有。`design` 是蓝图的原生准入结论与问题（草稿也审）。
  */
 export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   const root = featureRoot(projectRoot, feature);
@@ -66,6 +67,18 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   }
 
   const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
+  // update 开着：这一轮动手前的现场与本轮说明也是对照材料，新稿改掉的旧约束对着它核
+  const rid = flow?.update?.open;
+  if (rid) {
+    const base = path.join(src, 'updates', String(rid));
+    add(path.join(base, 'update-notes.md'), 'source', '本轮 update 的变化、依据与不变项（作者的判断）', false);
+    const before = path.join(base, 'before');
+    const walk = dir => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
+      .flatMap(e => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)])) : []);
+    const files = walk(before);
+    if (!files.length) problems.push(`update ${rid} 的 before/ 不在或是空的——这一轮缺比较基准`);
+    for (const f of files) add(f, 'source', `本轮 update 前的现场 ${path.relative(before, f).split(path.sep).join('/')}`);
+  }
   const ref = flow?.input?.snapshot_ref;
   if (!ref) {
     problems.push('流程契约没有登记交给设计的输入');
@@ -79,15 +92,16 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
     }
   }
   const blueprint = flow?.design_binding?.blueprint_id;
-  const read = blueprint ? readBlueprint(projectRoot, blueprint, 'delivery') : null;
+  const read = blueprint ? readBlueprint(projectRoot, blueprint, 'draft') : null;
   if (read?.status === 'ok') {
-    add(path.join(projectRoot, ...read.canonical_path.split('/')), 'source', `已准入的蓝图 r${read.blueprint_ref.revision}`);
+    add(path.join(projectRoot, ...read.canonical_path.split('/')), 'source',
+      `蓝图 r${read.blueprint_ref.revision}（${read.admitted ? '已准入' : '草稿，未准入'}）`);
     add(path.join(projectRoot, ...read.projection.path.split('/')), 'source', '蓝图的原生评审投影');
     for (const file of contractSources(read.blueprint)) {
       add(path.join(projectRoot, ...file.split('/')), 'source', `蓝图契约引用的接口转写或映射 ${file}`);
     }
   } else {
-    problems.push(`蓝图 ${blueprint ?? '（没有设计关联）'} 读不到或未准入`);
+    problems.push(`蓝图 ${blueprint ?? '（没有设计关联）'} 读不到（原生读取 ${read?.status ?? '未进行'}）`);
   }
 
   const ext = extensionRoot(projectRoot);
@@ -96,7 +110,8 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   add(path.join(ext, 'skills', 'story', 'contracts', 'story-chapters.json'), 'source', '章节合同');
   add(path.join(ext, 'rules', 'story-reader-rules.yaml'), 'source', '审查判据');
   const seen = new Set();
-  return { rows: rows.filter(r => !seen.has(r.path) && seen.add(r.path)), problems };
+  return { rows: rows.filter(r => !seen.has(r.path) && seen.add(r.path)), problems,
+    design: read?.status === 'ok' ? { admitted: read.admitted === true, issues: read.issues ?? [] } : null };
 }
 
 /**

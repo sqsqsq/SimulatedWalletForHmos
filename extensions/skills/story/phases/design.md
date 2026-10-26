@@ -7,7 +7,7 @@
 
 ```
 材料与范围确认 → bind-design → complete（冻结输入、原生来源检查）
-  → component-design 走到准入并生成评审投影
+  → component-design 完成可评审设计与独立质询，生成评审投影
   → story-build skeleton → 写作设计 → 逐章 chapter → 回看 → check
   → 独立审查（story-build review：定稿、准备派审载体 → 原样派审 → 核结果）→ story_flow.py story 登记
   → check --deliver 交付门 → 交付选择
@@ -44,7 +44,7 @@
 
 ## 三、设计
 
-蓝图由 Framework 的 component-design 建立、质询、调和到准入。请求 `/component-design <蓝图>` 时写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到准入并生成评审投影为止：
+蓝图由 Framework 的 component-design 建立、质询与调和。请求 `/component-design <蓝图>` 时写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止；准入由原生判定，草稿也可以成文与业务送审，准入状态与原生问题照实披露：
 
 - 用冻结的输入作为来源：系统需求交物化件，本地需求交需求条目；冻结文件直接交给设计作者。提取稿是索引与分析，业务的条件、行为与责任从冻结的原件与有效人签取，人签以冻结版本里的导出为准。把读过的材料逐份记为已消费。
 - 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
@@ -54,24 +54,24 @@
   2. 把任务交给子代理；它只读材料、逐项回复，不改蓝图；
   3. 派审时的候选与回复原样留存，一字不改；
   4. 设计负责方逐项处理质询提出的问题（要人定的问人），再写原生 `review_summary.questioning`，`provider_id` 写这次子代理调用的身份。
-  宿主没有隔离子代理时，停在质询这一步：向人说明需要一个隔离的质询者，质询完成后蓝图才准入。
-- 准入之后由设计职责按原生 renderer 生成评审投影 `component-blueprint.review.md`。
+  宿主没有隔离子代理时，停在质询这一步：向人说明需要一个隔离的质询者，质询完成后才生成评审投影、进入成文。
+- 质询处理完之后由设计职责按原生 renderer 生成评审投影 `component-blueprint.review.md`。
 
-蓝图没准入或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。只查看、重入或改表达不产生新的设计 revision。
-单独核蓝图状态用 `node doc/extensions/hooks/shared/framework-access.mjs --project-root <根> --action blueprint --blueprint <蓝图> --purpose delivery --snapshot <冻结快照> --summary`：
+蓝图读不出、没消费本次交给设计的输入，或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。蓝图是草稿、未准入不挡成文：准入状态与原生问题由 `skeleton`、独立审查任务与交付门照实带出。只查看、重入或改表达不产生新的设计 revision。
+单独核蓝图状态用 `node doc/extensions/hooks/shared/framework-access.mjs --project-root <根> --action blueprint --blueprint <蓝图> --purpose draft --snapshot <冻结快照> --summary`：
 同一次完整读取与校验，返回准入、引用、问题、投影与消费结果，不带蓝图正文；设计内容读 canonical 蓝图或评审投影。
 
 ## 四、成文
 
-成文方法见 [`phases/story-write.md`](story-write.md)。Story 按已准入的蓝图写：
+成文方法见 [`phases/story-write.md`](story-write.md)。Story 按当前蓝图写：草稿的原生问题涉及的业务事实写成待定或限制，不写成已定。
 
-- 附录的配置、埋点与改动边界由 `story-build project` 从蓝图投影，要改投影内容就回蓝图修订。
+- 附录的配置与埋点由 `story-build project` 从蓝图投影，要改投影内容就回蓝图修订。
 - 附录的端云接口、数据存储与规约由你按蓝图写业务摘要（写法见 `story-write.md` 的附录一行）；写作设计骨架里给这几节写
   `- 依据：`，注明蓝图 revision 与原生地址（如 `contract:<id>`），附录提交时核这些地址指得到当前蓝图的对象。
 - 完整技术契约随设计附件 `AR/design-review.md` 交付：定稿时从原生评审投影逐字节复制，你不写它，设计要改回蓝图。
 - 蓝图里没有的类别由你在那一节写「不涉及：<依据>」。术语起始行是蓝图里确认过的术语，解释由你从材料写。
-- 材料清单由你写成一张「材料｜来源｜贡献」表：每份外部原件一行，写它贡献了什么，没采纳的新值写裁决依据。
-- 蓝图 `story_details` 里的专项设计写在讲它的那一章，内容逐字呈现，表达由你组织。专项内容本身有错或含混，回蓝图修订，不在 Story 补一段相反的解释，也不留给施工单位改共同设计。
+- 材料清单由你写成一张「材料 | 来源 | 贡献」表：一行一份阅读稿，来源列列齐合成它的原件与采用版本，写它贡献了什么，没采纳的写原因（写法见 `story-write.md` 的附录一行）。
+- 蓝图 `story_details` 里的专项设计写在讲它的那一章，表达由你组织，精确值、引用与来源与蓝图一致。专项内容本身有错或含混，回蓝图修订，不在 Story 补一段相反的解释，也不留给施工单位改共同设计。
 
 ## 五、独立审查、登记与交付
 

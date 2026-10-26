@@ -89,6 +89,78 @@ def read_plan(text: str) -> dict:
     return json.loads(proc.stdout)
 
 
+def plan_in(text: str, files: dict | None = None) -> dict:
+    """在一个临时需求目录里放上游原件与写作设计，调 `readWritingPlan`，取问题、承接与阅读图选择。"""
+    import tempfile  # noqa: PLC0415
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for rel, body in (files or {}).items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(body.encode("utf-8"))
+        (root / "plan.md").write_bytes(text.encode("utf-8"))
+        script = (
+            "import {pathToFileURL} from 'node:url'; import * as fs from 'node:fs'; import * as path from 'node:path';"
+            "const m = await import(pathToFileURL(process.argv[1]).href);"
+            "const contract = JSON.parse(fs.readFileSync(process.argv[2], 'utf-8'));"
+            "const root = process.argv[3];"
+            "const plan = m.readWritingPlan({contract, featureRoot: root, srcDir: path.join(root, 'AR', 'story-src'),"
+            " templatePath: path.join(root, 'plan.md')});"
+            "process.stdout.write(JSON.stringify({problems: plan.problems, carry: plan.carry, reading: plan.reading}));")
+        proc = subprocess.run(["node", "--input-type=module", "-e", script, "--", str(PLAN_MODULE), str(CONTRACT_PATH), str(root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, cwd=str(REPO_ROOT))
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+UPSTREAM = {
+    "SR/design.md": "## 3. 协作\n\n```mermaid\ngraph TD\nE[发起] --> F[处理]\n```\n\n"
+                    "## 5. 业务流程\n\n### 5.1 受理\n\n```mermaid\ngraph TD\nA[提交] --> B[受理]\n```\n\n"
+                    "### 5.2 回执\n\n```mermaid\ngraph TD\nC[回执] --> D[展示]\n```\n",
+}
+FLOW_CARRY = ("- 本章主线：x\n- 承接上游图：SR §5.1 #1\n#### 回执\n- 答：回执到了以后怎样\n"
+              "- 承接上游图：SR §5.2 #1\n- 承接上游图：SR §3 #1\n")
+
+
+class UpstreamDiagramsAreRegisteredInTheDesign(unittest.TestCase):
+    """写作设计登记上游每张图由哪一节承接：一源多处、多源一节都合法，漏登、错身份、重复、空值点名。"""
+
+    def test_each_upstream_diagram_needs_a_place(self) -> None:
+        problems = plan_in(BASE, UPSTREAM)["problems"]
+        for source, topic in (("SR §5.1 #1", "提交 → 受理"), ("SR §5.2 #1", "回执 → 展示"), ("SR §3 #1", "发起 → 处理")):
+            self.assertTrue(any(f"没有登记 {source}（" in p and topic in p for p in problems), (source, problems))
+
+    def test_one_source_many_places_and_many_sources_one_place(self) -> None:
+        plan = with_chapter("07-exceptions", "- 本章主线：y\n- 承接上游图：SR §5.1 #1",
+                            with_chapter("05-flow", FLOW_CARRY))
+        got = plan_in(plan, UPSTREAM)
+        self.assertEqual([], got["problems"])
+        places = {(c["source"], c["chapter"], c["at"]) for c in got["carry"]}
+        self.assertEqual({("SR §5.1 #1", "05-flow", ""), ("SR §5.2 #1", "05-flow", "回执"),
+                          ("SR §3 #1", "05-flow", "回执"), ("SR §5.1 #1", "07-exceptions", "")}, places)
+
+    def test_line_endings_do_not_matter(self) -> None:
+        plan = with_chapter("05-flow", FLOW_CARRY).replace("\n", "\r\n")
+        self.assertEqual([], plan_in(plan, {k: v.replace("\n", "\r\n") for k, v in UPSTREAM.items()})["problems"])
+
+    def test_bad_registrations_are_named(self) -> None:
+        cases = {"不是当前上游里的图": FLOW_CARRY + "- 承接上游图：SR §9.9 #1\n",
+                 "同一位置登记了两次": FLOW_CARRY + "- 承接上游图：SR §3 #1\n",
+                 "没写图身份": FLOW_CARRY + "- 承接上游图：\n"}
+        for needle, block in cases.items():
+            with self.subTest(needle):
+                problems = plan_in(with_chapter("05-flow", block), UPSTREAM)["problems"]
+                self.assertTrue(any(needle in p for p in problems), problems)
+
+
+READING_OK = ("## 阅读图选择\n\n### order-recovery\n- 阅读问题：清掉本地记录后靠什么恢复\n"
+              "- 增益：把本地记录与远端事实放在一起对比\n- 放置：07-exceptions\n"
+              "- 依据：spec/spec.md > 业务流程 > 回执\n- 依据：AR/story-src/figures/fig-a.mmd\n")
+
+
+def reading(section: str) -> str:
+    return BASE.split("## 阅读图选择", 1)[0] + section
+
+
 class TheSkeletonIsReadInOnePlace(unittest.TestCase):
     """骨架缺在哪，一次报全、指得到位置；形状合法的标题、表、图原样交给核对与打底。"""
 
@@ -125,16 +197,12 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
                      ["「形式：（空）」不认识", "表格", "有序列表"]),
             "不认识的形式": (with_chapter("06-features", "#### 本地数据\n形式：随手画"),
                         ["「形式：随手画」不认识", "流程图", "时序图", "状态图"]),
-            "形式写成说明行": (with_chapter("06-features", "#### 本地数据\n- 形式：表格"),
-                         ["形式要单起一行"]),
             "不涉及还留小节": (with_chapter("06-features", "- 不涉及：没有功能变化\n#### 本地数据\n- 答：x"),
                           ["写了不涉及，却还留着"]),
             "五级标题没有上级": (with_chapter("06-features", "##### 重试入口\n- 答：x"),
                            ["前面没有 #### 小节"]),
             "小节重名": (with_chapter("06-features", "#### 本地数据\n- 答：x\n#### 本地数据\n- 答：y"),
                       ["「本地数据」重复"]),
-            "不是骨架写法": (with_chapter("06-features", "#### 本地数据\n这一节讲本机数据。"),
-                         ["不是骨架写法"]),
             "附录外小节": (with_chapter("10-appendix", "#### 补充说明\n- 答：x"), ["附录只有合同那几节"]),
         }
         for name, (text, needles) in cases.items():
@@ -142,6 +210,28 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
                 problems = "\n".join(read_plan(text)["problems"])
                 for needle in needles:
                     self.assertIn(needle, problems)
+
+    def test_the_same_design_in_another_legal_layout_reads_the_same(self) -> None:
+        """列表前缀带不带、换成 * 或 +，普通说明段落夹在中间：读出来的结构、待核与小节完全一样，不报格式错误。"""
+        plain = read_plan(with_chapter("06-features", FEATURES))
+        self.assertEqual([], plain["problems"])
+        variants = {
+            "形式带 - 前缀": FEATURES.replace("形式：表格", "- 形式：表格"),
+            "说明行不带前缀": FEATURES.replace("- 答：哪些数据", "答：哪些数据").replace("- 待核：", "待核："),
+            "换成 * 与 +": FEATURES.replace("- 答：", "* 答：").replace("- 描述：", "+ 描述："),
+            "夹一段普通说明": FEATURES.replace("#### 失败提示\n", "这一章先讲数据，再讲失败。\n#### 失败提示\n"),
+        }
+        before_chapter = BASE.replace("## 骨架\n", "## 骨架\n\n下面按章写，每章一段。\n", 1)
+        for name, block in variants.items():
+            with self.subTest(name):
+                got = read_plan(with_chapter("06-features", block))
+                self.assertEqual([], got["problems"], name)
+                for key in ("structures", "rechecks", "ids"):
+                    self.assertEqual(plain[key], got[key], f"{name}：{key} 不同")
+                self.assertEqual([h["title"] for h in plain["features"]["h3"]], [h["title"] for h in got["features"]["h3"]])
+        self.assertEqual([], read_plan(before_chapter)["problems"], "第一个章 ID 之前的说明被当成格式错误")
+        broken = read_plan(with_chapter("06-features", FEATURES.replace("形式：表格", "- 形式：随手画")))
+        self.assertTrue(any("「形式：随手画」不认识" in p for p in broken["problems"]), "带前缀的非法形式值没报")
 
     def test_the_skeleton_carries_titles_forms_and_open_questions(self) -> None:
         block = FEATURES + "形式：时序图\n"          # 挂在「重试入口」这一小节下
@@ -222,7 +312,7 @@ class TheFirstSkeletonAsksForTheDesign(PlanCase):
     def test_the_current_inputs_come_with_the_skeleton(self) -> None:
         """成文要用的输入在起手这一刻给：材料里的图、采用来源与蓝图里的图；设计事实来自蓝图，不再有 spec 的图。"""
         _, out = self.cmd("skeleton")
-        for heading in ("## 4. 材料里的图", "## 4a. 采用来源与蓝图里的图"):
+        for heading in ("## 4. 材料与来源", "## 4a. 材料里的图", "## 4b. 上游里的图（在 story 里的去向）"):
             self.assertIn(heading, out)
         self.assertNotIn("spec 里的图", out)
 
@@ -492,6 +582,73 @@ SEQ_FENCE = ("```mermaid\n%% 先讲受理，再讲结果回到谁\n\nsequenceDia
              "  申请方->>受理方: 提交\n  受理方-->>申请方: 受理结果\n```\n")
 
 
+PAGE_HEAD = "| 页面 | 来路/入口 | 用户操作 | 正常结果 | 异常提示与去向 |\n|---|---|---|---|---|\n"
+PAGE_PLAN = "- 本章主线：x\n形式：流程图\n#### 办理入口\n- 答：从哪进入、经过哪些页面、异常去哪\n形式：页面流转表"
+
+
+class ThePageFlowTableIsChosenNotForced(PlanCase):
+    """页面流转表是写作设计选的形式：选了才核，表头由合同给、可以在后面补列；没选不因「页面」二字强制。"""
+
+    def body(self, table: str) -> str:
+        return "提交之后等回执。\n\n" + FLOW_FENCE + "\n### 办理入口\n\n从首页进入办理。\n\n" + table
+
+    def test_the_draft_carries_the_contract_header(self) -> None:
+        self.write_plan(with_chapter("05-flow", PAGE_PLAN))
+        self.cmd("skeleton")
+        draft = self.draft("05").read_text(encoding="utf-8")
+        self.assertIn(PAGE_HEAD.split("\n")[0], draft)
+        # 章头问题与选表提示送达同一边界：业务已定时普通交互由作者补齐，改变业务承诺才要依据
+        self.assertIn("由作者补齐", draft)
+        self.assertIn("普通交互细节由你补齐", draft)
+        self.assertIn("改变权限、资金或安全承诺", draft)
+        for old in ("保持待决", "不替人补设计"):
+            self.assertNotIn(old, draft)
+
+    def test_a_page_journey_told_by_a_diagram_needs_no_table(self) -> None:
+        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：流程图\n#### 办理入口\n"
+                                     "- 答：从哪进入、经过哪些页面、异常去哪\n形式：流程图"))
+        self.cmd("skeleton")
+        page_flow = ("```mermaid\nflowchart TD\n首页 -->|点办理| 办理页\n办理页 -->|提交成功| 结果页\n"
+                     "办理页 -->|网络失败| 办理页\n结果页 -->|返回| 首页\n```\n")
+        body = ("提交之后等回执。\n\n" + FLOW_FENCE + "\n### 办理入口\n\n从首页进入办理，失败留在办理页重试：\n\n"
+                + page_flow + "\n成功后回到首页可见最新状态。\n")
+        code, out = self.put("业务流程", body)
+        self.assertEqual(0, code, out)
+
+    def test_a_chosen_table_is_held_by_its_header(self) -> None:
+        self.write_plan(with_chapter("05-flow", PAGE_PLAN))
+        self.cmd("skeleton")
+        code, out = self.put("业务流程", self.body("没有表。\n"))
+        self.assertEqual(1, code, out)
+        self.assertIn("缺「页面流转表」", out)
+        code, out = self.put("业务流程", self.body("| 步骤 | 说明 |\n|---|---|\n| 1 | 进入 |\n"))
+        self.assertEqual(1, code, "别的表顶替了页面流转表")
+        row = "| 办理页 | 首页「办理」 | 填写并提交 | 进入结果页 | 网络失败提示重试，留在办理页 | 有原图 |\n"
+        head = PAGE_HEAD.replace("异常提示与去向 |", "异常提示与去向 | 备注 |").replace("|---|---|---|---|---|", "|---|---|---|---|---|---|")
+        self.assertEqual(0, self.put("业务流程", self.body(head + row))[0], "补在后面的列不该挡")
+
+    def test_without_choosing_it_nothing_is_forced(self) -> None:
+        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：流程图\n#### 后台对账\n- 答：没有页面，谁调用、数据怎样"))
+        self.cmd("skeleton")
+        body = ("提交之后等回执。\n\n" + FLOW_FENCE
+                + "\n### 后台对账\n\n由定时作业发起，没有页面交互：用户不参与这一步。\n")
+        self.assertEqual(0, self.put("业务流程", body)[0])
+
+    def test_the_vocabulary_names_it_and_the_ux_note_is_delivered(self) -> None:
+        feature = self.src.parents[1]
+        (feature / "ux-reference").mkdir(exist_ok=True)
+        (feature / "ux-reference" / "README.md").write_text("# 界面\n\n办理页在首页下方。\n", encoding="utf-8")
+        subprocess.run([sys.executable, str(FLOW), "round", "--feature", FEATURE, "--project-root", str(self.root)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.write_plan(with_chapter("05-flow", PAGE_PLAN))
+        code, out = self.cmd("skeleton")
+        self.assertEqual(0, code, out)
+        self.assertIn("界面交互说明在 `ux-reference/README.md`", out)
+        self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：页面图鉴"))
+        _, out = self.cmd("skeleton")
+        self.assertIn("页面流转表", out, "认得的形式里没有合同登记的命名表")
+
+
 class ASkeletonDiagramTypeIsHeld(PlanCase):
     """点名时序图之后流程图顶替不了；与不点名的图或合同要求重合时，一个缺口只报一次、只给一次起点。"""
 
@@ -547,7 +704,7 @@ class ASkeletonDiagramTypeIsHeld(PlanCase):
 class TheExpressionScaffolding(PlanCase):
     """图三件套的脚手架、每章三问的空壳、附录章不要骨架。"""
 
-    GUIDES = ("作图：用一两句说明这段过程", "作图：这里放", "作图：图后用列表补图上没讲清的条件")
+    GUIDES = ("作图：一两句说清读者看这张图要看出什么", "作图：这里放", "作图：图后用列表补图里没表达的条件")
 
     def test_a_chosen_diagram_gets_three_guides_that_are_stripped_on_submit(self) -> None:
         self.write_plan(with_chapter("07-exceptions", SEQUENCE))
@@ -555,7 +712,7 @@ class TheExpressionScaffolding(PlanCase):
         draft = self.draft("07")
         text = draft.read_text(encoding="utf-8")
         at = [text.index(g) for g in self.GUIDES]
-        self.assertEqual(sorted(at), at, "三行指引的顺序是讲过程、放图、说明分支")
+        self.assertEqual(sorted(at), at, "三行指引的顺序是点明看什么、放图、补图外的条件与结果")
         draft.write_text(text + "\n" + SEQ_FENCE, encoding="utf-8")
         code, out = self.cmd("chapter", "--chapter", "异常与恢复", "--from", str(draft))
         self.assertEqual(0, code, out)
@@ -566,10 +723,7 @@ class TheExpressionScaffolding(PlanCase):
         code, out = self.cmd("skeleton")
         shell = self.plan.read_text(encoding="utf-8")
         self.assertIn("读者是谁、读完要做什么决定；按责任边界 → 整体协作与关键取舍 → 状态与分支 → 验收与待决", shell)
-        # 每章的读者目标取自章节合同，合同改了问题，空壳跟着变
-        contract = json.loads((DEV_EXT / "skills/story/contracts/story-chapters.json").read_text(encoding="utf-8"))
-        scope = next(ch for ch in contract["chapters"] if ch["id"] == "03-scope")
-        self.assertIn(f"读完这一章读者要能回答：{'；'.join(scope['questions'])}。哪个关系必须用图", shell)
+        self.assertIn("读完这一章读者要能回答什么；哪个关系必须用图、图后要补哪些图外的条件与结果", shell)
         self.assertIn("- 附录的接口、数据、规约与材料取舍由你写", shell)
         self.assertIn("没有就不写", shell, "待核只在有时写")
 

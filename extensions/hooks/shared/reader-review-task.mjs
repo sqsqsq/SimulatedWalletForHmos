@@ -1,26 +1,29 @@
 /**
  * Story 独立人读审查的任务书 —— **判据与这一次要看的东西**，从真源渲染。
  *
- * 判据本身（审什么、什么算 blocking、什么不做）只在 `rules/story-reader-rules.yaml` 的 `story_reader_review`
- * 里写一份，这里原样带上；其余是它判不出来的部分：这一次审查材料的唯一一份文件索引、读法、决定与会议的对照、
- * 来源图与采用它的图、这一版合同的十章问题与章级维度、材料清单里现有的图逐张、附录材料清单要列的原件。同一件事在两处各写一遍，改一处另一处就静默过期。
+ * 判据本身（审什么、什么算阻断、核的先后）只在 `rules/story-reader-rules.yaml` 的 `story_reader_review`
+ * 里写一份，这里原样带上；其余是它判不出来的部分：这一次审查材料的唯一一份文件索引、读法、关卡人签与决定的对照、
+ * 按作者区标题排好的阅读段、会议逐话题、上游图与承接它的小节、这一版合同的十章问题与章级维度、材料里的图逐张、
+ * 附录材料表要对照的来源集合。同一件事在两处各写一遍，改一处另一处就静默过期。
  * 唯一消费者是 `story-build review --action prepare`。
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
+import { storyReviewVisual } from './framework-access.mjs';
 import { parseYaml } from './yaml.mjs';
-import { headingEnd, parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
-import { blueprintGraph } from './framework-access.mjs';
-import { diagramBody, diagramsOf, diagramTopic, imagesIn, readablePaths }
+import { headingEnd, parseDocument, ZONE_BEGIN, ZONE_END, zonesByLine }
+  from '../../skills/story/scripts/core/story/document.mjs';
+import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
-import { adoptedInputs } from '../../skills/story/scripts/core/story/design-source.mjs';
-import { externalOriginals, sourceStatus } from '../../skills/story/scripts/core/story/sources.mjs';
-import { requirementContext } from '../../skills/story/scripts/core/story/context.mjs';
+import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
-import { readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
+import { signedGateRows } from './review-inputs.mjs';
+import { carryTargets, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
+import { readingWork } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { reviewObject } from '../../skills/story/scripts/core/story/review-object.mjs';
 import { reportFormat } from '../../skills/story/scripts/core/story/review-report-contract.mjs';
 
@@ -29,7 +32,8 @@ const PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 
 /**
  * 会议逐话题四栏并列：会议判断、原话（按引用的行范围从 raw.md 取，同一范围只取一次）、
- * 人的裁决（选了哪一项、没选哪几项、原话）、当前结果（doc-refresh.md 里这一话题的段落）。
+ * 人的裁决（关卡记录里生效的人签选了哪一项、没选哪几项；原话只在「关卡人签」给一份）、
+ * 当前结果（doc-refresh.md 里这一话题的段落）。
  * 取不到的一栏写「未取得，未验证」，不给空对象。
  */
 function meetingTopicRows(src) {
@@ -37,7 +41,8 @@ function meetingTopicRows(src) {
   const meetings = Array.isArray(notes?.meetings) ? notes.meetings : null;
   if (!meetings) return ['`AR/story-src/meeting-notes.json` 读不出 `meetings` 列表——逐话题核对未取得，未验证。'];
   const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
-  const gates = (flow?.rounds ?? []).flatMap(r => r?.gates ?? []).filter(g => g?.gate === 'meeting');
+  const gates = (flow?.rounds ?? []).flatMap(r => r?.gates ?? [])
+    .filter(g => g?.gate === 'meeting' && g?.by === 'human' && g?.outcome === 'accepted');
   const refresh = readOrNull(path.join(src, 'doc-refresh.md'));
   const doc = refresh === null ? null : parseDocument(refresh);
   const quoted = new Map();
@@ -62,7 +67,7 @@ function meetingTopicRows(src) {
         const opts = Array.isArray(g.options) ? g.options : [];
         const chosen = opts.find(o => o.key === g.chosen);
         out.push(`- **人的裁决**：选了「${g.chosen}」${chosen?.label ?? ''}；没选：`
-          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话：${g.basis || '—'}`);
+          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话见「关卡人签」`);
       } else {
         out.push(`- **人的裁决**：${t.question ? '未裁决——这个话题要问人，关卡记录里没有它' : '没有单独摆给人，随材料关卡一并确认'}`);
       }
@@ -82,7 +87,7 @@ function meetingTopicRows(src) {
  * 登记成已定的那几条 —— **判的是「这个结论谁给的」**。
  *
  * 只给 id 与标题判不了这两件事：替人选边要拿选项原文去对正文，已定的结论要拿依据原文
- * 回材料、会议原话与评审记录去对。
+ * 回关卡人签、问答原话、材料、会议原话与评审记录去对。
  *
  * 一条都没有时也说出来：`settled` 一条不登记同样可能是漏登记。
  */
@@ -91,12 +96,8 @@ function decisionRows(decisionsPath) {
   if (!all) return ['', '### 登记成已定的那几条', '', '`AR/story-src/decisions.json` 读不出登记列表——这一节未取得，未验证。'];
   const open = all.filter(d => d?.status === 'open');
   const settled = all.filter(d => d?.status === 'settled');
-  const out = ['', '### 仍开着的选择：受影响的行为有没有被写成已定', '',
-    open.length
-      ? '**每一条都写一句结论**，写在「判据核对」表后的审查方法里：依赖这个选择的行为在 Story 正文、附录、Review 与关联蓝图的哪几处，'
-        + '那几处只写了共同要求与条件，还是已经替人选了一边。各选项（含保持待定）都会有的行为才是共同要求；'
-        + '只属于某一个选项的做法或数值出现在正文与验收里，就是替人选了一边，在「发现」表记一条，严重程度按所属判据。'
-        + '按正文与验收实际写出的行为判。'
+  const out = ['', '### 先核：仍开着的选择与正文的冲突（逐章核查之前做）', '',
+    open.length ? '按判据「核的先后」①逐条给结论，写在「判据核对」表后的审查方法里；替人选了一边的同时在「发现」表记一条。'
       : '本轮没有仍开着的条目。'];
   for (const d of open) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
@@ -109,11 +110,7 @@ function decisionRows(decisionsPath) {
 
 function settledDetail(settled) {
   const out = ['', '### 登记成已定的那几条：结论是谁给的', '',
-    '逐条回材料、会议原话与评审记录核：这个结论有没有人真的表过态。'
-    + '要人表态才成立的事（业务口径、对外承诺、处置标「（评审动作）」的规约条目）指不出表态位置就是伪定案，它本该是 `open`。'
-    + '`decider` 有名字只说明该谁定；依据要指得到那个人表态的位置，转述、计划与作者自己的推荐都不是表态。'
-    + '判的是来源不是形态：`settled + confirm`（已有结论请人复核）是正常形态，评审记录里人工区空着也不证明无人表态。'
-    + '材料原文只是依据的出处，不能顶替人的表态；材料直接给定、或由已定结论推出的事本就不用人签，登记成议题是多余的一条，按建议记。'];
+    '按判据「核的先后」①回关卡人签、澄清正文里引用的问答原话、材料与评审记录核；引用的原话与作者的解释分开看。'];
   if (!settled.length) {
     out.push('', '本轮没有登记成已定的条目。');
     return out;
@@ -122,7 +119,7 @@ function settledDetail(settled) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
       `- **该谁定**：${String(d.decider ?? '').trim() || '（没写）'}`,
       `- **评审时要人做什么**：${String(d.review_mode ?? '').trim() || '（没写）'}`,
-      '- **作者写的澄清正文**：',
+      '- **澄清正文**（引用的问答原话是依据，其余是作者的解释）：',
       ...String(d.clarification ?? '（没写）').split(/\r?\n/).map(l => `  > ${l}`));
   }
   return out;
@@ -135,35 +132,24 @@ function fenced(rows, lang) {
 }
 
 /**
- * story 里带图源标记的每张图与它的来源并排：来源图、story 的图逐张给，标明 reuse 还是 refine。
- * 判的是关系保没保持、细化有没有依据，不是节点同不同名——并排才看得出来。
- * 没被任何图引用的采用来源图单列：它的去向由材料取舍说明交代，不要求每张都搬。
+ * 上游每张图与写作设计登记承接它的全部小节并排：原图，加每一节的正文、表与图。
+ * 判的是关系保没保持，不是节点同不同名；没登记、定不到、空着的位置列成缺口。审查仍从全部原件反查，不受登记集合限制。
  */
-function diagramPairRows(projectRoot, root, story) {
-  const docs = adoptedInputs({ projectRoot, flowPath: path.join(root, 'AR', 'story-src', 'story-flow.json') }).documents;
-  const used = new Set();
+function diagramPairRows(planCtx, plan, story) {
   const out = [];
-  for (const c of diagramsOf(story).filter(x => x.sources.length)) {
-    out.push('', `#### story 的图（${diagramTopic(c)}）`, '', ...fenced(diagramBody(c), 'mermaid'));
-    for (const s of c.sources) {
-      const v = s.value ?? {};
-      let lines = null;
-      if (v.kind === 'document') {
-        const hit = diagramsOf(docs.get(String(v.path ?? '')) ?? '').find(d => d.id === v.diagram);
-        if (hit) { used.add(`${v.path} ${v.diagram}`); lines = diagramBody(hit); }
-      } else if (v.kind === 'blueprint') {
-        const got = blueprintGraph(projectRoot, v.blueprint_ref, v.graph_id);
-        if (got.status === 'ok') lines = got.content.split(/\r?\n/);
+  const targets = plan ? carryTargets(plan, story) : [];
+  for (const [label, text] of upstreamDocs(planCtx)) {
+    for (const d of diagramsOf(text)) {
+      const tag = `${label} ${d.id}`;
+      out.push('', `#### ${tag}（${diagramTopic(d)}）`, '', '上游原图：', '', ...fenced(d.lines, 'mermaid'));
+      const hits = targets.filter(c => c.source === tag);
+      if (!hits.length) out.push('', '写作设计没有登记承接这张图的小节。');
+      for (const c of hits) {
+        out.push('', `承接它的「${c.where}」：`, '', ...(c.problem ? [`（${c.problem}）`] : fenced(c.body.split(/\r?\n/), 'markdown')));
       }
-      out.push('', `来源 \`${s.raw}\`${lines ? `（${v.mode}）：` : '：指不到，机械检查已报'}`, ...(lines ? ['', ...fenced(lines, 'mermaid')] : []));
     }
   }
-  const unused = [...docs].flatMap(([at, text]) => diagramsOf(text).filter(d => !used.has(`${at} ${d.id}`))
-    .map(d => `- \`${at}\` ${d.id}（${diagramTopic(d)}）`));
-  if (unused.length) out.push('', '没有被 story 引用的采用来源图（去向按材料取舍说明核）：', '', ...unused);
-  if (out.length) return out;
-  return ['', docs.size ? '采用来源里没有可解析的 Mermaid 图，story 也没有带图源标记的图；其他格式的图按原文自行对照。'
-    : '本需求还没有冻结的采用来源，没有来源图要对照。'];
+  return out.length ? out : ['', '本次采用的上游原件里没有图。'];
 }
 
 // 盘上实际有哪几版会议材料：路径逐版列出，审查不必猜目录形状
@@ -259,6 +245,7 @@ function sharedProjection(projectRoot, rows) {
  * 完整读时先来源与设计，再通读待审的三件；附件与投影同字节时只读附件一次。
  */
 const reading = shared => ['', '### 怎么读', '',
+  '读到这份任务时，你已按派审载体只读 `AR/story.md` 做完首读，首读结论写在报告「判据核对」表后；下面是核源。',
   '先看派审载体说的是哪种情形。首审、上一份结论是 fail 的复审、带上一版材料报告参考的审查，按下面的顺序完整读。'
   + '格式返修只修上一份回复的报告形态：原回复的实质判断与判据覆盖充分就照用，只回材料核诊断点到的那部分；'
   + '诊断是缺判据、引用找不到、依据不足或结论矛盾，或者看不出原审查是否完整时，同样按下面的顺序完整读。', '',
@@ -298,16 +285,57 @@ export function readerReviewTask(projectRoot, feature) {
     ]),
     ...reading(sharedProjection(projectRoot, object.rows)),
     ...objectRows(projectRoot, feature, contract, object),
+    ...(object.design ? ['', '### 设计状态（原生读取）', '',
+      `蓝图${object.design.admitted ? '已准入' : '是草稿、未准入'}；原生问题 ${object.design.issues.length} 条`
+        + `${object.design.issues.length ? '（下列）' : ''}。草稿可以送审，问题涉及的业务事实在人读件里是不是写成了待定或限制，按判据核。`,
+      ...object.design.issues.map(i => `- ${i.code ?? i.id ?? 'issue'}${i.path ? ` @${i.path}` : ''}：${i.message ?? ''}`)] : []),
   ];
+  const src = path.join(root, 'AR', 'story-src');
+  const rid = readJsonOrNull(path.join(src, 'story-flow.json'))?.update?.open;
+  if (rid) {
+    rows.push('', `### 本轮 update ${rid}：新稿对照有效旧依据`, '',
+      `\`AR/story-src/updates/${rid}/before/\` 是这一轮动手前的现场。逐处核：新稿改掉的旧约束、旧决定与旧验收，改动依据是谁给的、他有没有这个权限；`
+      + '与仍有效的旧约束冲突而没经有权人裁定的，在「发现」表记阻断。update-notes 是作者的判断，按原件与 before 核，不当依据。');
+  }
 
+  // 人答先于逐章：关卡人签是来源之一，对话里答过的问题由登记条目的澄清正文引用原话，二者都拿原话核
+  rows.push('', '### 关卡人签：流程关卡上人看到的选项与回答（人答的来源之一）', '', ...signedGateRows(root));
+  rows.push(...decisionRows(path.join(src, 'decisions.json')));
+
+  // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
+  // 摘要只算作者区（机器区整段换成区名）：投影刷新不换审查对象，作者改一个字就换。准备审查时 story 已回到
+  // 正式形态（正式图块都是按源的 Mermaid），盘上读到的就是被审的那一份。
   const storyPath = path.join(root, 'AR', 'story.md');
   const story = readOrNull(storyPath) ?? '';
+  rows.push('', '### 审查对象：当前 `AR/story.md`（按下面的段落顺序读盘上原文）', '',
+    ...(story.trim() ? readingRows('AR/story.md', authorZone(story)) : ['`AR/story.md` 读不到或是空的：按「报告怎么写」第 5 条记。']));
+  // 已有的同图增强只给机械事实（哪几张、文件在哪、核到哪一步）；值不值得做、做得好不好按判据看图与 SVG 源码
+  const work = readingWork(root);
+  rows.push('', '### 已有的同图增强（机械事实）', '', ...(work.items.length
+    ? work.items.map(i => `- ${i.id}：\`AR/figures/${i.id}.svg\`，图审工作 \`AR/story-src/figures/${i.id}.reading/\`——${i.state}${i.reason ? `（${i.reason}）` : ''}`)
+    : ['没有已开始的同图增强：所有正式图都是 Mermaid。']));
+
+  // 写作设计：作者这一版的阅读主线与骨架，是待核的作者判断
+  const planText = readOrNull(path.join(src, 'story-template.md'));
+  rows.push('', '### 作者的写作设计：`AR/story-src/story-template.md`', '',
+    ...(planText === null || !planText.trim()
+      ? ['**写作设计缺口**：`AR/story-src/story-template.md` 读不到或是空的。照原材料与范围审正文，'
+        + '在「发现」表记一条：没有可核的写作设计。']
+      : ['（作者对本需求的阅读主线与每章骨架，是待核的作者判断，不是审查标准）', '',
+        ...readingRows('AR/story-src/story-template.md', planText)]));
+
   // 回看清单：作者十章齐后逐条处置的同一张清单，这里核每一条的去向成不成立。
-  const src = path.join(root, 'AR', 'story-src');
-  const planCtx = { contract, featureRoot: root, srcDir: src, storyPath,
+  const planCtx = { contract, projectRoot, featureRoot: root, srcDir: src, storyPath,
     decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
+  const plan = contract ? readWritingPlan(planCtx) : null;
   rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',
-    ...recheckRows(recheckItems(planCtx, contract ? readWritingPlan(planCtx) : null, story)));
+    ...recheckRows(recheckItems(planCtx, plan, story)));
+
+  // 来源集合与作者任务包同一份渲染：附录材料表对着它核，不拿作者表自证完整。
+  rows.push('', '### 材料与来源（附录材料表对着它核）', '',
+    '逐行对着原件核「贡献」：写的是这份材料实际给了什么；没采纳的新值或冲突版本写了对比作用与裁决依据。', '',
+    ...originRows(planCtx));
+
   // 会议逐话题把会议判断、原话、人的裁决与当前结果并排：审查要对着原话判，不只读模型写的结果。
   // 位置逐版列实际存在的那些，纠偏留痕仍回原件看。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
@@ -323,12 +351,7 @@ export function readerReviewTask(projectRoot, feature) {
     rows.push(...meetingTopicRows(src));
   }
 
-  rows.push(...decisionRows(planCtx.decisionsPath));
-
-  rows.push('', '### 来源图与 story 里采用它的图', '',
-    '逐张对照参与者、请求与返回、条件分支、结果归谁、失败后的责任；节点同名、带着图源标记不等于关系还在；'
-    + 'reuse 的图体机械已核，refine 核增量有没有依据、来源的关系有没有丢；没带标记的图是新绘，按设计与正文核。',
-    ...diagramPairRows(projectRoot, root, story));
+  rows.push('', '### 上游图与 story 里承接它的小节', '', ...diagramPairRows(planCtx, plan, story));
 
   // 作者对已用于写章的安排做过实质调整时才有这份：它是解释材料，不是事实真源
   if (fs.existsSync(path.join(src, 'template-adjustments.md'))) {
@@ -356,16 +379,35 @@ export function readerReviewTask(projectRoot, feature) {
   } else {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
-
-  // 附录材料清单的原件集合与清单检查同一份：结构由检查核过，这里核每行的贡献与采用关系
-  const set = externalOriginals(requirementContext(projectRoot, root, contract));
-  rows.push('', '### 附录材料清单要列的原件', '', ...(!set ? ['还没交给设计，没有冻结快照，原件集合未定。'] : [
-    '逐行对着原件核「贡献」：写的是这份材料实际给了什么；没采纳的新值或冲突版本写了对比作用与裁决依据。',
-    ...[...set.originals].map(([o, via]) => `- \`${o}\`${via.length ? `（经收件箱导入，转换稿 ${via.join('、')}）` : ''}`),
-    ...set.gaps.map(g => `- 缺口：${g}`)]));
+  // 有要核的图才做视觉裁定：原生纯函数按冻结来源与当前蓝图算，事实写在这里，结论只认这一份
+  const pictures = images.rows?.length || object.rows.some(r => r.label.endsWith('（image）'));
+  if (pictures) rows.push('', ...visualRows(storyReviewVisual(projectRoot, feature)));
 
   rows.push(...reportFormat());
   return rows.join('\n');
+}
+
+/** 看图能力裁定的任务行：允许图面延期、不允许延期、取不到三种照实写。 */
+function visualRows(v) {
+  if (v.status !== 'ok') {
+    return [`**本次看图能力裁定取不到**（${(v.issues ?? []).map(i => i.message ?? i.code).join('；') || v.status}）：`
+      + '看不了图就是没读完，按「报告怎么写」第 5 条记。'];
+  }
+  return [`**本次看图能力**：${v.fact}。`, v.deferral
+    ? '**图面核对可以按能力缺口延期**：按判据里「图面核对可以按能力缺口延期」那一款处理。'
+    : v.capability.has_vision ? '能看图：图面照常核。' : '图面核对不能延期：看不了图就是没读完，按「报告怎么写」第 5 条记。'];
+}
+
+/** story 的作者区：机器区（投影）整段换成一行区名。 */
+function authorZone(story) {
+  const lines = String(story).split(/\r?\n/);
+  const zones = zonesByLine(lines);
+  const out = [];
+  lines.forEach((line, i) => {
+    if (line.startsWith(ZONE_BEGIN)) out.push(`（附录机器区：${zones.get(i + 1)?.name ?? line.slice(ZONE_BEGIN.length).split(' · ')[0]}）`);
+    else if (!zones.has(i) && line.trim() !== ZONE_END) out.push(line);
+  });
+  return out.join('\n');
 }
 
 /** 读一份文件；读不到返回 null——空串与「读不到」在这里必须分得开。 */
@@ -377,8 +419,35 @@ function readOrNull(abs) {
 function longestFence(text) {
   let most = 3;
   for (const line of String(text ?? '').split(/\r?\n/)) {
-    const m = line.match(/^[ 	]*(`{3,})/);
+    const m = line.match(/^[ \t]*(`{3,})/);
     if (m && m[1].length > most) most = m[1].length;
   }
   return most;
 }
+
+/**
+ * 一份文件的阅读入口：内容摘要与按作者区真实标题排好的阅读段（不带行号，机器区排版不影响它）。
+ *
+ * 摘要取 `basis`（story 取作者区）：正文变了审查对象跟着变。读取以盘上原文为准，摘要对不上时
+ * 说明读到的不是这一版——停下重取当前请求，不拼接不同版本的局部判断。
+ */
+function readingRows(rel, basis) {
+  const digest = crypto.createHash('sha256').update(String(basis).replace(/\r\n/g, '\n')).digest('hex').slice(0, 16);
+  // 段落按作者区的标题给，不给行号：行号会随机器区重投的排版（多一个空行）漂移，
+  // 审查对象就跟着换了，而作者内容一字未动。读的时候在盘上按标题找，标题都在作者区里。
+  const doc = parseDocument(basis);
+  const heads = doc.headings.filter(h => h.level <= 3);
+  const rows = [`- \`${rel}\`：内容摘要 ${digest}。按下面的标题顺序分段读盘上原文，每段从这个标题读到下一个标题之前，`
+    + '段与段首尾相接、连起来是全文；段名里的上级标题只说明它在哪一章。'
+    + '读不到或读到的与这一版对不上，写明哪几段未审，不凭印象补'];
+  if (!heads.length || doc.lines.slice(0, heads[0].at).some(l => l.trim())) rows.push('  - （第一个标题之前的开头）');
+  const trail = [];
+  for (const h of heads) {
+    while (trail.length && trail[trail.length - 1].level >= h.level) trail.pop();
+    trail.push(h);
+    const label = trail.filter(t => t === h || t.level > 1);
+    rows.push(`  - ${label.map(t => `${'#'.repeat(t.level)} ${t.raw}`).join(' › ')}`);
+  }
+  return rows;
+}
+

@@ -23,16 +23,21 @@ import json
 import shutil
 import subprocess
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 import yaml
-from ext_workspace import copy_host_entries, git_init_excluding_framework, installed_package, link_framework
+from ext_workspace import (change_versions, copy_host_entries, git_init_excluding_framework, installed_package,
+                           link_framework, link_harness_yaml)
 
+REPO = Path(__file__).resolve().parents[2]
 #: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
 PKG_ROOT = installed_package()
 PKG_EXT = PKG_ROOT / "doc" / "extensions"
 SCAN = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "adapt-scan.mjs"
 ENTRIES = PKG_EXT / "skills" / "story-adaptation" / "scripts" / "entries.mjs"
+#: 包的版本：`adapted_for` 只会被脚本写成它
+PKG_VERSION = yaml.safe_load((PKG_EXT / "manifest.yaml").read_text(encoding="utf-8"))["version"]
 
 
 class AdaptCase(unittest.TestCase):
@@ -52,7 +57,8 @@ class AdaptCase(unittest.TestCase):
         self.target = Path(self._tmp.name) / "target"
         link_framework(self.target)
         (self.target / ".gitignore").write_text(
-            "doc/features/**/AR/story-src/drafts/\n", encoding="utf-8")
+            "doc/features/**/AR/story-src/drafts/\ndoc/features/**/.usage-input.json\ndoc/features/.usage-stats/\n"
+            "doc/features/.usage-state.json*\n/doc/usage.json.lock\n/doc/.usage.json.*.tmp\n", encoding="utf-8")
         shutil.copytree(PKG_EXT, self.target / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__", ".adapt-*"))
         copy_host_entries(PKG_ROOT, self.target)
@@ -60,6 +66,8 @@ class AdaptCase(unittest.TestCase):
         self.scripts = self.ext / "skills" / "story" / "scripts"
         self.core = self.scripts / "core"
         self.adapters = self.scripts / "adapters"
+        # 已适配到本版的目标有使用记录：由适配建立的空表（没有使用记录的情形由各用例自己删掉）
+        (self.target / "doc" / "usage.json").write_text('{\n  "schema": 1,\n  "requirements": {}\n}\n', encoding="utf-8")
         self.commit("baseline")
 
     # ---- 驱动 ----
@@ -91,6 +99,24 @@ class AdaptCase(unittest.TestCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.commit("空仓")
+
+    def write_review(self, *, digest: str | None = None, verdict: str = "PASS", skip: int = 0,
+                     dup_pass: bool = False) -> None:
+        """独立审查者交回的证据块：摘要与激活清单取自 `--status`，四个维度逐份给结论。
+
+        `dup_pass` 在末尾给第一份知识再补一项全 PASS——重复项不能盖住前面的结论。"""
+        knowledge = json.loads(self.adapt("--status").stdout)["knowledge"]
+        files = knowledge["files"][skip:]
+        dims = lambda v: "".join(f"      {d}: {{verdict: {v}, evidence: 核过 {d}}}\n"  # noqa: E731
+                                 for d in ("granularity", "fact_use", "duplication", "coding_boundary"))
+        rows = "".join(f"    - path: {f}\n{dims(verdict)}" for f in files)
+        if dup_pass:
+            rows += f"    - path: {files[0]}\n{dims('PASS')}"
+        review = self.ext / ".adapt" / "knowledge-review.md"
+        review.parent.mkdir(parents=True, exist_ok=True)
+        review.write_text("# 知识独审\n\n```yaml\nknowledge_review:\n"
+                          f"  digest: \"{digest or knowledge['digest']}\"\n  executor: subagent-run-1\n"
+                          f"  files:\n{rows}  blocking: []\n  unreviewed: []\n```\n", encoding="utf-8")
 
 
 class TheTargetKeepsWhatIsItsOwn(AdaptCase):
@@ -202,6 +228,10 @@ class TheMechanismFollowsThePackage(AdaptCase):
         head, _, tail = text.partition("  knowledge:\n")
         keep = tail.split("\n  hooks:", 1)[1] if "\n  hooks:" in tail else ""
         manifest.write_text(head + mine + "\n  hooks:" + keep, encoding="utf-8")
+        # 目标改了激活清单，它的 Framework 按改后的清单重物化入口（入口里的知识路由随清单）
+        rendered = subprocess.run(["node", str(ENTRIES), "--project-root", str(self.target), "--action", "materialize"],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, rendered.returncode, self.out(rendered))
         self.commit("目标只激活一份知识")
 
         proc = self.adapt("--apply")
@@ -213,37 +243,126 @@ class TheMechanismFollowsThePackage(AdaptCase):
         self.assertIn("story-adaptation", after, "机制登记没跟上包")
 
 
-class KnowledgeIsCheckedWithoutAFeature(AdaptCase):
-    """方法页第 7 步的只读检查：刚装完、没有任何需求时照样能核知识，不写文件；知识坏了非零退出。"""
+class TheStatusViewOnlyReads(AdaptCase):
+    """`--status`：刚装完、没有任何需求时照样能核知识；只读——前后文件集合与内容一致；
+    未安装、坏清单、坏配置分别是不同的事实，不能都变成「零知识且通过」。"""
 
-    def check_script(self) -> str:
-        page = (PKG_EXT / "skills" / "story-adaptation" / "reference" / "knowledge-adaptation.md").read_text(encoding="utf-8")
-        block = page.split("**确认与交回**", 1)[1].split("```js", 1)[1].split("```", 1)[0]
-        return "\n".join(l[3:] if l.startswith("   ") else l for l in block.splitlines())
+    def tree(self) -> dict[str, bytes]:
+        return {p.relative_to(self.target).as_posix(): p.read_bytes()
+                for p in self.target.rglob("*") if p.is_file() and ".git" not in p.parts}
 
-    def run_check(self) -> subprocess.CompletedProcess:
-        return subprocess.run(["node", "--input-type=module", "-e", self.check_script()], cwd=self.target,
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    def status(self) -> tuple[int, dict]:
+        before = self.tree()
+        proc = self.adapt("--status")
+        self.assertEqual(before, self.tree(), "--status 写了文件")
+        return proc.returncode, json.loads(proc.stdout)
+
+    def test_an_installed_target_reports_versions_counts_and_digest(self) -> None:
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual(PKG_VERSION, got["package"]["version"])
+        self.assertTrue(got["target"]["installed"])
+        self.assertEqual("PASS", got["knowledge"]["status"])
+        self.assertTrue(got["knowledge"]["counts"])
+        self.assertTrue(got["knowledge"]["digest"].startswith("sha256:"))
+        self.assertTrue(got["history"].startswith("unknown"), "读不到的历史没说成未知")
 
     def test_a_fresh_install_checks_clean_and_writes_nothing(self) -> None:
         self.make_fresh()
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.commit("装好")
-        proc = self.run_check()
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertIn('"status":"PASS"', proc.stdout)
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=self.target, capture_output=True, text=True)
-        self.assertEqual("", status.stdout.strip(), "检查写了文件")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("PASS", got["knowledge"]["status"])
+        self.assertEqual({}, got["knowledge"]["counts"])
+        self.assertTrue(got["items"]["知识"], "从未适配的目标没从知识基线列起")
         self.assertFalse((self.target / "doc" / "features").exists(), "检查造了需求目录")
 
-    def test_broken_knowledge_exits_non_zero_with_the_file(self) -> None:
+    def test_not_installed_is_a_fact_not_an_error(self) -> None:
+        shutil.rmtree(self.ext)
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("not_installed", got["state"])
+        self.assertNotIn("knowledge", got, "没装的目标报出了知识结果")
+
+    def test_broken_knowledge_exits_one_with_the_file(self) -> None:
         manifest = self.ext / "manifest.yaml"
         manifest.write_text(manifest.read_text(encoding="utf-8").replace(
             "  knowledge:\n", "  knowledge:\n    - knowledge/facts/gone.md\n", 1), encoding="utf-8")
-        proc = self.run_check()
-        self.assertNotEqual(0, proc.returncode)
-        self.assertIn("knowledge/facts/gone.md", proc.stderr)
+        code, got = self.status()
+        self.assertEqual(1, code)
+        self.assertEqual("FAIL", got["knowledge"]["status"])
+        self.assertIn("knowledge/facts/gone.md", "\n".join(got["knowledge"]["problems"]))
+
+    def test_an_unreadable_config_is_an_input_error(self) -> None:
+        (self.target / "framework.config.json").write_text("{坏了", encoding="utf-8")
+        code, got = self.status()
+        self.assertEqual(2, code)
+        self.assertEqual("config", got["error"]["category"])
+        self.assertIn("framework.config.json", got["error"]["message"])
+
+    def test_after_an_upgrade_the_items_follow_the_current_cursor(self) -> None:
+        (self.ext / "adaptation.yaml").write_text('adapters: stand-in\nadapted_for: "1.9.6"\n', encoding="utf-8")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("1.9.6", got["target"]["adapted_for"])
+        self.assertTrue(all(tuple(map(int, i.split("：", 1)[0].split("."))) > (1, 9, 6)
+                            for i in got["items"]["知识"]), got["items"])
+        self.assertNotIn("在途单", got["items"], "adapt 不处理旧需求，跟进里不该有在途单块")
+
+
+class SameUseCandidatesAreOnlyHints(TheStatusViewOnlyReads):
+    """同用途声明候选只按 `applies_when` 原文相同分组，给独立审查当线索：不改 PASS，不推断相似，
+    为空也不说明没有重复。重复与否、互补与否由审查读正文判。"""
+
+    def set_applies(self, name: str, text: str) -> None:
+        f = self.ext / "knowledge" / "facts" / name
+        rows = [f"applies_when: {text}" if l.startswith("applies_when:") else l
+                for l in f.read_text(encoding="utf-8").split("\n")]
+        f.write_text("\n".join(rows), encoding="utf-8")
+
+    def test_the_same_declared_use_is_listed_without_changing_the_verdict(self) -> None:
+        """同用途但内容互补：脚本只列出来，不判它们重复。"""
+        self.set_applies("component-profile.md", "设计要用项目已有能力时：在哪、怎么用")
+        self.set_applies("engineering-capabilities.md", "  设计要用项目已有能力时：在哪、怎么用  ")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        self.assertEqual("PASS", got["knowledge"]["status"])
+        self.assertEqual("同用途声明候选，须语义核对", got["knowledge"]["sameUse"]["note"])
+        files = [g["files"] for g in got["knowledge"]["sameUse"]["groups"]]
+        self.assertIn(sorted(["knowledge/facts/component-profile.md", "knowledge/facts/engineering-capabilities.md"]),
+                      [sorted(f) for f in files])
+
+    def test_different_wording_is_not_claimed_free_of_duplicates(self) -> None:
+        """用途写法不同而正文重复：脚本不列，也不说「没有重复」——那归审查。"""
+        self.set_applies("component-profile.md", "查本部件边界时")
+        self.set_applies("engineering-capabilities.md", "查已有能力时")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        listed = [f for g in got["knowledge"]["sameUse"]["groups"] for f in g["files"]]
+        self.assertNotIn("knowledge/facts/component-profile.md", listed)
+        self.assertNotIn("无重复", json.dumps(got, ensure_ascii=False))
+
+
+class TheIndependentReviewIsDeliveredBeforeMarking(unittest.TestCase):
+    """独立审查的任务页交付四个维度，SKILL 与方法页在 --mark-adapted 之前送达它。"""
+
+    REF = PKG_EXT / "skills" / "story-adaptation"
+
+    def test_the_task_page_names_the_four_dimensions_and_its_inputs(self) -> None:
+        page = (self.REF / "reference" / "knowledge-review.md").read_text(encoding="utf-8")
+        for dim in ("条目粒度与归类", "项目事实的用途", "跨文件重复", "编码规范边界"):
+            self.assertIn(dim, page)
+        for given in ("knowledge.digest", "knowledge.sameUse", "正常需求", "未审"):
+            self.assertIn(given, page)
+
+    def test_the_review_comes_before_marking_in_both_entry_pages(self) -> None:
+        for rel in ("SKILL.md", "reference/knowledge-adaptation.md"):
+            text = (self.REF / rel).read_text(encoding="utf-8")
+            with self.subTest(page=rel):
+                self.assertIn("knowledge-review.md", text)
+                self.assertLess(text.index("knowledge-review.md"), text.rindex("--mark-adapted"))
 
 
 class TheUpgradeFollowsTheVersionRecord(AdaptCase):
@@ -275,16 +394,119 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertIn(f"{fact.name} 的 frontmatter 缺 form", proc.stdout)
         self.assertIn("停一次问人", proc.stdout)
 
-    def test_nothing_to_adapt_is_one_sentence(self) -> None:
-        """知识已按包的版本适配过：没有晚于它的条目，只给一句话。"""
-        self.set_adapted(yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))["version"])
+    def test_nothing_to_adapt_is_one_sentence_and_records_the_version(self) -> None:
+        """已按包的版本适配过、知识合协议：没有更晚的演进条目，不问人，脚本把 adapted_for 写成包的版本。"""
+        self.set_adapted(PKG_VERSION)
         proc = self.adapt("--apply")
         self.assertEqual(0, proc.returncode, self.out(proc))
         self.assertIn("目标已按包的版本适配，知识与当前协议一致", proc.stdout)
         self.assertNotIn("停一次问人", proc.stdout)
-        self.assertEqual("", self.git("status", "--porcelain", "--", "doc/extensions/manifest.yaml",
-                                      "doc/extensions/adaptation.yaml", "doc/extensions/knowledge").stdout.strip(),
-                         "只是提示却写了知识、清单或适配状态")
+        adaptation = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
+        self.assertIn(f'adapted_for: "{PKG_VERSION}"', adaptation, "无事可做却没记下已按包的版本适配")
+        self.assertEqual("", self.git("status", "--porcelain", "--", "doc/extensions/knowledge").stdout.strip(),
+                         "只是提示却写了知识")
+        self.assertEqual(0, self.adapt("--check").returncode, "写了 adapted_for 之后核对不再通过")
+
+    def test_a_target_without_adapted_for_starts_from_the_knowledge_baseline(self) -> None:
+        """没按任何版本适配过：知识块从基线一节列起，连同后面各版的知识条目。"""
+        adaptation = self.ext / "adaptation.yaml"
+        adaptation.write_text("adapters: stand-in\n", encoding="utf-8")
+        self.commit("没写过 adapted_for")
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
+        knowledge = json.loads(line.split("按版本跟进：", 1)[1])["items"]["知识"]
+        self.assertEqual(set(change_versions(PKG_EXT, "知识")), {i.split("：", 1)[0] for i in knowledge},
+                         "没从知识基线起列全各版知识条目")
+        self.assertIn("停一次问人", proc.stdout)
+        self.assertNotIn("adapted_for", adaptation.read_text(encoding="utf-8"), "没等人做完就写了适配版本")
+
+
+class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
+    """`--mark-adapted` 把 adapted_for 写成包的版本；值不由模型定，前置不满足就停。"""
+
+    def mark(self) -> subprocess.CompletedProcess:
+        return self.adapt("--mark-adapted")
+
+    def set_manifest_line(self, key: str, value: str) -> None:
+        """`adapted_for` 写在目标的 adaptation.yaml，`version` 写在 manifest。"""
+        if key == "adapted_for":
+            (self.ext / "adaptation.yaml").write_text(f'adapters: stand-in\nadapted_for: "{value}"\n', encoding="utf-8")
+        else:
+            manifest = self.ext / "manifest.yaml"
+            rows = [f'{key}: "{value}"' if l.startswith(f"{key}:") else l
+                    for l in manifest.read_text(encoding="utf-8").split("\n")]
+            manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit(f"{key} {value}")
+
+    def test_it_writes_the_package_version_and_the_check_still_passes(self) -> None:
+        self.set_manifest_line("adapted_for", "1.9.6")
+        self.write_review()
+        proc = self.mark()
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        adaptation = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
+        self.assertIn(f'adapted_for: "{PKG_VERSION}"', adaptation)
+        self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
+
+    def test_knowledge_due_for_adaptation_needs_matching_independent_evidence(self) -> None:
+        """有知识演进条目时，加载通过不等于适配完成：缺审、过期、漏一份、判 FAIL 都不写 adapted_for。"""
+        self.set_manifest_line("adapted_for", "1.9.2")
+        before = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
+        cases = {"缺审": (None, "missing"), "过期": ({"digest": "sha256:0000000000000000"}, "stale"),
+                 "漏一份": ({"skip": 1}, "incomplete"), "判 FAIL": ({"verdict": "FAIL"}, "incomplete"),
+                 "未知": ({"verdict": "UNKNOWN"}, "incomplete"), "非法值": ({"verdict": "OK"}, "incomplete"),
+                 "重复盖住 FAIL": ({"verdict": "FAIL", "dup_pass": True}, "incomplete")}
+        for name, (kw, status) in cases.items():
+            with self.subTest(name):
+                review = self.ext / ".adapt" / "knowledge-review.md"
+                review.unlink(missing_ok=True)
+                if kw is not None:
+                    self.write_review(**kw)
+                status_json = json.loads(self.adapt("--status").stdout)
+                self.assertEqual(status, status_json["knowledge"]["review"]["status"])
+                proc = self.mark()
+                self.assertEqual(2, proc.returncode, self.out(proc))
+                self.assertIn("知识适配未完成", self.out(proc))
+                self.assertEqual(before, (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
+        self.write_review()
+        self.assertEqual(0, self.mark().returncode)
+        fact = next((self.ext / "knowledge" / "facts").glob("*.md"))
+        fact.write_text(fact.read_text(encoding="utf-8") + "\n补一句。\n", encoding="utf-8")
+        self.assertEqual("stale", json.loads(self.adapt("--status").stdout)["knowledge"]["review"]["status"],
+                         "知识改过之后旧结论还盖着新内容")
+
+    def test_a_mechanism_only_upgrade_needs_no_review(self) -> None:
+        """没有晚于 adapted_for 的知识条目：不要求独审，照常记版本。"""
+        latest = change_versions(PKG_EXT, "知识")[-1]
+        self.set_manifest_line("adapted_for", latest)
+        proc = self.mark()
+        self.assertEqual(0, proc.returncode, self.out(proc))
+
+    def test_it_stops_when_the_target_has_no_manifest(self) -> None:
+        shutil.rmtree(self.ext)
+        self.commit("空仓")
+        proc = self.mark()
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("还没装过", self.out(proc))
+        self.assertFalse((self.ext / "manifest.yaml").exists(), "没装过却写了 manifest")
+
+    def test_it_stops_before_the_mechanism_is_upgraded(self) -> None:
+        self.set_manifest_line("version", "1.9.7")
+        before = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
+        proc = self.mark()
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn("把机制升到包的版本", self.out(proc))
+        self.assertEqual(before, (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
+
+    def test_it_stops_when_the_knowledge_does_not_load(self) -> None:
+        fact = next((self.ext / "knowledge" / "facts").glob("*.md"))
+        fact.write_text(fact.read_text(encoding="utf-8").replace("\nform:", "\nshape:", 1), encoding="utf-8")
+        self.commit("有一份知识没写 form")
+        before = (self.ext / "adaptation.yaml").read_text(encoding="utf-8")
+        proc = self.mark()
+        self.assertEqual(2, proc.returncode, self.out(proc))
+        self.assertIn(fact.name, self.out(proc))
+        self.assertEqual(before, (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
 
 
 class ThePreflightStopsInsteadOfGuessing(AdaptCase):
@@ -308,14 +530,14 @@ class ThePreflightStopsInsteadOfGuessing(AdaptCase):
         self.assertEqual(2, proc.returncode, "没有 git 却照写了")
         self.assertIn("git", self.out(proc))
 
-    def test_running_twice_says_it_is_still_valid(self) -> None:
-        """同版本重复执行不损坏内容，第二次说「仍有效」而不是「写入 0 个文件」。"""
+    def test_running_twice_says_the_mechanism_is_current(self) -> None:
+        """同版本重复执行不损坏内容，第二次说「机制已在包的版本上」而不是「写入 0 个文件」。"""
         first = self.adapt("--apply")
         self.assertEqual(0, first.returncode, self.out(first))
         self.commit("第一次升级")
         second = self.adapt("--apply")
         self.assertEqual(0, second.returncode, self.out(second))
-        self.assertIn("当前适配仍有效", self.out(second))
+        self.assertIn("机制已在包的版本上", self.out(second))
 
 
 class AFreshInstallRunsOutOfTheBox(AdaptCase):
@@ -369,6 +591,25 @@ class AFreshInstallRunsOutOfTheBox(AdaptCase):
         proc = self.adapt("--check")
         self.assertEqual(0, proc.returncode, self.out(proc))
 
+    def test_a_fresh_install_lists_the_knowledge_baseline_and_leaves_adapted_for_to_the_script(self) -> None:
+        """首次安装就列出从基线起的知识条目，不带 adapted_for；交回后 `--mark-adapted` 写成包的版本。"""
+        proc = self.adapt("--apply")
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertNotIn("adapted_for", (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
+        self.assertIn("--mark-adapted", proc.stdout)
+        line = next(l for l in proc.stdout.splitlines() if "按版本跟进：" in l)
+        items = json.loads(line.split("按版本跟进：", 1)[1])["items"]
+        self.assertEqual(set(change_versions(PKG_EXT, "知识")), {i.split("：", 1)[0] for i in items["知识"]},
+                         "首次没从知识基线起拿到各版知识条目")
+        self.assertNotIn("在途单", items, "adapt 不处理旧需求，跟进里不该有在途单块")
+        self.commit("首次装好")
+        self.assertEqual(2, self.adapt("--mark-adapted").returncode, "首装写了知识却没独审，也记成已适配")
+        self.write_review()
+        marked = self.adapt("--mark-adapted")
+        self.assertEqual(0, marked.returncode, self.out(marked))
+        self.assertIn(f'adapted_for: "{PKG_VERSION}"', (self.ext / "adaptation.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(0, self.adapt("--check").returncode)
+
 
 
 class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
@@ -401,6 +642,197 @@ class ThePackageKeepsItsOwnDirectoriesStraight(AdaptCase):
         self.assertEqual(1, proc.returncode, "包的 scripts 根下有脚本却判通过了")
         self.assertIn("loose.mjs", self.out(proc))
 
+
+class TheUsageRecordIsSetUpByApply(AdaptCase):
+    """adapt 给业务仓建立可入库的 `doc/usage.json`：缺了建空表，在了逐字节保留，检查只读，坏了不覆盖。"""
+
+    EMPTY = {"schema": 1, "requirements": {}}
+    REAL = ('{"schema":1,"requirements":{"AR1-20261021T080102.123Z":{"ext":"1.9.9","fw":null,'
+            '"agent":null,"model":null,"steps":{"story":{"spent":1656}}}}}')
+
+    def setUp(self) -> None:  # noqa: D102
+        super().setUp()
+        self.record = self.target / "doc" / "usage.json"
+
+    def without_record(self, message: str = "还没有使用记录") -> None:
+        self.record.unlink()
+        self.commit(message)
+
+    def doc_listing(self) -> list[str]:
+        return sorted(p.name for p in (self.target / "doc").iterdir())
+
+    def assert_set_up(self, proc: subprocess.CompletedProcess) -> None:
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertEqual(self.EMPTY, json.loads(self.record.read_text(encoding="utf-8")))
+        self.assertIn("已建立使用记录 doc/usage.json", proc.stdout)
+        self.assertIn("一起提交", proc.stdout)
+        self.git("add", "doc/usage.json")
+        self.assertIn("A  doc/usage.json", self.git("status", "--porcelain", "doc/usage.json").stdout, "普通 git add 加不进去")
+        self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
+
+    def test_an_upgrade_from_an_older_version_sets_it_up(self) -> None:
+        core = next(self.core.rglob("*.py"))
+        core.write_text(core.read_text(encoding="utf-8") + "\n# 旧版本\n", encoding="utf-8")
+        manifest = self.ext / "manifest.yaml"
+        manifest.write_text("\n".join('version: "1.9.8"' if l.startswith("version:") else l
+                                      for l in manifest.read_text(encoding="utf-8").split("\n")), encoding="utf-8")
+        self.without_record("1.9.8 的仓")
+        proc = self.adapt("--apply")
+        self.assertIn("升级完成", proc.stdout)
+        self.assert_set_up(proc)
+
+    def test_a_fresh_install_and_a_same_version_rerun_set_it_up(self) -> None:
+        self.make_fresh()
+        self.without_record("空仓")
+        self.assert_set_up(self.adapt("--apply"))
+        self.commit("装好")
+        self.without_record("使用记录被删了")
+        proc = self.adapt("--apply")
+        self.assertIn("没有机制文件要写", proc.stdout)
+        self.assert_set_up(proc)
+
+    def test_an_existing_record_is_kept_byte_for_byte(self) -> None:
+        for text in ('{\n  "schema": 1,\n  "requirements": {}\n}\n', self.REAL):
+            with self.subTest(text=text[:20]):
+                self.record.write_text(text, encoding="utf-8")      # 未提交的改动也照样保留
+                proc = self.adapt("--apply")
+                self.assertEqual(0, proc.returncode, self.out(proc))
+                self.assertIn("已在且合法，保留未动", proc.stdout)
+                self.assertEqual(text, self.record.read_text(encoding="utf-8"))
+                self.git("checkout", "--", "AGENTS.md")       # 入口文件归 apply 重写，下一轮保持写入面干净
+
+    def test_status_and_check_only_read(self) -> None:
+        self.without_record()
+        before = self.doc_listing()
+        check = self.adapt("--check")
+        self.assertEqual(1, check.returncode, self.out(check))
+        self.assertIn("④ 使用记录：doc/usage.json 不存在", self.out(check))
+        self.assertIn("跑 --apply 建立", self.out(check))
+        self.adapt("--status")
+        self.assertEqual(before, self.doc_listing(), "检查命令建了文件、锁或临时文件")
+
+    def test_a_bad_record_stops_apply_before_anything_is_written(self) -> None:
+        core = next(self.core.rglob("*.py"))
+        stale = core.read_text(encoding="utf-8") + "\n# 旧版本\n"
+        for name, text in {"坏 JSON": "{ 坏了", "冲突标记": '<<<<<<< HEAD\n{"schema": 1}\n=======\n{}\n>>>>>>> b\n',
+                           "旧 schema": '{"schema": 0, "requirements": {}}'}.items():
+            with self.subTest(name):
+                core.write_text(stale, encoding="utf-8")
+                self.record.write_text(text, encoding="utf-8")
+                self.commit(name)
+                proc = self.adapt("--apply")
+                self.assertEqual(2, proc.returncode, self.out(proc))
+                self.assertIn("不合法", self.out(proc))
+                self.assertIn("机制一个字节没写", self.out(proc))
+                self.assertEqual(text, self.record.read_text(encoding="utf-8"))
+                self.assertEqual(stale, core.read_text(encoding="utf-8"), "坏记录却先写了机制文件")
+
+    def test_an_ignored_record_is_not_called_a_finished_adaptation(self) -> None:
+        self.without_record()
+        exclude = self.target / ".git" / "info" / "exclude"
+        exclude.write_text(exclude.read_text(encoding="utf-8") + "\n/doc/usage.json\n", encoding="utf-8")
+        proc = self.adapt("--apply")
+        self.assertEqual(1, proc.returncode, self.out(proc))
+        self.assertIn("仍被", proc.stdout)
+        self.assertIn("未解决前适配不算完成", proc.stdout)
+        self.assertNotIn("升级完成", proc.stdout)
+
+    def test_a_record_that_cannot_be_written_gives_the_one_repair(self) -> None:
+        """写不进去：说清机制已写完、使用记录没建，给出原样可跑的补建一行；照它补完 --check 通过。"""
+        self.without_record()
+        lock = self.target / "doc" / "usage.json.lock"
+        lock.mkdir()
+        proc = self.adapt("--apply")
+        self.assertEqual(1, proc.returncode, self.out(proc))
+        self.assertIn("没有建立", proc.stdout)
+        self.assertIn("不用重跑 --apply", proc.stdout)
+        self.assertFalse(self.record.exists())
+        lock.rmdir()
+        line = repair_line(proc.stdout)
+        done = run_in_shell(line, cwd=PKG_ROOT)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.assertEqual(self.EMPTY, json.loads(self.record.read_text(encoding="utf-8")))
+        self.assertEqual(0, self.adapt("--check").returncode, self.out(self.adapt("--check")))
+
+
+def repair_line(stdout: str) -> str:
+    """apply 输出里那一行补建命令：提示句的下一行，原样取出。"""
+    lines = stdout.splitlines()
+    at = next(i for i, l in enumerate(lines) if "只补这一份" in l)
+    return lines[at + 1].strip()
+
+
+def run_in_shell(line: str, *, cwd: Path, shell: str | None = None) -> subprocess.CompletedProcess:
+    """按命令打印时所针对的宿主 shell 原样执行，不拆参数。"""
+    shell = shell or ("bash" if __import__("os").environ.get("SHELL") else "powershell")
+    argv = ["powershell", "-NoProfile", "-Command", line] if shell == "powershell" else ["bash", "-c", line]
+    return subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120)
+
+
+class TheRepairLineRunsAsPrinted(unittest.TestCase):
+    """补建那一行在两种宿主 shell 下原样可跑：目标根带单引号、空格与中文，扩展目录自定义且带空格，从别的目录执行。"""
+
+    def setUp(self) -> None:  # noqa: D102
+        import os  # noqa: PLC0415
+        for tool in ("node", "git"):
+            if shutil.which(tool) is None:
+                self.skipTest(f"环境里没有 {tool}")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.os = os
+
+    def make_target(self, name: str) -> Path:
+        target = Path(self._tmp.name) / name
+        target.mkdir(parents=True)
+        link_framework(target)
+        config = json.loads((target / "framework.config.json").read_text(encoding="utf-8"))
+        config.setdefault("paths", {})["extension_dir"] = "doc/my ext"
+        (target / "framework.config.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        for args in (["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]):
+            subprocess.run(["git", "-C", str(target), *args], capture_output=True)
+        (target / "doc").mkdir(exist_ok=True)
+        (target / "doc" / "usage.json.lock").mkdir()
+        return target
+
+    def adapt(self, target: Path, mode: str, env: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(["node", str(SCAN), mode, "--target", str(target), "--package", str(PKG_ROOT)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env)
+
+    def check_shell(self, shell: str) -> None:
+        if shutil.which(shell) is None:
+            self.skipTest(f"环境里没有 {shell}")
+        env = dict(self.os.environ)
+        if shell == "powershell":
+            env.pop("SHELL", None)
+        else:
+            env["SHELL"] = "/bin/bash"
+        target = self.make_target(f"O'Brien 目标 {shell}")
+        proc = self.adapt(target, "--apply", env)
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        (target / "doc" / "usage.json.lock").rmdir()
+        line = repair_line(proc.stdout)
+        self.assertIn("python -B", line)
+        done = run_in_shell(line, cwd=REPO, shell=shell)
+        self.assertEqual(0, done.returncode, f"{line}\n{done.stdout}{done.stderr}")
+        record = target / "doc" / "usage.json"
+        self.assertEqual({"schema": 1, "requirements": {}}, json.loads(record.read_text(encoding="utf-8")))
+        ext = target / "doc" / "my ext"
+        self.assertTrue((ext / "manifest.yaml").is_file(), "扩展没装到自定义目录")
+        self.assertEqual([], [p for p in ext.rglob("__pycache__")], "补建命令在机制目录里留了字节码")
+        check = self.adapt(target, "--check", env)
+        self.assertEqual(0, check.returncode, check.stdout + check.stderr)
+        for args in (["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "装好"]):
+            subprocess.run(["git", "-C", str(target), *args], capture_output=True)
+        again = self.adapt(target, "--apply", env)
+        self.assertEqual(0, again.returncode, again.stdout + again.stderr)
+        self.assertIn("已在且合法，保留未动", again.stdout)
+
+    def test_powershell(self) -> None:
+        self.check_shell("powershell")
+
+    def test_posix_shell(self) -> None:
+        self.check_shell("bash")
 
 if __name__ == "__main__":
     unittest.main()

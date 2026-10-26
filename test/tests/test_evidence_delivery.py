@@ -158,18 +158,73 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             encoding="utf-8")
         (src / "story-flow.json").write_text(json.dumps({"rounds": [{"gates": [{
             "gate": "meeting", "meeting": "澄清会@abcdef12", "item": "T1", "chosen": "defer",
-            "options": topic["options"], "basis": "用户回复：T1 保持待定"}]}]}, ensure_ascii=False), encoding="utf-8")
+            "options": topic["options"], "reply": "T1 保持待定", "by": "human", "outcome": "accepted"}]}]},
+            ensure_ascii=False), encoding="utf-8")
         (src / "doc-refresh.md").write_text("### 澄清会@abcdef12/T1 重试标识\n\n本期换标识。\n", encoding="utf-8")
         text = self.reader_task()
         section = text.split("#### 澄清会@abcdef12/T1", 1)[1].split("####", 1)[0]
         self.assertIn("**会议判断**：重试是否换标识未定", section)
         self.assertIn("> 乙 10:01：重试要不要换标识，先别写死。", section)
-        self.assertIn("选了「defer」保持待定；没选：「a」换标识", section)
+        self.assertIn("选了「defer」保持待定；没选：「a」换标识；原话见「关卡人签」", section)
+        self.assertEqual(1, text.count("> T1 保持待定"), "同一笔人签的原话在一份任务里贴了两遍")
         self.assertIn("> 本期换标识。", section)
         t2 = text.split("#### 澄清会@abcdef12/T2", 1)[1]
         self.assertIn("同 T1", t2, "同一范围的原话取了两次")
         self.assertIn("未裁决", t2)
         self.assertIn("doc-refresh.md 里没有这个话题的段落", t2)
+
+    def signed(self, label: str = "后续由负责人定", **gate) -> dict:
+        record = {"gate": "scope_decision", "ask_id": "a1", "no": 2, "at": "2026-01-01T00:00:00Z",
+                  "options": [{"no": 1, "key": "retry", "label": "失败后允许再试"},
+                              {"no": 2, "key": "later", "label": label}],
+                  "chosen": "later", "label": label, "reply": "失败怎么处理先不定，后面负责人定",
+                  "mapped_by": "reply", "by": "human", "outcome": "accepted"}
+        record.update(gate)
+        return record
+
+    def write_flow(self, *gates: dict) -> None:
+        (self.src() / "story-flow.json").write_text(json.dumps({"rounds": [{"round": 1, "gates": list(gates)}]},
+                                                               ensure_ascii=False), encoding="utf-8")
+
+    def test_the_signed_original_comes_before_the_authors_reading(self) -> None:
+        """人选了「后续定」，作者登记却写成可再试：任务同时交两份不同内容，人签在前，原话取 reply。"""
+        src = self.src()
+        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
+        self.write_flow(self.signed())
+        (src / "decisions.json").write_text(json.dumps({"decisions": [
+            {"id": "D-4", "status": "settled", "title": "失败处理", "decider": "需求方",
+             "clarification": "失败后可默认再试一次"}]}, ensure_ascii=False), encoding="utf-8")
+        task = self.reader_task()
+        signed = task.split("### 关卡人签", 1)[1].split("\n### ", 1)[0]
+        self.assertLess(task.index("### 关卡人签"), task.index("### 登记成已定"), "作者解释排在人签前面")
+        self.assertIn("选了「later」后续由负责人定", signed)
+        self.assertIn("「retry」失败后允许再试；「later」后续由负责人定", signed, "当时摆出的选项没带全")
+        self.assertIn("> 失败怎么处理先不定，后面负责人定", signed, "人答不是 reply 原文")
+        self.assertNotIn("可默认再试", signed, "作者解释混进了关卡人签")
+        self.assertIn("失败后可默认再试一次", task.split("### 登记成已定", 1)[1], "作者解释没作为待核对象送到")
+        self.assertIn("引用的问答原话是依据，其余是作者的解释", task, "澄清正文里引用的人答没被当作可用依据送到")
+        self.assertIn("没有已开始的同图增强", task.split("### 已有的同图增强（机械事实）", 1)[1], "已有增强的机械事实没送到")
+        for phrase in ("—", "basis"):
+            self.assertNotIn(phrase, signed)
+
+    def test_only_effective_human_answers_are_signatures(self) -> None:
+        """模型提议、被退回的回话不呈为人签；没有流程契约是没有这类人签，契约坏了是缺口。"""
+        self.write_flow(self.signed(by="model"), self.signed(outcome="rejected", reply="放好了"))
+        rows = self.signed_rows()
+        self.assertIn("还没有生效的人签", rows)
+        self.assertNotIn("后面负责人定", rows)
+        self.assertNotIn("放好了", rows)
+        (self.src() / "story-flow.json").write_text("{ 坏", encoding="utf-8")
+        self.assertIn("读不出关卡记录", self.signed_rows())
+        (self.src() / "story-flow.json").unlink()
+        self.assertIn("没有这类人签", self.signed_rows())
+
+    def signed_rows(self) -> str:
+        proc = nk.node("--input-type=module", "-e",
+                       f"const m = await import({nk.as_url(self.ext / 'hooks/shared/review-inputs.mjs')});"
+                       f"process.stdout.write(m.signedGateRows({json.dumps(self.feature_root.as_posix())}).join('\\n'));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return proc.stdout
 
     def test_each_open_decision_comes_with_its_options_for_a_verdict(self) -> None:
         """U41：每条 open 议题带澄清原文，审查逐条给结论——只给标题时两个用例都放过了替人选边的正文。"""
@@ -182,39 +237,43 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
              "clarification": "**要定的事**：宽限期。\n\n1. 24 小时\n2. 48 小时"},
             {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方", "clarification": "依据"}]},
             ensure_ascii=False), encoding="utf-8")
-        section = self.reader_task().split("### 仍开着的选择", 1)[1].split("### 登记成已定", 1)[0]
-        self.assertIn("每一条都写一句结论", section)
-        self.assertIn("各选项（含保持待定）都会有的行为才是共同要求", section)
+        task = self.reader_task()
+        self.assertLess(task.index("### 先核：仍开着的选择与正文的冲突"), task.index("### 审查对象"),
+                        "决定冲突要在逐章阅读之前核")
+        section = task.split("### 先核：仍开着的选择与正文的冲突", 1)[1].split("### 登记成已定", 1)[0]
+        self.assertIn("「核的先后」①逐条给结论", section, "没指到判法所在")
+        overlay = (self.ext / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
+        for needle in ("每条 open 写一句结论", "不按作者声称已覆盖的位置缩小范围", "稍后问人",
+                       "各选项（含保持待定）都会有的行为才是共同要求", "不授权其中任何一个备选"):
+            self.assertIn(needle, overlay, f"判法里少了「{needle}」")
+            self.assertEqual(1, task.count(needle), f"判法要随判据原文恰好送到一次：{needle}")
+            self.assertNotIn(needle, section, f"开着的选择那一节又抄了一份判法：{needle}")
         for head, option in (("#### D-2 超时后是否自动重试", "  > 1. 自动重试一次"),
                              ("#### D-3 宽限期多长", "  > 2. 48 小时")):
             self.assertIn(head, section)
             self.assertIn(option, section, "选项原文没带到审查者手上")
         self.assertNotIn("D-1", section, "已定的归下一节")
 
-    def test_a_marked_story_diagram_sits_next_to_its_source(self) -> None:
-        """带标记的图与它的来源并排；没被引用的来源图单列，去向由材料取舍说明交代，不算缺图。"""
-        rel = "doc/features/NK90001/AR/story-src/inputs/v1"
-        frozen = self.root / rel / "files" / "SR" / "design.md"
-        frozen.parent.mkdir(parents=True, exist_ok=True)
-        frozen.write_text("## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
-                          "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
-        digest = hashlib.sha256(frozen.read_bytes()).hexdigest()
-        (self.root / rel / "snapshot.json").write_text(json.dumps({"files": [{"path": "SR/design.md", "sha256": digest}]}),
-                                                       encoding="utf-8")
-        flow = self.feature_root / "AR" / "story-src" / "story-flow.json"
-        data = json.loads(flow.read_text(encoding="utf-8")) if flow.exists() else {}
-        data["input"] = {"snapshot_ref": f"{rel}/snapshot.json"}
-        flow.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        mark = json.dumps({"kind": "document", "path": f"{rel}/files/SR/design.md", "diagram": "§3 #1", "mode": "refine"},
-                          ensure_ascii=False, separators=(",", ":"))
+    def test_upstream_diagrams_sit_next_to_every_section_that_carries_them(self) -> None:
+        """原图与写作设计登记承接它的小节并排：那一节的正文、表、图都给；没登记的明说。"""
+        (self.feature_root / "SR").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "SR" / "design.md").write_text(
+            "## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
+            "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
+        (self.feature_root / "AR" / "story.md").parent.mkdir(parents=True, exist_ok=True)
         (self.feature_root / "AR" / "story.md").write_text(
-            f"# NK90001 中性需求\n\n## 业务流程\n\n```mermaid\n%% 图源 {mark}\nflowchart TD\n  甲 --> 乙\n```\n",
-            encoding="utf-8")
-        text = self.reader_task().split("### 来源图与 story 里采用它的图", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("乙 -->|失败| 丙", text, "来源图内容没给")
-        self.assertIn("（refine）", text)
-        self.assertIn("没有被 story 引用的采用来源图", text)
-        self.assertIn("§4 #1", text.split("没有被 story 引用的采用来源图", 1)[1])
+            "# NK90001 中性需求\n\n## 业务流程\n\n### 受理\n\n甲交给乙；乙失败时交丙处理。\n\n"
+            "| 结果 | 谁接手 |\n|---|---|\n| 失败 | 丙 |\n", encoding="utf-8")
+        (self.feature_root / "AR" / "story-src").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "AR" / "story-src" / "story-template.md").write_text(
+            "# 写作设计\n\n## 骨架\n\n### 05-flow\n#### 受理\n- 承接上游图：SR §3 #1\n", encoding="utf-8")
+        text = self.reader_task().split("### 上游图与 story 里承接它的小节", 1)[1]
+        first = text.split("#### SR §3 #1", 1)[1].split("#### ", 1)[0]
+        self.assertIn("乙 -->|失败| 丙", first, "上游原图内容没给")
+        self.assertIn("承接它的「业务流程 > 受理」", first)
+        self.assertIn("乙失败时交丙处理", first, "承接小节的正文没给")
+        self.assertIn("| 失败 | 丙 |", first, "承接小节里的表没给")
+        self.assertIn("写作设计没有登记承接这张图的小节", text.split("#### SR §4 #1", 1)[1])
 
 
 class AChoiceNeedsASuggestion(ModesCase):

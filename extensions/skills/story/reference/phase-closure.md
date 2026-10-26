@@ -14,6 +14,8 @@
 回复只原样落盘，不改结论、不补行；重新派审得到的新回复按同样判据核。回执是 harness 的只读投影，`check-receipt` 自己先生成再校验；
 要写备注写 `<阶段>/notes.md`。
 
+阶段原生闭环、本轮工作做完后跑 `python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <Feature id> --finalize --phase <阶段>`，返回 ok 才算记进 `doc/usage.json`；只有原生有效闭环才收尾，失败按它报的原因处理后重跑同一条。
+
 **报告回来之后怎么处置，全扩展只有这一张表**：
 
 | 报告结论 | 你做什么 | 闭环方式 |
@@ -23,7 +25,7 @@
 | PASS，改动改变业务口径、范围、验收、契约实体 | 改完完整跑 harness | 取新请求再派审 |
 | PASS，建议不在本阶段修 | 不改材料 | notes 逐条记建议与去处（下一阶段或评审） |
 
-- 改动属于哪一类由你判断，写进 `<阶段>/notes.md`；门禁核报告里每条 WARN、FAIL 在 notes 里都有处置记录。
+- 改动属于哪一类由你判断，写进 `<阶段>/notes.md`；门禁核报告里每条 WARN、FAIL 在 notes 里都有指向这份报告的处置记录：同一行写判据编号与报告对象前 8 位（终态块里的 `verifier_subject_id`），旧报告的同号处置不替新报告豁免。
 - 审查之后改了知识判断或决策状态，notes 写新依据——只为消掉审查意见而改判断不算处置。
 - 门禁反复报同一问题而你判断改不动时，停下向人说明缺什么、需要谁提供，不靠多跑几次过关。
 - `/story update` 里的重新闭环与收口按 `phases/update.md`「二、一条线」第 7–9 步。

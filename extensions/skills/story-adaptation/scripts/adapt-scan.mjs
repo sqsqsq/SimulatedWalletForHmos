@@ -14,21 +14,24 @@
  *
  * 边界这么一分，一个文件归谁看它在哪个目录，没有第三种要模型判断的情形；
  * `--check` 据此核**安装结果**——这个目标现在装的是不是包的这一版。
+ * `--mark-adapted` 在各块交回后把目标 `adaptation.yaml` 的 `adapted_for` 写成包的版本——这个值只由脚本写，模型不定。
+ * `--status` 只读：版本、按当前游标可推导的跟进条目、知识加载结果与内容摘要，stdout 一份 JSON，不写任何文件。
  *
- * 用法: node adapt-scan.mjs --apply|--check --target <目标根> [--package <包根>]
- * 退出: 0 通过 / 1 核对不符 / 2 参数或前置错误
+ * 用法: node adapt-scan.mjs --apply|--check|--mark-adapted|--status --target <目标根> [--package <包根>]
+ * 退出: 0 通过（--status：事实读取成功，含未安装）/ 1 核对不符（--status：知识结构自检不通过）/ 2 参数或前置错误
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseYaml } from '../../../hooks/shared/yaml.mjs';
+import { shellArg } from '../../story/scripts/core/story/drafts.mjs';
 import { candidateProblems, entryCheck, entryMaterialize, entryPlan } from './entries.mjs';
 
-const MODES = ['--apply', '--check'];
+const MODES = ['--apply', '--check', '--mark-adapted', '--status'];
 
 /** 目标仓自己实现的那一层。这个目录整个不在写入面上。 */
 const ADAPTERS = 'skills/story/scripts/adapters';
@@ -39,8 +42,8 @@ const SCRIPTS_DIR = 'skills/story/scripts';
 const CORE = 'core';
 /** 升级演进记录：按扩展版本分节、每条标块，升级后据它列出目标这次要做什么。 */
 const CHANGES = 'skills/story-adaptation/reference/upgrade-changes.md';
-/** 演进记录的三块；对接层只在目标自己维护对接层时列出。 */
-const BLOCKS = ['知识', '对接层', '在途单'];
+/** 演进记录的两块；对接层只在目标自己维护对接层时列出。 */
+const BLOCKS = ['知识', '对接层'];
 /** 目标的适配状态：对接来源（adapters）与已适配版本（adapted_for），归目标。 */
 const ADAPTATION = 'adaptation.yaml';
 /** 1.x 把这两项写在 manifest 顶层；升级时一次性迁进 adaptation.yaml。 */
@@ -49,7 +52,15 @@ const ADAPTATION_KEYS = ['adapters', 'adapted_for'];
 const argv = process.argv.slice(2);
 const mode = MODES.find(m => argv.includes(m));
 const opt = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : null; };
-const die = (msg, code = 2) => { console.error(`[adapt-scan] ${msg}`); process.exit(code); };
+/**
+ * 停下并说清原因。`--status` 的读者是脚本与模型，错误也给 JSON：类别（input / config / package / dependency）
+ * 加原话，原话里写着读的是哪个文件、按什么判、怎样恢复；读不出不能变成「什么都没有」的空成功。
+ */
+const die = (msg, code = 2, category = 'input') => {
+  if (mode === '--status') console.log(JSON.stringify({ mode: 'status', error: { category, message: msg } }));
+  else console.error(`[adapt-scan] ${msg}`);
+  process.exit(code);
+};
 
 const read = f => readFileSync(f, 'utf8');
 const rel = (base, f) => relative(base, f).split(sep).join('/');
@@ -70,7 +81,7 @@ function config(root) {
   } catch (e) {
     // 读不出不是「没配置」：扩展落点与需求目录都从它取，静默退回缺省值会让
     // 整个写入面悄悄挪到别的路径上，而 diff 那时看起来一切正常。
-    return die(`${f} 读不出（${e.message}）：扩展落点与需求目录都从它取`);
+    return die(`${f} 读不出（${e.message}）：扩展落点与需求目录都从它取`, 2, 'config');
   }
 }
 const extDir = root => config(root)?.paths?.extension_dir || 'doc/extensions';
@@ -302,7 +313,7 @@ function targetAdaptation(tdir, tgtManifestFile) {
 /**
  * 目标 `.gitignore` 还缺哪几行。
  *
- * 要挡的只有章草稿目录——本命令自己不落工作件，没有第二样东西。
+ * 要挡的是不入库的工作件：章草稿目录、使用记录的一次性输入与本地运行态、记录器的锁与临时文件。
  *
  * **先问 git 它是不是已经被挡住了**：需求目录整个不入库是常见做法（`doc/features/`
  * 一行就盖住了它下面的一切），那时再加一条只是噪声——一条永远不起作用的规则，
@@ -312,12 +323,23 @@ function targetAdaptation(tdir, tgtManifestFile) {
  * 按「没挡住」处理，照常补。
  */
 function missingGitignoreLines(root) {
-  const want = `${featuresDir(root)}/**/AR/story-src/drafts/`;
-  const probe = `${featuresDir(root)}/_probe/AR/story-src/drafts/x.md`;
-  if (git(root, ['check-ignore', '-q', '--no-index', probe]).ok) return [];
+  const fd = featuresDir(root);
+  const [dir, name] = [dirname(USAGE.record), basename(USAGE.record)];
+  const wants = [[`${fd}/**/AR/story-src/drafts/`, `${fd}/_probe/AR/story-src/drafts/x.md`],
+    [`${fd}/**/${USAGE.input_file}`, `${fd}/_probe/${USAGE.input_file}`],
+    [`${fd}/${USAGE.state_file}*`, `${fd}/${USAGE.state_file}`],
+    [`/${USAGE.record}.lock`, `${USAGE.record}.lock`], [`/${dir}/.${name}.*.tmp`, `${dir}/.${name}.1.tmp`]];
   const f = join(root, '.gitignore');
   const have = existsSync(f) ? read(f).split(/\r?\n/).map(l => l.trim()) : [];
-  return have.includes(want) ? [] : [want];
+  return wants.filter(([want, probe]) => !have.includes(want)
+    && !git(root, ['check-ignore', '-q', '--no-index', probe]).ok).map(([want]) => want);
+}
+
+/** 使用记录被哪条忽略规则挡住（来源:行号:模式），没挡住为空串——它归目标，要能随普通 git add 入库。 */
+function usageBlockedBy(root) {
+  const r = git(root, ['check-ignore', '-v', '--no-index', USAGE.record]);
+  const rule = r.ok ? r.out.trim().split('\t')[0] : '';
+  return rule.split(':').slice(2).join(':').startsWith('!') ? '' : rule;   // 最后命中的是放行规则就没挡住
 }
 
 /**
@@ -332,6 +354,43 @@ function inWriteFace(root, p, entries, withAdapters) {
   if (inner.startsWith(`${KNOWLEDGE}/`)) return false;
   if (!withAdapters && inner.startsWith(`${ADAPTERS}/`)) return false;
   return true;
+}
+
+/**
+ * 使用记录归目标、由记录器（story 的 usage.py）唯一写：这里只经扩展里的桥接调它。
+ * `ensure` 缺了建空表、在了只校验；`inspect` 只读。`root` 是哪一份扩展的桥接（包或目标已装的）。
+ */
+async function usageWriter(root, action) {
+  const bridge = join(root, 'hooks', 'shared', 'usage.mjs');
+  if (!existsSync(bridge)) return { ok: false, errors: [`没有使用记录桥接 ${relative(TARGET, bridge)}`] };
+  process.env.PYTHONDONTWRITEBYTECODE = '1';     // 记录器不在目标的机制目录里留字节码，下一次 --apply 的写入面才是干净的
+  try {
+    return (await import(pathToFileURL(bridge).href)).recordUsage(TARGET, action);
+  } catch (e) {
+    return { ok: false, errors: [`使用记录桥接加载失败（${e?.message ?? e}）`] };
+  }
+}
+
+/** apply 收尾：确保目标有可入库的使用记录。返回 {ok, lines}；失败时机制已写完的事实由调用方照常报出。 */
+async function ensureUsage() {
+  const r = await usageWriter(TDIR, 'ensure');
+  const still = usageBlockedBy(TARGET);
+  const lines = [];
+  if (r.ok) {
+    lines.push(r.changed
+      ? `[adapt-scan] 已建立使用记录 ${USAGE.record}（schema ${USAGE.schema}，还没有需求）：它归目标，与这次升级改动一起提交`
+      : `[adapt-scan] 使用记录 ${USAGE.record} 已在且合法，保留未动`);
+  } else {
+    lines.push(`[adapt-scan] 使用记录 ${USAGE.record} 没有建立（${(r.errors ?? []).join('；')}）。机制文件已按上面写完，不用重跑 --apply；`
+      + '修好原因后只补这一份（下面一行原样复制，在哪个目录跑都行，-B 不留字节码），补完再跑 --check：');
+    lines.push(`  echo '{"action":"ensure"}' | python -B ${shellArg(join(TDIR, 'skills', 'story', 'scripts', 'core', 'usage.py'))}`
+      + ` --project-root ${shellArg(TARGET)}`);
+  }
+  if (still) {
+    lines.push(`[adapt-scan] ${USAGE.record} 仍被 ${still} 挡住，使用记录进不了库：`
+      + '放行它的父路径与这个文件（其余过程目录保持忽略），或按规则来源找它的维护者；未解决前适配不算完成');
+  }
+  return { ok: r.ok && !still, lines };
 }
 
 // ── git ─────────────────────────────────────────────────────────────────────
@@ -379,7 +438,16 @@ const PKG = opt('--package')
 if (!PKG) die('包不是有效仓库根（找不到 framework.config.json）');
 
 const PDIR = join(PKG, ...extDir(PKG).split('/'));
+//: 使用记录合同（story 包里的那一份）：记录位置、一次性输入文件名
+const USAGE = JSON.parse(read(join(PDIR, 'skills', 'story', 'contracts', 'usage.json')));
 const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
+// 目标关掉了 Framework 生命周期钩子：阶段钩子（含使用记录采集）不执行。这是目标自己的决定，adapt 不改它，
+// --apply 与 --check 都把这个限制说出来，不拿「机制面装对了」代替「采集能成立」。
+const HOOKS_OFF = config(TARGET)?.lifecycle_hooks_enabled === false
+  ? '[adapt-scan] 采集限制：目标 framework.config.json 的 lifecycle_hooks_enabled 是 false，Framework 不执行扩展的阶段钩子，'
+    + `直接走 Framework 阶段的使用不会记进 ${USAGE.record}（Story 命令照常记）；`
+    + '恢复采集要把它改成 true 或删掉这个键（Framework 默认开启）'
+  : null;
 
 // 扩展的 YAML 读取借目标 framework harness 的 `yaml` 包（hooks/shared/yaml.mjs）：装之前先确认它在。
 // 缺了也能把文件复制过去，但目标跑第一道门禁就会抛「读取器不可用」——那时人看到的是门禁坏了，不是没装依赖。
@@ -391,13 +459,13 @@ const TDIR = join(TARGET, ...extDir(TARGET).split('/'));
     console.error(`[adapt-scan] 目标还没有 ${relative(TARGET, harness)}：扩展的门禁要在接入 framework 并装好 harness 依赖之后才能跑`);
   } else if (!existsSync(yamlPkg)) {
     die(`目标的 framework harness 还没装依赖（缺 ${relative(TARGET, yamlPkg)}）：`
-      + '先在目标里跑 `cd framework/harness && npm install`，再 --apply / --check');
+      + '先在目标里跑 `cd framework/harness && npm install`，再 --apply / --check', 2, 'dependency');
   }
 }
 const SAME_TREE = resolve(PKG) === resolve(TARGET);
 
 const pkgManifest = join(PDIR, 'manifest.yaml');
-if (!existsSync(pkgManifest)) die(`包里没有 manifest.yaml：${pkgManifest}`);
+if (!existsSync(pkgManifest)) die(`包里没有 manifest.yaml：${pkgManifest}`, 2, 'package');
 const PKG_MANIFEST_TEXT = read(pkgManifest);
 /** 包登记的 Skill：宿主入口由 Framework 按它物化。 */
 const PKG_SKILLS = (() => {
@@ -405,14 +473,15 @@ const PKG_SKILLS = (() => {
     const skills = parseYaml(PKG_MANIFEST_TEXT)?.provides?.skills ?? [];
     return skills.filter(s => typeof s === 'string');
   } catch (e) {
-    return die(`包的 manifest.yaml 读不出（${e.message}）`);
+    return die(`包的 manifest.yaml 读不出（${e.message}）`, 2, 'package');
   }
 })();
+const PKG_VERSION = manifestValue(PKG_MANIFEST_TEXT, 'version');
 
 const tgtManifest = join(TDIR, 'manifest.yaml');
 /**
- * 目标升级前装的是哪一版：写目标之前读，写完 `version` 就是包的了。
- * 在途单条目只跟「从哪一版升上来」有关，按它列；知识与对接层按目标的 `adapted_for` 列。
+ * 目标升级前装的是哪一版：写目标之前读，写完 `version` 就是包的了。版本事实与 mark 前核安装版本用它；
+ * 演进条目按目标的 `adapted_for` 列。
  */
 const INSTALLED = existsSync(tgtManifest) ? manifestValue(read(tgtManifest), 'version') ?? '0' : null;
 /** 两态，就这一条判据：目标有没有 manifest.yaml。历史版本识别不存在于本实现。 */
@@ -427,11 +496,11 @@ const STATE = existsSync(tgtManifest) ? 'upgrade' : 'fresh';
  */
 const WITH_ADAPTERS = (() => {
   const file = join(PDIR, ADAPTATION);
-  if (!existsSync(file)) return die(`包里没有 ${ADAPTATION}：判不出对接实现是不是替身`);
+  if (!existsSync(file)) return die(`包里没有 ${ADAPTATION}：判不出对接实现是不是替身`, 2, 'package');
   try {
     return parseAdaptation(file).adapters !== 'stand-in';
   } catch (e) {
-    return die(`包的 ${e.message}`);
+    return die(`包的 ${e.message}`, 2, 'package');
   }
 })();
 /** 目标这一次之后的适配状态（写目标前算好，冲突在这里停）。 */
@@ -443,16 +512,16 @@ const TARGET_ADAPTATION = targetAdaptation(TDIR, tgtManifest);
  */
 function changeEntries() {
   const file = join(PDIR, ...CHANGES.split('/'));
-  if (!existsSync(file)) die(`包里没有升级演进记录：${CHANGES}`);
+  if (!existsSync(file)) die(`包里没有升级演进记录：${CHANGES}`, 2, 'package');
   const out = [];
   let version = null;
   read(file).split(/\r?\n/).forEach((line, i) => {
     const head = line.match(/^##\s+(\d+(?:\.\d+)+)\s*$/);
     if (head) { version = head[1]; return; }
-    if (version && /^\s+-\s/.test(line)) die(`${CHANGES} 第 ${i + 1} 行是缩进的子项：演进记录每条一行、不用子项`);
+    if (version && /^\s+-\s/.test(line)) die(`${CHANGES} 第 ${i + 1} 行是缩进的子项：演进记录每条一行、不用子项`, 2, 'package');
     if (!version || !/^-\s+\S/.test(line)) return;
     const m = line.match(/^-\s+\[([^\]]+)\]\s*(.+)$/);
-    if (!m || !BLOCKS.includes(m[1])) die(`${CHANGES} 第 ${i + 1} 行没有块标签（${BLOCKS.map(b => `[${b}]`).join(' / ')}）`);
+    if (!m || !BLOCKS.includes(m[1])) die(`${CHANGES} 第 ${i + 1} 行没有块标签（${BLOCKS.map(b => `[${b}]`).join(' / ')}）`, 2, 'package');
     out.push({ version, block: m[1], text: m[2].trim() });
   });
   return out;
@@ -469,41 +538,176 @@ const newer = (a, b) => {
   return false;
 };
 
-/**
- * 升级之后按版本跟进：演进记录里晚于目标 `adapted_for` 的知识与对接层条目、晚于升级前所装版本的在途单条目，按块分组，
- * 加上按当前协议加载目标知识的结果（按 kind × form 计数，或问题清单）。只报事实，问不问人由模型照 SKILL 走。
- *
- * 包带对接实现时（业务仓来源），对接层已整份换成包的，那一块的条目不列。
- */
-async function upgradeFollowUp() {
-  const since = TARGET_ADAPTATION.doc.adapted_for ?? '0';
-  const from = { 在途单: INSTALLED ?? '0' };
-  const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
-  for (const e of CHANGE_ENTRIES) {
-    if (newer(e.version, from[e.block] ?? since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
+/** 当前激活知识的内容摘要：清单里每份知识的路径与内容（换行归一），独审证据按它对得上当前知识。 */
+function knowledgeDigest(files) {
+  const h = createHash('sha256');
+  for (const f of files) {
+    const abs = join(TDIR, ...f.split('/'));
+    h.update(f).update('\0').update(existsSync(abs) ? read(abs).replace(/\r\n/g, '\n') : '').update('\0');
   }
+  return `sha256:${h.digest('hex').slice(0, 16)}`;
+}
+
+/** 按当前协议加载目标知识：按 kind × form 计数、内容摘要与独审证据，或问题清单。 */
+async function knowledgeCheck() {
   try {
     const api = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'knowledge.mjs')).href);
     const k = api.activeKnowledge(TARGET);
     const problems = api.selfCheck(TARGET, k);
+    if (problems.length) return { status: 'FAIL', problems };
+    const files = [...k.facts, ...k.constraints, ...k.patterns].map(x => x.file);
     const counts = {};
     for (const kind of ['facts', 'constraints', 'patterns']) {
       for (const x of k[kind]) counts[`${kind} × ${x.form}`] = (counts[`${kind} × ${x.form}`] ?? 0) + 1;
     }
-    return { since, installed: INSTALLED, items, check: problems.length ? { status: 'FAIL', problems } : { status: 'PASS', counts } };
+    // 同用途声明候选：只按 applies_when 去首尾空白后原文相同分组，给独立审查当线索；
+    // 不判相似、不影响 PASS，为空也不说明没有重复——重复与否由审查读正文判
+    const byUse = new Map();
+    for (const x of [...k.facts, ...k.constraints, ...k.patterns]) {
+      const use = String(x.appliesWhen ?? '').trim();
+      byUse.set(use, [...(byUse.get(use) ?? []), x.file]);
+    }
+    const sameUse = [...byUse].filter(([, list]) => list.length > 1)
+      .map(([appliesWhen, list]) => ({ appliesWhen, files: list }));
+    const digest = knowledgeDigest(files);
+    return { status: 'PASS', counts, digest, files, review: await knowledgeReview(digest, files),
+      sameUse: { note: '同用途声明候选，须语义核对', groups: sameUse } };
   } catch (e) {
-    return { since, installed: INSTALLED, items, check: { status: 'FAIL', problems: [String(e?.message ?? e)] } };
+    return { status: 'FAIL', problems: [String(e?.message ?? e)] };
   }
 }
 
-/** 升级后的跟进提示：有条目或知识不合协议就摆出来请模型停一次问人，都空只一句。 */
+//: 知识独审报告的四个维度：键名与方法页「逐份核四个维度」一一对应
+const REVIEW_DIMENSIONS = ['granularity', 'fact_use', 'duplication', 'coding_boundary'];
+//: 每维的合法结论；只有 PASS 与带具体建议的 WARN 算这一维审完
+const REVIEW_VERDICTS = ['PASS', 'WARN', 'FAIL', 'UNKNOWN', 'SKIP'];
+
+/**
+ * `.adapt/knowledge-review.md` 里的证据块对不对得上当前知识 —— 只读派生，不是状态。
+ *
+ * 核：块读得出；`digest` 等于当前激活知识的摘要；激活清单每份都有一行、四个维度都有结论与证据；
+ * 没有 FAIL、没有阻断项、没有未核。结构有效不证明审查真由独立执行体做过——那由交回与宿主证据核。
+ */
+async function knowledgeReview(digest, files) {
+  const file = join(TDIR, '.adapt', 'knowledge-review.md');
+  if (!existsSync(file)) return { status: 'missing', problems: ['.adapt/knowledge-review.md 不在：还没有独立审查报告'] };
+  const { parseYaml: parse } = await import(pathToFileURL(join(TDIR, 'hooks', 'shared', 'yaml.mjs')).href);
+  const blocks = [...read(file).matchAll(/```ya?ml\r?\n([\s\S]*?)```/g)].map((m) => {
+    try { return parse(m[1])?.knowledge_review; } catch { return undefined; }
+  }).filter(Boolean);
+  if (blocks.length !== 1) return { status: 'invalid', problems: [`证据块要恰好一个 \`knowledge_review:\` YAML 块（现在 ${blocks.length} 个）`] };
+  const r = blocks[0];
+  if (r.digest !== digest) return { status: 'stale', problems: [`报告审的是 ${r.digest ?? '（没写）'}，当前知识是 ${digest}：知识或激活清单改过，对受影响的知识重审`] };
+  const listed = Array.isArray(r.files) ? r.files.map(x => String(x?.path ?? '')) : [];
+  const problems = [];
+  const twice = [...new Set(listed.filter((f, i) => listed.indexOf(f) !== i))];
+  if (twice.length) problems.push(`同一份知识写了多项：${twice.join('、')}——一份一项，不让后一项盖住前一项`);
+  const extra = listed.filter(f => !files.includes(f));
+  if (extra.length) problems.push(`报告里有激活清单之外的条目：${extra.join('、')}`);
+  for (const f of files) {
+    const rows = (Array.isArray(r.files) ? r.files : []).filter(x => String(x?.path ?? '') === f);
+    if (!rows.length) { problems.push(`${f}：报告里没有这一份`); continue; }
+    for (const row of rows) {
+      const lacking = REVIEW_DIMENSIONS.filter(d => !String(row[d]?.evidence ?? '').trim());
+      if (lacking.length) problems.push(`${f}：${lacking.join('、')} 没写证据`);
+      for (const d of REVIEW_DIMENSIONS) {
+        const v = String(row[d]?.verdict ?? '').trim().toUpperCase();
+        if (!REVIEW_VERDICTS.includes(v)) problems.push(`${f}：${d} 的结论「${row[d]?.verdict ?? ''}」不在 ${REVIEW_VERDICTS.join(' / ')} 里`);
+        else if (!['PASS', 'WARN'].includes(v)) problems.push(`${f}：${d} 判 ${v}——${v === 'FAIL' ? '改完这份知识再审' : '没有审完，不算适配完成'}`);
+      }
+    }
+  }
+  for (const key of ['blocking', 'unreviewed']) {
+    if (!Array.isArray(r[key])) problems.push(`\`${key}\` 不是列表（没有就写空列表）`);
+    else if (r[key].length) problems.push(`\`${key}\` 还有 ${r[key].length} 项：${r[key].map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join('；')}`);
+  }
+  if (!String(r.executor ?? '').trim()) problems.push('`executor` 没写宿主返回的独立执行或会话引用');
+  return problems.length ? { status: 'incomplete', problems } : { status: 'valid', executor: r.executor };
+}
+
+/**
+ * 按版本跟进：演进记录里晚于目标 `adapted_for` 的知识与对接层条目，按块分组，
+ * 加上按当前协议加载目标知识的结果。只报事实，问不问人由模型照 SKILL 走。
+ *
+ * 没有 `adapted_for` 的目标从最早一节（知识基线）列起——首次安装拿到的就是完整的知识主题清单。
+ * 包带对接实现时（业务仓来源）对接层已整份换成包的，那一块整块不出现。
+ */
+async function followUp() {
+  const since = TARGET_ADAPTATION.doc.adapted_for ?? '0';
+  const items = Object.fromEntries(BLOCKS.filter(b => !(WITH_ADAPTERS && b === '对接层')).map(b => [b, []]));
+  for (const e of CHANGE_ENTRIES) {
+    if (newer(e.version, since) && items[e.block]) items[e.block].push(`${e.version}：${e.text}`);
+  }
+  return { since, installed: INSTALLED, items, check: await knowledgeCheck() };
+}
+
+/** 把目标 `adaptation.yaml` 的 `adapted_for` 写成包的版本：只改这一行，其余行原样。 */
+function writeAdaptedFor() {
+  const file = join(TDIR, ADAPTATION);
+  const lines = (existsSync(file) ? read(file) : '').split(/\r?\n/).filter(l => l.trim() && l.trim() !== '{}');
+  const row = `adapted_for: ${JSON.stringify(PKG_VERSION)}`;
+  const at = lines.findIndex(l => /^adapted_for\s*:/.test(l));
+  if (at >= 0) lines[at] = row;
+  else lines.push(row);
+  const next = `${lines.join('\n')}\n`;
+  if (!existsSync(file) || read(file) !== next) writeFileSync(file, next, 'utf8');
+}
+
+/** 写入后的跟进提示：有条目或知识不合协议就摆出来请模型停一次问人；都空就记下适配版本，只一句。 */
 async function printFollowUp() {
-  const f = await upgradeFollowUp();
+  const f = await followUp();
   console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
-  const pending = Object.values(f.items).some(list => list.length);
-  console.log(pending || f.check.status !== 'PASS'
-    ? '[adapt-scan] 有演进条目或知识不合当前协议：按块摆出来，停一次问人「现在做这些适配吗」；选稍后就不写任何东西'
-    : '[adapt-scan] 目标已按包的版本适配，知识与当前协议一致');
+  if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS') {
+    console.log('[adapt-scan] 有演进条目或知识不合当前协议：按块摆出来，停一次问人「现在做这些适配吗」；'
+      + '选稍后就不写任何东西；选中的知识与对接适配都交回后跑 --mark-adapted');
+    return;
+  }
+  writeAdaptedFor();
+  console.log(`[adapt-scan] 目标已按包的版本适配，知识与当前协议一致：adapted_for 记为 ${PKG_VERSION}`);
+}
+
+// ── --status ────────────────────────────────────────────────────────────────
+
+// 只读聚合：复用 followUp 与 knowledgeCheck 的纯计算，不调 printFollowUp（它会写 adapted_for）。
+// 升级前装的是哪一版、历次做完了哪些，另起的进程读不到：照实写 unknown，以上次交回为准，不造状态文件补洞。
+if (mode === '--status') {
+  const ident = key => (existsSync(tgtManifest) ? manifestValue(read(tgtManifest), key) : null);
+  const out = {
+    mode: 'status', package: { version: PKG_VERSION },
+    target: { installed: STATE === 'upgrade', version: INSTALLED, name: ident('name'), description: ident('description'),
+      adapters: TARGET_ADAPTATION.doc.adapters ?? null, adapted_for: TARGET_ADAPTATION.doc.adapted_for ?? null },
+    history: 'unknown：升级前所装版本与历次已完成的适配读不到，以上次交回为准；items 只按当前游标推导',
+  };
+  if (STATE === 'fresh') {
+    console.log(JSON.stringify({ ...out, state: 'not_installed' }, null, 2));
+    process.exit(0);
+  }
+  const f = await followUp();
+  out.items = f.items;
+  out.knowledge = f.check;
+  console.log(JSON.stringify(out, null, 2));
+  process.exit(f.check.status === 'PASS' ? 0 : 1);
+}
+
+// ── --mark-adapted ──────────────────────────────────────────────────────────
+
+if (mode === '--mark-adapted') {
+  if (SAME_TREE) die('包与目标是同一棵树，没有可写的东西');
+  if (!existsSync(tgtManifest)) die('目标没有 manifest.yaml：还没装过，先 --apply');
+  if (INSTALLED !== PKG_VERSION) {
+    die(`目标机制是 ${INSTALLED}、包是 ${PKG_VERSION}：先 --apply 把机制升到包的版本，再做适配`);
+  }
+  const f = await followUp();
+  if (f.check.status !== 'PASS') die(`知识不能按当前协议加载，适配还没做完：\n  ${f.check.problems.join('\n  ')}`);
+  // 本次有知识演进义务时，加载通过不等于适配完成：当前知识要有对得上的独立审查证据
+  if (f.items.知识?.length && f.check.review.status !== 'valid') {
+    die(`本次有 ${f.items.知识.length} 条知识演进要适配，知识独审证据不成立（${f.check.review.status}）：\n  `
+      + `${f.check.review.problems.join('\n  ')}\n  按 reference/knowledge-review.md 发起与收回审查；`
+      + '机制已经装好，知识适配未完成，adapted_for 不写');
+  }
+  writeAdaptedFor();
+  console.log(`[adapt-scan] adapted_for 记为 ${PKG_VERSION}：下次升级只列晚于它的演进条目`);
+  process.exit(0);
 }
 
 // ── --apply ─────────────────────────────────────────────────────────────────
@@ -563,6 +767,10 @@ if (mode === '--apply') {
     dirty.forEach(p => console.error(`  ${p}`));
     die('先提交或暂存自己的改动再升级——本命令不替你动工作区（不 stash、不提交）', 2);
   }
+  if (existsSync(join(TARGET, ...USAGE.record.split('/')))) {
+    const u = await usageWriter(PDIR, 'inspect');
+    if (!u.ok) die(`使用记录 ${USAGE.record} 不合法（${(u.errors ?? []).join('；')}）：它不会被当成空表覆盖。机制一个字节没写，修好后重跑 --apply`, 2);
+  }
   if (plan.conflicts.length) {
     console.error(`[adapt-scan] 停：宿主入口有 ${plan.conflicts.length} 处 Framework 物化会覆盖或不接管的内容：`);
     plan.conflicts.forEach(c => console.error(`  ${c}`));
@@ -605,11 +813,12 @@ if (mode === '--apply') {
     written.push(ADAPTATION);
   }
 
-  // 4. `.gitignore`：真的还没被挡住才补
+  // 4. `.gitignore`：真的还没被挡住才补；使用记录被目标规则挡住时补一条精确放行再复查
   {
     const f = join(TARGET, '.gitignore');
     const have = existsSync(f) ? read(f) : '';
     const missing = missingGitignoreLines(TARGET);
+    if (usageBlockedBy(TARGET).startsWith('.gitignore:')) missing.push(`!/${USAGE.record}`);
     if (missing.length) {
       writeFileSync(f, `${have.replace(/\n*$/, '\n')}${missing.join('\n')}\n`, 'utf8');
       written.push('.gitignore');
@@ -643,22 +852,29 @@ if (mode === '--apply') {
     die(`已写入 ${written.length} 个文件：用 git 查看这次的改动并处理`, 1);
   }
 
+  // 7. 使用记录：机制写完之后经目标已装的记录器建立；首装、升级、同版本补文件都走这一处
+  const usage = await ensureUsage();
   // 一个字节都没动 = 这个目标已经在包的版本上。说出来，不要报「写入 0 个文件」——
   // 那句话看起来像什么都没做成，而事实是没有可做的。
   if (!written.length && !removed.length) {
-    console.log('[adapt-scan] 当前适配仍有效：目标已在包的版本上，没有要写的东西');
-    if (STATE === 'upgrade') await printFollowUp();
-    process.exit(0);
+    console.log('[adapt-scan] 机制已在包的版本上，没有机制文件要写');
+    usage.lines.forEach(l => console.log(l));
+    if (HOOKS_OFF) console.log(HOOKS_OFF);
+    await printFollowUp();
+    process.exit(usage.ok ? 0 : 1);
   }
-  console.log(`[adapt-scan] ${STATE === 'fresh' ? '首次安装' : '升级'}完成：`
+  console.log(`[adapt-scan] ${usage.ok ? `${STATE === 'fresh' ? '首次安装' : '升级'}完成` : '机制文件写完，适配没有全部完成（见下）'}：`
     + `写入 ${written.length} 个文件，清除 ${removed.length} 个包里不再有的文件`);
   if (removed.length) removed.forEach(p => console.log(`  - ${p}`));
   console.log('[adapt-scan] 下一步：跑 --check 自检；'
     + (STATE === 'fresh'
-      ? '首次安装还要按 SKILL.md 写部件定位知识，摆给人确认一次'
+      ? '首次安装接着按 SKILL.md：写部件定位知识并摆给人确认一次 → 按下面列出的知识条目逐题判适用、'
+        + '按目标仓写 → 知识交回后跑 --mark-adapted 记下适配版本'
       : '`git diff` 看这次动了哪些文件'));
-  if (STATE === 'upgrade') await printFollowUp();
-  process.exit(0);
+  usage.lines.forEach(l => console.log(l));
+  if (HOOKS_OFF) console.log(HOOKS_OFF);
+  await printFollowUp();
+  process.exit(usage.ok ? 0 : 1);
 }
 
 // ── --check ─────────────────────────────────────────────────────────────────
@@ -716,10 +932,16 @@ try {
   bad.push(`③ 宿主入口核不了：${e.message}`);
 }
 
-// ④ 章草稿目录被挡住了：它是临时件，不挡就会被提交进目标的库。
-// 目标怎么挡不管——自己写了那一行、或者整个需求目录都不入库，都算挡住了。
+// ④ 工作件被挡住了：章草稿、使用记录的一次性输入、锁与临时文件不挡就会被提交进目标的库。
+// 目标怎么挡不管——自己写了那一行、或者整个需求目录都不入库，都算挡住了。使用记录本身反过来必须能入库。
 for (const line of missingGitignoreLines(TARGET)) {
-  bad.push(`④ 章草稿目录没被 .gitignore 挡住：补一行 ${line}`);
+  bad.push(`④ 工作件没被 .gitignore 挡住：补一行 ${line}`);
+}
+{
+  const blocked = usageBlockedBy(TARGET);
+  if (blocked) bad.push(`④ 使用记录 ${USAGE.record} 被 ${blocked} 挡住：它归目标，要能随普通 git add 入库`);
+  const u = await usageWriter(existsSync(join(TDIR, 'hooks')) ? TDIR : PDIR, 'inspect');
+  if (!u.ok) bad.push(`④ 使用记录：${(u.errors ?? []).join('；')}——缺了跑 --apply 建立；坏了修好后重验，不重置成空表`);
 }
 
 // ⑤ 包的 `scripts/` 这一层只有 core/ 与 adapters/ 两个目录
@@ -744,11 +966,12 @@ for (const line of missingGitignoreLines(TARGET)) {
   }
 }
 
+if (HOOKS_OFF) console.log(HOOKS_OFF);
 if (bad.length) {
   console.error(`[adapt-scan] 核对不符 ${bad.length} 处：`);
   bad.forEach(b => console.error(`  ${b}`));
   process.exit(1);
 }
 console.log('[adapt-scan] 核对通过：机制面与包一致 / manifest 按所有权合成 / '
-  + '宿主入口与 Framework 物化一致 / .gitignore 有章草稿那一行 / 包的 scripts 只有 core 与 adapters'
+  + '宿主入口与 Framework 物化一致 / 工作件被 .gitignore 挡住、使用记录在且合法能入库 / 包的 scripts 只有 core 与 adapters'
   + (WITH_ADAPTERS ? '（来源带对接实现）' : ''));

@@ -1,11 +1,12 @@
 /**
- * 路径解析 —— 扩展根、feature 根、配置读取。
+ * 路径解析 —— 扩展根、feature 根（原生身份）、配置读取。
  *
  * 所有路径从 `framework.config.json` 现取，取不到用框架默认值；**不写死任何工程路径**
  * （硬编码路径会在配置变更时静默失效）。
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { featureDir, featureIdentity } from './framework-access.mjs';
 
 /** 读实例配置；文件缺失或坏 JSON 都返回 null，由调用方决定降级还是出声。 */
 function readConfig(projectRoot) {
@@ -22,22 +23,26 @@ export function extensionRoot(projectRoot) {
   return path.join(projectRoot, ...String(rel).split(/[\\/]/).filter(Boolean));
 }
 
-/**
- * feature 归档根（`paths.features_dir`，默认 `doc/features`）。
- *
- * 配置值只有**字符串且 trim 后非空**才采用（用 trim 后的值），其余一律回默认——
- * 空串/空白不是「配置了空目录」；Python 侧 `import_sources.features_dir` 是同一语义，
- * 两边必须解析出同一个目录，否则一边建的流程文件另一边找不到。
- */
-function featuresDir(projectRoot) {
-  const rel = readConfig(projectRoot)?.paths?.features_dir;
-  const dir = typeof rel === 'string' && rel.trim() ? rel.trim() : 'doc/features';
-  return path.join(projectRoot, ...dir.split(/[\\/]/).filter(Boolean));
-}
+//: 原生 `feature-identity.js` 的施工单位前缀：只有带它的身份才编码了蓝图与施工单位
+const CU_PREFIX = 'cu-';
 
-/** 某个 feature 的根目录。 */
+/**
+ * 某个逻辑 Feature 的物理目录。施工单位（`cu-` 前缀）按原生身份解析到它的蓝图下；其余身份在原生规则里是
+ * `paths.features_dir` 下的同名目录（`featureRelativePath` 原样返回），直接按配置取，不为此加载原生模块。
+ * 施工单位身份认不出时照原生的问题抛错，不回落默认目录。
+ */
 export function featureRoot(projectRoot, feature) {
-  return path.join(featuresDir(projectRoot), feature);
+  if (!String(feature).startsWith(CU_PREFIX)) {
+    const rel = readConfig(projectRoot)?.paths?.features_dir;
+    const dir = typeof rel === 'string' && rel.trim() ? rel.trim() : 'doc/features';
+    return path.join(projectRoot, ...dir.split(/[\\/]/).filter(Boolean), String(feature));
+  }
+  const dir = featureDir(projectRoot, feature);
+  if (!dir) {
+    const why = featureIdentity(projectRoot, feature).issues?.map(i => i.message).join('；');
+    throw new Error(`Feature ${feature} 的原生身份认不出${why ? `（${why}）` : ''}`);
+  }
+  return dir;
 }
 
 /** 相对仓库根的展示路径（报错文案里用，跨平台统一正斜杠）。 */

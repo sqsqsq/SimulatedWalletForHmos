@@ -2,7 +2,7 @@
  * 统计点 —— 设计里的埋点明细与 plan 的逐点落实，plan 门禁与审查共用这一份。
  *
  * 设计侧从施工单位的蓝图读：`story_details` 里 `kind: event`、依据落在本单位设计引用上的明细，正文里表头含「统计点」
- * 的表逐行是统计点。plan 侧从 plan.md 读：表头同时含「统计点」与「责任方法」的表，同一统计点可以有多行结果。
+ * 的表逐行是统计点；一条明细是一个指标，缺定义段或点位表的形状缺口随明细一起交给作者与审查。plan 侧从 plan.md 读：表头同时含「统计点」与「责任方法」的表，同一统计点可以有多行结果。
  * 只认这两个列名，不认任何知识文件名、渠道名、结果枚举或编码——那些只在项目知识里。
  */
 import { parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
@@ -38,9 +38,35 @@ export function designStatPoints(design) {
   const details = (design.blueprint.story_details ?? [])
     .filter(d => d?.kind === 'event' && (!design.scope || (d.evidence_refs ?? []).some(r => design.scope.has(r))))
     .map(d => ({ id: d.id, title: d.title ?? d.id, body: String(d.body ?? '').trim(), refs: d.evidence_refs ?? [],
+      lead: indicatorLead(d.body), problems: indicatorShape(d),
       rows: tableRows(d.body, ['统计点']).map(({ cells, at }) => [cells[at[0]], ...cells.filter((_, i) => i !== at[0])]) }));
   if (!details.length) return { state: 'missing', why: `蓝图 ${design.blueprint.blueprint_id} 没有落在本施工单位的埋点明细`, details };
   return { state: details.some(d => d.rows.length) ? 'ready' : 'empty', details };
+}
+
+/** 明细正文里的有效行：去空行与注释行。 */
+const bodyLines = (body) => String(body ?? '').split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('<!--'));
+
+/** 指标的定义段：第一张表之前的第一行正文；没有为空串。 */
+function indicatorLead(body) {
+  const lines = bodyLines(body);
+  const first = lines.findIndex(l => l.startsWith('|'));
+  return (first < 0 ? lines : lines.slice(0, first))[0] ?? '';
+}
+
+/**
+ * 一条埋点明细就是一个指标，它的形状：第一张表之前有定义段，有表头含「统计点」的点位表且至少一行；
+ * 说明表不算点位，统计点列不必在第一列。正文以「不涉及：<依据>」起头的不判。只核结构，不核指标名、统计点名与结果写法。
+ */
+function indicatorShape(detail) {
+  const where = `埋点明细「${detail.title ?? detail.id}」（${detail.id}）`;
+  if (/^(本需求)?不涉及[:：]\s*\S/.test(bodyLines(detail.body)[0] ?? '')) return [];
+  const problems = [];
+  if (!indicatorLead(detail.body)) problems.push(`${where}缺定义段——第一张表之前的第一行正文按定义段读`);
+  if (!tableRows(detail.body, ['统计点']).length) {
+    problems.push(`${where}没有统计点——统计点取表头含「统计点」的表里非空的那一格，说明表不算`);
+  }
+  return problems;
 }
 
 const list = (x) => (Array.isArray(x) ? x : []);
@@ -61,7 +87,8 @@ export function statDelivery(design, contracts, acceptance) {
     [`- ${k} \`${c?.id ?? '（没写 id）'}\``, ...Object.entries(c ?? {}).filter(([key]) => key !== 'id')
       .map(([key, v]) => `  - ${key}：${value(v)}`)]));
   return ['埋点明细（蓝图 story_details 里的 event，落在本施工单位；正文照录）：',
-    ...want.details.flatMap(d => ['', `**${d.title}**（${d.id}；依据 ${d.refs.join('、') || '—'}）`, '', d.body || '（正文为空）']),
+    ...want.details.flatMap(d => ['', `**${d.title}**（${d.id}；依据 ${d.refs.join('、') || '—'}）`, '', d.body || '（正文为空）',
+      ...d.problems.map(p => `- 形状缺口：${p}——设计负责方在蓝图里补齐`)]),
     '', '契约方法说明（没有 plan.md 时，统计点、适用结果与验证方式写在这里）：',
     ...(methods.length ? methods : ['- （契约方法都没有说明）']),
     '', '验收条目（完整字段）：', ...(cases.length ? cases : ['- （没有验收条目）'])];

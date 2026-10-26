@@ -42,7 +42,7 @@ DESIGN_INPUT = ("AR", "story-src", "design-input.json")
 # 到了这两步就意味着**本轮范围已定**，S4 可以做。候选稿在不在由 `complete` 自己核，
 # 不借道 next_step——候选可以由 `--from` 指到别处，而 next_step 只认默认落点。
 S4_STEPS = ("generate_design", "run_complete")
-# 成文登记时记指纹的文件（相对需求目录）：story 与它据以成文的决策登记、写作设计。
+# 成文登记时记指纹的文件（相对需求目录）：story、review、设计附件与它据以成文的决策登记、写作设计；设计依据另记在 story_basis。
 # 登记之后任一份再改，`story-build check` 报「登记之后改过」，重跑 `story` 重新登记。
 STORY_REGISTERED = (
     "AR/story.md",

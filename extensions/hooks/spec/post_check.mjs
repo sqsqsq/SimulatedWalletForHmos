@@ -7,8 +7,7 @@
  *      `knowledge_decision_id` 的条目；桥接指回的都是承接的适用判断；
  *   ② **验收标准一致**——spec.md「验收标准」里定义的编号在 acceptance.yaml 里有，关联功能一致；
  *   ③ **审查报告**——格式、判据全不全、一对象一结论、WARN 的处置。
- *   ④ **图源**——spec.md 里采用的图指得到本次有效来源，reuse 的图体与来源一致（与 Story 同一个检查）。
- *   ⑤ **宿主扩展章**——spec.md「宿主扩展治理项」在，承接的规约与选中模式各有小节，写到的规约与验收编号引得到。
+ *   ④ **宿主扩展章**——spec.md「宿主扩展治理项」在，承接的规约与选中模式各有小节，写到的规约与验收编号引得到。
  *
  * 验收是否真的覆盖了规约要求的行为与验证责任，是语义判断，归独立审查。
  *
@@ -22,7 +21,6 @@ import { featureKnowledge, unitDuties } from '../shared/knowledge-application.mj
 import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { acceptanceIdRe, functionIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
-import { unitDiagramSourceProblems } from '../../skills/story/scripts/core/story/images.mjs';
 
 /** 「验收标准」一节的正文行：标题下到下一个同级或更高级标题。 */
 function acceptanceSection(lines) {
@@ -118,12 +116,10 @@ export default guard('spec', async (ctx) => {
   }
 
   const specPath = path.join(inputs.dir, 'spec', 'spec.md');
-  const diagrams = { name: '图源', problems: [], skipped: [] };
   const host = { name: '宿主扩展章', problems: [], skipped: [] };
-  groups.push(diagrams, host);
+  groups.push(host);
   if (!fs.existsSync(specPath)) {
     alignment.skipped.push({ what: '验收标准与 acceptance.yaml', why: '这一次没有生成 spec.md' });
-    diagrams.skipped.push({ what: 'spec.md 的图源', why: '这一次没有生成 spec.md' });
     host.skipped.push({ what: '宿主扩展治理项', why: '这一次没有生成 spec.md；承接在验收条目里' });
   } else {
     const specText = fs.readFileSync(specPath, 'utf-8');
@@ -131,9 +127,6 @@ export default guard('spec', async (ctx) => {
     if (!judged) host.skipped.push({ what: '宿主扩展治理项', why: '激活知识派生失败，承接范围无从确定' });
     else host.problems.push(...hostChapterProblems(specText, { file: 'spec.md', anchor: '宿主扩展治理项', judged, acceptance }));
     if (judged && !acceptance) host.skipped.push({ what: '扩展章引用的验收编号', why: inputs.why });
-    const checked = unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, specText, 'spec.md');
-    diagrams.problems.push(...checked.problems);
-    diagrams.skipped.push(...checked.skipped);
   }
 
   groups.push({ name: '审查报告', problems: reportProblems(ctx.projectRoot, ctx.feature, 'spec'), skipped: [] });

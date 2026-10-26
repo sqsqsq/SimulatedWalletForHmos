@@ -257,6 +257,15 @@ class ThePlanTableNamesTheClassMethod(ChainCase):
         self.assertNotIn("HomeRepository.refreshBalance 在 contracts.yaml", gate)
         self.assertNotIn("逐点表里没有行", gate)
 
+    def test_a_point_of_the_design_missing_from_the_table_is_named(self) -> None:
+        """蓝图埋点明细的统计点在逐点表里没有行：点名那个统计点。"""
+        plan = Path(self.probe()["dir"]) / "plan" / "plan.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text("# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+                        "| 别的点 | 成功 | HomeRepository.refreshBalance |\n", encoding="utf-8")
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("逐点表里没有行：余额刷新 / 保存结果", gate)
+
 
 class AMissingOwnRoleIsNamed(ChainCase):
     """本单位承担的角色没有实体：点名那个角色，不点名别的施工单位的角色。"""

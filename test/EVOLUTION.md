@@ -5,7 +5,29 @@
 
 ## 1. 演进记录
 
+2026-10-25 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](../doc/release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
+
 2026-10-17 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。
+
+2026-10-16 **dsh 正式 CLI 链路测通**：用户最终范围为正常工作后停止。中心 runtime 修复不限时请求、dsh cwd 与 Windows Electron/ASAR 启动，并补回 OpenCode 参数顺序、内容审查与百炼鉴权分类；中心提交 `2934b83`、`d904257`，本地标签 `v1.0.1`、`v1.0.2`，已同步本仓、未推送。中心最终离线 72 passed；本仓相关回归 155 passed、12 subtests passed，已消除上次同步发现的兼容缺口。正式 suite `story-suite-20261016-dsh-full-01` 的 car-key-sharing 使用 dsh + 百炼 DeepSeek；有效 attempt 3 已验证工具执行、材料关卡回复、两份补料投放及同 session 续行（41 次原始 tool_call/result），随后按用户要求 stop/finalize，相关进程已退出。前两 attempt 的注册表漂移和沙箱 ACL 故障保留，不归责消费模型。临时测试配置与 dsh profile 均已恢复；未完成阶段验收，不评分。证据见 `output/story/story-suite-20261016-dsh-full-01/startup-verification.md`。
+
+2026-10-16 **CLI runtime 接入中心仓同步版**：从 `C:/Users/kangz/.agents/tools/cli-runtime` 同步提交 `0e8defa910e36dbbe4bbf91febbada57a00f411d`，身份见 `tools/cli/.sync-stamp.json`；运行时新增 dsh 适配，契约测试迁至 `test/tools/cli/tests`，原有未被中心测试覆盖的七项回归保留于 `test/tools/cli/test_story_runtime_regression.py`，验证入口迁至 `test/tools/cli/TEST.md`，Codex 配置档位由 `full_access` 改为中心版的 `build`。同步检查 CLEAN、注册表校验、worker 入口、编译与两 Case 的只读 plan 通过；离线运行时回归 60 passed / 2 failed，消费方相关回归 107 passed / 39 subtests passed / 3 failed（含两项 subtest）。待中心仓修复：OpenCode prompt 参数顺序、内容审查拒绝分类、百炼鉴权报文识别。本仓副本保持同源，未启动真实模型；日志与同步前备份见 `output/scratch/cli-runtime-sync-20261016/`。
+
+2026-10-12 **1.9.9 两 Case 输入承接 2.x 业务补充**（用户确认「承接业务补充，保留 1.x 协议」，方案 `doc/plan/1.9.9/2026-10-12-整体设计/07-R6-两Case金样.md` §2；外线工作区 `E:\Project\SimulatedWalletForHmos` 的 `test/cases`，最近改动提交 `ce3677ad`，逐文件按实际 diff 合入，没有整体复制）：
+两份系统设计补接口字段、单位、可空性、判重与错误结构；交互脚本补「问到才答」的业务立场——auto-topup 的模拟验证边界、update 单日上限按会上 200；
+car-key 的初始宽限 48 小时口径、车钥匙卡片范围、模拟验证边界、草稿续办、接受比例由车云统计；auto-topup 答案卷补上限冲突的立场；
+两份评审回稿的意见按 2.x 措辞（car-key 保留本线 match/verdict/opinion 投放结构）；car-key `case.yaml` 只同步覆盖说明。
+不承接：命令起手 prompt、`end_at`/施工单位终点、`expected_phase` 改 story 的阶段语义、「已放入」与「实现方案」等 2.x 关卡措辞。
+原始字节 SHA-256 前 16 位（前 → 后）：auto-topup `interaction-script.yaml` 4edad2077fedb3e7 → 16f68d3fe7f5c5c3、`meeting-answer-key.md` 7fac2fd1d8629ca9 → 999e5cc4b578744d、
+`system/SR90006/design.md` f5c62ba06b98ef91 → d8a0e00cddf1ca0e（与外线锁定摘要相同）、`update-inputs/review-feedback.md` 51cb3825f9d06af0 → cd08cce794c2db2b；
+car-key-sharing `interaction-script.yaml` f327d7b08700361a → 0f5d24ed81a0c93c、`workspace/SR/design.md` 967a69233f70c43e → 68ff916dff8a6b00（与外线锁定摘要相同）、
+`update-inputs/car-review-feedback.yaml` a03ca13d07a13952 → f3cfaecdb956a21a、`case.yaml` 4c32321267803f14 → 11b3a91ed3bea3f1。初始 prompt 未改，update 材料仍只在第二段投放。
+
+2026-09-30 **1.9.8 发布后补充：首次知识质量判据与功能一览**（提交 `2e872e7d`，版本号不变；提交后全量 1512 passed，唯一失败为既有金样指纹）：内网首次适配产出的知识质量不高（规约罗列未归纳、模块私有内容当成项目知识、事实写成实现说明、模式自行归纳）。知识协议补范围与形态判据，适配方法页新增四条质量判据（首批每份最多 3 项、模式只在已用承载 SDK 时写、扩充归目标维护者），新增按主题写法页 `knowledge-topics.md`（13 主题 × 六项），基线条目改为指向主题页；README 新增功能一览与「评审 AI 起草的知识」；根 AGENTS §2/§3.3 同步。demo 按 §7 重装，失效形态 FAIL 0，预算 14027→14132。方案与交回见 [知识质量判据与README](../doc/plan/1.9.8/2026-09-30-知识质量判据与README/00-方案.md)。
+
+2026-09-29 **1.9.8 发布后修复：adapt 已适配版本与新仓知识**（发布提交 `a0627c9c`，自检修正 `8f60778f`：在途单整块不列、基线条目只写主题、AGENTS §2 同步；版本号不变；提交后全量 1512 passed，金样 `AR90004/ux-reference/README.md` 指纹为既有失败）：内网试用发现 adapt 有时不写 `adapted_for`、新仓被模型判为 0.1.0 且知识只做 1.9.4 起的增量。`adapted_for` 改为只由脚本写（新增 `--mark-adapted`，无事可做时 `--apply` 自动写）；升级演进记录补 `1.9.3` 知识基线（12 个主题，1.9.4 以前不分小版本），没有 `adapted_for` 的目标从基线列起、首次安装也打印跟进；demo 按 §7 重装（5 个文件，117 个同源），失效形态 FAIL 0，预算 13993→14027 收口。方案与交回见 [adapt修复](../doc/plan/1.9.8/2026-09-29-adapt修复/00-方案.md)，发布说明见 [1.9.8](../doc/release/1.9.8.md)。
+
+2026-09-29 **1.9.8 发布**（发布提交 `d19b26f7`）：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](../doc/release/1.9.8.md)，证据在 `output/story/1.9.8-release/`（不入库）。
 
 2026-10-16 **CLI runtime 中心同步 v1.0.2**：同步提交 `d90425786cf8a54497d8ea0ebff2bef539b6ee75`，保留既有 keep 清单；修正 verify.py 与 CLI TEST 的旧测试路径，Codex 配置档位 `full_access` 改为 `build`，CLI/模型顺序不变。固定 verify 入口相关离线回归 167 passed、27 subtests passed，两个 Case 只读 plan、注册表、worker 模块、编译与同源检查 CLEAN。未启动真实模型，未修改 Extension 或 demo；其他任务在途修改保留；本次按用户要求提交，未推送。结果与备份在 `E:/Project/SimulatedWalletForHmos-Story-1.0/output/scratch/cli-runtime-business-sync-20261016/`。
 

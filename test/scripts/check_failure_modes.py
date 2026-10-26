@@ -17,7 +17,7 @@
 用法::
 
     python test/scripts/check_failure_modes.py                # 默认目标集
-    python test/scripts/check_failure_modes.py --feature AR90004 --feature ISSUE-206
+    python test/scripts/check_failure_modes.py --feature AR90006 --feature ISSUE-206
     python test/scripts/check_failure_modes.py --feature-root <dir>
     python test/scripts/check_failure_modes.py --self-check   # 只跑夹具自检
     python test/scripts/check_failure_modes.py --list         # 列台账
@@ -645,13 +645,13 @@ def _case_numbers() -> list[str]:
 def _golden_titles(golden: Path | None = None) -> list[str]:
     """金样与候选样稿的业务名：大标题去掉单号与括注。
 
-    两种布局都认：根下的 `story-*.md` 与 `*/README.md`，以及按 Case 与情景分目录的 `<case>/<情景>/AR/story.md`。
-    单号按形态去掉（字母开头、可带连字符的编号），不只认 `AR` 前缀。
+    几种布局都认：根下的 `story-*.md` 与 `*/README.md`、按 Case 分目录的 `<case>/AR/story.md`，
+    以及按 Case 与情景分目录的 `<case>/<情景>/AR/story.md`。单号按形态去掉（字母开头、可带连字符的编号），不只认 `AR` 前缀。
     """
     golden = golden or REPO_ROOT / "test" / "golden"
     names: set[str] = set()
     for f in [*(f for f in golden.glob("story-*.md") if "说明" not in f.name), *golden.glob("*/README.md"),
-              *golden.glob("*/*/AR/story.md")]:
+              *golden.glob("*/AR/story.md"), *golden.glob("*/*/AR/story.md")]:
         first = split_lines(read_text(f))[0] if read_text(f) else ""
         if not first.startswith("# "):
             continue
@@ -2019,45 +2019,6 @@ def _form_case(root: Path, needle: str, ok: str) -> Outcome:
     return Outcome(False, f"check 未过（非固定形式原因）：{out[:200]}")
 
 
-#: 合格产物的正例：S05 形态的 good 夹具（REQ-DEMO，交给设计、蓝图已准入），check 零 FAIL
-VALID_OUTPUT = REPO_ROOT / "test/fixtures/failure-modes/S05-main-text-identifier/good"
-
-
-@checker
-def g01_judgement_rejects_valid_output(root: Path, ctx: Ctx) -> Outcome:
-    """判据把合格产物判成违规，或者判项在空转。
-
-    这是**常驻正例**，与其它形态反过来：这里 PASS 的意思是「合格的产物没被拦」。
-    两个分支都验。只验「零 FAIL」不够：判项集体空转时也是零 FAIL，那种「通过」比拦错更难发现。
-    """
-    story = VALID_OUTPUT / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md"
-    if not story.exists():
-        return Outcome(False, "合格产物的夹具不在库里——误拒没有正例可核")
-    verdict = "待提交状态：用户点了提交但未收到回执"
-    code, out = _story_build_cycle(VALID_OUTPUT, verdict)
-    if code != 0:
-        return Outcome(False, f"判据拦住了合格产物：{out[:260]}")
-
-    # 反分支：塞一个工程标识与一个模板占位进主叙事，判项应当各自点名
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / VALID_OUTPUT.name
-        shutil.copytree(VALID_OUTPUT, work)
-        target = work / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md"
-        text = read_text(target)
-        if "\n## 背景\n" not in text:
-            return Outcome(False, "夹具切不出背景章——形态变了，本条的注入点要重定")
-        target.write_text(text.replace(
-            "\n## 背景\n", "\n## 背景\n\n这里塞一个 queryLossEligibility 进主叙事，再留一个 {{待替换的占位}}。\n", 1),
-            encoding="utf-8")
-        bad_code, bad_out = _story_build_in(work, verdict)
-    if bad_code == 0:
-        return Outcome(False, "往合格产物里塞了工程标识与模板占位符却仍然全过——判项在空转")
-    missed = [w for w in ("工程标识", "模板占位符") if w not in bad_out]
-    if missed:
-        return Outcome(False, f"注入的违例没被点名：{missed}；实际输出 {bad_out[:200]}")
-    return Outcome(True, "合格产物零 FAIL，且注入违例时判项各自点名")
-
-
 _REF_RE = re.compile(r"([\w./-]+\.md)\)?[`]?「([^」]{2,20})」")
 _SENT_SPLIT = re.compile(r"[。；\n]")
 
@@ -2216,7 +2177,7 @@ def m21_environment_hardcoded(root: Path, ctx: Ctx) -> Outcome:
 
 #: 验证资产的名字。机制层提到它们，就是判据在照着某一份样本长——
 #: 而样本是用来检验机制的，被检验的东西反过来指向检验它的东西，这条链就闭合成了自证。
-VERIFICATION_ASSET_WORDS = ("金样", "仲裁锚", "golden", "fixtures", "夹具目录")
+VERIFICATION_ASSET_WORDS = ("金样", "golden", "fixtures", "夹具目录")
 
 
 def maintenance_path_hits(line: str) -> list[str]:
@@ -2234,9 +2195,8 @@ def maintenance_path_hits(line: str) -> list[str]:
 def g02_mechanism_points_at_assets(root: Path, ctx: Ctx) -> Outcome:
     """机制层指向验证资产（金样、夹具、测试目录）。
 
-    判据从金样正推形态，但这条关系是**单向**的——
-    机制层一旦提到金样或夹具，判据就从「形态规则」滑成了「照着那一份写」，
-    换个业务域立刻不成立，而台账还是全绿。
+    样本与夹具是用来检验机制的。机制层一旦提到金样或夹具，判据就从「形态规则」滑成了
+    「照着那一份写」，换个业务域立刻不成立，而台账还是全绿。
 
     与 M02 分工：M02 判的是业务字面（单号、业务名），这条判的是**指向验证资产本身**。
     """

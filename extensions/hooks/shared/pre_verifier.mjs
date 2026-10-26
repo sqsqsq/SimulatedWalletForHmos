@@ -25,8 +25,10 @@ import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
 import { entryOf, featureKnowledge, unitContext } from './knowledge-application.mjs';
 import { knowledgeTask } from './knowledge-task.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
-import { extensionRoot, readTextOrNull, relDisplay } from './paths.mjs';
+import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
+import { ensureMermaid } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { designStatPoints, planStatRows, pointKey, statDelivery } from './stat-points.mjs';
+import { COVERED_CHECKS, DETAIL_KEYS, inputRows, reviewInputs } from './review-inputs.mjs';
 import { overlayChecks, summaryStructure } from './verifier-report.mjs';
 
 /** 知识类判据的命名前缀 —— 只用来决定这一段要不要讲「知识判断在哪份文件里」。 */
@@ -149,7 +151,7 @@ function allChecksFragment(checks) {
     const first = String(c?.description ?? '').replace(/\s+/g, ' ').trim().split(/(?<=[。；])/)[0];
     return `- \`${id}\`（${c?.severity ?? '未定级'}）：${first}`;
   });
-  return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '', ...summaryStructure()].join('\n');
+  return ['## 本阶段全部判据（逐条出结论）', '', ...rows, '', ...summaryStructure(Object.keys(checks))].join('\n');
 }
 
 /**
@@ -166,6 +168,11 @@ function reviewerKnowledge(ctx) {
 }
 
 export default async function preVerifier(ctx) {
+  // 正常阶段已由 pre_phase 的 story-view 处理；单独调用时同样先回到正式形态，审查只读正式正文
+  if (ctx?.feature && ctx?.projectRoot) {
+    const back = ensureMermaid(featureRoot(ctx.projectRoot, ctx.feature));
+    if (back.problems.length) throw new Error(`story 回不到正式形态：${back.problems.join('；')}`);
+  }
   const phase = ctx?.phase;
   if (!phase || !ctx?.feature || !ctx?.projectRoot) return {};
   const source = SOURCE_OF_TRUTH[phase];
@@ -202,6 +209,14 @@ export default async function preVerifier(ctx) {
 
   fragments.push(allChecksFragment(checks));
   fragments.push(reviewerKnowledge(ctx));
+  // 走局部明细合同的判据（Plan 的义务审查）：必审集合、当前回稿、说明与旧现场一起送达
+  for (const id of checkIds.filter(c => COVERED_CHECKS[c])) {
+    const basis = reviewInputs(ctx.projectRoot, ctx.feature, COVERED_CHECKS[id]);
+    fragments.push([`## \`${id}\` 的必审输入（报告的 examined_inputs 按这张表逐份声明）`, '', ...inputRows(basis), '',
+      ...(basis.update ? ['update 开着：改掉的旧约束、旧决定与旧验收，依据是谁给的、有没有权限；'
+        + '与仍有效的旧约束冲突而没经有权人裁定的，这一条 FAIL。', ''] : []),
+      `明细四个键（${DETAIL_KEYS.join('、')}）无论结论都写：读不到或没读完的列进 unreviewed 并写原因，必审没核完不能判 PASS 或 WARN。`].join('\n'));
+  }
   if (!knowledgeIds.length) return { promptFragments: fragments };
 
   const fragment = [
@@ -246,6 +261,9 @@ export default async function preVerifier(ctx) {
     `${knowledgeIds.map(id => `\`${id}\``).join(' 与 ')} 与其它判据一样在汇总表各一行；非 PASS 的在 \`checks:\` 明细里`,
     '`details` 写你判出问题的那几条：是哪一条、问题是什么、依据是产物或材料里的什么事实。',
     'PASS 的写进报告说明：你按什么看过、看了哪几条。',
+    ...(knowledgeIds.some(id => COVERED_CHECKS[id])
+      ? [`${knowledgeIds.filter(id => COVERED_CHECKS[id]).map(id => `\`${id}\``).join('、')} 走局部明细合同：无论结论都在明细里出一条，四个键按上面它的必审输入表写。`]
+      : []),
   ].join('\n');
 
   fragments.push(fragment);

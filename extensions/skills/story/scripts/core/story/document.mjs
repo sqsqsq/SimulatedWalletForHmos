@@ -99,7 +99,7 @@ export function fencedLines(text) {
   return maskOf(lines, fenceRanges(lines));
 }
 
-/** 围栏里首个有效声明：跳过空行与 `%%` 注释行（图源标记也是注释）。图类型由它认。 */
+/** 围栏里首个有效声明：跳过空行与 `%%` 注释行。图类型由它认。 */
 function firstStatement(lines, fence) {
   const end = fence.closed ? fence.to : fence.to + 1;
   for (let i = fence.from + 1; i < end && i < lines.length; i++) {
@@ -170,15 +170,18 @@ export function headingEnd(doc, heading) {
  * 合同给的是这一节要讲什么，作者按业务命名（「与上游单的交接约定」），只认精确名会把后者
  * 判成缺节。但包含命中两个以上时（「参与方」同时像「参与方与分工」与「参与方不在本轮」），
  * 取第一个就是替作者猜——那一节的表与图会被算到另一节头上。这时报歧义，让作者改名。
+ * 精确同名两处同样是歧义；`exact` 只认完整名（作者在写作设计里登记的位置用它，不按包含猜）。
  *
  * @param {{name: string}[]} items 已规范化名字的候选（标题、小节）
  * @returns {{hit: object|null, ambiguous: string[]|null}}
  */
-export function findByName(items, name) {
+export function findByName(items, name, { exact: only = false } = {}) {
   const want = normalizeHeading(name);
   const list = items ?? [];
-  const exact = list.find(x => x.name === want);
-  if (exact) return { hit: exact, ambiguous: null };
+  const exact = list.filter(x => x.name === want);
+  if (exact.length === 1) return { hit: exact[0], ambiguous: null };
+  if (exact.length > 1) return { hit: null, ambiguous: exact.map(x => x.raw ?? x.name) };
+  if (only) return { hit: null, ambiguous: null };
   const loose = list.filter(x => x.name.includes(want));
   if (loose.length === 1) return { hit: loose[0], ambiguous: null };
   return { hit: null, ambiguous: loose.length > 1 ? loose.map(x => x.raw ?? x.name) : null };
@@ -210,6 +213,87 @@ export function storySpan(storyText, chapterTitle, at = '', under = '') {
     node = hit;
   }
   return { start: node.at, end: headingEnd(doc, node) };
+}
+
+/**
+ * 按完整标题路径逐层精确定位：每一层在上一层管辖的范围里找名字完全一致的标题，取命中里最浅的那一级，
+ * 同级两处同名是歧义。返回那一节的正文区间 `{from, to, body}`（0 起，不含标题行），或 `{problem}`。
+ */
+export function headingPath(text, names) {
+  const doc = parseDocument(text);
+  let scope = { level: 0, at: -1, end: doc.lines.length };
+  for (const name of names) {
+    const want = normalizeHeading(name);
+    const hits = doc.headings.filter(h => h.at > scope.at && h.at < scope.end && h.level > scope.level && h.name === want);
+    const level = Math.min(...hits.map(h => h.level));
+    const top = hits.filter(h => h.level === level);
+    if (top.length !== 1) return { problem: top.length ? `「${name}」有 ${top.length} 处同名` : `找不到「${name}」` };
+    scope = { level, at: top[0].at, end: headingEnd(doc, top[0]) };
+  }
+  return { from: scope.at + 1, to: scope.end, body: doc.lines.slice(scope.at + 1, scope.end).join('\n') };
+}
+
+//: Story 里正式图块的成对标记：块里是按 .mmd 的 Mermaid，或同 ID 增强 SVG 的一行引用
+export const FIGURE_MARK = /^<!-- story-figure:([A-Za-z0-9][\w-]*):(begin|end) -->$/;
+
+/**
+ * 成对标记与之间的行：配对与唯一（不分大小写——ID 也是文件名）一次核完，问题按 `noun` 点名。围栏里的标记是样例，不算。
+ * `body` 不含标记内侧的分隔空行（`separateMarks` 铺的格式）。
+ *
+ * @returns {{spans: {id, from, to, body: string[]}[], problems: string[]}}
+ */
+export function markPairs(lines, mark, noun) {
+  const fenced = new Set(fenceRanges(lines).flatMap(f => Array.from({ length: f.to - f.from + 1 }, (_, k) => f.from + k)));
+  const spans = [];
+  const problems = [];
+  let open = null;
+  lines.forEach((line, i) => {
+    const m = !fenced.has(i) && mark.exec(line.trim());
+    if (!m) return;
+    const [, id, side] = m;
+    if (side === 'begin') {
+      if (open) problems.push(`第 ${open.from + 1} 行的${noun} ${open.id} 没有结束标记就又开了 ${id}`);
+      open = { id, from: i };
+    } else if (!open || open.id !== id) {
+      problems.push(`第 ${i + 1} 行是${noun} ${id} 的结束标记，前面没有对应的开始标记`);
+    } else {
+      spans.push({ ...open, to: i, body: zoneBody(lines, { start: open.from, end: i + 1 }) });
+      open = null;
+    }
+  });
+  if (open) problems.push(`第 ${open.from + 1} 行的${noun} ${open.id} 没有结束标记`);
+  const seen = new Set();
+  for (const s of spans) {
+    if (seen.has(s.id.toLowerCase())) problems.push(`${noun} ${s.id} 出现了不止一次——ID 是它在文档里的身份，一个 ID 一处`);
+    seen.add(s.id.toLowerCase());
+  }
+  return { spans, problems };
+}
+
+//: 生成块的成对标记：story 与 review 的机器区（名字在标记里，配对只看前缀）。
+const ZONE_MARK = /^<!-- story-build:(begin|end)\b/;
+
+/**
+ * 生成块（机器区、正式图块）的标记与两侧内容各隔一个空行：注释紧贴表格、围栏或图片引用时，
+ * 有的渲染器认不出块。
+ *
+ * 只在缺空行处补一行，已有的不动，重跑不长；围栏里的标记是样例，不碰。
+ * 生成器写盘前过一遍，块怎么拼不用各自操心分隔。
+ */
+export function separateMarks(lines) {
+  const fenced = new Set(fenceRanges(lines).flatMap(f => Array.from({ length: f.to - f.from + 1 }, (_, k) => f.from + k)));
+  const markOf = (line, i) => (fenced.has(i) ? null
+    : FIGURE_MARK.test(line.trim()) || ZONE_MARK.test(line.trim()));
+  const out = [];
+  lines.forEach((line, i) => {
+    const m = markOf(line, i);
+    const prev = out[out.length - 1];
+    if (m && prev !== undefined && prev.trim()) out.push('');
+    out.push(line);
+    const next = lines[i + 1];
+    if (m && next !== undefined && next.trim() && !markOf(next, i + 1)) out.push('');
+  });
+  return out;
 }
 
 /** 一张表是否落在 `[from, to)` 里。 */
@@ -303,9 +387,10 @@ function tablesInSpan(view, span) {
   return (view?.tables ?? []).filter(t => t.line >= span.from && t.line < span.to);
 }
 
-/** 这个区间里有没有一张真的 Markdown 表。 */
-export function hasTable(view, span) {
-  return tablesInSpan(view, span).length > 0;
+/** 这个区间里有没有一张真的 Markdown 表；给了表头时要有一张以这几列起头的表（后面可以补列）。 */
+export function hasTable(view, span, header = null) {
+  const want = header ? header.map(c => norm(c)) : null;
+  return tablesInSpan(view, span).some(t => !want || want.every((c, i) => t.header[i] === c));
 }
 
 /**
@@ -581,7 +666,7 @@ export const EMPTY_SECTION_TEXT = '本需求不涉及。';
 // 机器区（投影区）的标记与定位
 // --------------------------------------------------------------------------
 //: 生成区的标记。**这段的所有者是脚本**：内容从真源投影而来，`chapter` 落盘时
-//: 原样保留，`skeleton` 可以重渲染。作者要改它，改的是真源（已准入的蓝图、
+//: 原样保留，`skeleton` 可以重渲染。作者要改它，改的是真源（当前蓝图、
 //: 冻结的设计输入、materials.json），不是这里。
 //:
 //: 与作者区的分界就是所有权：术语的措辞、流程图的节点文字是**一次性种子**——
@@ -635,13 +720,26 @@ export const zoneBlock = (name, source, rows) =>
     ...rows, ZONE_END];
 
 /**
+ * 区里的正文行：去掉首尾标记，也去掉标记内侧的分隔空行（`separateMarks` 铺的格式）。
+ *
+ * 只剥首尾的空白行——那是生成器的格式，不是内容；正文内部的空行原样留着，删了它照样算改动。
+ */
+export function zoneBody(lines, at) {
+  let from = at.start + 1;
+  let to = at.end - 1;
+  while (from < to && !lines[from].trim()) from += 1;
+  while (to > from && !lines[to - 1].trim()) to -= 1;
+  return lines.slice(from, to);
+}
+
+/**
  * 盘上这一段，是不是有人动过手 —— 动过就返回它现在的样子，没动过返回 null。
  *
  * 标记里的摘要与盘上内容比，相等就是没人动过（真源变没变不影响这个判断，那是下一步的事）。
  * 标记里没有摘要就无从分辨「真源变了」与「有人改了」，按改过处理——让人自己说哪一种。
  */
 export function zoneHandEdited(lines, at) {
-  const body = lines.slice(at.start + 1, at.end - 1);
+  const body = zoneBody(lines, at);
   const recorded = recordedDigest(lines[at.start]);
   return recorded && projectionDigest(body) === recorded ? null : body;
 }

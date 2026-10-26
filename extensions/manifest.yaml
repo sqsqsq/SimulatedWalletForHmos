@@ -1,6 +1,6 @@
 schema_version: "1.1"
 name: wallet-sdk-demo
-version: "2.0.4"
+version: "2.0.0"
 description: 实例扩展包（story 需求流程 + 三类知识 + 生命周期钩子）
 provides:
   # 宿主入口由 Framework 按这份清单物化（每个宿主一份跳板，指向 skills/<id>/SKILL.md）
@@ -8,6 +8,13 @@ provides:
     - story
     - story-adaptation
     - story-knowledge
+    - story-stats
+
+  # component-design 动笔前的设计知识方法入口：Framework 按这一项把它送进蓝图作者的上下文（plan、review 阶段同读）。
+  # 它只给方法与路由，知识清单仍以下面的 knowledge 为唯一来源。
+  skill_assets:
+    component-design:
+      knowledge: hooks/blueprint/author.md
 
   # 知识激活清单（确定性）：**阶段只读这里列出的文件**，不扫描 knowledge/ 目录——
   # 目录里躺着的未登记文件，任何阶段都读不到。
@@ -48,31 +55,43 @@ provides:
   # 挂的 story-knowledge 送达；`hooks/<phase>/author.md`（原则页）入口写在 SKILL 与知识任务里。
   hooks:
     spec:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/spec/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     plan:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/plan/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     coding:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/coding/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     review:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/review/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     ut:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/ut/post_check.mjs
       pre_verifier:
         - hooks/shared/pre_verifier.mjs
     testing:
+      pre_phase:
+        - hooks/shared/story-view.mjs
       post_check:
         - hooks/testing/post_check.mjs
       pre_verifier:

@@ -10,7 +10,7 @@ import { readJson, readText } from './context.mjs';
 import { DIAGRAM_LANGS, headingEnd, parseChapter, parseDocument, storySections, tablesWithin } from './document.mjs';
 import { decisionList } from './review.mjs';
 
-const RECHECK_ASK = '先拿有效的原材料与当前决定核关键关系：条件、行为、责任、结果、例外与未决，在受影响的位置是不是一致；核的是已准入蓝图的评审投影、当前的 story.md（含附录投影区）、review.md 与 decisions.json，有会议材料时还有 doc-refresh.md 与它引的原话。'
+const RECHECK_ASK = '先拿有效的原材料与当前决定核关键关系：条件、行为、责任、结果、例外与未决，在受影响的位置是不是一致；核的是当前蓝图的评审投影、当前的 story.md（含附录投影区）、review.md 与 decisions.json，有会议材料时还有 doc-refresh.md 与它引的原话。'
   + '再用这张清单定位疑点——它帮你找问题，不是只审这几条：每一条问这句话材料里有吗、材料给的靠得住吗（拿它去撞更晚的输入、材料之间、工程事实、规约与材料自己声明的目标）；有问题回它的真源改，没问题不改，不写「已核对」';
 //: 初筛表里「没有疑点」的写法：空着、一道横线，或写「无」。
 const EMPTY_CELL = /^(?:[-—–]+|无)?$/;
@@ -57,7 +57,8 @@ export function recheckItems(ctx, plan, storyText) {
       .map(d => item('已定取舍', String(d?.id ?? '（无编号）'), String(d?.title ?? ''), '取舍落在哪一章，依据写了没有')),
     ...(plan?.rechecks ?? [])
       .map(r => item('骨架待核', r.at ? `${r.chapter}·${r.at}` : r.chapter, r.text, '在正文或决策登记里有去向')),
-    ...storyDiagrams(storyText).map(where => item('图', where, '', '图前声称覆盖的去向，图里有没有')),
+    ...storyDiagrams(storyText).map(where => item('图', where, '',
+      '图前说明与图后列表在不在，图前声称覆盖的去向图里有没有；按 reference/svg.md 看值不值得做同图增强')),
   ];
 }
 

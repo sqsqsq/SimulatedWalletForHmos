@@ -51,9 +51,10 @@ function renderedEntries(ctx) {
   }
   return [...targets].map(target => ({
     target,
-    rendered: tr.renderAgentsTemplate(template, tr.buildAgentsTemplateVars(raw, {
+    // 模板按检出时的行尾读进来（CRLF 检出的 Framework 渲染出 CRLF）：与盘上入口一样按 LF 比
+    rendered: lf(tr.renderAgentsTemplate(template, tr.buildAgentsTemplateVars(raw, {
       entryFile: target, projectRoot: native.root, frameworkRoot: native.frameworkRoot,
-    })),
+    }))),
   }));
 }
 

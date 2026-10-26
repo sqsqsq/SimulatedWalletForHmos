@@ -23,9 +23,12 @@ import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
  */
 const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md', 'design-review.md', 'detail.json'];
 
+/** 命令判定没过：原因已写到 stderr，入口在恢复阅读视图之后按退出码 1 结束，不在半路退出进程。 */
+export class CommandFailure extends Error {}
+
 export function fail(msg) {
   process.stderr.write(`[story-build] ${msg}\n`);
-  process.exit(1);
+  throw new CommandFailure(msg);
 }
 
 export function readText(file) {
@@ -225,7 +228,8 @@ export function strayFileProblems(ctx) {
     const arDir = path.join(ctx.featureRoot, 'AR');
     const strays = fs.existsSync(arDir)
       ? fs.readdirSync(arDir, { withFileTypes: true })
-        .filter(e => e.isFile() && !AR_ROOT_FILES.includes(e.name)).map(e => e.name)
+        .filter(e => e.isFile() && !AR_ROOT_FILES.includes(e.name) && e.name !== ctx.contract.local_reading_entry)
+        .map(e => e.name)
       : [];
     for (const name of strays) {
       problems.push(`AR/${name} 不该在这一层——AR 根下的独立文件按白名单判，只有交付文档与单据身份`

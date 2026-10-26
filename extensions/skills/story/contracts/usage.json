@@ -1,0 +1,9 @@
+{
+  "_note": "使用记录合同：story 记录器（scripts/core/usage.py）与 story-stats 共用。record 相对工程根；identity_file 与 input_file 在需求目录下（身份件是执行现场的身份真源，需求目录不随代码归档；输入由原任务写、记录器读后删）；state_file 在需求根目录下，是不入库的本地运行态。",
+  "schema": 1,
+  "record": "doc/usage.json",
+  "identity_file": ".usage-id",
+  "input_file": ".usage-input.json",
+  "state_file": ".usage-state.json",
+  "steps": ["story", "story update", "spec", "plan", "coding", "review", "ut", "testing"]
+}

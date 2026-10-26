@@ -31,7 +31,9 @@ cli:
   #              F5 报告里的效率数字要与 F 修复两轮比（同宿主），与 F4 首跑/收口
   #              那组比时必须写明中间换过 codex。
   configurations:
-    # 顺序 deepseek > glm > luna（用户 2026-09-04 指定）。
+    # 默认 dsh（用户 2026-10-24 指定）：dsh headless 跑 bailian 的 deepseek，审查员用工程 `.dsh/` 里归档的配置层；
+    # 后面几项只在当前配置被熔断（401）或内容审查耗尽时才轮到，换宿主即换被测对象，结论按 `cli_config_id` 记。
+    # 此前顺序 deepseek > glm > luna（用户 2026-09-04 指定），保留为后备。
     #
     # 首位从 GLM 换成 deepseek 的依据是步骤 7 资格实跑的实测：同一份任务上
     # deepseek 每份 100–265 秒，GLM 275–600 秒且出过一份 600 秒超时零输出。
@@ -40,6 +42,10 @@ cli:
     # 换配置的代价是与 GLM 跑的那两份旧成品不再同模型可比——**本轮不靠那个对比**：
     # 步骤 11 的产物验收对照的是金样（固定仲裁锚，与模型无关），
     # 结论按 `cli_config_id` 记、不外推到别的宿主与模型。
+    - id: dsh-deepseek
+      name: dsh
+      model: bailian/deepseek-v4-flash-0731
+      profile: build
     - id: bailian-deepseek
       name: opencode
       model: bailian/deepseek-v4-flash-0731

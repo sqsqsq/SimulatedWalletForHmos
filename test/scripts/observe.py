@@ -97,7 +97,7 @@ def tool_summary(event) -> str:
     lower = tool.lower()
     if lower in {"read", "write", "edit"}:
         detail: Any = ti.get("filePath") or ti.get("file_path") or ti.get("path") or ""
-    elif lower in {"bash", "shell", "shell_command"}:
+    elif lower in {"bash", "pwsh", "shell", "shell_command"}:
         detail = ti.get("command") or ""
     elif lower in {"grep", "search"}:
         detail = {"pattern": ti.get("pattern"), "path": ti.get("path")}
@@ -108,6 +108,8 @@ def tool_summary(event) -> str:
         parts.append(f"status={event.tool_status}")
     if event.tool_output:
         parts.append("result=" + shorten(event.tool_output))
+    if getattr(event, "source_truncated", None):
+        parts.append("（宿主输出已截断，原文以会话原件为准）")
     return "\n".join(parts)
 
 
@@ -174,7 +176,8 @@ def read_model(path: Path, cursor: int, max_chars: int) -> tuple[list[dict], int
             detail = (ti.get("command") or ti.get("filePath") or ti.get("file_path")
                       or ti.get("path") or ti.get("pattern") or "")
             item = {"seq": idx, "type": "tool", "tool": e.get("tool_name"),
-                    "detail": str(detail)[:200], "status": e.get("tool_status")}
+                    "detail": str(detail)[:200], "status": e.get("tool_status"),
+                    "source_truncated": e.get("source_truncated")}
         else:
             item = {"seq": idx, "type": e["type"], "content": (e.get("content") or "")[:4000]}
         chunk = len(json.dumps(item, ensure_ascii=False))

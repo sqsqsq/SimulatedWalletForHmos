@@ -4,9 +4,10 @@
  * 按**动作**分而不按文件在不在推断阶段：登记前跑的是普通 check，那时独立审查还没发生。
  */
 import { isSystemRequirement, readJson } from './context.mjs';
-import { basisDriftProblems, designSource } from './design-source.mjs';
+import { basisDriftProblems, designSource, designStatusLines } from './design-source.mjs';
 import { reviewResult } from './independent-review.mjs';
 import { designReviewProblems } from './appendix.mjs';
+import { readingWork } from './figure-view.mjs';
 
 /**
  * 交付门通过之后往哪走 —— 已有明确授权按其范围继续，没指定后续目标才问；打印这一问的选项，**不替人选**。
@@ -16,6 +17,12 @@ import { designReviewProblems } from './appendix.mjs';
  * 这是脚本给的确定性文本，与 `story_flow.py status` 同一口径。
  */
 export function deliveryNextSteps(ctx) {
+  // 已开始的同图增强没做完：交付门照样通过，下一步先把本轮这份工作做完，做完再问人
+  const work = readingWork(ctx.featureRoot);
+  if (!work.complete) {
+    return ['', `[story-build check] 交付门通过。已开始的同图增强还没做完，这是本轮工作，先做完：${work.next}`,
+      '做完后再跑一次交付门，按它给的停等问人。', ''].join('\n');
+  }
   const remote = readJson(ctx.flowPath, null) !== null && isSystemRequirement(ctx.args.feature);
   const rows = [
     ...(remote ? ['  - 送审：把这份需求送到需求系统，评审人在那里表态'] : []),
@@ -45,11 +52,13 @@ export async function deliveryProblems(ctx) {
   const source = designSource(ctx);
   const drift = source.problems.length ? source.problems : [...basisDriftProblems(ctx), ...designReviewProblems(ctx)];
   if (drift.length) return { problems: drift, notes: [] };
+  // 草稿可以业务送审；准入状态与原生问题照实写进交付说明，施工准备前由设计职责走到准入
+  const design = source.admitted ? [] : [`设计状态：${designStatusLines(source).join('\n')}——业务送审照常，施工准备前由设计职责走到准入`];
   const review = reviewResult(ctx);
-  if (review.result === 'pass') return { problems: [], notes: [] };
+  if (review.result === 'pass') return { problems: [], notes: design };
   if (review.result === 'warn') {
-    return { problems: [], notes: [`独立审查带非阻断建议通过，建议照录：${review.advisories.join('；')}`] };
+    return { problems: [], notes: [`独立审查带非阻断建议通过，建议照录：${review.advisories.join('；')}`, ...design] };
   }
-  if (review.result === 'unreviewed') return { problems: [], notes: [`${review.detail}——已写进 Story 交付章与 Review 题头的审查状态`] };
-  return { problems: [`独立审查结果 ${review.result}：${review.detail}`], notes: [] };
+  if (review.result === 'unreviewed') return { problems: [], notes: [`${review.detail}——已写进 Story 交付章与 Review 题头的审查状态`, ...design] };
+  return { problems: [`独立审查结果 ${review.result}：${review.detail}`], notes: design };
 }

@@ -51,7 +51,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HOST_ROOT))
 
 import run_layout
-from cli_config_group import load_cli_group, select_cli
+from cli_config_group import load_cli_group, registry_for, select_cli
 from phase_state import derive_phase_state
 import end_target
 
@@ -229,8 +229,14 @@ def pop_conclude_request(out_dir: Path) -> dict | None:
     return payload
 
 
+#: 技术重探恢复成完成的结果：既不是宿主回话（str）也不是收工（None）。只在进程内传，不落盘、不算人答
+READING_RECHECK_COMPLETE = object()
+#: 阅读状态读不出时停等期间重探的间隔（秒）
+READING_RECHECK_SEC = 15
+
+
 def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
-                         turn: int, prompt: str = "") -> str | None:
+                         turn: int, prompt: str = "", kind: str = "story_gate", recheck=None) -> object:
     """交互模式：停下来等宿主回话。**无限等，不设上限。**
 
     上一版等 `REPLY_WAIT`（1 小时）就 break，结果被折叠成 `target_not_reached`——
@@ -244,10 +250,14 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
     `prompt` 是模型本轮最后说的那段话，随停等一起交给宿主：他据它当轮就能回，
     不必再去 events.jsonl 尾部捞。
 
-    @returns 宿主的回话；`None` 表示宿主判定本轮到此为止（conclude）。
+    `recheck` 只在阅读状态读不出（技术故障）的停等里传：每隔 `READING_RECHECK_SEC` 秒同步重探一次，
+    恢复成完成或不适用就不等人，返回 `READING_RECHECK_COMPLETE`；变成真实未完成就停止重探、照常等宿主。
+    探针前后先看宿主的回话与收工，它们优先。
+
+    @returns 宿主的回话；`None` 表示宿主判定本轮到此为止（conclude）；`READING_RECHECK_COMPLETE` 表示技术重探已恢复完成。
     """
     state.update(status="awaiting_reply", awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"),
-                 awaiting_turn=turn, awaiting_kind="story_gate",
+                 awaiting_turn=turn, awaiting_kind=kind,
                  awaiting_prompt=(prompt or "")[:PROMPT_LIMIT],
                  awaiting_prompt_source="cli_text_event" if prompt else "unavailable")
     refresh_worker_lease(out_dir, state, force=True, event="awaiting_reply")
@@ -258,6 +268,7 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
           f"用 run_case.py <case> reply --text \"…\" 回话", file=sys.stderr, flush=True)
     waited = 0.0
     nudged = 0
+    rechecked = 0
     while True:
         refresh_worker_lease(out_dir, state)
         text = pop_pending_reply(out_dir)
@@ -274,6 +285,21 @@ def wait_for_human_reply(out_dir: Path, feed, runlog, state: dict, *,
             return text
         if pop_conclude_request(out_dir) is not None:
             return None
+        if recheck is not None and waited >= READING_RECHECK_SEC * (rechecked + 1):
+            rechecked += 1
+            facts = recheck()
+            queued = (out_dir / REPLY_FILE).exists() or (out_dir / CONCLUDE_FILE).exists()
+            if not queued and facts.get("state") in ("complete", "not_applicable"):
+                state.update(status="running", awaiting_since=None, awaiting_kind=None,
+                             awaiting_prompt=None, awaiting_prompt_source=None)
+                refresh_worker_lease(out_dir, state, force=True, event="reading_recheck_complete")
+                feed.emit("reading_recheck_complete", turn=turn, state=facts.get("state"))
+                runlog.event("阅读状态重探", f"恢复为 {facts.get('state')}，不需要人回话")
+                return READING_RECHECK_COMPLETE
+            if facts.get("state") == "pending":
+                recheck = None          # 读得出了、确实没做完：技术等待结束，照常等宿主
+                feed.emit("reading_recheck_pending", turn=turn)
+                runlog.event("阅读状态重探", "读得出了，增强确实没做完；停止重探，照常等宿主")
         time.sleep(1.0)
         waited += 1.0
         # 等久了要出声——「一直等」不等于「没人知道它在等」。
@@ -413,28 +439,37 @@ def update_round(feature: str) -> dict:
 
 
 def wait_for_resume(out_dir: Path, feed, runlog, state: dict, *, turn: int,
-                    pending: str = "") -> dict | None:
+                    pending: str = "", next_segment: bool = True) -> dict | None:
     """第一段到目标之后停在这里 —— **不终止、不覆写、保住 session**。
 
     终止的话，第二段就只能另起一个 run：`events.jsonl` 每次启动都被截断、游标归零，
     CLI session 也要重新拉起——那是「重启一个新会话冒充续行」，不是同一次对话里的更新。
     所以这里与等人回话同构：无上限地等，每隔一阵出一次声，租约照常续。
 
-    两个出口：宿主投来续跑请求（第二段开始），或宿主判收工（这一轮到此为止）。
+    三个出口：宿主回答检查点上那一问（`reply`，仍在第一段：模型照答复把授权的动作做完，到目标后再停一次），
+    宿主投来续跑请求（第二段开始，只在 `next_segment` 时有），或宿主判收工（这一轮到此为止）。
 
     模型到目标时最后一句常是一个提问（例如交付门问归档送审还是进入 plan）：它原样留在
-    `pending_question` 里交给宿主，续跑时先答它，不拿装置的文案盖掉。
+    `pending_question` 里交给宿主，续跑时先答它，不拿装置的文案盖掉。没配第二段的交互用例同样停在这里，
+    宿主答完本段的交付选择或确认无事可做后收工。
     """
+    idle = ("第一段已到目标并闭环，等宿主固定快照、评测、回流，再投续跑请求" if next_segment
+            else "已到目标并闭环；本段还有交付选择就回答它，没有就收工")
     state.update(status="awaiting_reply", checkpoint_stage="initial",
                  awaiting_since=time.strftime("%Y-%m-%d %H:%M:%S"), awaiting_turn=turn,
                  awaiting_kind="initial_checkpoint",
-                 awaiting_prompt=pending or "第一段已到目标并闭环，等宿主固定快照、评测、回流，再投续跑请求",
+                 awaiting_prompt=pending or idle,
                  pending_question=pending or None)
     refresh_worker_lease(out_dir, state, force=True, event="awaiting_initial_checkpoint")
     feed.emit("initial_checkpoint", turn=turn, pending_question=observe.shorten(pending, 1200) or None)
     runlog.event("第一检查点", "到目标未终止，等宿主评完第一段")
     waited = 0
     while True:
+        answer = pop_pending_reply(out_dir)
+        if answer:
+            runlog.event("检查点回话", answer[:200])
+            feed.emit("initial_checkpoint_reply", turn=turn, text=observe.shorten(answer, 300))
+            return {"reply": answer}
         request = pop_resume_request(out_dir)
         if request:
             runlog.event("续跑", request["text"][:200])
@@ -555,22 +590,134 @@ def closure_facts(feature: str, start_phase: str, end_at: dict, case: dict | Non
 
     `beyond_target_evidence` 是诊断：终点之后的阶段目录里看得到文件（`<阶段>@<施工单位>`），不认完成。
     """
-    facts = observe_target(feature, end_at, case, start_phase)
+    seen = observe_target(feature, end_at, case, start_phase)
     responsible = end_target.responsible_phases(end_at, start_phase)
     later = PHASE_ORDER[PHASE_ORDER.index(end_at["phase"]) + 1:] if end_at["kind"] == "phase" else PHASE_ORDER
-    beyond = [f"{phase}@{u['change_unit_id']}" for u in facts["units"] for phase in later
+    beyond = [f"{phase}@{u['change_unit_id']}" for u in seen["units"] for phase in later
               if files_observed(REPO_ROOT / str(u.get("feature_path") or ""), phase)]
-    return {
+    facts = {
         "end_at": end_target.label(end_at),
-        "target_closed": facts["reached"],
-        "target_missing": facts["missing"],
-        "blueprint_id": facts.get("blueprint_id"),
-        "blueprint": facts.get("blueprint"),
-        "units": facts["units"],
+        "target_closed": seen["reached"],
+        # 本地阅读按产品自己的派生结果记，与业务闭环分开；读不出如实记 unknown，不当完成
+        "reading": reading_facts(REPO_ROOT / FEATURES_DIR / feature,
+                                 story_required=start_phase == "story" and bool(seen["reached"])),
+        "target_missing": seen["missing"],
+        "blueprint_id": seen.get("blueprint_id"),
+        "blueprint": seen.get("blueprint"),
+        "units": seen["units"],
         "story_registered": story_registered(feature),
         "beyond_target_evidence": beyond,
         "responsible_phases": list(responsible),
     }
+    return {**facts, "target_complete": target_complete(facts)}
+
+
+def reading_contract(work: object) -> list[str]:
+    """产品 `story-build view --mode status` 的输出合同：字段、类型与相互关系。不合的逐条列出，空表才可信。
+
+    不适用 = story 里没有正式图且没有问题、没有待办、没有下一动作，同时算完成；已完成 = 每张正式图的增强 SVG 都验收成立；
+    没完成 = 至少一处待办，且给了下一动作。缺字段、类型错、自相矛盾都不能拿来判完成或不适用。
+    """
+    if not isinstance(work, dict):
+        return ["输出不是 JSON 对象"]
+    bad = [f"{key} 缺失或不是 {kind.__name__}" for key, kind in
+           (("applicable", bool), ("complete", bool), ("items", list), ("problems", list))
+           if not isinstance(work.get(key), kind)]
+    nxt = work.get("next")
+    if nxt is not None and not (isinstance(nxt, str) and nxt.strip()):
+        bad.append("next 不是非空文字或 null")
+    if bad:
+        return bad
+    items, problems = work["items"], work["problems"]
+    for i, it in enumerate(items):
+        if not (isinstance(it, dict) and all(isinstance(it.get(k), str) and it[k] for k in ("id", "state"))
+                and isinstance(it.get("reason"), str)):
+            bad.append(f"items 第 {i + 1} 项缺 id、state 或 reason")
+        elif it["state"] != "ready" and not it["reason"].strip():
+            bad.append(f"图 {it['id']} 没就绪却没写原因")
+    if not all(isinstance(x, str) and x.strip() for x in problems):
+        bad.append("problems 有空条目或不是文字")
+    if bad:
+        return bad
+    todo = bool(problems or any(it["state"] != "ready" for it in items))
+    if not work["applicable"]:
+        bad += ["说不适用却列了待办"] * todo + ["说不适用却又说没完成"] * (not work["complete"]) + ["说不适用却给了下一动作"] * bool(nxt)
+    elif work["complete"]:
+        bad += ["说已完成却还有待办"] * todo + ["说已完成却给了下一动作"] * bool(nxt)
+    else:
+        bad += ["说没完成却没有任何待办"] * (not todo) + ["没完成却没给下一动作"] * (not nxt)
+    return bad
+
+
+def reading_facts(feature_root: Path, *, story_required: bool = False) -> dict:
+    """产品 `story-build view --mode status`（只读）给的本地阅读结果，逐图原因、结构问题与下一动作原样保留。
+
+    `state`：complete / not_applicable / pending / unknown。本轮还没到成文、没有 story 才不适用；业务已收口而
+    story 不在（`story_required`）、子命令起不来、退出码非 0、输出不合 `reading_contract` 都是 unknown。
+    """
+    if not (feature_root / "AR" / "story.md").is_file():
+        return ({"state": "unknown", "error": "业务已收口却没有 AR/story.md，本地阅读判不了"} if story_required
+                else {"state": "not_applicable", "why": "还没有 AR/story.md（本轮还没到成文）"})
+    build = REPO_ROOT / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+    try:
+        proc = subprocess.run(["node", str(build), "view", "--mode", "status", "--feature", feature_root.name,
+                               "--project-root", str(REPO_ROOT)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"state": "unknown", "error": f"本地阅读状态读不出（{exc}）"}
+    try:
+        work = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except ValueError:
+        work = None
+    if work is None:
+        said = (proc.stderr or proc.stdout).strip()[:400]
+        return {"state": "unknown", "error": f"本地阅读状态读不出（退出码 {proc.returncode}：{said or '没有输出'}）"}
+    bad = reading_contract(work)
+    if bad:
+        return {"state": "unknown", "error": f"本地阅读状态不合产品输出合同：{'；'.join(bad)}"}
+    state = "not_applicable" if not work["applicable"] else "complete" if work["complete"] else "pending"
+    return {"state": state, **{k: work[k] for k in ("items", "problems")}, "next": work.get("next")}
+
+
+def reading_turn(feature: str, story_required: bool, seen: dict, result: dict, *,
+                 interactive: bool, can_continue: bool, ask) -> str | None:
+    """业务收口这一刻本地阅读的去向：返回同一段的续话；None 表示这一段不再为阅读续话。
+
+    - 完成或不适用、会话续不了：None（阅读按事实记，没完成就是未完成）；
+    - 自动用例里产品给了可执行的下一动作，且这份待办与上次转交时不同（第一次，或之后有了可见变化）：原样转交；
+    - 其余（交互用例、状态读不出、转交后没有可见变化）都交宿主：`ask(原因)` 带着模型原话停等，
+      宿主回话就用它续；宿主收工就是结束这次运行——记进既有的 `stop_reason=host_concluded`，返回 None，
+      调用方据它走收工出口，不再进检查点（那道收工已被这次停等消费，检查点等不到第二次）。
+    """
+    reading = reading_facts(REPO_ROOT / FEATURES_DIR / feature, story_required=story_required)
+    result["reading"] = reading
+    if reading["state"] in ("complete", "not_applicable") or not can_continue:
+        return None
+    key = json.dumps(reading, sort_keys=True, ensure_ascii=False)
+    if reading["state"] == "pending" and not interactive and key != seen.get("forwarded"):
+        seen["forwarded"] = key
+        return f"业务阶段已收口，本地阅读还没完成：{reading['next']}"
+    why = (f"本地阅读状态判不了：{reading['error']}" if reading["state"] == "unknown"
+           else f"本地阅读还没完成，{'上次转交下一动作之后没有可见变化' if key == seen.get('forwarded') else '交宿主决定'}：{reading['next']}")
+
+    def recheck() -> dict:
+        seen["rechecked"] = reading_facts(REPO_ROOT / FEATURES_DIR / feature, story_required=story_required)
+        return seen["rechecked"]
+
+    # 读不出是技术故障：停等期间装置自己重探，恢复了不需要人回一句假话
+    reply = ask(why, recheck=recheck if reading["state"] == "unknown" else None)
+    if reply is READING_RECHECK_COMPLETE:
+        result["reading"] = seen["rechecked"]
+        return None
+    if reply is None:
+        result.update(reading_handoff="host_concluded", stop_reason="host_concluded",
+                      conclude_reason="本地阅读停等期间宿主收工")
+    return reply
+
+
+def target_complete(closure: dict) -> bool:
+    """本轮任务目标成没成：业务阶段闭环，且本地阅读完成或不适用。读不出的阅读状态不算完成。"""
+    return bool(closure.get("target_closed")) and (closure.get("reading") or {}).get("state") in ("complete", "not_applicable")
 
 
 def publish_closure(out_dir: Path, state: dict, feature: str,
@@ -1728,9 +1875,11 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     runlog.header({"case": case_id, "feature": feature, "cli": cli_config["name"],
                    "model": cli_config["model"], "target": TARGET,
                    "start": result["start"]})
-    client = CliClient(runtime_root=out_dir / "cli-runtime")
+    registry = registry_for(cli_config["name"])
+    client = (CliClient(runtime_root=out_dir / "cli-runtime", registry_path=registry) if registry
+              else CliClient(runtime_root=out_dir / "cli-runtime"))
     t0 = time.time()
-    # 正式多 Case 使用不含 .git 的隔离 workspace；其源码基线与差异由宿主
+    # 正式多 Case 使用隔离 workspace（根下的 .git 只是本 Case 的起跑基线）；其源码基线与差异由宿主
     # run_multi_case.py 的白名单快照负责，不能再调用 demo 的 Git 源码事务。
     isolated_workspace = os.environ.get("STORY_ISOLATED_WORKSPACE", "").strip() == "1"
     source_transaction_required = (
@@ -1776,6 +1925,26 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             turns = 0
             # 同一阶段连续续话了几次——只用于报告里的可读性，不作上限
             stuck_phase, stuck_turns = None, 0
+            # 业务收口时转交过的阅读待办：再收口时与它比，看得出有没有进展
+            reading_seen: dict = {}
+
+            def reading_reply(why: str, recheck=None) -> object:
+                """阅读交宿主：带着模型本轮原话与阅读证据停等（既有停等，宿主回话或收工；读不出时装置自己重探）。
+
+                重探读得出了就经原发布入口刷新宿主看到的 closure；读到的是真实未完时，等待提示换成这份待办。"""
+                def probe() -> dict:
+                    facts = recheck()
+                    if facts.get("state") == "unknown":
+                        return facts
+                    publish_closure(out_dir, state, feature, start_phase, end_at, case)
+                    if facts.get("state") == "pending":
+                        said = f"本地阅读读得出了，还没完成：{facts.get('next') or '；'.join(map(str, facts.get('problems') or []))}"
+                        state["awaiting_prompt"] = (f"{last_text}\n\n——{said}" if last_text else said)[:PROMPT_LIMIT]
+                    refresh_worker_lease(out_dir, state, force=True, event="reading_recheck_published")
+                    return facts
+                return wait_for_human_reply(out_dir, feed, runlog, state, turn=turns, kind="local_reading",
+                                            prompt=f"{last_text}\n\n——{why}" if last_text else why,
+                                            recheck=probe if recheck else None)
 
             # story 是多轮交互流程：材料确认时会停下来等待补料、拆分或进入 spec。
             # 单轮驱动会把它卡死在那儿（产物一个不产），但那不是 skill 的缺陷——
@@ -1849,22 +2018,44 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
                     break
                 if facts["target_closed"] and state.get("checkpoint_stage") != "update":
-                    if not after_initial:
+                    # 业务闭环不等于交付完成：阅读待办在就按 reading_turn 续同一段，做完或宿主定了才停
+                    follow = reading_turn(feature, start_phase == "story", reading_seen, result, interactive=interactive,
+                                          can_continue=run.get("status") == "succeeded" and bool(session_id),
+                                          ask=reading_reply)
+                    if follow:
+                        feed.emit("reading_pending", turn=turns, todo=observe.shorten(follow, 300))
+                        runlog.event("阅读待办", follow[:200])
+                        request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)
+                        continue
+                    if result.get("stop_reason") == "host_concluded":
+                        runlog.event("宿主收工", result["conclude_reason"])
+                        feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
+                        break
+                    # 自动用例到目标即止；交互用例到目标停在第一检查点，宿主先处理本段还没做完的交付选择
+                    #（按公开任务与交互规划回话），做完或无事可做再收工。第二段只在配了 after_initial 时才有。
+                    if not after_initial and not interactive:
                         result["stop_reason"] = "target_reached"
                         break
                     if not session_id:
-                        # 没有 session 就续不了同一次对话。**说清楚是这个原因**，
-                        # 不要退而求其次另起一个 run——那是重启新会话冒充续行。
+                        # 没有 session 就续不了同一次对话，本段的交付选择也就做不完。**说清楚是这个原因**，
+                        # 不报成到达目标，也不另起一个 run——那是重启新会话冒充续行。
                         result["stop_reason"] = "cli_session_lost"
-                        runlog.event("续跑不了", "第一段到目标，但 CLI 没给回 session id")
+                        runlog.event("续跑不了", "到目标，但 CLI 没给回 session id")
                         break
                     resumed = wait_for_resume(out_dir, feed, runlog, state, turn=turns,
-                                              pending=last_text)
+                                              pending=last_text, next_segment=bool(after_initial))
                     if resumed is None:
                         result["stop_reason"] = "host_concluded"
                         result["conclude_reason"] = "第一检查点等待期间收到收工判定"
                         feed.emit("host_concluded", turn=turns)
                         break
+                    if "reply" in resumed:
+                        # 答检查点上那一问：仍是第一段，模型做完被授权的动作（如归档）后再停在第一检查点
+                        state.update(status="running", awaiting_kind=None, awaiting_prompt=None, pending_question=None)
+                        refresh_worker_lease(out_dir, state, force=True, event="initial_checkpoint_reply")
+                        request = replace(request, prompt=driver_prompt(resumed["reply"], interactive),
+                                          session_id=session_id)
+                        continue
                     # 进第二段：记下此刻的更新操作，第二段的终点靠它与之后的比。
                     entry = update_round(feature)
                     state.update(status="running", checkpoint_stage="update",
@@ -1886,6 +2077,18 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                         state["update_closed_round"] = closed
                         result["update_round"] = closed
                         why = f"更新 {closed} 已收口"
+                    follow = reading_turn(feature, start_phase == "story", reading_seen, result, interactive=interactive,
+                                          can_continue=run.get("status") == "succeeded" and bool(session_id),
+                                          ask=reading_reply) if why else None
+                    if follow:
+                        feed.emit("reading_pending", turn=turns, todo=observe.shorten(follow, 300))
+                        runlog.event("阅读待办", follow[:200])
+                        request = replace(request, prompt=driver_prompt(follow, interactive), session_id=session_id)
+                        continue
+                    if result.get("stop_reason") == "host_concluded":
+                        runlog.event("宿主收工", result["conclude_reason"])
+                        feed.emit("host_concluded", turn=turns, reason=result["conclude_reason"])
+                        break
                     if why:
                         result["stop_reason"] = "update_checkpoint"
                         if start_phase == "story":
@@ -1962,10 +2165,12 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         facts = closure_facts(feature, start_phase, end_at, case)
         result["closure"] = facts
         result["target_reached"] = facts["target_closed"]
+        result["target_complete"] = facts["target_complete"]
         result["pipeline"] = {
             "requested_start_phase": start_phase,
             "requested_end_at": end_target.label(end_at),
-            "status": ("completed_at_requested_end" if result["target_reached"]
+            "status": ("completed_at_requested_end" if result["target_complete"]
+                       else "business_closed_reading_incomplete" if result["target_reached"]
                        else "requested_end_not_reached"),
         }
         result["phase_scope"] = {
@@ -2358,13 +2563,11 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None,
         print(json.dumps({"ok": False, "error": f"运行已终止（{status}），无人接收"},
                          ensure_ascii=False))
         return 1
-    # 检查点在等宿主评测，不在等回话：这时收下的话会在续跑后被当成下一关的回答。
-    if state.get("awaiting_kind") in ("initial_checkpoint", "update_checkpoint"):
-        print(json.dumps({"ok": False, "error": (
-            "正停在检查点上，不收回话：第一检查点评完用 resume-update，第二检查点评完用 conclude")}, ensure_ascii=False))
+    # 第二检查点只等宿主收工；第一检查点上模型留的那一问可以答，答完仍在第一段（如归档送审）。
+    if state.get("awaiting_kind") == "update_checkpoint":
+        print(json.dumps({"ok": False, "error": "正停在第二检查点上，不收回话：评完用 conclude"}, ensure_ascii=False))
         return 1
-    # 只要 worker 仍处于 awaiting_reply 且 lease 未过期，就允许入队。
-    # Windows 的进程查询可能被权限策略拒绝，不能把诊断失败变成“无人接收”。
+    # 先做完所有校验与投放，再在一处替换检查点并入队：中途失败时原快照仍在、回话没入队，状态一致
     lease_expires = float(state.get("lease_expires_epoch") or 0)
     if lease_expires and lease_expires < time.time() and not _pid_alive(state.get("pid")):
         print(json.dumps({"ok": False,
@@ -2380,11 +2583,30 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None,
         return 1
     delivered = deliver_supplements(case_id, feature, list(deliver or []))
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / REPLY_FILE).write_text(
-        json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
-                   ensure_ascii=False), encoding="utf-8")
+    initial = out_dir / "checkpoints" / "initial"
+    superseded = None
+    if state.get("awaiting_kind") == "initial_checkpoint" and initial.is_dir():
+        # 已固定的第一段快照不再是第一段的终稿：留着作证据，答完之后重新固定
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        superseded = out_dir / "checkpoints" / f"initial.superseded-{stamp}"
+        n = 1
+        while superseded.exists():
+            n += 1
+            superseded = out_dir / "checkpoints" / f"initial.superseded-{stamp}-{n}"
+        initial.rename(superseded)
+    try:
+        (out_dir / REPLY_FILE).write_text(
+            json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
+                       ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        if superseded is not None:
+            superseded.rename(initial)
+        print(json.dumps({"ok": False, "error": f"回话没能入队（{exc}），第一段快照原样保留", "delivered": delivered},
+                         ensure_ascii=False))
+        return 1
     print(json.dumps({
         "ok": True, "queued": text, "delivered": delivered,
+        **({"superseded_checkpoint": str(superseded)} if superseded else {}),
         "reply_status": "accepted",
         "note": "被测会话本轮结束时取用；它仍在说话时不会被打断",
     }, ensure_ascii=False, indent=2))
@@ -2739,6 +2961,10 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
         print(json.dumps({"ok": False, "error": "worker 没有停在第一检查点上"
                                                 f"（现在 {state.get('awaiting_kind') or state.get('status') or '没在跑'}）"},
                          ensure_ascii=False))
+        return 1
+    if state.get("after_initial") != "update":
+        print(json.dumps({"ok": False, "error": "这个 Case 没配 after_initial: update，没有第二段："
+                                                "检查点上只能 reply 本段的交付选择或 conclude"}, ensure_ascii=False))
         return 1
     if not (out_dir / "checkpoints" / "initial").is_dir():
         print(json.dumps({"ok": False, "error": "第一段的快照还没固定：先 checkpoint --point initial。"

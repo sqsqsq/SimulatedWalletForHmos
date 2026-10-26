@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import yaml
-from ext_workspace import REPO_ROOT, git_init_excluding_framework, installed_package, link_framework
+from ext_workspace import REPO_ROOT, change_versions, git_init_excluding_framework, installed_package, link_framework
 
 #: 包：装好了开发源的临时消费工程——adapt 从包里的脚本起跑（运行态）
 PKG_ROOT = installed_package()
@@ -60,9 +60,22 @@ class SourceKindCase(unittest.TestCase):
         link_framework(at)
         shutil.copytree(DEMO / "doc" / "extensions", at / "doc" / "extensions",
                         ignore=shutil.ignore_patterns("__pycache__"))
-        for rel in (*LEGACY_ENTRIES, "AGENTS.md", "CLAUDE.md", ".gitignore"):
+        for rel in (*LEGACY_ENTRIES, ".gitignore"):
             (at / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(DEMO / rel, at / rel)
+        # Framework 已升到被测版本：入口文件是它按自己的模板渲染的那份，后面仍挂着已装 1.9.8 的 story-ext 段
+        scratch = self.root / f"{project}-render"
+        shutil.copytree(at, scratch, ignore=lambda d, names: ["framework"] if Path(d) == at else [])
+        link_framework(scratch)
+        for rel in LEGACY_ENTRIES:   # 只借它渲染入口文件：旧跳板位置让给原生物化
+            (scratch / rel).unlink()
+        self.entries(scratch, "materialize")
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            legacy = (DEMO / name).read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
+            begin = next(i for i, l in enumerate(legacy) if "<!-- story-ext:begin" in l)
+            end = next(i for i, l in enumerate(legacy) if "<!-- story-ext:end" in l)
+            rendered = (scratch / name).read_text(encoding="utf-8").replace("\r\n", "\n").rstrip("\n")
+            (at / name).write_bytes((rendered + "\n\n" + "\n".join(legacy[begin:end + 1]) + "\n").encode("utf-8"))
         if keep_stub:
             (at / LEGACY_STUB).parent.mkdir(parents=True, exist_ok=True)
             (at / LEGACY_STUB).write_text(LEGACY_STUB_TEXT, encoding="utf-8")
@@ -208,7 +221,7 @@ class TheAdapterBlocks(SourceKindCase):
     """对接块：未适配的目标拿到全部块，在途入口跟已装版本，块不全就写前停。"""
 
     def test_an_unadapted_target_gets_every_block_from_a_stand_in_source(self) -> None:
-        """目标没写 adapted_for、装的是旧版（旧装的仓都是这样）：从头列出各版条目；替身来源不给对接层，那一块照列。"""
+        """目标没写 adapted_for、装的是旧版：从知识基线起列出各版条目；替身来源不给对接层，那一块照列。"""
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, PKG_ROOT)
         self.set_version(target, "1.9.3")
@@ -216,25 +229,31 @@ class TheAdapterBlocks(SourceKindCase):
         self.assertEqual(0, proc.returncode, self.out(proc))
         got = self.follow_up(proc)
         self.assertEqual("0", got["since"])
-        self.assertEqual({"知识", "对接层", "在途单"}, set(got["items"]))
+        self.assertEqual({"知识", "对接层"}, set(got["items"]), "跟进只有知识与对接层两块")
         for block, items in got["items"].items():
             with self.subTest(block=block):
                 self.assertTrue(items, f"{block} 一条都没列")
         self.assertTrue(any(i.startswith("1.9.4：") for i in got["items"]["对接层"]))
+        self.assertEqual(change_versions(PKG_EXT, "知识")[0], got["items"]["知识"][0].split("：", 1)[0],
+                         "知识没从最早一节（基线）列起")
         self.assertIn("停一次问人", proc.stdout)
 
-    def test_in_flight_entries_follow_the_installed_version(self) -> None:
-        """在途单只跟从哪一版升上来有关：装的是上一版就只列本版；知识与对接层没写 adapted_for 仍从头列。"""
+    def set_version(self, target: Path, version: str) -> None:
+        manifest = target / "doc/extensions/manifest.yaml"
+        rows = [f'version: "{version}"' if l.startswith("version:") else l
+                for l in manifest.read_text(encoding="utf-8").split("\n")]
+        manifest.write_text("\n".join(rows), encoding="utf-8")
+        self.commit(target, f"装的是 {version}")
+
+    def test_the_installed_version_is_a_fact_not_a_filter(self) -> None:
+        """升级前装的版本照实回报，但不用它筛条目：没写 adapted_for 时知识与对接层仍从头列，没有旧需求的块。"""
         target = self.blank_repo("BizA")
         self.adapt("--apply", target, PKG_ROOT)
         self.set_version(target, "1.9.6")
         got = self.follow_up(self.adapt("--apply", target, PKG_ROOT))
         self.assertEqual("1.9.6", got["installed"])
-        self.assertTrue(got["items"]["在途单"])
-        later = [i.split("：", 1)[0] for i in got["items"]["在途单"]]
-        self.assertIn("1.9.7", later)
-        self.assertTrue(all(tuple(map(int, v.split("."))) > (1, 9, 6) for v in later), later)
-        self.assertTrue(any(i.startswith("1.9.5：") for i in got["items"]["知识"]))
+        self.assertEqual({"知识", "对接层"}, set(got["items"]))
+        self.assertTrue(any(i.startswith("1.9.5：") for i in got["items"]["知识"]), "按装的版本筛掉了知识条目")
 
     def test_a_business_source_leaves_out_the_adapter_block(self) -> None:
         """业务仓来源整份换了对接层，那一块不用目标再做。"""
@@ -342,17 +361,84 @@ class WhatTheTargetGets(SourceKindCase):
     """目标工程拿到什么：忽略规则、知识登记核对、宿主入口，发布说明不随行。"""
 
     def test_it_adds_nothing_to_a_gitignore_that_already_covers_the_drafts(self) -> None:
-        """需求目录整个不入库时，不再补那一行——一条永远不起作用的规则只是噪声。\n\n        目标怎么挡不管：自己写了那一行、或者 `doc/features/` 一行盖住底下的一切，\n        都算挡住了。两条模式等不等价，字符串比不出来，问 git。\n        """
+        """需求目录整个不入库时，不再补需求目录下的那几行——一条永远不起作用的规则只是噪声。\n\n        目标怎么挡不管：自己写了那一行、或者 `doc/features/` 一行盖住底下的一切，\n        都算挡住了。两条模式等不等价，字符串比不出来，问 git。需求目录之外的记录器锁与临时文件照补。\n        """
         target = self.blank_repo("BizA")
         (target / ".gitignore").write_text("doc/features/\nbuild/\n", encoding="utf-8")
         self.commit(target, "需求目录整个不入库")
 
         proc = self.adapt("--apply", target, PKG_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertEqual("doc/features/\nbuild/\n",
+        self.assertEqual("doc/features/\nbuild/\n/doc/usage.json.lock\n/doc/.usage.json.*.tmp\n",
                          (target / ".gitignore").read_text(encoding="utf-8"),
                          "已经被挡住了还往 .gitignore 里加")
         self.assertEqual(0, self.adapt("--check", target, PKG_ROOT).returncode)
+
+    def git_add_takes(self, target: Path, rel: str) -> bool:
+        path = target / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():           # 探针只补缺的文件，不盖掉已有的使用记录
+            path.write_text("{}\n", encoding="utf-8")
+        return subprocess.run(["git", "-C", str(target), "add", "--dry-run", rel], capture_output=True,
+                              text=True, encoding="utf-8").returncode == 0
+
+    def test_the_usage_record_can_be_added_and_its_work_files_cannot(self) -> None:
+        """使用记录归目标、随普通 git add 入库；一次性输入、本地运行态、锁与临时文件挡住（统计输出不在工程里）。"""
+        target = self.blank_repo("BizU")
+        (target / ".gitignore").write_text("doc/*\n!doc/features/\n", encoding="utf-8")
+        self.commit(target, "doc 下的文件默认不入库")
+        self.assertFalse(self.git_add_takes(target, "doc/usage.json"), "前提不成立：规则本来就没挡住")
+        (target / "doc" / "usage.json").unlink()      # 探针文件不是使用记录：适配前撤掉
+        self.assertNotEqual(0, self.adapt("--check", target, PKG_ROOT).returncode, "挡住了却说核对通过")
+        proc = self.adapt("--apply", target, PKG_ROOT)
+        self.assertEqual(0, proc.returncode, self.out(proc))
+        self.assertTrue(self.git_add_takes(target, "doc/usage.json"), "放行之后普通 git add 仍纳入不了")
+        for rel in ("doc/features/AR1/.usage-input.json", "doc/features/.usage-state.json",
+                    "doc/usage.json.lock", "doc/.usage.json.123.tmp"):
+            with self.subTest(rel):
+                self.assertFalse(self.git_add_takes(target, rel), f"{rel} 没被挡住")
+        check = self.adapt("--check", target, PKG_ROOT)
+        self.assertEqual(0, check.returncode, self.out(check))
+
+    def test_disabled_lifecycle_hooks_are_named_and_left_as_the_target_set_them(self) -> None:
+        """目标关掉生命周期钩子：apply / check 都说出采集限制，不改它的设置；恢复后提示消失；缺件照样判。"""
+        target = self.blank_repo("BizH")
+        self.assertEqual(0, self.adapt("--apply", target, PKG_ROOT).returncode)
+        self.commit(target, "装好")
+        on = self.adapt("--check", target, PKG_ROOT)
+        self.assertEqual(0, on.returncode, self.out(on))
+        self.assertNotIn("采集限制", self.out(on))
+        cfg_file = target / "framework.config.json"
+        cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+        cfg_file.write_text(json.dumps({**cfg, "lifecycle_hooks_enabled": False}, ensure_ascii=False), encoding="utf-8")
+        off = self.adapt("--check", target, PKG_ROOT)
+        self.assertIn("采集限制", off.stdout, "钩子被关了，检查却和开着时一样")
+        self.assertIn("lifecycle_hooks_enabled", off.stdout)
+        self.commit(target, "目标关掉生命周期钩子")
+        applied = self.adapt("--apply", target, PKG_ROOT)
+        self.assertIn("采集限制", applied.stdout, self.out(applied))
+        self.assertIs(False, json.loads(cfg_file.read_text(encoding="utf-8"))["lifecycle_hooks_enabled"], "adapt 改了目标的设置")
+        hook = target / "doc" / "extensions" / "hooks" / "shared" / "usage.mjs"
+        hook.unlink()
+        missing = self.adapt("--check", target, PKG_ROOT)
+        self.assertNotEqual(0, missing.returncode)
+        self.assertIn("① 机制面缺文件：hooks/shared/usage.mjs", self.out(missing))
+        self.commit(target, "缺件")
+        self.assertEqual(0, self.adapt("--apply", target, PKG_ROOT).returncode)
+        cfg_file.write_text(json.dumps({**cfg, "lifecycle_hooks_enabled": True}, ensure_ascii=False), encoding="utf-8")
+        back = self.adapt("--check", target, PKG_ROOT)
+        self.assertEqual(0, back.returncode, self.out(back))
+        self.assertNotIn("采集限制", self.out(back))
+
+    def test_a_parent_directory_rule_is_named_not_papered_over(self) -> None:
+        """父目录整个被忽略时，单条放行不起作用：点名挡住它的规则，不报装好。"""
+        target = self.blank_repo("BizV")
+        (target / ".gitignore").write_text("doc/\n", encoding="utf-8")
+        self.commit(target, "doc 整个不入库")
+        proc = self.adapt("--apply", target, PKG_ROOT)
+        self.assertIn("仍被 .gitignore:1:doc/", self.out(proc))
+        check = self.adapt("--check", target, PKG_ROOT)
+        self.assertNotEqual(0, check.returncode)
+        self.assertIn("使用记录 doc/usage.json 被", self.out(check))
 
     def test_a_target_knowledge_registration_framework_rejects_stops_before_writing(self) -> None:
         """目标自己的知识登记坏了（登记的文件不存在）：按合成后的目标登记核，写前停，包的知识不去顶替。"""
@@ -481,7 +567,7 @@ class IdentityAndUpgrade(IdentityAndUpgradeCase):
         self.commit(target, "升到 2.0")
         again = self.adapt("--apply", target, PKG_ROOT)
         self.assertEqual(0, again.returncode, self.out(again))
-        self.assertIn("当前适配仍有效", self.out(again))
+        self.assertIn("没有机制文件要写", self.out(again))
 
 
 class IdentityAndUpgradePart2(IdentityAndUpgradeCase):

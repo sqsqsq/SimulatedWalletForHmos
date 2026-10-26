@@ -9,7 +9,9 @@
  * Feature 动作：spec / plan / coding / review / ut / testing，按本阶段已有的原生输入取，不要求后继契约已经形成。
  * 执行范围未冻结时输出是预览：本阶段输入还没确定，不作为动笔依据。需求正文只在无 run 的 spec 恢复不出来源时给。
  *
- * 只读。退出 0 输出完整任务；1 为坏身份、坏知识登记或所需来源缺失（stdout 不给半份，stderr 写对象、缺口、责任）；
+ * 输出只读；唯一副作用：作者取 Feature 阶段的正式任务（范围已冻结）就是开始这一阶段的工作，命令入口记一笔使用记录的
+ * begin（被导入的渲染函数与审查者、预览、蓝图动作都不记）。记不上只在 stderr 说明，任务照常给出。
+ * 退出 0 输出完整任务；1 为坏身份、坏知识登记或所需来源缺失（stdout 不给半份，stderr 写对象、缺口、责任）；
  * 2 为参数或依赖错误。空清单合法，明示零项。
  */
 import * as crypto from 'node:crypto';
@@ -23,6 +25,7 @@ import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
 import { questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
 import { extensionRoot, relDisplay } from './paths.mjs';
+import { recordUsage } from './usage.mjs';
 import { unitSources } from '../../skills/story/scripts/core/story/design-source.mjs';
 import { normalizeHeading, storySpan } from '../../skills/story/scripts/core/story/document.mjs';
 import { basisSections, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
@@ -325,7 +328,12 @@ function featureTask(root, feature, action, supplied, knowledge) {
   };
 }
 
-export function knowledgeTask(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
+export function knowledgeTask(root, args) {
+  return buildTask(root, args).text;
+}
+
+/** 任务正文与它是不是预览（执行范围未冻结）。 */
+function buildTask(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
   // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处
   const { knowledge, rows } = knowledgeBlock(root, action);
   const task = blueprint ? blueprintTask(root, blueprint, action)
@@ -336,7 +344,7 @@ export function knowledgeTask(root, { action, audience, blueprint, feature, requ
     ? [`按 \`${page}\` 做本动作；知识方面：先履行第 2、3 块已成立的判断与义务，再按第 4 块原文核与本动作相关的每份知识：`
       + '适用的把要求落到对应的设计对象或契约实体上，不适用写明本需求里使它不适用的条件；已成立的判断直接承接，不重判。']
     : [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
-  return [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）${task.preview ? '——预览，执行范围未冻结' : ''}`, '',
+  const text = [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）${task.preview ? '——预览，执行范围未冻结' : ''}`, '',
     '## 1. 当前动作与对象', '', `- 动作：${action}`, `- 对象：${task.object}`, '',
     ...(task.sources ? ['### 候选采用的来源', '', ...task.sources, ''] : []),
     '## 2. 有效事实与决定', '', ...task.facts, '',
@@ -347,6 +355,7 @@ export function knowledgeTask(root, { action, audience, blueprint, feature, requ
     ...([...task.gaps, ...problems.map(p => `知识自检：${p}——目标工程的知识维护者处理。`)].map(g => `- ${g}`)),
     ...(!task.gaps.length && !problems.length ? ['- 无。'] : []), '',
     ...(task.dispatch?.length ? ['## 7. 派审与留存（主执行者）', '', ...task.dispatch, ''] : [])].join('\n');
+  return { text, preview: task.preview === true };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -364,7 +373,16 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exit(2);
   }
   try {
-    process.stdout.write(knowledgeTask(path.resolve(root), args));
+    const task = buildTask(path.resolve(root), args);
+    process.stdout.write(task.text);
+    // 作者取正式的阶段任务就是开始这一阶段：先有任务、再记起点；预览与审查者不算开始
+    if (args.audience === 'author' && args.feature && !task.preview) {
+      const begun = recordUsage(path.resolve(root), 'begin', { feature: args.feature, step: args.action });
+      if (!begun.ok) {
+        process.stderr.write(`[usage] ${args.action} 阶段的开始没有记上（任务照常给出）：${(begun.errors ?? []).join('；')}`
+          + '——修好原因后重跑本命令补记\n');
+      }
+    }
   } catch (e) {
     process.stderr.write(`[knowledge-task]\n${e?.message ?? e}\n`);
     process.exit(e instanceof TaskError ? 1 : 2);

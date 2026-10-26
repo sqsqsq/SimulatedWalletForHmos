@@ -113,7 +113,7 @@ export function cmdBuild(ctx) {
 // --------------------------------------------------------------------------
 
 /**
- * 设计议题指向蓝图里的哪一处：`design_target.target_ref` 是已准入蓝图的稳定地址。评审人对它的意见在 update 里
+ * 设计议题指向蓝图里的哪一处：`design_target.target_ref` 是当前蓝图的稳定地址。评审人对它的意见在 update 里
  * 作为设计反馈交给蓝图负责方，被评的蓝图版本就是成文登记记下的那一版。设计来源不成立另有报错，这里不重复。
  */
 function designTargetProblems(ctx, dec) {
@@ -126,7 +126,7 @@ function designTargetProblems(ctx, dec) {
   const { blueprint } = designSource(ctx);
   if (!blueprint) return [];
   const index = loadNative(ctx.projectRoot).module('scripts/utils/blueprint-addressing.ts').stableAddressIndex(blueprint);
-  return index.has(ref) ? [] : [`决策 ${id} 的 design_target.target_ref「${ref}」不是已准入蓝图 ${blueprint.blueprint_id} 里的稳定地址`
+  return index.has(ref) ? [] : [`决策 ${id} 的 design_target.target_ref「${ref}」不是当前蓝图 ${blueprint.blueprint_id} 里的稳定地址`
     + '——地址取蓝图评审投影与知识任务里给出的稳定地址'];
 }
 
@@ -431,18 +431,21 @@ function issueZones(reviewText, id, fresh) {
   // 找不到当前形态的人工区起点：整块当机器区交摘要核，有人写过字（含不是当前形态的人工区）就对不上
   if (!starts.length) {
     if (head < 0) return { machine: null, human: null, ambiguous: false };
-    const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
+    const markLine = markAbove(reviewText, from, head);
     return { machine: { mark: markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null,
       body: reviewText.slice(head + 1, end) }, human: null, ambiguous: false, noZone: true };
   }
   if (head < 0) return { machine: null, human: reviewText.slice(starts[0], end + anchor.length), ambiguous: false };
-  const markLine = reviewText.slice(reviewText.lastIndexOf('\n', head - 1) + 1, head);
+  const markLine = markAbove(reviewText, from, head);
   const mark = markLine.startsWith(`${ISSUE_MARK}${id} `) ? markLine : null;
   const want = recordedDigest(mark);
   const at = (want && starts.find(s => projectionDigest(reviewText.slice(head + 1, s)) === want)) ?? starts[0];
   return { machine: { mark, body: reviewText.slice(head + 1, at) },
     human: reviewText.slice(at, end + anchor.length), ambiguous: starts.length > 1 };
 }
+
+/** 标题上方第一行非空行：标记与标题之间隔着分隔空行；只在本议题范围 `[from, head)` 里找。 */
+const markAbove = (text, from, head) => text.slice(from, head).trimEnd().split(/\r?\n/).pop();
 
 /**
  * 这一段有人动过手吗。
@@ -698,7 +701,7 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
             + 'build 按决策点的摘要判问题换没换，换了就不把旧表态带到新问题下；评审人确认沿用上一版表态时，由 `story_flow.py decide --update 沿用上一版表态 --issue <议题 id> --reply <原话>` 记下原话，build 据这条记录沿用。');
         }
         const human = keptHumanZone(zones, dec) ?? renderHumanZone(dec);
-        parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n${machine}\n${human}\n`);
+        parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n\n${machine}\n${human}\n`);
       });
     });
     out.push(parts.join('\n'));

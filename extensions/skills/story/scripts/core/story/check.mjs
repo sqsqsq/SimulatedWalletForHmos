@@ -9,20 +9,21 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chapterProblems } from './chapter.mjs';
-import { readWritingPlan, selectedStructure } from './writing-plan.mjs';
+import { carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import {
   appendixChapter, appendixStructureProblems, appendixZoneProblems,
 } from './appendix.mjs';
 import { basisDriftProblems } from './design-source.mjs';
 import {
-  activeKnowledgeEntries, fail, ledgerDigestProblems, readText, requireLedgers,
+  activeKnowledgeEntries, CommandFailure, fail, ledgerDigestProblems, readText, requireLedgers,
   strayFileProblems,
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
   EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
-import { imageProblems, markLines } from './images.mjs';
+import { strayReadingLinks } from './figure-view.mjs';
+import { imageProblems } from './images.mjs';
 import { decisionProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
@@ -115,7 +116,8 @@ export function storyCheck(ctx, { registration = true } = {}) {
       + '——归档件流转出去之后，读者靠这个编号回到需求系统；大标题的形态是 `# <需求编号> <需求名称>`');
   } else if (!h1Text.replace(ctx.args.feature, '').trim()) {
     problems.push('story.md 大标题：只有需求编号、没有需求名'
-      + '——只有编号，读者在需求系统外认不出这是哪件事；名称取自需求详情，本地单是需求方给的名称');
+      + '——只有编号，读者在需求系统外认不出这是哪件事；名称取自需求详情，本地单是需求方给的名称：'
+      + `直接改 AR/story.md 第 1 行，写成 \`# ${ctx.args.feature} <需求名>\`；大标题不在任何章里，不经 chapter 提交`);
   }
 
   mark('③ 验收编号落在验收章');
@@ -162,10 +164,7 @@ export function storyCheck(ctx, { registration = true } = {}) {
   const reviewText = readText(ctx.reviewPath) ?? '';
   // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
   // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
-  // 图源标记由 ⑪ 按章报，标记里的来源路径给机器核，这里先抹掉，同一行不再按文档坐标报第二遍
-  const markRows = new Set(markLines(storyText));
-  const storyForPaths = redactMaterialLinks(storyText, ctx).split(/\r?\n/)
-    .map((line, i) => (markRows.has(i + 1) ? '' : line)).join('\n');
+  const storyForPaths = redactMaterialLinks(storyText, ctx);
   const storyLines = storyText.split(/\r?\n/);
   const zones = zonesByLine(storyLines);
   const zoneHits = [];
@@ -273,6 +272,16 @@ export function storyCheck(ctx, { registration = true } = {}) {
     notes.push(...out.notes);
   }
 
+  mark('⑫d 上游图承接');
+  // 上游每张图登记在写作设计的哪一节（登记全不全由写作设计那条报）：那一节在 story 里定得到、有正文。
+  // 关系讲没讲全要读内容，归独立审查。
+  for (const c of plan ? carryTargets(plan, storyText) : []) {
+    if (c.problem) problems.push(`写作设计登记 ${c.source} 由「${c.where}」承接：${c.problem}——这一节要讲出那张图的关系（正文、表或图都可以），或在写作设计里改登记位置`);
+  }
+
+  mark('⑫e 正式稿不带本地阅读图');
+  problems.push(...strayReadingLinks(ctx, storyText));
+
   mark('⑮ AR 根下只有交付文档');
   problems.push(...strayFileProblems(ctx));
 
@@ -310,7 +319,7 @@ export async function cmdCheck(ctx) {
         process.stderr.write(`  ${n}. ${item}\n`);
       }
     }
-    process.exit(1);
+    throw new CommandFailure('check 未通过');
   }
   process.stdout.write(`[story-build check] 通过：${chapters} 章\n`);
   // 交付门通过 = 这份 story 可以交出去了。往下怎么走按已有授权，没指定就**由人选**，选项由交付门给出。

@@ -23,13 +23,15 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { hostReviewer } from '../../../../../hooks/shared/framework-access.mjs';
+import { hostReviewer, storyReviewVisual } from '../../../../../hooks/shared/framework-access.mjs';
+import { detailProblems } from '../../../../../hooks/shared/review-inputs.mjs';
+import { parseYaml } from '../../../../../hooks/shared/yaml.mjs';
 import { readerCheckIds, readerReviewTask } from '../../../../../hooks/shared/reader-review-task.mjs';
 import { readJson, readText, replaceFile } from './context.mjs';
-import { chapterSpan, tableCells, zoneBlock, zoneSpan } from './document.mjs';
+import { chapterSpan, fenceRanges, tableCells, zoneBlock, zoneSpan } from './document.mjs';
 import { TASK, materialKey, reviewObject } from './review-object.mjs';
 import {
-  CHECK_HEADER, CHECK_RESULTS, FINDING_HEADER, REPORT_HEADINGS, SEVERITIES,
+  CHECK_HEADER, CHECK_RESULTS, COVERAGE_KEY, COVERAGE_KEYS, FINDING_HEADER, REPORT_HEADINGS, SEVERITIES,
 } from './review-report-contract.mjs';
 
 const reply = n => `review-original.${n}.md`;
@@ -179,19 +181,24 @@ function contextOf(ctx, kind, known) {
 
 /**
  * 派审载体：由准备记录确定性生成，主执行者原样作为宿主 task 的 prompt 交给隔离审查者。
- * 材料键、任务、回复位置与返修上下文都在这里，不经主执行者转述。
+ * 只给 Story 路径、通用首读问题、材料键与之后要读的任务路径：判据、来源、人签与返修诊断都在任务里，首读完成后才读。
+ * 审查者只读、只回最终报告；主执行者把最终回复原样写到回复位置。
  */
 function dispatchFor(ctx, record, task) {
+  const story = path.relative(ctx.projectRoot, ctx.storyPath).split(path.sep).join('/');
   const head = ['# Story 独立人读审查 · 派审', '',
     `- 工程根：\`${record.project_root}\``,
-    `- 材料键：\`${record.material_key}\``,
-    `- 审查任务：\`${task}\``];
+    `- 材料键：\`${record.material_key}\``];
   if (record.reused) {
-    return `${[...head, `- 已有通过的回复：\`${record.report_file}\``, '',
+    return `${[...head, `- 审查任务：\`${task}\``, `- 已有通过的回复：\`${record.report_file}\``, '',
       '这份材料已有可复用的审查结论，这一次不派审，直接跑 `story-build review --action check`。'].join('\n')}\n`;
   }
-  const out = [...head, `- 回复写到：\`${record.report_file}\`（工程相对路径）`, '',
-    '你是与作者隔离的独立审查者。按审查任务原文执行：只读被审材料与对照材料，只写上面这一份回复，其余文件保持原样。',
+  const out = [...head, `- 被审的 Story：\`${story}\``, `- 首读之后读的审查任务：\`${task}\``, '',
+    '你是与作者隔离的独立审查者，只读，不写任何文件；你的最终回复就是审查报告，主执行者把它原样写到'
+      + ` \`${record.report_file}\`（工程相对路径）。`, '',
+    '## 先首读', '',
+    `先只读 \`${story}\` 一遍，像第一次拿到它的评审者：读完能不能说出这个需求要做什么、为什么、用户怎么走、`
+      + '正常与异常各到哪、怎样判定完成；哪里读不懂、要回头找、前后说法不一。记下首读结论，再读审查任务，按它核源与逐项判据。',
     `回复第一行写 \`material_key: ${record.material_key}\`，其余格式见任务「报告怎么写」。`];
   const c = record.review_context;
   if (c?.kind === 'format_repair') {
@@ -304,6 +311,10 @@ export function reviewResult(ctx) {
   if (materialKey(ctx.projectRoot, object.rows) !== was.material_key) {
     return { result: 'subject_stale', detail: '准备审查之后审查对象变了：重跑 prepare，按新任务与材料键再派审' };
   }
+  // 任务依据的来源、视觉裁定与回看清单仍是现在这份：按同一份生成重算，变了就是旧任务
+  if (readText(path.join(ctx.featureRoot, ...TASK)) !== `${readerReviewTask(ctx.projectRoot, ctx.args.feature)}\n`) {
+    return { result: 'subject_stale', detail: '审查任务依据的输入变了（来源、视觉裁定或回看清单）：重跑 prepare，按新任务与材料键再派审' };
+  }
   const broken = dispatchProblem(ctx, was);
   if (broken) return { result: 'input_invalid', detail: `${broken}——重跑 \`story-build review --action prepare\`，按新生成的派审载体派审` };
   const at = { report_file: was.report_file };
@@ -327,7 +338,7 @@ function materialConclusion(ctx, key, reportDir, reportFile, materials, altered 
   const at = reportFile ?? replyNumbers(ctx, reportDir).sort((a, b) => b - a).map(n => `${reportDir}/${reply(n)}`)
     .find(f => !altered.has(f));
   if (at && fs.existsSync(abs(ctx, at)) && !altered.has(at)) {
-    return { ...judge(fs.readFileSync(abs(ctx, at), 'utf-8'), key, materials), report_file: at };
+    return { ...judge(fs.readFileSync(abs(ctx, at), 'utf-8'), key, materials, coverageBasis(ctx, materials)), report_file: at };
   }
   return earlierConclusion(ctx, key, reportDir, at, materials, altered);
 }
@@ -342,7 +353,7 @@ function replyNumbers(ctx, reportDir) {
 function earlierConclusion(ctx, key, reportDir, skip, materials, altered = new Set()) {
   const files = replyNumbers(ctx, reportDir).sort((a, b) => b - a).map(n => `${reportDir}/${reply(n)}`);
   for (const rel of files.filter(f => f !== skip && !altered.has(f))) {
-    const out = judge(fs.readFileSync(abs(ctx, rel), 'utf-8'), key, materials);
+    const out = judge(fs.readFileSync(abs(ctx, rel), 'utf-8'), key, materials, coverageBasis(ctx, materials));
     if (['pass', 'warn', 'fail'].includes(out.result)) return { ...out, report_file: rel };
   }
   return null;
@@ -391,8 +402,41 @@ function locations(cell) {
     .filter(Boolean);
 }
 
-/** 一份回复对这一份材料：材料键、三节、判据逐项、发现的材料引用、结论与发现一致。 */
-function judge(text, key, materials) {
+const visuals = new WeakMap();
+
+/**
+ * 覆盖声明对着核的必审集合：任务材料表列出的每一份（缺件已在对象里拦下；任务本身计入材料键、不在表里），加独立 Story 视觉裁定——
+ * 只有原生裁定允许延期时，对象里冻结的图片可以按能力缺口写进 unreviewed 而结论最高 warn。
+ */
+function coverageBasis(ctx, materials) {
+  const task = path.relative(ctx.projectRoot, path.join(ctx.featureRoot, ...TASK)).split(path.sep).join('/');
+  materials = materials.filter(m => m.path !== task);
+  const images = materials.filter(m => m.label.endsWith('（image）')).map(m => m.path);
+  if (images.length && !visuals.has(ctx)) visuals.set(ctx, storyReviewVisual(ctx.projectRoot, ctx.args.feature));
+  const v = images.length ? visuals.get(ctx) : null;
+  return {
+    inputs: materials.map(m => ({ path: m.path, purpose: m.role === 'object' ? `审查对象：${m.label}` : m.label, required: true, missing: false })),
+    gaps: [], alias: new Map(),
+    visual: v?.status === 'ok' && v.deferral ? { fact: v.fact, deferred: new Set(images) } : null,
+  };
+}
+
+/** 「判据核对」节里的覆盖声明块：带顶层键的 YAML 围栏块逐个取出；读不出的围栏块记进 `broken`，不当成没写。 */
+function coverageOf(body) {
+  const lines = String(body ?? '').split(/\r?\n/);
+  const docs = [];
+  const broken = [];
+  for (const f of fenceRanges(lines)) {
+    const y = lines.slice(f.from + 1, f.closed ? f.to : f.to + 1).join('\n');
+    let d;
+    try { d = parseYaml(y); } catch (e) { broken.push(`第 ${f.from + 1} 行起的围栏块按 YAML 读不出（${String(e?.message ?? e).split(/\r?\n/)[0]}）`); continue; }
+    if (d && typeof d === 'object' && COVERAGE_KEY in d) docs.push(d[COVERAGE_KEY]);
+  }
+  return { docs, broken };
+}
+
+/** 一份回复对这一份材料：材料键、三节、判据逐项、发现的材料引用、结论与发现一致、覆盖声明对得上必审集合。 */
+function judge(text, key, materials, basis = null) {
   const invalid = why => ({ result: 'report_invalid',
     detail: `回复不合报告合同：${why.join('；')}。这份回复留在原处；跑 \`story-build review --action prepare\` 取新的回复位置，`
       + '按它生成的派审载体交独立审查者重给一份' });
@@ -435,6 +479,21 @@ function judge(text, key, materials) {
   const derived = severe.length || checks.data.some(r => r[1] === 'fail') ? 'fail'
     : found.data.length || checks.data.some(r => r[1] === 'warn') ? 'warn' : 'pass';
   if (stated[1] !== derived) return invalid([`总体结论写 ${stated[1]}，按判据与发现应为 ${derived}`]);
+  const { docs: covers, broken } = coverageOf(parts.get('判据核对')[0]);
+  if (broken.length || covers.length !== 1 || !covers[0] || typeof covers[0] !== 'object' || Array.isArray(covers[0])) {
+    return invalid([...broken, `「判据核对」节末尾要恰好一个 YAML 块，顶层键 ${COVERAGE_KEY}，下面是 ${COVERAGE_KEYS.join('、')} 四个列表（现在 ${covers.length} 个）`]);
+  }
+  const cover = covers[0];
+  const ids2 = list => (Array.isArray(list) ? list.map(x => String(x).trim()) : null);
+  const want = { blocking_findings: severe.map(r => r[0]), advisories: found.data.filter(r => !['BLOCKER', 'MAJOR'].includes(r[1])).map(r => r[0]) };
+  for (const [k, expected] of Object.entries(want)) {
+    const got = ids2(cover[k]);
+    if (got && JSON.stringify([...got].sort()) !== JSON.stringify([...expected].sort())) {
+      why.push(`${COVERAGE_KEY}.${k} 要恰好列「发现」表里${k === 'blocking_findings' ? ' BLOCKER / MAJOR' : ' MINOR / INFO'} 的编号（应为 ${expected.join('、') || '空列表'}，写了 ${got.join('、') || '空列表'}）`);
+    }
+  }
+  why.push(...detailProblems(cover, derived.toUpperCase(), basis, ids).map(p => `${COVERAGE_KEY} ${p}`));
+  if (why.length) return invalid(why);
   const listed = rows => rows.map(r => `${r[0]} ${r[1]} ${r[4]}`);
   if (derived === 'fail') return { result: 'fail', detail: `审查结论阻断：${listed(severe).join('；') || '判据核对有 fail'}` };
   const advisories = listed(found.data);

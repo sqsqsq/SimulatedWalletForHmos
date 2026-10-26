@@ -394,7 +394,7 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         self.assertEqual(self.TEXT,
                          (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"),
                          "补图那一档把正文也换了")
-        self.assertTrue((self.feature_root / "assets" / "原稿" / "image1.png").is_file(),
+        self.assertTrue(list(self.feature_root.glob("assets/原稿.*/image1.png")),
                         "图没抽出来——这一档抽图是它唯一要做的事")
 
     def test_the_default_class_still_overwrites(self) -> None:

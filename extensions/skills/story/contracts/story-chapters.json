@@ -72,11 +72,12 @@
     {
       "id": "05-flow",
       "title": "业务流程",
-      "boundary": "能力内部规则归功能说明，详细恢复归异常与恢复",
+      "boundary": "能力内部规则归功能说明，详细恢复归异常与恢复；页面交互只写人看到什么、能做什么、被引导去哪，业务条件与状态变化留在功能说明，影响与恢复留在异常与恢复，互相按业务名指认",
       "questions": [
         "从触发到终态的完整过程与主要阶段",
         "主路径及全部分支去向（开关、登录态、风控、网络、回调等）与交接点——总览给主线与主要分流入口，复杂分支在对应小节完整展开并接回主线",
-        "关键状态变化与终态；有结果未知的环节（超时、回调未到）时，停在什么状态、由谁确认"
+        "关键状态变化与终态；有结果未知的环节（超时、回调未到）时，停在什么状态、由谁确认",
+        "有人机交互的流程：从哪进入、依次经过哪些页面、每页做什么、正常与受限或异常时各看到什么、被引导去哪；业务已定时，材料没给的页面组织、操作反馈与返回位置由作者补齐，改变权限、资金或安全承诺、业务能力、交付范围或外部保证的才要依据"
       ],
       "structure": {
         "diagram": true
@@ -141,12 +142,11 @@
       "id": "10-appendix",
       "title": "附录",
       "appendix": true,
-      "boundary": "理解型叙述归正文各章，读者不打开附录与设计附件也能答出整体问题，它们供精确核对；接口、数据与规约在附录写业务摘要，完整技术契约在设计附件 AR/design-review.md；配置、埋点与改动边界由脚本从蓝图投影，材料清单由作者按本次采用的外部原件写",
+      "boundary": "理解型叙述归正文各章，读者不打开附录与设计附件也能答出整体问题，它们供精确核对；接口、数据与规约在附录写业务摘要，完整技术契约在设计附件 AR/design-review.md；配置与埋点由脚本从蓝图投影，材料清单由作者按本次采用的外部原件写",
       "subsections": [
         "技术契约",
         "规约",
         "埋点",
-        "改动边界",
         "材料清单"
       ],
       "questions": [
@@ -163,13 +163,14 @@
           ]},
           "规约": {"author_guide": "逐条写激活规约在本需求的判定：适用的写本需求的哪项事实使它适用、由谁承担、怎样影响设计，不适用的写边界；判断取自蓝图的知识应用决定"},
           "埋点": {"reader": "details", "detail_kind": "event", "title_level": 4},
-          "改动边界": {"reader": "change_boundary", "tables": {"rows": "模块|本单怎么动"},
-                       "labels": {"unchanged": "开发视图不变"}},
           "材料清单": {"table": "材料|来源|贡献", "author_guide": "一张表，每行一份外部原件：需求系统原件、收件箱里人工提供的文件、评审反馈；材料列链到原件，转换稿与抽出的图归回原件不另列，提取稿、人签导出、图片与运行记录不列；贡献写它实际给了什么，没采纳的新值或冲突版本写对比作用与裁决依据"}
         }
       }
     }
   ],
+  "named_tables": {
+    "页面流转表": "页面|来路/入口|用户操作|正常结果|异常提示与去向"
+  },
   "id_shapes": {
     "acceptance": ["AC-[A-Z]?\\d+", "BD-[A-Z]?\\d+"],
     "function": ["F\\d+"],
@@ -208,7 +209,7 @@
       "取舍写清了依据，有真实备选时写清被否方案与理由",
       "标题是真实业务名、层级反映真实从属",
       "表达贴合内容（能一句话说清的不建表、流程用图、不是通篇表格靠连接词串起来、一格里不塞一串分号短语）",
-      "每张图前一两句说明这段过程，图后用列表补图上没讲清的条件、责任与结果；图上已讲清的，图后一句说明后续去向即可",
+      "每张图前一两句说清读者看这张图要看出什么；图后只补图里没表达的条件、责任与结果，图已讲清的不复述，没有可补的不凑话",
       "第一次接触的人读完能答出「为什么做 / 怎么做 / 哪里会坏 / 怎么算对」",
       "同一件事只在一处完整表述——本章与其它章没有成段重复；图讲关系、表讲属性、文字讲理由算互补，验收独立判所必需的条件与数值重现也算必要，都不算重复"
     ]
@@ -238,13 +239,15 @@
   "update_files": {
     "editable": ["AR/story.md", "AR/story-src/design-draft.md", "AR/story-src/design-input.json",
       "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
-      "AR/story-src/drafts/**"],
+      "AR/story-src/drafts/**", "AR/story-src/figures/**"],
     "regenerate": ["AR/review.md", "AR/design-review.md", "AR/story-src/materials.json"],
     "protected": ["RR/**", "SR/**", "AR/design.md", "AR/detail.json", "inbox/**", "assets/**", "ux-reference/**",
       "AR/story-src/meetings/**", "AR/story-src/inputs/**", "AR/story-src/review/**", "AR/story-src/updates/**",
       ".backups/**"],
     "field_owned": ["AR/story-src/story-flow.json"]
   },
+  "local_reading_entry": "切换视图.cmd",
+  "system_archive_entry": "skills/story/scripts/adapters/story.js",
   "pending_mark": "待写",
   "heading_counters": [
     "种",

@@ -1,8 +1,9 @@
 /**
- * 成文的设计来源：流程契约关联的蓝图（原生读取、已准入、评审投影对得上这一版）与登记的冻结输入。
+ * 成文的设计来源：流程契约关联的蓝图（原生 draft 读取、消费了本次交给设计的输入、评审投影对得上这一版）与登记的冻结输入。
  *
- * 附录机器区、术语起始行与材料清单都从这里取，Story 不再读 Spec。来源不成立时给出缺口与责任方，
- * 调用方按它停下——不拿空来源当「这一节不涉及」。同一条命令只读一次。
+ * 附录机器区、术语起始行与材料清单都从这里取，Story 不再读 Spec。草稿可以成文：准入状态与原生 issues 原样带出，
+ * 由作者、独立审查与交付说明照实披露——草稿可读不等于准入通过。来源不成立（读不到、坏身份、没消费输入、投影过期）
+ * 时给出缺口与责任方，调用方按它停下——不拿空来源当「这一节不涉及」。同一条命令只读一次。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -34,8 +35,9 @@ function readSnapshot(ctx, input, problems) {
 }
 
 /**
- * @returns {{blueprint: object|null, ref: object|null, projection?: string, canonical?: string, snapshot: object|null, problems: string[]}}
- *   `projection` 是原生评审投影、`canonical` 是蓝图本体的工程相对路径
+ * @returns {{blueprint: object|null, ref: object|null, projection?: string, canonical?: string, admitted?: boolean,
+ *   nativeIssues?: string[], snapshot: object|null, problems: string[]}}
+ *   `projection` 是原生评审投影、`canonical` 是蓝图本体的工程相对路径；`admitted` 与 `nativeIssues` 是原生读取的准入结论与问题
  */
 export function designSource(ctx) {
   if (cache.has(ctx)) return cache.get(ctx);
@@ -45,15 +47,15 @@ export function designSource(ctx) {
   const input = flow?.input;
   const out = { blueprint: null, ref: null, snapshot: null, problems };
   if (!binding?.blueprint_id || !input?.snapshot_ref) {
-    problems.push('AR/story-src/story-flow.json：没有设计关联或登记的设计输入——成文按已准入的蓝图写，'
+    problems.push('AR/story-src/story-flow.json：没有设计关联或登记的设计输入——成文按关联的蓝图写，'
       + '先 `story_flow.py bind-design` 与 `complete` 把需求交给设计');
   } else {
     out.snapshot = readSnapshot(ctx, input, problems);
-    const read = readBlueprint(ctx.projectRoot, binding.blueprint_id, 'delivery', input.snapshot_ref);
+    const read = readBlueprint(ctx.projectRoot, binding.blueprint_id, 'draft', input.snapshot_ref);
     if (read.status !== 'ok') {
-      problems.push(`蓝图 ${binding.blueprint_id}：${read.status === 'not_admitted' ? '还没准入' : `原生读取 ${read.status}`}`
+      problems.push(`蓝图 ${binding.blueprint_id}：原生读取 ${read.status}`
         + `${read.issues?.length ? `（${read.issues.slice(0, 3).map(i => i.code ?? i.id).join('、')}）` : ''}`
-        + '——成文按已准入的蓝图写，由设计职责在 component-design 里走到准入');
+        + '——由设计职责在 component-design 里修好蓝图');
     } else if (read.blueprint?.component_id !== binding.component_id) {
       problems.push(`蓝图 ${binding.blueprint_id} 归属组件 ${read.blueprint?.component_id}，不是本需求关联的 ${binding.component_id}`);
     } else if (read.consumption?.status !== 'ok') {
@@ -67,10 +69,23 @@ export function designSource(ctx) {
       out.ref = read.blueprint_ref;
       out.projection = read.projection.path;
       out.canonical = read.canonical_path;
+      out.admitted = read.admitted === true;
+      out.nativeIssues = (read.issues ?? []).map(i => `${i.code ?? i.id ?? 'issue'}${i.path ? ` @${i.path}` : ''}：${i.message ?? ''}`);
     }
   }
   cache.set(ctx, out);
   return out;
+}
+
+/**
+ * 蓝图的准入状态与原生问题，一行结论加逐条问题：作者任务、独立审查任务与交付说明照这一份披露。
+ * 设计来源不成立时为空（那时调用方报的是缺口）。
+ */
+export function designStatusLines(source) {
+  if (!source?.ref) return [];
+  const head = `蓝图 ${source.ref.blueprint_id} r${source.ref.revision}：${source.admitted ? '已准入' : '草稿，未准入'}`
+    + `；原生问题 ${source.nativeIssues?.length ?? 0} 条`;
+  return [head, ...(source.nativeIssues ?? []).map(i => `  - ${i}`)];
 }
 
 /** 激活知识的确定性摘要：有序的激活登记（路径、受众、摘要）与每份知识文件的原始字节。 */
@@ -146,17 +161,14 @@ const markdownOf = files => files.filter(f => /\.md$/i.test(f.file_path))
   .map(f => [f.file_path, f.bytes.toString('utf-8').replace(/^\uFEFF/, '')]);
 
 /**
- * 本次采用的冻结来源：当前流程登记的那一版快照（readFrozenInputs 按快照登记的摘要核每份文件的原始字节），Markdown 交给图源检查。
- * 读不到或字节不符的不进 `documents`，记进 `problems`——图源检查据此不认它，当前性检查按来源损坏报。还没登记快照时两者都空。
+ * 本次采用的冻结来源还立不立得住：当前流程登记的那一版快照，readFrozenInputs 按快照登记的摘要核每份文件的原始字节。
+ * 读不到或字节不符的逐份报出，当前性检查按来源损坏报。还没登记快照时为空。
  */
-export function adoptedInputs(ctx) {
-  const out = { documents: new Map(), problems: [] };
+function frozenInputProblems(ctx) {
   const ref = readJson(ctx.flowPath, null)?.input?.snapshot_ref;
-  if (!ref || !ctx.projectRoot) return out;
-  const read = readFrozenInputs(ctx.projectRoot, ref);
-  out.problems.push(...read.problems.map(p => `冻结输入 ${p}——冻结版本不改，恢复原件；恢复不了走 reopen 或 update 后重新 complete`));
-  for (const [at, text] of markdownOf(read.files)) out.documents.set(at, text);
-  return out;
+  if (!ref || !ctx.projectRoot) return [];
+  return readFrozenInputs(ctx.projectRoot, ref).problems
+    .map(p => `冻结输入 ${p}——冻结版本不改，恢复原件；恢复不了走 reopen 或 update 后重新 complete`);
 }
 
 /**
@@ -175,7 +187,7 @@ function storyCurrency(ctx) {
   if (!basis?.files || !basis?.blueprint_ref || !basis?.input_sha256) {
     return { state: 'broken', why: ['流程契约记着已成文登记，登记数据不完整（缺文件指纹或成文依据）——需求负责方按当前内容重新登记'] };
   }
-  const source = [...designSource(ctx).problems, ...adoptedInputs(ctx).problems];
+  const source = [...designSource(ctx).problems, ...frozenInputProblems(ctx)];
   if (source.length) return { state: 'broken', why: source };
   const changed = [...ledgerDigestProblems(ctx), ...basisDriftProblems(ctx)];
   return changed.length ? { state: 'stale', why: changed } : { state: 'current', why: [] };

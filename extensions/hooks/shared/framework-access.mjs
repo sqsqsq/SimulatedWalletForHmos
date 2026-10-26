@@ -16,7 +16,13 @@
  *   node framework-access.mjs --project-root <根> --action sources  < 来源物化 JSON（stdin）
  *   node framework-access.mjs --project-root <根> --action feedback --blueprint <id>  < blueprint-review-feedback@1（stdin）
  *   node framework-access.mjs --project-root <根> --action feedback-related --blueprint <id> --ref <反馈文件工程相对路径>  < feedback_id 列表（stdin）
- * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期或未准入（带原生 issues），2 参数或依赖错误。
+ *   node framework-access.mjs --project-root <根> --action feature-identity --feature <逻辑 id> [--report-phases <阶段,阶段>]
+ *   node framework-access.mjs --project-root <根> --action phase-evidence --feature <逻辑 id> --phases <有序阶段,阶段>
+ *   node framework-access.mjs --project-root <根> --action story-review-visual --feature <逻辑需求 id>
+ * 写动作（显式调用，只走原生接口）：
+ *   node framework-access.mjs --project-root <根> --action change-unit-readiness --blueprint <id>
+ *   node framework-access.mjs --project-root <根> --action change-unit-revise --blueprint <id>  < 原生 revisions 数组（stdin）
+ * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期、未准入、业务未就绪或忙（带原生 issues 与结果），2 参数、依赖或工具故障。
  */
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -156,7 +162,7 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snaps
   const out = {
     status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
     blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
-    projection: readProjection(native, checked), units: admitted ? activeUnits(native, projectRoot, blueprintId, reportPhases) : [],
+    projection: readProjection(native, checked, blueprintId), units: admitted ? activeUnits(native, projectRoot, blueprintId, reportPhases) : [],
     ...(snapshotRef ? { consumption: scopeConsumption(native, checked.blueprint, snapshotRef) } : {}),
   };
   if (purpose === 'delivery' && !admitted) out.status = 'not_admitted';
@@ -178,12 +184,12 @@ function activeUnits(native, projectRoot, blueprintId, reportPhases) {
 }
 
 /** 蓝图旁的原生评审投影：没有、与这一版 canonical 的确定性派生对不上（stale）、有效。 */
-function readProjection(native, checked) {
+function readProjection(native, checked, blueprintId) {
   const file = path.join(path.dirname(checked.canonicalPath), 'component-blueprint.review.md');
   const out = { path: rel(native.root, file) };
   if (!fs.existsSync(file)) return { ...out, status: 'missing', issues: [] };
   const issues = native.module('scripts/utils/blueprint-host-seams.ts')
-    .validateBlueprintReviewPublication(fs.readFileSync(file, 'utf8'), checked.blueprint, checked.artifactSha256);
+    .validateBlueprintReviewPublication(fs.readFileSync(file, 'utf8'), native.root, String(blueprintId));
   return { ...out, status: issues.length ? 'stale' : 'valid', issues };
 }
 
@@ -319,6 +325,124 @@ export function featureIdentity(projectRoot, feature) {
 }
 
 /**
+ * 逻辑 Feature 的原生身份、物理目录与（给了阶段时）各阶段报告目录：只复用 `featureIdentity` 与 `phaseReportsDir`，
+ * 不进入阶段能力解析、不冻结范围，阶段还没开始时也取得到路径。
+ */
+function featureIdentityReport(projectRoot, feature, phases) {
+  const id = featureIdentity(projectRoot, feature);
+  const { dir, ...rest } = id;
+  const native = loadNative(projectRoot);
+  return { ...rest, dir: dir ? rel(native.root, dir) : null,
+    ...(phases ? { phase_reports: phases.map(phase => {
+      const r = phaseReportsDir(projectRoot, feature, phase);
+      return { phase, ...(r.dir ? { dir: rel(native.root, r.dir) } : r) };
+    }) } : {}) };
+}
+
+/**
+ * 阶段证据当前有效性：原生 `recomputePhaseEvidenceStaleness` 的逐阶段结论原样返回（verdict、changed_paths、
+ * integrity_errors、propagated_from）。不传 run 与 pending owner，不自建失效账本。
+ */
+function phaseEvidence(projectRoot, feature, chain) {
+  const native = loadNative(projectRoot);
+  try {
+    const results = native.module('scripts/utils/phase-evidence-manifest.ts')
+      .recomputePhaseEvidenceStaleness(native.root, feature, chain, { frameworkRoot: native.frameworkRoot });
+    return { status: 'ok', results, issues: [] };
+  } catch (e) {
+    return failure('invalid', e);
+  }
+}
+
+/**
+ * 独立 Story 审查的视觉裁定：从这份需求当前的流程契约取已绑定的蓝图与冻结输入，按原生纯函数算看图能力与保真路由。
+ *
+ * - 需求原文取冻结包里采用的阅读原文（`original`，图片不算）与有效人签（`human_record`），提取稿、Story、写作设计不进；
+ *   取不到时说明来源不足，不拿作者摘要补。
+ * - 执行身份是 `story:<需求>:<蓝图>:<revision>:<artifact_sha256>`，需求摘要用冻结快照的登记摘要；
+ *   能力取原生当前 adapter 的图像输入解析与 profile 的 OCR 就绪，审查者与作者同一执行能力（`reviewVision = hasVision`）。
+ * - `deferral` 只在明确看不了图、原生 effective 是 semantic_layout、strictness 是 best_effort 且 defer=false 时为真：
+ *   这时登记图片的图面未核可以按能力缺口记 WARN；其余情况看不了图就是没读完。
+ * 只读，不调模型、不探测、不写裁定文件。
+ */
+export function storyReviewVisual(projectRoot, feature) {
+  const native = loadNative(projectRoot);
+  const id = featureIdentity(projectRoot, feature);
+  if (id.status !== 'ok' || !id.dir) return { status: 'invalid', issues: id.issues ?? [] };
+  let flow;
+  try {
+    flow = JSON.parse(fs.readFileSync(path.join(id.dir, 'AR', 'story-src', 'story-flow.json'), 'utf8'));
+  } catch (e) {
+    return failure('invalid', e);
+  }
+  const blueprintId = flow?.design_binding?.blueprint_id;
+  const snapshotRef = flow?.input?.snapshot_ref;
+  if (!blueprintId || !snapshotRef) {
+    return { status: 'invalid', issues: [{ code: 'story_design_input_missing', message: '流程契约没有已绑定的蓝图或冻结输入：视觉裁定无从取来源' }] };
+  }
+  const read = readBlueprint(projectRoot, blueprintId, 'draft');
+  if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [] };
+  const frozen = readFrozenInputs(projectRoot, snapshotRef);
+  if (frozen.problems.length) return { status: 'invalid', issues: frozen.problems.map(message => ({ code: 'frozen_input_invalid', message })) };
+  const texts = frozen.files.filter(f => ['original', 'human_record'].includes(f.role))
+    .map(f => `<<${f.path}>>
+${Buffer.from(f.bytes).toString('utf8')}`);
+  if (!frozen.files.some(f => f.role === 'original')) {
+    return { status: 'invalid', issues: [{ code: 'requirement_text_missing', message: '冻结输入里没有采用的需求阅读原文：来源不足，视觉裁定不做' }] };
+  }
+  const ref = read.blueprint_ref;
+  const executionIdentity = `story:${feature}:${blueprintId}:${ref.revision}:${ref.artifact_sha256}`;
+  const cfg = native.module('config.ts').loadFrameworkConfig(native.root);
+  const adapter = cfg?.agent_adapter ?? undefined;
+  let probe;
+  let ocrAvailable;
+  try {
+    probe = native.module('scripts/utils/multimodal-probe.ts').resolveContextAdapterImageInput(native.root, native.frameworkRoot, adapter);
+    const profileDir = native.module('profile-loader.ts').loadResolvedProfile(native.root, cfg, native.frameworkRoot).profileDir;
+    ocrAvailable = native.module('scripts/utils/fidelity-shared.ts').resolveOcrAvailableForRun(native.root, profileDir, adapter) === true;
+  } catch (e) {
+    return failure('invalid', e);
+  }
+  const hasVision = probe?.supported === true;
+  const routing = native.module('scripts/utils/fidelity-shared.ts').resolveFidelityRoutingDecision({
+    requirementText: texts.join('\n\n'), requirementSha: String(flow.input.snapshot_sha256 ?? ''), executionIdentity,
+    capability: { hasVision, ocrAvailable, reviewVision: hasVision },
+  });
+  const deferral = !hasVision && routing.effective === 'semantic_layout' && routing.strictness === 'best_effort' && routing.defer === false;
+  const fact = `看图能力：${hasVision ? '能看图' : '看不了图'}（adapter ${probe?.adapter ?? adapter ?? '未配置'}，${probe?.reason ?? '无说明'}；OCR ${ocrAvailable ? '就绪' : '不可用'}）；`
+    + `原生保真路由 effective=${routing.effective}、strictness=${routing.strictness}、defer=${routing.defer}（决定 ${routing.decision?.decision_id ?? '—'}）`;
+  return { status: 'ok', issues: [], blueprint_ref: ref, snapshot_ref: snapshotRef, snapshot_sha256: flow.input.snapshot_sha256 ?? null,
+    execution_identity: executionIdentity, adapter: adapter ?? null, model_pin: null,
+    capability: { has_vision: hasVision, image_input: probe?.imageInput ?? null, source: probe?.reason ?? null, ocr_available: ocrAvailable },
+    routing, deferral, fact };
+}
+
+/** 施工单位设计准备是否就绪：原生 `deriveDesignPreparationReadiness`；忙或未就绪退出 1，结果原样保留。 */
+function changeUnitReadiness(projectRoot, blueprintId) {
+  const native = loadNative(projectRoot);
+  try {
+    const r = native.module('scripts/utils/change-unit-design-preparation.ts').deriveDesignPreparationReadiness(native.root, blueprintId);
+    return { status: r.blueprintRefs?.busy ? 'busy' : r.ready ? 'ok' : 'not_ready', readiness: r, issues: [] };
+  } catch (e) {
+    return failure(e?.code ? 'rejected' : 'invalid', e);
+  }
+}
+
+/** 施工单位内容修订：stdin 给原生 revisions 数组，原样交 `reviseChangeUnitContent`；被拒或忙退出 1 并带原生代码。 */
+function changeUnitRevise(projectRoot, blueprintId, revisions) {
+  const native = loadNative(projectRoot);
+  if (!Array.isArray(revisions)) return { status: 'invalid', issues: [{ code: 'revisions_not_array', message: 'stdin 要是原生 revisions 数组' }] };
+  try {
+    const r = native.module('scripts/utils/change-unit-design-preparation.ts').reviseChangeUnitContent(native.root, blueprintId, revisions);
+    if (r.busy) return { status: 'busy', busy: r.busy, issues: [{ code: 'busy', message: r.busy }] };
+    return { status: 'ok', revised: r.revised.map(u => String(u.changeUnit?.change_unit_id ?? '')), unchanged: r.unchanged,
+      review: r.reviewDocument ?? null, issues: [] };
+  } catch (e) {
+    return failure(e?.code ? 'rejected' : 'invalid', e);
+  }
+}
+
+/**
  * 阶段审查报告目录：原生 `featurePhaseReportsDir` 给出的绝对路径（含工程配置的 reports_dir_pattern）。
  * 唯一消费者是阶段报告核对；解析失败返回原生的错误，不回落默认目录。
  *
@@ -336,24 +460,6 @@ export function phaseReportsDir(projectRoot, feature, phase) {
 /** 本阶段产物所在的目录，取原生身份给出的位置；身份认不出时为 null，由调用方报原生给的问题，不自拼目录。 */
 export function featureDir(projectRoot, feature) {
   return featureIdentity(projectRoot, feature).dir ?? null;
-}
-
-/** 蓝图生成图：原生 resolver 核引用的身份与版本，`graph_id` 在这一版的 `generated_graphs` 里实际存在。 */
-export function blueprintGraph(projectRoot, ref, graphId) {
-  const native = loadNative(projectRoot);
-  let resolved;
-  try {
-    resolved = native.module('scripts/utils/component-blueprint-path.ts').resolveComponentBlueprintRef(native.root, ref);
-  } catch (e) {
-    return failure(e?.code === 'component_blueprint_identity_mismatch' ? 'stale' : 'invalid', e);
-  }
-  const graphs = Array.isArray(resolved.blueprint.generated_graphs) ? resolved.blueprint.generated_graphs : [];
-  const graph = graphs.find(g => g?.graph_id === graphId);
-  if (!graph) {
-    return { status: 'missing', issues: [{ code: 'blueprint_graph_missing', message: `蓝图 ${ref.blueprint_id} r${ref.revision} 没有生成图 ${graphId}`
-      + `（这一版有：${graphs.map(g => g?.graph_id).filter(Boolean).join('、') || '无'}）` }] };
-  }
-  return { status: 'ok', content: String(graph.content ?? ''), issues: [] };
 }
 
 /**
@@ -612,7 +718,9 @@ function resolveFeature(projectRoot, feature, phase, supplied) {
       if (value.state === 'invalid') out.issues.push({ code: `${name}_invalid`, message: value.detail });
     }
     out.issues.push(...(spec?.shape_issues ?? []).map(message => ({ code: 'feature_spec_shape', message })));
-    out.spec = spec ? specOf(spec) : null;
+    // 本阶段选定的契约与验收以原生解析结果为准：规格加载没带出的那一份取解析器给的值
+    const chosen = name => (out.inputs[name]?.state === 'resolved' ? out.inputs[name].value ?? null : null);
+    out.spec = spec ? { ...specOf(spec), contracts: spec.contracts ?? chosen('contracts'), acceptance: spec.acceptance ?? chosen('acceptance') } : null;
     out.required_outputs = resolution.inputs?.context?.required_outputs ?? [];
   } catch (e) {
     return { ...out, ...failure('invalid', e) };
@@ -632,8 +740,17 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
       + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）'
       + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）'
-      + ' | --action feedback-related --blueprint <id> --ref <反馈文件>（stdin 给 feedback_id 列表）';
-    if (!root || !['blueprint', 'feature', 'binding', 'sources', 'feedback', 'feedback-related'].includes(action)) throw new Error(usage);
+      + ' | --action feedback-related --blueprint <id> --ref <反馈文件>（stdin 给 feedback_id 列表）'
+      + ' | --action feature-identity --feature <逻辑 id> [--report-phases <阶段,阶段>]'
+      + ' | --action phase-evidence --feature <逻辑 id> --phases <有序阶段,阶段>'
+      + ' | --action story-review-visual --feature <逻辑需求 id>'
+      + ' | --action change-unit-readiness --blueprint <id> | --action change-unit-revise --blueprint <id>（stdin 给 revisions 数组）';
+    const ACTIONS = ['blueprint', 'feature', 'binding', 'sources', 'feedback', 'feedback-related',
+      'feature-identity', 'phase-evidence', 'story-review-visual', 'change-unit-readiness', 'change-unit-revise'];
+    if (!root || !ACTIONS.includes(action)) throw new Error(usage);
+    if (['change-unit-readiness', 'change-unit-revise'].includes(action) && !opt('--blueprint')) throw new Error(usage);
+    if (['feature-identity', 'phase-evidence', 'story-review-visual'].includes(action) && !opt('--feature')) throw new Error(usage);
+    if (action === 'phase-evidence' && !String(opt('--phases') ?? '').trim()) throw new Error(usage);
     if (['feedback', 'feedback-related'].includes(action) && !opt('--blueprint')) throw new Error(usage);
     if (action === 'feedback-related' && !opt('--ref')) throw new Error(usage);
     if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
@@ -641,10 +758,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const summary = argv.includes('--summary');
     if (summary && action !== 'blueprint') throw new Error(usage);
     const phases = opt('--report-phases') === undefined ? null : [...new Set(opt('--report-phases').split(',').map(s => s.trim()).filter(Boolean))];
-    if (phases && (action !== 'blueprint' || !phases.length)) throw new Error(usage);
+    if (phases && (!['blueprint', 'feature-identity'].includes(action) || !phases.length)) throw new Error(usage);
     if (action === 'binding' && (!opt('--component') || !opt('--blueprint'))) throw new Error(usage);
     let doc;
-    if (['sources', 'feedback', 'feedback-related'].includes(action)) {
+    if (['sources', 'feedback', 'feedback-related', 'change-unit-revise'].includes(action)) {
       try {
         doc = JSON.parse(fs.readFileSync(0, 'utf8'));
       } catch (e) {
@@ -656,6 +773,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         : action === 'sources' ? checkSources(root, doc)
           : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)
             : action === 'feedback-related' ? feedbackRelated(root, opt('--blueprint'), opt('--ref'), doc)
+              : action === 'feature-identity' ? featureIdentityReport(root, opt('--feature'), phases)
+                : action === 'story-review-visual' ? storyReviewVisual(root, opt('--feature'))
+                : action === 'phase-evidence' ? phaseEvidence(root, opt('--feature'), opt('--phases').split(',').map(s => s.trim()).filter(Boolean))
+                  : action === 'change-unit-readiness' ? changeUnitReadiness(root, opt('--blueprint'))
+                    : action === 'change-unit-revise' ? changeUnitRevise(root, opt('--blueprint'), doc)
           : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });
     const { blueprint, ...status } = out;
     process.stdout.write(`${JSON.stringify(summary ? status : out, null, 1)}\n`);

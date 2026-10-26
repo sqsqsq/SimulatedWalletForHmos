@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -22,9 +23,47 @@ from typing import Callable
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def framework_under_test() -> Path:
+    """单测接的被测 Framework：`test/config/framework-under-test.json` 登记的固定发布树，应用同一文件登记的本地宿主补丁；
+    harness 依赖借 demo 已装的 `node_modules`（依赖声明与发布树一致才借，不一致就停，不联网装）。
+
+    按固定输入与补丁摘要在系统临时目录建一次，造好再改名，各进程与之后各轮共用；demo 不动。
+    """
+    import tempfile  # noqa: PLC0415
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import run_multi_case as rmc  # noqa: PLC0415
+    cfg = rmc.load_framework_under_test()
+    key = hashlib.sha256(f"{cfg['release_commit']}:{cfg['tree_oid']}:{cfg['patch_sha256']}".encode()).hexdigest()[:20]
+    base = Path(tempfile.gettempdir()) / "story-framework-under-test"
+    final = base / key
+    if (final / "framework" / "RELEASE-MANIFEST.json").is_file():
+        return final / "framework"
+    demo_harness = REPO_ROOT / "demo" / "framework" / "harness"
+    pkg = rmc._git_out("cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/harness/package.json")
+    if rmc._harness_dependencies(pkg.stdout) != rmc._harness_dependencies((demo_harness / "package.json").read_bytes()):
+        raise RuntimeError("被测 Framework 的 harness 依赖声明与 demo 已装的不同：先按维护环境准备装好它的依赖")
+    building = base / f"{key}.building-{os.getpid()}"
+    shutil.rmtree(building, ignore_errors=True)
+    framework = building / "framework"
+    framework.mkdir(parents=True)
+    rmc._write_framework_release(framework, cfg)
+    env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(building.parent)}
+    applied = rmc._git_out("apply", "--directory=framework", str(cfg["patch_path"]), cwd=building, env=env)
+    if applied.returncode != 0:
+        raise RuntimeError(f"本地宿主补丁不适用于被测 Framework：{applied.stderr.decode('utf-8', 'replace')[:600]}")
+    _link_dir(demo_harness / "node_modules", framework / "harness" / "node_modules")
+    try:
+        building.rename(final)
+    except OSError:
+        if not (final / "framework" / "RELEASE-MANIFEST.json").is_file():
+            raise
+        shutil.rmtree(building, ignore_errors=True)
+    return final / "framework"
+
+
 def link_framework(root: Path) -> Path:
-    """让临时工程根接入 demo 的 Framework：复制 demo 的 `framework.config.json`（物化哪些宿主由它定），
-    `framework/` 整个目录接一条指向 demo 的 junction（Windows）或符号链接。安装与宿主入口物化只读它、
+    """让临时工程根接入被测 Framework（`framework_under_test`）：复制 demo 的 `framework.config.json`（物化哪些宿主由它定），
+    `framework/` 整个目录接一条指向它的 junction（Windows）或符号链接。安装与宿主入口物化只读它、
     写在工程根；链接在临时目录清理时被删，demo 不动。已存在的都不动。"""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -33,7 +72,7 @@ def link_framework(root: Path) -> Path:
         shutil.copy2(REPO_ROOT / "demo" / "framework.config.json", config)
     target = root / "framework"
     if not target.exists():
-        source = REPO_ROOT / "demo" / "framework"
+        source = framework_under_test()
         if sys.platform == "win32":
             import _winapi
             _winapi.CreateJunction(str(source), str(target))
@@ -51,7 +90,7 @@ def _link_dir(source: Path, target: Path) -> None:
 
 
 def overlay_framework(root: Path) -> None:
-    """`framework/` 已经在（只接了 yaml 包、或放了替身）的临时工程补接 demo Framework 缺的部分：
+    """`framework/` 已经在（只接了 yaml 包、或放了替身）的临时工程补接被测 Framework 缺的部分：
     `framework/`、`harness/`、`node_modules/` 三层逐项只补缺的——目录接链接、文件复制，已有的一律不动。"""
     def fill(source: Path, target: Path, depth: int) -> None:
         target.mkdir(parents=True, exist_ok=True)
@@ -64,7 +103,7 @@ def overlay_framework(root: Path) -> None:
                 _link_dir(item, dest)
             else:
                 shutil.copy2(item, dest)
-    fill(REPO_ROOT / "demo" / "framework", Path(root) / "framework", 2)
+    fill(framework_under_test(), Path(root) / "framework", 2)
 
 
 def _is_junction(path: Path) -> bool:
@@ -93,15 +132,12 @@ BLUEPRINT_FIXTURE = REPO_ROOT / "test" / "fixtures" / "blueprint" / "wallet-bala
 COMPONENT = "wallet-main"
 
 RENDER = """
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, access, blueprint] = process.argv.slice(1);
 const { loadNative } = await import(pathToFileURL(access).href);
 const native = loadNative(root);
-const loaded = native.module('scripts/utils/component-blueprint-path.ts').loadCanonicalBlueprint(root, blueprint);
-const text = native.module('scripts/utils/blueprint-review-projection.ts').renderBlueprintReviewMarkdown(loaded.blueprint, loaded.artifactSha256);
-fs.writeFileSync(path.join(path.dirname(loaded.canonicalPath), 'component-blueprint.review.md'), text);
+const r = native.module('scripts/utils/blueprint-review-materialization.ts').materializeBlueprintReview(native.root, blueprint);
+if (r.status === 'failed') { process.stderr.write(`评审投影原生物化失败：${r.reason ?? ''}`); process.exit(1); }
 """
 
 
@@ -441,6 +477,28 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
             raise RuntimeError(f"附录按蓝图重投失败：{proc.stdout}{proc.stderr}")
 
 
+EVIDENCE = """
+import { pathToFileURL } from 'node:url';
+const [root, access, feature, phases] = process.argv.slice(1);
+const { loadNative } = await import(pathToFileURL(access).href);
+const native = loadNative(root);
+const m = native.module('scripts/utils/phase-evidence-manifest.ts');
+for (const phase of phases.split(',')) {
+  m.writePhaseEvidenceManifest(native.root,
+    m.resolvePhaseEvidenceManifest({ projectRoot: native.root, feature, phase, frameworkRoot: native.frameworkRoot }));
+}
+"""
+
+
+def write_native_evidence(root: Path, feature: str, phases: list[str], access: Path) -> None:
+    """按原生 `resolvePhaseEvidenceManifest` 给 `phases` 逐个写阶段证据清单（盘上现状即被证据锁定的状态）。"""
+    ensure_framework(root)
+    proc = subprocess.run(["node", "--input-type=module", "-e", EVIDENCE, str(root), str(access), feature, ",".join(phases)],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"阶段证据清单写不出：{proc.stderr[-600:]}")
+
+
 def install_review_mechanism(root: Path, extension: Path) -> None:
     """审查对象里的章节合同与判据取工程里装的那份扩展：只装了部分扩展的测试工程从 `extension` 补这两份。"""
     for rel in ("skills/story/contracts/story-chapters.json", "rules/story-reader-rules.yaml"):
@@ -464,17 +522,27 @@ def write_review(root: Path, feature: str, kind: str = "pass") -> Path:
 
     只验证协议——准备、报告合同与结果归类接得上——不是真实的独立审查。返回回复的路径。
     """
-    prepared = json.loads((root / features_dir(root) / feature / "AR" / "story-src" / "review" / "prepared.json")
-                          .read_text(encoding="utf-8"))
+    review = root / features_dir(root) / feature / "AR" / "story-src" / "review"
+    prepared = json.loads((review / "prepared.json").read_text(encoding="utf-8"))
     story = f"{features_dir(root)}/{feature}/AR/story.md"
     issues = REVIEW_ISSUES[kind]
     severe = any(i[1] in ("BLOCKER", "MAJOR") for i in issues)
     overall = "fail" if severe else "warn" if issues else "pass"
+    task = (review / "task.md").read_text(encoding="utf-8")
+    listed = task[task.index("### 本次审查的材料"):]
+    listed = listed[:listed.find("\n### ", 1)] if "\n### " in listed[1:] else listed
+    examined = re.findall(r"^- `([^`]+)` —— ", listed, re.M)
+    coverage = {"blocking_findings": [i[0] for i in issues if i[1] in ("BLOCKER", "MAJOR")],
+                "advisories": [i[0] for i in issues if i[1] not in ("BLOCKER", "MAJOR")],
+                "examined_inputs": examined, "unreviewed": []}
     text = "\n".join([
         f"material_key: {prepared['material_key']}", "",
         "## 判据核对", "", "| 判据 ID | 结果 | 依据 |", "|---|---|---|",
         f"| story_reader_review | {overall} | 逐章对着来源读过：背景、范围、方案、流程、功能、异常、验收与交付 |", "",
+        "首读结论：只读 Story 能读出要做什么、为什么做和怎么算对。", "",
         "审查方法：按任务里的判据逐章对着来源读。", "",
+        "```yaml", "review_coverage:",
+        *[f"  {k}: {json.dumps(v, ensure_ascii=False)}" for k, v in coverage.items()], "```", "",
         "## 发现", "", "| 编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任 |", "|---|---|---|---|---|---|",
         *[f"| {a} | {b} | story_reader_review | `{story}` | {c} | {d} |" for a, b, c, d in issues], "",
         "## 总体结论", "", f"{overall}：按判据与发现判定。", ""])

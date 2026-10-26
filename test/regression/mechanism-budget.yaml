@@ -310,8 +310,12 @@ release:
 
 # 实施包：R=该包起点以来逐提交累计G（budget_report 的 package.invested）/ approved_g，分母不因改签重置。
 # 每项 id、start_ref、approved_g、approved_by；可选 predicted（total 或责任项名 → {g, x}）、scopes（责任项 → extensions 内路径 glob）、
-# confirmations（band 为 125–150% 或 >150%，写 by/at/ref）。2.0.0 包（approved_g 13488）在批次二01开工前按真实 T 填写。
-packages: []
+# confirmations（band 为 125–150% 或 >150%，写 by/at/ref）。2.0.0 包按批次二01 启动 merge 前的真实 HEAD（T）为起点。
+packages:
+  - id: 2.0.0-完整实施
+    start_ref: "a05a3634f9ff70f78faec28612455fca2e4a5c7e"
+    approved_g: 13488
+    approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
 
 # 当前进行中的需求。status 由该需求收口那一步改为 closed；closed 后 target 即长期上限。
 requirement:

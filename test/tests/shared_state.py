@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -46,9 +45,9 @@ def digest(*inputs: Path | str) -> str:
 
 
 def framework_version() -> str:
-    proc = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD:demo/framework"],
-                          capture_output=True, text=True, encoding="utf-8")
-    return proc.stdout.strip() or "unknown"
+    """被测 Framework 的身份：登记的固定发布树与本地宿主补丁（`test/config/framework-under-test.json`）。"""
+    return digest(REPO_ROOT / "test" / "config" / "framework-under-test.json",
+                  REPO_ROOT / "test" / "fixtures" / "framework-local")
 
 
 #: 造状态时一定参与的输入：开发版扩展与造状态的脚本

@@ -302,9 +302,28 @@ class EachVersionKeepsItsOwnOriginal(MeetingCase):
         self.assertTrue(next(s for s in built["sources"] if s["file"] == docx.name)["ingested"])
         item = next(m for m in built["materials"] if m["kind"] == "meeting")
         self.assertEqual([f"AR/story-src/meetings/澄清会/{first.name}/original.docx"], item["paths"])
+        origin = next(o for o in built["origins"] if o["kind"] == "meeting")
+        self.assertEqual(item["paths"][0], origin["path"], "会议来源指向的不是留存版本的原件")
+        self.assertEqual([f"AR/story-src/meetings/澄清会/{first.name}/{meeting.RAW}"],
+                         origin["readable_paths"])
+        self.assertNotIn(f"inbox/{docx.name}", [o["path"] for o in built["origins"]],
+                         "收件箱里的会议原件又算了一份来源")
         self.imported(xml=SAME_LINE.replace("</w:body>", para("张三 10:30：补充一句") + "</w:body>"))
         self.assertTrue((first / meeting.RAW).is_file(), "新版本把旧版本的原文冲掉了")
         self.assertEqual(2, len(meeting.versions(self.fr)))
+
+    def test_a_meeting_in_a_subdirectory_keeps_its_version(self) -> None:
+        """子目录里的会议记录同样按原件内容留版本；同内容重导复用，来源关系指向留存原件。"""
+        (self.inbox / "会议").mkdir()
+        docx = self.imported(name="会议/澄清会.docx")
+        _, folder = self.folder(docx)
+        before = (folder / meeting.RAW).read_bytes()
+        self.assertEqual(0, self.cli("import_sources.py")[0])
+        self.assertEqual(before, (folder / meeting.RAW).read_bytes())
+        built = registry.build(self.fr)
+        self.assertTrue(next(s for s in built["sources"] if s["file"] == "会议/澄清会.docx")["ingested"])
+        self.assertIn(f"AR/story-src/meetings/澄清会/{folder.name}/original.docx",
+                      [o["path"] for o in built["origins"]])
 
     def test_reimporting_the_same_original_does_not_touch_the_conversion(self) -> None:
         docx = self.imported()
@@ -353,6 +372,40 @@ class EachVersionKeepsItsOwnOriginal(MeetingCase):
         code, _, log = self.cli("import_sources.py")
         self.assertEqual(1, code)
         self.assertIn("只收原始", log)
+
+
+class SameNamesThatDifferOnlyInCase(MeetingCase):
+    """两个子目录里的 Review.docx 与 review.docx：不改名、不多问一次，判断照 source.json 填写就对得上各自的版本。"""
+
+    def test_each_version_is_keyed_by_its_registered_source(self) -> None:
+        for sub in ("a", "b"):
+            (self.inbox / sub).mkdir()
+        one = self.place(name="a/Review.docx", xml=SAME_LINE)
+        two = self.place(name="b/review.docx", xml=NO_TIME)
+        code, _, log = self.cli("import_sources.py")
+        self.assertEqual(0, code, log)
+        sections = []
+        for docx in (one, two):
+            src = meeting.read_json(meeting.version_dir(self.fr, docx) / meeting.SOURCE)
+            self.assertEqual(docx.name, src["file"], "原件名没按原样登记")
+            sections.append({"source": src["file"], "source_sha": src["sha256"], "topics": []})
+        self.notes_path().write_text(json.dumps({"meetings": sections}, ensure_ascii=False), encoding="utf-8")
+        found = meeting.versions(self.fr)
+        self.assertEqual(set(meeting.read_notes(self.fr, [])), set(found))
+        self.assertEqual(2, len(found), "两份不同内容的会议并成了一版")
+        problems = meeting.inspect(self.fr)["problems"]
+        self.assertFalse([p for p in problems if "对不上任何会议版本" in p], problems)
+        for docx in (one, two):
+            folder = meeting.version_dir(self.fr, docx)
+            self.assertEqual(docx.read_bytes(), (folder / meeting.ORIGINAL).read_bytes(), "原件没各自留住")
+
+    def test_an_unreadable_registration_is_reported_not_guessed(self) -> None:
+        docx = self.imported()
+        folder = meeting.version_dir(self.fr, docx)
+        (folder / meeting.SOURCE).write_text("{坏", encoding="utf-8")
+        self.assertEqual({}, meeting.versions(self.fr), "读不出登记却按目录名猜了身份")
+        problems = meeting.inspect(self.fr)["problems"]
+        self.assertTrue(any(meeting.SOURCE in p for p in problems), problems)
 
 
 class TheCorrectionsAreDiffsOnly(MeetingCase):

@@ -1,0 +1,498 @@
+路径,处置
+"""doc/release/Framework\344\270\216Extension\346\274\224\350\277\233\346\261\207\346\212\245-\345\215\225\351\241\265PPT\347\250\277.md""",退出
+"""doc/release/Framework\344\270\216Extension\347\211\210\346\234\254\346\274\224\350\277\233\345\233\276.png""",退出
+"""doc/release/Framework\344\270\216Extension\347\211\210\346\234\254\346\274\224\350\277\233\345\233\276.svg""",退出
+"""doc/release/\347\273\264\346\212\244\346\223\215\344\275\234.md""",合并
+"""test/cases/auto-topup/update-inputs/\344\272\244\351\200\232\345\215\241\350\207\252\345\212\250\345\205\205\345\200\274-v2.docx""",取 B′
+"""test/golden/review-\351\207\221\346\240\267-AR90006.md""",退出
+"""test/golden/story-\351\207\221\346\240\267-AR90004.md""",退出
+"""test/golden/story-\351\207\221\346\240\267-AR90006-\350\257\264\346\230\216.md""",退出
+"""test/golden/story-\351\207\221\346\240\267-AR90006.md""",退出
+AGENTS.md,合并
+README.md,合并
+doc/release/1.9.0.md,退出
+doc/release/1.9.1.md,退出
+doc/release/1.9.2.md,退出
+doc/release/1.9.3.md,退出
+doc/release/1.9.4.md,退出
+doc/release/1.9.5.md,退出
+doc/release/1.9.6.md,退出
+doc/release/1.9.7.md,退出
+doc/release/1.9.8.md,退出
+doc/release/1.9.9.md,退出
+extensions/adaptation.yaml,合并
+extensions/bridges/agents-skill-story.md,退出
+extensions/bridges/cac-command-story.md,退出
+extensions/bridges/claude-command-story.md,退出
+extensions/bridges/codex-skills-story.md,退出
+extensions/bridges/cursor-skill-story.md,退出
+extensions/bridges/opencode-skill-story.md,退出
+extensions/hooks/blueprint/author.md,取 T（O 独有）
+extensions/hooks/blueprint/reviewer.md,取 T（O 独有）
+extensions/hooks/coding/author.md,合并
+extensions/hooks/coding/post_check.mjs,取 T
+extensions/hooks/plan/author.md,合并
+extensions/hooks/plan/author.mjs,退出
+extensions/hooks/plan/post_check.mjs,合并
+extensions/hooks/review/author.md,合并
+extensions/hooks/review/post_check.mjs,取 T
+extensions/hooks/shared/chapters.mjs,退出
+extensions/hooks/shared/contracts.mjs,合并
+extensions/hooks/shared/framework-access.mjs,合并
+extensions/hooks/shared/gate.mjs,取 B′
+extensions/hooks/shared/host-chapter.mjs,取 T（O 独有）
+extensions/hooks/shared/knowledge-application.mjs,取 T（O 独有）
+extensions/hooks/shared/knowledge-task.mjs,合并
+extensions/hooks/shared/knowledge-use.mjs,退出
+extensions/hooks/shared/knowledge-use/document.mjs,退出
+extensions/hooks/shared/knowledge-use/projection.mjs,退出
+extensions/hooks/shared/knowledge-use/validation.mjs,退出
+extensions/hooks/shared/knowledge.mjs,取 T
+extensions/hooks/shared/obligations.mjs,取 T
+extensions/hooks/shared/paths.mjs,合并
+extensions/hooks/shared/pre_verifier.mjs,合并
+extensions/hooks/shared/questioning.mjs,取 T（O 独有）
+extensions/hooks/shared/reader-review-task.mjs,合并
+extensions/hooks/shared/review-inputs.mjs,合并
+extensions/hooks/shared/stat-points.mjs,合并
+extensions/hooks/shared/story-view.mjs,取 B′（新增）
+extensions/hooks/shared/usage.mjs,合并
+extensions/hooks/shared/verifier-report.mjs,合并
+extensions/hooks/shared/yaml.mjs,取 B′
+extensions/hooks/spec/author.md,合并
+extensions/hooks/spec/author.mjs,退出
+extensions/hooks/spec/post_check.mjs,合并
+extensions/hooks/testing/author.md,合并
+extensions/hooks/testing/post_check.mjs,取 T
+extensions/hooks/ut/author.md,合并
+extensions/hooks/ut/post_check.mjs,取 T
+extensions/knowledge/constraints/deliverables.md,取 T
+extensions/knowledge/constraints/security-privacy.md,取 B′
+extensions/knowledge/design-patterns/decision-tree.md,取 T
+extensions/knowledge/design-patterns/page-interaction.md,取 T
+extensions/knowledge/facts/engineering-capabilities.md,取 B′
+extensions/knowledge/facts/event-tracking.md,取 T
+extensions/manifest.yaml,合并
+extensions/rules/coding-rules.overlay.yaml,取 T
+extensions/rules/plan-rules.overlay.yaml,合并
+extensions/rules/review-rules.overlay.yaml,取 T
+extensions/rules/spec-rules.overlay.yaml,取 T
+extensions/rules/story-reader-rules.yaml,合并
+extensions/rules/ut-rules.overlay.yaml,取 T
+extensions/skills/story-adaptation/SKILL.md,合并
+extensions/skills/story-adaptation/reference/knowledge-adaptation.md,合并
+extensions/skills/story-adaptation/reference/knowledge-review.md,取 B′（新增）
+extensions/skills/story-adaptation/reference/knowledge-topics.md,合并
+extensions/skills/story-adaptation/reference/upgrade-changes.md,合并
+extensions/skills/story-adaptation/scripts/adapt-scan.mjs,合并
+extensions/skills/story-adaptation/scripts/entries.mjs,合并
+extensions/skills/story-knowledge/SKILL.md,合并
+extensions/skills/story-stats/SKILL.md,取 B′（新增）
+extensions/skills/story-stats/scripts/stats.py,取 B′（新增）
+extensions/skills/story-stats/templates/report.md,取 B′（新增）
+extensions/skills/story/AGENTS.section.md,退出
+extensions/skills/story/SKILL.md,合并
+extensions/skills/story/contracts/knowledge-application.schema.json,取 T（O 独有）
+extensions/skills/story/contracts/story-chapters.json,合并
+extensions/skills/story/contracts/usage.json,取 B′（新增）
+extensions/skills/story/phases/design.md,合并
+extensions/skills/story/phases/meeting-read.md,取 T
+extensions/skills/story/phases/spec.md,退出
+extensions/skills/story/phases/story-write.md,合并
+extensions/skills/story/phases/update.md,合并
+extensions/skills/story/reference/evidence-rules.md,取 T
+extensions/skills/story/reference/knowledge/protocol.md,合并
+extensions/skills/story/reference/phase-closure.md,合并
+extensions/skills/story/reference/svg.md,取 B′（新增）
+extensions/skills/story/rules/ar_design_init.md,取 T
+extensions/skills/story/rules/inbox_import.md,合并
+extensions/skills/story/rules/init_analysis.md,合并
+extensions/skills/story/rules/scope_gate.md,取 T
+extensions/skills/story/scripts/adapters/archive.js,取 T
+extensions/skills/story/scripts/adapters/dirs.js,取 T
+extensions/skills/story/scripts/adapters/fetch.js,取 T
+extensions/skills/story/scripts/adapters/story.js,合并
+extensions/skills/story/scripts/core/flow/check.mjs,取 T
+extensions/skills/story/scripts/core/flow/client.mjs,合并
+extensions/skills/story/scripts/core/flow/decisions.py,取 B′
+extensions/skills/story/scripts/core/flow/inputs.py,取 T
+extensions/skills/story/scripts/core/flow/lifecycle.py,合并
+extensions/skills/story/scripts/core/flow/native.py,合并
+extensions/skills/story/scripts/core/flow/phase_facts.py,合并
+extensions/skills/story/scripts/core/flow/publish.py,取 T（O 独有）
+extensions/skills/story/scripts/core/flow/rounds.py,取 T
+extensions/skills/story/scripts/core/flow/routing.py,合并
+extensions/skills/story/scripts/core/flow/state.py,合并
+extensions/skills/story/scripts/core/flow/submission.py,取 T
+extensions/skills/story/scripts/core/flow/update.py,合并
+extensions/skills/story/scripts/core/import_sources.py,取 B′
+extensions/skills/story/scripts/core/materials/frozen.py,取 T（O 独有）
+extensions/skills/story/scripts/core/materials/importer.py,合并
+extensions/skills/story/scripts/core/materials/meeting.py,取 B′
+extensions/skills/story/scripts/core/materials/registry.py,合并
+extensions/skills/story/scripts/core/story-build.mjs,合并
+extensions/skills/story/scripts/core/story/appendix-readers.mjs,合并
+extensions/skills/story/scripts/core/story/appendix.mjs,合并
+extensions/skills/story/scripts/core/story/chapter-contract.mjs,合并
+extensions/skills/story/scripts/core/story/chapter.mjs,合并
+extensions/skills/story/scripts/core/story/check.mjs,合并
+extensions/skills/story/scripts/core/story/context.mjs,合并
+extensions/skills/story/scripts/core/story/delivery.mjs,合并
+extensions/skills/story/scripts/core/story/design-source.mjs,合并
+extensions/skills/story/scripts/core/story/document.mjs,合并
+extensions/skills/story/scripts/core/story/drafts.mjs,取 B′
+extensions/skills/story/scripts/core/story/figure-check.py,取 B′（新增）
+extensions/skills/story/scripts/core/story/figure-reading.mjs,取 B′（新增）
+extensions/skills/story/scripts/core/story/figure-view.mjs,取 B′（新增）
+extensions/skills/story/scripts/core/story/images.mjs,合并
+extensions/skills/story/scripts/core/story/independent-review.mjs,合并
+extensions/skills/story/scripts/core/story/language.mjs,合并
+extensions/skills/story/scripts/core/story/recheck.mjs,合并
+extensions/skills/story/scripts/core/story/review-object.mjs,合并
+extensions/skills/story/scripts/core/story/review-report-contract.mjs,合并
+extensions/skills/story/scripts/core/story/review.mjs,合并
+extensions/skills/story/scripts/core/story/sources.mjs,合并
+extensions/skills/story/scripts/core/story/story-inputs.mjs,合并
+extensions/skills/story/scripts/core/story/writing-plan.mjs,合并
+extensions/skills/story/scripts/core/story_flow.py,合并
+extensions/skills/story/scripts/core/usage.py,合并
+extensions/skills/story/templates/inbox-readme.md,合并
+extensions/skills/story/templates/plan-sections.md,退出
+extensions/skills/story/templates/spec-sections.md,退出
+test/EVOLUTION.md,合并
+test/TEST.md,合并
+test/cases/README.md,合并
+test/cases/auto-topup/case.yaml,合并
+test/cases/auto-topup/interaction-script.yaml,合并
+test/cases/auto-topup/meeting-answer-key.md,取 B′
+test/cases/auto-topup/update-inputs/review-feedback.md,取 T
+test/cases/car-key-sharing/case.yaml,取 T
+test/cases/car-key-sharing/interaction-script.yaml,合并
+test/cases/car-key-sharing/update-inputs/car-review-feedback.yaml,取 T
+test/config/framework-under-test.json,取 T（O 独有）
+test/config/test.yaml,合并
+test/fixtures/blueprint/wallet-balance-refresh/doc/features/wallet-balance-refresh/balance-refresh/change-unit.yaml,取 T（O 独有）
+test/fixtures/blueprint/wallet-balance-refresh/doc/features/wallet-balance-refresh/blueprint/component-blueprint.yaml,取 T（O 独有）
+test/fixtures/blueprint/wallet-balance-refresh/doc/requirements/wallet-balance-refresh.md,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/after/.claude/commands/story.md,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/after/doc/extensions/skills/story/contracts/usage.json,取 B′（新增）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/.cac/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/.claude/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/.codex/skills/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/.opencode/skill/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/doc/extensions/adaptation.yaml,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/doc/extensions/manifest.yaml,取 T
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/doc/extensions/skills/story/AGENTS.section.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/doc/extensions/skills/story/SKILL.md,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/doc/extensions/skills/story/contracts/usage.json,取 B′（新增）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/package/framework.config.json,取 T
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/.cac/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/.claude/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/.codex/skills/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/.opencode/skill/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/doc/extensions/adaptation.yaml,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/doc/extensions/manifest.yaml,取 T
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/doc/extensions/skills/story/SKILL.md,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/bad/target/framework.config.json,取 T
+test/fixtures/failure-modes/A02-adapt-check-blind/good/after/AGENTS.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/after/doc/extensions/hooks/shared/usage.mjs,取 B′（新增）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/after/doc/extensions/skills/story/AGENTS.section.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/after/doc/extensions/skills/story/contracts/usage.json,取 B′（新增）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/after/doc/usage.json,取 B′（新增）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/.cac/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/.claude/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/.codex/skills/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/.opencode/skill/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/doc/extensions/adaptation.yaml,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/doc/extensions/hooks/shared/usage.mjs,取 B′（新增）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/doc/extensions/manifest.yaml,取 T
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/doc/extensions/skills/story/AGENTS.section.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/doc/extensions/skills/story/SKILL.md,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/doc/extensions/skills/story/contracts/usage.json,取 B′（新增）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/package/framework.config.json,取 T
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/.cac/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/.claude/commands/story.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/.codex/skills/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/.gitignore,取 B′
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/.opencode/skill/story/SKILL.md,退出
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/doc/extensions/adaptation.yaml,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/doc/extensions/manifest.yaml,取 T
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/doc/extensions/skills/story/SKILL.md,取 T（O 独有）
+test/fixtures/failure-modes/A02-adapt-check-blind/good/target/framework.config.json,取 T
+test/fixtures/failure-modes/A03-author-channel-broken/good/hooks/plan/author.md,取 T
+test/fixtures/failure-modes/A05-author-knowledge-unbound/bad/manifest.yaml,取 T（O 独有）
+test/fixtures/failure-modes/A05-author-knowledge-unbound/bad/skills/story-knowledge/SKILL.md,取 T（O 独有）
+test/fixtures/failure-modes/A05-author-knowledge-unbound/good/manifest.yaml,取 T（O 独有）
+test/fixtures/failure-modes/A05-author-knowledge-unbound/good/skills/story-knowledge/SKILL.md,取 T（O 独有）
+test/fixtures/failure-modes/A05-entry-misses-section/bad/AGENTS.md,退出
+test/fixtures/failure-modes/A05-entry-misses-section/bad/AGENTS.section.md,退出
+test/fixtures/failure-modes/A05-entry-misses-section/bad/CLAUDE.md,退出
+test/fixtures/failure-modes/A05-entry-misses-section/good/AGENTS.md,退出
+test/fixtures/failure-modes/A05-entry-misses-section/good/AGENTS.section.md,退出
+test/fixtures/failure-modes/A05-entry-misses-section/good/CLAUDE.md,退出
+test/fixtures/failure-modes/F01-spec-without-story/bad/doc/features/REQ-DEMO/AR/story-src/story-flow.json,退出
+test/fixtures/failure-modes/F01-spec-without-story/good/doc/features/REQ-DEMO/AR/story-src/story-flow.json,退出
+test/fixtures/failure-modes/M19-rule-defined-twice/good/hooks/sample/author.md,取 T
+test/fixtures/failure-modes/M19-rule-defined-twice/good/skills/sample/phases/review.md,取 T
+test/fixtures/failure-modes/P06-knowledge-decision-outside-anchor/bad/plan/plan.md,退出
+test/fixtures/failure-modes/P06-knowledge-decision-outside-anchor/good/plan/plan.md,退出
+test/fixtures/failure-modes/P15-domain-gating-not-applied/bad/AR/story-src/knowledge.json,退出
+test/fixtures/failure-modes/P15-domain-gating-not-applied/bad/_knowledge/sample-always.md,退出
+test/fixtures/failure-modes/P15-domain-gating-not-applied/bad/_knowledge/sample-conditional.md,退出
+test/fixtures/failure-modes/P15-domain-gating-not-applied/good/AR/story-src/knowledge.json,退出
+test/fixtures/failure-modes/P15-domain-gating-not-applied/good/_knowledge/sample-always.md,退出
+test/fixtures/failure-modes/P15-domain-gating-not-applied/good/_knowledge/sample-conditional.md,退出
+test/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/bad/AR/story-src/knowledge.json,退出
+test/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/bad/spec/spec.md,退出
+test/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/good/AR/story-src/knowledge.json,退出
+test/fixtures/failure-modes/P16-spec-exit-diverges-from-registry/good/spec/spec.md,退出
+test/fixtures/failure-modes/P17-landing-md-yaml-mismatch/bad/contracts.yaml,取 T
+test/fixtures/failure-modes/P17-landing-md-yaml-mismatch/good/contracts.yaml,取 T
+test/fixtures/failure-modes/R01-verdict-echo/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/R01-verdict-echo/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/R01-verdict-echo/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/R01-verdict-echo/good/doc/features/REQ-DEMO/AR/story-src/story-template.md,取 B′
+test/fixtures/failure-modes/R01-verdict-echo/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/R01-verdict-echo/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/R01-verdict-echo/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/R02-knowledge-row-missing/bad/_design.json,取 T（O 独有）
+test/fixtures/failure-modes/R02-knowledge-row-missing/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/R02-knowledge-row-missing/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/R02-knowledge-row-missing/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/R02-knowledge-row-missing/good/_design.json,取 T（O 独有）
+test/fixtures/failure-modes/R02-knowledge-row-missing/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/R02-knowledge-row-missing/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/R02-knowledge-row-missing/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/R04-flow-status-after-s5/bad/doc/features/REQ-DEMO/AR/story-src/story-flow.json,退出
+test/fixtures/failure-modes/R04-flow-status-after-s5/good/doc/features/REQ-DEMO/AR/story-src/story-flow.json,退出
+test/fixtures/failure-modes/S05-main-text-identifier/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S05-main-text-identifier/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S05-main-text-identifier/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S05-main-text-identifier/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S05-main-text-identifier/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S05-main-text-identifier/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S06-appendix-dump/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S06-appendix-dump/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S06-appendix-dump/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S06-appendix-dump/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S06-appendix-dump/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S06-appendix-dump/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S10-image-path-copied/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S10-image-path-copied/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S10-image-path-copied/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S10-image-path-copied/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S10-image-path-copied/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S10-image-path-copied/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S11-image-two-names/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S11-image-two-names/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S11-image-two-names/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S11-image-two-names/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S11-image-two-names/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S11-image-two-names/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/extensions/knowledge/constraints/sample-domain.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/extensions/knowledge/design-patterns/sample-pattern.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/extensions/knowledge/facts/sample-facts.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/extensions/manifest.yaml,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/features/REQ-DEMO/AR/design.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/features/REQ-DEMO/AR/story-src/copyedit.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/features/REQ-DEMO/AR/story-src/decisions.json,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/features/REQ-DEMO/AR/story.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/features/REQ-DEMO/RR/prd.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/extensions/knowledge/constraints/sample-domain.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/extensions/knowledge/design-patterns/sample-pattern.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/extensions/knowledge/facts/sample-facts.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/extensions/manifest.yaml,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/features/REQ-DEMO/AR/design.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/features/REQ-DEMO/AR/story-src/copyedit.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/features/REQ-DEMO/AR/story-src/decisions.json,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/features/REQ-DEMO/AR/story.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/features/REQ-DEMO/RR/prd.md,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S16-material-list-intermediate/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S17-image-new-dir/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S17-image-new-dir/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S17-image-new-dir/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S17-image-new-dir/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S17-image-new-dir/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S17-image-new-dir/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S18-appendix-image/bad/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S18-appendix-image/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S18-appendix-image/bad/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/S18-appendix-image/good/doc/features/REQ-DEMO/AR/story.md,合并
+test/fixtures/failure-modes/S18-appendix-image/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/S18-appendix-image/good/doc/features/REQ-DEMO/spec/spec.md,退出
+test/fixtures/failure-modes/W01-non-story-invisible/bad/doc/features/REQ-DEMO/AR/story-src/story-flow.json,取 T
+test/fixtures/failure-modes/W01-non-story-invisible/bad/doc/features/REQ-DEMO/acceptance.yaml,取 T（O 独有）
+test/fixtures/failure-modes/W01-non-story-invisible/bad/doc/features/REQ-DEMO/contracts.yaml,取 T（O 独有）
+test/fixtures/failure-modes/W01-non-story-invisible/bad/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/W01-non-story-invisible/bad/doc/features/REQ-DEMO/spec/spec.md,取 T
+test/fixtures/failure-modes/W01-non-story-invisible/good/doc/features/REQ-DEMO/acceptance.yaml,取 T（O 独有）
+test/fixtures/failure-modes/W01-non-story-invisible/good/doc/features/REQ-DEMO/contracts.yaml,取 T（O 独有）
+test/fixtures/failure-modes/W01-non-story-invisible/good/doc/features/REQ-DEMO/spec/knowledge-use.yaml,退出
+test/fixtures/failure-modes/W01-non-story-invisible/good/doc/features/REQ-DEMO/spec/spec.md,取 T
+test/fixtures/framework-local/3.1.0-dsh.patch,取 T（O 独有）
+test/fixtures/narrative-variants/pairs/assets/queue-entry.png,退出
+test/fixtures/narrative-variants/pairs/assets/receipt-preview.png,退出
+test/fixtures/narrative-variants/pairs/base-queue.brief.md,退出
+test/fixtures/narrative-variants/pairs/base-queue.story.md,退出
+test/fixtures/narrative-variants/pairs/base-receipt.brief.md,退出
+test/fixtures/narrative-variants/pairs/base-receipt.story.md,退出
+test/fixtures/narrative-variants/pairs/pairs.json,退出
+test/fixtures/native/reports-dir-probe.ts,退出
+test/fixtures/real-run/AR90006/spec/knowledge-use.yaml,退出
+test/fixtures/real-run/AR90006/spec/spec.md,取 B′
+test/fixtures/real-run/README.md,取 B′
+test/fixtures/update-delivery/car-key-review-s23.md,取 B′（新增）
+test/fixtures/yaml/knowledge-contract.yaml,取 T（O 独有）
+test/golden/README.md,取 B′
+test/golden/assets/AR90006/detail-entry.png,退出
+test/golden/assets/AR90006/disabled-state.png,退出
+test/golden/assets/AR90006/manage-page.png,退出
+test/golden/assets/AR90006/signup-page.png,退出
+test/golden/assets/AR90006/verify-page.png,退出
+test/golden/assets/image1.png,退出
+test/golden/assets/image2.png,退出
+test/golden/auto-topup/AR/figures/auto-topup-recovery-boundary.svg,取 B′（新增）
+test/golden/auto-topup/AR/review.md,取 B′（新增）
+test/golden/auto-topup/AR/story-src/figures/fig-22c28d5a.mmd,取 B′（新增）
+test/golden/auto-topup/AR/story-src/figures/fig-55cee031.mmd,取 B′（新增）
+test/golden/auto-topup/AR/story-src/figures/fig-e2548d39.mmd,取 B′（新增）
+test/golden/auto-topup/AR/story.md,取 B′（新增）
+test/golden/auto-topup/README.md,取 B′（新增）
+test/golden/auto-topup/spec/spec.md,取 B′（新增）
+test/golden/auto-topup/ux-reference/detail-entry.png,取 B′（新增）
+test/golden/auto-topup/ux-reference/disabled-state.png,取 B′（新增）
+test/golden/auto-topup/ux-reference/manage-page.png,取 B′（新增）
+test/golden/auto-topup/ux-reference/signup-page.png,取 B′（新增）
+test/golden/auto-topup/ux-reference/verify-page.png,取 B′（新增）
+test/golden/bank-card-opening-reporting-candidate/README.md,退出
+test/golden/bank-card-opening-reporting-candidate/plan.md,退出
+test/golden/bank-card-opening-reporting-candidate/spec.md,退出
+test/golden/bank-card-opening-reporting-candidate/story.md,退出
+test/golden/car-key-sharing/AR/figures/car-key-revocation-responsibility.svg,取 B′（新增）
+test/golden/car-key-sharing/AR/review.md,取 B′（新增）
+test/golden/car-key-sharing/AR/story-src/figures/fig-0169f210.mmd,取 B′（新增）
+test/golden/car-key-sharing/AR/story-src/figures/fig-b533fea2.mmd,取 B′（新增）
+test/golden/car-key-sharing/AR/story-src/figures/fig-d087d97f.mmd,取 B′（新增）
+test/golden/car-key-sharing/AR/story.md,取 B′（新增）
+test/golden/car-key-sharing/README.md,取 B′（新增）
+test/golden/car-key-sharing/plan/plan.md,取 B′（新增）
+test/golden/car-key-sharing/spec/spec.md,取 B′（新增）
+test/golden/car-key-sharing/ux-reference/accept-page.png,取 B′（新增）
+test/golden/car-key-sharing/ux-reference/key-card-detail.png,取 B′（新增）
+test/golden/car-key-sharing/ux-reference/share-manage.png,取 B′（新增）
+test/golden/car-key-sharing/ux-reference/share-setup.png,取 B′（新增）
+test/regression/extension-acceptance.md,取 T
+test/regression/failure-modes.yaml,合并
+test/regression/mechanism-budget.yaml,合并
+test/scripts/budget_report.py,取 T
+test/scripts/check_failure_modes.py,合并
+test/scripts/cli_config_group.py,合并
+test/scripts/design_fixture.py,合并
+test/scripts/dsh_session.mjs,取 B′（新增）
+test/scripts/end_target.py,取 T（O 独有）
+test/scripts/make_narrative_variants.py,退出
+test/scripts/measure_run.py,合并
+test/scripts/observe.py,合并
+test/scripts/observe_target.mjs,合并
+test/scripts/phase_state.py,取 T
+test/scripts/publish_to_demo.py,取 T
+test/scripts/run_case.py,合并
+test/scripts/run_layout.py,取 T
+test/scripts/run_multi_case.py,合并
+test/scripts/verify.py,合并
+test/tests/README.md,合并
+test/tests/conftest.py,取 T（O 独有）
+test/tests/design_kit.py,取 T（O 独有）
+test/tests/designed_fixture.py,合并
+test/tests/ext_workspace.py,合并
+test/tests/flow_steps.py,取 T
+test/tests/shared_state.py,合并
+test/tests/test_adapt_ownership.py,合并
+test/tests/test_adapt_source_kinds.py,合并
+test/tests/test_author_context_entry.py,取 T
+test/tests/test_author_task_package.py,退出
+test/tests/test_blueprint_case_closure.py,合并
+test/tests/test_budget_report.py,取 T
+test/tests/test_chapter_numbers.py,退出
+test/tests/test_chapter_view.py,合并
+test/tests/test_cli_config_failover.py,合并
+test/tests/test_cli_registry_snapshot.py,取 B′（新增）
+test/tests/test_contracts_single_source.py,取 T
+test/tests/test_cu_knowledge_chain.py,合并
+test/tests/test_design_handover.py,合并
+test/tests/test_driver_deadlock.py,取 T
+test/tests/test_empty_knowledge_repo.py,取 T
+test/tests/test_evidence_delivery.py,合并
+test/tests/test_features_dir_config.py,取 T
+test/tests/test_figure_view.py,合并
+test/tests/test_flow_contract_signs.py,取 T
+test/tests/test_flow_module_layout.py,取 B′
+test/tests/test_flow_status_client.py,合并
+test/tests/test_frozen_origins.py,取 T（O 独有）
+test/tests/test_gate_groups.py,取 T
+test/tests/test_golden_sample.py,取 B′
+test/tests/test_harness.py,取 T
+test/tests/test_host_driver.py,合并
+test/tests/test_host_extension_anchor.py,退出
+test/tests/test_image_registration.py,取 T
+test/tests/test_indicator_reporting.py,合并
+test/tests/test_knowledge_application.py,取 T（O 独有）
+test/tests/test_knowledge_forms.py,取 T
+test/tests/test_knowledge_protocol.py,取 T
+test/tests/test_knowledge_task.py,合并
+test/tests/test_knowledge_use.py,退出
+test/tests/test_material_delivery.py,合并
+test/tests/test_material_rounds.py,合并
+test/tests/test_meeting_material.py,合并
+test/tests/test_multi_case_cli.py,合并
+test/tests/test_multi_scenario_cases.py,取 T
+test/tests/test_narrative_variants.py,退出
+test/tests/test_neutral_knowledge.py,取 T
+test/tests/test_publish_to_demo.py,合并
+test/tests/test_reading_completion.py,合并
+test/tests/test_reports_dir_native.py,合并
+test/tests/test_requirement_system.py,取 T
+test/tests/test_review_closure.py,合并
+test/tests/test_review_golden.py,合并
+test/tests/test_review_modes.py,取 T
+test/tests/test_review_render.py,取 T（O 独有）
+test/tests/test_review_task_boundary.py,合并
+test/tests/test_run_measurement.py,合并
+test/tests/test_s4_commit.py,退出
+test/tests/test_spec_contract_section.py,退出
+test/tests/test_spec_story_gate.py,取 T
+test/tests/test_stat_points.py,取 T（O 独有）
+test/tests/test_story_build.py,合并
+test/tests/test_story_inputs.py,合并
+test/tests/test_story_update.py,合并
+test/tests/test_update_checkpoints.py,合并
+test/tests/test_update_dispatch.py,取 T
+test/tests/test_usage.py,合并
+test/tests/test_usage_entries.py,合并
+test/tests/test_usage_stats.py,合并
+test/tests/test_verifier_chain_in_workspace.py,合并
+test/tests/test_verifier_report_protocol.py,合并
+test/tests/test_verifier_smoke.py,取 T
+test/tests/test_verify_entry.py,取 T（O 独有）
+test/tests/test_writing_flow.py,合并
+test/tests/test_writing_plan.py,合并
+test/tests/test_yaml_reader.py,取 T
+test/tests/ts_transpile_cache.cjs,取 T（O 独有）
+test/tools/cli/TEST.md,取 B′（新增）
+test/tools/cli/tests/fixtures/dsh_tools.jsonl,取 B′（新增）
+test/tools/cli/tests/test_adapters.py,取 B′
+test/tools/cli/tests/test_run_store.py,取 B′
+test/verifier-smoke/fixture/replies.yaml,取 T
+test/verifier-smoke/run_smoke.py,取 T
+tools/SYNC.md,退出
+tools/cli/.sync-stamp.json,取 B′
+tools/cli/README.md,取 B′
+tools/cli/TEST.md,退出
+tools/cli/adapters/base.py,取 B′
+tools/cli/adapters/providers.py,取 B′
+tools/cli/models.py,取 B′
+tools/cli/run_store.py,取 B′
+tools/cli/runner.py,取 B′

@@ -5,14 +5,17 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+from contextlib import contextmanager
 import subprocess
 from pathlib import Path
 
 from flow.state import (
     CORE_DIR, DESIGN, FlowError, S4_STEPS, STORY, STORY_REGISTERED, file_sha256, last_gate, load, log,
     now, require, round_gates, save, stage_of)
-from flow.routing import live_materials, material_state, next_step, sidecar_shape
+from flow.routing import (live_materials, material_state, next_step, reading_work, register_command,
+                          sidecar_shape)
 from flow import asks
 from flow.update import record_baseline, record_owned_after
 from flow.meetings import topic_digest
@@ -64,7 +67,9 @@ def cmd_status(feature_root: Path) -> dict:
     # 各自再 build 一次的话，同一条命令里会出现两份「现在的材料」，而消费者不知道
     # 自己拿的是哪一份。算不出来沿 FlowError 退出，不伪造 false。
     manifest = live_materials(feature_root) if (contract or {}).get("rounds") else None
-    step, action = next_step(feature_root, contract, manifest)
+    # 本地阅读同理：成文之后派生一次，路由与输出共用
+    reading = reading_work(feature_root) if (contract or {}).get("status") == "story_written" else None
+    step, action = next_step(feature_root, contract, manifest, reading)
     shape = sidecar_shape(step)
     # 到了停等点就生成问法并写侧车：人看到的选项块与 `decide` 核对的是同一份
     ask = asks.build(feature_root, contract, step) if contract and contract.get("rounds") else None
@@ -89,6 +94,8 @@ def cmd_status(feature_root: Path) -> dict:
         "status": contract.get("status"),
         # 最近一次成文登记的时刻；重跑 `story` 就是重新登记
         "story_written_at": contract.get("story_written_at"),
+        # 本地阅读与业务闭环分开报：成文之后才有增强 SVG 要做
+        **({"reading": reading} if reading is not None else {}),
         "round": current.get("round"),
         "positioning": current.get("positioning"),
         "gates": [{"gate": g.get("gate"), "chosen": g.get("chosen"),
@@ -113,7 +120,7 @@ def cmd_status(feature_root: Path) -> dict:
 
 
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
-    """登记「Story 已成文」：按已准入蓝图写成、经独立审查的 story 与 review 就是要交付的这一份。
+    """登记「Story 已成文」：按当前蓝图写成、经独立审查的 story 与 review 就是要交付的这一份。
 
     **登记只读核对，不改被审对象**：附录重投、编号与 Review 渲染在准备审查时已经做完
     （`story-build review --action prepare`），登记这一步再动它们，审的就不是登记的那一份。依次核：
@@ -125,7 +132,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
        加上 Story、Review、决策登记与写作设计的原始字节指纹。
 
     都成立才一次写入新依据；任一步不成立照实报出，已有的登记与依据原样保留（派生为待同步）。
-    依据与已登记的相同时什么都不改。
+    依据与已登记的相同时什么都不改，登记时刻也不换：成文时刻是这份稿的业务事实。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
@@ -142,26 +149,42 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
         raise FlowError("AR/story.md 不存在：没有成文，无可登记的成文态")
 
     checker = CORE_DIR / "story-build.mjs"
+    rerun = f"再跑 `{register_command(feature_root)}` 重新登记"
+
     node = shutil.which("node")
     if node is None:
-        raise FlowError("找不到 node：成文态登记要先跑 story-build 的检查，无法跳过")
-
-    def build(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run([node, str(checker), *args, "--feature", feature_root.name, "--project-root", str(project_root)],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace")
-
-    checked = build("check", "--registering")
-    if checked.returncode != 0:
-        raise FlowError("story-build check 未通过，成文态不予登记：\n" + (checked.stderr or checked.stdout or "").strip())
-    reviewed = build("review", "--action", "check")
-    rows = [line for line in reviewed.stdout.splitlines() if line.startswith("{")]
-    review = json.loads(rows[-1]) if rows else {}
-    if reviewed.returncode != 0 or review.get("result") not in ("pass", "warn", "unreviewed"):
-        raise FlowError(f"这一份的独立审查还不能消费（{review.get('result', '读不到结果')}）：{review.get('detail', (reviewed.stderr or '').strip()[:600])}"
-                        "——按 `phases/design.md`「五、独立审查、登记与交付」处置，审查通过再登记")
-    basis = build("basis")
-    if basis.returncode != 0:
-        raise FlowError("成文依据取不到，成文态不予登记：\n" + (basis.stderr or basis.stdout or "").strip())
+        raise FlowError("找不到 node，story-build 一步都没启动，成文没有登记。"
+                        f"这是运行环境问题，业务稿与派生件都不用改：装好 node 后{rerun}")
+    steps = (("check", ["check", "--registering"], "全篇检查通过"),
+             ("review --action check", ["review", "--action", "check"], "独立审查结果可消费"),
+             ("basis", ["basis"], "成文依据已取到"))
+    done: list[str] = []
+    outputs: dict[str, subprocess.CompletedProcess] = {}
+    for i, (name, argv, effect) in enumerate(steps):
+        try:
+            proc = subprocess.run(
+                [node, str(checker), *argv, "--feature", feature_root.name, "--project-root", str(project_root)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise FlowError(f"story-build {name} 没能启动（{exc}），成文没有登记。已完成：{'；'.join(done) or '无'}。"
+                            f"这是运行环境问题，业务稿与派生件都不用改：环境恢复后{rerun}") from exc
+        outputs[name] = proc
+        if name == "review --action check":
+            rows = [line for line in proc.stdout.splitlines() if line.startswith("{")]
+            review = json.loads(rows[-1]) if rows else {}
+            if proc.returncode in (0, 1) and review.get("result") not in ("pass", "warn", "unreviewed"):
+                raise FlowError(f"这一份的独立审查还不能消费（{review.get('result', '读不到结果')}）："
+                                f"{review.get('detail', (proc.stderr or '').strip()[:600])}"
+                                f"——按 `phases/design.md`「五、独立审查、登记与交付」处置，审查结果可消费后{rerun}")
+        if proc.returncode == 1:
+            raise FlowError(f"story-build {name} 没通过，成文没有登记，已有的登记原样保留。已完成：{'；'.join(done) or '无'}。"
+                            f"没跑：{'、'.join(s[0] for s in steps[i + 1:]) or '无'}。按下面的报告处理它点名的真源、草稿或环境"
+                            f"（正文经 chapter 提交），{rerun}：\n" + _said(proc))
+        if proc.returncode != 0:
+            raise FlowError(f"story-build {name} 没有正常结束（退出码 {proc.returncode}），成文没有登记。"
+                            f"这不是业务稿的问题，不要为它改真源或草稿：{_not_the_product(proc.returncode)}，"
+                            f"修好后{rerun}。原始输出：\n" + _said(proc))
+        done.append(effect)
 
     # 登记记下 story、review 与它们据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
     # 与流程路由拿它核「登记之后改过没有」，改过就重新审查、重新登记。
@@ -170,12 +193,12 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 它们走不漏到读者手上——归档只上传 story.md、review.md 与 design-review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
-    wanted = {**json.loads(basis.stdout),
+    wanted = {**json.loads(outputs["basis"].stdout),
               "files": {rel: file_sha256(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}}
     if status == "story_written" and contract.get("story_basis") == wanted:
         log("这一份已经按同样的依据登记过，不改")
         record_owned_after(feature_root)
-        return {"status": "story_written", "story": str(story), "registered": False}
+        return {"status": "story_written", "story": str(story), "registered": False, **_next(feature_root, contract)}
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
     contract["story_basis"] = wanted
@@ -183,8 +206,19 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 登记是 update 一轮的完成点：本扩展拥有的文件此刻的指纹记进这一轮，撤回时据它认「本轮留下的就是这一版」
     record_owned_after(feature_root)
     baseline = record_baseline(feature_root)
-    return {"status": "story_written", "story": str(story), "registered": True, "review": review.get("result"),
-            **({"update_baseline": baseline} if baseline else {})}
+    rows = [line for line in outputs["review --action check"].stdout.splitlines() if line.startswith("{")]
+    return {"status": "story_written", "story": str(story), "registered": True,
+            "review": (json.loads(rows[-1]) if rows else {}).get("result"),
+            **({"update_baseline": baseline} if baseline else {}), **_next(feature_root, contract)}
+
+
+def _next(feature_root: Path, contract: dict) -> dict:
+    """登记之后真正的下一步与 `status` 同一条路由给出，不另写一份；算不出来不遮住已成功的登记。"""
+    try:
+        step, action = next_step(feature_root, contract, live_materials(feature_root))
+    except FlowError as exc:
+        step, action = "status", f"成文已登记；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
+    return {"next": step, "action": action}
 
 
 def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, reply: str | None,
@@ -221,3 +255,75 @@ def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, r
     save(feature_root, contract)
     return {"review_waiver": contract["review_waiver"],
             "action": "已记下：重跑 `story-build review --action prepare`，审查状态写进 Story 交付章与 Review 题头，再 `story_flow.py story` 登记"}
+
+
+#: 外层持有视图的标记：值是需求目录（小写绝对路径），story_flow 与 story-build 共用；带着同一需求的值进来就是子调用，不各自恢复
+VIEW_OWNER = "STORY_VIEW_OWNER"
+
+
+@contextmanager
+def reading_view(feature_root: Path, project_root: Path, outcome: dict):
+    """最外层动作持有视图：动手前回到正式形态（图块按源的 Mermaid），结束或失败后恢复当前可用的增强 SVG。
+
+    被它调起的 story-build 子命令继承 `STORY_VIEW_OWNER`，不再切入，也不各自恢复。恢复失败只补视图，
+    写进 `outcome["view"]`，不遮住原来的结果或错误。
+    """
+    key = os.path.realpath(feature_root).lower()
+    before = os.environ.get(VIEW_OWNER)
+    owner = before != key
+    if owner:
+        os.environ[VIEW_OWNER] = key
+    try:
+        if owner:       # 同一需求的外层已切入并持有：不再切一遍
+            ensure_mermaid(feature_root, project_root)
+        yield
+    finally:
+        if owner:
+            if before is None:
+                os.environ.pop(VIEW_OWNER, None)
+            else:
+                os.environ[VIEW_OWNER] = before
+            story = feature_root / Path(*STORY)
+            if story.is_file() and _managed(story):
+                try:
+                    outcome["view"] = _view(feature_root, project_root, "svg", "增强 SVG 没有恢复，story 保持 Mermaid")
+                except FlowError as exc:
+                    outcome["view"] = str(exc)
+
+
+def _managed(story: Path) -> bool:
+    """story 里有没有脚本管理区：正式图块要经视图处理；旧版阅读槽也送去视图，由它报出来。"""
+    text = story.read_text(encoding="utf-8", errors="replace")
+    return "<!-- story-figure:" in text or "<!-- story-reading:" in text
+
+
+def ensure_mermaid(feature_root: Path, project_root: Path) -> None:
+    """story 里有管理区时先回到正式形态：比较、登记与归档只认图块按源 Mermaid 的文本。没有管理区不起进程。"""
+    story = feature_root / Path(*STORY)
+    if not story.is_file() or not _managed(story):
+        return
+    _view(feature_root, project_root, "mermaid", "读 story 之前要先回到正式形态，回不去")
+
+
+def _view(feature_root: Path, project_root: Path, mode: str, why: str) -> str:
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError(f"找不到 node：{why}（视图切换由 story-build.mjs view 做）")
+    proc = subprocess.run(
+        [node, str(CORE_DIR / "story-build.mjs"), "view", "--mode", mode, "--feature", feature_root.name,
+         "--project-root", str(project_root)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    if proc.returncode != 0:
+        raise FlowError(f"{why}：\n" + _said(proc))
+    return _said(proc)
+
+
+def _not_the_product(code: int) -> str:
+    """story-build 退出码既不是 0 也不是 1：归谁处理。"""
+    return "这是 story-build 自身异常，归扩展维护者处理" if code == 2 else "进程被中断或运行环境出错"
+
+
+def _said(proc: subprocess.CompletedProcess) -> str:
+    """子进程的两路输出原样带回：问题清单常在一路、恢复入口在另一路，只取一路就丢了一半。"""
+    return "\n".join(x.strip() for x in (proc.stdout, proc.stderr) if x and x.strip()) \
+        or f"退出码 {proc.returncode}，没有任何输出"

@@ -10,11 +10,13 @@
 import hashlib
 import json
 import re
+from dataclasses import asdict
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
 from ext_workspace import DEV_EXT
 
@@ -26,6 +28,8 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
 from materials import frozen, registry  # noqa: E402
 import measure_run  # noqa: E402
+sys.path.insert(0, str(REPO))
+from tools.cli.adapters import get_adapter  # noqa: E402
 import phase_state  # noqa: E402
 
 # 真实门禁控制台输出的形态（report-generator.printReportToConsole）。
@@ -189,7 +193,7 @@ class MeasureReadsRealEvents(unittest.TestCase):
         """被读得最多的是扩展自己的判据脚本，不是 framework 的 check-*.ts。"""
         r = self._measure([{
             "tool_name": "read",
-            "tool_input": {"filePath": "doc/extensions/hooks/shared/knowledge-application.mjs"},
+            "tool_input": {"filePath": "doc/extensions/hooks/shared/knowledge-use.mjs"},
             "tool_output": "export function coverageProblems() {}",
         }])
         self.assertEqual(1, r["reads_checker_source"])
@@ -239,19 +243,13 @@ class MeasureReadsRealEvents(unittest.TestCase):
         r = self._measure([{
             "tool_name": "bash",
             "tool_input": {"command":
-                           "node doc/extensions/skills/story/scripts/core/story-build.mjs skeleton "
-                           "--feature X | tail -20"},
-            "tool_output": "[story-build skeleton] 已起手",
-        }, {
-            "tool_name": "bash",
-            "tool_input": {"command":
                            "node doc/extensions/skills/story/scripts/core/story-build.mjs check "
                            "--feature X | tail -20"},
-            "tool_output": "[story-build check] 通过：10 章",
+            "tool_output": "[story-build check] 通过",
         }])
         self.assertEqual(0, r["reads_checker_source"])
         self.assertEqual(0, r["reads_rule_text"])
-        self.assertEqual(1, r["bash_rule_path_not_read"], "执行非门禁脚本要记成未分类，看得见；check 是门禁")
+        self.assertEqual(1, r["bash_rule_path_not_read"], "执行判据脚本要记成未分类，看得见")
         self.assertEqual("v3", r["read_algorithm"])
 
     def test_an_escaped_bar_in_a_grep_pattern_is_not_a_pipe(self):
@@ -391,194 +389,19 @@ class MeasureReadsRealEvents(unittest.TestCase):
         self.assertEqual("run_state", r["human_wait_source"])
 
     def test_time_is_split_by_what_was_running(self):
-        """门禁 / 子任务 / 成文 分开归属——只报总墙钟看不出时间花在哪。Story 自己的检查命令也算门禁。"""
+        """门禁 / verifier / 成文 分开归属——只报总墙钟看不出时间花在哪。"""
         r = self._measure([
             {"tool_name": "write", "tool_input": {"filePath": "a.md"}},
             _harness(GATE_FAIL),
             {"tool_name": "task", "tool_input": {"subagent_type": "verifier"}},
-            _story_review("fail"),
         ])
         gaps = r["gap_sec_by_kind"]
-        self.assertGreater(gaps["gate"], 60, "story-build review --action check 没算进门禁")
-        self.assertGreater(gaps["task"], 0)
-
-
-class SubtaskRolesAreInferredFromStructure(unittest.TestCase):
-    """子任务保留说明、子代理类型与引用的文件；角色只按引用的任务文件或子代理类型推断，提示词里提到某个动作不算依据。"""
-
-    CASES = {
-        "审查任务里提到格式问题重给": ({"description": "独立审查 N Story",
-                                    "prompt": "按 `doc/features/N/AR/story-src/review/task.md` 逐字执行；报告格式问题由审查者重给"},
-                                   "reader_review"),
-        "作者任务里提到质询": ({"description": "写蓝图候选",
-                             "prompt": "独立质询由主执行者派遣，你只完成作者工作：写 doc/features/bp-N/blueprint/component-blueprint.yaml"},
-                            "unknown"),
-        "只查路径的任务": ({"description": "看看文件在不在", "prompt": "列出 doc/features/N/AR/story.md 是否存在"}, "unknown"),
-        "正常的人读审查": ({"description": "审查", "prompt": "任务文件 doc/features/N/AR/story-src/review/task.md，材料键 k"},
-                         "reader_review"),
-        "原生阶段 verifier": ({"subagent_type": "verifier", "prompt": "审 spec 阶段产物"}, "stage_verifier"),
-        "蓝图质询": ({"description": "质询", "prompt": "回复写到 doc/features/bp-N/blueprint/questioning/k/reply.md"},
-                   "design_questioning"),
-        "依据指向两种角色": ({"prompt": "doc/features/N/AR/story-src/review/task.md 与 doc/features/bp-N/blueprint/questioning/k/reply.md"},
-                          "unknown"),
-    }
-
-    def test_each_call_keeps_its_facts_and_an_inferred_role(self) -> None:
-        for label, (tool_input, role) in self.CASES.items():
-            with self.subTest(case=label):
-                call = measure_run.task_call({"tool_name": "task", "tool_input": tool_input})
-                self.assertEqual(role, call["inferred_role"], call)
-                self.assertEqual(tool_input.get("description", ""), call["description"])
-                self.assertTrue(call["inferred_from"])
-
-    def test_the_run_lists_every_call_with_its_basis(self) -> None:
-        records = [{"tool_name": "task", "tool_input": t} for t, _ in self.CASES.values()]
-        r = MeasureReadsRealEvents._measure(MeasureReadsRealEvents(), records)
-        self.assertEqual(len(self.CASES), len(r["tasks"]))
-        self.assertEqual(sorted(role for _, role in self.CASES.values()), sorted(t["inferred_role"] for t in r["tasks"]))
-        refs = next(t["refs"] for t in r["tasks"] if t["description"] == "看看文件在不在")
-        self.assertEqual(["doc/features/N/AR/story.md"], refs)
-        self.assertIn("unknown", r["task_gap_sec_inferred"])
-
-
-def _story_review(result: str | None, *, feature: str = "N", order: str = "action-first") -> dict:
-    """一次 `story-build review --action check`；result 为 None 时输出里没有结构化结论。"""
-    args = (f"review --action check --feature {feature}" if order == "action-first"
-            else f"review --feature {feature} --action check")
-    out = "" if result is None else json.dumps({"result": result, "detail": "…"}, ensure_ascii=False)
-    return {"tool_name": "bash", "tool_input": {"command": f"node doc/extensions/skills/story/scripts/core/story-build.mjs {args}"},
-            "tool_output": out}
-
-
-class StoryGatesCountFailuresAndRework(unittest.TestCase):
-    """Story 门禁与原生门禁同一份计算：失败轮次、首次门禁、返工，参数换序结果相同，读不到结论记未知。"""
-
-    def measure(self, *records) -> dict:
-        return MeasureReadsRealEvents._measure(MeasureReadsRealEvents(), list(records))
-
-    def test_a_failed_review_then_a_pass_on_the_same_object_is_rework(self) -> None:
-        r = self.measure(_story_review("fail"), _story_review("pass"))
-        seg = r["segments"]["whole"]
-        self.assertEqual(1, r["gate_rounds_with_fail"])
-        self.assertEqual({"action": "story_review", "object": "N", "outcome": "fail", "fail_count": 1}, seg["first_gate"])
-        self.assertEqual(1.0, seg["rework_min"])
-        self.assertEqual([], seg["rework_open"])
-
-    def test_a_first_pass_has_no_rework(self) -> None:
-        seg = self.measure(_story_review("warn"))["segments"]["whole"]
-        self.assertEqual("pass", seg["first_gate"]["outcome"])
-        self.assertEqual((0, 0.0), (seg["gate_rounds_with_fail"], seg["rework_min"]))
-
-    def test_argument_order_does_not_change_the_result(self) -> None:
-        a = self.measure(_story_review("fail"), _story_review("pass"))
-        b = self.measure(_story_review("fail", order="feature-first"), _story_review("pass", order="feature-first"))
-        for key in ("gate_rounds_with_fail", "gap_sec_by_kind"):
-            self.assertEqual(a[key], b[key], key)
-        self.assertEqual(a["segments"]["whole"]["rework_min"], b["segments"]["whole"]["rework_min"])
-
-    def test_an_unreadable_result_is_unknown_not_zero_failures(self) -> None:
-        r = self.measure(_story_review(None))
-        seg = r["segments"]["whole"]
-        self.assertEqual(1, r["gate_rounds_unknown"])
-        self.assertEqual("unknown", seg["first_gate"]["outcome"])
-        self.assertEqual(0, r["gate_rounds_with_fail"])
-
-    def test_interleaved_objects_are_reworked_separately(self) -> None:
-        r = self.measure(_story_review("fail", feature="A"), _story_review("fail", feature="B"),
-                         _story_review("pass", feature="A"), _story_review("subject_stale", feature="B"))
-        seg = r["segments"]["whole"]
-        self.assertEqual(3, r["gate_rounds_with_fail"])
-        self.assertEqual(2.0, seg["rework_min"], "A 从 10:00 到 10:02")
-        self.assertEqual(["story_review@B"], seg["rework_open"])
-
-    def test_check_and_registration_read_their_own_conclusions(self) -> None:
-        check = {"tool_name": "bash", "tool_input": {"command": "node x/story-build.mjs check --feature N"},
-                 "tool_output": "[story-build check] 3 处未通过，分属 1 类"}
-        passed = {**check, "tool_output": "[story-build check] 通过：10 章"}
-        register = {"tool_name": "bash", "tool_input": {"command": "python x/story_flow.py story --feature N"},
-                    "tool_output": json.dumps({"success": False, "error": "审查结果 fail"}, ensure_ascii=False)}
-        r = self.measure(check, passed, register)
-        seg = r["segments"]["whole"]
-        self.assertEqual({"action": "story_check", "object": "N", "outcome": "fail", "fail_count": 3}, seg["first_gate"])
-        self.assertEqual("fail", seg["first_story_register"]["outcome"])
-        self.assertEqual(2, r["gate_rounds_with_fail"])
-        self.assertEqual(["story_register@N"], seg["rework_open"])
-
-
-    def test_reading_a_gate_script_is_not_a_gate(self) -> None:
-        """脚本名只出现在读取里（cat 源码）不是一轮门禁：不计次数、不计门禁时间、不记未知。"""
-        r = self.measure(
-            {"tool_name": "bash", "tool_input": {"command": "cat framework/harness/harness-runner.ts"}, "tool_output": ""},
-            {"tool_name": "bash", "tool_input": {"command": "cat doc/extensions/skills/story/scripts/core/story-build.mjs check --feature A"},
-             "tool_output": ""})
-        self.assertEqual((0, 0, 0), (r["harness_runs"], r["gate_rounds_unknown"], len(r["gate_calls_unattributed"])))
-        self.assertEqual(0, r["gap_sec_by_kind"]["gate"])
-        self.assertIsNone(r["segments"]["whole"]["first_gate"])
-
-    def test_a_combined_output_of_two_gates_is_unattributed(self) -> None:
-        """一次调用先后执行 A、B 两个审查核对，合并输出 fail 又 pass：归属不了，A 不记成通过，单列成一次调用。"""
-        both = {"tool_name": "bash", "tool_input": {"command":
-                "node x/story-build.mjs review --action check --feature A; node x/story-build.mjs review --action check --feature B"},
-                "tool_output": '{"result": "fail"}\n{"result": "pass"}'}
-        r = self.measure(both)
-        seg = r["segments"]["whole"]
-        self.assertEqual((0, 0), (r["gate_rounds_with_fail"], r["gate_rounds_unknown"]))
-        self.assertEqual([{"seq": 0, "candidates": ["story_review@A", "story_review@B"], "reason": "一次执行了多个门禁"}],
-                         r["gate_calls_unattributed"])
-        self.assertIsNone(seg["first_gate"])
-
-    def test_an_unattributed_call_does_not_close_rework(self) -> None:
-        """A 单独失败之后，一次合并执行 A、B 输出 pass：归属不了，不结束 A 的返工。"""
-        both = {"tool_name": "bash", "tool_input": {"command":
-                "node x/story-build.mjs review --action check --feature A && node x/story-build.mjs review --action check --feature B"},
-                "tool_output": '{"result": "pass"}\n{"result": "pass"}'}
-        seg = self.measure(_story_review("fail", feature="A"), both)["segments"]["whole"]
-        self.assertEqual(["story_review@A"], seg["rework_open"])
-        self.assertEqual(0.0, seg["rework_min"])
-        self.assertEqual(1, len(seg["gate_calls_unattributed"]))
-
-
-    def test_another_output_source_after_the_gate_is_unattributed(self) -> None:
-        """单个门禁后面又读了别的报告：输出不能可靠归给本次门禁，不覆盖已有的 fail，也不结束返工。"""
-        mixed = {"tool_name": "bash", "tool_input": {"command":
-                 "node x/story-build.mjs review --action check --feature A; cat saved-report.json"},
-                 "tool_output": '{"result": "fail"}\n{"result": "pass"}'}
-        r = self.measure(_story_review("fail", feature="A"), mixed)
-        seg = r["segments"]["whole"]
-        self.assertEqual(1, r["gate_rounds_with_fail"], "混合输出被算成了一轮")
-        self.assertEqual(["story_review@A"], seg["rework_open"])
-        [call] = r["gate_calls_unattributed"]
-        self.assertEqual(["story_review@A"], call["candidates"])
-        self.assertIn("门禁之外还有输出来源", call["reason"])
-
-    def test_contradicting_conclusions_in_one_output_are_unattributed(self) -> None:
-        """只执行一个门禁、输出里却有互相矛盾的结论：不挑一个当结论。"""
-        for name, record in {
-            "审查核对": {"tool_name": "bash", "tool_input": {"command": "node x/story-build.mjs review --action check --feature A"},
-                     "tool_output": '{"result": "fail"}\n{"result": "pass"}'},
-            "成文登记": {"tool_name": "bash", "tool_input": {"command": "python x/story_flow.py story --feature A"},
-                     "tool_output": '{"success": false}\n{"success": true}'},
-            "结构检查": {"tool_name": "bash", "tool_input": {"command": "node x/story-build.mjs check --feature A"},
-                     "tool_output": "[story-build check] 2 处未通过\n[story-build check] 通过：10 章"},
-            "原生门禁": _harness(GATE_FAIL + GATE_PASS),
-        }.items():
-            with self.subTest(gate=name):
-                r = self.measure(record)
-                self.assertEqual((0, 0), (r["gate_rounds_with_fail"], r["gate_rounds_unknown"]))
-                self.assertEqual(1, len(r["gate_calls_unattributed"]))
-
-    def test_cutting_the_gate_output_keeps_the_attribution(self) -> None:
-        """前面切目录、后面经管道截取门禁自己的输出：仍归给这一次门禁。"""
-        cut = {"tool_name": "bash", "tool_input": {"command":
-               "cd work && node x/story-build.mjs review --feature A --action check 2>&1 | tail -5"},
-               "tool_output": '{"result": "fail"}'}
-        r = self.measure(cut)
-        self.assertEqual(1, r["gate_rounds_with_fail"])
-        self.assertEqual([], r["gate_calls_unattributed"])
+        self.assertGreater(gaps["gate"], 0)
+        self.assertGreater(gaps["verifier"], 0)
 
 
 class EachSegmentIsMeasured(unittest.TestCase):
-    """双检查点单按续跑那一刻切两段，各报时长、模型与工具时间、各类子任务、首次门禁与登记、返工。"""
+    """双检查点单按续跑那一刻切两段，各报时长、模型与工具时间、verifier、首次门禁与登记、返工。"""
 
     def test_the_two_segments_carry_their_own_fields(self):
         records = [
@@ -587,9 +410,9 @@ class EachSegmentIsMeasured(unittest.TestCase):
             {"tool_name": "task", "tool_input": {"subagent_type": "verifier"}},
             _harness(GATE_PASS),
             {"tool_name": "bash", "tool_input": {"command": "python story_flow.py story --feature X"},
-             "tool_output": '{"success": false, "error": "结构检查没过"}'},
+             "tool_output": "[story-build check] 2 处未通过"},
             {"tool_name": "bash", "tool_input": {"command": "python story_flow.py story --feature X"},
-             "tool_output": '{"success": true, "registered": true}'},
+             "tool_output": "登记成文"},
         ]
         events = _events(*records)
         for e in events:
@@ -601,16 +424,173 @@ class EachSegmentIsMeasured(unittest.TestCase):
             (run / "state.json").write_text(json.dumps({"resumed_at": "2026-09-02T10:04:00+00:00"}), encoding="utf-8")
             r = measure_run.measure(run / "events.jsonl", run_dir=run)
         first, second = r["segments"]["initial"], r["segments"]["update"]
-        self.assertEqual({"action": "harness:spec", "object": "?", "outcome": "fail", "fail_count": 2}, first["first_gate"])
-        self.assertEqual(1, first["task_runs_inferred"]["stage_verifier"])
+        self.assertEqual({"fail_count": 2, "status": "completed"}, first["first_harness"])
+        self.assertEqual(1, first["verifier_runs"])
         self.assertEqual(2.0, first["rework_min"], "门禁 10:01 没过、10:03 通过")
-        self.assertEqual({"action": "story_register", "object": "X", "outcome": "fail", "fail_count": 1},
-                         second["first_story_register"])
+        self.assertEqual({"fail_count": 1, "status": "completed"}, second["first_story_register"])
         self.assertEqual(1.0, second["rework_min"])
-        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "task_runs_inferred", "task_gap_sec_inferred"):
+        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "verifier_gap_sec"):
             self.assertIn(key, second)
-        self.assertEqual(r["gate_rounds_with_fail"], first["gate_rounds_with_fail"] + second["gate_rounds_with_fail"],
-                         "全程与分段的失败轮次不一致")
+
+
+def _public_events(provider: str, runs: list[tuple[str, list[dict]]], *, minute: int = 0) -> list[dict]:
+    """宿主原始事件经**当前中央 adapter** 投影成公共事件，再加 runner 写进 events.jsonl 的 run_id 与时刻。"""
+    adapter = get_adapter(provider)
+    out = []
+    for run_id, raws in runs:
+        for raw in raws:
+            for event in adapter.parse(raw):
+                record = asdict(event)
+                record.update(run_id=run_id, timestamp=f"2026-10-20T10:{minute:02d}:00+00:00")
+                out.append(record)
+                minute += 1
+    return out
+
+
+def _dsh_call(call_id: str, tool: str, **tool_input) -> dict:
+    return {"type": "tool_call", "callId": call_id, "tool": tool, "input": tool_input}
+
+
+def _dsh_result(call_id: str, result: str, status: str = "completed") -> dict:
+    return {"type": "tool_result", "callId": call_id, "status": status, "result": result}
+
+
+HARNESS_PWSH = "cd framework/harness; npx ts-node harness-runner.ts --phase spec --feature SAMPLE"
+
+
+class ToolCallsArePairedFromPublicEvents(unittest.TestCase):
+    """开始与结果两条事件是一次调用：按 run 与调用编号配，不按条数、相邻行或工具名。"""
+
+    def _measure(self, events: list[dict], *, state: dict | None = None) -> dict:
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d)
+            (run / "events.jsonl").write_text(
+                "\n".join(json.dumps(e, ensure_ascii=False) for e in events), encoding="utf-8")
+            if state is not None:
+                (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            return measure_run.measure(run / "events.jsonl", run_dir=run)
+
+    def test_pwsh_reads_harness_and_the_verifier_tool_are_recognised_once_each(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("r", "pwsh", command="Get-Content framework/harness/scripts/check-spec.ts"),
+            _dsh_result("r", "file contents"),
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h", "  FAIL [BLOCKER] sample_rule"),
+            _dsh_call("v", "verifier", description="阶段独立审查", prompt="{}"),
+            _dsh_result("v", "review report"),
+            _dsh_call("s", "subagent", description="研究工程", prompt="读源码"),
+            _dsh_result("s", "started subagent child-1"),
+        ])]))
+        self.assertEqual(4, r["tool_calls"], "四次调用，八条事件")
+        self.assertEqual({"pwsh": 2, "verifier": 1, "subagent": 1}, dict(r["tools"]))
+        self.assertEqual((1, 1, 1), (r["reads_rule_text"], r["reads_checker_source"], r["harness_runs"]))
+        self.assertEqual([["sample_rule", 1]], [list(x) for x in r["repeated_check_fails"]])
+        whole = r["segments"]["whole"]
+        self.assertEqual({"fail_count": 1, "status": "completed"}, whole["first_harness"])
+        self.assertEqual((1, 1), (whole["verifier_runs"], whole["delegations_unresolved"]),
+                         "普通 subagent 研究不是审查")
+        self.assertEqual([], r["incomplete_tool_events"])
+
+    def test_interleaved_calls_pair_by_id_and_outcomes_follow_arrival(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h1", "pwsh", command=HARNESS_PWSH),
+            _dsh_call("h2", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h2", GATE_PASS),
+            _dsh_result("h1", GATE_FAIL),
+        ])]))
+        self.assertEqual((2, 2, 1), (r["tool_calls"], r["harness_runs"], r["gate_rounds_with_fail"]))
+        self.assertEqual({"fail_count": 0, "status": "completed"}, r["segments"]["whole"]["first_harness"],
+                         "先到的结果是 h2 的全绿")
+
+    def test_a_call_id_reused_by_another_run_is_another_call(self):
+        events = _public_events("dsh", [
+            ("run-a", [_dsh_call("c1", "pwsh", command=HARNESS_PWSH), _dsh_result("c1", GATE_FAIL)]),
+            ("run-b", [_dsh_call("c1", "pwsh", command=HARNESS_PWSH), _dsh_result("c1", GATE_PASS)]),
+        ])
+        r = self._measure(events)
+        self.assertEqual((2, 2, 1), (r["tool_calls"], r["harness_runs"], r["gate_rounds_with_fail"]))
+        self.assertEqual(2.0, r["segments"]["whole"]["rework_min"], "run-a 10:01 没过、run-b 10:03 通过")
+
+    def test_an_error_result_is_not_a_pass(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h1", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h1", "Error: harness crashed", status="error"),
+            _dsh_call("h2", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h2", GATE_PASS),
+        ])]))
+        whole = r["segments"]["whole"]
+        self.assertEqual({"fail_count": 0, "status": "error"}, whole["first_harness"])
+        self.assertEqual(2.0, whole["rework_min"], "报错那轮到全绿那轮是返工")
+
+    def test_reading_a_failed_report_again_is_not_another_gate_round(self):
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h", GATE_FAIL),
+            _dsh_call("c", "pwsh", command="Get-Content doc/features/X/spec/reports/harness.txt"),
+            _dsh_result("c", GATE_FAIL),
+        ])]))
+        self.assertEqual((1, 1), (r["harness_runs"], r["gate_rounds_with_fail"]))
+        self.assertEqual(1, dict(r["repeated_check_fails"])["feature_to_acceptance"])
+
+    def test_a_lone_start_or_a_lone_result_is_reported_not_guessed(self):
+        events = _public_events("dsh", [("run-a", [
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("ghost", GATE_FAIL),
+        ])])
+        r = self._measure(events)
+        self.assertEqual((1, 1), (r["tool_calls"], r["harness_runs"]), "开始了就算跑过门禁")
+        self.assertIsNone(r["segments"]["whole"]["first_harness"], "没有结果就没有门禁结论")
+        self.assertEqual(0, r["gate_rounds_with_fail"], "孤立结果不造一次调用、不造一轮失败")
+        self.assertNotIn("", dict(r["tools"]))
+        self.assertEqual([("no_result", "h"), ("result_without_call", "ghost")],
+                         [(i["reason"], i["tool_call_id"]) for i in r["incomplete_tool_events"]])
+        self.assertIn("统计不完整", measure_run.render(r))
+
+    def test_a_repeated_result_counts_once_and_a_conflicting_one_is_listed(self):
+        call = _dsh_call("h", "pwsh", command=HARNESS_PWSH)
+        twice = self._measure(_public_events("dsh", [("run-a", [call, _dsh_result("h", GATE_FAIL),
+                                                                _dsh_result("h", GATE_FAIL)])]))
+        self.assertEqual((1, 1, []), (twice["tool_calls"], twice["gate_rounds_with_fail"],
+                                      twice["incomplete_tool_events"]))
+        clash = self._measure(_public_events("dsh", [("run-a", [call, _dsh_result("h", GATE_FAIL),
+                                                                _dsh_result("h", GATE_PASS)])]))
+        self.assertEqual(1, clash["tool_calls"])
+        self.assertEqual(["conflicting_events"], [i["reason"] for i in clash["incomplete_tool_events"]])
+        self.assertEqual(0, clash["gate_rounds_with_fail"], "两个结果互相矛盾，不任取一个")
+        self.assertIsNone(clash["segments"]["whole"]["first_harness"])
+
+    def test_a_result_shortened_by_the_host_gives_no_gate_verdict(self):
+        """dsh 把长输出截断后，没看到 FAIL 不等于通过：这次门禁不出结论，列进不完整条目；没截断的照常判。"""
+        shortened = dict(_dsh_result("h1", "  Harness Script Report …（后面被截掉）"), truncated=True)
+        r = self._measure(_public_events("dsh", [("run-a", [
+            _dsh_call("h1", "pwsh", command=HARNESS_PWSH), shortened,
+            _dsh_call("h2", "pwsh", command=HARNESS_PWSH), _dsh_result("h2", GATE_FAIL),
+        ])]))
+        self.assertEqual(2, r["harness_runs"])
+        self.assertEqual({"fail_count": 2, "status": "completed"}, r["segments"]["whole"]["first_harness"],
+                         "被截断的那次不能当成一次全绿门禁")
+        self.assertEqual([("source_truncated", "h1")],
+                         [(i["reason"], i["tool_call_id"]) for i in r["incomplete_tool_events"]])
+
+    def test_codex_started_and_completed_items_are_one_call(self):
+        item = {"id": "item_1", "type": "command_execution", "command": "bash -lc 'npx ts-node harness-runner.ts'"}
+        r = self._measure(_public_events("codex", [("run-a", [
+            {"type": "item.started", "item": {**item, "status": "in_progress"}},
+            {"type": "item.completed", "item": {**item, "status": "completed", "aggregated_output": GATE_FAIL}},
+        ])]))
+        self.assertEqual({"command_execution": 1}, dict(r["tools"]))
+        self.assertEqual([], r["incomplete_tool_events"])
+
+    def test_a_call_spanning_the_checkpoint_belongs_to_where_it_started(self):
+        events = _public_events("dsh", [("run-a", [
+            _dsh_call("h", "pwsh", command=HARNESS_PWSH),
+            _dsh_result("h", GATE_FAIL),
+        ])])
+        r = self._measure(events, state={"resumed_at": "2026-10-20T10:01:00+00:00"})
+        first, second = r["segments"]["initial"], r["segments"]["update"]
+        self.assertEqual({"fail_count": 2, "status": "completed"}, first["first_harness"])
+        self.assertIsNone(second["first_harness"], "同一结果不在两段各算一轮")
+        self.assertEqual(["crosses_checkpoint"], [i["reason"] for i in r["incomplete_tool_events"]])
 
 
 class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):
@@ -861,17 +841,96 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                     self.assertIn(base + f"金样候选/demo-case/initial/assets/{name}", stray, name)
                 self.assertNotIn(base + "金样候选/demo-case/initial/assets/页面/新画的图.png", stray)
 
-    def test_golden_output_has_a_single_canonical_copy(self):
-        """金样成品只有 `test/golden/` 一处正本；夹具里出现逐字节副本，改了哪一份、对照的又是哪一份就说不清。"""
-        golden = REPO / "test/golden"
-        for canonical in ("assets/image1.png", "assets/image2.png",
-                          "story-金样-AR90004.md", "review-金样-AR90006.md"):
-            self.assertTrue((golden / canonical).exists(), f"金样正本缺 {canonical}")
+    @staticmethod
+    def golden_copies(root: Path) -> list[str]:
+        """审定正文在 `test/golden/` 之外的第二份：内容与登记的正文相同的文件，以及审定后还留着正文的候选目录。
 
-        canon = {p.read_bytes() for p in golden.rglob("*.md")}
-        strays = [p.relative_to(REPO).as_posix() for p in (REPO / "test/fixtures").rglob("*.md")
-                  if p.read_bytes() in canon]
-        self.assertEqual([], strays, f"夹具里出现了金样成品副本：{strays}")
+        判的是性质不是文件名：中性夹具自己的 story.md、历史报告里对正本的引文与链接都不算；
+        同一份审定正文换个位置存着才算——改了哪一份、对照的又是哪一份，就再也说不清。
+        """
+        from test_golden_sample import DOCUMENTS, REGISTRY, digest  # noqa: PLC0415
+        approved = {REGISTRY[f"{case}/{rel}"]: f"{case}/{rel}" for case, docs in DOCUMENTS.items() for rel in docs}
+        golden = root / "test" / "golden"
+        found = []
+        for top in ("doc", "test"):
+            for p in (root / top).rglob("*.md"):
+                # 归档目录保存的是历史版本的原始字节（批次一保全），不是第二份正本
+                if golden in p.parents or "node_modules" in p.parts or (root / "doc" / "archive") in p.parents:
+                    continue
+                if digest(p) in approved:
+                    found.append(f"{p.relative_to(root).as_posix()}：与正本 {approved[digest(p)]} 相同")
+        for case, docs in DOCUMENTS.items():
+            for cand in (root / "doc" / "plan").glob(f"*/{"金样候选"}/{case}"):
+                for rel in docs:
+                    if (cand / rel).is_file():
+                        found.append(f"{(cand / rel).relative_to(root).as_posix()}：审定后的候选目录还留着正文")
+        return found
+
+    def test_golden_output_has_a_single_canonical_copy(self):
+        self.assertEqual([], self.golden_copies(REPO))
+
+    def test_a_second_copy_is_found_and_neutral_texts_are_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("auto-topup/AR/story.md", "car-key-sharing/plan/plan.md"):
+                (root / "test/golden" / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(REPO / "test/golden" / rel, root / "test/golden" / rel)
+            fixture = root / "test/fixtures/neutral/AR/story.md"
+            fixture.parent.mkdir(parents=True)
+            fixture.write_text("# 中性夹具\n\n## 1. 背景\n", encoding="utf-8")
+            report = root / "doc/plan/9.9/评审.md"
+            report.parent.mkdir(parents=True)
+            report.write_text("正本见 [story](../../../test/golden/auto-topup/AR/story.md)。\n", encoding="utf-8")
+            self.assertEqual([], self.golden_copies(root), "中性夹具或历史引用被当成了副本")
+
+            copy = root / "test/fixtures/neutral/copy.md"
+            shutil.copy(REPO / "test/golden/auto-topup/AR/story.md", copy)
+            cand = root / "doc/plan/9.9" / "金样候选" / "car-key-sharing/plan/plan.md"
+            cand.parent.mkdir(parents=True)
+            cand.write_text("候选时期的另一稿\n", encoding="utf-8")
+            found = self.golden_copies(root)
+            self.assertEqual(2, len(found), found)
+            self.assertIn("test/fixtures/neutral/copy.md", found[0])
+            self.assertIn("car-key-sharing/plan/plan.md", found[1])
+
+
+
+class GateConclusionsAreCountedByKind(unittest.TestCase):
+    """同一调用结果派生按种类的门禁结论：harness 与 story_register 分计；没结果、冲突或截断记判不了；
+    原生 harness 的失败轮数保持原义，登记成功不算失败。"""
+
+    def measure(self, events: list[dict]) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
+            return measure_run.measure(path)
+
+    @staticmethod
+    def call(seq: int, command: str, output: str | None, **extra) -> dict:
+        event = {"type": "tool", "tool_name": "bash", "tool_call_id": f"c{seq}", "run_id": "r",
+                 "timestamp": f"2026-10-26T10:0{seq}:00+08:00", "tool_input": {"command": command},
+                 "tool_status": "completed"}
+        if output is not None:
+            event["tool_output"] = output
+        return {**event, **extra}
+
+    def test_harness_and_registration_are_counted_apart(self) -> None:
+        got = self.measure([
+            self.call(1, "npx ts-node harness-runner.ts --phase spec --feature X", "FAIL [BLOCKER] check_a"),
+            self.call(2, "python story_flow.py story --feature X", "{\"ok\": false, \"error\": \"未通过\"}"),
+            self.call(3, "python story_flow.py story --feature X", "{\"ok\": true}"),
+        ])
+        self.assertEqual(1, got["gate_rounds_with_fail"], "harness 失败轮数的原义变了")
+        self.assertEqual({"harness": 1, "story_register": 1}, got["gate_fail_by_kind"])
+        self.assertEqual({"harness": 0, "story_register": 0}, got["gate_unknown_by_kind"])
+
+    def test_a_truncated_or_missing_result_is_unknown_not_a_pass(self) -> None:
+        got = self.measure([
+            self.call(1, "npx ts-node harness-runner.ts --phase spec --feature X", "PASS", source_truncated=True),
+            {**self.call(2, "python story_flow.py story --feature X", None), "tool_status": "started"},
+        ])
+        self.assertEqual({"harness": 1, "story_register": 1}, got["gate_unknown_by_kind"])
+        self.assertEqual({"harness": 0, "story_register": 0}, got["gate_fail_by_kind"])
 
 
 if __name__ == "__main__":

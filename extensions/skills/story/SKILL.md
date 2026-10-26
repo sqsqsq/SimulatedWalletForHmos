@@ -21,6 +21,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 | `restore <AR>` | 「需求系统 Token」+「命令入口 · 恢复」 |
 | `update <编号>` | 「命令入口 · 更新」；要从需求系统取新内容时先读「需求系统 Token」 |
 | `adapt [<目标工程>]` | 改读 [../story-adaptation/SKILL.md](../story-adaptation/SKILL.md)：把本扩展装到或升级到另一个工程，与需求流程无关 |
+| `stats` | 改读 [../story-stats/SKILL.md](../story-stats/SKILL.md)：本仓的使用情况统计，与需求流程无关 |
 | `help` | 只输出下面这张表 |
 
 | 顺序 | 命令 | 功能 |
@@ -30,6 +31,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 | 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物 |
 | — | `/story adapt [<目标工程>]` | 把 Story Extension 装到或升级到另一个工程 |
+| — | `/story stats` | 统计本仓需求流程的使用情况 |
 | — | `/story help` | 输出本表 |
 
 `init` 之后不需要人再敲命令；中断后用 `python doc/extensions/skills/story/scripts/core/story_flow.py status --feature <编号>` 问现在走到哪、下一步做什么。
@@ -144,11 +146,12 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 - **输出**：`doc/features/<AR>/` 下的 `RR/` `SR/` `AR/` `inbox/` 四个目录与骨架文件
 
 ```
+python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <AR> --begin --step story   # ⓪ 开始计时
 node doc/extensions/skills/story/scripts/adapters/story.js init <AR> <mcp-token>   # ① 取材
 python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架（唯一写入者，重跑安全）
 ```
 
-① 失败就停下，报出它的 `error`，不建骨架。
+⓪ 在取 token、取材之前跑：它记下 Story 这一轮的开始，耗时从这一刻算到 `story` 登记成功；重跑保留最早的。成文后回头返修，动手前再跑它开新一轮，多轮累计。漏了它，② 只记「开始了、起点不可核」，那一轮成功后记为耗时缺口。① 失败就停下，报出它的 `error`，不建骨架。
 
 **看骨架判材料**：`RR/prd.md`、`SR/design.md` 是正文还是占位件（正文写着「本文档未从需求系统拉取到」）。
 有占位件就当缺料，请用户把对应文档放进 `inbox/` 走导入。
@@ -160,32 +163,30 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 ### 归档
 
 - **前置**：Story 已登记并通过交付门，`AR/story.md`、`AR/review.md` 与 `AR/design-review.md` 齐备；不适用于本地单
-- **上传只写取材回执里三件的读回**，工作区其余文件不动
+- **archive 不改业务正文**：上传只写取材回执里三件的读回，工作区其余文件不动；全程按正式形态上传（图块是 Mermaid，增强 SVG 不上传），结束后恢复可用的增强 SVG
 
 ```
-node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<工程根>" --out "<本单 inbox>"   # ① 取外部当前内容
-python doc/extensions/skills/story/scripts/core/story_flow.py publish --feature <AR>    # ② 发布前核对
-node doc/extensions/skills/story/scripts/adapters/story.js archive <AR> <mcp-token>        # ③ 上传
-python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature <AR>  # ④ 登记发布记录（自带交付门，不可逆）
+node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token> [--reply "<人确认覆盖外部改动的原话>"]
 ```
 
-- **②** 重跑交付门，并用 ① 的回执逐件核需求系统上的正文、评审记录附件与设计附件还是不是上次发布（或恢复）之后的那一版
-  （首次发布的附件，系统上应当还没有）。它返回这次与上次发布的差异、每件的动作、仍开着的议题与未验证项：**向人展示**；
-  已有送审授权（见「推进契约」）就接着做 ③，还没有授权先请人授权。
-  某一件被别人改过时它报冲突、不放行——要并进来的走 `/story update`；人看过仍要覆盖，带 `--reply "<原话>"` 再跑 ②，
-  原话连同那一件的外部与本地版本记进契约。
-- **③** 按 正文 → 评审记录附件 → 设计附件 的顺序逐件写入并读回，读回结果记进取材回执。中途失败就停下，不做 ④；
-  本地正确的修改与已完成的几件留着。重试前重新 ① 和 ②：已经写好的那几件判为相同、跳过，外部在失败之后又被改过的报冲突。
-- **④** 核三件都有这一版登记之后的读回、且读回的就是本地当前件，才记发布记录。
+一条命令依次走完：交付门 → 取外部当前内容 → 发布前核 → 按 正文 → 评审记录附件 → 设计附件 的顺序逐件写入并读回 → 核回执 → 登记发布记录（不可逆）。
 
-**③ 登记之后**，`AR/review.md` **归人所有**：再渲染时人工区逐字保留，机器区按当前决策件重算。决策件带着未勾的议题去归档是常态路径：
+- **交付门没过**不调用需求系统。
+- **发布前核**用取回的内容逐件核需求系统上的正文、评审记录附件与设计附件还是不是上次发布（或恢复）之后的那一版
+  （首次发布的附件，系统上应当还没有）。某一件被别人改过时它报冲突、不上传——要并进来的走 `/story update`；
+  人看过仍要覆盖，带 `--reply "<原话>"` 重跑，原话连同那一件的外部与本地版本记进契约。
+- **上传或读回没成立**不登记，按它报的远端状态核清后重跑：已经写好的那几件判为相同、跳过，外部在失败之后又被改过的报冲突。
+- **报「需求系统已写入、本地登记失败」**时不要重新上传，按它给的补登记命令只补登记；报「增强 SVG 没有恢复」时只补视图（`story-build view --mode svg`）。
+- 成功后输出这次带着送审的未决议题与未验证项：**向人展示**。
+
+**登记发布记录之后**，`AR/review.md` **归人所有**：再渲染时人工区逐字保留，机器区按当前决策件重算。决策件带着未勾的议题去归档是常态路径：
 评审的形态就是评审人在线上批注表态，归档时提示一句即可，**不停等确认**。
 
 ### 恢复
 
 `node .../story.js restore <AR> <mcp-token>`——把需求系统上的正文恢复到上一版，回退 archive 那次覆盖；两个附件与之后的人工意见留在系统上。
 恢复之后 `fetch` 一次，再 `story_flow.py restored --feature <AR>`：它记下外部正文现在是哪一版，报告与本地 Story 的差异；
-此后正文与两个附件分属不同版本，下一次发布按 ② 逐件核。
+此后正文与两个附件分属不同版本，下一次 archive 的发布前核逐件核。
 本地文件一个都不动，归档登记与人签照旧。本地单没有远端，没有这一步。
 
 ### 更新
@@ -203,6 +204,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature
 - **取材不写业务文件**：取回的只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
 ```
+python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <编号> --begin --step "story update"   # ⓪ 开始计时
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 续行状态与本需求的 paths
 node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游（系统需求必做）
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料
@@ -211,6 +213,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action close     # ⑤ 写好 update-notes.md 后收口
 ```
 
+- **⓪** 用户要求更新时先跑，再查状态、取材；这一轮的耗时从这一刻算，④ 开轮时记进这一轮。已开着的轮次重跑不换开始时刻。
 - **①** 有开着的更新（`open`）时按它的记录续做，本轮已经取过材的不再重复取。
 - **②** 只对 AR 开头的系统需求执行，先按「需求系统 Token」取 token；两个路径取自 ① 返回的 `paths`，按当前 shell 加引号。
   这一轮没取过上游，③ 会停下并指回这一步。本地需求跳过 token 与 ②。取材成功与否以这一次调用 stdout 末行的
@@ -243,7 +246,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | `AR/story-src/inputs/<版本>/` | 交给设计的冻结输入：采用的原件、图、提取稿与人签导出 |
 | 组件蓝图（framework `component-design`） | 本部件怎么设计（准入后是 Story 附录与后续施工的设计来源） |
 | `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
-| `AR/story.md` | 把材料、决定与已准入的设计组织成可评审的叙述（零新事实；archive 的上传正文） |
+| `AR/story.md` | 把材料、决定与当前设计组织成可评审的叙述（零新事实；archive 的上传正文） |
 | `AR/design-review.md` | 设计附件：本次蓝图原生评审投影的逐字节副本，完整技术契约在这里（定稿时生成，不手改；archive 的附件） |
 
 ## 需求系统 Token

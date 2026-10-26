@@ -5,22 +5,17 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { blueprintGraph, loadNative } from '../../../../../hooks/shared/framework-access.mjs';
-import { adoptedInputs, unitSources } from './design-source.mjs';
 import { joinPosix, readManifest, relFromFeature } from './sources.mjs';
 import { normalizeHeading, parseDocument } from './document.mjs';
+import { imageLinks } from './language.mjs';
 
-
-//: 图源标记：围栏开头连续的 `%% 图源 {JSON}` 行，一行一个来源；图正文里再出现的 `%%` 是注释。
-const MARK = /^%%\s*图源(?:\s+(.*?))?\s*$/;
-const MODES = new Set(['reuse', 'refine']);
 
 /**
- * 一份文档里的每张图 —— 身份由**位置**给，来源由**围栏开头**自报。
+ * 一份文档里的每张图 —— 身份由**位置**给：`§<节> #<该节内第几张>`，图不需要作者起名。
+ * 下游哪一节承接它讲的关系，登记在写作设计里（`- 承接上游图：<来源> <身份>`），不写在图里。
  *
- * 身份 `§<节> #<该节内第几张>`：图不需要作者起名，位置就是它的名字。节取标题的前导编号
- * （`### 5.2 异常回收` → `5.2`），没有编号就用业务名——取不到编号时身份仍要唯一。
- * 来源是围栏开头连续的 `%% 图源 {JSON}` 行，每行解析成一个对象；解析不了的带着原因交给检查，不丢弃。
+ * 节取标题的前导编号（`### 5.2 异常回收` → `5.2`）；没有编号就用业务名——
+ * 编号是给人对位用的，取不到时身份仍要唯一。
  */
 export function diagramsOf(text) {
   const doc = parseDocument(text);
@@ -34,26 +29,11 @@ export function diagramsOf(text) {
     const body = doc.lines.slice(fence.from + 1, fence.closed ? fence.to : fence.to + 1);
     const index = (seq.get(section) ?? 0) + 1;
     seq.set(section, index);
-    const sources = [];
-    for (const line of body) {
-      const m = line.trim().match(MARK);
-      if (!m) break;
-      const raw = (m[1] ?? '').trim();
-      let value = null;
-      let error = null;
-      try {
-        value = JSON.parse(raw);
-        if (!value || typeof value !== 'object' || Array.isArray(value)) error = '不是 JSON 对象';
-      } catch (e) {
-        error = e.message;
-      }
-      sources.push({ raw, value: error ? null : value, error });
-    }
     out.push({
       section, index, title,
       id: `§${section} #${index}`,
-      sources,
-      //: 围栏在原件里的行范围（**1 起，含首尾标记行**）——作者据它去读原件
+      //: 围栏在原件里的行范围（**1 起，含首尾标记行**）——作者据它去读原件，
+      //: 而不是读一份被复制进任务包的副本：副本一旦与原件不同步，他改的是副本。
       at: { from: fence.from + 1, to: fence.to + 1 },
       //: 按**行**给，不拼成字符串：CRLF 的文件拼了再切，每行尾会挂个 `\r`
       lines: body,
@@ -62,12 +42,6 @@ export function diagramsOf(text) {
   return out;
 }
 
-/** 图体：去掉开头的来源标记与末尾空行，其余逐行原样——reuse 按它比，不忽略节点、标签与边。 */
-export function diagramBody(d) {
-  const rows = d.lines.slice(d.sources.length);
-  while (rows.length && !rows[rows.length - 1].trim()) rows.pop();
-  return rows;
-}
 
 /** 这张图讲的是什么 —— 小节标题 + 首层节点，给的是**主题**，不是「少了一张图」。 */
 export function diagramTopic(d) {
@@ -75,117 +49,6 @@ export function diagramTopic(d) {
     .map(m => m[1].trim()).filter(Boolean);
   const uniq = [...new Set(nodes)].slice(0, 4);
   return uniq.length ? `${d.title}：${uniq.join(' → ')}` : d.title;
-}
-
-/** 图源标记所在的行（1 起，围栏内外都算）：扫仓内路径与语言红线时先抹掉——来源路径是给机器核的。 */
-export function markLines(text) {
-  return String(text ?? '').split(/\r?\n/).flatMap((line, i) => (MARK.test(line.trim()) ? [i + 1] : []));
-}
-
-/** 围栏外的图源标记行（1 起）：标记只在图的围栏开头算数。 */
-function strayMarks(text) {
-  const doc = parseDocument(text);
-  return doc.lines.flatMap((line, i) => (!doc.fenced.has(i) && MARK.test(line.trim()) ? [i + 1] : []));
-}
-
-/** 一个 document 来源指向的那张图：路径按原生项目路径规则、在本次有效来源里，图标识在那份文档里唯一。 */
-function documentDiagram(projectRoot, v, documents, excluded) {
-  if (typeof v.path !== 'string' || !v.path.trim() || typeof v.diagram !== 'string' || !v.diagram.trim()) {
-    return { problem: '缺 path 或 diagram——document 来源写工程相对路径与图标识（`§<节> #<该节第几张>`）' };
-  }
-  try {
-    loadNative(projectRoot).module('scripts/utils/project-relative-path.ts')
-      .validateProjectRelativePath(path.resolve(projectRoot), v.path, '图源 path');
-  } catch (e) {
-    return { problem: `的 path 不是工程内路径（${e.message}）` };
-  }
-  const text = documents.get(path.posix.normalize(v.path));
-  const why = excluded.get(path.posix.normalize(v.path));
-  if (why) return { problem: `指向的 ${v.path} 现在不是有效来源：${why}` };
-  if (text === undefined) {
-    const known = [...documents.keys()];
-    return { problem: `指向的 ${v.path} 不是本次有效采用的来源——可用的来源：${known.length ? known.map(k => `\`${k}\``).join('、') : '（没有：需求还没交给设计，或采用的材料里没有 Markdown）'}` };
-  }
-  const list = diagramsOf(text);
-  const hit = list.find(d => d.id === v.diagram);
-  if (!hit) {
-    return { problem: `指向的图 ${v.diagram} 在 ${v.path} 里没有——那份文档的图：${list.map(d => d.id).join('、') || '（没有可解析的 Mermaid 图）'}` };
-  }
-  return { lines: diagramBody(hit) };
-}
-
-/** 一个 blueprint 来源指向的生成图：原生 resolver 核引用的身份与版本，graph_id 在这一版里实际存在。 */
-function blueprintDiagram(projectRoot, v) {
-  if (!v.blueprint_ref || typeof v.blueprint_ref !== 'object' || typeof v.graph_id !== 'string' || !v.graph_id.trim()) {
-    return { problem: '缺 blueprint_ref 或 graph_id——blueprint 来源写原生完整引用与已有的 graph_id' };
-  }
-  const got = blueprintGraph(projectRoot, v.blueprint_ref, v.graph_id);
-  if (got.status !== 'ok') return { problem: `核不过（${got.status}）：${got.issues.map(i => i.message).join('；')}` };
-  const rows = got.content.split(/\r?\n/);
-  while (rows.length && !rows[rows.length - 1].trim()) rows.pop();
-  return { lines: rows };
-}
-
-/**
- * 图源标记指得到吗 —— Story 章提交、整篇检查与 spec/plan post_check 共用这一份。
- *
- * 机械只核来源身份与 reuse 的图体：document 指向本次有效来源里唯一的那张图，blueprint 经原生核过、graph_id 存在；
- * reuse 要与来源逐行相同。refine 增量讲没讲清、新绘图（不带标记）关系对不对、不适用的来源图去向是否交代，归独立审查。
- *
- * @param {string} projectRoot 工程根
- * @param {string} text 被核的正文（一章或整篇）
- * @param {Map<string,string>} documents 本次有效的 document 来源：工程相对路径 → 原文
- * @param {(line:number) => string} where 正文行号（1 起）→ 作者要改的位置
- * @param {Map<string,string>} [excluded] 认得出但现在不能用的来源与原因（旧表达、字节不符）
- */
-function diagramSourceProblems(projectRoot, text, documents, where, excluded = new Map()) {
-  const problems = [];
-  for (const d of diagramsOf(text)) {
-    const body = diagramBody(d);
-    for (const s of d.sources) {
-      const mark = `图源标记「${s.raw.length > 80 ? `${s.raw.slice(0, 80)}…` : s.raw}」`;
-      const say = msg => problems.push(`${where(d.at.from)}：${mark}${msg}`);
-      if (s.error) { say(`不是一个 JSON 对象（${s.error}）——一行写一个来源：\`%% 图源 {"kind":"document","path":…,"diagram":…,"mode":…}\``); continue; }
-      const v = s.value;
-      if (!MODES.has(v.mode)) { say(`的 mode 是 ${JSON.stringify(v.mode)}——原样采用写 reuse，在来源上补局部关系写 refine；没有适用来源而新绘的图不写标记`); continue; }
-      const found = v.kind === 'document' ? documentDiagram(projectRoot, v, documents, excluded)
-        : v.kind === 'blueprint' ? blueprintDiagram(projectRoot, v)
-          : { problem: `的 kind 是 ${JSON.stringify(v.kind)}——来源只有 document（文档里的图）与 blueprint（蓝图生成图）两种` };
-      if (found.problem) { say(found.problem); continue; }
-      if (v.mode === 'reuse' && found.lines.join('\n') !== body.join('\n')) {
-        say('写的是 reuse，图体与来源不一致——原样采用要逐行相同；按本需求补了关系就写 refine，增量写进写作设计这一节的依据');
-      }
-    }
-  }
-  for (const line of strayMarks(text)) {
-    problems.push(`${where(line)}：图源标记写在了围栏外——只有图的围栏开头那几行 \`%% 图源\` 算来源`);
-  }
-  return problems;
-}
-
-/** Story 一章或整篇的图源：document 来源是本次采用的冻结 Markdown。 */
-export function storyDiagramSourceProblems(ctx, text, where) {
-  return diagramSourceProblems(ctx.projectRoot, text, adoptedInputs(ctx).documents, where);
-}
-
-/**
- * 施工单位 spec / plan 的图源：document 来源是蓝图消费的采用来源与当前有效的关联 Story（`unitSources`），
- * 与 Story 用同一个检查；旧表达、字节不符的来源带着原因不认。用到 document 来源时，关联来源的问题一并报；
- * 来源取不到时这一项按 skipped 说明，不报成没有问题。
- *
- * @param {string} label 报错里的文件名（如 `spec.md`）
- * @returns {{problems: string[], skipped: {what: string, why: string}[]}}
- */
-export function unitDiagramSourceProblems(projectRoot, feature, text, label) {
-  const marks = diagramsOf(text).flatMap(d => d.sources);
-  if (!marks.length && !strayMarks(text).length) return { problems: [], skipped: [] };
-  const src = unitSources(projectRoot, feature);
-  if (src.status !== 'ok') {
-    return { problems: [], skipped: [{ what: `${label} 的图源`, why: `本单位的来源取不到（${src.status}）：${src.problems.join('；') || '原生没给原因'}` }] };
-  }
-  const usesDocuments = marks.some(s => s.value?.kind === 'document');
-  return { skipped: [], problems: [...(usesDocuments ? src.problems.map(p => `关联来源：${p}`) : []),
-    ...diagramSourceProblems(projectRoot, text, src.documents, line => `${label} 第 ${line} 行`, src.excluded)] };
 }
 
 /**
@@ -205,12 +68,16 @@ export function chapterImageProblems(ctx, text, where) {
   const byPath = new Map();
   (usable ?? []).forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
   String(text ?? '').split(/\r?\n/).forEach((line, i) => {
-    for (const [, alt, src] of line.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)) {
+    const { images, bad } = imageLinks(line);
+    for (const b of bad) {
+      problems.push(`${where(i + 1)}：图片链接写法解析不了（${b.text}）——带空格或括号的路径写成 \`![说明](<路径>)\``);
+    }
+    for (const { alt, target: src, external, path: ref } of images) {
       if (!alt.trim()) problems.push(`${where(i + 1)}：图片 ${src} 没有 alt 文本——alt 是评审人看不到图时读到的那句话`);
-      if (!usable || /^(https?:|data:)/i.test(src)) continue;
-      const idx = byPath.get(joinPosix(storyDir, src));
+      if (!usable || external || ref === null) continue;
+      const idx = byPath.get(joinPosix(storyDir, ref));
       if (idx === undefined) {
-        const name = path.posix.basename(src);
+        const name = path.posix.basename(ref);
         const same = [...byPath.keys()].filter(rel => path.posix.basename(rel) === name)
           .map(rel => path.posix.relative(storyDir, rel));
         problems.push(`${where(i + 1)}：图片「${src}」不在材料的图片登记里——story 里的图按登记的引用认`
@@ -236,11 +103,10 @@ export function chapterImageProblems(ctx, text, where) {
 export function imageProblems(ctx, storyText) {
   const problems = [];
   const notes = [];
-  const imgs = [...storyText.matchAll(/!\[([^\]]*)\]\(([^)\s]+)/g)];
-  const seen = new Set();
-  for (const [, , src] of imgs) {
-    if (seen.has(src)) problems.push(`story.md：图片 ${src} 被引用了不止一次——同一张图只在一处引，那一处说清它画的是什么`);
-    seen.add(src);
+  const seen = new Map();              // 引用写法 → 那一张
+  for (const img of String(storyText).split(/\r?\n/).flatMap(line => imageLinks(line).images)) {
+    if (seen.has(img.target)) problems.push(`story.md：图片 ${img.target} 被引用了不止一次——同一张图只在一处引，那一处说清它画的是什么`);
+    seen.set(img.target, img);
   }
   const registered = materialImages(ctx);
   if (registered?.gap) {
@@ -256,9 +122,9 @@ export function imageProblems(ctx, storyText) {
   const byPath = new Map();
   registered.forEach((m, i) => m.paths.forEach(rel => byPath.set(rel, i)));
   const usedBy = new Map();            // 登记序号 → story 里引到它的那些路径
-  for (const src of seen) {
-    if (/^(https?:|data:)/i.test(src)) continue;
-    const idx = byPath.get(joinPosix(storyDir, src));
+  for (const { target: src, external, path: ref } of seen.values()) {
+    if (external || ref === null) continue;
+    const idx = byPath.get(joinPosix(storyDir, ref));
     if (idx === undefined) continue;   // 不在登记里的由本章判据报
     if (!usedBy.has(idx)) usedBy.set(idx, []);
     usedBy.get(idx).push(src);
@@ -334,6 +200,7 @@ export function readablePaths(featureRoot, paths) {
     }
   });
 }
+
 
 function materialImages(ctx) {
   const data = readManifest(ctx);

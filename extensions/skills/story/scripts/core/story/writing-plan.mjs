@@ -3,7 +3,9 @@
  *
  * 这份文件由作者在蓝图准入、决策登记之后写，交付的是**表达设计**：第一次读的人按什么顺序理解
  * 这件事（阅读主线），正文将要有哪些小节、每节解决什么理解问题（`- 答：`/`- 依据：`/`- 待核：`），
- * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）。
+ * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）。行首的列表前缀只是排版，
+ * 带不带都按同一行读；协议字段之外的说明文字按说明消费，不进结构约束；
+ * 上游每张图讲的关系落在哪一节（`- 承接上游图：`）。
  * **内容不在这里定**：表格的列、图里的节点与分支、列表的项目，都由写章的人按原文决定。
  *
  * 脚本在这里只做确定的事：建空壳、指出协议缺了什么、把骨架换成章节合同能消费的结构。
@@ -14,9 +16,10 @@
  */
 import { readText } from './context.mjs';
 import {
-  DIAGRAM_SYNTAXES, fenceRanges, nativeAddresses, normalizeHeading, placeholderProblems,
+  DIAGRAM_SYNTAXES, fenceRanges, headingPath, nativeAddresses, normalizeHeading, placeholderProblems,
 } from './document.mjs';
-import { relFromFeature } from './sources.mjs';
+import { diagramsOf, diagramTopic } from './images.mjs';
+import { relFromFeature, upstreamDocs } from './sources.mjs';
 
 //: 两个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
 const PARTS = { story: '阅读主线', skeleton: '骨架' };
@@ -32,13 +35,16 @@ const ANY_DIAGRAM = '图';
 //: 附录章在空壳里的那一行：附录各节由合同定，骨架只给作者写的几节记依据；这一行只是说明，删掉也不报缺。
 const APPENDIX_NOTE = '附录的接口、数据、规约与材料取舍由你写：按 `#### 技术契约`、`##### 端云接口` 这样的节写 `- 依据：`，'
   + '注明蓝图 revision 与原生地址（如 `contract:<id>`、`view:runtime/flow:<id>`、`decision:<id>`）；其余各节由脚本投影';
+//: 列表前缀（- * +）只是排版：一行带不带它，协议上是同一行
+const LISTED = /^[-*+]\s+/;
 const LINE = {
-  note: /^-\s+(.+)$/, form: /^形式[:：]\s*(.*)$/,
+  form: /^形式[:：]\s*(.*)$/,
   recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
+  carry: /^承接上游图[:：]\s*(.*)$/,
 };
 
-/** 形式清单那句话：四个协议词 + 图种，报错与空壳共用一处。 */
-const formWords = () => `${Object.keys(FORMS).join(' / ')} / ${ANY_DIAGRAM}`
+/** 形式清单那句话：四个协议词 + 合同登记的命名表 + 图种，报错与空壳共用一处。 */
+const formWords = (named = {}) => `${[...Object.keys(FORMS), ...Object.keys(named)].join(' / ')} / ${ANY_DIAGRAM}`
   + `（任一种图），或点名一种：${Object.values(DIAGRAM_SYNTAXES).map(v => v.name).join('、')}`;
 
 /**
@@ -51,19 +57,21 @@ export function writingPlanShell(contract) {
   const rows = ['# 写作设计', '',
     `<!-- 骨架每章一段：正文要有的每个小节写一行 \`#### 标题\`，下面用 \`- 答：\` 写这一节解决读者的`
     + '什么理解问题、`- 依据：` 写依据在哪、`- 待核：` 写还没形成结论的疑点（没有就不写）；'
-    + `要用某种形式承载就单起一行 \`形式：<${formWords()}>\`，再用 \`- 描述：\` 说明它表达的对象、`
+    + `要用某种形式承载就写一行 \`形式：<${formWords(contract.named_tables)}>\`，再用 \`- 描述：\` 说明它表达的对象、`
     + '关系与边界（列、节点与项目在写章时按原文定，这里不预写）；'
-    + '一处要几种形式就写几行——图讲关系、表讲属性、文字讲理由，描述里说清各自承担什么；'
-    + '选了图的，描述写两半：图前要说明的过程，图后列表要补的条件、责任与结果；'
-    + '本章不涉及就只写 `- 不涉及：<理由>`。方法见 story-write.md 第四节 -->', '',
+    + '形式按 图＞表格＞列表＞章节＞文字 先后考虑：关系先试图，图讲不全的精确条件用表或列表补，文字解释理由；'
+    + '一处要几种形式就写几行，描述里说清各自承担什么；'
+    + '选了图的，描述写两半：图前要点明的阅读目的，图后要补的图外条件、责任与结果；'
+    + '本章不涉及就只写 `- 不涉及：<理由>`；上游图讲的关系由哪一节承接，就在那一节写 `- 承接上游图：<skeleton 列出的图身份>`，'
+    + '一行一张，正文、表或图都可以承接。方法见 story-write.md 第四节 -->', '',
     `## ${PARTS.story}`, '',
     '{{读者是谁、读完要做什么决定；按责任边界 → 整体协作与关键取舍 → 状态与分支 → 验收与待决，'
     + '哪几件事最容易误解、读者先理解哪一件才能理解后文；依据在哪、哪些未决限制后文}}', '', `## ${PARTS.skeleton}`, ''];
   for (const ch of contract.chapters ?? []) {
-    // 附录的四节由合同定、机器区由投影写，写作设计里没有要它安排的东西
+    // 附录的小节由合同定、机器区由投影写，写作设计里没有要它安排的东西
     rows.push(`### ${ch.id}`, ch.appendix ? `- ${APPENDIX_NOTE}`
-      : `- {{正文章名：${ch.title}。读完这一章读者要能回答：${(ch.questions ?? []).join('；')}。`
-        + '哪个关系必须用图、图后列表要补哪几条；其余用表、列表或叙述各讲什么}}', '');
+      : `- {{正文章名：${ch.title}。读完这一章读者要能回答什么；哪个关系必须用图、图后要补哪些图外的条件与结果；`
+        + '其余用表、列表或叙述各讲什么}}', '');
   }
   return rows.join('\n');
 }
@@ -79,13 +87,14 @@ export function writingPlanShell(contract) {
  */
 export function readWritingPlan(ctx) {
   const chapters = ctx.contract.chapters ?? [];
-  const plan = { text: null, chapters, skeletons: new Map(), structures: [], rechecks: [], problems: [] };
+  const plan = { text: null, chapters, named: ctx.contract.named_tables ?? {},
+    skeletons: new Map(), structures: [], rechecks: [], carry: [], problems: [] };
   const rel = relFromFeature(ctx, ctx.templatePath);
   const say = (msg) => plan.problems.push(`写作设计 ${rel} ${msg}`);
   const text = readText(ctx.templatePath);
   if (text === null || !text.trim()) {
     say(`${text === null ? '不在' : '是空的'}——空壳由 skeleton 建；阅读主线与每章骨架由作者对照原材料、需求分析里的来源初筛、`
-      + '已准入蓝图与决策登记写成，章提交按它核结构');
+      + '当前蓝图与决策登记写成，章提交按它核结构');
     return plan;
   }
   plan.text = text;
@@ -108,13 +117,45 @@ export function readWritingPlan(ctx) {
   if (story && !lines.slice(story.from, story.to).join('\n').trim()) say(`的「${PARTS.story}」是空的——这一部分按有无正文判`);
   const skeleton = part(PARTS.skeleton);
   if (skeleton) readSkeleton(plan, lines, skeleton, fenced, say);
+  if (skeleton) carryProblems(ctx, plan, say);
   plan.problems.push(...placeholderProblems(text, `写作设计 ${rel} `));
   return plan;
 }
 
-/** `形式：` 后面那个词认成什么：认不出返回 null。 */
-function parseForm(value) {
+/** 承接登记对不对得上上游：每张图至少登记一处，登记的身份真实，同一位置不重复登记同一张。 */
+function carryProblems(ctx, plan, say) {
+  const known = new Map();
+  for (const [label, text] of upstreamDocs(ctx)) for (const d of diagramsOf(text)) known.set(`${label} ${d.id}`, d);
+  const seen = new Set();
+  for (const c of plan.carry) {
+    const key = `${c.source}|${c.chapter}|${normalizeHeading(c.at)}|${normalizeHeading(c.under)}`;
+    if (!known.has(c.source)) say(`的「承接上游图：${c.source}」不是当前上游里的图——图身份按 skeleton 列出的「SR §<节> #<第几张>」写`);
+    else if (seen.has(key)) say(`的「承接上游图：${c.source}」在同一位置登记了两次`);
+    seen.add(key);
+  }
+  for (const [source, d] of known) {
+    if (!plan.carry.some(c => c.source === source)) {
+      say(`没有登记 ${source}（${diagramTopic(d)}）承接在哪一节——在讲这件事的小节下写「- 承接上游图：${source}」，正文、表或图都可以承接它讲的关系`);
+    }
+  }
+}
+
+/** 登记的承接位置在 story 里的那一节：按章名与小节名逐层精确定位，给出那一节的正文或定位问题。 */
+export function carryTargets(plan, storyText, chapterId = null) {
+  return (plan?.carry ?? []).filter(c => !chapterId || c.chapter === chapterId).map((c) => {
+    const title = plan.chapters.find(x => x.id === c.chapter)?.title ?? c.chapter;
+    const names = [title, c.at, c.under].filter(Boolean);
+    const hit = headingPath(storyText, names);
+    const where = names.join(' > ');
+    const problem = hit.problem ?? (hit.body.trim() ? null : '这一节没有正文');
+    return { ...c, where, body: hit.body ?? '', problem };
+  });
+}
+
+/** `形式：` 后面那个词认成什么：认不出返回 null。命名表是带合同表头的表格，选了才核。 */
+function parseForm(value, named = {}) {
   if (FORMS[value]) return { ...FORMS[value] };
+  if (named[value]) return { kind: 'table', name: value, header: String(named[value]).split('|').map(h => h.trim()) };
   if (value === ANY_DIAGRAM) return { kind: 'diagram' };
   const syntax = Object.keys(DIAGRAM_SYNTAXES)
     .find(key => [DIAGRAM_SYNTAXES[key].name, ...DIAGRAM_SYNTAXES[key].heads].includes(value));
@@ -126,7 +167,7 @@ function readSkeleton(plan, lines, range, fenced, say) {
   const known = new Map(plan.chapters.map(c => [c.id, c]));
   const blank = () => ({ notes: [], forms: [], sections: [] });
   const same = (list, title) => list.some(s => normalizeHeading(s.title) === normalizeHeading(title));
-  let ch = null, parent = null, node = null, started = false;
+  let ch = null, parent = null, node = null;
   const where = () => `「### ${ch.id}${node ? `·${node.title}` : ''}」`;
   for (let at = range.from; at < range.to; at++) {
     const line = fenced.has(at) ? '' : lines[at].trim();
@@ -134,18 +175,13 @@ function readSkeleton(plan, lines, range, fenced, say) {
     const head = /^(#{3,5})\s+(.+?)\s*$/.exec(line);
     if (head?.[1].length === 3) {
       const id = head[2];
-      started = true;
       ch = null; parent = null; node = null;
       if (!known.has(id)) say(`的「### ${id}」不是章节合同里的章 ID（${[...known.keys()].join('、')}）——骨架按合同章 ID 分章`);
       else if (plan.skeletons.has(id)) say(`的「### ${id}」出现了两次——一章一段骨架`);
       else plan.skeletons.set(id, (ch = { id, ...blank(), notApplicable: null }));
       continue;
     }
-    if (!ch) {
-      if (!started) say(`的「## ${PARTS.skeleton}」第一行不是 \`### <章 ID>\`——骨架按 ### 章 ID 分章，章 ID 之前的行归不到任何一章`);
-      started = true;
-      continue;
-    }
+    if (!ch) continue;              // 第一个章 ID 之前的说明，或认不出的章 ID 下面的行（那条已报）
     if (head) {
       const section = { title: head[2], ...blank() };
       // 重名只在同一个父节下算重名：两个 #### 各自的 ##### 同名是两处不同的位置
@@ -164,26 +200,27 @@ function readSkeleton(plan, lines, range, fenced, say) {
       continue;
     }
     const target = node ?? ch;
+    const body = line.replace(LISTED, '');
     let m;
-    if ((m = LINE.note.exec(line))) {
-      const note = m[1].trim();
-      if (LINE.form.test(note)) {
-        // 写成说明行的形式声明脚本不接管：说一次，别让作者以为已经定了
-        say(`${where()}的「- ${note}」：形式声明写成了说明行——形式要单起一行写「形式：<类型>」，带「- 」的行按说明行读，脚本不接管`);
-        continue;
-      }
+    if ((m = LINE.form.exec(body))) {
+      const value = m[1].trim();
+      const form = value ? parseForm(value, plan.named) : null;
+      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——认得的形式是 ${formWords(plan.named)}`);
+      else target.forms.push(form);
+    } else {
+      const note = body.trim();
       target.notes.push(note);
+      const carried = LINE.carry.exec(note);
+      if (carried) {
+        const source = carried[1].trim();
+        if (!source) say(`${where()}的「- 承接上游图：」没写图身份`);
+        else plan.carry.push({ source, chapter: ch.id, at: node ? (node === parent ? node.title : parent.title) : '',
+          under: node && node !== parent ? node.title : '' });
+      }
       const open = LINE.recheck.exec(note);
       if (open) plan.rechecks.push({ chapter: ch.id, at: node?.title ?? '', text: open[1].trim() });
       const skip = !node && LINE.notApplicable.exec(note);
       if (skip) ch.notApplicable = skip[1].trim();
-    } else if ((m = LINE.form.exec(line))) {
-      const value = m[1].trim();
-      const form = value ? parseForm(value) : null;
-      if (!form) say(`${where()}的「形式：${value || '（空）'}」不认识——认得的形式是 ${formWords()}`);
-      else target.forms.push(form);
-    } else {
-      say(`${where()}有一行不是骨架写法：「${line.slice(0, 30)}」——骨架按 - 说明行、形式： 与 ####、##### 标题逐行认`);
     }
   }
   for (const [id, c] of known) {
@@ -297,7 +334,8 @@ export function selectedStructure(plan, chapterId) {
         ...(!pick.at && base.diagram ? { alsoRequired: true } : {}) });
     } else if (pick.kind !== 'prose') {
       forms.push({ ...place, kind: pick.kind, selected: true,
-        ...(pick.kind === 'list' ? { ordered: pick.ordered } : {}) });
+        ...(pick.kind === 'list' ? { ordered: pick.ordered } : {}),
+        ...(pick.header ? { name: pick.name, header: pick.header } : {}) });
     }
   }
   const key = (d) => `${normalizeHeading(d.at)}|${normalizeHeading(d.under ?? '')}`;

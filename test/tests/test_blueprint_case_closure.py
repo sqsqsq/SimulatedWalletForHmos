@@ -26,16 +26,13 @@ STORY_BUILD = "doc/extensions/skills/story/scripts/core/story-build.mjs"
 UNIT = "balance-refresh"
 
 RENDER = """
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const [root, blueprint] = process.argv.slice(1);
 const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
 const native = loadNative(root);
-const loaded = native.module('scripts/utils/component-blueprint-path.ts').loadCanonicalBlueprint(native.root, blueprint);
-const { renderBlueprintReviewMarkdown } = native.module('scripts/utils/blueprint-review-projection.ts');
-fs.writeFileSync(path.join(path.dirname(loaded.canonicalPath), 'component-blueprint.review.md'),
-  renderBlueprintReviewMarkdown(loaded.blueprint, loaded.artifactSha256));
+const r = native.module('scripts/utils/blueprint-review-materialization.ts').materializeBlueprintReview(native.root, blueprint);
+if (r.status === 'failed') { process.stderr.write(`评审投影原生物化失败：${r.reason ?? ''}`); process.exit(1); }
 """
 
 
@@ -142,7 +139,7 @@ class DesignEndpointsOnTheRealBlueprint(unittest.TestCase):
 class ThePhaseEndAfterFreezing(unittest.TestCase):
     """范围冻结之后，阶段结论全取原生事实（真实冻结工程、真实原生判定）。
 
-    夹具的冻结范围只执行 coding 之后的阶段：spec、plan 的义务由蓝图派生的输入承接（`satisfied_by`），是原生合法复用。
+    夹具的冻结范围里 spec 的义务由蓝图派生的输入承接（`satisfied_by`），是原生合法复用；plan 起在执行链上。
     """
 
     @classmethod
@@ -156,12 +153,15 @@ class ThePhaseEndAfterFreezing(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls._tmp.cleanup()
 
-    def test_a_plan_end_is_reached_by_native_reuse(self) -> None:
-        """spec、plan 不在执行链上，义务由原生承接证据满足：不跑这两个阶段、没有回执也到了。"""
-        facts = observe(self.root, {"kind": "phase", "phase": "plan"})
+    def test_a_spec_end_is_reached_by_native_reuse(self) -> None:
+        """spec 不在执行链上，义务由原生承接证据满足：不跑这个阶段、没有回执也到了；plan 在链上，没有收口证据就没到。"""
+        facts = observe(self.root, {"kind": "phase", "phase": "spec"})
         self.assertTrue(facts["reached"], facts["missing"])
-        self.assertEqual({"spec": "reused", "plan": "reused"}, {p: r["state"] for p, r in facts["units"][0]["phases"].items()})
+        self.assertEqual({"spec": "reused"}, {p: r["state"] for p, r in facts["units"][0]["phases"].items()})
         self.assertEqual("satisfied", facts["units"][0]["phases"]["spec"]["native"]["kind"])
+        plan = observe(self.root, {"kind": "phase", "phase": "plan"})
+        self.assertFalse(plan["reached"])
+        self.assertEqual("executed", plan["units"][0]["phases"]["plan"]["native"]["kind"])
 
 
 class TheExecutedPhaseNeedsCurrentNativeEvidence(unittest.TestCase):
@@ -181,6 +181,9 @@ class TheExecutedPhaseNeedsCurrentNativeEvidence(unittest.TestCase):
     END = {"kind": "phase", "phase": "coding"}
 
     def test_evidence_must_be_this_units_closed_current_and_passing(self) -> None:
+        # 链上 coding 之前的 plan 已收口、物证在
+        summary(self.unit, "plan")
+        seal(self.root, "plan")
         # 执行链上的阶段没有完成证据：不因为它不要求新 Markdown 就算复用
         self.assertIn("没有身份相符的原生完成证据", observe(self.root, self.END)["missing"][0])
         # 别的 Feature、别的阶段的 summary：身份不符

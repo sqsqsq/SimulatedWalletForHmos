@@ -119,6 +119,26 @@ class TheOrderIsSnapshotThenPromoteThenResume(unittest.TestCase):
         self.assertIn('awaiting_kind") != "initial_checkpoint"', src,
                       "没有检查 worker 是不是停在第一检查点上")
 
+    def test_a_case_without_a_second_segment_refuses_resume(self) -> None:
+        """没配 after_initial 的交互用例也停在第一检查点，但那里只能答本段的交付选择或收工，不投第二段。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "checkpoints" / "initial").mkdir(parents=True)
+            for after, ok in ((None, False), ("update", True)):
+                with self.subTest(after_initial=after), \
+                        unittest.mock.patch.object(rc, "_load_case", return_value=(None, out, "AR1")), \
+                        unittest.mock.patch.object(rc, "reconcile_worker_state", side_effect=lambda _o, st: st), \
+                        unittest.mock.patch.object(rc, "read_state", return_value={
+                            "awaiting_kind": "initial_checkpoint", "after_initial": after}), \
+                        unittest.mock.patch.object(rc, "deliver_update_inputs", return_value=[]), \
+                        unittest.mock.patch.object(rc, "deliver_supplements", return_value=[]), \
+                        unittest.mock.patch("sys.stdout", new=io.StringIO()) as out_text:
+                    code = rc.cmd_resume_update("c", "/story update AR1")
+                    self.assertEqual(0 if ok else 1, code, out_text.getvalue())
+                    if not ok:
+                        self.assertIn("没有第二段", out_text.getvalue())
+                        self.assertFalse((out / rc.RESUME_FILE).exists(), "拒绝了却仍排了续跑请求")
+
     def test_the_suite_side_requires_a_promotion(self) -> None:
         src = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
         self.assertIn("第一段还没回流", src)
@@ -133,13 +153,25 @@ class TheOrderIsSnapshotThenPromoteThenResume(unittest.TestCase):
 
 
 class TheTwoSegmentsLandInDifferentPlaces(unittest.TestCase):
-    def test_the_final_documents_are_named_by_the_segment_that_ran(self) -> None:
-        """终态文档另名只在第二段真跑过时：第一段没到终点就收尾的，终态仍是第一段的产物。"""
-        planned_only = {"after_initial": "update"}
-        self.assertEqual("AR1", rmc.segment_name(planned_only, "AR1"))
-        ran = {**planned_only, "resumed_update": {"text": "/story update AR1"}}
-        self.assertEqual("AR1-update", rmc.segment_name(ran, "AR1"))
-        self.assertEqual("bp-AR1-update", rmc.segment_name(ran, "bp-AR1"))
+    def test_the_segment_comes_from_what_actually_happened(self) -> None:
+        """回流身份按实际走到的那一段：计划了 update 而只跑了第一段，仍是第一段（并标未走完）；续跑过才是 update。"""
+        sys.path.insert(0, str(SCRIPTS))
+        import run_multi_case  # noqa: PLC0415
+        cases = {
+            "只跑了第一段、没到检查点": ({"after_initial": "update", "status": "stop_failed"}, ("initial", True)),
+            "第一段到了检查点": ({"after_initial": "update", "checkpoints": {"initial": {"path": "x"}}}, ("initial", False)),
+            "续跑了第二段、没到检查点": ({"after_initial": "update", "resumed_update": {"text": "t"},
+                                  "checkpoints": {"initial": {"path": "x"}}}, ("update", True)),
+            "第二段到了检查点": ({"after_initial": "update", "resumed_update": {"text": "t"},
+                            "checkpoints": {"initial": {"path": "x"}, "update": {"path": "y"}}}, ("update", False)),
+            "单段单自然到达目标": ({"status": "finished"}, ("initial", False)),
+            "单段单被停": ({"status": "stopped"}, ("initial", True)),
+        }
+        for name, (record, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(want, run_multi_case.finalize_segment(record))
+        self.assertEqual(("AR-1", "AR-1-update"), (run_multi_case.promoted_feature_name("AR-1", "initial"),
+                                                     run_multi_case.promoted_feature_name("AR-1", "update")))
 
     def test_the_terminal_sets_agree_between_the_two_sides(self) -> None:
         """两边的终态名单要一致：Case 已经收尾，宿主却判它还活着就拒绝回灌。"""
@@ -594,3 +626,76 @@ class TheOldFakePhaseIsGone(unittest.TestCase):
         self.assertFalse(hasattr(rc, "STORY_REVIEW"))
         with self.assertRaises(SystemExit):
             rc.resolve_end_at({"id": "c", "end_at": "story-review"})
+
+
+class TheInitialQuestionIsAnsweredInsideTheInitialSegment(unittest.TestCase):
+    """第一检查点上模型那一问（如归档送审）按回话答，仍在第一段：被授权的动作做完再停、再固定快照；
+    已固定的旧快照不当终稿；第二检查点只收工；第一段回流后不再在第一段里继续。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.out = Path(self._tmp.name) / "run"
+        self.out.mkdir()
+
+    def reply(self, kind: str, **state_extra) -> dict:
+        state = {"status": "awaiting_reply", "awaiting_kind": kind, "lease_expires_epoch": 0, "pid": os.getpid(),
+                 "run_id": "r1", "awaiting_turn": 3, **state_extra}
+        with unittest.mock.patch.object(rc, "_load_case", return_value=(None, self.out, "AR1")), \
+                unittest.mock.patch.object(rc, "reconcile_worker_state", return_value=state), \
+                unittest.mock.patch.object(rc, "deliver_supplements", return_value=[]), \
+                unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as said:
+            code = rc.cmd_reply("case", "1 归档送审", run_id="r1", turn="3")
+        return {"code": code, **json.loads(said.getvalue())}
+
+    def test_a_reply_that_cannot_be_queued_keeps_the_snapshot(self) -> None:
+        """回话写不进队列：第一段快照原样留在原位，状态与「没答过」一致。"""
+        (self.out / "checkpoints" / "initial").mkdir(parents=True)
+        (self.out / rc.REPLY_FILE).mkdir()  # 回话文件位置被目录占着，写入必然失败
+        got = self.reply("initial_checkpoint")
+        self.assertEqual(1, got["code"], got)
+        self.assertTrue((self.out / "checkpoints" / "initial").is_dir(), "写失败后第一段快照没回到原位")
+        self.assertFalse(list((self.out / "checkpoints").glob("initial.superseded-*")), "失败留下了改名的快照")
+
+    def test_two_replies_in_one_second_keep_both_snapshots(self) -> None:
+        for _ in range(2):
+            (self.out / "checkpoints" / "initial").mkdir(parents=True)
+            with unittest.mock.patch.object(rc.time, "strftime", return_value="20261015-120000"):
+                self.assertEqual(0, self.reply("initial_checkpoint")["code"])
+        kept = sorted(p.name for p in (self.out / "checkpoints").glob("initial.superseded-*"))
+        self.assertEqual(["initial.superseded-20261015-120000", "initial.superseded-20261015-120000-2"], kept)
+
+    def test_an_expired_lease_is_refused_before_anything_moves(self) -> None:
+        (self.out / "checkpoints" / "initial").mkdir(parents=True)
+        with unittest.mock.patch.object(rc, "_pid_alive", return_value=False):
+            got = self.reply("initial_checkpoint", lease_expires_epoch=1)
+        self.assertEqual(1, got["code"])
+        self.assertIn("lease", got["error"])
+        self.assertTrue((self.out / "checkpoints" / "initial").is_dir(), "拒收前就把快照挪走了")
+        self.assertFalse((self.out / rc.REPLY_FILE).exists())
+
+    def test_a_reply_at_the_first_checkpoint_continues_the_first_segment(self) -> None:
+        (self.out / "checkpoints" / "initial").mkdir(parents=True)
+        got = self.reply("initial_checkpoint")
+        self.assertEqual(0, got["code"], got)
+        self.assertFalse((self.out / "checkpoints" / "initial").exists(), "答复前的快照仍当第一段终稿")
+        self.assertTrue(Path(got["superseded_checkpoint"]).is_dir(), "旧快照没留作证据")
+        feed = unittest.mock.Mock()
+        runlog = unittest.mock.Mock()
+        resumed = rc.wait_for_resume(self.out, feed, runlog, {}, turn=3, pending="归档送审还是进入 plan？")
+        self.assertEqual({"reply": "1 归档送审"}, resumed, "回话没有交回第一段")
+
+    def test_the_second_checkpoint_only_takes_a_conclusion(self) -> None:
+        got = self.reply("update_checkpoint")
+        self.assertEqual(1, got["code"])
+        self.assertIn("conclude", got["error"])
+
+    def test_a_promoted_first_segment_is_not_continued(self) -> None:
+        record = {"case": "c", "status": rmc.WAITING_STATUS, "promotions": {"initial": {"status": "promoted"}}}
+        suite = {"case_states": {"c": record}}
+        with unittest.mock.patch.object(rmc, "load_suite", return_value=(Path(self._tmp.name), suite)), \
+                unittest.mock.patch.object(rmc, "refresh_record", side_effect=lambda r: r), \
+                unittest.mock.patch.object(rmc, "invoke_case") as invoke, \
+                unittest.mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(1, rmc.command_reply("s", "c", "1"))
+        invoke.assert_not_called()

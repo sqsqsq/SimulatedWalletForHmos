@@ -9,8 +9,7 @@
  *   ③ **模式角色**——承担角色的实体带 `pattern_roles`，角色取选型决定与模式声明，选中的角色都有实体承担；
  *   ④ **引用**——用例引的验收编号存在；
  *   ⑤ **埋点逐点落实**——蓝图里落在本单位的每个统计点，plan.md 的逐点表里有行，责任方法是契约声明的方法。
- *   ⑥ **图源**——plan.md 里采用的图指得到本次有效来源，reuse 的图体与来源一致（与 Story 同一个检查）。
- *   ⑦ **宿主扩展章**——plan.md「宿主扩展（可选）」在，承接的规约、选中模式与埋点各有小节，规约编号引得到，逐点表在「埋点」小节里。
+ *   ⑥ **宿主扩展章**——plan.md「宿主扩展（可选）」在，承接的规约、选中模式与埋点各有小节，规约编号引得到，逐点表在「埋点」小节里。
  *
  * 「义务是不是真的被应用了」「text 写的是不是本需求的设计」是语义判断，归独立审查。
  *
@@ -27,7 +26,6 @@ import { readTextOrNull } from '../shared/paths.mjs';
 import { designStatPoints, planStatRows, pointKey } from '../shared/stat-points.mjs';
 import { acceptanceIds, entityId, phaseArtifacts, resourceEntries } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
-import { unitDiagramSourceProblems } from '../../skills/story/scripts/core/story/images.mjs';
 
 /**
  * `use-cases.yaml` 里 `linked_acceptance` 引的编号都要在 `acceptance.yaml` 里存在。
@@ -204,13 +202,8 @@ export default guard('plan', async (ctx) => {
 
   if (judged) statProblems(inputs, judged, contracts, stat);
 
-  // ---- 图源：plan.md 里采用的图指得到本次有效来源，reuse 的图体一致（与 Story、spec 同一个检查） ----
-  const planText = inputs.dir ? readTextOrNull(path.join(inputs.dir, 'plan', 'plan.md')) : null;
-  const diagrams = planText === null ? { problems: [], skipped: [{ what: 'plan.md 的图源', why: '这一次没有 plan.md' }] }
-    : unitDiagramSourceProblems(ctx.projectRoot, ctx.feature, planText, 'plan.md');
-  groups.push({ name: '图源', ...diagrams });
-
   // ---- 宿主扩展章：plan.md「宿主扩展（可选）」在，承接的规约、选中模式与埋点各有小节，逐点表在「埋点」小节里 ----
+  const planText = inputs.dir ? readTextOrNull(path.join(inputs.dir, 'plan', 'plan.md')) : null;
   const host = { name: '宿主扩展章', problems: [], skipped: [] };
   groups.push(host);
   if (planText === null) host.skipped.push({ what: '宿主扩展（可选）', why: '这一次没有 plan.md；承接在契约的 must、pattern_roles 与方法说明里' });

@@ -25,6 +25,7 @@ import design_kit
 REPO = Path(__file__).resolve().parents[2]
 STORY_BUILD = DEV_EXT / "skills/story/scripts/core/story-build.mjs"
 CONTRACT = DEV_EXT / "skills/story/contracts/story-chapters.json"
+ACCESS = DEV_EXT / "hooks/shared/framework-access.mjs"
 FEATURE = "RT90001"
 
 STORY_MD = """# 甲需求（SMPFEAT）
@@ -776,6 +777,111 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         self.assertEqual(0, delivered.returncode, delivered.stdout + delivered.stderr)
 
 
+class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
+    """冻结输入里有图时，看图能力与保真路由由独立 Story 审查在准备与核对时调原生纯函数算，不读预置的裁定文件。
+
+    夹具宿主是 generic（看不了图、OCR 就绪）：需求没写强保真时原生路由 semantic_layout / best_effort、不延期，
+    图面未核是能力缺口，文本审完最高判 WARN；需求写了强保真时 strictness=hard，图没核就是没审完。
+    """
+
+    FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
+    IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
+    IMAGE = "ux-reference/home.png"
+
+    def make(self, hard: bool = False) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        fixture = Path(self._tmp.name) / "fixture"
+        shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
+        feature = fixture / "doc" / "features" / "REQ-DEMO"
+        (feature / "ux-reference").mkdir()
+        shutil.copy2(next((REPO / "test" / "fixtures").rglob("*.png")), feature / self.IMAGE)
+        if hard:
+            prd = feature / "RR" / "prd.md"
+            prd.write_text(prd.read_text(encoding="utf-8") + "\n签约页必须像素级还原设计稿，不接受降级。\n", encoding="utf-8")
+        self.root = Path(self._tmp.name) / "work"
+        designed_copy(fixture, "REQ-DEMO", DRAFT, self.root)
+        design_kit.install_review_mechanism(self.root, DEV_EXT)
+        done = subprocess.run(["python", str(self.IMPORT), "--feature", "REQ-DEMO", "--project-root", str(self.root),
+                               "--caption-image", f"doc/features/REQ-DEMO/{self.IMAGE}", "--unused", "签约页现状参考，本需求不改签约页"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+
+    def run_node(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["node", str(STORY_BUILD), *args, "--feature", "REQ-DEMO", "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+    def result(self) -> dict:
+        out = self.run_node("review", "--action", "check")
+        return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
+
+    def review(self, kind: str, unread: tuple[str, ...] = ("image",)) -> dict:
+        """准备审查、夹具审查者回复，再把 `unread` 里的材料从读过的挪进没读到的（图写能力缺口原因）；返回核对结果。"""
+        prepared = self.run_node("review", "--action", "prepare")
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        report = design_kit.write_review(self.root, "REQ-DEMO", kind)
+        text = report.read_text(encoding="utf-8")
+        line = next(l for l in text.splitlines() if l.startswith("  examined_inputs: "))
+        examined = json.loads(line.split(": ", 1)[1])
+        picked = {"image": [e for e in examined if e.endswith("/home.png")],
+                  "story": [e for e in examined if e.endswith("/AR/story.md")]}
+        moved = [e for k in unread for e in picked[k]]
+        self.assertEqual(len(unread), len(moved), f"夹具没有要挪的材料：{examined}")
+        text = text.replace(line, "  examined_inputs: " + json.dumps([e for e in examined if e not in moved], ensure_ascii=False))
+        text = text.replace("  unreviewed: []", "  unreviewed: " + json.dumps(
+            [{"path": e, "reason": "宿主看不了图，图面未核" if e.endswith(".png") else "没读完"} for e in moved], ensure_ascii=False))
+        report.write_text(text, encoding="utf-8")
+        return self.result()
+
+    def test_the_task_states_the_native_ruling(self) -> None:
+        self.make()
+        self.assertEqual(0, self.run_node("review", "--action", "prepare").returncode)
+        task = (self.root / "doc/features/REQ-DEMO/AR/story-src/review/task.md").read_text(encoding="utf-8")
+        self.assertIn("**本次看图能力**：看图能力：看不了图（adapter generic", task)
+        self.assertIn("effective=semantic_layout、strictness=best_effort、defer=false", task)
+
+    def test_a_blind_host_with_zero_change_units_gets_a_bounded_text_review(self) -> None:
+        """零施工单位、没有主需求 Spec：原生裁定可延期，图面未核记能力缺口，文本审完判 WARN 照常可消费。"""
+        self.make()
+        got = self.review("advice")
+        self.assertEqual("warn", got["result"], got)
+
+    def test_a_blind_host_cannot_claim_pass(self) -> None:
+        self.make()
+        got = self.review("pass")
+        self.assertEqual("report_invalid", got["result"], got)
+        self.assertIn("图面却没核", got["detail"])
+
+    def test_the_text_still_has_to_be_read(self) -> None:
+        self.make()
+        got = self.review("advice", unread=("image", "story"))
+        self.assertEqual("report_invalid", got["result"], got)
+        self.assertIn("必审输入却有没核完的", got["detail"])
+        self.assertIn("AR/story.md", got["detail"])
+
+    def test_a_hard_fidelity_requirement_is_not_deferred(self) -> None:
+        """需求写了强保真：原生路由 strictness=hard，图没核就是没审完，WARN 也不成立。"""
+        self.make(hard=True)
+        got = self.review("advice")
+        self.assertEqual("report_invalid", got["result"], got)
+        self.assertIn("必审输入却有没核完的", got["detail"])
+
+    def test_a_missing_picture_is_not_a_capability_gap(self) -> None:
+        """冻结的那张图盘上没了：审查对象不成立，不按「看不了图」放行。"""
+        self.make()
+        self.assertEqual("warn", self.review("advice")["result"])
+        frozen = next(self.root.glob("doc/features/REQ-DEMO/AR/story-src/inputs/*/files/" + self.IMAGE))
+        frozen.unlink()
+        self.assertNotIn(self.result()["result"], ("pass", "warn"))
+
+    def test_a_changed_design_identity_retires_the_report(self) -> None:
+        """蓝图修订换了审查身份：上一份按旧身份写的报告不再是当前结论。"""
+        self.make()
+        self.assertEqual("warn", self.review("advice")["result"])
+        design_kit.change_blueprint(self.root, "REQ-DEMO", ACCESS, "  admission:\n    status: pass", "  admission:\n    status: fail")
+        self.assertNotIn(self.result()["result"], ("pass", "warn"))
+
+
 class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
     """判据要先成为「任务」，才谈得上做没做：Story 的独立审查任务带着判据原文与这一次的输入交给审查者。
 
@@ -855,19 +961,19 @@ class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
 
 class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
     def test_an_open_choice_is_judged_against_the_current_objects(self) -> None:
-        """仍开着的选择对着本次 Story、Review 与关联蓝图判，结论写进报告的审查方法；零 Spec 时不要求读它。"""
+        """仍开着的选择在逐章核查之前、按判据「核的先后」①对着本次 Story、Review 与蓝图判，结论写进报告的审查方法；不要求读 Spec。"""
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         (src / "decisions.json").write_text(json.dumps({"decisions": [{
             "id": "D1", "status": "open", "title": "超时由谁释放", "decider": "需求负责人",
             "clarification": "**要定的事**：超时由谁释放。"}]}, ensure_ascii=False), encoding="utf-8")
         task = self.inject()
-        section = task.split("### 仍开着的选择", 1)[1].split("\n### ", 1)[0]
+        section = task.split("### 先核：仍开着的选择", 1)[1].split("\n### ", 1)[0]
         self.assertIn("「判据核对」表后的审查方法", section)
         self.assertIn("在「发现」表记一条", section)
-        self.assertIn("关联蓝图", section)
+        self.assertIn("「核的先后」①", section)
         for gone in ("Spec", "acceptance.yaml", "证据格"):
             self.assertNotIn(gone, section, f"开着的选择还要对着「{gone}」判")
-        self.assertIn("本需求还没有冻结的采用来源，没有来源图要对照。", task)
+        self.assertIn("本次采用的上游原件里没有图。", task)
         self.assertNotIn("spec）里没有图", task)
 
     def test_the_task_carries_its_criteria(self) -> None:
@@ -924,7 +1030,7 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
     def test_a_legal_empty_manifest_is_no_images(self) -> None:
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         (src / "materials.json").write_text(
-            json.dumps({"materials": [{"kind": "doc", "paths": ["RR/prd.md"]}]},
+            json.dumps({"materials": [{"kind": "doc", "paths": ["RR/prd.md"]}], "origins": []},
                        ensure_ascii=False), encoding="utf-8")
         text = self.inject()
         self.assertIn("材料清单里没有图片", text)
@@ -1005,7 +1111,8 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         self.assertNotIn("三个以上参与方", self.inject())
 
     def test_the_task_is_one_index_and_embeds_no_document(self) -> None:
-        """任务只给一份文件索引与读法，被审文件与写作设计都按索引去读，任务里不嵌它们的全文。"""
+        """任务只给一份文件索引与读法，被审文件与写作设计都按索引去读，任务里不嵌它们的全文；
+        正文的阅读入口带作者区摘要，作者改字换任务，正文仍不嵌入。"""
         self.plan_path().write_text(self.base_plan().replace("## 阅读主线\n\n", "## 阅读主线\n\n设计里独有的一句甲。\n"),
                                     encoding="utf-8")
         task = self.inject()
@@ -1017,7 +1124,9 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         self.assertNotIn("设计里独有的一句甲。", task, "写作设计全文又嵌进了任务")
         story = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
         story.write_text(STORY_MD + "\n作者补的一句。\n", encoding="utf-8")
-        self.assertEqual(task, self.inject(), "改正文的措辞改了任务——正文按索引去读")
+        again = self.inject()
+        self.assertNotEqual(task, again, "作者改了正文，阅读入口的作者区摘要没跟着换")
+        self.assertNotIn("作者补的一句。", again, "Story 正文又嵌进了任务")
 
     def test_the_task_says_the_extract_is_a_derived_analysis(self) -> None:
         """提取稿是派生分析：回查上游原话看 RR、SR 与 AR/design.md 原文，不拿提取稿自证。"""
@@ -1071,7 +1180,7 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
         """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在判据文件。"""
         method = self.overlay_method()
         for needle in ("先独立想清楚", "写作设计", "设计漏掉的不因此算不在范围", "写了理由不等于理由成立",
-                       "还开着的决定被写成已定", "已准入蓝图", "正文提到过", "真实待决写清了边界",
+                       "还开着的决定被写成已定", "蓝图与已登记的判断", "正文提到过", "真实待决写清了边界",
                        "写明未验证与影响"):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
         self.assertNotIn("acceptance.yaml", method, "Story 判据还指着 Spec 的验收文件")

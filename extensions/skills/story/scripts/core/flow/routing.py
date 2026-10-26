@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
-from materials import meeting, registry
+from materials import importer, meeting, registry
 
 from flow.state import (
     CARRY_ALL, CORE_DIR, DESIGN_DRAFT, FlowError, S4_STEPS, STORY_CONTRACT, after_complete,
@@ -108,8 +110,19 @@ def settled_this_round(contract: dict) -> bool:
 #: 成文这一段的顺序，几个分支共用一句。
 STORY_STAGE_ORDER = (
     "顺序：story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
-    "回看清单逐条处置 → check 通过 → `story-build review --action prepare` 定稿（重投附录、编号、渲染 review）"
+    "回看清单逐条处置 → 图源写定后按 `reference/svg.md` 判断哪些图值得做同图增强 → check 通过 → "
+    "`story-build review --action prepare` 定稿（重投附录、编号、渲染 review）"
     "并准备独立审查 → 派审 → `story-build review --action check` → `story_flow.py story` 登记 → 交付门 → 交付选择")
+
+
+def register_command(feature_root: Path, mode: str = "story") -> str:
+    """这张单的登记命令（成文 story / 归档 archived），复制即可运行：参数包法与 story-build 的 `shellArg` 同一规则。"""
+    posix = bool(os.environ.get("SHELL")) or sys.platform != "win32"
+    def arg(value) -> str:
+        text = str(value)
+        return "'" + (text.replace("'", "'\\''") if posix else text.replace("'", "''")) + "'"
+    return (f"python doc/extensions/skills/story/scripts/core/story_flow.py {mode}"
+            f" --feature {arg(feature_root.name)} --project-root {arg(importer.project_root_of(feature_root))}")
 
 
 def pending_chapters(feature_root: Path) -> int:
@@ -130,7 +143,11 @@ def design_stage_step(feature_root: Path, contract: dict) -> tuple[str, str]:
 
 
 def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """设计这一侧还差什么：蓝图没建、读不过、没准入、没消费本次输入或投影不对时给下一步；都成立返回 None。"""
+    """设计这一侧还差什么：蓝图没建、读不过、没消费本次输入或投影不对时给下一步；都成立返回 None。
+
+    成文读的是原生草稿：没准入不挡成文与业务送审，原生 issues 与未决由成文、独审与交付说明如实带出；
+    准入只决定施工单位能不能开工，由交付门之后的施工路径消费。
+    """
     binding = contract.get("design_binding") or {}
     blueprint = binding.get("blueprint_id")
     entry = (contract.get("input") or {}).get("snapshot_ref")
@@ -142,31 +159,30 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
     if read["status"] == "missing":
         return ("design_blueprint",
                 f"设计输入已冻结（`{entry}`）。按 `phases/design.md`「三、设计」进原生 component-design："
-                f"用这份输入为组件 `{binding.get('component_id')}` 建立蓝图 `{blueprint}`，请求写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到准入并生成评审投影为止；"
+                f"用这份输入为组件 `{binding.get('component_id')}` 建立蓝图 `{blueprint}`，请求写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止"
+                "（准入与否、还开着的问题由原生如实给出，不为过准入删改未决）；"
                 "知识在设计决定前取（story-knowledge），独立质询交宿主的隔离子代理。"
                 "本轮授权：`/story <AR>` 的启动语义是「做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择」（batch 多阶段声明），直接进，不问")
     if read["status"] != "ok":
         return ("fix_blueprint", f"蓝图 `{blueprint}` 原生读不过（{read['status']}）：{native.issues_text(read)}——设计职责按原生报错修正")
-    if not read.get("admitted"):
-        return ("design_blueprint", f"蓝图 `{blueprint}` 还没准入：按 `phases/design.md` 在 component-design 里继续到准入")
     consumption = read.get("consumption") or {}
     if consumption.get("status") != "ok":
         return ("design_blueprint",
                 f"蓝图 `{blueprint}` 还没消费本次交给设计的输入（`{entry}`）：{native.issues_text(consumption)}——"
-                "设计职责在 component-design 里按这份输入同步蓝图的需求条目，再重新准入")
+                "设计职责在 component-design 里按这份输入同步蓝图的需求条目，再重新生成评审投影")
     projection = read.get("projection") or {}
     if projection.get("status") != "valid":
         return ("design_projection",
-                f"蓝图已准入，评审投影 `{projection.get('path')}` {'还没生成' if projection.get('status') == 'missing' else '与当前 revision 对不上'}："
+                f"评审投影 `{projection.get('path')}` {'还没生成' if projection.get('status') == 'missing' else '与当前 revision 对不上'}："
                 "由设计职责按原生 renderer 生成，Extension 不手改")
     return None
 
 
 def story_stage_step(feature_root: Path) -> tuple[str, str]:
-    """蓝图准入、投影有效之后，成文做到哪儿了——按磁盘上有什么说清。"""
+    """蓝图可读、投影有效之后，成文做到哪儿了——按磁盘上有什么说清。"""
     if not (feature_root / "AR" / "story.md").is_file():
         return ("story_skeleton",
-                "蓝图已准入。跑 `story-build skeleton`：它给出成文要用的当前输入，建写作设计空壳与章草稿，"
+                "蓝图可读、评审投影有效。跑 `story-build skeleton`：它给出成文要用的当前输入，建写作设计空壳与章草稿，"
                 "并告诉你先写整篇设计还是先写哪一章。" + STORY_STAGE_ORDER)
     left = pending_chapters(feature_root)
     if left:
@@ -176,11 +192,14 @@ def story_stage_step(feature_root: Path) -> tuple[str, str]:
                 "逐章在草稿上写、`story-build chapter --from <草稿>` 落盘——"
                 "每次落盘先核这一章能确定的那几条，判不过时盘上什么都不变；"
                 "落盘之后它会给出下一章。" + STORY_STAGE_ORDER)
+    reading = reading_todo(reading_work(feature_root))
     return ("register_story",
             "十章齐了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
             "（业务结论改决策登记或回设计，骨架改写作设计，正文改草稿再 chapter 提交）；"
-            "`story-build check` 通过之后准备独立审查（`story-build review --action prepare`）并派审，"
-            "审查结果可消费之后跑 `story_flow.py story` 登记成文。" + STORY_STAGE_ORDER)
+            "图源写定后按 `reference/svg.md`「值不值得做」判断每张图，值得的先做完同图增强并过源码审查"
+            + (f"（已开始的还没做完：{reading}）" if reading else "") +
+            "；`story-build check` 通过之后准备独立审查（`story-build review --action prepare`）并派审，"
+            f"审查结果可消费之后跑 `{register_command(feature_root)}` 登记成文。" + STORY_STAGE_ORDER)
 
 
 #: 停等点的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
@@ -354,19 +373,20 @@ def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | N
     drift = registration_drift(feature_root, contract) + basis_drift(feature_root, contract)
     if drift or contract.get("status") == "complete":
         return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")
-                + "改完先 `story-build review --action prepare` 定稿（重投附录、编号、渲染 review、全篇 check）并重新独立审查，审查通过后跑 `story_flow.py story` 重新登记")
+                + "改完先 `story-build review --action prepare` 定稿（重投附录、编号、渲染 review、全篇 check）并重新独立审查，"
+                f"审查通过后跑 `{register_command(feature_root)}` 重新登记")
     return None
 
 
 def next_step(feature_root: Path, contract: dict | None,
-              manifest: dict | None = None) -> tuple[str, str]:
+              manifest: dict | None = None, reading: dict | None = None) -> tuple[str, str]:
     """流程位置的唯一判据：读契约，回答下一步该干什么。
 
     位置由数据回答而不由记忆回答——skill 正文因此不必维护成篇的「如果……那么……」，
     恢复一个中断的 feature 也不用靠翻对话。每个返回值都对应 SKILL.md 里的一个具体动作。
 
-    `manifest` 是调用方这个时点已经取到的材料清单：路由与它给出的动作要跟同一份事实，
-    消费者（`status` 的 JSON、起手预检）读的也是这一份，不在下游再各判一次。
+    `manifest` 是调用方这个时点已经取到的材料清单，`reading` 是已经取到的本地阅读工作集合：
+    路由与它给出的动作要跟同一份事实，消费者（`status` 的 JSON、起手预检）读的也是这一份，不在下游再各判一次。
     """
     if contract is None or not contract.get("rounds"):
         return "run_round", "初析已生成的话，跑 `story_flow.py round` 登记本轮"
@@ -387,6 +407,12 @@ def next_step(feature_root: Path, contract: dict | None,
         reregister = registration_step(feature_root, contract)
         if reregister:
             return reregister
+    reading = (reading_todo(reading if reading is not None else reading_work(feature_root))
+               if stage in ("archived", "story_written") else None)
+    if reading:
+        # 已开始的同图增强是本轮工作：先做完再回原接续；读不出时给诊断动作，不当完成。不是业务许可，不挡交付门与归档
+        return ("finish_reading", f"已开始的同图增强还没做完，先在本轮做完：{reading}。"
+                "做完后按 `story_flow.py status` 的下一步回到原来的收尾" + closed_tail(feature_root, contract, manifest))
     if stage == "archived":
         # 归档之后收口过一轮 update：本地已按它更新，回写需求系统等人确认（`phases/update.md`「已归档」一行）
         closed = str((contract.get("update") or {}).get("last_closed") or "")
@@ -402,7 +428,7 @@ def next_step(feature_root: Path, contract: dict | None,
                 + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         return ("run_delivery_gate",
-                "Story 已按已准入蓝图写成、经独立审查并登记。按 `phases/design.md`「五、独立审查、登记与交付」走完："
+                "Story 已按当前蓝图写成、经独立审查并登记。按 `phases/design.md`「五、独立审查、登记与交付」走完："
                 "`story-build check --deliver` 交付门；通过后已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择"
                 "（送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进；本地单没有送审）"
                 + closed_tail(feature_root, contract, manifest))
@@ -563,3 +589,34 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
             f"提取稿已在。{bind}按 `phases/design.md` 写设计输入 `AR/story-src/design-input.json`（采用的原件与图、"
             "人签编号、需求条目），跑 `story_flow.py complete --feature <名> "
             f"--from {'/'.join(DESIGN_DRAFT)} --input AR/story-src/design-input.json` 冻结并交给设计")
+
+
+def reading_work(feature_root: Path) -> dict:
+    """本地阅读的工作集合：由 `story-build view --mode status` 从 Story 实际内容派生，不另存状态。读不出返回带 error 的结果。"""
+    node = shutil.which("node")
+    if node is None:
+        return {"error": "找不到 node，本地阅读状态读不出"}
+    proc = subprocess.run([node, str(Path(__file__).resolve().parents[1] / "story-build.mjs"), "view", "--mode", "status",
+                           "--feature", feature_root.name, "--project-root", str(importer.project_root_of(feature_root))],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return {"error": (proc.stderr or proc.stdout).strip() or f"退出码 {proc.returncode}"}
+
+
+def reading_todo(work: dict) -> str | None:
+    """本地阅读还没完成时要做什么（产品状态给的 `next`）；完成（含没有正式图）返回 None。
+
+    先认读取错误与状态自洽，再接受完成：读不出、缺字段、带着问题说完成，都按未知说，不当完成。
+    """
+    problems = work.get("problems")
+    if (work.get("error") or not isinstance(work.get("complete"), bool) or not isinstance(work.get("applicable"), bool)
+            or not isinstance(problems, list)):
+        return (f"本地阅读状态读不出（{work.get('error') or '状态缺 applicable、complete 或 problems'}），没有确认阅读图是否完成"
+                "——跑 `story-build view --mode status` 查")
+    if work["complete"] and not problems:
+        return None
+    if work["complete"]:
+        return f"本地阅读状态自相矛盾（说完成却列了问题：{'；'.join(map(str, problems))}）——跑 `story-build view --mode status` 查"
+    return work.get("next") or f"本地阅读没有完成：{'；'.join(map(str, problems)) or '状态没给原因'}"
