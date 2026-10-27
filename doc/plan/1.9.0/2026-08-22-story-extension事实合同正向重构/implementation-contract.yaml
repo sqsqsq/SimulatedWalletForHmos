@@ -1,0 +1,101 @@
+schema_version: "1.0"
+contract_status: frozen
+plan_commit: resolve-from-git-history
+delivery_states: [in_progress, blocked, accepted]
+
+scope:
+  production_allowed:
+    - doc/extensions/**
+    - .codex/skills/story/**
+    - .claude/commands/story.md
+    - .opencode/skill/story/**
+    - .cac/commands/story.md
+  verification_allowed:
+    - test/story/scripts/check_story_extension_delivery.py
+    - test/story/tests/test_story_fact_contract.py
+    - test/story/tests/test_extension_knowledge_contract.py
+  immutable:
+    - test/story/plan/2026-08-22-story-extension事实合同正向重构/**
+    - test/story/cases/**
+  forbidden:
+    - framework/**
+    - 01-Product/**
+    - 02-Feature/**
+    - 03-Feature/**
+    - 04-Feature/**
+    - 05-SystemBase/**
+
+requirements:
+  - requirement_id: STORY-FACT-01
+    behavior: every source unit has a fact, merge, or justified exclusion disposition
+    implementation_surface: story fact schema and build validation
+    positive_check: complete source ledger builds
+    negative_check: missing paragraph and table-row dispositions fail
+    real_output: every final Story fact traces to current Case sources
+  - requirement_id: STORY-FACT-02
+    behavior: every retained fact has exactly one primary narrative location
+    implementation_surface: story fact validation and chapter assembly
+    positive_check: unique primary chapter builds
+    negative_check: duplicate primary narrative fails
+    real_output: repeated context never duplicates a complete fact
+  - requirement_id: STORY-LOSSLESS-01
+    behavior: identifiers numbers images links and table facts are conserved
+    implementation_surface: deterministic source and output invariants
+    positive_check: protected elements remain traceable
+    negative_check: removing each protected element fails
+    real_output: complex-source Case retains protected elements
+  - requirement_id: STORY-TITLE-01
+    behavior: H1 is a business title and trace identifiers live in the appendix
+    implementation_surface: story facts title and deterministic assembly
+    positive_check: business title builds with trace appendix
+    negative_check: identifier or document-type H1 fails
+    real_output: every Case has a scope-accurate business title
+  - requirement_id: STORY-SCOPE-01
+    behavior: user-directed scope cannot be overwritten by AI defaulting
+    implementation_surface: story flow scope intent and facts contract
+    positive_check: unspecified scope may be inferred
+    negative_check: overriding user-directed scope fails
+    real_output: split Case preserves the confirmed AR boundary
+  - requirement_id: KNOWLEDGE-TYPE-01
+    behavior: manifest explicitly separates project constraints and patterns
+    implementation_surface: extension manifest and loader
+    positive_check: typed activation loads all three categories
+    negative_check: flat or unclassified activation fails
+    real_output: active knowledge set is traceable by category
+  - requirement_id: KNOWLEDGE-SPEC-01
+    behavior: Spec disposes every activated knowledge item
+    implementation_surface: knowledge-application schema hooks and checks
+    positive_check: every active item has a valid disposition and landing
+    negative_check: omitted item or false existing capability fails
+    real_output: Spec contains concrete project and constraint effects
+  - requirement_id: KNOWLEDGE-PLAN-01
+    behavior: Plan freezes every pattern candidate and downstream obligation
+    implementation_surface: knowledge-freeze schema hooks and checks
+    positive_check: adopted or rejected decisions have normal design landings
+    negative_check: deferring a candidate to Coding fails
+    real_output: Plan contains concrete pattern and constraint decisions
+  - requirement_id: KNOWLEDGE-STORY-01
+    behavior: Story consumes only business-relevant conclusions from Spec
+    implementation_surface: story fact knowledge conclusion import
+    positive_check: story conclusion becomes a traced ordinary fact
+    negative_check: raw knowledge path or unlanded sidecar entry fails
+    real_output: Story explains business impact without engineering scan details
+  - requirement_id: LEGACY-REMOVAL-01
+    behavior: rejected content audit and automatic review-reflow paths cannot execute
+    implementation_surface: story skill rules scripts and host bridges
+    positive_check: only fact-contract pipeline is reachable
+    negative_check: restoring a legacy entry is detected
+    real_output: generated workspace contains no rejected artifacts
+
+acceptance:
+  require_all_requirements: true
+  require_scope_clean: true
+  require_plan_unchanged: true
+  require_positive_checks: true
+  require_negative_checks: true
+  require_all_current_cases: true
+  require_case_target_reached: true
+  require_promoted_story: true
+  require_semantic_review: true
+  forbid_unexplained_skips: true
+  accepted_state: accepted

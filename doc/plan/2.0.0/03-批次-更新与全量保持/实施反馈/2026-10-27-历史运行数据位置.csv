@@ -1,0 +1,117 @@
+运行目录,所在位置,被引用文件,找到,引用它的文档数,示例引用,影响
+output/evidence/1.9.9-20261015-n08,本地story-1.0目录,1,1,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-15-第二轮返修与四项专项评审.md,
+output/evidence/1.9.9-20261015-r3-migration,本地story-1.0目录,1,1,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-15-第三轮返修复评.md,
+output/evidence/1.9.9-20261015-r3-q04,本地story-1.0目录,1,1,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-15-第三轮返修复评.md,
+output/evidence/1.9.9-budget-20261016,本地story-1.0目录,1,1,2,doc/plan/1.9.9/2026-10-16-整版功能与预算复核.md,
+output/evidence/1.9.9-budget-audit-20261024,本地story-1.0目录,13,13,2,doc/plan/1.9.9/2026-10-24-整版预算与实现复核/01-预算重估表.md,
+output/evidence/1.9.9-bug-review-20261024,本地story-1.0目录,5,5,1,doc/plan/1.9.9/2026-10-24-发布前问题收敛/评审意见/2026-10-24-9aa1f46c-Bug收口交回评审.md,
+output/evidence/1.9.9-bug-scope-20261024,本地story-1.0目录,3,3,1,doc/plan/1.9.9/2026-10-24-发布前问题收敛/05-预算核对与复算.md,
+output/evidence/1.9.9-cli-analysis-20261014,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/CLI测试分析/2026-10-14-1.9.9需求CLI实测与优化对照.md,
+output/evidence/1.9.9-cli-full-review-20261024,本地story-1.0目录,5,5,1,doc/plan/1.9.9/2026-10-23-发布收敛整改/评审意见/2026-10-24-最新CLI完整评审.md,
+output/evidence/1.9.9-cli-interaction-review-20261024,本地story-1.0目录,1,1,1,doc/plan/1.9.9/2026-10-23-发布收敛整改/评审意见/2026-10-24-SVG自动完成与测试交互补评.md,
+output/evidence/1.9.9-cli-review-20261025,批次一Git外副本；本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-24-发布前问题收敛/评审意见/2026-10-25-初段CLI完整评审.md,
+output/evidence/1.9.9-convergence-audit-20261024,本地story-1.0目录,4,4,3,doc/plan/1.9.9/2026-10-23-发布收敛整改/评审意见/2026-10-24-用例装置再审与累计计时核对.md,
+output/evidence/1.9.9-design,本地story-1.0目录,1,1,2,doc/plan/1.9.9/2026-10-12-整体设计/08-R7-性能与失败解释.md,
+output/evidence/1.9.9-final-consistency-review-20261017,本地story-1.0目录,2,2,2,doc/plan/1.9.9/2026-10-16-两Case金样完善与审定/评审意见/2026-10-17-最后口径一致性复核与交审.md,
+output/evidence/1.9.9-global-review-20261013,本地story-1.0目录,6,6,2,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-1.9.9全局评审.md,
+output/evidence/1.9.9-global-review-20261013-r2,本地story-1.0目录,6,6,1,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-全局评审返修复评.md,
+output/evidence/1.9.9-golden-final-approval-20261017,本地story-1.0目录,2,2,1,doc/plan/1.9.9/2026-10-17-R3页面交互金样修订/05-最终审定清单.md,
+output/evidence/1.9.9-pre-release-plan-20261024,本地story-1.0目录,1,1,1,doc/plan/1.9.9/2026-10-24-发布前问题收敛/00-实施方案.md,
+output/evidence/1.9.9-r03r06-recheck-20261024,本地story-1.0目录,3,3,1,doc/plan/1.9.9/2026-10-23-发布收敛整改/评审意见/2026-10-24-111000-R03R06返修复评.md,
+output/evidence/1.9.9-review-20261013,本地story-1.0目录,6,6,1,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-全部交回评审.md,
+output/evidence/1.9.9-review-20261013-r2,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-第一批返修复评.md,
+output/evidence/1.9.9-review-20261013-r3,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-第二批返修复评.md,
+output/evidence/1.9.9-review-20261013-r4,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-第三批返修复评.md,
+output/evidence/1.9.9-review-20261013-r5,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-第四批返修复评.md,
+output/evidence/1.9.9-review-20261013-v01,本地story-1.0目录,3,3,1,doc/plan/1.9.9/2026-10-12-整体设计/评审意见/2026-10-13-V01离线证据与验证改期评审.md,
+output/evidence/1.9.9-review-20261015,本地story-1.0目录,3,3,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-15-S1S2返修-S3-S4离线交回复评.md,
+output/evidence/1.9.9-review-20261015-r2,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-15-第二轮返修与四项专项评审.md,
+output/evidence/1.9.9-review-20261015-r3,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-15-第三轮返修复评.md,
+output/evidence/1.9.9-review-20261016-final,本地story-1.0目录,2,2,2,doc/plan/1.9.9/2026-10-16-R8方案与整版退场复核.md,
+output/evidence/1.9.9-review-20261016-r4,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-16-第三轮交回复评.md,
+output/evidence/1.9.9-s1-s2-review-20261014,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/评审意见/2026-10-14-需求覆盖与S1-S2交回复评.md,
+output/evidence/1.9.9-six-closure-review-20261024,本地story-1.0目录,4,4,1,doc/plan/1.9.9/2026-10-23-发布收敛整改/评审意见/2026-10-24-C01C06集中交回复评.md,
+output/evidence/1.9.9-svg-history-20261024,本地story-1.0目录,2,2,1,doc/plan/1.9.9/2026-10-24-发布前问题收敛/评审意见/2026-10-24-SVG历史反思与当前方案可靠性复核.md,
+output/evidence/1.9.9-svg-history-reanalysis-20261014,本地story-1.0目录,7,7,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/CLI测试分析/2026-10-14-1.9.9需求CLI实测与优化对照.md,
+output/evidence/1.9.9-svg-validation-20261024,本地story-1.0目录,14,14,1,doc/plan/1.9.9/2026-10-24-发布前问题收敛/06-实际图验证与生成收尾闭合.md,
+output/scratch/2.0.0-design,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,
+output/scratch/2.0.1-p1-r4-review,当前仓,1,0,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-02-P1收口评审.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/2.0.1-p1-rereview,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-02-P1返修评审.md,
+output/scratch/2.0.1-p1-review,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-02-P1评审.md,
+output/scratch/2.0.2,当前仓,4,4,8,doc/archive/legacy-2.x/plan/2.0.2/2026-10-04-整体设计/06-Framework问题与复现合同.md,
+output/scratch/2.0.3-p1,当前仓,7,6,7,doc/archive/legacy-2.x/plan/2.0.3/2026-10-07-整体设计/实施反馈/2026-10-08-P1交回.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/2.0.4,当前仓,16,15,12,doc/archive/legacy-2.x/plan/2.0.4/2026-10-11-内容交付与审查效率/评审意见/2026-10-11-宿主接缝定案.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/2.0.5-preparation,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.5/07-旧2.x成果保全与复用盘点.md,
+output/scratch/2.0.5-rewrite,未找到,1,0,1,doc/archive/legacy-2.x/plan/2.0.5/01-成果保全与基线切换.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/200-cli,未找到,1,0,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/200-final,未找到,1,0,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/200-s1,未找到,1,0,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/200-s2,未找到,1,0,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/200-s3,未找到,1,0,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/200-s4,未找到,1,0,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/scratch/2026-09-29-graph-expression-demo,当前仓,1,1,1,doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/04-SVG图形通道.md,
+output/scratch/2026-09-29-stability-performance,当前仓,2,2,3,doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/04-稳定性与性能分析/00-分析方案.md,
+output/scratch/b5-analysis,当前仓,1,1,1,doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/04-稳定性与性能分析/data/analysis-b5-spec-draft.md,
+output/scratch/b5-ar90006-story-review,当前仓,1,1,1,doc/archive/legacy-2.x/spec/2.1.0/历史参考/原1.9.9/04-稳定性与性能分析/data/analysis-b5-ar90006-story-review.md,
+output/scratch/fw31-cap,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/实施反馈/2026-09-29-Framework3.1能力核对-交回.md,
+output/scratch/history-budget-audit,当前仓,2,2,2,doc/archive/legacy-2.x/plan/2.0.4/2026-10-11-整体评审与职责收敛/调查/04-提交历史与补丁形态复核.md,
+output/scratch/r4v,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-10-01-步骤4返修评审.md,
+output/scratch/review-fw31-cap,当前仓,1,1,2,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-29-Framework3.1能力核对评审.md,
+output/scratch/review-s2-0930,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-30-步骤2实施评审.md,
+output/scratch/review-s2-rework-0930,当前仓,2,2,2,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-30-Framework3.1专项审查文件引用问题.md,
+output/scratch/review-s2-second-0930-pytest,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-30-步骤2二次返修评审.md,
+output/scratch/review-step1,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-29-步骤1实施评审.md,
+output/scratch/review-step1-r2,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-29-步骤1返修评审.md,
+output/scratch/review-step3-0930,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-30-步骤3实施评审.md,
+output/scratch/review-step3-return-0930,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-09-30-步骤3返修评审.md,
+output/scratch/review-step3-second-1001,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-10-01-步骤3二次返修评审.md,
+output/scratch/review-step4-1001,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/评审意见/2026-10-01-步骤4阶段评审.md,
+output/scratch/s1,当前仓,4,4,3,doc/archive/legacy-2.x/plan/2.0.0/99-执行者会话交接.md,
+output/scratch/s2r,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/99-执行者会话交接.md,
+output/scratch/s3,当前仓；本地story-1.0目录,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/99-执行者会话交接.md,
+output/scratch/s4,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/99-执行者会话交接.md,
+output/story/2.0.0,当前仓,17,16,19,doc/archive/legacy-2.x/plan/2.0.0/06-Framework基线接入与能力核对.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/2.0.0-design-20260929,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.0/05-步骤4-验证与收口.md,
+output/story/2.0.0-document-migration,当前仓；批次一Git外副本,1,1,1,doc/archive/legacy-2.x/README.md,
+output/story/2.0.1-analysis-20261002,当前仓,1,1,2,doc/archive/legacy-2.x/plan/2.0.1/00-返修与双Case实跑分析.md,
+output/story/2.0.1-p1-rereview-20261002,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-02-P1返修评审.md,
+output/story/2.0.1-p1-review-20261002,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-02-P1评审.md,
+output/story/2.0.1-p2-review-20261002,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-02-P2评审.md,
+output/story/2.0.1-p3-rereview-20261003,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-03-P3返修与表述排查评审.md,
+output/story/2.0.1-p3-review-20261003,当前仓,2,2,2,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-03-P2返修与P3评审.md,
+output/story/2.0.1-p3-second-review-20261003,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-03-P3第二次返修评审.md,
+output/story/2.0.1-p4-r2-final-review-20261003,当前仓,1,1,2,doc/archive/legacy-2.x/plan/2.0.1/实施反馈/2026-10-03-P4-R2输出归属交回.md,
+output/story/2.0.1-p4-rereview-20261003,当前仓,1,1,3,doc/archive/legacy-2.x/plan/2.0.1/实施反馈/2026-10-03-P4-R2剩余项交回.md,
+output/story/2.0.1-p4-review-20261003,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/评审意见/2026-10-03-P4离线准备评审.md,
+output/story/2.0.2-analysis-20261004,当前仓,2,1,2,doc/archive/legacy-2.x/plan/2.0.2/2026-10-04-整体设计/00-本轮实跑分析.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/2.0.2-fw05-repro-20261007,当前仓,1,1,4,doc/archive/legacy-2.x/plan/2.0.2/2026-10-04-整体设计/06-Framework问题与复现合同.md,
+output/story/2.0.2-review-20261007,当前仓,2,2,1,doc/archive/legacy-2.x/plan/2.0.2/2026-10-04-整体设计/评审意见/2026-10-07-四步集中评审.md,
+output/story/2.0.3-p1-candidates,未找到,2,0,3,doc/archive/legacy-2.x/plan/2.0.3/2026-10-07-整体设计/实施反馈/2026-10-08-P1剩余情景交回.md,2 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/2.0.4-review-20261012-independent-review,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.4/2026-10-11-职责收敛与最小实现/评审意见/2026-10-12-本轮独立审查与返修过程评审.md,
+output/story/2.0.5-rewrite,当前仓,3,3,4,doc/archive/legacy-2.x/README.md,
+output/story/20260830-104740-36496,当前仓,22,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,21 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260822-225100-retry3,当前仓,66,2,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,64 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260822-553928,当前仓,117,3,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,114 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260824-091443,当前仓,17,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,16 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260824-130828,当前仓,34,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,33 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260825-162511,当前仓,59,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,58 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260826-1310,当前仓,32,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,31 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260828-191953,当前仓,27,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,26 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260829-115836,当前仓,30,2,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,28 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260831-105803,当前仓,46,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,45 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260831-125744,当前仓,44,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,43 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260831-165400,当前仓,45,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,44 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260901-121846,当前仓,48,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,47 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260901-150010,当前仓,27,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,26 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260904-194427,当前仓,54,1,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,53 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260909-1402,当前仓,1,0,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260913-232703,当前仓,1,1,1,doc/plan/1.9.1/2026-09-11-Extension旧机制退场与新机制替换/13-实现质量替换/00-执行总览.md,
+output/story/story-suite-20260924-1234,当前仓,4,2,1,doc/plan/1.9.5/2026-09-24-埋点阶段分工复核/01-整体目标独立核对.md,2 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20260926-190654,当前仓,1,1,1,doc/archive/legacy-2.x/spec/2.1.0/历史参考/2026-10-01-接入事实核对.md,
+output/story/story-suite-20260928-214524,当前仓,1,1,1,doc/archive/legacy-2.x/plan/2.0.1/00-返修与双Case实跑分析.md,
+output/story/story-suite-20261002-101032,当前仓,2,2,2,doc/archive/legacy-2.x/plan/2.0.0/实施反馈/2026-10-02-步骤4-三次返修与CLI实跑交回.md,
+output/story/story-suite-20261003-215006,当前仓,3,2,4,doc/archive/legacy-2.x/plan/2.0.2/2026-10-04-整体设计/00-本轮实跑分析.md,1 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20261011-093025,当前仓,5,5,7,doc/archive/legacy-2.x/plan/2.0.4/2026-10-11-内容交付与审查效率/评审意见/2026-10-11-宿主接缝定案.md,
+output/story/story-suite-20261013-201213,本地story-1.0目录,12,9,1,doc/plan/1.9.9/2026-10-14-全功能优化实施方案/CLI测试分析/2026-10-14-1.9.9需求CLI实测与优化对照.md,3 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件
+output/story/story-suite-20261024-022956,本地story-1.0目录,1,1,1,doc/plan/1.9.9/2026-10-23-发布收敛整改/评审意见/2026-10-24-最新CLI完整评审.md,
+output/story/story-suite-b2v3d,未找到,15,0,1,doc/plan/1.9.1/2026-09-07-新需求四项/reviews/24-历史Story样本与最小章节索引.md,15 个被引用文件未找到：引用它的历史结论只能读正文，不能复核原件

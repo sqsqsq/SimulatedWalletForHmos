@@ -219,11 +219,17 @@ export function readerCheckIds() {
   return readerChecks().map(([id]) => id);
 }
 
-/** 这一次审查对象的全部材料：待审的与只读对照的分列；任务自己不列（它就是这份）。 */
-function objectRows(projectRoot, feature, contract, { rows, problems }) {
+/**
+ * 这一次审查对象的全部材料：待审的与只读对照的分列；任务自己不列（它就是这份）。
+ * 只核在场与来源摘要的行注明不必通读；同字节的别名注明与哪一份是同一内容，覆盖声明写哪个路径都算那一份。
+ */
+function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
   const { blocking } = sourceStatus({ contract, featureRoot: featureRoot(projectRoot, feature) });
-  const line = r => `- \`${r.path}\` —— ${r.label}`;
+  const line = r => `- \`${r.path}\` —— ${r.label}`
+    + (r.required_read === false ? '　（核在场与来源摘要，不必通读）' : '')
+    + (alias.has(r.path) ? `　（与 \`${alias.get(r.path)}\` 同一内容）` : '');
   return ['', '### 本次审查的材料（材料键按它们的原始字节算）', '',
+    '这张表是完整核源的集合：作者没采用的阅读稿、登记不用的图与会议纠偏留痕也在里面，核作者为何采用或排除它们。', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
     ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
@@ -380,7 +386,7 @@ export function readerReviewTask(projectRoot, feature) {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
   // 有要核的图才做视觉裁定：原生纯函数按冻结来源与当前蓝图算，事实写在这里，结论只认这一份
-  const pictures = images.rows?.length || object.rows.some(r => r.label.endsWith('（image）'));
+  const pictures = images.rows?.length || object.rows.some(r => r.kind === 'image');
   if (pictures) rows.push('', ...visualRows(storyReviewVisual(projectRoot, feature)));
 
   rows.push(...reportFormat());

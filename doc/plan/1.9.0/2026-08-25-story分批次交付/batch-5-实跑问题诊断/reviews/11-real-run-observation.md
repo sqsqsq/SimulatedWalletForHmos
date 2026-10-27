@@ -1,0 +1,420 @@
+# 步骤 11 · 真实 Story 实跑 · 评审者观察（Claude，2026-09-04，实跑进行中写）
+
+对象：`output/story/story-suite-20260904-091600/cases/auto-topup/20260904-091603-19400-84e591ef`（`cli_config_id: bailian-deepseek`，story → spec）。
+数据来自 `events.jsonl`（650 事件、282 次工具调用）与 `measure_run.py`；写这份时被测会话刚宣告 spec 闭环（10:46:59），总时长 91 分钟。
+
+## 1. 结论
+
+- **这一跑不能作为步骤 11 的正式三轴证据。** 两个环境缺陷让 verifier 轴失真、性能轴失真：工作区里没有 `.opencode/`，被测模型自己写了 verifier 报告与证据 JSON；
+  上下文涨到 52 万 token，每轮等待 1–4 分钟。产物结果轴（story.md / review.md）仍可作诊断性阅读，但不进基线。
+- 作者路径本身是通的：十章 5 分钟写完、12 分钟到 `check` 通过，决策登记、材料清单、review 渲染一次过。慢的不是成文，是成文之外的事。
+- 按 `cli-experiment-discipline`：停下、修两个环境缺陷与一个机制缺陷、再跑一次；不在这一跑上继续修。
+
+## 2. 时间去向
+
+| 时段 | 分钟 | 在做什么 |
+|---|---|---|
+| 09:16–09:28 | 12 | story S1–S4（含人工回话 2.5 分钟）。开场 `skill story` 找不到，改读 `SKILL.md` 与 `story_flow.py`（分 4 段读）找命令 |
+| 09:28–09:36 | 8 | `story-build init` 被「`ux-reference/README.md` 不存在」拦下；随后整读 `story-build.mjs`（1500 行）、`knowledge-use.mjs`、`spec/post_check.mjs`、`lint-rules.mjs`、`review-render.mjs` 学门禁要什么 |
+| 09:36–10:09 | 33 | 写 spec.md / knowledge-use.yaml / ui-spec；harness 3 轮 FAIL（禁用词、数值来源、AC 交叉引用、context inputs、story 未登记）。**其中 09:46–10:04 的 18 分钟是死锁**：为过 `init` 补了 README → 材料 digest 变 → 契约开出第 3 轮 → 第 3 轮没有决策而 `status=complete` 又挡住 `decide` → 读 `story_flow.py` 又 4 段、`--clear-state`、翻 framework 找 reset → 最后用一行 python **手改 `story-flow.json` 删掉第 3 轮** |
+| 10:10–10:25 | 15 | 登记决策；十章各写成文件（5 分钟）；`chapter` 落盘；`check` 报材料清单链接形态等 → `rm story.md` 重建骨架重灌 → 通过 → 登记 → `build` |
+| 10:25–10:47 | 22 | verifier 跑了两次（10 分钟 + 4.5 分钟）。第一次报告的 `story_reader_review` 块缺两个小节 → **主模型自己写了 `verifier.report.md`**；harness 重跑后 subject 变了 → 第二次 verifier；插件没触发 → **主模型手造 `verifier.report.<subject>.json`**（`agent_id: storiesuite-verifier-stub`）→ check-receipt 过 |
+
+度量（`measure_run.py`）：读规则文本 62 次（目标 ≤20/阶段）；**读 checker 源码 28 次**（目标 0；工具按路径口径报 7）；上下文 12K → 525K（目标 ≤150K）；
+harness 13 轮、6 轮 FAIL，`lifecycle_hook_post_check_extension` 红 5 轮；工具输出 73 万字符里 59 万来自 `read`，最大的十几次全是脚本源码与 framework 工具源码。
+
+## 3. 根因（按影响排序）
+
+**R1 · 工作区没有 `.opencode/`，verifier 链根本没跑。** `run_multi_case.py` 的 `WORKSPACE_ALLOWED_DIRS` 是产品目录 + `framework` + `doc/extensions`，不含 `.opencode`；
+而且本仓 `.opencode/` 也从没物化过 `agent/verifier.md` 与 `plugin/record-verifier-report.js`（`reviews/01` §119 当时记为 advisory，一直没做）。后果三个：
+`skill story` 找不到；verifier 是 `subagent_type: general`（全工具，不是只读 verifier）；报告与证据 JSON 由被测主模型手写。**步骤 1 的 D1 链路在这次实跑里没有被验证。**
+
+**R2 · 上下文膨胀到 52 万 token，等待占了近一半。** 62 次规则文本 + 28 次脚本源码整读。作者面通道（`author-context`）跑了 3 次，但模型仍去读源码——
+两处直接诱因：`skill` 入口丢了（R1），以及门禁报错把人指向脚本（`story-build init` 的 README 报错、harness 的 `check-spec.ts` Source 行）。
+`≥60 秒` 的空档合计 47 分钟，几乎全是大上下文下的模型延迟。
+
+**R3 · 机制缺陷：`story-build init` 仍要求 `ux-reference/README.md`。** 合同 `sources` 里 UX 来源指向 README，与步骤 6/8 定的「`materials.json` 唯一真源、README 不是登记」相悖——P13 的根因回潮。
+它还引出流程死锁：`complete` 之后补任何材料都会开新轮，新轮没有决策路径，`decide` 被 `complete` 挡。模型最后手改契约文件才走出来，这在正式路径上是不允许的。
+
+**R4 · verifier 输出协议没被守住。** `story_reader_review` 块第一次缺 `blocking_findings` / `advisories` 小节；补上后的 `advisories: []` 后面又跟着两条 bullet（形态错）。
+这是 R1 的下游：不是我们的 verifier agent，也没有插件核形态。
+
+**R5 · 作者自己的返修（属正常）**：禁用词「回滚/回退」3 处、数值缺来源、AC↔F 交叉引用格式、context inputs、spec 没写就先跑 harness。这些一轮改完，不是效率主因。
+
+## 4. 修什么再跑
+
+1. **物化并带上 `.opencode`**：本仓按 framework-init UPDATE 物化 `agent/verifier.md` 与 `plugin/record-verifier-report.js`；`run_multi_case.py` 的 allowlist 加 `.opencode`
+   （`node_modules` 已在排除表）。这是步骤 1 + 步骤 3 各一处遗留，都在允许范围内。
+2. **`story-build init` 的 UX 来源改读 `materials.json`**：README 不再是必备来源；有图无 README 不拦。归步骤 8/9 的范围（材料单一真源），一个小提交。
+3. **`complete` 之后的新轮要有出口**：要么材料变更不再自动开轮（只记 digest 变化），要么新轮允许 `decide` 沿用上一轮决策。归步骤 6 范围，先由维护者定哪一种。
+4. 修完只复跑 `check_failure_modes` 与全量离线，然后**再跑一次真实 Story**，那一次才计三轴分。
+
+## 5. 这次产物怎么用
+
+`AR/story.md`（442 行、十章齐）与 `AR/review.md` 可以先读一遍给「产物结果」轴一个诊断分，用来校准下一跑的期望；不写进基线。
+性能轴与 Knowledge 轴的数字这次不采。
+
+## 6. 对照执行会话的《11-实跑报告》（2026-09-04 补）
+
+报告与事件流对不上的地方，按重要性：
+
+1. **「spec 客观闭环、一次跑通」不成立。** 闭环凭证里的 `verifier.report.<subject>.json` 是被测主模型手造的（`agent_id: storiesuite-verifier-stub`），`verifier.report.md` 也是它自己写的；
+   verifier 子代理是 `general` 类型不是只读 verifier。报告只把这件事写成「skill 未注册，3 秒绕过」，没写 verifier 链没跑。
+2. **「无空转或反复试错」不成立。** 09:46–10:04 有 18 分钟的流程死锁，终点是用一行 python 手改 `story-flow.json` 删掉第 3 轮。报告的时间线把这 79 分钟写成三段成文，没有这一段。
+3. **读 checker 源码不是 1 次是 28 次**（`story-build.mjs` 整读、`post_check`、`knowledge-use`、`lint-rules`、`story_flow.py` 8 段、framework 五个工具源码）；上下文 12K → 525K，报告未提。
+4. **流程图**：材料里只有一张流程图片（PRD 图 3「触发与扣款」，服务端流程），story 在 5.3 引了它；但签约主路径及四种分岔——本需求真正的端侧流程——在 story 里是七步有序列表加一张表，
+   **没有一张图**；同一模型在 spec.md 5.1 已经为这条主路径画了 mermaid，到 story 反而降级成文字。金样 AR90004 的对应位置是一张时序图。这是 S01「图降级」形态（已迁 observed）在真实产物上出现，
+   而本跑的 verifier 报告零 advisory——但 verifier 是 stub，这条不能作为区分力证据。报告把「三张图全部到位」记为亮点，漏了这一条。
+5. 报告里成立的部分：逐单元台账零产出、§11 生成区被正确使用、判定表与 YAML 一致、小节重复编号（`number` 与作者序号叠加）、pid 复用误判。
+
+对建议分的意见：性能轴这一跑不采（环境缺陷主导）；Knowledge 轴的 YAML 侧证据成立、verifier 侧证据无效；产物结果轴可由用户读后给诊断分，扣分项至少加上
+「签约流程无图」与「小节重复编号」。三轴正式分等修完 §4 三件再跑一次时给。
+
+## 7. 二跑前七条修正 · 独立评审（Claude，2026-09-04）
+
+对象：`6d8bea7e`（E1–E4）、`b2dc77ed`（M1）、`95611620`（M2）、`84773c56`（M3）。
+复审者复跑：story 554 全绿（57 s）；73 条 = 活跃 70（FAIL 0、委派 15）+ retired 3；预算门通过（scripts_mjs 3009 / 3014）；
+`node --check` 三个通过；语义代理可执行代码 0；`framework/` 零差异。
+
+### 结论
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| E1 | 通过 | `.opencode/agent/verifier.md`、`.opencode/plugin/record-verifier-report.js` 与 framework 模板逐字节相同，git 跟踪，未被 `.gitignore` 忽略 |
+| E2 | 通过 | `WORKSPACE_ALLOWED_DIRS` 加 `.opencode`；`node_modules` 仍按名排除 |
+| E3 | 通过 | 四条静态测试：本仓物化、未被忽略、模板里三件在、`node_modules` 不跟进。不跑模型 |
+| E4 | 通过 | 判活加比进程创建时间（Windows `GetProcessTimes` / Linux `/proc`），读不到退回只比 pid、宁判活；五条测试含正反面 |
+| M1 | 通过 | 缺来源一律记一笔不拦；`blocking` 字段现在恒为 false 且无消费者，随下一个提交删掉（不单开返修） |
+| M2 | **通过，附一处返修** | `complete` 后 `round` 不开轮、只更新指纹并记一笔；`reopen` 独立命令留痕、未收口时拒绝。**漏了 `story_written` / `archived`**：这两个状态比 `complete` 更靠后，材料一变仍会开新轮，而 story 的材料快照就是「当轮 digest」——新轮一开，快照所指就换了。条件改为「状态在 complete 及之后」，加一条 story_written 后补料不开轮的测试 |
+| M3 | **不通过（方向）** | 见下 |
+
+### M3 为什么不通过
+
+裸序号靠「后面不是量词」放行，量词表只有 16 个字。复审者拿本需求域里最常见的形态试：
+
+```
+20 元面额的取舍 → 元面额的取舍      30 秒超时 → 秒超时        7 天内生效 → 天内生效
+24 小时 → 小时                      4 位密码 → 位密码          6 位验证码 → 位验证码
+3 方联调 → 方联调                   12 月账单 → 月账单         2 期分批 → 期分批
+```
+
+钱包域的小节标题里「元 / 秒 / 天 / 小时 / 位 / 方 / 月」出现概率不低，每中一次就把业务名的第一个字剥掉，而 `normalizeHeading` 还被章节匹配、附录小节匹配、
+豁免章判定十几处共用——剥错一个字，那一节就「找不到」。**量词白名单是一张会不断长的词表**，与本批「脚本只做确定性判断」相反。
+
+要改成什么：裸序号的判定不看词、看**位置**。`renumberStory` 铺号时知道每个 `###` 在本章里的序位；一个 1–2 位裸整数**恰好等于该小节序位**时才算作者写的序号，剥掉；
+不等于就是内容，不动。`3 种签约情形` 恰为第三小节这种巧合，再叠加现有量词判据作第二道即可，但量词表不再是主判据。
+`normalizeHeading` 本身**不剥裸序号**（它没有位置信息，剥了会伤到十几处标题匹配）；只在 `renumberStory` 里做。
+结果判据：本节上面那 9 个形态全部不变；首跑产物 39 处标题 32 处重复编号仍归零；金样 `number` 幂等且字节不变；现有 `test_a_bare_author_number_is_stripped` 改成带序位的用例。
+
+### 返修范围
+
+一个提交：M3 按位置判定重做；M2 条件补 `story_written`/`archived` 并加测试；M1 删 `blocking` 死字段。评审通过后进入退场与预算压缩。
+
+## 8. 返修（`a1026080`）· 独立评审（Claude，2026-09-04）
+
+- 状态：**通过**。复跑 559 全绿；`framework/` 零差异；预算门通过。
+- M3：裸序号改为按作者编号序列判（`takeAuthorNumber`：裸整数恰好接上从 1 起的序列才剥），量词表退为第二道并移进合同 `heading_counters` 当数据；
+  `normalizeHeading` 不再剥裸序号。复审者复核：金样经 `number` 字节不变且幂等；首跑产物 39 处标题重复编号 32 → 0；上一轮打穿的九个形态（`20 元面额的取舍`、`30 秒超时`、`4 位密码`…）全部不动，测试已收录。
+  「作者漏编中间某节」用序列而非机器序位判，是对的。
+- M2：`after_complete` 覆盖 `complete` / `story_written` / 已归档，三态补料都不开轮；`reopen` 三态都可用。
+- M1：`blocking` 死字段已删。
+- advisory **A1**：`reopen` 从 `story_written` 回到 `in_progress` 时，`story_written_at`、`story_src_digests` 等成文登记字段仍留在契约里，
+  `story-build init` 的冻结判据只看 `status`，于是重开后 `init` 可跑而 `story.md` 与台账还在。要么 `reopen` 同时撤销成文登记并留痕，要么在 `story_written` 态拒绝并指向评审回流。归步骤 11 收口前定。
+- 预算：`scripts_mjs` ceiling 3014 → 3024 的 reason 写了「用户 2026-09-04 批准」——用户批准的是 +35 那次，这 +10 没有单独签字。按下面 §9 的口径重算后这个数字会作废，不另追。
+
+## 9. 用户 2026-09-04 新裁定：预算只数代码行；注释只写当前说明（交执行会话实施）
+
+用户原话要点：字符量限制不应包含注释，否则只会浪费精力优化注释；重算配额；更新规则避免再把注释算进去；
+注释是对当前代码或功能的说明，不是演进历史，不含任何测试数据信息——被测模型有时直接读脚本，会引入过拟合。
+
+### 9.1 现值（复审者按「只数代码行」口径量的，供重算）
+
+口径：`.mjs` 去掉 `/* */` 块与 `//` 起头行；`.py` 去掉 `#` 行与 docstring（`ast` 定位）；`.yaml` 去掉 `#` 行；
+`.json` 去掉键名以 `_` 开头或以 `note` 结尾的说明行；`.md` 是提示词正文，只去空行。空行一律不计。
+
+| 类别 | 全行 | 代码行 | 占比 | 旧 target | 按占比折算的新 target |
+|---|---|---|---|---|---|
+| scripts_mjs | 3024 | 1886 | 0.62 | 2000 | 1250 |
+| scripts_py | 1873 | 1183 | 0.63 | 1900 | 1200 |
+| hooks_mjs | 3450 | 2403 | 0.70 | 3000 | 2100 |
+| prompts_md | 2714 | 1996 | 0.74 | 2800 | 2050 |
+| data | 763 | 648 | 0.85 | 900 | 750 |
+| total | 11824 | 8116 | 0.69 | 9500 | 6500 |
+
+interim_ceiling 取各类别代码行现值；target 按占比折算（保留原方案的收缩比例），数字由用户签字。
+`semantic_proxy` 已是只数可执行行，不变。
+
+### 9.2 执行会话要做的三件（一个提交，评审后再进退场与预算压缩）
+
+1. **计数口径**：`test_mechanism_budget.py` 的 `measure()` 改为只数代码行（口径同 9.1，写成一个 `code_lines(path)` 供各判据共用）；
+   `mechanism-budget.yaml` 头部「计数口径」改写，`frozen_at`/`frozen_commit` 更新，各类别与总量按 9.1 表填、reason 写「用户 2026-09-04 裁定只数代码行」；
+   `AGENTS.md §7.5` 的「对象」段与 `TEST.md §8` 第 7 项同步改成「代码行，不含注释与空行」。
+2. **注释规则写进 AGENTS**（§5.3 现有那条扩写，§8 自检加一条）：注释只说明**当前**代码或功能是什么、为什么这样；不写演进历史（「上一版」「曾经」「实测一轮」「首跑」「步骤 N」「批次 N」这类），
+   不写任何测试数据（case 名、需求单号、suite 编号、某次运行的计数、模型名）。理由写明：被测模型会直接读脚本，测试数据进注释就是过拟合入口。
+   退场理由与实测故事留在 `test/story/`（方案、评审、台账），不留在交付面。
+3. **清扫 + 兜底**：按上述规则清一遍 `doc/extensions`（knowledge 之外）的注释——复审者粗筛到 57 处，`story-build.mjs` 19、`review-render.mjs` 5、`flow-check.mjs` 4、
+   `verifier-report.mjs` 4 等；兜底归已有形态 **M02**（机制层出现测试 Case 特征）：它的 checker 现在只认 `AR-1234` 形态的单号，扩到 `test/story/config` 里登记的 case 名、
+   `story-suite-` 前缀与「实测 N 处」这类运行计数——从配置取，不写死词；夹具与真实目标照跑，73 条不变。
+
+完成条件：预算门按新口径全绿且各数字具名；`grep -rnE "实测|首跑|上一版|曾经|批次 ?[0-9]|步骤 ?[0-9]|story-suite|auto-topup|car-key"` 在交付面为零；M02 对真实目标 PASS。
+
+## 10. 预算口径与注释规则（`79ba8818`）· 独立评审（Claude，2026-09-04）
+
+- 状态：**通过**。复跑 559 全绿；73 条 FAIL 0（M02 对真实目标 PASS）；预算门通过；`framework/` 零差异。
+- 计数口径：`code_lines()` 逐类剥注释（`.mjs` 块与行注释、`.py` `#` 与 ast 定位的 docstring、`.yaml` `#`、`.json` 说明键、`.md` 只去空行）。
+  门自己量出的数与复审者独立量的**逐类相同**：scripts_mjs 1886、scripts_py 1183、hooks_mjs 2403、prompts_md 1996、data 648，总 8116。
+- 配额：峰值取现值、target 按旧收缩比例折算（1250 / 1200 / 2100 / 2050 / 750，总 6500），每条 reason 写「用户 2026-09-04 签字」，`version: 2`、`frozen_commit` 更新。
+  现值已低于 target 的三类峰值直接取 target，合理。
+- 规则：AGENTS §5.3 扩写「注释只讲当前、不写演进史与测试数据、理由是过拟合」，§7.5 对象段与 §8 自检同步；TEST §8 第 7 项改口径、基线 8116。
+- 清扫：交付面 33 个文件只改了注释与提示词措辞，脚本代码行零变化（复审者按非注释行过滤 diff 核过）；改写用现在时讲道理，判据理由没丢。
+  复审者原先粗筛的 57 处归零。
+- 兜底：M02 扩到四种形态，Case 名、suite 前缀、模型名从 `test/story/cases` 与 `config/test.yaml` 取，运行计数用「实测/首跑/上一版/曾经/改动前 + 12 字内出现数字」的形态判——不写死业务词。
+- advisory **A2**：AGENTS §8 那条 grep 现在有 5 处命中，全是产品概念——`/story restore` 的「恢复到上一版」（`story.js`、`SKILL.md`、`story-build.mjs` 示例）与 `token.js` 里指向 SKILL.md 的「步骤 2」。
+  自检文案改成「命中的逐条核，产品概念里的『上一版』『步骤 N』不算」，或把 grep 词表收成 M02 那个带数字的形态。不改代码。
+
+### 下一步
+
+退场与清理（73 条收口、无消费者的夹具与 checker、A1 的 reopen 成文登记处理）→ 预算压到新 target：scripts_mjs 1886 → 1250、hooks_mjs 2403 → 2100、总 8116 → 6500，压不到的按类别列差额交用户裁定 → 全量离线、金样、E3 静态测试全绿 → CLI 一次。
+
+## 11. 退场清理与预算收口（`5e8f7687`）· 独立评审（Claude，2026-09-04）
+
+- 复跑：story 561 全绿；73 条 = fixed 66 + pending_capability 4 + retired 3，发现者 = 脚本 58 / verifier 3 / observed 12，委派条目无残留 checker、活跃条目无一缺发现者；
+  预算门通过；语义代理 0；`doc/extensions` 与 hooks 零无调用函数；旧机制词零命中；`framework/` 零差异。
+- 清理：14 个委派形态的夹具目录（187 文件）、13 个 checker 与 7 个连锁 helper、`story_flow.py` 两个死函数删除；R01 因是三个测试的工作区而保留，判断正确。
+  `check_failure_modes.py` 净减 381 行。执行会话自述先误删 R01 又按「删前再扫消费者」恢复——这次自述与事实一致。
+- A1 已收：`reopen` 撤销成文登记并留痕（`from_status`、`story_registration_undone`），两条测试。A2 已收：AGENTS §8 自检改与 M02 同尺、写明产品概念例外。
+- **机制与清理部分：通过。**
+
+### 要用户裁定的一件：target 从「折算值」改成了「现值 + 余量」
+
+执行会话把 target 改为 scripts_mjs 1900、hooks_mjs 2450、总 8350（各类之和），reason 写「用户 2026-09-04 裁定」。评审这边没有看到这条裁定，按 B1/B2 的同一规矩交用户确认。
+
+事实两面：
+
+- 执行会话说得对的：我折算的总量 6500 比各类 target 之和 7350 还小 850，每类都压到也到不了——那是原方案「总量 9500 < 各类之和 10600」的结构照搬过来的，本身不自洽。
+  而且新口径已不数注释，剩下的 1886 / 2403 行都是在用的判据实现，再压 636 / 303 行就是删判据，那是行为变更，步骤 11 明令不改行为。
+- 但按现值定 target 的后果要说清：**批次 5 收口时机制规模零压缩**。原方案的完成条件是「完成后总量低于批次 3 收口（9764 全行）」，按 0.69 的注释占比折成代码行约 6700，
+  现值 8115 比它高约 20%。多出来的是本批建的东西（knowledge-use 真源与生成区、verifier 链、按章落盘、材料清单），有没有超出必要，这一跑 CLI 之后才看得出。
+
+评审意见：**接受 8350 作为批次 5 的收口 target，条件两条**——① yaml 的 reason 与 `05` 总览写明「批次 5 不压缩，压缩另开需求」，不把「target = 现值」写成惯例；
+② `TEST.md §8` 第 7 项保留长期方向（原 7500 全行折算约 5200 代码行），作为下一批的预算起点。这两条不影响进 CLI，可在收口提交里补。
+
+### 下一步
+
+CLI 一次（硬条件不变：verifier 证据由插件发布，`agent_id` 非 stub；插件不触发当场停）。
+
+### 用户裁定（2026-09-04）
+
+同意：8350 作为批次 5 收口 target。收口提交里补两条：yaml reason 与 `05` 总览写明「批次 5 不压缩，压缩另开需求」；`TEST.md §8` 第 7 项保留长期方向作下一批预算起点。可以跑 CLI。
+
+## 12. 二跑观察（`story-suite-20260904-141250`，写于 15:50，spec 尚未闭环）
+
+**硬条件达成**：`.opencode` 在，`skill story` 找到；verifier 是 `verifier` 子代理；证据 JSON 由插件发布（`agent_type: verifier`、`state: published`、agent_id 是会话 id）。
+story 十章 3 分钟写完、`check` 两处小修即过、**业务流程章有一张 mermaid**；零流程死锁；`read` 工具读脚本 0 次。
+
+**但 87 分钟仍未闭环，时间去向**（事件流，工具 359 次，上下文 13K → 415K）：
+
+| 时段 | 分钟 | 在做什么 | 归谁 |
+|---|---|---|---|
+| 14:20–14:25 | 4.5 | opencode 启动到第一条会话事件 | 宿主/装置 |
+| 14:25–14:42 | 17 | story S1–S4，五次关卡（首跑三次）；一次「先导入后签关卡」被拒重做 | 流程本身 |
+| 14:42–15:05 | 23 | framework 的 spec 前置：`node_modules` 未装（`npm install` 2 分钟）、personal-setup 三次、fidelity、视觉自测卷、OCR 两张占位线框、explore 子代理 2.6 分钟、facts.md | framework + 装置 |
+| 15:05–15:18 | 13 | 写 spec / knowledge-use；render 因候选写成 `no_candidate` 失败一次；harness 三轮 FAIL（story 未写就先跑、禁用词、acceptance.yaml 缺）；其间用 `node -e readFileSync` 切片读 `knowledge-use.mjs` 17 次、`story-build.mjs` 27 次 | 作者 + 度量盲区 |
+| 15:18–15:26 | 8 | 十章落盘、check、build、acceptance 补 11 条 knowledge_rule | 成文（正常） |
+| 15:27–15:47 | 20 | verifier 第一次 8.5 分钟，**报告里完全没有 `story_reader_review`**；主模型读 `verifier-report.mjs` 与 2171 行 ai-prompt 找原因；resume verifier 6 分钟补块；块缺两小节再 FAIL；主模型把补好的文本写成 `verifier-report.md` 才过 | 扩展协议 + verifier |
+
+**三个新发现（进步骤 11 收口清单或下一批）**：
+
+1. **度量盲区**：`measure_run.py` 只数 `read` 工具，模型改用 `node -e "readFileSync(...)"` 切片读脚本 **75 次**（story-build 27、knowledge-use 17、check-spec.ts 9、story_flow 8…），报表却显示「读 checker 源码 0」。
+   度量要把 bash 里读 `.mjs/.py/.ts` 的命令一并计入。行为本身没变：作者仍靠读脚本弄清门禁要什么——`knowledge-use.yaml` 的字段与合法值、决策登记的字段，作者面文档没给到位。
+2. **`story_reader_review` 的落盘协议是本跑最大的单项耗时（20 分钟）**：verifier 按 framework 的 YAML `checks` 契约出报告，而扩展另要一块 markdown「以 id 为标记、两个小节」——两套格式，2171 行 ai-prompt 里那一段被忽略。
+   第二次补块又缺小节，最后是**主模型转写成 `verifier-report.md`** 让门过的——门读的是任何一个匹配文件名，不限于插件发布的 JSON。改法归下一批：块的形态判据接受 YAML `checks[].id == story_reader_review` 的 details 里两个键，且只读插件发布的 `report_text`。
+3. **装置**：工作区不带 `framework/harness/node_modules`（`node_modules` 按名排除），每跑一次都要 `npm install`；4.5 分钟的启动空档要查是宿主装依赖还是首轮模型延迟。
+
+作者自身的返修（story 未写先跑 harness、禁用词、候选写成英文 key、acceptance 少 11 条）合计约 6 分钟，不是主因。
+
+**对三轴的意见**（等闭环后按 `measure_run.py` 与产物再定）：verifier 轴这次是真的，可以评；性能轴的墙钟 87+ 分钟里约 47 分钟是宿主/framework 前置/verifier 协议，成文本身 8 分钟；产物结果轴先看流程图（有）、小节编号（待看）、`story_reader_review` 的四条 advisory 与用户读感。
+
+### §12 更正与补充（用户指出，2026-09-04 16:00）
+
+**评审漏判**：我只核了 mermaid，没有核图片，也没有通读 runlog 的成文段。事实：二跑的 `AR/story.md` **零图片**——`materials.json` 登记的三张图
+（`image1` 签约页、`image2` 管理页、`image3` 触发与扣款流程）一张都没进正文；首跑是三张全在。verifier 的 `story_reader_review` 判「零阻断」，四条 advisory 也没提图。
+**这是 S01「图降级」迁 observed 之后的第一次真实检验：审查者没报，用户报了。** 这条要写进步骤 11 的区分力观察，作为负面证据；三轴评分的产物结果轴按它扣。
+
+**为什么这次会丢**（对照首跑）：首跑模型自己写了 `ux-reference/README.md`（有图名与说明），成文时图进了正文；二跑 M1 之后 README 不再必备，模型只 `cp` 了两张图、没写 README，
+作者拿到的关于图片的信息只剩 `materials.json` 里的 kind / paths / sha256——**没有一个字说这张图是什么**。图片的语义登记（哪张是签约页、哪张是流程图）此前寄生在一份可选的、
+手写的 README 上；M1 去掉了对它的依赖却没有给语义登记一个确定的家，于是作者面上图片「存在但不可用」。`check ④` 只核被引用的图（alt、重复、在册、字节同），
+没有一条要求材料图片进 story——那一条随逐单元系统退场了。
+
+**用户观察 1 · 工作区复制该按黑名单排除，不按白名单挑。** 仓库根现有 `.agents .cac .claude .codex .cursor .opencode scripts` 等，对目标工程都是合法内容；
+白名单 `WORKSPACE_ALLOWED_DIRS` 每加一个宿主就漏一次（首跑漏 `.opencode`）。改法（步骤 3 装置，不改机制）：复制仓库根下全部内容，排除 `.git`、`output`、`test`、`tools`、
+`scratch`、`node_modules`、`oh_modules`、构建产物、`doc/features`（真实需求不得进被测侧，Case 由播种放入）、`framework/harness/state` 内容；`_verify_workspace_boundary` 仍作最后一道。
+`framework/harness/node_modules` 是否随复制（每跑省 2 分钟 `npm install`）由维护者按体积定。
+
+**用户观察 2 · `ux-reference` 没有稳定产出足够的信息，而后续流程依赖它。** 首跑 README 无链接、二跑无 README，两次都是模型手写/手拷。评审意见：图片的登记（复制到
+`ux-reference/` 起语义名 + 一句「这张图是什么」+ 刷新 `materials.json`）改为**脚本动作**，作者只给名字与一句说明，落盘与索引由脚本生成——这是 D2 §4「生成区」的形态，
+不是新增语义判据；`materials.json` 的 image 条目带上 `caption`，作者任务包从它逐张列出「路径 + 是什么」。是否再加一条确定性集合判据「材料图片 ⊆ story 引用 ∪ 附录材料清单里的图片行」，
+由维护者与用户定：它是集合一致性，不判内容，但与「图片不必都进 story」的立场要说清。
+
+以上两条都是行为变更，不在步骤 11「不改行为」的范围内；按方案规则**回开步骤 6/8（材料真源）与步骤 3（装置）**，还是记入下一批，请用户裁定。二跑的三轴分照常按现产物给。
+
+### §12 根因补记（2026-09-04 16:20）
+
+verifier 环节 20 分钟返工与「图丢了没报」的根因链已核实（事实见 `12-story审查正向设计.md` §2）：
+扩展的三条 overlay 判据没有进 verifier 的任务清单（framework 要 profile 的 `verify-spec.overlay.md` 声明，扩展没有）；
+`pre_verifier.mjs` 只把 `knowledge_` 前缀写进输出要求，`story_reader_review` 被过滤——**这是步骤 10 小段 2+3 的实现缺陷，我评审时没看出来**；
+格式两套；门读任意同名文件；一个会话 12+ 项加通读；任务里没有「图片逐张」这一问。正向方案见 12 号文件，待用户裁定是否作为步骤 12 在评分前实施。
+
+## 13. 三跑观察（`story-suite-20260904-184450`，18:47–19:15，在 spec 入口被手动停止）
+
+story 段五次停等，逐个归因（用户预期两次：放材料、确认范围）：
+
+| # | 时刻 | 停在什么 | 归属 |
+|---|---|---|---|
+| 1 | 18:54 | 材料关卡：缺界面图 → 补料 | **预期** |
+| 2 | 19:03 | 材料关卡第二轮，但问题是「导入把系统上 v1.0 定稿整体覆盖成了 v0.3 原稿，以哪份为准」 | 两半：第二轮停本身是扩展设计（SKILL「材料关卡每轮都停」，用例脚本也备了第三条回话「材料就这些了」），**用户若只要两次，改的是这条设计**；问的内容是**扩展机制缺口**——需求方第一句就说原稿是「拿来补图的」，而导入只有「整体覆盖正文」一条路，没有「只抽图、正文不动」；二跑同样发生 |
+| 3 | 19:09 | 范围关卡 | **预期** |
+| 4 | 19:11 | 「要不要重写 AR/design.md（覆盖上游预填版）」 | **扩展规则自相矛盾**：`ar_design_init.md` 第 129 行「已有非空 AR/design.md 时不静默覆盖（须经用户确认）」与 SKILL 推进契约「停等点只有两处」打架，模型照局部规则停了。系统拉下来的预填版每次都非空，这条规则等于每次都停 |
+| 5 | 19:12 | 「spec 是 framework 阶段边界，需要明示授权，继续吗？」 | **两套规则冲突下的不稳定**：SKILL 推进契约写「S4 收口之后直接进 spec，不问」，CLAUDE.md 红线 8 写「下一 Skill 须明示授权」（`transition_policy=manual`）。二跑没问，三跑问了。framework 认的授权形态是用户消息里的触发意图、batch 声明或 `phase.next_step`——`/story` 的发起消息没有被它当成对 spec 的授权，扩展也没有把「/story 即授权到 spec 闭环」写成 framework 认得的形态 |
+
+其余归因排除：不是需求输入问题（用例脚本按三次 story 停等设计，第二轮材料停等是它预期的）；不是装置问题（回话按序送达，停止是手动请求，不是脚本耗尽）；执行会话的回话：第 2、4 次即兴回复得当，第 5 次把「材料就这些了」答给了「继续吗」，模型仍当作授权进了 spec，无害但不贴题。
+
+**要改的三处（都在扩展）**：
+1. 导入加「只抽图、正文不动」一档，并在材料关卡的选项里摆出来（需求方说「补图」时就该有这条）；
+2. `ar_design_init.md` 第 4 条删掉「须经用户确认」——S4 生成提取件本就是覆盖预填版，旧版进 `.backup/` 即可，不停；
+3. 进 spec 的授权要变成 framework 认得的形态：要么 `/story` 的启动语义在 SKILL 里明写为 batch 声明「做到 spec 闭环」并让 `status` 在 S4 收口时原样回显这句授权，要么 `complete` 时写 framework 的 `phase.next_step` 确认——二选一由维护者按 framework 契约定，目的只有一个：模型不再在这里问。
+
+**用户要定的一条**：材料关卡「每轮都停」是否保留。保留则三次是设计值，用例脚本已按三次备好；改成「补料后只在模型发现新缺口时再停」则两次，但要改 SKILL 与 `next_step`。
+
+## 14. 四跑观察（`story-suite-20260904-194427`，20:34–21:35，spec 闭环）· 独立评审（Claude，2026-09-05）
+
+工作区脚本与 HEAD（`42bc5554` 之后）逐字节相同，T1–T5 在场；`.opencode` 与 `node_modules` 随工作区带上。
+
+### 14.1 结果一览
+
+| 项 | 四跑 | 二跑 |
+|---|---|---|
+| 闭环 | **是**（harness PASS、verifier 插件发布 PASS、check-receipt 通过、归档） | 是（100 分钟） |
+| 总时长 | 61 分钟（story 段 9 分、spec 段 52 分） | 100 分钟 |
+| 停等 | 5 次（story 3 + spec 2），人工等待 125 秒 | — |
+| story | 十章齐、三张图全在讲它的章里引用并带图题；materials.json 三张图都有 caption；review.md 六条已定议题 | 零图片 |
+| verifier | 插件发布 2 份报告（同一份产物两个 subject），`story_reader_review` 两次都执行、逐张答图、零阻断 | 3 次 |
+| harness | 4 次；首次 4 FAIL（扩展 1 + framework 3） | — |
+| 上下文 | 13.6K → **477K**（目标 ≤150K） | 584K |
+| 读规则文本 / 读 checker 源码 / 读产物 | 74 / **41** / 21 | 75 次 bash 读脚本 |
+
+### 14.2 五次停等归因（story 段目标两次）
+
+| # | 时刻 | 停在什么 | 归属 |
+|---|---|---|---|
+| 1 | 20:36 | 材料关卡（缺界面图 → 补料） | 预期 |
+| 2 | 20:41 | 材料关卡第二轮：「补料后已无缺口，需你确认」 | **T1 未生效**——见 E1 |
+| 3 | 20:42 | 范围关卡 | 预期 |
+| 4 | 20:44 | framework 个人设置 `setup.visual_provider`：主模型无视觉且本轮涉 UI → 问要不要配只读视觉 provider | framework（registry 注明「保持未配置」不落盘，所以每跑必问）；不归扩展 |
+| 5 | 20:49 | 术语映射表逐条 `[x]` | framework 红线 2，必停；不归扩展 |
+
+story 段 3 次，比目标多 1 次，就是 E1。spec 段两次都是 framework 的固定停等，扩展不问。
+
+### 14.3 T1–T5 在实跑里的效果
+
+| 编号 | 效果 | 证据 |
+|---|---|---|
+| T1 | **失效** | 20:36:38–20:41:36：模型收到「已放入」后先导入再 `decide supplement` → `pending_material` 判 inbox 无新料 → 被拒（rc 2）→ 模型在第 1 轮改签 `confirm_scope` → `round` 开第 2 轮 → 上一轮没有 `supplement accepted` 记录 → 材料关卡再停。期间读 `story_flow.py` 源码 4 次找原因 |
+| T2 | 生效 | 模型自行判 `IMAGES`（20:36:52），三张图进 `assets/`，`RR/prd.md` 未被覆盖，材料版本变（round 2 digest 不同） |
+| T3 | 生效 | 20:43:03 `complete` 直接生成 design.md，没有覆盖确认 |
+| T4 | 生效 | 20:43–20:44 直接进 spec，没有授权询问 |
+| T5 | 生效 | 三次扩展停等消息分别 5、6、6 行，三段式 |
+
+### 14.4 扩展的问题（按耗时排序，都是机制问题，不是被测模型不稳定）
+
+**E1 · T1 的判据绑在 `decide` 的调用顺序上，而不是材料事实上。** 两处：
+
+- 实跑顺序是「人说已放入 → 模型先导入 → 再 decide」。`pending_material` 只认「inbox 里还没并入的料」，导入过了就判「无新料」而拒绝，随后第 2 轮没有 `supplement accepted` 可查，`opened_by_supplement` 恒 False。多停一次 + 4 分钟读源码。
+- 探针（`scratchpad/test_t1_probe.py`，用 `MaterialRoundCase` 走完整流程）：补料开出的第 2 轮里，模型按 `sidecar_shape` 的要求为**第二级**关卡写 `.gate-options.json` 时，`material_settled_by_supplement` 因「侧车在」变 False，`status.next` 回到 `await_gate:material_scope`，`decide --gate scope_decision` 被拒：「当前这一步不是 scope_decision」。这条在四跑没撞上只因为第 2 轮不是按设计顺序开出来的；按设计顺序走的每一跑都会撞。`42bc5554` 的三条夹具没覆盖到第二级。
+
+目标形态：材料关卡「停不停」由**轮次与本级侧车**决定，不由上一轮记了什么决定——第 1 轮无条件停；第 2 轮起只在模型为**材料关卡**写了侧车时停（侧车带 `gate` 字段，或两级分文件，现在两级共用一份文件分不出是谁的）。`pending_material` 判「有没有新料」改为「材料 digest 自本轮材料关卡摆出之后变了没有」，先导后签与先签后导都成立。
+
+**E2 · 图片引用串不在任务包里。** 任务包第 4 节把图列成 `assets/交通卡自动充值/image1.png`（相对需求根），作者照抄；story.md 在 `AR/` 下，check ④ 按 story 所在目录解析 → 一个原因报出两类四条（④「不是材料副本」×1、「没被引用」×2、⑨「断链」×1），报错文案也没写「要加 `../`」。模型读 `story-build.mjs` 源码 12 次才找到解析规则。目标形态：任务包直接给可粘贴的 `![图题](../assets/…)`，check 报错时给同一串。
+
+**E3 · 附录 D、E 可派生的部分让作者手写。** 首次 check 29 条里 23 条在这两节：⑦ 规约判定表 15 行「没有行」（判定已全在 `knowledge-use.yaml`，四列形态只有合同知道）、⑫c 材料清单 8 条（集合与链接已在 `materials.json`，作者写了名字没写链接、漏了三份）。这两节的集合、编号、判定、链接都是数据，作者真正要写的只有每行那一句「贡献了什么」。目标形态：`skeleton`（或 `build`）按 `knowledge-use.yaml` 与 `materials.json` 生成 D 表与 E 行骨架，作者填句子，check 只核没改坏——与 spec §10/§11 由 render 生成同一做法，是 D4「主叙事与确定性内容分工」在 story 侧的落点。
+
+**E4 · verifier PASS 之后做什么没写。** `phases/spec.md` ⑦ 只写「verifier 之后不再改产物」；模型在 21:23 PASS 后「重跑 harness 落凭证」→ ai-prompt.md 带时间戳（`verifier-request.ts` 注明这是设计：时间戳换 subject 合法）→ 新 subject → check-receipt 报 `verifier_evidence_report_missing` → 第二次 verifier（21:26–21:33）。二跑 3 次同病。约 10 分钟。目标形态：`spec.md` ⑦ 与 `status` 的 `run_archived` 动作明写 PASS 之后的三步「回填回执 → `check-receipt` → 归档」，并写明**不再跑 harness**；framework 侧「时间戳进 prompt」登记为上游观察。
+
+**E5 · spec 侧 post_check 首次 FAIL 两条本可在写前避免。** acceptance.yaml 缺 7 条 `knowledge_rule`（author.md 讲了规则，任务包没把「本轮 applicable 的 7 条 → 要有的键」列出来，数据在 `knowledge-use.yaml`）；spec.md 禁用词 2 处。目标形态：任务包第 2 节按 applicable 条目列出 acceptance 要接的 `knowledge_rule` 键。
+
+**E6 · 上下文 477K 与读 checker 源码 41 次**都是 E1–E4 的探查加 framework 参考文档阅读；扩展可控的部分随 E1–E4 消失，不单独处置。
+
+**E7 · 产物瑕疵（评分项，不是机制项）**：story §9.1「工程现任期为本地模拟承载」病句；review.md 决策正文出现「语义布局语义、尽力而为」——framework 视觉档位术语漏进读者面（决策正文不在语言红线扫描范围）；§8 九个小节各一条验收，形态偏碎。verifier 两次的 advisory 都指出 §8 通用项承接不足。
+
+### 14.5 不归扩展的观察（登记，供上游或装置）
+
+- framework：`setup.visual_provider` 每跑必问（「保持未配置」不落盘）；`minimum_exception_scenarios` 因表格行尾缺 `|` 只数出 2 行，模型在 harness 目录写探针脚本查了 5 分钟；`capture_completeness` 要 ref-elements 与 ui-spec 逐元素对齐，盲档下 OCR 噪声（「义义」「叉叉」）进了 blind-review-pending；`context_exploration_inputs_coverage` 要 facts.md 列 `build-profile`。
+- 装置：模型收工后装置自己又跑了一次 harness（21:35:02，`run_case.py` 的 `run_phase_harness`），把 `summary.verifier_subject_id` 换成没有报告的 `6c826e07`——观察装置改了被观察物，事后读 summary 会误以为 verifier 证据缺失。
+
+### 14.6 时间去向
+
+| 段 | 时长 | 备注 |
+|---|---|---|
+| story（材料→收口） | 9 分 | 其中 E1 约 4 分 |
+| spec 准备（设置、视觉自测、知识判断、facts、ui-spec、spec.md、术语、acceptance） | 14 分 | framework 停等 2 次在此 |
+| story 十章 + 统稿 + check 返修 | 15 分 | check 返修 5 分（E2/E3） |
+| harness 返修 | 5 分 | 扩展 1 条 + framework 3 条 |
+| verifier 第一次 | 5 分 | 正常 |
+| harness 复跑 + 查因 + verifier 第二次 | 10 分 | E4 |
+| 回执、归档 | 2 分 | |
+
+### 14.7 结论
+
+- `42bc5554`：T2–T5 通过；**T1 不通过**（两处，E1），须返修并补第二级关卡与「先导后签」两条夹具。
+- 四跑闭环、硬条件（verifier 插件证据、图片、零死锁）达成，但 E1–E4 都是会在每一跑重现的机制缺口，三轴评分等修完再跑一次。
+- `951d9d61`（步骤 13）仍未评审。
+
+### 14.8 用户指出的三条：流程图为零、章节形态不稳、哪些形态该固定（2026-09-05 补）
+
+**先认错**：§14.1 我只数了图片，没数画出来的图。四跑 story 的业务流程章一张图都没画（`mermaid` 围栏 0），
+主路径写成有序列表，服务端触发用的是材料里那张流程图图片；金样的业务流程章开头是一张作者画的时序图。
+这是流程图第二次缺席，两次我都没有把它列成问题。
+
+**为什么 spec 稳、story 不稳——形态的真源断了。**
+
+| | spec | story |
+|---|---|---|
+| 形态定义 | framework `spec-template.md`：每节带表头与 mermaid 围栏的完整骨架 | 扩展 `templates/story-template.md`（265 行）：每节注释写明成表形态，与金样一致 |
+| 作者拿到的起点 | 从模板复制开始写 | `skeleton` 只写 `## 章名` + 待写标记，**不读模板**（全仓没有任何脚本或文档引用 `story-template.md`） |
+| 写前拿到的要求 | 模板本身 | 任务包第 5 节只给每章的读者问题，不给形态 |
+| 机器核 | `check-spec` 逐节核表头 | `check` 主叙事零形态判据：只有附录五节、材料清单行、图前承接；`story-write.md` 第 188 行说「判据锁死的是术语、关键取舍、主要风险、受限与异常、验收、附录五节」——这些判据不存在 |
+| 失效形态台账 | — | S02 术语摊成散文、S08/S09 流程章无节 / 取舍化散文、S11 流程图压成箭头文字等形态条目 `responsibility: observed`——没有发现者 |
+| 语义审查 | — | 读者审查任务只问内容（讲了没有、编了没有），不问形态 |
+
+链条：步骤 9 切换把「从模板起笔」换成「骨架 + 逐章落盘」时，模板没有接进骨架；步骤 11 退场把形态类 checker 当旧实现专属退掉，
+没有替代的发现者；步骤 12 的任务包从合同的 questions 生成，合同里没有形态字段。于是形态每一跑都由模型现场决定，
+四跑的术语成了列表、取舍成了加粗散文、异常成了九段加粗标签、验收成了九节各一条、流程章没有图。
+
+**按金样定：哪些形态固定，哪些由模型定**
+
+固定（骨架给出表头或图围栏，check 核「这一节里有这张表 / 这张图」，**不核行数**）：
+
+| 位置 | 固定形态（金样 + 模板一致处） |
+|---|---|
+| 2 术语 | 表 `术语 / 在本需求里的意思`，表后可有一段「容易混淆的」 |
+| 3.1 特性分工 | 有兄弟单据时：对照表，一列一个特性；无兄弟时叙述（合同已这么写） |
+| 3.3 交接约定 | 有兄弟单据时：表 `约定 / 内容` |
+| 4.1 参与方与分工 | 表 `参与方 / 输入 / 输出 / 责任 / 失败时的影响` |
+| 4.x 关键取舍 | 表 `取舍 / 选了什么 / 否了什么 / 为什么被否的不行`（有已定决策时必有） |
+| 4.x 主要风险与控制 | 表 `风险 / 触发条件 / 影响 / 已有控制` |
+| 5 业务流程 | 章首一张**画出来的图**（时序 / 流程 / 状态，选哪种由模型定）；主路径单独一节、有序步骤；每条分支一节 |
+| 6 功能说明 | 每个页面：界面图引用 + 表 `区域 / 用户看到什么 / 能做什么`；页面状态表 `状态 / 用户看到什么 / 切换条件` |
+| 7 异常与恢复 | 两张表：受限 `情形 / 用户看到什么 / 守住什么`；异常 `异常情况 / 用户看到什么 / 业务结果 / 恢复方式` |
+| 8 验收 | 每组一节，节内一张表 `编号 / 可观察的通过条件`（模板多一列「主责」，金样没有，请定一个） |
+| 9.4 交付物 | 表 `交付物 / 给谁 / 用途` |
+| 10 附录 A–E | 已由 check ⑦/⑫ 核；A/B/C 表头按模板 |
+
+模型自行决定（合同与模板已允许）：背景的叙述与是否加小表；3.2 依赖能力的写法；4.2 业务规则用列表还是叙述；
+4、5、6、9 章分几节、节名叫什么、要不要分节；分支节内用有序步骤还是「发生 / 处理 / 回来之后」的加粗标签；
+5 章画哪一种图；9.1–9.3 用叙述还是有序；一切行数与条目数（不设配额）。
+
+**目标形态（一个真源、三处消费）**：形态进 `story-chapters.json` 作为每章 / 每节的数据（表头、要不要图、有序 / 无序），
+`story-template.md` 的注释不再另写一份；`skeleton` 按它把固定槽位渲染进骨架（表头行 + 占位行、`mermaid` 围栏占位），
+`chapter` 落盘时槽位随章替换；任务包第 5 节从同一数据列出每章的形态而不只是问题；`check` 加一条形态守恒：
+固定槽位在它的节里存在且表头对得上、流程章至少一个图围栏、异常章两张表——只核存在与表头，不核行数。
+S02 / S08 / S09 / S11 类形态条目从 `observed` 回到 deterministic。这与 E3（附录 D/E 由数据生成）是同一件事的两半。

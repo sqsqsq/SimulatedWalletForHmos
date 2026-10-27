@@ -15,9 +15,10 @@
 ## 读取方式
 
 - 归档内的相对链接按原仓布局保留：版本资料互链及其到 `test/golden/`、`test/cases/` 的链接可直接打开。
-- 指向 `extensions/`、`demo/`、`test/` 其他位置、`tools/` 或 `output/` 的链接没有随档复制，按 `44cba622:<原路径>` 读取；`output/` 下的运行证据由批次一01保全包取得，见当前批次交回。
+- 指向 `extensions/`、`demo/`、`test/` 其他位置或 `tools/` 的链接没有随档复制，按 `44cba622:<原路径>` 读取。
+- `output/` 下的运行证据不进 Git，不能按提交 SHA 取出：批次一01保全包只含当时选定的那部分；其余仍在本地 story-1.0 目录，位置清单见第三批01交回。2.x正式发布后再统一迁入当前仓本地。
 - 1.9.9发布说明仍是该版历史发布说明，不作2.0.0发布说明。旧2.0.1是story-1.0上的旧轮次资料，与 [legacy-2.x](../../legacy-2.x/README.md) 中的同号目录不是同一份。
 
-当前story上原有的1.x版本目录已从活跃入口撤下：与本目录同路径同blob的904件只登记映射，同路径不同的3件见 [story-before-rewrite](../../story-before-rewrite/19d26cad/README.md)。
+1.9.0–1.9.9 与 1.10.0 的版本资料已按本目录的原字节恢复到正常的 `doc/spec/`、`doc/plan/`、`doc/release/` 版本位置（2026-10-27），本目录保留作来源快照与 blob 身份证明。story分支与本目录同路径不同的3件story原件、story分支的旧金样见 [story-before-rewrite](../../story-before-rewrite/19d26cad/README.md)。
 
 当前需求从 [2.0.0规格](../../../spec/2.0.0/00-版本范围.md) 与 [2.0.0实施方案](../../../plan/2.0.0/00-实施方案.md) 进入。

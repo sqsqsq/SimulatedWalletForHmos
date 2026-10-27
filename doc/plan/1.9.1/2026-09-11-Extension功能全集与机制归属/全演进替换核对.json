@@ -1,0 +1,221 @@
+{
+  "scope": "整个Extension演进，非仅2.3",
+  "rows": [
+    {
+      "id": "H01",
+      "chain": "知识登记",
+      "old": "多种知识登记/硬编码基线",
+      "replacement": "877ba84e/9cc83c4e → manifest单清单、kind随文件、三类目录",
+      "status": "已替换",
+      "evidence": "当前knowledgeFiles/activeKnowledge按manifest与kind读取；旧pattern-baseline.json已删",
+      "action": "知识内容与机制分开，不因旧字段名退掉三类知识能力"
+    },
+    {
+      "id": "H02",
+      "chain": "知识下游传递",
+      "old": "contracts.knowledge_freeze独立冻结账本、readFreeze/downstream",
+      "replacement": "05af92ff/d6360575/111c4aef/54de2637/3ddf1b9f → 实体must与派生obligations",
+      "status": "代码主链已退",
+      "evidence": "cd838654的freeze.mjs有FREEZE_KEY；3dd将去账本后的freeze重命名contracts；当前无knowledge_freeze/readFreeze/downstream",
+      "action": "保留contracts实体解析属于复用，不是账本残留"
+    },
+    {
+      "id": "H03",
+      "chain": "模式契约落点",
+      "old": "知识文档指示project_knowledge.pattern_applications[].instance",
+      "replacement": "实体files.pattern/role与interfaces承担模式角色",
+      "status": "指令未退，新增R22",
+      "evidence": "README:59、decision-tree:42、page-interaction:40仍要求旧字段；当前Extension/Framework脚本无此字段消费者",
+      "action": "不能因模式正文被模型读取就判全是当前机制；只换失效落点指令，不删SDK知识"
+    },
+    {
+      "id": "H04",
+      "chain": "下游读取策略",
+      "old": "冻结后“一律不读知识目录”",
+      "replacement": "5949852a/2c04118d等 → must约束加已选模式实现篇",
+      "status": "过度表述未退，新增R23",
+      "evidence": "plan/author仍称后续不读知识目录，coding/author明确读被选模式实现篇",
+      "action": "适用/选型不重做与必要实现知识要读取是两件事"
+    },
+    {
+      "id": "H05",
+      "chain": "作者要求送达",
+      "old": "六阶段on_context_load及Story探针",
+      "replacement": "bc45379d → author.md；9c0a6148 → 作者显式取要求",
+      "status": "旧文件/注册已退",
+      "evidence": "Git有八份旧on_context文件删除记录；当前manifest无on_context_load，作者入口显式",
+      "action": "旧自动注入不能被算作当前仍能保证已读；现行送达另按实际调用验证"
+    },
+    {
+      "id": "H06",
+      "chain": "结构检查出口",
+      "old": "各阶段各自返回与错误处理",
+      "replacement": "5f4d7747 → guard/gate/evidence统一出口",
+      "status": "主职责已收敛",
+      "evidence": "当前六阶段共用guard/gate；Framework仅把ok:false加入hookCheckResults",
+      "action": "PASS证据文件有独有观察用途，不因为只有维护者读取就删"
+    },
+    {
+      "id": "H07",
+      "chain": "材料内容完整性",
+      "old": "source-units/逐单元分配与裁决、story-verify",
+      "replacement": "b991a22d/d158c5c6 → 模型整篇核对与独立语义审查",
+      "status": "旧主系统已退",
+      "evidence": "两提交删除source-units、story-verify、paraphrase、verdict-set；当前交付面无旧消费者",
+      "action": "2.3短ID仅定位原文，不等同旧逐事实裁决系统；是否过重另审"
+    },
+    {
+      "id": "H08",
+      "chain": "知识复述与裁决",
+      "old": "相似度、MIN_QUOTE、evidenceVerified、逐行裁决协议",
+      "replacement": "d158c5c6及后继 → 判断本身由verifier核",
+      "status": "主检查已退；尾部字段到B5才清",
+      "evidence": "当前无paraphrase/MIN_QUOTE/evidenceVerified；C1/C6旧值域与旧表头哨兵在B5才删除",
+      "action": "典型“主机制先退、配套合同/检查拖延退场”"
+    },
+    {
+      "id": "H09",
+      "chain": "独立审查发布",
+      "old": "subject分区JSON/宿主发布器与framework补丁交付",
+      "replacement": "18581b0a/5e0230a1 → 调用方原样落MD、Framework正式回执",
+      "status": "旧发布路径已退",
+      "evidence": "framework-patch.yaml删除，旧发布器测试/补丁退出；当前verifier-report读正式报告",
+      "action": "保留报告结构核对不是恢复发布器；不再自建平行调度"
+    },
+    {
+      "id": "H10",
+      "chain": "材料导入状态",
+      "old": "AR/.last-import.json导入回执与模型转述",
+      "replacement": "da35bbb7 → materials为身份/导入状态真源",
+      "status": "旧回执已退",
+      "evidence": "父提交import_sources含RECEIPT写入；该提交移除，当前交付面无last-import/导入回执",
+      "action": "imported是轮次增量用途，不是旧回执同名换壳；不盲删"
+    },
+    {
+      "id": "H11",
+      "chain": "成文初始化",
+      "old": "旧cmdInit检查来源并建决策容器",
+      "replacement": "2.3 sources接管同一准备职责",
+      "status": "未退",
+      "evidence": "当前cmdInit/COMMANDS/main和测试init_audit仍在",
+      "action": "R01与R13；此项仅是全演进的一例"
+    },
+    {
+      "id": "H12",
+      "chain": "源码事实与编号",
+      "old": "Spec工程token守恒、手工编号检查",
+      "replacement": "ff3d1b9c/c71e128b → 工程细节回契约、number统一编号",
+      "status": "主要旧规则已退；其他表达代理另列",
+      "evidence": "旧工程token守恒退；number/headings在用；仍有段长/人数/数值词面代理",
+      "action": "区分已退的token守恒与R14/R16，不因都有“数字”就判同一机制"
+    },
+    {
+      "id": "H13",
+      "chain": "附录生产",
+      "old": "作者手写/拷贝附录A–D",
+      "replacement": "8eaa7f35/24d2dba5/977fd1df → 真源投影与机器区保护",
+      "status": "生产已替换，旧行核对仍并存",
+      "evidence": "当前projectAppendix负责投影；check⑦/⑫b仍另抽规约行/首列集合",
+      "action": "R07先接只读一致性比对再退旧算法；不可无接替删除保护"
+    },
+    {
+      "id": "H14",
+      "chain": "附录表达",
+      "old": "整个附录只允许一句目的句+表行",
+      "replacement": "2.1允许机器投影外必要解释",
+      "status": "部分退，失效理由仍在",
+      "evidence": "其余四节不再按散文段数限制，材料清单仍slice(1)计段；appendixProjection注释仍援引旧限制",
+      "action": "R15/R18；不把受历史限制的形态当永恒用户要求"
+    },
+    {
+      "id": "H15",
+      "chain": "图片用途",
+      "old": "在正文/清单解释每张不用的图，路径当身份",
+      "replacement": "0615dd95/0133665d/2aee7914 → 按内容登记caption/unused",
+      "status": "用途已替换，送达与旁路残留",
+      "evidence": "materials按sha合路径；author按路径重复命令，check保留AR/assets未登记副本放行",
+      "action": "R11/R12；数据模型改了，围绕旧模型的输入/检查未全退"
+    },
+    {
+      "id": "H16",
+      "chain": "图与章节组织",
+      "old": "固定小节/标签、人数阈值、固定form.note",
+      "replacement": "133a15ef → 内容自适应；2.3 → runtime template",
+      "status": "部分退",
+      "evidence": "固定context后退；form.note至a9e6e50e才删除；人数/段长规则仍在",
+      "action": "R02/R14/R21；不能只查字段删除，还要核提示的决策规则与作者送达"
+    },
+    {
+      "id": "H17",
+      "chain": "评审件",
+      "old": "六类空骨架、签署字段、平铺表单",
+      "replacement": "b956169c/3ee1d24b → 判断台账、状态分类渲染、人工区",
+      "status": "主渲染路径已替换",
+      "evidence": "现行review-render按状态/类别和议题渲染；旧空骨架不再创建",
+      "action": "既定人工区保护保留；旧渲染每项需留无议题理由的规则不可恢复"
+    },
+    {
+      "id": "H18",
+      "chain": "统稿与审查记录",
+      "old": "copyedit固定行自证、逐章清单式证明",
+      "replacement": "1a93fca7及2.3 → 直接处理当前稿、来源到正文审查",
+      "status": "自证载体已退，重复方法未全退",
+      "evidence": "COPYEDIT_ROWS在1a93退；reader任务仍有旧跨章问题与结果说明，overlay也维护语义要求",
+      "action": "R20；“没文件了”不代表围绕旧流程的所有要求都清掉"
+    },
+    {
+      "id": "H19",
+      "chain": "作者材料载体",
+      "old": "v3指导区、固定关联、长stdout",
+      "replacement": "9f266709 → 输入/输出分离与短接续",
+      "status": "主链已退，部分新输入缺口",
+      "evidence": "指导区函数族/十章context字段已退；questions作者送达缺口",
+      "action": "T01–T05/R21，只占整体的一条链"
+    },
+    {
+      "id": "H20",
+      "chain": "写作步骤恢复",
+      "old": "Python按存在性判断Spec子步骤",
+      "replacement": "2.3 prepare成为子路由",
+      "status": "未退",
+      "evidence": "spec_stage_step和prepare同时在用，且有效性标准不同",
+      "action": "R08，先承接必要知识入口再删旧分支"
+    },
+    {
+      "id": "H21",
+      "chain": "交付授权与返修",
+      "old": "中途多次停等、启动即归档的旧说法、固定失败次数",
+      "replacement": "19657066/234d0548等 → 段内继续、交付后人选择",
+      "status": "实现/表述部分退",
+      "evidence": "当前仍有把S5放进启动授权表、固定三次失败资格、作者要求放check之后的链",
+      "action": "R03/R04/R05；优化了确认点却未消除旧例外与倒序说明"
+    },
+    {
+      "id": "H22",
+      "chain": "安装适配",
+      "old": "影子备份/回滚、旧版指纹判态、目标知识分析合并",
+      "replacement": "9b81a00f/e54b6c2e/cdb24f20 → 目录所有权、两态、知识不动",
+      "status": "主机制已退；模板晚退",
+      "evidence": "9b删回滚；e54替换扫描主干；4e5a0615才删旧适配plan模板/rules.md",
+      "action": "现行versionNotes保留目标注释有当前所有权用途，不是旧版识别分支"
+    },
+    {
+      "id": "H23",
+      "chain": "过程件生命周期",
+      "old": "登记时删除草稿和清扫story-src",
+      "replacement": "29c99a94/33dd9123 → 过程件保留用于恢复",
+      "status": "清扫职责已退",
+      "evidence": "现行登记保留drafts/过程件；恢复可按现稿补缺稿",
+      "action": "不能把保留过程件当旧垃圾协议，也不能再让指令编辑已删草稿"
+    },
+    {
+      "id": "H24",
+      "chain": "本轮新重复",
+      "old": "旧版本无对应实现",
+      "replacement": "2.3新增planJson/sourceCatalogue及重复语义段",
+      "status": "新增即重复，不是旧机制接管",
+      "evidence": "planJson在19af才出现；作者端已有readTemplate/effectiveDispositions",
+      "action": "R09/R20；同样要收敛，但不伪造它的历史归属"
+    }
+  ]
+}

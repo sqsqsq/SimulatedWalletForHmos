@@ -1,0 +1,134 @@
+{
+  "before": "0a177cf2",
+  "switch": "9f266709",
+  "review": "19af949f",
+  "current": "d36edb70",
+  "rows": [
+    {
+      "id": "T01",
+      "responsibility": "章稿指导区的物理包装、读写和剥除",
+      "old": "guidanceSpan/bufferLines/guidanceBlock/putGuidance/quoteGuidance/stripGuidanceZone/refreshGuidance",
+      "new": "独立chapters输入与drafts正文；writeViews/writeDrafts",
+      "status": "已退场",
+      "evidence": "0a177cf2中存在；9f266709删除；d36edb70中不存在",
+      "decision": "新机制直接接替；保留stripGuidance的种子注释清理不是复活整个旧指导区协议"
+    },
+    {
+      "id": "T02",
+      "responsibility": "范围、判断、方法与相关章灌入草稿头",
+      "old": "guidanceInputs/guidanceRows/methodBlock/relatedChapters",
+      "new": "scopeOf/chapterLead、template、relatedTargets、当前草稿定位",
+      "status": "旧函数已退，送达接替部分有缺口",
+      "evidence": "guidanceRows/inputs在0a中存在，9f删除；旧函数明确输出questions，现行chapterLead输出content/form/必要结构",
+      "decision": "范围/判断/相关章有承担者；稳定questions仍在合同但仅明确送审查端，R21补作者编排前入口"
+    },
+    {
+      "id": "T03",
+      "responsibility": "固定章关联表",
+      "old": "contract十章context_chapters及消费者",
+      "new": "运行时template.related与relatedTargets",
+      "status": "已退场",
+      "evidence": "0a十章都有context_chapters；9f以后为0",
+      "decision": "应保留真实关系入口，不恢复固定十章关系表"
+    },
+    {
+      "id": "T04",
+      "responsibility": "prepare刷新草稿及长stdout接后继",
+      "old": "prepareNext/prepareAfterWrite/wholePassOutput",
+      "new": "只读cmdPrepare与chapter成功后的短NEXT/INPUT/RESULT",
+      "status": "已退场",
+      "evidence": "三函数在0a存在、9f以后不存在；cmdPrepare名称沿用但职责已替换",
+      "decision": "不能因同名cmdPrepare还在判旧函数没退；也不能把正常chapter提交后的下一步提示一并删掉"
+    },
+    {
+      "id": "T05",
+      "responsibility": "固定章起手草稿",
+      "old": "chapterDraft与固定form.note的作者指导",
+      "new": "draftBody + template结构、集中表达方法",
+      "status": "分两轮退；存在承接检查项",
+      "evidence": "chapterDraft在9f删除；form.note在9f仍有10条，a9e6e50e才变0；questions仍保留10章",
+      "decision": "不能把整个“十章合同”判旧；稳定读者目标/必要凭据保留，R21只补漏掉的送达"
+    },
+    {
+      "id": "T06",
+      "responsibility": "材料准备与决策空容器起手",
+      "old": "story-build cmdInit + COMMANDS/main + init_audit测试起手",
+      "new": "cmdSources + ensureDecisions + missingRequired",
+      "status": "未退场",
+      "evidence": "cmdInit从0a到9f/19af/d36都存在；当前test_story_build仍有init_audit和直接init调用",
+      "decision": "R01：真正被接替的是这个成文init，不是story_flow.cmd_init、adapters init或knowledge-use init"
+    },
+    {
+      "id": "T07",
+      "responsibility": "Spec内写作子步骤判定",
+      "old": "Python spec_stage_step及多分支SPEC_STAGE_ORDER返回",
+      "new": "story-build cmdPrepare可读/可装配判断",
+      "status": "未退场",
+      "evidence": "spec_stage_step从0a到d36都存在；2.3-02已规定Python只给阶段动作、细步骤归prepare",
+      "decision": "R08先把knowledge-use缺件入口等有效动作接到prepare，再退Python子路由，不能删完留断点"
+    },
+    {
+      "id": "T08",
+      "responsibility": "整批上游Mermaid在作者包展开",
+      "old": "author.diagramSection循环carryableBlock",
+      "new": "source-index/chapters定位原文，按需读取",
+      "status": "旧送达面未退",
+      "evidence": "carryableBlock(d,label)调用从0a到d36一直存在",
+      "decision": "R10只退全量复制输入，不删除图源对应能力、diagramsOf共用解析或要求作者凭空画图"
+    },
+    {
+      "id": "T09",
+      "responsibility": "审查从章清单转为来源与实际结果比较",
+      "old": "readerReviewTask原跨章问题/输出契约段、overlay新次序",
+      "new": "overlay统一语义规则，任务书装本次对象",
+      "status": "部分退场",
+      "evidence": "B5/19af已去开头重复次序，但“跨章对着读，这四问”和输出段从0a仍留到d36",
+      "decision": "R20把独有效果要求并入唯一规则源再删任务书重复；合同questions是输入维度，不是待删除旧裁决表"
+    },
+    {
+      "id": "T10",
+      "responsibility": "S4覆写输入后检测自身变化",
+      "old": "模型直接改AR/design、旧complete收口方式",
+      "new": "design-draft + cmd_complete留存原AR/幂等提交",
+      "status": "已替换并返修补齐",
+      "evidence": "804db2d3引入；eda9c282/c388922a补重试与前置；现行生成指令写候选、complete --from提交",
+      "decision": "新增留存/提交代码有真实数据保护对象，不能只因“代码多了”删除；不把这部分当无用旧兼容"
+    },
+    {
+      "id": "T11",
+      "responsibility": "附录手写行一致性检查",
+      "old": "check⑦规约行与⑫b契约首列集合",
+      "new": "已存在的projectAppendix/appendixProjection",
+      "status": "更早替换的后续收敛机会；不是2.3新引入投影",
+      "evidence": "projectAppendix与⑫b在0a基线已同时存在",
+      "decision": "R07是先用同源只读机器区比对接替再退旧算法；旧check并非零用途，不能直接删"
+    },
+    {
+      "id": "T12",
+      "responsibility": "作者/审查编排协议各读一套",
+      "old": "story-build.readTemplate与新增reader.planJson/sourceCatalogue覆盖逻辑",
+      "new": "story-sources纯解析/有效取舍共用",
+      "status": "2.3新增重复；不是旧机制未退",
+      "evidence": "planJson在0a/9f不存在，19af才出现",
+      "decision": "R09：纠正新增实现的职责重复，不能记成历史旧代码退场"
+    },
+    {
+      "id": "T13",
+      "responsibility": "来源坐标/版本/编排结构检查",
+      "old": "旧流程靠模型逐章找材料；没有等量确定性索引实现",
+      "new": "story-sources新模块、index/basis/template校验",
+      "status": "新增确定性支撑，没有可一对一退掉的旧脚本",
+      "evidence": "story-sources在0a不存在，9f已存在；输入准备由新的脚本接替部分模型劳动",
+      "decision": "必须评价实际减少的模型劳动与新协议成本；不能假定新增761物理行必有761旧行可退，也不能因此免审新实现"
+    },
+    {
+      "id": "T14",
+      "responsibility": "正常的跨功能共同支撑",
+      "old": "material轮次/source basis/成文冻结；原生阶段与Extension阶段内步骤",
+      "new": "分别绑定人决定、坐标和定稿；Framework管阶段闭环",
+      "status": "职责不同，应共存",
+      "evidence": "各自读写的对象和失败条件不同；M04/M32/M33已有逐项比较",
+      "decision": "有多个文件/摘要不等于多版本机制；只收敛同一职责的重复，不砍恢复或知识后续能力"
+    }
+  ]
+}

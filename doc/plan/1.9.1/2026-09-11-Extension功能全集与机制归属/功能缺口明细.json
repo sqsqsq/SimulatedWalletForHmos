@@ -1,0 +1,29 @@
+[
+  {
+    "id": "D01",
+    "feature": "F4.8",
+    "path": "hooks/shared/contracts.mjs",
+    "symbol": "knowledgeCriteria",
+    "observed": "两条criteria同为RULE-01，输入AC-1/AC-2，实际Map只剩AC-2（本轮纯函数复现）。",
+    "decision": "保留一条规约可对应多个验收的完整关系；与R19同步修读取和UT/testing消费者，不能把删掉第二条验收当清理。",
+    "test": "同rule两AC、criteria/boundaries同rule、不同verify分派均不静默覆盖；合并读取不放宽Spec策略。"
+  },
+  {
+    "id": "D02",
+    "feature": "F4.4",
+    "path": "hooks/shared/knowledge-use.mjs",
+    "symbol": "coverageProblems",
+    "observed": "renderSkeleton对空patternIds输出patterns: []；本轮调用coverageProblems仍报“patterns一个适用单元都没登记”。",
+    "decision": "只有在册模式非空才要求进行适用判断；空模式集没有候选判断任务，保持合法空表。不是取消模式功能。",
+    "test": "空模式集空表通过；有模式未判断仍提示；有模式但无候选需有依据。"
+  },
+  {
+    "id": "D03",
+    "feature": "F4.4",
+    "path": "hooks/plan/post_check.mjs",
+    "symbol": "specPatternHits / planPatternChoices",
+    "observed": "两函数分别以unit为Map键set单值，代码会覆盖同单元的第二个候选/选择；知识README明确同单元可命中多个模式。此项为源码证明，未运行完整Plan场景。",
+    "decision": "候选/选择以unit+pattern或保留列表对应；消费方一起改，保留多模式能力和拒绝依据。",
+    "test": "一个单元两候选、选择一项拒绝一项、两项组合、重复同一项均有对应结论。"
+  }
+]

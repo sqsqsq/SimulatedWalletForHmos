@@ -170,7 +170,7 @@ export function inputRows(basis) {
 }
 
 /** 明细里写的路径规范成表里的写法：去反引号、反斜杠换正斜杠、去开头的 `./`。 */
-const inputPath = v => String(v ?? '').replace(/`/g, '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
+export const inputPath = v => String(v ?? '').replace(/`/g, '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
 
 /** unreviewed 一项：`{path|check, reason}` 或 `<路径或判据>：<原因>`。 */
 function skippedItem(u) {
@@ -206,12 +206,15 @@ export function detailProblems(details, status, basis, checkIds = []) {
     out.push('判了 SKIP，审查对象却在盘上——SKIP 只用于审查对象不存在');
   }
   const seen = new Set();
+  const written = new Set();
   for (const raw of details.examined_inputs) {
-    const p = canon(inputPath(typeof raw === 'string' ? raw : raw?.path));
-    // 表是必审集合，不是阅读白名单：额外取证读过的相关文件可以声明，但顶替不了任何一份必审
+    const at = inputPath(typeof raw === 'string' ? raw : raw?.path);
+    const p = canon(at);
+    // 表是必审集合，不是阅读白名单：额外取证读过的相关文件可以声明，但顶替不了任何一份必审；同一内容的别名各写一次算同一份
     if (!p) out.push(`examined_inputs 里有一项没有路径：${JSON.stringify(raw)}`);
-    else if (seen.has(p)) out.push(`examined_inputs 里「${p}」写了两次`);
+    else if (written.has(at)) out.push(`examined_inputs 里「${at}」写了两次`);
     else if (table.get(p)?.missing) out.push(`examined_inputs 声明读过「${p}」，它在盘上读不到`);
+    written.add(at);
     seen.add(p);
   }
   const skipped = new Set();

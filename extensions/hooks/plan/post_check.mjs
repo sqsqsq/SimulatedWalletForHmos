@@ -10,6 +10,7 @@
  *   ④ **引用**——用例引的验收编号存在；
  *   ⑤ **埋点逐点落实**——蓝图里落在本单位的每个统计点，plan.md 的逐点表里有行，责任方法是契约声明的方法。
  *   ⑥ **宿主扩展章**——plan.md「宿主扩展（可选）」在，承接的规约、选中模式与埋点各有小节，规约编号引得到，逐点表在「埋点」小节里。
+ *   ⑦ **章节编号与本文引用**——plan.md 带号子节以父节号开头、同一层不重号；表里「承载设计章」列的「号. 章名」指本文同一章。
  *
  * 「义务是不是真的被应用了」「text 写的是不是本需求的设计」是语义判断，归独立审查。
  *
@@ -19,6 +20,7 @@ import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { entryOf, featureKnowledge, rolesOf, unitDuties } from '../shared/knowledge-application.mjs';
+import { chapterNumberProblems, chapterRefProblems } from '../shared/chapters.mjs';
 import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, unidentifiedCarriers, verifyProblem }
   from '../shared/obligations.mjs';
@@ -212,6 +214,15 @@ export default guard('plan', async (ctx) => {
     host.problems.push(...hostChapterProblems(planText, { file: 'plan.md', anchor: '宿主扩展（可选）', judged,
       acceptance: inputs.acceptance, events: !['none', 'missing'].includes(designStatPoints(judged).state) }));
     if (!inputs.acceptance) host.skipped.push({ what: '扩展章引用的验收编号', why: inputs.why });
+  }
+
+  // ---- 章节编号与本文引用：只核 plan.md 自己的号与标题，不定固定章号 ----
+  const numbering = { name: '章节编号与本文引用', problems: [], skipped: [] };
+  groups.push(numbering);
+  if (planText === null) numbering.skipped.push({ what: 'plan.md 章节编号与本文引用', why: '这一次没有 plan.md' });
+  else {
+    numbering.problems.push(...[...chapterNumberProblems(planText), ...chapterRefProblems(planText, '承载设计章')]
+      .map(p => `plan.md：${p}`));
   }
 
   // ---- 本阶段审查报告：格式、判据全不全、一对象一结论、WARN 行的处置 ----

@@ -446,6 +446,33 @@ class TheHostChapterExplainsTheUnit(ChainCase):
         self.assertIn("本单位承接埋点，这一章下没有讲它的小节", gate)
         self.assertIn("本单位承接设计模式，这一章下没有讲它的小节", gate)
 
+    def test_the_spec_numbers_its_children_under_their_parent(self) -> None:
+        """spec 真实 post_check：带号子节不以父节号开头报出；无号的 Scope 与宿主扩展章、合法的自由编号不报。"""
+        body = ("# 规格\n\n## 1. 概述\n\n### 1.1 范围\n\n## Scope 声明\n\n### Scope 模块清单\n\n"
+                "## 3. 契约\n\n### 2.1 接口\n\n## 宿主扩展治理项\n\n### 规约\n\n" + RULES + "\n### 设计模式\n\n刷新分支按决策树编排。\n")
+        self.write("spec", body)
+        gate = self.spec_probe()["gate"]
+        self.assertIn("spec.md：「### 2.1 接口」挂在「## 3. 契约」下，号却是 2.1", gate)
+        self.assertNotIn("1.1 范围", gate)
+        self.assertNotIn("Scope", gate)
+        (Path(self.probe()["dir"]) / "spec" / "spec.md").write_text(body.replace("### 2.1 接口", "### 3.1 接口"), encoding="utf-8")
+        self.assertNotIn("章节编号", self.spec_probe()["gate"])
+
+    def test_the_plan_mapping_points_at_its_own_chapter(self) -> None:
+        """plan 真实 post_check：「承载设计章」的「号. 章名」号与章名指不同章时报出；没有这一列不要求。"""
+        host = ("\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
+                + "\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
+        mapping = "## 8. spec 功能映射表\n\n| spec 编号 | 承载设计章 |\n|---|---|\n| F1 | {ref} |\n"
+        body = "# 计划\n\n## 1. 模块架构图\n\n略。\n\n## 3. 数据模型定义\n\n略。\n\n" + mapping + host
+        self.write("plan", body.format(ref="3. 模块架构图"))
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("plan.md：「承载设计章」列的「3. 模块架构图」对不上本文的章：「模块架构图」在本文是第 1 章", gate)
+        plan = Path(self.probe()["dir"]) / "plan" / "plan.md"
+        plan.write_text(body.format(ref="1. 模块架构图（入口）"), encoding="utf-8")
+        self.assertNotIn("承载设计章", self.probe(fresh=True)["gate"])
+        plan.write_text(body.replace("承载设计章", "实现模块").format(ref="3. 模块架构图"), encoding="utf-8")
+        self.assertNotIn("对不上本文的章", self.probe(fresh=True)["gate"])
+
     def test_the_author_gets_the_judgements_it_does_not_carry(self) -> None:
         facts = self.probe()["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
         self.assertIn("需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）", facts)

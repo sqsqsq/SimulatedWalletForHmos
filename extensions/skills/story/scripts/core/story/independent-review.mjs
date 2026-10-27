@@ -27,7 +27,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { hostReviewer, storyReviewVisual } from '../../../../../hooks/shared/framework-access.mjs';
-import { detailProblems } from '../../../../../hooks/shared/review-inputs.mjs';
+import { detailProblems, inputPath } from '../../../../../hooks/shared/review-inputs.mjs';
 import { parseYaml } from '../../../../../hooks/shared/yaml.mjs';
 import { readerCheckIds, readerReviewTask } from '../../../../../hooks/shared/reader-review-task.mjs';
 import { readJson, readText, replaceFile } from './context.mjs';
@@ -102,7 +102,7 @@ export function prepareReview(ctx, reportDirArg) {
       + `这次指定的是 ${asked}。同一份材料的回复都在 ${bound}，准备记录与已有回复未改动；去掉 --report-dir 或写 ${bound} 重跑` };
   }
   const reportDir = bound ?? asked ?? `doc/reports/story/${ctx.args.feature}/${key.slice(0, 16)}`;
-  const choice = replyPlace(ctx, was, key, reportDir, object.rows);
+  const choice = replyPlace(ctx, was, key, reportDir, object);
   // 授权随这一次准备沿用与否，在准备开始时判定一次（`pendingDisclosure`）；披露已写进文件，材料键里含它
   const waiver = disclosedWaiver(ctx);
   const record = { material_key: key, project_root: ctx.projectRoot.split(path.sep).join('/'), report_dir: reportDir,
@@ -137,11 +137,11 @@ export function prepareReview(ctx, reportDirArg) {
  * 「前一次」只指紧前那次准备，不往更早的回复里找替代。
  * 派审带出去过的原回复记下原样字节（`originals`）；字节对不上的回复不再读出结论，恢复原样之后照常读。
  */
-function replyPlace(ctx, was, key, reportDir, rows) {
+function replyPlace(ctx, was, key, reportDir, object) {
   const originals = originalsOf(was);
   const altered = alteredReplies(ctx, originals);
   const current = was?.material_key === key ? was.report_file : null;
-  const known = materialConclusion(ctx, key, reportDir, current, rows, altered);
+  const known = materialConclusion(ctx, key, reportDir, current, object, altered);
   if (['pass', 'warn'].includes(known?.result)) return { reportFile: known.report_file, reused: true, context: null, originals: received(ctx, originals, known) };
   if (current && !was.reused && !fs.existsSync(abs(ctx, current))) {
     const c = was.review_context;
@@ -153,7 +153,7 @@ function replyPlace(ctx, was, key, reportDir, rows) {
   let context = null;
   if (['report_invalid', 'subject_stale'].includes(known?.result)) {
     // 当前回复不合合同时，check 读目录里其余回复中最新的有效结论；那里有通过结论就直接复用
-    const earlier = earlierConclusion(ctx, key, reportDir, current, rows, altered);
+    const earlier = earlierConclusion(ctx, key, reportDir, current, object, altered);
     if (['pass', 'warn'].includes(earlier?.result)) return { reportFile: earlier.report_file, reused: true, context: null, originals: received(ctx, originals, earlier) };
     context = contextOf(ctx, 'format_repair', known);
   } else if (known?.result === 'fail') {
@@ -355,7 +355,7 @@ export function reviewResult(ctx) {
   // 这一份还没回复时，同一份材料之前已有的有效结论仍在：重新准备不撤销已知的阻断；原样字节对不上的回复不读
   const originals = originalsOf(was);
   const altered = alteredReplies(ctx, originals);
-  const known = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object.rows, altered);
+  const known = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object, altered);
   if (known && ['pass', 'warn', 'fail'].includes(known.result) && !originals[known.report_file]) {
     return { result: 'report_unreceived', report_file: known.report_file,
       detail: `${known.report_file} 里的回复还没接收：重跑 \`story-build review --action prepare\` 接收（记下原样字节的摘要），再 check` };
@@ -383,13 +383,13 @@ export function reviewResult(ctx) {
  * 它目录里最新的原样回复就是当前回复（不合合同也照判，诊断留给格式返修）；当前位置还没回复时从其余回复取最新的有效结论；
  * 都没有返回 null。
  */
-function materialConclusion(ctx, key, reportDir, reportFile, materials, altered = new Set()) {
+function materialConclusion(ctx, key, reportDir, reportFile, object, altered = new Set()) {
   const at = reportFile ?? replyNumbers(ctx, reportDir).sort((a, b) => b - a).map(n => `${reportDir}/${reply(n)}`)
     .find(f => !altered.has(f));
   if (at && fs.existsSync(abs(ctx, at)) && !altered.has(at)) {
-    return { ...judge(fs.readFileSync(abs(ctx, at), 'utf-8'), key, materials, coverageBasis(ctx, materials)), report_file: at };
+    return { ...judge(fs.readFileSync(abs(ctx, at), 'utf-8'), key, object.rows, coverageBasis(ctx, object)), report_file: at };
   }
-  return earlierConclusion(ctx, key, reportDir, at, materials, altered);
+  return earlierConclusion(ctx, key, reportDir, at, object, altered);
 }
 
 /** 报告目录里已有回复的编号。 */
@@ -399,10 +399,10 @@ function replyNumbers(ctx, reportDir) {
 }
 
 /** 报告目录里除 `skip` 之外的回复，从新到旧取第一份有效结论（pass / warn / fail）；没有返回 null。 */
-function earlierConclusion(ctx, key, reportDir, skip, materials, altered = new Set()) {
+function earlierConclusion(ctx, key, reportDir, skip, object, altered = new Set()) {
   const files = replyNumbers(ctx, reportDir).sort((a, b) => b - a).map(n => `${reportDir}/${reply(n)}`);
   for (const rel of files.filter(f => f !== skip && !altered.has(f))) {
-    const out = judge(fs.readFileSync(abs(ctx, rel), 'utf-8'), key, materials, coverageBasis(ctx, materials));
+    const out = judge(fs.readFileSync(abs(ctx, rel), 'utf-8'), key, object.rows, coverageBasis(ctx, object));
     if (['pass', 'warn', 'fail'].includes(out.result)) return { ...out, report_file: rel };
   }
   return null;
@@ -454,18 +454,26 @@ function locations(cell) {
 const visuals = new WeakMap();
 
 /**
- * 覆盖声明对着核的必审集合：任务材料表列出的每一份（缺件已在对象里拦下；任务本身计入材料键、不在表里），加独立 Story 视觉裁定——
- * 只有原生裁定允许延期时，对象里冻结的图片可以按能力缺口写进 unreviewed 而结论最高 warn。
+ * 覆盖声明对着核的必审集合：审查对象的每一份按规范路径归一（同字节的别名算一份，成员里有一份要读就要读；缺件已在对象里拦下；
+ * 任务本身计入材料键、不在表里），只核在场与来源摘要的行不要求声明；加独立 Story 视觉裁定——
+ * 只有原生裁定允许延期时，对象里的图片可以按能力缺口写进 unreviewed 而结论最高 warn。
  */
-function coverageBasis(ctx, materials) {
+function coverageBasis(ctx, object) {
   const task = path.relative(ctx.projectRoot, path.join(ctx.featureRoot, ...TASK)).split(path.sep).join('/');
-  materials = materials.filter(m => m.path !== task);
-  const images = materials.filter(m => m.label.endsWith('（image）')).map(m => m.path);
+  const canon = p => object.alias.get(p) ?? p;
+  const inputs = new Map();
+  for (const m of object.rows.filter(r => r.path !== task)) {
+    const k = canon(m.path);
+    const seen = inputs.get(k);
+    if (seen) { seen.required ||= m.required_read !== false; continue; }
+    inputs.set(k, { path: k, purpose: m.role === 'object' ? `审查对象：${m.label}` : m.label, required: m.required_read !== false,
+      missing: false, image: m.kind === 'image' });
+  }
+  const images = [...inputs.values()].filter(x => x.image).map(x => x.path);
   if (images.length && !visuals.has(ctx)) visuals.set(ctx, storyReviewVisual(ctx.projectRoot, ctx.args.feature));
   const v = images.length ? visuals.get(ctx) : null;
   return {
-    inputs: materials.map(m => ({ path: m.path, purpose: m.role === 'object' ? `审查对象：${m.label}` : m.label, required: true, missing: false })),
-    gaps: [], alias: new Map(),
+    inputs: [...inputs.values()], gaps: [], alias: object.alias,
     visual: v?.status === 'ok' && v.deferral ? { fact: v.fact, deferred: new Set(images) } : null,
   };
 }
@@ -484,7 +492,10 @@ function coverageOf(body) {
   return { docs, broken };
 }
 
-/** 一份回复对这一份材料：材料键、三节、判据逐项、发现的材料引用、结论与发现一致、覆盖声明对得上必审集合。 */
+/**
+ * 一份回复对这一份材料：材料键、三节、判据逐项、发现的材料引用、结论与发现一致、覆盖声明对得上必审集合。
+ * 发现的材料位置要落在这一次的审查对象里，或是报告 examined_inputs 声明过的额外取证（额外取证顶替不了必审）。
+ */
 function judge(text, key, materials, basis = null) {
   const invalid = why => ({ result: 'report_invalid',
     detail: `回复不合报告合同：${why.join('；')}。这份回复留在原处；跑 \`story-build review --action prepare\` 取新的回复位置，`
@@ -510,7 +521,9 @@ function judge(text, key, materials, basis = null) {
     if (!CHECK_RESULTS.includes(result)) why.push(`判据 ${id} 的结果「${result}」不是 ${CHECK_RESULTS.join('/')}`);
     if (!basis) why.push(`判据 ${id} 没写依据`);
   }
-  const paths = new Set(materials.map(m => m.path));
+  const declared = coverageOf(parts.get('判据核对')[0]).docs[0]?.examined_inputs;
+  const paths = new Set([...materials.map(m => m.path),
+    ...(Array.isArray(declared) ? declared : []).map(x => inputPath(typeof x === 'string' ? x : x?.path)).filter(Boolean)]);
   found.data.forEach(([no, severity, id, where, what, owner], i) => {
     if (!no || !what || !owner) why.push(`发现 ${no || '（无编号）'} 缺编号、问题与依据或修正责任`);
     if (!SEVERITIES.includes(severity)) why.push(`发现 ${no} 的严重程度「${severity}」不是 ${SEVERITIES.join('/')}`);

@@ -8,6 +8,7 @@
  *   ② **验收标准一致**——spec.md「验收标准」里定义的编号在 acceptance.yaml 里有，关联功能一致；
  *   ③ **审查报告**——格式、判据全不全、一对象一结论、WARN 的处置。
  *   ④ **宿主扩展章**——spec.md「宿主扩展治理项」在，承接的规约与选中模式各有小节，写到的规约与验收编号引得到。
+ *   ⑤ **章节编号**——spec.md 带号子节以父节号开头，同一层不重号。
  *
  * 验收是否真的覆盖了规约要求的行为与验证责任，是语义判断，归独立审查。
  *
@@ -18,6 +19,7 @@ import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
 import { featureKnowledge, unitDuties } from '../shared/knowledge-application.mjs';
+import { chapterNumberProblems } from '../shared/chapters.mjs';
 import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { acceptanceIdRe, functionIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
@@ -117,12 +119,15 @@ export default guard('spec', async (ctx) => {
 
   const specPath = path.join(inputs.dir, 'spec', 'spec.md');
   const host = { name: '宿主扩展章', problems: [], skipped: [] };
-  groups.push(host);
+  const numbering = { name: '章节编号', problems: [], skipped: [] };
+  groups.push(host, numbering);
   if (!fs.existsSync(specPath)) {
     alignment.skipped.push({ what: '验收标准与 acceptance.yaml', why: '这一次没有生成 spec.md' });
     host.skipped.push({ what: '宿主扩展治理项', why: '这一次没有生成 spec.md；承接在验收条目里' });
+    numbering.skipped.push({ what: 'spec.md 章节编号', why: '这一次没有生成 spec.md' });
   } else {
     const specText = fs.readFileSync(specPath, 'utf-8');
+    numbering.problems.push(...chapterNumberProblems(specText).map(p => `spec.md：${p}`));
     if (acceptance) alignment.problems.push(...acceptanceAlignment(specText.split(/\r?\n/), acceptance));
     if (!judged) host.skipped.push({ what: '宿主扩展治理项', why: '激活知识派生失败，承接范围无从确定' });
     else host.problems.push(...hostChapterProblems(specText, { file: 'spec.md', anchor: '宿主扩展治理项', judged, acceptance }));

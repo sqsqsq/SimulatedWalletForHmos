@@ -1,0 +1,128 @@
+> 历史基线，只用于追溯，不执行本文件的旧顺序。当前唯一线路见 ../00-执行总览.md。原位置：03-Extension全量清单与退场判定.md。
+
+# 03 全量文件与三段职责判定
+
+> 基线33dd9123。替换旧K/D/M/E按文件或“生成器已保证”批量定生死的清单；本轮按B/C/保留职责执行。未定不是执行者任意选择，发现事实推翻本表时回方案裁定，不能硬删或自行恢复一代旧机制。
+
+## 1. B段：与2.1＋2.2无关，可独立闭合
+
+| 项 | 具体对象 | 准确处理 | 为什么现在可做 | 独立完成条件 |
+|---|---|---|---|---|
+| B01 同语言的配置与路径重复 | paths.mjs、spec/post_check.mjs、story-build.mjs的featuresDir；story_flow.py与import_sources.py的features_dir | JS复用featureRoot/extensionRoot，Python复用已有导入层函数；明确返回绝对或相对，由调用处转换；对接器与安装器独立部署不跨语言合并 | 同一个配置/路径解析职责已有公共实现，不依赖成文方法变化 | 不同features_dir、空格路径、缺配置、模块实际调用路径均正确；不以import成功代替执行 |
+| B02 知识清单解析重复 | knowledge-use.manifestDigest与knowledge.activeKnowledge各自读manifest | 在现有knowledge.mjs共用knowledgeFiles读取；一个消费者计算身份，一个派生知识，不改变各自语义 | 清单解析相同，消费者目的不同；只退重复读取规则 | 空清单、坏类型、缺登记文件、同知识多路径均按现行合同处理 |
+| B03 无实际用途的导出/计算 | IDENTIFIER_SHAPE、ownIdentifiers及unused ownIds、未使用baseLayerIds导入；plan的resolveEntityRef导入与AUTHOR_DOC；spec的恒空skipped；entityName仅收回无外部消费者的export | 按基线实际引用核对后删除独占无效计算/变量；baseLayerIds函数若随最后消费者退出则删除；内部仍用的entityName函数不删 | 这些计算不参与当前功能结果；不是仅因命名旧或测试没覆盖 | 有效语言扫描、契约解析和错误报告结果不变；删依赖后无新孤儿 |
+| B04 已退状态/过滤的残留 | flow-check.FLOW_STATES中的archived；story_flow.SKIP_INBOX后置过滤 | 保留真正的contract.archived与story_written；由导入源扫描唯一排除README；退虚构status=archived测试，真实状态区间测试继续守 | 实际写入方不产生第三状态，过滤对象早已被上游排除 | 真实归档与已登记仍通过；未完成不通过；README不是待导入材料 |
+| B05 知识解析的无消费者派生 | parseIndexFile的name/title；appliesWhen/alwaysApplies/coordinatorRole等无人读取的派生 | 逐字段核基线消费者后删除派生，indexes保留file；保留constraint正文、roles与coordinator合法性检查；不删除原知识文件内容 | 派生数据不被现行功能使用，原文仍是模型可读取的知识 | 激活、知识自检、模式roles与已有作者输入不缺；真正读取字段不得以同组名删除 |
+| B06 验收读取同义实现及一对多丢失 | spec.acceptanceCoverage与contracts.readAcceptance/knowledgeCriteria；ut/testing读取者 | 共用读取和条目规范化；Spec只选criteria，UT/testing保持原集合策略；rule映射保留数组而非覆盖最后一条；作者编号样例用既有AC数字形态 | 不同阶段策略不需要两套相同解析；共享时必须一起修原有丢条目，不能缩减验收情形 | 同rule多AC、criteria/boundaries、错误类型、坏YAML、AC样例到UT/testing贯通；不降低verify要求 |
+| B07 新知识配置与旧候选假设冲突 | knowledge-use.renderSkeleton/coverageProblems；plan.specPatternHits/planPatternChoices | 无在册模式时空patterns合法，有模式仍需判断；同unit不同pattern都保留并比较，重复同一对报错；消费者按unit+pattern或同义分组读取 | 激活机制允许没有模式、同单元允许多模式，旧强制/单值假设不再适合当前合同；属于必要局部修复，不算删除收益 | 无模式、有模式无候选、同单元双候选、采用/拒绝/组合均不静默消失 |
+| B08 旧知识协议指令与当前读取边界 | 模式README及两模式文档的project_knowledge落点；plan全面禁读知识；UT覆盖不了就转device；facts禁止新增的泛化 | 只修明确失效的协议指针/过度表述，指向当前files.pattern/role及实体；保留已选模式实现篇和必要facts读取；不重新做上游适用/选型 | 当前实体化与模式实现篇已接替旧账本策略，指令仍驱动模型去旧位置 | 不生成project_knowledge旁账，不擅改verify，有依据新增能力可设计；SDK/业务原文与知识义务不减少 |
+| B09 数值出处的旧字面裁决 | spec.post_check.scanNumericSources/UNIT_ALIASES与Spec语义规则 | 保留来源类型/位置的结构检查；退出数值加单位未字面匹配即伪造的分支，真假/换算由现有Spec verifier明确承担，不新增逐数值台账 | 字面命中不等于同一业务量，未命中不等于无真实来源；与Story形式改写无关，可先独立闭合 | 单位换算有真实依据可解释；缺来源标签仍报；相同数字不同含义由语义审查识别，未审不称已验 |
+
+B01/B02先归一，B03/B04再删失效依赖，B05–B09核知识链与来源边界。允许必要调用胶水与局部修复，但必须记录新增和删除；不能要求零新增逼出绕行。已通过的B5/2.4纯职责改动可抽取应用到基线，先核依赖与结果，不整笔引回2.3。
+
+rules.md及旧适配plan模板已归A段，不再出现于B段删除收益。cmdInit、chapterSection、槽位、copyedit、附录算法均归C，B不动。
+
+## 2. C段：2.1＋2.2与其旧承担者一起替换
+
+| 包 | 原承担者 | 目标承担者与处理 | 为什么归第三段 | 完成条件 |
+|---|---|---|---|---|
+| C00 回退后S4自覆盖的必要修复 | 基线cmd_complete与AR/design直接写入 | 候选提交、原输入留存和合法S4判定；只移植此职责，不带来源索引/编排/prepare | 已知失败不能通过回退重新带进成文；费用全部计C，不冒充基线已有 | 原输入可追、RR/SR真实变化仍拦、自身提交不误开轮 |
+| C01 唯一作者起手与逐章目标 | cmdInit、chapterSection、旧chapterDraft/form.note分发 | skeleton负责不覆盖的决策容器与章稿；questions/boundary进简短草稿头，稳定方法一处 | 新章头承接逐章要求后旧任务包分发与独立init一并退，不能在B先删 | 缺决策时可起步，已写决定不覆盖，作者第一次可取得十章目标 |
+| C02 自适应形式替换固定槽位 | form/slots/slotCondition/renderSlot及数量型⑪、⑫c中的固定形态 | 保留十章职责和明确凭据，保留08所列必要slots子集，退可选槽位与图表数量代理；模型按关系选形式 | 这是2.1目标的一部分，与作者指引同一步替换，不是无关死代码 | 无页面能力不套UI表，多控制对象可分别说明；不丢图源/验收 |
+| C03 可靠章提交与及时接续 | cmdCheck局部规则独占、chapter缺局部核与NEXT | chapterProblems共用＋成功后短NEXT/INPUT；Python spec_stage_step保留 | 不加prepare/任务协议；共用能由当前章决定的检查 | 同坏章两入口同判，失败不改Story，别章字节不变，下一动作真实 |
+| C04 实际整稿替换固定留痕 | COPYEDIT_ROWS/⑫d/冻结与台账中的copyedit及作者七行自证 | 按02的实际正文核对流程，决策仍落decisions | 退出的是自证载体与规则，不是整稿能力；新方法先送达 | 无copyedit可登记，已定/未定和跨章核对仍有承担者 |
+| C05 附录与评审的生成/读取保护归一 | ⑦/⑫b的手写行算法、⑤字段核与review渲染、重复只读保护 | 同源生成计算加只读机器区比对；字段合法性在渲染前核且check可复用；人工区保持 | 不能直接以“生成过”删掉生成后保护；只退重复算法 | 单独check/--deliver能发现丢行改值，生成器独立期望测试，人工意见保留 |
+| C06 按身份提供图并保留真实对应 | imageSection按路径重复任务、AR/assets未登记副本旁路、散文段数规则 | 一图一任务；登记路径仍可访问；原件对应/断链保留，段数交语义 | 退的是副本特权和配额，不是图片身份、来源对应、内容完整 | 注册assets合法、未注册不特权；源图合并/改画仍对应，清单可有必要说明 |
+| C07 真实审查与交付 | 任务书只有路径/重复方法、结构PASS被当语义PASS | Story全文一次、来源位置、overlay唯一方法、reviewVerdict交付核 | 这是2.2的审查闭合；保留Framework回执与既有能力缺失披露 | FAIL不能因报告结构PASS而放行，全文缺失不伪称已审 |
+| C08 作者方法与接口说明同步 | 旧图人数/段字数配额、倒置顺序、固定失败次数、旧init/槽位/copyedit说明 | 按02完整十章及三动作方法重写并按实际入口更新；边界以真实内容需求定 | 旧规则与新目标冲突，方法在作者行动前给，不靠脚本连续纠错 | 2.1/2.2每项诉求有输入、行为、结果与审查，不省掉细节只留口号 |
+| C09 最终验证与正式清单 | 旧E两跑即退、旧测试按引用批删、旧预算回填现值 | 功能/反例/正常CLI分层证据、去重增删账、G2与正式映射 | 验证真实目标而非旧机制自己的存续；不新增自动裁决平台 | 功能完整，规模符合04优先目标或具名合理例外；未验行为不称完成 |
+
+## 3. 明确保留，不能挪到预算外
+
+| 项 | 结论与边界 |
+|---|---|
+| K01 语言红线与作用域 | scanBannedTerms、scanLanguageRedline、redact*并非四代：规则、不同种类规则与作用域适配有区别；保留当前有效边界，方法文字可归一。不以一次未复现删除。 |
+| K02 图的独立保护 | 图片身份、断链、源图对应各判不同事实；保留。数量/固定位置配额由C02/C06退出；danglingFigures只保留能确定的缺引用/承接定位，不能以“图五代”整族删除。 |
+| K03 生成后只读校验 | H1编号、附录/Review生成区、冻结依据在独立check/交付时仍要验证；生成器与校验共享规则，但不能只留写入器。 |
+| K04 知识实体义务与探针 | contracts、obligations、probes及六阶段现行能力保留。探针只证明其语法/结构事实，不等于语义落实；不把未跑到coding当废弃。 |
+| K05 知识运行自检 | selfCheck不整体搬到本仓test/story以减预算；目标仓运行时仍需发现知识边界/配置问题。可逐条收敛不可靠规则，但本轮不取消这一交付职责。 |
+| K06 实际执行证据与可见任务 | evidence记录PASS运行事实，当前Framework仅记录ok:false；review-task显示同一审查任务。维护者是合法消费者，不因只供维护而称自证删除。 |
+| K07 真实状态与恢复 | material轮次、人签、imported增量、reopened/材料变化留痕、spec_stage_step、归档恢复保留；这些不因状态多而自动成为旧机制。 |
+| K08 独立适配与目标知识 | 安装器按目录所有权替换，目标知识/对接实现按来源保留；业务内容不重构。B08仅修失效协议指令，预算外变化单列不冒充减量。 |
+| K09 数据源身份与现行合法形态 | sources.label用于材料类别，不能和可选表格槽位一起删；解析所需元数据、有效正文与机器区边界保留。凡删除辅助函数先核是否还供保留职责使用。 |
+
+## 4. 全文件定位
+
+下表由33dd9123的实际文件与当时测量器核过：**59份文件、9675预算行**，三个对接JS列出但不计预算。它是定位索引，不再给整文件一个D字母让内部所有职责连带删除。知识和安装器虽不在本计数中，仍由K08保护、相关测试保留。
+
+表中的B/C范围是导航，不是允许重写整个文件的白名单。准确修改对象以07/08各包点名的函数、字段和直接消费者为准；未点名且没有本包接口变化的内容保持。
+
+| 文件 | 基线预算行 | 所属实施范围 |
+|---|---:|---|
+| `hooks/coding/author.md` | 34 | B08知识指令；C01/C06/C07/C08作者送达 |
+| `hooks/coding/post_check.mjs` | 118 | B01/B03/B06/B07/B09；C02/C05/C07；保留该阶段有效职责 |
+| `hooks/plan/author.md` | 44 | B08知识指令；C01/C06/C07/C08作者送达 |
+| `hooks/plan/post_check.mjs` | 226 | B01/B03/B06/B07/B09；C02/C05/C07；保留该阶段有效职责 |
+| `hooks/review/author.md` | 31 | B08知识指令；C01/C06/C07/C08作者送达 |
+| `hooks/review/post_check.mjs` | 97 | B01/B03/B06/B07/B09；C02/C05/C07；保留该阶段有效职责 |
+| `hooks/shared/contracts.mjs` | 130 | B02/B03/B05/B06/B07；K04/K05/K09 |
+| `hooks/shared/evidence.mjs` | 41 | K04/K05/K06，随接口作必要同步 |
+| `hooks/shared/gate.mjs` | 56 | K04/K05/K06，随接口作必要同步 |
+| `hooks/shared/knowledge-use.mjs` | 503 | B02/B03/B05/B06/B07；K04/K05/K09 |
+| `hooks/shared/knowledge.mjs` | 308 | B02/B03/B05/B06/B07；K04/K05/K09 |
+| `hooks/shared/obligations.mjs` | 74 | B02/B03/B05/B06/B07；K04/K05/K09 |
+| `hooks/shared/paths.mjs` | 42 | B01/B02/B04；C00必要协作；其余保留 |
+| `hooks/shared/pre_verifier.mjs` | 86 | C07/C08，保留各阶段独立语义与结构职责 |
+| `hooks/shared/probes.mjs` | 143 | K04/K05/K06，随接口作必要同步 |
+| `hooks/shared/reader-review-task.mjs` | 106 | C03/C05/C07；K03/K06 |
+| `hooks/shared/verifier-report.mjs` | 145 | C03/C05/C07；K03/K06 |
+| `hooks/shared/yaml-lite.mjs` | 146 | B01/B02/B04；C00必要协作；其余保留 |
+| `hooks/spec/author.md` | 41 | B08知识指令；C01/C06/C07/C08作者送达 |
+| `hooks/spec/author.mjs` | 275 | B08知识指令；C01/C06/C07/C08作者送达 |
+| `hooks/spec/post_check.mjs` | 360 | B01/B03/B06/B07/B09；C02/C05/C07；保留该阶段有效职责 |
+| `hooks/testing/author.md` | 28 | B08知识指令；C01/C06/C07/C08作者送达 |
+| `hooks/testing/post_check.mjs` | 76 | B01/B03/B06/B07/B09；C02/C05/C07；保留该阶段有效职责 |
+| `hooks/ut/author.md` | 29 | B08知识指令；C01/C06/C07/C08作者送达 |
+| `hooks/ut/post_check.mjs` | 77 | B01/B03/B06/B07/B09；C02/C05/C07；保留该阶段有效职责 |
+| `manifest.yaml` | 68 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `rules/coding-rules.overlay.yaml` | 22 | C07/C08，保留各阶段独立语义与结构职责 |
+| `rules/plan-rules.overlay.yaml` | 50 | C07/C08，保留各阶段独立语义与结构职责 |
+| `rules/review-rules.overlay.yaml` | 20 | C07/C08，保留各阶段独立语义与结构职责 |
+| `rules/spec-rules.overlay.yaml` | 133 | C07/C08，保留各阶段独立语义与结构职责 |
+| `rules/testing-rules.overlay.yaml` | 17 | C07/C08，保留各阶段独立语义与结构职责 |
+| `rules/ut-rules.overlay.yaml` | 21 | C07/C08，保留各阶段独立语义与结构职责 |
+| `skills/story/AGENTS.section.md` | 6 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/contracts/story-chapters.json` | 447 | C01/C02/C06/C08；sources.label/必要结构K09 |
+| `skills/story/phases/spec.md` | 126 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/phases/story-write.md` | 289 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/reference/evidence-rules.md` | 78 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/rules/ar_design_init.md` | 106 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/rules/inbox_import.md` | 68 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/rules/init_analysis.md` | 185 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/rules/review_reflow.md` | 72 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/rules/rules.md` | 81 | A保留删除，只计一次 |
+| `skills/story/rules/scope_gate.md` | 140 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/scripts/adapters/review.js` | 预算外 | K08；必要help在C08同步，不重构对接实现 |
+| `skills/story/scripts/adapters/story.js` | 预算外 | K08；必要help在C08同步，不重构对接实现 |
+| `skills/story/scripts/adapters/token.js` | 预算外 | K08；必要help在C08同步，不重构对接实现 |
+| `skills/story/scripts/core/flow-check.mjs` | 223 | B04；C03/C04/C08相应合同同步，K07 |
+| `skills/story/scripts/core/headings.mjs` | 72 | C03/C05/C07；K03/K06 |
+| `skills/story/scripts/core/import_sources.py` | 461 | B01/B02/B04；C00必要协作；其余保留 |
+| `skills/story/scripts/core/lint-rules.mjs` | 351 | B03孤儿；C02/C06配额；语言/路径K01/K02 |
+| `skills/story/scripts/core/materials.py` | 183 | B01/B02/B04；C00必要协作；其余保留 |
+| `skills/story/scripts/core/review-render.mjs` | 136 | C03/C05/C07；K03/K06 |
+| `skills/story/scripts/core/story-build.mjs` | 1706 | B01/B03；C01–C07，按函数/分支接替；不能整文件删 |
+| `skills/story/scripts/core/story_flow.py` | 915 | B01/B04；C00/C03/C04/C08；其余K07 |
+| `skills/story/scripts/README.md` | 19 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/SKILL.md` | 208 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/templates/inbox-readme.md` | 21 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/templates/plan-sections.md` | 104 | C01/C08方法与接口指针；非重复的原职责保留 |
+| `skills/story/templates/spec-sections.md` | 131 | C01/C08方法与接口指针；非重复的原职责保留 |
+
+## 5. 计量与裁决，不再使用旧“可退1600行”汇总
+
+旧估算把A已删除的81又算进B；E组的探针解析重复入账；旧子路由仍以退场计减；02新增局部检查/提交接续等成本没有完整进入汇总。原D912/M区间/E552不再作为本轮可实现的保证，也不保留任意文件行数上限作为替代。
+
+每个B/C包记录：基线具体函数/段落、删除的旧实现、移到共享处的量、接替新增、测试/知识/安装器变化、实际净值。移动只计一次；一项规则不能在“函数删除”和“文件压缩”两处重复抵扣。知识/测试/安装器单列，不能用它们抵消预算内增长。
+
+G1根据N1倒算第三段目标净变化`8675−N1`。C00必要修复、C01头部、C03局部核与NEXT、C05只读保护、C07全文/实际verdict及作者方法全部纳入C预测。估算不可信时G1不通过；必要合理实现可按04具名接受适当超限，不能说“做六成就够”。最终只认G2实测与功能完整。

@@ -3,17 +3,22 @@
 本文记录对应日期或版本的代码事实、证据和待验证边界；当前任务以用户目标及现行规约确定。历史测试、旧设计与已回滚实现不能覆盖
 已确认 Spec，也不能作为恢复生产结构的需求来源。
 
+记录合并了两条线：**story-1.0** 是 1.x 主线，到 1.9.9 发布（`b4fbf433`）；**story** 在 1.9.8 发布之后从 `c65ab661`（2026-09-29）分出，
+做了旧 2.x 各轮（资料在 [legacy-2.x](../doc/archive/legacy-2.x/README.md)）并把它的 demo 换成 Framework 3.1 + Story 1.9.8。两条线 2026-10-26 在
+`61a1446e` 合流为新 2.0.0。每条事件标所在的线：〔story-1.0〕〔story〕，分出之前的标〔共同〕；两条 demo 不是同一个消费工程的连续升级。
+各条里的「当前」「以……为准」指那条记录当时。
+
 ## 1. 演进记录
 
-2026-10-25 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](../doc/release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
+2026-10-25 〔story-1.0〕 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](../doc/release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
 
-2026-10-17 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。
+2026-10-17 〔两条线各自同步〕 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。
 
-2026-10-16 **dsh 正式 CLI 链路测通**：用户最终范围为正常工作后停止。中心 runtime 修复不限时请求、dsh cwd 与 Windows Electron/ASAR 启动，并补回 OpenCode 参数顺序、内容审查与百炼鉴权分类；中心提交 `2934b83`、`d904257`，本地标签 `v1.0.1`、`v1.0.2`，已同步本仓、未推送。中心最终离线 72 passed；本仓相关回归 155 passed、12 subtests passed，已消除上次同步发现的兼容缺口。正式 suite `story-suite-20261016-dsh-full-01` 的 car-key-sharing 使用 dsh + 百炼 DeepSeek；有效 attempt 3 已验证工具执行、材料关卡回复、两份补料投放及同 session 续行（41 次原始 tool_call/result），随后按用户要求 stop/finalize，相关进程已退出。前两 attempt 的注册表漂移和沙箱 ACL 故障保留，不归责消费模型。临时测试配置与 dsh profile 均已恢复；未完成阶段验收，不评分。证据见 `output/story/story-suite-20261016-dsh-full-01/startup-verification.md`。
+2026-10-16 〔story-1.0〕 **dsh 正式 CLI 链路测通**：用户最终范围为正常工作后停止。中心 runtime 修复不限时请求、dsh cwd 与 Windows Electron/ASAR 启动，并补回 OpenCode 参数顺序、内容审查与百炼鉴权分类；中心提交 `2934b83`、`d904257`，本地标签 `v1.0.1`、`v1.0.2`，已同步本仓、未推送。中心最终离线 72 passed；本仓相关回归 155 passed、12 subtests passed，已消除上次同步发现的兼容缺口。正式 suite `story-suite-20261016-dsh-full-01` 的 car-key-sharing 使用 dsh + 百炼 DeepSeek；有效 attempt 3 已验证工具执行、材料关卡回复、两份补料投放及同 session 续行（41 次原始 tool_call/result），随后按用户要求 stop/finalize，相关进程已退出。前两 attempt 的注册表漂移和沙箱 ACL 故障保留，不归责消费模型。临时测试配置与 dsh profile 均已恢复；未完成阶段验收，不评分。证据见 `output/story/story-suite-20261016-dsh-full-01/startup-verification.md`。
 
-2026-10-16 **CLI runtime 接入中心仓同步版**：从 `C:/Users/kangz/.agents/tools/cli-runtime` 同步提交 `0e8defa910e36dbbe4bbf91febbada57a00f411d`，身份见 `tools/cli/.sync-stamp.json`；运行时新增 dsh 适配，契约测试迁至 `test/tools/cli/tests`，原有未被中心测试覆盖的七项回归保留于 `test/tools/cli/test_story_runtime_regression.py`，验证入口迁至 `test/tools/cli/TEST.md`，Codex 配置档位由 `full_access` 改为中心版的 `build`。同步检查 CLEAN、注册表校验、worker 入口、编译与两 Case 的只读 plan 通过；离线运行时回归 60 passed / 2 failed，消费方相关回归 107 passed / 39 subtests passed / 3 failed（含两项 subtest）。待中心仓修复：OpenCode prompt 参数顺序、内容审查拒绝分类、百炼鉴权报文识别。本仓副本保持同源，未启动真实模型；日志与同步前备份见 `output/scratch/cli-runtime-sync-20261016/`。
+2026-10-16 〔story-1.0〕 **CLI runtime 接入中心仓同步版**：从 `C:/Users/kangz/.agents/tools/cli-runtime` 同步提交 `0e8defa910e36dbbe4bbf91febbada57a00f411d`，身份见 `tools/cli/.sync-stamp.json`；运行时新增 dsh 适配，契约测试迁至 `test/tools/cli/tests`，原有未被中心测试覆盖的七项回归保留于 `test/tools/cli/test_story_runtime_regression.py`，验证入口迁至 `test/tools/cli/TEST.md`，Codex 配置档位由 `full_access` 改为中心版的 `build`。同步检查 CLEAN、注册表校验、worker 入口、编译与两 Case 的只读 plan 通过；离线运行时回归 60 passed / 2 failed，消费方相关回归 107 passed / 39 subtests passed / 3 failed（含两项 subtest）。待中心仓修复：OpenCode prompt 参数顺序、内容审查拒绝分类、百炼鉴权报文识别。本仓副本保持同源，未启动真实模型；日志与同步前备份见 `output/scratch/cli-runtime-sync-20261016/`。
 
-2026-10-12 **1.9.9 两 Case 输入承接 2.x 业务补充**（用户确认「承接业务补充，保留 1.x 协议」，方案 `doc/plan/1.9.9/2026-10-12-整体设计/07-R6-两Case金样.md` §2；外线工作区 `E:\Project\SimulatedWalletForHmos` 的 `test/cases`，最近改动提交 `ce3677ad`，逐文件按实际 diff 合入，没有整体复制）：
+2026-10-12 〔story-1.0〕 **1.9.9 两 Case 输入承接 2.x 业务补充**（用户确认「承接业务补充，保留 1.x 协议」，方案 `doc/plan/1.9.9/2026-10-12-整体设计/07-R6-两Case金样.md` §2；外线工作区 `E:\Project\SimulatedWalletForHmos` 的 `test/cases`，最近改动提交 `ce3677ad`，逐文件按实际 diff 合入，没有整体复制）：
 两份系统设计补接口字段、单位、可空性、判重与错误结构；交互脚本补「问到才答」的业务立场——auto-topup 的模拟验证边界、update 单日上限按会上 200；
 car-key 的初始宽限 48 小时口径、车钥匙卡片范围、模拟验证边界、草稿续办、接受比例由车云统计；auto-topup 答案卷补上限冲突的立场；
 两份评审回稿的意见按 2.x 措辞（car-key 保留本线 match/verdict/opinion 投放结构）；car-key `case.yaml` 只同步覆盖说明。
@@ -23,23 +28,21 @@ car-key 的初始宽限 48 小时口径、车钥匙卡片范围、模拟验证�
 car-key-sharing `interaction-script.yaml` f327d7b08700361a → 0f5d24ed81a0c93c、`workspace/SR/design.md` 967a69233f70c43e → 68ff916dff8a6b00（与外线锁定摘要相同）、
 `update-inputs/car-review-feedback.yaml` a03ca13d07a13952 → f3cfaecdb956a21a、`case.yaml` 4c32321267803f14 → 11b3a91ed3bea3f1。初始 prompt 未改，update 材料仍只在第二段投放。
 
-2026-09-30 **1.9.8 发布后补充：首次知识质量判据与功能一览**（提交 `2e872e7d`，版本号不变；提交后全量 1512 passed，唯一失败为既有金样指纹）：内网首次适配产出的知识质量不高（规约罗列未归纳、模块私有内容当成项目知识、事实写成实现说明、模式自行归纳）。知识协议补范围与形态判据，适配方法页新增四条质量判据（首批每份最多 3 项、模式只在已用承载 SDK 时写、扩充归目标维护者），新增按主题写法页 `knowledge-topics.md`（13 主题 × 六项），基线条目改为指向主题页；README 新增功能一览与「评审 AI 起草的知识」；根 AGENTS §2/§3.3 同步。demo 按 §7 重装，失效形态 FAIL 0，预算 14027→14132。方案与交回见 [知识质量判据与README](../doc/plan/1.9.8/2026-09-30-知识质量判据与README/00-方案.md)。
+2026-09-30 〔story-1.0〕 **1.9.8 发布后补充：首次知识质量判据与功能一览**（提交 `2e872e7d`，版本号不变；提交后全量 1512 passed，唯一失败为既有金样指纹）：内网首次适配产出的知识质量不高（规约罗列未归纳、模块私有内容当成项目知识、事实写成实现说明、模式自行归纳）。知识协议补范围与形态判据，适配方法页新增四条质量判据（首批每份最多 3 项、模式只在已用承载 SDK 时写、扩充归目标维护者），新增按主题写法页 `knowledge-topics.md`（13 主题 × 六项），基线条目改为指向主题页；README 新增功能一览与「评审 AI 起草的知识」；根 AGENTS §2/§3.3 同步。demo 按 §7 重装，失效形态 FAIL 0，预算 14027→14132。方案与交回见 [知识质量判据与README](../doc/plan/1.9.8/2026-09-30-知识质量判据与README/00-方案.md)。
 
-2026-09-29 **1.9.8 发布后修复：adapt 已适配版本与新仓知识**（发布提交 `a0627c9c`，自检修正 `8f60778f`：在途单整块不列、基线条目只写主题、AGENTS §2 同步；版本号不变；提交后全量 1512 passed，金样 `AR90004/ux-reference/README.md` 指纹为既有失败）：内网试用发现 adapt 有时不写 `adapted_for`、新仓被模型判为 0.1.0 且知识只做 1.9.4 起的增量。`adapted_for` 改为只由脚本写（新增 `--mark-adapted`，无事可做时 `--apply` 自动写）；升级演进记录补 `1.9.3` 知识基线（12 个主题，1.9.4 以前不分小版本），没有 `adapted_for` 的目标从基线列起、首次安装也打印跟进；demo 按 §7 重装（5 个文件，117 个同源），失效形态 FAIL 0，预算 13993→14027 收口。方案与交回见 [adapt修复](../doc/plan/1.9.8/2026-09-29-adapt修复/00-方案.md)，发布说明见 [1.9.8](../doc/release/1.9.8.md)。
+2026-09-29 〔story-1.0〕 **1.9.8 发布后修复：adapt 已适配版本与新仓知识**（发布提交 `a0627c9c`，自检修正 `8f60778f`：在途单整块不列、基线条目只写主题、AGENTS §2 同步；版本号不变；提交后全量 1512 passed，金样 `AR90004/ux-reference/README.md` 指纹为既有失败）：内网试用发现 adapt 有时不写 `adapted_for`、新仓被模型判为 0.1.0 且知识只做 1.9.4 起的增量。`adapted_for` 改为只由脚本写（新增 `--mark-adapted`，无事可做时 `--apply` 自动写）；升级演进记录补 `1.9.3` 知识基线（12 个主题，1.9.4 以前不分小版本），没有 `adapted_for` 的目标从基线列起、首次安装也打印跟进；demo 按 §7 重装（5 个文件，117 个同源），失效形态 FAIL 0，预算 13993→14027 收口。方案与交回见 [adapt修复](../doc/plan/1.9.8/2026-09-29-adapt修复/00-方案.md)，发布说明见 [1.9.8](../doc/release/1.9.8.md)。
 
-2026-09-29 **1.9.8 发布**（发布提交 `d19b26f7`）：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](../doc/release/1.9.8.md)，证据在 `output/story/1.9.8-release/`（不入库）。
+2026-09-29 〔共同〕 **1.9.8 发布**（发布提交 `d19b26f7`）：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](../doc/release/1.9.8.md)（story-1.0 后来补了发布后修复；story 分支保留的是发布当时的一份：[story 分支的 1.9.8 发布说明](../doc/archive/story-before-rewrite/19d26cad/doc/release/1.9.8.md)），证据在 `output/story/1.9.8-release/`（不入库）。
 
-2026-10-16 **CLI runtime 中心同步 v1.0.2**：同步提交 `d90425786cf8a54497d8ea0ebff2bef539b6ee75`，保留既有 keep 清单；修正 verify.py 与 CLI TEST 的旧测试路径，Codex 配置档位 `full_access` 改为 `build`，CLI/模型顺序不变。固定 verify 入口相关离线回归 167 passed、27 subtests passed，两个 Case 只读 plan、注册表、worker 模块、编译与同源检查 CLEAN。未启动真实模型，未修改 Extension 或 demo；其他任务在途修改保留；本次按用户要求提交，未推送。结果与备份在 `E:/Project/SimulatedWalletForHmos-Story-1.0/output/scratch/cli-runtime-business-sync-20261016/`。
+2026-10-16 〔story〕 **CLI runtime 中心同步 v1.0.2**：同步提交 `d90425786cf8a54497d8ea0ebff2bef539b6ee75`，保留既有 keep 清单；修正 verify.py 与 CLI TEST 的旧测试路径，Codex 配置档位 `full_access` 改为 `build`，CLI/模型顺序不变。固定 verify 入口相关离线回归 167 passed、27 subtests passed，两个 Case 只读 plan、注册表、worker 模块、编译与同源检查 CLEAN。未启动真实模型，未修改 Extension 或 demo；其他任务在途修改保留；本次按用户要求提交，未推送。结果与备份在 `E:/Project/SimulatedWalletForHmos-Story-1.0/output/scratch/cli-runtime-business-sync-20261016/`。
 
-2026-09-29 **Framework 3.1.0 基线接入 demo**（提交 `74196422`，2.0.0 分册 06 §3）：来源为 main `025d1b6b` 的 framework/（3.1.0，source_commit `074a4c3c`，清单 1225 文件逐字节一致），替换原 3.0.0/`0143e21e`；opencode adapter 的 `commands.subagents`/`verifier_subagent` 与 verifier 子代理模板两处定制在新文件上加回；demo 内 framework-init UPDATE（智能模式、7 个 adapter，executed 24/skipped 5/failed 0，active_workflow→obligation-driven，change-lite 等 9 项旧入口备份后清理，Codex Stop 钩子随之退出）；UPDATE 重写的 AGENTS/CLAUDE 只放回 Extension 1.9.8 的 story-ext 段，六份 story 入口未触及。验证：harness npm test PASS（doc_freshness 按提交时刻误报、catalog key_exports 业务漂移各 1 条非阻断），check_framework_drift same_version，全量 1506 passed，失效形态 FAIL 0；两条测试随 3.1 事实更新（Codex 不再登记 Stop 钩子、feature.track 关卡随 change-lite 退出）。Extension 仍为 1.9.8，Framework 3.1 + Extension 1.9.8 组合未经真实 CLI 验收。证据在 `output/story/2.0.0/fw31-baseline/`（不入库）。
+2026-09-29 〔story〕 **Framework 3.1.0 基线接入 demo**（提交 `74196422`，旧2.0.0 分册 06 §3；story 分支的 demo，装的仍是 Story 1.9.8）：来源为 main `025d1b6b` 的 framework/（3.1.0，source_commit `074a4c3c`，清单 1225 文件逐字节一致），替换原 3.0.0/`0143e21e`；opencode adapter 的 `commands.subagents`/`verifier_subagent` 与 verifier 子代理模板两处定制在新文件上加回；demo 内 framework-init UPDATE（智能模式、7 个 adapter，executed 24/skipped 5/failed 0，active_workflow→obligation-driven，change-lite 等 9 项旧入口备份后清理，Codex Stop 钩子随之退出）；UPDATE 重写的 AGENTS/CLAUDE 只放回 Extension 1.9.8 的 story-ext 段，六份 story 入口未触及。验证：harness npm test PASS（doc_freshness 按提交时刻误报、catalog key_exports 业务漂移各 1 条非阻断），check_framework_drift same_version，全量 1506 passed，失效形态 FAIL 0；两条测试随 3.1 事实更新（Codex 不再登记 Stop 钩子、feature.track 关卡随 change-lite 退出）。Extension 仍为 1.9.8，Framework 3.1 + Extension 1.9.8 组合未经真实 CLI 验收。证据在 `output/story/2.0.0/fw31-baseline/`（不入库）。
 
-2026-09-29 **1.9.8 发布**（发布提交 `d19b26f7`）：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](../doc/archive/story-before-rewrite/19d26cad/doc/release/1.9.8.md)，证据在 `output/story/1.9.8-release/`（不入库）。
+2026-09-28 〔共同〕 **1.9.8 仓结构三分**：`doc/extensions` 上提为开发源 `extensions/`，业务、framework 与消费配置迁入完整消费工程 `demo/`，`test/story` 上提为测试域 `test/`，其中维护契约合入根 `AGENTS.md`，需求、方案与发布说明迁到根 `doc/spec|plan|release`，需求产物回流根改为根 `doc/features`；demo 按 R197（`c026a704`）发布文件装 1.9.7 基线（`f4e42d3f`）。同一安装函数 `test/scripts/publish_to_demo.py` 测试时装一次性 template、发布时装 demo；manifest 入口改为 target/source 对，adapt 从 demo 已装发布版执行。main 退出 Story Extension（本地 `51377a49`，未推送）。P3 目录归属纠正交回验证：全量 1499 passed，失效形态 FAIL 0（开发版 template），预算 13993；未启动真实 CLI。方案与评审见 [1.9.8 总览](../doc/plan/1.9.8/2026-09-26-整体设计/00-总览.md)，结果见 [1.9.8 发布说明](../doc/release/1.9.8.md)，运行证据在 `output/story/1.9.8-P1`、`1.9.8-P2`、`1.9.8-P3`（不入库）。
 
-2026-09-28 **1.9.8 仓结构三分**：`doc/extensions` 上提为开发源 `extensions/`，业务、framework 与消费配置迁入完整消费工程 `demo/`，`test/story` 上提为测试域 `test/`，其中维护契约合入根 `AGENTS.md`，需求、方案与发布说明迁到根 `doc/spec|plan|release`，需求产物回流根改为根 `doc/features`；demo 按 R197（`c026a704`）发布文件装 1.9.7 基线（`f4e42d3f`）。同一安装函数 `test/scripts/publish_to_demo.py` 测试时装一次性 template、发布时装 demo；manifest 入口改为 target/source 对，adapt 从 demo 已装发布版执行。main 退出 Story Extension（本地 `51377a49`，未推送）。P3 目录归属纠正交回验证：全量 1499 passed，失效形态 FAIL 0（开发版 template），预算 13993；未启动真实 CLI。方案与评审见 [1.9.8 总览](../doc/archive/story-1.0/44cba622/doc/plan/1.9.8/2026-09-26-整体设计/00-总览.md)，结果见 [1.9.8 发布说明](../doc/archive/story-before-rewrite/19d26cad/doc/release/1.9.8.md)，运行证据在 `output/story/1.9.8-P1`、`1.9.8-P2`、`1.9.8-P3`（不入库）。
+2026-09-28 〔共同〕 P3 评审：用户纠正维护契约与文档归属，要求根 AGENTS 承担完整契约、spec/plan/release 迁根 doc、需求产物回流根 doc/features；P3 暂不通过，1.9.8 未收口。具体实施合同见 [目录归属纠正](../doc/plan/1.9.8/2026-09-26-整体设计/评审意见/2026-09-28-P3评审与目录归属纠正.md)。
 
-2026-09-28 P3 评审：用户纠正维护契约与文档归属，要求根 AGENTS 承担完整契约、spec/plan/release 迁根 doc、需求产物回流根 doc/features；P3 暂不通过，1.9.8 未收口。具体实施合同见 [目录归属纠正](../doc/archive/story-1.0/44cba622/doc/plan/1.9.8/2026-09-26-整体设计/评审意见/2026-09-28-P3评审与目录归属纠正.md)。
-
-2026-09-07：用户确认 2026-08-25 分批交付轮次的四批次需求已结束交付，后续批次 5、6 的诊断收敛一并结束。当时工作入口为 [新需求讨论总览](../doc/archive/story-1.0/44cba622/doc/spec/1.9.1/2026-09-04-会议转写修正需求输入/00-讨论总览.md)：会议转写需求保留冻结基线，Extension 整体正向审查与重构进入澄清。交付记录见 [总方案](../doc/archive/story-1.0/44cba622/doc/plan/1.9.0/2026-08-25-story分批次交付/00-总方案.md)。以下日期记录用于追溯，不作为当前任务的自动推进指令。
+2026-09-07 〔共同〕：用户确认 2026-08-25 分批交付轮次的四批次需求已结束交付，后续批次 5、6 的诊断收敛一并结束。当时工作入口为 [新需求讨论总览](../doc/spec/1.9.1/2026-09-04-会议转写修正需求输入/00-讨论总览.md)：会议转写需求保留冻结基线，Extension 整体正向审查与重构进入澄清。交付记录见 [总方案](../doc/plan/1.9.0/2026-08-25-story分批次交付/00-总方案.md)。以下日期记录用于追溯，不作为当前任务的自动推进指令。
 
 2026-08-23 **回退重写**：`doc/extensions` 与四宿主 story 跳板整体回退到 1.0 基线（`19977c98`，
 其扩展目录与真实仓验证点 `0c8ab1dd` 逐字节一致），在其上按冻结需求从 0 重写 2.0。
@@ -117,19 +120,19 @@ heartbeat 续跑。脚本外交互改由宿主依据公开 Case 场景回复并�
 2026-08-23 当时的需求与方案入口：
 
 - 已确认 Spec：`spec/2026-08-21-story四项需求澄清/`（唯一需求真源）
-- **当前设计/实施：`plan/2026-08-23-story2.0回退重写/`**（00-评审结论与总方案 / 01-目标系统设计与
+- **当时的设计/实施：`plan/2026-08-23-story2.0回退重写/`**（00-评审结论与总方案 / 01-目标系统设计与
   实施计划 / 02-行为验证承接）
 - 原始需求与事故记录：`plan/2026-08-21-story全量需求与踩坑记录/`
 - 已废弃（只作教训留档，不作实施依据）：`plan/2026-08-23-story四项需求落地设计/`、
   `plan/2026-08-23-story图片引用正向优化/`——其结论的采纳/收敛/撤销记在本轮 00 文档
 
-行为验证只以 `plan/2026-08-23-story2.0回退重写/02-行为验证承接.md` 为准；未通过的项不得把版本
+当时行为验证只以 `plan/2026-08-23-story2.0回退重写/02-行为验证承接.md` 为准；未通过的项不得把版本
 声明或离线测试结果表述为已经验证通过。
 
 ## 2. 候选实现内容（历史归档描述，**非当前实现**）
 
-> 以下小节是 2.0 早期的候选描述，保留作背景。**当前实现以第 1 节与
-> `plan/2026-08-23-story2.0回退重写/01` 为准**，两者冲突处一律以后者为准。
+> 以下小节是 2.0 早期的候选描述，保留作背景。**当时的实现以第 1 节与
+> `plan/2026-08-23-story2.0回退重写/01` 为准**，两者冲突处以后者为准。
 
 ### Story 内容与人读成文
 

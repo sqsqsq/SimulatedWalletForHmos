@@ -1,10 +1,9 @@
 # 2026-10-25 2.0.0 重写适配（当前需求，Spec doc/spec/2.0.0/00-版本范围.md、方案 doc/plan/2.0.0/00-实施方案.md）：
 #    用户授权预算，授权与 1.9.9 budget_report 实测见参考13 §5。正式基线 P=b4fbf433（1.9.9 发布，17042）；整版适配 G5300、预计退出 X3820，
 #    预计完成 18522、保守峰值 22342；完整实施观察包 G13488（来源切换参考 8188 + 适配 5300 的计划包络）。五类分配按参考13 §4。
-#    整版 control 看 P→当前的 endpoint.G；P 是第二父链，P→当前的 series/invested/peak 不适用，由 budget_report 置空并列未执行。
-#    实施包 packages 的 start_ref 取 T（批次一评审及必要修正后、批次二01启动 merge 前的真实 HEAD），首个产品改写前填写，本批不预填。
-#    适配 R = [P→M endpoint.G + M→当前 first-parent invested.G] / 5300（M 为批次二01的双亲 merge 提交），由 reviewer 汇总两份报表，不另建算法。
-#    开发树在批次二01 merge 前仍是 O 产品（14664），本批维护/测试域改动计量 G0/X0。
+#    整版 R = P→当前的 endpoint.G / 5300；P 是第二父链，P→当前的 series/invested/peak 不适用，由 budget_report 置空并列未执行（不当 0）。
+#    实施包 R = T→当前的 first-parent invested.G / 13488；packages.start_ref 是 T a05a3634（批次二01 启动 merge 前的真实 HEAD），M 及后续修正全计入。
+#    两者由 budget_report 各自给出、分开判档（参考13 §3，2026-10-27）；原「P→M endpoint + M→当前 invested」合成数只解释投入，不用于分级。
 # 旧 2.x（临时编号 2.0.0–2.0.5，含 requirement 2.0.0-Framework3.1适配、基线 13993、峰值 17093 等）的账与批准原样见
 #    19d26cad:test/regression/mechanism-budget.yaml，按 doc/archive/legacy-2.x 的原轮次解释，不并入本轮额度。
 # 以下为 story-1.0（44cba622）台账的原注释，1.9.9 及更早的批准与收口记录照录。

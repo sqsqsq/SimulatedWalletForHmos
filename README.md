@@ -35,7 +35,7 @@ Story Extension 是挂在 AgentMaison Framework 上的需求开发流程：从�
 
 文中的路径都指目标工程里的位置：每个需求的目录默认是 `doc/features/<编号>/`，实际以 AI 给出的路径为准。本仓 `story-1.0` 分支的 `demo/` 是装好 Framework 3.0.0 与 Story 1.9.9 的示例工程。`story` 分支是 2.0 开发线，它的 `demo/` 已换成 Framework 3.1、仍装 Story 1.9.8，这一组合在适配中、未经验证，不作示例或安装来源。
 
-维护者从[新 2.0.0 范围](doc/spec/2.0.0/00-版本范围.md)和[重写方案](doc/plan/2.0.0/00-实施方案.md)继续工作；旧 2.x spec/plan 已迁至[归档区](doc/archive/README.md)。main 的新版 Framework 已完成[身份与合同核对](doc/plan/2.0.0/参考/11-最新输入与调查依据.md)，1.9.9 正式源与新版 Framework 输入已固定，按三个交付批次实施：产品源码已反合到新版 Framework 合同（蓝图 → 独立 Story → 施工单位），未发布、未经真实验证；demo 尚未切换。
+维护者从[新 2.0.0 范围](doc/spec/2.0.0/00-版本范围.md)和[重写方案](doc/plan/2.0.0/00-实施方案.md)继续工作；1.9.0–1.9.9 各版的 spec、plan 与发布说明在 `doc/spec/`、`doc/plan/`、`doc/release/` 的版本位置，旧 2.x spec/plan 在[归档区](doc/archive/README.md)。main 的新版 Framework 已完成[身份与合同核对](doc/plan/2.0.0/参考/11-最新输入与调查依据.md)，1.9.9 正式源与新版 Framework 输入已固定，按三个交付批次实施：产品源码已反合到新版 Framework 合同（蓝图 → 独立 Story → 施工单位），未发布、未经真实验证；demo 尚未切换。
 
 ### 2.1 命令
 
@@ -260,4 +260,4 @@ Story 是十章需求叙事（背景、术语、范围、业务方案、业务�
 - **统计**：输入 `/story stats`，脚本只从 `doc/usage.json` 与 Git 提交记录取事实，AI 按模板写报告：汇总、逐需求的步骤耗时、身份与版本、关联提交及新增/删除行数；
   缺的如实写（文件没入库、没有提交、身份未知、耗时未知）。报告写在系统临时目录，不写进工程；记录坏了或不是 Git 仓时直接报错，不出报告。
 
-延伸阅读（链接指 Story Extension 维护仓内的文件）：[AI 交付流程与演进方向](doc/release/需求交付流程.md)；1.x 各版变化见归档的[版本说明](doc/archive/story-1.0/44cba622/doc/release/)；维护本仓见 [AGENTS.md](AGENTS.md)。
+延伸阅读（链接指 Story Extension 维护仓内的文件）：[AI 交付流程与演进方向](doc/release/需求交付流程.md)；1.x 各版变化见[版本说明](doc/release/)；维护本仓见 [AGENTS.md](AGENTS.md)。

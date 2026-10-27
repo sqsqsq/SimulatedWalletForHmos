@@ -69,7 +69,7 @@ interfaces:
 
 开始本阶段的实际工作之前（读代码、设计、改动之前），先取本阶段的作者知识任务（story-knowledge Skill，`--audience author`）：它同时记下本阶段的开始。第一次开始前在本 Feature 的目录（知识任务第 1 块写的位置）写 `.usage-input.json`：`{"agent": "<宿主>", "model": "<模型>"}`，不知道的写 null。
 
-`cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature <Feature id>`。写完通读 `plan.md` 与契约，找错字、乱码与两处不一致。
+`cd framework/harness && npx ts-node harness-runner.ts --phase plan --feature <Feature id>`。写完通读 `plan.md` 与契约，找错字、乱码与两处不一致；带号的小节号以所属父节的号开头、同一层不重号，表里写「号. 章名」引用本文的章时号与章名指同一章，改了章节的号或名，引用一起改。
 报告回来之后按 [phase-closure.md](../../skills/story/reference/phase-closure.md)「闭环」那张表处置，改动属于哪一类写进 `plan/notes.md`。
 写 plan 时发现 spec 的现状结论与仓不符：先修正 spec 再继续 plan，不在 plan 里另写一套现状。
 
@@ -82,4 +82,5 @@ interfaces:
 - 设计里的知识判断本身有缺口（漏判、原文已变、落点失效）：交设计负责方。
 - 蓝图埋点明细里的统计点在逐点表里没有行；结果行没写责任方法，或它不是契约声明的方法。
 - 有 plan.md 时：没有「宿主扩展（可选）」章；本单位承接适用规约、选中模式或埋点，这一章下却没有对应小节；规约小节写到设计没判断过的编号；逐点表不在「埋点」小节里。
+- 有 plan.md 时：带号小节的号不以所属父节的号开头，或同一层两个标题同号；「承载设计章」列的「号. 章名」与本文实际的章对不上。
 - `use-cases.yaml` 引了 `acceptance.yaml` 里没有的验收编号；verifier 报告里没有本阶段判据的结论。

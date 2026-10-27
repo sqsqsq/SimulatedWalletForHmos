@@ -1,0 +1,131 @@
+待搬移目录 46；未匹配 0: []
+扫描 md 818 份；链接改写 1287 处；目标本就不存在(保留原样) 2001 处
+  MISSING: 00-讨论总览.md -> ../../plan/2026-09-07-新需求四项/steps/03-知识与机制的协议.md
+  MISSING: 00-讨论总览.md -> ../../plan/2026-09-07-新需求四项/steps/04-Review决策发现与表达.md
+  MISSING: 00-讨论总览.md -> ../../plan/2026-09-07-新需求四项/steps/05-会议转写.md
+  MISSING: 步骤4评审-2026-09-15.md -> ../../../output/story/story-suite-20260914-190900/evaluation/review.md
+  MISSING: 03-spec入口前置story.md -> ../../../doc/extensions/manifest.yaml
+  MISSING: 03-spec入口前置story.md -> ../../../doc/extensions/hooks/spec/on_context_load.md
+  MISSING: 03-spec入口前置story.md -> ../../../doc/extensions/hooks/spec/post_check.mjs
+  MISSING: 03-spec入口前置story.md -> ../../../doc/extensions/skills/story/SKILL.md
+  MISSING: 03-spec入口前置story.md -> ../../../framework/specs/lifecycle-hooks-schema.yaml
+  MISSING: 03-spec入口前置story.md -> ../../../framework/skills/reference/agents-entry-detail.md
+  MISSING: 06-补丁式描述清点与治理方案.md -> ../rules/interaction-renderer.md
+  MISSING: 01-分步实施计划.md -> path
+  MISSING: 05-实跑缺口修复方案.md -> missing.png
+  MISSING: 00-问题记录与原因分析.md -> ../assets/数字车钥匙分享/share-setup.png
+  MISSING: 00-问题记录与原因分析.md -> path
+  MISSING: 00-问题记录与原因分析.md -> …
+  MISSING: 16-固定形态与自由形态设计.md -> ../assets/…
+  MISSING: 03-六跑.md -> 链接
+  MISSING: 04-非正向表述全量排查.md -> …
+  MISSING: 03-六跑后的作者输入与交付路径.md -> 链接
+  rewritten     2  spec\1.9.0\2026-08-21-story四项需求澄清\00-讨论总览.md
+  rewritten     1  spec\1.9.0\2026-08-21-story四项需求澄清\01-Story内容守恒与去重.md
+  rewritten     1  spec\1.9.0\2026-08-21-story四项需求澄清\02-Story面向人类叙述.md
+  rewritten     1  spec\1.9.0\2026-08-21-story四项需求澄清\03-Knowledge跨阶段应用.md
+  rewritten     1  spec\1.9.0\2026-08-21-story四项需求澄清\04-ADAPTATION工程适配.md
+  rewritten     5  spec\1.9.1\2026-09-04-会议转写修正需求输入\00-讨论总览.md
+  rewritten     1  spec\1.9.1\2026-09-04-会议转写修正需求输入\01-Adapt轻量化\00-需求澄清.md
+  rewritten     1  spec\1.9.1\2026-09-04-会议转写修正需求输入\02-AR目录整理\00-需求澄清.md
+  rewritten    10  spec\1.9.1\2026-09-07-Extension整体正向审查与重构\02-Extension整体正向审查与重构诉求.md
+  rewritten     3  spec\1.9.1\2026-09-07-Extension整体正向审查与重构\03-Extension特性树与实现方案审查范围.md
+  rewritten     5  spec\1.9.1\2026-09-07-Extension整体正向审查与重构\04-Framework扩展能力选型与协作审查.md
+  rewritten     1  spec\1.9.2\2026-09-14-模型成文与审查闭环优化\00-需求与实施总览.md
+  rewritten     1  spec\1.9.2\2026-09-14-模型成文与审查闭环优化\03-骨架表达与决策交互优化.md
+  rewritten     4  spec\1.9.2\2026-09-14-模型成文与审查闭环优化\目标与实现偏差审视.md
+  rewritten     1  spec\1.9.4\2026-09-20-Extension残留清点与正向性复查\00-全盘分析报告.md
+  rewritten     1  spec\1.9.4\2026-09-20-Extension残留清点与正向性复查\FEATURE-CONTENT-MAP.md
+  rewritten     4  spec\1.9.4\2026-09-20-Extension残留清点与正向性复查\FEATURE-MAP.md
+  rewritten     7  spec\1.9.4\2026-09-20-Extension残留清点与正向性复查\FEATURES.md
+  rewritten     1  design\1.9.0\2026-08-13-init流程契约化\04-总体执行计划.md
+  rewritten     1  design\1.9.0\2026-08-13-修正与能力增强\00-总体执行计划.md
+  rewritten     1  design\1.9.0\2026-08-14-全流程验证与规约消费\00-总体计划.md
+  rewritten     1  design\1.9.0\2026-08-14-全流程验证与规约消费\02-story优化项.md
+  rewritten     6  design\1.9.0\2026-08-19-story实跑质量与闭环效率\03-既有优化诉求守恒下的Extension正向重建方案.md
+  rewritten     6  design\1.9.0\2026-08-20-storyExtension正向重建与诊断度量\00-本轮正向重建总方案.md
+  rewritten     3  design\1.9.0\2026-08-20-storyExtension正向重建与诊断度量\01-Story完整正向优化方案.md
+  rewritten     1  design\1.9.0\2026-08-20-storyExtension正向重建与诊断度量\02-Knowledge与ADAPTATION正向重建方案.md
+  rewritten     1  design\1.9.0\2026-08-20-storyExtension正向重建与诊断度量\05-Story面向人类写作与语义验收规则.md
+  rewritten     3  design\1.9.0\2026-08-20-storyExtension正向重建与诊断度量\07-剩余能力构建与测试交接.md
+  rewritten     1  design\1.9.0\2026-08-21-story四项需求实现方案\00-实现方案总览.md
+  rewritten     1  design\1.9.0\2026-08-23-story2.0回退重写\02-行为验证承接.md
+  rewritten     1  design\1.9.0\2026-08-23-story人读表达与裁决闭环修复\02-行为验证计划.md
+  rewritten     1  design\1.9.0\2026-08-23-story图片引用正向优化\00-方案与验收.md
+  rewritten     1  design\1.9.0\2026-08-25-story分批次交付\00-总方案.md
+  rewritten     2  design\1.9.0\2026-08-25-story分批次交付\batch-6-零改动适配\00-总览.md
+  rewritten     1  design\1.9.0\2026-08-25-story分批次交付\batch-6-零改动适配\99-评审会话交接.md
+  rewritten     1  design\1.9.0\2026-08-25-story分批次交付\batch-6-零改动适配\STATUS.md
+  rewritten     2  design\1.9.0\2026-08-25-story分批次交付\batch-4-评审载体内容与表达\F5-裁决语义与正式心态\实跑-2-装置改造前中止\car-key-sharing\runlog.md
+  rewritten     1  design\1.9.0\2026-08-25-story分批次交付\batch-4-评审载体内容与表达\F5-裁决语义与正式心态\实跑-1-配置误设中止\car-key-sharing\artifact\AR\story.md
+  rewritten     1  design\1.9.0\2026-08-25-story分批次交付\batch-4-评审载体内容与表达\F2-金样对齐\实跑-1\auto-topup\artifact\AR\design.md
+  rewritten     4  design\1.9.1\2026-09-07-新需求四项\00-总方案.md
+  rewritten     1  design\1.9.1\2026-09-07-新需求四项\reviews\22-Step2.2真实测试独立评审.md
+  rewritten     1  design\1.9.1\2026-09-07-新需求四项\steps\01-AR目录整理.md
+  rewritten     1  design\1.9.1\2026-09-07-新需求四项\steps\02-Adapt轻量化.md
+  rewritten     1  design\1.9.1\2026-09-07-新需求四项\steps\02.3-Story写作流程重设计.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\00-执行总览.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\01-材料事实与状态查询替换.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\02-章节解析与起手条件替换.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\03-验收读取单次分组.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\04-作者说明同语义重写.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\05-章提交与实际整稿替换.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\06-投影与评审记录归一.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\07-来源图片与语言职责收敛.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\08-真实审查与交付闭合.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\09-流程与材料功能目录归位.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\10-知识应用归位与入口同步.md
+  rewritten     1  design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换\13-实现质量替换\11-集成验收与本轮交付.md
+  rewritten     1  design\1.9.2\2026-09-11-知识协议-Review决策-会议转写\00-来源说明.md
+  rewritten     1  design\1.9.2\2026-09-11-知识协议-Review决策-会议转写\01-1.9.2总览与分册重审-2026-09-15.md
+  rewritten     2  design\1.9.2\2026-09-11-知识协议-Review决策-会议转写\02-步骤0-旧机制清理方案.md
+  rewritten     1  design\1.9.2\2026-09-11-知识协议-Review决策-会议转写\04-Review决策发现与表达.md
+  rewritten     1  design\1.9.2\2026-09-11-知识协议-Review决策-会议转写\05-会议转写.md
+  rewritten     1  design\1.9.2\2026-09-11-知识协议-Review决策-会议转写\会议转写处理与引用问题-2026-09-15.md
+  rewritten     2  EVOLUTION.md
+moved -> spec\1.9.0\2026-08-21-story四项需求澄清
+moved -> spec\1.9.1\2026-09-04-会议转写修正需求输入
+moved -> spec\1.9.1\2026-09-07-Extension整体正向审查与重构
+moved -> spec\1.9.2\2026-09-14-模型成文与审查闭环优化
+moved -> spec\1.9.3\2026-09-16-Extension机制级替换增强与退场
+moved -> spec\1.9.4\2026-09-20-Extension残留清点与正向性复查
+moved -> design\1.9.0\2026-08-13-init流程契约化
+moved -> design\1.9.0\2026-08-13-修正与能力增强
+moved -> design\1.9.0\2026-08-13-评测通路打通
+moved -> design\1.9.0\2026-08-14-全流程验证与规约消费
+moved -> design\1.9.0\2026-08-15-规约落地与扩展兼容
+moved -> design\1.9.0\2026-08-18-story适配与设计模式重启
+moved -> design\1.9.0\2026-08-19-story人类表达与测试历史迁移
+moved -> design\1.9.0\2026-08-19-story人读表达与工程知识生效
+moved -> design\1.9.0\2026-08-19-story实跑质量与闭环效率
+moved -> design\1.9.0\2026-08-20-storyExtension正向重建与诊断度量
+moved -> design\1.9.0\2026-08-21-story全量需求与踩坑记录
+moved -> design\1.9.0\2026-08-21-story四项需求实现方案
+moved -> design\1.9.0\2026-08-21-story多Case隔离并行测试重构
+moved -> design\1.9.0\2026-08-21-story实跑内容守恒与语义闭环优化
+moved -> design\1.9.0\2026-08-21-story章节取材软指导优化
+moved -> design\1.9.0\2026-08-22-story-15-120秒自适应定时驱动
+moved -> design\1.9.0\2026-08-22-story-extension事实合同正向重构
+moved -> design\1.9.0\2026-08-22-story主模型驱动式并行测试正向重构
+moved -> design\1.9.0\2026-08-22-story批量回灌事务修复
+moved -> design\1.9.0\2026-08-22-story旧Analysis-Report链移除
+moved -> design\1.9.0\2026-08-22-story现场延迟清理与稳定观测
+moved -> design\1.9.0\2026-08-22-story自动观测与驱动测试
+moved -> design\1.9.0\2026-08-22-story阶段状态实时校正
+moved -> design\1.9.0\2026-08-23-story2.0回退重写
+moved -> design\1.9.0\2026-08-23-story人读表达与裁决闭环修复
+moved -> design\1.9.0\2026-08-23-story四项需求落地设计
+moved -> design\1.9.0\2026-08-23-story图片引用正向优化
+moved -> design\1.9.0\2026-08-24-story判据内容化与失效形态回归
+moved -> design\1.9.0\2026-08-24-story知识贯通与评审件精简
+moved -> design\1.9.0\2026-08-25-story分批次交付
+moved -> design\1.9.0\2026-08-29-本地需求系统与用例重构
+moved -> design\1.9.0\2026-08-30-测试用例重构
+moved -> design\1.9.1\2026-09-07-新需求四项
+moved -> design\1.9.1\2026-09-10-extension历史残留清点
+moved -> design\1.9.1\2026-09-11-Extension功能全集与机制归属
+moved -> design\1.9.1\2026-09-11-Extension旧机制退场与新机制替换
+moved -> design\1.9.2\2026-09-11-知识协议-Review决策-会议转写
+moved -> design\1.9.2\2026-09-13-agent-maintenance-system
+moved -> design\1.9.2\2026-09-14-story维护文档精简
+moved -> design\1.9.3\2026-09-16-Extension机制级替换增强与退场

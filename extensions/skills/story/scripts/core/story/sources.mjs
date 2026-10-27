@@ -14,6 +14,7 @@ import { markdownLinks } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
 import { designSource } from './design-source.mjs';
 import { normalizeHeading, parseDocument, subsectionSpan } from './document.mjs';
+import { imagesIn } from './images.mjs';
 
 /**
  * 合同声明的每个来源，读到了没有 —— **读不到的也要带回来**。
@@ -111,28 +112,31 @@ export function registeredPaths(ctx) {
 }
 
 /**
- * 本轮实际采用的输入原件 —— `materials.json` 的 `origins`（registry 按磁盘现状派生）。
+ * 本轮的材料集合 —— `materials.json` 登记的原件、待导入的原件与图片对象（registry 按磁盘现状派生）。
+ * 作者材料表、审查任务与独立审查对象读同一份。
  *
- * 作者表不定义这个集合：漏写一行不能让那份原件从核对与审查里消失。集合三种来源：
+ * 作者表不定义这个集合：漏写一行不能让那份原件从核对与审查里消失。原件三种来源：
  * 远端直接给的正文（`direct`）、已确定性并入正文的收件箱原件（`converted-source`，只抽图的原件也在内，
  * 阅读稿是它自己、`image_paths` 列抽出的图）、留存的会议版本（`meeting`）。
- * 图片本身跟着图片说明与取舍走，不逐张进来；没并入的原件走待导入。
+ * 图片按图片对象列（同一内容的几个落点是一条），形状判定用 `imagesIn`；没并入的原件走待导入。
  *
- * @returns {{origins: object[], pending: string[]} | null | {gap: string}}
- *   null = 还没有清单（没跑过 round）；gap = 清单在但读不出来源关系
+ * @returns {{origins: object[]|null, pending: string[], images: object[], gaps: string[]} | null}
+ *   null = 还没有清单（没跑过 round）；`origins` 为 null 时清单在而读不出来源关系，原因在 `gaps` 第一条
  */
-function originSet(ctx) {
+export function materialSet(ctx) {
   const data = readManifest(ctx);
   if (data === null) return null;
   const fix = '——这份清单由 `story_flow.py round` 按磁盘现状生成';
-  if (data === 'broken') return { gap: `AR/story-src/materials.json：读不出材料清单${fix}` };
+  const none = gap => ({ origins: null, pending: [], images: [], gaps: [gap] });
+  if (data === 'broken') return none(`AR/story-src/materials.json：读不出材料清单${fix}`);
   if (!Array.isArray(data.origins)) {
-    return { gap: 'AR/story-src/materials.json：没有来源关系 `origins`（本版材料清单 schema 2）'
-      + `${fix}；旧版做到一半的单在旧版收口或从 init 重起` };
+    return none('AR/story-src/materials.json：没有来源关系 `origins`（本版材料清单 schema 2）'
+      + `${fix}；旧版做到一半的单在旧版收口或从 init 重起`);
   }
   const pending = (Array.isArray(data.sources) ? data.sources : [])
     .filter(s => s?.file && !s.ingested).map(s => `inbox/${s.file}`);
-  return { origins: data.origins, pending };
+  const { images, gap } = imagesIn(data);
+  return { origins: data.origins, pending, images, gaps: gap ? [gap] : [] };
 }
 
 /** 相对 story 的 markdown 链接串：带空格或括号的路径用 `<…>` 包起来，照抄即可。 */
@@ -149,9 +153,9 @@ function mdLink(rel) {
  * 版本有版号或会议版本时作者写那个，没有就写摘要。链接串相对 story，可以直接粘。
  */
 export function originRows(ctx) {
-  const set = originSet(ctx);
+  const set = materialSet(ctx);
   if (set === null) return ['还没有材料清单 `AR/story-src/materials.json`——先跑 `story_flow.py round`。'];
-  if (set.gap) return [`**输入有缺口**：${set.gap}。`];
+  if (set.origins === null) return [`**输入有缺口**：${set.gaps[0]}。`];
   const groups = new Map();
   for (const o of set.origins) {
     const key = (o.readable_paths ?? []).join('、') || o.path;
@@ -342,9 +346,10 @@ export function materialListProblems(ctx, storyText) {
     problems.push(`${where}第 ${lineNo(i)} 行：表外有链接——材料与来源只写在「${header.join(' | ')}」表里，列表写法已退出`);
   });
 
-  const set = originSet(ctx);
+  const set = materialSet(ctx);
+  const gap = set && set.origins === null ? set.gaps[0] : null;
   if (set === null) notes.push('AR/story-src/materials.json：不在，来源覆盖未核——这份清单由 `story_flow.py round` 生成');
-  if (set?.gap) problems.push(`${set.gap}；${where}的来源覆盖按它核`);
+  if (gap) problems.push(`${gap}；${where}的来源覆盖按它核`);
   const origins = new Map((set?.origins ?? []).map(o => [o.path, o]));
   const pending = new Set(set?.pending ?? []);
   const generated = new Set([relFromFeature(ctx, ctx.storyPath),
@@ -382,7 +387,7 @@ export function materialListProblems(ctx, storyText) {
     const readable = new Set();
     for (const l of src.links) {
       const rel = resolve(l);
-      if (!rel || !set || set.gap) continue;
+      if (!rel || !set || gap) continue;
       if (l.image || /\.(png|jpe?g|webp|bmp|gif|svg)$/i.test(rel)) {
         problems.push(`${at}：来源列放了图 ${rel}——图不进这张表，图的说明与不用的理由走图片登记`);
       } else if (origins.has(rel)) {

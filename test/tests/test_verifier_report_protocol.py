@@ -592,6 +592,130 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         self.assertNotEqual(bad, self.root / out["report_file"], "返修写回了原回复")
         self.assertEqual(kept, bad.read_bytes(), "原回复被改了")
 
+class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """完整核源：作者没采用的阅读稿、登记不用的图与会议纠偏留痕也在独立审查的必审集合里——任务列它、覆盖核它、发现可以引用它；
+    冻结采用版本仍是设计权威，同字节的当前文件是它的别名，换了内容的当前文件另列对照；二进制原件只核在场与来源摘要。"""
+
+    IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
+    FEATURE = "doc/features/REQ-DEMO"
+    SR = f"{FEATURE}/SR/design.md"
+    IMAGE = f"{FEATURE}/ux-reference/old.png"
+    CORRECTIONS = f"{FEATURE}/AR/story-src/meetings/续期会/v1/corrections.json"
+    SR_ROW = "| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) | 续期按月的提法与产品需求冲突，未采用：以产品需求的按年为准。 |"
+
+    def setUp(self) -> None:
+        super().setUp()
+        feature = self.root / self.FEATURE
+        (feature / "SR").mkdir(exist_ok=True)
+        (feature / "SR" / "design.md").write_text("# 系统设计\n\n续期改为按月扣费，与产品需求的按年不同。\n", encoding="utf-8")
+        (feature / "ux-reference").mkdir(exist_ok=True)
+        shutil.copy2(next((REPO / "test" / "fixtures").rglob("*.png")), feature / "ux-reference" / "old.png")
+        self.run_py(self.FLOW, "round")
+        self.run_py(self.IMPORT, "--caption-image", self.IMAGE, "--unused", "旧版签约页，本需求不改签约页")
+        # 作者在材料表里写明没采用的那份与原因：材料表按 origins 核覆盖
+        self.story.write_text(self.story.read_text(encoding="utf-8").replace(
+            "| 开发需求 [design.md](design.md) |", self.SR_ROW + "\n| 开发需求 [design.md](design.md) |"), encoding="utf-8")
+        meeting = self.flow_path.parent / "meetings" / "续期会" / "v1"
+        meeting.mkdir(parents=True)
+        (meeting / "raw.md").write_text("主持人：续期按年。\n", encoding="utf-8")
+        (meeting / "corrections.json").write_text(json.dumps({"corrections": [{"line": 1, "note": "按年无误"}]}, ensure_ascii=False),
+                                                  encoding="utf-8")
+        (meeting / "evidence.md").write_text("续期按年。\n", encoding="utf-8")
+
+    def run_py(self, script: Path, *args: str) -> None:
+        out = subprocess.run(["python", str(script), *args, "--feature", "REQ-DEMO", "--project-root", str(self.root)],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, out.returncode, out.stdout + out.stderr)
+
+    @staticmethod
+    def examined(change):
+        """改审查者覆盖声明里 examined_inputs 那一行（JSON 列表）。"""
+        def mutate(text: str) -> str:
+            line = next(l for l in text.splitlines() if l.startswith("  examined_inputs: "))
+            listed = change(json.loads(line.split(": ", 1)[1]))
+            return text.replace(line, "  examined_inputs: " + json.dumps(listed, ensure_ascii=False))
+        return mutate
+
+    def task_text(self) -> str:
+        return (self.root / self.prepare()["task"]).read_text(encoding="utf-8")
+
+    def test_the_task_lists_what_the_author_left_out(self) -> None:
+        task = self.task_text()
+        for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
+            self.assertIn(f"`{rel}`", task)
+        self.assertIn(f"`{self.SR}` —— 没采用的阅读稿 SR/design.md（核作者为何没采用）", task)
+        self.assertIn("作者登记不用：旧版签约页，本需求不改签约页", task)
+
+    def test_skipping_any_applicable_source_is_not_a_pass(self) -> None:
+        for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
+            with self.subTest(source=rel):
+                self.fresh()
+                self.reviewed("pass", self.examined(lambda xs, rel=rel: [x for x in xs if x != rel]))
+                got = self.result()
+                self.assertEqual("report_invalid", got["result"])
+                self.assertIn(rel, got["detail"])
+
+    def test_a_finding_on_a_left_out_source_is_consumed(self) -> None:
+        story = f"{self.FEATURE}/AR/story.md"
+        for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
+            with self.subTest(source=rel):
+                self.fresh()
+                self.reviewed("advice", lambda t, rel=rel: t.replace(f"`{story}`", f"`{rel}`"))
+                self.assertEqual("warn", self.result()["result"])
+
+    def test_extra_evidence_counts_only_when_declared(self) -> None:
+        story = f"{self.FEATURE}/AR/story.md"
+        extra = f"{self.FEATURE}/RR/上游补充说明.md"
+        relocate = lambda t: t.replace(f"`{story}`", f"`{extra}`")  # noqa: E731
+        self.reviewed("advice", lambda t: self.examined(lambda xs: [*xs, extra])(relocate(t)))
+        self.assertEqual("warn", self.result()["result"], "声明过的额外取证不能当作坏引用")
+        self.fresh()
+        self.reviewed("advice", relocate)
+        self.assertEqual("report_invalid", self.result()["result"], "没声明的位置当成了这一次的材料")
+
+    def test_a_binary_origin_is_checked_not_read(self) -> None:
+        import hashlib
+        feature = self.root / self.FEATURE
+        (feature / "inbox").mkdir(exist_ok=True)
+        docx = feature / "inbox" / "系统设计.docx"
+        docx.write_bytes(b"PK\x03\x04 binary original")
+        manifest = self.flow_path.parent / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["origins"].append({"path": "inbox/系统设计.docx", "kind": "converted-source", "readable_paths": ["SR/design.md"],
+                                "sha256": "sha256:" + hashlib.sha256(docx.read_bytes()).hexdigest()[:16]})
+        manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.story.write_text(self.story.read_text(encoding="utf-8").replace(
+            self.SR_ROW, self.SR_ROW.replace("| [design.md](../SR/design.md) |", "| [design.md](../SR/design.md) [系统设计.docx](../inbox/系统设计.docx) |")),
+            encoding="utf-8")
+        rel = f"{self.FEATURE}/inbox/系统设计.docx"
+        self.assertIn(f"`{rel}` —— 原件 inbox/系统设计.docx（核在场与来源摘要，正文读它的阅读稿）　（核在场与来源摘要，不必通读）",
+                      self.task_text())
+        self.fresh()
+        self.reviewed("pass", self.examined(lambda xs: [x for x in xs if x != rel]))
+        self.assertEqual("pass", self.result()["result"], "只核在场的二进制原件被当成必读")
+        docx.write_bytes(b"PK\x03\x04 another version")
+        out = self.review("prepare")
+        self.assertNotEqual(0, out.returncode)
+        self.assertIn("与材料清单登记的", out.stdout + out.stderr)
+        self.assertEqual("input_invalid", self.result()["result"])
+
+    def test_the_adopted_version_stays_beside_a_changed_current_file(self) -> None:
+        prd = f"{self.FEATURE}/RR/prd.md"
+        self.assertRegex(self.task_text(), rf"`{re.escape(prd)}` —— 阅读稿 RR/prd.md（与冻结副本 \S+/files/RR/prd.md 同字节）")
+        (self.root / prd).write_text((self.root / prd).read_text(encoding="utf-8") + "\n新版补了一句。\n", encoding="utf-8")
+        self.run_py(self.FLOW, "round")
+        task = self.task_text()
+        self.assertIn(f"`{prd}` —— 阅读稿 RR/prd.md：当前对照，与采用版不同，仅核取舍，不替代采用版", task)
+        self.assertRegex(task, r"/files/RR/prd\.md` —— 冻结输入里采用的 RR/prd\.md（original）")
+
+    def test_a_changed_left_out_source_retires_the_report(self) -> None:
+        self.reviewed("pass")
+        self.assertEqual("pass", self.result()["result"])
+        (self.root / self.SR).write_text("# 系统设计\n\n续期改为按季。\n", encoding="utf-8")
+        self.run_py(self.FLOW, "round")
+        self.assertEqual("subject_stale", self.result()["result"])
+
+
 class ABrokenPreparationRecordIsAnInputFault(TheStoryIsReviewedRegisteredAndDeliveredCase):
     """准备记录在却读不出：prepare 在定稿写盘之前报错退出、现场不动；check 判 input_invalid。不当作首次，不换默认目录。"""
 
@@ -876,7 +1000,8 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
 
     def review(self, kind: str, unread: tuple[str, ...] = ("image",)) -> dict:
-        """准备审查、夹具审查者回复，再把 `unread` 里的材料从读过的挪进没读到的（图写能力缺口原因）；返回核对结果。"""
+        """准备审查、夹具审查者回复，再把 `unread` 里的材料从读过的挪进没读到的（图写能力缺口原因）；返回核对结果。
+        同一张图的冻结副本与当前文件同字节，是同一份必审，一起挪。"""
         prepared = self.run_node("review", "--action", "prepare")
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         report = design_kit.write_review(self.root, "REQ-DEMO", kind)
@@ -886,7 +1011,7 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         picked = {"image": [e for e in examined if e.endswith("/home.png")],
                   "story": [e for e in examined if e.endswith("/AR/story.md")]}
         moved = [e for k in unread for e in picked[k]]
-        self.assertEqual(len(unread), len(moved), f"夹具没有要挪的材料：{examined}")
+        self.assertTrue(all(picked[k] for k in unread), f"夹具没有要挪的材料：{examined}")
         text = text.replace(line, "  examined_inputs: " + json.dumps([e for e in examined if e not in moved], ensure_ascii=False))
         text = text.replace("  unreviewed: []", "  unreviewed: " + json.dumps(
             [{"path": e, "reason": "宿主看不了图，图面未核" if e.endswith(".png") else "没读完"} for e in moved], ensure_ascii=False))
