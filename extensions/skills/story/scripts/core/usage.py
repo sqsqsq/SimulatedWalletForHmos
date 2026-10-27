@@ -562,18 +562,22 @@ def record(project_root: Path, action: str, *, feature: str | None = None, step:
                         st.setdefault(key, {})["pending"] = moved
                 save_state(state_path, st)
                 write_json(path, data)
+                out["changed"] = True
+                # 记录已落盘：身份件与已接收的输入此刻写、此刻删——后面清待写失败时，下一次仍接上同一节点，不另起一个
+                for later in done:
+                    later()
+                done = []
                 for key in keys:
                     st.get(key, {}).pop("pending", None)
                 tidy(st)
                 save_state(state_path, st)
-                out["changed"] = True
             if action == "finalize" and not out["errors"]:
                 # 读回盘上那一份核这一步已记：写进去了才算收尾完成
                 row = load(path)["requirements"].get(keys[0], {}).get("steps", {}).get(step)
                 if row is None:
                     out["errors"].append(f"{CONTRACT['record']} 读回没有 {step} 这一行")
                 out.update(phase=step, recorded=row, timing_gap=row is not None and "spent" not in row)
-            for later in done:      # 身份件与已接收的输入在记录落盘之后才写、才删：落盘失败时下一次照样能接上
+            for later in done:      # 记录没有变化时的身份件与输入：同样在记录之后
                 later()
     except UsageError as exc:
         out["errors"].append(str(exc))

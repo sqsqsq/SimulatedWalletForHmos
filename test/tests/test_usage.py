@@ -725,12 +725,54 @@ class VersionsAndIdentity(UsageCase):
 
 class WriteProtection(UsageCase):
     def test_two_requirements_written_at_once_both_survive(self) -> None:
-        threads = [threading.Thread(target=self.call, args=("begin", "story", f"AR{i}")) for i in range(1, 5)]
+        """四个需求同时记：每次调用要么记上，要么报出没记上（原记录不动）；成功的不被别人覆盖，没记上的重跑补上。
+        系统偶尔拒绝替换刚写过的文件（本机单进程也复现过），那一次照实报错，不当成并发丢写。"""
+        calls: dict[str, dict] = {}
+
+        def begin(feature: str) -> None:
+            self.fr(feature)
+            proc = subprocess.run([sys.executable, str(USAGE), "--project-root", str(self.root)],
+                                  input=json.dumps({"action": "begin", "step": "story", "feature": feature}),
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=self.env)
+            calls[feature] = {"code": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr[-1500:]}
+
+        threads = [threading.Thread(target=begin, args=(f"AR{i}",)) for i in range(1, 5)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        self.assertEqual(4, len(self.usage()["requirements"]))
+        said = {f: json.loads(c["stdout"]) for f, c in calls.items() if c["stdout"].strip().startswith("{")}
+        self.assertEqual(sorted(calls), sorted(said), f"有调用没给出结果：{calls}")
+        kept = {key.split("-")[0] for key in self.usage()["requirements"]}
+        for feature, out in said.items():
+            if out["ok"]:
+                self.assertIn(feature, kept, f"{feature} 报成功却没在记录里：{calls}")
+            else:
+                self.assertTrue(out["errors"] and calls[feature]["code"] == 1, calls[feature])
+                again = self.call("begin", "story", feature)
+                self.assertTrue(again["ok"], f"重跑没能补记：{again}；第一次：{calls[feature]}")
+        self.assertEqual({f"AR{i}" for i in range(1, 5)}, {key.split("-")[0] for key in self.usage()["requirements"]})
+
+    def test_a_refused_state_cleanup_after_the_record_keeps_the_same_node(self) -> None:
+        """记录已写上、清运行态那一步被系统拒绝：这一次报失败，但身份件已随记录写下，重跑接上同一节点，不另起一个。"""
+        sys.path.insert(0, str(CORE))
+        import usage  # noqa: PLC0415
+        real, seen = usage.write_json, []
+
+        def refused_second_state_write(path, data):
+            seen.append(path.name)
+            if path.name == ".usage-state.json" and seen.count(path.name) == 2:
+                raise usage.UsageError(".usage-state.json 写不进去（注入：系统拒绝替换）")
+            return real(path, data)
+
+        self.fr("AR1")
+        with unittest.mock.patch.object(usage, "write_json", refused_second_state_write),                 unittest.mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": self.env["GIT_CEILING_DIRECTORIES"]}):
+            first = usage.record(self.root, "begin", feature="AR1", step="story")
+        self.assertFalse(first["ok"], first)
+        self.assertEqual(1, len(self.usage()["requirements"]), "记录没写上，注入点不对")
+        again = self.call("begin", "story", "AR1")
+        self.assertTrue(again["ok"], again)
+        self.assertEqual(1, len(self.usage()["requirements"]), "重跑另起了一个节点")
 
     def test_a_broken_conflicted_or_old_record_is_never_overwritten(self) -> None:
         self.record.parent.mkdir(parents=True)
