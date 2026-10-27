@@ -15,7 +15,8 @@ import threading
 import unittest
 from pathlib import Path
 
-from ext_workspace import DEV_EXT
+from ext_workspace import DEV_EXT, link_framework
+import shared_state
 
 STATS = DEV_EXT / "skills" / "story-stats" / "scripts" / "stats.py"
 A, B, C = "AR1-20261001T010000.000Z", "DTS22-20261002T010000.000Z", "AR333-20261003T010000.000Z"
@@ -215,7 +216,9 @@ class TheArchivedRecordIsSelfContained(GitRepo):
         base = Path(cls._tmp.name)
         cls.package = installed_package()
         cls.root = root = base / "work"
-        shutil.copytree(cls.package, root)
+        # framework/ 是指向被测 Framework 的 junction：copytree 会顺着它把整个 Framework 连依赖复制一遍，跳过后重接
+        shared_state.copy_tree(cls.package, root)
+        link_framework(root)
         cls.git("init", "-q", "-b", "main")
         # 目标仓的做法：需求目录整体不入库，随代码归档的使用记录只有 doc/usage.json
         cls.commit("项目起点", {"src/app.txt": "1\n", ".gitignore": "doc/features/\n"})

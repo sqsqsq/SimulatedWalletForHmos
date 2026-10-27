@@ -65,6 +65,12 @@ def pytest_terminal_summary(terminalreporter):
     if not _classes or hasattr(terminalreporter.config, "workerinput"):
         return
     wall = time.time() - _started
+    dump = os.environ.get("STORY_TEST_TIMING_JSON")
+    if dump:      # 给计时拆分用：全部类的用时、条数与子进程数，按用时排序
+        import json  # noqa: PLC0415
+        Path(dump).write_text(json.dumps({"wall": round(wall, 1), "classes": [
+            {"class": k, "seconds": round(s, 1), "tests": n, "spawns": p}
+            for k, (s, n, p) in sorted(_classes.items(), key=lambda kv: -kv[1][0])]}, ensure_ascii=False, indent=1), encoding="utf-8")
     slow = sorted(((s, n, p, k) for k, (s, n, p) in _classes.items() if s > CLASS_BUDGET), reverse=True)
     full = len(_classes) > 100
     if not slow and (wall <= SUITE_BUDGET or not full):

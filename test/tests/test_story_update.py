@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import inspect
 import json
 import shutil
 import subprocess
@@ -34,6 +35,7 @@ from test_story_build import (  # noqa: E402
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
 from flow_steps import answer, open_decision, write_gaps  # noqa: E402
 import design_kit  # noqa: E402
+import shared_state  # noqa: E402
 from ext_workspace import DEV_EXT, link_framework
 
 FLOW = (DEV_EXT / "skills" / "story" / "scripts"
@@ -45,18 +47,44 @@ NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 
          "| 验收口径 | 这一轮没有动到它 |\n")
 
 
+#: 交给设计之后那份工作区的键：夹具、开发版扩展、造状态的脚本与 Framework 版本
+WALKED = shared_state.digest(FIXTURE, *shared_state.COMMON, Path(__file__).with_name("flow_steps.py"),
+                             FEATURE, StoryBuildCase.DRAFT, shared_state.framework_version())
+
+
 class UpdateCase(unittest.TestCase):
-    """每个用例一份新工作区：update 会往需求目录里写镜像。"""
+    """每个用例一份新工作区：update 会往需求目录里写镜像。
+
+    走完交给设计的状态（夹具 → `before_init` → 真实流程命令走完 S1–S3 并提交提取稿）整轮只造一次（shared_state），各用例复制；
+    改写了 `before_init` 的类按它自己的源码另造一份。
+    """
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
-        shutil.copytree(FIXTURE, self.root)
+        own = type(self).before_init is not UpdateCase.before_init
+        name, key = ("update-walked", WALKED) if not own else (
+            f"update-walked-{type(self).__name__}", shared_state.digest(WALKED, Path(inspect.getfile(type(self)))))
+        shared_state.copy_tree(shared_state.shared_tree(name, key, self._walk), self.root)
+        link_framework(self.root)
         self.feature_root = self.root / "doc" / "features" / FEATURE
         self.src = self.feature_root / "AR" / "story-src"
-        ensure_flow_state(self.root, FEATURE, self.src, StoryBuildCase.DRAFT)
         self.updates = self.src / "updates"
+
+    def _walk(self, base: Path) -> None:
+        shutil.copytree(FIXTURE, base)
+        link_framework(base)                 # 使用记录按原生身份认需求：init 之前的 begin 也要接上 Framework
+        own = self.root, getattr(self, "feature_root", None)
+        self.root, self.feature_root = base, base / "doc" / "features" / FEATURE     # 钩子按 self.root 操作：指向在造的这一份
+        try:
+            self.before_init()
+        finally:
+            self.root, self.feature_root = own
+        ensure_flow_state(base, FEATURE, base / "doc" / "features" / FEATURE / "AR" / "story-src", StoryBuildCase.DRAFT)
+
+    def before_init(self) -> None:
+        """夹具走 story init 之前的一步：多数用例什么也不做。"""
 
     def update(self, *extra: str) -> dict:
         """不写 `--action` 就是 prepare：多数用例测的是比较本身，输入阶段另有一组。"""
@@ -1233,6 +1261,35 @@ class TheStoryRegistrationLeavesTheFirstBaseline(UpdateCase):
         self.assertIn("AR/story.md", out["changed"])
 
 
+#: 登记好的那份工作区里，造它时那一次登记的原样输出
+FIRST_REGISTRATION = ".first-registration.json"
+REGISTERED = shared_state.digest(WALKED, "registered")
+
+
+def _registered(base: Path) -> None:
+    """走完交给设计的工作区装上审查机制，按正常一轮定稿、夹具审查者通过、接收、登记；记下那次登记的输出。"""
+    shared_state.copy_tree(shared_state.shared_tree("update-walked", WALKED, UpdateCase()._walk), base)
+    link_framework(base)
+    design_kit.install_review_mechanism(base, DEV_EXT)
+    build = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        proc = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=180, cwd=str(base))
+        if proc.returncode:
+            raise RuntimeError(f"{args[:3]}：{proc.stdout}{proc.stderr}")
+        return proc
+
+    run("node", str(build), "review", "--action", "prepare", "--feature", FEATURE, "--project-root", str(base))
+    design_kit.write_review(base, FEATURE, "pass")
+    run("node", str(build), "review", "--action", "prepare", "--feature", FEATURE, "--project-root", str(base))
+    proc = run(sys.executable, str(FLOW), "story", "--feature", FEATURE, "--project-root", str(base))
+    out = json.loads([line for line in proc.stdout.splitlines() if line.strip().startswith("{")][-1])
+    if not out.get("success"):
+        raise RuntimeError(f"登记没成：{out}")
+    (base / FIRST_REGISTRATION).write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+
+
 class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
     """story 登记之后要改：改完重跑 `story` 就是重新登记，不退状态、不碰流程契约（U39）。
 
@@ -1241,12 +1298,26 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
     """
 
     BUILD = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
+    #: 起手就是登记好的工作区：整轮只造一次（shared_state），本用例第一次 register() 交出造它时那次真实登记的原样结果
+    START_REGISTERED = False
 
     def setUp(self) -> None:
-        super().setUp()
-        # 登记前要经独立审查：审查对象里的章节合同与判据取工程里装的扩展
-        design_kit.install_review_mechanism(self.root, DEV_EXT)
         self.outputs: list[str] = []
+        self._first: dict | None = None
+        if not self.START_REGISTERED:
+            super().setUp()
+            # 登记前要经独立审查：审查对象里的章节合同与判据取工程里装的扩展
+            design_kit.install_review_mechanism(self.root, DEV_EXT)
+            return
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "work"
+        shared_state.copy_tree(shared_state.shared_tree("update-registered", REGISTERED, _registered), self.root)
+        link_framework(self.root)
+        self.feature_root = self.root / "doc" / "features" / FEATURE
+        self.src = self.feature_root / "AR" / "story-src"
+        self.updates = self.src / "updates"
+        self._first = json.loads((self.root / FIRST_REGISTRATION).read_text(encoding="utf-8"))
 
     def run_cmd(self, *args: str) -> subprocess.CompletedProcess:
         proc = subprocess.run(list(args), capture_output=True, text=True, encoding="utf-8",
@@ -1256,6 +1327,10 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
 
     def register(self) -> dict:
         """定稿并准备审查，夹具审查者给出通过的回复，重跑 prepare 接收，再登记。"""
+        if getattr(self, "_first", None) is not None:      # 别的类借用这个方法时没有预登记
+            out, self._first = self._first, None
+            self.outputs.append(json.dumps(out, ensure_ascii=False))
+            return out
         prepared = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--feature", FEATURE,
                                 "--project-root", str(self.root))
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
@@ -1298,6 +1373,8 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
 class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
     """登记链（全篇检查 → 审查结果 → 成文依据）哪一步没成：说清做完了什么、哪几步没跑、归谁处理，已有登记原样保留；
     同内容重新登记不换登记时刻。故障注入只换子进程，其余照真跑。"""
+
+    START_REGISTERED = True
 
     CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
 
@@ -1433,6 +1510,14 @@ class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
                 self.assertNotIn("不合格", error)
                 self.assertNotIn("archived", self.contract(), "没登记成却记了归档态")
 
+
+class TheReviewersWordsSurviveAFailedRegistration(StoryIsRegisteredAgainAfterChangesCase):
+    """评审人填过的意见在登记中途失败后逐字保留：要先写决策再登记，不从登记好的工作区起手。"""
+
+    CORE = TheRegistrationSaysWhatRan.CORE
+    modules = TheRegistrationSaysWhatRan.modules
+    registration_broken_at = TheRegistrationSaysWhatRan.registration_broken_at
+
     def test_the_review_human_zone_survives_a_failed_registration(self) -> None:
         """评审人填过的意见：登记中途失败、修好重新准备审查再登记，都一个字节不丢。"""
         decisions = self.src / "decisions.json"
@@ -1456,6 +1541,7 @@ class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
         human = filled[filled.index("评审结论："):filled.index("<!-- decision: D1 -->")]
         self.assertIn("重查间隔写进规格。", human)
         self.assertIn(human, review.read_text(encoding="utf-8"))
+
 
 
 class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsRegisteredAgainAfterChangesCase):
@@ -1528,6 +1614,8 @@ class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsR
 
 
 class StoryIsRegisteredAgainAfterChanges(StoryIsRegisteredAgainAfterChangesCase):
+    START_REGISTERED = True
+
     def test_spec_stage_change_is_registered_again(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.rewrite_background("支付提交后用户要能看到回执状态。登记之后补的一句。")
@@ -1557,6 +1645,8 @@ class StoryIsRegisteredAgainAfterChanges(StoryIsRegisteredAgainAfterChangesCase)
 
 
 class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChangesCase):
+    START_REGISTERED = True
+
     def test_a_recommitted_extract_needs_the_story_registered_again(self) -> None:
         """update 轮内重新提交提取稿：上一次登记随之作废，不重跑 `story` 就不收口。"""
         self.assertTrue(self.register().get("success"), self.outputs[-1])
@@ -1615,6 +1705,8 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
 
 class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChangesCase):
     """不采用的新材料与归档后改范围：有效输入与范围关卡各按自己的规则走。"""
+
+    START_REGISTERED = True
 
     def test_a_new_material_left_out_is_recorded_without_changing_the_input(self) -> None:
         """来了一份新材料而本轮不采用：重跑 complete 只记下这次材料，冻结版本照旧复用、设计不用同步；成文重新登记后收口。"""

@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_knowledge_task import BLUEPRINT, CU, make_project, prepare  # noqa: E402  —— 它把 test/scripts 放进导入路径
 from test_verifier_report_protocol import STORY_BUILD as DEV_STORY_BUILD, TheStoryIsReviewedRegisteredAndDeliveredCase  # noqa: E402
 import end_target  # noqa: E402
+import shared_state  # noqa: E402
+from ext_workspace import link_framework  # noqa: E402
 
 STORY_BUILD = "doc/extensions/skills/story/scripts/core/story-build.mjs"
 UNIT = "balance-refresh"
@@ -128,7 +130,8 @@ class DesignEndpointsOnTheRealBlueprint(unittest.TestCase):
     def test_no_unit_is_a_design_preparation_gap(self) -> None:
         """准入的蓝图还没有施工单位：设计交接没到，缺口是设计准备，不是某个阶段。"""
         copy = Path(self._tmp.name) / "zero"
-        shutil.copytree(self.root, copy, symlinks=True)
+        shared_state.copy_tree(self.root, copy)       # 跳过 framework junction 再重接，不顺着它复制整个 Framework
+        link_framework(copy)
         shutil.rmtree(copy / "doc" / "features" / BLUEPRINT / UNIT)
         facts = observe(copy, {"kind": "design_handoff"})
         self.assertFalse(facts["reached"])
