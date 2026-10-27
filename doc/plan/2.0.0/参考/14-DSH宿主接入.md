@@ -1,6 +1,8 @@
 # DSH接入、独审与模板同源
 
-本版验证宿主由用户固定为DSH，沿用1.9.9。以下是实现设计，本轮未启动DSH。N无dsh adapter；B具有本地定制但模板/声明/实际workspace不同源，必须修正后再验。
+2026-10-27状态：模板/runner接线及R4前置已由第二批实施，以下保留宿主合同；第三批复用并核受影响处，不重复移植。真实DSH起跑/派审及preflight-workspace身份证据仍待获准里程碑。
+
+本版验证宿主由用户固定为DSH，沿用1.9.9。以下为已采用的宿主合同；本轮Plan修订未启动DSH。N无原生dsh adapter，第二批已通过受控本地定制和runner接线处理原B装置同源问题；真实运行仍需核当次身份与效果。
 
 ## 1. 版本与所有权
 
@@ -35,7 +37,7 @@ Preset保留四个实例：agent-preset-registry（default=standard）、空pres
 | 审查 | 派发与返回 |
 |---|---|
 | 蓝图独立质询 | 作者预生成questioning核源任务文件，派发只交路径和读取顺序；子级先当前原生人读正文并答八问，再read任务/原件/canonical核源，不负责运行生成脚本；不继承父摘要；结果按原生questioning处理，不伪造Feature request/receipt |
-| Story独审 | 用 `story-build review --action prepare` 生成的dispatch，首读Story后才读取现有task.md中的来源、人签、回看及返修诊断；同步改reading/readerReviewTask/dispatchFor及CLI prepare输出，不让首读载体内联作者结论。子级返回完整报告，父按完成通知原样写到新编号原件，check消费当前material_key；不得缩写/修报告 |
+| Story独审 | 用 `story-build review --action prepare` 生成的dispatch，首读Story后才读取task.md的来源、人签、回看及适用context.md中的前轮报告/返修诊断；两者按参考02的现有prepared/material_key合同绑定，不让首读载体内联作者结论。子级返回完整报告，父按完成通知原样写到新编号原件，prepare接收其原件摘要后，check消费当前material_key；不得缩写/修报告 |
 | CU Spec/Plan等原生阶段 | 运行harness后取summary.verifier_request完整JSON派专用verifier；pre_verifier与knowledge内容必须进入其prompt_path；最终回复原样写summary.verifier_report，再报告核对/check-receipt/closure |
 
 DSH的 `verifier` 启动返回 `started subagent <childId>`，它不是审查报告。等待该child完成通知；期间不修改被审材料，不造轮询调度器。收到final answer后全文落盘，保留父子身份与实际回复原件。`host_verifier_role`在B只是静态invoked_via文字，不是N可调用API，不能据此写一个不存在的调度接口。
@@ -48,7 +50,7 @@ DSH的 `verifier` 启动返回 `started subagent <childId>`，它不是审查报
 
 - `test/scripts/cli_config_group.py::registry_snapshot`保留启动和续跑均带 `--patch {cwd}/.dsh/framework-verifier.patch.yml`；不直接改中央CLI镜像拼参。
 - `run_multi_case.py::seed_agent_adapter`显式project-root，使用原生check-personal-setup选择dsh；不能在framework/harness cwd误定位工程。
-- `host_capabilities`当前硬读opencode，改按实际Case的cli/activeAdapter读取并保存；preflight、template、最终workspace三者身份核一致。读取失败报前置问题，不借别的宿主true代替。
+- `host_capabilities`已按实际Case的cli/activeAdapter读取并保存，后续保持；preflight、template、最终workspace三者身份核一致。读取失败报前置问题，不借别的宿主true代替。
 - 保持 `dsh_session.mjs`、原生父子会话导出/摘要与不完整披露；原报告与最终回复校对用现有原生记录，不新建采集平台。
 - `test_verifier_chain_in_workspace.py`删除模板错配豁免，补Preset结构、registry join、模板→物化→workspace同源、能力选择及N新增persona语义；现有CLI注册/参数快照用例覆盖启动和续跑。
 - 本次DSH验收只选择dsh配置；B中备用opencode/codex配置可保留维护用途，但本轮runner配置不得自动切换它们后仍称DSH通过。DSH凭据/内容拒绝按现有重试和停止协议处理；换宿主需新的用户决定，不构成本版额外验收前置。
