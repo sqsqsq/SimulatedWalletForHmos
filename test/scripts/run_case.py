@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import getpass
 import hashlib
 import json
 import os
@@ -1065,6 +1066,26 @@ def _load_case(case_id: str, run_id: str | None = None) -> tuple[dict, Path, str
     return case, out_dir, feature
 
 
+def _grant_private_tmp_ownership_rights(private_tmp: Path) -> None:
+    """给私有 tmp 加当前用户可继承的完全控制项，让沙箱能为其中的临时目录改属主。
+
+    DSH 的 windows-acl 沙箱在 TMP 下 mkdtemp 后要把新目录的属主改为随机 SID，这需要目录
+    ACL 带 WRITE_OWNER。output/story 所在盘链给当前用户的项是 Modify（不含 WRITE_OWNER），
+    继承进来的 ACL 使每次 temp grant 都失败、失败后的清理也失败（2026-10-27 首个 dsh suite
+    实测）；对只授 Modify 的链，逐目录补对象级 ACE 也救不了动态 mkdtemp 子目录。
+    这里只新增当前用户的一条可继承 Allow 项，不改其它项、不改属主；icacls 失败仅告警，
+    沙箱仍按 fail-closed 在 CLI 层报错，不静默降级。
+    """
+    if sys.platform != "win32":
+        return
+    proc = subprocess.run(
+        ["icacls", str(private_tmp), "/grant", f"{getpass.getuser()}:(OI)(CI)F"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        print(f"[runner] 警告：私有 tmp 的可继承权限授予失败（{private_tmp}）：{detail}")
+
+
 def build_cli_env(out_dir: Path, cli_name: str | None = None, model: str | None = None,
                   limit: dict | None = None) -> dict[str, str]:
     """为被测 CLI 建立每轮独立的可写运行目录。
@@ -1084,6 +1105,7 @@ def build_cli_env(out_dir: Path, cli_name: str | None = None, model: str | None 
     # TMP/TEMP 指向本轮审计目录下的私有 tmp，历史数据物理隔离；对所有 CLI 生效。
     private_tmp = out_dir / "cli-tmp"
     private_tmp.mkdir(parents=True, exist_ok=True)
+    _grant_private_tmp_ownership_rights(private_tmp)
     env["TMP"] = env["TEMP"] = str(private_tmp)
     if cli_name != "opencode":
         return env

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -346,6 +347,29 @@ class AllUpdateInputsAreCheckedBeforeWriting(unittest.TestCase):
         self.assertEqual("system", err.failed["kind"])
         self.assertEqual((True, 3), (err.failed["target_now"]["exists"], err.failed["target_now"]["size"]), "部分写入被说成没写")
         self.assertEqual([], err.pending)
+
+
+class ThePrivateTmpCarriesAnInheritableGrant(unittest.TestCase):
+    """DSH 的 windows-acl 沙箱要在私有 tmp 下为每次 mkdtemp 的新目录改属主（需 WRITE_OWNER）；
+    output/story 所在盘链只授当前用户 Modify，所以私有 tmp 创建时必须补一条当前用户可继承的
+    完全控制项，否则每次命令的 temp grant 都失败。"""
+
+    def test_build_cli_env_grants_the_private_tmp_an_inheritable_full_control(self) -> None:
+        if sys.platform != "win32":
+            self.skipTest("Windows ACL 专属")
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "run"
+            out_dir.mkdir(parents=True)
+            env = rc.build_cli_env(out_dir, "dsh")
+            self.assertEqual(str(out_dir / "cli-tmp"), env["TMP"])
+            self.assertEqual(env["TMP"], env["TEMP"])
+            probe = Path(env["TMP"]) / "grant-probe"
+            probe.mkdir()
+            listing = subprocess.run(["icacls", str(probe)], capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace", check=True).stdout
+            granted = [line.strip() for line in listing.splitlines()
+                       if "(I)(OI)(CI)(F)" in line and "Administrators" not in line and "SYSTEM" not in line]
+            self.assertTrue(granted, f"mkdtemp 子目录没有继承到当前用户的完全控制项：\n{listing}")
 
 
 if __name__ == "__main__":
