@@ -440,6 +440,27 @@ def install_framework_under_test(template: Path) -> dict[str, Any]:
     }
 
 
+def strip_local_runtime_identity(template: Path) -> list[str]:
+    """剥掉 demo 本地运行态里「按工作区」的身份键，返回剥过的「文件:键」清单。
+
+    demo 的 framework.local.json 被 git 忽略，是 demo 自己的本地运行状态；其中 agent_adapter
+    记录「这个工作区上次用哪个 CLI 跑」。它随复制进新 workspace 后，起跑时的 adapter 播种
+    （check-personal-setup --ensure --select-adapter）会按 adapter_conflict 拒绝写入本次 CLI——
+    之前每次选中的 CLI 恰好与 demo 残留一致，冲突被掩盖。隔离工程的运行身份由播种按本次
+    选择的 CLI 写入，这里只剥这一个键；DevEco 等其它本地配置原样保留。
+    """
+    stripped: list[str] = []
+    local_path = template / "framework.local.json"
+    if not local_path.is_file():
+        return stripped
+    local_config = read_json(local_path, {}) or {}
+    if "agent_adapter" in local_config:
+        local_config.pop("agent_adapter")
+        write_json(local_path, local_config)
+        stripped.append("framework.local.json:agent_adapter")
+    return stripped
+
+
 def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Path]:
     """建一份短路径的工作区模板：demo 消费工程减去运行态，换上被测 Framework，再装上当前开发源。
 
@@ -459,6 +480,7 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
     (template / WORKSPACE_SEARCH_IGNORE).write_text(WORKSPACE_SEARCH_RULE, encoding="utf-8")
     (template / "doc/features").mkdir(parents=True, exist_ok=True)
     (template / "framework/harness/state").mkdir(parents=True, exist_ok=True)
+    stripped_identity = strip_local_runtime_identity(template)
     framework = install_framework_under_test(template)
     installed = install_dev_source(template)
     if demo_check() != demo_head:
@@ -473,6 +495,7 @@ def create_workspace_template(suite_root: Path, suite_id: str) -> tuple[Path, Pa
             + [f"{rel}/**" for rel in WORKSPACE_EXCLUDED_DIRS]
             + ["other Case inputs", "historical suite data"]),
         "installed": installed,
+        "neutralized_runtime_identity": stripped_identity,
         # 被测对象的身份：开发源、装进 template 的、发布的 Framework；结束时与它比较
         "identity": {"dev_source": tree_identity(DEV_SOURCE), "template_extension": tree_identity(template / "doc" / "extensions"),
                      "framework": framework_identity(template)},

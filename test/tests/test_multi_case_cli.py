@@ -1439,6 +1439,9 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         (demo / "framework/harness/node_modules/pkg/i.js").write_text("dep", encoding="utf-8")
         (demo / "doc/extensions/hooks/retired/old.mjs").write_text("上一版的机制", encoding="utf-8")
         (demo / "framework.config.json").write_text("{}", encoding="utf-8")
+        (demo / "framework.local.json").write_text(
+            '{"schema_version": "1.0", "agent_adapter": "opencode",'
+            ' "toolchain": {"devEcoStudio": {"installPath": "D:/DevEco"}}}', encoding="utf-8")
         for name in ("AGENTS.md", "CLAUDE.md"):
             (demo / name).write_text("# demo\n\n## 实例扩展\n\n", encoding="utf-8")
         (demo / ".gitignore").write_text("node_modules/\ndoc/features/\nframework/harness/state/*\n"
@@ -1513,6 +1516,12 @@ class WorkspaceBoundaryTest(unittest.TestCase):
         boundary = run_multi_case.read_json(root / "suite" / "workspace-boundary.json")
         self.assertEqual("installed", boundary["installed"]["status"])
         self.assertTrue(boundary["demo"]["head"], "没记下装配所用的 demo 提交")
+        local_identity = run_multi_case.read_json(template / "framework.local.json")
+        self.assertNotIn("agent_adapter", local_identity, "demo 的按工作区运行身份漏进了 template")
+        self.assertEqual({"installPath": "D:/DevEco"}, local_identity["toolchain"]["devEcoStudio"],
+                         "剥离运行身份时不能动其它本地配置")
+        self.assertEqual(["framework.local.json:agent_adapter"], boundary["neutralized_runtime_identity"],
+                         "剥过的键要记进 boundary，供身份核对")
 
     def test_a_maintenance_directory_in_demo_stops_the_assembly(self) -> None:
         for name in sorted(run_multi_case.MAINTENANCE_TOP_LEVEL):
