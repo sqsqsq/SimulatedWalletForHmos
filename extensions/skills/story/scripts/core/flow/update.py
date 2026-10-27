@@ -531,6 +531,34 @@ def _phase_facts(reports: list[dict], evidence: dict[str, str]) -> list[dict]:
     return out
 
 
+def stale_units(units: list[dict]) -> list[dict]:
+    """原生证据此刻不是「闭环且新鲜」的施工单位阶段，按单位列出，`from` 是最早的那一个。历史闭环保留在 units 里，
+    不算这一轮的完成；蓝图读不出时施工影响未知，照实列出。"""
+    out = []
+    for u in units:
+        if u.get("readable") is False:
+            out.append({"blueprint_id": u.get("blueprint_id"), "why": u.get("why"), "phases": []})
+            continue
+        old = [p for p in u.get("phases") or [] if not p.get("current")]
+        if old:
+            out.append({"change_unit_id": u["change_unit_id"], "feature_id": u["feature_id"], "from": old[0]["phase"],
+                        "phases": [{"phase": p["phase"], "evidence": p.get("evidence"), "closure": p.get("closure"),
+                                    **({"why": p["why"]} if p.get("readable") is False else {})} for p in old]})
+    return out
+
+
+def stale_text(stale: list[dict]) -> str:
+    """受影响 CU、过期阶段与接手动作：本轮只同步业务文档时由它披露，不称可以沿用旧 Plan。"""
+    if not stale:
+        return ""
+    rows = [f"蓝图 {s['blueprint_id']} 读不出（{s['why']}），施工单位受不受影响未知" if "change_unit_id" not in s
+            else f"{s['change_unit_id']}（{s['feature_id']}）的 "
+                 + "、".join(f"{p['phase']}（{p.get('evidence') or '读不出'}）" for p in s["phases"])
+            for s in stale]
+    return ("施工单位的阶段原生证据此刻不新鲜：" + "；".join(rows) + "。本轮授权到 Plan 的，从最早过期的阶段重新取原生输入、"
+            "落实变更并闭环到 Plan 才算同步；没有施工授权的，交施工负责人从这些阶段接手，不沿用旧 Plan。")
+
+
 def _paths(project_root: Path, feature_root: Path) -> dict:
     """本需求的本地位置（绝对路径）：取材落点 `inbox` 与人补料同一个入料口，回执跟着工程根走。"""
     return {"project_root": project_root.resolve().as_posix(),
@@ -551,7 +579,8 @@ def cmd_update_status(feature_root: Path, feature: str, project_root: Path) -> d
     records = _records(feature_root)
     openest = _latest(records, None, ACTIVE)
     closed = _latest(records, "closed")
-    out = {"rounds": len(records), "units": _unit_facts(feature_root, project_root),
+    units = _unit_facts(feature_root, project_root)
+    out = {"rounds": len(records), "units": units, "stale_units": stale_units(units),
            "stage": ((load(feature_root) or {}).get("update") or {}).get("stage"),
            "paths": _paths(project_root, feature_root)}
     if openest:
@@ -769,6 +798,7 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
     # `after/` 是**给下一轮比的正文**，不是交付目录的副本：只留这一轮盯着的那几份。
     kept = _keep(feature_root, current, root / "after")
     units = _unit_facts(feature_root, project_root)
+    stale = stale_units(units)
     contract = load(feature_root) or {}
     gap = _carry_start(feature_root, feature, rid, rec)      # 开轮时没移成的开始时刻，收口前再移一次
     # 人在这一轮的原话随轮次留档：契约只清「开着的那一轮」（还原同样如此）
@@ -776,7 +806,7 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
                sources=_sources(feature_root),
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
-               units=units, decisions=(contract.get("update") or {}).get("decisions", []))
+               units=units, stale_units=stale, decisions=(contract.get("update") or {}).get("decisions", []))
     contract["update"] = {"open": None, "last_closed": rid}
     save(feature_root, contract)
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
@@ -790,13 +820,13 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
         step, follow = "status", f"暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
     return {"update": rid, "status": "closed", "requested_result": result, "compared_next_time": kept,
             **({"usage_error": gap} if gap else {}),
-            "unreadable": unreadable, "units": units, "design_feedback": feedback, "next": step,
+            "unreadable": unreadable, "units": units, "stale_units": stale, "design_feedback": feedback, "next": step,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("本轮终点是取材与澄清：还没有设计或成文，按需求进展接着走。" if result == "materials" else "")
                       + (f"设计反馈 {len(feedback)} 条交蓝图负责方，接受与否待确认（负责方回复记在 update-notes）；施工授权另由人给。"
                          if feedback else "")
                       + ("有读不到的文件，它们这一轮没能记进基准，下一轮仍会被单列。"
-                         if unreadable else "") + f"下一步：{follow}"}
+                         if unreadable else "") + stale_text(stale) + f"下一步：{follow}"}
 
 
 #: 「不变项与理由」那一节：标题里有「不变项」，下面至少一行表格数据。

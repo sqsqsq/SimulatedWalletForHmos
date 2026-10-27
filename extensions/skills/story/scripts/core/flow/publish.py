@@ -14,6 +14,8 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from flow.lifecycle import _not_the_product, _said
+from flow.routing import live_materials, next_step, register_command
 from flow.state import (CORE_DIR, DESIGN_REVIEW, FlowError, PUBLISHED, REVIEW, STORY, load, log, now, require, save,
                         short_digest, system_requirement)
 
@@ -205,20 +207,29 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
             raise FlowError(f"{'/'.join(rel)} 不存在：归档件不全，无可登记的归档态")
 
     checker = CORE_DIR / "story-build.mjs"
+    # 走到这里需求系统那边已经写入并读回：失败只说本地登记没完成，下一步只补登记，不重新上传
+    again = (f"只补登记：`{register_command(feature_root, 'archived')}`；需求系统里已上传的那一份不受影响，不要重新上传")
     node = shutil.which("node")
     if node is None:
-        raise FlowError("找不到 node：归档态登记要先重跑交付门，无法跳过")
+        raise FlowError(f"找不到 node，交付门没跑，归档态没有登记。这是运行环境问题：装好 node 后{again}")
     # 交付门而不是普通 check：走到这里 story 该已登记、依据未变，审查结论也该已经如实记下。
     # 普通 check 判不到那两样，用它登记归档态等于把「审没审过」这一格空着送审。
-    proc = subprocess.run(
-        [node, str(checker), "check", "--deliver", "--feature", feature_root.name,
-         "--project-root", str(project_root)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    if proc.returncode != 0:
-        log((proc.stderr or proc.stdout).strip()[:2000])
+    try:
+        proc = subprocess.run(
+            [node, str(checker), "check", "--deliver", "--feature", feature_root.name,
+             "--project-root", str(project_root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    except OSError as exc:
+        raise FlowError(f"交付门没能启动（{exc}），归档态没有登记。这是运行环境问题：环境恢复后{again}") from exc
+    if proc.returncode == 1:
         raise FlowError(
-            "归档件未通过交付门（详见上方输出），拒绝登记归档态。"
-            "已经传上去的那一版是不合格的：修好后重新归档，再登记")
+            "交付门这次没通过，归档态没有登记。它核的是本地工作区当前的 Story、Review、设计附件与审查结果，"
+            f"不是需求系统里那一份；按下面的输出处理它点名的问题后{again}。本地业务稿确实要改的，走 `/story update`。"
+            "交付门原始输出：\n" + _said(proc))
+    if proc.returncode != 0:
+        raise FlowError(f"交付门没有正常结束（退出码 {proc.returncode}），归档态没有登记。"
+                        f"这不是归档件的问题：{_not_the_product(proc.returncode)}，修好后{again}。原始输出：\n"
+                        + _said(proc))
 
     # 三件都要有这一版登记之后的上传读回，且读回的就是本地当前件
     missing = readbacks(feature_root, contract.get("story_written_at"))
@@ -229,4 +240,9 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     contract["archived"] = publication_record(feature_root, (contract.get("story_basis") or {}).get("blueprint_ref"))
     save(feature_root, contract)
     log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
-    return {"archived": True, "at": contract["archived"]["at"]}
+    # 归档成立不回滚；本轮还有没做完的工作同源说出来，算不出来不遮住已成功的登记
+    try:
+        step, action = next_step(feature_root, contract, live_materials(feature_root))
+    except FlowError as exc:
+        step, action = "status", f"归档态已登记；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
+    return {"archived": True, "at": contract["archived"]["at"], "next": step, "action": action}

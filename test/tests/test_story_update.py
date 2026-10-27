@@ -32,7 +32,7 @@ from test_story_build import (  # noqa: E402
     FEATURE, FIXTURE, REPO_ROOT, StoryBuildCase, ensure_flow_state,
 )
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
-from flow_steps import answer, write_gaps  # noqa: E402
+from flow_steps import answer, open_decision, write_gaps  # noqa: E402
 import design_kit  # noqa: E402
 from ext_workspace import DEV_EXT, link_framework
 
@@ -865,6 +865,39 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         self.assertEqual([("plan", "closed")], [(p["phase"], p["closure"]) for p in unit["phases"]],
                          "默认目录的 summary 被当成了本阶段的，或配置目录没读")
 
+    def test_a_closed_phase_without_fresh_evidence_is_listed_as_stale(self) -> None:
+        """summary 写着闭环，原生证据此刻却不新鲜：不算这一轮的完成，按单位列出过期阶段与接手动作。"""
+        self.summary(json.dumps({"verdict": "PASS", "closure_status": "closed"}))
+        out = self.status()
+        [unit] = out["units"]
+        [phase] = unit["phases"]
+        self.assertNotEqual("fresh", phase["evidence"])
+        self.assertFalse(phase["current"])
+        [stale] = out["stale_units"]
+        self.assertEqual(("balance-refresh", "spec"), (stale["change_unit_id"], stale["from"]))
+
+    def test_the_disclosure_names_units_phases_and_who_takes_over(self) -> None:
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.update import stale_text, stale_units  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(core))
+        units = [{"change_unit_id": "a", "feature_id": "cu-a", "phases": [
+                     {"phase": "spec", "readable": True, "closure": "closed", "evidence": "fresh", "current": True},
+                     {"phase": "plan", "readable": True, "closure": "closed", "evidence": "stale", "current": False}]},
+                 {"change_unit_id": "b", "feature_id": "cu-b", "phases": [
+                     {"phase": "spec", "readable": True, "closure": "closed", "evidence": "fresh", "current": True}]},
+                 {"blueprint_id": "bp", "readable": False, "why": "原生读取 invalid"}]
+        stale = stale_units(units)
+        self.assertEqual(["a", None], [s.get("change_unit_id") for s in stale], "新鲜的单位被列成过期，或读不出的被略过")
+        text = stale_text(stale)
+        self.assertIn("a（cu-a）的 plan（stale）", text)
+        self.assertIn("蓝图 bp 读不出（原生读取 invalid）", text)
+        self.assertIn("闭环到 Plan", text)
+        self.assertIn("不沿用旧 Plan", text)
+        self.assertEqual("", stale_text(stale_units(units[1:2])))
+
     def test_a_directory_the_framework_cannot_resolve_is_unreadable(self) -> None:
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
@@ -1260,6 +1293,169 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
         for out in self.outputs:
             self.assertNotIn("手改", out)
 
+
+
+class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
+    """登记链（全篇检查 → 审查结果 → 成文依据）哪一步没成：说清做完了什么、哪几步没跑、归谁处理，已有登记原样保留；
+    同内容重新登记不换登记时刻。故障注入只换子进程，其余照真跑。"""
+
+    CORE = DEV_EXT / "skills" / "story" / "scripts" / "core"
+
+    def modules(self):
+        sys.path.insert(0, str(self.CORE))
+        self.addCleanup(lambda: str(self.CORE) in sys.path and sys.path.remove(str(self.CORE)))
+        from flow import lifecycle, publish  # noqa: PLC0415
+        from flow.state import FlowError  # noqa: PLC0415
+        return lifecycle, publish, FlowError
+
+    def registration_broken_at(self, step: int, outcome) -> tuple[str, list]:
+        """在本进程里跑登记，第 step 个子进程换成 outcome（异常就抛，整数就是那个退出码），其余照真跑。"""
+        lifecycle, _, FlowError = self.modules()
+        real, calls = subprocess.run, []
+
+        def run(cmd, *args, **kwargs):
+            calls.append(cmd)
+            if len(calls) - 1 != step:
+                return real(cmd, *args, **kwargs)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return subprocess.CompletedProcess(cmd, outcome, "", "[story-build] 脚本自身异常：注入的故障")
+
+        with unittest.mock.patch.object(lifecycle.subprocess, "run", run), self.assertRaises(FlowError) as caught:
+            lifecycle.cmd_story(self.feature_root, self.root)
+        return str(caught.exception), calls
+
+    def test_registering_unchanged_content_again_keeps_the_registration_time(self) -> None:
+        """同内容重新登记仍跑完整核对，登记时刻与依据不换；内容变了、重新审过再登记才换。"""
+        self.assertTrue(self.register().get("registered"), self.outputs[-1])
+        sys.path.insert(0, str(FLOW.parent))
+        from flow.state import load, save  # noqa: PLC0415
+        contract = load(self.feature_root)
+        contract["story_written_at"] = earlier = "2026-01-01T00:00:00+00:00"
+        save(self.feature_root, contract)
+        first = self.contract()
+        again = self.flow("story")
+        self.assertFalse(again.get("registered"), again)
+        self.assertEqual((earlier, first["story_basis"]), (self.contract()["story_written_at"], self.contract()["story_basis"]))
+        self.rewrite_background("支付提交后用户要能看到回执状态。登记之后补的一句。")
+        self.assertTrue(self.register().get("registered"), self.outputs[-1])
+        self.assertNotEqual(first["story_basis"], self.contract()["story_basis"])
+        self.assertGreater(self.contract()["story_written_at"], earlier)
+
+    def test_a_failed_first_step_says_nothing_else_ran(self) -> None:
+        """第一步全篇检查没过：已完成无、后两步没跑，原输出带出来；已有登记原样保留，修好后重新审过即可登记。"""
+        self.assertTrue(self.register().get("registered"), self.outputs[-1])
+        registered = self.contract()
+        story = self.feature_root / "AR" / "story.md"
+        good = story.read_text(encoding="utf-8")
+        head, rest = good.split("\n## ", 1)
+        first, others = rest.split("\n## ", 1)
+        story.write_text(f"{head}\n## {first}\n<!-- 待写：背景 -->\n\n## {others}", encoding="utf-8")
+        out = self.flow("story")
+        error = out.get("error", "")
+        self.assertIn("story-build check 没通过", error, out)
+        self.assertIn("已有的登记原样保留", error)
+        self.assertIn("已完成：无", error)
+        self.assertIn("没跑：review --action check、basis", error)
+        self.assertIn("story_flow.py story --feature", error, "没给重新登记的入口")
+        self.assertEqual((registered["status"], registered["story_basis"]),
+                         (self.contract()["status"], self.contract()["story_basis"]), "没登记成却改了已有登记")
+        story.write_text(good, encoding="utf-8")
+        self.assertEqual("story_written", self.contract()["status"])
+        self.assertFalse(self.flow("story").get("registered"), "改回原样后应与已有登记一致")
+
+    def test_a_step_that_cannot_start_keeps_the_progress(self) -> None:
+        """第三步进程起不来：前两步做了什么、这一步没跑，归运行环境，不让作者改稿；恢复后登记即成。"""
+        self.register()
+        error, calls = self.registration_broken_at(2, FileNotFoundError("node 不见了"))
+        self.assertIn("story-build basis 没能启动", error)
+        self.assertIn("已完成：全篇检查通过；独立审查结果可消费", error)
+        self.assertIn("运行环境问题，业务稿与派生件都不用改", error)
+        self.assertEqual(3, len(calls), "起不来之后还接着跑了后面的步骤")
+
+    def test_an_internal_error_is_not_sent_to_the_author(self) -> None:
+        """成文依据退出 2（脚本自身异常）：归扩展维护者，不让作者改稿，原始输出带出来。"""
+        self.register()
+        error, calls = self.registration_broken_at(2, 2)
+        self.assertIn("story-build basis 没有正常结束（退出码 2）", error)
+        self.assertIn("不要为它改真源或草稿", error)
+        self.assertIn("扩展维护者", error)
+        self.assertNotIn("按下面的报告处理", error)
+        self.assertIn("注入的故障", error, "原始输出没带出来")
+        self.assertEqual(3, len(calls))
+
+    def test_an_interrupted_step_is_an_environment_matter(self) -> None:
+        """退出码既不是 1 也不是 2（进程被杀之类）：查进程与环境，不让作者改稿，也不说成脚本缺陷。"""
+        self.register()
+        error, calls = self.registration_broken_at(0, 137)
+        self.assertIn("story-build check 没有正常结束（退出码 137）", error)
+        self.assertIn("进程被中断或运行环境出错", error)
+        self.assertNotIn("扩展维护者", error)
+        self.assertEqual(1, len(calls))
+
+    def test_without_node_nothing_runs(self) -> None:
+        lifecycle, _, FlowError = self.modules()
+        with unittest.mock.patch.object(lifecycle.shutil, "which", lambda _name: None), \
+                unittest.mock.patch.object(lifecycle.subprocess, "run") as run, self.assertRaises(FlowError) as caught:
+            lifecycle.cmd_story(self.feature_root, self.root)
+        run.assert_not_called()
+        self.assertIn("找不到 node，story-build 一步都没启动", str(caught.exception))
+        self.assertIn("运行环境问题", str(caught.exception))
+
+    def archived_with(self, outcome, *, node: bool = True) -> str:
+        """需求系统已写入之后的本地归档登记：交付门子进程换成 outcome（异常就抛，整数是退出码）。返回报错。"""
+        _, publish, FlowError = self.modules()
+
+        def run(cmd, *args, **kwargs):
+            if isinstance(outcome, Exception):
+                raise outcome
+            return subprocess.CompletedProcess(cmd, outcome, "", "[story-build] 交付门的原始输出")
+
+        which = (lambda _n: "node") if node else (lambda _n: None)
+        with unittest.mock.patch.object(publish.subprocess, "run", run), \
+                unittest.mock.patch.object(publish.shutil, "which", which), self.assertRaises(FlowError) as caught:
+            publish.cmd_archived(self.feature_root, self.root)
+        return str(caught.exception)
+
+    def test_a_failed_local_archive_registration_never_asks_for_another_upload(self) -> None:
+        """远端已写入后本地登记失败：哪一类失败都只补登记、不重新上传，也不断言远端那一份不合格。"""
+        self.assertTrue(self.register().get("registered"), self.outputs[-1])
+        cases = {"自身异常": (2, True, "扩展维护者"), "进程起不来": (FileNotFoundError("node 不见了"), True, "运行环境问题"),
+                 "没有 node": (0, False, "装好 node"), "被中断": (137, True, "进程被中断"),
+                 "交付门没过": (1, True, "不是需求系统里那一份")}
+        for name, (outcome, node, why) in cases.items():
+            with self.subTest(name):
+                error = self.archived_with(outcome, node=node)
+                self.assertIn(why, error)
+                self.assertIn("只补登记：`python doc/extensions/skills/story/scripts/core/story_flow.py archived", error)
+                self.assertIn("不要重新上传", error)
+                self.assertNotIn("重新归档", error)
+                self.assertNotIn("不合格", error)
+                self.assertNotIn("archived", self.contract(), "没登记成却记了归档态")
+
+    def test_the_review_human_zone_survives_a_failed_registration(self) -> None:
+        """评审人填过的意见：登记中途失败、修好重新准备审查再登记，都一个字节不丢。"""
+        decisions = self.src / "decisions.json"
+        data = json.loads(decisions.read_text(encoding="utf-8"))
+        data.pop("no_pending", None)
+        data["decisions"] = [open_decision("D1", "回执超时后是否自动重查待定", "回执超时后要不要自动再查一次。",
+                                           [("自动重查一次", "少一次手动操作；多一次请求"),
+                                            ("提示用户手动刷新", "请求少；用户多点一下")],
+                                           "选择方案 1。", category="业务规则")]
+        decisions.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        self.assertTrue(self.register().get("registered"), self.outputs[-1])
+        review = self.feature_root / "AR" / "review.md"
+        filled = review.read_text(encoding="utf-8").replace("- [ ] 同意", "- [x] 同意").replace(
+            "修改意见：\n", "修改意见：\n重查间隔写进规格。\n")
+        self.assertNotEqual(filled, review.read_text(encoding="utf-8"), "夹具的评审区形状变了，用例要跟着改")
+        review.write_text(filled, encoding="utf-8")
+        error, _ = self.registration_broken_at(1, 137)
+        self.assertIn("没有正常结束", error)
+        self.assertEqual(filled, review.read_text(encoding="utf-8"))
+        self.register()
+        human = filled[filled.index("评审结论："):filled.index("<!-- decision: D1 -->")]
+        self.assertIn("重查间隔写进规格。", human)
+        self.assertIn(human, review.read_text(encoding="utf-8"))
 
 
 class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsRegisteredAgainAfterChangesCase):

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from ext_workspace import DEV_EXT, REPO_ROOT
@@ -262,6 +263,38 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.assertEqual(0, self.commit().returncode)
         [version] = self.versions()
         self.assertEqual(PRD, (version / "files" / "RR" / "prd.md").read_text(encoding="utf-8"))
+
+    def test_a_refused_rename_keeps_the_registered_version_and_the_retry_freezes(self) -> None:
+        """新一版的临时目录改名被系统拒绝（本机实见 WinError 5）：异常原样抛出，不出现半个版本、不留临时目录，
+        已登记的输入、旧版本与流程契约一个字节不动；同一条命令重跑照常冻结。不加重试。"""
+        first = self.committed()["input"]["snapshot_ref"]
+        self.ok("reopen")
+        answer(self.ok, "scope_decision", "1")
+        self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
+        old = {p: p.read_bytes() for p in (self.root / first).parent.rglob("*") if p.is_file()}
+        contract = (self.src / "story-flow.json").read_bytes()
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.submission import cmd_complete  # noqa: PLC0415
+            real = Path.rename
+
+            def refuse(self_path, target):
+                if self_path.name.startswith(".staging-"):
+                    raise PermissionError(5, "拒绝访问。", str(self_path))
+                return real(self_path, target)
+
+            with unittest.mock.patch.object(Path, "rename", refuse), self.assertRaises(PermissionError):
+                cmd_complete(self.feature_root, self.root, self.feature, DRAFT_REL, INPUT_REL)
+        finally:
+            sys.path.remove(str(core))
+        self.assertEqual([(self.root / first).parent], self.versions(), "改名被拒却留下了新版本")
+        self.assertEqual([], [p for p in (self.src / "inputs").iterdir() if p.name.startswith(".staging-")], "临时目录没清")
+        self.assertEqual(old, {p: p.read_bytes() for p in (self.root / first).parent.rglob("*") if p.is_file()})
+        self.assertEqual(contract, (self.src / "story-flow.json").read_bytes(), "改名失败却改了流程契约")
+        self.assertEqual(0, self.commit().returncode)
+        self.assertNotEqual(first, self.contract()["input"]["snapshot_ref"])
+        self.assertEqual(2, len(self.versions()))
 
     def test_after_the_commit_the_state_waits_for_the_design(self) -> None:
         self.committed()
