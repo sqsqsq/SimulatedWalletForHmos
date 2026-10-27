@@ -394,6 +394,8 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
         meeting = self.flow_path.parent / "meetings" / "中性 会议" / "v1" / "raw.md"
         meeting.parent.mkdir(parents=True)
         meeting.write_text("主持人：先看续期。\n", encoding="utf-8")
+        (meeting.parent / "corrections.json").write_text("[]", encoding="utf-8")       # 读会必写：没有纠偏也写空数组
+        (meeting.parent / "evidence.md").write_text("主持人：先看续期。", encoding="utf-8")
         story = "doc/features/REQ-DEMO/AR/story.md"
         raw = "doc/features/REQ-DEMO/AR/story-src/meetings/中性 会议/v1/raw.md"
         cases = {
@@ -672,6 +674,42 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.fresh()
         self.reviewed("advice", relocate)
         self.assertEqual("report_invalid", self.result()["result"], "没声明的位置当成了这一次的材料")
+
+    def test_a_missing_meeting_correction_is_named_not_dropped(self) -> None:
+        """会议版本在、纠偏留痕或阅读件缺了：准备审查报缺件、点名那份文件，不缩成更小的必审集合。"""
+        for name in ("corrections.json", "evidence.md"):
+            with self.subTest(missing=name):
+                target = self.root / self.CORRECTIONS if name == "corrections.json" else \
+                    self.root / self.CORRECTIONS.replace("corrections.json", "evidence.md")
+                kept = target.read_bytes()
+                target.unlink()
+                out = self.review("prepare")
+                self.assertNotEqual(0, out.returncode)
+                self.assertIn(name, out.stdout + out.stderr)
+                target.write_bytes(kept)
+
+    def test_landings_with_different_bytes_are_read_apart(self) -> None:
+        """同一条图片登记的几个落点：同字节的是别名，内容不同的各自核读，不共用一份阅读声明。"""
+        manifest = self.flow_path.parent / "materials.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        image = next(m for m in data["materials"] if "image" in str(m.get("kind")) and any(p.endswith("old.png") for p in m["paths"]))
+        feature = self.root / self.FEATURE
+        (feature / "ux-reference" / "old-copy.png").write_bytes((feature / "ux-reference" / "old.png").read_bytes())
+        (feature / "ux-reference" / "old-edited.png").write_bytes((feature / "ux-reference" / "old.png").read_bytes() + b"x")
+        image["paths"] += ["ux-reference/old-copy.png", "ux-reference/old-edited.png"]
+        manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        task = self.task_text()
+        self.assertIn(f"`{self.FEATURE}/ux-reference/old-copy.png` —— ", task)
+        self.assertIn(f"（与 `{self.IMAGE}` 同一内容）", task.split(f"`{self.FEATURE}/ux-reference/old-copy.png`", 1)[1].split("\n", 1)[0])
+        edited = task.split(f"`{self.FEATURE}/ux-reference/old-edited.png`", 1)[1].split("\n", 1)[0]
+        self.assertIn("内容不同，单独核读", edited)
+        self.assertNotIn("同一内容", edited)
+        self.fresh()
+        edited_rel = f"{self.FEATURE}/ux-reference/old-edited.png"
+        self.reviewed("pass", self.examined(lambda xs: [x for x in xs if x != edited_rel]))
+        got = self.result()
+        self.assertEqual("report_invalid", got["result"], "内容不同的落点被别名顶替了")
+        self.assertIn(edited_rel, got["detail"])
 
     def test_a_binary_origin_is_checked_not_read(self) -> None:
         import hashlib

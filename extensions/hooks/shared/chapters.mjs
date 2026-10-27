@@ -9,7 +9,7 @@ import { normalizeHeading, parseDocument } from '../../skills/story/scripts/core
 const NUMBER = /^(\d+(?:\.\d+)*)\.?\s+/;
 
 /**
- * 带号子节以它所属的带号父节号开头；同一父节下两个标题同号是歧义（带号引用指不清是哪一个）。
+ * 带号子节以它所属的带号父节号开头，且正好深一层（`2` 的直接子节是 `2.x`，不是 `2.1.1`）；同一父节下两个标题同号是歧义。
  * 父节无号时不按它核子节号。
  *
  * @param {string} text 被核的文档
@@ -28,6 +28,8 @@ export function chapterNumberProblems(text) {
     const up = parent && NUMBER.exec(parent.raw)?.[1];
     if (up && !got.startsWith(`${up}.`)) {
       problems.push(`「${'#'.repeat(h.level)} ${h.raw}」挂在「${'#'.repeat(parent.level)} ${parent.raw}」下，号却是 ${got}——带号子节以父节号开头`);
+    } else if (up && got.split('.').length !== up.split('.').length + 1) {
+      problems.push(`「${'#'.repeat(h.level)} ${h.raw}」直接挂在「${'#'.repeat(parent.level)} ${parent.raw}」下，号却跳了层（${up} 的直接子节是 ${up}.<序号>）`);
     }
     const key = `${parent?.at ?? -1}:${got}`;
     if (used.has(key)) {

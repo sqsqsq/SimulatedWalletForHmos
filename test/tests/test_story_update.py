@@ -1064,6 +1064,60 @@ class SameNamedOriginalSteps:
             (self.feature_root / c["file"]).write_bytes((self.feature_root / c["before"]).read_bytes())
 
 
+class TheFrozenOriginalIsTracedThroughRetirement(SameNamedOriginalSteps, UpdateCase):
+    """冻结采用稿当时的原件按快照记的路径与摘要核：同名新版按方法页 `--retire` 退掉旧版再导入、登记本轮之后，
+    审查对象从退役备份取回当时那一版；备份也没了就报缺口，不拿同路径的新版顶替。"""
+
+    OBJECT = """
+import { pathToFileURL } from 'node:url';
+const [mod, root, feature] = process.argv.slice(1);
+const { reviewObject } = await import(pathToFileURL(mod).href);
+const o = reviewObject(root, feature, { withTask: false });
+process.stdout.write(JSON.stringify({ rows: o.rows.map(r => [r.path, r.label]), problems: o.problems }));
+"""
+
+    def review_object(self) -> dict:
+        mod = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.OBJECT, str(mod), str(self.root), FEATURE],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def test_the_retired_original_is_found_and_a_lost_one_is_named(self) -> None:
+        v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
+        self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
+        frozen_ref = self.snapshot_ref()
+        retire = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
+                                 "--project-root", str(self.root), "--retire", "甲需求.md"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, retire.returncode, retire.stdout + retire.stderr)
+        self.original.write_bytes("# 甲需求\n\n单日上限 300。\n".encode("utf-8"))
+        self.update("--action", "inputs")
+        write_gaps(self.src)
+        answer(self.flow, "material_scope", "放了甲需求新版", "--chosen", "supplied")
+        (self.inbox / ".classify.json").write_text(json.dumps({"甲需求.md": "RR"}, ensure_ascii=False), encoding="utf-8")
+        done = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
+                               "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        self.update()
+        self.assertIsNone(self.flow("round").get("error"))
+        self.assertEqual(frozen_ref, self.snapshot_ref(), "没重新冻结，采用版应仍是第一版")
+
+        backup = f".backups/local/inbox/甲需求.{hashlib.sha256(v1).hexdigest()[:16]}.md"
+        self.assertTrue((self.feature_root / backup).is_file(), "方法页的退役没有按摘要留备份")
+        got = self.review_object()
+        traced = [label for rel, label in got["rows"] if rel.endswith(backup)]
+        self.assertEqual(1, len(traced), got["rows"])
+        self.assertIn("冻结采用稿 RR/prd.md 当时的原件 inbox/甲需求.md（已退役", traced[0])
+        self.assertFalse([p for p in got["problems"] if "当时的原件" in p], got["problems"])
+
+        (self.feature_root / backup).unlink()
+        lost = [p for p in self.review_object()["problems"] if "当时的原件" in p]
+        self.assertEqual(1, len(lost), lost)
+        self.assertIn("既不在原处，也不在退役备份", lost[0])
+
+
 class ASameNamedOriginalGoesThroughTheRealEntries(SameNamedOriginalSteps, UpdateCase):
     """V01（未登记起点）：同名原件换版、撤回与重新采用旧原件。"""
 

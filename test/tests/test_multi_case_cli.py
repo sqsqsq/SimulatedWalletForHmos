@@ -114,6 +114,13 @@ class StructuredPhaseStateTest(unittest.TestCase):
         self.assertEqual("plan", record["highest_phase_reached"])
         self.assertEqual("2026-08-22T03:00:00Z", record["story_done_at"])
 
+    def test_invalid_or_foreign_framework_state_is_ignored(self) -> None:
+        record = self.record()
+        self.write_current_phase("spec", feature="OTHER")
+        run_multi_case.reconcile_record_phase(record)
+        self.assertEqual("story", record["current_phase"])
+        self.assertFalse(record.get("spec_entered_at"))
+
 
 class SuiteFeatureArchiveTest(unittest.TestCase):
     """起跑前把回流根下的需求目录归档进 doc/features/archive/<批次>/；archive 自身、spec/plan/release 不动。"""

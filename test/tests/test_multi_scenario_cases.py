@@ -111,6 +111,35 @@ class CaseShapeTest(unittest.TestCase):
         for case_id in ("narrative-brief", "narrative-role", "narrative-process"):
             self.assertFalse((CASES / case_id / "case.yaml").exists())
 
+    def test_prompts_do_not_contain_maintenance_or_expected_story_answers(self) -> None:
+        for case_id in CASE_IDS:
+            prompt = str(definition(case_id)["prompt"])
+            for leaked in ("历史答案", "期望 Story"):
+                self.assertNotIn(leaked, prompt, case_id)
+
+    def test_prompts_do_not_drive_phase_advancement(self) -> None:
+        """阶段推进归驱动器，不归被测模型。
+
+        `run_case.py` 在每个阶段边界按 `end_phase` 算出下一个未闭环阶段并**指名下发**
+        推进指令。prompt 里再写一遍阶段链，就是和驱动器双写：改终点时两边对不上
+        （实测协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，模型照 prompt 走），
+        而且把「模型会不会自己一路跑」混进了观测——测的就不再是驱动器能不能推动它。
+
+        `/story` 自己的动作（init / archive / review）不在 PHASE_ORDER 里，驱动器不发，
+        必须写在 prompt 里，所以不在本判据的拦截范围内。
+        """
+        chain = re.compile(
+            r"(依次完成|继续执行|随后执行\s*/?(spec|plan)|一路走到|"
+            r"(spec|plan|coding|review)\s*(阶段)?(闭环)?后(继续|再|本轮)|"
+            r"到\s*(spec|plan|coding|review|ut|testing)\s*(阶段)?为止|"
+            r"不进入\s*(plan|coding|review|UT|真机))")
+        for case_id in sorted(CASE_IDS):
+            prompt = str(definition(case_id)["prompt"])
+            hit = chain.search(prompt)
+            self.assertIsNone(
+                hit, f"{case_id} 的 prompt 在替驱动器安排阶段推进：「{hit.group(0) if hit else ''}」"
+                     f"——终点只由 end_phase 定，prompt 只写起点动作与业务要求")
+
 
 class CompositeCoverageTest(unittest.TestCase):
     """两个 Case 合起来要覆盖的能力点，逐条有承载者。
@@ -335,6 +364,25 @@ class CompositeCoverageTest(unittest.TestCase):
                         resolved = (markdown.parent / target.split("#", 1)[0]).resolve()
                         resolved.relative_to(root.resolve())
                         self.assertTrue(resolved.is_file(), f"{markdown}: {target}")
+
+
+class NarrativeFixtureTest(unittest.TestCase):
+
+    def test_three_styles_share_the_same_semantic_fact_tokens(self) -> None:
+        required = {
+            "COMPLETED", "PENDING", "FAILED", "PDF", "PNG", "maskCounterparty",
+            "wallet_receipt_temp", "GET /wallet/transactions/{transactionId}",
+            "IDLE", "RENDERING", "READY", "ERROR", "CANCELLED",
+            "receipt_render_start", "receipt_render_success", "receipt_render_fail",
+            "RECEIPT-001", "RECEIPT-002", "RECEIPT-003",
+        }
+        for name in VARIANTS:
+            text = (FIXTURES / name).read_text(encoding="utf-8")
+            self.assertEqual([], sorted(token for token in required if token not in text), name)
+            self.assertIn("端侧渲染", text)
+            self.assertIn("服务端生成", text)
+            self.assertIn("上报失败", text)
+
 
 
 if __name__ == "__main__":

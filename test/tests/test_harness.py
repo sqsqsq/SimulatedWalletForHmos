@@ -108,6 +108,65 @@ class CaseConfigTest(unittest.TestCase):
                     f"{path} 既没有 interaction-script.yaml 也没有 suggested_reply："
                     "每轮现编回话，轮次之间就不可比")
 
+    SPLIT_WORDS = ("只做其中一部分", "切开", "先做第一份", "本单承载", "拆开", "只做一部分")
+
+    def test_interactive_cases_do_not_preload_the_answer(self) -> None:
+        """交互用例的诉求必须由人在关卡上说出口——写进 prompt 就白搭了。"""
+        for name, path, cfg, _ in self._cases():
+            if not rc.is_interactive(cfg):
+                continue
+            with self.subTest(case=name):
+                prompt = str(cfg.get("prompt") or "")
+                hit = [w for w in self.SPLIT_WORDS if w in prompt]
+                self.assertFalse(
+                    hit, f"{path} 声明了交互模式，prompt 里却预塞了诉求 {hit}"
+                         "——那又退回测记忆了")
+                # 回话要有个固定来源，否则每轮现编，轮次之间就不可比。
+                # 逐关卡的 `interaction-script.yaml` 是它的完整形态（还能带补料投放）；
+                # 只有一关要回的用例可以用 case.yaml 的 `suggested_reply` 顶。
+                script = path.parent / "interaction-script.yaml"
+                self.assertTrue(
+                    script.is_file() or str(cfg.get("suggested_reply") or "").strip(),
+                    f"{path} 既没有 interaction-script.yaml 也没有 suggested_reply："
+                    "每轮现编回话，轮次之间就不可比")
+
+    def test_a_prompt_that_claims_seeded_material_actually_ships_it(self) -> None:
+        """prompt 说「材料我已经放好了」，`workspace/` 里就必须真有东西。
+
+        实测踩过：新建用例时抄了 prompt 却漏建 `workspace/`，跑起来 inbox 是空的。
+        模型只会如实报告「没有待导入材料」，一路跑完——**没有任何一步会失败**，
+        而这一轮测的其实是另一个场景。
+        """
+        claims = ("放到这个需求的目录下", "已经把", "放好了", "放进")
+        for name, path, cfg, _ in self._cases():
+            prompt = str(cfg.get("prompt") or "")
+            if not any(w in prompt for w in claims):
+                continue
+            workspace = path.parent / "workspace"
+            with self.subTest(case=name):
+                files = [p for p in workspace.rglob("*") if p.is_file()] if workspace.is_dir() else []
+                self.assertTrue(
+                    files,
+                    f"{path} 的 prompt 声称材料已放进工作区，但 {workspace} 是空的"
+                    "——跑起来 inbox 没东西，模型如实说「无待导入材料」，测的是另一个场景")
+
+    def test_a_preloaded_split_request_declares_itself_a_control_case(self) -> None:
+        """自动用例若在 prompt 里给了拆分诉求，头注必须写明它是对照组。"""
+        for name, path, cfg, raw in self._cases():
+            if rc.is_interactive(cfg):
+                continue
+            prompt = str(cfg.get("prompt") or "")
+            if not any(w in prompt for w in self.SPLIT_WORDS):
+                continue
+            header = raw.split("id:")[0]
+            with self.subTest(case=name):
+                # 认「对照组」这个词，不认「对照」——后者在正文里随处可见
+                # （「对照他说过的话」），宽一个字就漏掉整条看护。
+                self.assertIn(
+                    "对照组", header,
+                    f"{path} 把拆分诉求预塞进了 prompt 却没声明自己是对照组——"
+                    "读的人会以为它测的是交互")
+
 
 class FeedCursorTest(unittest.TestCase):
     """同一 cursor 不重复消费，推进后不漏事件，超限分页且不丢内容。"""
@@ -860,6 +919,10 @@ class TwoCheckpointEndPhaseTest(unittest.TestCase):
         src = (REPO_ROOT / "test" / "scripts" / "run_case.py").read_text(encoding="utf-8")
         self.assertIn('state["cli_session_id"]', src)
 
+    def test_an_unknown_end_phase_still_fails(self) -> None:
+        with self.assertRaises(SystemExit):
+            rc.phase_index("nowhere")
+
 
 class HumanReplyTest(unittest.TestCase):
     """交互模式：真人回话的投递、取用与「取走即消失」。
@@ -1061,6 +1124,40 @@ class GateScopeTest(unittest.TestCase):
             self.assertTrue(log.is_file())
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+
+class EndPhaseTest(unittest.TestCase):
+    """end_phase：跑到哪个阶段为止。
+
+    加它是因为 harness 原来只驱动到 spec——三份产物一齐备就 break，
+    后面的 plan/coding/review/ut 无从驱动。**缺省必须是 spec**：既有用例一个字没改，
+    行为要与从前逐字节一致，否则这次改造本身就成了变量。
+    """
+
+    def test_no_wall_clock_and_no_turn_budget(self) -> None:
+        """本域不设运行时限、也不设续话轮次上限。
+
+        两者保护的都是「进程失控」，而这里的观测者逐轮驱动、随时可以 stop。
+        实测两次都是限制先到：一次 1h54m 硬超时把正在推进的会话从中间切断，
+        一次 6 轮预算被 story 流程的关卡用光——留下的都是半成品，
+        观测到的既不是能力也不是缺陷。终点只由 end_phase 判定。
+        """
+        for gone in ("PHASE_TURNS", "MAX_TURNS", "SOFT_TIMEOUT", "HARD_TIMEOUT"):
+            self.assertFalse(hasattr(rc, gone), f"{gone} 应当已退场")
+        self.assertEqual(0, rc.NO_TIME_LIMIT)
+
+    def test_source_reset_scope_is_enumerated_not_inferred(self) -> None:
+        """源码复位范围必须是**列举**的。
+
+        写成「除 doc/test 之外」那种反向规则，一旦仓库多出一个顶层目录就会被卷进去删——
+        而被测件（doc/extensions）与 harness 自己（test）都在仓库里。
+        漏列一个目录只是少复位一处，多算一个目录是删掉被测对象。
+        """
+        for forbidden in ("doc", "test", "framework", "tools", "output", ""):
+            self.assertNotIn(forbidden, rc.SOURCE_DIRS)
+        self.assertTrue(all(d[:2].isdigit() for d in rc.SOURCE_DIRS),
+                         f"源码目录应是 NN-Name 形态：{rc.SOURCE_DIRS}")
+
 
 
 if __name__ == "__main__":

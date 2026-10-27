@@ -331,5 +331,58 @@ class TheAcceptanceIdsLineUp(ClosureCase):
         self.assertIn("AC-2 同号不同义", self.gate())
 
 
+class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
+    """Plan 的义务审查与读者审查同一份局部明细合同：无明细、漏必审、未核却 PASS 都拒收，完整报告收下。"""
+
+    def plan_report(self, details: str) -> str:
+        import yaml
+        ids = list(yaml.safe_load((EXT / "rules" / "plan-rules.overlay.yaml").read_text(encoding="utf-8"))["semantic_checks"])
+        rows = "\n".join(f"| {i} | PASS | MAJOR | 看过设计章 |" for i in ids)
+        reports = self.fr / "plan" / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        rel = f"doc/features/{FEATURE}/plan/reports/verifier.report.{SUBJECT}.md"
+        (reports / "summary.json").write_text(json.dumps({"verifier_report": rel, "verifier_subject_id": SUBJECT}),
+                                              encoding="utf-8")
+        (self.root / rel).write_text("| 检查项 | 状态 | 级别 | 证据 |\n|---|---|---|---|\n" + rows
+                                     + "\n\n<!-- maison-verifier-result:v1 -->\n"
+                                     f"verifier_subject_id: {SUBJECT}\nverdict: PASS\nblocker_count: 0\n"
+                                     "<!-- /maison-verifier-result:v1 -->\n" + details, encoding="utf-8")
+        proc = subprocess.run(
+            ["node", str(self.root / "doc/extensions/hooks/shared/verifier-report.mjs"),
+             "--feature", FEATURE, "--phase", "plan", "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        return f"exit={proc.returncode}\n{proc.stdout}{proc.stderr}"
+
+    DETAILS = ("\n```yaml\nverification_result:\n  checks:\n    - id: knowledge_obligation_substance\n"
+               "      status: PASS\n      details:\n        blocking_findings: []\n        advisories: []\n"
+               "        examined_inputs: []\n        unreviewed: []\n```\n")
+
+    def test_a_complete_plan_report_is_accepted(self) -> None:
+        from ext_workspace import cover_report  # noqa: PLC0415
+        out = self.plan_report(cover_report(self.DETAILS, self.root, FEATURE, "plan"))
+        self.assertTrue(out.startswith("exit=0"), out[-800:])
+
+    STORY_ONLY = ("AR/story-src/story-flow.json", "AR/story-src/decisions.json", "AR/review.md")
+
+    def required(self) -> list[str]:
+        from ext_workspace import required_inputs  # noqa: PLC0415
+        return required_inputs(self.root, FEATURE, "plan", fill=False)
+
+    def test_a_direct_plan_owes_no_story_artifacts(self) -> None:
+        """直接 spec→plan：没有 /story 契约就不要求从未生产的 Story 三件，本阶段输入齐了照常收下（G3@6）。"""
+        from ext_workspace import cover_report  # noqa: PLC0415
+        for rel in self.STORY_ONLY:
+            (self.fr / rel).unlink(missing_ok=True)
+        required = self.required()
+        for rel in self.STORY_ONLY:
+            self.assertNotIn(f"doc/features/{FEATURE}/{rel}", required)
+        self.assertIn(f"doc/features/{FEATURE}/plan/plan.md", required)
+        out = self.plan_report(cover_report(self.DETAILS, self.root, FEATURE, "plan"))
+        self.assertTrue(out.startswith("exit=0"), out[-800:])
+        for rel in self.STORY_ONLY:
+            self.assertFalse((self.fr / rel).exists(), "核对补出了本单不该有的 Story 件")
+
+
+
 if __name__ == "__main__":
     unittest.main()

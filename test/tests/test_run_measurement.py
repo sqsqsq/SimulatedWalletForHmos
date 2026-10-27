@@ -893,6 +893,121 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
             self.assertIn("test/fixtures/neutral/copy.md", found[0])
             self.assertIn("car-key-sharing/plan/plan.md", found[1])
 
+    CANDIDATES = "金样候选"
+
+    @classmethod
+    def candidate_figure(cls, p: Path, root: Path = REPO) -> bool:
+        """待审定的效果稿配图是被审产物，不是运行证据。
+
+        只认登记的候选位置 `doc/plan/<版本>/金样候选/<Case>/ux-reference/<图>`，且这个 Case 的 story 真引用它；
+        同样的 AR/ux-reference 布局出现在别处（运行目录、工作区副本）仍按运行证据报。
+        """
+        parts = p.relative_to(root).parts
+        if not (len(parts) == 7 and parts[:2] == ("doc", "plan") and parts[3] == cls.CANDIDATES
+                and parts[5] == "ux-reference" and p.suffix == ".png"):
+            return False
+        story = p.parent.parent / "AR" / "story.md"
+        return story.is_file() and f"](../ux-reference/{p.name})" in story.read_text(encoding="utf-8")
+
+    ANALYSIS_ARCHIVE = "doc/spec/1.9.9/04-稳定性与性能分析/data/golden"
+
+    @staticmethod
+    def archive_references(obj: Path) -> tuple[dict[Path, str], list[str]]:
+        """对象自身引用的图：story 的 Markdown 图片（相对 story 所在目录），spec Visual Handoff 的
+        authoritative_refs（消费工程路径 `doc/features/<对象>/…` 映射到对象子目录）。
+
+        返回（合法引用的目标 → 引用原文，非法引用）。绝对路径、不带本对象前缀的 Visual Handoff 路径、
+        映射后逃出本对象子目录的引用都是非法引用，不进允许集合；文件碰巧存在也不算。"""
+        import yaml  # noqa: PLC0415
+        home = obj.resolve()
+        refs: dict[Path, str] = {}
+        bad: list[str] = []
+
+        def take(rel: str, src: str) -> None:
+            if PureWindowsPath(rel).drive or rel.startswith(("/", "\\")):
+                bad.append(f"{src}：不是相对路径")
+                return
+            target = (obj / rel).resolve()
+            if target.is_relative_to(home):
+                refs[target] = src
+            else:
+                bad.append(f"{src}：逃出了对象目录")
+
+        story = obj / "story.md"
+        if story.is_file():
+            for target in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", story.read_text(encoding="utf-8")):
+                take(target, f"story.md {target}")
+        spec = obj / "spec.md"
+        if spec.is_file():
+            prefix = f"doc/features/{obj.name}/"
+            for block in re.findall(r"```yaml\n(.*?)```", spec.read_text(encoding="utf-8"), re.S):
+                data = yaml.safe_load(block)
+                handoff = data.get("visual_handoff") if isinstance(data, dict) else None
+                for ref in (handoff or {}).get("authoritative_refs") or []:
+                    path, src = str(ref.get("path", "")), f"spec.md visual_handoff {ref.get('path', '')}"
+                    if path.startswith(prefix):
+                        take(path[len(prefix):], src)
+                    else:
+                        bad.append(f"{src}：不是 {prefix} 下的消费工程路径")
+        return refs, bad
+
+    @classmethod
+    def analysis_reference(cls, p: Path, root: Path = REPO) -> bool:
+        """分析归档里被所属对象 story 或 spec 实际引用的 PNG 是评价参照，不是运行截图。
+
+        只认这一份归档：MANIFEST.md 在，图在 `<对象>/assets|ux-reference/` 下，且所属对象的引用映射到它。
+        不按目录名放行，未引用、映射错的图与其它后缀照常按运行证据报。
+        """
+        base = root / cls.ANALYSIS_ARCHIVE
+        if p.suffix != ".png" or not p.is_relative_to(base) or not (base / "MANIFEST.md").is_file():
+            return False
+        parts = p.relative_to(base).parts
+        if len(parts) != 3 or parts[1] not in ("assets", "ux-reference"):
+            return False
+        return p.resolve() in cls.archive_references(base / parts[0])[0]
+
+    @classmethod
+    def broken_archive_references(cls, root: Path = REPO) -> list[str]:
+        """非法引用逐条报（同一张图另有合法引用也报），合法引用指不到文件的也报。"""
+        base = root / cls.ANALYSIS_ARCHIVE
+        out: list[str] = []
+        for obj in (sorted(o for o in base.iterdir() if o.is_dir()) if base.is_dir() else []):
+            refs, bad = cls.archive_references(obj)
+            out += [f"{obj.name}/{b}" for b in bad]
+            out += [f"{obj.name}/{src}：指不到文件" for target, src in refs.items() if not target.is_file()]
+        return out
+
+    def test_both_roots_are_on_disk_and_not_ignored(self):
+        for rel in self.ROOTS:
+            with self.subTest(root=rel):
+                self.assertTrue((REPO / rel).is_dir(), f"{rel} 不在盘上")
+                ignored = subprocess.run(["git", "check-ignore", "-q", f"{rel}/1.9.0/00-总览.md"],
+                                         cwd=str(REPO)).returncode == 0
+                self.assertFalse(ignored, f"{rel} 被忽略了")
+
+    def test_a_candidate_figure_is_recognised_only_where_candidates_are_registered(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+
+            def case(base: Path) -> tuple[Path, Path]:
+                (base / "AR").mkdir(parents=True)
+                (base / "ux-reference").mkdir()
+                used, spare = base / "ux-reference" / "a.png", base / "ux-reference" / "b.png"
+                for f in (used, spare):
+                    f.write_bytes(b"PNG")
+                (base / "AR" / "story.md").write_text("![图 1 · 甲](../ux-reference/a.png)\n", encoding="utf-8")
+                return used, spare
+
+            used, spare = case(root / "doc" / "plan" / "1.9.9" / "金样候选" / "某案")
+            self.assertTrue(self.candidate_figure(used, root))
+            self.assertFalse(self.candidate_figure(spare, root), "story 没引用的图也被当成了产物")
+            for elsewhere in (root / "doc" / "plan" / "1.9.9" / "实跑-0101" / "某案",
+                              root / "doc" / "spec" / "1.9.9" / "金样候选" / "某案",
+                              root / "doc" / "plan" / "1.9.9" / "金样候选" / "某案" / "副本"):
+                with self.subTest(where=elsewhere.relative_to(root).as_posix()):
+                    run_used, _ = case(elsewhere)
+                    self.assertFalse(self.candidate_figure(run_used, root), "候选位置之外的同样布局被当成了产物")
+
 
 
 class GateConclusionsAreCountedByKind(unittest.TestCase):

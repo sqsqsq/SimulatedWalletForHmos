@@ -81,8 +81,8 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
         const dir = path.join(meetings, stem, version);
         if (!fs.existsSync(path.join(dir, 'raw.md'))) continue;
         add(path.join(dir, 'raw.md'), 'source', '会议原文');
-        add(path.join(dir, 'corrections.json'), 'source', '会议纠偏留痕', false);
-        add(path.join(dir, 'evidence.md'), 'source', '会议纠偏后的阅读件', false);
+        add(path.join(dir, 'corrections.json'), 'source', '会议纠偏留痕（读会必写，没有纠偏也写 []）');
+        add(path.join(dir, 'evidence.md'), 'source', '会议纠偏后的阅读件（`story_flow.py meeting-refresh` 按纠偏生成）');
       }
     }
   }
@@ -102,6 +102,7 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   }
   // 交给设计的冻结输入：采用的逻辑路径以冻结字节为设计权威，字节按快照登记的摘要核
   const frozen = new Map();             // 采用的逻辑路径（相对需求目录）→ {at: 冻结副本工程相对路径, sha256}
+  let frozenOrigins = {};               // 采用的阅读稿 → 冻结那一刻它的原件 [{path, sha256}]
   const ref = flow?.input?.snapshot_ref;
   if (!ref) {
     problems.push('流程契约没有登记交给设计的输入');
@@ -110,6 +111,7 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
     add(snapshotAbs, 'source', '交给设计的冻结输入快照');
     const read = fs.existsSync(snapshotAbs) ? readFrozenInputs(projectRoot, ref) : { snapshot: null, problems: [] };
     problems.push(...read.problems.map(p => `冻结输入：${p}`));
+    frozenOrigins = read.snapshot?.origins && typeof read.snapshot.origins === 'object' ? read.snapshot.origins : {};
     for (const row of read.snapshot?.files ?? []) {
       const abs = path.join(path.dirname(snapshotAbs), 'files', ...String(row.path).split('/'));
       add(abs, 'source', `冻结输入里采用的 ${row.path}（${row.role}）`, true, { kind: row.role === 'image' ? 'image' : 'text' });
@@ -154,12 +156,42 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
       current(r, frozen.has(r) ? `阅读稿 ${r}` : `没采用的阅读稿 ${r}（核作者为何没采用）`, 'text');
     }
   }
+  // 冻结采用稿当时的原件：按快照记的路径与摘要核。原路径还是那一版就绑它；换过版的到退役备份
+  // `.backups/local/inbox/<原相对目录>/<主名>.<摘要><扩展名>` 找同一版；都没有报缺口，不拿同路径的新版顶替
+  for (const [readable, list] of Object.entries(frozenOrigins)) {
+    for (const o of Array.isArray(list) ? list : []) {
+      const was = String(o?.path ?? '');
+      const want = String(o?.sha256 ?? '').replace(/^sha256:/, '');
+      if (!was || !want) continue;
+      const key = was.startsWith('inbox/') ? path.posix.parse(was.slice('inbox/'.length)) : null;
+      const retired = key ? `.backups/local/inbox/${key.dir ? `${key.dir}/` : ''}${key.name}.${want}${key.ext}` : null;
+      const hit = [was, retired].filter(Boolean).find(c => { const b = bytesOf(at(c)); return b && sha256(b).startsWith(want); });
+      if (hit) {
+        add(at(hit), 'source', `冻结采用稿 ${readable} 当时的原件 ${was}${hit === was ? '' : `（已退役，在 ${retired}）`}`,
+          true, { kind: 'metadata', read: false });
+      } else {
+        problems.push(`冻结采用稿 ${readable} 当时的原件 ${was}（${o.sha256}）既不在原处${retired ? `，也不在退役备份 ${retired}` : ''}：`
+          + '这一版采用稿的来源核不了');
+      }
+    }
+  }
+  // 图片按对象列，逐路径按字节认同一内容：同字节的落点是别名（冻结副本优先作规范路径），内容不同的落点各自核读
   for (const m of set?.images ?? []) {
-    const f = m.paths.map(r => frozen.get(r)).find(x => x && sha256(bytesOf(at(m.paths[0])) ?? Buffer.alloc(0)) === x.sha256);
-    const canonical = f?.at ?? rel(at(m.paths[0]));
     const unused = String(m.unused ?? '').trim();
     const label = `登记的图 ${m.caption || '（没写说明）'}${unused ? `，作者登记不用：${unused}` : ''}`;
-    for (const r of m.paths) add(at(r), 'source', `${label}（${r}）`, true, { kind: 'image', canonical });
+    const groups = new Map();           // 内容摘要 → 这份内容的落点
+    for (const r of m.paths) {
+      const bytes = bytesOf(at(r));
+      const digest = bytes ? sha256(bytes) : `missing:${r}`;
+      if (!groups.has(digest)) groups.set(digest, []);
+      groups.get(digest).push(r);
+    }
+    [...groups].forEach(([digest, paths], i) => {
+      const f = paths.map(r => frozen.get(r)).find(x => x && x.sha256 === digest);
+      const canonical = f?.at ?? rel(at(paths[0]));
+      const apart = i ? '；与同条登记的其它落点内容不同，单独核读' : '';
+      for (const r of paths) add(at(r), 'source', `${label}（${r}${apart}）`, true, { kind: 'image', canonical });
+    });
   }
   const blueprint = flow?.design_binding?.blueprint_id;
   const read = blueprint ? readBlueprint(projectRoot, blueprint, 'draft') : null;

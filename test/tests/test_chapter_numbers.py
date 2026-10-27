@@ -80,6 +80,13 @@ class NumberedChildrenFollowTheirParent(unittest.TestCase):
         self.assertIn("「### 3.2 使用场景」挂在「## 2. 目标用户与使用场景」下，号却是 3.2", got[0])
         self.assertIn("「#### 4.2.1 状态」挂在「### 4.1 页面总览」下，号却是 4.2.1", got[1])
 
+    def test_a_direct_child_one_level_too_deep_is_named(self) -> None:
+        """直接父节是 2，子节写 2.1.1：数字前缀对了也是跳层；2.1 与 2.1 下的 2.1.1 正常。"""
+        doc = "## 2. 设计\n\n### 2.1.1 状态\n\n## 3. 实现\n\n### 3.1 数据\n\n#### 3.1.1 表\n"
+        got = call("chapterNumberProblems", doc)
+        self.assertEqual(1, len(got), got)
+        self.assertIn("「### 2.1.1 状态」直接挂在「## 2. 设计」下，号却跳了层", got[0])
+
     def test_children_of_an_unnumbered_chapter_are_not_renumbered(self) -> None:
         doc = DOC.replace("### Scope 模块清单", "### 7.1 模块清单")
         self.assertEqual([], call("chapterNumberProblems", doc))
