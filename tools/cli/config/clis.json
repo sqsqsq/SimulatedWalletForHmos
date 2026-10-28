@@ -306,13 +306,13 @@
         "build": {
           "args": [
             "--profile",
-            "headless",
+            "batch-build",
             "--json",
             "{prompt}"
           ],
           "resume_args": [
             "--profile",
-            "headless",
+            "batch-build",
             "--json",
             "--session-id",
             "{session_id}",
