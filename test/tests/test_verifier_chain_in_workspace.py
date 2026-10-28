@@ -123,6 +123,13 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         self.assertEqual({"target_dir": ".dsh", "template_dir": "templates/agents", "update_policy": "auto_overwrite"},
                          adapter["commands"]["subagents"])
         self.assertIs(True, adapter["verifier_subagent"], "demo 的 dsh 审查员已正式入册")
+        # 与 opencode 同构的自有 bundle：阶段技能与规则物化在 .dsh 下，不再借 generic/chrys 的 .agents
+        self.assertEqual(".dsh/skills", adapter["skill_bridge"]["target_dir"])
+        self.assertEqual(".dsh/rules", adapter["rules"]["target_dir"])
+        phase = lambda root: {p.parent.name for p in (DEMO / root).glob("*/SKILL.md")} - {"story", "story-adaptation"}
+        self.assertEqual(phase(".opencode/skill"), phase(".dsh/skills"), ".dsh 的阶段技能与 .opencode 不是同一套")
+        self.assertEqual({p.name for p in (DEMO / ".opencode/rules").iterdir()},
+                         {p.name for p in (DEMO / ".dsh/rules").iterdir()})
         rows = {row["id"]: row for row in yaml.safe_load(layer.read_text(encoding="utf-8"))[0]["insert"]}
         self.assertEqual(["agent-preset-registry", "preset-standard", "preset-maison-verifier", "maison-verifier"], list(rows))
         self.assertEqual({"default": "standard"}, rows["agent-preset-registry"]["config"])
