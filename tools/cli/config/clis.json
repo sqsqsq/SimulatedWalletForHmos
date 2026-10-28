@@ -309,7 +309,10 @@
             "--session-id",
             "{session_id}",
             "{prompt}"
-          ]
+          ],
+          "env": {
+            "DSH_PERMISSION_MODE": "read-only"
+          }
         },
         "build": {
           "args": [
@@ -327,7 +330,10 @@
             "--session-id",
             "{session_id}",
             "{prompt}"
-          ]
+          ],
+          "env": {
+            "DSH_PERMISSION_MODE": "danger-full-access"
+          }
         }
       },
       "env": {

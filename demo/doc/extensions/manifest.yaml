@@ -30,9 +30,6 @@ provides:
       source: bridges/cursor-skill-story.md
     - target: .agents/skills/story/SKILL.md
       source: bridges/agents-skill-story.md
-    # DSH 的自有技能根（同层深度、同为标准 skill 头），与上一项同一份正文。
-    - target: .dsh/skills/story/SKILL.md
-      source: bridges/agents-skill-story.md
 
   # 知识激活清单（确定性）：**阶段只读这里列出的文件**，不扫描 knowledge/ 目录——
   # 目录里躺着的未登记文件，任何阶段都读不到。

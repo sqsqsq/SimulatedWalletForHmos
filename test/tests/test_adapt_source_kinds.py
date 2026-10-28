@@ -484,7 +484,7 @@ class SourceKindCase(unittest.TestCase):
         self.commit(target, "baseline")
         proc = self.adapt("--apply", target, PKG_ROOT)
         self.assertEqual(0, proc.returncode, self.out(proc))
-        self.assertEqual(7, len(LAUNCHERS))
+        self.assertEqual(6, len(LAUNCHERS))
         for rel in LAUNCHERS:
             self.assertEqual((PKG_ROOT / rel).read_bytes(), (target / rel).read_bytes(), rel)
 

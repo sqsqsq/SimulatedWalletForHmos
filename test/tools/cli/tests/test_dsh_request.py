@@ -93,3 +93,10 @@ def _repeated_slot(clis):
 def test_malformed_option_declarations_fail_validation(tmp_path, mutate):
     with pytest.raises(CliConfigurationError):
         CliRegistry(_registry_with(tmp_path, mutate))
+
+
+@pytest.mark.parametrize('profile,mode', [('plan', 'read-only'), ('build', 'danger-full-access')])
+def test_dsh_profiles_choose_their_permission_preset(tmp_path, profile, mode):
+    # DSH falls back to workspace-write when DSH_PERMISSION_MODE is unset; each profile states its own preset
+    request = CliRunRequest(cli='dsh', model='model', prompt='task', cwd=tmp_path, profile=profile)
+    assert CliRegistry().build(request, check_executable=False).env['DSH_PERMISSION_MODE'] == mode

@@ -24,8 +24,8 @@ provider-specific vocabulary:
 
 | Profile | Meaning | How each provider implements it |
 |---|---|---|
-| `plan` | Read and reason only — no file writes, no command execution | `claude --permission-mode plan` / `agent --mode plan` / `codex --sandbox read-only` / `opencode --agent plan` / `dsh --profile headless` (sandbox preset lives in the DSH profile) |
-| `build` | May write the workspace and run commands | `claude --dangerously-skip-permissions` (capped at 5 USD) / `agent --force --trust` / `codex --yolo` / `opencode --auto --agent build` / `dsh --profile headless` (sandbox preset lives in the DSH profile) |
+| `plan` | Read and reason only — no file writes, no command execution | `claude --permission-mode plan` / `agent --mode plan` / `codex --sandbox read-only` / `opencode --agent plan` / `dsh --profile headless` with `DSH_PERMISSION_MODE=read-only` |
+| `build` | May write the workspace and run commands | `claude --dangerously-skip-permissions` (capped at 5 USD) / `agent --force --trust` / `codex --yolo` / `opencode --auto --agent build` / `dsh --profile headless` with `DSH_PERMISSION_MODE=danger-full-access` |
 
 `codex` additionally offers `plan_schema` (`plan` plus `--output-schema`). It has
 no `resume_args`, so it cannot be used where session continuation is required.
@@ -36,9 +36,14 @@ no `resume_args`, so it cannot be used where session continuation is required.
   resolved to the executable and entry script; `ELECTRON_RUN_AS_NODE=1` preserves
   their CLI behavior and multiline tasks remain a single argument.
 
-- Both `plan` and `build` currently invoke the shipped `headless` profile; the
-  sandbox preset and model are DSH profile configuration (`agent-default-model`,
-  `dsh-permission-presets`), not argv. Point the entry at dedicated DSH
+- Both `plan` and `build` invoke the shipped `headless` profile. The sandbox
+  preset is chosen by the `DSH_PERMISSION_MODE` environment variable (DSH
+  defaults to `workspace-write` when it is unset), so each profile sets it in its
+  `env`: `plan` → `read-only`, `build` → `danger-full-access`, matching the other
+  CLIs' build contract. Under `workspace-write` DSH confines commands with a
+  write-restricted token, and a confined process cannot open libuv pipe stdio
+  for its own children (`spawn ... EPERM`). The model is DSH profile
+  configuration (`agent-default-model`), not argv. Point the entry at dedicated DSH
   profiles (for example `batch-plan` / `batch-build` created with
   `dsh --from-default-profile headless <name>` plus a patch layer) to split the
   presets; custom OpenAI-compatible model routes are declared in the same

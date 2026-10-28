@@ -337,14 +337,14 @@ categories:
   data:
     description: contracts/*.json、rules/*.yaml、manifest.yaml
     interim_ceiling: 786
-    target: 783
-    approved_by: 用户2026-10-28具名确认DSH发布后补充按实测上调（原值781，用户2026-10-25确认结项收口）
-    reason: manifest bridges新增.dsh/skills/story一对target/source（2行），见doc/plan/1.9.9/2026-10-28-dsh正式支持/02-批次-dsh自带入口；原1.9.9发布实测781。
+    target: 781
+    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+    reason: 1.9.9发布实测781，原完成预测780。
 total:
   interim_ceiling: 17098
-  target: 17044
-  approved_by: 用户2026-10-28具名确认DSH发布后补充按实测上调（原值17042，用户2026-10-25确认结项收口）
-  reason: DSH发布后补充只增data 2行（.dsh/skills/story入口登记），整版endpoint G3868仍在G3900内；原1.9.9发布实测17042，原完成预测17008、峰值预测17098；实际逐提交峰值见 budget_report peak。
+  target: 17042
+  approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
+  reason: 1.9.9发布实测17042，原完成预测17008、峰值预测17098；实际逐提交峰值见 budget_report peak。
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
 # 它本来就只数可执行行，口径不变。

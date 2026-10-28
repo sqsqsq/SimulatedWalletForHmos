@@ -1,17 +1,16 @@
 adapter_name: dsh
 description: |
-  DeepSeek Harness（dsh）adapter——原生读 AGENTS.md + 自有 `.dsh/skills`（skill 同时供模型加载与人用命令），
-  另物化独立审查员的 dsh 配置层 `.dsh/framework-verifier.patch.yml`（启动与续跑带 `--patch`）。
+  DeepSeek Harness（dsh）adapter——共享 `.agents` bridge bundle（AGENTS.md + .agents/skills/.agents/rules 跳板），
+  与 generic / chrys 字节一致、可幂等共存；另物化独立审查员的 dsh 配置层 `.dsh/framework-verifier.patch.yml`。
 
 agent_entry_file:
   template_path: templates/AGENTS.md.template
   target_path: AGENTS.md
 
 # dsh 不自动发现 Markdown 子 agent：独立审查员是 `@deepseek-ai/dsh-tool-subagent` 的一个具名工具实例
-# （toolName=verifier，in-process spawn 起空上下文子级）。DSH 0.2.1 起人设与工具放在 Agent Preset
-# `maison-verifier` 里（只装 read / read_image 与 glob / grep），registry 默认指向空 preset，主会话不受影响。
-# dsh 不发现工程级配置层，启动与续跑都显式带 `--patch <工程根>/.dsh/framework-verifier.patch.yml`；
-# 未带该层启动的会话里没有 verifier 工具，须带上该层新开会话。
+# （toolName=verifier，spawn 后端空上下文，toolFilter 只放 read/glob/grep/read_image），persona 内联在
+# 配置层里。dsh 不扫描 `.dsh/`，启动与续跑都显式带 `--patch <工程根>/.dsh/framework-verifier.patch.yml`；
+# 未带该层启动的会话里没有 verifier 工具，须新开会话。
 commands:
   subagents:
     target_dir: .dsh
@@ -19,11 +18,11 @@ commands:
     update_policy: auto_overwrite               # verifier 为协议级子 agent 配置
 
 skill_bridge:
-  target_dir: .dsh/skills
+  target_dir: .agents/skills
   template_dir: ../shared/agent-bundle/templates/skills-bridge
 
 rules:
-  target_dir: .dsh/rules
+  target_dir: .agents/rules
   template_dir: ../shared/agent-bundle/templates/rules
 
 user_confirmation:
@@ -35,18 +34,12 @@ user_confirmation:
 image_input: none
 
 # verifier 子代理能力（plan d2f7a9c4）：调用为 `verifier({description, prompt: <request JSON 整段>})`，
-# 报告由调用方原样写入 summary.verifier_report。入册依据：带该层的真实运行里父子会话不同、子级空上下文、
-# 读材料交回终态块。已知差距：宿主级工具对子级可见，只读靠人设约束，不是工具白名单（使用者接受后入册）。
-verifier_subagent: true
+# 报告由调用方原样写入 summary.verifier_report。入册纪律：宿主实跑观测（父子会话不同、子级空上下文、
+# 写工具不可用、读材料交回终态块）之前保持 false。
+verifier_subagent: false
 
 post_install_hooks: []
 
 notes: |
   - 只承接 interactive 运行模式，不声明 goal_capability。
-  - dsh 原生工具为小写 read / glob / grep / read_image / pwsh / write / edit；verifier 的 preset 只装前四个。
-  - 独立 adapter；skill 跳板物化到 dsh 自有的工程级技能根 `.dsh/skills/<id>/SKILL.md`（与 opencode 的
-    `.opencode/skill` 同一模式）。dsh 技能根优先级：`<工程根>/.dsh/skills` > `.agents/skills` > 用户级，
-    同名先到先得，所以与 generic/chrys 的 `.agents/skills` 共存时以 `.dsh/skills` 为准。
-  - **dsh 自动加载的只有**：工程根到 cwd 链上的 `AGENTS.md`/`CLAUDE.md`（instructions）+ 技能根下的 SKILL.md。
-    `.dsh/rules/*` 不被自动加载，是被 AGENTS.md 与 skill 引用的被动文档，与 opencode 的 `.opencode/rules` 同性质。
-  - **迁移**：旧版曾物化到 `.agents/skills`、`.agents/rules`；generic/chrys 仍在用时保留，不自动删除。
+  - dsh 原生工具为小写 read / glob / grep / read_image / pwsh / write / edit；verifier 工具实例只放前四个。
