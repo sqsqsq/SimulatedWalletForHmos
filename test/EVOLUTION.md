@@ -5,6 +5,14 @@
 
 ## 1. 演进记录
 
+2026-10-28 **1.9.9 发布后补充：DSH 正式支持（版本号不变）**。用户要求不改上游 Framework，让 Extension 与 demo 正式支持 dsh，测试装置的 dsh 临时支持退出；需求与方案见 [DSH 正式支持](../doc/spec/1.9.9/2026-10-28-dsh正式支持/00-需求.md)。
+- **demo 本地定制**：`framework/agents/dsh` 声明 `verifier_subagent: true`，模板同步为已物化的 DSH 0.2.1 配置层（三份逐字节相同）。用户接受只读靠人设的差距。
+- **中央 cli-runtime `a624042`（`cli-runtime-v1.0.6`）**：给 dsh 提供 `patch` 启动选项，同步进本仓。`test.yaml` 用 `options.patch` 指定 Case 工作区里的配置层；suite 快照、`cli-registry.json`、`STORY_CLI_REGISTRY` 与专用测试退出。
+- **Extension**：manifest 的 bridges 加一行注释、README 宿主表登记 DSH 共用 `.agents` 入口，按根 AGENTS §7 以 1.9.9 原号重装 demo。141 项无失败；132 个文件同源，demo 只变 manifest；失效形态 61 条 FAIL 0；预算 endpoint 仍为 G3866/X948。
+- **命令等价**：对 `story-suite-20261024-224427` 的 14 次 dsh 调用逐项比对，新方式命令相同（配置层路径仅斜杠形式不同）。
+- **未做**：没跑新的真实 CLI；dsh tui/web 形态与子级只读的工具级保证未覆盖；测试隔离问题（用户级 `~/.agents` 进入被测上下文）记为已知问题。
+- 证据在 `output/evidence/1.9.9-dsh-20261028/`（不入库），交回见同题 `实施反馈/`。
+
 2026-10-25 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](../doc/release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
 
 2026-10-17 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。

@@ -28,6 +28,7 @@ provides:
       source: bridges/opencode-skill-story.md
     - target: .cursor/skills/story/SKILL.md
       source: bridges/cursor-skill-story.md
+    # 通用 `.agents` 入口：凡是从 `.agents/skills` 发现技能的宿主（generic、chrys、DSH 等）共用这一份，不另设副本。
     - target: .agents/skills/story/SKILL.md
       source: bridges/agents-skill-story.md
 
