@@ -36,6 +36,7 @@ CHAIN = (
     Path(".opencode/agent/verifier.md"),
     Path(".opencode/skill/story/SKILL.md"),
     Path(".dsh/framework-verifier.patch.yml"),
+    Path(".dsh/skills/story/SKILL.md"),
     Path(".agents/skills/story/SKILL.md"),
 )
 
@@ -171,11 +172,12 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
         """story 入口归 Extension：demo 与 template 各等于自己所装包登记的来源；
         story-adaptation 入口不在登记里，是 Framework 物化的那份，template 保持 demo 的原样。"""
         bridges = self.runner.publish_to_demo.manifest_bridges
-        target = ".agents/skills/story/SKILL.md"
-        installed = next(b for b in bridges(DEMO / "doc/extensions") if b.target == target)
-        self.assertEqual(installed.source.read_bytes(), (DEMO / target).read_bytes(), "demo 的 story 入口不是它已装包登记的那份")
-        dev = next(b for b in bridges(self.runner.DEV_SOURCE) if b.target == target)
-        self.assertEqual(dev.source.read_bytes(), (self.template / target).read_bytes())
+        for target in (".agents/skills/story/SKILL.md", ".dsh/skills/story/SKILL.md"):
+            with self.subTest(target=target):
+                installed = next(b for b in bridges(DEMO / "doc/extensions") if b.target == target)
+                self.assertEqual(installed.source.read_bytes(), (DEMO / target).read_bytes(), "demo 的 story 入口不是它已装包登记的那份")
+                dev = next(b for b in bridges(self.runner.DEV_SOURCE) if b.target == target)
+                self.assertEqual(dev.source.read_bytes(), (self.template / target).read_bytes())
         rel = ".agents/skills/story-adaptation/SKILL.md"
         self.assertNotIn(rel, [b.target for b in bridges(self.runner.DEV_SOURCE)])
         self.assertEqual((DEMO / rel).read_bytes(), (self.template / rel).read_bytes())

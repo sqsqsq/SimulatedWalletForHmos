@@ -330,21 +330,21 @@ categories:
     reason: 1.9.9发布实测4503，原完成预测4501。
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
-    interim_ceiling: 2531
-    target: 2513
-    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
-    reason: 1.9.9发布实测2513，原完成预测2510。
+    interim_ceiling: 2544
+    target: 2544
+    approved_by: 用户2026-10-28具名确认DSH发布后补充按实测上调（原值2513，interim 2531，用户2026-10-25确认结项收口）
+    reason: DSH发布后补充新增独立bridge bridges/dsh-skill-story.md（正文31行），见doc/plan/1.9.9/2026-10-28-dsh正式支持/03-重做方案；原1.9.9发布实测2513。
   data:
     description: contracts/*.json、rules/*.yaml、manifest.yaml
     interim_ceiling: 786
-    target: 781
-    approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
-    reason: 1.9.9发布实测781，原完成预测780。
+    target: 783
+    approved_by: 用户2026-10-28具名确认DSH发布后补充按实测上调（原值781，用户2026-10-25确认结项收口）
+    reason: DSH发布后补充新增独立bridge bridges/dsh-skill-story.md（manifest登记一对target/source 2行），见doc/plan/1.9.9/2026-10-28-dsh正式支持/03-重做方案；原1.9.9发布实测781。
 total:
   interim_ceiling: 17098
-  target: 17042
-  approved_by: 用户2026-10-25确认1.9.9结项后按发布实测收口；设计者复评见发布前方案评审意见/2026-10-25-发布交回复评与结项.md
-  reason: 1.9.9发布实测17042，原完成预测17008、峰值预测17098；实际逐提交峰值见 budget_report peak。
+  target: 17075
+  approved_by: 用户2026-10-28具名确认DSH发布后补充按实测上调（原值17042，用户2026-10-25确认结项收口）
+  reason: DSH发布后补充新增bridge正文31行与manifest登记2行，整版endpoint G3899仍在G3900内；原1.9.9发布实测17042，原完成预测17008、峰值预测17098；实际逐提交峰值见 budget_report peak。
 
 # 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
 # 它本来就只数可执行行，口径不变。
