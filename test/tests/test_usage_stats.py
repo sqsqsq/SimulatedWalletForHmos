@@ -308,7 +308,7 @@ class Installed(GitRepo):
         import publish_to_demo
         root = installed_package()
         bridges = publish_to_demo.manifest_bridges(root / "doc" / "extensions")
-        self.assertEqual(6, len(bridges))
+        self.assertEqual(7, len(bridges))
         for bridge in bridges:
             with self.subTest(bridge.target):
                 text = (root / bridge.target).read_text(encoding="utf-8")

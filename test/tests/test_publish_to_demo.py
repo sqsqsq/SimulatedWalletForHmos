@@ -79,13 +79,13 @@ class TheSourceSetIsWhatIsOnDisk(PublishCase):
         for rel in ("node_modules", ".adapt-1.9.8", "adapt", "skills/story/scripts/core/__pycache__", "hooks/stale.pyc"):
             self.assertFalse((ext / rel).exists(), f"运行态 {rel} 进了目标")
 
-    def test_everything_in_the_source_lands_including_its_knowledge_and_six_entries(self) -> None:
+    def test_everything_in_the_source_lands_including_its_knowledge_and_every_entry(self) -> None:
         self.assertEqual("installed", self.install().status)
         ext = self.target / "doc" / "extensions"
         for rel in pub.enumerate_source(self.source):
             self.assertEqual((self.source / rel).read_bytes(), (ext / rel).read_bytes(), rel)
         bridges = pub.manifest_bridges(self.source)
-        self.assertEqual(6, len(bridges))
+        self.assertEqual(7, len(bridges))
         for bridge in bridges:
             self.assertEqual(bridge.source.read_bytes(), (self.target / bridge.target).read_bytes())
 

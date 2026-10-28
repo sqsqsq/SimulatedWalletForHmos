@@ -158,12 +158,13 @@ Story Extension 是挂在 AgentMaison Framework 上的需求开发流程：从�
   | OpenCode | Skill `.opencode/skill/story/SKILL.md` |
   | Cursor | Skill `.cursor/skills/story/SKILL.md` |
   | 通用 `.agents` | Skill `.agents/skills/story/SKILL.md` |
-  | DSH（DeepSeek Harness） | 与通用 `.agents` 同一份：DSH 读工程根 `AGENTS.md` 并从 `.agents/skills` 发现 `story` |
+  | DSH（DeepSeek Harness） | Skill `.dsh/skills/story/SKILL.md` |
 
-  DSH 的独立审查员不由本扩展提供：它来自 Framework 的 dsh adapter，物化为工程里的 `.dsh/framework-verifier.patch.yml`。
-  DSH 不会自动加载它，启动与续跑都要带上：`dsh --profile <名> --patch <工程根>/.dsh/framework-verifier.patch.yml`，续跑再加 `--session-id <id>`。
-  没带的会话里没有审查员工具，要带上它新开会话。目标工程的 Framework 没有 dsh adapter 时，`/story` 照常可用，
-  交付与更新会写明没有经过独立语义审查。
+  DSH 读工程根 `AGENTS.md`，从自己的技能目录 `.dsh/skills` 发现 `story`（优先于 `.agents/skills`，同名以它为准）。
+  Framework 各阶段技能与独立审查员不由本扩展提供：它们来自 Framework 的 dsh adapter，物化为工程里的 `.dsh/skills/<阶段>`、
+  `.dsh/rules` 与 `.dsh/framework-verifier.patch.yml`。审查员这一层 DSH 不会自动加载，启动与续跑都要带上：
+  `dsh --profile <名> --patch <工程根>/.dsh/framework-verifier.patch.yml`，续跑再加 `--session-id <id>`；没带的会话里没有审查员工具，
+  要带上它新开会话。目标工程的 Framework 没有 dsh adapter 时，`/story` 照常可用，交付与更新会写明没有经过独立语义审查。
 
 - 本说明由维护者另行分发，`/story adapt` 不会把它装进目标工程，也不会动目标工程自己的 README。
 

@@ -28,8 +28,10 @@ provides:
       source: bridges/opencode-skill-story.md
     - target: .cursor/skills/story/SKILL.md
       source: bridges/cursor-skill-story.md
-    # 通用 `.agents` 入口：凡是从 `.agents/skills` 发现技能的宿主（generic、chrys、DSH 等）共用这一份，不另设副本。
     - target: .agents/skills/story/SKILL.md
+      source: bridges/agents-skill-story.md
+    # DSH 的自有技能根（同层深度、同为标准 skill 头），与上一项同一份正文。
+    - target: .dsh/skills/story/SKILL.md
       source: bridges/agents-skill-story.md
 
   # 知识激活清单（确定性）：**阶段只读这里列出的文件**，不扫描 knowledge/ 目录——

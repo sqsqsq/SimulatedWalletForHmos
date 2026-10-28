@@ -12,6 +12,11 @@
 - **命令等价**：对 `story-suite-20261024-224427` 的 14 次 dsh 调用逐项比对，新方式命令相同（配置层路径仅斜杠形式不同）。
 - **未做**：没跑新的真实 CLI；dsh tui/web 形态与子级只读的工具级保证未覆盖；测试隔离问题（用户级 `~/.agents` 进入被测上下文）记为已知问题。
 - 证据在 `output/evidence/1.9.9-dsh-20261028/`（不入库），交回见同题 `实施反馈/`。
+- **批次 2，`.dsh` 自带入口**（用户「我期望.dsh跟.opencode一样的完整」）：
+  - demo 的 dsh adapter 改为与 opencode 同构的自有 bundle，Framework 物化器写出 `.dsh/skills` 11 个阶段技能与 `.dsh/rules` 3 份规则，均与 `.opencode` 逐字节相同；
+  - Extension 在 bridges 新增 `.dsh/skills/story/SKILL.md`，与 `.agents` 共用同一份正文，以 1.9.9 原号重装 142 项无失败；
+  - 批次 1“DSH 共用 `.agents` 入口”的取舍被替代。交回见同题 `02-批次-dsh自带入口/实施反馈/`。
+- **测试环境**：dsh 每会话在 TEMP 下建私有临时目录并打 Low 标签，需要 WRITE_OWNER；本仓 E 盘 `output\story` 链上当前用户只有 Modify，pwsh 全部失败。已在 `output\story` 加当前用户可继承完全控制，回滚命令与改前 ACL 在 `output/evidence/1.9.9-dsh-20261028/acl-recovery/`。
 
 2026-10-25 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](../doc/release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
 
