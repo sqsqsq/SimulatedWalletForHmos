@@ -2,8 +2,8 @@
   "source": "C:/Users/kangz/.agents/tools/cli-runtime",
   "repository": "C:/Users/kangz",
   "source_path": ".agents/tools/cli-runtime",
-  "commit": "8404bc11750ffe10b3575d3e2d68fedfc1001fa0",
-  "synced_at": "2026-10-20T19:56:41+0800",
+  "commit": "a624042aa79a5ab81f40d192cb1e4df42c40cc58",
+  "synced_at": "2026-10-28T09:46:16+0800",
   "scopes": [
     "tools/cli -> tools/cli",
     "test/tools/cli/tests -> test/tools/cli/tests",

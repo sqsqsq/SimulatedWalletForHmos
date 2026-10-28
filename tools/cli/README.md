@@ -46,6 +46,15 @@ no `resume_args`, so it cannot be used where session continuation is required.
 - The request `model` is recorded as metadata; headless has no `--model` flag
   (`model_in_argv: false` in the registry entry opts out of the `{model}`
   argv-placeholder requirement — the model selection is DSH profile config).
+- Patch layers: the entry declares the launcher option `patch`
+  (`"options": {"patch": ["--patch", "{value}"]}`) and every profile carries the
+  `{options}` slot after `--profile <name>`. The caller names the layers:
+  `CliRunRequest(..., options={"patch": [<path>, ...]})` expands to one
+  `--patch <path>` per value, in order, on start and resume alike; without
+  options the argv is unchanged. The runtime knows no project file — which
+  layer to load (for example a project-materialized verifier tool) belongs to
+  the business repo's own configuration. An option the entry does not declare
+  is a configuration error, not silently dropped.
 - Resume adopts the persisted DSH session (`--session-id`); session state lives
   under the DSH home directory, while this runtime keeps per-run artifacts only.
 - `dsh` failures are classified from the structured `turn_end` error payload

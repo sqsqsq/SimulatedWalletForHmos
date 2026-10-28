@@ -163,9 +163,10 @@ CLI 宿主按 `config/test.yaml > cli.configurations` 的顺序选，配置条�
 原始输出与记录保留在本 suite。重跑是原 suite 内的单 Case attempt，回到相同业务起点后仍等宿主逐关回复。`poll` 快照展示 attempt、
 `cli_config_id`、`failure_kind` 与配置健康状态，宿主不用手工执行重跑。
 
-配置组里有 dsh 时，`start` 在 suite 根写一份 `cli-registry.json`：只含 dsh 一项，启动与续跑都在 `--profile` 后插入
-`--patch {cwd}/.dsh/framework-verifier.patch.yml`，各 Case 的 cwd 仍是自己的工程，其余宿主照用中央 `tools/cli/config/clis.json`。
-demo 没物化这层配置时 `start` 在装配后、任何 Case 起跑前停下。
+配置项可带启动选项 `options`：选项名由中央 `tools/cli/config/clis.json` 里该宿主的条目声明并负责展开，值是相对 Case 工作区的文件。
+默认的 dsh 配置写 `options.patch: [.dsh/framework-verifier.patch.yml]`，即 demo 的 dsh adapter 物化、随 demo 带进工作区的审查员配置层；
+`run_case` 把它解析成本 Case 工作区里的绝对路径，中央 runtime 在启动与续跑的 `--profile headless` 之后各展开一次 `--patch <路径>`。
+文件不在时该 Case 在启动 CLI 之前停下并报出配置 id 与缺失路径。没带选项的配置，命令与中央注册表原样一致。
 
 ## 3. 观察与回复
 
@@ -345,7 +346,6 @@ story 门禁按产品的阶段顺序跑：先派发 `pre_phase` 的视图钩子�
 ```text
 output/story/<suite-id>/
 ├─ suite.json
-├─ cli-registry.json            # 配置组有 dsh 时才有（§2.1）
 ├─ previous-run-cleanup.json
 ├─ feature-migration.json
 ├─ workspace-boundary.json
@@ -440,8 +440,9 @@ python test/scripts/run_multi_case.py finalize `
 
 ### 5.1 verifier 通道（OpenCode / dsh）
 
-opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的只读工具实例，
-启动时经 `--patch` 装载（§2.1）。作者读到的调用指引统一指向宿主登记的专用 verifier 角色，通用研究/开发子 agent 不顶替（[维护操作§2](../doc/release/维护操作.md#2-framework-本地定制)）。
+opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的工具实例
+（人设与 preset 只装读与检索工具，宿主级工具对子级可见，只读靠人设），demo 的 dsh adapter 已声明 `verifier_subagent: true`，
+CLI 测试由配置的 `options.patch` 装载这层（§2.1）。作者读到的调用指引统一指向宿主登记的专用 verifier 角色，通用研究/开发子 agent 不顶替（[维护操作§2](../doc/release/维护操作.md#2-framework-本地定制)）。
 报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
 
 ```powershell

@@ -286,17 +286,25 @@
       "default_profile": "build",
       "use_cwd": true,
       "model_in_argv": false,
+      "options": {
+        "patch": [
+          "--patch",
+          "{value}"
+        ]
+      },
       "profiles": {
         "plan": {
           "args": [
             "--profile",
             "headless",
+            "{options}",
             "--json",
             "{prompt}"
           ],
           "resume_args": [
             "--profile",
             "headless",
+            "{options}",
             "--json",
             "--session-id",
             "{session_id}",
@@ -307,12 +315,14 @@
           "args": [
             "--profile",
             "headless",
+            "{options}",
             "--json",
             "{prompt}"
           ],
           "resume_args": [
             "--profile",
             "headless",
+            "{options}",
             "--json",
             "--session-id",
             "{session_id}",

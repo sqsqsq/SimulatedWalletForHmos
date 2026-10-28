@@ -5,31 +5,22 @@ selectors that the unified ``tools.cli`` registry consumes.
 """
 from __future__ import annotations
 
-import copy
-import json
-import os
 from pathlib import Path
 from typing import Any
 
-#: Framework 的 dsh adapter 把独立审查员物化成工程里的配置层；dsh 不扫描工程目录，
-#: 启动与续跑都要显式 ``--patch`` 装载它。
-DSH_VERIFIER_OVERLAY = ".dsh/framework-verifier.patch.yml"
-#: suite 生成的调用配置快照；只收需要改调用参数的宿主，其余宿主照用中央注册表。
-CLI_REGISTRY_ENV = "STORY_CLI_REGISTRY"
 
-
-def load_cli_group(config: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any]]:
+def load_cli_group(config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     cli = config.get("cli") or {}
     raw = cli.get("configurations")
     if not isinstance(raw, list) or not raw:
         raise SystemExit("[runner] cli.configurations 必须是非空有序列表")
-    configurations: list[dict[str, str]] = []
+    configurations: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             raise SystemExit(f"[runner] cli.configurations[{index}] 必须是映射")
-        value = {key: str(item.get(key) or "").strip()
-                 for key in ("id", "name", "model", "profile")}
+        value: dict[str, Any] = {key: str(item.get(key) or "").strip()
+                                 for key in ("id", "name", "model", "profile")}
         missing = [key for key, field in value.items() if not field]
         if missing:
             raise SystemExit(
@@ -37,6 +28,9 @@ def load_cli_group(config: dict[str, Any]) -> tuple[list[dict[str, str]], dict[s
         if value["id"] in seen:
             raise SystemExit(f"[runner] CLI 配置 id 重复: {value['id']}")
         seen.add(value["id"])
+        options = load_options(item.get("options"), f"cli.configurations[{index}].options")
+        if options:
+            value["options"] = options
         configurations.append(value)
 
     policy = cli.get("retry_policy") or {}
@@ -52,38 +46,43 @@ def load_cli_group(config: dict[str, Any]) -> tuple[list[dict[str, str]], dict[s
     }
 
 
-def select_cli(configurations: list[dict[str, str]], config_id: str | None) -> dict[str, str]:
+def load_options(raw: Any, label: str) -> dict[str, list[str]]:
+    """启动选项：选项名 → 相对 Case 工作区的文件路径列表（如 dsh 的 ``patch`` 配置层）。
+
+    选项名要由中央注册表里该宿主的条目声明，展开方式归中央；这里只核形状。
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or not raw:
+        raise SystemExit(f"[runner] {label} 必须是非空映射")
+    options: dict[str, list[str]] = {}
+    for name, values in raw.items():
+        if (not isinstance(values, list) or not values
+                or not all(isinstance(v, str) and v.strip() for v in values)):
+            raise SystemExit(f"[runner] {label}.{name} 必须是非空的路径字符串列表")
+        options[str(name)] = [v.strip() for v in values]
+    return options
+
+
+def resolve_cli_options(cli_config: dict[str, Any], workspace: Path) -> dict[str, list[str]]:
+    """把启动选项解析成 Case 工作区里的绝对路径，交中央 runtime 展开。
+
+    文件不在就在启动 CLI 之前停下：缺的多半是 demo 没物化对应的宿主件，跑起来要到阶段末尾才会发现。
+    """
+    resolved: dict[str, list[str]] = {}
+    for name, values in (cli_config.get("options") or {}).items():
+        paths = [(workspace / value).resolve() for value in values]
+        missing = [str(path) for path in paths if not path.is_file()]
+        if missing:
+            raise SystemExit(f"[runner] CLI 配置 {cli_config['id']} 的启动选项 {name} 指向的文件不在："
+                             f"{'；'.join(missing)}")
+        resolved[name] = [str(path) for path in paths]
+    return resolved
+
+
+def select_cli(configurations: list[dict[str, Any]], config_id: str | None) -> dict[str, Any]:
     selected = config_id or configurations[0]["id"]
     for item in configurations:
         if item["id"] == selected:
             return dict(item)
     raise SystemExit(f"[runner] 未知 CLI 配置: {selected}")
-
-
-def registry_snapshot(configurations: list[dict[str, str]],
-                      central: dict[str, Any]) -> dict[str, Any] | None:
-    """本组用到 dsh 时，给出只含 dsh 一项、启动与续跑都装载审查员配置层的调用配置。"""
-    if not any(item["name"] == "dsh" for item in configurations):
-        return None
-    entry = copy.deepcopy((central.get("clis") or {}).get("dsh") or {})
-    if not entry.get("profiles"):
-        raise SystemExit("[runner] 中央注册表没有 dsh 条目，无法生成 suite 调用配置")
-    for name, profile in entry["profiles"].items():
-        for key in ("args", "resume_args"):
-            argv = list(profile.get(key) or [])
-            if "--profile" not in argv:
-                raise SystemExit(f"[runner] dsh 档位 {name}.{key} 没有 --profile，找不到配置层插入位置")
-            at = argv.index("--profile") + 2
-            profile[key] = argv[:at] + ["--patch", "{cwd}/" + DSH_VERIFIER_OVERLAY] + argv[at:]
-    return {**{key: value for key, value in central.items() if key != "clis"},
-            "clis": {"dsh": entry}}
-
-
-def registry_for(cli_name: str, environ: dict[str, str] | None = None) -> Path | None:
-    """suite 快照里有这个宿主就用快照，否则返回 None（照用中央注册表）。"""
-    snapshot = (environ if environ is not None else os.environ).get(CLI_REGISTRY_ENV, "").strip()
-    if not snapshot:
-        return None
-    path = Path(snapshot)
-    clis = json.loads(path.read_text(encoding="utf-8")).get("clis") or {}
-    return path if cli_name in clis else None

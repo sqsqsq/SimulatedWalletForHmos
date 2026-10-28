@@ -51,7 +51,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HOST_ROOT))
 
 import run_layout
-from cli_config_group import load_cli_group, registry_for, select_cli
+from cli_config_group import load_cli_group, resolve_cli_options, select_cli
 from phase_state import derive_phase_state
 
 
@@ -2014,9 +2014,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     runlog.header({"case": case_id, "feature": feature, "cli": cli_config["name"],
                    "model": cli_config["model"], "target": TARGET,
                    "start": result["start"]})
-    registry = registry_for(cli_config["name"])
-    client = (CliClient(runtime_root=out_dir / "cli-runtime", registry_path=registry) if registry
-              else CliClient(runtime_root=out_dir / "cli-runtime"))
+    cli_options = resolve_cli_options(cli_config, TARGET)
+    client = CliClient(runtime_root=out_dir / "cli-runtime")
     t0 = time.time()
     # 正式多 Case 使用隔离 workspace（根下的 .git 只是本 Case 的起跑基线）；其源码基线与差异由宿主
     # run_multi_case.py 的白名单快照负责，不能再调用 demo 的 Git 源码事务。
@@ -2056,6 +2055,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                     interactive),
                 cwd=TARGET, soft_timeout_sec=NO_TIME_LIMIT, hard_timeout_sec=NO_TIME_LIMIT,
                 stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir, cli_config["name"]),
+                options=cli_options,
                 metadata={"tool": "story-skill-test",
                           "cli_config_id": cli_config["id"]})
             run: dict = {}

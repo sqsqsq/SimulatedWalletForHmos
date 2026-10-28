@@ -37,7 +37,6 @@ TEST_ROOT = HERE.parent
 REPO_ROOT = TEST_ROOT.parent
 #: 维护仓里的完整消费工程：Case 工作区从它复制，源码回灌回到它
 DEMO_ROOT = REPO_ROOT / "demo"
-CENTRAL_CLI_REGISTRY = REPO_ROOT / "tools" / "cli" / "config" / "clis.json"
 #: 开发源：装配时装进隔离 template（含未提交的修改与新文件）
 DEV_SOURCE = REPO_ROOT / "extensions"
 CASES_ROOT = TEST_ROOT / "cases"
@@ -59,8 +58,7 @@ _configure_console()
 sys.path.insert(0, str(HERE))
 import publish_to_demo  # noqa: E402
 import run_layout  # noqa: E402
-from cli_config_group import (  # noqa: E402
-    CLI_REGISTRY_ENV, DSH_VERIFIER_OVERLAY, load_cli_group, registry_snapshot)
+from cli_config_group import load_cli_group  # noqa: E402
 from phase_state import ALL_PHASES, derive_phase_state  # noqa: E402
 
 CLI_CONFIGURATIONS, CLI_RETRY_POLICY = load_cli_group(CFG)
@@ -1801,10 +1799,6 @@ def suite_environment(suite: dict[str, Any], case_id: str | None = None) -> dict
             environment[run_layout.RUN_CONTROL_ENV] = str(Path(control_root).resolve())
         else:
             environment.pop(run_layout.RUN_CONTROL_ENV, None)
-    if suite.get("cli_registry"):
-        environment[CLI_REGISTRY_ENV] = str(suite["cli_registry"])
-    else:
-        environment.pop(CLI_REGISTRY_ENV, None)
     environment.pop(REQUIREMENT_SYSTEM_ENV, None)
     if case_id:
         case = suite.get("case_states", {}).get(case_id) or {}
@@ -2464,26 +2458,6 @@ def default_suite_id(at: datetime | None = None) -> str:
     raise SystemExit(f"[multi] 同一秒内已有 100 个 suite：{base}")
 
 
-def write_cli_registry(suite_dir: Path, workspace_source: Path) -> Path | None:
-    """本组用到需要改调用参数的宿主时，生成整个 suite 共用的一份调用配置快照。
-
-    各 Case 的 CLI 进程都从这一份启动与续跑，cwd 仍是各自的工程；快照只收这些宿主，
-    别的宿主照用中央注册表。dsh 引用工程里物化的审查员配置层，起跑前就核它在不在，
-    不让模型跑到阶段末尾才发现没有审查员。
-    """
-    central = json.loads(CENTRAL_CLI_REGISTRY.read_text(encoding="utf-8"))
-    snapshot = registry_snapshot(CLI_CONFIGURATIONS, central)
-    if snapshot is None:
-        return None
-    if not (workspace_source / DSH_VERIFIER_OVERLAY).is_file():
-        raise SystemExit(
-            f"[multi] dsh 需要工程里的审查员配置层 {DSH_VERIFIER_OVERLAY}，"
-            f"{workspace_source} 里没有（demo 未物化 dsh adapter）")
-    target = suite_dir / "cli-registry.json"
-    target.write_bytes((json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-    return target
-
-
 def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
                  base_end_phase: str | None = None,
                  continue_case: str | None = None,
@@ -2513,7 +2487,6 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
     migration = migrate_existing_features(path)
     feature_archive_path = migration.get("destination_root")
     workspace_template, workspace_root = create_workspace_template(path, suite_id)
-    cli_registry = write_cli_registry(path, Path(workspace_template or DEMO_ROOT))
     plan_map = {plan.case_id: plan for plan in plans}
     suite: dict[str, Any] = {
         "schema_version": 1,
@@ -2529,7 +2502,6 @@ def create_suite(plans: list[CasePlan], suite_id: str, jobs: int,
         "preserve_current_features": preserve_current_features,
         "workspace_template": str(workspace_template) if workspace_template else None,
         "workspace_root": str(workspace_root) if workspace_root else None,
-        "cli_registry": str(cli_registry) if cli_registry else None,
         "execution_authorization": {
             "non_sandbox": True,
             "granted_by": "user",

@@ -80,7 +80,9 @@ def resolve_batch_wrapper(executable: str) -> tuple[str, tuple[str, ...]]:
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "clis.json"
-ALLOWED_PLACEHOLDERS = {"prompt", "cwd", "model", "session_id", "schema"}
+ALLOWED_PLACEHOLDERS = {"prompt", "cwd", "model", "session_id", "schema", "options"}
+# Whole-token slot where the request's launcher options expand (zero or more args).
+OPTIONS_TOKEN = "{options}"
 
 
 class CliConfigurationError(ValueError):
@@ -165,14 +167,19 @@ class CliRegistry:
             # model flag; such entries declare model_in_argv: false and the
             # request model is recorded as metadata only.
             require_model_in_argv = cli.get("model_in_argv", True)
+            declares_options = self._validate_options(cli.get("options"), f"{prefix}.options")
             for profile_name, profile in profiles.items():
                 pp = f"{prefix}.profiles.{profile_name}"
                 if not isinstance(profile, dict):
                     raise CliConfigurationError(f"{pp} must be an object")
                 self._validate_args(profile.get("args"), f"{pp}.args", require_model_in_argv)
+                self._validate_options_slot(profile["args"], f"{pp}.args", declares_options)
                 if "resume_args" in profile:
                     self._validate_args(
                         profile["resume_args"], f"{pp}.resume_args", require_model_in_argv
+                    )
+                    self._validate_options_slot(
+                        profile["resume_args"], f"{pp}.resume_args", declares_options
                     )
                     fields = self._fields(profile["resume_args"])
                     if "session_id" not in fields:
@@ -182,6 +189,59 @@ class CliRegistry:
                 self._validate_env(profile.get("env", {}), f"{pp}.env")
                 if "timeout" in profile:
                     self._validate_timeout(profile["timeout"], f"{pp}.timeout")
+
+    @staticmethod
+    def _option_args(
+        request: CliRunRequest, cli: dict[str, Any], profile_name: str, templates: list[str]
+    ) -> list[str]:
+        """Expand request options in request order; values are passed verbatim."""
+        if not request.options:
+            return []
+        declared = cli.get("options") or {}
+        unknown = sorted(set(request.options) - set(declared))
+        if unknown:
+            raise CliConfigurationError(
+                f"CLI {request.cli!r} declares no option(s): {', '.join(unknown)}"
+            )
+        if OPTIONS_TOKEN not in templates:
+            raise CliConfigurationError(
+                f"CLI {request.cli!r} profile {profile_name!r} has no {OPTIONS_TOKEN} slot"
+            )
+        args: list[str] = []
+        for name, items in request.options.items():
+            for item in items:
+                if not item:
+                    raise CliConfigurationError(f"Option {name!r} has an empty value")
+                args.extend(part.replace("{value}", item) for part in declared[name])
+        return args
+
+    @staticmethod
+    def _validate_options(value: Any, label: str) -> bool:
+        """`options` maps a launcher option name to the args one value expands to."""
+        if value is None:
+            return False
+        if not isinstance(value, dict) or not value:
+            raise CliConfigurationError(f"{label} must be a non-empty object")
+        for name, template in value.items():
+            if (
+                not isinstance(template, list)
+                or not template
+                or not all(isinstance(item, str) for item in template)
+            ):
+                raise CliConfigurationError(f"{label}.{name} must be a non-empty string array")
+            if not any("{value}" in item for item in template):
+                raise CliConfigurationError(f"{label}.{name} must contain {{value}}")
+        return True
+
+    def _validate_options_slot(self, args: list[str], label: str, declares_options: bool) -> None:
+        if "options" not in self._fields(args):
+            return
+        if any("{options}" in arg and arg != OPTIONS_TOKEN for arg in args):
+            raise CliConfigurationError(f"{label} must use {OPTIONS_TOKEN} as a whole argument")
+        if args.count(OPTIONS_TOKEN) != 1:
+            raise CliConfigurationError(f"{label} must not repeat {OPTIONS_TOKEN}")
+        if not declares_options:
+            raise CliConfigurationError(f"{label} uses {OPTIONS_TOKEN} but the CLI declares no options")
 
     def _validate_args(self, args: Any, label: str, require_model: bool = True) -> None:
         if not isinstance(args, list) or not args or not all(isinstance(v, str) for v in args):
@@ -260,6 +320,7 @@ class CliRegistry:
                 f"CLI {request.cli!r} profile {profile_name!r} does not support resume"
             )
         assert isinstance(templates, list)
+        option_args = self._option_args(request, cli, profile_name, templates)
         values = {
             "prompt": request.prompt,
             "cwd": str(cwd),
@@ -267,7 +328,7 @@ class CliRegistry:
             "session_id": request.session_id,
             "schema": str(request.output_schema.resolve()) if request.output_schema else None,
         }
-        fields = self._fields(templates)
+        fields = self._fields(templates) - {"options"}
         missing = sorted(field for field in fields if not values.get(field))
         if missing:
             raise CliConfigurationError(
@@ -275,6 +336,9 @@ class CliRegistry:
             )
         argv: list[str] = []
         for template in templates:
+            if template == OPTIONS_TOKEN:
+                argv.extend(option_args)
+                continue
             value = template
             for field in fields:
                 replacement = values[field]

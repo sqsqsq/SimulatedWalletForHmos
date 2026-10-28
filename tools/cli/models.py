@@ -61,6 +61,9 @@ class CliRunRequest:
     stop_grace_sec: float | None = None
     env: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Launcher options the CLI entry declares under "options" (e.g. dsh "patch");
+    # each value is passed through verbatim, in order.
+    options: dict[str, list[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -83,6 +86,10 @@ class CliRunRequest:
             stop_grace_sec=value.get("stop_grace_sec"),
             env={str(k): str(v) for k, v in (value.get("env") or {}).items()},
             metadata=dict(value.get("metadata") or {}),
+            options={
+                str(name): [str(item) for item in items]
+                for name, items in (value.get("options") or {}).items()
+            },
         )
 
 

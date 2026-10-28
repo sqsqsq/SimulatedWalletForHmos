@@ -65,6 +65,15 @@
         "default_profile": { "type": "string", "minLength": 1 },
         "use_cwd": { "type": "boolean" },
         "model_in_argv": { "type": "boolean" },
+        "options": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        },
         "env": { "$ref": "#/$defs/env" },
         "profiles": {
           "type": "object",

@@ -31,7 +31,10 @@ cli:
   #              F5 报告里的效率数字要与 F 修复两轮比（同宿主），与 F4 首跑/收口
   #              那组比时必须写明中间换过 codex。
   configurations:
-    # 默认 dsh（用户 2026-10-24 指定）：dsh headless 跑 bailian 的 deepseek，审查员用工程 `.dsh/` 里归档的配置层；
+    # 默认 dsh（用户 2026-10-24 指定）：dsh headless 跑 bailian 的 deepseek。
+    # `options.patch` 指定启动与续跑装载的 dsh 配置层，路径相对 Case 工作区：装的是 demo 的 dsh adapter
+    # 物化的独立审查员（随 demo 带进工作区），展开为 `--patch <路径>` 由中央 runtime 负责；
+    # 后面几项只在当前配置被熔断（401）或内容审查耗尽时才轮到，换宿主即换被测对象，结论按 `cli_config_id` 记。
     # 后面几项只在当前配置被熔断（401）或内容审查耗尽时才轮到，换宿主即换被测对象，结论按 `cli_config_id` 记。
     # 此前顺序 deepseek > glm > luna（用户 2026-09-04 指定），保留为后备。
     #
@@ -46,6 +49,9 @@ cli:
       name: dsh
       model: bailian/deepseek-v4-flash-0731
       profile: build
+      options:
+        patch:
+          - .dsh/framework-verifier.patch.yml
     - id: bailian-deepseek
       name: opencode
       model: bailian/deepseek-v4-flash-0731
