@@ -8,9 +8,10 @@ agent_entry_file:
   target_path: AGENTS.md
 
 # dsh 不自动发现 Markdown 子 agent：独立审查员是 `@deepseek-ai/dsh-tool-subagent` 的一个具名工具实例
-# （toolName=verifier，spawn 后端空上下文，toolFilter 只放 read/glob/grep/read_image），persona 内联在
-# 配置层里。dsh 不扫描 `.dsh/`，启动与续跑都显式带 `--patch <工程根>/.dsh/framework-verifier.patch.yml`；
-# 未带该层启动的会话里没有 verifier 工具，须新开会话。
+# （toolName=verifier，in-process spawn 起空上下文子级）。DSH 0.2.1 起人设与工具放在 Agent Preset
+# `maison-verifier` 里（只装 read / read_image 与 glob / grep），registry 默认指向空 preset，主会话不受影响。
+# dsh 不扫描 `.dsh/`，启动与续跑都显式带 `--patch <工程根>/.dsh/framework-verifier.patch.yml`；
+# 未带该层启动的会话里没有 verifier 工具，须带上该层新开会话。
 commands:
   subagents:
     target_dir: .dsh
@@ -34,12 +35,12 @@ user_confirmation:
 image_input: none
 
 # verifier 子代理能力（plan d2f7a9c4）：调用为 `verifier({description, prompt: <request JSON 整段>})`，
-# 报告由调用方原样写入 summary.verifier_report。入册纪律：宿主实跑观测（父子会话不同、子级空上下文、
-# 写工具不可用、读材料交回终态块）之前保持 false。
-verifier_subagent: false
+# 报告由调用方原样写入 summary.verifier_report。入册依据：带该层的真实运行里父子会话不同、子级空上下文、
+# 读材料交回终态块。已知差距：宿主级工具对子级可见，只读靠人设约束，不是工具白名单（使用者接受后入册）。
+verifier_subagent: true
 
 post_install_hooks: []
 
 notes: |
   - 只承接 interactive 运行模式，不声明 goal_capability。
-  - dsh 原生工具为小写 read / glob / grep / read_image / pwsh / write / edit；verifier 工具实例只放前四个。
+  - dsh 原生工具为小写 read / glob / grep / read_image / pwsh / write / edit；verifier 的 preset 只装前四个。
