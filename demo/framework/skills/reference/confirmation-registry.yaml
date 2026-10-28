@@ -26,7 +26,7 @@ entries:
     ssot_anchor: "user-confirmation-ux.md §3.4"
     skill_step: "S2 计划批准"
     portable_menu: "多选 adapter 目录名（候选见 S1 InitTaskPlan.adapter_catalog）；须至少 1 项"
-    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys/dsh 默认 `.agents` bridge bundle 字节一致、可幂等共存；opencode 用自有 `.opencode/skill` bundle（AGENTS.md 共享，像 cursor 各用各目录）；codex 默认 `.codex` bundle；差异仅在 headless 运行器与 skill 落盘目录。仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
+    notes: "项目级物化清单；写入 framework.config.json materialized_adapters[]。generic/chrys 默认 `.agents` bridge bundle 字节一致、可幂等共存；opencode 用自有 `.opencode/skill` bundle、dsh 用自有 `.dsh/skills` bundle（AGENTS.md 共享，像 cursor 各用各目录）；codex 默认 `.codex` bundle；差异仅在 headless 运行器与 skill 落盘目录。仅 generic 配非默认 agent_bundle_root 时为独立产物。generic 恒 bridge，无 inline 选项。"
     options:
       - value: claude
         label: "claude — 物化 Claude Code 入口与 .claude/ 产物"
@@ -50,7 +50,7 @@ entries:
         label: "codeagent — 物化 AGENTS.md + .cac/ 产物（Claude Code 内核；hooks 硬门禁；headless = codeagentcli -p）"
         portable: "codeagent"
       - value: dsh
-        label: "dsh — 物化 AGENTS.md + .agents/ bundle + .dsh/ 独立审查员配置层（启动带 --patch）"
+        label: "dsh — 物化 AGENTS.md + 自有 .dsh/ bundle（含独立审查员配置层，启动带 --patch）"
         portable: "dsh"
 
   - id: init.task_plan

@@ -113,14 +113,23 @@ class TheWorkspaceCarriesTheVerifierChain(unittest.TestCase):
     def test_the_dsh_verifier_is_a_read_only_spawn_with_the_same_protocol(self) -> None:
         """dsh 审查员（DSH 0.2.1 写法）：根目录与 demo 同一份配置层，人设放在 Agent Preset，子级 in-process spawn，
         preset 只装读与检索工具；registry 默认空 preset，主会话不受影响。阶段协议与 opencode 子代理同一版，另有自足审查任务的分支。
-        Framework dsh adapter 模板还是旧写法（tool-subagent 直接带 persona / toolFilter，新版加载即失败），这里不再要求 demo 与它逐字相同。"""
+        adapter 模板、demo 物化件与根目录维护拷贝是同一份：UPDATE 重新物化不会换掉可用的配置层。"""
         import yaml
         layer = DEMO / DSH_LAYER
         self.assertEqual((REPO_ROOT / DSH_LAYER).read_bytes(), layer.read_bytes(), "根目录与 demo 的 dsh 配置层不是同一份")
+        template = DEMO / DSH_ADAPTER / "templates" / "agents" / DSH_LAYER.name
+        self.assertEqual(template.read_bytes(), layer.read_bytes(), "dsh adapter 模板与 demo 物化件不是同一份")
         adapter = yaml.safe_load((DEMO / DSH_ADAPTER / "adapter.yaml").read_text(encoding="utf-8"))
         self.assertEqual({"target_dir": ".dsh", "template_dir": "templates/agents", "update_policy": "auto_overwrite"},
                          adapter["commands"]["subagents"])
-        self.assertIs(False, adapter["verifier_subagent"], "宿主实跑观测之前不入册")
+        self.assertIs(True, adapter["verifier_subagent"], "demo 的 dsh 审查员已正式入册")
+        # 与 opencode 同构的自有 bundle：阶段技能与规则物化在 .dsh 下，不再借 generic/chrys 的 .agents
+        self.assertEqual(".dsh/skills", adapter["skill_bridge"]["target_dir"])
+        self.assertEqual(".dsh/rules", adapter["rules"]["target_dir"])
+        phase = lambda root: {p.parent.name for p in (DEMO / root).glob("*/SKILL.md")} - {"story", "story-adaptation"}
+        self.assertEqual(phase(".opencode/skill"), phase(".dsh/skills"), ".dsh 的阶段技能与 .opencode 不是同一套")
+        self.assertEqual({p.name for p in (DEMO / ".opencode/rules").iterdir()},
+                         {p.name for p in (DEMO / ".dsh/rules").iterdir()})
         rows = {row["id"]: row for row in yaml.safe_load(layer.read_text(encoding="utf-8"))[0]["insert"]}
         self.assertEqual(["agent-preset-registry", "preset-standard", "preset-maison-verifier", "maison-verifier"], list(rows))
         self.assertEqual({"default": "standard"}, rows["agent-preset-registry"]["config"])
