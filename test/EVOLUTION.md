@@ -5,6 +5,14 @@
 
 ## 1. 演进记录
 
+2026-10-28 **1.9.9 发布后补充：DSH 正式支持（版本号不变）**。首版实施改出多处问题，已按用户要求整体回退（`4a543c50`），按[重做方案](../doc/plan/1.9.9/2026-10-28-dsh正式支持/03-重做方案/00-实施方案.md)重做。分层：cli-runtime 提供能力，测试装置做 CLI 适配，Extension 只经 bridges 支持宿主。
+- **cli-runtime**：`v1.0.6` 加通用启动选项 `options`，dsh 声明 `patch`；`v1.0.7` 给 dsh 的 plan/build 档设 `DSH_PERMISSION_MODE`（read-only / danger-full-access），与其它 CLI 的 build 契约一致。
+- **测试装置**：`test.yaml` 的 dsh 配置用 `options.patch` 装 Case 工作区里的审查员层；suite 快照、`cli-registry.json` 与对应专用测试退出。史实：10-24 及以前的 dsh 轮次靠临时设置跑在 full-access，并临时改工作区的审查员声明，交回里只写了“已还原”。
+- **demo 的 Framework 本地定制**：dsh adapter 与 opencode 同构，`.dsh/skills` 11 个阶段技能、`.dsh/rules` 3 份规则由 Framework 物化器写出（单任务 `materialize-adapter:dsh`）；审查员模板同步为 0.2.1 写法，`verifier_subagent: true`（`e6b158c2`）。
+- **Extension**：新增独立 bridge `bridges/dsh-skill-story.md`，登记到 `.dsh/skills/story/SKILL.md`，本体零改动；以 1.9.9 原号重装 143 项无失败；预算按用户具名确认上调到 17075，整版 G3899，在 G3900 内（`c9e1fb29`）。
+- **测试环境**：本仓 E 盘 `output\story` 加了当前用户可继承完全控制，用于 dsh 沙箱档的私有临时目录授权；按用户决定保留。回滚命令与改前 ACL 在 `output/evidence/1.9.9-dsh-20261028/acl-recovery/`。
+- **未覆盖与已知问题**：tui/web 交互形态与 `workspace-write` 下的审批流没有实跑；子级只读不是工具级保证；用户级 `~/.agents` 会进入被测会话上下文，隔离未修。
+
 2026-10-25 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](../doc/release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](../doc/plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
 
 2026-10-17 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。

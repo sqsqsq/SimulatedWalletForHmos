@@ -442,8 +442,9 @@ python test/scripts/run_multi_case.py finalize `
 
 ### 5.1 verifier 通道（OpenCode / dsh）
 
-opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的只读工具实例，
-启动时经 `--patch` 装载（§2.1）。作者读到的调用指引统一指向宿主登记的专用 verifier 角色，通用研究/开发子 agent 不顶替（[维护操作§2](../doc/release/维护操作.md#2-framework-本地定制)）。
+opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的工具实例
+（preset 只装读与检索工具，宿主级工具对子级可见，只读靠人设；demo 的 dsh adapter 声明 `verifier_subagent: true`），
+启动与续跑由测试配置的 `options.patch` 装载（§2.1）。作者读到的调用指引统一指向宿主登记的专用 verifier 角色，通用研究/开发子 agent 不顶替（[维护操作§2](../doc/release/维护操作.md#2-framework-本地定制)）。
 报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
 
 ```powershell

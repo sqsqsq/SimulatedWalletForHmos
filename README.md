@@ -158,6 +158,7 @@ Story Extension 是挂在 AgentMaison Framework 上的需求开发流程：从�
   | OpenCode | Skill `.opencode/skill/story/SKILL.md` |
   | Cursor | Skill `.cursor/skills/story/SKILL.md` |
   | 通用 `.agents` | Skill `.agents/skills/story/SKILL.md` |
+  | DSH | Skill `.dsh/skills/story/SKILL.md` |
 
 - 本说明由维护者另行分发，`/story adapt` 不会把它装进目标工程，也不会动目标工程自己的 README。
 
