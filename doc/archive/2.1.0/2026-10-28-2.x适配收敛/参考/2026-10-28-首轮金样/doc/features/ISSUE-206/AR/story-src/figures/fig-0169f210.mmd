@@ -1,0 +1,28 @@
+%% 图源 spec §5.1 #1
+%% 图源 spec §5.3 #2
+%% 图源 spec §5.3 #3
+flowchart TD
+    A[车主：卡包车钥匙卡片点分享，选给谁、权限与有效期，确认发出] --> C{车云与车厂云：建立分享并签发凭据}
+    C -->|分享建立，状态待接受| F[接受方：推送可达，或进入卡包补拉]
+    F --> G[接受方：看到待添加的钥匙，点添加到钱包]
+    G --> AC{车云与车厂云：向对方设备下发凭据}
+    AC -->|下发成功| L[接受方：钥匙生效，卡包里出现可用的钥匙卡片]
+    L -->|车主随后管理| M[车主：分享管理页看到这条分享]
+    M --> RV[车主：对生效的分享发起撤销]
+    RV --> RC{车云与车厂云：受理撤销}
+    RC -->|受理| OFF[车辆与接受方卡片：车辆即刻拒绝；卡片在线即收回，离线最长 48 小时内收回]
+    C -->|签发失败| BF[车主：不留关系，可以再发]
+    C -->|没得到回应| BU[钱包端：按 7.3 用同一请求确认]
+    G -.->|72 小时内没添加| EX[接受方：分享作废，待添加项移除]
+    AC -->|下发失败| AF[接受方：仍待接受，可以重试]
+    AC -->|其他失败或没得到回应| AQ[钱包端：重取这条分享，按 6.3 显示]
+    M --> KP[车主：继续保留，到期自动结束]
+    RC -->|失败或没得到回应| RQ[钱包端：重拉列表，按车云状态显示]
+    classDef owner fill:#eef4ff,stroke:#5b7fc7,color:#1d2b4f
+    classDef cloud fill:#fff6e0,stroke:#c99a2e,color:#4a3505
+    classDef grantee fill:#e6f6ea,stroke:#3f9a5a,color:#123d20
+    classDef wallet fill:#f4f6fa,stroke:#6b7a99,color:#1d2b4f
+    class A,M,RV,BF,KP owner
+    class C,AC,RC cloud
+    class F,G,L,OFF,EX,AF grantee
+    class BU,AQ,RQ wallet

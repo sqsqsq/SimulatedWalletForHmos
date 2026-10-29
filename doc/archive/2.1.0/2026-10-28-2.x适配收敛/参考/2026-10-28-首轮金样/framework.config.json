@@ -1,0 +1,4 @@
+{
+  "project_name": "car-key-sharing-golden-candidate",
+  "paths": {"features_dir": "doc/features", "module_catalog": "doc/module-catalog.yaml"}
+}

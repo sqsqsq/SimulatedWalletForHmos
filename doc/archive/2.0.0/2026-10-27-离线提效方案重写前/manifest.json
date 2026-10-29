@@ -1,0 +1,45 @@
+[
+  {
+    "source": "doc/plan/2.0.0/2026-10-27-离线全量验证提速/00-实施方案.md",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/原方案/00-实施方案.md",
+    "sha256": "1fda32f48235c7df36ceafbc6b732b047e391f1f561ad21adbf041bb685c8493"
+  },
+  {
+    "source": "doc/plan/2.0.0/2026-10-27-离线全量验证提速/01-共享装配与可信前置.md",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/原方案/01-共享装配与可信前置.md",
+    "sha256": "0989a0f317136473908fa7571314ffe09251d316c1a7081d0cfc03e24bc8ce51"
+  },
+  {
+    "source": "doc/plan/2.0.0/2026-10-27-离线全量验证提速/02-测试责任与重复执行收敛.md",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/原方案/02-测试责任与重复执行收敛.md",
+    "sha256": "726fd4d80b30b78d5703b0944191863b0d01d9630a6b37c1e283463aa1ca0d27"
+  },
+  {
+    "source": "doc/plan/2.0.0/2026-10-27-离线全量验证提速/03-完整验收与交回.md",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/原方案/03-完整验收与交回.md",
+    "sha256": "7c57096acc93918773dc2a68baebca7817edd0d191ada5fbbdac61af70c58c05"
+  },
+  {
+    "source": "doc/plan/2.0.0/2026-10-27-离线全量验证提速/参考/01-工作量收敛与达标预算.md",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/原方案/参考/01-工作量收敛与达标预算.md",
+    "sha256": "c4104bf7ce8f46181d0d108bd466834e5bf61f9190d33e10486f4bace61f3865"
+  },
+  {
+    "source_worktree": "E:\\Project\\SimulatedWalletForHmos\\output\\scratch\\offline-handback-worktree\\doc\\plan\\2.0.0\\2026-10-27-离线全量验证提速\\实施反馈\\2026-10-27-211112-重复工作与180秒缺口-设计者交回.md",
+    "source_commit": "499fc4e2",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/执行者交回/2026-10-27-211112-重复工作与180秒缺口-设计者交回.md",
+    "sha256": "cb2025bd68753464f043b0b7f0c56dc906311580840e4873a3db9bef6b215302"
+  },
+  {
+    "source_worktree": "E:\\Project\\SimulatedWalletForHmos\\output\\scratch\\offline-handback-worktree\\doc\\plan\\2.0.0\\2026-10-27-离线全量验证提速\\实施反馈\\2026-10-27-完整调用链与重复工作退出清单.md",
+    "source_commit": "499fc4e2",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/执行者交回/2026-10-27-完整调用链与重复工作退出清单.md",
+    "sha256": "e82c46829c1c75d0ca3a9755d0933e611251405ad403c810a25162b9f4ba68a1"
+  },
+  {
+    "source_worktree": "E:\\Project\\SimulatedWalletForHmos\\output\\scratch\\offline-handback-worktree\\doc\\plan\\2.0.0\\2026-10-27-离线全量验证提速\\实施反馈\\2026-10-27-集中返修03-完整验收交回.md",
+    "source_commit": "499fc4e2",
+    "copy": "doc/archive/2.0.0/2026-10-27-离线提效方案重写前/执行者交回/2026-10-27-集中返修03-完整验收交回.md",
+    "sha256": "32f76e27d795a5867b654a9013acc9b63fa322a74bedc3431b36f673028d4178"
+  }
+]

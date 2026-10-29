@@ -1,0 +1,12 @@
+[
+  {
+    "file": "doc/features/ISSUE-206/blueprint/component-blueprint.yaml",
+    "schema": "app-component-blueprint.schema.json",
+    "issues": []
+  },
+  {
+    "file": "doc/features/ISSUE-206/wallet-key-sharing/change-unit.candidate.yaml",
+    "schema": "change-unit.schema.json",
+    "issues": []
+  }
+]

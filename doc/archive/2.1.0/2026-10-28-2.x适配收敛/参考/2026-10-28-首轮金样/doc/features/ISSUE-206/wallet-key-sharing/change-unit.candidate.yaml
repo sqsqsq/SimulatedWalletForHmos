@@ -1,0 +1,1104 @@
+# 未接受候选；真实字节身份不表示原生接受、独审或闭环。
+artifact: change-unit@1
+component_id: wallet-main
+blueprint_id: ISSUE-206
+change_unit_id: wallet-key-sharing
+revision: 1
+priority: 1
+component_blueprint_ref:
+  artifact: component-blueprint@1
+  component_id: wallet-main
+  blueprint_id: ISSUE-206
+  revision: 1
+  source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+  artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+  target:
+    kind: blueprint
+    id: ISSUE-206
+provenance:
+  source_kind: unaccepted_maintenance_candidate
+  source_ref: doc/features/ISSUE-206/source-inputs.md
+  source_revision: 2026-10-28-candidate
+  observed_at: 2026-10-28
+  evidence_strength: inferred
+  extraction_method: adapted_from_full_1.9.9_golden_not_native_acceptance
+purpose: 一个CU完整承接钱包端F1-F9，模拟情景止于Plan，不拆需求、不授权Coding。
+preconditions:
+  - precondition_id: public-simulation-input
+    description: API12/Asset、1024byte完整草稿、稳定模拟身份、独立模拟云幂等与创建恢复均为公开情景前提；非真实设备或接口已验。
+    source_refs:
+      - ../source-inputs.md
+  - precondition_id: whole-wallet-scope
+    description: WalletMain全业务，Phone仅四页映射，公共模块只读复用；终点Plan。
+    source_refs:
+      - spec/spec.md
+      - plan/plan.md
+requires: []
+provides:
+  - provide_id: F1
+    description: 卡包车钥匙卡片
+  - provide_id: F2
+    description: 分享入口与门槛
+  - provide_id: F3
+    description: 分享设置
+  - provide_id: F4
+    description: 创建分享与草稿续办
+  - provide_id: F5
+    description: 分享管理与撤销
+  - provide_id: F6
+    description: 接受页
+  - provide_id: F7
+    description: 钥匙卡片详情
+  - provide_id: F8
+    description: 状态身份与隐私
+  - provide_id: F9
+    description: 被分享人收到的钥匙
+design_refs:
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: share-feature
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: draft-store
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: share-setup
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: telemetry
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: phone-routing
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: setup-operates
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: setup-actions
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: setup-interaction
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: setup-context
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: node
+      id: setup-page
+      view_id: development
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: contract
+      id: queryKeySharingQuota
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: contract
+      id: queryGranteePermission
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: contract
+      id: createKeySharing
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: contract
+      id: acceptKeySharing
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: contract
+      id: revokeKeySharing
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: contract
+      id: queryKeySharingList
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: contract
+      id: creation-recovery
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-SEC-01
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-ENV-01
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-ENV-02
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-DFX-01
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-OBS-02
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-OBS-03
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-OBS-05
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-OBS-06
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-UX-01
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-RES-01
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-RES-02
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-DFX-02
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-DLV-01
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: knowledge-COMPAT-01
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    revision: 1
+    source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+    artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+    target:
+      kind: decision
+      id: pattern-page-interaction
+touches:
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: share-feature
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+      - 02-Feature/WalletMain/src/test/WalletKeySharing.test.ets
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: draft-store
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: share-setup
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: telemetry
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: phone-routing
+        view_id: development
+    write_refs:
+      - 01-Product/Phone/src/main/ets/pages/index.ets
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: setup-operates
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: setup-actions
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: setup-interaction
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: setup-context
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - owner: wallet-team
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: ISSUE-206
+      revision: 1
+      source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+      artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+      target:
+        kind: node
+        id: setup-page
+        view_id: development
+    write_refs:
+      - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+      - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+      - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+      - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      - 02-Feature/WalletMain/src/main/ets/index.ets
+      - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+      - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+preserved_invariants:
+  - invariant_id: scope-and-open-decisions
+    description: 不拆需求；D2/D5/D8保持未决；真实六API无恢复能力，不把模拟来源写成真实联调。
+    evidence_refs:
+      - ../source-inputs.md
+      - ../AR/review.md
+  - invariant_id: cloud-and-device-responsibility
+    description: 车云受理撤销即拒绝车辆使用，设备卡片最长48小时收回，失败/未知不当已受理。
+    evidence_refs:
+      - spec/spec.md#AC-5
+      - ../source-inputs.md
+target_predicates:
+  - predicate_id: accept-AC-1
+    role: behavior
+    description: 卡包车钥匙卡片点分享，对象、权限、有效期三项都选齐前不能发出；选齐后发出，对方收到待接受的钥匙（承接：AC-K1）。
+    provide_ids:
+      - F2
+      - F3
+    verification_refs:
+      - acceptance:AC-1
+  - predicate_id: accept-AC-2
+    role: behavior
+    description: 对方接受后钥匙可用，权限与车主所选一致，钥匙作为车钥匙卡片出现在对方卡包（承接：AC-K2）。
+    provide_ids:
+      - F6
+      - F7
+    verification_refs:
+      - acceptance:AC-2
+  - predicate_id: accept-AC-4
+    role: behavior
+    description: 生效加待接受合计到上限后不能再发起，能看到原因（承接：AC-K4）。
+    provide_ids:
+      - F3
+      - F5
+    verification_refs:
+      - acceptance:AC-4
+  - predicate_id: accept-AC-5
+    role: behavior
+    description: 撤销时对方在线立即失效；对方离线进入撤销中，对方设备上的卡片在宽限内收回（D1）；车云受理撤销起车辆侧就不认这把钥匙（承接：AC-K5）。
+    provide_ids:
+      - F5
+    verification_refs:
+      - acceptance:AC-5
+  - predicate_id: accept-AC-6
+    role: recovery
+    description: 发起途中退出页面、断网或关掉应用再打开，同一账号同一辆车回来接着上次的选择发出，沿用同一幂等标识，不发出第二条（承接：AC-K6，D6）。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-6
+  - predicate_id: accept-AC-7
+    role: behavior
+    description: 管理列表的状态与车云返回一致：待接受、生效、已作废、已到期、撤销中、已撤销（承接：AC-K7）。
+    provide_ids:
+      - F5
+    verification_refs:
+      - acceptance:AC-7
+  - predicate_id: accept-AC-9
+    role: behavior
+    description: 未登录或没有车钥匙的用户看不到分享入口（承接：AC-K9）。
+    provide_ids:
+      - F2
+    verification_refs:
+      - acceptance:AC-9
+  - predicate_id: accept-AC-10
+    role: behavior
+    description: 开关关闭后不能发起新分享，已生效的分享不受影响（承接：AC-K10）。
+    provide_ids:
+      - F2
+    verification_refs:
+      - acceptance:AC-10
+  - predicate_id: accept-AC-11
+    role: behavior
+    description: 选家庭成员时全功能可选；换成其他联系人后全功能不可选，已选的全功能请车主重选；换回家庭成员又可选（承接：AC-K11）。
+    provide_ids:
+      - F3
+    verification_refs:
+      - acceptance:AC-11
+  - predicate_id: accept-AC-12
+    role: behavior
+    description: 卡包展示车主本人的车钥匙卡片，卡片上有分享与分享管理入口（D4）。
+    provide_ids:
+      - F1
+    verification_refs:
+      - acceptance:AC-12
+  - predicate_id: accept-AC-13
+    role: recovery
+    description: 发出成功、主动退出或切换账号后草稿被清除，换账号后看不到上一个账号的草稿或列表；退出时清除失败，旧会话照样退出，分享在清理完成前不可用（D6）。
+    provide_ids:
+      - F4
+      - F8
+    verification_refs:
+      - acceptance:AC-13
+  - predicate_id: accept-AC-14
+    role: behavior
+    description: 两个打码后相同的合法账号，查权限与创建分享时各自拿到正确的对象；两个展示账号相同的模拟账号，草稿互不可见。
+    provide_ids:
+      - F8
+    verification_refs:
+      - acceptance:AC-14
+  - predicate_id: accept-AC-15
+    role: behavior
+    description: 推送没送到时，对方进入卡包能看到待添加的钥匙，点它进入接受页并能添加。
+    provide_ids:
+      - F9
+    verification_refs:
+      - acceptance:AC-15
+  - predicate_id: accept-AC-16
+    role: behavior
+    description: 接受成功后，卡包里的待添加项变为可用的钥匙卡片；凭据下发失败时仍保持待接受。
+    provide_ids:
+      - F9
+    verification_refs:
+      - acceptance:AC-16
+  - predicate_id: accept-AC-17
+    role: behavior
+    description: 车主撤销且对方离线时，被分享人卡包里的卡片保留到收回完成后移除；车辆侧从车云受理撤销起已拒绝这把钥匙。
+    provide_ids:
+      - F9
+    verification_refs:
+      - acceptance:AC-17
+  - predicate_id: accept-AC-18
+    role: behavior
+    description: 撤销完成、到期或作废的钥匙从卡包移除；从旧入口打开它的详情时提示已不可用并回到卡包。
+    provide_ids:
+      - F7
+      - F9
+    verification_refs:
+      - acceptance:AC-18
+  - predicate_id: accept-AC-19
+    role: behavior
+    description: 切换账号后，卡包只显示新账号收到的待添加与可用钥匙。
+    provide_ids:
+      - F8
+      - F9
+    verification_refs:
+      - acceptance:AC-19
+  - predicate_id: accept-AC-20
+    role: behavior
+    description: 只有生效的分享显示撤销；撤销中、已作废、已到期、已撤销的条目不显示撤销，也不发撤销请求；待接受条目的撤回待 D8，裁定前不验。
+    provide_ids:
+      - F5
+    verification_refs:
+      - acceptance:AC-20
+  - predicate_id: accept-AC-21
+    role: recovery
+    description: 草稿没发出过或上次明确拒绝时配额已满，回到设置页按满额处理，不因草稿绕过配额。
+    provide_ids:
+      - F3
+      - F4
+    verification_refs:
+      - acceptance:AC-21
+  - predicate_id: accept-AC-29
+    role: behavior
+    description: 点本人钥匙卡片进入详情，看到车型、车辆与分享入口；点收到的钥匙卡片进入详情，看到权限范围与有效期；两种都不借用对方的身份取数。
+    provide_ids:
+      - F1
+      - F7
+    verification_refs:
+      - acceptance:AC-29
+  - predicate_id: accept-AC-30
+    role: recovery
+    description: 原有 4 条分享，发第 5
+      条时没得到回应而车云其实已建立：回来时配额显示已满，仍用同一幂等标识确认到这一条并清草稿，不出现第二条；若名额实际被另一次发起占满，车云返回满额，按满额提示，并在原请求与幂等标识同时持久清理成功后开放编辑。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-30
+  - predicate_id: accept-AC-31
+    role: behavior
+    description: 接受或撤销请求失败或没得到回应时，端侧不按旧状态下结论：重取状态后按车云状态显示，只有仍是待接受才可再点添加、仍是生效才可再撤；重取时当前账号下取不到这条，按已不可用移除，与查询失败（结果待确认）分开。
+    provide_ids:
+      - F5
+      - F6
+      - F9
+    verification_refs:
+      - acceptance:AC-31
+  - predicate_id: accept-AC-32
+    role: recovery
+    description: 发给对象 A 没得到回应后回到设置页：对象、权限、有效期按那次请求只读展示，点发出确认的是给 A 的那一条；页面不能先改成对象 B
+      再借这个幂等标识发出，确认前也不显示「已分享给 B」。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-32
+  - predicate_id: accept-AC-33
+    role: recovery
+    description: 同一账号先在甲车设置页留下草稿，再从乙车进入：乙车设置页不回填甲车的草稿，回到甲车时草稿仍在。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-33
+  - predicate_id: accept-AC-34
+    role: recovery
+    description: 分别在四个时点关掉应用后回来：保存选择后、写入原请求后发送前、发送后回包前、建立成功后清除草稿前。每一次都能确定要恢复的请求、允许的操作和清除责任：保存选择后恢复选择；写入原请求之后、回包之前都用同一请求确认；建立之后只能确认同一请求或重试清理。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-34
+  - predicate_id: accept-AC-35
+    role: recovery
+    description: 原请求写入失败时不发送；草稿读取失败或损坏时不当成没有草稿、不自动换标识重发；草稿超过存储上限时提示保存失败，不截断、不改存明文。原请求已发出、回包未到时草稿损坏：先做创建恢复，不提供删除后重建；原请求稍后建成时管理列表只有这一条。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-35
+  - predicate_id: accept-AC-36
+    role: recovery
+    description: 同账号同车辆从两个入口同时发出，只形成一份原请求；同账号两辆车各自发出互不阻塞。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-36
+  - predicate_id: accept-AC-37
+    role: recovery
+    description: 退出登录后旧账号请求的回调才到达，不写到新账号的页面，也不重建已清除的草稿；同一次请求的重复回调只结算一次。
+    provide_ids:
+      - F4
+      - F8
+    verification_refs:
+      - acceptance:AC-37
+  - predicate_id: accept-AC-38
+    role: behavior
+    description: 取消选择联系人、联系人没有有效账号时不发权限查询；换对象后上一个对象的权限选择作废；权限选项为空或无法解释时提示重新获取。
+    provide_ids:
+      - F3
+    verification_refs:
+      - acceptance:AC-38
+  - predicate_id: accept-AC-39
+    role: behavior
+    description: 在接受页停留超过待接受有效期（72
+      小时，上游约束：产品需求）后再点添加、另一端已接受后再点添加、分享已到期后在旧管理页撤销：都按重新取得的状态显示已作废、已生效或已到期，不因这次错误恢复成待接受或生效。接受已生效但回应丢失、车主随即撤销且对方离线：重取为撤销中，卡片保留到收回完成，不再显示添加。
+    provide_ids:
+      - F6
+      - F5
+    verification_refs:
+      - acceptance:AC-39
+  - predicate_id: accept-AC-40
+    role: behavior
+    description: 冷启动时还没有登录不清除草稿；同一模拟账号登录后能恢复它的草稿，登录前不回填、不发送。
+    provide_ids:
+      - F8
+    verification_refs:
+      - acceptance:AC-40
+  - predicate_id: accept-AC-41
+    role: recovery
+    description: 原创建已发出 → 草稿损坏 → 退出登录并清掉本地 → 同一账号再登录进这辆车的设置页：创建恢复返回 pending
+      时不能新建、找回原请求后只确认那一条；返回 established 时显示原来那条分享及当前状态；返回 clear
+      时允许新建，旧请求之后晚到也不出现第二条；查询失败时这辆车保持发起受限、管理页可看可重查。
+    provide_ids:
+      - F4
+      - F8
+    verification_refs:
+      - acceptance:AC-41
+  - predicate_id: accept-AC-42
+    role: recovery
+    description: 创建恢复不影响已有能力：完整草稿仍用自己的幂等标识续办，不做创建恢复；取消或换对象照常作废旧档位；另一辆车、另一个账号各自独立恢复，互不阻塞、互不串数据。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-42
+  - predicate_id: accept-AC-43
+    role: recovery
+    description: 这辆车本地从没有过草稿（首次使用），或上次成功发出后草稿已清，进设置页时先做创建恢复：clear 才开放空表单；pending
+      只确认原请求；unknown 或查询失败时这辆车暂停新发起，管理页照常可看、可重查。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-43
+  - predicate_id: accept-AC-3
+    role: behavior
+    description: 分享发出后对方在期限内未接受即自动作废，作废条目在列表可见，可重新发起（承接：AC-K3）。
+    provide_ids:
+      - F5
+    verification_refs:
+      - acceptance:AC-3
+  - predicate_id: accept-AC-8
+    role: behavior
+    description: 全程页面与记录不出现对方完整账号或手机号，只显示昵称与打码账号（承接：AC-K8）。
+    provide_ids:
+      - F8
+    verification_refs:
+      - acceptance:AC-8
+  - predicate_id: accept-AC-22
+    role: behavior
+    description: 新增页面与卡片的方向性参数用 start/end，从右到左语言下镜像正确（UX-01）。
+    provide_ids:
+      - F1
+      - F3
+    verification_refs:
+      - acceptance:AC-22
+  - predicate_id: accept-AC-23
+    role: behavior
+    description: 输出面打码、业务接口传可识别标识、草稿按 7.3 保护与清除（SEC-01）。
+    provide_ids:
+      - F8
+    verification_refs:
+      - acceptance:AC-23
+  - predicate_id: accept-AC-24
+    role: recovery
+    description: 分享相关调用每次进页拉取一次，草稿只在选择完成、发出前与结束时读写，没有定时任务或后台轮询（DFX-01）。
+    provide_ids:
+      - F4
+      - F5
+    verification_refs:
+      - acceptance:AC-24
+  - predicate_id: accept-AC-25
+    role: recovery
+    description: 创建、接受、撤销可定位到失败步骤；三个流程的事件结果完整、同次不重复、字段来源真实、编码无冲突；车型类别缺失按未知，失败说明是映射后的安全说明，不含账号与车牌（OBS-02、OBS-03、OBS-05、OBS-06）。
+    provide_ids:
+      - F4
+      - F5
+      - F6
+    verification_refs:
+      - acceptance:AC-25
+  - predicate_id: accept-AC-26
+    role: behavior
+    description: 图标复用优先，新引入的写明依据；文案复用优先，新增的中英文齐备并进待翻译清单；新增字符串资源的条数与体积给出数值（RES-01、RES-02、DLV-01、DFX-02）。
+    provide_ids:
+      - F3
+      - F6
+    verification_refs:
+      - acceptance:AC-26
+  - predicate_id: accept-AC-27
+    role: recovery
+    description: 六个车云接口按四问逐个给出兼容结论（COMPAT-01）。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-27
+  - predicate_id: accept-AC-28
+    role: recovery
+    description: 清除数据后先清遗留草稿再开放、不崩溃；重复触发发出不会创建第二条（ENV-01、ENV-02）。
+    provide_ids:
+      - F4
+    verification_refs:
+      - acceptance:AC-28
+  - predicate_id: accept-AC-G1
+    role: behavior
+    description: 新页面与卡包车钥匙卡片在深色、大字下可读可点。
+    provide_ids:
+      - F1
+      - F6
+    verification_refs:
+      - acceptance:AC-G1
+  - predicate_id: accept-AC-G2
+    role: behavior
+    description: 网络异常时有明确错误提示，不白屏、不崩溃。
+    provide_ids:
+      - F2
+      - F5
+    verification_refs:
+      - acceptance:AC-G2
+  - predicate_id: accept-AC-G3
+    role: behavior
+    description: 断网进管理页或卡包给网络失败态，不展示陈旧列表。
+    provide_ids:
+      - F5
+      - F9
+    verification_refs:
+      - acceptance:AC-G3
+verification_refs:
+  - acceptance.yaml
+  - contracts.yaml
+  - use-cases.yaml
+  - spec/spec.md
+  - plan/plan.md
+safe_intermediate_state:
+  description: 仅候选设计交接：未接受、未编码，模拟恢复/真实外部依赖和未决保持公开；不改变工程功能或开放真实服务。
+  build_validation_refs: []
+  compatibility_refs:
+    - plan/plan.md
+  recovery_refs:
+    - spec/spec.md
+    - ../source-inputs.md
+blockers:
+  - blocker_id: native-questioning-and-acceptance
+    gate: design
+    owner: component-design
+    reason: 本候选尚无独立质询、原生准入及CU接受；真实hash只标识当前候选字节。
+    unlock_condition: 按获准范围完成当前蓝图及CU的真实原生设计审查与接受，不以维护候选代签。
+    observation: machine
+    source_refs:
+      - ../blueprint/component-blueprint.yaml
+  - blocker_id: native-single-demand-root
+    gate: execution
+    owner: Framework-and-Extension-adaptation
+    reason: 当前候选按2.1.0单需求目录目标展示，未证明当前原生resolver已支持CU目录与统一需求根。
+    unlock_condition: 当前原生入口能解析相同需求根和该CU身份，仍止于获准Plan终点。
+    observation: machine
+    source_refs:
+      - ../blueprint/component-blueprint.yaml

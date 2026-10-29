@@ -1,0 +1,306 @@
+{
+  "candidate": "car-key-sharing 2.x initial through Plan",
+  "user_approved": false,
+  "files": [
+    {
+      "path": "doc/extensions/knowledge/constraints/compatibility-checklist.md",
+      "bytes": 1893,
+      "sha256": "0a1a760fafdd9cdaf8d0d25e5db4a45ea5e5caf38eeed4a0e65665324f9ed7b8"
+    },
+    {
+      "path": "doc/extensions/knowledge/constraints/deliverables.md",
+      "bytes": 2170,
+      "sha256": "ae494fa8bdcb3e56b1977e7cf7787abfc6eee4e632cf9e64e718e862cd657708"
+    },
+    {
+      "path": "doc/extensions/knowledge/constraints/dfx-baseline.md",
+      "bytes": 1726,
+      "sha256": "769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed"
+    },
+    {
+      "path": "doc/extensions/knowledge/constraints/env-exceptions.md",
+      "bytes": 1536,
+      "sha256": "61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81"
+    },
+    {
+      "path": "doc/extensions/knowledge/constraints/observability.md",
+      "bytes": 2934,
+      "sha256": "1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024"
+    },
+    {
+      "path": "doc/extensions/knowledge/constraints/resource-usage.md",
+      "bytes": 1690,
+      "sha256": "d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115"
+    },
+    {
+      "path": "doc/extensions/knowledge/constraints/security-privacy.md",
+      "bytes": 3282,
+      "sha256": "fef3f54273ad80f8736632606e2a114073309763232492e8919eb052dafc8337"
+    },
+    {
+      "path": "doc/extensions/knowledge/constraints/ux-consistency.md",
+      "bytes": 1163,
+      "sha256": "ec0be15aa7e88c30fa0523c49d55a96cf133747e8ae3c6e6b80d598e87fce2b7"
+    },
+    {
+      "path": "doc/extensions/knowledge/design-patterns/decision-tree.md",
+      "bytes": 8477,
+      "sha256": "5eccef2f635e82ac4b0e054abfe54138fccffe28088b3a0a9999643ed5efb359"
+    },
+    {
+      "path": "doc/extensions/knowledge/design-patterns/page-interaction.md",
+      "bytes": 7768,
+      "sha256": "03f705012b130ba72d9dcad38532eb160a77a07b3a233f2caf55ab1732c5d9b0"
+    },
+    {
+      "path": "doc/extensions/knowledge/facts/component-profile.md",
+      "bytes": 2151,
+      "sha256": "8558822c77b5d65445e905061d18601b85db8d2ca309bcbecfa37779d11b8ccf"
+    },
+    {
+      "path": "doc/extensions/knowledge/facts/engineering-capabilities.md",
+      "bytes": 2698,
+      "sha256": "b773972859774d51bac60a81dbe76c1bfde115309ad91d3d43a97e9c1c647dc8"
+    },
+    {
+      "path": "doc/extensions/knowledge/facts/event-tracking.md",
+      "bytes": 9061,
+      "sha256": "552f553ce1cb2e32adc9897075dcbc00eaf65e0d881e037bcbb14f75b705c176"
+    },
+    {
+      "path": "doc/extensions/manifest.yaml",
+      "bytes": 4705,
+      "sha256": "a01a976f57ed9f200f315a791d5b25c883995b814e46de6b52b3ad4e71d0ac71"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/design-review.md",
+      "bytes": 89956,
+      "sha256": "05fb2a6047215f65eac05e983ee1ea0e66f2400e1743d008255895478685af8d"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/detail.json",
+      "bytes": 134,
+      "sha256": "cb653fff6d3367beecf2355416634a1c8a93bb045d711bc37cee7cc4dfa68859"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/figures/car-key-revocation-responsibility.svg",
+      "bytes": 11780,
+      "sha256": "a94a0156edf1a0e27946c76aaf2b2ceb77e8d2bc792e096c706af3e6633de79e"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/review.md",
+      "bytes": 12187,
+      "sha256": "caa85751c34297e92ea69633b087bbf1d156b33845a0f831bf373b29b5544d1a"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/story-src/figures/fig-0169f210.mmd",
+      "bytes": 1784,
+      "sha256": "5487eca983addc951e7336bcbf60d3d7ae72265bce64a606b001ebc8033d717d"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/story-src/figures/fig-b533fea2.mmd",
+      "bytes": 358,
+      "sha256": "7c2541c9586f56451a91674fa6157aeacbdd05c78fbb9e1906745433dd61a55c"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/story-src/figures/fig-d087d97f.mmd",
+      "bytes": 849,
+      "sha256": "d78e5b218cf9b5633da189bbffac59baf23c7b9bb024cb5e517b3be203008ef6"
+    },
+    {
+      "path": "doc/features/ISSUE-206/AR/story.md",
+      "bytes": 72665,
+      "sha256": "6df19c1d19110feac9b2ac276f8642296ffcaff884278e35576a65ac0ee4c81b"
+    },
+    {
+      "path": "doc/features/ISSUE-206/assets/product-original/share-manage.png",
+      "bytes": 2674,
+      "sha256": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+    },
+    {
+      "path": "doc/features/ISSUE-206/assets/product-original/share-setup.png",
+      "bytes": 3188,
+      "sha256": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+    },
+    {
+      "path": "doc/features/ISSUE-206/assets/ux-original/accept-page.png",
+      "bytes": 3208,
+      "sha256": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+    },
+    {
+      "path": "doc/features/ISSUE-206/assets/ux-original/key-card-detail.png",
+      "bytes": 3004,
+      "sha256": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+    },
+    {
+      "path": "doc/features/ISSUE-206/blueprint/blueprint.target.md",
+      "bytes": 17779,
+      "sha256": "e6e69403168cd8499bc05104be17e4f8ab06eb699c30344f335ce9706e6a985b"
+    },
+    {
+      "path": "doc/features/ISSUE-206/blueprint/component-blueprint.review.md",
+      "bytes": 89956,
+      "sha256": "05fb2a6047215f65eac05e983ee1ea0e66f2400e1743d008255895478685af8d"
+    },
+    {
+      "path": "doc/features/ISSUE-206/blueprint/component-blueprint.yaml",
+      "bytes": 112577,
+      "sha256": "12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20"
+    },
+    {
+      "path": "doc/features/ISSUE-206/inbox/数字车钥匙分享.docx",
+      "bytes": 5845,
+      "sha256": "2a5b166b8b3e6ab44938d44997b673c46cedc4104b6c1f0d85c9a21bd724029f"
+    },
+    {
+      "path": "doc/features/ISSUE-206/inbox/车钥匙接受侧界面说明.docx",
+      "bytes": 3805,
+      "sha256": "fbc813c5206c9b526eeb006db8cde1af5ebf54160f63fd8c9a856c4cba9956d3"
+    },
+    {
+      "path": "doc/features/ISSUE-206/RR/prd.md",
+      "bytes": 4980,
+      "sha256": "4e5d4c3e3916680813768f7954e1ed66942b838fa56e7ccbd5e4136959f4fd42"
+    },
+    {
+      "path": "doc/features/ISSUE-206/source-inputs.md",
+      "bytes": 3826,
+      "sha256": "e24e9c5b506f2dc19ac3519ed8ce614222a9f34e5f160f673dbae78f0f3c1b35"
+    },
+    {
+      "path": "doc/features/ISSUE-206/SR/design.md",
+      "bytes": 8302,
+      "sha256": "68ff916dff8a6b007b8457835158d3b2dad68f6967bcce633515ce26702822fa"
+    },
+    {
+      "path": "doc/features/ISSUE-206/ux-reference/accept-page.png",
+      "bytes": 3208,
+      "sha256": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+    },
+    {
+      "path": "doc/features/ISSUE-206/ux-reference/key-card-detail.png",
+      "bytes": 3004,
+      "sha256": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+    },
+    {
+      "path": "doc/features/ISSUE-206/ux-reference/README.md",
+      "bytes": 1447,
+      "sha256": "77c8fa3bcc2d96e2c5e0ddf6534c40809a630888e1f4a84af00ceafd0ebcd2d1"
+    },
+    {
+      "path": "doc/features/ISSUE-206/ux-reference/share-manage.png",
+      "bytes": 2674,
+      "sha256": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+    },
+    {
+      "path": "doc/features/ISSUE-206/ux-reference/share-setup.png",
+      "bytes": 3188,
+      "sha256": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+    },
+    {
+      "path": "doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml",
+      "bytes": 85499,
+      "sha256": "f43621bd8d82413a4f27fa2943d9796f1c1ce998bdcbf223f4bf5eb3ce98e4a4"
+    },
+    {
+      "path": "doc/features/ISSUE-206/wallet-key-sharing/change-unit.candidate.yaml",
+      "bytes": 53118,
+      "sha256": "1fd95ddce40a8d716a9a2284ed65423d3f641822941de7509866037a316b3416"
+    },
+    {
+      "path": "doc/features/ISSUE-206/wallet-key-sharing/contracts.yaml",
+      "bytes": 86596,
+      "sha256": "a2a67566e2f8f7ad7ecd780c02c9a2fd9985ecc399975347b74d8c9a00004821"
+    },
+    {
+      "path": "doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md",
+      "bytes": 57417,
+      "sha256": "5b14ccffe038010d67bea3c64636da73d90101c396512daa5bb8aec3d6cb49aa"
+    },
+    {
+      "path": "doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md",
+      "bytes": 56907,
+      "sha256": "0dc35be09bc03eaca7871c7d54671c967f9bc662e84dc7c4b2c55d598a9f6152"
+    },
+    {
+      "path": "doc/features/ISSUE-206/wallet-key-sharing/use-cases.yaml",
+      "bytes": 46895,
+      "sha256": "1ff6c541e494ef1c5b4047d79bec45f83073a16ca42513319d5e4a3d438e6f34"
+    },
+    {
+      "path": "doc/module-catalog.yaml",
+      "bytes": 21957,
+      "sha256": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7"
+    },
+    {
+      "path": "evidence/baseline-1.9.9/AR/review.md",
+      "bytes": 12261,
+      "sha256": "4d2e3274a521d368b6dae7f89f0276af8fba9ddd80ea191dc0bd3df816e6b01f"
+    },
+    {
+      "path": "evidence/baseline-1.9.9/AR/story.md",
+      "bytes": 72805,
+      "sha256": "2f6bf7bfe203e3716d0254b2d592518c805e2cf71c4ab424dae17a37a4dca063"
+    },
+    {
+      "path": "evidence/baseline-1.9.9/plan/plan.md",
+      "bytes": 45160,
+      "sha256": "383c599fda4993e431226e8274383143c90add7aab069819c4320ab7d5105f9c"
+    },
+    {
+      "path": "evidence/baseline-1.9.9/README.md",
+      "bytes": 10175,
+      "sha256": "910d119afc41c59af9071c07a9e68452613dc6fe66eca35877fee18e9359fbb0"
+    },
+    {
+      "path": "evidence/baseline-1.9.9/spec/spec.md",
+      "bytes": 78546,
+      "sha256": "a4850d055370a3785646f4fc3c103737edc2235bc48908665c234cb0d1965bef"
+    },
+    {
+      "path": "evidence/candidate-identities.json",
+      "bytes": 252,
+      "sha256": "174251d686a9fea2becfbb159815954a7e1370b516f638dcebfa85ad99aece85"
+    },
+    {
+      "path": "evidence/document-shapes.json",
+      "bytes": 305,
+      "sha256": "a3a47d6c2303ea2995e12e9193390b1d178c1217f0d6f46fd070627e8fb0a4f2"
+    },
+    {
+      "path": "evidence/integrity.json",
+      "bytes": 17860,
+      "sha256": "b773bc96aa3c41a5206d61fc019aaec3688f605ea6e0bf92058fcc50c5001ae3"
+    },
+    {
+      "path": "evidence/interaction-script.yaml",
+      "bytes": 4336,
+      "sha256": "65c034b244620dda58004981112de478c5b915c44332fd6a68daf03c00de3a54"
+    },
+    {
+      "path": "evidence/native-render/component-blueprint.review.md",
+      "bytes": 89956,
+      "sha256": "05fb2a6047215f65eac05e983ee1ea0e66f2400e1743d008255895478685af8d"
+    },
+    {
+      "path": "evidence/native-render/generation.json",
+      "bytes": 556,
+      "sha256": "984bf3a248c5342c85bfba2e73165931e4292de1cb2dfae325645e776979e08c"
+    },
+    {
+      "path": "framework.config.json",
+      "bytes": 151,
+      "sha256": "46c0447c99667d0f92a263c91036209e2e052bfa937d271d0ef0a6d3562e489f"
+    },
+    {
+      "path": "README.md",
+      "bytes": 6161,
+      "sha256": "c34f7d4b26080c3f8801a1e309a20c00c5b319270bcb6419e6348c253dd52721"
+    },
+    {
+      "path": "核对与反查.md",
+      "bytes": 7001,
+      "sha256": "0fdb3904ef4310d7dbfcd7027e576ae930f68d0d65465109466eb08be7b97b3b"
+    }
+  ]
+}

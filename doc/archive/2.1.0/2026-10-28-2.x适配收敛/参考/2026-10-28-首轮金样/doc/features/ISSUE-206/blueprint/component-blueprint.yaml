@@ -1,0 +1,2225 @@
+artifact: component-blueprint@1
+component_id: wallet-main
+blueprint_id: ISSUE-206
+revision: 1
+source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+provenance:
+  source_kind: candidate_design_basis
+  source_ref: doc/features/ISSUE-206/source-inputs.md
+  observed_at: 2026-10-28
+  evidence_strength: inferred
+  extraction_method: maintenance_candidate_synthesis_not_human_signature
+candidate_status: author_draft_not_native_admitted
+review_summary:
+  title: 数字车钥匙分享：钱包端整体设计
+  summary: 在WalletMain补齐卡包、分享、接受与管理，Phone只登记页面；公开模拟前提下交接至Plan，未独审、未接受CU、未施工。
+  authored_by: maintenance-candidate-author
+  in_scope:
+    - WalletMain
+    - Phone:four-page-routing-only
+  non_goals:
+    - 真实车云联调
+    - 推送点击入口
+    - D2
+    - D5
+    - D8待接受撤回
+    - Coding
+  questioning:
+    status: not_started
+    items: []
+  admission:
+    status: not_evaluated
+    root_questions_complete: false
+    current_slice:
+      slice_id: wallet-key-sharing
+      contracts_ready: false
+      design_refs_ready: false
+      controlled_fakes: true
+    blocker_refs:
+      - gap:independent-questioning
+      - gap:native-single-root
+  reader_guide:
+    sections:
+      - section: summary
+        title: 1. 分享能做什么，谁负责什么
+        prose: |-
+          车主在卡包的本人车钥匙卡片上发起分享，选择对象、权限和有效期；对方在自己的卡包看到待添加钥匙，接受后取得可用卡片。车主从分享管理查看状态，对生效分享逐条撤销。卡包原先只有不可点的车钥匙分类，因此本单同时补齐本人钥匙卡片、收到的钥匙及分享入口。
+
+          产品目标是上线三个月内车钥匙用户中发起过分享比例不低于 15%，借车送钥匙类客服咨询下降一半；两者由运营侧统计，不由钱包三流程埋点直接作成功承诺。材料未给页面时延数值，本期不增加时延阈值。
+
+          钱包端负责页面、请求编排、本地草稿、状态展示和观察性输出；分享关系由车云裁定，凭据签发与车辆侧是否认可钥匙由车厂云负责。钱包不签发或保存车辆凭据，不把卡片仍显示解释为车辆仍允许使用。
+
+          本期按公开模拟前提验证钱包行为。六个车云接口按系统设计 2.1 的字段建立可替换数据源；本人钥匙、接受方账号查询、稳定账号标识、联系人、车型类别与创建恢复也由模拟源提供，后几项不能说成六接口已有。真实车云联调、系统联系人、推送点击入口与真机 Asset 验证不在本次情景终点内。
+
+          工程范围是 WalletMain 和 Phone。WalletMain 承担完整业务，Phone 只增加四个页面映射；AccountManager、CommUI、CommFunc 只读复用，不新增公共模块、架构 DSL 或模块依赖边。
+
+          设计依据与已审定情景输入见 [source-inputs](../source-inputs.md)。它区分原始材料、宿主立场、旧金样设计前提与真实未决；旧金样头部“已确认”不移签为当前候选的人签。
+        source_refs:
+          - /review_summary/summary
+          - /design_views/2/nodes/0
+        graph_ids: []
+      - section: journey
+        title: 2. 车主与接受方怎样走完一次分享
+        prose: |-
+          | 场景 | 页面和操作 | 决定下一步的事实 |
+          |---|---|---|
+          | 进入卡包 | 本人钥匙卡片显示车型、车辆；待接受的显示待添加；生效与撤销中的收到钥匙显示卡片 | 按当前账号重新取数；未登录或没有本人钥匙不显示本人分享入口 |
+          | 车主设置 | 给谁、权限、有效期三段；选定对象后才查权限，换对象作废旧档位 | 返回的可读档位原样展示和传回；不可分享、空档位或无法解释时说明原因，不猜权限 |
+          | 车主发出 | 三项齐、开关开、配额未满且草稿保存成功才发送新请求 | 配额统计生效与待接受；已有原请求的结果确认不被端侧满额阻断 |
+          | 接受方添加 | 从待添加卡片进入接受页，先看车型、车主昵称、权限与有效期，再点添加到钱包 | 不设拒绝按钮；只在当前状态仍为待接受时允许再次添加 |
+          | 车主管理 | 进页拉配额与列表；生效条目撤销，作废或到期条目重新发起 | 待接受撤回未决；其他状态只展示，不发送无效撤销 |
+          | 查看详情 | 本人钥匙按车辆标识读取；收到的钥匙按分享标识读取 | 权限外功能不出现；已不可用或当前账号没有此钥匙时提示并回卡包 |
+
+          参考图保留在需求根 `ux-reference/`：设置、管理、接受、钥匙详情四屏；卡包分区沿用既有卡片样式。四个新页面分别导出 builder，经 WalletMain 的 `index.ets` 和 Phone 的 `navDestinationMap` 接入。推送未达不改变创建结果，接受方进入卡包可补拉；本期不实现推送点击跳转。
+
+          有效期提供 7 天、30 天与自定义（至多 180 天）；权限档位由车云根据对象与车辆关系给出，钱包不凭本地联系人推断谁是家庭成员。选联系人取消、联系人服务不可用或缺有效账号时保留当前选择并解释，不发权限查询；可改手输账号。开关默认关闭，放开后才可新建，关闭不阻断已有分享的接受、管理和撤销。
+        source_refs:
+          - /design_views/4/nodes/0
+          - /design_views/4/nodes/1
+        graph_ids: []
+      - section: flows
+        title: 3. 分享状态与车辆权限分开表达
+        prose: |-
+          ```mermaid
+          stateDiagram-v2
+              [*] --> pending: 创建建立
+              pending --> active: 接受并下发凭据成功
+              pending --> voided: 72小时未接受
+              active --> expired: 有效期满
+              active --> revoked: 撤销时对方在线
+              active --> revoking: 撤销时对方离线
+              revoking --> revoked: 对方回网或48小时期限到
+          ```
+
+          六态以车云返回为准，钱包不后台计时推算终态。72 小时是待接受期限；48 小时是对方设备上的卡片收回期限，不是车辆继续可用期。车云受理成功撤销起车辆立即拒绝这把钥匙；离线接受方的卡片可以仍处于撤销中，收回完成才从卡包移除。已作废、已到期、已撤销不列入收到的钥匙；从旧入口进入按已不可用处理。
+
+          接受返回 `credentialStatus=failed` 且 `status=pending` 时保持待接受。其他失败或无回应都重取当前账号下该分享：待接受才可重试，生效显示卡片，撤销中保留卡片但不再提供添加，终态或不存在移除。查询失败和不存在分开，查询失败显示结果待确认且不让再次添加。
+
+          撤销失败或无回应后重拉管理列表；只有重拉后仍是生效才再次提供撤销。不能把陈旧状态覆盖车云的新状态。管理页和卡包网络失败显示可重试失败态，不展示陈旧列表。
+        source_refs:
+          - /design_views/0/nodes/0
+          - /design_views/1/nodes/0
+        graph_ids: []
+      - section: recovery
+        title: 4. 创建不确定时，先找回原请求
+        prose: |-
+          同账号同车辆只有一个创建编排入口，串行完成“读取—恢复—保存—创建或确认”；不同车辆互不阻塞。草稿带原请求和幂等标识时，对象、权限、有效期只读，用原请求确认同一分享，不生成新标识。新建发出前先持久化完整原请求和幂等标识，写失败不发请求。
+
+          | 本地读取 | 本次允许动作 | 恢复责任 |
+          |---|---|---|
+          | 有选择、无原请求 | 恢复选择，重查配额与对象权限 | 设置页与仓储；换对象清旧权限 |
+          | 有原请求 | 只读展示并确认该请求；满额仍能确认 | 仓储沿用请求与幂等标识 |
+          | 不可访问或服务失败 | 显示恢复失败、可重试；不新建 | 草稿存储明确失败，不伪装不存在 |
+          | 明确不存在或损坏 | 先做按账号、车辆的创建恢复；损坏原件隔离 | 模拟车云给出下表结果，仓储消费 |
+
+          | 创建恢复结果 | 页面、存储怎样处理 |
+          |---|---|
+          | pending，带原请求与幂等标识 | 受保护保存成功后只确认同一请求；保存失败继续受限 |
+          | established，带分享标识与当前状态 | 显示已建立，不自动再发；清本车旧草稿 |
+          | clear | 只有原创建已终结、迟到也建不出分享才成立；清旧稿成功后开放空表单 |
+          | unknown 或查询失败 | 当前账号这辆车暂停新发起；管理只读、可重查，不提供删除后重建 |
+
+          首次进入、成功发出并清稿后再次发起、退出重登、换号或清数据后回来，只要本地无稿，均先创建恢复。列表为空、打码昵称相同或“暂未看到请求”都不能推出 clear。模拟车云记录独立于钱包进程，并在受理新建时再次检查未终结创建；clear 覆盖迟到请求，防止“先查无、后晚到”的双建。
+
+          创建已建立后删本车草稿；删失败仍显示已建立并待清理，只能确认同请求或重试清理。明确拒绝（含满额、签发失败）后持久清掉原请求与幂等标识才恢复编辑。无回应保留原请求。签发失败时关系回滚由车云负责，钱包不自作成功或本地造关系。
+
+          这是旧金样公开的模拟业务合同，不是系统设计六接口已承诺的能力。真实对端缺少等价回查与迟到终结保证时，所有依赖创建恢复的新建都不能正式开放；带完整原请求的确认、接受、撤销与管理按自身条件处理。
+        source_refs:
+          - /design_views/1/runtime_data_flows/0
+          - /contracts/6
+        graph_ids: []
+      - section: data
+        title: 5. 草稿保护、账号切换与进程恢复
+        prose: |-
+          每账号每车辆一条系统 Asset，完整草稿放在一个 SECRET：账号车辆绑定、真实对象标识、打码展示值、权限、有效期，以及发出前加入的原请求和幂等标识。普通键值存储只留随机盐、初始化与待清理账号摘要，不留账号、车辆原值或请求副本。Asset ALIAS 与标签只放加盐摘要和业务功能标签；设备首次解锁后可访问、不同步、不设卸载保留。
+
+          保存时机是对象、档位、有效期各自选择完成及发出前，不按逐字输入或重绘写盘。Asset 不可用、数据损坏与不存在分别返回。超过 1024 字节按保存失败，不截断、不分片、不改存明文。API 12、`SystemCapability.Security.Asset`、完整模拟草稿不超过 1024 字节都是场景建设前提，未在真机证实。
+
+          主动退出或换号先持久标记旧账号不可恢复、更新会话使旧页面失效，再删除旧账号全部车辆草稿。清理失败照常退出旧会话，分享入口受限并可重试清理；连标记都写不进去则先清理，不开放下一个分享会话。普通冷启动未登录不等于主动退出，同一模拟账号登录后仍能恢复草稿；登录前不回填、不发送。
+
+          初始化标记缺失时按功能标签清理遗留 Asset，成功后建立盐与标记；失败显示初始化失败。模拟身份源的 `accountKey` 跨重开稳定，展示相同的不同账号必须不同；每次登录会话还有独立 `sessionId`。旧回调按发起时账号与会话匹配，换号后不改新页面、不重建已清草稿。尝试结果照实结算，不因丢弃页面更新就丢统计。
+        source_refs:
+          - /data_domains/1
+          - /data_domains/2
+        graph_ids: []
+      - section: solution
+        title: 6. 接口、对象与数据所有者
+        prose: |-
+          ```mermaid
+          flowchart TD
+              UI[卡包与四个业务页] --> R[KeySharingRepository / CarKeyRepository]
+              R --> S[KeySharingSource 可替换接口]
+              S --> M[模拟车云与本人/接受方钥匙数据]
+              R --> D[ShareDraftStore]
+              D --> A[系统 Asset：完整 SECRET]
+              D --> I[普通存储：盐与清理标记]
+              R --> E[ErrorMapper / 三流程结算]
+              P[Phone 页面映射] --> UI
+          ```
+
+          | 对象 | 主责及消费关系 |
+          |---|---|
+          | `KeySharingSource` / 模拟实现 | 承接六个冻结接口；额外模拟创建恢复、幂等记录与迟到终结。真实替换只换数据来源，不改页面、仓储的状态语义 |
+          | `SimulatedIdentitySource` | 稳定账号、会话、模拟联系人与身份事件；AccountManager 仍只提供已有登录态 |
+          | `KeySharingRepository` | 配额、权限、管理列表、创建恢复与创建、接受、撤销的业务入口；同车串行、展示组装、失败映射与三次尝试结算 |
+          | `CarKeyRepository` | 本人钥匙及当前账号收到的钥匙；单条当前状态供接受、详情及失败恢复共用 |
+          | `ShareDraftStore` | Asset 原子完整草稿、读取四分、选择与原请求保存、退出/初始化清理；不负责判断车云终态 |
+          | 设置页交互五角色 | `ShareSetupActions` 动作枚举、`ShareSetupPageOperates` 动作表、`ShareSetupPageInteraction` 交互封装、`ShareSetupContext` 上下文、`ShareSetupPage` 页面组件 |
+          | 其他页面与卡片分区 | 展示当前账号状态并触发仓储操作；不自造幂等、清理或后台同步协议 |
+
+          | 车云接口 | 输入 → 输出及关键语义 |
+          |---|---|
+          | `queryKeySharingQuota` | vehicleId → canShare、remaining、reason?、shares(shareId/status)；满额给原因 |
+          | `queryGranteePermission` | vehicleId、granteeId → shareable、permissionLevels、reason?；对象不可分享时为空，不复用上一对象结果 |
+          | `createKeySharing` | vehicleId、granteeId、permissionLevel、validUntil、idempotencyKey → shareId、pending；同标识同一条，签发失败不留关系 |
+          | `acceptKeySharing` | shareId → credentialStatus(issued/failed)、status(active/pending)；其他失败按重新取数处理 |
+          | `revokeKeySharing` | shareId → status(revoked/revoking)、graceHours?；revoking 时返回期限，失败按重拉结果 |
+          | `queryKeySharingList` | vehicleId → items(shareId/status/permissionLevel/validUntil/granteeMasked)；每次进管理页拉取、不落地缓存 |
+
+          六个接口都是新增调用，字段不删、不改类型，必有和可空遵守系统设计；沿用车云错误码，不新增云错误码。收到的分享查询及按分享标识重取、稳定身份、本人钥匙与创建恢复属于显式模拟扩展，不以换名混入六接口。
+        source_refs:
+          - /contracts
+          - /design_views/2/nodes/0
+        graph_ids: []
+      - section: quality
+        title: 7. 知识怎样改变这套设计
+        prose: |-
+          安全规约把业务身份与展示身份分开：查权限、创建用真实 `granteeId`，打码值不能承担业务身份。展示组装复用 MaskUtil，管理列表用车云打码值；长度不超过四位导致 `maskAccount` 原样返回时只显示昵称。草稿因此必须受保护跨重启存储，不能只保内存或写明文；日志和事件不带账号、打码账号、车牌、位置及原始错误内容。
+
+          环境与幂等义务落在 `ShareDraftStore` 和仓储创建入口：读失败不当没有、同车串行、原请求保存先于发送、换号旧回调隔离、缺稿先创建恢复。性能规约约束拉取和保存时机，端侧不轮询、不设后台写，不给材料没有的页面时延承诺。
+
+          设置页存在“读取结果决定起点、选对象后查档位、等待用户再恢复动作”的页内协作，因此选 page-interaction 五角色。主发起过程的失败分支各在一次判断或请求后收敛，签发回滚属于云侧，不选 decision-tree；管理页不强套模式。
+
+          方向性、资源与交付义务落到四页和卡片：start/end、TextAlign.Start/End；图标先系统符号再已有归档；中文资源复用优先，新增中文和英文齐备。CU Plan 需给待翻译清单与新增资源条数、UTF-8 体积，不增加图片或 SDK。这里只解释实际改变设计的知识；未命中的业务不逐条生成空取舍。
+        source_refs:
+          - /decisions_and_gaps/decisions
+        graph_ids: []
+      - section: quality
+        title: 8. 只统计三个钱包流程
+        prose: |-
+          发起、接受、撤销各一步，分别以建立为待接受、生效、撤销已受理作为成功；在线立即撤销和离线撤销中都算已受理。每次调用独立尝试标识，由 `settleCreate`、`settleAccept`、`settleRevoke` 只结算一次。创建确认沿用幂等标识但属于新尝试；重复回调不重复报，页面退出不取消已发送请求的统计。
+
+          前置配额/权限查询、草稿读写、卡包补拉与失败后重取只记必要定位日志，不进入流程统计；不上报失效事件。车型类别直接取模拟输入、缺失记未知；失败说明经 `KeySharingErrorMapper` 的已知错误码映射，未知码给通用分类，外码校验格式，不读任意 message 拼描述。上报失败不改变分享结果。
+
+          分享被接受比例按 D7 由车云分享记录统计，钱包不跨账号关联。三个流程号与内码在 CU Plan 中保留候选身份，编码前登记并核冲突，不把候选号说成已经分配。
+        source_refs:
+          - /design_views/2/nodes/3
+        graph_ids: []
+      - section: delivery
+        title: 9. 交给一个施工单元，止于 Plan
+        prose: >-
+          `wallet-key-sharing` 完整承担本蓝图的钱包端改动，模块归属仍是 WalletMain；Phone
+          页面映射列为其窄范围伴随改动。一个 CU
+          能闭合卡包、发起、草稿恢复、接受、管理和退出的共同状态责任，当前没有独立交付或不同授权要求，不按技术层另拆单元。
+
+
+          CU Spec 承接本单位的可见行为、边界和验收，尤其原请求未知不重复建、跨重启恢复与换号保护、撤销受理车辆立即拒绝、接受撤销失败重取。CU
+          Plan 再把这些义务落实到具体实体、方法、存储、动作表、页面映射与验证；共同状态与接口不另行定案。五角色、方法级
+          must、三流程统计点均需到真实实体，不能只写“遵守知识”。
+
+
+          本候选只做完整设计交接到 Plan，不启动编码或真实运行。原生 CU 接受、设计质询、readiness
+          与施工闭包实际尚未执行；机器字段存在不代替它们。
+
+
+
+          验收沿旧有效业务范围：卡包与入口、对象权限/配额、三项选择、72 小时作废、48
+          小时卡片回收与车辆立即拒绝、跨四个进程中断时点续办、原请求冻结、同车并发、账号/车辆隔离、Asset
+          失败/损坏/超限/清理、缺稿创建恢复及迟到请求、接受与撤销重取、深色大字与方向性、观察性脱敏和三流程去重。具体条目由 CU Spec
+          承载，未运行，不勾选通过。
+        source_refs:
+          - /design_views/2/nodes/0/acceptance
+        graph_ids: []
+      - section: questions
+        title: 10. 未决和正式接入依赖
+        prose: >-
+          | 项目 | 保留的边界 |
+
+          |---|---|
+
+          | D2 被分享人再转第三人 | 未定；本期不设计、不宣称支持 |
+
+          | D5 极端断网强制下线 | 未定；48 小时卡片收回规则不代替这项安全裁决 |
+
+          | D8 待接受能否撤回 | 未定；当前只完整设计生效撤销，待接受只展示，不能凭“随时可撤”擅自补接口边 |
+
+          | 创建恢复真实对端 | 六接口未声明；正式新建需等价回查及迟到终结保证 |
+
+          | 稳定账号、接受侧查询、本人钥匙、联系人、推送 | 当前是模拟或明确后续，真实提供方与契约待接入时核实 |
+
+          | Asset 与编译环境 | API 12、能力、完整草稿上限属于公开建设前提；设备能力、部署与生命周期未验证 |
+
+          | 候选与原生出版 | N24ea6aeb 的正式 renderer、同根目录支持及当前 canonical/CU
+          结构需分别核；不能手改签名投影或伪造质询通过 |
+        source_refs:
+          - /decisions_and_gaps/gaps
+        graph_ids: []
+    source_digest: sha256:76a39b21d986d10155a2268649202845db389714e2c25d73a919a6864c3a16f1
+  background: 一车多人使用，实体钥匙转交给家人或联系人不方便；钱包当前只有不可点车钥匙类别，需要补齐本人和收到的钥匙卡片与分享管理。
+  goals:
+    - goal_id: share-adoption
+      statement: 上线三个月内车钥匙用户发起过分享比例不低于15%
+      success_measures:
+        - 运营侧按发布后用户/分享记录统计，钱包流程指标只作支撑，不据模拟验证承诺达标
+    - goal_id: reduce-support
+      statement: 上线三个月内借车送钥匙类客服咨询量下降一半
+      success_measures:
+        - 运营/客服侧按一致口径对照上线前后；真实上线与统计未执行
+design_views:
+  - view_id: logical
+    viewpoint_contract: app-component-blueprint@1/logical
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 钱包业务评审者
+      - wallet-team
+    purpose: 分享关系以车云为真源；草稿、账号会话与当前页面投影分责
+    current_state: 工程只有车钥匙类别；本候选按公开模拟前提补齐分享
+    target_state: 分享关系以车云为真源；草稿、账号会话与当前页面投影分责
+    delta: 新增本业务能力，不改公共模块与模块依赖方向
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+    nodes:
+      - node_id: share-domain
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 六态分享、配额、对象权限；车辆使用权与卡片回收分开
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+        data_models:
+          - name: AccountSession
+            fields: accountKey:string; sessionId:string
+            description: 稳定账号与每次登录会话分开
+          - name: ShareDraft
+            fields: accountKey; vehicleId; granteeId; granteeDisplay; permissionLevel;
+              validUntil; request?; idempotencyKey?
+            description: 完整单SECRET；有原请求即冻结三项
+          - name: DraftReadResult
+            fields: absent|found(ShareDraft)|unavailable(reason)|corrupted
+            description: 只有absent/corrupted转创建恢复，不混同失败
+          - name: CreationRecovery
+            fields: pending(request,idempotencyKey)|established(shareId,status)|clear|unknown
+            description: clear覆盖迟到；pending须先受保护写回
+          - name: ShareState
+            fields: pending|active|voided|expired|revoking|revoked
+            description: 六态互斥，车云真源
+          - name: OwnerCarKey
+            fields: vehicleId:string; modelName:string; modelCategory?:string
+            description: 本人钥匙按当前账号查询
+          - name: ReceivedCarKey
+            fields: shareId;vehicleId;modelName;modelCategory?;ownerNickname;permissionLevel;validUntil;status;recallDeadline?
+            description: 同一实体供卡包、接受、详情及重取分流
+          - name: ShareItem
+            fields: shareId;status;permissionLevel;validUntil;granteeMasked
+            description: 车主管理列表
+          - name: GrantPermissionView
+            fields: granteeId;shareable:boolean;permissionLevels:string[];reason?
+            description: 换对象作废旧选项
+          - name: QuotaView
+            fields: canShare:boolean;remaining:number;reason?
+            description: 生效+待接受配额
+          - name: ShareContact
+            fields: name:string;granteeId?:string
+            description: 缺账号不发权限查询
+      - node_id: draft-domain
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 完整原请求与幂等标识按账号车辆绑定，读取四分与创建恢复四分
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+  - view_id: runtime
+    viewpoint_contract: app-component-blueprint@1/runtime
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 钱包业务评审者
+      - wallet-team
+    purpose: 创建、接受、撤销、进程恢复和账号切换按同一状态契约收敛
+    current_state: 工程只有车钥匙类别；本候选按公开模拟前提补齐分享
+    target_state: 创建、接受、撤销、进程恢复和账号切换按同一状态契约收敛
+    delta: 新增本业务能力，不改公共模块与模块依赖方向
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+    nodes:
+      - node_id: share-state
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 车云六态；页面每次进入重新获取，不落地列表缓存
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+      - node_id: draft-state
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 选择态/原请求待确认/恢复受限/已建立待清理，不能把失败当不存在
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+    runtime_data_flows:
+      - flow_id: sharing-lifecycle
+        name: 创建、接受、撤销与恢复
+        data_domain_refs:
+          - sharing-records
+          - protected-draft
+          - account-session
+        external_contract_refs:
+          - queryKeySharingQuota
+          - queryGranteePermission
+          - createKeySharing
+          - acceptKeySharing
+          - revokeKeySharing
+          - queryKeySharingList
+          - creation-recovery
+        logical_contract_refs:
+          - view:logical/node:share-domain
+          - view:logical/node:draft-domain
+        development_owner_ref: view:development/node:share-feature
+        source_of_truth:
+          authority: 车云分享关系；车厂云车辆使用权；本地Asset只存原请求和选择
+          persistence: 对端幂等记录跨钱包进程，端侧列表不落盘
+          projections_and_caches:
+            - 当前账号卡包
+            - 管理列表
+            - 设置页草稿
+          reconciliation: 进页重新取；失败重取；缺稿先创建恢复
+        initial_load:
+          initial_load_id: load-current-account
+          strategy: 先身份与初始化；卡包/管理拉取；设置读草稿四分
+          owner: wallet-key-sharing
+          freshness: 每次进页；账号切换重取
+        state_owner:
+          ref: view:runtime/node:share-state
+          states:
+            - pending
+            - active
+            - voided
+            - expired
+            - revoking
+            - revoked
+        triggers:
+          - kind: page_enter
+            timing: 卡包/管理/设置进入
+            idempotency: 仅本次加载，旧会话响应丢弃
+          - kind: user_action
+            timing: 确认发出/添加/撤销
+            idempotency: 创建同幂等标识；同车串行
+          - kind: session_change
+            timing: 主动退出与换号
+            idempotency: 先不可恢复标记和隔离再清理
+          - kind: process_recreation
+            timing: 冷启动后登录
+            idempotency: 不因初始未登录清稿；按稳定账号读回
+        mutations:
+          - mutation_id: persist-before-create
+            persistence_ref: view:development/node:draft-store
+            publication_ref: page-current-result
+            recovery_ref: recover-original-request
+          - mutation_id: accept-or-revoke
+            persistence_ref: car-cloud
+            publication_ref: page-current-result
+            recovery_ref: reload-authoritative-state
+        publications:
+          - publication_id: page-current-result
+            snapshot: 只更新匹配账号与会话的当前页面，不建跨页事件框架
+        subscriptions: []
+        consumers:
+          - consumer_id: card-pack
+            initial_load_ref: load-current-account
+            update_ref: page-current-result
+          - consumer_id: share-setup
+            initial_load_ref: load-current-account
+            update_ref: page-current-result
+          - consumer_id: share-manage
+            initial_load_ref: load-current-account
+            update_ref: page-current-result
+          - consumer_id: share-accept
+            initial_load_ref: load-current-account
+            update_ref: page-current-result
+          - consumer_id: key-detail
+            initial_load_ref: load-current-account
+            update_ref: page-current-result
+        failure_recovery:
+          recovery_id: recover-original-request
+          persistence_failure: 保存失败不发；不可读不当不存在；损坏隔离并做创建恢复；成功清理失败显示已建立待清理
+          subscription_failure: 无跨页订阅；页面回到前台重新获取
+          process_recreation: 完整原请求同标识确认；absent/corrupted先pending/established/clear/unknown分流
+        lifecycle_coverage:
+          - 首次进入
+          - 选择保存后退出
+          - 原请求持久化后发送前
+          - 发送后回包前
+          - 成功后清稿前
+          - 主动退出
+          - 切换账号
+          - 清数据初始化
+          - 同车双入口
+        evidence_refs:
+          - doc/features/ISSUE-206/source-inputs.md
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+  - view_id: development
+    viewpoint_contract: app-component-blueprint@1/development
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 钱包业务评审者
+      - wallet-team
+    purpose: WalletMain完整承接业务；Phone只登记页面
+    current_state: 工程只有车钥匙类别；本候选按公开模拟前提补齐分享
+    target_state: WalletMain完整承接业务；Phone只登记页面
+    delta: 新增本业务能力，不改公共模块与模块依赖方向
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+    nodes:
+      - node_id: share-feature
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: KeySharingRepository、CarKeyRepository及可替换KeySharingSource；六接口与模拟补充能力明确分开
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+        must:
+          - knowledge_id: SEC-01
+            decision_id: knowledge-SEC-01
+            requirement: granteeId只按协议交查权限与创建对端；展示打码短账号仅昵称；观察性输出无身份、车牌、位置和原始错误；完整草稿单Asset
+              SECRET，账号车辆隔离并按事件清除
+          - knowledge_id: DFX-01
+            decision_id: knowledge-DFX-01
+            requirement: 管理/设置进页查配额、管理进页查列表、换对象查权限；选择完成与发出前写草稿；无轮询及逐字写盘
+          - knowledge_id: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            requirement: 六接口均新增调用，不删旧字段、不改类型；必有/可空按系统设计；不改字段含义或自行补服务端校验，异常按真实状态恢复
+        acceptance:
+          criteria:
+            - id: AC-1
+              description: "(F2, F3):
+                卡包车钥匙卡片点分享，对象、权限、有效期三项都选齐前不能发出；选齐后发出，对方收到待接受的钥匙（承接：AC-K1）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-2
+              description: "(F6, F7): 对方接受后钥匙可用，权限与车主所选一致，钥匙作为车钥匙卡片出现在对方卡包（承接：AC-K2）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-4
+              description: "(F3, F5): 生效加待接受合计到上限后不能再发起，能看到原因（承接：AC-K4）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-5
+              description: "(F5):
+                撤销时对方在线立即失效；对方离线进入撤销中，对方设备上的卡片在宽限内收回（D1）；撤销起车辆侧就不认这把钥匙（承接：AC-K5\
+                ）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-6
+              description: "(F4):
+                发起途中退出页面、断网或关掉应用再打开，同一账号同一辆车回来接着上次的选择发出，沿用同一幂等标识，不发出第二条（承接：AC-K\
+                6，D6）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-7
+              description: "(F5): 管理列表的状态与车云返回一致：待接受、生效、已作废、已到期、撤销中、已撤销（承接：AC-K7）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-9
+              description: "(F2): 未登录或没有车钥匙的用户看不到分享入口（承接：AC-K9）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-10
+              description: "(F2): 开关关闭后不能发起新分享，已生效的分享不受影响（承接：AC-K10）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-11
+              description: "(F3):
+                选家庭成员时全功能可选；换成其他联系人后全功能不可选，已选的全功能请车主重选；换回家庭成员又可选（承接：AC-K11）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-12
+              description: "(F1): 卡包展示车主本人的车钥匙卡片，卡片上有分享与分享管理入口（D4）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-13
+              description: "(F4, F8):
+                发出成功、主动退出或切换账号后草稿被清除，换账号后看不到上一个账号的草稿或列表；退出时清除失败，旧会话照样退出，分享在清理完成\
+                前不可用（D6）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-14
+              description: "(F8): 两个打码后相同的合法账号，查权限与创建分享时各自拿到正确的对象；两个展示账号相同的模拟账号，草稿互不可见。"
+              testable: true
+              verification_status: not_run
+            - id: AC-15
+              description: "(F9): 推送没送到时，对方进入卡包能看到待添加的钥匙，点它进入接受页并能添加。"
+              testable: true
+              verification_status: not_run
+            - id: AC-16
+              description: "(F9): 接受成功后，卡包里的待添加项变为可用的钥匙卡片；凭据下发失败时仍保持待接受。"
+              testable: true
+              verification_status: not_run
+            - id: AC-17
+              description: "(F9): 车主撤销且对方离线时，被分享人卡包里的卡片保留到收回完成后移除；车辆侧从撤销起已拒绝这把钥匙。"
+              testable: true
+              verification_status: not_run
+            - id: AC-18
+              description: "(F7, F9): 撤销完成、到期或作废的钥匙从卡包移除；从旧入口打开它的详情时提示已不可用并回到卡包。"
+              testable: true
+              verification_status: not_run
+            - id: AC-19
+              description: "(F8, F9): 切换账号后，卡包只显示新账号收到的待添加与可用钥匙。"
+              testable: true
+              verification_status: not_run
+            - id: AC-20
+              description: "(F5): 只有生效的分享显示撤销；撤销中、已作废、已到期、已撤销的条目不显示撤销，也不发撤销请求；待接受条目的撤回待
+                D8，裁定前不验。"
+              testable: true
+              verification_status: not_run
+            - id: AC-21
+              description: "(F3, F4): 草稿没发出过或上次明确拒绝时配额已满，回到设置页按满额处理，不因草稿绕过配额。"
+              testable: true
+              verification_status: not_run
+            - id: AC-29
+              description: "(F1, F7):
+                点本人钥匙卡片进入详情，看到车型、车辆与分享入口；点收到的钥匙卡片进入详情，看到权限范围与有效期；两种都不借用对方的身份取数。"
+              testable: true
+              verification_status: not_run
+            - id: AC-30
+              description: "(F4): 原有 4 条分享，发第 5
+                条时没得到回应而车云其实已建立：回来时配额显示已满，仍用同一幂等标识确认到这一条并清草稿，不出现第二条；若名额实际被另一次发起\
+                占满，车云返回满额，按满额提示，并在原请求与幂等标识同时持久清理成功后开放编辑。"
+              testable: true
+              verification_status: not_run
+            - id: AC-31
+              description: "(F5, F6, F9):
+                接受或撤销请求失败或没得到回应时，端侧不按旧状态下结论：重取状态后按车云状态显示，只有仍是待接受才可再点添加、仍是生效才可再撤\
+                ；重取时当前账号下取不到这条，按已不可用移除，与查询失败（结果待确认）分开。"
+              testable: true
+              verification_status: not_run
+            - id: AC-32
+              description: "(F4): 发给对象 A 没得到回应后回到设置页：对象、权限、有效期按那次请求只读展示，点发出确认的是给 A
+                的那一条；页面不能先改成对象 B 再借这个幂等标识发出，确认前也不显示「已分享给 B」。"
+              testable: true
+              verification_status: not_run
+            - id: AC-33
+              description: "(F4): 同一账号先在甲车设置页留下草稿，再从乙车进入：乙车设置页不回填甲车的草稿，回到甲车时草稿仍在。"
+              testable: true
+              verification_status: not_run
+            - id: AC-34
+              description: "(F4):
+                分别在四个时点关掉应用后回来：保存选择后、写入原请求后发送前、发送后回包前、建立成功后清除草稿前。每一次都能确定要恢复的请求、\
+                允许的操作和清除责任：保存选择后恢复选择；写入原请求之后、回包之前都用同一请求确认；建立之后只能确认同一请求或重试清理。"
+              testable: true
+              verification_status: not_run
+            - id: AC-35
+              description: "(F4):
+                原请求写入失败时不发送；草稿读取失败或损坏时不当成没有草稿、不自动换标识重发；草稿超过存储上限时提示保存失败，不截断、不改存明\
+                文。原请求已发出、回包未到时草稿损坏：先做创建恢复，不提供删除后重建；原请求稍后建成时管理列表只有这一条。"
+              testable: true
+              verification_status: not_run
+            - id: AC-36
+              description: "(F4): 同账号同车辆从两个入口同时发出，只形成一份原请求；同账号两辆车各自发出互不阻塞。"
+              testable: true
+              verification_status: not_run
+            - id: AC-37
+              description: "(F4, F8): 退出登录后旧账号请求的回调才到达，不写到新账号的页面，也不重建已清除的草稿；同一次请求的重复回调只结算一次。"
+              testable: true
+              verification_status: not_run
+            - id: AC-38
+              description: "(F3):
+                取消选择联系人、联系人没有有效账号时不发权限查询；换对象后上一个对象的权限选择作废；权限选项为空或无法解释时提示重新获取。"
+              testable: true
+              verification_status: not_run
+            - id: AC-39
+              description: "(F6, F5): 在接受页停留超过待接受有效期（72
+                小时，上游约束：产品需求）后再点添加、另一端已接受后再点添加、分享已到期后在旧管理页撤销：都按重新取得的状态显示已作废、已生效\
+                或已到期，不因这次错误恢复成待接受或生效。接受已生效但回应丢失、车主随即撤销且对方离线：重取为撤销中，卡片保留到收回完成，不再\
+                显示添加。"
+              testable: true
+              verification_status: not_run
+            - id: AC-40
+              description: "(F8): 冷启动时还没有登录不清除草稿；同一模拟账号登录后能恢复它的草稿，登录前不回填、不发送。"
+              testable: true
+              verification_status: not_run
+            - id: AC-41
+              description: "(F4, F8): 原创建已发出 → 草稿损坏 → 退出登录并清掉本地 → 同一账号再登录进这辆车的设置页：创建恢复返回
+                pending 时不能新建、找回原请求后只确认那一条；返回 established 时显示原来那条分享及当前状态；返回
+                clear 时允许新建，旧请求之后晚到也不出现第二条；查询失败时这辆车保持发起受限、管理页可看可重查。"
+              testable: true
+              verification_status: not_run
+            - id: AC-42
+              description: "(F4):
+                创建恢复不影响已有能力：完整草稿仍用自己的幂等标识续办，不做创建恢复；取消或换对象照常作废旧档位；另一辆车、另一个账号各自独立\
+                恢复，互不阻塞、互不串数据。"
+              testable: true
+              verification_status: not_run
+            - id: AC-43
+              description: "(F4): 这辆车本地从没有过草稿（首次使用），或上次成功发出后草稿已清，进设置页时先做创建恢复：clear
+                才开放空表单；pending 只确认原请求；unknown 或查询失败时这辆车暂停新发起，管理页照常可看、可重查。"
+              testable: true
+              verification_status: not_run
+            - id: AC-3
+              description: "(F5): 分享发出后对方在期限内未接受即自动作废，作废条目在列表可见，可重新发起（承接：AC-K3）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-8
+              description: "(F8): 全程页面与记录不出现对方完整账号或手机号，只显示昵称与打码账号（承接：AC-K8）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-22
+              description: "(F1, F3): 新增页面与卡片的方向性参数用 start/end，从右到左语言下镜像正确（UX-01）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-23
+              description: "(F8): 输出面打码、业务接口传可识别标识、草稿按 7.3 保护与清除（SEC-01）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-24
+              description: "(F4, F5): 分享相关调用每次进页拉取一次，草稿只在选择完成、发出前与结束时读写，没有定时任务或后台轮询（DFX-01）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-25
+              description: "(F4, F5, F6):
+                创建、接受、撤销可定位到失败步骤；三个流程的事件结果完整、同次不重复、字段来源真实、编码无冲突；车型类别缺失按未知，失败说明是\
+                映射后的安全说明，不含账号与车牌（OBS-02、OBS-03、OBS-05、OBS-06）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-26
+              description: "(F3, F6):
+                图标复用优先，新引入的写明依据；文案复用优先，新增的中英文齐备并进待翻译清单；新增字符串资源的条数与体积给出数值（RES-01\
+                、RES-02、DLV-01、DFX-02）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-27
+              description: "(F4): 六个车云接口按四问逐个给出兼容结论（COMPAT-01）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-28
+              description: "(F4): 清除数据后先清遗留草稿再开放、不崩溃；重复触发发出不会创建第二条（ENV-01、ENV-02）。"
+              testable: true
+              verification_status: not_run
+            - id: AC-G1
+              description: "(F1, F6): 新页面与卡包车钥匙卡片在深色、大字下可读可点。"
+              testable: true
+              verification_status: not_run
+            - id: AC-G2
+              description: "(F2, F5): 网络异常时有明确错误提示，不白屏、不崩溃。"
+              testable: true
+              verification_status: not_run
+            - id: AC-G3
+              description: "(F5, F9): 断网进管理页或卡包给网络失败态，不展示陈旧列表。"
+              testable: true
+              verification_status: not_run
+          boundaries: []
+          performance: []
+      - node_id: draft-store
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: ShareDraftStore独立管理Asset SECRET与普通索引；同车串行由仓储负责
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+        must:
+          - knowledge_id: ENV-01
+            decision_id: knowledge-ENV-01
+            requirement: 无初始化标记先清遗留Asset；读失败不当不存在；缺稿或损坏先创建恢复，unknown受限，不靠清数据绕过未决请求
+          - knowledge_id: ENV-02
+            decision_id: knowledge-ENV-02
+            requirement: 同账号同车辆创建串行，发送前持久原请求；同幂等标识确认；双入口不双建；旧账号回调不改新会话
+      - node_id: share-setup
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: page-interaction五角色落实设置页交互
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+        pattern_roles:
+          - pattern: page-interaction
+            role: 动作表
+            entity: ShareSetupPageOperates
+            target_ref: view:development/node:setup-operates
+            decision_id: pattern-page-interaction
+          - pattern: page-interaction
+            role: 动作枚举
+            entity: ShareSetupActions
+            target_ref: view:development/node:setup-actions
+            decision_id: pattern-page-interaction
+          - pattern: page-interaction
+            role: 交互封装
+            entity: ShareSetupPageInteraction
+            target_ref: view:development/node:setup-interaction
+            decision_id: pattern-page-interaction
+          - pattern: page-interaction
+            role: 上下文
+            entity: ShareSetupContext
+            target_ref: view:development/node:setup-context
+            decision_id: pattern-page-interaction
+          - pattern: page-interaction
+            role: 页面组件
+            entity: ShareSetupPage
+            target_ref: view:development/node:setup-page
+            decision_id: pattern-page-interaction
+        must:
+          - knowledge_id: UX-01
+            decision_id: knowledge-UX-01
+            requirement: 四页与卡片方向性参数用start/end、TextAlign.Start/End，RTL正确镜像
+          - knowledge_id: RES-01
+            decision_id: knowledge-RES-01
+            requirement: 图标依次复用系统符号、既有归档；本计划不新增图片，如实施需新增则按源规则给理由与单图体积
+          - knowledge_id: RES-02
+            decision_id: knowledge-RES-02
+            requirement: 优先复用中文完全一致资源；新增文案按惯例定义引用，中英文齐备
+          - knowledge_id: DFX-02
+            decision_id: knowledge-DFX-02
+            requirement: 新增中英文字符串条数与UTF-8体积在CU交付量化；不新增图片、SDK或hap包
+          - knowledge_id: DLV-01
+            decision_id: knowledge-DLV-01
+            requirement: 新增文案同步待翻译清单，逐资源键记录中文、英文、回稿状态并在回稿后合入
+      - node_id: telemetry
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: ErrorMapper安全说明；三流程尝试与结算去重
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+        must:
+          - knowledge_id: OBS-02
+            decision_id: knowledge-OBS-02
+            requirement: 三流程失败定位复用Logger与事件安全描述，不新增重复定位事件；草稿与查询失败仅必要日志
+          - knowledge_id: OBS-03
+            decision_id: knowledge-OBS-03
+            requirement: 仅发起、接受、撤销三流程，实际结果完整；每次尝试只结算一次，重复回调不重复统计
+          - knowledge_id: OBS-05
+            decision_id: knowledge-OBS-05
+            requirement: 车型类别来自modelCategory缺失记未知；安全说明来自错误映射；外码仅合法车云错误码；不拼message或身份
+          - knowledge_id: OBS-06
+            decision_id: knowledge-OBS-06
+            requirement: 三个流程编号与内码仍为候选；编码前登记并核冲突，保持既有上报含义
+      - node_id: phone-routing
+        owner: wallet-team
+        module: Phone
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 四个页面经builder、WalletMain出口与Phone映射接入
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+      - node_id: setup-operates
+        owner: wallet-team
+        module: WalletMain
+        name: ShareSetupPageOperates
+        current_state: 拟建
+        target_state: ShareSetupPageOperates承担设置页动作表
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+        design_basis_refs:
+          - decision:pattern-page-interaction
+      - node_id: setup-actions
+        owner: wallet-team
+        module: WalletMain
+        name: ShareSetupActions
+        current_state: 拟建
+        target_state: ShareSetupActions承担设置页动作枚举
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+        design_basis_refs:
+          - decision:pattern-page-interaction
+      - node_id: setup-interaction
+        owner: wallet-team
+        module: WalletMain
+        name: ShareSetupPageInteraction
+        current_state: 拟建
+        target_state: ShareSetupPageInteraction承担设置页交互封装
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+        design_basis_refs:
+          - decision:pattern-page-interaction
+      - node_id: setup-context
+        owner: wallet-team
+        module: WalletMain
+        name: ShareSetupContext
+        current_state: 拟建
+        target_state: ShareSetupContext承担设置页上下文
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+        design_basis_refs:
+          - decision:pattern-page-interaction
+      - node_id: setup-page
+        owner: wallet-team
+        module: WalletMain
+        name: ShareSetupPage
+        current_state: 拟建
+        target_state: ShareSetupPage承担设置页页面组件
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+        design_basis_refs:
+          - decision:pattern-page-interaction
+  - view_id: deployment
+    viewpoint_contract: app-component-blueprint@1/deployment
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 钱包业务评审者
+      - wallet-team
+    purpose: 本期模拟验证；真车云与设备能力明确依赖
+    current_state: 工程只有车钥匙类别；本候选按公开模拟前提补齐分享
+    target_state: 本期模拟验证；真车云与设备能力明确依赖
+    delta: 新增本业务能力，不改公共模块与模块依赖方向
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+    nodes:
+      - node_id: wallet-app
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: HarmonyOS手机API12；Asset能力和1024字节模拟上限待真机核实
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+      - node_id: mock-counterpart
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 模拟车云幂等记录独立于钱包进程；clear覆盖迟到创建
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+  - view_id: scenarios
+    viewpoint_contract: app-component-blueprint@1/scenarios
+    applicability: applicable
+    evolution_impact: changed
+    stakeholders:
+      - 钱包业务评审者
+      - wallet-team
+    purpose: 车主发起/续办/撤销与接受方添加/查看形成闭合旅程
+    current_state: 工程只有车钥匙类别；本候选按公开模拟前提补齐分享
+    target_state: 车主发起/续办/撤销与接受方添加/查看形成闭合旅程
+    delta: 新增本业务能力，不改公共模块与模块依赖方向
+    decisions_and_gaps: []
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+    nodes:
+      - node_id: owner-journey
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 卡包→设置→保存原请求→创建→管理→撤销；中断先恢复
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+      - node_id: grantee-journey
+        owner: wallet-team
+        module: WalletMain
+        current_state: 旧金样记录为拟建能力，当前候选未编码
+        target_state: 卡包补拉→待添加→接受→详情；撤销中卡片保留至收回
+        provenance:
+          source_kind: candidate_design_basis
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: inferred
+          extraction_method: maintenance_candidate_synthesis_not_human_signature
+        verification_refs:
+          - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+decisions_and_gaps:
+  decisions:
+    - decision_id: D1
+      kind: scenario_host_position
+      status: answered_with_evidence
+      owner: scenario-host
+      rationale: 48小时为卡片收回期限；车云受理成功撤销起车辆立即拒绝
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/blueprint/blueprint.target.md
+    - decision_id: D3
+      kind: scenario_host_position
+      status: answered_with_evidence
+      owner: scenario-host
+      rationale: 模拟数据验证，不把真实联调与推送入口算入
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/blueprint/blueprint.target.md
+    - decision_id: D4
+      kind: scenario_host_position
+      status: answered_with_evidence
+      owner: scenario-host
+      rationale: 一并补卡包车钥匙卡片与分享入口
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/blueprint/blueprint.target.md
+    - decision_id: D6
+      kind: scenario_host_position
+      status: answered_with_evidence
+      owner: scenario-host
+      rationale: 退出页面、断网、应用关闭可续办；成功、主动退出、换账号清稿
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/blueprint/blueprint.target.md
+    - decision_id: D7
+      kind: scenario_host_position
+      status: answered_with_evidence
+      owner: scenario-host
+      rationale: 车云按分享记录统计接受比例；钱包只做三个流程
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/blueprint/blueprint.target.md
+    - decision_id: D2
+      kind: business_open_decision
+      status: open_decision
+      owner: 需求方与车云
+      rationale: 再转第三人未定
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/AR/review.md
+    - decision_id: D5
+      kind: business_open_decision
+      status: open_decision
+      owner: 需求方与车云
+      rationale: 极端断网强制下线未定
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/AR/review.md
+    - decision_id: D8
+      kind: business_open_decision
+      status: open_decision
+      owner: 需求方与车云
+      rationale: 待接受撤回未定；当前只做生效撤销
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+      verification_refs:
+        - doc/features/ISSUE-206/AR/review.md
+    - decision_id: knowledge-SEC-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求处理接收方账号、车辆身份和跨进程草稿，并新增页面、日志及事件出口，命中敏感数据保护要求。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/security-privacy.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: SEC-01
+        source_sha256: sha256:fef3f54273ad80f8736632606e2a114073309763232492e8919eb052dafc8337
+        outcome: applied
+        requirement: granteeId只按协议交查权限与创建对端；展示打码短账号仅昵称；观察性输出无身份、车牌、位置和原始错误；完整草稿单Asset
+          SECRET，账号车辆隔离并按事件清除
+        target_refs:
+          - view:development/node:share-feature
+    - decision_id: knowledge-ENV-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 草稿是本地状态，正常操作包含清数据后重进及丢失本地草稿的恢复，必须说明如何重建而非崩溃或循环。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: ENV-01
+        source_sha256: sha256:61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81
+        outcome: applied
+        requirement: 无初始化标记先清遗留Asset；读失败不当不存在；缺稿或损坏先创建恢复，unknown受限，不靠清数据绕过未决请求
+        target_refs:
+          - view:development/node:draft-store
+    - decision_id: knowledge-ENV-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 卡包和页面都可进入分享，用户可重复点击创建、接受和撤销，存在需要防止重复副作用的写操作。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/env-exceptions.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: ENV-02
+        source_sha256: sha256:61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81
+        outcome: applied
+        requirement: 同账号同车辆创建串行，发送前持久原请求；同幂等标识确认；双入口不双建；旧账号回调不改新会话
+        target_refs:
+          - view:development/node:draft-store
+    - decision_id: knowledge-DFX-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求新增六类端云调用、恢复查询和受保护草稿读写，需要核触发频次、串行范围及是否存在无必要轮询。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DFX-01
+        source_sha256: sha256:769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed
+        outcome: applied
+        requirement: 管理/设置进页查配额、管理进页查列表、换对象查权限；选择完成与发出前写草稿；无轮询及逐字写盘
+        target_refs:
+          - view:development/node:share-feature
+    - decision_id: knowledge-OBS-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求明确要求观察发起、接受、撤销三个流程，需先明确各流程一次尝试和结果的业务含义。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-02
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        requirement: 三流程失败定位复用Logger与事件安全描述，不新增重复定位事件；草稿与查询失败仅必要日志
+        target_refs:
+          - view:development/node:telemetry
+    - decision_id: knowledge-OBS-03
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 同一流程可能经历无响应、重查和重试，观察性记录不能由页面回调次数替代真实尝试与结果。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-03
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        requirement: 仅发起、接受、撤销三流程，实际结果完整；每次尝试只结算一次，重复回调不重复统计
+        target_refs:
+          - view:development/node:telemetry
+    - decision_id: knowledge-OBS-05
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求存在资料中的分享被接受比例及三个端侧流程指标，需要区分本端能观察的结果与云端统计责任。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-05
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        requirement: 车型类别来自modelCategory缺失记未知；安全说明来自错误映射；外码仅合法车云错误码；不拼message或身份
+        target_refs:
+          - view:development/node:telemetry
+    - decision_id: knowledge-OBS-06
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求引入三个流程的候选事件标识，必须按既有分配规则及兼容边界登记，不能假定已正式分配。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/observability.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: OBS-06
+        source_sha256: sha256:1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024
+        outcome: applied
+        requirement: 三个流程编号与内码仍为候选；编码前登记并核冲突，保持既有上报含义
+        target_refs:
+          - view:development/node:telemetry
+    - decision_id: knowledge-UX-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求增加或调整分享、接受、管理及卡包界面，包含方向性布局与交互。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/ux-consistency.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: UX-01
+        source_sha256: sha256:ec0be15aa7e88c30fa0523c49d55a96cf133747e8ae3c6e6b80d598e87fce2b7
+        outcome: applied
+        requirement: 四页与卡片方向性参数用start/end、TextAlign.Start/End，RTL正确镜像
+        target_refs:
+          - view:development/node:share-setup
+    - decision_id: knowledge-RES-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 上述页面需要图标和图片呈现，必须区分参考原图、已有可复用资源及真正新增的预置资源。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: RES-01
+        source_sha256: sha256:d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115
+        outcome: applied
+        requirement: 图标依次复用系统符号、既有归档；本计划不新增图片，如实施需新增则按源规则给理由与单图体积
+        target_refs:
+          - view:development/node:share-setup
+    - decision_id: knowledge-RES-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求增加用户可见的按钮、状态和错误说明，需要明确复用或新增字符串的归属。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/resource-usage.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: RES-02
+        source_sha256: sha256:d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115
+        outcome: applied
+        requirement: 优先复用中文完全一致资源；新增文案按惯例定义引用，中英文齐备
+        target_refs:
+          - view:development/node:share-setup
+    - decision_id: knowledge-DFX-02
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 本需求拟增加界面资源和代码，交付前应核实际资源/依赖体积；目标稿本身不能冒称已量化构建结果。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/dfx-baseline.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DFX-02
+        source_sha256: sha256:769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed
+        outcome: applied
+        requirement: 新增中英文字符串条数与UTF-8体积在CU交付量化；不新增图片、SDK或hap包
+        target_refs:
+          - view:development/node:share-setup
+    - decision_id: knowledge-DLV-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 新增或修改的用户文案需要翻译交付，这是人工交付义务，不等于产品流程增加人工批准。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/deliverables.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: DLV-01
+        source_sha256: sha256:ae494fa8bdcb3e56b1977e7cf7787abfc6eee4e632cf9e64e718e862cd657708
+        outcome: applied
+        requirement: 新增文案同步待翻译清单，逐资源键记录中文、英文、回稿状态并在回稿后合入
+        target_refs:
+          - view:development/node:share-setup
+    - decision_id: knowledge-COMPAT-01
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 钱包按六个接口的字段与返回状态消费端云契约，并引入模拟数据源，需要核旧字段含义及新增映射的兼容边界。
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/constraints/compatibility-checklist.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: constraints
+        form: entries
+        unit: COMPAT-01
+        source_sha256: sha256:0a1a760fafdd9cdaf8d0d25e5db4a45ea5e5caf38eeed4a0e65665324f9ed7b8
+        outcome: applied
+        requirement: 六接口均新增调用，不删旧字段、不改类型；必有/可空按系统设计；不改字段含义或自行补服务端校验，异常按真实状态恢复
+        target_refs:
+          - view:development/node:share-feature
+    - decision_id: pattern-page-interaction
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 设置页由草稿结果决定起点，选对象后查权限，等待用户时停机；五角色各有实体
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/design-patterns/page-interaction.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: patterns
+        form: halves
+        unit: 上篇
+        source_sha256: sha256:03f705012b130ba72d9dcad38532eb160a77a07b3a233f2caf55ab1732c5d9b0
+        outcome: selected
+        target_refs:
+          - view:development/node:share-setup
+        roles:
+          - role: 动作表
+            target_ref: view:development/node:setup-operates
+          - role: 动作枚举
+            target_ref: view:development/node:setup-actions
+          - role: 交互封装
+            target_ref: view:development/node:setup-interaction
+          - role: 上下文
+            target_ref: view:development/node:setup-context
+          - role: 页面组件
+            target_ref: view:development/node:setup-page
+    - decision_id: pattern-no-decision-tree
+      kind: knowledge_application
+      status: answered_with_evidence
+      owner: wallet-team
+      rationale: 主链分支是单次前置判断或请求结果，各支一步收敛；签发回滚由车云负责
+      provenance:
+        source_kind: knowledge
+        source_ref: doc/extensions/knowledge/design-patterns/decision-tree.md
+        observed_at: 2026-10-28
+        evidence_strength: observed
+        extraction_method: read_current_knowledge_snapshot_and_apply_to_candidate
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+      knowledge:
+        kind: patterns
+        form: halves
+        unit: 上篇
+        source_sha256: sha256:5eccef2f635e82ac4b0e054abfe54138fccffe28088b3a0a9999643ed5efb359
+        outcome: rejected
+        target_refs:
+          - view:development/node:share-setup
+  gaps:
+    - gap_id: real-creation-recovery
+      status: blocker
+      owner: 车云
+      needed_by: 正式开放依赖创建恢复的新建
+      unlock_condition: 按账号车辆回查创建且clear覆盖迟到请求，受理新建再次核未决
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+    - gap_id: real-identity-received-source
+      status: blocker
+      owner: 账号能力与车云
+      needed_by: 真实身份隔离和接受侧接入
+      unlock_condition: 稳定账号标识、本人钥匙及接受方查询契约到位
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+    - gap_id: asset-device-validation
+      status: blocker
+      owner: 钱包目标环境
+      needed_by: 真机跨重启草稿验收
+      unlock_condition: 核API12、Asset能力、1024字节完整草稿与生命周期
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+    - gap_id: independent-questioning
+      status: blocker
+      owner: 原生独立质询执行体
+      needed_by: 施工准入
+      unlock_condition: 对当前候选真实独立质询且保原始报告
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+    - gap_id: native-single-root
+      status: blocker
+      owner: Framework所有者
+      needed_by: 同根正式识别及出版
+      unlock_condition: 支持材料/ux-reference与blueprint/CU共存，实际原生结构可消费
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+relations:
+  - relation_id: domain-realized
+    from: view:logical/node:share-domain
+    to: view:development/node:share-feature
+    relation_type: realized_by
+    owner: wallet-team
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/source-inputs.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+  - relation_id: draft-protected
+    from: view:logical/node:draft-domain
+    to: view:development/node:draft-store
+    relation_type: realized_by
+    owner: wallet-team
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/source-inputs.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+  - relation_id: flow-owned
+    from: view:runtime/flow:sharing-lifecycle
+    to: view:development/node:share-feature
+    relation_type: owned_by
+    owner: wallet-team
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/source-inputs.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+  - relation_id: owner-traces
+    from: view:scenarios/node:owner-journey
+    to: view:runtime/flow:sharing-lifecycle
+    relation_type: traces
+    owner: wallet-team
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/source-inputs.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+  - relation_id: grantee-traces
+    from: view:scenarios/node:grantee-journey
+    to: view:runtime/flow:sharing-lifecycle
+    relation_type: traces
+    owner: wallet-team
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/source-inputs.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+    verification_refs:
+      - doc/features/ISSUE-206/wallet-key-sharing/spec/spec.md
+contracts:
+  - contract_id: queryKeySharingQuota
+    owner: 车云
+    needed_by: wallet-key-sharing
+    operation:
+      operation_id: queryKeySharingQuota
+      version: "2.1"
+      direction: wallet_to_car_cloud
+      source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    request_dto:
+      dto_id: queryKeySharingQuotaRequest
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: vehicleId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    response_dto:
+      dto_id: queryKeySharingQuotaResponse
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: canShare
+          type: boolean
+          required: true
+          nullable: false
+          semantics: canShare
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: remaining
+          type: integer
+          required: true
+          nullable: false
+          semantics: remaining
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: reason
+          type: string
+          required: true
+          nullable: true
+          semantics: reason
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: shares
+          type: ShareSummary[]
+          required: true
+          nullable: false
+          semantics: shares
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+          items:
+            shareId: string
+            status: ShareState
+    mappings: []
+    errors:
+      items: 沿用车云错误码；未知码安全说明；任意message不进日志或事件
+    idempotency:
+      rule: 配额按active+pending；确认原请求不被端侧满额拦截
+    nfr:
+      requirements:
+        - 不改变字段类型/必有/可空
+        - 本期由可替换模拟数据源承接
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+  - contract_id: queryGranteePermission
+    owner: 车云
+    needed_by: wallet-key-sharing
+    operation:
+      operation_id: queryGranteePermission
+      version: "2.1"
+      direction: wallet_to_car_cloud
+      source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    request_dto:
+      dto_id: queryGranteePermissionRequest
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: vehicleId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: granteeId
+          type: string
+          required: true
+          nullable: false
+          semantics: granteeId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    response_dto:
+      dto_id: queryGranteePermissionResponse
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareable
+          type: boolean
+          required: true
+          nullable: false
+          semantics: shareable
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: permissionLevels
+          type: string[]
+          required: true
+          nullable: false
+          semantics: permissionLevels
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: reason
+          type: string
+          required: true
+          nullable: true
+          semantics: reason
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    mappings: []
+    errors:
+      items: 沿用车云错误码；未知码安全说明；任意message不进日志或事件
+    idempotency:
+      rule: 对象换则重查；可读选项原样显示传回
+    nfr:
+      requirements:
+        - 不改变字段类型/必有/可空
+        - 本期由可替换模拟数据源承接
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+  - contract_id: createKeySharing
+    owner: 车云
+    needed_by: wallet-key-sharing
+    operation:
+      operation_id: createKeySharing
+      version: "2.1"
+      direction: wallet_to_car_cloud
+      source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    request_dto:
+      dto_id: createKeySharingRequest
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: vehicleId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: granteeId
+          type: string
+          required: true
+          nullable: false
+          semantics: granteeId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: permissionLevel
+          type: string
+          required: true
+          nullable: false
+          semantics: permissionLevel
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: validUntil
+          type: ISO8601
+          required: true
+          nullable: false
+          semantics: validUntil
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: idempotencyKey
+          type: string
+          required: true
+          nullable: false
+          semantics: idempotencyKey
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    response_dto:
+      dto_id: createKeySharingResponse
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareId
+          type: string
+          required: true
+          nullable: false
+          semantics: shareId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: status
+          type: pending
+          required: true
+          nullable: false
+          semantics: status
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    mappings: []
+    errors:
+      items: 沿用车云错误码；未知码安全说明；任意message不进日志或事件
+    idempotency:
+      rule: 同标识同一分享；签发失败不留关系
+    nfr:
+      requirements:
+        - 不改变字段类型/必有/可空
+        - 本期由可替换模拟数据源承接
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+  - contract_id: acceptKeySharing
+    owner: 车云
+    needed_by: wallet-key-sharing
+    operation:
+      operation_id: acceptKeySharing
+      version: "2.1"
+      direction: wallet_to_car_cloud
+      source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    request_dto:
+      dto_id: acceptKeySharingRequest
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareId
+          type: string
+          required: true
+          nullable: false
+          semantics: shareId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    response_dto:
+      dto_id: acceptKeySharingResponse
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: credentialStatus
+          type: issued|failed
+          required: true
+          nullable: false
+          semantics: credentialStatus
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: status
+          type: active|pending
+          required: true
+          nullable: false
+          semantics: status
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    mappings: []
+    errors:
+      items: 沿用车云错误码；未知码安全说明；任意message不进日志或事件
+    idempotency:
+      rule: failed+pending保持待接受；其他失败重取当前账号记录
+    nfr:
+      requirements:
+        - 不改变字段类型/必有/可空
+        - 本期由可替换模拟数据源承接
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+  - contract_id: revokeKeySharing
+    owner: 车云
+    needed_by: wallet-key-sharing
+    operation:
+      operation_id: revokeKeySharing
+      version: "2.1"
+      direction: wallet_to_car_cloud
+      source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    request_dto:
+      dto_id: revokeKeySharingRequest
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: shareId
+          type: string
+          required: true
+          nullable: false
+          semantics: shareId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    response_dto:
+      dto_id: revokeKeySharingResponse
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: status
+          type: revoked|revoking
+          required: true
+          nullable: false
+          semantics: status
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: graceHours
+          type: integer
+          required: true
+          nullable: true
+          semantics: graceHours
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    mappings: []
+    errors:
+      items: 沿用车云错误码；未知码安全说明；任意message不进日志或事件
+    idempotency:
+      rule: 只生效可撤销；revoking期限48小时收回卡片，车辆已拒绝
+    nfr:
+      requirements:
+        - 不改变字段类型/必有/可空
+        - 本期由可替换模拟数据源承接
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+  - contract_id: queryKeySharingList
+    owner: 车云
+    needed_by: wallet-key-sharing
+    operation:
+      operation_id: queryKeySharingList
+      version: "2.1"
+      direction: wallet_to_car_cloud
+      source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    request_dto:
+      dto_id: queryKeySharingListRequest
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: vehicleId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    response_dto:
+      dto_id: queryKeySharingListResponse
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      fields:
+        - field_id: items
+          type: ShareItem[]
+          required: true
+          nullable: false
+          semantics: items
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+          items:
+            shareId: string
+            status: ShareState
+            permissionLevel: string
+            validUntil: ISO8601
+            granteeMasked: string
+    mappings: []
+    errors:
+      items: 沿用车云错误码；未知码安全说明；任意message不进日志或事件
+    idempotency:
+      rule: 每次进页重新拉取，失败不给陈旧列表
+    nfr:
+      requirements:
+        - 不改变字段类型/必有/可空
+        - 本期由可替换模拟数据源承接
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/SR/design.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+  - contract_id: creation-recovery
+    owner: 模拟车云；真实方待接入
+    needed_by: wallet-key-sharing
+    operation:
+      operation_id: recoverCreation
+      version: candidate-mock
+      direction: wallet_to_simulated_counterpart
+      source_ref: doc/features/ISSUE-206/source-inputs.md
+    request_dto:
+      dto_id: RecoveryRequest
+      fields:
+        - field_id: accountKey
+          type: string
+          required: true
+          nullable: false
+          semantics: accountKey
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+        - field_id: vehicleId
+          type: string
+          required: true
+          nullable: false
+          semantics: vehicleId
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    response_dto:
+      dto_id: CreationRecovery
+      fields:
+        - field_id: result
+          type: pending(request,idempotencyKey)|established(shareId,status)|clear|unknown
+          required: true
+          nullable: false
+          semantics: result
+          source_ref: doc/features/ISSUE-206/SR/design.md#4-接口约定
+    idempotency:
+      rule: clear终结迟到请求；受理新建再核未决；不读管理列表猜测
+    errors:
+      items: 不完整/账号车辆不匹配/多条不唯一/查询失败均unknown
+    nfr:
+      requirements:
+        - 对端记录跨钱包进程
+        - 六接口没有此承诺
+        - 缺真实能力时依赖它的新建不开放
+    provenance:
+      source_kind: candidate_design_basis
+      source_ref: doc/features/ISSUE-206/source-inputs.md
+      observed_at: 2026-10-28
+      evidence_strength: inferred
+      extraction_method: maintenance_candidate_synthesis_not_human_signature
+providers:
+  - provider_id: candidate-source-index
+    source_ref: doc/features/ISSUE-206/source-inputs.md
+    available: true
+    missing_disposition: not_applicable
+    writes:
+      - canonical_blueprint_input
+    candidate_note: Source index copied and byte-bound; native provider execution not performed
+discovery:
+  source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+  facts:
+    - fact_id: mock-prerequisites
+      subject: 公开模拟前提
+      value:
+        api: "12"
+        asset_capability: SystemCapability.Security.Asset
+        complete_draft_max_utf8_bytes: 1024
+        account_key_stable: true
+        counterpart_idempotency_survives_wallet_process: true
+        recovery: pending/established/clear/unknown; clear covers late request
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+    - fact_id: legacy-knowledge-version
+      subject: SEC-01按用途处理
+      value: 旧金样Plan9.1明确开发源规约不同于demo；业务标识只交协议对端，展示和观察性输出分责
+      provenance:
+        source_kind: candidate_design_basis
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        observed_at: 2026-10-28
+        evidence_strength: inferred
+        extraction_method: maintenance_candidate_synthesis_not_human_signature
+  conflicts: []
+  inputs:
+    current_scope_items:
+      - item_id: product
+        kind: requirement
+        source_ref: doc/features/ISSUE-206/RR/prd.md
+        source_sha256: sha256:4e5d4c3e3916680813768f7954e1ed66942b838fa56e7ccbd5e4136959f4fd42
+        provenance:
+          source_kind: candidate_material_copy
+          source_ref: doc/features/ISSUE-206/RR/prd.md
+          observed_at: 2026-10-28
+          evidence_strength: observed
+          extraction_method: read_copied_file_bytes_not_human_attestation
+      - item_id: system
+        kind: requirement
+        source_ref: doc/features/ISSUE-206/SR/design.md
+        source_sha256: sha256:68ff916dff8a6b007b8457835158d3b2dad68f6967bcce633515ce26702822fa
+        provenance:
+          source_kind: candidate_material_copy
+          source_ref: doc/features/ISSUE-206/SR/design.md
+          observed_at: 2026-10-28
+          evidence_strength: observed
+          extraction_method: read_copied_file_bytes_not_human_attestation
+      - item_id: ux
+        kind: requirement
+        source_ref: doc/features/ISSUE-206/ux-reference/README.md
+        source_sha256: sha256:77c8fa3bcc2d96e2c5e0ddf6534c40809a630888e1f4a84af00ceafd0ebcd2d1
+        provenance:
+          source_kind: candidate_material_copy
+          source_ref: doc/features/ISSUE-206/ux-reference/README.md
+          observed_at: 2026-10-28
+          evidence_strength: observed
+          extraction_method: read_copied_file_bytes_not_human_attestation
+      - item_id: host-and-public-premises
+        kind: invariant
+        source_ref: doc/features/ISSUE-206/source-inputs.md
+        source_sha256: sha256:e24e9c5b506f2dc19ac3519ed8ce614222a9f34e5f160f673dbae78f0f3c1b35
+        provenance:
+          source_kind: candidate_material_copy
+          source_ref: doc/features/ISSUE-206/source-inputs.md
+          observed_at: 2026-10-28
+          evidence_strength: observed
+          extraction_method: read_copied_file_bytes_not_human_attestation
+      - item_id: legacy-spec
+        kind: invariant
+        source_ref: evidence/baseline-1.9.9/spec/spec.md
+        source_sha256: sha256:a4850d055370a3785646f4fc3c103737edc2235bc48908665c234cb0d1965bef
+        provenance:
+          source_kind: reviewed_target_baseline_copy
+          source_ref: evidence/baseline-1.9.9/spec/spec.md
+          observed_at: 2026-10-28
+          evidence_strength: observed
+          extraction_method: read_preserved_baseline_bytes_not_current_approval
+      - item_id: legacy-plan
+        kind: invariant
+        source_ref: evidence/baseline-1.9.9/plan/plan.md
+        source_sha256: sha256:383c599fda4993e431226e8274383143c90add7aab069819c4320ab7d5105f9c
+        provenance:
+          source_kind: reviewed_target_baseline_copy
+          source_ref: evidence/baseline-1.9.9/plan/plan.md
+          observed_at: 2026-10-28
+          evidence_strength: observed
+          extraction_method: read_preserved_baseline_bytes_not_current_approval
+  requirement_traceability:
+    - item_id: product
+      blueprint_refs:
+        - view:development/node:share-feature
+        - view:runtime/flow:sharing-lifecycle
+    - item_id: system
+      blueprint_refs:
+        - view:development/node:share-feature
+        - view:runtime/flow:sharing-lifecycle
+    - item_id: ux
+      blueprint_refs:
+        - view:development/node:share-feature
+        - view:runtime/flow:sharing-lifecycle
+    - item_id: host-and-public-premises
+      blueprint_refs:
+        - view:development/node:share-feature
+        - view:runtime/flow:sharing-lifecycle
+    - item_id: legacy-spec
+      blueprint_refs:
+        - view:development/node:share-feature
+        - view:runtime/flow:sharing-lifecycle
+    - item_id: legacy-plan
+      blueprint_refs:
+        - view:development/node:share-feature
+        - view:runtime/flow:sharing-lifecycle
+app_lens:
+  module_boundaries:
+    disposition: answered_with_evidence
+    answer: WalletMain完整业务；Phone只四页映射，不改公共模块
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  capability_seams:
+    disposition: answered_with_evidence
+    answer: 可替换数据源承接六接口；模拟补充能力不冒称真实已有
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  feature_flags:
+    disposition: answered_with_evidence
+    answer: 默认关，只限制新建，不影响既有管理接受撤销
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  data_producers_consumers:
+    disposition: answered_with_evidence
+    answer: 车云真源经仓储进入卡包和页面；Asset仅草稿
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  lifecycle_triggers:
+    disposition: answered_with_evidence
+    answer: 进页、用户动作、账号切换、进程重建；无后台轮询
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  state_owners:
+    disposition: answered_with_evidence
+    answer: 车云分享关系；Asset原请求；页面当前投影
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  initialization:
+    disposition: answered_with_evidence
+    answer: 先初始化清遗留，再按稳定身份读取；失败受限
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  publication_subscription:
+    disposition: answered_with_evidence
+    answer: 无跨页订阅，返回页面重新取数；只更新匹配会话
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  ui_refresh:
+    disposition: answered_with_evidence
+    answer: 失败重取权威状态，查询失败与不存在分开
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+  process_recovery:
+    disposition: answered_with_evidence
+    answer: 完整原请求同标识；无稿/损坏先创建恢复，clear须覆盖迟到
+    evidence_refs:
+      - view:runtime/flow:sharing-lifecycle
+derived_results: []
+data_domains:
+  - data_domain_id: sharing-records
+    usage: 分享关系与当前页面状态
+    retention: 车云真源；本地仅当前页面
+    isolation: 当前账号
+    cleanup: 退出或换号清页面
+    security: 展示打码，凭据不落钱包
+  - data_domain_id: protected-draft
+    usage: 选择和原请求跨重启续办
+    retention: 建立成功清本车，明确拒绝清原请求，主动退出/换号清账号全部
+    isolation: accountKey+vehicleId
+    cleanup: 先不可恢复标记再删除；失败保待清理
+    security: 完整单个Asset SECRET；普通存储仅盐/标记
+  - data_domain_id: account-session
+    usage: 草稿隔离和晚到回调匹配
+    retention: accountKey模拟稳定，sessionId每登录更新
+    isolation: 账号与会话
+    cleanup: 换号旧页面失效
+    security: 不展示不日志不埋点
+candidate_publication_notes:
+  - N24ea6aeb renderer export renderBlueprintReviewMarkdown(blueprint,
+    artifactSha256, inputs={units:[],sourceGaps:[],closureExists:false})
+  - Standalone renderer can generate an honest no-CU projection; passing empty
+    units does not show CU handoff as complete
+  - No true questioning provider/report or human signature exists; candidate
+    not_started/not_evaluated do not assert native accepted enum/state
+  - reader_guide sections need current native source_digest; do not fabricate.
+    Parent may compute via pinned public formatter once actual canonical inputs
+    fixed.
+knowledge_scope_summary:
+  not_applicable:
+    - unit: OBS-07
+      reason: 运营指标由运营与车云统计，钱包不新增独立BI采集
+    - unit: COMPAT-02
+      reason: 沿用车云错误码，不新增删除或改义
+    - unit: DLV-02
+      reason: 钱包内部页面与调用，不新增对外开放页面或接口
+  native_limitation: Current Extension checker still demands per-entry judgments
+    for all active constraints; this compact summary is target presentation only
+    and does not assert that checker already supports domain aggregation.
+  source_snapshot_note: Knowledge source byte hashes refer to actual copied
+    doc/extensions/knowledge files. This is source material, not proof that
+    mechanisms were installed or knowledge activated/delivered to a consuming
+    execution body.
+decision_fingerprint: sha256:c49225a37a05a84a2398b40a5a1e165ae87541ea6523841e18c87d91c604a9c8

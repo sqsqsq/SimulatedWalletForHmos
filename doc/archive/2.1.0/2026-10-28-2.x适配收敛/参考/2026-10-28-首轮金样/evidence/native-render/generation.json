@@ -1,0 +1,12 @@
+{
+  "operation": "document rendering only",
+  "framework_source": "226fee6f25cca779a6ccef55ca19d25adc258f5f",
+  "blueprint_sha256": "sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20",
+  "reader_guide_status": "current",
+  "reader_guide_diagnostics": [],
+  "native_output_sha256": "05fb2a6047215f65eac05e983ee1ea0e66f2400e1743d008255895478685af8d",
+  "native_output": "evidence\\native-render\\component-blueprint.review.md",
+  "canonical_cu_accepted": false,
+  "independent_review_performed": false,
+  "harness_or_tests_run": false
+}

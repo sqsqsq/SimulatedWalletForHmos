@@ -1,0 +1,1861 @@
+# 未物化候选；关联真实候选字节，不表示原生接受、闭环或测试通过。
+schema_version: "1.0"
+feature: wallet-key-sharing
+modules:
+  - name: WalletMain
+    layer: 02-Feature
+    format: har
+    change_type: modify
+    package_path: 02-Feature/WalletMain
+  - name: Phone
+    layer: 01-Product
+    format: hap
+    change_type: modify
+    package_path: 01-Product/Phone
+module_dependencies:
+  WalletMain:
+    - AccountManager
+    - CommUI
+    - CommFunc
+  Phone:
+    - WalletMain
+data_models:
+  - name: AccountSession
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+    kind: interface
+    fields:
+      - name: accountKey
+        type: string
+        required: true
+      - name: sessionId
+        type: string
+        required: true
+  - name: ShareContact
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+    kind: interface
+    fields:
+      - name: name
+        type: string
+        required: true
+      - name: granteeId
+        type: string
+        required: false
+  - name: OwnerCarKey
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: vehicleId
+        type: string
+        required: true
+      - name: modelName
+        type: string
+        required: true
+      - name: modelCategory
+        type: string
+        required: false
+  - name: ReceivedCarKey
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: shareId
+        type: string
+        required: true
+      - name: vehicleId
+        type: string
+        required: true
+      - name: modelName
+        type: string
+        required: true
+      - name: modelCategory
+        type: string
+        required: false
+      - name: ownerNickname
+        type: string
+        required: true
+      - name: permissionLevel
+        type: string
+        required: true
+      - name: validUntil
+        type: string
+        required: true
+      - name: status
+        type: ShareState
+        required: true
+      - name: recallDeadline
+        type: string
+        required: false
+  - name: GrantPermissionView
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: granteeId
+        type: string
+        required: true
+      - name: shareable
+        type: boolean
+        required: true
+      - name: permissionLevels
+        type: string[]
+        required: true
+      - name: reason
+        type: string
+        required: false
+  - name: QuotaView
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: canShare
+        type: boolean
+        required: true
+      - name: remaining
+        type: number
+        required: true
+      - name: reason
+        type: string
+        required: false
+  - name: ShareItem
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: shareId
+        type: string
+        required: true
+      - name: status
+        type: ShareState
+        required: true
+      - name: permissionLevel
+        type: string
+        required: true
+      - name: validUntil
+        type: string
+        required: true
+      - name: granteeMasked
+        type: string
+        required: true
+  - name: ShareDraft
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: accountKey
+        type: string
+        required: true
+      - name: vehicleId
+        type: string
+        required: true
+      - name: granteeId
+        type: string
+        required: true
+      - name: granteeDisplay
+        type: string
+        required: true
+      - name: permissionLevel
+        type: string
+        required: true
+      - name: validUntil
+        type: string
+        required: true
+      - name: request
+        type: ShareCreateRequest
+        required: false
+      - name: idempotencyKey
+        type: string
+        required: false
+  - name: DraftReadResult
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: kind
+        type: "'absent' | 'found' | 'unavailable' | 'corrupted'"
+        required: true
+      - name: draft
+        type: ShareDraft
+        required: false
+      - name: reason
+        type: string
+        required: false
+  - name: CreationRecovery
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: kind
+        type: "'pending' | 'established' | 'clear' | 'unknown'"
+        required: true
+      - name: request
+        type: ShareCreateRequest
+        required: false
+      - name: idempotencyKey
+        type: string
+        required: false
+      - name: shareId
+        type: string
+        required: false
+      - name: status
+        type: ShareState
+        required: false
+      - name: reason
+        type: string
+        required: false
+  - name: ShareState
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: enum
+    fields:
+      - name: value
+        type: "'pending' | 'active' | 'voided' | 'expired' | 'revoking' | 'revoked'"
+        required: true
+  - name: ShareSetupActions
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+    kind: enum
+    fields: []
+    pattern_roles:
+      - pattern: page-interaction
+        role: 动作枚举
+        decision_id: pattern-page-interaction
+  - name: ShareSetupContext
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+    kind: class
+    fields:
+      - name: session
+        type: AccountSession
+        required: true
+      - name: vehicleId
+        type: string
+        required: true
+      - name: draftReadResult
+        type: DraftReadResult
+        required: true
+      - name: draft
+        type: ShareDraft
+        required: true
+      - name: quota
+        type: QuotaView
+        required: true
+      - name: permission
+        type: GrantPermissionView
+        required: true
+      - name: operateSequence
+        type: string[]
+        required: true
+    pattern_roles:
+      - pattern: page-interaction
+        role: 上下文
+        decision_id: pattern-page-interaction
+  - name: ShareCreateRequest
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+    kind: interface
+    fields:
+      - name: vehicleId
+        type: string
+        required: true
+      - name: granteeId
+        type: string
+        required: true
+      - name: permissionLevel
+        type: string
+        required: true
+      - name: validUntil
+        type: string
+        required: true
+      - name: idempotencyKey
+        type: string
+        required: true
+interfaces:
+  - module: WalletMain
+    layer: data
+    file: 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+    class: SimulatedIdentitySource
+    methods:
+      - name: currentSession
+        params: []
+        return: AccountSession | undefined
+        description: 未登录返回空；accountKey跨重开稳定，sessionId每次会话变化
+        async: false
+      - name: listContacts
+        params: []
+        return: 'Promise<ShareContact[] | { kind: "unavailable" }>'
+        description: 模拟联系人，缺granteeId不能查权限
+        async: true
+      - name: onSessionChanged
+        params:
+          - "listener: (session: AccountSession | undefined) => void"
+        return: void
+        description: 通知登录、主动退出、换号
+        async: false
+  - module: WalletMain
+    layer: data
+    file: 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+    class: KeySharingSource
+    methods:
+      - name: listOwnerKeys
+        params:
+          - "session: AccountSession"
+        return: Promise<OwnerCarKey[]>
+        description: 新增模拟本人钥匙来源
+        async: true
+      - name: listReceivedKeys
+        params:
+          - "session: AccountSession"
+        return: Promise<ReceivedCarKey[]>
+        description: 新增模拟接收方查询，非真实六接口
+        async: true
+      - name: recoverCreation
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+        return: Promise<CreationRecovery>
+        description: 模拟云恢复，真实六接口无此能力
+        async: true
+      - name: queryKeySharingQuota
+        params:
+          - "vehicleId: string"
+        return: "Promise<QuotaView & { shares: { shareId: string; status: ShareState }[]
+          }>"
+        description: 六接口：配额
+        async: true
+        must:
+          - rule: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            text: 六API只新增客户端调用，不删字段、不改类型；reason/graceHours可空；模拟补充能力非真实接口。
+            verify: review
+      - name: queryGranteePermission
+        params:
+          - "vehicleId: string"
+          - "granteeId: string"
+        return: Promise<GrantPermissionView>
+        description: 六接口：原样权限选项
+        async: true
+        must:
+          - rule: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            text: 六API只新增客户端调用，不删字段、不改类型；reason/graceHours可空；模拟补充能力非真实接口。
+            verify: review
+      - name: createKeySharing
+        params:
+          - "request: ShareCreateRequest"
+        return: 'Promise<{ shareId: string; status: "pending" }>'
+        description: 六接口：同幂等标识同分享；签发失败不留关系；失败抛带车云码的错误，通信异常不同类
+        async: true
+        must:
+          - rule: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            text: 六API只新增客户端调用，不删字段、不改类型；reason/graceHours可空；模拟补充能力非真实接口。
+            verify: review
+      - name: acceptKeySharing
+        params:
+          - "shareId: string"
+        return: 'Promise<{ credentialStatus: "issued" | "failed"; status: "active" |
+          "pending" }>'
+        description: 六接口：failed+pending保持待接受；其他异常重取
+        async: true
+        must:
+          - rule: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            text: 六API只新增客户端调用，不删字段、不改类型；reason/graceHours可空；模拟补充能力非真实接口。
+            verify: review
+      - name: revokeKeySharing
+        params:
+          - "shareId: string"
+        return: 'Promise<{ status: "revoked" | "revoking"; graceHours?: number }>'
+        description: 六接口：车辆立即拒绝；卡片最长48h收回
+        async: true
+        must:
+          - rule: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            text: 六API只新增客户端调用，不删字段、不改类型；reason/graceHours可空；模拟补充能力非真实接口。
+            verify: review
+      - name: queryKeySharingList
+        params:
+          - "vehicleId: string"
+        return: Promise<ShareItem[]>
+        description: 六接口：管理列表，来源granteeMasked
+        async: true
+        must:
+          - rule: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            text: 六API只新增客户端调用，不删字段、不改类型；reason/graceHours可空；模拟补充能力非真实接口。
+            verify: review
+  - module: WalletMain
+    layer: data
+    file: 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+    class: SimulatedKeySharingSource
+    methods:
+      - name: listOwnerKeys
+        params:
+          - "session: AccountSession"
+        return: Promise<OwnerCarKey[]>
+        description: 新增模拟本人钥匙来源
+        async: true
+      - name: listReceivedKeys
+        params:
+          - "session: AccountSession"
+        return: Promise<ReceivedCarKey[]>
+        description: 新增模拟接收方查询，非真实六接口
+        async: true
+      - name: recoverCreation
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+        return: Promise<CreationRecovery>
+        description: 模拟云恢复，真实六接口无此能力
+        async: true
+      - name: queryKeySharingQuota
+        params:
+          - "vehicleId: string"
+        return: "Promise<QuotaView & { shares: { shareId: string; status: ShareState }[]
+          }>"
+        description: 六接口：配额
+        async: true
+      - name: queryGranteePermission
+        params:
+          - "vehicleId: string"
+          - "granteeId: string"
+        return: Promise<GrantPermissionView>
+        description: 六接口：原样权限选项
+        async: true
+      - name: createKeySharing
+        params:
+          - "request: ShareCreateRequest"
+        return: 'Promise<{ shareId: string; status: "pending" }>'
+        description: 六接口：同幂等标识同分享；签发失败不留关系；失败抛带车云码的错误，通信异常不同类
+        async: true
+      - name: acceptKeySharing
+        params:
+          - "shareId: string"
+        return: 'Promise<{ credentialStatus: "issued" | "failed"; status: "active" |
+          "pending" }>'
+        description: 六接口：failed+pending保持待接受；其他异常重取
+        async: true
+      - name: revokeKeySharing
+        params:
+          - "shareId: string"
+        return: 'Promise<{ status: "revoked" | "revoking"; graceHours?: number }>'
+        description: 六接口：车辆立即拒绝；卡片最长48h收回
+        async: true
+      - name: queryKeySharingList
+        params:
+          - "vehicleId: string"
+        return: Promise<ShareItem[]>
+        description: 六接口：管理列表，来源granteeMasked
+        async: true
+  - module: WalletMain
+    layer: data
+    file: 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+    class: CarKeyRepository
+    methods:
+      - name: listOwnerKeys
+        params: []
+        return: Promise<OwnerCarKey[]>
+        description: 当前账号本人钥匙
+        async: true
+      - name: listReceivedKeys
+        params:
+          - "session: AccountSession"
+        return: Promise<ReceivedCarKey[]>
+        description: 卡包只列pending/active/revoking
+        async: true
+      - name: getReceivedKey
+        params:
+          - "shareId: string"
+        return: 'Promise<{ kind: "found"; key: ReceivedCarKey } | { kind: "absent" } | {
+          kind: "unavailable" }>'
+        description: 不存在与查询失败分开；接受/详情重取六态
+        async: true
+      - name: getOwnerKey
+        params:
+          - "vehicleId: string"
+        return: Promise<OwnerCarKey | undefined>
+        description: 当前账号本人钥匙，不存在返回空
+        async: true
+  - module: WalletMain
+    layer: data
+    file: 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+    class: KeySharingRepository
+    methods:
+      - name: queryQuota
+        params:
+          - "vehicleId: string"
+        return: Promise<QuotaView>
+        description: 每次进页一次
+        async: true
+        must:
+          - rule: DFX-01
+            decision_id: knowledge-DFX-01
+            text: 每次进页一次；无轮询、不持久缓存列表。
+            verify: review
+      - name: queryGranteePermission
+        params:
+          - "vehicleId: string"
+          - "granteeId: string"
+        return: Promise<GrantPermissionView>
+        description: 换对象作废旧档位；请求用可识别身份
+        async: true
+        must:
+          - rule: DFX-01
+            decision_id: knowledge-DFX-01
+            text: 换对象作废旧档位；请求用可识别身份；无轮询、不持久缓存列表。
+            verify: review
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: granteeId只向协议车云以可识别值传递；展示另生成打码值，短账号只昵称；观察出口排除身份。
+            verify: both
+      - name: recoverCreation
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+        return: Promise<CreationRecovery>
+        description: 同账号车辆串行；absent/corrupted恢复；晚到响应核会话
+        async: true
+        must:
+          - rule: ENV-02
+            decision_id: knowledge-ENV-02
+            text: 同账号同车辆串行，未知沿用原请求；核accountKey与sessionId，旧回调不重建草稿或更新新页面。
+            verify: both
+      - name: createSharing
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+          - "draft: ShareDraft"
+        return: 'Promise<{ kind: "established"; shareId: string; status: ShareState } |
+          { kind: "rejected"; code: string } | { kind: "unknown" } | { kind:
+          "in_progress" }>'
+        description: 原请求先保存后发送；未知只确认同一请求；不受本地满额拦截；每调用新attempt
+        async: true
+        must:
+          - rule: ENV-02
+            decision_id: knowledge-ENV-02
+            text: 同账号同车辆串行，未知沿用原请求；核accountKey与sessionId，旧回调不重建草稿或更新新页面。
+            verify: both
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: granteeId只向协议车云以可识别值传递；展示另生成打码值，短账号只昵称；观察出口排除身份。
+            verify: both
+          - rule: OBS-02
+            decision_id: knowledge-OBS-02
+            text: 失败经既有Logger定位实际失败步骤；安全说明不拼message或原始错误。
+            verify: both
+      - name: acceptSharing
+        params:
+          - "shareId: string"
+        return: 'Promise<{ credentialStatus: "issued" | "failed"; status: "active" |
+          "pending" } | { kind: "rejected"; code: string } | { kind: "unknown"
+          }>'
+        description: 结果结算一次；其他错误/未知由页面重取
+        async: true
+        must:
+          - rule: COMPAT-01
+            decision_id: knowledge-COMPAT-01
+            text: failed+pending仅表示凭据下发失败；其他失败/未知重取状态，不更改协议字段含义。
+            verify: review
+          - rule: OBS-02
+            decision_id: knowledge-OBS-02
+            text: 失败经既有Logger定位实际失败步骤；安全说明不拼message或原始错误。
+            verify: both
+      - name: revokeSharing
+        params:
+          - "shareId: string"
+        return: 'Promise<{ status: "revoked" | "revoking"; graceHours?: number } | {
+          kind: "rejected"; code: string } | { kind: "unknown" }>'
+        description: 只调用active；失败重拉而非恢复旧状态
+        async: true
+        must:
+          - rule: OBS-02
+            decision_id: knowledge-OBS-02
+            text: 失败经既有Logger定位实际失败步骤；安全说明不拼message或原始错误。
+            verify: both
+      - name: listSharings
+        params:
+          - "vehicleId: string"
+        return: Promise<ShareItem[]>
+        description: 每次进页拉取，不落盘
+        async: true
+        must:
+          - rule: DFX-01
+            decision_id: knowledge-DFX-01
+            text: 每次进页拉取，不落盘；无轮询、不持久缓存列表。
+            verify: review
+      - name: settleCreate
+        params:
+          - "attemptId: string"
+          - "result: string"
+          - "safeDescription: string"
+          - "externalCode?: string"
+        return: void
+        description: 同一attempt仅一次Chart结算，旧会话不更新页面草稿
+        async: false
+        must:
+          - rule: OBS-03
+            decision_id: knowledge-OBS-03
+            text: 一个attempt仅一次Chart结算，重复回调不再报；重试是新attempt，重取查询不计流程。
+            verify: both
+          - rule: OBS-05
+            decision_id: knowledge-OBS-05
+            text: 车型类别来自modelCategory缺失未知；外码只取并校验云失败码，说明来自安全映射；无账号/车牌/位置。
+            verify: both
+          - rule: OBS-06
+            decision_id: knowledge-OBS-06
+            text: 使用KeySharingChartCodes核对过冲突的三流程编码；候选号登记前不能当已定编号。
+            verify: both
+      - name: settleAccept
+        params:
+          - "attemptId: string"
+          - "result: string"
+          - "safeDescription: string"
+          - "externalCode?: string"
+        return: void
+        description: 同一attempt仅一次Chart结算，旧会话不更新页面草稿
+        async: false
+        must:
+          - rule: OBS-03
+            decision_id: knowledge-OBS-03
+            text: 一个attempt仅一次Chart结算，重复回调不再报；重试是新attempt，重取查询不计流程。
+            verify: both
+          - rule: OBS-05
+            decision_id: knowledge-OBS-05
+            text: 车型类别来自modelCategory缺失未知；外码只取并校验云失败码，说明来自安全映射；无账号/车牌/位置。
+            verify: both
+          - rule: OBS-06
+            decision_id: knowledge-OBS-06
+            text: 使用KeySharingChartCodes核对过冲突的三流程编码；候选号登记前不能当已定编号。
+            verify: both
+      - name: settleRevoke
+        params:
+          - "attemptId: string"
+          - "result: string"
+          - "safeDescription: string"
+          - "externalCode?: string"
+        return: void
+        description: 同一attempt仅一次Chart结算，旧会话不更新页面草稿
+        async: false
+        must:
+          - rule: OBS-03
+            decision_id: knowledge-OBS-03
+            text: 一个attempt仅一次Chart结算，重复回调不再报；重试是新attempt，重取查询不计流程。
+            verify: both
+          - rule: OBS-05
+            decision_id: knowledge-OBS-05
+            text: 车型类别来自modelCategory缺失未知；外码只取并校验云失败码，说明来自安全映射；无账号/车牌/位置。
+            verify: both
+          - rule: OBS-06
+            decision_id: knowledge-OBS-06
+            text: 使用KeySharingChartCodes核对过冲突的三流程编码；候选号登记前不能当已定编号。
+            verify: both
+  - module: WalletMain
+    layer: data
+    file: 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+    class: ShareDraftStore
+    methods:
+      - name: read
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+        return: Promise<DraftReadResult>
+        description: 四种读取结果，不把损坏/不可访问当absent
+        async: true
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只读写当前账号车辆的单个Asset SECRET；索引只留加盐摘要/初始化/待清理标记；不落明文副本。
+            verify: both
+          - rule: ENV-01
+            decision_id: knowledge-ENV-01
+            text: 四种读取结果，不把损坏/不可访问当absent
+            verify: both
+      - name: saveSelection
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+          - "draft: ShareDraft"
+        return: Promise<boolean>
+        description: 选择完成写，原请求未确认拒绝修改
+        async: true
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只读写当前账号车辆的单个Asset SECRET；索引只留加盐摘要/初始化/待清理标记；不落明文副本。
+            verify: both
+          - rule: ENV-01
+            decision_id: knowledge-ENV-01
+            text: 选择完成写，原请求未确认拒绝修改
+            verify: both
+      - name: saveRequest
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+          - "draft: ShareDraft"
+        return: Promise<boolean>
+        description: 一个SECRET完整原请求，超1024byte失败不截断
+        async: true
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只读写当前账号车辆的单个Asset SECRET；索引只留加盐摘要/初始化/待清理标记；不落明文副本。
+            verify: both
+          - rule: ENV-01
+            decision_id: knowledge-ENV-01
+            text: 一个SECRET完整原请求，超1024byte失败不截断
+            verify: both
+      - name: clearRequest
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+        return: Promise<boolean>
+        description: 明确拒绝后清request与idempotencyKey，成功才开放编辑
+        async: true
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只读写当前账号车辆的单个Asset SECRET；索引只留加盐摘要/初始化/待清理标记；不落明文副本。
+            verify: both
+          - rule: ENV-01
+            decision_id: knowledge-ENV-01
+            text: 明确拒绝后清request与idempotencyKey，成功才开放编辑
+            verify: both
+      - name: remove
+        params:
+          - "session: AccountSession"
+          - "vehicleId: string"
+        return: Promise<boolean>
+        description: 成功/clear清本车草稿；失败保受限
+        async: true
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只读写当前账号车辆的单个Asset SECRET；索引只留加盐摘要/初始化/待清理标记；不落明文副本。
+            verify: both
+          - rule: ENV-01
+            decision_id: knowledge-ENV-01
+            text: 成功/clear清本车草稿；失败保受限
+            verify: both
+      - name: closeAccount
+        params:
+          - "session: AccountSession"
+        return: Promise<boolean>
+        description: 先标不可恢复/换会话再删本账号全部；失败照样退出但禁分享
+        async: true
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只读写当前账号车辆的单个Asset SECRET；索引只留加盐摘要/初始化/待清理标记；不落明文副本。
+            verify: both
+          - rule: ENV-01
+            decision_id: knowledge-ENV-01
+            text: 先标不可恢复/换会话再删本账号全部；失败照样退出但禁分享
+            verify: both
+      - name: initialize
+        params: []
+        return: Promise<boolean>
+        description: 初始化标缺失先按功能标签清遗留，成功才开放
+        async: true
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只读写当前账号车辆的单个Asset SECRET；索引只留加盐摘要/初始化/待清理标记；不落明文副本。
+            verify: both
+          - rule: ENV-01
+            decision_id: knowledge-ENV-01
+            text: 初始化标缺失先按功能标签清遗留，成功才开放
+            verify: both
+  - module: WalletMain
+    layer: data
+    file: 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+    class: KeySharingErrorMapper
+    methods:
+      - name: describe
+        params:
+          - "code: string"
+        return: "{ description: string; category: string; externalCode?: string }"
+        description: 安全错误码映射，未知通用说明，外码校格式，不读取原message
+        async: false
+        must:
+          - rule: SEC-01
+            decision_id: knowledge-SEC-01
+            text: 只从已知错误码生成安全说明；未知通用分类；不读取任意message，外码先校格式。
+            verify: both
+  - module: WalletMain
+    layer: presentation
+    file: 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+    class: ShareSetupPageInteraction
+    methods:
+      - name: doOperator
+        params:
+          - "action: ShareSetupActions"
+        return: void
+        description: page-interaction统一动作入口，等待用户处停机并由动作恢复
+        async: false
+    pattern_roles:
+      - pattern: page-interaction
+        role: 交互封装
+        decision_id: pattern-page-interaction
+  - module: WalletMain
+    layer: presentation
+    file: 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+    class: ShareSetupPageOperates
+    methods: []
+    pattern_roles:
+      - pattern: page-interaction
+        role: 动作表
+        decision_id: pattern-page-interaction
+components:
+  - name: CarKeyCardSection
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+    kind: component
+    state: []
+    props: []
+    events: []
+    children: []
+    must:
+      - rule: UX-01
+        decision_id: knowledge-UX-01
+        text: 方向参数用start/end，文本TextAlign.Start/End，RTL镜像保持语义。
+        verify: both
+      - rule: RES-01
+        decision_id: knowledge-RES-01
+        text: 图标依次选系统符号/已归档资源/必要新引入；参考图不进运行资源。
+        verify: review
+      - rule: RES-02
+        decision_id: knowledge-RES-02
+        text: 一致文案优先复用；新增字符串提供base与en_US并同步翻译清单。
+        verify: review
+  - name: CardPackPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+    kind: page
+    state: []
+    props: []
+    events: []
+    children: []
+  - name: ShareSetupPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+    kind: page
+    state: []
+    props: []
+    events: []
+    children: []
+    must:
+      - rule: UX-01
+        decision_id: knowledge-UX-01
+        text: 方向参数用start/end，文本TextAlign.Start/End，RTL镜像保持语义。
+        verify: both
+      - rule: RES-01
+        decision_id: knowledge-RES-01
+        text: 图标依次选系统符号/已归档资源/必要新引入；参考图不进运行资源。
+        verify: review
+      - rule: RES-02
+        decision_id: knowledge-RES-02
+        text: 一致文案优先复用；新增字符串提供base与en_US并同步翻译清单。
+        verify: review
+      - rule: DFX-02
+        decision_id: knowledge-DFX-02
+        text: 交付新增base/en_US字符串条数与UTF-8体积实际增量；不新增图片与SDK。
+        verify: review
+    pattern_roles:
+      - pattern: page-interaction
+        role: 页面组件
+        decision_id: pattern-page-interaction
+  - name: ShareManagePage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+    kind: page
+    state: []
+    props: []
+    events: []
+    children: []
+    must:
+      - rule: UX-01
+        decision_id: knowledge-UX-01
+        text: 方向参数用start/end，文本TextAlign.Start/End，RTL镜像保持语义。
+        verify: both
+      - rule: RES-01
+        decision_id: knowledge-RES-01
+        text: 图标依次选系统符号/已归档资源/必要新引入；参考图不进运行资源。
+        verify: review
+      - rule: RES-02
+        decision_id: knowledge-RES-02
+        text: 一致文案优先复用；新增字符串提供base与en_US并同步翻译清单。
+        verify: review
+  - name: ShareAcceptPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+    kind: page
+    state: []
+    props: []
+    events: []
+    children: []
+    must:
+      - rule: UX-01
+        decision_id: knowledge-UX-01
+        text: 方向参数用start/end，文本TextAlign.Start/End，RTL镜像保持语义。
+        verify: both
+      - rule: RES-01
+        decision_id: knowledge-RES-01
+        text: 图标依次选系统符号/已归档资源/必要新引入；参考图不进运行资源。
+        verify: review
+      - rule: RES-02
+        decision_id: knowledge-RES-02
+        text: 一致文案优先复用；新增字符串提供base与en_US并同步翻译清单。
+        verify: review
+  - name: KeyCardDetailPage
+    module: WalletMain
+    file: 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+    kind: page
+    state: []
+    props: []
+    events: []
+    children: []
+    must:
+      - rule: UX-01
+        decision_id: knowledge-UX-01
+        text: 方向参数用start/end，文本TextAlign.Start/End，RTL镜像保持语义。
+        verify: both
+      - rule: RES-01
+        decision_id: knowledge-RES-01
+        text: 图标依次选系统符号/已归档资源/必要新引入；参考图不进运行资源。
+        verify: review
+      - rule: RES-02
+        decision_id: knowledge-RES-02
+        text: 一致文案优先复用；新增字符串提供base与en_US并同步翻译清单。
+        verify: review
+state_management:
+  - name: creation-and-draft
+    owner: KeySharingRepository
+    storage: Asset SECRET per accountKey+vehicleId; preferences
+      salt/initialized/pendingCleanup digests only
+    lifecycle: 选择完成保存；发出前完整原请求；成功清本车；拒绝清请求；主动退出/换号清本账号；冷启动未登录不清
+    ordered_steps:
+      - 读取当前会话及草稿
+      - absent/corrupted向模拟云recoverCreation
+      - pending安全保存原请求后只确认；established展示原分享；clear安全清理后开放；unknown受限
+      - 同账号车辆串行保存完整request/idempotencyKey
+      - 保存成功才创建或确认
+      - 按结果结算attempt，核会话后更新页面与清理
+    recovery: unavailable不当absent；创建超时冻结请求；清理失败保持待清理；旧会话回调不重建草稿
+  - name: sharing-lists
+    owner: CarKeyRepository
+    storage: page memory only
+    lifecycle: 每次进页/回卡包按当前账号重取，换号清旧页面
+    recovery: 断网不展示陈旧列表；接受/撤销未知先重取，不存在与不可查询分开
+navigation:
+  config_files:
+    - 01-Product/Phone/src/main/ets/pages/index.ets
+resource_keys:
+  WalletMain:
+    string: []
+prd_to_code_traceability: []
+files:
+  - 02-Feature/WalletMain/src/main/ets/data/model/KeySharing.ets
+  - 02-Feature/WalletMain/src/main/ets/data/model/WalletIdentity.ets
+  - 02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+  - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+  - 02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+  - 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/CardPackPage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/MineTabPage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets
+  - 02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets
+  - 02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+  - 02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+  - 02-Feature/WalletMain/src/main/ets/index.ets
+  - 02-Feature/WalletMain/src/main/resources/base/element/string.json
+  - 02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+  - doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+  - 01-Product/Phone/src/main/ets/pages/index.ets
+  - 02-Feature/WalletMain/src/test/WalletKeySharing.test.ets
+change_unit:
+  change_unit_ref:
+    artifact: change-unit@1
+    component_id: wallet-main
+    blueprint_id: ISSUE-206
+    change_unit_id: wallet-key-sharing
+    revision: 1
+    artifact_sha256: sha256:1fd95ddce40a8d716a9a2284ed65423d3f641822941de7509866037a316b3416
+  predicate_mappings:
+    - predicate_id: accept-AC-1
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_1
+    - predicate_id: accept-AC-2
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets#KeyCardDetailPage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_2
+    - predicate_id: accept-AC-4
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_4
+    - predicate_id: accept-AC-5
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_5
+    - predicate_id: accept-AC-6
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_6
+    - predicate_id: accept-AC-7
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_7
+    - predicate_id: accept-AC-9
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_9
+    - predicate_id: accept-AC-10
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_10
+    - predicate_id: accept-AC-11
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_11
+    - predicate_id: accept-AC-12
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listOwnerKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_12
+    - predicate_id: accept-AC-13
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_13
+    - predicate_id: accept-AC-14
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_14
+    - predicate_id: accept-AC-15
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_15
+    - predicate_id: accept-AC-16
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_16
+    - predicate_id: accept-AC-17
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_17
+    - predicate_id: accept-AC-18
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets#KeyCardDetailPage
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_18
+    - predicate_id: accept-AC-19
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_19
+    - predicate_id: accept-AC-20
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_20
+    - predicate_id: accept-AC-21
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_21
+    - predicate_id: accept-AC-29
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listOwnerKeys
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets#KeyCardDetailPage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_29
+    - predicate_id: accept-AC-30
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_30
+    - predicate_id: accept-AC-31
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_31
+    - predicate_id: accept-AC-32
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_32
+    - predicate_id: accept-AC-33
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_33
+    - predicate_id: accept-AC-34
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_34
+    - predicate_id: accept-AC-35
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_35
+    - predicate_id: accept-AC-36
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_36
+    - predicate_id: accept-AC-37
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_37
+    - predicate_id: accept-AC-38
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_38
+    - predicate_id: accept-AC-39
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_39
+    - predicate_id: accept-AC-40
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_40
+    - predicate_id: accept-AC-41
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_41
+    - predicate_id: accept-AC-42
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_42
+    - predicate_id: accept-AC-43
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_43
+    - predicate_id: accept-AC-3
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_3
+    - predicate_id: accept-AC-8
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_8
+    - predicate_id: accept-AC-22
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listOwnerKeys
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_22
+    - predicate_id: accept-AC-23
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_23
+    - predicate_id: accept-AC-24
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_24
+    - predicate_id: accept-AC-25
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_25
+    - predicate_id: accept-AC-26
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_26
+    - predicate_id: accept-AC-27
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_27
+    - predicate_id: accept-AC-28
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_28
+    - predicate_id: accept-AC-G1
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listOwnerKeys
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_G1
+    - predicate_id: accept-AC-G2
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_G2
+    - predicate_id: accept-AC-G3
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#accept_AC_G3
+  provide_mappings:
+    - provide_id: F1
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listOwnerKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F1
+    - provide_id: F2
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+        - planned:02-Feature/WalletMain/src/main/ets/shared/constant/ShareConstants.ets
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F2
+    - provide_id: F3
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F3
+    - provide_id: F4
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F4
+    - provide_id: F5
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F5
+    - provide_id: F6
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F6
+    - provide_id: F7
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets#KeyCardDetailPage
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F7
+    - provide_id: F8
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedIdentitySource.ets#currentSession
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F8
+    - provide_id: F9
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#listReceivedKeys
+      test_refs:
+        - planned:02-Feature/WalletMain/src/test/WalletKeySharing.test.ets#F9
+  design_ref_mappings:
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: share-feature
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/SimulatedKeySharingSource.ets
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: draft-store
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#read
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: share-setup
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets#ShareSetupPage
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: telemetry
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleCreate
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleAccept
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleRevoke
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets#describe
+        - planned:02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: phone-routing
+          view_id: development
+      implementation_refs:
+        - planned:01-Product/Phone/src/main/ets/pages/index.ets
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: setup-operates
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets#ShareSetupPageOperates
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: setup-actions
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets#ShareSetupActions
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: setup-interaction
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: setup-context
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets#ShareSetupContext
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: node
+          id: setup-page
+          view_id: development
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets#ShareSetupPage
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: contract
+          id: queryKeySharingQuota
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets#queryKeySharingQuota
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#queryQuota
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: contract
+          id: queryGranteePermission
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets#queryGranteePermission
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#queryGranteePermission
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: contract
+          id: createKeySharing
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets#createKeySharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: contract
+          id: acceptKeySharing
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets#acceptKeySharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#getReceivedKey
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: contract
+          id: revokeKeySharing
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets#revokeKeySharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#listSharings
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: contract
+          id: queryKeySharingList
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets#queryKeySharingList
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#listSharings
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: contract
+          id: creation-recovery
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets#recoverCreation
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#recoverCreation
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveRequest
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-SEC-01
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets#describe
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#queryGranteePermission
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-ENV-01
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#initialize
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#read
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#recoverCreation
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-ENV-02
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#recoverCreation
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#closeAccount
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-DFX-01
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#queryQuota
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#queryGranteePermission
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#listSharings
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets#saveSelection
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-OBS-02
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#createSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#revokeSharing
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-OBS-03
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleCreate
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleAccept
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleRevoke
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-OBS-05
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingErrorMapper.ets#describe
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleCreate
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleAccept
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleRevoke
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-OBS-06
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/shared/constant/KeySharingChartCodes.ets
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleCreate
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleAccept
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#settleRevoke
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-UX-01
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets#ShareSetupPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets#ShareAcceptPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets#KeyCardDetailPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-RES-01
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets#ShareSetupPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareManagePage.ets#ShareManagePage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareAcceptPage.ets#ShareAcceptPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/KeyCardDetailPage.ets#KeyCardDetailPage
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/components/CarKeyCardSection.ets#CarKeyCardSection
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-RES-02
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/resources/base/element/string.json
+        - planned:02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-DFX-02
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/resources/base/element/string.json
+        - planned:02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+        - planned:doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-DLV-01
+      implementation_refs:
+        - planned:doc/features/ISSUE-206/wallet-key-sharing/plan/translation-list.md
+        - planned:02-Feature/WalletMain/src/main/resources/en_US/element/string.json
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/plan/plan.md
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: knowledge-COMPAT-01
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/data/source/KeySharingSource.ets
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets#acceptSharing
+        - planned:02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets#getReceivedKey
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+    - design_ref:
+        artifact: component-blueprint@1
+        component_id: wallet-main
+        blueprint_id: ISSUE-206
+        revision: 1
+        source_fingerprint: sha256:ccddffa3377f1991fa9320e80227c48a058dcac4dfa5d4a53f62434f49040937
+        artifact_sha256: sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20
+        target:
+          kind: decision
+          id: pattern-page-interaction
+      implementation_refs:
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets#ShareSetupActions
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageOperates.ets#ShareSetupPageOperates
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets#doOperator
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupContext.ets#ShareSetupContext
+        - planned:02-Feature/WalletMain/src/main/ets/presentation/pages/ShareSetupPage.ets#ShareSetupPage
+      verification_refs:
+        - doc/features/ISSUE-206/wallet-key-sharing/acceptance.yaml
+source: candidate.change-unit:sha256:1fd95ddce40a8d716a9a2284ed65423d3f641822941de7509866037a316b3416:sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20

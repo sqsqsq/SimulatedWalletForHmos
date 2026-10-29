@@ -1,0 +1,926 @@
+# 未物化候选；关联真实候选字节，不表示原生接受、闭环或测试通过。
+schema_version: "2.1"
+feature: wallet-key-sharing
+use_cases:
+  - id: share_setup_and_create
+    description: 保留完整场景和真实业务期望；分支可包含多个输入/时点，未编造统一可执行调用序列。具体入口仅在ui_bindings列出其适用动作。
+    coordinator: ShareSetupPageInteraction
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/presentation/interaction/ShareSetupPageInteraction.ets
+    ui_bindings:
+      - ui: ShareSetupPage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 确认对象、权限、有效期或发出/恢复时，通过设置页动作入口推进
+            calls: ShareSetupPageInteraction.doOperator
+    data_boundaries:
+      - name: keySharingSource
+        type: KeySharingSource
+        kind: cloud
+        methods:
+          - name: listOwnerKeys
+            params: &a1
+              - "session: AccountSession"
+            returns: Promise<OwnerCarKey[]>
+            async: true
+          - name: listReceivedKeys
+            params: &a2
+              - "session: AccountSession"
+            returns: Promise<ReceivedCarKey[]>
+            async: true
+          - name: recoverCreation
+            params: &a3
+              - "session: AccountSession"
+              - "vehicleId: string"
+            returns: Promise<CreationRecovery>
+            async: true
+          - name: queryKeySharingQuota
+            params: &a4
+              - "vehicleId: string"
+            returns: "Promise<QuotaView & { shares: { shareId: string; status: ShareState
+              }[] }>"
+            async: true
+          - name: queryGranteePermission
+            params: &a5
+              - "vehicleId: string"
+              - "granteeId: string"
+            returns: Promise<GrantPermissionView>
+            async: true
+          - name: createKeySharing
+            params: &a6
+              - "request: ShareCreateRequest"
+            returns: 'Promise<{ shareId: string; status: "pending" }>'
+            async: true
+          - name: acceptKeySharing
+            params: &a7
+              - "shareId: string"
+            returns: 'Promise<{ credentialStatus: "issued" | "failed"; status: "active" |
+              "pending" }>'
+            async: true
+          - name: revokeKeySharing
+            params: &a8
+              - "shareId: string"
+            returns: 'Promise<{ status: "revoked" | "revoking"; graceHours?: number }>'
+            async: true
+          - name: queryKeySharingList
+            params: &a9
+              - "vehicleId: string"
+            returns: Promise<ShareItem[]>
+            async: true
+      - name: shareDraftStore
+        type: ShareDraftStore
+        kind: storage
+        methods:
+          - name: read
+            params: &a13
+              - "session: AccountSession"
+              - "vehicleId: string"
+            returns: Promise<DraftReadResult>
+            async: true
+          - name: saveSelection
+            params: &a14
+              - "session: AccountSession"
+              - "vehicleId: string"
+              - "draft: ShareDraft"
+            returns: Promise<boolean>
+            async: true
+          - name: saveRequest
+            params: &a15
+              - "session: AccountSession"
+              - "vehicleId: string"
+              - "draft: ShareDraft"
+            returns: Promise<boolean>
+            async: true
+          - name: clearRequest
+            params: &a16
+              - "session: AccountSession"
+              - "vehicleId: string"
+            returns: Promise<boolean>
+            async: true
+          - name: remove
+            params: &a17
+              - "session: AccountSession"
+              - "vehicleId: string"
+            returns: Promise<boolean>
+            async: true
+          - name: closeAccount
+            params: &a18
+              - "session: AccountSession"
+            returns: Promise<boolean>
+            async: true
+          - name: initialize
+            params: &a19 []
+            returns: Promise<boolean>
+            async: true
+      - name: simulatedIdentitySource
+        type: SimulatedIdentitySource
+        kind: system
+        methods:
+          - name: currentSession
+            params: &a10 []
+            returns: AccountSession | undefined
+            async: false
+          - name: listContacts
+            params: &a11 []
+            returns: 'Promise<ShareContact[] | { kind: "unavailable" }>'
+            async: true
+          - name: onSessionChanged
+            params: &a12
+              - "listener: (session: AccountSession | undefined) => void"
+            returns: void
+            async: false
+    state_model:
+      phases:
+        - Loading
+        - Editing
+        - Saving
+        - Confirming
+        - Established
+        - Restricted
+      fields:
+        - name: result
+          type: string
+    branches:
+      - id: ac_1
+        scenario: 卡包车钥匙卡片点分享，对象、权限、有效期三项都选齐前不能发出；选齐后发出，对方收到待接受的钥匙（承接：AC-K1）。
+        expected_state:
+          business_outcome: 卡包车钥匙卡片点分享，对象、权限、有效期三项都选齐前不能发出；选齐后发出，对方收到待接受的钥匙（承接：AC-K1）。
+        linked_acceptance:
+          - AC-1
+      - id: ac_4
+        scenario: 生效加待接受合计到上限后不能再发起，能看到原因（承接：AC-K4）。
+        expected_state:
+          business_outcome: 生效加待接受合计到上限后不能再发起，能看到原因（承接：AC-K4）。
+        linked_acceptance:
+          - AC-4
+      - id: ac_6
+        scenario: 发起途中退出页面、断网或关掉应用再打开，同一账号同一辆车回来接着上次的选择发出，沿用同一幂等标识，不发出第二条（承接：AC-K6，D6）。
+        expected_state:
+          business_outcome: 发起途中退出页面、断网或关掉应用再打开，同一账号同一辆车回来接着上次的选择发出，沿用同一幂等标识，不发出第二条（承接：AC-K6，D6）。
+        linked_acceptance:
+          - AC-6
+      - id: ac_11
+        scenario: 选家庭成员时全功能可选；换成其他联系人后全功能不可选，已选的全功能请车主重选；换回家庭成员又可选（承接：AC-K11）。
+        expected_state:
+          business_outcome: 选家庭成员时全功能可选；换成其他联系人后全功能不可选，已选的全功能请车主重选；换回家庭成员又可选（承接：AC-K11）。
+        linked_acceptance:
+          - AC-11
+      - id: ac_21
+        scenario: 草稿没发出过或上次明确拒绝时配额已满，回到设置页按满额处理，不因草稿绕过配额。
+        expected_state:
+          business_outcome: 草稿没发出过或上次明确拒绝时配额已满，回到设置页按满额处理，不因草稿绕过配额。
+        linked_acceptance:
+          - AC-21
+      - id: ac_30
+        scenario: 原有 4 条分享，发第 5
+          条时没得到回应而车云其实已建立：回来时配额显示已满，仍用同一幂等标识确认到这一条并清草稿，不出现第二条；若名额实际被另一次发起占满，车云返回满额，按满额提示，并在原请求与幂等标识同时持久清理成功后开放编辑。
+        expected_state:
+          business_outcome: 原有 4 条分享，发第 5
+            条时没得到回应而车云其实已建立：回来时配额显示已满，仍用同一幂等标识确认到这一条并清草稿，不出现第二条；若名额实际被另一次发起占满，车云返回满额，按满额提示，并在原请求与幂等标识同时持久清理成功后开放编辑。
+        linked_acceptance:
+          - AC-30
+      - id: ac_32
+        scenario: 发给对象 A 没得到回应后回到设置页：对象、权限、有效期按那次请求只读展示，点发出确认的是给 A 的那一条；页面不能先改成对象 B
+          再借这个幂等标识发出，确认前也不显示「已分享给 B」。
+        expected_state:
+          business_outcome: 发给对象 A 没得到回应后回到设置页：对象、权限、有效期按那次请求只读展示，点发出确认的是给 A
+            的那一条；页面不能先改成对象 B 再借这个幂等标识发出，确认前也不显示「已分享给 B」。
+        linked_acceptance:
+          - AC-32
+      - id: ac_33
+        scenario: 同一账号先在甲车设置页留下草稿，再从乙车进入：乙车设置页不回填甲车的草稿，回到甲车时草稿仍在。
+        expected_state:
+          business_outcome: 同一账号先在甲车设置页留下草稿，再从乙车进入：乙车设置页不回填甲车的草稿，回到甲车时草稿仍在。
+        linked_acceptance:
+          - AC-33
+      - id: ac_34
+        scenario: 分别在四个时点关掉应用后回来：保存选择后、写入原请求后发送前、发送后回包前、建立成功后清除草稿前。每一次都能确定要恢复的请求、允许的操作和清除责任：保存选择后恢复选择；写入原请求之后、回包之前都用同一请求确认；建立之后只能确认同一请求或重试清理。
+        expected_state:
+          business_outcome: 分别在四个时点关掉应用后回来：保存选择后、写入原请求后发送前、发送后回包前、建立成功后清除草稿前。每一次都能确定要恢复的请求、允许的操作和清除责任：保存选择后恢复选择；写入原请求之后、回包之前都用同一请求确认；建立之后只能确认同一请求或重试清理。
+        linked_acceptance:
+          - AC-34
+      - id: ac_35
+        scenario: 原请求写入失败时不发送；草稿读取失败或损坏时不当成没有草稿、不自动换标识重发；草稿超过存储上限时提示保存失败，不截断、不改存明文。原请求已发出、回包未到时草稿损坏：先做创建恢复，不提供删除后重建；原请求稍后建成时管理列表只有这一条。
+        expected_state:
+          business_outcome: 原请求写入失败时不发送；草稿读取失败或损坏时不当成没有草稿、不自动换标识重发；草稿超过存储上限时提示保存失败，不截断、不改存明文。原请求已发出、回包未到时草稿损坏：先做创建恢复，不提供删除后重建；原请求稍后建成时管理列表只有这一条。
+        linked_acceptance:
+          - AC-35
+      - id: ac_36
+        scenario: 同账号同车辆从两个入口同时发出，只形成一份原请求；同账号两辆车各自发出互不阻塞。
+        expected_state:
+          business_outcome: 同账号同车辆从两个入口同时发出，只形成一份原请求；同账号两辆车各自发出互不阻塞。
+        linked_acceptance:
+          - AC-36
+      - id: ac_38
+        scenario: 取消选择联系人、联系人没有有效账号时不发权限查询；换对象后上一个对象的权限选择作废；权限选项为空或无法解释时提示重新获取。
+        expected_state:
+          business_outcome: 取消选择联系人、联系人没有有效账号时不发权限查询；换对象后上一个对象的权限选择作废；权限选项为空或无法解释时提示重新获取。
+        linked_acceptance:
+          - AC-38
+      - id: ac_41
+        scenario: 原创建已发出 → 草稿损坏 → 退出登录并清掉本地 → 同一账号再登录进这辆车的设置页：创建恢复返回 pending
+          时不能新建、找回原请求后只确认那一条；返回 established 时显示原来那条分享及当前状态；返回 clear
+          时允许新建，旧请求之后晚到也不出现第二条；查询失败时这辆车保持发起受限、管理页可看可重查。
+        expected_state:
+          business_outcome: 原创建已发出 → 草稿损坏 → 退出登录并清掉本地 → 同一账号再登录进这辆车的设置页：创建恢复返回 pending
+            时不能新建、找回原请求后只确认那一条；返回 established 时显示原来那条分享及当前状态；返回 clear
+            时允许新建，旧请求之后晚到也不出现第二条；查询失败时这辆车保持发起受限、管理页可看可重查。
+        linked_acceptance:
+          - AC-41
+      - id: ac_42
+        scenario: 创建恢复不影响已有能力：完整草稿仍用自己的幂等标识续办，不做创建恢复；取消或换对象照常作废旧档位；另一辆车、另一个账号各自独立恢复，互不阻塞、互不串数据。
+        expected_state:
+          business_outcome: 创建恢复不影响已有能力：完整草稿仍用自己的幂等标识续办，不做创建恢复；取消或换对象照常作废旧档位；另一辆车、另一个账号各自独立恢复，互不阻塞、互不串数据。
+        linked_acceptance:
+          - AC-42
+      - id: ac_43
+        scenario: 这辆车本地从没有过草稿（首次使用），或上次成功发出后草稿已清，进设置页时先做创建恢复：clear 才开放空表单；pending
+          只确认原请求；unknown 或查询失败时这辆车暂停新发起，管理页照常可看、可重查。
+        expected_state:
+          business_outcome: 这辆车本地从没有过草稿（首次使用），或上次成功发出后草稿已清，进设置页时先做创建恢复：clear
+            才开放空表单；pending 只确认原请求；unknown 或查询失败时这辆车暂停新发起，管理页照常可看、可重查。
+        linked_acceptance:
+          - AC-43
+      - id: bd_1
+        scenario: 配额已满
+        setup:
+          condition: 新建时生效加待接受合计到上限（草稿里上次发出结果未知的不在此列，见 E11a）
+        expected_state:
+          business_outcome: 不发新建请求；用户看到：发出置灰，显示配额接口给的原因
+        linked_acceptance:
+          - BD-1
+      - id: bd_2
+        scenario: 对象不可分享
+        setup:
+          condition: 对方没开通车钥匙等
+        expected_state:
+          business_outcome: 不呈现档位；用户看到：显示原因，请车主换一个人
+        linked_acceptance:
+          - BD-2
+      - id: bd_3
+        scenario: 换对象后旧档位不可用
+        setup:
+          condition: 新对象不支持已选档位
+        expected_state:
+          business_outcome: 作废旧档位，不静默降级；用户看到：请车主重选
+        linked_acceptance:
+          - BD-3
+      - id: bd_3a
+        scenario: 档位无法解释
+        setup:
+          condition: "`permissionLevels` 为空或返回的选项无法作为可读权限显示"
+        expected_state:
+          business_outcome: 不猜更大权限，不沿用上一对象的选项；用户看到：提示重新获取可用权限
+        linked_acceptance:
+          - BD-3a
+      - id: bd_3b
+        scenario: 联系人选择不成
+        setup:
+          condition: 取消选择、模拟联系人不可用，或选中的联系人没有有效账号
+        expected_state:
+          business_outcome: 保留当前对象，不发权限查询；用户看到：说明原因，可改为手输账号
+        linked_acceptance:
+          - BD-3b
+      - id: bd_4
+        scenario: 车厂云签发失败
+        setup:
+          condition: 创建时签发失败
+        expected_state:
+          business_outcome: 车云回滚，不留关系；同时持久清掉这次原请求与幂等标识，成功后开放编辑；用户看到：发出失败，可再发
+        linked_acceptance:
+          - BD-4
+      - id: bd_5
+        scenario: 重复触发发出
+        setup:
+          condition: 连点或重试
+        expected_state:
+          business_outcome: 请求中禁用按钮；幂等标识让同一请求返回同一条分享；用户看到：不出现第二条
+        linked_acceptance:
+          - BD-5
+      - id: bd_5a
+        scenario: 两个入口同时发出
+        setup:
+          condition: 同账号同车辆从两个入口几乎同时发出或确认
+        expected_state:
+          business_outcome: 同账号同车辆的「读原请求—生成并保存新请求—发起或确认」串行执行；已有请求时复用它的确认或提示进行中；不同车辆互不阻塞；用户看到：这辆车已有一份请求在处理
+        linked_acceptance:
+          - BD-5a
+      - id: bd_11
+        scenario: 发起被打断
+        setup:
+          condition: 退出页面、断网或应用关闭
+        expected_state:
+          business_outcome: 草稿保留；没发出过或上次明确拒绝的，回来时配额已满按满额处理；上次发出结果未知的按 E11a 先确认；用户看到：回来接着办
+        linked_acceptance:
+          - BD-11
+      - id: bd_11a
+        scenario: 创建结果未知
+        setup:
+          condition: 发出后超时、断网或应用被关，没得到回应
+        expected_state:
+          business_outcome: 草稿留着原请求与幂等标识，对象、权限、有效期冻结；回来或再点时用同一请求确认，不受端侧满额前置拦截；用户看到：结果待确认；确认到已建立就清草稿，车云明确拒绝就同时持久清掉原请求与幂等标识，成功后恢复可编辑并显示原因
+        linked_acceptance:
+          - BD-11a
+      - id: bd_13a
+        scenario: 换一辆车进设置页
+        setup:
+          condition: 同一账号从另一辆车进入
+        expected_state:
+          business_outcome: 只读这辆车的草稿，另一辆车的草稿原样保留、不回填；用户看到：这辆车没有草稿先做创建恢复，clear后才从头选
+        linked_acceptance:
+          - BD-13a
+      - id: bd_17
+        scenario: 草稿保存失败
+        setup:
+          condition: Asset 写入失败、不可访问，或草稿序列化后超过 1024 字节（本工程设定，无上游依据：按 Asset SECRET 上限设的
+            Case 前提）
+        expected_state:
+          business_outcome: 不截断、不分片、不改存明文；发出前那次写入失败时不发送；用户看到：草稿没保存成功，请重试
+        linked_acceptance:
+          - BD-17
+      - id: bd_18
+        scenario: 草稿读取失败
+        setup:
+          condition: Asset 不可访问或服务失败
+        expected_state:
+          business_outcome: 不当成没有草稿，不自动换标识重发；用户看到：草稿暂时读不出，可重试
+        linked_acceptance:
+          - BD-18
+      - id: bd_19
+        scenario: 草稿损坏
+        setup:
+          condition: 内容无法解析，或绑定的账号车辆与当前不一致
+        expected_state:
+          business_outcome: 原请求与幂等标识可能已丢，管理列表和人工删除都证明不了原请求没有执行或不会晚到；损坏原件隔离，先做创建恢复（§5.3）：pending
+            找回原请求只确认同一请求，established 显示原分享，clear 清掉损坏草稿后开放新建，unknown
+            或查询失败这辆车在当前账号下保持受限、管理页照常可看；不提供删除后重建，退出登录、换号或清数据后再登录仍按创建恢复处理；用户看到：这份草稿无法读取，正在确认上次发出
+            / 这辆车暂时不能新发起
+        linked_acceptance:
+          - BD-19
+      - id: bd_20
+        scenario: 建立成功后清理失败
+        setup:
+          condition: 删除草稿失败
+        expected_state:
+          business_outcome: 显示分享已建立并标记待清理；不把旧草稿当新请求；下次只能确认同一请求或重试清理；用户看到：分享已发出，草稿待清理
+        linked_acceptance:
+          - BD-20
+      - id: bd_21
+        scenario: 创建恢复确认不了
+        setup:
+          condition: 本地没有草稿或草稿损坏，创建恢复查询失败、数据不完整、对应不上当前账号车辆，或多条可能相关
+        expected_state:
+          business_outcome: 按 unknown：这辆车不开放新建，管理页只读、可重查；不按管理列表为空推断没有旧请求；用户看到：暂时无法确认上次的分享，请稍后重试
+        linked_acceptance:
+          - BD-21
+      - id: bd_22
+        scenario: 确认之后旧请求晚到
+        setup:
+          condition: 创建恢复已返回 clear，旧请求之后才到达车云
+        expected_state:
+          business_outcome: 车云已终结或作废这次尝试，晚到也不建立新分享；管理列表只有车主之后新建的那条；用户看到：无
+        linked_acceptance:
+          - BD-22
+  - id: accept_received_key
+    description: 保留完整场景和真实业务期望；分支可包含多个输入/时点，未编造统一可执行调用序列。具体入口仅在ui_bindings列出其适用动作。
+    coordinator: KeySharingRepository
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+    ui_bindings:
+      - ui: ShareAcceptPage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 当前分享仍待接受时，点击添加到钱包
+            calls: KeySharingRepository.acceptSharing
+    data_boundaries:
+      - name: keySharingSource
+        type: KeySharingSource
+        kind: cloud
+        methods:
+          - name: listOwnerKeys
+            params: *a1
+            returns: Promise<OwnerCarKey[]>
+            async: true
+          - name: listReceivedKeys
+            params: *a2
+            returns: Promise<ReceivedCarKey[]>
+            async: true
+          - name: recoverCreation
+            params: *a3
+            returns: Promise<CreationRecovery>
+            async: true
+          - name: queryKeySharingQuota
+            params: *a4
+            returns: "Promise<QuotaView & { shares: { shareId: string; status: ShareState
+              }[] }>"
+            async: true
+          - name: queryGranteePermission
+            params: *a5
+            returns: Promise<GrantPermissionView>
+            async: true
+          - name: createKeySharing
+            params: *a6
+            returns: 'Promise<{ shareId: string; status: "pending" }>'
+            async: true
+          - name: acceptKeySharing
+            params: *a7
+            returns: 'Promise<{ credentialStatus: "issued" | "failed"; status: "active" |
+              "pending" }>'
+            async: true
+          - name: revokeKeySharing
+            params: *a8
+            returns: 'Promise<{ status: "revoked" | "revoking"; graceHours?: number }>'
+            async: true
+          - name: queryKeySharingList
+            params: *a9
+            returns: Promise<ShareItem[]>
+            async: true
+    state_model:
+      phases:
+        - Pending
+        - Accepting
+        - Active
+        - Revoking
+        - Ended
+        - Unknown
+      fields:
+        - name: result
+          type: string
+    branches:
+      - id: ac_2
+        scenario: 对方接受后钥匙可用，权限与车主所选一致，钥匙作为车钥匙卡片出现在对方卡包（承接：AC-K2）。
+        expected_state:
+          business_outcome: 对方接受后钥匙可用，权限与车主所选一致，钥匙作为车钥匙卡片出现在对方卡包（承接：AC-K2）。
+        linked_acceptance:
+          - AC-2
+      - id: ac_16
+        scenario: 接受成功后，卡包里的待添加项变为可用的钥匙卡片；凭据下发失败时仍保持待接受。
+        expected_state:
+          business_outcome: 接受成功后，卡包里的待添加项变为可用的钥匙卡片；凭据下发失败时仍保持待接受。
+        linked_acceptance:
+          - AC-16
+      - id: ac_31
+        scenario: 接受或撤销请求失败或没得到回应时，端侧不按旧状态下结论：重取状态后按车云状态显示，只有仍是待接受才可再点添加、仍是生效才可再撤；重取时当前账号下取不到这条，按已不可用移除，与查询失败（结果待确认）分开。
+        expected_state:
+          business_outcome: 接受或撤销请求失败或没得到回应时，端侧不按旧状态下结论：重取状态后按车云状态显示，只有仍是待接受才可再点添加、仍是生效才可再撤；重取时当前账号下取不到这条，按已不可用移除，与查询失败（结果待确认）分开。
+        linked_acceptance:
+          - AC-31
+      - id: ac_39
+        scenario: 在接受页停留超过待接受有效期（72
+          小时，上游约束：产品需求）后再点添加、另一端已接受后再点添加、分享已到期后在旧管理页撤销：都按重新取得的状态显示已作废、已生效或已到期，不因这次错误恢复成待接受或生效。接受已生效但回应丢失、车主随即撤销且对方离线：重取为撤销中，卡片保留到收回完成，不再显示添加。
+        expected_state:
+          business_outcome: 在接受页停留超过待接受有效期（72
+            小时，上游约束：产品需求）后再点添加、另一端已接受后再点添加、分享已到期后在旧管理页撤销：都按重新取得的状态显示已作废、已生效或已到期，不因这次错误恢复成待接受或生效。接受已生效但回应丢失、车主随即撤销且对方离线：重取为撤销中，卡片保留到收回完成，不再显示添加。
+        linked_acceptance:
+          - AC-39
+      - id: bd_7
+        scenario: 接受时凭据下发失败
+        setup:
+          condition: 接受返回 `credentialStatus=failed`、`status=pending`
+        expected_state:
+          business_outcome: 保持待接受；用户看到：可重试，重试不产生新分享
+        linked_acceptance:
+          - BD-7
+      - id: bd_7a
+        scenario: 接受结果未知或其他失败
+        setup:
+          condition: 接受请求没得到回应，或返回凭据下发失败以外的错误
+        expected_state:
+          business_outcome: 不按失败也不按成功下结论：按当前账号重取这条分享，与进入卡包时用同一套状态分流——生效就显示钥匙卡片；仍是待接受才允许再点；撤销中保留卡片到收回完成、不再提供添加；已作废、已撤销或已到期就移除；当前账号下取不到这条按已不可用移除；查询失败显示结果待确认，不写回待接受；用户看到：结果待确认，可稍后再看
+        linked_acceptance:
+          - BD-7a
+  - id: manage_and_revoke
+    description: 保留完整场景和真实业务期望；分支可包含多个输入/时点，未编造统一可执行调用序列。具体入口仅在ui_bindings列出其适用动作。
+    coordinator: KeySharingRepository
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/data/repository/KeySharingRepository.ets
+    ui_bindings:
+      - ui: ShareManagePage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 对当前生效条目确认撤销
+            calls: KeySharingRepository.revokeSharing
+          - trigger: 进入管理页或撤销失败后重新取得列表
+            calls: KeySharingRepository.listSharings
+    data_boundaries:
+      - name: keySharingSource
+        type: KeySharingSource
+        kind: cloud
+        methods:
+          - name: listOwnerKeys
+            params: *a1
+            returns: Promise<OwnerCarKey[]>
+            async: true
+          - name: listReceivedKeys
+            params: *a2
+            returns: Promise<ReceivedCarKey[]>
+            async: true
+          - name: recoverCreation
+            params: *a3
+            returns: Promise<CreationRecovery>
+            async: true
+          - name: queryKeySharingQuota
+            params: *a4
+            returns: "Promise<QuotaView & { shares: { shareId: string; status: ShareState
+              }[] }>"
+            async: true
+          - name: queryGranteePermission
+            params: *a5
+            returns: Promise<GrantPermissionView>
+            async: true
+          - name: createKeySharing
+            params: *a6
+            returns: 'Promise<{ shareId: string; status: "pending" }>'
+            async: true
+          - name: acceptKeySharing
+            params: *a7
+            returns: 'Promise<{ credentialStatus: "issued" | "failed"; status: "active" |
+              "pending" }>'
+            async: true
+          - name: revokeKeySharing
+            params: *a8
+            returns: 'Promise<{ status: "revoked" | "revoking"; graceHours?: number }>'
+            async: true
+          - name: queryKeySharingList
+            params: *a9
+            returns: Promise<ShareItem[]>
+            async: true
+    state_model:
+      phases:
+        - Loading
+        - Active
+        - Revoking
+        - Revoked
+        - Expired
+        - Unavailable
+      fields:
+        - name: result
+          type: string
+    branches:
+      - id: ac_3
+        scenario: 分享发出后对方在期限内未接受即自动作废，作废条目在列表可见，可重新发起（承接：AC-K3）。
+        expected_state:
+          business_outcome: 分享发出后对方在期限内未接受即自动作废，作废条目在列表可见，可重新发起（承接：AC-K3）。
+        linked_acceptance:
+          - AC-3
+      - id: ac_5
+        scenario: 撤销时对方在线立即失效；对方离线进入撤销中，对方设备上的卡片在宽限内收回（D1）；车云受理撤销起车辆侧就不认这把钥匙（承接：AC-K5）。
+        expected_state:
+          business_outcome: 撤销时对方在线立即失效；对方离线进入撤销中，对方设备上的卡片在宽限内收回（D1）；车云受理撤销起车辆侧就不认这把钥匙（承接：AC-K5）。
+        linked_acceptance:
+          - AC-5
+      - id: ac_7
+        scenario: 管理列表的状态与车云返回一致：待接受、生效、已作废、已到期、撤销中、已撤销（承接：AC-K7）。
+        expected_state:
+          business_outcome: 管理列表的状态与车云返回一致：待接受、生效、已作废、已到期、撤销中、已撤销（承接：AC-K7）。
+        linked_acceptance:
+          - AC-7
+      - id: ac_17
+        scenario: 车主撤销且对方离线时，被分享人卡包里的卡片保留到收回完成后移除；车辆侧从车云受理撤销起已拒绝这把钥匙。
+        expected_state:
+          business_outcome: 车主撤销且对方离线时，被分享人卡包里的卡片保留到收回完成后移除；车辆侧从车云受理撤销起已拒绝这把钥匙。
+        linked_acceptance:
+          - AC-17
+      - id: ac_20
+        scenario: 只有生效的分享显示撤销；撤销中、已作废、已到期、已撤销的条目不显示撤销，也不发撤销请求；待接受条目的撤回待 D8，裁定前不验。
+        expected_state:
+          business_outcome: 只有生效的分享显示撤销；撤销中、已作废、已到期、已撤销的条目不显示撤销，也不发撤销请求；待接受条目的撤回待 D8，裁定前不验。
+        linked_acceptance:
+          - AC-20
+      - id: bd_6
+        scenario: 待接受逾期
+        setup:
+          condition: 对方在期限内没接受
+        expected_state:
+          business_outcome: 自动作废；用户看到：列表可见作废条目，可重新发起
+        linked_acceptance:
+          - BD-6
+      - id: bd_8
+        scenario: 撤销时对方离线
+        setup:
+          condition: 撤销请求时对方离线
+        expected_state:
+          business_outcome: 进入撤销中，对方卡片在宽限内收回（D1）；车辆侧自车云受理撤销起即拒绝；用户看到：车主侧显示撤销中
+        linked_acceptance:
+          - BD-8
+      - id: bd_9
+        scenario: 对非生效条目撤销
+        setup:
+          condition: 条目为撤销中、已作废、已到期或已撤销
+        expected_state:
+          business_outcome: 不提供撤销，不发撤销请求；用户看到：只看到状态；已作废、已到期的可重新发起
+        linked_acceptance:
+          - BD-9
+      - id: bd_9a
+        scenario: 待接受条目撤回
+        setup:
+          condition: 条目为待接受
+        expected_state:
+          business_outcome: 能否撤回待 D8；裁定前只展示状态，不发撤销请求；用户看到：只看到待接受
+        linked_acceptance:
+          - BD-9a
+      - id: bd_10
+        scenario: 撤销失败或结果未知
+        setup:
+          condition: 车云返回失败，或撤销请求没得到回应
+        expected_state:
+          business_outcome: 重新拉分享列表，按车云返回的状态显示；仍是生效才再提供撤销；已到期、已撤销的不因这次失败恢复成生效；列表拉不到给网络失败态；用户看到：按刷新后的状态显示
+        linked_acceptance:
+          - BD-10
+  - id: card_pack_and_detail
+    description: 保留完整场景和真实业务期望；分支可包含多个输入/时点，未编造统一可执行调用序列。具体入口仅在ui_bindings列出其适用动作。
+    coordinator: CarKeyRepository
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/data/repository/CarKeyRepository.ets
+    ui_bindings:
+      - ui: CardPackPage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 进入或返回卡包，按当前会话加载收到的分享
+            calls: CarKeyRepository.listReceivedKeys
+          - trigger: 加载当前账号的本人钥匙
+            calls: CarKeyRepository.listOwnerKeys
+      - ui: KeyCardDetailPage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 按vehicleId打开本人钥匙详情
+            calls: CarKeyRepository.getOwnerKey
+          - trigger: 按shareId打开收到的钥匙详情
+            calls: CarKeyRepository.getReceivedKey
+    data_boundaries:
+      - name: keySharingSource
+        type: KeySharingSource
+        kind: cloud
+        methods:
+          - name: listOwnerKeys
+            params: *a1
+            returns: Promise<OwnerCarKey[]>
+            async: true
+          - name: listReceivedKeys
+            params: *a2
+            returns: Promise<ReceivedCarKey[]>
+            async: true
+          - name: recoverCreation
+            params: *a3
+            returns: Promise<CreationRecovery>
+            async: true
+          - name: queryKeySharingQuota
+            params: *a4
+            returns: "Promise<QuotaView & { shares: { shareId: string; status: ShareState
+              }[] }>"
+            async: true
+          - name: queryGranteePermission
+            params: *a5
+            returns: Promise<GrantPermissionView>
+            async: true
+          - name: createKeySharing
+            params: *a6
+            returns: 'Promise<{ shareId: string; status: "pending" }>'
+            async: true
+          - name: acceptKeySharing
+            params: *a7
+            returns: 'Promise<{ credentialStatus: "issued" | "failed"; status: "active" |
+              "pending" }>'
+            async: true
+          - name: revokeKeySharing
+            params: *a8
+            returns: 'Promise<{ status: "revoked" | "revoking"; graceHours?: number }>'
+            async: true
+          - name: queryKeySharingList
+            params: *a9
+            returns: Promise<ShareItem[]>
+            async: true
+      - name: simulatedIdentitySource
+        type: SimulatedIdentitySource
+        kind: system
+        methods:
+          - name: currentSession
+            params: *a10
+            returns: AccountSession | undefined
+            async: false
+          - name: listContacts
+            params: *a11
+            returns: 'Promise<ShareContact[] | { kind: "unavailable" }>'
+            async: true
+          - name: onSessionChanged
+            params: *a12
+            returns: void
+            async: false
+    state_model:
+      phases:
+        - Loading
+        - Pending
+        - Active
+        - Revoking
+        - Ended
+        - Unavailable
+      fields:
+        - name: result
+          type: string
+    branches:
+      - id: ac_9
+        scenario: 未登录或没有车钥匙的用户看不到分享入口（承接：AC-K9）。
+        expected_state:
+          business_outcome: 未登录或没有车钥匙的用户看不到分享入口（承接：AC-K9）。
+        linked_acceptance:
+          - AC-9
+      - id: ac_10
+        scenario: 开关关闭后不能发起新分享，已生效的分享不受影响（承接：AC-K10）。
+        expected_state:
+          business_outcome: 开关关闭后不能发起新分享，已生效的分享不受影响（承接：AC-K10）。
+        linked_acceptance:
+          - AC-10
+      - id: ac_12
+        scenario: 卡包展示车主本人的车钥匙卡片，卡片上有分享与分享管理入口（D4）。
+        expected_state:
+          business_outcome: 卡包展示车主本人的车钥匙卡片，卡片上有分享与分享管理入口（D4）。
+        linked_acceptance:
+          - AC-12
+      - id: ac_15
+        scenario: 推送没送到时，对方进入卡包能看到待添加的钥匙，点它进入接受页并能添加。
+        expected_state:
+          business_outcome: 推送没送到时，对方进入卡包能看到待添加的钥匙，点它进入接受页并能添加。
+        linked_acceptance:
+          - AC-15
+      - id: ac_18
+        scenario: 撤销完成、到期或作废的钥匙从卡包移除；从旧入口打开它的详情时提示已不可用并回到卡包。
+        expected_state:
+          business_outcome: 撤销完成、到期或作废的钥匙从卡包移除；从旧入口打开它的详情时提示已不可用并回到卡包。
+        linked_acceptance:
+          - AC-18
+      - id: ac_19
+        scenario: 切换账号后，卡包只显示新账号收到的待添加与可用钥匙。
+        expected_state:
+          business_outcome: 切换账号后，卡包只显示新账号收到的待添加与可用钥匙。
+        linked_acceptance:
+          - AC-19
+      - id: ac_29
+        scenario: 点本人钥匙卡片进入详情，看到车型、车辆与分享入口；点收到的钥匙卡片进入详情，看到权限范围与有效期；两种都不借用对方的身份取数。
+        expected_state:
+          business_outcome: 点本人钥匙卡片进入详情，看到车型、车辆与分享入口；点收到的钥匙卡片进入详情，看到权限范围与有效期；两种都不借用对方的身份取数。
+        linked_acceptance:
+          - AC-29
+      - id: ac_g3
+        scenario: 断网进管理页或卡包给网络失败态，不展示陈旧列表。
+        expected_state:
+          business_outcome: 断网进管理页或卡包给网络失败态，不展示陈旧列表。
+        linked_acceptance:
+          - AC-G3
+      - id: bd_12
+        scenario: 断网进管理页或卡包
+        setup:
+          condition: 无网络
+        expected_state:
+          business_outcome: 不展示陈旧列表；用户看到：网络失败态，可重试
+        linked_acceptance:
+          - BD-12
+      - id: bd_15
+        scenario: 打开已不可用的钥匙
+        setup:
+          condition: 从旧入口打开已撤销、已到期或已作废的钥匙详情；或换账号后打开不属于当前账号的本人钥匙
+        expected_state:
+          business_outcome: 按当前状态处理；用户看到：提示这把钥匙已不可用，回到卡包
+        linked_acceptance:
+          - BD-15
+      - id: bd_16
+        scenario: 推送未达
+        setup:
+          condition: 推送没送到被分享人
+        expected_state:
+          business_outcome: 不改变分享关系；对方进入卡包时按当前账号补拉；用户看到：卡包里看到待添加的钥匙
+        linked_acceptance:
+          - BD-16
+  - id: session_cleanup_and_cold_start
+    description: 保留完整场景和真实业务期望；分支可包含多个输入/时点，未编造统一可执行调用序列。具体入口仅在ui_bindings列出其适用动作。
+    coordinator: ShareDraftStore
+    coordinator_file: 02-Feature/WalletMain/src/main/ets/data/repository/ShareDraftStore.ets
+    ui_bindings:
+      - ui: MineTabPage
+        role: entry
+        subscribes: []
+        user_actions:
+          - trigger: 主动退出或切换账号前关闭旧分享会话并清理草稿
+            calls: ShareDraftStore.closeAccount
+    data_boundaries:
+      - name: shareDraftStore
+        type: ShareDraftStore
+        kind: storage
+        methods:
+          - name: read
+            params: *a13
+            returns: Promise<DraftReadResult>
+            async: true
+          - name: saveSelection
+            params: *a14
+            returns: Promise<boolean>
+            async: true
+          - name: saveRequest
+            params: *a15
+            returns: Promise<boolean>
+            async: true
+          - name: clearRequest
+            params: *a16
+            returns: Promise<boolean>
+            async: true
+          - name: remove
+            params: *a17
+            returns: Promise<boolean>
+            async: true
+          - name: closeAccount
+            params: *a18
+            returns: Promise<boolean>
+            async: true
+          - name: initialize
+            params: *a19
+            returns: Promise<boolean>
+            async: true
+      - name: simulatedIdentitySource
+        type: SimulatedIdentitySource
+        kind: system
+        methods:
+          - name: currentSession
+            params: *a10
+            returns: AccountSession | undefined
+            async: false
+          - name: listContacts
+            params: *a11
+            returns: 'Promise<ShareContact[] | { kind: "unavailable" }>'
+            async: true
+          - name: onSessionChanged
+            params: *a12
+            returns: void
+            async: false
+    state_model:
+      phases:
+        - Open
+        - CleanupPending
+        - Closed
+        - Restricted
+      fields:
+        - name: result
+          type: string
+    branches:
+      - id: ac_13
+        scenario: 发出成功、主动退出或切换账号后草稿被清除，换账号后看不到上一个账号的草稿或列表；退出时清除失败，旧会话照样退出，分享在清理完成前不可用（D6）。
+        expected_state:
+          business_outcome: 发出成功、主动退出或切换账号后草稿被清除，换账号后看不到上一个账号的草稿或列表；退出时清除失败，旧会话照样退出，分享在清理完成前不可用（D6）。
+        linked_acceptance:
+          - AC-13
+      - id: ac_14
+        scenario: 两个打码后相同的合法账号，查权限与创建分享时各自拿到正确的对象；两个展示账号相同的模拟账号，草稿互不可见。
+        expected_state:
+          business_outcome: 两个打码后相同的合法账号，查权限与创建分享时各自拿到正确的对象；两个展示账号相同的模拟账号，草稿互不可见。
+        linked_acceptance:
+          - AC-14
+      - id: ac_28
+        scenario: 清除数据后先清遗留草稿再开放、不崩溃；重复触发发出不会创建第二条（ENV-01、ENV-02）。
+        expected_state:
+          business_outcome: 清除数据后先清遗留草稿再开放、不崩溃；重复触发发出不会创建第二条（ENV-01、ENV-02）。
+        linked_acceptance:
+          - AC-28
+      - id: ac_37
+        scenario: 退出登录后旧账号请求的回调才到达，不写到新账号的页面，也不重建已清除的草稿；同一次请求的重复回调只结算一次。
+        expected_state:
+          business_outcome: 退出登录后旧账号请求的回调才到达，不写到新账号的页面，也不重建已清除的草稿；同一次请求的重复回调只结算一次。
+        linked_acceptance:
+          - AC-37
+      - id: ac_40
+        scenario: 冷启动时还没有登录不清除草稿；同一模拟账号登录后能恢复它的草稿，登录前不回填、不发送。
+        expected_state:
+          business_outcome: 冷启动时还没有登录不清除草稿；同一模拟账号登录后能恢复它的草稿，登录前不回填、不发送。
+        linked_acceptance:
+          - AC-40
+      - id: bd_13
+        scenario: 退出登录或切换账号
+        setup:
+          condition: 主动退出或账号变化
+        expected_state:
+          business_outcome: 先持久记下旧账号不可恢复，隔离旧页面与在途请求，再删除旧账号全部车辆的草稿；列表与收到的分享按新账号获取；同一账号再登录后，每辆车第一次进设置页先做创建恢复；用户看到：不带出上一个账号的草稿、列表或钥匙
+        linked_acceptance:
+          - BD-13
+      - id: bd_13b
+        scenario: 退出时清理失败
+        setup:
+          condition: 删除旧账号草稿失败，或不可恢复标记写不进去
+        expected_state:
+          business_outcome: 照样退出旧会话，禁止恢复与发起分享，保留可重试的清理错误；标记都写不进去时先重试清理，不开放下一个分享会话；用户看到：分享暂不可用，正在清理上一个账号的数据
+        linked_acceptance:
+          - BD-13b
+      - id: bd_13c
+        scenario: 晚到的回调
+        setup:
+          condition: 退出或换账号后，旧账号的请求才返回
+        expected_state:
+          business_outcome: 回调只更新发起时的账号与会话；不写新账号的页面，不重建已清除的草稿；用户看到：无
+        linked_acceptance:
+          - BD-13c
+      - id: bd_14
+        scenario: 清除应用数据
+        setup:
+          condition: 本地数据被清除
+        expected_state:
+          business_outcome: 初始化标记缺失时先按功能标签清理遗留草稿，成功后重建索引再开放；之后每辆车第一次进设置页先做创建恢复，不把清空当作没有旧请求；不崩溃；用户看到：回到未选状态；清理失败时提示初始化失败
+        linked_acceptance:
+          - BD-14
+source: candidate.change-unit:sha256:1fd95ddce40a8d716a9a2284ed65423d3f641822941de7509866037a316b3416:sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20

@@ -1,0 +1,302 @@
+{
+  "blueprint_sha256": "sha256:12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20",
+  "cu_candidate_sha256": "sha256:1fd95ddce40a8d716a9a2284ed65423d3f641822941de7509866037a316b3416",
+  "blueprint_refs_checked": 75,
+  "must_checked": 57,
+  "pattern_roles": [
+    {
+      "pattern": "page-interaction",
+      "role": "动作枚举",
+      "decision_id": "pattern-page-interaction"
+    },
+    {
+      "pattern": "page-interaction",
+      "role": "上下文",
+      "decision_id": "pattern-page-interaction"
+    },
+    {
+      "pattern": "page-interaction",
+      "role": "交互封装",
+      "decision_id": "pattern-page-interaction"
+    },
+    {
+      "pattern": "page-interaction",
+      "role": "动作表",
+      "decision_id": "pattern-page-interaction"
+    },
+    {
+      "pattern": "page-interaction",
+      "role": "页面组件",
+      "decision_id": "pattern-page-interaction"
+    }
+  ],
+  "local_links_checked": 103,
+  "preserved_graphics": [
+    {
+      "path": "ux-reference\\accept-page.png",
+      "byte_identical": true
+    },
+    {
+      "path": "ux-reference\\key-card-detail.png",
+      "byte_identical": true
+    },
+    {
+      "path": "ux-reference\\share-manage.png",
+      "byte_identical": true
+    },
+    {
+      "path": "ux-reference\\share-setup.png",
+      "byte_identical": true
+    },
+    {
+      "path": "AR\\story-src\\figures\\fig-0169f210.mmd",
+      "byte_identical": true
+    },
+    {
+      "path": "AR\\story-src\\figures\\fig-b533fea2.mmd",
+      "byte_identical": true
+    },
+    {
+      "path": "AR\\story-src\\figures\\fig-d087d97f.mmd",
+      "byte_identical": true
+    },
+    {
+      "path": "AR\\figures\\car-key-revocation-responsibility.svg",
+      "byte_identical": true
+    }
+  ],
+  "story_mermaid_byte_content_unchanged": true,
+  "native_publication_copies_identical": true,
+  "issues": [
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/RR/prd.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/ux-reference/README.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/source-inputs.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> evidence/baseline-1.9.9/spec/spec.md",
+    "link doc\\features\\ISSUE-206\\AR\\design-review.md -> evidence/baseline-1.9.9/plan/plan.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/RR/prd.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/ux-reference/README.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/source-inputs.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> evidence/baseline-1.9.9/spec/spec.md",
+    "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> evidence/baseline-1.9.9/plan/plan.md"
+  ],
+  "product_status": "",
+  "not_performed": [
+    "native admission",
+    "CU acceptance",
+    "phase closure",
+    "product test suite",
+    "model CLI",
+    "device run",
+    "golden promotion"
+  ],
+  "unresolved_issues": [],
+  "known_native_link_limitations": [
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/RR/prd.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/ux-reference/README.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> doc/features/ISSUE-206/source-inputs.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> evidence/baseline-1.9.9/spec/spec.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\AR\\design-review.md -> evidence/baseline-1.9.9/plan/plan.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/RR/prd.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/SR/design.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/ux-reference/README.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> doc/features/ISSUE-206/source-inputs.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> evidence/baseline-1.9.9/spec/spec.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    },
+    {
+      "issue": "link doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md -> evidence/baseline-1.9.9/plan/plan.md",
+      "target_exists_from_project_root": true,
+      "classification": "native output uses project-relative source links; ordinary file-relative Markdown viewers need source navigation"
+    }
+  ],
+  "authored_main_documents_missing_links": []
+}

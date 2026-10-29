@@ -1,0 +1,755 @@
+{
+ "original_root": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛",
+ "files": [
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\00-实施方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\00-实施方案.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\00-实施方案.md",
+   "sha256_original": "6776283a6f4913151afd70bf2eb37b83adfaf9ce43b8820159c4c73dd1ec0cb0"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\01-产品实施方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\01-产品实施方案.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\01-产品实施方案.md",
+   "sha256_original": "a90854736fd490d52cd967e287afed2f505b7abd1a672bc334e62c93bb368c4a"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-需求设计与业务送审\\00-批次方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-需求设计与业务送审\\00-批次方案.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-需求设计与业务送审\\00-批次方案.md",
+   "sha256_original": "f2d1b91f965da261c0589595cd49585ce570ac35a4800a5435e96f0a835a91e5"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\02-批次-CU交接与更新交付\\00-批次方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\02-批次-CU交接与更新交付\\00-批次方案.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\02-批次-CU交接与更新交付\\00-批次方案.md",
+   "sha256_original": "ce73a1f83f199476e012148db4c29779bbab7dbbc87c717725301a1d351cc21a"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-完整保持与组合验收\\00-批次方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-完整保持与组合验收\\00-批次方案.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-完整保持与组合验收\\00-批次方案.md",
+   "sha256_original": "891ad2e2ee0a4c5ad4b2e4f90bc0785127b758a349bd7fb171af45532fb02255"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\00-实施方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\00-实施方案.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\00-实施方案.md",
+   "sha256_original": "caa6b3fc52791f90745d772228533525b56a6714fb0129323f4f78917ffc6619"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-产品方案自查与设计依据.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-产品方案自查与设计依据.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-产品方案自查与设计依据.md",
+   "sha256_original": "ccac863bd814d56b3a98c9b45963376448ad9b2f48ea905cb6f2a556e3dcf403"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-生产消费与退场.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-生产消费与退场.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-生产消费与退场.md",
+   "sha256_original": "c9e82fe57b92ff7f20dc968bd356cc129672a9ab7d68619622d03ff01146d344"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-预算与基线.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-预算与基线.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-预算与基线.md",
+   "sha256_original": "bf82a0ba9e69c18ffc2ba77a80aeed1027899f6321140572cefcf00f3b14d000"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-验证与测试迁移.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-验证与测试迁移.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\产品适配-验证与测试迁移.md",
+   "sha256_original": "3011c458c2a1d2ffa46787312eef0e79ea60fb07f3fd66fbdc18b4aadd9a64f4"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\实施反馈\\2026-10-29-文档优化-交回.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\实施反馈\\2026-10-29-文档优化-交回.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\实施反馈\\2026-10-29-文档优化-交回.md",
+   "sha256_original": "1fc485c423a47831dc77fbe5b51818e4fc9e7f806d4491b908820f072406a472"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\实施反馈\\2026-10-29-目标优先与知识呈现优化.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\实施反馈\\2026-10-29-目标优先与知识呈现优化.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\实施反馈\\2026-10-29-目标优先与知识呈现优化.md",
+   "sha256_original": "9d97017db37f870252e61e9fc2b4523fab50d066c61074ca4d6d7d12494ca902"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-main更新与Spec增量核查.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-main更新与Spec增量核查.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-main更新与Spec增量核查.md",
+   "sha256_original": "ced25ac18b6365303a7179ab461b9a8bfe2493e92d78add0a5dcf1ba0222f360"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-五稿与完整目标评价-自查.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-五稿与完整目标评价-自查.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-五稿与完整目标评价-自查.md",
+   "sha256_original": "60997f50e9010451a56c582159ed02cf17f0216a88dc564ee07c64ee92910978"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-整版Spec与验证体系重整核查.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-整版Spec与验证体系重整核查.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-整版Spec与验证体系重整核查.md",
+   "sha256_original": "6aa887b855899c9e2d5f24c4b8a65a362a1d831e428e385f62f2c60d9a3202e0"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-目标优先后全量金样复核.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-目标优先后全量金样复核.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-目标优先后全量金样复核.md",
+   "sha256_original": "8aeb63249386bb797565ea92f73b4ec0d9e0dd3a1c80765216a65c9ced651518"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-集中修订与情景复核.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-集中修订与情景复核.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-集中修订与情景复核.md",
+   "sha256_original": "3fe4e0b78958d827e2bfa578e2b74cd112b79e616b56bb1b09cb25c5ef8cacd9"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-页面交互恢复与1.x能力保持核查.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-页面交互恢复与1.x能力保持核查.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\评审意见\\2026-10-29-页面交互恢复与1.x能力保持核查.md",
+   "sha256_original": "7f90c331f3bf0e0c7cf5b46b7bf880e43da5a09757ee8028b59564a0e0093d84"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\README.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\README.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\README.md",
+   "sha256_original": "d5f5cf6e0b94539f5dcf1cf113f36e5693355ed3874b0cc8068525a0a67f64bb"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "sha256_original": "51332445881b2580a6aa1161ef2a0e4a04912543803dd14c917da21e053709a4"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "sha256_original": "5ae4fc922b9d90544e75e337d2ec0dbde01dc4a367d3162782b9d7979ea334e7"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "sha256_original": "a20ac68322731f889ac1706878dc8f0868fb62b7642f079d596706ea32d661e6"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "sha256_original": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "sha256_original": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "sha256_original": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "sha256_original": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "sha256_original": "124a1c01d20a0ca69e5638536caca832098151df857f36fd9f1f7737605eaf86"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "sha256_original": "0b13c994e04d7bdd5cde5b8ebc864d8ffad40567d96e72bab3000752c42e9e69"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\金样候选\\car-key-sharing\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "sha256_original": "a94a0156edf1a0e27946c76aaf2b2ceb77e8d2bc792e096c706af3e6633de79e"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\framework.config.json",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\framework.config.json",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\framework.config.json",
+   "sha256_original": "46c0447c99667d0f92a263c91036209e2e052bfa937d271d0ef0a6d3562e489f"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\README.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\README.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\README.md",
+   "sha256_original": "c34f7d4b26080c3f8801a1e309a20c00c5b319270bcb6419e6348c253dd52721"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\核对与反查.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\核对与反查.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\核对与反查.md",
+   "sha256_original": "0fdb3904ef4310d7dbfcd7027e576ae930f68d0d65465109466eb08be7b97b3b"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\README.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\README.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\README.md",
+   "sha256_original": "555d72edb2bef2befc9c1f35ede986985272246b4ee49df16c6ed210ba8697f8"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "sha256_original": "51332445881b2580a6aa1161ef2a0e4a04912543803dd14c917da21e053709a4"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "sha256_original": "dff3168e80106037cb6bb118dfc23a7774d3d26519d87908120855b7db32e79f"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "sha256_original": "ce2baaf7a4bc6a76d2e55eafef9f4c98540abf7cb2f9bf3d196ffb9acbeb73dd"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "sha256_original": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "sha256_original": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "sha256_original": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "sha256_original": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "sha256_original": "81eff9f1d792ed3b155e0702b99ed3855b00a3dcfba209bbe6913142003e53d1"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "sha256_original": "5916a029b14d95279e03d514eab9e8f275d4bb4a6274f7b90c8a4384c71ba7a1"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-29-第二轮金样\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "sha256_original": "a94a0156edf1a0e27946c76aaf2b2ceb77e8d2bc792e096c706af3e6633de79e"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\module-catalog.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\module-catalog.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\module-catalog.yaml",
+   "sha256_original": "1b1d96bd492e81757d642d6ad0e28456a9bd7db7b7b0ebfc19e29dc23d1607a7"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\candidate-identities.json",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\candidate-identities.json",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\candidate-identities.json",
+   "sha256_original": "174251d686a9fea2becfbb159815954a7e1370b516f638dcebfa85ad99aece85"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\document-shapes.json",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\document-shapes.json",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\document-shapes.json",
+   "sha256_original": "a3a47d6c2303ea2995e12e9193390b1d178c1217f0d6f46fd070627e8fb0a4f2"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\file-manifest.json",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\file-manifest.json",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\file-manifest.json",
+   "sha256_original": "1be6442b563b5820c5b82019f20a80c8953793f5aad842e67b35ba97bb9b72b7"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\integrity.json",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\integrity.json",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\integrity.json",
+   "sha256_original": "b773bc96aa3c41a5206d61fc019aaec3688f605ea6e0bf92058fcc50c5001ae3"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\interaction-script.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\interaction-script.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\interaction-script.yaml",
+   "sha256_original": "65c034b244620dda58004981112de478c5b915c44332fd6a68daf03c00de3a54"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\README.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\README.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\README.md",
+   "sha256_original": "910d119afc41c59af9071c07a9e68452613dc6fe66eca35877fee18e9359fbb0"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\native-render\\component-blueprint.review.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\native-render\\component-blueprint.review.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\native-render\\component-blueprint.review.md",
+   "sha256_original": "05fb2a6047215f65eac05e983ee1ea0e66f2400e1743d008255895478685af8d"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\native-render\\generation.json",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\native-render\\generation.json",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\native-render\\generation.json",
+   "sha256_original": "984bf3a248c5342c85bfba2e73165931e4292de1cb2dfae325645e776979e08c"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\AR\\review.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\AR\\review.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\AR\\review.md",
+   "sha256_original": "4d2e3274a521d368b6dae7f89f0276af8fba9ddd80ea191dc0bd3df816e6b01f"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\AR\\story.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\AR\\story.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\AR\\story.md",
+   "sha256_original": "2f6bf7bfe203e3716d0254b2d592518c805e2cf71c4ab424dae17a37a4dca063"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\plan\\plan.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\plan\\plan.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\plan\\plan.md",
+   "sha256_original": "383c599fda4993e431226e8274383143c90add7aab069819c4320ab7d5105f9c"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\spec\\spec.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\spec\\spec.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\evidence\\baseline-1.9.9\\spec\\spec.md",
+   "sha256_original": "a4850d055370a3785646f4fc3c103737edc2235bc48908665c234cb0d1965bef"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\manifest.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\manifest.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\manifest.yaml",
+   "sha256_original": "a01a976f57ed9f200f315a791d5b25c883995b814e46de6b52b3ad4e71d0ac71"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\source-inputs.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\source-inputs.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\source-inputs.md",
+   "sha256_original": "e24e9c5b506f2dc19ac3519ed8ce614222a9f34e5f160f673dbae78f0f3c1b35"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\design-review.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\design-review.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\design-review.md",
+   "sha256_original": "05fb2a6047215f65eac05e983ee1ea0e66f2400e1743d008255895478685af8d"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\detail.json",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\detail.json",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\detail.json",
+   "sha256_original": "cb653fff6d3367beecf2355416634a1c8a93bb045d711bc37cee7cc4dfa68859"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\review.md",
+   "sha256_original": "caa85751c34297e92ea69633b087bbf1d156b33845a0f831bf373b29b5544d1a"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story.md",
+   "sha256_original": "6df19c1d19110feac9b2ac276f8642296ffcaff884278e35576a65ac0ee4c81b"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\blueprint.target.md",
+   "sha256_original": "e6e69403168cd8499bc05104be17e4f8ab06eb699c30344f335ce9706e6a985b"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\component-blueprint.review.md",
+   "sha256_original": "05fb2a6047215f65eac05e983ee1ea0e66f2400e1743d008255895478685af8d"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\component-blueprint.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\component-blueprint.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\blueprint\\component-blueprint.yaml",
+   "sha256_original": "12a9171deee48d2211530f7b281c67b71e65479a39c641dd07c3319cfd109b20"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\inbox\\数字车钥匙分享.docx",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\inbox\\数字车钥匙分享.docx",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\inbox\\数字车钥匙分享.docx",
+   "sha256_original": "2a5b166b8b3e6ab44938d44997b673c46cedc4104b6c1f0d85c9a21bd724029f"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\inbox\\车钥匙接受侧界面说明.docx",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\inbox\\车钥匙接受侧界面说明.docx",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\inbox\\车钥匙接受侧界面说明.docx",
+   "sha256_original": "fbc813c5206c9b526eeb006db8cde1af5ebf54160f63fd8c9a856c4cba9956d3"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\RR\\prd.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\RR\\prd.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\RR\\prd.md",
+   "sha256_original": "4e5d4c3e3916680813768f7954e1ed66942b838fa56e7ccbd5e4136959f4fd42"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\SR\\design.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\SR\\design.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\SR\\design.md",
+   "sha256_original": "68ff916dff8a6b007b8457835158d3b2dad68f6967bcce633515ce26702822fa"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\accept-page.png",
+   "sha256_original": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\key-card-detail.png",
+   "sha256_original": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\README.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\README.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\README.md",
+   "sha256_original": "77c8fa3bcc2d96e2c5e0ddf6534c40809a630888e1f4a84af00ceafd0ebcd2d1"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-manage.png",
+   "sha256_original": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\ux-reference\\share-setup.png",
+   "sha256_original": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\acceptance.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\acceptance.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\acceptance.yaml",
+   "sha256_original": "f43621bd8d82413a4f27fa2943d9796f1c1ce998bdcbf223f4bf5eb3ce98e4a4"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\change-unit.candidate.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\change-unit.candidate.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\change-unit.candidate.yaml",
+   "sha256_original": "1fd95ddce40a8d716a9a2284ed65423d3f641822941de7509866037a316b3416"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\contracts.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\contracts.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\contracts.yaml",
+   "sha256_original": "a2a67566e2f8f7ad7ecd780c02c9a2fd9985ecc399975347b74d8c9a00004821"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\use-cases.yaml",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\use-cases.yaml",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\use-cases.yaml",
+   "sha256_original": "1ff6c541e494ef1c5b4047d79bec45f83073a16ca42513319d5e4a3d438e6f34"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\plan\\plan.md",
+   "sha256_original": "5b14ccffe038010d67bea3c64636da73d90101c396512daa5bb8aec3d6cb49aa"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\wallet-key-sharing\\spec\\spec.md",
+   "sha256_original": "0dc35be09bc03eaca7871c7d54671c967f9bc662e84dc7c4b2c55d598a9f6152"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\product-original\\share-manage.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\product-original\\share-manage.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\product-original\\share-manage.png",
+   "sha256_original": "6353c699bfb9ac487080a898b006e5105f0a3c2525bd0e95faa7cb08620da6ab"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\product-original\\share-setup.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\product-original\\share-setup.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\product-original\\share-setup.png",
+   "sha256_original": "15056c761f98905d698d167c07181032f0a178e7ab2d8d2547f59dfcb04d52bc"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\ux-original\\accept-page.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\ux-original\\accept-page.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\ux-original\\accept-page.png",
+   "sha256_original": "2508945f901642743168fa7358356f455bf3680f2228e726109bc2fa4a3260ea"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\ux-original\\key-card-detail.png",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\ux-original\\key-card-detail.png",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\assets\\ux-original\\key-card-detail.png",
+   "sha256_original": "87d832fadbce16adc3aa67421f438aafbddd7e297592f8870f60f223df153e09"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\figures\\car-key-revocation-responsibility.svg",
+   "sha256_original": "a94a0156edf1a0e27946c76aaf2b2ceb77e8d2bc792e096c706af3e6633de79e"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-0169f210.mmd",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-0169f210.mmd",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-0169f210.mmd",
+   "sha256_original": "5487eca983addc951e7336bcbf60d3d7ae72265bce64a606b001ebc8033d717d"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-b533fea2.mmd",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-b533fea2.mmd",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-b533fea2.mmd",
+   "sha256_original": "7c2541c9586f56451a91674fa6157aeacbdd05c78fbb9e1906745433dd61a55c"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-d087d97f.mmd",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-d087d97f.mmd",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\features\\ISSUE-206\\AR\\story-src\\figures\\fig-d087d97f.mmd",
+   "sha256_original": "d78e5b218cf9b5633da189bbffac59baf23c7b9bb024cb5e517b3be203008ef6"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\compatibility-checklist.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\compatibility-checklist.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\compatibility-checklist.md",
+   "sha256_original": "0a1a760fafdd9cdaf8d0d25e5db4a45ea5e5caf38eeed4a0e65665324f9ed7b8"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\deliverables.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\deliverables.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\deliverables.md",
+   "sha256_original": "ae494fa8bdcb3e56b1977e7cf7787abfc6eee4e632cf9e64e718e862cd657708"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\dfx-baseline.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\dfx-baseline.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\dfx-baseline.md",
+   "sha256_original": "769ed38d7faa99ebdf299d699c9eb145602f1a4b7e4eb570a3ff89bec8fde0ed"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\env-exceptions.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\env-exceptions.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\env-exceptions.md",
+   "sha256_original": "61a5a53d81e6c63f43ab2268f82c30a11b28ab813997ebe8e08c028bb2d8de81"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\observability.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\observability.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\observability.md",
+   "sha256_original": "1025429cbe453ee6f7d5d637ab7debf155d165690c851561d459f7c887937024"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\resource-usage.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\resource-usage.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\resource-usage.md",
+   "sha256_original": "d41e83c2f02d4dfdf03ada091f0c40e5ea07afdb099ce40ab8937924571d2115"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\security-privacy.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\security-privacy.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\security-privacy.md",
+   "sha256_original": "fef3f54273ad80f8736632606e2a114073309763232492e8919eb052dafc8337"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\ux-consistency.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\ux-consistency.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\constraints\\ux-consistency.md",
+   "sha256_original": "ec0be15aa7e88c30fa0523c49d55a96cf133747e8ae3c6e6b80d598e87fce2b7"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\design-patterns\\decision-tree.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\design-patterns\\decision-tree.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\design-patterns\\decision-tree.md",
+   "sha256_original": "5eccef2f635e82ac4b0e054abfe54138fccffe28088b3a0a9999643ed5efb359"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\design-patterns\\page-interaction.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\design-patterns\\page-interaction.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\design-patterns\\page-interaction.md",
+   "sha256_original": "03f705012b130ba72d9dcad38532eb160a77a07b3a233f2caf55ab1732c5d9b0"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\component-profile.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\component-profile.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\component-profile.md",
+   "sha256_original": "8558822c77b5d65445e905061d18601b85db8d2ca309bcbecfa37779d11b8ccf"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\engineering-capabilities.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\engineering-capabilities.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\engineering-capabilities.md",
+   "sha256_original": "b773972859774d51bac60a81dbe76c1bfde115309ad91d3d43a97e9c1c647dc8"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\event-tracking.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\event-tracking.md",
+   "current": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\2026-10-28-首轮金样\\doc\\extensions\\knowledge\\facts\\event-tracking.md",
+   "sha256_original": "552f553ce1cb2e32adc9897075dcbc00eaf65e0d881e037bcbb14f75b705c176"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\00-批次方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\00-批次方案.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-新原生组合与统一来源设计链\\00-批次方案.md",
+   "sha256_original": "0bcbe001cd5967e8c3136b1e0f8c2d96b7bbde0ad6fe14627a4b964f06d6ac5a"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\01-基线与标准接续.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\01-基线与标准接续.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-新原生组合与统一来源设计链\\01-基线与标准接续.md",
+   "sha256_original": "1e2563de5e44c1f613fab6d9eb69bacb1cb8fbeed80d1df046d6738ea4e313fe"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\02-Framework与DSH接入.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\02-Framework与DSH接入.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-新原生组合与统一来源设计链\\02-Framework与DSH接入.md",
+   "sha256_original": "93dcddb43994e07d4574ed85ad981c17c2288a3343da6cb3894ea438158583c7"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\03-共享来源与版本管理.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\03-共享来源与版本管理.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-新原生组合与统一来源设计链\\03-共享来源与版本管理.md",
+   "sha256_original": "11edf4f3eedfe502eb69938c90b8d2d3ab34b3ed3bc66c7077de6ac2aa3da023"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\04-原生设计交接.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\01-批次-新原生组合与统一来源设计链\\04-原生设计交接.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\01-批次-新原生组合与统一来源设计链\\04-原生设计交接.md",
+   "sha256_original": "d77f3e1760a4ae0eef6bc44aead357978d36b22610a685feed9bd7fd20c3ebb0"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\00-批次方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\00-批次方案.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\02-批次-知识设计与施工传递\\00-批次方案.md",
+   "sha256_original": "eb4e1d3c4fee74357a2bfb27926c2280ac68bd71a710b01c183af2a366d23c45"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\01-知识输入判断与实体应用.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\01-知识输入判断与实体应用.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\02-批次-知识设计与施工传递\\01-知识输入判断与实体应用.md",
+   "sha256_original": "c2250d154b7d32720ad012e0c7c481b5ecea9872b28902623448066f24bbb191"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\02-CU阶段与后续消费.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\02-CU阶段与后续消费.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\02-批次-知识设计与施工传递\\02-CU阶段与后续消费.md",
+   "sha256_original": "0de9ac687a6637f5e10b5de9542b481fc82e3a536bc72f94fea829185f489fdc"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\03-原生运行与当前资格.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\02-批次-知识设计与施工传递\\03-原生运行与当前资格.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\02-批次-知识设计与施工传递\\03-原生运行与当前资格.md",
+   "sha256_original": "418830c7f8fca64b8bad03746c55e10024d29f8774c1fbc6038d96060491f169"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\00-批次方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\00-批次方案.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-业务送审与变更交付\\00-批次方案.md",
+   "sha256_original": "d8fb4e1f30b1a14f874cd20ed14543e65fb2e31edbca4ff4fe1ef6164010a65f"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\01-Story写作与阅读质量.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\01-Story写作与阅读质量.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-业务送审与变更交付\\01-Story写作与阅读质量.md",
+   "sha256_original": "e46367fe20ba1895d26f4b1c278f395e61cf252fd51199b07a9edae0322e9c27"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\02-Story独审及交付状态.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\02-Story独审及交付状态.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-业务送审与变更交付\\02-Story独审及交付状态.md",
+   "sha256_original": "811a736b260606ec25ea6f6d88ce73dc8ca0806c94f73f3c75c12a845bc72a56"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\03-update与本地恢复.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\03-update与本地恢复.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-业务送审与变更交付\\03-update与本地恢复.md",
+   "sha256_original": "c43e370845fa2f7c75c39cc5d6f8c2dea27886770b56b82e10ca724819e41c4f"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\04-系统归档与远程恢复.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\03-批次-业务送审与变更交付\\04-系统归档与远程恢复.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\03-批次-业务送审与变更交付\\04-系统归档与远程恢复.md",
+   "sha256_original": "817120a50e084342a054734f89bb64134eb390759912e010e3cd2fc4b041b7ba"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\00-批次方案.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\00-批次方案.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\04-批次-能力保持与整版验收\\00-批次方案.md",
+   "sha256_original": "2f99e60154c10041b0c79528e64e8eec21e80e427a6703ddcc66ad6a61be1286"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\01-安装升级与项目资料.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\01-安装升级与项目资料.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\04-批次-能力保持与整版验收\\01-安装升级与项目资料.md",
+   "sha256_original": "285a4fdfc0df1fe83140a5d624feaa3b6659c22512fd63b894edb27b170204a1"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\02-usage与stats保持.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\02-usage与stats保持.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\04-批次-能力保持与整版验收\\02-usage与stats保持.md",
+   "sha256_original": "1146ea350f2ac32b9da10b4e542c4623a299e2358ddefd9014e0a379c974c3b4"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\03-完整离线验收.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\03-完整离线验收.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\04-批次-能力保持与整版验收\\03-完整离线验收.md",
+   "sha256_original": "f8c438ce4ba1233b2f8b8b9825b755b7c5c6a1600c4d2e160057d9356e702577"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\04-获准DSH效果验收.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\04-批次-能力保持与整版验收\\04-获准DSH效果验收.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\04-批次-能力保持与整版验收\\04-获准DSH效果验收.md",
+   "sha256_original": "48e534badae8269c58baf45683f57ae245fb0227269b670cf25e29f9a2c8f2a1"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\01-目标接口与状态.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\01-目标接口与状态.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\01-目标接口与状态.md",
+   "sha256_original": "952549063d2ef3c57ff87b718edc56a4083270b46ed49316105548190c36b740"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\02-退场与能力接替.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\02-退场与能力接替.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\02-退场与能力接替.md",
+   "sha256_original": "2a68397d41542080d76b18e3c00b29cd6bb586f2a90e621ac38aea10fcf43cf2"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\03-预算与计量.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\03-预算与计量.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\03-预算与计量.md",
+   "sha256_original": "74bba4bdbcedff031c9ddb534be2beb99926821aeeca77479d5ea70f7eefbc8a"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\04-验证与标准映射.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\04-验证与标准映射.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\04-验证与标准映射.md",
+   "sha256_original": "af4407e5ff2cf01be8205458f3f523962cf45f7d50df865ffb3029134214c5f3"
+  },
+  {
+   "old": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\05-重写依据与自查.md",
+   "archive": "doc\\archive\\2.1.0\\2026-10-28-2.x适配收敛\\产品适配\\参考\\05-重写依据与自查.md",
+   "current": "doc\\plan\\2.1.0\\2026-10-28-2.x适配收敛\\参考\\05-设计决定与依据.md",
+   "sha256_original": "929bba323080ce81d2ca46db572f5b756b8b2c934f48db93e708f28df1e39d1e"
+  }
+ ]
+}
