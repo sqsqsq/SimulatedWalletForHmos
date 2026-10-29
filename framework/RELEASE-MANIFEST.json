@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "439a808b1bf3e6962a2991c112465453582dd345",
-  "built_at": "2026-10-29T00:44:04.113Z",
+  "source_commit": "1712057c793aa7730269cdf3dc4aaa22b5d43eed",
+  "built_at": "2026-10-29T08:12:38.246Z",
   "files": [
     {
       "path": "MIGRATION.md",
-      "sha256": "1a3699279a986bd5df542806e9b63661275ca3078266d957916a866649ec4511"
+      "sha256": "660ed01b80463dfda5bd73de302d86be527893478bc11d4d66bb109a4e5c0912"
     },
     {
       "path": "README.md",
@@ -514,7 +514,7 @@
     },
     {
       "path": "docs/operations/goal-mode-runbook.md",
-      "sha256": "07379c3be89f2de52d00362aa7fa4a3e914417c0f3ffd4e560d9dd2ccdeb90ff"
+      "sha256": "7738d42fe9b4f29f6f3cb82f95e2c31a82c6ba9026f102a240f528e1a8126a6a"
     },
     {
       "path": "docs/operations/harness-runbook.md",
@@ -914,7 +914,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "d67cd88f55ffc53f40b19cd52b0038bb5163aba97ff8ee40e7605c86e0fec406"
+      "sha256": "f506dba4033dd5120b890bd4e24f83d79dfd915a0f000a82ed0582a16d806cdf"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -1110,7 +1110,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-admission.ts",
-      "sha256": "60125862d86e1565608af144beb9d7f4305bb5bb9a4710706a710141961e0522"
+      "sha256": "ec3ed88eb44f9fe2539fb5f53e4e52ad8bae8c425acc0c000b8dff327996b622"
     },
     {
       "path": "harness/scripts/utils/blueprint-contracts.ts",
@@ -1462,7 +1462,7 @@
     },
     {
       "path": "harness/scripts/utils/design-repair-unattended.ts",
-      "sha256": "a0522f4de5e9eb04775d44f12290ac96beb8fb29fc4116c4eb3cf99626212842"
+      "sha256": "8cb4762cd9f07665e64a3f894abfe1ff3621f59c9070cb77c18ef7c5efccb4f0"
     },
     {
       "path": "harness/scripts/utils/device-credential-store.ts",
@@ -1810,7 +1810,7 @@
     },
     {
       "path": "harness/scripts/utils/initial-design-delivery.ts",
-      "sha256": "41042dcda94a92e41768659d5ba2eae31d1c88a3079f2a958d5e1b866a46a43f"
+      "sha256": "c0671e16501bd7f9001cd29da7dae316b1000fb39a0601e7879e50e0df0ddd63"
     },
     {
       "path": "harness/scripts/utils/instance-skill-bridge.ts",
@@ -4706,7 +4706,7 @@
     },
     {
       "path": "skills/reference/app-component-blueprint-workflow.md",
-      "sha256": "8fb60d137234b98f1afbf3eb29b9af2e6859cbd06cdc99e2f0b8d3102881bfbb"
+      "sha256": "c8af2ab5e45dd620185409fb2e8c1f165616126d51d58361a2bece224f3fc443"
     },
     {
       "path": "skills/reference/business-ut-workflow-detail.md",
@@ -4742,7 +4742,7 @@
     },
     {
       "path": "skills/reference/design-repair-unattended.md",
-      "sha256": "66a25e9cbe6eb0a4f81bf327da63901a007551894974c98fbaff6647299e8a62"
+      "sha256": "f7157d784a1f168a488a170b7a9ce18240d21c9b801f63d1ac68e4a16d33808f"
     },
     {
       "path": "skills/reference/device-policy-gate.md",
