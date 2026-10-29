@@ -233,7 +233,7 @@ function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
     ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
-    ...blocking.map(m => `- **读不到 \`${m.rel}\`**——它是必备来源；与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
+    ...blocking.map(m => `- **读不到${m.label}（${m.doc}）**——它是必备来源，材料索引里没有这一类；与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
 }
 
 /** 设计附件与蓝图的原生评审投影字节相同时给出两者路径：同一份内容在两个位置。 */

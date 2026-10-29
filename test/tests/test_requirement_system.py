@@ -1,12 +1,9 @@
 """本地需求系统替身：一个目录就是一套需求系统，一个子目录就是一张单。
 
-外网 demo 用 `story.js` 屏蔽内网需求系统。此前那份替身把 RR/SR 从一个演示数据目录里
-按模板渲染出来，而那个目录早已不在——`init` 走到拉材料就崩，`review` 永远 `unchanged`，
-四个 Case 全靠测试驱动把材料预先铺进需求目录，**被测模型从来没有真的从系统拉过单**。
-
-现在它读一个真实存在的目录：查无此单会停住、归档覆盖系统正文之前把系统上那一版备份到
-需求目录的 `.backups/cloud/`、restore 用那份备份恢复系统正文。这里判的就是这几件事
-（KM-1…KM-4），因为它们是被测模型在实跑里唯一能观察到的「系统行为」。
+外网 demo 用 `story.js` 屏蔽内网需求系统。它读一个真实存在的目录：取材把上游正文写进来源收件箱下的
+取材批次、查无此单会停住、归档覆盖系统正文之前把系统上那一版备份到需求目录的 `.backups/cloud/`、
+restore 用那份备份恢复系统正文。这里判的就是这几件事（KM-1…KM-4），因为它们是被测模型在实跑里
+唯一能观察到的「系统行为」。
 """
 from __future__ import annotations
 
@@ -83,9 +80,12 @@ class SystemCase(unittest.TestCase):
         (self.feature / "AR" / "design-review.md").write_text(DESIGN_REVIEW_TEXT, encoding="utf-8")
         return story, notes
 
+    def batch(self) -> Path:
+        return self.feature / "sources" / "inbox" / "fetch-test"
+
     def fetch(self) -> dict:
         proc = subprocess.run(
-            ["node", str(STORY_JS), "fetch", AR, "token", "--out", str(self.feature / "inbox"),
+            ["node", str(STORY_JS), "fetch", AR, "token", "--out", str(self.batch()),
              "--project-root", str(self.project)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=60, env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
@@ -103,53 +103,62 @@ def _env() -> dict[str, str]:
             if k != "STORY_REQUIREMENT_SYSTEM_DIR"}
 
 
-class TestInit(SystemCase):
-    """KM-1：按单号拉单据。"""
+class TestFetch(SystemCase):
+    """KM-1：按单号取上游正文，写进来源收件箱下的一个取材批次。"""
 
-    def test_pulls_three_documents_and_three_tickets(self) -> None:
-        proc = self.story("init", AR)
+    def fetch_into(self, ticket: str = AR, system: Path | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(STORY_JS), "fetch", ticket, "token", "--out", str(self.batch()),
+             "--project-root", str(self.project)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system if system is None else system)})
+
+    def test_pulls_three_documents_into_one_batch(self) -> None:
+        proc = self.fetch_into()
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual({"mode": "init", "reqNo": AR, "parentNo": SR,
-                          "rrNo": RR, "success": True}, self.receipt(proc))
-        self.assertEqual(PRD_TEXT, (self.feature / "RR" / "prd.md").read_text("utf-8"))
-        self.assertEqual(SR_TEXT, (self.feature / "SR" / "design.md").read_text("utf-8"))
-        self.assertEqual(AR_TEXT, (self.feature / "AR" / "design.md").read_text("utf-8"))
-        for rel, expect in ((("AR", "detail.json"), {"reqNo": AR, "parentNo": SR, "rrNo": RR}),
-                            (("SR", "detail.json"), {"reqNo": SR, "rrNo": RR}),
-                            (("RR", "detail.json"), {"reqNo": RR})):
-            detail = json.loads((self.feature.joinpath(*rel)).read_text("utf-8"))
-            for key, value in expect.items():
-                self.assertEqual(value, detail[key], rel)
+        receipt = self.receipt(proc)
+        self.assertEqual(("fetch", AR, SR, RR, True),
+                         (receipt["mode"], receipt["reqNo"], receipt["parentNo"], receipt["rrNo"], receipt["success"]))
+        self.assertEqual(PRD_TEXT, (self.batch() / "RR-prd.md").read_text("utf-8"))
+        self.assertEqual(SR_TEXT, (self.batch() / "SR-design.md").read_text("utf-8"))
+        self.assertEqual(AR_TEXT, (self.batch() / "AR-design.md").read_text("utf-8"))
+        batch = json.loads((self.batch() / ".receipt.json").read_text(encoding="utf-8"))
+        self.assertEqual({("AR", AR, "开发需求"), ("SR", SR, "系统设计"), ("RR", RR, "产品需求")},
+                         {(i["role"], i["ticket"], i["title"]) for i in batch["items"]})
 
     def test_system_carries_no_images(self) -> None:
-        """系统只支持 md：拉一次单，需求目录里不该出现任何图片。
+        """系统只支持 md：取一次材，需求目录里不该出现任何图片。
 
         图片走的是另一条路——人手上的设计文档进收件箱、由导入抽出来。
         真让系统吐出图片，本地就跑通了一条真实环境里不存在的取材路径。
         """
-        self.story("init", AR)
+        self.fetch_into()
         images = [p for p in self.feature.rglob("*")
                   if p.is_file() and p.suffix.lower() in
                   {".png", ".jpg", ".jpeg", ".svg", ".webp", ".bmp"}]
         self.assertEqual([], images)
 
-    def test_existing_local_design_is_never_overwritten(self) -> None:
-        """AR/design.md 已有内容就是需求分析的成果，拉取不能盖掉它。"""
+    def test_fetch_writes_no_business_file(self) -> None:
+        """取材只写批次与 `AR/story-src` 下的回执：本地已有的业务文件一个字不动。"""
         (self.feature / "AR").mkdir(parents=True)
-        (self.feature / "AR" / "design.md").write_text("# 我自己写的\n", encoding="utf-8")
-        self.story("init", AR)
-        self.assertEqual("# 我自己写的\n", (self.feature / "AR" / "design.md").read_text("utf-8"))
+        (self.feature / "AR" / "story.md").write_text("# 我自己写的\n", encoding="utf-8")
+        self.fetch_into()
+        self.assertEqual("# 我自己写的\n", (self.feature / "AR" / "story.md").read_text("utf-8"))
+        written = {p.relative_to(self.feature).as_posix() for p in self.feature.rglob("*") if p.is_file()}
+        self.assertEqual(set(), {w for w in written - {"AR/story.md"}
+                                 if not w.startswith(("sources/inbox/fetch-test/", "AR/story-src/"))})
 
-    def test_missing_body_is_left_for_the_placeholder_step(self) -> None:
+    def test_missing_body_is_reported_absent_not_written_empty(self) -> None:
         """系统上没有正文就不写：空文件会让下游分不清「没有」和「拉到了空的」。"""
         (self.system / RR / "prd.md").unlink()
-        proc = self.story("init", AR)
+        proc = self.fetch_into()
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertFalse((self.feature / "RR" / "prd.md").exists())
-        self.assertTrue((self.feature / "SR" / "design.md").exists())
+        self.assertFalse((self.batch() / "RR-prd.md").exists())
+        self.assertTrue((self.batch() / "SR-design.md").exists())
+        self.assertEqual("absent", {i["name"]: i for i in self.receipt(proc)["items"]}["RR-prd.md"]["status"])
 
-    def test_unknown_ticket_stops_instead_of_seeding_placeholders(self) -> None:
-        proc = self.story("init", "AR70099")
+    def test_unknown_ticket_stops_without_a_feature_dir(self) -> None:
+        proc = self.fetch_into("AR70099")
         self.assertEqual(1, proc.returncode)
         receipt = self.receipt(proc)
         self.assertFalse(receipt["success"])
@@ -158,7 +167,7 @@ class TestInit(SystemCase):
 
     def test_unreachable_system_is_not_reported_as_unknown_ticket(self) -> None:
         """两种「取不到」的补救动作完全不同，报同一句话就分不出该找谁。"""
-        proc = self.story("init", AR, system=self.system.parent / "nowhere")
+        proc = self.fetch_into(system=self.system.parent / "nowhere")
         self.assertEqual(1, proc.returncode)
         error = self.receipt(proc)["error"]
         self.assertTrue(error.startswith("需求系统不可达"), error)
@@ -170,7 +179,6 @@ class TestArchive(SystemCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.story("init", AR)
         self.story_text, self.notes_text = self.write_spec_products()
         self.before = self.fetch()
 
@@ -281,7 +289,6 @@ class TestRestore(SystemCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.story("init", AR)
         self.story_text, self.notes_text = self.write_spec_products()
         self.fetch()
 
@@ -354,7 +361,7 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
     """不传 `--project-root` 时，脚本自己上溯到实例根。
 
     SKILL 正文给的取材命令就是这个形态：`node doc/extensions/skills/story/scripts/
-    adapters/story.js init <AR> <token>`。上溯的级数错一级，材料落到 `doc/` 底下
+    adapters/story.js fetch <AR> <token> --out <取材批次>`。上溯的级数错一级，回执落到 `doc/` 底下
     再开一层 `doc/features/`，消费模型得改扩展源码才跑得下去。
 
     别的用例都显式传根（它们要的是隔离的工作区），所以这一条单独走默认入口。
@@ -371,11 +378,12 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
 
     def test_material_lands_in_the_features_dir_of_the_project(self) -> None:
         proc = subprocess.run(
-            ["node", str(self.installed), "init", AR, "token"],
+            ["node", str(self.installed), "fetch", AR, "token", "--out",
+             f"doc/features/{AR}/sources/inbox/fetch-test"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=60, env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
+            timeout=60, cwd=self.project, env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual(AR_TEXT, (self.feature / "AR" / "design.md").read_text("utf-8"))
+        self.assertTrue((self.feature / "AR" / "story-src" / "fetched.json").is_file(), "回执没落在本工程的需求目录")
         self.assertFalse((self.project / "doc" / "doc").exists(),
                          "默认根少算一级：材料落进了 doc/ 底下的第二层 doc/features/")
 

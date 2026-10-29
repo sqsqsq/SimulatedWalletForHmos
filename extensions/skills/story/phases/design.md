@@ -22,10 +22,10 @@
 
    ```json
    {
-     "adopted": ["RR/prd.md", "AR/design.md", "assets/flow.svg"],
+     "adopted": ["sources/RR-<产品需求单号>-v1/RR-prd.md", "sources/系统设计-v2/text.md", "sources/系统设计-v2/images/flow.png"],
      "human_decision_ids": ["<scope_decision 等关卡记录的 ask_id>"],
      "scope_items": [
-       {"item_id": "request-main", "kind": "requirement", "source_path": "RR/prd.md",
+       {"item_id": "request-main", "kind": "requirement", "source_path": "sources/RR-<产品需求单号>-v1/RR-prd.md",
         "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}
      ]
    }

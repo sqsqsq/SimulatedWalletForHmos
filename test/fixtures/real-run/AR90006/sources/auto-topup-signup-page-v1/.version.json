@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "source_id": "local:ux-reference/auto-topup-signup-page.png",
+  "kind": "local",
+  "class": "UX",
+  "origin": {
+    "inbox_path": "ux-reference/auto-topup-signup-page.png"
+  },
+  "version": 1,
+  "acquired_at": "2026-10-29T19:42:57+08:00",
+  "original": {
+    "path": "sources/auto-topup-signup-page-v1/auto-topup-signup-page.png",
+    "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80"
+  },
+  "readable": null,
+  "images": []
+}

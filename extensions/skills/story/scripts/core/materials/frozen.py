@@ -27,6 +27,7 @@ from pathlib import Path, PurePosixPath
 
 from flow.inputs import is_ar_skeleton
 from materials import importer
+from materials.answers import effective_human_records
 
 INPUTS = ("AR", "story-src", "inputs")
 SNAPSHOT = "snapshot.json"
@@ -85,8 +86,10 @@ def read_input(feature_root: Path, rel: str) -> dict:
 
 
 def adopted_files(feature_root: Path, adopted: list, manifest: dict) -> list[str]:
-    """采用的原件：每份都是本轮确认的材料（材料清单里登记着），字节仍是确认时那一份由调用方先核。"""
+    """采用的原件：每份都是材料索引里登记的某一版本的文件（采用哪一版由设计定，不默认最新），字节由调用方先核。"""
     registered = {p for m in manifest.get("materials", []) for p in m.get("paths", [])}
+    registered |= {f["path"] for s in manifest.get("sources", []) for v in s.get("versions", [])
+                   for f in [v["original"], *([v["readable"]] if v.get("readable") else []), *(v.get("images") or [])]}
     out: list[str] = []
     for raw in adopted:
         rel = need_relative(raw, "adopted 里的一项")
@@ -97,19 +100,6 @@ def adopted_files(feature_root: Path, adopted: list, manifest: dict) -> list[str
     if not out:
         raise FrozenError("adopted 是空的：至少采用一份本轮确认的原件")
     return out
-
-
-def effective_human_records(contract: dict) -> list[dict]:
-    """当前有效的人签：同一关卡（会议话题按话题分）只认最后一条人给出、已生效的记录。
-
-    之后的轮次重新答过同一关卡（reopen 或补料后重问），前一条就被替代；没有重问的关卡沿用原记录。
-    """
-    latest: dict[tuple, dict] = {}
-    for r in contract.get("rounds", []):
-        for g in r.get("gates", []):
-            if g.get("by") == "human" and g.get("outcome") == "accepted":
-                latest[(g.get("gate"), g.get("meeting"), g.get("item"))] = dict(g, round=r.get("round"))
-    return list(latest.values())
 
 
 def human_records(contract: dict, ids: list) -> list[dict]:
@@ -191,12 +181,13 @@ def scope_items(raw: list, chosen: set[str]) -> list[dict]:
 
 
 def origins(feature_root: Path, originals: list[str], files: dict[str, bytes], manifest: dict) -> dict[str, list[dict]]:
-    """采用文件的外部来源，按冻结这一刻的材料登记取：收件箱导入的转换稿记它的全部原件（路径与登记摘要，同一落点可以有几份），
+    """采用文件的外部来源，按冻结这一刻的材料索引取：采用的是某版本的转换正文时记它的原件（路径与完整摘要），
     init 落的空骨架记空列表（生成件，不是外部材料）；没记的文件就是外部原件本身。读者面的材料清单按它列原件。"""
     out: dict[str, list[dict]] = {}
-    for s in manifest.get("sources", []):
-        if s.get("ingested") and s.get("target") in originals:
-            out.setdefault(s["target"], []).append({"path": f"inbox/{s['file']}", "sha256": s["sha256"]})
+    for o in manifest.get("origins", []):
+        for rel in o.get("readable_paths") or []:
+            if rel in originals and rel != o.get("path"):
+                out.setdefault(rel, []).append({"path": o["path"], "sha256": o["sha256"]})
     for rel in originals:
         if rel not in out and is_ar_skeleton(feature_root, feature_root.name, files[rel].decode("utf-8", errors="replace")):
             out[rel] = []

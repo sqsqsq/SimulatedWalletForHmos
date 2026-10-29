@@ -600,23 +600,38 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
 
     IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
     FEATURE = "doc/features/REQ-DEMO"
-    SR = f"{FEATURE}/SR/design.md"
-    IMAGE = f"{FEATURE}/ux-reference/old.png"
     CORRECTIONS = f"{FEATURE}/AR/story-src/meetings/续期会/v1/corrections.json"
-    SR_ROW = "| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) | 续期按月的提法与产品需求冲突，未采用：以产品需求的按年为准。 |"
+
+    def put(self, files: dict[str, tuple[bytes, str]]) -> None:
+        """经真实导入命令导成材料版本并登记本轮。"""
+        inbox = self.root / self.FEATURE / "sources" / "inbox"
+        classify = {}
+        for rel, (body, cls) in files.items():
+            (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+            (inbox / rel).write_bytes(body)
+            classify[rel] = cls
+        (inbox / ".classify.json").write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+        self.run_py(self.IMPORT)
+        self.run_py(self.FLOW, "round")
+
+    def latest(self, key: str) -> str:
+        index = json.loads((self.flow_path.parent / "materials.json").read_text(encoding="utf-8"))
+        return next(s for s in index["sources"] if s["source_id"] == f"local:{key}")["versions"][-1]["original"]["path"]
 
     def setUp(self) -> None:
         super().setUp()
-        feature = self.root / self.FEATURE
-        (feature / "SR").mkdir(exist_ok=True)
-        (feature / "SR" / "design.md").write_text("# 系统设计\n\n续期改为按月扣费，与产品需求的按年不同。\n", encoding="utf-8")
-        (feature / "ux-reference").mkdir(exist_ok=True)
-        shutil.copy2(next((REPO / "test" / "fixtures").rglob("*.png")), feature / "ux-reference" / "old.png")
-        self.run_py(self.FLOW, "round")
+        self.put({"SR/design.md": ("# 系统设计\n\n续期改为按月扣费，与产品需求的按年不同。\n".encode("utf-8"), "SR"),
+                  "old.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")})
+        self.sr_rel = self.latest("SR/design.md")
+        self.SR = f"{self.FEATURE}/{self.sr_rel}"
+        self.IMAGE = f"{self.FEATURE}/{self.latest('old.png')}"
+        self.SR_ROW = (f"| 系统设计 [design.md](../{self.sr_rel}) | [design.md](../{self.sr_rel}) "
+                       "| 续期按月的提法与产品需求冲突，未采用：以产品需求的按年为准。 |")
         self.run_py(self.IMPORT, "--caption-image", self.IMAGE, "--unused", "旧版签约页，本需求不改签约页")
         # 作者在材料表里写明没采用的那份与原因：材料表按 origins 核覆盖
-        self.story.write_text(self.story.read_text(encoding="utf-8").replace(
-            "| 开发需求 [design.md](design.md) |", self.SR_ROW + "\n| 开发需求 [design.md](design.md) |"), encoding="utf-8")
+        anchor = "| 开发需求 [design.md](../sources/design-v1/design.md) |"
+        self.story.write_text(self.story.read_text(encoding="utf-8").replace(anchor, self.SR_ROW + "\n" + anchor),
+                              encoding="utf-8")
         meeting = self.flow_path.parent / "meetings" / "续期会" / "v1"
         meeting.mkdir(parents=True)
         (meeting / "raw.md").write_text("主持人：续期按年。\n", encoding="utf-8")
@@ -645,7 +660,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         task = self.task_text()
         for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
             self.assertIn(f"`{rel}`", task)
-        self.assertIn(f"`{self.SR}` —— 没采用的阅读稿 SR/design.md（核作者为何没采用）", task)
+        self.assertIn(f"`{self.SR}` —— 没采用的阅读稿 {self.sr_rel}（核作者为何没采用）", task)
         self.assertIn("作者登记不用：旧版签约页，本需求不改签约页", task)
 
     def test_skipping_any_applicable_source_is_not_a_pass(self) -> None:
@@ -693,19 +708,20 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         manifest = self.flow_path.parent / "materials.json"
         data = json.loads(manifest.read_text(encoding="utf-8"))
         image = next(m for m in data["materials"] if "image" in str(m.get("kind")) and any(p.endswith("old.png") for p in m["paths"]))
-        feature = self.root / self.FEATURE
-        (feature / "ux-reference" / "old-copy.png").write_bytes((feature / "ux-reference" / "old.png").read_bytes())
-        (feature / "ux-reference" / "old-edited.png").write_bytes((feature / "ux-reference" / "old.png").read_bytes() + b"x")
-        image["paths"] += ["ux-reference/old-copy.png", "ux-reference/old-edited.png"]
+        folder = Path(self.IMAGE).parent.relative_to(self.FEATURE).as_posix()
+        original = self.root / self.IMAGE
+        (original.parent / "old-copy.png").write_bytes(original.read_bytes())
+        (original.parent / "old-edited.png").write_bytes(original.read_bytes() + b"x")
+        image["paths"] += [f"{folder}/old-copy.png", f"{folder}/old-edited.png"]
         manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         task = self.task_text()
-        self.assertIn(f"`{self.FEATURE}/ux-reference/old-copy.png` —— ", task)
-        self.assertIn(f"（与 `{self.IMAGE}` 同一内容）", task.split(f"`{self.FEATURE}/ux-reference/old-copy.png`", 1)[1].split("\n", 1)[0])
-        edited = task.split(f"`{self.FEATURE}/ux-reference/old-edited.png`", 1)[1].split("\n", 1)[0]
+        copy_rel, edited_rel = f"{self.FEATURE}/{folder}/old-copy.png", f"{self.FEATURE}/{folder}/old-edited.png"
+        self.assertIn(f"`{copy_rel}` —— ", task)
+        self.assertIn(f"（与 `{self.IMAGE}` 同一内容）", task.split(f"`{copy_rel}`", 1)[1].split("\n", 1)[0])
+        edited = task.split(f"`{edited_rel}`", 1)[1].split("\n", 1)[0]
         self.assertIn("内容不同，单独核读", edited)
         self.assertNotIn("同一内容", edited)
         self.fresh()
-        edited_rel = f"{self.FEATURE}/ux-reference/old-edited.png"
         self.reviewed("pass", self.examined(lambda xs: [x for x in xs if x != edited_rel]))
         got = self.result()
         self.assertEqual("report_invalid", got["result"], "内容不同的落点被别名顶替了")
@@ -714,19 +730,19 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
     def test_a_binary_origin_is_checked_not_read(self) -> None:
         import hashlib
         feature = self.root / self.FEATURE
-        (feature / "inbox").mkdir(exist_ok=True)
-        docx = feature / "inbox" / "系统设计.docx"
+        docx_rel = f"{Path(self.sr_rel).parent.as_posix()}/系统设计.docx"
+        docx = feature / docx_rel
         docx.write_bytes(b"PK\x03\x04 binary original")
         manifest = self.flow_path.parent / "materials.json"
         data = json.loads(manifest.read_text(encoding="utf-8"))
-        data["origins"].append({"path": "inbox/系统设计.docx", "kind": "converted-source", "readable_paths": ["SR/design.md"],
-                                "sha256": "sha256:" + hashlib.sha256(docx.read_bytes()).hexdigest()[:16]})
+        data["origins"].append({"path": docx_rel, "kind": "local", "readable_paths": [self.sr_rel],
+                                "sha256": hashlib.sha256(docx.read_bytes()).hexdigest()})
         manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        link = f"[design.md](../{self.sr_rel})"
         self.story.write_text(self.story.read_text(encoding="utf-8").replace(
-            self.SR_ROW, self.SR_ROW.replace("| [design.md](../SR/design.md) |", "| [design.md](../SR/design.md) [系统设计.docx](../inbox/系统设计.docx) |")),
-            encoding="utf-8")
-        rel = f"{self.FEATURE}/inbox/系统设计.docx"
-        self.assertIn(f"`{rel}` —— 原件 inbox/系统设计.docx（核在场与来源摘要，正文读它的阅读稿）　（核在场与来源摘要，不必通读）",
+            self.SR_ROW, self.SR_ROW.replace(f"| {link} |", f"| {link} [系统设计.docx](../{docx_rel}) |")), encoding="utf-8")
+        rel = f"{self.FEATURE}/{docx_rel}"
+        self.assertIn(f"`{rel}` —— 原件 {docx_rel}（核在场与来源摘要，正文读它的阅读稿）　（核在场与来源摘要，不必通读）",
                       self.task_text())
         self.fresh()
         self.reviewed("pass", self.examined(lambda xs: [x for x in xs if x != rel]))
@@ -737,20 +753,22 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertIn("与材料清单登记的", out.stdout + out.stderr)
         self.assertEqual("input_invalid", self.result()["result"])
 
-    def test_the_adopted_version_stays_beside_a_changed_current_file(self) -> None:
-        prd = f"{self.FEATURE}/RR/prd.md"
-        self.assertRegex(self.task_text(), rf"`{re.escape(prd)}` —— 阅读稿 RR/prd.md（与冻结副本 \S+/files/RR/prd.md 同字节）")
-        (self.root / prd).write_text((self.root / prd).read_text(encoding="utf-8") + "\n新版补了一句。\n", encoding="utf-8")
-        self.run_py(self.FLOW, "round")
+    def test_the_adopted_version_stays_beside_a_newer_version(self) -> None:
+        """产品需求取得了新版本：冻结采用的那一版仍是设计权威；新版本单独列作没采用的阅读稿，核作者为何没采用。"""
+        prd = "sources/prd-v1/prd.md"
+        self.assertRegex(self.task_text(), rf"`{re.escape(self.FEATURE)}/{re.escape(prd)}` —— 阅读稿 {re.escape(prd)}"
+                                           rf"（与冻结副本 \S+/files/{re.escape(prd)} 同字节）")
+        old = (self.root / self.FEATURE / prd).read_bytes()
+        self.put({"RR/prd.md": (old + "\n新版补了一句。\n".encode("utf-8"), "RR")})
+        self.story.write_text(self.story.read_text(encoding="utf-8").replace(prd, "sources/prd-v2/prd.md"), encoding="utf-8")
         task = self.task_text()
-        self.assertIn(f"`{prd}` —— 阅读稿 RR/prd.md：当前对照，与采用版不同，仅核取舍，不替代采用版", task)
-        self.assertRegex(task, r"/files/RR/prd\.md` —— 冻结输入里采用的 RR/prd\.md（original）")
+        self.assertIn(f"`{self.FEATURE}/sources/prd-v2/prd.md` —— 没采用的阅读稿 sources/prd-v2/prd.md（核作者为何没采用）", task)
+        self.assertRegex(task, rf"/files/{re.escape(prd)}` —— 冻结输入里采用的 {re.escape(prd)}（original）")
 
     def test_a_changed_left_out_source_retires_the_report(self) -> None:
         self.reviewed("pass")
         self.assertEqual("pass", self.result()["result"])
-        (self.root / self.SR).write_text("# 系统设计\n\n续期改为按季。\n", encoding="utf-8")
-        self.run_py(self.FLOW, "round")
+        self.put({"SR/design.md": ("# 系统设计\n\n续期改为按季。\n".encode("utf-8"), "SR")})
         self.assertEqual("subject_stale", self.result()["result"])
 
 
@@ -948,8 +966,23 @@ class AnUnreviewedDeliveryNeedsAHumanPart2(TheStoryIsReviewedRegisteredAndDelive
         self.assertEqual("pass", self.result()["result"])
 
 
+def import_fixture(fixture: Path, files: dict[str, tuple[bytes, str]]) -> None:
+    """在夹具副本上经真实导入命令导成材料版本（需求 REQ-DEMO）。"""
+    inbox = fixture / "doc" / "features" / "REQ-DEMO" / "sources" / "inbox"
+    classify = {}
+    for rel, (body, cls) in files.items():
+        (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+        (inbox / rel).write_bytes(body)
+        classify[rel] = cls
+    (inbox / ".classify.json").write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+    proc = subprocess.run(["python", str(DEV_EXT / "skills/story/scripts/core/import_sources.py"), "--feature", "REQ-DEMO",
+                           "--project-root", str(fixture)], capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
 class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
-    """带界面参考图的需求：需求目录保留 `ux-reference/`，蓝图在异名的工作区（`bp-<需求>`），
+    """带界面参考图的需求：界面图是需求根下的材料版本，蓝图在异名的工作区（`bp-<需求>`），
     冻结、蓝图消费、审查准备、登记与交付一路走通（审查者是夹具）。"""
 
     FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
@@ -960,9 +993,7 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         fixture = Path(self._tmp.name) / "fixture"
         shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
-        feature = fixture / "doc" / "features" / "REQ-DEMO"
-        (feature / "ux-reference").mkdir()
-        shutil.copy2(next((REPO / "test" / "fixtures").rglob("*.png")), feature / "ux-reference" / "home.png")
+        import_fixture(fixture, {"home.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")})
         self.root = Path(self._tmp.name) / "work"
         designed_copy(fixture, "REQ-DEMO", DRAFT, self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
@@ -979,7 +1010,7 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         hint = self.run_node("check").stderr
         command = hint.split("`import_sources.py ", 1)[1].split("`", 1)[0]
         image = command.split("--caption-image ", 1)[1].split(" ", 1)[0]
-        self.assertEqual("doc/features/REQ-DEMO/ux-reference/home.png", image)
+        self.assertEqual("doc/features/REQ-DEMO/sources/home-v1/home.png", image)
         done = subprocess.run(["python", str(self.IMPORT), "--feature", "REQ-DEMO", "--project-root", str(self.root),
                                "--caption-image", image, "--unused", "首页现状参考，本需求不改首页"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -987,7 +1018,7 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         prepared = self.run_node("review", "--action", "prepare")
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         task = (self.root / "doc/features/REQ-DEMO/AR/story-src/review/task.md").read_text(encoding="utf-8")
-        self.assertIn("/files/ux-reference/home.png`", task)
+        self.assertIn("/files/sources/home-v1/home.png`", task)
         self.assertIn("`doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml`", task)
         design_kit.write_review(self.root, "REQ-DEMO", "pass")
         received = self.run_node("review", "--action", "prepare")
@@ -1008,7 +1039,7 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
 
     FLOW = DEV_EXT / "skills/story/scripts/core/story_flow.py"
     IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
-    IMAGE = "ux-reference/home.png"
+    IMAGE = "sources/home-v1/home.png"
 
     def make(self, hard: bool = False) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -1016,11 +1047,15 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         fixture = Path(self._tmp.name) / "fixture"
         shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
         feature = fixture / "doc" / "features" / "REQ-DEMO"
-        (feature / "ux-reference").mkdir()
-        shutil.copy2(next((REPO / "test" / "fixtures").rglob("*.png")), feature / self.IMAGE)
+        files = {"home.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")}
         if hard:
-            prd = feature / "RR" / "prd.md"
-            prd.write_text(prd.read_text(encoding="utf-8") + "\n签约页必须像素级还原设计稿，不接受降级。\n", encoding="utf-8")
+            prd = feature / "sources" / "prd-v1" / "prd.md"
+            files["RR/prd.md"] = (prd.read_bytes() + "\n签约页必须像素级还原设计稿，不接受降级。\n".encode("utf-8"), "RR")
+        import_fixture(fixture, files)
+        if hard:
+            story = feature / "AR" / "story.md"
+            story.write_text(story.read_text(encoding="utf-8").replace("sources/prd-v1/prd.md", "sources/prd-v2/prd.md"),
+                             encoding="utf-8")
         self.root = Path(self._tmp.name) / "work"
         designed_copy(fixture, "REQ-DEMO", DRAFT, self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
@@ -1255,8 +1290,8 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
     def test_a_legal_empty_manifest_is_no_images(self) -> None:
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         (src / "materials.json").write_text(
-            json.dumps({"materials": [{"kind": "doc", "paths": ["RR/prd.md"]}], "origins": []},
-                       ensure_ascii=False), encoding="utf-8")
+            json.dumps({"schema": 3, "sources": [], "inbox": [], "materials": [{"kind": "doc", "paths": ["sources/prd-v1/prd.md"]}],
+                        "origins": []}, ensure_ascii=False), encoding="utf-8")
         text = self.inject()
         self.assertIn("材料清单里没有图片", text)
         self.assertNotIn("输入有缺口", text)
@@ -1396,10 +1431,10 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
         """该有而读不到的来源在索引里点名：系统需求缺系统设计要说，本地需求没有它是正常的。"""
         feature = self.root / "doc" / "features" / FEATURE
         index = lambda name: self.inject(name).split("### 本次审查的材料", 1)[1].split("\n### ", 1)[0]  # noqa: E731
-        self.assertNotIn("读不到 `SR/design.md`", index(FEATURE), "本地单没有系统设计是正常的")
+        self.assertNotIn("读不到系统设计（SR）", index(FEATURE), "本地单没有系统设计是正常的")
         remote = f"AR{FEATURE}"
         shutil.copytree(feature, feature.parent / remote)
-        self.assertIn("读不到 `SR/design.md`", index(remote), "系统需求缺必备来源没点名")
+        self.assertIn("读不到系统设计（SR）", index(remote), "系统需求缺必备来源没点名")
 
     def test_the_rules_judge_against_sources_not_the_design(self) -> None:
         """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在判据文件。"""

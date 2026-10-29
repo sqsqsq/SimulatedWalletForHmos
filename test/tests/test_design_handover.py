@@ -31,14 +31,14 @@ from flow.inputs import MATERIAL_REQUEST_KEYS  # noqa: E402
 from flow.lifecycle import cmd_status  # noqa: E402
 from flow.state import CARRY_ALL  # noqa: E402
 from flow.submission import cmd_complete  # noqa: E402
-from materials import registry  # noqa: E402
+from materials import importer, registry  # noqa: E402
 
 FEATURE = "AR90001"
 #: 需求关联的蓝图：与需求目录分开，新需求建议 bp-<需求标识>
 BLUEPRINT = f"bp-{FEATURE}"
 UPSTREAM_AR = ("# AR90001 上游预填\n\n## 上游先写下的几条\n\n"
                "- 判定与扣款都在服务端，端侧只做签约入口。\n")
-PRD = "# 产品需求\n\n背景。签约流程见下图：\n\n![签约流程](../assets/flow.svg)\n"
+PRD = "# 产品需求\n\n背景。签约流程见下图：\n\n![签约流程](../flow-v1/flow.svg)\n"
 DRAFT = (
     "# AR90001 自动充值 — 开发需求（AR）\n\n"
     "## 1 简介\n\n### 1.1 需求介绍\n\n端侧承载签约入口与状态展示。\n\n"
@@ -63,15 +63,31 @@ class HandoverCase(unittest.TestCase):
         self.root = Path(self._tmp.name)
         ensure_framework(self.root)
         self.feature_root = self.root / "doc" / "features" / self.feature
-        for part in ("RR", "SR", "AR", "assets"):
-            (self.feature_root / part).mkdir(parents=True)
-        self.prd = self.feature_root / "RR" / "prd.md"
-        self.prd.write_text(PRD, encoding="utf-8")
-        (self.feature_root / "assets" / "flow.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>\n", encoding="utf-8")
-        (self.feature_root / "SR" / "design.md").write_text("# 系统设计\n\n分工。\n", encoding="utf-8")
-        self.design = self.feature_root / "AR" / "design.md"
-        self.design.write_text(UPSTREAM_AR, encoding="utf-8")
+        (self.feature_root / "AR").mkdir(parents=True)
         self.src = self.feature_root / "AR" / "story-src"
+        self.seed({"RR/prd.md": (PRD, "RR"), "assets/flow.svg": ("<svg xmlns='http://www.w3.org/2000/svg'/>\n", "UX"),
+                   "SR/design.md": ("# 系统设计\n\n分工。\n", "SR"), "AR/design.md": (UPSTREAM_AR, "AR")})
+        self.design = self.feature_root / self.ar_rel
+
+    def seed(self, files: dict[str, tuple[str, str]]) -> None:
+        """经真实导入器导成材料版本，各来源最新版本的原件路径存成属性。"""
+        inbox = self.feature_root / "sources" / "inbox"
+        classify = {}
+        for rel, (text, cls) in files.items():
+            (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+            (inbox / rel).write_text(text, encoding="utf-8")
+            classify[rel] = cls
+        (inbox / ".classify.json").write_text(json.dumps(classify), encoding="utf-8")
+        importer.cmd_import(self.feature_root, self.root)
+        latest = {s["origin"]["inbox_path"]: s["versions"][-1]["original"]["path"] for s in registry.read(self.feature_root)["sources"]
+                  if s["kind"] == "local"}
+        self.prd_rel, self.flow_rel = latest["RR/prd.md"], latest["assets/flow.svg"]
+        self.sr_rel, self.ar_rel = latest["SR/design.md"], latest["AR/design.md"]
+        self.prd = self.feature_root / self.prd_rel
+
+    def new_prd(self, text: str) -> None:
+        """产品需求取得了新内容：同一位置再导入一次，成为新版本（已登记的版本不改）。"""
+        self.seed({"RR/prd.md": (text, "RR")})
 
     # -- 驱动 ---------------------------------------------------------------
 
@@ -121,10 +137,10 @@ class HandoverCase(unittest.TestCase):
 
     def write_input(self, *, adopted=None, ids=None, items=None) -> None:
         body = {
-            "adopted": adopted if adopted is not None else ["RR/prd.md", "assets/flow.svg", "AR/design.md"],
+            "adopted": adopted if adopted is not None else [self.prd_rel, self.flow_rel, self.ar_rel],
             "human_decision_ids": ids if ids is not None else [self.scope_ask()],
             "scope_items": items if items is not None else [
-                {"item_id": "request-main", "kind": "requirement", "source_path": "RR/prd.md",
+                {"item_id": "request-main", "kind": "requirement", "source_path": self.prd_rel,
                  "authority": {"owner": "需求负责人", "formality": "formal_requirement"}},
                 {"item_id": "scope-ruling", "kind": "invariant", "source_path": "AR/story-src/human-decisions.json",
                  "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}],
@@ -186,13 +202,13 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
 
     def test_a_background_link_is_listed_not_refused(self) -> None:
         """原件里的普通参考链接不是采用义务：冻结照常成立，没纳入的那几份列给模型判断要不要补成材料。"""
-        self.prd.write_text(PRD + "\n背景见 [旧版说明](../../other/old.md) 与 [系统设计](../SR/design.md)。\n",
-                            encoding="utf-8")
+        sr = "../" + self.sr_rel.split("/", 1)[1]
+        self.new_prd(PRD + f"\n背景见 [旧版说明](../../../other/old.md) 与 [系统设计]({sr})。\n")
         out = self.committed()
         notes = out.get("unadopted_references", [])
         self.assertEqual(2, len(notes), notes)
-        self.assertTrue(any("../../other/old.md" in n and "需求目录外" in n for n in notes), notes)
-        self.assertTrue(any("SR/design.md" in n for n in notes), notes)
+        self.assertTrue(any("../../../other/old.md" in n and "需求目录外" in n for n in notes), notes)
+        self.assertTrue(any(self.sr_rel in n for n in notes), notes)
         self.assertEqual("complete", self.contract()["status"])
 
     def test_the_upstream_design_is_never_overwritten(self) -> None:
@@ -209,7 +225,7 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.assertEqual(hashlib.sha256(snapshot_path.read_bytes()).hexdigest(), out["input"]["snapshot_sha256"])
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         roles = {row["path"]: row["role"] for row in snapshot["files"]}
-        self.assertEqual({"RR/prd.md": "original", "assets/flow.svg": "image", "AR/design.md": "original",
+        self.assertEqual({self.prd_rel: "original", self.flow_rel: "image", self.ar_rel: "original",
                           DRAFT_REL: "extracted_analysis", "AR/story-src/human-decisions.json": "human_record"}, roles)
         for row in snapshot["files"]:
             data = (version / "files" / row["path"]).read_bytes()
@@ -256,13 +272,13 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         self.ready()
         self.write_input()
         staging = self.src / "inputs" / ".staging-interrupted"
-        (staging / "files" / "RR").mkdir(parents=True)
-        (staging / "files" / "RR" / "prd.md").write_text("写到一半\n", encoding="utf-8")
+        (staging / "files" / self.prd_rel).parent.mkdir(parents=True)
+        (staging / "files" / self.prd_rel).write_text("写到一半\n", encoding="utf-8")
         self.assertEqual([], self.versions())
         self.assertNotIn("input", self.contract())
         self.assertEqual(0, self.commit().returncode)
         [version] = self.versions()
-        self.assertEqual(PRD, (version / "files" / "RR" / "prd.md").read_text(encoding="utf-8"))
+        self.assertEqual(PRD, (version / "files" / self.prd_rel).read_text(encoding="utf-8"))
 
     def test_a_refused_rename_keeps_the_registered_version_and_the_retry_freezes(self) -> None:
         """新一版的临时目录改名被系统拒绝（本机实见 WinError 5）：异常原样抛出，不出现半个版本、不留临时目录，
@@ -270,7 +286,7 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
         first = self.committed()["input"]["snapshot_ref"]
         self.ok("reopen")
         answer(self.ok, "scope_decision", "1")
-        self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
+        self.write_input(adopted=[self.prd_rel, self.flow_rel])
         old = {p: p.read_bytes() for p in (self.root / first).parent.rglob("*") if p.is_file()}
         contract = (self.src / "story-flow.json").read_bytes()
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -312,12 +328,12 @@ class TheInputIsFrozenForTheDesign(HandoverCase):
 
     def test_another_input_needs_reopen_and_the_old_version_stays(self) -> None:
         first = self.committed()["input"]["snapshot_ref"]
-        self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
+        self.write_input(adopted=[self.prd_rel, self.flow_rel])
         proc = self.commit()
         self.assertIn("reopen", json.loads(proc.stdout[proc.stdout.index("{"):])["error"])
         self.ok("reopen")
         answer(self.ok, "scope_decision", "1")
-        self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
+        self.write_input(adopted=[self.prd_rel, self.flow_rel])
         self.assertEqual(0, self.commit().returncode)
         now = self.contract()["input"]["snapshot_ref"]
         self.assertNotEqual(first, now)
@@ -389,7 +405,7 @@ class TheDesignConsumesThisInput(HandoverCase):
         design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
         self.ok("reopen")
         answer(self.ok, "scope_decision", "1")
-        self.write_input(adopted=["RR/prd.md", "assets/flow.svg"])
+        self.write_input(adopted=[self.prd_rel, self.flow_rel])
         self.assertEqual(0, self.commit().returncode)
         status = self.ok("status")
         self.assertEqual("design_blueprint", status["next"])
@@ -414,9 +430,9 @@ class WhatCannotBeFrozenIsRefused(HandoverCase):
 
     def test_an_image_the_original_references_must_be_adopted(self) -> None:
         self.ready()
-        self.write_input(adopted=["RR/prd.md"])
+        self.write_input(adopted=[self.prd_rel])
         error = json.loads(self.commit().stdout)["error"]
-        self.assertIn("assets/flow.svg", error)
+        self.assertIn(self.flow_rel, error)
         self.assertNotIn("input", self.contract())
 
     def test_a_forged_human_decision_is_refused(self) -> None:
@@ -441,7 +457,7 @@ class WhatCannotBeFrozenIsRefused(HandoverCase):
     def test_something_not_confirmed_this_round_cannot_be_adopted(self) -> None:
         self.ready()
         (self.src / "notes.md").write_text("草稿\n", encoding="utf-8")
-        self.write_input(adopted=["RR/prd.md", "assets/flow.svg", "AR/story-src/notes.md"])
+        self.write_input(adopted=[self.prd_rel, self.flow_rel, "AR/story-src/notes.md"])
         self.assertIn("不是本轮确认的材料", json.loads(self.commit().stdout)["error"])
 
     def test_a_refusal_after_a_registered_input_keeps_it(self) -> None:
@@ -461,13 +477,13 @@ class WhatCannotBeFrozenIsRefused(HandoverCase):
         self.write_input()
         self.assertEqual(0, self.commit().returncode)
         [version] = self.versions()
-        (version / "files" / "RR" / "prd.md").write_text("被改过\n", encoding="utf-8")
+        (version / "files" / self.prd_rel).write_text("被改过\n", encoding="utf-8")
         self.assertIn("已损坏", json.loads(self.commit().stdout)["error"])
 
     def test_the_native_source_check_decides_and_nothing_is_registered(self) -> None:
         """原生对来源条目的判定（这里是 item_id 不合原生的稳定标识）不过：冻结版本留下，输入不登记。"""
         self.ready()
-        self.write_input(items=[{"item_id": "需求 主条", "kind": "requirement", "source_path": "RR/prd.md",
+        self.write_input(items=[{"item_id": "需求 主条", "kind": "requirement", "source_path": self.prd_rel,
                                  "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}])
         proc = self.commit()
         self.assertEqual(1, proc.returncode)
@@ -539,13 +555,14 @@ class PrecheckFailuresChangeNothing(HandoverCase):
     def test_a_pending_original_in_the_inbox_blocks(self) -> None:
         self.ready()
         self.write_input()
-        (self.feature_root / "inbox" / "补充说明.md").write_text("# 补充\n\n新内容。\n", encoding="utf-8")
+        (self.feature_root / "sources" / "inbox" / "补充说明.md").write_text("# 补充\n\n新内容。\n", encoding="utf-8")
         self.assert_untouched("--from", DRAFT_REL, "--input", INPUT_REL, says="收件箱")
 
     def test_a_material_changed_after_the_round_blocks(self) -> None:
         self.ready()
         self.write_input()
-        self.prd.write_text(PRD + "\n补了一句。\n", encoding="utf-8")
+        self.new_prd(PRD + "\n补了一句。\n")
+        self.write_input()
         self.assert_untouched("--from", DRAFT_REL, "--input", INPUT_REL, says="材料在这一轮登记之后又变了")
 
 

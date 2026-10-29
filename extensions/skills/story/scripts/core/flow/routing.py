@@ -51,7 +51,7 @@ def closed_inbox_note(feature_root: Path, contract: dict, manifest: dict | None 
 def live_materials(feature_root: Path) -> dict:
     """按磁盘现状取一份材料清单 —— **同一个时点只取一次**，由调用链向内传。
 
-    同一条命令里重复 build，是把同一批文件再哈希一遍、把收件箱再转一遍，
+    同一条命令里重复 build，是把同一批文件再哈希一遍，
     而两次之间什么也没发生。写入前后是两个不同的时点，那时各取各的。
     """
     try:
@@ -61,15 +61,14 @@ def live_materials(feature_root: Path) -> dict:
 
 
 def material_state(feature_root: Path, current: dict, manifest: dict | None = None) -> dict:
-    """料现在什么样——**两个事实，一次问完**：谁还没并入正文、材料变没变。
+    """料现在什么样——**两个事实，一次问完**：谁还没导入、材料变没变。
 
-    ``pending`` 是收件箱里还没导进正文的原件；``changed`` 是材料指纹与本轮登记的
-    对不上（原件已经导进去了，本轮还没重新登记）。两者都走磁盘不走账本：材料清单
-    拿收件箱那批料重转一遍与正文比对，同名原件被换了内容也照样算新料，而这是任何
-    一份「导过什么」的名单都记不住的。
+    ``pending`` 是来源收件箱里还没导入的件；``changed`` 是材料指纹与本轮登记的
+    对不上（新版本已经导进来了，本轮还没重新登记）。两者都走磁盘不走账本：材料索引
+    按盘上的材料版本与收件箱现状算。
 
     **两件事互不替代**：`round` 登记新基准之后 `changed` 归假，而那份原件仍躺在
-    收件箱里没并进正文——只看 `changed` 的消费者从此再也不会提到它。
+    收件箱里没导入——只看 `changed` 的消费者从此再也不会提到它。
 
     `manifest` 是调用方在这个时点已经取到的清单：传了就按它派生，不再读盘；
     显式判 ``None``，合法的空清单不会被当成「没传」偷偷改回重读。
@@ -84,14 +83,14 @@ def material_state(feature_root: Path, current: dict, manifest: dict | None = No
 def pending_import_step(state: dict) -> tuple[str, str] | None:
     """收件箱里还躺着原件时的下一步 —— **收口前后同一句**：先导入。
 
-    登记新基准不等于原件已经并入：`round` 刷新之后「材料变了」这条判据不再响，
+    登记新基准不等于原件已经导入：`round` 刷新之后「材料变了」这条判据不再响，
     而那份文件仍在收件箱里。两处各写一句的话，其中一句迟早只说「材料没变」。
     """
     if not state["pending"]:
         return None
     more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
     return ("import_materials",
-            "收件箱里有还没并入正文的原件，先导入："
+            "来源收件箱里有还没导入的件，先导入："
             "`python doc/extensions/skills/story/scripts/core/import_sources.py --feature <名>`"
             f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
 
@@ -297,7 +296,7 @@ def update_inputs_step(feature_root: Path, contract: dict,
     if pending:
         return pending
     if state["changed"]:
-        return ("refresh_round", "新料已并入正文：跑 `story_flow.py round` 登记到本轮（它不开新轮），"
+        return ("refresh_round", "新料已导入：跑 `story_flow.py round` 登记到本轮（它不开新轮），"
                 "再 `story_flow.py update --action prepare --result <materials|documents>`")
     return ("update_prepare", "输入已定：跑 `story_flow.py update --feature <名> --action prepare --result <materials|documents>`"
             "（按人这次的请求记终点），它比较六项并开这一轮")
@@ -316,7 +315,7 @@ def update_open_step(feature_root: Path, contract: dict,
     if pending:
         return pending
     if state["changed"]:
-        return ("refresh_round", "这一轮新到的料已并入正文：跑 `story_flow.py round` 登记到本轮"
+        return ("refresh_round", "这一轮新到的料已导入：跑 `story_flow.py round` 登记到本轮"
                 "（update 期间它不开新轮）")
     # 新会议照常走会议关卡：会上有要人定的话题，那是真的要人拍板
     meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)

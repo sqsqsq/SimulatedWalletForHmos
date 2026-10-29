@@ -7,7 +7,7 @@
 **一个源版本一个目录**（`AR/story-src/meetings/<docx 主名>/<原件 sha8>/`）::
 
     original.docx      导入时复制的原件；收件箱里同名被换掉，旧引用仍查得回原文
-    source.json        {"file": 原文件名, "sha256": 原件完整摘要, "text_sha256": raw.md 摘要}
+    source.json        {"file": 原文件名, "sha256": 原件完整摘要, "text_sha256": raw.md 摘要, "acquired_at": 导入时刻}
     raw.md             未纠偏的转换文本，引用的基底
     corrections.json   模型写：逐行字面纠偏 [{"line", "original", "corrected", "basis"}]
     evidence.md        脚本按差异生成的阅读件，行号与 raw.md 一一对应
@@ -98,7 +98,7 @@ def save_version(feature_root: Path, docx: Path, markdown: str,
         (folder / MEDIA / name).write_bytes(blob)
     (folder / RAW).write_text(text, encoding="utf-8", newline="\n")
     (folder / SOURCE).write_text(json.dumps(
-        {"file": docx.name, "sha256": sha, "text_sha256": digest(text.encode("utf-8"))},
+        {"file": docx.name, "sha256": sha, "text_sha256": digest(text.encode("utf-8")), "acquired_at": importer.now()},
         ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     return folder, True
 
@@ -365,5 +365,5 @@ def material_items(feature_root: Path) -> list[dict]:
         sha = str((read_json(folder / SOURCE) or {}).get("sha256") or "")
         out.append({"kind": "meeting",
                     "paths": [(folder / ORIGINAL).relative_to(feature_root).as_posix()],
-                    "sha256": f"sha256:{sha[:16]}" if sha else None})
+                    "sha256": sha or None})
     return out

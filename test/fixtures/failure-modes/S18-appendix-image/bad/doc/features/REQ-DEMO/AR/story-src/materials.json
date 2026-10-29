@@ -1,0 +1,101 @@
+{
+  "schema": 3,
+  "feature": "REQ-DEMO",
+  "digest": "sha256:4982ff99b950ea7c",
+  "sources": [
+    {
+      "source_id": "local:AR/design.md",
+      "kind": "local",
+      "class": "AR",
+      "origin": {
+        "inbox_path": "AR/design.md"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/design-v1",
+          "acquired_at": "2026-10-29T19:42:59+08:00",
+          "original": {
+            "path": "sources/design-v1/design.md",
+            "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959"
+          },
+          "readable": {
+            "path": "sources/design-v1/design.md",
+            "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959"
+          },
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:RR/prd.md",
+      "kind": "local",
+      "class": "RR",
+      "origin": {
+        "inbox_path": "RR/prd.md"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/prd-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/prd-v1/prd.md",
+            "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819"
+          },
+          "readable": {
+            "path": "sources/prd-v1/prd.md",
+            "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819"
+          },
+          "images": []
+        }
+      ]
+    }
+  ],
+  "inbox": [],
+  "materials": [
+    {
+      "kind": "doc",
+      "paths": [
+        "sources/design-v1/design.md"
+      ],
+      "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
+      "source_id": "local:AR/design.md"
+    },
+    {
+      "kind": "doc",
+      "paths": [
+        "sources/prd-v1/prd.md"
+      ],
+      "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819",
+      "source_id": "local:RR/prd.md"
+    }
+  ],
+  "origins": [
+    {
+      "path": "sources/design-v1/design.md",
+      "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
+      "kind": "local",
+      "class": "AR",
+      "readable_paths": [
+        "sources/design-v1/design.md"
+      ],
+      "source_id": "local:AR/design.md",
+      "version": 1
+    },
+    {
+      "path": "sources/prd-v1/prd.md",
+      "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819",
+      "kind": "local",
+      "class": "RR",
+      "readable_paths": [
+        "sources/prd-v1/prd.md"
+      ],
+      "source_id": "local:RR/prd.md",
+      "version": 1
+    }
+  ],
+  "notes": {}
+}

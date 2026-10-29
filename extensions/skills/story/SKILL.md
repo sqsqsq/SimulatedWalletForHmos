@@ -40,7 +40,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 
 ```
 S1 取材        →  拉三套材料、建工作区骨架
-S2 导入+初析   →  列 inbox → 导入 → 材料盘点 →（材料确认后）有会议时读会，有要人定的话题停一次 → 需求分析
+S2 导入+初析   →  列来源收件箱 → 导入 → 材料盘点 →（材料确认后）有会议时读会，有要人定的话题停一次 → 需求分析
 S3 关卡        →  材料 →（会议）→ 范围怎么定 → 承载哪份
 S4 交给设计    →  bind-design 关联组件与蓝图；按已定范围写提取稿与设计输入，`complete` 冻结输入、过原生来源检查
    ↓
@@ -143,18 +143,19 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 ### 初始化
 
 - **输入**：AR 单号 + `<mcp-token>`（取法见「需求系统 Token」）
-- **输出**：`doc/features/<AR>/` 下的 `RR/` `SR/` `AR/` `inbox/` 四个目录与骨架文件
+- **输出**：`doc/features/<AR>/` 下的来源容器 `sources/`（收件箱 `sources/inbox/` 与来源导航）、`AR/` 与骨架文件
 
 ```
 python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <AR> --begin --step story   # ⓪ 开始计时
-node doc/extensions/skills/story/scripts/adapters/story.js init <AR> <mcp-token>   # ① 取材
+node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --out doc/features/<AR>/sources/inbox/fetch-<时刻>   # ① 取材
 python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架（唯一写入者，重跑安全）
 ```
 
 ⓪ 在取 token、取材之前跑：它记下 Story 这一轮的开始，耗时从这一刻算到 `story` 登记成功；重跑保留最早的。成文后回头返修，动手前再跑它开新一轮，多轮累计。漏了它，② 只记「开始了、起点不可核」，那一轮成功后记为耗时缺口。① 失败就停下，报出它的 `error`，不建骨架。
 
-**看骨架判材料**：`RR/prd.md`、`SR/design.md` 是正文还是占位件（正文写着「本文档未从需求系统拉取到」）。
-有占位件就当缺料，请用户把对应文档放进 `inbox/` 走导入。
+**看取材回执判材料**：① 的 stdout 末行逐份写着开发需求、系统设计、产品需求正文取到（`fetched`）、系统上没有（`absent`）
+还是读取失败（`failed`）；取回的正文在批次目录里等导入。缺的那一类当缺料，请用户把对应文档放进 `sources/inbox/` 一起导入。
+`<时刻>` 写当前时间（如 `20261029-153000`），一次取材一个批次目录。
 
 **没有需求系统单据时**（问题单、别人发来的需求文档）：入口不变，仍是 `/story init <编号>`。
 非 `AR` 开头的编号不碰需求系统，跳过 ①、直接建骨架。**本地单没有归档环节**——交付终点是仓内的
@@ -195,18 +196,18 @@ node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature 
 
 | 变化 | 怎么进来 |
 |---|---|
-| 新材料 | 人放进 `inbox/`，或系统需求经取材取回，走导入链 |
+| 新材料 | 人放进 `sources/inbox/`，或系统需求经取材取回到收件箱的批次目录，走导入链 |
 | 评审回流 | 评审人在 review.md 人工区表态；系统需求的评审回稿经取材取回 |
 | 人的新决定 | 人在对话里说的，经 `decide --update` 记原话 |
 | 有人直接改过的文档 | 六项比较报出来 |
 
 - **前置**：这个单走过 /story（有流程契约）；update 只改需求级的材料、提取稿、设计输入与 Story / Review，不推进施工
-- **取材不写业务文件**：取回的只往本单 `inbox/` 放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
+- **取材不写业务文件**：取回的只往本单来源收件箱的批次目录放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
 ```
 python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <编号> --begin --step "story update"   # ⓪ 开始计时
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action status    # ① 续行状态与本需求的 paths
-node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.inbox>"   # ② 取上游（系统需求必做）
+node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --project-root "<paths.project_root>" --out "<paths.fetch_batch>"   # ② 取上游（系统需求必做）
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs    # ③ 报输入，材料关卡停一次问补料
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action prepare --result <materials|documents>   # ④ 比较并开这一轮
 python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action feedback  # 评审人对设计议题提了意见时：核本轮的设计反馈
@@ -218,11 +219,11 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 - **②** 只对 AR 开头的系统需求执行，先按「需求系统 Token」取 token；两个路径取自 ① 返回的 `paths`，按当前 shell 加引号。
   这一轮没取过上游，③ 会停下并指回这一步。本地需求跳过 token 与 ②。取材成功与否以这一次调用 stdout 末行的
   `success` 与逐份状态为准：失败就停在这里，报出哪一份读取失败，不拿上一次的回执或「没有变化」代替。
-- **③** 收件箱有新原件先导入、`round` 登记到本轮，再 ④；④ 见到未并入的原件会拒绝并列出文件。
+- **③** 收件箱有新件先导入、`round` 登记到本轮，再 ④；④ 见到还没导入的件会拒绝并列出文件。
 
 **④** 按人这次的请求记本轮终点（只取材与澄清、没有已有人读件受影响是 `materials`，其余是 `documents`），
-把本扩展拥有的文件开轮时的样子留一份并开这一轮，比较结果（六项哪几份变了、上次以来新并入的原件）交你读原文判断；
-六项都没变也照常开轮，没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
+把本扩展拥有的文件开轮时的样子留一份并开这一轮，比较结果（哪些上游来源取得了新版本、交付件哪几份变了、上次以来新导入的版本）交你读原文判断；
+都没变也照常开轮，没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
 这一轮要撤回用 `--action restore`。每一步做什么、怎么判，完整一份在 [phases/update.md](phases/update.md)。
 
 **人写过意见的议题，正文改了或被删了，渲染会停下来**：他答的是上一版的问题。
@@ -233,15 +234,13 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 
 | 产物 | 回答什么 |
 |---|---|
-| `RR/prd.md` | 业务上为什么做、要什么价值（外部输入） |
-| `SR/design.md` | 整体方案、三方分工、系统级约定（外部输入） |
-| `AR/story-src/upstream.md` | 人工补录的本部件上游材料（外部输入） |
-| `ux-reference/` | 界面参考图与设计基准（外部输入） |
+| `sources/<名称>-v<N>/` | 一份来源材料的一个版本：原件、转换正文与图（外部输入，导入后不改；产品需求、系统设计、开发需求、界面、会议之外的补充都在这里） |
+| `sources/README.md` | 有哪些来源、各自最新是哪一版（按材料索引生成的导航） |
 | `AR/story-src/init-analysis.md` | 关卡决策的支撑分析与来源初筛（**非交付件**；设计与成文从它的来源初筛起步） |
 | `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架（作者写，成文登记时随稿记指纹） |
-| `AR/story-src/materials.json` | 手上有哪些材料、各自的身份与版本；收件箱里哪些原件还没并入正文 |
-| `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、并入与决策（谁、何时、依据） |
-| `AR/design.md` | 上游开发需求文档原件（外部输入，保持原样） |
+| `AR/story-src/materials.json` | 材料索引：每个来源取得过哪些版本、各自的完整摘要，图片说明与取舍，收件箱里还有什么没导入 |
+| `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、导入与决策（谁、何时、依据） |
+| `AR/design.md` | 提取稿起手的空骨架（init 生成） |
 | `AR/story-src/design-draft.md` | 本 AR 范围内要做什么的提取稿（派生分析，随设计输入冻结） |
 | `AR/story-src/inputs/<版本>/` | 交给设计的冻结输入：采用的原件、图、提取稿与人签导出 |
 | 组件蓝图（framework `component-design`） | 本部件怎么设计（准入后是 Story 附录与后续施工的设计来源） |

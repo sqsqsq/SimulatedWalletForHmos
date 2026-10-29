@@ -286,26 +286,26 @@ def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
 
 
 def read_ids(feature_root: Path, feature: str) -> dict[str, str | None]:
-    """单号取自 `detail.json`——那是需求系统的拉取产物，没有它就是本地单。
+    """单号取自需求系统取材的来源关系：已导入的系统来源记在版本里，还没导入的在取材批次回执里。没有就是本地单。
 
     只读不造：伪造单号等于谎称本地单有系统单据。
     """
-    def field(rel: str, key: str) -> str | None:
-        path = feature_root / rel
-        if not path.is_file():
-            return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
-        except ValueError as exc:
-            raise FlowError(f"{rel} 不是合法 JSON：{exc}——它是需求系统的拉取产物，重新取材覆盖它") from exc
-        value = data.get(key) if isinstance(data, dict) else None
-        return value.strip() if isinstance(value, str) and value.strip() else None
+    from materials import importer, registry  # 延迟导入：materials 引用 flow
 
-    return {
-        "AR": feature,
-        "SR": field("AR/detail.json", "parentNo") or field("SR/detail.json", "reqNo"),
-        "RR": field("AR/detail.json", "rrNo") or field("RR/detail.json", "reqNo"),
-    }
+    try:
+        found = [r.get("origin") or {} for r in registry.version_records(feature_root) if r.get("kind") == "system"]
+        found += list(importer.read_receipts(importer.inbox_of(feature_root)).values())
+    except (registry.MaterialError, importer.ImportError_) as exc:
+        raise FlowError(f"读不出需求系统来源关系：{exc}") from exc
+
+    def pick(role: str, field: str) -> str | None:
+        for o in found:
+            value = o.get("ticket") if o.get("role") == role else (o.get(field) if o.get("role") == "AR" else None)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    return {"AR": feature, "SR": pick("SR", "parentNo"), "RR": pick("RR", "rrNo")}
 
 
 def is_ar_skeleton(feature_root: Path, feature: str, text: str) -> bool:
@@ -329,8 +329,8 @@ def ar_design_skeleton(ids: dict[str, str | None]) -> str:
                  f"| SE设计文档 | requirement://sr/{ids['SR']} |\n")
     else:
         links = (f"| 来源载体 | {ids['AR']}（无需求系统单据） |\n"
-                 "| PRD文档 | 人工提供，见 inbox 导入记录 |\n"
-                 "| SE设计文档 | 人工提供，见 inbox 导入记录 |\n")
+                 "| PRD文档 | 人工提供，见 sources/README.md |\n"
+                 "| SE设计文档 | 人工提供，见 sources/README.md |\n")
     return (
         f"# {ids['AR']} 开发需求（AR）\n\n"
         "## 1 简介\n\n### 1.1 需求介绍\n\n### 1.2 本 AR 范围与拆分说明\n\n"
@@ -344,7 +344,7 @@ def ar_design_skeleton(ids: dict[str, str | None]) -> str:
         "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\n"
         "### 3.2 本部件方案要点与流程骨架\n\n"
         "## 4 上游索引\n\n"
-        "> 本索引的 SR 章节号指向 `SR/design.md`（与本文件同在本需求工作区，PRD 为 `RR/prd.md`）；\n"
+        "> 本索引的 SR 章节号指向系统设计来源的阅读稿（`sources/README.md` 列着它与产品需求的位置）；\n"
         "> 下游设计（接口由设计作者按原文转写）与成文须按索引直读该文件原文，不得仅凭本文摘要推断。\n\n"
         "| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
         "<!-- 逐类扫描 RR/SR 登记命中项：业务流程时序 / 端云接口 / 异常错误码 / 跨部件交互与调用方 /\n"
@@ -354,16 +354,11 @@ def ar_design_skeleton(ids: dict[str, str | None]) -> str:
 
 
 def cmd_init(feature_root: Path, feature: str) -> dict:
-    """建工作区骨架——`inbox/`、RR/SR 占位件、`AR/design.md` 空骨架的唯一写入者。
+    """建工作区骨架——来源收件箱 `sources/inbox/`、来源导航与 `AR/design.md` 空骨架的唯一写入者。
 
-    **缺什么补什么，已有的一律不动**，因此它与取材结果无关：系统单在 `story.js init`
-    之后跑，本地单（问题单、别人发来的需求文档）直接跑，两条路径同一条命令，重跑安全。
-    收件箱由此独立于数据对接层成立——那一层由各部署环境自备实现，不随交付走。
-
-    占位件让「上游没拉到」以**内容**表达：章节合同里有的章只吃 PRD、有的只吃 SE，
-    源文件在位，下游才能照常按源取材，补料后由导入步骤覆盖它。
-
-    **不写 detail.json**：那是需求系统的拉取产物，单号只读不造。
+    **缺什么补什么，已有的一律不动**，因此它与取材结果无关：系统单取材之后跑，本地单直接跑，
+    两条路径同一条命令，重跑安全。收件箱由此独立于数据对接层成立——那一层由各部署环境自备实现。
+    缺哪类上游材料由材料索引按来源回答，不落占位件。
     """
     created, kept = [], []
 
@@ -377,24 +372,14 @@ def cmd_init(feature_root: Path, feature: str) -> dict:
         created.append(rel)
 
     ids = read_ids(feature_root, feature)
-    placeholder = (
-        "# {title}\n\n"
-        "> **本文档未从需求系统拉取到**（单据未归档，或拉取失败）。\n"
-        "> 正文待从 `inbox/` 导入：把材料放进收件箱，由导入步骤归类覆盖本文件。\n"
-        "> 在此之前请勿把本占位件当作「需求没有这部分内容」。\n"
-    )
-    put("RR/prd.md", placeholder.format(title="产品需求（占位）"))
-    put("SR/design.md", placeholder.format(title="系统级设计（占位）"))
     put("AR/design.md", ar_design_skeleton(ids))
-
     readme = SKILL_ROOT / "templates" / "inbox-readme.md"
-    put("inbox/README.md", readme.read_text(encoding="utf-8"))
-
+    put("sources/inbox/README.md", readme.read_text(encoding="utf-8"))
+    from materials import registry  # 延迟导入：materials 引用 flow
+    try:
+        registry.refresh(feature_root)
+    except registry.MaterialError as exc:
+        raise FlowError(str(exc)) from exc
     local = not system_requirement(feature)
-    missing = [rel for rel in ("RR/prd.md", "SR/design.md") if rel in created]
-    log(f"工作区骨架：新建 {len(created)} 个文件"
-        + (f"，保留已有 {len(kept)} 个" if kept else ""))
-    if missing and not local:
-        log(f"上游未拉到：{'、'.join(missing)}——已写占位件，"
-            f"请把材料放进 {feature_root.name}/inbox/ 后走导入")
-    return {"created": created, "kept": kept, "local": local, "placeholders": missing}
+    log(f"工作区骨架：新建 {len(created)} 个文件" + (f"，保留已有 {len(kept)} 个" if kept else ""))
+    return {"created": created, "kept": kept, "local": local}

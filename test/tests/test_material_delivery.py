@@ -335,10 +335,10 @@ if __name__ == "__main__":
 
 
 class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
-    """补料是为了补图时，正文不动。
+    """补料是为了补图时，正文不采用。
 
-    导入此前只有一条路——正文整体覆盖目标文件。于是「原稿放进去了，图在里面」
-    这句话的后果是系统上的定稿被一份草稿盖掉：人要的是图，机制把正文也换了。
+    「原稿放进去了，图在里面」——人要的是图。原稿归 IMAGES 时导入只取图，它的正文不作阅读稿，
+    已有的定稿仍是这类来源唯一的正文。
     """
 
     TEXT = "# 定稿\n\n这是系统上的正文，补图不该动它。\n"
@@ -348,10 +348,11 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature_root = self.root / "doc" / "features" / "IM90002"
-        (self.feature_root / "RR").mkdir(parents=True)
-        (self.feature_root / "RR" / "prd.md").write_text(self.TEXT, encoding="utf-8")
-        self.inbox = self.feature_root / "inbox"
-        self.inbox.mkdir()
+        self.inbox = self.feature_root / "sources" / "inbox"
+        self.inbox.mkdir(parents=True)
+        (self.inbox / "prd.md").write_text(self.TEXT, encoding="utf-8")
+        (self.inbox / ".classify.json").write_text('{"prd.md": "RR"}', encoding="utf-8")
+        self.assertEqual(0, self.run_import().returncode)
 
     def write_docx(self, name: str = "原稿.docx") -> Path:
         """最小 docx：一段正文 + 一张内嵌图。"""
@@ -386,24 +387,29 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
              "--feature", "IM90002", "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
 
-    def test_the_text_survives_and_the_figure_lands(self) -> None:
+    def manifest(self) -> dict:
+        return json.loads((self.feature_root / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
+
+    def readable_docs(self) -> list[str]:
+        return sorted(p for m in self.manifest()["materials"] if m["kind"] == "doc" for p in m["paths"])
+
+    def test_the_text_is_not_adopted_and_the_figure_lands(self) -> None:
         self.write_docx()
         self.classify("IMAGES")
         proc = self.run_import()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual(self.TEXT,
-                         (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"),
-                         "补图那一档把正文也换了")
-        self.assertTrue(list(self.feature_root.glob("assets/原稿.*/image1.png")),
+        self.assertNotIn("sources/原稿-v1/text.md", self.readable_docs(), "补图那一档把原稿正文也当成了阅读稿")
+        self.assertFalse((self.feature_root / "sources" / "原稿-v1" / "text.md").exists())
+        self.assertTrue(list(self.feature_root.glob("sources/原稿-v1/images/*.png")),
                         "图没抽出来——这一档抽图是它唯一要做的事")
 
-    def test_the_default_class_still_overwrites(self) -> None:
-        """反样本：归 RR 就是要覆盖正文——这一档不是把覆盖废掉。"""
+    def test_a_text_class_takes_the_text(self) -> None:
+        """反样本：归 RR 就是要采用正文——这一档不是把正文转换废掉。"""
         self.write_docx()
         self.classify("RR")
         self.assertEqual(0, self.run_import().returncode)
-        self.assertNotEqual(self.TEXT,
-                            (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"))
+        self.assertIn("sources/原稿-v1/text.md", self.readable_docs())
+        self.assertIn("草稿正文", (self.feature_root / "sources" / "原稿-v1" / "text.md").read_text(encoding="utf-8"))
 
     def test_a_docx_without_figures_is_refused_in_that_class(self) -> None:
         """没有图却归了只抽图——那是归类错了，不能静默丢掉正文。"""
@@ -422,7 +428,7 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         """正文没动，但材料确实变了——图是材料，轮次要看得见它。"""
         self.write_docx()
         self.classify("IMAGES")
-        before = registry.compute_digest(registry.collect_materials(self.feature_root))
+        before = self.manifest()["digest"]
         self.assertEqual(0, self.run_import().returncode)
-        after = registry.compute_digest(registry.collect_materials(self.feature_root))
+        after = self.manifest()["digest"]
         self.assertNotEqual(before, after, "只抽图没有形成新材料版本")

@@ -28,11 +28,11 @@
 
 图 1 是提交入口在页面上的位置：
 
-![图 1 · 提交入口页面布局](../assets/入口原型说明/image1.png)
+![图 1 · 提交入口页面布局](../sources/image1-v1/image1.png)
 
 图 2 是同一页的布局参考：
 
-![图 2 · 提交入口页面布局（参考）](assets/入口原型说明/image1.png)
+![图 2 · 提交入口页面布局（参考）](sources/image1-v1/image1.png)
 
 ## 异常与恢复
 
@@ -94,6 +94,6 @@
 
 | 材料 | 来源 | 贡献 |
 |---|---|---|
-| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 提交回执的业务诉求与状态取值。 |
-| 开发需求 [design.md](design.md) | [design.md](design.md) | 本轮从上游提取的开发需求，业务分工与本单范围。 |
+| 甲需求 PRD [prd.md](../sources/prd-v1/prd.md) | [prd.md](../sources/prd-v1/prd.md) | 提交回执的业务诉求与状态取值。 |
+| 开发需求 [design.md](../sources/design-v1/design.md) | [design.md](../sources/design-v1/design.md) | 本轮从上游提取的开发需求，业务分工与本单范围。 |
 

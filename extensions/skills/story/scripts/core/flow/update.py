@@ -1,7 +1,7 @@
 """`/story update` 的文件侧支持 —— **脚本只回答确定的事**。
 
 这一层做三件机械的事：把本次执行前的现场完整留一份、与上次已处理的版本比一遍、
-把结果说清楚。取回来的新内容与人补的料一样进 `inbox/`，走 init 那条材料链——
+把结果说清楚。取回来的新内容与人补的料一样进来源收件箱 `sources/inbox/`，走 init 那条材料链——
 这里不另开第二个入料口。**变化意味着什么、要改哪里，一概不判**——
 那是模型读原文的事（方法在 `phases/update.md`）。
 
@@ -11,8 +11,8 @@
 没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
 **没查到不等于没变**：比较基准缺席、来源读不到，都单列出来说清可查范围，不许混进「无变化」。
 
-落点在 `AR/story-src/updates/<id>/`，它不在材料扫描的范围里（材料只认合同声明的正文源、
-`ux-reference`/`assets` 与会议原件），所以本层自己的写入不会把材料版本顶出一个新轮次。
+落点在 `AR/story-src/updates/<id>/`，它不在材料索引的范围里（材料只认 `sources/` 下的材料版本与会议原件），
+所以本层自己的写入不会把材料版本顶出一个新轮次。
 
 需求目录里的文件按章节合同的 `update_files` 分四类：本扩展写的可改件（editable）、可重生件（regenerate）、
 受保护件（protected，没登记的文件也按它）、只改字段的流程契约（field_owned）。快照、恢复与收口都按这一份分类，
@@ -42,8 +42,8 @@ from flow.state import (CONTRACT, CORE_DIR, DESIGN_INPUT, FlowError, STORY, REVI
 #: 本层全部落点的根（`UPDATES`）放在 story-src 下面：它是过程目录，AR 根只留交付件。
 #: 除材料正文之外，判「跟上次比变了没有」要看的交付件——**人会直接动的那两份人读件**。
 #:
-#: 连同合同登记的三份上游正文（`registry.source_docs()`）与收件箱（由材料事实回答，
-#: 不按文件哈希比），一共六项。决策登记、写作设计与知识判断不在里面：
+#: 连同材料索引里各来源最新取得的版本（按来源身份比原件摘要）与收件箱（由材料事实回答，
+#: 不按文件哈希比）。决策登记、写作设计与知识判断不在里面：
 #: 它们是模型据这几份写出来的中间真源，随交付件的修订而变，是结果不是原因。
 #: 盘上没有的跳过，不当成被删（`_scan`）。
 PRODUCTS = (STORY, REVIEW)
@@ -98,17 +98,22 @@ def _updates_dir(feature_root: Path) -> Path:
 
 
 def _scan(feature_root: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """当前盘上这一轮要盯的文件 → 指纹。**读不到的单列，不当成不存在。**
+    """当前这一轮要盯的东西 → 指纹。**读不到的单列，不当成不存在。**
 
-    「文件不在」与「文件在但读不出来」是两件事：前者是删除，后者是环境问题。
-    混成一个的话，一次权限错误会被报成「上游把这份材料删了」，而模型据此去删下游功能。
-    所以读不到的那几份**带着 key 单独返回**——`_compare` 要拿它把这些从「删除」里摘出去，
-    否则分开这一步只做了一半：`_scan` 分清了，下游又合回去。
+    上游材料按来源身份比：键是 `source:<来源>`，值是它最新取得版本的原件摘要——同一来源取得了新版本就是变了，
+    新来源是新增，旧来源都在索引里留着不算删除。交付件按路径比文件摘要。
+    「文件不在」与「文件在但读不出来」是两件事：读不到的那几份**带着 key 单独返回**，`_compare` 把它们从「删除」里摘出去。
     """
     seen: dict[str, str] = {}
     unreadable: dict[str, str] = {}
-    rels = [Path(rel) for rel in registry.source_docs()] + [Path(*p) for p in PRODUCTS]
-    for rel in rels:
+    try:
+        manifest = registry.build(feature_root)
+    except registry.MaterialError as exc:
+        raise FlowError(f"{exc}——材料索引算不出来就说不出上游变没变") from exc
+    for v in registry.current(manifest["sources"]):
+        if v["kind"] != "answer":
+            seen[f"source:{v['source_id']}"] = v["original"]["sha256"]
+    for rel in (Path(*p) for p in PRODUCTS):
         path = feature_root / rel
         key = rel.as_posix()
         if not path.exists():
@@ -227,48 +232,48 @@ def _collect(feature_root: Path, contract: dict, records: list[tuple[str, dict]]
 
 
 def _sources(feature_root: Path) -> list[dict]:
-    """已并入正文的原件（相对 inbox 的路径、摘要、归类），取自材料清单。
+    """已导入的来源版本（来源、版本号、原件摘要、类、目录），取自材料索引；收口时记下，下次据它找新导入的。
 
-    读不出清单就报，不当成「没有新料」：那会让人以为上次以来什么都没并入。
+    读不出索引就报，不当成「没有新料」：那会让人以为上次以来什么都没导入。
     """
     try:
         manifest = registry.read(feature_root)
     except registry.MaterialError as exc:
-        raise FlowError(f"{exc}——读不出材料清单就说不出上次以来并入了哪些原件") from exc
-    return [{"file": s.get("file"), "sha256": s.get("sha256"), "class": s.get("class")}
-            for s in manifest.get("sources") or [] if s.get("ingested")]
+        raise FlowError(f"{exc}——读不出材料索引就说不出上次以来导入了哪些版本") from exc
+    return [{"source_id": s["source_id"], "version": v["version"], "sha256": v["original"]["sha256"],
+             "class": s.get("class"), "dir": v.get("dir")}
+            for s in manifest.get("sources") or [] if s.get("kind") != "answer" for v in s.get("versions") or []]
 
 
 def _imported_since(feature_root: Path, records: list[tuple[str, dict]]) -> list[dict]:
-    """上一次收口（或成文基准）以来新并入正文的原件，**含只取图的**：它们的正文不进六项比较，
-    是不是带来了业务变化由模型读原件判。上一次没有留原件清单时，全部列出。
-    比较键是相对路径加摘要：原件挪了位置也算新并入，是不是同一份业务内容由模型读了判，不按路径猜替代。"""
+    """上一次收口以来新导入的来源版本，**含只取图的**：是不是带来了业务变化由模型读原件判。
+    还没有收口过的轮次就没有版本清单可比，不列——比较本身已报「没有上次已处理的版本」，由模型通读现有来源。"""
     closed = _latest(records, "closed")
-    seen = {(s.get("file"), s.get("sha256")) for s in ((closed[1].get("sources") if closed else None) or [])}
-    return [s for s in _sources(feature_root) if (s["file"], s["sha256"]) not in seen]
+    if not closed:
+        return []
+    seen = {(s.get("source_id"), s.get("version")) for s in (closed[1].get("sources") or [])}
+    return [s for s in _sources(feature_root) if (s["source_id"], s["version"]) not in seen]
 
 
 def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
-    """新原件可能取代的旧原件：收件箱里**已归类**的同类原件。**只列，不判**——是不是新版由你读了定。
+    """收件箱里的新件可能取代的已有来源：同类的来源。**只列，不判**——是不是新版由你读了定。
 
-    导入链把同一类的原件按名拼接成目标正文，没有「替代」一说：旧原件留在收件箱里，
-    目标就是两版拼在一起；只备份目标文件而不处理旧原件，下次导入时两版照样拼回去。
-    新原件自己还没归类时，列出全部已归类的原件。
+    放在同一位置的改版导入后自动成为同一来源的新版本；换了位置或名字的件是新来源，旧来源留在索引里可查，
+    设计依据哪一版由设计采用决定，不靠移走旧原件。新件还没归类时列出全部已有来源。
     """
-    inbox = feature_root / "inbox"
     try:
-        classes = importer.read_classify(inbox)
-    except importer.ImportError_ as exc:
-        raise FlowError(f"{exc}：修正归类件再跑") from exc
-    known = {key: cls for key, cls in classes.items() if (inbox / key).is_file()}
+        manifest = registry.build(feature_root)
+    except registry.MaterialError as exc:
+        raise FlowError(f"{exc}：修正后再跑") from exc
+    classes = {i["file"]: i.get("class") for i in manifest.get("inbox", [])}
+    known = [(s["source_id"], s.get("class")) for s in manifest.get("sources", []) if s.get("kind") != "answer"]
     out = []
     for new in pending:
-        cls = known.get(new)
-        olds = sorted(n for n, c in known.items() if n != new and (cls is None or c == cls))
+        cls = classes.get(new)
+        olds = sorted(sid for sid, c in known if cls is None or c == cls)
         if olds:
             out.append({"new": new, "same_class": olds,
-                        "note": f"若 {new} 取代其中某份，按 rules/inbox_import.md「新原件取代旧原件」"
-                                "移走旧原件并删掉它的归类键"})
+                        "note": f"若 {new} 是其中某个来源的新版，读了在影响分析里写明；设计改依据哪一版由设计修订决定"})
     return out
 
 
@@ -374,11 +379,11 @@ def cmd_update_prepare(feature_root: Path, feature: str, result: str | None) -> 
     `comparison` 直说比出来的是哪一种：
 
     - `resume`   上一轮还开着。**不新建镜像**——新的会把旧的恢复依据盖掉；
-    - `unchanged` 六项都没变、也没有新并入的原件：照常开轮，要不要改由模型按原文与人的这次要求判；
+    - `unchanged` 上游来源与交付件都没变、也没有新导入的版本：照常开轮，要不要改由模型按原文与人的这次要求判；
     - `incomplete` 比较基准缺席或来源读不到：说清可查与不可查的范围，交模型判当前一致性；
     - `changed`  有变化：本轮镜像留着不动，差异与位置交给模型。
 
-    **返回的全是机械事实**：哪几份文件跟上次不一样、新并入了哪些原件、镜像在哪。
+    **返回的全是机械事实**：哪些来源与文件跟上次不一样、新导入了哪些版本、镜像在哪。
     这些事实不表示任何业务结论——「变化意味着什么」由模型读原文回答。
     """
     contract = _contract(feature_root)
@@ -401,7 +406,7 @@ def cmd_update_prepare(feature_root: Path, feature: str, result: str | None) -> 
 
     facts = _collect(feature_root, contract, records)
     if facts["pending"]:
-        raise FlowError("收件箱里还有没并入正文的原件，先导入、`round` 登记到本轮，再 prepare："
+        raise FlowError("来源收件箱里还有没导入的件，先导入、`round` 登记到本轮，再 prepare："
                         + "、".join(facts["pending"]))
     current, unreadable, diff, changed = (facts["current"], facts["unreadable"],
                                           facts["diff"], facts["changed"])
@@ -435,7 +440,7 @@ def cmd_update_prepare(feature_root: Path, feature: str, result: str | None) -> 
     shutil.copyfile(feature_root / Path(*CONTRACT), before / Path(*CONTRACT))
     record = {"id": rid, "opened_at": now(), "status": "open", "requested_result": result,
               "owned_before": owned, "owned_after": None,
-              "files": current, "unreadable": unreadable, "comparison": diff,
+              "files": current, "unreadable": unreadable, "comparison": diff, "sources": _sources(feature_root),
               "materials": {"pending": pending, "changed": facts["materials_changed"],
                             "imported": imported},
               "mirror": {"path": f"AR/story-src/updates/{rid}/before", "files": mirrored}}
@@ -459,8 +464,8 @@ def cmd_update_prepare(feature_root: Path, feature: str, result: str | None) -> 
         lines.append("读不到：" + "、".join(f"{k}（{why}）" for k, why in unreadable.items())
                      + "——这是缺口，不是「没有变化」，更不是「它被删了」")
     if imported:
-        lines.append("上次以来新并入正文的原件：" + "、".join(f"{s['file']}（{s['class']}）" for s in imported)
-                     + "——只取图的原件正文不进上面的比较，读原件判它带没带来业务变化")
+        lines.append("上次以来新导入的来源版本：" + "、".join(f"{s['dir']}（{s['class']}）" for s in imported)
+                     + "——读原件判它带没带来业务变化；只取图的原件正文不作依据")
     if kind == "unchanged":
         lines.append("与上次已处理的版本逐份比过没有变化：按原文与人这次的要求判要不要改，"
                      "没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口")
@@ -560,10 +565,12 @@ def stale_text(stale: list[dict]) -> str:
 
 
 def _paths(project_root: Path, feature_root: Path) -> dict:
-    """本需求的本地位置（绝对路径）：取材落点 `inbox` 与人补料同一个入料口，回执跟着工程根走。"""
+    """本需求的本地位置（绝对路径）：人补料放进来源收件箱，系统取材落到收件箱下这一次的批次目录。"""
+    inbox = importer.inbox_of(feature_root)
     return {"project_root": project_root.resolve().as_posix(),
             "feature_root": feature_root.resolve().as_posix(),
-            "inbox": (feature_root / "inbox").resolve().as_posix()}
+            "inbox": inbox.resolve().as_posix(),
+            "fetch_batch": (inbox / f"fetch-{datetime.now().strftime('%Y%m%d-%H%M%S')}").resolve().as_posix()}
 
 
 def _latest(records: list[tuple[str, dict]], status: str | None = None,

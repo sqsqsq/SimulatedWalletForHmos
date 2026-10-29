@@ -1,69 +1,250 @@
 {
-  "schema": 1,
+  "schema": 3,
   "feature": "AR90006",
-  "digest": "sha256:fc3f6d56d8183c15",
+  "digest": "sha256:61873e8179897711",
+  "sources": [
+    {
+      "source_id": "local:RR/prd.md",
+      "kind": "local",
+      "class": "RR",
+      "origin": {
+        "inbox_path": "RR/prd.md"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/prd-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/prd-v1/prd.md",
+            "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59"
+          },
+          "readable": {
+            "path": "sources/prd-v1/prd.md",
+            "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59"
+          },
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:SR/design.md",
+      "kind": "local",
+      "class": "SR",
+      "origin": {
+        "inbox_path": "SR/design.md"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/design-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/design-v1/design.md",
+            "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320"
+          },
+          "readable": {
+            "path": "sources/design-v1/design.md",
+            "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320"
+          },
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:assets/交通卡自动充值/image1.png",
+      "kind": "local",
+      "class": "UX",
+      "origin": {
+        "inbox_path": "assets/交通卡自动充值/image1.png"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/image1-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/image1-v1/image1.png",
+            "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80"
+          },
+          "readable": null,
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:assets/交通卡自动充值/image2.png",
+      "kind": "local",
+      "class": "UX",
+      "origin": {
+        "inbox_path": "assets/交通卡自动充值/image2.png"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/image2-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/image2-v1/image2.png",
+            "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a"
+          },
+          "readable": null,
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:assets/交通卡自动充值/image3.png",
+      "kind": "local",
+      "class": "UX",
+      "origin": {
+        "inbox_path": "assets/交通卡自动充值/image3.png"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/image3-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/image3-v1/image3.png",
+            "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba"
+          },
+          "readable": null,
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:ux-reference/auto-topup-manage-page.png",
+      "kind": "local",
+      "class": "UX",
+      "origin": {
+        "inbox_path": "ux-reference/auto-topup-manage-page.png"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/auto-topup-manage-page-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/auto-topup-manage-page-v1/auto-topup-manage-page.png",
+            "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a"
+          },
+          "readable": null,
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:ux-reference/auto-topup-signup-page.png",
+      "kind": "local",
+      "class": "UX",
+      "origin": {
+        "inbox_path": "ux-reference/auto-topup-signup-page.png"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/auto-topup-signup-page-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/auto-topup-signup-page-v1/auto-topup-signup-page.png",
+            "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80"
+          },
+          "readable": null,
+          "images": []
+        }
+      ]
+    }
+  ],
+  "inbox": [],
   "materials": [
     {
       "kind": "doc",
       "paths": [
-        "RR/prd.md"
+        "sources/design-v1/design.md"
       ],
-      "sha256": "sha256:e90230c22fec374c"
+      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
+      "source_id": "local:SR/design.md"
     },
     {
       "kind": "doc",
       "paths": [
-        "SR/design.md"
+        "sources/prd-v1/prd.md"
       ],
-      "sha256": "sha256:c0478e4c7d34f204"
-    },
-    {
-      "kind": "doc",
-      "paths": [
-        "AR/design.md"
-      ],
-      "sha256": "sha256:e3c9a0c6933f8917"
-    },
-    {
-      "kind": "doc",
-      "paths": [
-        "AR/upstream.md"
-      ],
-      "sha256": null
+      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
+      "source_id": "local:RR/prd.md"
     },
     {
       "kind": "image",
       "paths": [
-        "assets/交通卡自动充值/image1.png",
-        "ux-reference/auto-topup-signup-page.png"
+        "sources/auto-topup-manage-page-v1/auto-topup-manage-page.png",
+        "sources/image2-v1/image2.png"
       ],
-      "sha256": "sha256:d25741a62303f129",
-      "caption": "自动充值签约页：门限与面额单选，协议勾选后「开启」按钮才可点击"
+      "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
+      "caption": "自动充值管理页：顶部为当前签约状态，下方为最近的自动充值记录，失败记录展示失败原因",
+      "unused": ""
     },
     {
       "kind": "image",
       "paths": [
-        "assets/交通卡自动充值/image2.png",
-        "ux-reference/auto-topup-manage-page.png"
+        "sources/auto-topup-signup-page-v1/auto-topup-signup-page.png",
+        "sources/image1-v1/image1.png"
       ],
-      "sha256": "sha256:b3fad248696b67a1",
-      "caption": "自动充值管理页：顶部为当前签约状态，下方为最近的自动充值记录，失败记录展示失败原因"
+      "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
+      "caption": "自动充值签约页：门限与面额单选，协议勾选后「开启」按钮才可点击",
+      "unused": ""
     },
     {
       "kind": "image",
       "paths": [
-        "assets/交通卡自动充值/image3.png"
+        "sources/image3-v1/image3.png"
       ],
-      "sha256": "sha256:5b271cadb8e2ecca",
-      "caption": "自动充值触发与扣款流程图：判定与扣款全部在服务端，端侧无感"
+      "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba",
+      "caption": "自动充值触发与扣款流程图：判定与扣款全部在服务端，端侧无感",
+      "unused": ""
     }
   ],
-  "sources": [
+  "origins": [
     {
-      "file": "交通卡自动充值.docx",
-      "sha256": "sha256:ebfbf1d807a6c211",
-      "class": "IMAGES",
-      "ingested": true
+      "path": "sources/design-v1/design.md",
+      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
+      "kind": "local",
+      "class": "SR",
+      "readable_paths": [
+        "sources/design-v1/design.md"
+      ],
+      "source_id": "local:SR/design.md",
+      "version": 1
+    },
+    {
+      "path": "sources/prd-v1/prd.md",
+      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
+      "kind": "local",
+      "class": "RR",
+      "readable_paths": [
+        "sources/prd-v1/prd.md"
+      ],
+      "source_id": "local:RR/prd.md",
+      "version": 1
     }
-  ]
+  ],
+  "notes": {
+    "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba": {
+      "caption": "自动充值触发与扣款流程图：判定与扣款全部在服务端，端侧无感"
+    },
+    "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a": {
+      "caption": "自动充值管理页：顶部为当前签约状态，下方为最近的自动充值记录，失败记录展示失败原因"
+    },
+    "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80": {
+      "caption": "自动充值签约页：门限与面额单选，协议勾选后「开启」按钮才可点击"
+    }
+  }
 }

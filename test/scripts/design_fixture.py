@@ -390,14 +390,22 @@ def answer(flow: Callable[..., dict], gate: str, reply: str, *extra: str) -> dic
     return flow("decide", "--gate", gate, "--ask", ask["ask_id"], "--reply", reply, *extra)
 
 
+def main_source(manifest: dict) -> str:
+    """需求条目指向的正文：产品需求来源的阅读稿，没有产品需求时取第一份正文。"""
+    requirement = {v.get("readable", {}).get("path") for s in manifest.get("sources", [])
+                   if s.get("class") == "RR" for v in s.get("versions", [])}
+    docs = [p for m in manifest["materials"] if m["kind"] == "doc" and m.get("sha256") for p in m["paths"]]
+    return next((p for p in docs if p in requirement), docs[0])
+
+
 def design_input(src: Path) -> dict:
-    """本轮确认的材料全部采用，人签取范围关卡那一条，需求条目指向第一份正文。"""
+    """本轮确认的材料全部采用，人签取范围关卡那一条，需求条目指向产品需求的正文。"""
     manifest = json.loads((src / "materials.json").read_text(encoding="utf-8"))
     adopted = [p for m in manifest["materials"] if m.get("sha256") for p in m["paths"]]
     contract = json.loads((src / "story-flow.json").read_text(encoding="utf-8"))
     asks = [g["ask_id"] for g in contract["rounds"][-1]["gates"]
             if g["gate"] == "scope_decision" and g["outcome"] == "accepted"]
-    main = next(p for m in manifest["materials"] if m["kind"] == "doc" and m.get("sha256") for p in m["paths"])
+    main = main_source(manifest)
     return {"adopted": adopted, "human_decision_ids": asks[-1:],
             "scope_items": [{"item_id": "request-main", "kind": "requirement", "source_path": main,
                              "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}]}
@@ -419,19 +427,13 @@ def hand_to_design(flow: Callable[..., dict], src: Path, access: Path) -> None:
 
 
 def walk_to_design(flow: Callable[..., dict], src: Path, draft_text: str, access: Path,
-                   scope_text: str = "本 AR 承载自动充值签约与管理", before: set[Path] | None = None) -> None:
+                   scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
     """用真实流程命令走完 S1–S3 并交给设计：材料关卡、需求分析、范围关卡、关联设计对象、冻结输入。
 
-    工程里同时放好一份已准入的蓝图——走完即「可以成文」。给了 `before`（init 之前就有的文件）时，init 为没拉到的上游
-    补的占位件在登记材料之前删掉：它们不是这张单的材料，不进冻结输入。"""
+    工程里同时放好一份已准入的蓝图——走完即「可以成文」。材料是夹具里已导入的 `sources/` 材料版本。"""
     src.mkdir(parents=True, exist_ok=True)
     (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
     flow("init")
-    if before is not None:
-        for rel in ("RR/prd.md", "SR/design.md"):
-            placeholder = src.parent.parent / rel
-            if placeholder not in before and placeholder.is_file():
-                placeholder.unlink()
     flow("round")
     write_gaps(src)
     answer(flow, "material_scope", "夹具：现有材料就是全部", "--chosen", "confirm_scope")
@@ -448,7 +450,7 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
                      draft: str, decisions: list[dict] | None = None, design: dict | None = None,
                      project_must_pass: bool = True) -> None:
     """就地把一份需求工作区准备成「交给设计、蓝图已准入」：接 Framework、放准入蓝图、用真实流程命令走到交给设计，
-    init 为没拉到的上游补的占位件在登记材料前删掉（与夹具原有材料一致），附录机器区按蓝图重投。
+    附录机器区按蓝图重投。
 
     `flow_script` / `build_script` / `access` 是本次要用的那份扩展里的 story_flow.py、story-build.mjs 与
     framework-access.mjs；已有流程契约的工作区不重走流程。`project_must_pass` 为假时附录重投不过不抛错——
@@ -466,8 +468,7 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
     if not (src / "story-flow.json").is_file():
-        before = {p for p in feature_root.rglob("*") if p.is_file()}
-        walk_to_design(flow, src, draft, access, before=before)
+        walk_to_design(flow, src, draft, access)
     # 设计按登记的输入走到准入：蓝图消费这次冻结输入，带本夹具要的知识应用决定与设计内容
     install_blueprint(root, feature, access, decisions=decisions, **(design or {}))
     if (feature_root / "AR" / "story.md").is_file():

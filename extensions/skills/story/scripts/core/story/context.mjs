@@ -13,15 +13,12 @@ import { activeKnowledge } from '../../../../../hooks/shared/knowledge.mjs';
 import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
 
 /**
- * `AR/` 根下允许的独立文件 —— 三份交付文档，加一份单据身份。
- *
- * `detail.json` 不是本机制的产物（写它的是目标仓自己实现的对接脚本），但它是这一层的
- * 正当住户：单号、类型、父单号是这份需求与需求系统之间的绳子，跟交付文档同级。
+ * `AR/` 根下允许的独立文件 —— 交付文档与提取稿骨架。需求系统的单号与关系记在来源版本里，不在这一层。
  *
  * 白名单而不是黑名单：黑名单挡不住下一个往根下写的新文件，而这里要成立的是一个
  * 持续的性质——机制不往交付层散辅助件。
  */
-const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md', 'design-review.md', 'detail.json'];
+const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md', 'design-review.md'];
 
 /** 命令判定没过：原因已写到 stderr，入口在恢复阅读视图之后按退出码 1 结束，不在半路退出进程。 */
 export class CommandFailure extends Error {}
@@ -221,7 +218,7 @@ export function strayFileProblems(ctx) {
   const problems = [];
   // ⑮ AR 根下只有交付文档：`AR/` 这一层的独立文件只有白名单那几个，辅助件进 `story-src/`。
   //
-  // **只判文件，目录一律放过**：`story-src/`、`assets/` 这类目录都是正当的
+  // **只判文件，目录一律放过**：`story-src/` 这类目录都是正当的
   // 落点，限制它们没有意义。判的是「这一层散没散」，不是「这一层该有什么」——白名单里
   // 的文件缺了不报，各有各的判据管。
   {

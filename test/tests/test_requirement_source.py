@@ -1,9 +1,9 @@
 """需求来源：本项目只有 AR 开头的需求挂在需求系统上，其余编号都是本地需求。
 
 锁住：
-  ① 对接层四条命令对本地需求在访问系统之前失败，名字不限 local——问题单、自定义名、
+  ① 对接层三条命令对本地需求在访问系统之前失败，名字不限 local——问题单、自定义名、
      中间含 AR 的编号都算本地；AR 开头而系统上查无此单仍是故障，不降级成本地；
-  ② 对接层只有 init / fetch / archive / restore，流程帮助归 `/story help`；
+  ② 对接层只有 fetch / archive / restore，流程帮助归 `/story help`；
   ③ core 两侧（Python 的 `system_requirement`、mjs 的 `isSystemRequirement`）对同一组编号判定一致，
      建骨架的来源标记按编号，需求目录里留着 `AR/detail.json` 也照编号判；
   ④ core 与对接层互不认识对方：core 的代码里没有对接层的路径或程序名，对接层的代码里没有 core 的命令。
@@ -46,7 +46,7 @@ class TheAdapterServesOnlySystemRequirements(unittest.TestCase):
         self.system = Path(self._tmp.name) / "no-such-system"
 
     def test_every_command_refuses_a_local_requirement_before_touching_the_system(self) -> None:
-        for cmd in ("init", "fetch", "archive", "restore"):
+        for cmd in ("fetch", "archive", "restore"):
             for no in LOCAL:
                 with self.subTest(cmd=cmd, no=no):
                     code, out, err = run_story(cmd, no, "token", "--out", "x",
@@ -57,7 +57,7 @@ class TheAdapterServesOnlySystemRequirements(unittest.TestCase):
                     self.assertNotIn("需求系统不可达", err)
 
     def test_a_system_requirement_that_cannot_be_read_stays_a_failure(self) -> None:
-        code, out, _ = run_story("init", "AR-not-exist", "token", "--project-root", self._tmp.name,
+        code, out, _ = run_story("fetch", "AR-not-exist", "token", "--out", "x", "--project-root", self._tmp.name,
                                  system=self.system)
         self.assertNotEqual(0, code)
         self.assertFalse(out["success"])
@@ -68,7 +68,7 @@ class TheAdapterServesOnlySystemRequirements(unittest.TestCase):
         self.assertNotEqual(0, code)
         self.assertIsNone(out)
         usage = err.split("用法：", 1)[1]
-        self.assertIn("<init|archive|restore|fetch>", usage)
+        self.assertIn("<archive|restore|fetch>", usage)
         self.assertNotIn("help", usage)
 
 

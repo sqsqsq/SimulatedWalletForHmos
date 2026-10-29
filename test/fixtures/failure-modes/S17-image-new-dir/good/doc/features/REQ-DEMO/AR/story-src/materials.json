@@ -1,0 +1,132 @@
+{
+  "schema": 3,
+  "feature": "REQ-DEMO",
+  "digest": "sha256:9d883dddbdef13cd",
+  "sources": [
+    {
+      "source_id": "local:AR/design.md",
+      "kind": "local",
+      "class": "AR",
+      "origin": {
+        "inbox_path": "AR/design.md"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/design-v1",
+          "acquired_at": "2026-10-29T19:42:59+08:00",
+          "original": {
+            "path": "sources/design-v1/design.md",
+            "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959"
+          },
+          "readable": {
+            "path": "sources/design-v1/design.md",
+            "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959"
+          },
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:RR/prd.md",
+      "kind": "local",
+      "class": "RR",
+      "origin": {
+        "inbox_path": "RR/prd.md"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/prd-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/prd-v1/prd.md",
+            "sha256": "702b99299bb2652376cef10b7a0b40490561b236e11b46eb2cfcdef4f7b773b8"
+          },
+          "readable": {
+            "path": "sources/prd-v1/prd.md",
+            "sha256": "702b99299bb2652376cef10b7a0b40490561b236e11b46eb2cfcdef4f7b773b8"
+          },
+          "images": []
+        }
+      ]
+    },
+    {
+      "source_id": "local:assets/入口原型说明/image1.png",
+      "kind": "local",
+      "class": "UX",
+      "origin": {
+        "inbox_path": "assets/入口原型说明/image1.png"
+      },
+      "latest_version": 1,
+      "versions": [
+        {
+          "version": 1,
+          "dir": "sources/image1-v1",
+          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "original": {
+            "path": "sources/image1-v1/image1.png",
+            "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166"
+          },
+          "readable": null,
+          "images": []
+        }
+      ]
+    }
+  ],
+  "inbox": [],
+  "materials": [
+    {
+      "kind": "doc",
+      "paths": [
+        "sources/design-v1/design.md"
+      ],
+      "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
+      "source_id": "local:AR/design.md"
+    },
+    {
+      "kind": "doc",
+      "paths": [
+        "sources/prd-v1/prd.md"
+      ],
+      "sha256": "702b99299bb2652376cef10b7a0b40490561b236e11b46eb2cfcdef4f7b773b8",
+      "source_id": "local:RR/prd.md"
+    },
+    {
+      "kind": "image",
+      "paths": [
+        "sources/image1-v1/image1.png"
+      ],
+      "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166",
+      "caption": "",
+      "unused": ""
+    }
+  ],
+  "origins": [
+    {
+      "path": "sources/design-v1/design.md",
+      "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
+      "kind": "local",
+      "class": "AR",
+      "readable_paths": [
+        "sources/design-v1/design.md"
+      ],
+      "source_id": "local:AR/design.md",
+      "version": 1
+    },
+    {
+      "path": "sources/prd-v1/prd.md",
+      "sha256": "702b99299bb2652376cef10b7a0b40490561b236e11b46eb2cfcdef4f7b773b8",
+      "kind": "local",
+      "class": "RR",
+      "readable_paths": [
+        "sources/prd-v1/prd.md"
+      ],
+      "source_id": "local:RR/prd.md",
+      "version": 1
+    }
+  ],
+  "notes": {}
+}

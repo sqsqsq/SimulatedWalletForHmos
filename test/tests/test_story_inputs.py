@@ -104,6 +104,27 @@ class WorkspaceCase(unittest.TestCase):
         self.feature_root = self.root / "doc" / "features" / FEATURE
         (self.feature_root / "AR" / "story-src").mkdir(parents=True)
 
+    def put(self, files: dict[str, tuple[bytes, str]]) -> None:
+        """经真实导入命令把原件导成材料版本：键是收件箱里的位置，值是字节与来源类。"""
+        inbox = self.feature_root / "sources" / "inbox"
+        for rel, (body, _) in files.items():
+            (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+            (inbox / rel).write_bytes(body)
+        (inbox / ".classify.json").write_text(
+            json.dumps({rel: cls for rel, (_, cls) in files.items()}, ensure_ascii=False), encoding="utf-8")
+        proc = run(sys.executable, "doc/extensions/skills/story/scripts/core/import_sources.py",
+                   "--feature", FEATURE, cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def latest(self, key: str) -> str:
+        """收件箱位置为 `key` 的那份来源最新版本的原件（相对需求目录）。"""
+        index = json.loads((self.feature_root / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
+        return next(s for s in index["sources"] if s["source_id"] == f"local:{key}")["versions"][-1]["original"]["path"]
+
+    def put_prd(self) -> None:
+        """交给设计要一份正文材料：放一份产品需求。"""
+        self.put({"RR/prd.md": ("# 产品需求\n\n自动充值签约。\n".encode("utf-8"), "RR")})
+
     def inputs(self, feature: str = FEATURE) -> str:
         """`story-build skeleton` 打印的成文输入：同一个函数、同一份来源状态，不必先把骨架的前置条件全摆齐。"""
         core = self.root / "doc" / "extensions" / "skills" / "story" / "scripts" / "core" / "story"
@@ -158,8 +179,12 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
     def section_4b(package: str) -> str:
         return package.split("## 4b.", 1)[1].split("\n## ", 1)[0]
 
+    def put_sr(self, text: str) -> str:
+        self.put({"SR/design.md": (text.encode("utf-8"), "SR")})
+        return self.latest("SR/design.md")
+
     def test_each_diagram_comes_with_its_identity_position_and_content(self) -> None:
-        self.freeze({"SR/design.md": self.SR})
+        self.freeze({self.put_sr(self.SR): self.SR})
         section = self.section_4b(self.inputs())
         self.assertIn("**SR §5.2 #1**（", section, "没给图身份")
         self.assertIn("自动充值触发", section, "没给图讲的主题")
@@ -169,20 +194,20 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
         self.assertNotIn("%% 图源", section, "退出的围栏标记又出现了")
 
     def test_the_frozen_version_is_the_source(self) -> None:
-        """交给设计之后工作区里的系统设计改了、加了图：照冻结的那一版列。"""
-        self.freeze({"SR/design.md": self.SR})
-        sr = self.feature_root / "SR" / "design.md"
-        sr.parent.mkdir(parents=True, exist_ok=True)
-        sr.write_text(self.SR + "\n### 5.3 新加的\n\n```mermaid\ngraph TD\nX --> Y\n```\n", encoding="utf-8")
+        """交给设计之后系统设计取得了新版本、加了图：照冻结的那一版列。"""
+        self.freeze({self.put_sr(self.SR): self.SR})
+        self.assertEqual("sources/design-v2/design.md",
+                         self.put_sr(self.SR + "\n### 5.3 新加的\n\n```mermaid\ngraph TD\nX --> Y\n```\n"))
         section = self.section_4b(self.inputs())
         self.assertIn("SR §5.2 #1", section)
         self.assertNotIn("SR §5.3 #1", section, "工作区改动被当成了已采用的来源")
 
     def test_a_missing_system_design_is_named(self) -> None:
-        self.assertIn("读不到 `SR/design.md`", self.section_4b(self.inputs()))
+        self.assertIn("材料索引里没有系统设计来源的阅读稿", self.section_4b(self.inputs()))
 
     def test_no_diagram_is_said_plainly(self) -> None:
-        self.freeze({"SR/design.md": "# 系统设计\n\n只有文字。\n"})
+        text = "# 系统设计\n\n只有文字。\n"
+        self.freeze({self.put_sr(text): text})
         self.assertIn("里现在没有图", self.section_4b(self.inputs()))
 
 class MaterialImagesAreOneTaskEach(WorkspaceCase):
@@ -192,18 +217,18 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         """材料里的图**一张一项**，并写明「用或写明不用」的义务。
 
         两跑各丢过一次图：一次主流程没画，一次三张图一张没进正文。
-        单位是图片对象不是路径：同一张图在仓里有两个落点（文档内嵌位置与
-        `ux-reference/` 下的语义名副本）时，按路径摆会让作者以为有两张。
+        单位是图片对象不是路径：同一张图在仓里有两个落点（两份材料版本里各有一份）时，
+        按路径摆会让作者以为有两张。
         """
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
             json.dumps({"materials": [
-                {"kind": "image", "paths": ["assets/x/one.png"], "caption": "签约页"},
-                {"kind": "image", "paths": ["assets/x/two.png"]},
+                {"kind": "image", "paths": ["sources/x-v1/images/one.png"], "caption": "签约页"},
+                {"kind": "image", "paths": ["sources/x-v1/images/two.png"]},
             ]}, ensure_ascii=False), encoding="utf-8")
         package = self.inputs()
-        self.assertIn("assets/x/one.png", package)
+        self.assertIn("sources/x-v1/images/one.png", package)
         self.assertIn("签约页", package)
-        self.assertIn("assets/x/two.png", package)
+        self.assertIn("sources/x-v1/images/two.png", package)
         self.assertIn("--unused", package, "用不上的那些要有写理由的去处")
         # **方法在作业书，数据与命令在成文输入**：把「怎么引、怎么登记」也抄进来，
         # 同一条规则就有两份会各自漂的写法。这里只核指路在、方法在它该在的地方。
@@ -218,14 +243,14 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
 
         按路径逐条摆的话，作者会以为有两张——于是引两次，或者为「另一张」再补一句说明。
         """
-        for rel in ("ux-reference/签约页.png", "assets/doc/img3.png"):
+        for rel in ("sources/签约页-v1/签约页.png", "sources/需求说明-v1/images/img3.png"):
             img = self.feature_root / rel
             img.parent.mkdir(parents=True, exist_ok=True)
             img.write_bytes(b"PNG")
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
             json.dumps({"materials": [
                 {"kind": "image", "sha256": "sha256:aa", "caption": "签约页",
-                 "paths": ["assets/doc/img3.png", "ux-reference/签约页.png"]},
+                 "paths": ["sources/需求说明-v1/images/img3.png", "sources/签约页-v1/签约页.png"]},
             ]}, ensure_ascii=False), encoding="utf-8")
         package = self.inputs()
         cmds = [l for l in package.split("\n")
@@ -235,14 +260,14 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         self.assertIn("是同一张，只引一次", package)
 
     def test_two_different_images_are_not_merged(self) -> None:
-        for rel in ("assets/x/a.png", "assets/x/b.png"):
+        for rel in ("sources/x-v1/images/a.png", "sources/x-v1/images/b.png"):
             img = self.feature_root / rel
             img.parent.mkdir(parents=True, exist_ok=True)
             img.write_bytes(rel.encode())
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
             json.dumps({"materials": [
-                {"kind": "image", "sha256": "sha256:aa", "paths": ["assets/x/a.png"]},
-                {"kind": "image", "sha256": "sha256:bb", "paths": ["assets/x/b.png"]},
+                {"kind": "image", "sha256": "sha256:aa", "paths": ["sources/x-v1/images/a.png"]},
+                {"kind": "image", "sha256": "sha256:bb", "paths": ["sources/x-v1/images/b.png"]},
             ]}, ensure_ascii=False), encoding="utf-8")
         package = self.inputs()
         cmds = [l for l in package.split("\n")
@@ -251,13 +276,13 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
 
     def test_the_representative_path_is_one_that_actually_reads(self) -> None:
         """登记里的路径可能指向已经不在的文件——拿它渲染出来的引用串与命令都是坏的。"""
-        img = self.feature_root / "ux-reference/签约页.png"
+        img = self.feature_root / "sources/签约页-v1/签约页.png"
         img.parent.mkdir(parents=True, exist_ok=True)
         img.write_bytes(b"PNG")
         (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
             json.dumps({"materials": [
                 {"kind": "image", "sha256": "sha256:aa",
-                 "paths": ["assets/doc/没有了.png", "ux-reference/签约页.png"]},
+                 "paths": ["sources/需求说明-v1/images/没有了.png", "sources/签约页-v1/签约页.png"]},
             ]}, ensure_ascii=False), encoding="utf-8")
         package = self.inputs()
         cmd = next(l for l in package.split("\n")
@@ -282,7 +307,7 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         for name, payload in (
             ("空对象", {}),
             ("materials 不是数组", {"materials": "invalid"}),
-            ("旧的 items/path", {"items": [{"kind": "image", "path": "assets/x/a.png"}]}),
+            ("旧的 items/path", {"items": [{"kind": "image", "path": "sources/x-v1/images/a.png"}]}),
             ("坏 JSON", "{ 坏了"),
         ):
             with self.subTest(shape=name):
@@ -296,11 +321,11 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
     def test_a_legal_empty_manifest_really_means_no_images(self) -> None:
         """合法的空清单与非图片材料：这时才是「没有图」。"""
         self.put_manifest({"materials": [
-            {"kind": "doc", "sha256": "sha256:aa", "paths": ["RR/prd.md"]}]})
+            {"kind": "doc", "sha256": "sha256:aa", "paths": ["sources/prd-v1/prd.md"]}]})
         self.assertIn("材料清单里现在没有图片", self.inputs())
 
     def test_a_bad_paths_shape_is_a_gap(self) -> None:
-        for name, paths in (("不是数组", "assets/x/a.png"), ("空数组", []),
+        for name, paths in (("不是数组", "sources/x-v1/images/a.png"), ("空数组", []),
                             ("空串", [""]), ("不是字符串", [12])):
             with self.subTest(paths=name):
                 self.put_manifest({"materials": [{"kind": "image", "paths": paths}]})
@@ -310,12 +335,12 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
 
     def test_an_unreadable_representative_falls_back_to_a_readable_alias(self) -> None:
         """代表路径缺了、别名读得到：用读得到的那个，另一个仍列成别名。"""
-        img = self.feature_root / "ux-reference/签约页.png"
+        img = self.feature_root / "sources/签约页-v1/签约页.png"
         img.parent.mkdir(parents=True, exist_ok=True)
         img.write_bytes(b"PNG")
         self.put_manifest({"materials": [{"kind": "image", "caption": "签约页",
-                                          "paths": ["assets/doc/没有了.png",
-                                                    "ux-reference/签约页.png"]}]})
+                                          "paths": ["sources/需求说明-v1/images/没有了.png",
+                                                    "sources/签约页-v1/签约页.png"]}]})
         package = self.inputs()
         cmds = self.image_command_lines(package)
         self.assertEqual(1, len(cmds))
@@ -325,7 +350,7 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
     def test_a_directory_is_not_a_readable_image(self) -> None:
         """`existsSync` 为真不等于它能当一张图：指到目录的命令照抄必错。"""
         (self.feature_root / "assets" / "x").mkdir(parents=True, exist_ok=True)
-        self.put_manifest({"materials": [{"kind": "image", "paths": ["assets/x"]}]})
+        self.put_manifest({"materials": [{"kind": "image", "paths": ["sources/x-v1/images"]}]})
         package = self.inputs()
         self.assertIn("一个都读不到", package)
         self.assertEqual([], self.image_command_lines(package), "给了指到目录的命令")
@@ -338,20 +363,19 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         self.assertIn("读不出材料清单", package)
         self.assertNotIn("材料清单里现在没有图片", package)
 
-    #: 图名带空格是常事——导入从文档里抽出来的图常常沿用原文里的名字。
-    SPACED = "assets/x/page one.png"
+    def put_two_images(self) -> tuple[str, str]:
+        """导入两张内容不同的图，返回它们的原件位置；第二张名字带空格——原文里的图名常常带空格。"""
+        self.put({"one.png": (b"PNG-one", "UX"), "page one.png": (b"PNG-two", "UX")})
+        return self.latest("one.png"), self.latest("page one.png")
 
     def seed_two_images(self) -> None:
-        """盘上放两张图并登记：一张要用、一张已登记不用（名字带空格）。"""
-        for rel in ("assets/x/one.png", self.SPACED):
-            img = self.feature_root / rel
-            img.parent.mkdir(parents=True, exist_ok=True)
-            img.write_bytes(b"PNG")
-        (self.feature_root / "AR" / "story-src" / "materials.json").write_text(
-            json.dumps({"materials": [
-                {"kind": "image", "paths": [self.SPACED], "caption": "签约页"},
-                {"kind": "image", "paths": ["assets/x/one.png"], "unused": "旧版对照稿"},
-            ]}, ensure_ascii=False), encoding="utf-8")
+        """两张图：带空格的那张写了说明、还要用，另一张已登记不用。"""
+        one, spaced = self.put_two_images()
+        proc = run(sys.executable, "doc/extensions/skills/story/scripts/core/import_sources.py",
+                   "--feature", FEATURE, "--caption-image", f"doc/features/{FEATURE}/{spaced}",
+                   "--caption", "签约页", cwd=self.root)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.register_unused(one, "旧版对照稿")
 
     def test_every_image_gets_a_command_that_runs_as_written(self) -> None:
         """展示的引用串相对 `AR/story.md`，命令的路径相对工程根——两个基准不一样。
@@ -390,17 +414,6 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         self.assertNotIn("\\", line, "命令里还有续行的反斜杠——shell 会把它当字面参数")
 
 
-    def refresh_manifest(self) -> None:
-        """用机制自己那份算法重算材料清单——手写的 materials.json 测不到取舍的写入。"""
-        core = self.root / "doc/extensions/skills/story/scripts/core"
-        proc = run(sys.executable, "-c",
-                   "import pathlib, sys;"
-                   f"sys.path.insert(0, {json.dumps(core.as_posix())});"
-                   "from materials import registry;"
-                   f"registry.refresh(pathlib.Path({json.dumps(self.feature_root.as_posix())}))",
-                   cwd=self.root)
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-
     def register_unused(self, rel: str, reason: str) -> None:
         """按真脚本登记「本需求不用这张图」——状态由它写，测试不手改台账。"""
         proc = run(sys.executable,
@@ -433,12 +446,8 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         「每张图下面那条命令原样跑」时，照做一遍就把还要用的图登记成不用、把已经有
         依据不用的图恢复引用——两个方向都是拿作者没做过的决定去写状态。
         """
-        for rel in ("assets/x/one.png", self.SPACED):
-            img = self.feature_root / rel
-            img.parent.mkdir(parents=True, exist_ok=True)
-            img.write_bytes(rel.encode())          # 内容不同：两张图两个 sha
-        self.register_unused("assets/x/one.png", "旧版对照稿")
-        self.refresh_manifest()
+        one, _ = self.put_two_images()
+        self.register_unused(one, "旧版对照稿")
 
         package = self.inputs()
         self.assertNotIn("原样跑", package, "两条命令写的状态相反，不能要求逐张跑")
@@ -460,11 +469,8 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         这是「不要求逐张跑」的依据：两条命令不是同一个动作的两种写法，
         它们把台账写向相反的方向。
         """
-        img = self.feature_root / "assets/x/one.png"
-        img.parent.mkdir(parents=True, exist_ok=True)
-        img.write_bytes(b"PNG-one")
-        self.register_unused("assets/x/one.png", "旧版对照稿")
-        self.refresh_manifest()
+        self.put({"one.png": (b"PNG-one", "UX")})
+        self.register_unused(self.latest("one.png"), "旧版对照稿")
 
         restore = self.image_commands(self.inputs())
         self.assertEqual(["--used"], [c[0] for c in restore])
@@ -472,11 +478,10 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertEqual(0, proc.returncode, out)
 
-        ledger = json.loads((self.feature_root / "ux-reference" / ".captions.json")
-                            .read_text(encoding="utf-8"))
-        self.assertFalse([e for e in ledger.values() if e.get("unused")],
-                         f"「不用」的理由没被撤掉：{ledger}")
-        self.refresh_manifest()
+        notes = json.loads((self.feature_root / "AR" / "story-src" / "materials.json")
+                           .read_text(encoding="utf-8"))["notes"]
+        self.assertFalse([e for e in notes.values() if e.get("unused")],
+                         f"「不用」的理由没被撤掉：{notes}")
         after = self.image_commands(self.inputs())
         self.assertEqual(["--unused"], [c[0] for c in after],
                          "撤销之后再给撤销命令，作者跑一遍就把它又标成不用")
@@ -532,6 +537,7 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         **材料指纹要带上当下的那个**：不带的话「材料变了」先于关卡成立，
         `status` 会先让人去重跑 `round`——那是对的行为，但不是这几条要问的事。
         """
+        self.put_prd()
         proc = run(sys.executable, str(FLOW_SCRIPT), "round",
                    "--feature", FEATURE, "--project-root", str(self.root), cwd=self.root)
         self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
@@ -587,6 +593,7 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
         self.contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         self.first = self.contract["chapters"][0]["title"]
         # skeleton 起手预检需要收口态的流程契约与材料基准（08 §2.1）
+        self.put_prd()
         ensure_flow_state(self.root, FEATURE,
                           self.feature_root / "AR" / "story-src", DRAFT_TEXT)
         (self.feature_root / "AR" / "story-src" / "decisions.json").write_text(

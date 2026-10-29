@@ -4,20 +4,19 @@
  *
  * `story-build skeleton` 起手与恢复时打印它：上游正文取本次采用的冻结版本，缺席按合同与单据身份说。
  */
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, relDisplay } from '../../../../../hooks/shared/paths.mjs';
 import { SHELL, shellArg } from './drafts.mjs';
 import { designSource, designStatusLines } from './design-source.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths } from './images.mjs';
 import { markdownTarget } from './language.mjs';
-import { originRows, relFromStory, upstreamDocs } from './sources.mjs';
+import { latestOf, originRows, relFromStory, upstreamDocs } from './sources.mjs';
 
 /**
  * 材料里的图 —— **一张图一项任务**。
  *
- * 单位是**图片对象**，不是路径：同一张图在仓里有两个落点（文档内嵌位置与
- * `ux-reference/` 下的语义名副本）时，那仍是一张图。按路径逐条摆，作者会以为有两张，
+ * 单位是**图片对象**，不是路径：同一张图出现在几个材料版本里（例如两份文档内嵌了同一张图）时，
+ * 那仍是一张图。按路径逐条摆，作者会以为有两张，
  * 于是引两次、或者为「另一张」再补一句说明。
  *
  * 代表路径取**实际读得到**的那一个：登记里的路径可能指向已经不在的文件，
@@ -94,14 +93,13 @@ function imageSection(projectRoot, feature) {
  */
 function upstreamSection(ctx) {
   const rows = ['## 4b. 上游里的图（在 story 里的去向）', ''];
-  const rel = ctx.contract.sources?.SE?.path;
   const docs = upstreamDocs(ctx);
   if (!docs.length) {
-    rows.push(rel ? `读不到 \`${rel}\`——上游里有没有图、各讲什么，现在给不出来。先把这份上游正文找回来，再跑一次 \`story-build skeleton\`。`
-      : '章节合同没有登记带图的上游文档，这一节没有要承接的图。');
+    rows.push('材料索引里没有系统设计来源的阅读稿——上游里有没有图、各讲什么，现在给不出来。'
+      + '系统设计还没取得就先取回或放进来源收件箱导入，再跑一次 `story-build skeleton`；本需求确实没有系统设计时这一节没有要承接的图。');
     return rows;
   }
-  for (const [label, text] of docs) {
+  for (const [label, text, rel] of docs) {
     const list = diagramsOf(text);
     if (!list.length) {
       rows.push(`${label}（\`${rel}\`）里现在没有图。`);
@@ -142,7 +140,7 @@ function blueprintSection(ctx) {
  * @param {{projectRoot: string, featureRoot: string, contract: object, args: {feature: string}}} ctx
  */
 export function storyInputs(ctx) {
-  const ux = path.join(ctx.featureRoot, 'ux-reference', 'README.md');
+  const ux = latestOf(ctx, 'UX').map(v => v.readable?.path).filter(Boolean);
   const status = designStatusLines(designSource(ctx));
   return [
     ...(status.length ? ['## 设计状态', '',
@@ -152,8 +150,8 @@ export function storyInputs(ctx) {
     '附录材料清单那张「材料 | 来源 | 贡献」表照这里写：一组一行，来源列列齐这一组的全部原件与采用版本'
     + '（有版号或会议版本写它，没有写下面的摘要）；集合由材料清单派生，漏写一行不会让那份原件免于审查。',
     ...originRows({ ...ctx, srcDir: ctx.srcDir ?? path.join(ctx.featureRoot, 'AR', 'story-src') }), '',
-    ...(fs.existsSync(ux)
-      ? ['界面交互说明在 `ux-reference/README.md`：业务流程章有人机交互的小节以它与下面的界面原图为依据，'
+    ...(ux.length
+      ? [`界面交互说明在 ${ux.map(r => `\`${r}\``).join('、')}：业务流程章有人机交互的小节以它与下面的界面原图为依据，`
         + '写作设计在那一节的「依据」里写明用哪一段、哪几张图；页面流转图与表照它写，它没覆盖的普通交互在已定业务内补齐。', ''] : []),
     ...imageSection(ctx.projectRoot, ctx.args.feature), '',
     ...upstreamSection(ctx), '',

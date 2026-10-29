@@ -527,14 +527,14 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         """集合写成一句话：原生读规格时点名是哪个集合，扩展照样报义务没有验收承接，不当空集合放行。"""
         self.write_acceptance("criteria: 还没写\n")
         message = self.ut_message()
-        self.assertIn("`criteria` 应为数组", message)
+        self.assertIn("$.criteria: 类型不符：期望 array", message)
         self.assertIn("没有 knowledge_rule: NEU-01", message)
 
     def test_a_bare_value_row_is_named(self) -> None:
         """条目写成裸值：原生读规格时点名是哪一条并剔除，其余条目照常核。"""
         self.write_acceptance("criteria:\n  - id: AC-1\n" + self.BRIDGE + "  - 只写了一句话\n")
         message = self.ut_message()
-        self.assertIn("`criteria[1]` 应为映射", message)
+        self.assertIn("$.criteria[1]: 类型不符：期望 object", message)
 
     def test_an_empty_rule_is_named(self) -> None:
         """`knowledge_rule:` 留空与「没写这个字段」不是一回事：后者是普通业务验收。"""

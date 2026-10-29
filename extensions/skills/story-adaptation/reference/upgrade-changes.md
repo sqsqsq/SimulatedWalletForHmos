@@ -71,3 +71,7 @@
 
 - [知识] 知识的适用判断由蓝图设计作出：需求级 spec 与 `knowledge-use.yaml` 不再承载判断，设计把判断写进蓝图的知识应用决定，施工单位契约实体上的 `must` 与模式角色承接。目标知识里「替谁作什么判断」或读取时机写着 spec 阶段判断的，改成蓝图设计判断、plan 落实体、检视与测试核，写法见 `knowledge-topics.md` 各主题。核：知识里不再把 spec 写成判断的出处，`/extension inspect` 无报错。
 - [知识] 埋点设计落在蓝图的精确明细：一条 `kind: event` 的明细是一个指标，先写定义段，再给表头含「统计点」的点位表；plan 用表头含「统计点」「责任方法」的逐点表落实。目标的上报或可观测知识若示范了 spec「埋点」一节的写法，改为指向蓝图埋点明细与 plan 逐点表。核：知识里不再出现 spec 埋点章节作为落点。
+
+## 2.1.0
+
+- [对接层] 命令 `init` 退出：起单与 update 都用 `fetch <AR单号> <token> --project-root <工程根> --out <本单 sources/inbox/fetch-<时刻>>` 取材，对接层不再写 `RR/`、`SR/`、`AR/design.md`、`detail.json`。`--out` 是本次取材批次目录，三份正文（`AR-design.md`、`SR-design.md`、`RR-prd.md`）写进它，并在它下面写 `.receipt.json`：`reqNo`、`parentNo`（SR 单号）、`rrNo`、`fetchedAt` 与逐件 `name`、`role`（AR/SR/RR）、`ticket`、`title`、`status`（fetched / same / absent / failed）、`saved`；导入按回执认来源，关联单号取不到的那一件记 `absent` 与原因。与来源索引 `AR/story-src/materials.json` 里同一来源（`system:<role>:<ticket>`）已存版本逐字相同的，以及 AR 正文与本地 `AR/story.md` 相同的，记 `same`、不落盘；`AR/story-src/fetched.json` 照旧写外部当前状态。验证：对一张系统单在空需求目录取材一次，批次目录有三份正文与回执，`story_flow.py init` 后 `import_sources.py --feature <AR>` 把三份导成 `sources/<角色>-<单号>-v1/`；不改系统内容再取一次，三份都是 `same`、批次目录不留正文。

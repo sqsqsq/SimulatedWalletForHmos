@@ -1,30 +1,23 @@
 /**
- * fetch.js — 取单据：`init` 首次拉取，`fetch` 只读取回。
- *
- * fetchOne(reqNo, dirType, mcpToken, backupTimestamp, baseReqNo?) → { parentNo }
- *   拉一级单据的详情与正文，落到 `<features>/<baseReqNo ?? reqNo>/<dirType>/`：
- *   detail.json 每次写；正文（AR/SR 为 design.md，RR 为 prd.md）系统上有才写、本地已有不覆盖——
- *   AR/design.md 是需求分析的预填输入，本地那份可能已经是分析成果。本替身不覆盖正文，
- *   backupTimestamp 不产生备份。
- *   parentNo 是上一级单号（AR → SR，SR → RR，RR 为 null），入口据它逐级往上拉。
+ * fetch.js — 取单据：起单与 update 都只读取材，`fetch` 一个业务文件都不写。
  *
  * fetchUpstream(reqNo, mcpToken, { outDir }) → 回执
- *   **只读取材**：把这张单现在关联的上游正文、评审回稿与两个附件取回，一个业务文件都不写。
- *   三份正文写进 outDir（本单 inbox），与本地对应文件逐字相同的不落盘；评审回稿写
- *   `AR/story-src/review-feedback.md`；评审记录附件与设计附件和本地不同时写 `AR/story-src/fetched-review.md`、
- *   `fetched-design-review.md`（不覆盖本地 AR/review.md 的人工区）；回执写 `AR/story-src/fetched.json`（不放 inbox，
- *   否则会被当成一份材料导入），带取材时刻 fetchedAt（带时区的 ISO 8601）。每份的 status 四态分开：fetched / same / absent / failed——
- *   混成一个的话，一次读取错误会被当成「评审没提意见」。
+ *   把这张单现在关联的上游正文（本单 AR、它挂的 SR、SR 挂的 RR）、评审回稿与两个附件取回。
+ *   三份正文写进 outDir（本单来源收件箱下的一个取材批次），批次里写 `.receipt.json`：
+ *   reqNo / parentNo / rrNo 与逐件的 role、ticket、title、origin、status、saved——导入按它认来源。
+ *   与来源索引里同一来源已存的某一版逐字相同的不落盘（AR 正文与本地已归档的 Story 相同也不落盘，
+ *   那是我们自己发布上去的）；评审回稿写 `AR/story-src/review-feedback.md`；评审记录附件与设计附件和本地不同时
+ *   写 `AR/story-src/fetched-review.md`、`fetched-design-review.md`（不覆盖本地 AR/review.md 的人工区）；
+ *   外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt。每份的 status 四态分开：
+ *   fetched / same / absent / failed——混成一个的话，一次读取错误会被当成「评审没提意见」。
+ *   关联关系逐级从实际返回解析，取不到就记 absent 与原因，不默认 AR 详情一定带 RR 编号。
  */
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { callMcp, REQUIREMENT_URL, ATTACHMENT_URL } = require('./mcp');
-const { featureDir, levelDir } = require('./dirs');
-
-const BODY = { AR: 'design.md', SR: 'design.md', RR: 'prd.md' };
-const FALLBACK_TITLE = { AR: '开发需求', SR: '系统设计', RR: '产品需求' };
+const { featureDir } = require('./dirs');
 
 function log(msg) {
   console.error(`[fetch.js] ${msg}`);
@@ -34,7 +27,7 @@ function text(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-/** 单据详情（公共）：update 取材与 init 共用。 */
+/** 单据详情（公共）：取标题与上一级单号。 */
 async function getDetail(reqNo, mcpToken) {
   return callMcp(REQUIREMENT_URL, 'getDetail', { reqNo }, mcpToken);
 }
@@ -44,50 +37,33 @@ async function getBody(reqNo, name, mcpToken) {
   return callMcp(REQUIREMENT_URL, 'getBody', { reqNo, name }, mcpToken);
 }
 
-/** 上一级单号：AR 的上一级是 SR，SR 的上一级是 RR。 */
-function parentOf(detail, dirType) {
-  if (dirType === 'AR') return text(detail.parentNo);
-  if (dirType === 'SR') return text(detail.parentNo) ?? text(detail.rrNo);
-  return null;
-}
-
-async function fetchOne(reqNo, dirType, mcpToken, backupTimestamp, baseReqNo) {
-  const detail = await getDetail(reqNo, mcpToken);
-  const dir = levelDir(baseReqNo ?? reqNo, dirType);
-  fs.mkdirSync(dir, { recursive: true });
-  const record = { reqNo, type: dirType, title: text(detail.title) ?? `${reqNo} ${FALLBACK_TITLE[dirType]}` };
-  if (dirType === 'AR') record.parentNo = parentOf(detail, 'AR');
-  if (dirType !== 'RR') record.rrNo = text(detail.rrNo);
-  fs.writeFileSync(path.join(dir, 'detail.json'), `${JSON.stringify(record, null, 2)}\n`, 'utf-8');
-
-  const body = await getBody(reqNo, BODY[dirType], mcpToken);
-  const target = path.join(dir, BODY[dirType]);
-  if (body === null) {
-    log(`系统上没有 ${dirType}/${BODY[dirType]}，本地未写入`);
-  } else if (fs.existsSync(target)) {
-    log(`已存在，跳过：${target}`);
-  } else {
-    fs.writeFileSync(target, body, 'utf-8');
-    log(`生成：${target}`);
-  }
-  return { parentNo: parentOf(detail, dirType) };
-}
-
 function readOr(file) {
   try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
+}
+
+/** 来源索引里同一来源（角色 + 单号）已存的各版原件：取回的内容与其中一版逐字相同就不再落盘。 */
+function storedVersions(root, role, ticket) {
+  let index;
+  try { index = JSON.parse(readOr(path.join(root, 'AR', 'story-src', 'materials.json')) ?? 'null'); } catch { index = null; }
+  const source = (index?.sources ?? []).find(s => s?.source_id === `system:${role}:${ticket}`);
+  return (source?.versions ?? []).map(v => ({ dir: v.dir, body: readOr(path.join(root, ...String(v.original?.path ?? '').split('/'))) }));
 }
 
 async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   const root = featureDir(reqNo);
   const detail = await getDetail(reqNo, mcpToken);
-  const srNo = parentOf(detail, 'AR');
-  const rrNo = text(detail.rrNo);
+  const srNo = text(detail.parentNo);
+  const srDetail = srNo ? await getDetail(srNo, mcpToken) : null;
+  const rrNo = text(detail.rrNo) ?? text(srDetail?.parentNo) ?? text(srDetail?.rrNo);
+  const rrDetail = rrNo ? await getDetail(rrNo, mcpToken) : null;
   const src = path.join(root, 'AR', 'story-src');
   const wanted = [
-    { name: 'AR-design.md', label: '开发需求正文（本单）', no: reqNo, body: 'design.md',
-      local: ['AR/design.md', 'AR/story.md'] },
-    { name: 'SR-design.md', label: '系统设计正文', no: srNo, body: 'design.md', local: ['SR/design.md'] },
-    { name: 'RR-prd.md', label: '产品需求正文', no: rrNo, body: 'prd.md', local: ['RR/prd.md'] },
+    { name: 'AR-design.md', role: 'AR', label: '开发需求正文（本单）', no: reqNo, title: text(detail.title), body: 'design.md',
+      local: ['AR/story.md'] },
+    { name: 'SR-design.md', role: 'SR', label: '系统设计正文', no: srNo, title: text(srDetail?.title), body: 'design.md', local: [],
+      missing: '本单详情没有给出上一级系统设计单号' },
+    { name: 'RR-prd.md', role: 'RR', label: '产品需求正文', no: rrNo, title: text(rrDetail?.title), body: 'prd.md', local: [],
+      missing: '本单与系统设计单都没有给出产品需求单号' },
     { name: 'review-feedback.md', label: '评审人留下的回稿', no: reqNo, body: 'review-feedback.md',
       local: [], dir: src },
     { name: 'review.md', label: '评审记录附件', no: reqNo, attachment: 'review.md',
@@ -97,8 +73,8 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   ];
   const items = [];
   for (const w of wanted) {
-    const id = { name: w.name, label: w.label, ticket: w.no || null };
-    if (!w.no) { items.push({ ...id, status: 'absent', note: '这张单上没有挂它' }); continue; }
+    const id = { name: w.name, label: w.label, ticket: w.no || null, ...(w.role ? { role: w.role, title: w.title } : {}) };
+    if (!w.no) { items.push({ ...id, status: 'absent', note: w.missing ?? '这张单上没有挂它' }); continue; }
     let body;
     try {
       body = w.attachment
@@ -109,11 +85,15 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
       continue;
     }
     if (body === null) { items.push({ ...id, status: 'absent', note: '系统上现在没有这一份' }); continue; }
+    const hash = crypto.createHash('sha256').update(body).digest('hex');
     const facts = {
-      digest: `sha256:${crypto.createHash('sha256').update(body).digest('hex').slice(0, 16)}`,
+      digest: `sha256:${hash.slice(0, 16)}`,
+      sha256: hash,
       origin: `${w.no}/${w.attachment ? `attachments/${w.attachment}` : w.body}`,
       bytes: Buffer.byteLength(body, 'utf-8'),
     };
+    const stored = w.role ? storedVersions(root, w.role, w.no).find(v => v.body === body) : null;
+    if (stored) { items.push({ ...id, status: 'same', note: `与来源 ${stored.dir} 逐字相同`, ...facts }); continue; }
     const same = w.local.find(rel => readOr(path.join(root, rel)) === body);
     if (same) { items.push({ ...id, status: 'same', note: `与本地 ${same} 逐字相同`, ...facts }); continue; }
     const dir = w.dir || outDir;
@@ -122,13 +102,18 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     items.push({ ...id, status: 'fetched',
       saved: path.relative(root, path.join(dir, w.saveAs ?? w.name)).split(path.sep).join('/'), ...facts });
   }
+  const receipt = { mode: 'fetch', reqNo, parentNo: srNo, rrNo, fetchedAt: new Date().toISOString(), items };
   fs.mkdirSync(src, { recursive: true });
-  fs.writeFileSync(path.join(src, 'fetched.json'),
-    `${JSON.stringify({ mode: 'fetch', reqNo, fetchedAt: new Date().toISOString(), items }, null, 2)}\n`, 'utf-8');
-  const fetched = items.filter(i => i.status === 'fetched').length;
+  fs.writeFileSync(path.join(src, 'fetched.json'), `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
+  const upstream = items.filter(i => i.role && i.status === 'fetched');
+  if (upstream.length) {
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, '.receipt.json'),
+      `${JSON.stringify({ ...receipt, items: items.filter(i => i.role) }, null, 2)}\n`, 'utf-8');
+  }
   const failed = items.filter(i => i.status === 'failed').length;
-  log(`取回 ${fetched} 份到 ${outDir}${failed ? `，${failed} 份读取失败` : ''}；一个业务文件都没动`);
-  return { out: outDir, fetched, failed, items };
+  log(`取回 ${upstream.length} 份上游正文到 ${outDir}${failed ? `，${failed} 份读取失败` : ''}；一个业务文件都没动`);
+  return { out: outDir, fetched: items.filter(i => i.status === 'fetched').length, failed, parentNo: srNo, rrNo, items };
 }
 
-module.exports = { fetchOne, fetchUpstream };
+module.exports = { fetchUpstream };

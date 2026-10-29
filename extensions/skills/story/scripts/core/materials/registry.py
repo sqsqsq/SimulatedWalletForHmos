@@ -1,408 +1,372 @@
-"""材料清单（`AR/story-src/materials.json`）的唯一算法与唯一写入者。
+"""材料索引（`AR/story-src/materials.json`）：来源库存与版本身份的唯一索引，也是它的唯一写入者。
 
-这份清单回答两个问题，而且**只有它**回答：
+索引回答：这个需求手里有哪些**来源**、每个来源取得过哪些**版本**（原件、阅读稿与图的完整摘要）、
+收件箱里还有哪些件没导入、每张图是什么、本需求用不用它。它**不回答**设计采用了哪个版本——那由原生蓝图的
+范围条目记录；最新取得的版本不等于设计已采用。
 
-1. 这个需求现在手里有什么材料——每份正文、每张图各自的身份（路径 + 内容哈希）；
-2. 收件箱里的原件哪些已经并入正文、哪些还没有；
-3. 本轮实际采用的输入原件各是什么、读哪一份阅读稿（`origins`，由前两问派生）。
+## 从哪里来
 
-清单的 `digest` 是**材料版本**：正文或图片任何一个字节变了，digest 就变；一个字节没变，
-重算多少次都相同。轮次边界就取这个值——流程侧不另算材料哈希。
+- 材料版本 `sources/<标签>-v<N>/.version.json`：导入时写下，之后不改（`materials/importer.py`）；
+- 会议版本 `AR/story-src/meetings/<主名>/<sha8>/`：版本目录里还有读会产物，身份取原件（`materials/meeting.py`）；
+- 有效人答 `sources/人工答复-v<N>/`：从流程契约导出（`materials/answers.py`），刷新索引时有变化才出新版本；
+- 收件箱 `sources/inbox/` 里还在的件就是待导入；
+- 图片说明与取舍记在索引自己的 `notes` 里，按图的内容摘要键：说明可以改，图还是那张；刷新时原样带过去。
 
-## 谁来算
+除 `notes` 外都按磁盘现状重算，所以重算多少次结果相同。已引用版本的字节被改是损坏：逐份核摘要，对不上报出原路径。
 
-只有机制层命令算：`story_flow.py round` 每次被调用时按**磁盘现状**重算并落盘。
+## 派生视图
 
-需求系统的对接层（各部署环境自备的 `story.js` 等）只负责把材料放到该在的位置，
-不知道这份清单的存在。理由是它不随包交付：把重算挂在对接层上，等于要求每一份自备实现
-都跟着改，而机制层对它们没有任何约束力。按现状重算则对来源免疫——料是谁放的、
-怎么放的都不影响结果。
-
-## 「已并入」怎么判
-
-不靠导入时留下的回执，靠磁盘：拿 `materials/importer.py` 的转换把收件箱里那批料
-重转一遍，与正文比对。转换是确定性的，所以「正文 == 这批料的转换结果」就是「已并入」，
-反过来则说明还有料没导。这样一来，新放的料和被改过的同名料都算未并入，
-而不需要任何一方记住发生过什么。
+- `materials`：各来源最新版本的正文与图（图按内容合并成一条，`paths` 列全部落点，带 `caption`/`unused`）；
+- `origins`：各来源最新版本的原件与它的阅读稿——作者材料表、审查任务与独立审查对象读同一份；人答不在其中；
+- `digest`：**材料版本**，按最新版本的原件、阅读稿与图的内容算。人答、说明与取舍不进摘要：答一句话或改一句说明不是材料变了。
 
 只用标准库。stdout 无输出：本模块是库，不是命令。
 """
 from __future__ import annotations
 
 import json
+import os
+import re
+import uuid
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from materials import importer, meeting
+from materials import answers, importer, meeting
 
-SCHEMA = 2
-#: 来源关系的三种：远端直接给的正文、被确定性转换并入正文的收件箱原件、留存的会议版本
-ORIGIN_KINDS = ("direct", "converted-source", "meeting")
+SCHEMA = 3
+KINDS = ("system", "local", "meeting", "answer")
 MANIFEST = ("AR", "story-src", "materials.json")
-
-# 权威材料的正文源：章节合同 `sources` 里上游给进来的那几份（本轮派生的规格不是材料），
-# 顺序照合同，见 `source_docs`。不存在的记 null——「没有」和「没查」是两件事。
-#
-# 目录形态的材料源：目录下每个文件各自进清单，加一张图就是材料变了。
-#
-# 两个目录都是图片的落点，也都是**权威落点**：界面参考图由导入平铺进 `ux-reference/`，
-# 文档内嵌图由导入抽进 `assets/<源文档主名>.<路径摘要>/`。图片的登记只有清单这一处：
-# 多一处就要人同步，对不上时下游只能挑一份信。
-SOURCE_DIRS = ("ux-reference", "assets")
-INBOX = "inbox"
-# 图片说明的落点：点开头，不进清单本身。按 sha256 键——图片的身份是内容不是路径，
-# 同一张图复制到第二个落点、换个名字，说明仍然跟着它。
-CAPTIONS = ("ux-reference", ".captions.json")
+README = (importer.SOURCES, "README.md")
+NOTE_FIELDS = ("caption", "unused")
+KIND_LABEL = {"system": "需求系统取得", "local": "本地提供", "meeting": "会议留存", "answer": "流程人答导出"}
 
 
 class MaterialError(Exception):
-    """可预期的失败：材料清单算不出来。带可执行的补救动作，直接呈给人。"""
-
-
-def source_docs() -> list[str]:
-    """清单要算的正文源：合同登记的来源里不是本轮派生的那几份，顺序照合同。"""
-    try:
-        sources = importer.contract_sources()
-    except importer.ImportError_ as exc:
-        raise MaterialError(str(exc)) from exc
-    return [decl["path"] for decl in sources.values()
-            if isinstance(decl, dict) and decl.get("path") and not decl.get("derived")]
+    """可预期的失败：材料索引算不出来。带可执行的补救动作，直接呈给人。"""
 
 
 def file_digest(path: Path) -> str | None:
-    """不存在的源记 null 而非省略——「没有」和「没查」是两件事。"""
+    """完整 SHA-256；不存在记 None——「没有」和「没查」是两件事。"""
     if not path.is_file():
         return None
-    return "sha256:" + sha256(path.read_bytes()).hexdigest()[:16]
+    return sha256(path.read_bytes()).hexdigest()
 
 
-def kind_of(path: Path) -> str:
-    return "image" if path.suffix.lower() in importer.IMAGE_EXTS else "doc"
+def version_records(feature_root: Path) -> list[dict]:
+    """盘上全部材料版本的记录（`.version.json`），带 `dir`（相对需求目录）。问题一次列全。
 
-
-def read_captions(feature_root: Path) -> dict[str, dict]:
-    """读图片说明与取舍。没写过就是空的；写坏了报错并指明文件。
-
-    每张图记两件事：``caption``（这张图是什么）与 ``unused``（本需求为什么不用它），值是对象。
+    记录里登记的每份文件都按摘要核：缺了或字节变了是损坏，报原路径与真实不一致，不重填摘要放行。
     """
-    path = feature_root / Path(*CAPTIONS)
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-    except ValueError as exc:
-        raise MaterialError(f"{'/'.join(CAPTIONS)} 不是合法 JSON（{exc}）："
-                            "它由 `import_sources.py --caption-image` 写，修正语法或重新登记") from exc
-    if not isinstance(data, dict):
-        raise MaterialError(f"{'/'.join(CAPTIONS)} 应是对象：{{图片摘要: {{caption, unused}}}}")
-    out: dict[str, dict] = {}
-    for key, value in data.items():
-        if isinstance(value, dict):
-            entry = {k: v for k, v in value.items()
-                     if k in ("caption", "unused") and isinstance(v, str) and v.strip()}
-        else:
+    root = feature_root / importer.SOURCES
+    out: list[dict] = []
+    problems: list[str] = []
+    for path in sorted(root.glob(f"*/{importer.VERSION_FILE}")) if root.is_dir() else []:
+        name = path.parent.name
+        if name.startswith(".") or name == importer.INBOX[-1]:
             continue
-        if entry:
-            out[str(key)] = entry
+        rel = f"{importer.SOURCES}/{name}"
+        try:
+            rec = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError) as exc:
+            problems.append(f"{rel}/{importer.VERSION_FILE} 读不出来（{exc}）")
+            continue
+        shape = _version_shape(rec)
+        if shape:
+            problems.append(f"{rel}/{importer.VERSION_FILE}：{shape}")
+            continue
+        if not re.fullmatch(rf".+-v{rec['version']}", name):
+            problems.append(f"{rel}：目录名与版本号 {rec['version']} 对不上")
+        for f in [rec["original"], *([rec["readable"]] if rec["readable"] else []), *rec["images"]]:
+            have = file_digest(feature_root / f["path"])
+            if have is None:
+                problems.append(f"{f['path']} 不在了：它是已登记版本 {rel} 的文件")
+            elif have != f["sha256"]:
+                problems.append(f"{f['path']} 的字节与版本登记不一致（登记 {f['sha256'][:12]}…，现在 {have[:12]}…）："
+                                "材料版本导入后不改，内容变了要作为新原件重新导入")
+        out.append({**rec, "dir": rel})
+    if problems:
+        raise MaterialError("材料版本有问题，索引算不出来：\n" + "\n".join(problems))
+    seen: dict[tuple, str] = {}
+    for rec in out:
+        key = (rec["source_id"], rec["version"])
+        if key in seen:
+            raise MaterialError(f"来源 {rec['source_id']} 的第 {rec['version']} 版有两个目录（{seen[key]}、{rec['dir']}）：留下正确的一份")
+        seen[key] = rec["dir"]
     return out
 
 
-def _write_entry(feature_root: Path, sha: str, field: str, value: str | None) -> Path:
-    """只动 ``field`` 这一个字段，另一个原样留着。
-
-    说明与取舍是两件独立的事：改说明不该把「为什么不用」抹掉，
-    标记不用也不该把说明抹掉。
-    """
-    path = feature_root / Path(*CAPTIONS)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = read_captions(feature_root)
-    entry = dict(data.get(sha, {}))
-    if value is None:
-        entry.pop(field, None)
-    else:
-        entry[field] = value
-    if entry:
-        data[sha] = entry
-    else:
-        data.pop(sha, None)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8")
-    return path
+def _version_shape(rec) -> str:
+    if not isinstance(rec, dict):
+        return "应是对象"
+    bad = []
+    if not isinstance(rec.get("source_id"), str) or not rec["source_id"]:
+        bad.append("缺 source_id")
+    if rec.get("kind") not in KINDS:
+        bad.append(f"kind 应为 {'/'.join(KINDS)}")
+    if not isinstance(rec.get("version"), int) or rec["version"] < 1:
+        bad.append("version 应是正整数")
+    files = [rec.get("original"), *([rec.get("readable")] if rec.get("readable") is not None else []),
+             *(rec.get("images") if isinstance(rec.get("images"), list) else [None])]
+    if any(not (isinstance(f, dict) and isinstance(f.get("path"), str) and isinstance(f.get("sha256"), str)) for f in files):
+        bad.append("original / readable / images 每项要有 path 与 sha256")
+    return "；".join(bad)
 
 
-def write_caption(feature_root: Path, sha: str, caption: str) -> Path:
-    """登记一张图是什么。同一张图重登记就覆盖——说明可以改，图还是那张。"""
-    return _write_entry(feature_root, sha, "caption", caption)
+def meeting_records(feature_root: Path) -> list[dict]:
+    """会议版本按版本记录的形状列出：来源是同一份会议（原件主名），版本按导入先后编号。"""
+    problems: list[str] = []
+    by_stem: dict[str, list[tuple[str, Path, dict]]] = {}
+    for key, folder in meeting.versions(feature_root, problems).items():
+        meta = meeting.read_json(folder / meeting.SOURCE) or {}
+        by_stem.setdefault(key.rsplit("@", 1)[0], []).append((str(meta.get("acquired_at") or ""), folder, meta))
+    if problems:
+        raise MaterialError("会议版本有问题，索引算不出来：\n" + "\n".join(problems))
+    out: list[dict] = []
+    for stem, items in by_stem.items():
+        for number, (at, folder, meta) in enumerate(sorted(items, key=lambda x: (x[0], x[1].name)), start=1):
+            rel = folder.relative_to(feature_root).as_posix()
+            raw = folder / meeting.RAW
+            out.append({"source_id": f"meeting:{stem}", "kind": "meeting", "class": "MEETING",
+                        "origin": {"file": meta.get("file")}, "version": number, "acquired_at": at or None, "dir": rel,
+                        "original": {"path": f"{rel}/{meeting.ORIGINAL}", "sha256": str(meta.get("sha256"))},
+                        "readable": {"path": f"{rel}/{meeting.RAW}", "sha256": file_digest(raw) or ""},
+                        "images": [{"path": p.relative_to(feature_root).as_posix(), "sha256": file_digest(p)}
+                                   for p in sorted((folder / meeting.MEDIA).glob("*")) if p.is_file()]})
+    return out
 
 
-def write_unused(feature_root: Path, sha: str, reason: str) -> Path:
-    """登记本需求为什么不用这张图。"""
-    return _write_entry(feature_root, sha, "unused", reason)
-
-
-def clear_unused(feature_root: Path, sha: str) -> Path:
-    """这张图要用了——把「不用」的理由撤掉。"""
-    return _write_entry(feature_root, sha, "unused", None)
-
-
-def collect_materials(feature_root: Path) -> list[dict]:
-    """枚举权威材料：正文源按合同顺序在前，目录源按路径排序在后。
-
-    每条记 `paths`（一份材料出现的全部位置）而不是单个 path，因为**图片的身份是它的内容，
-    不是它的路径**：界面图按规则要从文档内嵌位置复制一份到 `ux-reference/` 起语义名，
-    那不是第二张图，只是同一张图的第二个落点。逐路径各记一条的话，下游拿到的就是
-    「两张一模一样的图」，于是要么重复引用，要么各引各的、说的其实是同一张。
-    正文不做这种归并：两份内容相同的文档仍是两份材料。
-
-    顺序固定 = digest 稳定。点开头的文件是控制件不是材料，不进清单。
-
-    图片条目带 `caption`（这张图是什么）与 `unused`（本需求为什么不用它）——
-    成文输入与读者审查逐张列它们。没登记的图**仍然在清单里**，两个字段为空串：
-    漏登记要看得见，不能悄悄消失。两者都不进 `compute_digest`：说明或取舍变了
-    不是材料变了。反过来图的内容变了 sha 就变、取舍归零，作者要重新判——
-    内容变了取舍本来就该重判。
-    """
-    captions = read_captions(feature_root)
-    items: list[dict] = [
-        {"kind": "doc", "paths": [rel], "sha256": file_digest(feature_root / rel)}
-        for rel in source_docs()
-    ]
-    images: dict[str, dict] = {}
-    extra: list[dict] = []
-    for rel in SOURCE_DIRS:
-        directory = feature_root / rel
-        if not directory.is_dir():
-            continue
-        files = [f for f in directory.rglob("*")
-                 if f.is_file() and not f.name.startswith(".")]
-        for f in sorted(files, key=lambda x: x.relative_to(feature_root).as_posix()):
-            rel_path = f.relative_to(feature_root).as_posix()
-            kind = kind_of(f)
-            sha = file_digest(f)
-            if kind == "image":
-                found = images.get(sha)
-                if found:
-                    found["paths"].append(rel_path)
-                else:
-                    entry = captions.get(sha, {})
-                    images[sha] = {"kind": kind, "paths": [rel_path], "sha256": sha,
-                                   "caption": entry.get("caption", ""),
-                                   "unused": entry.get("unused", "")}
-                    extra.append(images[sha])
-            else:
-                extra.append({"kind": kind, "paths": [rel_path], "sha256": sha})
-    # 会议材料一个源版本一份：新会议或同名换了内容都是材料变了，开新一轮、在需求分析之前读会。
-    # 身份取原件——转换件、阅读件与结论是读会的产物，算进来的话读一次会就开一轮。
-    extra.extend(meeting.material_items(feature_root))
-    for item in extra:
-        # 落点排序：同一张图在哪几处是集合不是序列，排过序才能重算即相同
-        item["paths"].sort()
-    return items + sorted(extra, key=lambda m: m["paths"][0])
-
-
-def compute_digest(materials: list[dict]) -> str:
-    """材料版本：逐份身份的有序摘要。
-
-    只算权威材料，不算收件箱：料放进收件箱还没导，流程消费的仍是旧正文，材料版本不该动。
-    导入之后正文变了，版本随之变——这正是「补料开出新一轮」的机械事实。
-    """
-    payload = json.dumps([[m["kind"], m["sha256"], m["paths"]] for m in materials],
-                         ensure_ascii=False)
-    return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()[:16]
-
-
-def _same_text(disk: str, want: str) -> bool:
-    """正文比对忽略行尾差异：同一份内容在两台机器上落盘的行尾可能不同。"""
-    return disk.replace("\r\n", "\n") == want.replace("\r\n", "\n")
-
-
-def collect_sources(feature_root: Path) -> tuple[list[dict], dict[str, list[str]], dict[str, list[str]]]:
-    """收件箱里的原件：身份（相对 inbox 的路径 + 摘要）+ 是否已并入正文。
-
-    未归类的原件一定未并入——没归类就没有落点。归类件本身坏了则整份清单算不出来，
-    不能当成「收件箱是空的」放过去。
-
-    另返回两份关系，都只收已并入的：``{正文落点: [源键…]}`` 哪几份原件确定性地合成了哪份正文；
-    ``{源键: [图片路径…]}`` 只抽图的原件抽出了哪些图（就是下面逐字节比对过的那几张，不再读一遍 docx）。
-    """
-    inbox = feature_root / INBOX
+def inbox_items(feature_root: Path) -> list[dict]:
+    """收件箱里还没导入的件：键（相对收件箱）、内容摘要与类（没归类为 None）。"""
+    inbox = importer.inbox_of(feature_root)
     try:
         classify = importer.read_classify(inbox)
-        targets = importer.doc_targets()
-        sources = importer.scan_sources(inbox)
+        receipts = importer.read_receipts(inbox)
+        files = importer.scan_sources(inbox)
     except importer.ImportError_ as exc:
         raise MaterialError(str(exc)) from exc
+    return [{"file": importer.source_key(inbox, p), "sha256": file_digest(p),
+             "class": importer.class_of(importer.source_key(inbox, p), classify, receipts)} for p in files]
 
-    key = {p: importer.source_key(inbox, p) for p in sources}
-    entries = {key[p]: {"file": key[p], "sha256": file_digest(p),
-                        "class": classify.get(key[p]) if classify.get(key[p])
-                        in importer.CLASSES else None,
-                        "ingested": False}
-               for p in sources}
-    covered: dict[str, list[str]] = {}
-    pictures: dict[str, list[str]] = {}
 
-    grouped: dict[str, list[Path]] = {}
-    for path in sources:
-        cls = entries[key[path]]["class"]
-        if cls:
-            grouped.setdefault(cls, []).append(path)
+def catalog(records: list[dict]) -> list[dict]:
+    """按来源归组：每个来源的全部版本（旧版本留着可查）与最新取得的版本号。"""
+    groups: dict[str, list[dict]] = {}
+    for rec in records:
+        groups.setdefault(rec["source_id"], []).append(rec)
+    out = []
+    for sid in sorted(groups):
+        versions = sorted(groups[sid], key=lambda r: r["version"])
+        last = versions[-1]
+        out.append({"source_id": sid, "kind": last["kind"], "class": last.get("class"), "origin": last.get("origin") or {},
+                    "latest_version": last["version"],
+                    "versions": [{k: v[k] for k in ("version", "dir", "acquired_at", "original", "readable", "images") if k in v}
+                                 for v in versions]})
+    return out
 
-    for cls, paths in grouped.items():
-        if cls == "MEETING":
-            # 会议材料没有正文落点：这一版的原件留过，就算导过
-            for p in paths:
-                entries[key[p]]["ingested"] = meeting.saved(feature_root, p)
+
+def current(sources: list[dict]) -> list[dict]:
+    """各来源最新取得的版本（带来源字段）。"""
+    out = []
+    for s in sources:
+        last = s["versions"][-1]
+        out.append({**last, "source_id": s["source_id"], "kind": s["kind"], "class": s["class"], "origin": s["origin"]})
+    return out
+
+
+def derive(latest: list[dict], notes: dict[str, dict], feature_root: Path) -> tuple[list[dict], list[dict], str]:
+    """派生 `materials`、`origins` 与材料版本摘要。人答不进这三样。"""
+    materials: list[dict] = []
+    images: dict[str, dict] = {}
+    origins: list[dict] = []
+    payload = []
+    for v in (x for x in latest if x["kind"] != "answer"):
+        original, readable = v["original"], v["readable"]
+        pictures = list(v["images"])
+        if PurePosixPath(original["path"]).suffix.lower() in importer.IMAGE_EXTS:
+            pictures.insert(0, original)
+        if v["kind"] == "meeting":
+            # 会议的身份只认原件：转换件、阅读件与结论都是读会的产物，算进来的话读一次会就开一轮
+            payload.append([v["source_id"], original["sha256"]])
+            materials.append({"kind": "meeting", "paths": [original["path"]], "sha256": original["sha256"],
+                              "source_id": v["source_id"]})
+            folder = PurePosixPath(original["path"]).parent
+            readable_paths = [f"{folder}/{n}" for n in (meeting.RAW, meeting.EVIDENCE) if (feature_root / folder / n).is_file()]
+            origins.append({"path": original["path"], "sha256": original["sha256"], "kind": "meeting",
+                            "readable_paths": readable_paths, "source_id": v["source_id"], "version": v["version"]})
             continue
-        docs = [p for p in paths if p.suffix.lower() not in importer.IMAGE_EXTS]
-        images = [p for p in paths if p.suffix.lower() in importer.IMAGE_EXTS]
-
-        if docs:
-            try:
-                sections, media, _ = importer.convert_sources(
-                    inbox, docs, {key[p]: cls for p in docs})
-            except (importer.ImportError_, OSError, ValueError) as exc:
-                raise MaterialError(
-                    f"读不出「{cls}」类材料的转换结果，无法判断它是否已并入正文：{exc}") from exc
-            if cls not in targets:
-                # 只抽图那一档没有正文落点：图落地了就算并入
-                for p in docs:
-                    blobs = media.get(key[p]) or {}
-                    asset_dir = feature_root / importer.assets_for(key[p])
-                    entries[key[p]]["ingested"] = bool(blobs) and all(
-                        (asset_dir / name).is_file()
-                        and (asset_dir / name).read_bytes() == blob
-                        for name, blob in blobs.items())
-                    if entries[key[p]]["ingested"]:
-                        pictures[key[p]] = sorted(f"{importer.assets_for(key[p]).as_posix()}/{name}" for name in blobs)
-                docs = []
-            target = feature_root / targets[cls] if docs else None
-            if target is not None and target.is_file() and _same_text(
-                    target.read_text(encoding="utf-8", errors="replace"),
-                    importer.render_target(sections[cls])):
-                for p in docs:
-                    entries[key[p]]["ingested"] = True
-                    entries[key[p]]["target"] = targets[cls].as_posix()
-                covered[targets[cls].as_posix()] = [k for k, _, _ in sections[cls]]
-
-        for image in images:
-            # 界面图的落点是平铺的顶层，按源键派生；字节相同才算并入——同一路径换了内容也是新料
-            dest = feature_root / importer.ux_image_target(key[image])
-            if dest.is_file() and dest.read_bytes() == image.read_bytes():
-                entries[key[image]]["ingested"] = True
-
-    return [entries[k] for k in sorted(entries)], covered, pictures
+        payload.append([v["source_id"], original["sha256"], (readable or {}).get("sha256"),
+                        sorted(p["sha256"] for p in pictures)])
+        if readable or v["class"] == "IMAGES":
+            materials.append({"kind": "doc", "paths": sorted({original["path"], *([readable["path"]] if readable else [])}),
+                              "sha256": (readable or original)["sha256"], "source_id": v["source_id"]})
+            row = {"path": original["path"], "sha256": original["sha256"], "kind": v["kind"], "class": v["class"],
+                   "readable_paths": [readable["path"]] if readable else [original["path"]],
+                   "source_id": v["source_id"], "version": v["version"]}
+            if v["class"] == "IMAGES":
+                row["image_paths"] = [p["path"] for p in v["images"]]
+            origins.append(row)
+        for p in pictures:
+            found = images.get(p["sha256"])
+            if found:
+                found["paths"].append(p["path"])
+            else:
+                note = notes.get(p["sha256"], {})
+                images[p["sha256"]] = {"kind": "image", "paths": [p["path"]], "sha256": p["sha256"],
+                                       "caption": note.get("caption", ""), "unused": note.get("unused", "")}
+    for img in images.values():
+        img["paths"].sort()
+    materials = sorted(materials, key=lambda m: m["paths"][0]) + sorted(images.values(), key=lambda m: m["paths"][0])
+    body = json.dumps(sorted(payload, key=lambda r: r[0]), ensure_ascii=False)
+    return materials, sorted(origins, key=lambda o: o["path"]), "sha256:" + sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
-def collect_origins(feature_root: Path, materials: list[dict], sources: list[dict],
-                    covered: dict[str, list[str]], pictures: dict[str, list[str]] | None = None) -> list[dict]:
-    """本轮实际采用的输入原件，各自读哪份阅读稿 —— 从材料与原件两张表派生，不是第二份清单。
-
-    - ``converted-source``：已被确定性转换并入正文的收件箱原件，阅读稿是它并入的那份正文；
-      被收件箱完全承接的正文不再算作第二份原件。只抽图的原件同属这一类：它对成文的贡献是图，
-      ``readable_paths`` 记原件自身只作存在与身份的留存（正文没有采用，不作语义阅读稿、不造一份），
-      ``image_paths`` 列它抽出的图，图由图片登记逐张交审。正文也被采用的原件另有一条带阅读稿的记录。
-    - ``direct``：其余在盘上的正文材料（远端直接给的、不经收件箱的），阅读稿就是它自己。
-    - ``meeting``：留存的会议版本原件，阅读稿是同一版本目录里的转换文本与阅读件。
-
-    图片本身不在这里：图的身份、说明与取舍跟着图走，``image_paths`` 只记原件到图的关系。
-    没并入的原件也不在这里：它走待导入，作者表写一行替代不了导入。
-    """
-    sha = {s["file"]: s["sha256"] for s in sources}
-    origins = [{"path": f"{INBOX}/{k}", "sha256": sha[k], "kind": "converted-source",
-                "readable_paths": [target]}
-               for target, keys in covered.items() for k in keys]
-    origins += [{"path": f"{INBOX}/{k}", "sha256": sha[k], "kind": "converted-source",
-                 "readable_paths": [f"{INBOX}/{k}"], "image_paths": paths}
-                for k, paths in (pictures or {}).items()]
-    for m in materials:
-        rel = m["paths"][0]
-        if m["kind"] == "doc" and m["sha256"] and rel not in covered:
-            origins.append({"path": rel, "sha256": m["sha256"], "kind": "direct",
-                            "readable_paths": [rel]})
-        elif m["kind"] == "meeting":
-            folder = Path(rel).parent
-            readable = [(folder / name).as_posix() for name in (meeting.RAW, meeting.EVIDENCE)
-                        if (feature_root / folder / name).is_file()]
-            origins.append({"path": rel, "sha256": m["sha256"], "kind": "meeting",
-                            "readable_paths": readable})
-    return sorted(origins, key=lambda o: o["path"])
-
-
-def build(feature_root: Path) -> dict:
-    """按磁盘现状算出完整清单。不写盘。``origins`` 不进 digest：它由已计入的事实派生。"""
-    materials = collect_materials(feature_root)
-    sources, covered, pictures = collect_sources(feature_root)
-    return {
-        "schema": SCHEMA,
-        "feature": feature_root.name,
-        "digest": compute_digest(materials),
-        "materials": materials,
-        "sources": sources,
-        "origins": collect_origins(feature_root, materials, sources, covered, pictures),
-    }
+def build(feature_root: Path, notes: dict[str, dict] | None = None, records: list[dict] | None = None) -> dict:
+    """按磁盘现状算出完整索引。不写盘。"""
+    if notes is None:
+        notes = read_notes(feature_root)
+    if records is None:
+        records = version_records(feature_root)
+    sources = catalog(records + meeting_records(feature_root))
+    materials, origins, digest = derive(current(sources), notes, feature_root)
+    return {"schema": SCHEMA, "feature": feature_root.name, "digest": digest, "sources": sources,
+            "inbox": inbox_items(feature_root), "materials": materials, "origins": origins,
+            "notes": {k: notes[k] for k in sorted(notes)}}
 
 
 def path_of(feature_root: Path) -> Path:
     return feature_root / Path(*MANIFEST)
 
 
+def read_notes(feature_root: Path) -> dict[str, dict]:
+    """索引里已有的图片说明与取舍。还没有索引是空的；索引坏了报出来——当成没写过会丢掉作者已经给的说明。"""
+    path = path_of(feature_root)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise MaterialError(f"{'/'.join(MANIFEST)} 不是合法 JSON（{exc}）：图片说明记在它里面，"
+                            "按 Git 或备份找回上一版再刷新；确认放弃说明就删掉它重跑 `story_flow.py round`") from exc
+    notes = data.get("notes") if isinstance(data, dict) else None
+    if not isinstance(notes, dict):
+        return {}
+    return {str(k): {f: v[f] for f in NOTE_FIELDS if isinstance(v, dict) and isinstance(v.get(f), str) and v[f].strip()}
+            for k, v in notes.items() if isinstance(v, dict) and any(isinstance(v.get(f), str) and v[f].strip() for f in NOTE_FIELDS)}
+
+
+def write_note(feature_root: Path, sha: str, field: str, value: str | None) -> None:
+    """只动一张图的一个字段，另一个原样留着：改说明不抹掉「为什么不用」，标记不用也不抹掉说明。"""
+    notes = read_notes(feature_root)
+    entry = dict(notes.get(sha, {}))
+    if value is None:
+        entry.pop(field, None)
+    else:
+        entry[field] = value
+    if entry:
+        notes[sha] = entry
+    else:
+        notes.pop(sha, None)
+    write(feature_root, build(feature_root, notes))
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
+
+
 def write(feature_root: Path, manifest: dict) -> Path:
     path = path_of(feature_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8")
+    _atomic_write(path, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    _atomic_write(feature_root.joinpath(*README), render_readme(manifest))
     return path
 
 
+def render_readme(manifest: dict) -> str:
+    """来源导航：每个来源一行，链到最新版本的原件与阅读稿；旧版本与待导入件列在后面。不复制需求正文，不记采用。"""
+    rel = lambda p: str(PurePosixPath(p).relative_to(importer.SOURCES)) if str(p).startswith(f"{importer.SOURCES}/") \
+        else f"../{p}"
+    link = lambda p: f"[{PurePosixPath(p).name}](<{rel(p)}>)"
+    lines = ["# 来源材料", "",
+             "这一页由导入命令按材料索引 `AR/story-src/materials.json` 生成，手改会在下次导入时被覆盖。"
+             "最新版本不等于设计已采用：设计实际依据哪个版本，看蓝图的范围条目。", "",
+             "| 来源 | 类 | 取得方式 | 最新版本 | 原件 | 阅读稿 | 图 |", "|---|---|---|---|---|---|---|"]
+    for s in manifest.get("sources", []):
+        v = s["versions"][-1]
+        name = s["origin"].get("title") or s["origin"].get("ticket") or s["origin"].get("inbox_path") \
+            or s["origin"].get("file") or s["source_id"]
+        lines.append(f"| {name} | {s.get('class') or ''} | {KIND_LABEL.get(s['kind'], s['kind'])} | v{v['version']}"
+                     f"{'（' + str(v.get('acquired_at')) + '）' if v.get('acquired_at') else ''} | {link(v['original']['path'])} | "
+                     f"{link(v['readable']['path']) if v.get('readable') else '—'} | {len(v.get('images') or [])} |")
+    older = [(s, v) for s in manifest.get("sources", []) for v in s["versions"][:-1]]
+    if older:
+        lines += ["", "## 旧版本", ""] + [f"- {s['source_id']} v{v['version']}：{link(v['original']['path'])}" for s, v in older]
+    if manifest.get("inbox"):
+        lines += ["", "## 待导入", ""] + [f"- `inbox/{i['file']}`" + ("" if i.get("class") else "（未归类）")
+                                        for i in manifest["inbox"]]
+    return "\n".join(lines) + "\n"
+
+
 def refresh(feature_root: Path) -> dict:
-    """算一遍并落盘 —— 机制层命令唯一该调的入口。"""
-    manifest = build(feature_root)
+    """算一遍并落盘 —— 机制层命令唯一该调的入口。有效人答有变化时先导出新版本。"""
+    notes = read_notes(feature_root)
+    records = version_records(feature_root)
+    try:
+        if answers.export(feature_root, records):
+            records = version_records(feature_root)
+    except OSError as exc:
+        raise MaterialError(f"有效人答导出失败（{exc}）：排除写入故障后重跑") from exc
+    except answers.AnswerError as exc:
+        raise MaterialError(str(exc)) from exc
+    manifest = build(feature_root, notes, records)
     write(feature_root, manifest)
     return manifest
 
 
 def read(feature_root: Path) -> dict:
-    """读已落盘的清单。没有清单和清单坏了都不是「没有材料」，都要报出来。"""
+    """读已落盘的索引。没有索引和索引坏了都不是「没有材料」，都要报出来。"""
     path = path_of(feature_root)
+    name = "/".join(MANIFEST)
     if not path.is_file():
-        raise MaterialError(
-            f"{'/'.join(MANIFEST)} 不存在：材料清单由 `story_flow.py round` 生成，先跑它")
+        raise MaterialError(f"{name} 不存在：材料索引由 `story_flow.py round` 生成，先跑它")
     try:
         data = json.loads(path.read_text(encoding="utf-8").lstrip("﻿"))
     except ValueError as exc:
-        raise MaterialError(
-            f"{'/'.join(MANIFEST)} 不是合法 JSON（{exc}）：它只应由脚本写入，"
-            "若曾手工编辑，删掉后重跑 `story_flow.py round`") from exc
-    name = '/'.join(MANIFEST)
+        raise MaterialError(f"{name} 不是合法 JSON（{exc}）：它只应由脚本写入；图片说明记在它里面，"
+                            "按 Git 找回上一版，或删掉后重跑 `story_flow.py round` 重建（说明需重写）") from exc
     if isinstance(data, dict) and isinstance(data.get("schema"), int) and data["schema"] < SCHEMA:
         raise MaterialError(
             f"{name} 的 schema 为 {data['schema']}，本版要求 {SCHEMA}：这是旧版生成的需求，"
-            "本版的材料清单多了来源关系 origins、附录材料表改成三列。"
-            "旧版进行中的需求在旧版收口，或从 init 重起")
+            "本版的材料按来源版本存放在 sources/ 下。旧版进行中的需求在旧版收口，或从 init 重起")
     problems = _shape_problems(data)
     if problems:
-        raise MaterialError(
-            f"{name} 结构不对（{'；'.join(problems)}）：它只应由脚本写入，"
-            "删掉后重跑 `story_flow.py round` 按磁盘现状重建")
+        raise MaterialError(f"{name} 结构不对（{'；'.join(problems)}）：它只应由脚本写入，"
+                            "删掉后重跑 `story_flow.py round` 按磁盘现状重建")
     return data
 
 
 def _shape_problems(data) -> list[str]:
-    """当前 schema 的清单缺了或写坏了哪些字段。一次列全，不在第一处就停。"""
+    """当前 schema 的索引缺了或写坏了哪些字段。一次列全，不在第一处就停。"""
     if not isinstance(data, dict):
         return ["顶层应是对象"]
     problems = [] if data.get("schema") == SCHEMA else [f"schema 为 {data.get('schema')}，本版是 {SCHEMA}"]
-    for field in ("materials", "sources", "origins"):
+    for field in ("sources", "inbox", "materials", "origins"):
         if not isinstance(data.get(field), list):
             problems.append(f"缺 {field} 列表")
     for i, o in enumerate(data.get("origins") if isinstance(data.get("origins"), list) else []):
         if not (isinstance(o, dict) and isinstance(o.get("path"), str)
-                and o.get("kind") in ORIGIN_KINDS and isinstance(o.get("readable_paths"), list)):
-            problems.append(f"origins 第 {i + 1} 项应有 path、kind（{'/'.join(ORIGIN_KINDS)}）与 readable_paths")
+                and o.get("kind") in KINDS and isinstance(o.get("readable_paths"), list)):
+            problems.append(f"origins 第 {i + 1} 项应有 path、kind（{'/'.join(KINDS)}）与 readable_paths")
     return problems
 
 
 def pending(manifest: dict) -> list[str]:
-    """收件箱里还没并入正文的原件。空表示没有新料，不表示收件箱是空的。"""
-    return [s["file"] for s in manifest.get("sources", []) if not s.get("ingested")]
+    """收件箱里还没导入的件（相对收件箱的键）。空表示没有新料。"""
+    return [i["file"] for i in manifest.get("inbox", [])]
+
+
+def latest_of(manifest: dict, cls: str, kind: str | None = None) -> list[dict]:
+    """某一类来源各自最新取得的版本（如系统取得的 RR 正文）；给按角色找正文的读者用。"""
+    return [{**s["versions"][-1], "source_id": s["source_id"], "kind": s["kind"], "origin": s["origin"]}
+            for s in manifest.get("sources", []) if s.get("class") == cls and (kind is None or s["kind"] == kind)]

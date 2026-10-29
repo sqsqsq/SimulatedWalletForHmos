@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "source_id": "local:RR/prd.md",
+  "kind": "local",
+  "class": "RR",
+  "origin": {
+    "inbox_path": "RR/prd.md"
+  },
+  "version": 1,
+  "acquired_at": "2026-10-29T19:42:57+08:00",
+  "original": {
+    "path": "sources/prd-v1/prd.md",
+    "sha256": "702b99299bb2652376cef10b7a0b40490561b236e11b46eb2cfcdef4f7b773b8"
+  },
+  "readable": {
+    "path": "sources/prd-v1/prd.md",
+    "sha256": "702b99299bb2652376cef10b7a0b40490561b236e11b46eb2cfcdef4f7b773b8"
+  },
+  "images": []
+}

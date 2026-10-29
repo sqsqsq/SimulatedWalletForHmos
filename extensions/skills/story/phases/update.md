@@ -20,7 +20,7 @@
 问法、侧车、人签与登记全是 init 第一级关卡那一套，差别只在每次 update 都停一次。
 
 0. **先开始计时**：按 SKILL「更新」⓪ 跑一次，再查状态、取材——这一轮的耗时从这一刻算。
-1. **系统需求先取上游**：按 SKILL「更新」② 调用取材，落点用 `update --action status` 返回的 `paths.inbox`。
+1. **系统需求先取上游**：按 SKILL「更新」② 调用取材，落点用 `update --action status` 返回的 `paths.fetch_batch`。
    这一轮没取过上游，下一步的报输入会停下并指回这里。本地需求没有上游，跳过这一步。
 2. **报告输入**：
 
@@ -28,29 +28,29 @@
    python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <编号> --action inputs
    ```
 
-   它只报告、不建任何东西：六项里哪几份跟上次已处理的版本不一样、读不到的、收件箱里还没并入正文的原件
-   （`pending`）、上次以来新并入正文的原件（`imported`）、最近一次取材的回执（`upstream`：逐份 `fetched` / `same` / `absent` / `failed`）。
+   它只报告、不建任何东西：哪些上游来源与交付件跟上次已处理的版本不一样、读不到的、来源收件箱里还没导入的件
+   （`pending`）、上次以来新导入的来源版本（`imported`）、最近一次取材的回执（`upstream`：逐份 `fetched` / `same` / `absent` / `failed`）。
 3. **材料关卡停一次**：按 `rules/init_analysis.md` S2a 盘点手上的料（不取的理由只能是范围不依赖它），
    缺口写进 `.material-gaps.json`，跑 `status` 取问法；向人报告上游哪几份变了、没变、取不到，本地已有什么，
    一句缺口判断，`ask.block` 原样摆出，问**这一次要不要补料**，停下等他。
-4. 他放料进 `inbox/` 或答「不补」→ `decide --gate material_scope --ask <ask_id> --reply "<原话>"` → 有新原件先导入 →
-   `round` 登记到本轮（它不开新轮）。新原件是某份旧原件的新版本时，按 `rules/inbox_import.md`「新原件取代旧原件」
-   移走旧原件（`inputs` 的 `superseded_hint` 会列出同类的已归类原件），清单里写明取代关系。
+4. 他放料进 `sources/inbox/` 或答「不补」→ `decide --gate material_scope --ask <ask_id> --reply "<原话>"` → 有新件先导入 →
+   `round` 登记到本轮（它不开新轮）。放在同一位置的改版自动成为同一来源的新版本；换了位置或名字的件是新来源，
+   它是不是取代了某个已有来源由你读了判（`inputs` 的 `superseded_hint` 会列出同类的已有来源），在影响分析里写明。
 5. **比较并开这一轮**：`update --action prepare --result <materials|documents>`。`--result` 照人这次的请求记本轮终点：
    只取材与澄清、没有已有人读件受影响的是 `materials`；其余是 `documents`，已有 Story 受影响一律 `documents`。
-   续做中的一轮可以从 `materials` 改记成 `documents`，反过来不行——终点不为收口降级。收件箱里还有未并入的原件时它会拒绝并列出文件。
+   续做中的一轮可以从 `materials` 改记成 `documents`，反过来不行——终点不为收口降级。收件箱里还有没导入的件时它会拒绝并列出文件。
 
-取回的三份正文与人补的料一样在 `inbox/` 里等导入，归类照 init 的做法由你判；本单的系统正文与本地 story
-逐字相同的（自己归档上去的那一版）不会落盘。评审回稿不是需求正文，落在 `AR/story-src/review-feedback.md`，
+取回的三份正文在收件箱的取材批次里等导入，按批次回执归类；与已有版本逐字相同的、本单系统正文与本地 story
+逐字相同的（自己归档上去的那一版）不会落盘。人补的料归类照 init 的做法由你判。评审回稿不是需求正文，落在 `AR/story-src/review-feedback.md`，
 你读它，人的表态照下面的决策渠道记。**缺席与失败是两回事**：系统上没有评审回稿是常态，读不出来是故障——
 后者要如实说成缺口。`fetch` 命令失败（包括目标工程的对接实现没有这条命令）时，报出来并停下，不用别的写入方式代替取材：
 直接覆盖 `AR/review.md` 会把人刚写的意见吃掉。
 
 ## 一、`prepare` 比出的四种情况
 
-比较只看**人和上游会动的六项**：`RR/prd.md`、`SR/design.md`、`AR/design.md`、`inbox/`（按材料事实，
-不按文件哈希）、`AR/story.md`、`AR/review.md`。决策登记、写作设计与设计输入是你据它们写出来的中间真源，是结果不是原因，
-不进比较。另列上次以来新并入正文的原件（`imported`，含只取图的）：只取图的原件正文不进六项，它带没带来业务变化由你读原件判。
+比较只看**人和上游会动的东西**：各上游来源最新取得的版本（按来源身份比，取得了新版本就是变了）、来源收件箱（按材料事实）、
+`AR/story.md`、`AR/review.md`。决策登记、写作设计与设计输入是你据它们写出来的中间真源，是结果不是原因，
+不进比较。另列上次以来新导入的来源版本（`imported`，含只取图的）：它带没带来业务变化由你读原件判。
 
 比较结果是事实，不是结论：除了 `resume`，`prepare` 都开这一轮，要不要改、改哪里由你读原文与人这次的要求判。
 

@@ -1,5 +1,5 @@
-"""冻结时记下采用文件的外部来源：收件箱导入的转换稿记它的全部原件（一对多，带登记摘要），init 落的空骨架记空列表，
-真实的开发需求正文与上游原件不记（它们就是外部原件）。按真实骨架写入者比对，不按文件名排除。"""
+"""冻结时记下采用文件的外部来源：材料版本里的转换正文记它那一版的原件（带完整摘要），生成的空骨架记空列表，
+可直接阅读的原件不记（它们就是外部原件）。按真实骨架写入者比对，不按文件名排除。"""
 from __future__ import annotations
 
 import sys
@@ -21,14 +21,14 @@ class OriginsAreRecordedAtFreeze(unittest.TestCase):
         self.feature = Path(self._tmp.name) / "REQ-LOCAL"
         (self.feature / "AR").mkdir(parents=True)
 
-    def test_two_inbox_originals_of_one_copy_are_both_kept(self) -> None:
-        manifest = {"sources": [
-            {"file": "b.docx", "sha256": "sha256:bbbb", "class": "RR", "ingested": True, "target": "RR/prd.md"},
-            {"file": "a.docx", "sha256": "sha256:aaaa", "class": "RR", "ingested": True, "target": "RR/prd.md"},
-            {"file": "c.docx", "sha256": "sha256:cccc", "class": "RR", "ingested": False}]}
-        got = origins(self.feature, ["RR/prd.md", "SR/design.md"], {"RR/prd.md": b"x", "SR/design.md": b"y"}, manifest)
-        self.assertEqual({"RR/prd.md": [{"path": "inbox/a.docx", "sha256": "sha256:aaaa"},
-                                        {"path": "inbox/b.docx", "sha256": "sha256:bbbb"}]}, got)
+    def test_a_converted_text_records_the_original_of_its_own_version(self) -> None:
+        manifest = {"origins": [
+            {"path": "sources/prd-v2/prd.docx", "sha256": "bbbb", "readable_paths": ["sources/prd-v2/text.md"]},
+            {"path": "sources/prd-v1/prd.docx", "sha256": "aaaa", "readable_paths": ["sources/prd-v1/text.md"]},
+            {"path": "sources/design-v1/design.md", "sha256": "cccc", "readable_paths": ["sources/design-v1/design.md"]}]}
+        adopted = ["sources/prd-v2/text.md", "sources/design-v1/design.md"]
+        got = origins(self.feature, adopted, {rel: b"x" for rel in adopted}, manifest)
+        self.assertEqual({"sources/prd-v2/text.md": [{"path": "sources/prd-v2/prd.docx", "sha256": "bbbb"}]}, got)
 
     def test_the_local_skeleton_is_generated_but_a_real_ar_body_is_an_original(self) -> None:
         skeleton = ar_design_skeleton(read_ids(self.feature, self.feature.name)).encode("utf-8")

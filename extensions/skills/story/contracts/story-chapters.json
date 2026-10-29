@@ -1,25 +1,8 @@
 {
   "sources": {
-    "PRD": {
-      "path": "RR/prd.md",
-      "required": true,
-      "label": "产品需求"
-    },
-    "SE": {
-      "path": "SR/design.md",
-      "required": true,
-      "label": "系统设计"
-    },
-    "DESIGN": {
-      "path": "AR/design.md",
-      "required": true,
-      "label": "开发需求"
-    },
-    "UPSTREAM": {
-      "path": "AR/story-src/upstream.md",
-      "required": false,
-      "label": "上游澄清"
-    }
+    "RR": {"label": "产品需求", "required_for": "system"},
+    "SR": {"label": "系统设计", "required_for": "system"},
+    "AR": {"label": "开发需求原件"}
   },
   "chapters": [
     {
@@ -226,7 +209,7 @@
   "gates": {
     "material_scope": {
       "options": [
-        {"key": "supplied", "label": "材料已放进 doc/features/<单>/inbox/，请导入", "request": true},
+        {"key": "supplied", "label": "材料已放进 doc/features/<单>/sources/inbox/，请导入", "request": true},
         {"key": "confirm_scope", "label": "现有材料就是全部，开始需求分析"}
       ]
     }
@@ -241,7 +224,7 @@
       "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
       "AR/story-src/drafts/**", "AR/story-src/figures/**"],
     "regenerate": ["AR/review.md", "AR/design-review.md", "AR/story-src/materials.json"],
-    "protected": ["RR/**", "SR/**", "AR/design.md", "AR/detail.json", "inbox/**", "assets/**", "ux-reference/**",
+    "protected": ["sources/**", "AR/design.md",
       "AR/story-src/meetings/**", "AR/story-src/inputs/**", "AR/story-src/review/**", "AR/story-src/updates/**",
       ".backups/**"],
     "field_owned": ["AR/story-src/story-flow.json"]

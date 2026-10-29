@@ -328,14 +328,13 @@ function chapterBasis(ctx, plan, chapterId) {
 function carryRows(ctx, plan, chapterId) {
   const mine = (plan?.carry ?? []).filter(c => c.chapter === chapterId);
   if (!mine.length) return [];
-  const rel = { SR: ctx.contract.sources?.SE?.path };
-  const graphs = new Map(upstreamDocs(ctx).flatMap(([label, text]) => diagramsOf(text).map(d => [`${label} ${d.id}`, { label, d }])));
+  const graphs = new Map(upstreamDocs(ctx).flatMap(([label, text, rel]) => diagramsOf(text).map(d => [`${label} ${d.id}`, { label, d, rel }])));
   const rows = ['', '本章登记承接的上游图（写进下面这些小节，正文、表或图都可以，原图的关系不能丢）：'];
   for (const source of new Set(mine.map(c => c.source))) {
     const g = graphs.get(source);
     if (!g) continue;
     const places = mine.filter(c => c.source === source).map(c => [c.at, c.under].filter(Boolean).join(' > ') || '本章开头');
-    rows.push('', `- ${source}（${diagramTopic(g.d)}）→ ${places.join('、')}；原件 ${rel[g.label]} 第 ${g.d.at.from}–${g.d.at.to} 行`,
+    rows.push('', `- ${source}（${diagramTopic(g.d)}）→ ${places.join('、')}；原件 ${g.rel} 第 ${g.d.at.from}–${g.d.at.to} 行`,
       '', '````mermaid', ...g.d.lines, '````');
   }
   return rows;

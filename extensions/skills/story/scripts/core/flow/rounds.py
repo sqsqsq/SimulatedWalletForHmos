@@ -30,8 +30,8 @@ def cmd_round(feature_root: Path) -> dict:
         raise FlowError(str(exc)) from exc
     digest = manifest["digest"]
     reference = {"digest": digest}
-    # 已经并入正文的原件就是「导过的料」——这一份事实只在清单里，契约不另记哈希
-    ingested = sorted(s["file"] for s in manifest["sources"] if s.get("ingested"))
+    # 已经导入的来源就是「导过的料」——这一份事实只在材料索引里，契约不另记哈希
+    imported = [s for s in manifest["sources"] if s.get("kind") != "answer"]
 
     contract = load(feature_root) or {
         "schema": SCHEMA, "status": "in_progress",
@@ -103,7 +103,7 @@ def cmd_round(feature_root: Path) -> dict:
     save(feature_root, contract)
     consume_sidecar(feature_root, POSITIONING)
     consume_sidecar(feature_root, SCOPE_OPTIONS)
-    log(f"登记第 {entry['round']} 轮（材料 {digest}，已并入正文的原件 {len(ingested)} 件）")
+    log(f"登记第 {entry['round']} 轮（材料 {digest}，已导入的来源 {len(imported)} 个）")
     return {"round": entry["round"], "created": True, "materials": digest,
             "positioning": bool(entry.get("positioning")),
             "scopeOptions": len(entry.get("scope_options") or [])}

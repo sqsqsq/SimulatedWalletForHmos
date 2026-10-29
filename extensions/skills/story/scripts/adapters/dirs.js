@@ -5,9 +5,7 @@
  * 本文件住在 <实例根>/doc/extensions/skills/story/scripts/adapters/，
  * adapters → scripts → story → skills → extensions → doc → 实例根，共六级。
  *
- * 需求目录下的备份分两类，都在 `.backups/` 下：
- *   .backups/cloud/  需求系统拉取内容的备份（归档覆盖系统正文前从系统取下的那一版，restore 从这里取）
- *   .backups/local/  本地文档的备份（core 覆盖本地文件前的旧内容）
+ * 需求系统内容的备份在 `.backups/cloud/`：归档覆盖系统正文前从系统取下的那一版，restore 从这里取。
  */
 'use strict';
 const fs = require('node:fs');
@@ -39,11 +37,6 @@ function featureDir(reqNo) {
   return path.join(FEATURES_DIR, reqNo);
 }
 
-/** 需求目录下某一级单据的目录：`<features>/<AR>/<AR|SR|RR>`。 */
-function levelDir(baseReqNo, dirType) {
-  return path.join(featureDir(baseReqNo), dirType);
-}
-
 /** 需求系统拉取内容的备份目录：`<features>/<AR>/.backups/cloud`。 */
 function cloudBackupDir(reqNo) {
   return path.join(featureDir(reqNo), '.backups', 'cloud');
@@ -57,4 +50,4 @@ function timestamp() {
     + `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
-module.exports = { PROJECT_ROOT, featureDir, levelDir, cloudBackupDir, timestamp };
+module.exports = { PROJECT_ROOT, featureDir, cloudBackupDir, timestamp };

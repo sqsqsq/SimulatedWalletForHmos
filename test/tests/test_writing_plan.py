@@ -89,14 +89,20 @@ def read_plan(text: str) -> dict:
     return json.loads(proc.stdout)
 
 
-def plan_in(text: str, files: dict | None = None) -> dict:
-    """在一个临时需求目录里放上游原件与写作设计，调 `readWritingPlan`，取问题、承接与阅读图选择。"""
+def plan_in(text: str, sr_files: dict | None = None) -> dict:
+    """在一个临时需求目录里放系统设计来源的材料版本与写作设计，调 `readWritingPlan`，取问题、承接与阅读图选择。"""
     import tempfile  # noqa: PLC0415
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        for rel, body in (files or {}).items():
+        sources = []
+        for rel, body in (sr_files or {}).items():
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
             (root / rel).write_bytes(body.encode("utf-8"))
+            sources.append({"source_id": f"local:{rel}", "kind": "local", "class": "SR", "versions": [
+                {"version": 1, "original": {"path": rel}, "readable": {"path": rel}, "images": []}]})
+        (root / "AR" / "story-src").mkdir(parents=True)
+        (root / "AR" / "story-src" / "materials.json").write_text(
+            json.dumps({"schema": 3, "sources": sources, "materials": []}), encoding="utf-8")
         (root / "plan.md").write_bytes(text.encode("utf-8"))
         script = (
             "import {pathToFileURL} from 'node:url'; import * as fs from 'node:fs'; import * as path from 'node:path';"
@@ -113,7 +119,7 @@ def plan_in(text: str, files: dict | None = None) -> dict:
 
 
 UPSTREAM = {
-    "SR/design.md": "## 3. 协作\n\n```mermaid\ngraph TD\nE[发起] --> F[处理]\n```\n\n"
+    "sources/design-v1/design.md": "## 3. 协作\n\n```mermaid\ngraph TD\nE[发起] --> F[处理]\n```\n\n"
                     "## 5. 业务流程\n\n### 5.1 受理\n\n```mermaid\ngraph TD\nA[提交] --> B[受理]\n```\n\n"
                     "### 5.2 回执\n\n```mermaid\ngraph TD\nC[回执] --> D[展示]\n```\n",
 }
@@ -635,15 +641,20 @@ class ThePageFlowTableIsChosenNotForced(PlanCase):
         self.assertEqual(0, self.put("业务流程", body)[0])
 
     def test_the_vocabulary_names_it_and_the_ux_note_is_delivered(self) -> None:
-        feature = self.src.parents[1]
-        (feature / "ux-reference").mkdir(exist_ok=True)
-        (feature / "ux-reference" / "README.md").write_text("# 界面\n\n办理页在首页下方。\n", encoding="utf-8")
+        inbox = self.src.parents[1] / "sources" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "界面说明.md").write_text("# 界面\n\n办理页在首页下方。\n", encoding="utf-8")
+        (inbox / ".classify.json").write_text('{"界面说明.md": "UX"}', encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(BUILD.parent / "import_sources.py"), "--feature", FEATURE,
+                               "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         subprocess.run([sys.executable, str(FLOW), "round", "--feature", FEATURE, "--project-root", str(self.root)],
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.write_plan(with_chapter("05-flow", PAGE_PLAN))
         code, out = self.cmd("skeleton")
         self.assertEqual(0, code, out)
-        self.assertIn("界面交互说明在 `ux-reference/README.md`", out)
+        self.assertIn("界面交互说明在 `sources/界面说明-v1/界面说明.md`", out)
         self.write_plan(with_chapter("05-flow", "- 本章主线：x\n形式：页面图鉴"))
         _, out = self.cmd("skeleton")
         self.assertIn("页面流转表", out, "认得的形式里没有合同登记的命名表")
@@ -748,7 +759,7 @@ class TenChaptersHandOverToTheRecheck(PlanCase):
             self.assertEqual(0, code, out)
         head = out.split("\n")[:2]
         self.assertTrue(head[0].startswith("NEXT: 十章齐了——回看"), head)
-        for needle in ("story-template.md", "decisions.json", "init-analysis.md", "RR/prd.md", "「六、回看」"):
+        for needle in ("story-template.md", "decisions.json", "init-analysis.md", "sources/prd-v1/prd.md", "「六、回看」"):
             self.assertIn(needle, head[1], f"回看的输入少了「{needle}」")
         self.assertIn("[骨架待核] 02-terms：等待态这个词评审人认不认得", out)
         code, again = self.cmd("skeleton")

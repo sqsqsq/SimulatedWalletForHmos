@@ -256,10 +256,16 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
 
     def test_upstream_diagrams_sit_next_to_every_section_that_carries_them(self) -> None:
         """原图与写作设计登记承接它的小节并排：那一节的正文、表、图都给；没登记的明说。"""
-        (self.feature_root / "SR").mkdir(parents=True, exist_ok=True)
-        (self.feature_root / "SR" / "design.md").write_text(
+        inbox = self.feature_root / "sources" / "inbox"
+        (inbox / "SR").mkdir(parents=True, exist_ok=True)
+        (inbox / "SR" / "design.md").write_text(
             "## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"
             "## 4. 恢复\n\n```mermaid\nflowchart TD\n  丁 --> 戊\n```\n", encoding="utf-8")
+        (inbox / ".classify.json").write_text('{"SR/design.md": "SR"}', encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(self.ext / "skills/story/scripts/core/import_sources.py"),
+                               "--feature", nk.FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         (self.feature_root / "AR" / "story.md").parent.mkdir(parents=True, exist_ok=True)
         (self.feature_root / "AR" / "story.md").write_text(
             "# NK90001 中性需求\n\n## 业务流程\n\n### 受理\n\n甲交给乙；乙失败时交丙处理。\n\n"

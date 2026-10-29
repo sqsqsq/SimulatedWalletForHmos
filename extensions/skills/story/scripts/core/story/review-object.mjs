@@ -121,11 +121,11 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   // 材料清单登记的全部原件、阅读稿与图片：没采用的也在，审查要核作者为何排除它
   const set = materialSet({ srcDir: src });
   const manifest = path.join(src, 'materials.json');
-  if (set === null) problems.push('AR/story-src/materials.json 不在——材料清单由 `story_flow.py round` 按磁盘现状生成');
+  if (set === null) problems.push('AR/story-src/materials.json 不在——材料索引由 `story_flow.py round` 按磁盘现状生成');
   else {
     add(manifest, 'source', '材料清单（原件、阅读稿与图片的登记）', true, { kind: 'metadata', read: false });
     problems.push(...set.gaps);
-    for (const p of set.pending) problems.push(`${p} 还没并入正文——先按 inbox 导入规则导入，再准备审查`);
+    for (const p of set.pending) problems.push(`${p} 还在来源收件箱、没导入——先按来源导入规则导入，再准备审查`);
   }
   const at = r => path.join(root, ...String(r).split('/'));
   const bytesOf = abs => { try { return fs.readFileSync(abs); } catch { return null; } };
@@ -156,21 +156,18 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
       current(r, frozen.has(r) ? `阅读稿 ${r}` : `没采用的阅读稿 ${r}（核作者为何没采用）`, 'text');
     }
   }
-  // 冻结采用稿当时的原件：按快照记的路径与摘要核。原路径还是那一版就绑它；换过版的到退役备份
-  // `.backups/local/inbox/<原相对目录>/<主名>.<摘要><扩展名>` 找同一版；都没有报缺口，不拿同路径的新版顶替
+  // 冻结采用稿当时的原件：按快照记的路径与摘要核。材料版本导入后不改，那一版的原件就在原处；不在或字节不同报缺口，
+  // 不拿同一来源的新版本顶替
   for (const [readable, list] of Object.entries(frozenOrigins)) {
     for (const o of Array.isArray(list) ? list : []) {
       const was = String(o?.path ?? '');
       const want = String(o?.sha256 ?? '').replace(/^sha256:/, '');
       if (!was || !want) continue;
-      const key = was.startsWith('inbox/') ? path.posix.parse(was.slice('inbox/'.length)) : null;
-      const retired = key ? `.backups/local/inbox/${key.dir ? `${key.dir}/` : ''}${key.name}.${want}${key.ext}` : null;
-      const hit = [was, retired].filter(Boolean).find(c => { const b = bytesOf(at(c)); return b && sha256(b).startsWith(want); });
-      if (hit) {
-        add(at(hit), 'source', `冻结采用稿 ${readable} 当时的原件 ${was}${hit === was ? '' : `（已退役，在 ${retired}）`}`,
-          true, { kind: 'metadata', read: false });
+      const b = bytesOf(at(was));
+      if (b && sha256(b).startsWith(want)) {
+        add(at(was), 'source', `冻结采用稿 ${readable} 当时的原件 ${was}`, true, { kind: 'metadata', read: false });
       } else {
-        problems.push(`冻结采用稿 ${readable} 当时的原件 ${was}（${o.sha256}）既不在原处${retired ? `，也不在退役备份 ${retired}` : ''}：`
+        problems.push(`冻结采用稿 ${readable} 当时的原件 ${was}（${o.sha256}）${b ? '字节已与那一版不同' : '不在原处'}：`
           + '这一版采用稿的来源核不了');
       }
     }

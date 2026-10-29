@@ -86,6 +86,6 @@
 
 | 材料 | 来源 | 贡献 |
 |---|---|---|
-| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 提交回执的业务诉求与状态取值。 |
-| 开发需求 [design.md](design.md) | [design.md](design.md) | 本轮从上游提取的开发需求，业务分工与本单范围。 |
+| 甲需求 PRD [prd.md](../sources/prd-v1/prd.md) | [prd.md](../sources/prd-v1/prd.md) | 提交回执的业务诉求与状态取值。 |
+| 开发需求 [design.md](../sources/design-v1/design.md) | [design.md](../sources/design-v1/design.md) | 本轮从上游提取的开发需求，业务分工与本单范围。 |
 

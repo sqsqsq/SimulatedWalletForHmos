@@ -115,46 +115,38 @@ class RetiredJudgementsDoNotBlock(NegativeCase):
 class DeclaredSourcesMustExist(NegativeCase):
     """声明了却不存在的来源 —— **当前没有任何人拦**。
 
-    `story-chapters.json` 的 `sources` 声明六个来源；`sourceDocs` 对读不到的那些
-    静默跳过（`if (text !== null)`），于是守恒面缩掉一整类而零信号。
+    `story-chapters.json` 的 `sources` 按来源类声明；材料索引里没有某一类时若静默跳过，
+    守恒面缩掉一整类而零信号。
 
-    实跑实证：`ux-reference/README.md` 没被产出，UX 整类枚举出 0 个单元——
-    上一轮 auto-topup 34 个、car-key 11 个，本轮双双归零，全程没有一条报错。
-    这与 ⓪ 判据的立意完全一致（它防「枚举之后材料变了」），但 ⓪ 管不到
-    「声明的来源压根不在」。
+    实跑实证：界面说明没被产出，UX 整类枚举出 0 个单元——上一轮 auto-topup 34 个、car-key 11 个，
+    那一轮双双归零，全程没有一条报错。这与 ⓪ 判据的立意一致（它防「枚举之后材料变了」），
+    但 ⓪ 管不到「声明的来源压根不在」。
 
-    **本夹具就是这个洞的形状**：夹具里六个声明来源只有 `RR/prd.md` 存在，
-    另外五个都不在，而 `check` 照样过。
+    **本夹具就是这个洞的形状**：夹具的材料索引里没有系统设计这一类来源，而本地单照样能起手。
     """
 
     @staticmethod
-    def declared_sources() -> dict:
+    def declared_sources() -> set[str]:
         import json
-        raw = json.loads(CONTRACT.read_text(encoding="utf-8")).get("sources") or {}
-        return {k: (v if isinstance(v, str) else v.get("path")) for k, v in raw.items()}
+        return set(json.loads(CONTRACT.read_text(encoding="utf-8")).get("sources") or {})
 
     def test_the_hole_is_real(self) -> None:
-        """先证明这个洞确实存在：夹具缺了好几个声明来源。
-
-        它们**一律不拦、一律记一笔**。曾有一档是 BLOCKER（目录里有图而索引不在，
-        判「导入做了一半」），那条建立在「README 承载图片登记」之上；
-        步骤 6/8 把登记收成 `materials.json` 一处真源之后它失去对象，随步骤 11 退场。
-        """
-        missing = [rel for rel in self.declared_sources().values()
-                   if rel and not (self.feature_root() / rel).exists()]
-        self.assertGreaterEqual(len(missing), 2,
-                                "夹具变了——它本该缺好几个声明来源，这条反例才有对象")
+        """先证明这个洞确实存在：夹具缺了声明的来源类。本地单缺它们不拦、一律记一笔。"""
+        import json
+        index = json.loads((self.feature_root() / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
+        missing = self.declared_sources() - {s.get("class") for s in index.get("sources", [])}
+        self.assertTrue(missing, "夹具变了——它本该缺声明的来源类，这条反例才有对象")
 
     def test_missing_optional_source_is_visible_but_not_blocking(self) -> None:
         """缺失一律**可见**——根因是零信号，不是没拦。
 
-        夹具本身就缺好几个声明来源。可选的（含本地单的 RR/SE）不拦——
-        skeleton 起手照走，但每一份缺的都要在输出里各记一笔。
+        夹具本身就缺声明的来源类。可选的（含本地单的产品需求与系统设计）不拦——
+        skeleton 起手照走，但每一类缺的都要在输出里各记一笔。
         """
         proc = self.run_build("skeleton")
         self.assertEqual(proc.returncode, 0, "可选来源缺失不该拦：" + proc.stderr)
         out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertIn("不存在", out)
+        self.assertIn("材料索引里没有这一类来源", out)
         self.assertIn("记一笔：", out)
 
 

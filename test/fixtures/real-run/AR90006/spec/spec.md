@@ -463,8 +463,8 @@ flowchart TD
 
 ### B. 参考资料
 
-- RR90006 产品需求 — `doc/features/AR90006/RR/prd.md`
-- SR90006 系统设计 — `doc/features/AR90006/SR/design.md`
+- RR90006 产品需求 — `doc/features/AR90006/sources/prd-v1/prd.md`
+- SR90006 系统设计 — `doc/features/AR90006/sources/design-v1/design.md`
 - AR90006 开发需求提取件（S4 收口稿） — `doc/features/AR90006/AR/design.md`
 - 会议结果（第二次澄清会，含 T1-T8 裁决） — `doc/features/AR90006/AR/story-src/doc-refresh.md`
 - 界面示意图 — `doc/features/AR90006/ux-reference/`（图 1-5）

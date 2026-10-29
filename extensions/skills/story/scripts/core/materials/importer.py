@@ -1,33 +1,42 @@
-"""把 inbox/ 里的人工材料转成流程能消费的形态：docx 转正文、图片抽取与登记。
+"""把来源收件箱 `sources/inbox/` 里的原件导成材料版本：原件、转换正文与图一起按版本留住。
 
-正式命令是 `core/import_sources.py`，本模块只做实现。归类由 AI 写进
-`inbox/.classify.json`（`{"<相对 inbox 的路径>": "<类>"}`，值域见 `CLASSES`），脚本只负责执行与收敛；
-没给归类的文件不会被默默忽略——那等于人以为导了、实际没导。
+正式命令是 `core/import_sources.py`，本模块只做实现。
 
-核心不变量：
+一份原件是一个**来源**（source）。系统取材的件按回执认来源（角色 + 单号），本地放进来的件按它在收件箱里的相对路径认；
+同一来源每次取得的内容不同就是一个新**版本**，落在 `sources/<标签>-v<N>/`：
 
-    某类材料的目标文件全文 = 该类 inbox 文件集合（按相对路径排序拼接）的转换结果。
+    <原文件名>           原件字节，文件名不改（叫 spec.md 也只在版本目录里，不会被当成施工产物）
+    text.md              原件是 docx 时的转换正文；图链接指本版本的 images/
+    images/<名>          原件是 docx 时的内嵌图
+    .version.json        这一版的身份：来源、类、取得时刻、原件/阅读稿/图的完整摘要（点文件是控制件）
 
-由此重跑幂等、改了重放即重转、某类清空则该类目标不再被本模块改写（不是清空——
-「不动」才是收敛语义）。覆盖前旧内容进 `.backups/local/`。
+转换正文与内嵌图只在原件是 docx 时出现，所以不会与原件同名。
 
-只用标准库：docx 是 zip + OOXML，图片抽取本就要走 `zipfile` + XML；再引第三方解析器
-等于结构走一套、图片走另一套，还给交付件添一项部署依赖。
+版本一经写下不再改：转换器升级或原件换了内容，都是新版本；旧版本留着，已经引用它的设计与审查仍指得回同一批字节。
+同一来源这一次的内容与最新版本相同就复用，不新开版本。导入成功的原件移出收件箱，收件箱只剩还没导入的件。
 
-输入与格式的失败（读不开、没归类、链接越界、转换缺口）都在写盘之前报出，一个字节不动；
-写盘中途的 I/O 失败不冒称「整批没变」，如实报出已写的目标、旧版备份与失败位置。
-导入也不留回执：材料现在是什么、哪些原件已经并入正文，一律去 `materials/registry.py`
-的清单里按磁盘现状问。同一事实两处写，其中一处过期或被清掉时，两边都还理直气壮。
+归类由 AI 写进 `sources/inbox/.classify.json`（`{"<相对收件箱的路径>": "<类>"}`，值域见 `CLASSES`）；
+系统取材批次（`sources/inbox/<批次>/`，带 `.receipt.json` 回执）里回执列着的件按回执的角色归类，不用另写。
+没归类的件不会被默默忽略——那等于人以为导了、实际没导。
+
+输入与格式的失败（读不开、没归类、链接越界、转换缺口）都在写盘之前一次报全，一个字节不动；
+每个新版本先写在 `sources/.staging/` 下再改名落位，中途失败不留半个版本，报出已落位的版本与没动的原件。
+材料现在是什么由 `materials/registry.py` 的索引按磁盘现状回答。
+
+只用标准库：docx 是 zip + OOXML，图片抽取本就要走 `zipfile` + XML。
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
 import time
+import uuid
 import xml.etree.ElementTree as ET
 import zipfile
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 
@@ -38,62 +47,43 @@ REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 DOC_EXT = ".docx"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
-# inbox 里不算材料的文件：目录自解释用的说明书（每一层都不收）
+# 收件箱里不算材料的文件：目录自解释用的说明书（每一层都不收）
 SKIP_NAMES = {"readme.md"}
 # AI 写、脚本读的归类件；与它一样的点文件都是控制件，不是材料
 CLASSIFY_FILE = ".classify.json"
+#: 系统取材批次的回执：对接层逐件写角色、单号与取得状态
+RECEIPT_FILE = ".receipt.json"
 
-#: `IMAGES` 是「只抽图、正文不动」：补料是为了补图时走它。
-#: 系统上已有同类正文，而这份补料是原稿或参考稿——把它并进正文会用草稿盖掉定稿，
-#: 而人要的只是里面的图。选哪一档由归类时判断，不另外问人一次。
-#: `MEETING` 是会议材料：讨论态的证据，不并进任何正文，按版本留住原件与转换文本
-#: （`materials/meeting.py`），内容由读会的模型理解。
+#: 来源的类：RR 产品需求、SR 系统设计、AR 开发需求、UX 界面材料、IMAGES 只取图的参考稿、MEETING 会议材料。
+#: `IMAGES` 是「只抽图、正文不采用」：系统上已有同类正文、这份是原稿或参考稿时走它，正文不作阅读稿。
+#: `MEETING` 按会议版本留存（`materials/meeting.py`），读会由模型理解。
 CLASSES = ("RR", "SR", "AR", "UX", "IMAGES", "MEETING")
+#: 回执里的角色就是类
+SYSTEM_ROLES = ("RR", "SR", "AR")
 
-# 各类正文的落点。RR / SR / AR 三类的路径是章节合同登记的来源（取 `sources` 的哪一项见下表），
-# 不在这里另抄一份。AR 类补料落 upstream.md：`AR/design.md` 是上游给进来的输入件，S4 提交
-# 提取稿时整份覆盖它，人工补录的本部件材料要有自己的落点才留得住。
-# UX 分两路：图片进参考图目录，文档并入其 README——那个目录按文件登记为材料，不是合同里的来源。
-# `IMAGES` 不在这里：它没有正文落点，那正是它与别的类的区别。
-DOC_SOURCE = {"RR": "PRD", "SR": "SE", "AR": "UPSTREAM"}
-UX_DOC_TARGET = Path("ux-reference/README.md")
-UX_IMAGE_DIR = Path("ux-reference")
-#: 章节合同：正文来源的路径、是不是本轮派生，登记在它的 `sources` 里。路径只在 flow.state 定一次。
-from flow.state import STORY_CONTRACT  # noqa: E402
-
-GENERATED_MARK = "<!-- 本文件由 import_sources.py 从 inbox/ 生成，直接编辑会在下次导入时丢失 -->"
+SOURCES = "sources"
+INBOX = (SOURCES, "inbox")
+STAGING = (SOURCES, ".staging")
+VERSION_FILE = ".version.json"
+TEXT_FILE, IMAGES_DIR = "text.md", "images"
+VERSION_SCHEMA = 1
 
 
 class ImportError_(Exception):
     """可预期的导入失败：带可执行的补救动作，直接呈给人。"""
 
 
-def contract_sources() -> dict[str, dict]:
-    """章节合同登记的正文来源。读不出来就报：当成没有来源，清单会少算整份正文而不出声。"""
-    try:
-        sources = json.loads(STORY_CONTRACT.read_text(encoding="utf-8")).get("sources")
-    except (OSError, ValueError) as exc:
-        raise ImportError_(f"读不出章节合同的来源登记（{exc}）：{STORY_CONTRACT}") from exc
-    if not isinstance(sources, dict) or not sources:
-        raise ImportError_(f"章节合同里没有来源登记 sources：{STORY_CONTRACT}")
-    return sources
-
-
-def doc_targets() -> dict[str, Path]:
-    """各类正文的落点：RR / SR / AR 取合同登记的路径，UX 并入参考图目录的说明文件。"""
-    sources = contract_sources()
-    targets: dict[str, Path] = {}
-    for cls, key in DOC_SOURCE.items():
-        rel = (sources.get(key) or {}).get("path")
-        if not rel:
-            raise ImportError_(f"章节合同的来源登记缺 {key}：「{cls}」类材料没有落点")
-        targets[cls] = Path(rel)
-    targets["UX"] = UX_DOC_TARGET
-    return targets
-
-
 def log(msg: str) -> None:
     print(f"[import_sources] {msg}", file=sys.stderr)
+
+
+def digest(data: bytes) -> str:
+    """来源身份用完整 SHA-256（原生来源协议也用它）；给人看时由读者截短。"""
+    return sha256(data).hexdigest()
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 #: 默认工程根。本扩展装在 `<工程>/doc/extensions/` 下，脚本自己的位置就定死了它。
@@ -125,49 +115,30 @@ def project_root_of(feature_root: Path) -> Path:
     return next((p for p in feature_root.parents if (p / "framework.config.json").is_file()), feature_root.parents[2])
 
 
+def inbox_of(feature_root: Path) -> Path:
+    return feature_root.joinpath(*INBOX)
+
+
 # ---------------------------------------------------------------------------
-# 扫描与路由（零依赖层）
+# 扫描与归类（零依赖层）
 
 def source_key(inbox: Path, path: Path) -> str:
-    """原件的身份键：相对 inbox 的 POSIX 路径。归类、待导入、清单与 update 比较都用它，只在这里算。"""
+    """收件箱里一份件的键：相对收件箱的 POSIX 路径。归类、待导入与清单都用它，只在这里算。"""
     return path.relative_to(inbox).as_posix()
 
 
-def derived_name(key: str) -> str:
-    """原件派生物的名字：主名 + 身份键 UTF-8 的 SHA256 前 16 位。
-
-    不同目录下的同名原件身份键不同，派生物各落各的，不用人改名；主名留着给人和视觉链路看。
-    只看路径不看内容：原件改了内容，派生物仍在原处整份替换。导入写盘与清单判并入都调这一处。
-    """
-    return f"{PurePosixPath(key).stem}.{sha256(key.encode('utf-8')).hexdigest()[:16]}"
-
-
-def assets_for(key: str) -> Path:
-    """docx 内嵌图抽到哪个目录（相对需求目录）。"""
-    return Path("assets") / derived_name(key)
-
-
-def ux_image_target(key: str) -> Path:
-    """界面图平铺到哪个文件（相对需求目录）：派生名加原后缀。"""
-    return UX_IMAGE_DIR / f"{derived_name(key)}{PurePosixPath(key).suffix}"
-
-
 def check_inbox_root(inbox: Path) -> None:
-    """收件箱根本身得是需求目录下的实目录：根是链接或目录联接，等于把别处的文件当成本需求的原件。
-
-    导入、清单、update 与退原件都经源枚举或这里，同一条边界只在这一处判。
-    """
+    """收件箱根本身得是需求目录下的实目录：根是链接或目录联接，等于把别处的文件当成本需求的原件。"""
     if inbox.is_symlink() or inbox.is_junction() or inbox.resolve() != inbox.parent.resolve() / inbox.name:
-        raise ImportError_("收件箱 inbox 本身是链接或目录联接、指到了需求目录之外："
+        raise ImportError_("来源收件箱 sources/inbox 本身是链接或目录联接、指到了需求目录之外："
                            "收件箱只认需求目录下的实目录，把原件放进实目录再导；没有移动或写入任何文件")
 
 
 def scan_sources(inbox: Path) -> list[Path]:
-    """递归收料：任意深度的普通文件，按相对路径排序。
+    """递归收件：任意深度的普通文件，按相对路径排序。
 
     每一层的点目录与点文件是控制件、README 是说明书，都不收；空目录没有条目。
-    链接（含目录联接）不跟随：跟过去就可能读到 inbox 之外的东西，而登记的路径还写在 inbox 里。
-    收件箱根本身也一样，见 `check_inbox_root`。
+    链接（含目录联接）不跟随：跟过去就可能读到收件箱之外的东西，而登记的路径还写在收件箱里。
     """
     if not inbox.is_dir():
         return []
@@ -200,24 +171,45 @@ def read_classify(inbox: Path) -> dict[str, str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except ValueError as exc:
-        raise ImportError_(f"inbox/{CLASSIFY_FILE} 不是合法 JSON：{exc}") from exc
+        raise ImportError_(f"sources/inbox/{CLASSIFY_FILE} 不是合法 JSON：{exc}") from exc
     if not isinstance(data, dict):
-        raise ImportError_(f"inbox/{CLASSIFY_FILE} 应是 {{\"<相对 inbox 的路径>\": \"{'|'.join(CLASSES)}\"}} 对象")
-    # 一份原件只有一种键：绝对路径、`..`、`.`、反斜杠或多余的斜杠会让同一个文件有两个键，或指到 inbox 之外
+        raise ImportError_(f"sources/inbox/{CLASSIFY_FILE} 应是 {{\"<相对收件箱的路径>\": \"{'|'.join(CLASSES)}\"}} 对象")
+    # 一份原件只有一种键：绝对路径、`..`、`.`、反斜杠或多余的斜杠会让同一个文件有两个键，或指到收件箱之外
     bad = [k for k in data if not k or k != PurePosixPath(k).as_posix() or "\\" in k
            or PurePosixPath(k).is_absolute() or {".", ".."} & set(PurePosixPath(k).parts)]
     if bad:
-        raise ImportError_(f"inbox/{CLASSIFY_FILE} 的键 {'、'.join(map(repr, bad))} 不是规范的相对路径："
-                           "键写相对 inbox 的路径，用 `/` 分隔，不带 `./`、`..`、盘符或多余的斜杠")
+        raise ImportError_(f"sources/inbox/{CLASSIFY_FILE} 的键 {'、'.join(map(repr, bad))} 不是规范的相对路径："
+                           "键写相对收件箱的路径，用 `/` 分隔，不带 `./`、`..`、盘符或多余的斜杠")
     return data
 
 
-def is_text(path: Path) -> bool:
-    """能不能当文本读——问文件本身，不问扩展名。
+def read_receipts(inbox: Path) -> dict[str, dict]:
+    """系统取材批次回执里列着的件：`{相对收件箱的路径: 回执条目（含批次头）}`。
 
-    扩展名白名单会把 `.md`/`.txt`/`.log`/无后缀这些模型直接读得懂的材料挡在门外，
-    逼人绕道 Word 转一圈。严格 utf-8 解码是更诚实的判据：解得开就是文本。
+    回执由对接层写，逐件给角色、单号与取得状态；只认 `fetched` 且角色是 RR/SR/AR 的条目。
+    回执写坏了报出来——当成没有回执，系统件就会被当成没归类的本地件。
     """
+    out: dict[str, dict] = {}
+    if not inbox.is_dir():
+        return out
+    for path in sorted(inbox.rglob(RECEIPT_FILE)):
+        rel_dir = path.parent.relative_to(inbox).as_posix()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except ValueError as exc:
+            raise ImportError_(f"sources/inbox/{rel_dir}/{RECEIPT_FILE} 不是合法 JSON（{exc}）：它由取材命令写，重新取材") from exc
+        head = {k: data.get(k) for k in ("reqNo", "parentNo", "rrNo", "fetchedAt")} if isinstance(data, dict) else {}
+        for item in (data.get("items") if isinstance(data, dict) else None) or []:
+            if not (isinstance(item, dict) and item.get("status") == "fetched" and item.get("role") in SYSTEM_ROLES
+                    and item.get("ticket") and item.get("name")):
+                continue
+            key = f"{rel_dir}/{item['name']}" if rel_dir != "." else str(item["name"])
+            out[key] = {**item, "batch": rel_dir, **head}
+    return out
+
+
+def is_text(path: Path) -> bool:
+    """能不能当文本读——问文件本身，不问扩展名：严格 utf-8 解得开就是文本。"""
     try:
         path.read_text(encoding="utf-8")
         return True
@@ -225,7 +217,14 @@ def is_text(path: Path) -> bool:
         return False
 
 
-def validate(inbox: Path, sources: list[Path], classify: dict[str, str]) -> None:
+def class_of(key: str, classify: dict[str, str], receipts: dict[str, dict]) -> str | None:
+    """一份件的类：系统回执列着的按角色，其余按归类件。"""
+    if key in receipts:
+        return receipts[key]["role"]
+    return classify.get(key) if classify.get(key) in CLASSES else None
+
+
+def validate(inbox: Path, sources: list[Path], classify: dict[str, str], receipts: dict[str, dict]) -> None:
     """先验后写：问题一次列全，任何一项不合格就整批不动，不存在半改状态。"""
     problems: list[str] = []
     keys = {source_key(inbox, p) for p in sources}
@@ -238,22 +237,21 @@ def validate(inbox: Path, sources: list[Path], classify: dict[str, str]) -> None
                 f"（{'、'.join(sorted(IMAGE_EXTS))}）。"
                 "若你能读懂它的内容，请自行转写成 .md 放回收件箱再归类；"
                 "若你也读不了，请让用户提供可读版本")
+        if key in receipts:
+            continue
         if key not in classify:
             problems.append(
-                f"「{key}」未给出归类：请在 inbox/{CLASSIFY_FILE} 以相对 inbox 的路径为键，"
+                f"「{key}」未给出归类：请在 sources/inbox/{CLASSIFY_FILE} 以相对收件箱的路径为键，"
                 f"指明它属 {' / '.join(CLASSES)} 中的哪一类")
         elif classify[key] not in CLASSES:
             problems.append(f"「{key}」的归类「{classify[key]}」非法，须为 {'/'.join(CLASSES)}")
         elif classify[key] == "MEETING" and ext != DOC_EXT:
             problems.append(f"「{key}」归类为 MEETING，但会议材料只收原始 {DOC_EXT}"
                             "：原件要按版本留住，引用才指得回同一段原文")
+        elif ext in IMAGE_EXTS and classify[key] != "UX":
+            problems.append(f"「{key}」是图片但归类为 {classify[key]}：图片只能归 UX（界面设计）")
     for key in sorted(set(classify) - keys):
-        problems.append(f"inbox/{CLASSIFY_FILE} 的键「{key}」没有对应的原件：移走或改名的原件把它的归类键一并删掉或改掉")
-    assets = inbox.parent / "assets"
-    for old in sorted(p.name for p in assets.iterdir() if p.is_dir()) if assets.is_dir() else []:
-        if not re.fullmatch(r".+\.[0-9a-f]{16}", old):
-            problems.append(f"assets/{old}/ 是旧版导入按主名落的图片目录，本版按原件路径派生目录"
-                            "：旧版进行中的需求在旧版收口，或从 init 重起")
+        problems.append(f"sources/inbox/{CLASSIFY_FILE} 的键「{key}」没有对应的原件：移走或改名的原件把它的归类键一并删掉或改掉")
     if problems:
         raise ImportError_("\n".join(problems))
 
@@ -509,111 +507,13 @@ def docx_to_markdown(path: Path, asset_ref: str) -> tuple[str, dict[str, bytes]]
 
 
 # ---------------------------------------------------------------------------
-# 写盘（零依赖层）
-
-def _backup_stem(feature_root: Path, target: Path) -> str:
-    return str(target.relative_to(feature_root)).replace("/", "-").replace("\\", "-")
-
-
-def backup(feature_root: Path, target: Path) -> Path | None:
-    """覆盖前留一份：被抹掉的内容必须有退路。本地文档的备份在需求目录 .backups/local/。"""
-    if not target.exists():
-        return None
-    dest_dir = feature_root / ".backups" / "local"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{_backup_stem(feature_root, target)}-{time.strftime('%Y%m%d%H%M%S')}.md"
-    shutil.copyfile(target, dest)
-    return dest
-
-
-def retire_source(feature_root: Path, key: str) -> dict:
-    """被新原件取代的旧原件移出 inbox：留在 `.backups/local/inbox/<原相对目录>/<主名>.<摘要><扩展名>`。
-
-    名字带内容摘要，同一路径连续替代几次，每一版各占一个文件，谁也不覆盖谁；同一份内容再退一次
-    落到同一个名字上，已经在了就只把 inbox 里那份拿走。归类键随之删掉，不然下次导入报「键没有原件」。
-
-    能先核的都在动第一个文件之前核完（路径、归类件、已有备份），不过就一个文件都不动；
-    真正写盘中途失败，报出已经做了什么、东西在哪、怎样恢复。
-    """
-    inbox = feature_root / "inbox"
-    refuse = f"--retire「{key}」不动任何文件："
-    # 键只认 .classify.json 的写法：`/` 分隔的相对路径。盘符绝对路径、驱动器相对路径、UNC、反斜杠、`..` 都不是。
-    pure = PurePosixPath(key or "")
-    if (not key or key != pure.as_posix() or "\\" in key or ":" in key or pure.is_absolute()
-            or {".", ".."} & set(pure.parts)):
-        raise ImportError_(f"{refuse}写相对 inbox 的路径，与 .classify.json 的键同一写法（不带盘符、`..`、`./` 或反斜杠）")
-    src = inbox / Path(*pure.parts)
-    backup_root = feature_root / ".backups" / "local" / "inbox"
-    # 解析后的源与目标要仍在各自的根里：inbox 本身、它下面的目录，经联接或符号链接指到外面的，同样拒绝
-    try:
-        check_inbox_root(inbox)
-    except ImportError_ as exc:
-        raise ImportError_(f"{refuse}{exc}") from exc
-    if not src.resolve().is_relative_to(inbox.resolve()) or not src.is_file():
-        raise ImportError_(f"{refuse}inbox 里没有这份原件（或它经链接指到了 inbox 之外）")
-    blob = src.read_bytes()
-    dest = backup_root / Path(*pure.parts[:-1]) / f"{pure.stem}.{sha256(blob).hexdigest()[:16]}{pure.suffix}"
-    if not dest.resolve().is_relative_to(backup_root.resolve()) or not backup_root.resolve().is_relative_to(feature_root.resolve()):
-        raise ImportError_(f"{refuse}备份位置经链接指到了需求目录之外（{dest.relative_to(feature_root).as_posix()}）")
-    classify = read_classify(inbox)          # 归类件坏了在这里就停下，原件还在原处
-    if dest.exists() and dest.read_bytes() != blob:
-        raise ImportError_(f"{refuse}{dest.relative_to(feature_root).as_posix()} 已在且内容不同，不覆盖历史原件——先查明这份备份从哪来")
-    shown = dest.relative_to(feature_root).as_posix()
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists():
-            src.unlink()
-        else:
-            shutil.move(str(src), str(dest))
-    except OSError as exc:
-        moved = dest.exists() and not src.exists()
-        raise ImportError_(f"--retire「{key}」移动时失败（{exc}）：" + (
-            f"原件已在 {shown}，归类键还没删——删掉 .classify.json 里的「{key}」即完成" if moved
-            else "原件还在 inbox 原处，没有移动——排除故障后重跑")) from exc
-    removed = classify.pop(key, None)
-    if removed is not None:
-        try:
-            (inbox / CLASSIFY_FILE).write_text(json.dumps(classify, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        except OSError as exc:
-            raise ImportError_(f"--retire「{key}」原件已移到 {shown}，但归类件写不回（{exc}）："
-                               f"手动删掉 .classify.json 里的「{key}」；要撤回，把 {shown} 移回 inbox/{key}") from exc
-    return {"retired": key, "backup": shown, "classify_key_removed": removed is not None}
-
-
-def demote_headings(markdown: str, shift: int) -> str:
-    """把文档自带的标题整体降级，使其嵌在节标题之下。
-
-    每份材料在目标文件里占一个 `##` 节，而文档自己的 `#` 会与之平级甚至反超——
-    层级一乱，story 成文后的结构就散了。降级到 6 级封顶（markdown 上限）。
-    """
-    def fix(line: str) -> str:
-        m = re.match(r"^(#{1,6})(\s)", line)
-        if not m:
-            return line
-        return "#" * min(len(m.group(1)) + shift, 6) + line[len(m.group(1)):]
-    return "\n".join(fix(l) for l in markdown.split("\n"))
-
-
-def render_target(sections: list[tuple[str, str, str]]) -> str:
-    """目标文件 = 本类材料按相对路径排序拼接（每节 `(源键, 标题, 正文)`，标题就是源键）。无时间戳等易变量，保证重跑字节一致。"""
-    parts = [GENERATED_MARK, ""]
-    for _key, title, body in sections:
-        parts.append(f"## {title}")
-        parts.append("")
-        parts.append(demote_headings(body, 2))  # 节标题占 ##，文档 # 降到 ###
-        parts.append("")
-    return "\n".join(parts).rstrip() + "\n"
-
+# 预览与图片说明
 
 def preview(path: Path) -> dict:
     """只读预览一份材料：正文文本 + 图清单，**不落盘任何东西**。
 
-    归类是判断（这份文档主体是 RR / SR / AR / UX 哪一类），判断要读内容；
-    而 .docx 是压缩包，不解开就读不了。落盘那一步的解析器本来就在这里，
-    预览复用它——否则读文档的人只能自己写一遍 zipfile + OOXML，
-    否则每轮都要重写，还得先猜对 namespace。
-
-    与导入用的是**同一个解析器**：预览看到的正文，就是导入会写进去的正文。
+    归类是判断，判断要读内容；而 .docx 是压缩包，不解开就读不了。预览与导入用**同一个解析器**：
+    预览看到的正文，就是导入会写进去的正文。
     """
     if not path.is_file():
         raise ImportError_(f"「{path}」不存在")
@@ -625,298 +525,284 @@ def preview(path: Path) -> dict:
             "images": sorted(blobs.keys())}
 
 
-def convert_sources(inbox: Path, sources: list[Path], classify: dict[str, str]
-                    ) -> tuple[dict[str, list[tuple[str, str, str]]],
-                               dict[str, dict[str, bytes]], list[Path]]:
-    """把这批材料整批转换到内存：正文按类分节、docx 内嵌图按源键归组、界面图单列。
-
-    返回的就是「这批料落盘后该长成什么样」。`registry.py` 反过来拿它问磁盘：正文是不是
-    这批料的转换结果——判「已并入」与真正写进去的东西必须出自同一个算法，否则两边会分叉。
-    每节带着源键、节标题就是源键：哪几份原件合成了哪份正文，清单的来源关系照它派生，不另算一遍；
-    不同目录下的同名原件各占一节。图的落点按源键派生（`assets_for`、`ux_image_target`）。
-    """
-    doc_sections: dict[str, list[tuple[str, str, str]]] = {c: [] for c in CLASSES}
-    media: dict[str, dict[str, bytes]] = {}
-    ux_images: list[Path] = []
-
-    for path in sources:
-        key = source_key(inbox, path)
-        cls = classify[key]
-        if cls == "MEETING":
-            continue          # 会议转写不并进正文：按版本留存，由读会处理
-        if path.suffix.lower() in IMAGE_EXTS:
-            if cls != "UX":
-                raise ImportError_(
-                    f"「{key}」是图片但归类为 {cls}：图片只能归 UX（界面设计）")
-            ux_images.append(path)
-            continue
-        if path.suffix.lower() == DOC_EXT:
-            # docx 是压缩包，必须脚本转：zip + OOXML，顺带把内嵌图抽出来
-            markdown, blobs = docx_to_markdown(path, f"../{assets_for(key).as_posix()}")
-            if blobs:
-                media[key] = blobs
-        else:
-            # 文本原样并入——它已经是可读格式，任何"转换"都只会丢东西
-            markdown = path.read_text(encoding="utf-8").strip()
-        if cls == "IMAGES":
-            if not media.get(key):
-                raise ImportError_(
-                    f"「{key}」归类为 IMAGES（只抽图）但里面没有图——"
-                    "要并入正文的话改归 RR / SR / AR / UX")
-            continue          # 图已经在 media 里，正文丢掉：这一档就是不动正文
-        doc_sections[cls].append((key, key, markdown))
-
-    return doc_sections, media, ux_images
-
-
 def _no_such_image(target: Path) -> str:
     """读不到的时候，把正确的写法一起给出来——只说「读不到」等于让人去翻脚本。"""
     return (f"读不到 {target}——路径相对工程根，"
-            "例如 `doc/features/<需求名>/assets/<文件名>`；"
-            "绝对路径也认。`--feature <名>` 那次导入打印出来的路径可以直接复制")
-
-
-def caption_image(feature_root: Path, target: Path, caption: str) -> dict:
-    """给材料里的一张图写下「它是什么」。**不复制、不改名、不动文件**。
-
-    不是界面的图也要有说明——流程图、时序图、状态机都算。成文时作者面上关于一张图的
-    全部信息就是路径与这句话；没有它，作者无从知道该在哪一章用它。
-    """
-    from materials import registry  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
-
-    if not target.is_file():
-        raise ImportError_(_no_such_image(target))
-    if target.suffix.lower() not in IMAGE_EXTS:
-        raise ImportError_(f"{target.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
-    if not caption.strip():
-        raise ImportError_("缺 --caption：一句「这张图是什么」")
-    # 身份由清单模块算——两处各算一份，差一位截断就会静默挂不上
-    sha = registry.file_digest(target)
-    registry.write_caption(feature_root, sha, caption.strip())
-    manifest = registry.refresh(feature_root)
-    return {"sha256": sha, "caption": caption.strip(), "digest": manifest.get("digest")}
+            "例如 `doc/features/<需求名>/sources/<材料版本>/images/<文件名>`；"
+            "绝对路径也认。导入那次打印出来的路径可以直接复制")
 
 
 def resolve_image_arg(project_root: Path, raw: str) -> Path:
-    """图片参数落到哪个文件——**相对工程根**，或者绝对路径。
-
-    只认一种基准。「先按工程根找、找不到再按需求目录找」这种回落，在两处恰好同名时
-    会取到另一张图而且不报错；而 `--feature` 打印出来的就是相对工程根的写法，
-    作者手上本来就有一份可以直接复制的串。
-    """
+    """图片参数落到哪个文件——**相对工程根**，或者绝对路径。只认一种基准：两处恰好同名时回落会取到另一张图。"""
     path = Path(raw)
     return path if path.is_absolute() else project_root / path
 
 
-def _image_for_mark(feature_root: Path, target: Path) -> str:
-    """取舍写在哪张图上——身份由清单模块算，两处各算一份会差一位截断。"""
-    from materials import registry  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
-
+def _image_sha(feature_root: Path, target: Path) -> str:
+    """说明与取舍写在哪张图上：图的身份是内容。只收材料版本里的图——别处的图不是本需求的材料。"""
     if not target.is_file():
         raise ImportError_(_no_such_image(target))
     if target.suffix.lower() not in IMAGE_EXTS:
         raise ImportError_(f"{target.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
-    return registry.file_digest(target)
+    sources_root = (feature_root / SOURCES).resolve()
+    if not target.resolve().is_relative_to(sources_root) or target.resolve().is_relative_to(inbox_of(feature_root).resolve()):
+        raise ImportError_(f"{target.name} 不在已导入的材料版本里：先导入它所在的原件，再给导入后的那张图写说明")
+    return digest(target.read_bytes())
+
+
+def _note(feature_root: Path, target: Path, field: str, value: str | None) -> dict:
+    from materials import registry  # 延迟导入：registry 引用本模块，顶层互相 import 会成环
+    sha = _image_sha(feature_root, target)
+    registry.write_note(feature_root, sha, field, value)
+    manifest = registry.refresh(feature_root)
+    return {"sha256": sha, "digest": manifest.get("digest")}
+
+
+def caption_image(feature_root: Path, target: Path, caption: str) -> dict:
+    """给材料里的一张图写下「它是什么」。**不复制、不改名、不动文件**；说明跟着图的内容走，记在索引里。"""
+    if not caption.strip():
+        raise ImportError_("缺 --caption：一句「这张图是什么」")
+    return {**_note(feature_root, target, "caption", caption.strip()), "caption": caption.strip()}
 
 
 def mark_unused(feature_root: Path, target: Path, reason: str) -> dict:
-    """登记本需求为什么不用这张图。**不复制、不改名、不动文件**。
-
-    材料里的图不都属于本需求——废弃的对照稿、友商参考、别的单据的页面都可能在里面。
-    它们的去向要有个落点：写在这里，成文输入与读者审查逐张读得到，
-    归档件里也就不必为了解释一张不用的图而把它引进正文。
-    """
-    from materials import registry
-
+    """登记本需求为什么不用这张图：成文输入与读者审查逐张读得到。"""
     if not reason.strip():
         raise ImportError_("缺 --unused 的理由：一句「本需求为什么不用它」")
-    sha = _image_for_mark(feature_root, target)
-    registry.write_unused(feature_root, sha, reason.strip())
-    manifest = registry.refresh(feature_root)
-    return {"sha256": sha, "unused": reason.strip(), "digest": manifest.get("digest")}
+    return {**_note(feature_root, target, "unused", reason.strip()), "unused": reason.strip()}
 
 
 def mark_used(feature_root: Path, target: Path) -> dict:
     """这张图要用了——撤掉「不用」的理由，说明留着。"""
-    from materials import registry
-
-    sha = _image_for_mark(feature_root, target)
-    registry.clear_unused(feature_root, sha)
-    manifest = registry.refresh(feature_root)
-    return {"sha256": sha, "unused": "", "digest": manifest.get("digest")}
+    return {**_note(feature_root, target, "unused", None), "unused": ""}
 
 
-def register_ux(feature_root: Path, source: Path, name: str, caption: str) -> dict:
-    """把一张图登记成**界面参考**：复制到 `ux-reference/` 起语义名，并写下它是什么。
+# ---------------------------------------------------------------------------
+# 导入：原件 → 材料版本
 
-    只给界面用。不是界面的图（流程图、时序图）写说明走 `--caption-image`——
-    复制进 `ux-reference/` 会让视觉链路把它当成一屏去匹配，然后报它没映射到任何页面。
+def safe_label(text: str) -> str:
+    """材料版本目录的可读标签：去掉路径与 shell 敏感字符，空白连成 `-`；不以点开头。"""
+    label = re.sub(r"[\\/:*?\"<>|\s]+", "-", str(text)).strip(".-")[:60].strip(".-")
+    return label or "材料"
 
-    图片的身份是内容，所以说明按 sha256 记，跟着这张图走；名字只是给人看的。
-    登记完刷新材料清单——清单是唯一真源，成文输入与读者审查都从它逐张读。
+
+def identify(inbox: Path, path: Path, cls: str, receipts: dict[str, dict]) -> dict:
+    """这份件属于哪个来源：系统件按回执的角色与单号，本地件按它在收件箱里的相对路径。"""
+    key = source_key(inbox, path)
+    if key in receipts:
+        r = receipts[key]
+        origin = {"ticket": r["ticket"], "role": r["role"], "title": r.get("title"), "origin": r.get("origin"),
+                  "reqNo": r.get("reqNo"), "parentNo": r.get("parentNo"), "rrNo": r.get("rrNo"),
+                  "fetched_at": r.get("fetchedAt"), "batch": r.get("batch")}
+        return {"source_id": f"system:{r['role']}:{r['ticket']}", "kind": "system", "class": cls,
+                "origin": {k: v for k, v in origin.items() if v is not None}, "label": f"{r['role']}-{r['ticket']}"}
+    return {"source_id": f"local:{key}", "kind": "local", "class": cls, "origin": {"inbox_path": key},
+            "label": PurePosixPath(key).stem}
+
+
+def convert(path: Path, key: str, cls: str) -> tuple[str | None, dict[str, bytes]]:
+    """一份原件这一版的阅读稿与内嵌图（都在内存里）。
+
+    docx 转 Markdown、内嵌图引用指本版本的 `images/`；文本原件本身就是阅读稿，不另造；图片原件没有阅读稿。
+    `IMAGES` 只取图：正文不作阅读稿，没有图就报。
     """
-    from materials import registry  # 延迟导入：本模块被 materials 引用，顶层互相 import 会成环
+    ext = path.suffix.lower()
+    if ext in IMAGE_EXTS:
+        return None, {}
+    if ext == DOC_EXT:
+        markdown, blobs = docx_to_markdown(path, IMAGES_DIR)
+    else:
+        markdown, blobs = None, {}
+    if cls == "IMAGES":
+        if not blobs:
+            raise ImportError_(f"「{key}」归类为 IMAGES（只抽图）但里面没有图——要采用正文的话改归 RR / SR / AR / UX")
+        return None, blobs
+    return (markdown + "\n" if markdown is not None and not markdown.endswith("\n") else markdown), blobs
 
-    if not source.is_file():
-        raise ImportError_(_no_such_image(source))
-    if source.suffix.lower() not in IMAGE_EXTS:
-        raise ImportError_(f"{source.name} 不是图片（认这些后缀：{'、'.join(sorted(IMAGE_EXTS))}）")
-    if not caption.strip():
-        raise ImportError_(
-            "缺 --caption：一句「这张图是什么」。没有它，下游拿到的只有路径与哈希，"
-            "作者无从知道该在哪一章用它")
 
-    stem = name.strip() or source.stem
-    dest = feature_root / UX_IMAGE_DIR / f"{stem}{source.suffix.lower()}"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    blob = source.read_bytes()
-    if not dest.is_file() or dest.read_bytes() != blob:
-        dest.write_bytes(blob)
-    sha = registry.file_digest(dest)
-    registry.write_caption(feature_root, sha, caption.strip())
-    manifest = registry.refresh(feature_root)
-    return {"path": dest.relative_to(feature_root).as_posix(), "sha256": sha,
-            "caption": caption.strip(), "digest": manifest.get("digest")}
+def _same(record: dict, original: str, readable: str | None, images: dict[str, str]) -> bool:
+    """这一次的内容与已有版本是不是同一份：原件、阅读稿与内嵌图都相同。"""
+    have_readable = (record.get("readable") or {}).get("sha256")
+    if record.get("original", {}).get("sha256") != original:
+        return False
+    if readable is not None and have_readable != readable:
+        return False
+    if readable is None and record.get("readable") and record["readable"].get("path") != record["original"].get("path"):
+        return False
+    return {PurePosixPath(i["path"]).name: i["sha256"] for i in record.get("images") or []} == images
 
 
 def cmd_import(feature_root: Path, project_root: Path) -> dict:
-    """把 inbox/ 里这一批材料整批转换并落盘。
+    """把收件箱里这一批件导成材料版本，导入成功的原件移出收件箱。
 
-    打印的图片路径相对工程根，就是 `--caption-image` 接受的写法，照抄即可。
-
-    输入与格式的问题在写盘前一次报全，盘上一个字节不动：转换全部在内存里做完才开始写盘。
-    写盘中途的 I/O 失败如实报出已写的目标与旧版备份，不冒称整批没变。
+    输入与格式的问题在写盘前一次报全，盘上一个字节不动：转换全部在内存里做完才开始写。
+    每个新版本先写进 `sources/.staging/`，写全了再改名落位；中途失败如实报出已落位的版本与还在收件箱的原件。
     """
-    inbox = feature_root / "inbox"
+    from materials import meeting, registry  # 延迟导入：两者都引用本模块
 
+    inbox = inbox_of(feature_root)
     classify = read_classify(inbox)
-
+    receipts = read_receipts(inbox)
     sources = scan_sources(inbox)
-    validate(inbox, sources, classify)
+    validate(inbox, sources, classify, receipts)
+
+    # 已留存的会议版本：转换文本缺了或被改过就按同目录原件补回来；补不成原样的明说，不重编号——引用记的是行号
+    for folder in meeting.versions(feature_root).values():
+        if meeting.raw_lines(folder)[1]:
+            failed = meeting.restore_raw(folder)
+            if failed:
+                raise ImportError_(failed)
+
+    records = registry.version_records(feature_root)
+    latest: dict[str, dict] = {}
+    labels: dict[str, str] = {}
+    for rec in records:
+        if rec["version"] > latest.get(rec["source_id"], {}).get("version", 0):
+            latest[rec["source_id"]] = rec
+        labels.setdefault(rec["source_id"], re.sub(r"-v\d+$", "", PurePosixPath(rec["dir"]).name))
 
     # ── 先全部转换到内存，全成功才写盘 ──────────────────────────────
-    doc_sections, media, ux_images = convert_sources(inbox, sources, classify)
-    from materials import meeting  # 延迟导入：meeting 引用本模块，顶层互相 import 会成环
-    # 会议材料按版本留存：**这一版存过就原样复用**，不因转换器升级重转——
-    # 旧结论引的是 raw.md 的行号，重转一次就可能全错位。
-    meetings: list[tuple[Path, str, dict]] = []
-    for path in (p for p in sources if classify[source_key(inbox, p)] == "MEETING"):
-        if meeting.saved(feature_root, path):
-            # 这一版留过：转换件缺了或被改过就按留存的原件补回来；补不成原样的明说，
-            # 不重编号、也不拿另一份文本顶替——引用记的是行号。
-            folder = meeting.version_dir(feature_root, path)
-            if meeting.raw_lines(folder)[1]:
-                failed = meeting.restore_raw(folder)
-                if failed:
-                    raise ImportError_(failed)
-                log(f"会议材料 → {folder.relative_to(feature_root).as_posix()}/{meeting.RAW}"
-                    "（按留存原件补回，摘要与登记一致）")
+    plan: list[dict] = []
+    for path in sources:
+        key = source_key(inbox, path)
+        cls = class_of(key, classify, receipts)
+        if cls == "MEETING":
+            plan.append({"key": key, "path": path,
+                         "meeting": None if meeting.saved(feature_root, path) else docx_to_markdown(path, meeting.MEDIA)})
             continue
-        text, blobs = docx_to_markdown(path, meeting.MEDIA)
-        meetings.append((path, text, blobs))
+        ident = identify(inbox, path, cls, receipts)
+        readable, blobs = convert(path, key, cls)
+        original = digest(path.read_bytes())
+        readable_sha = digest(readable.encode("utf-8")) if readable is not None else None
+        images = {name: digest(blob) for name, blob in blobs.items()}
+        have = latest.get(ident["source_id"])
+        if have and _same(have, original, readable_sha, images):
+            plan.append({"key": key, "path": path, "reuse": have})
+            continue
+        if ident["source_id"] not in labels:
+            # 撞名按不区分大小写判：Windows 与 macOS 的盘上 Flow 与 flow 是同一个目录
+            base = safe_label(ident["label"])
+            taken = {v.casefold() for s, v in labels.items() if s != ident["source_id"]}
+            labels[ident["source_id"]] = base if base.casefold() not in taken \
+                else f"{base}-{digest(ident['source_id'].encode('utf-8'))[:6]}"
+        number = (have or {}).get("version", 0) + 1
+        latest[ident["source_id"]] = {"version": number}
+        plan.append({"key": key, "path": path, "ident": ident, "readable": readable, "blobs": blobs,
+                     "dir": f"{labels[ident['source_id']]}-v{number}", "version": number,
+                     "original": original, "readable_sha": readable_sha, "images": images})
 
     # ── 写盘 ────────────────────────────────────────────────────────
-    progress = _Progress()
+    done: list[str] = []
+    out = {"imported": [], "reused": [], "versions": [], "meetings": []}
     try:
-        return _write_all(feature_root, project_root, sources, inbox, doc_sections, media,
-                          ux_images, meetings, progress, meeting)
+        for item in plan:
+            if "meeting" in item:
+                folder = meeting.version_dir(feature_root, item["path"])
+                if item["meeting"] is not None:
+                    text, blobs = item["meeting"]
+                    folder, _ = meeting.save_version(feature_root, item["path"], text, blobs)
+                out["meetings"].append(folder.relative_to(feature_root).as_posix())
+            elif "reuse" in item:
+                out["reused"].append({"file": item["key"], "version": item["reuse"]["dir"]})
+            else:
+                _write_version(feature_root, item)
+                out["versions"].append(f"{SOURCES}/{item['dir']}")
+            item["path"].unlink()
+            classify.pop(item["key"], None)
+            done.append(item["key"])
+            out["imported"].append(item["key"])
     except OSError as exc:
-        raise ImportError_(progress.failed(exc)) from exc
+        left = [i["key"] for i in plan if i["key"] not in done]
+        raise ImportError_(f"写盘中途失败（{exc}）：已导入并移出收件箱的原件 {'、'.join(done) or '无'}；"
+                           f"还在收件箱、没有版本落位的 {'、'.join(left) or '无'}。新版本都先写在 sources/.staging/ 再改名，"
+                           "没有半个版本落位；先排除写入故障（权限、占用、磁盘），再重跑导入") from exc
+    finally:
+        _tidy_inbox(inbox, classify, sources)
+        clear_staging(feature_root)
+    for item in plan:
+        if "ident" in item:
+            log(f"{item['key']} → {SOURCES}/{item['dir']}/"
+                + ("（转换正文 text.md" + (f"，{len(item['blobs'])} 张图" if item["blobs"] else "") + "）"
+                   if item["readable"] is not None and item["path"].suffix.lower() == DOC_EXT
+                   else (f"（{len(item['blobs'])} 张图）" if item["blobs"] else "")))
+        elif "reuse" in item:
+            log(f"{item['key']} 与 {item['reuse']['dir']}/ 是同一份内容，复用已有版本")
+    manifest = registry.refresh(feature_root)
+    root = project_root.resolve()
+    out["images"] = [f"{shown}" for shown in (_shown(root, feature_root / p) for i in manifest.get("materials", [])
+                                               if i.get("kind") == "image" for p in i.get("paths", [])[:1])]
+    out["digest"] = manifest.get("digest")
+    return out
 
 
-class _Progress:
-    """写盘进度：做完了哪几处、断在哪一处（做到哪一步）、哪几处还没动。失败时照它如实报告。"""
-
-    def __init__(self) -> None:
-        self.plan: list[str] = []
-        self.done: list[str] = []
-        self.current: str | None = None
-        self.detail = ""
-        self.backups: list[str] = []
-
-    def start(self, step: str, detail: str = "") -> None:
-        self.current, self.detail = step, detail
-
-    def note(self, detail: str) -> None:
-        self.detail = detail
-
-    def finish(self) -> None:
-        self.done.append(self.current)
-        self.current, self.detail = None, ""
-
-    def failed(self, exc: OSError) -> str:
-        left = [x for x in self.plan if x not in self.done and x != self.current]
-        at = f"{self.current}（{self.detail}，这一处可能残缺）" if self.current else "无"
-        return (f"写盘中途失败（{exc}）：这一批没有整批落盘。已完成：{'、'.join(self.done) or '无'}；"
-                f"中断在：{at}；未执行：{'、'.join(left) or '无'}。"
-                f"正文覆盖前的旧版备份：{'、'.join(self.backups) or '无'}"
-                f"{'，要回到导入前的正文就按它恢复' if self.backups else ''}。"
-                "图片目录、界面参考图与会议留存都由收件箱原件派生，没有旧版备份；"
-                "先排除写入故障（权限、占用、磁盘），再重跑导入——导入按收件箱现状整类重写，会把这一批写全")
+def _shown(project_root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(project_root).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
 
 
-def _write_all(feature_root: Path, project_root: Path, sources: list[Path], inbox: Path,
-               doc_sections: dict, media: dict, ux_images: list[Path], meetings: list,
-               progress: "_Progress", meeting) -> dict:
-    """按内存里已转换好的结果落盘；每一处开始、进行到哪、做完都记进 ``progress``，失败时调用方据此如实报告。"""
-    doc_steps = [(cls, rel) for cls, rel in doc_targets().items() if doc_sections[cls]]
-    progress.plan = ([rel.as_posix() for _, rel in doc_steps] + [f"{assets_for(key).as_posix()}/" for key in media]
-                     + [ux_image_target(source_key(inbox, p)).as_posix() for p in ux_images]
-                     + [f"会议留存 {source_key(inbox, p)}" for p, _, _ in meetings])
-    targets: list[str] = []
-    for cls, rel in doc_steps:                      # 只有有正文落点、且该类有材料的才写盘
-        target = feature_root / rel
-        progress.start(rel.as_posix(), "正在覆盖写入")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        saved = backup(feature_root, target)
-        if saved:
-            progress.backups.append(saved.relative_to(feature_root).as_posix())
-        target.write_text(render_target(doc_sections[cls]), encoding="utf-8")
-        progress.finish()
-        targets.append(rel.as_posix())
-        log(f"{cls} → {rel.as_posix()}"
-            f"（{len(doc_sections[cls])} 份材料{'，旧版已备份' if saved else ''}）")
+def _write_version(feature_root: Path, item: dict) -> None:
+    """写一个新版本：先在暂存目录写全，再改名成最终目录。目标已在就报，不覆盖已有版本。"""
+    final = feature_root / SOURCES / item["dir"]
+    if final.exists():
+        raise OSError(f"{SOURCES}/{item['dir']} 已存在：版本目录不覆盖，查明它从哪来")
+    staging = feature_root.joinpath(*STAGING) / uuid.uuid4().hex
+    staging.mkdir(parents=True)
+    base = f"{SOURCES}/{item['dir']}"
+    name = item["path"].name
+    shutil.copyfile(item["path"], staging / name)
+    original = {"path": f"{base}/{name}", "sha256": item["original"]}
+    readable = None
+    if item["readable"] is not None:
+        (staging / TEXT_FILE).write_text(item["readable"], encoding="utf-8", newline="\n")
+        readable = {"path": f"{base}/{TEXT_FILE}", "sha256": item["readable_sha"]}
+    elif item["path"].suffix.lower() not in IMAGE_EXTS and item["ident"]["class"] != "IMAGES":
+        readable = dict(original)   # 文本原件本身就是阅读稿
+    images = []
+    for img, blob in item["blobs"].items():
+        (staging / IMAGES_DIR).mkdir(exist_ok=True)
+        (staging / IMAGES_DIR / img).write_bytes(blob)
+        images.append({"path": f"{base}/{IMAGES_DIR}/{img}", "sha256": item["images"][img]})
+    record = {"schema": VERSION_SCHEMA, "source_id": item["ident"]["source_id"], "kind": item["ident"]["kind"],
+              "class": item["ident"]["class"], "origin": item["ident"]["origin"], "version": item["version"],
+              "acquired_at": now(), "original": original, "readable": readable, "images": images}
+    (staging / VERSION_FILE).write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+                                        encoding="utf-8", newline="\n")
+    publish_dir(staging, final)
 
-    def shown(path: Path) -> str:
+
+def publish_dir(staging: Path, final: Path) -> None:
+    """把写全的暂存目录改名成最终目录。Windows 上刚写完的文件可能被杀毒或索引进程短暂占用，
+    改名报拒绝访问时稍等重试几次；仍失败按原错误报出，暂存目录留着不算版本。"""
+    for wait in (0.05, 0.1, 0.2, 0.4, 0):
         try:
-            return path.resolve().relative_to(project_root.resolve()).as_posix()
-        except ValueError:
-            return path.resolve().as_posix()
+            os.replace(staging, final)
+            return
+        except PermissionError:
+            if not wait:
+                raise
+            time.sleep(wait)
 
-    images: list[str] = []
-    for key, blobs in media.items():
-        asset_dir = feature_root / assets_for(key)
-        progress.start(f"{assets_for(key).as_posix()}/", "正在清掉旧图")
-        if asset_dir.exists():
-            shutil.rmtree(asset_dir)  # 收敛：源文档改了，旧图不该留下
-        asset_dir.mkdir(parents=True, exist_ok=True)
-        for k, (name, blob) in enumerate(blobs.items()):
-            progress.note(f"旧图已删，新图写成 {k}/{len(blobs)} 张，正写 {name}")
-            (asset_dir / name).write_bytes(blob)
-            images.append(shown(asset_dir / name))
-        progress.finish()
-        log(f"图片 → {shown(asset_dir)}/（{len(blobs)} 张）")
 
-    for path in ux_images:
-        rel = ux_image_target(source_key(inbox, path))
-        dest_dir = feature_root / UX_IMAGE_DIR
-        progress.start(rel.as_posix(), "正在覆盖写入")
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        # 顶层平铺：框架对 ux-reference 的扫描非递归，放子目录等于隐形
-        # 子目录里的同名界面图按派生名各落一处，互不覆盖
-        shutil.copyfile(path, feature_root / rel)
-        progress.finish()
-        targets.append(rel.as_posix())
-        images.append(shown(feature_root / rel))
-        log(f"UX 参考图 → {shown(feature_root / rel)}")
-    for path, text, blobs in meetings:
-        # 一个源版本一个目录：同名换了内容落新目录，旧版本的原文与读会产物原样留着
-        progress.start(f"会议留存 {source_key(inbox, path)}", "正在写这一版的原件、转换文本与图")
-        folder, fresh = meeting.save_version(feature_root, path, text, blobs)
-        progress.finish()
-        rel = folder.relative_to(feature_root).as_posix()
-        targets.append(f"{rel}/{meeting.RAW}")
-        log(f"会议材料 → {rel}/（{len(text.splitlines())} 行"
-            + (f"，{len(blobs)} 张图" if blobs else "")
-            + ("" if fresh else "；这一版已经存过，原样复用") + "）")
-    return {"converted": [source_key(inbox, p) for p in sources], "targets": targets, "images": images}
+def clear_staging(feature_root: Path) -> None:
+    """暂存目录只在写一个版本的那一刻有内容；空了就移走，不在来源容器里留控制目录。"""
+    staging = feature_root.joinpath(*STAGING)
+    if staging.is_dir() and not any(staging.iterdir()):
+        staging.rmdir()
+
+
+def _tidy_inbox(inbox: Path, classify: dict[str, str], scanned: list[Path]) -> None:
+    """收尾：归类件只留还在收件箱里的键；导空了的取材批次连回执一起移走（来源关系已记进版本）。"""
+    if not inbox.is_dir():
+        return
+    path = inbox / CLASSIFY_FILE
+    if path.is_file():
+        path.write_text(json.dumps(classify, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+    for receipt in sorted(inbox.rglob(RECEIPT_FILE), reverse=True):
+        batch = receipt.parent
+        if batch != inbox and not any(p.is_file() and p.name != RECEIPT_FILE for p in batch.rglob("*")):
+            shutil.rmtree(batch)
+    for directory in sorted({p.parent for p in scanned}, key=lambda p: len(p.parts), reverse=True):
+        if directory != inbox and directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()

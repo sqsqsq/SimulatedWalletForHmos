@@ -20,8 +20,8 @@
 |---|---|
 | SR 单号 | SR90006 |
 | 同 SR 其它 AR | 无 |
-| PRD | `RR/prd.md`（RR90006，含界面示意图逻辑的原稿 `inbox/交通卡自动充值.docx`） |
-| SE 设计 | `SR/design.md` |
+| PRD | `sources/prd-v1/prd.md`（RR90006，含界面示意图逻辑的原稿 `inbox/交通卡自动充值.docx`） |
+| SE 设计 | `sources/design-v1/design.md` |
 | UX 设计 | `ux-reference/`（图 1 详情页入口、图 2 签约页、图 3 免密验证页、图 4 管理页与记录列表、图 5 停用态） |
 
 ## 2 需求分析
@@ -83,7 +83,7 @@
 
 ## 4 上游索引
 
-> 本索引的 SR 章节号指向 `SR/design.md`（与本文件同在 `doc/features/AR90006/` 工作区，PRD 为 `RR/prd.md`）；
+> 本索引的 SR 章节号指向 `sources/design-v1/design.md`（与本文件同在 `doc/features/AR90006/` 工作区，PRD 为 `sources/prd-v1/prd.md`）；
 > 下游步骤（/spec 及其技术契约与合规判定取证）须按索引直读该文件原文，不得仅凭本文摘要推断。
 
 | 信息类别 | SR 章节 | 本流程消费步骤 |

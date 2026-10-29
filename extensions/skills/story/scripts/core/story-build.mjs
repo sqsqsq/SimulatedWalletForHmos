@@ -51,7 +51,7 @@ import {
   discloseInStory, pendingDisclosure, preparedRecord, prepareReview, reviewResult, waiverCheck,
 } from './story/independent-review.mjs';
 import {
-  materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
+  fetchBatchDir, latestOf, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
 import { cmdBuild, manualContent, registrationGap } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
@@ -293,8 +293,8 @@ function skeletonPreflight(ctx) {
   // ③ 来源必需性（与交付前的 check 同一份判定）
   const { docs, missing, blocking } = sourceStatus(ctx);
   if (!docs.length) {
-    problems.push(`一份材料都读不到（合同 sources 指向 ${Object.values(ctx.contract.sources ?? {})
-      .map(x => (typeof x === 'string' ? x : x?.path)).filter(Boolean).join('、')}）——骨架据合同 sources 声明的材料起`);
+    problems.push(`材料索引里一份${Object.values(ctx.contract.sources ?? {}).map(x => x?.label).filter(Boolean).join('、')}`
+      + '的阅读稿都读不到——骨架据合同 sources 声明的这几类来源起；先取得或导入上游材料，再起骨架');
   } else if (blocking.length) {
     problems.push(`必备来源缺失：${blocking.map(m => missingSourceLine(m)).join('；')}`);
   }
@@ -340,8 +340,8 @@ function cmdSkeleton(ctx) {
       + `${made.length ? `补建草稿 ${made.length} 份（已写完的章按现稿补回，可直接改）`
         : '草稿齐备，一份未覆盖'}`;
   } else {
-    // 大标题「编号 需求名」：名称取自需求详情；本地单没有详情，只写编号，下面的接续提示作者补名称
-    const title = String(readJson(path.join(ctx.featureRoot, 'AR', 'detail.json'), {})?.title ?? '').trim();
+    // 大标题「编号 需求名」：名称取自需求系统给的开发需求标题；本地单没有，只写编号，下面的接续提示作者补名称
+    const title = String(latestOf(ctx, 'AR').find(v => v.kind === 'system')?.origin?.title ?? '').trim();
     const body = [`# ${path.basename(ctx.featureRoot)}${title ? ` ${title}` : ''}`, ''];
     for (const ch of ctx.contract.chapters) {
       body.push(`## ${ch.title}`, '', pendingMark(ch.title), '');
@@ -427,7 +427,7 @@ function cmdArchive(ctx) {
   // 对接层入口登记在章节合同（相对扩展根），core 只按归档协议调它
   const adapter = path.join(extensionRoot(ctx.projectRoot), ...String(ctx.contract.system_archive_entry ?? '').split('/'));
   if (!ctx.contract.system_archive_entry || !fs.existsSync(adapter)) fail(`章节合同登记的归档对接入口读不到（${adapter}）：对接层由目标仓按所有权维护`);
-  const got = child([adapter, 'fetch', feature, token, '--project-root', ctx.projectRoot, '--out', path.join(ctx.featureRoot, 'inbox')]);
+  const got = child([adapter, 'fetch', feature, token, '--project-root', ctx.projectRoot, '--out', fetchBatchDir(ctx.featureRoot)]);
   const fetched = jsonIn(got.out);
   if (got.status !== 0 || fetched?.mode !== 'fetch' || fetched?.success !== true) {
     fail(`取外部当前内容没有成立（退出码 ${got.status ?? got.error?.message}），没有上传：\n${hide(got.out)}`);

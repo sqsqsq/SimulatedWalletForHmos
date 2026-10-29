@@ -67,10 +67,12 @@ def _external(feature_root: Path, since: str | None, names: tuple[str, ...]) -> 
 
 
 def _baselines(feature_root: Path, contract: dict) -> dict[str, str | None]:
-    """每件上次允许覆盖的那一版：发布过的取发布记录；正文首次发布取本单原始 AR/design.md，附件首次发布为不存在。"""
+    """每件上次允许覆盖的那一版：发布过的取发布记录；正文首次发布取需求系统开发需求来源最新取得的那一版原件，附件首次发布为不存在。"""
     archived = contract.get("archived") or {}
-    design = feature_root / "AR" / "design.md"
-    first_body = short_digest(design.read_bytes()) if design.is_file() else None
+    mine = [s for s in live_materials(feature_root).get("sources", [])
+            if s.get("kind") == "system" and s.get("class") == "AR" and (s.get("origin") or {}).get("ticket") == feature_root.name]
+    design = feature_root / mine[0]["versions"][-1]["original"]["path"] if mine else None
+    first_body = short_digest(design.read_bytes()) if design is not None and design.is_file() else None
     return {"AR-design.md": archived.get("external_digest") or first_body,
             "review.md": archived.get("review_digest"),
             "design-review.md": archived.get("design_review_digest")}

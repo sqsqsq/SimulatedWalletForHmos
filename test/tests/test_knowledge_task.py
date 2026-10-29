@@ -1051,7 +1051,7 @@ process.stdout.write(JSON.stringify({
         self.flow_file = self.root / "doc" / "features" / self.FEATURE / "AR" / "story-src" / "story-flow.json"
         self.snapshot_ref = json.loads(self.flow_file.read_text(encoding="utf-8"))["input"]["snapshot_ref"]
         self.pack = (self.root / self.snapshot_ref).parent
-        self.prd = f"{Path(self.snapshot_ref).parent.as_posix()}/files/RR/prd.md"
+        self.prd = f"{Path(self.snapshot_ref).parent.as_posix()}/files/sources/prd-v1/prd.md"
         self.canonical = self.root / "doc" / "features" / self.BLUEPRINT / "blueprint" / "component-blueprint.yaml"
         ref = json.loads(subprocess.run(
             ["node", "--input-type=module", "-e",
@@ -1154,9 +1154,10 @@ process.stdout.write(JSON.stringify({
 
     def test_non_markdown_and_bom_files_are_checked_on_their_raw_bytes(self) -> None:
         good = self.snapshot()
-        extra = {"RR/flow.png": b"\x89PNG\r\n\x1a\nnot-really", "RR/notes.md": "\ufeff# 备注\n人签过的边界。\n".encode("utf-8")}
+        extra = {"sources/flow-v1/flow.png": b"\x89PNG\r\n\x1a\nnot-really", "sources/notes-v1/notes.md": "\ufeff# 备注\n人签过的边界。\n".encode("utf-8")}
         rows = []
         for name, data in extra.items():
+            (self.pack / "files" / name).parent.mkdir(parents=True, exist_ok=True)
             (self.pack / "files" / name).write_bytes(data)
             rows.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "role": "original",
                          "provenance": good["files"][0]["provenance"]})
@@ -1171,11 +1172,11 @@ process.stdout.write(JSON.stringify({
         """候选仍采用 v1、流程已登记 v2：蓝图任务交 v1 的包，Story 侧按流程读 v2，各取各的。"""
         v2 = self.pack.parent / "v2-later"
         shutil.copytree(self.pack, v2)
-        prd2 = v2 / "files" / "RR" / "prd.md"
+        prd2 = v2 / "files" / "sources" / "prd-v1" / "prd.md"
         prd2.write_bytes(prd2.read_bytes() + "新版本补的一句。\n".encode("utf-8"))
         snap = json.loads((v2 / "snapshot.json").read_text(encoding="utf-8"))
         for row in snap["files"]:
-            if row["path"] == "RR/prd.md":
+            if row["path"] == "sources/prd-v1/prd.md":
                 row["sha256"] = hashlib.sha256(prd2.read_bytes()).hexdigest()
         (v2 / "snapshot.json").write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
         flow = json.loads(self.flow_file.read_text(encoding="utf-8"))

@@ -52,6 +52,28 @@ WALKED = shared_state.digest(FIXTURE, *shared_state.COMMON, Path(__file__).with_
                              FEATURE, StoryBuildCase.DRAFT, shared_state.framework_version())
 
 
+def import_into(root: Path, feature_root: Path, files: dict[str, tuple[bytes, str]]) -> None:
+    """往来源收件箱放件、写归类，经真实导入命令导成材料版本。"""
+    inbox = feature_root / "sources" / "inbox"
+    classify = {}
+    for rel, (body, cls) in files.items():
+        (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+        (inbox / rel).write_bytes(body)
+        classify[rel] = cls
+    (inbox / ".classify.json").write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
+                           "--project-root", str(root)], capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=120)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def cite_latest_prd(feature_root: Path) -> None:
+    """作者把材料表里产品需求那一行改成新取得的版本（材料表按各来源最新版本核对）。"""
+    story = feature_root / "AR" / "story.md"
+    story.write_text(story.read_text(encoding="utf-8").replace("sources/prd-v1/prd.md", "sources/prd-v2/prd.md"),
+                     encoding="utf-8")
+
+
 class UpdateCase(unittest.TestCase):
     """每个用例一份新工作区：update 会往需求目录里写镜像。
 
@@ -193,16 +215,14 @@ class NothingChangedIsAFactNotAnExit(UpdateCase):
         self.assertEqual(was, keep.read_bytes(), "上一轮的镜像被这一趟改了")
 
     def test_an_original_imported_since_the_last_close_is_listed(self) -> None:
-        """只取图的原件正文不进八项：它新并进来了就列出来，带没带来业务变化由模型读原件判。"""
-        manifest_path = self.src / "materials.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest.setdefault("sources", []).append(
-            {"file": "改版稿.docx", "sha256": "sha256:0123456789abcdef", "class": "IMAGES", "ingested": True})
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        """只取图的原件也是一个来源：上次收口以来新导入的就列出来，带没带来业务变化由模型读原件判。"""
+        docx = REPO_ROOT / "test" / "cases" / "auto-topup" / "supplements" / "交通卡自动充值.docx"
+        import_into(self.root, self.feature_root, {"改版稿.docx": (docx.read_bytes(), "IMAGES")})
+        self.flow("round")
         out = self.update()
         self.assertEqual("changed", out["comparison"], out)
-        self.assertEqual(["改版稿.docx"], [s["file"] for s in out["imported"]])
-        self.assertIn("改版稿.docx（IMAGES）", out["action"])
+        self.assertEqual([("local:改版稿.docx", "IMAGES")], [(s["source_id"], s["class"]) for s in out["imported"]])
+        self.assertIn(f"{out['imported'][0]['dir']}（IMAGES）", out["action"])
 
 
 class EditsMadeBeforeTheRunAreCaught(UpdateCase):
@@ -241,14 +261,13 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
                 # 每一轮都要关掉，否则下一份会撞上 resume。
                 self.close_latest()
 
-    def test_a_hand_edited_product_shows_up(self) -> None:
-        """有人在起跑前直接改了产物——只比材料指纹的话，这一笔永远看不见。"""
-        design = self.feature_root / "AR" / "design.md"
-        design.write_text(design.read_text(encoding="utf-8") + "\n<!-- 人手改的一行 -->\n",
-                          encoding="utf-8")
+    def test_a_new_upstream_version_shows_up(self) -> None:
+        """上游来源取得了新版本：按来源身份报出来，不按文件路径猜。"""
+        prd = self.feature_root / "sources" / "prd-v1" / "prd.md"
+        import_into(self.root, self.feature_root, {"RR/prd.md": (prd.read_bytes() + "\n补一句。\n".encode("utf-8"), "RR")})
         out = self.update()
         self.assertEqual("changed", out["comparison"], out)
-        self.assertIn("AR/design.md", out["changed"])
+        self.assertIn("source:local:RR/prd.md", out["changed"])
 
     def test_intermediate_sources_do_not_count(self) -> None:
         """决策登记与契约手改了也不报：报出来只是对人没有意义的几行。"""
@@ -327,9 +346,11 @@ class StatusReportsFactsNotJudgement(StatusReportsFactsNotJudgementCase):
         for action in ("status", "inputs"):
             with self.subTest(action):
                 out = self.update("--action", action)
+                inbox = (self.feature_root / "sources" / "inbox").resolve().as_posix()
                 self.assertEqual({"project_root": self.root.resolve().as_posix(),
-                                  "feature_root": self.feature_root.resolve().as_posix(),
-                                  "inbox": (self.feature_root / "inbox").resolve().as_posix()}, out["paths"])
+                                  "feature_root": self.feature_root.resolve().as_posix(), "inbox": inbox},
+                                 {k: v for k, v in out["paths"].items() if k != "fetch_batch"})
+                self.assertTrue(out["paths"]["fetch_batch"].startswith(inbox + "/fetch-"), out["paths"])
                 self.assertNotIn("fetch", out)
                 text = json.dumps(out, ensure_ascii=False)
                 self.assertNotIn("story.js", text)
@@ -388,13 +409,13 @@ class StatusReportsFactsNotJudgementPart2(StatusReportsFactsNotJudgementCase):
         finally:
             sys.path.remove(str(core))
         self.assertEqual(receipt, out["upstream"])
-        self.assertEqual((ar / "inbox").resolve().as_posix(), out["paths"]["inbox"])
+        self.assertEqual((ar / "sources" / "inbox").resolve().as_posix(), out["paths"]["inbox"])
 
     def test_a_resumed_update_still_gives_the_paths(self) -> None:
         self.update()                                  # 开一轮，不收口
         out = self.update("--action", "inputs")
         self.assertEqual("resume", out["comparison"], out)
-        self.assertEqual((self.feature_root / "inbox").resolve().as_posix(), out["paths"]["inbox"])
+        self.assertEqual((self.feature_root / "sources" / "inbox").resolve().as_posix(), out["paths"]["inbox"])
 
     def test_paths_follow_the_configured_features_dir_with_spaces(self) -> None:
         """需求目录按 `paths.features_dir` 解析，工程根与需求目录都含空格时也原样给出绝对路径。"""
@@ -409,7 +430,7 @@ class StatusReportsFactsNotJudgementPart2(StatusReportsFactsNotJudgementCase):
                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
             out = json.loads([l for l in proc.stdout.splitlines() if l.strip().startswith("{")][-1])
         self.assertEqual(root.resolve().as_posix(), out["paths"]["project_root"])
-        self.assertEqual((feature / "inbox").resolve().as_posix(), out["paths"]["inbox"])
+        self.assertEqual((feature / "sources" / "inbox").resolve().as_posix(), out["paths"]["inbox"])
 
     def test_without_a_design_link_there_are_no_units(self) -> None:
         self.assertEqual([], self.update("--action", "status")["units"])
@@ -732,7 +753,7 @@ class TheInputsStageAsksFirst(UpdateCase):
         was = self.rounds()
         out = self.update("--action", "inputs")
         self.assertEqual("inputs", out["stage"], out)
-        self.assertEqual((self.feature_root / "inbox").resolve().as_posix(), out["paths"]["inbox"])
+        self.assertEqual((self.feature_root / "sources" / "inbox").resolve().as_posix(), out["paths"]["inbox"])
         self.assertEqual("inputs", self.contract()["update"]["stage"])
         self.assertEqual("inventory_materials", self.next_of())
         write_gaps(self.src)
@@ -775,8 +796,8 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertEqual(out["update"], self.contract()["update"]["open"])
 
     def test_a_new_original_in_the_inbox_is_a_change(self) -> None:
-        inbox = self.feature_root / "inbox"
-        inbox.mkdir(exist_ok=True)
+        inbox = self.feature_root / "sources" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
         (inbox / "交通卡自动充值-v2.md").write_text("# 产品需求\n\n单日上限 300。\n", encoding="utf-8")
         out = self.update("--action", "inputs")
         self.assertIn("交通卡自动充值-v2.md", out["pending"], out)
@@ -797,8 +818,8 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.answer()
         self.update()
         rounds = len(self.contract()["rounds"])
-        prd = self.feature_root / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n单日上限 300。\n", encoding="utf-8")
+        prd = self.feature_root / "sources" / "prd-v1" / "prd.md"
+        import_into(self.root, self.feature_root, {"RR/prd.md": (prd.read_bytes() + "\n单日上限 300。\n".encode("utf-8"), "RR")})
         self.assertEqual("refresh_round", self.next_of())
         self.flow("round")
         self.assertEqual(rounds, len(self.contract()["rounds"]), "update 期间开了新轮")
@@ -973,67 +994,77 @@ class TheRequestedResultDecidesTheClose(UpdateCase):
         self.assertEqual("documents", rec["requested_result"])
 
 
-class ANewVersionReplacesTheOldOriginal(UpdateCase):
-    """同一来源的新版本：旧原件移进 `.backups/local/` 再导入，目标正文只含新版。
+class ANewVersionKeepsTheOldOne(UpdateCase):
+    """同一来源的新版本落成新版本，旧版本原样留着；换了名字的改版稿是新来源，update 列出同类的已有来源由模型读了判。"""
 
-    导入链的不变量是「某类目标全文 = 该类 inbox 原件按名拼接」，没有「替代」语义；
-    旧原件留在 inbox 的话，`RR/prd.md` 就是两版拼在一起（预跑里 auto 为了躲开它把 v2 归成了 AR）。
-    """
-
-    def import_all(self, classes: dict[str, str]) -> None:
-        inbox = self.feature_root / "inbox"
-        (inbox / ".classify.json").write_text(json.dumps(classes, ensure_ascii=False), encoding="utf-8")
-        proc = subprocess.run(
-            [sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
-             "--project-root", str(self.root)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-
-    def test_only_the_new_version_lands(self) -> None:
-        inbox = self.feature_root / "inbox"
-        inbox.mkdir(exist_ok=True)
-        (inbox / "产品原稿-v1.md").write_text("# 产品需求\n\n单日上限 200。\n", encoding="utf-8")
-        self.import_all({"产品原稿-v1.md": "RR"})
+    def test_a_renamed_revision_is_a_new_source_and_the_same_class_is_hinted(self) -> None:
+        import_into(self.root, self.feature_root, {"产品原稿-v1.md": ("# 产品需求\n\n单日上限 200。\n".encode("utf-8"), "RR")})
+        inbox = self.feature_root / "sources" / "inbox"
         (inbox / "RR-prd.md").write_text("# 产品需求\n\n单日上限 300。\n", encoding="utf-8")
+        (inbox / ".classify.json").write_text(json.dumps({"RR-prd.md": "RR"}, ensure_ascii=False), encoding="utf-8")
         hint = self.update("--action", "inputs")["superseded_hint"]
-        self.assertEqual([{"new": "RR-prd.md", "same_class": ["产品原稿-v1.md"]}],
-                         [{k: h[k] for k in ("new", "same_class")} for h in hint],
-                         "没提示同类的旧原件")
-        backup = self.feature_root / ".backups" / "local"
-        backup.mkdir(parents=True, exist_ok=True)
-        (inbox / "产品原稿-v1.md").rename(backup / "产品原稿-v1.md")
-        self.import_all({"RR-prd.md": "RR"})
-        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
-        self.assertIn("单日上限 300", prd)
-        self.assertNotIn("单日上限 200", prd, "旧版还拼在正文里")
-        self.assertTrue((backup / "产品原稿-v1.md").is_file(), "旧原件被删了，不是移走")
+        self.assertEqual("RR-prd.md", hint[0]["new"])
+        self.assertIn("local:产品原稿-v1.md", hint[0]["same_class"], "没提示同类的已有来源")
+        import_into(self.root, self.feature_root, {"RR-prd.md": ("# 产品需求\n\n单日上限 300。\n".encode("utf-8"), "RR")})
+        index = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        ids = {s["source_id"]: s for s in index["sources"]}
+        self.assertIn("local:RR-prd.md", ids)
+        old = self.feature_root / ids["local:产品原稿-v1.md"]["versions"][0]["original"]["path"]
+        self.assertIn("单日上限 200", old.read_text(encoding="utf-8"), "旧来源被动了")
+
+    def test_the_same_place_again_is_a_new_version(self) -> None:
+        import_into(self.root, self.feature_root, {"产品原稿.md": ("# 产品需求\n\n单日上限 200。\n".encode("utf-8"), "RR")})
+        import_into(self.root, self.feature_root, {"产品原稿.md": ("# 产品需求\n\n单日上限 300。\n".encode("utf-8"), "RR")})
+        index = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        versions = next(s for s in index["sources"] if s["source_id"] == "local:产品原稿.md")["versions"]
+        self.assertEqual([1, 2], [v["version"] for v in versions])
+        texts = [(self.feature_root / v["original"]["path"]).read_text(encoding="utf-8") for v in versions]
+        self.assertIn("单日上限 200", texts[0])
+        self.assertIn("单日上限 300", texts[1])
 
 
 class SameNamedOriginalSteps:
-    """V01 的真实入口步骤：update inputs、材料关卡、import_sources、prepare、round、complete、restore、close；
-    旧原件按方法页移进 `.backups/local/`。不手改冻结快照或 origins。混入 UpdateCase 一族使用。"""
+    """V01 的真实入口步骤：update inputs、材料关卡、import_sources、prepare、round、complete、restore、close。
+    同一位置放入改过的原件导入后就是同一来源的新版本，旧版本留着；设计输入采用该来源最新的版本。
+    不手改冻结快照或 origins。混入 UpdateCase 一族使用。"""
 
     NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n"
              "| 验收口径 | 没动 |\n")
+    NAME = "甲需求.md"
 
     def setUp(self) -> None:
         super().setUp()
-        self.inbox = self.feature_root / "inbox"
-        self.inbox.mkdir(exist_ok=True)
-        self.backups = self.feature_root / ".backups" / "local"
+        self.inbox = self.feature_root / "sources" / "inbox"
+        self.inbox.mkdir(parents=True, exist_ok=True)
         self.draft = self.src / "design-draft.md"
-        self.original = self.inbox / "甲需求.md"
+
+    def index(self) -> dict:
+        return json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+
+    def versions(self) -> list[dict]:
+        """这份原件这个来源的全部版本。"""
+        return next((s["versions"] for s in self.index()["sources"] if s["source_id"] == f"local:{self.NAME}"), [])
 
     def snapshot_ref(self) -> str:
         return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["input"]["snapshot_ref"]
 
+    def adopt_latest(self) -> None:
+        """设计输入改为采用这个来源最新的版本（替掉它的旧版本，其余采用不变）。"""
+        path = self.src / "design-input.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        mine = {f"{v['dir']}/" for v in self.versions()}
+        latest = self.versions()[-1]
+        wanted = [(latest["readable"] or latest["original"])["path"], *(i["path"] for i in latest.get("images") or [])]
+        data["adopted"] = [a for a in data["adopted"] if not any(a.startswith(d) for d in mine)] + wanted
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
     def adopt(self, data: bytes, basis: str) -> str:
-        """一次采用：材料关卡答补料 → 导入 → 开轮 → 登记本轮 → 提取稿写进依据 → complete 冻结；返回本轮 id。"""
-        self.original.write_bytes(data)
-        self.assertIn("甲需求.md", self.update("--action", "inputs")["pending"])
+        """一次采用：材料关卡答补料 → 导入 → 开轮 → 登记本轮 → 提取稿写进依据 → 设计输入采用新版本 → complete 冻结；返回本轮 id。"""
+        (self.inbox / self.NAME).write_bytes(data)
+        self.assertIn(self.NAME, self.update("--action", "inputs")["pending"])
         write_gaps(self.src)
         self.assertEqual("accepted", answer(self.flow, "material_scope", "放了甲需求", "--chosen", "supplied")["outcome"])
-        (self.inbox / ".classify.json").write_text(json.dumps({"甲需求.md": "RR"}, ensure_ascii=False), encoding="utf-8")
+        (self.inbox / ".classify.json").write_text(json.dumps({self.NAME: "RR"}, ensure_ascii=False), encoding="utf-8")
         proc = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
                                "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=120)
@@ -1042,7 +1073,8 @@ class SameNamedOriginalSteps:
         self.assertIsNone(self.flow("round").get("error"))
         text = self.draft.read_text(encoding="utf-8")
         self.draft.write_text(text.split("\n<!-- 依据 -->", 1)[0] + f"\n<!-- 依据 -->\n{basis}\n", encoding="utf-8")
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
+        self.adopt_latest()
+        done = self.flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
         self.assertTrue(done.get("committed"), done)
         return rid
 
@@ -1050,13 +1082,11 @@ class SameNamedOriginalSteps:
         (self.updates / rid / "update-notes.md").write_text(self.NOTES, encoding="utf-8")
         self.assertEqual("closed", self.update("--action", "close").get("status"))
 
-    def supersede(self, stamp: str) -> None:
-        """方法页：新版导入前把收件箱里那份旧原件本身移进 .backups/local/<名>-<时刻>，不删。"""
-        self.backups.mkdir(parents=True, exist_ok=True)
-        self.original.rename(self.backups / f"甲需求.md-{stamp}")
-
-    def frozen_prd(self, ref: str) -> bytes:
-        return (self.root / ref).parent.joinpath("files", "RR", "prd.md").read_bytes()
+    def frozen_original(self, ref: str) -> bytes:
+        """冻结包里这个来源被采用的那一版原件。"""
+        snapshot = json.loads((self.root / ref).read_text(encoding="utf-8"))
+        row = next(r for r in snapshot["files"] if Path(r["path"]).name == self.NAME)
+        return (self.root / ref).parent.joinpath("files", *row["path"].split("/")).read_bytes()
 
     def resolve_conflicts(self, out: dict) -> None:
         """人按冲突给的开轮版本定回去。"""
@@ -1065,8 +1095,8 @@ class SameNamedOriginalSteps:
 
 
 class TheFrozenOriginalIsTracedThroughRetirement(SameNamedOriginalSteps, UpdateCase):
-    """冻结采用稿当时的原件按快照记的路径与摘要核：同名新版按方法页 `--retire` 退掉旧版再导入、登记本轮之后，
-    审查对象从退役备份取回当时那一版；备份也没了就报缺口，不拿同路径的新版顶替。"""
+    """冻结采用稿当时的原件按快照记的路径与摘要核：同一位置导入新版、登记本轮之后，审查对象仍绑定当时那一版原件；
+    那一版的原件不在了就报缺口，不拿同一来源的新版本顶替。"""
 
     OBJECT = """
 import { pathToFileURL } from 'node:url';
@@ -1083,19 +1113,19 @@ process.stdout.write(JSON.stringify({ rows: o.rows.map(r => [r.path, r.label]), 
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
         return json.loads(proc.stdout)
 
-    def test_the_retired_original_is_found_and_a_lost_one_is_named(self) -> None:
-        v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
-        self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
+    NAME = "甲需求.docx"
+    DOCX = REPO_ROOT / "test" / "cases" / "auto-topup"
+
+    def test_the_adopted_version_is_traced_and_a_lost_one_is_named(self) -> None:
+        v1 = (self.DOCX / "supplements" / "交通卡自动充值.docx").read_bytes()
+        self.close(self.adopt(v1, "按甲需求第一版。"))
         frozen_ref = self.snapshot_ref()
-        retire = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
-                                 "--project-root", str(self.root), "--retire", "甲需求.md"],
-                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(0, retire.returncode, retire.stdout + retire.stderr)
-        self.original.write_bytes("# 甲需求\n\n单日上限 300。\n".encode("utf-8"))
+        first = self.versions()[0]
+        (self.inbox / self.NAME).write_bytes((self.DOCX / "update-inputs" / "交通卡自动充值-v2.docx").read_bytes())
         self.update("--action", "inputs")
         write_gaps(self.src)
         answer(self.flow, "material_scope", "放了甲需求新版", "--chosen", "supplied")
-        (self.inbox / ".classify.json").write_text(json.dumps({"甲需求.md": "RR"}, ensure_ascii=False), encoding="utf-8")
+        (self.inbox / ".classify.json").write_text(json.dumps({self.NAME: "RR"}, ensure_ascii=False), encoding="utf-8")
         done = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
                                "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=120)
@@ -1103,19 +1133,19 @@ process.stdout.write(JSON.stringify({ rows: o.rows.map(r => [r.path, r.label]), 
         self.update()
         self.assertIsNone(self.flow("round").get("error"))
         self.assertEqual(frozen_ref, self.snapshot_ref(), "没重新冻结，采用版应仍是第一版")
+        self.assertEqual([1, 2], [v["version"] for v in self.versions()])
 
-        backup = f".backups/local/inbox/甲需求.{hashlib.sha256(v1).hexdigest()[:16]}.md"
-        self.assertTrue((self.feature_root / backup).is_file(), "方法页的退役没有按摘要留备份")
         got = self.review_object()
-        traced = [label for rel, label in got["rows"] if rel.endswith(backup)]
+        original = first["original"]["path"]
+        traced = [label for rel, label in got["rows"] if rel.endswith(original)]
         self.assertEqual(1, len(traced), got["rows"])
-        self.assertIn("冻结采用稿 RR/prd.md 当时的原件 inbox/甲需求.md（已退役", traced[0])
+        self.assertIn(f"冻结采用稿 {first['readable']['path']} 当时的原件 {original}", traced[0])
         self.assertFalse([p for p in got["problems"] if "当时的原件" in p], got["problems"])
 
-        (self.feature_root / backup).unlink()
+        (self.feature_root / original).unlink()
         lost = [p for p in self.review_object()["problems"] if "当时的原件" in p]
         self.assertEqual(1, len(lost), lost)
-        self.assertIn("既不在原处，也不在退役备份", lost[0])
+        self.assertIn("不在原处", lost[0])
 
 
 class ASameNamedOriginalGoesThroughTheRealEntries(SameNamedOriginalSteps, UpdateCase):
@@ -1127,11 +1157,10 @@ class ASameNamedOriginalGoesThroughTheRealEntries(SameNamedOriginalSteps, Update
         v1_ref = self.snapshot_ref()
         draft_v1 = self.draft.read_bytes()
 
-        self.supersede("20261012T010000")
         self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。")
         v2_ref = self.snapshot_ref()
         self.assertNotEqual(v1_ref, v2_ref)
-        self.assertIn("单日上限 300", self.frozen_prd(v2_ref).decode("utf-8"))
+        self.assertIn("单日上限 300", self.frozen_original(v2_ref).decode("utf-8"))
 
         out = self.update("--action", "restore")
         self.assertEqual("restore_conflicted", out["status"], "complete 不是完成点：本轮改动没有登记的一版可比，应列冲突")
@@ -1142,34 +1171,33 @@ class ASameNamedOriginalGoesThroughTheRealEntries(SameNamedOriginalSteps, Update
         self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
         self.assertEqual(draft_v1, self.draft.read_bytes())
         self.assertEqual(v2_ref, self.snapshot_ref(), "撤回改了已冻结的输入登记")
-        self.assertIn("单日上限 300", self.original.read_text(encoding="utf-8"), "撤回回写了收件箱")
-        self.assertIn("单日上限 200", self.frozen_prd(v1_ref).decode("utf-8"), "旧冻结包被动了")
+        latest = self.versions()[-1]
+        self.assertEqual(2, latest["version"], "撤回动了材料版本")
+        self.assertIn("单日上限 300", (self.feature_root / latest["original"]["path"]).read_text(encoding="utf-8"),
+                      "撤回回写了材料版本")
+        self.assertIn("单日上限 200", self.frozen_original(v1_ref).decode("utf-8"), "旧冻结包被动了")
         self.assertEqual("design_blueprint", self.flow("status")["next"], "撤回后没要求设计按当前输入同步")
 
-    def test_a_closed_round_readopts_the_old_original_from_the_backup(self) -> None:
+    def test_a_closed_round_readopts_the_old_content_as_a_new_version(self) -> None:
+        """换版之后又改回旧内容：旧版本一直留在原处，改回的内容作为新一版取得并被采用，中间那一版冻结包不动。"""
         v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
         self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
         v1_ref = self.snapshot_ref()
-        self.supersede("20261012T010000")
         self.close(self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。"))
         v2_ref = self.snapshot_ref()
 
-        self.supersede("20261012T020000")
-        kept = (self.backups / "甲需求.md-20261012T010000").read_bytes()
-        self.assertEqual(v1, kept, "备份里不是旧原件的字节")
+        kept = (self.feature_root / self.versions()[0]["original"]["path"]).read_bytes()
+        self.assertEqual(v1, kept, "第一版的原件不是当时的字节")
         self.close(self.adopt(kept, "单日上限 200，按甲需求。"))
         v3_ref = self.snapshot_ref()
         self.assertNotEqual(v2_ref, v3_ref)
-        self.assertEqual(self.frozen_prd(v1_ref), self.frozen_prd(v3_ref), "重新采用的冻结正文不是旧版")
-        origins = json.loads((self.root / v3_ref).read_text(encoding="utf-8"))["origins"]["RR/prd.md"]
-        self.assertEqual(["inbox/甲需求.md"], [o["path"] for o in origins])
-        self.assertIn("单日上限 300", self.frozen_prd(v2_ref).decode("utf-8"), "中间那一版冻结包被覆盖了")
-        self.assertEqual(["甲需求.md-20261012T010000", "甲需求.md-20261012T020000"],
-                         sorted(p.name for p in self.backups.glob("甲需求.md-*")), "换版的旧原件没各留一份")
+        self.assertEqual(self.frozen_original(v1_ref), self.frozen_original(v3_ref), "重新采用的冻结正文不是旧版")
+        self.assertIn("单日上限 300", self.frozen_original(v2_ref).decode("utf-8"), "中间那一版冻结包被覆盖了")
+        self.assertEqual([1, 2, 3], [v["version"] for v in self.versions()], "换版的各版没各留一份")
 
 
 class FetchOnlyWritesToTheInbox(unittest.TestCase):
-    """只读取材：三份正文放本单 inbox，与人补的料走同一条导入链；业务文件一个字节都不碰。"""
+    """只读取材：三份正文放本单来源收件箱的取材批次，与人补的料走同一条导入链；业务文件一个字节都不碰。"""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -1191,7 +1219,7 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
         (self.feature / "AR").mkdir(parents=True)
         self.review = self.feature / "AR" / "review.md"
         self.review.write_text("# 评审记录\n\n人已经写过的意见。\n", encoding="utf-8")
-        self.out = self.feature / "inbox"
+        self.out = self.feature / "sources" / "inbox" / "fetch-1"
         self.src = self.feature / "AR" / "story-src"
 
     def fetch(self, ar: str = AR, *extra: str) -> tuple[int, dict]:
@@ -1227,29 +1255,44 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
 
     def test_the_receipt_says_where_each_one_came_from(self) -> None:
         self.fetch(AR, "--out", str(self.out))
-        self.assertEqual([], list(self.out.glob("*.json")), "回执进了 inbox，会被当成材料导入")
+        self.assertEqual([".receipt.json"], [p.name for p in self.out.glob("*.json")],
+                         "批次里只该有点文件回执（控制件，不当材料导入）")
         receipt = json.loads((self.src / "fetched.json").read_text(encoding="utf-8"))
         prd = [i for i in receipt["items"] if i["name"] == "RR-prd.md"][0]
         self.assertEqual(f"{RR}/prd.md", prd["origin"])
         self.assertTrue(prd["digest"].startswith("sha256:"))
+        batch = json.loads((self.out / ".receipt.json").read_text(encoding="utf-8"))
+        self.assertEqual((AR, SR, RR), (batch["reqNo"], batch["parentNo"], batch["rrNo"]))
+        roles = {i["name"]: (i["role"], i["ticket"], i["title"]) for i in batch["items"]}
+        self.assertEqual(("RR", RR, "产品需求"), roles["RR-prd.md"])
+        self.assertEqual(("AR", AR, "开发需求"), roles["AR-design.md"])
 
-    def test_what_equals_the_local_copy_is_not_dropped_in(self) -> None:
-        """与本地逐字相同的不落盘：放进去它就是一份「未并入的原件」，每次 update 都被报成新料。
-        本单系统正文与本地 story 相同，就是自己归档上去的那一版。"""
-        (self.feature / "RR").mkdir()
-        (self.feature / "RR" / "prd.md").write_text("# 产品需求\n\n单日上限 200。\n", encoding="utf-8")
-        (self.feature / "AR" / "story.md").write_text("# 开发需求\n\n上游先填了一版。\n",
-                                                      encoding="utf-8")
+    def test_what_equals_a_stored_version_is_not_dropped_in(self) -> None:
+        """与来源索引里同一来源已存的某一版逐字相同的不落盘：放进去它就是一份待导入的件，每次 update 都被报成新料。"""
+        self.assertEqual(0, self.fetch(AR, "--out", str(self.out))[0])
+        proc = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", AR,
+                               "--project-root", str(self.project)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        again = self.feature / "sources" / "inbox" / "fetch-2"
+        code, receipt = self.fetch(AR, "--out", str(again))
+        self.assertEqual(0, code, receipt)
+        states = {i["name"]: i["status"] for i in receipt["items"]}
+        self.assertEqual(("same", "same", "same"), (states["RR-prd.md"], states["SR-design.md"], states["AR-design.md"]))
+        self.assertFalse(again.exists(), "没有新内容却建了取材批次")
+
+    def test_our_own_published_story_is_not_new_upstream(self) -> None:
+        """本单系统正文与本地 story 相同，就是自己归档上去的那一版：不当成上游新需求取回。"""
+        (self.feature / "AR" / "story.md").write_text("# 开发需求\n\n上游先填了一版。\n", encoding="utf-8")
         code, receipt = self.fetch(AR, "--out", str(self.out))
         self.assertEqual(0, code, receipt)
         states = {i["name"]: i["status"] for i in receipt["items"]}
-        self.assertEqual("same", states["RR-prd.md"])
         self.assertEqual("same", states["AR-design.md"])
-        self.assertEqual(["SR-design.md"], sorted(f.name for f in self.out.iterdir()))
+        self.assertFalse((self.out / "AR-design.md").exists())
 
     def test_the_adapter_reports_facts_not_core_steps(self) -> None:
         """对接层只报取回、落盘的事实，不提示 core 的下一步命令。"""
-        for cmd in (["init", AR, "token"], ["fetch", AR, "token", "--out", str(self.out)]):
+        for cmd in (["fetch", AR, "token", "--out", str(self.out)],):
             with self.subTest(cmd[0]):
                 proc = subprocess.run(["node", str(STORY_JS), *cmd, "--project-root", str(self.project)],
                                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
@@ -1610,9 +1653,12 @@ class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsR
         rid = self.adopt("# 甲需求\n\n单日上限 200。\n".encode("utf-8"), "单日上限 200，按甲需求。")
         self.design_syncs()
         story = self.feature_root / "AR" / "story.md"
-        story.write_bytes(story.read_bytes().decode("utf-8").replace(
-            "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) |",
-            "| 甲需求 PRD [prd.md](../RR/prd.md) | [甲需求.md](../inbox/甲需求.md) |").encode("utf-8"))
+        row = "| 甲需求 PRD [prd.md](../sources/prd-v1/prd.md) | [prd.md](../sources/prd-v1/prd.md) |"
+        mine = self.versions()[-1]["original"]["path"]
+        text = story.read_bytes().decode("utf-8")
+        self.assertIn(row, text)
+        story.write_bytes(text.replace(row, f"| 甲需求 [甲需求.md](../{mine}) | [甲需求.md](../{mine}) | 单日上限。 |\n" + row)
+                          .encode("utf-8"))
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.close(rid)
         self.mark_archived()
@@ -1628,7 +1674,6 @@ class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsR
 
     def test_a_new_version_withdrawn_leaves_the_registration_to_the_design_sync(self) -> None:
         v1_ref = self.registered_v1()
-        self.supersede("20261012T010000")
         self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。")
         v2_ref = self.snapshot_ref()
         self.assertEqual(("complete", "design_blueprint"), (self.contract()["status"], self.flow("status")["next"]),
@@ -1641,8 +1686,8 @@ class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsR
         self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
         self.assertEqual(before, self.kept(), "撤回回写了冻结输入、蓝图、关卡记录或归档标记")
         self.assertEqual(v2_ref, self.snapshot_ref())
-        self.assertIn("单日上限 200", self.frozen_prd(v1_ref).decode("utf-8"), "v1 冻结包被动了")
-        self.assertIn("单日上限 300", self.frozen_prd(v2_ref).decode("utf-8"), "v2 冻结包被动了")
+        self.assertIn("单日上限 200", self.frozen_original(v1_ref).decode("utf-8"), "v1 冻结包被动了")
+        self.assertIn("单日上限 300", self.frozen_original(v2_ref).decode("utf-8"), "v2 冻结包被动了")
         self.assertEqual(("complete", "design_blueprint"), (self.contract()["status"], self.flow("status")["next"]),
                          "撤回之后把旧登记当成了现在的")
         self.assertNotEqual(0, self.deliver().returncode, "设计没按当前输入同步，交付门却放行了")
@@ -1725,13 +1770,18 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.mark_archived()
         rid = self.update()["update"]
-        prd = self.feature_root / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n改版：回执状态以服务端为准。\n", encoding="utf-8")
+        prd = self.feature_root / "sources" / "prd-v1" / "prd.md"
+        import_into(self.root, self.feature_root,
+                    {"RR/prd.md": (prd.read_bytes() + "\n改版：回执状态以服务端为准。\n".encode("utf-8"), "RR")})
         self.flow("round")
+        cite_latest_prd(self.feature_root)
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         refused = self.update("--action", "close")
         self.assertIn("材料变了", refused.get("error", ""), refused)
+        path = self.src / "design-input.json"       # 设计改为采用产品需求的新版本
+        path.write_text(path.read_text(encoding="utf-8").replace("sources/prd-v1/prd.md", "sources/prd-v2/prd.md"),
+                        encoding="utf-8")
         done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
         self.assertTrue(done.get("committed"), done)
         self.design_syncs()
@@ -1768,11 +1818,10 @@ class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChanges
         self.mark_archived()
         rid = self.update()["update"]
         before = self.contract()["input"]["snapshot_ref"]
-        (self.feature_root / "assets").mkdir(exist_ok=True)
-        (self.feature_root / "assets" / "meeting-photo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+        import_into(self.root, self.feature_root, {"meeting-photo.png": (b"\x89PNG\r\n\x1a\n" + b"0" * 32, "UX")})
         unused = self.run_cmd(sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
                               "--project-root", str(self.root), "--caption-image",
-                              f"doc/features/{FEATURE}/assets/meeting-photo.png", "--unused", "会场照片，不是需求依据")
+                              f"doc/features/{FEATURE}/sources/meeting-photo-v1/meeting-photo.png", "--unused", "会场照片，不是需求依据")
         self.assertEqual(0, unused.returncode, unused.stdout + unused.stderr)
         self.flow("round")
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
@@ -1855,9 +1904,10 @@ class TheUpdateRoundRunsEndToEnd(RegisteredCase):
     def test_the_whole_round(self) -> None:
         contract = lambda: json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
         status = lambda: self.flow("status")
-        # 上游材料出了新版
-        prd = self.feature_root / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n改版：余额刷新失败要提示用户。\n", encoding="utf-8")
+        # 上游材料出了新版：同一位置放入改版稿导入，成为产品需求的第二版
+        prd = self.feature_root / "sources" / "prd-v1" / "prd.md"
+        import_into(self.root, self.feature_root,
+                    {"RR/prd.md": (prd.read_bytes() + "\n改版：余额刷新失败要提示用户。\n".encode("utf-8"), "RR")})
         # 先报输入，在材料关卡问一次要不要补料；人说就这些
         self.assertEqual("inputs", self.update("--action", "inputs")["stage"])
         write_gaps(self.src)
@@ -1882,6 +1932,7 @@ class TheUpdateRoundRunsEndToEnd(RegisteredCase):
         self.assertEqual("complete", done.get("status"), done)
         self.assertEqual("design_blueprint", status()["next"], "输入换了版本，蓝图还没按它同步")
         StoryIsRegisteredAgainAfterChanges.design_syncs(self)
+        cite_latest_prd(self.feature_root)
         self.assertEqual("register_story", status()["next"])
         # 收口前要按当前设计重新登记：没登记不收口
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
@@ -2053,8 +2104,22 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.receipt((self.feature_root / "AR" / "design.md").read_bytes(), when="2000-01-01T00:00:00+00:00")
         self.assertIn("重新取一次材", self.error(self.publish))
 
-    def test_the_first_publish_starts_from_the_adopted_design(self) -> None:
-        self.receipt((self.feature_root / "AR" / "design.md").read_bytes())
+    def test_the_first_publish_baseline_is_the_fetched_development_requirement(self) -> None:
+        """首次发布时正文允许覆盖的那一版，是需求系统给本单取回的开发需求正文最新取得的那一版。"""
+        batch = self.feature_root / "sources" / "inbox" / "fetch-1"
+        batch.mkdir(parents=True)
+        body = "# 开发需求\n\n上游先填了一版。\n".encode("utf-8")
+        (batch / "AR-design.md").write_bytes(body)
+        (batch / ".receipt.json").write_text(json.dumps({"reqNo": FEATURE, "items": [
+            {"name": "AR-design.md", "role": "AR", "ticket": FEATURE, "status": "fetched"}]}), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
+                               "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual(self.digest(body), self.call("_baselines", self.contract())["AR-design.md"])
+
+    def test_the_first_publish_with_nothing_external_writes_all_three(self) -> None:
+        self.receipt(None)
         out = self.publish()
         self.assertTrue(out["publishable"], out)
         self.assertEqual({"AR-design.md": "write", "review.md": "write", "design-review.md": "write"}, self.actions(out))

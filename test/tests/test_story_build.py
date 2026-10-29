@@ -35,6 +35,7 @@ FIXTURE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
            / "R01-verdict-echo" / "good")
 FEATURE = "REQ-DEMO"
 FLOW = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+IMPORT = DEV_EXT / "skills" / "story" / "scripts" / "core" / "import_sources.py"
 #: 一份协议齐全的最小写作设计（十章各一段、结构选择为空）——测正文路径的用例起手前放它。
 PLAN_FIXTURE = FIXTURE / "doc" / "features" / FEATURE / "AR" / "story-src" / "story-template.md"
 
@@ -733,21 +734,20 @@ class TestFormLints(StoryBuildCase):
     def test_a_link_that_cannot_be_opened_is_named(self) -> None:
         """链接得能点开——裸相对路径解析错一层就是断链。
 
-        实测的失效形态：E 节写 `[RR/prd.md](RR/prd.md)`。story.md 在 AR/ 下，
-        这个路径解析出来是 `AR/RR/prd.md`，不存在。行形态判抓不到它——那条只看
-        链接落在需求目录的哪一段，`RR` 在允许集里就放行。「这一段允许链」与
-        「这个链接能不能点开」是两件事，得分开判。
+        实测的失效形态：E 节写 `[prd.md](sources/prd-v1/prd.md)`。story.md 在 AR/ 下，
+        这个路径解析出来是 `AR/sources/prd-v1/prd.md`，不存在。行形态判抓不到它——那条只看
+        链接落在需求目录的哪一段。「这一段允许链」与「这个链接能不能点开」是两件事，得分开判。
         """
-        self.put_materials("| [甲需求 PRD](RR/prd.md) | 需求目录（产品需求） | 提交回执的业务诉求与状态取值 |\n"
-                           "| [开发需求](design.md) | 需求目录（开发需求） | 业务分工与本单范围 |\n")
+        self.put_materials("| [甲需求 PRD](sources/prd-v1/prd.md) | 需求目录（产品需求） | 提交回执的业务诉求与状态取值 |\n"
+                           "| [开发需求](../sources/design-v1/design.md) | 需求目录（开发需求） | 业务分工与本单范围 |\n")
         self.init_audit()
         out = self.assert_check_names("链接点不开")
-        self.assertIn("RR/prd.md", out, "报错要把点不开的那个目标给出来")
+        self.assertIn("sources/prd-v1/prd.md", out, "报错要把点不开的那个目标给出来")
 
     def test_a_link_that_resolves_passes(self) -> None:
         """同一份材料写对了相对层级就该过——判的是能不能点开，不是长什么样。"""
-        self.put_materials("| [甲需求 PRD](../RR/prd.md) | 需求目录（产品需求） | 提交回执的业务诉求与状态取值 |\n"
-                           "| [开发需求](design.md) | 需求目录（开发需求） | 业务分工与本单范围 |\n")
+        self.put_materials("| [甲需求 PRD](../sources/prd-v1/prd.md) | 需求目录（产品需求） | 提交回执的业务诉求与状态取值 |\n"
+                           "| [开发需求](../sources/design-v1/design.md) | 需求目录（开发需求） | 业务分工与本单范围 |\n")
         self.init_audit()
         code, out = self.check_output()
         self.assertNotIn("链接点不开", out)
@@ -1159,6 +1159,25 @@ class Step8Case(StoryBuildCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
+    def put_inbox(self, files: dict[str, bytes], classes: dict[str, str] | None = None) -> None:
+        inbox = self.feature_root() / "sources" / "inbox"
+        for name, body in files.items():
+            path = inbox / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+        if classes:
+            (inbox / ".classify.json").write_text(json.dumps(classes, ensure_ascii=False), encoding="utf-8")
+
+    def import_now(self, files: dict[str, bytes], classes: dict[str, str]) -> dict:
+        """经真实导入命令导成材料版本并登记本轮，返回 `{收件箱键: 最新版本}`。"""
+        self.put_inbox(files, classes)
+        proc = subprocess.run([sys.executable, str(IMPORT), "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.round_now()
+        index = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        return {s["origin"].get("inbox_path"): s["versions"][-1] for s in index["sources"]}
+
     def write_decision(self, extra: list[dict] | None = None) -> None:
         rows = [settled_decision(
             "submit-boundary", "提交入口与补卡由两张开发单分别承接",
@@ -1192,10 +1211,18 @@ class TestArRootStaysClean(StoryBuildCase):
         self.assertNotIn("不该在这一层", out)
 
     def test_the_delivery_documents_pass(self) -> None:
-        """白名单上的照过——`detail.json` 由对接层写，它是这一层的正当住户。"""
-        (self.ar_root() / "detail.json").write_text('{"id": "REQ-DEMO"}', encoding="utf-8")
+        """白名单上的照过：交付文档与提取稿骨架在这一层是正当住户。"""
+        for name in ("design.md", "review.md", "design-review.md"):
+            path = self.ar_root() / name
+            if not path.exists():
+                path.write_text("# x\n", encoding="utf-8")
         _, out = self.check_output()
         self.assertNotIn("不该在这一层", out)
+
+    def test_a_system_detail_file_is_no_longer_a_resident(self) -> None:
+        """需求系统的单号与关系记在来源版本里：`AR/detail.json` 不再是这一层的住户。"""
+        (self.ar_root() / "detail.json").write_text('{"id": "REQ-DEMO"}', encoding="utf-8")
+        self.assert_check_names("AR/detail.json 不该在这一层")
 
 
 class TheFieldCheckIsOneImplementation(Step8Case):
@@ -1448,10 +1475,10 @@ class TestImageIdentityComesFromTheManifest(Step8Case):
 
     def setUp(self) -> None:
         super().setUp()
-        self.material_image = self.feature_root() / "assets" / "上游文档" / "image1.png"
-        self.material_image.parent.mkdir(parents=True, exist_ok=True)
-        self.material_image.write_bytes(b"PNGDATA1")
         self.round_now()
+        version = self.import_now({"上游文档/image1.png": b"PNGDATA1"}, {"上游文档/image1.png": "UX"})["上游文档/image1.png"]
+        self.material_image = self.feature_root() / version["original"]["path"]
+        self.registered = "../" + version["original"]["path"]
         self.init_audit()
 
     def put_image_ref(self, *refs: str) -> None:
@@ -1459,13 +1486,13 @@ class TestImageIdentityComesFromTheManifest(Step8Case):
         self.rewrite_story("## 业务方案", block + "\n\n## 业务方案")
 
     def test_a_reference_to_a_registered_image_passes(self) -> None:
-        self.put_image_ref("../assets/上游文档/image1.png")
+        self.put_image_ref(self.registered)
         _, out = self.check_output()
         self.assertNotIn("不在材料的图片登记里", out)
         self.assertNotIn("同一张图被两个路径引用", out)
 
     def test_an_unregistered_image_is_named(self) -> None:
-        self.put_image_ref("../assets/别处/image9.png")
+        self.put_image_ref("../sources/别处/image9.png")
         self.assert_check_names("不在材料的图片登记里")
 
     def test_an_unregistered_copy_is_named_even_if_the_bytes_match(self) -> None:
@@ -1506,7 +1533,7 @@ class TestImageIdentityComesFromTheManifest(Step8Case):
     def test_without_a_manifest_the_check_says_it_did_not_run(self) -> None:
         """没有清单时不许静默放过：说清楚这条判据没执行、怎么让它能执行。"""
         (self.src / "materials.json").unlink()
-        self.put_image_ref("../assets/别处/image9.png")
+        self.put_image_ref("../sources/别处/image9.png")
         _, out = self.check_output()
         self.assertIn("图片身份与落点判据未执行", out)
         self.assertIn("story_flow.py round", out)
@@ -1931,7 +1958,7 @@ class TheChapterIsCheckedBeforeItLandsPart2(TheChapterIsCheckedBeforeItLandsCase
     def test_the_upstreams_own_numbering_is_not_a_work_id(self) -> None:
         """上游原件自己用 F3 编功能点：Story 照原文引用它不是仓内工作编号，不强制改号。"""
         flow = json.loads((self.feature_root() / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
-        frozen = self.root / Path(flow["input"]["snapshot_ref"]).parent / "files" / "RR" / "prd.md"
+        frozen = self.root / Path(flow["input"]["snapshot_ref"]).parent / "files" / "sources" / "prd-v1" / "prd.md"
         frozen.write_text(frozen.read_text(encoding="utf-8") + "\n功能点 F3：签约。\n", encoding="utf-8")
         self.assertEqual(0, self.put("背景", "签约对应上游的 F3。\n").returncode)
         proc = self.put("背景", "签约对应上游的 F4。\n")
@@ -2328,7 +2355,7 @@ class OneChapterIsJudgedWhenItIsSubmitted(RealRunCase):
         out = proc.stdout + proc.stderr
         self.assertEqual(1, proc.returncode, out)
         self.assertIn("story 里的图按登记的引用认", out)
-        self.assertIn("`../ux-reference/auto-topup-signup-page.png`", out, "没给出登记的引用")
+        self.assertIn("`../sources/auto-topup-signup-page-v1/auto-topup-signup-page.png`", out, "没给出登记的引用")
 
     def test_a_direct_edit_of_story_md_is_named_by_chapter(self) -> None:
         self.build("skeleton")
@@ -2809,17 +2836,32 @@ class TestMaterialsMustStillBeTheOnesRegistered(SkeletonPreflightCase):
         self.story_path.unlink(missing_ok=True)     # 复现的是「起手要新建 Story」那一刻
 
     def change_a_material(self) -> None:
-        prd = self.feature_root() / "RR" / "prd.md"
-        prd.write_text(prd.read_text(encoding="utf-8") + "\n补一条：回执超时后允许重试一次。\n",
-                       encoding="utf-8")
+        """产品需求取得了新版本：同一位置放入改过的原件，经真实导入命令导成 v2，还没 `round` 登记。"""
+        prd = self.feature_root() / "sources" / "prd-v1" / "prd.md"
+        self.put_inbox({"RR/prd.md": (prd.read_text(encoding="utf-8") + "\n补一条：回执超时后允许重试一次。\n").encode("utf-8")},
+                       {"RR/prd.md": "RR"})
+        proc = subprocess.run([sys.executable, str(IMPORT), "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertTrue((self.feature_root() / "sources" / "prd-v2" / "prd.md").is_file())
 
     def test_a_changed_material_blocks_the_skeleton_and_writes_nothing(self) -> None:
         self.change_a_material()
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, f"材料变了还是起了手：{out}")
-        self.assertIn("材料在收口之后又变了", out)
+        self.assertRegex(out, "材料在收口之后又变了|材料基准对不上")
         self.assertIn("round", out, "没给处置动作")
+        self.assert_wrote_nothing(before)
+
+    def test_an_edited_registered_version_blocks_the_skeleton(self) -> None:
+        """已登记版本的字节被直接改了是损坏：起手停下并点名那份文件，不重填摘要放行。"""
+        prd = self.feature_root() / "sources" / "prd-v1" / "prd.md"
+        prd.write_text(prd.read_text(encoding="utf-8") + "\n手改了一行。\n", encoding="utf-8")
+        before = self.files_now()
+        code, out = self.skeleton()
+        self.assertEqual(1, code, f"登记的版本被改了还是起了手：{out}")
+        self.assertIn("sources/prd-v1/prd.md", out)
         self.assert_wrote_nothing(before)
 
     def test_registering_the_change_lets_it_start(self) -> None:
@@ -2831,9 +2873,9 @@ class TestMaterialsMustStillBeTheOnesRegistered(SkeletonPreflightCase):
         self.assertTrue(self.story_path.is_file(), out)
 
     def put_unimported_original(self, name: str = "后到的稿.md") -> None:
-        """收件箱里放一份已归类、还没并入正文的原件。"""
-        inbox = self.feature_root() / "inbox"
-        inbox.mkdir(exist_ok=True)
+        """来源收件箱里放一份已归类、还没导入的原件。"""
+        inbox = self.feature_root() / "sources" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
         (inbox / name).write_text("# " + name + "\n\n收口之后才到的材料。\n",
                                   encoding="utf-8")
         (inbox / ".classify.json").write_text(
@@ -2866,33 +2908,16 @@ class TestMaterialsMustStillBeTheOnesRegistered(SkeletonPreflightCase):
 
 
 class TheMaterialListNamesThisRoundsInputs(SkeletonPreflightCase):
-    """材料清单列的是这一轮拿到的初始资料：上游正文与收件箱原件，各一行。"""
+    """材料清单列的是这一轮拿到的初始资料：各来源最新版本的原件，一份一行。"""
 
-    def list_every_material(self) -> None:
-        """把清单补齐到「这一轮的材料一份不少」。
-
-        夹具的 story 手写在前，而 `round` 按磁盘现状重算材料集合——系统设计那一份
-        只有在它没被某条用例删掉时才在集合里，所以不写死在夹具里，由要它的用例补。
-        """
-        story = self.feature_root() / "AR" / "story.md"
-        text = story.read_text(encoding="utf-8")
-        if "SR/design.md" in text:
-            return
-        at = text.index("| 甲需求 PRD [prd.md]")
-        story.write_text(
-            text[:at] + "| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) | 本单的上游系统设计。 |\n" + text[at:],
-            encoding="utf-8")
-
-    def test_the_overwritten_ar_backup_is_not_a_required_row(self) -> None:
-        """收口覆盖 `AR/design.md` 之前的备份是退路，不是本轮材料：清单不必列它。"""
-        self.list_every_material()
+    def test_listing_this_rounds_sources_passes(self) -> None:
+        """夹具列齐了这一轮的来源（产品需求与开发需求）：清单核对通过，备份之类的退路不是材料。"""
         code, out = self.check_output()
         self.assertEqual(0, code, out)
         self.assertNotIn(".backups", out)
 
     def test_two_paragraphs_of_source_notes_are_not_flagged(self) -> None:
         """材料清单那一节写两段说明不误拦——段数配额（`proseBlocks`）已随 Q7 退场。"""
-        self.list_every_material()
         story = self.feature_root() / "AR" / "story.md"
         text = story.read_text(encoding="utf-8")
         at = text.index("### 材料清单") + len("### 材料清单")
@@ -2906,54 +2931,42 @@ class TestSourceNecessityIsJudgedOnce(SkeletonPreflightCase):
     """来源必不必需，起手与交付前的 check 是**同一份判定**。
 
     两处各判一次的代价，实测是同一份缺件被说成两件事：起手说「本地单缺它正常」，
-    交付前的 check 说「它是必备来源」——作者只能挑一句信。
+    交付前的 check 说「它是必备来源」——作者只能挑一句信。来源是不是系统单的由编号决定。
     """
 
+    def remote_copy(self) -> str:
+        """同一份需求挪成 AR 开头的编号：材料不变，只有单据来源变成需求系统。"""
+        remote = "AR90009"
+        shutil.copytree(self.feature_root(), self.feature_root().parent / remote)
+        return remote
+
+    def run_remote(self, command: str, feature: str) -> tuple[int, str]:
+        proc = subprocess.run(["node", str(BUILD), command, "--feature", feature, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        return proc.returncode, (proc.stderr or "") + (proc.stdout or "")
+
     def test_a_missing_required_source_blocks_both(self) -> None:
-        (self.feature_root() / "AR" / "design.md").unlink()
-        self.round_now()                    # 缺件也是材料变化，先登记进本轮
+        """系统单缺系统设计来源：起手拦、一个字节不写，交付前的 check 同样拦。"""
+        remote = self.remote_copy()
         before = self.files_now()
-        code, out = self.skeleton()
+        code, out = self.run_remote("skeleton", remote)
         self.assertEqual(1, code, out)
         self.assertIn("必备来源缺失", out)
-        self.assertIn("AR/design.md", out)
+        self.assertIn("系统设计（SR）", out)
         self.assert_wrote_nothing(before)
 
-        code2, out2 = self.check_output()
+        code2, out2 = self.run_remote("check", remote)
         self.assertEqual(1, code2, f"起手拦了，交付前的 check 却放过：{out2}")
-        self.assertIn("AR/design.md", out2)
+        self.assertIn("系统设计（SR）", out2)
         self.assertIn("必备来源", out2)
 
     def test_a_local_ticket_may_lack_the_remote_only_sources(self) -> None:
-        """本地单没有需求系统给的 PRD / 系统设计：记一笔，不拦——两处都不拦。"""
-        (self.feature_root() / "SR" / "design.md").unlink()
-        self.round_now()                    # 材料集合跟着变，清单按现状重算
+        """本地单没有需求系统给的系统设计：记一笔，不拦——两处都不拦。"""
         code, out = self.check_output()
         self.assertEqual(0, code, out)
-        self.assertIn("本地单没有需求系统给的这一份", out)
+        self.assertIn("本地单没有需求系统给的这一类", out)
         _, skeleton_out = self.skeleton()
-        self.assertIn("本地单没有需求系统给的这一份", skeleton_out)
-
-    def test_a_local_ticket_with_a_leftover_detail_file_stays_local(self) -> None:
-        """需求目录里留着 `AR/detail.json`，本地需求仍是本地需求：来源由编号决定。"""
-        (self.feature_root() / "AR" / "detail.json").write_text('{"reqNo": "x"}', encoding="utf-8")
-        (self.feature_root() / "SR" / "design.md").unlink()
-        self.round_now()
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-        self.assertIn("本地单没有需求系统给的这一份", out)
-
-    def test_a_system_requirement_must_have_them(self) -> None:
-        """AR 开头就是系统需求，没有 `detail.json` 也一样：同一份缺件在这里是必备缺失。"""
-        remote = "AR90009"
-        shutil.copytree(self.feature_root(), self.feature_root().parent / remote)
-        (self.feature_root().parent / remote / "SR" / "design.md").unlink()
-        proc = subprocess.run(["node", str(BUILD), "check", "--feature", remote, "--project-root", str(self.root)],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        out = (proc.stderr or "") + (proc.stdout or "")
-        self.assertEqual(1, proc.returncode, out)
-        self.assertIn("SR/design.md", out)
-        self.assertIn("必备来源", out)
+        self.assertIn("本地单没有需求系统给的这一类", skeleton_out)
 
 
 class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
@@ -3186,40 +3199,20 @@ class TheProjectionRefreshesAfterRegistration(Step8Case):
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("重投", proc.stdout)
 class TestMaterialListMatchesTheManifest(Step8Case):
-    """材料表的来源与 `materials.json` 的 `origins` 对得上：漏行、重复原件、集合外的东西各被点名。
+    """材料表的来源与材料索引的 `origins` 对得上：漏行、重复原件、集合外的东西各被点名。
 
-    集合由清单派生，不由作者表定义——漏写一行不能让那份原件从核对里消失。
+    集合由索引派生，不由作者表定义——漏写一行不能让那份原件从核对里消失。材料经真实导入命令进来。
     采用的版本对不对、贡献真不真，归独立审查，这里不判。
     """
 
-    LISTED = "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd.md](../RR/prd.md) | 提交回执的业务诉求与状态取值。 |"
+    PRD = "../sources/prd-v1/prd.md"
+    LISTED = f"| 甲需求 PRD [prd.md]({PRD}) | [prd.md]({PRD}) | 提交回执的业务诉求与状态取值。 |"
+    DOCX = REPO_ROOT / "test" / "cases" / "auto-topup" / "supplements" / "交通卡自动充值.docx"
 
     def setUp(self) -> None:
         super().setUp()
         self.round_now()
         self.init_audit()
-
-    def set_origins(self, origins: list[dict], sources: list[dict] | None = None) -> None:
-        manifest = self.src / "materials.json"
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-        data["origins"] = origins
-        if sources is not None:
-            data["sources"] = sources
-        manifest.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-
-    def put_inbox(self, *names: str) -> None:
-        for name in names:
-            path = self.feature_root() / "inbox" / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("# 原件\n", encoding="utf-8")
-
-    def merged_into_prd(self, *names: str) -> None:
-        """几份收件箱原件合成了 RR/prd.md：它不再是第二份原件。"""
-        self.put_inbox(*names)
-        keep = [o for o in json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"]
-                if o["path"] != "RR/prd.md"]
-        self.set_origins(keep + [{"path": f"inbox/{n}", "sha256": "sha256:0", "kind": "converted-source",
-                                  "readable_paths": ["RR/prd.md"]} for n in names])
 
     def test_the_listed_material_passes(self) -> None:
         _, out = self.check_output()
@@ -3228,9 +3221,9 @@ class TestMaterialListMatchesTheManifest(Step8Case):
 
     def test_a_missing_material_is_named(self) -> None:
         """漏一份等于那份材料没人知道——读者据这一节把材料找出来。"""
-        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) "
+        self.rewrite_story(self.LISTED, f"| 甲需求 PRD [prd.md]({self.PRD}) "
                                         "| [别的](story-src/decisions.json) | 状态取值 |")
-        out = self.assert_check_names("少了来源 RR/prd.md")
+        out = self.assert_check_names("少了来源 sources/prd-v1/prd.md")
         self.assertIn("是本轮生成件", out)
 
     def test_an_intermediate_product_is_named(self) -> None:
@@ -3256,19 +3249,15 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         self.assertIn("是本轮生成件", hits[0])
 
     def register_an_image(self) -> str:
-        """盘上放一张图并重算清单，返回它相对需求目录的路径。"""
-        rel = "assets/入口原型说明/image1.png"
-        image = self.feature_root() / rel
-        image.parent.mkdir(parents=True, exist_ok=True)
-        image.write_bytes(b"PNGDATA1")
-        self.round_now()
-        return rel
+        """导入一张界面图，返回它相对需求目录的路径。"""
+        version = self.import_now({"入口原型.png": b"PNGDATA1"}, {"入口原型.png": "UX"})["入口原型.png"]
+        return version["original"]["path"]
 
     def test_an_image_does_not_belong_in_this_section(self) -> None:
         """图不进材料表：图的去向（引了没有、不引为什么）跟着图的内容走，登记在图片说明里。"""
         rel = self.register_an_image()
         self.rewrite_story(self.LISTED, self.LISTED
-                           + "\n| 界面图 [prd.md](../RR/prd.md) | ![image1](../" + rel + ") | 参考 |")
+                           + f"\n| 界面图 [prd.md]({self.PRD}) | ![image1](../" + rel + ") | 参考 |")
         out = self.assert_check_names("图不进这张表")
         self.assertIn(rel, out)
 
@@ -3279,56 +3268,59 @@ class TestMaterialListMatchesTheManifest(Step8Case):
         self.assertNotIn("少了来源", out, out[:500])
 
     def test_an_image_only_original_is_required_and_lists_itself(self) -> None:
-        """只抽图的原件是来源（R03）：漏写报漏源；材料列与来源列都链原件自己是正例，图不逐张成行。"""
-        self.put_inbox("产品原稿.docx")
-        keep = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"]
-        self.set_origins(keep + [{"path": "inbox/产品原稿.docx", "sha256": "sha256:0123456789abcdef",
-                                  "kind": "converted-source", "readable_paths": ["inbox/产品原稿.docx"],
-                                  "image_paths": ["assets/产品原稿/image1.png"]}])
-        self.assert_check_names("少了来源 inbox/产品原稿.docx")
+        """只取图的原件是来源（R03）：漏写报漏源；材料列与来源列都链原件自己是正例，图不逐张成行。"""
+        version = self.import_now({"产品原稿.docx": self.DOCX.read_bytes()}, {"产品原稿.docx": "IMAGES"})["产品原稿.docx"]
+        rel = version["original"]["path"]
+        self.assert_check_names(f"少了来源 {rel}")
+        link = f"[产品原稿.docx](../{rel})"
         self.rewrite_story(self.LISTED, self.LISTED
-                           + "\n| 产品原稿 [产品原稿.docx](../inbox/产品原稿.docx) | [产品原稿.docx](../inbox/产品原稿.docx)（摘要 01234567）"
+                           + f"\n| 产品原稿 {link} | {link}（v1，摘要 {version['original']['sha256'][:8]}）"
                            " | 只采用设置页的界面图；正文以产品需求单为准，不采用 |")
         _, out = self.check_output()
         self.assertNotIn("少了来源", out, out[:500])
         self.assertNotIn("不是来源列那几份原件的阅读稿", out, out[:500])
 
-    def test_the_inbox_original_is_required(self) -> None:
-        """并入正文的收件箱原件是来源：表里漏了它要点名，正文自己不再顶替它。"""
-        self.merged_into_prd("补充说明.docx")
-        out = self.assert_check_names("少了来源 inbox/补充说明.docx")
-        self.assertIn("RR/prd.md", out)
+    def test_a_docx_original_is_required_and_read_through_its_converted_text(self) -> None:
+        """docx 原件导入后是来源：漏写点名，材料列写它的转换正文，来源列写原件。"""
+        version = self.import_now({"补充说明.docx": self.DOCX.read_bytes()}, {"补充说明.docx": "AR"})["补充说明.docx"]
+        original, readable = version["original"]["path"], version["readable"]["path"]
+        self.assertTrue(readable.endswith("/text.md"), readable)
+        out = self.assert_check_names(f"少了来源 {original}")
+        self.assertIn(readable, out)
+        self.rewrite_story(self.LISTED, self.LISTED
+                           + f"\n| 补充说明 [text.md](../{readable}) | [补充说明.docx](../{original}) | 补充的签约规则 |")
+        _, out = self.check_output()
+        for word in ("少了来源", "不是来源列那几份原件的阅读稿", "点不开"):
+            self.assertNotIn(word, out, out[:800])
 
-    def test_two_originals_merged_into_one_document_is_one_row(self) -> None:
-        """两份原件合成一稿：写在同一行是正例，带空格的路径用尖括号写。"""
-        self.merged_into_prd("1-总体.md", "2-补充 说明.md")
-        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) "
-                                        "| [1-总体.md](../inbox/1-总体.md)、[2-补充 说明.md](<../inbox/2-补充 说明.md>) "
-                                        "| 状态取值 |")
+    def test_a_path_with_a_space_is_written_in_angle_brackets(self) -> None:
+        """带空格的原件名照常是一份来源，链接用尖括号写。"""
+        version = self.import_now({"2-补充 说明.md": "# 补充\n".encode("utf-8")}, {"2-补充 说明.md": "AR"})["2-补充 说明.md"]
+        rel = version["original"]["path"]
+        self.rewrite_story(self.LISTED, self.LISTED + f"\n| 补充 [说明](<../{rel}>) | [2-补充 说明.md](<../{rel}>) | 补充 |")
         _, out = self.check_output()
         for word in ("少了来源", "材料清单」第", "解析不了", "点不开"):
             self.assertNotIn(word, out, out[:800])
 
     def test_an_original_written_in_two_rows_is_named(self) -> None:
-        self.merged_into_prd("1-总体.md")
-        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) | [1-总体.md](../inbox/1-总体.md) | 一 |\n"
-                                        "| 总体 [prd.md](../RR/prd.md) | [1-总体.md](../inbox/1-总体.md) | 二 |")
+        self.rewrite_story(self.LISTED, f"| 甲需求 PRD [prd.md]({self.PRD}) | [prd.md]({self.PRD}) | 一 |\n"
+                                        f"| 总体 [prd.md]({self.PRD}) | [prd.md]({self.PRD}) | 二 |")
         self.assert_check_names("写在了 2 行")
 
     def test_a_pending_original_cannot_be_listed_instead_of_imported(self) -> None:
-        self.put_inbox("新料.md")
-        self.set_origins(json.loads((self.src / "materials.json").read_text(encoding="utf-8"))["origins"],
-                         [{"file": "新料.md", "sha256": "sha256:1", "class": "RR", "ingested": False}])
-        self.rewrite_story(self.LISTED, self.LISTED + "\n| 新料 [prd.md](../RR/prd.md) | [新料.md](../inbox/新料.md) | 补充 |")
-        self.assert_check_names("还没并入正文")
+        """还在来源收件箱里的件不能拿作者表的一行代替导入。"""
+        self.put_inbox({"新料.md": "# 原件\n".encode("utf-8")}, {"新料.md": "RR"})
+        self.round_now()
+        self.rewrite_story(self.LISTED, self.LISTED + f"\n| 新料 [prd.md]({self.PRD}) | [新料.md](../sources/inbox/新料.md) | 补充 |")
+        self.assert_check_names("还在收件箱、没导入")
 
     def test_a_link_with_a_bare_space_is_reported_with_its_position(self) -> None:
-        self.rewrite_story(self.LISTED, "| 甲需求 PRD [prd.md](../RR/prd.md) | [prd](../RR/p rd.md) | 状态取值 |")
+        self.rewrite_story(self.LISTED, f"| 甲需求 PRD [prd.md]({self.PRD}) | [prd](../sources/prd-v1/p rd.md) | 状态取值 |")
         out = self.assert_check_names("链接写法解析不了")
         self.assertIn("行", out)
 
     def test_the_material_column_points_at_the_readable_copy(self) -> None:
-        self.rewrite_story(self.LISTED, "| 甲需求 PRD [design.md](design.md) | [prd.md](../RR/prd.md) | 状态取值 |")
+        self.rewrite_story(self.LISTED, f"| 甲需求 PRD [design.md](../sources/design-v1/design.md) | [prd.md]({self.PRD}) | 状态取值 |")
         self.assert_check_names("不是来源列那几份原件的阅读稿")
 
 
@@ -3581,22 +3573,23 @@ class TheSkeletonListsEveryIndependentGap(SkeletonPreflightCase):
         self.story_path.unlink(missing_ok=True)
 
     def test_two_independent_gaps_come_in_one_run(self) -> None:
-        design = self.feature_root() / "AR" / "design.md"
-        good_design = design.read_bytes()
+        """收件箱里有没导入的件、决策登记又坏了：两件互不依赖，一次报全，补好之后照常起手。"""
         decisions = self.src / "decisions.json"
         good_decisions = decisions.read_text(encoding="utf-8")
-        design.unlink()
+        self.put_inbox({"后到的稿.md": "# 后到的稿\n".encode("utf-8")}, {"后到的稿.md": "AR"})
+        self.round_now()
         decisions.write_text("{ 坏了", encoding="utf-8")
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, out)
-        self.assertIn("必备来源缺失", out)
-        self.assertIn("AR/design.md", out)
+        self.assertIn("后到的稿.md", out)
+        self.assertIn("导入", out, "待导入的件没给恢复入口")
         self.assertIn("decisions.json", out, "第二个独立缺口要等补完第一个才报")
-        self.assertIn("人把文档放进 inbox 导入", out, "必备来源缺失没给恢复入口")
         self.assertNotIn("本地阅读图没有恢复", out, "还没有 story 却报阅读图恢复失败")
         self.assert_wrote_nothing(before)
-        design.write_bytes(good_design)
+        (self.feature_root() / "sources" / "inbox" / "后到的稿.md").unlink()
+        (self.feature_root() / "sources" / "inbox" / ".classify.json").write_text("{}", encoding="utf-8")
+        self.round_now()
         decisions.write_text(good_decisions, encoding="utf-8")
         code, out = self.skeleton()
         self.assertEqual(0, code, out)
@@ -3626,16 +3619,22 @@ class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
         self.addCleanup(self._tmp.cleanup)
         fixture = Path(self._tmp.name) / "fixture"
         shutil.copytree(FIXTURE, fixture)
-        sr = fixture / "doc" / "features" / FEATURE / "SR" / "design.md"
-        sr.parent.mkdir(parents=True)
-        sr.write_text("# 甲需求 系统设计" + self.UPSTREAM_FIGURES, encoding="utf-8")
+        inbox = fixture / "doc" / "features" / FEATURE / "sources" / "inbox"
+        (inbox / "SR").mkdir(parents=True)
+        (inbox / "SR" / "design.md").write_text("# 甲需求 系统设计" + self.UPSTREAM_FIGURES, encoding="utf-8")
+        (inbox / ".classify.json").write_text(json.dumps({"SR/design.md": "SR"}), encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(IMPORT), "--feature", FEATURE, "--project-root", str(fixture)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        index = json.loads((fixture / "doc" / "features" / FEATURE / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
+        sr = next(s for s in index["sources"] if s["class"] == "SR")["versions"][-1]["original"]["path"]
         self.root = Path(self._tmp.name) / "work"
         designed_copy(fixture, FEATURE, self.DRAFT, self.root)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
         self.init_audit()
-        row = "| 开发需求 [design.md](design.md) |"
-        self.rewrite_story(row, "| 系统设计 [design.md](../SR/design.md) | [design.md](../SR/design.md) | 补充流程的提交与回执两张图。 |\n" + row)
+        row = "| 开发需求 [design.md](../sources/design-v1/design.md) |"
+        self.rewrite_story(row, f"| 系统设计 [design.md](../{sr}) | [design.md](../{sr}) | 补充流程的提交与回执两张图。 |\n" + row)
         self.plan = self.src / "story-template.md"
 
     def design(self, text: str) -> None:

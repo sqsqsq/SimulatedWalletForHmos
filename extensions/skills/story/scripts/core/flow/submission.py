@@ -81,7 +81,7 @@ def cmd_bind_design(feature_root: Path, project_root: Path, component: str, blue
     """需求关联的设计对象：首次写入，同值重复不改一个字节，别的值冲突。
 
     需求目录与蓝图工作区分开：蓝图标识不能与需求标识相同——两者同在需求目录下时，原生把需求材料
-    （如 `ux-reference/`）当作平铺 Feature 产物，按歧义拒绝。标识按原生规则核；蓝图已在时核它实际归属的组件。
+    （如 `sources/` 下的材料版本）当作平铺 Feature 产物，按歧义拒绝。标识按原生规则核；蓝图已在时核它实际归属的组件。
     关联之后不自动改绑——绑错了重新起单。
     """
     contract = require(load(feature_root))

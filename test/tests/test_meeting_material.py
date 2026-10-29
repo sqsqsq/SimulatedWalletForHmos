@@ -121,13 +121,19 @@ class MeetingCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.fr = self.root / "doc" / "features" / FEATURE
-        for rel, text in (("RR/prd.md", "# 产品需求\n\n背景。\n"),
-                          ("SR/design.md", "# 系统设计\n\n分工。\n"),
-                          ("AR/design.md", "# 提取件\n\n范围。\n")):
-            (self.fr / rel).parent.mkdir(parents=True, exist_ok=True)
-            (self.fr / rel).write_text(text, encoding="utf-8")
-        self.inbox = self.fr / "inbox"
-        self.inbox.mkdir()
+        self.inbox = self.fr / "sources" / "inbox"
+        self.inbox.mkdir(parents=True)
+        (self.fr / "AR").mkdir(parents=True)
+        classify = {}
+        for rel, text, cls in (("RR/prd.md", "# 产品需求\n\n背景。\n", "RR"),
+                               ("SR/design.md", "# 系统设计\n\n分工。\n", "SR"),
+                               ("AR/design.md", "# 开发需求\n\n范围。\n", "AR")):
+            (self.inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.inbox / rel).write_text(text, encoding="utf-8")
+            classify[rel] = cls
+        (self.inbox / ".classify.json").write_text(json.dumps(classify), encoding="utf-8")
+        importer.cmd_import(self.fr, self.root)
+        self.placed: dict[str, bytes] = {}
 
     def cli(self, script: str, *args: str) -> tuple[int, dict, str]:
         proc = subprocess.run(
@@ -147,10 +153,12 @@ class MeetingCase(unittest.TestCase):
     def place(self, name: str = "澄清会.docx", xml: str = SAME_LINE,
               cls: str = "MEETING") -> Path:
         path = self.inbox / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         if name.endswith(".docx"):
             write_docx(path, xml)
         else:
             path.write_text("张三 10:02：上限五个\n", encoding="utf-8")
+        self.placed[path.name] = path.read_bytes()
         classify = meeting.read_json(self.inbox / ".classify.json") or {}
         classify[name] = cls
         (self.inbox / ".classify.json").write_text(
@@ -164,7 +172,9 @@ class MeetingCase(unittest.TestCase):
         return path
 
     def folder(self, docx: Path) -> tuple[str, Path]:
-        folder = meeting.version_dir(self.fr, docx)
+        """这份会议原件那一版的目录。导入后原件已移出收件箱，按放进来时的字节算。"""
+        blob = docx.read_bytes() if docx.is_file() else self.placed[docx.name]
+        folder = self.fr.joinpath(*meeting.MEETINGS, docx.stem, meeting.digest(blob)[:8])
         return f"{docx.stem}@{folder.name}", folder
 
     def notes_path(self) -> Path:
@@ -294,19 +304,20 @@ class EachVersionKeepsItsOwnOriginal(MeetingCase):
 
     def test_import_registers_by_the_original_and_keeps_old_versions(self) -> None:
         docx = self.place()
-        source = next(s for s in registry.build(self.fr)["sources"] if s["file"] == docx.name)
-        self.assertEqual(("MEETING", False), (source["class"], source["ingested"]))
+        pending = next(i for i in registry.build(self.fr)["inbox"] if i["file"] == docx.name)
+        self.assertEqual("MEETING", pending["class"])
         self.assertEqual(0, self.cli("import_sources.py")[0])
         _, first = self.folder(docx)
         built = registry.build(self.fr)
-        self.assertTrue(next(s for s in built["sources"] if s["file"] == docx.name)["ingested"])
+        self.assertEqual([], built["inbox"], "导入成功的会议原件还在收件箱")
+        self.assertIn("meeting:澄清会", [s["source_id"] for s in built["sources"]])
         item = next(m for m in built["materials"] if m["kind"] == "meeting")
         self.assertEqual([f"AR/story-src/meetings/澄清会/{first.name}/original.docx"], item["paths"])
         origin = next(o for o in built["origins"] if o["kind"] == "meeting")
         self.assertEqual(item["paths"][0], origin["path"], "会议来源指向的不是留存版本的原件")
         self.assertEqual([f"AR/story-src/meetings/澄清会/{first.name}/{meeting.RAW}"],
                          origin["readable_paths"])
-        self.assertNotIn(f"inbox/{docx.name}", [o["path"] for o in built["origins"]],
+        self.assertNotIn(f"sources/inbox/{docx.name}", [o["path"] for o in built["origins"]],
                          "收件箱里的会议原件又算了一份来源")
         self.imported(xml=SAME_LINE.replace("</w:body>", para("张三 10:30：补充一句") + "</w:body>"))
         self.assertTrue((first / meeting.RAW).is_file(), "新版本把旧版本的原文冲掉了")
@@ -314,14 +325,13 @@ class EachVersionKeepsItsOwnOriginal(MeetingCase):
 
     def test_a_meeting_in_a_subdirectory_keeps_its_version(self) -> None:
         """子目录里的会议记录同样按原件内容留版本；同内容重导复用，来源关系指向留存原件。"""
-        (self.inbox / "会议").mkdir()
         docx = self.imported(name="会议/澄清会.docx")
         _, folder = self.folder(docx)
         before = (folder / meeting.RAW).read_bytes()
-        self.assertEqual(0, self.cli("import_sources.py")[0])
+        self.imported(name="会议/澄清会.docx")
         self.assertEqual(before, (folder / meeting.RAW).read_bytes())
         built = registry.build(self.fr)
-        self.assertTrue(next(s for s in built["sources"] if s["file"] == "会议/澄清会.docx")["ingested"])
+        self.assertEqual([], built["inbox"])
         self.assertIn(f"AR/story-src/meetings/澄清会/{folder.name}/original.docx",
                       [o["path"] for o in built["origins"]])
 
@@ -386,7 +396,7 @@ class SameNamesThatDifferOnlyInCase(MeetingCase):
         self.assertEqual(0, code, log)
         sections = []
         for docx in (one, two):
-            src = meeting.read_json(meeting.version_dir(self.fr, docx) / meeting.SOURCE)
+            src = meeting.read_json(self.folder(docx)[1] / meeting.SOURCE)
             self.assertEqual(docx.name, src["file"], "原件名没按原样登记")
             sections.append({"source": src["file"], "source_sha": src["sha256"], "topics": []})
         self.notes_path().write_text(json.dumps({"meetings": sections}, ensure_ascii=False), encoding="utf-8")
@@ -396,12 +406,12 @@ class SameNamesThatDifferOnlyInCase(MeetingCase):
         problems = meeting.inspect(self.fr)["problems"]
         self.assertFalse([p for p in problems if "对不上任何会议版本" in p], problems)
         for docx in (one, two):
-            folder = meeting.version_dir(self.fr, docx)
-            self.assertEqual(docx.read_bytes(), (folder / meeting.ORIGINAL).read_bytes(), "原件没各自留住")
+            folder = self.folder(docx)[1]
+            self.assertEqual(self.placed[docx.name], (folder / meeting.ORIGINAL).read_bytes(), "原件没各自留住")
 
     def test_an_unreadable_registration_is_reported_not_guessed(self) -> None:
         docx = self.imported()
-        folder = meeting.version_dir(self.fr, docx)
+        folder = self.folder(docx)[1]
         (folder / meeting.SOURCE).write_text("{坏", encoding="utf-8")
         self.assertEqual({}, meeting.versions(self.fr), "读不出登记却按目录名猜了身份")
         problems = meeting.inspect(self.fr)["problems"]
