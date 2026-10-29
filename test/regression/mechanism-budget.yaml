@@ -1,3 +1,9 @@
+# 2026-10-29 2.1.0 整版适配（Spec doc/spec/2.1.0/00-版本范围.md、方案 doc/plan/2.1.0/2026-10-28-2.x适配收敛/00-实施方案.md）：
+#    用户决定2.0.0不发布、直接进入2.1.0，并批准全版预算：新增G4250、预计退出X5840，保守峰值22182、预计完成16342，五类分配按参考03 §3。
+#    实施基线S=1806aa59（story开发成果，计量文件与B0 155efc55相同，实测17932）。整版R = S→当前的 endpoint.G / 4250；
+#    包 2.1.0-完整适配 R = S→当前的 first-parent invested.G / 4250，批次/步骤/返修不重置起点与分母。
+#    2.0.0 的 release/requirement/categories 原值见本次提交前的 test/regression/mechanism-budget.yaml（155efc55）；整版 P→S endpoint G5973/控制G5300
+#    与包 2.0.0-完整实施 invested G4392/13488 照原账保留，不转作2.1.0额度、不以转版清零（A01交回）。
 # 2026-10-25 2.0.0 重写适配（当前需求，Spec doc/spec/2.0.0/00-版本范围.md、方案 doc/plan/2.0.0/00-实施方案.md）：
 #    用户授权预算，授权与 1.9.9 budget_report 实测见参考13 §5。正式基线 P=b4fbf433（1.9.9 发布，17042）；整版适配 G5300、预计退出 X3820，
 #    预计完成 18522、保守峰值 22342；完整实施观察包 G13488（来源切换参考 8188 + 适配 5300 的计划包络）。五类分配按参考13 §4。
@@ -301,67 +307,65 @@ frozen_commit: "a1026080"
 
 # 整版控制：endpoint G 对 control_g；baseline_ref 是正式发布提交 P。
 release:
-  id: "2.0.0"
-  baseline_ref: "b4fbf433"
-  control_g: 5300
-  approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-  reason: 1.9.9正式发布P实测17042；适配G5300含复用移入、替换重写及后续返修，预计退出X3820、完成18522。
+  id: "2.1.0"
+  baseline_ref: "1806aa596beb1057c54b367ec227bf4de1e5b804"
+  control_g: 4250
+  approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+  reason: 2.0.0不发布，以story开发成果S（17932）为基线整版适配Framework 3.1.0新原生组合；G4250含替换重写及返修包络，预计退出X5840、完成16342。
 
-# 实施包：R=该包起点以来逐提交累计G（budget_report 的 package.invested）/ approved_g，分母不因改签重置。
-# 每项 id、start_ref、approved_g、approved_by；可选 predicted（total 或责任项名 → {g, x}）、scopes（责任项 → extensions 内路径 glob）、
-# confirmations（band 为 125–150% 或 >150%，写 by/at/ref）。2.0.0 包按批次二01 启动 merge 前的真实 HEAD（T）为起点。
 packages:
   - id: 2.0.0-完整实施
     start_ref: "a05a3634f9ff70f78faec28612455fca2e4a5c7e"
     approved_g: 13488
     approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
+  - id: 2.1.0-完整适配
+    start_ref: "1806aa596beb1057c54b367ec227bf4de1e5b804"
+    approved_g: 4250
+    approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
 
-# 当前进行中的需求。status 由该需求收口那一步改为 closed；closed 后 target 即长期上限。
 requirement:
-  id: 2.0.0-重写适配
+  id: 2.1.0-完整适配
   status: in_progress
-  approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-  reason: 以1.9.9正式发布为基线反合story-1.0并适配Framework 3.1；进行中核interim_ceiling（保守峰值），收口按实测与评审改签target。
+  approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+  reason: 以S为起点按四批十五步完成原生同根来源、设计交接、知识承接、送审与变更交付及能力保持；进行中核interim_ceiling（保守峰值），收口按实测与评审改签target。
 
 categories:
   scripts_mjs:
     description: skills/**.mjs（story-build、lint、review-render、flow-check、headings、adapt-scan、entries）
-    interim_ceiling: 6862
-    target: 5912
-    approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-    reason: P基线4962+G估算1900为保守峰值；完成=峰值−X估算950。分类是同一5300/3820的投影，按实际责任由reviewer调整，不改总分母。
+    interim_ceiling: 6944
+    target: 5564
+    approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+    reason: S基线5944+G估算1000为保守峰值；完成=峰值−X估算1380。分类是同一4250/5840的投影，按实际责任由reviewer调整，不改总分母。
   scripts_py:
     description: skills/**.py（story_flow、import_sources、materials）
-    interim_ceiling: 4983
-    target: 4383
-    approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-    reason: P基线4283+G估算700为保守峰值；完成=峰值−X估算600。分类是同一5300/3820的投影，按实际责任由reviewer调整，不改总分母。
+    interim_ceiling: 6128
+    target: 4518
+    approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+    reason: S基线4948+G估算1180为保守峰值；完成=峰值−X估算1610。分类是同一4250/5840的投影，按实际责任由reviewer调整，不改总分母。
   hooks_mjs:
     description: hooks/**.mjs（六阶段 post_check + shared）
-    interim_ceiling: 6303
-    target: 4803
-    approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-    reason: P基线4503+G估算1800为保守峰值；完成=峰值−X估算1500。分类是同一5300/3820的投影，按实际责任由reviewer调整，不改总分母。
+    interim_ceiling: 5049
+    target: 3429
+    approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+    reason: S基线3889+G估算1160为保守峰值；完成=峰值−X估算1620。分类是同一4250/5840的投影，按实际责任由reviewer调整，不改总分母。
   prompts_md:
     description: 所有 .md（SKILL、phases、rules、templates、hooks/*/author.md、AGENTS.section）
-    interim_ceiling: 3113
-    target: 2563
-    approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-    reason: P基线2513+G估算600为保守峰值；完成=峰值−X估算550。分类是同一5300/3820的投影，按实际责任由reviewer调整，不改总分母。
+    interim_ceiling: 3112
+    target: 2102
+    approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+    reason: S基线2372+G估算740为保守峰值；完成=峰值−X估算1010。分类是同一4250/5840的投影，按实际责任由reviewer调整，不改总分母。
   data:
     description: contracts/*.json、rules/*.yaml、manifest.yaml、adaptation.yaml
-    interim_ceiling: 1081
-    target: 861
-    approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-    reason: P基线781+G估算300为保守峰值；完成=峰值−X估算220。分类是同一5300/3820的投影，按实际责任由reviewer调整，不改总分母。
+    interim_ceiling: 949
+    target: 729
+    approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+    reason: S基线779+G估算170为保守峰值；完成=峰值−X估算220。分类是同一4250/5840的投影，按实际责任由reviewer调整，不改总分母。
 total:
-  interim_ceiling: 22342
-  target: 18522
-  approved_by: 用户2026-10-25授权预算（doc/plan/2.0.0/参考/13-预算估算与记账.md §5）
-  reason: P基线17042+适配G5300=保守峰值22342；预计完成18522（净增1480）。实测峰值与差额由budget_report报告、交回列出。
+  interim_ceiling: 22182
+  target: 16342
+  approved_by: 用户2026-10-29批准2.1.0实施及全版预算G4250/X5840（doc/plan/2.1.0/2026-10-28-2.x适配收敛/参考/03-预算与计量.md；授权记录见A01交回）
+  reason: S基线17932+新增G4250=保守峰值22182；预计完成16342（净减1590，不代替G4250的累计新增）。实测峰值与差额由budget_report报告、交回列出。
 
-# 语义代理标识：脚本里出现这些词，说明有人又在用字符串近似「讲清没讲清」。
-# 它本来就只数可执行行，口径不变。
 semantic_proxy:
   pattern: "similarity|paraphrase|levenshtein|jaccard|min_quote_chars|回声"
   scope: [scripts_mjs, scripts_py, hooks_mjs]
