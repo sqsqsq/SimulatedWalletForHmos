@@ -385,6 +385,11 @@ class CompleteThenMaterialChanged(CompleteThenMaterialChangedCase):
         result = self.round_now()
         self.assertTrue(result.get("created"))
         self.assertEqual(before + 1, len(self.contract()["rounds"]))
+        # 补料开的新轮没有重开标记，重开之前的范围答复照样不当前；材料关卡的答复不受影响
+        index = json.loads((self.feature_root / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
+        answers = next(s for s in index["sources"] if s["kind"] == "answer")["versions"][-1]
+        current = json.loads((self.feature_root / answers["original"]["path"]).read_text(encoding="utf-8"))["current"]
+        self.assertEqual(["material_scope"], [d["gate"] for d in current], "补料开轮让重开前的范围答复又算当前了")
 
     def test_story_written_also_opens_no_round(self) -> None:
         """`story_written` 比设计开始更靠后，同样不开轮。

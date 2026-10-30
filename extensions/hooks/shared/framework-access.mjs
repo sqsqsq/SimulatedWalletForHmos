@@ -28,6 +28,7 @@ import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { markdownLinks } from '../../skills/story/scripts/core/story/language.mjs';
 
 const loaded = new Map();
 
@@ -83,7 +84,8 @@ function scopeConsumption(projectRoot, blueprint, requirement) {
   const issues = adopted.problems.map(message => ({ code: 'scope_source_invalid', message }));
   issues.push(...readSourceFiles(projectRoot, adopted.sources).problems.map(message => ({ code: 'scope_source_unreadable', message })));
   const own = adopted.requirements[0];
-  issues.push(...readSourceFiles(projectRoot, own?.files ?? []).problems.map(message => ({ code: 'adopted_source_unreadable', message })));
+  issues.push(...readSourceFiles(projectRoot, [...(own?.files ?? []), ...adopted.projectFiles]).problems
+    .map(message => ({ code: 'adopted_source_unreadable', message })));
   if (!own?.versions.length) {
     issues.push({ code: 'scope_item_not_consumed', message: `蓝图的需求条目与设计依据没有引用需求 ${requirement} 登记的材料` });
   } else {
@@ -350,7 +352,7 @@ ${Buffer.from(f.bytes).toString('utf8')}`);
   if (!files.files.some(f => f.role === 'text')) {
     return { status: 'invalid', issues: [{ code: 'requirement_text_missing', message: '采用的来源里没有需求阅读原文：来源不足，视觉裁定不做' }] };
   }
-  const sourcesSha = sourcesIdentity([...adopted.sources, ...own.files, ...own.answers]);
+  const sourcesSha = sourcesIdentity([...adopted.sources, ...own.files, ...adopted.projectFiles, ...own.answers]);
   const ref = read.blueprint_ref;
   const executionIdentity = `story:${feature}:${blueprintId}:${ref.revision}:${ref.artifact_sha256}`;
   const cfg = native.module('config.ts').loadFrameworkConfig(native.root);
@@ -439,19 +441,22 @@ function requirementIndex(native, root) {
 const fileOf = (root, row) => ({ path: `${root}/${row.path}`, sha256: `sha256:${row.sha256}`, role: row.role,
   source_id: row.source_id, version: row.version, kind: row.kind, dir: row.dir });
 
-/** Markdown 正文里的本地链接与图片目标（相对它自己），外部链接与文内锚点不算。 */
-const LOCAL_REF = /!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
+/** Markdown 正文里的本地链接与图片目标（相对它自己），按 `markdownLinks` 的完整目标读法；外部链接与文内锚点不算。 */
 function localTargets(text, fromDir) {
   const out = [];
-  for (const m of String(text).matchAll(LOCAL_REF)) {
-    const target = decodeURI(String(m[1] ?? m[2] ?? '').split('#')[0]);
-    if (!target || /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('/')) continue;
-    out.push(path.posix.normalize(path.posix.join(fromDir, target)));
+  for (const line of String(text).split(/\r?\n/)) {
+    for (const { target } of markdownLinks(line).links) {
+      if (!target || /^[a-z][a-z0-9+.-]*:/i.test(target) || /^[#/]/.test(target)) continue;
+      let file;
+      try { file = decodeURIComponent(target.split(/[?#]/)[0]); } catch { continue; }
+      if (file) out.push(path.posix.normalize(path.posix.join(fromDir, file)));
+    }
   }
   return out;
 }
 
-/** 来源引用连同它在蓝图里的位置：provenance 取 source_ref；合同各段直接带 source_ref。 */
+/** 来源引用连同它在蓝图里的位置：provenance 取 source_ref（原生 validateOwnedCollections 覆盖的各集合，含合同对象自身）；
+ * 合同各段直接带 source_ref。 */
 function refsOf(blueprint) {
   const support = [];
   const conflicts = [];
@@ -472,6 +477,7 @@ function refsOf(blueprint) {
   }
   (blueprint?.contracts ?? []).forEach((c, i) => {
     const id = c?.contract_id ?? i;
+    prov(support, c, `contracts[${id}]`);
     const parts = [['operation', c?.operation], ['request_dto', c?.request_dto], ['response_dto', c?.response_dto],
       ...(c?.request_dto?.fields ?? []).map((f, j) => [`request_dto.fields[${j}]`, f]),
       ...(c?.response_dto?.fields ?? []).map((f, j) => [`response_dto.fields[${j}]`, f]),
@@ -498,15 +504,18 @@ function refsOf(blueprint) {
  * - 需求 `requirement`（默认蓝图标识，蓝图与需求同根）的材料索引 `files` 视图登记的文件：被上面三类引用命中的来源版本就是
  *   采用的版本，按版本展开成全部文件（原件、阅读稿、图、会议的 raw/纠偏/阅读件），Markdown 阅读稿引的登记图一并加入；
  *   最新一版人工答复作为独立必读（`answers`），不取决于有没有被引用。
- * 引用落在需求目录里、却不是登记文件的，逐条报出，不静默过滤。不读来源正文以外的东西、不算摘要。
+ * - `projectFiles`：支撑与冲突依据引用的需求目录以外的工程文件，按原生来源解析（片段要在文件里）读出原始字节摘要，
+ *   作为设计来源身份的一部分交给读者；引用不是工程内现存文件的（原生合法的非文件出处）按原生合同保留在 `support`，不当材料。
+ * 支撑与冲突引用带片段时按原生来源解析核片段。引用落在需求目录里、却不是登记文件的（含冲突依据），逐条报出，不静默过滤。
+ * 采用版本的 Markdown 阅读稿链到的登记文件，连同它所在的整个版本一起加入，沿着读下去它的图也在。
  *
- * @returns {{status: string, sources: object[], support: object[], conflicts: object[],
+ * @returns {{status: string, sources: object[], support: object[], conflicts: object[], projectFiles: object[],
  *   requirements: {requirement: string, root: string, versions: string[], files: object[], answers: object[], conflictFiles: object[]}[],
  *   problems: string[]}}
  */
 export function adoptedSources(projectRoot, blueprint, { requirement = blueprint?.blueprint_id } = {}) {
   const native = loadNative(projectRoot);
-  const out = { status: 'ok', sources: [], support: [], conflicts: [], requirements: [], problems: [] };
+  const out = { status: 'ok', sources: [], support: [], conflicts: [], projectFiles: [], requirements: [], problems: [] };
   const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
   const guard = native.module('scripts/utils/project-relative-path.ts');
   const root = `${path.posix.normalize(featuresDir)}/${requirement}`;
@@ -528,8 +537,23 @@ export function adoptedSources(projectRoot, blueprint, { requirement = blueprint
   const { support, conflicts } = refsOf(blueprint);
   out.support = support;
   out.conflicts = conflicts;
-  const index = requirementIndex(native, root);
   const inRoot = (file) => file && file.startsWith(`${root}/`);
+  // 支撑与冲突引用按原生来源解析：片段要在文件里；需求目录以外的现存工程文件读出摘要，进来源身份
+  const resolve = native.module('scripts/utils/blueprint-requirement-traceability.ts').resolveCurrentScopeSource;
+  const exists = (file) => { try { return fs.statSync(path.join(native.root, ...file.split('/'))).isFile(); } catch { return false; } };
+  for (const [use, list] of [['support', support], ['conflict', conflicts]]) {
+    for (const r of list) {
+      const file = fileAt(r.path);
+      if (!file || (!inRoot(file) && !exists(file))) continue;
+      try {
+        const got = resolve(native.root, r.path);
+        if (!inRoot(file)) out.projectFiles.push({ path: file, sha256: got.source_sha256, role: 'project_file', use, where: r.where });
+      } catch (e) {
+        if (exists(file)) out.problems.push(`${r.where} 引用的 ${r.path} 解析不了：${String(e?.message ?? e).split(/\r?\n/)[0]}——设计负责方按原文修正片段`);
+      }
+    }
+  }
+  const index = requirementIndex(native, root);
   const cited = [...out.sources, ...support].map(r => ({ ...r, file: fileAt(r.path) }));
   if (!index) {
     if (cited.some(r => inRoot(r.file))) out.problems.push(`需求 ${requirement} 的材料索引读不出来（或不是本版带 files 视图的索引）——重跑 \`story_flow.py round\` 重建`);
@@ -546,19 +570,29 @@ export function adoptedSources(projectRoot, blueprint, { requirement = blueprint
     else adopted.add(versionKey(row));
   }
   for (const r of conflicts) {
-    const row = rows.get(fileAt(r.path));
-    if (row) conflicted.add(versionKey(row));
+    const file = fileAt(r.path);
+    if (!inRoot(file)) continue;
+    const row = rows.get(file);
+    if (!row) out.problems.push(`${r.where} 引用的冲突依据 ${file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按 sources/README.md 同步`);
+    else conflicted.add(versionKey(row));
   }
-  const expand = (keys) => {
-    const files = index.files.filter(r => keys.has(versionKey(r))).map(r => fileOf(root, r));
-    const have = new Set(files.map(f => f.path));
-    for (const f of [...files]) {
-      if (f.role !== 'text' || !/\.md$/i.test(f.path)) continue;
-      let text;
-      try { text = fs.readFileSync(path.join(native.root, ...f.path.split('/')), 'utf8'); } catch { continue; }
-      for (const target of localTargets(text, path.posix.dirname(f.path))) {
-        const row = rows.get(target);
-        if (row && !have.has(target)) { files.push(fileOf(root, row)); have.add(target); }
+  // 版本展开：阅读稿链到的登记文件连同它的整个版本加入，新加入的阅读稿接着读，直到没有新版本
+  const expand = (seed) => {
+    const keys = new Set(seed);
+    const queue = [...keys];
+    const files = [];
+    while (queue.length) {
+      const key = queue.shift();
+      for (const r of index.files.filter(x => versionKey(x) === key)) {
+        const f = fileOf(root, r);
+        files.push(f);
+        if (f.role !== 'text' || !/\.md$/i.test(f.path)) continue;
+        let text;
+        try { text = fs.readFileSync(path.join(native.root, ...f.path.split('/')), 'utf8'); } catch { continue; }
+        for (const target of localTargets(text, path.posix.dirname(f.path))) {
+          const row = rows.get(target);
+          if (row && !keys.has(versionKey(row))) { keys.add(versionKey(row)); queue.push(versionKey(row)); }
+        }
       }
     }
     return files;

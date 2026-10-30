@@ -47,20 +47,20 @@ def gate_answers(contract: dict) -> tuple[list[dict], list[str]]:
     """关卡里当前有效的人答与记录缺口。"""
     from flow.state import CARRY_ALL  # noqa: PLC0415 —— 契约常量的唯一真源
     rounds = contract.get("rounds") or []
+    # 最近一次范围重开那一轮起才算数：重开之前的范围与承载答复不替重拍授权，之后补料开的新轮也一样
+    reopened_at = max((i for i, r in enumerate(rounds) if r.get("reopened")), default=0)
     latest: dict[tuple, dict] = {}
-    for r in rounds:
+    for i, r in enumerate(rounds):
         for g in r.get("gates") or []:
-            if g.get("by") == "human" and g.get("outcome") == "accepted":
-                latest[(g.get("gate"), g.get("meeting"), g.get("item"))] = dict(g, round=r.get("round"))
-    last = rounds[-1] if rounds else {}
-    reopened = bool(last.get("reopened")) and not any(
-        g.get("gate") == "scope_decision" and g.get("by") == "human" for g in last.get("gates") or [])
+            if g.get("by") != "human" or g.get("outcome") != "accepted":
+                continue
+            if g.get("gate") in SCOPE_GATES and i < reopened_at:
+                continue
+            latest[(g.get("gate"), g.get("meeting"), g.get("item"))] = dict(g, round=r.get("round"))
     scope = latest.get(("scope_decision", None, None))
     split = contract.get("split") or {}
     out, problems = [], []
     for (gate, _, _), g in latest.items():
-        if gate in SCOPE_GATES and reopened:
-            continue        # 范围重开了还没重答：旧的范围与承载答复不替重拍授权
         if gate == "split_carrier" and not (scope and scope.get("chosen") != CARRY_ALL
                                             and split.get("decided") == "split" and split.get("settled_round") == g["round"]):
             continue        # 整体承载了，或不是这一次定案的份表：承载答复只是历史

@@ -19,10 +19,11 @@ import sys
 import tempfile
 import unittest
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from unittest import mock
 from urllib.parse import unquote
 from ext_workspace import DEV_EXT
+from flow_steps import ensure_framework
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "test" / "scripts"
@@ -437,10 +438,25 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
 
 
 class MarkdownKeepsItsPictures(unittest.TestCase):
-    """Markdown 原件按它在收件箱里的位置引用图：原件字节不动，阅读稿的链接改指导入后图的真实版本位置。"""
+    """Markdown 原件按它在收件箱里的位置引用图与别的文档：原件字节不动，阅读稿的链接改指导入后对方给人读的那一份。
 
-    TEXT = ("# 说明\n\n![流程](images/流程.png)\n\n[外部](https://example.com/a.png) [本节](#说明)\n\n"
-            "见 [附录](附录.md#口径)\n")
+    目标按 `markdownLinks` 的完整读法：尖括号包起来的可含空格与括号，不包的括号成对。A 链到 B、B 链到图，
+    沿着 A 的阅读稿读下去，B 的阅读稿与它的图都在；设计采用 A 时，B 的版本与图一起进入采用集合。
+    """
+
+    TEXT = ("# 说明\n\n![流程](<images/流程 (修订).png>)\n\n![旧版](images/flow(v2).png)\n\n"
+            "[外部](https://example.com/a.png) [本节](#说明)\n\n见 [附录](附录.md#口径)\n")
+    APPENDIX = "# 附录\n\n## 口径\n\n![口径图](images/口径.png)\n"
+    PICTURES = ("流程 (修订).png", "flow(v2).png", "口径.png")
+
+    ADOPTED = """
+    const [access, root, feature, ref] = process.argv.slice(1);
+    const { adoptedSources } = await import(access);
+    const blueprint = { blueprint_id: feature, discovery: { inputs: { current_scope_items: [] },
+      facts: [{ fact_id: 'fact-intro', provenance: { source_kind: 'requirement_material', source_ref: ref, evidence_strength: 'observed' } }] } };
+    const out = adoptedSources(root, blueprint, { requirement: feature });
+    process.stdout.write(JSON.stringify({ problems: out.problems, files: out.requirements[0].files.map(f => f.path) }));
+    """
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -467,26 +483,61 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         return json.loads((self.feature_root / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
 
     def first_import(self) -> None:
-        self.put({"docs/说明.md": self.TEXT, "docs/附录.md": "# 附录\n\n## 口径\n", "docs/images/流程.png": b"\x89PNG\r\n\x1a\nflow"},
-                 {"docs/说明.md": "RR", "docs/附录.md": "RR", "docs/images/流程.png": "UX"})
+        files = {"docs/说明.md": self.TEXT, "docs/附录.md": self.APPENDIX,
+                 **{f"docs/images/{n}": b"\x89PNG\r\n\x1a\n" + n.encode("utf-8") for n in self.PICTURES}}
+        self.put(files, {rel: ("UX" if "/images/" in rel else "RR") for rel in files})
         proc = self.run_import()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
 
-    def test_the_reading_copy_links_to_the_imported_picture(self) -> None:
+    def follow(self, reading: Path) -> dict[str, Path]:
+        """阅读稿里每个本地链接按链接写法解析到的文件（用产品的同一读法）。"""
+        from materials import importer  # noqa: PLC0415
+        out = {}
+        for line in reading.read_text(encoding="utf-8").splitlines():
+            for _, _, target in importer.markdown_links(line):
+                if re.match(r"^[a-z]+:", target) or target.startswith("#"):
+                    continue
+                out[target] = (reading.parent / unquote(re.split(r"[?#]", target)[0])).resolve()
+        return out
+
+    def reading_of(self, source_id: str) -> Path:
+        version = next(s for s in self.manifest()["sources"] if s["source_id"] == source_id)["versions"][-1]
+        return self.feature_root / version["readable"]["path"]
+
+    def test_the_reading_chain_reaches_every_picture(self) -> None:
         self.first_import()
-        version = self.feature_root / "sources" / "说明-v1"
-        self.assertEqual(self.TEXT.encode("utf-8"), (version / "说明.md").read_bytes(), "原件字节被改了")
-        reading = (version / "text.md").read_text(encoding="utf-8")
-        links = re.findall(r"\]\(([^)]+)\)", reading)
-        self.assertIn("https://example.com/a.png", links, "外部链接被改写")
-        self.assertIn("#说明", links, "文内锚点被改写")
-        for link in links[:1] + [l for l in links if "附录" in unquote(l)]:
-            target = (version / unquote(link.split("#")[0])).resolve()
-            self.assertTrue(target.is_file(), f"阅读稿的链接 {link} 指向不存在的文件")
-        self.assertTrue((self.feature_root / "sources" / "流程-v1" / "流程.png").is_file(), "图没按自己的来源导成版本")
-        roles = {r["path"]: r["role"] for r in self.manifest()["files"]}
-        self.assertEqual(("original", "text", "image"),
-                         (roles["sources/说明-v1/说明.md"], roles["sources/说明-v1/text.md"], roles["sources/流程-v1/流程.png"]))
+        intro = self.reading_of("local:docs/说明.md")
+        self.assertEqual(self.TEXT.encode("utf-8"),
+                         (intro.parent / "说明.md").read_bytes(), "原件字节被改了")
+        links = self.follow(intro)
+        self.assertEqual(3, len(links), f"本地链接没认全：{list(links)}")
+        for target, file in links.items():
+            self.assertTrue(file.is_file(), f"说明的阅读稿链接 {target} 指向不存在的文件")
+        text = intro.read_text(encoding="utf-8")
+        self.assertIn("https://example.com/a.png", text, "外部链接被改写")
+        self.assertIn("](#说明)", text, "文内锚点被改写")
+        appendix = next(f for t, f in links.items() if "附录" in unquote(t))
+        self.assertEqual(self.reading_of("local:docs/附录.md").resolve(), appendix, "说明链到的不是附录给人读的那一份")
+        [(target, picture)] = self.follow(appendix).items()
+        self.assertTrue(picture.is_file(), f"附录阅读稿的图 {target} 断了")
+        pictures = {p.name for p in links.values() if p.suffix == ".png"} | {picture.name}
+        self.assertEqual(set(self.PICTURES), pictures)
+
+    def test_the_design_reads_the_linked_version_and_its_pictures(self) -> None:
+        """设计只在事实里引用说明的阅读稿：附录的版本与三张图都进采用集合。"""
+        self.first_import()
+        ensure_framework(self.root)
+        access = (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
+        ref = f"doc/features/MD90001/{self.reading_of('local:docs/说明.md').relative_to(self.feature_root).as_posix()}"
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.ADOPTED, access, str(self.root), "MD90001", ref],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        got = json.loads(proc.stdout)
+        self.assertEqual([], got["problems"])
+        names = {PurePosixPath(p).name for p in got["files"]}
+        self.assertTrue(set(self.PICTURES) <= names, f"采用集合缺图：{sorted(names)}")
+        self.assertIn(self.reading_of("local:docs/附录.md").name, names)
+        self.assertIn("附录.md", names)
 
     def test_the_same_input_again_reuses_the_version(self) -> None:
         self.first_import()
@@ -494,13 +545,12 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         proc = self.run_import()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual([], json.loads(proc.stdout)["versions"], "同一份输入又开了新版本")
-        self.assertFalse((self.feature_root / "sources" / "说明-v2").exists())
 
     def test_a_missing_local_picture_refuses_the_batch(self) -> None:
-        self.put({"docs/新.md": "![缺](images/缺.png)\n"}, {"docs/新.md": "RR"})
+        self.put({"docs/新.md": "![缺](<images/缺 (1).png>)\n"}, {"docs/新.md": "RR"})
         proc = self.run_import()
         self.assertNotEqual(0, proc.returncode)
-        self.assertIn("images/缺.png", json.loads(proc.stdout)["error"])
+        self.assertIn("images/缺 (1).png", json.loads(proc.stdout)["error"])
         self.assertTrue((self.inbox / "docs" / "新.md").is_file(), "整批没导却把原件移出了收件箱")
         self.assertFalse(list(self.feature_root.glob("sources/新-v*")), "缺图还落了版本")
 

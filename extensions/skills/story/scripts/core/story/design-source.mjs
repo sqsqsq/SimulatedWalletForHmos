@@ -115,9 +115,10 @@ function knowledgeDigest(ctx) {
   return sha256(JSON.stringify(rows));
 }
 
-/** 设计来源与必读人答的联合身份：需求条目声明、采用版本展开的文件与当前人答（`sourcesIdentity`）。 */
+/** 设计来源与必读人答的联合身份：需求条目声明、采用版本展开的文件、设计依据引用的工程文件与当前人答（`sourcesIdentity`）。 */
 function sourcesOf(source) {
-  return source.adopted ? sourcesIdentity([...source.adopted.sources, ...(source.adopted.own?.files ?? []), ...source.adopted.answers]) : null;
+  const a = source.adopted;
+  return a ? sourcesIdentity([...a.sources, ...(a.own?.files ?? []), ...(a.projectFiles ?? []), ...a.answers]) : null;
 }
 
 /**
@@ -184,7 +185,7 @@ const markdownOf = files => files.filter(f => /\.md$/i.test(f.file_path))
 function adoptedSourceProblems(ctx) {
   const adopted = designSource(ctx).adopted;
   if (!adopted?.own || !ctx.projectRoot) return [];
-  return readSourceFiles(ctx.projectRoot, [...adopted.own.files, ...adopted.answers]).problems
+  return readSourceFiles(ctx.projectRoot, [...adopted.own.files, ...adopted.projectFiles, ...adopted.answers]).problems
     .map(p => `采用的材料版本 ${p}——材料版本导入后不改，恢复原件`);
 }
 

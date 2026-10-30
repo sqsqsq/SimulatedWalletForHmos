@@ -143,7 +143,7 @@ function answerRows(root, id) {
  */
 function sourceIndex(root, id, blueprint) {
   const declared = adoptedSources(root, blueprint);
-  const read = readSourceFiles(root, declared.sources);
+  const read = readSourceFiles(root, [...declared.sources, ...declared.projectFiles]);
   const packs = declared.requirements.map(r => ({ ...r, ...readSourceFiles(root, [...r.files, ...r.conflictFiles]) }));
   const problems = [...declared.problems, ...read.problems, ...packs.flatMap(p => p.problems.map(x => `需求 ${p.requirement}：${x}`))];
   if (problems.length) {
@@ -154,6 +154,8 @@ function sourceIndex(root, id, blueprint) {
     ...declared.sources.map(s => `- \`${s.item_id}\`（${s.kind}，${s.provenance?.evidence_strength ?? '未声明证据强度'}）：\`${s.path}\`，${s.sha256}`),
     ...(declared.support.length ? [`设计依据引用 ${declared.support.length} 处：`,
       ...declared.support.map(s => `- ${s.where}：\`${s.path}\``)] : []),
+    ...(declared.projectFiles.length ? ['设计依据与冲突依据引用的工程文件，逐份读：',
+      ...declared.projectFiles.map(f => `- \`${f.path}\`（${f.use === 'conflict' ? '冲突依据' : '支撑依据'}，${f.where}），${f.sha256}`)] : []),
     ...packs.flatMap(p => [`需求 \`${p.requirement}\` 采用的材料版本 ${p.versions.join('、') || '（没有）'}，共 ${p.files.length} 份，逐份读：`,
       ...p.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`),
       ...(p.conflictFiles.length ? ['冲突依据（蓝图登记的冲突一方，没被采用，核取舍）：', ...p.conflictFiles.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)] : [])]),

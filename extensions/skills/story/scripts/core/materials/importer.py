@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
 from hashlib import sha256
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 from pathlib import Path, PurePosixPath
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -624,9 +624,54 @@ def convert(path: Path, key: str, cls: str) -> tuple[str | None, dict[str, bytes
     return (markdown + "\n" if markdown is not None and not markdown.endswith("\n") else markdown), blobs
 
 
-#: Markdown 正文里的链接与图片（含 HTML img）：分组保留前后缀，只换目标
 MD_EXTS = {".md", ".markdown"}
-MD_LINK = re.compile(r'(!?\[[^\]]*\]\(\s*<?)([^)\s>]+)(>?(?:\s+"[^"]*")?\s*\))|(<img\b[^>]*?\bsrc\s*=\s*["\'])([^"\']+)(["\'])', re.I)
+
+
+def markdown_links(line: str) -> list[tuple[int, int, str]]:
+    """一行里 `[文字](目标)` 与 `![文字](目标)` 的目标：(目标在行里的起止, 目标)。
+
+    与 `story/language.mjs` 的 `markdownLinks` 同一读法：`<…>` 包起来的目标可含空格与括号（起止含尖括号），
+    否则不含空白、括号成对，`\\` 转义下一个字符；表格里转义的 `\\|`、`\\(`、`\\)` 在目标里还原。解析不出目标的不算链接。
+    """
+    out: list[tuple[int, int, str]] = []
+    i = 0
+    while (i := line.find("](", i)) >= 0:
+        j = i + 2
+        if line[j:j + 1] == "<":
+            close = line.find(">", j)
+            if close > j and line[close + 1:close + 2] == ")":
+                out.append((j, close + 1, re.sub(r"\\([|()])", r"\1", line[j + 1:close])))
+                i = close + 2
+                continue
+        else:
+            depth, k = 0, j
+            while k < len(line):
+                c = line[k]
+                if c == "\\":
+                    k += 2
+                    continue
+                if c.isspace():
+                    break
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    if not depth:
+                        break
+                    depth -= 1
+                k += 1
+            if line[k:k + 1] == ")" and k > j:
+                out.append((j, k, re.sub(r"\\([|()])", r"\1", line[j:k])))
+                i = k + 1
+                continue
+        i += 2
+    return out
+
+
+def markdown_target(path: str, suffix: str = "") -> str:
+    """写回链接的目标：与 `language.mjs` 的 `markdownTarget` 同一写法——`% # ? < >` 编码，含空白或括号时用尖括号包起来。
+    `suffix` 是原链接的 `#片段` 或 `?查询`，原样接在后面。"""
+    s = re.sub(r"[%#?<>]", lambda m: f"%{ord(m.group(0)):02X}", path) + suffix
+    return f"<{s}>" if re.search(r"[\s()]", s) else s
 
 
 def _local_ref(target: str) -> bool:
@@ -634,32 +679,49 @@ def _local_ref(target: str) -> bool:
     return bool(target) and not re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) and not target.startswith(("#", "/"))
 
 
-def project_markdown(text: str, key: str, here: str, targets: dict[str, str]) -> tuple[str | None, list[str]]:
-    """Markdown 原件按导入前的位置解析本地引用，换成指向导入后真实位置的阅读投影。
+def _split_target(target: str) -> tuple[str, str]:
+    """(按 URL 读法还原的路径, 原样的 `#片段`/`?查询`)。"""
+    cut = re.search(r"[?#]", target)
+    head, suffix = (target[:cut.start()], target[cut.start():]) if cut else (target, "")
+    return unquote(head), suffix
 
-    `key` 是它在收件箱里的位置，`here` 是阅读投影所在目录（相对需求目录），`targets` 是收件箱位置 → 导入后位置
-    （本批导入的与已登记的）。返回 (阅读投影, 找不到的引用)；没有本地引用为 (None, [])，原件自己就是阅读稿。
+
+def has_local_links(text: str) -> bool:
+    return any(_local_ref(target) for line in text.splitlines() for _, _, target in markdown_links(line))
+
+
+def project_markdown(text: str, key: str, here: str, targets: dict[str, str]) -> tuple[str | None, list[str]]:
+    """Markdown 原件按导入前的位置解析本地引用，换成指向导入后可读产物的阅读投影。
+
+    `key` 是它在收件箱里的位置，`here` 是阅读投影所在目录（相对需求目录），`targets` 是收件箱位置 → 导入后给人读的那一份
+    （本批导入的与已登记的：有阅读稿的指阅读稿，图与文本原件指原件）。返回 (阅读投影, 找不到的引用)；
+    没有本地引用为 (None, [])，原件自己就是阅读稿。
     """
     missing: list[str] = []
     changed = False
+    lines = []
+    for line in text.splitlines(keepends=True):
+        for start, end, target in reversed(markdown_links(line)):
+            if not _local_ref(target):
+                continue
+            path, suffix = _split_target(target)
+            final = targets.get(posixpath.normpath(posixpath.join(posixpath.dirname(key), path)))
+            if final is None:
+                missing.append(target)
+                continue
+            changed = True
+            line = line[:start] + markdown_target(posixpath.relpath(final, here), suffix) + line[end:]
+        lines.append(line)
+    return ("".join(lines) if changed else None), missing
 
-    def swap(m: re.Match) -> str:
-        nonlocal changed
-        head, target, tail = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(4), m.group(5), m.group(6))
-        if not _local_ref(target):
-            return m.group(0)
-        path, _, fragment = target.partition("#")
-        where = posixpath.normpath(posixpath.join(posixpath.dirname(key), unquote(path)))
-        final = targets.get(where)
-        if final is None:
-            missing.append(target)
-            return m.group(0)
-        changed = True
-        new = posixpath.relpath(final, here) + (f"#{fragment}" if fragment else "")
-        return f"{head}{quote(new, safe='/#.-_~')}{tail}"
 
-    projected = MD_LINK.sub(swap, text)
-    return (projected if changed else None), missing
+def _reading(rec: dict) -> str:
+    """一个已登记版本给人读的那一份：有阅读稿取阅读稿，否则原件（图、文本原件）。"""
+    return (rec.get("readable") or rec["original"])["path"]
+
+
+def _text_file(name: str) -> str:
+    return TEXT_FILE if name != TEXT_FILE else READING_FILE
 
 
 def _same(record: dict, original: str, readable: str | None, images: dict[str, str]) -> bool:
@@ -707,8 +769,8 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         if rec["version"] > latest.get(rec["source_id"], {}).get("version", 0):
             latest[rec["source_id"]] = rec
         labels.setdefault(rec["source_id"], re.sub(r"-v\d+$", "", PurePosixPath(rec["dir"]).name))
-    # 收件箱位置 → 已登记的最新原件位置：Markdown 引用的本地文件可能早已导入
-    targets = {rec["origin"]["inbox_path"]: rec["original"]["path"] for rec in latest.values()
+    # 收件箱位置 → 已登记的最新版本给人读的那一份：Markdown 引用的本地文件可能早已导入
+    targets = {rec["origin"]["inbox_path"]: _reading(rec) for rec in latest.values()
                if (rec.get("origin") or {}).get("inbox_path")}
 
     # ── 先全部转换到内存，全成功才写盘 ──────────────────────────────
@@ -732,7 +794,7 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         have = latest.get(ident["source_id"])
         if have and _same(have, original, readable_sha, images):
             plan.append({"key": key, "path": path, "reuse": have})
-            targets[key] = have["original"]["path"]
+            targets[key] = _reading(have)
             continue
         if ident["source_id"] not in labels:
             # 撞名按不区分大小写判：Windows 与 macOS 的盘上 Flow 与 flow 是同一个目录
@@ -745,9 +807,10 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         plan.append({"key": key, "path": path, "ident": ident, "readable": readable, "blobs": blobs,
                      "dir": f"{labels[ident['source_id']]}-v{number}", "version": number,
                      "original": original, "readable_sha": readable_sha, "images": images})
-        targets[key] = f"{SOURCES}/{plan[-1]['dir']}/{path.name}"
-    # Markdown：先按原件字节定每份落在哪（原件没变落回已有版本），文档之间互链也能指到真实位置
-    pending: list[tuple[Path, str, dict, dict | None, str, int]] = []
+        targets[key] = f"{SOURCES}/{plan[-1]['dir']}/{TEXT_FILE if readable is not None else path.name}"
+    # Markdown：先按原件字节定每份给人读的那一份落在哪（原件没变落回已有版本；有本地引用的读阅读投影），
+    # 文档之间互链指到对方的可读产物，沿着读下去图也在
+    pending: list[tuple[Path, str, dict, dict | None, str, int, str]] = []
     for path, key, cls in markdown:
         ident = identify(inbox, path, cls, receipts)
         have = latest.get(ident["source_id"])
@@ -758,16 +821,17 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
                 else f"{base}-{digest(ident['source_id'].encode('utf-8'))[:6]}"
         original = digest(path.read_bytes())
         number = (have or {}).get("version", 0) + 1
-        same = have and have.get("original", {}).get("sha256") == original
-        targets[key] = have["original"]["path"] if same else f"{SOURCES}/{labels[ident['source_id']]}-v{number}/{path.name}"
-        pending.append((path, key, ident, have, original, number))
-    gaps: list[str] = []
-    for path, key, ident, have, original, number in pending:
-        here = f"{SOURCES}/{labels[ident['source_id']]}-v{number}"
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             text = ""
+        here = f"{SOURCES}/{labels[ident['source_id']]}-v{number}"
+        same = have and have.get("original", {}).get("sha256") == original
+        targets[key] = _reading(have) if same else f"{here}/{_text_file(path.name) if has_local_links(text) else path.name}"
+        pending.append((path, key, ident, have, original, number, text))
+    gaps: list[str] = []
+    for path, key, ident, have, original, number, text in pending:
+        here = f"{SOURCES}/{labels[ident['source_id']]}-v{number}"
         readable, missing = project_markdown(text, key, here, targets)
         gaps += [f"「{key}」引用的 {m}" for m in missing]
         readable_sha = digest(readable.encode("utf-8")) if readable is not None else None
@@ -847,7 +911,7 @@ def _write_version(feature_root: Path, item: dict) -> None:
     original = {"path": f"{base}/{name}", "sha256": item["original"]}
     readable = None
     if item["readable"] is not None:
-        text_file = TEXT_FILE if name != TEXT_FILE else READING_FILE
+        text_file = _text_file(name)
         (staging / text_file).write_text(item["readable"], encoding="utf-8", newline="\n")
         readable = {"path": f"{base}/{text_file}", "sha256": item["readable_sha"]}
     elif item["path"].suffix.lower() not in IMAGE_EXTS and item["ident"]["class"] != "IMAGES":

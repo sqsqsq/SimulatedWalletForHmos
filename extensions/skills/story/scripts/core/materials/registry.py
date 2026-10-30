@@ -344,7 +344,7 @@ def render_readme(manifest: dict) -> str:
     link = lambda p: f"[{PurePosixPath(p).name}](<{rel(p)}>)"
     lines = ["# 来源材料", "",
              "这一页由导入命令按材料索引 `AR/story-src/materials.json` 生成，手改会在下次导入时被覆盖。"
-             "最新版本不等于设计已采用：设计实际依据哪个版本，看蓝图的范围条目。", "",
+             "最新版本不等于设计已采用：设计实际依据哪个版本，看蓝图的需求条目与设计依据（事实、设计对象、合同等的出处）引用的版本。", "",
              "| 来源 | 类 | 取得方式 | 最新版本 | 原件 | 阅读稿 | 图 |", "|---|---|---|---|---|---|---|"]
     for s in manifest.get("sources", []):
         v = s["versions"][-1]

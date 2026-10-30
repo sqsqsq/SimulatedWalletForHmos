@@ -447,8 +447,9 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
     const src = designSource(ctx);
     process.stdout.write(JSON.stringify({ problems: src.problems, answers: requiredAnswers(ctx),
       versions: src.adopted?.own?.versions ?? [], adopted: (src.adopted?.answers ?? []).map(f => f.path),
-      // 成文依据的来源身份（currentBasis 的 sources_sha256）由这三部分算
-      identity: src.adopted ? sourcesIdentity([...src.adopted.sources, ...(src.adopted.own?.files ?? []), ...src.adopted.answers]) : null }));
+      // 成文依据的来源身份（currentBasis 的 sources_sha256）由这几部分算
+      identity: src.adopted ? sourcesIdentity([...src.adopted.sources, ...(src.adopted.own?.files ?? []),
+        ...src.adopted.projectFiles, ...src.adopted.answers]) : null }));
     """
 
     def design_view(self) -> dict:
@@ -541,6 +542,28 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         self.assertTrue(json.loads(self.flow("status", "--materials").stdout)["required_answers"]["in_sync"])
         self.assertNotEqual("await_gate:material_scope", self.ok("status")["next"], "导出补上之后又问了一遍")
 
+    def test_a_supplement_after_reopen_keeps_the_old_scope_out_until_answered_again(self) -> None:
+        """设计开始后重开范围、还没重答就补料开了新轮：旧范围答复不回到当前；重新答了之后新答复生效，其余人答不丢。"""
+        self.ready()
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
+        self.ok("reopen")
+        self.seed({"UX/补充说明.md": ("# 补充\n\n入口挪到卡包首页。\n", "UX")})
+        self.assertTrue(self.ok("round")["created"])
+        self.assertEqual(["material_scope"], [d["gate"] for d in self.exported()["current"]],
+                         "重开之后补料开轮，旧范围答复又算当前了")
+        while (step := self.ok("status")["next"]).startswith("await_gate:") or step in ("run_round", "run_analysis"):
+            if step == "run_analysis":
+                self.write_analysis()
+                self.ok("round")
+            elif step == "run_round":
+                self.ok("round")
+            else:
+                answer(self.ok, step.split(":", 1)[1], "1")
+        current = self.exported()["current"]
+        scope = next(d for d in current if d["gate"] == "scope_decision")
+        self.assertEqual(self.contract()["rounds"][-1]["round"], scope["round"], "生效的不是重开之后重答的那一次")
+        self.assertIn("material_scope", [d["gate"] for d in current])
+
     def test_a_later_carry_all_retires_the_split_carrier(self) -> None:
         """切两份、定了承载，设计开始后重开范围改成整体承载：旧的承载答复只是历史，不再当前有效。"""
         self.ok("init")
@@ -599,6 +622,72 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         with self.assertRaises(answers.AnswerError) as got:
             answers.collect(self.feature_root)
         self.assertIn("缺 question", str(got.exception))
+
+
+class TheSupportSourcesAreCollectedNatively(HandoverCase):
+    """设计依据按原生出处收全：合同对象自身的 provenance 也算；引用带的片段按原生来源解析核；需求目录里没登记的冲突依据报出；
+    需求目录以外的工程文件读出摘要进来源身份。用一个蓝图对象直接调共享收集，作者、Story 与审查都消费这一份。"""
+
+    PROBE = """
+    const [access, root, feature, bp] = process.argv.slice(1);
+    const { adoptedSources, sourcesIdentity } = await import(access);
+    const out = adoptedSources(root, JSON.parse(bp), { requirement: feature });
+    const own = out.requirements[0] ?? { versions: [], files: [] };
+    process.stdout.write(JSON.stringify({ problems: out.problems, versions: own.versions,
+      projectFiles: out.projectFiles, identity: sourcesIdentity([...out.sources, ...own.files, ...out.projectFiles]) }));
+    """
+
+    def collect(self, blueprint: dict) -> dict:
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.PROBE, ACCESS.resolve().as_uri(), str(self.root),
+                               self.feature, json.dumps(blueprint, ensure_ascii=False)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def blueprint(self, *, contract_ref: str, conflict_ref: str | None = None) -> dict:
+        prov = lambda ref: {"source_kind": "system_design", "source_ref": ref, "observed_at": "2026-10-30T10:00:00+08:00",
+                            "evidence_strength": "observed", "extraction_method": "read-source"}
+        conflicts = [{"sources": [{"source_ref": conflict_ref}, {"source_ref": contract_ref}], "owner": "需求负责人"}] if conflict_ref else []
+        return {"blueprint_id": self.feature, "discovery": {"inputs": {"current_scope_items": []}, "facts": [], "conflicts": conflicts},
+                "contracts": [{"contract_id": "c-sign", "provenance": prov(contract_ref)}]}
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ready()
+        self.base = f"doc/features/{self.feature}"
+        self.sr = f"{self.base}/{next(s for s in registry.read(self.feature_root)['sources'] if s['source_id'] == 'local:SR/design.md')['versions'][-1]['original']['path']}"
+
+    def test_a_contract_level_reference_adopts_its_version(self) -> None:
+        got = self.collect(self.blueprint(contract_ref=f"{self.sr}#分工"))
+        self.assertEqual([], got["problems"])
+        self.assertTrue(any(v.endswith("/design-v1") for v in got["versions"]), got["versions"])
+
+    def test_a_fragment_that_is_not_in_the_file_is_named(self) -> None:
+        got = self.collect(self.blueprint(contract_ref=f"{self.sr}#没有这一节"))
+        self.assertTrue(any("contracts[c-sign]" in p and "fragment" in p for p in got["problems"]), got["problems"])
+
+    def test_an_unregistered_conflict_source_is_named(self) -> None:
+        stray = f"{self.base}/sources/design-v9/design.md"
+        got = self.collect(self.blueprint(contract_ref=self.sr, conflict_ref=stray))
+        self.assertTrue(any("冲突依据" in p and stray in p for p in got["problems"]), got["problems"])
+
+    def test_a_project_file_outside_the_requirement_enters_the_identity(self) -> None:
+        doc = self.root / "doc" / "architecture" / "签约边界.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("# 签约边界\n\n钱包只发起签约。\n", encoding="utf-8")
+        bp = self.blueprint(contract_ref=self.sr)
+        bp["discovery"]["facts"] = [{"fact_id": "f-boundary", "provenance": {"source_ref": "doc/architecture/签约边界.md#签约边界"}}]
+        first = self.collect(bp)
+        self.assertEqual([], first["problems"])
+        self.assertEqual(["doc/architecture/签约边界.md"], [f["path"] for f in first["projectFiles"]])
+        doc.write_text("# 签约边界\n\n钱包发起并确认签约。\n", encoding="utf-8")
+        self.assertNotEqual(first["identity"], self.collect(bp)["identity"], "工程文件变了，来源身份没跟着变")
+
+    def test_a_non_file_provenance_is_left_to_the_native_contract(self) -> None:
+        bp = self.blueprint(contract_ref=self.sr)
+        bp["discovery"]["facts"] = [{"fact_id": "f-talk", "provenance": {"source_ref": "interview:2026-10-30-产品"}}]
+        got = self.collect(bp)
+        self.assertEqual(([], []), (got["problems"], got["projectFiles"]))
 
 
 def yaml_scope(root: Path, feature: str) -> list[dict]:
