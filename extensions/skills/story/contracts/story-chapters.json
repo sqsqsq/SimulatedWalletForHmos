@@ -146,7 +146,7 @@
           ]},
           "规约": {"author_guide": "逐条写激活规约在本需求的判定：适用的写本需求的哪项事实使它适用、由谁承担、怎样影响设计，不适用的写边界；判断取自蓝图的知识应用决定"},
           "埋点": {"reader": "details", "detail_kind": "event", "title_level": 4},
-          "材料清单": {"table": "材料|来源|贡献", "author_guide": "一张表，每行一份外部原件：需求系统原件、收件箱里人工提供的文件、评审反馈；材料列链到原件，转换稿与抽出的图归回原件不另列，提取稿、人签导出、图片与运行记录不列；贡献写它实际给了什么，没采纳的新值或冲突版本写对比作用与裁决依据"}
+          "材料清单": {"table": "材料|来源|贡献", "author_guide": "一张表，每行一份外部原件：需求系统原件、收件箱里人工提供的文件、评审反馈；材料列链到原件，转换稿与抽出的图归回原件不另列，人签导出、图片与运行记录不列；贡献写它实际给了什么，没采纳的新值或冲突版本写对比作用与裁决依据"}
         }
       }
     }
@@ -215,17 +215,16 @@
     }
   },
   "flow": {
-    "schema": 5,
+    "schema": 6,
     "gates": ["material_scope", "scope_decision", "split_carrier", "meeting"],
     "carry_all": "carry_all"
   },
   "update_files": {
-    "editable": ["AR/story.md", "AR/story-src/design-draft.md", "AR/story-src/design-input.json",
-      "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
+    "editable": ["AR/story.md", "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
       "AR/story-src/drafts/**", "AR/story-src/figures/**"],
     "regenerate": ["AR/review.md", "AR/design-review.md", "AR/story-src/materials.json"],
-    "protected": ["sources/**", "AR/design.md",
-      "AR/story-src/meetings/**", "AR/story-src/inputs/**", "AR/story-src/review/**", "AR/story-src/updates/**",
+    "protected": ["sources/**", "blueprint/**",
+      "AR/story-src/meetings/**", "AR/story-src/review/**", "AR/story-src/updates/**",
       ".backups/**"],
     "field_owned": ["AR/story-src/story-flow.json"]
   },

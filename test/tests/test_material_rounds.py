@@ -110,9 +110,9 @@ class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
                 with mock.patch.object(rounds, name, boom):
                     result = rounds.cmd_reopen(self.feature_root)
                 disk = self.disk()
-                self.assertEqual("in_progress", disk["status"], "盘上没重开")
+                self.assertEqual("gathering", disk["status"], "盘上没重开")
                 self.assertTrue(disk["rounds"][-1].get("reopened"), "重开的一轮没留标记")
-                self.assertEqual("in_progress", result["status"])
+                self.assertEqual("gathering", result["status"])
                 self.assertIsNone(result["next"], "算不出来的下一步被编了一个")
                 self.assertIn("材料清单读不出（注入）", result["action"], "没说清为什么算不出来")
                 self.assertIn("不要再跑 reopen", result["action"], "诱导重跑 reopen")
@@ -129,7 +129,7 @@ class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
 
 
 class RegisteringBeforeTheCloseSaysSoFirst(MaterialRoundCase):
-    """没收口就来登记成文态：先说「还没收口」，算下一步失败也不顶掉这一句。"""
+    """范围还没定就来登记成文态：先说「范围还没定」，算下一步失败也不顶掉这一句。"""
 
     def test_a_failing_next_step_does_not_hide_the_open_flow(self) -> None:
         from unittest import mock  # noqa: PLC0415
@@ -146,7 +146,7 @@ class RegisteringBeforeTheCloseSaysSoFirst(MaterialRoundCase):
                 with self.assertRaises(FlowError) as caught:
                     lifecycle.cmd_story(self.feature_root, self.root)
                 message = str(caught.exception)
-                self.assertIn("还没收口", message, "材料那边的错顶掉了「还没收口」")
+                self.assertIn("范围还没定", message, "材料那边的错顶掉了「范围还没定」")
                 self.assertIn("story_flow.py status", message, "没给出取下一步的命令")
 
 
@@ -280,13 +280,16 @@ class CompleteThenMaterialChangedCase(MaterialRoundCase):
         return json.loads(
             (self.feature_root / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
 
-    def complete_it(self, status: str = "complete") -> None:
-        """把契约摆成收口态——这里只测 round/reopen，不重演整条关卡链。已登记的带上此刻的登记指纹。"""
+    def complete_it(self, status: str = "gathering") -> None:
+        """把契约摆成收口态（本轮范围已定、同根蓝图已在）——这里只测 round/reopen，不重演整条关卡链。
+        已登记的带上此刻的登记指纹。"""
         self.round_now()
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
-        # 收口意味着已关联设计对象、登记了冻结输入：用产品的冻结模块补成真实状态，收口之后的路由要读原生蓝图
+        data["rounds"][-1]["gates"] = [{"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human", "ask_id": "m1", "reply": "1"},
+                {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human", "ask_id": "s1", "reply": "1"}]
+        # 收口意味着设计已经开始：放好同根蓝图，收口之后的路由要读原生蓝图
         root = project_root_of(self.feature_root)
         ensure_framework(root)
         data = design_kit.hand_over_state(root, self.feature_root.name, data)
@@ -348,20 +351,21 @@ class CompleteThenMaterialChanged(CompleteThenMaterialChangedCase):
                             "材料变了而指纹没跟上——那份快照就不是当下的事实了")
         self.assertIn("reopen", proc.stderr, "记一笔要说清出口在哪")
 
-    def test_status_stays_at_complete(self) -> None:
-        """补料不改变流程状态——它仍然是收口的，仍然可以进 spec。"""
+    def test_the_scope_stays_settled(self) -> None:
+        """补料不改变流程位置——本轮范围仍是定了的，设计照常进行。"""
         self.complete_it()
         self.add_ux("extra.png")
         self.round_now()
-        self.assertEqual("complete", self.contract()["status"])
+        self.assertEqual("gathering", self.contract()["status"])
+        self.assertIn(self.status_payload()["state"], ("waiting_for_design", "ready_to_write"))
 
     def test_reopen_puts_it_back_and_leaves_a_trace(self) -> None:
-        """`reopen` 是唯一出口：状态回到进行中，日志说清从哪个状态退回。"""
+        """`reopen` 是唯一出口：回到范围关卡，日志说清从哪个状态重开。"""
         self.complete_it()
         proc = self.run_flow("reopen")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("in_progress", self.contract()["status"])
-        self.assertIn("complete → in_progress", proc.stderr)
+        self.assertEqual("gathering", self.contract()["status"])
+        self.assertIn("范围已重开（原状态 gathering）", proc.stderr)
 
     def test_after_reopen_a_material_change_opens_a_round_again(self) -> None:
         """打开之后一切照旧：补料照常开新轮。"""
@@ -374,7 +378,7 @@ class CompleteThenMaterialChanged(CompleteThenMaterialChangedCase):
         self.assertEqual(before + 1, len(self.contract()["rounds"]))
 
     def test_story_written_also_opens_no_round(self) -> None:
-        """`story_written` 比 `complete` 更靠后，同样不开轮。
+        """`story_written` 比设计开始更靠后，同样不开轮。
 
         story 的材料快照就是**当轮的 digest**——新轮一开，快照所指就换了一批材料，
         那份已经定稿的 story 就对不上它自己声称的依据了。
@@ -462,20 +466,21 @@ class CompleteThenMaterialChangedPart2(CompleteThenMaterialChangedCase):
     def test_reopen_works_from_story_written_too(self) -> None:
         self.complete_it("story_written")
         self.assertEqual(0, self.run_flow("reopen").returncode)
-        self.assertEqual("in_progress", self.contract()["status"])
+        self.assertEqual("gathering", self.contract()["status"])
 
 
 class CompleteThenMaterialChangedPart3(CompleteThenMaterialChangedCase):
     def test_reopen_keeps_the_registration_on_hold(self) -> None:
-        """重拍范围不抹掉上一次成文登记：它留作依据，但在重新提交、重新登记之前不可交付。"""
+        """重拍范围不抹掉上一次成文登记：它留作依据，但在范围重新定了、重新登记之前不可交付。"""
         self.complete_it("story_written")
         before = self.contract()
+        canonical = (self.feature_root / "blueprint" / "component-blueprint.yaml").read_bytes()
         proc = self.run_flow("reopen")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         contract = self.contract()
         self.assertEqual(before["story_basis"], contract["story_basis"])
-        self.assertEqual((before["design_binding"], before["input"]), (contract["design_binding"], contract["input"]))
-        self.assertEqual("in_progress", contract["status"], "重开之后仍是可交付的成文态")
+        self.assertEqual(canonical, (self.feature_root / "blueprint" / "component-blueprint.yaml").read_bytes(), "重开动了蓝图")
+        self.assertEqual("gathering", contract["status"], "重开之后仍是可交付的成文态")
         out = json.loads(proc.stdout[proc.stdout.index("{"):])
         self.assertTrue(out["basisOnHold"], "保留了什么、为什么暂不可交付要说出来")
 

@@ -1,12 +1,12 @@
-"""已交给设计、蓝图准入的需求工作区怎样准备——测试夹具与失效形态运行器共用这一份。
+"""范围已定、蓝图准入的需求工作区怎样准备——测试夹具与失效形态运行器共用这一份。
 
 - **接 Framework**：临时工程接 demo 的 Framework（整目录链接，或在已有替身旁逐层补缺）；
-- **准入蓝图**：取 `test/fixtures/blueprint/wallet-balance-refresh` 那份真实准入的 canonical，蓝图标识换成需求关联的那一个
-  （新需求建议 `bp-<需求标识>`，蓝图工作区与需求目录分开），按需插入知识应用决定、精确明细与术语事实；评审投影在真实流程里
+- **准入蓝图**：取 `test/fixtures/blueprint/wallet-balance-refresh` 那份真实准入的 canonical，放到需求目录的 `blueprint/`
+  （与需求同根，蓝图标识就是需求标识），按需插入知识应用决定、精确明细与术语事实；评审投影在真实流程里
   由设计职责按原生 renderer 生成，这里代它生成同一份字节——Extension 只读、不写它；
-- **设计消费本次输入**：需求已交给设计时，蓝图的需求条目换成这次冻结输入推出的原生条目（与原生 builder 从
-  物化件取条目同形），来源指纹按原生算法重算——真实流程里这是设计职责在 component-design 里做的；
-- **交给设计**：用真实流程命令走材料关卡、范围关卡、关联设计对象与冻结输入，人签与真实运行留下的记录同形。
+- **设计采用本需求的来源**：蓝图的需求条目换成按材料索引补齐来源的原生条目（`import_sources.py --scope` 同一算法），
+  来源指纹按原生算法重算——真实流程里这是设计职责在 component-design 里做的；
+- **走关卡**：用真实流程命令走材料关卡与范围关卡，人签与真实运行留下的记录同形。
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -257,10 +257,8 @@ def story_detail(detail_id: str, kind: str, title: str, body: str) -> str:
 
 
 def blueprint_of(root: Path, feature: str) -> str:
-    """需求关联的蓝图标识：流程契约里关联了就用它，还没关联用新需求的建议标识 `bp-<需求标识>`。"""
-    flow = root / features_dir(root) / feature / "AR" / "story-src" / "story-flow.json"
-    contract = json.loads(flow.read_text(encoding="utf-8")) if flow.is_file() else {}
-    return (contract.get("design_binding") or {}).get("blueprint_id") or f"bp-{feature}"
+    """需求的蓝图标识：蓝图与需求同根，标识就是需求标识。"""
+    return feature
 
 
 def change_blueprint(root: Path, feature: str, access: Path, old: str, new: str) -> None:
@@ -305,20 +303,27 @@ fs.writeFileSync(file, text.split(bp.source_fingerprint).join(next));
 
 
 def handed_items(root: Path, feature: str, access: Path) -> list[dict] | None:
-    """需求登记的冻结输入推出的原生需求条目：用那份扩展的冻结模块算物化件，去掉 authority（原生
-    `materializedScopeItems` 的形状）。需求还没交给设计时返回 None。"""
-    flow = root / features_dir(root) / feature / "AR" / "story-src" / "story-flow.json"
-    contract = json.loads(flow.read_text(encoding="utf-8")) if flow.is_file() else {}
-    ref = (contract.get("input") or {}).get("snapshot_ref")
-    if not ref:
+    """需求的材料版本推出的原生需求条目：设计依据的每份正文各一条——产品需求的阅读正文（没有产品需求取第一份正文）是
+    `request-main`，其余正文是约束条目；用那份扩展的 `materials/scope.py` 按材料索引补齐来源，去掉 authority
+    （原生 `materializedScopeItems` 的形状）。需求还没有材料索引时返回 None。"""
+    feature_root = root / features_dir(root) / feature
+    index = feature_root / "AR" / "story-src" / "materials.json"
+    if not index.is_file():
         return None
     core = Path(access).resolve().parents[2] / "skills" / "story" / "scripts" / "core"
     if str(core) not in sys.path:
         sys.path.insert(0, str(core))
-    from materials import frozen  # noqa: PLC0415
-    snapshot = json.loads((root / ref).read_text(encoding="utf-8"))
-    doc = frozen.materialization({"snapshot": snapshot}, ref.rsplit("/", 1)[0], contract["design_binding"])
-    return [{k: v for k, v in item.items() if k != "authority"} for item in doc["items"]]
+    from materials import scope  # noqa: PLC0415
+    manifest = json.loads(index.read_text(encoding="utf-8"))
+    main = main_source(manifest)
+    docs = [p for m in manifest["materials"] if m["kind"] == "doc" and m.get("sha256") for p in m["paths"]
+            if PurePosixPath(p).suffix.lower() in (".md", ".txt")]
+    authority = {"owner": "需求负责人", "formality": "formal_requirement"}
+    wanted = [{"item_id": "request-main", "kind": "requirement", "source": main, "authority": authority}]
+    wanted += [{"item_id": f"source-{i}", "kind": "invariant", "source": doc, "authority": authority}
+               for i, doc in enumerate((d for d in docs if d != main), 1)]
+    filled = scope.fill(feature_root, root, wanted)
+    return [{k: v for k, v in entry.items() if k != "authority"} for entry, _ in filled]
 
 
 def consume_items(text: str, items: list[dict]) -> str:
@@ -334,14 +339,13 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
                       decisions: list[dict] | None = None, details: list[str] | None = None,
                       terms: list[str] | None = None, consume: bool = True, exact_decisions: bool = False,
                       items: list[dict] | None = None) -> Path:
-    """把需求关联的准入蓝图放到 `<features_dir>/<蓝图标识>/blueprint/`（与需求目录分开），返回 canonical 路径。
+    """把需求的准入蓝图放到需求目录的 `blueprint/`（与需求同根，标识就是需求标识），返回 canonical 路径。
 
     `decisions` 是 `knowledge_decision` 给出的判断：激活了的照用，其余激活规约逐条判定不涉及；
     `exact_decisions` 为真时蓝图里就只有给的这几条（反例用：可以漏判，空列表就一条不判）；
     `details` 是 `story_detail` 生成的 canonical 片段，按原文插进去；
-    `projection` 为假时不生成评审投影。需求已交给设计且 `consume` 为真时，蓝图消费登记的冻结输入；
-    `consume` 为假时保留夹具原来那份需求（另一个需求）的条目——反例用；`items` 直接给出要消费的条目
-    （流程契约还没落盘时用）。
+    `projection` 为假时不生成评审投影。`consume` 为真时蓝图的需求条目采用需求已导入的材料版本；
+    `consume` 为假时保留夹具原来那份需求（另一个需求）的条目——反例用；`items` 直接给出要采用的条目。
     """
     ensure_framework(root)
     blueprint = blueprint_of(root, feature)
@@ -398,41 +402,22 @@ def main_source(manifest: dict) -> str:
     return next((p for p in docs if p in requirement), docs[0])
 
 
-def design_input(src: Path) -> dict:
-    """本轮确认的材料全部采用，人签取范围关卡那一条，需求条目指向产品需求的正文。"""
-    manifest = json.loads((src / "materials.json").read_text(encoding="utf-8"))
-    adopted = [p for m in manifest["materials"] if m.get("sha256") for p in m["paths"]]
-    contract = json.loads((src / "story-flow.json").read_text(encoding="utf-8"))
-    asks = [g["ask_id"] for g in contract["rounds"][-1]["gates"]
-            if g["gate"] == "scope_decision" and g["outcome"] == "accepted"]
-    main = main_source(manifest)
-    return {"adopted": adopted, "human_decision_ids": asks[-1:],
-            "scope_items": [{"item_id": "request-main", "kind": "requirement", "source_path": main,
-                             "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}]}
-
-
-def hand_to_design(flow: Callable[..., dict], src: Path, access: Path) -> None:
-    """关联设计对象、写设计输入，提交冻结；再由设计按这份输入走到准入。蓝图标识取需求标识；
-    `access` 是用来调原生的 framework-access。"""
+def hand_to_design(src: Path, access: Path) -> None:
+    """范围定了：设计由原生 component-design 完成——放一份与需求同根、需求条目采用本需求材料版本、已准入的蓝图
+    （带一条知识应用决定），成文按它写。`access` 是用来调原生的 framework-access。"""
     feature_root = src.parents[1]
     root = project_root_of(feature_root)
     ensure_framework(root)
-    blueprint = f"bp-{feature_root.name}"
-    flow("bind-design", "--component", COMPONENT, "--blueprint", blueprint)
-    (src / "design-input.json").write_text(json.dumps(design_input(src), ensure_ascii=False), encoding="utf-8")
-    flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
-    # 设计由原生 component-design 完成：放一份消费了这次输入、已准入的蓝图（带一条知识应用决定），成文按它写
-    if not (feature_root.parent / blueprint / "blueprint" / "component-blueprint.yaml").is_file():
+    if not (feature_root / "blueprint" / "component-blueprint.yaml").is_file():
         install_blueprint(root, feature_root.name, access)
 
 
-def walk_to_design(flow: Callable[..., dict], src: Path, draft_text: str, access: Path,
+def walk_to_design(flow: Callable[..., dict], src: Path, access: Path,
                    scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
-    """用真实流程命令走完 S1–S3 并交给设计：材料关卡、需求分析、范围关卡、关联设计对象、冻结输入。
+    """用真实流程命令走完 S1–S3 并交给设计：材料关卡、需求分析、范围关卡，再放好同根的准入蓝图。
 
-    工程里同时放好一份已准入的蓝图——走完即「可以成文」。材料是夹具里已导入的 `sources/` 材料版本。"""
+    走完即「可以成文」。材料是夹具里已导入的 `sources/` 材料版本。"""
     src.mkdir(parents=True, exist_ok=True)
-    (src / "design-draft.md").write_text(draft_text, encoding="utf-8")
     flow("init")
     flow("round")
     write_gaps(src)
@@ -443,13 +428,13 @@ def walk_to_design(flow: Callable[..., dict], src: Path, draft_text: str, access
         [{"key": "carry_all", "label": "按当前范围整体承载"}], ensure_ascii=False), encoding="utf-8")
     flow("round")
     answer(flow, "scope_decision", "夹具：整体承载", "--chosen", "carry_all")
-    hand_to_design(flow, src, access)
+    hand_to_design(src, access)
 
 
 def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_script: Path, access: Path,
-                     draft: str, decisions: list[dict] | None = None, design: dict | None = None,
+                     decisions: list[dict] | None = None, design: dict | None = None,
                      project_must_pass: bool = True) -> None:
-    """就地把一份需求工作区准备成「交给设计、蓝图已准入」：接 Framework、放准入蓝图、用真实流程命令走到交给设计，
+    """就地把一份需求工作区准备成「范围已定、蓝图已准入」：接 Framework、用真实流程命令走完关卡、放准入蓝图，
     附录机器区按蓝图重投。
 
     `flow_script` / `build_script` / `access` 是本次要用的那份扩展里的 story_flow.py、story-build.mjs 与
@@ -468,8 +453,8 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
     if not (src / "story-flow.json").is_file():
-        walk_to_design(flow, src, draft, access)
-    # 设计按登记的输入走到准入：蓝图消费这次冻结输入，带本夹具要的知识应用决定与设计内容
+        walk_to_design(flow, src, access)
+    # 设计走到准入：蓝图的需求条目采用本需求的材料版本，带本夹具要的知识应用决定与设计内容
     install_blueprint(root, feature, access, decisions=decisions, **(design or {}))
     if (feature_root / "AR" / "story.md").is_file():
         proc = subprocess.run(["node", str(build_script), "project", "--feature", feature, "--project-root", str(root)],

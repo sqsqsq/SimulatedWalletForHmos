@@ -12,7 +12,7 @@
 | phase | 在 design_handoff 之上，每个活动施工单位在终点及之前各阶段：冻结范围要执行的，原生完成证据身份相符、已收口、质量结论 PASS，
 认定到达时阶段物证仍新鲜；不执行的，本阶段必需义务由原生承接证据满足（合法复用），或义务全部不适用 |
 
-蓝图身份取需求流程契约里的设计关联（`design_binding.blueprint_id`）；直接走 Framework 的 Case 在配置里显式写 `blueprint_id`。
+蓝图与需求同根，身份就是需求标识（需求目录下有 canonical 蓝图时）；直接走 Framework 的 Case 在配置里显式写 `blueprint_id`。
 驱动器不从目录名猜。原生事实由 `observe_target.mjs` 只读取得；本模块把它们与磁盘上的完成回执合成结论，只报事实与缺口。
 """
 from __future__ import annotations
@@ -222,7 +222,7 @@ def observe(root: Path, features_dir: str, feature: str, end_at: dict, *, case: 
     blueprint = blueprint_of(root, features_dir, feature, case)
     facts["blueprint_id"] = blueprint
     if not blueprint:
-        facts["missing"] = ["需求还没有设计关联的蓝图（流程契约 design_binding.blueprint_id），Case 也没显式给 blueprint_id"]
+        facts["missing"] = ["需求目录下还没有蓝图（blueprint/component-blueprint.yaml），Case 也没显式给 blueprint_id"]
         return facts
     phases = responsible_phases(end_at, start_phase) if end_at["kind"] == "phase" else ()
     native = observe_native(root, blueprint, phases)

@@ -20,21 +20,10 @@ from flow_steps import walk_to_complete
 ACCESS = design_kit.ACCESS
 BUILD = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FLOW = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
-#: 交给设计时提交的最小提取稿：五段结构齐全
-DRAFT = (
-    "# 需求 — 开发需求（AR）\n\n"
-    "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
-    "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
-    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
-    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
-    "## 5 上游已声明线索\n\n无。\n")
+def ensure_flow_state(root: Path, feature: str, src: Path) -> None:
+    """skeleton 起手预检需要的流程状态：S1–S3 走完、范围已定、同根蓝图已准入（真实脚本生成契约）。
 
-
-def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> None:
-    """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。
-
-    08 §2.1 之后 skeleton 的起手预检要读流程契约与材料基准；夹具没有时，
-    用真实流程命令把 S1–S3 走完并提交一份提取稿——生成的契约即收口态。
+    skeleton 的起手预检要读流程契约与材料基准；夹具没有时，用真实流程命令把 S1–S3 走完。
     """
     def flow(*args: str) -> dict:
         proc = subprocess.run(
@@ -48,11 +37,11 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
     # 流程按原生身份找需求目录：先接被测 Framework
     design_kit.ensure_framework(root)
     if (src / "story-flow.json").is_file():
-        # 已交给设计的工程：起手前 init 照常为没拉到的上游补占位件，round 把它登记进本轮
+        # 已走过关卡的工程：起手前 init 照常补工作区骨架，round 把现状登记进本轮
         flow("init")
         flow("round")
         return
-    walk_to_complete(flow, src, draft_text)
+    walk_to_complete(flow, src)
 
 
 
@@ -77,7 +66,7 @@ REAL_RUN_DESIGN = {
 }
 
 
-def designed_copy(fixture: Path, feature: str, draft: str, target: Path, design: dict | None = None) -> None:
+def designed_copy(fixture: Path, feature: str, target: Path, design: dict | None = None) -> None:
     """夹具 + 已准入的蓝图 + 真实走过的交给设计：同一组输入只准备一次，复制到 `target`。
 
     流程契约与冻结输入只记工程内相对路径，复制到别处照样成立；Framework 链接复制后重接。
@@ -86,10 +75,10 @@ def designed_copy(fixture: Path, feature: str, draft: str, target: Path, design:
         shutil.copytree(fixture, base / "doc" / "features" / feature if fixture.name == feature else base)
         spec = dict(design or {})
         decisions = spec.pop("decisions", FIXTURE_DECISIONS)
-        design_kit.prepare_designed(base, feature, flow_script=FLOW, build_script=BUILD, access=ACCESS, draft=draft,
+        design_kit.prepare_designed(base, feature, flow_script=FLOW, build_script=BUILD, access=ACCESS,
                                     decisions=decisions, design=spec)
 
-    key = shared_state.digest(fixture, *shared_state.COMMON, feature, draft, shared_state.framework_version(),
+    key = shared_state.digest(fixture, *shared_state.COMMON, feature, shared_state.framework_version(),
                               json.dumps(design or {}, ensure_ascii=False, sort_keys=True, default=str))
     base = shared_state.shared_tree("designed", key, build)
     shared_state.copy_tree(base, target)

@@ -8,7 +8,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { isSystemRequirement, readJson, readText } from './context.mjs';
+import { isSystemRequirement, readText } from './context.mjs';
 import { queryFlowStatus } from '../flow/client.mjs';
 import { markdownLinks } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
@@ -30,25 +30,20 @@ export function latestOf(ctx, cls) {
 }
 
 /**
- * 某一类来源本次采用的版本：交给设计后取冻结输入里登记的那一版（冻结之后才取得的来源不算采用），之前取最新取得的版本。
+ * 某一类来源本次采用的版本：蓝图的需求条目采用了本需求的材料版本时，取其中这类来源被采用的那一版
+ * （设计之后才取得的版本不算采用，没被采用的来源不列）；还没有可读的设计来源时取最新取得的版本。
  */
 function adoptedOf(ctx, cls) {
-  const frozen = frozenPaths(ctx);
-  if (!frozen) return latestOf(ctx, cls);
+  const designed = ctx.projectRoot && ctx.args?.feature && fs.existsSync(path.join(ctx.featureRoot, 'blueprint', 'component-blueprint.yaml'));
+  const own = designed ? designSource(ctx).adopted?.own : null;
+  if (!own) return latestOf(ctx, cls);
+  const dirs = new Set(own.versions);
   const m = readManifest({ srcDir: ctx.srcDir ?? path.join(ctx.featureRoot, 'AR', 'story-src') });
   if (!m || m === 'broken' || !Array.isArray(m.sources)) return [];
   return m.sources.filter(s => s?.class === cls && s.kind !== 'answer' && Array.isArray(s.versions)).flatMap((s) => {
-    const v = s.versions.findLast(x => frozen.has(x?.readable?.path ?? x?.original?.path));
+    const v = s.versions.findLast(x => dirs.has(String(x?.dir)));
     return v ? [{ ...v, source_id: s.source_id, kind: s.kind, class: s.class, origin: s.origin ?? {} }] : [];
   });
-}
-
-/** 冻结输入登记的文件（相对需求目录）；还没交给设计时为 null。 */
-function frozenPaths(ctx) {
-  const ref = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null)?.input?.snapshot_ref;
-  if (!ref || !ctx.projectRoot) return null;
-  const snapshot = readJson(path.join(ctx.projectRoot, ...String(ref).split('/')), null);
-  return new Set((Array.isArray(snapshot?.files) ? snapshot.files : []).map(f => f?.path).filter(Boolean));
 }
 
 /**
@@ -215,40 +210,25 @@ export function joinPosix(base, ref) {
 }
 
 /**
- * 需求目录里一份上游文件在本次采用的版本：交给设计后读冻结输入里的原始字节，当前工作区的新版本不改变已采用的来源；
- * 还没交给设计时读当前文件。返回正文与它的位置（冻结副本给工程内路径，当前文件给需求目录内路径），读不到返回 null。
- *
- * @param {{projectRoot: string, featureRoot: string}} ctx
- */
-function adoptedText(ctx, rel) {
-  const flow = readJson(path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'), null);
-  const ref = flow?.input?.snapshot_ref;
-  const at = ref ? `${path.posix.dirname(String(ref))}/files/${rel}` : null;
-  const file = at && ctx.projectRoot ? path.join(ctx.projectRoot, ...at.split('/')) : path.join(ctx.featureRoot, rel);
-  const text = readText(file);
-  if (text === null) return null;
-  return { text, at: at && ctx.projectRoot ? at : rel };
-}
-
-/**
- * 本次采用的上游原件正文（产品需求、系统设计、开发需求各类来源的阅读稿）：交给设计后取冻结副本，之前取当前版本。
+ * 本次采用的上游原件正文（产品需求、系统设计、开发需求各类来源采用版本的阅读稿）。材料版本导入后不改，按原处读。
  * 判一个编号是不是上游自己的编号时用它。
  */
 export function adoptedUpstreamTexts(ctx) {
   return Object.keys(ctx.contract.sources ?? {}).flatMap(cls => adoptedOf(ctx, cls))
-    .map(v => v.readable?.path).filter(Boolean).map(rel => adoptedText(ctx, rel)?.text).filter(t => typeof t === 'string');
+    .map(v => v.readable?.path).filter(Boolean).map(rel => readText(path.join(ctx.featureRoot, ...rel.split('/'))))
+    .filter(t => typeof t === 'string');
 }
 
 /**
  * 带图的上游文档在本次采用的版本：写作设计登记「承接上游图：<名> §<节> #<第几张>」时，名就是这里的标签。
- * 系统设计来源的阅读稿取冻结输入里的原始字节（交给设计之前取当前版本）；蓝图里的图由设计来源给出，不在这里。
+ * 取系统设计来源采用版本的阅读稿；蓝图里的图由设计来源给出，不在这里。
  *
  * @returns {[string, string, string][]} [标签, 正文, 阅读稿位置（相对需求目录）]
  */
 export function upstreamDocs(ctx) {
   return adoptedOf(ctx, 'SR').filter(v => v.readable?.path).map((v) => {
-    const got = adoptedText(ctx, v.readable.path);
-    return got ? ['SR', got.text, v.readable.path] : null;
+    const text = readText(path.join(ctx.featureRoot, ...v.readable.path.split('/')));
+    return text === null ? null : ['SR', text, v.readable.path];
   }).filter(Boolean);
 }
 

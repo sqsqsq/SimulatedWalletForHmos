@@ -149,7 +149,9 @@ class TheOrderIsSnapshotThenPromoteThenResume(unittest.TestCase):
         src = (SCRIPTS / "run_multi_case.py").read_text(encoding="utf-8")
         body = src.split("def command_promote_checkpoint", 1)[1].split("\ndef ", 1)[0]
         self.assertIn("checkpoints", body)
-        self.assertIn("destination_conflict", body, "目的地有不同内容时没有保留两边")
+        self.assertIn("_promote_tree(source", body, "回流没走保留两边的那条路")
+        tree = src.split("def _promote_tree", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("destination_conflict", tree, "目的地有不同内容时没有保留两边")
 
 
 class TheTwoSegmentsLandInDifferentPlaces(unittest.TestCase):
@@ -558,13 +560,11 @@ class StoryGatesTellNotRunFromFailed(unittest.TestCase):
         self.assertEqual(1, self.calls, "输入一字未变，却又起了检查进程")
 
     def test_any_input_change_reruns(self) -> None:
-        """正文、侧车、检查器实现、需求关联的蓝图变了都重跑——旧 PASS 不沿用。"""
-        (self.feature / "AR" / "story-src" / "story-flow.json").write_text(
-            json.dumps({"design_binding": {"blueprint_id": "bp1"}}), encoding="utf-8")
-        (self.tmp / "doc" / "features" / "bp1" / "blueprint").mkdir(parents=True)
+        """正文、侧车、检查器实现、与需求同根的蓝图变了都重跑——旧 PASS 不沿用。"""
+        (self.feature / "blueprint").mkdir(parents=True, exist_ok=True)
         for rel in ("doc/features/AR1/AR/story.md", "doc/features/AR1/AR/story-src/story-template.md",
                     "doc/extensions/skills/story/scripts/core/story-build.mjs",
-                    "doc/features/bp1/blueprint/component-blueprint.yaml"):
+                    "doc/features/AR1/blueprint/component-blueprint.yaml"):
             with self.subTest(rel=rel):
                 self.run_gates()
                 before = self.calls

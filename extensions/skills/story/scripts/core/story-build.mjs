@@ -21,11 +21,11 @@
  * |------|--------|
  * | `skeleton` | 预检流程与材料；建决策登记骨架、写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
- * | `project` | 附录机器区按当前真源（当前蓝图、冻结的设计输入）重投 |
+ * | `project` | 附录机器区按当前真源（当前蓝图与它采用的来源）重投 |
  * | `check` | 上面那几条确定性不变量 |
  * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
- * | `basis` | 输出这一刻的成文依据（设计引用、冻结输入、知识摘要），登记与路由用它 |
+ * | `basis` | 输出这一刻的成文依据（设计引用、设计采用的来源、知识摘要），登记与路由用它 |
  * | `review`| 独立人读审查：`--action prepare` 定稿并准备原生审查请求，`--action check` 核这一次的审查结果 |
  * | `view` | 正式图的两种形态：`--mode prepare` 给未管理的 Mermaid 图建源（`--id` 从源重建一块），`mermaid` 按源重铺，`svg` 把验收成立的图换成同 ID 的增强 SVG，`toggle` 一键切换；`status` 列每张图的增强进度，`review-request` / `review-check` 生成与核对 SVG 验收 |
  * | `archive` | 唯一的归档入口：交付门 → 取外部当前内容 → 发布前核 → 对接层上传与读回 → 核回执 → 登记归档态 |
@@ -69,7 +69,7 @@ const REVIEW_ACTIONS = ['prepare', 'check', 'waiver-check', 'manual'];
 const COMMANDS = Object.assign(Object.create(null), {
   skeleton: { what: '预检流程、材料、设计来源与决策登记，全过才建写作设计空壳、十章骨架与章草稿，并给出当前输入与下一步' },
   chapter: { what: '把草稿里的一章原子替换进 AR/story.md，其余章一个字节不动', need: ['--chapter', '--from'] },
-  project: { what: '附录机器区按当前真源（蓝图、冻结的设计输入）重投' },
+  project: { what: '附录机器区按当前真源（蓝图与它采用的来源）重投' },
   number: { what: '给 AR/story.md 重编号：章序按合同，小节与图题按出现顺序' },
   check: { what: '只读核对确定性不变量；加 --deliver 判能不能交付，加 --registering 按登记前口径核', opts: ['--deliver', '--registering'] },
   build: { what: '由 decisions.json 渲染 AR/review.md（人工区逐字节保留）' },
@@ -186,11 +186,11 @@ function cmdProject(ctx) {
   const { text, zones } = projectAppendix(ctx, story);
   if (text !== story) fs.writeFileSync(ctx.storyPath, text, 'utf-8');
   process.stdout.write(`[story-build project] 附录机器区按当前真源重投 ${zones} 节`
-    + '（当前蓝图 / 冻结的设计输入）；机器区外的说明归你，不动\n');
+    + '（当前蓝图与它采用的来源）；机器区外的说明归你，不动\n');
 }
 
 /**
- * 这一刻的成文依据（设计引用、冻结输入、知识摘要）输出成一行 JSON：`story_flow.py story` 登记时写进流程契约，
+ * 这一刻的成文依据（设计引用、设计采用的来源、知识摘要）输出成一行 JSON：`story_flow.py story` 登记时写进流程契约，
  * 流程路由拿它核登记之后换没换。设计来源不成立时照实失败。
  */
 function cmdBasis(ctx) {
@@ -274,9 +274,7 @@ function skeletonPreflight(ctx) {
   if (flowGaps.length) problems.push(...flowGaps);
   else if (!flow) {
     problems.push('AR/story-src/story-flow.json：不存在，本需求还没走过 /story 的 S1–S3'
-      + '——流程契约由 `story_flow.py init` 起单、按关卡收口时写成，story 骨架在范围收口之后起');
-  } else if (flow.status !== 'complete' && flow.status !== 'story_written') {
-    problems.push(`AR/story-src/story-flow.json：status 是 ${flow.status}，本轮还没有收口——story 骨架在 complete 或 story_written 时起，当前动作由 \`story_flow.py status\` 给出`);
+      + '——流程契约由 `story_flow.py init` 起单、按关卡收口时写成，story 骨架在范围定了、设计成立之后起');
   }
   // ② 材料：清单在、与本轮基准一致、且磁盘现状仍是这批料（基准在流程契约里）
   const manifest = readJson(path.join(ctx.srcDir, 'materials.json'), null);
@@ -298,7 +296,7 @@ function skeletonPreflight(ctx) {
   } else if (blocking.length) {
     problems.push(`必备来源缺失：${blocking.map(m => missingSourceLine(m)).join('；')}`);
   }
-  // ④ 设计来源成立：蓝图、有效的评审投影、登记的冻结输入
+  // ④ 设计来源成立：蓝图、有效的评审投影、需求条目采用了本需求的材料版本
   const gaps = designGaps(ctx);
   if (gaps.length) problems.push(`设计来源或附录投影还不成立：\n  · ${gaps.join('\n  · ')}`);
   // ⑤ 决策登记起手前就有议题，或写明本单无待决（只读）

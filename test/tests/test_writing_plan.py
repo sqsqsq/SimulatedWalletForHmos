@@ -275,7 +275,7 @@ class PlanCase(StoryBuildCase):
 
     def setUp(self) -> None:
         super().setUp()
-        ensure_flow_state(self.root, FEATURE, self.src, self.DRAFT)
+        ensure_flow_state(self.root, FEATURE, self.src)
         self.plan = self.src / "story-template.md"
         self.plan.unlink(missing_ok=True)
         shutil.rmtree(self.src / "drafts", ignore_errors=True)

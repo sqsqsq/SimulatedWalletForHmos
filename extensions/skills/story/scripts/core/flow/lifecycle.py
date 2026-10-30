@@ -12,8 +12,8 @@ import subprocess
 from pathlib import Path
 
 from flow.state import (
-    CORE_DIR, DESIGN, FlowError, S4_STEPS, STORY, STORY_REGISTERED, file_sha256, last_gate, load, log,
-    now, require, round_gates, save, stage_of)
+    CORE_DIR, FlowError, STORY, STORY_REGISTERED, blueprint_exists, file_sha256, last_gate, load, log,
+    now, require, round_gates, save, scope_settled, stage_of)
 from flow.routing import (live_materials, material_state, next_step, reading_work, register_command,
                           sidecar_shape)
 from flow import asks
@@ -22,7 +22,7 @@ from flow.meetings import topic_digest
 from materials import meeting
 
 
-#: 设计交接之后等设计的几步与成文的几步（路由给出），派生状态按它们归类
+#: 范围定了之后等设计的几步与成文的几步（路由给出），派生状态按它们归类
 DESIGN_STEPS = ("design_blueprint", "fix_blueprint", "design_projection")
 WRITING_STEPS = ("story_skeleton", "story_chapters", "register_story")
 
@@ -30,22 +30,21 @@ WRITING_STEPS = ("story_skeleton", "story_chapters", "register_story")
 def derived_state(contract: dict | None, step: str) -> str:
     """需求现在处在哪一态：由契约与路由的同一次判断派生，不另存副本。
 
-    gathering 材料未确认；scope_pending 范围未定；input_ready 可以冻结输入；waiting_for_design 输入已登记、
-    蓝图没有或未准入（含投影无效）；ready_to_write 可以成文；needs_sync 已登记的输入或成文与现状不符；
-    registered 成文已登记且与现状一致。update 的两段另由 `update` 字段给出。
+    gathering 材料未确认；scope_pending 范围未定；waiting_for_design 范围已定、蓝图没有、读不过、没采用本需求来源
+    或投影无效；ready_to_write 可以成文；needs_sync 成文与现状不符；registered 成文已登记且与现状一致。
+    update 的两段另由 `update` 字段给出。
     """
     if not contract or not contract.get("rounds"):
         return "gathering"
-    status = contract.get("status")
-    if status == "story_written":
+    if contract.get("status") == "story_written":
         return "needs_sync" if step == "register_story" else "registered"
-    if status == "complete":
+    if scope_settled(contract):
         return ("waiting_for_design" if step in DESIGN_STEPS
                 else "ready_to_write" if step in WRITING_STEPS else "needs_sync")
     confirmed = last_gate(round_gates(contract), "material_scope")
     if not confirmed or confirmed.get("outcome") != "accepted":
         return "gathering"
-    return "input_ready" if step in S4_STEPS else "scope_pending"
+    return "scope_pending"
 
 
 def cmd_material_status(feature_root: Path) -> dict:
@@ -101,12 +100,11 @@ def cmd_status(feature_root: Path) -> dict:
         "gates": [{"gate": g.get("gate"), "chosen": g.get("chosen"),
                    "outcome": g.get("outcome"), "by": g.get("by")} for g in gates],
         "split": contract.get("split", {}).get("decided"),
-        "design": bool((feature_root / Path(*DESIGN)).is_file()),
         "archived": bool(contract.get("archived")),
         "state": derived_state(contract, step),
         **({"update": stage_of(contract)} if stage_of(contract).startswith("update_") else {}),
-        "design_binding": contract.get("design_binding"),
-        "input": contract.get("input"),
+        # 蓝图与需求同根：标识就是需求标识，在不在按原生 canonical 文件
+        "blueprint": {"blueprint_id": feature_root.name, "exists": blueprint_exists(feature_root)},
         "material_state": ({"pending": state["pending"], "changed": state["changed"]}
                            if state else None),
         # 会议话题在这里机械枚举一次：全部版本、全部话题，含不属于本需求与归属判不准的。
@@ -128,7 +126,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     1. 全篇结构检查（`story-build check`）通过；
     2. 这一份的独立审查结果（`story-build review --action check`）是 pass 或 warn——审的是现在这份；
        宿主没有独立审查能力、人授权不经审查交付的（unreviewed）同样可登记，披露随结果；
-    3. 这一刻的成文依据（`story-build basis`）：蓝图引用、交给设计的输入版本、激活知识摘要，
+    3. 这一刻的成文依据（`story-build basis`）：蓝图引用、设计采用的来源、激活知识摘要与材料索引摘要，
        加上 Story、Review、决策登记与写作设计的原始字节指纹。
 
     都成立才一次写入新依据；任一步不成立照实报出，已有的登记与依据原样保留（派生为待同步）。
@@ -136,14 +134,14 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if status not in ("complete", "story_written"):
+    if status != "story_written" and not scope_settled(contract):
         # 重拍范围之后直接来登记的常见一步：说出现在该做什么，不只说「不行」。
-        # 下一步要按磁盘现状读材料；读不出来时「还没收口」照样先说，原因附在后面。
+        # 下一步要按磁盘现状读材料；读不出来时「范围还没定」照样先说，原因附在后面。
         try:
             _, action = next_step(feature_root, contract, live_materials(feature_root))
         except FlowError as exc:
             action = f"暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取下一步"
-        raise FlowError(f"流程还没收口（status 是 {status}），成文态无从登记。下一步：{action}")
+        raise FlowError(f"本轮范围还没定，成文态无从登记。下一步：{action}")
     story = feature_root / Path(*STORY)
     if not story.is_file():
         raise FlowError("AR/story.md 不存在：没有成文，无可登记的成文态")
@@ -193,7 +191,9 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 它们走不漏到读者手上——归档只上传 story.md、review.md 与 design-review.md，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
+    # 材料索引摘要随登记记下：update 以 documents 收口时据它认「登记之后来的新材料有没有经过这次成文」
     wanted = {**json.loads(outputs["basis"].stdout),
+              "materials_digest": live_materials(feature_root).get("digest"),
               "files": {rel: file_sha256(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}}
     if status == "story_written" and contract.get("story_basis") == wanted:
         log("这一份已经按同样的依据登记过，不改")

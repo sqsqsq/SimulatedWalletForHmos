@@ -18,8 +18,8 @@ from pathlib import Path
 from materials import importer, meeting, registry
 
 from flow.state import (
-    CARRY_ALL, CORE_DIR, DESIGN_DRAFT, FlowError, S4_STEPS, STORY_CONTRACT, after_complete,
-    last_gate, registration_drift, round_gates, stage_of)
+    CARRY_ALL, CORE_DIR, FlowError, STORY_CONTRACT, blueprint_exists, closed, last_gate, registration_drift,
+    round_gates, scope_settled, settled_this_round, stage_of)
 from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
 from flow.meetings import meeting_basis, pending_asks, refresh_problems
@@ -34,7 +34,7 @@ def closed_inbox_note(feature_root: Path, contract: dict, manifest: dict | None 
     `status` 只说下一步走 spec 那条路。**下游没有动作时要说明为什么不适用，
     缺席不代表不适用。**
     """
-    if not after_complete(contract) or not contract.get("rounds"):
+    if not contract.get("rounds") or not closed(feature_root, contract):
         return ""
     pending = material_state(feature_root, contract["rounds"][-1], manifest)["pending"]
     if not pending:
@@ -95,17 +95,6 @@ def pending_import_step(state: dict) -> tuple[str, str] | None:
             f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
 
 
-def settled_this_round(contract: dict) -> bool:
-    """拆分是不是**在当前轮**定的案。
-
-    `split` 是契约级字段（design.md 只认最终那一份），而拆分决策属于某一轮——
-    两者用 `settled_round` 挂钩，重新初析后同一份 split 就不再算数。
-    """
-    split = contract.get("split") or {}
-    return (split.get("decided") == "split"
-            and split.get("settled_round") == contract["rounds"][-1].get("round"))
-
-
 #: 成文这一段的顺序，几个分支共用一句。
 STORY_STAGE_ORDER = (
     "顺序：story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
@@ -137,38 +126,36 @@ def pending_chapters(feature_root: Path) -> int:
     return len(re.findall(r"<!--\s*" + re.escape(mark) + r"[:：]", text))
 
 def design_stage_step(feature_root: Path, contract: dict) -> tuple[str, str]:
-    """设计输入登记之后：按原生蓝图的真实状态回答等设计还是可以成文。flow 不存准入与 revision 的副本。"""
+    """本轮范围定了之后：按原生蓝图的真实状态回答等设计还是可以成文。flow 不存准入与 revision 的副本。"""
     return design_gate(feature_root, contract) or story_stage_step(feature_root)
 
 
 def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """设计这一侧还差什么：蓝图没建、读不过、没消费本次输入或投影不对时给下一步；都成立返回 None。
+    """设计这一侧还差什么：蓝图没建、读不过、没有采用本需求的来源或投影不对时给下一步；都成立返回 None。
 
-    成文读的是原生草稿：没准入不挡成文与业务送审，原生 issues 与未决由成文、独审与交付说明如实带出；
-    准入只决定施工单位能不能开工，由交付门之后的施工路径消费。
+    蓝图与需求同根，蓝图标识就是需求标识。成文读的是原生草稿：没准入不挡成文与业务送审，原生 issues 与未决由成文、
+    独审与交付说明如实带出；准入只决定施工单位能不能开工，由交付门之后的施工路径消费。
     """
-    binding = contract.get("design_binding") or {}
-    blueprint = binding.get("blueprint_id")
-    entry = (contract.get("input") or {}).get("snapshot_ref")
-    if not blueprint or not entry:
-        raise FlowError("流程契约标了已提交，却没有设计关联（design_binding）或登记的输入（input）：契约不完整。"
-                        "跑 `story_flow.py bind-design` 与 `complete` 重新提交")
-    read = native.call(native.project_root_of(feature_root), "blueprint", "--blueprint", str(blueprint), "--purpose", "draft",
-                       "--snapshot", str(entry))
-    if read["status"] == "missing":
+    blueprint = feature_root.name
+    if not blueprint_exists(feature_root):
         return ("design_blueprint",
-                f"设计输入已冻结（`{entry}`）。按 `phases/design.md`「三、设计」进原生 component-design："
-                f"用这份输入为组件 `{binding.get('component_id')}` 建立蓝图 `{blueprint}`，请求写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止"
+                f"本轮范围已定。按 `phases/design.md`「二、交给设计」「三、设计」进原生 component-design：为本需求建立蓝图 `{blueprint}`"
+                f"（与需求同根，在 `{blueprint}/blueprint/`），来源是 `sources/README.md` 列的材料版本与人工答复；"
+                "需求条目用 `import_sources.py --scope` 按材料索引补齐来源路径与摘要。"
+                "请求写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止"
                 "（准入与否、还开着的问题由原生如实给出，不为过准入删改未决）；"
                 "知识在设计决定前取（story-knowledge），独立质询交宿主的隔离子代理。"
                 "本轮授权：`/story <AR>` 的启动语义是「做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择」（batch 多阶段声明），直接进，不问")
+    read = native.call(native.project_root_of(feature_root), "blueprint", "--blueprint", blueprint, "--purpose", "draft",
+                       "--consume", blueprint)
     if read["status"] != "ok":
         return ("fix_blueprint", f"蓝图 `{blueprint}` 原生读不过（{read['status']}）：{native.issues_text(read)}——设计职责按原生报错修正")
     consumption = read.get("consumption") or {}
     if consumption.get("status") != "ok":
         return ("design_blueprint",
-                f"蓝图 `{blueprint}` 还没消费本次交给设计的输入（`{entry}`）：{native.issues_text(consumption)}——"
-                "设计职责在 component-design 里按这份输入同步蓝图的需求条目，再重新生成评审投影")
+                f"蓝图 `{blueprint}` 的需求条目没有采用本需求的来源：{native.issues_text(consumption)}——"
+                "设计职责在 component-design 里按 `sources/` 的材料版本同步需求条目（`import_sources.py --scope` 补齐路径与摘要），"
+                "再重新生成评审投影")
     projection = read.get("projection") or {}
     if projection.get("status") != "valid":
         return ("design_projection",
@@ -306,8 +293,7 @@ def update_open_step(feature_root: Path, contract: dict,
                      manifest: dict | None = None) -> tuple[str, str]:
     """更新正在进行：去向是「按修订清单改」，**不重走材料与范围关卡**。
 
-    新材料 `round` 登记进当前轮；提取稿改了由 `complete` 重新提交，范围沿用本单已定的；
-    story 改了（或登记因提交提取稿作废）就重跑 `story` 重新登记。
+    新材料 `round` 登记进当前轮，范围沿用本单已定的；设计按新来源同步，story 改了就重跑 `story` 重新登记。
     """
     rid = contract["update"]["open"]
     state = material_state(feature_root, contract["rounds"][-1], manifest)
@@ -322,14 +308,8 @@ def update_open_step(feature_root: Path, contract: dict,
     if meeting_now:
         return meeting_now
     # 这一轮 update 里重开了范围：先回范围关卡重新确认，update 照旧开着
-    if contract["rounds"][-1].get("reopened") and not after_complete(contract):
-        step, action = scope_step(feature_root, contract)
-        if step not in S4_STEPS:
-            return step, action
-    if not after_complete(contract):
-        return ("run_complete", f"更新 {rid}：改完提取稿 `{'/'.join(DESIGN_DRAFT)}` 与设计输入，跑 "
-                f"`story_flow.py complete --feature <名> --from {'/'.join(DESIGN_DRAFT)} --input AR/story-src/design-input.json`"
-                " 冻结新一版输入交给设计")
+    if contract["rounds"][-1].get("reopened") and not scope_settled(contract):
+        return scope_step(feature_root, contract)
     reregister = registration_step(feature_root, contract)
     if reregister:
         return reregister
@@ -357,20 +337,24 @@ def basis_drift(feature_root: Path, contract: dict) -> list[str]:
     out = []
     if (ref.get("artifact_sha256"), ref.get("revision")) != (cur.get("artifact_sha256"), cur.get("revision")):
         out.append(f"蓝图（登记时 r{ref.get('revision')}，现在 r{cur.get('revision')}）")
+    if was.get("sources_sha256") != now.get("sources_sha256"):
+        out.append("设计采用的来源")
     if was.get("knowledge_sha256") != now.get("knowledge_sha256"):
         out.append("激活知识")
     return out
 
 
 def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """story 已写出来之后要不要重新登记：登记之后 story、输入、蓝图或知识变了，或状态停在已收口（update 里
-    重新提交输入、重新登记没过）。不需要返回 None。还在逐章写的单不走这里，由成文那条路给下一步。
+    """story 已写出来之后要不要重新登记：登记之后 story、采用来源、蓝图或知识变了，或还没按当前内容登记
+    （update 里重开范围后、重新登记没过）。不需要返回 None。
     """
     waiting = design_gate(feature_root, contract)
     if waiting:
         return waiting
+    if contract.get("status") != "story_written":
+        return story_stage_step(feature_root)
     drift = registration_drift(feature_root, contract) + basis_drift(feature_root, contract)
-    if drift or contract.get("status") == "complete":
+    if drift:
         return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")
                 + "改完先 `story-build review --action prepare` 定稿（重投附录、编号、渲染 review、全篇 check）并重新独立审查，"
                 f"审查通过后跑 `{register_command(feature_root)}` 重新登记")
@@ -394,7 +378,7 @@ def next_step(feature_root: Path, contract: dict | None,
         return update_inputs_step(feature_root, contract, manifest)
     # 收口之后才导进来的会议：还没有会议判断的版本。收口前读过的会都已写进判断（范围关卡之前必经）
     late = (sorted(set(meeting.versions(feature_root)) - set(meeting.read_notes(feature_root, [])))
-            if after_complete(contract) and stage != "update_open" else [])
+            if closed(feature_root, contract) and stage != "update_open" else [])
     if late:
         return ("late_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：按 `phases/meeting-read.md` 读会。"
                 "会上有要人定的话题就先 `story_flow.py reopen` 重拍，在范围关卡摆给人；"
@@ -414,10 +398,10 @@ def next_step(feature_root: Path, contract: dict | None,
                 "做完后按 `story_flow.py status` 的下一步回到原来的收尾" + closed_tail(feature_root, contract, manifest))
     if stage == "archived":
         # 归档之后收口过一轮 update：本地已按它更新，回写需求系统等人确认（`phases/update.md`「已归档」一行）
-        closed = str((contract.get("update") or {}).get("last_closed") or "")
+        last_closed = str((contract.get("update") or {}).get("last_closed") or "")
         archived = contract.get("archived") or {}
         at = str(archived.get("at") or "")
-        updated = closed[:15] > at.replace("-", "").replace(":", "").replace("T", "-")[:15]
+        updated = last_closed[:15] > at.replace("-", "").replace(":", "").replace("T", "-")[:15]
         restored = archived.get("restored_at") and archived.get("external_digest") != archived.get("story_digest")
         return ("done", ("本地已按 update 更新；回写需求系统等人确认，确认后走 `/story archive`。" if updated
                          else "需求系统上的正文已恢复到旧版，两个附件仍是最近一次发布的版本，三件分属不同版本；"
@@ -431,9 +415,9 @@ def next_step(feature_root: Path, contract: dict | None,
                 "`story-build check --deliver` 交付门；通过后已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择"
                 "（送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进；本地单没有送审）"
                 + closed_tail(feature_root, contract, manifest))
-    if stage == "complete":
-        # 收口之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
-        # 而 spec 与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
+    if closed(feature_root, contract):
+        # 设计开始之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
+        # 而设计与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
         # 仍然彼此相等，只有按磁盘现状重算才看得见。处置是 `round`——它把这次变化
         # 记到本轮（不开新轮），要重新决策才跑 `reopen`。**没有登记过基准不算「变了」**：
         # 那是轮次自己缺了材料指纹，由流程契约的判据报，处置也不是同一个。
@@ -449,7 +433,7 @@ def next_step(feature_root: Path, contract: dict | None,
             return ("refresh_round",
                     "材料在收口之后又变了：先跑 `story_flow.py round` 把这次变化登记到本轮"
                     "（它不开新轮；要重新走关卡重新决策，跑 `story_flow.py reopen`），"
-                    "再继续——设计输入与叙事件都按本轮登记的那批料写"
+                    "再继续——设计与叙事件都按本轮登记的那批料写"
                     + closed_tail(feature_root, contract, manifest))
         step, action = design_stage_step(feature_root, contract)
         return step, action + closed_tail(feature_root, contract, manifest)
@@ -462,7 +446,7 @@ def next_step(feature_root: Path, contract: dict | None,
     # 在那之前的每一个判断都建立在一份不全的材料上。文件已经在盘上，
     # 导入是脚本的活，不用问人「放好了吗」。
     # 表态与导入互不挡路：第一级的 `decide` 看的是「这一级定没定」，不看这里给的是什么。
-    # 收口之后不走这条——那时材料再变登记到本轮，见上面 `complete` 那支。
+    # 设计开始之后不走这条——那时材料再变登记到本轮，见上面 `closed` 那支。
     state = material_state(feature_root, current, manifest)
     pending = pending_import_step(state)
     if pending:
@@ -526,12 +510,9 @@ def meeting_result_step(feature_root: Path, contract: dict) -> tuple[str, str] |
 
 
 def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
-    """本轮范围定到哪一级了——材料关卡、会议、需求分析、后两级关卡与 S4。
+    """本轮范围定到哪一级了——材料关卡、会议、需求分析、后两级关卡；范围定了就交给设计这一段。
 
-    **不看材料新鲜度**：那是 `next_step` 在这之前判的。分出来是因为 S4 提交要在
-    「自己刚写下的那一笔材料差异」之上问同一个问题，而那笔差异会让新鲜度判据说
-    「材料变了」——两个问题挤在一个函数里，提交就只能在「重判范围」与
-    「跳过范围检查」之间二选一。
+    **不看材料新鲜度**：那是 `next_step` 在这之前判的。
     """
     current = contract["rounds"][-1]
     gates = round_gates(contract)
@@ -575,19 +556,8 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
     if decision["chosen"] != CARRY_ALL and not settled_this_round(contract):
         return "await_gate:split_carrier", "S3 第三级：呈现该维度的份表，取得本 AR 承载哪份"
 
-    # 范围已定——整体承载，或份表已定案。直接进 S4
-    if not (feature_root / Path(*DESIGN_DRAFT)).is_file():
-        return ("generate_design",
-                "S4：按 rules/ar_design_init.md 提取，写到 "
-                f"`{'/'.join(DESIGN_DRAFT)}`——`AR/design.md` 是上游给进来的原件，不覆盖；"
-                "提取稿作为派生分析与采用的原件一起交给设计")
-    bind = "" if contract.get("design_binding") else (
-        "先 `story_flow.py bind-design --feature <名> --component <组件> --blueprint <蓝图>` 关联设计对象"
-        "（蓝图标识与需求标识分开，新需求建议 bp-<需求标识>），再")
-    return ("run_complete",
-            f"提取稿已在。{bind}按 `phases/design.md` 写设计输入 `AR/story-src/design-input.json`（采用的原件与图、"
-            "人签编号、需求条目），跑 `story_flow.py complete --feature <名> "
-            f"--from {'/'.join(DESIGN_DRAFT)} --input AR/story-src/design-input.json` 冻结并交给设计")
+    # 范围已定——整体承载，或份表已定案：交给设计这一段按原生蓝图的真实状态往下走
+    return design_stage_step(feature_root, contract)
 
 
 def reading_work(feature_root: Path) -> dict:

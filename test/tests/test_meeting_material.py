@@ -800,13 +800,16 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         self.assertIn("本轮第一级已经定了", out["error"])
 
     def test_a_meeting_arriving_after_closure_is_read_first(self) -> None:
-        """收口之后才导进来的会议没有会议判断：先读会（有要人定的话题才 reopen）；读过的会不算迟到。"""
+        """设计开始之后才导进来的会议没有会议判断：先读会（有要人定的话题才 reopen）；读过的会不算迟到。"""
         from flow import routing
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
-        contract = {**self.contract(), "status": "complete",
-                    "design_binding": {"component_id": "wallet-home", "blueprint_id": f"bp-{self.fr.name}"},
-                    "input": {"snapshot_ref": f"doc/features/{self.fr.name}/AR/story-src/inputs/0/snapshot.json"}}
+        contract = self.contract()
+        contract["rounds"][-1]["gates"] = [{"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human"},
+                          {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human"}]
+        # 设计已经开始：同根蓝图在盘上
+        (self.fr / "blueprint").mkdir(exist_ok=True)
+        (self.fr / "blueprint" / "component-blueprint.yaml").write_text("component_id: wallet-home\n", encoding="utf-8")
         ensure_framework(project_root_of(self.fr))
         self.assertEqual("late_meeting", routing.next_step(self.fr, contract)[0])
         self.read_meeting(docx)

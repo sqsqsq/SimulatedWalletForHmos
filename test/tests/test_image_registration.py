@@ -34,14 +34,6 @@ PNG_TWO = b"\x89PNG\r\n\x1a\nmanage"
 
 
 FLOW_SCRIPT = DEV_EXT / "skills/story/scripts/core/story_flow.py"
-DRAFT_TEXT = (
-    "# IM90001 — 开发需求（AR）\n\n"
-    "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
-    "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
-    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
-    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
-    "## 5 上游已声明线索\n\n无。\n")
-
 
 def ensure_flow_state(root: Path, src: Path) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
@@ -56,7 +48,7 @@ def ensure_flow_state(root: Path, src: Path) -> None:
         assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    walk_to_complete(flow, src, DRAFT_TEXT, "x")
+    walk_to_complete(flow, src, "x")
 
 
 class RegistrationCase(unittest.TestCase):

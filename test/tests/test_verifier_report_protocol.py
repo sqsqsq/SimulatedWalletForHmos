@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from ext_workspace import link_harness_yaml, DEV_EXT
-from designed_fixture import DRAFT, designed_copy
+from designed_fixture import designed_copy
 import design_kit
 
 REPO = Path(__file__).resolve().parents[2]
@@ -49,7 +49,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(self.FIXTURE, "REQ-DEMO", DRAFT, self.root)
+        designed_copy(self.FIXTURE, "REQ-DEMO", self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
         self.assertFalse((self.root / "doc" / "features" / "REQ-DEMO" / "spec").exists(), "2.0 的需求目录没有 Spec 产物")
         self.flow_path = self.root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
@@ -168,7 +168,7 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         for need in ("doc/features/REQ-DEMO/AR/story.md", "doc/features/REQ-DEMO/AR/review.md",
                      "doc/extensions/rules/story-reader-rules.yaml"):
             self.assertIn(f"`{need}`", task)
-        self.assertIn("/AR/story-src/inputs/", task, "冻结输入没进审查对象")
+        self.assertIn("`doc/features/REQ-DEMO/sources/prd-v1/prd.md` —— 设计采用的阅读稿", task, "设计采用的材料版本没进审查对象")
         self.assertIn("component-blueprint.yaml", task, "蓝图没进审查对象")
         self.assertNotIn(self.prepared()["material_key"], task, "任务里嵌了由它自己算出的材料键")
         self.assertEqual("pass", self.result()["result"])
@@ -220,7 +220,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart2(TheStoryIsReviewedRegistered
                 refused = self.register()
                 self.assertNotEqual(0, refused.returncode)
                 self.assertIn("fail", refused.stdout)
-                self.assertEqual("complete", self.flow()["status"])
+                self.assertEqual("gathering", self.flow()["status"])
 
 
 class TheStoryIsReviewedRegisteredAndDeliveredPart3(TheStoryIsReviewedRegisteredAndDeliveredCase):
@@ -754,16 +754,15 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertEqual("input_invalid", self.result()["result"])
 
     def test_the_adopted_version_stays_beside_a_newer_version(self) -> None:
-        """产品需求取得了新版本：冻结采用的那一版仍是设计权威；新版本单独列作没采用的阅读稿，核作者为何没采用。"""
+        """产品需求取得了新版本：设计采用的那一版仍是设计权威；新版本单独列作没采用的阅读稿，核作者为何没采用。"""
         prd = "sources/prd-v1/prd.md"
-        self.assertRegex(self.task_text(), rf"`{re.escape(self.FEATURE)}/{re.escape(prd)}` —— 阅读稿 {re.escape(prd)}"
-                                           rf"（与冻结副本 \S+/files/{re.escape(prd)} 同字节）")
+        self.assertIn(f"`{self.FEATURE}/{prd}` —— 设计采用的阅读稿 {prd}", self.task_text())
         old = (self.root / self.FEATURE / prd).read_bytes()
         self.put({"RR/prd.md": (old + "\n新版补了一句。\n".encode("utf-8"), "RR")})
         self.story.write_text(self.story.read_text(encoding="utf-8").replace(prd, "sources/prd-v2/prd.md"), encoding="utf-8")
         task = self.task_text()
         self.assertIn(f"`{self.FEATURE}/sources/prd-v2/prd.md` —— 没采用的阅读稿 sources/prd-v2/prd.md（核作者为何没采用）", task)
-        self.assertRegex(task, rf"/files/{re.escape(prd)}` —— 冻结输入里采用的 {re.escape(prd)}（original）")
+        self.assertIn(f"`{self.FEATURE}/{prd}` —— 设计采用的阅读稿 {prd}", task)
 
     def test_a_changed_left_out_source_retires_the_report(self) -> None:
         self.reviewed("pass")
@@ -995,7 +994,7 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
         import_fixture(fixture, {"home.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")})
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(fixture, "REQ-DEMO", DRAFT, self.root)
+        designed_copy(fixture, "REQ-DEMO", self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
 
     def run_node(self, *args: str) -> subprocess.CompletedProcess:
@@ -1003,9 +1002,7 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
     def test_the_story_is_reviewed_and_delivered_next_to_its_ui_reference(self) -> None:
-        flow = json.loads((self.root / "doc/features/REQ-DEMO/AR/story-src/story-flow.json").read_text(encoding="utf-8"))
-        self.assertEqual("bp-REQ-DEMO", flow["design_binding"]["blueprint_id"])
-        self.assertTrue((self.root / "doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml").is_file())
+        self.assertTrue((self.root / "doc/features/REQ-DEMO/blueprint/component-blueprint.yaml").is_file(), "蓝图不在需求同根")
         # 参考图没用上：照检查给的那条命令原样登记不用的理由
         hint = self.run_node("check").stderr
         command = hint.split("`import_sources.py ", 1)[1].split("`", 1)[0]
@@ -1018,8 +1015,8 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         prepared = self.run_node("review", "--action", "prepare")
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         task = (self.root / "doc/features/REQ-DEMO/AR/story-src/review/task.md").read_text(encoding="utf-8")
-        self.assertIn("/files/sources/home-v1/home.png`", task)
-        self.assertIn("`doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml`", task)
+        self.assertIn("`doc/features/REQ-DEMO/sources/home-v1/home.png`", task)
+        self.assertIn("`doc/features/REQ-DEMO/blueprint/component-blueprint.yaml`", task)
         design_kit.write_review(self.root, "REQ-DEMO", "pass")
         received = self.run_node("review", "--action", "prepare")
         self.assertEqual(0, received.returncode, received.stdout + received.stderr)
@@ -1057,7 +1054,7 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
             story.write_text(story.read_text(encoding="utf-8").replace("sources/prd-v1/prd.md", "sources/prd-v2/prd.md"),
                              encoding="utf-8")
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(fixture, "REQ-DEMO", DRAFT, self.root)
+        designed_copy(fixture, "REQ-DEMO", self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
         done = subprocess.run(["python", str(self.IMPORT), "--feature", "REQ-DEMO", "--project-root", str(self.root),
                                "--caption-image", f"doc/features/REQ-DEMO/{self.IMAGE}", "--unused", "签约页现状参考，本需求不改签约页"],
@@ -1127,11 +1124,10 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         self.assertIn("必审输入却有没核完的", got["detail"])
 
     def test_a_missing_picture_is_not_a_capability_gap(self) -> None:
-        """冻结的那张图盘上没了：审查对象不成立，不按「看不了图」放行。"""
+        """登记的那张图盘上没了：审查对象不成立，不按「看不了图」放行。"""
         self.make()
         self.assertEqual("warn", self.review("advice")["result"])
-        frozen = next(self.root.glob("doc/features/REQ-DEMO/AR/story-src/inputs/*/files/" + self.IMAGE))
-        frozen.unlink()
+        (self.root / "doc/features/REQ-DEMO" / self.IMAGE).unlink()
         self.assertNotIn(self.result()["result"], ("pass", "warn"))
 
     def test_a_changed_design_identity_retires_the_report(self) -> None:
@@ -1388,10 +1384,10 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         self.assertNotEqual(task, again, "作者改了正文，阅读入口的作者区摘要没跟着换")
         self.assertNotIn("作者补的一句。", again, "Story 正文又嵌进了任务")
 
-    def test_the_task_says_the_extract_is_a_derived_analysis(self) -> None:
-        """提取稿是派生分析：回查上游原话看 RR、SR 与 AR/design.md 原文，不拿提取稿自证。"""
+    def test_the_task_reads_the_adopted_versions_first(self) -> None:
+        """核源先读设计采用的材料版本与人工答复：上游原话在原件里，不拿作者摘要自证。"""
         task = self.inject()
-        self.assertIn("派生分析", task)
+        self.assertIn("设计采用的材料版本与人工答复", task)
         self.assertNotIn(".backups/local/", task, "上游 AR 不再被覆盖，没有备份位置可指")
 
     def test_the_task_carries_the_recheck_list(self) -> None:

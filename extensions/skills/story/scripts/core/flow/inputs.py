@@ -2,9 +2,6 @@
 
 侧车是 AI 写、脚本读、读完即销毁的文件：命令行参数只放标量，结构化数据一律走文件，
 免得同一份 JSON 在不同 shell 下被二次解析成不同的东西。
-
-AR 提取稿的空骨架在这里唯一维护——`submission` 判断「候选还是不是空骨架」用的是同一个
-生成函数；两处各写一份的话，骨架一改，空判断就会漏。
 """
 from __future__ import annotations
 
@@ -285,76 +282,8 @@ def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
             for p in sorted(parts, key=lambda x: x["seq"])]
 
 
-def read_ids(feature_root: Path, feature: str) -> dict[str, str | None]:
-    """单号取自需求系统取材的来源关系：已导入的系统来源记在版本里，还没导入的在取材批次回执里。没有就是本地单。
-
-    只读不造：伪造单号等于谎称本地单有系统单据。
-    """
-    from materials import importer, registry  # 延迟导入：materials 引用 flow
-
-    try:
-        found = [r.get("origin") or {} for r in registry.version_records(feature_root) if r.get("kind") == "system"]
-        found += list(importer.read_receipts(importer.inbox_of(feature_root)).values())
-    except (registry.MaterialError, importer.ImportError_) as exc:
-        raise FlowError(f"读不出需求系统来源关系：{exc}") from exc
-
-    def pick(role: str, field: str) -> str | None:
-        for o in found:
-            value = o.get("ticket") if o.get("role") == role else (o.get(field) if o.get("role") == "AR" else None)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return None
-
-    return {"AR": feature, "SR": pick("SR", "parentNo"), "RR": pick("RR", "rrNo")}
-
-
-def is_ar_skeleton(feature_root: Path, feature: str, text: str) -> bool:
-    """这份 AR/design.md 还是 `init` 落的空骨架。
-
-    空骨架不是上游给的东西，正文只有段标题和写给模型的判定指引：它被覆盖不必备份，
-    交上来当提取稿也不算写过，冻结时也不算外部原件。
-    """
-    return text.replace("\r\n", "\n") == ar_design_skeleton(read_ids(feature_root, feature))
-
-
-def ar_design_skeleton(ids: dict[str, str | None]) -> str:
-    """`AR/design.md` 空骨架——**全流程唯一真源**。
-
-    结构对应 rules/ar_design_init.md 的「需求提取五段结构」；内嵌注释是给后续模型的
-    判定指引，必须一并落盘，不是给人看的说明。
-    """
-    if ids["SR"] and ids["RR"]:
-        links = (f"| SR/AR单号 | {ids['SR']} / {ids['AR']} |\n"
-                 f"| PRD文档 | requirement://prd/{ids['RR']} |\n"
-                 f"| SE设计文档 | requirement://sr/{ids['SR']} |\n")
-    else:
-        links = (f"| 来源载体 | {ids['AR']}（无需求系统单据） |\n"
-                 "| PRD文档 | 人工提供，见 sources/README.md |\n"
-                 "| SE设计文档 | 人工提供，见 sources/README.md |\n")
-    return (
-        f"# {ids['AR']} 开发需求（AR）\n\n"
-        "## 1 简介\n\n### 1.1 需求介绍\n\n### 1.2 本 AR 范围与拆分说明\n\n"
-        "<!-- 本 AR 承载哪部分；范围外内容归属（兄弟 AR 单号或「待立项」）。必填，空着分不清「没拆」与「忘了写」。\n"
-        "     三形态（按流程契约 positioning/split 判）见 rules/ar_design_init.md §3（模板 1.2 三形态）——\n"
-        "     「无拆分」不等于「承载全部」：同 SR 有兄弟 AR 时后者是假的 -->\n\n"
-        "### 1.3 相关文档链接\n\n| 内容 | 链接 |\n| --- | --- |\n"
-        f"{links}"
-        "| UX设计文档 | |\n\n"
-        "## 2 需求分析\n\n### 2.1 场景与功能点\n\n### 2.2 验收意图\n\n"
-        "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\n"
-        "### 3.2 本部件方案要点与流程骨架\n\n"
-        "## 4 上游索引\n\n"
-        "> 本索引的 SR 章节号指向系统设计来源的阅读稿（`sources/README.md` 列着它与产品需求的位置）；\n"
-        "> 下游设计（接口由设计作者按原文转写）与成文须按索引直读该文件原文，不得仅凭本文摘要推断。\n\n"
-        "| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
-        "<!-- 逐类扫描 RR/SR 登记命中项：业务流程时序 / 端云接口 / 异常错误码 / 跨部件交互与调用方 /\n"
-        "     系统级存储 / 配置管控 / 打点 / 非功能约束 / 安全合规 / 版本与配套 / 依赖 SDK·TA /\n"
-        "     术语与命名 / 上游已定的方案边界。清单与消费方见 rules/ar_design_init.md -->\n\n"
-        "## 5 上游已声明线索\n")
-
-
 def cmd_init(feature_root: Path, feature: str) -> dict:
-    """建工作区骨架——来源收件箱 `sources/inbox/`、来源导航与 `AR/design.md` 空骨架的唯一写入者。
+    """建工作区骨架——来源收件箱 `sources/inbox/` 与来源导航的唯一写入者。
 
     **缺什么补什么，已有的一律不动**，因此它与取材结果无关：系统单取材之后跑，本地单直接跑，
     两条路径同一条命令，重跑安全。收件箱由此独立于数据对接层成立——那一层由各部署环境自备实现。
@@ -371,8 +300,6 @@ def cmd_init(feature_root: Path, feature: str) -> dict:
         target.write_text(text, encoding="utf-8")
         created.append(rel)
 
-    ids = read_ids(feature_root, feature)
-    put("AR/design.md", ar_design_skeleton(ids))
     readme = SKILL_ROOT / "templates" / "inbox-readme.md"
     put("sources/inbox/README.md", readme.read_text(encoding="utf-8"))
     from materials import registry  # 延迟导入：materials 引用 flow

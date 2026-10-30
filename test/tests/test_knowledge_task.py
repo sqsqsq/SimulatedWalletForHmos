@@ -797,22 +797,22 @@ def place_unit(root: Path, blueprint: str, ref: dict) -> tuple[Path, str]:
 class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
     """施工单位按蓝图实际消费的冻结来源找到关联需求，Story 仍是成文登记的那一份时，照录依据落在本单位设计责任内的小节。
 
-    需求 REQ-DEMO 已交给设计，蓝图 bp-REQ-DEMO 消费了它的冻结输入；这里在同一蓝图下放一个施工单位，
+    需求 REQ-DEMO 范围已定，同根蓝图 REQ-DEMO 的需求条目采用了它的材料版本；这里在同一蓝图下放一个施工单位，
     它的设计引用是开发视图的模块节点、逻辑视图的余额节点与两者之间的关系。成文登记用真实的成文依据（`registered_basis`）。
     """
 
     FEATURE = "REQ-DEMO"
-    BLUEPRINT = "bp-REQ-DEMO"
+    BLUEPRINT = "REQ-DEMO"
     STORY_FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
     DIAGRAM = "flowchart TD\n  提交 --> 等待\n  等待 -->|回执到达| 完成\n"
 
     @classmethod
     def setUpClass(cls) -> None:
-        from designed_fixture import DRAFT, designed_copy  # noqa: PLC0415
+        from designed_fixture import designed_copy  # noqa: PLC0415
         from ext_workspace import DEV_EXT  # noqa: PLC0415  —— 开发源在消费工程里才跑得起来
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls._tmp.name) / "work"
-        designed_copy(cls.STORY_FIXTURE, cls.FEATURE, DRAFT, cls.root)
+        designed_copy(cls.STORY_FIXTURE, cls.FEATURE, cls.root)
         cls.ext = DEV_EXT
         cls.access = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
         ref = cls.node("const r = fa.readBlueprint(root, process.argv[3], 'draft'); out(r.blueprint_ref);", cls.BLUEPRINT)
@@ -987,11 +987,11 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
                 self.assertNotIn(self.selected_body(), section)
                 target.write_bytes(data)
 
-    def test_a_registered_input_that_no_longer_matches_is_old_expression(self) -> None:
-        self.edit_flow(lambda f: f["story_basis"].update(input_sha256="0" * 64))
+    def test_registered_sources_that_no_longer_match_are_old_expression(self) -> None:
+        self.edit_flow(lambda f: f["story_basis"].update(sources_sha256="0" * 64))
         section = self.section()
         self.assertIn("旧表达", section)
-        self.assertIn("交给设计的输入", section)
+        self.assertIn("设计采用的来源", section)
 
     def test_missing_registration_data_is_a_gap_not_a_source(self) -> None:
         self.edit_flow(lambda f: f["story_basis"].pop("files"))
@@ -1016,50 +1016,45 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
     def test_an_address_the_blueprint_does_not_have_is_a_gap(self) -> None:
         self.assertIn("contract:nope 在蓝图里解析不了", self.task())
 
-    def test_a_story_bound_to_another_blueprint_is_a_source_problem(self) -> None:
-        self.edit_flow(lambda f: f["design_binding"].update(blueprint_id="bp-other"))
-        out = self.task()
-        self.assertIn("关联的设计对象是", out)
-        self.assertNotIn(self.selected_body(), self.section(out))
-
 
 class AdoptedSourcesAreReadThroughOneReader(unittest.TestCase):
-    """候选声明的来源与冻结包按同一底层读取（原生 resolveCurrentScopeSource 核原字节、片段与声明摘要）：
+    """候选声明的来源与它们所在的材料版本按同一底层读取（原生 resolveCurrentScopeSource 核原字节、片段与声明摘要）：
     蓝图设计/质询任务交真实来源索引，CU 来源（unitSources）对同一文件得到同样的结论；
     任一份坏了蓝图任务不给半份，失败不写盘。
     """
 
     FEATURE = "REQ-DEMO"
-    BLUEPRINT = "bp-REQ-DEMO"
+    BLUEPRINT = "REQ-DEMO"
     STORY_FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
     PROBE = """
 const ds = await import(process.argv[1]);
-const [root, flow, feature] = process.argv.slice(2);
+const [root, feature] = process.argv.slice(2);
 const unit = ds.unitSources(root, feature);
 process.stdout.write(JSON.stringify({
   unit: { documents: Object.fromEntries(unit.documents), excluded: Object.fromEntries(unit.excluded), problems: unit.problems } }));
 """
 
     def setUp(self) -> None:
-        from designed_fixture import DRAFT, designed_copy  # noqa: PLC0415
+        from designed_fixture import designed_copy  # noqa: PLC0415
         from ext_workspace import DEV_EXT  # noqa: PLC0415
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(self.STORY_FIXTURE, self.FEATURE, DRAFT, self.root)
+        designed_copy(self.STORY_FIXTURE, self.FEATURE, self.root)
         self.ext = DEV_EXT
-        self.flow_file = self.root / "doc" / "features" / self.FEATURE / "AR" / "story-src" / "story-flow.json"
-        self.snapshot_ref = json.loads(self.flow_file.read_text(encoding="utf-8"))["input"]["snapshot_ref"]
-        self.pack = (self.root / self.snapshot_ref).parent
-        self.prd = f"{Path(self.snapshot_ref).parent.as_posix()}/files/sources/prd-v1/prd.md"
-        self.canonical = self.root / "doc" / "features" / self.BLUEPRINT / "blueprint" / "component-blueprint.yaml"
-        ref = json.loads(subprocess.run(
+        self.access = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+        self.feature_root = self.root / "doc" / "features" / self.FEATURE
+        self.prd = f"doc/features/{self.FEATURE}/sources/prd-v1/prd.md"
+        self.canonical = self.feature_root / "blueprint" / "component-blueprint.yaml"
+        _, self.unit = place_unit(self.root, self.BLUEPRINT, self.blueprint_ref())
+
+    def blueprint_ref(self) -> dict:
+        return json.loads(subprocess.run(
             ["node", "--input-type=module", "-e",
              "const fa = await import(process.argv[1]); process.stdout.write(JSON.stringify("
              "fa.readBlueprint(process.argv[2], process.argv[3], 'draft').blueprint_ref));",
-             (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri(), str(self.root), self.BLUEPRINT],
+             self.access.resolve().as_uri(), str(self.root), self.BLUEPRINT],
             capture_output=True, text=True, encoding="utf-8", timeout=120).stdout)
-        _, self.unit = place_unit(self.root, self.BLUEPRINT, ref)
 
     def task(self, action: str = "design", audience: str = "author") -> subprocess.CompletedProcess:
         return subprocess.run(["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
@@ -1068,16 +1063,13 @@ process.stdout.write(JSON.stringify({
 
     def readers(self) -> dict:
         module = (self.ext / "skills" / "story" / "scripts" / "core" / "story" / "design-source.mjs").resolve().as_uri()
-        proc = subprocess.run(["node", "--input-type=module", "-e", self.PROBE, module, str(self.root), str(self.flow_file), self.unit],
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.PROBE, module, str(self.root), self.unit],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
         return json.loads(proc.stdout)
 
-    def snapshot(self) -> dict:
-        return json.loads((self.root / self.snapshot_ref).read_text(encoding="utf-8"))
-
-    def put_snapshot(self, data: dict) -> None:
-        (self.root / self.snapshot_ref).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    def index(self) -> dict:
+        return json.loads((self.feature_root / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
 
     def assert_task_fails(self, *words: str) -> None:
         before = files_under(self.root / "doc")
@@ -1089,17 +1081,17 @@ process.stdout.write(JSON.stringify({
                     self.assertIn(word, proc.stderr)
         self.assertEqual(before, files_under(self.root / "doc"), "失败时写了盘")
 
-    def test_the_design_and_questioning_tasks_index_every_adopted_source(self) -> None:
+    def test_the_design_and_questioning_tasks_index_every_adopted_version_file(self) -> None:
+        versions = {v["dir"]: v for s in self.index()["sources"] for v in s["versions"]}
         for action, audience in (("design", "author"), ("questioning", "reviewer")):
             with self.subTest(action=action):
                 proc = self.task(action, audience)
                 self.assertEqual(0, proc.returncode, proc.stderr[-800:])
                 index = proc.stdout.split("### 候选采用的来源", 1)[1].split("## 2.", 1)[0]
                 self.assertIn(f"`{self.prd}`", index)
-                self.assertIn(f"`{self.snapshot_ref}`", index, "没交候选那一版的快照位置")
-                for row in self.snapshot()["files"]:
-                    self.assertIn(f"`{Path(self.snapshot_ref).parent.as_posix()}/files/{row['path']}`（{row['role']}，"
-                                  f"{row['provenance']['evidence_strength']}），sha256:{row['sha256']}", index)
+                self.assertIn("采用的材料版本 sources/design-v1、sources/prd-v1", index)
+                for v in (versions["sources/prd-v1"], versions["sources/design-v1"]):
+                    self.assertIn(f"`doc/features/{self.FEATURE}/{v['original']['path']}`（text），sha256:{v['original']['sha256']}", index)
 
     def test_the_same_good_file_reaches_all_three_readers(self) -> None:
         got = self.readers()
@@ -1119,8 +1111,8 @@ process.stdout.write(JSON.stringify({
                 self.assertIn(word, got["unit"]["excluded"][self.prd])
                 target.write_bytes(original)
 
-    def test_a_wrong_declaration_fails_even_when_the_pack_is_intact(self) -> None:
-        """冻结包逐份都对，但候选声明的片段或摘要错了：蓝图任务照样不给，不因包校验成功或草稿 status=ok 放过。"""
+    def test_a_wrong_declaration_fails_even_when_the_version_is_intact(self) -> None:
+        """材料版本逐份都对，但候选声明的片段或摘要错了：蓝图任务照样不给，不因草稿 status=ok 放过。"""
         original = self.canonical.read_bytes()
         declared = "sha256:" + hashlib.sha256((self.root / self.prd).read_bytes()).hexdigest()
         text = original.decode("utf-8")
@@ -1135,71 +1127,70 @@ process.stdout.write(JSON.stringify({
                 self.canonical.write_bytes(original)
 
     def access_status(self) -> int:
-        proc = subprocess.run(["node", str(self.ext / "hooks" / "shared" / "framework-access.mjs"), "--project-root", str(self.root),
+        proc = subprocess.run(["node", str(self.access), "--project-root", str(self.root),
                                "--action", "blueprint", "--blueprint", self.BLUEPRINT, "--purpose", "draft", "--summary"],
                               capture_output=True, text=True, encoding="utf-8", timeout=120)
         return proc.returncode
 
-    def test_a_broken_snapshot_or_a_row_outside_the_pack_is_never_an_empty_success(self) -> None:
-        good = self.snapshot()
-        for label, write, word in (
-                ("坏 JSON", lambda: (self.root / self.snapshot_ref).write_text("{", encoding="utf-8"), "读不出来"),
-                ("没有 files", lambda: self.put_snapshot({**good, "files": "x"}), "没有 files 清单"),
-                ("越出包外", lambda: self.put_snapshot({**good, "files": [*good["files"], {**good["files"][0], "path": "../../../x.md"}]}),
-                 "不在包内")):
-            with self.subTest(case=label):
-                write()
-                self.assert_task_fails(word)
-                self.put_snapshot(good)
+    def test_a_version_the_index_does_not_register_is_never_an_empty_success(self) -> None:
+        """声明落在 sources/ 下、但版本目录不是材料索引登记的：不当成原生直接输入放过。"""
+        stray = self.feature_root / "sources" / "prd-v9" / "prd.md"
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes((self.root / self.prd).read_bytes())
+        text = self.canonical.read_text(encoding="utf-8")
+        self.canonical.write_bytes(text.replace(self.prd, f"doc/features/{self.FEATURE}/sources/prd-v9/prd.md").encode("utf-8"))
+        self.assert_task_fails("不是材料索引登记的版本")
 
-    def test_non_markdown_and_bom_files_are_checked_on_their_raw_bytes(self) -> None:
-        good = self.snapshot()
-        extra = {"sources/flow-v1/flow.png": b"\x89PNG\r\n\x1a\nnot-really", "sources/notes-v1/notes.md": "\ufeff# 备注\n人签过的边界。\n".encode("utf-8")}
-        rows = []
-        for name, data in extra.items():
-            (self.pack / "files" / name).parent.mkdir(parents=True, exist_ok=True)
-            (self.pack / "files" / name).write_bytes(data)
-            rows.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "role": "original",
-                         "provenance": good["files"][0]["provenance"]})
-        self.put_snapshot({**good, "files": [*good["files"], *rows]})
-        base = Path(self.snapshot_ref).parent.as_posix()
+    def test_images_and_bom_files_are_checked_on_their_raw_bytes(self) -> None:
+        """采用的版本里有图与带 BOM 的正文：按原始字节核，逐份进索引。"""
+        import design_kit  # noqa: PLC0415
+        inbox = self.feature_root / "sources" / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "flow.png").write_bytes(b"\x89PNG\r\n\x1a\nnot-really")
+        (inbox / "notes.md").write_bytes("﻿# 备注\n人签过的边界。\n".encode("utf-8"))
+        (inbox / ".classify.json").write_text('{"flow.png": "UX", "notes.md": "AR"}', encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(self.ext / "skills/story/scripts/core/import_sources.py"), "--feature",
+                               self.FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        items = design_kit.handed_items(self.root, self.FEATURE, self.access)
+        sys.path.insert(0, str(self.ext / "skills/story/scripts/core"))
+        from materials import scope  # noqa: PLC0415
+        [(picture, _)] = scope.fill(self.feature_root, self.root, [{"item_id": "flow-picture", "kind": "invariant",
+                                                                     "source": "sources/flow-v1/flow.png",
+                                                                     "authority": {"owner": "需求负责人", "formality": "unspecified"}}])
+        design_kit.install_blueprint(self.root, self.FEATURE, self.access, items=[*items, {k: v for k, v in picture.items() if k != "authority"}])
+        _, self.unit = place_unit(self.root, self.BLUEPRINT, self.blueprint_ref())
         self.assertEqual([], self.readers()["unit"]["problems"])
         index = self.task().stdout
-        for name in extra:
-            self.assertIn(f"`{base}/files/{name}`", index, f"{name} 没进来源索引")
+        for rel in ("sources/flow-v1/flow.png", "sources/notes-v1/notes.md"):
+            self.assertIn(f"`doc/features/{self.FEATURE}/{rel}`", index, f"{rel} 没进来源索引")
 
-    def test_an_older_candidate_keeps_its_own_pack_when_the_flow_moved_on(self) -> None:
-        """候选仍采用 v1、流程已登记 v2：蓝图任务交 v1 的包，Story 侧按流程读 v2，各取各的。"""
-        v2 = self.pack.parent / "v2-later"
-        shutil.copytree(self.pack, v2)
-        prd2 = v2 / "files" / "sources" / "prd-v1" / "prd.md"
-        prd2.write_bytes(prd2.read_bytes() + "新版本补的一句。\n".encode("utf-8"))
-        snap = json.loads((v2 / "snapshot.json").read_text(encoding="utf-8"))
-        for row in snap["files"]:
-            if row["path"] == "sources/prd-v1/prd.md":
-                row["sha256"] = hashlib.sha256(prd2.read_bytes()).hexdigest()
-        (v2 / "snapshot.json").write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
-        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
-        flow["input"]["snapshot_ref"] = (v2 / "snapshot.json").relative_to(self.root).as_posix()
-        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+    def test_an_older_adopted_version_is_listed_not_the_newest(self) -> None:
+        """候选仍采用 v1、产品需求已取得 v2：蓝图任务交 v1 的文件，不配上新版本。"""
+        inbox = self.feature_root / "sources" / "inbox" / "RR"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "prd.md").write_bytes((self.root / self.prd).read_bytes() + "新版本补的一句。\n".encode("utf-8"))
+        (inbox.parent / ".classify.json").write_text('{"RR/prd.md": "RR"}', encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(self.ext / "skills/story/scripts/core/import_sources.py"), "--feature",
+                               self.FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertTrue((self.feature_root / "sources" / "prd-v2" / "prd.md").is_file())
         index = self.task().stdout.split("## 2.", 1)[0]
-        self.assertIn(f"`{self.snapshot_ref}`", index)
-        self.assertNotIn("v2-later", index, "候选配上了流程里的新版本")
-
+        self.assertIn(f"`{self.prd}`", index)
+        self.assertNotIn("prd-v2", index, "候选配上了没采用的新版本")
 
     def test_backslash_references_reach_the_same_project_path(self) -> None:
-        """R1：候选声明与流程快照用反斜杠写（原生判合法）：施工单位来源的键仍是正斜杠工程路径。"""
+        """候选声明用反斜杠写（原生判合法）：施工单位来源的键仍是正斜杠工程路径。"""
         slash = self.readers()
         text = self.canonical.read_bytes().decode("utf-8")
         self.assertIn(self.prd, text, "夹具变了，用例要跟着改")
         self.canonical.write_bytes(text.replace(self.prd, self.prd.replace("/", "\\\\")).encode("utf-8"))
-        flow = json.loads(self.flow_file.read_text(encoding="utf-8"))
-        flow["input"]["snapshot_ref"] = self.snapshot_ref.replace("/", "\\")
-        self.flow_file.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
         back = self.readers()
         self.assertEqual([], back["unit"]["problems"])
         self.assertEqual(sorted(slash["unit"]["documents"]), sorted(back["unit"]["documents"]))
-        self.assertIn(self.prd, back["unit"]["documents"], "反斜杠声明的来源没按工程路径交出")
+
 
 class ANativeSourceKeepsItsFragment(NativeCase):
     """原生直接入口：声明带片段的需求文件按原引用交给原生定位；片段找不到时任务不给，不先去掉片段再读。"""

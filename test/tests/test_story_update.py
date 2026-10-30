@@ -18,6 +18,7 @@ import atexit
 import hashlib
 import inspect
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -49,7 +50,7 @@ NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 
 
 #: 交给设计之后那份工作区的键：夹具、开发版扩展、造状态的脚本与 Framework 版本
 WALKED = shared_state.digest(FIXTURE, *shared_state.COMMON, Path(__file__).with_name("flow_steps.py"),
-                             FEATURE, StoryBuildCase.DRAFT, shared_state.framework_version())
+                             FEATURE, shared_state.framework_version())
 
 
 def import_into(root: Path, feature_root: Path, files: dict[str, tuple[bytes, str]]) -> None:
@@ -103,7 +104,7 @@ class UpdateCase(unittest.TestCase):
             self.before_init()
         finally:
             self.root, self.feature_root = own
-        ensure_flow_state(base, FEATURE, base / "doc" / "features" / FEATURE / "AR" / "story-src", StoryBuildCase.DRAFT)
+        ensure_flow_state(base, FEATURE, base / "doc" / "features" / FEATURE / "AR" / "story-src")
 
     def before_init(self) -> None:
         """夹具走 story init 之前的一步：多数用例什么也不做。"""
@@ -541,19 +542,21 @@ class RestoreFollowsTheTruthTable(UpdateCase):
         self.assertEqual([], out["conflicts"])
 
     def test_protected_bytes_are_never_touched(self) -> None:
-        design = self.feature_root / "AR" / "design.md"
-        changed = design.read_bytes() + "冻结之后的新版\n".encode("utf-8")
-        design.write_bytes(changed)
+        changed = {}
+        for rel in ("sources/design-v1/design.md", "blueprint/component-blueprint.yaml"):
+            target = self.feature_root / rel
+            changed[rel] = target.read_bytes() + "开轮之后被改的字节\n".encode("utf-8")
+            target.write_bytes(changed[rel])
         self.complete_point()
         out = self.update("--action", "restore")
-        self.assertEqual(changed, design.read_bytes(), "受保护件被还原了")
-        self.assertNotIn("AR/design.md", [c["file"] for c in out["conflicts"]])
+        for rel, data in changed.items():
+            self.assertEqual(data, (self.feature_root / rel).read_bytes(), f"受保护件 {rel} 被还原了")
+            self.assertNotIn(rel, [c["file"] for c in out["conflicts"]])
 
-    def test_frozen_inputs_and_the_framework_keep_their_bytes(self) -> None:
-        """这一轮里新冻结的输入版本与 Framework 都不是本扩展拥有的文件：恢复不删、不改，也不列冲突。"""
-        frozen = self.src / "inputs" / "20260930-in-round" / "manifest.json"
-        frozen.parent.mkdir(parents=True)
-        frozen.write_text('{"version": "20260930-in-round"}\n', encoding="utf-8")
+    def test_design_files_and_the_framework_keep_their_bytes(self) -> None:
+        """这一轮里新写的蓝图侧文件与 Framework 都不是本扩展拥有的文件：恢复不删、不改，也不列冲突。"""
+        frozen = self.feature_root / "blueprint" / "requirement-source-materialization.json"
+        frozen.write_text('{"artifact": "in-round"}\n', encoding="utf-8")
         framework = self.root / "framework"
 
         def tree(base: Path) -> dict[str, bytes]:
@@ -562,8 +565,8 @@ class RestoreFollowsTheTruthTable(UpdateCase):
         before = tree(framework)
         self.complete_point()
         out = self.update("--action", "restore")
-        self.assertEqual('{"version": "20260930-in-round"}\n', frozen.read_text(encoding="utf-8"), "冻结输入被恢复动了")
-        self.assertFalse(any(c["file"].startswith("AR/story-src/inputs/") for c in out["conflicts"]))
+        self.assertEqual('{"artifact": "in-round"}\n', frozen.read_text(encoding="utf-8"), "蓝图侧文件被恢复动了")
+        self.assertFalse(any(c["file"].startswith("blueprint/") for c in out["conflicts"]))
         self.assertEqual(before, tree(framework), "恢复改了 Framework 的字节")
 
     def test_the_flow_contract_keeps_its_other_fields(self) -> None:
@@ -808,9 +811,9 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertIn("交通卡自动充值-v2.md", out["error"])
 
     def test_inside_an_open_round_every_command_agrees(self) -> None:
-        """AC13：update 这一轮开着时，status、round、complete、decide 判定一致。
+        """AC13：update 这一轮开着时，status、round、decide 判定一致。
 
-        新材料登记进当前轮；提取稿改了由 complete 冻结新一版输入、范围沿用已定的；关卡不再问人。
+        新材料登记进当前轮，范围沿用已定的；关卡不再问人。
         09-25、09-26 两次实跑都卡在这条序列上。要重拍范围时 reopen 在 update 里同样合法，
         update 照旧开着（锁在 test_material_rounds 的 reopen 用例里）。
         """
@@ -825,11 +828,6 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertEqual(rounds, len(self.contract()["rounds"]), "update 期间开了新轮")
         out = self.flow("decide", "--gate", "scope_decision", "--ask", "x", "--reply", "1")
         self.assertIn("当前这一步不是 scope_decision", out.get("error", ""))
-        draft = self.src / "design-draft.md"
-        draft.write_text(draft.read_text(encoding="utf-8") + "\n单日上限按改版稿核对。\n", encoding="utf-8")
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertEqual("complete", done.get("status"), done)
-        self.assertTrue(done.get("committed"), done)
         self.assertEqual(rounds, len(self.contract()["rounds"]))
 
 
@@ -857,14 +855,15 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
         cls.unit = cls.root / "doc" / "features" / BLUEPRINT / "balance-refresh"
-        feature_root = cls.root / "doc" / "features" / "REQ-U"
+        # 需求与蓝图同根：需求目录就是蓝图所在的那一个
+        feature_root = cls.root / "doc" / "features" / BLUEPRINT
         (feature_root / "AR" / "story-src").mkdir(parents=True)
+        cls.feature = BLUEPRINT
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow.state import save  # noqa: PLC0415
-            save(feature_root, {"schema": 5, "rounds": [],
-                                "design_binding": {"component_id": "wallet-main", "blueprint_id": BLUEPRINT}})
+            save(feature_root, {"schema": 6, "status": "gathering", "rounds": []})
         finally:
             sys.path.remove(str(core))
 
@@ -873,7 +872,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         cls._tmp.cleanup()
 
     def status(self) -> dict:
-        proc = subprocess.run([sys.executable, str(FLOW), "update", "--feature", "REQ-U", "--project-root", str(self.root),
+        proc = subprocess.run([sys.executable, str(FLOW), "update", "--feature", self.feature, "--project-root", str(self.root),
                                "--action", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         return json.loads([l for l in proc.stdout.splitlines() if l.strip().startswith("{")][-1])
 
@@ -1024,9 +1023,9 @@ class ANewVersionKeepsTheOldOne(UpdateCase):
 
 
 class SameNamedOriginalSteps:
-    """V01 的真实入口步骤：update inputs、材料关卡、import_sources、prepare、round、complete、restore、close。
-    同一位置放入改过的原件导入后就是同一来源的新版本，旧版本留着；设计输入采用该来源最新的版本。
-    不手改冻结快照或 origins。混入 UpdateCase 一族使用。"""
+    """V01 的真实入口步骤：update inputs、材料关卡、import_sources、prepare、round、设计同步、restore、close。
+    同一位置放入改过的原件导入后就是同一来源的新版本，旧版本留着；设计同步后需求条目采用各来源最新的版本。
+    不手改材料索引或蓝图条目。混入 UpdateCase 一族使用。"""
 
     NOTES = ("## 当前依据\n读过了。\n\n## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n"
              "| 验收口径 | 没动 |\n")
@@ -1036,7 +1035,8 @@ class SameNamedOriginalSteps:
         super().setUp()
         self.inbox = self.feature_root / "sources" / "inbox"
         self.inbox.mkdir(parents=True, exist_ok=True)
-        self.draft = self.src / "design-draft.md"
+        #: 作者据新材料改写的可改件：撤回按它的指纹判冲突
+        self.basis = self.src / "doc-refresh.md"
 
     def index(self) -> dict:
         return json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
@@ -1045,21 +1045,23 @@ class SameNamedOriginalSteps:
         """这份原件这个来源的全部版本。"""
         return next((s["versions"] for s in self.index()["sources"] if s["source_id"] == f"local:{self.NAME}"), [])
 
-    def snapshot_ref(self) -> str:
-        return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["input"]["snapshot_ref"]
+    def canonical(self) -> Path:
+        return self.feature_root / "blueprint" / "component-blueprint.yaml"
 
-    def adopt_latest(self) -> None:
-        """设计输入改为采用这个来源最新的版本（替掉它的旧版本，其余采用不变）。"""
-        path = self.src / "design-input.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        mine = {f"{v['dir']}/" for v in self.versions()}
-        latest = self.versions()[-1]
-        wanted = [(latest["readable"] or latest["original"])["path"], *(i["path"] for i in latest.get("images") or [])]
-        data["adopted"] = [a for a in data["adopted"] if not any(a.startswith(d) for d in mine)] + wanted
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    def adopted(self) -> int | None:
+        """蓝图需求条目采用的是这个来源的第几版；没采用为 None。"""
+        stem = Path(self.NAME).stem
+        hits = {int(m) for m in re.findall(rf"sources/{re.escape(stem)}-v(\d+)/", self.canonical().read_text(encoding="utf-8"))}
+        self.assertLessEqual(len(hits), 1, f"同一来源采用了不止一版：{hits}")
+        return next(iter(hits), None)
+
+    def original(self, version: int) -> bytes:
+        """这个来源第 `version` 版的原件字节（材料版本导入后不改）。"""
+        v = next(v for v in self.versions() if v["version"] == version)
+        return (self.feature_root / v["original"]["path"]).read_bytes()
 
     def adopt(self, data: bytes, basis: str) -> str:
-        """一次采用：材料关卡答补料 → 导入 → 开轮 → 登记本轮 → 提取稿写进依据 → 设计输入采用新版本 → complete 冻结；返回本轮 id。"""
+        """一次采用：材料关卡答补料 → 导入 → 开轮 → 登记本轮 → 作者写下依据 → 设计同步，需求条目采用新版本；返回本轮 id。"""
         (self.inbox / self.NAME).write_bytes(data)
         self.assertIn(self.NAME, self.update("--action", "inputs")["pending"])
         write_gaps(self.src)
@@ -1071,31 +1073,26 @@ class SameNamedOriginalSteps:
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         rid = self.update()["update"]
         self.assertIsNone(self.flow("round").get("error"))
-        text = self.draft.read_text(encoding="utf-8")
-        self.draft.write_text(text.split("\n<!-- 依据 -->", 1)[0] + f"\n<!-- 依据 -->\n{basis}\n", encoding="utf-8")
-        self.adopt_latest()
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md", "--input", "AR/story-src/design-input.json")
-        self.assertTrue(done.get("committed"), done)
+        self.basis.write_text(f"# 当前依据\n\n{basis}\n", encoding="utf-8")
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS)
+        self.assertEqual(self.versions()[-1]["version"], self.adopted(), "设计同步后没采用新版本")
         return rid
 
     def close(self, rid: str) -> None:
         (self.updates / rid / "update-notes.md").write_text(self.NOTES, encoding="utf-8")
         self.assertEqual("closed", self.update("--action", "close").get("status"))
 
-    def frozen_original(self, ref: str) -> bytes:
-        """冻结包里这个来源被采用的那一版原件。"""
-        snapshot = json.loads((self.root / ref).read_text(encoding="utf-8"))
-        row = next(r for r in snapshot["files"] if Path(r["path"]).name == self.NAME)
-        return (self.root / ref).parent.joinpath("files", *row["path"].split("/")).read_bytes()
-
     def resolve_conflicts(self, out: dict) -> None:
-        """人按冲突给的开轮版本定回去。"""
+        """人按冲突给的开轮版本定回去（开轮时没有的那份就删掉）。"""
         for c in out["conflicts"]:
-            (self.feature_root / c["file"]).write_bytes((self.feature_root / c["before"]).read_bytes())
+            if c.get("before"):
+                (self.feature_root / c["file"]).write_bytes((self.feature_root / c["before"]).read_bytes())
+            else:
+                (self.feature_root / c["file"]).unlink()
 
 
-class TheFrozenOriginalIsTracedThroughRetirement(SameNamedOriginalSteps, UpdateCase):
-    """冻结采用稿当时的原件按快照记的路径与摘要核：同一位置导入新版、登记本轮之后，审查对象仍绑定当时那一版原件；
+class TheAdoptedOriginalIsTracedThroughRetirement(SameNamedOriginalSteps, UpdateCase):
+    """设计采用的那一版原件按材料版本的路径与摘要核：同一位置导入新版、登记本轮之后，审查对象仍列着采用的那一版；
     那一版的原件不在了就报缺口，不拿同一来源的新版本顶替。"""
 
     OBJECT = """
@@ -1119,7 +1116,6 @@ process.stdout.write(JSON.stringify({ rows: o.rows.map(r => [r.path, r.label]), 
     def test_the_adopted_version_is_traced_and_a_lost_one_is_named(self) -> None:
         v1 = (self.DOCX / "supplements" / "交通卡自动充值.docx").read_bytes()
         self.close(self.adopt(v1, "按甲需求第一版。"))
-        frozen_ref = self.snapshot_ref()
         first = self.versions()[0]
         (self.inbox / self.NAME).write_bytes((self.DOCX / "update-inputs" / "交通卡自动充值-v2.docx").read_bytes())
         self.update("--action", "inputs")
@@ -1132,68 +1128,58 @@ process.stdout.write(JSON.stringify({ rows: o.rows.map(r => [r.path, r.label]), 
         self.assertEqual(0, done.returncode, done.stdout + done.stderr)
         self.update()
         self.assertIsNone(self.flow("round").get("error"))
-        self.assertEqual(frozen_ref, self.snapshot_ref(), "没重新冻结，采用版应仍是第一版")
+        self.assertEqual(1, self.adopted(), "设计没同步，采用版应仍是第一版")
         self.assertEqual([1, 2], [v["version"] for v in self.versions()])
 
         got = self.review_object()
         original = first["original"]["path"]
         traced = [label for rel, label in got["rows"] if rel.endswith(original)]
         self.assertEqual(1, len(traced), got["rows"])
-        self.assertIn(f"冻结采用稿 {first['readable']['path']} 当时的原件 {original}", traced[0])
-        self.assertFalse([p for p in got["problems"] if "当时的原件" in p], got["problems"])
+        self.assertIn(f"设计采用版本的原件 {original}", traced[0])
+        self.assertIn(f"设计采用的阅读稿 {first['readable']['path']}", [label for _, label in got["rows"]])
+        self.assertFalse([p for p in got["problems"] if "设计采用的" in p], got["problems"])
 
         (self.feature_root / original).unlink()
-        lost = [p for p in self.review_object()["problems"] if "当时的原件" in p]
-        self.assertEqual(1, len(lost), lost)
-        self.assertIn("不在原处", lost[0])
+        lost = [p for p in self.review_object()["problems"] if original in p]
+        self.assertTrue(lost, "采用的那一版原件不在了却没报")
 
 
 class ASameNamedOriginalGoesThroughTheRealEntries(SameNamedOriginalSteps, UpdateCase):
     """V01（未登记起点）：同名原件换版、撤回与重新采用旧原件。"""
 
-    def test_an_open_round_withdrawal_keeps_inputs_and_leaves_the_design_to_sync(self) -> None:
+    def test_an_open_round_withdrawal_keeps_versions_and_the_design(self) -> None:
         v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
         self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
-        v1_ref = self.snapshot_ref()
-        draft_v1 = self.draft.read_bytes()
+        basis_v1 = self.basis.read_bytes()
 
         self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。")
-        v2_ref = self.snapshot_ref()
-        self.assertNotEqual(v1_ref, v2_ref)
-        self.assertIn("单日上限 300", self.frozen_original(v2_ref).decode("utf-8"))
+        canonical = self.canonical().read_bytes()
+        self.assertEqual(2, self.adopted())
 
         out = self.update("--action", "restore")
-        self.assertEqual("restore_conflicted", out["status"], "complete 不是完成点：本轮改动没有登记的一版可比，应列冲突")
-        self.assertIn("AR/story-src/design-draft.md", [c["file"] for c in out["conflicts"]])
-        self.assertIn("单日上限 300", self.draft.read_text(encoding="utf-8"), "冲突的现状被覆盖了")
+        self.assertEqual("restore_conflicted", out["status"], "本轮改动没有登记的一版可比，应列冲突")
+        self.assertIn("AR/story-src/doc-refresh.md", [c["file"] for c in out["conflicts"]])
+        self.assertIn("单日上限 300", self.basis.read_text(encoding="utf-8"), "冲突的现状被覆盖了")
         self.resolve_conflicts(out)
         out = self.update("--action", "restore")
         self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
-        self.assertEqual(draft_v1, self.draft.read_bytes())
-        self.assertEqual(v2_ref, self.snapshot_ref(), "撤回改了已冻结的输入登记")
-        latest = self.versions()[-1]
-        self.assertEqual(2, latest["version"], "撤回动了材料版本")
-        self.assertIn("单日上限 300", (self.feature_root / latest["original"]["path"]).read_text(encoding="utf-8"),
-                      "撤回回写了材料版本")
-        self.assertIn("单日上限 200", self.frozen_original(v1_ref).decode("utf-8"), "旧冻结包被动了")
-        self.assertEqual("design_blueprint", self.flow("status")["next"], "撤回后没要求设计按当前输入同步")
+        self.assertEqual(basis_v1, self.basis.read_bytes())
+        self.assertEqual(canonical, self.canonical().read_bytes(), "撤回回写了蓝图")
+        self.assertEqual(2, self.versions()[-1]["version"], "撤回动了材料版本")
+        self.assertIn("单日上限 300", self.original(2).decode("utf-8"), "撤回回写了材料版本")
+        self.assertIn("单日上限 200", self.original(1).decode("utf-8"), "旧版本被动了")
 
     def test_a_closed_round_readopts_the_old_content_as_a_new_version(self) -> None:
-        """换版之后又改回旧内容：旧版本一直留在原处，改回的内容作为新一版取得并被采用，中间那一版冻结包不动。"""
+        """换版之后又改回旧内容：旧版本一直留在原处，改回的内容作为新一版取得并被采用，中间那一版不动。"""
         v1 = "# 甲需求\n\n单日上限 200。\n".encode("utf-8")
         self.close(self.adopt(v1, "单日上限 200，按甲需求。"))
-        v1_ref = self.snapshot_ref()
         self.close(self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。"))
-        v2_ref = self.snapshot_ref()
-
-        kept = (self.feature_root / self.versions()[0]["original"]["path"]).read_bytes()
-        self.assertEqual(v1, kept, "第一版的原件不是当时的字节")
-        self.close(self.adopt(kept, "单日上限 200，按甲需求。"))
-        v3_ref = self.snapshot_ref()
-        self.assertNotEqual(v2_ref, v3_ref)
-        self.assertEqual(self.frozen_original(v1_ref), self.frozen_original(v3_ref), "重新采用的冻结正文不是旧版")
-        self.assertIn("单日上限 300", self.frozen_original(v2_ref).decode("utf-8"), "中间那一版冻结包被覆盖了")
+        self.assertEqual(v1, self.original(1), "第一版的原件不是当时的字节")
+        self.close(self.adopt(self.original(1), "单日上限 200，按甲需求。"))
         self.assertEqual([1, 2, 3], [v["version"] for v in self.versions()], "换版的各版没各留一份")
+        self.assertEqual(3, self.adopted())
+        self.assertEqual(self.original(1), self.original(3), "重新采用的正文不是旧版")
+        self.assertIn("单日上限 300", self.original(2).decode("utf-8"), "中间那一版被覆盖了")
 
 
 class FetchOnlyWritesToTheInbox(unittest.TestCase):
@@ -1450,7 +1436,7 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
         return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
 
     def design_syncs(self) -> None:
-        """交给设计的输入换了一版：设计职责在 component-design 里按新输入同步蓝图并重新准入。"""
+        """设计按当前材料同步：设计职责在 component-design 里让需求条目采用各来源最新的版本并重新准入。"""
         design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS)
 
     def mark_archived(self) -> None:
@@ -1643,15 +1629,14 @@ class TheReviewersWordsSurviveAFailedRegistration(StoryIsRegisteredAgainAfterCha
 
 class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsRegisteredAgainAfterChangesCase):
     """V01（已登记起点）：v1 走真实审查与 `story` 登记并收口后，新一轮同名换版或只改表达，再撤回。
-    撤回只退可改件；登记、冻结包、蓝图、人签与轮次记录不回写，当前资格照实报，交付门不放行。"""
+    撤回只退可改件；登记、材料版本、蓝图、人签与轮次记录不回写，当前资格照实报，交付门不放行。"""
 
     def deliver(self) -> subprocess.CompletedProcess:
         return self.run_cmd("node", str(self.BUILD), "check", "--deliver", "--feature", FEATURE, "--project-root", str(self.root))
 
-    def registered_v1(self) -> str:
-        """v1 原件经材料关卡导入、冻结，设计同步，材料清单改列原件（作者的事），审查通过后登记并收口。"""
+    def registered_v1(self) -> None:
+        """v1 原件经材料关卡导入，设计同步采用它，材料清单改列原件（作者的事），审查通过后登记并收口。"""
         rid = self.adopt("# 甲需求\n\n单日上限 200。\n".encode("utf-8"), "单日上限 200，按甲需求。")
-        self.design_syncs()
         story = self.feature_root / "AR" / "story.md"
         row = "| 甲需求 PRD [prd.md](../sources/prd-v1/prd.md) | [prd.md](../sources/prd-v1/prd.md) |"
         mine = self.versions()[-1]["original"]["path"]
@@ -1663,34 +1648,31 @@ class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsR
         self.close(rid)
         self.mark_archived()
         self.assertEqual("story_written", self.contract()["status"])
-        return self.snapshot_ref()
 
     def kept(self) -> dict:
-        """撤回不该回写的：冻结输入登记、蓝图、关卡记录（含人的原话）、归档标记。"""
-        canonical = self.root / "doc" / "features" / "bp-REQ-DEMO" / "blueprint" / "component-blueprint.yaml"
+        """撤回不该回写的：蓝图、关卡记录（含人的原话）、归档标记。"""
         contract = self.contract()
-        return {"input": contract["input"], "blueprint": canonical.read_bytes(),
+        return {"blueprint": self.canonical().read_bytes(),
                 "gates": contract["rounds"][-1]["gates"], "archived": contract.get("archived")}
 
-    def test_a_new_version_withdrawn_leaves_the_registration_to_the_design_sync(self) -> None:
-        v1_ref = self.registered_v1()
+    def test_a_new_version_withdrawn_leaves_the_registration_to_sync(self) -> None:
+        self.registered_v1()
         self.adopt("# 甲需求\n\n单日上限 300。\n".encode("utf-8"), "单日上限 300，按甲需求新版。")
-        v2_ref = self.snapshot_ref()
-        self.assertEqual(("complete", "design_blueprint"), (self.contract()["status"], self.flow("status")["next"]),
-                         "冻结了新输入，登记仍算成立")
+        self.assertEqual(("story_written", "register_story"), (self.contract()["status"], self.flow("status")["next"]),
+                         "设计采用了新版本，登记仍算成立")
         before = self.kept()
         out = self.update("--action", "restore")
         self.assertEqual("restore_conflicted", out["status"], out)
         self.resolve_conflicts(out)
         out = self.update("--action", "restore")
         self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
-        self.assertEqual(before, self.kept(), "撤回回写了冻结输入、蓝图、关卡记录或归档标记")
-        self.assertEqual(v2_ref, self.snapshot_ref())
-        self.assertIn("单日上限 200", self.frozen_original(v1_ref).decode("utf-8"), "v1 冻结包被动了")
-        self.assertIn("单日上限 300", self.frozen_original(v2_ref).decode("utf-8"), "v2 冻结包被动了")
-        self.assertEqual(("complete", "design_blueprint"), (self.contract()["status"], self.flow("status")["next"]),
+        self.assertEqual(before, self.kept(), "撤回回写了蓝图、关卡记录或归档标记")
+        self.assertEqual(2, self.adopted())
+        self.assertIn("单日上限 200", self.original(1).decode("utf-8"), "v1 被动了")
+        self.assertIn("单日上限 300", self.original(2).decode("utf-8"), "v2 被动了")
+        self.assertEqual(("story_written", "register_story"), (self.contract()["status"], self.flow("status")["next"]),
                          "撤回之后把旧登记当成了现在的")
-        self.assertNotEqual(0, self.deliver().returncode, "设计没按当前输入同步，交付门却放行了")
+        self.assertNotEqual(0, self.deliver().returncode, "设计采用的来源换了而稿没重新登记，交付门却放行了")
 
     def test_a_registered_expression_change_withdrawn_needs_registering_again(self) -> None:
         self.registered_v1()
@@ -1746,18 +1728,15 @@ class StoryIsRegisteredAgainAfterChanges(StoryIsRegisteredAgainAfterChangesCase)
 class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChangesCase):
     START_REGISTERED = True
 
-    def test_a_recommitted_extract_needs_the_story_registered_again(self) -> None:
-        """update 轮内重新提交提取稿：上一次登记随之作废，不重跑 `story` 就不收口。"""
+    def test_a_design_change_in_the_round_needs_the_story_registered_again(self) -> None:
+        """update 轮内设计改了需求条目（材料字节没变）：上一次登记的依据不再是现在的，不重跑 `story` 就不收口。"""
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.mark_archived()
         rid = self.update()["update"]
-        draft = self.src / "design-draft.md"
-        draft.write_text(draft.read_text(encoding="utf-8") + "\n按改版稿核过一遍。\n", encoding="utf-8")
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertTrue(done.get("committed"), done)
-        self.assertEqual("design_blueprint", self.flow("status")["next"], "输入换了版本，蓝图还没按它同步")
-        self.design_syncs()
-        self.assertEqual("register_story", self.flow("status")["next"])
+        items = design_kit.handed_items(self.root, FEATURE, design_kit.ACCESS)
+        items[0]["kind"] = "goal"
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS, items=items)
+        self.assertEqual("register_story", self.flow("status")["next"], "设计改了，没指向重新登记")
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         refused = self.update("--action", "close")
         self.assertIn("重新登记", refused.get("error", ""), refused)
@@ -1765,8 +1744,8 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
         self.assertEqual("closed", self.update("--action", "close").get("status"))
         self.assert_no_hand_edit()
 
-    def test_changed_materials_need_a_new_frozen_input_before_close(self) -> None:
-        """update 轮里材料变了：稿子重新登记了，设计输入却还是旧冻结版本——不收口；重跑 complete、设计同步、重新登记后收口。"""
+    def test_changed_materials_need_a_registration_after_them_before_close(self) -> None:
+        """update 轮里材料变了：登记还是变化之前的那一份——不收口；设计采用新版本、按它重新登记后收口。"""
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.mark_archived()
         rid = self.update()["update"]
@@ -1774,50 +1753,27 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
         import_into(self.root, self.feature_root,
                     {"RR/prd.md": (prd.read_bytes() + "\n改版：回执状态以服务端为准。\n".encode("utf-8"), "RR")})
         self.flow("round")
-        cite_latest_prd(self.feature_root)
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
-        self.assertTrue(self.register().get("success"), self.outputs[-1])
         refused = self.update("--action", "close")
-        self.assertIn("材料变了", refused.get("error", ""), refused)
-        path = self.src / "design-input.json"       # 设计改为采用产品需求的新版本
-        path.write_text(path.read_text(encoding="utf-8").replace("sources/prd-v1/prd.md", "sources/prd-v2/prd.md"),
-                        encoding="utf-8")
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertTrue(done.get("committed"), done)
-        self.design_syncs()
+        self.assertIn("材料又变了", refused.get("error", ""), refused)
+        self.design_syncs()             # 设计改为采用产品需求的新版本
+        cite_latest_prd(self.feature_root)
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.assertEqual("closed", self.update("--action", "close").get("status"))
         self.assert_no_hand_edit()
 
-    def test_a_changed_input_declaration_needs_a_new_frozen_input_before_close(self) -> None:
-        """材料字节没变，设计输入里一条需求条目的类别改了：登记的冻结版本已不是现在的有效输入——不收口，重跑 complete 后收口。"""
-        self.assertTrue(self.register().get("success"), self.outputs[-1])
-        self.mark_archived()
-        rid = self.update()["update"]
-        path = self.src / "design-input.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["scope_items"][0]["kind"] = "goal" if data["scope_items"][0]["kind"] != "goal" else "requirement"
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
-        refused = self.update("--action", "close")
-        self.assertIn("与登记的冻结版本不同", refused.get("error", ""), refused)
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertTrue(done.get("committed"), done)
-        self.design_syncs()
-        self.assertTrue(self.register().get("success"), self.outputs[-1])
-        self.assertEqual("closed", self.update("--action", "close").get("status"))
 
 class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChangesCase):
-    """不采用的新材料与归档后改范围：有效输入与范围关卡各按自己的规则走。"""
+    """不采用的新材料与归档后改范围：设计采用关系与范围关卡各按自己的规则走。"""
 
     START_REGISTERED = True
 
-    def test_a_new_material_left_out_is_recorded_without_changing_the_input(self) -> None:
-        """来了一份新材料而本轮不采用：重跑 complete 只记下这次材料，冻结版本照旧复用、设计不用同步；成文重新登记后收口。"""
+    def test_a_new_material_left_out_needs_a_registration_but_no_design_change(self) -> None:
+        """来了一份新材料而本轮不采用：设计不用同步，成文按当前材料重新登记（材料清单写明它的去处）后收口。"""
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.mark_archived()
         rid = self.update()["update"]
-        before = self.contract()["input"]["snapshot_ref"]
+        canonical = (self.feature_root / "blueprint" / "component-blueprint.yaml").read_bytes()
         import_into(self.root, self.feature_root, {"meeting-photo.png": (b"\x89PNG\r\n\x1a\n" + b"0" * 32, "UX")})
         unused = self.run_cmd(sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
                               "--project-root", str(self.root), "--caption-image",
@@ -1826,14 +1782,12 @@ class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChanges
         self.flow("round")
         (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
         refused = self.update("--action", "close")
-        self.assertIn("材料变了", refused.get("error", ""), refused)
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertEqual(before, done["input"]["snapshot_ref"], "不采用的新材料改了冻结版本")
-        again = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertFalse(again.get("committed"), "同一份输入重入又登记了一次")
-        self.assertTrue(self.register().get("success"), self.outputs[-1])  # 材料清单写明新材料的去处，重新审查登记
+        self.assertIn("材料又变了", refused.get("error", ""), refused)
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
         closed = self.update("--action", "close")
         self.assertEqual("closed", closed.get("status"), closed)
+        self.assertEqual(canonical, (self.feature_root / "blueprint" / "component-blueprint.yaml").read_bytes(),
+                         "不采用的新材料改了设计")
 
     def test_rescoping_after_archive_goes_through_the_scope_gate(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
@@ -1841,13 +1795,8 @@ class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChanges
         reopened = self.flow("reopen")
         self.assertEqual("await_gate:scope_decision", reopened.get("next"), reopened)
         answer(self.flow, "scope_decision", "还是整体承载", "--chosen", "carry_all")
-        draft = self.src / "design-draft.md"
-        draft.write_text(draft.read_text(encoding="utf-8") + "\n重拍范围后核过一遍。\n", encoding="utf-8")
-        (self.src / "design-input.json").write_text(  # 设计输入带重新确认的那条人签
-            json.dumps(design_kit.design_input(self.src), ensure_ascii=False), encoding="utf-8")
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertEqual("complete", done.get("status"), done)
         self.design_syncs()
+        self.assertEqual("register_story", self.flow("status")["next"])
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.assertEqual("story_written", self.contract()["status"])
         self.assert_no_hand_edit()
@@ -1898,7 +1847,7 @@ class RegisteredCase(UpdateCase):
 
 class TheUpdateRoundRunsEndToEnd(RegisteredCase):
     """update 的正常第二段串成一条：新材料 → 报输入、问一次补料 → 开轮 → 新料登记进本轮 → reopen 由人确认范围
-    → 冻结新输入 → 设计按它同步 → 重新独立审查并登记 → 收口。只测协议与状态，不假装模型的语义；
+    → 设计采用新版本 → 重新独立审查并登记 → 收口。只测协议与状态，不假装模型的语义；
     每一步都是新起的进程，中途断开后从盘上的状态接着走（跨会话就是重载已有状态）。"""
 
     def test_the_whole_round(self) -> None:
@@ -1923,14 +1872,7 @@ class TheUpdateRoundRunsEndToEnd(RegisteredCase):
         self.assertEqual("await_gate:scope_decision", self.flow("reopen").get("next"))
         self.assertEqual(rid, self.flow("update", "--action", "status")["open"], "重载状态：开着的这一轮还在")
         answer(self.flow, "scope_decision", "还是整体承载", "--chosen", "carry_all")
-        # 按新料改提取稿、冻结新一版输入（带这次人签），设计按它同步蓝图并重新准入
-        draft = self.src / "design-draft.md"
-        draft.write_text(draft.read_text(encoding="utf-8") + "\n按改版稿补了失败提示。\n", encoding="utf-8")
-        (self.src / "design-input.json").write_text(json.dumps(design_kit.design_input(self.src), ensure_ascii=False),
-                                                    encoding="utf-8")
-        done = self.flow("complete", "--from", "AR/story-src/design-draft.md")
-        self.assertEqual("complete", done.get("status"), done)
-        self.assertEqual("design_blueprint", status()["next"], "输入换了版本，蓝图还没按它同步")
+        # 设计按新料同步：需求条目采用产品需求的新版本，蓝图重新准入
         StoryIsRegisteredAgainAfterChanges.design_syncs(self)
         cite_latest_prd(self.feature_root)
         self.assertEqual("register_story", status()["next"])
@@ -2058,6 +2000,10 @@ class PublishChecksTheExternalVersion(RegisteredCase):
     def local(self, name: str) -> bytes:
         return (self.feature_root / "AR" / self.NAMES[name]).read_bytes()
 
+    def system_body(self) -> bytes:
+        """系统上原来那份开发需求正文：取材导入的开发需求来源第一版。"""
+        return (self.feature_root / "sources" / "design-v1" / "design.md").read_bytes()
+
     def receipt(self, body: bytes | None, when: str = "2099-01-01T00:00:00+00:00", status: str = "fetched",
                 attachments: dict | None = None, checked: str | None = None) -> None:
         """取材回执：正文给 body（None 是系统上没有），两个附件默认系统上没有；`checked` 给出时三件都记成上传读回。"""
@@ -2101,7 +2047,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
 
     def test_it_needs_a_fetch_after_the_registration(self) -> None:
         self.assertIn("先取一次材", self.error(self.publish))
-        self.receipt((self.feature_root / "AR" / "design.md").read_bytes(), when="2000-01-01T00:00:00+00:00")
+        self.receipt(self.system_body(), when="2000-01-01T00:00:00+00:00")
         self.assertIn("重新取一次材", self.error(self.publish))
 
     def test_the_first_publish_baseline_is_the_fetched_development_requirement(self) -> None:
@@ -2143,14 +2089,14 @@ class PublishChecksTheExternalVersion(RegisteredCase):
 
     def test_a_same_named_attachment_nobody_published_is_a_conflict(self) -> None:
         """首次发布附件：系统上已有同名却不是我们的内容，所有权未确认，交人。"""
-        self.receipt((self.feature_root / "AR" / "design.md").read_bytes(), attachments={"review.md": "别人的附件\n".encode("utf-8")})
+        self.receipt(self.system_body(), attachments={"review.md": "别人的附件\n".encode("utf-8")})
         out = self.publish()
         self.assertFalse(out["publishable"], out)
         self.assertEqual("conflict", self.actions(out)["review.md"])
         self.assertEqual("write", self.actions(out)["design-review.md"])
 
     def test_archived_needs_three_readbacks_of_this_version(self) -> None:
-        self.receipt((self.feature_root / "AR" / "design.md").read_bytes())
+        self.receipt(self.system_body())
         self.assertIn("上传读回不全", self.error(lambda: self.call("cmd_archived", self.root)))
         self.uploaded(checked="2000-01-01T00:00:00+00:00")
         self.assertIn("早于这一版的登记", self.error(lambda: self.call("cmd_archived", self.root)), "旧读回放行了这一版")
@@ -2178,7 +2124,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.assertTrue(out["publishable"], out)
         self.assertEqual({"skip"}, set(self.actions(out).values()))
         self.assertEqual("与上次发布逐字相同", out["diff"])
-        self.receipt((self.feature_root / "AR" / "design.md").read_bytes(),
+        self.receipt(self.system_body(),
                      attachments={n: self.local(n) for n in ("review.md", "design-review.md")})
         self.assertFalse(self.publish()["publishable"], "发布之后外部回到了旧版却没当成外部改动")
         self.receipt(self.local("AR-design.md"), attachments={"review.md": self.local("review.md")})
@@ -2189,7 +2135,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.uploaded()
         self.call("cmd_archived", self.root)
         story = self.local("AR-design.md")
-        older = (self.feature_root / "AR" / "design.md").read_bytes()
+        older = self.system_body()
         attachments = {n: self.local(n) for n in ("review.md", "design-review.md")}
         self.receipt(older, status="same", attachments=attachments)
         out = self.call("cmd_restored")

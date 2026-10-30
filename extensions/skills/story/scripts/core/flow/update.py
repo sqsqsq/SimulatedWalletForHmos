@@ -31,12 +31,12 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from materials import frozen, importer, registry
+from materials import importer, registry
 
 import usage
 from flow.phase_facts import UPDATES, update_records as _records
 from flow.routing import basis_drift, inputs_answer, material_state, next_step
-from flow.state import (CONTRACT, CORE_DIR, DESIGN_INPUT, FlowError, STORY, REVIEW, STORY_CONTRACT, file_sha256, system_requirement,
+from flow.state import (CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, blueprint_exists, file_sha256, system_requirement,
                         load, log, now, registration_drift, round_gates, save)
 
 #: 本层全部落点的根（`UPDATES`）放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -488,10 +488,10 @@ PHASES = ("spec", "plan", "coding", "review", "ut", "testing")
 
 
 def _unit_facts(feature_root: Path, project_root: Path | None = None) -> list[dict]:
-    """需求还没关联蓝图、蓝图还没准入时为空列表；蓝图读不过时报原生问题。"""
-    blueprint = ((load(feature_root) or {}).get("design_binding") or {}).get("blueprint_id")
-    if not blueprint:
+    """需求还没有蓝图时为空列表；蓝图读不过时报原生问题。蓝图与需求同根，标识就是需求标识。"""
+    if not blueprint_exists(feature_root):
         return []
+    blueprint = feature_root.name
     from flow import native  # noqa: PLC0415 —— 施工单位由原生读蓝图时列出
     project_root = project_root or native.project_root_of(feature_root)
     read = native.call(project_root, "blueprint", "--blueprint", str(blueprint), "--purpose", "draft", "--summary",
@@ -652,7 +652,7 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
     except ValueError as exc:
         raise FlowError(f"{FEEDBACK} 不是合法 JSON（{exc}）") from exc
     contract = load(feature_root) or {}
-    blueprint = (contract.get("design_binding") or {}).get("blueprint_id")
+    blueprint = feature_root.name if blueprint_exists(feature_root) else None
     reviewed = ((contract.get("story_basis") or {}).get("blueprint_ref") or {}).get("revision")
     if not blueprint or reviewed is None:
         raise FlowError("这张单还没有按蓝图成文登记过：评审人评的是登记的那一版，没有登记就没有被评的蓝图版本")
@@ -667,7 +667,7 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
         said = {d.get("issue") for d in (contract.get("update") or {}).get("decisions", [])}
         problems, items = [], []
         if doc.get("blueprint_id") != blueprint:
-            problems.append(f"blueprint_id 应是本单关联的蓝图 {blueprint}")
+            problems.append(f"blueprint_id 应是本单的蓝图 {blueprint}")
         if doc.get("source_revision") != reviewed:
             problems.append(f"source_revision 应是成文登记时评审的蓝图版本 {reviewed}（写的是 {doc.get('source_revision')}）")
         for item in doc.get("items") or []:
@@ -715,30 +715,18 @@ def record_owned_after(feature_root: Path) -> str | None:
     return rid
 
 
-def registered_input_stale(feature_root: Path, contract: dict) -> str | None:
-    """登记的设计输入是不是现在的有效输入：两件都要成立，不成立返回原因。
+def materials_since_registration(feature_root: Path, contract: dict) -> str | None:
+    """成文登记之后材料有没有再变：登记时记下的材料索引摘要不等于现在的，返回原因；没变返回 None。
 
-    ① 登记时记下的材料摘要等于当前材料：本轮来的新材料无论采用与否，都要经 complete 记下处置；
-    ② 按当前设计输入、提取稿、有效人签与采用文件重算的冻结版本号（`frozen.current_version`，与 complete 同一算法）
-       等于登记的版本：采用关系、需求条目或人签变了，材料字节不变也算变。
+    本轮来的新材料无论设计采用与否，都要经过一次按当前材料的成文登记（作者据它判断采不采用、Story 要不要改），
+    documents 收口才算这一轮承接了它。采用关系与需求条目的变化由成文依据里的设计采用来源另核。
     """
     try:
         live = registry.build(feature_root)
     except registry.MaterialError as exc:
         raise FlowError(str(exc)) from exc
-    if live.get("digest") != contract["input"].get("materials_digest"):
-        return "这一轮材料变了，设计输入还是变化之前登记的那一版"
-    snapshot_ref = str(contract["input"].get("snapshot_ref") or "")
-    version = snapshot_ref.rsplit("/", 2)[-2] if snapshot_ref.count("/") >= 2 else ""
-    try:
-        snapshot = json.loads((feature_root / Path(*frozen.INPUTS) / version / frozen.SNAPSHOT).read_text(encoding="utf-8"))
-        candidate = next(row["path"] for row in snapshot["files"] if row.get("role") == "extracted_analysis")
-        design_input = frozen.read_input(feature_root, "/".join(DESIGN_INPUT))
-        now = frozen.current_version(feature_root, contract, design_input, live, candidate)
-    except (OSError, ValueError, StopIteration, frozen.FrozenError) as exc:
-        return f"按当前设计输入核不了登记的版本（{exc}）"
-    if now != version:
-        return "当前的设计输入（采用集合、需求条目、人签或提取稿）与登记的冻结版本不同"
+    if live.get("digest") != (contract.get("story_basis") or {}).get("materials_digest"):
+        return "成文登记之后材料又变了，登记的还是变化之前的那一版"
     return None
 
 
@@ -778,12 +766,11 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
     if result == "materials" and touched:
         raise FlowError(f"这一轮登记的请求是 materials，却改了已有人读件 {'、'.join(touched)}，不收口："
                         "已有 Story 受影响的是 documents——`update --action prepare --result documents` 改记终点，按 documents 收口")
-    if result == "documents" and contract.get("input"):
-        stale = registered_input_stale(feature_root, contract)
+    if result == "documents" and contract.get("status") == "story_written":
+        stale = materials_since_registration(feature_root, contract)
         if stale:
-            raise FlowError(f"{stale}，不收口：在 design-input.json 写明本轮采用集合、需求条目与人签（不采用的在提取稿写理由），"
-                            "重跑 `story_flow.py complete`——内容没变就复用原版本并记下这次的材料；"
-                            "设计与成文按登记的输入同步后再收口")
+            raise FlowError(f"{stale}，不收口：按新材料判断设计要不要同步（采用的来源在蓝图需求条目里改）、Story 要不要改，"
+                            "`story-build review --action prepare` 定稿并重新独立审查，再跑 `story_flow.py story` 重新登记")
     if result == "documents" and (feature_root / Path(*STORY)).is_file():
         registered_before = (load(root / "before") or {}).get("status") == "story_written"
         if contract.get("status") != "story_written":

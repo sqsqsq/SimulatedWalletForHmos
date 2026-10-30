@@ -8,6 +8,7 @@
     python import_sources.py --feature <AR> --caption-image <图> --caption <一句话>
     python import_sources.py --feature <AR> --caption-image <图> --unused <理由>
     python import_sources.py --feature <AR> --caption-image <图> --used
+    python import_sources.py --feature <AR> --scope <条目.json> [--component <组件>]
 
 本地放进来的件，归类读 `sources/inbox/.classify.json`，内容是 `{"<相对收件箱的路径>": "<类>"}`（值域见
 `materials/importer.py` 的 `CLASSES`）。**归类判断不是脚本的活**：它需要读文件名、内容语义与人在关卡上的说明，
@@ -15,6 +16,8 @@
 
 **归类为什么走文件而不是命令行参数**：JSON 全是引号，而任何 shell 都要对参数再解析一遍——
 宿主是变量，所以约束落在接口上：结构化数据走文件（AI 写文件不过 shell），参数只放标量。
+
+`--scope` 给设计用：需求条目的语义由模型写进文件，脚本按材料索引补来源路径、摘要与 provenance（`materials/scope.py`）。
 
 本文件只做参数解析、分派与顶层输出：stdout 单行 JSON，人类可读日志走 stderr。
 导入与图片说明的实现在 `materials/importer.py`；材料现在是什么，一律去 `materials/registry.py` 的索引问。
@@ -26,7 +29,7 @@ import json
 import sys
 from pathlib import Path
 
-from materials import importer
+from materials import importer, scope
 
 
 def main() -> int:
@@ -43,6 +46,10 @@ def main() -> int:
                     help="与 --caption-image 同用：登记本需求为什么不用这张图")
     ap.add_argument("--used", action="store_true",
                     help="与 --caption-image 同用：撤掉「不用」的理由（说明留着）")
+    ap.add_argument("--scope", default=None, metavar="PATH",
+                    help="需求条目文件 [{item_id, kind, source, authority}]：按材料索引补来源，输出原生需求条目")
+    ap.add_argument("--component", default=None,
+                    help="与 --scope 同用：条目来自需求系统、蓝图还没建立时，给原生设计认定的组件标识")
     args = ap.parse_args()
 
     for stream in (sys.stdout, sys.stderr):
@@ -72,6 +79,18 @@ def main() -> int:
                         if args.feature else None)
     except importer.ImportError_ as exc:
         return emit({"mode": "import", "ok": False, "error": str(exc)}, 1)
+
+    if args.scope:
+        if feature_root is None:
+            return emit({"mode": "scope", "ok": False, "error": "补需求条目需要 --feature"}, 1)
+        try:
+            items = scope.read_items(Path(args.scope))
+            out = scope.materialize(feature_root, project_root, items, args.component)
+        except (scope.ScopeError, importer.ImportError_) as exc:
+            return emit({"mode": "scope", "ok": False, "error": str(exc)}, 1)
+        importer.log(f"需求条目 {len(out['current_scope_items'])} 条已按材料索引补齐来源"
+                     + (f"；来源物化信封 {out['materialization']}" if out.get("materialization") else ""))
+        return emit({"mode": "scope", "ok": True, **out}, 0)
 
     if args.caption_image:
         if feature_root is None:

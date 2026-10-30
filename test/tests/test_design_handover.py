@@ -1,9 +1,9 @@
-"""需求交给设计：关联设计对象（`bind-design`）与冻结设计输入（`complete`）。
+"""需求交给设计：范围定了直接进原生 component-design，蓝图与需求同根，需求条目引 `sources/` 的材料版本。
 
-`AR/design.md` 是上游给进来的原件，提交不覆盖它：候选提取稿作为派生分析进冻结集合，采用的原件、图片与
-真实人签一起按原始字节冻结在 `AR/story-src/inputs/<版本>/`，经原生来源检查后登记 `input`。
-这一份锁：冻结的内容与版本身份、复用与换输入、闭包与人签的拒绝、失败不改已登记的输入、提交前的前置，
-以及同一时点只取一份材料事实。
+这一份锁：范围定了之后路由按原生蓝图派生位置，没有交接命令、不写契约；`import_sources.py --scope` 按材料索引
+补齐需求条目的来源——系统来源另写原生物化信封并过原生检查，本地来源不落 provider 文件，引了没登记的文件拒绝且不写盘；
+蓝图的需求条目采用了本需求的材料版本才进成文；设计开始之后材料再变只登记进本轮，设计开始之前照常开新轮；
+旧 schema 的契约明确拒绝；同一时点只取一份材料事实；成文登记跑真的检查器。
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import unittest.mock
 from pathlib import Path
 
 from ext_workspace import DEV_EXT, REPO_ROOT
@@ -24,30 +23,19 @@ from flow_steps import answer, ensure_framework, write_gaps
 
 STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
 FLOW = STORY_SCRIPTS / "story_flow.py"
+IMPORT = STORY_SCRIPTS / "import_sources.py"
+ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
 
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.decisions import cmd_decide  # noqa: E402
 from flow.inputs import MATERIAL_REQUEST_KEYS  # noqa: E402
 from flow.lifecycle import cmd_status  # noqa: E402
 from flow.state import CARRY_ALL  # noqa: E402
-from flow.submission import cmd_complete  # noqa: E402
 from materials import importer, registry  # noqa: E402
 
 FEATURE = "AR90001"
-#: 需求关联的蓝图：与需求目录分开，新需求建议 bp-<需求标识>
-BLUEPRINT = f"bp-{FEATURE}"
-UPSTREAM_AR = ("# AR90001 上游预填\n\n## 上游先写下的几条\n\n"
-               "- 判定与扣款都在服务端，端侧只做签约入口。\n")
-PRD = "# 产品需求\n\n背景。签约流程见下图：\n\n![签约流程](../flow-v1/flow.svg)\n"
-DRAFT = (
-    "# AR90001 自动充值 — 开发需求（AR）\n\n"
-    "## 1 简介\n\n### 1.1 需求介绍\n\n端侧承载签约入口与状态展示。\n\n"
-    "## 2 需求分析\n\n### 2.1 场景与功能点\n\n签约、解约、状态查看。\n\n"
-    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\n判定在服务端。\n\n"
-    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
-    "## 5 上游已声明线索\n\n无。\n")
-DRAFT_REL = "AR/story-src/design-draft.md"
-INPUT_REL = "AR/story-src/design-input.json"
+PRD = "# 产品需求\n\n## 背景\n\n签约流程见下图：\n\n![签约流程](../flow-v1/flow.svg)\n"
+AUTHORITY = {"owner": "需求负责人", "formality": "formal_requirement"}
 
 
 class HandoverCase(unittest.TestCase):
@@ -66,28 +54,25 @@ class HandoverCase(unittest.TestCase):
         (self.feature_root / "AR").mkdir(parents=True)
         self.src = self.feature_root / "AR" / "story-src"
         self.seed({"RR/prd.md": (PRD, "RR"), "assets/flow.svg": ("<svg xmlns='http://www.w3.org/2000/svg'/>\n", "UX"),
-                   "SR/design.md": ("# 系统设计\n\n分工。\n", "SR"), "AR/design.md": (UPSTREAM_AR, "AR")})
-        self.design = self.feature_root / self.ar_rel
+                   "SR/design.md": ("# 系统设计\n\n分工。\n", "SR")})
 
-    def seed(self, files: dict[str, tuple[str, str]]) -> None:
-        """经真实导入器导成材料版本，各来源最新版本的原件路径存成属性。"""
+    def seed(self, files: dict[str, tuple[str, str]], receipt: dict | None = None) -> None:
+        """经真实导入器导成材料版本，各来源最新版本的原件路径存成属性。给了 `receipt` 时这批件是一次系统取材。"""
         inbox = self.feature_root / "sources" / "inbox"
+        batch = inbox / "fetch-1" if receipt else inbox
         classify = {}
         for rel, (text, cls) in files.items():
-            (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
-            (inbox / rel).write_text(text, encoding="utf-8")
+            (batch / rel).parent.mkdir(parents=True, exist_ok=True)
+            (batch / rel).write_text(text, encoding="utf-8")
             classify[rel] = cls
-        (inbox / ".classify.json").write_text(json.dumps(classify), encoding="utf-8")
+        if receipt:
+            (batch / ".receipt.json").write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+        else:
+            (inbox / ".classify.json").write_text(json.dumps(classify), encoding="utf-8")
         importer.cmd_import(self.feature_root, self.root)
-        latest = {s["origin"]["inbox_path"]: s["versions"][-1]["original"]["path"] for s in registry.read(self.feature_root)["sources"]
-                  if s["kind"] == "local"}
-        self.prd_rel, self.flow_rel = latest["RR/prd.md"], latest["assets/flow.svg"]
-        self.sr_rel, self.ar_rel = latest["SR/design.md"], latest["AR/design.md"]
-        self.prd = self.feature_root / self.prd_rel
-
-    def new_prd(self, text: str) -> None:
-        """产品需求取得了新内容：同一位置再导入一次，成为新版本（已登记的版本不改）。"""
-        self.seed({"RR/prd.md": (text, "RR")})
+        latest = {s["source_id"]: s["versions"][-1]["original"]["path"] for s in registry.read(self.feature_root)["sources"]}
+        self.prd_rel = latest.get("local:RR/prd.md")
+        self.flow_rel = latest.get("local:assets/flow.svg")
 
     # -- 驱动 ---------------------------------------------------------------
 
@@ -101,11 +86,6 @@ class HandoverCase(unittest.TestCase):
         self.assertEqual(0, proc.returncode, f"{args} 失败：{proc.stdout}\n{proc.stderr}")
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    def refused(self, *args: str) -> str:
-        proc = self.flow(*args)
-        self.assertEqual(1, proc.returncode, f"{args} 应当被拒：{proc.stdout}")
-        return json.loads(proc.stdout[proc.stdout.index("{"):])["error"]
-
     def contract(self) -> dict:
         return json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
 
@@ -117,8 +97,8 @@ class HandoverCase(unittest.TestCase):
         (self.src / ".scope-options.json").write_text(json.dumps(
             [{"key": CARRY_ALL, "label": "按当前范围整体承载"}], ensure_ascii=False), encoding="utf-8")
 
-    def ready(self, *, bind: bool = True) -> None:
-        """S1–S3 走完、提取稿写好、关联好设计对象，停在「可以交给设计」。"""
+    def ready(self) -> None:
+        """S1–S3 走完、范围已定：停在「交给设计」。"""
         self.ok("init")
         self.ok("round")
         write_gaps(self.src)
@@ -126,238 +106,166 @@ class HandoverCase(unittest.TestCase):
         self.write_analysis()
         self.ok("round")
         answer(self.ok, "scope_decision", "1")
-        (self.src / "design-draft.md").write_text(DRAFT, encoding="utf-8")
-        if bind:
-            self.ok("bind-design", "--component", "wallet-home", "--blueprint", f"bp-{self.feature}")
 
-    def scope_ask(self) -> str:
-        """当前有效的范围人签：最后一次人给出、已生效的范围关卡记录。"""
-        return [g["ask_id"] for r in self.contract()["rounds"] for g in r["gates"]
-                if g["gate"] == "scope_decision" and g["outcome"] == "accepted"][-1]
+    def answers_rel(self) -> str:
+        """人工答复的最新版本里给人读的那份。"""
+        answers = next(s for s in registry.read(self.feature_root)["sources"] if s["kind"] == "answer")
+        return answers["versions"][-1]["readable"]["path"]
 
-    def write_input(self, *, adopted=None, ids=None, items=None) -> None:
-        body = {
-            "adopted": adopted if adopted is not None else [self.prd_rel, self.flow_rel, self.ar_rel],
-            "human_decision_ids": ids if ids is not None else [self.scope_ask()],
-            "scope_items": items if items is not None else [
-                {"item_id": "request-main", "kind": "requirement", "source_path": self.prd_rel,
-                 "authority": {"owner": "需求负责人", "formality": "formal_requirement"}},
-                {"item_id": "scope-ruling", "kind": "invariant", "source_path": "AR/story-src/human-decisions.json",
-                 "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}],
-        }
-        (self.src / "design-input.json").write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+    def scope(self, items: list[dict], *extra: str) -> subprocess.CompletedProcess:
+        path = self.root / "scope-items.json"
+        path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(IMPORT), "--feature", self.feature, "--project-root", str(self.root), "--scope", str(path), *extra],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
 
-    def commit(self) -> subprocess.CompletedProcess:
-        return self.flow("complete", "--from", DRAFT_REL, "--input", INPUT_REL)
-
-    def versions(self) -> list[Path]:
-        root = self.src / "inputs"
-        return sorted(p for p in root.iterdir() if not p.name.startswith(".")) if root.is_dir() else []
-
-
-class TheDesignObjectIsBoundOnce(HandoverCase):
-    def test_the_first_binding_is_written_and_the_same_one_changes_nothing(self) -> None:
-        self.ready(bind=False)
-        out = self.ok("bind-design", "--component", "wallet-home", "--blueprint", BLUEPRINT)
-        self.assertEqual({"component_id": "wallet-home", "blueprint_id": BLUEPRINT}, out["design_binding"])
-        before = (self.src / "story-flow.json").read_bytes()
-        self.assertFalse(self.ok("bind-design", "--component", "wallet-home", "--blueprint", BLUEPRINT)["bound"])
-        self.assertEqual(before, (self.src / "story-flow.json").read_bytes(), "同值重复关联改了契约")
-
-    def test_another_binding_is_refused(self) -> None:
-        self.ready()
-        before = (self.src / "story-flow.json").read_bytes()
-        self.assertIn("不改绑", self.refused("bind-design", "--component", "wallet-home", "--blueprint", "other"))
-        self.assertEqual(before, (self.src / "story-flow.json").read_bytes(), "拒绝改绑却改了契约")
-
-    def test_the_blueprint_lives_apart_from_the_requirement(self) -> None:
-        """蓝图标识与需求标识相同时拒绝：两者会落在同一目录，原生把需求材料当作平铺 Feature 产物。"""
-        self.ready(bind=False)
-        error = self.refused("bind-design", "--component", "wallet-home", "--blueprint", self.feature)
-        self.assertIn(f"bp-{self.feature}", error)
-        self.assertNotIn("design_binding", self.contract())
-
-    def test_an_unsafe_identifier_is_refused_by_the_native_rule(self) -> None:
-        self.ready(bind=False)
-        self.assertIn("blueprint_id_invalid", self.refused("bind-design", "--component", "wallet-home", "--blueprint", "../x"))
-        self.assertNotIn("design_binding", self.contract())
-
-    def test_an_existing_blueprint_of_another_component_is_refused(self) -> None:
-        self.ready(bind=False)
-        fixture = REPO_ROOT / "test" / "fixtures" / "blueprint" / "wallet-balance-refresh" / "doc" / "features"
-        shutil.copytree(fixture / "wallet-balance-refresh", self.root / "doc" / "features" / "wallet-balance-refresh")
-        error = self.refused("bind-design", "--component", "not-its-component", "--blueprint", "wallet-balance-refresh")
-        self.assertIn("blueprint_component_mismatch", error)
-
-
-class TheInputIsFrozenForTheDesign(HandoverCase):
-    """冻结的是本次交给设计的全部依据；上游原件原样不动。"""
-
-    def committed(self) -> dict:
-        self.ready()
-        self.write_input()
-        proc = self.commit()
+    def scoped(self, items: list[dict], *extra: str) -> dict:
+        proc = self.scope(items, *extra)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        return json.loads(proc.stdout[proc.stdout.index("{"):])
+        return json.loads(proc.stdout)
 
-    def test_a_background_link_is_listed_not_refused(self) -> None:
-        """原件里的普通参考链接不是采用义务：冻结照常成立，没纳入的那几份列给模型判断要不要补成材料。"""
-        sr = "../" + self.sr_rel.split("/", 1)[1]
-        self.new_prd(PRD + f"\n背景见 [旧版说明](../../../other/old.md) 与 [系统设计]({sr})。\n")
-        out = self.committed()
-        notes = out.get("unadopted_references", [])
-        self.assertEqual(2, len(notes), notes)
-        self.assertTrue(any("../../../other/old.md" in n and "需求目录外" in n for n in notes), notes)
-        self.assertTrue(any(self.sr_rel in n for n in notes), notes)
-        self.assertEqual("complete", self.contract()["status"])
+    def tree(self) -> dict[str, bytes]:
+        features = self.root / "doc" / "features"
+        return {p.relative_to(features).as_posix(): p.read_bytes() for p in features.rglob("*") if p.is_file()}
 
-    def test_the_upstream_design_is_never_overwritten(self) -> None:
-        self.committed()
-        self.assertEqual(UPSTREAM_AR, self.design.read_text(encoding="utf-8"))
-        self.assertFalse((self.feature_root / ".backups").exists(), "提交还在备份并覆盖上游 AR")
 
-    def test_the_version_holds_every_file_by_its_raw_bytes_and_role(self) -> None:
-        out = self.committed()
-        [version] = self.versions()
-        snapshot_path = version / "snapshot.json"
-        self.assertEqual(out["input"]["snapshot_ref"],
-                         snapshot_path.relative_to(self.root).as_posix())
-        self.assertEqual(hashlib.sha256(snapshot_path.read_bytes()).hexdigest(), out["input"]["snapshot_sha256"])
-        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        roles = {row["path"]: row["role"] for row in snapshot["files"]}
-        self.assertEqual({self.prd_rel: "original", self.flow_rel: "image", self.ar_rel: "original",
-                          DRAFT_REL: "extracted_analysis", "AR/story-src/human-decisions.json": "human_record"}, roles)
-        for row in snapshot["files"]:
-            data = (version / "files" / row["path"]).read_bytes()
-            self.assertEqual(row["sha256"], hashlib.sha256(data).hexdigest(), row["path"])
-        body = {k: v for k, v in snapshot.items() if k != "observed_at"}
-        canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        self.assertEqual(version.name, hashlib.sha256(canonical).hexdigest(), "版本号不是快照主体的摘要")
+def item(source: str, item_id: str = "request-main", kind: str = "requirement") -> dict:
+    return {"item_id": item_id, "kind": kind, "source": source, "authority": AUTHORITY}
 
-    def test_the_human_record_is_exported_from_the_real_gate(self) -> None:
-        self.committed()
-        [version] = self.versions()
-        exported = json.loads((version / "files" / "AR/story-src/human-decisions.json").read_text(encoding="utf-8"))
-        gate = next(g for r in self.contract()["rounds"] for g in r["gates"] if g["ask_id"] == self.scope_ask())
-        [row] = exported["decisions"]
-        self.assertEqual((gate["reply"], gate["chosen"], gate["at"]), (row["reply"], row["chosen"], row["at"]))
-        self.assertFalse((self.src / "human-decisions.json").exists(), "人签导出写进了工作区")
 
-    def test_a_system_requirement_gets_a_materialization_pointing_into_the_version(self) -> None:
-        self.committed()
-        [version] = self.versions()
-        doc = json.loads((version / "materialization.json").read_text(encoding="utf-8"))
-        self.assertEqual(("requirement-source-materialization@1", BLUEPRINT), (doc["artifact"], doc["blueprint_id"]))
-        prefix = version.relative_to(self.root).as_posix() + "/files/"
-        self.assertTrue(all(item["source_ref"].startswith(prefix) for item in doc["items"]))
-        self.assertEqual("recorded_user_reply", doc["items"][1]["provenance"]["extraction_method"])
+class ScopeSettledGoesStraightToDesign(HandoverCase):
+    """范围定了，下一步就是原生 component-design：没有交接命令，契约里不记设计关联与输入。"""
 
-    def test_a_file_only_proves_it_was_observed_and_the_person_is_the_authority(self) -> None:
-        """原件只证明冻结时读到了这些字节；只有人签是人的权威。时刻是冻结观察时刻，人签原话各自的时刻留在导出里。"""
-        self.committed()
-        [version] = self.versions()
-        snapshot = json.loads((version / "snapshot.json").read_text(encoding="utf-8"))
-        strength = {row["role"]: row["provenance"]["evidence_strength"] for row in snapshot["files"]}
-        self.assertEqual({"original": "observed", "image": "observed", "extracted_analysis": "inferred",
-                          "human_record": "authoritative"}, strength)
-        doc = json.loads((version / "materialization.json").read_text(encoding="utf-8"))
-        main = doc["items"][0]["provenance"]
-        self.assertEqual(("observed", "frozen_file_observation", snapshot["observed_at"]),
-                         (main["evidence_strength"], main["extraction_method"], main["observed_at"]))
-        self.assertEqual(snapshot["observed_at"], doc["items"][1]["provenance"]["observed_at"], "人签合并文件记导出时刻")
-        self.assertNotIn("human_decided_at", snapshot)
-
-    def test_an_interrupted_freeze_leaves_no_version_and_the_same_command_resumes(self) -> None:
-        """断在改名之前：只剩临时目录，它不是一个版本；重跑同一条命令照常冻结并登记。"""
+    def test_status_points_at_component_design_and_writes_nothing(self) -> None:
         self.ready()
-        self.write_input()
-        staging = self.src / "inputs" / ".staging-interrupted"
-        (staging / "files" / self.prd_rel).parent.mkdir(parents=True)
-        (staging / "files" / self.prd_rel).write_text("写到一半\n", encoding="utf-8")
-        self.assertEqual([], self.versions())
-        self.assertNotIn("input", self.contract())
-        self.assertEqual(0, self.commit().returncode)
-        [version] = self.versions()
-        self.assertEqual(PRD, (version / "files" / self.prd_rel).read_text(encoding="utf-8"))
-
-    def test_a_refused_rename_keeps_the_registered_version_and_the_retry_freezes(self) -> None:
-        """新一版的临时目录改名被系统拒绝（本机实见 WinError 5）：异常原样抛出，不出现半个版本、不留临时目录，
-        已登记的输入、旧版本与流程契约一个字节不动；同一条命令重跑照常冻结。不加重试。"""
-        first = self.committed()["input"]["snapshot_ref"]
-        self.ok("reopen")
-        answer(self.ok, "scope_decision", "1")
-        self.write_input(adopted=[self.prd_rel, self.flow_rel])
-        old = {p: p.read_bytes() for p in (self.root / first).parent.rglob("*") if p.is_file()}
-        contract = (self.src / "story-flow.json").read_bytes()
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
-        sys.path.insert(0, str(core))
-        try:
-            from flow.submission import cmd_complete  # noqa: PLC0415
-            real = Path.rename
-
-            def refuse(self_path, target):
-                if self_path.name.startswith(".staging-"):
-                    raise PermissionError(5, "拒绝访问。", str(self_path))
-                return real(self_path, target)
-
-            with unittest.mock.patch.object(Path, "rename", refuse), self.assertRaises(PermissionError):
-                cmd_complete(self.feature_root, self.root, self.feature, DRAFT_REL, INPUT_REL)
-        finally:
-            sys.path.remove(str(core))
-        self.assertEqual([(self.root / first).parent], self.versions(), "改名被拒却留下了新版本")
-        self.assertEqual([], [p for p in (self.src / "inputs").iterdir() if p.name.startswith(".staging-")], "临时目录没清")
-        self.assertEqual(old, {p: p.read_bytes() for p in (self.root / first).parent.rglob("*") if p.is_file()})
-        self.assertEqual(contract, (self.src / "story-flow.json").read_bytes(), "改名失败却改了流程契约")
-        self.assertEqual(0, self.commit().returncode)
-        self.assertNotEqual(first, self.contract()["input"]["snapshot_ref"])
-        self.assertEqual(2, len(self.versions()))
-
-    def test_after_the_commit_the_state_waits_for_the_design(self) -> None:
-        self.committed()
+        before = self.tree()
         status = self.ok("status")
-        self.assertEqual(("complete", "waiting_for_design", "design_blueprint"),
-                         (status["status"], status["state"], status["next"]))
+        self.assertEqual(("waiting_for_design", "design_blueprint"), (status["state"], status["next"]))
+        self.assertEqual({"blueprint_id": FEATURE, "exists": False}, status["blueprint"])
+        for needle in ("component-design", f"`{FEATURE}/blueprint/`", "import_sources.py --scope"):
+            self.assertIn(needle, status["action"])
+        contract = self.contract()
+        self.assertEqual("gathering", contract["status"])
+        self.assertFalse({"input", "design_binding"} & set(contract), "契约又记了设计关联或输入")
+        self.assertEqual(before, self.tree(), "status 是只读查询，却写了需求目录")
 
-    def test_the_same_input_again_reuses_the_version_and_changes_nothing(self) -> None:
-        self.committed()
-        before = (self.src / "story-flow.json").read_bytes()
-        again = json.loads(self.commit().stdout.split("\n")[-2])
-        self.assertFalse(again["committed"])
-        self.assertEqual(before, (self.src / "story-flow.json").read_bytes())
-        self.assertEqual(1, len(self.versions()))
+    def test_the_retired_commands_are_gone(self) -> None:
+        self.ready()
+        for mode in ("bind-design", "complete"):
+            with self.subTest(mode=mode):
+                proc = self.flow(mode)
+                self.assertEqual(2, proc.returncode, proc.stdout + proc.stderr)
+                self.assertIn("invalid choice", proc.stderr)
 
-    def test_another_input_needs_reopen_and_the_old_version_stays(self) -> None:
-        first = self.committed()["input"]["snapshot_ref"]
-        self.write_input(adopted=[self.prd_rel, self.flow_rel])
-        proc = self.commit()
-        self.assertIn("reopen", json.loads(proc.stdout[proc.stdout.index("{"):])["error"])
-        self.ok("reopen")
-        answer(self.ok, "scope_decision", "1")
-        self.write_input(adopted=[self.prd_rel, self.flow_rel])
-        self.assertEqual(0, self.commit().returncode)
-        now = self.contract()["input"]["snapshot_ref"]
-        self.assertNotEqual(first, now)
-        self.assertTrue((self.root / first).is_file(), "换输入删掉或覆写了已被引用的旧版本")
-        self.assertEqual("waiting_for_design", self.ok("status")["state"])
+    def test_an_old_contract_is_refused_with_its_schema(self) -> None:
+        """旧版本的契约不迁移：明确说是哪一版、当前是哪一版。"""
+        self.ready()
+        old = {**self.contract(), "schema": 5, "status": "complete"}
+        (self.src / "story-flow.json").write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+        proc = self.flow("status")
+        self.assertEqual(1, proc.returncode)
+        error = json.loads(proc.stdout[proc.stdout.index("{"):])["error"]
+        self.assertIn("schema 5", error)
+        self.assertIn("当前 6", error)
 
 
-class TheDesignConsumesThisInput(HandoverCase):
-    """成文按的蓝图要真的消费了本次交给设计的输入：准入、标识对得上还不够，需求条目要指向这次冻结的来源。"""
+class ScopeItemsAreFilledFromTheIndex(HandoverCase):
+    """需求条目的语义模型写一次，来源路径、摘要与 provenance 由脚本按材料索引补。"""
 
-    ACCESS = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
+    def test_a_local_source_gets_native_items_and_no_provider_file(self) -> None:
+        self.ready()
+        answers = self.answers_rel()
+        out = self.scoped([item(self.prd_rel), item(answers, "scope-ruling", "invariant")])
+        main, ruling = out["current_scope_items"]
+        prd = self.feature_root / self.prd_rel
+        self.assertEqual(f"doc/features/{FEATURE}/{self.prd_rel}", main["source_ref"])
+        self.assertEqual("sha256:" + hashlib.sha256(prd.read_bytes()).hexdigest(), main["source_sha256"])
+        self.assertEqual(("requirement_material", "observed", "imported_file_observation"),
+                         (main["provenance"]["source_kind"], main["provenance"]["evidence_strength"],
+                          main["provenance"]["extraction_method"]))
+        self.assertEqual(main["source_ref"], main["provenance"]["source_ref"])
+        self.assertEqual(("human_decision", "authoritative"),
+                         (ruling["provenance"]["source_kind"], ruling["provenance"]["evidence_strength"]),
+                         "人工答复是人的原话")
+        self.assertEqual(AUTHORITY, main["authority"])
+        self.assertNotIn("materialization", out)
+        self.assertFalse((self.feature_root / "blueprint").exists(), "本地来源不该落 provider 文件")
+
+    def test_a_fragment_stays_on_the_reference(self) -> None:
+        self.ready()
+        [main] = self.scoped([item(f"{self.prd_rel}#背景")])["current_scope_items"]
+        self.assertTrue(main["source_ref"].endswith(f"{self.prd_rel}#背景"))
+
+    def test_a_file_outside_the_index_is_refused_and_nothing_is_written(self) -> None:
+        self.ready()
+        before = self.tree()
+        proc = self.scope([item("AR/story-src/init-analysis.md"), item(self.prd_rel, "other")])
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("不是材料索引登记的版本文件", json.loads(proc.stdout)["error"])
+        self.assertEqual(before, self.tree())
+
+    def test_a_bad_shape_is_named_item_by_item(self) -> None:
+        self.ready()
+        proc = self.scope([{"item_id": "x", "kind": "story", "source": self.prd_rel}])
+        error = json.loads(proc.stdout)["error"]
+        self.assertIn("kind 取", error)
+        self.assertIn("authority 要有 owner 与 formality", error)
+
+
+class SystemSourcesGetTheNativeEnvelope(HandoverCase):
+    """需求系统取得的来源：同一组条目另写成原生来源物化信封，放在需求的 blueprint/ 里并过原生检查。"""
+
+    def seed_system(self) -> str:
+        self.seed({"RR-prd.md": ("# 系统上的产品需求\n\n签约。\n", "RR")},
+                  receipt={"reqNo": FEATURE, "rrNo": "RR90001",
+                           "items": [{"name": "RR-prd.md", "role": "RR", "ticket": "RR90001", "title": "产品需求",
+                                      "status": "fetched"}]})
+        source = next(s for s in registry.read(self.feature_root)["sources"] if s["kind"] == "system")
+        return source["versions"][-1]["original"]["path"]
+
+    def test_the_envelope_is_written_once_and_checked_natively(self) -> None:
+        system = self.seed_system()
+        self.ready()
+        out = self.scoped([item(system)], "--component", "wallet-home")
+        envelope = self.feature_root / "blueprint" / "requirement-source-materialization.json"
+        self.assertEqual(f"doc/features/{FEATURE}/blueprint/requirement-source-materialization.json", out["materialization"])
+        doc = json.loads(envelope.read_text(encoding="utf-8"))
+        self.assertEqual(("requirement-source-materialization@1", FEATURE, "wallet-home"),
+                         (doc["artifact"], doc["blueprint_id"], doc["component_id"]))
+        self.assertEqual(out["current_scope_items"], doc["items"])
+        self.assertTrue(doc["items"][0]["provenance"]["source_revision"].startswith("system:RR:RR90001@v"))
+        before = envelope.stat().st_mtime_ns
+        self.scoped([item(system)], "--component", "wallet-home")
+        self.assertEqual(before, envelope.stat().st_mtime_ns, "同一组条目重跑不该重写信封")
+
+    def test_without_a_blueprint_the_component_must_be_given(self) -> None:
+        system = self.seed_system()
+        self.ready()
+        proc = self.scope([item(system)])
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("--component", json.loads(proc.stdout)["error"])
+        self.assertFalse((self.feature_root / "blueprint").exists())
+
+    def test_an_existing_blueprint_decides_the_component(self) -> None:
+        system = self.seed_system()
+        self.ready()
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
+        doc = self.scoped([item(system)])
+        self.assertTrue(doc["materialization"])
+        proc = self.scope([item(system)], "--component", "wallet-other")
+        self.assertIn(f"归属组件 {design_kit.COMPONENT}", json.loads(proc.stdout)["error"])
+
+
+class TheDesignAdoptsThisRequirement(HandoverCase):
+    """成文按的蓝图要真的采用了本需求的来源：准入、标识对得上还不够，需求条目要指向本需求已导入的材料版本。"""
+
     SOURCE = """
     const [module, root, feature] = process.argv.slice(1);
     const { designSource } = await import(module);
-    const ctx = { projectRoot: root, args: { feature },
+    const ctx = { projectRoot: root, args: { feature }, featureRoot: `${root}/doc/features/${feature}`,
                   flowPath: `${root}/doc/features/${feature}/AR/story-src/story-flow.json` };
     process.stdout.write(JSON.stringify(designSource(ctx).problems));
     """
-
-    def handed(self) -> None:
-        self.ready(bind=False)
-        self.ok("bind-design", "--component", design_kit.COMPONENT, "--blueprint", f"bp-{self.feature}")
-        self.write_input()
-        self.assertEqual(0, self.commit().returncode)
 
     def source_problems(self) -> list[str]:
         module = (STORY_SCRIPTS / "story" / "design-source.mjs").resolve().as_uri()
@@ -366,204 +274,72 @@ class TheDesignConsumesThisInput(HandoverCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return json.loads(proc.stdout)
 
-    def tree(self) -> dict[str, bytes]:
-        features = self.root / "doc" / "features"
-        return {p.relative_to(features).as_posix(): p.read_bytes() for p in features.rglob("*") if p.is_file()}
-
-    def test_a_blueprint_built_from_this_input_is_ready_to_write(self) -> None:
-        self.handed()
-        design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
+    def test_a_blueprint_adopting_this_requirement_is_ready_to_write(self) -> None:
+        self.ready()
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
         before = self.tree()
-        self.assertEqual("ready_to_write", self.ok("status")["state"])
-        self.assertEqual(before, self.tree(), "status 是只读查询，却写了需求或蓝图工作区")
+        self.assertEqual(("ready_to_write", "story_skeleton"), (self.ok("status")["state"], self.ok("status")["next"]))
+        self.assertEqual(before, self.tree(), "status 是只读查询，却写了需求或蓝图")
         self.assertEqual([], self.source_problems())
 
-    def test_an_unadmitted_blueprint_is_written_from_its_draft_and_status_writes_nothing(self) -> None:
-        """蓝图在、读得过、投影有效，但准入没过：成文读原生草稿，照样到成文（准入只管施工单位开工）；status 不写任何东西。"""
-        self.handed()
-        design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
-        design_kit.change_blueprint(self.root, self.feature, self.ACCESS,
+    def test_an_unadmitted_blueprint_is_written_from_its_draft(self) -> None:
+        """准入没过：成文读原生草稿，照样到成文（准入只管施工单位开工）。"""
+        self.ready()
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
+        design_kit.change_blueprint(self.root, self.feature, ACCESS,
                                     "  admission:\n    status: pass\n", "  admission:\n    status: blocked\n")
-        before = self.tree()
         self.assertEqual("ready_to_write", self.ok("status")["state"])
-        self.assertEqual(before, self.tree(), "status 是只读查询，却写了需求或蓝图工作区")
 
-    def test_an_admitted_blueprint_of_another_requirement_waits_for_the_design(self) -> None:
-        """同组件、换成本需求标识的准入蓝图，来源仍是另一份需求：等设计同步，不成文。"""
-        self.handed()
-        design_kit.install_blueprint(self.root, self.feature, self.ACCESS,
-                                     consume=False)
+    def test_a_blueprint_on_another_requirements_sources_waits_for_the_design(self) -> None:
+        """蓝图的需求条目还是夹具里另一份需求的来源：等设计同步，不成文。"""
+        self.ready()
+        design_kit.install_blueprint(self.root, self.feature, ACCESS, consume=False)
         status = self.ok("status")
         self.assertEqual(("waiting_for_design", "design_blueprint"), (status["state"], status["next"]))
-        self.assertIn("还没消费本次交给设计的输入", status["action"])
+        self.assertIn("没有采用本需求的来源", status["action"])
         [problem] = self.source_problems()
-        self.assertIn("request-main", problem)
+        self.assertIn(f"需求 {FEATURE} 已导入的材料版本", problem)
 
-    def test_a_blueprint_still_on_the_previous_input_waits_for_the_design(self) -> None:
-        """换过一版输入：蓝图还引用上一版冻结的来源，等设计按新输入同步。"""
-        self.handed()
-        design_kit.install_blueprint(self.root, self.feature, self.ACCESS)
-        self.ok("reopen")
-        answer(self.ok, "scope_decision", "1")
-        self.write_input(adopted=[self.prd_rel, self.flow_rel])
-        self.assertEqual(0, self.commit().returncode)
-        status = self.ok("status")
-        self.assertEqual("design_blueprint", status["next"])
-        self.assertIn("不是本次冻结的", status["action"])
-        self.assertTrue(any("不是本次冻结的" in p for p in self.source_problems()))
-
-
-class ALocalRequirementHasNoManifest(HandoverCase):
-    feature = "local-autocharge"
-
-    def test_the_items_are_checked_but_no_materialization_is_written(self) -> None:
+    def test_an_overstated_evidence_strength_is_not_adoption(self) -> None:
+        """条目把材料文件声明成 authoritative：材料只证明读到了这些字节，人的原话才是权威。"""
         self.ready()
-        self.write_input()
-        out = self.ok("complete", "--from", DRAFT_REL, "--input", INPUT_REL)
-        [version] = self.versions()
-        self.assertFalse((version / "materialization.json").exists())
-        self.assertEqual(2, len(out["design_entry"]["current_scope_items"]))
+        items = design_kit.handed_items(self.root, self.feature, ACCESS)
+        items[0]["provenance"]["evidence_strength"] = "authoritative"
+        design_kit.install_blueprint(self.root, self.feature, ACCESS, items=items)
+        self.assertEqual("design_blueprint", self.ok("status")["next"])
+        self.assertTrue(any("只能证明 observed" in p for p in self.source_problems()))
 
-
-class WhatCannotBeFrozenIsRefused(HandoverCase):
-    """冻结不成立时不登记：候选与诊断留在原处，已登记的输入不变。"""
-
-    def test_an_image_the_original_references_must_be_adopted(self) -> None:
+    def test_an_older_adopted_version_stays_the_basis(self) -> None:
+        """设计开始之后产品需求取得了新版本：不开新轮，蓝图仍采用旧版本，照样可以成文——采不采用新版本由设计判断。"""
         self.ready()
-        self.write_input(adopted=[self.prd_rel])
-        error = json.loads(self.commit().stdout)["error"]
-        self.assertIn(self.flow_rel, error)
-        self.assertNotIn("input", self.contract())
-
-    def test_a_forged_human_decision_is_refused(self) -> None:
-        self.ready()
-        self.write_input(ids=["deadbeef"])
-        self.assertIn("deadbeef", json.loads(self.commit().stdout)["error"])
-        self.assertEqual([], self.versions())
-
-    def test_a_decision_replaced_by_a_later_answer_is_not_current(self) -> None:
-        """reopen 之后范围关卡重新答过：上一次的人签已被替代，不能当作本次的有效决定交给设计。"""
-        self.ready()
-        old = self.scope_ask()
-        self.write_input()
-        self.assertEqual(0, self.commit().returncode)
-        self.ok("reopen")
-        answer(self.ok, "scope_decision", "1")
-        self.write_input(ids=[old])
-        self.assertIn("已被之后同一关卡的人签替代", json.loads(self.commit().stdout)["error"])
-        self.write_input(ids=[self.scope_ask()])
-        self.assertEqual(0, self.commit().returncode)
-
-    def test_something_not_confirmed_this_round_cannot_be_adopted(self) -> None:
-        self.ready()
-        (self.src / "notes.md").write_text("草稿\n", encoding="utf-8")
-        self.write_input(adopted=[self.prd_rel, self.flow_rel, "AR/story-src/notes.md"])
-        self.assertIn("不是本轮确认的材料", json.loads(self.commit().stdout)["error"])
-
-    def test_a_refusal_after_a_registered_input_keeps_it(self) -> None:
-        """已登记过一版输入，之后的冻结因伪造人签被拒：登记的那一版原样还在，不多出版本。"""
-        self.ready()
-        self.write_input()
-        self.assertEqual(0, self.commit().returncode)
-        registered = self.contract()["input"]
-        versions = self.versions()
-        self.write_input(ids=["deadbeef"])
-        self.assertIn("deadbeef", json.loads(self.commit().stdout)["error"])
-        self.assertEqual(registered, self.contract()["input"])
-        self.assertEqual(versions, self.versions())
-
-    def test_a_damaged_version_is_not_reused(self) -> None:
-        self.ready()
-        self.write_input()
-        self.assertEqual(0, self.commit().returncode)
-        [version] = self.versions()
-        (version / "files" / self.prd_rel).write_text("被改过\n", encoding="utf-8")
-        self.assertIn("已损坏", json.loads(self.commit().stdout)["error"])
-
-    def test_the_native_source_check_decides_and_nothing_is_registered(self) -> None:
-        """原生对来源条目的判定（这里是 item_id 不合原生的稳定标识）不过：冻结版本留下，输入不登记。"""
-        self.ready()
-        self.write_input(items=[{"item_id": "需求 主条", "kind": "requirement", "source_path": self.prd_rel,
-                                 "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}])
-        proc = self.commit()
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("原生来源检查没过", json.loads(proc.stdout)["error"])
-        self.assertNotIn("input", self.contract())
-        self.assertEqual(1, len(self.versions()), "冻结版本应留在原处供诊断")
-
-
-class PrecheckFailuresChangeNothing(HandoverCase):
-    """提交前的前置不满足：一个字节都不写。"""
-
-    def assert_untouched(self, *args: str, says: str) -> None:
-        before = (self.src / "story-flow.json").read_bytes()
-        proc = self.flow("complete", *args)
-        self.assertEqual(1, proc.returncode, proc.stdout)
-        self.assertIn(says, json.loads(proc.stdout)["error"])
-        self.assertEqual(before, (self.src / "story-flow.json").read_bytes())
-        self.assertEqual([], self.versions())
-
-    def test_without_a_binding_it_says_bind_first(self) -> None:
-        self.ready(bind=False)
-        self.write_input()
-        self.assert_untouched("--from", DRAFT_REL, "--input", INPUT_REL, says="bind-design")
-
-    def test_a_missing_candidate_says_where_to_write_it(self) -> None:
-        self.ready()
-        (self.src / "design-draft.md").unlink()
-        self.assert_untouched("--from", DRAFT_REL, says="design-draft.md")
-
-    def test_no_from_argument_refuses(self) -> None:
-        self.ready()
-        self.assert_untouched(says="--from")
-
-    def test_a_candidate_outside_the_feature_refuses(self) -> None:
-        self.ready()
-        outside = self.root / "draft.md"
-        outside.write_text(DRAFT, encoding="utf-8")
-        self.assert_untouched("--from", str(outside), says="需求目录外")
-
-    def test_the_untouched_skeleton_is_not_an_extraction(self) -> None:
-        self.ready()
-        sys.path.insert(0, str(STORY_SCRIPTS))
-        from flow.inputs import ar_design_skeleton, read_ids  # noqa: PLC0415
-        (self.src / "design-draft.md").write_text(ar_design_skeleton(read_ids(self.feature_root, FEATURE)),
-                                                  encoding="utf-8")
-        self.assert_untouched("--from", DRAFT_REL, says="空骨架")
-
-    def test_a_broken_five_section_shape_refuses(self) -> None:
-        self.ready()
-        (self.src / "design-draft.md").write_text("# x\n\n## 1 简介\n\nx\n", encoding="utf-8")
-        self.assert_untouched("--from", DRAFT_REL, says="五段结构")
-
-    def test_headings_inside_a_fence_do_not_count(self) -> None:
-        self.ready()
-        fenced = "```\n" + DRAFT + "```\n"
-        (self.src / "design-draft.md").write_text(fenced, encoding="utf-8")
-        self.assert_untouched("--from", DRAFT_REL, says="五段结构")
-
-    def test_an_unsettled_scope_still_blocks(self) -> None:
-        self.ok("init")
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
+        rounds = len(self.contract()["rounds"])
+        self.seed({"RR/prd.md": (PRD + "\n新版补了一句。\n", "RR")})
+        self.assertEqual("refresh_round", self.ok("status")["next"])
         self.ok("round")
-        write_gaps(self.src)
-        answer(self.ok, "material_scope", "现有材料就是全部")
-        self.ok("bind-design", "--component", "wallet-home", "--blueprint", BLUEPRINT)
-        (self.src / "design-draft.md").write_text(DRAFT, encoding="utf-8")
-        self.write_input(ids=[])
-        self.assert_untouched("--from", DRAFT_REL, "--input", INPUT_REL, says="范围尚未定")
+        self.assertEqual(rounds, len(self.contract()["rounds"]), "设计开始之后材料变了却开了新轮")
+        self.assertEqual("ready_to_write", self.ok("status")["state"])
+        self.assertEqual([], self.source_problems())
 
-    def test_a_pending_original_in_the_inbox_blocks(self) -> None:
-        self.ready()
-        self.write_input()
-        (self.feature_root / "sources" / "inbox" / "补充说明.md").write_text("# 补充\n\n新内容。\n", encoding="utf-8")
-        self.assert_untouched("--from", DRAFT_REL, "--input", INPUT_REL, says="收件箱")
 
-    def test_a_material_changed_after_the_round_blocks(self) -> None:
+class MaterialChangesBeforeTheDesignReopenTheRound(HandoverCase):
+    """范围定了、设计还没开始：材料再变照常开新一轮重新确认，不当作已经交给设计。"""
+
+    def test_a_new_round_opens(self) -> None:
         self.ready()
-        self.write_input()
-        self.new_prd(PRD + "\n补了一句。\n")
-        self.write_input()
-        self.assert_untouched("--from", DRAFT_REL, "--input", INPUT_REL, says="材料在这一轮登记之后又变了")
+        rounds = len(self.contract()["rounds"])
+        self.seed({"RR/prd.md": (PRD + "\n补充。\n", "RR")})
+        self.assertEqual("run_round", self.ok("status")["next"])
+        self.assertTrue(self.ok("round")["created"])
+        self.assertEqual(rounds + 1, len(self.contract()["rounds"]))
+
+    def test_reopen_needs_a_started_design(self) -> None:
+        self.ready()
+        self.assertEqual(1, self.flow("reopen").returncode, "设计还没开始，范围关卡本来就能重走")
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
+        out = self.ok("reopen")
+        self.assertEqual("gathering", out["status"])
+        self.assertTrue(self.contract()["rounds"][-1]["reopened"])
 
 
 class TheMaterialFactIsTakenOncePerTimepoint(HandoverCase):
@@ -592,14 +368,6 @@ class TheMaterialFactIsTakenOncePerTimepoint(HandoverCase):
         cmd_status(self.feature_root)
         self.assertEqual(1, len(builds), f"status 取了 {len(builds)} 次材料事实——路由、提示与输出该共用一份")
         self.assertEqual([], refreshes, "status 只读，不该刷新清单")
-
-    def test_commit_takes_one_snapshot_and_writes_no_material(self) -> None:
-        """提交只冻结、不改材料：取一次现状，不刷新清单。"""
-        self.ready()
-        self.write_input()
-        builds, refreshes = self.count_material_reads()
-        cmd_complete(self.feature_root, self.root, FEATURE, DRAFT_REL, INPUT_REL)
-        self.assertEqual((1, []), (len(builds), refreshes))
 
     def decide_now(self, gate: str, chosen: str) -> tuple[dict, int]:
         ask = json.loads((self.src / ".ask.json").read_text(encoding="utf-8"))
@@ -664,15 +432,14 @@ class RegistrationRunsTheRealChecker(HandoverCase):
 
     def test_the_checker_runs_and_its_own_finding_is_the_verdict(self) -> None:
         self.ready()
-        self.write_input()
-        self.assertEqual(0, self.commit().returncode)
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
         (self.feature_root / "AR" / "story.md").write_text("# 随手写的一行\n", encoding="utf-8")
         proc = self.flow("story")
         self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
         error = json.loads(proc.stdout[proc.stdout.index("{"):])["error"]
         self.assertNotIn("Cannot find module", error, "node 找不到 story-build.mjs——公共 CLI 的定位错了")
         self.assertIn("[story-build]", error, "登记没把 story-build 的结论带出来，只报了自己跑不通")
-        self.assertEqual("complete", self.contract()["status"], "检查没通过却记了成文态")
+        self.assertEqual("gathering", self.contract()["status"], "检查没通过却记了成文态")
 
 
 if __name__ == "__main__":

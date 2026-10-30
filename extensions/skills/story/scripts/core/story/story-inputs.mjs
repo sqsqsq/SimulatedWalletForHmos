@@ -2,7 +2,7 @@
  * 成文要用的当前输入 —— 材料与来源、材料里的图（一张图一项，带引用串与登记不用的命令）、
  * 上游里的图（带写作设计登记用的图身份）、蓝图生成图（参考）。
  *
- * `story-build skeleton` 起手与恢复时打印它：上游正文取本次采用的冻结版本，缺席按合同与单据身份说。
+ * `story-build skeleton` 起手与恢复时打印它：上游正文取设计采用的那一版材料，缺席按合同与单据身份说。
  */
 import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, relDisplay } from '../../../../../hooks/shared/paths.mjs';

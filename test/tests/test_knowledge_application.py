@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ext_workspace import DEV_EXT, REPO_ROOT
 import design_kit
-from designed_fixture import DRAFT, designed_copy
+from designed_fixture import designed_copy
 
 FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
 MODULE = (DEV_EXT / "hooks" / "shared" / "knowledge-application.mjs").resolve().as_uri()
@@ -40,7 +40,7 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(FIXTURE, "REQ-DEMO", DRAFT, self.root)
+        designed_copy(FIXTURE, "REQ-DEMO", self.root)
 
     def problems(self, mutate: str = "") -> list[str]:
         proc = subprocess.run(["node", "--input-type=module", "-e", SCRIPT, MODULE, ACCESS, str(self.root),

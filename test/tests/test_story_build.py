@@ -73,15 +73,6 @@ CHAPTER_OUT_OF_CONTRACT = "第十五章"
 QUOTE = "提交之后回执没到之前，界面停在等待态"
 
 
-DRAFT_TEXT = (
-    "# AR90006 — 开发需求（AR）\n\n"
-    "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
-    "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
-    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
-    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
-    "## 5 上游已声明线索\n\n无。\n")
-
-
 # 机制按运行环境选 shell（`story/drafts.mjs` 的 `SHELL`）：有 SHELL 变量的是 POSIX shell，
 # Windows 上没有它的是 PowerShell。测试用同一条规则选，跑的就是机制引参数时对准的那个。
 SHELL = "bash" if os.environ.get("SHELL") or os.name != "nt" else "powershell"
@@ -159,7 +150,7 @@ class StoryBuildCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(FIXTURE, FEATURE, self.DRAFT, self.root, self.DESIGN)
+        designed_copy(FIXTURE, FEATURE, self.root, self.DESIGN)
         self.addCleanup(self._tmp.cleanup)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
@@ -168,7 +159,7 @@ class StoryBuildCase(unittest.TestCase):
 
     def run_build(self, command: str) -> subprocess.CompletedProcess:
         if command == "skeleton":
-            ensure_flow_state(self.root, FEATURE, self.src, self.DRAFT)
+            ensure_flow_state(self.root, FEATURE, self.src)
         return subprocess.run(
             ["node", str(BUILD), command, "--feature", FEATURE,
              "--project-root", str(self.root)],
@@ -183,14 +174,6 @@ class StoryBuildCase(unittest.TestCase):
         decisions = self.src / "decisions.json"
         if not decisions.exists():
             decisions.write_text('{"decisions": [], "no_pending": "夹具：本单无待决"}', encoding="utf-8")
-
-    DRAFT = (
-        "# REQ-DEMO — 开发需求（AR）\n\n"
-        "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
-        "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
-        "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
-        "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
-        "## 5 上游已声明线索\n\n无。\n")
 
     def check_output(self) -> tuple[int, str]:
         proc = self.run_build("check")
@@ -1211,8 +1194,8 @@ class TestArRootStaysClean(StoryBuildCase):
         self.assertNotIn("不该在这一层", out)
 
     def test_the_delivery_documents_pass(self) -> None:
-        """白名单上的照过：交付文档与提取稿骨架在这一层是正当住户。"""
-        for name in ("design.md", "review.md", "design-review.md"):
+        """白名单上的照过：交付文档在这一层是正当住户。"""
+        for name in ("review.md", "design-review.md"):
             path = self.ar_root() / name
             if not path.exists():
                 path.write_text("# x\n", encoding="utf-8")
@@ -1695,7 +1678,7 @@ class ABrokenIdShapeIsObservable(unittest.TestCase):
                       / "story-build.mjs")
         # 专项夹具：交给设计、蓝图已准入的 REQ-DEMO 工作区，用副本机制的入口跑 check
         self.ws = Path(self._tmp.name) / "work"
-        designed_copy(FIXTURE, FEATURE, StoryBuildCase.DRAFT, self.ws)
+        designed_copy(FIXTURE, FEATURE, self.ws)
 
     def check(self) -> str:
         proc = subprocess.run(
@@ -1953,13 +1936,23 @@ class TheChapterIsCheckedBeforeItLandsPart2(TheChapterIsCheckedBeforeItLandsCase
         _, out = self.check_output()
         self.assertNotIn("AC-", self.story_path.read_text(encoding="utf-8"), "夹具前提：Story 里没有 AC 形态的编号")
         self.assertIn("验收编号全集这一条没有可核对象", out)
-        self.assertIn("独立审查对照冻结原文", out)
+        self.assertIn("独立审查对照采用的原文", out)
 
     def test_the_upstreams_own_numbering_is_not_a_work_id(self) -> None:
-        """上游原件自己用 F3 编功能点：Story 照原文引用它不是仓内工作编号，不强制改号。"""
-        flow = json.loads((self.feature_root() / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
-        frozen = self.root / Path(flow["input"]["snapshot_ref"]).parent / "files" / "sources" / "prd-v1" / "prd.md"
-        frozen.write_text(frozen.read_text(encoding="utf-8") + "\n功能点 F3：签约。\n", encoding="utf-8")
+        """设计采用的上游原件自己用 F3 编功能点：Story 照原文引用它不是仓内工作编号，不强制改号。"""
+        from designed_fixture import FIXTURE_DECISIONS  # noqa: PLC0415
+        feature = self.feature_root()
+        prd = feature / "sources" / "prd-v1" / "prd.md"
+        inbox = feature / "sources" / "inbox" / "RR"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / "prd.md").write_text(prd.read_text(encoding="utf-8") + "\n功能点 F3：签约。\n", encoding="utf-8")
+        (inbox.parent / ".classify.json").write_text('{"RR/prd.md": "RR"}', encoding="utf-8")
+        for script, args in ((IMPORT, ()), (FLOW, ("round",))):
+            proc = subprocess.run([sys.executable, str(script), *args, "--feature", FEATURE, "--project-root", str(self.root)],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        # 设计采用新版本：需求条目改引 prd-v2
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS, decisions=FIXTURE_DECISIONS)
         self.assertEqual(0, self.put("背景", "签约对应上游的 F3。\n").returncode)
         proc = self.put("背景", "签约对应上游的 F4。\n")
         self.assertEqual(1, proc.returncode, "上游原文里没有的编号仍按仓内工作编号拦")
@@ -2009,10 +2002,9 @@ class TheChapterTaskCarriesItsBasis(TheChapterIsCheckedBeforeItLandsCase):
         proc = self.put("背景", minimal_body("背景", "本章有效正文。"))
         self.assertEqual(0, proc.returncode, self.out(proc))
         lines = proc.stdout.split("\n")
-        flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
-        self.assertIn("当前设计投影 doc/features/bp-REQ-DEMO/blueprint/component-blueprint.review.md（蓝图 bp-REQ-DEMO r", lines[1])
-        self.assertIn("本体 doc/features/bp-REQ-DEMO/blueprint/component-blueprint.yaml", lines[1])
-        self.assertIn(f"冻结来源 {flow['input']['snapshot_ref']}", lines[1])
+        self.assertIn("当前设计投影 doc/features/REQ-DEMO/blueprint/component-blueprint.review.md（蓝图 REQ-DEMO r", lines[1])
+        self.assertIn("本体 doc/features/REQ-DEMO/blueprint/component-blueprint.yaml", lines[1])
+        self.assertIn("设计采用的材料版本 sources/design-v1、sources/prd-v1", lines[1])
         self.assertIn("决策登记 AR/story-src/decisions.json", lines[1])
         basis = [l for l in lines if l.startswith("  本章依据")]
         self.assertEqual([
@@ -2190,7 +2182,7 @@ class RealRunCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature = self.root / "doc" / "features" / "AR90006"
-        designed_copy(real_with_knowledge(self.REAL), "AR90006", DRAFT_TEXT, self.root, self.DESIGN)
+        designed_copy(real_with_knowledge(self.REAL), "AR90006", self.root, self.DESIGN)
         self.story_path = self.feature / "AR" / "story.md"
         self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
@@ -2200,8 +2192,7 @@ class RealRunCase(unittest.TestCase):
         起手前放好写作设计：这一组测的是作者照设计写章之后的路径，设计本身另有用例。
         """
         if "skeleton" in args:
-            ensure_flow_state(self.root, "AR90006", self.feature / "AR" / "story-src",
-                              DRAFT_TEXT)
+            ensure_flow_state(self.root, "AR90006", self.feature / "AR" / "story-src")
             plan = self.feature / "AR" / "story-src" / "story-template.md"
             if not plan.exists():
                 text = PLAN_FIXTURE.read_text(encoding="utf-8")
@@ -2805,7 +2796,7 @@ class SkeletonPreflightCase(Step8Case):
 
     def setUp(self) -> None:
         super().setUp()
-        ensure_flow_state(self.root, FEATURE, self.src, self.DRAFT)
+        ensure_flow_state(self.root, FEATURE, self.src)
         shutil.rmtree(self.src / "drafts", ignore_errors=True)
 
     def skeleton(self) -> tuple[int, str]:
@@ -3033,7 +3024,7 @@ class TestTheSubmitCommandRunsAsWritten(StoryBuildCase):
         self._tmp = tempfile.TemporaryDirectory()
         # 工程根带空格与 `$`：两样都是 shell 会动手脚的字符
         self.root = Path(self._tmp.name) / "work space $x"
-        designed_copy(FIXTURE, FEATURE, self.DRAFT, self.root)
+        designed_copy(FIXTURE, FEATURE, self.root)
         self.addCleanup(self._tmp.cleanup)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
@@ -3190,7 +3181,7 @@ class TheProjectionRefreshesAfterRegistration(Step8Case):
     """AC22：登记之后附录的真源（蓝图）改了，`project` 直接重投附录机器区，不必 reopen。"""
 
     def test_project_runs_on_a_registered_story(self) -> None:
-        ensure_flow_state(self.root, FEATURE, self.src, self.DRAFT)
+        ensure_flow_state(self.root, FEATURE, self.src)
         flow = self.src / "story-flow.json"
         data = json.loads(flow.read_text(encoding="utf-8"))
         data["status"] = "story_written"
@@ -3629,7 +3620,7 @@ class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
         index = json.loads((fixture / "doc" / "features" / FEATURE / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
         sr = next(s for s in index["sources"] if s["class"] == "SR")["versions"][-1]["original"]["path"]
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(fixture, FEATURE, self.DRAFT, self.root)
+        designed_copy(fixture, FEATURE, self.root)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
         self.init_audit()

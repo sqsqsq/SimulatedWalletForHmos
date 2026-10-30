@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shlex
@@ -66,16 +65,8 @@ def as_url(path: Path) -> str:
 
 
 FLOW_SCRIPT = DEV_EXT / "skills/story/scripts/core/story_flow.py"
-DRAFT_TEXT = (
-    "# AR90001 — 开发需求（AR）\n\n"
-    "## 1 简介\n\n### 1.1 需求介绍\n\nx\n\n"
-    "## 2 需求分析\n\n### 2.1 场景与功能点\n\nx\n\n"
-    "## 3 SE 方案摘要（本部件相关）\n\n### 3.1 全局方案与部件分工\n\nx\n\n"
-    "## 4 上游索引\n\n| 信息类别 | SR 章节 | 本流程消费步骤 |\n| --- | --- | --- |\n\n"
-    "## 5 上游已声明线索\n\n无。\n")
 
-
-def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> None:
+def ensure_flow_state(root: Path, feature: str, src: Path) -> None:
     """skeleton 起手预检需要的流程状态：S1–S3 走完并收口（真实脚本生成契约）。"""
     if (src / "story-flow.json").is_file():
         return
@@ -88,7 +79,7 @@ def ensure_flow_state(root: Path, feature: str, src: Path, draft_text: str) -> N
         assert proc.returncode == 0, f"{args}: {proc.stdout}\n{proc.stderr}"
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
-    walk_to_complete(flow, src, draft_text, "本 AR 承载自动充值签约与管理")
+    walk_to_complete(flow, src, "本 AR 承载自动充值签约与管理")
 
 
 class WorkspaceCase(unittest.TestCase):
@@ -155,25 +146,16 @@ class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
 class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
     """本次采用的系统设计里的图逐张给身份、主题、原件位置与原图，登记写法照抄；不指定放哪一节。
 
-    交给设计之后来源是冻结的那一版：工作区里的系统设计之后改了、加了图，不改变已采用的来源。
+    设计开始之后来源是蓝图需求条目采用的那一版：系统设计之后取得了新版本、加了图，不改变已采用的来源。
     """
 
     SR = ("# 系统设计\n\n## 5. 业务流程\n\n### 5.2 自动充值触发\n\n"
           "```mermaid\ngraph TD\nC[余额上报] --> D[判定]\n```\n")
 
-    def freeze(self, files: dict[str, str]) -> str:
-        """像 `complete` 那样留下冻结快照：登记的文件放在 `files/` 下，流程契约指向快照。返回冻结目录（工程相对）。"""
-        src = self.feature_root / "AR" / "story-src"
-        rel = f"doc/features/{FEATURE}/AR/story-src/inputs/v1"
-        for name, text in files.items():
-            f = self.root / rel / "files" / name
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_bytes(text.encode("utf-8"))
-        (self.root / rel / "snapshot.json").write_text(json.dumps({"files": [
-            {"path": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} for name, text in files.items()]}),
-            encoding="utf-8")
-        (src / "story-flow.json").write_text(json.dumps({"input": {"snapshot_ref": f"{rel}/snapshot.json"}}), encoding="utf-8")
-        return rel
+    def design_adopts(self) -> None:
+        """设计开始：放好同根准入蓝图，需求条目采用各来源此刻最新的版本。"""
+        ensure_framework(self.root)
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS)
 
     @staticmethod
     def section_4b(package: str) -> str:
@@ -184,7 +166,7 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
         return self.latest("SR/design.md")
 
     def test_each_diagram_comes_with_its_identity_position_and_content(self) -> None:
-        self.freeze({self.put_sr(self.SR): self.SR})
+        self.put_sr(self.SR)
         section = self.section_4b(self.inputs())
         self.assertIn("**SR §5.2 #1**（", section, "没给图身份")
         self.assertIn("自动充值触发", section, "没给图讲的主题")
@@ -193,21 +175,21 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
         self.assertIn("登记写 `- 承接上游图：SR §5.2 #1`", section, "没给照抄的登记写法")
         self.assertNotIn("%% 图源", section, "退出的围栏标记又出现了")
 
-    def test_the_frozen_version_is_the_source(self) -> None:
-        """交给设计之后系统设计取得了新版本、加了图：照冻结的那一版列。"""
-        self.freeze({self.put_sr(self.SR): self.SR})
+    def test_the_adopted_version_is_the_source(self) -> None:
+        """设计开始之后系统设计取得了新版本、加了图：照设计采用的那一版列。"""
+        self.put_sr(self.SR)
+        self.design_adopts()
         self.assertEqual("sources/design-v2/design.md",
                          self.put_sr(self.SR + "\n### 5.3 新加的\n\n```mermaid\ngraph TD\nX --> Y\n```\n"))
         section = self.section_4b(self.inputs())
         self.assertIn("SR §5.2 #1", section)
-        self.assertNotIn("SR §5.3 #1", section, "工作区改动被当成了已采用的来源")
+        self.assertNotIn("SR §5.3 #1", section, "没采用的新版本被当成了已采用的来源")
 
     def test_a_missing_system_design_is_named(self) -> None:
         self.assertIn("材料索引里没有系统设计来源的阅读稿", self.section_4b(self.inputs()))
 
     def test_no_diagram_is_said_plainly(self) -> None:
-        text = "# 系统设计\n\n只有文字。\n"
-        self.freeze({self.put_sr(text): text})
+        self.put_sr("# 系统设计\n\n只有文字。\n")
         self.assertIn("里现在没有图", self.section_4b(self.inputs()))
 
 class MaterialImagesAreOneTaskEach(WorkspaceCase):
@@ -531,8 +513,8 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return json.loads(proc.stdout)
 
-    def write_contract(self, status: str) -> None:
-        """一份走到某个状态的契约。
+    def write_contract(self, status: str, *, settled: bool = True) -> None:
+        """一份走到某个状态的契约：`settled` 时本轮范围已定。
 
         **材料指纹要带上当下的那个**：不带的话「材料变了」先于关卡成立，
         `status` 会先让人去重跑 `round`——那是对的行为，但不是这几条要问的事。
@@ -544,8 +526,13 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
-        data["rounds"][-1]["gates"] = []
-        # 收口意味着已关联设计对象、登记了冻结输入：用产品的冻结模块补成真实状态，之后的位置要读原生蓝图
+        data["rounds"][-1]["gates"] = [
+            {"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human"},
+            {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human"}] if settled else []
+        if settled:
+            data["rounds"][-1].update(positioning={"scope_text": "本 AR 承载签约", "sr_related_ars": []},
+                                      scope_options=[{"key": "carry_all", "label": "按当前范围整体承载"}])
+        # 范围定了之后的位置要读原生蓝图：接 Framework，成文登记了的放好同根蓝图
         ensure_framework(self.root)
         data = design_kit.hand_over_state(self.root, FEATURE, data, with_blueprint=status == "story_written")
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -554,13 +541,13 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
             data["story_basis"] = design_kit.registered_basis(self.root, FEATURE)
             path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-    def test_after_the_input_is_registered_it_waits_for_the_blueprint(self) -> None:
-        """输入登记了、蓝图还没建：派生状态是等设计，下一步指向原生 component-design 与登记的那份输入。"""
-        self.write_contract("complete")
+    def test_a_settled_scope_waits_for_the_blueprint(self) -> None:
+        """范围定了、蓝图还没建：派生状态是等设计，下一步指向原生 component-design 与补齐需求条目来源的命令。"""
+        self.write_contract("gathering")
         out = self.status()
         self.assertEqual(("waiting_for_design", "design_blueprint"), (out["state"], out["next"]))
         self.assertIn("component-design", out["action"])
-        self.assertIn(out["input"]["snapshot_ref"], out["action"])
+        self.assertIn("import_sources.py --scope", out["action"])
 
     def test_after_registration_it_points_at_review_and_delivery(self) -> None:
         """登记那一步已经渲染并核过 review；接下来是独立审查、交付门与一次交付选择，规则所在指向 phase 文档。"""
@@ -573,7 +560,7 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
 
     def test_a_gate_step_shows_the_shape_of_the_file_to_write(self) -> None:
         """S1–S4 的侧车形状：二跑为弄清它切片读了本脚本六次。"""
-        self.write_contract("in_progress")
+        self.write_contract("gathering", settled=False)
         payload = self.status()
         self.assertIn("sidecar", payload, "关卡这一步没给出要写的文件形状")
         shape = json.dumps(payload["sidecar"], ensure_ascii=False)
@@ -595,7 +582,7 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
         # skeleton 起手预检需要收口态的流程契约与材料基准（08 §2.1）
         self.put_prd()
         ensure_flow_state(self.root, FEATURE,
-                          self.feature_root / "AR" / "story-src", DRAFT_TEXT)
+                          self.feature_root / "AR" / "story-src")
         (self.feature_root / "AR" / "story-src" / "decisions.json").write_text(
             '{"decisions": [], "no_pending": "夹具：本单无待决"}', encoding="utf-8")
         # 章是照写作设计写的：这一组测章文件的标题处理，设计放一份协议齐全的最小件

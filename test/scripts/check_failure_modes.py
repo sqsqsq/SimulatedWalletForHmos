@@ -1672,11 +1672,6 @@ def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[in
         return _story_build_in(work, extra_verdict)
 
 
-#: 夹具交给设计时提交的最小提取稿：五段结构齐全
-_MIN_DRAFT = ("# 需求 — 开发需求（AR）\n\n## 1 简介\n\nx\n\n## 2 需求分析\n\nx\n\n"
-              "## 3 SE 方案摘要（本部件相关）\n\nx\n\n## 4 上游索引\n\nx\n\n## 5 上游已声明线索\n\n无。\n")
-
-
 def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-DEMO") -> tuple[int, str]:
     build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
     if build is None:
@@ -1691,10 +1686,10 @@ def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-D
         [sys.executable, str(flow), "round", "--feature", feature,
          "--project-root", str(root)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-    # 成文按已准入的蓝图写：夹具里没走过交给设计的，放一份准入蓝图并用真实流程命令交给设计，附录按它重投
+    # 成文按已准入的蓝图写：夹具里没有同根蓝图的，用真实流程命令走完关卡、放一份准入蓝图，附录按它重投
     access = _ext_file(root, "hooks/shared/framework-access.mjs") or executor_ext() / "hooks" / "shared" / "framework-access.mjs"
     story_src = root / "doc" / "features" / feature / "AR" / "story-src"
-    if not (story_src / "story-flow.json").is_file() or '"design_binding"' not in (story_src / "story-flow.json").read_text(encoding="utf-8"):
+    if not (story_src / "story-flow.json").is_file() or not (story_src.parents[1] / "blueprint" / "component-blueprint.yaml").is_file():
         (story_src / "story-flow.json").unlink(missing_ok=True)
         # 夹具可以写明设计里就是哪几条知识应用决定（`_design.json`，不补判）；没写就逐条判定不涉及
         judged = root / "_design.json"
@@ -1705,7 +1700,7 @@ def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-D
                                               requirement=d.get("requirement"))
             for d in json.loads(judged.read_text(encoding="utf-8"))["knowledge_decisions"]]
         design_fixture.prepare_designed(root, feature, flow_script=flow, build_script=build, access=access,
-                                        draft=_MIN_DRAFT, decisions=decisions,
+                                        decisions=decisions,
                                         design={"exact_decisions": True} if decisions is not None else None,
                                         project_must_pass=False)
 
@@ -2403,9 +2398,9 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
         if reopened is None:
             return Outcome(False, why)
         delivered = run("node", str(build), "check", "--deliver")
-        if reopened.get("status") != "in_progress" or delivered.returncode == 0:
+        if reopened.get("status") != "gathering" or delivered.returncode == 0:
             return Outcome(False, f"reopen 之后状态是 {reopened.get('status')}，交付门{'放行了' if delivered.returncode == 0 else '拦住了'}：应待同步、交付门拦住")
-    return Outcome(True, "交给设计、登记成文、重复查询与重复登记、reopen 待同步都成立")
+    return Outcome(True, "范围定了进设计、登记成文、重复查询与重复登记、reopen 待同步都成立")
 
 
 def _norm(text: str) -> str:

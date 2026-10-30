@@ -16,7 +16,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from ext_workspace import link_harness_yaml, DEV_EXT, DEV_ROOT
-from designed_fixture import DRAFT, designed_copy
+from designed_fixture import designed_copy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
@@ -150,7 +150,7 @@ class OneParsePerChapterPerRun(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(FIXTURE, FEATURE, DRAFT, self.root)   # 工程侧：交给设计、蓝图已准入的夹具
+        designed_copy(FIXTURE, FEATURE, self.root)   # 工程侧：交给设计、蓝图已准入的夹具
         self.mech = Path(self._tmp.name) / "mech" / "doc" / "extensions"
         shutil.copytree(EXT, self.mech)          # 机制侧：副本按相对位置自己找模块
         link_harness_yaml(self.mech.parents[1])

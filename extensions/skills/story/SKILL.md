@@ -42,7 +42,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 S1 取材        →  拉三套材料、建工作区骨架
 S2 导入+初析   →  列来源收件箱 → 导入 → 材料盘点 →（材料确认后）有会议时读会，有要人定的话题停一次 → 需求分析
 S3 关卡        →  材料 →（会议）→ 范围怎么定 → 承载哪份
-S4 交给设计    →  bind-design 关联组件与蓝图；按已定范围写提取稿与设计输入，`complete` 冻结输入、过原生来源检查
+S4 交给设计    →  范围定了直接进 component-design：蓝图与需求同根，需求条目引 sources/ 的材料版本（`import_sources.py --scope` 补齐来源）
    ↓
 [framework component-design]  蓝图走到准入，生成评审投影
    ↓
@@ -63,7 +63,6 @@ S6 交付选择    →  送审（/story archive）/ 完整设计交接 / 实现�
 | S2 读会（导入了会议材料时） | [phases/meeting-read.md](phases/meeting-read.md) |
 | S2 初析与流程契约 | [rules/init_analysis.md](rules/init_analysis.md) |
 | S3 关卡怎么摆 | [rules/scope_gate.md](rules/scope_gate.md) |
-| S4 写提取稿 | [rules/ar_design_init.md](rules/ar_design_init.md) |
 | S4–S6 交给设计、成文顺序、独立审查与交付 | [phases/design.md](phases/design.md) |
 | 成文：写作设计、按章写与回看 | [phases/story-write.md](phases/story-write.md) |
 | 产物更新 | [phases/update.md](phases/update.md) |
@@ -78,7 +77,7 @@ S6 交付选择    →  送审（/story archive）/ 完整设计交接 / 实现�
 **`/story <AR>` 的启动语义 = 做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择**。这是本扩展对 framework 推进策略的
 batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8.1 第 2 条、§8.2）：
 **范围之内不再逐阶段要授权**，交付门之后的施工按已有授权或人选的那一项，与 framework 的推进策略走。只用命令起手时请求里没有后续目标，交付门问一次。
-`status` 在输入冻结、进 component-design 那一步会把这句声明原样打出来。
+`status` 在范围定了、进 component-design 那一步会把这句声明原样打出来。
 
 | 层 | 谁说了算 | 怎么推进 |
 |---|---|---|
@@ -201,7 +200,7 @@ node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature 
 | 人的新决定 | 人在对话里说的，经 `decide --update` 记原话 |
 | 有人直接改过的文档 | 六项比较报出来 |
 
-- **前置**：这个单走过 /story（有流程契约）；update 只改需求级的材料、提取稿、设计输入与 Story / Review，不推进施工
+- **前置**：这个单走过 /story（有流程契约）；update 只改需求级的材料、蓝图需求条目与 Story / Review，不推进施工
 - **取材不写业务文件**：取回的只往本单来源收件箱的批次目录放；`AR/review.md` 里人刚写的意见原样留着，改哪些产物由读过原文的你与人决定
 
 ```
@@ -240,10 +239,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架（作者写，成文登记时随稿记指纹） |
 | `AR/story-src/materials.json` | 材料索引：每个来源取得过哪些版本、各自的完整摘要，图片说明与取舍，收件箱里还有什么没导入 |
 | `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、导入与决策（谁、何时、依据） |
-| `AR/design.md` | 提取稿起手的空骨架（init 生成） |
-| `AR/story-src/design-draft.md` | 本 AR 范围内要做什么的提取稿（派生分析，随设计输入冻结） |
-| `AR/story-src/inputs/<版本>/` | 交给设计的冻结输入：采用的原件、图、提取稿与人签导出 |
-| 组件蓝图（framework `component-design`） | 本部件怎么设计（准入后是 Story 附录与后续施工的设计来源） |
+| `blueprint/` | 组件蓝图（framework `component-design`，与需求同根）：本部件怎么设计，需求条目引 `sources/` 的材料版本（准入后是 Story 附录与后续施工的设计来源） |
 | `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
 | `AR/story.md` | 把材料、决定与当前设计组织成可评审的叙述（零新事实；archive 的上传正文） |
 | `AR/design-review.md` | 设计附件：本次蓝图原生评审投影的逐字节副本，完整技术契约在这里（定稿时生成，不手改；archive 的附件） |

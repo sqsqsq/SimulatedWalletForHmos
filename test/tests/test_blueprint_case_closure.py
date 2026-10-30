@@ -114,18 +114,12 @@ class DesignEndpointsOnTheRealBlueprint(unittest.TestCase):
         self.assertFalse(facts["reached"])
         self.assertEqual([f"施工单位 {UNIT} 的执行范围还没冻结"], facts["missing"])
 
-    def test_the_link_finds_a_differently_named_blueprint(self) -> None:
-        """需求名与蓝图名不同：只凭流程契约的设计关联找蓝图，没有关联就说缺关联，不按目录名猜。"""
-        self.assertIn("还没有设计关联", observe(self.root, {"kind": "design_handoff"}, blueprint=None)["missing"][0])
-        flow = self.root / "doc" / "features" / "REQ-DESIGN" / "AR" / "story-src" / "story-flow.json"
-        flow.parent.mkdir(parents=True, exist_ok=True)
-        flow.write_text(json.dumps({"design_binding": {"blueprint_id": BLUEPRINT}}), encoding="utf-8")
-        try:
-            facts = observe(self.root, {"kind": "design_handoff"}, blueprint=None)
-            self.assertEqual(BLUEPRINT, facts["blueprint_id"])
-            self.assertTrue(facts["reached"], facts["missing"])
-        finally:
-            shutil.rmtree(self.root / "doc" / "features" / "REQ-DESIGN")
+    def test_the_blueprint_is_found_in_its_requirement(self) -> None:
+        """蓝图与需求同根：需求目录下有 canonical 蓝图就是它，没有就说缺，不另按目录名猜一份。"""
+        self.assertIn("需求目录下还没有蓝图", observe(self.root, {"kind": "design_handoff"}, blueprint=None)["missing"][0])
+        facts = observe(self.root, {"kind": "design_handoff"}, feature=BLUEPRINT, blueprint=None)
+        self.assertEqual(BLUEPRINT, facts["blueprint_id"])
+        self.assertTrue(facts["reached"], facts["missing"])
 
     def test_no_unit_is_a_design_preparation_gap(self) -> None:
         """准入的蓝图还没有施工单位：设计交接没到，缺口是设计准备，不是某个阶段。"""

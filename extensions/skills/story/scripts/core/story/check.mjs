@@ -132,7 +132,7 @@ export function storyCheck(ctx, { registration = true } = {}) {
   const keep = ctx.idShapes?.keep ?? [];
   if (keep.length && !keep.some(re => [...storyText.matchAll(re)].length)) {
     notes.push(`story.md：没有合同 id_shapes.keep 形态（${keep.map(re => re.source).join('、')}）的验收编号，验收编号全集这一条没有可核对象`
-      + '——上游用别的编号写法时，原始验收是否逐条承接由独立审查对照冻结原文判');
+      + '——上游用别的编号写法时，原始验收是否逐条承接由独立审查对照采用的原文判');
   }
   for (const re of keep) {
     const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));

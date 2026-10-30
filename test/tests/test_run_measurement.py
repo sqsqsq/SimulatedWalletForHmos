@@ -26,7 +26,7 @@ STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
 
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(STORY_SCRIPTS))
-from materials import frozen, importer, registry  # noqa: E402
+from materials import importer, registry  # noqa: E402
 import measure_run  # noqa: E402
 sys.path.insert(0, str(REPO))
 from tools.cli.adapters import get_adapter  # noqa: E402
@@ -754,7 +754,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     #: 已授权保留的历史原稿：迁移清单按确切路径与原始字节摘要登记，登记在内且字节没变的原件不是新的运行证据
     HISTORY_MANIFEST = "doc/archive/legacy-2.x/spec/2.1.0/历史参考/迁移清单.json"
     #: 金样候选的登记位置（2.0.3 的 05 合同 §2：`实施反馈/金样候选/<case>/<情景>/`）。目标稿自带的配图在情景的
-    #: `assets/` 下、被本情景文档引用、且是产品支持的图片类型（`materials.frozen.IMAGE_SUFFIXES`）；
+    #: `assets/` 下、被本情景文档引用、且是产品支持的图片类型（`materials.importer.IMAGE_EXTS`）；
     #: 日志、事件、原件附件与压缩包被引用也不算。图里画的是否适用于该情景由评审者核，这里不看字节
     CANDIDATE_ROOTS = ("doc/plan/*/*/实施反馈/金样候选",
                        "doc/archive/legacy-2.x/plan/*/*/实施反馈/金样候选")
@@ -772,7 +772,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                         if re.match(r"^[a-z]+:", target) or target.startswith("#"):
                             continue
                         f = (doc.parent / unquote(target)).resolve()
-                        if f.is_file() and assets in f.parents and f.suffix.lower() in frozen.IMAGE_SUFFIXES:
+                        if f.is_file() and assets in f.parents and f.suffix.lower() in importer.IMAGE_EXTS:
                             out.add(f.relative_to(repo.resolve()).as_posix())
         return out
 

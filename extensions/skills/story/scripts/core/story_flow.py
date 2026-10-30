@@ -21,8 +21,6 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
     python story_flow.py decide   --feature <AR> --update <定了哪件事> --issue <议题编号> --reply <人的原话>
     python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
     python story_flow.py status   --feature <AR>
-    python story_flow.py bind-design --feature <AR> --component <组件> --blueprint <蓝图>
-    python story_flow.py complete --feature <AR> --from AR/story-src/design-draft.md --input AR/story-src/design-input.json
     python story_flow.py story    --feature <AR>
     python story_flow.py reopen   --feature <AR>
     python story_flow.py publish  --feature <AR> [--reply <人确认覆盖外部改动的原话>]
@@ -62,7 +60,8 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
 
 本文件只做参数解析、分派与顶层输出；每条命令的实现在 `flow/` 下按职责分开：
 契约读写、常量与阶段判定在 `state`，一次性侧车与骨架在 `inputs`，「现在走到哪」在 `routing`，
-问法在 `asks`，`decide`/`round`/`bind-design`+`complete`/`status` 各在 `decisions`/`rounds`/`submission`/`lifecycle`。
+问法在 `asks`，`decide`/`round`/`status` 各在 `decisions`/`rounds`/`lifecycle`。范围定了之后的设计由原生 component-design 做，
+流程只按原生蓝图派生位置，不另设交接命令。
 """
 from __future__ import annotations
 
@@ -75,12 +74,11 @@ from pathlib import Path
 import usage
 from materials import importer
 
-from flow.state import DESIGN_DRAFT, FlowError, GATES, TAMPER_NOTES, log
+from flow.state import FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
 from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
 from flow.publish import cmd_archived, cmd_publish, cmd_restored
 from flow.rounds import cmd_reopen, cmd_round
-from flow.submission import cmd_bind_design, cmd_complete
 from flow.lifecycle import cmd_material_status, cmd_status, cmd_story, cmd_unreviewed, reading_view
 from flow.meetings import cmd_meeting_refresh
 from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_inputs, cmd_update_prepare,
@@ -89,12 +87,12 @@ from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_input
 
 # ---------------------------------------------------------------------------
 #: 会读、比较或登记 story 的动作：最外层持有视图——动手前回到正式形态，结束或失败后恢复可用的增强 SVG
-VIEW_READERS = {"status", "story", "publish", "archived", "restored", "update", "round", "reopen", "complete"}
+VIEW_READERS = {"status", "story", "publish", "archived", "restored", "update", "round", "reopen"}
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="story 需求流程契约的唯一写入者")
     ap.add_argument("mode",
-                    choices=["init", "round", "decide", "status", "bind-design", "complete", "reopen",
+                    choices=["init", "round", "decide", "status", "reopen",
                              "story", "unreviewed", "publish", "archived", "restored", "meeting-refresh", "update"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
@@ -115,12 +113,6 @@ def main() -> int:
                     help="decide --update：人定的事挂在评审记录的哪一条议题上（D 编号）")
     ap.add_argument("--update", dest="update_item", default=None,
                     help="decide：更新期间人定的一件事（与三级关卡无关，要有开着的 update）")
-    ap.add_argument("--from", dest="from_path", default=None,
-                    help="complete：要提交的提取稿，落点 " + "/".join(DESIGN_DRAFT))
-    ap.add_argument("--input", dest="input_path", default=None,
-                    help="complete：设计输入（采用集合、人签编号、语义条目），缺省 AR/story-src/design-input.json")
-    ap.add_argument("--component", default=None, help="bind-design：设计对象的组件标识")
-    ap.add_argument("--blueprint", default=None, help="bind-design：设计对象的蓝图标识")
     ap.add_argument("--action", default="inputs",
                     choices=["inputs", "prepare", "status", "close", "restore", "feedback"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
@@ -164,8 +156,6 @@ def main() -> int:
             result.update(cmd_restored(feature_root))
         elif args.mode == "archived":
             result.update(cmd_archived(feature_root, project_root))
-        elif args.mode == "bind-design":
-            result.update(cmd_bind_design(feature_root, project_root, args.component, args.blueprint))
         elif args.mode == "reopen":
             result.update(cmd_reopen(feature_root))
         elif args.mode == "meeting-refresh":
@@ -183,8 +173,6 @@ def main() -> int:
                 result.update(cmd_update_inputs(feature_root, args.feature, project_root))
             else:
                 result.update(cmd_update_prepare(feature_root, args.feature, args.result))
-        else:
-            result.update(cmd_complete(feature_root, project_root, args.feature, args.from_path, args.input_path))
         return code
 
     result: dict = {"mode": args.mode, "reqNo": args.feature}

@@ -27,7 +27,7 @@ FLOW_CLI = CORE / "story_flow.py"
 IMPORT_CLI = CORE / "import_sources.py"
 
 #: 允许的依赖方向：键可以 import 值，值不能反过来 import 键。
-#: state 一个兄弟都不 import；lifecycle/decisions/rounds/submission 是命令，谁也不 import 它们。
+#: state 一个兄弟都不 import；lifecycle/decisions/rounds 是命令，谁也不 import 它们。
 ALLOWED = {
     "state": set(),
     "phase_facts": {"state"},
@@ -38,7 +38,6 @@ ALLOWED = {
     "update": {"state", "routing", "phase_facts"},
     "decisions": {"state", "inputs", "routing", "meetings", "asks"},
     "rounds": {"state", "inputs", "routing", "meetings"},
-    "submission": {"state", "inputs", "routing"},
     "lifecycle": {"state", "inputs", "routing", "meetings", "asks", "update", "phase_facts"},
 }
 
@@ -101,7 +100,7 @@ class ImportingAModuleChangesNothing(unittest.TestCase):
     """import 一个子模块不该解析参数、不该输出、不该写盘。"""
 
     MODULES = ("flow.state", "flow.inputs", "flow.meetings", "flow.routing", "flow.asks",
-               "flow.decisions", "flow.rounds", "flow.submission", "flow.lifecycle", "flow.update",
+               "flow.decisions", "flow.rounds", "flow.lifecycle", "flow.update",
                "materials.registry", "materials.importer", "materials.meeting")
 
     def test_import_is_silent_and_writes_nothing(self) -> None:

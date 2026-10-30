@@ -32,16 +32,8 @@ def system_requirement(feature: str) -> bool:
     return str(feature).startswith("AR")
 
 
-DESIGN = ("AR", "design.md")
-# S4 提取稿的落点。**输入与输出分开**：`AR/design.md` 是上游给进来的输入件，
-# 模型把提取结果写在这里，由 `complete` 提交上去。写在同一个文件里的话，
-# 材料指纹会因为自己的输出而变，流程被自己推回未定状态。
-DESIGN_DRAFT = ("AR", "story-src", "design-draft.md")
-#: 设计输入的默认落点：模型写采用集合、人签编号与语义条目
-DESIGN_INPUT = ("AR", "story-src", "design-input.json")
-# 到了这两步就意味着**本轮范围已定**，S4 可以做。候选稿在不在由 `complete` 自己核，
-# 不借道 next_step——候选可以由 `--from` 指到别处，而 next_step 只认默认落点。
-S4_STEPS = ("generate_design", "run_complete")
+#: 需求的蓝图与需求同根：蓝图标识就是需求标识，原生 canonical 蓝图在需求目录的 `blueprint/` 下
+BLUEPRINT = ("blueprint", "component-blueprint.yaml")
 # 成文登记时记指纹的文件（相对需求目录）：story、review、设计附件与它据以成文的决策登记、写作设计；设计依据另记在 story_basis。
 # 登记之后任一份再改，`story-build check` 报「登记之后改过」，重跑 `story` 重新登记。
 STORY_REGISTERED = (
@@ -167,10 +159,10 @@ def save(feature_root: Path, contract: dict) -> None:
 def stage_of(contract: dict | None) -> str:
     """流程现在处在哪一段——**各命令判位置只问这一处**。
 
-    返回 `none`（没有轮次）、`gathering`（收口前：盘点、关卡、提取）、`complete`（已收口、
-    story 未登记）、`story_written`、`archived`（已登记且归档过）、`update_inputs`（update
-    输入阶段）、`update_open`（update 这一轮开着）。update 的两段优先：这一轮沿用已定范围，
-    新材料登记进当前轮。归档是 `story_written` 上的标记，不是另一档状态。
+    返回 `none`（没有轮次）、`gathering`（成文登记前：盘点、关卡、设计与成文）、`story_written`、
+    `archived`（已登记且归档过）、`update_inputs`（update 输入阶段）、`update_open`（update 这一轮开着）。
+    update 的两段优先：这一轮沿用已定范围，新材料登记进当前轮。归档是 `story_written` 上的标记，不是另一档状态。
+    设计开没开始不存在契约里，由 `closed` 按原生蓝图派生。
     """
     if contract is None or not contract.get("rounds"):
         return "none"
@@ -181,8 +173,6 @@ def stage_of(contract: dict | None) -> str:
         return "update_open"
     if contract.get("status") == "story_written":
         return "archived" if contract.get("archived") else "story_written"
-    if contract.get("status") == "complete":
-        return "complete"
     return "gathering"
 
 
@@ -196,21 +186,48 @@ def require(contract: dict | None) -> dict:
     return contract
 
 
-def after_complete(contract: dict) -> bool:
-    """流程收口了没有——**收口那一刻及其之后都算**，只看状态。
+def settled_this_round(contract: dict) -> bool:
+    """拆分是不是**在当前轮**定的案。
 
-    `complete` 之后还有 `story_written`；材料在这些状态下再变，同样不该开新轮。
-    归档过的单 `reopen` 之后回到收口前，与没归档过的一样。
+    `split` 是契约级字段（只认最终那一份），而拆分决策属于某一轮——
+    两者用 `settled_round` 挂钩，重新初析后同一份 split 就不再算数。
     """
-    return contract.get("status") in ("complete", "story_written")
+    split = contract.get("split") or {}
+    return (split.get("decided") == "split"
+            and split.get("settled_round") == contract["rounds"][-1].get("round"))
+
+
+def scope_settled(contract: dict) -> bool:
+    """本轮范围定下来没有：范围关卡选了整体承载，或本轮切分已定案。只看当前轮的人签——范围关卡只在它之前的
+    材料与会议都走完时才问得出来（重开范围的那一轮沿用上一轮的材料确认）。"""
+    if not contract.get("rounds"):
+        return False
+    decision = last_gate(round_gates(contract), "scope_decision")
+    if not decision or decision.get("outcome") != "accepted":
+        return False
+    return decision.get("chosen") == CARRY_ALL or settled_this_round(contract)
+
+
+def blueprint_exists(feature_root: Path) -> bool:
+    """需求的 canonical 蓝图在不在（同根 `blueprint/`）——设计真实开始的原生对象。"""
+    return (feature_root / Path(*BLUEPRINT)).is_file()
+
+
+def closed(feature_root: Path, contract: dict) -> bool:
+    """范围收口、设计已经开始没有：成文已登记，或本轮范围已定且原生蓝图已经建立。
+
+    收口之后材料再变只登记进本轮、不开新轮；要重拍范围显式 `reopen`。设计还没开始时范围仍可随材料重新盘点。
+    归档过的单 `reopen` 之后回到范围关卡，与没归档过的一样。
+    """
+    return contract.get("status") == "story_written" or (scope_settled(contract) and blueprint_exists(feature_root))
 
 
 def registration_drift(feature_root: Path, contract: dict) -> list[str]:
-    """已登记的成文之后又变了什么：story 与它的决策登记、写作设计的指纹，以及交给设计的输入版本。没登记过返回空。
+    """已登记的成文之后又变了什么：story 与它的决策登记、写作设计的指纹。没登记过返回空。
 
     与 `story/context.mjs` 的 `ledgerDigestProblems` 是同一件事的两处读者：
     流程路由与 update 收口在这里问，成文检查在那边问，指纹都由 `file_sha256` 口径算。
-    蓝图与知识换没换要读原生对象，由路由经 `story-build basis` 另问。
+    蓝图、采用来源与知识换没换要读原生对象，由路由经 `story-build basis` 另问。
     """
     if contract.get("status") != "story_written":
         return []
@@ -218,11 +235,8 @@ def registration_drift(feature_root: Path, contract: dict) -> list[str]:
     if not isinstance(basis, dict) or not isinstance(basis.get("files"), dict):
         raise FlowError("流程契约记着已成文登记，却没有成文依据 story_basis：契约不完整。"
                         "跑 `story_flow.py story` 按当前内容重新登记")
-    drift = [rel for rel in STORY_REGISTERED
-             if basis["files"].get(rel) != file_sha256(feature_root / Path(*rel.split("/")))]
-    if basis.get("input_sha256") != (contract.get("input") or {}).get("snapshot_sha256"):
-        drift.append("交给设计的输入")
-    return drift
+    return [rel for rel in STORY_REGISTERED
+            if basis["files"].get(rel) != file_sha256(feature_root / Path(*rel.split("/")))]
 
 
 def round_gates(contract: dict) -> list[dict]:

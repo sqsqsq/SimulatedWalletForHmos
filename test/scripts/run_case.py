@@ -1663,9 +1663,6 @@ def _story_gate_inputs(feature: str) -> str | None:
         ext = REPO_ROOT / ext_rel
         parts.append(_tree_digest(ext) if ext.is_dir() else "absent")
         parts.append(_tree_digest(REPO_ROOT / FEATURES_DIR / feature))
-        blueprint = run_layout.linked_blueprint(REPO_ROOT / FEATURES_DIR, feature)
-        if blueprint:
-            parts.append(_tree_digest(REPO_ROOT / FEATURES_DIR / blueprint))
     except OSError:
         return None
     return ":".join(parts)
@@ -2246,12 +2243,8 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         feed.emit("execution_checks_done", status=result["execution_status"],
                   target_reached=result["target_reached"], gates=result["gates"])
 
-        # 归档产物副本：下一条新链会把当前 feature 移到仓外；run 目录仍保留本轮不可变审计副本。
-        # 需求关联的蓝图工作区（含施工单位）另存一份，按它自己的身份命名。
+        # 归档产物副本：下一条新链会把当前 feature 移到仓外；run 目录仍保留本轮不可变审计副本（蓝图与需求同根，一起带上）。
         copies = [(REPO_ROOT / FEATURES_DIR / feature, out_dir / "artifact")]
-        linked = run_layout.linked_blueprint(REPO_ROOT / FEATURES_DIR, feature)
-        if linked:
-            copies.append((REPO_ROOT / FEATURES_DIR / linked, out_dir / "artifact-blueprint"))
         for src, artifact in copies:
             if not src.is_dir():
                 continue
@@ -2661,15 +2654,7 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
     if not frozen["ok"]:
         print(json.dumps({"case": case_id, "point": point, **frozen}, ensure_ascii=False))
         return 1
-    # 需求关联的蓝图工作区在另一个目录：同一时刻一起固定，评测与回流拿到的是同一刻的设计
-    blueprint = run_layout.linked_blueprint(REPO_ROOT / FEATURES_DIR, feature)
     extra: dict = {}
-    if blueprint:
-        design = _freeze_tree(REPO_ROOT / FEATURES_DIR / blueprint, out_dir / "checkpoints" / f"{point}.blueprint")
-        if not design["ok"]:
-            print(json.dumps({"case": case_id, "point": point, "blueprint": blueprint, **design}, ensure_ascii=False))
-            return 1
-        extra = {"blueprint": blueprint, "blueprint_path": design["path"], "blueprint_digest": design["digest"]}
     # Story 的独立审查报告在需求目录之外（doc/reports/story/<需求>/）：同一时刻一起固定，评测看得到审查原件
     reports = REPO_ROOT / "doc" / "reports" / "story" / feature
     if reports.is_dir():

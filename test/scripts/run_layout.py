@@ -171,22 +171,7 @@ def publish_latest(out_root: Path, case_id: str, run_id: str, status: str) -> No
 
 
 def bound_blueprint(features_root: Path, feature: str) -> str | None:
-    """需求流程契约里的设计关联（`design_binding.blueprint_id`）；没有或读不出为 None。"""
-    flow = Path(features_root) / feature / "AR" / "story-src" / "story-flow.json"
-    try:
-        blueprint = str(json.loads(flow.read_text(encoding="utf-8"))["design_binding"]["blueprint_id"] or "").strip()
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return blueprint or None
-
-
-def linked_blueprint(features_root: Path, feature: str) -> str | None:
-    """需求关联的另一份蓝图工作区名。
-
-    需求目录与蓝图工作区分开：快照、回流与审计副本按这层关联把两处各自带上，不从需求名推测蓝图位置。
-    没有关联、与需求同名或盘上不存在时返回 None。
-    """
-    blueprint = bound_blueprint(features_root, feature)
-    if not blueprint or blueprint == feature or Path(blueprint).name != blueprint:
-        return None
-    return blueprint if (Path(features_root) / blueprint).is_dir() else None
+    """需求的蓝图：与需求同根，标识就是需求标识；需求目录下还没有 canonical 蓝图时为 None。
+    快照、回流与审计副本带上需求目录就带上了蓝图。"""
+    canonical = Path(features_root) / feature / "blueprint" / "component-blueprint.yaml"
+    return feature if canonical.is_file() else None

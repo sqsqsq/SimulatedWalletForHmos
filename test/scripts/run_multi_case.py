@@ -3483,8 +3483,6 @@ def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
     if returncode == 0 and isinstance(payload, dict):
         record.setdefault("checkpoints", {})[point] = {
             "path": payload.get("path"), "digest": payload.get("digest"),
-            **({"blueprint": payload["blueprint"], "blueprint_path": payload.get("blueprint_path")}
-               if payload.get("blueprint") else {}),
             "session": payload.get("session"), "at": now(),
             "usage": snapshot_usage(suite, record, point)}
     else:
@@ -3514,15 +3512,9 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
     source = Path(saved)
     if is_archive_name(str(record["feature"])):
         raise SystemExit(f"[multi] {case_id} 的需求编号与归档目录 doc/features/archive 同名，拒绝回流")
-    checkpoint = (record.get("checkpoints") or {}).get(point) or {}
+    # 蓝图与需求同根：需求目录的快照里已经带着它
     result: dict[str, Any] = {"case": case_id, "point": point,
                               **_promote_tree(source, FEATURES_ROOT / promoted_feature_name(str(record["feature"]), point))}
-    # 需求关联的蓝图工作区与需求目录分开固定，按它自己的身份回流
-    if checkpoint.get("blueprint_path"):
-        design = _promote_tree(Path(checkpoint["blueprint_path"]), FEATURES_ROOT / str(checkpoint["blueprint"]))
-        result["blueprint"] = design
-        if design["status"] == "destination_conflict":
-            result["status"] = "destination_conflict"
     record.setdefault("promotions", {})[point] = {**result, "at": now()}
     append_event(suite, "case_checkpoint_promoted", case=case_id, point=point,
                  status=result["status"])
@@ -3940,15 +3932,6 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
         else:
             shutil.copytree(_long(feature_source), _long(feature_destination))
             promoted.append(feature_item)
-    # 需求关联的蓝图工作区在另一个目录，按它自己的身份回流；双检查点单的终态同样另名落地
-    blueprint = run_layout.linked_blueprint(workspace / "doc" / "features", str(record["feature"]))
-    if blueprint and feature_source.is_dir():
-        name = promoted_feature_name(blueprint, segment)
-        design = {"kind": "blueprint", **_promote_tree(workspace / "doc" / "features" / blueprint, FEATURES_ROOT / name)}
-        if design["status"] == "destination_conflict":
-            conflicts.append({**design, "reason": "blueprint_destination_conflict"})
-        else:
-            (already_promoted if design["status"] == "already_promoted" else promoted).append(design)
 
     # Source promotion uses a per-file three-way check.  This accepts the suite
     # baseline, is idempotent when a prior finalize already wrote the same file,

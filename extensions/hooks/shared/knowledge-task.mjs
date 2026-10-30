@@ -19,7 +19,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { blueprintKnowledge, entryOf, featureKnowledge, rolesOf, unitContext, unitDuties } from './knowledge-application.mjs';
-import { blueprintSources, loadNative, readBlueprint, readFeature, readFrozenInputs, readSourceFiles } from './framework-access.mjs';
+import { adoptedSources, loadNative, readBlueprint, readFeature, readSourceFiles } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
 import { firstReadCarrier, nativeEightQuestions, questioningRound } from './questioning.mjs';
@@ -113,23 +113,23 @@ function unitLines(judged) {
 }
 
 /**
- * 候选这一版实际采用的来源：每条声明（原引用、片段与声明摘要）按原生规则核过原字节，声明落在需求冻结输入里的，
- * 再按候选指向的那一版快照取完整的包（角色与证据强度取快照登记）。任一份读不到、摘要不符、绑定不对或快照坏了，
+ * 候选这一版实际采用的来源：每条声明（原引用、片段与声明摘要）按原生规则核过原字节，声明落在需求材料版本里的，
+ * 再按版本展开成完整的采用文件（原件、阅读正文、图、人工答复，摘要取材料索引）。任一份读不到、摘要不符或版本没登记，
  * 不交半份任务。
  */
 function sourceIndex(root, id, blueprint) {
-  const declared = blueprintSources(root, blueprint);
+  const declared = adoptedSources(root, blueprint);
   const read = readSourceFiles(root, declared.sources);
-  const packs = declared.requirements.map(r => ({ ...r, ...readFrozenInputs(root, r.snapshot_ref) }));
+  const packs = declared.requirements.map(r => ({ ...r, ...readSourceFiles(root, r.files) }));
   const problems = [...declared.problems, ...read.problems, ...packs.flatMap(p => p.problems.map(x => `需求 ${p.requirement}：${x}`))];
   if (problems.length) {
     stop(`蓝图 ${id} 候选采用的来源`, problems.join('；'),
-      '冻结包坏了由需求负责方恢复原件或重新 complete；声明的引用、摘要或绑定不对由设计负责方按原生修订同步');
+      '材料版本坏了由需求负责方恢复原件；声明的引用或摘要不对由设计负责方按原生修订同步');
   }
   return [`候选声明 ${declared.sources.length} 条来源，原字节都与声明摘要一致：`,
     ...declared.sources.map(s => `- \`${s.item_id}\`（${s.kind}，${s.provenance?.evidence_strength ?? '未声明证据强度'}）：\`${s.path}\`，${s.sha256}`),
-    ...packs.flatMap(p => [`需求 \`${p.requirement}\` 的冻结输入 ${p.version}（\`${p.snapshot_ref}\`），共 ${p.files.length} 份，逐份读：`,
-      ...p.files.map(f => `- \`${f.path}\`（${f.role ?? '未登记角色'}，${f.provenance?.evidence_strength ?? '未声明证据强度'}），${f.sha256}`)])];
+    ...packs.flatMap(p => [`需求 \`${p.requirement}\` 采用的材料版本 ${p.versions.join('、')}，共 ${p.files.length} 份，逐份读：`,
+      ...p.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)])];
 }
 
 function blueprintTask(root, id, action) {

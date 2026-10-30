@@ -13,12 +13,12 @@ import { activeKnowledge } from '../../../../../hooks/shared/knowledge.mjs';
 import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
 
 /**
- * `AR/` 根下允许的独立文件 —— 交付文档与提取稿骨架。需求系统的单号与关系记在来源版本里，不在这一层。
+ * `AR/` 根下允许的独立文件 —— 只有交付文档。需求系统的单号与关系记在来源版本里，不在这一层。
  *
  * 白名单而不是黑名单：黑名单挡不住下一个往根下写的新文件，而这里要成立的是一个
  * 持续的性质——机制不往交付层散辅助件。
  */
-const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md', 'design-review.md'];
+const AR_ROOT_FILES = ['story.md', 'review.md', 'design-review.md'];
 
 /** 命令判定没过：原因已写到 stderr，入口在恢复阅读视图之后按退出码 1 结束，不在半路退出进程。 */
 export class CommandFailure extends Error {}
@@ -108,7 +108,7 @@ export function createContext(args) {
   if (!fs.existsSync(featureDir)) {
     fail(`需求目录 ${featureDir} 不存在（工程根 ${projectRoot}，需求 ${args.feature}）：本命令读写的台账、正文与评审记录都在这个目录下`);
   }
-  return { args, ...requirementContext(projectRoot, featureDir, contract), idShapes, scriptPath: path.join(CORE_DIR, 'story-build.mjs') };
+  return { ...requirementContext(projectRoot, featureDir, contract), args, idShapes, scriptPath: path.join(CORE_DIR, 'story-build.mjs') };
 }
 
 /**
@@ -118,7 +118,7 @@ export function createContext(args) {
 export function requirementContext(projectRoot, featureDir, contract = commonInputs({ projectRoot }).contract) {
   const srcDir = path.join(featureDir, 'AR', 'story-src');
   return {
-    projectRoot: path.resolve(projectRoot), contract, featureRoot: featureDir, srcDir,
+    projectRoot: path.resolve(projectRoot), contract, featureRoot: featureDir, srcDir, args: { feature: path.basename(featureDir) },
     decisionsPath: path.join(srcDir, 'decisions.json'),
     templatePath: path.join(srcDir, 'story-template.md'),
     storyPath: path.join(featureDir, 'AR', 'story.md'),

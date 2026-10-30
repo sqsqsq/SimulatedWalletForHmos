@@ -118,18 +118,26 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
     """取法写在作者一定读得到的地方——文件在磁盘上不等于作者看见了。"""
 
     def test_the_flow_next_step_text_carries_the_knowledge_entry(self):
-        """输入交给设计之后，作者逐步跟的 `status` 下一步文本要带着设计前取知识的入口。"""
+        """范围定了、进设计时，作者逐步跟的 `status` 下一步文本要带着设计前取知识的入口。"""
         ws = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, ws, True)
         ensure_framework(ws)
         feature_root = ws / "doc" / "features" / "demo"
         (feature_root / "AR" / "story-src").mkdir(parents=True)
-        (feature_root / "AR" / "story-src" / "story-flow.json").write_text(json.dumps({
-            "schema": 5, "feature": "demo", "status": "complete",
-            "design_binding": {"component_id": "wallet-home", "blueprint_id": "bp-demo"},
-            "input": {"snapshot_ref": "doc/features/demo/AR/story-src/inputs/0/snapshot.json"},
-            "rounds": [{"round": 1, "gates": []}],
-        }, ensure_ascii=False), encoding="utf-8")
+        for mode in ("init", "round"):
+            done = subprocess.run([sys.executable, str(FLOW), mode, "--feature", "demo", "--project-root", str(ws)],
+                                  cwd=str(ws), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL)
+            self.assertEqual(0, done.returncode, done.stderr[-600:])
+        # 范围已定：本轮的材料与范围两级都由人确认了
+        path = feature_root / "AR" / "story-src" / "story-flow.json"
+        contract = json.loads(path.read_text(encoding="utf-8"))
+        contract["rounds"][-1].update(
+            positioning={"scope_text": "本 AR 承载演示", "sr_related_ars": []},
+            scope_options=[{"key": "carry_all", "label": "按当前范围整体承载"}])
+        contract["rounds"][-1]["gates"] = [
+            {"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human"},
+            {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human"}]
+        path.write_text(json.dumps(contract, ensure_ascii=False), encoding="utf-8")
 
         proc = subprocess.run(
             [sys.executable, str(FLOW), "status", "--feature", "demo",

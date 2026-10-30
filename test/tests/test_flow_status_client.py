@@ -26,10 +26,9 @@ CLIENT = CORE / "flow" / "client.mjs"
 FEATURE = "AR90001"
 
 FLOW_JSON = {
-    "schema": 5,
+    "schema": 6,
     "feature": FEATURE,
-    "status": "complete",
-    "input": {"snapshot_ref": "doc/features/x/AR/story-src/inputs/0/snapshot.json"},
+    "status": "gathering",
     "rounds": [{
         "round": 1,
         "materials": {"path": "AR/story-src/materials.json", "digest": "seeded"},
@@ -87,7 +86,7 @@ class TheQueryHitsTheProjectItWasGiven(ClientCase):
         got = self.query()
         self.assertIsNone(got["error"], got)
         self.assertTrue(got["data"]["exists"])
-        self.assertEqual("complete", got["data"]["status"])
+        self.assertEqual("gathering", got["data"]["status"])
         self.assertEqual(1, got["data"]["round"], "读到的不是这个工程的那一轮")
         self.assertIn("material_state", got["data"], "材料事实没带回来")
 

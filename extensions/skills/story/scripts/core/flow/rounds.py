@@ -9,7 +9,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.state import (
-    FlowError, SCHEMA, after_complete, in_update, load, log, require, save, stage_of)
+    FlowError, SCHEMA, closed, in_update, load, log, require, save, stage_of)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
 from flow.routing import closed_inbox_note, live_materials, next_step
@@ -34,7 +34,7 @@ def cmd_round(feature_root: Path) -> dict:
     imported = [s for s in manifest["sources"] if s.get("kind") != "answer"]
 
     contract = load(feature_root) or {
-        "schema": SCHEMA, "status": "in_progress",
+        "schema": SCHEMA, "status": "gathering",
         "rounds": [],
         "split": {"decided": "none", "settled_round": None, "scope_text": None, "parts": []},
     }
@@ -64,20 +64,16 @@ def cmd_round(feature_root: Path) -> dict:
                 "positioning": bool(current.get("positioning")),
                 "scopeOptions": len(current.get("scope_options") or [])}
 
-    # 收口之后材料又变了：**不开新轮**。收口的含义是「本轮范围已定、可以交给设计」，
-    # 此后补一份说明文件、改一个错字都不该把流程推回未定状态。
+    # 收口之后材料又变了：**不开新轮**。收口的含义是「本轮范围已定、设计已经按它开始」，
+    # 此后补一份说明文件、改一个错字都不该把流程推回未定状态；新开一轮会把已开始的设计与人签
+    # 晾在一轮没有任何决策的轮次后面。要重拍范围请显式跑 `reopen`。
     #
-    # 开轮的代价是死锁：新轮没有任何决策，而 `decide` 被 status=complete 挡住，
-    # 于是既走不下去也退不回来，只能去手改契约文件——那在正式路径上不允许。
-    # 要重拍范围请显式跑 `reopen`。
-    #
-    # **判的是「收口及之后」不是「恰好在 complete」**：`story_written` 比它更靠后，
-    # 而 story 的材料快照就是当轮的 digest——新轮一开，快照所指就换了一批材料。
+    # `story_written` 同样算收口：story 的材料快照就是当轮的 digest——新轮一开，快照所指就换了一批材料。
     # 据新料改完 story，重跑 `story` 重新登记。
     #
     # **update 期间同理**：这一轮是一次有依据的修订，范围沿用本单已定的；新材料登记进当前轮，
     # 开新轮会把人送回材料与范围关卡。
-    if (after_complete(contract) or in_update(contract)) and rounds:
+    if (closed(feature_root, contract) or in_update(contract)) and rounds:
         current = rounds[-1]
         stamp(current)
         save(feature_root, contract)
@@ -112,16 +108,16 @@ def cmd_round(feature_root: Path) -> dict:
 def cmd_reopen(feature_root: Path) -> dict:
     """重开本需求的范围决定——**唯一的回退出口**，只做这一件事。
 
-    收口之后要重新拍板范围（材料变了、会上有要人定的话题、范围本身定错了）时走它：状态回到 `in_progress`，
+    收口之后要重新拍板范围（材料变了、会上有要人定的话题、范围本身定错了）时走它：状态回到 `gathering`，
     另开一轮承接重拍的关卡，材料没变也一样——当前轮已记的范围关卡不替重拍授权。新一轮沿用本轮的材料基准、
     本 AR 定位与范围选项集，分析要改就改侧车再跑 `round`。
 
-    设计关联、已冻结的输入、人签历史与上一次成文登记都保留：登记在重新确认、重新提交并重新登记之前不可交付。
+    蓝图、人签历史与上一次成文登记都保留：登记在重新确认、设计按新范围同步并重新登记之前不可交付。
     update 这一轮开着时同样可以重开，update 照旧开着，收口条件不变。只改 story 不用走这里——改完重跑 `story`。
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if not after_complete(contract) and stage_of(contract) != "update_open":
+    if not closed(feature_root, contract) and stage_of(contract) != "update_open":
         raise FlowError(f"流程还没收口（现在是 {status}），范围关卡本来就开着：跑 `story_flow.py status` 取下一步")
     held = status == "story_written"
     current = contract["rounds"][-1]
@@ -132,18 +128,18 @@ def cmd_reopen(feature_root: Path) -> dict:
              "gates": [],
              "reopened": True}
     contract["rounds"].append(entry)
-    contract["status"] = "in_progress"
+    contract["status"] = "gathering"
     save(feature_root, contract)
     # **重开到此成立。** 往下只是算下一步：通常是范围关卡；材料变了先盘点。
-    # 算下一步要按磁盘现状读材料，读不出来不能反过来把重开报成失败：盘上已经是 in_progress，
+    # 算下一步要按磁盘现状读材料，读不出来不能反过来把重开报成失败：盘上已经回到范围关卡，
     # 再跑 reopen 只会被「还没收口」挡回。所以只兜这一段，写入失败照常失败。
     try:
         step, action = next_step(feature_root, contract, live_materials(feature_root))
     except FlowError as exc:
         step, action = None, (f"下一步暂时算不出来（{exc}）。重开已经生效，不要再跑 reopen；"
                               "按这个原因修好材料后跑 `story_flow.py status` 取下一步")
-    log(f"流程已重开（{status} → in_progress），重拍的关卡记进第 {entry['round']} 轮"
-        + ("；上一次成文登记保留但暂不可交付，范围定了之后重新 complete、再跑 story 登记" if held else "")
+    log(f"范围已重开（原状态 {status}），重拍的关卡记进第 {entry['round']} 轮"
+        + ("；上一次成文登记保留但暂不可交付，范围定了、设计同步之后再跑 story 重新登记" if held else "")
         + f"。下一步：{action}")
-    return {"status": "in_progress", "rounds": len(contract["rounds"]),
+    return {"status": "gathering", "rounds": len(contract["rounds"]),
             "basisOnHold": held, "next": step, "action": action}

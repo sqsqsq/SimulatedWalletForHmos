@@ -6,8 +6,8 @@
 ## 一、顺序
 
 ```
-材料与范围确认 → bind-design → complete（冻结输入、原生来源检查）
-  → component-design 完成可评审设计与独立质询，生成评审投影
+材料与范围确认
+  → component-design 按 sources/ 的材料版本完成可评审设计与独立质询，生成评审投影
   → story-build skeleton → 写作设计 → 逐章 chapter → 回看 → check
   → 独立审查（story-build review：定稿、准备派审载体 → 原样派审 → 核结果）→ story_flow.py story 登记
   → check --deliver 交付门 → 交付选择
@@ -17,36 +17,34 @@
 
 ## 二、交给设计
 
-1. **关联设计对象**：`story_flow.py bind-design --feature <需求> --component <组件> --blueprint <蓝图>`。蓝图标识与需求标识分开（需求材料目录与蓝图工作区是两个目录）：新需求建议 `bp-<需求标识>`；已有设计给出它实际的蓝图标识，核它归属的组件。标识已被别的对象占用时照报错换一个你实际要用的，不自动搜索或改名。关联一次，之后不改绑。
-2. **写设计输入** `AR/story-src/design-input.json`：
+范围定了，`status` 给出 `design_blueprint`，就进原生 component-design。没有单独的交接命令：材料已经按版本导在 `sources/`，人的有效答复导出在 `sources/人工答复-v<N>/`，设计直接读它们。
+
+1. **蓝图与需求同根**：蓝图标识就是需求标识，canonical 蓝图在 `<需求目录>/blueprint/`。组件由原生设计按工程上下文认定，写在蓝图里。已有蓝图按原生规则继续，不重复创建。
+2. **需求条目只写一次语义**：把条目的身份、类别、来源文件与权威写进一个 JSON 文件，跑 `import_sources.py --feature <需求> --scope <条目文件>`：
 
    ```json
-   {
-     "adopted": ["sources/RR-<产品需求单号>-v1/RR-prd.md", "sources/系统设计-v2/text.md", "sources/系统设计-v2/images/flow.png"],
-     "human_decision_ids": ["<scope_decision 等关卡记录的 ask_id>"],
-     "scope_items": [
-       {"item_id": "request-main", "kind": "requirement", "source_path": "sources/RR-<产品需求单号>-v1/RR-prd.md",
-        "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}
-     ]
-   }
+   [
+     {"item_id": "request-main", "kind": "requirement", "source": "sources/RR-<产品需求单号>-v1/RR-prd.md",
+      "authority": {"owner": "需求负责人", "formality": "formal_requirement"}},
+     {"item_id": "scope-decision", "kind": "requirement", "source": "sources/人工答复-v<N>/answers.md",
+      "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}
+   ]
    ```
 
-   - `adopted`：本轮确认的原件与它们引用的图，逐份列；不采用的材料在提取稿里写明理由。原件里引用的本地图片要在采用集合里；作为设计依据的本地文件同样采用进来。
-   - `human_decision_ids`：真实关卡记录的 `ask_id`。人的原话、所选项与时间由脚本从流程契约导出，不手填。
-   - `scope_items`：需求条目的身份、类别与权威取自材料与人签。`kind` 取 requirement / goal / invariant / high_risk；来源没分类的 `formality` 写 `unspecified`，由人在设计入口确认。
-3. **冻结并交给设计**：`story_flow.py complete --feature <需求> --from AR/story-src/design-draft.md --input AR/story-src/design-input.json`。
-   - 采用的原件、图片、提取稿（派生分析）与人签导出，按原始字节冻结在 `AR/story-src/inputs/<版本>/`。
-   - 系统需求在版本里生成 `materialization.json`，本地需求把需求条目交给蓝图作者。两者都先过原生来源检查，通过才登记。
-   - 同一份输入重跑复用原版本。`AR/design.md` 是上游原件，保持原样。
-   - 输出里的 `unadopted_references` 是原件链到、但没纳入本次冻结的文件：逐条判断它是不是设计依据——是就补成材料再提交，不是就在提取稿里写明不采用。没纳入的文件内容不算已取得的来源。
-   - 失败时候选与诊断留在原处，已登记的输入不变。按报错补齐后重跑同一条命令。
-4. 已登记一版之后要换输入，先 `story_flow.py reopen` 重新确认范围，或在 `/story update` 里重新提交。已被设计引用的版本一直保留。
+   - `source` 是需求相对路径，可带 `#片段`；只能引 `sources/README.md` 列着的版本文件（原件、阅读正文、图或人工答复）。
+   - 设计依据的每份来源各写一条（系统设计里的约束写 `invariant`）：需求条目引的版本就是设计采用的版本，没写进条目的材料就是没采用，Story 材料表与独立审查按它核取舍。
+   - `kind` 取 requirement / goal / invariant / high_risk。来源没分类的 `formality` 写 `unspecified`，由人在设计入口确认。
+   - 脚本按材料索引补工程相对路径、原始字节摘要与 provenance，输出原生需求条目 `current_scope_items`，蓝图的 `discovery.inputs.current_scope_items` 按它写。
+   - 条目来自需求系统取得的来源时，脚本同时写原生来源物化信封 `blueprint/requirement-source-materialization.json` 并过原生来源检查；蓝图还没建立时用 `--component <组件>` 给出原生设计认定的组件。本地来源只输出条目。
+   - 失败时什么都不写，按报错补齐后重跑。
+3. 设计按哪一版材料做，就是蓝图需求条目引的那一版。之后取得的新版本不自动进入设计；要不要采用由 update 判断，采用就改需求条目。
+4. 要重拍范围先 `story_flow.py reopen`，范围重新定了再按新范围同步需求条目。
 
 ## 三、设计
 
 蓝图由 Framework 的 component-design 建立、质询与调和。请求 `/component-design <蓝图>` 时写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止；准入由原生判定，草稿也可以成文与业务送审，准入状态与原生问题照实披露：
 
-- 用冻结的输入作为来源：系统需求交物化件，本地需求交需求条目；冻结文件直接交给设计作者。提取稿是索引与分析，业务的条件、行为与责任从冻结的原件与有效人签取，人签以冻结版本里的导出为准。把读过的材料逐份记为已消费。
+- 来源是需求条目引的材料版本：业务的条件、行为与责任从原件与有效人工答复取，人签以 `sources/人工答复-v<N>/` 的导出为准。读过的材料逐份记为已消费。
 - 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
 - 原生字段表达不了的精确内容写进 `story_details`，写法见 `hooks/blueprint/author.md`。
 - **独立质询**由你（主执行者）派给宿主的隔离子代理，同一个子代理先首读人读稿、再核源：
@@ -58,8 +56,8 @@
      修订后按原生规则重渲人读稿，该轮质询方从头通读当前正文复核。
   宿主没有隔离子代理时，停在质询这一步：向人说明需要一个隔离的质询者，质询完成后才进入成文。
 
-蓝图读不出、没消费本次交给设计的输入，或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。蓝图是草稿、未准入不挡成文：准入状态与原生问题由 `skeleton`、独立审查任务与交付门照实带出。只查看、重入或改表达不产生新的设计 revision。
-单独核蓝图状态用 `node doc/extensions/hooks/shared/framework-access.mjs --project-root <根> --action blueprint --blueprint <蓝图> --purpose draft --snapshot <冻结快照> --summary`：
+蓝图读不出、需求条目没有采用本需求的材料版本，或投影与当前 revision 对不上时，`status` 停在等设计，成文不起手。蓝图是草稿、未准入不挡成文：准入状态与原生问题由 `skeleton`、独立审查任务与交付门照实带出。只查看、重入或改表达不产生新的设计 revision。
+单独核蓝图状态用 `node doc/extensions/hooks/shared/framework-access.mjs --project-root <根> --action blueprint --blueprint <需求> --purpose draft --consume <需求> --summary`：
 同一次完整读取与校验，返回准入、引用、问题、投影与消费结果，不带蓝图正文；设计内容读 canonical 蓝图或评审投影。
 
 ## 四、成文
@@ -105,16 +103,15 @@
    授权记进流程契约；再跑一次 prepare，审查状态写进 Story 交付章与 Review 题头，结果是 unreviewed，可以登记与交付。
    授权对应当时这一版材料：材料变了要重新审查或重新授权；之后宿主能派审了，用 `--withdraw` 撤回后正常派审。
 4. **登记**：`story_flow.py story`。它核结构检查、这一份的审查结果（pass、warn 或人授权的 unreviewed）与成文依据
-   （蓝图引用、输入版本、知识摘要，以及 Story、Review、设计附件、决策登记与写作设计的原始字节指纹），通过后记下新依据。
+   （蓝图引用、设计采用的来源、知识摘要、材料索引摘要，以及 Story、Review、设计附件、决策登记与写作设计的原始字节指纹），通过后记下新依据。
 5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据没变、设计附件仍是当前原生投影、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：
    - 送审：仅系统需求，走 `/story archive <AR>`，Story 作正文、Review 与设计附件作附件，三件都读回一致才登记；
    - 完整设计交接：在已准入蓝图上按 Framework change-unit-progression 完成施工单位设计准备，不启动施工；
    - 实现方案：完成施工单位设计准备，再沿 Framework 交互路径为每个施工单位准备范围，请求终点写到 Plan
      （`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，Framework 判可复用的沿用，止于 Plan。
-     施工单位的 Feature 标识由 Framework 的身份解析给出；`--requirement-file` 用本轮冻结输入里的提取稿：读 `story-flow.json`
-     的 `input.snapshot_ref`，取快照 `files` 里 `role` 为 `extracted_analysis` 的那一行，路径是快照目录下的 `files/<path>`，
-     范围候选、首个阶段与之后的运行都用这一份。快照里没有这一行或有不止一行，回到 `complete` 补齐冻结输入；
+     施工单位的 Feature 标识由 Framework 的身份解析给出；`--requirement-file` 用蓝图需求条目里 `kind` 为 requirement 的来源文件
+     （去掉 `#片段`），范围候选、首个阶段与之后的运行都用这一份；
 
    - 完整实现：在授权范围内接续设计准备与 Framework 交互式开发，按 Framework 结果推进；
    - 暂不推进：停在这里，之后从 `story_flow.py status` 续上。

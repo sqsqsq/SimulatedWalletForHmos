@@ -7,12 +7,11 @@
  *
  * 命令行只读取、不写盘：
  *   node framework-access.mjs --project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery
- *        [--snapshot <冻结快照的项目相对路径>]（给了就核蓝图消费了这次交给设计的条目）
+ *        [--consume <需求 id>]（给了就核蓝图的需求条目采用了这个需求已导入的材料版本）
  *        [--summary]（只核状态：同一读取与校验，输出省掉蓝图正文 blueprint，其余字段照旧）
  *        [--report-phases <阶段,阶段>]（给了就在每个施工单位上附原生阶段报告目录 phase_reports）
  *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id> --phase <阶段>
  *        [--requirement-file <文件> | --requirement <原文>]（无 run 的 spec 恢复不出需求来源时给）
- *   node framework-access.mjs --project-root <根> --action binding --component <组件 id> --blueprint <蓝图 id>
  *   node framework-access.mjs --project-root <根> --action sources  < 来源物化 JSON（stdin）
  *   node framework-access.mjs --project-root <根> --action feedback --blueprint <id>  < blueprint-review-feedback@1（stdin）
  *   node framework-access.mjs --project-root <根> --action feedback-related --blueprint <id> --ref <反馈文件工程相对路径>  < feedback_id 列表（stdin）
@@ -24,6 +23,7 @@
  *   node framework-access.mjs --project-root <根> --action change-unit-revise --blueprint <id>  < 原生 revisions 数组（stdin）
  * 输出 JSON；退出 0 正常，1 对象缺失、坏身份、过期、未准入、业务未就绪或忙（带原生 issues 与结果），2 参数、依赖或工具故障。
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
@@ -70,52 +70,40 @@ function blueprintRef(loaded, blueprintId) {
   };
 }
 
-/** 证据强度的高低：蓝图声明的不能高于交给设计时的。 */
+/** 证据强度的高低：蓝图声明的不能高于来源本身能证明的（人工答复是人的原话，其余材料只证明读到了这些字节）。 */
 const STRENGTH = { unknown: 0, inferred: 1, observed: 2, authoritative: 3 };
 
 /**
- * 这一版蓝图有没有消费本次交给设计的条目。
- *
- * 预期条目由冻结快照推出：身份与类别取语义条目，来源是冻结目录里的那份文件、摘要是它的原始字节。
- * 每条都要在原生 `currentScopeItems` 里有同一 item_id，类别、来源路径（按原生规则规范化，锚点不计）与摘要一致，
- * 声明的证据强度不高于交给设计时。蓝图另有其他有据条目不算问题；需求内容是否被设计落实由独立审查判断。
+ * 这一版蓝图的需求条目采用了这个需求的来源没有：至少一条来自需求自己已导入的材料版本（`sources/` 下、材料索引登记过），
+ * 全部声明来源的原字节与声明摘要一致，声明的证据强度不高于来源能证明的。蓝图另有其他有据条目不算问题；
+ * 需求内容是否被设计落实由独立审查判断。
  */
-function scopeConsumption(native, blueprint, snapshotRef) {
-  let snapshot;
-  try {
-    snapshot = JSON.parse(fs.readFileSync(path.join(native.root, ...String(snapshotRef).split('/')), 'utf8'));
-  } catch (e) {
-    return failure('invalid', e);
-  }
-  const guard = native.module('scripts/utils/project-relative-path.ts');
-  const normal = (ref) => {
-    try {
-      return path.posix.normalize(guard.validateProjectRelativePath(native.root, String(ref ?? '').split('#')[0], 'source_ref'));
-    } catch {
-      return null;
-    }
-  };
-  const dir = path.posix.dirname(String(snapshotRef));
-  const rows = new Map((snapshot.files ?? []).map(r => [r.path, r]));
-  const have = new Map(native.module('scripts/utils/blueprint-requirement-traceability.ts')
-    .currentScopeItems(blueprint).map(i => [String(i.item_id), i]));
-  const issues = [];
-  for (const item of snapshot.scope_items ?? []) {
-    const row = rows.get(item.source_path);
-    const expected = { ref: normal(`${dir}/files/${item.source_path}`), sha: `sha256:${row?.sha256}` };
-    const got = have.get(String(item.item_id));
-    const say = (message) => issues.push({ code: 'scope_item_not_consumed', item_id: item.item_id, message });
-    if (!got) {
-      say(`蓝图没有条目 ${item.item_id}`);
-    } else if (got.kind !== item.kind) {
-      say(`条目 ${item.item_id} 在蓝图里是 ${got.kind}，交给设计的是 ${item.kind}`);
-    } else if (normal(got.source_ref) !== expected.ref || got.source_sha256 !== expected.sha) {
-      say(`条目 ${item.item_id} 在蓝图里的来源是 ${got.source_ref}（${got.source_sha256}），不是本次冻结的 ${expected.ref}`);
-    } else if ((STRENGTH[got.provenance?.evidence_strength] ?? 0) > (STRENGTH[row?.provenance?.evidence_strength] ?? 0)) {
-      say(`条目 ${item.item_id} 在蓝图里声明为 ${got.provenance?.evidence_strength}，交给设计时只是 ${row?.provenance?.evidence_strength}`);
+function scopeConsumption(projectRoot, blueprint, requirement) {
+  const adopted = adoptedSources(projectRoot, blueprint);
+  const issues = adopted.problems.map(message => ({ code: 'scope_source_invalid', message }));
+  issues.push(...readSourceFiles(projectRoot, adopted.sources).problems.map(message => ({ code: 'scope_source_unreadable', message })));
+  const own = adopted.requirements.find(r => r.requirement === requirement);
+  if (!own) {
+    issues.push({ code: 'scope_item_not_consumed', message: `蓝图的需求条目没有一条来自需求 ${requirement} 已导入的材料版本（sources/ 下）` });
+  } else {
+    const roles = new Map(own.files.map(f => [f.path, f.role]));
+    const guard = loadNative(projectRoot).module('scripts/utils/project-relative-path.ts');
+    for (const s of adopted.sources) {
+      let file;
+      try {
+        file = path.posix.normalize(guard.validateProjectRelativePath(loadNative(projectRoot).root, s.path.split('#')[0], 'source_ref'));
+      } catch {
+        continue;
+      }
+      if (!roles.has(file)) continue;
+      const most = roles.get(file) === 'answer' ? 'authoritative' : 'observed';
+      if ((STRENGTH[s.provenance?.evidence_strength] ?? 0) > STRENGTH[most]) {
+        issues.push({ code: 'scope_item_not_consumed', item_id: s.item_id,
+          message: `条目 ${s.item_id} 声明为 ${s.provenance?.evidence_strength}，来源 ${file} 只能证明 ${most}` });
+      }
     }
   }
-  return { status: issues.length ? 'unconsumed' : 'ok', issues };
+  return { status: issues.length ? 'unconsumed' : 'ok', issues, sources_sha256: sourcesIdentity(adopted.sources) };
 }
 
 /** 宿主能不能派独立审查子代理：原生按当前 adapter 的 `verifier_subagent` 声明判（`agents/<adapter>/adapter.yaml`）。 */
@@ -129,11 +117,11 @@ export function hostReviewer(projectRoot) {
 /**
  * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
  * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。
- * 给了冻结快照时一并回答 `consumption`：这一版蓝图消费了本次交给设计的条目没有。
+ * 给了需求 id 时一并回答 `consumption`：这一版蓝图的需求条目采用了这个需求已导入的材料版本没有。
  * 已准入时列出活动施工单位 `units`（原生枚举、去掉已被取代的）：身份、Feature 标识与原生目录（工程相对）；
  * 给了 `reportPhases` 时每个单位另带 `phase_reports: [{phase, dir}|{phase, error}]`（phaseReportsDir 的原生结果）。
  */
-export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snapshotRef = null, reportPhases = null) {
+export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', consume = null, reportPhases = null) {
   const native = loadNative(projectRoot);
   const paths = native.module('scripts/utils/component-blueprint-path.ts');
   const check = native.module('scripts/check-component-blueprint.ts');
@@ -163,7 +151,7 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', snaps
     status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
     blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
     projection: readProjection(native, checked, blueprintId), units: admitted ? activeUnits(native, projectRoot, blueprintId, reportPhases) : [],
-    ...(snapshotRef ? { consumption: scopeConsumption(native, checked.blueprint, snapshotRef) } : {}),
+    ...(consume ? { consumption: scopeConsumption(projectRoot, checked.blueprint, consume) } : {}),
   };
   if (purpose === 'delivery' && !admitted) out.status = 'not_admitted';
   return out;
@@ -194,32 +182,8 @@ function readProjection(native, checked, blueprintId) {
 }
 
 /**
- * 需求要关联的设计对象：组件与蓝图标识按原生规则核；蓝图已在时核它实际归属的组件，不按名称猜。
- * 蓝图还不存在是合法的新对象。
- */
-function checkBinding(projectRoot, componentId, blueprintId) {
-  const native = loadNative(projectRoot);
-  const paths = native.module('scripts/utils/component-blueprint-path.ts');
-  try {
-    paths.assertComponentId(componentId);
-    paths.assertBlueprintId(blueprintId);
-  } catch (e) {
-    return failure('invalid', e);
-  }
-  let loaded;
-  try {
-    loaded = paths.loadCanonicalBlueprint(native.root, blueprintId);
-  } catch (e) {
-    return e?.code === 'component_blueprint_missing' ? { status: 'ok', exists: false, issues: [] } : failure('invalid', e);
-  }
-  const actual = loaded.blueprint?.component_id;
-  return actual === componentId ? { status: 'ok', exists: true, issues: [] }
-    : { status: 'mismatch', exists: true, issues: [{ code: 'blueprint_component_mismatch', message: `蓝图 ${blueprintId} 归属组件 ${actual}，不是 ${componentId}` }] };
-}
-
-/**
  * 核一份来源物化（requirement-source-materialization@1 形状）：原生校验信封、项目内 source_ref、原始字节摘要、
- * provenance 与 authority。系统单的物化件落在冻结目录里；本地单同一形状只在内存里核，不另造 provider manifest。
+ * provenance 与 authority。系统来源的物化信封落在需求的 `blueprint/` 里；本地来源不另造 provider manifest。
  */
 function checkSources(projectRoot, doc) {
   const native = loadNative(projectRoot);
@@ -355,11 +319,11 @@ function phaseEvidence(projectRoot, feature, chain) {
 }
 
 /**
- * 独立 Story 审查的视觉裁定：从这份需求当前的流程契约取已绑定的蓝图与冻结输入，按原生纯函数算看图能力与保真路由。
+ * 独立 Story 审查的视觉裁定：取与需求同根的蓝图（标识就是需求标识）与它采用的本需求来源，按原生纯函数算看图能力与保真路由。
  *
- * - 需求原文取冻结包里采用的阅读原文（`original`，图片不算）与有效人签（`human_record`），提取稿、Story、写作设计不进；
+ * - 需求原文取采用版本里的阅读正文（`text`，图片与二进制原件不算）与人工答复（`answer`），Story、写作设计不进；
  *   取不到时说明来源不足，不拿作者摘要补。
- * - 执行身份是 `story:<需求>:<蓝图>:<revision>:<artifact_sha256>`，需求摘要用冻结快照的登记摘要；
+ * - 执行身份是 `story:<需求>:<蓝图>:<revision>:<artifact_sha256>`，需求摘要用采用来源的身份 `sourcesIdentity`；
  *   能力取原生当前 adapter 的图像输入解析与 profile 的 OCR 就绪，审查者与作者同一执行能力（`reviewVision = hasVision`）。
  * - `deferral` 只在明确看不了图、原生 effective 是 semantic_layout、strictness 是 best_effort 且 defer=false 时为真：
  *   这时登记图片的图面未核可以按能力缺口记 WARN；其余情况看不了图就是没读完。
@@ -369,27 +333,23 @@ export function storyReviewVisual(projectRoot, feature) {
   const native = loadNative(projectRoot);
   const id = featureIdentity(projectRoot, feature);
   if (id.status !== 'ok' || !id.dir) return { status: 'invalid', issues: id.issues ?? [] };
-  let flow;
-  try {
-    flow = JSON.parse(fs.readFileSync(path.join(id.dir, 'AR', 'story-src', 'story-flow.json'), 'utf8'));
-  } catch (e) {
-    return failure('invalid', e);
-  }
-  const blueprintId = flow?.design_binding?.blueprint_id;
-  const snapshotRef = flow?.input?.snapshot_ref;
-  if (!blueprintId || !snapshotRef) {
-    return { status: 'invalid', issues: [{ code: 'story_design_input_missing', message: '流程契约没有已绑定的蓝图或冻结输入：视觉裁定无从取来源' }] };
-  }
+  const blueprintId = feature;
   const read = readBlueprint(projectRoot, blueprintId, 'draft');
   if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [] };
-  const frozen = readFrozenInputs(projectRoot, snapshotRef);
-  if (frozen.problems.length) return { status: 'invalid', issues: frozen.problems.map(message => ({ code: 'frozen_input_invalid', message })) };
-  const texts = frozen.files.filter(f => ['original', 'human_record'].includes(f.role))
-    .map(f => `<<${f.path}>>
-${Buffer.from(f.bytes).toString('utf8')}`);
-  if (!frozen.files.some(f => f.role === 'original')) {
-    return { status: 'invalid', issues: [{ code: 'requirement_text_missing', message: '冻结输入里没有采用的需求阅读原文：来源不足，视觉裁定不做' }] };
+  const adopted = adoptedSources(projectRoot, read.blueprint);
+  const own = adopted.requirements.find(r => r.requirement === feature);
+  if (adopted.problems.length) return { status: 'invalid', issues: adopted.problems.map(message => ({ code: 'adopted_source_invalid', message })) };
+  if (!own) {
+    return { status: 'invalid', issues: [{ code: 'story_design_input_missing', message: '蓝图的需求条目没有采用本需求的来源：视觉裁定无从取来源' }] };
   }
+  const files = readSourceFiles(projectRoot, own.files.filter(f => f.role === 'text' || f.role === 'answer'));
+  if (files.problems.length) return { status: 'invalid', issues: files.problems.map(message => ({ code: 'adopted_source_invalid', message })) };
+  const texts = files.files.map(f => `<<${f.path}>>
+${Buffer.from(f.bytes).toString('utf8')}`);
+  if (!files.files.some(f => f.role === 'text')) {
+    return { status: 'invalid', issues: [{ code: 'requirement_text_missing', message: '采用的来源里没有需求阅读原文：来源不足，视觉裁定不做' }] };
+  }
+  const sourcesSha = sourcesIdentity(adopted.sources);
   const ref = read.blueprint_ref;
   const executionIdentity = `story:${feature}:${blueprintId}:${ref.revision}:${ref.artifact_sha256}`;
   const cfg = native.module('config.ts').loadFrameworkConfig(native.root);
@@ -405,13 +365,13 @@ ${Buffer.from(f.bytes).toString('utf8')}`);
   }
   const hasVision = probe?.supported === true;
   const routing = native.module('scripts/utils/fidelity-shared.ts').resolveFidelityRoutingDecision({
-    requirementText: texts.join('\n\n'), requirementSha: String(flow.input.snapshot_sha256 ?? ''), executionIdentity,
+    requirementText: texts.join('\n\n'), requirementSha: sourcesSha, executionIdentity,
     capability: { hasVision, ocrAvailable, reviewVision: hasVision },
   });
   const deferral = !hasVision && routing.effective === 'semantic_layout' && routing.strictness === 'best_effort' && routing.defer === false;
   const fact = `看图能力：${hasVision ? '能看图' : '看不了图'}（adapter ${probe?.adapter ?? adapter ?? '未配置'}，${probe?.reason ?? '无说明'}；OCR ${ocrAvailable ? '就绪' : '不可用'}）；`
     + `原生保真路由 effective=${routing.effective}、strictness=${routing.strictness}、defer=${routing.defer}（决定 ${routing.decision?.decision_id ?? '—'}）`;
-  return { status: 'ok', issues: [], blueprint_ref: ref, snapshot_ref: snapshotRef, snapshot_sha256: flow.input.snapshot_sha256 ?? null,
+  return { status: 'ok', issues: [], blueprint_ref: ref, sources_sha256: sourcesSha,
     execution_identity: executionIdentity, adapter: adapter ?? null, model_pin: null,
     capability: { has_vision: hasVision, image_input: probe?.imageInput ?? null, source: probe?.reason ?? null, ocr_available: ocrAvailable },
     routing, deferral, fact };
@@ -462,16 +422,41 @@ export function featureDir(projectRoot, feature) {
   return featureIdentity(projectRoot, feature).dir ?? null;
 }
 
+/** 需求材料索引登记的版本：版本目录（相对需求目录）→ 记录（带来源字段）。索引读不出为 null。 */
+function requirementVersions(native, root) {
+  try {
+    const index = JSON.parse(fs.readFileSync(path.join(native.root, ...root.split('/'), 'AR', 'story-src', 'materials.json'), 'utf8'));
+    return new Map((index.sources ?? []).flatMap(s => (s.versions ?? [])
+      .map(v => [String(v.dir), { ...v, source_id: s.source_id, kind: s.kind, class: s.class }])));
+  } catch {
+    return null;
+  }
+}
+
 /**
- * 候选蓝图采用的来源：原生 `currentScopeItems` 的每条声明（原引用连同片段、声明摘要、条目身份与 provenance），
- * 以及其中落在需求冻结输入布局（`<需求目录>/<需求>/AR/story-src/inputs/<版本>/files/…`）里的需求——按需求根去重，
- * 核需求关联的设计对象就是这份蓝图，带出蓝图采用的那一版与它的快照位置。不读来源正文、不算摘要；不枚举需求目录、不按名称猜。
+ * 一个版本登记的文件（工程相对路径、`sha256:<64 位>`、角色）：`text` 可读的正文（文本原件或转换正文），
+ * `original` 有转换正文的二进制原件，`image` 图，人工答复的 `answer`（answers.md）与 `original`（answers.json）。
+ */
+function versionFiles(root, v) {
+  const answer = v.kind === 'answer';
+  const split = v.readable?.path && v.readable.path !== v.original?.path;
+  const rows = [{ ...v.original, role: split ? 'original' : answer ? 'answer' : 'text' }];
+  if (split) rows.push({ ...v.readable, role: answer ? 'answer' : 'text' });
+  rows.push(...(v.images ?? []).map(i => ({ ...i, role: 'image' })));
+  return rows.filter(r => r.path && r.sha256).map(r => ({ path: `${root}/${r.path}`, sha256: `sha256:${r.sha256}`, role: r.role }));
+}
+
+/**
+ * 蓝图采用的来源：原生 `currentScopeItems` 的每条声明（原引用连同片段、声明摘要、条目身份与 provenance），
+ * 以及其中落在某个需求 `sources/<版本>/` 下的——按需求根去重，版本要在那个需求的材料索引里登记过，
+ * 按版本展开成采用文件（原件、阅读稿、图、人工答复）。不读来源正文、不算摘要；不枚举需求目录、不按名称猜。
  * 来源不在这一布局的条目是原生直接输入，不产生需求。
  *
  * @returns {{status: string, sources: {path: string, sha256: string, item_id: string, kind: string, provenance: object|null}[],
- *   requirements: {requirement: string, root: string, version: string, snapshot_ref: string}[], problems: string[]}}
+ *   requirements: {requirement: string, root: string, versions: string[], files: {path: string, sha256: string, role: string}[]}[],
+ *   problems: string[]}}
  */
-export function blueprintSources(projectRoot, blueprint) {
+export function adoptedSources(projectRoot, blueprint) {
   const native = loadNative(projectRoot);
   const out = { status: 'ok', sources: [], requirements: [], problems: [] };
   const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
@@ -489,30 +474,32 @@ export function blueprintSources(projectRoot, blueprint) {
     out.sources.push({ path: String(item.source_ref), sha256: String(item.source_sha256 ?? ''), item_id: String(item.item_id),
       kind: item.kind, provenance: item.provenance ?? null });
     const parts = file.startsWith(prefix) ? file.slice(prefix.length).split('/') : [];
-    if (parts.length < 7 || parts.slice(1, 4).join('/') !== 'AR/story-src/inputs' || parts[5] !== 'files') continue;
-    byRequirement.set(parts[0], new Set([...(byRequirement.get(parts[0]) ?? []), parts[4]]));
+    if (parts.length < 4 || parts[1] !== 'sources') continue;
+    byRequirement.set(parts[0], new Set([...(byRequirement.get(parts[0]) ?? []), `sources/${parts[2]}`]));
   }
-  for (const [requirement, versions] of byRequirement) {
+  for (const [requirement, dirs] of byRequirement) {
     const root = `${prefix}${requirement}`;
-    if (versions.size > 1) {
-      out.problems.push(`需求 ${requirement}：蓝图同时消费了它 ${versions.size} 版冻结输入（${[...versions].join('、')}）——认不出当前是哪一版，设计负责方按一版同步`);
+    const versions = requirementVersions(native, root);
+    if (!versions) {
+      out.problems.push(`需求 ${requirement} 的材料索引读不出来——蓝图引用了它的来源，需求负责方重跑 \`story_flow.py round\` 重建索引`);
       continue;
     }
-    let bound = null;
-    try {
-      bound = JSON.parse(fs.readFileSync(path.join(native.root, ...root.split('/'), 'AR', 'story-src', 'story-flow.json'), 'utf8'))?.design_binding;
-    } catch {
-      bound = null;
+    const files = [];
+    for (const dir of [...dirs].sort()) {
+      const v = versions.get(dir);
+      if (v) files.push(...versionFiles(root, v));
+      else out.problems.push(`需求 ${requirement}：蓝图引用的 ${dir} 不是材料索引登记的版本——需求条目只引已导入的材料版本，设计负责方按 sources/README.md 同步`);
     }
-    if (bound?.blueprint_id !== blueprint.blueprint_id || bound?.component_id !== blueprint.component_id) {
-      out.problems.push(`需求 ${requirement} 关联的设计对象是 ${bound ? `${bound.component_id}/${bound.blueprint_id}` : '（读不到）'}，`
-        + `不是 ${blueprint.component_id}/${blueprint.blueprint_id}——需求负责方核对`);
-      continue;
-    }
-    const [version] = versions;
-    out.requirements.push({ requirement, root, version, snapshot_ref: `${root}/AR/story-src/inputs/${version}/snapshot.json` });
+    out.requirements.push({ requirement, root, versions: [...dirs].sort(), files });
   }
   return out;
+}
+
+/** 设计采用来源的身份：声明的 [来源, 摘要] 排序后的 SHA-256。成文登记与视觉裁定都按它认「采用的是哪一组来源」。 */
+export function sourcesIdentity(sources) {
+  const rows = sources.map(s => [String(s.path), String(s.sha256)])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  return crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
 
 /**
@@ -557,42 +544,7 @@ export function readSourceFiles(projectRoot, entries) {
 }
 
 /**
- * 一版冻结输入：读显式给的快照（工程相对路径），files 每行换成 `<快照目录>/files/<行路径>` 与 `sha256:<行摘要>` 交 readSourceFiles。
- * 行路径要留在包内；快照读不到、不是 JSON 或没有 files 清单报问题，不当空包。快照本身的摘要由持有登记的调用方核，这里不自证版本。
- *
- * @returns {{snapshot: object|null, files: object[], excluded: Map<string,string>, problems: string[]}}
- */
-export function readFrozenInputs(projectRoot, snapshotRef) {
-  const native = loadNative(projectRoot);
-  const out = { snapshot: null, files: [], excluded: new Map(), problems: [] };
-  let at;
-  try {
-    at = native.module('scripts/utils/project-relative-path.ts').validateProjectRelativePath(native.root, String(snapshotRef), 'snapshot_ref');
-    out.snapshot = JSON.parse(fs.readFileSync(path.join(native.root, ...at.split('/')), 'utf8'));
-  } catch (e) {
-    out.problems.push(`冻结快照 ${snapshotRef} 读不出来（${String(e?.message ?? e).split(/\r?\n/)[0]}）`);
-    return out;
-  }
-  if (!Array.isArray(out.snapshot?.files)) {
-    out.problems.push(`冻结快照 ${snapshotRef} 没有 files 清单`);
-    return out;
-  }
-  const dir = path.posix.dirname(path.posix.normalize(at));
-  const entries = [];
-  for (const row of out.snapshot.files) {
-    const name = typeof row?.path === 'string' ? path.posix.normalize(row.path) : '';
-    if (!name || name === '..' || name.startsWith('../') || path.posix.isAbsolute(name)) {
-      out.problems.push(`冻结快照 ${snapshotRef} 的文件行 ${JSON.stringify(row?.path)} 不在包内`);
-      continue;
-    }
-    entries.push({ ...row, name, path: `${dir}/files/${name}`, sha256: `sha256:${row.sha256}` });
-  }
-  const read = readSourceFiles(projectRoot, entries);
-  return { ...out, files: read.files, excluded: read.excluded, problems: [...out.problems, ...read.problems] };
-}
-
-/**
- * 施工单位关联的需求：先按原生身份认出 CU 与它的蓝图，再取 blueprintSources。
+ * 施工单位关联的需求：先按原生身份认出 CU 与它的蓝图，再取 adoptedSources。
  * Story 现在是否当前，由 Story 侧按成文登记判（`design-source.mjs` 的 `storyCurrency`）。
  *
  * @param {object|null} blueprint 调用方已读到的蓝图，给了就不再读
@@ -608,7 +560,7 @@ export function relatedStories(projectRoot, feature, blueprint = null) {
     if (read.status !== 'ok') return { ...out, status: read.status, problems: [`蓝图 ${who.blueprintId} 原生读取 ${read.status}——设计负责方处理`] };
     bp = read.blueprint;
   }
-  return { ...blueprintSources(projectRoot, bp), blueprint: bp };
+  return { ...adoptedSources(projectRoot, bp), blueprint: bp };
 }
 
 /**
@@ -735,17 +687,17 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const root = opt('--project-root');
   const action = opt('--action');
   try {
-    const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery [--snapshot <快照>] [--summary]'
+    const usage = '用法：--project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery [--consume <需求 id>] [--summary]'
       + ' [--report-phases <阶段,阶段>]'
       + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
-      + ' | --action binding --component <id> --blueprint <id> | --action sources（stdin 给来源物化 JSON）'
+      + ' | --action sources（stdin 给来源物化 JSON）'
       + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）'
       + ' | --action feedback-related --blueprint <id> --ref <反馈文件>（stdin 给 feedback_id 列表）'
       + ' | --action feature-identity --feature <逻辑 id> [--report-phases <阶段,阶段>]'
       + ' | --action phase-evidence --feature <逻辑 id> --phases <有序阶段,阶段>'
       + ' | --action story-review-visual --feature <逻辑需求 id>'
       + ' | --action change-unit-readiness --blueprint <id> | --action change-unit-revise --blueprint <id>（stdin 给 revisions 数组）';
-    const ACTIONS = ['blueprint', 'feature', 'binding', 'sources', 'feedback', 'feedback-related',
+    const ACTIONS = ['blueprint', 'feature', 'sources', 'feedback', 'feedback-related',
       'feature-identity', 'phase-evidence', 'story-review-visual', 'change-unit-readiness', 'change-unit-revise'];
     if (!root || !ACTIONS.includes(action)) throw new Error(usage);
     if (['change-unit-readiness', 'change-unit-revise'].includes(action) && !opt('--blueprint')) throw new Error(usage);
@@ -759,7 +711,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (summary && action !== 'blueprint') throw new Error(usage);
     const phases = opt('--report-phases') === undefined ? null : [...new Set(opt('--report-phases').split(',').map(s => s.trim()).filter(Boolean))];
     if (phases && (!['blueprint', 'feature-identity'].includes(action) || !phases.length)) throw new Error(usage);
-    if (action === 'binding' && (!opt('--component') || !opt('--blueprint'))) throw new Error(usage);
     let doc;
     if (['sources', 'feedback', 'feedback-related', 'change-unit-revise'].includes(action)) {
       try {
@@ -768,8 +719,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         throw new Error(`stdin 不是 JSON（${e?.message ?? e}）`);
       }
     }
-    const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--snapshot'), phases)
-      : action === 'binding' ? checkBinding(root, opt('--component'), opt('--blueprint'))
+    const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--consume'), phases)
         : action === 'sources' ? checkSources(root, doc)
           : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)
             : action === 'feedback-related' ? feedbackRelated(root, opt('--blueprint'), opt('--ref'), doc)
