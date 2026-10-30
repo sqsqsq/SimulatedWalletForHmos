@@ -229,7 +229,7 @@ function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
     + (r.required_read === false ? '　（核在场与来源摘要，不必通读）' : '')
     + (alias.has(r.path) ? `　（与 \`${alias.get(r.path)}\` 同一内容）` : '');
   return ['', '### 本次审查的材料（材料键按它们的原始字节算）', '',
-    '这张表是完整核源的集合：作者没采用的阅读稿、登记不用的图与会议纠偏留痕也在里面，核作者为何采用或排除它们。', '',
+    '这张表是完整核源的集合：设计未见引用的阅读稿、冲突依据、当前有效人答、登记不用的图与会议纠偏留痕也在里面，核设计为何引用或不用它们。', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
     ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
@@ -330,7 +330,7 @@ export function readerReviewTask(projectRoot, feature) {
         ...readingRows('AR/story-src/story-template.md', planText)]));
 
   // 回看清单：作者十章齐后逐条处置的同一张清单，这里核每一条的去向成不成立。
-  const planCtx = { contract, projectRoot, featureRoot: root, srcDir: src, storyPath,
+  const planCtx = { contract, projectRoot, args: { feature }, featureRoot: root, srcDir: src, storyPath,
     decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
   const plan = contract ? readWritingPlan(planCtx) : null;
   rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',

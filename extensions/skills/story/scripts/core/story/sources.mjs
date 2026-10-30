@@ -9,10 +9,9 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isSystemRequirement, readText } from './context.mjs';
-import { queryFlowStatus } from '../flow/client.mjs';
 import { markdownLinks } from './language.mjs';
 import { appendixChapter, materialSubsectionName } from './appendix.mjs';
-import { designSource } from './design-source.mjs';
+import { designSource, flowMaterials } from './design-source.mjs';
 import { normalizeHeading, parseDocument, subsectionSpan } from './document.mjs';
 import { imagesIn } from './images.mjs';
 
@@ -133,9 +132,9 @@ export function materialSet(ctx) {
   const fix = '——这份索引由 `story_flow.py round` 按磁盘现状生成';
   const none = gap => ({ origins: null, pending: [], images: [], gaps: [gap] });
   if (data === 'broken') return none(`AR/story-src/materials.json：读不出材料索引${fix}`);
-  if (data.schema !== 3 || !Array.isArray(data.origins) || !Array.isArray(data.inbox)) {
-    return none('AR/story-src/materials.json：不是本版材料索引（schema 3，材料按来源版本存放在 sources/ 下）'
-      + `${fix}；旧版做到一半的单在旧版收口或从 init 重起`);
+  if (data.schema !== 3 || !Array.isArray(data.origins) || !Array.isArray(data.inbox) || !Array.isArray(data.files)) {
+    return none('AR/story-src/materials.json：不是本版材料索引（schema 3，含 files 视图，材料按来源版本存放在 sources/ 下）'
+      + `${fix}；旧版生成的需求本版不接续，另建新需求，这个目录原样保留`);
   }
   const pending = data.inbox.filter(s => s?.file).map(s => `sources/inbox/${s.file}`);
   const { images, gap } = imagesIn(data);
@@ -168,6 +167,18 @@ export function originRows(ctx) {
   const KIND = { system: '需求系统取得', local: '本地提供', meeting: '会议留存版本' };
   const digest = o => String(o.sha256 ?? '').replace(/^sha256:/, '').slice(0, 8);
   const version = o => (o.version ? `v${o.version}，` : '');
+  // 设计开始之后：同一来源取得的最新版与设计引证的版本各说各的，不让最新行冒充设计采用
+  const designed = ctx.projectRoot && ctx.args?.feature && fs.existsSync(path.join(ctx.featureRoot, 'blueprint', 'component-blueprint.yaml'));
+  const own = designed ? designSource(ctx).adopted?.own : null;
+  const cited = new Map();
+  for (const f of own?.files ?? []) cited.set(f.source_id, new Set([...(cited.get(f.source_id) ?? []), f.version]));
+  const use = (o) => {
+    if (!own || !o.source_id) return '';
+    const v = cited.get(o.source_id);
+    if (!v) return '；设计未见引用';
+    if (v.has(o.version)) return '';
+    return `；设计引证 ${[...v].sort().map(x => `v${x}`).join('、')}，取得的 v${o.version} 未见引用——贡献列写明采用哪一版、为什么不用新版`;
+  };
   const rows = [...groups.values()].map((g) => {
     const pictures = g.items.flatMap(o => o.image_paths ?? []);
     if (pictures.length) {
@@ -177,7 +188,7 @@ export function originRows(ctx) {
         + '贡献写采用了哪些视觉信息，全部不用也写理由';
     }
     return `- 阅读稿 ${g.readable.map(r => `\`${mdLink(r)}\``).join('、') || '（读不到）'}`
-      + ` ← 来源 ${g.items.map(o => `\`${mdLink(o.path)}\`（${KIND[o.kind] ?? o.kind}，${version(o)}摘要 ${digest(o)}）`).join('、')}`;
+      + ` ← 来源 ${g.items.map(o => `\`${mdLink(o.path)}\`（${KIND[o.kind] ?? o.kind}，${version(o)}摘要 ${digest(o)}${use(o)}）`).join('、')}`;
   });
   if (!rows.length) rows.push('- （本轮没有可采用的正文来源）');
   for (const rel of set.pending) rows.push(`- **还没导入**：\`${rel}\`——先按来源导入规则导入，作者表写一行替代不了导入`);
@@ -265,8 +276,7 @@ export function redactMaterialLinks(storyText, ctx) {
  * @returns {string|null} 不能起手的原因（含处置）；null = 材料就位
  */
 export function materialsNotReady(ctx) {
-  const { data, error } = queryFlowStatus(ctx.projectRoot, ctx.args.feature,
-    { timeoutMs: 120000, materialsOnly: true });
+  const { data, error } = flowMaterials(ctx);
   if (error) {
     return `\`story_flow.py status\` 跑不通（${error}）——原件导没导、材料变没变由 story_flow 的材料链`
       + '按磁盘现状答，起骨架前读它的结论'
@@ -275,8 +285,9 @@ export function materialsNotReady(ctx) {
   const state = data?.material_state ?? null;
   if (!state) return null;        // 没有轮次：基准不符由上面的清单判据报
   if (!state.pending.length && !state.changed) return null;
-  return String(data.action ?? '').trim()
-    || '材料与本轮登记的不是同一批——当前该做的动作由 `story_flow.py status` 按材料链给出';
+  const what = [state.pending.length ? `收件箱里还有没导入的 ${state.pending.join('、')}` : '',
+    state.changed ? '材料与本轮登记的不是同一批' : ''].filter(Boolean).join('；');
+  return `${what}——当前该做的动作由 \`story_flow.py status --feature <名> --project-root <工程根>\` 按材料链给出`;
 }
 
 /**

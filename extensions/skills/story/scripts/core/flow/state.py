@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -138,7 +139,7 @@ def load(feature_root: Path) -> dict | None:
     if contract.get("schema") != SCHEMA:
         raise FlowError(
             f"不是当前版本的流程契约（schema {contract.get('schema', '缺失')}，当前 {SCHEMA}）："
-            "这张单在旧版本收口，或清掉需求目录后从 init 重新起单")
+            "本版只接续本版新初始化的需求，不迁移、不改写这个目录；要在本版做就另建一个新需求")
     if contract.get(DIGEST_KEY) != contract_digest(contract):
         note = ("流程契约被手改过（内容摘要对不上），本次命令照常执行："
                 "跑 `story_flow.py status` 核对当前位置；手改里要保留的决定，"
@@ -261,3 +262,28 @@ STORY = ("AR", "story.md")
 REVIEW = ("AR", "review.md")
 #: 设计附件：本次蓝图原生评审投影的逐字节副本，与 Story、Review 一起交付
 DESIGN_REVIEW = ("AR", "design-review.md")
+
+
+def issue_zone(feature_root: Path, issue: str) -> tuple[str, str]:
+    """评审记录里这条议题机器区的摘要与正文：人回话时看到的就是它，记下来作问法的等价物。"""
+    review = feature_root / "AR" / "review.md"
+    text = review.read_text(encoding="utf-8") if review.is_file() else ""
+    # 机器区：标记行之后到人工区填写位（行首「评审结论：」）或本议题的决定锚点
+    hit = re.search(rf"<!-- story-build:begin 议题 {re.escape(issue)} · .*?sha256:([0-9a-f]+) -->\n?(.*?)"
+                    rf"(?=^评审结论：|<!-- decision: {re.escape(issue)} -->|\Z)", text, re.S | re.M)
+    if not hit:
+        raise FlowError(f"评审记录里没有议题 {issue}：人定的事先登记成议题、build 进评审记录，"
+                        "人看过那一条再回话")
+    return hit.group(1), hit.group(2).strip()
+
+
+def sync_answers(feature_root: Path, what: str) -> str | None:
+    """收口、撤回或重开改变了哪些人答当前有效：同步导出。
+    已经写盘的那一步照样成立；导出没完成时返回要说的话，交调用方带出，不当作这一步没发生。"""
+    from materials import registry  # noqa: PLC0415 —— 人答导出由材料索引刷新承担
+    try:
+        registry.refresh(feature_root)
+    except registry.MaterialError as exc:
+        return (f"当前有效人答没能同步导出（{exc}）：排除问题后跑 `story_flow.py round` 重试派生，"
+                f"{what}已经生效，不要重做")
+    return None

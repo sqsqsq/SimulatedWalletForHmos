@@ -303,9 +303,9 @@ fs.writeFileSync(file, text.split(bp.source_fingerprint).join(next));
 
 
 def handed_items(root: Path, feature: str, access: Path) -> list[dict] | None:
-    """需求的材料版本推出的原生需求条目：设计依据的每份正文各一条——产品需求的阅读正文（没有产品需求取第一份正文）是
-    `request-main`，其余正文是约束条目；用那份扩展的 `materials/scope.py` 按材料索引补齐来源，去掉 authority
-    （原生 `materializedScopeItems` 的形状）。需求还没有材料索引时返回 None。"""
+    """需求的材料版本推出的原生需求条目：只有真实的需求——产品需求的阅读正文（没有产品需求取第一份正文）是
+    `request-main`；用那份扩展的 `materials/scope.py` 按材料索引补齐来源，去掉 authority
+    （原生 `materializedScopeItems` 的形状）。其余正文是支撑材料，见 `support_refs`。需求还没有材料索引时返回 None。"""
     feature_root = root / features_dir(root) / feature
     index = feature_root / "AR" / "story-src" / "materials.json"
     if not index.is_file():
@@ -315,15 +315,33 @@ def handed_items(root: Path, feature: str, access: Path) -> list[dict] | None:
         sys.path.insert(0, str(core))
     from materials import scope  # noqa: PLC0415
     manifest = json.loads(index.read_text(encoding="utf-8"))
-    main = main_source(manifest)
-    docs = [p for m in manifest["materials"] if m["kind"] == "doc" and m.get("sha256") for p in m["paths"]
-            if PurePosixPath(p).suffix.lower() in (".md", ".txt")]
     authority = {"owner": "需求负责人", "formality": "formal_requirement"}
-    wanted = [{"item_id": "request-main", "kind": "requirement", "source": main, "authority": authority}]
-    wanted += [{"item_id": f"source-{i}", "kind": "invariant", "source": doc, "authority": authority}
-               for i, doc in enumerate((d for d in docs if d != main), 1)]
+    wanted = [{"item_id": "request-main", "kind": "requirement", "source": main_source(manifest), "authority": authority}]
     filled = scope.fill(feature_root, root, wanted)
     return [{k: v for k, v in entry.items() if k != "authority"} for entry, _ in filled]
+
+
+def support_refs(root: Path, feature: str) -> list[str]:
+    """需求条目之外的支撑正文（工程相对路径）：设计在用到它的事实的 provenance 里引用，不为它造需求条目。"""
+    feature_root = root / features_dir(root) / feature
+    index = feature_root / "AR" / "story-src" / "materials.json"
+    if not index.is_file():
+        return []
+    manifest = json.loads(index.read_text(encoding="utf-8"))
+    main = main_source(manifest)
+    base = feature_root.relative_to(root).as_posix()
+    return [f"{base}/{p}" for m in manifest["materials"] if m["kind"] == "doc" and m.get("sha256") for p in m["paths"]
+            if PurePosixPath(p).suffix.lower() in (".md", ".txt") and p != main]
+
+
+def support_facts(refs: list[str]) -> str:
+    """每份支撑正文一条 discovery 事实，provenance 引用它：设计依据由真实引用承载。"""
+    return "".join(
+        f"    - fact_id: fact-support-{i}\n      subject: 支撑材料 {i}\n      value: 设计按这份材料理解系统约束\n"
+        f"      provenance:\n        source_kind: system_design\n        source_ref: {ref}\n"
+        "        observed_at: 2026-10-30T10:00:00+08:00\n        evidence_strength: observed\n"
+        "        extraction_method: read-source\n"
+        for i, ref in enumerate(refs, 1))
 
 
 def consume_items(text: str, items: list[dict]) -> str:
@@ -338,7 +356,7 @@ def consume_items(text: str, items: list[dict]) -> str:
 def install_blueprint(root: Path, feature: str, access: Path, *, projection: bool = True,
                       decisions: list[dict] | None = None, details: list[str] | None = None,
                       terms: list[str] | None = None, consume: bool = True, exact_decisions: bool = False,
-                      items: list[dict] | None = None) -> Path:
+                      items: list[dict] | None = None, support: list[str] | None = None) -> Path:
     """把需求的准入蓝图放到需求目录的 `blueprint/`（与需求同根，标识就是需求标识），返回 canonical 路径。
 
     `decisions` 是 `knowledge_decision` 给出的判断：激活了的照用，其余激活规约逐条判定不涉及；
@@ -346,6 +364,7 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
     `details` 是 `story_detail` 生成的 canonical 片段，按原文插进去；
     `projection` 为假时不生成评审投影。`consume` 为真时蓝图的需求条目采用需求已导入的材料版本；
     `consume` 为假时保留夹具原来那份需求（另一个需求）的条目——反例用；`items` 直接给出要采用的条目。
+    `support` 是事实 provenance 引用的支撑材料（工程相对路径）；不给且 `consume` 为真时取需求条目之外的全部正文。
     """
     ensure_framework(root)
     blueprint = blueprint_of(root, feature)
@@ -360,13 +379,14 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
                             + "".join(decision_text(root, d, active) for d in judged), 1)
     if details:
         text = text.rstrip("\n") + "\nstory_details:\n" + "".join(details)
-    if terms:
-        text = text.replace("  facts:\n", "  facts:\n" + "".join(terms), 1)
+    support = support if support is not None else support_refs(root, feature) if consume else []
+    if terms or support:
+        text = text.replace("  facts:\n", "  facts:\n" + "".join(terms or []) + support_facts(support), 1)
     items = items if items is not None else handed_items(root, feature, access) if consume else None
     if items:
         text = consume_items(text, items)
     target.write_bytes(text.encode("utf-8"))
-    if terms or items:
+    if terms or items or support:
         # 事实或需求条目变了，来源指纹按原生算法重算：它由 discovery 的事实与当前范围条目确定性得出
         proc = subprocess.run(["node", "--input-type=module", "-e", REFINGERPRINT, str(root), str(access), blueprint, str(target)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

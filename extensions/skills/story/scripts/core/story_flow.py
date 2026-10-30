@@ -117,7 +117,7 @@ def main() -> int:
                     choices=["inputs", "prepare", "status", "close", "restore", "feedback"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
     ap.add_argument("--materials", action="store_true",
-                    help="status：只答材料就没就位（起稿预检用），不算整条下一步")
+                    help="status：只答材料事实与必读人答同步没有（起稿预检与来源读者用），不算下一步")
     ap.add_argument("--result", default=None, choices=["materials", "documents"],
                     help="update prepare：本轮请求的终点——只取材与澄清是 materials，要同步人读件是 documents")
     args = ap.parse_args()

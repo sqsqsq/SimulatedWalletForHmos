@@ -24,9 +24,10 @@ import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './kn
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
 import { firstReadCarrier, nativeEightQuestions, questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
-import { extensionRoot, relDisplay } from './paths.mjs';
+import { extensionRoot, featureRoot, relDisplay } from './paths.mjs';
 import { recordUsage } from './usage.mjs';
-import { unitSources } from '../../skills/story/scripts/core/story/design-source.mjs';
+import { requiredAnswers, unitSources } from '../../skills/story/scripts/core/story/design-source.mjs';
+import { requirementContext } from '../../skills/story/scripts/core/story/context.mjs';
 import { normalizeHeading, storySpan } from '../../skills/story/scripts/core/story/document.mjs';
 import { basisSections, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 
@@ -117,19 +118,46 @@ function unitLines(judged) {
  * 再按版本展开成完整的采用文件（原件、阅读正文、图、人工答复，摘要取材料索引）。任一份读不到、摘要不符或版本没登记，
  * 不交半份任务。
  */
+/**
+ * 当前有效人答：独立必读，蓝图还没建立时设计作者也取得；导出落后于流程记录时不交任务，不拿旧导出顶替。
+ * 需求目录里还没有流程契约（不是 Story 需求）时为空。
+ */
+function answerRows(root, id) {
+  const dir = featureRoot(root, id);
+  if (!fs.existsSync(path.join(dir, 'AR', 'story-src', 'story-flow.json'))) return [];
+  const answers = requiredAnswers(requirementContext(root, dir));
+  if (answers.problems.length) {
+    stop(`需求 ${id} 的当前有效人答`, answers.problems.join('；'), '需求负责方按提示重试派生，答复本身不用重答');
+  }
+  const read = readSourceFiles(root, answers.files);
+  if (read.problems.length) stop(`需求 ${id} 的当前有效人答`, read.problems.join('；'), '需求负责方恢复人答导出');
+  return answers.files.length
+    ? ['当前有效人答（必读，不取决于需求条目或设计引用有没有写它）：', ...answers.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)]
+    : [];
+}
+
+/**
+ * 候选这一版实际依据的来源：需求条目的声明按原生规则核原字节，设计依据（事实、设计对象、合同的 provenance）
+ * 命中本需求登记文件的按版本展开成完整的采用文件；冲突一方单列供核；当前有效人答独立必读。
+ * 任一份读不到、摘要不符或引用不是登记文件，不交半份任务。
+ */
 function sourceIndex(root, id, blueprint) {
   const declared = adoptedSources(root, blueprint);
   const read = readSourceFiles(root, declared.sources);
-  const packs = declared.requirements.map(r => ({ ...r, ...readSourceFiles(root, r.files) }));
+  const packs = declared.requirements.map(r => ({ ...r, ...readSourceFiles(root, [...r.files, ...r.conflictFiles]) }));
   const problems = [...declared.problems, ...read.problems, ...packs.flatMap(p => p.problems.map(x => `需求 ${p.requirement}：${x}`))];
   if (problems.length) {
     stop(`蓝图 ${id} 候选采用的来源`, problems.join('；'),
-      '材料版本坏了由需求负责方恢复原件；声明的引用或摘要不对由设计负责方按原生修订同步');
+      '材料版本坏了由需求负责方恢复原件；引用或摘要不对由设计负责方按原生修订同步');
   }
-  return [`候选声明 ${declared.sources.length} 条来源，原字节都与声明摘要一致：`,
+  return [`候选声明 ${declared.sources.length} 条需求条目，原字节都与声明摘要一致：`,
     ...declared.sources.map(s => `- \`${s.item_id}\`（${s.kind}，${s.provenance?.evidence_strength ?? '未声明证据强度'}）：\`${s.path}\`，${s.sha256}`),
-    ...packs.flatMap(p => [`需求 \`${p.requirement}\` 采用的材料版本 ${p.versions.join('、')}，共 ${p.files.length} 份，逐份读：`,
-      ...p.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)])];
+    ...(declared.support.length ? [`设计依据引用 ${declared.support.length} 处：`,
+      ...declared.support.map(s => `- ${s.where}：\`${s.path}\``)] : []),
+    ...packs.flatMap(p => [`需求 \`${p.requirement}\` 采用的材料版本 ${p.versions.join('、') || '（没有）'}，共 ${p.files.length} 份，逐份读：`,
+      ...p.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`),
+      ...(p.conflictFiles.length ? ['冲突依据（蓝图登记的冲突一方，没被采用，核取舍）：', ...p.conflictFiles.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)] : [])]),
+    ...answerRows(root, id)];
 }
 
 function blueprintTask(root, id, action) {
@@ -145,7 +173,8 @@ function blueprintTask(root, id, action) {
   const object = bp ? `蓝图 \`${id}\`（\`${bp.canonical_path}\`，revision ${bp.blueprint_ref.revision}，${bp.admitted ? '已准入' : '草稿，未准入'}）`
     : `蓝图 \`${id}\`（尚未建立）`;
   if (bp?.issues?.length) gaps.push(`蓝图原生校验有 ${bp.issues.length} 项：${bp.issues.slice(0, 5).map(i => i.id ?? i.code).join('、')}——设计作者处理。`);
-  const sources = bp ? sourceIndex(root, id, bp.blueprint) : ['蓝图尚未建立，没有候选采用的来源：按 Framework 已收到的需求输入起手。'];
+  const sources = bp ? sourceIndex(root, id, bp.blueprint)
+    : ['蓝图尚未建立，还没有候选采用的来源：需求的材料版本列在 `sources/README.md`，从那里起手。', ...answerRows(root, id)];
   const decided = bp ? decisionsOf(bp.blueprint) : [];
   if (bp) gaps.push(...blueprintKnowledge(root, bp.blueprint).problems.map(p => `${p}——设计作者处理。`));
   const duties = ['设计阶段还没有施工契约；知识判断以决定的形式落在蓝图里，施工义务在施工单位的契约中承接。'];

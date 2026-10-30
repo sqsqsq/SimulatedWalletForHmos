@@ -50,7 +50,8 @@ class AnOldContractIsNotRead(unittest.TestCase):
             with self.assertRaises(state.FlowError) as got:
                 state.load(root)
             self.assertIn("不是当前版本的流程契约", str(got.exception))
-            self.assertIn("从 init 重新起单", str(got.exception))
+            self.assertIn("另建一个新需求", str(got.exception))
+            self.assertIn("不迁移、不改写这个目录", str(got.exception))
 
 
 if __name__ == "__main__":

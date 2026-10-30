@@ -37,7 +37,7 @@ import usage
 from flow.phase_facts import UPDATES, update_records as _records
 from flow.routing import basis_drift, inputs_answer, material_state, next_step
 from flow.state import (CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, blueprint_exists, file_sha256, system_requirement,
-                        load, log, now, registration_drift, round_gates, save)
+                        load, log, now, registration_drift, round_gates, save, sync_answers)
 
 #: 本层全部落点的根（`UPDATES`）放在 story-src 下面：它是过程目录，AR 根只留交付件。
 #: 除材料正文之外，判「跟上次比变了没有」要看的交付件——**人会直接动的那两份人读件**。
@@ -806,6 +806,7 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
                                       encoding="utf-8")
     log(f"update {rid} 收口：比较正文留了 {kept} 份")
+    answers_gap = sync_answers(feature_root, "本轮的收口")
     # 收口成立不回滚；本轮还有没做完的工作（如已开始的同图增强）由同一路由说出来，不以 closed 结束整个任务。
     # 算不出来不遮住已写盘的收口（同 cmd_story），命令照常成功、使用记录照常收尾
     try:
@@ -813,7 +814,7 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
     except FlowError as exc:
         step, follow = "status", f"暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
     return {"update": rid, "status": "closed", "requested_result": result, "compared_next_time": kept,
-            **({"usage_error": gap} if gap else {}),
+            **({"usage_error": gap} if gap else {}), **({"answers_error": answers_gap} if answers_gap else {}),
             "unreadable": unreadable, "units": units, "stale_units": stale, "design_feedback": feedback, "next": step,
             "action": f"{rid} 已收口。下一轮以此刻的内容为基准；本轮的原貌仍在 before/。"
                       + ("本轮终点是取材与澄清：还没有设计或成文，按需求进展接着走。" if result == "materials" else "")
@@ -934,6 +935,9 @@ def cmd_update_restore(feature_root: Path) -> dict:
 
     conflicts, restored, removed = [], [], []
     review = "/".join(REVIEW)
+    # 材料索引从盘上的来源版本派生（来源是受保护件、不随撤回退掉）：不退回旧索引，撤回之后按盘上现状重算
+    index = "/".join(registry.MANIFEST)
+    keys = [k for k in keys if k != index]
     manual = _manual_content(feature_root) if current.get(review) not in (None, before.get(review)) else None
     for rel in keys:
         was, now_sha = before.get(rel), current.get(rel)
@@ -968,11 +972,13 @@ def cmd_update_restore(feature_root: Path) -> dict:
         contract["update"] = {"open": None, "last_restored": rid}
         save(feature_root, contract)
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    answers_gap = sync_answers(feature_root, "本轮的撤回") if not conflicts else None
     drift = (registration_drift(feature_root, contract) + basis_drift(feature_root, contract)
              if contract.get("status") == "story_written" else [])
     log(f"update {rid} 还原：退回 {len(restored)} 份、删掉 {len(removed)} 份、冲突 {len(conflicts)} 份")
     return {"update": rid, "status": rec["status"], "restored": restored, "removed": removed,
             "conflicts": conflicts, "restore_copy": rec["restore_copy"], "needs_sync": drift,
+            **({"answers_error": answers_gap} if answers_gap else {}),
             "action": (f"有 {len(conflicts)} 份不满足退回条件，保留现状、这一轮照旧开着：逐份定好要哪一版后再跑 restore。"
                        if conflicts else f"本扩展在 {rid} 改过的文件已退回开轮之前，轮次关闭。")
                       + (f"成文登记与当前依据不一致（{'、'.join(drift)}）：登记保留原样，交付前按当前依据重新定稿登记。"

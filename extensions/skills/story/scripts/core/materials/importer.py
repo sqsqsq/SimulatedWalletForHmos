@@ -6,11 +6,12 @@
 同一来源每次取得的内容不同就是一个新**版本**，落在 `sources/<标签>-v<N>/`：
 
     <原文件名>           原件字节，文件名不改（叫 spec.md 也只在版本目录里，不会被当成施工产物）
-    text.md              原件是 docx 时的转换正文；图链接指本版本的 images/
+    text.md              阅读稿：原件是 docx 时的转换正文，图链接指本版本的 images/；原件是带本地引用的 Markdown 时
+                         是它的阅读投影，引用按导入前的位置解析、改指导入后的真实位置（原件字节不动）
     images/<名>          原件是 docx 时的内嵌图
     .version.json        这一版的身份：来源、类、取得时刻、原件/阅读稿/图的完整摘要（点文件是控制件）
 
-转换正文与内嵌图只在原件是 docx 时出现，所以不会与原件同名。
+Markdown 引用的图与文件各按自己的来源导成版本；引用的本地文件不在这一批也没导入过时整批不导，报出缺哪些。
 
 版本一经写下不再改：转换器升级或原件换了内容，都是新版本；旧版本留着，已经引用它的设计与审查仍指得回同一批字节。
 同一来源这一次的内容与最新版本相同就复用，不新开版本。导入成功的原件移出收件箱，收件箱只剩还没导入的件。
@@ -29,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import shutil
 import sys
@@ -38,6 +40,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
 from hashlib import sha256
+from urllib.parse import quote, unquote
 from pathlib import Path, PurePosixPath
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -66,6 +69,7 @@ INBOX = (SOURCES, "inbox")
 STAGING = (SOURCES, ".staging")
 VERSION_FILE = ".version.json"
 TEXT_FILE, IMAGES_DIR = "text.md", "images"
+READING_FILE = "text.reading.md"     # Markdown 原件自己叫 text.md 时，它的阅读投影改用这个名
 VERSION_SCHEMA = 1
 
 
@@ -620,6 +624,44 @@ def convert(path: Path, key: str, cls: str) -> tuple[str | None, dict[str, bytes
     return (markdown + "\n" if markdown is not None and not markdown.endswith("\n") else markdown), blobs
 
 
+#: Markdown 正文里的链接与图片（含 HTML img）：分组保留前后缀，只换目标
+MD_EXTS = {".md", ".markdown"}
+MD_LINK = re.compile(r'(!?\[[^\]]*\]\(\s*<?)([^)\s>]+)(>?(?:\s+"[^"]*")?\s*\))|(<img\b[^>]*?\bsrc\s*=\s*["\'])([^"\']+)(["\'])', re.I)
+
+
+def _local_ref(target: str) -> bool:
+    """本地相对引用：不是外部地址、不是文内锚点、不是绝对路径。"""
+    return bool(target) and not re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) and not target.startswith(("#", "/"))
+
+
+def project_markdown(text: str, key: str, here: str, targets: dict[str, str]) -> tuple[str | None, list[str]]:
+    """Markdown 原件按导入前的位置解析本地引用，换成指向导入后真实位置的阅读投影。
+
+    `key` 是它在收件箱里的位置，`here` 是阅读投影所在目录（相对需求目录），`targets` 是收件箱位置 → 导入后位置
+    （本批导入的与已登记的）。返回 (阅读投影, 找不到的引用)；没有本地引用为 (None, [])，原件自己就是阅读稿。
+    """
+    missing: list[str] = []
+    changed = False
+
+    def swap(m: re.Match) -> str:
+        nonlocal changed
+        head, target, tail = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(4), m.group(5), m.group(6))
+        if not _local_ref(target):
+            return m.group(0)
+        path, _, fragment = target.partition("#")
+        where = posixpath.normpath(posixpath.join(posixpath.dirname(key), unquote(path)))
+        final = targets.get(where)
+        if final is None:
+            missing.append(target)
+            return m.group(0)
+        changed = True
+        new = posixpath.relpath(final, here) + (f"#{fragment}" if fragment else "")
+        return f"{head}{quote(new, safe='/#.-_~')}{tail}"
+
+    projected = MD_LINK.sub(swap, text)
+    return (projected if changed else None), missing
+
+
 def _same(record: dict, original: str, readable: str | None, images: dict[str, str]) -> bool:
     """这一次的内容与已有版本是不是同一份：原件、阅读稿与内嵌图都相同。"""
     have_readable = (record.get("readable") or {}).get("sha256")
@@ -640,6 +682,11 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
     """
     from materials import meeting, registry  # 延迟导入：两者都引用本模块
 
+    # 旧版生成的需求：写任何版本之前就拒绝，目录原样保留
+    try:
+        registry.read_notes(feature_root)
+    except registry.MaterialError as exc:
+        raise ImportError_(str(exc)) from exc
     inbox = inbox_of(feature_root)
     classify = read_classify(inbox)
     receipts = read_receipts(inbox)
@@ -660,12 +707,19 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         if rec["version"] > latest.get(rec["source_id"], {}).get("version", 0):
             latest[rec["source_id"]] = rec
         labels.setdefault(rec["source_id"], re.sub(r"-v\d+$", "", PurePosixPath(rec["dir"]).name))
+    # 收件箱位置 → 已登记的最新原件位置：Markdown 引用的本地文件可能早已导入
+    targets = {rec["origin"]["inbox_path"]: rec["original"]["path"] for rec in latest.values()
+               if (rec.get("origin") or {}).get("inbox_path")}
 
     # ── 先全部转换到内存，全成功才写盘 ──────────────────────────────
     plan: list[dict] = []
+    markdown: list[tuple[Path, str, str]] = []
     for path in sources:
         key = source_key(inbox, path)
         cls = class_of(key, classify, receipts)
+        if cls not in ("MEETING", "IMAGES") and path.suffix.lower() in MD_EXTS:
+            markdown.append((path, key, cls))       # 第二遍：等本批其余件的位置定了再出阅读投影
+            continue
         if cls == "MEETING":
             plan.append({"key": key, "path": path,
                          "meeting": None if meeting.saved(feature_root, path) else docx_to_markdown(path, meeting.MEDIA)})
@@ -678,6 +732,7 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         have = latest.get(ident["source_id"])
         if have and _same(have, original, readable_sha, images):
             plan.append({"key": key, "path": path, "reuse": have})
+            targets[key] = have["original"]["path"]
             continue
         if ident["source_id"] not in labels:
             # 撞名按不区分大小写判：Windows 与 macOS 的盘上 Flow 与 flow 是同一个目录
@@ -690,6 +745,42 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         plan.append({"key": key, "path": path, "ident": ident, "readable": readable, "blobs": blobs,
                      "dir": f"{labels[ident['source_id']]}-v{number}", "version": number,
                      "original": original, "readable_sha": readable_sha, "images": images})
+        targets[key] = f"{SOURCES}/{plan[-1]['dir']}/{path.name}"
+    # Markdown：先按原件字节定每份落在哪（原件没变落回已有版本），文档之间互链也能指到真实位置
+    pending: list[tuple[Path, str, dict, dict | None, str, int]] = []
+    for path, key, cls in markdown:
+        ident = identify(inbox, path, cls, receipts)
+        have = latest.get(ident["source_id"])
+        if ident["source_id"] not in labels:
+            base = safe_label(ident["label"])
+            taken = {v.casefold() for s, v in labels.items() if s != ident["source_id"]}
+            labels[ident["source_id"]] = base if base.casefold() not in taken \
+                else f"{base}-{digest(ident['source_id'].encode('utf-8'))[:6]}"
+        original = digest(path.read_bytes())
+        number = (have or {}).get("version", 0) + 1
+        same = have and have.get("original", {}).get("sha256") == original
+        targets[key] = have["original"]["path"] if same else f"{SOURCES}/{labels[ident['source_id']]}-v{number}/{path.name}"
+        pending.append((path, key, ident, have, original, number))
+    gaps: list[str] = []
+    for path, key, ident, have, original, number in pending:
+        here = f"{SOURCES}/{labels[ident['source_id']]}-v{number}"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = ""
+        readable, missing = project_markdown(text, key, here, targets)
+        gaps += [f"「{key}」引用的 {m}" for m in missing]
+        readable_sha = digest(readable.encode("utf-8")) if readable is not None else None
+        if have and _same(have, original, readable_sha, {}):
+            plan.append({"key": key, "path": path, "reuse": have})
+            continue
+        latest[ident["source_id"]] = {"version": number}
+        plan.append({"key": key, "path": path, "ident": ident, "readable": readable, "blobs": {},
+                     "dir": f"{labels[ident['source_id']]}-v{number}", "version": number,
+                     "original": original, "readable_sha": readable_sha, "images": {}})
+    if gaps:
+        raise ImportError_("Markdown 引用的本地文件找不到（不在这次的收件箱里，也没导入过）：" + "；".join(gaps)
+                           + "——把引用的图或文件按原来的相对位置一起放进收件箱再导；外部链接与文内锚点不受影响")
 
     # ── 写盘 ────────────────────────────────────────────────────────
     done: list[str] = []
@@ -724,6 +815,7 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
             log(f"{item['key']} → {SOURCES}/{item['dir']}/"
                 + ("（转换正文 text.md" + (f"，{len(item['blobs'])} 张图" if item["blobs"] else "") + "）"
                    if item["readable"] is not None and item["path"].suffix.lower() == DOC_EXT
+                   else "（阅读稿 text.md，本地引用指向导入后的位置）" if item["readable"] is not None
                    else (f"（{len(item['blobs'])} 张图）" if item["blobs"] else "")))
         elif "reuse" in item:
             log(f"{item['key']} 与 {item['reuse']['dir']}/ 是同一份内容，复用已有版本")
@@ -755,8 +847,9 @@ def _write_version(feature_root: Path, item: dict) -> None:
     original = {"path": f"{base}/{name}", "sha256": item["original"]}
     readable = None
     if item["readable"] is not None:
-        (staging / TEXT_FILE).write_text(item["readable"], encoding="utf-8", newline="\n")
-        readable = {"path": f"{base}/{TEXT_FILE}", "sha256": item["readable_sha"]}
+        text_file = TEXT_FILE if name != TEXT_FILE else READING_FILE
+        (staging / text_file).write_text(item["readable"], encoding="utf-8", newline="\n")
+        readable = {"path": f"{base}/{text_file}", "sha256": item["readable_sha"]}
     elif item["path"].suffix.lower() not in IMAGE_EXTS and item["ident"]["class"] != "IMAGES":
         readable = dict(original)   # 文本原件本身就是阅读稿
     images = []

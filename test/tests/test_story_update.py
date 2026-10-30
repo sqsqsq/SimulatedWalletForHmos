@@ -716,6 +716,47 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
         self.assertEqual([("按 36 小时做", "0123456789abcdef")],
                          [(d["reply"], d["asked"]) for d in rec["decisions"]])
 
+    def exported(self) -> dict:
+        """最新导出的人答记录（answers.json）。"""
+        index = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        answers = next(s for s in index["sources"] if s["kind"] == "answer")
+        return json.loads((self.feature_root / answers["versions"][-1]["original"]["path"]).read_text(encoding="utf-8"))
+
+    def test_the_answer_is_exported_with_the_issue_shown(self) -> None:
+        """人在 update 里定的事一记下就导出：当前有效组里有原话与当时看到的议题正文。"""
+        self.update()
+        self.put_issue()
+        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
+        [row] = [d for d in self.exported()["current"] if d.get("issue") == "D1"]
+        self.assertEqual(("撤销宽限改 36 小时", "按 36 小时做"), (row["item"], row["reply"]))
+        self.assertIn("撤销宽限的时长", row["question"])
+
+    def test_a_restored_round_keeps_the_answer_for_context(self) -> None:
+        """本地撤回不撤销人的业务决定：原话留在「需结合上下文」组并说明出处，不再算当前有效。"""
+        self.put_issue()
+        self.update()
+        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
+        self.assertEqual("restored", self.update("--action", "restore").get("status"))
+        answers = self.exported()
+        self.assertEqual([], [d for d in answers["current"] if d.get("issue") == "D1"])
+        [row] = [d for d in answers["context"] if d.get("issue") == "D1"]
+        self.assertEqual("按 36 小时做", row["reply"])
+        self.assertIn("撤回", row["why"])
+
+    def test_a_changed_issue_moves_the_answer_to_context(self) -> None:
+        """议题在评审记录里换了问法：旧原话不冒充对新问法的回答，移到「需结合上下文」组。"""
+        self.update()
+        self.put_issue()
+        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
+        (self.feature_root / "AR" / "review.md").write_text(
+            "# 评审记录\n\n" + self.MARK.replace("0123456789abcdef", "fedcba9876543210")
+            + "\n#### 1.1.1 撤销宽限的时长与通知\n", encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(FLOW), "round", "--feature", FEATURE, "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        [row] = [d for d in self.exported()["context"] if d.get("issue") == "D1"]
+        self.assertIn("问法", row["why"])
+
     def test_it_needs_the_issue(self) -> None:
         self.update()
         self.put_issue()

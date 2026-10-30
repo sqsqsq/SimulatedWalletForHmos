@@ -236,6 +236,69 @@ class MeetingCase(unittest.TestCase):
         return meetings.refresh_problems(self.fr, meeting.read_notes(self.fr, []), self.contract())
 
 
+class AMeetingIsCitedThroughItsCorrections(MeetingCase):
+    """会议原件、raw、纠偏与阅读件各自登记：同源的阅读件可被需求条目或设计依据引用，改过的阅读件不靠重算摘要过关。"""
+
+    ADOPTED = """
+    const [access, root, feature, ref] = process.argv.slice(1);
+    const { adoptedSources } = await import(access);
+    const blueprint = { blueprint_id: feature, discovery: { inputs: { current_scope_items: [] },
+      facts: [{ fact_id: 'fact-meeting', subject: '会上结论', value: '上限 5 个',
+                provenance: { source_kind: 'meeting_record', source_ref: ref, evidence_strength: 'observed' } }] } };
+    const out = adoptedSources(root, blueprint, { requirement: feature });
+    process.stdout.write(JSON.stringify({ problems: out.problems, roles: out.requirements[0].files.map(f => f.role).sort() }));
+    """
+
+    def corrected(self) -> str:
+        """导入会议、交一条纠偏出阅读件，返回会议版本目录（相对需求目录）。"""
+        docx = self.imported()
+        _, folder = self.folder(docx)
+        lines = meeting.raw_lines(folder)[0]
+        line = next(i + 1 for i, text in enumerate(lines) if "上限先按五个来" in text)
+        self.read_meeting(docx, corrections=[{
+            "line": line, "original": lines[line - 1],
+            "corrected": lines[line - 1].replace("五个", "5 个"), "basis": "系统设计里写的是数字"}])
+        return folder.relative_to(self.fr).as_posix()
+
+    def cite(self, rel: str) -> list[tuple[dict, dict]]:
+        from materials import scope  # noqa: PLC0415
+        return scope.fill(self.fr, self.root, [{"item_id": "meeting-limit", "kind": "invariant", "source": rel,
+                                                "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}])
+
+    def test_the_corrected_reading_is_registered_and_citable(self) -> None:
+        folder = self.corrected()
+        roles = {r["role"] for r in registry.build(self.fr)["files"] if r["path"].startswith(folder + "/")}
+        self.assertEqual({"original", "raw", "corrections", "evidence"}, roles)
+        [(entry, row)] = self.cite(f"{folder}/{meeting.EVIDENCE}")
+        self.assertEqual(("meeting_record", "evidence"), (entry["provenance"]["source_kind"], row["role"]))
+
+    def test_an_edited_reading_copy_is_not_registered(self) -> None:
+        from materials import scope  # noqa: PLC0415
+        folder = self.corrected()
+        evidence = self.fr / folder / meeting.EVIDENCE
+        evidence.write_text(evidence.read_text(encoding="utf-8").replace("5 个", "50 个"), encoding="utf-8")
+        registry.refresh(self.fr)
+        self.assertNotIn(f"{folder}/{meeting.EVIDENCE}", [r["path"] for r in registry.read(self.fr)["files"]],
+                         "改过的阅读件重算摘要就登记上了")
+        with self.assertRaises(scope.ScopeError) as got:
+            self.cite(f"{folder}/{meeting.EVIDENCE}")
+        self.assertIn("不是材料索引登记的文件", str(got.exception))
+
+    def test_the_design_reads_the_meeting_version_it_cites(self) -> None:
+        """设计依据只在事实里引用会议阅读件：采用集合展开成这一版会议的原件、raw、纠偏与阅读件。"""
+        folder = self.corrected()
+        registry.refresh(self.fr)
+        ensure_framework(project_root_of(self.fr))
+        access = (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
+        ref = f"doc/features/{FEATURE}/{folder}/{meeting.EVIDENCE}"
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.ADOPTED, access, str(self.root), FEATURE, ref],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual([], out["problems"])
+        self.assertEqual(["corrections", "evidence", "original", "raw"], out["roles"])
+
+
 class TheConverterMovesShapeNotMeaning(MeetingCase):
     """转换只搬形态：顺序、软换行、制表符、表格与内容控件；语义一个都不推断。"""
 

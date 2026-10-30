@@ -48,16 +48,19 @@ def derived_state(contract: dict | None, step: str) -> str:
 
 
 def cmd_material_status(feature_root: Path) -> dict:
-    """只答材料就没就位：`pending` 与 `changed`，没就位时带上去处。起稿预检只问这一件，不必算整条下一步（那要读蓝图）。"""
+    """只答材料事实：`pending` 与 `changed`、必读人答同步没有。不算下一步——路由要核成文依据，
+    而成文依据的读者（story-build basis 等）装配输入时正是来问这一份，算下一步会绕回它们自己。下一步问 `status`。"""
     contract = load(feature_root)
     if not (contract or {}).get("rounds"):
         return {"exists": contract is not None, "material_state": None}
     manifest = live_materials(feature_root)
     state = material_state(feature_root, contract["rounds"][-1], manifest)
-    out = {"exists": True, "material_state": {"pending": state["pending"], "changed": state["changed"]}}
-    if state["pending"] or state["changed"]:
-        out["next"], out["action"] = next_step(feature_root, contract, manifest)
-    return out
+    # 必读人答：期待的导出身份与实际导出是否一致——作者、质询与独审装配输入时读这一份，不各算一套
+    from materials import answers  # noqa: PLC0415
+    required = answers.required(feature_root, [{**v, "source_id": s["source_id"]} for s in manifest["sources"]
+                                               for v in s["versions"]])
+    return {"exists": True, "material_state": {"pending": state["pending"], "changed": state["changed"]},
+            "required_answers": required, "source_problems": required["problems"]}
 
 
 def cmd_status(feature_root: Path) -> dict:

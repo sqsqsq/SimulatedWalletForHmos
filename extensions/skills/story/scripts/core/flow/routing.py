@@ -140,8 +140,10 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
     if not blueprint_exists(feature_root):
         return ("design_blueprint",
                 f"本轮范围已定。按 `phases/design.md`「二、交给设计」「三、设计」进原生 component-design：为本需求建立蓝图 `{blueprint}`"
-                f"（与需求同根，在 `{blueprint}/blueprint/`），来源是 `sources/README.md` 列的材料版本与人工答复；"
-                "需求条目用 `import_sources.py --scope` 按材料索引补齐来源路径与摘要。"
+                f"（与需求同根，在 `{blueprint}/blueprint/`）。来源是 `sources/README.md` 列的材料版本；当前有效人工答复是必读；"
+                "本轮定位（本单承载、同一系统设计下的兄弟单、协作方与不做项）与范围答复写进原生范围与边界。"
+                "需求条目只写真实的需求、目标、约束与风险，用 `import_sources.py --scope` 按材料索引补齐来源路径与摘要；"
+                "只作支撑的材料在事实与设计对象的 provenance 里引用，不为它造条目。"
                 "请求写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止"
                 "（准入与否、还开着的问题由原生如实给出，不为过准入删改未决）；"
                 "知识在设计决定前取（story-knowledge），独立质询交宿主的隔离子代理。"
@@ -153,8 +155,8 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
     consumption = read.get("consumption") or {}
     if consumption.get("status") != "ok":
         return ("design_blueprint",
-                f"蓝图 `{blueprint}` 的需求条目没有采用本需求的来源：{native.issues_text(consumption)}——"
-                "设计职责在 component-design 里按 `sources/` 的材料版本同步需求条目（`import_sources.py --scope` 补齐路径与摘要），"
+                f"蓝图 `{blueprint}` 没有采用本需求的来源：{native.issues_text(consumption)}——"
+                "设计职责在 component-design 里按登记的材料同步需求条目与设计依据（条目用 `import_sources.py --scope` 补齐路径与摘要），"
                 "再重新生成评审投影")
     projection = read.get("projection") or {}
     if projection.get("status") != "valid":

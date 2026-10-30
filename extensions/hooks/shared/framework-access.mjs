@@ -7,7 +7,7 @@
  *
  * 命令行只读取、不写盘：
  *   node framework-access.mjs --project-root <根> --action blueprint --blueprint <id> --purpose draft|delivery
- *        [--consume <需求 id>]（给了就核蓝图的需求条目采用了这个需求已导入的材料版本）
+ *        [--consume <需求 id>]（给了就核蓝图的需求条目与设计依据引用了这个需求登记的材料）
  *        [--summary]（只核状态：同一读取与校验，输出省掉蓝图正文 blueprint，其余字段照旧）
  *        [--report-phases <阶段,阶段>]（给了就在每个施工单位上附原生阶段报告目录 phase_reports）
  *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id> --phase <阶段>
@@ -74,17 +74,18 @@ function blueprintRef(loaded, blueprintId) {
 const STRENGTH = { unknown: 0, inferred: 1, observed: 2, authoritative: 3 };
 
 /**
- * 这一版蓝图的需求条目采用了这个需求的来源没有：至少一条来自需求自己已导入的材料版本（`sources/` 下、材料索引登记过），
- * 全部声明来源的原字节与声明摘要一致，声明的证据强度不高于来源能证明的。蓝图另有其他有据条目不算问题；
- * 需求内容是否被设计落实由独立审查判断。
+ * 这一版蓝图采用了这个需求的来源没有：需求条目或设计依据至少引了一份本需求登记的材料，引用落在需求目录里的都是登记文件，
+ * 声明来源的原字节与声明摘要一致、采用版本的文件与登记摘要一致，条目声明的证据强度不高于来源能证明的。
+ * 支撑材料不必成为需求条目；需求内容是否被设计落实、没引的材料是不是漏了，由独立质询与审查判断。
  */
 function scopeConsumption(projectRoot, blueprint, requirement) {
-  const adopted = adoptedSources(projectRoot, blueprint);
+  const adopted = adoptedSources(projectRoot, blueprint, { requirement });
   const issues = adopted.problems.map(message => ({ code: 'scope_source_invalid', message }));
   issues.push(...readSourceFiles(projectRoot, adopted.sources).problems.map(message => ({ code: 'scope_source_unreadable', message })));
-  const own = adopted.requirements.find(r => r.requirement === requirement);
-  if (!own) {
-    issues.push({ code: 'scope_item_not_consumed', message: `蓝图的需求条目没有一条来自需求 ${requirement} 已导入的材料版本（sources/ 下）` });
+  const own = adopted.requirements[0];
+  issues.push(...readSourceFiles(projectRoot, own?.files ?? []).problems.map(message => ({ code: 'adopted_source_unreadable', message })));
+  if (!own?.versions.length) {
+    issues.push({ code: 'scope_item_not_consumed', message: `蓝图的需求条目与设计依据没有引用需求 ${requirement} 登记的材料` });
   } else {
     const roles = new Map(own.files.map(f => [f.path, f.role]));
     const guard = loadNative(projectRoot).module('scripts/utils/project-relative-path.ts');
@@ -103,7 +104,7 @@ function scopeConsumption(projectRoot, blueprint, requirement) {
       }
     }
   }
-  return { status: issues.length ? 'unconsumed' : 'ok', issues, sources_sha256: sourcesIdentity(adopted.sources) };
+  return { status: issues.length ? 'unconsumed' : 'ok', issues };
 }
 
 /** 宿主能不能派独立审查子代理：原生按当前 adapter 的 `verifier_subagent` 声明判（`agents/<adapter>/adapter.yaml`）。 */
@@ -117,7 +118,7 @@ export function hostReviewer(projectRoot) {
 /**
  * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
  * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。
- * 给了需求 id 时一并回答 `consumption`：这一版蓝图的需求条目采用了这个需求已导入的材料版本没有。
+ * 给了需求 id 时一并回答 `consumption`：这一版蓝图的需求条目与设计依据引用了这个需求登记的材料没有。
  * 已准入时列出活动施工单位 `units`（原生枚举、去掉已被取代的）：身份、Feature 标识与原生目录（工程相对）；
  * 给了 `reportPhases` 时每个单位另带 `phase_reports: [{phase, dir}|{phase, error}]`（phaseReportsDir 的原生结果）。
  */
@@ -321,7 +322,7 @@ function phaseEvidence(projectRoot, feature, chain) {
 /**
  * 独立 Story 审查的视觉裁定：取与需求同根的蓝图（标识就是需求标识）与它采用的本需求来源，按原生纯函数算看图能力与保真路由。
  *
- * - 需求原文取采用版本里的阅读正文（`text`，图片与二进制原件不算）与人工答复（`answer`），Story、写作设计不进；
+ * - 需求原文取采用版本里的阅读正文（`text`、会议阅读件 `evidence`，图片与二进制原件不算）与必读人答（`answer`），Story、写作设计不进；
  *   取不到时说明来源不足，不拿作者摘要补。
  * - 执行身份是 `story:<需求>:<蓝图>:<revision>:<artifact_sha256>`，需求摘要用采用来源的身份 `sourcesIdentity`；
  *   能力取原生当前 adapter 的图像输入解析与 profile 的 OCR 就绪，审查者与作者同一执行能力（`reviewVision = hasVision`）。
@@ -336,20 +337,20 @@ export function storyReviewVisual(projectRoot, feature) {
   const blueprintId = feature;
   const read = readBlueprint(projectRoot, blueprintId, 'draft');
   if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [] };
-  const adopted = adoptedSources(projectRoot, read.blueprint);
-  const own = adopted.requirements.find(r => r.requirement === feature);
+  const adopted = adoptedSources(projectRoot, read.blueprint, { requirement: feature });
+  const own = adopted.requirements[0];
   if (adopted.problems.length) return { status: 'invalid', issues: adopted.problems.map(message => ({ code: 'adopted_source_invalid', message })) };
-  if (!own) {
-    return { status: 'invalid', issues: [{ code: 'story_design_input_missing', message: '蓝图的需求条目没有采用本需求的来源：视觉裁定无从取来源' }] };
+  if (!own?.versions.length) {
+    return { status: 'invalid', issues: [{ code: 'story_design_input_missing', message: '蓝图没有引用本需求的来源：视觉裁定无从取来源' }] };
   }
-  const files = readSourceFiles(projectRoot, own.files.filter(f => f.role === 'text' || f.role === 'answer'));
+  const files = readSourceFiles(projectRoot, [...own.files, ...own.answers].filter(f => ['text', 'evidence', 'answer'].includes(f.role)));
   if (files.problems.length) return { status: 'invalid', issues: files.problems.map(message => ({ code: 'adopted_source_invalid', message })) };
   const texts = files.files.map(f => `<<${f.path}>>
 ${Buffer.from(f.bytes).toString('utf8')}`);
   if (!files.files.some(f => f.role === 'text')) {
     return { status: 'invalid', issues: [{ code: 'requirement_text_missing', message: '采用的来源里没有需求阅读原文：来源不足，视觉裁定不做' }] };
   }
-  const sourcesSha = sourcesIdentity(adopted.sources);
+  const sourcesSha = sourcesIdentity([...adopted.sources, ...own.files, ...own.answers]);
   const ref = read.blueprint_ref;
   const executionIdentity = `story:${feature}:${blueprintId}:${ref.revision}:${ref.artifact_sha256}`;
   const cfg = native.module('config.ts').loadFrameworkConfig(native.root);
@@ -422,82 +423,161 @@ export function featureDir(projectRoot, feature) {
   return featureIdentity(projectRoot, feature).dir ?? null;
 }
 
-/** 需求材料索引登记的版本：版本目录（相对需求目录）→ 记录（带来源字段）。索引读不出为 null。 */
-function requirementVersions(native, root) {
+/** 需求材料索引：`files` 视图（相对需求目录的路径 → 来源、版本、角色、完整摘要）与来源版本。读不出为 null。 */
+function requirementIndex(native, root) {
+  let index;
   try {
-    const index = JSON.parse(fs.readFileSync(path.join(native.root, ...root.split('/'), 'AR', 'story-src', 'materials.json'), 'utf8'));
-    return new Map((index.sources ?? []).flatMap(s => (s.versions ?? [])
-      .map(v => [String(v.dir), { ...v, source_id: s.source_id, kind: s.kind, class: s.class }])));
+    index = JSON.parse(fs.readFileSync(path.join(native.root, ...root.split('/'), 'AR', 'story-src', 'materials.json'), 'utf8'));
   } catch {
     return null;
   }
+  if (!Array.isArray(index?.files) || !Array.isArray(index?.sources)) return null;
+  return index;
 }
 
-/**
- * 一个版本登记的文件（工程相对路径、`sha256:<64 位>`、角色）：`text` 可读的正文（文本原件或转换正文），
- * `original` 有转换正文的二进制原件，`image` 图，人工答复的 `answer`（answers.md）与 `original`（answers.json）。
- */
-function versionFiles(root, v) {
-  const answer = v.kind === 'answer';
-  const split = v.readable?.path && v.readable.path !== v.original?.path;
-  const rows = [{ ...v.original, role: split ? 'original' : answer ? 'answer' : 'text' }];
-  if (split) rows.push({ ...v.readable, role: answer ? 'answer' : 'text' });
-  rows.push(...(v.images ?? []).map(i => ({ ...i, role: 'image' })));
-  return rows.filter(r => r.path && r.sha256).map(r => ({ path: `${root}/${r.path}`, sha256: `sha256:${r.sha256}`, role: r.role }));
-}
+/** 一行登记文件换成工程相对路径与 `sha256:<64 位>`。 */
+const fileOf = (root, row) => ({ path: `${root}/${row.path}`, sha256: `sha256:${row.sha256}`, role: row.role,
+  source_id: row.source_id, version: row.version, kind: row.kind, dir: row.dir });
 
-/**
- * 蓝图采用的来源：原生 `currentScopeItems` 的每条声明（原引用连同片段、声明摘要、条目身份与 provenance），
- * 以及其中落在某个需求 `sources/<版本>/` 下的——按需求根去重，版本要在那个需求的材料索引里登记过，
- * 按版本展开成采用文件（原件、阅读稿、图、人工答复）。不读来源正文、不算摘要；不枚举需求目录、不按名称猜。
- * 来源不在这一布局的条目是原生直接输入，不产生需求。
- *
- * @returns {{status: string, sources: {path: string, sha256: string, item_id: string, kind: string, provenance: object|null}[],
- *   requirements: {requirement: string, root: string, versions: string[], files: {path: string, sha256: string, role: string}[]}[],
- *   problems: string[]}}
- */
-export function adoptedSources(projectRoot, blueprint) {
-  const native = loadNative(projectRoot);
-  const out = { status: 'ok', sources: [], requirements: [], problems: [] };
-  const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
-  const guard = native.module('scripts/utils/project-relative-path.ts');
-  const prefix = `${path.posix.normalize(featuresDir)}/`;
-  const byRequirement = new Map();
-  for (const item of native.module('scripts/utils/blueprint-requirement-traceability.ts').currentScopeItems(blueprint)) {
-    let file;
-    try {
-      file = path.posix.normalize(guard.validateProjectRelativePath(native.root, String(item.source_ref ?? '').split('#')[0], 'source_ref'));
-    } catch (e) {
-      out.problems.push(`蓝图条目 ${item.item_id} 的来源 ${item.source_ref} 不是工程内路径（${e?.message ?? e}）——设计负责方处理`);
-      continue;
-    }
-    out.sources.push({ path: String(item.source_ref), sha256: String(item.source_sha256 ?? ''), item_id: String(item.item_id),
-      kind: item.kind, provenance: item.provenance ?? null });
-    const parts = file.startsWith(prefix) ? file.slice(prefix.length).split('/') : [];
-    if (parts.length < 4 || parts[1] !== 'sources') continue;
-    byRequirement.set(parts[0], new Set([...(byRequirement.get(parts[0]) ?? []), `sources/${parts[2]}`]));
-  }
-  for (const [requirement, dirs] of byRequirement) {
-    const root = `${prefix}${requirement}`;
-    const versions = requirementVersions(native, root);
-    if (!versions) {
-      out.problems.push(`需求 ${requirement} 的材料索引读不出来——蓝图引用了它的来源，需求负责方重跑 \`story_flow.py round\` 重建索引`);
-      continue;
-    }
-    const files = [];
-    for (const dir of [...dirs].sort()) {
-      const v = versions.get(dir);
-      if (v) files.push(...versionFiles(root, v));
-      else out.problems.push(`需求 ${requirement}：蓝图引用的 ${dir} 不是材料索引登记的版本——需求条目只引已导入的材料版本，设计负责方按 sources/README.md 同步`);
-    }
-    out.requirements.push({ requirement, root, versions: [...dirs].sort(), files });
+/** Markdown 正文里的本地链接与图片目标（相对它自己），外部链接与文内锚点不算。 */
+const LOCAL_REF = /!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)|<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi;
+function localTargets(text, fromDir) {
+  const out = [];
+  for (const m of String(text).matchAll(LOCAL_REF)) {
+    const target = decodeURI(String(m[1] ?? m[2] ?? '').split('#')[0]);
+    if (!target || /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('/')) continue;
+    out.push(path.posix.normalize(path.posix.join(fromDir, target)));
   }
   return out;
 }
 
-/** 设计采用来源的身份：声明的 [来源, 摘要] 排序后的 SHA-256。成文登记与视觉裁定都按它认「采用的是哪一组来源」。 */
+/** 来源引用连同它在蓝图里的位置：provenance 取 source_ref；合同各段直接带 source_ref。 */
+function refsOf(blueprint) {
+  const support = [];
+  const conflicts = [];
+  const put = (list, ref, where, provenance = null) => {
+    if (typeof ref === 'string' && ref.trim()) list.push({ path: ref.trim(), where, provenance });
+  };
+  const prov = (list, obj, where) => put(list, obj?.provenance?.source_ref, where, obj?.provenance ?? null);
+  prov(support, blueprint, 'provenance');
+  (blueprint?.discovery?.facts ?? []).forEach((f, i) => prov(support, f, `discovery.facts[${f?.fact_id ?? i}]`));
+  (blueprint?.design_views ?? []).forEach((v, i) => {
+    (v?.nodes ?? []).forEach((n, j) => prov(support, n, `design_views[${v?.view_id ?? i}].nodes[${n?.node_id ?? j}]`));
+    (v?.runtime_data_flows ?? []).forEach((n, j) => prov(support, n, `design_views[${v?.view_id ?? i}].runtime_data_flows[${j}]`));
+  });
+  (blueprint?.relations ?? []).forEach((r, i) => prov(support, r, `relations[${r?.relation_id ?? i}]`));
+  for (const key of ['decisions', 'gaps']) {
+    (blueprint?.decisions_and_gaps?.[key] ?? []).forEach((d, i) =>
+      prov(support, d, `decisions_and_gaps.${key}[${d?.decision_id ?? d?.gap_id ?? i}]`));
+  }
+  (blueprint?.contracts ?? []).forEach((c, i) => {
+    const id = c?.contract_id ?? i;
+    const parts = [['operation', c?.operation], ['request_dto', c?.request_dto], ['response_dto', c?.response_dto],
+      ...(c?.request_dto?.fields ?? []).map((f, j) => [`request_dto.fields[${j}]`, f]),
+      ...(c?.response_dto?.fields ?? []).map((f, j) => [`response_dto.fields[${j}]`, f]),
+      ...(c?.mappings ?? []).map((m, j) => [`mappings[${j}]`, m]),
+      ['errors', c?.errors], ['idempotency', c?.idempotency], ['nfr', c?.nfr]];
+    for (const [at, part] of parts) put(support, part?.source_ref, `contracts[${id}].${at}`);
+  });
+  (blueprint?.discovery?.conflicts ?? []).forEach((c, i) => {
+    prov(conflicts, c, `discovery.conflicts[${i}]`);
+    (c?.sources ?? []).forEach((s, j) => (typeof s === 'string'
+      ? put(conflicts, s, `discovery.conflicts[${i}].sources[${j}]`)
+      : put(conflicts, s?.source_ref ?? s?.provenance?.source_ref, `discovery.conflicts[${i}].sources[${j}]`)));
+  });
+  return { support, conflicts };
+}
+
+/**
+ * 蓝图实际依据的来源与本需求的采用版本 —— 真实需求条目、支撑依据、冲突核源与必读人答各自分开，不保存第二份采用清单。
+ *
+ * - `sources`：原生 `currentScopeItems` 的声明（原引用连同片段、声明摘要、条目身份与 provenance）——真实需求、目标、约束与风险；
+ * - `support`：蓝图根、`discovery.facts`、设计视图节点与运行数据流、关系、决定与缺口的 provenance，以及合同各段的 `source_ref`；
+ *   说明文字、reader_guide 指针、示例与被否方案里的同名字段不算；
+ * - `conflicts`：`discovery.conflicts` 引的来源，供核源，不算已采用；
+ * - 需求 `requirement`（默认蓝图标识，蓝图与需求同根）的材料索引 `files` 视图登记的文件：被上面三类引用命中的来源版本就是
+ *   采用的版本，按版本展开成全部文件（原件、阅读稿、图、会议的 raw/纠偏/阅读件），Markdown 阅读稿引的登记图一并加入；
+ *   最新一版人工答复作为独立必读（`answers`），不取决于有没有被引用。
+ * 引用落在需求目录里、却不是登记文件的，逐条报出，不静默过滤。不读来源正文以外的东西、不算摘要。
+ *
+ * @returns {{status: string, sources: object[], support: object[], conflicts: object[],
+ *   requirements: {requirement: string, root: string, versions: string[], files: object[], answers: object[], conflictFiles: object[]}[],
+ *   problems: string[]}}
+ */
+export function adoptedSources(projectRoot, blueprint, { requirement = blueprint?.blueprint_id } = {}) {
+  const native = loadNative(projectRoot);
+  const out = { status: 'ok', sources: [], support: [], conflicts: [], requirements: [], problems: [] };
+  const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
+  const guard = native.module('scripts/utils/project-relative-path.ts');
+  const root = `${path.posix.normalize(featuresDir)}/${requirement}`;
+  const fileAt = (ref) => {
+    try {
+      return path.posix.normalize(guard.validateProjectRelativePath(native.root, String(ref ?? '').split('#')[0], 'source_ref'));
+    } catch {
+      return null;
+    }
+  };
+  for (const item of native.module('scripts/utils/blueprint-requirement-traceability.ts').currentScopeItems(blueprint)) {
+    if (!fileAt(item.source_ref)) {
+      out.problems.push(`蓝图条目 ${item.item_id} 的来源 ${item.source_ref} 不是工程内路径——设计负责方处理`);
+      continue;
+    }
+    out.sources.push({ path: String(item.source_ref), sha256: String(item.source_sha256 ?? ''), item_id: String(item.item_id),
+      kind: item.kind, provenance: item.provenance ?? null, where: `discovery.inputs.current_scope_items[${item.item_id}]` });
+  }
+  const { support, conflicts } = refsOf(blueprint);
+  out.support = support;
+  out.conflicts = conflicts;
+  const index = requirementIndex(native, root);
+  const inRoot = (file) => file && file.startsWith(`${root}/`);
+  const cited = [...out.sources, ...support].map(r => ({ ...r, file: fileAt(r.path) }));
+  if (!index) {
+    if (cited.some(r => inRoot(r.file))) out.problems.push(`需求 ${requirement} 的材料索引读不出来（或不是本版带 files 视图的索引）——重跑 \`story_flow.py round\` 重建`);
+    return out;
+  }
+  const rows = new Map(index.files.map(r => [`${root}/${r.path}`, r]));
+  const versionKey = r => `${r.source_id}@${r.version}`;
+  const adopted = new Set();
+  const conflicted = new Set();
+  for (const r of cited) {
+    if (!inRoot(r.file)) continue;
+    const row = rows.get(r.file);
+    if (!row) out.problems.push(`${r.where} 引用的 ${r.file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按 sources/README.md 同步`);
+    else adopted.add(versionKey(row));
+  }
+  for (const r of conflicts) {
+    const row = rows.get(fileAt(r.path));
+    if (row) conflicted.add(versionKey(row));
+  }
+  const expand = (keys) => {
+    const files = index.files.filter(r => keys.has(versionKey(r))).map(r => fileOf(root, r));
+    const have = new Set(files.map(f => f.path));
+    for (const f of [...files]) {
+      if (f.role !== 'text' || !/\.md$/i.test(f.path)) continue;
+      let text;
+      try { text = fs.readFileSync(path.join(native.root, ...f.path.split('/')), 'utf8'); } catch { continue; }
+      for (const target of localTargets(text, path.posix.dirname(f.path))) {
+        const row = rows.get(target);
+        if (row && !have.has(target)) { files.push(fileOf(root, row)); have.add(target); }
+      }
+    }
+    return files;
+  };
+  const files = expand(adopted);
+  const answers = (() => {
+    const mine = (index.sources ?? []).find(s => s?.kind === 'answer');
+    const last = mine?.versions?.at(-1);
+    return last ? index.files.filter(r => r.source_id === mine.source_id && r.version === last.version).map(r => fileOf(root, r)) : [];
+  })();
+  out.requirements.push({ requirement, root,
+    versions: [...new Set(files.map(f => f.dir))].sort(), files, answers,
+    conflictFiles: expand(new Set([...conflicted].filter(k => !adopted.has(k)))) });
+  return out;
+}
+
+/** 设计来源的身份：给定的 [来源, 摘要] 去重排序后的 SHA-256。成文登记与视觉裁定传「采用来源＋必读人答」，按它认依据换没换。 */
 export function sourcesIdentity(sources) {
-  const rows = sources.map(s => [String(s.path), String(s.sha256)])
+  const rows = [...new Map(sources.map(s => [`${s.path}\0${s.sha256}`, [String(s.path), String(s.sha256)]])).values()]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
   return crypto.createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }

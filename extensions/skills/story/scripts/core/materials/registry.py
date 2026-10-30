@@ -19,6 +19,8 @@
 - `materials`：各来源最新版本的正文与图（图按内容合并成一条，`paths` 列全部落点，带 `caption`/`unused`）；
 - `origins`：各来源最新版本的原件与它的阅读稿——作者材料表、审查任务与独立审查对象读同一份；人答不在其中；
 - `digest`：**材料版本**，按最新版本的原件、阅读稿与图的内容算。人答、说明与取舍不进摘要：答一句话或改一句说明不是材料变了。
+- `files`：全部登记文件（各来源的每个版本，含人答与会议的原件、raw、纠偏与阅读件）→ 来源、版本、角色与完整摘要。
+  需求条目补来源、设计采用与审查核源都按它认文件，不各自扫目录、猜角色；会议的纠偏与阅读件核过同源才列。
 
 只用标准库。stdout 无输出：本模块是库，不是命令。
 """
@@ -226,15 +228,66 @@ def build(feature_root: Path, notes: dict[str, dict] | None = None, records: lis
         notes = read_notes(feature_root)
     if records is None:
         records = version_records(feature_root)
-    sources = catalog(records + meeting_records(feature_root))
+    meetings = meeting_records(feature_root)
+    sources = catalog(records + meetings)
     materials, origins, digest = derive(current(sources), notes, feature_root)
     return {"schema": SCHEMA, "feature": feature_root.name, "digest": digest, "sources": sources,
             "inbox": inbox_items(feature_root), "materials": materials, "origins": origins,
-            "notes": {k: notes[k] for k in sorted(notes)}}
+            "files": files_view(feature_root, records, meetings), "notes": {k: notes[k] for k in sorted(notes)}}
+
+
+def files_view(feature_root: Path, records: list[dict], meetings: list[dict]) -> list[dict]:
+    """全部登记文件 → 来源身份、版本、角色与完整摘要（路径相对需求目录）。
+
+    角色：`text` 可读的正文（文本原件或转换/阅读投影）、`original` 另有阅读稿的原件、`image` 图、
+    人答的 `answer`（answers.md）与 `answer_record`（answers.json）、会议的 `raw`、`corrections`、`evidence`。
+    会议的纠偏与阅读件是读会产物：纠偏能应用到原文、阅读件与纠偏结果逐字相同才列，不对改过的阅读件重算摘要放行。
+    """
+    rows: list[dict] = []
+
+    def add(path: str, rec: dict, role: str, sha: str) -> None:
+        rows.append({"path": path, "source_id": rec["source_id"], "version": rec["version"], "kind": rec["kind"],
+                     "role": role, "sha256": sha, "dir": rec["dir"]})
+
+    for rec in records:
+        answer = rec["kind"] == "answer"
+        readable, original = rec.get("readable"), rec["original"]
+        split = bool(readable) and readable["path"] != original["path"]
+        role = ("answer_record" if answer else "original" if split or not readable and rec.get("class") == "IMAGES"
+                else "image" if not readable else "text")
+        add(original["path"], rec, role, original["sha256"])
+        if split:
+            add(readable["path"], rec, "answer" if answer else "text", readable["sha256"])
+        for image in rec.get("images") or []:
+            add(image["path"], rec, "image", image["sha256"])
+    for rec in meetings:
+        folder = feature_root / rec["dir"]
+        add(rec["original"]["path"], rec, "original", rec["original"]["sha256"])
+        lines, broken = meeting.raw_lines(folder)
+        if not broken:
+            add(f"{rec['dir']}/{meeting.RAW}", rec, "raw", rec["readable"]["sha256"])
+            corrections = meeting.read_json(folder / meeting.CORRECTIONS) if (folder / meeting.CORRECTIONS).is_file() else None
+            if corrections is not None:
+                fixed, bad = meeting.apply_corrections(lines, corrections)
+                if not bad:
+                    add(f"{rec['dir']}/{meeting.CORRECTIONS}", rec, "corrections", file_digest(folder / meeting.CORRECTIONS))
+                    if (folder / meeting.EVIDENCE).is_file() and not meeting.evidence_stale(folder, fixed):
+                        add(f"{rec['dir']}/{meeting.EVIDENCE}", rec, "evidence", file_digest(folder / meeting.EVIDENCE))
+        for image in rec.get("images") or []:
+            add(image["path"], rec, "image", image["sha256"])
+    return sorted(rows, key=lambda r: r["path"])
 
 
 def path_of(feature_root: Path) -> Path:
     return feature_root / Path(*MANIFEST)
+
+
+def refuse_old(data) -> None:
+    """旧版生成的索引：本版不接续、不借刷新改写成新结构，这个需求目录原样保留。"""
+    if isinstance(data, dict) and isinstance(data.get("schema"), int) and data["schema"] < SCHEMA:
+        raise MaterialError(
+            f"{'/'.join(MANIFEST)} 的 schema 为 {data['schema']}，本版要求 {SCHEMA}：这是旧版生成的需求，本版不接续它。"
+            "本版只从新需求初始化：另建一个新需求，这个目录原样保留")
 
 
 def read_notes(feature_root: Path) -> dict[str, dict]:
@@ -247,6 +300,7 @@ def read_notes(feature_root: Path) -> dict[str, dict]:
     except ValueError as exc:
         raise MaterialError(f"{'/'.join(MANIFEST)} 不是合法 JSON（{exc}）：图片说明记在它里面，"
                             "按 Git 或备份找回上一版再刷新；确认放弃说明就删掉它重跑 `story_flow.py round`") from exc
+    refuse_old(data)
     notes = data.get("notes") if isinstance(data, dict) else None
     if not isinstance(notes, dict):
         return {}
@@ -335,10 +389,7 @@ def read(feature_root: Path) -> dict:
     except ValueError as exc:
         raise MaterialError(f"{name} 不是合法 JSON（{exc}）：它只应由脚本写入；图片说明记在它里面，"
                             "按 Git 找回上一版，或删掉后重跑 `story_flow.py round` 重建（说明需重写）") from exc
-    if isinstance(data, dict) and isinstance(data.get("schema"), int) and data["schema"] < SCHEMA:
-        raise MaterialError(
-            f"{name} 的 schema 为 {data['schema']}，本版要求 {SCHEMA}：这是旧版生成的需求，"
-            "本版的材料按来源版本存放在 sources/ 下。旧版进行中的需求在旧版收口，或从 init 重起")
+    refuse_old(data)
     problems = _shape_problems(data)
     if problems:
         raise MaterialError(f"{name} 结构不对（{'；'.join(problems)}）：它只应由脚本写入，"
@@ -351,7 +402,7 @@ def _shape_problems(data) -> list[str]:
     if not isinstance(data, dict):
         return ["顶层应是对象"]
     problems = [] if data.get("schema") == SCHEMA else [f"schema 为 {data.get('schema')}，本版是 {SCHEMA}"]
-    for field in ("sources", "inbox", "materials", "origins"):
+    for field in ("sources", "inbox", "materials", "origins", "files"):
         if not isinstance(data.get(field), list):
             problems.append(f"缺 {field} 列表")
     for i, o in enumerate(data.get("origins") if isinstance(data.get("origins"), list) else []):

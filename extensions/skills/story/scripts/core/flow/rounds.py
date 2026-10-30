@@ -9,7 +9,7 @@ from pathlib import Path
 from materials import registry
 
 from flow.state import (
-    FlowError, SCHEMA, closed, in_update, load, log, require, save, stage_of)
+    FlowError, SCHEMA, closed, in_update, load, log, require, save, stage_of, sync_answers)
 from flow.inputs import (
     POSITIONING, SCOPE_OPTIONS, consume_sidecar, read_positioning, read_scope_options)
 from flow.routing import closed_inbox_note, live_materials, next_step
@@ -130,6 +130,8 @@ def cmd_reopen(feature_root: Path) -> dict:
     contract["rounds"].append(entry)
     contract["status"] = "gathering"
     save(feature_root, contract)
+    # 旧的范围与承载答复不再当前有效：同步导出，导出没完成不撤回重开
+    answers_gap = sync_answers(feature_root, "范围重开")
     # **重开到此成立。** 往下只是算下一步：通常是范围关卡；材料变了先盘点。
     # 算下一步要按磁盘现状读材料，读不出来不能反过来把重开报成失败：盘上已经回到范围关卡，
     # 再跑 reopen 只会被「还没收口」挡回。所以只兜这一段，写入失败照常失败。
@@ -142,4 +144,5 @@ def cmd_reopen(feature_root: Path) -> dict:
         + ("；上一次成文登记保留但暂不可交付，范围定了、设计同步之后再跑 story 重新登记" if held else "")
         + f"。下一步：{action}")
     return {"status": "gathering", "rounds": len(contract["rounds"]),
-            "basisOnHold": held, "next": step, "action": action}
+            "basisOnHold": held, "next": step, "action": action,
+            **({"answers_error": answers_gap} if answers_gap else {})}

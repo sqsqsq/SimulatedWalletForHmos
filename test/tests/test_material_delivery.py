@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock
+from urllib.parse import unquote
 from ext_workspace import DEV_EXT
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -432,3 +434,97 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         self.assertEqual(0, self.run_import().returncode)
         after = self.manifest()["digest"]
         self.assertNotEqual(before, after, "只抽图没有形成新材料版本")
+
+
+class MarkdownKeepsItsPictures(unittest.TestCase):
+    """Markdown 原件按它在收件箱里的位置引用图：原件字节不动，阅读稿的链接改指导入后图的真实版本位置。"""
+
+    TEXT = ("# 说明\n\n![流程](images/流程.png)\n\n[外部](https://example.com/a.png) [本节](#说明)\n\n"
+            "见 [附录](附录.md#口径)\n")
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.feature_root = self.root / "doc" / "features" / "MD90001"
+        self.inbox = self.feature_root / "sources" / "inbox"
+        (self.inbox / "docs" / "images").mkdir(parents=True)
+
+    def put(self, files: dict[str, bytes | str], classify: dict[str, str]) -> None:
+        for rel, body in files.items():
+            (self.inbox / rel).parent.mkdir(parents=True, exist_ok=True)
+            data = body.encode("utf-8") if isinstance(body, str) else body
+            (self.inbox / rel).write_bytes(data)
+        (self.inbox / ".classify.json").write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+
+    def run_import(self) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(DEV_EXT / "skills/story/scripts/core/import_sources.py"),
+             "--feature", "MD90001", "--project-root", str(self.root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+
+    def manifest(self) -> dict:
+        return json.loads((self.feature_root / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
+
+    def first_import(self) -> None:
+        self.put({"docs/说明.md": self.TEXT, "docs/附录.md": "# 附录\n\n## 口径\n", "docs/images/流程.png": b"\x89PNG\r\n\x1a\nflow"},
+                 {"docs/说明.md": "RR", "docs/附录.md": "RR", "docs/images/流程.png": "UX"})
+        proc = self.run_import()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_the_reading_copy_links_to_the_imported_picture(self) -> None:
+        self.first_import()
+        version = self.feature_root / "sources" / "说明-v1"
+        self.assertEqual(self.TEXT.encode("utf-8"), (version / "说明.md").read_bytes(), "原件字节被改了")
+        reading = (version / "text.md").read_text(encoding="utf-8")
+        links = re.findall(r"\]\(([^)]+)\)", reading)
+        self.assertIn("https://example.com/a.png", links, "外部链接被改写")
+        self.assertIn("#说明", links, "文内锚点被改写")
+        for link in links[:1] + [l for l in links if "附录" in unquote(l)]:
+            target = (version / unquote(link.split("#")[0])).resolve()
+            self.assertTrue(target.is_file(), f"阅读稿的链接 {link} 指向不存在的文件")
+        self.assertTrue((self.feature_root / "sources" / "流程-v1" / "流程.png").is_file(), "图没按自己的来源导成版本")
+        roles = {r["path"]: r["role"] for r in self.manifest()["files"]}
+        self.assertEqual(("original", "text", "image"),
+                         (roles["sources/说明-v1/说明.md"], roles["sources/说明-v1/text.md"], roles["sources/流程-v1/流程.png"]))
+
+    def test_the_same_input_again_reuses_the_version(self) -> None:
+        self.first_import()
+        self.put({"docs/说明.md": self.TEXT}, {"docs/说明.md": "RR"})
+        proc = self.run_import()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual([], json.loads(proc.stdout)["versions"], "同一份输入又开了新版本")
+        self.assertFalse((self.feature_root / "sources" / "说明-v2").exists())
+
+    def test_a_missing_local_picture_refuses_the_batch(self) -> None:
+        self.put({"docs/新.md": "![缺](images/缺.png)\n"}, {"docs/新.md": "RR"})
+        proc = self.run_import()
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("images/缺.png", json.loads(proc.stdout)["error"])
+        self.assertTrue((self.inbox / "docs" / "新.md").is_file(), "整批没导却把原件移出了收件箱")
+        self.assertFalse(list(self.feature_root.glob("sources/新-v*")), "缺图还落了版本")
+
+
+class AnOldIndexIsNotTakenOver(unittest.TestCase):
+    """旧版生成的需求目录：导入在写任何版本之前就拒绝，提示另建新需求，索引与收件箱原样不动。"""
+
+    def test_import_refuses_and_leaves_the_directory_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feature_root = root / "doc" / "features" / "OLD90001"
+            inbox = feature_root / "sources" / "inbox"
+            inbox.mkdir(parents=True)
+            (inbox / "prd.md").write_text("# 产品需求\n", encoding="utf-8")
+            (inbox / ".classify.json").write_text('{"prd.md": "RR"}', encoding="utf-8")
+            index = feature_root / "AR" / "story-src" / "materials.json"
+            index.parent.mkdir(parents=True)
+            index.write_text(json.dumps({"schema": 2, "materials": [], "notes": {}}), encoding="utf-8")
+            before = {p.relative_to(feature_root).as_posix(): p.read_bytes() for p in feature_root.rglob("*") if p.is_file()}
+            proc = subprocess.run(
+                [sys.executable, str(DEV_EXT / "skills/story/scripts/core/import_sources.py"),
+                 "--feature", "OLD90001", "--project-root", str(root)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+            self.assertNotEqual(0, proc.returncode)
+            self.assertIn("另建一个新需求", json.loads(proc.stdout)["error"])
+            after = {p.relative_to(feature_root).as_posix(): p.read_bytes() for p in feature_root.rglob("*") if p.is_file()}
+            self.assertEqual(before, after, "旧目录被改写了")

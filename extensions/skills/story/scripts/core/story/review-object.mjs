@@ -3,8 +3,9 @@
  *
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算、覆盖声明与发现定位对着它核：几处用同一份，审的就是要交付的那一份。
  * 待审的是 Story、Review 与设计附件；其余是只读对照：写作设计、决策登记、会议记录（每版原文、纠偏留痕与阅读件）、
- * 设计采用的材料版本（蓝图需求条目引用的本需求版本：原件、阅读正文、图与人工答复）、材料清单登记的全部原件与阅读稿
- * （含没采用的）和每个图片对象、当前蓝图与评审投影、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
+ * 设计采用的材料版本（蓝图需求条目与设计依据引用的本需求版本：原件、阅读正文、图、会议纠偏与阅读件）、冲突依据、
+ * 当前有效人答（独立必读，不取决于设计有没有引用）、材料清单登记的全部原件与阅读稿（含设计未见引用的）和每个图片对象、
+ * 当前蓝图与评审投影、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
  * 完整核源让审查能核作者为何采用或排除一份材料：作者的采用选择不缩小这个集合。
  * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
  */
@@ -15,6 +16,8 @@ import { adoptedSources, readBlueprint } from '../../../../../hooks/shared/frame
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
 import { extensionRoot, featureRoot, readJsonOrNull } from '../../../../../hooks/shared/paths.mjs';
 import { materialSet } from './sources.mjs';
+import { requiredAnswers } from './design-source.mjs';
+import { requirementContext } from './context.mjs';
 
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
@@ -100,16 +103,24 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
     if (!files.length) problems.push(`update ${rid} 的 before/ 不在或是空的——这一轮缺比较基准`);
     for (const f of files) add(f, 'source', `本轮 update 前的现场 ${path.relative(before, f).split(path.sep).join('/')}`);
   }
-  // 设计采用的来源：与需求同根的蓝图，它的需求条目采用的本需求材料版本逐份展开，字节按材料索引登记的摘要核
+  // 设计采用的来源：与需求同根的蓝图，它的需求条目与设计依据引用的本需求材料版本逐份展开，字节按材料索引登记的摘要核
   const adopted = new Map();            // 采用文件（相对需求目录）→ {sha256, role}
+  const conflicted = new Map();         // 冲突依据（没被采用的那一方）→ {sha256, role}
   const read = readBlueprint(projectRoot, feature, 'draft');
   if (read.status !== 'ok') {
     problems.push(`蓝图 ${feature} 读不到（原生读取 ${read.status}）`);
   } else {
-    const own = adoptedSources(projectRoot, read.blueprint).requirements.find(r => r.requirement === feature);
-    if (!own) problems.push('蓝图的需求条目没有采用本需求已导入的材料版本');
-    for (const f of own?.files ?? []) adopted.set(f.path.slice(own.root.length + 1), { sha256: f.sha256.replace(/^sha256:/, ''), role: f.role });
+    const found = adoptedSources(projectRoot, read.blueprint, { requirement: feature });
+    const own = found.requirements[0];
+    problems.push(...found.problems);
+    if (!own?.versions.length) problems.push('蓝图的需求条目与设计依据没有引用本需求登记的材料');
+    const local = f => f.path.slice(own.root.length + 1);
+    for (const f of own?.files ?? []) adopted.set(local(f), { sha256: f.sha256.replace(/^sha256:/, ''), role: f.role });
+    for (const f of own?.conflictFiles ?? []) conflicted.set(local(f), { sha256: f.sha256.replace(/^sha256:/, ''), role: f.role });
   }
+  // 当前有效人答：独立必读，导出落后于流程记录时报缺口，不拿旧导出顶替
+  const answers = requiredAnswers(requirementContext(projectRoot, root));
+  problems.push(...answers.problems);
   // 材料清单登记的全部原件、阅读稿与图片：没采用的也在，审查要核作者为何排除它
   const set = materialSet({ srcDir: src });
   const manifest = path.join(src, 'materials.json');
@@ -146,17 +157,30 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
     if (pictureOnly) continue;
     for (const r of readable) {
       checkAdopted(r);
-      add(at(r), 'source', adopted.has(r) ? `设计采用的阅读稿 ${r}` : `没采用的阅读稿 ${r}（核作者为何没采用）`, true, { kind: 'text' });
+      add(at(r), 'source', adopted.has(r) ? `设计采用的阅读稿 ${r}`
+        : `设计未见引用的阅读稿 ${r}（核是有据不用，还是漏了依据）`, true, { kind: 'text' });
     }
   }
-  // 设计采用的较早版本（同一来源后来取得了新版本）：材料清单只列各来源最新的一版，采用的那一版在这里补齐
+  // 设计采用的较早版本与会议纠偏/阅读件：材料清单只列各来源最新的一版原件与阅读稿，采用的那些在这里补齐
   const listed = r => rows.some(x => x.path === rel(at(r)));
+  const META = new Set(['original', 'answer_record']);
+  const LABEL = { original: '设计采用版本的原件', raw: '设计采用的会议原文', corrections: '设计采用的会议纠偏记录',
+    evidence: '设计采用的会议阅读件', answer: '设计引用的人工答复', answer_record: '设计引用的人工答复记录', text: '设计采用的阅读稿' };
   for (const [r, f] of adopted) {
     if (f.role === 'image' || listed(r)) continue;
     checkAdopted(r);
-    add(at(r), 'source', f.role === 'original' ? `设计采用版本的原件 ${r}（核在场与来源摘要，正文读它的阅读稿）`
-      : f.role === 'answer' ? `设计采用的人工答复 ${r}` : `设计采用的阅读稿 ${r}`,
-    true, f.role === 'original' ? { kind: 'metadata', read: false } : { kind: 'text' });
+    add(at(r), 'source', `${LABEL[f.role] ?? '设计采用的来源'} ${r}${META.has(f.role) ? '（核在场与来源摘要，正文读它的阅读稿）' : ''}`,
+      true, META.has(f.role) ? { kind: 'metadata', read: false } : { kind: 'text' });
+  }
+  for (const [r, f] of conflicted) {
+    if (f.role === 'image' || listed(r)) continue;
+    add(at(r), 'source', `冲突依据 ${r}（蓝图登记的冲突一方，没有被采用；核取舍）`, true,
+      META.has(f.role) ? { kind: 'metadata', read: false } : { kind: 'text' });
+  }
+  for (const f of answers.files) {
+    add(path.join(projectRoot, ...f.path.split('/')), 'source',
+      f.role === 'answer' ? '当前有效人答（必读：问法与原话）' : '当前有效人答的记录', true,
+      f.role === 'answer' ? { kind: 'text' } : { kind: 'metadata', read: false });
   }
   // 图片按对象列，逐路径按字节认同一内容：同字节的落点是别名（第一个落点作规范路径），内容不同的落点各自核读
   for (const m of set?.images ?? []) {

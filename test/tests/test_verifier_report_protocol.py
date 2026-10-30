@@ -595,7 +595,7 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         self.assertEqual(kept, bad.read_bytes(), "原回复被改了")
 
 class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """完整核源：作者没采用的阅读稿、登记不用的图与会议纠偏留痕也在独立审查的必审集合里——任务列它、覆盖核它、发现可以引用它；
+    """完整核源：设计未见引用的阅读稿、登记不用的图与会议纠偏留痕也在独立审查的必审集合里——任务列它、覆盖核它、发现可以引用它；
     冻结采用版本仍是设计权威，同字节的当前文件是它的别名，换了内容的当前文件另列对照；二进制原件只核在场与来源摘要。"""
 
     IMPORT = DEV_EXT / "skills/story/scripts/core/import_sources.py"
@@ -660,7 +660,8 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         task = self.task_text()
         for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
             self.assertIn(f"`{rel}`", task)
-        self.assertIn(f"`{self.SR}` —— 没采用的阅读稿 {self.sr_rel}（核作者为何没采用）", task)
+        self.assertIn(f"`{self.SR}` —— 设计未见引用的阅读稿 {self.sr_rel}（核是有据不用，还是漏了依据）", task)
+        self.assertIn("当前有效人答（必读：问法与原话）", task, "必读人答没进独立审查的核源集合")
         self.assertIn("作者登记不用：旧版签约页，本需求不改签约页", task)
 
     def test_skipping_any_applicable_source_is_not_a_pass(self) -> None:
@@ -754,15 +755,16 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertEqual("input_invalid", self.result()["result"])
 
     def test_the_adopted_version_stays_beside_a_newer_version(self) -> None:
-        """产品需求取得了新版本：设计采用的那一版仍是设计权威；新版本单独列作没采用的阅读稿，核作者为何没采用。"""
+        """产品需求取得了新版本：设计采用的那一版仍是设计权威；新版本单独列作设计未见引用的阅读稿，核是有据不用还是漏了依据。"""
         prd = "sources/prd-v1/prd.md"
         self.assertIn(f"`{self.FEATURE}/{prd}` —— 设计采用的阅读稿 {prd}", self.task_text())
         old = (self.root / self.FEATURE / prd).read_bytes()
         self.put({"RR/prd.md": (old + "\n新版补了一句。\n".encode("utf-8"), "RR")})
         self.story.write_text(self.story.read_text(encoding="utf-8").replace(prd, "sources/prd-v2/prd.md"), encoding="utf-8")
         task = self.task_text()
-        self.assertIn(f"`{self.FEATURE}/sources/prd-v2/prd.md` —— 没采用的阅读稿 sources/prd-v2/prd.md（核作者为何没采用）", task)
+        self.assertIn(f"`{self.FEATURE}/sources/prd-v2/prd.md` —— 设计未见引用的阅读稿 sources/prd-v2/prd.md（核是有据不用，还是漏了依据）", task)
         self.assertIn(f"`{self.FEATURE}/{prd}` —— 设计采用的阅读稿 {prd}", task)
+        self.assertIn("设计引证 v1，取得的 v2 未见引用", task, "材料表让最新取得的一版冒充了设计采用")
 
     def test_a_changed_left_out_source_retires_the_report(self) -> None:
         self.reviewed("pass")
@@ -1287,7 +1289,7 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         (src / "materials.json").write_text(
             json.dumps({"schema": 3, "sources": [], "inbox": [], "materials": [{"kind": "doc", "paths": ["sources/prd-v1/prd.md"]}],
-                        "origins": []}, ensure_ascii=False), encoding="utf-8")
+                        "origins": [], "files": []}, ensure_ascii=False), encoding="utf-8")
         text = self.inject()
         self.assertIn("材料清单里没有图片", text)
         self.assertNotIn("输入有缺口", text)

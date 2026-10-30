@@ -526,9 +526,16 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
+        at = "2026-10-30T00:00:00Z"
         data["rounds"][-1]["gates"] = [
-            {"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human"},
-            {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human"}] if settled else []
+            {"gate": "material_scope", "ask_id": "m1", "question": "材料齐了吗？",
+             "options": [{"no": 1, "key": "confirm_scope", "label": "现有材料就是全部"}],
+             "chosen": "confirm_scope", "no": 1, "label": "现有材料就是全部", "reply": "1",
+             "outcome": "accepted", "by": "human", "at": at},
+            {"gate": "scope_decision", "ask_id": "s1", "question": "这个需求承载哪些？",
+             "options": [{"no": 1, "key": "carry_all", "label": "按当前范围整体承载"}],
+             "chosen": "carry_all", "no": 1, "label": "按当前范围整体承载", "reply": "1",
+             "outcome": "accepted", "by": "human", "at": at, "context": {"scope_text": "本 AR 承载签约"}}] if settled else []
         if settled:
             data["rounds"][-1].update(positioning={"scope_text": "本 AR 承载签约", "sr_related_ars": []},
                                       scope_options=[{"key": "carry_all", "label": "按当前范围整体承载"}])
@@ -536,6 +543,8 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         ensure_framework(self.root)
         data = design_kit.hand_over_state(self.root, FEATURE, data, with_blueprint=status == "story_written")
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        if settled:
+            design_kit._core_modules()[0].refresh(self.feature_root)    # 答复生效时 decide 做的那一步：导出人答
         if status == "story_written":
             # 已登记的契约带此刻的成文依据（缺了是契约不完整，status 报错）
             data["story_basis"] = design_kit.registered_basis(self.root, FEATURE)

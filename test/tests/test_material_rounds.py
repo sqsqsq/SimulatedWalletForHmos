@@ -25,7 +25,7 @@ MATERIALS = STORY_SCRIPTS / "materials" / "registry.py"
 sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.inputs import MATERIAL_REQUEST_KEYS, material_options  # noqa: E402
 from flow.state import CONTRACT, STORY_REGISTERED, file_sha256  # noqa: E402
-from materials import importer  # noqa: E402
+from materials import importer, registry  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from flow_steps import ensure_framework, project_root_of, write_gaps  # noqa: E402
@@ -287,13 +287,22 @@ class CompleteThenMaterialChangedCase(MaterialRoundCase):
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["status"] = status
-        data["rounds"][-1]["gates"] = [{"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human", "ask_id": "m1", "reply": "1"},
-                {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human", "ask_id": "s1", "reply": "1"}]
+        at = "2026-10-30T00:00:00Z"
+        data["rounds"][-1]["gates"] = [
+            {"gate": "material_scope", "ask_id": "m1", "question": "材料齐了吗？",
+             "options": [{"no": 1, "key": "confirm_scope", "label": "现有材料就是全部"}],
+             "chosen": "confirm_scope", "no": 1, "label": "现有材料就是全部", "reply": "1",
+             "outcome": "accepted", "by": "human", "at": at},
+            {"gate": "scope_decision", "ask_id": "s1", "question": "这个需求承载哪些？",
+             "options": [{"no": 1, "key": "carry_all", "label": "按当前范围整体承载"}],
+             "chosen": "carry_all", "no": 1, "label": "按当前范围整体承载", "reply": "1",
+             "outcome": "accepted", "by": "human", "at": at, "context": {"scope_text": "本 AR 承载全部"}}]
         # 收口意味着设计已经开始：放好同根蓝图，收口之后的路由要读原生蓝图
         root = project_root_of(self.feature_root)
         ensure_framework(root)
         data = design_kit.hand_over_state(root, self.feature_root.name, data)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        registry.refresh(self.feature_root)    # 答复生效时 decide 做的那一步：导出人答
         if status == "story_written":
             data["story_basis"] = design_kit.registered_basis(root, self.feature_root.name)
             path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1207,7 +1216,9 @@ class TheManifestIsTheOnlyMaterialTruth(ManifestCase):
         self.assertEqual(before["materials"], after["materials"], "记一句人答把材料版本顶出了新一轮")
         answers = next(s for s in self.manifest()["sources"] if s["kind"] == "answer")
         record = json.loads((self.feature_root / answers["versions"][-1]["original"]["path"]).read_text(encoding="utf-8"))
-        self.assertEqual(["现有材料就是全部"], [d["reply"] for d in record["decisions"]])
+        self.assertEqual(["现有材料就是全部"], [d["reply"] for d in record["current"]])
+        self.assertEqual(["material_scope"], [d["gate"] for d in record["current"]])
+        self.assertTrue(record["current"][0]["question"], "导出的人答没带问法")
         self.assertNotIn("answers", [o["source_id"] for o in self.manifest()["origins"]])
         self.round_now()
         self.assertEqual(1, next(s for s in self.manifest()["sources"] if s["kind"] == "answer")["latest_version"],

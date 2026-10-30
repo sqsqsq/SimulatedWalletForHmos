@@ -1,8 +1,10 @@
 """需求条目的来源补齐：条目的语义由模型给一次，来源的路径、摘要与 provenance 由脚本按材料索引补。
 
 模型写 `[{item_id, kind, source, authority: {owner, formality}}]`：`source` 是需求相对路径（可带 `#片段`），
-必须是材料索引登记过的版本文件（原件、阅读稿、图或人工答复）。脚本补工程相对的 `source_ref`、盘上字节核过的
-`source_sha256` 与 provenance，得到原生 `currentScopeItem` 形状，蓝图的需求条目按它写。
+必须是材料索引 `files` 视图登记的文件（材料版本的原件、阅读稿与图，人工答复，会议原件、raw、纠偏与阅读件）。
+脚本补工程相对的 `source_ref`、盘上字节核过的 `source_sha256` 与 provenance，得到原生 `currentScopeItem` 形状，
+蓝图的需求条目按它写。需求条目只写真实的需求、目标、约束与风险；只作支撑的材料按原生事实与设计对象的
+provenance 引用，不为它们造条目。
 条目来自需求系统的来源时，同一组条目另写成原生来源物化信封（`requirement-source-materialization@1`），
 放在需求的 `blueprint/` 里并过原生来源检查；本地来源只输出条目，不落 provider 文件。
 """
@@ -53,52 +55,47 @@ def read_items(path: Path) -> list[dict]:
     return items
 
 
-def _files(feature_root: Path) -> dict[str, tuple[dict, str, str]]:
-    """索引登记的每份版本文件 → (版本记录, 角色, 完整摘要)。"""
-    try:
-        records = registry.version_records(feature_root)
-    except registry.MaterialError as exc:
-        raise ScopeError(str(exc)) from exc
-    out: dict[str, tuple[dict, str, str]] = {}
-    for rec in records:
-        out[rec["original"]["path"]] = (rec, "original", rec["original"]["sha256"])
-        if rec.get("readable") and rec["readable"]["path"] != rec["original"]["path"]:
-            out[rec["readable"]["path"]] = (rec, "readable", rec["readable"]["sha256"])
-        for image in rec.get("images") or []:
-            out[image["path"]] = (rec, "image", image["sha256"])
-    return out
+#: 各类登记文件作为需求条目来源时能证明什么：人答是人的原话，其余只证明读到了这些字节
+SOURCE_KIND = {"answer": "human_decision", "meeting": "meeting_record"}
 
 
-def fill(feature_root: Path, project_root: Path, items: list[dict]) -> list[tuple[dict, dict]]:
-    """逐条补来源：返回 (原生条目, 它的版本记录)。来源不是登记的版本文件或盘上字节与登记不同，一次列全再报。"""
-    known = _files(feature_root)
+def fill(feature_root: Path, project_root: Path, items: list[dict],
+         manifest: dict | None = None) -> list[tuple[dict, dict]]:
+    """逐条补来源：返回 (原生条目, 它在 `files` 视图里的那一行)。来源不是登记文件或盘上字节与登记不同，一次列全再报。"""
+    if manifest is None:
+        try:
+            manifest = registry.build(feature_root)
+        except registry.MaterialError as exc:
+            raise ScopeError(str(exc)) from exc
+    known = {row["path"]: row for row in manifest["files"]}
+    acquired = {(s["source_id"], v["version"]): v.get("acquired_at") for s in manifest["sources"] for v in s["versions"]}
     base = f"{importer.features_dir(project_root)}/{feature_root.name}"
     out, problems = [], []
     for item in items:
         source = str(item["source"]).strip().replace("\\", "/")
         rel, _, fragment = source.partition("#")
-        hit = known.get(rel)
-        if hit is None:
-            problems.append(f"{item['item_id']}：{rel} 不是材料索引登记的版本文件（原件、阅读稿、图或人工答复）——"
-                            "需求条目只引已导入的材料版本，见 sources/README.md")
+        row = known.get(rel)
+        if row is None:
+            problems.append(f"{item['item_id']}：{rel} 不是材料索引登记的文件（材料版本、人工答复或会议；会议阅读件与纠偏"
+                            "不同源时不登记，先跑 meeting-refresh）——见 sources/README.md")
             continue
-        rec, role, sha = hit
+        sha = row["sha256"]
         if registry.file_digest(feature_root / rel) != sha:
-            problems.append(f"{item['item_id']}：{rel} 盘上的字节与索引登记的不同——材料版本导入后不改，恢复原件")
+            problems.append(f"{item['item_id']}：{rel} 盘上的字节与索引登记的不同——登记的文件导入后不改，恢复原件")
             continue
         ref = f"{base}/{rel}" + (f"#{fragment}" if fragment else "")
-        answer = rec.get("kind") == "answer"
+        answer = row["kind"] == "answer"
         provenance = {
-            "source_kind": "human_decision" if answer else "requirement_image" if role == "image" else "requirement_material",
-            "source_ref": ref, "source_revision": f"{rec['source_id']}@v{rec['version']}",
-            "observed_at": str(rec.get("acquired_at") or ""),
+            "source_kind": SOURCE_KIND.get(row["kind"]) or ("requirement_image" if row["role"] == "image" else "requirement_material"),
+            "source_ref": ref, "source_revision": f"{row['source_id']}@v{row['version']}",
+            "observed_at": str(acquired.get((row["source_id"], row["version"])) or ""),
             "evidence_strength": "authoritative" if answer else "observed",
             "extraction_method": "recorded_user_reply" if answer else "imported_file_observation",
         }
         entry = {"item_id": item["item_id"], "kind": item["kind"], "source_ref": ref, "source_sha256": f"sha256:{sha}",
                  "provenance": provenance, "authority": {"owner": str(item["authority"]["owner"]).strip(),
                                                          "formality": item["authority"]["formality"]}}
-        out.append((entry, rec))
+        out.append((entry, row))
     if problems:
         raise ScopeError("需求条目的来源补不齐：" + "；".join(problems))
     return out
@@ -114,8 +111,13 @@ def blueprint_component(feature_root: Path) -> str | None:
 
 
 def materialize(feature_root: Path, project_root: Path, items: list[dict], component: str | None) -> dict:
-    """补齐条目；有需求系统来源时写原生来源物化信封并过原生检查，检查不过不写。"""
-    filled = fill(feature_root, project_root, items)
+    """补齐条目；有需求系统来源时写原生来源物化信封并过原生检查，检查不过不写。
+    先按现状刷新材料索引（含当前有效人答的导出），条目引的人答就是此刻有效的那一版。"""
+    try:
+        manifest = registry.refresh(feature_root)
+    except registry.MaterialError as exc:
+        raise ScopeError(str(exc)) from exc
+    filled = fill(feature_root, project_root, items, manifest)
     scope = [entry for entry, _ in filled]
     out: dict = {"current_scope_items": scope}
     if not any(rec.get("kind") == "system" for _, rec in filled):

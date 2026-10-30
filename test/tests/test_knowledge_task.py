@@ -1092,6 +1092,10 @@ process.stdout.write(JSON.stringify({
                 self.assertIn("采用的材料版本 sources/design-v1、sources/prd-v1", index)
                 for v in (versions["sources/prd-v1"], versions["sources/design-v1"]):
                     self.assertIn(f"`doc/features/{self.FEATURE}/{v['original']['path']}`（text），sha256:{v['original']['sha256']}", index)
+                # 当前有效人答独立必读：不取决于需求条目或设计引用写没写它
+                answers = next(s for s in self.index()["sources"] if s["kind"] == "answer")["versions"][-1]
+                self.assertIn("当前有效人答（必读", index)
+                self.assertIn(f"`doc/features/{self.FEATURE}/{answers['readable']['path']}`（answer）", index)
 
     def test_the_same_good_file_reaches_all_three_readers(self) -> None:
         got = self.readers()
@@ -1133,13 +1137,13 @@ process.stdout.write(JSON.stringify({
         return proc.returncode
 
     def test_a_version_the_index_does_not_register_is_never_an_empty_success(self) -> None:
-        """声明落在 sources/ 下、但版本目录不是材料索引登记的：不当成原生直接输入放过。"""
+        """声明落在 sources/ 下、但版本目录不是材料索引登记的文件：不当成原生直接输入放过。"""
         stray = self.feature_root / "sources" / "prd-v9" / "prd.md"
         stray.parent.mkdir(parents=True)
         stray.write_bytes((self.root / self.prd).read_bytes())
         text = self.canonical.read_text(encoding="utf-8")
         self.canonical.write_bytes(text.replace(self.prd, f"doc/features/{self.FEATURE}/sources/prd-v9/prd.md").encode("utf-8"))
-        self.assert_task_fails("不是材料索引登记的版本")
+        self.assert_task_fails("材料索引登记的文件")
 
     def test_images_and_bom_files_are_checked_on_their_raw_bytes(self) -> None:
         """采用的版本里有图与带 BOM 的正文：按原始字节核，逐份进索引。"""

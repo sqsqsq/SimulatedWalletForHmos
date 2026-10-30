@@ -13,10 +13,41 @@ import { adoptedSources, readBlueprint, readSourceFiles, relatedStories, sources
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
 import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
 import { ledgerDigestProblems, readJson, readText, requirementContext } from './context.mjs';
+import { queryFlowStatus } from '../flow/client.mjs';
 
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
 const cache = new WeakMap();
+const materialCache = new WeakMap();
+
+/**
+ * 材料链此刻的事实（`story_flow.py status --materials`）：原件导没导、材料变没变、必读人答同步没有。
+ * 一次命令的上下文只问一次，起稿预检、设计来源与审查对象共用这一份。
+ *
+ * @returns {{data: object|null, error: string|null}}
+ */
+export function flowMaterials(ctx) {
+  if (!materialCache.has(ctx)) {
+    materialCache.set(ctx, queryFlowStatus(ctx.projectRoot, ctx.args.feature, { timeoutMs: 120000, materialsOnly: true }));
+  }
+  return materialCache.get(ctx);
+}
+
+/**
+ * 当前有效人答——**独立必读**，不取决于作者有没有把它写进需求条目或设计引用。
+ * 文件取最新导出的人工答复版本（工程相对路径、`sha256:` 摘要、角色）；导出落后于流程记录或读不出时，`problems` 说缺口，不拿旧导出顶替。
+ *
+ * @returns {{files: {path: string, sha256: string, role: string}[], problems: string[]}}
+ */
+export function requiredAnswers(ctx) {
+  const { data, error } = flowMaterials(ctx);
+  if (error) return { files: [], problems: [`读不出必读人答（${error}）`] };
+  const req = data?.required_answers;
+  if (!req) return { files: [], problems: [] };
+  const base = path.relative(ctx.projectRoot, ctx.featureRoot).split(path.sep).join('/');
+  return { files: (req.exported?.files ?? []).map(f => ({ path: `${base}/${f.path}`, sha256: `sha256:${f.sha256}`, role: f.role })),
+    problems: (req.problems ?? []).map(p => `必读人答：${p}`) };
+}
 
 /**
  * @returns {{blueprint: object|null, ref: object|null, projection?: string, canonical?: string, admitted?: boolean,
@@ -31,6 +62,8 @@ export function designSource(ctx) {
   const out = { blueprint: null, ref: null, adopted: null, problems };
   const read = fs.existsSync(path.join(ctx.featureRoot, 'blueprint', 'component-blueprint.yaml'))
     ? readBlueprint(ctx.projectRoot, id, 'draft', id) : { status: 'missing' };
+  const answers = ctx.projectRoot ? requiredAnswers(ctx) : { files: [], problems: [] };
+  problems.push(...answers.problems);
   if (read.status === 'missing') {
     problems.push(`蓝图 ${id} 还没建立——成文按与需求同根的蓝图写，先在 component-design 里按 sources/ 的材料版本完成设计`);
   } else if (read.status !== 'ok') {
@@ -38,20 +71,20 @@ export function designSource(ctx) {
       + `${read.issues?.length ? `（${read.issues.slice(0, 3).map(i => i.code ?? i.id).join('、')}）` : ''}`
       + '——由设计职责在 component-design 里修好蓝图');
   } else if (read.consumption?.status !== 'ok') {
-    problems.push(`蓝图 ${id} 的需求条目没有采用本需求的来源：`
-      + `${(read.consumption?.issues ?? []).map(i => i.message).join('；')}——由设计职责在 component-design 里按 sources/ 的材料版本同步需求条目`);
+    problems.push(`蓝图 ${id} 没有采用本需求的来源：`
+      + `${(read.consumption?.issues ?? []).map(i => i.message).join('；')}——由设计职责在 component-design 里按登记的材料同步需求条目与设计依据`);
   } else if (read.projection?.status !== 'valid') {
     problems.push(`蓝图 ${id} 的评审投影 ${read.projection?.path}`
       + `${read.projection?.status === 'missing' ? '还没生成' : '与当前 revision 对不上'}——由设计职责按原生 renderer 生成，Extension 不手改`);
   } else {
-    const adopted = adoptedSources(ctx.projectRoot, read.blueprint);
+    const adopted = adoptedSources(ctx.projectRoot, read.blueprint, { requirement: id });
     out.blueprint = read.blueprint;
     out.ref = read.blueprint_ref;
     out.projection = read.projection.path;
     out.canonical = read.canonical_path;
     out.admitted = read.admitted === true;
     out.nativeIssues = (read.issues ?? []).map(i => `${i.code ?? i.id ?? 'issue'}${i.path ? ` @${i.path}` : ''}：${i.message ?? ''}`);
-    out.adopted = { ...adopted, own: adopted.requirements.find(r => r.requirement === id) ?? null };
+    out.adopted = { ...adopted, own: adopted.requirements[0] ?? null, answers: answers.files };
   }
   cache.set(ctx, out);
   return out;
@@ -82,15 +115,20 @@ function knowledgeDigest(ctx) {
   return sha256(JSON.stringify(rows));
 }
 
+/** 设计来源与必读人答的联合身份：需求条目声明、采用版本展开的文件与当前人答（`sourcesIdentity`）。 */
+function sourcesOf(source) {
+  return source.adopted ? sourcesIdentity([...source.adopted.sources, ...(source.adopted.own?.files ?? []), ...source.adopted.answers]) : null;
+}
+
 /**
- * 这一刻的成文依据：设计引用（原生完整 blueprint_ref）、设计采用来源的身份、激活知识。
+ * 这一刻的成文依据：设计引用（原生完整 blueprint_ref）、设计来源与必读人答的联合身份、激活知识。
  * 登记（`story_flow.py story` 经 `story-build basis`）与核对（check、交付门）用同一份计算。
  */
 export function currentBasis(ctx) {
   const source = designSource(ctx);
   return {
     problems: source.problems, blueprint_ref: source.ref,
-    sources_sha256: source.adopted ? sourcesIdentity(source.adopted.sources) : null, knowledge_sha256: knowledgeDigest(ctx),
+    sources_sha256: sourcesOf(source), knowledge_sha256: knowledgeDigest(ctx),
   };
 }
 
@@ -115,7 +153,7 @@ export function basisDriftProblems(ctx) {
     out.push(`登记之后蓝图内容变了（版本仍是 r${was.revision}，内容摘要 ${short(was.artifact_sha256)} → `
       + `${short(now.blueprint_ref?.artifact_sha256)}）${again}`);
   }
-  if (basis.sources_sha256 !== now.sources_sha256) out.push(`登记之后设计采用的来源换了${again}`);
+  if (basis.sources_sha256 !== now.sources_sha256) out.push(`登记之后设计采用的来源或必读人答变了${again}`);
   if (basis.knowledge_sha256 !== now.knowledge_sha256) out.push(`登记之后激活知识或知识原文变了${again}`);
   return out;
 }
@@ -144,9 +182,9 @@ const markdownOf = files => files.filter(f => /\.md$/i.test(f.file_path))
  * 当前性检查按来源损坏报。设计来源不成立时为空（那时报的是设计来源的缺口）。
  */
 function adoptedSourceProblems(ctx) {
-  const own = designSource(ctx).adopted?.own;
-  if (!own || !ctx.projectRoot) return [];
-  return readSourceFiles(ctx.projectRoot, own.files).problems
+  const adopted = designSource(ctx).adopted;
+  if (!adopted?.own || !ctx.projectRoot) return [];
+  return readSourceFiles(ctx.projectRoot, [...adopted.own.files, ...adopted.answers]).problems
     .map(p => `采用的材料版本 ${p}——材料版本导入后不改，恢复原件`);
 }
 

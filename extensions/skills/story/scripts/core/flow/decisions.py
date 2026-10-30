@@ -11,22 +11,24 @@ import re
 from pathlib import Path
 
 from flow.state import (
-    FlowError, GATES, in_update, last_gate, load, log, now, require, round_gates, save)
+    FlowError, GATES, in_update, issue_zone, last_gate, load, log, now, require, round_gates, save)
 from flow.inputs import (
     GAPS, MATERIAL_REQUEST_KEYS, SPLIT_PARTS, consume_sidecar, read_split_parts)
 from flow.routing import inputs_answer, live_materials, material_state, next_step
 from flow import asks
 
 
-def issue_digest(feature_root: Path, issue: str) -> str:
-    """评审记录里这条议题机器区的摘要：人回话时看到的就是它，记下来作问法的等价物。"""
-    review = feature_root / "AR" / "review.md"
-    text = review.read_text(encoding="utf-8") if review.is_file() else ""
-    hit = re.search(rf"<!-- story-build:begin 议题 {re.escape(issue)} · .*?sha256:([0-9a-f]+) -->", text)
-    if not hit:
-        raise FlowError(f"评审记录里没有议题 {issue}：人定的事先登记成议题、build 进评审记录，"
-                        "人看过那一条再回话")
-    return hit.group(1)
+def export_answers(feature_root: Path, what: str) -> dict:
+    """答复已经保存：把当前有效人答导出成来源版本、刷新材料索引，返回新索引。
+
+    导出与答复是两件事：导出失败时答复照样生效，报清楚派生没完成、怎么重试，不让人再答一次。
+    """
+    from materials import registry  # noqa: PLC0415 —— 人答导出由材料索引刷新承担
+    try:
+        return registry.refresh(feature_root)
+    except registry.MaterialError as exc:
+        raise FlowError(f"{what}已经记下并生效；导出当前有效人答、刷新材料索引没完成（{exc}）。"
+                        "不要重答：排除问题后跑 `story_flow.py round` 重试派生（材料没变不开新轮）") from exc
 
 
 def cmd_decide_update(feature_root: Path, item: str, reply: str, issue: str) -> dict:
@@ -50,12 +52,14 @@ def cmd_decide_update(feature_root: Path, item: str, reply: str, issue: str) -> 
     if not state.get("open"):
         raise FlowError("现在没有开着的更新：先跑 `story_flow.py update` 起一轮，"
                         "这条记录要挂在某一轮上")
-    entry = {"item": item.strip(), "issue": issue.strip(), "asked": issue_digest(feature_root, issue.strip()),
+    asked, question = issue_zone(feature_root, issue.strip())
+    entry = {"item": item.strip(), "issue": issue.strip(), "asked": asked, "question": question,
              "reply": reply.strip(), "by": "human", "at": now()}
     state.setdefault("decisions", []).append(entry)
     contract["update"] = state
     save(feature_root, contract)
     log(f"更新 {state['open']} 记下一条人的决定：{entry['item']}")
+    export_answers(feature_root, f"更新 {state['open']} 里人定的「{entry['item']}」")
     return {"update": state["open"], "recorded": entry,
             "action": f"已记：{entry['item']}。update-notes 里引用这一条"}
 
@@ -143,12 +147,20 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
             reason = ("来源收件箱（含子目录）里没有待导入的件、材料也没变：把文档或界面设计图放进 "
                       f"{feature_root.name}/sources/inbox/（可以整个文件夹放）后再答一次")
 
+    # 当时的问法照存：之后问法、选项或份表再变，这一条仍说得清人回答的是什么
+    question = (next(it["question"] for it in ask["items"] if it["item"] == str(args.item or "")
+                     and it["meeting"] == str(args.meeting or "")) if gate == "meeting" else ask.get("block"))
     record = {
-        "gate": gate, "ask_id": ask["ask_id"],
+        "gate": gate, "ask_id": ask["ask_id"], "question": question,
         "options": [{"no": o["no"], "key": o["key"], "label": o["label"]} for o in options],
         "chosen": picked["key"], "no": picked["no"], "label": picked["label"],
         "reply": reply, "mapped_by": mapped, "outcome": outcome, "by": "human", "at": now(),
     }
+    if gate == "scope_decision":
+        # 人答时看到的定位：本单承载什么、同一系统设计下的兄弟单各承载什么——设计与审查按它写范围与边界
+        positioning = current.get("positioning") or {}
+        record["context"] = {"scope_text": positioning.get("scope_text"),
+                             "sr_related_ars": positioning.get("sr_related_ars") or []}
     if reason:
         record["reason"] = reason
     if gate == "meeting":
@@ -165,9 +177,12 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
         scope_text = next(p["scope"] for p in parts if p["carrier"] == feature_root.name)
         contract["split"] = {"decided": "split", "settled_round": current["round"],
                              "scope_text": scope_text, "parts": parts}
+        record["context"] = {"parts": parts}
 
     save(feature_root, contract)
-    # 记一笔关卡不改材料：末尾的下一步沿用开头那一份材料事实
+    # 人答生效即导出：下一步（例如进设计）读到的就是含这一条的人答；材料摘要不含人答，不因此开新轮
+    if outcome == "accepted":
+        manifest = export_answers(feature_root, f"第 {current['round']} 轮 {gate} 的答复")
     step, action = next_step(feature_root, contract, manifest)
     if step != f"await_gate:{gate}":
         asks.clear(feature_root)

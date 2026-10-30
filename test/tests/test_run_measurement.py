@@ -758,23 +758,35 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
     #: 日志、事件、原件附件与压缩包被引用也不算。图里画的是否适用于该情景由评审者核，这里不看字节
     CANDIDATE_ROOTS = ("doc/plan/*/*/实施反馈/金样候选",
                        "doc/archive/legacy-2.x/plan/*/*/实施反馈/金样候选")
+    #: 当前的候选位置（TEST §5：`doc/plan/<版本>/<主题>/金样候选/<case>/`，里面是该 Case 的需求树）。
+    #: 目标 UX 配图是该需求的 Story 实际引用、落在同一需求根内的图片；README、蓝图等别的文档引用不代 Story 的配图用途
+    STORY_CANDIDATE_ROOTS = ("doc/plan/*/*/金样候选",)
+    LINK = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")
+
+    @classmethod
+    def _linked_images(cls, doc: Path, within: Path) -> set[Path]:
+        """文档里引用的、落在 within 之内的产品支持图片。"""
+        out = set()
+        for target in cls.LINK.findall(doc.read_text(encoding="utf-8")):
+            if re.match(r"^[a-z]+:", target) or target.startswith("#"):
+                continue
+            f = (doc.parent / unquote(target.split("#")[0])).resolve()
+            if f.is_file() and within in f.parents and f.suffix.lower() in importer.IMAGE_EXTS:
+                out.add(f)
+        return out
 
     @classmethod
     def candidate_assets(cls, repo: Path) -> set[str]:
-        """各候选情景文档实际引用、落在本情景 assets/ 下的图片。"""
-        link = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")
-        out: set[str] = set()
+        """候选里的目标配图：历史候选情景文档引用的本情景 assets/ 图，当前候选各需求 Story 引用的本需求根内的图。"""
+        found: set[Path] = set()
         for root in (root for pattern in cls.CANDIDATE_ROOTS for root in repo.glob(pattern)):
             for scene in (s for s in root.glob("*/*") if s.is_dir()):
-                assets = (scene / "assets").resolve()
                 for doc in scene.rglob("*.md"):
-                    for target in link.findall(doc.read_text(encoding="utf-8")):
-                        if re.match(r"^[a-z]+:", target) or target.startswith("#"):
-                            continue
-                        f = (doc.parent / unquote(target)).resolve()
-                        if f.is_file() and assets in f.parents and f.suffix.lower() in importer.IMAGE_EXTS:
-                            out.add(f.relative_to(repo.resolve()).as_posix())
-        return out
+                    found |= cls._linked_images(doc, (scene / "assets").resolve())
+        for root in (root for pattern in cls.STORY_CANDIDATE_ROOTS for root in repo.glob(pattern)):
+            for story in root.glob("*/doc/features/*/AR/story.md"):
+                found |= cls._linked_images(story, story.parent.parent.resolve())
+        return {f.relative_to(repo.resolve()).as_posix() for f in found}
 
     @classmethod
     def stray_evidence(cls, repo: Path) -> list[str]:
@@ -863,6 +875,47 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                 for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
                     self.assertIn(base + f"金样候选/demo-case/initial/assets/{name}", stray, name)
                 self.assertNotIn(base + "金样候选/demo-case/initial/assets/页面/新画的图.png", stray)
+
+    def test_current_candidate_story_images_are_target_assets(self):
+        """当前候选（`金样候选/<case>/doc/features/<需求>/`）里该需求 Story 引用的本需求图是目标配图；
+        没人引用的、只被 README 或蓝图引用的、引用越出本需求根的、运行原件即使被 Story 链接，都还是运行证据。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "doc/spec").mkdir(parents=True)
+            case = repo / "doc/plan/2.1.0/主题/金样候选/demo-case"
+            feature = case / "doc/features/ISSUE-1"
+            (feature / "AR").mkdir(parents=True)
+            (feature / "ux-reference").mkdir()
+            (feature / "ux-reference/设置页.png").write_bytes(b"page")
+            (feature / "AR/story.md").write_text("![设置页](../ux-reference/%E8%AE%BE%E7%BD%AE%E9%A1%B5.png)\n",
+                                                 encoding="utf-8")
+            self.assertEqual([], self.stray_evidence(repo), "Story 引用的候选配图不是运行证据")
+
+            base = "doc/plan/2.1.0/主题/金样候选/demo-case/"
+            (feature / "ux-reference/没人引用.png").write_bytes(b"x")
+            (feature / "ux-reference/只在说明里.png").write_bytes(b"y")
+            (case / "README.md").write_text("![图](doc/features/ISSUE-1/ux-reference/只在说明里.png)\n", encoding="utf-8")
+            (feature / "blueprint").mkdir()
+            (feature / "blueprint/blueprint.target.md").write_text("![图](../ux-reference/没人引用.png)\n",
+                                                                    encoding="utf-8")
+            other = case / "doc/features/ISSUE-2/ux-reference/别的需求.png"
+            other.parent.mkdir(parents=True)
+            other.write_bytes(b"z")
+            outside = repo / "doc/plan/2.1.0/主题/截图.png"
+            outside.write_bytes(b"shot")
+            for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
+                (feature / "ux-reference" / name).write_text("x", encoding="utf-8")
+            (feature / "AR/story.md").write_text(
+                "![设置页](../ux-reference/%E8%AE%BE%E7%BD%AE%E9%A1%B5.png)\n"
+                "![别的需求](../../ISSUE-2/ux-reference/别的需求.png)\n"
+                "![越界](../../../../../../截图.png)\n"
+                + "".join(f"[{n}](../ux-reference/{n})\n" for n in ("run.log", "原稿.docx", "包.zip", "events.jsonl")),
+                encoding="utf-8")
+            prefix = base + "doc/features/ISSUE-1/ux-reference/"
+            self.assertEqual({prefix + "没人引用.png", prefix + "只在说明里.png",
+                              base + "doc/features/ISSUE-2/ux-reference/别的需求.png", "doc/plan/2.1.0/主题/截图.png",
+                              *(prefix + n for n in ("run.log", "原稿.docx", "包.zip", "events.jsonl"))},
+                             set(self.stray_evidence(repo)))
 
     @staticmethod
     def golden_copies(root: Path) -> list[str]:
