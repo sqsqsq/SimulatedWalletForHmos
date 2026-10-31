@@ -8,7 +8,9 @@
  *   与来源索引里同一来源已存的某一版逐字相同的不落盘（AR 正文与本地已归档的 Story 相同也不落盘，
  *   那是我们自己发布上去的）；评审回稿写 `AR/story-src/review-feedback.md`；评审记录附件与设计参考附件和本地不同时
  *   写 `AR/story-src/fetched-review.md`、`fetched-design-review.md`（不覆盖本地 AR/review.md 的人工区）；
- *   外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt。每份的 status 四态分开：
+ *   外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt 与这张单的交付要求
+ *   `delivery_requirements: {design_reference}`（系统要不要设计参考附件；本替身读单据详情的 `design_reference_required`，缺省不要求）。
+ *   每份的 status 四态分开：
  *   fetched / same / absent / failed——混成一个的话，一次读取错误会被当成「评审没提意见」。
  *   关联关系逐级从实际返回解析，取不到就记 absent 与原因，不默认 AR 详情一定带 RR 编号。
  */
@@ -102,7 +104,8 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     items.push({ ...id, status: 'fetched',
       saved: path.relative(root, path.join(dir, w.saveAs ?? w.name)).split(path.sep).join('/'), ...facts });
   }
-  const receipt = { mode: 'fetch', reqNo, parentNo: srNo, rrNo, fetchedAt: new Date().toISOString(), items };
+  const receipt = { mode: 'fetch', reqNo, parentNo: srNo, rrNo, fetchedAt: new Date().toISOString(),
+    delivery_requirements: { design_reference: detail.design_reference_required === true }, items };
   fs.mkdirSync(src, { recursive: true });
   fs.writeFileSync(path.join(src, 'fetched.json'), `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
   const upstream = items.filter(i => i.role && i.status === 'fetched');

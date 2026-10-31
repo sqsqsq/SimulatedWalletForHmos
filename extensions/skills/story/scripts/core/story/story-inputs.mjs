@@ -107,11 +107,11 @@ function upstreamSection(ctx) {
       continue;
     }
     rows.push(`原件在 \`${rel}\`，每张图的内容附在下面（取自本次采用的版本）。`,
-      '每一张讲的关系在 story 里由讲这件事的小节承接，在写作设计那一节下写 `- 承接上游图：<身份>` 登记；'
-      + '怎样换载体而不丢关系见 `story-write.md` 第三节「换图种可以，丢关系不行」。', '');
+      '与本需求相关的关系在 story 里由讲这件事的小节承接；想标明哪一节承接哪张，在写作设计那一节下写 `- 承接上游图：<身份>`（按需写，'
+      + '不要求每张都写）。怎样换载体而不丢关系见 `story-write.md` 第三节「换图种可以，丢关系不行」。', '');
     for (const d of list) {
       rows.push(`- **${label} ${d.id}**（${diagramTopic(d)}）——原件 \`${rel}\` 第 ${d.at.from}–${d.at.to} 行；`
-        + `登记写 \`- 承接上游图：${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
+        + `要标承接位置时写 \`- 承接上游图：${label} ${d.id}\``, '', '````mermaid', ...d.lines, '````', '');
     }
   }
   return rows;

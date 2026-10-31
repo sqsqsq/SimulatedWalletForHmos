@@ -303,7 +303,7 @@ class TestArchive(SystemCase):
         self.fetch()
         proc = self.story("archive", AR)
         self.assertEqual(1, proc.returncode)
-        self.assertIn("没有可用的交付集合", self.receipt(proc)["error"])
+        self.assertIn("交付集合", self.receipt(proc)["error"])
         self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
 
     def test_local_ticket_has_no_place_to_archive(self) -> None:
@@ -318,40 +318,75 @@ class TestArchive(SystemCase):
 
 
 class TestRestore(SystemCase):
-    """restore 用 `sources/backups/cloud/` 里的备份恢复系统正文，附件与本地业务文件不动。"""
+    """restore 照取材回执里的恢复准备把那次覆盖前的备份写回系统正文并读回；附件与本地业务文件不动。
+    远端在准备之后又变了一字不写；远端已是目标只读回；写不进去记 failed，恢复未确认。"""
 
     def setUp(self) -> None:
         super().setUp()
         self.story_text, self.notes_text = self.write_spec_products()
         self.fetch()
         self.deliver()
+        proc = self.story("archive", AR)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.backup = self.receipt(proc)["backupPath"]
+        self.fetch()
+
+    def prepare(self, action: str = "write") -> None:
+        """恢复准备（`story_flow.py restored --prepare` 写进取材回执的 restore）：目标是归档留下的备份，远端是刚取回的那一版。"""
+        path = self.feature / "AR" / "story-src" / "fetched.json"
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        receipt["restore"] = {"prepared_at": "2099-01-01T00:00:00+00:00", "name": "AR-design.md", "local": self.backup,
+                              "digest": short(self.feature / self.backup), "external": short(self.system / AR / "design.md"),
+                              "action": action}
+        path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def test_restore_returns_the_previous_body_and_leaves_the_attachments(self) -> None:
-        self.story("archive", AR)
         self.assertEqual(self.story_text, (self.system / AR / "design.md").read_text("utf-8"))
+        self.prepare()
         proc = self.story("restore", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertTrue(self.receipt(proc)["restored"])
         self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
         self.assertEqual(self.story_text, (self.feature / "AR" / "story.md").read_text("utf-8"))
         self.assertEqual(DESIGN_REVIEW_TEXT, (self.system / AR / "attachments" / "design-review.md").read_text("utf-8"))
+        body = self.items()["AR-design.md"]
+        self.assertEqual(("fetched", short(self.feature / self.backup)), (body["status"], body["digest"]))
+        self.assertIn("checkedAt", body)
+        self.assertEqual(1, len(list((self.feature / "sources" / "backups" / "cloud").glob("design-*.md"))), "restore 不该再备份一份")
 
-    def test_restore_takes_the_latest_cloud_backup(self) -> None:
-        self.story("archive", AR)
-        cloud = self.feature / "sources" / "backups" / "cloud"
-        (cloud / "design-29990101000000.md").write_text("# 更晚的备份\n", encoding="utf-8")
+    def test_a_change_after_the_preparation_writes_nothing(self) -> None:
+        self.prepare()
+        (self.system / AR / "design.md").write_text("评审人后来改的正文\n", encoding="utf-8")
+        proc = self.story("restore", AR)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("在恢复准备之后又变了", self.receipt(proc)["error"])
+        self.assertEqual("评审人后来改的正文\n", (self.system / AR / "design.md").read_text("utf-8"))
+
+    def test_a_body_already_at_the_target_is_only_read_back(self) -> None:
+        (self.system / AR / "design.md").write_text(AR_TEXT, encoding="utf-8")
+        self.prepare("skip")
+        before = (self.system / AR / "design.md").stat().st_mtime_ns
         proc = self.story("restore", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertEqual("# 更晚的备份\n", (self.system / AR / "design.md").read_text("utf-8"))
-        self.assertEqual(2, len(list(cloud.glob("design-*.md"))), "restore 不该再备份一份")
+        self.assertEqual(before, (self.system / AR / "design.md").stat().st_mtime_ns, "已是目标还重写了一次")
+        self.assertEqual("same", self.items()["AR-design.md"]["status"])
 
-    def test_restore_without_backup_fails(self) -> None:
+    def test_a_failed_write_is_not_reported_as_restored(self) -> None:
+        self.prepare()
+        target = self.system / AR / "design.md"
+        target.chmod(stat.S_IREAD)
+        self.addCleanup(target.chmod, stat.S_IREAD | stat.S_IWRITE)
+        proc = self.story("restore", AR)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("恢复未确认", self.receipt(proc)["error"])
+        self.assertEqual("failed", self.items()["AR-design.md"]["status"])
+
+    def test_restore_without_a_preparation_fails(self) -> None:
         proc = self.story("restore", AR)
         self.assertEqual(1, proc.returncode)
         receipt = self.receipt(proc)
         self.assertFalse(receipt["success"])
-        self.assertIn("backups", receipt["error"])
-
+        self.assertIn("恢复准备", receipt["error"])
 
 
 class TestNoStaleDataSource(unittest.TestCase):

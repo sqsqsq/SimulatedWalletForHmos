@@ -834,7 +834,9 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         targets[key] = docs[-1]["target"] if new else _reading(have)
 
     def rendered(doc: dict) -> tuple[str | None, str | None, list[str]]:
-        readable, missing = project_markdown(doc["text"], doc["key"], doc["here"], targets)
+        # 按它此刻选定的实际阅读目录渲染：暂落回已有版本的在旧版本目录，提升后在候选新目录
+        here = doc["here"] if doc["new"] else posixpath.dirname(_reading(doc["have"]))
+        readable, missing = project_markdown(doc["text"], doc["key"], here, targets)
         return readable, digest(readable.encode("utf-8")) if readable is not None else None, missing
 
     promoted = True

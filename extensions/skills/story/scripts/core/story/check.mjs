@@ -20,7 +20,7 @@ import {
 } from './context.mjs';
 import { deliveryNextSteps, deliveryProblems } from './delivery.mjs';
 import {
-  EMPTY_SECTION_TEXT, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
+  EMPTY_SECTION_TEXT, normalizeHeading, parseChapter, placeholderProblems, storySections, tableCells, zonesByLine,
 } from './document.mjs';
 import { strayReadingLinks } from './figure-view.mjs';
 import { imageProblems } from './images.mjs';
@@ -76,7 +76,8 @@ export function storyCheck(ctx, { registration = true } = {}) {
     return parsed.get(title);
   };
   const titles = sections.map(s2 => s2.title);
-  const want = ctx.contract.chapters.map(c => c.title);
+  // 本需求的有效章表：章序与展示标题按写作设计；写了不涉及的章可以不出现（出现也按它的位置认）
+  const want = ctx.contract.chapters.filter(c => !c.omittable || titles.includes(normalizeHeading(c.title))).map(c => c.title);
 
   mark('⓪a 声明的来源都在');
   {

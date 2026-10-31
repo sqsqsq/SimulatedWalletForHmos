@@ -5,7 +5,7 @@
  *   story.js（入口：参数解析 → 校验 → 分发）
  *     ├─ fetch.js    fetch（fetchUpstream 只读取回本单关联的 AR / SR / RR 正文、评审回稿与附件）
  *     ├─ archive.js  archive（archiveOne，三件逐件写入并读回）
- *     └─ restore.js  restore（restoreOne，经 archiveOne 回传备份）
+ *     └─ restore.js  restore（restoreOne，照取材回执里的恢复准备写回那次覆盖前的正文）
  *   mcp.js（需求系统访问层）  dirs.js（路径）  token.js（取 token，独立入口）
  *
  * 命令接口（SKILL 按此调用）：
@@ -17,7 +17,7 @@
  *             AR/story.md 写成系统正文、AR/review.md 与 blueprint/component-blueprint.review.md（设计参考）传为附件，逐件读回，读回记进
  *             AR/story-src/fetched.json；交付哪几件照回执里发布前核对记下的 delivery；覆盖前系统正文备份到需求目录 `sources/backups/cloud/`。
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
- *             把 `sources/backups/cloud/` 里最新一份写回系统正文；没有备份即失败。
+ *             照取材回执里的恢复准备（`restore`）把那次覆盖前的备份写回系统正文并读回；没有准备、远端在准备之后变了或读回不一致即失败。
  *   fetch   → {"mode":"fetch","reqNo":"...","out":"...","parentNo":"SR...","rrNo":"RR...","fetched":3,"failed":0,
  *              "items":[...],"success":true}
  *             只读取材，起单与 update 都用它：上游三份正文写进 --out（必填，本单来源收件箱下的取材批次），

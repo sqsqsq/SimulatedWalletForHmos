@@ -2587,6 +2587,8 @@ class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
         self.build("skeleton")
         story = self.landed("02-术语.md", "术语")
         body = story.split("## 术语", 1)[1].split("## 范围", 1)[0]
+        # 章锚（`<!-- story-build:chapter <ID> -->`）是工具定位用的隐藏注释，不是写给作者的指引
+        body = "\n".join(line for line in body.splitlines() if not line.startswith("<!-- story-build:chapter "))
         self.assertNotIn("<!--", body, "写给作者的注释进了归档件")
         self.assertIn("| 术语 |", body, "术语表本身该留下")
 
@@ -3346,8 +3348,9 @@ class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
                 self.assertEqual(0, code, out)
                 self.assertIn("用法", out)
         code, out = self.run_build("chapter", "--help")
-        self.assertIn("--chapter <章名>  必需", out)
-        self.assertIn("--from <文件>  必需", out)
+        self.assertIn("--chapter <章 ID 或章名>  必需", out)
+        self.assertIn("--from <文件>", out)
+        self.assertIn("--omit", out)
         self.assert_wrote_nothing(before)
 
     def test_bad_usage_stops_before_anything_runs(self) -> None:
@@ -3637,10 +3640,12 @@ class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
     def design(self, text: str) -> None:
         self.plan.write_text(text, encoding="utf-8")
 
-    def test_an_unregistered_diagram_is_named_with_its_topic(self) -> None:
-        out = self.assert_check_names("没有登记 SR §9.1 #1（")
-        self.assertIn("提交 → 受理", out, "缺口要说出那张图讲的事")
-        self.assertIn("没有登记 SR §9.2 #1（", out)
+    def test_an_unmapped_diagram_does_not_block_the_check(self) -> None:
+        """作者没为上游图指定承接位置：全篇检查不因此报缺口，选了的位置照常核。"""
+        _, out = self.check_output()
+        self.assertNotIn("没有登记 SR §9", out)
+        self.design(with_carry(self.plan.read_text(encoding="utf-8"), ["SR §9.7 #1"]))
+        self.assert_check_names("「承接上游图：SR §9.7 #1」不是当前上游里的图")
 
     def test_prose_and_tables_can_carry_the_relation(self) -> None:
         """业务流程章只有正文、没有下游 Mermaid：登记在这一章即合法。"""

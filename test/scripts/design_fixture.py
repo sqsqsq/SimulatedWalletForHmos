@@ -463,10 +463,11 @@ def hand_to_design(src: Path, access: Path) -> None:
 
 
 def walk_to_design(flow: Callable[..., dict], src: Path, access: Path,
-                   scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
+                   scope_text: str = "本 AR 承载自动充值签约与管理", hand: bool = True) -> None:
     """用真实流程命令走完 S1–S3 并交给设计：材料关卡、需求分析、范围关卡，再放好同根的准入蓝图。
 
-    走完即「可以成文」。材料是夹具里已导入的 `sources/` 材料版本。"""
+    走完即「可以成文」。材料是夹具里已导入的 `sources/` 材料版本。`hand` 为假时只推进关卡、不放蓝图：
+    调用方随后自己装唯一一份目标蓝图（`prepare_designed`），不先装一份默认蓝图再覆盖。"""
     src.mkdir(parents=True, exist_ok=True)
     flow("init")
     flow("round")
@@ -478,7 +479,8 @@ def walk_to_design(flow: Callable[..., dict], src: Path, access: Path,
         [{"key": "carry_all", "label": "按当前范围整体承载"}], ensure_ascii=False), encoding="utf-8")
     flow("round")
     answer(flow, "scope_decision", "夹具：整体承载", "--chosen", "carry_all")
-    hand_to_design(src, access)
+    if hand:
+        hand_to_design(src, access)
 
 
 def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_script: Path, access: Path,
@@ -503,7 +505,7 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
         return json.loads(proc.stdout[proc.stdout.index("{"):])
 
     if not (src / "story-flow.json").is_file():
-        walk_to_design(flow, src, access)
+        walk_to_design(flow, src, access, hand=False)
     # 设计走到准入：蓝图的需求条目采用本需求的材料版本，带本夹具要的知识适用性判断与设计内容
     install_blueprint(root, feature, access, judgements=judgements, **(design or {}))
     if (feature_root / "AR" / "story.md").is_file():

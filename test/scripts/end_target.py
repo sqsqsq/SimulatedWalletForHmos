@@ -129,10 +129,11 @@ def short_digest(data: bytes) -> str:
 
 
 def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Path | None) -> list[str]:
-    """当前这一版真实送审了没有：Story、Review 与设计参考附件三件都要对上。只读，不替模型上传、不写任何文件。
+    """当前这一版真实送审了没有：发布记录里这一次交付的每一件都要对上（Story 正文与 Review 附件必有，
+    设计参考附件在这一次交了才核）。只读，不替模型上传、不写任何文件。
 
-    发布记录（流程契约 `archived` 的三份摘要与 `.backups/published/` 副本）要是当前这三件；需求系统上，
-    正文逐字是当前 Story，两个附件逐字是当前 Review 与设计参考（同根蓝图的原生评审投影）。只登记了归档、附件旧了或空着，都不算送到。
+    发布记录（流程契约 `archived` 的交付项、摘要与 `.backups/published/` 副本）要是当前这几件；需求系统上，
+    正文逐字是当前 Story，附件逐字是当前 Review 与（交了时）设计参考。只登记了归档、附件旧了或空着，都不算送到。
     """
     feature_root = root / features_dir / feature
     ar = feature_root / "AR"
@@ -144,10 +145,14 @@ def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Pat
         return [f"读不出流程契约、AR/story.md、AR/review.md 或 blueprint/component-blueprint.review.md（{exc}）"]
     if not archived:
         return ["流程契约里没有发布记录：当前这一版还没送审"]
+    items = archived.get("items") or []
+    if not {"AR-design.md", "review.md"} <= set(items):
+        return [f"发布记录的交付项缺 Story 正文或 Review 附件（{items}）：不算送到"]
+    design = "design-review.md" in items
     missing: list[str] = []
     published = feature_root / ".backups" / "published"
     for name, key, copy in (("Story", "story_digest", "story.md"), ("Review", "review_digest", "review.md"),
-                            ("设计参考", "design_review_digest", "design-review.md")):
+                            *((("设计参考", "design_review_digest", "design-review.md"),) if design else ())):
         if archived.get(key) != short_digest(current[name]):
             missing.append(f"发布记录里的 {name} 是 {archived.get(key)}，当前是 {short_digest(current[name])}：送审的不是当前这一版")
         try:
@@ -162,7 +167,7 @@ def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Pat
         return ["没有需求系统（STORY_REQUIREMENT_SYSTEM_DIR 未设）：送审终点只对系统单成立"]
     ticket = system_dir / feature
     for name, rel, label in (("Story", "design.md", "正文"), ("Review", "attachments/review.md", "评审记录附件"),
-                             ("设计参考", "attachments/design-review.md", "设计参考附件")):
+                             *((("设计参考", "attachments/design-review.md", "设计参考附件"),) if design else ())):
         try:
             remote = (ticket / rel).read_bytes()
         except OSError:

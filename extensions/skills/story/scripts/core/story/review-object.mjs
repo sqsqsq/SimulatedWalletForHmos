@@ -67,7 +67,6 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   const src = path.join(root, 'AR', 'story-src');
   add(path.join(root, 'AR', 'story.md'), 'object', '待审的 Story');
   add(path.join(root, 'AR', 'review.md'), 'object', '待审的决策与评审记录（机器区与人工区）');
-  if (withTask) add(path.join(root, ...TASK), 'source', '审查任务');
   add(path.join(src, 'story-template.md'), 'source', '作者的写作设计（待核的作者判断）');
   add(path.join(src, 'decisions.json'), 'source', '决策登记');
   for (const name of ['doc-refresh.md', 'template-adjustments.md', 'meeting-notes.json']) {
@@ -222,8 +221,23 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   for (const r of knowledgeRegistrations(projectRoot)) add(path.join(ext, ...r.file.split('/')), 'source', `激活知识 ${r.file}`);
   add(path.join(ext, 'skills', 'story', 'contracts', 'story-chapters.json'), 'source', '章节合同');
   add(path.join(ext, 'rules', 'story-reader-rules.yaml'), 'source', '审查判据');
-  return { rows, problems, alias,
+  const object = { rows, problems, alias,
     design: read.status === 'ok' ? { admitted: read.admitted === true, issues: read.issues ?? [] } : null };
+  return withTask ? withTaskRow(projectRoot, feature, object) : object;
+}
+
+/**
+ * 给一份不含审查任务的对象补上任务那一行（紧跟在待审件之后），得到最终的审查对象；任务不在记进 problems。
+ * 同一次动作先组装一次对象生成任务，再用它补出最终身份，不为任务另组装一遍。
+ */
+export function withTaskRow(projectRoot, feature, object) {
+  const abs = path.join(featureRoot(projectRoot, feature), ...TASK);
+  const p = path.relative(projectRoot, abs).split(path.sep).join('/');
+  if (!(fs.existsSync(abs) && fs.statSync(abs).isFile())) return { ...object, problems: [...object.problems, `${p} 读不到（审查任务）`] };
+  const rows = [...object.rows];
+  const at = rows.reduce((last, r, i) => (r.role === 'object' ? i + 1 : last), 0);
+  rows.splice(at, 0, { path: p, role: 'source', label: '审查任务', kind: 'text', required_read: true });
+  return { ...object, rows };
 }
 
 /**

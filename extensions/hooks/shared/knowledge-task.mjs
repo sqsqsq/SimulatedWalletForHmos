@@ -30,7 +30,7 @@ import { recordUsage } from './usage.mjs';
 import { requiredAnswers, unitSources } from '../../skills/story/scripts/core/story/design-source.mjs';
 import { requirementContext } from '../../skills/story/scripts/core/story/context.mjs';
 import { normalizeHeading, storySpan } from '../../skills/story/scripts/core/story/document.mjs';
-import { basisSections, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
+import { basisSections, useEffectiveChapters } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 
 const BLUEPRINT_ACTIONS = ['discovery', 'design', 'questioning'];
 const FEATURE_ACTIONS = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
@@ -285,7 +285,7 @@ function storyExpression(root, feature, judged) {
       rows.push(`- 需求 \`${s.requirement}\` 的 Story 不作为当前可复用的依据${s.state === 'stale' ? '，是旧表达' : ''}：${s.why.join('；')}。`);
       continue;
     }
-    const plan = readWritingPlan(s.ctx);
+    const plan = useEffectiveChapters(s.ctx);
     if (plan.problems.length) {
       gaps.push(`关联 Story：需求 ${s.requirement} 的写作设计读不全，片段取不了：${plan.problems.join('；')}——需求作者修正后重新登记`);
       continue;

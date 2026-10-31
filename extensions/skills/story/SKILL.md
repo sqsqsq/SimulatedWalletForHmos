@@ -27,7 +27,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 | 顺序 | 命令 | 功能 |
 |---|---|---|
 | 1 | `/story init <编号>` | 起手取材、导入与分析，之后按本文一路做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择 |
-| 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 与设计参考 `blueprint/component-blueprint.review.md` 作附件逐件上传并读回（自动备份；任一缺失或未过门禁即拒绝） |
+| 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 作附件，系统要求或本单已有交付请求时再加设计参考 `blueprint/component-blueprint.review.md`，逐件上传并读回（自动备份；任一缺失或未过门禁即拒绝） |
 | 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物 |
 | — | `/story adapt [<目标工程>]` | 把 Story Extension 装到或升级到另一个工程 |
@@ -105,7 +105,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 | **交付选择** | 你问。`story-build check --deliver` 通过后，请求还没指定后续目标时问一次：送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进（本地单没有送审）。已有明确授权的按其范围继续，不问；只问授权之外新增的范围、权限或业务决定 | 交付门打印的选项 | 人选送审就走「命令入口 · 归档」 |
 | **查无此单** | 你问。全是占位件且取材报「查无此单」 | 确认单号 | 按人给的单号重取 |
 | **归档** | 你问。还没有送审授权时问一次；已有授权时只在发布前核报出外部改动、超出授权范围或新增附件、目标时问 | 发布前核的差异与冲突 | 覆盖冲突人看过仍要覆盖，带 `--reply` 记原话 |
-| **恢复** | 你问。恢复会覆盖线上正文，人明确要求才做 | 恢复的既有确认点 | 按既有确认点 |
+| **恢复** | 你问。恢复会覆盖线上正文，人明确要求才做；恢复准备报「之后有人改过」时再停 | 恢复准备的三方比较与差异 | 人看过仍要恢复，`restored --prepare` 带 `--reply` 记原话 |
 
 **停等的开关不交给被停的那一方**：「要不要停」不由判断材料齐不齐、范围有没有变来决定。你的判断只进推荐与提议，定不定由人。
 
@@ -163,13 +163,16 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 ### 归档
 
 - **前置**：Story 已登记并通过交付门，`AR/story.md`、`AR/review.md` 与设计参考 `blueprint/component-blueprint.review.md` 齐备；不适用于本地单
-- **archive 不改业务正文**：上传只写取材回执里三件的读回，工作区其余文件不动；全程按正式形态上传（图块是 Mermaid，增强 SVG 不上传），结束后恢复可用的增强 SVG
+- **交付哪几件**：Story 正文与 Review 附件必交；设计参考附件在对接层给出的系统要求（取材回执 `delivery_requirements.design_reference`）为真时必交，
+  本单已有交付请求要附它时带 `--with-design-reference`，两者都没有就交两件。发布前核把这一次的集合记进取材回执，上传、读回与登记都照它；
+  上次交过、这次没交的设计参考附件留在系统上，发布记录标明它不是这一次的新版
+- **archive 不改业务正文**：上传只写取材回执里交付各件的读回，工作区其余文件不动；全程按正式形态上传（图块是 Mermaid，增强 SVG 不上传），结束后恢复可用的增强 SVG
 
 ```
-node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token> [--reply "<人确认覆盖外部改动的原话>"]
+node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token> [--reply "<人确认覆盖外部改动的原话>"] [--with-design-reference]
 ```
 
-一条命令依次走完：交付门 → 取外部当前内容 → 发布前核 → 按 正文 → 评审记录附件 → 设计参考附件 的顺序逐件写入并读回 → 核回执 → 登记发布记录（不可逆）。
+一条命令依次走完：交付门 → 取外部当前内容 → 发布前核（定下交付集合） → 按 正文 → 评审记录附件 →（设计参考附件）的顺序逐件写入并读回 → 核回执 → 登记发布记录（不可逆）。
 
 - **交付门没过**不调用需求系统。
 - **发布前核**用取回的内容逐件核需求系统上的正文、评审记录附件与设计参考附件还是不是上次发布（或恢复）之后的那一版
@@ -184,9 +187,16 @@ node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature 
 
 ### 恢复
 
-`node .../story.js restore <AR> <mcp-token>`——把需求系统上的正文恢复到上一版，回退 archive 那次覆盖；两个附件与之后的人工意见留在系统上。
-恢复之后 `fetch` 一次，再 `story_flow.py restored --feature <AR>`：它记下外部正文现在是哪一版，报告与本地 Story 的差异；
-此后正文与两个附件分属不同版本，下一次 archive 的发布前核逐件核。
+把需求系统上的正文恢复到最近一次 archive 覆盖它之前的那一版；附件与之后的人工意见留在系统上。按这个顺序：
+
+1. `node .../story.js fetch <AR> <mcp-token> --project-root <工程根> --out <本单 sources/inbox/fetch-<时刻>>`：取外部当前内容；
+2. `story_flow.py restored --prepare --feature <AR>`：核那次覆盖前的备份，按「那次覆盖之后的外部正文 / 恢复目标 / 现在的外部正文」三方判——
+   现在已是目标只读回；仍是那次覆盖之后的版本就可以写；**都不是，说明之后有人改过，它报冲突、不写**：把差异摆给人，
+   人看过仍要恢复时带 `--reply "<原话>"` 再准备（普通恢复请求不等于同意覆盖别人后来的改动）；
+3. `node .../story.js restore <AR> <mcp-token>`：只照准备写正文并读回；远端在准备之后又变了就一字不写，读回不一致报恢复未确认；
+4. `story_flow.py restored --feature <AR>`：读回成立才记下外部正文现在是恢复后的那一版，报告与本地 Story 的差异。
+
+此后正文与附件分属不同版本，下一次 archive 的发布前核逐件核。没有那次覆盖前的备份就不能恢复。
 本地文件一个都不动，归档登记与人签照旧。本地单没有远端，没有这一步。
 
 ### 更新

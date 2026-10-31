@@ -15,7 +15,7 @@
  *   本地只写 `sources/backups/cloud/` 与取材回执，业务文件一个字节不动。**只上传 md**：系统不承载图片，正文里的图片链接原样保留。
  *   交付集合里的本地来源缺了即失败。归档前的交付门与外部冲突由 /story 流程在调用前核完，不在这里。
  *
- *   restore 经 contentOverride 只回传正文（skipBackup 为真，不动附件与回执）。
+ *   覆盖正文时把备份路径记在 delivery 的正文项（`backup`），归档登记据它保住恢复目标。
  */
 'use strict';
 const fs = require('node:fs');
@@ -53,15 +53,7 @@ async function backupBody(reqNo, mcpToken, root) {
   return rel;
 }
 
-/** restore 用：只把给定内容回传为系统正文并核对。 */
-async function putBodyOnly(reqNo, mcpToken, content) {
-  await callMcp(REQUIREMENT_URL, 'putBody', { reqNo, name: 'design.md', content }, mcpToken);
-  const verified = await callMcp(REQUIREMENT_URL, 'getBody', { reqNo, name: 'design.md' }, mcpToken) === content;
-  return { archived: true, backupPath: null, verified };
-}
-
-async function archiveOne(reqNo, mcpToken, skipBackup = false, contentOverride = undefined) {
-  if (contentOverride !== undefined) return putBodyOnly(reqNo, mcpToken, contentOverride);
+async function archiveOne(reqNo, mcpToken) {
   const root = featureDir(reqNo);
   const receiptFile = path.join(root, RECEIPT);
   let receipt;
@@ -72,8 +64,9 @@ async function archiveOne(reqNo, mcpToken, skipBackup = false, contentOverride =
   }
   // ⓪ 交付集合：发布前核对记下的那一份；本地来源此刻的摘要要等于它记的
   const delivery = receipt.delivery?.items;
-  if (!Array.isArray(delivery) || !delivery.length || delivery.some(d => !REMOTE[d?.name] || !d.local)) {
-    throw new Error(`取材回执里没有可用的交付集合（delivery）：上传前先做发布前核对，它记下这一次交付哪几件`);
+  if (!Array.isArray(delivery) || !delivery.length || delivery.some(d => !REMOTE[d?.name] || !d.local)
+    || !(Date.parse(receipt.delivery?.prepared_at) >= Date.parse(receipt.fetchedAt))) {
+    throw new Error(`取材回执里没有这次取材之后的交付集合（delivery）：上传前先做发布前核对，它记下这一次交付哪几件`);
   }
   const ITEMS = delivery.map(d => ({ ...REMOTE[d.name], name: d.name, local: d.local, digest: d.digest }));
   const local = {};
@@ -111,8 +104,11 @@ async function archiveOne(reqNo, mcpToken, skipBackup = false, contentOverride =
   }
   receipt.items = items;
   save();
-  const backupPath = skipBackup || current['AR-design.md'] === local['AR-design.md'] ? null
-    : await backupBody(reqNo, mcpToken, root);
+  const backupPath = current['AR-design.md'] === local['AR-design.md'] ? null : await backupBody(reqNo, mcpToken, root);
+  if (backupPath) {
+    receipt.delivery.items.find(d => d.name === 'AR-design.md').backup = backupPath;
+    save();
+  }
   for (const item of ITEMS) {
     const at = items.findIndex(i => i.name === item.name);
     const skipped = current[item.name] === local[item.name];

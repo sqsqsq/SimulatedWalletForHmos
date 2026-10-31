@@ -156,36 +156,44 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     if node is None:
         raise FlowError("找不到 node，story-build 一步都没启动，成文没有登记。"
                         f"这是运行环境问题，业务稿与派生件都不用改：装好 node 后{rerun}")
-    steps = (("check", ["check", "--registering"], "全篇检查通过"),
-             ("review --action check", ["review", "--action", "check"], "独立审查结果可消费"),
-             ("basis", ["basis"], "成文依据已取到"))
+    # 三项核对（全篇检查 → 审查结果 → 成文依据）在一个 story-build 进程里按序跑，各步结论与原输出逐项带回
+    steps = (("check", "check", "全篇检查通过"), ("review", "review --action check", "独立审查结果可消费"),
+             ("basis", "basis", "成文依据已取到"))
+    try:
+        proc = subprocess.run(
+            [node, str(checker), "registration-check", "--feature", feature_root.name, "--project-root", str(project_root)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise FlowError(f"story-build registration-check 没能启动（{exc}），成文没有登记。已完成：无。"
+                        f"这是运行环境问题，业务稿与派生件都不用改：环境恢复后{rerun}") from exc
+    rows = [line for line in (proc.stdout or "").splitlines() if line.startswith("{")]
+    try:
+        result = json.loads(rows[-1]) if rows else None
+    except ValueError:
+        result = None
+    if proc.returncode not in (0, 1, 2) or not isinstance(result, dict) or not isinstance(result.get("steps"), list):
+        raise FlowError(f"story-build registration-check 没有正常结束（退出码 {proc.returncode}），成文没有登记。"
+                        f"这不是业务稿的问题，不要为它改真源或草稿：{_not_the_product(proc.returncode)}，"
+                        f"修好后{rerun}。原始输出：\n" + _said(proc))
+    by = {s.get("name"): s for s in result["steps"]}
     done: list[str] = []
-    outputs: dict[str, subprocess.CompletedProcess] = {}
-    for i, (name, argv, effect) in enumerate(steps):
-        try:
-            proc = subprocess.run(
-                [node, str(checker), *argv, "--feature", feature_root.name, "--project-root", str(project_root)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace")
-        except OSError as exc:
-            raise FlowError(f"story-build {name} 没能启动（{exc}），成文没有登记。已完成：{'；'.join(done) or '无'}。"
-                            f"这是运行环境问题，业务稿与派生件都不用改：环境恢复后{rerun}") from exc
-        outputs[name] = proc
-        if name == "review --action check":
-            rows = [line for line in proc.stdout.splitlines() if line.startswith("{")]
-            review = json.loads(rows[-1]) if rows else {}
-            if proc.returncode in (0, 1) and review.get("result") not in ("pass", "warn", "unreviewed"):
-                raise FlowError(f"这一份的独立审查还不能消费（{review.get('result', '读不到结果')}）："
-                                f"{review.get('detail', (proc.stderr or '').strip()[:600])}"
-                                f"——按 `phases/design.md`「五、独立审查、登记与交付」处置，审查结果可消费后{rerun}")
-        if proc.returncode == 1:
+    for i, (key, name, effect) in enumerate(steps):
+        step = by.get(key) or {"status": "not_run", "detail": ""}
+        if step.get("status") == "passed":
+            done.append(effect)
+            continue
+        detail = str(step.get("detail") or "").strip() or "没有任何输出"
+        if key == "review" and step.get("status") == "failed":
+            review = result.get("review") or {}
+            raise FlowError(f"这一份的独立审查还不能消费（{review.get('result', '读不到结果')}）："
+                            f"{review.get('detail', detail[:600])}"
+                            f"——按 `phases/design.md`「五、独立审查、登记与交付」处置，审查结果可消费后{rerun}")
+        if step.get("status") == "failed":
             raise FlowError(f"story-build {name} 没通过，成文没有登记，已有的登记原样保留。已完成：{'；'.join(done) or '无'}。"
-                            f"没跑：{'、'.join(s[0] for s in steps[i + 1:]) or '无'}。按下面的报告处理它点名的真源、草稿或环境"
-                            f"（正文经 chapter 提交），{rerun}：\n" + _said(proc))
-        if proc.returncode != 0:
-            raise FlowError(f"story-build {name} 没有正常结束（退出码 {proc.returncode}），成文没有登记。"
-                            f"这不是业务稿的问题，不要为它改真源或草稿：{_not_the_product(proc.returncode)}，"
-                            f"修好后{rerun}。原始输出：\n" + _said(proc))
-        done.append(effect)
+                            f"没跑：{'、'.join(s[1] for s in steps[i + 1:]) or '无'}。按下面的报告处理它点名的真源、草稿或环境"
+                            f"（正文经 chapter 提交），{rerun}：\n" + detail)
+        raise FlowError(f"story-build {name} 没有正常结束，成文没有登记。已完成：{'；'.join(done) or '无'}。"
+                        f"这不是业务稿的问题，不要为它改真源或草稿：{_not_the_product(2)}，修好后{rerun}。原始输出：\n" + detail)
 
     # 登记记下 story、review 与它们据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
     # 与流程路由拿它核「登记之后改过没有」，改过就重新审查、重新登记。
@@ -195,7 +203,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
     # 材料索引摘要随登记记下：update 以 documents 收口时据它认「登记之后来的新材料有没有经过这次成文」
-    wanted = {**json.loads(outputs["basis"].stdout),
+    wanted = {**result["basis"],
               "materials_digest": live_materials(feature_root).get("digest"),
               "files": {rel: file_sha256(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}}
     if status == "story_written" and contract.get("story_basis") == wanted:
@@ -209,9 +217,8 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 登记是 update 一轮的完成点：本扩展拥有的文件此刻的指纹记进这一轮，撤回时据它认「本轮留下的就是这一版」
     record_owned_after(feature_root)
     baseline = record_baseline(feature_root)
-    rows = [line for line in outputs["review --action check"].stdout.splitlines() if line.startswith("{")]
     return {"status": "story_written", "story": str(story), "registered": True,
-            "review": (json.loads(rows[-1]) if rows else {}).get("result"),
+            "review": (result.get("review") or {}).get("result"),
             **({"update_baseline": baseline} if baseline else {}), **_next(feature_root, contract)}
 
 

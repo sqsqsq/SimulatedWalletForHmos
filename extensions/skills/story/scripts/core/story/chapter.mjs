@@ -23,7 +23,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { chapterStructureProblems, pickedStructureNames } from './chapter-contract.mjs';
 import {
-  authoredText, chapterSpan, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
+  authoredText, chapterSpan, chapterSpanById, DIAGRAM_LANGS, EMPTY_SECTION_TEXT, fencedLines, norm, normalizeHeading,
   parseChapter, pendingChapters, placeholderProblems, storySections, zonesByLine,
 } from './document.mjs';
 import { activeKnowledgeEntries, CommandFailure, fail, readRaw, readText } from './context.mjs';
@@ -31,7 +31,7 @@ import { designSource } from './design-source.mjs';
 import { loadNative } from '../../../../../hooks/shared/framework-access.mjs';
 import { appendixBasisProblems, appendixChapter, projectAppendix } from './appendix.mjs';
 import { adoptedUpstreamTexts, redactMaterialLinks, relFromFeature, sourceStatus, upstreamDocs } from './sources.mjs';
-import { draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
+import { draftFor, draftPath, GUIDE_MARK, shellArg } from './drafts.mjs';
 import { scanBrokenImages, scanLanguageRedline, scanLocalPaths } from './language.mjs';
 import { chapterImageProblems, diagramsOf, diagramTopic } from './images.mjs';
 import { basisSections, carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
@@ -272,13 +272,13 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
       + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；方法见 ${guide} 的「四、动笔前：先设计表达」`);
   } else if (left.length) {
     const title = left[0];
-    const at = (ctx.contract.chapters ?? [])
-      .findIndex(c => normalizeHeading(c.title) === normalizeHeading(title));
-    const draft = draftPath(ctx, at < 0 ? 0 : at, title);
+    const at = (ctx.contract.chapters ?? []).findIndex(c => [c.title, c.defaultTitle]
+      .some(t => t && normalizeHeading(t) === normalizeHeading(title)));
+    const draft = at < 0 ? draftPath(ctx, 0, title) : draftFor(ctx, ctx.contract.chapters[at]);
     rows.push(`NEXT: 写「${title}」（还剩 ${left.length} 章待写）`
       + '——照草稿里的骨架写：先答每一节骨架里的问题，再补骨架没列的；'
       + `改完草稿跑 node ${shellArg(ctx.scriptPath)} chapter`
-      + ` --feature ${shellArg(ctx.args.feature)} --chapter ${shellArg(title)}`
+      + ` --feature ${shellArg(ctx.args.feature)} --chapter ${shellArg(ctx.contract.chapters[at]?.id ?? title)}`
       + ` --from ${shellArg(draft)} --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: 本章草稿 ${relFromFeature(ctx, draft)}（骨架已铺在里面）；${planRel} 里`
       + `「${ctx.contract.chapters[at]?.id ?? title}」的骨架；当前 ${storyRel} 里已写的章；`
@@ -353,12 +353,69 @@ function carryRows(ctx, plan, chapterId) {
  * 附录候选在内存投影 → 写前核对 → 替换目标区 → 接续。**核对在写盘之前**：
  * 判不过时 Story 与候选文件都不变，作者改草稿重跑就是。
  */
+/** `--chapter` 认哪一章：章 ID 优先，其次展示标题或合同章名；认不出报出全部可写的章。 */
+function chapterOf(ctx, asked) {
+  const chapters = ctx.contract.chapters ?? [];
+  const hit = chapters.find(c => c.id === asked)
+    ?? chapters.find(c => [c.title, c.defaultTitle].some(t => t && normalizeHeading(t) === normalizeHeading(asked)));
+  if (!hit) {
+    fail(`--chapter「${asked}」：合同里没有这一章——按章 ID 或章名认：`
+      + `${chapters.map(c => `${c.id}（${c.title}）`).join('、')}`);
+  }
+  return hit;
+}
+
+/** 这一章在 Story 里的区间：有章锚按章锚（职责 ID），没有按标题（展示标题或合同章名）；定不到返回 null。 */
+function locate(story, chapter) {
+  const byId = chapterSpanById(story, chapter.id);
+  if (byId?.problem) fail(`AR/story.md：${byId.problem}——AR/story.md 没动`);
+  if (byId) {
+    const n = chapterAnchors(story, byId.title);
+    if (n > 1) {
+      fail(`AR/story.md：有 ${n} 处「${byId.title}」章标题，章锚 ${chapter.id} 只对应其中一处——替换只换得掉这一处，`
+        + '另一处仍是旧的，读者会读到两遍；先删掉多出来的那一处');
+    }
+    return byId;
+  }
+  for (const t of [chapter.title, chapter.defaultTitle]) {
+    if (!t) continue;
+    const n = chapterAnchors(story, t);
+    if (n > 1) {
+      fail(`AR/story.md：有 ${n} 处「${t}」章标题（章锚）——替换按章定位，只会替掉第一处，另一处仍是旧的，读者会读到两遍`);
+    }
+    if (n === 1) return chapterSpan(story, t);
+  }
+  return null;
+}
+
+/**
+ * 省略一章：写作设计把这一章定为不涉及（附录章与带审查状态的章不能省）时，把它连同章锚原子删掉；已不在就不动。
+ * 删之前由作者判断过它在本需求确实不涉及，脚本只核写作设计里有那句理由。
+ */
+function omitChapter(ctx, asked) {
+  const chapter = chapterOf(ctx, asked);
+  if (!chapter.omittable) {
+    fail(`「${chapter.id}」在写作设计里没有写不涉及${chapter.appendix || chapter.review_status ? '，而且它承担机器投影或审查披露，不能省' : ''}`
+      + '——省略一章先在写作设计那一章写 `- 不涉及：<理由>`，再跑 --omit');
+  }
+  const story = readRaw(ctx.storyPath);
+  if (story === null) fail('AR/story.md：不在——省略作用在 skeleton 建出的 story 上');
+  const span = locate(story, chapter);
+  if (!span) {
+    process.stdout.write(`[story-build chapter] 「${chapter.id}」已不在 AR/story.md 里，没有改动\n`);
+    return;
+  }
+  fs.writeFileSync(ctx.storyPath, story.slice(0, span.tagStart ?? span.start) + story.slice(span.end), 'utf-8');
+  process.stdout.write(`[story-build chapter] 已从 AR/story.md 删掉「${chapter.id}」（${chapter.reason}），其余章一个字节未动\n`);
+}
+
 export function cmdChapter(ctx) {
-  const title = String(ctx.args.chapter ?? '').trim();
-  if (!title) fail('缺 --chapter <章名>：要替换哪一章');
+  const asked = String(ctx.args.chapter ?? '').trim();
+  if (!asked) fail('缺 --chapter <章 ID 或章名>：要替换哪一章');
+  if (ctx.args.omit) return omitChapter(ctx, asked);
   const from = ctx.args.from;
   if (!from) fail('缺 --from <文件>：这一章的内容写在文件里，不走命令行参数——'
-    + '正文里有换行、引号与 markdown，任何 shell 都会再解析一遍');
+    + '正文里有换行、引号与 markdown，任何 shell 都会再解析一遍；用法见 `story-build chapter --help`');
   const body = readText(path.resolve(from));
   if (body === null) fail(`${from}：读不到——章提交从这个文件读本章正文`);
   if (!body.trim()) {
@@ -369,12 +426,8 @@ export function cmdChapter(ctx) {
   // 「其余章一个字节未动」这句话随之不成立。判据那一侧仍用剥过 BOM 的读法。
   const story = readRaw(ctx.storyPath);
   if (story === null) fail('AR/story.md：不在——骨架与章锚由 skeleton 建，章提交按章锚替换');
-  const chapters = ctx.contract.chapters ?? [];
-  const chapter = chapters.find(c => normalizeHeading(c.title) === normalizeHeading(title));
-  if (!chapter) {
-    fail(`--chapter「${title}」：合同里没有这一章——章名按章节合同认：`
-      + `${chapters.map(c => c.title).join('、')}`);
-  }
+  const chapter = chapterOf(ctx, asked);
+  const title = chapter.title;
   // 章是照写作设计写的：设计读不了就先不落盘——空壳时写下的章没有可核的依据，
   // 骨架里的小节与表图也无从核对。报错把设计缺在哪一次列全，改完再提交。
   const plan = readWritingPlan(ctx);
@@ -385,16 +438,11 @@ export function cmdChapter(ctx) {
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)} 给出`);
   }
   const planned = { ...chapter, structure: selectedStructure(plan, chapter.id) };
-  const anchors = chapterAnchors(story, title);
-  if (!anchors) {
-    fail(`AR/story.md：找不到「${title}」的章锚（## ${title}）`
-      + '——章锚由 skeleton 按合同章名建，章提交按它定位替换区间');
+  const span = locate(story, chapter);
+  if (!span) {
+    fail(`AR/story.md：找不到「${chapter.id}」这一章（章锚或 ## ${title}）`
+      + '——章锚由 skeleton 建，章提交按它定位替换区间；不在 Story 末尾另加一章');
   }
-  if (anchors > 1) {
-    fail(`AR/story.md：有 ${anchors} 处「${title}」章锚——替换按章锚定位，只会替掉第一处，`
-      + '另一处仍是旧的，读者会读到两遍');
-  }
-  const span = chapterSpan(story, title);
   // 先剥写给作者的说明（章头指引），再剥开头属于本章自己的 H1/同名 H2——
   // 章草稿的章头是注释行，混在任何顺序里都必须先剥干净，标题比对才认得出开头。
   const { text: trimmed, origin } = stripDraft(body, title);

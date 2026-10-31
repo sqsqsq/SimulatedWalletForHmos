@@ -99,7 +99,10 @@ def main() -> int:
     ap.add_argument("--gate", default=None, choices=list(GATES),
                     help="关卡编号，缺省 material_scope")
     ap.add_argument("--ask", default=None, help="decide：`status` 给出的问法编号 ask_id")
-    ap.add_argument("--reply", default=None, help="decide、publish：人的原话，逐字")
+    ap.add_argument("--reply", default=None, help="decide、publish、restored --prepare：人的原话，逐字")
+    ap.add_argument("--with-design-reference", action="store_true",
+                    help="publish：本单已有交付请求要附设计参考时带上（系统要求附时不必带，也不能省）")
+    ap.add_argument("--prepare", action="store_true", help="restored：只准备远端恢复（三方比较），不写远端")
     ap.add_argument("--chosen", default=None,
                     help="decide：人选的选项编号或键——原话没写编号或标签时用；--propose 时是提议项")
     ap.add_argument("--propose", action="store_true", help="decide：记成模型的提议，不推进流程")
@@ -147,9 +150,9 @@ def main() -> int:
         elif args.mode == "story":
             result.update(cmd_story(feature_root, project_root))
         elif args.mode == "publish":
-            result.update(cmd_publish(feature_root, project_root, args.reply))
+            result.update(cmd_publish(feature_root, project_root, args.reply, args.with_design_reference))
         elif args.mode == "restored":
-            result.update(cmd_restored(feature_root))
+            result.update(cmd_restored(feature_root, args.prepare, args.reply))
         elif args.mode == "archived":
             result.update(cmd_archived(feature_root, project_root))
         elif args.mode == "reopen":

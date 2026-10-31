@@ -874,7 +874,14 @@ class AHostWithoutAReviewerDisclosesUnreviewed(TheStoryIsReviewedRegisteredAndDe
         self.host(reviewer=False)
 
     def test_unreviewed_is_disclosed_in_both_documents_without_asking(self) -> None:
-        self.assertEqual(0, self.review("prepare").returncode)
+        prepared = self.review("prepare")
+        self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
+        self.assertIn("本版不派审", prepared.stdout)
+        self.assertIn("直接跑 story-build review --action check", prepared.stdout)
+        self.assertNotIn("交给审查者", prepared.stdout, "没有审查员还叫人派审")
+        dispatch = (self.flow_path.parent / "review" / "dispatch.md").read_text(encoding="utf-8")
+        self.assertIn("本版不派审", dispatch)
+        self.assertNotIn("独立审查者", dispatch, "派审载体还在给一个不存在的审查者下任务")
         self.assertEqual("unreviewed", self.result()["result"])
         story = self.story.read_text(encoding="utf-8")
         chapter = story.split("## 9.", 1)[1].split("\n## ", 1)[0]
@@ -918,8 +925,23 @@ class AHostWithoutAReviewerDisclosesUnreviewed(TheStoryIsReviewedRegisteredAndDe
         self.assertIn("已知必修未复核", got["detail"])
         self.assertNotEqual(0, self.register().returncode, "已知必修未复核还登记了")
         self.story.write_text(self.story.read_text(encoding="utf-8") + "\n再补一句。\n", encoding="utf-8")
-        self.assertEqual(0, self.review("prepare").returncode)
+        prepared = self.review("prepare")
         self.assertIn("已知必修未复核", self.result()["detail"], "再改一版就把已知阻断丢了")
+        self.assertIn("还没人复核", prepared.stdout)
+        self.assertNotIn("unreviewed", prepared.stdout.split("还没人复核", 1)[1], "已知必修待复核还说成未审放行")
+        # 宿主恢复审查能力：首读之后的上下文带上尚未复核的阻断原件，复审通过才解除
+        blocked = self.prepared()["unresolved_fail"]
+        self.host(reviewer=True)
+        self.assertEqual(0, self.review("prepare").returncode)
+        context = (self.flow_path.parent / "review" / "context.md").read_text(encoding="utf-8")
+        self.assertIn("尚未复核的已知阻断", context)
+        self.assertIn(f"`{blocked['report_file']}`（SHA-256 {blocked['report_sha256']}）", context)
+        dispatch = (self.flow_path.parent / "review" / "dispatch.md").read_text(encoding="utf-8")
+        self.assertIn("前轮上下文", dispatch, "派审载体没有指向首读之后读的上下文")
+        self.assertEqual("report_missing", self.result()["result"])
+        self.answer("pass")
+        self.assertEqual("pass", self.result()["result"])
+        self.assertNotIn("unresolved_fail", self.prepared(), "复审通过之后已知必修还挂着")
 
     def test_a_host_change_after_preparing_is_stale(self) -> None:
         """准备时写了未审披露、之后宿主能派审：结果是 subject_stale；重新准备撤掉披露，按正常审查走。"""

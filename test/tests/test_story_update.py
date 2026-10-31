@@ -1574,8 +1574,8 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
 
 
 class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
-    """登记链（全篇检查 → 审查结果 → 成文依据）哪一步没成：说清做完了什么、哪几步没跑、归谁处理，已有登记原样保留；
-    同内容重新登记不换登记时刻。故障注入只换子进程，其余照真跑。"""
+    """登记链（全篇检查 → 审查结果 → 成文依据，一个 story-build 进程里按序跑）哪一步没成：说清做完了什么、哪几步没跑、
+    归谁处理，已有登记原样保留；同内容重新登记不换登记时刻。故障注入只换那一个子进程，其余照真跑。"""
 
     START_REGISTERED = True
 
@@ -1588,22 +1588,41 @@ class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
         from flow.state import FlowError  # noqa: PLC0415
         return lifecycle, publish, FlowError
 
-    def registration_broken_at(self, step: int, outcome) -> tuple[str, list]:
-        """在本进程里跑登记，第 step 个子进程换成 outcome（异常就抛，整数就是那个退出码），其余照真跑。"""
+    def registration_returning(self, outcome) -> tuple[str, list]:
+        """在本进程里跑登记，登记前核的那个 story-build 子进程换成 outcome（异常就抛；
+        `(退出码, stdout)` 就照它返回），其余子进程照真跑。返回报错与登记前核被调了几次。"""
         lifecycle, _, FlowError = self.modules()
         real, calls = subprocess.run, []
 
         def run(cmd, *args, **kwargs):
-            calls.append(cmd)
-            if len(calls) - 1 != step:
+            if "registration-check" not in cmd:
                 return real(cmd, *args, **kwargs)
+            calls.append(cmd)
             if isinstance(outcome, Exception):
                 raise outcome
-            return subprocess.CompletedProcess(cmd, outcome, "", "[story-build] 脚本自身异常：注入的故障")
+            code, stdout = outcome
+            return subprocess.CompletedProcess(cmd, code, stdout, "")
 
         with unittest.mock.patch.object(lifecycle.subprocess, "run", run), self.assertRaises(FlowError) as caught:
             lifecycle.cmd_story(self.feature_root, self.root)
         return str(caught.exception), calls
+
+    def test_the_three_checks_run_in_one_process(self) -> None:
+        """正常登记：三项核对只起一个 story-build 进程，结果照常登记。"""
+        lifecycle, _, _ = self.modules()
+        real, checks = subprocess.run, []
+
+        def run(cmd, *args, **kwargs):
+            if any("story-build" in str(c) for c in cmd):
+                checks.append([str(c) for c in cmd])
+            return real(cmd, *args, **kwargs)
+
+        with unittest.mock.patch.object(lifecycle.subprocess, "run", run):
+            lifecycle.cmd_story(self.feature_root, self.root)
+        names = [c[2] for c in checks]
+        self.assertEqual(1, names.count("registration-check"), checks)
+        self.assertFalse({"check", "review"} & set(names), f"三项核对又各起了进程：{names}")
+        self.assertEqual("registration-check", names[0], "登记之后的路由（下一步）之前先跑登记前核")
 
     def test_registering_unchanged_content_again_keeps_the_registration_time(self) -> None:
         """同内容重新登记仍跑完整核对，登记时刻与依据不换；内容变了、重新审过再登记才换。"""
@@ -1644,34 +1663,35 @@ class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
         self.assertEqual("story_written", self.contract()["status"])
         self.assertFalse(self.flow("story").get("registered"), "改回原样后应与已有登记一致")
 
-    def test_a_step_that_cannot_start_keeps_the_progress(self) -> None:
-        """第三步进程起不来：前两步做了什么、这一步没跑，归运行环境，不让作者改稿；恢复后登记即成。"""
+    def test_a_check_process_that_cannot_start_is_an_environment_matter(self) -> None:
+        """登记前核的进程起不来：一步都没做，归运行环境，不让作者改稿。"""
         self.register()
-        error, calls = self.registration_broken_at(2, FileNotFoundError("node 不见了"))
-        self.assertIn("story-build basis 没能启动", error)
-        self.assertIn("已完成：全篇检查通过；独立审查结果可消费", error)
+        error, calls = self.registration_returning(FileNotFoundError("node 不见了"))
+        self.assertIn("story-build registration-check 没能启动", error)
+        self.assertIn("已完成：无", error)
         self.assertIn("运行环境问题，业务稿与派生件都不用改", error)
-        self.assertEqual(3, len(calls), "起不来之后还接着跑了后面的步骤")
+        self.assertEqual(1, len(calls))
 
     def test_an_internal_error_is_not_sent_to_the_author(self) -> None:
-        """成文依据退出 2（脚本自身异常）：归扩展维护者，不让作者改稿，原始输出带出来。"""
+        """成文依据那一步脚本自身异常（退出 2）：说出前两步已完成，归扩展维护者，不让作者改稿，原始输出带出来。"""
         self.register()
-        error, calls = self.registration_broken_at(2, 2)
-        self.assertIn("story-build basis 没有正常结束（退出码 2）", error)
+        steps = [{"name": "check", "status": "passed", "detail": ""}, {"name": "review", "status": "passed", "detail": ""},
+                 {"name": "basis", "status": "error", "detail": "[story-build] 脚本自身异常：注入的故障"}]
+        error, calls = self.registration_returning((2, json.dumps({"ok": False, "steps": steps, "review": {"result": "pass"}})))
+        self.assertIn("story-build basis 没有正常结束", error)
+        self.assertIn("已完成：全篇检查通过；独立审查结果可消费", error)
         self.assertIn("不要为它改真源或草稿", error)
         self.assertIn("扩展维护者", error)
         self.assertNotIn("按下面的报告处理", error)
         self.assertIn("注入的故障", error, "原始输出没带出来")
-        self.assertEqual(3, len(calls))
 
-    def test_an_interrupted_step_is_an_environment_matter(self) -> None:
-        """退出码既不是 1 也不是 2（进程被杀之类）：查进程与环境，不让作者改稿，也不说成脚本缺陷。"""
+    def test_an_interrupted_check_process_is_an_environment_matter(self) -> None:
+        """退出码既不是 0/1/2（进程被杀之类）、也没给结果：查进程与环境，不让作者改稿，也不说成脚本缺陷。"""
         self.register()
-        error, calls = self.registration_broken_at(0, 137)
-        self.assertIn("story-build check 没有正常结束（退出码 137）", error)
+        error, calls = self.registration_returning((137, ""))
+        self.assertIn("story-build registration-check 没有正常结束（退出码 137）", error)
         self.assertIn("进程被中断或运行环境出错", error)
         self.assertNotIn("扩展维护者", error)
-        self.assertEqual(1, len(calls))
 
     def test_without_node_nothing_runs(self) -> None:
         lifecycle, _, FlowError = self.modules()
@@ -1719,7 +1739,7 @@ class TheReviewersWordsSurviveAFailedRegistration(StoryIsRegisteredAgainAfterCha
 
     CORE = TheRegistrationSaysWhatRan.CORE
     modules = TheRegistrationSaysWhatRan.modules
-    registration_broken_at = TheRegistrationSaysWhatRan.registration_broken_at
+    registration_returning = TheRegistrationSaysWhatRan.registration_returning
 
     def test_the_review_human_zone_survives_a_failed_registration(self) -> None:
         """评审人填过的意见：登记中途失败、修好重新准备审查再登记，都一个字节不丢。"""
@@ -1737,7 +1757,7 @@ class TheReviewersWordsSurviveAFailedRegistration(StoryIsRegisteredAgainAfterCha
             "修改意见：\n", "修改意见：\n重查间隔写进规格。\n")
         self.assertNotEqual(filled, review.read_text(encoding="utf-8"), "夹具的评审区形状变了，用例要跟着改")
         review.write_text(filled, encoding="utf-8")
-        error, _ = self.registration_broken_at(1, 137)
+        error, _ = self.registration_returning((137, ""))
         self.assertIn("没有正常结束", error)
         self.assertEqual(filled, review.read_text(encoding="utf-8"))
         self.register()
@@ -2126,9 +2146,13 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         """系统上原来那份开发需求正文：取材导入的开发需求来源第一版。"""
         return (self.feature_root / "sources" / "design-v1" / "design.md").read_bytes()
 
+    #: 对接层给出的系统交付要求：这一组用例的系统要求设计参考附件（三件）；两件的组合在专门的用例里改
+    DESIGN_REQUIRED = True
+
     def receipt(self, body: bytes | None, when: str = "2099-01-01T00:00:00+00:00", status: str = "fetched",
-                attachments: dict | None = None, checked: str | None = None) -> None:
-        """取材回执：正文给 body（None 是系统上没有），两个附件默认系统上没有；`checked` 给出时三件都记成上传读回。"""
+                attachments: dict | None = None, checked: str | None = None, design_required: bool | None = None) -> None:
+        """取材回执：正文给 body（None 是系统上没有），两个附件默认系统上没有；`checked` 给出时三件都记成上传读回；
+        交付要求照对接层写（`design_required`，缺省取本组的系统要求）。"""
         items = []
         for name, value in (("AR-design.md", body), *((n, (attachments or {}).get(n)) for n in ("review.md", "design-review.md"))):
             item = {"name": name, "status": (status if name == "AR-design.md" else "fetched") if value is not None else "absent"}
@@ -2137,15 +2161,29 @@ class PublishChecksTheExternalVersion(RegisteredCase):
             if checked:
                 item["checkedAt"] = checked
             items.append(item)
-        (self.src / "fetched.json").write_text(json.dumps({"fetchedAt": when, "items": items}), encoding="utf-8")
+        required = self.DESIGN_REQUIRED if design_required is None else design_required
+        (self.src / "fetched.json").write_text(json.dumps({"fetchedAt": when, "delivery_requirements": {"design_reference": required},
+                                                           "items": items}), encoding="utf-8")
+
+    def readback(self, checked: str, **digests: bytes) -> None:
+        """对接层逐件写入并读回之后的回执：给出的各件记成读回的这一份与读回时刻，交付集合等其余字段原样。"""
+        path = self.src / "fetched.json"
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        for item in receipt["items"]:
+            name = item["name"].replace("-", "_").replace(".", "_")
+            if name in digests:
+                item.update(status="fetched", digest=self.digest(digests[name]), checkedAt=checked)
+        path.write_text(json.dumps(receipt), encoding="utf-8")
 
     def uploaded(self, checked: str = "2099-01-01T00:00:00+00:00") -> None:
-        """三件都已上传并读回：回执里每件是本地当前这一份。"""
-        self.receipt(self.local("AR-design.md"), checked=checked,
-                     attachments={n: self.local(n) for n in ("review.md", "design-review.md")})
+        """三件都已上传并读回：发布前核对（真实生产者）记下交付集合，回执里每件是本地当前这一份。"""
+        self.receipt(self.local("AR-design.md"), attachments={n: self.local(n) for n in ("review.md", "design-review.md")})
+        self.publish()
+        self.readback(checked, AR_design_md=self.local("AR-design.md"), review_md=self.local("review.md"),
+                      design_review_md=self.local("design-review.md"))
 
-    def publish(self, reply=None) -> dict:
-        return self.call("cmd_publish", self.root, reply)
+    def publish(self, reply=None, with_design: bool = False) -> dict:
+        return self.call("cmd_publish", self.root, reply, with_design)
 
     def actions(self, out: dict) -> dict:
         return {r["item"]: r["action"] for r in out["items"]}
@@ -2251,18 +2289,168 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.receipt(self.local("AR-design.md"), attachments={"review.md": self.local("review.md")})
         self.assertEqual("conflict", self.actions(self.publish())["design-review.md"], "发布过的附件被删也是外部改动")
 
-    def test_a_remote_restore_moves_only_the_body_baseline_and_keeps_local_files(self) -> None:
-        self.assertIn("还没归档过", self.error(lambda: self.call("cmd_restored")))
-        self.uploaded()
-        self.call("cmd_archived", self.root)
-        story = self.local("AR-design.md")
+    def overwrite_the_system_body(self) -> bytes:
+        """一次覆盖了系统正文的归档：发布前核对记下集合，对接层留下覆盖前正文的备份并逐件读回，再登记。返回那份备份。"""
         older = self.system_body()
+        self.receipt(older)
+        self.assertTrue(self.publish("系统上那份正文看过了，按本地这一版覆盖")["publishable"])
+        backup = self.feature_root / "sources" / "backups" / "cloud" / "design-20990101000000.md"
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_bytes(older)
+        path = self.src / "fetched.json"
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        next(i for i in receipt["delivery"]["items"] if i["name"] == "AR-design.md")["backup"] = "sources/backups/cloud/design-20990101000000.md"
+        path.write_text(json.dumps(receipt), encoding="utf-8")
+        self.readback("2099-01-01T00:00:00+00:00", AR_design_md=self.local("AR-design.md"), review_md=self.local("review.md"),
+                      design_review_md=self.local("design-review.md"))
+        self.assertTrue(self.call("cmd_archived", self.root)["archived"])
+        self.assertEqual("sources/backups/cloud/design-20990101000000.md", self.contract()["archived"]["body_backup"])
+        return older
+
+    def restored(self, prepare: bool = False, reply: str | None = None):
+        return self.call("cmd_restored", prepare, reply)
+
+    def test_a_remote_restore_moves_only_the_body_baseline_and_keeps_local_files(self) -> None:
+        self.assertIn("没有可核的正文覆盖", self.error(lambda: self.restored(True)))
+        older = self.overwrite_the_system_body()
+        story = self.local("AR-design.md")
         attachments = {n: self.local(n) for n in ("review.md", "design-review.md")}
-        self.receipt(older, status="same", attachments=attachments)
-        out = self.call("cmd_restored")
+        self.receipt(story, status="same", attachments=attachments, when="2099-01-02T00:00:00+00:00")
+        prepared = self.restored(True)
+        self.assertEqual(("write", self.digest(older)), (prepared["restore"]["action"], prepared["restore"]["digest"]), prepared)
+        self.assertIn("恢复未确认", self.error(self.restored), "没有读回就登记了恢复")
+        self.readback("2100-01-01T00:00:00+00:00", AR_design_md=older)
+        out = self.restored()
         self.assertTrue(out["differs"], out)
         self.assertEqual(story, self.local("AR-design.md"), "远端恢复动了本地文件")
-        self.receipt(older, status="same", attachments=attachments)
+        self.assertEqual(self.digest(older), self.contract()["archived"]["external_digest"])
+        self.receipt(older, status="same", attachments=attachments, when="2100-01-02T00:00:00+00:00")
         out = self.publish()
         self.assertTrue(out["publishable"], "恢复之后外部就是恢复的那一版，不该再当成别人改过")
         self.assertEqual({"AR-design.md": "write", "review.md": "skip", "design-review.md": "skip"}, self.actions(out))
+
+    def test_a_later_edit_on_the_system_is_not_restored_over_without_a_decision(self) -> None:
+        """归档之后有人在系统上改了正文：恢复准备报冲突、不写准备项；人看过仍要恢复，原话只授权这一次的这一处。
+        系统上已是恢复目标时只读回。"""
+        older = self.overwrite_the_system_body()
+        edited = "评审人后来改过的正文\n".encode("utf-8")
+        self.receipt(edited, when="2099-01-02T00:00:00+00:00")
+        out = self.restored(True)
+        self.assertEqual((False, "conflict"), (out["restorable"], out["restore"]["action"]), out)
+        self.assertNotIn("restore", json.loads((self.src / "fetched.json").read_text(encoding="utf-8")))
+        out = self.restored(True, "看过了，按备份恢复")
+        self.assertEqual("authorized", out["restore"]["action"], out)
+        self.assertEqual(self.digest(edited), self.contract()["restore_overrides"][-1]["external"])
+        self.receipt(older, when="2099-01-03T00:00:00+00:00")
+        self.assertEqual("skip", self.restored(True)["restore"]["action"], "系统上已是恢复目标还要写")
+
+    def test_the_design_reference_follows_the_system_requirement(self) -> None:
+        """系统不要求设计参考附件时交两件；本单已有交付请求带上它时交三件；对接层没给交付要求是对接层缺口。"""
+        self.receipt(None, design_required=False)
+        self.assertEqual({"AR-design.md", "review.md"}, set(self.actions(self.publish())))
+        delivery = json.loads((self.src / "fetched.json").read_text(encoding="utf-8"))["delivery"]
+        self.assertEqual(["AR-design.md", "review.md"], [i["name"] for i in delivery["items"]])
+        self.assertEqual({"AR-design.md", "review.md", "design-review.md"}, set(self.actions(self.publish(with_design=True))))
+        path = self.src / "fetched.json"
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        del receipt["delivery_requirements"]
+        path.write_text(json.dumps(receipt), encoding="utf-8")
+        self.assertIn("对接层", self.error(self.publish))
+
+    def test_a_two_item_delivery_keeps_the_earlier_design_attachment(self) -> None:
+        """上次交过设计参考附件，这次系统不要求、也没请求：只交两件，发布记录保留上次的附件基线并标明不是这一次的新版。"""
+        self.uploaded()
+        self.call("cmd_archived", self.root)
+        first = self.contract()["archived"]
+        self.receipt(self.local("AR-design.md"), attachments={n: self.local(n) for n in ("review.md", "design-review.md")},
+                     design_required=False)
+        self.assertTrue(self.publish()["publishable"])
+        self.readback("2099-01-01T00:00:00+00:00", AR_design_md=self.local("AR-design.md"), review_md=self.local("review.md"))
+        self.call("cmd_archived", self.root)
+        archived = self.contract()["archived"]
+        self.assertEqual(["AR-design.md", "review.md"], archived["items"])
+        self.assertEqual(first["design_review_digest"], archived["design_review_digest"])
+        self.assertIn("这一次没有更新", archived["design_reference"])
+
+
+class TheDeliveryChainRunsThroughTheAdapter(RegisteredCase):
+    """发布、上传、登记与恢复串成一条真实交接：生产者写下的交付集合与恢复准备由对接层（本地替身系统上的真实函数）消费，
+    对接层写下的读回由登记消费，测试不代填。核心侧在进程内把本单当系统单；对接层替身只认 AR 单号的命令行入口不经过，
+    直接调它导出的函数。系统不要求设计参考附件（两件），本单再交付时带上它（三件）。"""
+
+    # 只借发布用例的辅助（进程内调核心、摘要、本地来源），不继承它的用例
+    NAMES = PublishChecksTheExternalVersion.NAMES
+    digest = staticmethod(PublishChecksTheExternalVersion.digest)
+    call, local, system_body, publish, actions, contract = (
+        PublishChecksTheExternalVersion.call, PublishChecksTheExternalVersion.local,
+        PublishChecksTheExternalVersion.system_body, PublishChecksTheExternalVersion.publish,
+        PublishChecksTheExternalVersion.actions, PublishChecksTheExternalVersion.contract)
+    ADAPTERS = DEV_EXT / "skills" / "story" / "scripts" / "adapters"
+    CALL = """
+const [dir, fn, reqNo, out] = process.argv.slice(1, 5);
+const mod = require(require('path').join(dir, fn === 'fetchUpstream' ? 'fetch.js' : fn === 'archiveOne' ? 'archive.js' : 'restore.js'));
+mod[fn](reqNo, 'token', ...(out ? [{ outDir: out }] : []))
+  .then(r => process.stdout.write(JSON.stringify(r)), e => { process.stdout.write(JSON.stringify({ error: e.message })); process.exitCode = 1; });
+"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        self.system = Path(holder.name) / "system"
+        ticket = self.system / FEATURE
+        (ticket / "attachments").mkdir(parents=True)
+        (ticket / "detail.json").write_text(json.dumps({"reqNo": FEATURE, "type": "AR", "title": "余额刷新"}), encoding="utf-8")
+        (ticket / "design.md").write_bytes(self.system_body())
+
+    def adapter(self, fn: str, out: str | None = None) -> dict:
+        proc = subprocess.run(["node", "-e", self.CALL, str(self.ADAPTERS), fn, FEATURE, *([out] if out else []),
+                               "--project-root", str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                              env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
+        return json.loads(proc.stdout or "{}")
+
+    def fetch(self) -> None:
+        got = self.adapter("fetchUpstream", str(self.feature_root / "sources" / "inbox" / "fetch-chain"))
+        self.assertNotIn("error", got, got)
+
+    def remote(self, rel: str) -> bytes | None:
+        f = self.system / FEATURE / rel
+        return f.read_bytes() if f.is_file() else None
+
+    def test_publish_archive_register_redeliver_and_restore(self) -> None:
+        self.fetch()
+        self.assertEqual({"AR-design.md", "review.md"}, set(self.actions(self.publish("系统上那份正文看过了，按本地这一版覆盖"))))
+        self.assertNotIn("error", self.adapter("archiveOne"))
+        self.assertTrue(self.call("cmd_archived", self.root)["archived"])
+        self.assertEqual((self.local("AR-design.md"), self.local("review.md"), None),
+                         (self.remote("design.md"), self.remote("attachments/review.md"), self.remote("attachments/design-review.md")))
+        archived = self.contract()["archived"]
+        self.assertEqual(["AR-design.md", "review.md"], archived["items"])
+        self.assertEqual(self.system_body(), (self.feature_root / archived["body_backup"]).read_bytes(), "覆盖前的正文没留住")
+
+        # 本单的交付请求要附设计参考：再交付一次，正文与 Review 判相同、只写设计参考附件
+        self.fetch()
+        out = self.publish(with_design=True)
+        self.assertEqual({"AR-design.md": "skip", "review.md": "skip", "design-review.md": "write"}, self.actions(out))
+        self.assertNotIn("error", self.adapter("archiveOne"))
+        self.call("cmd_archived", self.root)
+        self.assertEqual(self.local("design-review.md"), self.remote("attachments/design-review.md"))
+        self.assertEqual(["AR-design.md", "review.md", "design-review.md"], self.contract()["archived"]["items"])
+
+        # 评审人之后在系统上改了正文：再发布被拦，对接层不被调用
+        (self.system / FEATURE / "design.md").write_text("评审人改过的正文\n", encoding="utf-8")
+        self.fetch()
+        self.assertFalse(self.publish()["publishable"])
+
+        # 远端恢复：准备看到他人改动报冲突、不写；改回之后准备可写，对接层只照准备写正文并读回，登记据读回
+        out = self.call("cmd_restored", True, None)
+        self.assertEqual("conflict", out["restore"]["action"], out)
+        (self.system / FEATURE / "design.md").write_bytes(self.local("AR-design.md"))
+        self.fetch()
+        self.assertEqual("write", self.call("cmd_restored", True, None)["restore"]["action"])
+        self.assertNotIn("error", self.adapter("restoreOne"))
+        self.assertEqual(self.system_body(), self.remote("design.md"))
+        self.assertEqual(self.local("review.md"), self.remote("attachments/review.md"), "恢复动了附件")
+        restored = self.call("cmd_restored", False, None)
+        self.assertEqual(self.digest(self.system_body()), restored["external"])

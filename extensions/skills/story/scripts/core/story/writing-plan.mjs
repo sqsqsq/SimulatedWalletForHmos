@@ -5,7 +5,7 @@
  * 这件事（阅读主线），正文将要有哪些小节、每节解决什么理解问题（`- 答：`/`- 依据：`/`- 待核：`），
  * 以及每处用什么形式承载（`形式：`）与这个形式要表达什么（`- 描述：`）。行首的列表前缀只是排版，
  * 带不带都按同一行读；协议字段之外的说明文字按说明消费，不进结构约束；
- * 上游每张图讲的关系落在哪一节（`- 承接上游图：`）。
+ * 作者选定由哪一节承接上游哪张图讲的关系（`- 承接上游图：`，按需写，不要求每张都写）。
  * **内容不在这里定**：表格的列、图里的节点与分支、列表的项目，都由写章的人按原文决定。
  *
  * 脚本在这里只做确定的事：建空壳、指出协议缺了什么、把骨架换成章节合同能消费的结构。
@@ -18,7 +18,7 @@ import { readText } from './context.mjs';
 import {
   DIAGRAM_SYNTAXES, fenceRanges, headingPath, nativeAddresses, normalizeHeading, placeholderProblems,
 } from './document.mjs';
-import { diagramsOf, diagramTopic } from './images.mjs';
+import { diagramsOf } from './images.mjs';
 import { relFromFeature, upstreamDocs } from './sources.mjs';
 
 //: 两个必需的二级标题。协议认名字，不管顺序，也不管前面有没有别的说明。
@@ -39,7 +39,7 @@ const APPENDIX_NOTE = '附录的接口、数据、规约与材料取舍由你写
 const LISTED = /^[-*+]\s+/;
 const LINE = {
   form: /^形式[:：]\s*(.*)$/,
-  recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/,
+  recheck: /^待核[:：]\s*(.+)$/, notApplicable: /^不涉及[:：]\s*(.+)$/, display: /^展示标题[:：]\s*(.+)$/,
   carry: /^承接上游图[:：]\s*(.*)$/,
 };
 
@@ -62,8 +62,9 @@ export function writingPlanShell(contract) {
     + '形式按 图＞表格＞列表＞章节＞文字 先后考虑：关系先试图，图讲不全的精确条件用表或列表补，文字解释理由；'
     + '一处要几种形式就写几行，描述里说清各自承担什么；'
     + '选了图的，描述写两半：图前要点明的阅读目的，图后要补的图外条件、责任与结果；'
-    + '本章不涉及就只写 `- 不涉及：<理由>`；上游图讲的关系由哪一节承接，就在那一节写 `- 承接上游图：<skeleton 列出的图身份>`，'
-    + '一行一张，正文、表或图都可以承接。方法见 story-write.md 第四节 -->', '',
+    + '这一章在 Story 里换个标题就写 `- 展示标题：<准确主题>`（不写用合同章名；章的出现顺序就是 Story 的章序）；'
+    + '本章不涉及就只写 `- 不涉及：<理由>`（附录与审查状态那两章不能省）；想标明上游某张图讲的关系由哪一节承接，就在那一节写 `- 承接上游图：<skeleton 列出的图身份>`，'
+    + '一行一张，正文、表或图都可以承接；不是每张图都要写。方法见 story-write.md 第四节 -->', '',
     `## ${PARTS.story}`, '',
     '{{读者是谁、读完要做什么决定；按责任边界 → 整体协作与关键取舍 → 状态与分支 → 验收与待决，'
     + '哪几件事最容易误解、读者先理解哪一件才能理解后文；依据在哪、哪些未决限制后文}}', '', `## ${PARTS.skeleton}`, ''];
@@ -118,11 +119,12 @@ export function readWritingPlan(ctx) {
   const skeleton = part(PARTS.skeleton);
   if (skeleton) readSkeleton(plan, lines, skeleton, fenced, say);
   if (skeleton) carryProblems(ctx, plan, say);
+  if (skeleton) plan.effective = effectiveChapters(plan, say);
   plan.problems.push(...placeholderProblems(text, `写作设计 ${rel} `));
   return plan;
 }
 
-/** 承接登记对不对得上上游：每张图至少登记一处，登记的身份真实，同一位置不重复登记同一张。 */
+/** 作者写下的承接登记对不对得上上游：登记的身份真实，同一位置不重复登记同一张。没登记的图不报——全部上游图照样送独审核相关关系有没有讲到。 */
 function carryProblems(ctx, plan, say) {
   const known = new Map();
   for (const [label, text] of upstreamDocs(ctx)) for (const d of diagramsOf(text)) known.set(`${label} ${d.id}`, d);
@@ -133,17 +135,50 @@ function carryProblems(ctx, plan, say) {
     else if (seen.has(key)) say(`的「承接上游图：${c.source}」在同一位置登记了两次`);
     seen.add(key);
   }
-  for (const [source, d] of known) {
-    if (!plan.carry.some(c => c.source === source)) {
-      say(`没有登记 ${source}（${diagramTopic(d)}）承接在哪一节——在讲这件事的小节下写「- 承接上游图：${source}」，正文、表或图都可以承接它讲的关系`);
-    }
+}
+
+/**
+ * 本需求的有效章表：默认职责（章节合同的章 ID 与读者问题）按写作设计骨架里章 ID 出现的顺序排，标题取 `展示标题`，
+ * 写了 `不涉及` 的章标为可省略（`omittable`：作者可以用 chapter --omit 把它从 Story 删掉；附录章与带审查状态的章承担机器投影与披露，不可省略）。骨架里没出现的章按合同顺序接在后面。
+ * 展示标题撞名报出来。章 ID 是稳定身份，标题只作展示。
+ *
+ * @returns {{id: string, title: string, defaultTitle: string, omittable: boolean, reason: string|null}[]}
+ */
+function effectiveChapters(plan, say) {
+  const defaults = plan.chapters.map(c => ({ ...c, defaultTitle: c.defaultTitle ?? c.title }));
+  const seen = [...plan.skeletons.keys()];
+  const order = [...seen, ...defaults.map(c => c.id).filter(id => !seen.includes(id))];
+  const out = order.map((id) => {
+    const c = defaults.find(x => x.id === id);
+    const sk = plan.skeletons.get(id);
+    const keep = Boolean(c.appendix || c.review_status);
+    const reason = sk?.notApplicable ?? null;
+    return { ...c, title: sk?.display ?? c.defaultTitle, omittable: reason !== null && !keep, reason };
+  });
+  const names = out.map(c => normalizeHeading(c.title));
+  names.forEach((n, i) => {
+    if (names.indexOf(n) !== i) say(`的「### ${out[i].id}」展示标题「${out[i].title}」与「${out[names.indexOf(n)].id}」重名——章标题在 Story 里要唯一`);
+  });
+  return out;
+}
+
+/**
+ * 成文命令按本需求的有效章表工作：写作设计读得了，就把这一次上下文里的章表换成有效章表（章序、展示标题、省略标记），
+ * 读不了保持默认职责。只在命令入口调一次；不在上下文构造时读写作设计。
+ */
+export function useEffectiveChapters(ctx) {
+  const plan = readWritingPlan(ctx);
+  if (plan.effective && !plan.problems.length) {
+    ctx.defaultChapters ??= ctx.contract.chapters;
+    ctx.contract = { ...ctx.contract, chapters: plan.effective };
   }
+  return plan;
 }
 
 /** 登记的承接位置在 story 里的那一节：按章名与小节名逐层精确定位，给出那一节的正文或定位问题。 */
 export function carryTargets(plan, storyText, chapterId = null) {
   return (plan?.carry ?? []).filter(c => !chapterId || c.chapter === chapterId).map((c) => {
-    const title = plan.chapters.find(x => x.id === c.chapter)?.title ?? c.chapter;
+    const title = (plan.effective ?? plan.chapters).find(x => x.id === c.chapter)?.title ?? c.chapter;
     const names = [title, c.at, c.under].filter(Boolean);
     const hit = headingPath(storyText, names);
     const where = names.join(' > ');
@@ -221,6 +256,8 @@ function readSkeleton(plan, lines, range, fenced, say) {
       if (open) plan.rechecks.push({ chapter: ch.id, at: node?.title ?? '', text: open[1].trim() });
       const skip = !node && LINE.notApplicable.exec(note);
       if (skip) ch.notApplicable = skip[1].trim();
+      const shown = !node && LINE.display.exec(note);
+      if (shown) ch.display = shown[1].trim();
     }
   }
   for (const [id, c] of known) {

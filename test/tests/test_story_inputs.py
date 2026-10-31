@@ -172,7 +172,7 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
         self.assertIn("自动充值触发", section, "没给图讲的主题")
         self.assertRegex(section, r"第 \d+–\d+ 行", "没给图在原件里的行范围")
         self.assertIn("C[余额上报]", section, "原图内容没送到")
-        self.assertIn("登记写 `- 承接上游图：SR §5.2 #1`", section, "没给照抄的登记写法")
+        self.assertIn("要标承接位置时写 `- 承接上游图：SR §5.2 #1`", section, "没给照抄的登记写法")
         self.assertNotIn("%% 图源", section, "退出的围栏标记又出现了")
 
     def test_the_adopted_version_is_the_source(self) -> None:

@@ -32,7 +32,7 @@ import { parseYaml } from '../../../../../hooks/shared/yaml.mjs';
 import { readerCheckIds, readerReviewTask } from '../../../../../hooks/shared/reader-review-task.mjs';
 import { readJson, readText, replaceFile } from './context.mjs';
 import { chapterSpan, fenceRanges, tableCells, zoneBlock, zoneSpan } from './document.mjs';
-import { TASK, materialKey, reviewObject } from './review-object.mjs';
+import { TASK, materialKey, reviewObject, withTaskRow } from './review-object.mjs';
 import {
   CHECK_HEADER, CHECK_RESULTS, COVERAGE_KEY, COVERAGE_KEYS, FINDING_HEADER, REPORT_HEADINGS, SEVERITIES,
 } from './review-report-contract.mjs';
@@ -88,10 +88,12 @@ export function prepareReview(ctx, reportDirArg) {
   const was = before.record;
   fs.mkdirSync(dir, { recursive: true });
   const task = path.join(ctx.featureRoot, ...TASK);
-  // 任务是审查对象的一部分，所以不嵌入由对象算出的材料键：材料键经派审载体交给审查者
-  const taskText = `${readerReviewTask(ctx.projectRoot, ctx.args.feature)}\n`;
+  // 任务是审查对象的一部分，所以不嵌入由对象算出的材料键：材料键经派审载体交给审查者。
+  // 对象只组装一次：先用不含任务的那份生成任务，任务写好后补上任务那一行得到最终身份
+  const base = reviewObject(ctx.projectRoot, ctx.args.feature, { withTask: false });
+  const taskText = `${readerReviewTask(ctx.projectRoot, ctx.args.feature, base)}\n`;
   if (readText(task) !== taskText) fs.writeFileSync(task, taskText, 'utf-8');
-  const object = reviewObject(ctx.projectRoot, ctx.args.feature);
+  const object = withTaskRow(ctx.projectRoot, ctx.args.feature, base);
   if (object.problems.length) return { error: `审查对象不全：${object.problems.join('；')}` };
   const key = materialKey(ctx.projectRoot, object.rows);
   // 报告目录随材料键定一次：同一份材料的历次回复都在这个目录里，结论按它们取
@@ -106,6 +108,7 @@ export function prepareReview(ctx, reportDirArg) {
   // 未审披露在准备开始时按宿主能力判定一次（`pendingDisclosure`），已写进文件、材料键里含它；随准备记下原因
   const shown = disclosure(ctx);
   const unresolved = unresolvedFail(ctx, was, key, object, choice);
+  if (unresolved) choice.originals[unresolved.report_file] ??= unresolved.report_sha256;
   const record = { material_key: key, project_root: ctx.projectRoot.split(path.sep).join('/'), report_dir: reportDir,
     report_file: choice.reportFile,
     report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(shown ? { disclosure: shown.reason } : {}),
@@ -121,7 +124,7 @@ export function prepareReview(ctx, reportDirArg) {
   replaceFile(dispatch, dispatchText);
   replaceFile(prepared, `${JSON.stringify(record, null, 2)}\n`);
   return { material_key: key, task: rel, rows: object.rows, report_dir: reportDir, report_file: choice.reportFile,
-    reused: choice.reused, dispatch_file: path.relative(ctx.projectRoot, dispatch).split(path.sep).join('/'),
+    reused: choice.reused, disclosure: record.disclosure ?? null, unresolved_fail: record.unresolved_fail ?? null, dispatch_file: path.relative(ctx.projectRoot, dispatch).split(path.sep).join('/'),
     dispatch_text: dispatchText };
 }
 
@@ -213,6 +216,14 @@ function dispatchFor(ctx, record, task) {
     return `${[...head, `- 审查任务：\`${task}\``, `- 已有通过的回复：\`${record.report_file}\``, '',
       '这份材料已有可复用的审查结论，这一次不派审，直接跑 `story-build review --action check`。'].join('\n')}\n`;
   }
+  if (record.disclosure) {
+    return `${[...head, '', `本版不派审：${record.disclosure}。`, '', ...(record.unresolved_fail
+      ? [`之前的独立审查判过阻断（\`${record.unresolved_fail.report_file}\`），这一版改过之后还没人复核：`
+        + '`story-build review --action check` 的结果是 fail（已知必修未复核），不能登记交付；'
+        + '在能派独立审查的宿主上重新 `story-build review --action prepare`，按那时生成的载体复核。']
+      : ['未审披露已写进 Story 交付章与 Review 题头。直接跑 `story-build review --action check`（结果是 unreviewed），'
+        + '再按已有授权登记与交付；交付说明照实写本版未审。'])].join('\n')}\n`;
+  }
   const later = contextFor(record)
     ? `审查任务 \`${task}\`，以及前轮上下文 \`${relOf(ctx, places(ctx).context)}\`` : `审查任务 \`${task}\``;
   const out = [...head, `- 被审的 Story：\`${story}\``, `- 首读之后读的：${later}`, '',
@@ -233,9 +244,19 @@ const relOf = (ctx, file) => path.relative(ctx.projectRoot, file).split(path.sep
  * 它不是被审材料，不进材料键：材料键定下之后才选得出用哪一份前轮报告。
  */
 function contextFor(record) {
-  const c = record.reused ? null : record.review_context;
-  if (!c) return null;
+  if (record.reused || record.disclosure) return null;
+  const c = record.review_context;
+  const open = record.unresolved_fail?.report_file && record.unresolved_fail.report_file !== c?.report_file
+    ? record.unresolved_fail : null;
+  if (!c && !open) return null;
   const out = ['# Story 独立人读审查 · 前轮上下文（首读之后读）', '', `- 材料键：\`${record.material_key}\``, ''];
+  if (open) {
+    out.push('## 尚未复核的已知阻断（待核参考）', '',
+      `之前的独立审查判过阻断：\`${open.report_file}\`（SHA-256 ${open.report_sha256}），只读。之后材料改过，还没人复核。`
+      + '对它的每条阻断发现，在报告「发现」里说明现在是已修、仍在，还是因范围变化不再适用，并写依据；它的结论不适用于这一次，'
+      + '回复只对应上面的材料键。', '');
+  }
+  if (!c) return `${out.join('\n')}\n`;
   if (c.kind === 'format_repair') {
     out.push('## 上一份回复不合报告合同', '',
       `原回复：\`${c.report_file}\`（SHA-256 ${c.report_sha256}），只读，保持原样。核对给出的诊断原文：`, '',
@@ -257,7 +278,7 @@ function contextFor(record) {
     out.push('## 上一份回复的原件已被改动', '',
       `\`${c.damaged.report_file}\` 派审时记下的 SHA-256 是 ${c.damaged.report_sha256}，现在的字节与它不同：`
       + '它留在原处作现场，不作审查依据。对当前材料做一次完整的独立审查，判据逐项核。');
-  } else {
+  } else if (!open) {
     return null;
   }
   return `${out.join('\n')}\n`;
@@ -270,8 +291,8 @@ function dispatchProblem(ctx, was) {
   if (readText(dispatch) !== dispatchFor(ctx, was, task) || readText(places(ctx).context) !== contextFor(was)) {
     return '派审载体 AR/story-src/review/dispatch.md 或前轮上下文 context.md 不在，或与准备记录对不上';
   }
-  const c = was.review_context;
-  if (c?.report_file) {
+  const carried = was.disclosure ? [] : [was.review_context, was.unresolved_fail].filter(c => c?.report_file);
+  for (const c of carried) {
     let bytes = null;
     try { bytes = fs.readFileSync(abs(ctx, c.report_file)); } catch { bytes = null; }
     if (bytes === null || sha256(bytes) !== c.report_sha256) {
@@ -318,11 +339,14 @@ function reviewStatusLines(shown) {
  */
 function unresolvedFail(ctx, was, key, object, choice) {
   if (choice.reused) return null;
-  if (choice.context?.kind === 'recheck') return { report_file: choice.context.report_file };
+  const c = choice.context;
+  if (c?.kind === 'recheck') return { report_file: c.report_file, report_sha256: c.report_sha256 };
   if (was && was.material_key !== key) {
     const prior = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object,
       alteredReplies(ctx, originalsOf(was)));
-    if (prior?.result === 'fail') return { report_file: prior.report_file };
+    if (prior?.result === 'fail') {
+      return { report_file: prior.report_file, report_sha256: sha256(fs.readFileSync(abs(ctx, prior.report_file))) };
+    }
     if (['pass', 'warn'].includes(prior?.result)) return null;
   }
   return was?.unresolved_fail ?? null;
@@ -336,13 +360,14 @@ export function reviewResult(ctx) {
   if (!was) {
     return { result: 'report_missing', detail: '还没准备这一次的审查——先跑 `story-build review --action prepare`' };
   }
-  const object = reviewObject(ctx.projectRoot, ctx.args.feature);
+  const base = reviewObject(ctx.projectRoot, ctx.args.feature, { withTask: false });
+  const object = withTaskRow(ctx.projectRoot, ctx.args.feature, base);
   if (object.problems.length) return { result: 'input_invalid', detail: `审查对象不全：${object.problems.join('；')}` };
   if (materialKey(ctx.projectRoot, object.rows) !== was.material_key) {
     return { result: 'subject_stale', detail: '准备审查之后审查对象变了：重跑 prepare，按新任务与材料键再派审' };
   }
   // 任务依据的来源、视觉裁定与回看清单仍是现在这份：按同一份生成重算，变了就是旧任务
-  if (readText(path.join(ctx.featureRoot, ...TASK)) !== `${readerReviewTask(ctx.projectRoot, ctx.args.feature)}\n`) {
+  if (readText(path.join(ctx.featureRoot, ...TASK)) !== `${readerReviewTask(ctx.projectRoot, ctx.args.feature, base)}\n`) {
     return { result: 'subject_stale', detail: '审查任务依据的输入变了（来源、视觉裁定或回看清单）：重跑 prepare，按新任务与材料键再派审' };
   }
   const broken = dispatchProblem(ctx, was);

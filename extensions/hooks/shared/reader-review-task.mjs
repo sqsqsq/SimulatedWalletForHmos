@@ -14,14 +14,14 @@ import { fileURLToPath } from 'node:url';
 import { featureRoot, readJsonOrNull, readTextOrNull } from './paths.mjs';
 import { storyReviewVisual } from './framework-access.mjs';
 import { parseYaml } from './yaml.mjs';
-import { headingEnd, parseDocument, ZONE_BEGIN, ZONE_END, zonesByLine }
+import { headingEnd, normalizeHeading, parseDocument, storySections, ZONE_BEGIN, ZONE_END, zonesByLine }
   from '../../skills/story/scripts/core/story/document.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { signedGateRows } from './review-inputs.mjs';
-import { carryTargets, readWritingPlan } from '../../skills/story/scripts/core/story/writing-plan.mjs';
+import { carryTargets, useEffectiveChapters } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { readingWork } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { reviewObject } from '../../skills/story/scripts/core/story/review-object.mjs';
@@ -132,8 +132,9 @@ function fenced(rows, lang) {
 }
 
 /**
- * 上游每张图与写作设计登记承接它的全部小节并排：原图，加每一节的正文、表与图。
- * 判的是关系保没保持，不是节点同不同名；没登记、定不到、空着的位置列成缺口。审查仍从全部原件反查，不受登记集合限制。
+ * 上游每张图与作者选定承接它的小节并排：原图，加每一节的正文、表与图。
+ * 判的是关系保没保持，不是节点同不同名；登记了却定不到、空着的位置列成缺口；没登记的图标明未指定位置，
+ * 由审查者结合本需求范围判有没有相关关系漏讲。审查仍从全部原件反查，不受登记集合限制。
  */
 function diagramPairRows(planCtx, plan, story) {
   const out = [];
@@ -143,7 +144,8 @@ function diagramPairRows(planCtx, plan, story) {
       const tag = `${label} ${d.id}`;
       out.push('', `#### ${tag}（${diagramTopic(d)}）`, '', '上游原图：', '', ...fenced(d.lines, 'mermaid'));
       const hits = targets.filter(c => c.source === tag);
-      if (!hits.length) out.push('', '写作设计没有登记承接这张图的小节。');
+      if (!hits.length) out.push('', '作者没有指定承接位置：结合本需求范围，核这张图讲的相关业务关系在 Story 里有没有漏讲；'
+        + '与本需求无关、或只供精确技术查阅的关系可以留在蓝图与来源里。');
       for (const c of hits) {
         out.push('', `承接它的「${c.where}」：`, '', ...(c.problem ? [`（${c.problem}）`] : fenced(c.body.split(/\r?\n/), 'markdown')));
       }
@@ -257,11 +259,12 @@ const reading = () => ['', '### 怎么读', '',
  * @param {string} projectRoot
  * @param {string} feature
  */
-export function readerReviewTask(projectRoot, feature) {
+export function readerReviewTask(projectRoot, feature, object = null) {
   const contract = contractOf();
   const root = featureRoot(projectRoot, feature);
   const checks = readerChecks();
-  const object = reviewObject(projectRoot, feature, { withTask: false });
+  // 调用方这一次已组装好的对象（不含任务）就直接用，不再组装一遍
+  object ??= reviewObject(projectRoot, feature, { withTask: false });
   const rows = [
     `## Story 独立人读审查（判据 ${checks.map(([id]) => id).join('、')}）`,
     '',
@@ -319,7 +322,8 @@ export function readerReviewTask(projectRoot, feature) {
   // 回看清单：作者十章齐后逐条处置的同一张清单，这里核每一条的去向成不成立。
   const planCtx = { contract, projectRoot, args: { feature }, featureRoot: root, srcDir: src, storyPath,
     decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
-  const plan = contract ? readWritingPlan(planCtx) : null;
+  // 本需求的有效章表（章序、展示标题、省略）：逐章问题按它列
+  const plan = contract ? useEffectiveChapters(planCtx) : null;
   rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',
     ...recheckRows(recheckItems(planCtx, plan, story)));
 
@@ -353,8 +357,11 @@ export function readerReviewTask(projectRoot, feature) {
   }
 
   rows.push('', '### 逐章过读者会问的问题', '');
-  for (const chapter of contract?.chapters ?? []) {
-    rows.push(`- **${chapter.title}**：${(chapter.questions ?? []).join('；')}`);
+  const present = new Set(storySections(story).map(s => s.title));
+  for (const chapter of planCtx.contract?.chapters ?? []) {
+    rows.push(chapter.omittable && !present.has(normalizeHeading(chapter.title))
+      ? `- **${chapter.title}**（本需求不涉及：${chapter.reason}）：核这个理由站不站得住，相关内容有没有落到别的章`
+      : `- **${chapter.title}**：${(chapter.questions ?? []).join('；')}`);
   }
 
   const dimensions = contract?.verdicts?.chapter_dimensions;

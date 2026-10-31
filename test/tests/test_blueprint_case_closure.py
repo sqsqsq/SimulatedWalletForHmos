@@ -275,8 +275,12 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
                   "digest": "sha256:" + hashlib.sha256((self.story.parent.parent / local).read_bytes()).hexdigest()[:16]}
                  for name, local in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"),
                                      ("design-review.md", "blueprint/component-blueprint.review.md"))]
+        # 发布前核对记下的这一次交付集合（三件：本单的交付请求带了设计参考）
+        delivery = {"prepared_at": "2099-01-01T00:00:00+00:00", "items": [
+            {"name": i["name"], "local": local, "digest": i["digest"]}
+            for i, local in zip(items, ("AR/story.md", "AR/review.md", "blueprint/component-blueprint.review.md"))]}
         (self.story.parent / "story-src" / "fetched.json").write_text(
-            json.dumps({"fetchedAt": "2099-01-01T00:00:00+00:00", "items": items}), encoding="utf-8")
+            json.dumps({"fetchedAt": "2099-01-01T00:00:00+00:00", "items": items, "delivery": delivery}), encoding="utf-8")
         archived = subprocess.run(["python", str(self.FLOW), "archived", "--feature", "REQ-DEMO",
                                    "--project-root", str(self.root)],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)

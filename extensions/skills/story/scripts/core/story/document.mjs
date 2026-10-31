@@ -569,8 +569,29 @@ export function renumberStory(text, chapters = [], counters = []) {
 export function storySections(storyText) {
   const doc = parseDocument(storyText);
   const h2s = doc.headings.filter(h => h.level === 2);
+  // 下一章的章锚行在本章区间的末尾，它属于下一章：不算进本章正文
   return h2s.map((h, k) => ({ title: h.name, raw: h.raw, at: h.at,
-    text: doc.lines.slice(h.at + 1, h2s[k + 1]?.at ?? doc.lines.length).join('\n') }));
+    text: doc.lines.slice(h.at + 1, h2s[k + 1]?.at ?? doc.lines.length).filter(l => !CHAPTER_TAG.test(l)).join('\n') }));
+}
+
+//: 章锚：skeleton 写在每章 `## ` 前一行的隐藏注释，记这一章承担的职责 ID（章节合同的章 ID）。
+//: 展示标题可以改，章锚不变；章提交、省略与编号按它定位，读者看不到它
+const CHAPTER_TAG = /^<!-- story-build:chapter ([0-9A-Za-z][\w-]*) -->\s*$/;
+export const chapterTag = id => `<!-- story-build:chapter ${id} -->`;
+
+/** 全篇的章锚：`{id, line, heading}`，heading 是紧跟它的 `## ` 标题行（0 起），后面不是 `## ` 时为 -1。围栏里的不算。 */
+function chapterTags(storyText) {
+  const doc = parseDocument(storyText);
+  const out = [];
+  doc.lines.forEach((line, i) => {
+    const m = doc.fenced.has(i) ? null : CHAPTER_TAG.exec(line);
+    if (!m) return;
+    let j = i + 1;
+    while (j < doc.lines.length && !doc.lines[j].trim()) j += 1;
+    const h2 = doc.headings.find(h => h.at === j && h.level === 2);
+    out.push({ id: m[1], line: i, heading: h2 ? j : -1, title: h2?.name ?? null });
+  });
+  return out;
 }
 
 /**
@@ -606,11 +627,47 @@ export function chapterSpan(storyText, title) {
     offsets.push(offset);
     offset += line.length + (text.startsWith('\r\n', offset + line.length) ? 2 : 1);
   }
-  const h2s = parseDocument(text).headings.filter(h => h.level === 2);
+  const doc = parseDocument(text);
+  const h2s = doc.headings.filter(h => h.level === 2);
   const k = h2s.findIndex(h => h.name === normalizeHeading(title));
   if (k < 0) return null;
   start = h2s[k].at;
-  return { start: offsets[start], end: h2s[k + 1] ? offsets[h2s[k + 1].at] : text.length };
+  return { start: offsets[start], end: h2s[k + 1] ? offsets[spanEnd(doc, h2s[k + 1].at)] : text.length };
+}
+
+/** 一章的区间到下一章为止：下一章 `## ` 前面紧挨着它的章锚（中间只隔空行）也属于下一章。 */
+function spanEnd(doc, nextHeading) {
+  let at = nextHeading;
+  let j = nextHeading - 1;
+  while (j >= 0 && !doc.lines[j].trim()) j -= 1;
+  if (j >= 0 && !doc.fenced.has(j) && CHAPTER_TAG.test(doc.lines[j])) at = j;
+  return at;
+}
+
+/**
+ * 按章锚定位一章的字节区间：从章锚后面那行 `## ` 到下一章（含下一章的章锚）之前，章锚本身留在区间外。
+ * 没有这个章锚返回 null；同一 ID 两处、或章锚后面不是 `## ` 返回 `{problem}`，调用方报出来、不写。
+ *
+ * @returns {{start:number, end:number, title:string}|{problem:string}|null}
+ */
+export function chapterSpanById(storyText, id) {
+  const text = String(storyText ?? '');
+  const tags = chapterTags(text).filter(t => t.id === id);
+  if (!tags.length) return null;
+  if (tags.length > 1) return { problem: `章锚 ${id} 有 ${tags.length} 处——一个职责只对应一章` };
+  if (tags[0].heading < 0) return { problem: `章锚 ${id} 后面不是章标题（## ）——章锚紧挨着它那一章的标题` };
+  const lines = text.split(/\r?\n/);
+  const offsets = [];
+  let offset = 0;
+  for (const line of lines) {
+    offsets.push(offset);
+    offset += line.length + (text.startsWith('\r\n', offset + line.length) ? 2 : 1);
+  }
+  const doc = parseDocument(text);
+  const h2s = doc.headings.filter(h => h.level === 2);
+  const k = h2s.findIndex(h => h.at === tags[0].heading);
+  return { start: offsets[h2s[k].at], end: h2s[k + 1] ? offsets[spanEnd(doc, h2s[k + 1].at)] : text.length, title: h2s[k].name,
+    tagStart: offsets[tags[0].line] };
 }
 
 /**

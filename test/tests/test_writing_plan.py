@@ -128,12 +128,12 @@ FLOW_CARRY = ("- 本章主线：x\n- 承接上游图：SR §5.1 #1\n#### 回执\
 
 
 class UpstreamDiagramsAreRegisteredInTheDesign(unittest.TestCase):
-    """写作设计登记上游每张图由哪一节承接：一源多处、多源一节都合法，漏登、错身份、重复、空值点名。"""
+    """写作设计按需登记上游图由哪一节承接：一源多处、多源一节都合法；错身份、重复、空值点名；没登记的图不报。"""
 
-    def test_each_upstream_diagram_needs_a_place(self) -> None:
+    def test_an_unmapped_diagram_is_not_a_gap(self) -> None:
+        """没登记承接位置的上游图不算设计缺口：它照样送独审，相关关系有没有讲到由审查判。"""
         problems = plan_in(BASE, UPSTREAM)["problems"]
-        for source, topic in (("SR §5.1 #1", "提交 → 受理"), ("SR §5.2 #1", "回执 → 展示"), ("SR §3 #1", "发起 → 处理")):
-            self.assertTrue(any(f"没有登记 {source}（" in p and topic in p for p in problems), (source, problems))
+        self.assertFalse([p for p in problems if "承接" in p or "SR §" in p], problems)
 
     def test_one_source_many_places_and_many_sources_one_place(self) -> None:
         plan = with_chapter("07-exceptions", "- 本章主线：y\n- 承接上游图：SR §5.1 #1",
@@ -766,6 +766,65 @@ class TenChaptersHandOverToTheRecheck(PlanCase):
         self.assertEqual(0, code, again)
         self.assertTrue(again.startswith("NEXT: 十章齐了——回看"), again[:200])
         self.assertIn("[骨架待核] 02-terms", again, "再跑 skeleton 没再给一次回看清单")
+
+
+class ThisRequirementsChapterTable(PlanCase):
+    """本需求的有效章表：术语章写不涉及并省略、业务流程章换展示标题、业务方案章挪到业务流程之后；
+    章提交按章 ID 定位，全篇检查与编号按有效章序，改一章其余字节不动。默认十章职责与读者问题不变。"""
+
+    def plan_text(self) -> str:
+        text = with_chapter("02-terms", "- 不涉及：没有需要单列解释的歧义术语")
+        text = with_chapter("05-flow", "- 展示标题：申请与使用流程\n- 本章主线：提交、等待与回执三步", text)
+        start = text.index("### 04-solution\n")
+        block = text[start:text.index("### 05-flow\n")]
+        text = text[:start] + text[start + len(block):]
+        at = text.index("### 06-features\n")
+        return text[:at] + block + text[at:]
+
+    def test_a_renamed_reordered_and_shortened_story_lands_checks_and_numbers(self) -> None:
+        contract = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+        default = {c["id"]: c["title"] for c in contract["chapters"]}
+        order = ["01-background", "02-terms", "03-scope", "05-flow", "04-solution", "06-features", "07-exceptions",
+                 "08-acceptance", "09-rollout", "10-appendix"]
+        shown = {**default, "05-flow": "申请与使用流程"}
+        self.write_plan(self.plan_text())
+        code, out = self.cmd("skeleton")
+        self.assertEqual(0, code, out)
+        story = self.story_path.read_text(encoding="utf-8")
+        self.assertEqual([f"<!-- story-build:chapter {i} -->" for i in order],
+                         [line for line in story.splitlines() if line.startswith("<!-- story-build:chapter ")])
+        code, out = self.cmd("chapter", "--chapter", "02-terms", "--omit")
+        self.assertEqual(0, code, out)
+        code, again = self.cmd("chapter", "--chapter", "02-terms", "--omit")
+        self.assertEqual(0, code, again)
+        self.assertIn("已不在", again, "重复省略不该再动 Story")
+        code, refused = self.cmd("chapter", "--chapter", "06-features", "--omit")
+        self.assertEqual(1, code, "写作设计没写不涉及的章被省掉了")
+        for cid in [i for i in order if i != "02-terms"]:
+            code, out = self.put(cid, minimal_body(default[cid], f"「{shown[cid]}」的正文。"))
+            self.assertEqual(0, code, (cid, out))
+        code, out = self.cmd("check")
+        # 夹具的大标题与附录几节不在本组（别的组核）；章序、展示标题与省略的章在全篇检查里成立
+        self.assertNotIn("章标题与顺序", out)
+        self.assertNotIn("申请与使用流程", out, out)
+        self.assertNotIn("术语", out, out)
+        code, out = self.cmd("number")
+        self.assertEqual(0, code, out)
+        numbered = self.story_path.read_bytes()
+        code, out = self.cmd("number")
+        self.assertEqual(numbered, self.story_path.read_bytes(), "重复编号改了字节")
+        heads = [line for line in numbered.decode("utf-8").splitlines() if line.startswith("## ")]
+        want = [f"## {n}. {shown[i]}" for n, i in enumerate([i for i in order if i != "02-terms"], 1)]
+        self.assertEqual(want, heads)
+        # 改一章：章锚定位，其余章一个字节不动
+        before = numbered.decode("utf-8")
+        code, out = self.put("06-features", minimal_body(default["06-features"], "改过的功能说明。"))
+        self.assertEqual(0, code, out)
+        after = self.story_path.read_text(encoding="utf-8")
+        cut = lambda s: (s.split("<!-- story-build:chapter 06-features -->", 1)[0],
+                         s.split("<!-- story-build:chapter 07-exceptions -->", 1)[1])  # noqa: E731
+        self.assertEqual(cut(before), cut(after), "改一章动了别的章")
+        self.assertIn("改过的功能说明。", after)
 
 
 class ALandedChapterStillGetsItsStarts(PlanCase):

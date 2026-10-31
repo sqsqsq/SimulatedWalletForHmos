@@ -26,6 +26,13 @@ export function draftPath(ctx, index, title) {
     `${String(index + 1).padStart(2, '0')}-${title}.md`);
 }
 
+/** 一章的草稿：按它的职责定位（默认章序与合同章名），展示标题改了、章序调了都还是这一份。 */
+export function draftFor(ctx, ch) {
+  const defaults = ctx.defaultChapters ?? ctx.contract.chapters;
+  const at = defaults.findIndex(c => c.id === ch.id);
+  return draftPath(ctx, at < 0 ? 0 : at, ch.defaultTitle ?? ch.title);
+}
+
 /**
  * 宿主的命令行，取自运行环境：有 `SHELL` 的是 POSIX shell，Windows 上没有它的是 PowerShell。
  * 命令围栏按它标注，参数按它引。
@@ -89,8 +96,7 @@ const formHint = (at, form) => guideLine(`${at ? `「${at}」这一节` : '这�
  * @param {object} ch 合同章（可已并入写作设计选定的结构）
  */
 function chapterDraft(ctx, ch, facts) {
-  const index = ctx.contract.chapters.findIndex(c => c.id === ch.id);
-  const file = draftPath(ctx, index, ch.title);
+  const file = draftFor(ctx, ch);
   const plan = relFromFeature(ctx, ctx.templatePath);
   return [
     guideLine(`读完这一章，读者要能回答：${(ch.questions ?? []).join('；')}（直接回答，不写本章讲什么）`),
@@ -100,7 +106,7 @@ function chapterDraft(ctx, ch, facts) {
       + `设计要改回写作设计 ${plan}，并在 story-src/template-adjustments.md 记下实质调整的原因`),
     guideLine(`node ${shellArg(ctx.scriptPath)} chapter`
       + ` --feature ${shellArg(ctx.args.feature)}`
-      + ` --chapter ${shellArg(ch.title)}`
+      + ` --chapter ${shellArg(ch.id)}`
       + ` --from ${shellArg(file)}`
       + ` --project-root ${shellArg(ctx.projectRoot)}`, '提交'),
     '',
@@ -147,10 +153,11 @@ export function writeDrafts(ctx, facts, chapterState, plan) {
   // 设计还读不了（空壳、形状不对、缺口）就不按它铺：铺进去的占位或半截骨架会让草稿看起来被动过，
   // 设计写好之后反而换不成骨架起点。
   const usable = Boolean(plan) && !plan.problems.length;
-  ctx.contract.chapters.forEach((ch, i) => {
-    const file = draftPath(ctx, i, ch.title);
+  ctx.contract.chapters.forEach((ch) => {
+    const file = draftFor(ctx, ch);
     const key = normalizeHeading(ch.title);
-    const done = chapterState?.hasStory && !pending.has(key);
+    const waiting = pending.has(key) || pending.has(normalizeHeading(ch.defaultTitle ?? ch.title));
+    const done = chapterState?.hasStory && !waiting;
     const planned = usable ? { ...ch, structure: selectedStructure(plan, ch.id) } : ch;
     const picked = usable && plan.skeletons.has(ch.id);
     if (!fs.existsSync(file)) {

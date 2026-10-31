@@ -575,6 +575,19 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual([], json.loads(proc.stdout)["versions"], "原样重交的整包开了新版本")
 
+    def test_a_document_linking_to_its_own_section_is_reused(self) -> None:
+        """说明链到自己的一节：原样再交一次，阅读稿按它所在的旧版本目录渲染，内容不变，复用，不多出一版。"""
+        text = self.TEXT + "\n回到[本节](说明.md#说明)\n"
+        files = {"docs/说明.md": text, "docs/附录.md": self.APPENDIX,
+                 **{f"docs/images/{n}": b"\x89PNG\r\n\x1a\n" + n.encode("utf-8") for n in self.PICTURES}}
+        classify = {rel: ("UX" if "/images/" in rel else "RR") for rel in files}
+        self.put(files, classify)
+        self.assertEqual(0, self.run_import().returncode)
+        self.put(files, classify)
+        proc = self.run_import()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual([], json.loads(proc.stdout)["versions"], "原样重交的自链文档多出了一版")
+
     def test_the_same_input_again_reuses_the_version(self) -> None:
         self.first_import()
         self.put({"docs/说明.md": self.TEXT}, {"docs/说明.md": "RR"})

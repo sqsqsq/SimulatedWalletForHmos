@@ -51,7 +51,7 @@ class DeliveryCase(kp.ProtocolCase):
         proc = nk.node("--input-type=module", "-e",
                        f"const m = await import({nk.as_url(self.ext / 'hooks/shared/reader-review-task.mjs')});"
                        f"process.stdout.write(m.readerReviewTask({json.dumps(self.root.as_posix())},"
-                       f" {json.dumps(nk.FEATURE)}, 'story_reader_review'));")
+                       f" {json.dumps(nk.FEATURE)}));")
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 
@@ -279,7 +279,9 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertIn("承接它的「业务流程 > 受理」", first)
         self.assertIn("乙失败时交丙处理", first, "承接小节的正文没给")
         self.assertIn("| 失败 | 丙 |", first, "承接小节里的表没给")
-        self.assertIn("写作设计没有登记承接这张图的小节", text.split("#### SR §4 #1", 1)[1])
+        unmapped = text.split("#### SR §4 #1", 1)[1]
+        self.assertIn("作者没有指定承接位置", unmapped)
+        self.assertIn("有没有漏讲", unmapped, "没指定位置的图要交审查者核相关关系")
 
 
 class AChoiceNeedsASuggestion(ModesCase):
