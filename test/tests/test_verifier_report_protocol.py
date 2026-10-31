@@ -28,6 +28,8 @@ STORY_BUILD = DEV_EXT / "skills/story/scripts/core/story-build.mjs"
 CONTRACT = DEV_EXT / "skills/story/contracts/story-chapters.json"
 ACCESS = DEV_EXT / "hooks/shared/framework-access.mjs"
 FEATURE = "RT90001"
+#: 声明了 Story 独立审查子代理的宿主：模拟审查员回复的用例都在它上面跑
+REVIEWER_HOST = '{"schema_version": "1.0", "agent_adapter": "opencode"}'
 #: 导入用的图：明确选定一张现有图片，它的字节进共享前态的键
 PICTURE = REPO / "test/fixtures/real-run/AR90006/sources/auto-topup-manage-page-v1/auto-topup-manage-page.png"
 
@@ -42,6 +44,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
     """一条真实的正常链：定稿并准备审查 → 审查者回复 → 按报告合同核对 → 登记 → 交付门。
 
     审查者是夹具（按 Story 报告合同写回复），只验证协议接得上；真实的独立执行与业务效果在 CLI 里核。
+    宿主声明了审查子代理（`REVIEWER_HOST`）。
     """
 
     FIXTURE = REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
@@ -54,6 +57,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
         self.root = Path(self._tmp.name) / "work"
         designed_copy(self.FIXTURE, "REQ-DEMO", self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
+        (self.root / "framework.local.json").write_text(REVIEWER_HOST, encoding="utf-8")
         self.assertFalse((self.root / "doc" / "features" / "REQ-DEMO" / "spec").exists(), "2.0 的需求目录没有 Spec 产物")
         self.flow_path = self.root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
         self.story = self.flow_path.parent.parent / "story.md"
@@ -144,12 +148,13 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
         task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
         return next(part for part in task.split("`") if part.endswith("component-blueprint.yaml"))
 
-    def unreviewed(self, *extra: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["python", str(self.FLOW), "unreviewed", "--feature", "REQ-DEMO", "--project-root", str(self.root),
-                               *extra], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-
-    def authorize(self) -> subprocess.CompletedProcess:
-        return self.unreviewed("--reason", "宿主没有可派的审查子代理", "--reply", "这版先不审，直接交")
+    def host(self, reviewer: bool) -> None:
+        """切换宿主：声明审查子代理的，或没有工作区运行身份（默认宿主，没有声明）。"""
+        local = self.root / "framework.local.json"
+        if reviewer:
+            local.write_text(REVIEWER_HOST, encoding="utf-8")
+        else:
+            local.unlink(missing_ok=True)
 
 
 class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDeliveredCase):
@@ -641,6 +646,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.root = base
         designed_copy(self.FIXTURE, "REQ-DEMO", base)
         design_kit.install_review_mechanism(base, DEV_EXT)
+        (base / "framework.local.json").write_text(REVIEWER_HOST, encoding="utf-8")
         self.flow_path = base / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
         self.story = self.flow_path.parent.parent / "story.md"
         self.put({"SR/design.md": ("# 系统设计\n\n续期改为按月扣费，与产品需求的按年不同。\n".encode("utf-8"), "SR"),
@@ -859,40 +865,38 @@ class TheDesignReferenceIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDel
         self.assertNotEqual(0, self.check("--deliver").returncode, "蓝图换版之后旧登记仍被交付")
 
 
-class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """当前 adapter 没声明审查子代理、这一版的结果是 report_missing 时，人明确授权才可不经审查交付；
-    授权记在流程契约，审查状态写进最终的 Story 与 Review，材料一变就不再适用。"""
+class AHostWithoutAReviewerDisclosesUnreviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """当前宿主没有声明 Story 独立审查能力：准备审查时自动把未审披露写进 Story 交付章与 Review 题头，结果 unreviewed，
+    可以登记与交付，不问人要授权、流程契约里没有授权记录。已知必修未复核不按未审放行；准备之后宿主能力变了要重新准备。"""
 
-    def test_the_authorization_is_recorded_and_disclosed_in_both_documents(self) -> None:
-        self.assertNotEqual(0, self.authorize().returncode, "没定稿就记了授权")
-        self.assertEqual(0, self.review("prepare").returncode)
-        self.assertNotEqual(0, self.unreviewed("--reason", "宿主没有可派的审查子代理").returncode, "没有人的原话也记了授权")
-        recorded = self.authorize()
-        self.assertEqual(0, recorded.returncode, recorded.stdout + recorded.stderr)
-        self.assertEqual("human", self.flow()["review_waiver"]["by"])
+    def setUp(self) -> None:
+        super().setUp()
+        self.host(reviewer=False)
+
+    def test_unreviewed_is_disclosed_in_both_documents_without_asking(self) -> None:
         self.assertEqual(0, self.review("prepare").returncode)
         self.assertEqual("unreviewed", self.result()["result"])
         story = self.story.read_text(encoding="utf-8")
         chapter = story.split("## 9.", 1)[1].split("\n## ", 1)[0]
         self.assertIn("本版未经独立审查", chapter, "Story 交付章没有审查状态")
-        self.assertIn("这版先不审，直接交", chapter)
+        self.assertIn("没有声明 Story 独立审查能力", chapter)
         review = (self.story.parent / "review.md").read_text(encoding="utf-8")
-        head = review.split("\n## ", 1)[0]
-        self.assertIn("本版未经独立审查", head, "Review 题头之后、议题之前没有审查状态")
+        self.assertIn("本版未经独立审查", review.split("\n## ", 1)[0], "Review 题头之后、议题之前没有审查状态")
         before = self.tree()
         self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual(before, {k: v for k, v in self.tree().items()}, "同样的输入重跑准备改了字节")
-        self.assertEqual("unreviewed", self.result()["result"])
+        self.assertEqual(before, self.tree(), "同样的输入重跑准备改了字节")
         self.assertEqual(0, self.register().returncode)
         out = self.check("--deliver")
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
         self.assertIn("本版未经独立审查", out.stdout)
+        self.assertNotIn("review_waiver", self.flow())
+        retired = subprocess.run(["python", str(self.FLOW), "unreviewed", "--feature", "REQ-DEMO", "--project-root", str(self.root)],
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertNotEqual(0, retired.returncode, "免审授权命令还在")
 
     def test_a_crlf_story_gets_one_disclosure(self) -> None:
         """以 CRLF 交来的 Story：披露写进交付章一次，重跑准备字节不变。"""
         self.story.write_bytes(self.story.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
-        self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual(0, self.authorize().returncode)
         self.assertEqual(0, self.review("prepare").returncode)
         first = self.story.read_bytes()
         self.assertEqual(1, first.decode("utf-8").count("本版未经独立审查"))
@@ -900,29 +904,39 @@ class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCa
         self.assertEqual(first, self.story.read_bytes(), "重跑准备改了 Story 的字节")
         self.assertEqual("unreviewed", self.result()["result"])
 
-    def test_a_host_that_can_review_is_not_waived(self) -> None:
-        (self.root / "framework.local.json").write_text('{"schema_version": "1.0", "agent_adapter": "opencode"}',
-                                                         encoding="utf-8")
-        self.assertEqual(0, self.review("prepare").returncode)
-        refused = self.authorize()
-        self.assertNotEqual(0, refused.returncode)
-        self.assertIn("声明能派独立审查子代理", refused.stdout + refused.stderr)
-
-    def test_a_failing_review_is_not_turned_into_an_unreviewed_delivery(self) -> None:
+    def test_a_known_blocker_is_not_released_as_unreviewed(self) -> None:
+        """有审查员时判了阻断；之后宿主没有审查员：同一份材料仍是 fail，改过之后也不按未审放行，登记不了。"""
+        self.host(reviewer=True)
         self.reviewed("block")
-        self.assertEqual("fail", self.result()["result"])
+        self.host(reviewer=False)
         self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual("fail", self.result()["result"], "重新准备撤销了同一份材料的已知阻断")
-        refused = self.authorize()
-        self.assertNotEqual(0, refused.returncode, "已有不通过的结论还记了未审查授权")
-        self.assertNotIn("review_waiver", self.flow())
+        self.assertEqual("fail", self.result()["result"], "宿主没了审查员，已知阻断就消失了")
+        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n按审查意见补的一句。\n", encoding="utf-8")
+        self.assertEqual(0, self.review("prepare").returncode)
+        got = self.result()
+        self.assertEqual("fail", got["result"], got)
+        self.assertIn("已知必修未复核", got["detail"])
+        self.assertNotEqual(0, self.register().returncode, "已知必修未复核还登记了")
+        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n再补一句。\n", encoding="utf-8")
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertIn("已知必修未复核", self.result()["detail"], "再改一版就把已知阻断丢了")
 
-class AnUnreviewedDeliveryNeedsAHumanPart2(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """未审查授权与报告目录、材料变化：同一份材料换目录不消掉阻断，材料一变授权就不再适用。"""
+    def test_a_host_change_after_preparing_is_stale(self) -> None:
+        """准备时写了未审披露、之后宿主能派审：结果是 subject_stale；重新准备撤掉披露，按正常审查走。"""
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.host(reviewer=True)
+        self.assertEqual("subject_stale", self.result()["result"])
+        self.assertEqual(0, self.review("prepare").returncode)
+        self.assertNotIn("本版未经独立审查", self.story.read_text(encoding="utf-8"))
+        self.assertEqual("report_missing", self.result()["result"])
+        self.answer("pass")
+        self.assertEqual("pass", self.result()["result"])
+
+
+class TheReportDirStaysWithItsMaterial(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """报告目录随材料键定一次：另指目录报冲突、不改文件，已知的阻断仍在；不带参数准备仍写进首次定下的目录。"""
 
     def test_another_report_dir_keeps_the_known_blocker(self) -> None:
-        """同一份材料的报告目录在首次准备时定下：另指目录报冲突、不改文件，已知的阻断仍在，也记不了未审查授权；
-        原目录里真实复审的新报告照常更新结论。"""
         self.reviewed("block")
         self.assertEqual("fail", self.result()["result"])
         before = self.tree()
@@ -931,13 +945,10 @@ class AnUnreviewedDeliveryNeedsAHumanPart2(TheStoryIsReviewedRegisteredAndDelive
         self.assertIn("报告目录冲突", moved.stdout + moved.stderr)
         self.assertEqual(before, self.tree(), "目录冲突的准备改了文件")
         self.assertEqual("fail", self.result()["result"])
-        self.assertNotEqual(0, self.authorize().returncode, "换目录之后记上了未审查授权")
-        self.assertNotIn("review_waiver", self.flow())
         self.reviewed("pass")
         self.assertEqual("pass", self.result()["result"], "原目录里的复审没更新结论")
 
     def test_a_chosen_report_dir_stays_with_its_material(self) -> None:
-        """首次准备指定的目录随材料键沿用：之后不带参数准备仍写进它。"""
         first = self.run_node("review", "--action", "prepare", "--report-dir", "doc/reports/chosen")
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
         self.assertEqual("doc/reports/chosen", self.prepared()["report_dir"])
@@ -945,20 +956,6 @@ class AnUnreviewedDeliveryNeedsAHumanPart2(TheStoryIsReviewedRegisteredAndDelive
         self.assertEqual(0, self.review("prepare").returncode)
         self.assertEqual("doc/reports/chosen", self.prepared()["report_dir"])
         self.assertEqual("fail", self.result()["result"])
-
-    def test_a_changed_story_drops_the_authorization_and_a_real_review_takes_over(self) -> None:
-        self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual(0, self.authorize().returncode)
-        self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual("unreviewed", self.result()["result"])
-        self.story.write_text(self.story.read_text(encoding="utf-8") + "\n登记前补的一句。\n", encoding="utf-8")
-        self.assertEqual("subject_stale", self.result()["result"])
-        self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual("report_missing", self.result()["result"], "材料变了还沿用旧授权")
-        self.assertNotIn("本版未经独立审查", self.story.read_text(encoding="utf-8"), "授权不适用了，披露还留在 Story 里")
-        self.assertEqual(0, self.unreviewed("--withdraw").returncode)
-        self.reviewed("pass")
-        self.assertEqual("pass", self.result()["result"])
 
 
 def prepared_copy(name: str, variant: str, build, target: Path) -> None:

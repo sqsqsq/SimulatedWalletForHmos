@@ -39,7 +39,7 @@ export function deliveryNextSteps(ctx) {
  * 交付门 —— 成文依据还是登记时那一份吗，这一份的独立审查给出可消费的结论了吗。
  *
  * 设计来源不成立、登记之后蓝图 / 输入 / 知识 / 被审文件变了，都拦：登记说的已经不是现在这份。
- * 审查结论只读当前对象的 Story 报告：pass 放行，warn 放行并列出建议，人授权的未审查交付放行并披露，其余照结果拦。
+ * 审查结论只读当前对象的 Story 报告：pass 放行，warn 放行并列出建议，宿主没有审查能力时的未审放行并披露，其余照结果拦。
  *
  * @returns {Promise<{problems: string[], notes: string[]}>}
  */

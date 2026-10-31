@@ -13,8 +13,8 @@
  * | 结果 | 含义 |
  * |---|---|
  * | pass / warn | 可以登记交付；warn 带非阻断建议 |
- * | fail | 报告有 BLOCKER / MAJOR 发现，或总体结论不通过 |
- * | unreviewed | 宿主没有独立审查能力，人明确授权这一版不经审查交付；授权记在流程契约，披露写进 Story 与 Review |
+ * | fail | 报告有 BLOCKER / MAJOR 发现，或总体结论不通过；宿主没有审查员时，上一版的阻断改过之后没人复核也记为它（已知必修未复核） |
+ * | unreviewed | 当前宿主没有声明 Story 独立审查能力：这一版如实记为未审，准备时把审查状态写进 Story 与 Review；不是业务完成、设计准入或发布质量结论 |
  * | report_missing | 还没准备，或回复不在 |
  * | report_unreceived | 回复在，还没经准备接收（没记原件摘要） |
  * | report_invalid | 回复不合报告合同：格式、判据覆盖、材料引用或结论自相矛盾；或接收之后被改过 |
@@ -103,11 +103,13 @@ export function prepareReview(ctx, reportDirArg) {
   }
   const reportDir = bound ?? asked ?? `doc/reports/story/${ctx.args.feature}/${key.slice(0, 16)}`;
   const choice = replyPlace(ctx, was, key, reportDir, object);
-  // 授权随这一次准备沿用与否，在准备开始时判定一次（`pendingDisclosure`）；披露已写进文件，材料键里含它
-  const waiver = disclosedWaiver(ctx);
+  // 未审披露在准备开始时按宿主能力判定一次（`pendingDisclosure`），已写进文件、材料键里含它；随准备记下原因
+  const shown = disclosure(ctx);
+  const unresolved = unresolvedFail(ctx, was, key, object, choice);
   const record = { material_key: key, project_root: ctx.projectRoot.split(path.sep).join('/'), report_dir: reportDir,
     report_file: choice.reportFile,
-    report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(waiver ? { waiver_at: waiver.at } : {}),
+    report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(shown ? { disclosure: shown.reason } : {}),
+    ...(unresolved ? { unresolved_fail: unresolved } : {}),
     ...(choice.reused ? { reused: true } : {}), ...(choice.context ? { review_context: choice.context } : {}),
     ...(Object.keys(choice.originals).length ? { originals: choice.originals } : {}) };
   const rel = path.relative(ctx.projectRoot, task).split(path.sep).join('/');
@@ -281,54 +283,49 @@ function dispatchProblem(ctx, was) {
 }
 
 /**
- * 准备开始时判一次：流程契约里人授权的未审查交付，这一次准备沿不沿用。
- * 授权给在上一次准备的那一版上，或已随它沿用过；且那之后被审材料没再变、宿主仍没有独立审查能力。
+ * 准备开始时判一次：当前宿主有没有声明 Story 独立审查能力。没有就如实披露未审，原因写明是哪个 adapter；
  * 结论存进 `ctx.disclosure`，Review 题头与 Story 交付章按同一个结论写披露。
  */
 export function pendingDisclosure(ctx) {
-  const waiver = readJson(ctx.flowPath, null)?.review_waiver;
-  const was = readJson(places(ctx).prepared, null);
-  let applies = Boolean(waiver?.at && was?.material_key)
-    && (waiver.material_key === was.material_key || was.waiver_at === waiver.at);
-  if (applies) {
-    const object = reviewObject(ctx.projectRoot, ctx.args.feature);
-    applies = !object.problems.length && materialKey(ctx.projectRoot, object.rows) === was.material_key
-      && !hostReviewer(ctx.projectRoot).declared;
-  }
-  ctx.disclosure = applies ? waiver : null;
+  const host = hostReviewer(ctx.projectRoot);
+  ctx.disclosure = host.declared ? null
+    : { reason: `当前宿主（adapter ${host.adapter ?? '未配置'}）没有声明 Story 独立审查能力` };
   return ctx.disclosure;
 }
 
-/** 要写进交付件的未审查授权：准备过程中用开头判定的结论，其余时候只认已随准备记录沿用的那一条。 */
-function disclosedWaiver(ctx) {
+/** 要写进交付件的未审披露：准备过程中用开头判定的结论，其余时候认准备记录里记下的那一条。 */
+function disclosure(ctx) {
   if (ctx.disclosure !== undefined) return ctx.disclosure;
-  const waiver = readJson(ctx.flowPath, null)?.review_waiver;
-  const was = readJson(places(ctx).prepared, null);
-  return waiver?.at && was?.waiver_at === waiver.at && !hostReviewer(ctx.projectRoot).declared ? waiver : null;
+  const reason = readJson(places(ctx).prepared, null)?.disclosure;
+  return reason ? { reason } : null;
 }
 
-/** 审查状态的机器区：Story 交付章与 Review 题头共用这一份，区名取章节合同；没有适用的授权返回空。 */
+/** 审查状态的机器区：Story 交付章与 Review 题头共用这一份，区名取章节合同；没有未审披露返回空。 */
 export function reviewStatusBlock(ctx) {
   const name = (ctx.contract.chapters ?? []).find(c => c.review_status)?.review_status;
-  const rows = reviewStatusLines(disclosedWaiver(ctx));
-  return name && rows.length ? zoneBlock(name, '人授权的未审查交付记录', rows) : [];
+  const rows = reviewStatusLines(disclosure(ctx));
+  return name && rows.length ? zoneBlock(name, '未审披露（宿主没有独立审查能力时自动写）', rows) : [];
 }
 
-function reviewStatusLines(waiver) {
-  return waiver ? [`本版未经独立审查。原因：${waiver.reason}。人授权不经审查交付的原话：「${waiver.reply}」（${waiver.at}）。`
-    + '授权只适用于这一版，材料再变需要重新审查或重新授权。'] : [];
+function reviewStatusLines(shown) {
+  return shown ? [`本版未经独立审查。原因：${shown.reason}。这是审查事实，不是业务完成、设计准入或发布质量结论；`
+    + '宿主能派独立审查之后，重新准备审查走正常审查。'] : [];
 }
 
 /**
- * 记授权之前的核对（`story_flow.py unreviewed` 调用）：宿主有没有独立审查能力、这一版现在的审查结果。
- * 授权的前提：当前 adapter 没声明审查子代理，且这一版的结果是 report_missing。
+ * 已知必修：这份材料的有效阻断（回复位置换成了复审），或紧前那一版材料的阻断在这次改动之后还没人复核；
+ * 前面已记的照样往下带，直到某一版有了 pass / warn。宿主没有审查员时它挡住未审放行。
  */
-export function waiverCheck(ctx) {
-  const host = hostReviewer(ctx.projectRoot);
-  const was = readJson(places(ctx).prepared, null);
-  const now = reviewResult(ctx);
-  return { host_reviewer: host.declared, adapter: host.adapter, result: now.result, detail: now.detail,
-    material_key: was?.material_key ?? null };
+function unresolvedFail(ctx, was, key, object, choice) {
+  if (choice.reused) return null;
+  if (choice.context?.kind === 'recheck') return { report_file: choice.context.report_file };
+  if (was && was.material_key !== key) {
+    const prior = materialConclusion(ctx, was.material_key, was.report_dir, was.report_file, object,
+      alteredReplies(ctx, originalsOf(was)));
+    if (prior?.result === 'fail') return { report_file: prior.report_file };
+    if (['pass', 'warn'].includes(prior?.result)) return null;
+  }
+  return was?.unresolved_fail ?? null;
 }
 
 /** 这一次审查的结果，只读。显式 check、登记、交付门与状态共用。 */
@@ -370,10 +367,18 @@ export function reviewResult(ctx) {
     return { result: c.diagnostic.result, report_file: c.report_file,
       detail: `${c.diagnostic.detail}（新的派审载体已带原回复与诊断，回复位置 ${was.report_file}：按它派审）` };
   }
-  const waiver = readJson(ctx.flowPath, null)?.review_waiver;
-  if (waiver?.at && was.waiver_at === waiver.at && !hostReviewer(ctx.projectRoot).declared) {
-    return { result: 'unreviewed', detail: `本版未经独立审查：${waiver.reason}；人授权原话「${waiver.reply}」（${waiver.at}）`, ...at };
+  // 没有可消费的回复时，宿主能力与准备时写进交付件的披露要一致：不一致就是准备之后宿主变了，重新准备
+  const host = hostReviewer(ctx.projectRoot);
+  if (Boolean(was.disclosure) === host.declared) {
+    return { result: 'subject_stale', detail: host.declared
+      ? '准备时宿主没有独立审查能力、写了未审披露，现在宿主能派审了：重跑 prepare 撤掉披露，按新载体派审'
+      : '准备时宿主能派审，现在没有声明独立审查能力：重跑 prepare，把未审披露写进 Story 与 Review', ...at };
   }
+  if (!host.declared && was.unresolved_fail) {
+    return { result: 'fail', detail: `已知必修未复核：之前的独立审查判了阻断（${was.unresolved_fail.report_file}），`
+      + '这一版改过之后没有可用的独立审查员复核——未审不能放过它；在能派独立审查的宿主上重新准备并复核', ...at };
+  }
+  if (!host.declared) return { result: 'unreviewed', detail: `本版未经独立审查：${was.disclosure}`, ...at };
   return { result: 'report_missing', detail: `审查者的回复不在 ${was.report_file}——把独立审查者的回复原样写到那里`, ...at };
 }
 
@@ -562,7 +567,7 @@ function judge(text, key, materials, basis = null) {
 }
 
 /**
- * Story 交付章里的审查状态：有适用的未审查授权就写机器区，没有就撤掉；在哪一章、区名取章节合同。
+ * Story 交付章里的审查状态：宿主没有独立审查能力时写未审披露，否则撤掉；在哪一章、区名取章节合同。
  * 准备审查时在算材料键之前调用，披露是被审、被登记的内容；同样的输入重跑不改字节。
  */
 export function discloseInStory(ctx) {

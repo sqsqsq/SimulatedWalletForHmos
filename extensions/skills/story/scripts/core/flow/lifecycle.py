@@ -128,7 +128,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
 
     1. 全篇结构检查（`story-build check`）通过；
     2. 这一份的独立审查结果（`story-build review --action check`）是 pass 或 warn——审的是现在这份；
-       宿主没有独立审查能力、人授权不经审查交付的（unreviewed）同样可登记，披露随结果；
+       宿主没有声明独立审查能力时如实记为未审（unreviewed），同样可登记，披露随结果；
     3. 这一刻的成文依据（`story-build basis`）：蓝图引用、设计采用的来源、激活知识摘要与材料索引摘要，
        加上 Story、Review、决策登记与写作设计的原始字节指纹。
 
@@ -222,42 +222,6 @@ def _next(feature_root: Path, contract: dict) -> dict:
     except FlowError as exc:
         step, action = "status", f"成文已登记；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
     return {"next": step, "action": action}
-
-
-def cmd_unreviewed(feature_root: Path, project_root: Path, reason: str | None, reply: str | None,
-                   withdraw: bool = False) -> dict:
-    """人授权这一版不经独立审查交付：原话、原因与授权给在哪一版，记进流程契约（人签与发布确认同在这里）。
-
-    前提：当前 adapter 没声明审查子代理（读它的 verifier_subagent 声明），且这一版的审查结果是 report_missing。记下之后重跑 `story-build review --action prepare`，
-    审查状态写进 Story 交付章与 Review 题头，再登记。`--withdraw` 撤回，之后按正常审查走。
-    """
-    contract = require(load(feature_root))
-    if withdraw:
-        contract.pop("review_waiver", None)
-        save(feature_root, contract)
-        return {"review_waiver": None, "action": "已撤回未审查授权：重跑 `story-build review --action prepare`，按正常审查走"}
-    if not str(reason or "").strip() or not str(reply or "").strip():
-        raise FlowError("要写明宿主缺什么（--reason）与人授权不经审查交付的原话（--reply）")
-    node = shutil.which("node")
-    if node is None:
-        raise FlowError("找不到 node：授权前要核宿主能力与这一版的审查结果，无法跳过")
-    proc = subprocess.run([node, str(CORE_DIR / "story-build.mjs"), "review", "--action", "waiver-check",
-                           "--feature", feature_root.name, "--project-root", str(project_root)],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace")
-    rows = [line for line in proc.stdout.splitlines() if line.startswith("{")]
-    if proc.returncode != 0 or not rows:
-        raise FlowError("核不了宿主能力与审查结果：" + (proc.stderr or proc.stdout).strip()[:600])
-    state = json.loads(rows[-1])
-    if state["host_reviewer"]:
-        raise FlowError(f"当前宿主 {state['adapter']} 声明能派独立审查子代理：按 `phases/design.md`「五」派审")
-    if state["result"] != "report_missing" or not state.get("material_key"):
-        raise FlowError(f"这一版的审查结果是 {state['result']}（{state['detail']}）：未审查授权记在已准备、还没有回复的这一版上"
-                        "（report_missing）；按 `phases/design.md`「五」第 3 步的表处理这个结果，还没准备的先跑 `story-build review --action prepare`")
-    contract["review_waiver"] = {"material_key": state["material_key"], "reason": reason.strip(), "reply": reply.strip(),
-                                 "by": "human", "adapter": state["adapter"], "at": now()}
-    save(feature_root, contract)
-    return {"review_waiver": contract["review_waiver"],
-            "action": "已记下：重跑 `story-build review --action prepare`，审查状态写进 Story 交付章与 Review 题头，再 `story_flow.py story` 登记"}
 
 
 #: 外层持有视图的标记：值是需求目录（小写绝对路径），story_flow 与 story-build 共用；带着同一需求的值进来就是子调用，不各自恢复

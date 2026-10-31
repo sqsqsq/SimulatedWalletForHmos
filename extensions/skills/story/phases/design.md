@@ -101,12 +101,12 @@
    | report_invalid | 原回复留在原处，你不补表、不改字；重新 prepare，新载体带着原回复与诊断，原样交独立审查者重给一份 |
    | subject_stale | 准备之后被审材料变了：重新 prepare，按新载体再派审 |
    | input_invalid | 派审载体缺失或与准备记录对不上时重跑 prepare；准备记录本身读不出时按诊断恢复原记录，不删掉它重来；审查对象缺来源时停下，向人报告缺哪份、向谁取得 |
+   | unreviewed | 当前宿主没有声明 Story 独立审查能力：prepare 已把未审披露写进 Story 交付章与 Review 题头，可以登记与交付；不问人要免审授权，交付说明照实写本版未审 |
 
-   宿主没有可派的审查子代理（当前 adapter 没有声明）时，向人说明这一版需要独立审查，并问是否授权本版不经审查交付。
-   人授权后，在 prepare 之后、结果为 report_missing 时跑 `story_flow.py unreviewed --reason "<缺什么>" --reply "<人的原话>"`，
-   授权记进流程契约；再跑一次 prepare，审查状态写进 Story 交付章与 Review 题头，结果是 unreviewed，可以登记与交付。
-   授权对应当时这一版材料：材料变了要重新审查或重新授权；之后宿主能派审了，用 `--withdraw` 撤回后正常派审。
-4. **登记**：`story_flow.py story`。它核结构检查、这一份的审查结果（pass、warn 或人授权的 unreviewed）与成文依据
+   宿主没有可派的审查子代理（当前 adapter 没有声明）时不派审：prepare 自动写未审披露，结果是 unreviewed。
+   之前的审查判过阻断、改过之后还没人复核时，结果是 fail（已知必修未复核），要在能派审的宿主上复核。
+   宿主能力在 prepare 之后变了，结果是 subject_stale，重新 prepare。
+4. **登记**：`story_flow.py story`。它核结构检查、这一份的审查结果（pass、warn，或宿主没有审查能力时的 unreviewed）与成文依据
    （蓝图引用、设计采用的来源、知识摘要、材料索引摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），通过后记下新依据。
 5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据（含蓝图）没变、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：

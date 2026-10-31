@@ -48,7 +48,7 @@ import {
 import { designGaps, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
 import {
-  discloseInStory, pendingDisclosure, preparedRecord, prepareReview, reviewResult, waiverCheck,
+  discloseInStory, pendingDisclosure, preparedRecord, prepareReview, reviewResult,
 } from './story/independent-review.mjs';
 import {
   fetchBatchDir, latestOf, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
@@ -64,7 +64,7 @@ import {
 import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
 
-const REVIEW_ACTIONS = ['prepare', 'check', 'waiver-check', 'manual'];
+const REVIEW_ACTIONS = ['prepare', 'check', 'manual'];
 /** 命令与它做什么、要哪些命令参数（必需的写在 need）；解析与帮助读同一张表。无原型：只认表里自己的键。 */
 const COMMANDS = Object.assign(Object.create(null), {
   skeleton: { what: '预检流程、材料、设计来源与决策登记，全过才建写作设计空壳、十章骨架与章草稿，并给出当前输入与下一步' },
@@ -208,7 +208,6 @@ function cmdBasis(ctx) {
  *   它接收这份回复（记下原样字节的摘要）并按结论给下一步。
  * - `check`：只读核这一次的审查报告，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
- * - `waiver-check`：只读，给 `story_flow.py unreviewed` 记授权之前核宿主能力与这一版的审查结果，一行 JSON。
  * - `manual`：评审记录里人写过的内容（写过字的议题、自由意见区），一行 JSON。
  */
 function cmdReview(ctx) {
@@ -222,10 +221,6 @@ function cmdReview(ctx) {
     const out = reviewResult(ctx);
     process.stdout.write(`${JSON.stringify(out)}\n`);
     process.exitCode = ['pass', 'warn', 'unreviewed'].includes(out.result) ? 0 : 1;
-    return;
-  }
-  if (ctx.args.action === 'waiver-check') {
-    process.stdout.write(`${JSON.stringify(waiverCheck(ctx))}\n`);
     return;
   }
   // 准备记录坏了是输入故障：在定稿写盘之前停下，现场不动

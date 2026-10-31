@@ -362,7 +362,7 @@ const DOC_HINT = '> 怎么填：第一部分还没定，等你评；第二部分
 const FREEFORM_HINT = '> 以上议题之外你认为该说的事写在这里——缺的分支、该复用的既有能力、'
   + '遗漏的埋点都算。按 1. 2. 3. 编号列举，每条写清是什么、影响哪里。';
 
-/** 归档件的头部：大标题 + 一条可见提示；本版人授权不经审查交付时，紧接着是审查状态（机器维护）。 */
+/** 归档件的头部：大标题 + 一条可见提示；宿主没有独立审查能力、本版未审时，紧接着是审查状态（机器维护）。 */
 function renderDocHeader(status = []) {
   const disclosed = status.length ? `\n${status.join('\n')}\n` : '';
   return `# 评审记录\n\n${DOC_HINT}\n${disclosed}`;
