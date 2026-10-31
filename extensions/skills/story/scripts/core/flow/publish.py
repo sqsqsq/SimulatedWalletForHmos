@@ -21,7 +21,8 @@ from flow.state import (CORE_DIR, DESIGN_REFERENCE, FlowError, PUBLISHED, REVIEW
 
 #: 最近一次取材的回执，与 update 读的是同一份
 RECEIPT = ("AR", "story-src", "fetched.json")
-#: 发布的三件：回执里的名字、本地来源、发布记录里的摘要键，按上传顺序；设计参考附件取蓝图原生评审投影的原字节
+#: 交付项：回执里的名字、本地来源、发布记录里的摘要键，按上传顺序；设计参考附件取蓝图原生评审投影的原字节。
+#: 发布前核对通过时按它把这一次的交付集合（本地来源与摘要）记进取材回执的 `delivery`，对接层照它上传，不另列一份
 ITEMS = (("AR-design.md", STORY, "story_digest"),
          ("review.md", REVIEW, "review_digest"),
          ("design-review.md", DESIGN_REFERENCE, "design_review_digest"))
@@ -112,6 +113,8 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None) -> di
         contract["publish_overrides"] = granted
         save(feature_root, contract)
         conflicts = []
+    if not conflicts:
+        _record_delivery(feature_root, rows)
     last = feature_root / Path(*PUBLISHED) / "story.md"
     diff = ("首次发布：需求系统上还没有这张单的 Story" if not last.is_file() else "".join(difflib.unified_diff(
         last.read_text(encoding="utf-8").splitlines(keepends=True),
@@ -131,6 +134,16 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None) -> di
                        if conflicts else
                        "把差异、未决议题与未验证项向人展示；这一单已有送审授权（交付选择选了送审，或明确要求 archive）就接着上传，"
                        "还没有授权先请人授权；三件都读回一致再 `story_flow.py archived` 登记")}
+
+
+def _record_delivery(feature_root: Path, rows: list[dict]) -> None:
+    """这一次的交付集合只在这里形成：每项的本地来源与此刻的摘要写进取材回执的 `delivery`，对接层上传前逐项核本地没变。"""
+    path = feature_root / Path(*RECEIPT)
+    receipt = read_receipt(feature_root)
+    local = {name: "/".join(rel) for name, rel, _ in ITEMS}
+    receipt["delivery"] = {"prepared_at": now(),
+                           "items": [{"name": r["item"], "local": local[r["item"]], "digest": r["local"]} for r in rows]}
+    path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def readbacks(feature_root: Path, since: str | None) -> list[str]:

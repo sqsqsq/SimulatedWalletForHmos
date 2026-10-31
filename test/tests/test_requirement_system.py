@@ -1,7 +1,7 @@
 """本地需求系统替身：一个目录就是一套需求系统，一个子目录就是一张单。
 
 外网 demo 用 `story.js` 屏蔽内网需求系统。它读一个真实存在的目录：取材把上游正文写进来源收件箱下的
-取材批次、查无此单会停住、归档覆盖系统正文之前把系统上那一版备份到需求目录的 `.backups/cloud/`、
+取材批次、查无此单会停住、归档覆盖系统正文之前把系统上那一版备份到需求目录的 `sources/backups/cloud/`、
 restore 用那份备份恢复系统正文。这里判的就是这几件事（KM-1…KM-4），因为它们是被测模型在实跑里
 唯一能观察到的「系统行为」。
 """
@@ -83,6 +83,16 @@ class SystemCase(unittest.TestCase):
 
     def batch(self) -> Path:
         return self.feature / "sources" / "inbox" / "fetch-test"
+
+    def deliver(self) -> None:
+        """发布前核对记下的交付集合（`story_flow.py publish` 写进取材回执的 delivery）：本地三件的来源与此刻的摘要。"""
+        path = self.feature / "AR" / "story-src" / "fetched.json"
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        receipt["delivery"] = {"prepared_at": "2099-01-01T00:00:00+00:00", "items": [
+            {"name": name, "local": rel, "digest": short(self.feature / rel)}
+            for name, rel in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"),
+                              ("design-review.md", "blueprint/component-blueprint.review.md"))]}
+        path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def fetch(self) -> dict:
         proc = subprocess.run(
@@ -183,6 +193,7 @@ class TestArchive(SystemCase):
         super().setUp()
         self.story_text, self.notes_text = self.write_spec_products()
         self.before = self.fetch()
+        self.deliver()
 
     def test_three_items_are_written_and_read_back(self) -> None:
         proc = self.story("archive", AR)
@@ -193,10 +204,10 @@ class TestArchive(SystemCase):
         self.assertEqual(self.story_text, (self.system / AR / "design.md").read_text("utf-8"))
         self.assertEqual(self.notes_text, (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
         self.assertEqual(DESIGN_REVIEW_TEXT, (self.system / AR / "attachments" / "design-review.md").read_text("utf-8"))
-        backups = sorted((self.feature / ".backups" / "cloud").glob("design-*.md"))
+        backups = sorted((self.feature / "sources" / "backups" / "cloud").glob("design-*.md"))
         self.assertEqual(1, len(backups))
         self.assertEqual(AR_TEXT, backups[0].read_text("utf-8"))
-        self.assertEqual(f".backups/cloud/{backups[0].name}", receipt["backupPath"])
+        self.assertEqual(f"sources/backups/cloud/{backups[0].name}", receipt["backupPath"])
         items = self.items()
         for name, local in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"), ("design-review.md", "blueprint/component-blueprint.review.md")):
             item = items[name]
@@ -214,6 +225,7 @@ class TestArchive(SystemCase):
         (assets / "screen.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         story = self.story_text + "\n![界面参考](../assets/ux/screen.png)\n"
         (self.feature / "AR" / "story.md").write_text(story, encoding="utf-8")
+        self.deliver()
         self.story("archive", AR)
         uploaded = sorted(p.suffix.lower() for p in (self.system / AR).rglob("*") if p.is_file())
         self.assertEqual({".json", ".md"}, set(uploaded))
@@ -227,7 +239,7 @@ class TestArchive(SystemCase):
                  for p in sorted(self.feature.rglob("*")) if p.is_file()}
         added = sorted(set(after) - set(before))
         self.assertEqual(1, len(added), added)
-        self.assertTrue(added[0].startswith(".backups/cloud/design-"), added)
+        self.assertTrue(added[0].startswith("sources/backups/cloud/design-"), added)
         changed = sorted(k for k in before if before[k] != after.get(k))
         self.assertEqual(["AR/story-src/fetched.json"], changed)
 
@@ -260,6 +272,7 @@ class TestArchive(SystemCase):
         target.chmod(stat.S_IREAD)
         self.addCleanup(target.chmod, stat.S_IREAD | stat.S_IWRITE)
         self.fetch()
+        self.deliver()
         proc = self.story("archive", AR)
         self.assertEqual(1, proc.returncode)
         items = self.items()
@@ -268,12 +281,30 @@ class TestArchive(SystemCase):
         self.assertNotIn("checkedAt", items["design-review.md"])
         target.chmod(stat.S_IREAD | stat.S_IWRITE)
         self.fetch()
+        self.deliver()
         proc = self.story("archive", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
         items = self.items()
         self.assertEqual(("same", "same", "fetched"),
                          tuple(items[n]["status"] for n in ("AR-design.md", "review.md", "design-review.md")))
         self.assertEqual(DESIGN_REVIEW_TEXT, target.read_text("utf-8"))
+
+    def test_a_local_change_after_the_publish_check_stops_before_any_write(self) -> None:
+        """发布前核对记下交付集合之后本地又改了一件：一件都不写，报出哪件变了。"""
+        (self.feature / "AR" / "review.md").write_text(self.notes_text + "核对之后补的一句\n", encoding="utf-8")
+        proc = self.story("archive", AR)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("AR/review.md 在发布前核对之后又变了", self.receipt(proc)["error"])
+        self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
+        self.assertFalse((self.system / AR / "attachments" / "review.md").exists())
+
+    def test_without_a_delivery_set_nothing_is_written(self) -> None:
+        """取材之后没做发布前核对（回执里没有交付集合）：一件都不写，要求先核对。"""
+        self.fetch()
+        proc = self.story("archive", AR)
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("没有可用的交付集合", self.receipt(proc)["error"])
+        self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
 
     def test_local_ticket_has_no_place_to_archive(self) -> None:
         """没有系统单据的本地单不走归档——交付终点就是仓内那三份产物。"""
@@ -287,12 +318,13 @@ class TestArchive(SystemCase):
 
 
 class TestRestore(SystemCase):
-    """restore 用 `.backups/cloud/` 里的备份恢复系统正文，附件与本地业务文件不动。"""
+    """restore 用 `sources/backups/cloud/` 里的备份恢复系统正文，附件与本地业务文件不动。"""
 
     def setUp(self) -> None:
         super().setUp()
         self.story_text, self.notes_text = self.write_spec_products()
         self.fetch()
+        self.deliver()
 
     def test_restore_returns_the_previous_body_and_leaves_the_attachments(self) -> None:
         self.story("archive", AR)
@@ -306,7 +338,7 @@ class TestRestore(SystemCase):
 
     def test_restore_takes_the_latest_cloud_backup(self) -> None:
         self.story("archive", AR)
-        cloud = self.feature / ".backups" / "cloud"
+        cloud = self.feature / "sources" / "backups" / "cloud"
         (cloud / "design-29990101000000.md").write_text("# 更晚的备份\n", encoding="utf-8")
         proc = self.story("restore", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -318,7 +350,7 @@ class TestRestore(SystemCase):
         self.assertEqual(1, proc.returncode)
         receipt = self.receipt(proc)
         self.assertFalse(receipt["success"])
-        self.assertIn(".backups", receipt["error"])
+        self.assertIn("backups", receipt["error"])
 
 
 

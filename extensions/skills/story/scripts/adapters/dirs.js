@@ -5,7 +5,7 @@
  * 本文件住在 <实例根>/doc/extensions/skills/story/scripts/adapters/，
  * adapters → scripts → story → skills → extensions → doc → 实例根，共六级。
  *
- * 需求系统内容的备份在 `.backups/cloud/`：归档覆盖系统正文前从系统取下的那一版，restore 从这里取。
+ * 需求系统内容的备份在 `sources/backups/cloud/`：归档覆盖系统正文前从系统取下的那一版，restore 从这里取。
  */
 'use strict';
 const fs = require('node:fs');
@@ -37,9 +37,9 @@ function featureDir(reqNo) {
   return path.join(FEATURES_DIR, reqNo);
 }
 
-/** 需求系统拉取内容的备份目录：`<features>/<AR>/.backups/cloud`。 */
+/** 需求系统拉取内容的备份目录：`<features>/<AR>/sources/backups/cloud`（需求的来源目录下，受保护）。 */
 function cloudBackupDir(reqNo) {
-  return path.join(featureDir(reqNo), '.backups', 'cloud');
+  return path.join(featureDir(reqNo), 'sources', 'backups', 'cloud');
 }
 
 /** 本地时间戳（备份文件名用），形如 20260924123456。 */

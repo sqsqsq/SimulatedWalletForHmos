@@ -15,9 +15,9 @@
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,
  *              "items":[...],"success":true}
  *             AR/story.md 写成系统正文、AR/review.md 与 blueprint/component-blueprint.review.md（设计参考）传为附件，逐件读回，读回记进
- *             AR/story-src/fetched.json；覆盖前系统正文备份到需求目录 `.backups/cloud/`。缺任一件即失败。
+ *             AR/story-src/fetched.json；交付哪几件照回执里发布前核对记下的 delivery；覆盖前系统正文备份到需求目录 `sources/backups/cloud/`。
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
- *             把 `.backups/cloud/` 里最新一份写回系统正文；没有备份即失败。
+ *             把 `sources/backups/cloud/` 里最新一份写回系统正文；没有备份即失败。
  *   fetch   → {"mode":"fetch","reqNo":"...","out":"...","parentNo":"SR...","rrNo":"RR...","fetched":3,"failed":0,
  *              "items":[...],"success":true}
  *             只读取材，起单与 update 都用它：上游三份正文写进 --out（必填，本单来源收件箱下的取材批次），
