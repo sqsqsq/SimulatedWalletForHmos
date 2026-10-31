@@ -36,7 +36,7 @@ from materials import importer, registry
 import usage
 from flow.phase_facts import UPDATES, update_records as _records
 from flow.routing import basis_drift, inputs_answer, material_state, next_step
-from flow.state import (CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, blueprint_exists, file_sha256, system_requirement,
+from flow.state import (BACKUPS, CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, blueprint_exists, file_sha256, system_requirement,
                         load, log, now, registration_drift, round_gates, save, sync_answers)
 
 #: 本层全部落点的根（`UPDATES`）放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -1013,8 +1013,10 @@ def cmd_update_restore(feature_root: Path) -> dict:
     current = _owned(feature_root)
     keys = sorted({*before, *current, *(after or {})})
 
-    # 先把现在与开轮时不同的那几份、连同评审记录（人工区在里面）原样存进本轮的受保护历史；存不下就不往下走
-    saved = root / f"restore-{now().replace('-', '').replace(':', '').replace('T', '-')[:15]}"
+    # 先把现在与开轮时不同的那几份、连同评审记录（人工区在里面）原样存进来源目录下的备份（受保护、按轮次可定位）；
+    # 存不下就不往下走
+    saved = feature_root.joinpath(*BACKUPS) / f"update-{rid}-restore-{now().replace('-', '').replace(':', '').replace('T', '-')[:15]}"
+    copy = saved.relative_to(feature_root).as_posix()
     for rel in [*(k for k in keys if current.get(k) is not None and current.get(k) != before.get(k)), "/".join(REVIEW)]:
         src = feature_root / rel
         if src.is_file():
@@ -1033,7 +1035,7 @@ def cmd_update_restore(feature_root: Path) -> dict:
             continue
         if rel == review and manual and (manual["issues"] or manual["freeform"]):
             conflicts.append({"file": rel, "before": f"AR/story-src/updates/{rid}/before/{rel}" if was else None,
-                              "current": f"AR/story-src/updates/{rid}/{saved.name}/{rel}",
+                              "current": f"{copy}/{rel}",
                               "why": "评审记录里有人写过的意见（" + "、".join(manual["issues"] + (["自由意见区"] if manual["freeform"] else []))
                                      + "），不随撤回退掉——旧议题与现在的表态对不对得上交渲染与议题流程"})
             continue
@@ -1048,14 +1050,14 @@ def cmd_update_restore(feature_root: Path) -> dict:
                 restored.append(rel)
                 continue
         conflicts.append({"file": rel, "before": f"AR/story-src/updates/{rid}/before/{rel}" if was else None,
-                          "current": f"AR/story-src/updates/{rid}/{saved.name}/{rel}" if now_sha else None,
+                          "current": f"{copy}/{rel}" if now_sha else None,
                           "why": ("本轮没到完成点，改动没有登记的那一版可比" if after is None or rel not in after
                                   else "本轮完成点之后又改过")})
 
     contract = load(feature_root) or {}
     rec["decisions"] = (contract.get("update") or {}).get("decisions", [])
     rec.update(status="restore_conflicted" if conflicts else "restored", restored_at=now(),
-               restore_conflicts=conflicts, restore_copy=f"AR/story-src/updates/{rid}/{saved.name}")
+               restore_conflicts=conflicts, restore_copy=copy)
     if not conflicts:
         contract["update"] = {"open": None, "last_restored": rid}
         save(feature_root, contract)

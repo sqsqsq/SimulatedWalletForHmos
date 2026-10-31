@@ -506,6 +506,7 @@ class RestoreFollowsTheTruthTable(UpdateCase):
         self.assertEqual("restored", out["status"], out)
         self.assertEqual(self.was, self.story.read_bytes())
         self.assertFalse(draft.exists(), "本轮新建、登记过的草稿没退掉")
+        self.assertTrue(out["restore_copy"].startswith(f"sources/backups/update-{self.rid}-restore-"), out["restore_copy"])
         saved = self.feature_root / out["restore_copy"]
         self.assertIn("这一轮改的", (saved / "AR" / "story.md").read_text(encoding="utf-8"), "被退掉的那一版没留下来")
         self.assertIsNone(self.flow("update", "--action", "status")["open"], "没有冲突却没关掉这一轮")
@@ -547,6 +548,11 @@ class RestoreFollowsTheTruthTable(UpdateCase):
             target = self.feature_root / rel
             changed[rel] = target.read_bytes() + "开轮之后被改的字节\n".encode("utf-8")
             target.write_bytes(changed[rel])
+        # 本轮里原生施工单位写下的阶段产物：不是本扩展拥有的文件，撤回不删、不改
+        unit = self.feature_root / "balance-refresh" / "spec" / "spec.md"
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.write_text("# 施工单位的 Spec（本轮原生写下）\n", encoding="utf-8")
+        changed[unit.relative_to(self.feature_root).as_posix()] = unit.read_bytes()
         self.complete_point()
         out = self.update("--action", "restore")
         for rel, data in changed.items():

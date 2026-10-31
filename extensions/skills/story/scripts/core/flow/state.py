@@ -104,6 +104,8 @@ def file_sha256(path: Path) -> str | None:
     return sha256(path.read_bytes()).hexdigest()
 
 
+#: 备份的统一位置（相对需求目录）：来源目录下的 backups/，受保护——update 撤回前存下的现状等都放这里
+BACKUPS = ("sources", "backups")
 #: 上次发布出去的 Story、Review 与设计参考附件原样留在这里（相对需求目录）：下一次发布前据它给出差异
 PUBLISHED = (".backups", "published")
 
