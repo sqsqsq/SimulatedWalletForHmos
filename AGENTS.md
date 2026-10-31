@@ -25,6 +25,7 @@
 - `doc/spec/`、`doc/plan/`、`doc/release/` 与 `doc/archive/` 随提交留下历史；归档版本号属于对应旧轮次，复用前核当前需求与实际接口。运行证据（事件流、运行日志、截图、材料原件、压缩包）放 `output/story/` 并在过程件里按路径引用；
   临时脚本与临时工作区放 `output/scratch/<本次任务>/`。
 - 运行、修改或评价测试按 [test/TEST.md](test/TEST.md)，命令、状态、证据与评分只在那里维护；测试命令从仓根执行。
+- 测试命令因机器内存紧张被宿主中止（含后台任务被回收）时，用户已授权直接重新启动，不再停下询问；重跑期间不改被测源码、不提交，交回如实写明被中止的那次与重跑结果。
 - 定方案、开工与评审先读 [TEST §6.5](test/TEST.md#65-维护标准与评审)、[全量评价标准](test/regression/extension-acceptance.md)及本版 `doc/spec/<版本>/评价标准变更.md`；先核标准再实现，按对象取证。
 - [test/EVOLUTION.md](test/EVOLUTION.md) 记录演进与规则来源，是追溯证据，不是当前实现依据。
 - `demo/framework/` 是 AgentMaison 发布件，只读，变化只经 §6 进入 demo。本仓根不挂 Framework 的阶段钩子与写保护钩子，只读边界由维护者遵守。
