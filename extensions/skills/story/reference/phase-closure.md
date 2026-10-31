@@ -29,3 +29,19 @@
 - 审查之后改了知识判断或决策状态，notes 写新依据——只为消掉审查意见而改判断不算处置。
 - 门禁反复报同一问题而你判断改不动时，停下向人说明缺什么、需要谁提供，不靠多跑几次过关。
 - `/story update` 里的重新闭环与收口按 `phases/update.md`「二、一条线」第 7–9 步。
+
+## 现在能不能完成
+
+summary 的闭环是历史事实，不等于此刻还能完成或发布。说「做完了」「可以交付」之前，查原生的当前处置：
+
+```
+node doc/extensions/hooks/shared/framework-access.mjs --project-root . --action disposition --feature <Feature id> --phases <本次负责的阶段，按顺序>
+```
+
+| 返回 | 含义与去处 |
+|---|---|
+| `completion_blocking` 非空 | 本次还不能完成：`repair` 由 `owner` 写的阶段返修，`verify` 补验，`wait` 等原生能力或外部执行；只阻相关的那部分工作 |
+| `release_blocking` 非空、`completion_eligible: true` | 可以普通完成，不能说发布通过；交付说明照实披露 |
+| `disclosed` | 允许披露的残差，写进交付说明，不改签原质量结论 |
+
+完整 interactive 交付沿原生 attended run 的运行身份、范围与完成合同接续；独立 Spec / Plan 只完成本阶段，不为它新建 run、不默认启动 Coding。

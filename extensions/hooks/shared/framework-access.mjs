@@ -322,6 +322,28 @@ function phaseEvidence(projectRoot, feature, chain) {
 }
 
 /**
+ * Feature 此刻的当前处置（只读）：原生 `readCurrentDispositionInput` 组装本次责任链的当前事实（summary、检查、必需缺口、
+ * 证据新鲜度、债务与已登记发现），`resolveCurrentDisposition` 分成阻断完成、阻断发布与可披露三类，并给出普通完成与发布资格。
+ * `chain` 只放本次要问的阶段，不固定六阶段；不传 run，不写任何东西、不启动 readiness 之类有副作用的动作。
+ * 历史闭环（summary 的 closure）由调用方另列，这里只答「现在」。
+ */
+function currentDisposition(projectRoot, feature, chain) {
+  const native = loadNative(projectRoot);
+  try {
+    const input = native.module('scripts/utils/verify-feature-completion.ts')
+      .readCurrentDispositionInput({ projectRoot: native.root, frameworkRoot: native.frameworkRoot, feature, chain });
+    const got = native.module('scripts/utils/check-disposition.ts').resolveCurrentDisposition(input);
+    const row = x => ({ phase: x.phase, id: x.id, action: x.action, affects: x.affects, severity: x.severity,
+      owner: x.owner ?? x.phase, detail: x.detail });
+    return { status: 'ok', feature, chain, completion_eligible: got.completionEligible, release_ready: got.releaseReady,
+      completion_blocking: got.completionBlocking.map(row), release_blocking: got.releaseBlocking.map(row),
+      disclosed: got.disclosed.map(row), reasons: got.reasons, issues: [] };
+  } catch (e) {
+    return failure('invalid', e);
+  }
+}
+
+/**
  * 独立 Story 审查的视觉裁定：取与需求同根的蓝图（标识就是需求标识）与它采用的本需求来源，按原生纯函数算看图能力与保真路由。
  *
  * - 需求原文取采用版本里的阅读正文（`text`、会议阅读件 `evidence`，图片与二进制原件不算）与必读人答（`answer`），Story、写作设计不进；
@@ -809,14 +831,15 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       + ' | --action feedback-related --blueprint <id> --ref <反馈文件>（stdin 给 feedback_id 列表）'
       + ' | --action feature-identity --feature <逻辑 id> [--report-phases <阶段,阶段>]'
       + ' | --action phase-evidence --feature <逻辑 id> --phases <有序阶段,阶段>'
+      + ' | --action disposition --feature <逻辑 id> --phases <有序阶段,阶段>'
       + ' | --action story-review-visual --feature <逻辑需求 id>'
       + ' | --action change-unit-readiness --blueprint <id> | --action change-unit-revise --blueprint <id>（stdin 给 revisions 数组）';
     const ACTIONS = ['blueprint', 'feature', 'sources', 'feedback', 'feedback-related',
-      'feature-identity', 'phase-evidence', 'story-review-visual', 'change-unit-readiness', 'change-unit-revise'];
+      'feature-identity', 'phase-evidence', 'disposition', 'story-review-visual', 'change-unit-readiness', 'change-unit-revise'];
     if (!root || !ACTIONS.includes(action)) throw new Error(usage);
     if (['change-unit-readiness', 'change-unit-revise'].includes(action) && !opt('--blueprint')) throw new Error(usage);
-    if (['feature-identity', 'phase-evidence', 'story-review-visual'].includes(action) && !opt('--feature')) throw new Error(usage);
-    if (action === 'phase-evidence' && !String(opt('--phases') ?? '').trim()) throw new Error(usage);
+    if (['feature-identity', 'phase-evidence', 'disposition', 'story-review-visual'].includes(action) && !opt('--feature')) throw new Error(usage);
+    if (['phase-evidence', 'disposition'].includes(action) && !String(opt('--phases') ?? '').trim()) throw new Error(usage);
     if (['feedback', 'feedback-related'].includes(action) && !opt('--blueprint')) throw new Error(usage);
     if (action === 'feedback-related' && !opt('--ref')) throw new Error(usage);
     if (action === 'blueprint' && (!opt('--blueprint') || !['draft', 'delivery'].includes(opt('--purpose') ?? 'draft'))) throw new Error(usage);
@@ -840,6 +863,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
               : action === 'feature-identity' ? featureIdentityReport(root, opt('--feature'), phases)
                 : action === 'story-review-visual' ? storyReviewVisual(root, opt('--feature'))
                 : action === 'phase-evidence' ? phaseEvidence(root, opt('--feature'), opt('--phases').split(',').map(s => s.trim()).filter(Boolean))
+                : action === 'disposition' ? currentDisposition(root, opt('--feature'), opt('--phases').split(',').map(s => s.trim()).filter(Boolean))
                   : action === 'change-unit-readiness' ? changeUnitReadiness(root, opt('--blueprint'))
                     : action === 'change-unit-revise' ? changeUnitRevise(root, opt('--blueprint'), doc)
           : readFeature(root, opt('--feature'), opt('--phase'), { requirement: opt('--requirement'), requirementFile: opt('--requirement-file') });

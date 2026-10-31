@@ -965,6 +965,32 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         [stale] = out["stale_units"]
         self.assertEqual(("balance-refresh", "spec"), (stale["change_unit_id"], stale["from"]))
 
+    def test_an_old_pass_does_not_hide_the_current_must_fix(self) -> None:
+        """summary 写着闭环 PASS，原生当前处置却还有完成阻断：历史闭环照列，当前不算完成，阻断项与动作点名，不报无待办。"""
+        self.summary(json.dumps({"verdict": "PASS", "closure_status": "closed"}))
+        out = self.status()
+        [unit] = out["units"]
+        self.assertEqual("closed", unit["phases"][0]["closure"], "历史闭环被抹掉了")
+        self.assertIs(False, unit["disposition"]["completion_eligible"])
+        blocking = unit["phases"][0]["blocking"]
+        self.assertTrue(blocking, "原生的当前必修没有落到这个阶段")
+        self.assertTrue(all(b["action"] in ("repair", "verify", "wait") for b in blocking), blocking)
+        [stale] = out["stale_units"]
+        self.assertEqual(blocking, stale["phases"][0]["blocking"])
+
+    def test_reading_the_disposition_writes_nothing(self) -> None:
+        """当前处置只读：查一次，需求目录与 harness 状态一个字节不变。"""
+        self.summary(json.dumps({"verdict": "PASS", "closure_status": "closed"}))
+        watched = [self.root / "doc" / "features", self.root / "framework" / "harness" / "state"]
+        snapshot = lambda: {p: p.read_bytes() for d in watched if d.is_dir() for p in d.rglob("*") if p.is_file()}  # noqa: E731
+        before = snapshot()
+        proc = subprocess.run(["node", str(self.root / "doc/extensions/hooks/shared/framework-access.mjs"), "--project-root",
+                               str(self.root), "--action", "disposition", "--feature", self.status()["units"][0]["feature_id"],
+                               "--phases", "spec"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertIn(proc.returncode, (0, 1), proc.stderr)
+        self.assertEqual("ok", json.loads(proc.stdout)["status"])
+        self.assertEqual(before, snapshot(), "查当前处置写了盘")
+
     def test_the_disclosure_names_units_phases_and_who_takes_over(self) -> None:
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
@@ -981,7 +1007,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         stale = stale_units(units)
         self.assertEqual(["a", None], [s.get("change_unit_id") for s in stale], "新鲜的单位被列成过期，或读不出的被略过")
         text = stale_text(stale)
-        self.assertIn("a（cu-a）的 plan（stale）", text)
+        self.assertIn("a（cu-a）的 plan（证据 stale）", text)
         self.assertIn("蓝图 bp 读不出（原生读取 invalid）", text)
         self.assertIn("闭环到 Plan", text)
         self.assertIn("不沿用旧 Plan", text)
