@@ -22,7 +22,7 @@
 import * as path from 'node:path';
 import { phaseArtifacts } from './contracts.mjs';
 import { activeKnowledge, knowledgeGuide } from './knowledge.mjs';
-import { entryOf, featureKnowledge, unitContext } from './knowledge-application.mjs';
+import { activation, entryOf, featureKnowledge, knowledgeSource, unitContext } from './knowledge-application.mjs';
 import { knowledgeTask } from './knowledge-task.mjs';
 import { obligationsFromContracts } from './obligations.mjs';
 import { extensionRoot, featureRoot, readTextOrNull, relDisplay } from './paths.mjs';
@@ -36,8 +36,8 @@ const KNOWLEDGE_CHECK_PREFIX = 'knowledge_';
 
 /** 本阶段被审的知识判断在哪：判断由蓝图设计形成，spec 核验收承接，plan 冻结成契约上的 must，之后各阶段按它落实与取证。 */
 const SOURCE_OF_TRUTH = {
-  spec: { file: 'acceptance.yaml', what: '本施工单位承接的适用判断（设计里的知识应用决定）有没有验收条目承接（`knowledge_rule` 与 `knowledge_decision_id`）' },
-  plan: { file: 'contracts.yaml', what: '每条承接的适用判断挂在哪个实体上（`must`，带 `decision_id`）、选中模式的角色由哪个实体承担（`pattern_roles`）' },
+  spec: { file: 'acceptance.yaml', what: '本施工单位承接的适用规约条目（蓝图适用性事实里判定适用的）有没有验收条目承接（`knowledge_refs` 列着它）' },
+  plan: { file: 'contracts.yaml', what: '每条承接的适用规约条目挂在哪个实体上（`must`，`source_ref` 指条目）、选中模式的角色由哪个实体承担（`pattern_roles`）' },
   coding: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，代码里有没有落实' },
   review: { file: 'contracts.yaml', what: '契约实体上的每条 `must`，复核表里一处落点一行的结论' },
   ut: { file: 'contracts.yaml', what: '要单测证据的 `must`（`verify: ut / both`）与 `acceptance.yaml` 里桥到规约的验收条目' },
@@ -59,20 +59,21 @@ const WALK = {
 const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s*\r?\n\s*/g, ' ').trim() || '—';
 
 /**
- * spec：本施工单位承接的判断一条一行，原条目与判定、要求与落点并列；审查对着原文核验收是否承接了它们。
+ * spec：本施工单位相关的知识判断一条一行（规约逐条、整域无关一行、选中或拒绝的模式一行），原条目、判定、理由与落点并列；
+ * 审查对着原文核验收是否承接了适用的那些。
  */
 function decisionTable(projectRoot, feature, knowledge, inputs) {
   const judged = featureKnowledge(projectRoot, feature, inputs.contracts);
-  const { mine, common, undetermined } = unitContext(judged);
+  const { mine, common } = unitContext(judged);
   const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
-  if (!mine.length && !common.length && !undetermined.length) return [`${judged.label} 里没有与本施工单位相关的知识判断。`, ...gaps];
-  // 没有落点的也列出：不适用与拒绝是公共依据（宿主扩展章引用其理由），其余作用域未确定；落点在别的单位的不列
-  const where = d => (mine.includes(d) ? cell((d.knowledge.target_refs ?? []).join('、'))
-    : common.includes(d) ? '需求级公共依据（无落点）' : '作用域未确定（无落点，待设计负责方明确）');
-  return ['| 决定 | 知识单元 | 原文 | 判定 | 要求与理由 | 落点 |', '|---|---|---|---|---|---|',
-    ...[...mine, ...common, ...undetermined].map(d => `| ${d.decision_id} | ${d.knowledge.unit} `
-      + `| ${cell(entryOf(knowledge, d)?.constraint ?? '（模式，见知识任务原文）')} | ${d.knowledge.outcome} `
-      + `| ${cell([d.knowledge.requirement, d.rationale].filter(Boolean).join('；'))} | ${where(d)} |`),
+  if (!mine.length && !common.length) return [`${judged.label} 里没有与本施工单位相关的知识判断。`, ...gaps];
+  // 没有落点的不适用与拒绝是需求级公共依据（宿主扩展章引用其理由）；落点在别的单位的不列
+  const where = d => (mine.includes(d) ? cell(d.target_refs.join('、')) : '需求级公共依据（无落点）');
+  const what = d => (d.kind === 'patterns' ? '模式' : d.domain ? '整域' : d.unit);
+  return ['| 来源 | 条目 | 原文 | 判定 | 理由 | 落点 |', '|---|---|---|---|---|---|',
+    ...[...mine, ...common].map(d => `| ${d.source_ref} | ${what(d)} `
+      + `| ${cell(entryOf(knowledge, d)?.constraint ?? (d.kind === 'patterns' ? '（模式，见知识任务原文）' : '（整域，见知识任务原文）'))} `
+      + `| ${d.outcome} | ${cell(d.rationale)} | ${where(d)} |`),
     ...gaps];
 }
 
@@ -83,21 +84,18 @@ function decisionTable(projectRoot, feature, knowledge, inputs) {
 function obligationTable(projectRoot, feature, knowledge, inputs) {
   const contracts = inputs.contracts;
   if (!contracts) return [`**契约拿不到**：${inputs.why}——原义与 must 无从并列，未验证。`];
-  const musts = obligationsFromContracts(contracts).filter(o => o.rule);
+  const musts = obligationsFromContracts(contracts).filter(o => o.sourceRef);
   if (!musts.length) return ['契约上一条 `must` 都没有。'];
-  // 条目按义务出自的判断找（来源文件 + 单元）：不同文件同编号的规约各成一行
-  const decisions = new Map(featureKnowledge(projectRoot, feature, contracts).rows.map(d => [d.decision_id, d]));
+  // 条目按义务出自的来源找（知识文件 + 编号）：不同文件同编号的规约各成一行
+  const active = activation(projectRoot, knowledge);
   const groups = new Map();
-  for (const o of musts) {
-    const key = `${o.rule}\0${o.decisionId ?? ''}`;
-    groups.set(key, [...(groups.get(key) ?? []), o]);
-  }
-  const rows = ['| 编号 | 约束原文 | 命中后要给出 | 附注 | 契约上的 must（实体：要落实成什么 · verify · 出自的决定） |',
+  for (const o of musts) groups.set(o.sourceRef, [...(groups.get(o.sourceRef) ?? []), o]);
+  const rows = ['| 条目 | 约束原文 | 命中后要给出 | 附注 | 契约上的 must（实体：要落实成什么 · verify） |',
     '|---|---|---|---|---|'];
-  for (const list of groups.values()) {
-    const e = entryOf(knowledge, decisions.get(list[0].decisionId));
-    const cells = list.map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'} · ${o.decisionId || '（没写 decision_id）'}`);
-    rows.push(`| ${list[0].rule} | ${cell(e?.constraint ?? '（认不回判断的来源条目）')} | ${cell(e?.handling)} | ${cell(e?.note)} `
+  for (const [ref, list] of groups) {
+    const e = entryOf(knowledge, knowledgeSource(active, ref));
+    const cells = list.map(o => `${o.entityPath}：${o.text || '（没写 text）'} · ${o.verify || '—'}`);
+    rows.push(`| ${cell(ref)} | ${cell(e?.constraint ?? '（认不回激活规约的条目）')} | ${cell(e?.handling)} | ${cell(e?.note)} `
       + `| ${cells.map(cell).join('<br>')} |`);
   }
   return rows;

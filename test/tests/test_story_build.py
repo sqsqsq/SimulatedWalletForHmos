@@ -23,7 +23,7 @@ import unittest
 from pathlib import Path
 from ext_workspace import link_framework, link_harness_yaml, DEV_EXT, DEV_ROOT
 import design_kit  # noqa: E402
-from designed_fixture import FIXTURE_DECISIONS, REAL_RUN_DESIGN, designed_copy, ensure_flow_state  # noqa: E402
+from designed_fixture import FIXTURE_JUDGEMENTS, REAL_RUN_DESIGN, designed_copy, ensure_flow_state  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
 
@@ -1940,7 +1940,7 @@ class TheChapterIsCheckedBeforeItLandsPart2(TheChapterIsCheckedBeforeItLandsCase
 
     def test_the_upstreams_own_numbering_is_not_a_work_id(self) -> None:
         """设计采用的上游原件自己用 F3 编功能点：Story 照原文引用它不是仓内工作编号，不强制改号。"""
-        from designed_fixture import FIXTURE_DECISIONS  # noqa: PLC0415
+        from designed_fixture import FIXTURE_JUDGEMENTS  # noqa: PLC0415
         feature = self.feature_root()
         prd = feature / "sources" / "prd-v1" / "prd.md"
         inbox = feature / "sources" / "inbox" / "RR"
@@ -1952,7 +1952,7 @@ class TheChapterIsCheckedBeforeItLandsPart2(TheChapterIsCheckedBeforeItLandsCase
                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
             self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         # 设计采用新版本：需求条目改引 prd-v2
-        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS, decisions=FIXTURE_DECISIONS)
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS, judgements=FIXTURE_JUDGEMENTS)
         self.assertEqual(0, self.put("背景", "签约对应上游的 F3。\n").returncode)
         proc = self.put("背景", "签约对应上游的 F4。\n")
         self.assertEqual(1, proc.returncode, "上游原文里没有的编号仍按仓内工作编号拦")
@@ -2423,7 +2423,7 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
         draft = (self.build("skeleton"), self.draft("10-附录.md").read_text(encoding="utf-8"))[1]
         self.assertIn("节首可以有一句业务定位", draft, "定位句可写可不写，草稿只给指引")
         self.assertNotIn("{{", draft, "附录草稿里留了要作者填的占位")
-        for needle in ("按蓝图契约逐个写接口", "逐类写数据由谁持有", "逐条写激活规约在本需求的判定",
+        for needle in ("按蓝图契约逐个写接口", "逐类写数据由谁持有", "写影响本需求的规约判定",
                        "一张表，每行一份外部原件"):
             self.assertIn(needle, draft)
         self.assertNotIn("story-build:begin", draft, "机器区进了草稿")
@@ -2595,18 +2595,19 @@ class WhatTheAuthorLandsIsCleanAndLinkable(RealRunCase):
 class ProjectionRefusesToInventContent(RealRunCase):
     """机器区宁可停下也不写占位——作者改不了它，挂着就永远不会被填。"""
 
-    def test_active_knowledge_without_any_decision_stops_the_projection(self) -> None:
-        """激活了规约、蓝图里却没有一条知识应用决定——投影不替设计编一个判断出来。"""
+    def test_a_related_domain_left_half_judged_stops_the_projection(self) -> None:
+        """相关规约域只判了一条——投影不替设计把其余条目编出判断来。"""
         self.build("skeleton")
         self.land_appendix()
-        design_kit.install_blueprint(self.root, "AR90006", ACCESS, decisions=[], exact_decisions=True)
+        design_kit.install_blueprint(self.root, "AR90006", ACCESS, exact=True,
+                                     judgements=[design_kit.rule_judgement("OBS-02", "applied", "本需求新增提交入口")])
         proc = subprocess.run(
             ["node", str(BUILD), "project", "--feature", "AR90006",
              "--project-root", str(self.root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(1, proc.returncode, "缺判断还照投不误")
         out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertIn("没有判断激活规约", out)
+        self.assertIn("相关域没有逐条判断", out)
         self.assertIn("设计职责", out)
 
     def test_a_zone_outside_the_contract_belongs_to_an_older_version(self) -> None:
@@ -2987,23 +2988,23 @@ class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
         self.assert_wrote_nothing(before)
 
     def test_active_knowledge_without_a_design_judgement_blocks(self) -> None:
-        """激活规约逐条判断：蓝图漏判一条，起手停下并点名那一条，判断归设计，不由成文补。"""
-        design_kit.install_blueprint(self.root, FEATURE, ACCESS, decisions=FIXTURE_DECISIONS[:1], exact_decisions=True)
+        """相关规约域逐条判断：蓝图漏判一条，起手停下并点名那一条，判断归设计，不由成文补。"""
+        design_kit.install_blueprint(self.root, FEATURE, ACCESS, judgements=FIXTURE_JUDGEMENTS[:1], exact=True)
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, out)
-        self.assertIn("没有判断激活规约 SMP-02", out)
-        self.assertNotIn("SMP-01", out.split("没有判断激活规约", 1)[1].split("\n", 1)[0])
+        self.assertIn("相关域没有逐条判断 SMP-02", out)
+        self.assertNotIn("SMP-01", out.split("相关域没有逐条判断", 1)[1].split("\n", 1)[0])
         self.assert_wrote_nothing(before)
 
     def test_a_judgement_on_old_knowledge_text_blocks(self) -> None:
-        """判断记着当时的知识原文摘要：原文之后改了，蓝图待同步，起手停下。"""
-        design_kit.install_blueprint(self.root, FEATURE, ACCESS, decisions=FIXTURE_DECISIONS)
+        """蓝图记着当时的知识输入身份：原文之后改了，蓝图待同步，起手停下。"""
+        design_kit.install_blueprint(self.root, FEATURE, ACCESS, judgements=FIXTURE_JUDGEMENTS)
         rules = next((self.root / "doc" / "extensions" / "knowledge" / "constraints").glob("*.md"))
         rules.write_text(rules.read_text(encoding="utf-8") + "\n补一句说明。\n", encoding="utf-8")
         code, out = self.skeleton()
         self.assertEqual(1, code, out)
-        self.assertIn("知识原文变了", out)
+        self.assertIn("原文变了", out)
 
     def test_an_explicit_not_applicable_section_is_legal(self) -> None:
         """写出来的「不涉及：<依据>」是结论，起手照常——不逼作者补一张空表。"""

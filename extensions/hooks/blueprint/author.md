@@ -13,34 +13,57 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
   现状怎么取、结论怎么写见 `doc/extensions/skills/story/reference/evidence-rules.md`，来源发现之前读。
 - **工程现状核对**：材料承诺的能力在工程里有没有、依赖的接口接不接得上，在定决策之前核。已有能力不实、外部依赖缺席，或只能模拟而影响验收的，登记为承载缺口交人定；正常要新写的代码不算承载问题。
 - **恢复与兜底路径**：写清谁发起、按什么身份查询、查的是哪个对象、状态以谁为准、结果给谁用，路径挂在承担它的那一方的设计对象上。
-- **规约**：与本需求相关的每条逐条判断。适用的，要求写在真正承担它的设计对象上，并写明验证去向；不适用的，写出使它不适用的需求条件；只有真实授权才写豁免，连同理由与补偿。
-- **设计模式**：单元怎么切、信号从哪来按 `doc/extensions/skills/story/reference/knowledge/protocol.md`「设计模式」；每个激活模式按它的上篇写一条判断（选中、调整、拒绝或待定），全都不选也逐个写拒绝的事实；选中的写明每个角色落在哪个设计对象或流程步骤上；定不下来的登记为未决，写明由谁、在何时定。
+- **规约**：每份规约是一个域。与本需求相关的域逐条判断：适用的写明落在哪个设计对象上，不适用的写出使它不适用的需求条件；整域都碰不到写一条域级的不涉及与理由。有争议、要豁免或定不下来的，登记成原生决定或缺口（豁免要有真实授权、理由与补偿），条目指向它。
+- **设计模式**：单元怎么切、信号从哪来按 `doc/extensions/skills/story/reference/knowledge/protocol.md`「设计模式」。只在业务单元出现了这个模式的候选信号时判断：选中写条件与理由，并在承担每个角色的设计对象上写角色；有信号却不用写反证；没有候选信号的模式不判。
 - **判断的来源**：你依据材料作出的判断保持推断来源；人签过的裁决引用人的原话与记录位置。
-- **施工义务**：蓝图写决定与落点；每个施工单位的契约再把它承担的义务写到实体上，知识正文留在知识文件里。设计覆盖实际要改的每个业务与宿主模块；在宿主模块里只加一条路由或入口也是改动，写进改动边界。
+- **施工义务**：适用的规约落到真正承担它的设计对象或契约实体上；每个施工单位的契约再把它承担的义务写到实体上，知识正文留在知识文件里。设计覆盖实际要改的每个业务与宿主模块；在宿主模块里只加一条路由或入口也是改动，写进改动边界。
 
 来源发现阶段已成立的判断直接承接到设计，设计中出现新的对象时回到知识任务核一遍相关知识。
 准入之前双向核来源（知识任务第 1 块列出候选采用的每份原件）：先逐份读原件，条件、行为、边界、异常与责任各找到承担它的设计对象，没有承担者的落实成对象或登记原生缺口，没有验收编号不是略过的理由；再逐个设计对象回原件、工程事实与人签核出处，材料事实、人签与你的推断分开，仍未决的写成未决、不写成定案。init-analysis 只作定位索引。
 
-## 知识应用决定的写法
+## 知识在蓝图里的写法
 
-每条激活规约一条决定，模式一个单元一条，写在 `decisions_and_gaps.decisions`，形态以
-`doc/extensions/skills/story/contracts/knowledge-application.schema.json` 为准：
+形态以 `doc/extensions/skills/story/contracts/knowledge-application.schema.json` 为准。
+
+**知识输入身份**：知识任务第 3 块给出这一轮的 `knowledge_context`，原样写进 `discovery.inputs.knowledge_context`。它记设计收到的是哪一版知识；知识之后增删或改了，重取任务，核受影响的事实与设计对象，原生修订后换成新的一份。
+
+**适用性写成原生事实**（`discovery.facts`），一份知识一条，`provenance.source_ref` 指知识文件：
 
 ```yaml
-- decision_id: knowledge-ret-01
-  kind: knowledge_application
-  status: answered_with_evidence
-  owner: design-author
-  rationale: 本需求在处理过程中保存临时记录
-  provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/constraints/<规约文件>.md, observed_at: 2026-09-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
-  verification_refs: [view:logical/node:record-store]
-  knowledge: {kind: constraints, form: entries, unit: RET-01, source_sha256: "sha256:3f5e0b8c9d1a2e4f6071829304a5b6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d", outcome: applied, requirement: 处理完成后清除临时记录, target_refs: [view:logical/node:record-store]}
+- fact_id: knowledge-retention
+  subject: knowledge:retention
+  value:
+    knowledge_kind: constraints
+    items:
+      - {unit: RET-01, outcome: applied, rationale: 本需求在处理过程中保存临时记录，处理完成后清除, target_refs: [view:logical/node:record-store]}
+      - {unit: RET-02, outcome: not_applicable, rationale: 本需求不导出记录, target_refs: []}
+      - {unit: RET-03, outcome: pending, rationale: 保留期限等运营定, target_refs: [decision:retention-period]}
+  provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/constraints/<规约文件>.md, observed_at: 2026-10-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
+- fact_id: knowledge-export
+  subject: knowledge:export
+  value: {knowledge_kind: constraints, outcome: not_applicable, rationale: 本需求没有任何对外导出}
+  provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/constraints/<另一份规约>.md, observed_at: 2026-10-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
+- fact_id: knowledge-branching
+  subject: knowledge:branching
+  value: {knowledge_kind: patterns, outcome: selected, rationale: 刷新有三条以上互斥分支，各分支的前置检查不同}
+  provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/design-patterns/<模式文件>.md, observed_at: 2026-10-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
 ```
 
-- `source_ref`、`source_sha256`、`unit` 照抄知识任务第 4 块；原文之后变了按新原文重判。三个字段各答一问：`rationale` 写本需求的哪项具体事实使它适用或不适用；`requirement` 写承担对象在本需求里具体做什么；`target_refs` 列承担它的设计对象。每条按本需求的事实写。
-- 规约：适用 `applied` 写 `requirement` 与承担它的设计对象地址；不适用 `not_applicable`（`status` 同为 `not_applicable`，理由写哪个条件不成立，只写理由）；豁免 `waived` 带 `waiver: {reason, compensation, authority_ref}` 指真实授权，红线不能豁免。
-- 模式：`selected` / `adjusted` 写 `roles: [{role, target_ref}]`，`rationale` 讲各角色怎样协作、为什么选它；`rejected` 写反证；定不下来写 `pending`，`status` 为 `open_decision` 或 `blocker` 并登记原生缺口。
-- 事实用到的知识单元写在事实的 `value.knowledge: {unit, form, source_sha256}`，读到的内容与用途写 `value.observation`。
+- 相关域的 `items` 覆盖这份规约的每条：`applied` 的 `target_refs` 列承担它的设计对象地址；`not_applicable` 的理由写本需求哪个条件不成立；`pending` 指向登记它的原生决定或缺口。`rationale` 写本需求的具体事实，不抄规约原文。
+- 用到的项目事实照常写成事实，`provenance.source_ref` 指事实文件（用到某一面或某一篇写 `#<面名>`）。
+
+**义务与角色写在承担它的设计对象上**：
+
+```yaml
+nodes:
+  - node_id: record-store
+    must:
+      - {text: 处理完成后清除临时记录, source_ref: "doc/extensions/knowledge/constraints/<规约文件>.md#RET-01", verify: ut}
+    pattern_roles:
+      - {pattern_ref: doc/extensions/knowledge/design-patterns/<模式文件>.md, role: 协调者}
+```
+
+`must.source_ref` 指适用的那一条规约条目，`text` 写这个对象在本需求里具体做什么，`verify` 按规约声明的执行体定；`pattern_roles.role` 取模式声明的角色。
 
 ## 原生字段放不下的精确内容
 

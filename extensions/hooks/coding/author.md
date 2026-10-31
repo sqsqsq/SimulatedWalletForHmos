@@ -26,7 +26,7 @@
 
 **证据就是挂着义务的那个实体的代码**；证据怎么取由 `must.verify` 定（`ut` / `device` / `both` 交 UT 与真机，
 `review` 交 verifier）。落不了地就回 plan 改 `must`。源码里不写规约编号、规约原文或 `must.text` 的复述，
-注释只写这段代码的意图——追踪链是 `acceptance.yaml` 的 `knowledge_rule` → 契约的 `must.rule` → UT 用例名里的 `[AC-N]`。
+注释只写这段代码的意图——追踪链是 `acceptance.yaml` 的 `knowledge_refs` → 契约的 `must.source_ref` → UT 用例名里的 `[AC-N]`。
 
 ## 三、跑哪条命令
 

@@ -16,9 +16,9 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
     """spec：设计里的知识判断、验收承接、验收标准一致三组各按自己的前置判。"""
 
     def acceptance_with(self, *extra: str) -> None:
-        """夹具判了 NEU-01/02/03 三条适用：桥三条都有，`extra` 再多桥几条（写规约编号，决定按夹具的命名）。"""
+        """夹具判了 NEU-01/02/03 三条适用：桥三条都有，`extra` 再多桥几条（写中性域的规约编号）。"""
         rules = ["NEU-01", "NEU-02", "NEU-03", *extra]
-        rows = "".join(f"  - id: AC-{i + 1}\n    knowledge_rule: {r}\n    knowledge_decision_id: k-{r.lower()}\n"
+        rows = "".join(f"  - id: AC-{i + 1}\n    knowledge_refs: [{kp.REF}#{r}]\n"
                        "    description: 桥\n" for i, r in enumerate(rules))
         (self.feature_root / "acceptance.yaml").write_text("criteria:\n" + rows, encoding="utf-8")
 
@@ -28,29 +28,28 @@ class SpecProblemsShowUpTogether(kp.ProtocolCase):
             "# 规格\n\n## 验收标准\n\n" + "".join(f"- {i} 出口带标识\n" for i in ids), encoding="utf-8")
 
     def test_three_independent_problems_are_named_in_one_run(self) -> None:
-        """单元不在册（判断组）、桥指向不适用的判断（承接组）、验收标准的编号在 acceptance 里没有（一致组）——一次全出。"""
+        """条目不在册（判断组）、桥指向不适用的条目（承接组）、验收标准的编号在 acceptance 里没有（一致组）——一次全出。"""
         self.judged()
-        self.decisions.append(self.decision("NEU-01", "not_applicable", "占位"))
-        self.decisions[-1].update(decision_id="k-neu-99")
-        self.decisions[-1]["knowledge"]["unit"] = "NEU-99"
+        self.facts[0]["value"]["items"].append(self.item("NEU-99", "not_applicable", "占位"))
         self.write_contracts()
         self.acceptance_with("NEU-04")
         self.spec_md("AC-1", "AC-9")
         message = self.hook("spec")
-        self.assertIn("单元 NEU-99 不在", message)
-        self.assertIn("k-neu-04，它不是本施工单位承接的适用判断", message, "承接问题没有与判断问题同轮出现")
+        self.assertIn("条目 NEU-99 不在", message)
+        self.assertIn(f"{kp.REF}#NEU-04 不是本施工单位承接的适用规约条目", message, "承接问题没有与判断问题同轮出现")
         self.assertIn("AC-9 在 acceptance.yaml 里没有", message, "一致问题没有同轮出现")
         self.assertIn("【", message, "报错没有按组分节")
 
     def test_a_design_gap_does_not_hide_the_bridge(self) -> None:
-        """判断的原文变了是设计缺口，交设计负责方；它不挡住验收承接那一组。"""
+        """相关域漏判一条是设计缺口，交设计负责方；它不挡住验收承接那一组。"""
         self.judged()
+        self.facts[0]["value"]["items"] = [i for i in self.facts[0]["value"]["items"] if i["unit"] != "NEU-04"]
         self.write_contracts()
-        self.edit_knowledge("constraints/neutral-domain.md", "出口处记一条耗时", "出口处记一条总耗时")
         (self.feature_root / "acceptance.yaml").write_text("criteria:\n  - id: AC-1\n    description: x\n", encoding="utf-8")
         message = self.hook("spec")
-        self.assertIn("知识原文变了", message)
-        self.assertIn("k-neu-02（NEU-02）没有验收条目承接", message, "设计缺口屏蔽了承接组")
+        self.assertIn("相关域没有逐条判断 NEU-04", message)
+        self.assertIn("判定适用的 NEU-02（knowledge/constraints/neutral-domain.md）由本施工单位承接，没有验收条目承接", message,
+                      "设计缺口屏蔽了承接组")
 
     def test_a_clean_spec_passes(self) -> None:
         """合法的普通 Feature 没走 /story、没有 Story：spec 门禁照常通过，不要求 Story。"""
@@ -69,13 +68,12 @@ class PlanProblemsShowUpTogether(kp.ProtocolCase):
 
     def test_placement_obligation_and_consistency_are_named_together(self) -> None:
         self.judged()
-        self.write_contracts("data_models:\n  - name: 出口记录\n    must:\n"
-                             "      - rule: NEU-01\n        decision_id: k-neu-01\n        text: x\n        verify: review\n"
-                             + kp.contracts().replace("decision_id: k-neu-03", "decision_id: k-neu-04"))
+        self.write_contracts("data_models:\n  - name: 出口记录\n    must:\n" + kp.landing("NEU-01", "x", "review", indent=6)
+                             + kp.contracts().replace(f"{kp.REF}#NEU-03", f"{kp.REF}#NEU-04"))
         message = self.hook("plan")
         self.assertIn("data_models.出口记录 顶层挂了 must", message)
-        self.assertIn("NEU-03 的 must 指向 k-neu-04，它不是本施工单位承接的适用判断", message, "义务问题没有与挂位同轮出现")
-        self.assertIn("k-neu-03（NEU-03", message, "判断没人扛没有同轮出现")
+        self.assertIn(f"must 出自 {kp.REF}#NEU-04，它不是本施工单位承接的适用规约条目", message, "义务问题没有与挂位同轮出现")
+        self.assertIn("判定适用的 NEU-03（", message, "条目没人扛没有同轮出现")
 
     def test_an_unreadable_contract_says_what_waits(self) -> None:
         """契约读不出：义务与一致两组写明前置；不依赖契约的用例引用组照判。"""

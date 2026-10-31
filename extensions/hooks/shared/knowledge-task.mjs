@@ -18,7 +18,8 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blueprintKnowledge, entryOf, featureKnowledge, rolesOf, unitContext, unitDuties } from './knowledge-application.mjs';
+import { blueprintKnowledge, entryOf, featureKnowledge, knowledgeContext, rolesOf, unitContext, unitDuties }
+  from './knowledge-application.mjs';
 import { adoptedSources, loadNative, readBlueprint, readFeature, readSourceFiles } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
@@ -71,9 +72,8 @@ function knowledgeBlock(root, action) {
   for (const k of ordered) {
     const file = path.join(extensionRoot(root), ...k.file.split('/'));
     const body = fs.readFileSync(file, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
-    const digest = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
     rows.push(`### ${k.name}（${k.file.split('/')[1] ?? ''}，${k.form}）`, '',
-      `- 位置：\`${relDisplay(root, file)}\`（判断的 provenance.source_ref）`, `- 原文摘要：\`${digest}\`（判断的 source_sha256）`,
+      `- 位置：\`${relDisplay(root, file)}\`（适用性事实的 provenance.source_ref；规约条目引用写 \`<位置>#<编号>\`）`,
       `- 单元：${k.units.join('、')}`, `- 何时读：${k.appliesWhen}`,
       ...(k.registration.audience === null ? []
         : [`- 登记：受众 ${JSON.stringify(k.registration.audience)}${k.registration.summary ? `，摘要「${k.registration.summary}」` : ''}`]),
@@ -83,14 +83,15 @@ function knowledgeBlock(root, action) {
   return { knowledge, rows };
 }
 
-const factLine = f => `- 事实 \`${f.fact_id}\`：${JSON.stringify(f.value)}`;
-const decisionLine = d => `- 决定 \`${d.decision_id}\`（${d.status}）：${d.rationale ?? ''} ${JSON.stringify(d.knowledge ?? {})}`;
+const factLine = f => `- 事实 \`${f.fact_id}\`（${f.provenance?.source_ref}）：${JSON.stringify(f.value)}`;
+/** 一条规约或模式判断：哪份知识的哪一条、判定、理由与落点。 */
+const judgedLine = d => `- \`${d.source_ref}\`（${d.kind === 'patterns' ? '模式' : d.domain ? '整域' : d.unit}，事实 ${d.fact_id}）`
+  + ` → ${d.outcome}：${d.rationale ?? ''}${d.target_refs.length ? `；落在 ${d.target_refs.join('、')}` : ''}`
+  + `${d.roles?.length ? `；角色 ${d.roles.map(r => `${r.role} → ${r.target_ref}`).join('、')}` : ''}`;
 
-/** 蓝图里与知识相关的事实与决定：原样列出，判断归模型。 */
-function decisionsOf(blueprint) {
-  const facts = (blueprint?.discovery?.facts ?? []).filter(f => f?.value?.knowledge);
-  const decisions = (blueprint?.decisions_and_gaps?.decisions ?? []).filter(d => d?.kind === 'knowledge_application');
-  return [...facts.map(factLine), ...decisions.map(decisionLine)];
+/** 蓝图里与知识相关的判断与事实：按知识应用的读法列出，判断归模型。 */
+function judgedOf(checked) {
+  return [...checked.rows.map(judgedLine), ...checked.facts.map(factLine)];
 }
 
 /**
@@ -102,15 +103,13 @@ function unitLines(judged) {
   const { applied, selected } = unitDuties(judged);
   const own = context.mine.filter(d => !applied.includes(d) && !selected.includes(d));
   const lines = [
-    ...(own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(decisionLine)] : []),
-    ...(context.common.length ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...context.common.map(decisionLine)] : []),
-    ...(context.undetermined.length ? ['作用域未确定的判断（没有落点，需设计负责方明确归属）：', ...context.undetermined.map(decisionLine)] : []),
+    ...(own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(judgedLine)] : []),
+    ...(context.common.length ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...context.common.map(judgedLine)] : []),
     ...context.facts.map(factLine),
     ...(context.located.length ? [`需求里另有知识事实，与本单位的关联未明，只给定位：${context.located
       .map(f => `\`${f.fact_id}\`（${f.subject ?? ''}）`).join('、')}`] : []),
   ];
-  const gaps = context.undetermined.map(d => `判断 ${d.decision_id}（${d.knowledge.unit}，${d.knowledge.outcome}）没有落点，作用域未确定——设计负责方明确它归哪个设计对象。`);
-  return { lines, gaps };
+  return { lines, gaps: [] };
 }
 
 /**
@@ -177,9 +176,15 @@ function blueprintTask(root, id, action) {
   if (bp?.issues?.length) gaps.push(`蓝图原生校验有 ${bp.issues.length} 项：${bp.issues.slice(0, 5).map(i => i.id ?? i.code).join('、')}——设计作者处理。`);
   const sources = bp ? sourceIndex(root, id, bp.blueprint)
     : ['蓝图尚未建立，还没有候选采用的来源：需求的材料版本列在 `sources/README.md`，从那里起手。', ...answerRows(root, id)];
-  const decided = bp ? decisionsOf(bp.blueprint) : [];
-  if (bp) gaps.push(...blueprintKnowledge(root, bp.blueprint).problems.map(p => `${p}——设计作者处理。`));
-  const duties = ['设计阶段还没有施工契约；知识判断以决定的形式落在蓝图里，施工义务在施工单位的契约中承接。'];
+  const checked = bp ? blueprintKnowledge(root, bp.blueprint) : null;
+  const decided = checked ? judgedOf(checked) : [];
+  if (checked) gaps.push(...checked.problems.map(p => `${p}——设计作者处理。`));
+  const duties = ['设计阶段还没有施工契约；知识的适用性写成蓝图的原生事实，适用规约的义务与模式角色写在承担它的设计对象上，'
+    + '施工义务在施工单位的契约中承接。'];
+  if (action !== 'questioning') {
+    duties.push('这一轮的知识输入身份，原样写进蓝图 `discovery.inputs.knowledge_context`（知识换了重取本任务、按新的一份替换）：', '',
+      '```json', JSON.stringify(knowledgeContext(root), null, 2), '```');
+  }
   const dispatch = [];
   if (action === 'questioning') {
     const round = questioningRound(root, bp, loadNative(root));
@@ -202,7 +207,7 @@ function blueprintTask(root, id, action) {
   return {
     object,
     sources,
-    facts: decided.length ? decided : [bp ? '蓝图里还没有知识应用的事实与决定。' : '蓝图尚未建立，没有已成立的判断。'],
+    facts: decided.length ? decided : [bp ? '蓝图里还没有知识的适用性事实。' : '蓝图尚未建立，没有已成立的判断。'],
     duties,
     dispatch,
     gaps,
@@ -216,15 +221,16 @@ function blueprintTask(root, id, action) {
  */
 function carriedDuties(judged, action, knowledge) {
   const { applied, selected } = unitDuties(judged);
-  const out = [`本施工单位承接 ${applied.length} 条适用规约、${selected.length} 条选中模式（原文在第 4 块，按来源文件与单元找）：`];
+  const out = [`本施工单位承接 ${applied.length} 条适用规约条目、${selected.length} 个选中模式（原文在第 4 块，按来源文件与单元找）：`];
   for (const d of applied) {
     const { executor, allowed } = verifyChoices(entryOf(knowledge, d));
-    out.push(`- \`${d.decision_id}\`（${d.knowledge.unit}，${d.file}）：${d.knowledge.requirement ?? ''}；落在 ${(d.knowledge.target_refs ?? []).join('、')}`
-      + (action === 'plan' ? `；must 带 decision_id，verify 取 ${allowed.join(' / ')}${executor ? `（规约声明要「${executor}」证据）` : ''}` : '')
-      + (action === 'spec' ? '；验收写出它要求的可观察行为与验证责任，带 knowledge_rule 与 knowledge_decision_id' : ''));
+    out.push(`- \`${d.source_ref}\`（事实 ${d.fact_id}）：${d.rationale ?? ''}；落在 ${d.target_refs.join('、')}`
+      + (action === 'plan' ? `；承担它的实体写 must（source_ref 照抄这条），verify 取 ${allowed.join(' / ')}${executor ? `（规约声明要「${executor}」证据）` : ''}` : '')
+      + (action === 'spec' ? '；验收写出它要求的可观察行为与验证责任，knowledge_refs 列这条' : ''));
   }
   for (const d of selected) {
-    out.push(`- \`${d.decision_id}\`（模式 ${path.basename(d.file, '.md')}，${d.file}）：本单位承担的角色 ${rolesOf(d, judged.scope).map(r => `${r.role} → ${r.target_ref}`).join('、') || '（无）'}`);
+    out.push(`- 模式 \`${d.ref}\`（事实 ${d.fact_id}）：本单位承担的角色 ${rolesOf(d, judged.scope).map(r => `${r.role} → ${r.target_ref}`).join('、') || '（无）'}`
+      + (action === 'plan' ? '；承担角色的实体写 pattern_roles（pattern_ref 照抄这个模式）' : ''));
   }
   return { duties: applied.length || selected.length ? out : ['本施工单位没有承接的适用规约与选中模式。'], gaps: judged.problems };
 }
@@ -319,9 +325,9 @@ function featureTask(root, feature, action, supplied, knowledge) {
       const own = unitLines(judged);
       facts = own.lines;
       gaps.push(...own.gaps);
-    } else facts = judged.blueprint ? decisionsOf(judged.blueprint) : [];
+    } else facts = judged.blueprint ? judgedOf(judged) : [];
     if (!judged.blueprint) gaps.push('蓝图读不到：设计负责方处理。');
-    if (!facts.length && !['spec', 'plan'].includes(action)) facts = ['蓝图里还没有知识应用的事实与决定。'];
+    if (!facts.length && !['spec', 'plan'].includes(action)) facts = ['蓝图里还没有知识的适用性事实。'];
     facts.push(`本施工单位承担的设计对象：${f.design_refs.map(r => `${r?.target?.kind}:${r?.target?.id}`).join('、') || '（无）'}`);
     if (['spec', 'plan'].includes(action)) {
       const expression = storyExpression(root, feature, judged);
@@ -331,8 +337,10 @@ function featureTask(root, feature, action, supplied, knowledge) {
       gaps.push(...expression.gaps.map(g => `${g}。`));
     }
   } else {
-    const rows = (f.spec?.contracts?.knowledge_applications ?? []).map(d => `- 决定 \`${d.decision_id}\`（${d.status}）：${d.rationale ?? ''}`);
-    facts = rows.length ? rows : ['契约里还没有知识应用的决定。'];
+    judged = featureKnowledge(root, feature, f.spec?.contracts ?? null);
+    facts = judgedOf(judged);
+    if (!facts.length) facts = ['契约里还没有知识的适用性事实（knowledge_facts）。'];
+    gaps.push(...judged.problems.map(p => `${p}——维护 Feature 的作者处理。`));
   }
   const duties = [];
   if (f.scope === 'not_frozen') {
@@ -343,15 +351,15 @@ function featureTask(root, feature, action, supplied, knowledge) {
     // 契约与验收取原生按阶段组装的那一份：解析器选定的输入加本阶段自己的产出
     const contracts = f.spec?.contracts ?? null;
     const source = f.inputs.contracts;
-    if (f.identity.kind === 'cu' && ['spec', 'plan'].includes(action)) {
+    if (['spec', 'plan'].includes(action)) {
       const carried = carriedDuties(judged, action, knowledge);
       duties.push(...carried.duties);
-      gaps.push(...carried.gaps.map(p => `${p}——设计负责方处理。`));
+      if (f.identity.kind === 'cu') gaps.push(...carried.gaps.map(p => `${p}——设计负责方处理。`));
     }
     if (contracts) {
       const must = obligationsFromContracts(contracts);
       duties.push(`契约来自 ${source?.binding?.kind ?? '本阶段产出'}${source?.binding?.artifact ? ` ${source.binding.artifact}` : ''}。`,
-        ...(must.length ? must.map(m => `- \`${m.entityPath}\`：${m.rule} ${m.text}（验证 ${m.verify || '未写'}）`) : ['契约里没有知识义务。']));
+        ...(must.length ? must.map(m => `- \`${m.entityPath}\`：${m.sourceRef} ${m.text}（验证 ${m.verify || '未写'}）`) : ['契约里没有知识义务。']));
     } else {
       duties.push(`本阶段没有可读的施工契约（${source?.state ?? '本阶段不读契约'}）${source?.detail ? `：${source.detail}` : ''}。`);
     }
@@ -359,8 +367,8 @@ function featureTask(root, feature, action, supplied, knowledge) {
     if (f.identity.kind === 'cu' && action !== 'spec') {
       duties.push(...statDelivery(judged, contracts, acceptance));
     }
-    const bridged = [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])].filter(c => c?.knowledge_rule);
-    duties.push(...bridged.map(c => `- 验收 \`${c.id}\` 承接 \`${c.knowledge_rule}\`${c.knowledge_decision_id ? `（决定 ${c.knowledge_decision_id}）` : ''}`));
+    const bridged = [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])].filter(c => Array.isArray(c?.knowledge_refs));
+    duties.push(...bridged.map(c => `- 验收 \`${c.id}\` 承接 ${c.knowledge_refs.map(r => `\`${r}\``).join('、')}`));
     if (f.assurance === 'degraded') gaps.push('原生阶段解析为 degraded：有能力被裁剪，按原生报告核对本阶段可用的输入。');
   }
   return {

@@ -49,7 +49,7 @@
 蓝图由 Framework 的 component-design 建立、质询与调和。请求 `/component-design <蓝图>` 时写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止；准入由原生判定，草稿也可以成文与业务送审，准入状态与原生问题照实披露：
 
 - 来源是登记的材料与当前有效人答：业务的条件、行为与责任从原件与人答取，人签以 `sources/人工答复-v<N>/` 的导出为准。用到哪份就在相应的条目或 provenance 里引用它。
-- 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。知识应用的判断写成蓝图里的 `knowledge_application` 决定。
+- 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。任务给的知识输入身份写进蓝图，知识的适用性写成蓝图事实，适用规约的义务与模式角色写在承担它的设计对象上。
 - 原生字段表达不了的精确内容写进 `story_details`，写法见 `hooks/blueprint/author.md`。
 - **独立质询**由你（主执行者）派给宿主的隔离子代理，同一个子代理先首读人读稿、再核源：
   1. 候选、图与说明写好后，设计职责先跑原生 `check:component-blueprint --write-review --json` 渲染人读稿 `component-blueprint.review.md`；

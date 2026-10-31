@@ -84,7 +84,7 @@ function appendixSourceProblems(ctx) {
   // 投影适配缺口：蓝图里有、章节合同还没有人读写法的结构，并入这份结论
   const gaps = [];
   appendixZones(ctx, source, gaps);
-  return [...problems.map(p => `${p}——判断在设计时写进蓝图（knowledge_application），附录·规约按它写；由设计职责在 component-design 里修订`),
+  return [...problems.map(p => `${p}——知识的适用性在设计时写进蓝图的事实，附录·规约按它写；由设计职责在 component-design 里修订`),
     ...gaps];
 }
 

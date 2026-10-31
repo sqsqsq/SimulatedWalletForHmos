@@ -79,7 +79,7 @@ if (action === 'materialize') {
   const YAML = native.require('yaml');
   const value = YAML.parse(fs.readFileSync(file, 'utf8'));
   (value.components ??= []).push({ name: 'LocalOwner', file: value.files[0], kind: 'page',
-    must: [{ rule: 'LOCAL-1', text: '本地加的义务', verify: 'ut' }] });
+    must: [{ text: '本地加的义务', source_ref: 'doc/extensions/knowledge/constraints/local.md#LOCAL-1', verify: 'ut' }] });
   fs.writeFileSync(file, YAML.stringify(value));
 } else {
   // 需求按来源文件给（候选记下来源），或 inline 给正文（候选只记正文指纹）
@@ -601,15 +601,18 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
             body = (self.ext / rel).read_text(encoding="utf-8").split("\n---\n", 1)[1].strip()
             self.assertIn(body.splitlines()[0], proc.stdout, f"{rel} 的原文没到")
 
-    def test_unjudged_patterns_reach_the_author_and_the_questioner(self) -> None:
-        """夹具蓝图还没有模式判断：设计作者与质询者的缺口里都点名每个激活模式，与门禁同一集合。"""
-        patterns = [rel for rel in self.registered() if rel.startswith("knowledge/design-patterns/")]
-        self.assertTrue(patterns, "夹具要有激活模式")
+    def test_the_design_author_gets_the_knowledge_context_to_record(self) -> None:
+        """设计作者拿到这一轮的知识输入身份（产品生成，原样写进蓝图）；夹具蓝图还没记它，作者与质询者的缺口里都点名。"""
+        author = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout
+        duties = author.split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
+        self.assertIn("discovery.inputs.knowledge_context", duties)
+        context = json.loads(duties.split("```json\n", 1)[1].split("```", 1)[0])
+        self.assertEqual(sorted(f"doc/extensions/{rel}" for rel in self.registered()), [f["source_ref"] for f in context["files"]])
+        self.assertTrue(context["digest"].startswith("sha256:"))
         for action, audience in (("design", "author"), ("questioning", "reviewer")):
             with self.subTest(action=action):
                 gaps = self.task("--blueprint", BLUEPRINT, "--action", action, "--audience", audience).stdout.split("## 6. 缺口与责任", 1)[1]
-                for rel in patterns:
-                    self.assertIn(f"没有判断激活模式 doc/extensions/{rel}", gaps)
+                self.assertIn("没有记知识输入身份（discovery.inputs.knowledge_context）", gaps)
 
     def test_halves_are_marked_for_the_side_that_uses_them(self) -> None:
         design = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout

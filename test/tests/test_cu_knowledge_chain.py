@@ -1,11 +1,12 @@
-"""真实施工单位的知识承接正常链：蓝图设计对象里的义务与模式角色，经原生派生 / 物化 → 阶段解析 → 门禁与审查任务。
+"""真实施工单位的知识承接正常链：蓝图里的适用性事实、设计对象上的义务与模式角色，经原生派生 / 物化 → 阶段解析 → 门禁与审查任务。
 
-用 demo Framework 与夹具蓝图（`wallet-balance-refresh`）在临时工程里走原生入口：蓝图里放逐条判断的知识应用决定、一个选型决定
-（两个角色，一个落在本施工单位的设计引用内、一个落在别处），设计对象的契约里带 `must` / `pattern_roles`；
+用 demo Framework 与夹具蓝图（`wallet-balance-refresh`）在临时工程里走原生入口：蓝图带产品生成的知识输入身份，
+规约按域写适用性事实（OBS-02 适用，其余域整域不涉及），决策树模式有候选信号时写选中事实，
+角色写在承担它的设计对象上（一个落在本施工单位的设计引用内、一个落在别处）；设计对象的契约里带 `must` / `pattern_roles`；
 改过蓝图之后按原生的摘要口径更新施工单位的蓝图引用，再冻结范围。
 
 锁的是：原生派生、复用本地物化件时，实体上的义务与角色都还在，并且被 plan 门禁与审查任务实际用上；
-施工单位只承担落点在自己设计引用内的角色；测试的转译缓存钩子不改变结果。
+施工单位只承担落在自己设计引用内的角色；没有候选信号的模式零判断；测试的转译缓存钩子不改变结果。
 """
 from __future__ import annotations
 
@@ -23,91 +24,76 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_knowledge_task import BLUEPRINT, CU, cu_id, make_project, prepare  # noqa: E402  —— 它把 test/scripts 放进导入路径
 import design_kit  # noqa: E402
 
-KNOWLEDGE_ID = "knowledge-obs-02"
-PATTERN_ID = "pattern-decision-tree"
+OBS = "doc/extensions/knowledge/constraints/observability.md"
+#: 本施工单位承接的那条适用规约条目
+KNOWLEDGE_REF = f"{OBS}#OBS-02"
+#: 决策树模式：有候选信号时选中，两个角色，一个落在本施工单位的设计对象上，一个落在别处
+DECISION_TREE = "knowledge/design-patterns/decision-tree.md"
+PATTERN_REF = f"doc/extensions/{DECISION_TREE}"
 MODULE = "view:development/node:wallet-main-module"
 ELSEWHERE = "view:runtime"
-ELSEWHERE_ID = "knowledge-runtime-only"
-ELSEWHERE_PENDING = "pattern-runtime-pending"
+#: 只落在运行视图上的两条判断（另一个施工单位独有）：一条适用、一条不适用
+ELSEWHERE_REF = f"{OBS}#OBS-05"
+ELSEWHERE_QUIET = f"{OBS}#OBS-06"
 
 
 def sha(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-#: 选型决定：两个角色，一个落在本施工单位的设计对象上，一个落在别处
-DECISION_TREE = "knowledge/design-patterns/decision-tree.md"
-
-
-def pattern_spec(mode: str) -> list[dict]:
-    """决策树这个模式的判断：选中（带角色）、待定、拒绝交给夹具默认，漏判则连默认也不写。"""
-    if mode == "selected":
-        return [design_kit.pattern_decision(PATTERN_ID, DECISION_TREE, "selected", "刷新有多个分支，拆成节点", [MODULE],
-                                            [{"role": "节点表", "target_ref": MODULE}, {"role": "上下文", "target_ref": ELSEWHERE}])]
-    if mode == "pending":
-        return [design_kit.pattern_decision(PATTERN_ID, DECISION_TREE, "pending", "分支是否多步要等接口定稿")]
-    return []
-
-
 def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False, facts: bool = False) -> None:
-    """改夹具蓝图（按原文插入，不整份重写）：逐条的知识判断、选型决定、设计对象契约上的义务与角色；
-    再按原生口径（蓝图原字节的摘要）更新施工单位的蓝图引用。`pattern` 是决策树的判断：selected / pending /
-    rejected（与其他模式一样按夹具默认有据拒绝）/ missing（激活模式一条判断都不写，漏判反例）。
-    `elsewhere` 再加一条只落在运行视图上的适用规约与一条落在那里的待定模式（另一个施工单位独有）；
-    `facts` 加两条知识事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。"""
+    """改夹具蓝图（按原文插入）：知识输入身份、适用性事实、设计对象契约上的义务与角色；再按原生口径（蓝图原字节的摘要与
+    来源指纹）更新施工单位的蓝图引用。`pattern` 是决策树：selected（有候选信号，选中并写角色）/ none（没有候选信号，不判）。
+    `elsewhere` 再加两条只落在运行视图上的规约判断（另一个施工单位独有）；
+    `facts` 加两条项目事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
-    text = canonical.read_text(encoding="utf-8")
+    old_text = canonical.read_text(encoding="utf-8")
+    text = old_text
     active = design_kit.active_constraints(root, design_kit.ACCESS)
-    other = next(u for c in active if c["kind"] == "constraints" for u in c["units"] if u != "OBS-02")
-    other_pattern = next(c["file"] for c in active if c["kind"] == "patterns" and c["file"] != DECISION_TREE)
-    extra = [design_kit.knowledge_decision(ELSEWHERE_ID, other, "applied", "运行视图上的后台同步要满足它",
-                                           requirement="同步失败可回查", target_refs=[ELSEWHERE]),
-             design_kit.pattern_decision(ELSEWHERE_PENDING, other_pattern, "pending", "后台同步的交互待定",
-                                         [ELSEWHERE])] if elsewhere else []
-    judged = design_kit.judged_rules(active, [design_kit.knowledge_decision(
-        KNOWLEDGE_ID, "OBS-02", "applied", "余额刷新是新增的业务过程", requirement="刷新失败记一条可定位的日志"),
-        *pattern_spec(pattern), *extra], False)
-    if pattern == "missing":
-        judged = [d for d in judged if "file" not in d]
-    text = text.replace("decisions_and_gaps:\n  decisions:\n", "decisions_and_gaps:\n  decisions:\n"
-                        + "".join(design_kit.decision_text(root, d, active) for d in judged), 1)
+    judgements = [design_kit.rule_judgement("OBS-02", "applied", "余额刷新是新增的业务过程，刷新失败要记一条可定位的日志")]
+    if elsewhere:
+        judgements += [design_kit.rule_judgement("OBS-05", "applied", "运行视图上的后台同步要上报结果", [ELSEWHERE]),
+                       design_kit.rule_judgement("OBS-06", "not_applicable", "后台同步复用已有事件定义，不新增", [ELSEWHERE])]
+    if pattern == "selected":
+        judgements.append(design_kit.pattern_judgement(DECISION_TREE, "selected", "刷新有多个分支，拆成节点",
+                                                       [{"role": "节点表", "target_ref": MODULE}, {"role": "上下文", "target_ref": ELSEWHERE}]))
+    knowledge, roles = design_kit.knowledge_facts(judgements, active, False)
+    text = text.replace("  facts:\n", "  facts:\n" + knowledge, 1).replace(
+        "  inputs:\n", "  inputs:\n    knowledge_context: "
+        + json.dumps(design_kit.knowledge_context(root, design_kit.ACCESS), ensure_ascii=False) + "\n", 1)
     method = "                - name: refreshBalance\n"
     assert text.count(method) == 1
-    text = text.replace(method, method + "                  must:\n                    - rule: OBS-02\n"
-                        f"                      decision_id: {KNOWLEDGE_ID}\n                      text: 刷新失败时记一条带页面与原因的日志\n"
-                        "                      verify: ut\n", 1)
+    text = text.replace(method, method + "                  must:\n                    - text: 刷新失败时记一条带页面与原因的日志\n"
+                        f"                      source_ref: {KNOWLEDGE_REF}\n                      verify: ut\n", 1)
     if with_roles and pattern == "selected":
         owner = "              class: HomeRepository\n"
         assert text.count(owner) == 1
-        text = text.replace(owner, owner + "              pattern_roles:\n                - pattern: decision-tree\n"
-                            f"                  role: 节点表\n                  decision_id: {PATTERN_ID}\n", 1)
+        text = text.replace(owner, owner + "              pattern_roles:\n"
+                            f"                - pattern_ref: {PATTERN_REF}\n                  role: 节点表\n", 1)
     assert text.endswith("derived_results: []\n")
     text += STAT_DETAIL
     if facts:
-        text = with_facts(root, text)
+        text = with_facts(text)
+    if roles:
+        text = design_kit.with_pattern_roles(text, roles)
     canonical.write_bytes(text.encode("utf-8"))
-    if facts:
-        proc = subprocess.run(["node", "--input-type=module", "-e", design_kit.REFINGERPRINT, str(root), str(design_kit.ACCESS),
-                               BLUEPRINT, str(canonical)], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        assert proc.returncode == 0, proc.stderr[-600:]
+    # 事实变了来源指纹跟着变：按原生算法重算，施工单位的蓝图引用记着它与原字节摘要，按原生口径一并更新
+    proc = subprocess.run(["node", "--input-type=module", "-e", design_kit.REFINGERPRINT, str(root), str(design_kit.ACCESS),
+                           BLUEPRINT, str(canonical)], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    assert proc.returncode == 0, proc.stderr[-600:]
     unit = root / "doc" / "features" / BLUEPRINT / "balance-refresh" / "change-unit.yaml"
-    refs = unit.read_bytes().replace(old.encode(), sha(canonical).encode())
-    if facts:
-        # 事实变了来源指纹跟着变：施工单位的蓝图引用记着它，按原生口径一并更新
-        stamp = lambda s: s.split("source_fingerprint: ", 1)[1].split("\n", 1)[0]  # noqa: E731
-        refs = refs.replace(stamp(text).encode(), stamp(canonical.read_text(encoding="utf-8")).encode())
-    unit.write_bytes(refs)
+    stamp = lambda s: s.split("source_fingerprint: ", 1)[1].split("\n", 1)[0]  # noqa: E731
+    unit.write_bytes(unit.read_bytes().replace(old.encode(), sha(canonical).encode())
+                     .replace(stamp(old_text).encode(), stamp(canonical.read_text(encoding="utf-8")).encode()))
 
 
-def with_facts(root: Path, text: str) -> str:
-    """两条知识事实与模块节点上的引用：验证引用里整项写 fact-10 与裸验收编号 AC-001，fact-1 只在正文里被提到。"""
-    ref = "doc/extensions/knowledge/facts/event-tracking.md"
-    knowledge = {"unit": "上篇", "form": "halves", "source_sha256": sha(root / ref)}
-    provenance = {"source_kind": "facts", "source_ref": ref, "observed_at": "2026-09-30T00:00:00Z",
-                  "evidence_strength": "observed", "extraction_method": "read_and_apply"}
+def with_facts(text: str) -> str:
+    """两条项目事实与模块节点上的引用：验证引用里整项写 fact-10 与裸验收编号 AC-001，fact-1 只在正文里被提到。"""
+    provenance = {"source_kind": "facts", "source_ref": "doc/extensions/knowledge/facts/event-tracking.md",
+                  "observed_at": "2026-09-30T00:00:00Z", "evidence_strength": "observed", "extraction_method": "read_and_apply"}
     rows = "".join(f"    - fact_id: {fid}\n      subject: {subject}\n"
-                   f"      value: {json.dumps({'observation': subject, 'knowledge': knowledge}, ensure_ascii=False)}\n"
+                   f"      value: {json.dumps({'observation': subject}, ensure_ascii=False)}\n"
                    f"      provenance: {json.dumps(provenance, ensure_ascii=False)}\n"
                    for fid, subject in (("fact-1", "WalletMain.Logger"), ("fact-10", "WalletMain.WalletHAManager")))
     for old, new in (("  facts:\n", "  facts:\n" + rows),
@@ -195,20 +181,21 @@ class TheDerivedContractCarriesTheObligations(ChainCase):
     def test_obligations_and_roles_survive_derivation_and_are_used(self) -> None:
         out = self.probe()
         self.assertEqual([], out["problems"], out["problems"])
-        self.assertEqual(KNOWLEDGE_ID, out["must"][0]["decision_id"])
-        self.assertEqual([{"pattern": "decision-tree", "role": "节点表", "decision_id": PATTERN_ID}], out["roles"])
+        self.assertEqual(KNOWLEDGE_REF, out["must"][0]["source_ref"])
+        self.assertEqual([{"pattern_ref": PATTERN_REF, "role": "节点表"}], out["roles"])
         self.assertNotIn("契约还没建", out["gate"])
         self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
         self.assertNotIn("没有实体承担", out["gate"], out["gate"])
-        self.assertIn(f"ut · {KNOWLEDGE_ID}", out["review"], "审查任务没并列出实体上的义务与出自的决定")
+        self.assertIn(f"| {KNOWLEDGE_REF} |", out["review"], "审查任务没按条目列出实体上的义务")
+        self.assertIn("刷新失败时记一条带页面与原因的日志 · ut", out["review"])
 
     def test_the_plan_author_gets_the_carried_duties_before_the_knowledge_text(self) -> None:
-        """plan 作者先拿到本单位承接的判断：要求、落点与这条允许的 verify（与门禁同一份规则），再是知识原文。"""
+        """plan 作者先拿到本单位承接的条目：理由、落点与这条允许的 verify（与门禁同一份规则），再是知识原文。"""
         author = self.probe()["author"]
         duties = author.split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识及原文", 1)[0]
-        self.assertIn(f"`{KNOWLEDGE_ID}`（OBS-02", duties)
-        self.assertIn("must 带 decision_id，verify 取", duties)
-        self.assertIn(f"`{PATTERN_ID}`（模式 decision-tree", duties)
+        self.assertIn(f"`{KNOWLEDGE_REF}`（事实 knowledge-observability）", duties)
+        self.assertIn("承担它的实体写 must（source_ref 照抄这条），verify 取", duties)
+        self.assertIn(f"模式 `{PATTERN_REF}`", duties)
         self.assertIn("节点表 →", duties)
 
     def test_the_stat_detail_reaches_author_and_reviewer_in_full(self) -> None:
@@ -278,58 +265,24 @@ class AMissingOwnRoleIsNamed(ChainCase):
         self.assertNotIn("「上下文」", gate)
 
 
-class EveryPatternIsRejected(ChainCase):
-    """每个激活模式都有据拒绝：零选中角色合法，任务不编角色，规约义务与激活知识照样送达，门禁不因没有角色而拒绝。"""
-    PATTERN = "rejected"
+class NoPatternIsACandidate(ChainCase):
+    """没有模式出现候选信号：零模式判断合法，任务不编角色，规约义务与模式知识原文照样送达，门禁不因没有角色而拒绝。"""
+    PATTERN = "none"
 
     def test_no_role_is_invented_and_the_rule_still_arrives(self) -> None:
         out = self.probe()
         self.assertEqual([], out["problems"], out["problems"])
-        self.assertEqual(KNOWLEDGE_ID, out["must"][0]["decision_id"])
+        self.assertEqual(KNOWLEDGE_REF, out["must"][0]["source_ref"])
         self.assertIsNone(out["roles"])
         self.assertEqual([], out["roleAddresses"])
-        for gone in ("没有实体承担", "pattern_roles", "节点表"):
+        for gone in ("没有实体承担", "pattern_roles", "节点表", "模式"):
             self.assertNotIn(gone, out["gate"], out["gate"])
         self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
         duties = out["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识及原文", 1)[0]
-        self.assertIn(f"`{KNOWLEDGE_ID}`（OBS-02", duties)
-        self.assertNotIn("模式 decision-tree", duties)
+        self.assertIn(f"`{KNOWLEDGE_REF}`", duties)
+        self.assertNotIn("模式 `", duties)
         knowledge = out["author"].split("## 4. 激活知识及原文", 1)[1]
-        self.assertIn("doc/extensions/knowledge/design-patterns/decision-tree.md", knowledge,
-                      "没选模式不等于不给模式知识原文")
-
-
-
-class AnUnjudgedPatternIsNamed(ChainCase):
-    """激活模式一条判断都没有是漏判：门禁点名模式与上篇单元，交设计负责方补，不当作「没选中」放过。"""
-    PATTERN = "missing"
-
-    def test_the_gate_names_the_missing_pattern(self) -> None:
-        out = self.probe()
-        self.assertIn("没有判断激活模式", out["gate"])
-        self.assertIn("decision-tree.md", out["gate"])
-        self.assertIsNone(out["roles"])
-
-
-class APendingPatternIsAJudgement(ChainCase):
-    """待定是判断：不报漏判，不编角色；是否阻断按原生缺口与切片责任处理。"""
-    PATTERN = "pending"
-
-    def test_pending_is_not_reported_as_missing(self) -> None:
-        out = self.probe()
-        self.assertNotIn("没有判断激活模式", out["gate"])
-        self.assertIsNone(out["roles"])
-
-    def test_a_pending_without_target_is_undetermined_not_requirement_wide(self) -> None:
-        """没有落点的待定不说成对整个需求成立：显示作用域未确定，并作为待设计处理项进缺口。"""
-        author = self.probe()["author"]
-        facts = author.split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
-        undetermined = facts.split("作用域未确定的判断（没有落点，需设计负责方明确归属）：", 1)[1]
-        self.assertIn(f"`{PATTERN_ID}`", undetermined)
-        self.assertNotIn(f"`{PATTERN_ID}`", facts.split("作用域未确定的判断", 1)[0], "待定被放进了公共依据")
-        self.assertNotIn("对整个需求成立", author)
-        gaps = author.split("## 6. 缺口与责任", 1)[1]
-        self.assertIn(f"判断 {PATTERN_ID}（上篇，pending）没有落点，作用域未确定", gaps)
+        self.assertIn(PATTERN_REF, knowledge, "没有候选不等于不给模式知识原文")
 
 
 FACT_PROBE = """
@@ -360,8 +313,8 @@ class FactsBelongByTheirReferences(ChainCase):
         out = self.probe()
         self.assertEqual([], [p for p in out["problems"]], out["problems"])
         facts = out["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
-        self.assertIn("- 事实 `fact-10`：", facts)
-        self.assertNotIn("- 事实 `fact-1`：", facts)
+        self.assertIn("- 事实 `fact-10`（", facts)
+        self.assertNotIn("- 事实 `fact-1`（", facts)
         self.assertIn("需求里另有知识事实，与本单位的关联未明，只给定位：`fact-1`（WalletMain.Logger）", facts)
         proc = subprocess.run(["node", "--input-type=module", "-e", SPEC_PROBE, str(self.root.as_posix()), CU],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
@@ -422,7 +375,7 @@ class TheHostChapterExplainsTheUnit(ChainCase):
 
     def test_the_spec_review_lists_judgements_the_unit_does_not_carry(self) -> None:
         review = self.spec_probe()["review"]
-        self.assertIn(f"| {KNOWLEDGE_ID} |", review)
+        self.assertIn(f"| {KNOWLEDGE_REF} |", review)
         self.assertIn("| 需求级公共依据（无落点） |", review)
 
     def test_the_plan_table_sits_in_the_events_section(self) -> None:
@@ -476,9 +429,9 @@ class TheHostChapterExplainsTheUnit(ChainCase):
     def test_the_author_gets_the_judgements_it_does_not_carry(self) -> None:
         facts = self.probe()["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
         self.assertIn("需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）", facts)
-        self.assertIn("（not_applicable）", facts)
-        self.assertNotIn(f"`{KNOWLEDGE_ID}`", facts)
-        self.assertNotIn(f"`{PATTERN_ID}`", facts)
+        self.assertIn("→ not_applicable", facts)
+        self.assertNotIn(f"`{KNOWLEDGE_REF}`", facts)
+        self.assertNotIn(f"`{PATTERN_REF}`", facts)
 
 SIBLING_PROBE = """
 import { pathToFileURL } from 'node:url';
@@ -493,7 +446,7 @@ for (const f of features) {
   const c = k.unitContext(j);
   const author = kt.knowledgeTask(root, { action: 'spec', audience: 'author', feature: f });
   const review = await pre({ phase: 'spec', feature: f, projectRoot: root });
-  out[f] = { problems: j.problems, decisions: c.mine.map(d => d.decision_id).sort(), global: c.common.map(d => d.decision_id),
+  out[f] = { problems: j.problems, decisions: c.mine.map(d => d.source_ref).sort(), global: c.common.map(d => d.source_ref),
              roles: c.mine.flatMap(d => k.rolesOf(d, j.scope).map(r => r.role)).sort(),
              facts: author.split('## 2. 有效事实与决定')[1].split('## 3. 当前契约与义务')[0], author,
              review: (review.promptFragments ?? []).join('\\n') };
@@ -536,8 +489,8 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         out, second = self.sibling()
         for f in (CU, second):
             self.assertEqual([], out[f]["problems"], f)
-        self.assertEqual(sorted([KNOWLEDGE_ID, PATTERN_ID]), out[CU]["decisions"], "模块单位漏了共同落点上的判断")
-        self.assertEqual(sorted([KNOWLEDGE_ID, PATTERN_ID, ELSEWHERE_ID, ELSEWHERE_PENDING]), out[second]["decisions"],
+        self.assertEqual(sorted([KNOWLEDGE_REF, PATTERN_REF]), out[CU]["decisions"], "模块单位漏了共同落点上的判断")
+        self.assertEqual(sorted([KNOWLEDGE_REF, PATTERN_REF, ELSEWHERE_REF, ELSEWHERE_QUIET]), out[second]["decisions"],
                          "运行视图单位漏了它独有的判断")
         self.assertEqual(["节点表"], out[CU]["roles"], "运行视图上的角色被强给了不承担它的单位")
         self.assertEqual(["上下文", "节点表"], out[second]["roles"], "承担运行视图的单位漏了它的角色")
@@ -545,20 +498,20 @@ class SiblingUnitsInOneBlueprint(ChainCase):
     def test_another_units_judgement_stays_with_it(self) -> None:
         """B 独有的判断不进 A 的作者任务与审查任务；B 自己的审查判断表里有它。"""
         out, second = self.sibling()
-        self.assertNotIn(ELSEWHERE_ID, out[CU]["author"])
-        self.assertNotIn(ELSEWHERE_ID, out[CU]["review"])
-        self.assertIn(f"| {ELSEWHERE_ID} |", out[second]["review"])
-        self.assertNotIn(ELSEWHERE_ID, out[second]["facts"], "承接的适用判断在第 3 块，不在第 2 块重复")
+        self.assertNotIn(ELSEWHERE_REF, out[CU]["author"])
+        self.assertNotIn(ELSEWHERE_REF, out[CU]["review"])
+        self.assertIn(f"| {ELSEWHERE_REF} |", out[second]["review"])
+        self.assertNotIn(ELSEWHERE_REF, out[second]["facts"], "承接的适用判断在第 3 块，不在第 2 块重复")
 
-    def test_a_pending_placed_on_another_unit_stays_there(self) -> None:
-        """落在运行视图上的待定只归运行视图单位：模块单位看不到，运行视图单位作为相关判断看到，不成义务。"""
+    def test_a_judgement_without_duty_placed_on_another_unit_stays_there(self) -> None:
+        """落在运行视图上的不适用只归运行视图单位：模块单位看不到，运行视图单位作为相关判断看到，不成义务。"""
         out, second = self.sibling()
-        self.assertNotIn(ELSEWHERE_PENDING, out[CU]["author"])
-        self.assertNotIn(ELSEWHERE_PENDING, out[CU]["review"])
+        self.assertNotIn(ELSEWHERE_QUIET, out[CU]["author"])
+        self.assertNotIn(ELSEWHERE_QUIET, out[CU]["review"])
         own = out[second]["facts"].split("本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：", 1)[1]
-        self.assertIn(f"`{ELSEWHERE_PENDING}`", own)
+        self.assertIn(f"`{ELSEWHERE_QUIET}`", own)
         duties = out[second]["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
-        self.assertNotIn(ELSEWHERE_PENDING, duties)
+        self.assertNotIn(ELSEWHERE_QUIET, duties)
 
     def test_a_requirement_level_judgement_is_given_once_and_marked(self) -> None:
         """没有落点的需求级判断：两个单位各拿一次，标明需求级，不说成本单位适用。"""
@@ -567,17 +520,17 @@ class SiblingUnitsInOneBlueprint(ChainCase):
             self.assertTrue(out[f]["global"], f)
             self.assertIn("需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）", out[f]["facts"])
             for d in out[f]["global"]:
-                self.assertEqual(1, out[f]["author"].count(f"`{d}`"), (f, d))
+                self.assertEqual(1, out[f]["facts"].count(f"`{d}`"), (f, d))
                 self.assertEqual(1, out[f]["review"].count(f"| {d} |"), (f, d))
                 row = next(line for line in out[f]["review"].splitlines() if line.startswith(f"| {d} |"))
                 self.assertTrue(row.endswith("| 需求级公共依据（无落点） |"), row)
 
 
 class AUnitCarryingNoJudgementStillGetsTheShared(ChainCase):
-    """只承担运行视图的施工单位：没有落在它设计责任内的判断，但需求级公共依据与作用域未确定的待定仍是它的判断依据，
-    作者任务与审查判断表都列出；三组都空才说没有相关判断。"""
+    """只承担运行视图的施工单位：没有落在它设计责任内的判断，但需求级公共依据仍是它的判断依据，
+    作者任务与审查判断表都列出；两组都空才说没有相关判断。"""
     STEPS = ()
-    PATTERN = "pending"
+    PATTERN = "none"
     LONE = "balance-watch"
 
     @classmethod
@@ -593,7 +546,7 @@ class AUnitCarryingNoJudgementStillGetsTheShared(ChainCase):
         (base / cls.LONE).mkdir()
         (base / cls.LONE / "change-unit.yaml").write_text(head + "design_refs:\n" + runtime + after, encoding="utf-8")
 
-    def test_the_review_table_keeps_common_and_undetermined_rows(self) -> None:
+    def test_the_review_table_keeps_the_common_rows(self) -> None:
         lone = cu_id(BLUEPRINT, self.LONE)
         proc = subprocess.run(["node", "--input-type=module", "-e", SIBLING_PROBE, str(self.root.as_posix()), lone],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
@@ -602,11 +555,9 @@ class AUnitCarryingNoJudgementStillGetsTheShared(ChainCase):
         self.assertEqual([], out["decisions"], "夹具变了：这个单位不该有落在它设计责任内的判断")
         self.assertTrue(out["global"], "夹具变了：要有需求级公共依据")
         self.assertNotIn("没有与本施工单位相关的知识判断", out["review"])
-        row = next((line for line in out["review"].splitlines() if line.startswith(f"| {PATTERN_ID} |")), "")
-        self.assertTrue(row.endswith("| 作用域未确定（无落点，待设计负责方明确） |"), out["review"][-1500:])
         for d in out["global"]:
             self.assertIn(f"| {d} |", out["review"])
-        self.assertIn("作用域未确定的判断（没有落点，需设计负责方明确归属）", out["facts"], "作者任务与审查表不同源")
+            self.assertIn(f"`{d}`", out["facts"], "作者任务与审查表不同源")
 
 
 class TheMaterializedContractIsReused(ChainCase):
@@ -616,7 +567,7 @@ class TheMaterializedContractIsReused(ChainCase):
     def test_the_materialized_contract_keeps_the_obligations(self) -> None:
         out = self.probe()
         self.assertEqual([], out["problems"], out["problems"])
-        self.assertEqual(KNOWLEDGE_ID, out["must"][0]["decision_id"])
+        self.assertEqual(KNOWLEDGE_REF, out["must"][0]["source_ref"])
         self.assertTrue(out["roles"])
         self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
 

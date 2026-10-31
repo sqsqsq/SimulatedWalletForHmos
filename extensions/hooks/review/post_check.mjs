@@ -16,7 +16,7 @@ import * as path from 'node:path';
 import { lines, readTextOrNull } from '../shared/paths.mjs';
 import { phaseArtifacts } from '../shared/contracts.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { entryOf, featureKnowledge } from '../shared/knowledge-application.mjs';
+import { activation, entryOf, knowledgeSource } from '../shared/knowledge-application.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { cellByHeader as cellOf, tableCells }
@@ -54,7 +54,6 @@ export default guard('review', async (ctx) => {
   const contracts = inputs.contracts;
   if (!contracts) return done({ skipped: [{ what: '知识义务复核表', why: inputs.why }] });
   const obligations = obligationsFromContracts(contracts);
-  const decisions = new Map(featureKnowledge(ctx.projectRoot, ctx.feature, contracts).rows.map(d => [d.decision_id, d]));
   const roles = patternRolesFromContracts(contracts);
   if (!obligations.length && !roles.length) {
     return done({ skipped: [{ what: '知识义务复核表', why: '契约里没有 must，也没有承担模式角色的实体' }] });
@@ -84,6 +83,7 @@ export default guard('review', async (ctx) => {
   }
 
   const problems = [];
+  const active = activation(ctx.projectRoot, knowledge);
   const col = (row, keyword) => cellOf(row.cells, table.headers, keyword);
   for (const ob of obligations) {
     if (!ob.rule) continue;
@@ -99,7 +99,7 @@ export default guard('review', async (ctx) => {
       problems.push(`review/review-report.md 第 ${row.line} 行：${where} 的结论列是「${verdict}」——结论列取值封闭为 ${VERDICTS.join(' / ')}`);
       continue;
     }
-    const force = entryOf(knowledge, decisions.get(ob.decisionId))?.force;
+    const force = entryOf(knowledge, knowledgeSource(active, ob.sourceRef))?.force;
     if (verdict === '未落实' && force === '红线') {
       problems.push(`review/review-report.md 第 ${row.line} 行：${where} 判「未落实」，这条规约是红线——强制力取自激活知识，红线未落实即阻断，不能带着交付`);
       continue;

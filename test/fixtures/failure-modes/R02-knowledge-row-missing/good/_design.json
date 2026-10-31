@@ -1,21 +1,15 @@
 {
-  "$comment": "夹具的设计判断：蓝图里就是这几条知识应用决定（不补判）",
-  "knowledge_decisions": [
+  "$comment": "夹具的设计判断：蓝图里就是这几条知识适用性判断（不补判）；没有候选信号的模式不判",
+  "knowledge_judgements": [
     {
       "unit": "SMP-01",
       "outcome": "applied",
-      "rationale": "本需求新增提交入口",
-      "requirement": "受理单编号在入口生成"
+      "rationale": "本需求新增提交入口，受理单编号在入口生成"
     },
     {
       "unit": "SMP-02",
       "outcome": "not_applicable",
       "rationale": "本需求没有任何上报动作"
-    },
-    {
-      "file": "knowledge/design-patterns/sample-pattern.md",
-      "outcome": "rejected",
-      "rationale": "提交只有一步，没有多步分支要编排"
     }
   ]
 }

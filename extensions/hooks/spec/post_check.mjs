@@ -1,10 +1,10 @@
 /**
  * spec 阶段 post_check（实例扩展）—— 本施工单位的验收有没有承接设计里适用的规约判断。
  *
- * 判断只在原生设计里（CU 的蓝图知识应用决定；非 CU 维护 Feature 契约里的 knowledge_applications）。
- * 本阶段机械核三件事：
- *   ① **验收承接**——本施工单位承接的每条适用判断，acceptance 里有带 `knowledge_rule` 与
- *      `knowledge_decision_id` 的条目；桥接指回的都是承接的适用判断；
+ * 适用性只在设计里（CU 蓝图的规约适用性事实；非 CU 维护 Feature 原生契约里同形态的 `knowledge_facts`）。
+ * 本阶段机械核这几件事：
+ *   ① **验收承接**——本施工单位承接的每条适用规约条目，acceptance 里有 `knowledge_refs` 列着它的条目；
+ *      `knowledge_refs` 列的都是激活规约的条目，且是本单位承接的适用条目；
  *   ② **验收标准一致**——spec.md「验收标准」里定义的编号在 acceptance.yaml 里有，关联功能一致；
  *   ③ **审查报告**——格式、判据全不全、一对象一结论、WARN 的处置。
  *   ④ **宿主扩展章**——spec.md「宿主扩展治理项」在，承接的规约与选中模式各有小节，写到的规约与验收编号引得到。
@@ -18,7 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { featureKnowledge, unitDuties } from '../shared/knowledge-application.mjs';
+import { activation, entryOf, featureKnowledge, knowledgeSource, unitDuties } from '../shared/knowledge-application.mjs';
 import { chapterNumberProblems } from '../shared/chapters.mjs';
 import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { acceptanceIdRe, functionIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
@@ -99,19 +99,20 @@ export default guard('spec', async (ctx) => {
     if (!acceptance) {
       if (applied.length) bridge.skipped.push({ what: '验收承接适用规约', why: inputs.why });
     } else {
-      const { byRule, problems } = knowledgeCriteria(acceptance);
+      const { byRef, problems } = knowledgeCriteria(acceptance);
       bridge.problems.push(...problems);
-      for (const d of applied) {
-        const rows = (byRule.get(d.knowledge.unit) ?? []).filter(r => String(r.knowledge_decision_id).trim() === d.decision_id);
-        if (!rows.length) {
-          bridge.problems.push(`acceptance.yaml：${judged.label} 的适用判断 ${d.decision_id}（${d.knowledge.unit}）没有验收条目承接——`
-            + `写一条 criteria，带 knowledge_rule: ${d.knowledge.unit} 与 knowledge_decision_id: ${d.decision_id}；下游 ut / testing 按它找要覆盖的场景`);
-        }
+      for (const d of applied.filter(x => !byRef.has(x.source_ref))) {
+        bridge.problems.push(`acceptance.yaml：${judged.label} 判定适用的 ${d.unit}（${d.file}）由本施工单位承接，没有验收条目承接——`
+          + `写一条 criteria，knowledge_refs 列 ${d.source_ref}；下游 ut / testing 按它找要覆盖的场景`);
       }
-      const known = new Set(applied.map(d => d.decision_id));
-      for (const [rule, rows] of byRule) {
-        for (const r of rows.filter(x => !known.has(String(x.knowledge_decision_id).trim()))) {
-          bridge.problems.push(`acceptance.yaml「${String(r.id ?? '（没写 id）')}」：knowledge_rule ${rule} 指向 ${r.knowledge_decision_id}，它不是本施工单位承接的适用判断`);
+      const active = activation(ctx.projectRoot, knowledge);
+      const carried = new Set(applied.map(d => d.source_ref));
+      for (const [ref, rows] of byRef) {
+        const ids = rows.map(r => String(r.id ?? '（没写 id）')).join('、');
+        if (!entryOf(knowledge, knowledgeSource(active, ref))) {
+          bridge.problems.push(`acceptance.yaml「${ids}」：knowledge_refs 的 ${ref} 不是激活规约的条目（<知识文件>#<编号>）`);
+        } else if (!carried.has(ref)) {
+          bridge.problems.push(`acceptance.yaml「${ids}」：knowledge_refs 的 ${ref} 不是本施工单位承接的适用规约条目`);
         }
       }
     }

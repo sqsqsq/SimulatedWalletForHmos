@@ -122,8 +122,8 @@ class EmptyKnowledgeRepo(unittest.TestCase):
                     f" projectRoot: {json.dumps(self.root.as_posix())} }});"
                     "process.stdout.write(JSON.stringify(out));")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertNotIn("没有判断激活规约", proc.stdout)
-        self.assertNotIn("知识应用", proc.stdout)
+        self.assertNotIn("相关域没有逐条判断", proc.stdout)
+        self.assertNotIn("knowledge_context", proc.stdout)
 
 
 if __name__ == "__main__":

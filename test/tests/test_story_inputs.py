@@ -485,7 +485,7 @@ class TheAcceptanceExampleIsRealShape(unittest.TestCase):
         lines = [l for l in self.example().split("\n") if l.strip()]
         item = next(i for i, l in enumerate(lines) if l.strip().startswith("- id:"))
         indent = lines[item].index("-") + 2
-        for key in ("knowledge_rule", "knowledge_decision_id"):
+        for key in ("knowledge_refs",):
             with self.subTest(key=key):
                 at = next(i for i, l in enumerate(lines) if l.strip().startswith(key + ":"))
                 self.assertGreater(at, item, f"{key} 跑到条目外面去了")
@@ -500,8 +500,9 @@ class TheAcceptanceExampleIsRealShape(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         item = json.loads(proc.stdout)["criteria"][0]
         self.assertTrue(item.get("id"))
-        self.assertEqual(str, type(item.get("knowledge_rule")), "一条 criteria 一个编号")
-        self.assertTrue(item.get("knowledge_decision_id"))
+        refs = item.get("knowledge_refs")
+        self.assertEqual(list, type(refs), "knowledge_refs 是条目引用列表")
+        self.assertTrue(refs and all("#" in r for r in refs), "条目引用写 <知识文件>#<编号>")
 
 
 class StatusAnswersWhereYouAre(WorkspaceCase):

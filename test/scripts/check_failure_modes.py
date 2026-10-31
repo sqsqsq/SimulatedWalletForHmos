@@ -1691,17 +1691,15 @@ def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-D
     story_src = root / "doc" / "features" / feature / "AR" / "story-src"
     if not (story_src / "story-flow.json").is_file() or not (story_src.parents[1] / "blueprint" / "component-blueprint.yaml").is_file():
         (story_src / "story-flow.json").unlink(missing_ok=True)
-        # 夹具可以写明设计里就是哪几条知识应用决定（`_design.json`，不补判）；没写就逐条判定不涉及
+        # 夹具可以写明设计里就是哪几条知识适用性判断（`_design.json`，不补判）；没写就每一域判定不涉及
         judged = root / "_design.json"
-        decisions = None if not judged.is_file() else [
-            design_fixture.pattern_decision(f"knowledge-pattern-{Path(d['file']).stem}", d["file"], d["outcome"], d["rationale"])
-            if "file" in d else
-            design_fixture.knowledge_decision(f"knowledge-{d['unit'].lower()}", d["unit"], d["outcome"], d["rationale"],
-                                              requirement=d.get("requirement"))
-            for d in json.loads(judged.read_text(encoding="utf-8"))["knowledge_decisions"]]
+        judgements = None if not judged.is_file() else [
+            design_fixture.pattern_judgement(d["file"], d["outcome"], d["rationale"])
+            if "file" in d else design_fixture.rule_judgement(d["unit"], d["outcome"], d["rationale"])
+            for d in json.loads(judged.read_text(encoding="utf-8"))["knowledge_judgements"]]
         design_fixture.prepare_designed(root, feature, flow_script=flow, build_script=build, access=access,
-                                        decisions=decisions,
-                                        design={"exact_decisions": True} if decisions is not None else None,
+                                        judgements=judgements,
+                                        design={"exact": True} if judgements is not None else None,
                                         project_must_pass=False)
 
     def run(cmd: str) -> subprocess.CompletedProcess:
@@ -1734,17 +1732,17 @@ def _norm(text: str) -> str:
 
 @checker
 def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
-    """激活规约有一条在设计里没有判断——逐条判定又丢了，附录·规约也就少了那一行。
+    """相关规约域有一条在设计里没有判断——逐条判定又丢了，附录·规约也就少了那一行。
 
-    判断在已准入蓝图的知识应用决定里，附录·规约按它投影；漏判的那一条要被点名，交回设计职责。
+    判断在蓝图的规约适用性事实里（相关域逐条），附录·规约按它写；漏判的那一条要被点名，交回设计职责。
     """
     if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
         return Outcome(True, "夹具里没有 story（该形态未启用）")
     code, out = _story_build_cycle(root, "提交之后回执没到之前，界面停在等待态")
     if code == 0:
-        return Outcome(True, "激活规约在设计里逐条有判断，附录·规约逐条成行")
-    if "没有判断激活规约" in out:
-        return Outcome(False, "漏判被点名：" + out.split("没有判断激活规约", 1)[1].split("——", 1)[0].strip())
+        return Outcome(True, "相关规约域在设计里逐条有判断，附录·规约逐条成行")
+    if "相关域没有逐条判断" in out:
+        return Outcome(False, "漏判被点名：" + out.split("相关域没有逐条判断", 1)[1].split("——", 1)[0].strip())
     return Outcome(False, f"check 未过（非漏判原因）：{out[:300]}")
 
 

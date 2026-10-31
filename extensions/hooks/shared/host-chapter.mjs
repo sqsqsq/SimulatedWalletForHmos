@@ -22,7 +22,7 @@ const POINT_TABLE = ['统计点', '责任方法'];
  */
 export function hostChapterProblems(text, { file, anchor, judged, acceptance = null, events = null }) {
   const { applied, selected } = unitDuties(judged);
-  const units = new Set(judged.rows.filter(d => d.knowledge.kind === 'constraints').map(d => d.knowledge.unit));
+  const units = new Set(judged.rows.filter(d => d.kind === 'constraints' && d.unit).map(d => d.unit));
   const need = [...(applied.length ? ['规约'] : []), ...(selected.length ? ['设计模式'] : []), ...(events ? ['埋点'] : [])];
   const doc = parseDocument(text);
   const head = doc.headings.find(h => h.level === 2 && h.name === anchor);
@@ -38,7 +38,7 @@ export function hostChapterProblems(text, { file, anchor, judged, acceptance = n
   for (const s of subs.filter(x => x.name.includes('规约'))) {
     const ids = doc.tables.filter(t => within(t.line, s)).flatMap(t => t.rows.flatMap(r => String(r[0] ?? '').match(RULE_ID) ?? []));
     for (const id of new Set(ids.filter(x => !units.has(x)))) {
-      problems.push(`${file}「${anchor}·${s.name}」：${id} 不是设计判断过的规约——编号取设计里知识应用判断的单元`);
+      problems.push(`${file}「${anchor}·${s.name}」：${id} 不是设计判断过的规约——编号取蓝图适用性事实里逐条判断的条目`);
     }
   }
   if (acceptance) {

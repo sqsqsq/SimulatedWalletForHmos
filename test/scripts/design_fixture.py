@@ -157,12 +157,11 @@ def render_projection(root: Path, blueprint: str, access: Path) -> None:
 TARGET = "view:logical/node:wallet-balance"
 
 
-def knowledge_decision(decision_id: str, unit: str, outcome: str, rationale: str,
-                       requirement: str | None = None, target_refs: list[str] | None = None) -> dict:
-    """一条规约的知识应用决定：来源文件与原文摘要在放进蓝图时按工程里激活的知识算（`decision_text`）；
-    适用的落点默认是夹具的设计对象，`target_refs` 可另指。"""
-    return {"decision_id": decision_id, "unit": unit, "outcome": outcome, "rationale": rationale,
-            **({"requirement": requirement} if requirement else {}), **({"target_refs": target_refs} if target_refs else {})}
+def rule_judgement(unit: str, outcome: str, rationale: str, target_refs: list[str] | None = None) -> dict:
+    """一条规约条目的适用性判断：`outcome` 取 applied / not_applicable / pending；适用的落点默认是夹具的设计对象，
+    待定的 `target_refs` 指原生决定或缺口。放进蓝图时按条目所在的激活规约文件归成那一域的事实（`knowledge_facts`）。"""
+    return {"unit": unit, "outcome": outcome, "rationale": rationale,
+            "target_refs": list(target_refs) if target_refs is not None else ([TARGET] if outcome == "applied" else [])}
 
 
 ACTIVE_CONSTRAINTS = """
@@ -176,7 +175,7 @@ process.stdout.write(JSON.stringify([...k.constraints.map(c => ({ kind: 'constra
 
 
 def active_constraints(root: Path, access: Path) -> list[dict]:
-    """工程激活的规约与模式（扩展根相对路径、类别、要判的单元：规约逐条，模式取上篇这一个选型单元）；没有激活清单就没有。"""
+    """工程激活的规约与模式（扩展根相对路径、类别、单元）；没有激活清单就没有。"""
     if not (root / "doc" / "extensions" / "manifest.yaml").is_file():
         return []
     proc = subprocess.run(["node", "--input-type=module", "-e", ACTIVE_CONSTRAINTS, str(root),
@@ -187,62 +186,91 @@ def active_constraints(root: Path, access: Path) -> list[dict]:
     return json.loads(proc.stdout)
 
 
-def pattern_decision(decision_id: str, file: str, outcome: str, rationale: str,
-                     target_refs: list[str] | None = None, roles: list[dict] | None = None) -> dict:
-    """一个模式的选型判断（按上篇这一个单元判）：`file` 是扩展根相对路径；选中、调整时带落点与角色。"""
-    return {"decision_id": decision_id, "file": file, "unit": "上篇", "outcome": outcome, "rationale": rationale,
-            "target_refs": list(target_refs or []), **({"roles": roles} if roles else {})}
+def pattern_judgement(file: str, outcome: str, rationale: str, roles: list[dict] | None = None) -> dict:
+    """一个出现了候选信号的模式的判断：`file` 是扩展根相对路径，`outcome` 取 selected / rejected；
+    选中时 `roles: [{role, target_ref}]` 写到承担角色的设计对象上（`pattern_roles`）。"""
+    return {"file": file, "outcome": outcome, "rationale": rationale, "roles": list(roles or [])}
 
 
-def decision_text(root: Path, spec: dict, active: list[dict]) -> str:
-    """一条知识应用决定的 canonical 文本（缩进对齐顶层 decisions 列表）：来源与摘要取激活的那份知识文件。"""
-    if "file" in spec:
-        source = next((c for c in active if c["kind"] == "patterns" and c["file"] == spec["file"]), None)
-    else:
-        source = next((c for c in active if c["kind"] == "constraints" and spec["unit"] in c["units"]), None)
-    if source is None:
-        raise AssertionError(f"夹具要判的 {spec.get('file', spec['unit'])} 不在工程激活的知识里")
-    ref = f"doc/extensions/{source['file']}"
-    digest = "sha256:" + hashlib.sha256((root / ref).read_bytes()).hexdigest()
-    applied = spec["outcome"] == "applied"
-    if source["kind"] == "patterns":
-        knowledge = {"kind": "patterns", "form": "halves", "unit": spec["unit"], "source_sha256": digest,
-                     "outcome": spec["outcome"], "target_refs": spec.get("target_refs", []),
-                     **({"roles": spec["roles"]} if spec.get("roles") else {})}
-    else:
-        knowledge = {"kind": "constraints", "form": "entries", "unit": spec["unit"], "source_sha256": digest,
-                     "outcome": spec["outcome"], **({"requirement": spec["requirement"]} if applied else {}),
-                     "target_refs": (spec.get("target_refs") or [TARGET]) if applied else []}
-    provenance = {"source_kind": "knowledge", "source_ref": ref, "observed_at": "2026-09-30T00:00:00Z",
-                  "evidence_strength": "inferred", "extraction_method": "read_and_apply"}
-    status = ("not_applicable" if spec["outcome"] == "not_applicable"
-              else "open_decision" if spec["outcome"] == "pending" else "answered_with_evidence")
-    return (f"    - decision_id: {spec['decision_id']}\n"
-            "      kind: knowledge_application\n"
-            f"      status: {status}\n"
-            "      owner: design-author\n"
-            f"      rationale: {json.dumps(spec['rationale'], ensure_ascii=False)}\n"
-            f"      provenance: {json.dumps(provenance, ensure_ascii=False)}\n"
-            f"      verification_refs: [{(knowledge['target_refs'] or [TARGET])[0]}]\n"
-            f"      knowledge: {json.dumps(knowledge, ensure_ascii=False)}\n")
+KNOWLEDGE_CONTEXT = """
+import { pathToFileURL } from 'node:url';
+const [root, module] = process.argv.slice(1);
+const { knowledgeContext } = await import(pathToFileURL(module).href);
+process.stdout.write(JSON.stringify(knowledgeContext(root)));
+"""
 
 
-def judged_rules(active: list[dict], given: list[dict] | None, exact: bool) -> list[dict]:
-    """设计对激活知识的判断：`exact` 时就是给的这几条（反例用，可以漏判）；否则给的里面激活了的照用，
-    其余规约逐条判定本需求不涉及、模式逐个写一条有据拒绝（夹具默认）。"""
-    if exact:
-        return list(given or [])
-    rules = {u for c in active if c["kind"] == "constraints" for u in c["units"]}
-    patterns = {c["file"] for c in active if c["kind"] == "patterns"}
-    chosen = [d for d in (given or []) if (d.get("file") in patterns if "file" in d else d["unit"] in rules)]
-    done_rules = {d["unit"] for d in chosen if "file" not in d}
-    done_patterns = {d["file"] for d in chosen if "file" in d}
-    return (chosen
-            + [knowledge_decision(f"knowledge-{u.lower()}", u, "not_applicable", "夹具：本需求不涉及这条规约")
-               for c in active if c["kind"] == "constraints" for u in c["units"] if u not in done_rules]
-            + [pattern_decision(f"knowledge-pattern-{Path(c['file']).stem}", c["file"], "rejected",
-                                "夹具：本需求没有这个模式适用的交互或分支")
-               for c in active if c["kind"] == "patterns" and c["file"] not in done_patterns])
+def knowledge_context(root: Path, access: Path) -> dict:
+    """这一轮的知识输入身份——由产品的 `knowledgeContext` 生成，设计作者原样写进蓝图。"""
+    proc = subprocess.run(["node", "--input-type=module", "-e", KNOWLEDGE_CONTEXT, str(root),
+                           str(Path(access).parent / "knowledge-application.mjs")],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(f"知识输入身份生成失败：{proc.stderr[-600:]}")
+    return json.loads(proc.stdout)
+
+
+def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bool) -> tuple[str, dict[str, list[dict]]]:
+    """设计对激活知识的适用性事实（缩进对齐 discovery.facts）与要写到设计对象上的模式角色。
+
+    规约一域一条事实：给了条目判断的域逐条写（`exact` 为假时其余条目补「不涉及」），没给的域写一条域级不涉及
+    （`exact` 时不写，反例用：可以漏判）；模式只写给了判断的那些——没有候选信号的模式不判。
+    """
+    given = list(judgements or [])
+    facts, roles = [], {}
+    for c in (x for x in active if x["kind"] == "constraints"):
+        mine = [j for j in given if "unit" in j and j["unit"] in c["units"]]
+        if mine:
+            items = mine + ([] if exact else [rule_judgement(u, "not_applicable", "夹具：本需求不涉及这条规约")
+                                              for u in c["units"] if u not in {j["unit"] for j in mine}])
+            value = {"knowledge_kind": "constraints", "items": items}
+        elif exact:
+            continue
+        else:
+            value = {"knowledge_kind": "constraints", "outcome": "not_applicable", "rationale": "夹具：本需求不涉及这一域的规约"}
+        facts.append((c["file"], value))
+    known = {c["file"] for c in active if c["kind"] == "patterns"}
+    for j in (x for x in given if "file" in x):
+        if j["file"] not in known:
+            raise AssertionError(f"夹具要判的模式 {j['file']} 不在工程激活的知识里")
+        facts.append((j["file"], {"knowledge_kind": "patterns", "outcome": j["outcome"], "rationale": j["rationale"]}))
+        for r in j["roles"]:
+            roles.setdefault(r["target_ref"], []).append({"pattern_ref": f"doc/extensions/{j['file']}", "role": r["role"]})
+    unknown = [j["unit"] for j in given if "unit" in j and not any(j["unit"] in c["units"] for c in active if c["kind"] == "constraints")]
+    if unknown:
+        raise AssertionError(f"夹具要判的 {'、'.join(unknown)} 不在工程激活的规约里")
+    text = "".join(
+        f"    - fact_id: knowledge-{Path(file).stem}\n"
+        f"      subject: {json.dumps('knowledge:' + Path(file).stem, ensure_ascii=False)}\n"
+        f"      value: {json.dumps(value, ensure_ascii=False)}\n"
+        "      provenance: " + json.dumps({"source_kind": "knowledge", "source_ref": f"doc/extensions/{file}",
+                                          "observed_at": "2026-10-30T00:00:00Z", "evidence_strength": "inferred",
+                                          "extraction_method": "read_and_apply"}, ensure_ascii=False) + "\n"
+        for file, value in facts)
+    return text, roles
+
+
+def with_pattern_roles(text: str, roles: dict[str, list[dict]]) -> str:
+    """把模式角色写到承担它的设计对象上（`pattern_roles`），地址按原生稳定地址的写法认。"""
+    import yaml  # noqa: PLC0415
+    doc = yaml.safe_load(text)
+
+    def find(address: str) -> dict:
+        kind, _, rest = address.partition(":")
+        if kind == "view":
+            view_id, _, tail = rest.partition("/")
+            view = next(v for v in doc["design_views"] if v["view_id"] == view_id)
+            if not tail:
+                return view
+            sub, _, sid = tail.partition(":")
+            key, id_key = ("nodes", "node_id") if sub == "node" else ("runtime_data_flows", "flow_id")
+            return next(x for x in view[key] if x[id_key] == sid)
+        table = {"contract": ("contracts", "contract_id"), "relation": ("relations", "relation_id")}[kind]
+        return next(x for x in doc[table[0]] if x[table[1]] == rest)
+
+    for address, list_ in roles.items():
+        find(address).setdefault("pattern_roles", []).extend(list_)
+    return yaml.safe_dump(doc, allow_unicode=True, sort_keys=False, width=1000)
 
 
 def story_detail(detail_id: str, kind: str, title: str, body: str) -> str:
@@ -354,13 +382,13 @@ def consume_items(text: str, items: list[dict]) -> str:
 
 
 def install_blueprint(root: Path, feature: str, access: Path, *, projection: bool = True,
-                      decisions: list[dict] | None = None, details: list[str] | None = None,
-                      terms: list[str] | None = None, consume: bool = True, exact_decisions: bool = False,
+                      judgements: list[dict] | None = None, details: list[str] | None = None,
+                      terms: list[str] | None = None, consume: bool = True, exact: bool = False,
                       items: list[dict] | None = None, support: list[str] | None = None) -> Path:
     """把需求的准入蓝图放到需求目录的 `blueprint/`（与需求同根，标识就是需求标识），返回 canonical 路径。
 
-    `decisions` 是 `knowledge_decision` 给出的判断：激活了的照用，其余激活规约逐条判定不涉及；
-    `exact_decisions` 为真时蓝图里就只有给的这几条（反例用：可以漏判，空列表就一条不判）；
+    `judgements` 是 `rule_judgement` / `pattern_judgement` 给出的适用性判断，按 `knowledge_facts` 写成蓝图事实，
+    蓝图另记产品生成的知识输入身份；`exact` 为真时蓝图里就只有给的这几条（反例用：可以漏判，空列表就一条不判）；
     `details` 是 `story_detail` 生成的 canonical 片段，按原文插进去；
     `projection` 为假时不生成评审投影。`consume` 为真时蓝图的需求条目采用需求已导入的材料版本；
     `consume` 为假时保留夹具原来那份需求（另一个需求）的条目——反例用；`items` 直接给出要采用的条目。
@@ -373,20 +401,22 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
     target.parent.mkdir(parents=True, exist_ok=True)
     text = source.read_text(encoding="utf-8").replace("blueprint_id: wallet-balance-refresh\n", f"blueprint_id: {blueprint}\n", 1)
     active = active_constraints(root, access)
-    judged = judged_rules(active, decisions, exact_decisions)
-    if judged:
-        text = text.replace("decisions_and_gaps:\n  decisions:\n", "decisions_and_gaps:\n  decisions:\n"
-                            + "".join(decision_text(root, d, active) for d in judged), 1)
+    knowledge, roles = knowledge_facts(judgements, active, exact)
+    if active:
+        text = text.replace("  inputs:\n", "  inputs:\n    knowledge_context: "
+                            + json.dumps(knowledge_context(root, access), ensure_ascii=False) + "\n", 1)
     if details:
         text = text.rstrip("\n") + "\nstory_details:\n" + "".join(details)
     support = support if support is not None else support_refs(root, feature) if consume else []
-    if terms or support:
-        text = text.replace("  facts:\n", "  facts:\n" + "".join(terms or []) + support_facts(support), 1)
+    if terms or support or knowledge:
+        text = text.replace("  facts:\n", "  facts:\n" + "".join(terms or []) + support_facts(support) + knowledge, 1)
     items = items if items is not None else handed_items(root, feature, access) if consume else None
     if items:
         text = consume_items(text, items)
+    if roles:
+        text = with_pattern_roles(text, roles)
     target.write_bytes(text.encode("utf-8"))
-    if terms or items or support:
+    if terms or items or support or knowledge:
         # 事实或需求条目变了，来源指纹按原生算法重算：它由 discovery 的事实与当前范围条目确定性得出
         proc = subprocess.run(["node", "--input-type=module", "-e", REFINGERPRINT, str(root), str(access), blueprint, str(target)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -452,7 +482,7 @@ def walk_to_design(flow: Callable[..., dict], src: Path, access: Path,
 
 
 def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_script: Path, access: Path,
-                     decisions: list[dict] | None = None, design: dict | None = None,
+                     judgements: list[dict] | None = None, design: dict | None = None,
                      project_must_pass: bool = True) -> None:
     """就地把一份需求工作区准备成「范围已定、蓝图已准入」：接 Framework、用真实流程命令走完关卡、放准入蓝图，
     附录机器区按蓝图重投。
@@ -474,8 +504,8 @@ def prepare_designed(root: Path, feature: str, *, flow_script: Path, build_scrip
 
     if not (src / "story-flow.json").is_file():
         walk_to_design(flow, src, access)
-    # 设计走到准入：蓝图的需求条目采用本需求的材料版本，带本夹具要的知识应用决定与设计内容
-    install_blueprint(root, feature, access, decisions=decisions, **(design or {}))
+    # 设计走到准入：蓝图的需求条目采用本需求的材料版本，带本夹具要的知识适用性判断与设计内容
+    install_blueprint(root, feature, access, judgements=judgements, **(design or {}))
     if (feature_root / "AR" / "story.md").is_file():
         proc = subprocess.run(["node", str(build_script), "project", "--feature", feature, "--project-root", str(root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)

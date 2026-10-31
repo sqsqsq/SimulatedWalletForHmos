@@ -58,21 +58,23 @@ function mustOf(node) {
 }
 
 /**
- * 遍历五类实体收集 `must`。
+ * 遍历五类实体收集 `must: [{text, source_ref, verify}]`。
  *
- * @returns {{rule, text, verify, decisionId, entityPath, entityKind, file}[]}
- *   `entityPath` 是可回查的实体引用（`components.X.state.y` 形态），`decisionId` 是这条义务出自的知识应用决定，
+ * @returns {{sourceRef, rule, text, verify, entityPath, entityKind, file}[]}
+ *   `sourceRef` 是这条义务出自的规约条目（`<知识文件>#<编号>`），`rule` 是其中的编号；
+ *   `entityPath` 是可回查的实体引用（`components.X.state.y` 形态），
  *   `file` 是该实体所属的实现文件（实体写了 `file` 才有，由 coding 侧按契约定位）。
  */
 export function obligationsFromContracts(contracts) {
   const out = [];
   const push = (node, entityKind, entityPath, file) => {
     for (const m of mustOf(node)) {
+      const sourceRef = String(m.source_ref ?? '').trim();
       out.push({
-        rule: String(m.rule ?? '').trim(),
+        sourceRef,
+        rule: sourceRef.includes('#') ? sourceRef.slice(sourceRef.indexOf('#') + 1) : '',
         text: String(m.text ?? '').trim(),
         verify: String(m.verify ?? '').trim().toLowerCase(),
-        decisionId: String(m.decision_id ?? '').trim(),
         entityKind,
         entityPath,
         file: file ?? null,
@@ -158,9 +160,9 @@ export function unidentifiedCarriers(contracts) {
 
 /**
  * 模式采用的结构投影：真实承担角色的 `components` / `interfaces` / `data_models` 实体上的
- * `pattern_roles: [{pattern, role, decision_id}]`，以实体的原生名定位，实现文件取实体自己的 `file`。
+ * `pattern_roles: [{pattern_ref, role}]`，以实体的原生名定位，实现文件取实体自己的 `file`。
  *
- * @returns {{pattern, role, decisionId, entity, entityPath, path}[]}
+ * @returns {{patternRef, role, entity, entityPath, path}[]}
  */
 export function patternRolesFromContracts(contracts) {
   const out = [];
@@ -168,9 +170,8 @@ export function patternRolesFromContracts(contracts) {
     for (const it of arr(contracts?.[kind]).filter(x => entityId(kind, x))) {
       for (const pr of arr(it?.pattern_roles)) {
         out.push({
-          pattern: String(pr?.pattern ?? '').trim(),
+          patternRef: String(pr?.pattern_ref ?? '').trim(),
           role: String(pr?.role ?? '').trim(),
-          decisionId: String(pr?.decision_id ?? '').trim(),
           entity: entityId(kind, it),
           entityPath: `${kind}.${entityId(kind, it)}`,
           path: it?.file ? String(it.file).replace(/\\/g, '/') : null,

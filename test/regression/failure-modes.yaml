@@ -956,7 +956,7 @@ modes:
   - id: R02-knowledge-row-missing
     dimension: content
     found_round: "2026-08-28"
-    form: 激活规约有一条在设计里没有判断——逐条判定失去落点，附录·规约少了那一行，知识应用在 story 侧退化
+    form: 相关规约域有一条在设计里没有判断——逐条判定失去落点，附录·规约少了那一行，知识应用在 story 侧退化
     clause: E2 / KR-2b
     checker: r02_knowledge_row_missing
     target: mechanism
@@ -966,9 +966,9 @@ modes:
     severity: BLOCKER
     status: fixed
     scope_note: >
-      判定原先落在 spec/knowledge-use.yaml，附录·规约是它的投影；2.0 起判断是已准入蓝图里的
-      知识应用决定（形态见 knowledge-application.schema.json），附录·规约由作者按它写。
-      激活规约逐条要有判断（按来源文件与单元认，不适用也要写明哪个条件不成立），漏判一条点名一条，
+      判定原先落在 spec/knowledge-use.yaml，附录·规约是它的投影；2.1 起判断是蓝图里的规约适用性事实
+      （形态见 knowledge-application.schema.json），附录·规约由作者按它写。整域无关一条域级事实；
+      相关域逐条要有判断（按来源文件与条目认，不适用也要写明哪个条件不成立），漏判一条点名一条，
       交回设计职责；夹具的 `_design.json` 写明设计里就是哪几条判断。
 
   - id: G01-judgement-rejects-valid-output

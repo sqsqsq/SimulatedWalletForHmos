@@ -119,8 +119,11 @@ class BadAnswersAreNamed(ClientCase):
         stub_root = ext / "skills" / "story" / "scripts" / "core"
         (stub_root / "flow").mkdir(parents=True, exist_ok=True)
         (ext / "hooks" / "shared").mkdir(parents=True, exist_ok=True)
-        for name in ("paths.mjs", "framework-access.mjs"):   # paths 认施工单位身份时走原生桥
+        # paths 认施工单位身份时走原生桥；原生桥读 Markdown 链接用 story 的链接读法
+        for name in ("paths.mjs", "framework-access.mjs"):
             shutil.copy2(DEV_EXT / "hooks" / "shared" / name, ext / "hooks" / "shared" / name)
+        (stub_root / "story").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(CORE / "story" / "markdown-links.mjs", stub_root / "story" / "markdown-links.mjs")
         shutil.copy2(CLIENT, stub_root / "flow" / "client.mjs")
         (stub_root / "story_flow.py").write_text(body, encoding="utf-8")
         return stub_root / "flow" / "client.mjs"

@@ -68,23 +68,23 @@ export default guard('testing', async (ctx) => {
     return done({ skipped: [{ what: '验收条目实机覆盖', why: '测试产物还没建' }] });
   }
 
-  // 桥接：acceptance.yaml 的 knowledge_rule 把验收条目认回规约条目（framework 原生追溯链）。
+  // 桥接：acceptance.yaml 的 knowledge_refs 把验收条目认回义务出自的规约条目。
   // 同一规约常有多个验收条目（不同场景），逐条核，不能只看最后一条；
   // 原生没给出验收时说出原因，不当空集合放行。
   const acceptance = inputs.acceptance;
   const accError = acceptance ? null : `验收拿不到（${inputs.why}）——义务按验收条目分派，没有验收就核不了覆盖`;
-  const { byRule, problems: accProblems } = knowledgeCriteria(acceptance);
+  const { byRef, problems: accProblems } = knowledgeCriteria(acceptance);
   const problems = accError ? [accError] : [...accProblems];
 
   for (const ob of obligations) {
     const rule = String(ob.rule ?? '?');
     // verify 是四阶段分派的单源：本阶段只管 device 与 both，其余是显式不适用
     if (ob.verify !== 'device' && ob.verify !== 'both') continue;
-    // 同编号的规约可能来自不同文件：按义务出自的那条判断认验收
-    const entries = (byRule.get(rule) ?? []).filter(c => String(c.knowledge_decision_id).trim() === ob.decisionId);
+    // 同编号的规约可能来自不同文件：按义务出自的条目（文件 + 编号）认验收
+    const entries = byRef.get(ob.sourceRef) ?? [];
     if (!entries.length) {
-      problems.push(`acceptance.yaml：义务 ${rule} 标了 verify: ${ob.verify}，但没有 `
-        + `knowledge_rule: ${rule}、knowledge_decision_id: ${ob.decisionId} 的验收条目——门禁按这两项把验收条目认回义务出自的判断，要走查的场景从这些条目取`);
+      problems.push(`acceptance.yaml：义务 ${rule} 标了 verify: ${ob.verify}，但没有 knowledge_refs 列着 ${ob.sourceRef || '（must 没写 source_ref）'} 的验收条目`
+        + '——门禁按它把验收条目认回义务出自的规约条目，要走查的场景从这些条目取');
       continue;
     }
     for (const c of entries) {

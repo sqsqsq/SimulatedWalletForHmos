@@ -129,11 +129,12 @@ class TheUnitFollowsTheForm(MethodCase):
         self.assertEqual(["NEU-01", "NEU-02"], domain["units"])
 
     def test_a_wrong_half_is_named_as_a_half(self) -> None:
-        chosen = self.decision("上篇", "selected", "标识贯穿多步", "neutral-pattern", kind="patterns",
-                               target_refs=[nk.TARGET], roles=[{"role": "标识生成者", "target_ref": nk.TARGET}])
-        chosen["knowledge"]["unit"] = "中篇"
-        self.write_contracts(decisions=self.judged() + [chosen])
-        self.assertIn("单元 中篇 不在 knowledge/design-patterns/neutral-pattern.md 里", self.hook("spec"))
+        """事实引用上下篇知识的某一篇：篇名按形态核，写错的篇点名。"""
+        read = {"fact_id": "f-method", "subject": "method:neutral", "value": {"observation": "出口逐个列出、逐行核对"},
+                "provenance": {"source_kind": "knowledge", "source_ref": "doc/extensions/knowledge/facts/neutral-method.md#中篇",
+                               "observed_at": "2026-10-30T00:00:00Z", "evidence_strength": "observed", "extraction_method": "read"}}
+        self.write_contracts(facts=self.judged() + [read])
+        self.assertIn("单元 中篇 不在 knowledge/facts/neutral-method.md 里", self.hook("spec"))
 
 
 class ThePlanTaskPointsAtTheLowerHalf(MethodCase):

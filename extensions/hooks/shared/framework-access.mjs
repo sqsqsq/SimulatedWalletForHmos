@@ -28,7 +28,7 @@ import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { markdownLinks } from '../../skills/story/scripts/core/story/language.mjs';
+import { markdownLinks } from '../../skills/story/scripts/core/story/markdown-links.mjs';
 
 const loaded = new Map();
 

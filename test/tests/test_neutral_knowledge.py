@@ -3,12 +3,12 @@
 这条测试守的是「三类知识的消费与传递不靠硬编码」——新增一条 fact / constraint / pattern，
 **不改任何通用脚本**，它就该分别到达正确的消费者：
 
-  设计：知识应用决定逐条判它，漏判就点名，来源与原文摘要按激活知识核；
-  spec：适用的判断在验收里有带决定的桥；
-  plan：适用的判断在契约里有实体扛着（must 带 decision_id）；
+  设计：相关域逐条判它，漏判就点名，来源按激活知识核；
+  spec：适用的条目在验收里有 knowledge_refs 承接；
+  plan：适用的条目在契约里有实体扛着（must 的 source_ref 指它）；
   下游：义务经 contracts 的 `must.verify` 分派到对应阶段。
 
-用的是平铺维护 Feature：判断写在它原生契约的 `knowledge_applications` 里，不建蓝图、不走 Story。
+用的是平铺维护 Feature：适用性事实写在它原生契约的 `knowledge_facts` 里，不建蓝图、不走 Story。
 
 为什么要有它：判据里凡是写死了域前缀、条目编号、模式名的地方，在现有知识上都测不出来
 ——现有知识恰好满足那些写死的假设。只有塞一条机制从没见过的知识，才知道它是按数据走的，
@@ -130,6 +130,10 @@ process.stdout.write(JSON.stringify(rows));
 
 #: 非 CU 维护 Feature 的判断落点：没有蓝图稳定地址，写它契约里的承担对象
 TARGET = "contract:neutral-exit"
+#: 中性域规约文件：条目引用写 `<它>#<编号>`
+REF = "doc/extensions/knowledge/constraints/neutral-domain.md"
+
+
 
 
 def node(*args: str) -> subprocess.CompletedProcess:
@@ -206,43 +210,33 @@ class NeutralKnowledgeCase(unittest.TestCase):
             NeutralKnowledgeCase._active[key] = json.loads(proc.stdout)
         return NeutralKnowledgeCase._active[key]
 
-    def decision(self, unit: str, outcome: str, rationale: str, source: str = "", **knowledge) -> dict:
-        """一条知识应用决定：来源与原文摘要按激活知识里含这个单元的那份文件取（`source` 是文件路径的一段，同名单元时用它挑）。"""
-        source = next(s for s in self.active() if unit in s["units"] and source in s["file"]
-                      and knowledge.get("kind", "constraints") == s["kind"])
-        status = {"not_applicable": "not_applicable", "pending": "open_decision"}.get(outcome, "answered_with_evidence")
-        return {"decision_id": f"k-{unit.lower()}", "kind": "knowledge_application", "status": status,
-                "owner": "design-author", "rationale": rationale,
-                "provenance": {"source_kind": "knowledge", "source_ref": f"doc/extensions/{source['file']}",
-                               "observed_at": "2026-09-30T00:00:00Z", "evidence_strength": "inferred",
-                               "extraction_method": "read_and_apply"},
-                "verification_refs": [TARGET],
-                "knowledge": {"kind": source["kind"], "form": source["form"], "unit": unit, "source_sha256": source["sha"],
-                              "outcome": outcome, "target_refs": [], **{k: v for k, v in knowledge.items() if k != "kind"}}}
+    def item(self, unit: str, outcome: str, rationale: str, target_refs: list[str] | None = None) -> dict:
+        """一条规约条目的适用性：适用的落点默认是中性出口这个承担对象。"""
+        return {"unit": unit, "outcome": outcome, "rationale": rationale,
+                "target_refs": target_refs if target_refs is not None else ([TARGET] if outcome == "applied" else [])}
+
+    def fact(self, source: str, value: dict) -> dict:
+        """一份知识的适用性事实：`source` 是知识文件路径的一段，按激活知识挑出那一份。"""
+        s = next(x for x in self.active() if source in x["file"])
+        return {"fact_id": f"k-{Path(s['file']).stem}", "subject": f"knowledge:{Path(s['file']).stem}", "value": value,
+                "provenance": {"source_kind": "knowledge", "source_ref": f"doc/extensions/{s['file']}",
+                               "observed_at": "2026-10-30T00:00:00Z", "evidence_strength": "inferred",
+                               "extraction_method": "read_and_apply"}}
 
     def judged(self, *, neutral: list[dict] | None = None) -> list[dict]:
-        """设计的判断：中性域按参数（默认 NEU-01 适用、NEU-02 不适用），其余激活规约逐条不涉及，激活模式逐个有据拒绝。"""
+        """设计的适用性事实：中性域按参数逐条（默认 NEU-01 适用、NEU-02 不适用），其余激活规约整域不涉及，模式没有候选不判。"""
         neutral = neutral if neutral is not None else [
-            self.decision("NEU-01", "applied", "本需求新增出口", requirement="中性出口在入口生成一次标识并向后透传",
-                          target_refs=[TARGET]),
-            self.decision("NEU-02", "not_applicable", "本需求没有重试路径，出口只走一次")]
-        done = {(d["provenance"]["source_ref"], d["knowledge"]["unit"]) for d in neutral}
-        others = [{**self.decision(u, "not_applicable", "本需求不涉及这条规约", s["file"]),
-                   "decision_id": f"k-{Path(s['file']).stem}-{u.lower()}"}
-                  for s in self.active() if s["kind"] == "constraints" and "neutral-domain" not in s["file"] for u in s["units"]
-                  if (f"doc/extensions/{s['file']}", u) not in done]
-        # 激活模式按上篇各判一次：没给判断的写一条有据拒绝
-        patterns = [{**self.decision("上篇", "rejected", "本需求没有这个模式适用的交互或分支", s["file"], kind="patterns"),
-                     "decision_id": f"k-{Path(s['file']).stem}-pattern"}
-                    for s in self.active() if s["kind"] == "patterns"
-                    and (f"doc/extensions/{s['file']}", "上篇") not in done]
-        return neutral + others + patterns
+            self.item("NEU-01", "applied", "本需求新增出口，出口在入口生成一次标识并向后透传"),
+            self.item("NEU-02", "not_applicable", "本需求没有重试路径，出口只走一次")]
+        return [self.fact("neutral-domain", {"knowledge_kind": "constraints", "items": neutral}),
+                *[self.fact(s["file"], {"knowledge_kind": "constraints", "outcome": "not_applicable", "rationale": "本需求不涉及这一域"})
+                  for s in self.active() if s["kind"] == "constraints" and not Path(s["file"]).stem.startswith("neutral-")]]
 
-    def write_contracts(self, body: str = "", decisions: list[dict] | None = None) -> None:
-        """维护 Feature 的原生契约：知识应用决定在 `knowledge_applications`，其余按给的正文。"""
-        judged = self.judged() if decisions is None else decisions
+    def write_contracts(self, body: str = "", facts: list[dict] | None = None) -> None:
+        """维护 Feature 的原生契约：适用性事实在 `knowledge_facts`，其余按给的正文。"""
         (self.feature_root / "contracts.yaml").write_text(
-            "knowledge_applications: " + json.dumps(judged, ensure_ascii=False) + "\n" + body, encoding="utf-8")
+            "knowledge_facts: " + json.dumps(self.judged() if facts is None else facts, ensure_ascii=False) + "\n" + body,
+            encoding="utf-8")
 
     def hook(self, phase: str) -> str:
         """跑本阶段的 post_check，返回它的消息。"""
@@ -259,14 +253,13 @@ class NeutralKnowledgeCase(unittest.TestCase):
                     "--action", action, "--audience", "author")
 
 
-#: 挂在中性出口接口上的一条义务：出自 NEU-01 的适用判断
+#: 挂在中性出口接口上的一条义务：出自 NEU-01 这条适用条目
 EXIT_METHOD = ("interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n"
                "    methods:\n      - name: emitWithTrace\n")
 
 
-def must(rule: str, verify: str, decision: str | None = None, text: str = "入口生成标识并透传给后两步") -> str:
-    return (f"          - rule: {rule}\n            decision_id: {decision or 'k-' + rule.lower()}\n"
-            f"            text: {text}\n            verify: {verify}\n")
+def must(rule: str, verify: str, source: str = REF, text: str = "入口生成标识并透传给后两步") -> str:
+    return (f"          - text: {text}\n            source_ref: {source}#{rule}\n            verify: {verify}\n")
 
 
 class TheRuleTextIsHandedOverByPath(NeutralKnowledgeCase):
@@ -378,56 +371,54 @@ class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):
                       self.eval_js("k.activeKnowledge(root).patternIds.join(',')"))
 
     def test_leaving_the_new_domain_unjudged_is_named(self) -> None:
-        """逐条判断认新条目：不判它就点名——这正是「机制不认识」时会静默漏掉的那一类。"""
-        self.write_contracts(decisions=self.judged(neutral=[self.decision("NEU-01", "not_applicable", "本需求没有新增出口")]))
-        message = self.hook("spec")
-        self.assertIn("没有判断激活规约 NEU-02", message)
+        """相关域逐条判断认新条目：漏判就点名——这正是「机制不认识」时会静默漏掉的那一类。"""
+        self.write_contracts(facts=self.judged(neutral=[self.item("NEU-01", "not_applicable", "本需求没有新增出口")]))
+        self.assertIn("相关域没有逐条判断 NEU-02", self.hook("spec"))
 
     def test_a_complete_judgement_passes(self) -> None:
         self.write_contracts()
-        self.assertNotIn("知识应用", self.hook("spec"))
+        self.assertNotIn("的契约 的事实", self.hook("spec"))
 
     def test_the_new_pattern_is_a_legal_choice(self) -> None:
         """新模式一登记就能被选——在不在册查的是激活清单，不是一份写死的名单。"""
-        chosen = self.decision("上篇", "selected", "标识由入口生成、被后续两步消费，贯穿多步", "neutral-pattern", kind="patterns",
-                               target_refs=[TARGET], roles=[{"role": "标识生成者", "target_ref": TARGET}])
-        others = [d for d in self.judged() if "neutral-pattern" not in d["provenance"]["source_ref"]]
-        self.write_contracts(decisions=others + [chosen])
-        self.assertNotIn("知识应用", self.hook("spec"))
+        chosen = self.fact("neutral-pattern", {"knowledge_kind": "patterns", "outcome": "selected",
+                                               "rationale": "标识由入口生成、被后续两步消费，贯穿多步"})
+        self.write_contracts(facts=self.judged() + [chosen])
+        self.assertNotIn("的契约 的事实", self.hook("spec"))
 
     def test_an_unregistered_pattern_is_still_refused(self) -> None:
         """反面：没登记进激活清单的模式文件照样不是合法来源。"""
-        chosen = self.decision("上篇", "selected", "自己想的模式", "neutral-pattern", kind="patterns",
-                               target_refs=[TARGET], roles=[{"role": "标识生成者", "target_ref": TARGET}])
+        chosen = self.fact("neutral-pattern", {"knowledge_kind": "patterns", "outcome": "selected", "rationale": "自己想的模式"})
         chosen["provenance"]["source_ref"] = "doc/extensions/knowledge/design-patterns/我自己想的模式.md"
-        self.write_contracts(decisions=self.judged() + [chosen])
+        self.write_contracts(facts=self.judged() + [chosen])
         self.assertIn("不是这一轮激活的知识文件", self.hook("spec"))
 
 
+
 class ThePlanSideReadsTheSameSource(NeutralKnowledgeCase):
-    """plan 侧读同一份判断——中性域的适用判断要在契约里有实体扛着，must 认得回它。"""
+    """plan 侧读同一份判断——中性域的适用条目要在契约里有实体扛着，must 认得回它。"""
 
     def test_a_judgement_carried_by_an_entity_passes(self) -> None:
         self.write_contracts(EXIT_METHOD + "        must:\n" + must("NEU-01", "ut"))
         message = self.hook("plan")
         self.assertNotIn("没有实体扛着", message)
-        self.assertNotIn("不是本施工单位承接的适用判断", message)
+        self.assertNotIn("不是本施工单位承接的适用规约条目", message)
 
     def test_a_judgement_with_no_entity_is_named(self) -> None:
         """适用却没人扛：知识在设计阶段就丢了。"""
         self.write_contracts(EXIT_METHOD)
-        self.assertIn("k-neu-01（NEU-01", self.hook("plan"))
+        self.assertIn("判定适用的 NEU-01（knowledge/constraints/neutral-domain.md", self.hook("plan"))
 
     def test_the_retired_files_object_carries_nothing(self) -> None:
         """1.x 把义务挂在 files 对象上；2.0 的 files 只是原生授权文件清单（原生读取时规整成路径）：
         挂在上面的义务不算有实体承担，对应的判断被点名。"""
         self.write_contracts("files:\n  - path: src/exit.ets\n    must:\n" + must("NEU-01", "ut").replace("          ", "      "))
-        self.assertIn("k-neu-01（NEU-01", self.hook("plan"), "files 对象上的义务被当成了实体承担")
+        self.assertIn("判定适用的 NEU-01（knowledge/constraints/neutral-domain.md", self.hook("plan"), "files 对象上的义务被当成了实体承担")
 
     def test_an_obligation_outside_the_judgement_is_named(self) -> None:
-        """反过来也不许多出来：不适用的判断上挂义务，两处说法对不上。"""
+        """反过来也不许多出来：不适用的条目上挂义务，两处说法对不上。"""
         self.write_contracts(EXIT_METHOD + "        must:\n" + must("NEU-01", "ut") + must("NEU-02", "ut", text="重试复用同一个标识"))
-        self.assertIn("NEU-02 的 must 指向 k-neu-02，它不是本施工单位承接的适用判断", self.hook("plan"))
+        self.assertIn(f"must 出自 {REF}#NEU-02，它不是本施工单位承接的适用规约条目", self.hook("plan"))
 
 
 class TheObligationReachesTheDownstream(NeutralKnowledgeCase):
@@ -459,7 +450,7 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
     作者桥接了两条，下游只验一条。解析失败也要接住报出来，不能当空集合放行。
     """
 
-    BRIDGE = "    knowledge_rule: NEU-01\n    knowledge_decision_id: k-neu-01\n"
+    BRIDGE = f"    knowledge_refs: [{REF}#NEU-01]\n"
 
     def write_acceptance(self, text: str) -> None:
         (self.feature_root / "acceptance.yaml").write_text(text, encoding="utf-8")
@@ -489,7 +480,7 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.assertNotIn("AC-2 在 UT 侧找不到覆盖证据", message)
 
     def test_both_entries_covered_and_plain_business_ac_not_flagged(self) -> None:
-        """两条全覆盖通过；没有 knowledge_rule 的普通业务验收不误报。"""
+        """两条全覆盖通过；没有 knowledge_refs 的普通业务验收不误报。"""
         self.write_acceptance(self.acceptance_with("  - id: AC-9\n    description: 与规约无关的普通业务验收点\n"))
         self.cover(["AC-1", "AC-2"])
         message = self.ut_message()
@@ -497,15 +488,15 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.assertNotIn("AC-9", message)
         self.assertNotIn("没写 id", message)
 
-    def test_an_entry_from_another_judgement_does_not_count(self) -> None:
-        """同编号、指向别的判断的条目不算承接这一条义务：按规约编号与决定一起认。"""
-        self.write_acceptance("criteria:\n  - id: AC-1\n    knowledge_rule: NEU-01\n    knowledge_decision_id: k-other\n")
+    def test_an_entry_from_another_file_does_not_count(self) -> None:
+        """同编号、出自别的规约文件的条目不算承接这一条义务：按「知识文件 + 编号」认。"""
+        self.write_acceptance("criteria:\n  - id: AC-1\n    knowledge_refs: [doc/extensions/knowledge/constraints/neutral-other.md#NEU-01]\n")
         self.cover(["AC-1"])
-        self.assertIn("knowledge_decision_id: k-neu-01 的验收条目", self.ut_message())
+        self.assertIn(f"没有 knowledge_refs 列着 {REF}#NEU-01 的验收条目", self.ut_message())
 
-    def test_a_bridge_without_its_decision_is_named(self) -> None:
-        self.write_acceptance("criteria:\n  - id: AC-1\n    knowledge_rule: NEU-01\n")
-        self.assertIn("没写 knowledge_decision_id", self.ut_message())
+    def test_the_retired_bridge_fields_are_named(self) -> None:
+        self.write_acceptance("criteria:\n  - id: AC-1\n    knowledge_rule: NEU-01\n    knowledge_decision_id: k-neu-01\n")
+        self.assertIn("写的是 knowledge_rule / knowledge_decision_id", self.ut_message())
 
     def test_an_entry_without_an_id_is_named(self) -> None:
         """按编号回查覆盖证据的前提是有编号——缺 id 要逐条点名。"""
@@ -513,10 +504,10 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.cover(["AC-1"])
         self.assertIn("没写 id", self.ut_message())
 
-    def test_a_list_shaped_rule_is_refused_not_flattened(self) -> None:
-        """一条 criteria 桥一串编号下游分派不了——报错，不悄悄拍平。"""
-        self.write_acceptance("criteria:\n  - id: AC-1\n    knowledge_rule: [NEU-01, NEU-02]\n")
-        self.assertIn("不是一个编号", self.ut_message())
+    def test_a_bare_reference_is_refused_not_wrapped(self) -> None:
+        """knowledge_refs 写成一个字符串：下游按列表分派，报错，不悄悄包成列表。"""
+        self.write_acceptance(f"criteria:\n  - id: AC-1\n    knowledge_refs: {REF}#NEU-01\n")
+        self.assertIn("knowledge_refs 不是条目引用列表", self.ut_message())
 
     def test_a_broken_acceptance_is_surfaced_not_treated_as_empty(self) -> None:
         """解析失败接住报出来——当空集合放行，义务就全部静默失去验收条目。"""
@@ -528,7 +519,7 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.write_acceptance("criteria: 还没写\n")
         message = self.ut_message()
         self.assertIn("$.criteria: 类型不符：期望 array", message)
-        self.assertIn("没有 knowledge_rule: NEU-01", message)
+        self.assertIn(f"没有 knowledge_refs 列着 {REF}#NEU-01", message)
 
     def test_a_bare_value_row_is_named(self) -> None:
         """条目写成裸值：原生读规格时点名是哪一条并剔除，其余条目照常核。"""
@@ -536,11 +527,11 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         message = self.ut_message()
         self.assertIn("$.criteria[1]: 类型不符：期望 object", message)
 
-    def test_an_empty_rule_is_named(self) -> None:
-        """`knowledge_rule:` 留空与「没写这个字段」不是一回事：后者是普通业务验收。"""
-        self.write_acceptance("criteria:\n  - id: AC-1\n" + self.BRIDGE + '  - id: AC-2\n    knowledge_rule: ""\n')
+    def test_an_empty_reference_list_is_named(self) -> None:
+        """`knowledge_refs: []` 与「没写这个字段」不是一回事：后者是普通业务验收。"""
+        self.write_acceptance("criteria:\n  - id: AC-1\n" + self.BRIDGE + "  - id: AC-2\n    knowledge_refs: []\n")
         message = self.ut_message()
-        self.assertIn("不是一个编号", message)
+        self.assertIn("knowledge_refs 不是条目引用列表", message)
         self.assertIn("AC-2", message)
 
     def test_boundaries_count_for_spec_and_ut_alike(self) -> None:
@@ -548,13 +539,13 @@ class TheAcceptanceBridgeKeepsEveryEntry(NeutralKnowledgeCase):
         self.write_acceptance("boundaries:\n  - id: BD-1\n" + self.BRIDGE)
         self.cover(["BD-1"])
         message = self.ut_message()
-        self.assertNotIn("的验收条目——门禁按这两项", message, f"boundaries 的条目该计入 UT 桥：{message}")
+        self.assertNotIn("门禁按它把验收条目认回", message, f"boundaries 的条目该计入 UT 桥：{message}")
         self.assertNotIn("没有验收条目承接", self.hook("spec"), "boundaries 的条目该计入 spec 的桥")
 
     def test_spec_names_a_judgement_the_acceptance_does_not_carry(self) -> None:
         self.write_contracts()
         self.write_acceptance("criteria:\n  - id: AC-9\n    description: 普通业务验收\n")
-        self.assertIn("k-neu-01（NEU-01）没有验收条目承接", self.hook("spec"))
+        self.assertIn("判定适用的 NEU-01（knowledge/constraints/neutral-domain.md）由本施工单位承接，没有验收条目承接", self.hook("spec"))
 
 
 #: 另一份规约里也有 NEU-01：编号相同、来源不同，要求实机证据
@@ -575,7 +566,7 @@ domain: NEU
 
 
 class TheSameIdFromTwoFiles(NeutralKnowledgeCase):
-    """两份规约都有 NEU-01：激活照常，判断与义务按「来源文件 + 单元」认，各自按自己那一条的执行体核 verify。"""
+    """两份规约都有 NEU-01：激活照常，判断与义务按「来源文件 + 编号」认，各自按自己那一条的执行体核 verify。"""
 
     def setUp(self) -> None:
         super().setUp()
@@ -590,19 +581,19 @@ class TheSameIdFromTwoFiles(NeutralKnowledgeCase):
         self.assertEqual(["knowledge/constraints/neutral-domain.md", "knowledge/constraints/neutral-other.md"], sorted(got))
 
     def test_each_must_follows_its_own_source(self) -> None:
-        other = {**self.decision("NEU-01", "applied", "出口要在弱网下给结果", "neutral-other",
-                                 requirement="弱网下出口给出结果", target_refs=[TARGET]), "decision_id": "k-other-neu-01"}
+        other = self.fact("neutral-other", {"knowledge_kind": "constraints",
+                                            "items": [self.item("NEU-01", "applied", "出口要在弱网下给结果")]})
+        facts = [other, *[f for f in self.judged() if "neutral-other" not in f["provenance"]["source_ref"]]]
         self.write_contracts(
             "interfaces:\n  - class: 中性出口接口\n    file: src/exit.ets\n    methods:\n"
             "      - name: emitWithTrace\n        must:\n" + must("NEU-01", "review")
-            + "      - name: emitOnWeakNetwork\n        must:\n" + must("NEU-01", "review", "k-other-neu-01", "弱网下给出结果"),
-            decisions=self.judged(neutral=[
-                self.decision("NEU-01", "applied", "本需求新增出口", "neutral-domain", requirement="入口生成一次标识", target_refs=[TARGET]),
-                self.decision("NEU-02", "not_applicable", "本需求没有重试路径", "neutral-domain"), other]))
+            + "      - name: emitOnWeakNetwork\n        must:\n"
+            + must("NEU-01", "review", "doc/extensions/knowledge/constraints/neutral-other.md", "弱网下给出结果"),
+            facts=facts)
         message = self.hook("plan")
         self.assertNotIn("emitWithTrace 的 NEU-01", message, "中性域的 NEU-01 只要模型证据，review 就够")
         self.assertIn("emitOnWeakNetwork 的 NEU-01 标了 verify: review，而该规约声明要「实机」证据", message)
-        self.assertNotIn("只判一次", message)
+        self.assertNotIn("一份知识一条适用性事实", message)
 
 
 if __name__ == "__main__":

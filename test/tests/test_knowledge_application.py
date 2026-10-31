@@ -1,7 +1,8 @@
-"""设计里的知识应用：形态按 knowledge-application.schema.json（原生 lite-json-schema 校验），来源、原文摘要、
-单元、稳定地址、红线不可豁免与逐条覆盖按实际对象核（hooks/shared/knowledge-application.mjs）。
+"""设计里的知识应用：形态按 knowledge-application.schema.json（原生 lite-json-schema 校验），知识输入身份、来源、
+相关域逐条、稳定地址、实体上的义务与模式角色按实际对象核（hooks/shared/knowledge-application.mjs）。
 
-用例在一份已交给设计、蓝图已准入的工程上改蓝图对象里的决定，看核对结论；夹具的准入本身已经过原生完整校验。
+用例在一份已交给设计、蓝图已准入的工程上改蓝图对象，看核对结论；夹具的准入本身已经过原生完整校验。
+夹具的判断：样例规约域里 SMP-01 适用、SMP-02 不适用（同一域两种结果），样例模式没有候选信号、不判。
 """
 from __future__ import annotations
 
@@ -18,20 +19,20 @@ from designed_fixture import designed_copy
 FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
 MODULE = (DEV_EXT / "hooks" / "shared" / "knowledge-application.mjs").resolve().as_uri()
 ACCESS = (DEV_EXT / "hooks" / "shared" / "framework-access.mjs").resolve().as_uri()
-#: 读准入蓝图，按 argv 里的 JS 片段改它（变量 bp、decisions、sha），再核
+#: 读准入蓝图，按 argv 里的 JS 片段改它（变量 bp、rules：样例规约域的事实、node：夹具的设计对象），再核
 SCRIPT = """
-import * as crypto from 'node:crypto';
-import * as fs from 'node:fs';
 const [module, access, root, blueprintId, mutate] = process.argv.slice(1);
 const { blueprintKnowledge } = await import(module);
 const { readBlueprint } = await import(access);
 const bp = structuredClone(readBlueprint(root, blueprintId, 'draft').blueprint);
-const decisions = bp.decisions_and_gaps.decisions.filter(d => d.kind === 'knowledge_application');
-const sha = rel => 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(root + '/' + rel)).digest('hex');
-new Function('bp', 'decisions', 'sha', mutate)(bp, decisions, sha);
+const rules = bp.discovery.facts.find(f => String(f.provenance?.source_ref).endsWith('constraints/sample-domain.md'));
+const node = bp.design_views.flatMap(v => v.nodes ?? []).find(n => n.node_id === 'wallet-balance');
+new Function('bp', 'rules', 'node', mutate)(bp, rules, node);
 process.stdout.write(JSON.stringify(blueprintKnowledge(root, bp).problems));
 """
 RULES = "doc/extensions/knowledge/constraints/sample-domain.md"
+PATTERN = "doc/extensions/knowledge/design-patterns/sample-pattern.md"
+NODE = "view:logical/node:wallet-balance"
 
 
 class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
@@ -49,93 +50,83 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
         return json.loads(proc.stdout)
 
-    def test_the_admitted_fixture_holds(self) -> None:
-        self.assertEqual([], self.problems())
+    def test_two_outcomes_in_a_related_domain_and_no_pattern_judgement_hold(self) -> None:
+        """同一域两条不同结果、没成候选的模式零判断，都是合法设计。"""
+        self.assertEqual([], self.problems("if (rules.value.items.map(i => i.outcome).join() !== 'applied,not_applicable')"
+                                           " throw new Error('夹具变了');"
+                                           "if (bp.discovery.facts.some(f => String(f.provenance?.source_ref).includes('design-patterns')))"
+                                           " throw new Error('夹具不该判模式');"))
 
-    def test_an_applied_rule_needs_a_requirement_and_a_target(self) -> None:
-        out = self.problems("const d = decisions.find(x => x.knowledge.outcome === 'applied');"
-                            "delete d.knowledge.requirement; d.knowledge.target_refs = [];")
-        self.assertTrue(any("形态不合" in p for p in out), out)
+    def test_a_whole_domain_out_of_scope_is_one_reasoned_fact(self) -> None:
+        self.assertEqual([], self.problems("rules.value = {knowledge_kind: 'constraints', outcome: 'not_applicable',"
+                                           " rationale: '本需求没有新增入口，也没有上报动作'};"))
 
-    def test_a_target_must_be_a_stable_address_of_this_design(self) -> None:
-        out = self.problems("decisions.find(x => x.knowledge.outcome === 'applied').knowledge.target_refs = ['view:logical/node:nowhere'];")
-        self.assertTrue(any("view:logical/node:nowhere" in p for p in out), out)
+    def test_a_related_domain_judges_every_entry_once(self) -> None:
+        missing = self.problems("rules.value.items = rules.value.items.filter(i => i.unit === 'SMP-01');")
+        self.assertTrue(any("没有逐条判断 SMP-02" in p for p in missing), missing)
+        twice = self.problems("rules.value.items.push({...rules.value.items[1]});")
+        self.assertTrue(any("SMP-02 写了两次" in p for p in twice), twice)
+        alien = self.problems("rules.value.items[1].unit = 'SMP-99';")
+        self.assertTrue(any("SMP-99 不在" in p for p in alien), alien)
 
-    def test_a_source_outside_the_activation_is_refused(self) -> None:
-        out = self.problems("decisions[0].provenance.source_ref = 'doc/other/rules.md';")
+    def test_one_fact_per_knowledge_file(self) -> None:
+        out = self.problems("bp.discovery.facts.push({...structuredClone(rules), fact_id: 'dup'});")
+        self.assertTrue(any("dup" in p and "一份知识一条适用性事实" in p for p in out), out)
+
+    def test_an_applied_entry_needs_a_real_target(self) -> None:
+        empty = self.problems("rules.value.items[0].target_refs = [];")
+        self.assertTrue(any("形态不合" in p for p in empty), empty)
+        nowhere = self.problems("rules.value.items[0].target_refs = ['view:logical/node:nowhere'];")
+        self.assertTrue(any("view:logical/node:nowhere" in p for p in nowhere), nowhere)
+
+    def test_a_pending_entry_points_at_a_native_decision_or_gap(self) -> None:
+        out = self.problems(f"rules.value.items[1] = {{unit: 'SMP-02', outcome: 'pending', rationale: '上报要不要做等运营定',"
+                            f" target_refs: ['{NODE}']}};")
+        self.assertTrue(any("待定" in p and "decision / gap" in p for p in out), out)
+        ok = ("bp.decisions_and_gaps.decisions.push({decision_id: 'report-or-not', kind: 'open_question', status: 'open_decision',"
+              " owner: '需求负责人', rationale: '上报要不要做等运营定', provenance: rules.provenance, verification_refs: []});"
+              "rules.value.items[1] = {unit: 'SMP-02', outcome: 'pending', rationale: '上报要不要做等运营定',"
+              " target_refs: ['decision:report-or-not']};")
+        self.assertEqual([], self.problems(ok))
+
+    def test_a_source_under_the_extension_must_be_active_knowledge(self) -> None:
+        out = self.problems("rules.provenance = {...rules.provenance, source_ref: 'doc/extensions/knowledge/constraints/retired.md'};")
         self.assertTrue(any("不是这一轮激活的知识文件" in p for p in out), out)
 
-    def test_a_unit_not_in_the_file_is_refused(self) -> None:
-        out = self.problems("decisions[0].knowledge.unit = 'SMP-99';")
-        self.assertTrue(any("SMP-99" in p for p in out), out)
-
-    def test_the_same_rule_judged_twice_is_named(self) -> None:
-        out = self.problems("decisions.push({...structuredClone(decisions[0]), decision_id: 'dup'});"
-                            "bp.decisions_and_gaps.decisions.push(decisions[decisions.length - 1]);")
-        self.assertTrue(any("只判一次" in p for p in out), out)
-
-    def test_an_active_pattern_without_judgement_is_named(self) -> None:
-        """激活模式一条判断都没有是漏判，不是「没选中」；点名模式文件与上篇单元。"""
-        out = self.problems("bp.decisions_and_gaps.decisions = bp.decisions_and_gaps.decisions"
-                            ".filter(d => d.knowledge?.kind !== 'patterns');")
-        self.assertTrue(any("没有判断激活模式" in p and "sample-pattern.md" in p and "上篇" in p for p in out), out)
-
-    def test_a_reasoned_rejection_is_a_judgement(self) -> None:
-        """全部有据拒绝是合法判断：夹具默认就是这样，核对通过、不要求选中。"""
-        out = self.problems("if (!decisions.some(d => d.knowledge.kind === 'patterns' && d.knowledge.outcome === 'rejected'))"
-                            " throw new Error('夹具没有拒绝的模式判断');")
-        self.assertEqual([], out)
-
-    def test_a_pending_pattern_is_a_judgement(self) -> None:
-        """待定也是判断：交原生缺口与切片责任处理，这里不当漏判。"""
-        out = self.problems("const d = decisions.find(x => x.knowledge.kind === 'patterns');"
-                            "d.knowledge.outcome = 'pending'; d.status = 'open_decision';")
-        self.assertFalse(any("没有判断激活模式" in p for p in out), out)
-
-    def test_a_second_half_judgement_is_not_another_selection(self) -> None:
-        """模式只按上篇选型：再按下篇判一条就是同一模式判两次，点名那一条；上篇那条照常算已判断。"""
-        out = self.problems("const d = decisions.find(x => x.knowledge.kind === 'patterns');"
-                            "bp.decisions_and_gaps.decisions.push({ ...d, decision_id: 'k-pattern-lower', knowledge: { ...d.knowledge, unit: '下篇' } });")
-        self.assertTrue(any("k-pattern-lower" in p and "模式只按上篇选型" in p for p in out), out)
-        self.assertFalse(any("没有判断激活模式" in p for p in out), out)
-
-    def test_no_active_pattern_needs_no_judgement(self) -> None:
-        """没有激活模式时零判断合法。"""
-        manifest = self.root / "doc" / "extensions" / "manifest.yaml"
-        manifest.write_bytes(manifest.read_bytes().replace(b"    - knowledge/design-patterns/sample-pattern.md\n", b""))
-        out = self.problems("bp.decisions_and_gaps.decisions = bp.decisions_and_gaps.decisions"
-                            ".filter(d => d.knowledge?.kind !== 'patterns');")
-        self.assertFalse(any("模式" in p for p in out), out)
-
-    def test_a_red_line_cannot_be_waived(self) -> None:
-        rules = self.root / RULES
-        rules.write_bytes(rules.read_bytes().replace("| 上报失败只记本地日志，不阻断主流程 | 基线 |".encode("utf-8"),
-                                                     "| 上报失败只记本地日志，不阻断主流程 | 红线 |".encode("utf-8")))
-        waive = ("const d = decisions.find(x => x.knowledge.unit === 'SMP-02');"
-                 "d.status = 'answered_with_evidence';"
-                 f"Object.assign(d.knowledge, {{outcome: 'waived', source_sha256: sha('{RULES}'),"
-                 "waiver: {reason: '旧页面下线在即', compensation: '下线前加提示', authority_ref: 'gate:scope'}});"
-                 f"for (const x of decisions) x.knowledge.source_sha256 = sha('{RULES}');")
-        out = self.problems(waive)
-        self.assertTrue(any("红线，不能豁免" in p for p in out), out)
-
-    def test_a_fact_read_from_knowledge_must_say_which_unit(self) -> None:
-        """事实来源是激活的项目知识却没写 value.knowledge：报出来；来源是仓里代码的普通事实照原生形态，不要求它。"""
+    def test_a_project_fact_cites_its_file_and_a_real_unit(self) -> None:
         fact = ("bp.discovery.facts.push({fact_id: 'f-from-knowledge', subject: 'module:WalletMain', value: {observation: '钱包主模块'},"
-                " provenance: {source_kind: 'knowledge', source_ref: 'doc/extensions/knowledge/facts/sample-facts.md',"
+                " provenance: {source_kind: 'knowledge', source_ref: 'doc/extensions/knowledge/facts/sample-facts.md#UNIT',"
                 " observed_at: '2026-10-02T00:00:00Z', evidence_strength: 'observed', extraction_method: 'read'}});")
-        out = self.problems(fact)
-        self.assertTrue(any("f-from-knowledge" in p and "value.knowledge" in p for p in out), out)
-        plain = fact.replace("source_kind: 'knowledge'", "source_kind: 'code'").replace(
-            "doc/extensions/knowledge/facts/sample-facts.md", "02-Feature/WalletMain/src/main/ets/pages/Index.ets")
-        self.assertEqual([], self.problems(plain))
+        bad = self.problems(fact.replace("UNIT", "没有这一面"))
+        self.assertTrue(any("f-from-knowledge" in p and "没有这一面" in p for p in bad), bad)
+        self.assertEqual([], self.problems(fact.replace("#UNIT", "")))
 
-    def test_a_pending_judgement_is_an_open_decision(self) -> None:
-        out = self.problems("decisions[0].knowledge.outcome = 'pending';")
-        self.assertTrue(any("形态不合" in p for p in out), "pending 却标成已作答")
-        self.assertEqual([], self.problems("decisions[0].knowledge.outcome = 'pending';"
-                                           "decisions[0].knowledge.target_refs = []; delete decisions[0].knowledge.requirement;"
-                                           "decisions[0].status = 'open_decision';"))
+    def test_a_selected_pattern_needs_declared_roles_on_real_objects(self) -> None:
+        select = (f"bp.discovery.facts.push({{fact_id: 'k-pattern', subject: 'knowledge:sample-pattern',"
+                  " value: {knowledge_kind: 'patterns', outcome: 'selected', rationale: '刷新有多个分支'},"
+                  f" provenance: {{...rules.provenance, source_ref: '{PATTERN}'}}}});")
+        no_roles = self.problems(select)
+        self.assertTrue(any("k-pattern" in p and "没有实体承担它的角色" in p for p in no_roles), no_roles)
+        self.assertEqual([], self.problems(select + f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '节点表'}}];"))
+        undeclared = self.problems(select + f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '编排器'}}];")
+        self.assertTrue(any("编排器" in p and "声明的角色" in p for p in undeclared), undeclared)
+        unselected = self.problems(f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '节点表'}}];")
+        self.assertTrue(any("没有选中的适用性事实" in p for p in unselected), unselected)
+
+    def test_a_must_comes_from_an_applied_entry_with_a_fitting_verify(self) -> None:
+        self.assertEqual([], self.problems(f"node.must = [{{text: '入口生成受理单编号', source_ref: '{RULES}#SMP-01', verify: 'review'}}];"))
+        not_applied = self.problems(f"node.must = [{{text: '失败降级', source_ref: '{RULES}#SMP-02', verify: 'review'}}];")
+        self.assertTrue(any("SMP-02" in p and "not_applicable" in p for p in not_applied), not_applied)
+        unknown = self.problems(f"node.must = [{{text: 'x', source_ref: '{RULES}#SMP-99', verify: 'review'}}];")
+        self.assertTrue(any("SMP-99" in p for p in unknown), unknown)
+
+    def test_the_knowledge_context_is_this_rounds(self) -> None:
+        missing = self.problems("delete bp.discovery.inputs.knowledge_context;")
+        self.assertTrue(any("knowledge_context" in p for p in missing), missing)
+        rules = self.root / RULES
+        rules.write_bytes(rules.read_bytes() + "\n补一条附注。\n".encode("utf-8"))
+        changed = self.problems()
+        self.assertTrue(any("原文变了" in p and RULES in p for p in changed), changed)
 
 
 if __name__ == "__main__":

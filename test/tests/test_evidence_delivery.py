@@ -101,21 +101,20 @@ class AReviewActionAsksForNoCode(DeliveryCase):
         super().setUp()
         self.with_constraint(rows=REVIEW_ACTION_ROW)
         self.judged()
-        self.decisions.append(self.decision("NEU-05", "applied", "本需求新增了一个出口",
-                                            requirement="出口说明文档归档", target_refs=[nk.TARGET]))
+        self.facts[0]["value"]["items"].append(self.item("NEU-05", "applied", "本需求新增了一个出口，出口说明文档归档"))
 
     def test_spec_does_not_ask_for_an_acceptance_bridge(self) -> None:
         self.write_contracts()
         (self.feature_root / "acceptance.yaml").write_text(
-            "criteria:\n" + "".join(f"  - id: AC-{n}\n    knowledge_rule: NEU-0{n}\n    knowledge_decision_id: k-neu-0{n}\n"
+            "criteria:\n" + "".join(f"  - id: AC-{n}\n    knowledge_refs: [{kp.REF}#NEU-0{n}]\n"
                                     for n in (1, 2, 3)), encoding="utf-8")
         message = self.hook("spec")
         self.assertNotIn("NEU-05", message)
-        self.assertNotIn("知识应用", message)
+        self.assertNotIn("的契约 的事实", message)
 
     def test_plan_does_not_ask_for_an_obligation(self) -> None:
         self.write_contracts(kp.contracts(second02="ut"))
-        self.assertNotIn("k-neu-05", self.hook("plan"))
+        self.assertNotIn("NEU-05", self.hook("plan"))
 
 
 class TheTaskBookCarriesTheOriginal(DeliveryCase):
@@ -123,24 +122,25 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.write_contracts()
         text = self.pre_verifier("spec")
         self.assertIn("原知识与仓内事实是审查依据", text)
-        row = next(l for l in text.splitlines() if l.startswith("| k-neu-02 |"))
+        row = next(l for l in text.splitlines() if l.startswith(f"| {kp.REF}#NEU-02 |"))
         for part in ("NEU-02", "重复触发时复用同一个标识", "applied", "重试复用标识", nk.TARGET):
             self.assertIn(part, row)
-        self.assertIn("本需求的出口不计耗时", next(l for l in text.splitlines() if l.startswith("| k-neu-04 |")))
+        self.assertIn("本需求的出口不计耗时", next(l for l in text.splitlines() if l.startswith(f"| {kp.REF}#NEU-04 |")))
 
-    def test_a_missing_judgement_is_a_design_gap_not_empty(self) -> None:
-        super(kp.ProtocolCase, self).write_contracts("", [])
+    def test_a_half_judged_domain_is_a_design_gap_not_empty(self) -> None:
+        self.judged()
+        self.facts[0]["value"]["items"] = self.facts[0]["value"]["items"][:1]
+        self.write_contracts()
         text = self.pre_verifier("spec")
-        self.assertIn("没有与本施工单位相关的知识判断", text)
         self.assertIn("**设计缺口**", text)
-        self.assertIn("没有判断激活规约 NEU-01", text)
+        self.assertIn("相关域没有逐条判断 NEU-02", text)
 
     def test_plan_rows_put_the_entry_next_to_every_must(self) -> None:
         self.write_contracts(kp.contracts(second02="both"))
-        row = next(l for l in self.pre_verifier("plan").splitlines() if l.startswith("| NEU-02 |") and "reuseTrace" in l)
+        row = next(l for l in self.pre_verifier("plan").splitlines() if l.startswith(f"| {kp.REF}#NEU-02 |") and "reuseTrace" in l)
         self.assertIn("重复触发时复用同一个标识", row)
-        self.assertIn("interfaces.中性出口接口.reuseTrace：重试时复用入口生成的标识 · ut · k-neu-02", row)
-        self.assertIn("interfaces.中性出口接口.emitWithTrace：重试时复用入口生成的标识 · both · k-neu-02", row)
+        self.assertIn("interfaces.中性出口接口.reuseTrace：重试时复用入口生成的标识 · ut", row)
+        self.assertIn("interfaces.中性出口接口.emitWithTrace：重试时复用入口生成的标识 · both", row)
 
     def test_meeting_topics_come_in_four_columns(self) -> None:
         src = self.src()

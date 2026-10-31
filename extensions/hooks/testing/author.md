@@ -13,7 +13,7 @@
 | 文件 | 拿什么 |
 |---|---|
 | `contracts.yaml` | 各实体上的 `must`——`verify` 决定谁来验 |
-| 需求根目录的 `acceptance.yaml` | `knowledge_rule` 与 `knowledge_decision_id` 指回这条义务出自的判断的那条验收条目，按它的 `device_focus` 走查 |
+| 需求根目录的 `acceptance.yaml` | `knowledge_refs` 列着这条义务出自的规约条目（与 `must.source_ref` 相同）的验收条目，按它的 `device_focus` 走查 |
 
 ## 二、产出形态
 

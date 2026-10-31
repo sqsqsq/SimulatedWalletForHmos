@@ -1,12 +1,12 @@
 /**
  * plan 阶段 post_check（实例扩展）—— 设计里的知识判断是否**落到了契约实体上**。
  *
- * 判断只在原生设计里（CU 的蓝图知识应用决定；非 CU 维护 Feature 契约里的 knowledge_applications）。
- * 本阶段核四件事：
- *   ① **挂对地方**——must 只挂五类实体，`files` 只是授权文件清单；编号在册，text 写了，verify 取值封闭；
- *   ② **判断与义务一致**——本施工单位承接的每条适用判断至少有一处 must（带它的 decision_id），
- *      每条 must 都认得回一条承接的适用判断；
- *   ③ **模式角色**——承担角色的实体带 `pattern_roles`，角色取选型决定与模式声明，选中的角色都有实体承担；
+ * 适用性只在设计里（CU 蓝图的规约与模式适用性事实；非 CU 维护 Feature 原生契约里同形态的 `knowledge_facts`）。
+ * 本阶段核这几件事：
+ *   ① **挂对地方**——must 只挂五类实体，`files` 只是授权文件清单；`source_ref` 指激活规约的条目，text 写了，verify 取值封闭；
+ *   ② **判断与义务一致**——本施工单位承接的每条适用规约条目至少有一处 must（`source_ref` 指它），
+ *      CU 的每条 must 都出自本单位承接的适用条目；
+ *   ③ **模式角色**——承担角色的实体带 `pattern_roles`，模式是选中的、角色是模式声明的，本单位承担的角色都有实体承担；
  *   ④ **引用**——用例引的验收编号存在；
  *   ⑤ **埋点逐点落实**——蓝图里落在本单位的每个统计点，plan.md 的逐点表里有行，责任方法是契约声明的方法。
  *   ⑥ **宿主扩展章**——plan.md「宿主扩展（可选）」在，承接的规约、选中模式与埋点各有小节，规约编号引得到，逐点表在「埋点」小节里。
@@ -19,7 +19,7 @@
 import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { entryOf, featureKnowledge, rolesOf, unitDuties } from '../shared/knowledge-application.mjs';
+import { activation, entryOf, featureKnowledge, knowledgeSource, rolesOf, unitDuties } from '../shared/knowledge-application.mjs';
 import { chapterNumberProblems, chapterRefProblems } from '../shared/chapters.mjs';
 import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, unidentifiedCarriers, verifyProblem }
@@ -130,36 +130,36 @@ export default guard('plan', async (ctx) => {
   try {
     knowledge = activeKnowledge(ctx.projectRoot);
   } catch (e) {
-    obligation.problems.push(`${e.message}——激活知识派生失败；must 的编号、verify 与判断的来源都按它核`);
+    obligation.problems.push(`${e.message}——激活知识派生失败；must 的来源条目、verify 与模式角色都按它核`);
   }
   const judged = knowledge ? featureKnowledge(ctx.projectRoot, ctx.feature, contracts) : null;
+  const active = knowledge ? activation(ctx.projectRoot, knowledge) : null;
   if (judged) design.problems.push(...judged.problems);
   const { applied, selected } = judged ? unitDuties(judged) : { applied: [], selected: [] };
   const why = noContract ?? (knowledge ? null : '激活知识派生失败');
   const obligations = contracts ? obligationsFromContracts(contracts) : [];
 
-  // ---- 每条 must 自身：编号在册、text、verify、出自哪条承接的适用判断 ----
+  // ---- 每条 must 自身：来源条目在册、text、verify；CU 的出自本单位承接的适用条目 ----
+  const carried = new Set(applied.map(d => d.source_ref));
   if (why) {
-    obligation.skipped.push({ what: '每条 must 的编号、text、verify 与决定', why });
+    obligation.skipped.push({ what: '每条 must 的来源条目、text 与 verify', why });
   } else {
     for (const ob of obligations) {
       const at = `contracts.yaml 的 ${ob.entityPath || '(未知实体)'}`;
-      if (!ob.rule) { obligation.problems.push(`${at}：有一条 must 没写 rule——must 按 rule 的编号认回激活知识里的规约条目`); continue; }
+      if (!ob.sourceRef) { obligation.problems.push(`${at}：有一条 must 没写 source_ref——must 按它认回激活知识里的规约条目（<知识文件>#<编号>）`); continue; }
+      const entry = entryOf(knowledge, knowledgeSource(active, ob.sourceRef));
+      if (!entry) { obligation.problems.push(`${at}：must 的 source_ref ${ob.sourceRef} 不是激活规约的条目`); continue; }
       if (!ob.text) obligation.problems.push(`${at}：${ob.rule} 的 must 缺 text——text 写这条规约在本需求落实成什么，coding 按它落实`);
-      // 先认回判断，再按判断的来源文件与单元找条目：不同文件可以有同编号的规约
-      const decision = applied.find(d => d.decision_id === ob.decisionId);
-      if (!ob.decisionId) { obligation.problems.push(`${at}：${ob.rule} 的 must 没写 decision_id——义务按它认回设计里那条适用判断`); continue; }
-      if (!decision) { obligation.problems.push(`${at}：${ob.rule} 的 must 指向 ${ob.decisionId}，它不是本施工单位承接的适用判断`); continue; }
-      if (decision.knowledge.unit !== ob.rule) { obligation.problems.push(`${at}：must.rule 是 ${ob.rule}，它指向的判断 ${ob.decisionId} 判的是 ${decision.knowledge.unit}`); continue; }
-      const entry = entryOf(knowledge, decision);
-      if (!entry) { obligation.problems.push(`${at}：must.rule「${ob.rule}」不在判断 ${ob.decisionId} 的来源 ${decision.file} 里`); continue; }
+      if (!carried.has(ob.sourceRef)) {
+        obligation.problems.push(`${at}：must 出自 ${ob.sourceRef}，它不是本施工单位承接的适用规约条目（蓝图的适用性事实里判定适用、落点在本单位设计责任内）`);
+      }
       const verify = verifyProblem(entry, ob.verify);
       if (verify) obligation.problems.push(`${at} 的 ${ob.rule} ${verify}`);
     }
     for (const d of applied) {
       if (entryOf(knowledge, d)?.probe?.kind !== 'present_in_method') continue;
-      if (!obligations.some(o => o.decisionId === d.decision_id && o.entityKind === 'interfaces')) {
-        obligation.skipped.push({ what: `${d.knowledge.unit} 的探针`, why: '探针无落点：它查方法体，而这条规约没有挂在 interfaces[].methods[] 上的 must' });
+      if (!obligations.some(o => o.sourceRef === d.source_ref && o.entityKind === 'interfaces')) {
+        obligation.skipped.push({ what: `${d.unit} 的探针`, why: '探针无落点：它查方法体，而这条规约没有挂在 interfaces[].methods[] 上的 must' });
       }
     }
   }
@@ -168,36 +168,32 @@ export default guard('plan', async (ctx) => {
   if (why) {
     consistency.skipped.push({ what: '判断与义务一致', why });
   } else {
-    for (const d of applied) {
-      if (!obligations.some(o => o.decisionId === d.decision_id)) {
-        consistency.problems.push(`contracts.yaml：${judged.label} 的适用判断 ${d.decision_id}（${d.knowledge.unit}，落在 ${d.knowledge.target_refs.join('、')}）`
-          + '在契约里没有实体扛着——义务以 must（带 decision_id）挂在承担它的实体上，coding 从实体读义务');
-      }
+    for (const d of applied.filter(x => !obligations.some(o => o.sourceRef === x.source_ref))) {
+      consistency.problems.push(`contracts.yaml：${judged.label} 判定适用的 ${d.unit}（${d.file}，落在 ${d.target_refs.join('、')}）`
+        + `在契约里没有实体扛着——义务以 must（source_ref: ${d.source_ref}）挂在承担它的实体上，coding 从实体读义务`);
     }
   }
 
-  // ---- 模式角色：实体上的 pattern_roles 认回选型决定与模式声明，选中的角色都有实体承担 ----
+  // ---- 模式角色：实体上的 pattern_roles 认回选中模式与模式声明的角色，本单位承担的角色都有实体承担 ----
   if (why) {
     pattern.skipped.push({ what: '模式角色', why });
   } else {
     const roles = patternRolesFromContracts(contracts);
     for (const pr of roles) {
       const at = `contracts.yaml 的 ${pr.entityPath}`;
-      const decision = selected.find(d => d.decision_id === pr.decisionId);
-      if (!decision) { pattern.problems.push(`${at}：pattern_roles 指向 ${pr.decisionId || '（没写 decision_id）'}，它不是本施工单位承接的选型决定`); continue; }
-      const declared = knowledge.patterns.find(p => p.file === decision.file);
-      if (declared && pr.pattern !== declared.id) pattern.problems.push(`${at}：pattern 写的是 ${pr.pattern}，决定 ${pr.decisionId} 选的是 ${declared.id}`);
-      if (!(decision.knowledge.roles ?? []).some(r => r.role === pr.role)) {
-        pattern.problems.push(`${at}：角色「${pr.role}」不在决定 ${pr.decisionId} 选定的角色里（${(decision.knowledge.roles ?? []).map(r => r.role).join('、')}）`);
-      } else if (!rolesOf(decision, judged.scope).some(r => r.role === pr.role)) {
-        pattern.problems.push(`${at}：角色「${pr.role}」按决定 ${pr.decisionId} 落在别的施工单位的设计责任里——本单位只承担落点在自己设计引用内的角色`);
+      const source = knowledgeSource(active, pr.patternRef);
+      if (!source || source.kind !== 'patterns') { pattern.problems.push(`${at}：pattern_ref ${pr.patternRef || '（没写）'} 不是激活的模式`); continue; }
+      if (!source.roles.has(pr.role)) { pattern.problems.push(`${at}：角色「${pr.role}」不是 ${source.file} 声明的角色（${[...source.roles].join('、')}）`); continue; }
+      const row = selected.find(d => d.ref === source.ref);
+      if (!row) pattern.problems.push(`${at}：${source.file} 不是本施工单位承接的选中模式`);
+      else if (judged.scope && !rolesOf(row, judged.scope).some(r => r.role === pr.role)) {
+        pattern.problems.push(`${at}：角色「${pr.role}」在蓝图里由别的施工单位的设计对象承担——本单位只承担落在自己设计引用内的角色`);
       }
     }
     for (const d of selected) {
-      for (const r of rolesOf(d, judged.scope)) {
-        if (!roles.some(pr => pr.decisionId === d.decision_id && pr.role === r.role)) {
-          pattern.problems.push(`contracts.yaml：选型决定 ${d.decision_id} 的角色「${r.role}」（${r.target_ref}）没有实体承担——在真正承担它的 components / interfaces / data_models 上写 pattern_roles`);
-        }
+      for (const r of rolesOf(d, judged.scope).filter(x => !roles.some(pr => pr.patternRef === d.ref && pr.role === x.role))) {
+        pattern.problems.push(`contracts.yaml：选中模式 ${d.file} 的角色「${r.role}」（蓝图 ${r.target_ref}）没有实体承担——`
+          + `在真正承担它的 components / interfaces / data_models 上写 pattern_roles: [{pattern_ref: ${d.ref}, role: ${r.role}}]`);
       }
     }
   }

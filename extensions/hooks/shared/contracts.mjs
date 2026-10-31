@@ -204,53 +204,42 @@ export const acceptanceIds = (acceptance) => new Set(Object.values(acceptance ??
 /** 验收行关联的功能编号形态（`id_shapes.function`）。 */
 export const functionIdRe = () => idShape('function');
 
+/** 验收里能桥接规约的集合：spec 核承接、UT/testing 按承接分派，读的是同一组。 */
+const ACCEPTANCE_SECTIONS = ['criteria', 'boundaries'];
+
 /**
- * 规约编号 → 该编号下**全部**验收条目 —— 各阶段桥接前的唯一入口。
+ * 规约条目 → 承接它的**全部**验收条目 —— 各阶段桥接前的唯一入口。
  *
- * **一条验收条目可以只对应一条规约，一条规约常有多个验收条目**：同一条规约在不同场景
- * 下验收（正常路径、边界、异常恢复），下游要逐条覆盖。按 `Map.set(rule, 单条)` 收的话，
- * 同 rule 多条 AC 会静默只留最后一条——作者桥接了两条，下游只验一条。
- *
- * 校验与分组在**同一次遍历**里做完：先摊成 `{section, criterion}` 再分组的话，那份中间
- * 数组没有自己的下游（Spec 只要编号集合，UT/testing 只要 byRule），却要维护两个接口与
- * 两次遍历。只读解析结果，不改输入对象，不落盘。
+ * 验收条目的 `knowledge_refs: [<知识文件>#<编号>, …]` 列它承接的规约条目；一条规约常有多个验收条目
+ * （正常路径、边界、异常恢复），下游逐条覆盖，所以按条目收全部，不按单条覆盖。没写 `knowledge_refs` 的是普通业务验收。
+ * 校验与分组同一次遍历做完；只读解析结果，不改输入对象，不落盘。
  *
  * @param {object|null} acceptance phaseArtifacts 给出的 acceptance（原生组装的那一份）
  * @param {string[]} [sections] 桥接所在的集合名，默认 `ACCEPTANCE_SECTIONS`
- * @returns {{byRule: Map<string, object[]>, problems: string[]}}
- *   缺集合视为空；非数组集合或非对象成员报明集合与序号；`knowledge_rule` 缺省的条目属
- *   普通业务验收（绝大多数验收点与规约无关，为它们各报一条会淹掉真正缺的），存在时须为
- *   非空字符串——写成列表的「一条 criteria 桥一串编号」下游分派不了。
- *   消费者先处理 `problems` 再查 `byRule`，不能过滤非法行后以「剩余为空」放行。
+ * @returns {{byRef: Map<string, object[]>, problems: string[]}}
+ *   `knowledge_refs` 不是非空的条目引用列表，或还写着旧的 `knowledge_rule` / `knowledge_decision_id`，报明集合与条目。
+ *   消费者先处理 `problems` 再查 `byRef`，不能过滤非法行后以「剩余为空」放行。
  */
-/** 验收里能桥接规约的集合：spec 核桥接、UT/testing 按桥接分派，读的是同一组。 */
-const ACCEPTANCE_SECTIONS = ['criteria', 'boundaries'];
-
 export function knowledgeCriteria(acceptance, sections = ACCEPTANCE_SECTIONS) {
   const problems = [];
-  const byRule = new Map();
+  const byRef = new Map();
   // 集合不是列表、条目不是映射由原生规格读取报（feature_spec_shape），交到这里的已经是规范化后的条目
   for (const section of sections) {
     (Array.isArray(acceptance?.[section]) ? acceptance[section] : []).forEach((row) => {
-      if (!row || typeof row !== 'object' || !('knowledge_rule' in row)) return;
-      const rule = row.knowledge_rule;
-      if (typeof rule !== 'string' || !rule.trim()) {
-        problems.push(`acceptance.yaml 的 ${section}「${String(row.id ?? '（没写 id）')}」：knowledge_rule 不是一个编号——`
-          + '一条 criteria 一个 `knowledge_rule: <编号>`，多条规约各写一条 criteria；'
-          + '写成列表或留空的话，下游按编号分派时对不到场景（形状见 spec 作者页）');
+      if (!row || typeof row !== 'object') return;
+      const at = `acceptance.yaml 的 ${section}「${String(row.id ?? '（没写 id）')}」`;
+      if ('knowledge_rule' in row || 'knowledge_decision_id' in row) {
+        problems.push(`${at}：写的是 knowledge_rule / knowledge_decision_id——验收按 knowledge_refs 列它承接的规约条目（<知识文件>#<编号>），形状见 spec 作者页`);
         return;
       }
-      const decision = row.knowledge_decision_id;
-      if (typeof decision !== 'string' || !decision.trim()) {
-        problems.push(`acceptance.yaml 的 ${section}「${String(row.id ?? '（没写 id）')}」：写了 knowledge_rule ${rule}，没写 knowledge_decision_id——`
-          + '验收按决定认回知识来源，同编号的规约可能来自不同文件，只写编号认不回是哪一条判断');
+      if (!('knowledge_refs' in row)) return;
+      const refs = row.knowledge_refs;
+      if (!Array.isArray(refs) || !refs.length || refs.some(r => typeof r !== 'string' || !r.trim())) {
+        problems.push(`${at}：knowledge_refs 不是条目引用列表——写成 [<知识文件>#<编号>, …]，下游按条目分派场景`);
         return;
       }
-      const key = rule.trim();
-      const list = byRule.get(key) ?? [];
-      list.push(row);
-      byRule.set(key, list);
+      for (const ref of new Set(refs.map(r => r.trim()))) byRef.set(ref, [...(byRef.get(ref) ?? []), row]);
     });
   }
-  return { byRule, problems };
+  return { byRef, problems };
 }
