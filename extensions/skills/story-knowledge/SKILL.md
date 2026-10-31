@@ -24,13 +24,16 @@ Feature id 与阶段取当前阶段上下文里 Framework 给出的原生值，�
 标题带「预览，执行范围未冻结」的任务只是预览：本阶段的原生输入还没确定，不拿它动笔。只是查看知识不等于获准开始阶段；已获准开始本阶段时按顺序做：
 
 1. Feature 还没有范围候选：按 Framework 的 `framework/skills/reference/goal-mode-operations.md` 走原生 `goal-mode-entry --prepare-scope`，用真实需求与影响依据生成候选。
-2. 候选可用：在 `framework/harness` 下用原生函数完成首阶段范围准备（机器写冻结记录，不手写）：
+2. 施工单位独立进入 spec 或 plan，本阶段的投影（spec 的 `acceptance.yaml`、plan 的 `contracts.yaml`）还不在本单位目录：冻结之前在 `framework/harness` 下跑
+   `npx ts-node scripts/prepare-blueprint-design.ts --feature <Feature id> --phase <spec|plan> --project-root <工程根>`，只物化本阶段这一份（任务第 6 块会写明）。
+   冻结记下的是当时的输入身份：冻结之后、或在 runtime 的 run 里，直接用原生解析的输入，不再准备。
+3. 候选可用：在 `framework/harness` 下用原生函数完成首阶段范围准备（机器写冻结记录，不手写）：
 
    ```
    node -e "require('ts-node').register({transpileOnly:true});const r=require('./scripts/utils/feature-execution-scope').ensureFeatureExecutionScopeFrozen({projectRoot:process.argv[1],frameworkRoot:process.argv[1]+'/framework',feature:process.argv[2]});console.log(JSON.stringify(r,null,1));process.exitCode=['frozen','reused'].includes(r.status)?0:1" <工程根> <Feature id>
    ```
 
-3. 返回 `frozen` 或 `reused` 后重取本阶段任务，确认第 3 块的输入与义务再动笔。返回别的状态按其中 `checks` 的原因交回责任方，不绕过。
+4. 返回 `frozen` 或 `reused` 后重取本阶段任务，确认第 3 块的输入与义务再动笔。返回别的状态按其中 `checks` 的原因交回责任方，不绕过。
 
 不为冻结提前跑整个阶段 harness。
 

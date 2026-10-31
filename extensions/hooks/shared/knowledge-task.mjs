@@ -67,7 +67,8 @@ function knowledgeBlock(root, action) {
       : `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`] };
   }
   const half = DESIGN_SIDE.has(action) ? HALVES[0] : HALVES[1];
-  rows.push(`共 ${ordered.length} 份，按激活顺序。先按「何时读」判断与本动作是否相关；相关的逐条判断适用与否。`
+  rows.push(`共 ${ordered.length} 份，按激活顺序。先按「何时读」判断与本动作是否相关；`
+    + (DESIGN_SIDE.has(action) ? '相关的规约域逐条判断适用与否。' : '适用性已在设计里判过，原文用来理解方法与语义。')
     + `各列与形态怎么读见 \`${relDisplay(root, protocol)}\`。`, '');
   for (const k of ordered) {
     const file = path.join(extensionRoot(root), ...k.file.split('/'));
@@ -235,6 +236,21 @@ function carriedDuties(judged, action, knowledge) {
   return { duties: applied.length || selected.length ? out : ['本施工单位没有承接的适用规约与选中模式。'], gaps: judged.problems };
 }
 
+//: 独立 spec / plan 入口要物化的本阶段投影：阶段 → 本地文件与原生规格里的那一份
+const STAGE_OUTPUT = { spec: ['acceptance.yaml', 'acceptance'], plan: ['contracts.yaml', 'contracts'] };
+
+/**
+ * 施工单位独立进入 spec / plan、范围还没冻结、本阶段的投影还没物化到本地时：冻结之前先用原生
+ * `prepare-blueprint-design --phase <阶段>` 只物化本阶段的那一份。冻结记下的是当时的输入身份，冻结后再物化会让它过期，
+ * 所以冻结之后（含 runtime 的 run）一律直接消费原生解析的输入，不再准备。原生物化不覆盖已有合法产物，冲突时报出。
+ */
+function stagePreparation(f, feature, action) {
+  const [file, part] = STAGE_OUTPUT[action] ?? [];
+  if (f.identity.kind !== 'cu' || !file || f.scope !== 'not_frozen' || process.env.MAISON_GOAL_RUN_ID?.trim() || f.spec?.[part]) return null;
+  return `冻结之前先物化本阶段的投影 ${file}：在 \`framework/harness\` 下跑`
+    + ` \`npx ts-node scripts/prepare-blueprint-design.ts --feature ${feature} --phase ${action} --project-root <工程根>\`（只写本阶段这一份，不覆盖已有合法产物）；`;
+}
+
 /** 围栏包一段原文：外层比里面最长的反引号串多一个，原文照录不转义。 */
 function verbatim(text) {
   const mark = '`'.repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map(m => m[0].length + 1)));
@@ -345,7 +361,7 @@ function featureTask(root, feature, action, supplied, knowledge) {
   const duties = [];
   if (f.scope === 'not_frozen') {
     duties.push('本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
-    gaps.push('执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」先准备范围'
+    gaps.push(`执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${stagePreparation(f, feature, action) ?? ''}先准备范围`
       + '（没有候选先走原生 prepare-scope，再由原生 ensureFeatureExecutionScopeFrozen 冻结），返回 frozen 或 reused 后重取本任务再动笔；原生失败按它的报错交回责任方。');
   } else {
     // 契约与验收取原生按阶段组装的那一份：解析器选定的输入加本阶段自己的产出
@@ -389,17 +405,19 @@ function buildTask(root, { action, audience, blueprint, feature, requirement, re
     : featureTask(root, feature, action, { requirement, requirementFile }, knowledge);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));
-  const done = audience === 'author'
-    ? [`按 \`${page}\` 做本动作；知识方面：先履行第 2、3 块已成立的判断与义务，再按第 4 块原文核与本动作相关的每份知识：`
-      + '适用的把要求落到对应的设计对象或契约实体上，不适用写明本需求里使它不适用的条件；已成立的判断直接承接，不重判。']
-    : [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
+  const done = audience !== 'author' ? null : blueprint
+    ? [`按 \`${page}\` 做本动作；知识方面：按第 4 块原文判与本需求相关的每份知识：相关的规约域逐条写适用性，`
+      + '适用的把要求落到承担它的设计对象上，不适用写明本需求里使它不适用的条件；出现候选信号的模式写选与不选；已成立的判断直接承接，不重判。']
+    : [`按 \`${page}\` 做本动作；知识方面：履行第 2、3 块已成立的判断与本单位承接的义务，第 4 块原文用来理解方法与语义，`
+      + '不重判适用性；本单位的设计对象碰到了设计里没判过的知识，交设计负责方补判，不在本阶段自定。']
+  const review = [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
   const text = [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）${task.preview ? '——预览，执行范围未冻结' : ''}`, '',
     '## 1. 当前动作与对象', '', `- 动作：${action}`, `- 对象：${task.object}`, '',
     ...(task.sources ? ['### 候选采用的来源', '', ...task.sources, ''] : []),
     '## 2. 有效事实与决定', '', ...task.facts, '',
     '## 3. 当前契约与义务', '', ...task.duties, '',
     ...rows, '',
-    '## 5. 本次完成条件', '', ...done, '',
+    '## 5. 本次完成条件', '', ...(done ?? review), '',
     '## 6. 缺口与责任', '',
     ...([...task.gaps, ...problems.map(p => `知识自检：${p}——目标工程的知识维护者处理。`)].map(g => `- ${g}`)),
     ...(!task.gaps.length && !problems.length ? ['- 无。'] : []), '',

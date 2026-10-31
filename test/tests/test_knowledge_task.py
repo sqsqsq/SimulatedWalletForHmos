@@ -386,6 +386,51 @@ class PhaseInputsBeforeLocalContracts(FreshProject):
         self.assertEqual((1, ""), (task.returncode, task.stdout))
 
 
+class StandaloneStagesPrepareOnlyTheirOwn(FreshProject):
+    """独立 spec / plan 入口、范围还没冻结、本阶段投影还没物化：作者任务的缺口指向冻结之前先跑原生
+    `prepare-blueprint-design --phase`。照它跑，spec 只物化验收、plan 只物化契约且不重写已有验收，再跑一次不写，
+    物化之后不再提示；冻结之后直接消费原生解析的输入，不再提示准备（冻结后再物化会让冻结的输入身份过期）。"""
+
+    HINT = "scripts/prepare-blueprint-design.ts --feature"
+
+    def gaps(self, action: str) -> str:
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", action, "--audience", "author")
+        self.assertEqual(0, task.returncode, task.stderr)
+        return task.stdout.split("## 6. 缺口与责任", 1)[1]
+
+    def prepare_phase(self, phase: str) -> list[str]:
+        harness = self.root / "framework" / "harness"
+        proc = subprocess.run(["node", str(harness / "node_modules/ts-node/dist/bin.js"), "--transpile-only",
+                               "scripts/prepare-blueprint-design.ts", "--feature", CU, "--phase", phase, "--project-root", str(self.root)],
+                              cwd=str(harness), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return [Path(p).name for p in json.loads(proc.stdout.strip().splitlines()[-1])["written"]]
+
+    def test_each_stage_prepares_only_its_own_output_before_freezing(self) -> None:
+        self.use("candidate")
+        unit = self.root / "doc" / "features" / BLUEPRINT / "balance-refresh"
+        self.assertIn(f"{self.HINT} {CU} --phase spec", self.gaps("spec"))
+        self.assertEqual(["acceptance.yaml"], self.prepare_phase("spec"))
+        self.assertFalse((unit / "contracts.yaml").exists(), "spec 阶段物化了 plan 的契约")
+        self.assertNotIn(self.HINT, self.gaps("spec"), "物化之后还在提示")
+        accepted = (unit / "acceptance.yaml").read_bytes()
+        self.assertIn(f"{self.HINT} {CU} --phase plan", self.gaps("plan"))
+        self.assertIn("contracts.yaml", self.prepare_phase("plan"))
+        self.assertEqual(accepted, (unit / "acceptance.yaml").read_bytes(), "plan 重写了已有的验收")
+        self.assertEqual([], self.prepare_phase("plan"), "再跑一次又写了")
+        self.assertNotIn(self.HINT, self.gaps("plan"))
+
+    def test_after_freezing_the_native_inputs_are_consumed_as_they_are(self) -> None:
+        self.use("freeze")
+        code, out = self.feature("plan")
+        self.assertEqual((0, "derive"), (code, out["inputs"]["contracts"]["binding"]["kind"]), out)
+        for action in ("spec", "plan"):
+            with self.subTest(action=action):
+                task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", action, "--audience", "author")
+                self.assertEqual(0, task.returncode, task.stderr)
+                self.assertNotIn(self.HINT, task.stdout)
+
+
 class PhaseInputsFromMaterializedContracts(FreshProject):
     """先物化本地契约再冻结：原生选本地契约；冻结后改了它，原生判过期，读取不写任何东西、不拿蓝图顶上。"""
 
