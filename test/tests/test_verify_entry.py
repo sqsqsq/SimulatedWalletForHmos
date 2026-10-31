@@ -4,6 +4,7 @@
 """
 import argparse
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -35,6 +36,12 @@ class EveryPytestRunIsParallel(unittest.TestCase):
 
 
 class TheHandbackRunsInLanes(unittest.TestCase):
+    def scratch_repo(self):
+        """整轮入口的日志目录落在临时目录，不在真实 output/verify 下留下假的交回证据。"""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return mock.patch.object(verify, "REPO", Path(tmp.name))
+
     def test_full_failure_modes_and_the_rest_are_three_lanes(self) -> None:
         args = argparse.Namespace(scenario="handback", targets=[], keyword=None)
         with mock.patch.object(verify, "build_template", return_value="TEMPLATE"):
@@ -57,7 +64,7 @@ class TheHandbackRunsInLanes(unittest.TestCase):
             return name, name != "compileall", f"[{name}]"
         with mock.patch.object(verify, "run", side_effect=fake_run), \
                 mock.patch.object(verify, "build_template", return_value="TEMPLATE"), \
-                mock.patch("sys.stdout"):
+                mock.patch("sys.stdout"), self.scratch_repo():
             code = verify.main(["handback"])
         self.assertEqual(1, code)
 
@@ -72,7 +79,8 @@ class TheHandbackRunsInLanes(unittest.TestCase):
         printed = []
         with mock.patch.object(verify, "run", side_effect=fake_run), \
                 mock.patch.object(verify, "build_template", side_effect=SystemExit("装配前后 demo 的提交变了")), \
-                mock.patch("builtins.print", side_effect=lambda *a, **k: printed.append(" ".join(map(str, a)))):
+                mock.patch("builtins.print", side_effect=lambda *a, **k: printed.append(" ".join(map(str, a)))), \
+                self.scratch_repo():
             code = verify.main(["handback"])
         self.assertEqual(1, code)
         self.assertEqual({"full", "cli-tests", "compileall", "validate-clis", "node-check"}, set(ran), "别的通道没照跑")
