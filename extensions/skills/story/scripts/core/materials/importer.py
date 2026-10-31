@@ -808,9 +808,10 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
                      "dir": f"{labels[ident['source_id']]}-v{number}", "version": number,
                      "original": original, "readable_sha": readable_sha, "images": images})
         targets[key] = f"{SOURCES}/{plan[-1]['dir']}/{TEXT_FILE if readable is not None else path.name}"
-    # Markdown：先按原件字节定每份给人读的那一份落在哪（原件没变落回已有版本；有本地引用的读阅读投影），
-    # 文档之间互链指到对方的可读产物，沿着读下去图也在
-    pending: list[tuple[Path, str, dict, dict | None, str, int, str]] = []
+    # Markdown：本批的阅读版本先在内存里定稳，再出最终稿。首次导入或原件变了的出新版本；原件没变的暂落回已有版本，
+    # 按当前目标渲染后阅读内容变了（它引用的本批材料换了版本）就提升为新版本、更新目标，引用它的再重算，
+    # 直到没有新的提升——每份至多提升一次，有限输入自然收敛。文档之间互链指到对方的可读产物，沿着读下去图也在
+    docs: list[dict] = []
     for path, key, cls in markdown:
         ident = identify(inbox, path, cls, receipts)
         have = latest.get(ident["source_id"])
@@ -826,22 +827,35 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
         except UnicodeDecodeError:
             text = ""
         here = f"{SOURCES}/{labels[ident['source_id']]}-v{number}"
-        same = have and have.get("original", {}).get("sha256") == original
-        targets[key] = _reading(have) if same else f"{here}/{_text_file(path.name) if has_local_links(text) else path.name}"
-        pending.append((path, key, ident, have, original, number, text))
+        new = not have or have.get("original", {}).get("sha256") != original
+        docs.append({"path": path, "key": key, "ident": ident, "have": have, "original": original, "number": number,
+                     "text": text, "here": here, "new": new,
+                     "target": f"{here}/{_text_file(path.name) if has_local_links(text) else path.name}"})
+        targets[key] = docs[-1]["target"] if new else _reading(have)
+
+    def rendered(doc: dict) -> tuple[str | None, str | None, list[str]]:
+        readable, missing = project_markdown(doc["text"], doc["key"], doc["here"], targets)
+        return readable, digest(readable.encode("utf-8")) if readable is not None else None, missing
+
+    promoted = True
+    while promoted:
+        promoted = False
+        for doc in docs:
+            if not doc["new"] and not _same(doc["have"], doc["original"], rendered(doc)[1], {}):
+                doc["new"], promoted = True, True
+                targets[doc["key"]] = doc["target"]
     gaps: list[str] = []
-    for path, key, ident, have, original, number, text in pending:
-        here = f"{SOURCES}/{labels[ident['source_id']]}-v{number}"
-        readable, missing = project_markdown(text, key, here, targets)
-        gaps += [f"「{key}」引用的 {m}" for m in missing]
-        readable_sha = digest(readable.encode("utf-8")) if readable is not None else None
-        if have and _same(have, original, readable_sha, {}):
-            plan.append({"key": key, "path": path, "reuse": have})
+    for doc in docs:
+        readable, readable_sha, missing = rendered(doc)
+        gaps += [f"「{doc['key']}」引用的 {m}" for m in missing]
+        if not doc["new"]:
+            plan.append({"key": doc["key"], "path": doc["path"], "reuse": doc["have"]})
             continue
+        ident, number = doc["ident"], doc["number"]
         latest[ident["source_id"]] = {"version": number}
-        plan.append({"key": key, "path": path, "ident": ident, "readable": readable, "blobs": {},
+        plan.append({"key": doc["key"], "path": doc["path"], "ident": ident, "readable": readable, "blobs": {},
                      "dir": f"{labels[ident['source_id']]}-v{number}", "version": number,
-                     "original": original, "readable_sha": readable_sha, "images": {}})
+                     "original": doc["original"], "readable_sha": readable_sha, "images": {}})
     if gaps:
         raise ImportError_("Markdown 引用的本地文件找不到（不在这次的收件箱里，也没导入过）：" + "；".join(gaps)
                            + "——把引用的图或文件按原来的相对位置一起放进收件箱再导；外部链接与文内锚点不受影响")

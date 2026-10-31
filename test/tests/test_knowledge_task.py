@@ -413,6 +413,9 @@ class StandaloneStagesPrepareOnlyTheirOwn(FreshProject):
         self.assertEqual(["acceptance.yaml"], self.prepare_phase("spec"))
         self.assertFalse((unit / "contracts.yaml").exists(), "spec 阶段物化了 plan 的契约")
         self.assertNotIn(self.HINT, self.gaps("spec"), "物化之后还在提示")
+        # spec 作者在本阶段写完验收（这里补一行作者说明），再进独立 plan
+        authored = (unit / "acceptance.yaml").read_bytes() + "# spec 作者：刷新失败的验收按日志核\n".encode("utf-8")
+        (unit / "acceptance.yaml").write_bytes(authored)
         accepted = (unit / "acceptance.yaml").read_bytes()
         self.assertIn(f"{self.HINT} {CU} --phase plan", self.gaps("plan"))
         self.assertIn("contracts.yaml", self.prepare_phase("plan"))
@@ -652,7 +655,7 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         duties = author.split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
         self.assertIn("discovery.inputs.knowledge_context", duties)
         context = json.loads(duties.split("```json\n", 1)[1].split("```", 1)[0])
-        self.assertEqual(sorted(f"doc/extensions/{rel}" for rel in self.registered()), [f["source_ref"] for f in context["files"]])
+        self.assertEqual(sorted(f"doc/extensions/{rel}" for rel in self.registered()), [f["source_ref"] for f in context["entries"]])
         self.assertTrue(context["digest"].startswith("sha256:"))
         for action, audience in (("design", "author"), ("questioning", "reviewer")):
             with self.subTest(action=action):
@@ -735,6 +738,21 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
                 proc = self.task("--feature", feature, "--action", "coding", "--audience", "author")
                 self.assertEqual((1, ""), (proc.returncode, proc.stdout))
                 self.assertIn(reason, proc.stderr)
+
+    def test_the_maintenance_plan_author_gets_the_knowledge_context_to_record(self) -> None:
+        """平铺维护 Feature 的 plan 作者拿到这一轮的知识输入身份，写在契约顶层；spec 作者不拿（还没有承载判断的契约）。"""
+        flat = self.root / "doc" / "features" / "flat-ok"
+        flat.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, flat, True)
+        plan = self.task("--feature", "flat-ok", "--action", "plan", "--audience", "author")
+        self.assertEqual(0, plan.returncode, plan.stderr)
+        duties = plan.stdout.split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
+        self.assertIn("契约顶层 `knowledge_context`", duties)
+        context = json.loads(duties.split("```json\n", 1)[1].split("```", 1)[0])
+        self.assertEqual(sorted(f"doc/extensions/{rel}" for rel in self.registered()), [f["source_ref"] for f in context["entries"]])
+        spec = self.task("--feature", "flat-ok", "--action", "spec", "--audience", "author")
+        self.assertEqual(0, spec.returncode, spec.stderr)
+        self.assertNotIn("knowledge_context", spec.stdout)
 
     def test_a_unit_before_freezing_says_its_inputs_are_not_yet_determined(self) -> None:
         proc = self.task("--feature", CU, "--action", "plan", "--audience", "author")

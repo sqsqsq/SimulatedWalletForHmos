@@ -37,7 +37,7 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
     items:
       - {unit: RET-01, outcome: applied, rationale: 本需求在处理过程中保存临时记录，处理完成后清除, target_refs: [view:logical/node:record-store]}
       - {unit: RET-02, outcome: not_applicable, rationale: 本需求不导出记录, target_refs: []}
-      - {unit: RET-03, outcome: pending, rationale: 保留期限等运营定, target_refs: [decision:retention-period]}
+      - {unit: RET-03, outcome: pending, rationale: 保留期限等运营定, target_refs: [view:logical/node:record-store, decision:retention-period]}
   provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/constraints/<规约文件>.md, observed_at: 2026-10-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
 - fact_id: knowledge-export
   subject: knowledge:export
@@ -49,7 +49,7 @@ node doc/extensions/hooks/shared/knowledge-task.mjs --project-root <工程根> -
   provenance: {source_kind: knowledge, source_ref: doc/extensions/knowledge/design-patterns/<模式文件>.md, observed_at: 2026-10-30T08:00:00Z, evidence_strength: inferred, extraction_method: read_and_apply}
 ```
 
-- 相关域的 `items` 覆盖这份规约的每条：`applied` 的 `target_refs` 列承担它的设计对象地址；`not_applicable` 的理由写本需求哪个条件不成立；`pending` 指向登记它的原生决定或缺口。`rationale` 写本需求的具体事实，不抄规约原文。
+- 相关域的 `items` 覆盖这份规约的每条：`applied` 的 `target_refs` 列承担它的设计对象地址；`not_applicable` 的理由写本需求哪个条件不成立；`pending` 指向登记它的原生决定或缺口，已知受影响的设计对象一并列上——施工单位按设计对象接收它；只列决定或缺口表示承担对象还没定，每个施工单位都收到它去核。`rationale` 写本需求的具体事实，不抄规约原文。
 - 用到的项目事实照常写成事实，`provenance.source_ref` 指事实文件（用到某一面或某一篇写 `#<面名>`）。
 
 **义务与角色写在承担它的设计对象上**：

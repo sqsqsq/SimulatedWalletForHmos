@@ -67,8 +67,10 @@ function decisionTable(projectRoot, feature, knowledge, inputs) {
   const { mine, common } = unitContext(judged);
   const gaps = judged.problems.map(p => `- **设计缺口**：${p}`);
   if (!mine.length && !common.length) return [`${judged.label} 里没有与本施工单位相关的知识判断。`, ...gaps];
-  // 没有落点的不适用与拒绝是需求级公共依据（宿主扩展章引用其理由）；落点在别的单位的不列
-  const where = d => (mine.includes(d) ? cell(d.target_refs.join('、')) : '需求级公共依据（无落点）');
+  // 没有承担实体的：不适用与拒绝是需求级公共依据（宿主扩展章引用其理由），只指决定或缺口的待定是归属待核的公共缺口；
+  // 承担实体在别的单位的不列
+  const where = d => (mine.includes(d) ? cell(d.target_refs.join('、'))
+    : d.outcome === 'pending' ? cell(`归属待核的公共知识缺口（${d.target_refs.join('、')}）`) : '需求级公共依据（无落点）');
   const what = d => (d.kind === 'patterns' ? '模式' : d.domain ? '整域' : d.unit);
   return ['| 来源 | 条目 | 原文 | 判定 | 理由 | 落点 |', '|---|---|---|---|---|---|',
     ...[...mine, ...common].map(d => `| ${d.source_ref} | ${what(d)} `

@@ -48,7 +48,7 @@ def node_json(script: str, *argv: str) -> subprocess.CompletedProcess:
 
 
 
-#: 当前形态的契约：平铺维护 Feature 的知识应用决定、实体上的 must 与 pattern_roles（流式与块式混写）
+#: 当前形态的契约：平铺维护 Feature 的知识适用性事实与输入身份、实体上的 must 与 pattern_roles（流式与块式混写）
 KNOWLEDGE_CONTRACT = Path(__file__).resolve().parents[1] / "fixtures" / "yaml" / "knowledge-contract.yaml"
 
 class ScalarLexing(unittest.TestCase):

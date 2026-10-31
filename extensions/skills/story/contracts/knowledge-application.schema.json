@@ -1,15 +1,15 @@
 {
-  "$comment": "设计里知识应用的扩展字段形态，唯一合同。蓝图 discovery.inputs.knowledge_context 是工具生成的知识输入身份；规约与模式的适用性写在原生事实 discovery.facts[].value 里（provenance.source_ref 指知识文件）；义务 must 与模式角色 pattern_roles 写在真正承担的实体上（蓝图的稳定地址对象、施工契约的实体）；验收用 knowledge_refs 指规约条目。来源是否激活、单元在不在文件里、条目覆盖、真实地址与角色由 hooks/shared/knowledge-application.mjs 按实际对象核。用原生 lite-json-schema 的关键字子集。",
+  "$comment": "设计里知识应用的扩展字段形态，唯一合同。knowledge_context 是工具生成的知识输入身份，CU 记在蓝图 discovery.inputs.knowledge_context，非 CU 的维护 Feature 记在原生契约顶层 knowledge_context（清单键用 entries，不撞原生对 files 字段的文件引用扫描）；规约与模式的适用性写在原生事实 discovery.facts[].value 里（provenance.source_ref 指知识文件）；义务 must 与模式角色 pattern_roles 写在真正承担的实体上（蓝图的稳定地址对象、施工契约的实体）；验收用 knowledge_refs 指规约条目。来源是否激活、单元在不在文件里、条目覆盖、真实地址与角色由 hooks/shared/knowledge-application.mjs 按实际对象核。用原生 lite-json-schema 的关键字子集。",
   "$defs": {
     "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "text": {"type": "string", "minLength": 1},
     "refs": {"type": "array", "items": {"$ref": "#/$defs/text"}},
     "knowledgeContext": {
       "type": "object",
-      "required": ["digest", "files"],
+      "required": ["digest", "entries"],
       "properties": {
         "digest": {"$ref": "#/$defs/sha256"},
-        "files": {
+        "entries": {
           "type": "array",
           "items": {"type": "object", "required": ["source_ref", "kind", "form", "sha256"],
                     "properties": {"source_ref": {"$ref": "#/$defs/text"}, "kind": {"enum": ["facts", "constraints", "patterns"]},

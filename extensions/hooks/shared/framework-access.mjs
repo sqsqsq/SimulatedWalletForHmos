@@ -700,6 +700,33 @@ export function relatedStories(projectRoot, feature, blueprint = null) {
 }
 
 /**
+ * 一个 Feature 此刻的实际实现文件：原生 `diff-scope.implementationFiles` 合并契约预测的引用与有效基线以来的实际源码变更，
+ * 只取现存文件；预测只是线索，不是写授权。`baseline` 是同一输入的原生基线结论（基线可得且原生比得出实际变更）：
+ * 不可得时集合只剩预测引用，
+ * 缺实体、没有调用这类要靠完整实际变更才下得了的结论不能下。
+ *
+ * runId 只用于这个 Feature：调用方给的阶段上下文优先，其次原生 harness 给当前阶段注入的 `MAISON_GOAL_RUN_ID`；
+ * 都没有按原生无 run 基线读，不去找最近的 run。
+ */
+export function implementationInputs(projectRoot, feature, predicted, modules = [], runId = undefined) {
+  const native = loadNative(projectRoot);
+  const run = runId || process.env.MAISON_GOAL_RUN_ID?.trim() || undefined;
+  const git = native.module('scripts/utils/git-diff.ts');
+  let baseline;
+  try {
+    baseline = git.resolveEffectiveDiffBaseline(native.root, feature, run);
+    // 基线可得还要比得出来（不是 git 仓库、基线提交不可达时原生比不出实际变更）
+    const diff = baseline.available ? git.diffChangedFilesWithStatus({ projectRoot: native.root, baseRef: baseline.baseSha }) : null;
+    if (diff && !diff.executed) baseline = { available: false, reason: diff.error ?? '实际变更比不出来' };
+  } catch (e) {
+    baseline = { available: false, reason: e?.message ?? String(e) };
+  }
+  const files = native.module('scripts/utils/diff-scope.ts').implementationFiles(native.root, feature, { files: predicted, modules }, run);
+  return { files, baseline: baseline.available ? { available: true, source: baseline.source ?? null }
+    : { available: false, reason: baseline.reason ?? '原生没有给出原因' } };
+}
+
+/**
  * 读一个原生 Feature（CU 或平铺维护 Feature）在某阶段的输入：身份与蓝图引用，加上当前阶段的原生只读解析结果。
  *
  * 范围已冻结时，按原生阶段调用的同一顺序组装入口参数、跑阶段解析器：用哪份输入、复用、过期与 invalid 全由原生定，

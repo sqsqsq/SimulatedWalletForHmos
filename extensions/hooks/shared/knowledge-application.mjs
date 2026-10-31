@@ -34,6 +34,9 @@ const posix = p => p.split(path.sep).join('/');
 const sha = bytes => `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 const where = ref => String(ref ?? '').split('#')[0].replace(/\\/g, '/');
 const unitOf = ref => { const at = String(ref ?? '').indexOf('#'); return at >= 0 ? String(ref).slice(at + 1) : ''; };
+/** 只说明由谁解决的地址（原生决定、缺口）：不标识承担实体，判断归哪个施工单位按其余地址。 */
+const RESOLVES = /^(decision|gap):/;
+const owners = d => d.target_refs.filter(t => !RESOLVES.test(t));
 
 /**
  * 激活知识按工程相对路径登记：扩展根相对的文件、类别、形态、单元、原始摘要；规约另带每条的强制力与哪几条是评审动作，
@@ -59,12 +62,12 @@ export function activation(projectRoot, knowledge = activeKnowledge(projectRoot)
 
 /**
  * 这一轮的知识输入身份：激活清单里每份知识的工程相对路径、类别、形态与原字节摘要，按路径排序；`digest` 是它们的摘要。
- * 设计作者原样写进蓝图 `discovery.inputs.knowledge_context`。
+ * 设计作者原样写进承载判断的设计产物：CU 的蓝图 `discovery.inputs.knowledge_context`，非 CU 维护 Feature 的契约顶层 `knowledge_context`。
  */
 export function knowledgeContext(projectRoot, active = activation(projectRoot)) {
-  const files = [...active].map(([ref, s]) => ({ source_ref: ref, kind: s.kind, form: s.form, sha256: s.sha256 }))
+  const entries = [...active].map(([ref, s]) => ({ source_ref: ref, kind: s.kind, form: s.form, sha256: s.sha256 }))
     .sort((a, b) => (a.source_ref < b.source_ref ? -1 : a.source_ref > b.source_ref ? 1 : 0));
-  return { digest: sha(JSON.stringify(files.map(f => [f.source_ref, f.kind, f.form, f.sha256]))), files };
+  return { digest: sha(JSON.stringify(entries.map(f => [f.source_ref, f.kind, f.form, f.sha256]))), entries };
 }
 
 function schemaCheck(native, value, name) {
@@ -89,32 +92,33 @@ export function blueprintAddresses(projectRoot, blueprint) {
   return new Set(addressing.stableAddressIndex(blueprint).keys());
 }
 
-/** 蓝图记的知识输入身份与这一轮的比：缺了、坏了，或哪些知识增删改了。 */
-function contextProblems(native, declared, current, label) {
+/** 设计记的知识输入身份（在 `at`）与这一轮的比：缺了、坏了，或哪些知识增删改了。 */
+function contextProblems(native, declared, current, label, at) {
   if (declared === undefined || declared === null) {
-    return current.files.length
-      ? [`${label} 没有记知识输入身份（discovery.inputs.knowledge_context）——设计作者把知识任务给出的那一段原样写进去`]
+    return current.entries.length
+      ? [`${label} 没有记知识输入身份（${at}）——设计作者把知识任务给出的那一段原样写进去`]
       : [];
   }
   const shape = schemaCheck(native, declared, 'knowledgeContext');
-  if (shape.length) return [`${label} 的 knowledge_context 形态不合：${shape.slice(0, 4).join('；')}——原样用知识任务给出的那一段`];
+  if (shape.length) return [`${label} 的 ${at} 形态不合：${shape.slice(0, 4).join('；')}——原样用知识任务给出的那一段`];
   if (declared.digest === current.digest) return [];
-  const was = new Map(declared.files.map(f => [f.source_ref, f.sha256]));
-  const now = new Map(current.files.map(f => [f.source_ref, f.sha256]));
+  const was = new Map(declared.entries.map(f => [f.source_ref, f.sha256]));
+  const now = new Map(current.entries.map(f => [f.source_ref, f.sha256]));
   const added = [...now.keys()].filter(k => !was.has(k));
   const removed = [...was.keys()].filter(k => !now.has(k));
   const changed = [...now.keys()].filter(k => was.has(k) && was.get(k) !== now.get(k));
   const what = [added.length ? `新增 ${added.join('、')}` : '', removed.length ? `撤下 ${removed.join('、')}` : '',
     changed.length ? `原文变了 ${changed.join('、')}` : ''].filter(Boolean).join('；') || '摘要与文件清单对不上';
-  return [`${label} 的知识输入不是这一轮的（${what}）——按新知识核受影响的事实与实体，原生修订后换成知识任务给出的 knowledge_context`];
+  return [`${label} 的知识输入不是这一轮的（${what}）——按新知识核受影响的事实与实体，修订后把 ${at} 换成知识任务给出的那一段`];
 }
 
 /**
  * 适用性事实与输入身份：来源是激活知识、形态合合同、一份知识一条事实、相关域逐条不重复、待定指原生决定或缺口；
- * `real` 给了就核落点是这份设计的稳定地址，`context` 为 false 时不核输入身份（平铺维护 Feature 两者都没有）。
+ * `real` 给了就核落点是这份设计的稳定地址（平铺维护 Feature 没有）；`context` 是设计记的输入身份与它的位置 `{declared, at}`，
+ * 还没有承载判断的设计产物时为 null，不核。
  */
 function checkFacts(projectRoot, native, active, { facts: list, context, real, label }) {
-  const problems = context === false ? [] : contextProblems(native, context, knowledgeContext(projectRoot, active), label);
+  const problems = context ? contextProblems(native, context.declared, knowledgeContext(projectRoot, active), label, context.at) : [];
   const extRef = posix(path.relative(projectRoot, extensionRoot(projectRoot)));
   const rows = [];
   const facts = [];
@@ -155,7 +159,7 @@ function checkFacts(projectRoot, native, active, { facts: list, context, real, l
       seen.add(it.unit);
       const dangling = real ? it.target_refs.filter(r => !real(r)) : [];
       if (dangling.length) say(id, `条目 ${it.unit} 的落点不是这份设计里的稳定地址：${[...new Set(dangling)].join('、')}`);
-      if (it.outcome === 'pending' && !it.target_refs.some(r => /^(decision|gap):/.test(r))) {
+      if (it.outcome === 'pending' && !it.target_refs.some(r => RESOLVES.test(r))) {
         say(id, `条目 ${it.unit} 待定，却没指向原生的决定或缺口——争议、豁免与待定登记成原生 decision / gap，在 target_refs 里引它`);
       }
       rows.push({ kind: 'constraints', file: source.file, ref, unit: it.unit, source_ref: `${ref}#${it.unit}`, outcome: it.outcome,
@@ -184,7 +188,8 @@ export function blueprintKnowledge(projectRoot, blueprint) {
   const label = `蓝图 ${blueprint?.blueprint_id}`;
   const index = native.module('scripts/utils/blueprint-addressing.ts').stableAddressIndex(blueprint);
   const { rows, facts, problems } = checkFacts(projectRoot, native, active, { facts: blueprint?.discovery?.facts ?? [],
-    context: blueprint?.discovery?.inputs?.knowledge_context ?? null, real: a => index.has(a), label });
+    context: { declared: blueprint?.discovery?.inputs?.knowledge_context ?? null, at: 'discovery.inputs.knowledge_context' },
+    real: a => index.has(a), label });
   const say = (id, text) => problems.push(`${label} 的事实 ${id}：${text}`);
   // 实体上的义务与模式角色：蓝图里挂在稳定地址对象上
   for (const [address, node] of index) {
@@ -230,7 +235,8 @@ function mustProblems(knowledge, active, m, rows, at) {
 
 /**
  * 一个施工 Feature 的知识判断：CU 取它蓝图里的知识应用（按原生地址核），并把它的设计引用换成稳定地址作承接范围；
- * 非 CU 的维护 Feature 取它原生契约里的 `knowledge_facts`（同一形态，没有稳定地址与输入身份可核），全部由它承接。
+ * 非 CU 的维护 Feature 取它原生契约里的 `knowledge_facts` 与 `knowledge_context`（同一形态与同一比较，没有稳定地址可核），
+ * 全部由它承接；还没有契约（独立 Spec）时没有判断，也不核输入身份。
  *
  * @returns {{rows: object[], facts: object[], problems: string[], scope: object|null, label: string, blueprint?: object}}
  *   scope 为 null 时判断全部由它承接；CU 带上读到的蓝图，专项明细（如埋点）从它取
@@ -246,7 +252,8 @@ export function featureKnowledge(projectRoot, feature, contracts = null) {
     const label = `Feature ${feature} 的契约`;
     const active = activation(projectRoot);
     return { ...checkFacts(projectRoot, loadNative(projectRoot), active, { facts: contracts?.knowledge_facts ?? [],
-      context: false, real: null, label }), scope: null, label };
+      context: contracts ? { declared: contracts.knowledge_context ?? null, at: '契约顶层 knowledge_context' } : null,
+      real: null, label }), scope: null, label };
   }
   const label = `蓝图 ${who.blueprintId}`;
   const read = readBlueprint(projectRoot, who.blueprintId, 'draft');
@@ -296,9 +303,9 @@ function unitScope(addressing, blueprint, refs, bad) {
       .flatMap(k => (Array.isArray(n[k]) ? n[k].filter(r => typeof r === 'string') : []))))]) };
 }
 
-/** 这个施工单位要承接的判断：落点（含模式角色落点）在它的设计责任内的；scope 为 null 时全部。 */
+/** 这个施工单位要承接的判断：承担实体（含模式角色落点）在它的设计责任内的；scope 为 null 时全部。 */
 function carriedBy(rows, scope) {
-  return rows.filter(d => !scope || d.target_refs.some(t => scope.has(t)));
+  return rows.filter(d => !scope || owners(d).some(t => scope.has(t)));
 }
 
 /** 本施工单位要履行的判断：承接的适用规约条目（评审动作不产生代码要求，除外）与选中模式；spec、plan 门禁与知识任务共用。 */
@@ -312,13 +319,13 @@ export function unitDuties(judged) {
 
 /**
  * 本单位人读章能引用的判断与事实，作者任务与审查任务共用这一份。判断：
- * `mine` 落点或角色在设计责任内的（含不适用、待定）；没有落点的不适用（整域无关、条目不适用）与拒绝是需求级公共依据
- * （`common`）；落点全在别的施工单位的不给。事实：本单位设计的引用字段里按 fact_id 整项引到的在 `facts`，
+ * `mine` 承担实体或角色在设计责任内的（含不适用、待定）；没有承担实体的进 `common`——不适用（整域无关、条目不适用）与
+ * 拒绝是需求级公共依据，只指原生决定或缺口的待定是归属待核的公共知识缺口；承担实体全在别的施工单位的不给。事实：本单位设计的引用字段里按 fact_id 整项引到的在 `facts`，
  * 其余关联未明、只给定位（`located`）。scope 为 null（平铺维护 Feature）时全部是本单位的。
  */
 export function unitContext(judged) {
   const mine = carriedBy(judged.rows, judged.scope);
-  const common = judged.rows.filter(d => !mine.includes(d) && !d.target_refs.length);
+  const common = judged.rows.filter(d => !mine.includes(d) && !owners(d).length);
   const refs = judged.scope ? judged.scope.refs() : null;
   const cited = f => !refs || refs.includes(f.fact_id);
   return { mine, common, facts: judged.facts.filter(cited), located: judged.facts.filter(f => !cited(f)) };

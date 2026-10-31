@@ -52,7 +52,8 @@ def framework_version() -> str:
 
 #: 造状态时一定参与的输入：开发版扩展与造状态的脚本
 COMMON = (REPO_ROOT / "extensions", REPO_ROOT / "test" / "scripts" / "design_fixture.py",
-          Path(__file__).with_name("designed_fixture.py"), Path(__file__).with_name("design_kit.py"))
+          Path(__file__).with_name("designed_fixture.py"), Path(__file__).with_name("flow_steps.py"),
+          Path(__file__).with_name("design_kit.py"))
 
 
 def _prune() -> None:

@@ -176,7 +176,7 @@ export function resourceEntries(contracts) {
   return { entries, problems };
 }
 
-/** 契约点名的实现文件（coding 阶段据此限定检索范围，不全仓扫）。 */
+/** 契约预测的实现文件（`files` 与实体自己的 `file`）：实际实现定位的线索，不是写授权，也不是唯一检索范围。 */
 export function contractFiles(contracts) {
   const out = new Set();
   for (const it of asArray(contracts?.files)) {

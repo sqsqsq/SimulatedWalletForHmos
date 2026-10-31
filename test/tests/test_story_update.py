@@ -1007,11 +1007,58 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         stale = stale_units(units)
         self.assertEqual(["a", None], [s.get("change_unit_id") for s in stale], "新鲜的单位被列成过期，或读不出的被略过")
         text = stale_text(stale)
-        self.assertIn("a（cu-a）的 plan（证据 stale）", text)
+        self.assertIn("a（cu-a）：阶段 plan（证据 stale）", text)
         self.assertIn("蓝图 bp 读不出（原生读取 invalid）", text)
         self.assertIn("闭环到 Plan", text)
         self.assertIn("不沿用旧 Plan", text)
         self.assertEqual("", stale_text(stale_units(units[1:2])))
+
+    def test_unit_level_dispositions_are_disclosed_apart_from_phases(self) -> None:
+        """阶段都闭环且新鲜，原生处置还有单位级的事：完成阻断、只限发布、可披露、读不出各有输出，不编造从哪个阶段重做。"""
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow.update import stale_text, stale_units  # noqa: PLC0415
+        finally:
+            sys.path.remove(str(core))
+
+        def unit(disposition: dict, current: bool = True) -> dict:
+            return {"change_unit_id": "a", "feature_id": "cu-a", "disposition": disposition, "phases": [
+                {"phase": "spec", "readable": True, "closure": "closed", "evidence": "fresh", "current": current, "blocking": []}]}
+
+        def ok(**over) -> dict:
+            return {"status": "ok", "completion_eligible": True, "release_ready": True,
+                    "completion_blocking": [], "release_blocking": [], "disclosed": [], **over}
+
+        cases = {
+            "单位完成阻断": (ok(completion_eligible=False, release_ready=False, completion_blocking=[
+                {"id": "goal_run_identity_intact", "phase": "*", "owner": "harness", "action": "repair", "detail": "运行身份断了"}]),
+                "completion_blocking", ["单位完成受阻：goal_run_identity_intact（repair，负责方 harness）", "不重做没受影响的业务阶段"]),
+            "只限制发布": (ok(release_ready=False, release_blocking=[
+                {"id": "release_gate", "phase": "spec", "owner": "spec", "action": "verify", "detail": "发布前要复核"}]),
+                "release_blocking", ["只限制发布：release_gate（verify，负责方 spec）", "普通完成照原生结论"]),
+            "可披露": (ok(disclosed=[{"id": "known_residual", "phase": "*", "owner": None, "action": "disclose", "detail": "已知残差"}]),
+                     "disclosed", ["交付时要披露：known_residual（disclose）", "不当作缺陷"]),
+        }
+        for name, (disposition, key, pieces) in cases.items():
+            with self.subTest(case=name):
+                [stale] = stale_units([unit(disposition)])
+                self.assertEqual([], stale["phases"])
+                self.assertNotIn("from", stale)
+                self.assertEqual([key], list(stale["unit"]))
+                text = stale_text([stale])
+                for piece in pieces:
+                    self.assertIn(piece, text)
+                self.assertNotIn("最早未完成的阶段", text)
+        with self.subTest(case="处置读不出"):
+            [stale] = stale_units([unit({"status": "unknown", "why": "原生读取失败"}, current=False)])
+            self.assertEqual(([], "原生读取失败"), (stale["phases"], stale["disposition_unknown"]))
+            self.assertNotIn("from", stale)
+            text = stale_text([stale])
+            self.assertIn("当前处置读不出（原生读取失败）", text)
+            self.assertIn("不据此重做阶段", text)
+            self.assertNotIn("最早未完成的阶段", text)
+        self.assertEqual([], stale_units([unit(ok())]), "没有要交代的事却被列出")
 
     def test_a_directory_the_framework_cannot_resolve_is_unreadable(self) -> None:
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"

@@ -35,16 +35,21 @@ ELSEWHERE = "view:runtime"
 #: 只落在运行视图上的两条判断（另一个施工单位独有）：一条适用、一条不适用
 ELSEWHERE_REF = f"{OBS}#OBS-05"
 ELSEWHERE_QUIET = f"{OBS}#OBS-06"
+#: 蓝图里登记的原生决定；两条待定都引它：一条只引它（承担对象未定），一条连同运行视图一起引（已知落在运行视图）
+DECISION = "decision:balance-refresh-policy"
+UNOWNED = f"{OBS}#OBS-03"
+PENDING_ELSEWHERE = f"{OBS}#OBS-07"
 
 
 def sha(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False, facts: bool = False) -> None:
+def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False, facts: bool = False,
+           pending: bool = False) -> None:
     """改夹具蓝图（按原文插入）：知识输入身份、适用性事实、设计对象契约上的义务与角色；再按原生口径（蓝图原字节的摘要与
     来源指纹）更新施工单位的蓝图引用。`pattern` 是决策树：selected（有候选信号，选中并写角色）/ none（没有候选信号，不判）。
-    `elsewhere` 再加两条只落在运行视图上的规约判断（另一个施工单位独有）；
+    `elsewhere` 再加两条只落在运行视图上的规约判断（另一个施工单位独有）；`pending` 再加两条待定（见 `UNOWNED`、`PENDING_ELSEWHERE`）；
     `facts` 加两条项目事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
@@ -55,6 +60,9 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     if elsewhere:
         judgements += [design_kit.rule_judgement("OBS-05", "applied", "运行视图上的后台同步要上报结果", [ELSEWHERE]),
                        design_kit.rule_judgement("OBS-06", "not_applicable", "后台同步复用已有事件定义，不新增", [ELSEWHERE])]
+    if pending:
+        judgements += [design_kit.rule_judgement("OBS-03", "pending", "刷新失败要不要计入运维指标等运维定", [DECISION]),
+                       design_kit.rule_judgement("OBS-07", "pending", "后台同步要不要单独采集等运营定", [ELSEWHERE, DECISION])]
     if pattern == "selected":
         judgements.append(design_kit.pattern_judgement(DECISION_TREE, "selected", "刷新有多个分支，拆成节点",
                                                        [{"role": "节点表", "target_ref": MODULE}, {"role": "上下文", "target_ref": ELSEWHERE}]))
@@ -148,13 +156,14 @@ class ChainCase(unittest.TestCase):
     PATTERN = "selected"
     ELSEWHERE = False
     FACTS = False
+    PENDING = False
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
     def setUpClass(cls) -> None:
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
-        design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS)
+        design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS, cls.PENDING)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -457,9 +466,10 @@ process.stdout.write(JSON.stringify(out));
 
 class SiblingUnitsInOneBlueprint(ChainCase):
     """同一蓝图两个施工单位：共同落点上的义务两边都承接，只落在一边设计责任内的角色与判断只归那一边；
-    没有落点的需求级判断两边各拿一次，作者任务与审查任务按同一份作用域取。"""
+    没有落点的需求级判断两边各拿一次，作者任务与审查任务按同一份作用域取。待定按承担实体归属，只引决定的是归属待核的公共缺口。"""
     STEPS = ()
     ELSEWHERE = True
+    PENDING = True
     SECOND = "balance-runtime"
 
     @classmethod
@@ -490,7 +500,7 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         for f in (CU, second):
             self.assertEqual([], out[f]["problems"], f)
         self.assertEqual(sorted([KNOWLEDGE_REF, PATTERN_REF]), out[CU]["decisions"], "模块单位漏了共同落点上的判断")
-        self.assertEqual(sorted([KNOWLEDGE_REF, PATTERN_REF, ELSEWHERE_REF, ELSEWHERE_QUIET]), out[second]["decisions"],
+        self.assertEqual(sorted([KNOWLEDGE_REF, PATTERN_REF, ELSEWHERE_REF, ELSEWHERE_QUIET, PENDING_ELSEWHERE]), out[second]["decisions"],
                          "运行视图单位漏了它独有的判断")
         self.assertEqual(["节点表"], out[CU]["roles"], "运行视图上的角色被强给了不承担它的单位")
         self.assertEqual(["上下文", "节点表"], out[second]["roles"], "承担运行视图的单位漏了它的角色")
@@ -523,7 +533,24 @@ class SiblingUnitsInOneBlueprint(ChainCase):
                 self.assertEqual(1, out[f]["facts"].count(f"`{d}`"), (f, d))
                 self.assertEqual(1, out[f]["review"].count(f"| {d} |"), (f, d))
                 row = next(line for line in out[f]["review"].splitlines() if line.startswith(f"| {d} |"))
-                self.assertTrue(row.endswith("| 需求级公共依据（无落点） |"), row)
+                self.assertTrue(row.endswith(f"| 归属待核的公共知识缺口（{DECISION}） |" if d == UNOWNED
+                                             else "| 需求级公共依据（无落点） |"), row)
+
+    def test_a_pending_goes_by_its_entity_and_an_unowned_one_reaches_both(self) -> None:
+        """待定连同运行视图一起引决定：只归运行视图单位，作为本单位相关的判断；只引决定的：两个单位都作为归属待核的缺口收到。"""
+        out, second = self.sibling()
+        for f in (CU, second):
+            self.assertIn(UNOWNED, out[f]["global"], f)
+            unowned = out[f]["facts"].split("归属待核的公共知识缺口", 1)[1]
+            self.assertIn(f"`{UNOWNED}`", unowned, f)
+            self.assertIn(DECISION, unowned, f)
+        self.assertNotIn(PENDING_ELSEWHERE, out[CU]["author"])
+        self.assertNotIn(PENDING_ELSEWHERE, out[CU]["review"])
+        own = out[second]["facts"].split("本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：", 1)[1]
+        self.assertIn(f"`{PENDING_ELSEWHERE}`", own.split("需求级公共依据", 1)[0])
+        duties = out[second]["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
+        self.assertNotIn(PENDING_ELSEWHERE, duties, "待定成了已生效的义务")
+        self.assertNotIn(UNOWNED, duties, "待定成了已生效的义务")
 
 
 class AUnitCarryingNoJudgementStillGetsTheShared(ChainCase):

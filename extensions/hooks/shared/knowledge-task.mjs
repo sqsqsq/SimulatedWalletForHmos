@@ -103,9 +103,14 @@ function unitLines(judged) {
   const context = unitContext(judged);
   const { applied, selected } = unitDuties(judged);
   const own = context.mine.filter(d => !applied.includes(d) && !selected.includes(d));
+  const basis = context.common.filter(d => d.outcome !== 'pending');
+  const unowned = context.common.filter(d => d.outcome === 'pending');
   const lines = [
     ...(own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(judgedLine)] : []),
-    ...(context.common.length ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...context.common.map(judgedLine)] : []),
+    ...(basis.length ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...basis.map(judgedLine)] : []),
+    ...(unowned.length ? ['归属待核的公共知识缺口（待定，只登记了原生决定或缺口，还没定由哪个设计对象承担）：核它是否落在本单位；'
+      + '落在本单位的按决定此刻的效力处理，未决的照原生决定或缺口的负责方等待或回报，不当作已生效的义务，也不当作豁免：',
+    ...unowned.map(judgedLine)] : []),
     ...context.facts.map(factLine),
     ...(context.located.length ? [`需求里另有知识事实，与本单位的关联未明，只给定位：${context.located
       .map(f => `\`${f.fact_id}\`（${f.subject ?? ''}）`).join('、')}`] : []),
@@ -359,6 +364,10 @@ function featureTask(root, feature, action, supplied, knowledge) {
     gaps.push(...judged.problems.map(p => `${p}——维护 Feature 的作者处理。`));
   }
   const duties = [];
+  if (f.identity.kind !== 'cu' && action === 'plan') {
+    duties.push('这一轮的知识输入身份，原样写进契约顶层 `knowledge_context`，与 `knowledge_facts` 并列（知识换了重取本任务、按新的一份替换）：', '',
+      '```json', JSON.stringify(knowledgeContext(root), null, 2), '```');
+  }
   if (f.scope === 'not_frozen') {
     duties.push('本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
     gaps.push(`执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${stagePreparation(f, feature, action) ?? ''}先准备范围`

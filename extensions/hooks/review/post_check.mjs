@@ -115,10 +115,10 @@ export default guard('review', async (ctx) => {
     }
   }
 
-  for (const id of new Set(roles.map(r => r.pattern).filter(Boolean))) {
-    if (!table.data.some(r => r.joined.includes(id))) {
-      problems.push(`review/review-report.md：采用的模式 ${id} 在复核表里没有对应行`
-        + '——契约里有实体在 pattern_roles 承担这个模式的角色，门禁在复核表各行里找这个模式名；本阶段核实现是否按这个结构落');
+  for (const ref of new Set(roles.map(r => r.patternRef).filter(Boolean))) {
+    if (!table.data.some(r => r.joined.includes(ref))) {
+      problems.push(`review/review-report.md：采用的模式 ${ref} 在复核表里没有对应行`
+        + '——契约里有实体在 pattern_roles 承担这个模式的角色，门禁在复核表各行里找这个 pattern_ref；本阶段核实现是否按这个结构落');
     }
   }
 

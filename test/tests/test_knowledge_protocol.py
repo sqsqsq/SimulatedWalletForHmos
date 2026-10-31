@@ -12,9 +12,12 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_neutral_knowledge as nk  # noqa: E402
@@ -347,8 +350,9 @@ class TheReviewTableIsOneRowPerLanding(ProtocolCase):
     EMIT = "interfaces.中性出口接口.emitWithTrace"
     REUSE = "interfaces.中性出口接口.reuseTrace"
 
-    def review(self, *rows: tuple[str, str, str, str]) -> str:
-        self.write_contracts(contracts(second02="ut"))
+    def review(self, *rows: tuple[str, str, str, str], roles: str = "") -> str:
+        """`roles` 插在中性出口接口上（`pattern_roles` 块）。"""
+        self.write_contracts(contracts(second02="ut").replace("    file: src/exit.ets\n", "    file: src/exit.ets\n" + roles))
         (self.feature_root / "review").mkdir(parents=True, exist_ok=True)
         table = "\n".join(f"| {r} | {at} | src/exit.ets | {verdict} | {basis} |" for r, at, verdict, basis in rows)
         (self.feature_root / "review" / "review-report.md").write_text(
@@ -374,6 +378,17 @@ class TheReviewTableIsOneRowPerLanding(ProtocolCase):
                 for r, at, v, b in self.full()]
         self.assertIn(f"义务 NEU-02（{self.REUSE}） 判「未落实」，这条规约是红线", self.review(*rows))
 
+    def test_a_role_carried_pattern_needs_its_own_row(self) -> None:
+        """实体承担已选模式的角色：复核表没有这个模式的行就点名，rule 列写它的 pattern_ref 就过。"""
+        pattern = "doc/extensions/knowledge/design-patterns/neutral-pattern.md"
+        self.judged()
+        self.facts = self.facts + [self.fact("neutral-pattern", {"knowledge_kind": "patterns", "outcome": "selected",
+                                                                  "rationale": "标识由入口生成、被后续两步只读消费"})]
+        roles = f"    pattern_roles:\n      - {{pattern_ref: {pattern}, role: 标识生成者}}\n"
+        self.assertIn(f"采用的模式 {pattern} 在复核表里没有对应行", self.review(*self.full(), roles=roles))
+        row = (pattern, "interfaces.中性出口接口", "落实", "入口生成标识，两步只读")
+        self.assertEqual("", self.review(*self.full(), row, roles=roles))
+
     def test_a_baseline_not_landed_needs_a_basis_and_the_force_decides(self) -> None:
         bare = [(r, at, "未落实", "—") if r == "NEU-01" else (r, at, v, b) for r, at, v, b in self.full()]
         self.assertIn("NEU-01", self.review(*bare))
@@ -385,7 +400,16 @@ class TheReviewTableIsOneRowPerLanding(ProtocolCase):
 
 
 class TheCodeIsTheEvidence(ProtocolCase):
-    """传递（coding）：探针按「阻断」声明与强制力处置；注释不是证据，注释里的在册编号报到行号。"""
+    """传递（coding）：探针按「阻断」声明与强制力处置；注释不是证据，注释里的在册编号报到行号。
+    工作区是 git 仓库、基线是提交过的初始状态：实际实现文件取原生的定位（契约预测的引用加实际源码变更）。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.root / ".gitignore").write_text("framework/\n", encoding="utf-8")
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "core.autocrlf=false"]
+        for cmd in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "base"]):
+            proc = subprocess.run(git + cmd, cwd=self.root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(0, proc.returncode, proc.stderr)
 
     GOOD = ("export class 中性出口接口 {\n"
             "  emitWithTrace(): string {\n"
@@ -433,6 +457,26 @@ class TheCodeIsTheEvidence(ProtocolCase):
         (self.root / "src").mkdir(exist_ok=True)
         (self.root / "src" / "exit.ets").write_text(bad, encoding="utf-8")
         self.assertEqual(1, self.hook("coding").count("而这条规约是红线"))
+
+    def test_the_implementation_may_land_outside_the_predicted_file(self) -> None:
+        """契约预测 src/exit.ets，实现落在同模块的另一个文件：实体在实际变更里找得到就成立；
+        同一处少了一个方法，照样点名——预测不是白名单，也不因此放过真实缺口。"""
+        module = "modules:\n  - {name: exit, layer: feature, format: har, change_type: modify, package_path: src}\n"
+        (self.root / "src").mkdir(exist_ok=True)
+        (self.root / "src" / "exit.ets").write_text("export const placeholder = 1;\n", encoding="utf-8")
+        self.write_contracts(module + contracts())
+        (self.root / "src" / "exit-impl.ets").write_text(self.GOOD, encoding="utf-8")
+        self.assertNotIn("代码里找不到", self.hook("coding"))
+        (self.root / "src" / "exit-impl.ets").write_text(
+            self.GOOD.replace("reuseTrace(prev: string)", "retry(prev: string)"), encoding="utf-8")
+        self.assertIn("代码里找不到「reuseTrace」", self.hook("coding"))
+
+    def test_without_a_comparable_baseline_a_missing_entity_is_a_gap(self) -> None:
+        """基线不可达（指定的基线提交不存在）：只剩契约预测的文件，没找到不判未落实，报这组证据缺口。"""
+        with mock.patch.dict(os.environ, {"HARNESS_DIFF_BASE_REF": "0" * 40}):
+            result_text = self.coding(self.GOOD.replace("reuseTrace(prev: string)", "retry(prev: string)"))
+        self.assertNotIn("代码里找不到", result_text)
+        self.assertIn("有效基线不可得", self.fragments(self.result) + json.dumps(self.result, ensure_ascii=False))
 
     def test_an_entity_only_in_a_comment_is_not_found(self) -> None:
         source = self.GOOD.replace("reuseTrace(prev: string)", "// reuseTrace 在这里\n  retry(prev: string)")

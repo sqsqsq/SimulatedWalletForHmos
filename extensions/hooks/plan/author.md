@@ -3,7 +3,8 @@
 > 读者：plan 阶段的作者。时机：动笔前读一遍，这一次的数据看知识任务（story-knowledge Skill，`--action plan`）；
 > 门禁报错时回到「门禁会拦什么」。
 
-设计里的知识判断（CU 蓝图的适用性事实与设计对象上的角色；非 CU 维护 Feature 契约里的 `knowledge_facts`）由你落到契约实体上：
+设计里的知识判断（CU 蓝图的适用性事实与设计对象上的角色；非 CU 维护 Feature 契约里的 `knowledge_facts`）由你落到契约实体上。
+非 CU 维护 Feature 的契约同时记这一轮的知识输入身份：知识任务第 3 块给出的 `knowledge_context` 原样写在契约顶层。
 下游不重做适用性与选型，它们读**实体上的 `must`** 与**实体上的 `pattern_roles`**——挂错或没挂，下游零注入。
 
 ## 一、读哪几样
@@ -41,7 +42,7 @@ interfaces:
             verify: ut
 ```
 
-- `must` 只挂五处：`data_models[].fields[]`、`interfaces[].methods[]`、`components[]` 及其 `state[]`、`resource_keys.<模块>.<分类>[]` 的资源条目。`files` 是原生授权文件清单（路径字符串），不承载义务。
+- `must` 只挂五处：`data_models[].fields[]`、`interfaces[].methods[]`、`components[]` 及其 `state[]`、`resource_keys.<模块>.<分类>[]` 的资源条目。`files` 是预测的实现文件（路径字符串）：给实现定位的线索，不是写授权，实现落到别的文件照样成立；它不承载义务。
 - `source_ref` 照抄知识任务第 3 块列的条目引用（`<知识文件>#<编号>`）；`text` 写本次要落实成什么，不复述规约原文；不是某条规约要求的业务规则写在实体自己的描述里，不挂 `must`。
 - `verify` 按规约声明的执行体定：含「实机」写 `ut` / `device` / `both`；只有「模型」（或加「构建」）写 `review`；「人工」不挂 `must`。
 - **选中模式的角色**写在真实承担它的 `components` / `interfaces` / `data_models` 实体上：`pattern_roles: [{pattern_ref, role}]`，

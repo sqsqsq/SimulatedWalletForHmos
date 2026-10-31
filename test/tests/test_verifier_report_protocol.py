@@ -28,6 +28,8 @@ STORY_BUILD = DEV_EXT / "skills/story/scripts/core/story-build.mjs"
 CONTRACT = DEV_EXT / "skills/story/contracts/story-chapters.json"
 ACCESS = DEV_EXT / "hooks/shared/framework-access.mjs"
 FEATURE = "RT90001"
+#: 导入用的图：明确选定一张现有图片，它的字节进共享前态的键
+PICTURE = REPO / "test/fixtures/real-run/AR90006/sources/auto-topup-manage-page-v1/auto-topup-manage-page.png"
 
 STORY_MD = """# 甲需求（SMPFEAT）
 
@@ -642,7 +644,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.flow_path = base / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
         self.story = self.flow_path.parent.parent / "story.md"
         self.put({"SR/design.md": ("# 系统设计\n\n续期改为按月扣费，与产品需求的按年不同。\n".encode("utf-8"), "SR"),
-                  "old.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")})
+                  "old.png": (PICTURE.read_bytes(), "UX")})
         sr_rel = self.latest("SR/design.md")
         image = f"{self.FEATURE}/{self.latest('old.png')}"
         self.run_py(self.IMPORT, "--caption-image", image, "--unused", "旧版签约页，本需求不改签约页")
@@ -979,9 +981,10 @@ class AnUnreviewedDeliveryNeedsAHumanPart2(TheStoryIsReviewedRegisteredAndDelive
 
 def prepared_copy(name: str, variant: str, build, target: Path) -> None:
     """一组用例共同的前态（还没准备独审、没登记报告）：同一业务输入只真实生产一次，各用例拿私有副本，副本重接 Framework。
-    前态由当前生产者产生，键是输入内容（夹具、开发源、被测 Framework）与变体名，不剥导入时刻、不手补状态。"""
+    前态由当前生产者产生，键是输入内容（夹具、开发源与造状态的脚本、构造前态的本文件、导入的图、被测 Framework）
+    与变体名，不剥导入时刻、不手补状态。"""
     key = shared_state.digest(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good",
-                              *shared_state.COMMON, shared_state.framework_version(), name, variant)
+                              *shared_state.COMMON, Path(__file__), PICTURE, shared_state.framework_version(), name, variant)
     shared_state.copy_tree(shared_state.shared_tree(name, key, build), target)
     link_framework(target)
 
@@ -1013,7 +1016,7 @@ class ARequirementWithUiReferenceGoesThrough(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         fixture = Path(self._tmp.name) / "fixture"
         shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
-        import_fixture(fixture, {"home.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")})
+        import_fixture(fixture, {"home.png": (PICTURE.read_bytes(), "UX")})
         self.root = Path(self._tmp.name) / "work"
         designed_copy(fixture, "REQ-DEMO", self.root)
         design_kit.install_review_mechanism(self.root, DEV_EXT)
@@ -1071,7 +1074,7 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
             fixture = Path(tmp) / "fixture"
             shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
             feature = fixture / "doc" / "features" / "REQ-DEMO"
-            files = {"home.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")}
+            files = {"home.png": (PICTURE.read_bytes(), "UX")}
             if hard:
                 prd = feature / "sources" / "prd-v1" / "prd.md"
                 files["RR/prd.md"] = (prd.read_bytes() + "\n签约页必须像素级还原设计稿，不接受降级。\n".encode("utf-8"), "RR")

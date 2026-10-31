@@ -571,41 +571,85 @@ def _phase_facts(reports: list[dict], evidence: dict[str, str]) -> list[dict]:
     return out
 
 
+def _phase_open(p: dict) -> bool:
+    """阶段自身的问题：读不出、没闭环、原生证据此刻不新鲜，或原生当前完成阻断落在这个阶段上。"""
+    return p.get("readable") is False or p.get("closure") != "closed" or p.get("evidence") != "fresh" or bool(p.get("blocking"))
+
+
+def _disposed(items: list[dict] | None) -> list[dict]:
+    return [{k: b.get(k) for k in ("id", "phase", "owner", "action", "detail")} for b in items or []]
+
+
 def stale_units(units: list[dict]) -> list[dict]:
-    """原生证据此刻不是「闭环且新鲜」的施工单位阶段，按单位列出，`from` 是最早的那一个。历史闭环保留在 units 里，
-    不算这一轮的完成；蓝图读不出时施工影响未知，照实列出。"""
+    """施工单位此刻要交代的事，阶段与单位分列。历史闭环保留在 units 里；蓝图读不出时施工影响未知，照实列出。
+
+    - `phases`：有自身问题的阶段，`from` 是最早的那一个；
+    - `unit`：原生当前处置里不落在已列阶段上的完成阻断（如 `phase='*'` 的单位级阻断）、只限制发布的阻断与可披露事项；
+    - `disposition_unknown`：处置读不出的原因——此刻不能当作已完成，也不据此认定哪个阶段要重做。"""
     out = []
     for u in units:
         if u.get("readable") is False:
             out.append({"blueprint_id": u.get("blueprint_id"), "why": u.get("why"), "phases": []})
             continue
-        old = [p for p in u.get("phases") or [] if not p.get("current")]
-        if old:
-            out.append({"change_unit_id": u["change_unit_id"], "feature_id": u["feature_id"], "from": old[0]["phase"],
-                        "phases": [{"phase": p["phase"], "evidence": p.get("evidence"), "closure": p.get("closure"),
-                                    "blocking": p.get("blocking") or [],
-                                    **({"why": p["why"]} if p.get("readable") is False else {})} for p in old],
-                        **({"disposition_unknown": u["disposition"]["why"]}
-                           if (u.get("disposition") or {}).get("status") == "unknown" else {})})
+        phases = u.get("phases") or []
+        old = [p for p in phases if _phase_open(p)]
+        d = u.get("disposition") or {}
+        listed = {p["phase"] for p in phases}
+        unit = {"completion_blocking": _disposed([b for b in d.get("completion_blocking") or []
+                                                  if not {b.get("phase"), b.get("owner")} & listed]),
+                "release_blocking": _disposed(d.get("release_blocking")),
+                "disclosed": _disposed(d.get("disclosed"))}
+        unit = {k: v for k, v in unit.items() if v}
+        unknown = d.get("why") if d.get("status") == "unknown" else None
+        if not (old or unit or unknown):
+            continue
+        out.append({"change_unit_id": u["change_unit_id"], "feature_id": u["feature_id"],
+                    **({"from": old[0]["phase"]} if old else {}),
+                    "phases": [{"phase": p["phase"], "evidence": p.get("evidence"), "closure": p.get("closure"),
+                                "blocking": p.get("blocking") or [],
+                                **({"why": p["why"]} if p.get("readable") is False else {})} for p in old],
+                    **({"unit": unit} if unit else {}),
+                    **({"disposition_unknown": unknown} if unknown else {})})
     return out
 
 
 def stale_text(stale: list[dict]) -> str:
-    """受影响 CU、过期阶段与接手动作：本轮只同步业务文档时由它披露，不称可以沿用旧 Plan。"""
+    """受影响 CU 与接手动作：阶段问题、单位完成阻断、发布限制、披露事项、处置读不出各说各的去处，不称可以沿用旧 Plan。"""
     if not stale:
         return ""
-    def phase(p: dict) -> str:
-        state = p.get("evidence") or "读不出"
-        todo = "、".join(f"{b['id']}（{b['action']}）" for b in p.get("blocking") or [])
-        return f"{p['phase']}（证据 {state}{f'，当前要处理 {todo}' if todo else ''}）"
+    def todo(items: list[dict]) -> str:
+        return "、".join(f"{b['id']}（{b['action']}{'，负责方 ' + b['owner'] if b.get('owner') else ''}）" for b in items)
 
-    rows = [f"蓝图 {s['blueprint_id']} 读不出（{s['why']}），施工单位受不受影响未知" if "change_unit_id" not in s
-            else f"{s['change_unit_id']}（{s['feature_id']}）的 " + "、".join(phase(p) for p in s["phases"])
-            + (f"，当前处置读不出（{s['disposition_unknown']}）" if s.get("disposition_unknown") else "")
-            for s in stale]
-    return ("施工单位的阶段此刻不算完成（历史闭环保留，证据不新鲜或原生当前处置还有必修、待核）：" + "；".join(rows)
-            + "。本轮授权到 Plan 的，从最早未完成的阶段重新取原生输入、落实变更并闭环到 Plan 才算同步；"
-            "没有施工授权的，交施工负责人从这些阶段接手，不沿用旧 Plan。")
+    def phase(p: dict) -> str:
+        extra = f"，当前要处理 {todo(p['blocking'])}" if p.get("blocking") else ""
+        return f"{p['phase']}（证据 {p.get('evidence') or '读不出'}{extra}）"
+
+    labels = (("completion_blocking", "单位完成受阻"), ("release_blocking", "只限制发布"), ("disclosed", "交付时要披露"))
+    rows, kinds = [], set()
+    for s in stale:
+        if "change_unit_id" not in s:
+            rows.append(f"蓝图 {s['blueprint_id']} 读不出（{s['why']}），施工单位受不受影响未知")
+            kinds.add("phases")
+            continue
+        unit = s.get("unit") or {}
+        parts = [f"阶段 {'、'.join(phase(p) for p in s['phases'])}"] if s["phases"] else []
+        parts += [f"{label}：{todo(unit[key])}" for key, label in labels if unit.get(key)]
+        if s.get("disposition_unknown"):
+            parts.append(f"当前处置读不出（{s['disposition_unknown']}）")
+        rows.append(f"{s['change_unit_id']}（{s['feature_id']}）：" + "；".join(parts))
+        kinds.update(key for key, _ in labels if unit.get(key))
+        if s["phases"]:
+            kinds.add("phases")
+        if s.get("disposition_unknown"):
+            kinds.add("unknown")
+    follow = {"phases": "有阶段问题的，本轮授权到 Plan 就从最早未完成的阶段重新取原生输入、落实变更并闭环到 Plan 才算同步，"
+                        "没有施工授权的交施工负责人从这些阶段接手，不沿用旧 Plan",
+              "completion_blocking": "单位完成阻断按原生给的负责方与动作处理，不重做没受影响的业务阶段",
+              "release_blocking": "发布阻断只限制发布，普通完成照原生结论",
+              "disclosed": "披露事项在交付时照实写明，不当作缺陷",
+              "unknown": "处置读不出的单位此刻不能当作已完成，读取恢复后再判，不据此重做阶段"}
+    return ("施工单位此刻还有要交代的事（历史闭环保留）：" + "；".join(rows) + "。"
+            + "；".join(text for key, text in follow.items() if key in kinds) + "。")
 
 
 def _paths(project_root: Path, feature_root: Path) -> dict:

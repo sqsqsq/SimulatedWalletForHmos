@@ -539,6 +539,42 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         self.assertIn(self.reading_of("local:docs/附录.md").name, names)
         self.assertIn("附录.md", names)
 
+    def test_a_new_picture_reaches_the_top_of_the_reading_chain(self) -> None:
+        """同一包再交一次，只有附录的图换了：这一次的说明沿阅读链读到的是这一次的附录与新图；
+        上一次的版本原样留着，仍读到旧图；没换的两张图复用。"""
+        self.first_import()
+        old_intro = self.reading_of("local:docs/说明.md")
+        new_picture = b"\x89PNG\r\n\x1a\n" + "口径 第二版".encode("utf-8")
+        files = {"docs/说明.md": self.TEXT, "docs/附录.md": self.APPENDIX,
+                 **{f"docs/images/{n}": b"\x89PNG\r\n\x1a\n" + n.encode("utf-8") for n in self.PICTURES},
+                 "docs/images/口径.png": new_picture}
+        self.put(files, {rel: ("UX" if "/images/" in rel else "RR") for rel in files})
+        proc = self.run_import()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(3, len(out["versions"]), f"该出新版本的没出全：{out['versions']}")
+        self.assertEqual({"docs/images/流程 (修订).png", "docs/images/flow(v2).png"}, {r["file"] for r in out["reused"]})
+
+        intro = self.reading_of("local:docs/说明.md")
+        self.assertNotEqual(old_intro, intro, "说明还停在上一次的版本")
+        appendix = next(f for target, f in self.follow(intro).items() if "附录" in unquote(target))
+        self.assertEqual(self.reading_of("local:docs/附录.md").resolve(), appendix, "说明链到的不是这一次的附录")
+        [(_, picture)] = self.follow(appendix).items()
+        self.assertEqual(new_picture, picture.read_bytes(), "沿阅读链读到的不是这一次的图")
+
+        old_appendix = next(f for target, f in self.follow(old_intro).items() if "附录" in unquote(target))
+        [(_, old_picture)] = self.follow(old_appendix).items()
+        self.assertEqual(b"\x89PNG\r\n\x1a\n" + "口径.png".encode("utf-8"), old_picture.read_bytes(), "上一次的版本被改写了")
+
+    def test_the_whole_package_again_reuses_every_version(self) -> None:
+        self.first_import()
+        files = {"docs/说明.md": self.TEXT, "docs/附录.md": self.APPENDIX,
+                 **{f"docs/images/{n}": b"\x89PNG\r\n\x1a\n" + n.encode("utf-8") for n in self.PICTURES}}
+        self.put(files, {rel: ("UX" if "/images/" in rel else "RR") for rel in files})
+        proc = self.run_import()
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        self.assertEqual([], json.loads(proc.stdout)["versions"], "原样重交的整包开了新版本")
+
     def test_the_same_input_again_reuses_the_version(self) -> None:
         self.first_import()
         self.put({"docs/说明.md": self.TEXT}, {"docs/说明.md": "RR"})

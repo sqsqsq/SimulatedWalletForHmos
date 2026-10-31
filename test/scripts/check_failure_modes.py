@@ -1767,6 +1767,12 @@ def _spec_post_check(root: Path) -> tuple[bool, str] | None:
         hook = _ext_file(work, "hooks/spec/post_check.mjs")
         if hook is None:
             hook = executor_ext() / "hooks" / "spec" / "post_check.mjs"
+        # 平铺 Feature 的契约记这一轮的知识输入身份：它随激活知识变，夹具不存；按作者的做法由产品生成、原样写进副本
+        contracts = work / "doc" / "features" / "REQ-DEMO" / "contracts.yaml"
+        if contracts.is_file() and "knowledge_facts:" in (text := contracts.read_text(encoding="utf-8")) \
+                and "knowledge_context:" not in text:
+            context = design_fixture.knowledge_context(work, hook.parent.parent / "shared" / "framework-access.mjs")
+            contracts.write_text(text + "knowledge_context: " + json.dumps(context, ensure_ascii=False) + "\n", encoding="utf-8")
         proc = subprocess.run(
             ["node", "--input-type=module", "-e", script, "--",
              str(hook), str(work), "REQ-DEMO"],

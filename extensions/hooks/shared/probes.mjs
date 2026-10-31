@@ -68,7 +68,7 @@ function readOrNull(abs) {
  * 实体名 → 承载它的实现文件。
  *
  * 先按文件名匹配（实体 `FooSheet` → `.../FooSheet.ets`）；匹配不到就退回
- * 契约点名的全部文件，并让调用方知道这次是**放宽了范围**——放宽会稀释区分力，
+ * 这次的全部实现文件，并让调用方知道这次是**放宽了范围**——放宽会稀释区分力，
  * 静默放宽等于把恒真探针换了个写法。
  */
 export function filesForEntity(files, entityName) {
@@ -121,9 +121,9 @@ export function runProbe(probe, target) {
   const abs = scope.files.map(rel => ({ rel, abs: path.resolve(projectRoot, rel) }));
   const readable = abs.map(f => ({ ...f, text: readOrNull(f.abs) })).filter(f => f.text !== null);
   if (!readable.length) {
-    return { ok: false, detail: `没有可读的实现文件（契约点名 ${scope.files.length} 个）`, scanned: 0 };
+    return { ok: false, detail: `没有可读的实现文件（这次的实现文件 ${scope.files.length} 个）`, scanned: 0 };
   }
-  const widened = scope.narrowed ? '' : '（未能定位到该实体自己的文件，已放宽到契约点名的全部文件）';
+  const widened = scope.narrowed ? '' : '（未能定位到该实体自己的文件，已放宽到这次的全部实现文件）';
 
   let re;
   if (probe.pattern) {

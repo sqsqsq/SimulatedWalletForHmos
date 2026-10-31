@@ -2,7 +2,7 @@
  * coding 阶段 post_check（实例扩展）—— 义务在代码里**真的落到了那个实体上**吗。
  *
  * 本阶段的证据是代码本身。机械层只查它判得了、且对已知违规有区分力的几件事：
- *   ① 契约点名的实体，代码里在不在（抹掉注释再找：只在注释里出现不算）；
+ *   ① 契约点名的实体，在实际实现文件里在不在（抹掉注释再找：只在注释里出现不算）；
  *   ② 规约自带探针的，对形态匹配的每处落点自动跑——带「阻断：」的形态就是要求，
  *      不过即这处未落实、后果按强制力；不带的只是取证线索，不过记证据缺口；
  *   ③ 标了模式的角色文件，那个角色在定义文件之外有没有被调用；
@@ -10,6 +10,9 @@
  *
  * **本文件不含任何规则编号、域前缀或来自规约的正则字面**：探针表达式随知识走
  * （规约表的「探针」列），换一套知识这里一个字都不用改。
+ *
+ * 实际实现文件取原生的定位（契约预测的引用加有效基线以来的实际源码变更），预测不是白名单；基线不可得时只剩预测，
+ * 「找不到实体」「没有调用」不下结论，报这组证据缺口。
  *
  * 「落得对不对」是语义判断，归 overlay。机械层越权下语义结论，就成了「写了字就算做了」。
  *
@@ -20,6 +23,7 @@ import * as path from 'node:path';
 import { contractFiles, phaseArtifacts, resolveEntityRef } from '../shared/contracts.mjs';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
+import { implementationInputs } from '../shared/framework-access.mjs';
 import { activation, entryOf, knowledgeSource } from '../shared/knowledge-application.mjs';
 import { obligationsFromContracts, patternRolesFromContracts } from '../shared/obligations.mjs';
 import { blankComments, filesForEntity, runProbe } from '../shared/probes.mjs';
@@ -32,7 +36,7 @@ function tailIdentifier(entityPath) {
   return last.includes('/') ? (last.split('/').pop() ?? '').replace(/\.[^.]+$/, '') : last;
 }
 
-/** 契约点名的实现文件原文；读不到的不列。 */
+/** 实现文件原文；读不到的不列。 */
 function sources(projectRoot, files) {
   return files.map(rel => {
     try {
@@ -66,17 +70,26 @@ export default guard('coding', async (ctx) => {
     });
   }
 
-  const files = contractFiles(contracts);
-  const present = files.filter(rel => fs.existsSync(path.resolve(ctx.projectRoot, rel)));
+  let actual;
+  try {
+    actual = implementationInputs(ctx.projectRoot, ctx.feature, contractFiles(contracts), contracts.modules ?? [], ctx.runId);
+  } catch (e) {
+    return done({ problems: [`实际实现文件取不到（原生 diff-scope）：${e.message}`] });
+  }
+  const present = actual.files;
+  // 基线不可得：集合只剩契约预测的引用，「找不到」「没调用」不能当未落实
+  const partial = actual.baseline.available ? null
+    : `有效基线不可得（${actual.baseline.reason}），实现文件只剩契约预测的引用；没找到不判未落实`;
   if (!present.length) {
-    // 契约文件一个都还没建：框架原生的文件完整性门禁会报，这里不重复；但要报出这组判据没跑成
+    // 一个现存实现文件都没有：框架原生的文件完整性门禁会报，这里不重复；但要报出这组判据没跑成
     return done({
-      skipped: [{ what: '义务落点与探针', why: '契约点名的实现文件一个都还没建' }],
+      skipped: [{ what: '义务落点与探针', why: partial ?? '契约预测的引用与实际源码变更里都还没有现存实现文件' }],
     });
   }
 
   const problems = [];
   const warnings = [];
+  const unproven = [];
   const code = sources(ctx.projectRoot, present).map(s => ({ ...s, blank: blankComments(s.text) }));
 
   // ---- 1. 落点实体在代码里存在（注释抹掉之后）----
@@ -86,9 +99,11 @@ export default guard('coding', async (ctx) => {
     const name = tailIdentifier(ob.entityPath);
     if (!name) continue;
     const re = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
-    if (!code.some(s => re.test(s.blank))) {
+    if (code.some(s => re.test(s.blank))) continue;
+    if (partial) unproven.push(`义务 ${ob.rule} 的落点「${name}」`);
+    else {
       problems.push(`义务 ${ob.rule} 挂在「${ob.entityPath}」上，代码里找不到「${name}」`
-        + '——门禁取 contracts.yaml 落点的末段标识符，在契约 files 点名的已建文件里抹掉注释后按整词找');
+        + '——门禁取 contracts.yaml 落点的末段标识符，在实际实现文件（契约预测的引用加有效基线以来的实际源码变更）里抹掉注释后按整词找');
     }
   }
 
@@ -130,15 +145,17 @@ export default guard('coding', async (ctx) => {
     const base = pr.entity;
     const scope = filesForEntity(present, pr.path ? path.basename(pr.path).replace(/\.[^.]+$/, '') : base);
     if (!scope.narrowed) {
-      warnings.push(`模式 ${pr.pattern} 的角色「${pr.role}」（${pr.entityPath}${pr.path ? `，${pr.path}` : ''}）的实现文件还没建，引用可达性未验`);
+      warnings.push(`模式 ${pr.patternRef} 的角色「${pr.role}」（${pr.entityPath}${pr.path ? `，${pr.path}` : ''}）的实现文件还没建，引用可达性未验`);
       continue;
     }
     const r = runProbe(
       { kind: 'referenced_outside_definition', pattern: '', count: null, raw: 'referenced_outside_definition' },
       { projectRoot: ctx.projectRoot, files: present, entityName: base, entityKind: 'files' });
-    if (!r.ok) {
-      problems.push(`模式 ${pr.pattern} 的角色「${pr.role}」（${pr.entityPath}）${r.detail}`
-        + '——门禁在契约点名的其他已建文件里抹掉注释后按整词找这个角色实体的名字；只有定义没有调用，这个模式就只落在了名字上');
+    if (r.ok) continue;
+    if (partial) unproven.push(`模式 ${pr.patternRef} 的角色「${pr.role}」的调用`);
+    else {
+      problems.push(`模式 ${pr.patternRef} 的角色「${pr.role}」（${pr.entityPath}）${r.detail}`
+        + '——门禁在其他实际实现文件里抹掉注释后按整词找这个角色实体的名字；只有定义没有调用，这个模式就只落在了名字上');
     }
   }
 
@@ -157,5 +174,5 @@ export default guard('coding', async (ctx) => {
     });
   }
 
-  return done({ problems, warnings });
+  return done({ problems, warnings, skipped: unproven.map(what => ({ what, why: partial })) });
 });

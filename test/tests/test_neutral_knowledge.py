@@ -232,10 +232,20 @@ class NeutralKnowledgeCase(unittest.TestCase):
                 *[self.fact(s["file"], {"knowledge_kind": "constraints", "outcome": "not_applicable", "rationale": "本需求不涉及这一域"})
                   for s in self.active() if s["kind"] == "constraints" and not Path(s["file"]).stem.startswith("neutral-")]]
 
-    def write_contracts(self, body: str = "", facts: list[dict] | None = None) -> None:
-        """维护 Feature 的原生契约：适用性事实在 `knowledge_facts`，其余按给的正文。"""
+    def context(self) -> dict:
+        """这一轮的知识输入身份：由产品的 `knowledgeContext` 生成，作者原样写进契约。"""
+        proc = node("--input-type=module", "-e",
+                    f"const k = await import({as_url(self.module('knowledge-application.mjs'))});"
+                    f"process.stdout.write(JSON.stringify(k.knowledgeContext({json.dumps(self.root.as_posix())})));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def write_contracts(self, body: str = "", facts: list[dict] | None = None, context: bool = True) -> None:
+        """维护 Feature 的原生契约：适用性事实在 `knowledge_facts`，这一轮的输入身份在 `knowledge_context`（`context` 为假时不写），
+        其余按给的正文。"""
         (self.feature_root / "contracts.yaml").write_text(
-            "knowledge_facts: " + json.dumps(self.judged() if facts is None else facts, ensure_ascii=False) + "\n" + body,
+            "knowledge_facts: " + json.dumps(self.judged() if facts is None else facts, ensure_ascii=False) + "\n"
+            + ("knowledge_context: " + json.dumps(self.context(), ensure_ascii=False) + "\n" if context else "") + body,
             encoding="utf-8")
 
     def hook(self, phase: str) -> str:
@@ -379,6 +389,18 @@ class TheNewDomainReachesEveryConsumer(NeutralKnowledgeCase):
         self.write_contracts()
         self.assertNotIn("的契约 的事实", self.hook("spec"))
 
+    def test_the_contract_records_this_rounds_knowledge_input(self) -> None:
+        """契约记这一轮的知识输入身份：没记、或知识原文之后变了，门禁点名位置与哪份变了；按新的一份重写就过。"""
+        self.write_contracts(context=False)
+        self.assertIn("没有记知识输入身份（契约顶层 knowledge_context）", self.hook("spec"))
+        self.write_contracts()
+        self.assertNotIn("knowledge_context", self.hook("spec"))
+        domain = self.ext / "knowledge" / "constraints" / "neutral-domain.md"
+        domain.write_text(domain.read_text(encoding="utf-8") + "\n出口的标识只在入口生成。\n", encoding="utf-8")
+        self.assertIn(f"原文变了 {REF}", self.hook("spec"))
+        self.write_contracts()
+        self.assertNotIn("knowledge_context", self.hook("spec"))
+
     def test_the_new_pattern_is_a_legal_choice(self) -> None:
         """新模式一登记就能被选——在不在册查的是激活清单，不是一份写死的名单。"""
         chosen = self.fact("neutral-pattern", {"knowledge_kind": "patterns", "outcome": "selected",
@@ -410,7 +432,7 @@ class ThePlanSideReadsTheSameSource(NeutralKnowledgeCase):
         self.assertIn("判定适用的 NEU-01（knowledge/constraints/neutral-domain.md", self.hook("plan"))
 
     def test_the_retired_files_object_carries_nothing(self) -> None:
-        """1.x 把义务挂在 files 对象上；2.0 的 files 只是原生授权文件清单（原生读取时规整成路径）：
+        """1.x 把义务挂在 files 对象上；2.0 的 files 只是预测的实现文件（原生读取时规整成路径）：
         挂在上面的义务不算有实体承担，对应的判断被点名。"""
         self.write_contracts("files:\n  - path: src/exit.ets\n    must:\n" + must("NEU-01", "ut").replace("          ", "      "))
         self.assertIn("判定适用的 NEU-01（knowledge/constraints/neutral-domain.md", self.hook("plan"), "files 对象上的义务被当成了实体承担")
