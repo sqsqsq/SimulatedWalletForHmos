@@ -73,7 +73,7 @@ async function archiveOne(reqNo, mcpToken, skipBackup = false, contentOverride =
   // ⓪ 交付集合：发布前核对记下的那一份；本地来源此刻的摘要要等于它记的
   const delivery = receipt.delivery?.items;
   if (!Array.isArray(delivery) || !delivery.length || delivery.some(d => !REMOTE[d?.name] || !d.local)) {
-    throw new Error(`取材回执里没有可用的交付集合（delivery）：上传前先做发布前核对（story_flow.py publish），它记下这一次交付哪几件`);
+    throw new Error(`取材回执里没有可用的交付集合（delivery）：上传前先做发布前核对，它记下这一次交付哪几件`);
   }
   const ITEMS = delivery.map(d => ({ ...REMOTE[d.name], name: d.name, local: d.local, digest: d.digest }));
   const local = {};

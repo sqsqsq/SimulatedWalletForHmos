@@ -93,17 +93,18 @@ class BothSidesOfCoreJudgeTheSame(unittest.TestCase):
         self.assertEqual(want, self.mjs(ids))
 
     def test_a_leftover_detail_file_does_not_make_a_local_requirement_remote(self) -> None:
+        # cmd_init 里延迟导入 materials：调用期间 core 都要在导入路径上，不靠别的用例先把它载入
         sys.path.insert(0, str(CORE))
         try:
             from flow import inputs
+            with tempfile.TemporaryDirectory() as d:
+                root = Path(d) / "ISSUE-206"
+                (root / "AR").mkdir(parents=True)
+                (root / "AR" / "detail.json").write_text('{"reqNo": "ISSUE-206"}', encoding="utf-8")
+                self.assertTrue(inputs.cmd_init(root, "ISSUE-206")["local"])
+                self.assertFalse(inputs.cmd_init(Path(d) / "AR90006", "AR90006")["local"])
         finally:
             sys.path.remove(str(CORE))
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "ISSUE-206"
-            (root / "AR").mkdir(parents=True)
-            (root / "AR" / "detail.json").write_text('{"reqNo": "ISSUE-206"}', encoding="utf-8")
-            self.assertTrue(inputs.cmd_init(root, "ISSUE-206")["local"])
-            self.assertFalse(inputs.cmd_init(Path(d) / "AR90006", "AR90006")["local"])
 
 
 
