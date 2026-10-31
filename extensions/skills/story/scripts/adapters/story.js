@@ -14,7 +14,7 @@
  *   人类可读日志走 stderr；命令执行完 stdout 最后一行是单行 JSON：
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,
  *              "items":[...],"success":true}
- *             AR/story.md 写成系统正文、AR/review.md 与 AR/design-review.md 传为附件，逐件读回，读回记进
+ *             AR/story.md 写成系统正文、AR/review.md 与 blueprint/component-blueprint.review.md（设计参考）传为附件，逐件读回，读回记进
  *             AR/story-src/fetched.json；覆盖前系统正文备份到需求目录 `.backups/cloud/`。缺任一件即失败。
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             把 `.backups/cloud/` 里最新一份写回系统正文；没有备份即失败。

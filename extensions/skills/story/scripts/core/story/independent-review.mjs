@@ -109,8 +109,7 @@ export function prepareReview(ctx, reportDirArg) {
     report_file: choice.reportFile,
     report_dirs: { ...was?.report_dirs, [key]: reportDir }, ...(waiver ? { waiver_at: waiver.at } : {}),
     ...(choice.reused ? { reused: true } : {}), ...(choice.context ? { review_context: choice.context } : {}),
-    ...(Object.keys(choice.originals).length ? { originals: choice.originals } : {}),
-    ...(ctx.designReviewSha256 ? { design_review_sha256: ctx.designReviewSha256 } : {}) };
+    ...(Object.keys(choice.originals).length ? { originals: choice.originals } : {}) };
   const rel = path.relative(ctx.projectRoot, task).split(path.sep).join('/');
   const dispatchText = dispatchFor(ctx, record, rel);
   const contextText = contextFor(record);

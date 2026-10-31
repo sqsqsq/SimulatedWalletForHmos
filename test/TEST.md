@@ -632,7 +632,7 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 
 | 评分项 | 评价对象 | 主要证据 |
 |---|---|---|
-| 产物结果 | `story.md`、`review.md` 与设计附件 `design-review.md` 作为一组评审载体 | 已确认范围与原始材料、最终 decisions、金样的形似/神似、verifier 与人工审阅 |
+| 产物结果 | `story.md` 与 `review.md` 作为一组评审载体，设计参考是同根蓝图的原生评审投影 | 已确认范围与原始材料、最终 decisions、金样的形似/神似、verifier 与人工审阅 |
 | 性能 | 从 Story init 开始到可交付结果的完整过程 | 总墙钟、作者/脚本/verifier/返修耗时、循环次数、上下文增长、规则与 checker 读取；人工等待和外部故障单列 |
 | Knowledge 应用 | 适用知识在本次需求中的消费结果 | 看到、理解、应用、传递四段证据；用确有适用知识的 Case |
 

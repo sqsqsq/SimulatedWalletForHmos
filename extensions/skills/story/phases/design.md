@@ -71,7 +71,7 @@
 - 附录的配置与埋点由 `story-build project` 从蓝图投影，要改投影内容就回蓝图修订。
 - 附录的端云接口、数据存储与规约由你按蓝图写业务摘要（写法见 `story-write.md` 的附录一行）；写作设计骨架里给这几节写
   `- 依据：`，注明蓝图 revision 与原生地址（如 `contract:<id>`），附录提交时核这些地址指得到当前蓝图的对象。
-- 完整技术契约随设计附件 `AR/design-review.md` 交付：定稿时从原生评审投影逐字节复制，你不写它，设计要改回蓝图。
+- 完整技术契约在设计参考——同根蓝图的原生评审投影 `blueprint/component-blueprint.review.md`：你不写它、不复制它，设计要改回蓝图。
 - 蓝图里没有的类别由你在那一节写「不涉及：<依据>」。术语起始行是蓝图里确认过的术语，解释由你从材料写。
 - 材料清单由你写成一张「材料 | 来源 | 贡献」表：一行一份阅读稿，来源列列齐合成它的原件与采用版本，写它贡献了什么，没采纳的写原因（写法见 `story-write.md` 的附录一行）。
 - 蓝图 `story_details` 里的专项设计写在讲它的那一章，表达由你组织，精确值、引用与来源与蓝图一致。专项内容本身有错或含混，回蓝图修订，不在 Story 补一段相反的解释，也不留给施工单位改共同设计。
@@ -79,7 +79,7 @@
 ## 五、独立审查、登记与交付
 
 1. **定稿并准备审查**：`story-build check` 通过之后，跑 `story-build review --action prepare`。它先把审查对象定成最终版
-   （附录重投、编号、渲染 `AR/review.md`、复制设计附件 `AR/design-review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`，
+   （附录重投、编号、渲染 `AR/review.md`、全篇结构检查），再写审查任务 `AR/story-src/review/task.md`，
    定下这一次的材料键、报告目录（默认 `doc/reports/story/<需求>/<材料键前 16 位>/`，与需求目录分开；可用 `--report-dir` 指定，
    首次准备定下后同一份材料一直沿用）与这一份回复的位置，生成派审载体 `AR/story-src/review/dispatch.md`（输出里的 `dispatch_text`）。
    同一份材料已有通过的报告时输出 `reused`，直接核结果。之后改了任何被审材料，重新 prepare、重新审。
@@ -107,10 +107,10 @@
    授权记进流程契约；再跑一次 prepare，审查状态写进 Story 交付章与 Review 题头，结果是 unreviewed，可以登记与交付。
    授权对应当时这一版材料：材料变了要重新审查或重新授权；之后宿主能派审了，用 `--withdraw` 撤回后正常派审。
 4. **登记**：`story_flow.py story`。它核结构检查、这一份的审查结果（pass、warn 或人授权的 unreviewed）与成文依据
-   （蓝图引用、设计采用的来源、知识摘要、材料索引摘要，以及 Story、Review、设计附件、决策登记与写作设计的原始字节指纹），通过后记下新依据。
-5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据没变、设计附件仍是当前原生投影、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
+   （蓝图引用、设计采用的来源、知识摘要、材料索引摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），通过后记下新依据。
+5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据（含蓝图）没变、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：
-   - 送审：仅系统需求，走 `/story archive <AR>`，Story 作正文、Review 与设计附件作附件，三件都读回一致才登记；
+   - 送审：仅系统需求，走 `/story archive <AR>`，Story 作正文、Review 与设计参考（蓝图的原生评审投影原字节）作附件，三件都读回一致才登记；
    - 完整设计交接：在已准入蓝图上按 Framework change-unit-progression 完成施工单位设计准备，不启动施工；
    - 实现方案：完成施工单位设计准备，再沿 Framework 交互路径为每个施工单位准备范围，请求终点写到 Plan
      （`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，Framework 判可复用的沿用，止于 Plan。

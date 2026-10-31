@@ -236,30 +236,17 @@ function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
     ...blocking.map(m => `- **读不到${m.label}（${m.doc}）**——它是必备来源，材料索引里没有这一类；与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
 }
 
-/** 设计附件与蓝图的原生评审投影字节相同时给出两者路径：同一份内容在两个位置。 */
-function sharedProjection(projectRoot, rows) {
-  const attachment = rows.find(r => r.role === 'object' && r.path.endsWith('/AR/design-review.md'))?.path;
-  const projection = rows.find(r => r.role === 'source' && r.path.endsWith('/component-blueprint.review.md'))?.path;
-  const bytes = p => { try { return fs.readFileSync(path.join(projectRoot, ...p.split('/'))); } catch { return null; } };
-  const a = attachment && bytes(attachment);
-  const b = projection && bytes(projection);
-  return a && b && a.equals(b) ? { attachment, projection } : null;
-}
-
 /**
  * 读法：先按派审载体说的情形定范围——首审、实质复审与上一版报告参考完整读，格式返修照用原回复已充分的判断、只补诊断点到的核验；
- * 完整读时先来源与设计，再通读待审的三件；附件与投影同字节时只读附件一次。
+ * 完整读时先来源与设计，再通读待审的 Story 与 Review。
  */
-const reading = shared => ['', '### 怎么读', '',
+const reading = () => ['', '### 怎么读', '',
   '读到这份任务时，你已按派审载体只读 `AR/story.md` 做完首读，首读结论写在报告「判据核对」表后；下面是核源。',
   '先看派审载体有没有列前轮上下文（没有就是首审）；有就读它，看是哪种情形。首审、上一份结论是 fail 的复审、带上一版材料报告参考的审查，按下面的顺序完整读。'
   + '格式返修只修上一份回复的报告形态：原回复的实质判断与判据覆盖充分就照用，只回材料核诊断点到的那部分；'
   + '诊断是缺判据、引用找不到、依据不足或结论矛盾，或者看不出原审查是否完整时，同样按下面的顺序完整读。', '',
   '1. 先读来源与人签（设计采用的材料版本与人工答复、会议原文与人的裁决、决策登记），'
-  + (shared
-    ? '再读整体设计（蓝图），然后通读待审的 Story、Review 与设计附件；'
-      + `设计附件 \`${shared.attachment}\` 与蓝图的原生评审投影 \`${shared.projection}\` 字节相同，完整读设计附件一次即可。`
-    : '再读整体设计（蓝图与它的原生评审投影），然后通读待审的 Story、Review 与设计附件。')
+  + '再读整体设计（蓝图与它的原生评审投影——设计参考，完整技术契约在这里），然后通读待审的 Story 与 Review。'
   + '写作设计是作者的安排，作参考。',
   '2. 一份文件一次读不完时按范围接着读到末尾；读不到的按「报告怎么写」第 5 条处理。',
   '3. 发现整体业务矛盾时追到它的权威对象（决定、蓝图、来源），按它对这次交付的影响定严重程度。'];
@@ -288,7 +275,7 @@ export function readerReviewTask(projectRoot, feature) {
       String(check.ai_prompt_hint ?? '').trim(),
       '',
     ]),
-    ...reading(sharedProjection(projectRoot, object.rows)),
+    ...reading(),
     ...objectRows(projectRoot, feature, contract, object),
     ...(object.design ? ['', '### 设计状态（原生读取）', '',
       `蓝图${object.design.admitted ? '已准入' : '是草稿、未准入'}；原生问题 ${object.design.issues.length} 条`

@@ -45,7 +45,7 @@ import { writeDrafts } from './story/drafts.mjs';
 import {
   CommandFailure, createContext, fail, isSystemRequirement, readJson, readText,
 } from './story/context.mjs';
-import { attachDesignReview, designGaps, projectAppendix } from './story/appendix.mjs';
+import { designGaps, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
 import {
   discloseInStory, pendingDisclosure, preparedRecord, prepareReview, reviewResult, waiverCheck,
@@ -239,7 +239,6 @@ function cmdReview(ctx) {
   cmdNumber(ctx);
   cmdBuild(ctx);
   discloseInStory(ctx);
-  attachDesignReview(ctx);
   const { problems } = storyCheck(ctx, { registration: false });
   if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
   const out = prepareReview(ctx, ctx.args.reportDir);
@@ -453,7 +452,7 @@ function cmdArchive(ctx) {
       + `\`python doc/extensions/skills/story/scripts/core/story_flow.py archived --feature ${feature}\`\n`
       + (reg.error ?? reg.output));
   }
-  process.stdout.write(`[story-build archive] 已归档并登记：${feature}（Story、Review、设计附件三件上传并读回核验成立；`
+  process.stdout.write(`[story-build archive] 已归档并登记：${feature}（Story、Review、设计参考附件三件上传并读回核验成立；`
     + `覆盖前的系统正文备份在 ${receipt.backupPath ?? '对接层记录处'}）\n`);
   if (plan.open_topics?.length) process.stdout.write(`[story-build archive] 带着未决议题送审：${plan.open_topics.join('；')}\n`);
   if (plan.unverified?.length) process.stdout.write(`[story-build archive] 未验证项：${plan.unverified.join('；')}\n`);

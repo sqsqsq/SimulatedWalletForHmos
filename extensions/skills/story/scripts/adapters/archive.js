@@ -1,5 +1,5 @@
 /**
- * archive.js — 归档：Story 写成系统正文，Review 与设计附件传为附件，逐件写入并读回。
+ * archive.js — 归档：Story 写成系统正文，Review 与设计参考（蓝图原生评审投影）传为附件，逐件写入并读回。
  *
  * archiveOne(reqNo, mcpToken, skipBackup?, contentOverride?)
  *   → { archived: true, backupPath, verified, items }
@@ -27,7 +27,7 @@ const RECEIPT = path.join('AR', 'story-src', 'fetched.json');
 const ITEMS = [
   { name: 'AR-design.md', local: 'AR/story.md', get: 'getBody', put: 'putBody', url: REQUIREMENT_URL, remote: 'design.md' },
   { name: 'review.md', local: 'AR/review.md', get: 'getAttachment', put: 'putAttachment', url: ATTACHMENT_URL, remote: 'review.md' },
-  { name: 'design-review.md', local: 'AR/design-review.md', get: 'getAttachment', put: 'putAttachment', url: ATTACHMENT_URL,
+  { name: 'design-review.md', local: 'blueprint/component-blueprint.review.md', get: 'getAttachment', put: 'putAttachment', url: ATTACHMENT_URL,
     remote: 'design-review.md' },
 ];
 
@@ -66,7 +66,7 @@ async function archiveOne(reqNo, mcpToken, skipBackup = false, contentOverride =
   for (const item of ITEMS) {
     const file = path.join(root, item.local);
     if (!fs.existsSync(file)) {
-      throw new Error(`${item.local} 不存在，无可归档物：${reqNo}。它是 /story 成文登记的产物，请回 /story 补齐后重试。`);
+      throw new Error(`${item.local} 不存在，无可归档物：${reqNo}。它是 /story 成文登记的产物或同根蓝图的原生评审投影，请回 /story 补齐后重试。`);
     }
     local[item.name] = fs.readFileSync(file, 'utf-8');
   }
@@ -119,7 +119,7 @@ async function archiveOne(reqNo, mcpToken, skipBackup = false, contentOverride =
       throw new Error(`${item.name} 上传未完成（${e.message}）：已完成的几件保留，重试前重新 fetch 并做发布前核对`);
     }
   }
-  log(`归档完成：${reqNo}（正文 + 评审记录附件 + 设计附件，均已读回）`);
+  log(`归档完成：${reqNo}（正文 + 评审记录附件 + 设计参考附件，均已读回）`);
   return { archived: true, backupPath, verified: true, items: items.filter(i => ITEMS.some(x => x.name === i.name)) };
 }
 

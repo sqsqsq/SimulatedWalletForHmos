@@ -6,7 +6,6 @@
 import { isSystemRequirement, readJson } from './context.mjs';
 import { basisDriftProblems, designSource, designStatusLines } from './design-source.mjs';
 import { reviewResult } from './independent-review.mjs';
-import { designReviewProblems } from './appendix.mjs';
 import { readingWork } from './figure-view.mjs';
 
 /**
@@ -39,7 +38,7 @@ export function deliveryNextSteps(ctx) {
 /**
  * 交付门 —— 成文依据还是登记时那一份吗，这一份的独立审查给出可消费的结论了吗。
  *
- * 设计来源不成立、登记之后蓝图 / 输入 / 知识 / 被审文件变了、设计附件不是当前原生投影，都拦：登记说的已经不是现在这份。
+ * 设计来源不成立、登记之后蓝图 / 输入 / 知识 / 被审文件变了，都拦：登记说的已经不是现在这份。
  * 审查结论只读当前对象的 Story 报告：pass 放行，warn 放行并列出建议，人授权的未审查交付放行并披露，其余照结果拦。
  *
  * @returns {Promise<{problems: string[], notes: string[]}>}
@@ -50,7 +49,7 @@ export async function deliveryProblems(ctx) {
     return { problems: ['还没登记成文——交付的是登记过的那一份，先跑 `story_flow.py story` 登记'], notes: [] };
   }
   const source = designSource(ctx);
-  const drift = source.problems.length ? source.problems : [...basisDriftProblems(ctx), ...designReviewProblems(ctx)];
+  const drift = source.problems.length ? source.problems : basisDriftProblems(ctx);
   if (drift.length) return { problems: drift, notes: [] };
   // 草稿可以业务送审；准入状态与原生问题照实写进交付说明，施工准备前由设计职责走到准入
   const design = source.admitted ? [] : [`设计状态：${designStatusLines(source).join('\n')}——业务送审照常，施工准备前由设计职责走到准入`];

@@ -191,7 +191,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     # 与流程路由拿它核「登记之后改过没有」，改过就重新审查、重新登记。
     #
     # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
-    # 它们走不漏到读者手上——归档只上传 story.md、review.md 与 design-review.md，`story-src/` 整层
+    # 它们走不漏到读者手上——归档只上传 story.md、review.md 与蓝图的原生评审投影，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
     # 材料索引摘要随登记记下：update 以 documents 收口时据它认「登记之后来的新材料有没有经过这次成文」

@@ -18,7 +18,7 @@ import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
  * 白名单而不是黑名单：黑名单挡不住下一个往根下写的新文件，而这里要成立的是一个
  * 持续的性质——机制不往交付层散辅助件。
  */
-const AR_ROOT_FILES = ['story.md', 'review.md', 'design-review.md'];
+const AR_ROOT_FILES = ['story.md', 'review.md'];
 
 /** 命令判定没过：原因已写到 stderr，入口在恢复阅读视图之后按退出码 1 结束，不在半路退出进程。 */
 export class CommandFailure extends Error {}

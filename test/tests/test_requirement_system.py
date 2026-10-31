@@ -77,7 +77,8 @@ class SystemCase(unittest.TestCase):
         (self.feature / "AR").mkdir(parents=True, exist_ok=True)
         (self.feature / "AR" / "story.md").write_text(story, encoding="utf-8")
         (self.feature / "AR" / "review.md").write_text(notes, encoding="utf-8")
-        (self.feature / "AR" / "design-review.md").write_text(DESIGN_REVIEW_TEXT, encoding="utf-8")
+        (self.feature / "blueprint").mkdir(parents=True, exist_ok=True)
+        (self.feature / "blueprint" / "component-blueprint.review.md").write_text(DESIGN_REVIEW_TEXT, encoding="utf-8")
         return story, notes
 
     def batch(self) -> Path:
@@ -175,7 +176,8 @@ class TestFetch(SystemCase):
 
 
 class TestArchive(SystemCase):
-    """归档是往系统上写三件：正文、评审记录附件、设计附件，逐件写入并读回；本地只多一份系统正文的备份，回执记读回。"""
+    """归档是往系统上写三件：正文、评审记录附件、设计参考附件（蓝图原生评审投影的原字节），逐件写入并读回；
+    本地只多一份系统正文的备份，回执记读回。"""
 
     def setUp(self) -> None:
         super().setUp()
@@ -196,10 +198,10 @@ class TestArchive(SystemCase):
         self.assertEqual(AR_TEXT, backups[0].read_text("utf-8"))
         self.assertEqual(f".backups/cloud/{backups[0].name}", receipt["backupPath"])
         items = self.items()
-        for name, local in (("AR-design.md", "story.md"), ("review.md", "review.md"), ("design-review.md", "design-review.md")):
+        for name, local in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"), ("design-review.md", "blueprint/component-blueprint.review.md")):
             item = items[name]
             self.assertEqual("fetched", item["status"], item)
-            self.assertEqual(short(self.feature / "AR" / local), item["digest"])
+            self.assertEqual(short(self.feature / local), item["digest"])
             self.assertIn("checkedAt", item)
         after = json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
         self.assertEqual(self.before["fetchedAt"], after["fetchedAt"], "上传刷新了取材时间")
@@ -230,7 +232,7 @@ class TestArchive(SystemCase):
         self.assertEqual(["AR/story-src/fetched.json"], changed)
 
     def test_a_missing_item_fails_without_touching_the_system(self) -> None:
-        for rel in ("AR/story.md", "AR/design-review.md"):
+        for rel in ("AR/story.md", "blueprint/component-blueprint.review.md"):
             with self.subTest(missing=rel):
                 kept = (self.feature / rel).read_bytes()
                 (self.feature / rel).unlink()

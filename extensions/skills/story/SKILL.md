@@ -27,7 +27,7 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 | 顺序 | 命令 | 功能 |
 |---|---|---|
 | 1 | `/story init <编号>` | 起手取材、导入与分析，之后按本文一路做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择 |
-| 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 与 `AR/design-review.md` 作附件逐件上传并读回（自动备份；任一缺失或未过门禁即拒绝） |
+| 2 | `/story archive <AR>` | `AR/story.md` 作正文、`AR/review.md` 与设计参考 `blueprint/component-blueprint.review.md` 作附件逐件上传并读回（自动备份；任一缺失或未过门禁即拒绝） |
 | 3 | `/story restore <AR>` | （可选）用备份回退 archive 的覆盖 |
 | 4 | `/story update <编号>` | 上游材料、评审意见或人的新决定变了之后，据它更新已有产物 |
 | — | `/story adapt [<目标工程>]` | 把 Story Extension 装到或升级到另一个工程 |
@@ -86,7 +86,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 
 **交给设计之后直接进 component-design，不问**：本轮的终点在启动时就声明了，中途再问是把一个已经有主的问题重问一次。
 
-**送审授权**：交付选择里人选了「送审」，或请求明确要 `/story archive`，即授权把当前展示的 Story、Review 与设计附件写到这一张单据，
+**送审授权**：交付选择里人选了「送审」，或请求明确要 `/story archive`，即授权把当前展示的 Story、Review 与设计参考附件写到这一张单据，
 覆盖相应的归档写入。发布前核照常跑、结果向人展示，范围没变不再要第二次确认；目标被外部改过、待覆盖的内容超出这次授权、
 附件或目标新增时，停下说明变化请人决定。恢复线上正文按它自己的授权，送审授权不含恢复。
 
@@ -158,21 +158,21 @@ python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR
 
 **没有需求系统单据时**（问题单、别人发来的需求文档）：入口不变，仍是 `/story init <编号>`。
 非 `AR` 开头的编号不碰需求系统，跳过 ①、直接建骨架。**本地单没有归档环节**——交付终点是仓内的
-`AR/story.md`、`AR/review.md` 与设计附件 `AR/design-review.md`。
+`AR/story.md` 与 `AR/review.md`；设计参考是同根蓝图的原生评审投影 `blueprint/component-blueprint.review.md`。
 
 ### 归档
 
-- **前置**：Story 已登记并通过交付门，`AR/story.md`、`AR/review.md` 与 `AR/design-review.md` 齐备；不适用于本地单
+- **前置**：Story 已登记并通过交付门，`AR/story.md`、`AR/review.md` 与设计参考 `blueprint/component-blueprint.review.md` 齐备；不适用于本地单
 - **archive 不改业务正文**：上传只写取材回执里三件的读回，工作区其余文件不动；全程按正式形态上传（图块是 Mermaid，增强 SVG 不上传），结束后恢复可用的增强 SVG
 
 ```
 node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature <AR> --mcp-token <token> [--reply "<人确认覆盖外部改动的原话>"]
 ```
 
-一条命令依次走完：交付门 → 取外部当前内容 → 发布前核 → 按 正文 → 评审记录附件 → 设计附件 的顺序逐件写入并读回 → 核回执 → 登记发布记录（不可逆）。
+一条命令依次走完：交付门 → 取外部当前内容 → 发布前核 → 按 正文 → 评审记录附件 → 设计参考附件 的顺序逐件写入并读回 → 核回执 → 登记发布记录（不可逆）。
 
 - **交付门没过**不调用需求系统。
-- **发布前核**用取回的内容逐件核需求系统上的正文、评审记录附件与设计附件还是不是上次发布（或恢复）之后的那一版
+- **发布前核**用取回的内容逐件核需求系统上的正文、评审记录附件与设计参考附件还是不是上次发布（或恢复）之后的那一版
   （首次发布的附件，系统上应当还没有）。某一件被别人改过时它报冲突、不上传——要并进来的走 `/story update`；
   人看过仍要覆盖，带 `--reply "<原话>"` 重跑，原话连同那一件的外部与本地版本记进契约。
 - **上传或读回没成立**不登记，按它报的远端状态核清后重跑：已经写好的那几件判为相同、跳过，外部在失败之后又被改过的报冲突。
@@ -242,7 +242,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | `blueprint/` | 组件蓝图（framework `component-design`，与需求同根）：本部件怎么设计，需求条目引 `sources/` 的材料版本（准入后是 Story 附录与后续施工的设计来源） |
 | `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
 | `AR/story.md` | 把材料、决定与当前设计组织成可评审的叙述（零新事实；archive 的上传正文） |
-| `AR/design-review.md` | 设计附件：本次蓝图原生评审投影的逐字节副本，完整技术契约在这里（定稿时生成，不手改；archive 的附件） |
+| `blueprint/component-blueprint.review.md` | 设计参考：蓝图的原生评审投影，完整技术契约在这里（原生生成，设计要改回蓝图；archive 按原字节作设计参考附件上传） |
 
 ## 需求系统 Token
 

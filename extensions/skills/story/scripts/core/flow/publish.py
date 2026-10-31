@@ -2,7 +2,7 @@
 
 上传与恢复由数据对接层执行（它的 archive 与 restore 命令），本层只做它们之前与之后确定的事：
 发布前按当前人读交付门核资格，把差异、未决与未验证项摆给人；用最近一次取材的回执逐件核需求系统上的
-Story 正文、Review 附件与设计附件还是不是我们上次知道的那一版——被别人改过就交人定，不直接覆盖；
+Story 正文、Review 附件与设计参考附件还是不是我们上次知道的那一版——被别人改过就交人定，不直接覆盖；
 发布与远端恢复之后记下外部现在是哪一版。本地单没有远端，这里的动作都不适用。
 """
 from __future__ import annotations
@@ -16,20 +16,20 @@ from pathlib import Path
 
 from flow.lifecycle import _not_the_product, _said
 from flow.routing import live_materials, next_step, register_command
-from flow.state import (CORE_DIR, DESIGN_REVIEW, FlowError, PUBLISHED, REVIEW, STORY, load, log, now, require, save,
+from flow.state import (CORE_DIR, DESIGN_REFERENCE, FlowError, PUBLISHED, REVIEW, STORY, load, log, now, require, save,
                         short_digest, system_requirement)
 
 #: 最近一次取材的回执，与 update 读的是同一份
 RECEIPT = ("AR", "story-src", "fetched.json")
-#: 发布的三件：回执里的名字、本地文件、发布记录里的摘要键，按上传顺序
+#: 发布的三件：回执里的名字、本地来源、发布记录里的摘要键，按上传顺序；设计参考附件取蓝图原生评审投影的原字节
 ITEMS = (("AR-design.md", STORY, "story_digest"),
          ("review.md", REVIEW, "review_digest"),
-         ("design-review.md", DESIGN_REVIEW, "design_review_digest"))
+         ("design-review.md", DESIGN_REFERENCE, "design_review_digest"))
 
 
 def _remote_only(feature_root: Path) -> None:
     if not system_requirement(feature_root.name):
-        raise FlowError("本地单没有远端动作：交付终点就是仓内的 AR/story.md、AR/review.md 与 AR/design-review.md")
+        raise FlowError("本地单没有远端动作：交付终点就是仓内的 AR/story.md 与 AR/review.md，设计参考是同根蓝图的原生评审投影")
 
 
 def _gate(feature_root: Path, project_root: Path) -> tuple[bool, str]:
@@ -176,13 +176,13 @@ def cmd_restored(feature_root: Path) -> dict:
 
 
 def publication_record(feature_root: Path, blueprint_ref: dict | None) -> dict:
-    """三件都读回之后的发布记录：这一次发出去的 Story、Review 与设计附件的摘要和设计附件的原生引用，
-    外部现在就是这一版；三件原样各留一份给下一次比差异。"""
-    story, review, design = (feature_root / Path(*rel) for rel in (STORY, REVIEW, DESIGN_REVIEW))
+    """三件都读回之后的发布记录：这一次发出去的 Story、Review 与设计参考附件的摘要和设计参考的原生引用，
+    外部现在就是这一版；三件原样各留一份给下一次比差异（按需求系统上的名字存）。"""
+    story, review, design = (feature_root / Path(*rel) for rel in (STORY, REVIEW, DESIGN_REFERENCE))
     out = feature_root / Path(*PUBLISHED)
     out.mkdir(parents=True, exist_ok=True)
-    for path in (story, review, design):
-        shutil.copyfile(path, out / path.name)
+    for name, path in (("story.md", story), ("review.md", review), ("design-review.md", design)):
+        shutil.copyfile(path, out / name)
     digest = short_digest(story.read_bytes())
     return {"at": now(), "story_digest": digest, "review_digest": short_digest(review.read_bytes()),
             "design_review_digest": short_digest(design.read_bytes()), "design_blueprint_ref": blueprint_ref,
@@ -190,7 +190,7 @@ def publication_record(feature_root: Path, blueprint_ref: dict | None) -> dict:
 
 
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:
-    """登记「叙事件已送审」：Story、Review 与设计附件三件都已上传并读回一致。归档动作由数据对接层执行，本命令只记状态。
+    """登记「叙事件已送审」：Story、Review 与设计参考附件三件都已上传并读回一致。归档动作由数据对接层执行，本命令只记状态。
 
     归档态是**流程状态**，落在流程契约里：装配脚本据它判定 `AR/review.md` 已归人所有，
     此后重新渲染时人工区逐字保留、机器区按当前决策件重算，评审人的批注与回稿都留在那份文件里。判据在契约里，
@@ -204,7 +204,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
         raise FlowError(
             "还没登记成文态：归档的是 story，story 没过 check 就归档等于把未校验的产物送审。"
             "先跑 `story_flow.py story --feature <名>`")
-    for rel in (STORY, REVIEW, DESIGN_REVIEW):
+    for rel in (STORY, REVIEW, DESIGN_REFERENCE):
         if not (feature_root / Path(*rel)).is_file():
             raise FlowError(f"{'/'.join(rel)} 不存在：归档件不全，无可登记的归档态")
 
@@ -225,7 +225,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
         raise FlowError(f"交付门没能启动（{exc}），归档态没有登记。这是运行环境问题：环境恢复后{again}") from exc
     if proc.returncode == 1:
         raise FlowError(
-            "交付门这次没通过，归档态没有登记。它核的是本地工作区当前的 Story、Review、设计附件与审查结果，"
+            "交付门这次没通过，归档态没有登记。它核的是本地工作区当前的 Story、Review、设计参考与审查结果，"
             f"不是需求系统里那一份；按下面的输出处理它点名的问题后{again}。本地业务稿确实要改的，走 `/story update`。"
             "交付门原始输出：\n" + _said(proc))
     if proc.returncode != 0:

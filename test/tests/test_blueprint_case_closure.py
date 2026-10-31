@@ -259,7 +259,8 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertEqual({"ok": True, "kind": "local"}, after["delivery"])
 
     def test_submitted_needs_the_current_version_in_the_requirement_system(self) -> None:
-        """送审终点：交付门通过之外，发布记录与已发布副本是当前 Story、Review 与设计附件，需求系统上的正文与两个附件逐字是这三件。"""
+        """送审终点：交付门通过之外，发布记录与已发布副本是当前 Story、Review 与设计参考（蓝图的原生评审投影），
+        需求系统上的正文与两个附件逐字是这三件。"""
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
         system = self.root.parent / "system"
@@ -271,9 +272,9 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertIn("还没送审", submitted()["missing"][0])
         # 对接层逐件上传并读回：取材回执里三件记这一版的读回
         items = [{"name": name, "status": "fetched", "checkedAt": "2099-01-01T00:00:00+00:00",
-                  "digest": "sha256:" + hashlib.sha256((self.story.parent / local).read_bytes()).hexdigest()[:16]}
-                 for name, local in (("AR-design.md", "story.md"), ("review.md", "review.md"),
-                                     ("design-review.md", "design-review.md"))]
+                  "digest": "sha256:" + hashlib.sha256((self.story.parent.parent / local).read_bytes()).hexdigest()[:16]}
+                 for name, local in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"),
+                                     ("design-review.md", "blueprint/component-blueprint.review.md"))]
         (self.story.parent / "story-src" / "fetched.json").write_text(
             json.dumps({"fetchedAt": "2099-01-01T00:00:00+00:00", "items": items}), encoding="utf-8")
         archived = subprocess.run(["python", str(self.FLOW), "archived", "--feature", "REQ-DEMO",
@@ -288,7 +289,8 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         attachment = ticket / "attachments" / "review.md"
         attachment.parent.mkdir(parents=True)
         (ticket / "design.md").write_bytes(self.story.read_bytes())
-        (ticket / "attachments" / "design-review.md").write_bytes((self.story.parent / "design-review.md").read_bytes())
+        (ticket / "attachments" / "design-review.md").write_bytes(
+            (self.story.parent.parent / "blueprint" / "component-blueprint.review.md").read_bytes())
         for stale, why in ((b"", "空附件"), (review.read_bytes() + "上一版的评审记录。\n".encode("utf-8"), "旧附件")):
             attachment.write_bytes(stale)
             self.assertTrue(any("评审记录附件" in m for m in submitted()["missing"]), f"{why}被当成送到了")

@@ -809,20 +809,22 @@ class ABrokenPreparationRecordIsAnInputFault(TheStoryIsReviewedRegisteredAndDeli
         self.assertEqual("fail", self.result()["result"], "恢复原记录后，原 fail 不见了")
 
 
-class TheDesignAttachmentIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """设计附件 AR/design-review.md：定稿时从原生评审投影逐字节复制，是被审、被登记的一件；手改不盖，蓝图换版照常重写。"""
-
-    def attachment(self) -> Path:
-        return self.story.parent / "design-review.md"
+class TheDesignReferenceIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """设计参考是同根蓝图的原生评审投影：审查任务把它列作只读对照，待审的只有 Story 与 Review；本地不另存副本，
+    蓝图换版后旧登记不再交付。"""
 
     def projection(self) -> Path:
         return self.root / "doc" / "features" / design_kit.blueprint_of(self.root, "REQ-DEMO") / "blueprint" / "component-blueprint.review.md"
 
-    def test_prepare_copies_the_projection_byte_for_byte_and_reviews_it(self) -> None:
+    def test_the_review_reads_the_projection_and_nothing_is_copied(self) -> None:
         self.reviewed("pass")
-        self.assertEqual(self.projection().read_bytes(), self.attachment().read_bytes())
+        self.assertFalse((self.story.parent / "design-review.md").exists(), "定稿又在交付层复制了一份设计")
         task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
-        self.assertIn("doc/features/REQ-DEMO/AR/design-review.md`", task, "设计附件不在审查材料里")
+        objects, sources = task.split("待审（结论针对它们）：", 1)[1].split("只读对照（据以判断，不在这次改）：", 1)
+        projection = self.projection().relative_to(self.root).as_posix()
+        self.assertIn(f"`{projection}` —— 蓝图的原生评审投影（设计参考", sources)
+        self.assertEqual(["AR/review.md", "AR/story.md"],
+                         sorted(line.split("`")[1].split("REQ-DEMO/", 1)[1] for line in objects.splitlines() if line.startswith("- `")))
         self.assertEqual(0, self.register().returncode)
         self.assertEqual(0, self.check("--deliver").returncode)
 
@@ -837,16 +839,6 @@ class TheDesignAttachmentIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDe
         self.assertEqual(0, r.returncode, r.stderr[:600])
         return r.stdout.split("### 怎么读", 1)[1].split("\n### ", 1)[0]
 
-    def test_the_identical_projection_is_read_once(self) -> None:
-        """附件与原生投影同字节：读法写明两处是同一份、完整读附件一次；字节不同就两处都读。"""
-        self.assertEqual(0, self.review("prepare").returncode)
-        projection = self.projection().relative_to(self.root).as_posix()
-        self.assertIn(f"`{projection}` 字节相同，完整读设计附件一次即可", self.reading())
-        self.attachment().write_bytes(self.attachment().read_bytes() + "手加的一行。\n".encode("utf-8"))
-        reading = self.reading()
-        self.assertIn("蓝图与它的原生评审投影", reading)
-        self.assertNotIn("字节相同", reading)
-
     def test_the_reading_scope_is_chosen_before_the_full_reading_order(self) -> None:
         """R2：入口先按载体情形定范围：格式返修照用充分的原判断、只补诊断点到的核验，其余情形与实质缺陷完整读；
         完整读的顺序只在这之后给一次，没有末尾追加的例外条。"""
@@ -857,24 +849,14 @@ class TheDesignAttachmentIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDe
             self.assertIn(words, head)
         self.assertNotRegex(order, r"(?m)^5\. ", "格式返修又成了末尾的例外条")
         self.assertEqual(1, reading.count("格式返修"), "范围说明不止一处")
+        self.assertIn("蓝图与它的原生评审投影", order)
 
-    def test_a_hand_edit_is_kept_and_stops_the_prepare(self) -> None:
-        self.assertEqual(0, self.review("prepare").returncode)
-        edited = self.attachment().read_bytes() + "手加的一行。\n".encode("utf-8")
-        self.attachment().write_bytes(edited)
-        out = self.review("prepare")
-        self.assertNotEqual(0, out.returncode, "被改过的设计附件被静默覆盖")
-        self.assertIn("被改过", out.stdout + out.stderr)
-        self.assertEqual(edited, self.attachment().read_bytes())
-
-    def test_a_revised_blueprint_rewrites_it_and_the_old_registration_is_not_delivered(self) -> None:
+    def test_a_revised_blueprint_retires_the_old_registration(self) -> None:
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
         design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, "target_state: refresh trigger",
                                     "target_state: refresh trigger and badge")
-        self.assertNotEqual(0, self.check("--deliver").returncode, "蓝图换版之后旧附件仍被交付")
-        self.assertEqual(0, self.review("prepare").returncode)
-        self.assertEqual(self.projection().read_bytes(), self.attachment().read_bytes(), "蓝图换版之后附件没跟着重写")
+        self.assertNotEqual(0, self.check("--deliver").returncode, "蓝图换版之后旧登记仍被交付")
 
 
 class AnUnreviewedDeliveryNeedsAHuman(TheStoryIsReviewedRegisteredAndDeliveredCase):

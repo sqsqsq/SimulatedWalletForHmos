@@ -1,30 +1,24 @@
 /**
- * 附录 —— 当前蓝图与它采用的来源的投影、手改保护、附录自己的结构判据，以及设计附件。
+ * 附录 —— 当前蓝图与它采用的来源的投影、手改保护、附录自己的结构判据。
  *
  * 附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。这里管三件事：
  * 机器区**从真源重算**（不读旧 story，读旧的就成了真源加一份会漂的副本），
- * 作者区与机器区的分界——有人在机器区写过字就停下，不静默盖掉——以及设计附件 `AR/design-review.md`。
+ * 作者区与机器区的分界——有人在机器区写过字就停下，不静默盖掉。
  *
  * 机器区的真源是原生读取、消费了本次输入且评审投影对得上的当前蓝图（开发视图与架构影响、精确明细 `story_details` 里的
- * 配置与埋点）。接口、数据与规约由作者按蓝图写业务摘要，完整技术契约在设计附件。
+ * 配置与埋点）。接口、数据与规约由作者按蓝图写业务摘要，完整技术契约在设计参考（蓝图的原生评审投影）。
  * 每个机器区由章节合同登记的具名读取器算出，生成与核对共用同一份计算；表头与文字标签登记在合同，本文件不写业务词。
  */
-import * as crypto from 'node:crypto';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   chapterSpan, findByName, headingEnd, nativeAddresses, normalizeHeading, parseDocument, sectionBody, sectionNames,
   separateMarks, zoneBlock, zoneBody, zoneHandEdited, zoneLine, zoneSpan, ZONE_BEGIN, ZONE_END,
 } from './document.mjs';
-import { fail, readJson, replaceFile } from './context.mjs';
+import { fail } from './context.mjs';
 import { imageLinks } from './language.mjs';
 import { blueprintAddresses, blueprintKnowledge } from '../../../../../hooks/shared/knowledge-application.mjs';
 import { designSource } from './design-source.mjs';
 import { READERS } from './appendix-readers.mjs';
-
-//: 设计附件：本次蓝图原生评审投影的逐字节副本，随 Story 与 Review 一起交付
-const DESIGN_REVIEW = ['AR', 'design-review.md'];
-const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
 
 /** 附录那一章（合同里标了 `appendix` 的那个）。没有就返回 null。 */
 export function appendixChapter(contract) {
@@ -385,57 +379,4 @@ function firstDiff(have, want) {
     if (a[i] !== b[i]) return { why: '这一行不一样', at: i, have: a[i], want: b[i] };
   }
   return null;
-}
-
-/**
- * 盘上的设计附件是不是本扩展上次生成的那一份：准备记录、当前 update 的完成点与成文登记里记过的摘要。
- * 三处都是既有的所有权记录；与其中任一相符就是机器产物，可以按当前投影重写。
- */
-function knownDesignReview(ctx) {
-  const rel = DESIGN_REVIEW.join('/');
-  const known = new Set();
-  const prepared = readJson(path.join(ctx.srcDir, 'review', 'prepared.json'), null);
-  if (prepared?.design_review_sha256) known.add(prepared.design_review_sha256);
-  const flow = readJson(ctx.flowPath, null);
-  if (flow?.story_basis?.files?.[rel]) known.add(flow.story_basis.files[rel]);
-  const open = flow?.update?.open;
-  const record = open ? readJson(path.join(ctx.srcDir, 'updates', open, 'record.json'), null) : null;
-  if (record?.owned_after?.[rel]) known.add(record.owned_after[rel]);
-  return known;
-}
-
-/**
- * 定稿时写设计附件 `AR/design-review.md`：复制当前蓝图的原生评审投影，字节相同。
- *
- * 设计来源不成立时不写（调用方在这之前已经按同一份结论停下）。盘上已有的附件与当前投影不同、
- * 又不是上次生成的那一份，就是有人改过：停下不盖，修改回蓝图。成功后把写下的摘要记进 `ctx`，准备记录据它认所有权。
- */
-export function attachDesignReview(ctx) {
-  const source = designSource(ctx);
-  if (source.problems.length || !source.projection) {
-    fail(`设计附件写不出来：\n  · ${source.problems.join('\n  · ') || '原生评审投影的位置读不到'}`);
-  }
-  const bytes = fs.readFileSync(path.join(ctx.projectRoot, ...source.projection.split('/')));
-  const target = path.join(ctx.featureRoot, ...DESIGN_REVIEW);
-  const now = fs.existsSync(target) ? fs.readFileSync(target) : null;
-  if (now && !now.equals(bytes)) {
-    if (!knownDesignReview(ctx).has(sha256(now))) {
-      fail(`${DESIGN_REVIEW.join('/')} 与当前原生评审投影 ${source.projection} 不同，也不是上次生成的那一份：盘上这份被改过，未覆盖。`
-        + '它是原生投影的副本，设计要改回蓝图修订；把这份里的改动交回它的责任处之后删掉它，再跑 prepare 重新生成');
-    }
-  }
-  if (!now || !now.equals(bytes)) replaceFile(target, bytes);
-  ctx.designReviewSha256 = sha256(bytes);
-}
-
-/** 交付前核设计附件：等于当前蓝图的原生评审投影。 */
-export function designReviewProblems(ctx) {
-  const source = designSource(ctx);
-  if (source.problems.length || !source.projection) return [];
-  const target = path.join(ctx.featureRoot, ...DESIGN_REVIEW);
-  const want = fs.readFileSync(path.join(ctx.projectRoot, ...source.projection.split('/')));
-  const have = fs.existsSync(target) ? fs.readFileSync(target) : null;
-  if (have?.equals(want)) return [];
-  return [`${DESIGN_REVIEW.join('/')} ${have ? '与' : '不在，'}当前蓝图的原生评审投影 ${source.projection}${have ? ' 不同' : ''}`
-    + '——设计附件在 `story-build review --action prepare` 定稿时按当前投影生成，重新 prepare、审查并登记'];
 }

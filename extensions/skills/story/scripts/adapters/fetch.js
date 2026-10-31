@@ -6,7 +6,7 @@
  *   三份正文写进 outDir（本单来源收件箱下的一个取材批次），批次里写 `.receipt.json`：
  *   reqNo / parentNo / rrNo 与逐件的 role、ticket、title、origin、status、saved——导入按它认来源。
  *   与来源索引里同一来源已存的某一版逐字相同的不落盘（AR 正文与本地已归档的 Story 相同也不落盘，
- *   那是我们自己发布上去的）；评审回稿写 `AR/story-src/review-feedback.md`；评审记录附件与设计附件和本地不同时
+ *   那是我们自己发布上去的）；评审回稿写 `AR/story-src/review-feedback.md`；评审记录附件与设计参考附件和本地不同时
  *   写 `AR/story-src/fetched-review.md`、`fetched-design-review.md`（不覆盖本地 AR/review.md 的人工区）；
  *   外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt。每份的 status 四态分开：
  *   fetched / same / absent / failed——混成一个的话，一次读取错误会被当成「评审没提意见」。
@@ -68,8 +68,8 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
       local: [], dir: src },
     { name: 'review.md', label: '评审记录附件', no: reqNo, attachment: 'review.md',
       local: ['AR/review.md'], dir: src, saveAs: 'fetched-review.md' },
-    { name: 'design-review.md', label: '设计附件', no: reqNo, attachment: 'design-review.md',
-      local: ['AR/design-review.md'], dir: src, saveAs: 'fetched-design-review.md' },
+    { name: 'design-review.md', label: '设计参考附件', no: reqNo, attachment: 'design-review.md',
+      local: ['blueprint/component-blueprint.review.md'], dir: src, saveAs: 'fetched-design-review.md' },
   ];
   const items = [];
   for (const w of wanted) {

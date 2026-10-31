@@ -192,6 +192,26 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
         self.put_sr("# 系统设计\n\n只有文字。\n")
         self.assertIn("里现在没有图", self.section_4b(self.inputs()))
 
+class TheDesignReferenceAndJudgementsReachTheAuthor(WorkspaceCase):
+    """同根蓝图在：起手输入给出设计参考（原生评审投影）的位置与蓝图里已定的每条知识判断，作者不必自己去翻。"""
+
+    def test_the_projection_and_every_judgement_are_listed(self) -> None:
+        self.put_prd()
+        ensure_framework(self.root)
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS)
+        package = self.inputs()
+        section = package.split("## 4d.", 1)[1]
+        self.assertIn(f"`doc/features/{FEATURE}/blueprint/component-blueprint.review.md`", section)
+        constraints = [x for x in design_kit.active_constraints(self.root, design_kit.ACCESS) if x["kind"] == "constraints"]
+        self.assertTrue(constraints, "夹具变了：要有激活规约")
+        for c in constraints:
+            self.assertIn(f"`doc/extensions/{c['file']}`（整域）→ not_applicable", section, c["file"])
+
+    def test_without_a_blueprint_nothing_is_invented(self) -> None:
+        self.put_prd()
+        self.assertNotIn("## 4d.", self.inputs())
+
+
 class MaterialImagesAreOneTaskEach(WorkspaceCase):
     """材料里的图是材料清单的投影：一张图一项，命令照抄能跑。"""
 

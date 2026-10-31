@@ -1,10 +1,11 @@
 /**
  * 成文要用的当前输入 —— 材料与来源、材料里的图（一张图一项，带引用串与登记不用的命令）、
- * 上游里的图（带写作设计登记用的图身份）、蓝图生成图（参考）。
+ * 上游里的图（带写作设计登记用的图身份）、蓝图生成图（参考）、设计参考与蓝图里已定的知识判断。
  *
  * `story-build skeleton` 起手与恢复时打印它：上游正文取设计采用的那一版材料，缺席按合同与单据身份说。
  */
 import * as path from 'node:path';
+import { blueprintKnowledge } from '../../../../../hooks/shared/knowledge-application.mjs';
 import { featureRoot, readJsonOrNull, relDisplay } from '../../../../../hooks/shared/paths.mjs';
 import { SHELL, shellArg } from './drafts.mjs';
 import { designSource, designStatusLines } from './design-source.mjs';
@@ -133,7 +134,28 @@ function blueprintSection(ctx) {
 }
 
 /**
- * 成文要用的当前输入 —— 材料与来源、材料里的图、上游里的图、蓝图生成图。
+ * 设计参考与已定的知识判断：原生评审投影的位置（完整技术契约在那里，Story 不复制），
+ * 蓝图里每条知识判断的出处、判定、理由与承担对象——附录「规约」节写本需求的理由与影响，不重判、不另造。
+ * 判断本身有问题的照列，交设计负责方。
+ */
+function designReferenceSection(ctx) {
+  const source = designSource(ctx);
+  if (!source.blueprint || !source.projection) return [];
+  const judged = blueprintKnowledge(ctx.projectRoot, source.blueprint);
+  const what = d => (d.kind === 'patterns' ? '模式' : d.domain ? '整域' : d.unit);
+  return ['## 4d. 设计参考与知识判断', '',
+    `设计参考是 \`${source.projection}\`（蓝图 r${source.ref?.revision} 的原生评审投影）：附录接口、数据与规约的业务摘要对着它写，`
+    + '完整字段、类型与映射留在那里，Story 不复制它；设计要改回蓝图。', '',
+    ...(judged.rows.length
+      ? ['蓝图里已定的知识判断（附录「规约」节写它们在本需求的理由、承担者与对设计的影响；不重判，待定的写成待定）：',
+        ...judged.rows.map(d => `- \`${d.source_ref}\`（${what(d)}）→ ${d.outcome}：${d.rationale ?? ''}`
+          + `${d.target_refs.length ? `；落在 ${d.target_refs.join('、')}` : ''}`)]
+      : ['蓝图里还没有知识判断。']),
+    ...judged.problems.map(p => `- **设计缺口**：${p}——交设计负责方，Story 不替它补判断`)];
+}
+
+/**
+ * 成文要用的当前输入 —— 材料与来源、材料里的图、上游里的图、蓝图生成图、设计参考与知识判断。
  *
  * `story-build skeleton` 起手与恢复时打印它。
  *
@@ -156,5 +178,6 @@ export function storyInputs(ctx) {
     ...imageSection(ctx.projectRoot, ctx.args.feature), '',
     ...upstreamSection(ctx), '',
     ...blueprintSection(ctx),
+    ...designReferenceSection(ctx),
   ];
 }

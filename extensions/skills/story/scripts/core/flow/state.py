@@ -35,12 +35,11 @@ def system_requirement(feature: str) -> bool:
 
 #: 需求的蓝图与需求同根：蓝图标识就是需求标识，原生 canonical 蓝图在需求目录的 `blueprint/` 下
 BLUEPRINT = ("blueprint", "component-blueprint.yaml")
-# 成文登记时记指纹的文件（相对需求目录）：story、review、设计附件与它据以成文的决策登记、写作设计；设计依据另记在 story_basis。
+# 成文登记时记指纹的文件（相对需求目录）：story、review 与它据以成文的决策登记、写作设计；设计依据（蓝图原生引用与摘要）另记在 story_basis。
 # 登记之后任一份再改，`story-build check` 报「登记之后改过」，重跑 `story` 重新登记。
 STORY_REGISTERED = (
     "AR/story.md",
     "AR/review.md",
-    "AR/design-review.md",
     "AR/story-src/decisions.json",
     "AR/story-src/story-template.md",
 )
@@ -105,7 +104,7 @@ def file_sha256(path: Path) -> str | None:
     return sha256(path.read_bytes()).hexdigest()
 
 
-#: 上次发布出去的 Story、Review 与设计附件原样留在这里（相对需求目录）：下一次发布前据它给出差异
+#: 上次发布出去的 Story、Review 与设计参考附件原样留在这里（相对需求目录）：下一次发布前据它给出差异
 PUBLISHED = (".backups", "published")
 
 
@@ -260,8 +259,8 @@ def last_gate(gates: list[dict], name: str) -> dict | None:
 
 STORY = ("AR", "story.md")
 REVIEW = ("AR", "review.md")
-#: 设计附件：本次蓝图原生评审投影的逐字节副本，与 Story、Review 一起交付
-DESIGN_REVIEW = ("AR", "design-review.md")
+#: 设计参考：与需求同根的蓝图原生评审投影。系统送审时按原字节作设计参考附件上传，本地不另存副本
+DESIGN_REFERENCE = ("blueprint", "component-blueprint.review.md")
 
 
 def issue_zone(feature_root: Path, issue: str) -> tuple[str, str]:

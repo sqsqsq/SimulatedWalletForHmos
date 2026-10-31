@@ -574,7 +574,7 @@ class TheAuthorSectionsTakeAnyForm(StoryBuildCase):
 class TheReadersRenderTheNativeObjects(unittest.TestCase):
     """附录读取器：原生对象的字段原样排出，不补、不改写、不推断；表头与标签来自章节合同。
 
-    接口、数据与规约由作者按蓝图写业务摘要（完整契约在设计附件），没有读取器；这里核仍由脚本投影的几区。
+    接口、数据与规约由作者按蓝图写业务摘要（完整契约在设计参考），没有读取器；这里核仍由脚本投影的几区。
     """
 
     READERS = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "appendix-readers.mjs"
@@ -1195,12 +1195,17 @@ class TestArRootStaysClean(StoryBuildCase):
 
     def test_the_delivery_documents_pass(self) -> None:
         """白名单上的照过：交付文档在这一层是正当住户。"""
-        for name in ("review.md", "design-review.md"):
+        for name in ("review.md",):
             path = self.ar_root() / name
             if not path.exists():
                 path.write_text("# x\n", encoding="utf-8")
         _, out = self.check_output()
         self.assertNotIn("不该在这一层", out)
+
+    def test_a_design_copy_is_no_longer_a_resident(self) -> None:
+        """设计参考是同根蓝图的原生评审投影：交付层不再放一份 `AR/design-review.md` 副本。"""
+        (self.ar_root() / "design-review.md").write_text("# 设计\n", encoding="utf-8")
+        self.assert_check_names("AR/design-review.md 不该在这一层")
 
     def test_a_system_detail_file_is_no_longer_a_resident(self) -> None:
         """需求系统的单号与关系记在来源版本里：`AR/detail.json` 不再是这一层的住户。"""
@@ -2233,7 +2238,7 @@ class RealRunCase(unittest.TestCase):
         draft = self.draft("10-附录.md")
         text = (draft.read_text(encoding="utf-8")
                 .replace("### 技术契约\n\n", "### 技术契约\n\n服务端返回的受理状态决定后续处理路径。\n\n", 1)
-                .replace("#### 端云接口\n\n", "#### 端云接口\n\n不涉及：本需求复用既有接口，接口约定见设计附件。\n\n", 1)
+                .replace("#### 端云接口\n\n", "#### 端云接口\n\n不涉及：本需求复用既有接口，接口约定见设计参考。\n\n", 1)
                 .replace("#### 数据存储\n\n", "#### 数据存储\n\n不涉及：本需求不新增持久化数据。\n\n", 1)
                 .replace("### 规约\n\n", "### 规约\n\n| 规约 | 判定 | 本需求的理由 |\n|---|---|---|\n"
                          "| 可观测 | 适用 | 本需求新增提交入口 |\n\n", 1)

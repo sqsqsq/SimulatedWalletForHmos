@@ -2092,10 +2092,12 @@ class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
 
 
 class PublishChecksTheExternalVersion(RegisteredCase):
-    """发布前按交付门核资格，用取材回执逐件核 Story 正文、Review 附件与设计附件：E=L 跳过，E=B 可写，其余交人；
-    三件都有这一版登记之后的读回才登记归档。本地单没有远端动作。需求系统单由编号决定，这里在进程内把本单当作系统单。"""
+    """发布前按交付门核资格，用取材回执逐件核 Story 正文、Review 附件与设计参考附件（蓝图的原生评审投影原字节）：
+    E=L 跳过，E=B 可写，其余交人；三件都有这一版登记之后的读回才登记归档。本地单没有远端动作。
+    需求系统单由编号决定，这里在进程内把本单当作系统单。"""
 
-    NAMES = {"AR-design.md": "story.md", "review.md": "review.md", "design-review.md": "design-review.md"}
+    #: 回执里的名字 → 本地来源（相对需求目录）
+    NAMES = {"AR-design.md": "AR/story.md", "review.md": "AR/review.md", "design-review.md": "blueprint/component-blueprint.review.md"}
 
     def call(self, name: str, *args, system: bool = True):
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -2112,7 +2114,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         return "sha256:" + hashlib.sha256(body).hexdigest()[:16]
 
     def local(self, name: str) -> bytes:
-        return (self.feature_root / "AR" / self.NAMES[name]).read_bytes()
+        return (self.feature_root / self.NAMES[name]).read_bytes()
 
     def system_body(self) -> bytes:
         """系统上原来那份开发需求正文：取材导入的开发需求来源第一版。"""
@@ -2226,9 +2228,8 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         archived = self.contract()["archived"]
         self.assertEqual(self.digest(self.local("design-review.md")), archived["design_review_digest"])
         self.assertEqual(self.contract()["story_basis"]["blueprint_ref"], archived["design_blueprint_ref"])
-        for name in ("story.md", "review.md", "design-review.md"):
-            self.assertEqual((self.feature_root / "AR" / name).read_bytes(),
-                             (self.feature_root / ".backups" / "published" / name).read_bytes())
+        for name, published in (("AR-design.md", "story.md"), ("review.md", "review.md"), ("design-review.md", "design-review.md")):
+            self.assertEqual(self.local(name), (self.feature_root / ".backups" / "published" / published).read_bytes())
 
     def test_after_a_publish_each_item_is_its_own_baseline(self) -> None:
         self.uploaded()
