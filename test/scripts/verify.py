@@ -147,7 +147,7 @@ def scenario(args: argparse.Namespace) -> list[list]:
 
     每组拿日志目录、返回步骤列表，轮到它才求值：失效形态的模板在它那条通道开跑时才建。
     """
-    template_steps = lambda d: failure_mode_steps(build_template(d))  # noqa: E731
+    template_steps = named("failure-modes", lambda d: failure_mode_steps(build_template(d)))
     return {
         "affected": [[lambda _: affected_steps(args.targets, args.keyword)]],
         "full": [[lambda _: full_steps()]],
@@ -158,8 +158,33 @@ def scenario(args: argparse.Namespace) -> list[list]:
     }[args.scenario]
 
 
+def named(label: str, group):
+    """给要先准备的步骤组记上名字：准备失败时汇总按这个名字报。"""
+    group.label = label
+    return group
+
+
 def run_lane(lane: list, log_dir: Path) -> list[tuple[str, bool, str]]:
-    return [run(name, cmd, log_dir) for group in lane for name, cmd in group(log_dir)]
+    """一条通道的步骤组先后跑。某组的准备（如装模板）抛错时，这一组记为失败并写明原错误与没执行的步骤，
+    同一通道后面的组照跑，别的通道的真实结果照常汇总——不让一处准备异常吞掉整份汇总、也不让退出码显得成功。"""
+    out = []
+    for group in lane:
+        started = time.monotonic()
+        try:
+            steps = group(log_dir)
+        except BaseException as exc:  # noqa: BLE001 —— 装配守卫用 SystemExit 中止，同样要记进汇总
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            label = getattr(group, "label", "准备")
+            text = f"{type(exc).__name__}: {exc}"
+            (log_dir / f"{label}.log").write_text(f"准备失败，步骤没有执行。\n{text}\n", encoding="utf-8")
+            line = f"[失败] {label}（准备，{time.monotonic() - started:.0f} 秒）：{text}——这一组没有执行"
+            with _PRINT:
+                print(line, flush=True)
+            out.append((label, False, line))
+            continue
+        out.extend(run(name, cmd, log_dir) for name, cmd in steps)
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -18,9 +18,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from ext_workspace import link_harness_yaml, DEV_EXT
+from ext_workspace import link_framework, link_harness_yaml, DEV_EXT
 from designed_fixture import designed_copy
 import design_kit
+import shared_state
 
 REPO = Path(__file__).resolve().parents[2]
 STORY_BUILD = DEV_EXT / "skills/story/scripts/core/story-build.mjs"
@@ -619,19 +620,37 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         return next(s for s in index["sources"] if s["source_id"] == f"local:{key}")["versions"][-1]["original"]["path"]
 
     def setUp(self) -> None:
-        super().setUp()
-        self.put({"SR/design.md": ("# 系统设计\n\n续期改为按月扣费，与产品需求的按年不同。\n".encode("utf-8"), "SR"),
-                  "old.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")})
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        target = Path(self._tmp.name) / "work"
+        prepared_copy("whole-source", "base", self.build, target)
+        self.root = target   # 前态在这个用例里建时，build 临时指向了构建目录
+        self.flow_path = self.root / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
+        self.story = self.flow_path.parent.parent / "story.md"
         self.sr_rel = self.latest("SR/design.md")
         self.SR = f"{self.FEATURE}/{self.sr_rel}"
         self.IMAGE = f"{self.FEATURE}/{self.latest('old.png')}"
         self.SR_ROW = (f"| 系统设计 [design.md](../{self.sr_rel}) | [design.md](../{self.sr_rel}) "
                        "| 续期按月的提法与产品需求冲突，未采用：以产品需求的按年为准。 |")
-        self.run_py(self.IMPORT, "--caption-image", self.IMAGE, "--unused", "旧版签约页，本需求不改签约页")
+
+    def build(self, base: Path) -> None:
+        """完整核源的前态：设计准备之后经真实导入命令补一份没采用的系统设计与一张登记不用的图，作者在材料表写明，
+        另放一次会议的原文、纠偏与阅读件。"""
+        self.root = base
+        designed_copy(self.FIXTURE, "REQ-DEMO", base)
+        design_kit.install_review_mechanism(base, DEV_EXT)
+        self.flow_path = base / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src" / "story-flow.json"
+        self.story = self.flow_path.parent.parent / "story.md"
+        self.put({"SR/design.md": ("# 系统设计\n\n续期改为按月扣费，与产品需求的按年不同。\n".encode("utf-8"), "SR"),
+                  "old.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")})
+        sr_rel = self.latest("SR/design.md")
+        image = f"{self.FEATURE}/{self.latest('old.png')}"
+        self.run_py(self.IMPORT, "--caption-image", image, "--unused", "旧版签约页，本需求不改签约页")
         # 作者在材料表里写明没采用的那份与原因：材料表按 origins 核覆盖
+        row = (f"| 系统设计 [design.md](../{sr_rel}) | [design.md](../{sr_rel}) "
+               "| 续期按月的提法与产品需求冲突，未采用：以产品需求的按年为准。 |")
         anchor = "| 开发需求 [design.md](../sources/design-v1/design.md) |"
-        self.story.write_text(self.story.read_text(encoding="utf-8").replace(anchor, self.SR_ROW + "\n" + anchor),
-                              encoding="utf-8")
+        self.story.write_text(self.story.read_text(encoding="utf-8").replace(anchor, row + "\n" + anchor), encoding="utf-8")
         meeting = self.flow_path.parent / "meetings" / "续期会" / "v1"
         meeting.mkdir(parents=True)
         (meeting / "raw.md").write_text("主持人：续期按年。\n", encoding="utf-8")
@@ -663,15 +682,6 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertIn(f"`{self.SR}` —— 设计未见引用的阅读稿 {self.sr_rel}（核是有据不用，还是漏了依据）", task)
         self.assertIn("当前有效人答（必读：问法与原话）", task, "必读人答没进独立审查的核源集合")
         self.assertIn("作者登记不用：旧版签约页，本需求不改签约页", task)
-
-    def test_skipping_any_applicable_source_is_not_a_pass(self) -> None:
-        for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
-            with self.subTest(source=rel):
-                self.fresh()
-                self.reviewed("pass", self.examined(lambda xs, rel=rel: [x for x in xs if x != rel]))
-                got = self.result()
-                self.assertEqual("report_invalid", got["result"])
-                self.assertIn(rel, got["detail"])
 
     def test_a_finding_on_a_left_out_source_is_consumed(self) -> None:
         story = f"{self.FEATURE}/AR/story.md"
@@ -967,6 +977,15 @@ class AnUnreviewedDeliveryNeedsAHumanPart2(TheStoryIsReviewedRegisteredAndDelive
         self.assertEqual("pass", self.result()["result"])
 
 
+def prepared_copy(name: str, variant: str, build, target: Path) -> None:
+    """一组用例共同的前态（还没准备独审、没登记报告）：同一业务输入只真实生产一次，各用例拿私有副本，副本重接 Framework。
+    前态由当前生产者产生，键是输入内容（夹具、开发源、被测 Framework）与变体名，不剥导入时刻、不手补状态。"""
+    key = shared_state.digest(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good",
+                              *shared_state.COMMON, shared_state.framework_version(), name, variant)
+    shared_state.copy_tree(shared_state.shared_tree(name, key, build), target)
+    link_framework(target)
+
+
 def import_fixture(fixture: Path, files: dict[str, tuple[bytes, str]]) -> None:
     """在夹具副本上经真实导入命令导成材料版本（需求 REQ-DEMO）。"""
     inbox = fixture / "doc" / "features" / "REQ-DEMO" / "sources" / "inbox"
@@ -1043,25 +1062,30 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
     def make(self, hard: bool = False) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        fixture = Path(self._tmp.name) / "fixture"
-        shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
-        feature = fixture / "doc" / "features" / "REQ-DEMO"
-        files = {"home.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")}
-        if hard:
-            prd = feature / "sources" / "prd-v1" / "prd.md"
-            files["RR/prd.md"] = (prd.read_bytes() + "\n签约页必须像素级还原设计稿，不接受降级。\n".encode("utf-8"), "RR")
-        import_fixture(fixture, files)
-        if hard:
-            story = feature / "AR" / "story.md"
-            story.write_text(story.read_text(encoding="utf-8").replace("sources/prd-v1/prd.md", "sources/prd-v2/prd.md"),
-                             encoding="utf-8")
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(fixture, "REQ-DEMO", self.root)
-        design_kit.install_review_mechanism(self.root, DEV_EXT)
-        done = subprocess.run(["python", str(self.IMPORT), "--feature", "REQ-DEMO", "--project-root", str(self.root),
+        prepared_copy("visual-ruling", "hard" if hard else "normal", lambda base: self.build(base, hard), self.root)
+
+    def build(self, base: Path, hard: bool) -> None:
+        """有图的前态：真实导入图（强保真再导一版产品需求、Story 改引新版）、设计准备、登记这张图不用的理由。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture"
+            shutil.copytree(REPO / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good", fixture)
+            feature = fixture / "doc" / "features" / "REQ-DEMO"
+            files = {"home.png": (next((REPO / "test" / "fixtures").rglob("*.png")).read_bytes(), "UX")}
+            if hard:
+                prd = feature / "sources" / "prd-v1" / "prd.md"
+                files["RR/prd.md"] = (prd.read_bytes() + "\n签约页必须像素级还原设计稿，不接受降级。\n".encode("utf-8"), "RR")
+            import_fixture(fixture, files)
+            if hard:
+                story = feature / "AR" / "story.md"
+                story.write_text(story.read_text(encoding="utf-8").replace("sources/prd-v1/prd.md", "sources/prd-v2/prd.md"),
+                                 encoding="utf-8")
+            designed_copy(fixture, "REQ-DEMO", base)
+        design_kit.install_review_mechanism(base, DEV_EXT)
+        done = subprocess.run(["python", str(self.IMPORT), "--feature", "REQ-DEMO", "--project-root", str(base),
                                "--caption-image", f"doc/features/REQ-DEMO/{self.IMAGE}", "--unused", "签约页现状参考，本需求不改签约页"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        assert done.returncode == 0, done.stdout + done.stderr
 
     def run_node(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["node", str(STORY_BUILD), *args, "--feature", "REQ-DEMO", "--project-root", str(self.root)],
@@ -1071,8 +1095,8 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         out = self.run_node("review", "--action", "check")
         return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
 
-    def review(self, kind: str, unread: tuple[str, ...] = ("image",)) -> dict:
-        """准备审查、夹具审查者回复，再把 `unread` 里的材料从读过的挪进没读到的（图写能力缺口原因）；返回核对结果。
+    def review(self, kind: str) -> dict:
+        """准备审查、夹具审查者回复，再把图从读过的挪进没读到的（写能力缺口原因）；返回核对结果。
         同一张图的冻结副本与当前文件同字节，是同一份必审，一起挪。"""
         prepared = self.run_node("review", "--action", "prepare")
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
@@ -1080,13 +1104,11 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         text = report.read_text(encoding="utf-8")
         line = next(l for l in text.splitlines() if l.startswith("  examined_inputs: "))
         examined = json.loads(line.split(": ", 1)[1])
-        picked = {"image": [e for e in examined if e.endswith("/home.png")],
-                  "story": [e for e in examined if e.endswith("/AR/story.md")]}
-        moved = [e for k in unread for e in picked[k]]
-        self.assertTrue(all(picked[k] for k in unread), f"夹具没有要挪的材料：{examined}")
+        moved = [e for e in examined if e.endswith("/home.png")]
+        self.assertTrue(moved, f"夹具没有要挪的图：{examined}")
         text = text.replace(line, "  examined_inputs: " + json.dumps([e for e in examined if e not in moved], ensure_ascii=False))
         text = text.replace("  unreviewed: []", "  unreviewed: " + json.dumps(
-            [{"path": e, "reason": "宿主看不了图，图面未核" if e.endswith(".png") else "没读完"} for e in moved], ensure_ascii=False))
+            [{"path": e, "reason": "宿主看不了图，图面未核"} for e in moved], ensure_ascii=False))
         report.write_text(text, encoding="utf-8")
         received = self.run_node("review", "--action", "prepare")
         self.assertEqual(0, received.returncode, received.stdout + received.stderr)
@@ -1104,19 +1126,6 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         self.make()
         got = self.review("advice")
         self.assertEqual("warn", got["result"], got)
-
-    def test_a_blind_host_cannot_claim_pass(self) -> None:
-        self.make()
-        got = self.review("pass")
-        self.assertEqual("report_invalid", got["result"], got)
-        self.assertIn("图面却没核", got["detail"])
-
-    def test_the_text_still_has_to_be_read(self) -> None:
-        self.make()
-        got = self.review("advice", unread=("image", "story"))
-        self.assertEqual("report_invalid", got["result"], got)
-        self.assertIn("必审输入却有没核完的", got["detail"])
-        self.assertIn("AR/story.md", got["detail"])
 
     def test_a_hard_fidelity_requirement_is_not_deferred(self) -> None:
         """需求写了强保真：原生路由 strictness=hard，图没核就是没审完，WARN 也不成立。"""
@@ -1138,6 +1147,80 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         self.assertEqual("warn", self.review("advice")["result"])
         design_kit.change_blueprint(self.root, "REQ-DEMO", ACCESS, "  admission:\n    status: pass", "  admission:\n    status: fail")
         self.assertNotIn(self.result()["result"], ("pass", "warn"))
+
+
+class TheCoverageRulesJudgeTheDetails(unittest.TestCase):
+    """覆盖明细的判法（`review-inputs.mjs::detailProblems`）：给定必审集合与视觉延期，逐例判结论与明细是否自洽。
+
+    这里的必审集合是手写的；集合由谁、按什么生产（任务列齐、别名、原生视觉裁定）由上面几组真实链核。
+    """
+
+    FEATURE = "doc/features/REQ-DEMO"
+    STORY = f"{FEATURE}/AR/story.md"
+    SR = f"{FEATURE}/sources/design-v2/design.md"
+    OLD = f"{FEATURE}/sources/old-v1/old.png"
+    CORRECTIONS = f"{FEATURE}/AR/story-src/meetings/续期会/v1/corrections.json"
+    HOME = f"{FEATURE}/sources/home-v1/home.png"
+    DRIVER = """
+const m = await import(process.argv[1]);
+let raw = '';
+for await (const chunk of process.stdin) raw += chunk;
+const out = JSON.parse(raw).map(c => m.detailProblems(c.details, c.status, c.basis && {
+  inputs: c.basis.inputs, gaps: c.basis.gaps, alias: new Map(),
+  visual: c.basis.visual && { fact: c.basis.visual.fact, deferred: new Set(c.basis.visual.deferred) },
+}, []));
+process.stdout.write(JSON.stringify(out));
+"""
+
+    @staticmethod
+    def basis(inputs: list[tuple[str, str]], deferred: list[str] | None = None) -> dict:
+        return {"inputs": [{"path": rel, "purpose": why, "required": True, "missing": False, "digest": None} for rel, why in inputs],
+                "gaps": [],
+                "visual": None if deferred is None else {"fact": "看图能力：看不了图（adapter generic）", "deferred": deferred}}
+
+    @staticmethod
+    def details(examined: list[str], unreviewed: list[tuple[str, str]] = ()) -> dict:
+        return {"blocking_findings": [], "advisories": [], "examined_inputs": list(examined),
+                "unreviewed": [{"path": rel, "reason": why} for rel, why in unreviewed]}
+
+    def judge(self, cases: list[dict]) -> list[list[str]]:
+        module = DEV_EXT / "hooks/shared/review-inputs.mjs"
+        r = subprocess.run(["node", "--input-type=module", "-e", self.DRIVER, module.resolve().as_uri()],
+                           input=json.dumps(cases, ensure_ascii=False), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr[:600])
+        return json.loads(r.stdout)
+
+    def test_every_case(self) -> None:
+        whole = [(self.STORY, "审查对象：Story 正文"),
+                 (self.SR, "设计未见引用的阅读稿（核是有据不用，还是漏了依据）"),
+                 (self.OLD, "作者登记不用：旧版签约页，本需求不改签约页"),
+                 (self.CORRECTIONS, "会议纠偏留痕")]
+        visual = [(self.STORY, "审查对象：Story 正文"), (self.HOME, "登记的图片")]
+        blind = "宿主看不了图，图面未核"
+        # (名字, 明细, 结论, 必审集合, 每条问题各含的片段；空表示自洽)
+        cases = [
+            ("完整核源全读过", self.details([x for x, _ in whole]), "PASS", self.basis(whole), []),
+            *[(f"漏报{why}", self.details([x for x, _ in whole if x != rel]), "PASS", self.basis(whole),
+               [f"必审输入既没出现在 examined_inputs 也没列进 unreviewed：{rel}"])
+              for rel, why in whole[1:]],
+            ("看不了图、文本审完判 WARN", self.details([self.STORY], [(self.HOME, blind)]), "WARN",
+             self.basis(visual, [self.HOME]), []),
+            ("看不了图却判 PASS", self.details([self.STORY], [(self.HOME, blind)]), "PASS",
+             self.basis(visual, [self.HOME]), [f"判了 PASS，图面却没核：{self.HOME}"]),
+            ("图可延期、正文没读完判 WARN", self.details([], [(self.HOME, blind), (self.STORY, "没读完")]), "WARN",
+             self.basis(visual, [self.HOME]), [f"判了 WARN，必审输入却有没核完的：{self.STORY}——"]),
+            ("图不延期、图没核判 WARN", self.details([self.STORY], [(self.HOME, blind)]), "WARN",
+             self.basis(visual, []), [f"判了 WARN，必审输入却有没核完的：{self.HOME}——"]),
+            ("图不延期、图没核判 PASS", self.details([self.STORY], [(self.HOME, blind)]), "PASS",
+             self.basis(visual), [f"判了 PASS，必审输入却有没核完的：{self.HOME}——"]),
+        ]
+        got = self.judge([{"details": d, "status": s, "basis": b} for _, d, s, b, _ in cases])
+        for (name, _, _, _, want), problems in zip(cases, got):
+            with self.subTest(case=name):
+                self.assertEqual(len(want), len(problems), problems)
+                for piece, problem in zip(want, problems):
+                    self.assertIn(piece, problem)
 
 
 class ReviewTaskReachesTheVerifierCase(unittest.TestCase):

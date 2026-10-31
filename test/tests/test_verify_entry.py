@@ -61,6 +61,25 @@ class TheHandbackRunsInLanes(unittest.TestCase):
             code = verify.main(["handback"])
         self.assertEqual(1, code)
 
+    def test_a_lane_whose_preparation_fails_is_reported_not_swallowed(self) -> None:
+        """失效形态那条通道装模板时中止（如装配守卫的 SystemExit）：记为失败、写明原错误与没执行，
+        另两条通道的真实结果照常汇总，退出码非 0。"""
+        ran = []
+
+        def fake_run(name, cmd, log_dir):
+            ran.append(name)
+            return name, True, f"[通过] {name}"
+        printed = []
+        with mock.patch.object(verify, "run", side_effect=fake_run), \
+                mock.patch.object(verify, "build_template", side_effect=SystemExit("装配前后 demo 的提交变了")), \
+                mock.patch("builtins.print", side_effect=lambda *a, **k: printed.append(" ".join(map(str, a)))):
+            code = verify.main(["handback"])
+        self.assertEqual(1, code)
+        self.assertEqual({"full", "cli-tests", "compileall", "validate-clis", "node-check"}, set(ran), "别的通道没照跑")
+        failed = [line for line in printed if "failure-modes" in line and "准备" in line]
+        self.assertTrue(failed and "装配前后 demo 的提交变了" in failed[-1] and "没有执行" in failed[-1], printed)
+        self.assertTrue(any("汇总" in line for line in printed), "准备失败吞掉了整份汇总")
+
 
 class CasesPlanEveryCase(unittest.TestCase):
     def test_jobs_equal_the_number_of_cases(self) -> None:

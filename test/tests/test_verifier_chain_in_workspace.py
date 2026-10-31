@@ -66,20 +66,44 @@ def demo_state() -> tuple[str, str]:
     return head.strip(), status
 
 
+def framework_blobs(cfg: dict, rels: list[str]) -> dict[str, bytes | None]:
+    """固定发布提交里这些文件的原件，一次 `git cat-file --batch` 读完：逐个核对象类别与长度，提交里没有的为 None。"""
+    request = "".join(f"{cfg['release_commit']}:{cfg['framework_path']}/{rel}\n" for rel in rels).encode("utf-8")
+    proc = subprocess.run(["git", "cat-file", "--batch"], cwd=str(REPO_ROOT), input=request, capture_output=True, check=True)
+    out, at = {}, 0
+    data = proc.stdout
+    for rel in rels:
+        end = data.index(b"\n", at)
+        header = data[at:end].decode("utf-8").split()
+        at = end + 1
+        if header[-1] == "missing":
+            out[rel] = None
+            continue
+        kind, size = header[1], int(header[2])
+        if kind != "blob":
+            raise AssertionError(f"{rel} 在发布提交里是 {kind}，不是文件")
+        out[rel] = data[at:at + size]
+        if len(out[rel]) != size or data[at + size:at + size + 1] != b"\n":
+            raise AssertionError(f"{rel} 的原件没读全（要 {size} 字节）")
+        at += size + 1
+    if at != len(data):
+        raise AssertionError("git cat-file --batch 的输出多出了内容")
+    return out
+
+
 def framework_blob(cfg: dict, rel: str) -> bytes | None:
-    proc = subprocess.run(["git", "cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/{rel}"],
-                          cwd=str(REPO_ROOT), capture_output=True)
-    return proc.stdout if proc.returncode == 0 else None
+    return framework_blobs(cfg, [rel])[rel]
 
 
 def framework_plus_patch(cfg: dict) -> dict[str, bytes]:
     """独立推算补丁涉及的文件：只取这些文件的发布原件放进空目录，单独打一次补丁，得到期望字节。"""
     rels = [line[len("+++ b/"):] for line in Path(cfg["patch_path"]).read_text(encoding="utf-8").splitlines()
             if line.startswith("+++ b/")]
+    originals = framework_blobs(cfg, rels)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "pkg"
         for rel in rels:
-            body = framework_blob(cfg, rel)
+            body = originals[rel]
             if body is not None:
                 (root / "framework" / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / "framework" / rel).write_bytes(body)
