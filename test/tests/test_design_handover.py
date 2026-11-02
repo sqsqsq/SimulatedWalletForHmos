@@ -826,6 +826,32 @@ class DirectOriginalsAreCitedAtTheirVersions(HandoverCase):
         self.assertNotEqual(old["source_ref"], new["source_ref"], "被链的原文换版，链它的阅读稿没出新版本")
         self.assertIn(sr_v2, self.collect([new])["files"])
 
+    READERS = """
+    const [core, root, feature] = process.argv.slice(1);
+    const { createContext } = await import(new URL('context.mjs', core));
+    const { adoptedUpstreamTexts, upstreamDocs } = await import(new URL('sources.mjs', core));
+    const ctx = createContext({ feature, projectRoot: root });
+    process.stdout.write(JSON.stringify({ texts: adoptedUpstreamTexts(ctx), docs: upstreamDocs(ctx).map(([, , rel]) => rel) }));
+    """
+
+    def test_two_direct_originals_of_the_same_name_stay_apart(self) -> None:
+        """SR/design.md 与 AR/design.md 同一批直接给出、主名相同：各是各的来源版本；设计只采用开发需求时，
+        Story 读上游正文与上游图的读者都不把系统设计算作采用。"""
+        self.give({"SR/design.md": "# 系统设计\n\n## 分工\n\n云侧负责扣款。\n",
+                   "AR/design.md": "# 开发需求\n\n## 范围\n\n钱包发起签约。\n"})
+        sr, ar = self.latest("SR/design.md"), self.latest("AR/design.md")
+        self.assertNotEqual(sr["dir"], ar["dir"], "两份直接原文的版本身份相同")
+        [scoped] = self.scoped([item("AR/design.md#范围")])["current_scope_items"]
+        design_kit.install_blueprint(self.root, self.feature, ACCESS, items=[scoped], support=[])
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.READERS,
+                               (STORY_SCRIPTS / "story").resolve().as_uri() + "/", str(self.root), self.feature],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        got = json.loads(proc.stdout)
+        self.assertTrue(any("钱包发起签约" in text for text in got["texts"]), "采用的开发需求没交给上游正文的读者")
+        self.assertFalse(any("云侧负责扣款" in text for text in got["texts"]), "没被采用的系统设计算成了采用的上游正文")
+        self.assertEqual([], got["docs"], "没被采用的系统设计进了上游图的读者")
+
     def test_pictures_follow_the_use_they_were_cited_for(self) -> None:
         picture = self.feature_root / "assets" / "ux" / "界面.png"
         picture.parent.mkdir(parents=True, exist_ok=True)

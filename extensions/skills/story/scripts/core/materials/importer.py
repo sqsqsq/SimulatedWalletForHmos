@@ -1117,6 +1117,7 @@ def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> 
     阅读结果因此变了的再提升为新版本，直到不再变化——登记结果与 RR/SR/AR 的先后无关。全部算完才写盘。返回登记了的位置。"""
     from materials import registry  # noqa: PLC0415
     plan: dict[str, dict] = {}
+    planned: dict[str, str] = {}          # 这一批定下的标签：同主名的 SR/design.md 与 AR/design.md 各得各的
     for rel, cls in DIRECT.items():
         path = feature_root / rel
         if not path.is_file():
@@ -1128,7 +1129,7 @@ def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> 
         if (draft or last) and not changes:
             continue                      # 改过的是待导入：查询不替人登记
         sid = f"direct:{rel}"
-        label = unique_label(stored, sid, f"{PurePosixPath(rel).stem}-直接")
+        label = unique_label(stored, sid, f"{PurePosixPath(rel).stem}-直接", planned)
         number = (last or {}).get("version", 0) + 1
         plan[rel] = {"cls": cls, "sid": sid, "label": label, "number": number, "blob": blob, "last": last,
                      "new": not last or last["original"]["sha256"] != digest(blob)}
