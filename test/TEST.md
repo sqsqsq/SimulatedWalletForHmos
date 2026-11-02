@@ -1,6 +1,6 @@
 # Story 并行 CLI 测试指南
 
-本指南是 Story 测试域的操作协议。维护约束见根 [AGENTS.md](../AGENTS.md)，规则的事故来源与演进见 [EVOLUTION.md](EVOLUTION.md)。
+本指南是 Story 测试域的操作协议。维护约束见根 [AGENTS.md](../AGENTS.md)，规则的事故来源与项目演进见 [doc/EVOLUTION.md](../doc/EVOLUTION.md)；原 test 入口只保迁移导航。
 这些维护文件不进入被测模型上下文。
 
 ## 按当前任务读取
@@ -683,6 +683,8 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 目标依据由用户有效决定及需求正本维护；[全量评价标准](regression/extension-acceptance.md)维护当前Extension能力的效果与判法。每版在`doc/spec/<版本>/评价标准变更.md`记录增量、采用修订、保持集合和核对结果。标准正文只保留一份；历史正文用Git或当次固定文本保存，历史报告保持当时结论。
 
 #### 用户级维护 Skill 的项目接入
+
+维护开发概念先核根[GLOSSARY](../GLOSSARY.md)，重要取舍和实际演进按[项目记录](../doc/EVOLUTION.md#项目演进登记)由设计/执行/评审接续。公共参考使用用户级共享读取工具，原件与read.json放`output/evidence/<本任务>/methods/`；doctor按依赖清单核适用、读取时序和产物采用，调查读取不算正常采用，缺回执不直接判漏读。维护参考与记录不投放消费模型，不改变Case验收或实跑授权。
 
 `maintenance-designer review` 按下方对象分流取得材料，不缩成代码diff检查。两个维护Skill共用doctor方法：`doctor env`只检查根AGENTS、标准/任务入口、§5验证和证据引用是否可读一致，不深入业务历史、不写诊断报告；没有具体任务版本时仅列任务级前提，不猜版本或判全环境损坏。
 

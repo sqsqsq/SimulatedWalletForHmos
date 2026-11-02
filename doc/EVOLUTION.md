@@ -1,0 +1,294 @@
+# Story 演进记录
+
+> 2026-11-02 从 `test/EVOLUTION.md` 迁移。下文旧正文与章节保留其当时身份；代码块和行内代码中的旧路径按迁移前所在位置理解。迁移原件见 `bd180c70:test/EVOLUTION.md`；当前要求仍以 AGENTS、TEST 及有效 Spec/Plan 为准。
+
+## 项目演进登记
+
+本页是项目级重要决定与实际演进索引，承接架构决策记录的用途，不另建 ADR 目录。术语定义见 [GLOSSARY](../GLOSSARY.md)，详细设计与讨论留在对应 Plan。设计者确认重要取舍时登记选择、理由、必要代价和依据，注明未实施；执行者交回时补实际提交及验证边界；评审者核对象一致。普通局部修改不逐提交登记。
+
+### 近期接续（2026-11-02 据已有材料补录）
+
+- **2.1.0原生蓝图/CU适配**：2.0.0不发布，2.1.0在保1.9.9能力的前提下接原生共同设计与CU，不复制一套Framework。跨步消费者与验证必须同责落地，不能只删旧机制。决定及理由见[范围](spec/2.1.0/00-版本范围.md)、[总Plan](plan/2.1.0/2026-10-28-2.x适配收敛/00-实施方案.md)；本页不把各批实现等同整版通过。
+- **新需求起步边界**：2.x从新需求初始化，不接续旧1.x/试验2.x在途；同一新需求内正常多轮、update与恢复仍保持。取舍是退出旧现场兼容成本，同时保有效生命周期能力；依据见[决定记录](plan/2.1.0/2026-10-28-2.x适配收敛/参考/05-设计决定与依据.md#新需求起步边界收紧2026-10-30)。
+- **目录与投料保持**：撤回统一sources目录，保根inbox及RR/SR/AR和原备份职责；稳定版本由已有索引与备份承接。目的是避免无必要改变用户习惯与内网adapter；blueprint/CU及共享UX真实冲突仍作必要适配。D05已在`bd180c70`提交，具体验证与剩余按其[交回](plan/2.1.0/2026-10-28-2.x适配收敛/04-批次-能力保持与整版验收/实施反馈/)和后续评审，不冒签已关闭；理由见[11-02纠正](plan/2.1.0/2026-10-28-2.x适配收敛/参考/05-设计决定与依据.md#2026-11-02-用户纠正最小目录变化与真实测试成本)。
+- **离线职责与成本**：120—180秒是优化目标，不是功能推进门槛。去重复准备、保独有断言和真实生产消费；D03的full为1990通过/2跳过、771.59秒，不能移签后续对象，也不等于真实DSH/内网成立。依据见[TEST §5](../test/TEST.md#5-离线验证)、[D03交回](plan/2.1.0/2026-10-28-2.x适配收敛/04-批次-能力保持与整版验收/实施反馈/2026-11-02-091000-D批汇总与完整离线验收-交回.md)。
+- **维护者公共方法与文档**：用户批准只优化两维护Skill，间接引用在相关动作前读取留证；采用核实际工作，不建平台或运行时依赖。稳定概念集中根Glossary，本页迁到doc并承接项目演进索引，原test位置保指针。配置仓实现已固定于`ed2dfdb`，工具7项通过；项目文档与本条随本次提交固定，真实Claude及后续开发效果仍待。实施、自查及未验见[本次交回](project/2026-11-02-维护者双Skill优化/实施反馈/2026-11-02-维护优化-交回.md)。
+
+以下是迁移前保留的历史正文。
+
+
+本文记录对应日期或版本的代码事实、证据和待验证边界；当前任务以用户目标及现行规约确定。历史测试、旧设计与已回滚实现不能覆盖
+已确认 Spec，也不能作为恢复生产结构的需求来源。
+
+记录合并了两条线：**story-1.0** 是 1.x 主线，到 1.9.9 发布（`b4fbf433`）；**story** 在 1.9.8 发布之后从 `c65ab661`（2026-09-29）分出，
+做了旧 2.x 各轮（资料在 [legacy-2.x](archive/legacy-2.x/README.md)）并把它的 demo 换成 Framework 3.1 + Story 1.9.8。两条线 2026-10-26 在
+`61a1446e` 合流为新 2.0.0。每条事件标所在的线：〔story-1.0〕〔story〕，分出之前的标〔共同〕；两条 demo 不是同一个消费工程的连续升级。
+各条里的「当前」「以……为准」指那条记录当时。
+
+## 1. 演进记录
+
+2026-10-25 〔story-1.0〕 **1.9.9 发布**（用户按已知限制接受，剩余问题遗留 1.10.0，见 [07 发布结论](plan/1.9.9/2026-10-24-发布前问题收敛/07-发布结论与遗留确认.md)；发布提交为加入 [1.9.9 发布说明](release/1.9.9.md) 的那次提交）：按根 AGENTS §7 把 `extensions/`（manifest 1.9.9，产品最后改动 `34e40143`）装进 demo，替换 1.9.8；dry-run 与安装各 141 项无失败，demo 扩展 132 个文件与开发源逐字节同源，六份入口按 manifest 登记，AGENTS/CLAUDE 只改扩展段；对 demo 跑失效形态 61 条 FAIL 0。本版增量：使用记录 `doc/usage.json` 与 `/story stats`、图优先表达与同图增强阅读 SVG、收件箱子目录与同名区分、归档读回核验与报告核对、adapt 知识独审与 `--status`（在途单块退出）。最近实跑 `story-suite-20261024-224427` 两例到达授权终点，语义差距按 07 接受遗留；预算 14124→17042（G3866/X948，G3900 内）。发布未改产品、未跑 CLI、未推送。证据在 `output/evidence/1.9.9-release-20261025/`（不入库），交回见[发布执行交回](plan/1.9.9/2026-10-24-发布前问题收敛/实施反馈/2026-10-25-102730-发布执行-交回.md)。
+
+2026-10-17 〔两条线各自同步〕 **CLI runtime Git 身份纠正**：中心源码的实际 Git 为 `C:/Users/kangz` 配置仓，源码路径 `.agents/tools/cli-runtime`。旧隐藏历史仓的 `d904257` 已对应合入实际配置仓 `9b5320e`；当前 stamp 通过正式脚本刷新为 `cli-runtime-v1.0.3` / `ce7e8af`，同时登记 repository/source_path/commit，旧历史身份只保留追溯。同步脚本排除继承的 Git 覆盖变量，检查记录身份及内容，既有 keep 自动保留；中心离线回归 80 passed，本工作区同源检查 CLEAN。本次仅修正同步与版本身份，运行时内容、模型配置和原有在途改动保留，未启动真实 CLI。
+
+2026-10-16 〔story-1.0〕 **dsh 正式 CLI 链路测通**：用户最终范围为正常工作后停止。中心 runtime 修复不限时请求、dsh cwd 与 Windows Electron/ASAR 启动，并补回 OpenCode 参数顺序、内容审查与百炼鉴权分类；中心提交 `2934b83`、`d904257`，本地标签 `v1.0.1`、`v1.0.2`，已同步本仓、未推送。中心最终离线 72 passed；本仓相关回归 155 passed、12 subtests passed，已消除上次同步发现的兼容缺口。正式 suite `story-suite-20261016-dsh-full-01` 的 car-key-sharing 使用 dsh + 百炼 DeepSeek；有效 attempt 3 已验证工具执行、材料关卡回复、两份补料投放及同 session 续行（41 次原始 tool_call/result），随后按用户要求 stop/finalize，相关进程已退出。前两 attempt 的注册表漂移和沙箱 ACL 故障保留，不归责消费模型。临时测试配置与 dsh profile 均已恢复；未完成阶段验收，不评分。证据见 `output/story/story-suite-20261016-dsh-full-01/startup-verification.md`。
+
+2026-10-16 〔story-1.0〕 **CLI runtime 接入中心仓同步版**：从 `C:/Users/kangz/.agents/tools/cli-runtime` 同步提交 `0e8defa910e36dbbe4bbf91febbada57a00f411d`，身份见 `tools/cli/.sync-stamp.json`；运行时新增 dsh 适配，契约测试迁至 `test/tools/cli/tests`，原有未被中心测试覆盖的七项回归保留于 `test/tools/cli/test_story_runtime_regression.py`，验证入口迁至 `test/tools/cli/TEST.md`，Codex 配置档位由 `full_access` 改为中心版的 `build`。同步检查 CLEAN、注册表校验、worker 入口、编译与两 Case 的只读 plan 通过；离线运行时回归 60 passed / 2 failed，消费方相关回归 107 passed / 39 subtests passed / 3 failed（含两项 subtest）。待中心仓修复：OpenCode prompt 参数顺序、内容审查拒绝分类、百炼鉴权报文识别。本仓副本保持同源，未启动真实模型；日志与同步前备份见 `output/scratch/cli-runtime-sync-20261016/`。
+
+2026-10-12 〔story-1.0〕 **1.9.9 两 Case 输入承接 2.x 业务补充**（用户确认「承接业务补充，保留 1.x 协议」，方案 `doc/plan/1.9.9/2026-10-12-整体设计/07-R6-两Case金样.md` §2；外线工作区 `E:\Project\SimulatedWalletForHmos` 的 `test/cases`，最近改动提交 `ce3677ad`，逐文件按实际 diff 合入，没有整体复制）：
+两份系统设计补接口字段、单位、可空性、判重与错误结构；交互脚本补「问到才答」的业务立场——auto-topup 的模拟验证边界、update 单日上限按会上 200；
+car-key 的初始宽限 48 小时口径、车钥匙卡片范围、模拟验证边界、草稿续办、接受比例由车云统计；auto-topup 答案卷补上限冲突的立场；
+两份评审回稿的意见按 2.x 措辞（car-key 保留本线 match/verdict/opinion 投放结构）；car-key `case.yaml` 只同步覆盖说明。
+不承接：命令起手 prompt、`end_at`/施工单位终点、`expected_phase` 改 story 的阶段语义、「已放入」与「实现方案」等 2.x 关卡措辞。
+原始字节 SHA-256 前 16 位（前 → 后）：auto-topup `interaction-script.yaml` 4edad2077fedb3e7 → 16f68d3fe7f5c5c3、`meeting-answer-key.md` 7fac2fd1d8629ca9 → 999e5cc4b578744d、
+`system/SR90006/design.md` f5c62ba06b98ef91 → d8a0e00cddf1ca0e（与外线锁定摘要相同）、`update-inputs/review-feedback.md` 51cb3825f9d06af0 → cd08cce794c2db2b；
+car-key-sharing `interaction-script.yaml` f327d7b08700361a → 0f5d24ed81a0c93c、`workspace/SR/design.md` 967a69233f70c43e → 68ff916dff8a6b00（与外线锁定摘要相同）、
+`update-inputs/car-review-feedback.yaml` a03ca13d07a13952 → f3cfaecdb956a21a、`case.yaml` 4c32321267803f14 → 11b3a91ed3bea3f1。初始 prompt 未改，update 材料仍只在第二段投放。
+
+2026-09-30 〔story-1.0〕 **1.9.8 发布后补充：首次知识质量判据与功能一览**（提交 `2e872e7d`，版本号不变；提交后全量 1512 passed，唯一失败为既有金样指纹）：内网首次适配产出的知识质量不高（规约罗列未归纳、模块私有内容当成项目知识、事实写成实现说明、模式自行归纳）。知识协议补范围与形态判据，适配方法页新增四条质量判据（首批每份最多 3 项、模式只在已用承载 SDK 时写、扩充归目标维护者），新增按主题写法页 `knowledge-topics.md`（13 主题 × 六项），基线条目改为指向主题页；README 新增功能一览与「评审 AI 起草的知识」；根 AGENTS §2/§3.3 同步。demo 按 §7 重装，失效形态 FAIL 0，预算 14027→14132。方案与交回见 [知识质量判据与README](plan/1.9.8/2026-09-30-知识质量判据与README/00-方案.md)。
+
+2026-09-29 〔story-1.0〕 **1.9.8 发布后修复：adapt 已适配版本与新仓知识**（发布提交 `a0627c9c`，自检修正 `8f60778f`：在途单整块不列、基线条目只写主题、AGENTS §2 同步；版本号不变；提交后全量 1512 passed，金样 `AR90004/ux-reference/README.md` 指纹为既有失败）：内网试用发现 adapt 有时不写 `adapted_for`、新仓被模型判为 0.1.0 且知识只做 1.9.4 起的增量。`adapted_for` 改为只由脚本写（新增 `--mark-adapted`，无事可做时 `--apply` 自动写）；升级演进记录补 `1.9.3` 知识基线（12 个主题，1.9.4 以前不分小版本），没有 `adapted_for` 的目标从基线列起、首次安装也打印跟进；demo 按 §7 重装（5 个文件，117 个同源），失效形态 FAIL 0，预算 13993→14027 收口。方案与交回见 [adapt修复](plan/1.9.8/2026-09-29-adapt修复/00-方案.md)，发布说明见 [1.9.8](release/1.9.8.md)。
+
+2026-09-29 〔共同〕 **1.9.8 发布**（发布提交 `d19b26f7`）：demo 由 1.9.7 基线（`f4e42d3f`）装入 1.9.8（extensions 与 demo 扩展逐字节同源、六份入口、失效形态 FAIL 0）；预算按实测 13993 收口；发布说明见 [1.9.8](release/1.9.8.md)（story-1.0 后来补了发布后修复；story 分支保留的是发布当时的一份：[story 分支的 1.9.8 发布说明](archive/story-before-rewrite/19d26cad/doc/release/1.9.8.md)），证据在 `output/story/1.9.8-release/`（不入库）。
+
+2026-10-16 〔story〕 **CLI runtime 中心同步 v1.0.2**：同步提交 `d90425786cf8a54497d8ea0ebff2bef539b6ee75`，保留既有 keep 清单；修正 verify.py 与 CLI TEST 的旧测试路径，Codex 配置档位 `full_access` 改为 `build`，CLI/模型顺序不变。固定 verify 入口相关离线回归 167 passed、27 subtests passed，两个 Case 只读 plan、注册表、worker 模块、编译与同源检查 CLEAN。未启动真实模型，未修改 Extension 或 demo；其他任务在途修改保留；本次按用户要求提交，未推送。结果与备份在 `E:/Project/SimulatedWalletForHmos-Story-1.0/output/scratch/cli-runtime-business-sync-20261016/`。
+
+2026-09-29 〔story〕 **Framework 3.1.0 基线接入 demo**（提交 `74196422`，旧2.0.0 分册 06 §3；story 分支的 demo，装的仍是 Story 1.9.8）：来源为 main `025d1b6b` 的 framework/（3.1.0，source_commit `074a4c3c`，清单 1225 文件逐字节一致），替换原 3.0.0/`0143e21e`；opencode adapter 的 `commands.subagents`/`verifier_subagent` 与 verifier 子代理模板两处定制在新文件上加回；demo 内 framework-init UPDATE（智能模式、7 个 adapter，executed 24/skipped 5/failed 0，active_workflow→obligation-driven，change-lite 等 9 项旧入口备份后清理，Codex Stop 钩子随之退出）；UPDATE 重写的 AGENTS/CLAUDE 只放回 Extension 1.9.8 的 story-ext 段，六份 story 入口未触及。验证：harness npm test PASS（doc_freshness 按提交时刻误报、catalog key_exports 业务漂移各 1 条非阻断），check_framework_drift same_version，全量 1506 passed，失效形态 FAIL 0；两条测试随 3.1 事实更新（Codex 不再登记 Stop 钩子、feature.track 关卡随 change-lite 退出）。Extension 仍为 1.9.8，Framework 3.1 + Extension 1.9.8 组合未经真实 CLI 验收。证据在 `output/story/2.0.0/fw31-baseline/`（不入库）。
+
+2026-09-28 〔共同〕 **1.9.8 仓结构三分**：`doc/extensions` 上提为开发源 `extensions/`，业务、framework 与消费配置迁入完整消费工程 `demo/`，`test/story` 上提为测试域 `test/`，其中维护契约合入根 `AGENTS.md`，需求、方案与发布说明迁到根 `doc/spec|plan|release`，需求产物回流根改为根 `doc/features`；demo 按 R197（`c026a704`）发布文件装 1.9.7 基线（`f4e42d3f`）。同一安装函数 `test/scripts/publish_to_demo.py` 测试时装一次性 template、发布时装 demo；manifest 入口改为 target/source 对，adapt 从 demo 已装发布版执行。main 退出 Story Extension（本地 `51377a49`，未推送）。P3 目录归属纠正交回验证：全量 1499 passed，失效形态 FAIL 0（开发版 template），预算 13993；未启动真实 CLI。方案与评审见 [1.9.8 总览](plan/1.9.8/2026-09-26-整体设计/00-总览.md)，结果见 [1.9.8 发布说明](release/1.9.8.md)，运行证据在 `output/story/1.9.8-P1`、`1.9.8-P2`、`1.9.8-P3`（不入库）。
+
+2026-09-28 〔共同〕 P3 评审：用户纠正维护契约与文档归属，要求根 AGENTS 承担完整契约、spec/plan/release 迁根 doc、需求产物回流根 doc/features；P3 暂不通过，1.9.8 未收口。具体实施合同见 [目录归属纠正](plan/1.9.8/2026-09-26-整体设计/评审意见/2026-09-28-P3评审与目录归属纠正.md)。
+
+2026-09-07 〔共同〕：用户确认 2026-08-25 分批交付轮次的四批次需求已结束交付，后续批次 5、6 的诊断收敛一并结束。当时工作入口为 [新需求讨论总览](spec/1.9.1/2026-09-04-会议转写修正需求输入/00-讨论总览.md)：会议转写需求保留冻结基线，Extension 整体正向审查与重构进入澄清。交付记录见 [总方案](plan/1.9.0/2026-08-25-story分批次交付/00-总方案.md)。以下日期记录用于追溯，不作为当前任务的自动推进指令。
+
+2026-08-23 **回退重写**：`doc/extensions` 与四宿主 story 跳板整体回退到 1.0 基线（`19977c98`，
+其扩展目录与真实仓验证点 `0c8ab1dd` 逐字节一致），在其上按冻结需求从 0 重写 2.0。
+设计入口 `plan/2026-08-23-story2.0回退重写/`（00 评审结论与总方案 / 01 目标系统设计与实施计划 /
+02 行为验证承接）。
+
+上一版 2.0（提交 `f3b2a95d` 与其后工作区）已废弃：它处于「已落地门禁与待实施修正互斥并存」的半途
+双轨态（正文规约编号与 H1 编号两处判据正反打架、机械上游守恒被判为错误方向却仍在生效、
+自称 SSOT 的消费矩阵无代码读取、review 人工区改名未全链兼容导致历史产物假失败）。
+**本轮不在其上打补丁**，只把这些教训转为负面契约断言。
+
+- **需求1+2（内容守恒与人读成文）**：章节合同 v3 固定十章（背景与目标/术语/范围与边界/业务方案/
+  业务流程/功能说明/异常与恢复/验收/交付与上线/附录），每章带 `responsibility`（替读者回答什么），
+  **无 form 形态配额**；成文=四段法（全局规划→逐章成文→全文统稿→全量复核），统稿不得重生成整篇、
+  不得压缩事实集合；`story-build.mjs` 四命令（scaffold/build/check/audit）；scaffold 任务书含
+  **同轮视觉材料清单**（路径按 story.md 位置重算，不照抄源文档）；H1=`<单号> <业务名>`；
+  check 人读兜底 4a-4d（H1 形态 / 章级编号标题 / 机器面泄漏含规约编号 / 表格占比 WARN）；
+  audit 生成 `content-audit.md` 六字段核对表 + 非门禁对照统计（图数、数值命中），不进正文不随归档。
+  守恒机械层：spec 可标识事实覆盖、数值溯源、impact 锚定、源指纹漂移；图片只查引用完整性
+  （alt 非空 + 路径可达），**不做数量守恒**。
+- **需求3（三类知识跨阶段）**：新增机制层 SSOT `hooks/shared/knowledge-consumption-map.md`
+  （知识实例 × 阶段 × 读哪分区，规约按域文件、模式按文件、facts 按文件）；
+  `hooks/active-knowledge.mjs` **真实解析该矩阵**注入（不再有平行硬编码语义），
+  coding/review/ut/testing 读 plan 冻结结果定向收窄、**无冻结零注入**；
+  `constraints/README.md` 删适用矩阵（C4）；新增 `constraints/diagnostics-metrics.md`（DM 域，
+  承载三层可观测性合同）与 `codebase-facts.md` 可观测性面；两设计模式取归档原件逐字节恢复；
+  `hooks/shared/pre_verifier.mjs`（六阶段必答清单，含 SKIP 资格条款与知识应用核验）；
+  `hooks/plan/{on_context_load.md,post_check.mjs}` + `hooks/coding/post_check.mjs`（冻结链）；
+  `hooks/shared/paths.mjs` 统一路径解析（features_dir 一律读配置）。
+- **需求4（工程适配）**：`skills/story-adaptation/SKILL.md`（三态 + 五插槽 + 四权威顺序 +
+  影子树原子写入）、`verify-adaptation.mjs`（结构档 / `--require-confirmed` 内容档）、
+  `build-release.mjs`（`--version` 参数化，支持 `--git-rev` 给历史版本补指纹）；
+  `releases/1.0.json` 基线记 `19977c98` 并注明与 `0c8ab1dd` 等价；四宿主跳板加 `adapt` 路由。
+- **需求5（review 优化）**：机器区=背景/决策两段叙述（未定项尾注「待 X 确认」），
+  人工区=三态（同意/需修改/暂缓）；**无确认人/日期/依据、无责任人/期限/阻塞字段**（用户 2026-08-23 决策）；
+  人工区定位单源且新旧标记双兼容（读旧写新，历史产物不假失败）；`decider` 登记层保留。
+
+本轮已通过（离线）：`pytest test/story/tests`（122 passed + 7 subtests）、compileall、
+`node --check` ×12、夹具四命令 round trip 与正反用例（规约编号/坏图路径/缺 alt/H1 形态）、
+旧 MARK 兼容双用例、hook-runner 六阶段冒烟（无冻结零注入、冻结后定向收窄、pre_verifier 条数
+spec 8/plan 2/其余各 1）、plan·coding·spec post_check 正反用例、负面契约断言表 11 项、
+`build-release --version 2.0` + `verify-adaptation` 双档、`run_multi_case plan` 只读演练。
+**行为验证见 `plan/2026-08-23-story2.0回退重写/02-行为验证承接.md`**（唯一承接台账）：
+本轮按用户决策只跑 2 个代表性 Case，其余项保持「未执行」。
+**2.0 指纹已定（releases/2.0.json），行为验证全部通过前状态为「验证中」**，不得表述为已验证通过。
+
+2026-08-22 修复多 Case finalize 回灌串扰：Feature 文档与源码检查解耦，所有终态 Case 的 Feature
+均独立回灌；源码改为逐文件三方检查并支持幂等重入，前一个 Case 的合法写入不再导致后续 Case 被
+`main_workspace_drift` 整体拒绝。
+
+2026-08-22 修正长 CLI turn 内阶段状态滞后：worker 心跳与 suite poll 共同使用结构化 Framework
+current-phase 和阶段产物实时推导 `current_phase` / `highest_phase_reached`，不再等待下一 CLI turn，
+也不解析模型文本。现有运行 suite 可在下一次正式 poll 原地校正。
+
+2026-08-22 修正 feature 迁移位置：主工程 `doc/features/*` 不再进入 suite output，而是整批迁移到
+`E:\Project\bak\Story-Features-<时间戳>/`。suite output 只保留迁移清单和测试运行现场。
+
+2026-08-22 移除旧 Analysis/Report 链：删除旧取材、断言、独立审阅合并脚本、相关测试与整套判据资产；
+单 Case 和多 Case runner 只保存执行状态、阶段、交互、错误、原生 gate、恢复、回灌和现场生命周期事实。
+逐 Case Markdown 统一为 `observation-record.md`，当前操作入口只保留 `TEST.md` 的自动观测与驱动流程。
+实现入口见 `plan/2026-08-22-story旧Analysis-Report链移除/00-实现与验收.md`。
+
+2026-08-22 追加测试现场延迟清理与稳定观测：本轮 finalize 不再删除 workspace/output，现场保留到
+下一轮起跑；新 suite 在迁移 `doc/features` 前统一验证并清理历史 Story suite 现场，孤儿目录只有在
+进程检查通过后删除。Spec 自动观测改为连续两轮 15 秒完整确认后才切换 120 秒，等待回复、阶段回退
+或读取失败会降回 15 秒。实现入口见
+`plan/2026-08-22-story现场延迟清理与稳定观测/00-实现与验收.md`。
+
+2026-08-22 增加自动观测与驱动测试协议：新会话可以从 `TEST.md` 完成 Case 多选和确认；宿主模型在
+非沙箱环境顺序确认启动各 CLI，Story 交互期按 15 秒驱动，进入 Spec 后以当前会话的 Goal 和两分钟
+heartbeat 续跑。脚本外交互改由宿主依据公开 Case 场景回复并留痕；历史 `doc/features` 迁移后不恢复，
+所有终态 Case 的文档和安全源码差异均回灌并保留执行事实。实现与验收入口见
+`plan/2026-08-22-story自动观测与驱动测试/00-实现与验收.md`。
+
+2026-08-23 当时的需求与方案入口：
+
+- 已确认 Spec：`spec/2026-08-21-story四项需求澄清/`（唯一需求真源）
+- **当时的设计/实施：`plan/2026-08-23-story2.0回退重写/`**（00-评审结论与总方案 / 01-目标系统设计与
+  实施计划 / 02-行为验证承接）
+- 原始需求与事故记录：`plan/2026-08-21-story全量需求与踩坑记录/`
+- 已废弃（只作教训留档，不作实施依据）：`plan/2026-08-23-story四项需求落地设计/`、
+  `plan/2026-08-23-story图片引用正向优化/`——其结论的采纳/收敛/撤销记在本轮 00 文档
+
+当时行为验证只以 `plan/2026-08-23-story2.0回退重写/02-行为验证承接.md` 为准；未通过的项不得把版本
+声明或离线测试结果表述为已经验证通过。
+
+## 2. 候选实现内容（历史归档描述，**非当前实现**）
+
+> 以下小节是 2.0 早期的候选描述，保留作背景。**当时的实现以第 1 节与
+> `plan/2026-08-23-story2.0回退重写/01` 为准**，两者冲突处以后者为准。
+
+### Story 内容与人读成文
+
+- H2 固定为背景、术语、范围、业务方案、业务流程、功能说明、异常与恢复、验收、交付与上线、附录。
+- 每章都能读取同轮全部 PRD、SE、Spec 与 AR design；候选标题只提示阅读重点，未命中时回退整篇，
+  不按测试关键词、文件名或标题匹配判失败。
+- 需求 1 与需求 2 在**同一组章节文件**上先后完成：先以内容守恒与去重为目标成文，再按人读规则统稿
+  （不再引入 `story-src/content/` 内容稿——那是被否决的方向，成文后审计由 `content-audit.md` 承担）。
+- 成文按“全局规划 → 逐章成文 → 全文统稿 → 全量复核”推进。`story.md` 只由章节源文件装配，
+  统稿不整篇重新生成。
+- `content-audit.md` 在最终成文后按来源逐项记录事实、正文位置、其它位置独有信息、重复处置、图片、
+  链接和最终处置；它不参与取材、分章、正文装配或归档。
+- 除术语表外，不规定 Markdown 类型或数量。正文、有序/无序/任务列表、强调、引用、表格、代码、
+  流程图/状态图/时序图、图片和链接按真实内容关系使用。
+
+### Knowledge 与阶段传递
+
+- 2.0 的 Knowledge 语义类型封闭为项目知识、规约、设计模式三类；将来出现无法归类的新语义时，
+  必须作为新需求修改分类和版本，不能静默增加类型或勉强归类。
+- `component-profile.md` 保留部件职责、边界和交互方；`codebase-facts.md` 按能力面连续说明真实工程
+  API、调用关系和失败语义，没有拆成 `CAP-*` 或文件清单。
+- Spec 只读取 Manifest 激活知识，识别项目事实影响、规约命中和零个或多个模式候选。Plan 把知识落实
+  到正常方案、contracts 和 use-cases，并形成指向这些落点的冻结结果；下游只消费冻结结果，不重新扫描
+  Knowledge 或选型。
+- 日志、VOC 与 Chart 共用业务 `flow_id` / `step_id`，分别承担本地链路还原、远程定位和统计；终态、
+  数据保护与失败隔离进入规约，当前 Demo 的真实 API、公共出口和失败语义进入 `codebase-facts.md`。
+- `decision-tree`、`page-interaction` 与 README 保持指定原件全文，并默认进入 Manifest 知识清单。
+  当前工程只证实 SDK 随仓存在，未找到多个真实业务案例；该证据限制具体需求是否能够采用模式，不影响
+  模式知识的交付和默认启用。Spec 可以识别零个、一个或两个候选，Plan 再依据工程证据决定是否采用。
+
+### Story Extension 适配
+
+- 四类 Story 跳板均支持 `/story adapt [<目标工程>]` 并直接跳转独立适配 Skill。
+- 来源 Manifest 版本是当前发布版本唯一真源；同版本发布清单明确声明 `managed_files`、五个
+  `adapted_files` 和 Manifest 混合字段。发布脚本只刷新清单已有路径的哈希，不扫描目录推断所有权。
+- `releases/1.0.json` 是由本工程归档交付边界固化的随包基线；来源证据只留在测试域，运行时不访问
+  来源提交、外部工程或 Git 历史。
+- 无安装记录时，1.0 只有在直接维护文件指纹、适配文件存在性、Story 跳板和 Extension 固定入口全部
+  对应时才自动识别；不对应则列出差异并等待用户确认来源版本。
+- 首装、升级和同版本重适配均先在目标工程外准备影子副本并扫描目标工程。确认前目标零写入；确认后
+  统一写入并校验，失败恢复后核对写前指纹。同版本内容与有效安装记录均不变时完全零写入。
+- 适配扫描覆盖部件职责、工程能力、需求系统接入、三层可观测性和两个模式。未经核实的项目知识与目标
+  相关规约不进入目标 Manifest；两个直接维护模式及其索引默认保留，扫描证据决定具体需求能否采用。
+
+## 3. 2026-08 候选实现当时的静态证据
+
+- 两个模式正文和 README 的 SHA-256 与用户指定原件逐文件一致。
+- `story-chapters.json` 保留候选标题安全回退，固定十章且没有测试用例关键词失败门禁。
+- `story-build.mjs check` 不再硬编码本工程层名；直接维护的适配能力不读取外部工程路径或测试域作为运行依赖。
+- 2.0 文件归属由发布清单显式列出；目标适配范围为 `component-profile.md`、`codebase-facts.md`、
+  `story.js`、`token.js`、`review.js` 和 Manifest 的 `provides.knowledge`。
+
+这些是只读检查和内容比对证据，不等于语法、行为、构建或语义验证通过。
+
+## 4. 2026-08 候选实现当时待用户确认的验证
+
+当前候选实现修改后，旧指纹上的任何通过记录均已失效，不能证明本轮代码。获得用户确认后，按当前
+实现方案依次验证：
+
+1. Story 装配脚本语法、固定十章、内容稿/成文章、最终审计和 merge 检查。
+2. Tools CLI 与保留的四个并行 CLI 测试模块。
+3. 两个模式原件完整性、Demo 与 Tools 未被本轮修改、Demo 构建。
+4. Framework 缺失、首次适配、1.0→2.0、同版本重适配和失败恢复。
+5. 当前选择的隔离 Case 按执行事实记录需求守恒、人读表达、图片/链接、Knowledge 应用与阶段传递。
+6. 全部验证通过后，记录 2.0 已验证结论；若验证修复改变直接维护文件，重新刷新并核对
+   `releases/2.0.json` 指纹。
+
+## 5. 长期维护原则
+
+1. 测试验证已确认需求，不从旧用例、旧设计或历史 EVOLUTION 反推生产结构。
+2. 测试与当前需求或生产基线冲突时修正测试，不修改生产代码迎合废弃断言。
+3. Story/Extension 自身优化不调用 Story、Framework、Extension 的能力处理自身。
+4. 主模型依据测试场景理解异常并继续驱动；脚本不使用关键词、标题相似度或 Markdown 数量作内容裁决。
+5. 直接维护文件的新增和删除先显式修改发布清单；哈希刷新不能推断文件归属。
+6. `doc/extensions` 独立交付；来源考证留在测试域，直接维护内容不依赖外部工程、绝对路径或来源 Git 历史。
+
+2026-08-22 将主模型驱动改为 Codex heartbeat 调度：start 后建立 15 秒任务，每次唤醒执行零等待完整
+poll；全部实际 Case 连续两轮稳定进入 Spec 后更新同一任务为 120 秒，回退或等待回复时恢复 15 秒。
+runner 输出统一的下一间隔和结构化进展变化；每轮均展示完整简短状态，终态 finalize 后暂停 heartbeat。
+实现入口见 `plan/2026-08-22-story-15-120秒自适应定时驱动/00-实现与验收.md`。
+2026-08-22 正向重构 Story 并行测试驱动：主模型负责完整测试回合、15 秒连续 poll、语义判断、
+自适应交互、异常恢复与汇总；脚本收敛为确定性的 plan/start/单轮 poll/reply/status/stop/finalize。
+撤销后台 watch、monitor lease 和脚本阻塞循环；不再以关键词或“污染”状态自动停止测试。实际 Case
+集合完全来自 suite。workspace 改为运行依赖白名单并递归校验，记录复制、排除和 Case seed 清单。
+实现入口见 `plan/2026-08-22-story主模型驱动式并行测试正向重构/00-实现与验收.md`。
+
+## 6. 运行协议的事故来源与已退场做法
+
+`TEST.md` 只保留现行规则；本节按规则登记其来源的事故、实测数字和被替代的旧做法，一行一条。
+
+- 自动应答退场（TEST §3.0）：旧版「三重比对全等就自动投逐字原话，否则回落宿主」。`expected_turn` 是绝对序号，模型多问一关即从那关起
+  全部失配、永久回落且没有任何信号（一轮五条只投出三条，评审意见那条从头到尾没排上）；回落时只给「模型说了什么」、不给「本该说什么」，
+  宿主翻漏了就临场发挥，观测里掺进宿主自己的话。15/120 秒 heartbeat 正是为「宿主当人、及时接话」而设，自动应答架空的就是它。
+- 规划指针改按 `--step` 推进（TEST §3.0）：旧版拿回复文本与脚本逐字比对推进指针，宿主用自己的话说几乎从不重合，规划条目一条条烂在后面
+  没人知道。
+- 宿主口吻泄露解法（TEST §0.2）：实测一次宿主用维护者口吻回话，把重开流程的路径直接喂给被测模型。
+- 代跑 heartbeat 脚本无出口（TEST §3.1）：后台脚本只做「poll、睡、再 poll」，两 Case 分别空等 45 分钟与 33 分钟，轮询、状态正常、
+  `last_error` 为空，只有 `next_action` 反复说该回话。
+- 1 小时等待线退场（TEST §3.6）：旧 1 小时线踩上即静默 break 并记成 `target_not_reached`，报告看不出是没人回话；上述两 Case 距该线只差
+  15 分钟。现改为无上限并每 5 分钟发 `awaiting_reply_stale`。
+- `stop` 整 suite 一档退场（TEST §3.4/§3.5）：先到终点的 Case 要陪另一个干等，实测空转 18 分钟；改为逐 Case `conclude`。
+- `target_not_reached` 拆账（TEST §5）：旧版把「模型没做完」「没人回话」「CLI 没回 session id」塞进同一终态；现分别为
+  `target_not_reached` / `concluded_by_host` / `cli_session_lost`。
+- 阶段漂移实例（TEST §3.3）：一轮两 Case 各漂一关：一个的术语确认排在 story 之后才轮到，另一个的第二份材料模型自始至终没开口要。
+- prompt 与驱动器双写（cases/README.md）：协调器记着「到 spec 为止」而 prompt 写着「继续完成 plan」，模型照 prompt 进了 plan，
+  白跑一段还得人工停。
+- 读判据口径漏洞（TEST §8 第 3 项）：一轮实跑通过 `node -e "readFileSync(...)"` 读判据脚本 68 次，当时口径只认 `cat`/`sed`/`grep`，
+  报表写 0；口径已扩到 bash 内所有读取形态。
+- 离线回归并行实测（TEST §7）：2026-09-13 本机同一批 884 条，`-n auto --dist loadscope` 45.8 秒，串行 439 秒。
+- 实跑效率诊断基线（TEST §8，批次 3 之前）：门禁回环占比 49.3%（spec 47.4 min / plan 10.5 / coding 11.5）；作者读 `framework/**` +
+  `doc/extensions/**` 60 + 40 次/阶段；`check-spec.ts` 被读 9 次，14 条 bash 在 grep checker 反推判据；同一 check id FAIL 5 次
+  （`lifecycle_hook_post_check_extension` 洋葱式暴露五层）；spec 阶段上下文 +397K（全程 11K → 818K，零 compaction）；spec 阶段扩展占
+  prompt 44.3%；机制层代码行新口径基线 8116。
+
+## 7. Case 输入变更
+
+`test/cases/` 是被测输入，按 cases/README 改一次记一笔：旧/新摘要（原始字节 SHA-256 前 16 位）、增加的立场及预期影响。
+
+- **2026-10-09 补齐两 Case 的宿主立场**（依据 2.0.3 设计者 10-09 裁定）。原始快照 `15844e09` 保留为历史基底；之后的金样候选与成本配对
+  都用这一版新输入，不拿旧输入的历史运行比性能。
+  - `auto-topup/interaction-script.yaml` 81854d79f927870f → 91d5d59473d57dee：新增 `update-daily-limit-conflict`（第二段改版稿单日上限
+    300 与会上冲突，问到时答本期 200 元）。10-03 实跑里宿主是按答案卷临场答的，现在立场有了唯一的书面来源。
+  - `auto-topup/meeting-answer-key.md` 7fac2fd1d8629ca9 → 999e5cc4b578744d：宿主立场一节引用上面那一条。
+  - `car-key-sharing/interaction-script.yaml` e82e00628e8aa18b → 0d48bdfea52c1989：新增四条，都只在模型问到时才说。
+    - `grace-window-initial`：初段宽限按 48 小时，指卡片收回期限，车辆侧撤销即拒绝不变。
+    - `car-key-card-scope`：工程里没有车钥匙卡片，这次一并补卡包里的车钥匙卡片展示与分享入口，接受成功的钥匙也在卡包展示；真车开锁、凭据与设备能力不做。
+    - `no-real-interface`：先按给定接口用模拟数据验证钱包端，真实联调另算、不算验过。
+    - `draft-resume-boundary`：退出页面、断网、应用关闭再打开都能续办；发出成功、退出登录或换账号后清除、不串账号。
+    - 其余条目的预估顺序顺延。
+  - `car-key-sharing/case.yaml` 86a1490b20e0fe6e → 720a0293704355c6：覆盖说明补上工程事实探针、承载方式与草稿续办边界。
+  - `car-key-sharing/update-inputs/car-review-feedback.yaml` a03ca13d07a13952 → ebbad8571f846f95：宽限那条的匹配词加上「对方离线」。
+    初段按新立场把宽限定案后，议题标题写成「撤销时对方离线：……48 小时内收回……」，不再含「宽限」，投放找不到这条议题。改测试输入而不改业务问题。
+  - 预期影响：
+    - 初段的 D1、D3、D5 与草稿边界都可以在问人之后定案；车钥匙卡片在本工程不存在的事实保留为探针，不为它预先补 demo；
+    - 第二段 36 小时再改版，验证已定结论的真实修订；
+    - 立场只给业务范围，类、文件、路由与数据结构由消费模型自己调查。
+- **2026-10-10 补自动充值的承载立场**（依据 2.0.3 金样与 1.x 最佳形态对照：工程里没有任何自动充值实现，1.x 档案已把「工程承载现实未登记」列为回灌版退步项）。
+  - `auto-topup/interaction-script.yaml` 91d5d59473d57dee → 1c1c6561bda0443c：新增 `no-real-interface`（卡云与支付接口在工程里接不上，先按给定接口用模拟数据验证钱包端交互，真实联调另算、不算验过），插在范围关卡之前，其后条目的预估顺序顺延。
+  - 预期影响：模型要从工程事实里认出「承诺与工程现状不符」，登记承载议题并问人；立场只给业务范围，数据源与类由消费模型自己设计。
+- **2026-10-10 补车钥匙分享的统计边界立场**（依据 2.0.3「知识承接与人读交付」包 3：分享被接受比例按车云分享记录统计）。
+  - `car-key-sharing/interaction-script.yaml` 0d48bdfea52c1989 → de073f044883c2c8：新增 `acceptance-ratio-owner`（被接受比例按车云的分享记录统计，钱包端只报发起、接受、撤销三个流程，不另报失效），只在模型问到时才说；插在术语确认之前，其后条目的预估顺序顺延。
+  - 预期影响：模型要从系统设计的四类事件里认出两侧钱包拼不出「一条分享算一次」的比例，登记议题问人；立场只给统计归属，事件编号与结算方法由消费模型按上报知识设计。

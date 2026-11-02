@@ -12,6 +12,8 @@
 | `doc/` | 项目文档：`spec/` 需求与版本范围，`plan/` 方案、评审与交回，`release/` 按版本的发布说明（只写本版增量）与 AI 交付流程说明；`features/` 是 CLI 测试回流的需求产物（不入库） |
 | `doc/archive/` | 旧轮次维护资料；追溯旧设计、评审和未完成项时从 [归档入口](doc/archive/README.md) 查找，当前任务仍从 `doc/spec/`、`doc/plan/` 进入 |
 | `README.md` | 项目说明与使用指南，只写当前状态；维护者据此分发给使用者 |
+| `GLOSSARY.md` | 维护者开发 Extension 的稳定概念与区分；定义或改变实体、关系、状态、所有权时先核 |
+| `doc/EVOLUTION.md` | 项目级重要决定与实际演进索引；详细取舍留对应 Plan，当前施工仍读有效 Spec/Plan |
 | `test/` | 测试域：测试协议、脚本、Case、夹具、回归台账、金样、演进记录与本地需求系统 |
 | `tools/cli/` | 实跑用的 CLI runtime |
 | `output/` | 不入库：`output/story/` 放运行证据，`output/scratch/` 放临时脚本、临时工作区与 pytest 缓存 |
@@ -27,7 +29,8 @@
 - 运行、修改或评价测试按 [test/TEST.md](test/TEST.md)，命令、状态、证据与评分只在那里维护；测试命令从仓根执行。
 - 测试命令因机器内存紧张被宿主中止（含后台任务被回收）时，用户已授权直接重新启动，不再停下询问；重跑期间不改被测源码、不提交，交回如实写明被中止的那次与重跑结果。
 - 定方案、开工与评审先读 [TEST §6.5](test/TEST.md#65-维护标准与评审)、[全量评价标准](test/regression/extension-acceptance.md)及本版 `doc/spec/<版本>/评价标准变更.md`；先核标准再实现，按对象取证。
-- [test/EVOLUTION.md](test/EVOLUTION.md) 记录演进与规则来源，是追溯证据，不是当前实现依据。
+- [doc/EVOLUTION.md](doc/EVOLUTION.md) 记录演进与规则来源，是追溯证据，不是当前实现依据；原 test 入口只保迁移指针。
+  重要架构取舍确认后由设计者登记选择、理由、必要代价与 Plan 链接（未实施明示），执行者交回补实际提交和验证边界，评审者核对象一致；普通局部修改不逐提交登记，历史缺项只凭原依据补录。
 - `demo/framework/` 是 AgentMaison 发布件，只读，变化只经 §6 进入 demo。本仓根不挂 Framework 的阶段钩子与写保护钩子，只读边界由维护者遵守。
 - 新 checkout 先按下方「维护环境准备」恢复依赖。
 - 维护范围只覆盖 interactive 运行模式；Framework 的 headless/goal 能力不在 Extension 的兼容、状态与测试范围内，用户明确提出时另立需求。
@@ -58,6 +61,8 @@ demo/scripts/build-dependence.ps1                                     # 重建 d
 实跑宿主由本次指定维护角色担任，代理需求方边界按 TEST §0.3。消费模型只依赖需求、目标工程及 Framework/Extension 上下文；不向它投放维护方案、测试答案、失败用例或checker源码。读取checker按TEST§6.1调查：排查工具错误与据隐藏判据改产物分别归因。verifier是产品内独立审查能力。
 
 ## 2. 产品定位与所有权
+
+概念定义与易混关系见 [GLOSSARY](GLOSSARY.md)；下表维护职责约束，具体行为与接口仍以有效 Spec/Plan 和原生合同为准。
 
 评价消费模型完成未知需求的实际行为：输入事实→送达→理解/决定→产物→下游→恢复→证据。载体字段、代码和门禁只证明各自局部性质；确定性helper核其真实输入输出及消费者，用户可见组合效果按完整链验收。
 
@@ -189,7 +194,7 @@ demo/scripts/build-dependence.ps1                                     # 重建 d
    每个扩展 Skill 的入口都在；不一致按它点名的项处理，不手改入口文件。
 6. 装置同步：根 `.opencode/agent/verifier.md` 逐字节复制自 `demo/.opencode/agent/verifier.md`。
 7. 验证：demo 下 `cd framework/harness && npm test`；`check_framework_drift.py` 结果与本次接入一致；按 [TEST §5](test/TEST.md) 跑与改动相关的离线回归。
-8. 提交 demo，并在 [test/EVOLUTION.md](test/EVOLUTION.md) 登记发布件版本、source_commit、定制处理与验证结果。
+8. 提交 demo，并在 [doc/EVOLUTION.md](doc/EVOLUTION.md) 登记发布件版本、source_commit、定制处理与验证结果。
 
 失败时用 git 查看并还原 demo；framework 自身的缺陷报回上游。
 
@@ -227,7 +232,7 @@ demo/scripts/build-dependence.ps1                                     # 重建 d
   ```
 
   然后跑 `python test/scripts/check_failure_modes.py`（缺省检查 demo）。发布提交带上 demo、`doc/release/<版本>.md` 与更新后的
-  [README](README.md)，并在 EVOLUTION 登记。提交前核：本版增量里使用者可见的每项变化都已反映在 README 的当前描述里
+  [README](README.md)，并在 [项目演进记录](doc/EVOLUTION.md) 登记。提交前核：本版增量里使用者可见的每项变化都已反映在 README 的当前描述里
   （命令、能力、产物、入口、安装），与发布版本一致；README 只写当前状态，版本变化只写在本版发布说明。
 - **失败**：退出 2 是输入读取、git 前置或宿主入口写前核不成立，目标没写；退出 1 是写入或物化中途失败，结果 JSON 列出实际完成项。用 git 查看并还原 demo，
   修好后从同一源重装。
