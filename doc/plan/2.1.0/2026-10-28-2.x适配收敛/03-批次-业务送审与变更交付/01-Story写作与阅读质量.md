@@ -6,7 +6,7 @@
 
 必读[批次方案](00-批次方案.md)、[共享接口](../参考/01-目标接口与状态.md)、主Spec R1—R4/R9及阅读专题R1—R7、TEST§6.5和本版评价标准变更。实施对象为`extensions/skills/story/`下的`phases/story-write.md`、`phases/design.md`、章节合同及成文模块；不改金样业务或`demo/framework/`。
 
-输入是`materials.json`可回到`sources/<材料名版本>/`的原件、转换稿和图，会议原话与纠偏、有效人答、当前蓝图canonical及原生人读稿、facts与真实契约实体义务。蓝图`current_scope_items`选用的版本与实际引用一致；材料已到但不采用仍可核理由。来源索引不变成写作逐条守恒账本，作者不再填写第二份`design-input`。
+输入是`materials.json`可回到材料索引指向的原件/稳定阅读版本的原件、转换稿和图，会议原话与纠偏、有效人答、当前蓝图canonical及原生人读稿、facts与真实契约实体义务。蓝图`current_scope_items`选用的版本与实际引用一致；材料已到但不采用仍可核理由。来源索引不变成写作逐条守恒账本，作者不再填写第二份`design-input`。
 
 输出仍为`AR/story.md`、`AR/review.md`及有用途的`AR/story-src/`写作安排/章节草稿/图源码/必要回看记录。Story可解释共同设计但不能另造共同决定；Review仅承载真实裁决及人工区，非独审报告。必要技术摘要保状态、接口业务语义、恢复、规约、配置与埋点，不因蓝图已有就移除。
 

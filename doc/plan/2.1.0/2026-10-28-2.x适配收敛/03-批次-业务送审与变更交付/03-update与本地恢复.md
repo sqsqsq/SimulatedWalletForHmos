@@ -12,7 +12,7 @@
 
 ## 2. 工程动作与正常顺序
 
-1. `scripts/core/flow/update.py`的`cmd_update_inputs`、`_collect`、`_sources`、`_imported_since`、`_fetched_this_round`先汇集实际输入，再由`cmd_update_prepare`建立轮次和可比较before。导入新来源时已版本化到`sources/<材料名版本>/`，本步只读`materials.json`及本轮回执判断新增/替换，不再调用`frozen.current_version`或要求重跑`complete`补登记。新材料到达不自动否定有效人答，是否采用由模型按当前事实决定并回写原生采用版本。
+1. `scripts/core/flow/update.py`的`cmd_update_inputs`、`_collect`、`_sources`、`_imported_since`、`_fetched_this_round`先汇集实际输入，再由`cmd_update_prepare`建立轮次和可比较before。导入新来源时已版本化到材料索引指向的原件/稳定阅读版本，本步只读`materials.json`及本轮回执判断新增/替换，不再调用`frozen.current_version`或要求重跑`complete`补登记。新材料到达不自动否定有效人答，是否采用由模型按当前事实决定并回写原生采用版本。
 2. 模型先判影响位置：原件/会议解释变化修其真实来源和纠偏；共同业务/接口/状态/知识义务变化修蓝图及原生decision；仅叙事变化修Story；真实裁决变化更新`decisions.json`并保人工区；CU按原生准备/更新取得当前Spec/Plan投影，不手改投影补共同决定。普通文件/模块预测调整不视为授权扩大，真实业务边界或明确限制变化才取得对应授权。
 3. `update.py`的`_unit_facts`、`_phase_facts`、`stale_units`、`cmd_update_status`、`cmd_update_feedback`与`phase_facts.py`经`flow/native.py`和`hooks/shared/framework-access.mjs`取同根实际CU/阶段事实。删除`design_binding.blueprint_id`定位及`closure_status == closed && fresh`单项代签。上游`ff111909`的`framework/harness/scripts/utils/check-disposition.ts`负责当前失败去向，`phase-closure-finalizer.ts`负责真实闭环；Extension消费原生当前处置与完成/发布资格，不复制处置表、不自行改FAIL为WARN。
 4. 来源、设计或正文变化后调用步骤01当前输入/写作/定稿，步骤02按对象变化确定必要复核。A04已退出`registered_input_stale`，本步不恢复该旧函数。现有登记/来源当前性读者按参考01及A05核实际采用＋必读人答联合身份、当前原生依据与登记对象；不以普通材料digest遮人答变化，也不重复实现A05已有来源读取。旧冻结快照/五段稿算法保持退出。真实旧FAIL、当前待核与普通完成资格分别显示，不为重新取报告而虚构内容返修。
@@ -22,9 +22,9 @@
 
 ## 3. 恢复实现与保护范围
 
-`contracts/story-chapters.json`的`update_files`继续是四类归属真源，`update.py`的`owner`/`_owned`/`_mirror`/`record_owned_after`/`cmd_update_restore`共用；更新路径后把`sources/**`、原件版本、备份、会议原话、人答及原生蓝图/CU/阶段产物列为受保护。未登记路径仍默认protected。流程契约仅恢复明确归Extension且属于本轮的字段，不整文件回退其他人的状态。
+`contracts/story-chapters.json`的`update_files`继续是四类归属真源，`update.py`的`owner`/`_owned`/`_mirror`/`record_owned_after`/`cmd_update_restore`共用；更新路径后按D05把inbox原件、RR/SR/AR来源、assets历史图、原件版本、备份、会议原话、人答及原生蓝图/CU/阶段产物列为受保护。未登记路径仍默认protected。流程契约仅恢复明确归Extension且属于本轮的字段，不整文件回退其他人的状态。
 
-保before/after/current三方指纹：current=before不动；current=本轮确权after才可退before或删本轮新建工作件；其他改动留当前并报冲突。恢复前将当前差异和Review原件保存到`sources/backups/`下本轮可定位备份，失败即停止后续写入；Review人工意见与有效人答始终保留。原生已完成对象不放进可撤回集合，恢复后按当前原生事实重算需要同步的Story/Review及审查状态，不恢复旧登记来制造一致。`restore_conflicted`继续保轮次可续，不对冲突自动选旧版。
+保before/after/current三方指纹：current=before不动；current=本轮确权after才可退before或删本轮新建工作件；其他改动留当前并报冲突。恢复前将当前差异和Review原件保存到1.9.9已有的AR/story-src/updates/<轮次>/restore-<时刻>/可定位备份，失败即停止后续写入；Review人工意见与有效人答始终保留。原生已完成对象不放进可撤回集合，恢复后按当前原生事实重算需要同步的Story/Review及审查状态，不恢复旧登记来制造一致。`restore_conflicted`继续保轮次可续，不对冲突自动选旧版。
 
 这替换的是旧根/旧冻结输入/旧closed判完成，不替换三方比较和所有权保护；只对本版新初始化的需求做多轮更新/恢复；1.x与旧试验2.x现场不接续、不转换，旧记录不回填。
 
