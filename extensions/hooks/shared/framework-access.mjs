@@ -644,9 +644,8 @@ function adoptedSourcesNow(projectRoot, blueprint, requirement) {
   const leaf = group => ({ ...fileOf(root, group[0]), dir: null, ...(group.length > 1 ? { source_id: null, version: null } : {}) });
   const ownImage = group => group.length === 1 && versionOf(group[0])?.original?.path === group[0].path;
   // 一处引用落到哪个来源版本：当前位置（别名）不是依据，报出对应的稳定文件；几个版本共用的留存按 provenance 写明的版本认，
-  // 认不出就列候选阅读稿；图是资源叶子，只取这份文件、不把含它的版本都算采用
-  const leaves = new Map();
-  const pick = (r, file, label) => {
+  // 认不出就列候选阅读稿；图是资源叶子，只取这份文件、不把含它的版本都算采用。叶子按用途各自归集（采用、冲突核源）
+  const pick = (r, file, label, leaves) => {
     const group = rows.get(file);
     if (!group) {
       out.problems.push(`${r.where} 引用的${label} ${file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按材料索引 files 同步`);
@@ -673,20 +672,22 @@ function adoptedSourcesNow(projectRoot, blueprint, requirement) {
   };
   const adopted = new Set();
   const conflicted = new Set();
+  const adoptedLeaves = new Map();
+  const conflictLeaves = new Map();
   for (const r of cited) {
     if (!inRoot(r.file)) continue;
-    const key = pick(r, r.file, '');
+    const key = pick(r, r.file, '', adoptedLeaves);
     if (key) adopted.add(key);
   }
   for (const r of conflicts) {
     const file = fileAt(r.path);
     if (!inRoot(file)) continue;
-    const key = pick(r, file, '冲突依据');
+    const key = pick(r, file, '冲突依据', conflictLeaves);
     if (key) conflicted.add(key);
   }
   // 版本展开：只取稳定行。聚合稿按它这一版固定的组成展开；阅读稿链到的登记文件连同它的整个版本加入（图只取那一份），
-  // 新加入的阅读稿接着读，直到没有新版本。阅读稿链到会换版的当前位置是生产缺口，报出来
-  const expand = (seed, use) => {
+  // 新加入的阅读稿接着读，直到没有新版本；末尾补上这一用途直接引的与链到的图。阅读稿链到会换版的当前位置是生产缺口，报出来
+  const expand = (seed, use, leaves) => {
     const keys = new Set(seed);
     const queue = [...keys];
     const files = [];
@@ -719,10 +720,10 @@ function adoptedSourcesNow(projectRoot, blueprint, requirement) {
         }
       }
     }
+    for (const [file, f] of leaves) if (!files.some(x => x.path === file)) files.push(f);
     return files;
   };
-  const files = expand(adopted, true);
-  for (const [file, f] of leaves) if (!files.some(x => x.path === file)) files.push(f);
+  const files = expand(adopted, true, adoptedLeaves);
   const answers = (() => {
     const mine = (index.sources ?? []).find(s => s?.kind === 'answer');
     const last = mine?.versions?.at(-1);
@@ -730,7 +731,7 @@ function adoptedSourcesNow(projectRoot, blueprint, requirement) {
   })();
   out.requirements.push({ requirement, root,
     versions: [...new Set(files.map(f => f.dir).filter(Boolean))].sort(), files, answers,
-    conflictFiles: expand(new Set([...conflicted].filter(k => !adopted.has(k))), false) });
+    conflictFiles: expand(new Set([...conflicted].filter(k => !adopted.has(k))), false, conflictLeaves) });
   return out;
 }
 

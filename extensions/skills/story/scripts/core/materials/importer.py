@@ -1111,9 +1111,12 @@ def latest_draft(stored: dict, target: str) -> dict | None:
 def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> list[str]:
     """直接给在 RR/SR/AR 的原文登记成来源版本（`direct_version` 算这一版留存什么）。第一次见到时登记；
     `changes` 为真（导入时）原文、引到的图或由它们生成的阅读稿变了也登记成新版本——生成后被人改过、这次又没重新生成的阅读稿
-    同样登记，保住人的改动。返回登记了的位置。"""
+    同样登记，保住人的改动。
+
+    这一批先在内存里定稳：原文换了的出新版本、占好它的阅读地址；直接原文之间的链接改指对方这一批的阅读地址，
+    阅读结果因此变了的再提升为新版本，直到不再变化——登记结果与 RR/SR/AR 的先后无关。全部算完才写盘。返回登记了的位置。"""
     from materials import registry  # noqa: PLC0415
-    done = []
+    plan: dict[str, dict] = {}
     for rel, cls in DIRECT.items():
         path = feature_root / rel
         if not path.is_file():
@@ -1127,27 +1130,47 @@ def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> 
         sid = f"direct:{rel}"
         label = unique_label(stored, sid, f"{PurePosixPath(rel).stem}-直接")
         number = (last or {}).get("version", 0) + 1
-        version, files = direct_version(feature_root, stored, rel, cls, label, number, blob)
-        if last and last["original"]["sha256"] == version["original"]["sha256"] \
-                and (last.get("image_inputs") or []) == version["image_inputs"] \
-                and last["readable"]["sha256"] == version["readable"]["sha256"]:
+        plan[rel] = {"cls": cls, "sid": sid, "label": label, "number": number, "blob": blob, "last": last,
+                     "new": not last or last["original"]["sha256"] != digest(blob)}
+    targets = {rel: reading_path(p["cls"], p["label"], p["number"]) if p["new"] else p["last"]["readable"]["path"]
+               for rel, p in plan.items()}
+
+    def same(p: dict) -> bool:
+        last, version = p["last"], p["version"]
+        return bool(last) and last["original"]["sha256"] == version["original"]["sha256"] \
+            and (last.get("image_inputs") or []) == version["image_inputs"] \
+            and last["readable"]["sha256"] == version["readable"]["sha256"]
+
+    promoted = True
+    while promoted:
+        promoted = False
+        for rel, p in plan.items():
+            p["version"], p["files"] = direct_version(feature_root, stored, rel, p["cls"], p["label"], p["number"],
+                                                      p["blob"], targets)
+            if not p["new"] and not same(p):
+                p["new"], promoted = True, True
+                targets[rel] = reading_path(p["cls"], p["label"], p["number"])
+    done = []
+    for rel, p in plan.items():
+        if not p["new"]:
             continue
-        for at, data in files.items():
+        for at, data in p["files"].items():
             write_once(feature_root, at, data)
-        registry.add_version(stored, {"source_id": sid, "kind": "direct", "class": cls, "origin": {"file": rel}, "label": label},
-                             {"version": number, "dir": f"{label}-v{number}", "acquired_at": now(), **version})
+        registry.add_version(stored, {"source_id": p["sid"], "kind": "direct", "class": p["cls"], "origin": {"file": rel},
+                                      "label": p["label"]},
+                             {"version": p["number"], "dir": f"{p['label']}-v{p['number']}", "acquired_at": now(), **p["version"]})
         done.append(rel)
     return done
 
 
 def direct_version(feature_root: Path, stored: dict, rel: str, cls: str, label: str, number: int,
-                   blob: bytes) -> tuple[dict, dict[str, bytes]]:
+                   blob: bytes, batch: dict[str, str] | None = None) -> tuple[dict, dict[str, bytes]]:
     """直接原文这一版的登记与要写的留存（只算不写）。
 
     没有本地链接时原字节就是阅读稿 `<标签>-v<N>.md`。有本地链接时原字节原样另存为 `<标签>-v<N>.original.md`，阅读稿是它在
     留存位置的投影：引到的图按内容身份落成稳定资源（已登记的同内容图直接复用，否则存一份到 `assets/ux/` 或这份原文的
     `assets/<派生名>/`，用户原图留在原处），链接改指稳定资源；引到会换版的当前位置（收件箱原件、当前阅读稿）改指它此刻的
-    稳定阅读地址；其余按原处解析改写。`images` 只登记稳定资源，原图位置与此刻的摘要记在 `image_inputs`，判下一次换没换图。
+    稳定阅读地址，引到同一批登记的直接原文改指它这一批的阅读地址（`batch`）；其余按原处解析改写。`images` 只登记稳定资源，原图位置与此刻的摘要记在 `image_inputs`，判下一次换没换图。
     引到的图不在报出来。"""
     from materials import registry  # noqa: PLC0415
     sha = digest(blob)
@@ -1157,7 +1180,7 @@ def direct_version(feature_root: Path, stored: dict, rel: str, cls: str, label: 
         same = {"path": reading, "sha256": sha}
         return {"original": same, "readable": dict(same), "images": [], "image_inputs": []}, {reading: blob}
     here, there = posixpath.dirname(rel), posixpath.dirname(reading)
-    aliases = registry.aliases(feature_root, stored)
+    stable = {at: a["path"] for at, a in registry.aliases(feature_root, stored).items()} | (batch or {})
     files: dict[str, bytes] = {}
     images: list[dict] = []
     inputs: list[dict] = []
@@ -1166,7 +1189,7 @@ def direct_version(feature_root: Path, stored: dict, rel: str, cls: str, label: 
     def move(p: str) -> str | None:
         linked = posixpath.normpath(posixpath.join(here, p))
         if posixpath.splitext(linked)[1].lower() not in IMAGE_EXTS:
-            return posixpath.relpath(aliases[linked]["path"] if linked in aliases else linked, there)
+            return posixpath.relpath(stable.get(linked, linked), there)
         picture = feature_root / linked
         if not picture.is_file():
             missing.append(linked)
@@ -1174,17 +1197,17 @@ def direct_version(feature_root: Path, stored: dict, rel: str, cls: str, label: 
         data = picture.read_bytes()
         h = digest(data)
         known = registry.stable_image(stored, h)
-        stable = known or (
+        kept_image = known or (
             linked if PurePosixPath(linked).stem.endswith(f".{h[:16]}") else
             f"{UX_DIR if linked.startswith(UX_DIR + '/') else ASSETS + '/' + derived_name(rel)}/"
             f"{stored_name(PurePosixPath(linked).name, data)}")
         if known is None:
-            files[stable] = data
-        if stable not in [i["path"] for i in images]:
-            images.append({"path": stable, "sha256": h})
+            files[kept_image] = data
+        if kept_image not in [i["path"] for i in images]:
+            images.append({"path": kept_image, "sha256": h})
         if linked not in [i["path"] for i in inputs]:
-            inputs.append({"path": linked, "sha256": h, "stable_path": stable})
-        return posixpath.relpath(stable, there)
+            inputs.append({"path": linked, "sha256": h, "stable_path": kept_image})
+        return posixpath.relpath(kept_image, there)
 
     projected = relink(text, move).encode("utf-8")
     if missing:

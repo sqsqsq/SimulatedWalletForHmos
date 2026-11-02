@@ -756,6 +756,98 @@ class ACitedCurrentDraftStaysAtItsVersion(HandoverCase):
         self.assertIn(self.current()["reference"]["path"], problem, "没指出当前位置对应的稳定文件")
 
 
+class DirectOriginalsAreCitedAtTheirVersions(HandoverCase):
+    """直接写在 RR/SR/AR 的原文：同一批里互相链接时，阅读稿链对方这一批的版本，与先后无关；被链的那份换版，旧版仍读旧正文。
+    设计引用的图按用途归集：采用的图进采用，冲突依据直接引或经它的文稿链到的图进冲突核源，不凭空变成采用。"""
+
+    PROBE = """
+    const [access, root, feature, bp] = process.argv.slice(1);
+    const { adoptedSources } = await import(access);
+    const out = adoptedSources(root, JSON.parse(bp), { requirement: feature });
+    const own = out.requirements[0] ?? { files: [], conflictFiles: [] };
+    process.stdout.write(JSON.stringify({ problems: out.problems, files: own.files.map(f => f.path),
+      conflictFiles: own.conflictFiles.map(f => f.path) }));
+    """
+
+    def setUp(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        ensure_framework(self.root)
+        self.feature_root = self.root / "doc" / "features" / self.feature
+        (self.feature_root / "inbox").mkdir(parents=True)
+        self.src = self.feature_root / "AR" / "story-src"
+        self.base = f"doc/features/{self.feature}"
+
+    def give(self, files: dict[str, str | bytes]) -> None:
+        """直接写进需求目录（不经收件箱），再经真实导入器登记。"""
+        for rel, body in files.items():
+            (self.feature_root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.feature_root / rel).write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+        importer.cmd_import(self.feature_root, self.root)
+
+    def latest(self, rel: str) -> dict:
+        return next(s for s in registry.read(self.feature_root)["sources"] if s["source_id"] == f"direct:{rel}")["versions"][-1]
+
+    def collect(self, items: list[dict], support: list[str] = (), conflicts: list[str] = ()) -> dict:
+        prov = lambda ref: {"source_kind": "requirement_reading", "source_ref": ref, "observed_at": "2026-11-02T10:00:00+08:00",  # noqa: E731
+                            "evidence_strength": "observed", "extraction_method": "read-source"}
+        bp = {"blueprint_id": self.feature, "discovery": {
+            "inputs": {"current_scope_items": items},
+            "facts": [{"fact_id": f"f-{i}", "provenance": prov(ref)} for i, ref in enumerate(support)],
+            "conflicts": [{"sources": [{"source_ref": ref} for ref in conflicts], "owner": "需求负责人"}] if conflicts else []}}
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.PROBE, ACCESS.resolve().as_uri(), str(self.root),
+                               self.feature, json.dumps(bp, ensure_ascii=False)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_a_link_between_direct_originals_reads_the_linked_version(self) -> None:
+        self.give({"RR/prd.md": "# 产品需求\n\n## 背景\n\n分工见[系统设计](../SR/design.md#分工)。\n",
+                   "SR/design.md": "# 系统设计\n\n## 分工\n\n钱包发起签约。\n"})
+        [old] = self.scoped([item("RR/prd.md#背景")])["current_scope_items"]
+        first = self.collect([old])
+        self.assertEqual([], first["problems"], "同一批登记的直接原文链到了会换版的当前位置")
+        sr_v1 = f"{self.base}/{self.latest('SR/design.md')['readable']['path']}"
+        self.assertIn(sr_v1, first["files"], "链到的系统设计没随采用展开")
+        self.assertIn("钱包发起签约", (self.root / sr_v1).read_text(encoding="utf-8"))
+
+        self.give({"SR/design.md": "# 系统设计\n\n## 分工\n\n钱包发起并确认签约。\n"})
+        sr_v2 = f"{self.base}/{self.latest('SR/design.md')['readable']['path']}"
+        self.assertNotEqual(sr_v1, sr_v2)
+        again = self.collect([old])
+        self.assertEqual([], again["problems"])
+        self.assertIn(sr_v1, again["files"], "旧引用展开到了新版本")
+        self.assertNotIn(sr_v2, again["files"])
+        self.assertIn("钱包发起签约", (self.root / sr_v1).read_text(encoding="utf-8"), "旧版正文被改了")
+        [new] = self.scoped([item("RR/prd.md#背景")])["current_scope_items"]
+        self.assertNotEqual(old["source_ref"], new["source_ref"], "被链的原文换版，链它的阅读稿没出新版本")
+        self.assertIn(sr_v2, self.collect([new])["files"])
+
+    def test_pictures_follow_the_use_they_were_cited_for(self) -> None:
+        picture = self.feature_root / "assets" / "ux" / "界面.png"
+        picture.parent.mkdir(parents=True, exist_ok=True)
+        picture.write_bytes(b"\x89PNG\r\n\x1a\nui")
+        self.give({"RR/prd.md": "# 产品需求\n\n## 背景\n\n签约。\n",
+                   "AR/design.md": "# 开发需求\n\n## 界面\n\n![界面](../assets/ux/界面.png)\n"})
+        [scoped] = self.scoped([item("RR/prd.md#背景")])["current_scope_items"]
+        shown = f"{self.base}/{self.latest('AR/design.md')['images'][0]['path']}"
+        reading = f"{self.base}/{self.latest('AR/design.md')['readable']['path']}"
+        direct = self.collect([scoped], conflicts=[shown])
+        self.assertEqual([], direct["problems"])
+        self.assertIn(shown, direct["conflictFiles"], "冲突依据直接引的图没进冲突核源")
+        self.assertNotIn(shown, direct["files"], "只作冲突依据的图变成了采用")
+        linked = self.collect([scoped], conflicts=[reading])
+        self.assertEqual([], linked["problems"])
+        self.assertTrue({reading, shown} <= set(linked["conflictFiles"]), "冲突文稿链到的图没随冲突核源交出")
+        self.assertNotIn(shown, linked["files"])
+        used = self.collect([scoped], support=[shown])
+        self.assertIn(shown, used["files"], "设计引用的图没进采用")
+        self.assertNotIn(reading, used["files"], "引了文稿里的一张图，把整份文稿都算成了采用")
+
+
 def yaml_scope(root: Path, feature: str) -> list[dict]:
     """蓝图里的原生需求条目（夹具写成单行 JSON）。"""
     text = (root / "doc" / "features" / feature / "blueprint" / "component-blueprint.yaml").read_text(encoding="utf-8")
