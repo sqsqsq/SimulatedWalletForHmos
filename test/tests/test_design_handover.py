@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -59,7 +60,7 @@ class HandoverCase(unittest.TestCase):
 
     def seed(self, files: dict[str, tuple[str, str]], receipt: dict | None = None) -> None:
         """经真实导入器导成材料版本，各来源最新版本的原件路径存成属性。给了 `receipt` 时这批件是一次系统取材。"""
-        inbox = self.feature_root / "sources" / "inbox"
+        inbox = self.feature_root / "inbox"
         batch = inbox / "fetch-1" if receipt else inbox
         classify = {}
         for rel, (text, cls) in files.items():
@@ -501,13 +502,13 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         self.ready()
         design_kit.install_blueprint(self.root, self.feature, ACCESS)
         versions = self.design_view()["versions"]
-        self.assertTrue(any(v.endswith("/design-v1") for v in versions), versions)
-        self.assertTrue(any(v.endswith("/prd-v1") for v in versions), versions)
+        self.assertTrue(any(re.fullmatch(r"design(-[0-9a-f]{6})?-v1", v) for v in versions), versions)
+        self.assertTrue(any(re.fullmatch(r"prd(-[0-9a-f]{6})?-v1", v) for v in versions), versions)
 
     def test_a_support_reference_to_an_unregistered_file_is_named(self) -> None:
         """设计依据引了本需求下没登记的文件：报出位置，不静默省略。"""
         self.ready()
-        stray = f"doc/features/{self.feature}/sources/design-v9/design.md"
+        stray = f"doc/features/{self.feature}/.backups/local/SR/design-v9.md"
         design_kit.install_blueprint(self.root, self.feature, ACCESS, support=[stray])
         self.assertTrue(any("discovery.facts" in p and stray in p for p in self.design_view()["problems"]))
 
@@ -660,14 +661,14 @@ class TheSupportSourcesAreCollectedNatively(HandoverCase):
     def test_a_contract_level_reference_adopts_its_version(self) -> None:
         got = self.collect(self.blueprint(contract_ref=f"{self.sr}#分工"))
         self.assertEqual([], got["problems"])
-        self.assertTrue(any(v.endswith("/design-v1") for v in got["versions"]), got["versions"])
+        self.assertTrue(any(re.fullmatch(r"design(-[0-9a-f]{6})?-v1", v) for v in got["versions"]), got["versions"])
 
     def test_a_fragment_that_is_not_in_the_file_is_named(self) -> None:
         got = self.collect(self.blueprint(contract_ref=f"{self.sr}#没有这一节"))
         self.assertTrue(any("contracts[c-sign]" in p and "fragment" in p for p in got["problems"]), got["problems"])
 
     def test_an_unregistered_conflict_source_is_named(self) -> None:
-        stray = f"{self.base}/sources/design-v9/design.md"
+        stray = f"{self.base}/.backups/local/SR/design-v9.md"
         got = self.collect(self.blueprint(contract_ref=self.sr, conflict_ref=stray))
         self.assertTrue(any("冲突依据" in p and stray in p for p in got["problems"]), got["problems"])
 

@@ -37,7 +37,7 @@ def hand_over_state(root: Path, feature: str, contract: dict, *, with_blueprint:
     manifest = registry.build(feature_root)
     if not any(m["kind"] == "doc" and m.get("sha256") for m in manifest["materials"]):
         # 设计至少要采用一份原件：没有正文材料的测试工程导入一份最小的需求正文，本轮材料基准随之更新
-        inbox = feature_root / "sources" / "inbox"
+        inbox = feature_root / "inbox"
         (inbox / "RR").mkdir(parents=True, exist_ok=True)
         (inbox / "RR" / "prd.md").write_text("# 产品需求\n\n夹具。\n", encoding="utf-8")
         (inbox / ".classify.json").write_text('{"RR/prd.md": "RR"}', encoding="utf-8")

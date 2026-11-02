@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -31,6 +32,16 @@ FEATURE = "IM90001"
 
 PNG_ONE = b"\x89PNG\r\n\x1a\nsignup"
 PNG_TWO = b"\x89PNG\r\n\x1a\nmanage"
+
+
+def ux(name: str, blob: bytes) -> str:
+    """界面图导入后的落点（相对需求目录）：assets/ux/<主名>.<内容摘要前 16 位><后缀>。"""
+    stem, ext = name.rsplit(".", 1)
+    return f"assets/ux/{stem}.{hashlib.sha256(blob).hexdigest()[:16]}.{ext}"
+
+
+#: 签约页那张图导入后的落点
+SIGNUP = ux("signup-page.png", PNG_ONE)
 
 
 FLOW_SCRIPT = DEV_EXT / "skills/story/scripts/core/story_flow.py"
@@ -61,7 +72,7 @@ class RegistrationCase(unittest.TestCase):
         link_harness_yaml(self.root)
         self.feature_root = self.root / "doc" / "features" / FEATURE
         (self.feature_root / "AR" / "story-src").mkdir(parents=True)
-        (self.feature_root / "sources" / "inbox").mkdir(parents=True)
+        (self.feature_root / "inbox").mkdir(parents=True)
         self.incoming = self.root / "incoming"
         self.incoming.mkdir()
         (self.incoming / "raw-1.png").write_bytes(PNG_ONE)
@@ -69,7 +80,7 @@ class RegistrationCase(unittest.TestCase):
 
     def put(self, source: str, rel: str, cls: str = "UX") -> str:
         """把一份原件放进来源收件箱并导入，返回导入后它在工程里的路径。"""
-        inbox = self.feature_root / "sources" / "inbox"
+        inbox = self.feature_root / "inbox"
         (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(self.incoming / source, inbox / rel)
         (inbox / ".classify.json").write_text(json.dumps({rel: cls}, ensure_ascii=False), encoding="utf-8")
@@ -102,8 +113,7 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
     def test_it_copies_names_and_captions_in_one_go(self) -> None:
         proc = self.register("raw-1.png", "signup-page", "签约页：门限与面额选择")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertTrue((self.feature_root / "sources" / "signup-page-v1" / "signup-page.png").is_file(),
-                        "图没有导成材料版本")
+        self.assertTrue((self.feature_root / SIGNUP).is_file(), "图没有按内容身份导进 assets/ux/")
         images = self.images()
         self.assertEqual(1, len(images))
         self.assertEqual("签约页：门限与面额选择", images[0]["caption"])
@@ -119,7 +129,7 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
         self.put("raw-2.png", "doc-a/image3.png")
         self.register("raw-1.png", "signup-page", "签约页")
         captions = {img["paths"][0]: img["caption"] for img in self.images()}
-        self.assertEqual("", captions["sources/image3-v1/image3.png"])
+        self.assertEqual("", captions[ux("image3.png", PNG_TWO)])
 
     def test_the_caption_follows_the_bytes_not_the_path(self) -> None:
         """同一张图复制到第二个落点，说明跟着它——图片的身份是内容。"""
@@ -151,7 +161,10 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
         self.put("界面说明.md", "界面说明.md")
         self.assertEqual(0, self.register("raw-1.png", "signup-page", "签约页").returncode)
         docs = [m["paths"] for m in self.manifest()["materials"] if m["kind"] == "doc"]
-        self.assertIn(["sources/界面说明-v1/界面说明.md"], docs, "说明文件没登记成材料")
+        kept = f".backups/local/inbox/界面说明.{hashlib.sha256((self.incoming / '界面说明.md').read_bytes()).hexdigest()[:16]}.md"
+        self.assertIn([kept], docs, "说明文件没登记成材料")
+        self.assertIn("签约页的交互", (self.feature_root / "assets" / "ux" / "README.md").read_text(encoding="utf-8"),
+                      "界面说明没并进 assets/ux/README.md")
 
 
 class EveryRegisteredImageNeedsSomewhereToGoCase(RegistrationCase):
@@ -191,7 +204,7 @@ class EveryRegisteredImageNeedsSomewhereToGoCase(RegistrationCase):
         return subprocess.run(
             ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
-             f"doc/features/{FEATURE}/sources/signup-page-v1/signup-page.png", "--unused", reason],
+             f"doc/features/{FEATURE}/{SIGNUP}", "--unused", reason],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
 
@@ -233,17 +246,17 @@ class EveryRegisteredImageNeedsSomewhereToGo(EveryRegisteredImageNeedsSomewhereT
         proc = subprocess.run(
             ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
-             "sources/signup-page-v1/signup-page.png", "--caption", "签约页"],
+             SIGNUP, "--caption", "签约页"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
         self.assertEqual(1, proc.returncode)
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertIn("路径相对工程根", out)
-        self.assertIn("doc/features/<需求名>/sources/<材料版本>/images/<文件名>", out)
+        self.assertIn("doc/features/<需求名>/assets/<图片目录>/<文件名>", out)
 
     def test_an_image_nobody_mentions_is_reported_by_name(self) -> None:
         out = self.check_output()
-        self.assertIn("sources/signup-page-v1/signup-page.png", out)
+        self.assertIn(SIGNUP, out)
         self.assertIn("--unused", out, "报错要给出登记去向的那条命令")
 
     def test_registering_why_it_is_unused_settles_it(self) -> None:
@@ -264,7 +277,7 @@ class EveryRegisteredImageNeedsSomewhereToGoPart2(EveryRegisteredImageNeedsSomew
         proc = subprocess.run(
             ["python", "doc/extensions/skills/story/scripts/core/import_sources.py",
              "--feature", FEATURE, "--caption-image",
-             f"doc/features/{FEATURE}/sources/signup-page-v1/signup-page.png", "--used"],
+             f"doc/features/{FEATURE}/{SIGNUP}", "--used"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=90, cwd=self.root)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
@@ -279,13 +292,13 @@ class EveryRegisteredImageNeedsSomewhereToGoPart2(EveryRegisteredImageNeedsSomew
         """
         self.assertEqual(0, self.mark_unused("属别的需求的页面").returncode)
         self.put_in_body("签约页长这样。\n\n"
-                         "![图 1 · 签约页](../sources/signup-page-v1/signup-page.png)\n")
+                         f"![图 1 · 签约页](../{SIGNUP})\n")
         self.assertIn("在材料里登记着不用的理由", self.check_output())
 
     def test_using_it_settles_it_too(self) -> None:
         text = self.story.read_text(encoding="utf-8")
         self.story.write_text(
-            text + "\n![图 1 · 签约页](../sources/signup-page-v1/signup-page.png)\n", encoding="utf-8")
+            text + f"\n![图 1 · 签约页](../{SIGNUP})\n", encoding="utf-8")
         out = self.check_output()
         self.assertNotIn("没被引用", out)
         self.assertNotIn("不在材料的图片登记里", out)

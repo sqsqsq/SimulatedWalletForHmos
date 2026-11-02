@@ -90,7 +90,7 @@ def pending_import_step(state: dict) -> tuple[str, str] | None:
         return None
     more = f" 等 {len(state['pending'])} 件" if len(state["pending"]) > 3 else ""
     return ("import_materials",
-            "来源收件箱里有还没导入的件，先导入："
+            "收件箱里有还没导入的件（或直接改过的当前阅读稿），先导入："
             "`python doc/extensions/skills/story/scripts/core/import_sources.py --feature <名>`"
             f"（{'、'.join(state['pending'][:3])}{more}），导完重跑 `round` 盘点")
 
@@ -140,7 +140,7 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
     if not blueprint_exists(feature_root):
         return ("design_blueprint",
                 f"本轮范围已定。按 `phases/design.md`「二、交给设计」「三、设计」进原生 component-design：为本需求建立蓝图 `{blueprint}`"
-                f"（与需求同根，在 `{blueprint}/blueprint/`）。来源是 `sources/README.md` 列的材料版本；当前有效人工答复是必读；"
+                f"（与需求同根，在 `{blueprint}/blueprint/`）。来源是材料索引 `AR/story-src/materials.json` 登记的版本（当前阅读稿 `RR/prd.md`、`SR/design.md` 等及它们的组成原件，每版留存在 `.backups/local/`）；当前有效人工答复是必读；"
                 "本轮定位（本单承载、同一系统设计下的兄弟单、协作方与不做项）与范围答复写进原生范围与边界。"
                 "需求条目只写真实的需求、目标、约束与风险，用 `import_sources.py --scope` 按材料索引补齐来源路径与摘要；"
                 "只作支撑的材料在事实与设计对象的 provenance 里引用，不为它造条目。"

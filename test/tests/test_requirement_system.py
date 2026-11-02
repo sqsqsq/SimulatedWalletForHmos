@@ -1,7 +1,7 @@
 """本地需求系统替身：一个目录就是一套需求系统，一个子目录就是一张单。
 
 外网 demo 用 `story.js` 屏蔽内网需求系统。它读一个真实存在的目录：取材把上游正文写进来源收件箱下的
-取材批次、查无此单会停住、归档覆盖系统正文之前把系统上那一版备份到需求目录的 `sources/backups/cloud/`、
+取材批次、查无此单会停住、归档覆盖系统正文之前把系统上那一版备份到需求目录的 `.backups/cloud/`、
 restore 用那份备份恢复系统正文。这里判的就是这几件事（KM-1…KM-4），因为它们是被测模型在实跑里
 唯一能观察到的「系统行为」。
 """
@@ -82,7 +82,7 @@ class SystemCase(unittest.TestCase):
         return story, notes
 
     def batch(self) -> Path:
-        return self.feature / "sources" / "inbox" / "fetch-test"
+        return self.feature / "inbox" / "fetch-test"
 
     def deliver(self) -> None:
         """发布前核对记下的交付集合（`story_flow.py publish` 写进取材回执的 delivery）：本地三件的来源与此刻的摘要。"""
@@ -104,8 +104,10 @@ class SystemCase(unittest.TestCase):
         return json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
 
     def items(self) -> dict:
-        receipt = json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
-        return {i["name"]: i for i in receipt["items"]}
+        return {i["name"]: i for i in self.receipt_file()["items"]}
+
+    def receipt_file(self) -> dict:
+        return json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
 
 
 def _env() -> dict[str, str]:
@@ -157,7 +159,7 @@ class TestFetch(SystemCase):
         self.assertEqual("# 我自己写的\n", (self.feature / "AR" / "story.md").read_text("utf-8"))
         written = {p.relative_to(self.feature).as_posix() for p in self.feature.rglob("*") if p.is_file()}
         self.assertEqual(set(), {w for w in written - {"AR/story.md"}
-                                 if not w.startswith(("sources/inbox/fetch-test/", "AR/story-src/"))})
+                                 if not w.startswith(("inbox/fetch-test/", "AR/story-src/"))})
 
     def test_missing_body_is_reported_absent_not_written_empty(self) -> None:
         """系统上没有正文就不写：空文件会让下游分不清「没有」和「拉到了空的」。"""
@@ -204,10 +206,10 @@ class TestArchive(SystemCase):
         self.assertEqual(self.story_text, (self.system / AR / "design.md").read_text("utf-8"))
         self.assertEqual(self.notes_text, (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
         self.assertEqual(DESIGN_REVIEW_TEXT, (self.system / AR / "attachments" / "design-review.md").read_text("utf-8"))
-        backups = sorted((self.feature / "sources" / "backups" / "cloud").glob("design-*.md"))
+        backups = sorted((self.feature / ".backups" / "cloud").glob("design-*.md"))
         self.assertEqual(1, len(backups))
         self.assertEqual(AR_TEXT, backups[0].read_text("utf-8"))
-        self.assertEqual(f"sources/backups/cloud/{backups[0].name}", receipt["backupPath"])
+        self.assertEqual(f".backups/cloud/{backups[0].name}", receipt["backupPath"])
         items = self.items()
         for name, local in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"), ("design-review.md", "blueprint/component-blueprint.review.md")):
             item = items[name]
@@ -239,7 +241,7 @@ class TestArchive(SystemCase):
                  for p in sorted(self.feature.rglob("*")) if p.is_file()}
         added = sorted(set(after) - set(before))
         self.assertEqual(1, len(added), added)
-        self.assertTrue(added[0].startswith("sources/backups/cloud/design-"), added)
+        self.assertTrue(added[0].startswith(".backups/cloud/design-"), added)
         changed = sorted(k for k in before if before[k] != after.get(k))
         self.assertEqual(["AR/story-src/fetched.json"], changed)
 
@@ -279,15 +281,23 @@ class TestArchive(SystemCase):
         self.assertEqual(("fetched", "fetched", "failed"),
                          tuple(items[n]["status"] for n in ("AR-design.md", "review.md", "design-review.md")))
         self.assertNotIn("checkedAt", items["design-review.md"])
+        # 正文已真实覆盖：覆盖关联记在回执顶层，附件失败不撤销它，重新取材也保留
+        wrote = self.receipt_file()["body_write"]
+        self.assertEqual((short(self.feature / "AR" / "story.md"), AR_TEXT),
+                         (wrote["target_digest"], (self.feature / wrote["backup"]).read_text("utf-8")))
+        self.assertIn("verified_at", wrote)
         target.chmod(stat.S_IREAD | stat.S_IWRITE)
         self.fetch()
+        self.assertEqual(wrote, self.receipt_file()["body_write"], "重新取材把正文覆盖关联丢了")
         self.deliver()
+        self.assertEqual(wrote, self.receipt_file()["body_write"], "发布前核对把正文覆盖关联丢了")
         proc = self.story("archive", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
         items = self.items()
         self.assertEqual(("same", "same", "fetched"),
                          tuple(items[n]["status"] for n in ("AR-design.md", "review.md", "design-review.md")))
         self.assertEqual(DESIGN_REVIEW_TEXT, target.read_text("utf-8"))
+        self.assertEqual(wrote, self.receipt_file()["body_write"], "续传时正文没再写，覆盖关联却变了")
 
     def test_a_local_change_after_the_publish_check_stops_before_any_write(self) -> None:
         """发布前核对记下交付集合之后本地又改了一件：一件都不写，报出哪件变了。"""
@@ -352,7 +362,7 @@ class TestRestore(SystemCase):
         body = self.items()["AR-design.md"]
         self.assertEqual(("fetched", short(self.feature / self.backup)), (body["status"], body["digest"]))
         self.assertIn("checkedAt", body)
-        self.assertEqual(1, len(list((self.feature / "sources" / "backups" / "cloud").glob("design-*.md"))), "restore 不该再备份一份")
+        self.assertEqual(1, len(list((self.feature / ".backups" / "cloud").glob("design-*.md"))), "restore 不该再备份一份")
 
     def test_a_change_after_the_preparation_writes_nothing(self) -> None:
         self.prepare()
@@ -448,7 +458,7 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
     def test_material_lands_in_the_features_dir_of_the_project(self) -> None:
         proc = subprocess.run(
             ["node", str(self.installed), "fetch", AR, "token", "--out",
-             f"doc/features/{AR}/sources/inbox/fetch-test"],
+             f"doc/features/{AR}/inbox/fetch-test"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=60, cwd=self.project, env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
         self.assertEqual(0, proc.returncode, proc.stderr)

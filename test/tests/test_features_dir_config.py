@@ -100,7 +100,7 @@ class FeaturesDirConfigTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertFalse((self.root / " feat dir ").exists(),
                          "带边缘空格的目录不该被创建")
-        self.assertTrue((self.root / "feat dir" / FEATURE / "sources" / "inbox" / "README.md").is_file())
+        self.assertTrue((self.root / "feat dir" / FEATURE / "inbox" / "README.md").is_file())
         self.put_ledgers("feat dir")
         self.assertIn(
             str(self.root / "feat dir" / FEATURE / "AR" / "story.md"),

@@ -181,7 +181,7 @@ function blueprintTask(root, id, action) {
     : `蓝图 \`${id}\`（尚未建立）`;
   if (bp?.issues?.length) gaps.push(`蓝图原生校验有 ${bp.issues.length} 项：${bp.issues.slice(0, 5).map(i => i.id ?? i.code).join('、')}——设计作者处理。`);
   const sources = bp ? sourceIndex(root, id, bp.blueprint)
-    : ['蓝图尚未建立，还没有候选采用的来源：需求的材料版本列在 `sources/README.md`，从那里起手。', ...answerRows(root, id)];
+    : ['蓝图尚未建立，还没有候选采用的来源：需求的当前阅读稿（`RR/prd.md`、`SR/design.md` 等）与登记的材料版本见材料索引 `AR/story-src/materials.json`，从那里起手。', ...answerRows(root, id)];
   const checked = bp ? blueprintKnowledge(root, bp.blueprint) : null;
   const decided = checked ? judgedOf(checked) : [];
   if (checked) gaps.push(...checked.problems.map(p => `${p}——设计作者处理。`));

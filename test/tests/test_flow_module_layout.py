@@ -161,8 +161,8 @@ class OneRuleFindsEveryResource(unittest.TestCase):
         """`init` 落下的收件箱说明书来自 Skill 自带的模板：定位错一层就没有这个文件。"""
         out = self.payload(self.flow("init"))
         self.assertTrue(out["success"], out)
-        readme = self.feature_root / "sources" / "inbox" / "README.md"
-        self.assertTrue(readme.is_file(), "sources/inbox/README.md 没落地——模板没找到")
+        readme = self.feature_root / "inbox" / "README.md"
+        self.assertTrue(readme.is_file(), "inbox/README.md 没落地——模板没找到")
         template = CORE.parents[1] / "templates" / "inbox-readme.md"
         self.assertEqual(template.read_text(encoding="utf-8"),
                          readme.read_text(encoding="utf-8"),

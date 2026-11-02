@@ -1,57 +1,59 @@
 {
-  "schema": 3,
+  "schema": 4,
   "feature": "AR90006",
-  "digest": "sha256:61873e8179897711",
+  "digest": "sha256:65dadcaf58fe043d",
   "sources": [
     {
-      "source_id": "local:RR/prd.md",
-      "kind": "local",
+      "source_id": "direct:RR/prd.md",
+      "kind": "direct",
       "class": "RR",
       "origin": {
-        "inbox_path": "RR/prd.md"
+        "file": "RR/prd.md"
       },
       "latest_version": 1,
       "versions": [
         {
           "version": 1,
-          "dir": "sources/prd-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "prd-直接-v1",
+          "acquired_at": "2026-11-02T10:47:43+08:00",
           "original": {
-            "path": "sources/prd-v1/prd.md",
+            "path": ".backups/local/RR/prd-直接-v1.md",
             "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59"
           },
           "readable": {
-            "path": "sources/prd-v1/prd.md",
+            "path": ".backups/local/RR/prd-直接-v1.md",
             "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59"
           },
           "images": []
         }
-      ]
+      ],
+      "label": "prd-直接"
     },
     {
-      "source_id": "local:SR/design.md",
-      "kind": "local",
+      "source_id": "direct:SR/design.md",
+      "kind": "direct",
       "class": "SR",
       "origin": {
-        "inbox_path": "SR/design.md"
+        "file": "SR/design.md"
       },
       "latest_version": 1,
       "versions": [
         {
           "version": 1,
-          "dir": "sources/design-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "design-直接-v1",
+          "acquired_at": "2026-11-02T10:47:43+08:00",
           "original": {
-            "path": "sources/design-v1/design.md",
+            "path": ".backups/local/SR/design-直接-v1.md",
             "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320"
           },
           "readable": {
-            "path": "sources/design-v1/design.md",
+            "path": ".backups/local/SR/design-直接-v1.md",
             "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320"
           },
           "images": []
         }
-      ]
+      ],
+      "label": "design-直接"
     },
     {
       "source_id": "local:assets/交通卡自动充值/image1.png",
@@ -64,16 +66,18 @@
       "versions": [
         {
           "version": 1,
-          "dir": "sources/image1-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "image1-v1",
+          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "inbox_path": "assets/交通卡自动充值/image1.png",
           "original": {
-            "path": "sources/image1-v1/image1.png",
+            "path": "assets/ux/image1.d25741a62303f129.png",
             "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80"
           },
           "readable": null,
           "images": []
         }
-      ]
+      ],
+      "label": "image1"
     },
     {
       "source_id": "local:assets/交通卡自动充值/image2.png",
@@ -86,16 +90,18 @@
       "versions": [
         {
           "version": 1,
-          "dir": "sources/image2-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "image2-v1",
+          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "inbox_path": "assets/交通卡自动充值/image2.png",
           "original": {
-            "path": "sources/image2-v1/image2.png",
+            "path": "assets/ux/image2.b3fad248696b67a1.png",
             "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a"
           },
           "readable": null,
           "images": []
         }
-      ]
+      ],
+      "label": "image2"
     },
     {
       "source_id": "local:assets/交通卡自动充值/image3.png",
@@ -108,85 +114,92 @@
       "versions": [
         {
           "version": 1,
-          "dir": "sources/image3-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "image3-v1",
+          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "inbox_path": "assets/交通卡自动充值/image3.png",
           "original": {
-            "path": "sources/image3-v1/image3.png",
+            "path": "assets/ux/image3.5b271cadb8e2ecca.png",
             "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba"
           },
           "readable": null,
           "images": []
         }
-      ]
+      ],
+      "label": "image3"
     },
     {
-      "source_id": "local:ux-reference/auto-topup-manage-page.png",
+      "source_id": "local:界面参考/auto-topup-manage-page.png",
       "kind": "local",
       "class": "UX",
       "origin": {
-        "inbox_path": "ux-reference/auto-topup-manage-page.png"
+        "inbox_path": "界面参考/auto-topup-manage-page.png"
       },
       "latest_version": 1,
       "versions": [
         {
           "version": 1,
-          "dir": "sources/auto-topup-manage-page-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "auto-topup-manage-page-v1",
+          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "inbox_path": "界面参考/auto-topup-manage-page.png",
           "original": {
-            "path": "sources/auto-topup-manage-page-v1/auto-topup-manage-page.png",
+            "path": "assets/ux/auto-topup-manage-page.b3fad248696b67a1.png",
             "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a"
           },
           "readable": null,
           "images": []
         }
-      ]
+      ],
+      "label": "auto-topup-manage-page"
     },
     {
-      "source_id": "local:ux-reference/auto-topup-signup-page.png",
+      "source_id": "local:界面参考/auto-topup-signup-page.png",
       "kind": "local",
       "class": "UX",
       "origin": {
-        "inbox_path": "ux-reference/auto-topup-signup-page.png"
+        "inbox_path": "界面参考/auto-topup-signup-page.png"
       },
       "latest_version": 1,
       "versions": [
         {
           "version": 1,
-          "dir": "sources/auto-topup-signup-page-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "auto-topup-signup-page-v1",
+          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "inbox_path": "界面参考/auto-topup-signup-page.png",
           "original": {
-            "path": "sources/auto-topup-signup-page-v1/auto-topup-signup-page.png",
+            "path": "assets/ux/auto-topup-signup-page.d25741a62303f129.png",
             "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80"
           },
           "readable": null,
           "images": []
         }
-      ]
+      ],
+      "label": "auto-topup-signup-page"
     }
   ],
+  "drafts": {},
   "inbox": [],
   "materials": [
     {
       "kind": "doc",
       "paths": [
-        "sources/design-v1/design.md"
+        ".backups/local/RR/prd-直接-v1.md"
       ],
-      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
-      "source_id": "local:SR/design.md"
+      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
+      "source_id": "direct:RR/prd.md"
     },
     {
       "kind": "doc",
       "paths": [
-        "sources/prd-v1/prd.md"
+        ".backups/local/SR/design-直接-v1.md"
       ],
-      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
-      "source_id": "local:RR/prd.md"
+      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
+      "source_id": "direct:SR/design.md"
     },
     {
       "kind": "image",
       "paths": [
-        "sources/auto-topup-manage-page-v1/auto-topup-manage-page.png",
-        "sources/image2-v1/image2.png"
+        "assets/ux/auto-topup-manage-page.b3fad248696b67a1.png",
+        "assets/ux/image2.b3fad248696b67a1.png"
       ],
       "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
       "caption": "自动充值管理页：顶部为当前签约状态，下方为最近的自动充值记录，失败记录展示失败原因",
@@ -195,8 +208,8 @@
     {
       "kind": "image",
       "paths": [
-        "sources/auto-topup-signup-page-v1/auto-topup-signup-page.png",
-        "sources/image1-v1/image1.png"
+        "assets/ux/auto-topup-signup-page.d25741a62303f129.png",
+        "assets/ux/image1.d25741a62303f129.png"
       ],
       "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
       "caption": "自动充值签约页：门限与面额单选，协议勾选后「开启」按钮才可点击",
@@ -205,7 +218,7 @@
     {
       "kind": "image",
       "paths": [
-        "sources/image3-v1/image3.png"
+        "assets/ux/image3.5b271cadb8e2ecca.png"
       ],
       "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba",
       "caption": "自动充值触发与扣款流程图：判定与扣款全部在服务端，端侧无感",
@@ -214,26 +227,154 @@
   ],
   "origins": [
     {
-      "path": "sources/design-v1/design.md",
-      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
-      "kind": "local",
-      "class": "SR",
+      "path": "RR/prd.md",
+      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
+      "kind": "direct",
+      "class": "RR",
       "readable_paths": [
-        "sources/design-v1/design.md"
+        "RR/prd.md"
       ],
-      "source_id": "local:SR/design.md",
+      "source_id": "direct:RR/prd.md",
       "version": 1
     },
     {
-      "path": "sources/prd-v1/prd.md",
-      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
-      "kind": "local",
-      "class": "RR",
+      "path": "SR/design.md",
+      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
+      "kind": "direct",
+      "class": "SR",
       "readable_paths": [
-        "sources/prd-v1/prd.md"
+        "SR/design.md"
       ],
-      "source_id": "local:RR/prd.md",
+      "source_id": "direct:SR/design.md",
       "version": 1
+    }
+  ],
+  "files": [
+    {
+      "path": ".backups/local/RR/prd-直接-v1.md",
+      "source_id": "direct:RR/prd.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
+      "dir": "prd-直接-v1"
+    },
+    {
+      "path": ".backups/local/SR/design-直接-v1.md",
+      "source_id": "direct:SR/design.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
+      "dir": "design-直接-v1"
+    },
+    {
+      "path": "RR/prd.md",
+      "source_id": "direct:RR/prd.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
+      "dir": "prd-直接-v1"
+    },
+    {
+      "path": "SR/design.md",
+      "source_id": "direct:SR/design.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
+      "dir": "design-直接-v1"
+    },
+    {
+      "path": "assets/ux/auto-topup-manage-page.b3fad248696b67a1.png",
+      "source_id": "local:界面参考/auto-topup-manage-page.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
+      "dir": "auto-topup-manage-page-v1"
+    },
+    {
+      "path": "assets/ux/auto-topup-signup-page.d25741a62303f129.png",
+      "source_id": "local:界面参考/auto-topup-signup-page.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
+      "dir": "auto-topup-signup-page-v1"
+    },
+    {
+      "path": "assets/ux/image1.d25741a62303f129.png",
+      "source_id": "local:assets/交通卡自动充值/image1.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
+      "dir": "image1-v1"
+    },
+    {
+      "path": "assets/ux/image2.b3fad248696b67a1.png",
+      "source_id": "local:assets/交通卡自动充值/image2.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
+      "dir": "image2-v1"
+    },
+    {
+      "path": "assets/ux/image3.5b271cadb8e2ecca.png",
+      "source_id": "local:assets/交通卡自动充值/image3.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba",
+      "dir": "image3-v1"
+    },
+    {
+      "path": "inbox/assets/交通卡自动充值/image1.png",
+      "source_id": "local:assets/交通卡自动充值/image1.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
+      "dir": "image1-v1"
+    },
+    {
+      "path": "inbox/assets/交通卡自动充值/image2.png",
+      "source_id": "local:assets/交通卡自动充值/image2.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
+      "dir": "image2-v1"
+    },
+    {
+      "path": "inbox/assets/交通卡自动充值/image3.png",
+      "source_id": "local:assets/交通卡自动充值/image3.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba",
+      "dir": "image3-v1"
+    },
+    {
+      "path": "inbox/界面参考/auto-topup-manage-page.png",
+      "source_id": "local:界面参考/auto-topup-manage-page.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
+      "dir": "auto-topup-manage-page-v1"
+    },
+    {
+      "path": "inbox/界面参考/auto-topup-signup-page.png",
+      "source_id": "local:界面参考/auto-topup-signup-page.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
+      "dir": "auto-topup-signup-page-v1"
     }
   ],
   "notes": {

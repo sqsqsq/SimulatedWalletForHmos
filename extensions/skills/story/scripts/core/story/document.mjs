@@ -671,6 +671,35 @@ export function chapterSpanById(storyText, id) {
 }
 
 /**
+ * 按有效章序重排已成文的章：每章连同它的章锚整块移动，章内正文、图与小节一个字节不改。
+ * 先核每个出现的章锚都唯一、紧挨章标题，且这些章块首尾相接（中间没有不带章锚的内容）；不成立返回 `{problem}`，不改。
+ * 没有章锚的稿（还没走过 skeleton）原样返回。
+ *
+ * @returns {{text: string}|{problem: string}}
+ */
+export function reorderChapters(storyText, ids) {
+  const text = String(storyText ?? '');
+  const blocks = [];
+  for (const id of ids) {
+    const span = chapterSpanById(text, id);
+    if (span?.problem) return { problem: span.problem };
+    if (span) blocks.push({ id, start: span.tagStart, end: span.end });
+  }
+  if (blocks.length < 2) return { text };
+  const placed = [...blocks].sort((a, b) => a.start - b.start);
+  for (let i = 1; i < placed.length; i += 1) {
+    if (placed[i].start !== placed[i - 1].end) {
+      return { problem: `章锚 ${placed[i - 1].id} 与 ${placed[i].id} 两章之间有不带章锚的内容——不知道它属于哪一章，不移动` };
+    }
+  }
+  if (placed.every((b, i) => b === blocks[i])) return { text };
+  const head = text.slice(0, placed[0].start);
+  const tail = text.slice(placed.at(-1).end);
+  const body = blocks.map(b => text.slice(b.start, b.end).replace(/\s+$/, '')).join('\n\n');
+  return { text: `${head}${body}${tail || '\n'}` };
+}
+
+/**
  * 待写块的 marker —— **明确记号**，不是「看起来像没写完」。
  *
  * 判它不需要读懂任何一句话：在就是没写完，不在就是写过了。中断恢复据它决定还剩哪几章，

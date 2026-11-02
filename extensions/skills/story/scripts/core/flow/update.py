@@ -1,7 +1,7 @@
 """`/story update` 的文件侧支持 —— **脚本只回答确定的事**。
 
 这一层做三件机械的事：把本次执行前的现场完整留一份、与上次已处理的版本比一遍、
-把结果说清楚。取回来的新内容与人补的料一样进来源收件箱 `sources/inbox/`，走 init 那条材料链——
+把结果说清楚。取回来的新内容与人补的料一样进收件箱 `inbox/`，走 init 那条材料链——
 这里不另开第二个入料口。**变化意味着什么、要改哪里，一概不判**——
 那是模型读原文的事（方法在 `phases/update.md`）。
 
@@ -11,7 +11,7 @@
 没有业务变化时 update-notes 写明比过什么、为什么不用改，照常收口。
 **没查到不等于没变**：比较基准缺席、来源读不到，都单列出来说清可查范围，不许混进「无变化」。
 
-落点在 `AR/story-src/updates/<id>/`，它不在材料索引的范围里（材料只认 `sources/` 下的材料版本与会议原件），
+落点在 `AR/story-src/updates/<id>/`，它不在材料索引的范围里（材料只认收件箱原件、当前阅读稿、留存的版本与会议原件），
 所以本层自己的写入不会把材料版本顶出一个新轮次。
 
 需求目录里的文件按章节合同的 `update_files` 分四类：本扩展写的可改件（editable）、可重生件（regenerate）、
@@ -36,7 +36,7 @@ from materials import importer, registry
 import usage
 from flow.phase_facts import UPDATES, update_records as _records
 from flow.routing import basis_drift, inputs_answer, material_state, next_step
-from flow.state import (BACKUPS, CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, blueprint_exists, file_sha256, system_requirement,
+from flow.state import (CONTRACT, CORE_DIR, FlowError, STORY, REVIEW, STORY_CONTRACT, blueprint_exists, file_sha256, system_requirement,
                         load, log, now, registration_drift, round_gates, save, sync_answers)
 
 #: 本层全部落点的根（`UPDATES`）放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -101,7 +101,7 @@ def _scan(feature_root: Path) -> tuple[dict[str, str], dict[str, str]]:
     """当前这一轮要盯的东西 → 指纹。**读不到的单列，不当成不存在。**
 
     上游材料按来源身份比：键是 `source:<来源>`，值是它最新取得版本的原件摘要——同一来源取得了新版本就是变了，
-    新来源是新增，旧来源都在索引里留着不算删除。交付件按路径比文件摘要。
+    新来源是新增，旧来源都在索引里留着不算删除。当前阅读稿与直接原文（`current:<路径>`）、交付件按路径比文件摘要。
     「文件不在」与「文件在但读不出来」是两件事：读不到的那几份**带着 key 单独返回**，`_compare` 把它们从「删除」里摘出去。
     """
     seen: dict[str, str] = {}
@@ -113,6 +113,10 @@ def _scan(feature_root: Path) -> tuple[dict[str, str], dict[str, str]]:
     for v in registry.current(manifest["sources"]):
         if v["kind"] != "answer":
             seen[f"source:{v['source_id']}"] = v["original"]["sha256"]
+    # 当前阅读稿与直接原文按盘上字节比：人直接改了它也是变化，不因登记还没跟上就算没变
+    for rel in sorted({*manifest.get("drafts", {}), *importer.DIRECT}):
+        if (feature_root / rel).is_file():
+            seen[f"current:{rel}"] = registry.file_digest(feature_root / rel) or ""
     for rel in (Path(*p) for p in PRODUCTS):
         path = feature_root / rel
         key = rel.as_posix()
@@ -265,7 +269,7 @@ def _superseded_hint(feature_root: Path, pending: list[str]) -> list[dict]:
         manifest = registry.build(feature_root)
     except registry.MaterialError as exc:
         raise FlowError(f"{exc}：修正后再跑") from exc
-    classes = {i["file"]: i.get("class") for i in manifest.get("inbox", [])}
+    classes = {i["path"]: i.get("class") for i in manifest.get("inbox", [])}
     known = [(s["source_id"], s.get("class")) for s in manifest.get("sources", []) if s.get("kind") != "answer"]
     out = []
     for new in pending:
@@ -1013,9 +1017,9 @@ def cmd_update_restore(feature_root: Path) -> dict:
     current = _owned(feature_root)
     keys = sorted({*before, *current, *(after or {})})
 
-    # 先把现在与开轮时不同的那几份、连同评审记录（人工区在里面）原样存进来源目录下的备份（受保护、按轮次可定位）；
+    # 先把现在与开轮时不同的那几份、连同评审记录（人工区在里面）原样存进这一轮的记录目录（按轮次可定位）；
     # 存不下就不往下走
-    saved = feature_root.joinpath(*BACKUPS) / f"update-{rid}-restore-{now().replace('-', '').replace(':', '').replace('T', '-')[:15]}"
+    saved = root / f"restore-{now().replace('-', '').replace(':', '').replace('T', '-')[:15]}"
     copy = saved.relative_to(feature_root).as_posix()
     for rel in [*(k for k in keys if current.get(k) is not None and current.get(k) != before.get(k)), "/".join(REVIEW)]:
         src = feature_root / rel
@@ -1025,7 +1029,7 @@ def cmd_update_restore(feature_root: Path) -> dict:
 
     conflicts, restored, removed = [], [], []
     review = "/".join(REVIEW)
-    # 材料索引从盘上的来源版本派生（来源是受保护件、不随撤回退掉）：不退回旧索引，撤回之后按盘上现状重算
+    # 材料索引是来源版本的登记（原件与留存都是受保护件、不随撤回退掉）：不退回旧索引，撤回之后按登记与盘上现状重算
     index = "/".join(registry.MANIFEST)
     keys = [k for k in keys if k != index]
     manual = _manual_content(feature_root) if current.get(review) not in (None, before.get(review)) else None

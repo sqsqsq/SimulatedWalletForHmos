@@ -65,7 +65,7 @@ export function designSource(ctx) {
   const answers = ctx.projectRoot ? requiredAnswers(ctx) : { files: [], problems: [] };
   problems.push(...answers.problems);
   if (read.status === 'missing') {
-    problems.push(`蓝图 ${id} 还没建立——成文按与需求同根的蓝图写，先在 component-design 里按 sources/ 的材料版本完成设计`);
+    problems.push(`蓝图 ${id} 还没建立——成文按与需求同根的蓝图写，先在 component-design 里按材料索引登记的版本完成设计`);
   } else if (read.status !== 'ok') {
     problems.push(`蓝图 ${id}：原生读取 ${read.status}`
       + `${read.issues?.length ? `（${read.issues.slice(0, 3).map(i => i.code ?? i.id).join('、')}）` : ''}`

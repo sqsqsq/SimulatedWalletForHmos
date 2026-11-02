@@ -1,7 +1,7 @@
 """有效人答导出为来源版本：设计、质询与审查按来源读人的原话，不另开一份要人重勾的清单。
 
 人答的真源是流程契约（`AR/story-src/story-flow.json`）与 update 轮次记录里人给出的真实答复；这里把它们按适用性
-分两组原样导出成 `sources/人工答复-v<N>/`：`answers.json`（问法、选项、所选、原话、时刻与出处）与给人读的 `answers.md`。
+分两组原样导出成 `AR/story-src/answers/人工答复-v<N>.json`（问法、选项、所选、原话、时刻与出处）与给人读的同名 `.md`。
 
 - **当前有效**：起手与会议关卡里人答且已生效的记录，同一关卡（会议按话题）只认最后一次；范围重开后还没重答的
   范围/承载答复不再当前；最后定的是整体承载时，之前的承载答复只是历史，切分时只认本轮定案那一次。update 期间人定的事按
@@ -17,16 +17,14 @@
 from __future__ import annotations
 
 import json
-import shutil
-import uuid
 from pathlib import Path
 
 from materials import importer
 
 CONTRACT = ("AR", "story-src", "story-flow.json")
+ANSWERS = ("AR", "story-src", "answers")
 SOURCE_ID = "answers"
 LABEL = "人工答复"
-RECORD, READABLE = "answers.json", "answers.md"
 GATE_FIELDS = ("ask_id", "gate", "round", "question", "options", "chosen", "no", "label", "reply", "at",
                "meeting", "item", "context")
 GATE_REQUIRED = ("ask_id", "gate", "question", "options", "chosen", "reply", "at")
@@ -204,47 +202,26 @@ def required(feature_root: Path, records: list[dict]) -> dict:
     return out
 
 
-def export(feature_root: Path, records: list[dict]) -> str | None:
-    """有效人答与最新导出版本不同就写一个新版本，返回它的目录（相对需求目录）；相同或没有人答返回 None。
-
-    `records` 是索引已读到的全部版本记录（registry.version_records），这里只找本来源的那几条。
-    """
+def export(feature_root: Path, stored: dict) -> str | None:
+    """有效人答与最新导出版本不同就写一个新版本并登记进 `stored`（材料索引的登记部分），返回阅读件位置（相对需求目录）；
+    相同或没有人答返回 None。版本存在 `AR/story-src/answers/人工答复-v<N>.json|.md`，按内容只增不改。"""
+    from materials import registry  # noqa: PLC0415 —— registry 引用本模块
     answers = collect(feature_root)
     if not answers or not (answers["current"] or answers["context"]):
         return None
     body = _body(answers)
     sha = importer.digest(body)
-    mine = _mine(records)
-    if mine and mine[-1]["original"]["sha256"] == sha:
+    last = registry.latest(stored, SOURCE_ID)
+    if last and last["original"]["sha256"] == sha:
         return None
-    number = (mine[-1]["version"] if mine else 0) + 1
-    name = f"{LABEL}-v{number}"
-    final = feature_root / importer.SOURCES / name
-    if final.exists():
-        # 上一次已经发布了这一版、只是索引没写成：同内容就沿用，不另造一版
-        known = final / RECORD
-        if known.is_file() and importer.digest(known.read_bytes()) == sha:
-            return None
-        raise OSError(f"{importer.SOURCES}/{name} 已存在且内容不同：版本目录不覆盖，查明它从哪来")
-    staging = feature_root.joinpath(*importer.STAGING) / uuid.uuid4().hex
-    staging.mkdir(parents=True)
-    try:
-        text = _render(answers)
-        (staging / RECORD).write_bytes(body)
-        (staging / READABLE).write_text(text, encoding="utf-8", newline="\n")
-        base = f"{importer.SOURCES}/{name}"
-        record = {"schema": importer.VERSION_SCHEMA, "source_id": SOURCE_ID, "kind": "answer", "class": "ANSWER",
-                  "origin": {"contract": "/".join(CONTRACT)},
-                  "version": number, "acquired_at": importer.now(),
-                  "original": {"path": f"{base}/{RECORD}", "sha256": sha},
-                  "readable": {"path": f"{base}/{READABLE}", "sha256": importer.digest(text.encode("utf-8"))},
-                  "images": []}
-        (staging / importer.VERSION_FILE).write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n",
-                                                     encoding="utf-8", newline="\n")
-        importer.publish_dir(staging, final)
-    except OSError:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
-    finally:
-        importer.clear_staging(feature_root)
-    return f"{importer.SOURCES}/{name}"
+    number = (last or {}).get("version", 0) + 1
+    base = f"{'/'.join(ANSWERS)}/{LABEL}-v{number}"
+    text = _render(answers).encode("utf-8")
+    importer.write_once(feature_root, f"{base}.json", body)
+    importer.write_once(feature_root, f"{base}.md", text)
+    registry.add_version(stored, {"source_id": SOURCE_ID, "kind": "answer", "class": "ANSWER",
+                                  "origin": {"contract": "/".join(CONTRACT)}, "label": LABEL},
+                         {"version": number, "dir": f"{LABEL}-v{number}", "acquired_at": importer.now(),
+                          "original": {"path": f"{base}.json", "sha256": sha},
+                          "readable": {"path": f"{base}.md", "sha256": importer.digest(text)}, "images": []})
+    return f"{base}.md"

@@ -70,8 +70,8 @@ function scanSources(ctx) {
 export function missingSourceLine(m) {
   return `${m.label}（${m.doc}）：材料索引里没有这一类来源`
     + (m.required
-      ? '——它是必备来源，缺了这一轮的材料就不完整；系统单由取材命令取回 `sources/inbox/<批次>/` 后导入，'
-        + '本地单把文档放进 `sources/inbox/` 归类导入'
+      ? '——它是必备来源，缺了这一轮的材料就不完整；系统单由取材命令取回 `inbox/<批次>/` 后导入，'
+        + '本地单把文档放进 `inbox/` 归类导入'
       : `（${m.why ?? '可选来源'}，缺了是正常的）`);
 }
 
@@ -132,11 +132,11 @@ export function materialSet(ctx) {
   const fix = '——这份索引由 `story_flow.py round` 按磁盘现状生成';
   const none = gap => ({ origins: null, pending: [], images: [], gaps: [gap] });
   if (data === 'broken') return none(`AR/story-src/materials.json：读不出材料索引${fix}`);
-  if (data.schema !== 3 || !Array.isArray(data.origins) || !Array.isArray(data.inbox) || !Array.isArray(data.files)) {
-    return none('AR/story-src/materials.json：不是本版材料索引（schema 3，含 files 视图，材料按来源版本存放在 sources/ 下）'
+  if (data.schema !== 4 || !Array.isArray(data.origins) || !Array.isArray(data.inbox) || !Array.isArray(data.files)) {
+    return none('AR/story-src/materials.json：不是本版材料索引（schema 4，版本关系登记在索引里、含 files 视图）'
       + `${fix}；旧版生成的需求本版不接续，另建新需求，这个目录原样保留`);
   }
-  const pending = data.inbox.filter(s => s?.file).map(s => `sources/inbox/${s.file}`);
+  const pending = data.inbox.filter(s => s?.path).map(s => s.path);
   const { images, gap } = imagesIn(data);
   return { origins: data.origins, pending, images, gaps: gap ? [gap] : [] };
 }
@@ -196,13 +196,13 @@ export function originRows(ctx) {
 }
 
 /**
- * 一次系统取材的落点：来源收件箱下按取材时刻起名的批次目录。对接层把取回的正文与批次回执写在这里，导入时按回执认来源。
+ * 一次系统取材的落点：收件箱下按取材时刻起名的批次目录。对接层把取回的正文与批次回执写在这里，导入时按回执认来源。
  */
 export function fetchBatchDir(featureRoot) {
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  return path.join(featureRoot, 'sources', 'inbox', `fetch-${stamp}`);
+  return path.join(featureRoot, 'inbox', `fetch-${stamp}`);
 }
 
 export function relFromFeature(ctx, target) {
@@ -437,8 +437,8 @@ export function materialListProblems(ctx, storyText) {
 /**
  * 需求目录下的相对路径 → **相对 story.md** 的路径。
  *
- * story.md 在 `AR/` 下，而索引记的是相对需求目录的路径（`sources/<材料>-v1/text.md`、
- * `sources/<材料>-v1/images/x.png`）。差这一层，链接就点不开、图就断链——落盘后 `check` 会逐条报，
+ * story.md 在 `AR/` 下，而索引记的是相对需求目录的路径（`RR/prd.md`、`inbox/x.docx`、
+ * `assets/<目录>/x.png`）。差这一层，链接就点不开、图就断链——落盘后 `check` 会逐条报，
  * 而那几条本可以不发生：串是脚本给作者的，算对是脚本的事。
  */
 export function relFromStory(rel) {

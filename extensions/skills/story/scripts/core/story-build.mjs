@@ -39,7 +39,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { flowProblems } from './flow/check.mjs';
 import {
-  chapterTag, normalizeHeading, pendingChapters, pendingMark, renumberStory, storySections,
+  chapterTag, normalizeHeading, pendingChapters, pendingMark, renumberStory, reorderChapters, storySections,
 } from './story/document.mjs';
 import { writeDrafts } from './story/drafts.mjs';
 import {
@@ -165,9 +165,12 @@ function parseArgs(argv) {
 function cmdNumber(ctx) {
   const before = readText(ctx.storyPath);
   if (before === null) fail(`AR/story.md：不在（${ctx.storyPath}）——编号作用在 skeleton 建出的 story 上`);
+  // 写作设计改了章序时，先按有效章序整块移动已成文的章（章锚定位，章内不动），再编号；
   // 章号按本需求的有效章序、只数 Story 里实际有的章（省略的章不占号）
-  const present = new Set(storySections(before).map(s2 => s2.title));
-  const after = renumberStory(before, (ctx.contract.chapters ?? []).filter(c => present.has(normalizeHeading(c.title))),
+  const moved = reorderChapters(before, (ctx.contract.chapters ?? []).map(c => c.id));
+  if (moved.problem) fail(`AR/story.md：${moved.problem}——章序没有调整，编号没有改`);
+  const present = new Set(storySections(moved.text).map(s2 => s2.title));
+  const after = renumberStory(moved.text, (ctx.contract.chapters ?? []).filter(c => present.has(normalizeHeading(c.title))),
                               ctx.contract.heading_counters ?? []);
   if (after === before) {
     process.stdout.write('[story-build number] 编号已经是对的，未改动\n');
@@ -176,7 +179,8 @@ function cmdNumber(ctx) {
   fs.writeFileSync(ctx.storyPath, after, 'utf-8');
   const was = before.split(/\r?\n/);
   const changed = after.split(/\r?\n/).filter((l, i) => l !== was[i]).length;
-  process.stdout.write(`[story-build number] 重编号 ${changed} 行（章序按合同，节序按出现顺序，图序按全篇顺序）\n`);
+  process.stdout.write(`[story-build number] ${moved.text !== before ? '按有效章序移动了章块，' : ''}`
+    + `重编号 ${changed} 行（章序按本需求的有效章表，节序按出现顺序，图序按全篇顺序）\n`);
 }
 
 // --------------------------------------------------------------------------

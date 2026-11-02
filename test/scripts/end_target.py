@@ -130,7 +130,7 @@ def short_digest(data: bytes) -> str:
 
 def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Path | None) -> list[str]:
     """当前这一版真实送审了没有：发布记录里这一次交付的每一件都要对上（Story 正文与 Review 附件必有，
-    设计参考附件在这一次交了才核）。只读，不替模型上传、不写任何文件。
+    设计参考附件在系统要求时必有，否则这一次交了才核）。只读，不替模型上传、不写任何文件。
 
     发布记录（流程契约 `archived` 的交付项、摘要与 `.backups/published/` 副本）要是当前这几件；需求系统上，
     正文逐字是当前 Story，附件逐字是当前 Review 与（交了时）设计参考。只登记了归档、附件旧了或空着，都不算送到。
@@ -150,6 +150,13 @@ def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Pat
         return [f"发布记录的交付项缺 Story 正文或 Review 附件（{items}）：不算送到"]
     design = "design-review.md" in items
     missing: list[str] = []
+    # 系统要求设计参考附件时（对接层写进取材回执的交付要求），它是必交项，不只看发布记录自己列了什么
+    try:
+        receipt = json.loads((ar / "story-src" / "fetched.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        receipt = {}
+    if (receipt.get("delivery_requirements") or {}).get("design_reference") is True and not design:
+        missing.append("需求系统要求设计参考附件，发布记录的交付项里没有它：不算送到")
     published = feature_root / ".backups" / "published"
     for name, key, copy in (("Story", "story_digest", "story.md"), ("Review", "review_digest", "review.md"),
                             *((("设计参考", "design_review_digest", "design-review.md"),) if design else ())):

@@ -687,7 +687,7 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
     @staticmethod
     def _put(feature: Path, files: dict[str, tuple[bytes, str]]) -> None:
         """把原件放进来源收件箱，经产品的导入形成材料版本。"""
-        inbox = feature / "sources" / "inbox"
+        inbox = feature / "inbox"
         inbox.mkdir(parents=True, exist_ok=True)
         for rel, (data, _) in files.items():
             (inbox / rel).write_bytes(data)
@@ -732,7 +732,7 @@ class MaterialVersionSeesSupplements(unittest.TestCase):
         images = [m for m in registry.build(root)["materials"] if m["kind"] == "image"]
         self.assertEqual(1, len(images), "同一张图被登记成了两张")
         self.assertEqual(2, len(images[0]["paths"]), f"两个落点没有都记下来：{images[0]['paths']}")
-        self.assertIn("sources/签约页-v1/签约页.png", images[0]["paths"])
+        self.assertTrue(any(p.startswith("assets/ux/签约页.") for p in images[0]["paths"]), images[0]["paths"])
 
 
 class ProcessArtifactsEnterTheIndex(unittest.TestCase):

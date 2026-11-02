@@ -121,7 +121,7 @@ class MeetingCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.fr = self.root / "doc" / "features" / FEATURE
-        self.inbox = self.fr / "sources" / "inbox"
+        self.inbox = self.fr / "inbox"
         self.inbox.mkdir(parents=True)
         (self.fr / "AR").mkdir(parents=True)
         classify = {}
@@ -380,7 +380,7 @@ class EachVersionKeepsItsOwnOriginal(MeetingCase):
         self.assertEqual(item["paths"][0], origin["path"], "会议来源指向的不是留存版本的原件")
         self.assertEqual([f"AR/story-src/meetings/澄清会/{first.name}/{meeting.RAW}"],
                          origin["readable_paths"])
-        self.assertNotIn(f"sources/inbox/{docx.name}", [o["path"] for o in built["origins"]],
+        self.assertNotIn(f"inbox/{docx.name}", [o["path"] for o in built["origins"]],
                          "收件箱里的会议原件又算了一份来源")
         self.imported(xml=SAME_LINE.replace("</w:body>", para("张三 10:30：补充一句") + "</w:body>"))
         self.assertTrue((first / meeting.RAW).is_file(), "新版本把旧版本的原文冲掉了")

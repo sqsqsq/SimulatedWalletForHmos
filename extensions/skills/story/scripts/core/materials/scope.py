@@ -1,7 +1,7 @@
 """需求条目的来源补齐：条目的语义由模型给一次，来源的路径、摘要与 provenance 由脚本按材料索引补。
 
 模型写 `[{item_id, kind, source, authority: {owner, formality}}]`：`source` 是需求相对路径（可带 `#片段`），
-必须是材料索引 `files` 视图登记的文件（材料版本的原件、阅读稿与图，人工答复，会议原件、raw、纠偏与阅读件）。
+必须是材料索引 `files` 视图登记的文件（材料版本的原件、阅读稿与图，当前阅读稿，人工答复，会议原件、raw、纠偏与阅读件）。
 脚本补工程相对的 `source_ref`、盘上字节核过的 `source_sha256` 与 provenance，得到原生 `currentScopeItem` 形状，
 蓝图的需求条目按它写。需求条目只写真实的需求、目标、约束与风险；只作支撑的材料按原生事实与设计对象的
 provenance 引用，不为它们造条目。
@@ -77,7 +77,7 @@ def fill(feature_root: Path, project_root: Path, items: list[dict],
         row = known.get(rel)
         if row is None:
             problems.append(f"{item['item_id']}：{rel} 不是材料索引登记的文件（材料版本、人工答复或会议；会议阅读件与纠偏"
-                            "不同源时不登记，先跑 meeting-refresh）——见 sources/README.md")
+                            "不同源时不登记，先跑 meeting-refresh）——登记的文件见 AR/story-src/materials.json 的 files")
             continue
         sha = row["sha256"]
         if registry.file_digest(feature_root / rel) != sha:
@@ -120,7 +120,9 @@ def materialize(feature_root: Path, project_root: Path, items: list[dict], compo
     filled = fill(feature_root, project_root, items, manifest)
     scope = [entry for entry, _ in filled]
     out: dict = {"current_scope_items": scope}
-    if not any(rec.get("kind") == "system" for _, rec in filled):
+    # 当前阅读稿按合成它的版本认来源：里面有系统取得的版本，就是需求系统来源
+    if not any(rec.get("kind") == "system" or any(str(c).startswith("system:") for c in rec.get("components") or [])
+               for _, rec in filled):
         return out
     owner = blueprint_component(feature_root)
     if owner and component and component != owner:

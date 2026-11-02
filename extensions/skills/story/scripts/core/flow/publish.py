@@ -167,11 +167,16 @@ def _record_delivery(feature_root: Path, rows: list[dict], basis: dict) -> None:
 
 
 def _delivered(receipt: dict) -> list[tuple]:
-    """回执里这一次的交付集合（发布前核对记下的那一份），按 ITEMS 的顺序；没有、或缺必需业务项时为空。"""
+    """回执里这一次的交付集合（发布前核对记下的那一份），按 ITEMS 的顺序；没有、缺必需业务项，
+    或系统要求设计参考附件（对接层给的交付要求）而集合里没有它时为空——必交项不只信集合自己。"""
     names = {i.get("name") for i in (receipt.get("delivery") or {}).get("items") or []}
-    if not {"AR-design.md", "review.md"} <= names:
+    if not {"AR-design.md", "review.md"} <= names or (_required_design(receipt) and DESIGN not in names):
         return []
     return [i for i in ITEMS if i[0] in names]
+
+
+def _required_design(receipt: dict) -> bool:
+    return (receipt.get("delivery_requirements") or {}).get("design_reference") is True
 
 
 def readbacks(feature_root: Path, since: str | None) -> list[str]:
@@ -182,7 +187,8 @@ def readbacks(feature_root: Path, since: str | None) -> list[str]:
         return [str(exc)]
     delivered = _delivered(receipt)
     if not delivered:
-        return ["取材回执里没有这一次的交付集合（或缺 Story 正文、Review 附件）：先做发布前核对，它记下交付哪几件"]
+        return ["取材回执里没有这一次的交付集合（或缺 Story 正文、Review 附件，或缺系统要求的设计参考附件）："
+                "先做发布前核对，它记下交付哪几件"]
     items = {i.get("name"): i for i in receipt.get("items") or []}
     since_at = datetime.fromisoformat(since) if since else None
     out = []
@@ -201,7 +207,8 @@ def cmd_restored(feature_root: Path, prepare: bool = False, reply: str | None = 
     """远端正文恢复，分准备与登记两步；**本地文件一个都不动**，本地稿、人答、原生设计与附件的已确认版本照旧。
 
     顺序：fetch → `restored --prepare` → 对接层 restore → `restored`。
-    - 准备：恢复目标是最近一次本扩展覆盖正文时留下的备份（归档登记记着它）。按 B（那次覆盖之后已确认的外部正文）、
+    - 准备：恢复目标是最近一次本扩展真实覆盖正文时留下的备份——对接层写正文时记在取材回执的 `body_write`，
+      正文写了而附件失败、还没登记归档也算；没有它就取归档登记里的。按 B（那次覆盖之后已确认的外部正文）、
       L（恢复目标）与 E（刚取回的外部正文）判：E=L 只读回不写；E=B 可写；其余是之后别人改过，交人——普通恢复请求不等于同意覆盖它，
       人看过仍要覆盖时带 `--reply "<原话>"` 再准备，原话连同 E 与 L 记进契约，只授权这一次。可写时把准备项写进取材回执的 `restore`。
     - 登记：对接层读回晚于准备、状态成立、摘要等于目标，才记下外部正文现在是恢复后的那一版；否则恢复未确认。
@@ -209,19 +216,26 @@ def cmd_restored(feature_root: Path, prepare: bool = False, reply: str | None = 
     _remote_only(feature_root)
     contract = require(load(feature_root))
     archived = contract.get("archived") or {}
-    backup = archived.get("body_backup")
-    if not archived or not backup:
-        raise FlowError("没有可核的正文覆盖：恢复回退的是某一次归档覆盖正文时留下的备份，这张单的归档登记里没有它——不能恢复")
+    receipt = read_receipt(feature_root) if (feature_root / Path(*RECEIPT)).is_file() else {}
+    write = receipt.get("body_write") or {}
+    # 最近一次真实覆盖：回执里的那次若已登记进归档，B 用归档记的外部现状（恢复过会更新它），否则用那次写进去的内容
+    if write.get("backup"):
+        backup = write["backup"]
+        b = archived.get("external_digest") if archived.get("body_backup") == backup else write.get("target_digest")
+        since = (archived.get("restored_at") or archived.get("at")) if archived.get("body_backup") == backup else write.get("written_at")
+    else:
+        backup, b = archived.get("body_backup"), archived.get("external_digest")
+        since = archived.get("restored_at") or archived.get("at")
+    if not backup:
+        raise FlowError("没有可核的正文覆盖：恢复回退的是某一次覆盖正文前留下的备份，取材回执与归档登记里都没有它——不能恢复")
     receipt = read_receipt(feature_root)
     if prepare:
         target = feature_root / backup
         if not target.is_file():
             raise FlowError(f"{backup} 不在：那次覆盖前的系统正文备份没了，不能恢复，也不拿别的旧来源顶替")
         local = short_digest(target.read_bytes())
-        since = archived.get("restored_at") or archived.get("at")
         item = _external(feature_root, since, ("AR-design.md",))["AR-design.md"]
         e = item.get("digest") if item.get("status") != "absent" else None
-        b = archived.get("external_digest")
         granted = contract.get("restore_overrides") or []
         action = ("skip" if e == local else "write" if e == b
                   else "authorized" if any(g.get("external") == e and g.get("local") == local for g in granted) else "conflict")
@@ -250,8 +264,11 @@ def cmd_restored(feature_root: Path, prepare: bool = False, reply: str | None = 
                         f"（正文 {item.get('status', '没有记录')}：{item.get('note') or item.get('digest') or '—'}）。"
                         "对接层报写入失败或读回不一致时远端可能已被写过：重新 fetch、`restored --prepare` 核清现状再续")
     local = short_digest((feature_root / Path(*STORY)).read_bytes())
-    archived.update(external_digest=r["digest"], restored_at=now())
-    contract["archived"] = archived
+    if archived.get("body_backup") == r.get("local"):
+        archived.update(external_digest=r["digest"], restored_at=now())
+        contract["archived"] = archived
+    else:                     # 恢复的是还没登记进归档的那次覆盖：外部现状记在恢复记录里，不冒充归档
+        contract["restored"] = {"at": now(), "external_digest": r["digest"], "backup": r.get("local")}
     save(feature_root, contract)
     log(f"已记下远端恢复：外部正文 {r['digest']}，本地 Story {local}")
     return {"external": r["digest"], "local": local, "differs": r["digest"] != local,
@@ -262,12 +279,12 @@ def cmd_restored(feature_root: Path, prepare: bool = False, reply: str | None = 
 def publication_record(feature_root: Path, blueprint_ref: dict | None, previous: dict | None = None) -> dict:
     """这一次交付集合都读回之后的发布记录：交了哪几件、各自的摘要，外部现在就是这一版；交了的原样各留一份给下一次比差异
     （按需求系统上的名字存）。设计参考附件这次没交时，保留上一次的基线与原生引用，标明它不是这一次的新版。
-    覆盖正文时对接层留下的备份路径记下来，远端恢复据它取目标；这次没覆盖正文就沿用上一次的。"""
+    最近一次真实覆盖正文时对接层留下的备份（回执的 `body_write`，取材与发布前核对都保留它）记下来，远端恢复据它取目标；
+    这一次续传时正文已是本地这一份、没再覆盖，也是那一次的备份，不回退到更早一次归档的。"""
     previous = previous or {}
     receipt = read_receipt(feature_root)
     delivered = _delivered(receipt)
     names = [name for name, _, _ in delivered]
-    body = next((i for i in (receipt.get("delivery") or {}).get("items") or [] if i.get("name") == "AR-design.md"), {})
     out = feature_root / Path(*PUBLISHED)
     out.mkdir(parents=True, exist_ok=True)
     copies = {"AR-design.md": "story.md", "review.md": "review.md", DESIGN: "design-review.md"}
@@ -281,7 +298,7 @@ def publication_record(feature_root: Path, blueprint_ref: dict | None, previous:
             else previous.get("design_review_digest"),
             "design_blueprint_ref": blueprint_ref if design else previous.get("design_blueprint_ref"),
             **({} if design or not previous.get("design_review_digest") else {"design_reference": "上一次交付的版本，这一次没有更新"}),
-            "body_backup": body.get("backup") or previous.get("body_backup"),
+            "body_backup": (receipt.get("body_write") or {}).get("backup") or previous.get("body_backup"),
             "external_digest": digest}
 
 

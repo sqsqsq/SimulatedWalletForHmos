@@ -351,7 +351,7 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature_root = self.root / "doc" / "features" / "IM90002"
-        self.inbox = self.feature_root / "sources" / "inbox"
+        self.inbox = self.feature_root / "inbox"
         self.inbox.mkdir(parents=True)
         (self.inbox / "prd.md").write_text(self.TEXT, encoding="utf-8")
         (self.inbox / ".classify.json").write_text('{"prd.md": "RR"}', encoding="utf-8")
@@ -401,9 +401,10 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         self.classify("IMAGES")
         proc = self.run_import()
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertNotIn("sources/原稿-v1/text.md", self.readable_docs(), "补图那一档把原稿正文也当成了阅读稿")
-        self.assertFalse((self.feature_root / "sources" / "原稿-v1" / "text.md").exists())
-        self.assertTrue(list(self.feature_root.glob("sources/原稿-v1/images/*.png")),
+        self.assertFalse([d for d in self.readable_docs() if "原稿" in d and d.endswith(".md")], "补图那一档把原稿正文也当成了阅读稿")
+        self.assertFalse(list((self.feature_root / ".backups" / "local").glob("*/原稿-v1.md")))
+        self.assertNotIn("草稿正文", (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"), "补图那一档的正文并进了当前阅读稿")
+        self.assertTrue(list(self.feature_root.glob("assets/原稿.*/*.png")),
                         "图没抽出来——这一档抽图是它唯一要做的事")
 
     def test_a_text_class_takes_the_text(self) -> None:
@@ -411,8 +412,9 @@ class SupplementForImagesOnlyLeavesTheTextAlone(unittest.TestCase):
         self.write_docx()
         self.classify("RR")
         self.assertEqual(0, self.run_import().returncode)
-        self.assertIn("sources/原稿-v1/text.md", self.readable_docs())
-        self.assertIn("草稿正文", (self.feature_root / "sources" / "原稿-v1" / "text.md").read_text(encoding="utf-8"))
+        self.assertIn(".backups/local/RR/原稿-v1.md", self.readable_docs())
+        self.assertIn("草稿正文", (self.feature_root / ".backups/local/RR/原稿-v1.md").read_text(encoding="utf-8"))
+        self.assertIn("草稿正文", (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8"))
 
     def test_a_docx_without_figures_is_refused_in_that_class(self) -> None:
         """没有图却归了只抽图——那是归类错了，不能静默丢掉正文。"""
@@ -463,7 +465,7 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature_root = self.root / "doc" / "features" / "MD90001"
-        self.inbox = self.feature_root / "sources" / "inbox"
+        self.inbox = self.feature_root / "inbox"
         (self.inbox / "docs" / "images").mkdir(parents=True)
 
     def put(self, files: dict[str, bytes | str], classify: dict[str, str]) -> None:
@@ -500,6 +502,11 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
                 out[target] = (reading.parent / unquote(re.split(r"[?#]", target)[0])).resolve()
         return out
 
+    @staticmethod
+    def shown(name: str) -> str:
+        """导入后按内容起名的图（`<主名>.<16 位摘要><后缀>`）还原成原件名。"""
+        return re.sub(r"\.[0-9a-f]{16}(\.[^.]+)$", r"\1", name)
+
     def reading_of(self, source_id: str) -> Path:
         version = next(s for s in self.manifest()["sources"] if s["source_id"] == source_id)["versions"][-1]
         return self.feature_root / version["readable"]["path"]
@@ -507,8 +514,7 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
     def test_the_reading_chain_reaches_every_picture(self) -> None:
         self.first_import()
         intro = self.reading_of("local:docs/说明.md")
-        self.assertEqual(self.TEXT.encode("utf-8"),
-                         (intro.parent / "说明.md").read_bytes(), "原件字节被改了")
+        self.assertEqual(self.TEXT.encode("utf-8"), (self.inbox / "docs" / "说明.md").read_bytes(), "原件字节被改了")
         links = self.follow(intro)
         self.assertEqual(3, len(links), f"本地链接没认全：{list(links)}")
         for target, file in links.items():
@@ -520,7 +526,7 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         self.assertEqual(self.reading_of("local:docs/附录.md").resolve(), appendix, "说明链到的不是附录给人读的那一份")
         [(target, picture)] = self.follow(appendix).items()
         self.assertTrue(picture.is_file(), f"附录阅读稿的图 {target} 断了")
-        pictures = {p.name for p in links.values() if p.suffix == ".png"} | {picture.name}
+        pictures = {self.shown(p.name) for p in links.values() if p.suffix == ".png"} | {self.shown(picture.name)}
         self.assertEqual(set(self.PICTURES), pictures)
 
     def test_the_design_reads_the_linked_version_and_its_pictures(self) -> None:
@@ -534,7 +540,7 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         got = json.loads(proc.stdout)
         self.assertEqual([], got["problems"])
-        names = {PurePosixPath(p).name for p in got["files"]}
+        names = {self.shown(PurePosixPath(p).name) for p in got["files"]}
         self.assertTrue(set(self.PICTURES) <= names, f"采用集合缺图：{sorted(names)}")
         self.assertIn(self.reading_of("local:docs/附录.md").name, names)
         self.assertIn("附录.md", names)
@@ -601,7 +607,7 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
         self.assertNotEqual(0, proc.returncode)
         self.assertIn("images/缺 (1).png", json.loads(proc.stdout)["error"])
         self.assertTrue((self.inbox / "docs" / "新.md").is_file(), "整批没导却把原件移出了收件箱")
-        self.assertFalse(list(self.feature_root.glob("sources/新-v*")), "缺图还落了版本")
+        self.assertFalse(list((self.feature_root / ".backups").rglob("新*")), "缺图还落了版本")
 
 
 class AnOldIndexIsNotTakenOver(unittest.TestCase):
@@ -611,7 +617,7 @@ class AnOldIndexIsNotTakenOver(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             feature_root = root / "doc" / "features" / "OLD90001"
-            inbox = feature_root / "sources" / "inbox"
+            inbox = feature_root / "inbox"
             inbox.mkdir(parents=True)
             (inbox / "prd.md").write_text("# 产品需求\n", encoding="utf-8")
             (inbox / ".classify.json").write_text('{"prd.md": "RR"}', encoding="utf-8")

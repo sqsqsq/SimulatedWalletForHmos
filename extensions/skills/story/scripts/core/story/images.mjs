@@ -77,8 +77,10 @@ export function chapterImageProblems(ctx, text, where) {
       if (!usable || external || ref === null) continue;
       const idx = byPath.get(joinPosix(storyDir, ref));
       if (idx === undefined) {
-        const name = path.posix.basename(ref);
-        const same = [...byPath.keys()].filter(rel => path.posix.basename(rel) === name)
+        // 导入后的图按内容起名（`<主名>.<16 位摘要><后缀>`）：按原名找同名的登记引用
+        const named = rel => path.posix.basename(rel).replace(/\.[0-9a-f]{16}(\.[^.]+)$/, '$1');
+        const name = named(ref);
+        const same = [...byPath.keys()].filter(rel => named(rel) === name)
           .map(rel => path.posix.relative(storyDir, rel));
         problems.push(`${where(i + 1)}：图片「${src}」不在材料的图片登记里——story 里的图按登记的引用认`
           + `（相对 ${storyDir}/ 解析）${same.length ? `，同名的登记引用是 \`${same.join('`、`')}\`` : ''}`

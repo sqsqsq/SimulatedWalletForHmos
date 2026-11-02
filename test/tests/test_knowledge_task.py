@@ -1147,7 +1147,8 @@ process.stdout.write(JSON.stringify({
         self.ext = DEV_EXT
         self.access = DEV_EXT / "hooks" / "shared" / "framework-access.mjs"
         self.feature_root = self.root / "doc" / "features" / self.FEATURE
-        self.prd = f"doc/features/{self.FEATURE}/sources/prd-v1/prd.md"
+        # 夹具的产品需求是直接给的原文 RR/prd.md：设计引的是它这一版的留存
+        self.prd = f"doc/features/{self.FEATURE}/.backups/local/RR/prd-直接-v1.md"
         self.canonical = self.feature_root / "blueprint" / "component-blueprint.yaml"
         _, self.unit = place_unit(self.root, self.BLUEPRINT, self.blueprint_ref())
 
@@ -1192,8 +1193,8 @@ process.stdout.write(JSON.stringify({
                 self.assertEqual(0, proc.returncode, proc.stderr[-800:])
                 index = proc.stdout.split("### 候选采用的来源", 1)[1].split("## 2.", 1)[0]
                 self.assertIn(f"`{self.prd}`", index)
-                self.assertIn("采用的材料版本 sources/design-v1、sources/prd-v1", index)
-                for v in (versions["sources/prd-v1"], versions["sources/design-v1"]):
+                self.assertIn("采用的材料版本 design-直接-v1、prd-直接-v1", index)
+                for v in (versions["prd-直接-v1"], versions["design-直接-v1"]):
                     self.assertIn(f"`doc/features/{self.FEATURE}/{v['original']['path']}`（text），sha256:{v['original']['sha256']}", index)
                 # 当前有效人答独立必读：不取决于需求条目或设计引用写没写它
                 answers = next(s for s in self.index()["sources"] if s["kind"] == "answer")["versions"][-1]
@@ -1240,18 +1241,18 @@ process.stdout.write(JSON.stringify({
         return proc.returncode
 
     def test_a_version_the_index_does_not_register_is_never_an_empty_success(self) -> None:
-        """声明落在 sources/ 下、但版本目录不是材料索引登记的文件：不当成原生直接输入放过。"""
-        stray = self.feature_root / "sources" / "prd-v9" / "prd.md"
-        stray.parent.mkdir(parents=True)
+        """声明落在需求目录下、但不是材料索引登记的文件：不当成原生直接输入放过。"""
+        stray = self.feature_root / ".backups" / "local" / "RR" / "prd-直接-v9.md"
+        stray.parent.mkdir(parents=True, exist_ok=True)
         stray.write_bytes((self.root / self.prd).read_bytes())
         text = self.canonical.read_text(encoding="utf-8")
-        self.canonical.write_bytes(text.replace(self.prd, f"doc/features/{self.FEATURE}/sources/prd-v9/prd.md").encode("utf-8"))
+        self.canonical.write_bytes(text.replace(self.prd, f"doc/features/{self.FEATURE}/.backups/local/RR/prd-直接-v9.md").encode("utf-8"))
         self.assert_task_fails("材料索引登记的文件")
 
     def test_images_and_bom_files_are_checked_on_their_raw_bytes(self) -> None:
         """采用的版本里有图与带 BOM 的正文：按原始字节核，逐份进索引。"""
         import design_kit  # noqa: PLC0415
-        inbox = self.feature_root / "sources" / "inbox"
+        inbox = self.feature_root / "inbox"
         inbox.mkdir(parents=True, exist_ok=True)
         (inbox / "flow.png").write_bytes(b"\x89PNG\r\n\x1a\nnot-really")
         (inbox / "notes.md").write_bytes("﻿# 备注\n人签过的边界。\n".encode("utf-8"))
@@ -1261,32 +1262,32 @@ process.stdout.write(JSON.stringify({
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         items = design_kit.handed_items(self.root, self.FEATURE, self.access)
+        latest = {s["source_id"]: s["versions"][-1] for s in self.index()["sources"]}
+        flow, notes = latest["local:flow.png"]["original"]["path"], latest["local:notes.md"]["original"]["path"]
         sys.path.insert(0, str(self.ext / "skills/story/scripts/core"))
         from materials import scope  # noqa: PLC0415
         [(picture, _)] = scope.fill(self.feature_root, self.root, [{"item_id": "flow-picture", "kind": "invariant",
-                                                                     "source": "sources/flow-v1/flow.png",
+                                                                     "source": flow,
                                                                      "authority": {"owner": "需求负责人", "formality": "unspecified"}}])
         design_kit.install_blueprint(self.root, self.FEATURE, self.access, items=[*items, {k: v for k, v in picture.items() if k != "authority"}])
         _, self.unit = place_unit(self.root, self.BLUEPRINT, self.blueprint_ref())
         self.assertEqual([], self.readers()["unit"]["problems"])
         index = self.task().stdout
-        for rel in ("sources/flow-v1/flow.png", "sources/notes-v1/notes.md"):
+        for rel in (flow, notes):
             self.assertIn(f"`doc/features/{self.FEATURE}/{rel}`", index, f"{rel} 没进来源索引")
 
     def test_an_older_adopted_version_is_listed_not_the_newest(self) -> None:
         """候选仍采用 v1、产品需求已取得 v2：蓝图任务交 v1 的文件，不配上新版本。"""
-        inbox = self.feature_root / "sources" / "inbox" / "RR"
-        inbox.mkdir(parents=True, exist_ok=True)
-        (inbox / "prd.md").write_bytes((self.root / self.prd).read_bytes() + "新版本补的一句。\n".encode("utf-8"))
-        (inbox.parent / ".classify.json").write_text('{"RR/prd.md": "RR"}', encoding="utf-8")
+        current = self.feature_root / "RR" / "prd.md"
+        current.write_bytes(current.read_bytes() + "新版本补的一句。\n".encode("utf-8"))
         proc = subprocess.run([sys.executable, str(self.ext / "skills/story/scripts/core/import_sources.py"), "--feature",
                                self.FEATURE, "--project-root", str(self.root)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertTrue((self.feature_root / "sources" / "prd-v2" / "prd.md").is_file())
+        self.assertTrue((self.feature_root / ".backups" / "local" / "RR" / "prd-直接-v2.md").is_file())
         index = self.task().stdout.split("## 2.", 1)[0]
         self.assertIn(f"`{self.prd}`", index)
-        self.assertNotIn("prd-v2", index, "候选配上了没采用的新版本")
+        self.assertNotIn("prd-直接-v2", index, "候选配上了没采用的新版本")
 
     def test_backslash_references_reach_the_same_project_path(self) -> None:
         """候选声明用反斜杠写（原生判合法）：施工单位来源的键仍是正斜杠工程路径。"""

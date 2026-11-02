@@ -145,7 +145,7 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
         if not state["pending"] and not state["changed"]:
             outcome, code = "rejected", 2
             reason = ("来源收件箱（含子目录）里没有待导入的件、材料也没变：把文档或界面设计图放进 "
-                      f"{feature_root.name}/sources/inbox/（可以整个文件夹放）后再答一次")
+                      f"{feature_root.name}/inbox/（可以整个文件夹放）后再答一次")
 
     # 当时的问法照存：之后问法、选项或份表再变，这一条仍说得清人回答的是什么
     question = (next(it["question"] for it in ask["items"] if it["item"] == str(args.item or "")

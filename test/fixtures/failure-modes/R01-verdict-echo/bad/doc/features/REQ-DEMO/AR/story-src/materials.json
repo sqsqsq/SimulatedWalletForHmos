@@ -1,100 +1,141 @@
 {
-  "schema": 3,
+  "schema": 4,
   "feature": "REQ-DEMO",
-  "digest": "sha256:4982ff99b950ea7c",
+  "digest": "sha256:d92be1899750351a",
   "sources": [
     {
-      "source_id": "local:AR/design.md",
-      "kind": "local",
+      "source_id": "direct:AR/design.md",
+      "kind": "direct",
       "class": "AR",
       "origin": {
-        "inbox_path": "AR/design.md"
+        "file": "AR/design.md"
       },
       "latest_version": 1,
       "versions": [
         {
           "version": 1,
-          "dir": "sources/design-v1",
-          "acquired_at": "2026-10-29T19:42:58+08:00",
+          "dir": "design-直接-v1",
+          "acquired_at": "2026-11-02T10:47:02+08:00",
           "original": {
-            "path": "sources/design-v1/design.md",
+            "path": ".backups/local/AR/design-直接-v1.md",
             "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959"
           },
           "readable": {
-            "path": "sources/design-v1/design.md",
+            "path": ".backups/local/AR/design-直接-v1.md",
             "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959"
           },
           "images": []
         }
-      ]
+      ],
+      "label": "design-直接"
     },
     {
-      "source_id": "local:RR/prd.md",
-      "kind": "local",
+      "source_id": "direct:RR/prd.md",
+      "kind": "direct",
       "class": "RR",
       "origin": {
-        "inbox_path": "RR/prd.md"
+        "file": "RR/prd.md"
       },
       "latest_version": 1,
       "versions": [
         {
           "version": 1,
-          "dir": "sources/prd-v1",
-          "acquired_at": "2026-10-29T19:42:57+08:00",
+          "dir": "prd-直接-v1",
+          "acquired_at": "2026-11-02T10:47:02+08:00",
           "original": {
-            "path": "sources/prd-v1/prd.md",
+            "path": ".backups/local/RR/prd-直接-v1.md",
             "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819"
           },
           "readable": {
-            "path": "sources/prd-v1/prd.md",
+            "path": ".backups/local/RR/prd-直接-v1.md",
             "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819"
           },
           "images": []
         }
-      ]
+      ],
+      "label": "prd-直接"
     }
   ],
+  "drafts": {},
   "inbox": [],
   "materials": [
     {
       "kind": "doc",
       "paths": [
-        "sources/design-v1/design.md"
+        ".backups/local/AR/design-直接-v1.md"
       ],
       "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
-      "source_id": "local:AR/design.md"
+      "source_id": "direct:AR/design.md"
     },
     {
       "kind": "doc",
       "paths": [
-        "sources/prd-v1/prd.md"
+        ".backups/local/RR/prd-直接-v1.md"
       ],
       "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819",
-      "source_id": "local:RR/prd.md"
+      "source_id": "direct:RR/prd.md"
     }
   ],
   "origins": [
     {
-      "path": "sources/design-v1/design.md",
+      "path": "AR/design.md",
       "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
-      "kind": "local",
+      "kind": "direct",
       "class": "AR",
       "readable_paths": [
-        "sources/design-v1/design.md"
+        "AR/design.md"
       ],
-      "source_id": "local:AR/design.md",
+      "source_id": "direct:AR/design.md",
       "version": 1
     },
     {
-      "path": "sources/prd-v1/prd.md",
+      "path": "RR/prd.md",
       "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819",
-      "kind": "local",
+      "kind": "direct",
       "class": "RR",
       "readable_paths": [
-        "sources/prd-v1/prd.md"
+        "RR/prd.md"
       ],
-      "source_id": "local:RR/prd.md",
+      "source_id": "direct:RR/prd.md",
       "version": 1
+    }
+  ],
+  "files": [
+    {
+      "path": ".backups/local/AR/design-直接-v1.md",
+      "source_id": "direct:AR/design.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
+      "dir": "design-直接-v1"
+    },
+    {
+      "path": ".backups/local/RR/prd-直接-v1.md",
+      "source_id": "direct:RR/prd.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819",
+      "dir": "prd-直接-v1"
+    },
+    {
+      "path": "AR/design.md",
+      "source_id": "direct:AR/design.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "9dbfadb9f48de93ac30e2be5df215b1e20c9576d88195374e9d190a6c65fb959",
+      "dir": "design-直接-v1"
+    },
+    {
+      "path": "RR/prd.md",
+      "source_id": "direct:RR/prd.md",
+      "version": 1,
+      "kind": "direct",
+      "role": "text",
+      "sha256": "42e13196ee06443d01a0fa5f805a523a785643df7f8a44e2555470faef3e1819",
+      "dir": "prd-直接-v1"
     }
   ],
   "notes": {}

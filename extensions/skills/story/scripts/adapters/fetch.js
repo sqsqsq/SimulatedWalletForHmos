@@ -43,12 +43,14 @@ function readOr(file) {
   try { return fs.readFileSync(file, 'utf-8'); } catch { return null; }
 }
 
-/** 来源索引里同一来源（角色 + 单号）已存的各版原件：取回的内容与其中一版逐字相同就不再落盘。 */
-function storedVersions(root, role, ticket) {
+/** 材料索引里同一来源（角色 + 单号）最新登记的那一版原件：取回的内容与它逐字相同就不再落盘。
+ * 只比最新一版——系统上改回了旧内容，这一次取得的就是新版本。 */
+function latestStored(root, role, ticket) {
   let index;
   try { index = JSON.parse(readOr(path.join(root, 'AR', 'story-src', 'materials.json')) ?? 'null'); } catch { index = null; }
   const source = (index?.sources ?? []).find(s => s?.source_id === `system:${role}:${ticket}`);
-  return (source?.versions ?? []).map(v => ({ dir: v.dir, body: readOr(path.join(root, ...String(v.original?.path ?? '').split('/'))) }));
+  const v = source?.versions?.at(-1);
+  return v ? { dir: v.dir, body: readOr(path.join(root, ...String(v.original?.path ?? '').split('/'))) } : null;
 }
 
 async function fetchUpstream(reqNo, mcpToken, { outDir }) {
@@ -94,7 +96,8 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
       origin: `${w.no}/${w.attachment ? `attachments/${w.attachment}` : w.body}`,
       bytes: Buffer.byteLength(body, 'utf-8'),
     };
-    const stored = w.role ? storedVersions(root, w.role, w.no).find(v => v.body === body) : null;
+    const last = w.role ? latestStored(root, w.role, w.no) : null;
+    const stored = last && last.body === body ? last : null;
     if (stored) { items.push({ ...id, status: 'same', note: `与来源 ${stored.dir} 逐字相同`, ...facts }); continue; }
     const same = w.local.find(rel => readOr(path.join(root, rel)) === body);
     if (same) { items.push({ ...id, status: 'same', note: `与本地 ${same} 逐字相同`, ...facts }); continue; }
@@ -104,8 +107,12 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     items.push({ ...id, status: 'fetched',
       saved: path.relative(root, path.join(dir, w.saveAs ?? w.name)).split(path.sep).join('/'), ...facts });
   }
+  // 最近一次真实的正文覆盖（归档写下）不是取材的结果：刷新外部现状时原样带着，远端恢复与之后的登记还要它
+  let kept = null;
+  try { kept = JSON.parse(readOr(path.join(src, 'fetched.json')) ?? 'null')?.body_write ?? null; } catch { kept = null; }
   const receipt = { mode: 'fetch', reqNo, parentNo: srNo, rrNo, fetchedAt: new Date().toISOString(),
-    delivery_requirements: { design_reference: detail.design_reference_required === true }, items };
+    delivery_requirements: { design_reference: detail.design_reference_required === true }, items,
+    ...(kept ? { body_write: kept } : {}) };
   fs.mkdirSync(src, { recursive: true });
   fs.writeFileSync(path.join(src, 'fetched.json'), `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
   const upstream = items.filter(i => i.role && i.status === 'fetched');

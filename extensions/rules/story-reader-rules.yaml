@@ -7,7 +7,7 @@ semantic_checks:
     description: >
       归档叙事件的独立审查：读者拿这一份能不能读懂这个需求。审查对象是最终的
       `doc/features/{module}/AR/story.md` 与一起交付的 Review，输入是它据以成文的东西——材料清单
-      `AR/story-src/materials.json` 指向的每一份材料、蓝图需求条目采用的材料版本（`sources/<版本>/`）、
+      `AR/story-src/materials.json` 指向的每一份材料、蓝图需求条目采用的材料版本（当前阅读稿或 `.backups/local/` 里登记的那一版）、
       `AR/story-src/story-flow.json` 里已确认的本 AR 范围与关卡人签、`AR/story-src/decisions.json` 里已登记的判断、
       蓝图与它的原生评审投影（设计事实的权威）、激活知识原文，
       以及作者的写作设计 `AR/story-src/story-template.md`（待核的作者判断，不是标准），update 开着时还有这一轮的 before。

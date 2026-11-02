@@ -283,7 +283,7 @@ def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
 
 
 def cmd_init(feature_root: Path, feature: str) -> dict:
-    """建工作区骨架——来源收件箱 `sources/inbox/` 与来源导航的唯一写入者。
+    """建工作区骨架——收件箱 `inbox/` 与它的说明的唯一写入者。
 
     **缺什么补什么，已有的一律不动**，因此它与取材结果无关：系统单取材之后跑，本地单直接跑，
     两条路径同一条命令，重跑安全。收件箱由此独立于数据对接层成立——那一层由各部署环境自备实现。
@@ -301,7 +301,7 @@ def cmd_init(feature_root: Path, feature: str) -> dict:
         created.append(rel)
 
     readme = SKILL_ROOT / "templates" / "inbox-readme.md"
-    put("sources/inbox/README.md", readme.read_text(encoding="utf-8"))
+    put("inbox/README.md", readme.read_text(encoding="utf-8"))
     from materials import registry  # 延迟导入：materials 引用 flow
     try:
         registry.refresh(feature_root)

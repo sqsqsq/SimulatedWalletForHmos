@@ -40,9 +40,9 @@ description: /story 需求流程编排——init 拉取需求资料并建工作�
 
 ```
 S1 取材        →  拉三套材料、建工作区骨架
-S2 导入+初析   →  列来源收件箱 → 导入 → 材料盘点 →（材料确认后）有会议时读会，有要人定的话题停一次 → 需求分析
+S2 导入+初析   →  列收件箱 → 导入 → 材料盘点 →（材料确认后）有会议时读会，有要人定的话题停一次 → 需求分析
 S3 关卡        →  材料 →（会议）→ 范围怎么定 → 承载哪份
-S4 交给设计    →  范围定了直接进 component-design：蓝图与需求同根，需求条目引 sources/ 的材料版本（`import_sources.py --scope` 补齐来源）
+S4 交给设计    →  范围定了直接进 component-design：蓝图与需求同根，需求条目引登记的材料版本（`import_sources.py --scope` 补齐来源）
    ↓
 [framework component-design]  蓝图走到准入，生成评审投影
    ↓
@@ -142,18 +142,18 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 ### 初始化
 
 - **输入**：AR 单号 + `<mcp-token>`（取法见「需求系统 Token」）
-- **输出**：`doc/features/<AR>/` 下的来源容器 `sources/`（收件箱 `sources/inbox/` 与来源导航）、`AR/` 与骨架文件
+- **输出**：`doc/features/<AR>/` 下的收件箱 `inbox/`（带说明）、`AR/` 与骨架文件
 
 ```
 python doc/extensions/skills/story/scripts/core/usage.py --project-root . --feature <AR> --begin --step story   # ⓪ 开始计时
-node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --out doc/features/<AR>/sources/inbox/fetch-<时刻>   # ① 取材
+node doc/extensions/skills/story/scripts/adapters/story.js fetch <AR> <mcp-token> --out doc/features/<AR>/inbox/fetch-<时刻>   # ① 取材
 python doc/extensions/skills/story/scripts/core/story_flow.py init --feature <AR>  # ② 建骨架（唯一写入者，重跑安全）
 ```
 
 ⓪ 在取 token、取材之前跑：它记下 Story 这一轮的开始，耗时从这一刻算到 `story` 登记成功；重跑保留最早的。成文后回头返修，动手前再跑它开新一轮，多轮累计。漏了它，② 只记「开始了、起点不可核」，那一轮成功后记为耗时缺口。① 失败就停下，报出它的 `error`，不建骨架。
 
 **看取材回执判材料**：① 的 stdout 末行逐份写着开发需求、系统设计、产品需求正文取到（`fetched`）、系统上没有（`absent`）
-还是读取失败（`failed`）；取回的正文在批次目录里等导入。缺的那一类当缺料，请用户把对应文档放进 `sources/inbox/` 一起导入。
+还是读取失败（`failed`）；取回的正文在批次目录里等导入。缺的那一类当缺料，请用户把对应文档放进 `inbox/` 一起导入。
 `<时刻>` 写当前时间（如 `20261029-153000`），一次取材一个批次目录。
 
 **没有需求系统单据时**（问题单、别人发来的需求文档）：入口不变，仍是 `/story init <编号>`。
@@ -189,8 +189,8 @@ node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature 
 
 把需求系统上的正文恢复到最近一次 archive 覆盖它之前的那一版；附件与之后的人工意见留在系统上。按这个顺序：
 
-1. `node .../story.js fetch <AR> <mcp-token> --project-root <工程根> --out <本单 sources/inbox/fetch-<时刻>>`：取外部当前内容；
-2. `story_flow.py restored --prepare --feature <AR>`：核那次覆盖前的备份，按「那次覆盖之后的外部正文 / 恢复目标 / 现在的外部正文」三方判——
+1. `node .../story.js fetch <AR> <mcp-token> --project-root <工程根> --out <本单 inbox/fetch-<时刻>>`：取外部当前内容；
+2. `story_flow.py restored --prepare --feature <AR>`：核最近一次覆盖正文前的备份（对接层写正文时记在取材回执里，附件没交完、还没登记归档也算），按「那次覆盖之后的外部正文 / 恢复目标 / 现在的外部正文」三方判——
    现在已是目标只读回；仍是那次覆盖之后的版本就可以写；**都不是，说明之后有人改过，它报冲突、不写**：把差异摆给人，
    人看过仍要恢复时带 `--reply "<原话>"` 再准备（普通恢复请求不等于同意覆盖别人后来的改动）；
 3. `node .../story.js restore <AR> <mcp-token>`：只照准备写正文并读回；远端在准备之后又变了就一字不写，读回不一致报恢复未确认；
@@ -205,7 +205,7 @@ node doc/extensions/skills/story/scripts/core/story-build.mjs archive --feature 
 
 | 变化 | 怎么进来 |
 |---|---|
-| 新材料 | 人放进 `sources/inbox/`，或系统需求经取材取回到收件箱的批次目录，走导入链 |
+| 新材料 | 人放进 `inbox/`，或系统需求经取材取回到收件箱的批次目录，走导入链 |
 | 评审回流 | 评审人在 review.md 人工区表态；系统需求的评审回稿经取材取回 |
 | 人的新决定 | 人在对话里说的，经 `decide --update` 记原话 |
 | 有人直接改过的文档 | 六项比较报出来 |
@@ -243,13 +243,15 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 
 | 产物 | 回答什么 |
 |---|---|
-| `sources/<名称>-v<N>/` | 一份来源材料的一个版本：原件、转换正文与图（外部输入，导入后不改；产品需求、系统设计、开发需求、界面、会议之外的补充都在这里） |
-| `sources/README.md` | 有哪些来源、各自最新是哪一版（按材料索引生成的导航） |
+| `inbox/` | 上游原件（人放的与系统取材批次），导入后原样留着 |
+| `RR/prd.md`、`SR/design.md`、`AR/design.md` | 当前阅读稿：同类来源各自最新版本按来源拼成（本地补录的开发需求在 `AR/story-src/upstream.md`）；也可以直接写原文 |
+| `assets/` | 文档内嵌图（按原件分目录）与界面材料 `assets/ux/` |
+| `.backups/local/` | 每个版本的原件字节与阅读稿留存、当前稿覆盖前的备份（外部输入的历史，不改） |
 | `AR/story-src/init-analysis.md` | 关卡决策的支撑分析与来源初筛（**非交付件**；设计与成文从它的来源初筛起步） |
 | `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架（作者写，成文登记时随稿记指纹） |
-| `AR/story-src/materials.json` | 材料索引：每个来源取得过哪些版本、各自的完整摘要，图片说明与取舍，收件箱里还有什么没导入 |
+| `AR/story-src/materials.json` | 材料索引：版本关系的唯一登记——每个来源取得过哪些版本、各自的完整摘要与留存位置，当前阅读稿由哪几版合成，图片说明与取舍，还有什么没导入 |
 | `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、导入与决策（谁、何时、依据） |
-| `blueprint/` | 组件蓝图（framework `component-design`，与需求同根）：本部件怎么设计，需求条目引 `sources/` 的材料版本（准入后是 Story 附录与后续施工的设计来源） |
+| `blueprint/` | 组件蓝图（framework `component-design`，与需求同根）：本部件怎么设计，需求条目引登记的材料版本（准入后是 Story 附录与后续施工的设计来源） |
 | `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
 | `AR/story.md` | 把材料、决定与当前设计组织成可评审的叙述（零新事实；archive 的上传正文） |
 | `blueprint/component-blueprint.review.md` | 设计参考：蓝图的原生评审投影，完整技术契约在这里（原生生成，设计要改回蓝图；archive 按原字节作设计参考附件上传） |

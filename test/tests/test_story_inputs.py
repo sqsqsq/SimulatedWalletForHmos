@@ -97,7 +97,7 @@ class WorkspaceCase(unittest.TestCase):
 
     def put(self, files: dict[str, tuple[bytes, str]]) -> None:
         """经真实导入命令把原件导成材料版本：键是收件箱里的位置，值是字节与来源类。"""
-        inbox = self.feature_root / "sources" / "inbox"
+        inbox = self.feature_root / "inbox"
         for rel, (body, _) in files.items():
             (inbox / rel).parent.mkdir(parents=True, exist_ok=True)
             (inbox / rel).write_bytes(body)
@@ -177,10 +177,11 @@ class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
 
     def test_the_adopted_version_is_the_source(self) -> None:
         """设计开始之后系统设计取得了新版本、加了图：照设计采用的那一版列。"""
-        self.put_sr(self.SR)
+        first = self.put_sr(self.SR)
         self.design_adopts()
-        self.assertEqual("sources/design-v2/design.md",
-                         self.put_sr(self.SR + "\n### 5.3 新加的\n\n```mermaid\ngraph TD\nX --> Y\n```\n"))
+        second = self.put_sr(self.SR + "\n### 5.3 新加的\n\n```mermaid\ngraph TD\nX --> Y\n```\n")
+        self.assertNotEqual(first, second, "新内容没出新版本")
+        self.assertRegex(second, r"^\.backups/local/inbox/SR/design\.[0-9a-f]{16}\.md$")
         section = self.section_4b(self.inputs())
         self.assertIn("SR §5.2 #1", section)
         self.assertNotIn("SR §5.3 #1", section, "没采用的新版本被当成了已采用的来源")
@@ -408,7 +409,7 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         self.assertTrue(cmds, "没有渲染出可跑的取舍命令")
         line = next(c for c in cmds if "--unused" in c).replace(
             '"<为什么它不属于本需求>"', '"属别的需求的页面"')
-        self.assertIn("page one.png", line, "跑的应当是名字带空格的那张")
+        self.assertIn("/page one.", line, "跑的应当是名字带空格的那张")
         proc = run_in_shell(line, cwd=self.root)
         out = (proc.stdout or "") + (proc.stderr or "")
         self.assertEqual(0, proc.returncode, out)
@@ -458,10 +459,10 @@ class MaterialImagesAreOneTaskEach(WorkspaceCase):
         used = [c for c in cmds if c[0] == "--used"]
         unused = [c for c in cmds if c[0] == "--unused"]
         self.assertEqual(1, len(used), "已登记不用的那张要给撤销命令")
-        self.assertIn("one.png", used[0][1])
+        self.assertIn("/one.", used[0][1])
         self.assertIn("要引用它时", used[0][2], used[0][2])
         self.assertEqual(1, len(unused), "还没登记的那张要给登记命令")
-        self.assertIn("page one.png", unused[0][1])
+        self.assertIn("/page one.", unused[0][1])
         self.assertIn("决定不用它时", unused[0][2], unused[0][2])
         self.assertIn("换成真的理由", unused[0][2], "带占位符的命令不能说原样跑")
 

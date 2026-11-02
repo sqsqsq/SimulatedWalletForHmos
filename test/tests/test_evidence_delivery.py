@@ -256,7 +256,7 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
 
     def test_upstream_diagrams_sit_next_to_every_section_that_carries_them(self) -> None:
         """原图与写作设计登记承接它的小节并排：那一节的正文、表、图都给；没登记的明说。"""
-        inbox = self.feature_root / "sources" / "inbox"
+        inbox = self.feature_root / "inbox"
         (inbox / "SR").mkdir(parents=True, exist_ok=True)
         (inbox / "SR" / "design.md").write_text(
             "## 3. 协作\n\n```mermaid\nflowchart TD\n  甲 --> 乙\n  乙 -->|失败| 丙\n```\n\n"

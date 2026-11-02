@@ -11,7 +11,7 @@ import { SHELL, shellArg } from './drafts.mjs';
 import { designSource, designStatusLines } from './design-source.mjs';
 import { diagramsOf, diagramTopic, imagesIn, readablePaths } from './images.mjs';
 import { markdownTarget } from './language.mjs';
-import { latestOf, originRows, relFromStory, upstreamDocs } from './sources.mjs';
+import { materialSet, originRows, relFromStory, upstreamDocs } from './sources.mjs';
 
 /**
  * 材料里的图 —— **一张图一项任务**。
@@ -162,7 +162,9 @@ function designReferenceSection(ctx) {
  * @param {{projectRoot: string, featureRoot: string, contract: object, args: {feature: string}}} ctx
  */
 export function storyInputs(ctx) {
-  const ux = latestOf(ctx, 'UX').map(v => v.readable?.path).filter(Boolean);
+  // 界面交互说明读当前阅读稿（界面材料的文字说明并在 assets/ux/README.md）；没有当前稿时读各自的阅读稿
+  const set = materialSet({ ...ctx, srcDir: ctx.srcDir ?? path.join(ctx.featureRoot, 'AR', 'story-src') });
+  const ux = [...new Set((set?.origins ?? []).filter(o => o.class === 'UX').flatMap(o => o.readable_paths ?? []))];
   const status = designStatusLines(designSource(ctx));
   return [
     ...(status.length ? ['## 设计状态', '',

@@ -88,6 +88,7 @@
     {
       "id": "08-acceptance",
       "title": "验收",
+      "acceptance": true,
       "boundary": "规则的定义归业务流程、功能说明与异常与恢复",
       "questions": [
         "完整需求怎样才算完成",
@@ -209,7 +210,7 @@
   "gates": {
     "material_scope": {
       "options": [
-        {"key": "supplied", "label": "材料已放进 doc/features/<单>/sources/inbox/，请导入", "request": true},
+        {"key": "supplied", "label": "材料已放进 doc/features/<单>/inbox/，请导入", "request": true},
         {"key": "confirm_scope", "label": "现有材料就是全部，开始需求分析"}
       ]
     }
@@ -223,7 +224,8 @@
     "editable": ["AR/story.md", "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
       "AR/story-src/drafts/**", "AR/story-src/figures/**"],
     "regenerate": ["AR/review.md", "AR/story-src/materials.json"],
-    "protected": ["sources/**", "blueprint/**",
+    "protected": ["inbox/**", "RR/**", "SR/**", "AR/design.md", "AR/story-src/upstream.md", "AR/story-src/answers/**",
+      "assets/**", "blueprint/**",
       "AR/story-src/meetings/**", "AR/story-src/review/**", "AR/story-src/updates/**",
       ".backups/**"],
     "field_owned": ["AR/story-src/story-flow.json"]

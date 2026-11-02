@@ -588,14 +588,14 @@ export function adoptedSources(projectRoot, blueprint, { requirement = blueprint
   for (const r of cited) {
     if (!inRoot(r.file)) continue;
     const row = rows.get(r.file);
-    if (!row) out.problems.push(`${r.where} 引用的 ${r.file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按 sources/README.md 同步`);
+    if (!row) out.problems.push(`${r.where} 引用的 ${r.file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按材料索引 files 同步`);
     else adopted.add(versionKey(row));
   }
   for (const r of conflicts) {
     const file = fileAt(r.path);
     if (!inRoot(file)) continue;
     const row = rows.get(file);
-    if (!row) out.problems.push(`${r.where} 引用的冲突依据 ${file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按 sources/README.md 同步`);
+    if (!row) out.problems.push(`${r.where} 引用的冲突依据 ${file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按材料索引 files 同步`);
     else conflicted.add(versionKey(row));
   }
   // 版本展开：阅读稿链到的登记文件连同它的整个版本加入，新加入的阅读稿接着读，直到没有新版本
@@ -608,6 +608,11 @@ export function adoptedSources(projectRoot, blueprint, { requirement = blueprint
       for (const r of index.files.filter(x => versionKey(x) === key)) {
         const f = fileOf(root, r);
         files.push(f);
+        // 当前阅读稿由几份来源版本合成：引它就是采用了这几版，连同它们的文件一起读
+        for (const c of r.components ?? []) {
+          const k = String(c);
+          if (!keys.has(k)) { keys.add(k); queue.push(k); }
+        }
         if (f.role !== 'text' || !/\.md$/i.test(f.path)) continue;
         let text;
         try { text = fs.readFileSync(path.join(native.root, ...f.path.split('/')), 'utf8'); } catch { continue; }

@@ -129,7 +129,10 @@ export function storyCheck(ctx, { registration = true } = {}) {
   //
   // 合同里的形态正则编译一次，坏的当场报出来：写错一条就静默不判的话，门禁全绿。
   problems.push(...(ctx.idShapes?.problems ?? []));
-  const acceptanceSec = sections.find(s => s.title.includes('验收'));
+  // 验收章按职责认（合同 `acceptance`），标题是本需求的展示标题，不按字面「验收」找
+  const acceptanceChapter = ctx.contract.chapters.find(c => c.acceptance);
+  const acceptanceSec = acceptanceChapter
+    ? sections.find(s => normalizeHeading(s.title) === normalizeHeading(acceptanceChapter.title)) : null;
   const keep = ctx.idShapes?.keep ?? [];
   if (keep.length && !keep.some(re => [...storyText.matchAll(re)].length)) {
     notes.push(`story.md：没有合同 id_shapes.keep 形态（${keep.map(re => re.source).join('、')}）的验收编号，验收编号全集这一条没有可核对象`
@@ -138,7 +141,11 @@ export function storyCheck(ctx, { registration = true } = {}) {
   for (const re of keep) {
     const inStory = new Set([...storyText.matchAll(re)].map(m => m[0]));
     if (!inStory.size) continue;
-    if (!acceptanceSec) { problems.push('story.md：有验收编号，却没有「验收」章——验收编号按章节合同 id_shapes 认，出现过的都要落在验收章'); continue; }
+    if (!acceptanceSec) {
+      problems.push(`story.md：有验收编号，却没有承担验收的那一章（本需求叫「${acceptanceChapter?.title ?? '验收'}」）`
+        + '——验收编号按章节合同 id_shapes 认，出现过的都要落在验收章');
+      continue;
+    }
     const missed = [...inStory].filter(id => !acceptanceSec.text.includes(id));
     if (missed.length) {
       problems.push(`story.md「${acceptanceSec.title}」：没有出现验收编号 ${missed.join('、')}`

@@ -15,7 +15,7 @@
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,
  *              "items":[...],"success":true}
  *             AR/story.md 写成系统正文、AR/review.md 与 blueprint/component-blueprint.review.md（设计参考）传为附件，逐件读回，读回记进
- *             AR/story-src/fetched.json；交付哪几件照回执里发布前核对记下的 delivery；覆盖前系统正文备份到需求目录 `sources/backups/cloud/`。
+ *             AR/story-src/fetched.json；交付哪几件照回执里发布前核对记下的 delivery；覆盖前系统正文备份到需求目录 `.backups/cloud/`。
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             照取材回执里的恢复准备（`restore`）把那次覆盖前的备份写回系统正文并读回；没有准备、远端在准备之后变了或读回不一致即失败。
  *   fetch   → {"mode":"fetch","reqNo":"...","out":"...","parentNo":"SR...","rrNo":"RR...","fetched":3,"failed":0,
@@ -62,7 +62,7 @@ async function main() {
   if (!reqNo) usageError('缺单号');
   if (!reqNo.startsWith('AR')) {
     usageError(`${reqNo} 是本地需求：只有 AR 开头的需求挂在需求系统上，${mode} 不适用（不访问系统）。`
-      + '本地需求的材料由人直接放进 sources/inbox/');
+      + '本地需求的材料由人直接放进 inbox/');
   }
   if (!mcpToken || mcpToken.startsWith('--')) usageError('缺 mcp-token');
 

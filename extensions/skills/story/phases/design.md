@@ -7,7 +7,7 @@
 
 ```
 材料与范围确认
-  → component-design 按 sources/ 的材料版本完成可评审设计与独立质询，生成评审投影
+  → component-design 按材料索引登记的版本完成可评审设计与独立质询，生成评审投影
   → story-build skeleton → 写作设计 → 逐章 chapter → 回看 → check
   → 独立审查（story-build review：定稿、准备派审载体 → 原样派审 → 核结果）→ story_flow.py story 登记
   → check --deliver 交付门 → 交付选择
@@ -17,7 +17,7 @@
 
 ## 二、交给设计
 
-范围定了，`status` 给出 `design_blueprint`，就进原生 component-design。没有单独的交接命令：材料已经按版本导在 `sources/`（会议在 `AR/story-src/meetings/`），人的答复在生效时就导出在 `sources/人工答复-v<N>/`，设计直接读它们。
+范围定了，`status` 给出 `design_blueprint`，就进原生 component-design。没有单独的交接命令：材料已经导成当前阅读稿 `RR/prd.md`、`SR/design.md`、`AR/design.md` 等，每个版本留存在 `.backups/local/` 并登记在材料索引（会议在 `AR/story-src/meetings/`），人的答复在生效时就导出在 `AR/story-src/answers/人工答复-v<N>.md`，设计直接读它们。
 
 - **当前有效人答是必读**：问法与原话都在里面，分「当前有效」与「需结合上下文」两组。它不取决于你有没有把它写进需求条目或设计引用；答复确实规定了目标或边界时，原生范围要反映那条约束。
 - **范围与兄弟单**：`status` 里本轮的定位（本单承载什么、同一系统设计下的兄弟单承载什么、协作方与不做项）和范围答复，写进原生范围与边界，再由 Story 讲给评审人。
@@ -27,9 +27,9 @@
 
    ```json
    [
-     {"item_id": "request-main", "kind": "requirement", "source": "sources/RR-<产品需求单号>-v1/RR-prd.md",
+     {"item_id": "request-main", "kind": "requirement", "source": "RR/prd.md#<节>",
       "authority": {"owner": "需求负责人", "formality": "formal_requirement"}},
-     {"item_id": "carry-boundary", "kind": "invariant", "source": "sources/人工答复-v<N>/answers.md",
+     {"item_id": "carry-boundary", "kind": "invariant", "source": "AR/story-src/answers/人工答复-v<N>.md",
       "authority": {"owner": "需求负责人", "formality": "formal_requirement"}}
    ]
    ```
@@ -48,7 +48,7 @@
 
 蓝图由 Framework 的 component-design 建立、质询与调和。请求 `/component-design <蓝图>` 时写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止；准入由原生判定，草稿也可以成文与业务送审，准入状态与原生问题照实披露：
 
-- 来源是登记的材料与当前有效人答：业务的条件、行为与责任从原件与人答取，人签以 `sources/人工答复-v<N>/` 的导出为准。用到哪份就在相应的条目或 provenance 里引用它。
+- 来源是登记的材料与当前有效人答：业务的条件、行为与责任从原件与人答取，人签以 `AR/story-src/answers/人工答复-v<N>.*` 的导出为准。用到哪份就在相应的条目或 provenance 里引用它。
 - 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。任务给的知识输入身份写进蓝图，知识的适用性写成蓝图事实，适用规约的义务与模式角色写在承担它的设计对象上。
 - 原生字段表达不了的精确内容写进 `story_details`，写法见 `hooks/blueprint/author.md`。
 - **独立质询**由你（主执行者）派给宿主的隔离子代理，同一个子代理先首读人读稿、再核源：

@@ -13,12 +13,13 @@ import { activeKnowledge } from '../../../../../hooks/shared/knowledge.mjs';
 import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
 
 /**
- * `AR/` 根下允许的独立文件 —— 只有交付文档。需求系统的单号与关系记在来源版本里，不在这一层。
+ * `AR/` 根下允许的独立文件 —— 交付文档与本单取得的开发需求原文（`design.md`，导入生成或直接给的）。
+ * 需求系统的单号与关系记在来源版本里，不在这一层。
  *
  * 白名单而不是黑名单：黑名单挡不住下一个往根下写的新文件，而这里要成立的是一个
  * 持续的性质——机制不往交付层散辅助件。
  */
-const AR_ROOT_FILES = ['story.md', 'review.md'];
+const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md'];
 
 /** 命令判定没过：原因已写到 stderr，入口在恢复阅读视图之后按退出码 1 结束，不在半路退出进程。 */
 export class CommandFailure extends Error {}

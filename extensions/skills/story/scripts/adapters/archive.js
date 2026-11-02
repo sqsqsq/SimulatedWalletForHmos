@@ -11,11 +11,13 @@
  *   ② 回执里交付的各项先标成 failed（「本次发布读回尚未完成」），再按交付集合的顺序（正文 → review.md → design-review.md）上传：
  *      外部已经是本地这一份的跳过写入；每件写完读回，读回等于本地才把这一项写成 fetched / same 与 checkedAt。
  *      回执里其余项与 fetchedAt 不动。读回不一致或写入失败时这一项记 failed 与原始错误，停下，后面的不写。
- *   ③ 覆盖正文前把系统当前正文备份到 `<需求目录>/sources/backups/cloud/design-<时刻>.md`（restore 靠它）；系统上还没有正文时不留空备份。
- *   本地只写 `sources/backups/cloud/` 与取材回执，业务文件一个字节不动。**只上传 md**：系统不承载图片，正文里的图片链接原样保留。
+ *   ③ 覆盖正文前把系统当前正文备份到 `<需求目录>/.backups/cloud/design-<时刻>.md`（restore 靠它）；系统上还没有正文时不留空备份。
+ *   本地只写 `.backups/cloud/` 与取材回执，业务文件一个字节不动。**只上传 md**：系统不承载图片，正文里的图片链接原样保留。
  *   交付集合里的本地来源缺了即失败。归档前的交付门与外部冲突由 /story 流程在调用前核完，不在这里。
  *
- *   覆盖正文时把备份路径记在 delivery 的正文项（`backup`），归档登记据它保住恢复目标。
+ *   真要覆盖正文时，写之前先备份，写入返回后立刻在回执顶层记下这一次覆盖 `body_write: {target_digest, backup, written_at}`，
+ *   读回一致再补 `verified_at`；后面的附件失败不撤销它。取材刷新回执、发布前核对重建交付集合都保留这一项，
+ *   远端恢复与之后的登记据它找到这次覆盖前的原件。外部已是本地这一份、跳过写入时不动它。
  */
 'use strict';
 const fs = require('node:fs');
@@ -105,17 +107,20 @@ async function archiveOne(reqNo, mcpToken) {
   receipt.items = items;
   save();
   const backupPath = current['AR-design.md'] === local['AR-design.md'] ? null : await backupBody(reqNo, mcpToken, root);
-  if (backupPath) {
-    receipt.delivery.items.find(d => d.name === 'AR-design.md').backup = backupPath;
-    save();
-  }
   for (const item of ITEMS) {
     const at = items.findIndex(i => i.name === item.name);
     const skipped = current[item.name] === local[item.name];
     try {
-      if (!skipped) await callMcp(item.url, item.put, { reqNo, name: item.remote, content: local[item.name] }, mcpToken);
+      if (!skipped) {
+        await callMcp(item.url, item.put, { reqNo, name: item.remote, content: local[item.name] }, mcpToken);
+        if (item.name === 'AR-design.md') {
+          receipt.body_write = { target_digest: digest(local[item.name]), backup: backupPath, written_at: new Date().toISOString() };
+          save();
+        }
+      }
       const back = await callMcp(item.url, item.get, { reqNo, name: item.remote }, mcpToken);
       if (back !== local[item.name]) throw new Error('读回内容与本地这一份不同');
+      if (!skipped && item.name === 'AR-design.md') receipt.body_write.verified_at = new Date().toISOString();
       items[at] = { ...items[at], status: skipped ? 'same' : 'fetched', note: skipped ? '外部已是本地这一份' : '本次上传已读回',
         digest: digest(back), origin: `${reqNo}/${item.remote}`, bytes: Buffer.byteLength(back, 'utf-8'),
         checkedAt: new Date().toISOString() };

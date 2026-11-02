@@ -1,7 +1,7 @@
-"""import_sources.py — 把来源收件箱 `sources/inbox/` 里的原件导成材料版本（正式入口）。
+"""import_sources.py — 把收件箱 `inbox/` 里的原件导成材料版本，出当前阅读稿（正式入口）。
 
-一份原件导成 `sources/<标签>-v<N>/`：原件字节、转换正文与内嵌图一起按版本留住，导入成功的原件移出收件箱。
-同一来源这次的内容与最新版本相同就复用；内容变了是新版本，旧版本留着可查。
+原件留在收件箱；还没并入的件登记成新版本，原件字节、阅读稿与内嵌图另存一份（位置见 `materials/importer.py`），
+再按各类来源的最新版本重出 `RR/prd.md`、`SR/design.md`、`AR/design.md` 等当前阅读稿。已并入的原样件重跑不新开版本。
 
     python import_sources.py --feature <AR> [--project-root <abs>]
     python import_sources.py --preview <材料文件>
@@ -9,8 +9,9 @@
     python import_sources.py --feature <AR> --caption-image <图> --unused <理由>
     python import_sources.py --feature <AR> --caption-image <图> --used
     python import_sources.py --feature <AR> --scope <条目.json> [--component <组件>]
+    python import_sources.py --feature <AR> --retire <相对收件箱的路径>
 
-本地放进来的件，归类读 `sources/inbox/.classify.json`，内容是 `{"<相对收件箱的路径>": "<类>"}`（值域见
+本地放进来的件，归类读 `inbox/.classify.json`，内容是 `{"<相对收件箱的路径>": "<类>"}`（值域见
 `materials/importer.py` 的 `CLASSES`）。**归类判断不是脚本的活**：它需要读文件名、内容语义与人在关卡上的说明，
 由 AI 做出后写进该文件；系统取材批次里回执列着的件按回执的角色归类。没给归类的件不会被默默忽略。
 
@@ -46,6 +47,8 @@ def main() -> int:
                     help="与 --caption-image 同用：登记本需求为什么不用这张图")
     ap.add_argument("--used", action="store_true",
                     help="与 --caption-image 同用：撤掉「不用」的理由（说明留着）")
+    ap.add_argument("--retire", default=None, metavar="KEY",
+                    help="被新原件取代的旧原件（相对收件箱的路径）：按内容摘要移进 .backups/local/inbox/，删它的归类键")
     ap.add_argument("--scope", default=None, metavar="PATH",
                     help="需求条目文件 [{item_id, kind, source, authority}]：按材料索引补来源，输出原生需求条目")
     ap.add_argument("--component", default=None,
@@ -120,6 +123,14 @@ def main() -> int:
 
     if feature_root is None:
         return emit({"mode": "import", "ok": False, "error": "导入模式需要 --feature"}, 1)
+
+    if args.retire:
+        try:
+            out = importer.retire_source(feature_root, args.retire)
+        except importer.ImportError_ as exc:
+            return emit({"mode": "retire", "ok": False, "error": str(exc)}, 1)
+        importer.log(f"旧原件 {out['retired']} 已退到 {out['backup']}")
+        return emit({"mode": "retire", "ok": True, **out}, 0)
 
     result: dict = {"mode": "import", "reqNo": args.feature}
     try:
