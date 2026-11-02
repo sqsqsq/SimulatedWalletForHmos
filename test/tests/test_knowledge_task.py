@@ -18,12 +18,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 from ext_workspace import DEV_SOURCE, REPO_ROOT, link_framework
 
 sys.path.insert(0, str(REPO_ROOT / "test" / "scripts"))
+import design_fixture  # noqa: E402
 import publish_to_demo  # noqa: E402
 
 FIXTURE = REPO_ROOT / "test" / "fixtures" / "blueprint" / "wallet-balance-refresh"
@@ -362,6 +364,41 @@ class TheAuthorTaskBeginsThePhase(FreshProject):
         first = self.starts()["plan"]
         self.assertEqual(0, self.task("plan").returncode)
         self.assertEqual(first, self.starts()["plan"], "重取任务换了起点")
+
+    def test_a_unit_phase_is_counted_on_the_units_own_node(self) -> None:
+        """需求的共同工作记在需求节点；施工单位的阶段按它的原生身份记在自己的节点（身份件在它的原生目录），
+        不用完整 run：取正式任务即开始，原生闭环后收尾即结算。需求节点不出这一阶段的行。"""
+        self.use("freeze")
+        core = self.root / "doc/extensions/skills/story/scripts/core"
+        usage = lambda *a: subprocess.run([sys.executable, str(core / "usage.py"), "--project-root", str(self.root), *a],  # noqa: E731
+                                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        begun = usage("--feature", BLUEPRINT, "--begin", "--step", "story")
+        self.assertEqual(0, begun.returncode, begun.stdout + begun.stderr)
+        self.assertEqual(0, self.task("spec").returncode)
+        locate = ("import sys; sys.path.insert(0, sys.argv[1]); from flow import native, phase_facts; "
+                  "p = native.feature_paths(sys.argv[2], sys.argv[3], phase_facts.PHASES); "
+                  "print(p['dir']); print(p['reports']['spec'])")
+        where = subprocess.run([sys.executable, "-c", locate, str(core), str(self.root), CU],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, where.returncode, where.stderr)
+        unit_dir, reports = (Path(line) for line in where.stdout.splitlines()[-2:])
+        self.assertEqual((self.root / "doc/features" / BLUEPRINT / "balance-refresh").resolve(), unit_dir.resolve())
+        self.assertTrue((unit_dir / ".usage-id").is_file(), "施工单位的身份件不在它的原生目录")
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text(json.dumps({
+            "verdict": "PASS", "closure_status": "closed", "gate_fingerprint": "3.1.0:e88e81fec381",
+            "closure_commit": {"schema_version": "1.0", "committed_at": datetime.now(timezone.utc).isoformat()}}),
+            encoding="utf-8")
+        design_fixture.write_native_evidence(self.root, CU, ["spec"], self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        done = usage("--feature", CU, "--finalize", "--phase", "spec")
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        nodes = json.loads((self.root / "doc/usage.json").read_text(encoding="utf-8"))["requirements"]
+        unit_key = f"{CU}-{(unit_dir / '.usage-id').read_text(encoding='utf-8').strip()}"
+        main_key = f"{BLUEPRINT}-{(self.root / 'doc/features' / BLUEPRINT / '.usage-id').read_text(encoding='utf-8').strip()}"
+        self.assertEqual({unit_key, main_key}, set(nodes))
+        self.assertEqual(["spec"], list(nodes[unit_key]["steps"]))
+        self.assertIn("spent", nodes[unit_key]["steps"]["spec"])
+        self.assertEqual({}, nodes[main_key]["steps"], "施工单位的阶段记到了需求节点")
 
 
 class PhaseInputsBeforeLocalContracts(FreshProject):
