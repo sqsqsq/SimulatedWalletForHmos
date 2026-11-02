@@ -7,11 +7,13 @@
 ## 登记什么，从哪里来
 
 - 导入的版本（`materials/importer.py` 写进来）：原件按 1.9.9 留在 `inbox/`，每个版本的原件字节另存一份在
-  `.backups/local/inbox/<原相对目录>/<主名>.<内容摘要><后缀>`，转换出的阅读稿存 `.backups/local/<类>/<标签>-v<N>.md`，
-  图按内容身份存 `assets/`；版本登记只在这里，之后不改；
+  `.backups/local/inbox/<原相对目录>/<主名>.<内容摘要><后缀>`，每个版本的阅读稿（转换结果，或文本原件的原字节）存
+  `.backups/local/<类>/<标签>-v<N>.<后缀>`，图按内容身份存 `assets/`；版本登记只在这里，之后不改；
 - 直接给在 `RR/prd.md`、`SR/design.md`、`AR/design.md` 的原文（不是导入生成的）：第一次见到时登记原字节，之后改了算待导入，
-  由导入登记成新版本——刷新不替人把改过的内容记成「没变」；
-- 当前阅读稿（`drafts`）：导入按各类来源的最新版本拼成，登记合成它的版本；
+  由导入登记成新版本——刷新不替人把改过的内容记成「没变」；正文没变、引到的图换了也是新版本（原图留在原处，图的稳定字节
+  按内容身份另存，`image_inputs` 记原位置与当时的摘要）；
+- 当前阅读稿（`drafts`）：导入按各类来源的最新版本拼成；合成它的版本或正文变了就是新的一版，每版登记此刻的摘要、
+  合成它的版本与稳定副本 `.backups/local/<类>/<主名>-聚合-v<N>.md`，旧版留着；
 - 会议版本 `AR/story-src/meetings/<主名>/<sha8>/`：版本目录里还有读会产物，身份取原件（`materials/meeting.py`），按磁盘现状算；
 - 有效人答：从流程契约导出成 `AR/story-src/answers/人工答复-v<N>.*`（`materials/answers.py`），有变化才出新版本；
 - 图片说明与取舍记在 `notes` 里，按图的内容摘要键。
@@ -23,8 +25,9 @@
 - `materials`：各来源最新版本的正文与图（图按内容合并成一条，`paths` 列全部落点，带 `caption`/`unused`）；
 - `origins`：各来源最新版本的原件与它的阅读稿——作者材料表、审查任务与独立审查对象读同一份；人答不在其中；
 - `digest`：**材料版本**，按最新版本的原件、阅读稿与图的内容算。人答、说明与取舍不进摘要；
-- `files`：全部登记文件（各来源的每个版本、当前阅读稿与仍是最新版本的收件箱原件）→ 来源、版本、角色与完整摘要；
-  当前阅读稿带 `components`（合成它的版本）。需求条目补来源、设计采用与审查核源都按它认文件。
+- `files`：全部登记文件（各来源的每个版本、当前阅读稿的每一版稳定副本）→ 来源、版本、角色与完整摘要，聚合稿带
+  `components`（合成它的版本）；会换版的当前位置另列一行，`reference` 指此刻对应的稳定行。需求条目补来源、设计采用与审查
+  核源都按它认文件，设计引用只认稳定行。
 
 只用标准库。stdout 无输出：本模块是库，不是命令。
 """
@@ -38,7 +41,7 @@ from pathlib import Path, PurePosixPath
 
 from materials import answers, importer, meeting
 
-SCHEMA = 4
+SCHEMA = 5
 KINDS = ("system", "local", "direct", "meeting", "answer")
 MANIFEST = ("AR", "story-src", "materials.json")
 NOTE_FIELDS = ("caption", "unused")
@@ -111,6 +114,12 @@ def verify(feature_root: Path, stored: dict) -> None:
             elif have != f["sha256"]:
                 problems.append(f"{f['path']} 的字节与版本登记不一致（登记 {f['sha256'][:12]}…，现在 {have[:12]}…）："
                                 "已登记版本的留存不改，内容变了要作为新原件重新导入")
+    for target, d in stored["drafts"].items():
+        for v in d["versions"]:
+            have = file_digest(feature_root / v["readable"]["path"])
+            if have != v["readable"]["sha256"]:
+                problems.append(f"{v['readable']['path']} {'不在了' if have is None else '的字节与登记不一致'}："
+                                f"它是当前阅读稿 {target} 第 {v['version']} 版的稳定副本，设计可能引用了它，留存不改")
     if problems:
         raise MaterialError("材料版本有问题，索引算不出来：\n" + "\n".join(problems))
 
@@ -204,12 +213,48 @@ def direct_changes(feature_root: Path, stored: dict) -> list[tuple[str, str, str
         sha = file_digest(feature_root / rel)
         if sha is None:
             continue
-        draft = stored["drafts"].get(rel)
+        draft = importer.latest_draft(stored, rel)
         last = latest(stored, f"direct:{rel}")
-        if (draft and draft["sha256"] == sha) or (last and last["original"]["sha256"] == sha):
+        if draft and draft["current_sha256"] == sha:
+            continue
+        if last and last["original"]["sha256"] == sha:
+            # 正文没变，引到的图按原位置与当时的摘要核：换了图也是新版本
+            changed = [i["path"] for i in last.get("image_inputs") or [] if file_digest(feature_root / i["path"]) != i["sha256"]]
+            if changed:
+                out.append((rel, sha, f"引用的图换了或不在了（{'、'.join(changed)}）"))
             continue
         if draft or last:
             out.append((rel, sha, "生成后被直接改过" if draft and not last else "直接原文改过"))
+    return out
+
+
+def stable_image(stored: dict, sha: str) -> str | None:
+    """已登记的同内容稳定图（各来源版本的图、界面图原件，都在 `assets/` 下按内容起名、只增不改）；没有为 None。"""
+    for s in stored["sources"]:
+        for v in s["versions"]:
+            for f in [*(v.get("images") or []), v["original"]]:
+                if (f["sha256"] == sha and f["path"].startswith(f"{importer.ASSETS}/")
+                        and PurePosixPath(f["path"]).suffix.lower() in importer.IMAGE_EXTS):
+                    return f["path"]
+    return None
+
+
+def aliases(feature_root: Path, stored: dict) -> dict[str, dict]:
+    """会换版的当前位置 → 它此刻对应的稳定行：收件箱里原样的最新原件、直接原文原处、与最近一版一致的当前阅读稿。
+    值是 `{path, sha256, source_id, version}`：设计引用指稳定的那一份，当前位置给人读与定位。字节对不上的当前位置不是别名。"""
+    out: dict[str, dict] = {}
+    for s in stored["sources"]:
+        if not s["versions"]:
+            continue
+        v = {**s["versions"][-1], "kind": s["kind"], "origin": s.get("origin") or {}}
+        here = _here(feature_root, v)
+        stable = v.get("readable") or v["original"]
+        if here and here != stable["path"]:
+            out[here] = {"path": stable["path"], "sha256": stable["sha256"], "source_id": s["source_id"], "version": v["version"]}
+    for target in stored["drafts"]:
+        last = importer.latest_draft(stored, target)
+        if last and file_digest(feature_root / target) == last["current_sha256"]:
+            out[target] = {**last["readable"], "source_id": f"draft:{target}", "version": last["version"]}
     return out
 
 
@@ -225,7 +270,7 @@ def catalog(recs: list[dict], stored_sources: list[dict]) -> list[dict]:
         last = versions[-1]
         row = {"source_id": sid, "kind": last["kind"], "class": last.get("class"), "origin": last.get("origin") or {},
                "latest_version": last["version"],
-               "versions": [{k: v[k] for k in ("version", "dir", "acquired_at", "inbox_path", "original", "readable", "images")
+               "versions": [{k: v[k] for k in ("version", "dir", "acquired_at", "inbox_path", "original", "readable", "images", "image_inputs")
                              if k in v} for v in versions]}
         if labels.get(sid):
             row["label"] = labels[sid]
@@ -253,8 +298,8 @@ def derive(latest_versions: list[dict], drafts: dict, notes: dict[str, dict], fe
     `origins` 一行一份原件：原件此刻还在收件箱原样就指它，否则指留存；阅读稿是它所在的当前阅读稿（合成它的那一份），
     没有当前阅读稿时是它自己的阅读稿。
     """
-    in_draft = {c: rel for rel, d in drafts.items() if file_digest(feature_root / rel) == d["sha256"]
-                for c in d.get("components") or []}
+    in_draft = {c: rel for rel in drafts if (d := importer.latest_draft({"drafts": drafts}, rel))
+                and file_digest(feature_root / rel) == d["current_sha256"] for c in d["components"]}
     materials: list[dict] = []
     images: dict[str, dict] = {}
     origins: list[dict] = []
@@ -280,9 +325,9 @@ def derive(latest_versions: list[dict], drafts: dict, notes: dict[str, dict], fe
         shown = here or original["path"]
         draft = in_draft.get(f"{v['source_id']}@{v['version']}")
         if readable or v["class"] == "IMAGES":
-            # 读的是合成它的当前阅读稿；没有就是它自己的阅读稿（原件本身就是阅读稿、又还在原处时指原处）
+            # 读的是合成它的当前阅读稿；没有就是它自己的阅读稿（阅读稿就是原字节、原件又还在原处时指原处）
             reading = ([draft] if draft else [] if not readable
-                       else [here] if here and (readable["path"] == original["path"] or v["kind"] == "direct")
+                       else [here] if here and (readable["sha256"] == original["sha256"] or v["kind"] == "direct")
                        else [readable["path"]]) or [shown]
             materials.append({"kind": "doc", "paths": sorted({original["path"], *([readable["path"]] if readable else [])}),
                               "sha256": (readable or original)["sha256"], "source_id": v["source_id"]})
@@ -307,25 +352,22 @@ def derive(latest_versions: list[dict], drafts: dict, notes: dict[str, dict], fe
     return materials, sorted(origins, key=lambda o: o["path"]), "sha256:" + sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
-def files_view(feature_root: Path, recs: list[dict], meetings: list[dict], drafts: dict) -> list[dict]:
+def files_view(feature_root: Path, stored: dict, meetings: list[dict]) -> list[dict]:
     """全部登记文件 → 来源身份、版本、角色与完整摘要（路径相对需求目录）。
 
     角色：`text` 可读的正文（文本原件或转换/阅读投影）、`original` 另有阅读稿的原件、`image` 图、
     人答的 `answer`（answers.md）与 `answer_record`（answers.json）、会议的 `raw`、`corrections`、`evidence`。
-    最新版本的原件还原样在收件箱（或直接原文还在原处）时，那个位置也是这一版的文件；当前阅读稿与合成它的版本一致时列出，
-    带 `components`。会议的纠偏与阅读件核过同源才列。
+    当前阅读稿每一版的稳定副本是一行 `draft:<当前稿>`，带合成它的版本 `components`。会议的纠偏与阅读件核过同源才列。
+    以上是稳定行，设计引用它们。会换版的当前位置（收件箱里原样的最新原件、直接原文原处、与最近一版一致的当前阅读稿）
+    另列一行，带 `reference` 指此刻对应的稳定行：它给人读与定位，需求条目补来源时换成稳定行，设计引用不写它。
     """
     rows: list[dict] = []
-    latest_of = {}
-    for rec in recs:
-        if rec["version"] >= latest_of.get(rec["source_id"], 0):
-            latest_of[rec["source_id"]] = rec["version"]
 
     def add(path: str, rec: dict, role: str, sha: str) -> None:
         rows.append({"path": path, "source_id": rec["source_id"], "version": rec["version"], "kind": rec["kind"],
                      "role": role, "sha256": sha, "dir": rec["dir"]})
 
-    for rec in recs:
+    for rec in records(stored):
         answer = rec["kind"] == "answer"
         readable, original = rec.get("readable"), rec["original"]
         split = bool(readable) and readable["path"] != original["path"]
@@ -336,14 +378,18 @@ def files_view(feature_root: Path, recs: list[dict], meetings: list[dict], draft
             add(readable["path"], rec, "answer" if answer else "text", readable["sha256"])
         for image in rec.get("images") or []:
             add(image["path"], rec, "image", image["sha256"])
-        if rec["version"] == latest_of[rec["source_id"]]:
-            here = _here(feature_root, rec)
-            if here and here != original["path"]:
-                add(here, rec, role, original["sha256"])
-    for rel, d in sorted(drafts.items()):
-        if file_digest(feature_root / rel) == d["sha256"]:
-            rows.append({"path": rel, "source_id": f"draft:{rel}", "version": 1, "kind": "draft", "role": "text",
-                         "sha256": d["sha256"], "dir": rel, "components": list(d.get("components") or [])})
+    for target, d in sorted(stored["drafts"].items()):
+        for v in d["versions"]:
+            rows.append({"path": v["readable"]["path"], "source_id": f"draft:{target}", "version": v["version"], "kind": "draft",
+                         "role": "text", "sha256": v["readable"]["sha256"], "dir": PurePosixPath(v["readable"]["path"]).stem,
+                         "components": list(v["components"])})
+    # 会换版的当前位置：只给人读与定位，`reference` 指此刻对应的稳定行，设计引用写那一份
+    for here, ref in sorted(aliases(feature_root, stored).items()):
+        mine = [r for r in rows if r["source_id"] == ref["source_id"] and r["version"] == ref["version"] and "reference" not in r]
+        sha = file_digest(feature_root / here)
+        # 原处是原件（与它的原件留存同字节、同角色）；当前阅读稿是正文
+        same = next((r for r in mine if r["sha256"] == sha and r["role"] != "text"), None) or next(r for r in mine if r["path"] == ref["path"])
+        rows.append({**same, "path": here, "sha256": sha, "reference": {"path": ref["path"], "sha256": ref["sha256"]}})
     for rec in meetings:
         folder = feature_root / rec["dir"]
         add(rec["original"]["path"], rec, "original", rec["original"]["sha256"])
@@ -374,7 +420,7 @@ def build(feature_root: Path, stored: dict | None = None) -> dict:
     return {"schema": SCHEMA, "feature": feature_root.name, "digest": digest, "sources": sources,
             "drafts": {k: stored["drafts"][k] for k in sorted(stored["drafts"])},
             "inbox": inbox_items(feature_root, stored), "materials": materials, "origins": origins,
-            "files": files_view(feature_root, recs, meetings, stored["drafts"]),
+            "files": files_view(feature_root, stored, meetings),
             "notes": {k: stored["notes"][k] for k in sorted(stored["notes"])}}
 
 
@@ -454,6 +500,13 @@ def _shape_problems(data, stored: bool = False) -> list[str]:
         if not (isinstance(s, dict) and isinstance(s.get("source_id"), str) and s.get("kind") in KINDS
                 and isinstance(versions, list) and all(_version_ok(v) for v in versions)):
             problems.append(f"sources 第 {i + 1} 项应有 source_id、kind（{'/'.join(KINDS)}）与每项带 version、original 的 versions")
+    drafts = data.get("drafts", {})
+    if not isinstance(drafts, dict) or not all(
+            isinstance(d, dict) and isinstance(d.get("versions"), list) and all(
+                isinstance(v, dict) and isinstance(v.get("version"), int) and isinstance(v.get("current_sha256"), str)
+                and _version_ok({"version": v.get("version"), "original": v.get("readable")})
+                and isinstance(v.get("components"), list) for v in d["versions"]) for d in drafts.values()):
+        problems.append("drafts 应是 当前稿 → {versions: [{version, current_sha256, readable, components, generated_at}]}")
     if not stored:
         for i, o in enumerate(data.get("origins") if isinstance(data.get("origins"), list) else []):
             if not (isinstance(o, dict) and isinstance(o.get("path"), str)

@@ -160,8 +160,10 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
     if (pictureOnly) continue;
     for (const r of readable) {
       checkAdopted(r);
+      const fixed = set.current?.get(r);
       add(at(r), 'source', adopted.has(r) ? `设计采用的阅读稿 ${r}`
-        : `设计未见引用的阅读稿 ${r}（核是有据不用，还是漏了依据）`, true, { kind: 'text' });
+        : fixed && adopted.has(fixed) ? `设计采用的阅读稿 ${r}（设计引用的是它此刻对应的稳定副本 ${fixed}）`
+          : `设计未见引用的阅读稿 ${r}（核是有据不用，还是漏了依据）`, true, { kind: 'text' });
     }
   }
   // 设计采用的较早版本与会议纠偏/阅读件：材料清单只列各来源最新的一版原件与阅读稿，采用的那些在这里补齐

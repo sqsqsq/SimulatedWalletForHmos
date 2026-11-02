@@ -9,4 +9,4 @@
 
 参考图见下：
 
-![入口页面布局](../assets/ux/image1.7a0b672988d707e2.png)
+![入口页面布局](../../../assets/ux/image1.7a0b672988d707e2.png)

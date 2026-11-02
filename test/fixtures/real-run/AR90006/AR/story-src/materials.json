@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "feature": "AR90006",
   "digest": "sha256:65dadcaf58fe043d",
   "sources": [
@@ -15,7 +15,7 @@
         {
           "version": 1,
           "dir": "prd-直接-v1",
-          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "acquired_at": "2026-11-02T17:49:11+08:00",
           "original": {
             "path": ".backups/local/RR/prd-直接-v1.md",
             "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59"
@@ -24,7 +24,8 @@
             "path": ".backups/local/RR/prd-直接-v1.md",
             "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59"
           },
-          "images": []
+          "images": [],
+          "image_inputs": []
         }
       ],
       "label": "prd-直接"
@@ -41,7 +42,7 @@
         {
           "version": 1,
           "dir": "design-直接-v1",
-          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "acquired_at": "2026-11-02T17:49:11+08:00",
           "original": {
             "path": ".backups/local/SR/design-直接-v1.md",
             "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320"
@@ -50,7 +51,8 @@
             "path": ".backups/local/SR/design-直接-v1.md",
             "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320"
           },
-          "images": []
+          "images": [],
+          "image_inputs": []
         }
       ],
       "label": "design-直接"
@@ -67,7 +69,7 @@
         {
           "version": 1,
           "dir": "image1-v1",
-          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "acquired_at": "2026-11-02T17:49:11+08:00",
           "inbox_path": "assets/交通卡自动充值/image1.png",
           "original": {
             "path": "assets/ux/image1.d25741a62303f129.png",
@@ -91,7 +93,7 @@
         {
           "version": 1,
           "dir": "image2-v1",
-          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "acquired_at": "2026-11-02T17:49:11+08:00",
           "inbox_path": "assets/交通卡自动充值/image2.png",
           "original": {
             "path": "assets/ux/image2.b3fad248696b67a1.png",
@@ -115,7 +117,7 @@
         {
           "version": 1,
           "dir": "image3-v1",
-          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "acquired_at": "2026-11-02T17:49:11+08:00",
           "inbox_path": "assets/交通卡自动充值/image3.png",
           "original": {
             "path": "assets/ux/image3.5b271cadb8e2ecca.png",
@@ -139,7 +141,7 @@
         {
           "version": 1,
           "dir": "auto-topup-manage-page-v1",
-          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "acquired_at": "2026-11-02T17:49:11+08:00",
           "inbox_path": "界面参考/auto-topup-manage-page.png",
           "original": {
             "path": "assets/ux/auto-topup-manage-page.b3fad248696b67a1.png",
@@ -163,7 +165,7 @@
         {
           "version": 1,
           "dir": "auto-topup-signup-page-v1",
-          "acquired_at": "2026-11-02T10:47:43+08:00",
+          "acquired_at": "2026-11-02T17:49:11+08:00",
           "inbox_path": "界面参考/auto-topup-signup-page.png",
           "original": {
             "path": "assets/ux/auto-topup-signup-page.d25741a62303f129.png",
@@ -275,7 +277,11 @@
       "kind": "direct",
       "role": "text",
       "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59",
-      "dir": "prd-直接-v1"
+      "dir": "prd-直接-v1",
+      "reference": {
+        "path": ".backups/local/RR/prd-直接-v1.md",
+        "sha256": "e90230c22fec374c5cb3ae5855f50888536ceaf8230dfcc9b430cfc2b5d73d59"
+      }
     },
     {
       "path": "SR/design.md",
@@ -284,7 +290,11 @@
       "kind": "direct",
       "role": "text",
       "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320",
-      "dir": "design-直接-v1"
+      "dir": "design-直接-v1",
+      "reference": {
+        "path": ".backups/local/SR/design-直接-v1.md",
+        "sha256": "f5c62ba06b98ef9184547ade39e3ab37b52c2cc4a43afef7f8cbbe586217e320"
+      }
     },
     {
       "path": "assets/ux/auto-topup-manage-page.b3fad248696b67a1.png",
@@ -338,7 +348,11 @@
       "kind": "local",
       "role": "image",
       "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
-      "dir": "image1-v1"
+      "dir": "image1-v1",
+      "reference": {
+        "path": "assets/ux/image1.d25741a62303f129.png",
+        "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80"
+      }
     },
     {
       "path": "inbox/assets/交通卡自动充值/image2.png",
@@ -347,7 +361,11 @@
       "kind": "local",
       "role": "image",
       "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
-      "dir": "image2-v1"
+      "dir": "image2-v1",
+      "reference": {
+        "path": "assets/ux/image2.b3fad248696b67a1.png",
+        "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a"
+      }
     },
     {
       "path": "inbox/assets/交通卡自动充值/image3.png",
@@ -356,7 +374,11 @@
       "kind": "local",
       "role": "image",
       "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba",
-      "dir": "image3-v1"
+      "dir": "image3-v1",
+      "reference": {
+        "path": "assets/ux/image3.5b271cadb8e2ecca.png",
+        "sha256": "5b271cadb8e2ecca28a0d7f35b5670ce1462b644c6f76ea9376721cf4662a5ba"
+      }
     },
     {
       "path": "inbox/界面参考/auto-topup-manage-page.png",
@@ -365,7 +387,11 @@
       "kind": "local",
       "role": "image",
       "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a",
-      "dir": "auto-topup-manage-page-v1"
+      "dir": "auto-topup-manage-page-v1",
+      "reference": {
+        "path": "assets/ux/auto-topup-manage-page.b3fad248696b67a1.png",
+        "sha256": "b3fad248696b67a169551f253a553ac9f2620b79be78babe3b32be2d9958a83a"
+      }
     },
     {
       "path": "inbox/界面参考/auto-topup-signup-page.png",
@@ -374,7 +400,11 @@
       "kind": "local",
       "role": "image",
       "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80",
-      "dir": "auto-topup-signup-page-v1"
+      "dir": "auto-topup-signup-page-v1",
+      "reference": {
+        "path": "assets/ux/auto-topup-signup-page.d25741a62303f129.png",
+        "sha256": "d25741a62303f1292c5424ce64e9c7dd67c7443dffcf441ec0f62525a2925f80"
+      }
     }
   ],
   "notes": {

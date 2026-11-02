@@ -691,6 +691,71 @@ class TheSupportSourcesAreCollectedNatively(HandoverCase):
         self.assertEqual(([], []), (got["problems"], got["projectFiles"]))
 
 
+class ACitedCurrentDraftStaysAtItsVersion(HandoverCase):
+    """作者按当前阅读稿 `RR/prd.md#节` 写需求条目：补出的引用指当时那一版聚合稿的稳定副本与它固定的组成；
+    之后一份原件换版，当前稿换成新的一版，旧条目与旧支撑引用仍读旧正文、展开旧组成，新条目指新的一版。
+    设计引用当前位置不算依据，报出它此刻对应的稳定文件。"""
+
+    PROBE = """
+    const [access, root, feature, bp] = process.argv.slice(1);
+    const { adoptedSources } = await import(access);
+    const out = adoptedSources(root, JSON.parse(bp), { requirement: feature });
+    const own = out.requirements[0] ?? { versions: [], files: [] };
+    process.stdout.write(JSON.stringify({ problems: out.problems, versions: own.versions, files: own.files.map(f => f.path) }));
+    """
+
+    LIMIT = "# 限额\n\n## 单笔\n\n单笔上限 {} 元。\n"
+
+    def collect(self, items: list[dict], support: str | None = None) -> dict:
+        prov = {"source_kind": "requirement_reading", "source_ref": support, "observed_at": "2026-11-02T10:00:00+08:00",
+                "evidence_strength": "observed", "extraction_method": "read-source"}
+        bp = {"blueprint_id": self.feature, "discovery": {"inputs": {"current_scope_items": items}, "conflicts": [],
+                                                          "facts": [{"fact_id": "f-limit", "provenance": prov}] if support else []}}
+        proc = subprocess.run(["node", "--input-type=module", "-e", self.PROBE, ACCESS.resolve().as_uri(), str(self.root),
+                               self.feature, json.dumps(bp, ensure_ascii=False)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def current(self) -> dict:
+        """材料索引里当前稿 `RR/prd.md` 那一行（会换版的当前位置）。"""
+        return next(r for r in registry.read(self.feature_root)["files"] if r["path"] == "RR/prd.md")
+
+    def test_the_cited_version_and_its_components_survive_a_new_version(self) -> None:
+        self.ready()
+        self.seed({"RR/限额.md": (self.LIMIT.format(500), "RR")})
+        [old] = self.scoped([item("RR/prd.md#单笔")])["current_scope_items"]
+        alias = self.current()
+        stable = alias["reference"]["path"]
+        self.assertEqual(f"doc/features/{FEATURE}/{stable}#单笔", old["source_ref"], "条目指了会换版的当前稿")
+        self.assertEqual(f"draft:RR/prd.md@v{alias['version']}", old["provenance"]["source_revision"])
+        self.assertIn("单笔上限 500 元", (self.feature_root / stable).read_text(encoding="utf-8"))
+        support = f"doc/features/{FEATURE}/{stable}#背景"
+        first = self.collect([old], support)
+        self.assertEqual([], first["problems"])
+        self.assertIn("限额-v1", first["versions"], "聚合稿的组成没展开")
+
+        self.seed({"RR/限额.md": (self.LIMIT.format(800), "RR")})
+        self.assertNotEqual(stable, self.current()["reference"]["path"], "原件换版后当前稿没换成新的一版")
+        again = self.collect([old], support)
+        self.assertEqual([], again["problems"], "旧引用在材料换版后读不了")
+        self.assertEqual(first["versions"], again["versions"], "旧引用展开到了新的组成")
+        self.assertIn("单笔上限 500 元", (self.feature_root / stable).read_text(encoding="utf-8"), "旧稳定副本被改了")
+        [new] = self.scoped([item("RR/prd.md#单笔")])["current_scope_items"]
+        self.assertNotEqual(old["source_ref"], new["source_ref"])
+        latest = self.collect([new])
+        self.assertIn("限额-v2", latest["versions"])
+        self.assertNotIn("限额-v1", latest["versions"])
+
+    def test_a_design_reference_to_the_current_draft_names_its_stable_file(self) -> None:
+        self.ready()
+        [scoped] = self.scoped([item("RR/prd.md#背景")])["current_scope_items"]
+        got = self.collect([scoped], f"doc/features/{FEATURE}/RR/prd.md#背景")
+        [problem] = got["problems"]
+        self.assertIn("f-limit", problem)
+        self.assertIn(self.current()["reference"]["path"], problem, "没指出当前位置对应的稳定文件")
+
+
 def yaml_scope(root: Path, feature: str) -> list[dict]:
     """蓝图里的原生需求条目（夹具写成单行 JSON）。"""
     text = (root / "doc" / "features" / feature / "blueprint" / "component-blueprint.yaml").read_text(encoding="utf-8")

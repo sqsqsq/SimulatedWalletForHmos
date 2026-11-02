@@ -562,6 +562,15 @@ def write_review(root: Path, feature: str, kind: str = "pass") -> Path:
     """
     review = root / features_dir(root) / feature / "AR" / "story-src" / "review"
     prepared = json.loads((review / "prepared.json").read_text(encoding="utf-8"))
+    original = root / prepared["report_file"]
+    original.parent.mkdir(parents=True, exist_ok=True)
+    original.write_text(review_text(root, feature, kind, prepared["material_key"]), encoding="utf-8")
+    return original
+
+
+def review_text(root: Path, feature: str, kind: str, material_key: str) -> str:
+    """夹具审查者的回复正文：回显 `material_key`，审过的材料取当前审查任务列的那几份。"""
+    review = root / features_dir(root) / feature / "AR" / "story-src" / "review"
     story = f"{features_dir(root)}/{feature}/AR/story.md"
     issues = REVIEW_ISSUES[kind]
     severe = any(i[1] in ("BLOCKER", "MAJOR") for i in issues)
@@ -573,8 +582,8 @@ def write_review(root: Path, feature: str, kind: str = "pass") -> Path:
     coverage = {"blocking_findings": [i[0] for i in issues if i[1] in ("BLOCKER", "MAJOR")],
                 "advisories": [i[0] for i in issues if i[1] not in ("BLOCKER", "MAJOR")],
                 "examined_inputs": examined, "unreviewed": []}
-    text = "\n".join([
-        f"material_key: {prepared['material_key']}", "",
+    return "\n".join([
+        f"material_key: {material_key}", "",
         "## 判据核对", "", "| 判据 ID | 结果 | 依据 |", "|---|---|---|",
         f"| story_reader_review | {overall} | 逐章对着来源读过：背景、范围、方案、流程、功能、异常、验收与交付 |", "",
         "首读结论：只读 Story 能读出要做什么、为什么做和怎么算对。", "",
@@ -584,7 +593,3 @@ def write_review(root: Path, feature: str, kind: str = "pass") -> Path:
         "## 发现", "", "| 编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任 |", "|---|---|---|---|---|---|",
         *[f"| {a} | {b} | story_reader_review | `{story}` | {c} | {d} |" for a, b, c, d in issues], "",
         "## 总体结论", "", f"{overall}：按判据与发现判定。", ""])
-    original = root / prepared["report_file"]
-    original.parent.mkdir(parents=True, exist_ok=True)
-    original.write_text(text, encoding="utf-8")
-    return original

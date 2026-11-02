@@ -1,9 +1,10 @@
 """需求条目的来源补齐：条目的语义由模型给一次，来源的路径、摘要与 provenance 由脚本按材料索引补。
 
 模型写 `[{item_id, kind, source, authority: {owner, formality}}]`：`source` 是需求相对路径（可带 `#片段`），
-必须是材料索引 `files` 视图登记的文件（材料版本的原件、阅读稿与图，当前阅读稿，人工答复，会议原件、raw、纠偏与阅读件）。
-脚本补工程相对的 `source_ref`、盘上字节核过的 `source_sha256` 与 provenance，得到原生 `currentScopeItem` 形状，
-蓝图的需求条目按它写。需求条目只写真实的需求、目标、约束与风险；只作支撑的材料按原生事实与设计对象的
+必须是材料索引 `files` 视图登记的文件（材料版本的原件、阅读稿与图，当前阅读稿各版的稳定副本，人工答复，会议原件、raw、
+纠偏与阅读件），也可以是会换版的当前位置（`RR/prd.md`、收件箱里的原件等，带 `reference` 的那一行）。
+脚本把当前位置换成它此刻对应的稳定文件，补工程相对的 `source_ref`、盘上字节核过的 `source_sha256` 与 provenance，
+得到原生 `currentScopeItem` 形状，蓝图的需求条目按它写：材料之后换版，条目仍指当时那一份。需求条目只写真实的需求、目标、约束与风险；只作支撑的材料按原生事实与设计对象的
 provenance 引用，不为它们造条目。
 条目来自需求系统的来源时，同一组条目另写成原生来源物化信封（`requirement-source-materialization@1`），
 放在需求的 `blueprint/` 里并过原生来源检查；本地来源只输出条目，不落 provider 文件。
@@ -61,34 +62,58 @@ SOURCE_KIND = {"answer": "human_decision", "meeting": "meeting_record"}
 
 def fill(feature_root: Path, project_root: Path, items: list[dict],
          manifest: dict | None = None) -> list[tuple[dict, dict]]:
-    """逐条补来源：返回 (原生条目, 它在 `files` 视图里的那一行)。来源不是登记文件或盘上字节与登记不同，一次列全再报。"""
+    """逐条补来源：返回 (原生条目, 它在 `files` 视图里的那一行——稳定行)。来源不是登记文件、盘上字节与登记不同，
+    或一个位置对着几个来源版本而认不出是哪一版，一次列全再报。"""
     if manifest is None:
         try:
             manifest = registry.build(feature_root)
         except registry.MaterialError as exc:
             raise ScopeError(str(exc)) from exc
-    known = {row["path"]: row for row in manifest["files"]}
-    acquired = {(s["source_id"], v["version"]): v.get("acquired_at") for s in manifest["sources"] for v in s["versions"]}
+    known: dict[str, list[dict]] = {}
+    for row in manifest["files"]:
+        group = known.setdefault(row["path"], [])
+        if not any(r["source_id"] == row["source_id"] and r["version"] == row["version"] for r in group):
+            group.append(row)
+    acquired = {(s["source_id"], v["version"]): v for s in manifest["sources"] for v in s["versions"]}
+    for target, d in manifest.get("drafts", {}).items():
+        for v in d["versions"]:
+            acquired[(f"draft:{target}", v["version"])] = {"acquired_at": v.get("generated_at")}
     base = f"{importer.features_dir(project_root)}/{feature_root.name}"
     out, problems = [], []
     for item in items:
         source = str(item["source"]).strip().replace("\\", "/")
         rel, _, fragment = source.partition("#")
-        row = known.get(rel)
-        if row is None:
+        rows = known.get(rel)
+        if not rows:
             problems.append(f"{item['item_id']}：{rel} 不是材料索引登记的文件（材料版本、人工答复或会议；会议阅读件与纠偏"
                             "不同源时不登记，先跑 meeting-refresh）——登记的文件见 AR/story-src/materials.json 的 files")
             continue
-        sha = row["sha256"]
-        if registry.file_digest(feature_root / rel) != sha:
+        if registry.file_digest(feature_root / rel) != rows[0]["sha256"]:
             problems.append(f"{item['item_id']}：{rel} 盘上的字节与索引登记的不同——登记的文件导入后不改，恢复原件")
             continue
+        alias = rows[0].get("reference")
+        if alias:
+            # 当前位置：换成它此刻对应的稳定行，片段照旧
+            rows = [r for r in known.get(alias["path"], []) if r["source_id"] == rows[0]["source_id"]
+                    and r["version"] == rows[0]["version"]]
+            rel = alias["path"]
+        if len(rows) != 1:
+            problems.append(f"{item['item_id']}：{rel} 是 {'、'.join(r['source_id'] + '@v' + str(r['version']) for r in rows)} 共用的留存，"
+                            "认不出是哪一版——改写那一版的阅读稿：" + "、".join(sorted(
+                                {_reading_of(manifest, r) for r in rows})))
+            continue
+        row = rows[0]
+        sha = row["sha256"]
         ref = f"{base}/{rel}" + (f"#{fragment}" if fragment else "")
         answer = row["kind"] == "answer"
+        version = acquired.get((row["source_id"], row["version"])) or {}
         provenance = {
-            "source_kind": SOURCE_KIND.get(row["kind"]) or ("requirement_image" if row["role"] == "image" else "requirement_material"),
+            "source_kind": SOURCE_KIND.get(row["kind"]) or ("requirement_image" if row["role"] == "image"
+                                                            else "requirement_reading" if row["kind"] == "draft"
+                                                            or sha != (version.get("original") or {}).get("sha256", sha)
+                                                            else "requirement_material"),
             "source_ref": ref, "source_revision": f"{row['source_id']}@v{row['version']}",
-            "observed_at": str(acquired.get((row["source_id"], row["version"])) or ""),
+            "observed_at": str(version.get("acquired_at") or ""),
             "evidence_strength": "authoritative" if answer else "observed",
             "extraction_method": "recorded_user_reply" if answer else "imported_file_observation",
         }
@@ -99,6 +124,15 @@ def fill(feature_root: Path, project_root: Path, items: list[dict],
     if problems:
         raise ScopeError("需求条目的来源补不齐：" + "；".join(problems))
     return out
+
+
+def _reading_of(manifest: dict, row: dict) -> str:
+    """这一行所在版本的阅读稿（没有阅读稿的取原件留存）。"""
+    for s in manifest["sources"]:
+        for v in s["versions"]:
+            if s["source_id"] == row["source_id"] and v["version"] == row["version"]:
+                return (v.get("readable") or v["original"])["path"]
+    return row["path"]
 
 
 def blueprint_component(feature_root: Path) -> str | None:

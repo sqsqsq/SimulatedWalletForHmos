@@ -559,8 +559,10 @@ function refsOf(blueprint) {
  * - `support`：蓝图根、`discovery.facts`、设计视图节点与运行数据流、关系、决定与缺口的 provenance，以及合同各段的 `source_ref`；
  *   说明文字、reader_guide 指针、示例与被否方案里的同名字段不算；
  * - `conflicts`：`discovery.conflicts` 引的来源，供核源，不算已采用；
- * - 需求 `requirement`（默认蓝图标识，蓝图与需求同根）的材料索引 `files` 视图登记的文件：被上面三类引用命中的来源版本就是
- *   采用的版本，按版本展开成全部文件（原件、阅读稿、图、会议的 raw/纠偏/阅读件），Markdown 阅读稿引的登记图一并加入；
+ * - 需求 `requirement`（默认蓝图标识，蓝图与需求同根）的材料索引 `files` 视图登记的稳定文件：被上面三类引用命中的来源版本
+ *   就是采用的版本，按版本展开成全部文件（原件、阅读稿、图、会议的 raw/纠偏/阅读件），聚合稿按它那一版固定的组成展开，
+ *   Markdown 阅读稿引的登记文件一并加入；图是资源叶子，只取被引的那一份。引用会换版的当前位置（带 `reference` 的别名行）
+ *   不算依据，报出它此刻对应的稳定文件；几个版本共用的留存按 provenance 的 `source_revision` 认版本，认不出就报候选；
  *   最新一版人工答复作为独立必读（`answers`），不取决于有没有被引用。
  * - `projectFiles`：支撑与冲突依据引用的需求目录以外的工程文件，按原生来源解析（片段要在文件里）读出原始字节摘要，
  *   作为设计来源身份的一部分交给读者；引用不是工程内现存文件的（原生合法的非文件出处）按原生合同保留在 `support`，不当材料。
@@ -622,34 +624,77 @@ function adoptedSourcesNow(projectRoot, blueprint, requirement) {
     if (cited.some(r => inRoot(r.file))) out.problems.push(`需求 ${requirement} 的材料索引读不出来（或不是本版带 files 视图的索引）——重跑 \`story_flow.py round\` 重建`);
     return out;
   }
-  const rows = new Map(index.files.map(r => [`${root}/${r.path}`, r]));
+  // 同一路径可以是几个来源版本共用的留存（同字节的原件、共享的图）：按路径分组，不让最后一行盖掉来源身份
   const versionKey = r => `${r.source_id}@${r.version}`;
+  const rows = new Map();
+  for (const r of index.files) {
+    const at = `${root}/${r.path}`;
+    const group = rows.get(at) ?? [];
+    if (!group.some(x => versionKey(x) === versionKey(r))) group.push(r);
+    rows.set(at, group);
+  }
+  const stable = index.files.filter(r => !r.reference);
+  const isImage = group => group.every(r => r.role === 'image');
+  const versionOf = r => (index.sources ?? []).find(s => s?.source_id === r.source_id)?.versions?.find(x => x?.version === r.version);
+  const reading = (r) => {
+    const v = versionOf(r);
+    return `${root}/${(v?.readable ?? v?.original)?.path ?? r.path}`;
+  };
+  // 图作资源叶子：只取这份文件，不声称采用了含它的版本；单独一份界面图本身就是一个来源版本，引它就是采用它
+  const leaf = group => ({ ...fileOf(root, group[0]), dir: null, ...(group.length > 1 ? { source_id: null, version: null } : {}) });
+  const ownImage = group => group.length === 1 && versionOf(group[0])?.original?.path === group[0].path;
+  // 一处引用落到哪个来源版本：当前位置（别名）不是依据，报出对应的稳定文件；几个版本共用的留存按 provenance 写明的版本认，
+  // 认不出就列候选阅读稿；图是资源叶子，只取这份文件、不把含它的版本都算采用
+  const leaves = new Map();
+  const pick = (r, file, label) => {
+    const group = rows.get(file);
+    if (!group) {
+      out.problems.push(`${r.where} 引用的${label} ${file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按材料索引 files 同步`);
+      return null;
+    }
+    const alias = group.find(x => x.reference);
+    if (alias) {
+      out.problems.push(`${r.where} 引用的${label} ${file} 是会换版的当前位置，不是依据：它此刻对应 ${root}/${alias.reference.path}`
+        + `（${versionKey(alias)}）——设计负责方把引用改成这份稳定文件`);
+      return null;
+    }
+    if (isImage(group) && !ownImage(group)) {
+      if (!leaves.has(file)) leaves.set(file, leaf(group));
+      return null;
+    }
+    const named = String(r.provenance?.source_revision ?? '');
+    const hit = group.length === 1 ? group[0] : group.find(x => `${x.source_id}@v${x.version}` === named);
+    if (!hit) {
+      out.problems.push(`${r.where} 引用的${label} ${file} 是 ${group.map(versionKey).join('、')} 共用的留存，认不出是哪一版`
+        + `——设计负责方改引那一版的阅读稿：${[...new Set(group.map(reading))].join('、')}`);
+      return null;
+    }
+    return versionKey(hit);
+  };
   const adopted = new Set();
   const conflicted = new Set();
   for (const r of cited) {
     if (!inRoot(r.file)) continue;
-    const row = rows.get(r.file);
-    if (!row) out.problems.push(`${r.where} 引用的 ${r.file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按材料索引 files 同步`);
-    else adopted.add(versionKey(row));
+    const key = pick(r, r.file, '');
+    if (key) adopted.add(key);
   }
   for (const r of conflicts) {
     const file = fileAt(r.path);
     if (!inRoot(file)) continue;
-    const row = rows.get(file);
-    if (!row) out.problems.push(`${r.where} 引用的冲突依据 ${file} 不是需求 ${requirement} 材料索引登记的文件（不在或没导入）——设计负责方按材料索引 files 同步`);
-    else conflicted.add(versionKey(row));
+    const key = pick(r, file, '冲突依据');
+    if (key) conflicted.add(key);
   }
-  // 版本展开：阅读稿链到的登记文件连同它的整个版本加入，新加入的阅读稿接着读，直到没有新版本
-  const expand = (seed) => {
+  // 版本展开：只取稳定行。聚合稿按它这一版固定的组成展开；阅读稿链到的登记文件连同它的整个版本加入（图只取那一份），
+  // 新加入的阅读稿接着读，直到没有新版本。阅读稿链到会换版的当前位置是生产缺口，报出来
+  const expand = (seed, use) => {
     const keys = new Set(seed);
     const queue = [...keys];
     const files = [];
     while (queue.length) {
       const key = queue.shift();
-      for (const r of index.files.filter(x => versionKey(x) === key)) {
+      for (const r of stable.filter(x => versionKey(x) === key)) {
         const f = fileOf(root, r);
         files.push(f);
-        // 当前阅读稿由几份来源版本合成：引它就是采用了这几版，连同它们的文件一起读
         for (const c of r.components ?? []) {
           const k = String(c);
           if (!keys.has(k)) { keys.add(k); queue.push(k); }
@@ -658,22 +703,34 @@ function adoptedSourcesNow(projectRoot, blueprint, requirement) {
         let text;
         try { text = fs.readFileSync(path.join(native.root, ...f.path.split('/')), 'utf8'); } catch { continue; }
         for (const target of localTargets(text, path.posix.dirname(f.path))) {
-          const row = rows.get(target);
-          if (row && !keys.has(versionKey(row))) { keys.add(versionKey(row)); queue.push(versionKey(row)); }
+          const group = rows.get(target);
+          if (!group) continue;
+          if (group.some(x => x.reference)) {
+            if (use) out.problems.push(`${f.path} 链到会换版的当前位置 ${target}：稳定阅读稿要链当时那一份，重跑导入改写`);
+            continue;
+          }
+          if (isImage(group)) {
+            if (!files.some(x => x.path === target) && !leaves.has(target)) leaves.set(target, leaf(group));
+            continue;
+          }
+          for (const row of group) {
+            if (!keys.has(versionKey(row))) { keys.add(versionKey(row)); queue.push(versionKey(row)); }
+          }
         }
       }
     }
     return files;
   };
-  const files = expand(adopted);
+  const files = expand(adopted, true);
+  for (const [file, f] of leaves) if (!files.some(x => x.path === file)) files.push(f);
   const answers = (() => {
     const mine = (index.sources ?? []).find(s => s?.kind === 'answer');
     const last = mine?.versions?.at(-1);
     return last ? index.files.filter(r => r.source_id === mine.source_id && r.version === last.version).map(r => fileOf(root, r)) : [];
   })();
   out.requirements.push({ requirement, root,
-    versions: [...new Set(files.map(f => f.dir))].sort(), files, answers,
-    conflictFiles: expand(new Set([...conflicted].filter(k => !adopted.has(k)))) });
+    versions: [...new Set(files.map(f => f.dir).filter(Boolean))].sort(), files, answers,
+    conflictFiles: expand(new Set([...conflicted].filter(k => !adopted.has(k))), false) });
   return out;
 }
 

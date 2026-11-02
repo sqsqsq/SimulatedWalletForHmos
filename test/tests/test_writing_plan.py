@@ -102,7 +102,7 @@ def plan_in(text: str, sr_files: dict | None = None) -> dict:
                 {"version": 1, "original": {"path": rel}, "readable": {"path": rel}, "images": []}]})
         (root / "AR" / "story-src").mkdir(parents=True)
         (root / "AR" / "story-src" / "materials.json").write_text(
-            json.dumps({"schema": 4, "sources": sources, "materials": []}), encoding="utf-8")
+            json.dumps({"schema": 5, "sources": sources, "materials": []}), encoding="utf-8")
         (root / "plan.md").write_bytes(text.encode("utf-8"))
         script = (
             "import {pathToFileURL} from 'node:url'; import * as fs from 'node:fs'; import * as path from 'node:path';"

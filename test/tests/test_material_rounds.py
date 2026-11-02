@@ -1066,8 +1066,10 @@ class CurrentReadingCopiesKeepWhatPeopleWrote(ManifestCase):
         self.round_now()
         self.assertIn("RR/prd.md", [i["path"] for i in self.manifest()["inbox"]], "人改过的当前稿没算待导入")
         self.assertEqual(edited, self.rr().read_bytes(), "查询把人改过的当前稿写回去了")
+        drafts = self.manifest()["drafts"]["RR/prd.md"]["versions"]
         self.imported()
         self.assertEqual(edited, self.rr().read_bytes(), "导入覆盖了人改过的当前稿")
+        self.assertEqual(drafts, self.manifest()["drafts"]["RR/prd.md"]["versions"], "人改了当前稿，聚合稿的历史版本被删或改了")
         direct = next(s for s in self.manifest()["sources"] if s["source_id"] == "direct:RR/prd.md")
         self.assertEqual(edited, (self.feature_root / direct["versions"][-1]["original"]["path"]).read_bytes())
         self.assertEqual([], self.manifest()["inbox"])
@@ -1077,6 +1079,16 @@ class CurrentReadingCopiesKeepWhatPeopleWrote(ManifestCase):
         self.assertEqual(edited, self.rr().read_bytes(), "新原件把人的当前稿盖掉了")
         origin = next(o for o in self.manifest()["origins"] if o["source_id"] == "local:RR/prd.md")
         self.assertEqual(["inbox/RR/prd.md"], origin["readable_paths"])
+
+    def test_a_stable_copy_of_the_current_draft_is_protected(self) -> None:
+        """当前稿某一版的稳定副本设计可能引用了：被改了按损坏报出，不重填摘要放行。"""
+        self.imported()
+        self.round_now()
+        stable = self.feature_root / self.manifest()["drafts"]["RR/prd.md"]["versions"][-1]["readable"]["path"]
+        stable.write_bytes(stable.read_bytes() + "改了一句。\n".encode("utf-8"))
+        proc = self.run_flow("round")
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn(stable.relative_to(self.feature_root).as_posix(), proc.stdout + proc.stderr)
 
     def test_an_original_given_directly_is_registered_once_and_its_change_is_imported(self) -> None:
         """不经收件箱、直接写在 AR/design.md 的本单原文：第一次见到时登记；改了算待导入，导入登记成新版本。"""
@@ -1136,6 +1148,42 @@ class AnOriginalWithPicturesKeepsThemInItsStableCopy(ManifestCase):
         self.assertEqual([picture], [i["path"] for i in version["images"]], "引到的图没登记成这一版的图")
         origin = next(o for o in self.manifest()["origins"] if o["source_id"] == "direct:AR/design.md")
         self.assertEqual(["AR/design.md"], origin["readable_paths"], "原处的当前稿该照旧给人读")
+
+    def test_a_plain_picture_replaced_in_place_makes_a_new_version(self) -> None:
+        """直接原文引用一张普通名字的图：图按内容另存一份稳定的给这一版用，原图留在原处；同名换图（正文不变）是新版本，
+        旧版仍读旧图；再改正文又是一版，图沿用已存的那份。读者拿到的是最新一版的阅读稿。"""
+        picture = self.feature_root / "assets" / "ux" / "界面.png"
+        picture.parent.mkdir(parents=True, exist_ok=True)
+        picture.write_bytes(self.PNG + b"one")
+        given = self.feature_root / "AR" / "design.md"
+        given.write_text("# 开发需求\n\n![界面](../assets/ux/界面.png)\n", encoding="utf-8")
+        self.round_now()
+        versions = lambda: next(s for s in self.manifest()["sources"] if s["source_id"] == "direct:AR/design.md")["versions"]  # noqa: E731
+        [first] = versions()
+        [old] = self.resolved(first["readable"]["path"])
+        self.assertEqual(self.PNG + b"one", old.read_bytes())
+        self.assertNotEqual(picture.resolve(), old, "阅读稿指的是会被换掉的原图")
+        self.assertEqual([old], [(self.feature_root / i["path"]).resolve() for i in first["images"]])
+
+        picture.write_bytes(self.PNG + b"two")
+        self.round_now()
+        self.assertIn("AR/design.md", [i["path"] for i in self.manifest()["inbox"]], "换了图没算待导入")
+        self.imported()
+        second = versions()[-1]
+        self.assertEqual(2, second["version"])
+        [new] = self.resolved(second["readable"]["path"])
+        self.assertEqual(self.PNG + b"two", new.read_bytes())
+        self.assertEqual([old], self.resolved(first["readable"]["path"]), "旧版不再读旧图")
+        self.assertEqual(self.PNG + b"one", old.read_bytes())
+        self.assertEqual(self.PNG + b"two", picture.read_bytes(), "原图被搬走或改了")
+
+        given.write_text(given.read_text(encoding="utf-8") + "补一句说明。\n", encoding="utf-8")
+        self.imported()
+        third = versions()[-1]
+        self.assertEqual((3, second["images"]), (third["version"], third["images"]))
+        self.assertIn(third["readable"]["path"], self.read_by_consumer("AR"))
+        self.imported()
+        self.assertEqual(3, len(versions()), "没变的再导一次又出了新版本")
 
     def test_a_hand_edited_reading_copy_with_pictures(self) -> None:
         self.docx("产品需求.docx", {"image1.png": self.PNG + b"p"}, cls="RR", text="产品规则")
@@ -1417,7 +1465,9 @@ class OriginsFollowTheLatestVersions(ManifestCase):
         current = (self.feature_root / "SR" / "design.md").read_text(encoding="utf-8")
         self.assertIn("第二版", current)
         self.assertNotIn("第一版", current)
-        self.assertIn("system:SR:SR9@2", self.manifest()["drafts"]["SR/design.md"]["components"])
+        versions = self.manifest()["drafts"]["SR/design.md"]["versions"]
+        self.assertEqual(["system:SR:SR9@1", "system:SR:SR9@2"], [v["components"][0] for v in versions[-2:]], "聚合稿换版没留旧的一版")
+        self.assertIn("第一版", (self.feature_root / versions[-2]["readable"]["path"]).read_text(encoding="utf-8"))
         self.assertIn("第一版", (self.feature_root / source["versions"][0]["original"]["path"]).read_text(encoding="utf-8"))
         origin = next(o for o in self.manifest()["origins"] if o["source_id"] == "system:SR:SR9")
         self.assertEqual(("inbox/fetch-2/SR-design.md", ["SR/design.md"]), (origin["path"], origin["readable_paths"]))

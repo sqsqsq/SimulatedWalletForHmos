@@ -7,7 +7,7 @@
     AR/design.md                 系统取得的本单 AR 正文的当前阅读稿；本地补录的 AR 材料落 AR/story-src/upstream.md
     assets/<原件派生名>/         docx 内嵌图；assets/ux/ 是界面图与界面说明（README.md）
     .backups/local/inbox/...     每个版本的原件字节：<原相对目录>/<主名>.<内容摘要><后缀>
-    .backups/local/<类>/         每个版本的阅读稿：<标签>-v<N>.md
+    .backups/local/<类>/         每个版本的阅读稿：<标签>-v<N>.md；当前阅读稿每一版的稳定副本：<主名>-聚合-v<N>.md
 
 一份原件是一个**来源**（source）。系统取材的件按回执认来源（角色 + 单号），本地放进来的件按它在收件箱里的相对路径认；
 同一来源每次取得的内容不同就是一个新**版本**，登记在材料索引里（`materials/registry.py`，版本关系只登记在那里）。
@@ -19,7 +19,7 @@
 没归类的件不会被默默忽略——那等于人以为导了、实际没导。
 
 输入与格式的失败（读不开、没归类、链接越界、转换缺口）都在写盘之前一次报全，一个字节不动。
-直接给在 RR/SR/AR 的原文也是合法来源：第一次见到时登记原字节；之后改了算待导入，由导入登记成新版本。
+直接给在 RR/SR/AR 的原文也是合法来源：第一次见到时登记原字节；之后原文或它引用的图改了算待导入，由导入登记成新版本。
 
 只用标准库：docx 是 zip + OOXML，图片抽取本就要走 `zipfile` + XML。
 """
@@ -598,9 +598,25 @@ def kept_path(key: str, blob: bytes) -> str:
     return "/".join([*BACKUP, INBOX[-1], *p.parts[:-1], stored_name(p.name, blob)])
 
 
-def reading_path(cls: str, label: str, number: int) -> str:
-    """一个版本的阅读稿存在哪：`.backups/local/<类>/<标签>-v<N>.md`。"""
-    return "/".join([*BACKUP, cls, f"{label}-v{number}.md"])
+def reading_path(cls: str, label: str, number: int, suffix: str = ".md") -> str:
+    """一个版本的阅读稿存在哪：`.backups/local/<类>/<标签>-v<N>.md`。文本原件不用转换时阅读稿是原字节，沿原后缀。
+    每个版本一个阅读地址：内容相同的原件共用一份字节留存，阅读地址仍指认得出是哪一版。"""
+    return "/".join([*BACKUP, cls, f"{label}-v{number}{suffix}"])
+
+
+#: 当前阅读稿 → 它的类（稳定副本落在 `.backups/local/<类>/`）
+DRAFT_CLASS = {"RR/prd.md": "RR", "SR/design.md": "SR", "AR/design.md": "AR", "AR/story-src/upstream.md": "AR",
+               f"{UX_DIR}/README.md": "UX"}
+
+
+def draft_label(target: str) -> str:
+    """当前阅读稿稳定副本的标签：`<主名>-聚合`。来源标签不取这个形状。"""
+    return f"{safe_label(PurePosixPath(target).stem)}-聚合"
+
+
+def draft_reading(target: str, number: int) -> str:
+    """当前阅读稿第 N 版的稳定副本：`.backups/local/<类>/<主名>-聚合-v<N>.md`。设计引用它，不引用会换版的当前稿。"""
+    return reading_path(DRAFT_CLASS[target], draft_label(target), number)
 
 
 def draft_target(cls: str, kind: str) -> str | None:
@@ -666,6 +682,7 @@ def unique_label(stored: dict, source_id: str, base: str, planned: dict[str, str
     label = safe_label(base)
     taken = {str(s.get("label") or "").casefold() for s in stored["sources"] if s["source_id"] != source_id}
     taken |= {v.casefold() for k, v in planned.items() if k != source_id}
+    taken |= {draft_label(t).casefold() for t in DRAFT_CLASS}
     planned[source_id] = label if label.casefold() not in taken else f"{label}-{digest(source_id.encode('utf-8'))[:6]}"
     return planned[source_id]
 
@@ -882,10 +899,11 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
             original = kept_path(key, blob)
         else:
             original, readable, images = kept_path(key, blob), None, {}
-        reading = reading_path(cls, label, number) if readable is not None else None
+        text_original = readable is None and path.suffix.lower() not in IMAGE_EXTS and cls != "IMAGES"
+        reading = (reading_path(cls, label, number) if readable is not None
+                   else reading_path(cls, label, number, path.suffix.lower()) if text_original else None)
         plan.append({"key": key, "path": path, "ident": ident, "number": number, "blob": blob, "original": original,
-                     "readable": readable, "reading": reading, "images": images, "text_original": readable is None
-                     and path.suffix.lower() not in IMAGE_EXTS and cls != "IMAGES"})
+                     "readable": readable, "reading": reading, "images": images, "text_original": text_original})
         targets[key] = reading or original
     # Markdown：本批的阅读版本先在内存里定稳，再出最终稿。新原件出新版本；原件没变的按已有版本的阅读位置渲染，
     # 阅读内容变了（它引用的本批材料换了版本）就提升为新版本、更新目标，引用它的再重算——每份至多提升一次，有限输入自然收敛。
@@ -901,7 +919,7 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
             text = ""
         label = unique_label(stored, ident["source_id"], ident["label"], planned)
         number = number_of(ident)
-        target = reading_path(cls, label, number) if has_local_links(text) else kept_path(key, blob)
+        target = reading_path(cls, label, number, path.suffix.lower())
         docs.append({"path": path, "key": key, "cls": cls, "ident": {**ident, "label": label}, "have": have, "blob": blob,
                      "number": number, "text": text, "new": new, "target": target})
         targets[key] = target if new else _reading(have)
@@ -913,10 +931,8 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
     def same(doc: dict) -> bool:
         readable, _ = rendered(doc)
         have = doc["have"]
-        if readable is None:
-            return not have.get("readable") or have["readable"]["path"] == have["original"]["path"]
-        return bool(have.get("readable")) and have["readable"]["path"] != have["original"]["path"] \
-            and have["readable"]["sha256"] == digest(readable.encode("utf-8"))
+        return bool(have.get("readable")) and have["readable"]["sha256"] == (
+            have["original"]["sha256"] if readable is None else digest(readable.encode("utf-8")))
 
     promoted = True
     while promoted:
@@ -934,8 +950,7 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
             continue
         plan.append({"key": doc["key"], "path": doc["path"], "ident": doc["ident"], "number": doc["number"],
                      "blob": doc["blob"], "original": kept_path(doc["key"], doc["blob"]), "readable": readable,
-                     "reading": doc["target"] if readable is not None else None, "images": {},
-                     "text_original": readable is None})
+                     "reading": doc["target"], "images": {}, "text_original": readable is None})
     if gaps:
         raise ImportError_("Markdown 引用的本地文件找不到（不在收件箱里，也没导入过）：" + "；".join(gaps)
                            + "——把引用的图或文件按原来的相对位置一起放进收件箱再导；外部链接与文内锚点不受影响")
@@ -1000,9 +1015,10 @@ def _write_version(feature_root: Path, stored: dict, item: dict) -> None:
     blob = item["blob"]
     write_once(feature_root, item["original"], blob)
     original = {"path": item["original"], "sha256": digest(blob)}
-    readable = dict(original) if item["text_original"] else None
-    if item["readable"] is not None:
-        data = item["readable"].encode("utf-8")
+    readable = None
+    if item["readable"] is not None or item["text_original"]:
+        # 原件共用按内容起名的字节留存；阅读稿每版一份（文本原件就是原字节），设计引用它就指认得出这一版
+        data = blob if item["readable"] is None else item["readable"].encode("utf-8")
         write_once(feature_root, item["reading"], data)
         readable = {"path": item["reading"], "sha256": digest(data)}
     images = []
@@ -1059,30 +1075,43 @@ def write_drafts(feature_root: Path, stored: dict) -> tuple[list[str], list[str]
     written, held = [], []
     for target, items in sorted(groups.items()):
         items.sort(key=lambda x: x[0])
-        data = render_target([(t, b) for _, t, b, _ in items]).encode("utf-8")
+        text = render_target([(t, b) for _, t, b, _ in items])
+        data = text.encode("utf-8")
         sha = digest(data)
-        record = stored["drafts"].get(target)
+        components = [c for *_, c in items]
+        last = latest_draft(stored, target)
         path = feature_root / target
         have = digest(path.read_bytes()) if path.is_file() else None
-        if have is not None and have != sha and have != (record or {}).get("sha256"):
-            stored["drafts"].pop(target, None)
-            held.append(target)
-            continue
-        if record and record["sha256"] == sha and have == sha:
+        if have is not None and have != sha and have != (last or {}).get("current_sha256"):
+            held.append(target)           # 人写或人改过：不覆盖，已有的聚合版本留着
             continue
         if have != sha:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             written.append(target)
-        stored["drafts"][target] = {"sha256": sha, "components": [c for *_, c in items], "generated_at": now()}
+        if last and last["current_sha256"] == sha and last["components"] == components:
+            continue
+        # 组成或正文变了就是新的一版：当前稿给人读，稳定副本按自己的位置改写链接、只增不改，设计引用它
+        number = (last or {}).get("version", 0) + 1
+        stable = draft_reading(target, number)
+        projected = reroot(text, posixpath.dirname(target), posixpath.dirname(stable)).encode("utf-8")
+        write_once(feature_root, stable, projected)
+        stored["drafts"].setdefault(target, {"versions": []})["versions"].append(
+            {"version": number, "current_sha256": sha, "readable": {"path": stable, "sha256": digest(projected)},
+             "components": components, "generated_at": now()})
     return written, held
 
 
+def latest_draft(stored: dict, target: str) -> dict | None:
+    """当前阅读稿最近生成的一版；还没生成过为 None。"""
+    versions = (stored["drafts"].get(target) or {}).get("versions") or []
+    return versions[-1] if versions else None
+
+
 def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> list[str]:
-    """直接给在 RR/SR/AR 的原文登记成来源版本，原字节另存在 `.backups/local/<类>/`；带本地链接的另出一份按留存位置改写链接的
-    阅读稿（`<标签>-v<N>.md`，原字节在 `<标签>-v<N>.original.md`），引到的图登记成这一版的图。第一次见到时登记；
-    `changes` 为真（导入时）改过的也登记成新版本——生成后被人改过、这次又没重新生成的阅读稿同样登记，保住人的改动。
-    返回登记了的位置。"""
+    """直接给在 RR/SR/AR 的原文登记成来源版本（`direct_version` 算这一版留存什么）。第一次见到时登记；
+    `changes` 为真（导入时）原文、引到的图或由它们生成的阅读稿变了也登记成新版本——生成后被人改过、这次又没重新生成的阅读稿
+    同样登记，保住人的改动。返回登记了的位置。"""
     from materials import registry  # noqa: PLC0415
     done = []
     for rel, cls in DIRECT.items():
@@ -1090,44 +1119,81 @@ def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> 
         if not path.is_file():
             continue
         blob = path.read_bytes()
-        sha = digest(blob)
-        sid = f"direct:{rel}"
-        draft, last = stored["drafts"].get(rel), registry.latest(stored, sid)
-        if (draft and draft["sha256"] == sha) or (last and last["original"]["sha256"] == sha):
-            continue
+        draft, last = latest_draft(stored, rel), registry.latest(stored, f"direct:{rel}")
+        if draft and draft["current_sha256"] == digest(blob):
+            continue                      # 导入生成的当前稿，没被人改过
         if (draft or last) and not changes:
             continue                      # 改过的是待导入：查询不替人登记
+        sid = f"direct:{rel}"
         label = unique_label(stored, sid, f"{PurePosixPath(rel).stem}-直接")
         number = (last or {}).get("version", 0) + 1
-        reading = reading_path(cls, label, number)
-        text = blob.decode("utf-8", errors="replace")
-        if not has_local_links(text):
-            original = readable = {"path": reading, "sha256": sha}
-            write_once(feature_root, reading, blob)
-            images = []
-        else:
-            # 原字节原样另存；阅读稿是它在留存位置的投影：本地链接按原处解析、改指同一批真实文件，引到的图登记成这一版的图
-            kept = reading.removesuffix(".md") + ".original.md"
-            write_once(feature_root, kept, blob)
-            here = posixpath.dirname(rel)
-            projected = reroot(text, here, posixpath.dirname(reading)).encode("utf-8")
-            write_once(feature_root, reading, projected)
-            original, readable = {"path": kept, "sha256": sha}, {"path": reading, "sha256": digest(projected)}
-            images = []
-            for line in text.splitlines():
-                for _, _, target in markdown_links(line):
-                    if not _local_ref(target):
-                        continue
-                    linked = posixpath.normpath(posixpath.join(here, _split_target(target)[0]))
-                    picture = feature_root / linked
-                    if (posixpath.splitext(linked)[1].lower() in IMAGE_EXTS and picture.is_file()
-                            and linked not in [i["path"] for i in images]):
-                        images.append({"path": linked, "sha256": digest(picture.read_bytes())})
+        version, files = direct_version(feature_root, stored, rel, cls, label, number, blob)
+        if last and last["original"]["sha256"] == version["original"]["sha256"] \
+                and (last.get("image_inputs") or []) == version["image_inputs"] \
+                and last["readable"]["sha256"] == version["readable"]["sha256"]:
+            continue
+        for at, data in files.items():
+            write_once(feature_root, at, data)
         registry.add_version(stored, {"source_id": sid, "kind": "direct", "class": cls, "origin": {"file": rel}, "label": label},
-                             {"version": number, "dir": f"{label}-v{number}", "acquired_at": now(),
-                              "original": original, "readable": readable, "images": images})
+                             {"version": number, "dir": f"{label}-v{number}", "acquired_at": now(), **version})
         done.append(rel)
     return done
+
+
+def direct_version(feature_root: Path, stored: dict, rel: str, cls: str, label: str, number: int,
+                   blob: bytes) -> tuple[dict, dict[str, bytes]]:
+    """直接原文这一版的登记与要写的留存（只算不写）。
+
+    没有本地链接时原字节就是阅读稿 `<标签>-v<N>.md`。有本地链接时原字节原样另存为 `<标签>-v<N>.original.md`，阅读稿是它在
+    留存位置的投影：引到的图按内容身份落成稳定资源（已登记的同内容图直接复用，否则存一份到 `assets/ux/` 或这份原文的
+    `assets/<派生名>/`，用户原图留在原处），链接改指稳定资源；引到会换版的当前位置（收件箱原件、当前阅读稿）改指它此刻的
+    稳定阅读地址；其余按原处解析改写。`images` 只登记稳定资源，原图位置与此刻的摘要记在 `image_inputs`，判下一次换没换图。
+    引到的图不在报出来。"""
+    from materials import registry  # noqa: PLC0415
+    sha = digest(blob)
+    reading = reading_path(cls, label, number)
+    text = blob.decode("utf-8", errors="replace")
+    if not has_local_links(text):
+        same = {"path": reading, "sha256": sha}
+        return {"original": same, "readable": dict(same), "images": [], "image_inputs": []}, {reading: blob}
+    here, there = posixpath.dirname(rel), posixpath.dirname(reading)
+    aliases = registry.aliases(feature_root, stored)
+    files: dict[str, bytes] = {}
+    images: list[dict] = []
+    inputs: list[dict] = []
+    missing: list[str] = []
+
+    def move(p: str) -> str | None:
+        linked = posixpath.normpath(posixpath.join(here, p))
+        if posixpath.splitext(linked)[1].lower() not in IMAGE_EXTS:
+            return posixpath.relpath(aliases[linked]["path"] if linked in aliases else linked, there)
+        picture = feature_root / linked
+        if not picture.is_file():
+            missing.append(linked)
+            return None
+        data = picture.read_bytes()
+        h = digest(data)
+        known = registry.stable_image(stored, h)
+        stable = known or (
+            linked if PurePosixPath(linked).stem.endswith(f".{h[:16]}") else
+            f"{UX_DIR if linked.startswith(UX_DIR + '/') else ASSETS + '/' + derived_name(rel)}/"
+            f"{stored_name(PurePosixPath(linked).name, data)}")
+        if known is None:
+            files[stable] = data
+        if stable not in [i["path"] for i in images]:
+            images.append({"path": stable, "sha256": h})
+        if linked not in [i["path"] for i in inputs]:
+            inputs.append({"path": linked, "sha256": h, "stable_path": stable})
+        return posixpath.relpath(stable, there)
+
+    projected = relink(text, move).encode("utf-8")
+    if missing:
+        raise ImportError_(f"{rel} 引用的图不在：{'、'.join(sorted(set(missing)))}——把图放回引用的位置，"
+                           "或改掉正文里的引用，再重跑")
+    kept = reading.removesuffix(".md") + ".original.md"
+    files.update({kept: blob, reading: projected})
+    return {"original": {"path": kept, "sha256": sha}, "readable": {"path": reading, "sha256": digest(projected)},
+            "images": images, "image_inputs": inputs}, files
 
 
 def retire_source(feature_root: Path, key: str) -> dict:

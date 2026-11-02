@@ -162,7 +162,7 @@ class RegisteringSaysWhatTheImageIs(RegistrationCase):
         self.assertEqual(0, self.register("raw-1.png", "signup-page", "签约页").returncode)
         docs = [m["paths"] for m in self.manifest()["materials"] if m["kind"] == "doc"]
         kept = f".backups/local/inbox/界面说明.{hashlib.sha256((self.incoming / '界面说明.md').read_bytes()).hexdigest()[:16]}.md"
-        self.assertIn([kept], docs, "说明文件没登记成材料")
+        self.assertIn([".backups/local/UX/界面说明-v1.md", kept], docs, "说明文件没登记成材料（原件留存与这一版的阅读稿）")
         self.assertIn("签约页的交互", (self.feature_root / "assets" / "ux" / "README.md").read_text(encoding="utf-8"),
                       "界面说明没并进 assets/ux/README.md")
 

@@ -123,7 +123,7 @@ export function registeredPaths(ctx) {
  * 留存的会议版本（`meeting`）。图片按图片对象列（同一内容的几个落点是一条），形状判定用 `imagesIn`；
  * 还在收件箱里的件走待导入。
  *
- * @returns {{origins: object[]|null, pending: string[], images: object[], gaps: string[]} | null}
+ * @returns {{origins: object[]|null, pending: string[], images: object[], current?: Map<string,string>, gaps: string[]} | null}
  *   null = 还没有索引（没跑过 round）；`origins` 为 null 时索引在而读不出来源关系，原因在 `gaps` 第一条
  */
 export function materialSet(ctx) {
@@ -132,13 +132,15 @@ export function materialSet(ctx) {
   const fix = '——这份索引由 `story_flow.py round` 按磁盘现状生成';
   const none = gap => ({ origins: null, pending: [], images: [], gaps: [gap] });
   if (data === 'broken') return none(`AR/story-src/materials.json：读不出材料索引${fix}`);
-  if (data.schema !== 4 || !Array.isArray(data.origins) || !Array.isArray(data.inbox) || !Array.isArray(data.files)) {
-    return none('AR/story-src/materials.json：不是本版材料索引（schema 4，版本关系登记在索引里、含 files 视图）'
+  if (data.schema !== 5 || !Array.isArray(data.origins) || !Array.isArray(data.inbox) || !Array.isArray(data.files)) {
+    return none('AR/story-src/materials.json：不是本版材料索引（schema 5，版本关系登记在索引里、含 files 视图）'
       + `${fix}；旧版生成的需求本版不接续，另建新需求，这个目录原样保留`);
   }
   const pending = data.inbox.filter(s => s?.path).map(s => s.path);
   const { images, gap } = imagesIn(data);
-  return { origins: data.origins, pending, images, gaps: gap ? [gap] : [] };
+  // 会换版的当前位置 → 此刻对应的稳定文件（相对需求目录）：给人读的是当前位置，设计采用记的是稳定文件
+  const current = new Map(data.files.filter(r => r?.reference?.path).map(r => [r.path, r.reference.path]));
+  return { origins: data.origins, pending, images, current, gaps: gap ? [gap] : [] };
 }
 
 /** 相对 story 的 markdown 链接串：带空格或括号的路径用 `<…>` 包起来，照抄即可。 */
