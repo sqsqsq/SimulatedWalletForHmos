@@ -282,7 +282,8 @@ def derive(latest_versions: list[dict], drafts: dict, notes: dict[str, dict], fe
         if readable or v["class"] == "IMAGES":
             # 读的是合成它的当前阅读稿；没有就是它自己的阅读稿（原件本身就是阅读稿、又还在原处时指原处）
             reading = ([draft] if draft else [] if not readable
-                       else [here] if here and readable["path"] == original["path"] else [readable["path"]]) or [shown]
+                       else [here] if here and (readable["path"] == original["path"] or v["kind"] == "direct")
+                       else [readable["path"]]) or [shown]
             materials.append({"kind": "doc", "paths": sorted({original["path"], *([readable["path"]] if readable else [])}),
                               "sha256": (readable or original)["sha256"], "source_id": v["source_id"]})
             row = {"path": shown, "sha256": original["sha256"], "kind": v["kind"], "class": v["class"],

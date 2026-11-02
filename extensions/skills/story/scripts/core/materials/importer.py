@@ -1079,7 +1079,8 @@ def write_drafts(feature_root: Path, stored: dict) -> tuple[list[str], list[str]
 
 
 def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> list[str]:
-    """直接给在 RR/SR/AR 的原文登记成来源版本，原字节另存在 `.backups/local/<类>/`。第一次见到时登记；
+    """直接给在 RR/SR/AR 的原文登记成来源版本，原字节另存在 `.backups/local/<类>/`；带本地链接的另出一份按留存位置改写链接的
+    阅读稿（`<标签>-v<N>.md`，原字节在 `<标签>-v<N>.original.md`），引到的图登记成这一版的图。第一次见到时登记；
     `changes` 为真（导入时）改过的也登记成新版本——生成后被人改过、这次又没重新生成的阅读稿同样登记，保住人的改动。
     返回登记了的位置。"""
     from materials import registry  # noqa: PLC0415
@@ -1098,11 +1099,33 @@ def register_direct(feature_root: Path, stored: dict, changes: bool = False) -> 
             continue                      # 改过的是待导入：查询不替人登记
         label = unique_label(stored, sid, f"{PurePosixPath(rel).stem}-直接")
         number = (last or {}).get("version", 0) + 1
-        kept = reading_path(cls, label, number)
-        write_once(feature_root, kept, blob)
+        reading = reading_path(cls, label, number)
+        text = blob.decode("utf-8", errors="replace")
+        if not has_local_links(text):
+            original = readable = {"path": reading, "sha256": sha}
+            write_once(feature_root, reading, blob)
+            images = []
+        else:
+            # 原字节原样另存；阅读稿是它在留存位置的投影：本地链接按原处解析、改指同一批真实文件，引到的图登记成这一版的图
+            kept = reading.removesuffix(".md") + ".original.md"
+            write_once(feature_root, kept, blob)
+            here = posixpath.dirname(rel)
+            projected = reroot(text, here, posixpath.dirname(reading)).encode("utf-8")
+            write_once(feature_root, reading, projected)
+            original, readable = {"path": kept, "sha256": sha}, {"path": reading, "sha256": digest(projected)}
+            images = []
+            for line in text.splitlines():
+                for _, _, target in markdown_links(line):
+                    if not _local_ref(target):
+                        continue
+                    linked = posixpath.normpath(posixpath.join(here, _split_target(target)[0]))
+                    picture = feature_root / linked
+                    if (posixpath.splitext(linked)[1].lower() in IMAGE_EXTS and picture.is_file()
+                            and linked not in [i["path"] for i in images]):
+                        images.append({"path": linked, "sha256": digest(picture.read_bytes())})
         registry.add_version(stored, {"source_id": sid, "kind": "direct", "class": cls, "origin": {"file": rel}, "label": label},
                              {"version": number, "dir": f"{label}-v{number}", "acquired_at": now(),
-                              "original": {"path": kept, "sha256": sha}, "readable": {"path": kept, "sha256": sha}, "images": []})
+                              "original": original, "readable": readable, "images": images})
         done.append(rel)
     return done
 

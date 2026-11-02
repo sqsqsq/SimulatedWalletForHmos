@@ -35,6 +35,8 @@ from test_story_build import (  # noqa: E402
 )
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
 from flow_steps import answer, open_decision, write_gaps  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import end_target  # noqa: E402
 import design_kit  # noqa: E402
 import shared_state  # noqa: E402
 from ext_workspace import DEV_EXT, link_framework
@@ -2386,7 +2388,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.assertEqual(rel, self.contract()["archived"]["body_backup"], "登记没记这次覆盖的备份")
 
     def test_a_required_design_reference_left_out_of_the_set_is_not_registered(self) -> None:
-        """系统要求设计参考附件：交付集合里少了它（被改小了），读回核对不成立、不登记，送审终点也不算到。"""
+        """系统要求设计参考附件：交付集合里少了它（被改小了），读回核对不成立、不登记。"""
         self.uploaded()
         path = self.src / "fetched.json"
         receipt = json.loads(path.read_text(encoding="utf-8"))
@@ -2441,7 +2443,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
 class TheDeliveryChainRunsThroughTheAdapter(RegisteredCase):
     """发布、上传、登记与恢复串成一条真实交接：生产者写下的交付集合与恢复准备由对接层（本地替身系统上的真实函数）消费，
     对接层写下的读回由登记消费，测试不代填。核心侧在进程内把本单当系统单；对接层替身只认 AR 单号的命令行入口不经过，
-    直接调它导出的函数。系统不要求设计参考附件（两件），本单再交付时带上它（三件）。"""
+    直接调它导出的函数。系统先不要求设计参考附件（两件）；之后系统要求它，再交付带上它（三件），送审终点据系统上的三件核到。"""
 
     # 只借发布用例的辅助（进程内调核心、摘要、本地来源），不继承它的用例
     NAMES = PublishChecksTheExternalVersion.NAMES
@@ -2485,6 +2487,10 @@ mod[fn](reqNo, 'token', ...(out ? [{ outDir: out }] : []))
         f = self.system / FEATURE / rel
         return f.read_bytes() if f.is_file() else None
 
+    def submitted(self) -> list[str]:
+        """送审终点没到的原因（空表是到了）。"""
+        return end_target.story_submitted(self.root, "doc/features", FEATURE, self.system)
+
     def test_publish_archive_register_redeliver_and_restore(self) -> None:
         self.fetch()
         self.assertEqual({"AR-design.md", "review.md"}, set(self.actions(self.publish("系统上那份正文看过了，按本地这一版覆盖"))))
@@ -2495,15 +2501,20 @@ mod[fn](reqNo, 'token', ...(out ? [{ outDir: out }] : []))
         archived = self.contract()["archived"]
         self.assertEqual(["AR-design.md", "review.md"], archived["items"])
         self.assertEqual(self.system_body(), (self.feature_root / archived["body_backup"]).read_bytes(), "覆盖前的正文没留住")
+        self.assertEqual([], self.submitted())
 
-        # 本单的交付请求要附设计参考：再交付一次，正文与 Review 判相同、只写设计参考附件
+        # 系统改为要求设计参考附件：取材带回这条要求，两件的交付就不算送到；再交付一次，正文与 Review 判相同、只写设计参考附件
+        detail = self.system / FEATURE / "detail.json"
+        detail.write_text(json.dumps({**json.loads(detail.read_text(encoding="utf-8")), "design_reference_required": True}), encoding="utf-8")
         self.fetch()
-        out = self.publish(with_design=True)
+        self.assertTrue(any("要求设计参考附件" in m for m in self.submitted()), self.submitted())
+        out = self.publish()
         self.assertEqual({"AR-design.md": "skip", "review.md": "skip", "design-review.md": "write"}, self.actions(out))
         self.assertNotIn("error", self.adapter("archiveOne"))
-        self.call("cmd_archived", self.root)
+        self.assertTrue(self.call("cmd_archived", self.root)["archived"])
         self.assertEqual(self.local("design-review.md"), self.remote("attachments/design-review.md"))
         self.assertEqual(["AR-design.md", "review.md", "design-review.md"], self.contract()["archived"]["items"])
+        self.assertEqual([], self.submitted())
 
         # 评审人之后在系统上改了正文：再发布被拦，对接层不被调用
         (self.system / FEATURE / "design.md").write_text("评审人改过的正文\n", encoding="utf-8")

@@ -119,6 +119,27 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
             (self.flow_path.parent / "review" / name).unlink(missing_ok=True)
         shutil.rmtree(self.root / "doc" / "reports", ignore_errors=True)
 
+    def replies(self, cases: dict) -> None:
+        """报告合同的局部变体（标签 → 回复种类、改法、应得结果）：真实准备一次，记下准备之后的审查现场；
+        每个变体回到这份现场、只换审查者的回复再核结果：合合同的回复先接收才读出结论，信不过的回复不接收也直接判出，回复原件不被改。"""
+        self.prepare()
+        roots = (self.flow_path.parent / "review", self.root / "doc" / "reports")
+        scene = {f: f.read_bytes() for r in roots if r.is_dir() for f in r.rglob("*") if f.is_file()}
+        for label, (kind, mutate, want) in cases.items():
+            with self.subTest(case=label):
+                for f in [f for r in roots if r.is_dir() for f in r.rglob("*") if f.is_file() and f not in scene]:
+                    f.unlink()
+                for f, data in scene.items():
+                    f.write_bytes(data)
+                reply = design_kit.write_review(self.root, "REQ-DEMO", kind)
+                reply.write_text(mutate(reply.read_text(encoding="utf-8")), encoding="utf-8")
+                kept = reply.read_bytes()
+                if want in ("pass", "warn"):
+                    self.receive()
+                got = self.result()
+                self.assertEqual(want, got["result"], got)
+                self.assertEqual(kept, reply.read_bytes(), "接收或核对改了回复原件")
+
     def receive(self) -> None:
         """回复落盘后重跑 prepare 接收它（记下原样字节的摘要）。"""
         out = self.review("prepare")
@@ -393,11 +414,7 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
             "总体结论不在第一行": ("pass", lambda t: t.replace("pass：按判据与发现判定。", "说明见下。\npass：按判据与发现判定。"),
                           "report_invalid"),
         }
-        for label, (kind, mutate, want) in cases.items():
-            with self.subTest(case=label):
-                self.fresh()
-                self.reviewed(kind, mutate)
-                self.assertEqual(want, self.result()["result"])
+        self.replies(cases)
 
     def test_locations_keep_their_quoting(self) -> None:
         """材料位置按引用边界取完整路径：整格一条路径可含空格，多条或夹说明时逐条反引号；取完再去定位片段。"""
@@ -415,11 +432,8 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
             "含空格但不存在的路径": (f"`doc/features/REQ-DEMO/AR/story-src/meetings/中性 会议/v2/raw.md`", "report_invalid"),
             "多条路径没逐条括起": (f"{story} {raw}", "report_invalid"),
         }
-        for label, (where, want) in cases.items():
-            with self.subTest(case=label):
-                self.fresh()
-                self.reviewed("advice", lambda t, where=where: t.replace(f"`{story}`", where))
-                self.assertEqual(want, self.result()["result"], self.result())
+        self.replies({label: ("advice", lambda t, where=where: t.replace(f"`{story}`", where), want)
+                      for label, (where, want) in cases.items()})
 
 
 class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliveredCase):

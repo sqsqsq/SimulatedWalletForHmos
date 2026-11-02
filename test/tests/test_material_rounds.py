@@ -1098,6 +1098,60 @@ class CurrentReadingCopiesKeepWhatPeopleWrote(ManifestCase):
         self.assertEqual(("AR/design.md", ["AR/design.md"]), (origin["path"], origin["readable_paths"]))
 
 
+class AnOriginalWithPicturesKeepsThemInItsStableCopy(ManifestCase):
+    """直接给的原文、人改过的当前稿带着本地图引用：原字节原样留存，另存的阅读稿按留存位置改写链接、指到同一批真实的图，
+    图登记成这一版的图；原处那份照旧是给人读的当前稿。"""
+
+    def read_by_consumer(self, cls: str) -> list[str]:
+        """来源阅读的真实消费者（`sources.mjs` 的 latestOf）给出的这一类各来源阅读稿位置。"""
+        script = ("import(process.argv[1]).then(m => process.stdout.write(JSON.stringify("
+                  "m.latestOf({ featureRoot: process.argv[2] }, process.argv[3]).map(v => v.readable?.path))))")
+        proc = subprocess.run(["node", "-e", script, (STORY_SCRIPTS / "story" / "sources.mjs").as_uri(), str(self.feature_root), cls],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def resolved(self, reading: str) -> list[Path]:
+        """阅读稿里每个本地链接按它所在位置解析到的文件。"""
+        out = []
+        for line in (self.feature_root / reading).read_text(encoding="utf-8").splitlines():
+            for _, _, target in importer.markdown_links(line):
+                if importer._local_ref(target):
+                    out.append((self.feature_root / posixpath.dirname(reading) / importer._split_target(target)[0]).resolve())
+        return out
+
+    def test_a_direct_original_with_a_picture(self) -> None:
+        self.put("界面.png", self.PNG + b"ui", "UX")
+        self.imported()
+        picture = next(m for m in self.manifest()["materials"] if m["kind"] == "image")["paths"][0]
+        given = self.feature_root / "AR" / "design.md"
+        text = f"# 开发需求\n\n![界面](../{picture})\n"
+        given.write_text(text, encoding="utf-8")
+        self.round_now()
+        version = next(s for s in self.manifest()["sources"] if s["source_id"] == "direct:AR/design.md")["versions"][-1]
+        self.assertEqual(text, (self.feature_root / version["original"]["path"]).read_text(encoding="utf-8"), "原字节没有原样留存")
+        self.assertNotEqual(version["original"]["path"], version["readable"]["path"])
+        self.assertIn(version["readable"]["path"], self.read_by_consumer("AR"), "读者拿到的不是这份留存阅读稿")
+        self.assertEqual([(self.feature_root / picture).resolve()], self.resolved(version["readable"]["path"]), "留存的阅读稿图链接断了")
+        self.assertEqual([picture], [i["path"] for i in version["images"]], "引到的图没登记成这一版的图")
+        origin = next(o for o in self.manifest()["origins"] if o["source_id"] == "direct:AR/design.md")
+        self.assertEqual(["AR/design.md"], origin["readable_paths"], "原处的当前稿该照旧给人读")
+
+    def test_a_hand_edited_reading_copy_with_pictures(self) -> None:
+        self.docx("产品需求.docx", {"image1.png": self.PNG + b"p"}, cls="RR", text="产品规则")
+        self.imported()
+        current = self.feature_root / "RR" / "prd.md"
+        edited = current.read_text(encoding="utf-8") + "人补的一句。\n"
+        current.write_text(edited, encoding="utf-8")
+        self.imported()
+        version = next(s for s in self.manifest()["sources"] if s["source_id"] == "direct:RR/prd.md")["versions"][-1]
+        self.assertEqual(edited, (self.feature_root / version["original"]["path"]).read_text(encoding="utf-8"))
+        self.assertIn(version["readable"]["path"], self.read_by_consumer("RR"), "读者拿到的不是这份留存阅读稿")
+        links = self.resolved(version["readable"]["path"])
+        self.assertTrue(links and all(p.is_file() for p in links), f"人改过的当前稿登记后图链接断了：{links}")
+        self.assertTrue(version["images"], "引到的图没登记成这一版的图")
+
+
 class TheManifestIsTheOnlyMaterialTruth(ManifestCase):
     """材料现在是什么、导没导过、取得过哪些版本，只有材料索引 `AR/story-src/materials.json` 说了算。"""
 
