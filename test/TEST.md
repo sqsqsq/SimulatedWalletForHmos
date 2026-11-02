@@ -465,19 +465,19 @@ python test/scripts/run_multi_case.py finalize `
 离线核确定性规则和真实生产消费/身份/保护/恢复，局部反例不重复整套安装及业务准备；CLI核模型实际送达、理解、知识应用、阅读质量、独审与交付效果。组合验证在少量现有生命周期链核状态衔接，复用现有Case，不新增全组合矩阵。测试因内存紧张或后台回收中止，按已有授权直接重启；期间不改被测源码、不提交，保中止及重跑原件，不重复询问。
 
 
-离线验证用 `test/scripts/verify.py`，从仓根执行，只选场景。并行参数（`-n auto --dist loadscope`）、模板装配与先后顺序都写在脚本里，不手拼 pytest 或检查命令：
+离线验证用 `test/scripts/verify.py`，从仓根执行，只选场景。并行参数、共享前态的准备与先后顺序都写在脚本里，不手拼 pytest 或检查命令：
 
 | 场景 | 命令 | 什么时候跑 |
 |---|---|---|
 | 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
 | 全量 | `python test/scripts/verify.py full` | 需要单独看全量结论时；批末交回由 `handback` 一并跑 |
 | 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4；各条形态按进程并行，结果按台账顺序输出 |
-| 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑 |
+| 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑；各通道的并发上限固定在脚本里（全量 4 个 worker、失效形态 1 个进程、CLI 测试 1 个 worker、compileall 单进程） |
 | Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
 | 装配专项 | `python test/scripts/verify.py assembly` | 第二次从空目录经同一入口重建工作区模板，身份核对与第一次相同。`test/config/framework-under-test.json`、`test/fixtures/framework-local/` 补丁或 `create_workspace_template` 装配代码相对上次专项证据有变时必跑，交回引用该次 `output/verify/<时刻>-assembly/`；没变时复用上次证据并写明被测 Framework 与补丁的身份。全量只保留一次当前装配与协议核对，不选这一类 |
 
 每步的完整输出写到 `output/verify/<时刻>-<场景>/<步骤>.log`，控制台按完成先后打印每步的结论行与耗时，多步时最后按固定顺序汇总；有一步失败退出码非 0。
-同时跑的前提是各步只写自己的位置：每次现建自己的模板，测试与失效形态各用自己的临时目录，跨进程共享的重夹具（`tests/shared_state.py`）有锁、造好再改名。
+同时跑的前提是各步只写自己的位置：测试与失效形态各用自己的临时目录，跨进程共享的重夹具（`tests/shared_state.py`）有锁、造好再改名。交回与全量开跑前，由脚本（父进程）在计时之内准备一次只读的共享前态，结束时由它清掉：正式装配的模板（交回；失效形态与全量里核装配身份的那一组读它，`STORY_TEST_ASSEMBLY_ROOT` / `STORY_TEST_ASSEMBLY_BOUNDARY`，装配前后 demo 的状态记在边界记录旁的 `assembly-demo.json`）与按原合同正式安装的包（交回、全量；`STORY_TEST_INSTALLED_PACKAGE`）。读者不写、不删它们，要改的用例先复制；第二次从空目录重建从不读共享模板。
 新写的测试或失效形态检查要守这一条；要排查并行带来的问题时，失效形态加 `--jobs 1` 串行对照。
 
 `test/tests/conftest.py` 给测试起的 node 进程带上 ts-node 转译缓存（系统临时目录 `story-ts-transpile-cache`，按内容取键，删了只会重新转译）；

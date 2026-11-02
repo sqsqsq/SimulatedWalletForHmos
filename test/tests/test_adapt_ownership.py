@@ -243,9 +243,8 @@ class TheMechanismFollowsThePackage(AdaptCase):
         self.assertIn("story-adaptation", after, "机制登记没跟上包")
 
 
-class TheStatusViewOnlyReads(AdaptCase):
-    """`--status`：刚装完、没有任何需求时照样能核知识；只读——前后文件集合与内容一致；
-    未安装、坏清单、坏配置分别是不同的事实，不能都变成「零知识且通过」。"""
+class StatusCase(AdaptCase):
+    """只读状态视图的辅助：跑 `--status` 并核前后文件一字不变。本类不含用例。"""
 
     def tree(self) -> dict[str, bytes]:
         return {p.relative_to(self.target).as_posix(): p.read_bytes()
@@ -256,6 +255,11 @@ class TheStatusViewOnlyReads(AdaptCase):
         proc = self.adapt("--status")
         self.assertEqual(before, self.tree(), "--status 写了文件")
         return proc.returncode, json.loads(proc.stdout)
+
+
+class TheStatusViewOnlyReads(StatusCase):
+    """`--status`：刚装完、没有任何需求时照样能核知识；只读——前后文件集合与内容一致；
+    未安装、坏清单、坏配置分别是不同的事实，不能都变成「零知识且通过」。"""
 
     def test_an_installed_target_reports_versions_counts_and_digest(self) -> None:
         code, got = self.status()
@@ -312,7 +316,7 @@ class TheStatusViewOnlyReads(AdaptCase):
         self.assertNotIn("在途单", got["items"], "adapt 不处理旧需求，跟进里不该有在途单块")
 
 
-class SameUseCandidatesAreOnlyHints(TheStatusViewOnlyReads):
+class SameUseCandidatesAreOnlyHints(StatusCase):
     """同用途声明候选只按 `applies_when` 原文相同分组，给独立审查当线索：不改 PASS，不推断相似，
     为空也不说明没有重复。重复与否、互补与否由审查读正文判。"""
 

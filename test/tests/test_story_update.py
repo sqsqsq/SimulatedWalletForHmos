@@ -2129,13 +2129,18 @@ class PublishChecksTheExternalVersion(RegisteredCase):
 
     #: 回执里的名字 → 本地来源（相对需求目录）
     NAMES = {"AR-design.md": "AR/story.md", "review.md": "AR/review.md", "design-review.md": "blueprint/component-blueprint.review.md"}
+    #: 发布前核对的交付门结果。这一组核的是外部版本、基线与授权的政策，交付门本身另有用例：默认把门的结论
+    #: 换成「通过」，不为每个政策例重跑一次完整 deliver 检查；`None` 时跑真实的交付门（门的接线用例用它）
+    GATE: tuple[bool, str] | None = (True, "（这一组的政策用例：交付门由专门的用例核）")
 
     def call(self, name: str, *args, system: bool = True):
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
         sys.path.insert(0, str(core))
         try:
             from flow import publish  # noqa: PLC0415
-            with unittest.mock.patch.object(publish, "system_requirement", lambda _: system):
+            gate = self.GATE
+            with unittest.mock.patch.object(publish, "system_requirement", lambda _: system), \
+                    unittest.mock.patch.object(publish, "_gate", (lambda *_: gate) if gate is not None else publish._gate):
                 return getattr(publish, name)(self.feature_root, *args)
         finally:
             sys.path.remove(str(core))
@@ -2228,6 +2233,14 @@ class PublishChecksTheExternalVersion(RegisteredCase):
                               errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         self.assertEqual(self.digest(body), self.call("_baselines", self.contract())["AR-design.md"])
+
+    def test_publishing_goes_through_the_real_delivery_gate(self) -> None:
+        """发布前核对真跑交付门：已登记的这一份过门才可发布；门没过就不发布，报出门的原话。"""
+        self.GATE = None
+        self.receipt(None)
+        self.assertTrue(self.publish()["publishable"], "登记过的稿没过真实的交付门")
+        self.GATE = (False, "[story-build check] 交付门的原话")
+        self.assertIn("交付门没过", self.error(self.publish))
 
     def test_the_first_publish_with_nothing_external_writes_all_three(self) -> None:
         self.receipt(None)
@@ -2432,6 +2445,8 @@ class TheDeliveryChainRunsThroughTheAdapter(RegisteredCase):
 
     # 只借发布用例的辅助（进程内调核心、摘要、本地来源），不继承它的用例
     NAMES = PublishChecksTheExternalVersion.NAMES
+    #: 这条链真跑交付门
+    GATE = None
     digest = staticmethod(PublishChecksTheExternalVersion.digest)
     call, local, system_body, publish, actions, contract = (
         PublishChecksTheExternalVersion.call, PublishChecksTheExternalVersion.local,

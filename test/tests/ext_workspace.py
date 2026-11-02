@@ -107,9 +107,13 @@ _INSTALLED: Path | None = None
 def installed_package() -> Path:
     """用正式安装动作把开发源装进一个接入了 demo Framework 的临时消费工程（扩展与各宿主入口都到位），返回工程根。
 
-    adapt 按运行态执行：它的包是装好了的工程，从包里的脚本起跑。每个进程建一次。
+    adapt 按运行态执行：它的包是装好了的工程，从包里的脚本起跑。交回与全量时父进程已按同一合同装好一份
+    （`STORY_TEST_INSTALLED_PACKAGE`），worker 只读它；要改包的用例先复制。否则每个进程建一次。
     """
     global _INSTALLED
+    shared = os.environ.get("STORY_TEST_INSTALLED_PACKAGE")
+    if _INSTALLED is None and shared and Path(shared, "doc", "extensions", "manifest.yaml").is_file():
+        _INSTALLED = Path(shared)
     if _INSTALLED is None:
         root = Path(tempfile.mkdtemp(prefix="story-installed-")) / "package"
         atexit.register(shutil.rmtree, root.parent, True)

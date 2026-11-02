@@ -122,10 +122,20 @@ class AssembledFromTheFixedInputs:
     runner: object
     _tmp: tempfile.TemporaryDirectory
 
+    #: 这一轮父进程已正式装配了一份（交回时 verify 准备）：读它，不再装第二份；第二次重建的那一类从不读它
+    shared = False
+
     @classmethod
-    def build(cls, label: str) -> None:
+    def build(cls, label: str, use_shared: bool = False) -> None:
         cls.runner = load_runner()
         cls.cfg = cls.runner.load_framework_under_test()
+        root, boundary = os.environ.get("STORY_TEST_ASSEMBLY_ROOT"), os.environ.get("STORY_TEST_ASSEMBLY_BOUNDARY")
+        if use_shared and root and boundary:
+            cls.shared = True
+            cls.template, cls.suite_root = Path(root), Path(boundary).parent
+            demo = json.loads((cls.suite_root / "assembly-demo.json").read_text(encoding="utf-8"))
+            cls.demo_before, cls.demo_after = tuple(demo["before"]), tuple(demo["after"])
+            return
         cls._tmp = tempfile.TemporaryDirectory()
         cls.suite_root = Path(cls._tmp.name) / "suite"
         cls.suite_root.mkdir(parents=True)
@@ -136,6 +146,8 @@ class AssembledFromTheFixedInputs:
 
     @classmethod
     def tearDownClass(cls) -> None:
+        if cls.shared:
+            return                      # 共享的那一份归准备它的父进程清
         shutil.rmtree(cls.template.parent, ignore_errors=True)
         cls._tmp.cleanup()
 
@@ -193,7 +205,7 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.build("verifier-chain-test")
+        cls.build("verifier-chain-test", use_shared=True)
 
     def test_the_repo_has_the_chain_materialised(self) -> None:
         """先看 demo：它没物化的话，工作区带什么都带不出来。"""

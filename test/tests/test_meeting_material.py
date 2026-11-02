@@ -68,8 +68,9 @@ def document(*blocks: str) -> str:
 
 
 def write_docx(path: Path, xml: str) -> Path:
+    """同样的正文写出同样的字节：zip 条目的时间固定，不随写的那一秒变（原件身份按字节认）。"""
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("word/document.xml", xml)
+        zf.writestr(zipfile.ZipInfo("word/document.xml", date_time=(2026, 9, 1, 10, 0, 0)), xml)
     return path
 
 

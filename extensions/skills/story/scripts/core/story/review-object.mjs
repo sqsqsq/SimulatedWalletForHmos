@@ -104,7 +104,8 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   // 设计采用的来源：与需求同根的蓝图，它的需求条目与设计依据引用的本需求材料版本逐份展开，字节按材料索引登记的摘要核
   const adopted = new Map();            // 采用文件（相对需求目录）→ {sha256, role}
   const conflicted = new Map();         // 冲突依据（没被采用的那一方）→ {sha256, role}
-  const read = readBlueprint(projectRoot, feature, 'draft');
+  // 与设计来源同一组参数读：同一动作里只真读一次
+  const read = readBlueprint(projectRoot, feature, 'draft', feature);
   if (read.status !== 'ok') {
     problems.push(`蓝图 ${feature} 读不到（原生读取 ${read.status}）`);
   } else {

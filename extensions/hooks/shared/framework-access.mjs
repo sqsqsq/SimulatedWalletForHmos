@@ -118,6 +118,37 @@ export function hostReviewer(projectRoot) {
 }
 
 /**
+ * 同一进程里同一次读取只真做一次：按参数与输入文件的状态（蓝图目录逐个文件、材料索引）记下结果，状态没变就给一份副本，
+ * 进程里写过它们状态就变、重新读取。只在内存，进程结束即无；返回副本，调用方改了也不影响别处。
+ */
+const readMemo = new Map();
+
+function inputsStamp(projectRoot, requirement) {
+  const native = loadNative(projectRoot);
+  const dir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
+  const root = path.join(native.root, ...String(dir).split(/[\\/]/).filter(Boolean), String(requirement));
+  const files = [];
+  const walk = (d) => {
+    let entries = [];
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) (e.isDirectory() ? walk(path.join(d, e.name)) : files.push(path.join(d, e.name)));
+  };
+  walk(path.join(root, 'blueprint'));
+  files.push(path.join(root, 'AR', 'story-src', 'materials.json'));
+  return files.sort().map((f) => {
+    try { const s = fs.statSync(f); return `${f}:${s.size}:${s.mtimeMs}`; } catch { return `${f}:-`; }
+  }).join('|');
+}
+
+function memoized(key, stamp, read) {
+  const hit = readMemo.get(key);
+  if (hit && hit.stamp === stamp) return structuredClone(hit.value);
+  const value = read();
+  readMemo.set(key, { stamp, value });
+  return structuredClone(value);
+}
+
+/**
  * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
  * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。
  * 给了需求 id 时一并回答 `consumption`：这一版蓝图的需求条目与设计依据引用了这个需求登记的材料没有。
@@ -125,6 +156,11 @@ export function hostReviewer(projectRoot) {
  * 给了 `reportPhases` 时每个单位另带 `phase_reports: [{phase, dir}|{phase, error}]`（phaseReportsDir 的原生结果）。
  */
 export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', consume = null, reportPhases = null) {
+  return memoized(JSON.stringify(['blueprint', path.resolve(projectRoot), blueprintId, purpose, consume, reportPhases]),
+    inputsStamp(projectRoot, blueprintId), () => readBlueprintNow(projectRoot, blueprintId, purpose, consume, reportPhases));
+}
+
+function readBlueprintNow(projectRoot, blueprintId, purpose, consume, reportPhases) {
   const native = loadNative(projectRoot);
   const paths = native.module('scripts/utils/component-blueprint-path.ts');
   const check = native.module('scripts/check-component-blueprint.ts');
@@ -536,6 +572,11 @@ function refsOf(blueprint) {
  *   problems: string[]}}
  */
 export function adoptedSources(projectRoot, blueprint, { requirement = blueprint?.blueprint_id } = {}) {
+  const key = JSON.stringify(['adopted', path.resolve(projectRoot), requirement, crypto.createHash('sha256').update(JSON.stringify(blueprint ?? null)).digest('hex')]);
+  return memoized(key, inputsStamp(projectRoot, requirement), () => adoptedSourcesNow(projectRoot, blueprint, requirement));
+}
+
+function adoptedSourcesNow(projectRoot, blueprint, requirement) {
   const native = loadNative(projectRoot);
   const out = { status: 'ok', sources: [], support: [], conflicts: [], projectFiles: [], requirements: [], problems: [] };
   const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';

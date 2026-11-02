@@ -2089,30 +2089,15 @@ class ChaptersLandOneAtATime(Step8Case):
             with self.subTest(chapter=title):
                 self.assertEqual(before, self.chapter_text(title), "已完成的章被动过了")
 
-    def test_no_unit_ledger_is_produced_at_any_point(self) -> None:
-        """全程零 audit：从 init 到写满十章再到 check，逐单元台账一个都不该出现。
-
-        逐单元系统退场的机械证据。它们只要还被生成，就还有人会去读、去维护，
-        退场就只是名义上的。
-        """
+    def test_ten_chapters_land_without_ledgers_and_a_copyedit_replaces_one(self) -> None:
+        """一条生命周期：从骨架写满十章，每一章之后都没有逐单元台账（逐单元系统退场的机械证据）；
+        写满后统稿只改第 5 章，其余九章字节相同；全篇检查之后台账仍不出现。"""
         gone = ("source-units.json", "audit.json", "story-verdicts.md")
-        stages = ["skeleton"]
-        self.assertEqual(0, self.run_build("skeleton").returncode)
-        for i, title in enumerate(self.titles()):
-            self.assertEqual(0, self.put_chapter(title, minimal_body(title, f"第 {i + 1} 章的正文。")).returncode)
-            stages.append(f"chapter {i + 1}")
-            for name in gone:
-                self.assertFalse((self.src / name).exists(),
-                                 f"{stages[-1]} 之后冒出了 {name}")
-        self.check_output()
-        for name in gone:
-            self.assertFalse((self.src / name).exists(), f"check 之后冒出了 {name}")
-
-    def test_a_copyedit_pass_replaces_one_chapter_only(self) -> None:
-        """统稿夹具：十章写完之后只改第 5 章，其余九章字节相同。"""
         titles = self.titles()
         for i, title in enumerate(titles):
             self.assertEqual(0, self.put_chapter(title, minimal_body(title, f"第 {i + 1} 章的正文。")).returncode)
+            for name in gone:
+                self.assertFalse((self.src / name).exists(), f"第 {i + 1} 章之后冒出了 {name}")
         before = {t: self.chapter_text(t) for t in titles}
         self.assertEqual(0, self.put_chapter(titles[4], minimal_body(titles[4], "统稿之后的第 5 章。")).returncode)
         for title in titles:
@@ -2121,6 +2106,9 @@ class ChaptersLandOneAtATime(Step8Case):
                     self.assertIn("统稿之后的第 5 章。", self.chapter_text(title))
                 else:
                     self.assertEqual(before[title], self.chapter_text(title))
+        self.check_output()
+        for name in gone:
+            self.assertFalse((self.src / name).exists(), f"check 之后冒出了 {name}")
 
     def test_an_unknown_chapter_is_refused(self) -> None:
         proc = self.put_chapter("并不存在的章", "随便写点。\n")

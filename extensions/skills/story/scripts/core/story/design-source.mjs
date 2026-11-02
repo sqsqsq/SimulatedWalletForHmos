@@ -18,7 +18,7 @@ import { queryFlowStatus } from '../flow/client.mjs';
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
 const cache = new WeakMap();
-const materialCache = new WeakMap();
+const materialCache = new Map();
 
 /**
  * 材料链此刻的事实（`story_flow.py status --materials`）：原件导没导、材料变没变、必读人答同步没有。
@@ -27,10 +27,16 @@ const materialCache = new WeakMap();
  * @returns {{data: object|null, error: string|null}}
  */
 export function flowMaterials(ctx) {
-  if (!materialCache.has(ctx)) {
-    materialCache.set(ctx, queryFlowStatus(ctx.projectRoot, ctx.args.feature, { timeoutMs: 120000, materialsOnly: true }));
-  }
-  return materialCache.get(ctx);
+  // 同一进程里同一需求的材料事实只问一次：流程契约与材料索引的状态没变就沿用（进程里写过它们会换状态、重新问）
+  const key = `${path.resolve(ctx.projectRoot)}\0${ctx.args.feature}`;
+  const stamp = [ctx.flowPath ?? path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'),
+    path.join(ctx.featureRoot, 'AR', 'story-src', 'materials.json')]
+    .map((f) => { try { const s = fs.statSync(f); return `${s.size}:${s.mtimeMs}`; } catch { return '-'; } }).join('|');
+  const hit = materialCache.get(key);
+  if (hit?.stamp === stamp) return hit.value;
+  const value = queryFlowStatus(ctx.projectRoot, ctx.args.feature, { timeoutMs: 120000, materialsOnly: true });
+  materialCache.set(key, { stamp, value });
+  return value;
 }
 
 /**
