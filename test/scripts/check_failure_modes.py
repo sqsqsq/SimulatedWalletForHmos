@@ -1660,18 +1660,6 @@ def b01_probe_no_discrimination(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, "；".join(bad))
     return Outcome(True, f"两个探针都放行（扫 {out['absent']['scanned']} 个文件）")
 
-def _story_build_cycle(root: Path, extra_verdict: str | None = None) -> tuple[int, str]:
-    """（可选写裁决表）→ check，返回 check 的退出码与输出。
-
-    **在夹具的副本上跑**：check 会写决策登记骨架，直接在夹具里跑会把它写脏，
-    且上一次的产物会影响下一次的判定。
-    """
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / root.name
-        shutil.copytree(root, work)
-        return _story_build_in(work, extra_verdict)
-
-
 def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-DEMO") -> tuple[int, str]:
     build = _ext_file(root, "skills/story/scripts/core/story-build.mjs")
     if build is None:
@@ -1734,16 +1722,28 @@ def _norm(text: str) -> str:
 def r02_knowledge_row_missing(root: Path, ctx: Ctx) -> Outcome:
     """相关规约域有一条在设计里没有判断——逐条判定又丢了，附录·规约也就少了那一行。
 
-    判断在蓝图的规约适用性事实里（相关域逐条），附录·规约按它写；漏判的那一条要被点名，交回设计职责。
+    判断在蓝图的规约适用性事实里（相关域逐条）；漏判的那一条要被点名，交回设计职责。
+    夹具的 `_design.json` 写明设计里就是哪几条判断（不补判）：按它在副本上装一份同根蓝图，直接调真实的 `blueprintKnowledge`。
     """
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "提交之后回执没到之前，界面停在等待态")
-    if code == 0:
-        return Outcome(True, "相关规约域在设计里逐条有判断，附录·规约逐条成行")
-    if "相关域没有逐条判断" in out:
-        return Outcome(False, "漏判被点名：" + out.split("相关域没有逐条判断", 1)[1].split("——", 1)[0].strip())
-    return Outcome(False, f"check 未过（非漏判原因）：{out[:300]}")
+    judged = root / "_design.json"
+    if not judged.is_file():
+        return Outcome(True, "夹具没有设计判断（该形态未启用）")
+    judgements = [design_fixture.pattern_judgement(d["file"], d["outcome"], d["rationale"])
+                  if "file" in d else design_fixture.rule_judgement(d["unit"], d["outcome"], d["rationale"])
+                  for d in json.loads(judged.read_text(encoding="utf-8"))["knowledge_judgements"]]
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp) / root.name
+        shutil.copytree(root, work)
+        access = executor_ext() / "hooks" / "shared" / "framework-access.mjs"
+        try:
+            design_fixture.install_blueprint(work, "REQ-DEMO", access, judgements=judgements, exact=True,
+                                             consume=False, projection=False)
+        except Exception as exc:  # noqa: BLE001 —— 前态装不上不是判出了形态
+            return Outcome(False, f"装不上夹具蓝图：{str(exc)[:200]}", infra=True)
+        got, err = _story_rule(work, "knowledge")
+    if got is None:
+        return Outcome(False, f"判据没跑成：{err}", infra=True)
+    return _rule_outcome(got, ("相关域没有逐条判断",), "相关规约域在设计里逐条有判断", "漏判被点名")
 
 
 #: story 专属要求的说法——它们出现在**非** story 需求的门禁回话里，就是作者面泄漏。
@@ -1753,7 +1753,7 @@ _STORY_ONLY_WORDS = ("story", "三份产物", "叙事件", "技术契约", "归�
 def _spec_post_check(root: Path) -> tuple[bool, str] | None:
     """跑真实的 spec post_check，回 (ok, message)；跑不起来回 None。
 
-    **在副本上跑**，与 `_story_build_cycle` 同一口径：检查器不改夹具。
+    **在副本上跑**：检查器不改夹具。
     """
     script = (
         "import {pathToFileURL} from 'node:url';"
@@ -1812,28 +1812,109 @@ def w01_non_story_invisible(root: Path, ctx: Ctx) -> Outcome:
         return Outcome(False, f"门禁回话里提了 story 专属要求 {leaked}——对这个需求它们不存在")
     return Outcome(True, "非 story 需求判断写全即通过，回话里没有 story 专属要求")
 
+#: 局部规则直接调装好的执行器扩展里的真实判据函数，输入是夹具本身——不为每个正反例走一遍整需求准备。
+#: 反例要命中本判据：没执行、读不出或只出了别的诊断都按执行失败报（infra），不当作判出了形态。
+STORY_RULES = """
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [core, hooks, root, feature, op, a, b] = process.argv.slice(1);
+const mod = async (base, rel) => import(pathToFileURL(path.join(base, rel)).href);
+const { requirementContext, activeKnowledgeEntries } = await mod(core, 'story/context.mjs');
+const { storySections, parseChapter } = await mod(core, 'story/document.mjs');
+const ctx = requirementContext(root, path.join(root, 'doc', 'features', feature));
+let out;
+if (op === 'chapter') {
+  const { chapterStructureProblems } = await mod(core, 'story/chapter-contract.mjs');
+  const ch = ctx.contract.chapters.find(c => c.title === a);
+  if (!ch) throw new Error(`章节合同里没有「${a}」`);
+  out = chapterStructureProblems(ch, parseChapter(fs.readFileSync(b, 'utf8')));
+} else if (op === 'knowledge') {
+  const { readBlueprint } = await mod(hooks, 'framework-access.mjs');
+  const { blueprintKnowledge } = await mod(hooks, 'knowledge-application.mjs');
+  const read = readBlueprint(root, feature, 'draft');
+  if (read.status !== 'ok') throw new Error(`夹具蓝图读不过：${read.status}`);
+  out = blueprintKnowledge(root, read.blueprint).problems;
+} else {
+  const text = fs.readFileSync(ctx.storyPath, 'utf8');
+  const sections = storySections(text);
+  const views = new Map();
+  const viewOf = t => (views.has(t) ? views.get(t) : views.set(t, parseChapter(sections.find(s => s.title === t)?.text ?? '')).get(t));
+  if (op === 'language') {
+    const { scanLanguageRedline } = await mod(core, 'story/language.mjs');
+    const { appendixChapter } = await mod(core, 'story/appendix.mjs');
+    const { redactMaterialLinks } = await mod(core, 'story/sources.mjs');
+    const r = ctx.contract.language_redline ?? {};
+    out = scanLanguageRedline(redactMaterialLinks(text, ctx), { kinds: r.kinds, appendixTitle: appendixChapter(ctx.contract)?.title,
+      ruleIds: activeKnowledgeEntries(ctx).map(e => e.id), sourceTags: r.source_tags, projectRoot: ctx.projectRoot })
+      .map(h => `${h.kind}｜${h.line} 行「${h.hits.join('」「')}」`);
+  } else if (op === 'appendix') {
+    const { appendixStructureProblems } = await mod(core, 'story/appendix.mjs');
+    out = appendixStructureProblems(ctx, sections, viewOf);
+  } else if (op === 'chapter-images') {
+    const { chapterImageProblems } = await mod(core, 'story/images.mjs');
+    out = sections.flatMap(s => chapterImageProblems(ctx, s.text, n => `「${s.title}」第 ${n} 行`));
+  } else if (op === 'images') {
+    const { imageProblems } = await mod(core, 'story/images.mjs');
+    const r = imageProblems(ctx, text);
+    out = [...r.problems, ...r.notes.map(n => `未执行：${n}`)];
+  } else throw new Error(`没有这个动作：${op}`);
+}
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _story_rule(root: Path, op: str, *args: str) -> tuple[list[str] | None, str]:
+    """在夹具上直接调一条真实判据，回它报的问题串；跑不起来回 (None, 原因)。"""
+    ext = executor_ext()
+    core, hooks = ext / "skills" / "story" / "scripts" / "core", ext / "hooks" / "shared"
+    r = subprocess.run(["node", "--input-type=module", "-e", STORY_RULES, str(core), str(hooks), str(root), "REQ-DEMO", op, *args],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+    if r.returncode != 0:
+        return None, f"退出码 {r.returncode}：{(r.stderr or '').strip()[-300:]}"
+    try:
+        return json.loads(r.stdout), ""
+    except json.JSONDecodeError:
+        return None, f"输出不是 JSON：{(r.stdout or '')[:160]}"
+
+
+def _rule_outcome(problems: list[str], markers: tuple[str, ...], ok: str, hit: str) -> Outcome:
+    """判据的结论：命中本判据的诊断 → 判出了形态；只有别的诊断 → 没命中本判据，按执行失败报；没有诊断 → 放行。"""
+    target = [x for x in problems if any(m in x for m in markers)]
+    if target:
+        return Outcome(False, f"{hit}：{target[0][:200]}")
+    if problems:
+        return Outcome(False, f"没命中本判据，另有诊断：{problems[0][:200]}", infra=True)
+    return Outcome(True, ok)
+
+
+def _story_case(root: Path, op: str, markers: tuple[str, ...], ok: str, hit: str) -> Outcome:
+    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
+        return Outcome(True, "夹具里没有 story（该形态未启用）")
+    got, err = _story_rule(root, op)
+    if got is None:
+        return Outcome(False, f"判据没跑成：{err}", infra=True)
+    return _rule_outcome(got, markers, ok, hit)
+
+
 @checker
 def s05_main_text_identifier(root: Path, ctx: Ctx) -> Outcome:
     """工程标识、规约编号出现在主叙事里——打断了面向人的阅读。
 
     它们不是不该在归档件里：评审者要查接口名、要核规约判断，查得到才行。
-    问题在于位置——读者顺着九章读下来，每隔两行撞见一个 camelCase 就得停下来
+    问题在于位置——读者顺着正文读下来，每隔两行撞见一个 camelCase 就得停下来
     判断「这是我要懂的东西吗」。附录是它们的唯一落点，主叙事写中文业务名。
 
-    判据不是「报了错」而是**点名了是哪一类、在哪一行**：只说「不合规」的门禁，
-    作者只能靠删字去试。
+    判据不是「报了错」而是**点名了是哪一类、在哪一行**：两类要各自点名，只出一类说明反例没命中预期的那一条。
     """
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "主叙事零工程标识、零规约编号")
-    kinds = [k for k in ("工程标识", "规约编号") if f"story 出现{k}" in out]
-    if not kinds:
-        return Outcome(False, f"check 未过（非语言红线原因）：{out[:200]}")
+    out = _story_case(root, "language", ("repo_identifier｜", "rule_id｜"), "主叙事零工程标识、零规约编号", "语言红线被点名")
+    if out.ok or out.infra:
+        return out
+    got, _ = _story_rule(root, "language")
+    kinds = sorted({x.split("｜", 1)[0] for x in got or [] if x.startswith(("repo_identifier｜", "rule_id｜"))})
     if len(kinds) < 2:
-        return Outcome(False, f"语言红线只报了 {kinds}，两类应当各自点名：{out[:220]}")
-    return Outcome(False, f"两类语言红线各自被点名：{'、'.join(kinds)}")
+        return Outcome(False, f"语言红线只报了 {kinds}，两类应当各自点名：{(got or [''])[0][:200]}", infra=True)
+    return Outcome(False, "两类语言红线各自被点名：" + "；".join(x for x in got if x.startswith(("repo_identifier｜", "rule_id｜")))[:300])
 
 
 @checker
@@ -1841,18 +1922,10 @@ def s06_appendix_dump(root: Path, ctx: Ctx) -> Outcome:
     """附录长出合同之外的小节、材料原文成段搬进围栏块——附录成了倾倒区。
 
     附录是全篇唯一允许出现工程标识的地方，于是它天然最容易变成倾倒区。
-    首跑实测：产物在附录下多长出一个「机器核对索引」小节，255 行原文占全篇 58%，
-    而当时的判据只核「附录这一章存在」，倾倒完全合法。
     判的是结构不是内容——约定之外的小节、非 mermaid 的围栏块、空节，三样都不该有。
     """
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "附录只有约定的几节，节内是表和列表")
-    if "多了一节" in out or "不是原文存放处" in out or "是空的" in out:
-        return Outcome(False, "附录的倾倒被点名（合同外小节 / 围栏块 / 空节）")
-    return Outcome(False, f"check 未过（非附录结构原因）：{out[:200]}")
+    return _story_case(root, "appendix", ("不是合同约定的节", "围栏块", "没有内容", "没有机器区"),
+                       "附录只有约定的几节，节内是表和列表", "附录的倾倒被点名")
 
 
 @checker
@@ -1860,17 +1933,10 @@ def s10_image_path_copied(root: Path, ctx: Ctx) -> Outcome:
     """图片被复制进归档目录、改个名再引用——副本没人维护，改名后认不出是原来那张。
 
     实测链条：材料抽图落在素材目录（机制内）→ 模型复制一份进界面参考目录（合理）
-    → **又复制第三份进归档目录并改名**，story 按裸文件名引用。模板从来只约定图题形态，
-    没约定引用路径口径，于是这条链一路无人拦。
+    → **又复制第三份进归档目录并改名**，story 按裸文件名引用。
     """
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "图片引的是登记里那张图的既有落盘位置")
-    if "不在材料的图片登记里" in out:
-        return Outcome(False, "归档目录下的副本引用被点名")
-    return Outcome(False, f"check 未过（非图片路径原因）：{out[:200]}")
+    return _story_case(root, "chapter-images", ("不在材料的图片登记里",),
+                       "图片引的是登记里那张图的既有落盘位置", "归档目录下的副本引用被点名")
 
 
 @checker
@@ -1878,59 +1944,9 @@ def s11_image_two_names(root: Path, ctx: Ctx) -> Outcome:
     """同一张图被两个路径引用，story 里当成两张不同的图各引一次。
 
     实测：两个文件的内容完全相同，story 分别称它们为「管理页」与「管理页布局参考」，
-    后一张没有任何说明段——读者以为看漏了什么，其实是同一张图。
+    后一张没有任何说明段——读者以为看漏了什么，其实是同一张图。判据要真的执行过（不是「材料清单不在、未执行」）。
     """
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "同一张图只引一次")
-    if "同一张图被两个路径引用" in out:
-        return Outcome(False, "同图两名被点名")
-    return Outcome(False, f"check 未过（非图片路径原因）：{out[:200]}")
-
-# --------------------------------------------------------------------------
-# 形态守恒（check ⑪）的七条：正反例都是一段章正文
-# --------------------------------------------------------------------------
-
-#: 底样：十章齐、附录合法的一份 story。除被测那一章外，其余章都是「本需求不涉及。」，
-#: ⑪ 对空节豁免，所以这份底样只会响被测的那一条。
-FORM_BASE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
-             / "R01-verdict-echo" / "good")
-
-
-def _story_with_chapter(chapter: str, body: str) -> tuple[int, str]:
-    """把底样的某一章换成给定正文，跑一次 story-build check。"""
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / "work"
-        shutil.copytree(FORM_BASE, work)
-        path = work / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md"
-        lines = path.read_text(encoding="utf-8").split("\n")
-        out, skipping = [], False
-        for line in lines:
-            if line.startswith("## "):
-                skipping = line[3:].strip() == chapter
-                out.append(line)
-                if skipping:
-                    out.append("")
-                    out.extend(body.strip().split("\n"))
-                    out.append("")
-                continue
-            if not skipping:
-                out.append(line)
-        path.write_text("\n".join(out), encoding="utf-8")
-        return _story_build_in(work, "待提交状态：用户点了提交但未收到回执", "REQ-DEMO")
-
-
-def _form_outcome(chapter: str, bad: str, good: str, needle: str) -> Outcome:
-    """反例必须被点名，正例必须放行——两头都验，判据才既有区分力又不误伤。"""
-    _, out = _story_with_chapter(chapter, bad)
-    if needle not in out:
-        return Outcome(False, f"反例没被点名（找「{needle}」）：{out[:200]}")
-    _, out = _story_with_chapter(chapter, good)
-    if "形态守恒" in out:
-        return Outcome(False, f"正例被形态判据拦下：{out[:200]}")
-    return Outcome(True, "反例被点名、正例放行")
+    return _story_case(root, "images", ("同一张图被两个路径引用",), "同一张图只引一次", "同图两名被点名")
 
 
 @checker
@@ -1940,7 +1956,7 @@ def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
     判的是**这一章有没有真正的图**，不是图在第几行：总览放在章首那段或一个总览小节里
     都合法，按位置推断它是不是总览会拦住合法产物；它讲没讲清整条业务归语义审查。
     """
-    return _form_outcome(
+    return _chapter_case(
         "业务流程",
         "主路径：进入页面 → 查询资格 → 风险确认 → 提交 → 查询结果。\n\n"
         "### 主路径\n\n1. 进入页面查询资格。\n2. 确认风险后提交。",
@@ -1954,7 +1970,7 @@ def s01_diagram_degraded(root: Path, ctx: Ctx) -> Outcome:
 @checker
 def s02_terms_not_table(root: Path, ctx: Ctx) -> Outcome:
     """材料里的表在 story 里被摊成散文，逐项比对的那几列丢了。"""
-    return _form_outcome(
+    return _chapter_case(
         "术语",
         "紧急挂失是用户发现卡遗失后发起的冻结流程；冻结结果是卡云给出的最终答复；"
         "卡云是管理交通卡状态的云端服务。",
@@ -1967,7 +1983,7 @@ def s02_terms_not_table(root: Path, ctx: Ctx) -> Outcome:
 @checker
 def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
     """验收写成 bullet——编号与通过条件挤在一行文字里，没法逐条比对。"""
-    return _form_outcome(
+    return _chapter_case(
         "验收",
         "### 主流程\n\n"
         "- AC-R1：正常用户完成提交，只创建一次申请。\n"
@@ -1979,43 +1995,46 @@ def s14_acceptance_bulleted(root: Path, ctx: Ctx) -> Outcome:
         "缺一张表")
 
 
+#: 章级形态的工程底样：有章节合同与激活知识即可，章正文由各形态给正反两段
+FORM_BASE = (REPO_ROOT / "test" / "fixtures" / "failure-modes"
+             / "R01-verdict-echo" / "good")
+
+
+def _chapter_case(chapter: str, bad: str, good: str, needle: str) -> Outcome:
+    """章级必要结构：直接调 `chapterStructureProblems`，反例必须报出这一条，正例这一章不报。两头都验。"""
+    outs = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for kind, body in (("bad", bad), ("good", good)):
+            path = Path(tmp) / f"{kind}.md"
+            path.write_text(body, encoding="utf-8")
+            got, err = _story_rule(FORM_BASE, "chapter", chapter, str(path))
+            if got is None:
+                return Outcome(False, f"判据没跑成：{err}", infra=True)
+            outs[kind] = got
+    if not any(needle in x for x in outs["bad"]):
+        return Outcome(False, f"反例没被点名（找「{needle}」）：{outs['bad'][:2]}", infra=True)
+    if outs["good"]:
+        return Outcome(False, f"正例被章级结构判据拦下：{outs['good'][:2]}", infra=True)
+    return Outcome(True, "反例被点名、正例放行")
+
+
 @checker
 def s17_image_new_dir(root: Path, ctx: Ctx) -> Outcome:
     """同名图片被复制进新建的目录——按文件名比对的判据一路放行。
 
     实测一轮：模型自建了一个图片目录再复制一份，全树因此有五份同一张图。
-    同一张图散在几个目录里，改了一处其余几处就成了旧图。
+    判据按登记的引用认，同名的登记引用要点出来，作者才知道该改指哪一份。
     """
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, "图片引的是既有落盘位置")
-    if "新建的图片目录" in out:
-        return Outcome(False, "新目录里的副本引用被点名")
-    return Outcome(False, f"check 未过（非图片目录原因）：{out[:200]}")
+    return _story_case(root, "chapter-images", ("同名的登记引用是",), "图片引的是既有落盘位置", "新目录里的副本引用被点名")
 
 
 @checker
 def s18_appendix_image(root: Path, ctx: Ctx) -> Outcome:
     """图整批迁进附录——正文的承接句留在原地，读者手边没有图。
 
-    落点判够不到：图片单元的落点是按引用位置反推的，图放哪儿它跟到哪儿。
     这一条与图守恒合围，把图逼回它讲的那一章。
     """
-    return _form_case(root, "里有", "图在它讲的那一章")
-
-
-def _form_case(root: Path, needle: str, ok: str) -> Outcome:
-    """A 档固定形式的五条共用同一套跑法：good 该过，bad 该被点名。"""
-    if not (root / "doc" / "features" / "REQ-DEMO" / "AR" / "story.md").exists():
-        return Outcome(True, "夹具里没有 story（该形态未启用）")
-    code, out = _story_build_cycle(root, "待提交状态：用户点了提交但未收到回执")
-    if code == 0:
-        return Outcome(True, ok)
-    if needle in out:
-        return Outcome(False, "固定形式被点名")
-    return Outcome(False, f"check 未过（非固定形式原因）：{out[:200]}")
+    return _story_case(root, "appendix", ("张图（",), "图在它讲的那一章", "附录里的图被点名")
 
 
 _REF_RE = re.compile(r"([\w./-]+\.md)\)?[`]?「([^」]{2,20})」")

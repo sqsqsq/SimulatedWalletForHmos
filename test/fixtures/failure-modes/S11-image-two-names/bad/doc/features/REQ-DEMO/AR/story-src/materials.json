@@ -69,28 +69,28 @@
       "label": "prd-直接"
     },
     {
-      "source_id": "local:assets/入口原型说明/image1.png",
+      "source_id": "local:assets/入口原型说明/entry.png",
       "kind": "local",
       "class": "UX",
       "origin": {
-        "inbox_path": "assets/入口原型说明/image1.png"
+        "inbox_path": "assets/入口原型说明/entry.png"
       },
       "latest_version": 1,
       "versions": [
         {
           "version": 1,
-          "dir": "image1-v1",
+          "dir": "entry-v1",
           "acquired_at": "2026-11-02T17:49:11+08:00",
-          "inbox_path": "assets/入口原型说明/image1.png",
+          "inbox_path": "assets/入口原型说明/entry.png",
           "original": {
-            "path": "assets/ux/image1.7a0b672988d707e2.png",
+            "path": "assets/ux/entry.7a0b672988d707e2.png",
             "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166"
           },
           "readable": null,
           "images": []
         }
       ],
-      "label": "image1"
+      "label": "entry"
     }
   ],
   "drafts": {},
@@ -116,6 +116,7 @@
     {
       "kind": "image",
       "paths": [
+        "assets/ux/entry.7a0b672988d707e2.png",
         "assets/ux/image1.7a0b672988d707e2.png"
       ],
       "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166",
@@ -202,6 +203,15 @@
       }
     },
     {
+      "path": "assets/ux/entry.7a0b672988d707e2.png",
+      "source_id": "local:assets/入口原型说明/entry.png",
+      "version": 1,
+      "kind": "local",
+      "role": "image",
+      "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166",
+      "dir": "entry-v1"
+    },
+    {
       "path": "assets/ux/image1.7a0b672988d707e2.png",
       "source_id": "direct:RR/prd.md",
       "version": 1,
@@ -211,24 +221,15 @@
       "dir": "prd-直接-v1"
     },
     {
-      "path": "assets/ux/image1.7a0b672988d707e2.png",
-      "source_id": "local:assets/入口原型说明/image1.png",
+      "path": "inbox/assets/入口原型说明/entry.png",
+      "source_id": "local:assets/入口原型说明/entry.png",
       "version": 1,
       "kind": "local",
       "role": "image",
       "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166",
-      "dir": "image1-v1"
-    },
-    {
-      "path": "inbox/assets/入口原型说明/image1.png",
-      "source_id": "local:assets/入口原型说明/image1.png",
-      "version": 1,
-      "kind": "local",
-      "role": "image",
-      "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166",
-      "dir": "image1-v1",
+      "dir": "entry-v1",
       "reference": {
-        "path": "assets/ux/image1.7a0b672988d707e2.png",
+        "path": "assets/ux/entry.7a0b672988d707e2.png",
         "sha256": "7a0b672988d707e22df9942bfb555bba5659c4c9ca49f59fcb63f50aec09a166"
       }
     }
