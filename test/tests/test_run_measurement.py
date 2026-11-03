@@ -1112,17 +1112,93 @@ class GateConclusionsAreCountedByKind(unittest.TestCase):
             self.call(3, "python story_flow.py story --feature X", "{\"ok\": true}"),
         ])
         self.assertEqual(1, got["gate_rounds_with_fail"], "harness 失败轮数的原义变了")
-        self.assertEqual({"harness": 1, "story_register": 1}, got["gate_fail_by_kind"])
-        self.assertEqual({"harness": 0, "story_register": 0}, got["gate_unknown_by_kind"])
+        self.assertEqual({"harness": 1, "story_register": 1, "story_check": 0, "review_check": 0, "deliver": 0}, got["gate_fail_by_kind"])
+        self.assertEqual({"harness": 0, "story_register": 0, "story_check": 0, "review_check": 0, "deliver": 0}, got["gate_unknown_by_kind"])
 
     def test_a_truncated_or_missing_result_is_unknown_not_a_pass(self) -> None:
         got = self.measure([
             self.call(1, "npx ts-node harness-runner.ts --phase spec --feature X", "PASS", source_truncated=True),
             {**self.call(2, "python story_flow.py story --feature X", None), "tool_status": "started"},
         ])
-        self.assertEqual({"harness": 1, "story_register": 1}, got["gate_unknown_by_kind"])
-        self.assertEqual({"harness": 0, "story_register": 0}, got["gate_fail_by_kind"])
+        self.assertEqual({"harness": 1, "story_register": 1, "story_check": 0, "review_check": 0, "deliver": 0}, got["gate_unknown_by_kind"])
+        self.assertEqual({"harness": 0, "story_register": 0, "story_check": 0, "review_check": 0, "deliver": 0}, got["gate_fail_by_kind"])
 
+    def test_story_check_review_conclusions_and_the_delivery_gate_are_counted_apart(self) -> None:
+        """成文检查没过、审查结论 report_invalid、交付门一次过各自计：交付门过了不抹掉之前的检查与审查结论。"""
+        build = "node doc/extensions/skills/story/scripts/core/story-build.mjs"
+        got = self.measure([
+            self.call(1, f"{build} check --feature X", "{\"ok\": false, \"problems\": [\"2 处未通过\"]}"),
+            self.call(2, f"{build} review --action check --feature X", "{\"result\": \"report_invalid\", \"detail\": \"缺判据\"}"),
+            self.call(3, f"{build} review --action check --feature X", "{\"result\": \"warn\"}"),
+            self.call(4, f"{build} check --deliver --feature X", "{\"ok\": true}"),
+        ])
+        self.assertEqual({"harness": 0, "story_register": 0, "story_check": 1, "review_check": 1, "deliver": 0},
+                         got["gate_fail_by_kind"])
+        self.assertEqual({"report_invalid": 1, "warn": 1}, got["review_results"])
+
+
+#: 造一份 dsh v4 原生会话：行写成 jsonl，用 Node 内置 zstd 压成一个 frame
+ZSTD = "const fs = require('fs'); const zlib = require('zlib');" \
+       "fs.writeFileSync(process.argv[2], zlib.zstdCompressSync(fs.readFileSync(process.argv[1])));"
+
+
+def _session(path: Path, session_id: str, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plain = path.with_suffix(".plain")
+    plain.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in
+                                [{"type": "session", "version": 4, "id": session_id, "cwd": "w"}, *rows]) + "\n", encoding="utf-8")
+    subprocess.run(["node", "-e", ZSTD, str(plain), str(path)], check=True)
+    plain.unlink()
+
+
+class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
+    """委派的角色按原生会话里实际派出去的正文与子会话实际产出认，不按工具名或 label：
+    产品载体 → 那一类审查；写了需求 blueprint/ 下的设计产物 → 蓝图作者；专用 verifier → 阶段审查；其余 unresolved。
+    观察跨度从原生登记到收尾通知，没有收尾通知是 unknown，不是 0；没有保全原件时整项为 null。"""
+
+    def setUp(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.run_dir = Path(self._tmp.name)
+
+    def spawn(self, seq: int, call_id: str, child: str, prompt: str, label: str, *, settled: str | None) -> list[dict]:
+        rows = [{"type": "tool/call", "time": seq * 60000, "data": {"callId": call_id, "name": "subagent",
+                                                                  "arguments": json.dumps({"description": label, "prompt": prompt})}},
+                {"type": "subagent/catalog", "time": seq * 60000, "data": {"childId": child, "childCreatedAt": seq * 60000, "label": label}},
+                {"type": "tool/result", "time": seq * 60000, "data": {"message": {"toolCallId": call_id,
+                                                                                  "content": [{"type": "text", "text": f"started subagent {child}"}]}}}]
+        if settled:
+            rows.append({"type": "agent/inbox/spliced", "time": (seq + 10) * 60000, "data": {"inserted": [{
+                "content": [{"type": "text", "text": "报告正文"}],
+                "source": {"kind": "subagent-settled", "senderSessionId": child,
+                           "summary": f"Background subagent {child} {settled}."}}]}})
+        return rows
+
+    def test_roles_spans_and_unknowns(self) -> None:
+        parent = "session-p"
+        base = self.run_dir / "native-sessions" / parent
+        rows = [*self.spawn(1, "c1", "k-review", "# Story 独立人读审查 · 派审\n\n- 材料键：x", "随便起的名字", settled="finished and will do no further work"),
+                *self.spawn(2, "c2", "k-author", "你来写这份蓝图", "看起来像审查的 label", settled="failed before it finished"),
+                *self.spawn(3, "c3", "k-other", "帮我查一下代码", "研究", settled=None),
+                {"type": "tool/call", "time": 5, "data": {"callId": "c4", "name": "verifier", "arguments": "{}"}}]
+        _session(base / "session.v4.jsonl.zstd", parent, rows)
+        _session(base / "children" / "k-author" / "session.v4.jsonl.zstd", "k-author", [
+            {"type": "tool/call", "time": 1, "data": {"callId": "w", "name": "write",
+                                                      "arguments": json.dumps({"file_path": "doc/features/X/blueprint/contracts/a.yaml"})}}])
+        _session(base / "children" / "k-other" / "session.v4.jsonl.zstd", "k-other", [
+            {"type": "tool/call", "time": 1, "data": {"callId": "r", "name": "read", "arguments": json.dumps({"file_path": "src/a.ets"})}}])
+        got = measure_run.native_delegations(self.run_dir)["delegations"]
+        self.assertEqual({"story_review": 1, "blueprint_author": 1, "unresolved": 1, "stage_verifier": 1}, got["by_role"])
+        by_child = {i["child_id"]: i for i in got["items"]}
+        self.assertEqual((10.0, "finished"), (by_child["k-review"]["observed_span_min"], by_child["k-review"]["settled"]))
+        self.assertEqual("failed", by_child["k-author"]["settled"])
+        self.assertEqual((None, "unknown"), (by_child["k-other"]["observed_span_min"], by_child["k-other"]["settled"]),
+                         "没有收尾通知的跨度被当成了一个数")
+
+    def test_without_kept_sessions_the_roles_are_unknown(self) -> None:
+        self.assertIsNone(measure_run.native_delegations(self.run_dir)["delegations"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -395,8 +395,16 @@ output/story/<suite-id>/
       ├─ cli-runtime/<runtime-id>/{request.json,run.json,raw.jsonl,events.jsonl}
       ├─ usage/<point>/usage.json   # 该运行工作区全局 doc/usage.json 的原字节快照，point 为 initial / update / final
       ├─ native-sessions/<session-id>/  # finalize 时按 run.json 的 dsh session_id 复制的原生会话原件与子会话（manifest.json 记来源与摘要）
-      └─ artifact/
+      ├─ checkpoints/<point>/、<point>.reports/、<point>.dependencies/  # 检查点：需求树、审查报告与根外依赖同一刻固定
+      ├─ artifact/
+      └─ artifact.dependencies/  # 终态 artifact 同一窗口的根外依赖
 ```
+
+**依赖保全**：检查点与终态各自按同一刻同根蓝图的来源索引（`framework-access.mjs --action blueprint` 的 `source_index`）固定需求目录以外、
+设计实际依赖的工程文件：契约权威文件与设计依据引用的工程文件。`<…>.dependencies/manifest.json` 记捕获时点、需求树摘要、蓝图引用、来源索引原样，
+以及逐份的原路径、用途、期望与实际摘要、副本位置 `project/<工程相对路径>` 与状态；读不到、摘要对不上或越出工程根标 `incomplete`，不当完整。
+需求目录里的文件随需求树保全，不重复复制。同一时点同内容复用、内容不同不覆盖；不同时点同路径的不同字节各留一份。
+复核按所选时点的清单把副本放回原相对路径读，不从后来的工作区补字节。
 
 **阶段闭环证据**：读取当前运行的 closure、summary、trace 与回执，按当前协议定位 verifier 报告；文件存在不等于绑定本轮或审查通过。
 评价时分别记对象/版本绑定、报告结构结果和实际语义结论。报告缺失、尚未到审查时点、宿主未启用能力和业务不适用分开说明，是否允许降级
@@ -409,14 +417,14 @@ output/story/<suite-id>/
 | 步 | 动作 | 为什么在这一步 |
 |---|---|---|
 | 1 | Case 自己停在第一检查点（`awaiting_kind: initial_checkpoint`），模型最后那一问在 `question` 与 `pending_question` 里 | 到目标就终止只能另起 run，那是重启新会话冒充续行 |
-| 1a | 那一问是第一段里的业务动作（系统单交付门的交付选择，如送审）时，按 `interaction-script.yaml` 的立场用 `reply` 回答；模型在第一段里把它做完（归档以核心 archive 的回执、读回与本地登记为准）后再停到第一检查点。已固定的快照随之作废留证（`initial.superseded-*`），从第 2 步重来 | 归档是第一段的终点动作，和第二段的投料不合成一轮；本地单没有归档，不为凑覆盖调对接层 |
-| 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；需求目录、关联蓝图与需求目录外的 Story 审查报告同一刻固定，复制前后目录摘要不同则快照作废 |
+| 1a | 那一问是第一段里的业务动作（系统单交付门的交付选择，如送审）时，按 `interaction-script.yaml` 的立场用 `reply` 回答；模型在第一段里把它做完（归档以核心 archive 的回执、读回与本地登记为准）后再停到第一检查点。已固定的快照连同它的 `.reports` 与 `.dependencies` 一起作废留证（同一个 `initial.superseded-*` 名），回话入队失败时三者一起回到原位；从第 2 步重来 | 归档是第一段的终点动作，和第二段的投料不合成一轮；本地单没有归档，不为凑覆盖调对接层 |
+| 2 | `checkpoint --case <id> --point initial` | 它停着、没有写入者，复制才说得清是哪一刻；需求目录、关联蓝图、需求目录外的 Story 审查报告与根外依赖（见上文「依赖保全」）同一刻固定，复制前后摘要不同则快照作废 |
 | 3 | 只读评测那份快照 | 工作区马上要跑第二段 |
-| 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`；不先回流，第一段产物就只剩快照 |
+| 4 | `promote-checkpoint --case <id> --point initial` | 第一段回流到维护仓 `doc/features/<需求编号>`，回流记录带检查点记下的依赖清单（清单不在或摘要对不上就拒绝回流，重新 checkpoint）；不先回流，第一段产物就只剩快照 |
 | 5 | `resume-update --case <id>`（投 case.yaml 的 `update_request`，与第一段的 `prompt` 同一条路）；Case 有 `review_human_zone` 时加 `--review-feedback-file <本次反馈文件>` | 只投第二段请求；第一段回流之后 `reply` 被拒，不再在第一段里继续。`update_inputs` 在这一步按下表投放，`--deliver` 只投 `supplements/` 里的补料；全部输入写前核完，一项不成立就一项不写、不发请求 |
 | 6 | 第二段起手在材料关卡停一次，按该 Case `interaction-script.yaml` 的 `update-material` 作答；之后 Case 停在第二检查点（`stop_reason: update_checkpoint`） | 终点以流程契约里这一轮 update 关闭为准，模型说「更新完成」不算 |
 | 7 | `checkpoint --point update` → 只读后评 → `conclude` | story 门禁已在进第二检查点前跑过；第二检查点的唯一出口是 conclude，不发的话 worker 一直等，最后只能被外部停掉、终态成 `worker_lost` |
-| 8 | 全部终态后 `finalize --promote` | 实际续跑过第二段，终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；只跑了第一段则回原编号，`promotion-manifest.json` 的 `segment` / `partial` 说明是哪一段、走没走到检查点 |
+| 8 | 全部终态后 `finalize --promote` | 实际续跑过第二段，终态文档落到 `<需求编号>-update`，第一段那份不被覆盖；只跑了第一段则回原编号，`promotion-manifest.json` 的 `segment` / `partial` 说明是哪一段、走没走到检查点。终态文档取本 run 固定的 `artifact/`，`terminal` 记它的依赖清单；没有固定终态（如 worker 丢失）时回流工作区里的需求目录并标 `terminal: incomplete` |
 
 | `update_inputs` 的 `kind` | 投到哪 | 模拟的是 |
 |---|---|---|
@@ -593,7 +601,8 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 - verifier 只认专用 `verifier` 工具与 `subagent_type=verifier` 的 task；其它委派记进 `delegations_unresolved`，是不是审查由人判断。
 - 首次门禁、登记与返工只看有结果的调用，命令报错也算没过；读一份旧门禁报告不是一轮门禁。
 - 归并不了或被宿主输出截断的条目（只有开始、只有结果、同键冲突、跨检查点、`source_truncated`）列在 `incomplete_tool_events`，此时计数只是已观察到的次数；被截断的门禁结果不出结论。
-- 门禁结论另按种类给全程数：`gate_fail_by_kind`、`gate_unknown_by_kind`（harness / story_register 分计，没结果、冲突或截断记判不了）；`gate_rounds_with_fail` 只数原生 harness，不能用它为 0 概括本轮没有 FAIL。
+- 门禁结论另按种类给全程数：`gate_fail_by_kind`、`gate_unknown_by_kind`（harness / story_register / story_check / review_check / deliver 分计，没结果、冲突或截断记判不了）；审查结论值另计 `review_results`。`gate_rounds_with_fail` 只数原生 harness，不能用它为 0 概括本轮没有 FAIL；交付门一次过也不说明之前的检查、审查与返修没发生。
+- 有保全的 dsh 原生会话时，`delegations` 按原生调用认委派角色：派出去的是产品生成的 Story 派审载体、蓝图质询载体或阅读图任务就是那一类审查，子会话写了需求 `blueprint/` 下的设计产物是蓝图作者，专用 `verifier` 是阶段审查，其余 `unresolved` 带 label 交人判；每个子会话给原生登记到收尾通知的观察跨度（含等待，不是纯推理时间）与收尾状态，没有收尾通知的是 unknown。没有保全原件时整项为 null。
 - `context_growth` 是首末两次请求的 context_total 读数之差，不是单阶段净上下文。
 - `*_gap_sec` 仍是事件间隔估计；并发调用相互重叠，不能相加成墙钟。
 

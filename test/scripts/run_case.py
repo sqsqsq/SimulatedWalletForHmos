@@ -2254,6 +2254,11 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
             if artifact.exists():
                 shutil.rmtree(_long(artifact))
             shutil.copytree(_long(src), _long(artifact))
+            # 同一窗口固定终态的根外依赖：artifact 每次重写，它的依赖配套跟着换成这一份
+            paired = artifact.with_name("artifact.dependencies")
+            if paired.exists():
+                shutil.rmtree(_long(paired))
+            result["artifact_dependencies"] = _freeze_dependencies(case_id, feature, _tree_digest(artifact), paired, "terminal")
 
         # Review 与所有 gate 都已读完同一份成型 diff，现在恢复
         # 用户跑前的索引/工作树字节状态。
@@ -2600,22 +2605,29 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None,
     out_dir.mkdir(parents=True, exist_ok=True)
     initial = out_dir / "checkpoints" / "initial"
     superseded = None
+    moved: list[tuple[Path, Path]] = []
     if state.get("awaiting_kind") == "initial_checkpoint" and initial.is_dir():
-        # 已固定的第一段快照不再是第一段的终稿：留着作证据，答完之后重新固定
+        # 已固定的第一段快照不再是第一段的终稿：留着作证据，答完之后重新固定。
+        # 快照、同一时刻的审查报告与依赖是一组，一起换成同一个 superseded 名，新 initial 不会撞上旧配套
         stamp = time.strftime("%Y%m%d-%H%M%S")
         superseded = out_dir / "checkpoints" / f"initial.superseded-{stamp}"
         n = 1
-        while superseded.exists():
+        while any(superseded.with_name(superseded.name + s).exists() for s in ("", ".reports", ".dependencies")):
             n += 1
             superseded = out_dir / "checkpoints" / f"initial.superseded-{stamp}-{n}"
-        initial.rename(superseded)
+        for suffix in ("", ".reports", ".dependencies"):
+            src = initial.with_name("initial" + suffix)
+            if src.exists():
+                dst = superseded.with_name(superseded.name + suffix)
+                src.rename(dst)
+                moved.append((dst, src))
     try:
         (out_dir / REPLY_FILE).write_text(
             json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
                        ensure_ascii=False), encoding="utf-8")
     except OSError as exc:
-        if superseded is not None:
-            superseded.rename(initial)
+        for dst, src in reversed(moved):
+            dst.rename(src)
         print(json.dumps({"ok": False, "error": f"回话没能入队（{exc}），第一段快照原样保留", "delivered": delivered},
                          ensure_ascii=False))
         return 1
@@ -2663,11 +2675,111 @@ def cmd_checkpoint(case_id: str, point: str) -> int:
             print(json.dumps({"case": case_id, "point": point, "reports": str(reports), **kept}, ensure_ascii=False))
             return 1
         extra.update(reports_path=kept["path"], reports_digest=kept["digest"])
+    deps = _freeze_dependencies(case_id, feature, frozen["digest"], out_dir / "checkpoints" / f"{point}.dependencies", point)
+    if not deps["ok"]:
+        print(json.dumps({"ok": False, "case": case_id, "point": point, "path": frozen["path"], "dependencies": deps},
+                         ensure_ascii=False))
+        return 1
+    extra.update(dependencies_path=deps["path"], dependencies_manifest_sha256=deps["manifest_sha256"],
+                 dependencies_status=deps["status"])
     print(json.dumps({"ok": True, "case": case_id, "point": point, "path": frozen["path"],
                       "digest": frozen["digest"], **({"reused": True} if frozen.get("reused") else {}), **extra,
                       "session": state.get("cli_session_id"), "stage": state.get("checkpoint_stage")},
                      ensure_ascii=False))
     return 0
+
+
+#: 工作区里装好的读取入口：依赖从它给出的来源索引取，测试域不另解释 source_ref
+ACCESS_REL = ("doc", "extensions", "hooks", "shared", "framework-access.mjs")
+
+
+def _source_index(feature: str) -> tuple[dict | None, dict | None, str | None]:
+    """同根蓝图此刻的来源索引与蓝图引用；读不到时给原因（还没有蓝图也是原因，不当失败）。"""
+    access = REPO_ROOT.joinpath(*ACCESS_REL)
+    if not access.is_file():
+        return None, None, f"工作区没有 {'/'.join(ACCESS_REL)}"
+    proc = subprocess.run(["node", str(access), "--project-root", str(REPO_ROOT), "--action", "blueprint",
+                           "--blueprint", feature, "--purpose", "draft", "--consume", feature, "--summary"],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        read = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None, None, f"读来源索引失败：{(proc.stderr or proc.stdout).strip()[:400]}"
+    if read.get("status") != "ok":
+        return None, None, f"同根蓝图原生读取 {read.get('status')}"
+    return read.get("source_index"), read.get("blueprint_ref"), None
+
+
+def _freeze_dependencies(case_id: str, feature: str, tree_digest: str, dest: Path, kind: str) -> dict:
+    """需求目录以外、这一刻设计实际依赖的工程文件，和需求树同一时刻固定：`<dest>/manifest.json` 与 `<dest>/project/<工程相对路径>`。
+
+    依赖只取来源索引里的契约权威文件与设计依据引用的工程文件（同一份 `source_index`），需求目录里的已随需求树保全。
+    逐份记原路径、用途、期望摘要、实际摘要与副本位置；读不到、摘要对不上、越出工程根的记进 problems，清单标 incomplete。
+    复制前后核一次原件字节，期间变了这次不成立。同一位置已有内容相同的清单复用，内容不同不覆盖。
+    """
+    index, ref, why = _source_index(feature)
+    root_prefix = f"{FEATURES_DIR}/{feature}/"
+    rows, problems = [], ([] if why is None or why.startswith("同根蓝图原生读取 missing") else [why])
+    wanted = {}
+    if index:
+        if index.get("status") != "ok":
+            problems.append(f"来源索引 {index.get('status')}：{'；'.join(index.get('problems') or [])[:600]}")
+        for f in [*(index.get("authorityFiles") or []), *(index.get("projectFiles") or [])]:
+            rel = str(f.get("path") or "")
+            if rel and not rel.startswith(root_prefix):
+                wanted.setdefault(rel, {"path": rel, "role": f.get("role"), "use": f.get("use"),
+                                        "expected_sha256": str(f.get("sha256") or "").removeprefix("sha256:") or None})
+    before = {}
+    for rel, row in wanted.items():
+        abs_path = (REPO_ROOT / rel).resolve()
+        try:
+            abs_path.relative_to(REPO_ROOT)
+        except ValueError:
+            rows.append({**row, "status": "outside_project"})
+            problems.append(f"{rel} 解析到工程根以外")
+            continue
+        try:
+            data = abs_path.read_bytes()
+        except OSError as exc:
+            rows.append({**row, "status": "missing"})
+            problems.append(f"{rel} 读不到（{exc}）")
+            continue
+        actual = hashlib.sha256(data).hexdigest()
+        before[rel] = (abs_path, actual)
+        status = "ok" if row["expected_sha256"] in (None, actual) else "sha_mismatch"
+        if status != "ok":
+            problems.append(f"{rel} 的字节与来源索引记的不同")
+        rows.append({**row, "actual_sha256": actual, "copy": f"project/{rel}", "status": status})
+    manifest = {"case": case_id, "feature": feature, "capture_kind": kind, "tree_digest": tree_digest,
+                "blueprint_ref": ref, "blueprint_note": why, "source_index": index,
+                "dependencies": sorted(rows, key=lambda r: r["path"]),
+                "status": "incomplete" if problems else "complete", "problems": problems}
+    text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+    sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    out = {"path": str(dest), "manifest_sha256": sha, "status": manifest["status"], "problems": problems}
+    if dest.exists():
+        same = (dest / "manifest.json").is_file() and (dest / "manifest.json").read_text(encoding="utf-8") == text
+        return {**out, "ok": same, **({"reused": True} if same else
+                                      {"error": "这一处已有一份内容不同的依赖清单，没有覆盖——先看清楚它是哪一次的"})}
+    building = dest.with_name(dest.name + ".building")
+    shutil.rmtree(_long(building), ignore_errors=True)
+    try:
+        for rel, (abs_path, _) in before.items():
+            target = building / "project" / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(abs_path, target)
+        building.mkdir(parents=True, exist_ok=True)
+        (building / "manifest.json").write_text(text, encoding="utf-8")
+        changed = [rel for rel, (abs_path, digest) in before.items()
+                   if hashlib.sha256(abs_path.read_bytes()).hexdigest() != digest]
+        if changed:
+            shutil.rmtree(_long(building), ignore_errors=True)
+            return {**out, "ok": False, "error": f"复制期间依赖变了：{'、'.join(changed)}——这次依赖快照作废"}
+        building.rename(dest)
+    except OSError as exc:
+        shutil.rmtree(_long(building), ignore_errors=True)
+        return {**out, "ok": False, "error": f"复制依赖失败，已清掉半成品：{str(exc)[:600]}"}
+    return {**out, "ok": True}
 
 
 def _freeze_tree(source: Path, dest: Path) -> dict:

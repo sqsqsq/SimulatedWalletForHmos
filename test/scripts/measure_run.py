@@ -25,6 +25,13 @@
   **按事件间隔归属的近似值**，字段名如实标注；并发调用的区间相互重叠，不能相加成墙钟）；``human_wait_sec``（**由驱动器累计**，
   与模型耗时分开；读不到时报 ``null`` 而不是 0——「这轮没人等过」和「这份记录里没这个字段」是两件事）。
 - verifier 只认专用 ``verifier`` 工具与 ``subagent_type=verifier`` 的 task；其它委派计进 ``delegations_unresolved``，是不是审查由人判断。
+- 有保全的 dsh 原生会话（``<run>/native-sessions/``）时，``delegations`` 按原生调用认委派的角色：派出去的是产品生成的
+  Story 派审载体、蓝图质询载体或阅读图任务，就是那一类审查；派出去的子会话写了需求 ``blueprint/`` 下的设计产物，是蓝图作者；专用 ``verifier``
+  工具是阶段审查；其余按 ``unresolved`` 带上 label 交人判。label 只用来定位，不定角色。每个子会话给原生登记到收尾通知的
+  **观察跨度**（含等待与排队，不是纯推理时间）与收尾状态；没有收尾通知的跨度是 unknown，不按 0 算。
+- 门禁种类另分 ``story_check``（``story-build check``）、``review_check``（``story-build review --action check``，按结论值计
+  ``review_results``）与 ``deliver``（``check --deliver``）：成文检查没过、审查结论 fail 或 report_invalid、交付门没过各自计数；
+  交付门一次过不说明此前的检查、审查与返修都没有发生。
 
 ## 一次调用
 
@@ -153,6 +160,12 @@ ANSI_RE = re.compile("\x1b\\[[0-9;]*m")
 HARNESS_CMD_RE = re.compile(r"harness-runner")
 #: story 成文登记：`story_flow.py story`。
 STORY_REGISTER_RE = re.compile(r"story_flow\.py\S*\s+story\b")
+#: 成文检查、交付门与审查结论的命令（story-build 的子命令）
+DELIVER_RE = re.compile(r"story-build\.mjs\S*\s+check\b[^\n]*--deliver")
+STORY_CHECK_RE = re.compile(r"story-build\.mjs\S*\s+check\b")
+REVIEW_CHECK_RE = re.compile(r"story-build\.mjs\S*\s+review\b[^\n]*--action\s+check")
+#: 审查结论：`review --action check` 输出里的 result
+REVIEW_RESULT_RE = re.compile(r"\"result\":\s*\"([a-z_]+)\"")
 #: 成文登记没过时输出里的形态（check 报「N 处未通过」或登记被拒）。
 REGISTER_FAIL_RE = re.compile(r"未通过|没有登记|拒绝登记|\"ok\":\s*false")
 
@@ -329,6 +342,12 @@ def _call_kind(call: dict) -> str:
         return "harness"
     if name in SHELL_TOOLS and STORY_REGISTER_RE.search(request):
         return "story_register"
+    if name in SHELL_TOOLS and REVIEW_CHECK_RE.search(request):
+        return "review_check"
+    if name in SHELL_TOOLS and DELIVER_RE.search(request):
+        return "deliver"
+    if name in SHELL_TOOLS and STORY_CHECK_RE.search(request):
+        return "story_check"
     if _is_verifier(call):
         return "verifier"
     if name in DELEGATION_TOOLS:
@@ -372,9 +391,14 @@ def split_at_checkpoint(events: list[dict], run_dir: Path | None) -> int | None:
 
 
 def _gate_failed(call: dict, output: str) -> bool:
-    """一次有结果的门禁调用没过：harness 输出里有 FAIL 行，登记输出报未通过，或命令本身以错误状态结束。"""
-    fails = (any(m.group(1) == "FAIL" for m in CHECK_LINE_RE.finditer(output)) if call["kind"] == "harness"
-             else bool(REGISTER_FAIL_RE.search(output)))
+    """一次有结果的门禁调用没过：harness 输出里有 FAIL 行，审查结论是 fail / report_invalid，登记、成文检查或交付门输出报未通过，
+    或命令本身以错误状态结束。"""
+    if call["kind"] == "harness":
+        fails = any(m.group(1) == "FAIL" for m in CHECK_LINE_RE.finditer(output))
+    elif call["kind"] == "review_check":
+        fails = any(m.group(1) in {"fail", "report_invalid"} for m in REVIEW_RESULT_RE.finditer(output))
+    else:
+        fails = bool(REGISTER_FAIL_RE.search(output))
     return fails or str(call["end"].get("tool_status") or "") not in SUCCESS_STATUSES
 
 
@@ -455,8 +479,9 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     harness_runs = 0
     gate_rounds_with_fail = 0
     #: 按种类的门禁结论：同一调用一次，结果读不出（没结果、冲突、截断）记 unknown
-    gate_fail_by_kind = {"harness": 0, "story_register": 0}
-    gate_unknown_by_kind = {"harness": 0, "story_register": 0}
+    gate_fail_by_kind = {"harness": 0, "story_register": 0, "story_check": 0, "review_check": 0, "deliver": 0}
+    gate_unknown_by_kind = dict.fromkeys(gate_fail_by_kind, 0)
+    review_results: Counter[str] = Counter()
     check_fail_counts: Counter[str] = Counter()
     # 分段耗时：「上一条事件到本条事件的间隔」按本条所属调用的用途归属，是**近似**，
     # 字段名带 _gap_sec 明说这一点——不把近似值包装成实测值。
@@ -522,6 +547,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
                 gate_fail_by_kind[call["kind"]] += 1
         if output is None:
             continue
+        if call["kind"] == "review_check":
+            review_results.update({m.group(1) for m in REVIEW_RESULT_RE.finditer(output)})
         # 门禁报出的 check id 只在**门禁调用的输出**里。按「这一次调用」去重后再计数：
         # 同一份报告在 console 打一次、被 cat 再打一次，按文本次数算就会翻倍，
         # 而判据问的是「同一个 id 在多少**轮**门禁里失败」。
@@ -577,6 +604,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "gate_rounds_with_fail": gate_rounds_with_fail,
         "gate_fail_by_kind": gate_fail_by_kind,
         "gate_unknown_by_kind": gate_unknown_by_kind,
+        "review_results": dict(review_results),
+        **native_delegations(run_dir or events_path.parent),
         "repeated_check_fails": check_fail_counts.most_common(5),
         "worst_repeated_check": (check_fail_counts.most_common(1)[0] if check_fail_counts else None),
         "gap_sec_by_kind": {k: round(v, 1) for k, v in gap_by_kind.items()},
@@ -586,6 +615,84 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         **_human_wait(run_dir or events_path.parent),
         **_startup_gap(run_dir or events_path.parent, first_model_ts),
     }
+
+
+DSH_SESSION_READER = Path(__file__).resolve().parent / "dsh_session.mjs"
+#: 产品生成的派审载体与审查任务：派出去的正文按它认审查类委派
+CARRIER_ROLES = ((re.compile(r"^# Story 独立人读审查 · 派审"), "story_review"),
+                 (re.compile(r"^# 蓝图独立质询 · 派审"), "questioning"),
+                 (re.compile(r"的增强阅读 SVG"), "figure_review"))
+DELEGATING_TOOLS = {"subagent", "subagent_fork", "task"}
+STARTED_RE = re.compile(r"started subagent (\S+)")
+BLUEPRINT_FILE_RE = re.compile(r"[\\/]blueprint[\\/]")
+
+
+def _native(path: Path) -> dict:
+    """读一份 dsh 原生会话（`dsh_session.mjs`）；起不来或解不开返回 {error}。"""
+    import subprocess  # noqa: PLC0415
+    proc = subprocess.run(["node", str(DSH_SESSION_READER), str(path)], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"error": (proc.stderr or proc.stdout or "没有输出").strip()[:300]}
+
+
+def _args(call: dict) -> dict:
+    try:
+        value = json.loads(call.get("args") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _child_role(child: dict) -> str | None:
+    """子会话实际产出了什么：写了需求 `blueprint/` 下的设计产物（canonical 或契约转写）的是蓝图作者；其余不在这里定。"""
+    for call in child.get("calls") or []:
+        if call.get("name") in AUTHORING_TOOLS and BLUEPRINT_FILE_RE.search(str(_args(call).get("file_path") or "")):
+            return "blueprint_author"
+    return None
+
+
+def native_delegations(run_dir: Path) -> dict:
+    """原生会话里的委派：按派出去的正文与子会话实际产出认角色，给每个子会话的观察跨度与收尾状态。没有保全原件时为 null。"""
+    root = run_dir / "native-sessions"
+    parents = sorted(root.glob("*/session.v4.jsonl.zstd")) if root.is_dir() else []
+    if not parents:
+        return {"delegations": None}
+    rows, problems = [], []
+    for parent in parents:
+        info = _native(parent)
+        if info.get("error"):
+            problems.append(f"{parent.parent.name}：{info['error']}")
+            continue
+        catalog = {c["childId"]: c for c in info.get("children") or []}
+        settled = {s["childId"]: s for s in info.get("settled") or [] if s.get("childId")}
+        for call in info.get("calls") or []:
+            name = call.get("name")
+            if name not in DELEGATING_TOOLS and name != "verifier":
+                continue
+            started = next((m.group(1) for r in call.get("results") or [] for m in [STARTED_RE.search(r.get("text") or "")] if m), None)
+            prompt = str(_args(call).get("prompt") or "")
+            if name == "verifier":
+                role, basis = "stage_verifier", "专用 verifier 工具"
+            else:
+                role = next((r for pattern, r in CARRIER_ROLES if pattern.search(prompt)), None)
+                basis = "派出去的是产品生成的载体" if role else None
+            child_file = parent.parent / "children" / str(started) / "session.v4.jsonl.zstd" if started else None
+            if role is None and child_file and child_file.is_file():
+                child = _native(child_file)
+                role = _child_role(child) if not child.get("error") else None
+                basis = "子会话写了蓝图设计产物" if role else None
+            entry = catalog.get(started or "") or {}
+            done = settled.get(started or "")
+            span = (round((done["time"] - entry["createdAt"]) / 60000, 1)
+                    if done and done.get("time") and entry.get("createdAt") else None)
+            summary = str((done or {}).get("summary") or "")
+            rows.append({"role": role or "unresolved", "basis": basis, "label": entry.get("label") or str(_args(call).get("description") or ""),
+                         "child_id": started, "observed_span_min": span,
+                         "settled": "failed" if "failed" in summary else "finished" if "finished" in summary else "unknown"})
+    return {"delegations": {"by_role": dict(Counter(r["role"] for r in rows)), "items": rows, "problems": problems}}
 
 
 def _diagrams(run_dir: Path) -> dict:
@@ -675,6 +782,14 @@ def render(result: dict) -> str:
         f"    有 FAIL 的门禁轮次：{result['gate_rounds_with_fail']} 轮",
         f"    门禁结论按种类：失败 {result['gate_fail_by_kind']}，判不了 {result['gate_unknown_by_kind']}",
         f"    反复 FAIL 的 check：{result['repeated_check_fails'] or '（本轮没有 FAIL）'}   目标 同一 id ≤2 轮",
+        f"    审查结论（review --action check，每次调用的结论值）：{result['review_results'] or '（没有观察到）'}",
+        "",
+        "  ── 委派（按原生会话认角色）──",
+        *(["    没有保全的原生会话：委派角色未取得（不是没有委派）"] if result.get("delegations") is None else [
+            f"    按角色：{result['delegations']['by_role'] or '（没有委派）'}",
+            *(f"    - {i['role']}｜{i['label']}｜观察跨度 {i['observed_span_min'] if i['observed_span_min'] is not None else '未知'} 分钟"
+              f"（含等待，不是纯推理）｜收尾 {i['settled']}" for i in result["delegations"]["items"]),
+            *(f"    读不了：{p}" for p in result["delegations"]["problems"])]),
         "",
         "  ── 时间去哪了（间隔归属的近似值，不是实测 span）──",
         f"    门禁 {result['gap_sec_by_kind']['gate']}s｜verifier {result['gap_sec_by_kind']['verifier']}s"

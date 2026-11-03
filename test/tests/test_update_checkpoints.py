@@ -225,6 +225,81 @@ class TheSecondCheckpointAlsoWaits(unittest.TestCase):
         self.assertIn('status != "awaiting_reply"', body)
 
 
+class EachPointKeepsItsOwnDependencies(unittest.TestCase):
+    """检查点与终态各自固定需求目录以外、设计实际依赖的工程文件：同一份来源索引给出清单，需求目录里的随需求树走；
+    逐份记期望与实际摘要，读不到或对不上标 incomplete；同一位置同内容复用，内容不同不覆盖；回流按检查点记的清单取同一组。
+    来源索引本身由产品的读取入口产生（来源测试覆盖），这里在进程边界给定它。"""
+
+    def setUp(self) -> None:
+        import hashlib  # noqa: PLC0415
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "ws"
+        self.contract = self.root / "doc" / "design-contracts" / "AR1" / "api.yaml"
+        self.contract.parent.mkdir(parents=True)
+        self.contract.write_bytes(b"operations: {}\n")
+        self.inside = self.root / rc.FEATURES_DIR / "AR1" / "blueprint" / "contracts" / "a.yaml"
+        self.inside.parent.mkdir(parents=True)
+        self.inside.write_bytes(b"x: 1\n")
+        self.sha = lambda b: hashlib.sha256(b).hexdigest()
+        self.dest = Path(self._tmp.name) / "out" / "initial.dependencies"
+
+    def index(self, expected: str | None = None, extra: list | None = None) -> dict:
+        return {"status": "ok", "problems": [], "authorityFiles": [
+            {"path": "doc/design-contracts/AR1/api.yaml", "sha256": f"sha256:{expected or self.sha(self.contract.read_bytes())}",
+             "role": "contract_authority"},
+            {"path": f"{rc.FEATURES_DIR}/AR1/blueprint/contracts/a.yaml", "sha256": "sha256:" + "0" * 64, "role": "contract_authority"}],
+            "projectFiles": list(extra or [])}
+
+    def freeze(self, index: dict) -> dict:
+        with unittest.mock.patch.object(rc, "REPO_ROOT", self.root.resolve()), \
+                unittest.mock.patch.object(rc, "_source_index", return_value=(index, {"revision": 3}, None)):
+            return rc._freeze_dependencies("c", "AR1", "tree-1", self.dest, "initial")
+
+    def manifest(self) -> dict:
+        return json.loads((self.dest / "manifest.json").read_text(encoding="utf-8"))
+
+    def test_root_external_files_are_kept_and_the_requirement_tree_is_not_copied_again(self) -> None:
+        got = self.freeze(self.index())
+        self.assertEqual((True, "complete"), (got["ok"], got["status"]), got)
+        self.assertEqual(b"operations: {}\n", (self.dest / "project" / "doc" / "design-contracts" / "AR1" / "api.yaml").read_bytes())
+        self.assertEqual(["doc/design-contracts/AR1/api.yaml"], [d["path"] for d in self.manifest()["dependencies"]],
+                         "需求目录里的权威文件不该再拷一份")
+        self.assertEqual(("initial", "tree-1", {"revision": 3}),
+                         (self.manifest()["capture_kind"], self.manifest()["tree_digest"], self.manifest()["blueprint_ref"]))
+
+    def test_the_same_point_is_reused_and_different_content_is_not_overwritten(self) -> None:
+        first = self.freeze(self.index())
+        again = self.freeze(self.index())
+        self.assertTrue(again.get("reused"), again)
+        self.assertEqual(first["manifest_sha256"], again["manifest_sha256"])
+        self.contract.write_bytes(b"operations: {changed: true}\n")
+        changed = self.freeze(self.index())
+        self.assertFalse(changed["ok"])
+        self.assertIn("没有覆盖", changed["error"])
+        self.assertEqual(b"operations: {}\n", (self.dest / "project" / "doc" / "design-contracts" / "AR1" / "api.yaml").read_bytes(),
+                         "已固定的依赖被后来的字节改掉了")
+
+    def test_mismatched_or_missing_files_make_the_set_incomplete(self) -> None:
+        missing = {"path": "doc/architecture/gone.md", "sha256": "sha256:" + "1" * 64, "role": "project_file", "use": "support"}
+        got = self.freeze(self.index(expected="f" * 64, extra=[missing]))
+        self.assertEqual((True, "incomplete"), (got["ok"], got["status"]))
+        states = {d["path"]: d["status"] for d in self.manifest()["dependencies"]}
+        self.assertEqual({"doc/design-contracts/AR1/api.yaml": "sha_mismatch", "doc/architecture/gone.md": "missing"}, states)
+
+    def test_promotion_takes_the_dependency_set_the_checkpoint_recorded(self) -> None:
+        self.freeze(self.index())
+        snapshot = Path(self._tmp.name) / "out" / "initial"
+        snapshot.mkdir(parents=True)
+        record = {"case": "c", "feature": "AR1", "checkpoints": {"initial": {
+            "path": str(snapshot), "dependencies": {"path": str(self.dest), "manifest_sha256": "0" * 64}}}}
+        suite = {"case_states": {"c": record}}
+        with unittest.mock.patch.object(rmc, "load_suite", return_value=(Path(self._tmp.name), suite)), \
+                unittest.mock.patch.object(rmc, "refresh_record", side_effect=lambda r: r):
+            with self.assertRaises(SystemExit) as stop:
+                rmc.command_promote_checkpoint("s", "c", "initial")
+        self.assertIn("依赖清单", str(stop.exception))
+
 class LongPathsDoNotBreakTheRun(unittest.TestCase):
     """T2 实跑撞上的：Windows 260 字符上限。
 
@@ -649,13 +724,26 @@ class TheInitialQuestionIsAnsweredInsideTheInitialSegment(unittest.TestCase):
         return {"code": code, **json.loads(said.getvalue())}
 
     def test_a_reply_that_cannot_be_queued_keeps_the_snapshot(self) -> None:
-        """回话写不进队列：第一段快照原样留在原位，状态与「没答过」一致。"""
-        (self.out / "checkpoints" / "initial").mkdir(parents=True)
+        """回话写不进队列：第一段快照与它的报告、依赖原样留在原位，状态与「没答过」一致。"""
+        for suffix in ("", ".reports", ".dependencies"):
+            (self.out / "checkpoints" / f"initial{suffix}").mkdir(parents=True)
         (self.out / rc.REPLY_FILE).mkdir()  # 回话文件位置被目录占着，写入必然失败
         got = self.reply("initial_checkpoint")
         self.assertEqual(1, got["code"], got)
-        self.assertTrue((self.out / "checkpoints" / "initial").is_dir(), "写失败后第一段快照没回到原位")
+        for suffix in ("", ".reports", ".dependencies"):
+            self.assertTrue((self.out / "checkpoints" / f"initial{suffix}").is_dir(), f"写失败后 initial{suffix} 没回到原位")
         self.assertFalse(list((self.out / "checkpoints").glob("initial.superseded-*")), "失败留下了改名的快照")
+
+    def test_the_snapshot_its_reports_and_dependencies_are_superseded_together(self) -> None:
+        """补答之后旧的一组整体换成同一个 superseded 名：新的 initial 不会撞上旧报告或旧依赖。"""
+        for suffix in ("", ".reports", ".dependencies"):
+            (self.out / "checkpoints" / f"initial{suffix}").mkdir(parents=True)
+        got = self.reply("initial_checkpoint")
+        self.assertEqual(0, got["code"], got)
+        moved = Path(got["superseded_checkpoint"])
+        for suffix in ("", ".reports", ".dependencies"):
+            self.assertFalse((self.out / "checkpoints" / f"initial{suffix}").exists(), f"initial{suffix} 还在原位")
+            self.assertTrue(moved.with_name(moved.name + suffix).is_dir(), f"initial{suffix} 没跟着换名")
 
     def test_two_replies_in_one_second_keep_both_snapshots(self) -> None:
         for _ in range(2):

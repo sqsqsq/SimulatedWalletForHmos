@@ -1645,6 +1645,32 @@ class WorkspaceBoundaryTest(unittest.TestCase):
             run_multi_case.FEATURES_ROOT = original_features
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_the_terminal_document_comes_from_the_fixed_artifact_with_its_dependencies(self) -> None:
+        """终态回流取本 run 固定的 artifact 与同一窗口的依赖清单，不取后来的工作区；没有固定终态才退回工作区并标 incomplete。"""
+        root = Path(tempfile.mkdtemp(prefix="story-promotion-fixed-"))
+        self.addCleanup(shutil.rmtree, root, True)
+        for name in ("DEMO_ROOT", "FEATURES_ROOT"):
+            self.addCleanup(setattr, run_multi_case, name, getattr(run_multi_case, name))
+        workspace, run_dir = root / "workspace", root / "run"
+        (workspace / "doc/features/AR-X").mkdir(parents=True)
+        (workspace / "doc/features/AR-X/story.md").write_text("后来工作区里的稿", encoding="utf-8")
+        (run_dir / "artifact").mkdir(parents=True)
+        (run_dir / "artifact/story.md").write_text("终态固定的稿", encoding="utf-8")
+        (run_dir / "artifact.dependencies").mkdir()
+        (run_dir / "artifact.dependencies/manifest.json").write_text('{"status": "complete"}\n', encoding="utf-8")
+        run_multi_case.DEMO_ROOT = root / "host"
+        run_multi_case.DEMO_ROOT.mkdir()
+        run_multi_case.FEATURES_ROOT = root / "maintenance/doc/features"
+        suite = {"bundle_root": str(root / "bundle"), "main_source_baseline": run_multi_case.snapshot_workspace_sources(run_multi_case.DEMO_ROOT)}
+        record = {"case": "case-x", "feature": "AR-X", "workspace": str(workspace), "status": "finished", "run_id": "r1"}
+        with mock.patch.object(run_multi_case, "run_pointer_state", return_value={"run_dir": str(run_dir)}):
+            result = run_multi_case.promote_case_workspace(suite, record)
+        self.assertEqual("终态固定的稿", (root / "maintenance/doc/features/AR-X/story.md").read_text(encoding="utf-8"))
+        item = next(p for p in result["promoted"] if p["kind"] == "feature")
+        self.assertEqual("complete", item["terminal"]["status"])
+        self.assertEqual(hashlib.sha256((run_dir / "artifact.dependencies/manifest.json").read_bytes()).hexdigest(),
+                         item["terminal"]["manifest_sha256"])
+
     def test_batch_promotion_keeps_later_features_and_is_idempotent(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="story-promotion-batch-"))
         original_repo = run_multi_case.DEMO_ROOT
@@ -1727,10 +1753,14 @@ class FeaturesFlowBackToTheMaintenanceDoc(unittest.TestCase):
         snapshot = self.root / "snapshot/AR-9"
         snapshot.mkdir(parents=True)
         (snapshot / "story.md").write_text("第一段", encoding="utf-8")
+        deps = self.root / "snapshot/AR-9.dependencies"
+        deps.mkdir(parents=True)
+        (deps / "manifest.json").write_text('{"status": "complete", "dependencies": []}\n', encoding="utf-8")
         suite_id = "suite-flow"
         bundle = self.root / "suites" / suite_id
+        recorded = {"path": str(deps), "manifest_sha256": hashlib.sha256((deps / "manifest.json").read_bytes()).hexdigest()}
         record = {"case": "case-9", "feature": "AR-9", "status": "awaiting_reply",
-                  "checkpoints": {"after_initial": {"path": str(snapshot)}}}
+                  "checkpoints": {"after_initial": {"path": str(snapshot), "dependencies": recorded}}}
         run_multi_case.write_json(bundle / "suite.json", {"bundle_root": str(bundle),
                                                           "case_states": {"case-9": record}, "events": []})
         with mock.patch.object(run_multi_case, "refresh_record", side_effect=lambda r: r), \

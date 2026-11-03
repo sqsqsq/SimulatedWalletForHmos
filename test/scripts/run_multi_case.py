@@ -3484,6 +3484,10 @@ def command_checkpoint(suite_id: str, case_id: str, point: str) -> int:
         record.setdefault("checkpoints", {})[point] = {
             "path": payload.get("path"), "digest": payload.get("digest"),
             "session": payload.get("session"), "at": now(),
+            # 同一时刻固定的根外依赖：清单位置与摘要随检查点记下，回流与复核按它取同一组
+            "dependencies": {"path": payload.get("dependencies_path"),
+                             "manifest_sha256": payload.get("dependencies_manifest_sha256"),
+                             "status": payload.get("dependencies_status")},
             "usage": snapshot_usage(suite, record, point)}
     else:
         record["last_error"] = {"stdout": stdout[-2000:], "stderr": stderr[-2000:]}
@@ -3506,15 +3510,22 @@ def command_promote_checkpoint(suite_id: str, case_id: str, point: str) -> int:
     if case_id not in suite["case_states"]:
         raise SystemExit(f"[multi] Case 不在 suite 中: {case_id}")
     record = refresh_record(suite["case_states"][case_id])
-    saved = ((record.get("checkpoints") or {}).get(point) or {}).get("path")
+    fixed = (record.get("checkpoints") or {}).get(point) or {}
+    saved = fixed.get("path")
     if not saved or not Path(saved).is_dir():
         raise SystemExit(f"[multi] {case_id} 的 {point} 快照还没固定，先 checkpoint")
     source = Path(saved)
+    deps = fixed.get("dependencies") or {}
+    manifest = Path(str(deps.get("path") or "")) / "manifest.json"
+    if not deps.get("path") or not manifest.is_file() \
+            or hashlib.sha256(manifest.read_bytes()).hexdigest() != deps.get("manifest_sha256"):
+        raise SystemExit(f"[multi] {case_id} 的 {point} 依赖清单不在或与检查点记的不是同一份——重新 checkpoint 固定这一组")
     if is_archive_name(str(record["feature"])):
         raise SystemExit(f"[multi] {case_id} 的需求编号与归档目录 doc/features/archive 同名，拒绝回流")
     # 蓝图与需求同根：需求目录的快照里已经带着它
     result: dict[str, Any] = {"case": case_id, "point": point,
-                              **_promote_tree(source, FEATURES_ROOT / promoted_feature_name(str(record["feature"]), point))}
+                              **_promote_tree(source, FEATURES_ROOT / promoted_feature_name(str(record["feature"]), point)),
+                              "dependencies": deps}
     record.setdefault("promotions", {})[point] = {**result, "at": now()}
     append_event(suite, "case_checkpoint_promoted", case=case_id, point=point,
                  status=result["status"])
@@ -3910,7 +3921,18 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
 
     # Feature documents are independent Case outputs.  They must not be blocked
     # by source changes promoted by an earlier Case in the same finalize batch.
-    feature_source = workspace / "doc" / "features" / str(record["feature"])
+    # 终态回流取本 run 已固定的 artifact 与同一窗口的 artifact.dependencies；没有固定终态（如 worker 丢失）时
+    # 退回工作区里的需求目录，并标明终态配套不完整，不拿后来的业务稿去配旧依赖
+    run_dir = Path(str((run_pointer_state(str(record["case"]), record.get("run_id")) or {}).get("run_dir") or ""))
+    fixed = run_dir / "artifact" if str(run_dir) not in ("", ".") else None
+    terminal: dict[str, Any] = {"status": "incomplete", "reason": "本 run 没有固定的终态 artifact"}
+    if fixed is not None and fixed.is_dir():
+        manifest = fixed.with_name("artifact.dependencies") / "manifest.json"
+        terminal = ({"status": json.loads(manifest.read_text(encoding="utf-8")).get("status"),
+                     "dependencies": str(manifest.parent),
+                     "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()}
+                    if manifest.is_file() else {"status": "incomplete", "reason": "终态 artifact 没有依赖清单"})
+    feature_source = fixed if fixed is not None and fixed.is_dir() else workspace / "doc" / "features" / str(record["feature"])
     # 回流身份按实际走到的那一段定：真的续跑过第二段才另名 `-update`；目录名换了不改里面的需求编号
     segment, partial = finalize_segment(record)
     feature_destination = FEATURES_ROOT / promoted_feature_name(str(record["feature"]), segment)
@@ -3923,7 +3945,7 @@ def promote_case_workspace(suite: dict[str, Any], record: dict[str, Any]) -> dic
         destination_digest = _tree_digest(feature_destination)
         feature_item = {"kind": "feature", "source": str(feature_source),
                         "destination": str(feature_destination),
-                        "sha256": source_digest}
+                        "sha256": source_digest, "terminal": terminal}
         if destination_digest == source_digest:
             already_promoted.append(feature_item)
         elif feature_destination.exists():
