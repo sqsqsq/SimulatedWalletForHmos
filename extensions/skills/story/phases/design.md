@@ -118,7 +118,7 @@
    （蓝图引用、设计采用的来源、知识摘要、材料索引摘要，以及 Story、Review、决策登记与写作设计的原始字节指纹），通过后记下新依据。
 5. **交付门**：`story-build check --deliver`，核交付的是登记的那一份、依据（含蓝图）没变、审查结果仍可消费。登记或交付门报错时，按报错回到对应步骤。
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：
-   - 送审：仅系统需求，走 `/story archive <AR>`，Story 作正文、Review 与设计参考（蓝图的原生评审投影原字节）作附件，三件都读回一致才登记；
+   - 送审：仅系统需求，走 `/story archive <AR>`，Story 作正文、Review 作附件；系统要求设计参考（取材回执 `delivery_requirements.design_reference`）或本单已有交付请求时，再加设计参考（蓝图的原生评审投影原字节）附件；交付集合里的各件都读回一致才登记；
    - 完整设计交接：在已准入蓝图上按 Framework change-unit-progression 完成施工单位设计准备，不启动施工；
    - 实现方案：完成施工单位设计准备，再沿 Framework 交互路径为每个施工单位准备范围，请求终点写到 Plan
      （`--completion-target request --requested-phases spec,plan`）；完成适用的 Spec/Plan，Framework 判可复用的沿用，止于 Plan。

@@ -553,6 +553,8 @@ class TheFormalFormIsMermaid(FigureViewCase):
         step, action = routing.next_step(self.fr, contract)
         self.assertEqual("run_delivery_gate", step, "普通 Mermaid 图被当成了待办")
         self.assertIn("`story-build check --deliver` 交付门", action)
+        self.assertIn("本单是本地需求：完整设计交接", action, "本地单的交付选择没按它的来源给")
+        self.assertNotIn("送审 /", action, "本地单列出了送审")
         archived = {**contract, "archived": {"at": "2026-10-21T00:00:00+00:00"}}
         self.assertEqual("done", routing.next_step(self.fr, archived)[0])
         self.put_svg()

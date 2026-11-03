@@ -19,7 +19,7 @@ from materials import importer, meeting, registry
 
 from flow.state import (
     CARRY_ALL, CORE_DIR, FlowError, STORY_CONTRACT, blueprint_exists, closed, last_gate, registration_drift,
-    round_gates, scope_settled, settled_this_round, stage_of)
+    round_gates, scope_settled, settled_this_round, stage_of, system_requirement)
 from flow.inputs import (
     GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
 from flow.meetings import meeting_basis, pending_asks, refresh_problems
@@ -412,11 +412,14 @@ def next_step(feature_root: Path, contract: dict | None,
                 + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
                 + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
+        # 交付选择按这张单的真实来源给：挂在需求系统上的单能送审，本地需求没有系统可送
+        choices = ("（本单挂在需求系统上：送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进）"
+                   if system_requirement(feature_root.name)
+                   else "（本单是本地需求：完整设计交接 / 实现方案 / 完整实现 / 暂不推进）")
         return ("run_delivery_gate",
                 "Story 已按当前蓝图写成、经独立审查并登记。按 `phases/design.md`「五、独立审查、登记与交付」走完："
                 "`story-build check --deliver` 交付门；通过后已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择"
-                "（送审 / 完整设计交接 / 实现方案 / 完整实现 / 暂不推进；本地单没有送审）"
-                + closed_tail(feature_root, contract, manifest))
+                + choices + closed_tail(feature_root, contract, manifest))
     if closed(feature_root, contract):
         # 设计开始之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
         # 而设计与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
