@@ -453,10 +453,20 @@ class MarkdownKeepsItsPictures(unittest.TestCase):
 
     ADOPTED = """
     const [access, root, feature, ref] = process.argv.slice(1);
-    const { adoptedSources } = await import(access);
-    const blueprint = { blueprint_id: feature, discovery: { inputs: { current_scope_items: [] },
-      facts: [{ fact_id: 'fact-intro', provenance: { source_kind: 'requirement_material', source_ref: ref, evidence_strength: 'observed' } }] } };
-    const out = adoptedSources(root, blueprint, { requirement: feature });
+    const BLUEPRINT = JSON.stringify({ blueprint_id: feature, discovery: { inputs: { current_scope_items: [] },
+      facts: [{ fact_id: 'fact-intro', provenance: { source_kind: 'requirement_material', source_ref: ref, evidence_strength: 'observed' } }] } });
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const file = path.join(root, 'doc', 'features', feature, 'blueprint', 'component-blueprint.yaml');
+    if (fs.existsSync(file)) throw new Error(`${file} 已有蓝图，探针不覆盖`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, BLUEPRINT);
+    const { readBlueprint } = await import(access);
+    const read = readBlueprint(root, feature, 'draft', feature);
+    fs.rmSync(file);
+    if (!fs.readdirSync(path.dirname(file)).length) fs.rmdirSync(path.dirname(file));
+    if (read.status !== 'ok') throw new Error(`蓝图读不过：${JSON.stringify(read.issues)}`);
+    const out = read.source_index;
     process.stdout.write(JSON.stringify({ problems: out.problems, files: out.requirements[0].files.map(f => f.path) }));
     """
 

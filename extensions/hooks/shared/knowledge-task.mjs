@@ -20,7 +20,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { blueprintKnowledge, entryOf, featureKnowledge, knowledgeContext, rolesOf, unitContext, unitDuties }
   from './knowledge-application.mjs';
-import { adoptedSources, loadNative, readBlueprint, readFeature, readSourceFiles } from './framework-access.mjs';
+import { loadNative, readBlueprint, readFeature, readSourceFiles } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
 import { firstReadCarrier, nativeEightQuestions, questioningRound } from './questioning.mjs';
@@ -142,12 +142,12 @@ function answerRows(root, id) {
 }
 
 /**
- * 候选这一版实际依据的来源：需求条目的声明按原生规则核原字节，设计依据（事实、设计对象、合同的 provenance）
- * 命中本需求登记文件的按版本展开成完整的采用文件；冲突一方单列供核；当前有效人答独立必读。
- * 任一份读不到、摘要不符或引用不是登记文件，不交半份任务。
+ * 候选这一版实际依据的来源（读取结果的 `source_index`）：需求条目的声明按原生规则核原字节，设计依据（事实、设计对象、合同的 provenance）
+ * 命中本需求登记文件的按版本展开成完整的采用文件；契约段引的权威文件由原生逐段核过，整份交读；冲突一方单列供核；当前有效人答独立必读。
+ * 任一份读不到、摘要不符、引用不是登记文件或契约权威不完整，不交半份任务。
  */
-function sourceIndex(root, id, blueprint) {
-  const declared = adoptedSources(root, blueprint);
+function sourceIndex(root, id, bp) {
+  const declared = bp.source_index;
   const read = readSourceFiles(root, [...declared.sources, ...declared.projectFiles]);
   const packs = declared.requirements.map(r => ({ ...r, ...readSourceFiles(root, [...r.files, ...r.conflictFiles]) }));
   const problems = [...declared.problems, ...read.problems, ...packs.flatMap(p => p.problems.map(x => `需求 ${p.requirement}：${x}`))];
@@ -161,6 +161,8 @@ function sourceIndex(root, id, blueprint) {
       ...declared.support.map(s => `- ${s.where}：\`${s.path}\``)] : []),
     ...(declared.projectFiles.length ? ['设计依据与冲突依据引用的工程文件，逐份读：',
       ...declared.projectFiles.map(f => `- \`${f.path}\`（${f.use === 'conflict' ? '冲突依据' : '支撑依据'}，${f.where}），${f.sha256}`)] : []),
+    ...(declared.authorityFiles.length ? ['契约段引用的权威文件（接口转写或映射；指针与内容由原生逐段核对），逐份读：',
+      ...declared.authorityFiles.map(f => `- \`${f.path}\`，${f.sha256}，被 ${f.refs.length} 处引用（${f.refs.slice(0, 3).map(r => r.where).join('、')}${f.refs.length > 3 ? ' 等' : ''}）`)] : []),
     ...packs.flatMap(p => [`需求 \`${p.requirement}\` 采用的材料版本 ${p.versions.join('、') || '（没有）'}，共 ${p.files.length} 份，逐份读：`,
       ...p.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`),
       ...(p.conflictFiles.length ? ['冲突依据（蓝图登记的冲突一方，没被采用，核取舍）：', ...p.conflictFiles.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)] : [])]),
@@ -180,7 +182,7 @@ function blueprintTask(root, id, action) {
   const object = bp ? `蓝图 \`${id}\`（\`${bp.canonical_path}\`，revision ${bp.blueprint_ref.revision}，${bp.admitted ? '已准入' : '草稿，未准入'}）`
     : `蓝图 \`${id}\`（尚未建立）`;
   if (bp?.issues?.length) gaps.push(`蓝图原生校验有 ${bp.issues.length} 项：${bp.issues.slice(0, 5).map(i => i.id ?? i.code).join('、')}——设计作者处理。`);
-  const sources = bp ? sourceIndex(root, id, bp.blueprint)
+  const sources = bp ? sourceIndex(root, id, bp)
     : ['蓝图尚未建立，还没有候选采用的来源：需求的当前阅读稿（`RR/prd.md`、`SR/design.md` 等）与登记的材料版本见材料索引 `AR/story-src/materials.json`，从那里起手。', ...answerRows(root, id)];
   const checked = bp ? blueprintKnowledge(root, bp.blueprint) : null;
   const decided = checked ? judgedOf(checked) : [];
@@ -274,7 +276,7 @@ function verbatim(text) {
  * @returns {{rows: string[], gaps: string[]}}
  */
 function storyExpression(root, feature, judged) {
-  const src = unitSources(root, feature, judged.blueprint ?? null);
+  const src = unitSources(root, feature, judged.blueprint ? { blueprint: judged.blueprint, source_index: judged.source_index } : null);
   const gaps = src.problems.map(p => `关联 Story：${p}`);
   if (src.status !== 'ok' || !src.blueprint) return { rows: [], gaps };
   if (!src.stories.length) return { rows: ['本施工单位的输入不来自 Story（原生直接入口），没有可复用的已定表达。'], gaps };

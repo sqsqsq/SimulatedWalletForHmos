@@ -33,6 +33,7 @@ import { readerCheckIds, readerReviewTask } from '../../../../../hooks/shared/re
 import { readJson, readText, replaceFile } from './context.mjs';
 import { chapterSpan, fenceRanges, tableCells, zoneBlock, zoneSpan } from './document.mjs';
 import { TASK, materialKey, reviewObject, withTaskRow } from './review-object.mjs';
+import { designSource } from './design-source.mjs';
 import {
   CHECK_HEADER, CHECK_RESULTS, COVERAGE_KEY, COVERAGE_KEYS, FINDING_HEADER, REPORT_HEADINGS, SEVERITIES,
 } from './review-report-contract.mjs';
@@ -90,7 +91,7 @@ export function prepareReview(ctx, reportDirArg) {
   const task = path.join(ctx.featureRoot, ...TASK);
   // 任务是审查对象的一部分，所以不嵌入由对象算出的材料键：材料键经派审载体交给审查者。
   // 对象只组装一次：先用不含任务的那份生成任务，任务写好后补上任务那一行得到最终身份
-  const base = reviewObject(ctx.projectRoot, ctx.args.feature, { withTask: false });
+  const base = reviewObject(ctx.projectRoot, ctx.args.feature, { withTask: false, source: designSource(ctx) });
   const taskText = `${readerReviewTask(ctx.projectRoot, ctx.args.feature, base)}\n`;
   if (readText(task) !== taskText) fs.writeFileSync(task, taskText, 'utf-8');
   const object = withTaskRow(ctx.projectRoot, ctx.args.feature, base);
@@ -360,7 +361,7 @@ export function reviewResult(ctx) {
   if (!was) {
     return { result: 'report_missing', detail: '还没准备这一次的审查——先跑 `story-build review --action prepare`' };
   }
-  const base = reviewObject(ctx.projectRoot, ctx.args.feature, { withTask: false });
+  const base = reviewObject(ctx.projectRoot, ctx.args.feature, { withTask: false, source: designSource(ctx) });
   const object = withTaskRow(ctx.projectRoot, ctx.args.feature, base);
   if (object.problems.length) return { result: 'input_invalid', detail: `审查对象不全：${object.problems.join('；')}` };
   if (materialKey(ctx.projectRoot, object.rows) !== was.material_key) {
@@ -499,7 +500,7 @@ function coverageBasis(ctx, object) {
       missing: false, image: m.kind === 'image' });
   }
   const images = [...inputs.values()].filter(x => x.image).map(x => x.path);
-  if (images.length && !visuals.has(ctx)) visuals.set(ctx, storyReviewVisual(ctx.projectRoot, ctx.args.feature));
+  if (images.length && !visuals.has(ctx)) visuals.set(ctx, storyReviewVisual(ctx.projectRoot, ctx.args.feature, designSource(ctx).read));
   const v = images.length ? visuals.get(ctx) : null;
   return {
     inputs: [...inputs.values()], gaps: [], alias: object.alias,

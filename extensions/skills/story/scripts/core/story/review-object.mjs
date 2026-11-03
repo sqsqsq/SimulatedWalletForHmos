@@ -12,7 +12,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { adoptedSources, readBlueprint } from '../../../../../hooks/shared/framework-access.mjs';
+import { readBlueprint } from '../../../../../hooks/shared/framework-access.mjs';
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
 import { extensionRoot, featureRoot, readJsonOrNull } from '../../../../../hooks/shared/paths.mjs';
 import { materialSet } from './sources.mjs';
@@ -21,35 +21,23 @@ import { requirementContext } from './context.mjs';
 
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
-/** 蓝图契约各段 `source_ref` 实际引用的文件（去掉 `#` 之后的指针），按出现顺序去重。 */
-function contractSources(blueprint) {
-  const refs = [];
-  for (const c of blueprint?.contracts ?? []) {
-    const parts = [c.operation, c.request_dto, c.response_dto, ...(c.request_dto?.fields ?? []),
-      ...(c.response_dto?.fields ?? []), ...(c.mappings ?? []), c.errors, c.idempotency, c.nfr];
-    for (const part of parts) {
-      const file = String(part?.source_ref ?? '').split('#')[0];
-      if (file && !refs.includes(file)) refs.push(file);
-    }
-  }
-  return refs;
-}
-
 /** 审查任务在需求目录里的位置：它也是审查对象的一部分。 */
 export const TASK = ['AR', 'story-src', 'review', 'task.md'];
 
 /**
- * `withTask` 为假时不含审查任务本身（生成任务时列材料用）。
+ * `withTask` 为假时不含审查任务本身（生成任务时列材料用）。`source` 是同一命令已取得的设计来源（`designSource` 的
+ * `read` 与 `answers`），给了就用它，不再另读蓝图与人答。
  *
  * 每行带 `kind`（`text` / `image` / `metadata`）与 `required_read`：为假的行只核在场与来源摘要（二进制原件、只取图的原件、
  * 材料清单本身），仍按字节绑定、进材料键。同一内容的几个路径（图片对象的几个落点）
  * 记进 `alias`：路径 → 规范路径（第一个落点），覆盖、发现定位与图面延期按它归一；内容不同的不互相顶替。
  *
  * @returns {{rows: {path: string, role: 'object'|'source', label: string, kind: string, required_read: boolean}[],
- *   problems: string[], design: {admitted: boolean, issues: object[]}|null, alias: Map<string, string>}}
- *   路径相对工程根；缺了该有的材料写进 problems，不当作没有。`design` 是蓝图的原生准入结论与问题（草稿也审）。
+ *   problems: string[], design: {admitted: boolean, issues: object[]}|null, alias: Map<string, string>, read: object}}
+ *   路径相对工程根；缺了该有的材料写进 problems，不当作没有。`design` 是蓝图的原生准入结论与问题（草稿也审），
+ *   `read` 是这一次的原生读取结果，任务里的视觉裁定用同一份。
  */
-export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
+export function reviewObject(projectRoot, feature, { withTask = true, source = null } = {}) {
   const root = featureRoot(projectRoot, feature);
   const rel = abs => path.relative(projectRoot, abs).split(path.sep).join('/');
   const rows = [];
@@ -104,12 +92,12 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   // 设计采用的来源：与需求同根的蓝图，它的需求条目与设计依据引用的本需求材料版本逐份展开，字节按材料索引登记的摘要核
   const adopted = new Map();            // 采用文件（相对需求目录）→ {sha256, role}
   const conflicted = new Map();         // 冲突依据（没被采用的那一方）→ {sha256, role}
-  // 与设计来源同一组参数读：同一动作里只真读一次
-  const read = readBlueprint(projectRoot, feature, 'draft', feature);
+  // 与设计来源同一组参数读
+  const read = source?.read ?? readBlueprint(projectRoot, feature, 'draft', feature);
   if (read.status !== 'ok') {
     problems.push(`蓝图 ${feature} 读不到（原生读取 ${read.status}）`);
   } else {
-    const found = adoptedSources(projectRoot, read.blueprint, { requirement: feature });
+    const found = read.source_index;
     const own = found.requirements[0];
     problems.push(...found.problems);
     if (!own?.versions.length) problems.push('蓝图的需求条目与设计依据没有引用本需求登记的材料');
@@ -122,7 +110,7 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
     }
   }
   // 当前有效人答：独立必读，导出落后于流程记录时报缺口，不拿旧导出顶替
-  const answers = requiredAnswers(requirementContext(projectRoot, root));
+  const answers = source?.answers ?? requiredAnswers(requirementContext(projectRoot, root));
   problems.push(...answers.problems);
   // 材料清单登记的全部原件、阅读稿与图片：没采用的也在，审查要核作者为何排除它
   const set = materialSet({ srcDir: src });
@@ -214,8 +202,8 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
     add(path.join(projectRoot, ...read.canonical_path.split('/')), 'source',
       `蓝图 r${read.blueprint_ref.revision}（${read.admitted ? '已准入' : '草稿，未准入'}）`);
     add(path.join(projectRoot, ...read.projection.path.split('/')), 'source', '蓝图的原生评审投影（设计参考：完整技术契约在这里）');
-    for (const file of contractSources(read.blueprint)) {
-      add(path.join(projectRoot, ...file.split('/')), 'source', `蓝图契约引用的接口转写或映射 ${file}`);
+    for (const f of read.source_index.authorityFiles) {
+      add(path.join(projectRoot, ...f.path.split('/')), 'source', `蓝图契约段引用的接口转写或映射 ${f.path}（契约权威，原生逐段核对）`);
     }
   }
 
@@ -224,7 +212,7 @@ export function reviewObject(projectRoot, feature, { withTask = true } = {}) {
   for (const r of knowledgeRegistrations(projectRoot)) add(path.join(ext, ...r.file.split('/')), 'source', `激活知识 ${r.file}`);
   add(path.join(ext, 'skills', 'story', 'contracts', 'story-chapters.json'), 'source', '章节合同');
   add(path.join(ext, 'rules', 'story-reader-rules.yaml'), 'source', '审查判据');
-  const object = { rows, problems, alias,
+  const object = { rows, problems, alias, read,
     design: read.status === 'ok' ? { admitted: read.admitted === true, issues: read.issues ?? [] } : null };
   return withTask ? withTaskRow(projectRoot, feature, object) : object;
 }

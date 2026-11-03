@@ -380,7 +380,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   }
   // 有要核的图才做视觉裁定：原生纯函数按设计采用的来源与当前蓝图算，事实写在这里，结论只认这一份
   const pictures = images.rows?.length || object.rows.some(r => r.kind === 'image');
-  if (pictures) rows.push('', ...visualRows(storyReviewVisual(projectRoot, feature)));
+  if (pictures) rows.push('', ...visualRows(storyReviewVisual(projectRoot, feature, object.read)));
 
   rows.push(...reportFormat());
   return rows.join('\n');

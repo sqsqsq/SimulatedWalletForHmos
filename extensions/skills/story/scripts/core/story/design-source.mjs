@@ -9,7 +9,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { adoptedSources, readBlueprint, readSourceFiles, relatedStories, sourcesIdentity } from '../../../../../hooks/shared/framework-access.mjs';
+import { readBlueprint, readSourceFiles, relatedStories, sourcesIdentity } from '../../../../../hooks/shared/framework-access.mjs';
 import { knowledgeRegistrations } from '../../../../../hooks/shared/knowledge.mjs';
 import { extensionRoot } from '../../../../../hooks/shared/paths.mjs';
 import { ledgerDigestProblems, readJson, readText, requirementContext } from './context.mjs';
@@ -18,25 +18,17 @@ import { queryFlowStatus } from '../flow/client.mjs';
 const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
 const cache = new WeakMap();
-const materialCache = new Map();
+const materials = new WeakMap();
 
 /**
  * 材料链此刻的事实（`story_flow.py status --materials`）：原件导没导、材料变没变、必读人答同步没有。
- * 一次命令的上下文只问一次，起稿预检、设计来源与审查对象共用这一份。
+ * 一次命令的上下文只问一次，起稿预检、设计来源与审查对象共用这一份；写过材料或人答的下一条命令另建上下文、重新问。
  *
  * @returns {{data: object|null, error: string|null}}
  */
 export function flowMaterials(ctx) {
-  // 同一进程里同一需求的材料事实只问一次：流程契约与材料索引的状态没变就沿用（进程里写过它们会换状态、重新问）
-  const key = `${path.resolve(ctx.projectRoot)}\0${ctx.args.feature}`;
-  const stamp = [ctx.flowPath ?? path.join(ctx.featureRoot, 'AR', 'story-src', 'story-flow.json'),
-    path.join(ctx.featureRoot, 'AR', 'story-src', 'materials.json')]
-    .map((f) => { try { const s = fs.statSync(f); return `${s.size}:${s.mtimeMs}`; } catch { return '-'; } }).join('|');
-  const hit = materialCache.get(key);
-  if (hit?.stamp === stamp) return hit.value;
-  const value = queryFlowStatus(ctx.projectRoot, ctx.args.feature, { timeoutMs: 120000, materialsOnly: true });
-  materialCache.set(key, { stamp, value });
-  return value;
+  if (!materials.has(ctx)) materials.set(ctx, queryFlowStatus(ctx.projectRoot, ctx.args.feature, { timeoutMs: 120000, materialsOnly: true }));
+  return materials.get(ctx);
 }
 
 /**
@@ -57,18 +49,19 @@ export function requiredAnswers(ctx) {
 
 /**
  * @returns {{blueprint: object|null, ref: object|null, projection?: string, canonical?: string, admitted?: boolean,
- *   nativeIssues?: string[], adopted: object|null, problems: string[]}}
+ *   nativeIssues?: string[], adopted: object|null, problems: string[], read: object, answers: object}}
  *   `projection` 是原生评审投影、`canonical` 是蓝图本体的工程相对路径；`admitted` 与 `nativeIssues` 是原生读取的准入结论与问题；
- *   `adopted` 是蓝图采用的来源（`adoptedSources`），其中本需求的那一份在 `adopted.own`
+ *   `adopted` 是蓝图采用的来源（读取结果的 `source_index`），其中本需求的那一份在 `adopted.own`；
+ *   `read` 与 `answers` 是这一次的原生读取结果与必读人答，同一命令的审查对象直接用它们
  */
 export function designSource(ctx) {
   if (cache.has(ctx)) return cache.get(ctx);
   const problems = [];
   const id = ctx.args.feature;
-  const out = { blueprint: null, ref: null, adopted: null, problems };
   const read = fs.existsSync(path.join(ctx.featureRoot, 'blueprint', 'component-blueprint.yaml'))
     ? readBlueprint(ctx.projectRoot, id, 'draft', id) : { status: 'missing' };
   const answers = ctx.projectRoot ? requiredAnswers(ctx) : { files: [], problems: [] };
+  const out = { blueprint: null, ref: null, adopted: null, problems, read, answers };
   problems.push(...answers.problems);
   if (read.status === 'missing') {
     problems.push(`蓝图 ${id} 还没建立——成文按与需求同根的蓝图写，先在 component-design 里按材料索引登记的版本完成设计`);
@@ -83,7 +76,7 @@ export function designSource(ctx) {
     problems.push(`蓝图 ${id} 的评审投影 ${read.projection?.path}`
       + `${read.projection?.status === 'missing' ? '还没生成' : '与当前 revision 对不上'}——由设计职责按原生 renderer 生成，Extension 不手改`);
   } else {
-    const adopted = adoptedSources(ctx.projectRoot, read.blueprint, { requirement: id });
+    const adopted = read.source_index;
     out.blueprint = read.blueprint;
     out.ref = read.blueprint_ref;
     out.projection = read.projection.path;
@@ -121,10 +114,10 @@ function knowledgeDigest(ctx) {
   return sha256(JSON.stringify(rows));
 }
 
-/** 设计来源与必读人答的联合身份：需求条目声明、采用版本展开的文件、设计依据引用的工程文件与当前人答（`sourcesIdentity`）。 */
+/** 设计来源与必读人答的联合身份：需求条目声明、采用版本展开的文件、设计依据引用的工程文件、契约权威文件与当前人答（`sourcesIdentity`）。 */
 function sourcesOf(source) {
   const a = source.adopted;
-  return a ? sourcesIdentity([...a.sources, ...(a.own?.files ?? []), ...(a.projectFiles ?? []), ...a.answers]) : null;
+  return a ? sourcesIdentity([...a.sources, ...(a.own?.files ?? []), ...a.projectFiles, ...a.authorityFiles, ...a.answers]) : null;
 }
 
 /**
@@ -221,12 +214,12 @@ function storyCurrency(ctx) {
  * 施工单位这次能用的来源：蓝图消费的采用来源（按蓝图登记的摘要核过字节），加上当前有效的关联 Story。
  * 关联 Story 由原生来源链定位（`relatedStories`），当前性按 `storyCurrency`；不是当前的 Story 进 `excluded` 并带原因。
  *
- * @param {object|null} blueprint 本命令已读到的蓝图，给了就不再读
+ * @param {{blueprint: object, source_index: object}|null} known 本命令已读到的蓝图与它的来源索引，给了就不再读
  * @returns {{status: string, documents: Map<string,string>, excluded: Map<string,string>, stories: object[],
  *   problems: string[], blueprint?: object}}
  */
-export function unitSources(projectRoot, feature, blueprint = null) {
-  const related = relatedStories(projectRoot, feature, blueprint);
+export function unitSources(projectRoot, feature, known = null) {
+  const related = relatedStories(projectRoot, feature, known);
   const out = { status: related.status, documents: new Map(), excluded: new Map(), stories: [], problems: [...related.problems],
     blueprint: related.blueprint };
   const read = readSourceFiles(projectRoot, related.sources);

@@ -78,9 +78,9 @@ const STRENGTH = { unknown: 0, inferred: 1, observed: 2, authoritative: 3 };
  * 这一版蓝图采用了这个需求的来源没有：需求条目或设计依据至少引了一份本需求登记的材料，引用落在需求目录里的都是登记文件，
  * 声明来源的原字节与声明摘要一致、采用版本的文件与登记摘要一致，条目声明的证据强度不高于来源能证明的。
  * 支撑材料不必成为需求条目；需求内容是否被设计落实、没引的材料是不是漏了，由独立质询与审查判断。
+ * `adopted` 是同一次读取得到的来源索引（`source_index`）。
  */
-function scopeConsumption(projectRoot, blueprint, requirement) {
-  const adopted = adoptedSources(projectRoot, blueprint, { requirement });
+function scopeConsumption(projectRoot, adopted, requirement) {
   const issues = adopted.problems.map(message => ({ code: 'scope_source_invalid', message }));
   issues.push(...readSourceFiles(projectRoot, adopted.sources).problems.map(message => ({ code: 'scope_source_unreadable', message })));
   const own = adopted.requirements[0];
@@ -118,57 +118,24 @@ export function hostReviewer(projectRoot) {
 }
 
 /**
- * 同一进程里同一次读取只真做一次：按参数与输入文件的状态（蓝图目录逐个文件、材料索引）记下结果，状态没变就给一份副本，
- * 进程里写过它们状态就变、重新读取。只在内存，进程结束即无；返回副本，调用方改了也不影响别处。
- */
-const readMemo = new Map();
-
-function inputsStamp(projectRoot, requirement) {
-  const native = loadNative(projectRoot);
-  const dir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
-  const root = path.join(native.root, ...String(dir).split(/[\\/]/).filter(Boolean), String(requirement));
-  const files = [];
-  const walk = (d) => {
-    let entries = [];
-    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) (e.isDirectory() ? walk(path.join(d, e.name)) : files.push(path.join(d, e.name)));
-  };
-  walk(path.join(root, 'blueprint'));
-  files.push(path.join(root, 'AR', 'story-src', 'materials.json'));
-  return files.sort().map((f) => {
-    try { const s = fs.statSync(f); return `${f}:${s.size}:${s.mtimeMs}`; } catch { return `${f}:-`; }
-  }).join('|');
-}
-
-function memoized(key, stamp, read) {
-  const hit = readMemo.get(key);
-  if (hit && hit.stamp === stamp) return structuredClone(hit.value);
-  const value = read();
-  readMemo.set(key, { stamp, value });
-  return structuredClone(value);
-}
-
-/**
- * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。
- * 前后两次读到的字节不同（期间被改写）报 stale，不消费混合对象。
- * 给了需求 id 时一并回答 `consumption`：这一版蓝图的需求条目与设计依据引用了这个需求登记的材料没有。
+ * 读蓝图：draft 可返回未准入草稿与原生 issues，delivery 要求已准入。每次调用都按此刻的字节读，同一命令里的读者共用这一份结果。
+ * 前后两次读到的蓝图或契约权威文件字节不同（期间被改写）报 stale，不消费混合对象。
+ * `source_index` 是这一版蓝图实际依据的来源（`sourcesOf`，契约权威取这次原生完整检查的结论）；
+ * 给了需求 id 时按它认采用版本，并一并回答 `consumption`：这一版蓝图的需求条目与设计依据引用了这个需求登记的材料没有。
  * 已准入时列出活动施工单位 `units`（原生枚举、去掉已被取代的）：身份、Feature 标识与原生目录（工程相对）；
  * 给了 `reportPhases` 时每个单位另带 `phase_reports: [{phase, dir}|{phase, error}]`（phaseReportsDir 的原生结果）。
  */
 export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', consume = null, reportPhases = null) {
-  return memoized(JSON.stringify(['blueprint', path.resolve(projectRoot), blueprintId, purpose, consume, reportPhases]),
-    inputsStamp(projectRoot, blueprintId), () => readBlueprintNow(projectRoot, blueprintId, purpose, consume, reportPhases));
-}
-
-function readBlueprintNow(projectRoot, blueprintId, purpose, consume, reportPhases) {
   const native = loadNative(projectRoot);
   const paths = native.module('scripts/utils/component-blueprint-path.ts');
   const check = native.module('scripts/check-component-blueprint.ts');
   const prep = native.module('scripts/utils/change-unit-design-preparation.ts');
   let first;
   let checked;
+  let bytes;
   try {
     first = paths.loadCanonicalBlueprint(native.root, blueprintId);
+    bytes = authorityBytes(native, first.blueprint);
     checked = check.checkCanonicalComponentBlueprint(native.root, blueprintId);
   } catch (e) {
     return failure(e?.code === 'component_blueprint_missing' ? 'missing' : 'invalid', e);
@@ -186,11 +153,17 @@ function readBlueprintNow(projectRoot, blueprintId, purpose, consume, reportPhas
   if (last.artifactSha256 !== first.artifactSha256) {
     return { status: 'stale', issues: [{ code: 'blueprint_changed_while_reading', message: '读取期间蓝图被改写，重新读取' }] };
   }
+  if (!sameBytes(bytes, authorityBytes(native, last.blueprint))) {
+    return { status: 'stale', issues: [{ code: 'contract_authority_changed_while_reading', message: '读取期间契约权威文件被改写，重新读取' }] };
+  }
+  const requirement = consume ?? blueprintId;
+  const sourceIndex = sourcesOf(native, checked.blueprint, requirement, { issues: checked.issues ?? [], bytes });
   const out = {
     status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
     blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
     projection: readProjection(native, checked, blueprintId), units: admitted ? activeUnits(native, projectRoot, blueprintId, reportPhases) : [],
-    ...(consume ? { consumption: scopeConsumption(projectRoot, checked.blueprint, consume) } : {}),
+    source_index: sourceIndex,
+    ...(consume ? { consumption: scopeConsumption(projectRoot, sourceIndex, consume) } : {}),
   };
   if (purpose === 'delivery' && !admitted) out.status = 'not_admitted';
   return out;
@@ -388,16 +361,16 @@ function currentDisposition(projectRoot, feature, chain) {
  *   能力取原生当前 adapter 的图像输入解析与 profile 的 OCR 就绪，审查者与作者同一执行能力（`reviewVision = hasVision`）。
  * - `deferral` 只在明确看不了图、原生 effective 是 semantic_layout、strictness 是 best_effort 且 defer=false 时为真：
  *   这时登记图片的图面未核可以按能力缺口记 WARN；其余情况看不了图就是没读完。
- * 只读，不调模型、不探测、不写裁定文件。
+ * 只读，不调模型、不探测、不写裁定文件。`read` 是本命令已有的同根蓝图读取结果，给了就不再读。
  */
-export function storyReviewVisual(projectRoot, feature) {
+export function storyReviewVisual(projectRoot, feature, read = null) {
   const native = loadNative(projectRoot);
   const id = featureIdentity(projectRoot, feature);
   if (id.status !== 'ok' || !id.dir) return { status: 'invalid', issues: id.issues ?? [] };
   const blueprintId = feature;
-  const read = readBlueprint(projectRoot, blueprintId, 'draft');
+  read ??= readBlueprint(projectRoot, blueprintId, 'draft');
   if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [] };
-  const adopted = adoptedSources(projectRoot, read.blueprint, { requirement: feature });
+  const adopted = read.source_index;
   const own = adopted.requirements[0];
   if (adopted.problems.length) return { status: 'invalid', issues: adopted.problems.map(message => ({ code: 'adopted_source_invalid', message })) };
   if (!own?.versions.length) {
@@ -410,7 +383,7 @@ ${Buffer.from(f.bytes).toString('utf8')}`);
   if (!files.files.some(f => f.role === 'text')) {
     return { status: 'invalid', issues: [{ code: 'requirement_text_missing', message: '采用的来源里没有需求阅读原文：来源不足，视觉裁定不做' }] };
   }
-  const sourcesSha = sourcesIdentity([...adopted.sources, ...own.files, ...adopted.projectFiles, ...own.answers]);
+  const sourcesSha = sourcesIdentity([...adopted.sources, ...own.files, ...adopted.projectFiles, ...adopted.authorityFiles, ...own.answers]);
   const ref = read.blueprint_ref;
   const executionIdentity = `story:${feature}:${blueprintId}:${ref.revision}:${ref.artifact_sha256}`;
   const cfg = native.module('config.ts').loadFrameworkConfig(native.root);
@@ -513,8 +486,8 @@ function localTargets(text, fromDir) {
   return out;
 }
 
-/** 来源引用连同它在蓝图里的位置：provenance 取 source_ref（原生 validateOwnedCollections 覆盖的各集合，含合同对象自身）；
- * 合同各段直接带 source_ref。 */
+/** 来源引用连同它在蓝图里的位置：provenance 取 source_ref（原生 validateOwnedCollections 覆盖的各集合，含合同对象自身）。
+ * 合同各段的 source_ref 是契约权威，见 `authorityRefs`。 */
 function refsOf(blueprint) {
   const support = [];
   const conflicts = [];
@@ -533,16 +506,7 @@ function refsOf(blueprint) {
     (blueprint?.decisions_and_gaps?.[key] ?? []).forEach((d, i) =>
       prov(support, d, `decisions_and_gaps.${key}[${d?.decision_id ?? d?.gap_id ?? i}]`));
   }
-  (blueprint?.contracts ?? []).forEach((c, i) => {
-    const id = c?.contract_id ?? i;
-    prov(support, c, `contracts[${id}]`);
-    const parts = [['operation', c?.operation], ['request_dto', c?.request_dto], ['response_dto', c?.response_dto],
-      ...(c?.request_dto?.fields ?? []).map((f, j) => [`request_dto.fields[${j}]`, f]),
-      ...(c?.response_dto?.fields ?? []).map((f, j) => [`response_dto.fields[${j}]`, f]),
-      ...(c?.mappings ?? []).map((m, j) => [`mappings[${j}]`, m]),
-      ['errors', c?.errors], ['idempotency', c?.idempotency], ['nfr', c?.nfr]];
-    for (const [at, part] of parts) put(support, part?.source_ref, `contracts[${id}].${at}`);
-  });
+  (blueprint?.contracts ?? []).forEach((c, i) => prov(support, c, `contracts[${c?.contract_id ?? i}]`));
   (blueprint?.discovery?.conflicts ?? []).forEach((c, i) => {
     prov(conflicts, c, `discovery.conflicts[${i}]`);
     (c?.sources ?? []).forEach((s, j) => (typeof s === 'string'
@@ -552,14 +516,87 @@ function refsOf(blueprint) {
   return { support, conflicts };
 }
 
+/** 契约各段的权威引用，位置与原生 `validateBlueprintContracts` 逐段核对的相同：operation、DTO 及字段、mappings、errors、idempotency、nfr。 */
+function authorityRefs(blueprint) {
+  const out = [];
+  (blueprint?.contracts ?? []).forEach((c, i) => {
+    const id = c?.contract_id ?? i;
+    const parts = [['operation', c?.operation], ['request_dto', c?.request_dto], ['response_dto', c?.response_dto],
+      ...(c?.request_dto?.fields ?? []).map((f, j) => [`request_dto.fields[${j}]`, f]),
+      ...(c?.response_dto?.fields ?? []).map((f, j) => [`response_dto.fields[${j}]`, f]),
+      ...(c?.mappings ?? []).map((m, j) => [`mappings[${j}]`, m]),
+      ['errors', c?.errors], ['idempotency', c?.idempotency], ['nfr', c?.nfr]];
+    for (const [at, part] of parts) {
+      if (typeof part?.source_ref === 'string' && part.source_ref.trim()) out.push({ ref: part.source_ref.trim(), where: `contracts[${id}].${at}` });
+    }
+  });
+  return out;
+}
+
+/** 无片段的规范工程相对路径；越出工程根或不是相对路径为 null（原生按自己的规则报）。 */
+function projectFile(native, ref) {
+  try {
+    return path.posix.normalize(native.module('scripts/utils/project-relative-path.ts')
+      .validateProjectRelativePath(native.root, String(ref ?? '').split('#')[0], 'source_ref'));
+  } catch {
+    return null;
+  }
+}
+
+/** 契约权威文件此刻的原始字节：文件 → 字节（读不到为 null）。原生核对前后各取一次，判读取期间有没有被改写。 */
+function authorityBytes(native, blueprint) {
+  const out = new Map();
+  for (const { ref } of authorityRefs(blueprint)) {
+    const file = projectFile(native, ref);
+    if (!file || out.has(file)) continue;
+    try { out.set(file, fs.readFileSync(path.join(native.root, ...file.split('/')))); } catch { out.set(file, null); }
+  }
+  return out;
+}
+
+const sameBytes = (a, b) => a.size === b.size && [...a].every(([f, x]) => {
+  const y = b.get(f);
+  return x === null ? y === null : Boolean(y) && x.equals(y);
+});
+
+/**
+ * 契约权威：原生已逐段核过的引用与它们所在的文件。原生对契约权威没有报问题时，每份文件给出这次核对时的原字节摘要；
+ * 有问题时整组不完整（`sha256` 为 null），原生问题原样保留，不按段落拆开放行。
+ */
+function authorityOf(native, blueprint, checked) {
+  const refs = authorityRefs(blueprint);
+  const issues = checked.issues.filter(i => String(i?.id ?? '').startsWith('blueprint_contract_authority_'))
+    .map(i => ({ id: i.id, path: i.path, message: i.message }));
+  const exact = new Map();
+  const files = new Map();
+  for (const r of refs) {
+    const file = projectFile(native, r.ref);
+    if (!file) continue;
+    exact.set(r.ref, file);
+    if (!files.has(file)) files.set(file, { path: file, sha256: null, role: 'contract_authority', refs: [] });
+    files.get(file).refs.push({ ref: r.ref, where: r.where });
+  }
+  if (!issues.length) {
+    for (const f of files.values()) {
+      const bytes = checked.bytes.get(f.path);
+      if (bytes) f.sha256 = `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+    }
+  }
+  return { exact, files, issues };
+}
+
 /**
  * 蓝图实际依据的来源与本需求的采用版本 —— 真实需求条目、支撑依据、冲突核源与必读人答各自分开，不保存第二份采用清单。
  *
  * - `sources`：原生 `currentScopeItems` 的声明（原引用连同片段、声明摘要、条目身份与 provenance）——真实需求、目标、约束与风险；
- * - `support`：蓝图根、`discovery.facts`、设计视图节点与运行数据流、关系、决定与缺口的 provenance，以及合同各段的 `source_ref`；
+ * - `support`：蓝图根、`discovery.facts`、设计视图节点与运行数据流、关系、决定与缺口、合同对象自身的 provenance；
  *   说明文字、reader_guide 指针、示例与被否方案里的同名字段不算；
  * - `conflicts`：`discovery.conflicts` 引的来源，供核源，不算已采用；
- * - 需求 `requirement`（默认蓝图标识，蓝图与需求同根）的材料索引 `files` 视图登记的稳定文件：被上面三类引用命中的来源版本
+ * - `authorityFiles`：合同各段 `source_ref` 指向的契约权威文件（`{path, sha256, role: 'contract_authority', refs: [{ref, where}]}`），
+ *   JSON Pointer 与内容由原生契约校验核对，这里不再按材料或文字片段核；原生对契约权威报了问题时整组不完整，问题原样在
+ *   `authorityIssues`（`{id, path, message}`）与 `problems` 里，`sha256` 为 null。依据或冲突引用与某段的引用完全相同时就是这一段权威，
+ *   记进那份文件的 `refs`；落在权威文件里、却不是原生核过的那一段的引用逐条报出；
+ * - 需求 `requirement`（默认蓝图标识，蓝图与需求同根）的材料索引 `files` 视图登记的稳定文件：被需求条目、依据与冲突引用命中的来源版本
  *   就是采用的版本，按版本展开成全部文件（原件、阅读稿、图、会议的 raw/纠偏/阅读件），聚合稿按它那一版固定的组成展开，
  *   Markdown 阅读稿引的登记文件一并加入；图是资源叶子，只取被引的那一份。引用会换版的当前位置（带 `reference` 的别名行）
  *   不算依据，报出它此刻对应的稳定文件；几个版本共用的留存按 provenance 的 `source_revision` 认版本，认不出就报候选；
@@ -569,28 +606,19 @@ function refsOf(blueprint) {
  * 支撑与冲突引用带片段时按原生来源解析核片段。引用落在需求目录里、却不是登记文件的（含冲突依据），逐条报出，不静默过滤。
  * 采用版本的 Markdown 阅读稿链到的登记文件，连同它所在的整个版本一起加入，沿着读下去它的图也在。
  *
- * @returns {{status: string, sources: object[], support: object[], conflicts: object[], projectFiles: object[],
+ * 只在 `readBlueprint` 里随原生完整检查算一次，读者都用读取结果的 `source_index`，不另核一遍。
+ *
+ * @returns {{status: 'ok'|'incomplete', sources: object[], support: object[], conflicts: object[], projectFiles: object[],
+ *   authorityFiles: object[], authorityIssues: object[],
  *   requirements: {requirement: string, root: string, versions: string[], files: object[], answers: object[], conflictFiles: object[]}[],
  *   problems: string[]}}
  */
-export function adoptedSources(projectRoot, blueprint, { requirement = blueprint?.blueprint_id } = {}) {
-  const key = JSON.stringify(['adopted', path.resolve(projectRoot), requirement, crypto.createHash('sha256').update(JSON.stringify(blueprint ?? null)).digest('hex')]);
-  return memoized(key, inputsStamp(projectRoot, requirement), () => adoptedSourcesNow(projectRoot, blueprint, requirement));
-}
-
-function adoptedSourcesNow(projectRoot, blueprint, requirement) {
-  const native = loadNative(projectRoot);
-  const out = { status: 'ok', sources: [], support: [], conflicts: [], projectFiles: [], requirements: [], problems: [] };
+function sourcesOf(native, blueprint, requirement, checked) {
+  const out = { status: 'ok', sources: [], support: [], conflicts: [], projectFiles: [], authorityFiles: [], authorityIssues: [],
+    requirements: [], problems: [] };
   const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
-  const guard = native.module('scripts/utils/project-relative-path.ts');
   const root = `${path.posix.normalize(featuresDir)}/${requirement}`;
-  const fileAt = (ref) => {
-    try {
-      return path.posix.normalize(guard.validateProjectRelativePath(native.root, String(ref ?? '').split('#')[0], 'source_ref'));
-    } catch {
-      return null;
-    }
-  };
+  const fileAt = ref => projectFile(native, ref);
   for (const item of native.module('scripts/utils/blueprint-requirement-traceability.ts').currentScopeItems(blueprint)) {
     if (!fileAt(item.source_ref)) {
       out.problems.push(`蓝图条目 ${item.item_id} 的来源 ${item.source_ref} 不是工程内路径——设计负责方处理`);
@@ -599,9 +627,33 @@ function adoptedSourcesNow(projectRoot, blueprint, requirement) {
     out.sources.push({ path: String(item.source_ref), sha256: String(item.source_sha256 ?? ''), item_id: String(item.item_id),
       kind: item.kind, provenance: item.provenance ?? null, where: `discovery.inputs.current_scope_items[${item.item_id}]` });
   }
-  const { support, conflicts } = refsOf(blueprint);
+  const authority = authorityOf(native, blueprint, checked);
+  if (authority.issues.length) {
+    out.status = 'incomplete';
+    out.authorityIssues = authority.issues;
+    out.problems.push(...authority.issues.map(i => `契约权威 ${i.path}：${i.message}——设计负责方按原生问题修正契约段或权威文件`));
+  }
+  // 依据与冲突引用里的契约权威：与某段引用完全相同的就是那一段，同文件的其它位置原生没有核过
+  const notAuthority = (r) => {
+    const exact = authority.exact.get(r.path);
+    if (exact) {
+      authority.files.get(exact).refs.push({ ref: r.path, where: r.where });
+      return false;
+    }
+    const file = fileAt(r.path);
+    if (file && authority.files.has(file)) {
+      out.problems.push(`${r.where} 引用的 ${r.path} 落在契约权威文件 ${file}，不是 contracts 里原生核过的那一段：`
+        + '权威文件的内容只经契约段的 source_ref 由原生核对——设计负责方处理');
+      return false;
+    }
+    return true;
+  };
+  const refs = refsOf(blueprint);
+  const support = refs.support.filter(notAuthority);
+  const conflicts = refs.conflicts.filter(notAuthority);
   out.support = support;
   out.conflicts = conflicts;
+  out.authorityFiles = [...authority.files.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const inRoot = (file) => file && file.startsWith(`${root}/`);
   // 支撑与冲突引用按原生来源解析：片段要在文件里；需求目录以外的现存工程文件读出摘要，进来源身份
   const resolve = native.module('scripts/utils/blueprint-requirement-traceability.ts').resolveCurrentScopeSource;
@@ -784,23 +836,21 @@ export function readSourceFiles(projectRoot, entries) {
 }
 
 /**
- * 施工单位关联的需求：先按原生身份认出 CU 与它的蓝图，再取 adoptedSources。
+ * 施工单位关联的需求：先按原生身份认出 CU 与它的蓝图，再取蓝图读取结果的 `source_index`。
  * Story 现在是否当前，由 Story 侧按成文登记判（`design-source.mjs` 的 `storyCurrency`）。
  *
- * @param {object|null} blueprint 调用方已读到的蓝图，给了就不再读
+ * @param {{blueprint: object, source_index: object}|null} known 本命令已读到的蓝图与它的来源索引（`readBlueprint` 的同名字段），给了就不再读
  */
-export function relatedStories(projectRoot, feature, blueprint = null) {
+export function relatedStories(projectRoot, feature, known = null) {
   const out = { status: 'ok', sources: [], requirements: [], problems: [] };
   const who = featureIdentity(projectRoot, feature);
   if (who.status !== 'ok') return { ...out, status: who.status, problems: (who.issues ?? []).map(i => i.message) };
   if (who.kind !== 'cu') return out;
-  let bp = blueprint;
-  if (!bp) {
-    const read = readBlueprint(projectRoot, who.blueprintId, 'draft');
-    if (read.status !== 'ok') return { ...out, status: read.status, problems: [`蓝图 ${who.blueprintId} 原生读取 ${read.status}——设计负责方处理`] };
-    bp = read.blueprint;
+  const read = known ?? readBlueprint(projectRoot, who.blueprintId, 'draft');
+  if (read.status && read.status !== 'ok') {
+    return { ...out, status: read.status, problems: [`蓝图 ${who.blueprintId} 原生读取 ${read.status}——设计负责方处理`] };
   }
-  return { ...adoptedSources(projectRoot, bp), blueprint: bp };
+  return { ...read.source_index, blueprint: read.blueprint };
 }
 
 /**

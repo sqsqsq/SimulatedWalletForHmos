@@ -262,7 +262,7 @@ export function featureKnowledge(projectRoot, feature, contracts = null) {
   const scope = unitScope(loadNative(projectRoot).module('scripts/utils/blueprint-addressing.ts'), read.blueprint, who.design_refs,
     ref => problems.push(`${label}：施工单位的设计引用 ${JSON.stringify(ref.target)} 在蓝图里解析不了——交设计负责方`));
   const checked = blueprintKnowledge(projectRoot, read.blueprint);
-  return { ...checked, problems: [...problems, ...checked.problems], scope, label, blueprint: read.blueprint };
+  return { ...checked, problems: [...problems, ...checked.problems], scope, label, blueprint: read.blueprint, source_index: read.source_index };
 }
 
 const NOTHING = { has: () => false, refs: () => [] };

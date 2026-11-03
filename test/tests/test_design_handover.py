@@ -625,17 +625,28 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         self.assertIn("缺 question", str(got.exception))
 
 
-class TheSupportSourcesAreCollectedNatively(HandoverCase):
-    """设计依据按原生出处收全：合同对象自身的 provenance 也算；引用带的片段按原生来源解析核；需求目录里没登记的冲突依据报出；
-    需求目录以外的工程文件读出摘要进来源身份。用一个蓝图对象直接调共享收集，作者、Story 与审查都消费这一份。"""
+class SourceIndexCase(HandoverCase):
+    """把一个蓝图对象放到同根蓝图的位置，经原生读取取它的来源索引（作者、Story 与审查都消费这一份）。"""
 
     PROBE = """
-    const [access, root, feature, bp] = process.argv.slice(1);
-    const { adoptedSources, sourcesIdentity } = await import(access);
-    const out = adoptedSources(root, JSON.parse(bp), { requirement: feature });
+    const [access, root, feature, BLUEPRINT] = process.argv.slice(1);
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const file = path.join(root, 'doc', 'features', feature, 'blueprint', 'component-blueprint.yaml');
+    if (fs.existsSync(file)) throw new Error(`${file} 已有蓝图，探针不覆盖`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, BLUEPRINT);
+    const { readBlueprint } = await import(access);
+    const read = readBlueprint(root, feature, 'draft', feature);
+    fs.rmSync(file);
+    if (!fs.readdirSync(path.dirname(file)).length) fs.rmdirSync(path.dirname(file));
+    if (read.status !== 'ok') throw new Error(`蓝图读不过：${JSON.stringify(read.issues)}`);
+    const out = read.source_index;
+    const { sourcesIdentity } = await import(access);
     const own = out.requirements[0] ?? { versions: [], files: [] };
     process.stdout.write(JSON.stringify({ problems: out.problems, versions: own.versions,
-      projectFiles: out.projectFiles, identity: sourcesIdentity([...out.sources, ...own.files, ...out.projectFiles]) }));
+      projectFiles: out.projectFiles, authorityFiles: out.authorityFiles, authorityIssues: out.authorityIssues, status: out.status,
+      identity: sourcesIdentity([...out.sources, ...own.files, ...out.projectFiles, ...out.authorityFiles]) }));
     """
 
     def collect(self, blueprint: dict) -> dict:
@@ -657,6 +668,11 @@ class TheSupportSourcesAreCollectedNatively(HandoverCase):
         self.ready()
         self.base = f"doc/features/{self.feature}"
         self.sr = f"{self.base}/{next(s for s in registry.read(self.feature_root)['sources'] if s['source_id'] == 'local:SR/design.md')['versions'][-1]['original']['path']}"
+
+
+class TheSupportSourcesAreCollectedNatively(SourceIndexCase):
+    """设计依据按原生出处收全：合同对象自身的 provenance 也算；引用带的片段按原生来源解析核；需求目录里没登记的冲突依据报出；
+    需求目录以外的工程文件读出摘要进来源身份。"""
 
     def test_a_contract_level_reference_adopts_its_version(self) -> None:
         got = self.collect(self.blueprint(contract_ref=f"{self.sr}#分工"))
@@ -691,15 +707,107 @@ class TheSupportSourcesAreCollectedNatively(HandoverCase):
         self.assertEqual(([], []), (got["problems"], got["projectFiles"]))
 
 
+class ContractSectionsReadTheirAuthority(SourceIndexCase):
+    """契约段的 source_ref 是设计转写出的接口契约（JSON Pointer 指到段），放在需求自己的 blueprint/ 下：
+    指针与内容由原生契约校验核，不按材料登记、不按文字片段核；依据引用与某段完全相同就是这一段。坏指针、内容不符照原生报，
+    同文件里原生没核过的位置单独报出；权威文件的字节进来源身份。"""
+
+    AUTHORITY = "operations:\n  sign:\n    operation:\n      operation_id: sign\n      direction: outbound\n      version: v1\n"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.file = f"{self.base}/blueprint/contracts/sign.yaml"
+        self.authority = self.root / Path(*self.file.split("/"))
+        self.authority.parent.mkdir(parents=True, exist_ok=True)
+        self.authority.write_bytes(self.AUTHORITY.encode("utf-8"))
+
+    def with_contract(self, pointer: str, *, version: str = "v1", fact_ref: str | None = None) -> dict:
+        bp = self.blueprint(contract_ref=f"{self.sr}#分工")
+        bp["contracts"][0]["operation"] = {"operation_id": "sign", "direction": "outbound", "version": version,
+                                           "source_ref": f"{self.file}#{pointer}", "verification_refs": ["ut:sign"]}
+        if fact_ref:
+            bp["discovery"]["facts"] = [{"fact_id": "f-op", "provenance": {"source_kind": "system_design", "source_ref": fact_ref}}]
+        return bp
+
+    def test_a_section_pointer_and_an_equal_design_reference_are_the_authority(self) -> None:
+        ref = f"{self.file}#/operations/sign/operation"
+        got = self.collect(self.with_contract("/operations/sign/operation", fact_ref=ref))
+        self.assertEqual(([], "ok", []), (got["problems"], got["status"], got["authorityIssues"]))
+        [row] = got["authorityFiles"]
+        self.assertEqual((self.file, f"sha256:{hashlib.sha256(self.AUTHORITY.encode('utf-8')).hexdigest()}", "contract_authority"),
+                         (row["path"], row["sha256"], row["role"]))
+        self.assertEqual({"contracts[c-sign].operation", "discovery.facts[f-op]"}, {r["where"] for r in row["refs"]})
+        self.assertTrue(any(re.fullmatch(r"design(-[0-9a-f]{6})?-v1", v) for v in got["versions"]), "合同自身的原始出处没再采用")
+
+    def test_a_pointer_the_authority_does_not_have_is_the_native_finding(self) -> None:
+        got = self.collect(self.with_contract("/operations/refund/operation"))
+        self.assertEqual("incomplete", got["status"])
+        self.assertEqual(["blueprint_contract_authority_source_invalid"], [i["id"] for i in got["authorityIssues"]])
+        self.assertEqual([None], [f["sha256"] for f in got["authorityFiles"]], "坏的契约权威不能给出可复用的摘要")
+        self.assertTrue(any("契约权威" in p and "refund" in p for p in got["problems"]), got["problems"])
+
+    def test_content_that_differs_from_its_authority_is_the_native_finding(self) -> None:
+        got = self.collect(self.with_contract("/operations/sign/operation", version="v2"))
+        self.assertEqual(["blueprint_contract_authority_mismatch"], [i["id"] for i in got["authorityIssues"]])
+
+    def test_another_place_in_the_authority_file_is_named(self) -> None:
+        got = self.collect(self.with_contract("/operations/sign/operation", fact_ref=f"{self.file}#/operations"))
+        self.assertEqual("ok", got["status"])
+        [problem] = got["problems"]
+        self.assertIn("discovery.facts[f-op]", problem)
+        self.assertIn("原生核过", problem)
+
+    def test_the_authority_bytes_enter_the_identity(self) -> None:
+        bp = self.with_contract("/operations/sign/operation")
+        first = self.collect(bp)
+        self.authority.write_bytes(("# 签约接口\n" + self.AUTHORITY).encode("utf-8"))
+        again = self.collect(bp)
+        self.assertEqual(([], []), (first["problems"], again["problems"]))
+        self.assertNotEqual(first["identity"], again["identity"], "权威文件换了字节，来源身份没跟着变")
+
+    def test_a_read_after_an_edit_in_the_same_process_sees_the_new_bytes(self) -> None:
+        """同一进程里先读、改了权威文件再读：后一次按此刻的字节，不沿用前一次的结果。"""
+        probe = """
+        const [access, root, feature, file, bp, extra] = process.argv.slice(1);
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const canonical = path.join(root, 'doc', 'features', feature, 'blueprint', 'component-blueprint.yaml');
+        fs.writeFileSync(canonical, bp);
+        const { readBlueprint } = await import(access);
+        const sha = () => readBlueprint(root, feature, 'draft', feature).source_index.authorityFiles.map(f => f.sha256);
+        const before = sha();
+        fs.writeFileSync(path.join(root, ...file.split('/')), extra + fs.readFileSync(path.join(root, ...file.split('/')), 'utf8'));
+        process.stdout.write(JSON.stringify({ before, after: sha() }));
+        """
+        bp = json.dumps(self.with_contract("/operations/sign/operation"), ensure_ascii=False)
+        proc = subprocess.run(["node", "--input-type=module", "-e", probe, ACCESS.resolve().as_uri(), str(self.root), self.feature,
+                               self.file, bp, "# 签约接口\n"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        got = json.loads(proc.stdout)
+        self.assertEqual([f"sha256:{hashlib.sha256(self.AUTHORITY.encode('utf-8')).hexdigest()}"], got["before"])
+        self.assertEqual([f"sha256:{hashlib.sha256(('# 签约接口' + chr(10) + self.AUTHORITY).encode('utf-8')).hexdigest()}"], got["after"])
+
+
 class ACitedCurrentDraftStaysAtItsVersion(HandoverCase):
     """作者按当前阅读稿 `RR/prd.md#节` 写需求条目：补出的引用指当时那一版聚合稿的稳定副本与它固定的组成；
     之后一份原件换版，当前稿换成新的一版，旧条目与旧支撑引用仍读旧正文、展开旧组成，新条目指新的一版。
     设计引用当前位置不算依据，报出它此刻对应的稳定文件。"""
 
     PROBE = """
-    const [access, root, feature, bp] = process.argv.slice(1);
-    const { adoptedSources } = await import(access);
-    const out = adoptedSources(root, JSON.parse(bp), { requirement: feature });
+    const [access, root, feature, BLUEPRINT] = process.argv.slice(1);
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const file = path.join(root, 'doc', 'features', feature, 'blueprint', 'component-blueprint.yaml');
+    if (fs.existsSync(file)) throw new Error(`${file} 已有蓝图，探针不覆盖`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, BLUEPRINT);
+    const { readBlueprint } = await import(access);
+    const read = readBlueprint(root, feature, 'draft', feature);
+    fs.rmSync(file);
+    if (!fs.readdirSync(path.dirname(file)).length) fs.rmdirSync(path.dirname(file));
+    if (read.status !== 'ok') throw new Error(`蓝图读不过：${JSON.stringify(read.issues)}`);
+    const out = read.source_index;
     const own = out.requirements[0] ?? { versions: [], files: [] };
     process.stdout.write(JSON.stringify({ problems: out.problems, versions: own.versions, files: own.files.map(f => f.path) }));
     """
@@ -761,9 +869,19 @@ class DirectOriginalsAreCitedAtTheirVersions(HandoverCase):
     设计引用的图按用途归集：采用的图进采用，冲突依据直接引或经它的文稿链到的图进冲突核源，不凭空变成采用。"""
 
     PROBE = """
-    const [access, root, feature, bp] = process.argv.slice(1);
-    const { adoptedSources } = await import(access);
-    const out = adoptedSources(root, JSON.parse(bp), { requirement: feature });
+    const [access, root, feature, BLUEPRINT] = process.argv.slice(1);
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const file = path.join(root, 'doc', 'features', feature, 'blueprint', 'component-blueprint.yaml');
+    if (fs.existsSync(file)) throw new Error(`${file} 已有蓝图，探针不覆盖`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, BLUEPRINT);
+    const { readBlueprint } = await import(access);
+    const read = readBlueprint(root, feature, 'draft', feature);
+    fs.rmSync(file);
+    if (!fs.readdirSync(path.dirname(file)).length) fs.rmdirSync(path.dirname(file));
+    if (read.status !== 'ok') throw new Error(`蓝图读不过：${JSON.stringify(read.issues)}`);
+    const out = read.source_index;
     const own = out.requirements[0] ?? { files: [], conflictFiles: [] };
     process.stdout.write(JSON.stringify({ problems: out.problems, files: own.files.map(f => f.path),
       conflictFiles: own.conflictFiles.map(f => f.path) }));
