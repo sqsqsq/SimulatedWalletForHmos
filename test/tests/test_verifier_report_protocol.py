@@ -471,6 +471,9 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertIn(context["report_sha256"], self.context_text())
         self.assertNotIn(diagnosis["detail"].splitlines()[0], out["dispatch_text"], "诊断又进了首读载体")
         self.assertIn("context.md", out["dispatch_text"], "载体没列首读之后读的前轮上下文")
+        # 返修与首审是同一种交接：审查者只读、完整报告就是最终回复，由主执行者原样存到新位置
+        self.assertIn("只读，不写任何文件", out["dispatch_text"])
+        self.assertIn("作为这次的最终回复，主执行者把它原样存到", self.context_text(), "格式返修要审查者自己写盘，与只读回复矛盾")
         self.assertEqual("report_invalid", self.result()["result"], "接收之后诊断不见了")
         again = self.prepare()
         self.assertEqual(out["report_file"], again["report_file"], "同一次返修再准备，回复位置递增了")

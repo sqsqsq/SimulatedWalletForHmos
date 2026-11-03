@@ -493,14 +493,16 @@ python test/scripts/run_multi_case.py finalize `
 
 opencode 的 verifier 子代理定义物化在 `.opencode/agent/verifier.md`；dsh 的是 `.dsh/framework-verifier.patch.yml` 里名为 `verifier` 的只读工具实例，
 启动时经 `--patch` 装载（§2.1）。作者读到的调用指引统一指向宿主登记的专用 verifier 角色，通用研究/开发子 agent 不顶替（[维护操作§2](../doc/release/维护操作.md#2-framework-本地定制)）。
-报告由派它的 agent 原样写到 `summary.verifier_report`。两条命令都不启动真实 CLI：
+审查员入口分两种调用：阶段 request 照原生合同，自足只读审查任务（Story 派审载体、阅读图验收）照任务回复；两种都只读，
+派它的 agent 把完成回复原样存盘（阶段报告写到 `summary.verifier_report`，Story 报告写到派审载体给的回复位置）。两条命令都不启动真实 CLI：
 
 ```powershell
 python -m unittest discover -s test/tests -p "test_verifier_chain_in_workspace.py"
 npx ts-node scripts/check-adapter-catalog-consistency.ts --framework-root <仓根>\demo\framework   # 在 demo/framework/harness 下跑
 ```
 
-第一条核工作区带没带上子代理定义与作者入口、定义是不是当前协议、调用指引是否都指向专用角色；第二条用 `demo/framework/harness/node_modules/ts-node`。
+第一条核工作区带没带上子代理定义与作者入口、定义是不是当前协议、调用指引是否都指向专用角色，以及五个物化入口（Claude、Codeagent、Codex、OpenCode、dsh）
+都接两种调用、保持只读，Codeagent 与 Claude 同源、Codex 等于原生生成器按 Claude 源渲染的结果；第二条用 `demo/framework/harness/node_modules/ts-node`。
 
 ### 5.2 verifier smoke（真实 CLI，独立于 Story）
 

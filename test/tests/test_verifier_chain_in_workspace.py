@@ -286,8 +286,38 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
                        "本轮为产品失败诊断", "路径解析（BLOCKER）", "## 其它独立只读审查任务", "精简规则不省略它要求的明细"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, persona)
-        ending = stage.split("**回答的最后必须且只能出现一个终态块**", 1)[1].split("## 硬性规则", 1)[0]
+        ending = stage.split("**回答的最后必须且只能出现一个终态块**", 1)[1].split("## 其它独立只读审查任务", 1)[0]
         self.assertIn(ending, persona, "阶段报告合同与被测 Framework 的 verifier 不是同一版")
+
+    def test_every_declared_verifier_takes_both_kinds_of_read_only_task(self) -> None:
+        """五个物化的审查员入口都分两种调用：阶段 request 照原合同，自足只读审查任务（Story 派审载体）照任务回复；
+        都只读，回复由调用方存盘。Codeagent 与 Claude 同一份源，Codex 是原生生成器按 Claude 源渲染的结果。"""
+        source = (self.template / "framework/agents/claude/templates/agents/verifier.md").read_text(encoding="utf-8")
+        entries = {".claude/agents/verifier.md": "tools: Read, Glob, Grep", ".cac/agents/verifier.md": "tools: Read, Glob, Grep",
+                   ".codex/agents/verifier.toml": 'sandbox_mode = "read-only"', ".opencode/agent/verifier.md": "write: deny",
+                   DSH_LAYER.as_posix(): "write: false"}
+        for rel, read_only in entries.items():
+            text = (self.template / rel).read_text(encoding="utf-8")
+            with self.subTest(entry=rel):
+                for needle in ("maison_verifier_request", "## 其它独立只读审查任务", "Story 业务审查的派审载体", "调用方", read_only):
+                    self.assertIn(needle, text)
+        for rel in (".claude/agents/verifier.md", ".cac/agents/verifier.md"):
+            with self.subTest(same_source=rel):
+                self.assertEqual(source, (self.template / rel).read_text(encoding="utf-8"))
+        probe = """
+        const [access, root, file] = process.argv.slice(1);
+        const fs = await import('node:fs');
+        const { loadNative } = await import(access);
+        const render = loadNative(root).module('scripts/utils/codex-agent-toml.ts').renderCodexAgentToml;
+        process.stdout.write(render(fs.readFileSync(file, 'utf-8')));
+        """
+        access = self.template / "doc/extensions/hooks/shared/framework-access.mjs"
+        proc = subprocess.run(["node", "--input-type=module", "-e", probe, access.resolve().as_uri(), str(self.template),
+                               str(self.template / "framework/agents/claude/templates/agents/verifier.md")],
+                              capture_output=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(proc.stdout, (self.template / ".codex/agents/verifier.toml").read_text(encoding="utf-8"),
+                         "Codex 审查员不是原生生成器按 Claude 源渲染的结果")
 
     def test_the_init_registry_offers_exactly_the_adapters_on_disk(self) -> None:
         """framework-init 的物化选项与 framework/agents 下的 adapter 双向对上：本地补丁加了 dsh 就要有它的选项。"""
