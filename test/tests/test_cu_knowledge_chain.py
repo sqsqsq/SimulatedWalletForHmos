@@ -27,11 +27,25 @@ import design_kit  # noqa: E402
 OBS = "doc/extensions/knowledge/constraints/observability.md"
 #: 本施工单位承接的那条适用规约条目
 KNOWLEDGE_REF = f"{OBS}#OBS-02"
-#: 决策树模式：有候选信号时选中，两个角色，一个落在本施工单位的设计对象上，一个落在别处
+#: 决策树模式：有候选信号时选中，声明的必需角色都有承担者：节点表落在本施工单位的设计对象上，其余落在别处
 DECISION_TREE = "knowledge/design-patterns/decision-tree.md"
 PATTERN_REF = f"doc/extensions/{DECISION_TREE}"
 MODULE = "view:development/node:wallet-main-module"
-ELSEWHERE = "view:runtime"
+#: 运行视图里的设计对象：由承担运行视图的另一个施工单位负责
+ELSEWHERE = "view:runtime/node:background-sync"
+ELSEWHERE_ROLES = ("上下文", "步骤枚举", "构建与启动")
+#: 运行视图原来没有节点：放一个后台同步节点作为另一个施工单位的承担对象
+RUNTIME_NODE = ("""    nodes:
+      - node_id: background-sync
+        owner: wallet-team
+        current_state: HomeRepository loads data on page mount.
+        target_state: HomeRepository loads data on page mount.
+        design_basis_refs:
+          - view:logical/node:wallet-balance
+        provenance: *a2
+        verification_refs:
+          - verify:background-sync
+""")
 #: 只落在运行视图上的两条判断（另一个施工单位独有）：一条适用、一条不适用
 ELSEWHERE_REF = f"{OBS}#OBS-05"
 ELSEWHERE_QUIET = f"{OBS}#OBS-06"
@@ -46,11 +60,12 @@ def sha(path: Path) -> str:
 
 
 def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False, facts: bool = False,
-           pending: bool = False) -> None:
+           pending: bool = False, nested: bool = True) -> str | None:
     """改夹具蓝图（按原文插入）：知识输入身份、适用性事实、设计对象契约上的义务与角色；再按原生口径（蓝图原字节的摘要与
     来源指纹）更新施工单位的蓝图引用。`pattern` 是决策树：selected（有候选信号，选中并写角色）/ none（没有候选信号，不判）。
     `elsewhere` 再加两条只落在运行视图上的规约判断（另一个施工单位独有）；`pending` 再加两条待定（见 `UNOWNED`、`PENDING_ELSEWHERE`）；
-    `facts` 加两条项目事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。"""
+    `facts` 加两条项目事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。
+    `nested` 为假时模块节点不带机器契约（原生 contracts 投影为 absent，plan 阶段自己写契约），返回拿掉的那段契约原文。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     old_text = canonical.read_text(encoding="utf-8")
@@ -65,8 +80,12 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
                        design_kit.rule_judgement("OBS-07", "pending", "后台同步要不要单独采集等运营定", [ELSEWHERE, DECISION])]
     if pattern == "selected":
         judgements.append(design_kit.pattern_judgement(DECISION_TREE, "selected", "刷新有多个分支，拆成节点",
-                                                       [{"role": "节点表", "target_ref": MODULE}, {"role": "上下文", "target_ref": ELSEWHERE}]))
-    knowledge, roles = design_kit.knowledge_facts(judgements, active, False)
+                                                       [{"role": "节点表", "target_ref": MODULE},
+                                                        *({"role": r, "target_ref": ELSEWHERE} for r in ELSEWHERE_ROLES)]))
+    knowledge, attach = design_kit.knowledge_facts(judgements, active, False)
+    runtime = "      - verify:runtime\n    nodes: []\n"
+    assert text.count(runtime) == 1
+    text = text.replace(runtime, "      - verify:runtime\n" + RUNTIME_NODE, 1)
     text = text.replace("  facts:\n", "  facts:\n" + knowledge, 1).replace(
         "  inputs:\n", "  inputs:\n    knowledge_context: "
         + json.dumps(design_kit.knowledge_context(root, design_kit.ACCESS), ensure_ascii=False) + "\n", 1)
@@ -74,7 +93,11 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     assert text.count(method) == 1
     text = text.replace(method, method + "                  must:\n                    - text: 刷新失败时记一条带页面与原因的日志\n"
                         f"                      source_ref: {KNOWLEDGE_REF}\n                      verify: ut\n", 1)
-    if with_roles and pattern == "selected":
+    removed = None
+    if not nested:
+        start, end = text.index("        contracts:\n          modules:"), text.index("  - view_id: deployment")
+        removed, text = text[start:end], text[:start] + text[end:]
+    elif with_roles and pattern == "selected":
         owner = "              class: HomeRepository\n"
         assert text.count(owner) == 1
         text = text.replace(owner, owner + "              pattern_roles:\n"
@@ -83,8 +106,8 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     text += STAT_DETAIL
     if facts:
         text = with_facts(text)
-    if roles:
-        text = design_kit.with_pattern_roles(text, roles)
+    if attach:
+        text = design_kit.with_entities(text, attach)
     canonical.write_bytes(text.encode("utf-8"))
     # 事实变了来源指纹跟着变：按原生算法重算，施工单位的蓝图引用记着它与原字节摘要，按原生口径一并更新
     proc = subprocess.run(["node", "--input-type=module", "-e", design_kit.REFINGERPRINT, str(root), str(design_kit.ACCESS),
@@ -94,6 +117,7 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     stamp = lambda s: s.split("source_fingerprint: ", 1)[1].split("\n", 1)[0]  # noqa: E731
     unit.write_bytes(unit.read_bytes().replace(old.encode(), sha(canonical).encode())
                      .replace(stamp(old_text).encode(), stamp(canonical.read_text(encoding="utf-8")).encode()))
+    return removed
 
 
 def with_facts(text: str) -> str:
@@ -157,13 +181,14 @@ class ChainCase(unittest.TestCase):
     ELSEWHERE = False
     FACTS = False
     PENDING = False
+    NESTED = True
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
     def setUpClass(cls) -> None:
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
-        design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS, cls.PENDING)
+        cls.removed = design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS, cls.PENDING, cls.NESTED)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -503,7 +528,7 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         self.assertEqual(sorted([KNOWLEDGE_REF, PATTERN_REF, ELSEWHERE_REF, ELSEWHERE_QUIET, PENDING_ELSEWHERE]), out[second]["decisions"],
                          "运行视图单位漏了它独有的判断")
         self.assertEqual(["节点表"], out[CU]["roles"], "运行视图上的角色被强给了不承担它的单位")
-        self.assertEqual(["上下文", "节点表"], out[second]["roles"], "承担运行视图的单位漏了它的角色")
+        self.assertEqual(sorted([*ELSEWHERE_ROLES, "节点表"]), out[second]["roles"], "承担运行视图的单位漏了它的角色")
 
     def test_another_units_judgement_stays_with_it(self) -> None:
         """B 独有的判断不进 A 的作者任务与审查任务；B 自己的审查判断表里有它。"""
@@ -585,6 +610,35 @@ class AUnitCarryingNoJudgementStillGetsTheShared(ChainCase):
         for d in out["global"]:
             self.assertIn(f"| {d} |", out["review"])
             self.assertIn(f"`{d}`", out["facts"], "作者任务与审查表不同源")
+
+
+class APlanWithoutAProjectionWritesItsOwnContract(ChainCase):
+    """设计对象只带义务与角色、不带机器契约：原生 contracts 投影是 absent，plan 阶段不回蓝图补、自己写契约。
+    作者任务说明由本阶段写；按设计写出的契约把承接的义务与角色落到实体上，plan 门禁照常核过。"""
+    NESTED = False
+
+    def test_the_task_hands_the_contract_to_the_plan_stage(self) -> None:
+        out = self.probe()
+        duties = out["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
+        self.assertIn("设计没有给本施工单位的机器契约投影", duties)
+        self.assertIn(KNOWLEDGE_REF, duties, "承接的适用条目没交给写契约的作者")
+
+    def test_a_contract_the_plan_writes_carries_the_duties(self) -> None:
+        import textwrap
+        import yaml
+        body = yaml.safe_load(textwrap.dedent(self.removed))["contracts"]
+        # plan 作者按第 3 块把本单位的角色落到承担它的实体上
+        body["interfaces"][0]["pattern_roles"] = [{"pattern_ref": PATTERN_REF, "role": "节点表"}]
+        out = self.probe(fresh=True)
+        target = self.root / out["dir"] / "contracts.yaml"
+        target.write_text(yaml.safe_dump(body, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        # 写进去的契约只属于本例：结束时撤掉，并丢掉按它读到的缓存，同类其它用例仍看没有契约的状态
+        self.addCleanup(lambda: vars(self.__class__).get("_out") is not None and delattr(self.__class__, "_out"))
+        self.addCleanup(target.unlink)
+        got = self.probe(fresh=True)
+        self.assertEqual(KNOWLEDGE_REF, (got["must"] or [{}])[0].get("source_ref"), got["problems"])
+        self.assertNotIn("没有实体扛着", got["gate"], got["gate"])
+        self.assertNotIn("没有实体承担", got["gate"], got["gate"])
 
 
 class TheMaterializedContractIsReused(ChainCase):

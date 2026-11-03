@@ -166,11 +166,16 @@ def rule_judgement(unit: str, outcome: str, rationale: str, target_refs: list[st
 
 ACTIVE_CONSTRAINTS = """
 import { pathToFileURL } from 'node:url';
-const [root, module] = process.argv.slice(1);
+const [root, module, obligations] = process.argv.slice(1);
 const { activeKnowledge } = await import(pathToFileURL(module).href);
+const { verifyChoices } = await import(pathToFileURL(obligations).href);
 const k = activeKnowledge(root);
-process.stdout.write(JSON.stringify([...k.constraints.map(c => ({ kind: 'constraints', file: c.file, units: c.units })),
-  ...k.patterns.map(p => ({ kind: 'patterns', file: p.file, units: [p.units[0]] }))]));
+// 作者任务给作者的同一份：每条规约允许的 verify 与是不是评审动作
+const entry = (file, id) => k.entries.find(e => e.file === file && e.id === id);
+process.stdout.write(JSON.stringify([...k.constraints.map(c => ({ kind: 'constraints', file: c.file, units: c.units,
+    verify: Object.fromEntries(c.units.map(u => [u, verifyChoices(entry(c.file, u)).allowed[0]])),
+    review: c.units.filter(u => entry(c.file, u)?.reviewAction) })),
+  ...k.patterns.map(p => ({ kind: 'patterns', file: p.file, units: [p.units[0]], roles: p.roles ?? [] }))]));
 """
 
 
@@ -179,7 +184,7 @@ def active_constraints(root: Path, access: Path) -> list[dict]:
     if not (root / "doc" / "extensions" / "manifest.yaml").is_file():
         return []
     proc = subprocess.run(["node", "--input-type=module", "-e", ACTIVE_CONSTRAINTS, str(root),
-                           str(Path(access).parent / "knowledge.mjs")],
+                           str(Path(access).parent / "knowledge.mjs"), str(Path(access).parent / "obligations.mjs")],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if proc.returncode != 0:
         raise RuntimeError(f"激活知识读不出来：{proc.stderr[-600:]}")
@@ -210,14 +215,16 @@ def knowledge_context(root: Path, access: Path) -> dict:
     return json.loads(proc.stdout)
 
 
-def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bool) -> tuple[str, dict[str, list[dict]]]:
-    """设计对激活知识的适用性事实（缩进对齐 discovery.facts）与要写到设计对象上的模式角色。
+def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bool) -> tuple[str, dict[str, dict]]:
+    """设计对激活知识的适用性事实（缩进对齐 discovery.facts）与要写到设计对象上的东西：`{地址: {"must": [...], "pattern_roles": [...]}}`。
 
     规约一域一条事实：给了条目判断的域逐条写（`exact` 为假时其余条目补「不涉及」），没给的域写一条域级不涉及
-    （`exact` 时不写，反例用：可以漏判）；模式只写给了判断的那些——没有候选信号的模式不判。
+    （`exact` 时不写，反例用：可以漏判）；适用的条目（评审动作除外）在每个落点写出自它的 must，verify 取这条允许的第一种；
+    模式只写给了判断的那些——没有候选信号的模式不判。
     """
     given = list(judgements or [])
-    facts, roles = [], {}
+    facts, attach = [], {}
+    put = lambda address, key, value: attach.setdefault(address, {}).setdefault(key, []).append(value)  # noqa: E731
     for c in (x for x in active if x["kind"] == "constraints"):
         mine = [j for j in given if "unit" in j and j["unit"] in c["units"]]
         if mine:
@@ -229,13 +236,19 @@ def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bo
         else:
             value = {"knowledge_kind": "constraints", "outcome": "not_applicable", "rationale": "夹具：本需求不涉及这一域的规约"}
         facts.append((c["file"], value))
+        for j in mine:
+            if j["outcome"] != "applied" or j["unit"] in c.get("review", []):
+                continue
+            for t in (x for x in j["target_refs"] if not x.startswith(("decision:", "gap:"))):
+                put(t, "must", {"text": f"夹具：{j['rationale']}", "source_ref": f"doc/extensions/{c['file']}#{j['unit']}",
+                                "verify": c["verify"][j["unit"]]})
     known = {c["file"] for c in active if c["kind"] == "patterns"}
     for j in (x for x in given if "file" in x):
         if j["file"] not in known:
             raise AssertionError(f"夹具要判的模式 {j['file']} 不在工程激活的知识里")
         facts.append((j["file"], {"knowledge_kind": "patterns", "outcome": j["outcome"], "rationale": j["rationale"]}))
         for r in j["roles"]:
-            roles.setdefault(r["target_ref"], []).append({"pattern_ref": f"doc/extensions/{j['file']}", "role": r["role"]})
+            put(r["target_ref"], "pattern_roles", {"pattern_ref": f"doc/extensions/{j['file']}", "role": r["role"]})
     unknown = [j["unit"] for j in given if "unit" in j and not any(j["unit"] in c["units"] for c in active if c["kind"] == "constraints")]
     if unknown:
         raise AssertionError(f"夹具要判的 {'、'.join(unknown)} 不在工程激活的规约里")
@@ -247,11 +260,11 @@ def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bo
                                           "observed_at": "2026-10-30T00:00:00Z", "evidence_strength": "inferred",
                                           "extraction_method": "read_and_apply"}, ensure_ascii=False) + "\n"
         for file, value in facts)
-    return text, roles
+    return text, attach
 
 
-def with_pattern_roles(text: str, roles: dict[str, list[dict]]) -> str:
-    """把模式角色写到承担它的设计对象上（`pattern_roles`），地址按原生稳定地址的写法认。"""
+def with_entities(text: str, attach: dict[str, dict]) -> str:
+    """把义务与模式角色写到承担它的设计对象上（`must`、`pattern_roles`），地址按原生稳定地址的写法认。"""
     import yaml  # noqa: PLC0415
     doc = yaml.safe_load(text)
 
@@ -268,8 +281,9 @@ def with_pattern_roles(text: str, roles: dict[str, list[dict]]) -> str:
         table = {"contract": ("contracts", "contract_id"), "relation": ("relations", "relation_id")}[kind]
         return next(x for x in doc[table[0]] if x[table[1]] == rest)
 
-    for address, list_ in roles.items():
-        find(address).setdefault("pattern_roles", []).extend(list_)
+    for address, fields in attach.items():
+        for key, list_ in fields.items():
+            find(address).setdefault(key, []).extend(list_)
     return yaml.safe_dump(doc, allow_unicode=True, sort_keys=False, width=1000)
 
 
@@ -401,7 +415,7 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
     target.parent.mkdir(parents=True, exist_ok=True)
     text = source.read_text(encoding="utf-8").replace("blueprint_id: wallet-balance-refresh\n", f"blueprint_id: {blueprint}\n", 1)
     active = active_constraints(root, access)
-    knowledge, roles = knowledge_facts(judgements, active, exact)
+    knowledge, attach = knowledge_facts(judgements, active, exact)
     if active:
         text = text.replace("  inputs:\n", "  inputs:\n    knowledge_context: "
                             + json.dumps(knowledge_context(root, access), ensure_ascii=False) + "\n", 1)
@@ -413,8 +427,8 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
     items = items if items is not None else handed_items(root, feature, access) if consume else None
     if items:
         text = consume_items(text, items)
-    if roles:
-        text = with_pattern_roles(text, roles)
+    if attach:
+        text = with_entities(text, attach)
     target.write_bytes(text.encode("utf-8"))
     if terms or items or support or knowledge:
         # 事实或需求条目变了，来源指纹按原生算法重算：它由 discovery 的事实与当前范围条目确定性得出

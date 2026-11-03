@@ -387,6 +387,9 @@ function featureTask(root, feature, action, supplied, knowledge) {
       const must = obligationsFromContracts(contracts);
       duties.push(`契约来自 ${source?.binding?.kind ?? '本阶段产出'}${source?.binding?.artifact ? ` ${source.binding.artifact}` : ''}。`,
         ...(must.length ? must.map(m => `- \`${m.entityPath}\`：${m.sourceRef} ${m.text}（验证 ${m.verify || '未写'}）`) : ['契约里没有知识义务。']));
+    } else if (action === 'plan' && source?.state === 'absent') {
+      duties.push('设计没有给本施工单位的机器契约投影：在本阶段的 contracts.yaml 里按承担的设计对象写出契约，'
+        + '把上面承接的适用条目落成实体上的 must、本单位的角色落成 pattern_roles；原生按设计权威核对，设计已有的权威内容照它写。');
     } else {
       duties.push(`本阶段没有可读的施工契约（${source?.state ?? '本阶段不读契约'}）${source?.detail ? `：${source.detail}` : ''}。`);
     }

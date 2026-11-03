@@ -2,7 +2,8 @@
 相关域逐条、稳定地址、实体上的义务与模式角色按实际对象核（hooks/shared/knowledge-application.mjs）。
 
 用例在一份已交给设计、蓝图已准入的工程上改蓝图对象，看核对结论；夹具的准入本身已经过原生完整校验。
-夹具的判断：样例规约域里 SMP-01 适用、SMP-02 不适用（同一域两种结果），样例模式没有候选信号、不判。
+夹具的判断：样例规约域里 SMP-01 适用（落在设计对象上，那里写着出自它的 must）、SMP-02 不适用（同一域两种结果），
+样例模式没有候选信号、不判。
 """
 from __future__ import annotations
 
@@ -27,12 +28,14 @@ const { readBlueprint } = await import(access);
 const bp = structuredClone(readBlueprint(root, blueprintId, 'draft').blueprint);
 const rules = bp.discovery.facts.find(f => String(f.provenance?.source_ref).endsWith('constraints/sample-domain.md'));
 const node = bp.design_views.flatMap(v => v.nodes ?? []).find(n => n.node_id === 'wallet-balance');
-new Function('bp', 'rules', 'node', mutate)(bp, rules, node);
+const other = bp.design_views.flatMap(v => v.nodes ?? []).find(n => n.node_id === 'wallet-main-module');
+new Function('bp', 'rules', 'node', 'other', mutate)(bp, rules, node, other);
 process.stdout.write(JSON.stringify(blueprintKnowledge(root, bp).problems));
 """
 RULES = "doc/extensions/knowledge/constraints/sample-domain.md"
 PATTERN = "doc/extensions/knowledge/design-patterns/sample-pattern.md"
 NODE = "view:logical/node:wallet-balance"
+OTHER = "view:development/node:wallet-main-module"
 
 
 class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
@@ -59,7 +62,7 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
 
     def test_a_whole_domain_out_of_scope_is_one_reasoned_fact(self) -> None:
         self.assertEqual([], self.problems("rules.value = {knowledge_kind: 'constraints', outcome: 'not_applicable',"
-                                           " rationale: '本需求没有新增入口，也没有上报动作'};"))
+                                           " rationale: '本需求没有新增入口，也没有上报动作'}; node.must = [];"))
 
     def test_a_related_domain_judges_every_entry_once(self) -> None:
         missing = self.problems("rules.value.items = rules.value.items.filter(i => i.unit === 'SMP-01');")
@@ -106,12 +109,37 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
                   " value: {knowledge_kind: 'patterns', outcome: 'selected', rationale: '刷新有多个分支'},"
                   f" provenance: {{...rules.provenance, source_ref: '{PATTERN}'}}}});")
         no_roles = self.problems(select)
-        self.assertTrue(any("k-pattern" in p and "没有实体承担它的角色" in p for p in no_roles), no_roles)
-        self.assertEqual([], self.problems(select + f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '节点表'}}];"))
+        self.assertTrue(any("k-pattern" in p and "节点表、上下文 没有实体承担" in p for p in no_roles), no_roles)
+        one = self.problems(select + f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '节点表'}}];")
+        self.assertTrue(any("必需角色 上下文 没有实体承担" in p for p in one), one)
+        both = (f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '节点表'}}];"
+                f"other.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '上下文'}}];")
+        self.assertEqual([], self.problems(select + both))
+        on_view = self.problems(select + f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '节点表'}}];"
+                                f"bp.design_views.find(v => v.view_id === 'logical').pattern_roles = [{{pattern_ref: '{PATTERN}', role: '上下文'}}];")
+        self.assertTrue(any("view:logical" in p and "整个视图" in p for p in on_view), on_view)
         undeclared = self.problems(select + f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '编排器'}}];")
         self.assertTrue(any("编排器" in p and "声明的角色" in p for p in undeclared), undeclared)
         unselected = self.problems(f"node.pattern_roles = [{{pattern_ref: '{PATTERN}', role: '节点表'}}];")
         self.assertTrue(any("没有选中的适用性事实" in p for p in unselected), unselected)
+
+    def test_an_applied_entry_has_its_must_on_each_bearer(self) -> None:
+        """适用条目与承担它的对象双向对上：落点上要有出自它的 must，must 挂的对象要在落点里，落点是具体设计对象。"""
+        dropped = self.problems("node.must = [];")
+        self.assertTrue(any("SMP-01 适用、落在 " + NODE in p and "没有出自它的 must" in p for p in dropped), dropped)
+        stray = self.problems(f"other.must = [{{text: '模块里也生成编号', source_ref: '{RULES}#SMP-01', verify: 'review'}}];")
+        self.assertTrue(any(OTHER in p and "落点" in p and "没有 " + OTHER in p for p in stray), stray)
+        both = (f"rules.value.items[0].target_refs = ['{NODE}', '{OTHER}'];"
+                f"other.must = [{{text: '模块透传编号', source_ref: '{RULES}#SMP-01', verify: 'review'}}];")
+        self.assertEqual([], self.problems(both))
+        view = self.problems("rules.value.items[0].target_refs = ['view:logical'];"
+                             f"bp.design_views.find(v => v.view_id === 'logical').must = [{{text: 'x', source_ref: '{RULES}#SMP-01', verify: 'review'}}];")
+        self.assertTrue(any("view:logical" in p and "整个视图" in p for p in view), view)
+        only_decision = self.problems("bp.decisions_and_gaps.decisions.push({decision_id: 'who-numbers', kind: 'open_question',"
+                                      " status: 'open_decision', owner: '需求负责人', rationale: '编号由谁生成待定',"
+                                      " provenance: rules.provenance, verification_refs: []});"
+                                      "rules.value.items[0].target_refs = ['decision:who-numbers']; node.must = [];")
+        self.assertTrue(any("SMP-01 适用，却没有承担它的设计对象" in p for p in only_decision), only_decision)
 
     def test_a_must_comes_from_an_applied_entry_with_a_fitting_verify(self) -> None:
         self.assertEqual([], self.problems(f"node.must = [{{text: '入口生成受理单编号', source_ref: '{RULES}#SMP-01', verify: 'review'}}];"))

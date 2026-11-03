@@ -37,25 +37,28 @@ const unitOf = ref => { const at = String(ref ?? '').indexOf('#'); return at >= 
 /** 只说明由谁解决的地址（原生决定、缺口）：不标识承担实体，判断归哪个施工单位按其余地址。 */
 const RESOLVES = /^(decision|gap):/;
 const owners = d => d.target_refs.filter(t => !RESOLVES.test(t));
+/** 能承担义务与角色的设计对象：视图里的节点与数据流、关系、契约（原生稳定地址的种类）；整份蓝图与整个视图只是范围。 */
+const bearer = a => /^view:[^/]+\/(node|flow):/.test(a) || /^(relation|contract):/.test(a);
 
 /**
  * 激活知识按工程相对路径登记：扩展根相对的文件、类别、形态、单元、原始摘要；规约另带每条的强制力与哪几条是评审动作，
- * 模式另带声明的角色。工程相对路径就是事实、义务与验收里写的 `source_ref`。
+ * 模式另带声明的角色：`roles` 是合法角色名（必需与可选），`required` 是选中后必须有人承担的那些。
+ * 工程相对路径就是事实、义务与验收里写的 `source_ref`。
  */
 export function activation(projectRoot, knowledge = activeKnowledge(projectRoot)) {
   const ext = extensionRoot(projectRoot);
   const out = new Map();
-  const add = (kind, k, entries = [], roles = []) => {
+  const add = (kind, k, entries = [], roles = [], optional = []) => {
     const abs = path.join(ext, ...k.file.split('/'));
     out.set(posix(path.relative(projectRoot, abs)), {
       kind, file: k.file, form: k.form, units: k.units, sha256: sha(fs.readFileSync(abs)),
       force: new Map(entries.map(e => [e.id, e.force])),
       reviewActions: new Set(entries.filter(e => e.reviewAction).map(e => e.id)),
-      roles: new Set(roles), id: k.id ?? null,
+      roles: new Set([...roles, ...optional]), required: new Set(roles), id: k.id ?? null,
     });
   };
   for (const c of knowledge.constraints) add('constraints', c, c.entries);
-  for (const p of knowledge.patterns) add('patterns', p, [], [...(p.roles ?? []), ...(p.optionalRoles ?? [])]);
+  for (const p of knowledge.patterns) add('patterns', p, [], p.roles ?? [], p.optionalRoles ?? []);
   for (const f of knowledge.facts) add('facts', f);
   return out;
 }
@@ -196,7 +199,7 @@ export function blueprintKnowledge(projectRoot, blueprint) {
     if (node?.must !== undefined) {
       const shape = schemaCheck(native, node.must, 'must');
       if (shape.length) problems.push(`${label} 的 ${address}：must 形态不合：${shape.slice(0, 4).join('；')}`);
-      else for (const m of node.must) problems.push(...mustProblems(knowledge, active, m, rows, `${label} 的 ${address}`));
+      else for (const m of node.must) problems.push(...mustProblems(knowledge, active, m, rows, `${label} 的 ${address}`, address));
     }
     if (node?.pattern_roles !== undefined) {
       const shape = schemaCheck(native, node.pattern_roles, 'patternRoles');
@@ -207,18 +210,40 @@ export function blueprintKnowledge(projectRoot, blueprint) {
         if (!source || source.kind !== 'patterns') problems.push(`${label} 的 ${address}：pattern_ref ${r.pattern_ref} 不是这一轮激活的模式`);
         else if (!source.roles.has(r.role)) problems.push(`${label} 的 ${address}：角色「${r.role}」不是 ${source.file} 声明的角色（${[...source.roles].join('、')}）`);
         else if (row?.outcome !== 'selected') problems.push(`${label} 的 ${address}：承担 ${source.file} 的角色，这个模式却没有选中的适用性事实——选中写一条 outcome: selected 的事实，讲为什么用它`);
+        else if (!bearer(address)) problems.push(`${label} 的 ${address}：角色「${r.role}」写在整份蓝图或整个视图上——角色写在真正承担它的节点、数据流、关系或契约上`);
         else { row.roles.push({ role: r.role, target_ref: address }); row.target_refs.push(address); }
       }
     }
   }
-  for (const row of rows.filter(r => r.kind === 'patterns' && r.outcome === 'selected' && !r.roles.length)) {
-    say(row.fact_id, `选中了 ${row.file}，却没有实体承担它的角色——在真正承担的设计对象上写 pattern_roles`);
+  // 选中的模式：声明的必需角色在整份蓝图里都有承担者，可选角色按需求用；各施工单位只承接落在自己设计引用内的角色
+  for (const row of rows.filter(r => r.kind === 'patterns' && r.outcome === 'selected')) {
+    const source = active.get(row.ref);
+    const missing = [...source.required].filter(role => !row.roles.some(x => x.role === role));
+    if (missing.length) {
+      say(row.fact_id, `选中了 ${row.file}，必需角色 ${missing.join('、')} 没有实体承担——在真正承担它的设计对象上写 pattern_roles`);
+    }
+  }
+  // 适用条目（评审动作除外）：每个落点是承担它的设计对象，并在那里写出自这一条的 must
+  for (const row of rows.filter(r => r.kind === 'constraints' && r.outcome === 'applied' && !r.reviewAction)) {
+    const bearers = owners(row);
+    if (!bearers.length) say(row.fact_id, `条目 ${row.unit} 适用，却没有承担它的设计对象——target_refs 列出真正做这件事的节点、数据流、关系或契约`);
+    for (const t of bearers) {
+      if (!index.has(t)) continue;
+      if (!bearer(t)) {
+        say(row.fact_id, `条目 ${row.unit} 适用，落点 ${t} 是整份蓝图或整个视图——落到真正做这件事的节点、数据流、关系或契约上`);
+      } else if (!(Array.isArray(index.get(t)?.must) && index.get(t).must.some(m => m?.source_ref === row.source_ref))) {
+        say(row.fact_id, `条目 ${row.unit} 适用、落在 ${t}，${t} 上没有出自它的 must——在 ${t} 写 must: [{text, source_ref: ${row.source_ref}, verify}]`);
+      }
+    }
   }
   return { rows, facts, problems };
 }
 
-/** 一条 must 自身：形态之外，来源是激活规约的一条，verify 合这条规约的执行体，出自的条目在适用性事实里是适用。 */
-function mustProblems(knowledge, active, m, rows, at) {
+/**
+ * 一条 must 自身：形态之外，来源是激活规约的一条，verify 合这条规约的执行体，出自的条目在适用性事实里是适用，
+ * 挂它的对象（`address`）在那一条的落点里。
+ */
+function mustProblems(knowledge, active, m, rows, at, address) {
   const source = knowledgeSource(active, m.source_ref);
   if (!source || source.kind !== 'constraints') return [`${at}：must 的 source_ref ${m.source_ref} 不是这一轮激活规约的条目`];
   const entry = entryOf(knowledge, source);
@@ -229,6 +254,8 @@ function mustProblems(knowledge, active, m, rows, at) {
   const row = rows.find(r => r.source_ref === `${source.ref}#${source.unit}`);
   if (row?.outcome !== 'applied') {
     out.push(`${at}：must 出自 ${entry.id}，它在适用性事实里${row ? `是 ${row.outcome}` : '没有判断'}——义务只出自判定适用的条目`);
+  } else if (!row.target_refs.includes(address)) {
+    out.push(`${at}：must 出自 ${entry.id}，这一条的落点（${row.target_refs.join('、')}）里没有 ${address}——在适用性事实的 target_refs 列上它，或把 must 挂到列出的承担者上`);
   }
   return out;
 }
