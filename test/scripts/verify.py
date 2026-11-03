@@ -51,7 +51,7 @@ SECOND_REBUILD = "test/tests/test_verifier_chain_in_workspace.py::ASecondEmptyDi
 def pytest_step(name: str, targets: list[str], extra: list[str] | None = None,
                 workers: int | None = None) -> tuple[str, list[str]]:
     parallel = PARALLEL if workers is None else (["-n", str(workers), "--dist", "loadscope"] if workers > 1 else ["-p", "no:xdist"])
-    return name, [sys.executable, "-m", "pytest", "-q", *targets, *parallel, *(extra or [])]
+    return name, [sys.executable, "-m", "pytest", "-q", "-rs", *targets, *parallel, *(extra or [])]
 
 
 def affected_steps(targets: list[str], keyword: str | None) -> list[tuple[str, list[str]]]:

@@ -6,18 +6,23 @@
 改过蓝图之后按原生的摘要口径更新施工单位的蓝图引用，再冻结范围。
 
 锁的是：原生派生、复用本地物化件时，实体上的义务与角色都还在，并且被 plan 门禁与审查任务实际用上；
-施工单位只承担落在自己设计引用内的角色；没有候选信号的模式零判断；测试的转译缓存钩子不改变结果。
+施工单位只承担落在自己设计引用内的角色；没有候选信号的模式零判断；测试的转译缓存钩子不改变结果；
+设计对象不带验收或契约时由本阶段写出、经实际门禁与原生阶段解析，契约不在而用例权威在时 plan 仍按它对齐。
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
+
+import yaml
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -60,12 +65,14 @@ def sha(path: Path) -> str:
 
 
 def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False, facts: bool = False,
-           pending: bool = False, nested: bool = True) -> str | None:
+           pending: bool = False, nested: bool = True, acceptance: bool = True, use_cases: bool = False) -> str | None:
     """改夹具蓝图（按原文插入）：知识输入身份、适用性事实、设计对象契约上的义务与角色；再按原生口径（蓝图原字节的摘要与
     来源指纹）更新施工单位的蓝图引用。`pattern` 是决策树：selected（有候选信号，选中并写角色）/ none（没有候选信号，不判）。
     `elsewhere` 再加两条只落在运行视图上的规约判断（另一个施工单位独有）；`pending` 再加两条待定（见 `UNOWNED`、`PENDING_ELSEWHERE`）；
     `facts` 加两条项目事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。
-    `nested` 为假时模块节点不带机器契约（原生 contracts 投影为 absent，plan 阶段自己写契约），返回拿掉的那段契约原文。"""
+    `nested` 为假时模块节点不带机器契约（原生 contracts 投影为 absent，plan 阶段自己写契约），返回拿掉的那段契约原文；
+    `acceptance` 为假时模块节点也不带验收（spec 阶段的验收投影为 absent，spec 自己写验收）；
+    `use_cases` 给模块节点加一段用例权威（`USE_CASES`），契约不在时它仍是 plan 阶段要对齐的设计权威。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     old_text = canonical.read_text(encoding="utf-8")
@@ -93,6 +100,14 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     assert text.count(method) == 1
     text = text.replace(method, method + "                  must:\n                    - text: 刷新失败时记一条带页面与原因的日志\n"
                         f"                      source_ref: {KNOWLEDGE_REF}\n                      verify: ut\n", 1)
+    if use_cases:
+        anchor = "        contracts:\n          modules:"
+        assert text.count(anchor) == 1
+        text = text.replace(anchor, USE_CASES + anchor, 1)
+    if not acceptance:
+        start = text.index("        acceptance:\n          criteria:\n")
+        end = text.index("          boundaries: []\n", start) + len("          boundaries: []\n")
+        text = text[:start] + text[end:]
     removed = None
     if not nested:
         start, end = text.index("        contracts:\n          modules:"), text.index("  - view_id: deployment")
@@ -118,6 +133,35 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     unit.write_bytes(unit.read_bytes().replace(old.encode(), sha(canonical).encode())
                      .replace(stamp(old_text).encode(), stamp(canonical.read_text(encoding="utf-8")).encode()))
     return removed
+
+
+#: 模块节点上的一段用例权威：一个用例、一个分支，分支引验收 AC-001（原生 use-cases 结构校验的必填项齐全）
+USE_CASES = """        use_cases:
+          schema_version: "2.1"
+          use_cases:
+            - id: balance_refresh
+              description: 返回首页刷新余额
+              coordinator: HomeRepository
+              ui_bindings:
+                - ui: HomePage
+                  role: entry
+                  subscribes: []
+                  user_actions:
+                    - trigger: 用户返回首页
+                      calls: repository.refreshBalance
+              data_boundaries:
+                - name: wallet
+                  type: WalletService
+                  kind: cloud
+                  methods:
+                    - { name: queryBalance, params: [], returns: Balance, async: true }
+              state_model:
+                phases: [Idle, Refreshing, Done]
+              branches:
+                - id: refreshed
+                  scenario: 返回首页后余额刷新
+                  linked_acceptance: [AC-001]
+"""
 
 
 def with_facts(text: str) -> str:
@@ -175,6 +219,23 @@ process.stdout.write(JSON.stringify({ must: i.methods?.[0]?.must ?? null, roles:
 """
 
 
+SPEC_PROBE = """
+import { pathToFileURL } from 'node:url';
+const [root, feature] = process.argv.slice(1);
+const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const spec = (await import(base + 'spec/post_check.mjs')).default;
+const pre = (await import(base + 'shared/pre_verifier.mjs')).default;
+const gate = await spec({ phase: 'spec', feature, projectRoot: root });
+const review = await pre({ phase: 'spec', feature, projectRoot: root });
+process.stdout.write(JSON.stringify({ gate: gate.message ?? '', review: (review.promptFragments ?? []).join('\\n') }));
+"""
+
+POINTS = ("| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+          "| 余额刷新 / 保存结果 | 成功 | HomeRepository.refreshBalance |\n"
+          "| 余额刷新 / 保存结果 | 拒绝 | HomeRepository.refreshBalance |\n")
+RULES = "| 编号 | 落实成什么 | 落点 |\n|---|---|---|\n| OBS-02 | 刷新失败记一条可定位的日志 | `HomeRepository.refreshBalance` |\n"
+
+
 class ChainCase(unittest.TestCase):
     WITH_ROLES = True
     PATTERN = "selected"
@@ -182,13 +243,16 @@ class ChainCase(unittest.TestCase):
     FACTS = False
     PENDING = False
     NESTED = True
+    ACCEPTANCE = True
+    USE_CASES = False
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
     def setUpClass(cls) -> None:
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
-        cls.removed = design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS, cls.PENDING, cls.NESTED)
+        cls.removed = design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS, cls.PENDING, cls.NESTED,
+                             cls.ACCEPTANCE, cls.USE_CASES)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -197,20 +261,45 @@ class ChainCase(unittest.TestCase):
         cls._tmp.cleanup()
 
     def probe(self, env: dict | None = None, fresh: bool = False) -> dict:
-        """门禁、审查任务与作者任务读到的结果；同一类的工程不变，默认环境下只跑一次（`fresh` 在改过工程后重读）。"""
-        if env is None and not fresh and "_out" in self.__class__.__dict__:
+        """门禁、审查任务与作者任务读到的结果。类的原状态默认环境下只读一次；`fresh` 读改过之后的工程，读数不进缓存。"""
+        cached = env is None and not fresh
+        if cached and "_out" in self.__class__.__dict__:
             return self.__class__._out
         proc = subprocess.run(["node", "--input-type=module", "-e", PROBE, str(self.root.as_posix()), CU],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, env=env)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
         out = json.loads(proc.stdout)
-        if env is None:
+        if cached:
             self.__class__._out = out
         return out
 
+    @property
+    def unit(self) -> Path:
+        """施工单位的原生目录：阶段产物写在这里。"""
+        return self.root / "doc" / "features" / BLUEPRINT / "balance-refresh"
 
-class TheDerivedContractCarriesTheObligations(ChainCase):
-    """没有本地契约：原生从蓝图派生，实体上的义务与角色原样到门禁与审查任务。"""
+    def variant(self, rel: str, text: str) -> Path:
+        """本例的局部变体：在施工单位目录下写 `rel`，结束时恢复它原来的有无与字节，同组其它用例仍看原状态（变体读数用 `fresh`）。"""
+        f = self.unit / rel
+        before = f.read_bytes() if f.exists() else None
+        made = next((d for d in reversed(f.parents) if not d.exists()), None)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+
+        def restore() -> None:
+            if before is not None:
+                f.write_bytes(before)
+                return
+            f.unlink(missing_ok=True)
+            if made is not None:
+                shutil.rmtree(made, ignore_errors=True)
+        self.addCleanup(restore)
+        return f
+
+
+class TheDerivedUnitWithItsRole(ChainCase):
+    """同一份前态：模块单位选中决策树并写了角色，没有本地契约，原生从蓝图派生后冻结；改工程的用例用 `variant`，结束即恢复。
+    实体上的义务与角色原样到门禁与审查任务。"""
 
     def test_obligations_and_roles_survive_derivation_and_are_used(self) -> None:
         out = self.probe()
@@ -263,16 +352,12 @@ class TheDerivedContractCarriesTheObligations(ChainCase):
         env.pop("STORY_TEST_TS_CACHE", None)
         self.assertEqual(cached, self.probe(env))
 
-
-class ThePlanTableNamesTheClassMethod(ChainCase):
-    """plan.md 逐点表的责任方法写「接口 class.方法 name」：契约声明的方法认得出，写错的方法照样被拒绝。"""
+    # plan.md 逐点表的责任方法写「接口 class.方法 name」：契约声明的方法认得出，写错的方法照样被拒绝。
 
     def test_the_declared_method_passes_and_a_wrong_one_is_named(self) -> None:
-        plan = Path(self.probe()["dir"]) / "plan" / "plan.md"
-        plan.parent.mkdir(parents=True, exist_ok=True)
-        plan.write_text("# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
-                        "| 余额刷新 / 保存结果 | 成功 | HomeRepository.refreshBalance |\n"
-                        "| 余额刷新 / 保存结果 | 拒绝 | HomeRepository.saveNothing |\n", encoding="utf-8")
+        self.variant("plan/plan.md", "# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+                     "| 余额刷新 / 保存结果 | 成功 | HomeRepository.refreshBalance |\n"
+                     "| 余额刷新 / 保存结果 | 拒绝 | HomeRepository.saveNothing |\n")
         gate = self.probe(fresh=True)["gate"]
         self.assertIn("HomeRepository.saveNothing 在 contracts.yaml 的 interfaces[].methods[] 里找不到", gate)
         self.assertNotIn("HomeRepository.refreshBalance 在 contracts.yaml", gate)
@@ -280,12 +365,100 @@ class ThePlanTableNamesTheClassMethod(ChainCase):
 
     def test_a_point_of_the_design_missing_from_the_table_is_named(self) -> None:
         """蓝图埋点明细的统计点在逐点表里没有行：点名那个统计点。"""
-        plan = Path(self.probe()["dir"]) / "plan" / "plan.md"
-        plan.parent.mkdir(parents=True, exist_ok=True)
-        plan.write_text("# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
-                        "| 别的点 | 成功 | HomeRepository.refreshBalance |\n", encoding="utf-8")
+        self.variant("plan/plan.md", "# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+                     "| 别的点 | 成功 | HomeRepository.refreshBalance |\n")
         gate = self.probe(fresh=True)["gate"]
         self.assertIn("逐点表里没有行：余额刷新 / 保存结果", gate)
+
+    # spec「宿主扩展治理项」、plan「宿主扩展（可选）」：有 Markdown 时章在、承接的几类各有小节、规约编号引得到、
+    # 逐点表在「埋点」小节里；作者与审查拿到本单位不承接的判断，用来写不适用与不选的理由。
+
+    def write(self, phase: str, text: str) -> None:
+        self.variant(f"{phase}/{phase}.md", text)
+
+    def spec_probe(self) -> dict:
+        proc = subprocess.run(["node", "--input-type=module", "-e", SPEC_PROBE, str(self.root.as_posix()), CU],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def test_a_spec_without_the_anchor_is_named(self) -> None:
+        self.write("spec", "# 规格\n\n## 1. 概述\n\n刷新余额。\n")
+        self.assertIn("spec.md：没有「宿主扩展治理项」章", self.spec_probe()["gate"])
+
+    def test_the_spec_chapter_needs_its_sections_and_known_rules(self) -> None:
+        self.write("spec", "# 规格\n\n## 宿主扩展治理项\n\n### 规约\n\n| 编号 | 判定 |\n|---|---|\n| OBS-02 | 适用，见 AC-001 |\n| ZZZ-99 | 适用，见 AC-999 |\n")
+        gate = self.spec_probe()["gate"]
+        self.assertIn("本单位承接设计模式，这一章下没有讲它的小节", gate)
+        self.assertIn("ZZZ-99 不是设计判断过的规约", gate)
+        self.assertNotIn("OBS-02 不是", gate)
+        self.assertNotIn("本单位承接规约", gate)
+        self.assertIn("引用的验收 AC-999 在 acceptance.yaml 里没有", gate)
+        self.assertNotIn("AC-001 在", gate)
+
+    def test_a_complete_spec_chapter_passes(self) -> None:
+        self.write("spec", "# 规格\n\n## 宿主扩展治理项\n\n### 规约\n\n" + RULES + "\n### 设计模式\n\n刷新分支按决策树编排。\n\n## 附录\n")
+        self.assertNotIn("宿主扩展治理项", self.spec_probe()["gate"])
+
+    def test_the_spec_review_lists_judgements_the_unit_does_not_carry(self) -> None:
+        review = self.spec_probe()["review"]
+        self.assertIn(f"| {KNOWLEDGE_REF} |", review)
+        self.assertIn("| 需求级公共依据（无落点） |", review)
+
+    def test_the_plan_table_sits_in_the_events_section(self) -> None:
+        self.write("plan", "# 计划\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
+                   + "\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
+        gate = self.probe(fresh=True)["gate"]
+        for gone in ("宿主扩展（可选）」章", "没有讲它的小节", "逐点表不在", "不是设计判断过的规约"):
+            self.assertNotIn(gone, gate)
+
+    def test_the_plan_chapter_cites_real_acceptance(self) -> None:
+        self.write("plan", "# 计划\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
+                   + "\n验证见 AC-001 与 AC-999。\n\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("plan.md「宿主扩展（可选）」：引用的验收 AC-999 在 acceptance.yaml 里没有", gate)
+        self.assertNotIn("AC-001 在", gate)
+
+    def test_a_point_table_elsewhere_and_a_missing_section_are_named(self) -> None:
+        self.write("plan", "# 计划\n\n## 9. 埋点\n\n" + POINTS + "\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES)
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("的逐点表不在「宿主扩展（可选）」的「埋点」小节里", gate)
+        self.assertIn("本单位承接埋点，这一章下没有讲它的小节", gate)
+        self.assertIn("本单位承接设计模式，这一章下没有讲它的小节", gate)
+
+    def test_the_spec_numbers_its_children_under_their_parent(self) -> None:
+        """spec 真实 post_check：带号子节不以父节号开头报出；无号的 Scope 与宿主扩展章、合法的自由编号不报。"""
+        body = ("# 规格\n\n## 1. 概述\n\n### 1.1 范围\n\n## Scope 声明\n\n### Scope 模块清单\n\n"
+                "## 3. 契约\n\n### 2.1 接口\n\n## 宿主扩展治理项\n\n### 规约\n\n" + RULES + "\n### 设计模式\n\n刷新分支按决策树编排。\n")
+        self.write("spec", body)
+        gate = self.spec_probe()["gate"]
+        self.assertIn("spec.md：「### 2.1 接口」挂在「## 3. 契约」下，号却是 2.1", gate)
+        self.assertNotIn("1.1 范围", gate)
+        self.assertNotIn("Scope", gate)
+        (self.unit / "spec" / "spec.md").write_text(body.replace("### 2.1 接口", "### 3.1 接口"), encoding="utf-8")
+        self.assertNotIn("章节编号", self.spec_probe()["gate"])
+
+    def test_the_plan_mapping_points_at_its_own_chapter(self) -> None:
+        """plan 真实 post_check：「承载设计章」的「号. 章名」号与章名指不同章时报出；没有这一列不要求。"""
+        host = ("\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
+                + "\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
+        mapping = "## 8. spec 功能映射表\n\n| spec 编号 | 承载设计章 |\n|---|---|\n| F1 | {ref} |\n"
+        body = "# 计划\n\n## 1. 模块架构图\n\n略。\n\n## 3. 数据模型定义\n\n略。\n\n" + mapping + host
+        self.write("plan", body.format(ref="3. 模块架构图"))
+        gate = self.probe(fresh=True)["gate"]
+        self.assertIn("plan.md：「承载设计章」列的「3. 模块架构图」对不上本文的章：「模块架构图」在本文是第 1 章", gate)
+        plan = self.unit / "plan" / "plan.md"
+        plan.write_text(body.format(ref="1. 模块架构图（入口）"), encoding="utf-8")
+        self.assertNotIn("承载设计章", self.probe(fresh=True)["gate"])
+        plan.write_text(body.replace("承载设计章", "实现模块").format(ref="3. 模块架构图"), encoding="utf-8")
+        self.assertNotIn("对不上本文的章", self.probe(fresh=True)["gate"])
+
+    def test_the_author_gets_the_judgements_it_does_not_carry(self) -> None:
+        facts = self.probe()["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
+        self.assertIn("需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）", facts)
+        self.assertIn("→ not_applicable", facts)
+        self.assertNotIn(f"`{KNOWLEDGE_REF}`", facts)
+        self.assertNotIn(f"`{PATTERN_REF}`", facts)
 
 
 class AMissingOwnRoleIsNamed(ChainCase):
@@ -356,116 +529,7 @@ class FactsBelongByTheirReferences(ChainCase):
         for text in (out["author"], json.loads(proc.stdout)["review"]):
             self.assertNotIn("找不到对象或事实", text, "合法的裸验收编号被判成指不到的事实")
 
-SPEC_PROBE = """
-import { pathToFileURL } from 'node:url';
-const [root, feature] = process.argv.slice(1);
-const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
-const spec = (await import(base + 'spec/post_check.mjs')).default;
-const pre = (await import(base + 'shared/pre_verifier.mjs')).default;
-const gate = await spec({ phase: 'spec', feature, projectRoot: root });
-const review = await pre({ phase: 'spec', feature, projectRoot: root });
-process.stdout.write(JSON.stringify({ gate: gate.message ?? '', review: (review.promptFragments ?? []).join('\\n') }));
-"""
 
-POINTS = ("| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
-          "| 余额刷新 / 保存结果 | 成功 | HomeRepository.refreshBalance |\n"
-          "| 余额刷新 / 保存结果 | 拒绝 | HomeRepository.refreshBalance |\n")
-RULES = "| 编号 | 落实成什么 | 落点 |\n|---|---|---|\n| OBS-02 | 刷新失败记一条可定位的日志 | `HomeRepository.refreshBalance` |\n"
-
-
-class TheHostChapterExplainsTheUnit(ChainCase):
-    """spec「宿主扩展治理项」、plan「宿主扩展（可选）」：有 Markdown 时章在、承接的几类各有小节、规约编号引得到、
-    逐点表在「埋点」小节里；作者与审查拿到本单位不承接的判断，用来写不适用与不选的理由。"""
-
-    def write(self, phase: str, text: str) -> None:
-        f = Path(self.probe()["dir"]) / phase / f"{phase}.md"
-        f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text, encoding="utf-8")
-        self.addCleanup(f.unlink)
-
-    def spec_probe(self) -> dict:
-        proc = subprocess.run(["node", "--input-type=module", "-e", SPEC_PROBE, str(self.root.as_posix()), CU],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
-        return json.loads(proc.stdout)
-
-    def test_a_spec_without_the_anchor_is_named(self) -> None:
-        self.write("spec", "# 规格\n\n## 1. 概述\n\n刷新余额。\n")
-        self.assertIn("spec.md：没有「宿主扩展治理项」章", self.spec_probe()["gate"])
-
-    def test_the_spec_chapter_needs_its_sections_and_known_rules(self) -> None:
-        self.write("spec", "# 规格\n\n## 宿主扩展治理项\n\n### 规约\n\n| 编号 | 判定 |\n|---|---|\n| OBS-02 | 适用，见 AC-001 |\n| ZZZ-99 | 适用，见 AC-999 |\n")
-        gate = self.spec_probe()["gate"]
-        self.assertIn("本单位承接设计模式，这一章下没有讲它的小节", gate)
-        self.assertIn("ZZZ-99 不是设计判断过的规约", gate)
-        self.assertNotIn("OBS-02 不是", gate)
-        self.assertNotIn("本单位承接规约", gate)
-        self.assertIn("引用的验收 AC-999 在 acceptance.yaml 里没有", gate)
-        self.assertNotIn("AC-001 在", gate)
-
-    def test_a_complete_spec_chapter_passes(self) -> None:
-        self.write("spec", "# 规格\n\n## 宿主扩展治理项\n\n### 规约\n\n" + RULES + "\n### 设计模式\n\n刷新分支按决策树编排。\n\n## 附录\n")
-        self.assertNotIn("宿主扩展治理项", self.spec_probe()["gate"])
-
-    def test_the_spec_review_lists_judgements_the_unit_does_not_carry(self) -> None:
-        review = self.spec_probe()["review"]
-        self.assertIn(f"| {KNOWLEDGE_REF} |", review)
-        self.assertIn("| 需求级公共依据（无落点） |", review)
-
-    def test_the_plan_table_sits_in_the_events_section(self) -> None:
-        self.write("plan", "# 计划\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
-                   + "\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
-        gate = self.probe(fresh=True)["gate"]
-        for gone in ("宿主扩展（可选）」章", "没有讲它的小节", "逐点表不在", "不是设计判断过的规约"):
-            self.assertNotIn(gone, gate)
-
-    def test_the_plan_chapter_cites_real_acceptance(self) -> None:
-        self.write("plan", "# 计划\n\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
-                   + "\n验证见 AC-001 与 AC-999。\n\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
-        gate = self.probe(fresh=True)["gate"]
-        self.assertIn("plan.md「宿主扩展（可选）」：引用的验收 AC-999 在 acceptance.yaml 里没有", gate)
-        self.assertNotIn("AC-001 在", gate)
-
-    def test_a_point_table_elsewhere_and_a_missing_section_are_named(self) -> None:
-        self.write("plan", "# 计划\n\n## 9. 埋点\n\n" + POINTS + "\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES)
-        gate = self.probe(fresh=True)["gate"]
-        self.assertIn("的逐点表不在「宿主扩展（可选）」的「埋点」小节里", gate)
-        self.assertIn("本单位承接埋点，这一章下没有讲它的小节", gate)
-        self.assertIn("本单位承接设计模式，这一章下没有讲它的小节", gate)
-
-    def test_the_spec_numbers_its_children_under_their_parent(self) -> None:
-        """spec 真实 post_check：带号子节不以父节号开头报出；无号的 Scope 与宿主扩展章、合法的自由编号不报。"""
-        body = ("# 规格\n\n## 1. 概述\n\n### 1.1 范围\n\n## Scope 声明\n\n### Scope 模块清单\n\n"
-                "## 3. 契约\n\n### 2.1 接口\n\n## 宿主扩展治理项\n\n### 规约\n\n" + RULES + "\n### 设计模式\n\n刷新分支按决策树编排。\n")
-        self.write("spec", body)
-        gate = self.spec_probe()["gate"]
-        self.assertIn("spec.md：「### 2.1 接口」挂在「## 3. 契约」下，号却是 2.1", gate)
-        self.assertNotIn("1.1 范围", gate)
-        self.assertNotIn("Scope", gate)
-        (Path(self.probe()["dir"]) / "spec" / "spec.md").write_text(body.replace("### 2.1 接口", "### 3.1 接口"), encoding="utf-8")
-        self.assertNotIn("章节编号", self.spec_probe()["gate"])
-
-    def test_the_plan_mapping_points_at_its_own_chapter(self) -> None:
-        """plan 真实 post_check：「承载设计章」的「号. 章名」号与章名指不同章时报出；没有这一列不要求。"""
-        host = ("\n## 宿主扩展（可选）\n\n### 规约落实到实体\n\n" + RULES
-                + "\n### 设计模式选型与角色\n\n节点表由 HomeRepository 承担。\n\n### 埋点\n\n" + POINTS)
-        mapping = "## 8. spec 功能映射表\n\n| spec 编号 | 承载设计章 |\n|---|---|\n| F1 | {ref} |\n"
-        body = "# 计划\n\n## 1. 模块架构图\n\n略。\n\n## 3. 数据模型定义\n\n略。\n\n" + mapping + host
-        self.write("plan", body.format(ref="3. 模块架构图"))
-        gate = self.probe(fresh=True)["gate"]
-        self.assertIn("plan.md：「承载设计章」列的「3. 模块架构图」对不上本文的章：「模块架构图」在本文是第 1 章", gate)
-        plan = Path(self.probe()["dir"]) / "plan" / "plan.md"
-        plan.write_text(body.format(ref="1. 模块架构图（入口）"), encoding="utf-8")
-        self.assertNotIn("承载设计章", self.probe(fresh=True)["gate"])
-        plan.write_text(body.replace("承载设计章", "实现模块").format(ref="3. 模块架构图"), encoding="utf-8")
-        self.assertNotIn("对不上本文的章", self.probe(fresh=True)["gate"])
-
-    def test_the_author_gets_the_judgements_it_does_not_carry(self) -> None:
-        facts = self.probe()["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
-        self.assertIn("需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）", facts)
-        self.assertIn("→ not_applicable", facts)
-        self.assertNotIn(f"`{KNOWLEDGE_REF}`", facts)
-        self.assertNotIn(f"`{PATTERN_REF}`", facts)
 
 SIBLING_PROBE = """
 import { pathToFileURL } from 'node:url';
@@ -624,21 +688,98 @@ class APlanWithoutAProjectionWritesItsOwnContract(ChainCase):
         self.assertIn(KNOWLEDGE_REF, duties, "承接的适用条目没交给写契约的作者")
 
     def test_a_contract_the_plan_writes_carries_the_duties(self) -> None:
-        import textwrap
-        import yaml
         body = yaml.safe_load(textwrap.dedent(self.removed))["contracts"]
         # plan 作者按第 3 块把本单位的角色落到承担它的实体上
         body["interfaces"][0]["pattern_roles"] = [{"pattern_ref": PATTERN_REF, "role": "节点表"}]
-        out = self.probe(fresh=True)
-        target = self.root / out["dir"] / "contracts.yaml"
-        target.write_text(yaml.safe_dump(body, allow_unicode=True, sort_keys=False), encoding="utf-8")
-        # 写进去的契约只属于本例：结束时撤掉，并丢掉按它读到的缓存，同类其它用例仍看没有契约的状态
-        self.addCleanup(lambda: vars(self.__class__).get("_out") is not None and delattr(self.__class__, "_out"))
-        self.addCleanup(target.unlink)
+        self.variant("contracts.yaml", yaml.safe_dump(body, allow_unicode=True, sort_keys=False))
         got = self.probe(fresh=True)
         self.assertEqual(KNOWLEDGE_REF, (got["must"] or [{}])[0].get("source_ref"), got["problems"])
         self.assertNotIn("没有实体扛着", got["gate"], got["gate"])
         self.assertNotIn("没有实体承担", got["gate"], got["gate"])
+
+
+#: 阶段实际消费者：原生阶段解析（本阶段与 plan）、本阶段门禁，plan 阶段再加原生的设计权威对齐（与原生 plan 检查同一函数）
+STAGE_PROBE = """
+import { pathToFileURL } from 'node:url';
+const [root, feature, phase] = process.argv.slice(1);
+const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const access = await import(base + 'shared/framework-access.mjs');
+const gate = await (await import(base + phase + '/post_check.mjs')).default({ phase, feature, projectRoot: root });
+const view = f => ({ status: f.status, issues: f.issues, inputs: Object.fromEntries(Object.entries(f.inputs).map(([k, v]) => [k, [v.state, v.binding ?? null]])) });
+const here = access.readFeature(root, feature, phase);
+const n = access.loadNative(root);
+const p = n.module('scripts/utils/blueprint-skill-projection.ts');
+const drift = phase === 'plan' ? p.authoritativeContentDrift(root, feature, n.frameworkRoot, 'contracts', here.spec?.contracts ?? {}) : null;
+process.stdout.write(JSON.stringify({ ...view(here), plan: view(access.readFeature(root, feature, 'plan')), gate: gate.message ?? '', ok: gate.ok !== false,
+  drift: drift && { state: drift.state, items: (drift.items ?? []).map(i => [i.id, i.field]), expected: drift.items?.[0]?.expected ?? null } }));
+"""
+
+#: 模块节点验收的同一条（spec 作者按设计写出的验收）
+ACCEPTANCE_TEXT = {"schema_version": "1.0", "feature": CU, "criteria": [{
+    "id": "AC-001", "prd_function": None, "priority": "P0", "description": "返回首页时余额刷新", "testable": True,
+    "verification_steps": ["切到其他页面后返回首页"], "expected_result": "账户卡片展示最新余额", "ut_layer": "device",
+    "device_focus": "返回首页后账户卡片余额文本更新"}], "boundaries": []}
+
+
+class StageCase(ChainCase):
+    def stage(self, phase: str) -> dict:
+        proc = subprocess.run(["node", "--input-type=module", "-e", STAGE_PROBE, str(self.root.as_posix()), CU, phase],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+
+class ASpecWithoutAnAcceptanceProjectionWritesItsOwn(StageCase):
+    """设计对象既不带验收也不带契约：spec 阶段的验收投影是 absent，spec 自己写 acceptance.yaml。写出之前 plan 被原生挡在缺验收；
+    写出的验收由 spec 门禁核承接，plan 阶段改按这份阶段产物解析验收。"""
+    NESTED = False
+    ACCEPTANCE = False
+
+    def test_the_spec_writes_the_acceptance_and_the_plan_reads_it(self) -> None:
+        before = self.stage("spec")
+        self.assertEqual(("ok", ["absent", None]), (before["status"], before["inputs"]["acceptance"]), before)
+        self.assertIn("acceptance=absent", json.dumps(before["plan"]["issues"], ensure_ascii=False))
+        self.variant("acceptance.yaml", yaml.safe_dump(ACCEPTANCE_TEXT, allow_unicode=True, sort_keys=False))
+        unbridged = self.stage("spec")
+        self.assertIn(f"由本施工单位承接，没有验收条目承接——写一条 criteria，knowledge_refs 列 {KNOWLEDGE_REF}", unbridged["gate"])
+        bridged = json.loads(json.dumps(ACCEPTANCE_TEXT))
+        bridged["criteria"][0]["knowledge_refs"] = [KNOWLEDGE_REF]
+        self.variant("acceptance.yaml", yaml.safe_dump(bridged, allow_unicode=True, sort_keys=False))
+        after = self.stage("spec")
+        self.assertTrue(after["ok"], after["gate"])
+        artifact = ["resolved", {"kind": "artifact", "artifact": "acceptance@1"}]
+        self.assertEqual((artifact, "ok"), (after["inputs"]["acceptance"], after["plan"]["status"]), after["plan"])
+        self.assertEqual(artifact, after["plan"]["inputs"]["acceptance"])
+
+
+class APlanUnderAUseCaseAuthority(StageCase):
+    """设计对象不带契约、带一段用例权威：plan 的契约投影是 absent，但用例权威仍在。plan 写契约之外要按它写 use-cases.yaml；
+    只写契约原生判用例漂移，照权威写齐才对齐，改了分支引用的验收则原生判漂移、plan 门禁点名那个验收编号。"""
+    NESTED = False
+    USE_CASES = True
+
+    def test_the_use_case_authority_holds_when_the_plan_writes_its_contract(self) -> None:
+        before = self.stage("plan")
+        self.assertEqual(("ok", "absent"), (before["status"], before["inputs"]["contracts"][0]), before)
+        self.assertEqual(("drift", [["use_cases:$", ""]]), (before["drift"]["state"], before["drift"]["items"]))
+        authority = before["drift"]["expected"]
+        self.assertEqual(["balance_refresh"], [u["id"] for u in authority["use_cases"]])
+        body = yaml.safe_load(textwrap.dedent(self.removed))["contracts"]
+        body["interfaces"][0]["pattern_roles"] = [{"pattern_ref": PATTERN_REF, "role": "节点表"}]
+        self.variant("contracts.yaml", yaml.safe_dump(body, allow_unicode=True, sort_keys=False))
+        contract_only = self.stage("plan")
+        self.assertEqual(["resolved", {"kind": "artifact", "artifact": "contracts@1"}], contract_only["inputs"]["contracts"])
+        self.assertEqual([["use_cases:$", ""]], contract_only["drift"]["items"], "契约 absent 时用例权威被丢了")
+        written = {k: v for k, v in authority.items() if k != "source"}
+        self.variant("use-cases.yaml", yaml.safe_dump(written, allow_unicode=True, sort_keys=False))
+        aligned = self.stage("plan")
+        self.assertEqual("aligned", aligned["drift"]["state"], aligned["drift"])
+        self.assertTrue(aligned["ok"], aligned["gate"])
+        written["use_cases"][0]["branches"][0]["linked_acceptance"] = ["AC-999"]
+        self.variant("use-cases.yaml", yaml.safe_dump(written, allow_unicode=True, sort_keys=False))
+        moved = self.stage("plan")
+        self.assertEqual([["use_cases:refreshed", "linked_acceptance"]], moved["drift"]["items"])
+        self.assertIn("use-cases.yaml 引了验收 AC-999（refreshed），acceptance.yaml 里没有这个编号", moved["gate"])
 
 
 class TheMaterializedContractIsReused(ChainCase):

@@ -334,9 +334,8 @@ class FreshProject(unittest.TestCase):
         return proc.returncode, json.loads(proc.stdout)
 
 
-class TheAuthorTaskBeginsThePhase(FreshProject):
-    """作者取 Feature 阶段的正式任务就是开始这一阶段：命令入口记使用记录的 begin，重取保留最早的起点；
-    预览、审查者与被导入的渲染函数都不记。"""
+class UsageStarts:
+    """使用记录里各阶段的开始，与作者取正式任务的命令入口。"""
 
     def starts(self) -> dict:
         path = self.root / "doc" / "features" / ".usage-state.json"
@@ -346,87 +345,9 @@ class TheAuthorTaskBeginsThePhase(FreshProject):
     def task(self, action: str, audience: str = "author") -> subprocess.CompletedProcess:
         return self.run_script("knowledge-task.mjs", "--feature", CU, "--action", action, "--audience", audience)
 
-    def test_a_preview_does_not_begin(self) -> None:
-        self.use("candidate")
-        self.assertEqual(0, self.task("spec").returncode)
-        self.assertNotIn("spec", self.starts(), "预览任务开始了阶段计时")
 
-    def test_the_formal_author_task_begins_once_and_the_rest_do_not(self) -> None:
-        self.use("freeze")
-        module = (self.root / "doc/extensions/hooks/shared/knowledge-task.mjs").resolve().as_uri()
-        imported = subprocess.run(["node", "--input-type=module", "-e",
-                                   "await import(process.argv[1]); process.stdout.write('imported');", module],
-                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual("imported", imported.stdout, imported.stderr)
-        self.assertEqual(0, self.task("plan", "reviewer").returncode)
-        self.assertEqual({}, self.starts(), "导入模块或取审查者任务就写了使用记录")
-        self.assertEqual(0, self.task("plan").returncode)
-        first = self.starts()["plan"]
-        self.assertEqual(0, self.task("plan").returncode)
-        self.assertEqual(first, self.starts()["plan"], "重取任务换了起点")
-
-    def test_a_unit_phase_is_counted_on_the_units_own_node(self) -> None:
-        """需求的共同工作记在需求节点；施工单位的阶段按它的原生身份记在自己的节点（身份件在它的原生目录），
-        不用完整 run：取正式任务即开始，原生闭环后收尾即结算。需求节点不出这一阶段的行。"""
-        self.use("freeze")
-        core = self.root / "doc/extensions/skills/story/scripts/core"
-        usage = lambda *a: subprocess.run([sys.executable, str(core / "usage.py"), "--project-root", str(self.root), *a],  # noqa: E731
-                                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        begun = usage("--feature", BLUEPRINT, "--begin", "--step", "story")
-        self.assertEqual(0, begun.returncode, begun.stdout + begun.stderr)
-        self.assertEqual(0, self.task("spec").returncode)
-        locate = ("import sys; sys.path.insert(0, sys.argv[1]); from flow import native, phase_facts; "
-                  "p = native.feature_paths(sys.argv[2], sys.argv[3], phase_facts.PHASES); "
-                  "print(p['dir']); print(p['reports']['spec'])")
-        where = subprocess.run([sys.executable, "-c", locate, str(core), str(self.root), CU],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
-        self.assertEqual(0, where.returncode, where.stderr)
-        unit_dir, reports = (Path(line) for line in where.stdout.splitlines()[-2:])
-        self.assertEqual((self.root / "doc/features" / BLUEPRINT / "balance-refresh").resolve(), unit_dir.resolve())
-        self.assertTrue((unit_dir / ".usage-id").is_file(), "施工单位的身份件不在它的原生目录")
-        reports.mkdir(parents=True, exist_ok=True)
-        (reports / "summary.json").write_text(json.dumps({
-            "verdict": "PASS", "closure_status": "closed", "gate_fingerprint": "3.1.0:e88e81fec381",
-            "closure_commit": {"schema_version": "1.0", "committed_at": datetime.now(timezone.utc).isoformat()}}),
-            encoding="utf-8")
-        design_fixture.write_native_evidence(self.root, CU, ["spec"], self.root / "doc/extensions/hooks/shared/framework-access.mjs")
-        done = usage("--feature", CU, "--finalize", "--phase", "spec")
-        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
-        nodes = json.loads((self.root / "doc/usage.json").read_text(encoding="utf-8"))["requirements"]
-        unit_key = f"{CU}-{(unit_dir / '.usage-id').read_text(encoding='utf-8').strip()}"
-        main_key = f"{BLUEPRINT}-{(self.root / 'doc/features' / BLUEPRINT / '.usage-id').read_text(encoding='utf-8').strip()}"
-        self.assertEqual({unit_key, main_key}, set(nodes))
-        self.assertEqual(["spec"], list(nodes[unit_key]["steps"]))
-        self.assertIn("spent", nodes[unit_key]["steps"]["spec"])
-        self.assertEqual({}, nodes[main_key]["steps"], "施工单位的阶段记到了需求节点")
-
-
-class PhaseInputsBeforeLocalContracts(FreshProject):
-    """范围冻结、还没有本地施工输入：本阶段输入照原生阶段解析——蓝图派生，或原生判缺必需能力。"""
-
-    def test_the_blueprint_derivation_is_what_the_resolver_selects_before_local_inputs_exist(self) -> None:
-        self.use("freeze")
-        code, out = self.feature("plan")
-        self.assertEqual((0, "ok", "frozen"), (code, out["status"], out["scope"]), out)
-        self.assertEqual("derive", out["inputs"]["contracts"]["binding"]["kind"])
-        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "plan", "--audience", "author")
-        self.assertEqual(0, task.returncode, task.stderr)
-        self.assertIn("契约来自 derive", task.stdout)
-
-    def test_a_phase_the_native_resolver_blocks_fails_the_task(self) -> None:
-        """原生判本阶段缺必需能力（无 run 的 coding 缺需求正文）：照原生结论失败，不当作空义务。"""
-        self.use("freeze")
-        code, out = self.feature("coding")
-        self.assertEqual((1, "invalid", "blocked"), (code, out["status"], out["assurance"]), out)
-        self.assertEqual("capability_blocked", out["issues"][0]["code"])
-        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "coding", "--audience", "author")
-        self.assertEqual((1, ""), (task.returncode, task.stdout))
-
-
-class StandaloneStagesPrepareOnlyTheirOwn(FreshProject):
-    """独立 spec / plan 入口、范围还没冻结、本阶段投影还没物化：作者任务的缺口指向冻结之前先跑原生
-    `prepare-blueprint-design --phase`。照它跑，spec 只物化验收、plan 只物化契约且不重写已有验收，再跑一次不写，
-    物化之后不再提示；冻结之后直接消费原生解析的输入，不再提示准备（冻结后再物化会让冻结的输入身份过期）。"""
+class StagePreparation:
+    """作者任务的「缺口与责任」块，与原生 `prepare-blueprint-design --phase` 的实际写入。"""
 
     HINT = "scripts/prepare-blueprint-design.ts --feature"
 
@@ -442,33 +363,6 @@ class StandaloneStagesPrepareOnlyTheirOwn(FreshProject):
                               cwd=str(harness), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr[-800:])
         return [Path(p).name for p in json.loads(proc.stdout.strip().splitlines()[-1])["written"]]
-
-    def test_each_stage_prepares_only_its_own_output_before_freezing(self) -> None:
-        self.use("candidate")
-        unit = self.root / "doc" / "features" / BLUEPRINT / "balance-refresh"
-        self.assertIn(f"{self.HINT} {CU} --phase spec", self.gaps("spec"))
-        self.assertEqual(["acceptance.yaml"], self.prepare_phase("spec"))
-        self.assertFalse((unit / "contracts.yaml").exists(), "spec 阶段物化了 plan 的契约")
-        self.assertNotIn(self.HINT, self.gaps("spec"), "物化之后还在提示")
-        # spec 作者在本阶段写完验收（这里补一行作者说明），再进独立 plan
-        authored = (unit / "acceptance.yaml").read_bytes() + "# spec 作者：刷新失败的验收按日志核\n".encode("utf-8")
-        (unit / "acceptance.yaml").write_bytes(authored)
-        accepted = (unit / "acceptance.yaml").read_bytes()
-        self.assertIn(f"{self.HINT} {CU} --phase plan", self.gaps("plan"))
-        self.assertIn("contracts.yaml", self.prepare_phase("plan"))
-        self.assertEqual(accepted, (unit / "acceptance.yaml").read_bytes(), "plan 重写了已有的验收")
-        self.assertEqual([], self.prepare_phase("plan"), "再跑一次又写了")
-        self.assertNotIn(self.HINT, self.gaps("plan"))
-
-    def test_after_freezing_the_native_inputs_are_consumed_as_they_are(self) -> None:
-        self.use("freeze")
-        code, out = self.feature("plan")
-        self.assertEqual((0, "derive"), (code, out["inputs"]["contracts"]["binding"]["kind"]), out)
-        for action in ("spec", "plan"):
-            with self.subTest(action=action):
-                task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", action, "--audience", "author")
-                self.assertEqual(0, task.returncode, task.stderr)
-                self.assertNotIn(self.HINT, task.stdout)
 
 
 class PhaseInputsFromMaterializedContracts(FreshProject):
@@ -568,32 +462,6 @@ class SpecCase(FreshProject):
         return (self.root / "doc/requirements/wallet-balance-refresh.md").read_text(encoding="utf-8").strip()
 
 
-class SpecFromARequirementFile(SpecCase):
-    """候选记下了需求来源文件：按它恢复，与原生同结果，审查者拿到同一份任务。"""
-
-    def test_a_file_bound_spec_resolves_as_the_native_harness_does(self) -> None:
-        self.use("freeze")
-        native = self.native_spec()
-        self.assertEqual(("full", "resolved", []), (native["assurance"], native["requirement"], native["blocked"]))
-        code, out = self.spec()
-        self.assertEqual((0, "ok", native["assurance"]), (code, out["status"], out["assurance"]), out)
-        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
-        self.assertEqual(0, task.returncode, task.stderr)
-        self.assertNotIn("预览", task.stdout.splitlines()[0])
-
-    def test_the_reviewer_gets_the_spec_task_on_the_same_object(self) -> None:
-        self.use("freeze")
-        probe = ("const m = (await import(process.argv[1])).default;"
-                 "const out = await m({ phase: 'spec', feature: process.argv[2], projectRoot: process.argv[3] });"
-                 "process.stdout.write(out.promptFragments.join('\\n\\n'));")
-        module = (self.root / "doc/extensions/hooks/shared/pre_verifier.mjs").resolve().as_uri()
-        proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        self.assertIn("# 知识任务：spec（审查者）", proc.stdout)
-        self.assertNotIn("取不到", proc.stdout)
-
-
 class SpecRequirementSourceChanged(SpecCase):
     """冻结后需求来源变了：照原生报过期。"""
 
@@ -635,8 +503,153 @@ class SpecWithAnInlineRequirement(SpecCase):
                 self.assertEqual(0, task.returncode, task.stderr)
 
 
-class TheFirstPhaseIsPreparedNatively(FreshProject):
-    """首阶段：先原生准备范围，再重取任务动笔。"""
+class OnAFrozenScope(UsageStarts, StagePreparation, SpecCase):
+    """范围候选已生成并冻结（`use("freeze")`）：同一种准备归成一组，每个进程只冻结一次，每条用例拿一份复制回来的工程。"""
+
+    # 作者取 Feature 阶段的正式任务就是开始这一阶段：命令入口记使用记录的 begin，重取保留最早的起点；
+    # 预览、审查者与被导入的渲染函数都不记。
+
+    def test_the_formal_author_task_begins_once_and_the_rest_do_not(self) -> None:
+        self.use("freeze")
+        module = (self.root / "doc/extensions/hooks/shared/knowledge-task.mjs").resolve().as_uri()
+        imported = subprocess.run(["node", "--input-type=module", "-e",
+                                   "await import(process.argv[1]); process.stdout.write('imported');", module],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual("imported", imported.stdout, imported.stderr)
+        self.assertEqual(0, self.task("plan", "reviewer").returncode)
+        self.assertEqual({}, self.starts(), "导入模块或取审查者任务就写了使用记录")
+        self.assertEqual(0, self.task("plan").returncode)
+        first = self.starts()["plan"]
+        self.assertEqual(0, self.task("plan").returncode)
+        self.assertEqual(first, self.starts()["plan"], "重取任务换了起点")
+
+    def test_a_unit_phase_is_counted_on_the_units_own_node(self) -> None:
+        """需求的共同工作记在需求节点；施工单位的阶段按它的原生身份记在自己的节点（身份件在它的原生目录），
+        不用完整 run：取正式任务即开始，原生闭环后收尾即结算。需求节点不出这一阶段的行。"""
+        self.use("freeze")
+        core = self.root / "doc/extensions/skills/story/scripts/core"
+        usage = lambda *a: subprocess.run([sys.executable, str(core / "usage.py"), "--project-root", str(self.root), *a],  # noqa: E731
+                                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        begun = usage("--feature", BLUEPRINT, "--begin", "--step", "story")
+        self.assertEqual(0, begun.returncode, begun.stdout + begun.stderr)
+        self.assertEqual(0, self.task("spec").returncode)
+        locate = ("import sys; sys.path.insert(0, sys.argv[1]); from flow import native, phase_facts; "
+                  "p = native.feature_paths(sys.argv[2], sys.argv[3], phase_facts.PHASES); "
+                  "print(p['dir']); print(p['reports']['spec'])")
+        where = subprocess.run([sys.executable, "-c", locate, str(core), str(self.root), CU],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, where.returncode, where.stderr)
+        unit_dir, reports = (Path(line) for line in where.stdout.splitlines()[-2:])
+        self.assertEqual((self.root / "doc/features" / BLUEPRINT / "balance-refresh").resolve(), unit_dir.resolve())
+        self.assertTrue((unit_dir / ".usage-id").is_file(), "施工单位的身份件不在它的原生目录")
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "summary.json").write_text(json.dumps({
+            "verdict": "PASS", "closure_status": "closed", "gate_fingerprint": "3.1.0:e88e81fec381",
+            "closure_commit": {"schema_version": "1.0", "committed_at": datetime.now(timezone.utc).isoformat()}}),
+            encoding="utf-8")
+        design_fixture.write_native_evidence(self.root, CU, ["spec"], self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        done = usage("--feature", CU, "--finalize", "--phase", "spec")
+        self.assertEqual(0, done.returncode, done.stdout + done.stderr)
+        nodes = json.loads((self.root / "doc/usage.json").read_text(encoding="utf-8"))["requirements"]
+        unit_key = f"{CU}-{(unit_dir / '.usage-id').read_text(encoding='utf-8').strip()}"
+        main_key = f"{BLUEPRINT}-{(self.root / 'doc/features' / BLUEPRINT / '.usage-id').read_text(encoding='utf-8').strip()}"
+        self.assertEqual({unit_key, main_key}, set(nodes))
+        self.assertEqual(["spec"], list(nodes[unit_key]["steps"]))
+        self.assertIn("spent", nodes[unit_key]["steps"]["spec"])
+        self.assertEqual({}, nodes[main_key]["steps"], "施工单位的阶段记到了需求节点")
+
+    # 范围冻结、还没有本地施工输入：本阶段输入照原生阶段解析——蓝图派生，或原生判缺必需能力。
+
+    def test_the_blueprint_derivation_is_what_the_resolver_selects_before_local_inputs_exist(self) -> None:
+        self.use("freeze")
+        code, out = self.feature("plan")
+        self.assertEqual((0, "ok", "frozen"), (code, out["status"], out["scope"]), out)
+        self.assertEqual("derive", out["inputs"]["contracts"]["binding"]["kind"])
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "plan", "--audience", "author")
+        self.assertEqual(0, task.returncode, task.stderr)
+        self.assertIn("契约来自 derive", task.stdout)
+
+    def test_a_phase_the_native_resolver_blocks_fails_the_task(self) -> None:
+        """原生判本阶段缺必需能力（无 run 的 coding 缺需求正文）：照原生结论失败，不当作空义务。"""
+        self.use("freeze")
+        code, out = self.feature("coding")
+        self.assertEqual((1, "invalid", "blocked"), (code, out["status"], out["assurance"]), out)
+        self.assertEqual("capability_blocked", out["issues"][0]["code"])
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "coding", "--audience", "author")
+        self.assertEqual((1, ""), (task.returncode, task.stdout))
+
+    # 独立 spec / plan 入口、范围还没冻结、本阶段投影还没物化：作者任务的缺口指向冻结之前先跑原生
+    # `prepare-blueprint-design --phase`。照它跑，spec 只物化验收、plan 只物化契约且不重写已有验收，再跑一次不写，
+    # 物化之后不再提示；冻结之后直接消费原生解析的输入，不再提示准备（冻结后再物化会让冻结的输入身份过期）。
+
+    def test_after_freezing_the_native_inputs_are_consumed_as_they_are(self) -> None:
+        self.use("freeze")
+        code, out = self.feature("plan")
+        self.assertEqual((0, "derive"), (code, out["inputs"]["contracts"]["binding"]["kind"]), out)
+        for action in ("spec", "plan"):
+            with self.subTest(action=action):
+                task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", action, "--audience", "author")
+                self.assertEqual(0, task.returncode, task.stderr)
+                self.assertNotIn(self.HINT, task.stdout)
+
+    # 候选记下了需求来源文件：按它恢复，与原生同结果，审查者拿到同一份任务。
+
+    def test_a_file_bound_spec_resolves_as_the_native_harness_does(self) -> None:
+        self.use("freeze")
+        native = self.native_spec()
+        self.assertEqual(("full", "resolved", []), (native["assurance"], native["requirement"], native["blocked"]))
+        code, out = self.spec()
+        self.assertEqual((0, "ok", native["assurance"]), (code, out["status"], out["assurance"]), out)
+        task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "spec", "--audience", "author")
+        self.assertEqual(0, task.returncode, task.stderr)
+        self.assertNotIn("预览", task.stdout.splitlines()[0])
+
+    def test_the_reviewer_gets_the_spec_task_on_the_same_object(self) -> None:
+        self.use("freeze")
+        probe = ("const m = (await import(process.argv[1])).default;"
+                 "const out = await m({ phase: 'spec', feature: process.argv[2], projectRoot: process.argv[3] });"
+                 "process.stdout.write(out.promptFragments.join('\\n\\n'));")
+        module = (self.root / "doc/extensions/hooks/shared/pre_verifier.mjs").resolve().as_uri()
+        proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, CU, str(self.root)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("# 知识任务：spec（审查者）", proc.stdout)
+        self.assertNotIn("取不到", proc.stdout)
+
+
+class BeforeTheScopeIsFrozen(UsageStarts, StagePreparation, FreshProject):
+    """范围候选已生成、还没冻结（`use("candidate")`）：同一种准备归成一组。"""
+
+    # 作者取 Feature 阶段的正式任务就是开始这一阶段：命令入口记使用记录的 begin，重取保留最早的起点；
+    # 预览、审查者与被导入的渲染函数都不记。
+
+    def test_a_preview_does_not_begin(self) -> None:
+        self.use("candidate")
+        self.assertEqual(0, self.task("spec").returncode)
+        self.assertNotIn("spec", self.starts(), "预览任务开始了阶段计时")
+
+    # 独立 spec / plan 入口、范围还没冻结、本阶段投影还没物化：作者任务的缺口指向冻结之前先跑原生
+    # `prepare-blueprint-design --phase`。照它跑，spec 只物化验收、plan 只物化契约且不重写已有验收，再跑一次不写，
+    # 物化之后不再提示；冻结之后直接消费原生解析的输入，不再提示准备（冻结后再物化会让冻结的输入身份过期）。
+
+    def test_each_stage_prepares_only_its_own_output_before_freezing(self) -> None:
+        self.use("candidate")
+        unit = self.root / "doc" / "features" / BLUEPRINT / "balance-refresh"
+        self.assertIn(f"{self.HINT} {CU} --phase spec", self.gaps("spec"))
+        self.assertEqual(["acceptance.yaml"], self.prepare_phase("spec"))
+        self.assertFalse((unit / "contracts.yaml").exists(), "spec 阶段物化了 plan 的契约")
+        self.assertNotIn(self.HINT, self.gaps("spec"), "物化之后还在提示")
+        # spec 作者在本阶段写完验收（这里补一行作者说明），再进独立 plan
+        authored = (unit / "acceptance.yaml").read_bytes() + "# spec 作者：刷新失败的验收按日志核\n".encode("utf-8")
+        (unit / "acceptance.yaml").write_bytes(authored)
+        accepted = (unit / "acceptance.yaml").read_bytes()
+        self.assertIn(f"{self.HINT} {CU} --phase plan", self.gaps("plan"))
+        self.assertIn("contracts.yaml", self.prepare_phase("plan"))
+        self.assertEqual(accepted, (unit / "acceptance.yaml").read_bytes(), "plan 重写了已有的验收")
+        self.assertEqual([], self.prepare_phase("plan"), "再跑一次又写了")
+        self.assertNotIn(self.HINT, self.gaps("plan"))
+
+    # 首阶段：先原生准备范围，再重取任务动笔。
 
     def test_the_first_phase_is_prepared_natively_before_the_task_is_used(self) -> None:
         """首阶段：候选有了、范围未冻结时任务只是预览；照 story-knowledge Skill 给的原生准备命令冻结后，重取得到真实输入。"""

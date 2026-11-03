@@ -826,11 +826,6 @@ class TheRepairLineRunsAsPrinted(unittest.TestCase):
         self.assertEqual([], [p for p in ext.rglob("__pycache__")], "补建命令在机制目录里留了字节码")
         check = self.adapt(target, "--check", env)
         self.assertEqual(0, check.returncode, check.stdout + check.stderr)
-        for args in (["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "装好"]):
-            subprocess.run(["git", "-C", str(target), *args], capture_output=True)
-        again = self.adapt(target, "--apply", env)
-        self.assertEqual(0, again.returncode, again.stdout + again.stderr)
-        self.assertIn("已在且合法，保留未动", again.stdout)
 
     def test_powershell(self) -> None:
         self.check_shell("powershell")

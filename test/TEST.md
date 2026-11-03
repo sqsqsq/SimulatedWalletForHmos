@@ -492,7 +492,7 @@ python test/scripts/run_multi_case.py finalize `
 要读原生 Framework 的用例按准备状态分小类，一个类只造一种状态：`loadscope` 按类分 worker，大类会串行拖住整轮。
 
 - 按影响范围分层跑：改一处用 `affected`；批内每一步用 `affected` 覆盖本步改动的直接测试与消费者，装配输入有变时加跑 `assembly`，其余专项按本步改动对象选；全量、失效形态与其余离线检查在批末最后一步交回前由 `handback` 跑一次。批内中间步骤的提交只说明本步验证范围，不宣称全量就绪；同一对象无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
-- 跳过与预期失败按当前用例声明与实际输出逐项说明。这些命令不启动真实被测 CLI。
+- 跳过与预期失败按当前用例声明与实际输出逐项说明：pytest 步骤带 `-rs`，每条跳过的用例与原因列在该步日志末尾的 short test summary。这些命令不启动真实被测 CLI。
 - 运行证据的位置由 `test_run_measurement.py::ProcessArtifactsEnterTheIndex` 核：`doc/spec`、`doc/plan` 下的截图、日志、事件流、压缩包按运行证据报：CLI 运行记录放 `output/story/`，维护过程证据放 `output/evidence/`（§0.4）。两类图是评价参照而不是运行证据：待审定金样候选里被该 Case story 引用的 `ux-reference` 图；已确认的分析归档 `doc/spec/1.9.9/04-稳定性与性能分析/data/golden/`（性质由其 MANIFEST 声明）里被所属对象 story 图片或 spec Visual Handoff 实际引用的 PNG。归档里未引用、映射到别的对象、缺 MANIFEST 的图与其它后缀照常报，断开的引用逐条报出。
 - pytest 缓存由根 `pytest.ini` 放在 `output/scratch/pytest-cache`；需要 `--basetemp` 或临时工作区时用 `output/scratch/<本次任务>/` 下的新目录（§0.4）。
 - 串行只在排障时用，且只串行跑那一条：`python -m unittest discover test/tests`。测试隔离与慢用例的编写纪律见 [tests/README.md](tests/README.md)。
