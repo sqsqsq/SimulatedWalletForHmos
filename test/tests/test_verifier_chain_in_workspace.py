@@ -301,6 +301,17 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
             with self.subTest(entry=rel):
                 for needle in ("maison_verifier_request", "## 其它独立只读审查任务", "Story 业务审查的派审载体", "调用方", read_only):
                     self.assertIn(needle, text)
+            with self.subTest(scope=rel):
+                # 阶段的总判与处置口径只在阶段分支；自足任务按任务自己的判据与结论（Story 的 MAJOR 是阻断）
+                own = text.index("## 其它独立只读审查任务")
+                self.assertIn("MAJOR 属于阻断发现", text[own:])
+                if "## 阶段审查：结论分级" in text:
+                    stage = text.index("## 阶段审查：结论分级")
+                    for phrase in ("MAJOR 也不自动成为必修", "只有 **BLOCKER 级 FAIL** 会让父 agent 回去修"):
+                        if phrase in text:
+                            self.assertTrue(stage < text.index(phrase) < own, f"{phrase} 不在阶段分支里")
+                else:
+                    self.assertNotIn("MAJOR 也不自动成为必修", text[:text.index("## 你收到什么")])
         for rel in (".claude/agents/verifier.md", ".cac/agents/verifier.md"):
             with self.subTest(same_source=rel):
                 self.assertEqual(source, (self.template / rel).read_text(encoding="utf-8"))

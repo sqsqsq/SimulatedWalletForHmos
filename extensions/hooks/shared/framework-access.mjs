@@ -543,11 +543,23 @@ function projectFile(native, ref) {
   }
 }
 
+/**
+ * 契约权威文件的规范工程相对路径，按原生契约 loader 的同一读法：相对路径解析到工程根之下即可（含 `a/../b` 这类等价写法），
+ * 绝对路径、带协议或越出工程根为 null（原生对它们报问题）。
+ */
+function authorityFile(native, ref) {
+  const rel = String(ref ?? '').split('#')[0];
+  if (!rel.trim() || path.isAbsolute(rel) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(rel)) return null;
+  const inside = path.relative(native.root, path.resolve(native.root, rel));
+  if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) return null;
+  return inside.split(path.sep).join('/');
+}
+
 /** 契约权威文件此刻的原始字节：文件 → 字节（读不到为 null）。原生核对前后各取一次，判读取期间有没有被改写。 */
 function authorityBytes(native, blueprint) {
   const out = new Map();
   for (const { ref } of authorityRefs(blueprint)) {
-    const file = projectFile(native, ref);
+    const file = authorityFile(native, ref);
     if (!file || out.has(file)) continue;
     try { out.set(file, fs.readFileSync(path.join(native.root, ...file.split('/')))); } catch { out.set(file, null); }
   }
@@ -570,7 +582,7 @@ function authorityOf(native, blueprint, checked) {
   const exact = new Map();
   const files = new Map();
   for (const r of refs) {
-    const file = projectFile(native, r.ref);
+    const file = authorityFile(native, r.ref);
     if (!file) continue;
     exact.set(r.ref, file);
     if (!files.has(file)) files.set(file, { path: file, sha256: null, role: 'contract_authority', refs: [] });
@@ -640,7 +652,7 @@ function sourcesOf(native, blueprint, requirement, checked) {
       authority.files.get(exact).refs.push({ ref: r.path, where: r.where });
       return false;
     }
-    const file = fileAt(r.path);
+    const file = authorityFile(native, r.path);
     if (file && authority.files.has(file)) {
       out.problems.push(`${r.where} 引用的 ${r.path} 落在契约权威文件 ${file}，不是 contracts 里原生核过的那一段：`
         + '权威文件的内容只经契约段的 source_ref 由原生核对——设计负责方处理');

@@ -765,6 +765,51 @@ class ContractSectionsReadTheirAuthority(SourceIndexCase):
         self.assertEqual(([], []), (first["problems"], again["problems"]))
         self.assertNotEqual(first["identity"], again["identity"], "权威文件换了字节，来源身份没跟着变")
 
+    def test_an_equivalent_path_the_native_loader_accepts_is_the_same_authority(self) -> None:
+        """原生 loader 接受 `contracts/../contracts/sign.yaml` 这样的根内等价写法：它与标准写法是同一份权威文件、同一摘要、同一来源身份。"""
+        pointer = "/operations/sign/operation"
+        standard = self.collect(self.with_contract(pointer))
+        bp = self.with_contract(pointer)
+        bp["contracts"][0]["operation"]["source_ref"] = f"{self.base}/blueprint/contracts/../contracts/sign.yaml#{pointer}"
+        equivalent = self.collect(bp)
+        self.assertEqual(([], []), (equivalent["problems"], equivalent["authorityIssues"]))
+        self.assertEqual([(self.file, f"sha256:{hashlib.sha256(self.AUTHORITY.encode('utf-8')).hexdigest()}")],
+                         [(f["path"], f["sha256"]) for f in equivalent["authorityFiles"]], "等价写法的权威文件没进来源集合")
+        self.assertEqual(standard["identity"], equivalent["identity"])
+
+    def test_an_authority_outside_the_project_stays_the_native_finding(self) -> None:
+        bp = self.with_contract("/operations/sign/operation")
+        bp["contracts"][0]["operation"]["source_ref"] = "../outside/sign.yaml#/operations/sign/operation"
+        got = self.collect(bp)
+        self.assertEqual("incomplete", got["status"])
+        self.assertEqual(["blueprint_contract_authority_source_invalid"], [i["id"] for i in got["authorityIssues"]])
+        self.assertEqual([], got["authorityFiles"])
+
+    def test_the_review_object_lists_the_authority_reached_by_an_equivalent_path(self) -> None:
+        """独审对象是来源集合的直接读者：等价写法引到的权威文件照样进必读材料。"""
+        probe = """
+        const [access, review, root, feature, BLUEPRINT] = process.argv.slice(1);
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const file = path.join(root, 'doc', 'features', feature, 'blueprint', 'component-blueprint.yaml');
+        fs.writeFileSync(file, BLUEPRINT);
+        const { reviewObject } = await import(review);
+        const object = reviewObject(root, feature, { withTask: false });
+        fs.rmSync(file);
+        process.stdout.write(JSON.stringify(object.rows.map(r => r.path)));
+        """
+        bp = self.with_contract("/operations/sign/operation")
+        bp["contracts"][0]["operation"]["source_ref"] = f"{self.base}/blueprint/contracts/../contracts/sign.yaml#/operations/sign/operation"
+        review = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
+        manifest = self.root / "doc" / "extensions" / "manifest.yaml"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("provides:\n  knowledge: []\n", encoding="utf-8")   # 审查对象要列激活清单；本例不涉知识
+        proc = subprocess.run(["node", "--input-type=module", "-e", probe, ACCESS.resolve().as_uri(), review.resolve().as_uri(),
+                               str(self.root), self.feature, json.dumps(bp, ensure_ascii=False)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn(self.file, json.loads(proc.stdout), "独审必读材料里没有等价写法引到的权威文件")
+
     def test_a_read_after_an_edit_in_the_same_process_sees_the_new_bytes(self) -> None:
         """同一进程里先读、改了权威文件再读：后一次按此刻的字节，不沿用前一次的结果。"""
         probe = """
