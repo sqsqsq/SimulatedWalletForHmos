@@ -491,6 +491,13 @@ python test/scripts/run_multi_case.py finalize `
 `test/tests/conftest.py` 给测试起的 node 进程带上 ts-node 转译缓存（系统临时目录 `story-ts-transpile-cache`，按内容取键，删了只会重新转译）；
 要读原生 Framework 的用例按准备状态分小类，一个类只造一种状态：`loadscope` 按类分 worker，大类会串行拖住整轮。
 
+**进程内宿主**：测试里 `subprocess.run` 起的 `node <脚本.mjs>` 与 `node --input-type=module -e` 由本测试进程的一个 node 宿主在进程内执行（`test/tests/node_host_bridge.py`、`node_host.mjs`、`node_host_loader.mjs`），Framework 的 TS 每个测试进程只加载一次；宿主随测试进程起停，不是常驻服务，每 60 条请求重启一次（每条请求一份新的扩展模块，内存只增不减）。
+- 与命令行同语义：每条请求的 argv、cwd、env 各自设好再还原；扩展模块级状态每条请求从零开始；`process.exit` 当场截断并给出退出码；`-e` 正文里的导入相对本次 cwd 解析。
+- 不转的形态照常起真实进程：带 stdin 或 shell、带别的 node 参数、换了 `NODE_OPTIONS`、脚本在 node_modules 下；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
+- 进程边界本身的见证在类上写 `REAL_CLI = True`（如 `test_story_build.py::TheCommandLineIsCheckedFirst`、`AMissingRequirementDirectoryIsNamed`）。
+- `STORY_TEST_NODE_HOST=0` 全部走真实进程；`STORY_TEST_NODE_HOST_LOG=<目录>` 逐条记下归一化的结果，两轮全量（关、开）比对宿主与命令行是否等价。
+- 已知与命令行的差异（不影响断言，留在比对结论里）：Framework 按“本进程”只打一次的提示（如缺 `project_profile` 的 advisory）在宿主里每个宿主进程只打一次；未捕获异常的打印格式没有 Node 原生的源码行与插入符。
+
 - 按影响范围分层跑：改一处用 `affected`；批内每一步用 `affected` 覆盖本步改动的直接测试与消费者，装配输入有变时加跑 `assembly`，其余专项按本步改动对象选；全量、失效形态与其余离线检查在批末最后一步交回前由 `handback` 跑一次。批内中间步骤的提交只说明本步验证范围，不宣称全量就绪；同一对象无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明：pytest 步骤带 `-rs`，每条跳过的用例与原因列在该步日志末尾的 short test summary。这些命令不启动真实被测 CLI。
 - 运行证据的位置由 `test_run_measurement.py::ProcessArtifactsEnterTheIndex` 核：`doc/spec`、`doc/plan` 下的截图、日志、事件流、压缩包按运行证据报：CLI 运行记录放 `output/story/`，维护过程证据放 `output/evidence/`（§0.4）。两类图是评价参照而不是运行证据：待审定金样候选里被该 Case story 引用的 `ux-reference` 图；已确认的分析归档 `doc/spec/1.9.9/04-稳定性与性能分析/data/golden/`（性质由其 MANIFEST 声明）里被所属对象 story 图片或 spec Visual Handoff 实际引用的 PNG。归档里未引用、映射到别的对象、缺 MANIFEST 的图与其它后缀照常报，断开的引用逐条报出。

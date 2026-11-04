@@ -204,6 +204,8 @@ class StoryBuildCase(unittest.TestCase):
 
 class AMissingRequirementDirectoryIsNamed(unittest.TestCase):
     """工程根或需求名写错：先说需求目录不存在、在哪，不往下报「台账缺」这类以目录存在为前提的问题，也不建目录。"""
+    #: 命令行入口本身的见证：走真实进程（conftest「进程内宿主」）
+    REAL_CLI = True
 
     def test_the_directory_and_the_inputs_are_named(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3331,6 +3333,8 @@ class TestMaterialListMatchesTheManifest(Step8Case):
 
 class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
     """帮助与参数错误在任何动作之前处理：帮助退出 0，错误退出 1，两者都不写盘、不跑命令。"""
+    #: 命令行入口本身的见证：走真实进程（conftest「进程内宿主」）
+    REAL_CLI = True
 
     SECRET = "tok-should-not-print"
 
