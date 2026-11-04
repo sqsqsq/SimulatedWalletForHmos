@@ -1,4 +1,4 @@
-"""已交给设计、蓝图准入的需求工作区：成文与检查类用例从这里起步。
+"""已交给设计、蓝图准入的需求工作区：成文与检查类用例从这里起步；被测动作在起骨架之后的，从 `skeleton_copy` 起步。
 
 每份夹具只准备一次（复制夹具、放准入蓝图、用真实流程命令走到交给设计、按蓝图重投附录），各进程与之后各轮共用
 （`shared_state`，键是输入内容的摘要），复制给各用例。流程契约与冻结输入只记工程内相对路径，复制到别处照样成立；
@@ -81,3 +81,39 @@ def designed_copy(fixture: Path, feature: str, target: Path, design: dict | None
     base = shared_state.shared_tree("designed", key, build)
     shared_state.copy_tree(base, target)
     link_framework(target)
+
+
+#: 共享的起骨架前态里记下那次真实 skeleton 的结果；不随工程复制给用例
+SKELETON_RESULT = ".skeleton-result.json"
+
+
+def skeleton_copy(fixture: Path, feature: str, target: Path, design: dict | None = None, *,
+                  variant: str, owner: Path, before=None, then=None, skeleton: bool = True) -> subprocess.CompletedProcess | None:
+    """设计前态之上起好骨架：被测动作之前的这一段（`before` 的确定改动 → 走流程 → `then` → 真实 skeleton）同一组输入只跑一次，
+    复制到 `target`，回那次 skeleton 的真实结果。两个改动写在 `owner` 测试文件里，键带上它的内容与 `variant`。
+    被测的就是起骨架时给 `skeleton=False`：前态停在走完流程、`then` 之后，回 None。"""
+    def build(base: Path) -> None:
+        designed_copy(fixture, feature, base, design)
+        if before is not None:
+            before(base)
+        ensure_flow_state(base, feature, base / "doc" / "features" / feature / "AR" / "story-src")
+        if then is not None:
+            then(base)
+        if not skeleton:
+            return
+        proc = subprocess.run(["node", str(BUILD), "skeleton", "--feature", feature, "--project-root", str(base)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        (base / SKELETON_RESULT).write_text(json.dumps({"stdout": proc.stdout, "stderr": proc.stderr}, ensure_ascii=False),
+                                            encoding="utf-8")
+
+    key = shared_state.digest(fixture, *shared_state.COMMON, feature, shared_state.framework_version(), owner,
+                              json.dumps(design or {}, ensure_ascii=False, sort_keys=True, default=str), variant)
+    base = shared_state.shared_tree("skeleton" if skeleton else "flowed", key, build)
+    shared_state.copy_tree(base, target)
+    link_framework(target)
+    if not skeleton:
+        return None
+    (target / SKELETON_RESULT).unlink()
+    ran = json.loads((base / SKELETON_RESULT).read_text(encoding="utf-8"))
+    return subprocess.CompletedProcess(["skeleton"], 0, ran["stdout"], ran["stderr"])

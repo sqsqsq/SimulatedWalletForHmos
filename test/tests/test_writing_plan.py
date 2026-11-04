@@ -23,8 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_story_build import (  # noqa: E402
-    BUILD, FEATURE, FLOW, PLAN_FIXTURE, REPO_ROOT, StoryBuildCase, ensure_flow_state, minimal_body,
+    BUILD, FEATURE, FIXTURE, FLOW, PLAN_FIXTURE, REPO_ROOT, StoryBuildCase, minimal_body,
 )
+from designed_fixture import skeleton_copy  # noqa: E402
 from ext_workspace import DEV_EXT, project_root_of  # noqa: E402
 import design_kit  # noqa: E402
 
@@ -270,16 +271,24 @@ class TheSkeletonIsReadInOnePlace(unittest.TestCase):
         self.assertEqual([{"at": "", "kind": "table", "selected": True}], forms)
 
 
+def _not_started(base: Path) -> None:
+    src = base / "doc" / "features" / FEATURE / "AR" / "story-src"
+    (src / "story-template.md").unlink(missing_ok=True)
+    shutil.rmtree(src / "drafts", ignore_errors=True)
+    (src.parent / "story.md").unlink(missing_ok=True)
+
+
 class PlanCase(StoryBuildCase):
     """从「Spec 写完、还没起手」开始：流程收口，设计、草稿与 Story 都不在。"""
 
     def setUp(self) -> None:
         super().setUp()
-        ensure_flow_state(self.root, FEATURE, self.src)
         self.plan = self.src / "story-template.md"
-        self.plan.unlink(missing_ok=True)
-        shutil.rmtree(self.src / "drafts", ignore_errors=True)
-        self.story_path.unlink(missing_ok=True)
+
+    def prepare(self) -> None:
+        # 走完流程、撤掉设计、草稿与 Story：这一段同一组输入只真实跑一次，本例从这里起手
+        skeleton_copy(FIXTURE, FEATURE, self.root, self.DESIGN, variant="plan-start", owner=Path(__file__),
+                      then=_not_started, skeleton=False)
 
     def cmd(self, *args: str) -> tuple[int, str]:
         proc = subprocess.run(["node", str(BUILD), *args, "--feature", FEATURE,

@@ -24,6 +24,7 @@ import unittest
 from pathlib import Path
 from flow_steps import walk_to_complete
 from ext_workspace import link_harness_yaml, DEV_EXT
+import shared_state  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXT = DEV_EXT
@@ -66,7 +67,11 @@ class RegistrationCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name) / "work"
+        self.lay_out(Path(self._tmp.name) / "work")
+
+    def lay_out(self, root: Path) -> None:
+        """一份装好扩展、需求目录与收件箱都空着的工程，两张待导入的图放在工程外的来件处。"""
+        self.root = root
         (self.root / "doc").mkdir(parents=True)
         shutil.copytree(EXT, self.root / "doc" / "extensions")
         link_harness_yaml(self.root)
@@ -178,7 +183,20 @@ class EveryRegisteredImageNeedsSomewhereToGoCase(RegistrationCase):
             timeout=90, cwd=self.root)
 
     def setUp(self) -> None:
-        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        # 导入、登记、走流程、起骨架这一段同一组输入只真实跑一次（共享），本例从起好的骨架开始
+        key = shared_state.digest(EXT, *shared_state.COMMON, Path(__file__), shared_state.framework_version())
+        base = shared_state.shared_tree("image-destination", key, self.prepare)
+        self.root = Path(self._tmp.name) / "work"
+        shared_state.copy_tree(base, self.root)
+        link_harness_yaml(self.root)
+        self.feature_root = self.root / "doc" / "features" / FEATURE
+        self.incoming = self.root / "incoming"
+        self.story = self.feature_root / "AR" / "story.md"
+
+    def prepare(self, base: Path) -> None:
+        self.lay_out(base)
         (self.incoming / "prd.md").write_text("# 产品需求\n\n自动充值签约。\n", encoding="utf-8")
         self.put("prd.md", "prd.md", "RR")
         self.register("raw-1.png", "signup-page", "签约页")
@@ -192,8 +210,8 @@ class EveryRegisteredImageNeedsSomewhereToGoCase(RegistrationCase):
                              "**结论与影响**：验收不含管理页。",
             "decider": "需求方",
         }]}, ensure_ascii=False), encoding="utf-8")
-        self.assertEqual(0, self.build("skeleton").returncode)
-        self.story = self.feature_root / "AR" / "story.md"
+        made = self.build("skeleton")
+        assert made.returncode == 0, made.stdout + made.stderr
 
     def check_output(self) -> str:
         proc = self.build("check")

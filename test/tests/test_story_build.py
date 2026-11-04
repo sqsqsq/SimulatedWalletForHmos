@@ -23,7 +23,8 @@ import unittest
 from pathlib import Path
 from ext_workspace import link_framework, link_harness_yaml, DEV_EXT, DEV_ROOT
 import design_kit  # noqa: E402
-from designed_fixture import FIXTURE_JUDGEMENTS, REAL_RUN_DESIGN, designed_copy, ensure_flow_state  # noqa: E402
+import shared_state  # noqa: E402
+from designed_fixture import FIXTURE_JUDGEMENTS, REAL_RUN_DESIGN, designed_copy, ensure_flow_state, skeleton_copy  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
 
@@ -150,10 +151,14 @@ class StoryBuildCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name) / "work"
-        designed_copy(FIXTURE, FEATURE, self.root, self.DESIGN)
+        self.prepare()
         self.addCleanup(self._tmp.cleanup)
         self.src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         self.story_path = self.root / "doc" / "features" / FEATURE / "AR" / "story.md"
+
+    def prepare(self) -> None:
+        """本例的起点；被测动作在起骨架之后的子类改从共享的骨架前态起步。"""
+        designed_copy(FIXTURE, FEATURE, self.root, self.DESIGN)
 
     # ---- 驱动 ----
 
@@ -1126,6 +1131,10 @@ class TestChangesAfterRegistration(StoryBuildCase):
         self.assertEqual(0, self.run_build("skeleton").returncode,
                          "没登记就拦 skeleton，那是把正常流程拦了")
 
+def _without_story(base: Path) -> None:
+    (base / "doc" / "features" / FEATURE / "AR" / "story.md").unlink()
+
+
 class Step8Case(StoryBuildCase):
     """本组用例都要一份真的材料清单——它由 `story_flow.py round` 按磁盘现状生成。"""
 
@@ -1817,10 +1826,10 @@ class TheChapterIsCheckedBeforeItLandsCase(Step8Case):
     作者得同时改草稿与已经写进去的正文，而两者哪个是准的没人说得清。
     """
 
-    def setUp(self) -> None:
-        super().setUp()
-        self.story_path.unlink()
-        self.assertEqual(0, self.run_build("skeleton").returncode)
+    def prepare(self) -> None:
+        # 删掉 story.md 再起骨架：这一段同一组输入只真实跑一次，本例从起好的骨架开始
+        skeleton_copy(FIXTURE, FEATURE, self.root, self.DESIGN, variant="story-removed", owner=Path(__file__),
+                      before=_without_story)
 
     def put(self, title: str, body: str) -> subprocess.CompletedProcess:
         src = self.root / "chapter.md"
@@ -2029,10 +2038,10 @@ class ChaptersLandOneAtATime(Step8Case):
     整篇重出是全有或全无，中途断了磁盘上什么都没有。
     """
 
-    def setUp(self) -> None:
-        super().setUp()
-        self.story_path.unlink()
-        self.assertEqual(0, self.run_build("skeleton").returncode)
+    def prepare(self) -> None:
+        # 删掉 story.md 再起骨架：这一段同一组输入只真实跑一次，本例从起好的骨架开始
+        skeleton_copy(FIXTURE, FEATURE, self.root, self.DESIGN, variant="story-removed", owner=Path(__file__),
+                      before=_without_story)
 
     def titles(self) -> list[str]:
         return [c["title"] for c in json.loads(
@@ -2155,10 +2164,19 @@ def real_with_knowledge(real: Path) -> Path:
     return _REAL_WITH_KNOWLEDGE[real]
 
 
+def _place_plan(root: Path, carried) -> None:
+    """起手前放好写作设计：作者照设计写章之后的路径才是本组测的，设计本身另有用例。"""
+    plan = root / "doc" / "features" / "AR90006" / "AR" / "story-src" / "story-template.md"
+    if not plan.exists():
+        plan.write_text(with_carry(PLAN_FIXTURE.read_text(encoding="utf-8"), carried), encoding="utf-8")
+
+
 class RealRunCase(unittest.TestCase):
     """拿真实一跑的产物走作者路径。
 
     手造的最小样本全是 LF、字段规整、图片路径不带中文目录名，真实产物哪一样都不是。
+    本组用例的第一条命令都是起骨架、之前不改工程：设计就绪 → 走流程 → 写作设计 → skeleton 这一段同一组输入只真实跑一次
+    （`skeleton_copy`），本例第一次 skeleton 交回那次的真实结果；之后再起骨架照常真跑。
     """
 
     REAL = REPO_ROOT / "test" / "fixtures" / "real-run" / "AR90006"
@@ -2172,7 +2190,10 @@ class RealRunCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
         self.feature = self.root / "doc" / "features" / "AR90006"
-        designed_copy(real_with_knowledge(self.REAL), "AR90006", self.root, self.DESIGN)
+        carried = self.CARRIED
+        self._skeleton = skeleton_copy(real_with_knowledge(self.REAL), "AR90006", self.root, self.DESIGN,
+                                       variant=f"carried={carried!r}", owner=Path(__file__),
+                                       then=lambda base: _place_plan(base, carried))
         self.story_path = self.feature / "AR" / "story.md"
         self.drafts = self.feature / "AR" / "story-src" / "drafts"
 
@@ -2181,12 +2202,13 @@ class RealRunCase(unittest.TestCase):
 
         起手前放好写作设计：这一组测的是作者照设计写章之后的路径，设计本身另有用例。
         """
+        if args == ("skeleton",) and self._skeleton is not None:
+            ran, self._skeleton = self._skeleton, None
+            return ran
+        self._skeleton = None
         if "skeleton" in args:
             ensure_flow_state(self.root, "AR90006", self.feature / "AR" / "story-src")
-            plan = self.feature / "AR" / "story-src" / "story-template.md"
-            if not plan.exists():
-                text = PLAN_FIXTURE.read_text(encoding="utf-8")
-                plan.write_text(with_carry(text, self.CARRIED), encoding="utf-8")
+            _place_plan(self.root, self.CARRIED)
         return subprocess.run(
             ["node", str(BUILD), *args, "--feature", "AR90006",
              "--project-root", str(self.root)],
@@ -3598,10 +3620,9 @@ class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
     UPSTREAM_FIGURES = ("\n\n## 9. 补充流程\n\n### 9.1 提交\n\n```mermaid\ngraph TD\nA[提交] --> B[受理]\n```\n\n"
                         "### 9.2 回执\n\n```mermaid\ngraph TD\nC[回执] --> D[展示]\n```\n")
 
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        fixture = Path(self._tmp.name) / "fixture"
+    def build_fixture(self, fixture: Path) -> None:
+        """夹具加一份带两张图的系统设计，经真实导入命令导成材料版本。导入写下取得时刻，所以整轮只导一次（共享），
+        各例按同一份导入结果准备设计。"""
         shutil.copytree(FIXTURE, fixture)
         inbox = fixture / "doc" / "features" / FEATURE / "inbox"
         (inbox / "SR").mkdir(parents=True)
@@ -3609,7 +3630,13 @@ class UpstreamDiagramsAreCarriedWhereTheDesignSays(StoryBuildCase):
         (inbox / ".classify.json").write_text(json.dumps({"SR/design.md": "SR"}), encoding="utf-8")
         proc = subprocess.run([sys.executable, str(IMPORT), "--feature", FEATURE, "--project-root", str(fixture)],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        key = shared_state.digest(FIXTURE, *shared_state.COMMON, Path(__file__), self.UPSTREAM_FIGURES)
+        fixture = shared_state.shared_tree("upstream-sr", key, self.build_fixture)
         index = json.loads((fixture / "doc" / "features" / FEATURE / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
         origin = next(o for o in index["origins"] if o["class"] == "SR")
         sr, sr_reading = origin["path"], origin["readable_paths"][0]
