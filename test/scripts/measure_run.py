@@ -258,12 +258,14 @@ def _outcome(event: dict) -> tuple[str, str]:
     return str(event.get("tool_status") or ""), _output_text(event)
 
 
-def tool_call_view(events: list[dict]) -> tuple[list[dict], list[dict]]:
+def tool_call_view(events: list[dict], native: dict[str, list[dict]] | None = None) -> tuple[list[dict], list[dict]]:
     """公共 tool 事件归并成调用：返回（按开始先后排列的调用，归并不了的条目）。
 
     键是 (run_id, tool_call_id)：并发交错按键配，不按相邻行或工具名；不同 run 复用的编号各算各的。
     没有编号的事件自身带名字就是一次调用（单事件宿主与历史记录），不和别的无编号事件猜配。
     每个调用记下它名下所有事件的位置，事件间隔按它归属。
+    `native` 是本 run 保全的原生会话里的调用（callId → 各会话里的那一次）：公共事件被截断或缺结果的一侧，
+    由同一原生调用的完整入参与结果补齐后再分类（见 `_complete_from_native`）；补不齐的照旧记截断或缺结果。
     """
     calls: list[dict] = []
     incomplete: list[dict] = []
@@ -318,14 +320,49 @@ def tool_call_view(events: list[dict]) -> tuple[list[dict], list[dict]]:
         call["conflict"] = True
         note("conflicting_events", index, event)
     for call in calls:
-        call["kind"] = _call_kind(call)
         call["shortened"] = any(events[i].get("source_truncated") is True for i in call["indices"])
+        if (call["shortened"] or call["end"] is None) and not call["conflict"]:
+            _complete_from_native(call, native or {})
+        call["kind"] = _call_kind(call)
         if call["end"] is None:
             note("no_result", call["start_index"], call["start"])
         if call["shortened"]:
             note("source_truncated", call["start_index"], call["start"])
     incomplete.sort(key=lambda item: item["index"])
     return calls, incomplete
+
+
+def _complete_from_native(call: dict, native: dict[str, list[dict]]) -> None:
+    """同一调用在原生会话里有完整记录时，补齐公共事件截断或缺失的那一侧。
+
+    认同一调用：callId 相同、只在一个原生会话里出现、工具名一致。入参被截断取原生完整入参；结果缺失或被截断取原生结果，
+    原生对这次调用只有一份结果才取（内容不同的多份是冲突，不挑）。补齐的一侧记 `completed_from: native`；
+    另一侧仍截断时调用照旧是截断，结论照旧判不了。
+    """
+    found = native.get(str(call["start"].get("tool_call_id") or ""), [])
+    if len(found) != 1 or str(found[0].get("name") or "").lower() != call["name"]:
+        return
+    same = found[0]
+    filled = []
+    if call["start"].get("source_truncated") is True:
+        try:
+            args = json.loads(same.get("args") or "")
+        except (TypeError, ValueError):
+            args = None
+        if isinstance(args, dict):
+            call["start"] = {**call["start"], "tool_input": args, "source_truncated": False}
+            filled.append("input")
+    end = call["end"]
+    results = same.get("results") or []
+    if (end is None or end.get("source_truncated") is True) and len(results) == 1 and results[0].get("text") is not None:
+        status = "error" if results[0].get("isError") else "completed"
+        base = end or {"type": "tool", "run_id": call["start"].get("run_id"), "tool_call_id": call["start"].get("tool_call_id"),
+                       "timestamp": None}
+        call["end"] = {**base, "tool_status": status, "tool_output": results[0]["text"], "source_truncated": False}
+        filled.append("result")
+    if filled:
+        call["completed_from"] = {"native": filled}
+        call["shortened"] = any(e is not None and e.get("source_truncated") is True for e in (call["start"], call["end"]))
 
 
 def _is_verifier(call: dict) -> bool:
@@ -468,7 +505,12 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
     if not events:
         raise SystemExit(f"[measure_run] {events_path} 里没有可解析的事件——不是「指标为零」，是读不到数据")
 
-    calls, incomplete = tool_call_view(events)
+    sessions = _native_sessions(run_dir or events_path.parent)
+    native: dict[str, list[dict]] = {}
+    for _parent, info in sessions["read"]:
+        for one in info.get("calls") or []:
+            native.setdefault(str(one.get("callId")), []).append(one)
+    calls, incomplete = tool_call_view(events, native)
     owners = _owners(calls)
     reads_rule = 0            # 读框架/扩展的规则文本
     reads_own = 0             # 读自己的产物
@@ -605,7 +647,8 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "gate_fail_by_kind": gate_fail_by_kind,
         "gate_unknown_by_kind": gate_unknown_by_kind,
         "review_results": dict(review_results),
-        **native_delegations(run_dir or events_path.parent),
+        "tool_calls_completed_from_native": sum("completed_from" in call for call in calls),
+        **native_delegations(sessions),
         "repeated_check_fails": check_fail_counts.most_common(5),
         "worst_repeated_check": (check_fail_counts.most_common(1)[0] if check_fail_counts else None),
         "gap_sec_by_kind": {k: round(v, 1) for k, v in gap_by_kind.items()},
@@ -654,18 +697,27 @@ def _child_role(child: dict) -> str | None:
     return None
 
 
-def native_delegations(run_dir: Path) -> dict:
-    """原生会话里的委派：按派出去的正文与子会话实际产出认角色，给每个子会话的观察跨度与收尾状态。没有保全原件时为 null。"""
+def _native_sessions(run_dir: Path) -> dict:
+    """本 run 保全的原生父会话：{present, read: [(文件, 读数)], problems}。没有保全原件时 present 为假。"""
     root = run_dir / "native-sessions"
     parents = sorted(root.glob("*/session.v4.jsonl.zstd")) if root.is_dir() else []
-    if not parents:
-        return {"delegations": None}
-    rows, problems = [], []
+    read, problems = [], []
     for parent in parents:
         info = _native(parent)
         if info.get("error"):
             problems.append(f"{parent.parent.name}：{info['error']}")
-            continue
+        else:
+            read.append((parent, info))
+    return {"present": bool(parents), "read": read, "problems": problems}
+
+
+def native_delegations(sessions: dict) -> dict:
+    """原生会话里的委派：按派出去的正文与子会话实际产出认角色，给每个子会话的观察跨度与收尾状态；
+    Story 独审另给收尾回复里的业务结论（`_review_conclusion`），与收尾状态、父方的报告接收结论分开。没有保全原件时为 null。"""
+    if not sessions["present"]:
+        return {"delegations": None}
+    rows, problems = [], list(sessions["problems"])
+    for parent, info in sessions["read"]:
         catalog = {c["childId"]: c for c in info.get("children") or []}
         settled = {s["childId"]: s for s in info.get("settled") or [] if s.get("childId")}
         for call in info.get("calls") or []:
@@ -689,10 +741,59 @@ def native_delegations(run_dir: Path) -> dict:
             span = (round((done["time"] - entry["createdAt"]) / 60000, 1)
                     if done and done.get("time") and entry.get("createdAt") else None)
             summary = str((done or {}).get("summary") or "")
-            rows.append({"role": role or "unresolved", "basis": basis, "label": entry.get("label") or str(_args(call).get("description") or ""),
-                         "child_id": started, "observed_span_min": span,
-                         "settled": "failed" if "failed" in summary else "finished" if "finished" in summary else "unknown"})
-    return {"delegations": {"by_role": dict(Counter(r["role"] for r in rows)), "items": rows, "problems": problems}}
+            row = {"role": role or "unresolved", "basis": basis, "label": entry.get("label") or str(_args(call).get("description") or ""),
+                   "child_id": started, "observed_span_min": span,
+                   "settled": "failed" if "failed" in summary else "finished" if "finished" in summary else "unknown"}
+            if row["role"] == "story_review":
+                row["review_conclusion"] = _review_conclusion(prompt, done)
+            rows.append(row)
+    conclusions = Counter(r["review_conclusion"]["value"] for r in rows if "review_conclusion" in r)
+    return {"delegations": {"by_role": dict(Counter(r["role"] for r in rows)), "story_review_conclusions": dict(conclusions),
+                            "items": rows, "problems": problems}}
+
+
+#: 宿主收尾通知里，子会话最后那条回复从这一行之后开始
+CLOSING_MESSAGE = "Its closing message:\n"
+#: 产品派审载体给审查者的材料键（independent-review.mjs）
+CARRIER_KEY_RE = re.compile(r"^- 材料键：`([0-9a-f]{64})`", re.MULTILINE)
+REPLY_KEY_RE = re.compile(r"^material_key: *([0-9a-f]{64}) *$", re.MULTILINE)
+#: 产品报告合同的三个二级标题（review-report-contract.mjs 的 REPORT_HEADINGS）
+REPORT_HEADINGS = ("判据核对", "发现", "总体结论")
+STATED_RE = re.compile(r"^(pass|warn|fail)(?![A-Za-z])")
+
+
+def _review_conclusion(prompt: str, done: dict | None) -> dict:
+    """Story 独审子会话收尾回复里写明的总体结论：{value: pass/warn/fail/unknown, why, at}。
+
+    只做结构提取：回复恰好一行材料键且是派出去的那一份、三个二级标题各恰好一个、「总体结论」第一行是 pass / warn / fail。
+    任何一条不成立都是 unknown 并写明原因——不从正文里的 fail 字样推断，也不把收尾 finished 当通过；
+    报告是否合合同、结论与发现是否一致仍归产品的 `review --action check` 与独立评审。
+    """
+    def unknown(why: str) -> dict:
+        return {"value": "unknown", "why": why, "at": None}
+    if not done:
+        return unknown("没有收尾通知")
+    text = str(done.get("text") or "")
+    if CLOSING_MESSAGE not in text:
+        return unknown("收尾通知里没有收尾回复")
+    reply = text.split(CLOSING_MESSAGE, 1)[1]
+    carrier = CARRIER_KEY_RE.findall(prompt)
+    keys = REPLY_KEY_RE.findall(reply)
+    if len(carrier) != 1 or keys != carrier:
+        return unknown("回复的材料键对不上派出去的审查对象")
+    lines = reply.splitlines()
+    heads = [(i, line[3:].strip()) for i, line in enumerate(lines) if line.startswith("## ")]
+    if sorted(h for _, h in heads if h in REPORT_HEADINGS) != sorted(REPORT_HEADINGS) \
+            or len([h for _, h in heads if h in REPORT_HEADINGS]) != len(REPORT_HEADINGS):
+        return unknown("回复的二级标题不是报告合同的三节各一个")
+    start = next(i for i, h in heads if h == "总体结论")
+    end = next((i for i, _ in heads if i > start), len(lines))
+    first = next(((i, line.strip()) for i, line in enumerate(lines[start + 1:end], start + 1) if line.strip()), None)
+    stated = STATED_RE.match(first[1]) if first else None
+    if not stated:
+        return unknown("「总体结论」第一行不是 pass / warn / fail")
+    return {"value": stated.group(1), "why": None,
+            "at": {"child_id": done.get("childId"), "settled_time": done.get("time"), "reply_line": first[0] + 1}}
 
 
 def _diagrams(run_dir: Path) -> dict:
@@ -761,7 +862,8 @@ def _human_wait(run_dir: Path) -> dict:
 def render(result: dict) -> str:
     lines = [
         "[measure_run] 实跑效率度量（只报数，达标与否由人判断；范围是整份 events.jsonl，分段按实际 checkpoint）",
-        f"  事件 {result['events']}｜工具调用 {result['tool_calls']}｜时长 {result['duration_min']} 分钟",
+        f"  事件 {result['events']}｜工具调用 {result['tool_calls']}（其中 {result['tool_calls_completed_from_native']} 次由同一原生调用补齐截断或缺端）"
+        f"｜时长 {result['duration_min']} 分钟",
         *([f"  统计不完整，仅为已观察到的次数：归并不了的工具事件 "
            + "、".join(f"{reason} {count}" for reason, count in
                       Counter(item["reason"] for item in result["incomplete_tool_events"]).most_common())]
@@ -787,8 +889,13 @@ def render(result: dict) -> str:
         "  ── 委派（按原生会话认角色）──",
         *(["    没有保全的原生会话：委派角色未取得（不是没有委派）"] if result.get("delegations") is None else [
             f"    按角色：{result['delegations']['by_role'] or '（没有委派）'}",
+            f"    Story 独审回复写明的总体结论：{result['delegations']['story_review_conclusions'] or '（没有 Story 独审）'}"
+            "（与收尾状态、父方报告接收结论分开计）",
             *(f"    - {i['role']}｜{i['label']}｜观察跨度 {i['observed_span_min'] if i['observed_span_min'] is not None else '未知'} 分钟"
-              f"（含等待，不是纯推理）｜收尾 {i['settled']}" for i in result["delegations"]["items"]),
+              f"（含等待，不是纯推理）｜收尾 {i['settled']}"
+              + (f"｜回复结论 {i['review_conclusion']['value']}"
+                 + (f"（{i['review_conclusion']['why']}）" if i['review_conclusion']['why'] else "")
+                 if "review_conclusion" in i else "") for i in result["delegations"]["items"]),
             *(f"    读不了：{p}" for p in result["delegations"]["problems"])]),
         "",
         "  ── 时间去哪了（间隔归属的近似值，不是实测 span）──",

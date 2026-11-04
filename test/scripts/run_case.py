@@ -2606,6 +2606,7 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None,
     initial = out_dir / "checkpoints" / "initial"
     superseded = None
     moved: list[tuple[Path, Path]] = []
+    parts: dict[str, str] = {}
     if state.get("awaiting_kind") == "initial_checkpoint" and initial.is_dir():
         # 已固定的第一段快照不再是第一段的终稿：留着作证据，答完之后重新固定。
         # 快照、同一时刻的审查报告与依赖是一组，一起换成同一个 superseded 名，新 initial 不会撞上旧配套
@@ -2615,12 +2616,13 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None,
         while any(superseded.with_name(superseded.name + s).exists() for s in ("", ".reports", ".dependencies")):
             n += 1
             superseded = out_dir / "checkpoints" / f"initial.superseded-{stamp}-{n}"
-        for suffix in ("", ".reports", ".dependencies"):
+        for suffix, part in (("", "tree"), (".reports", "reports"), (".dependencies", "dependencies")):
             src = initial.with_name("initial" + suffix)
             if src.exists():
                 dst = superseded.with_name(superseded.name + suffix)
                 src.rename(dst)
                 moved.append((dst, src))
+                parts[part] = str(dst)
     try:
         (out_dir / REPLY_FILE).write_text(
             json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")},
@@ -2633,7 +2635,8 @@ def cmd_reply(case_id: str, text: str, deliver: list[str] | None = None,
         return 1
     print(json.dumps({
         "ok": True, "queued": text, "delivered": delivered,
-        **({"superseded_checkpoint": str(superseded)} if superseded else {}),
+        # 实际挪走的每一样与它现在的位置：记录按它改指，旧记录读到的仍是自己那一版
+        **({"superseded_checkpoint": str(superseded), "superseded_parts": parts} if superseded else {}),
         "reply_status": "accepted",
         "note": "被测会话本轮结束时取用；它仍在说话时不会被打断",
     }, ensure_ascii=False, indent=2))

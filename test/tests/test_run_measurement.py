@@ -1189,7 +1189,7 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                                                       "arguments": json.dumps({"file_path": "doc/features/X/blueprint/contracts/a.yaml"})}}])
         _session(base / "children" / "k-other" / "session.v4.jsonl.zstd", "k-other", [
             {"type": "tool/call", "time": 1, "data": {"callId": "r", "name": "read", "arguments": json.dumps({"file_path": "src/a.ets"})}}])
-        got = measure_run.native_delegations(self.run_dir)["delegations"]
+        got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
         self.assertEqual({"story_review": 1, "blueprint_author": 1, "unresolved": 1, "stage_verifier": 1}, got["by_role"])
         by_child = {i["child_id"]: i for i in got["items"]}
         self.assertEqual((10.0, "finished"), (by_child["k-review"]["observed_span_min"], by_child["k-review"]["settled"]))
@@ -1198,7 +1198,105 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                          "没有收尾通知的跨度被当成了一个数")
 
     def test_without_kept_sessions_the_roles_are_unknown(self) -> None:
-        self.assertIsNone(measure_run.native_delegations(self.run_dir)["delegations"])
+        self.assertIsNone(measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"])
+
+    KEY = "a" * 64
+
+    def review(self, reply: str, *, key: str | None = None) -> dict:
+        """派一次 Story 独审，子会话正常收尾，收尾通知带着 `reply`；回给这一项的委派条目。"""
+        parent = "session-p"
+        rows = self.spawn(1, "c1", "k-review", f"# Story 独立人读审查 · 派审\n\n- 材料键：`{key or self.KEY}`\n", "审查", settled=None)
+        rows.append({"type": "agent/inbox/spliced", "time": 11 * 60000, "data": {"inserted": [{
+            "content": [{"type": "text", "text": "Background subagent k-review finished and will do no further work.\n"
+                                                 "Its closing message:\n" + reply}],
+            "source": {"kind": "subagent-settled", "senderSessionId": "k-review",
+                       "summary": "Background subagent k-review finished and will do no further work."}}]}})
+        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
+        [item] = got["items"]
+        return {**item, "conclusions": got["story_review_conclusions"]}
+
+    def report(self, conclusion: str) -> str:
+        return (f"material_key: {self.KEY}\n\n## 判据核对\n\n| 判据 ID | 结果 | 依据 |\n|---|---|---|\n| story_reader_review | fail | 口径冲突 |\n\n"
+                "## 发现\n\n| 编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任 |\n|---|---|---|---|---|---|\n"
+                f"| F1 | MAJOR | story_reader_review | AR/story.md | 转化率分子分母冲突 | 设计 |\n\n## 总体结论\n\n{conclusion}\n")
+
+    def test_a_review_that_finished_normally_can_still_fail(self) -> None:
+        """子会话正常收尾，回复写明总体结论 fail：业务结论是 fail，收尾仍是 finished，两件事分开记，并给出回复里的行号。"""
+        got = self.review(self.report("fail\n\n理由：存在 1 条 MAJOR。"))
+        self.assertEqual(("finished", "fail"), (got["settled"], got["review_conclusion"]["value"]))
+        self.assertEqual({"child_id": "k-review", "settled_time": 11 * 60000, "reply_line": 17}, got["review_conclusion"]["at"])
+        self.assertEqual({"fail": 1}, got["conclusions"])
+
+    def test_a_reply_that_is_not_the_whole_report_is_unknown(self) -> None:
+        """收尾回复只是摘要（正文里写着「总体结论：warn」）、材料键不是派出去的那一份：都判不了，不从字样推断。"""
+        summary = f"material_key: {self.KEY}\n\n## 判据核对\n\n（全文已发给父代理）\n\n**总体结论：warn**\n"
+        self.assertEqual("unknown", self.review(summary)["review_conclusion"]["value"])
+        other = self.review(self.report("fail\n\n理由。"), key="b" * 64)["review_conclusion"]
+        self.assertEqual(("unknown", "回复的材料键对不上派出去的审查对象"), (other["value"], other["why"]))
+
+
+class TruncatedPublicCallsAreCompletedByTheSameNativeCall(unittest.TestCase):
+    """公共事件里截断的入参或缺失、截断的结果，由同一原生调用（同 callId、只在一个原生会话里、工具名一致）补齐后再分类计数；
+    同一 callId 落在两个会话、或原生对它有两份不同结果时不补，照旧判不了。"""
+
+    BUILD = "node doc/extensions/skills/story/scripts/core/story-build.mjs"
+
+    def setUp(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.run_dir = Path(self._tmp.name)
+
+    def native(self, session: str, call_id: str, command: str, *results: str) -> None:
+        rows = [{"type": "tool/call", "time": 1, "data": {"callId": call_id, "name": "pwsh",
+                                                          "arguments": json.dumps({"command": command})}}]
+        rows += [{"type": "tool/result", "time": 2 + i, "data": {"message": {
+            "toolCallId": call_id, "content": [{"type": "text", "text": text}]}}} for i, text in enumerate(results)]
+        _session(self.run_dir / "native-sessions" / session / "session.v4.jsonl.zstd", session, rows)
+
+    def measure(self, *, input_cut: bool = True, output_cut: bool = False) -> dict:
+        start = {"type": "tool", "tool_name": "pwsh", "tool_call_id": "call_x", "run_id": "r", "tool_status": "started",
+                 "timestamp": "2026-11-03T01:19:02+08:00",
+                 "tool_input": {"command": "$r = \"review-original.6.md\"\n$content = @'\nmaterial_key: 1"} if input_cut
+                 else {"command": f"{self.BUILD} review --action check --feature X"}, "source_truncated": input_cut}
+        end = {"type": "tool", "tool_call_id": "call_x", "run_id": "r", "tool_status": "completed",
+               "timestamp": "2026-11-03T01:19:09+08:00",
+               "tool_output": "report6 saved\n{\"res" if output_cut else "report6 saved\n{\"result\": \"report_invalid\"}",
+               "source_truncated": output_cut}
+        path = self.run_dir / "events.jsonl"
+        path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in (start, end)) + "\n", encoding="utf-8")
+        return measure_run.measure(path, run_dir=self.run_dir)
+
+    def full(self) -> str:
+        return f"$r = \"review-original.6.md\"\nWrite-Output saved\n{self.BUILD} review --action check --feature X"
+
+    def test_the_cut_command_is_read_from_the_native_call(self) -> None:
+        """入参被截断，命令落在截断的部分：原生完整入参补齐后，这次是审查结论检查，结论照公共结果计。"""
+        self.native("session-p", "call_x", self.full(), "report6 saved\n{\"result\": \"report_invalid\"}")
+        got = self.measure()
+        self.assertEqual(1, got["tool_calls_completed_from_native"])
+        self.assertEqual((1, 0), (got["gate_fail_by_kind"]["review_check"], got["gate_unknown_by_kind"]["review_check"]))
+        self.assertEqual([], [i for i in got["incomplete_tool_events"] if i["reason"] == "source_truncated"])
+
+    def test_a_cut_result_is_taken_from_the_one_native_result(self) -> None:
+        self.native("session-p", "call_x", self.full(), "report8 saved\n{\"result\": \"warn\"}")
+        got = self.measure(input_cut=False, output_cut=True)
+        self.assertEqual({"warn": 1}, got["review_results"])
+        self.assertEqual(0, got["gate_unknown_by_kind"]["review_check"])
+
+    def test_an_ambiguous_native_record_is_not_used(self) -> None:
+        """同一 callId 出现在两个原生会话：认不出是哪一次，不补，照旧是截断的 other。原生对它有两份不同结果：结果不挑，照旧判不了。"""
+        self.native("session-p", "call_x", self.full(), "{\"result\": \"report_invalid\"}")
+        self.native("session-q", "call_x", self.full(), "{\"result\": \"report_invalid\"}")
+        got = self.measure()
+        self.assertEqual((0, 0, 0), (got["tool_calls_completed_from_native"], got["gate_fail_by_kind"]["review_check"],
+                                     got["gate_unknown_by_kind"]["review_check"]))
+        shutil.rmtree(self.run_dir / "native-sessions")
+        self.native("session-p", "call_x", self.full(), "{\"result\": \"report_invalid\"}", "{\"result\": \"warn\"}")
+        got = self.measure(input_cut=False, output_cut=True)
+        self.assertEqual((1, {}), (got["gate_unknown_by_kind"]["review_check"], got["review_results"]))
 
 if __name__ == "__main__":
     unittest.main()

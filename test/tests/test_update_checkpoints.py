@@ -15,6 +15,7 @@ finalize 的目的地固定成原编号。这一组锁住改完之后的几件�
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -744,6 +745,54 @@ class TheInitialQuestionIsAnsweredInsideTheInitialSegment(unittest.TestCase):
         for suffix in ("", ".reports", ".dependencies"):
             self.assertFalse((self.out / "checkpoints" / f"initial{suffix}").exists(), f"initial{suffix} 还在原位")
             self.assertTrue(moved.with_name(moved.name + suffix).is_dir(), f"initial{suffix} 没跟着换名")
+
+    def test_the_superseded_record_still_reads_its_own_version(self) -> None:
+        """固定初段 H1 → 补答 → 重新固定 H2：suite 里作废的那条记录指向 H1 现在的位置，摘要与清单对得上；新记录指向 H2。
+        生产者是真实的 `cmd_reply`，消费者是真实的 `command_reply` / `command_checkpoint` 与 `save_suite`，只替换起子进程那一层。"""
+        points = self.out / "checkpoints"
+
+        def fix(version: str) -> dict:
+            (points / "initial").mkdir(parents=True)
+            (points / "initial" / "story.md").write_text(version, encoding="utf-8")
+            (points / "initial.dependencies").mkdir()
+            manifest = points / "initial.dependencies" / "manifest.json"
+            manifest.write_text(json.dumps({"version": version}), encoding="utf-8")
+            return {"path": str(points / "initial"), "digest": f"tree-{version}", "session": None,
+                    "dependencies_path": str(points / "initial.dependencies"),
+                    "dependencies_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                    "dependencies_status": "complete"}
+
+        def invoke(case_id, command, *args, suite=None):
+            if command == "checkpoint":
+                return 0, fixed, "", ""
+            got = self.reply("initial_checkpoint")
+            return got.pop("code"), got, "", ""
+
+        record = {"case": "c", "feature": "AR1", "status": rmc.WAITING_STATUS, "run_id": "r1",
+                  "last_awaiting": {"turn": 3, "kind": "initial_checkpoint", "prompt": "归档送审还是进入 plan？"}}
+        suite = {"bundle_root": self._tmp.name, "case_states": {"c": record}, "events": []}
+        bundle = Path(self._tmp.name)
+        with unittest.mock.patch.object(rmc, "load_suite", side_effect=lambda _id: (bundle, suite)), \
+                unittest.mock.patch.object(rmc, "refresh_record", side_effect=lambda r: r), \
+                unittest.mock.patch.object(rmc, "invoke_case", invoke), \
+                unittest.mock.patch.object(rmc, "snapshot_usage", return_value=None), \
+                unittest.mock.patch("sys.stdout", new_callable=io.StringIO):
+            fixed = fix("H1")
+            self.assertEqual(0, rmc.command_checkpoint("s", "c", "initial"))
+            self.assertEqual(0, rmc.command_reply("s", "c", "1 归档送审", run_id="r1", turn="3"))
+            fixed = fix("H2")
+            self.assertEqual(0, rmc.command_checkpoint("s", "c", "initial"))
+        saved = json.loads((bundle / "suite.json").read_text(encoding="utf-8"))["case_states"]["c"]
+        [old] = saved["superseded_checkpoints"]
+        new = saved["checkpoints"]["initial"]
+
+        def reads(entry: dict) -> tuple[str, bool]:
+            manifest = Path(entry["dependencies"]["path"]) / "manifest.json"
+            return ((Path(entry["path"]) / "story.md").read_text(encoding="utf-8"),
+                    hashlib.sha256(manifest.read_bytes()).hexdigest() == entry["dependencies"]["manifest_sha256"])
+        self.assertEqual(("H1", True), reads(old), old)
+        self.assertEqual("tree-H1", old["digest"])
+        self.assertEqual(("H2", True), reads(new), new)
 
     def test_two_replies_in_one_second_keep_both_snapshots(self) -> None:
         for _ in range(2):

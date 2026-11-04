@@ -3402,10 +3402,14 @@ def command_reply(suite_id: str, case_id: str, text: str,
         record["last_reply_status"] = "accepted"
         record["last_reply_text"] = text
         if (payload or {}).get("superseded_checkpoint"):
-            # 第一段在答复后继续：之前固定的快照不是终稿，作废记录留证据，答完重新 checkpoint
-            stale = (record.get("checkpoints") or {}).pop("initial", None)
-            record.setdefault("superseded_checkpoints", []).append(
-                {**(stale or {}), "moved_to": payload["superseded_checkpoint"], "at": now()})
+            # 第一段在答复后继续：之前固定的快照不是终稿，作废记录留证据，答完重新 checkpoint。
+            # 快照与依赖已同组改名：记录改指它们现在的位置，摘要与清单摘要原样，旧记录仍读得到自己那一版
+            stale = dict((record.get("checkpoints") or {}).pop("initial", None) or {})
+            parts = payload.get("superseded_parts") or {}
+            stale["path"] = parts.get("tree", payload["superseded_checkpoint"])
+            if isinstance(stale.get("dependencies"), dict) and "dependencies" in parts:
+                stale["dependencies"] = {**stale["dependencies"], "path": parts["dependencies"]}
+            record.setdefault("superseded_checkpoints", []).append({**stale, "superseded_at": now()})
         record["last_replied_turn"] = awaiting.get("turn")
         record["last_human_reply_at"] = now()
         record["automation_observation_state"] = "reply_sent"
