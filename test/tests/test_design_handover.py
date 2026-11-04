@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ext_workspace import DEV_EXT, REPO_ROOT
 import design_kit
+import shared_state
 from flow_steps import answer, ensure_framework, write_gaps
 
 STORY_SCRIPTS = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -50,7 +51,14 @@ class HandoverCase(unittest.TestCase):
             self.skipTest("环境里没有 node")
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
+        self.lay_out(Path(self._tmp.name))
+        #: 还停在默认材料、没有别的改动：第一次 ready() 可以从共享的「范围已定」前态起手
+        self._pristine = True
+
+    def lay_out(self, root: Path) -> None:
+        """接入 demo Framework 的新工程，默认三份材料经真实导入器导成材料版本。"""
+        self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
         ensure_framework(self.root)
         self.feature_root = self.root / "doc" / "features" / self.feature
         (self.feature_root / "AR").mkdir(parents=True)
@@ -60,6 +68,7 @@ class HandoverCase(unittest.TestCase):
 
     def seed(self, files: dict[str, tuple[str, str]], receipt: dict | None = None) -> None:
         """经真实导入器导成材料版本，各来源最新版本的原件路径存成属性。给了 `receipt` 时这批件是一次系统取材。"""
+        self._pristine = False
         inbox = self.feature_root / "inbox"
         batch = inbox / "fetch-1" if receipt else inbox
         classify = {}
@@ -72,6 +81,9 @@ class HandoverCase(unittest.TestCase):
         else:
             (inbox / ".classify.json").write_text(json.dumps(classify), encoding="utf-8")
         importer.cmd_import(self.feature_root, self.root)
+        self.note_latest()
+
+    def note_latest(self) -> None:
         latest = {s["source_id"]: s["versions"][-1]["original"]["path"] for s in registry.read(self.feature_root)["sources"]}
         self.prd_rel = latest.get("local:RR/prd.md")
         self.flow_rel = latest.get("local:assets/flow.svg")
@@ -100,7 +112,30 @@ class HandoverCase(unittest.TestCase):
             [{"key": CARRY_ALL, "label": "按当前范围整体承载"}], ensure_ascii=False), encoding="utf-8")
 
     def ready(self) -> None:
-        """S1–S3 走完、范围已定：停在「交给设计」。"""
+        """S1–S3 走完、范围已定：停在「交给设计」。
+
+        默认材料上、没有别的改动时，这一段同一组输入只真实跑一次（共享），本例换成那份结果；改过材料或已走过的照常真跑。"""
+        if self._pristine:
+            self._pristine = False
+            key = shared_state.digest(*shared_state.COMMON, Path(__file__), shared_state.framework_version(), self.feature)
+            base = shared_state.shared_tree("handover-ready", key, self._walk_default)
+            for child in self.root.iterdir():
+                if child.name != "framework":
+                    shutil.rmtree(child) if child.is_dir() else child.unlink()
+            shared_state.copy_tree(base, self.root)
+            self.note_latest()
+            return
+        self.walk()
+
+    def _walk_default(self, base: Path) -> None:
+        saved = (self.root, self.feature_root, self.src)
+        try:
+            self.lay_out(base)
+            self.walk()
+        finally:
+            self.root, self.feature_root, self.src = saved
+
+    def walk(self) -> None:
         self.ok("init")
         self.ok("round")
         write_gaps(self.src)
