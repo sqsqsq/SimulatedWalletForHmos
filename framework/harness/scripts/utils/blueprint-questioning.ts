@@ -1,3 +1,7 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as YAML from 'yaml';
+import * as crypto from 'crypto';
 import {
   BlueprintIssue,
   BlueprintRecord,
@@ -7,6 +11,8 @@ import {
   issue,
   nonEmptyString,
   DISPOSITIONS,
+  BLUEPRINT_SCHEMA,
+  renderBlueprintFieldResponsibilities,
 } from './component-blueprint-model';
 import { validateProvenanceRecord } from './blueprint-provenance';
 import { APP_LENS_QUESTIONS, isApplicableView, isChangedView } from './blueprint-views';
@@ -57,12 +63,21 @@ export function unchangedViewQuestioningScopes(blueprint: BlueprintRecord): Map<
   return out;
 }
 
+function questioningId(kind: unknown, ref: unknown): string {
+  return `q:${crypto.createHash('sha256').update(String(kind ?? '') + '\n' + String(ref ?? '')).digest('hex').slice(0, 16)}`;
+}
+
 export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, providerId: string): string[] {
-  const scopes = [...requiredQuestioningScopes(blueprint)].map(([ref, kind]) => `- ${ref}（${kind}）`);
+  const existing = asRecords(asRecord(asRecord(blueprint.review_summary)?.questioning)?.items);
+  const scopes = [...requiredQuestioningScopes(blueprint)].map(([ref, kind]) => {
+    const id = existing.find(item => item.scope_ref === ref && nonEmptyString(item.question_id))?.question_id ?? questioningId(kind, ref);
+    return `- ${ref}（${kind}；question_id=${String(id)}，机器已给出）`;
+  });
   const unchanged = [...unchangedViewQuestioningScopes(blueprint)].map(([ref, refs]) => `- ${ref}：须核实不变声明及其依据（answered_with_evidence，evidence_refs 至少含其一：${refs.join(', ') || '（未声明）'}）`);
   return [
     `质询方标识 provider_id：${providerId}`,
-    '结果形状：status: complete；isolated_context: true；writes_ssot: false；frontier_budget；repeated_frontier_count；items[]（每项 question_id / question / frontier_fingerprint / owner / scope_kind / scope_ref / disposition / verification_refs / provenance，answered_with_evidence 另需 answer 与 evidence_refs）。',
+    `只返回现有 questioning JSON 的 items[]。每项业务必填：${BLUEPRINT_SCHEMA.$defs.questioningItem.required.join(' / ')}，另给 scope_kind / scope_ref / disposition / verification_refs / provenance；answered_with_evidence 另需 answer 与 evidence_refs。`,
+    renderBlueprintFieldResponsibilities(),
     `disposition只能使用以下合法值：${DISPOSITIONS.join(' / ')}；不要用open等其它拼写。`,
     '',
     '## 必答范围（每个恰好一项）',
@@ -75,19 +90,52 @@ export function createIndependentQuestioningResult(input: {
   providerId: string;
   authoredBy: string;
   items: BlueprintRecord[];
-  frontierBudget: number;
-  repeatedFrontierCount?: number;
+  previous?: BlueprintRecord;
 }): BlueprintRecord {
-  if (input.providerId === input.authoredBy) throw new Error('质询 provider 必须独立于蓝图编写方。');
-  return {
-    status: 'complete',
-    provider_id: input.providerId,
-    isolated_context: true,
-    frontier_budget: input.frontierBudget,
-    repeated_frontier_count: input.repeatedFrontierCount ?? 0,
-    writes_ssot: false,
-    items: input.items,
-  };
+  return independentQuestioningEnvelope({ items: input.items }, input.providerId, input.authoredBy, input.previous);
+}
+
+/** Read only the existing structured result, never infer a verdict from prose. */
+export function parseIndependentQuestioningOutput(output: string): BlueprintRecord {
+  const parsed = asRecord(JSON.parse(output));
+  const result = asRecord(asRecord(parsed?.review_summary)?.questioning) ?? asRecord(parsed?.questioning) ?? parsed;
+  if (!result || !Array.isArray(result.items) || result.items.some(item => !asRecord(item))) {
+    throw new Error('独立质询必须返回现有 questioning JSON 对象及 items 数组；自然语言总结不能签发结果。');
+  }
+  return result;
+}
+
+export function independentQuestioningEnvelope(result: BlueprintRecord, providerId: string, authoredBy: unknown, previous?: BlueprintRecord): BlueprintRecord {
+  if (!nonEmptyString(providerId) || providerId === authoredBy) throw new Error('质询 provider 必须独立于蓝图编写方。');
+  const priorItems = asRecords(previous?.items);
+  const items = asRecords(result.items).map(item => ({ ...item,
+    question_id: priorItems.find(prior => prior.scope_kind === item.scope_kind && prior.scope_ref === item.scope_ref && nonEmptyString(prior.question_id))?.question_id
+      ?? questioningId(item.scope_kind, item.scope_ref) }));
+  return { ...result, items, status: 'complete', provider_id: providerId, isolated_context: true, writes_ssot: false };
+}
+
+/** Called only after the caller confirms a real isolated invocation completed. */
+export function applyIndependentQuestioningOutput(
+  blueprintPath: string, outputPath: string, output: string, providerId: string,
+): BlueprintRecord {
+  if (path.resolve(blueprintPath) === path.resolve(outputPath)) throw new Error('质询原件不能覆盖蓝图。');
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  if (fs.existsSync(outputPath)) {
+    if (fs.readFileSync(outputPath, 'utf8') !== output) throw new Error('本次质询原件已存在且与真实返回不同。');
+  } else fs.writeFileSync(outputPath, output, { encoding: 'utf8', flag: 'wx' });
+  const result = parseIndependentQuestioningOutput(output);
+  const blueprint = asRecord(YAML.parse(fs.readFileSync(blueprintPath, 'utf8')));
+  if (!blueprint) throw new Error('蓝图不可解析，无法回填真实质询结果。');
+  const review = asRecord(blueprint.review_summary) ?? {};
+  const questioning = { ...result, ...createIndependentQuestioningResult({ providerId, authoredBy: String(review.authored_by ?? ''),
+    items: asRecords(result.items), previous: asRecord(review.questioning) }) };
+  blueprint.review_summary = { ...review, questioning };
+  const temporary = `${blueprintPath}.tmp-${process.pid}-questioning`;
+  try {
+    fs.writeFileSync(temporary, YAML.stringify(blueprint), { encoding: 'utf8', flag: 'wx' });
+    fs.renameSync(temporary, blueprintPath);
+  } finally { if (fs.existsSync(temporary)) fs.rmSync(temporary); }
+  return questioning;
 }
 
 /** A complete report can still explicitly deny the design; schema success is not acceptance. */
@@ -117,7 +165,7 @@ export function validateBlueprintQuestioning(blueprint: BlueprintRecord): Bluepr
   const covered = new Set<string>();
   items.forEach((item, index) => {
     const base = `$.review_summary.questioning.items[${index}]`;
-    for (const field of ['question_id', 'question', 'frontier_fingerprint', 'owner']) {
+    for (const field of BLUEPRINT_SCHEMA.$defs.questioningItem.required as string[]) {
       if (!nonEmptyString(item[field])) out.push(issue('blueprint_questioning_item_incomplete', `${base}.${field}`, `质询项缺 ${field}。`));
     }
     const scopeKind = String(item.scope_kind ?? '');
@@ -132,6 +180,10 @@ export function validateBlueprintQuestioning(blueprint: BlueprintRecord): Bluepr
     const disposition = String(item.disposition);
     if (!(DISPOSITIONS as readonly string[]).includes(disposition)) {
       out.push(issue('blueprint_questioning_disposition_invalid', `${base}.disposition`, '质询 disposition 非法。'));
+    }
+    if (disposition === 'blocker') {
+      out.push(issue('blueprint_admission_false_pass', `${base}.disposition`,
+        `独立质询尚有实质否定（${scopeRef}）：${String(item.question ?? '')}；${String(item.answer ?? '')}`));
     }
     if (disposition === 'answered_with_evidence' && (asStrings(item.evidence_refs).length === 0 || !nonEmptyString(item.answer))) {
       out.push(issue('blueprint_questioning_evidence_missing', base, 'answered_with_evidence 必须有证据回答与 evidence_refs。'));
@@ -167,9 +219,6 @@ export function validateBlueprintQuestioning(blueprint: BlueprintRecord): Bluepr
     if (!covered.has(scopeRef)) {
       out.push(issue('blueprint_questioning_coverage_missing', '$.review_summary.questioning.items', `缺少 ${scopeKind} 质询覆盖：${scopeRef}。`));
     }
-  }
-  if (Number(questioning.repeated_frontier_count ?? 0) > Number(questioning.frontier_budget ?? 0)) {
-    out.push(issue('blueprint_questioning_frontier_budget_exceeded', '$.review_summary.questioning.repeated_frontier_count', '重复 frontier 超预算，必须 blocker 或可解释退出。'));
   }
   if (questioning.writes_ssot === true) {
     out.push(issue('blueprint_questioning_parallel_ssot', '$.review_summary.questioning.writes_ssot', '质询报告是过程证据，不能成为新 SSOT。'));

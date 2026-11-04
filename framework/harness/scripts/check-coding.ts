@@ -328,8 +328,9 @@ function codingTestChanges(ctx: CheckContext, files: readonly string[], events: 
   const priorUt = loadPhaseEvidenceManifest(ctx.projectRoot, ctx.feature, 'ut');
   const codingWrites = new Map<string, string>();
   for (const event of events) {
-    if (event.phase !== 'coding' || event.type !== 'phase_write_observed') continue;
-    for (const row of (event as { observations?: Array<{ path: string }> }).observations ?? []) codingWrites.set(row.path, event.ts ?? '');
+    if (event.phase === 'ut' || event.type !== 'phase_write_observed') continue;
+    const writes = event as { owned?: Array<{ path: string }>; observations?: Array<{ path: string }> };
+    for (const row of [...(writes.owned ?? []), ...(writes.observations ?? [])]) codingWrites.set(row.path, event.ts ?? '');
   }
   return testPaths.flatMap(file => {
     if (runId && !owned.has(file) && !codingWrites.has(file)) return [];
@@ -338,8 +339,9 @@ function codingTestChanges(ctx: CheckContext, files: readonly string[], events: 
     const lastWrite = codingWrites.get(file);
     const laterUt = !runId || events.some(event => event.phase === 'ut' && event.type === 'phase_verdict' && event.verdict === 'PASS'
       && !event.advance_blocked && event.action !== 'retry' && (!lastWrite || Date.parse(event.ts ?? '') > Date.parse(lastWrite)));
+    // A read-only UT tool adopts its verified input bytes without rewriting the source as an output.
     if (laterUt && priorUt?.integrityOk && (!lastWrite || Date.parse(priorUt.manifest.generated_at) > Date.parse(lastWrite))
-      && priorUt.manifest.outputs.some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(ctx.projectRoot, entry, ctx.feature))) return [];
+      && [...priorUt.manifest.inputs, ...priorUt.manifest.outputs].some(entry => entry.path === file && evidenceEntryMatchesCurrentFile(ctx.projectRoot, entry, ctx.feature))) return [];
     return [{ file, ...codingTestPreservation({ projectRoot: ctx.projectRoot, feature: ctx.feature, file, runId }) }];
   });
 }
@@ -352,10 +354,10 @@ export function checkCodingExistingTestPreserved(ctx: CheckContext): CheckResult
   const rows = diff?.executed ? codingTestChanges(ctx, diff.entries.map(entry => entry.path), events, runId) : [];
   const failures = rows.filter(row => !row.preserved);
   return [{ id: 'coding_existing_test_preserved', category: 'traceability', severity: 'BLOCKER',
-    status: failures.length ? 'FAIL' : 'PASS', description: 'coding 有限兼容修补保留既有用例与断言',
-    details: rows.length ? rows.map(row => `${row.file}：${row.reason}`).join('\n') : '没有需要有限兼容豁免的 coding 测试源码修改。',
-    ...(failures.length ? { affected_files: failures.map(row => row.file), repair_owner: 'ut',
-      suggestion: '交真实 UT 负责方修正或以当前有效 manifest 核验采纳；新增/修改用例及断言不属于 coding 有限许可。' } : {}) }];
+    status: failures.length ? 'FAIL' : 'PASS', description: '既有测试文本对比与独立断言强度核验材料',
+    details: rows.length ? rows.map(row => `${row.file}：${row.reason}`).join('\n') : '当前没有检测到需要比较的作者测试源码写入。',
+    ...(rows.length ? { affected_files: rows.map(row => row.file),
+      suggestion: '当前单元作者可同时修复实现和测试。独立核验须对照当前已授权验收、真实前像、用例/断言/失败路径及执行原件，确认删弱/skip或认可合理加强；未核验不能完成。原始文本对比不直接判充分性，验收实质变化须先由真实授权与设计单元重签。' } : {}) }];
 }
 
 export function checkDiffWithinScope(ctx: CheckContext): CheckResult[] {
@@ -706,7 +708,7 @@ const checker: PhaseChecker = {
     // --- blind-visual-hardening d1 切片一：上游裁决传播 ---
     results.push(
       ...executeCheck(ctx,
-        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, feature: ctx.feature, phase: 'coding', runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
+        () => checkUpstreamVerdictGate({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase: 'coding', resolvedInputs: ctx.resolvedInputs, runId: ctx.resolvedInputs ? process.env.MAISON_GOAL_RUN_ID : undefined }),
         'upstream_verdict_gate',
       ),
     );

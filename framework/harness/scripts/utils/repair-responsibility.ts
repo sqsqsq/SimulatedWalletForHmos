@@ -15,6 +15,7 @@ import {
   featureDir,
   featureFilePath,
   receiptDirPath,
+  relFeaturesDir,
 } from '../../config';
 import type { FeatureTrack } from './runtime-policy';
 import { resolveModulePathPrefixes, resolveImplementationScope, projectImplementationModules } from './diff-scope';
@@ -30,6 +31,8 @@ import type { ContractsSpec, HarnessResolvedProfile } from './types';
 import type { CorrectionCategory } from './correction-routing';
 import type { ExecutionScope } from './execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
+import type { RepairEvidenceRef } from './repair-candidates';
+import type { CurrentDisposition, CurrentDispositionProblem } from './check-disposition';
 import { extractUtItBlocks } from './ut-it-blocks';
 import * as ts from 'typescript';
 
@@ -71,19 +74,29 @@ export interface PhaseWriteBoundaryResolution {
   /** Source-producing phases whose existing resolver could not produce a domain. */
   unresolvedSourcePhases: string[];
   protectedRoots: string[];
+  /** Invocation-local views derived from the existing request/purpose and input bindings. */
+  executionRole?: 'author' | 'verifier';
+  verifierResultPath?: string;
+  immutableInputPaths?: string[];
 }
 
 export interface ResolvePhaseWriteBoundaryOptions {
+  /** Before run birth, use the same original request without a temporary on-disk manifest. */
+  originalRequirement?: string;
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot: string;
   frameworkRoot: string;
   feature: string;
   runId?: string;
+  /** Already-loaded approved scope; invocation-local input, not another authority record. */
+  executionScope?: ExecutionScope;
   pendingOwnerPhase?: string;
   phaseOrder: readonly string[];
   track: FeatureTrack;
   profileDir: string;
   productLayerDirs: readonly string[];
+  executionRole?: 'author' | 'verifier';
+  verifierResultPath?: string;
   /** Already-resolved construction authority for research attribution, not a write grant. */
   constructionModules?: ReadonlyArray<{ name: string; package_path: string }>;
   /** Test seam and profile-neutral custom-phase support. */
@@ -91,6 +104,38 @@ export interface ResolvePhaseWriteBoundaryOptions {
     projectRoot: string,
     modules: ReadonlyArray<{ name: string; package_path: string }>,
   ) => string[];
+}
+
+/** Ownership describes every producer; only approved construction duties grant source writes. */
+export function workUnitWriteDomains(domains: readonly PhaseWriteDomain[], scope?: ExecutionScope): PhaseWriteDomain[] {
+  const sourceOwners = new Set(scope?.obligations.filter(obligation => obligation.applicability === 'required'
+    && (obligation.kind === 'implementation' || obligation.kind === 'unit-evidence')).map(obligation => obligation.owner_phase) ?? []);
+  return domains.filter(domain => domain.kind !== 'source' || sourceOwners.has(domain.owner));
+}
+
+/** Existing completion writer locations; only the current run original is inspected. */
+export function workUnitProtectedRecordPaths(projectRoot: string, feature: string, runDir?: string): string[] {
+  const { FEATURE_COMPLETION_FILENAME } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+  return [featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME),
+    ...(runDir ? [path.resolve(projectRoot, runDir, FEATURE_COMPLETION_FILENAME)] : [])]
+    .map(file => normalizeResponsibilityPath(projectRoot, file));
+}
+
+/** Write permission is a view of the unit's actual inputs/outputs, never its current method. */
+export function workUnitMayWritePath(resolution: PhaseWriteBoundaryResolution, candidate: string): boolean {
+  const normalized = normalizeResponsibilityPath(resolution.projectRoot, candidate);
+  const within = (prefix: string): boolean => normalized === prefix || normalized.startsWith(prefix + '/');
+  if (within('framework') || resolution.immutableInputPaths?.some(within)) return false;
+  if (resolution.executionRole === 'verifier') {
+    return !!resolution.verifierResultPath && normalized === resolution.verifierResultPath;
+  }
+  if (resolution.executionRole !== 'author') return false;
+  const domains = resolution.domains.filter(domain => (domain.match === 'exact' ? normalized === domain.path : within(domain.path))
+    && !(domain.excludedPrefixes ?? []).some(within));
+  // Skill outputs remain editable; the existing writers/checkers decide which evidence is valid.
+  if (domains.some(domain => domain.kind === 'artifact')) return true;
+  if (domains.some(domain => domain.kind === 'source')) return true;
+  return domains.some(domain => domain.kind === 'phase_workspace');
 }
 
 function toPosix(value: string): string {
@@ -142,11 +187,12 @@ function loadCodingScope(options: ResolvePhaseWriteBoundaryOptions): {
     return { available: true, prefixes: resolved.allowedPrefixes, modules, diagnostics: resolved.unmapped.map(name => `construction module has no path: ${name}`) };
   }
   const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-  const recordedScope = resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+  // Before birth the caller passes the run's own approved scope; a feature already transferred to an older run has no run-less authority.
+  const recordedScope = options.executionScope ?? resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
   if (recordedScope) {
     const { readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
     let contracts: ReturnType<typeof readRunBoundContracts>;
-    try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId, options.authorityReaders); }
+    try { contracts = readRunBoundContracts(options.projectRoot, options.frameworkRoot, options.feature, options.runId, options.authorityReaders, options.executionScope); }
     catch (error) {
       // Ownership discovery also runs before the design producer. A missing or stale
       // construction input leaves source attribution unresolved; the real coding
@@ -238,7 +284,7 @@ export function readRepairResponsibilityContracts(
 
     // Existing per-phase agent workspace convention.  Runner-owned reports and
     // closure files are excluded from the invocation snapshot below.
-    for (const name of ['context-exploration.md', 'headless-assumptions.jsonl', 'headless-assumptions.md']) {
+    for (const name of ['context-exploration.md', 'headless-assumptions.jsonl', 'headless-assumptions.md', 'notes.md']) {
       addDomain(domains, seen, options.projectRoot, {
         owner: phase,
         kind: 'phase_workspace',
@@ -252,7 +298,7 @@ export function readRepairResponsibilityContracts(
   const predictedScope = loadCodingScope(options);
   // Existing project sources have a producer before a construction input is ready.
   // That attribution does not replace the coding entry's strict bound-input check.
-  const implementation = resolveImplementationScope(options.projectRoot, options.feature, predictedScope.modules, options.runId);
+  const implementation = resolveImplementationScope(options.projectRoot, options.feature, predictedScope.modules, options.runId, options.originalRequirement);
   const codingScope = { modules: implementation.modules, prefixes: implementation.allowedPrefixes, diagnostics: predictedScope.diagnostics };
   diagnostics.push(...codingScope.diagnostics);
   const codingContract = contracts.get('coding')?.phase;
@@ -323,6 +369,62 @@ export function readRepairResponsibilityContracts(
       .filter((abs) => fs.existsSync(abs)),
   ].map((p) => normalizeResponsibilityPath(options.projectRoot, p));
 
+  const immutableInputPaths = new Set<string>();
+  if (options.executionRole) {
+    for (const file of workUnitProtectedRecordPaths(options.projectRoot, options.feature,
+      options.runId ? featureFilePath(options.projectRoot, options.feature, `goal-runs/${options.runId}`) : undefined)) immutableInputPaths.add(file);
+    const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+    const scope = options.executionScope ?? resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+    const { resolveDependencyPath, inferLegacyProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
+    const { collectRequirementSsotPaths } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+    for (const file of collectRequirementSsotPaths(options.projectRoot, options.feature, relFeaturesDir(options.projectRoot), { runId: options.runId })) {
+      try { immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, file)); }
+      catch { /* Project-external original inputs remain outside this write boundary. */ }
+    }
+    for (const obligation of scope?.obligations ?? []) {
+      for (const binding of [...obligation.basis, ...(obligation.satisfied_by ?? [])]) {
+        if (!('input_id' in binding) || binding.source.kind !== 'derive'
+          || binding.source.provider_id !== 'derive.requirement') continue;
+        // Dependencies include unsuccessful candidates; only the selected source is the original input.
+        for (const source of binding.source_refs) {
+          try { immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot,
+            resolveDependencyPath(options.projectRoot, source, scope ? inferLegacyProjectRoot(options.projectRoot, scope) : undefined))); }
+          catch { /* External inputs cannot be written through this project boundary. */ }
+        }
+      }
+    }
+    if (options.feature.startsWith('cu-')) {
+      const { parseChangeUnitFeatureId, changeUnitPath, loadCanonicalChangeUnit, asChangeUnitArtifact } = require('./change-unit-path') as typeof import('./change-unit-path');
+      const { componentBlueprintPath, loadCanonicalBlueprint } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');
+      const { blueprintSourceRefFiles } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
+      const identity = parseChangeUnitFeatureId(options.feature);
+      immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, changeUnitPath(options.projectRoot, identity.blueprintId, identity.changeUnitId)));
+      immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, componentBlueprintPath(options.projectRoot, identity.blueprintId)));
+      try {
+        const cu = asChangeUnitArtifact((options.authorityReaders?.loadChangeUnit ?? loadCanonicalChangeUnit)(options.projectRoot, identity.blueprintId, identity.changeUnitId).changeUnit);
+        for (const blueprintId of new Set([identity.blueprintId, cu.component_blueprint_ref.blueprint_id, ...(cu.design_refs ?? []).map(ref => ref.blueprint_id)])) {
+          immutableInputPaths.add(normalizeResponsibilityPath(options.projectRoot, componentBlueprintPath(options.projectRoot, blueprintId)));
+          const loaded = (options.authorityReaders?.loadBlueprint ?? loadCanonicalBlueprint)(options.projectRoot, blueprintId);
+          for (const file of blueprintSourceRefFiles(options.projectRoot, loaded.blueprint)) {
+            const rel = normalizeResponsibilityPath(options.projectRoot, file);
+            const localOutput = domains.some(domain => (domain.kind === 'source' || domain.kind === 'artifact')
+              && (domain.match === 'exact' ? rel === domain.path : rel === domain.path || rel.startsWith(domain.path + '/'))
+              && !(domain.excludedPrefixes ?? []).some(prefix => rel === prefix || rel.startsWith(prefix + '/')));
+            if (!localOutput) immutableInputPaths.add(rel);
+          }
+        }
+      } catch (error) { diagnostics.push(`shared design source resolution unavailable: ${(error as Error).message}`); }
+    }
+    const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
+    const configured = loadFrameworkConfig(options.projectRoot).paths;
+    for (const candidate of [configured.architecture_md, configured.module_catalog, configured.glossary,
+      'framework.config.json', ...immutableInputPaths]) {
+      if (candidate && fs.existsSync(path.resolve(options.projectRoot, candidate))) {
+        protectedRoots.push(normalizeResponsibilityPath(options.projectRoot, candidate));
+      }
+    }
+  }
+
   return {
     projectRoot: options.projectRoot,
     feature: options.feature,
@@ -331,10 +433,17 @@ export function readRepairResponsibilityContracts(
     diagnostics,
     unresolvedSourcePhases: [...unresolvedSourcePhases].sort(),
     protectedRoots: [...new Set(protectedRoots)].sort(),
+    ...(options.executionRole ? { executionRole: options.executionRole, immutableInputPaths: [...immutableInputPaths].sort() } : {}),
+    ...(options.verifierResultPath ? { verifierResultPath: normalizeResponsibilityPath(options.projectRoot, options.verifierResultPath) } : {}),
   };
 }
 
 export interface RepairResponsibilityTarget {
+  id?: string;
+  source_phase?: string;
+  /** Existing candidate identity, checked against the current producer's object reference. */
+  item_fingerprint?: string;
+  identity_schema?: 'signal@1';
   files?: readonly string[];
   category?: CorrectionCategory;
   summary?: string;
@@ -344,9 +453,13 @@ export interface RepairResponsibilityTarget {
   factsOwner?: string;
   compatibilityPreserved?: boolean;
   designAuthority?: boolean;
+  /** Existing readonly native object locators; never source write paths. */
+  evidence_refs?: readonly RepairEvidenceRef[];
 }
 
 export interface RepairResponsibilityContext {
+  /** The same synchronous producer/verifier disposition used by the caller; never persisted. */
+  currentDisposition?: CurrentDisposition;
   authorityReaders?: IdentityNeutralDigestReaders;
   projectRoot?: string;
   frameworkRoot?: string;
@@ -359,6 +472,7 @@ export interface RepairResponsibilityContext {
   /** Action-local parsed contracts, never persisted. */
   skillContracts?: ReturnType<typeof phaseContractIndex>;
   profile?: HarnessResolvedProfile;
+  executionRole?: 'author' | 'verifier';
 }
 
 export interface RepairResponsibility {
@@ -442,7 +556,7 @@ export function repairResponsibilityContext(input: RepairResponsibilityContext):
   }
   const scope = input.executionScope ?? resolveEffectiveScopeSource(input.projectRoot, input.feature, input.runId)?.scope;
   const contracts = input.contracts ?? readRepairResponsibilityContracts({ projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot,
-    feature: input.feature, runId: input.runId, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders,
+    feature: input.feature, runId: input.runId, executionScope: scope, pendingOwnerPhase: input.currentPhase, authorityReaders: input.authorityReaders, executionRole: input.executionRole ?? 'author',
     phaseOrder: workflow.artifacts.map(artifact => artifact.id), track: 'full', profileDir: profile.profileDir,
     productLayerDirs: (config.architecture?.outer_layers ?? []).map(layer => layer.id),
     resolveUtSourceRoots: tryLoadUtSourceRootResolver(profile.profileDir) ?? undefined });
@@ -461,6 +575,19 @@ function ownerCategory(owner: string, context: RepairResponsibilityContext): Cor
   return null;
 }
 
+/** Object identity comes from the current common view, not a category or another evidence parser. */
+export function currentRepairObject(context: RepairResponsibilityContext, target: RepairResponsibilityTarget): CurrentDispositionProblem | undefined {
+  if (!context.currentDisposition || !target.id || !target.source_phase) return undefined;
+  let matches = context.currentDisposition.problems.filter(problem =>
+    (problem.id === target.id || problem.id === `open_finding:${target.id}`)
+    && (problem.source_phase ?? problem.phase) === target.source_phase);
+  if (target.identity_schema === 'signal@1' || matches.some(problem => problem.evidence?.some(ref => ref.startsWith('visual:')))) {
+    matches = matches.filter(problem => !!target.item_fingerprint && problem.evidence?.some(ref => ref.startsWith('visual:')
+      && crypto.createHash('sha256').update(ref.slice('visual:'.length)).digest('hex') === target.item_fingerprint));
+  }
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 /** Shared in-memory decision. Unknown targets stay unknown rather than falling back to coding/the queue head. */
 export function resolveRepairResponsibility(input: RepairResponsibilityContext & { target: RepairResponsibilityTarget }): RepairResponsibility {
   let context: RepairResponsibilityContext;
@@ -468,6 +595,7 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   catch (error) { return { target: input.target, owner: null, category: input.target.category ?? null,
     roles: { introducedBy: input.target.introducedBy ?? null, legalModifier: null, verifier: null }, action: 'unavailable', reason: String(error) }; }
   const target = input.target;
+  const currentObject = currentRepairObject(context, target);
   const rawContracts = context.contracts;
   const matches = rawContracts ? (target.files ?? []).map(file => {
     const normalized = normalizeResponsibilityPath(rawContracts.projectRoot, file);
@@ -486,13 +614,13 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
       matches.push(owners.length === 1 ? owners[0] : null);
     }
   }
-  let owner: string | null = target.factsOwner ?? target.owner ?? null;
+  let owner: string | null = target.factsOwner ?? (!target.files?.length ? currentObject?.owner : undefined) ?? target.owner ?? null;
   const knownMatches = matches.filter((value): value is string => !!value);
   const pathOwner = knownMatches.length === (target.files?.length ?? 0) && knownMatches.length && new Set(knownMatches).size === 1 ? knownMatches[0] : null;
   const targetConflict = !!target.owner && !!pathOwner && target.owner !== pathOwner
     && !(target.owner === 'coding' && ownerCategory(pathOwner, context) === 'verification');
-  if (targetConflict || target.owner === 'coding' && pathOwner && ownerCategory(pathOwner, context) === 'verification') owner = pathOwner;
-  if (!owner && knownMatches.length === (target.files?.length ?? 0) && knownMatches.length && new Set(knownMatches).size === 1) owner = knownMatches[0];
+  if (!target.designAuthority && (targetConflict || target.owner === 'coding' && pathOwner && ownerCategory(pathOwner, context) === 'verification')) owner = pathOwner;
+  if (!owner && !target.designAuthority && knownMatches.length === (target.files?.length ?? 0) && knownMatches.length && new Set(knownMatches).size === 1) owner = knownMatches[0];
   if (!owner && target.category && context.workflow) {
     const owners = [...new Map(context.workflow.artifacts.filter(artifact => ownerCategory(artifact.id, context) === target.category).map(artifact => [artifact.id, artifact])).values()];
     const obligated = owners.filter(artifact => context.executionScope?.obligations.some(obligation => obligation.owner_phase === artifact.id && obligation.applicability === 'required'));
@@ -503,6 +631,7 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   const verifierCheck = owner ? phaseContracts.get(owner)?.phase.verifies.check : undefined;
   const verifier = verifierCheck ? [...phaseContracts].find(([, indexed]) => indexed.phase.verifies.check === verifierCheck)?.[0] ?? null : null;
   let category = owner ? ownerCategory(owner, context) ?? target.category ?? null : target.category ?? null;
+  const workUnitRole = context.executionRole ?? context.contracts?.executionRole ?? (context.contracts ? 'author' : undefined);
   const compatible = target.compatibilityPreserved ?? (category === 'verification' && !!context.projectRoot && !!context.feature && !!target.files?.length
     && target.files.every(file => (target.owner === 'coding' || hasImplementationTypeCompatibilityChange({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }))
       && codingTestPreservation({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }).preserved));
@@ -512,25 +641,33 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   }
   const roles = { introducedBy: target.introducedBy ?? null, legalModifier: owner, verifier };
   const result = (action: RepairResponsibility['action'], reason: string): RepairResponsibility => ({ target, owner, category, roles, action, reason });
+  if (workUnitRole) {
+    if (target.designAuthority) return result('design', '共享设计沿原设计权威链裁决、发布并重绑');
+    // This answers who may repair, not what the currently reading verifier may write.
+    const boundary = context.contracts && { ...context.contracts, executionRole: 'author' as const,
+      domains: workUnitWriteDomains(context.contracts.domains, context.executionScope) };
+    const unitWritable = !!boundary && !!context.projectRoot && !!context.feature
+      && path.resolve(boundary.projectRoot) === path.resolve(context.projectRoot) && boundary.feature === context.feature
+      && boundary.domains.some(domain => workUnitMayWritePath(boundary, domain.path));
+    const verifiedObject = !target.files?.length && currentObject?.action === 'repair' && unitWritable;
+    if (!boundary || !(target.files?.length ? target.files.every(file => workUnitMayWritePath(boundary, file)) : verifiedObject)) {
+      return result('unavailable', '修复对象不在当前工作单元写权内，或属于原输入、共享发布、框架或正式核验结果');
+    }
+    if (verifiedObject) return result('current', '当前工作单元作者按同一当前处置调查已核实业务对象；源码定位后仍须遵守原写界，证据路径不授予写权');
+    return result('current', '当前工作单元作者可修复授权内实现、测试源码与设计候选；断言强度和适用验收仍需独立核验');
+  }
   if (targetConflict) return result('unavailable', '已核实责任声明与真实修复对象不一致；修复对象不能由报错/诊断文件替代，请原提出方更正对象后重新核实');
   if (target.designAuthority) return result('design', '由既有设计权威链裁决、发布并重绑');
   if (!owner) return result('unavailable', '修复对象没有唯一可核实负责方；需要补足真实产物或成因依据');
   if (!context.workflow?.artifacts.some(artifact => artifact.id === owner)) return result('unavailable', `${owner} 的职责已确定，但当前 workflow 无可用能力`);
   if (context.projectRoot && !context.skillContracts?.has(owner)) return result('unavailable', `${owner} 的职责已确定，但当前缺少可执行 Skill 契约`);
   if (context.profile?.phasesDisabled.has(owner)) return result('unavailable', `${owner} 的职责已确定，但当前 profile/实例已禁用该能力`);
-  const scope = context.executionScope;
-  const { authorizedScopePhases } = require('./execution-scope') as typeof import('./execution-scope');
-  if (scope && !authorizedScopePhases(scope, context.workflow).includes(owner)) return result('unavailable', `本次请求未授权 ${owner} 的修改职责`);
-  if (owner === input.currentPhase) return result('current', '本阶段在原授权内修复后由原接口复验');
-  const obligations = scope?.obligations.filter(obligation => obligation.owner_phase === owner && obligation.applicability === 'required') ?? [];
-  if (obligations.some(obligation => obligation.satisfied_by?.length) || scope?.reused_phases.some(phase => phase.phase === owner)) return result('reopen', '已有负责方成果发现真实缺陷，沿原义务重开并撤销受影响证明');
-  if (scope?.phase_chain.includes(owner)) return result('handoff', '交给尚待执行且不依赖该待修结论的真实负责方');
-  return result('include', '在原请求授权内经既有范围修订纳入必要责任义务');
+  return result('unavailable', '职责已识别，但缺少当前工作单元的真实产物与授权视图；不能用phase队列授予修改权');
 }
 
 /** Reuse the UT parser; ambiguous syntax never acquires the finite coding exemption. */
 export function compareExistingTestPreservation(before: string | undefined, after: string): { preserved: boolean; reason: string } {
-  if (before === undefined) return { preserved: false, reason: '无法取得本次修补前的真实测试原件；交 UT 核验' };
+  if (before === undefined) return { preserved: false, reason: '无法取得本次修补前的真实测试原件；交独立核验' };
   const inspect = (text: string): { pieces: string[]; disabled: string[]; error?: string } => {
     const source = ts.createSourceFile('test.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     if ((source as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics.length) return { pieces: [], disabled: [], error: '测试源码解析不确定' };
@@ -555,17 +692,24 @@ export function compareExistingTestPreservation(before: string | undefined, afte
   const old = inspect(before), current = inspect(after);
   if (old.error || current.error) return { preserved: false, reason: old.error ?? current.error! };
   const preserved = JSON.stringify(old.pieces) === JSON.stringify(current.pieces) && JSON.stringify(old.disabled) === JSON.stringify(current.disabled);
-  return { preserved, reason: preserved ? '既有用例定义与断言原样保留，未新增测试、断言或跳过声明' : '用例定义、断言或跳过声明发生变化；交真实 UT 负责方修复/核验' };
+  return { preserved, reason: preserved ? '既有用例定义与断言原样保留，未新增测试、断言或跳过声明' : '用例定义、断言或跳过声明发生变化；需独立核验当前授权验收与断言强度' };
 }
 
 /** Existing pre-write hashes select the original; an older run Git version is never substituted. */
-export function codingTestPreservation(input: { projectRoot: string; feature: string; file: string; runId?: string }): { preserved: boolean; reason: string } {
+export function codingTestPreservation(input: { projectRoot: string; feature: string; file: string; runId?: string }): { preserved: boolean; reason: string; beforeText?: string } {
+  const { validateProjectRelativePath, isInsideProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
+  try {
+    const file = validateProjectRelativePath(input.projectRoot, input.file, 'existing test source');
+    const absolute = path.resolve(input.projectRoot, file);
+    if (fs.existsSync(absolute) && !isInsideProjectRoot(fs.realpathSync(input.projectRoot), fs.realpathSync(absolute))) throw new Error('symlink escapes project');
+    input = { ...input, file };
+  } catch (error) { return { preserved: false, reason: `测试引用不在当前工程内：${(error as Error).message}` }; }
   const { readFileAtRef, resolveEffectiveDiffBaseline } = require('./git-diff') as typeof import('./git-diff');
   const baseline = resolveEffectiveDiffBaseline(input.projectRoot, input.feature, input.runId);
   if (!baseline.available) return { preserved: false, reason: baseline.reason };
   const original = readFileAtRef(input.projectRoot, baseline.baseSha, input.file);
   let expected: string | null | undefined;
-  let codingStarted = false;
+  let authorWriteStarted = false;
   if (input.runId) {
     const { loadLineageRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
     for (const event of loadLineageRunEvents(input.projectRoot, input.feature, input.runId)) {
@@ -573,17 +717,19 @@ export function codingTestPreservation(input: { projectRoot: string; feature: st
       const rows = [...((event as { owned?: Array<{ path: string; pre_sha256?: string | null; post_sha256?: string | null }> }).owned ?? []),
         ...((event as { observations?: Array<{ path: string; pre_sha256?: string | null; post_sha256?: string | null }> }).observations ?? [])];
       for (const row of rows.filter(row => row.path === input.file)) {
-        if (event.phase === 'ut') { expected = row.post_sha256; codingStarted = false; }
-        else if (event.phase === 'coding' && !codingStarted) { expected = row.pre_sha256; codingStarted = true; }
+        if (event.phase === 'ut') { expected = row.post_sha256 === undefined ? 'unverifiable' : row.post_sha256; authorWriteStarted = false; }
+        else if (!authorWriteStarted) { expected = row.pre_sha256 === undefined ? 'unverifiable' : row.pre_sha256; authorWriteStarted = true; }
       }
     }
   }
   const originalHash = original ? crypto.createHash('sha256').update(original).digest('hex') : null;
-  if (expected !== undefined && expected !== originalHash) return { preserved: false, reason: '真实前置测试版本不在可读取的 Git 原件中；不能用更旧 run baseline 代替，交 UT 核验' };
+  if (expected !== undefined && expected !== originalHash) return { preserved: false, reason: '真实前置测试版本不在可读取的 Git 原件中；不能用更旧 run baseline 代替，交独立核验' };
+  const before = expected === undefined || original === null || original === undefined ? {} : { beforeText: original.toString('utf8') };
   let after: string;
   try { after = fs.readFileSync(path.resolve(input.projectRoot, input.file), 'utf8'); }
-  catch { return { preserved: false, reason: '测试文件删除或不可读取；交 UT 核验' }; }
-  return compareExistingTestPreservation(original?.toString('utf8'), after);
+  catch { return { preserved: false, reason: '测试文件删除或不可读取；交独立核验', ...before }; }
+  return { ...compareExistingTestPreservation(original?.toString('utf8'), after),
+    ...before };
 }
 
 /** A concrete old typed fixture broken by this implementation's newly-required fields. */

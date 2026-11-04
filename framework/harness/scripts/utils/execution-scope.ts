@@ -349,8 +349,11 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
   for (const { kind, provider } of DERIVED_EVIDENCE_KINDS) {
     if (!inPlay(provider)) continue;
     const derivation = derivations.get(kind)!;
-    const existing = input.facts.filter(fact => fact.kind === kind);
+    const existing = input.facts.filter(fact => fact.kind === kind && !workflow.artifacts.some(artifact =>
+      artifact.obligation_provider_id === provider && request.requested_phases.includes(artifact.id)
+      && fact.id === `${kind}:request:${artifact.id}`));
     if (existing.length) {
+      // Request markers express user duties; they cannot replace the derived source fact.
       // Override every candidate fact of this kind — not just the same-id one. Original basis is
       // kept (it may carry real sources), except the acceptance binding that this derivation owns:
       // a spec revision must replace that generation rather than retain old+new acceptance truth.
@@ -367,7 +370,9 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     const hasRealSource = kind === 'visual-evidence' ? resolved !== undefined : acceptance !== undefined;
     const phaseRequested = workflow.artifacts.some(a => a.obligation_provider_id === provider && request.requested_phases.includes(a.id));
     if (hasRealSource) {
-      input.facts.push({ id: `${kind}:${derivation.source}`, kind, applicability: derivation.applicability, reason: derivation.reason, basis: [...derivation.basis] });
+      const fact = { id: `${kind}:${derivation.source}`, kind, applicability: derivation.applicability, reason: derivation.reason, basis: [...derivation.basis] };
+      const markerAt = input.facts.findIndex(item => item.kind === kind);
+      if (markerAt < 0) input.facts.push(fact); else input.facts.splice(markerAt, 0, fact);
     } else if (request.completion_target === 'feature' && kind !== 'visual-evidence' && !phaseRequested) {
       input.facts.push({ id: `${kind}:pending`, kind, applicability: 'unknown', reason: '验证责任尚缺验收或影响依据', basis: [] });
     }
@@ -408,15 +413,15 @@ export function resolveExecutionScope(input: ExecutionScopeInput, workflow: Work
     if (!kinds) fail(`phase ${artifact.id} 缺少已注册义务 provider`);
     const applicableFacts = input.facts.filter(fact => kinds.includes(fact.kind));
     for (const fact of applicableFacts) obligations.push({ ...structuredClone(fact), owner_phase: artifact.id });
-    if (request.requested_phases.includes(artifact.id) && !applicableFacts.some(f => f.applicability === 'required')) {
+    if (request.requested_phases.includes(artifact.id)) {
       const id = `${kinds[0]}:request:${artifact.id}`;
       // A request marker states what the USER asked for; it is not a candidate observation. When a
       // revision carries one forward it arrives as a fact of an evidence kind and the derivation
-      // above rewrites it — re-assert it here instead of pushing a second obligation with the same
-      // id (which `validateExecutionScope` rejects outright). At birth this branch simply creates it.
+      // above must not rewrite it. Re-assert a carried marker independently of derived facts;
+      // create one only when the request has no other required duty of this provider.
       const carried = obligations.find(o => o.id === id && o.owner_phase === artifact.id);
       if (carried) Object.assign(carried, { applicability: 'required', reason: `用户明确请求 ${artifact.id}` });
-      else obligations.push({ id, kind: kinds[0], owner_phase: artifact.id, applicability: 'required', reason: `用户明确请求 ${artifact.id}`, basis: [] });
+      else if (!applicableFacts.some(f => f.applicability === 'required')) obligations.push({ id, kind: kinds[0], owner_phase: artifact.id, applicability: 'required', reason: `用户明确请求 ${artifact.id}`, basis: [] });
     }
   }
   for (const fact of input.facts) if (!obligations.some(o => o.id === fact.id)) fail(`未知义务：${fact.kind}`);
@@ -548,7 +553,8 @@ export function scopeRevisionInvalidations(previous: ExecutionScope, next: Pick<
     if (after.applicability !== 'required') return false;
     const before = previous.obligations.find(item => item.id === after.id && item.kind === after.kind);
     if (!before || before.applicability !== 'required') return !after.satisfied_by?.length;
-    return (!!before.satisfied_by?.length || completed.has(before.owner_phase)) && !after.satisfied_by?.length;
+    return !after.satisfied_by?.length && (!!before.satisfied_by?.length
+      || completed.has(before.owner_phase) && executionScopeFingerprint(before.basis) !== executionScopeFingerprint(after.basis));
   }).map(item => item.owner_phase);
   const owners = new Set([...previous.obligations, ...next.obligations].map(item => item.owner_phase));
   return affectedScopePhases(roots, order, { ...dependencyContext, scope: { ...previous, ...next }, workflow }).filter(phase => owners.has(phase));
@@ -601,6 +607,15 @@ export function isEffectivePhasePass(event: ScopeHistoryEvent): boolean {
 /** Derived causal state only: history remains immutable and file mtimes never establish a PASS. */
 export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeHistoryEvent[], order: readonly string[], currentPhasePass?: string, workflow?: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}) {
   let scope = birth;
+  const definitionProofs = new Map<string, InputBinding[]>();
+  const inputProofs = (obligation?: ExecutionObligation): InputBinding[] | undefined =>
+    obligation && obligation.applicability === 'required' && acceptsDefinitionInputProof(obligation.kind)
+      && obligation.satisfied_by?.length && obligation.satisfied_by.every(ref => 'input_id' in ref)
+      ? obligation.satisfied_by as InputBinding[] : undefined;
+  for (const obligation of birth.obligations) {
+    const inputs = inputProofs(obligation);
+    if (inputs) definitionProofs.set(obligation.id, structuredClone(inputs));
+  }
   const invalidated = new Set<string>();
   const passed = new Set<string>();
   const invalidatedAt = new Map<string, string>();
@@ -610,6 +625,21 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
     let revoked: string[] = [];
     if (event.type === 'scope_revised' && event.execution_scope) {
       revoked = scopeRevisionInvalidations(scope, event.execution_scope, order, passed, workflow, dependencyContext);
+      const explicitlyWithdrawn = scope.obligations.some(before => inputProofs(before)
+        && !event.execution_scope!.obligations.find(after => after.id === before.id)?.satisfied_by?.length);
+      for (const [id, inputs] of definitionProofs) {
+        const after = event.execution_scope.obligations.find(obligation => obligation.id === id);
+        if (!after || after.applicability !== 'required' || !inputs.every(proof => after.basis.some(binding =>
+          binding.input_id === proof.input_id && binding.content_fingerprint === proof.content_fingerprint
+            && executionScopeFingerprint(binding.source) === executionScopeFingerprint(proof.source)))) definitionProofs.delete(id);
+      }
+      for (const obligation of event.execution_scope.obligations) {
+        const inputs = inputProofs(obligation);
+        if (inputs) definitionProofs.set(obligation.id, structuredClone(inputs));
+      }
+      if (explicitlyWithdrawn) for (const [id] of definitionProofs) {
+        if (revoked.includes(event.execution_scope.obligations.find(obligation => obligation.id === id)!.owner_phase)) definitionProofs.delete(id);
+      }
       scope = event.execution_scope;
       revisions.set(index, revoked);
     } else if (event.type === 'phase_backtrack_requested') {
@@ -621,20 +651,38 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
     }
     for (const phase of revoked) {
       invalidated.add(phase); passed.delete(phase);
-      invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+      // Observations and ordinary waits may withdraw PASS, but only an actual
+      // revision or invalidation requires a result produced after that boundary.
+      if (event.type === 'scope_revised' || event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
+        invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+      }
+      if (event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
+        for (const [id] of definitionProofs) if (scope.obligations.find(obligation => obligation.id === id)?.owner_phase === phase) definitionProofs.delete(id);
+      }
     }
     if (event.type === 'phase_verdict' && event.phase && event.action !== 'retry') {
       if (isEffectivePhasePass(event)) { invalidated.delete(event.phase); passed.add(event.phase); }
       else passed.delete(event.phase);
     }
   });
-  return { scope, invalidated, passed, invalidatedAt, revisions };
+  return { scope, invalidated, passed, invalidatedAt, revisions, definitionProofs };
+}
+
+/** One qualification for current proof and reuse; undefined keeps an unknown repair-time boundary unknown. */
+export function phaseEvidenceIsCurrent(input: { fresh: boolean; generatedAt?: string; invalidatedAt?: string }): boolean | undefined {
+  if (!input.fresh) return false;
+  if (input.invalidatedAt === undefined) return true;
+  const generated = Date.parse(input.generatedAt ?? ''), invalidated = Date.parse(input.invalidatedAt);
+  if (!Number.isFinite(generated) || !Number.isFinite(invalidated)) return undefined;
+  return generated > invalidated;
 }
 
 /** The queue is a view of effective duties; historical outcomes cannot independently skip it. */
 export function effectiveScopeView(input: {
   birth: ExecutionScope; events: readonly ScopeHistoryEvent[]; workflow: WorkflowSpec;
   proofs?: ReadonlyMap<string, ScopeEvidenceRef>;
+  /** Existing accepted definition inputs, revalidated by the read action; never a new proof claim. */
+  definitionProofs?: ReadonlyMap<string, readonly InputBinding[]>;
   stalePhases?: readonly string[];
   reopen?: string;
   inputOwners?: ScopeDependencyContext['inputOwners'];
@@ -645,11 +693,25 @@ export function effectiveScopeView(input: {
   const history = scopeProofHistory(input.birth, input.events, order, undefined, input.workflow, input);
   const scope = structuredClone(history.scope);
   const invalid = new Set([...history.invalidated].filter(phase => !input.proofs?.has(phase)));
-  for (const phase of [...affectedScopePhases(input.stalePhases ?? [], order, { ...input, scope }), ...affectedScopePhases(input.reopen ? [input.reopen] : [], order, { ...input, scope })]) invalid.add(phase);
+  const reopened = affectedScopePhases(input.reopen ? [input.reopen] : [], order, { ...input, scope });
+  for (const phase of [...affectedScopePhases(input.stalePhases ?? [], order, { ...input, scope }), ...reopened]) invalid.add(phase);
   for (const obligation of scope.obligations) {
     if (obligation.applicability !== 'required') continue;
-    if (invalid.has(obligation.owner_phase)) delete obligation.satisfied_by;
-    else if (input.proofs?.has(obligation.owner_phase)) obligation.satisfied_by = [input.proofs.get(obligation.owner_phase)!];
+    const definition = input.definitionProofs?.has(obligation.id) ? history.definitionProofs.get(obligation.id) : undefined;
+    if (definition?.length && !reopened.includes(obligation.owner_phase)) obligation.satisfied_by = structuredClone([...definition]);
+    else if (invalid.has(obligation.owner_phase)) delete obligation.satisfied_by;
+    else if (input.proofs?.has(obligation.owner_phase)
+      && !(acceptsDefinitionInputProof(obligation.kind) && obligation.satisfied_by?.length
+        && obligation.satisfied_by.every(ref => 'input_id' in ref))) {
+      // A validated definition binding is the fulfilled duty itself. Do not replace it with
+      // a broader phase report whose unrelated implementation/context inputs may later change.
+      obligation.satisfied_by = [input.proofs.get(obligation.owner_phase)!];
+    }
+  }
+  for (const phase of [...invalid]) {
+    const duties = scope.obligations.filter(obligation => obligation.owner_phase === phase && obligation.applicability !== 'not_applicable');
+    if (!reopened.includes(phase) && duties.length && duties.every(obligation => obligation.applicability === 'required'
+      && history.definitionProofs.has(obligation.id) && input.definitionProofs?.has(obligation.id))) invalid.delete(phase);
   }
   const projected = projectScopeSchedule(scope, input.workflow, input);
   // A direct authorized backtrack is itself an existing instruction to re-run the owner,

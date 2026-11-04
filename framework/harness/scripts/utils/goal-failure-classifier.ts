@@ -12,7 +12,11 @@ import {
   DEFAULT_DEPENDENCY_POLICY,
 } from './phase-transition-policy';
 import { AGGREGATE_RUN_STATUS_CHECK_IDS, requiredSummaryCheckGaps, resultBasisOwner } from './check-disposition';
-import { digestDirectoryTree } from './product-source-snapshot';
+import type { CurrentDisposition } from './check-disposition';
+import { digestDirectoryTree, EXCLUDED_SEGMENTS } from './product-source-snapshot';
+import { normalizeCheckId } from './phase-alias';
+import { existingProjectPathSpelling, isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
+import { CANONICAL_CODING_COMPILE_ID, LEGACY_CODING_COMPILE_ID, CANONICAL_UT_COMPILE_ID, LEGACY_UT_COMPILE_ID } from '../../capability-registry';
 
 export type FailureKind =
   | 'deterministic_gate_or_artifact_missing'
@@ -182,66 +186,6 @@ export const SIGNATURE_HALT_KINDS: ReadonlySet<FailureKind> = new Set<FailureKin
 export const CUMULATIVE_HALT_FAMILY: ReadonlySet<FailureKind> = new Set<FailureKind>([
   'toolchain',
 ]);
-
-/**
- * f9c2e6b4 t3：重试耗尽时的**责任归属**——哪些 FailureKind 属"外部条件未满足"。
- *
- * 立项事故 run 20260803T103413Z-3f72a8：耗尽后产生端发
- * `assess_halt:phase_verdict:halt; failure_kind=project_build`，被 `normalizeIncidentId`
- * 截到首个 `:` 变成 `assess_halt`，registry 固定 `operator` → **WAITING/human**。
- * 真实责任类别在这一步被抹平，而 WAITING 会让 supervisor 永不拉起。
- *
- * 本集合**复用既有 FailureKind 分类**，不新建正则、不新建第二套责任表——
- * 它只回答一个问题：这个失败是"内容没做对"（重启无用，人来看）还是"外部条件不满足"
- * （环境恢复后可继续）。不在集合内的一律按内容失败处理（保守：内容失败 → TERMINAL，
- * 不会让 supervisor 反复拉起一个注定再死的 run）。
- */
-export const EXTERNAL_RETRY_RESPONSIBILITY_KINDS: ReadonlySet<FailureKind> = new Set<FailureKind>([
-  'toolchain',
-  'external_block',
-  'capture',
-  'agent_timeout',
-  'transient_api_error',
-  'agent_no_output',
-]);
-
-/**
- * plan b3e8d4c7 t3：**assess-halt 汇点的事故 id**。
- *
- * 该汇点（goal-runner 的 `action==='halt' && !haltReason`）承载多类 halt，f9c2e6b4 t3
- * 曾把它**整体**假设成"重试耗尽"，于是宿主 run 20260804T033834Z-99c0a1 里预算只用了 1/2、
- * 真因是"推荐无路由"，却被标 content_retry_exhausted + TERMINAL（halt_reason 说 exhausted、
- * reason 说 unclosed，自相矛盾，还让 supervisor 永不拉起）。
- *
- * `retries >= max` 只是**必要**条件——预算恰好用满时任何落进 catch-all 的 halt 都会被误标。
- * 充分证据须同时满足：来自 phase-outcome SSOT 的 halt（runner_action==='halt'）、
- * 本轮非 PASS、且未熔断。其余一律 fail-closed 到 framework_bug——**不给 catch-all 起精确名字**。
- */
-export function resolveAssessHaltIncident(input: {
-  retriesUsed: number;
-  maxRetriesPerPhase: number;
-  /** assess recommendation 的 SSOT 动作（仅当推荐派生自 phase outcome 时存在） */
-  runnerAction?: string;
-  verdict: string;
-  fused: boolean;
-  failureKind: FailureKind;
-}): 'content_retry_exhausted' | 'external_retry_exhausted' | 'framework_bug' {
-  const exhausted =
-    input.retriesUsed >= input.maxRetriesPerPhase &&
-    input.runnerAction === 'halt' &&
-    input.verdict !== 'PASS' &&
-    !input.fused;
-  if (!exhausted) return 'framework_bug';
-  return EXTERNAL_RETRY_RESPONSIBILITY_KINDS.has(input.failureKind)
-    ? 'external_retry_exhausted'
-    : 'content_retry_exhausted';
-}
-
-/** 同一 blocker_signature 在 CUMULATIVE_HALT_FAMILY 家族内累计出现达到此次数即 halt（非连续）。 */
-export const CUMULATIVE_HALT_THRESHOLD = 3;
-
-/** advance_blocked（script PASS 但 closure 打不开）累计出现达到此次数（含本次）即 halt 求人，不再退化到无限重试。 */
-export const ADVANCE_BLOCKED_HALT_THRESHOLD = 2;
 
 /**
  * Blocker ids where retry without user input is structurally pointless.
@@ -829,39 +773,176 @@ export interface NoProgressGuardInput {
   currentBlockerSignature: string;
   priorArtifactSnapshot: ArtifactSnapshot | null;
   currentArtifactSnapshot: ArtifactSnapshot;
-  /**
-   * content 失败的相关文件集合是否已由机器证据解析且非空
-   * （`extractContentRelatedFiles` = `repair_candidates[].files` ∪ `blockers[].affected_files`）。
-   */
+  /** @deprecated Historical diagnostic only; byte snapshots are not completed evaluations. */
   relevantEvidenceKnown?: boolean;
+  previousEvaluation?: CompletionEvaluation | null;
+  currentEvaluation?: CompletionEvaluation;
+  comparableHistory?: readonly CompletionEvaluation[];
+  feedbackDelivered?: boolean;
+  authorReturned?: boolean;
+}
+
+/** A view of existing result/input facts, not another persisted progress record. */
+export interface CompletionEvaluation {
+  /** Same request, authorization and applicable acceptance version. */
+  acceptanceKey: string;
+  /** Relevant author inputs, excluding generated report/transport metadata. */
+  inputs: ArtifactSnapshot;
+  disposition: CurrentDisposition;
+  /** Actual completed tool/check families; absent means the full view. Never an author dispatch queue. */
+  checkFamilies?: readonly string[];
+  /** Required checks and independent verification actually finished for these inputs. */
+  completed: boolean;
+}
+
+const sortedRefs = (refs: readonly string[] | undefined): string[] => [...new Set(refs ?? [])].sort();
+
+function scopedProblems(problems: CurrentDisposition['problems'], families?: readonly string[]): CurrentDisposition['problems'] {
+  if (families === undefined) return problems;
+  return problems.filter(problem => {
+    const source = problem.source_phase ?? problem.phase;
+    return source !== '*' && source !== 'scope' && families.includes(source);
+  });
+}
+
+function comparisonScope(evaluation: CompletionEvaluation): string {
+  return evaluation.checkFamilies === undefined ? 'full' : JSON.stringify(sortedRefs(evaluation.checkFamilies));
+}
+
+function problemIdentity(problem: CurrentDisposition['completionBlocking'][number], includeRouting = false): string {
+  const finding = problem.id.startsWith('open_finding:');
+  return JSON.stringify({
+    id: finding ? 'open_finding' : problem.id,
+    // A verified finding follows its real object, not the label or reviewer that reported it.
+    ...(!finding || includeRouting ? { phase: problem.source_phase ?? problem.phase } : {}),
+    ...(includeRouting ? { owner: problem.owner, propagated_from: problem.propagated_from } : {}),
+    action: problem.action, affects: problem.affects,
+    // The subject-bound verifier report remains mandatory evidence, but its
+    // regenerated filename is not a new product defect or acceptance condition.
+    files: sortedRefs(problem.id === 'attestation_present' && problem.action === 'repair' ? [] : problem.files), evidence: sortedRefs(problem.evidence),
+  });
+}
+
+export function completionProblemSignature(disposition: CurrentDisposition, checkFamilies?: readonly string[]): string {
+  return JSON.stringify([...new Set(scopedProblems(disposition.completionBlocking, checkFamilies).filter(problem => problem.action === 'repair')
+    .map(problem => problemIdentity(problem)))].sort());
+}
+
+function dispositionFacts(disposition: CurrentDisposition, checkFamilies?: readonly string[]): string {
+  const facts = (problems: CurrentDisposition['problems']): string[] => [...new Set(scopedProblems(problems, checkFamilies).map(problem => problemIdentity(problem, true)))].sort();
+  return JSON.stringify({ ...(checkFamilies === undefined ? { completionEligible: disposition.completionEligible, releaseReady: disposition.releaseReady } : {}),
+    problems: facts(disposition.problems), completion: facts(disposition.completionBlocking),
+    release: facts(disposition.releaseBlocking), disclosed: facts(disposition.disclosed) });
+}
+
+function nativeCompileCheck(id: string): boolean {
+  const raw = id.startsWith('open_finding:') ? id.slice('open_finding:'.length).split(':').at(-1)! : id;
+  const normalized = normalizeCheckId(raw.replace(/^adhoc_/, ''));
+  return normalized === CANONICAL_CODING_COMPILE_ID || normalized === LEGACY_CODING_COMPILE_ID
+    || normalized === CANONICAL_UT_COMPILE_ID || normalized === LEGACY_UT_COMPILE_ID;
+}
+
+/** Only native object facts identify a compiler error; report paths and line numbers do not. */
+export function nativeCompileDiagnosticRefs(check: { id: string; structured?: unknown }, projectRoot: string): string[] | undefined {
+  if (!nativeCompileCheck(check.id)) return undefined;
+  const diagnostics = (check.structured as { compiler_diagnostics?: unknown } | null)?.compiler_diagnostics;
+  if (!Array.isArray(diagnostics) || !diagnostics.length) return [];
+  const refs = new Set<string>();
+  for (const diagnostic of diagnostics) {
+    if (!diagnostic || typeof diagnostic !== 'object' || typeof diagnostic.file !== 'string' || !diagnostic.file.trim()
+      || typeof diagnostic.code !== 'string' || !diagnostic.code.trim() || typeof diagnostic.message !== 'string' || !diagnostic.message.trim()) return [];
+    try {
+      const declared = path.resolve(projectRoot, diagnostic.file.replace(/\\/g, '/'));
+      const relative = validateProjectRelativePath(projectRoot, path.relative(projectRoot, declared), 'compiler diagnostic');
+      if (relative.split('/').some(segment => EXCLUDED_SEGMENTS.has(segment))) return [];
+      const actual = existingProjectPathSpelling(projectRoot, declared);
+      if (!actual || !fs.statSync(actual).isFile()) return [];
+      const realRoot = fs.realpathSync(projectRoot), realFile = fs.realpathSync(actual);
+      if (!isInsideProjectRoot(realRoot, realFile)) return [];
+      const file = path.relative(realRoot, realFile).replace(/\\/g, '/');
+      if (file.split('/').some(segment => EXCLUDED_SEGMENTS.has(segment))) return [];
+      const ref = `compiler:${JSON.stringify([file, diagnostic.code.trim(), diagnostic.message.trim()])}`;
+      if (refs.has(ref)) return []; // Distinct diagnostics with this same object cannot be disambiguated by a line number.
+      refs.add(ref);
+    } catch { return []; }
+  }
+  return [...refs].sort();
+}
+
+export function hasFindingIdentities(disposition: CurrentDisposition, checkFamilies?: readonly string[]): boolean {
+  // The common reader supplies bound acceptance/CU/case/step refs, never report names or invoke timestamps.
+  return scopedProblems([...disposition.problems, ...disposition.completionBlocking, ...disposition.releaseBlocking, ...disposition.disclosed], checkFamilies)
+    .every(problem => nativeCompileCheck(problem.id) ? !!problem.evidence?.some(ref => ref.startsWith('compiler:'))
+      : !problem.id.startsWith('open_finding:') || !!problem.evidence?.some(ref => ref.trim().length > 0));
+}
+
+function completedEvaluation(evaluation: CompletionEvaluation | null | undefined): evaluation is CompletionEvaluation {
+  return !!evaluation?.completed && evaluation.acceptanceKey.trim().length > 0
+    && compareRelatedInputSnapshots(evaluation.inputs, evaluation.inputs) === 'unchanged';
+}
+
+function comparableRepairs(evaluation: CompletionEvaluation): boolean {
+  return completedEvaluation(evaluation) && hasFindingIdentities(evaluation.disposition, evaluation.checkFamilies)
+    && !scopedProblems(evaluation.disposition.completionBlocking, evaluation.checkFamilies).some(problem => problem.action === 'verify' || problem.action === 'wait');
+}
+
+function otherVerifiedClosure(previous: CompletionEvaluation, current: CompletionEvaluation): boolean {
+  if (current.checkFamilies === undefined) return false;
+  const allCurrent = [...current.disposition.problems, ...current.disposition.completionBlocking, ...current.disposition.releaseBlocking, ...current.disposition.disclosed];
+  const source = (problem: CurrentDisposition['problems'][number]): string => problem.source_phase ?? problem.phase;
+  const refs = (problem: CurrentDisposition['problems'][number]): string[] => {
+    const evidence = sortedRefs(problem.evidence);
+    if (!evidence.length && problem.id.startsWith('open_finding:')) return [];
+    return (evidence.length ? evidence : [problem.id]).map(ref => JSON.stringify({ source: source(problem), files: sortedRefs(problem.files), ref }));
+  };
+  for (const old of previous.disposition.completionBlocking) {
+    const family = source(old);
+    if (old.action !== 'repair' || family === '*' || family === 'scope' || current.checkFamilies.includes(family)) continue;
+    if (!hasFindingIdentities(current.disposition, [family]) || allCurrent.some(problem => source(problem) === family && (problem.action === 'wait' || problem.action === 'verify'))) continue;
+    const remaining = new Set(allCurrent.filter(problem => source(problem) === family).flatMap(refs));
+    if (refs(old).some(ref => !remaining.has(ref))) return true;
+  }
+  return false;
+}
+
+/** Reuse, comparison eligibility and baseline advancement are one decision. */
+export function evaluateCompletionProgress(input: {
+  previous?: CompletionEvaluation | null; current: CompletionEvaluation;
+  /** Existing completed result views, in chronological order; a version change ends the comparison window. */
+  history?: readonly CompletionEvaluation[]; feedbackDelivered: boolean;
+  /** A completed native author invocation handed the relevant work back after receiving feedback. */
+  authorReturned?: boolean;
+}): { evaluation: CompletionEvaluation | null; reused: boolean; halt: boolean } {
+  const { previous, current } = input;
+  if (!completedEvaluation(current)) return { evaluation: previous ?? null, reused: false, halt: false };
+  if (!completedEvaluation(previous) || previous.acceptanceKey !== current.acceptanceKey || comparisonScope(previous) !== comparisonScope(current)) return { evaluation: current, reused: false, halt: false };
+  const change = compareRelatedInputSnapshots(previous.inputs, current.inputs);
+  // A real new relevant set establishes its own baseline; it cannot prove anything about the old set.
+  if (change === 'unknown') return { evaluation: current, reused: false, halt: false };
+  const handedBack = input.feedbackDelivered && input.authorReturned === true;
+  const identified = hasFindingIdentities(previous.disposition, previous.checkFamilies) && hasFindingIdentities(current.disposition, current.checkFamilies);
+  if ((!handedBack || !identified) && change === 'unchanged' && dispositionFacts(current.disposition, current.checkFamilies) === dispositionFacts(previous.disposition, previous.checkFamilies)) {
+    // Other families/global constraints still update the full view without advancing this comparison.
+    return { evaluation: dispositionFacts(current.disposition) === dispositionFacts(previous.disposition) ? previous : current, reused: true, halt: false };
+  }
+  if (!identified) return { evaluation: current, reused: false, halt: false };
+  if (!input.feedbackDelivered || change !== 'changed' && !handedBack || !comparableRepairs(previous) || !comparableRepairs(current)) return { evaluation: current, reused: false, halt: false };
+  const signature = completionProblemSignature(current.disposition, current.checkFamilies);
+  if (signature === '[]') return { evaluation: current, reused: false, halt: false };
+  let repeated = false;
+  for (const prior of [...input.history ?? [], previous]) {
+    if (prior.acceptanceKey !== current.acceptanceKey || comparisonScope(prior) !== comparisonScope(current)) { repeated = false; continue; }
+    if (comparableRepairs(prior) && compareRelatedInputSnapshots(prior.inputs, current.inputs) !== 'unknown'
+      && completionProblemSignature(prior.disposition, prior.checkFamilies) === signature) repeated = true;
+  }
+  return { evaluation: current, reused: false, halt: repeated && !otherVerifiedClosure(previous, current) };
 }
 
 /**
- * Halt when a signature-halt kind repeats with zero progress (2nd+ identical failure).
- * T6 起覆盖 {deterministic_gate, toolchain, capture, visual_gap}：
- *   - deterministic/toolchain/capture：基建/缺件类，盲重试无益 → identical signature 即 halt
- *     （toolchain/capture 无 watched artifact，artifactsProgressed 恒 false，纯靠 signature 重复判定，
- *      达成"工具链/采集反复失败不吃视觉迭代预算"的预算分流）。
- *   - visual_gap：同一组视觉门禁 signature 重复（coding 上一轮"修"未改变任何失败门禁）= 无改善 → 熔断求人，
- *     避免 homepage 那种"3 轮把卡包瞎挪、视觉门禁原样复现"的空转。
- *   - code_regression：相关集合**已知**时仍要求可比内容基线（不得用空快照冒充"无改动"）；
- *     相关集合**未知或为空**时（无 repair candidate、无 blocker affected_files）意味着
- *     没解析出可修目标＝本阶段无路可走，同签名重复即停（plan e7a2c4f1 §3.6，覆盖
- *     1f3d7a92 §3.3 顺带选的"退回有界重试烧满 max_retries_per_phase"出路——那条路在三轮
- *     宿主实测里 8 次同签名零进展、且终态理由 `content_retry_exhausted` 把账本问题说成
- *     内容问题）。**空集只说明"没解析出目标"，不能说成"证明了没修"**，调用点的文案因此
- *     必须写「相关目标未知」。不新增 halt reason，仍走既有 `no_progress_guard`。
+ * Boolean compatibility view of the same completion decision. Old signatures and byte snapshots
+ * alone do not prove a completed acceptance evaluation or that feedback reached the author.
  */
 export function shouldHaltNoProgress(input: NoProgressGuardInput): boolean {
-  const priorKeys = Object.keys(input.priorArtifactSnapshot ?? {}).sort();
-  const currentKeys = Object.keys(input.currentArtifactSnapshot).sort();
-  const comparableContentBaseline = priorKeys.length > 0 && currentKeys.length > 0 &&
-    JSON.stringify(priorKeys) === JSON.stringify(currentKeys);
-  const eligible = SIGNATURE_HALT_KINDS.has(input.failureKind) ||
-    (input.failureKind === 'code_regression' &&
-      (input.relevantEvidenceKnown === true ? comparableContentBaseline : true));
-  if (!eligible) return false;
-  if (!input.priorBlockerSignature || input.priorBlockerSignature.length === 0) return false;
-  if (input.priorBlockerSignature !== input.currentBlockerSignature) return false;
-  return !artifactsProgressed(input.priorArtifactSnapshot, input.currentArtifactSnapshot);
+  return !!input.currentEvaluation && evaluateCompletionProgress({ previous: input.previousEvaluation, current: input.currentEvaluation,
+    history: input.comparableHistory, feedbackDelivered: input.feedbackDelivered === true, authorReturned: input.authorReturned }).halt;
 }

@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { readSessionExecution, acceptedSessionReport, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { readSessionExecution, acceptedSessionReport, acceptSessionExecution, normalizeSessionReport, inspectSessionExecutionBeforeRuntime, sessionRunMaterialPath, sessionReportInputPath, executionRequestForInvoke, observeSessionExecution, stopBoundExecution, sessionExecutionDeadlineMs, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import type {
@@ -10,15 +10,22 @@ import type {
   GoalModeInSessionOptions,
 } from './utils/goal-phase-runtime';
 import { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
-import { GoalPhaseRuntime } from './goal-phase-runtime';
-import { AttendedGoalPhaseExecutor } from './utils/goal-phase-executor';
-import { collectSupersededAncestorEvents, loadEventsJsonl } from './utils/goal-runner-phase';
+import { GoalPhaseRuntime, bindGuardianOrKill, resolveManifestIdentityBaseline } from './goal-phase-runtime';
+import { AttendedGoalPhaseExecutor, DetachedGoalPhaseExecutor, createWorkUnitExecutionContext, observeWorkUnitProviderSession, workUnitExecutionInputs } from './utils/goal-phase-executor';
+import { loadEventsJsonl, loadAuthoritativeEvents } from './utils/goal-runner-phase';
+import { resolveHeadlessInvokePlan, extractProviderFinalText } from './utils/agent-invoke';
+import { invocationCompleted, invocationEndFacts } from './utils/invocation-completion';
+import { reconcileGuardianOwnership } from './utils/goal-containment-reconcile';
+import { defaultProcessProbe } from './utils/device-session';
+import { RUN_LOCK_NAME, tryAcquireLock, releaseLock, touchLock, readLockRecord, isLockStale } from './utils/goal-run-lock';
 import { resolveGoalRunBaseline } from './utils/goal-run-baseline';
 import { projectCanonicalLifecycle } from './utils/goal-canonical-lifecycle';
 import {
   readRunControl,
   ensureRunControl,
   releaseRunOwner,
+  resumeIssuedSessionOwner,
+  renewSessionLease,
 } from './utils/goal-run-control';
 import {
   buildGoalManifestFromInput,
@@ -36,6 +43,8 @@ import {
   type GoalRunManifest,
   type GoalBudget,
   type UnattendedContract,
+  computeManifestIdentityFields,
+  diffManifestIdentityFields,
   type AdapterModelPin,
   type RunAdapterProvenance,
 } from './utils/goal-manifest';
@@ -44,7 +53,7 @@ import {
   createGoalRun,
   decideRunContinuation,
   inspectGoalRunCreation,
-  resolveCycleEffectiveBudget,
+  resolveDeliveryCycleBoundary,
   successorBoundsConflicts,
   successorBoundsRefusal,
   resolveActualGoalPhaseChainAtBirth,
@@ -71,7 +80,7 @@ import { designDeliveryNextStep, DesignDeliveryPreparationRequired } from './uti
 import { findInitialDesignRun, prepareInitialDesignRun, projectInitialDesignDelivery, initialDesignPhasePolicy, initialDesignScopeActionIssues } from './utils/initial-design-delivery';
 import type { ProviderRef } from './utils/types';
 import { applyManifestCliOverrides, validateManifestCliOverrides } from './utils/goal-manifest-cli';
-import { readOriginalDeliveryBudget, assertCanonicalDeliveryChild, originalDeliveryForManifest } from './utils/delivery-origin';
+import { assertCanonicalDeliveryChild, originalDeliveryForManifest } from './utils/delivery-origin';
 export type { GoalModeInSessionOptions } from './utils/goal-phase-runtime';
 export { deriveInSessionFingerprint } from './utils/goal-phase-runtime';
 
@@ -92,7 +101,6 @@ export async function runGoalModeInSession(
     executePhase: options.executePhase,
     authorization: options.authorization,
     leaseMs: options.leaseMs,
-    maxRounds: options.maxRounds,
     onRound: options.onRound,
   });
 }
@@ -107,6 +115,7 @@ export interface PrepareGoalModeRunOptions {
   requirement: string;
   /** plan c4e8a1f7 T2：--requirement-file 来源列表（goal-mode-entry 与 goal-runner 同源解析） */
   requirementSourceFiles?: string[];
+  userDeadlineAt?: string;
   startPhase?: string;
   endPhase?: string;
   forceFresh?: boolean;
@@ -143,9 +152,8 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     const origin = loadGoalRunManifestFromRun(options.projectRoot, options.deliveryOrigin.run_id, { feature: options.deliveryOrigin.feature });
     if (!isInitialDesignManifest(origin)) throw new Error('[goal-mode-entry] delivery origin is not an original design request');
     assertGoalRunAttachable(options.projectRoot, origin);
-    const effective = readOriginalDeliveryBudget(options.projectRoot, origin);
     if (origin.requirement !== options.requirement || origin.adapter !== options.adapter) throw new Error('[goal-mode-entry] child cannot replace original requirement or adapter');
-    options = { ...options, requirementSourceFiles: origin.requirement_source_files, budget: effective?.budget ?? origin.budget, unattended: origin.unattended,
+    options = { ...options, requirementSourceFiles: origin.requirement_source_files, userDeadlineAt: origin.user_deadline_at, unattended: origin.unattended,
       adapterSource: typeof origin.adapter_provenance === 'string' && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(origin.adapter_provenance) ? origin.adapter_provenance as RunAdapterProvenance : undefined,
       adapterModelPin: origin.adapter_model_pin, visualProviderPin: origin.visual_provider_pin, fidelity: origin.fidelity,
       dependencyPolicy: origin.dependency_policy, minimumAssurance: origin.minimum_assurance, preAuthorizedMutations: origin.pre_authorized_mutations };
@@ -164,12 +172,11 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     : options.forceFresh
     ? { kind: 'fresh', explicit: true, reason: '显式 --force' }
     : decideRunContinuation({
-        projectRoot: options.projectRoot, feature,
+        projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, feature,
         call: {
           requirement,
           ...(options.requirementSourceFiles?.length ? { requirementSourceFiles: options.requirementSourceFiles } : {}),
           attended: true,
-          budgetOverride: options.budgetOverride === true,
           supersede: options.supersede,
         },
       });
@@ -209,15 +216,12 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     }
     const baseline = resolveGoalRunBaseline(options.projectRoot, feature, source.run_id);
     if (baseline.available) source.run_base_sha = baseline.baseSha; else delete source.run_base_sha;
-    const ancestors = collectSupersededAncestorEvents({ projectRoot: options.projectRoot, featuresDir, feature, seedTargets: continuation.targets });
-    const pick = (key: 'round_fingerprint' | 'drift_fingerprint'): string[] => ancestors
-      .map(e => (e as Record<string, unknown>)[key]).filter((v): v is string => typeof v === 'string');
     const birthInput = buildGoalManifestFromInput({
       feature, run_id: options.runId, requirement, adapter: source.adapter,
+      ...(options.userDeadlineAt ? { user_deadline_at: options.userDeadlineAt } : {}),
       ...(options.requirementSourceFiles?.length ? { requirement_source_files: options.requirementSourceFiles } : {}),
       start_phase: source.start_phase, end_phase: source.end_phase,
-      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
-      ...(options.budget ? { budget: options.budget } : {}),
+      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never' },
       ...(options.adapterModelPin ? { adapter_model_pin: options.adapterModelPin } : {}),
       ...(options.visualProviderPin ? { visual_provider_pin: options.visualProviderPin } : {}),
       ...(options.fidelity ? { fidelity: options.fidelity } : {}),
@@ -226,14 +230,9 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       ...(options.minimumAssurance ? { minimum_assurance: options.minimumAssurance } : {}),
       ...(options.preAuthorizedMutations ? { pre_authorized_mutations: options.preAuthorizedMutations } : {}),
     }, { projectRoot: options.projectRoot, featuresDir });
-    const manifest = inheritSuccessorManifest(birthInput, source, { round: pick('round_fingerprint'), drift: pick('drift_fingerprint') });
-    // Same budget inheritance and explicit override as the runtime birth path.
-    const effectiveBudget = resolveCycleEffectiveBudget({
-      projectRoot: options.projectRoot, featuresDir, feature, frameworkRoot: options.frameworkRoot, targets: continuation.targets,
-      sourceBudget: source.budget, birthInputBudget: birthInput.budget, override: options.budgetOverride === true,
-    });
-    manifest.budget = effectiveBudget.budget;
-    console.log(`[goal-mode-entry] 后继预算：${effectiveBudget.basis}`);
+    const cycleBoundary = resolveDeliveryCycleBoundary({ projectRoot: options.projectRoot, featuresDir, feature, frameworkRoot: options.frameworkRoot,
+      seedTargets: continuation.targets });
+    const manifest = inheritSuccessorManifest(birthInput, source, { round: [], drift: [] }, { newDeliveryCycle: cycleBoundary === source.run_id });
     // 与 runtime 合并块同一个函数：没有新内容时保留源合同全文，否则源全文 + 新增段（本次文本已是合并格式也不丢新增内容）
     manifest.requirement = deriveSuccessorRequirement(source.requirement, requirement);
     const scope = resolveSuccessorExecutionScope(options.projectRoot, feature, workflow, options.frameworkRoot, manifest.requirement, source.run_id, manifest.fidelity);
@@ -243,7 +242,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     }
     const track = resolveFeatureTrack(loadFeatureTrackDecl(options.projectRoot, feature));
     const chain = scope?.phase_chain ?? resolveAutoChain(workflow, manifest.start_phase, manifest.end_phase, manifest.chain_override, track);
-    createGoalRun({ projectRoot: options.projectRoot, manifest, chain, continuation });
+    createGoalRun({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest, chain, continuation });
     const successorDir = path.resolve(options.projectRoot, ...manifest.report_dir.split('/'));
     ensureRunControl(successorDir, manifest.run_id);
     return { manifest, manifestPath: path.join(successorDir, 'manifest.json'), runDir: successorDir, continuation };
@@ -261,6 +260,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
   const manifest = buildGoalManifestFromInput(
     {
       feature,
+      ...(options.userDeadlineAt ? { user_deadline_at: options.userDeadlineAt } : {}),
       run_id: options.runId,
       requirement,
       ...(options.requirementSourceFiles && options.requirementSourceFiles.length > 0
@@ -273,8 +273,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
       end_phase: options.endPhase ?? executionScope?.phase_chain.at(-1) ?? 'testing',
       // plan a8e5c3f9 t6：headless 即全权限——新 manifest 直接写 effective 值
       //（此前 workspace-write + on-request 让 claude 连 dontAsk 都拿不到，与无人值守自相矛盾）。
-      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never', max_turns: 20 },
-      ...(options.budget ? { budget: options.budget } : {}),
+      unattended: options.unattended ?? { write_mode: 'full-access', approval_mode: 'never' },
       ...(options.adapterModelPin ? { adapter_model_pin: options.adapterModelPin } : {}),
       ...(options.visualProviderPin ? { visual_provider_pin: options.visualProviderPin } : {}),
       ...(options.fidelity ? { fidelity: options.fidelity } : {}),
@@ -328,7 +327,7 @@ export function prepareGoalModeRun(options: PrepareGoalModeRunOptions): {
     requiresLegacyFidelityRecovery:
       !executionScope && loadInertLegacyFidelityIntentSsot(options.projectRoot, feature) !== null,
   });
-  createGoalRun({ projectRoot: options.projectRoot, manifest, chain: actualChain, forceFresh: options.forceFresh, continuation });
+  createGoalRun({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest, chain: actualChain, forceFresh: options.forceFresh, continuation });
   // D1.3 转交登记：**createGoalRun 成功之后、ensureRunControl 之前**。出生未完成时 feature 侧
   // 绝不能留下指向不存在 run 的指针；反向残留（记录指向不存在的 run）才是 D1.3 第三行的报错。
   if (executionScope) {
@@ -355,7 +354,6 @@ export interface GoalModeHostBridgeOptions {
   executePhase: InSessionRoundOptions['executePhase'];
   authorization?: InSessionRoundOptions['authorization'];
   leaseMs?: number;
-  maxRounds?: number;
   forceTakeover?: boolean;
   onRound?: (result: InSessionRoundResult) => void;
 }
@@ -476,7 +474,6 @@ export async function runGoalModeHostBridge(
     executor,
     authorization: options.authorization ?? { mode: 'goal_mode' },
     ...(options.leaseMs !== undefined ? { leaseMs: options.leaseMs } : {}),
-    ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
   });
   const priorEventCount = loadEventsJsonl(path.join(runDir, 'events.jsonl')).length;
   const invocationStartedAt = new Date().toISOString();
@@ -523,9 +520,7 @@ export async function runGoalModeHostBridge(
   const result: InSessionRoundResult = {
     run_id: manifest.run_id,
     exit_code: exitCode,
-    status: exitCode === 0 && options.authorization?.mode === 'manual'
-      ? 'waiting'
-      : completed
+    status: completed
       ? 'reconciled'
       : waiting
         ? 'waiting'
@@ -571,9 +566,18 @@ function resolveOriginalDeliveryRequest(projectRoot: string, original: InitialDe
   return issued;
 }
 
+function executionActionCommands(options: Pick<GoalModeHostBridgeOptions, 'authorization' | 'overrideManifest'>, issued: IssuedSessionExecution): Record<string, string> {
+  const quote = (value: string): string => `'${value.replace(/'/g, process.platform === 'win32' ? "''" : "'\\''")}'`;
+  const context = issued.request.context;
+  const base = `${process.platform === 'win32' ? '& ' : ''}${quote(process.execPath)} -r ${quote(require.resolve('ts-node/register/transpile-only'))} ${quote(path.join(context.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(context.feature)} --run-id ${quote(context.runId)} --adapter ${quote(context.adapter)} --run-mode attended --project-root ${quote(context.projectRoot)} --framework-root ${quote(context.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''}`;
+  const request = ` --request ${quote(path.resolve(context.runDir, issued.reference.path))}`;
+  return { execute_command: `${base}${request} --execute-request`, observe_command: `${base}${request} --observe`, interrupt_command: `${base}${request} --interrupt`, next_command: `${base} --next` };
+}
+
 export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOptions, 'executePhase' | 'sessionHandoff'> & {
-  requestPath?: string; report?: SessionExecutionReport;
+  requestPath?: string; report?: SessionExecutionReport; action?: 'execute' | 'observe' | 'interrupt';
 }): Promise<Record<string, unknown>> {
+  if (options.action) return runGoalExecutionAction(options);
   assertAttendedRunMode(options.runMode);
   const deliveryManifest = loadGoalRunManifestFromRun(options.projectRoot, options.runId, { feature: options.feature });
   const currentOriginal = originalDeliveryForManifest(options.projectRoot, deliveryManifest);
@@ -615,10 +619,12 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
     try { console.log = log; console.warn = log; console.error = log; exitCode = await runtime.run(); }
     finally { Object.assign(console, savedConsole); }
     if (issued) return { type: 'phase_execute_request', run_id: issued.request.context.runId, delivery_run_id: original.run_id,
+      ...executionActionCommands(options, issued),
       feature: issued.request.context.feature, phase: issued.request.context.phase, attempt_id: issued.request.context.attemptId,
       log: controlLog,
       request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
-      deadline: issued.request.deadline, gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
+      deadline: Number.isFinite(sessionExecutionDeadlineMs(issued.request)) ? new Date(sessionExecutionDeadlineMs(issued.request)).toISOString() : undefined,
+      gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
       status: 'execution_required', status_line: '按原件完成本职并报告；作者调用结束不表示原始交付完成。',
       next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + sessionReportInputPath(issued.request.context.runDir, issued))}`) };
     const view = projectInitialDesignDelivery({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, manifest: original });
@@ -639,11 +645,13 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
     ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\\''")}'`;
   const command = (action: string, commandRunId = options.runId): string => `npx ts-node ${quote(path.join(options.frameworkRoot, 'harness/scripts/goal-mode-entry.ts'))} --feature ${quote(options.feature)} --run-id ${quote(commandRunId)} --adapter ${quote(options.adapter)} --run-mode attended --project-root ${quote(options.projectRoot)} --framework-root ${quote(options.frameworkRoot)}${options.authorization?.autonomyAuthorized ? ' --authorize-autonomy' : ''}${options.overrideManifest ? ' --override-manifest' : ''} ${action}`;
   const project = (issued: IssuedSessionExecution): Record<string, unknown> => ({
+    ...executionActionCommands(options, issued),
     type: 'phase_execute_request', run_id: issued.request.context.runId, phase: issued.request.context.phase, attempt_id: issued.request.context.attemptId,
     request: { path: path.resolve(issued.request.context.runDir, issued.reference.path), sha256: issued.reference.sha256 },
     log: path.join(runDir, 'session-control.log'),
     status: 'execution_required', status_line: '读取请求原件，按原身份执行并自检，再报告；本次领取不表示等待或通过。',
-    deadline: issued.request.deadline, gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
+    deadline: Number.isFinite(sessionExecutionDeadlineMs(issued.request)) ? new Date(sessionExecutionDeadlineMs(issued.request)).toISOString() : undefined,
+    gate_timeout_ms: issued.request.gate_timeout_ms, cleanup_reserve_ms: issued.request.cleanup_reserve_ms,
     next_command: command(`--request ${quote(path.resolve(issued.request.context.runDir, issued.reference.path))} --report-result ${quote('@' + path.relative(issued.request.context.runDir, sessionReportInputPath(issued.request.context.runDir, issued)).replace(/\\/g, '/'))}`, issued.request.context.runId),
   });
   if (current) {
@@ -690,6 +698,112 @@ export async function runGoalModeSessionStep(options: Omit<GoalModeHostBridgeOpt
     ...(!options.authorization?.autonomyAuthorized ? { authorization_guidance: '本次按需确认；主 Agent 应先核对已有可信原授权再重传。' } : {}) };
 }
 
+/** Thin physical transport for an existing request. The ordinary runtime still owns all decisions. */
+async function runGoalExecutionAction(options: Parameters<typeof runGoalModeSessionStep>[0]): Promise<Record<string, unknown>> {
+  const selected = loadGoalRunManifestFromRun(options.projectRoot, options.runId, { feature: options.feature });
+  const runDir = path.resolve(options.projectRoot, selected.report_dir);
+  const issued = isInitialDesignManifest(selected) && options.requestPath
+    ? resolveOriginalDeliveryRequest(options.projectRoot, selected, options.requestPath)
+    : executionRequestForInvoke(runDir, options.requestPath
+      ? (JSON.parse(fs.readFileSync(sessionRunMaterialPath(runDir, options.requestPath), 'utf8')) as { invoke_id: string }).invoke_id : undefined);
+  if (!issued) throw new Error('[goal-mode-entry] no issued execution request');
+  const actualRunDir = issued.request.context.runDir;
+  if (options.requestPath && sessionRunMaterialPath(actualRunDir, options.requestPath) !== sessionRunMaterialPath(actualRunDir, path.resolve(actualRunDir, issued.reference.path))) throw new Error('[goal-mode-entry] execution request is not current');
+  if (issued.request.context.adapter !== options.adapter) throw new Error('[goal-mode-entry] execution adapter mismatch');
+  const view = () => ({ type: 'goal_session_result', run_id: issued.request.context.runId,
+    observation: observeSessionExecution(actualRunDir, issued) });
+  if (options.action === 'observe') return view();
+  const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(actualRunDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+  if (options.action === 'interrupt') {
+    const stopped = stopBoundExecution(actualRunDir, issued, emit);
+    if (!stopped.stopped && !stopped.completed) throw new Error(stopped.detail);
+    return { ...view(), interrupted: stopped.stopped && !stopped.completed, detail: stopped.detail };
+  }
+  const accepted = acceptedSessionReport(actualRunDir, issued);
+  if (accepted) return { ...view(), duplicate: true, status: accepted.report.status };
+  const original = issued.request.context;
+  if (original.owner.kind !== 'session') throw new Error('[goal-mode-entry] a process owner already executes its request');
+  resumeIssuedSessionOwner(actualRunDir, original.owner);
+  const lockPath = path.join(actualRunDir, RUN_LOCK_NAME);
+  const lock = tryAcquireLock(lockPath, { run_id: original.runId, epoch: original.owner.epoch, ownerId: original.owner.owner_id, report_dir: original.reportDir, run_mode: 'authoritative' });
+  if (!lock) return { ...view(), status: 'execution_running' };
+  const resultPath = sessionReportInputPath(actualRunDir, issued);
+  let report: SessionExecutionReport | undefined;
+  let acceptedResult: ReturnType<typeof acceptSessionExecution> | undefined;
+  try {
+    if (fs.existsSync(resultPath)) report = normalizeSessionReport(JSON.parse(fs.readFileSync(resultPath, 'utf8')));
+    else {
+      const events = loadAuthoritativeEvents(path.join(actualRunDir, 'events.jsonl'));
+      const own = events.filter(event => event.invoke_id === issued.request.invoke_id);
+      if (own.some(event => event.type === 'agent_process_bound' || event.type === 'agent_process_settled')) {
+        const reconciled = reconcileGuardianOwnership(own, defaultProcessProbe());
+        if (reconciled.kind === 'outcomes' && reconciled.items.some(item => item.kind === 'guardian_alive_matching' || item.kind === 'guardian_identity_unverifiable' && !item.identity_mismatch)) return { ...view(), status: 'execution_running', detail: '原绑定执行仍在运行或身份不可核实；不会启动第二个执行者。' };
+        for (const event of own.filter(event => event.type === 'agent_process_bound')) emit({ type: 'orphan_reclaimed', phase: original.phase, invoke_id: issued.request.invoke_id, run_id: original.runId, pid: (event as Record<string, unknown>).pid, method: 'existing_identity_reconciliation' });
+        const settled = [...own].reverse().find(event => event.type === 'agent_process_settled') as Record<string, any> | undefined;
+        const completed = !!settled && invocationCompleted({ ...settled, exitCode: settled.exit_code });
+        const raw = path.join(actualRunDir, path.dirname(issued.reference.path), 'agent-events.jsonl');
+        report = { status: completed ? 'passed' : settled?.status === 'waiting' || settled?.interrupted === true ? 'waiting' : 'failed', phase: original.phase,
+          details: completed && fs.existsSync(raw) ? extractProviderFinalText(fs.readFileSync(raw, 'utf8'), original.adapter) ?? '原生调用已完成，继续正式核验。'
+            : '上次原生执行已停止；沿原结束事实保留失败或未完成，不从裸终态文本签通过，也不重复启动作者。' };
+      } else {
+        const directory = path.resolve(actualRunDir, path.dirname(issued.reference.path));
+        if (['agent-output.log', 'agent-events.jsonl'].some(name => fs.existsSync(path.join(directory, name)))) return { ...view(), status: 'waiting',
+          detail: '已有原始执行流但没有可核实绑定；先确认旧执行停止，不重复启动作者。' };
+        const manifest = loadGoalRunManifestFromRun(options.projectRoot, original.runId, { feature: original.feature });
+        const baseline = resolveManifestIdentityBaseline(events);
+        if (baseline && diffManifestIdentityFields(baseline, computeManifestIdentityFields(manifest)).length) throw new Error('[goal-mode-entry] manifest_identity_drift; reconcile through --next before execution');
+        const current = workUnitExecutionInputs(manifest, issued.request.purpose, options.projectRoot);
+        const input = { ...original, ...current, authority: original.authority ?? current.authority };
+        const observed = observeWorkUnitProviderSession(input);
+        if ('status' in observed) return { ...view(), status: 'waiting', detail: observed.details,
+          ...(observed.provider_session_id ? { provider_session_id: observed.provider_session_id } : {}) };
+        const context = createWorkUnitExecutionContext(input, observed);
+        const capability = loadGoalCapability(context.frameworkRoot, context.adapter);
+        if (!capability.valid || !capability.capability) throw new Error(capability.issues.join('; '));
+        const promptFile = path.join(directory, 'execution-prompt.md');
+        fs.writeFileSync(promptFile, context.instruction ?? '', 'utf8');
+        const plan = resolveHeadlessInvokePlan(context.adapter, capability.capability, manifest.unattended, context.instruction ?? '', {
+          PROMPT: context.instruction ?? '', PROMPT_FILE: promptFile, PROJECT_ROOT: context.projectRoot, FRAMEWORK_ROOT: context.frameworkRoot,
+          FEATURE: context.feature, PHASE: context.phase, SKILL_PATH: '',
+        }, context.adapterModel);
+        const heartbeat = setInterval(() => { try { touchLock(lockPath, lock.ownerId); renewSessionLease(actualRunDir, context.owner, 60_000); } catch { /* Fence changes prevent the result from being accepted. */ } }, 30_000);
+        let bindingError: string | undefined, bindingStillAlive = false;
+        try {
+          const result = await new GoalPhaseRuntime().executeExecutor(context, new DetachedGoalPhaseExecutor(() => ({ plan, cwd: context.projectRoot,
+            options: { outputLogPath: path.join(directory, 'agent-output.log'), extraEnv: { ...context.childEnv },
+              usageCapture: capability.capability!.usage_capture, toolEventCapture: capability.capability!.tool_event_provenance,
+              ...(process.platform === 'win32' ? { containment: { runId: context.runId, invokeId: issued.request.invoke_id } } : {}),
+              onActiveChild: ({ pid }) => {
+                if (process.platform !== 'win32') return;
+                const bound = bindGuardianOrKill(pid, `${context.runId}/${issued.request.invoke_id}`);
+                if (!bound.ok) { bindingError = bound.error; bindingStillAlive = bound.stillAlive; return; }
+                emit({ type: 'agent_process_bound', run_id: context.runId, phase: context.phase, invoke_id: issued.request.invoke_id,
+                  owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch, pid, started_at_ms: bound.identity.startedAtMs,
+                  executable: bound.identity.executable, token: `${context.runId}/${issued.request.invoke_id}` });
+              },
+            } })));
+          if (bindingStillAlive) throw new Error(bindingError);
+          emit({ type: 'agent_process_settled', run_id: context.runId, phase: context.phase, invoke_id: issued.request.invoke_id,
+            status: result.status, ...invocationEndFacts(result), kill_attempted: result.kill_attempted });
+          report = { status: bindingError ? 'failed' : result.status, phase: context.phase,
+            details: bindingError ?? result.details ?? extractProviderFinalText(result.stdout, context.adapter) ?? `native exit=${result.exitCode}` };
+        } finally { clearInterval(heartbeat); }
+      }
+      fs.writeFileSync(resultPath, JSON.stringify(report) + '\n');
+    }
+    const settled = [...loadAuthoritativeEvents(path.join(actualRunDir, 'events.jsonl'))].reverse().find(event => event.type === 'agent_process_settled'
+      && event.invoke_id === issued.request.invoke_id) as Record<string, any> | undefined;
+    if (report?.status === 'passed' && settled && !invocationCompleted({ ...settled, exitCode: settled.exit_code })) {
+      report = { ...report, status: settled.interrupted === true || settled.status === 'waiting' ? 'waiting' : 'failed' };
+      fs.writeFileSync(resultPath, JSON.stringify(report) + '\n');
+    }
+    acceptedResult = acceptSessionExecution({ runDir: actualRunDir, issued, report: report!, emit });
+  } finally { releaseLock(lockPath, lock.ownerId); }
+  const commands = executionActionCommands(options, issued);
+  return { type: 'goal_session_report_received', run_id: original.runId, status: report!.status, duplicate: acceptedResult!.duplicate,
+    next_command: commands.next_command, observation: observeSessionExecution(actualRunDir, issued) };
+}
+
 async function main(): Promise<void> {
   const argv = minimist(process.argv.slice(2), {
     string: [
@@ -700,15 +814,16 @@ async function main(): Promise<void> {
       'impact-behavior-change', 'impact-reason', 'impact-basis',
       // f9c2e6b4 t4：与 goal-runner 同名同义，共用同一读取函数（相对路径按 projectRoot 解析）
       'requirement-file', 'manifest', 'supersede',
+      'user-deadline-at',
     ],
-    boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest', 'override-start', 'override-end'],
+    boolean: ['force', 'force-takeover', 'prepare-run', 'prepare-scope', 'overwrite', 'help', 'next', 'authorize-autonomy', 'override-manifest', 'override-start', 'override-end', 'execute-request', 'observe', 'interrupt'],
   });
   if (argv.help) {
     console.log(
       'Usage: goal-mode-entry.ts --feature <f> --run-id <id> --adapter <name> ' +
       '--run-mode attended [--project-root <root>] [--framework-root <framework>] [--force-takeover]\n' +
       'Fresh attended run: add --prepare-run --requirement "<text>" (optionally --run-id/--start/--end; --force records an operator override).\n' +
-      'Exhausted initial design: --prepare-run --supersede <current-run-id> with the original requirement creates an audited successor and keeps cumulative budget.\n' +
+      'Original request continuation: --prepare-run --supersede <current-run-id> preserves the audited request, real results and explicit user deadline.\n' +
       'Scope candidate (run this BEFORE --prepare-run; the two flags are mutually exclusive):\n' +
       '  --prepare-scope --feature <f> --completion-target <request|feature>\n' +
       '    --requested-results "<text>" (repeatable) --requested-phases spec,plan,coding,review,ut\n' +
@@ -721,7 +836,8 @@ async function main(): Promise<void> {
       '       --requested-results "refreshed balance is correct" --requested-phases coding,review,ut\n' +
       '       --impact-behavior-change false --impact-reason "internal value only" --impact-basis src/ledger/Balance.ets\n' +
       'Long / multi-line requirement: use --requirement-file <path> (mutually exclusive with --requirement).\n' +
-      'Protocol: --next returns a saved request and exits; --report-result @<run-relative JSON file> --request <saved path> consumes a result (inline JSON remains supported). Only the current request result input file may be written by the executor. Optional --authorize-autonomy and --override-manifest are trusted launch inputs.',
+      'Explicit user deadline: --user-deadline-at <UTC timestamp>; no default deadline is inferred, and continuation never resets it.\n' +
+      'Protocol: --next returns a saved request and execute_command/observe_command/interrupt_command. Use --execute-request --request <saved path> for the dedicated native executor; --observe/--interrupt use that exact request and owner binding. The main conversation does not perform business edits. Legacy --report-result @<run-relative JSON file> --request <saved path> consumes a result (inline JSON remains supported). Only the current request result input file may be written by the executor. Optional --authorize-autonomy and --override-manifest are trusted launch inputs.',
     );
     return;
   }
@@ -735,6 +851,7 @@ async function main(): Promise<void> {
     const overrides = { manifest: String(argv.manifest), adapter: typeof argv.adapter === 'string' ? argv.adapter : undefined,
       start: typeof argv.start === 'string' ? argv.start : undefined, end: typeof argv.end === 'string' ? argv.end : undefined,
       requirement: suppliedRequirement.text, requirement_source_files: suppliedRequirement.sources,
+      'user-deadline-at': typeof argv['user-deadline-at'] === 'string' ? argv['user-deadline-at'] : undefined,
       'override-manifest': Boolean(argv['override-manifest']), 'override-start': Boolean(argv['override-start']), 'override-end': Boolean(argv['override-end']) };
     const validation = validateManifestCliOverrides(overrides);
     if (!validation.ok) throw new Error(validation.message);
@@ -765,7 +882,7 @@ async function main(): Promise<void> {
       feature,
       runId: runId || undefined,
       adapter,
-      ...(inputManifest ? { budget: inputManifest.budget, unattended: inputManifest.unattended,
+      ...(inputManifest ? { unattended: inputManifest.unattended,
         adapterModelPin: inputManifest.adapter_model_pin, visualProviderPin: inputManifest.visual_provider_pin, fidelity: inputManifest.fidelity,
         dependencyPolicy: inputManifest.dependency_policy, minimumAssurance: inputManifest.minimum_assurance, preAuthorizedMutations: inputManifest.pre_authorized_mutations,
         ...(inputManifest.adapter_provenance && (RUN_ADAPTER_PROVENANCES as readonly string[]).includes(inputManifest.adapter_provenance) ? { adapterSource: inputManifest.adapter_provenance as RunAdapterProvenance } : {}) } : {}),
@@ -791,9 +908,9 @@ async function main(): Promise<void> {
       endPhase: inputManifest?.end_phase ?? (typeof argv.end === 'string' ? argv.end : undefined),
       requestedPhases: inputDefinition?.requestedPhases,
       requestedResults: inputDefinition?.requestedResults,
+      userDeadlineAt: inputManifest?.user_deadline_at ?? (typeof argv['user-deadline-at'] === 'string' ? argv['user-deadline-at'] : undefined),
       forceFresh: Boolean(argv.force),
       supersede: (Array.isArray(argv.supersede) ? argv.supersede : argv.supersede ? [argv.supersede] : []).map(String),
-      budgetOverride: Boolean(argv['override-manifest']),
       autonomyAuthorized: Boolean(argv['authorize-autonomy']),
     });
     console.log(JSON.stringify({
@@ -907,7 +1024,9 @@ async function main(): Promise<void> {
   if (!['manual', 'batch_authorized', 'goal_mode'].includes(mode)) {
     throw new Error(`authorization mode 非法：${mode}`);
   }
-  if (Boolean(argv.next) === (typeof argv['report-result'] === 'string')) throw new Error('choose exactly one of --next or --report-result <JSON>');
+  const actions = [argv['execute-request'] ? 'execute' : '', argv.observe ? 'observe' : '', argv.interrupt ? 'interrupt' : ''].filter(Boolean);
+  if (actions.length > 1 || actions.length && (argv.next || argv['report-result'])) throw new Error('choose one execution control action');
+  if (!actions.length && Boolean(argv.next) === (typeof argv['report-result'] === 'string')) throw new Error('choose exactly one of --next or --report-result <JSON>');
   if (argv['report-result'] && !argv.request) throw new Error('--report-result requires --request');
   let report: SessionExecutionReport | undefined;
   if (typeof argv['report-result'] === 'string') {
@@ -919,6 +1038,7 @@ async function main(): Promise<void> {
     report = parseSessionReportResult(argv['report-result'], reportRunDir, sessionReportInputPath(reportRunDir, issued));
   }
   const result = await runGoalModeSessionStep({ projectRoot, frameworkRoot, feature, runId, adapter, runMode,
+    ...(actions[0] ? { action: actions[0] as 'execute' | 'observe' | 'interrupt' } : {}),
     forceTakeover: Boolean(argv['force-takeover']), overrideManifest: Boolean(argv['override-manifest']),
     authorization: { mode: mode as 'manual' | 'batch_authorized' | 'goal_mode', autonomyAuthorized: Boolean(argv['authorize-autonomy']),
       ...(argv['through-phase'] ? { through_phase: String(argv['through-phase']) } : {}) },

@@ -1,20 +1,27 @@
+import type { GoalRunEvent } from './goal-runner-phase';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { readRepairResponsibilityContracts, normalizeResponsibilityPath } from './repair-responsibility';
+import { readRepairResponsibilityContracts, normalizeResponsibilityPath, workUnitMayWritePath, workUnitWriteDomains } from './repair-responsibility';
 import type { PhaseWriteDomainKind, PhaseWriteBoundaryResolution, ResolvePhaseWriteBoundaryOptions } from './repair-responsibility';
 export { partitionConstructionFiles } from './repair-responsibility';
+export { workUnitProtectedRecordPaths } from './repair-responsibility';
 export type { PhaseWriteDomainKind, PhaseWriteMatchKind, PhaseWriteDomain, PhaseWriteBoundaryResolution, ResolvePhaseWriteBoundaryOptions } from './repair-responsibility';
 
 function toPosix(value: string): string { return value.replace(/\\/g, '/'); }
 const normalizeRelative = normalizeResponsibilityPath;
 
-/** Ownership remains complete; the invocation order is only the current authorization view. */
+/** Complete ownership is read separately; this snapshot freezes the actual unit's write domains. */
 export function resolvePhaseWriteBoundary(options: ResolvePhaseWriteBoundaryOptions): PhaseWriteBoundaryResolution {
-  const raw = readRepairResponsibilityContracts(options);
+  const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
+  const scope = options.executionScope ?? resolveEffectiveScopeSource(options.projectRoot, options.feature, options.runId)?.scope;
+  const raw = readRepairResponsibilityContracts({ ...options, executionScope: scope });
   const known = new Set(raw.phaseOrder);
-  return { ...raw, phaseOrder: [...options.phaseOrder], diagnostics: [...raw.diagnostics,
-    ...options.phaseOrder.filter(phase => !known.has(phase)).map(phase => `phase ${phase} has no registered skill contract; read-only`)] };
+  return { ...raw, phaseOrder: [...options.phaseOrder],
+    ...(options.executionRole === 'author' ? { domains: workUnitWriteDomains(raw.domains, scope),
+      protectedRoots: [...new Set([...raw.protectedRoots, ...raw.domains.filter(domain => domain.kind === 'source').map(domain => domain.path)])] } : {}),
+    diagnostics: [...raw.diagnostics,
+    ...(options.executionRole ? [] : options.phaseOrder.filter(phase => !known.has(phase)).map(phase => `phase ${phase} has no registered skill contract; read-only`))] };
 }
 
 export interface PhasePathOwnership {
@@ -95,7 +102,7 @@ function sha256Buffer(buffer: Buffer): string {
  * 其余位置（别的 feature 的 run）仍按通用规则排除运行时输出；依赖、缓存、构建目录的排除不变。都不给 = 阶段调用的原行为。
  */
 export function capturePhaseInvocationSnapshot(
-  resolution: Pick<PhaseWriteBoundaryResolution, 'projectRoot' | 'protectedRoots'>,
+  resolution: Pick<PhaseWriteBoundaryResolution, 'projectRoot' | 'protectedRoots' | 'executionRole' | 'immutableInputPaths' | 'verifierResultPath'>,
   options: { ownedPrefixes?: readonly string[]; runtimeExcluded?: readonly string[]; includeFiles?: readonly string[] } = {},
 ): PhaseInvocationSnapshot {
   const entries: PhaseInvocationSnapshotEntry[] = [];
@@ -104,9 +111,20 @@ export function capturePhaseInvocationSnapshot(
     (prefixes ?? []).map((prefix) => normalizeRelative(resolution.projectRoot, prefix));
   const runtimeExcluded = normalizeAll(options.runtimeExcluded);
   const ownedPrefixes = normalizeAll(options.ownedPrefixes);
-  const included = new Set(normalizeAll(options.includeFiles));
-  const excludedByRuntime = (rel: string): boolean => runtimeExcluded.some((prefix) => prefixMatches(rel, prefix))
-    || (!included.has(rel) && !ownedPrefixes.some((prefix) => prefixMatches(rel, prefix)) && isRunnerOwnedOrSharedPath(rel));
+  const immutableInputs = normalizeAll(resolution.immutableInputPaths);
+  const included = new Set(normalizeAll([...(options.includeFiles ?? []), ...immutableInputs,
+    ...(resolution.verifierResultPath ? [resolution.verifierResultPath] : [])]));
+  let runnerPreflightPath: string | undefined;
+  if (resolution.executionRole === 'author') {
+    const { harnessPreflightPath } = require('./capability-preflight') as typeof import('./capability-preflight');
+    runnerPreflightPath = normalizeRelative(resolution.projectRoot, harnessPreflightPath(resolution.projectRoot));
+  }
+  const explicitlyIncluded = (rel: string): boolean => included.has(rel) || immutableInputs.some(prefix => prefixMatches(rel, prefix));
+  const excludedByRuntime = (rel: string): boolean =>
+    (runtimeExcluded.some(prefix => prefixMatches(rel, prefix)) && !(resolution.executionRole && explicitlyIncluded(rel)))
+    || (!explicitlyIncluded(rel) && !ownedPrefixes.some(prefix => prefixMatches(rel, prefix))
+      && (resolution.executionRole === 'verifier' ? /(?:^|\/)(?:goal-runs|context)(?:\/|$)/.test(rel)
+        : isRunnerOwnedOrSharedPath(rel) || rel === runnerPreflightPath));
   const visit = (abs: string, requiredRoot: boolean): string | null => {
     let stat: fs.Stats;
     try {
@@ -155,7 +173,7 @@ export function capturePhaseInvocationSnapshot(
   };
 
   for (const root of resolution.protectedRoots) {
-    const failure = visit(path.join(resolution.projectRoot, root), true);
+    const failure = visit(path.join(resolution.projectRoot, root), false);
     if (failure) return snapshotFailure(failure);
   }
   // 实际引用的输入：所在目录按通用规则不遍历时单独核（不存在 = 不记，前后都不存在即无变化）。
@@ -203,7 +221,7 @@ export function diffPhaseInvocationSnapshots(
 
 export interface PhaseWriteViolation extends PhaseInvocationChange, PhasePathOwnership {
   currentPhase: string;
-  violation: 'wrong_phase';
+  violation: 'wrong_phase' | 'outside_authority';
 }
 
 /**
@@ -237,6 +255,11 @@ export function classifyPhaseInvocationChanges(
   const observed: PhaseWriteObservation[] = [];
   for (const change of changes) {
     const ownership = resolvePhasePathOwnership(resolution, change.path);
+    if (resolution.executionRole) {
+      if (workUnitMayWritePath(resolution, change.path)) allowed.push({ ...change, ...ownership });
+      else violations.push({ ...change, ...ownership, currentPhase, violation: 'outside_authority' });
+      continue;
+    }
     if (ownership.status === 'unique' && ownership.owner === currentPhase) {
       allowed.push({ ...change, ...ownership });
       continue;
@@ -262,7 +285,7 @@ export function classifyPhaseInvocationChanges(
 
 /**
  * Replay one run's attribution events into "path → bytes the UT invocation left there"
- * (`null` = UT removed it).  Any later observation or violation of the same path, by any
+ * (`null` = UT removed it).  Any later owned write, observation or violation of the same path, by any
  * invocation, voids the fact until a UT invocation writes it again.  This grants nothing:
  * check-coding only uses it to stop blaming coding for a UT output whose bytes are unchanged.
  */
@@ -282,7 +305,7 @@ export function replayUtOwnedWrites(
       continue;
     }
     if (event.type !== 'phase_write_observed') continue;
-    for (const row of rows(event.observations)) voidPath(row.path, event.phase);
+    for (const row of [...rows(event.observations), ...rows(event.owned)]) voidPath(row.path, event.phase);
     if (event.phase !== 'ut') continue;
     for (const row of rows(event.owned)) {
       if (typeof row.path !== 'string') continue;
@@ -298,6 +321,20 @@ export function renderPhaseWriteBoundaryGuidance(
   resolution: PhaseWriteBoundaryResolution,
   currentPhase: string,
 ): string[] {
+  if (resolution.executionRole) {
+    return [
+      '**Work unit write boundary (recorded around this invocation):**',
+      ...(resolution.executionRole === 'verifier'
+        ? [`- Independent verification is read-only. Return only this invocation's original result${resolution.verifierResultPath ? ` at \`${resolution.verifierResultPath}\`` : ' through its result transport'}. Do not repair product or design files.`]
+        : [
+          '- The same unit author may edit authorized implementation, test source, test scripts/inputs and local design candidates across methods. Skill outputs and profile source roots describe the artifacts; the current method grants no extra authority.',
+          '- Preserve the original request and acceptance strength. Changes to tests/assertions require independent assessment of coverage and strength; a self-reported PASS is not proof.',
+          '- Shared design publication, bound original inputs, framework files, machine state and formal screenshots/logs/results/PASS records are protected. Run the actual checking tools to produce evidence.',
+          '- Testing scripts/inputs and test-plan.hylyre.md are editable inputs; adjacent reports, captures and execution results are evidence and cannot be hand-written.',
+        ]),
+      '- Pre-existing dirty bytes are not attributed to this invocation. Legal writes and their pre/post hashes remain available after interruption.',
+    ];
+  }
   const mine = resolution.domains.filter((domain) => domain.owner === currentPhase);
   const exact = mine.filter((domain) => domain.match === 'exact').map((domain) => domain.path);
   const prefixes = mine.filter((domain) => domain.match === 'prefix').map((domain) => `${domain.path}/**`);
@@ -312,4 +349,32 @@ export function renderPhaseWriteBoundaryGuidance(
     ...(currentPhase === 'coding' ? ['- Finite compatibility repair: existing test imports/types/data/doubles directly broken by this implementation may be repaired only while coding_existing_test_preserved confirms real pre-repair originals and unchanged existing cases/assertions, with no new test/assertion/skip. New or changed test logic belongs to UT. In the existing coding report list each changed test datum/double, the actual edit and its implementation-related reason; review verifies the actual diff. A preservation PASS is not a business-cause explanation or a test PASS.'] : []),
     '- `goal-runs/**`, closure state, manifests, pointers, summaries, and evidence refreshes are runner-owned. Do not edit them.',
   ];
+}
+
+export function authorWritePreimages(events: readonly GoalRunEvent[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  const ownRecoveries = new Set((events as readonly Record<string, any>[]).filter(event => event.type === 'phase_backtrack_requested' && event.reason === 'phase_write_violation'
+    && typeof event.invoke_id === 'string' && typeof event.from_phase === 'string' && event.from_phase === event.to_phase).map(event => event.invoke_id));
+  for (const event of events as readonly Record<string, any>[]) {
+    if (event.type === 'phase_write_violation' && Array.isArray(event.violations)) for (const value of event.violations) {
+      const row = value as { path?: unknown; violation?: unknown; pre_sha256?: unknown };
+      if ((row.violation === 'outside_authority' || row.violation === 'wrong_phase' && ownRecoveries.has(event.invoke_id))
+        && typeof row.path === 'string' && !out.has(row.path) && (row.pre_sha256 === null || typeof row.pre_sha256 === 'string')) out.set(row.path, row.pre_sha256 as string | null);
+    }
+    if (event.type === 'phase_write_observed') for (const row of [...(event.observations ?? []), ...(event.owned ?? [])]) {
+      if (out.has(row.path) && out.get(row.path) === row.post_sha256) out.delete(row.path);
+    }
+  }
+  return out;
+}
+
+
+export function unrestoredAuthorWrites(projectRoot: string, events: readonly GoalRunEvent[]): Map<string, string | null> {
+  return new Map([...authorWritePreimages(events)].filter(([file, before]) => {
+    const absolute = path.resolve(projectRoot, file);
+    if (!absolute.startsWith(path.resolve(projectRoot) + path.sep)) return true;
+    if (!fs.existsSync(absolute)) return before !== null;
+    if (!fs.lstatSync(absolute).isFile() || fs.lstatSync(absolute).isSymbolicLink()) return true;
+    return crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') !== before;
+  }));
 }
