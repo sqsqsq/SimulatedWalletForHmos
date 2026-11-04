@@ -18,7 +18,9 @@
 2 分钟的整轮；点名后先按真实职责与成本判断，不要求每次同一改动强行提速（要全部类的用时，设 `STORY_TEST_TIMING_JSON=<文件>` 跑一轮，按用时排序写出每个类的用时、条数与子进程数）：
 
 - **重状态整轮只造一次**：要走真实流程造的状态（准入蓝图、登记好的 Story）用 `shared_state.shared_tree`，键是输入内容的摘要，
-  各进程与之后各轮共用；只在一个类里用的，至少 `setUpClass` 造一次、每条用例复制。
+  各进程与之后各轮共用；只在一个类里用的，至少 `setUpClass` 造一次、每条用例复制。共享只到**被测动作之前**：
+  设计已准入用 `designed_fixture.designed_copy`，被测动作在起骨架之后的用 `designed_fixture.skeleton_copy`（真实 skeleton 跑一次、交回那次结果；
+  `skeleton=False` 停在走完流程）；造前态时会写时刻的导入也放进共享前态里，否则按内容取的键每例都不同、永远不命中。
 - **不为每条用例重复起进程**：同一输入的派生结果（激活知识、原生读取）按内容缓存；能在进程内调的不另起 node 或 Python。
 - **复制工程跳过 Framework 链接**：临时工程的 `framework/` 是指向被测 Framework 的 junction，`shutil.copytree` 会顺着它把整个 Framework
   连依赖复制一遍（几千个文件）；复制工程根一律用 `shared_state.copy_tree`，复制后 `link_framework` 重接。
