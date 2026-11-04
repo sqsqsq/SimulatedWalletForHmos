@@ -42,8 +42,9 @@ REPO = HERE.parents[1]
 TESTS = REPO / "test" / "tests"
 #: pytest 的并行参数：loadscope 让同一个类的用例落在同一个 worker，类级夹具只建一次
 PARALLEL = ["-n", "auto", "--dist", "loadscope"]
-#: 交回时各通道的固定并发上限（控制同时跑的通道互相争用，不是实测最优）：全量 worker 数、失效形态进程数、cli 离线测试 worker 数
-FULL_WORKERS, FAILURE_JOBS, CLI_WORKERS = 4, 1, 1
+#: 交回时各通道的固定并发上限：全量 worker 数、失效形态进程数、cli 离线测试 worker 数。全量 8 个 worker 按 2.1.1 F05 实测定
+#: （测试进程内执行产品命令后，8 worker 比 4 worker 快一倍，内存仍宽裕；用户 2026-11-04 同意固定为 8）
+FULL_WORKERS, FAILURE_JOBS, CLI_WORKERS = 8, 1, 1
 #: 第二次从空目录重建：装配专项，只在被测 Framework 登记、本地补丁或模板装配代码变了时跑；full 不选它
 SECOND_REBUILD = "test/tests/test_verifier_chain_in_workspace.py::ASecondEmptyDirectoryRebuildsTheSameCombination"
 

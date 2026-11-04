@@ -20,6 +20,7 @@ import * as readline from 'node:readline';
 import { createHash } from 'node:crypto';
 import Module, { createRequire, register } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { inspect } from 'node:util';
 
 const writeOut = process.stdout.write.bind(process.stdout);
 const writeErr = process.stderr.write.bind(process.stderr);
@@ -70,18 +71,20 @@ const freshPreload = () => {
 };
 
 class HostExit extends Error {}
+/** 与 Node 打未捕获异常同一种写法（util.inspect：带构造函数名、cause 等）；只少它前面的源码行与插入符。 */
+const shown = (e) => (e instanceof Error ? inspect(e) : String(e));
 let current = null;     // 正在执行的请求：{code, stdout[], stderr[]}
 process.on('uncaughtException', (e) => {
   if (e instanceof HostExit) return;
   if (!current) throw e;
   // 命令行里未捕获的异常打出栈并以 1 结束
-  current.stderr.push(`${e?.stack ?? e}\n`);
+  current.stderr.push(`${shown(e)}\n`);
   if (current.code === null) current.code = 1;
 });
 process.on('unhandledRejection', (e) => {
   if (e instanceof HostExit) return;
   if (!current) throw e;
-  current.stderr.push(`${e?.stack ?? e}\n`);
+  current.stderr.push(`${shown(e)}\n`);
   if (current.code === null) current.code = 1;
 });
 
@@ -138,7 +141,7 @@ async function run(request) {
   } catch (e) {
     if (!(e instanceof HostExit)) {
       // 入口找不到、或入口模块求值时同步抛出：命令行里同样是未捕获异常，打出栈、以 1 结束
-      state.stderr.push(`${e?.stack ?? e}\n`);
+      state.stderr.push(`${shown(e)}\n`);
       if (state.code === null) state.code = 1;
     }
   } finally {

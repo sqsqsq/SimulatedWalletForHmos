@@ -480,7 +480,7 @@ python test/scripts/run_multi_case.py finalize `
 | 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
 | 全量 | `python test/scripts/verify.py full` | 需要单独看全量结论时；批末交回由 `handback` 一并跑 |
 | 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4；各条形态按进程并行，结果按台账顺序输出 |
-| 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑；各通道的并发上限固定在脚本里（全量 4 个 worker、失效形态 1 个进程、CLI 测试 1 个 worker、compileall 单进程） |
+| 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑；各通道的并发上限固定在脚本里（全量 8 个 worker、失效形态 1 个进程、CLI 测试 1 个 worker、compileall 单进程；全量的 8 由 2.1.1 F05 实测定） |
 | Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
 | 装配专项 | `python test/scripts/verify.py assembly` | 第二次从空目录经同一入口重建工作区模板，身份核对与第一次相同。`test/config/framework-under-test.json`、`test/fixtures/framework-local/` 补丁或 `create_workspace_template` 装配代码相对上次专项证据有变时必跑，交回引用该次 `output/verify/<时刻>-assembly/`；没变时复用上次证据并写明被测 Framework 与补丁的身份。全量只保留一次当前装配与协议核对，不选这一类 |
 
@@ -493,10 +493,11 @@ python test/scripts/run_multi_case.py finalize `
 
 **进程内宿主**：测试里 `subprocess.run` 起的 `node <脚本.mjs>` 与 `node --input-type=module -e` 由本测试进程的一个 node 宿主在进程内执行（`test/tests/node_host_bridge.py`、`node_host.mjs`、`node_host_loader.mjs`），Framework 的 TS 每个测试进程只加载一次；宿主随测试进程起停，不是常驻服务，每 60 条请求重启一次（每条请求一份新的扩展模块，内存只增不减）。
 - 与命令行同语义：每条请求的 argv、cwd、env 各自设好再还原；扩展模块级状态每条请求从零开始；`process.exit` 当场截断并给出退出码；`-e` 正文里的导入相对本次 cwd 解析。
-- 不转的形态照常起真实进程：带 stdin 或 shell、带别的 node 参数、换了 `NODE_OPTIONS`、脚本在 node_modules 下；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
+- Python 产品脚本（`python <脚本.py>`，脚本在 `extensions/skills` 或 `extensions/hooks` 下、不带解释器参数）直接在本测试进程里按 `__main__` 执行：argv、`sys.path`（脚本目录排首位）、cwd、env 设好再还原，已加载的产品模块收起、脚本导入全新一份、结束后放回；它内部起的 node 命令同样交给宿主。
+- 不转的形态照常起真实进程：带 stdin 或 shell、带别的 node 参数或解释器参数、换了 `NODE_OPTIONS`、脚本在 node_modules 下或不存在、调用来自非主线程（用例自己并发起命令）；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
 - 进程边界本身的见证在类上写 `REAL_CLI = True`（如 `test_story_build.py::TheCommandLineIsCheckedFirst`、`AMissingRequirementDirectoryIsNamed`）。
 - `STORY_TEST_NODE_HOST=0` 全部走真实进程；`STORY_TEST_NODE_HOST_LOG=<目录>` 逐条记下归一化的结果，两轮全量（关、开）比对宿主与命令行是否等价。
-- 已知与命令行的差异（不影响断言，留在比对结论里）：Framework 按“本进程”只打一次的提示（如缺 `project_profile` 的 advisory）在宿主里每个宿主进程只打一次；未捕获异常的打印格式没有 Node 原生的源码行与插入符。
+- 已知与命令行的差异（不影响断言，留在比对结论里）：Framework 按“本进程”只打一次的提示（如缺 `project_profile` 的 advisory）在宿主里每个宿主进程只打一次；未捕获异常照 Node 的写法打出（`util.inspect`，带错误类名与 cause），只少它前面的源码行与插入符。
 
 - 按影响范围分层跑：改一处用 `affected`；批内每一步用 `affected` 覆盖本步改动的直接测试与消费者，装配输入有变时加跑 `assembly`，其余专项按本步改动对象选；全量、失效形态与其余离线检查在批末最后一步交回前由 `handback` 跑一次。批内中间步骤的提交只说明本步验证范围，不宣称全量就绪；同一对象无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明：pytest 步骤带 `-rs`，每条跳过的用例与原因列在该步日志末尾的 short test summary。这些命令不启动真实被测 CLI。

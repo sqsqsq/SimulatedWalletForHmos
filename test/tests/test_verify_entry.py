@@ -31,9 +31,9 @@ class EveryPytestRunIsParallel(unittest.TestCase):
         self.assertEqual(["-k", "parallel"], affected[-2:])
 
     def test_the_handback_lanes_have_fixed_concurrency(self) -> None:
-        """交回时各通道的并发上限固定：全量 4 个 worker、失效形态 1 个进程、CLI 测试不并行、compileall 单进程。"""
+        """交回时各通道的并发上限固定：全量 8 个 worker、失效形态 1 个进程、CLI 测试不并行、compileall 单进程。"""
         got = dict(steps_of("handback"))
-        self.assertIn("-n 4 --dist loadscope", " ".join(got["full"]))
+        self.assertIn("-n 8 --dist loadscope", " ".join(got["full"]))
         self.assertEqual(["--jobs", "1"], got["failure-modes"][-2:])
         self.assertIn("-p no:xdist", " ".join(got["cli-tests"]))
         self.assertIn("-j 1", " ".join(got["compileall"]))
