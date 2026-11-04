@@ -967,7 +967,13 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         story = self.story_file.read_bytes().decode("utf-8")
         self.story_file.write_bytes(story.replace("### 6.1 提交与回执\n", f"### 6.1 提交与回执\n\n```mermaid\n{self.DIAGRAM}```\n", 1)
                                     .encode("utf-8"))
-        self.register()
+        # 每例起点相同（上面的改动之后、登记一次）：登记只真算一次，之后各例写回同一份登记结果
+        cls = self.__class__
+        if "_registered" not in cls.__dict__:
+            self.register()
+            cls._registered = self.flow_file.read_bytes()
+        else:
+            self.flow_file.write_bytes(cls._registered)
 
     def restore(self) -> None:
         for p, data in self.saved.items():
