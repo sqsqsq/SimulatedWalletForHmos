@@ -493,11 +493,11 @@ python test/scripts/run_multi_case.py finalize `
 
 **进程内宿主**：测试里 `subprocess.run` 起的 `node <脚本.mjs>` 与 `node --input-type=module -e` 由本测试进程的一个 node 宿主在进程内执行（`test/tests/node_host_bridge.py`、`node_host.mjs`、`node_host_loader.mjs`），Framework 的 TS 每个测试进程只加载一次；宿主随测试进程起停，不是常驻服务，每 60 条请求重启一次（每条请求一份新的扩展模块，内存只增不减）。
 - 与命令行同语义：每条请求的 argv、cwd、env 各自设好再还原；扩展模块级状态每条请求从零开始；`process.exit` 当场截断并给出退出码；`-e` 正文里的导入相对本次 cwd 解析。
-- Python 产品脚本（`python <脚本.py>`，脚本在 `extensions/skills` 或 `extensions/hooks` 下、不带解释器参数）直接在本测试进程里按 `__main__` 执行：argv、`sys.path`（脚本目录排首位）、cwd、env 设好再还原，已加载的产品模块收起、脚本导入全新一份、结束后放回；它内部起的 node 命令同样交给宿主。
-- 不转的形态照常起真实进程：带 stdin 或 shell、带别的 node 参数或解释器参数、换了 `NODE_OPTIONS`、脚本在 node_modules 下或不存在、调用来自非主线程（用例自己并发起命令）；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
+- 只转上面两种 node 形态。Python 命令一律起真实解释器（外层 timeout、解释器启动与输出编码都是被测的进程边界）；其余照常起真实进程：带 stdin 或 shell、带别的 node 参数、换了 `NODE_OPTIONS`、脚本在 node_modules 下、调用来自非主线程（宿主一次只执行一条请求）；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
+- 宿主固定在 `test/tests` 目录、按测试进程启动时的环境起，请求之间重启也不继承用例当时切进去的 cwd。
 - 进程边界本身的见证在类上写 `REAL_CLI = True`（如 `test_story_build.py::TheCommandLineIsCheckedFirst`、`AMissingRequirementDirectoryIsNamed`）。
 - `STORY_TEST_NODE_HOST=0` 全部走真实进程；`STORY_TEST_NODE_HOST_LOG=<目录>` 逐条记下归一化的结果，两轮全量（关、开）比对宿主与命令行是否等价。
-- 已知与命令行的差异（不影响断言，留在比对结论里）：Framework 按“本进程”只打一次的提示（如缺 `project_profile` 的 advisory）在宿主里每个宿主进程只打一次；未捕获异常照 Node 的写法打出（`util.inspect`，带错误类名与 cause），只少它前面的源码行与插入符。
+- 已知与命令行的显示差异只有两种，比对时逐项记账、原输出保留：Framework 按“本进程”只打一次的提示（如缺 `project_profile` 的 advisory）在宿主里每个宿主进程只打一次；未捕获异常照 Node 的写法打出（`util.inspect`，带错误类名、消息与 cause），只少它前面的源码行与插入符。用例要测的就是这两种显示本身时，类上写 `REAL_CLI = True`。
 
 - 按影响范围分层跑：改一处用 `affected`；批内每一步用 `affected` 覆盖本步改动的直接测试与消费者，装配输入有变时加跑 `assembly`，其余专项按本步改动对象选；全量、失效形态与其余离线检查在批末最后一步交回前由 `handback` 跑一次。批内中间步骤的提交只说明本步验证范围，不宣称全量就绪；同一对象无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明：pytest 步骤带 `-rs`，每条跳过的用例与原因列在该步日志末尾的 short test summary。这些命令不启动真实被测 CLI。

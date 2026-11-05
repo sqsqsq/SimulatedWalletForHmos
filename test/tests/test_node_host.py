@@ -16,6 +16,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import node_host_bridge as bridge  # noqa: E402
 
+REPO = Path(__file__).resolve().parents[2]
+FLOW = REPO / "extensions" / "skills" / "story" / "scripts" / "core" / "story_flow.py"
+
 
 def write(root: Path, name: str, body: str) -> Path:
     path = root / name
@@ -109,91 +112,55 @@ class TheHostRunsAScriptLikeTheCommandLine(unittest.TestCase):
         self.assertEqual(real.returncode, host.returncode)
         self.assertIn("没有这个.mjs", host.stderr)
 
-
-class PythonScriptsRunInTheTestProcess(unittest.TestCase):
-    """`python <产品脚本.py>` 在本测试进程里按 `__main__` 执行，与真实进程同结果；产品模块每次全新，执行完一切还原。"""
-
-    def setUp(self) -> None:
-        if not bridge.ENABLED:
-            self.skipTest("宿主关着（STORY_TEST_NODE_HOST=0）：这组比的就是进程内执行与命令行")
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        # 只有产品目录下的脚本才在进程内执行：夹具按产品的目录形状放
-        self.dir = Path(self._tmp.name) / "extensions" / "skills" / "probe"
-        self.dir.mkdir(parents=True)
-
-    def both(self, args: list[str], **kwargs):
-        before = bridge.jobs
-        mine = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", **kwargs)
-        self.assertGreater(bridge.jobs, before, "这条命令没在进程内执行")
-        real = bridge._real_run(args, capture_output=True, text=True, encoding="utf-8", **kwargs)
-        return mine, real
-
-    def test_exit_code_output_and_a_crash(self) -> None:
-        script = write(self.dir, "flow.py", """
-            import sys
-            for s in (sys.stdout, sys.stderr):
-                s.reconfigure(encoding="utf-8", errors="replace")
-            print("中文输出")
-            print("提示", file=sys.stderr)
-            sys.exit(3)
-            """)
-        mine, real = self.both([sys.executable, str(script)])
-        self.assertEqual((real.returncode, real.stdout, real.stderr), (mine.returncode, mine.stdout, mine.stderr))
-        boom = write(self.dir, "boom.py", "raise RuntimeError('炸了')\n")
-        mine, real = self.both([sys.executable, str(boom)])
-        self.assertEqual((1, 1), (real.returncode, mine.returncode))
-        self.assertEqual(real.stderr.strip().splitlines()[-1], mine.stderr.strip().splitlines()[-1])
-
-    def test_a_relative_script_is_found_from_the_given_cwd(self) -> None:
-        write(self.dir, "rel.py", "import sys\nprint(sys.argv[0])\n")
-        top = self.dir.parents[2]
-        args = [sys.executable, "extensions/skills/probe/rel.py"]
-        mine, real = self.both(args, cwd=top)
-        self.assertEqual((0, real.stdout), (mine.returncode, mine.stdout))
-
     def test_commands_from_another_thread_start_real_processes(self) -> None:
-        script = write(self.dir, "t.py", "print('ok')\n")
+        """宿主一次只执行一条请求：用例自己开线程起的命令照常起真实进程。"""
+        script = write(self.root, "t.mjs", "console.log('ok');\n")
         before, box = bridge.jobs, {}
-        t = threading.Thread(target=lambda: box.setdefault("p", subprocess.run([sys.executable, str(script)], capture_output=True, text=True)))
+        t = threading.Thread(target=lambda: box.setdefault("p", subprocess.run(["node", str(script)], capture_output=True, text=True)))
         t.start()
         t.join()
         self.assertEqual((before, "ok\n"), (bridge.jobs, box["p"].stdout))
 
-    def test_bytes_mode_keeps_the_platform_newline(self) -> None:
-        script = write(self.dir, "lines.py", "print('一')\nprint('二')\n")
-        mine = subprocess.run([sys.executable, str(script)], capture_output=True)
-        real = bridge._real_run([sys.executable, str(script)], capture_output=True)
-        self.assertEqual(real.stdout, mine.stdout)
-
-    def test_argv_cwd_env_and_the_test_process_are_restored(self) -> None:
-        script = write(self.dir, "who.py", """
-            import json, os, sys
-            print(json.dumps([sys.argv[1:], os.path.basename(os.getcwd()), os.environ.get("STORY_HOST_PROBE")]))
-            os.environ["LEAK"] = "1"
-            """)
-        here = self.dir / "here"
+    def test_a_restarted_host_does_not_hold_the_directory_the_test_was_in(self) -> None:
+        """宿主在请求之间重启时不继承用例那时所在的 cwd——否则 Windows 上那个目录删不掉。"""
+        here = self.root / "here"
         here.mkdir()
-        env_before, cwd_before, argv_before, path_before = dict(os.environ), os.getcwd(), list(sys.argv), list(sys.path)
-        mine, real = self.both([sys.executable, str(script), "a", "b c"], cwd=here, env={**os.environ, "STORY_HOST_PROBE": "甲"})
-        self.assertEqual(real.stdout, mine.stdout)
-        self.assertEqual('[["a", "b c"], "here", "\\u7532"]\n', mine.stdout)
-        self.assertEqual((env_before, cwd_before, argv_before, path_before), (dict(os.environ), os.getcwd(), sys.argv, sys.path))
+        script = write(self.root, "y.mjs", "console.log('ok');\n")
+        bridge._host.stop()
+        os.chdir(here)
+        try:
+            self.assertEqual("ok\n", self.same(["node", str(script)]).stdout)
+        finally:
+            os.chdir(REPO)
+        shutil.rmtree(here)
 
-    def test_product_modules_start_over_and_the_tests_own_copy_is_untouched(self) -> None:
-        write(self.dir, "state.py", "seen = []\n")
-        script = write(self.dir, "use.py", "import state\nstate.seen.append(1)\nprint(len(state.seen))\n")
-        sys.path.insert(0, str(self.dir))
-        self.addCleanup(sys.path.remove, str(self.dir))
-        import state  # noqa: PLC0415  —— 测试自己持有的那一份
-        self.addCleanup(sys.modules.pop, "state", None)
-        state.seen.append("测试的")
-        for _ in range(3):
-            self.assertEqual("1\n", self.both([sys.executable, str(script)])[0].stdout)
-        self.assertIs(state, sys.modules["state"])
-        self.assertEqual(["测试的"], state.seen)
 
-    def test_a_node_command_inside_goes_to_the_node_host(self) -> None:
+class PythonCommandsKeepTheRealProcess(unittest.TestCase):
+    """Python 命令一律起真实解释器：外层 timeout 照样截断，输出与同环境的真实解释器逐字节相同，脚本里再起的 node 也不进宿主。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name) / "extensions" / "skills" / "probe"     # 与产品脚本同样的目录形状
+        self.dir.mkdir(parents=True)
+
+    def test_a_timeout_still_cuts_the_command(self) -> None:
+        script = write(self.dir, "slow.py", "import time\ntime.sleep(5)\n")
+        before = bridge.jobs
+        with self.assertRaises(subprocess.TimeoutExpired):
+            subprocess.run([sys.executable, str(script)], capture_output=True, timeout=0.5)
+        self.assertEqual(before, bridge.jobs)
+
+    def test_the_product_help_is_byte_for_byte_the_real_interpreter(self) -> None:
+        """产品入口在解析参数时就退出的输出（如 --help）不经任何包装：编码现象按真实解释器原样留给测试看见。"""
+        args = [sys.executable, str(FLOW), "--help"]
+        before = bridge.jobs
+        mine = subprocess.run(args, capture_output=True)
+        real = bridge._real_run(args, capture_output=True)
+        self.assertEqual(before, bridge.jobs)
+        self.assertEqual((real.returncode, real.stdout, real.stderr), (mine.returncode, mine.stdout, mine.stderr))
+
+    def test_a_node_command_inside_a_python_script_stays_a_real_process(self) -> None:
         mjs = write(self.dir, "x.mjs", "console.log('来自 node');\n")
         script = write(self.dir, "calls_node.py", f"""
             import subprocess, sys
@@ -204,23 +171,7 @@ class PythonScriptsRunInTheTestProcess(unittest.TestCase):
         before = bridge.jobs
         got = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual((0, "来自 node\n"), (got.returncode, got.stdout))
-        self.assertEqual(before + 2, bridge.jobs, "脚本里的 node 命令没交给宿主")
-
-    def test_a_host_first_started_inside_a_script_does_not_hold_its_directory(self) -> None:
-        """宿主若在进程内执行的脚本里才第一次起，不继承那条请求的 cwd——否则 Windows 上那个目录删不掉。"""
-        here = Path(self._tmp.name) / "here"
-        here.mkdir()
-        mjs = write(self.dir, "y.mjs", "console.log(process.env.STORY_HOST_PROBE ?? '无');\n")
-        script = write(self.dir, "first_node.py", f"""
-            import subprocess
-            print(subprocess.run(["node", {str(mjs)!r}], capture_output=True, text=True).stdout, end="")
-            """)
-        bridge._host.stop()
-        got = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, cwd=here,
-                             env={**os.environ, "STORY_HOST_PROBE": "甲"})
-        self.assertEqual("甲\n", got.stdout)
-        shutil.rmtree(here)
-        self.assertEqual("无\n", subprocess.run(["node", str(mjs)], capture_output=True, text=True, encoding="utf-8").stdout)
+        self.assertEqual(before, bridge.jobs, "Python 脚本里的 node 命令进了测试进程的宿主")
 
 
 class OnlyTheAgreedFormsGoToTheHost(unittest.TestCase):
