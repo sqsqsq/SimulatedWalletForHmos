@@ -3,8 +3,10 @@
 只转约定的那几种形态，其余照原样起进程。"""
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
+import locale
 import os
 import shutil
 import subprocess
@@ -109,10 +111,28 @@ class TheHostRunsAScriptLikeTheCommandLine(unittest.TestCase):
         self.assertEqual(real.stdout, host.stdout, "字节模式不能转换换行")
         self.same(["node", str(script)])          # 文本模式按 subprocess 的通用换行
 
-    def test_text_mode_without_an_encoding_decodes_like_the_command_line(self) -> None:
-        """没给 encoding 的文本模式按本机区域编码解码：中文解不开时那一路与真实进程同样是 None 或乱码，宿主不替它修好。"""
+    def test_a_strict_non_utf8_text_request_runs_as_a_real_process(self) -> None:
+        """没给 encoding（本机区域编码）且 errors 为 strict 的文本请求解中文会失败：执行前就交真实进程，
+        返回值与错误通道都是真实的——单路 PIPE 抛给调用方，双路 PIPE 在读取线程里报错、那一路为 None。"""
+        if codecs.lookup(locale.getencoding()).name == "utf-8" or sys.flags.utf8_mode:
+            self.skipTest("本机区域编码就是 UTF-8：没有解不开的形态")
         script = write(self.root, "zh.mjs", "process.stdout.write('中文输出\\n'); process.stderr.write('ok\\n');\n")
-        for kwargs in ({"text": True}, {"text": True, "errors": "replace"}, {"universal_newlines": True}):
+        for kwargs in ({"text": True}, {"universal_newlines": True}):
+            with self.subTest(**kwargs):
+                before = bridge.jobs
+                with self.assertRaises(UnicodeDecodeError):
+                    subprocess.run(["node", str(script)], stdout=subprocess.PIPE, **kwargs)
+                with self.assertRaises(UnicodeDecodeError):
+                    bridge._real_run(["node", str(script)], stdout=subprocess.PIPE, **kwargs)
+                host = subprocess.run(["node", str(script)], capture_output=True, **kwargs)
+                real = bridge._real_run(["node", str(script)], capture_output=True, **kwargs)
+                self.assertEqual(before, bridge.jobs, "解不开的文本请求进了宿主")
+                self.assertEqual((real.returncode, real.stdout, real.stderr), (host.returncode, host.stdout, host.stderr))
+
+    def test_text_that_always_decodes_stays_in_the_host_and_matches(self) -> None:
+        """给了不报错的 errors 或 UTF-8：宿主承担，按同一份字节解码，与真实进程逐项相同（包括乱码本身）。"""
+        script = write(self.root, "zh.mjs", "process.stdout.write('中文输出\\n'); process.stderr.write('ok\\n');\n")
+        for kwargs in ({"text": True, "errors": "replace"}, {"encoding": "utf-8"}, {"encoding": "UTF8", "errors": "strict"}):
             with self.subTest(**kwargs):
                 before = bridge.jobs
                 host = subprocess.run(["node", str(script)], capture_output=True, **kwargs)
@@ -211,7 +231,7 @@ class TheComparisonRecordKeepsTheWholeCall(unittest.TestCase):
         subprocess.run(["node", str(script), "a", "b", "c", "第四个", str(other / "f.txt")], capture_output=True, encoding="utf-8")
         subprocess.run(["node", str(script), "a"], capture_output=True, encoding="utf-8", timeout=60)
         source = "console.log('内联');"
-        subprocess.run(["node", "--input-type=module", "-e", source, "--", "x"], capture_output=True, text=True,
+        subprocess.run(["node", "--input-type=module", "-e", source, "--", "x"], capture_output=True, encoding="utf-8",
                        env={**os.environ, "STORY_HOST_PROBE": str(self.root / "p")})
         first, second, inline = self.records()[-3:]
         self.assertEqual(["a", "b", "c", "第四个", "<TMP2>\\f.txt"], first["argv"], "参数没记全或两个临时根没分开")

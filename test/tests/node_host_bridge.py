@@ -3,6 +3,7 @@
 conftest.py 导入它即生效：替换 `subprocess.run`，只转下列形态，其余（含全部 Python 命令）一律照原样起真实进程——
 - `node <脚本.mjs> 参数…`（脚本不在 node_modules 下）与 `node --input-type=module -e <正文> 参数…`，不带别的 node 参数；
 - 没给 `input` / `stdin`，没开 `shell`，`stdout` / `stderr` 只是 PIPE、STDOUT、DEVNULL 或不给；
+- 字节模式，或文本模式下编码是 UTF-8、或给了不报错的 `errors`（非 UTF-8 且 strict 的解码失败语义由真实进程承担）；
 - 给了 `env` 时其中的 `NODE_OPTIONS` 与本进程一致（要对照「关掉某个预载」的用例自动走真实进程）；
 - 当前用例没有声明 `REAL_CLI = True`（进程边界本身的见证）；
 - 调用发生在主线程（宿主一次只执行一条请求；用例自己开线程并发起命令，比的就是多个进程同时跑）。
@@ -14,6 +15,7 @@ conftest.py 导入它即生效：替换 `subprocess.run`，只转下列形态，
 from __future__ import annotations
 
 import atexit
+import codecs
 import hashlib
 import json
 import locale
@@ -115,6 +117,8 @@ def _request(args, kwargs: dict) -> dict | None:
     env = kwargs.get("env")
     if env is not None and env.get("NODE_OPTIONS") != os.environ.get("NODE_OPTIONS"):
         return None
+    if not _decodable(kwargs):
+        return None
     a = [str(x) for x in args]
     if a[1] == "--input-type=module" and len(a) >= 4 and a[2] == "-e":
         rest = a[4:]
@@ -134,6 +138,24 @@ def _text_mode(kwargs: dict) -> bool:
     return bool(kwargs.get("text") or kwargs.get("universal_newlines") or kwargs.get("encoding") or kwargs.get("errors"))
 
 
+def _encoding(kwargs: dict) -> str:
+    """文本模式实际用的编码：调用给的，没给就是 subprocess 的缺省（UTF-8 模式下是 UTF-8，否则本机区域编码）。"""
+    return kwargs.get("encoding") or ("utf-8" if sys.flags.utf8_mode else locale.getencoding())
+
+
+def _decodable(kwargs: dict) -> bool:
+    """宿主只接一定解得开的文本请求：字节模式、UTF-8，或给了不报错的 errors。
+    非 UTF-8 且 strict（含没给 encoding 时的本机 GBK）解中文会失败，失败时 subprocess 或抛给调用方、或在读取线程里报错，
+    这些由真实进程承担；在执行前就分流，不在宿主跑完之后重跑（会重复副作用）。"""
+    if not _text_mode(kwargs):
+        return True
+    try:
+        utf8 = codecs.lookup(_encoding(kwargs)).name == "utf-8"
+    except LookupError:
+        return False
+    return utf8 or (kwargs.get("errors") or "strict") != "strict"
+
+
 def _completed(args, kwargs: dict, got: dict) -> subprocess.CompletedProcess:
     """宿主的结果按调用方要的形态交回：与 subprocess.run 对同一个进程的结果一致。"""
     text = _text_mode(kwargs)
@@ -145,16 +167,11 @@ def _completed(args, kwargs: dict, got: dict) -> subprocess.CompletedProcess:
         out, err, se = out + err, "", None
         so = so if so is not None else subprocess.PIPE
     if text:
-        # 与 subprocess 读同一份字节：按调用给的 encoding（没给就是本机区域编码）与 errors 解码、做通用换行转换。
-        # 解不开时 Windows 上 subprocess 的读取线程出错、那一路得到 None，这里同样给 None——不替被测命令把输出“修好”
-        encoding = kwargs.get("encoding") or ("utf-8" if sys.flags.utf8_mode else locale.getencoding())
-        errors = kwargs.get("errors") or "strict"
+        # 与 subprocess 读同一份字节：按调用的编码与 errors 解码、做通用换行转换（_decodable 已保证解得开），不替被测命令把输出“修好”
+        encoding, errors = _encoding(kwargs), kwargs.get("errors") or "strict"
 
-        def conv(s: str) -> str | None:
-            try:
-                return s.encode("utf-8").decode(encoding, errors).replace("\r\n", "\n").replace("\r", "\n")
-            except UnicodeDecodeError:
-                return None
+        def conv(s: str) -> str:
+            return s.encode("utf-8").decode(encoding, errors).replace("\r\n", "\n").replace("\r", "\n")
     else:
         def conv(s: str) -> bytes:
             return s.encode("utf-8")

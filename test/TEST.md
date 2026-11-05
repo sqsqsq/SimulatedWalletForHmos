@@ -493,7 +493,7 @@ python test/scripts/run_multi_case.py finalize `
 
 **进程内宿主**：测试里 `subprocess.run` 起的 `node <脚本.mjs>` 与 `node --input-type=module -e` 由本测试进程的一个 node 宿主在进程内执行（`test/tests/node_host_bridge.py`、`node_host.mjs`、`node_host_loader.mjs`），Framework 的 TS 每个测试进程只加载一次；宿主随测试进程起停，不是常驻服务，每 60 条请求重启一次（每条请求一份新的扩展模块，内存只增不减）。
 - 与命令行同语义：每条请求的 argv、cwd、env 各自设好再还原；扩展模块级状态每条请求从零开始；`process.exit` 当场截断并给出退出码；`-e` 正文里的导入相对本次 cwd 解析。
-- 只转上面两种 node 形态。Python 命令一律起真实解释器（外层 timeout、解释器启动与输出编码都是被测的进程边界）；其余照常起真实进程：带 stdin 或 shell、带别的 node 参数、换了 `NODE_OPTIONS`、脚本在 node_modules 下、调用来自非主线程（宿主一次只执行一条请求）；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
+- 只转上面两种 node 形态。Python 命令一律起真实解释器（外层 timeout、解释器启动与输出编码都是被测的进程边界）；其余照常起真实进程：带 stdin 或 shell、带别的 node 参数、换了 `NODE_OPTIONS`、文本模式下编码不是 UTF-8 且 `errors` 为 strict（含没给 encoding 时的本机区域编码；解码失败的抛错与读取线程报错由真实进程承担）、脚本在 node_modules 下、调用来自非主线程（宿主一次只执行一条请求）；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
 - 宿主固定在 `test/tests` 目录、按测试进程启动时的环境起，请求之间重启也不继承用例当时切进去的 cwd。
 - 进程边界本身的见证在类上写 `REAL_CLI = True`（如 `test_story_build.py::TheCommandLineIsCheckedFirst`、`AMissingRequirementDirectoryIsNamed`）。
 - `STORY_TEST_NODE_HOST=0` 全部走真实进程；`STORY_TEST_NODE_HOST_LOG=<目录>` 逐条记下完整的调用身份（用例与阶段、入口与字节摘要、全部参数、内联正文、cwd、调用选项、显式改过的环境）与原始输出，另附只换临时根与仓根的归一结果；两轮全量（`full` 宿主关、`handback` 默认）按身份逐条配对比对。
