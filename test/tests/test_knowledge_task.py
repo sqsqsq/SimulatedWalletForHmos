@@ -1025,6 +1025,35 @@ class RelatedStoryExpressionReachesTheUnit(unittest.TestCase):
         flow_text = story.split("## 业务流程", 1)[1].split("\n## ", 1)[0].strip().splitlines()[0]
         self.assertNotIn(flow_text, self.section())
 
+    def test_another_unit_split_gets_only_what_it_carries(self) -> None:
+        """同一蓝图再划一个施工单位，它另外承担运行视图：依据运行视图的业务流程一节只交给它，原单位照旧取不到。
+        （夹具蓝图只有一个模块节点，原生要求每个单位都引用模块，所以第二个单位同样承担那个模块。）"""
+        import design_kit  # noqa: PLC0415
+        unit = (self.unit_dir / "change-unit.yaml").read_text(encoding="utf-8")
+        head, tail = unit.replace("change_unit_id: balance-refresh", "change_unit_id: balance-runtime").split("design_refs:\n", 1)
+        refs, after = tail[:tail.index("touches:")], tail[tail.index("touches:"):]
+        first = refs[:refs.index("  - artifact: component-blueprint@1", 4)]
+        runtime = first.replace("  - &a1\n    artifact", "  - artifact").replace(
+            "kind: node\n      id: wallet-main-module\n      view_id: development", "kind: view\n      id: runtime")
+        self.assertNotEqual(first, runtime, "夹具变了，用例要跟着改")
+        target = self.unit_dir.parent / "balance-runtime" / "change-unit.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(head + "design_refs:\n" + refs + runtime + after, encoding="utf-8")
+        # 评审投影随施工单位集合变化：放进与撤出都按原生物化重出（同 place_unit）
+        self.addCleanup(design_kit.render_projection, self.root, self.BLUEPRINT, self.access)
+        self.addCleanup(shutil.rmtree, target.parent, True)
+        design_kit.render_projection(self.root, self.BLUEPRINT, self.access)
+        proc = subprocess.run(
+            ["node", str(self.ext / "hooks" / "shared" / "knowledge-task.mjs"), "--project-root", str(self.root),
+             "--action", "spec", "--audience", "author", "--feature", cu_id(self.BLUEPRINT, "balance-runtime")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        story = self.story_file.read_bytes().decode("utf-8")
+        flow_text = story.split("## 业务流程", 1)[1].split("\n## ", 1)[0].strip().splitlines()[0]
+        self.assertIn(flow_text, self.section(proc.stdout), "承担运行视图的单位没拿到依据运行视图的那一节")
+        self.assertNotIn(flow_text, self.section(), "运行视图那一节交给了不承担它的单位")
+        self.assertIn(self.selected_body(), self.section(), "原来的单位仍取得到它承担的那一节")
+
     def test_an_address_without_backticks_is_read_the_same(self) -> None:
         before = self.section()
         plan = self.plan_file.read_bytes().decode("utf-8").replace("`view:development/node:wallet-main-module`",
