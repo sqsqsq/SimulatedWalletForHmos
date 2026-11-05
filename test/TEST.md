@@ -478,14 +478,14 @@ python test/scripts/run_multi_case.py finalize `
 | 场景 | 命令 | 什么时候跑 |
 |---|---|---|
 | 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
-| 全量 | `python test/scripts/verify.py full` | 需要单独看全量结论时；批末交回由 `handback` 一并跑 |
+| 全量 | `python test/scripts/verify.py full` | 需要单独看全量结论时；批末交回由 `handback` 一并跑。与交回里的全量同一个 worker 数、同一种共享前态，两轮可逐条对照 |
 | 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4；各条形态按进程并行，结果按台账顺序输出 |
 | 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑；各通道的并发上限固定在脚本里（全量 8 个 worker、失效形态 1 个进程、CLI 测试 1 个 worker、compileall 单进程；全量的 8 由 2.1.1 F05 实测定） |
 | Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
 | 装配专项 | `python test/scripts/verify.py assembly` | 第二次从空目录经同一入口重建工作区模板，身份核对与第一次相同。`test/config/framework-under-test.json`、`test/fixtures/framework-local/` 补丁或 `create_workspace_template` 装配代码相对上次专项证据有变时必跑，交回引用该次 `output/verify/<时刻>-assembly/`；没变时复用上次证据并写明被测 Framework 与补丁的身份。全量只保留一次当前装配与协议核对，不选这一类 |
 
 每步的完整输出写到 `output/verify/<时刻>-<场景>/<步骤>.log`，控制台按完成先后打印每步的结论行与耗时，多步时最后按固定顺序汇总；有一步失败退出码非 0。
-同时跑的前提是各步只写自己的位置：测试与失效形态各用自己的临时目录，跨进程共享的重夹具（`tests/shared_state.py`）有锁、造好再改名。交回与全量开跑前，由脚本（父进程）在计时之内准备一次只读的共享前态，结束时由它清掉：正式装配的模板（交回；失效形态与全量里核装配身份的那一组读它，`STORY_TEST_ASSEMBLY_ROOT` / `STORY_TEST_ASSEMBLY_BOUNDARY`，装配前后 demo 的状态记在边界记录旁的 `assembly-demo.json`）与按原合同正式安装的包（交回、全量；`STORY_TEST_INSTALLED_PACKAGE`）。读者不写、不删它们，要改的用例先复制；第二次从空目录重建从不读共享模板。
+同时跑的前提是各步只写自己的位置：测试与失效形态各用自己的临时目录，跨进程共享的重夹具（`tests/shared_state.py`）有锁、造好再改名。交回与全量开跑前，由脚本（父进程）在计时之内准备一次只读的共享前态，结束时由它清掉：正式装配的模板（交回、全量；失效形态与全量里核装配身份的那一组读它，`STORY_TEST_ASSEMBLY_ROOT` / `STORY_TEST_ASSEMBLY_BOUNDARY`，装配前后 demo 的状态记在边界记录旁的 `assembly-demo.json`）与按原合同正式安装的包（交回、全量；`STORY_TEST_INSTALLED_PACKAGE`）。读者不写、不删它们，要改的用例先复制；第二次从空目录重建从不读共享模板。
 新写的测试或失效形态检查要守这一条；要排查并行带来的问题时，失效形态加 `--jobs 1` 串行对照。
 
 `test/tests/conftest.py` 给测试起的 node 进程带上 ts-node 转译缓存（系统临时目录 `story-ts-transpile-cache`，按内容取键，删了只会重新转译）；
@@ -496,8 +496,8 @@ python test/scripts/run_multi_case.py finalize `
 - 只转上面两种 node 形态。Python 命令一律起真实解释器（外层 timeout、解释器启动与输出编码都是被测的进程边界）；其余照常起真实进程：带 stdin 或 shell、带别的 node 参数、换了 `NODE_OPTIONS`、脚本在 node_modules 下、调用来自非主线程（宿主一次只执行一条请求）；产品命令内部再起的进程（如 story-build 问 `story_flow.py`）仍是真实进程。
 - 宿主固定在 `test/tests` 目录、按测试进程启动时的环境起，请求之间重启也不继承用例当时切进去的 cwd。
 - 进程边界本身的见证在类上写 `REAL_CLI = True`（如 `test_story_build.py::TheCommandLineIsCheckedFirst`、`AMissingRequirementDirectoryIsNamed`）。
-- `STORY_TEST_NODE_HOST=0` 全部走真实进程；`STORY_TEST_NODE_HOST_LOG=<目录>` 逐条记下归一化的结果，两轮全量（关、开）比对宿主与命令行是否等价。
-- 已知与命令行的显示差异只有两种，比对时逐项记账、原输出保留：Framework 按“本进程”只打一次的提示（如缺 `project_profile` 的 advisory）在宿主里每个宿主进程只打一次；未捕获异常照 Node 的写法打出（`util.inspect`，带错误类名、消息与 cause），只少它前面的源码行与插入符。用例要测的就是这两种显示本身时，类上写 `REAL_CLI = True`。
+- `STORY_TEST_NODE_HOST=0` 全部走真实进程；`STORY_TEST_NODE_HOST_LOG=<目录>` 逐条记下完整的调用身份（用例与阶段、入口与字节摘要、全部参数、内联正文、cwd、调用选项、显式改过的环境）与原始输出，另附只换临时根与仓根的归一结果；两轮全量（`full` 宿主关、`handback` 默认）按身份逐条配对比对。
+- 已知与命令行的显示差异只有两种，比对时逐项记账、原输出保留：Framework 按“本进程”只打一次的提示（如缺 `project_profile` 的 advisory）在宿主里每个宿主进程只打一次；未捕获异常照 Node 的写法打出（`util.inspect`，带错误类名、消息与 cause），只少它前面的源码行与插入符、末尾的 Node 版本行，栈帧里的模块地址带 `?job=N`、内联模块显示为临时文件并多一个异步帧。用例要测的就是这两种显示本身时，类上写 `REAL_CLI = True`。
 
 - 按影响范围分层跑：改一处用 `affected`；批内每一步用 `affected` 覆盖本步改动的直接测试与消费者，装配输入有变时加跑 `assembly`，其余专项按本步改动对象选；全量、失效形态与其余离线检查在批末最后一步交回前由 `handback` 跑一次。批内中间步骤的提交只说明本步验证范围，不宣称全量就绪；同一对象无新改动不重复刷全量，要看某条失败的细节用 `affected` 只重跑那个文件。全量用时预算与超预算的处置见 [tests/README.md](tests/README.md)「用时预算」。
 - 跳过与预期失败按当前用例声明与实际输出逐项说明：pytest 步骤带 `-rs`，每条跳过的用例与原因列在该步日志末尾的 short test summary。这些命令不启动真实被测 CLI。

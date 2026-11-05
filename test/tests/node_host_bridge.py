@@ -8,12 +8,15 @@ conftest.py 导入它即生效：替换 `subprocess.run`，只转下列形态，
 - 调用发生在主线程（宿主一次只执行一条请求；用例自己开线程并发起命令，比的就是多个进程同时跑）。
 
 `STORY_TEST_NODE_HOST=0` 时一律走真实进程。`STORY_TEST_NODE_HOST_LOG=<目录>` 时，凡符合上面形态的调用（不论这次走哪条路）
-都记一行归一化的结果，两轮全量比对宿主与命令行是否等价（TEST §5「进程内宿主」）。产品运行不经过这里。
+都记一行：用例与阶段、完整的命令身份（入口与其字节摘要、全部参数、内联正文的摘要与原文、cwd、调用选项、显式改过的环境），
+原始输出与只换掉临时根和仓根的归一结果分开记，供两轮全量逐条比对（TEST §5「进程内宿主」）。产品运行不经过这里。
 """
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
+import locale
 import os
 import re
 import subprocess
@@ -135,15 +138,26 @@ def _completed(args, kwargs: dict, got: dict) -> subprocess.CompletedProcess:
     """宿主的结果按调用方要的形态交回：与 subprocess.run 对同一个进程的结果一致。"""
     text = _text_mode(kwargs)
     out, err = got["stdout"], got["stderr"]
-    if text:   # 文本模式下 subprocess 做通用换行转换
-        out, err = (s.replace("\r\n", "\n").replace("\r", "\n") for s in (out, err))
     so, se = kwargs.get("stdout"), kwargs.get("stderr")
     if kwargs.get("capture_output"):
         so = se = subprocess.PIPE
     if se == subprocess.STDOUT:
         out, err, se = out + err, "", None
         so = so if so is not None else subprocess.PIPE
-    conv = (lambda s: s) if text else (lambda s: s.encode("utf-8"))
+    if text:
+        # 与 subprocess 读同一份字节：按调用给的 encoding（没给就是本机区域编码）与 errors 解码、做通用换行转换。
+        # 解不开时 Windows 上 subprocess 的读取线程出错、那一路得到 None，这里同样给 None——不替被测命令把输出“修好”
+        encoding = kwargs.get("encoding") or ("utf-8" if sys.flags.utf8_mode else locale.getencoding())
+        errors = kwargs.get("errors") or "strict"
+
+        def conv(s: str) -> str | None:
+            try:
+                return s.encode("utf-8").decode(encoding, errors).replace("\r\n", "\n").replace("\r", "\n")
+            except UnicodeDecodeError:
+                return None
+    else:
+        def conv(s: str) -> bytes:
+            return s.encode("utf-8")
     stdout = conv(out) if so == subprocess.PIPE else None
     stderr = conv(err) if se == subprocess.PIPE else None
     if so is None and out:
@@ -157,31 +171,72 @@ def _completed(args, kwargs: dict, got: dict) -> subprocess.CompletedProcess:
 
 
 _SEP = r"(?:\\\\|\\|/)+"           # 一个或两个反斜杠（JSON 里转义过的）或斜杠
-_TMP = _SEP.join(re.escape(part) for part in re.split(r"[\\/]+", tempfile.gettempdir()) if part)
-_NORMALIZE = (
-    (re.compile(r"(?:file:/+)?" + _TMP + _SEP + r"[^\\/\s'\"`|,;:)\]]+", re.IGNORECASE), "<TMP>"),
-    (re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:?\d{2}|Z)?"), "<TS>"),
-)
-
-
-def _norm(text) -> str:
-    text = text.decode("utf-8", "replace") if isinstance(text, bytes) else str(text or "")
-    for pattern, repl in _NORMALIZE:
-        text = pattern.sub(repl, text)
-    return text.replace("\r\n", "\n")
-
-
+_TMP_ROOT = re.compile(r"(?:file:/+)?" + _SEP.join(re.escape(part) for part in re.split(r"[\\/]+", tempfile.gettempdir()) if part)
+                       + _SEP + r"([^\\/\s'\"`|,;:)\]]+)", re.IGNORECASE)
+_REPO = re.compile(_SEP.join(re.escape(part) for part in re.split(r"[\\/]+", str(HOST_SCRIPT.parents[2])) if part), re.IGNORECASE)
+#: 每个用例里出现过的临时根（系统临时目录下的第一层）按出现先后编号：同一用例里不同的根仍可区分，两轮按顺序对应
+_roots: dict[str, dict[str, str]] = {}
 _calls: dict[str, int] = {}
 
 
-def _log(req: dict, proc: subprocess.CompletedProcess, via: str, ms: float) -> None:
-    test = (os.environ.get("PYTEST_CURRENT_TEST") or "").rsplit(" (", 1)[0]
+def _norm(text, test: str) -> str:
+    """只换掉每轮必然不同的位置：本用例的临时根换成 <TMPn>（原值记在 roots 里），仓根换成 <REPO>；正文其余照旧。"""
+    text = text.decode("utf-8", "replace") if isinstance(text, bytes) else str(text or "")
+    roots = _roots.setdefault(test, {})
+
+    def root(m: re.Match) -> str:
+        key = m.group(1).lower()
+        if key not in roots:
+            roots[key] = f"<TMP{len(roots) + 1}>"
+        return roots[key]
+    return _REPO.sub("<REPO>", _TMP_ROOT.sub(root, text))
+
+
+def _digest(data: bytes | str) -> str:
+    return "sha256:" + hashlib.sha256(data.encode("utf-8") if isinstance(data, str) else data).hexdigest()
+
+
+def _log(req: dict, args, kwargs: dict, rc, out, err, via: str, ms: float) -> None:
+    """记一条调用：用例与阶段、本用例里的第几次、走哪条路，完整的命令身份与调用选项，原始输出与归一结果分开记。"""
+    current = os.environ.get("PYTEST_CURRENT_TEST") or ""
+    test, _, phase = current.rpartition(" (")
+    test, phase = (test, phase.rstrip(")")) if test else (current, "")
     _calls[test] = _calls.get(test, 0) + 1
-    entry = "eval:" + req["source"][:60] if req["kind"] == "eval" else req["argv"][0]
-    rec = {"test": test, "i": _calls[test], "via": via, "entry": _norm(entry), "args": [_norm(x) for x in req["argv"][1:4]],
-           "rc": proc.returncode, "ms": round(ms, 1), "stdout": _norm(proc.stdout), "stderr": _norm(proc.stderr)}
-    Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
-    with open(Path(LOG_DIR) / f"{os.getpid()}.jsonl", "a", encoding="utf-8") as f:
+    log = Path(LOG_DIR)
+    log.mkdir(parents=True, exist_ok=True)
+    if req["kind"] == "eval":
+        # 身份取归一后正文的摘要（正文里常嵌着本轮的临时路径）；原文按原始摘要另存一份，entry_bytes 指向它
+        entry = "eval:" + _digest(_norm(req["source"], test))
+        entry_bytes = _digest(req["source"])
+        source = log / "eval" / (entry_bytes.split(":", 1)[1] + ".mjs")
+        if not source.exists():
+            source.parent.mkdir(exist_ok=True)
+            source.write_text(req["source"], encoding="utf-8")
+    else:
+        script = Path(req["cwd"], req["argv"][0])
+        entry = str(script.resolve()) if script.exists() else req["argv"][0]
+        entry_bytes = _digest(script.read_bytes()) if script.is_file() else None
+    env = kwargs.get("env")
+    overrides = {}
+    if env is not None:
+        for k in sorted(set(env) | set(os.environ)):
+            if env.get(k) != os.environ.get(k):
+                v = env.get(k)
+                overrides[k] = None if v is None else (_norm(v, test) if k.startswith("STORY_") else _digest(v)[:19])
+    options = {k: kwargs[k] for k in ("text", "universal_newlines", "encoding", "errors", "timeout", "check", "capture_output")
+               if kwargs.get(k) is not None}
+    for k in ("stdout", "stderr"):
+        if kwargs.get(k) is not None:
+            options[k] = {subprocess.PIPE: "PIPE", subprocess.STDOUT: "STDOUT", subprocess.DEVNULL: "DEVNULL"}.get(kwargs[k], "other")
+    raw = {"stdout": out.decode("utf-8", "replace") if isinstance(out, bytes) else out,
+           "stderr": err.decode("utf-8", "replace") if isinstance(err, bytes) else err}
+    rec = {"test": test, "phase": phase, "i": _calls[test], "via": via, "rc": rc, "ms": round(ms, 1),
+           "kind": req["kind"], "entry": _norm(entry, test), "entry_bytes": entry_bytes,
+           "argv": [_norm(x, test) for x in (req["argv"] if req["kind"] == "eval" else req["argv"][1:])],
+           "cwd": _norm(req["cwd"], test), "options": options, "env": overrides,
+           "raw": raw, "norm": {k: None if v is None else _norm(v, test).replace("\r\n", "\n") for k, v in raw.items()},
+           "roots": {v: k for k, v in _roots.get(test, {}).items()}}
+    with open(log / f"{os.getpid()}.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
@@ -191,15 +246,24 @@ def run(args, *popenargs, **kwargs):
     if req is None:
         return _real_run(args, *popenargs, **kwargs)
     started = time.perf_counter()
-    if ENABLED and not real_cli and threading.current_thread() is threading.main_thread():
-        jobs += 1
-        proc = _completed(args, kwargs, _host.ask(req, kwargs.get("timeout")))
-        via = "host"
-    else:
-        proc = _real_run(args, **kwargs)
-        via = "cli"
+    host = ENABLED and not real_cli and threading.current_thread() is threading.main_thread()
+    via = "host" if host else "cli"
+    try:
+        if host:
+            jobs += 1
+            proc = _completed(args, kwargs, _host.ask(req, kwargs.get("timeout")))
+        else:
+            proc = _real_run(args, **kwargs)
+    except subprocess.CalledProcessError as e:        # check=True 的失败：照样记下再抛给调用方
+        if LOG_DIR:
+            _log(req, args, kwargs, e.returncode, e.stdout, e.stderr, via, (time.perf_counter() - started) * 1000)
+        raise
+    except subprocess.TimeoutExpired as e:
+        if LOG_DIR:
+            _log(req, args, kwargs, "timeout", e.stdout, e.stderr, via, (time.perf_counter() - started) * 1000)
+        raise
     if LOG_DIR:
-        _log(req, proc, via, (time.perf_counter() - started) * 1000)
+        _log(req, args, kwargs, proc.returncode, proc.stdout, proc.stderr, via, (time.perf_counter() - started) * 1000)
     return proc
 
 

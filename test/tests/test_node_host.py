@@ -3,6 +3,8 @@
 只转约定的那几种形态，其余照原样起进程。"""
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -107,6 +109,17 @@ class TheHostRunsAScriptLikeTheCommandLine(unittest.TestCase):
         self.assertEqual(real.stdout, host.stdout, "字节模式不能转换换行")
         self.same(["node", str(script)])          # 文本模式按 subprocess 的通用换行
 
+    def test_text_mode_without_an_encoding_decodes_like_the_command_line(self) -> None:
+        """没给 encoding 的文本模式按本机区域编码解码：中文解不开时那一路与真实进程同样是 None 或乱码，宿主不替它修好。"""
+        script = write(self.root, "zh.mjs", "process.stdout.write('中文输出\\n'); process.stderr.write('ok\\n');\n")
+        for kwargs in ({"text": True}, {"text": True, "errors": "replace"}, {"universal_newlines": True}):
+            with self.subTest(**kwargs):
+                before = bridge.jobs
+                host = subprocess.run(["node", str(script)], capture_output=True, **kwargs)
+                self.assertEqual(before + 1, bridge.jobs)
+                real = bridge._real_run(["node", str(script)], capture_output=True, **kwargs)
+                self.assertEqual((real.returncode, real.stdout, real.stderr), (host.returncode, host.stdout, host.stderr))
+
     def test_a_missing_script_fails_like_the_command_line(self) -> None:
         host, real = self.both(["node", str(self.root / "没有这个.mjs")])
         self.assertEqual(real.returncode, host.returncode)
@@ -172,6 +185,54 @@ class PythonCommandsKeepTheRealProcess(unittest.TestCase):
         got = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual((0, "来自 node\n"), (got.returncode, got.stdout))
         self.assertEqual(before, bridge.jobs, "Python 脚本里的 node 命令进了测试进程的宿主")
+
+
+class TheComparisonRecordKeepsTheWholeCall(unittest.TestCase):
+    """`STORY_TEST_NODE_HOST_LOG` 的每条记录能唯一认出是哪一次调用，原始输出原样留着；归一只换临时根与仓根。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        log = tempfile.TemporaryDirectory()
+        self.addCleanup(log.cleanup)
+        self.log = Path(log.name)
+        saved = bridge.LOG_DIR
+        bridge.LOG_DIR = str(self.log)
+        self.addCleanup(setattr, bridge, "LOG_DIR", saved)
+
+    def records(self) -> list[dict]:
+        return [json.loads(line) for f in self.log.glob("*.jsonl") for line in f.read_text(encoding="utf-8").splitlines()]
+
+    def test_two_calls_of_one_script_and_an_inline_module_are_told_apart(self) -> None:
+        script = write(self.root, "echo.mjs", "console.log(process.argv.slice(2).join('|'));\n")
+        other = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, other, True)
+        subprocess.run(["node", str(script), "a", "b", "c", "第四个", str(other / "f.txt")], capture_output=True, encoding="utf-8")
+        subprocess.run(["node", str(script), "a"], capture_output=True, encoding="utf-8", timeout=60)
+        source = "console.log('内联');"
+        subprocess.run(["node", "--input-type=module", "-e", source, "--", "x"], capture_output=True, text=True,
+                       env={**os.environ, "STORY_HOST_PROBE": str(self.root / "p")})
+        first, second, inline = self.records()[-3:]
+        self.assertEqual(["a", "b", "c", "第四个", "<TMP2>\\f.txt"], first["argv"], "参数没记全或两个临时根没分开")
+        self.assertEqual(["a"], second["argv"])
+        self.assertEqual(first["entry"], second["entry"])
+        self.assertEqual("sha256:" + hashlib.sha256(script.read_bytes()).hexdigest(), first["entry_bytes"])
+        self.assertEqual({"timeout": 60, "encoding": "utf-8", "capture_output": True}, second["options"])
+        self.assertTrue(first["raw"]["stdout"].startswith("a|b|c|第四个|" + str(other)), "原始输出被改了")
+        self.assertEqual(second["i"], first["i"] + 1)
+        self.assertEqual("call", first["phase"])
+        self.assertEqual("eval:sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest(), inline["entry"])
+        digest = inline["entry_bytes"].removeprefix("sha256:")
+        self.assertEqual(source, (self.log / "eval" / f"{digest}.mjs").read_text(encoding="utf-8"))
+        self.assertEqual({"STORY_HOST_PROBE": "<TMP1>\\p"}, inline["env"])
+
+    def test_a_checked_failure_is_recorded_before_it_is_raised(self) -> None:
+        script = write(self.root, "fail.mjs", "console.error('坏了'); process.exit(2);\n")
+        with self.assertRaises(subprocess.CalledProcessError):
+            subprocess.run(["node", str(script)], capture_output=True, encoding="utf-8", check=True)
+        rec = self.records()[-1]
+        self.assertEqual((2, "坏了\n"), (rec["rc"], rec["raw"]["stderr"]))
 
 
 class OnlyTheAgreedFormsGoToTheHost(unittest.TestCase):

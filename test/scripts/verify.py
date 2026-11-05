@@ -19,7 +19,7 @@
 
 handback 与 full 由这里（父进程）在计时开始之后准备一次只读的共享前态，交给各通道读，结束时由父进程清掉：
 
-- 正式装配的模板（handback、failure-modes）：失效形态与全量里核装配身份的那一组读同一份；
+- 正式装配的模板（handback、full、failure-modes）：失效形态与全量里核装配身份的那一组读同一份；
   经 ``STORY_TEST_ASSEMBLY_ROOT`` / ``STORY_TEST_ASSEMBLY_BOUNDARY`` 交给 pytest，旁边的 ``assembly-demo.json`` 记装配前后 demo 的状态。
   第二次从空目录重建（装配专项）从不读它；
 - 按原合同正式安装的包（handback、full）：经 ``STORY_TEST_INSTALLED_PACKAGE`` 交给 worker 只读，要改包的用例先复制。
@@ -42,8 +42,8 @@ REPO = HERE.parents[1]
 TESTS = REPO / "test" / "tests"
 #: pytest 的并行参数：loadscope 让同一个类的用例落在同一个 worker，类级夹具只建一次
 PARALLEL = ["-n", "auto", "--dist", "loadscope"]
-#: 交回时各通道的固定并发上限：全量 worker 数、失效形态进程数、cli 离线测试 worker 数。全量 8 个 worker 按 2.1.1 F05 实测定
-#: （测试进程内执行产品命令后，8 worker 比 4 worker 快一倍，内存仍宽裕；用户 2026-11-04 同意固定为 8）
+#: 各通道的固定并发上限：全量 worker 数（full 与 handback 同一个）、失效形态进程数、cli 离线测试 worker 数。
+#: 全量 8 个 worker：测试进程内的 node 宿主下 8 worker 比 4 worker 快一倍、内存仍宽裕（2.1.1 F 批实测，用户 2026-11-04 同意固定为 8）
 FULL_WORKERS, FAILURE_JOBS, CLI_WORKERS = 8, 1, 1
 #: 第二次从空目录重建：装配专项，只在被测 Framework 登记、本地补丁或模板装配代码变了时跑；full 不选它
 SECOND_REBUILD = "test/tests/test_verifier_chain_in_workspace.py::ASecondEmptyDirectoryRebuildsTheSameCombination"
@@ -214,7 +214,7 @@ def scenario(args: argparse.Namespace) -> list[list]:
     handback_failure = named("failure-modes", lambda d: failure_mode_steps(SHARED.assembly(d), FAILURE_JOBS))
     return {
         "affected": [[lambda _: affected_steps(args.targets, args.keyword)]],
-        "full": [[lambda _: full_steps()]],
+        "full": [[lambda _: full_steps(FULL_WORKERS)]],
         "failure-modes": [[template_steps]],
         "cases": [[lambda _: case_steps()]],
         "assembly": [[lambda _: assembly_steps()]],
@@ -223,8 +223,9 @@ def scenario(args: argparse.Namespace) -> list[list]:
 
 
 def prepare_shared(scenario: str, log_dir: Path) -> None:
-    """通道开跑之前由父进程准备共享前态（在总计时之内）：handback 装一次模板与安装包，full 装安装包。"""
-    if scenario == "handback":
+    """通道开跑之前由父进程准备共享前态（在总计时之内）：full 与 handback 都装一次模板与安装包——
+    单独跑的全量与交回里的全量拿到同一种前态，两轮能逐条对照。"""
+    if scenario in ("handback", "full"):
         SHARED.assembly(log_dir)
     if scenario in ("handback", "full"):
         SHARED.installed_package()

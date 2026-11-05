@@ -22,9 +22,11 @@ def steps_of(scenario: str, **extra) -> list[tuple[str, list[str]]]:
 
 class EveryPytestRunIsParallel(unittest.TestCase):
     def test_full_and_affected_carry_the_parallel_arguments(self) -> None:
-        for name, cmd in steps_of("full") + steps_of("affected", targets=["test_verify_entry.py"], keyword="parallel"):
-            with self.subTest(step=name):
-                self.assertIn("-n auto --dist loadscope", " ".join(cmd))
+        """全量单跑与交回里的全量是同一个固定 worker 数；改一处按机器自动。"""
+        full, handback = " ".join(steps_of("full")[0][1]), " ".join(dict(steps_of("handback"))["full"])
+        self.assertIn(f"-n {verify.FULL_WORKERS} --dist loadscope", full)
+        self.assertEqual(full, handback, "单跑的全量与交回里的全量命令不同")
+        self.assertIn("-n auto --dist loadscope", " ".join(steps_of("affected", targets=["test_verify_entry.py"], keyword="parallel")[0][1]))
         self.assertIn("--durations", steps_of("full")[0][1])
         affected = steps_of("affected", targets=["test_verify_entry.py"], keyword="parallel")[0][1]
         self.assertIn(str(REPO / "test" / "tests" / "test_verify_entry.py"), affected, "只写文件名时没落到 test/tests")
@@ -88,6 +90,16 @@ class TheHandbackRunsInLanes(unittest.TestCase):
         self.assertTrue(seen and all(e.get("STORY_TEST_ASSEMBLY_ROOT") == "TEMPLATE" and e.get("STORY_TEST_INSTALLED_PACKAGE") == "PKG"
                                      for e in seen), seen)
         self.assertEqual([True], cleared, "共享前态没由父进程清掉")
+
+    def test_full_and_handback_prepare_the_same_shared_state(self) -> None:
+        """单跑全量与交回都由父进程装一次模板与安装包：两轮全量的 worker 拿到同一种前态；改一处什么都不装。"""
+        for scenario, expected in (("full", ["assembly", "package"]), ("handback", ["assembly", "package"]), ("affected", [])):
+            made = []
+            with self.subTest(scenario=scenario), \
+                    mock.patch.object(verify.SHARED, "assembly", side_effect=lambda d: made.append("assembly")), \
+                    mock.patch.object(verify.SHARED, "installed_package", side_effect=lambda: made.append("package")):
+                verify.prepare_shared(scenario, REPO)
+                self.assertEqual(expected, made)
 
     def test_every_lane_reports_in_a_fixed_order(self) -> None:
         """通道同时跑、完成有先后，汇总仍按通道顺序，有一步失败退出码非 0。"""
