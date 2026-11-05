@@ -36,14 +36,14 @@ flowchart LR
 - 发布仓不开发特性。任何特性改动都回所属的源码仓：Framework、Story 回外网，平台和对接层回内网对应的仓。
 - 平台仓和发布仓的协作方式，与现在 Story 和 Framework 的协作方式一样：装好发布仓打出的 Framework 包，在上面开发自己的部分。
 - 业务工程装的是一个 Maison 发行包。升级和 Framework 一样：替换包，重跑初始化（Framework 跑 init，Story 跑 adapt）。
-- Web、Android 进入正式支持，以及 Story 2.x 的新形态，都需要 Framework 配套（§9）。
+- Web、Android 进入正式支持，以及 Story 2.x 的知识登记，需要 Framework 配套（§9）。
 
 | 状态 | 内容 |
 |---|---|
 | 已在用 | Framework、Story 在外网开发发布；鸿蒙业务手工拷贝发布件使用 |
 | 代码可见、内网未跑过 | Framework 打包（`release:pack`）和 init、Story adapt 的安装步骤 |
 | 本方案新增 | 内网四个仓及两条线、发布仓的导入与打包流程、基准和全功能场景集、Maison 发行包 |
-| 需外网承接 | Framework 配套能力（§9）；Story 2.x 目录整改（§5.7） |
+| 需外网承接 | Framework 配套能力（§9）；Story 2.x 目录整改（§5.7，王义康） |
 
 ## 2. 人和责任
 
@@ -110,7 +110,8 @@ maison-distribution/                       分支 1.x、2.x
 │  │  └─ android-app/                      来自 maison-android 的 tag
 │  └─ dist/                                打包输出，不入库
 ├─ story/
-│  ├─ base/                                Story 源码，随外网快照
+│  ├─ base/                                Story 包，与业务仓 extensions/base/ 同构，随外网快照
+│  ├─ examples/knowledge/                  样例知识（Story 从 Demo 整理），随外网快照
 │  └─ adapters/                            来自 maison-story-adapters 的 tag
 ├─ 打包/
 │  ├─ pack-maison.ps1（或 .sh）             从当前提交打出 Maison 发行包
@@ -133,7 +134,7 @@ maison-distribution/                       分支 1.x、2.x
 framework/                 Maison 源码仓 3.2.0，外网提交 a1b2c3d
 framework/profiles/web-app        maison-web  web-2.0.3
 framework/profiles/android-app    maison-android  android-2.0.1（沿用上一版）
-story/base/                Story 仓 2.1.0，外网提交 e4f5a6b，配 Framework 3.2.0
+story/base/、examples/      Story 仓 2.1.0，外网提交 e4f5a6b，配 Framework 3.2.0
 story/adapters/            maison-story-adapters  adapters-2.0.2
 ```
 
@@ -142,14 +143,14 @@ story/adapters/            maison-story-adapters  adapters-2.0.2
 | 动作 | 整份替换 | 保留不动 |
 |---|---|---|
 | 导入 Framework | `framework/` | `framework/profiles/web-app/`、`android-app/` |
-| 导入 Story | `story/base/` | `story/adapters/` |
+| 导入 Story | `story/base/`、`story/examples/` | `story/adapters/` |
 | 收平台 tag | `framework/profiles/<名>/` | — |
 | 收对接层 tag | `story/adapters/` | — |
 
 打包（写进 `pack-maison` 脚本，只在 rc 或正式 tag 上执行）：
 
 1. 在 `framework/` 下安装打包依赖，执行 `npm run release:pack`，在 `framework/dist/` 得到 `framework-<版本>.zip` 和 `.manifest.json`；再执行 `npm run release:verify` 核对。打包按目录收集文件，所以 Web、Android 已进入包内的校验清单。
-2. 建 `maison-<版本>/`，放入 Framework 包、`story/base/`、`story/adapters/`。
+2. 建 `maison-<版本>/`，放入 Framework 包和整个 `story/`（`base/`、`examples/`、`adapters/`）。
 3. 从 `来源.md` 生成版本清单，从模板填写安装说明，附发布说明。
 4. 压成 `maison-<版本>.zip`，计算 sha256，存到团队发布存储。
 
@@ -209,9 +210,12 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
    ├─ framework-3.2.0.zip            发布仓打出的 Framework 包，含 web-app、android-app
    ├─ framework-3.2.0.manifest.json
    └─ story/
-      ├─ base/                        Story 机制：manifest、skills、hooks、rules、examples/knowledge
-      └─ adapters/                    内网需求系统对接层
+      ├─ base/                        Story 包：manifest、skills、hooks、rules；升级时只用它
+      ├─ adapters/                    内网需求系统对接层；首装时复制
+      └─ examples/knowledge/          样例知识；adapt 读取作参考，不复制进业务工程
 ```
+
+`story/` 下的 `base/`、`adapters/` 与业务工程 `doc/extensions/` 下的同名目录一一对应。
 
 1.x 线的 Story 按 §5.7 的过渡方式交付。
 
@@ -221,14 +225,14 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
 <业务工程>/                                 必须是 Git 根
 ├─ framework/                               解压 framework-3.2.0.zip 得到
 │  └─ harness/node_modules/                 init 时 npm install 生成，不入库
-├─ framework.config.json                    init 生成：项目名、project_profile、架构分层
+├─ framework.config.json                    init 生成：项目名、project_profile、架构分层；paths.extension_dir 指向 doc/extensions/base
 ├─ framework.local.json                     个人工具链路径，不入库
 ├─ AGENTS.md、CLAUDE.md 等                   init 生成宿主入口；adapt 写 Story 标记区
 └─ doc/
    ├─ architecture.md、module-catalog.yaml   init 生成骨架，业务填写
    ├─ usage.json                            使用记录
    └─ extensions/
-      ├─ base/                              Story 机制，升级时整份替换
+      ├─ base/                              Story 包：manifest、skills、hooks、rules，升级时整份替换
       ├─ knowledge/                         业务知识及其加载清单，由 adapt 生成和演进
       ├─ adapters/                          对接层，首装取自发行包，之后由 adapt 演进
       └─ adaptation.yaml                    已适配版本等状态
@@ -236,22 +240,27 @@ maison-2.1.0.zip（另附 maison-2.1.0.zip.sha256）
 
 ### 5.7 Story 2.x 的目录整改
 
-Story 现在的 `extensions/` 里，包的内容和业务自己的内容混在一起：知识放在 `knowledge/`，知识清单写在 `manifest.yaml`；对接层嵌在 `skills/story/scripts/adapters/`。这些都妨碍直接在业务仓里替换升级。2.x 整改为三块：
+Story 现在的 `extensions/` 里，包的内容和业务自己的内容混在一起：知识放在 `knowledge/`，知识清单写在 `manifest.yaml`；对接层嵌在 `skills/story/scripts/adapters/`。这些都妨碍直接在业务仓里替换升级。2.x 把业务工程的 `doc/extensions/` 整改为：
 
 | 目录 | 归谁 | 升级时 |
 |---|---|---|
-| `base/` | 包：manifest、skills、hooks、rules，以及 `examples/knowledge/` 样例 | 整份替换 |
+| `base/` | 包：manifest、skills、hooks、rules | 整份替换 |
 | `knowledge/` | 业务：知识及其加载清单 | 由 `/story adapt` 按演进记录适配 |
 | `adapters/` | 业务：需求系统对接层 | 由 `/story adapt` 按演进记录适配 |
 | `adaptation.yaml` | 业务：已适配版本等状态 | 由 adapt 写 |
 
+- **发布包与业务工程同构**：Story 发布的就是 `base/`。Maison 包的 `story/` 另外带上内网对接层 `adapters/`（首装用），以及样例 `examples/knowledge/`。
 - **安装和升级与 Framework 一样**：
-  - 首装：复制 `base/`、`adapters/`，再执行 `/story adapt` 生成知识。
-  - 升级：替换 `base/`，再执行 `/story adapt`。
+  - 首装：把包里的 `base/`、`adapters/` 复制到 `doc/extensions/`，在业务工程会话执行 `/story adapt`。adapt 参考包里的样例生成知识，写 `adaptation.yaml`，把 `paths.extension_dir` 设为 `doc/extensions/base`。
+  - 升级：替换 `doc/extensions/base/`，执行 `/story adapt`，按 `adaptation.yaml` 之后的演进条目适配知识和对接层。
   - Framework 先于 Story 安装，因为 Story 的宿主入口由 Framework 按 manifest 生成。
-- **新业务没有知识可参考**：Demo 的知识作为样例放在 `base/examples/knowledge/`。样例不登记加载，只给 adapt 作参考；它随 base 一起替换，不需要删除。模型会照着样例写，所以样例要选达到金样水平的内容。
-- **需要 Framework 配合**：现在 Framework 在扩展根读 `manifest.yaml`，技能入口固定在 `<扩展目录>/skills/<id>/SKILL.md`，知识清单写在 manifest 里。三块分开存放，要 Framework 的扩展约定支持"包放在 `base/`、知识自带清单"（§9）。
-- **Demo 的定位**：Story 仓里的 Demo 继续用于外网开发和测试；它的替身对接层留在 Demo，不进 `base/`。
+- **样例只在包里**：新业务没有知识可参考，adapt 从包的 `examples/knowledge/` 读取样例。样例不复制进业务工程，所以不会提交到业务代码仓。模型会照着样例写，所以样例要选达到金样水平的内容。
+- **Story 内部要改的**：
+  - 拆出 `base/`、`knowledge/`、`adapters/`；
+  - Story 脚本改为从 `../adapters/` 加载对接层；
+  - adapt 支持"本工程已替换 base 后自升级"，首装时从包目录读样例。
+- **需要 Framework 配合一项**：`paths.extension_dir` 指向 `base/` 后，Framework 能在 base 里读到 manifest、skills、hooks。但知识只能经 manifest 登记，路径不得越出扩展根，所以 `doc/extensions/knowledge/` 登记不进去。需要 Framework 支持在扩展根之外登记知识（§9）。
+- **Demo 的定位**：Story 仓里的 Demo 继续用于外网开发和测试；它的替身对接层留在 Demo，不进包。
 - **整改的具体设计和实施进入 Story 2.x 的 Spec**，由王义康负责。
 
 **1.x 线（过渡）**：Story 1.x 保持现有目录，只能从已经装好 Story 的工程执行 adapt。1.x 发行包写明"从已适配的业务仓执行 adapt"；能否直接从包目录安装，由王义康核。1.x 停止维护时，这条过渡路径一并退出。
@@ -374,7 +383,7 @@ flowchart TB
 2. 把 `framework-<版本>.zip` 解压到工程根，得到 `framework/`。
 3. 运行 framework-init，选对工程类型。init 会安装 Harness 依赖、扫描工程、确定计划，生成 `framework.config.json` 和宿主入口。
 4. 把发行包的 `story/base/`、`story/adapters/` 复制到 `doc/extensions/base/`、`doc/extensions/adapters/`。
-5. 在业务工程里打开会话，执行 `/story adapt`：按演进记录生成知识（参考 `base/examples/knowledge/`），写 `adaptation.yaml`，核对对接层和入口。
+5. 在业务工程里打开会话，执行 `/story adapt`：参考发行包里的 `story/examples/knowledge/` 生成知识，写 `adaptation.yaml`，把 `paths.extension_dir` 设为 `doc/extensions/base`，核对对接层和入口。样例不复制进业务工程。
 6. 在 `framework.local.json` 填个人工具链路径。
 7. 按安装说明的接入验收项确认可用，再合入业务主线。
 
@@ -416,9 +425,9 @@ flowchart TB
 | fixture 扫描根只登记了 hmos-app、generic；发布件的 `npm test` 是 `check:global`，不跑 fixture | 已核：Maison `harness/tests/run-tests.ts`、`framework/README.md` | 盛强：Web、Android 的 fixture 能在源码测试中运行 |
 | 发布仓在 `framework/` 里直接执行 `release:pack`、`release:verify`，打包依赖能否在内网安装 | 打包按目录收集文件（`scripts/release-pack-rules.mjs`）；整套发布命令在发布仓能否跑通，需核 | 盛强核；需要时说明在发布仓里的打包方式 |
 | Android 多仓、二进制依赖的工程结构需要 Framework 新增核心能力 | 已核：Maison 的 Android 适配计划排在 3.2.0 | 盛强按版本计划交付；只能进 2.x 线 |
-| 扩展约定支持"包放在 `base/`、知识自带清单"（Story 2.x 目录整改的前提） | 已核现状：Maison `harness/extension-loader.ts`（扩展根读 manifest）、`harness/scripts/utils/instance-skill-bridge.ts`（技能入口在扩展根 `skills/`） | 王义康提需求，盛强设计排期 |
+| 在扩展根之外登记知识（Story 2.x 目录整改的前提）：`paths.extension_dir` 指向 `base/` 后，manifest、skills、hooks 都能读到，但知识只能经 manifest 登记，路径不得含 `..`、不得越出扩展根，`doc/extensions/knowledge/` 登记不进去 | 已核：Maison `harness/extension-loader.ts`（`safeResolve`）、`harness/scripts/utils/project-relative-path.ts`（`validateProjectRelativePath`） | 王义康提需求，盛强设计排期 |
 
-这些就绪之前，Web、Android 只在代表工程里试验，不写进发布说明的支持范围；Story 2.x 先保持现有目录。
+这些就绪之前，Web、Android 只在代表工程里试验，不写进发布说明的支持范围；知识登记就绪前，Story 2.x 先保持现有目录。
 
 ## 10. 先做的事
 
@@ -438,7 +447,7 @@ flowchart TB
 | 首轮发布负责人 | 团队 |
 | 对接层维护者，以及从哪个业务工程提取首个版本 | 团队 |
 | Web、Android Profile 的正式名称 | 盛强 |
-| Story 2.x 目录整改所在版本，以及 Framework 扩展约定的排期 | 王义康、盛强 |
+| Story 2.x 目录整改所在版本，以及 Framework 支持扩展根外知识登记的排期 | 王义康、盛强 |
 | 基准场景集、全功能场景集的具体内容 | 首轮发布负责人与部件作者 |
 | 1.x 何时停止维护 | 需求方与发布负责人，看业务迁移进度 |
 | 黄志强、潘雨晨的分工；做公共能力需要外网和强模型条件 | 团队 |
@@ -484,7 +493,7 @@ flowchart TB
 | 07 每版三平台全验 | 夸大了 07：07 允许按影响复验、复用证据 | 补丁轮按影响缩小范围（§6） |
 | 固定一位发布负责人 | 用户原话："这个不是关键，理论上共建团队的任何人都可以轮值负责" | 每条线每轮指定一人，交接靠发布仓记录（§2、§8.4） |
 
-### 12.3 2026-11-05 第二次纠正：发布仓放源码，目录要能照做
+### 12.3 2026-11-05 第二、三次纠正：发布仓放源码，目录要能照做，Story 包与业务仓同构
 
 用户要求平台仓、发布仓、完整发布包的结构具体到能照着做。审计划时，用户对"发布仓归档上游 ZIP、从 ZIP 组装"的设计提出四点（原话）：
 
@@ -520,6 +529,24 @@ flowchart TB
 | Story 以正式 Demo 作为发布形态 | 2.x 发 `base/`＋`adapters/`；1.x 过渡（§5.7） |
 | "上游校验清单对附加文件的处理"待核 | Profile 在发布仓随源码打包，进入校验清单，这个问题不再存在 |
 
+第三次纠正（同日）。我在上面的评估中做了两处调整，用户指出（原话）：
+
+1. 如果 base 里的样例不删，会提交到业务代码仓，这个有点问题。
+2. 不对吧，当前 story adapt 不是可以完成 Extension 的跨仓迁移吗，那在本仓自升级做不到吗？
+3. story 的发布包结构，不是应该跟业务仓的 Extensions 里的结构一样吗？理论上发布包里只有一个 base，升级时替换业务仓的 extensions/base？
+
+核实与更正：
+
+- 用户的设计成立：发布包与业务工程同构，升级就是替换 `extensions/base/`，再执行 `/story adapt`。
+- 升级流程本身不需要 Framework 改动，adapt 已经按目录归属替换包的内容并适配目标。我此前把"运行时 Framework 从哪里读扩展"和"升级怎么做"混为一谈，夸大成"扩展约定整体改造"。
+- `paths.extension_dir` 指向 `base/` 后，Framework 能读到 manifest、skills、hooks。卡住的只有知识登记：路径不得越出扩展根。§9 只保留这一项。
+- 样例放进 `base/` 会提交进业务仓。改为样例只在发行包的 `story/examples/knowledge/`，adapt 从包里读。
+
+| 退出 | 由什么接替 |
+|---|---|
+| 样例放在 `base/examples/knowledge/`、不登记加载 | 样例只在发行包的 `story/examples/knowledge/`，adapt 从包读取（§5.5、§5.7） |
+| Framework 扩展约定支持"包放在 `base/`、知识自带清单" | Framework 只需支持在扩展根之外登记知识（§9） |
+
 本轮核到的事实：
 
 | 事实 | 来源 |
@@ -531,6 +558,8 @@ flowchart TB
 | 本仓 Story 与 Framework 的协作：`demo/framework/` 只读，经解压加 framework-init UPDATE 同步；`extensions/` 开发；测试装入一次性工程 | 本仓 `AGENTS.md` |
 | Story 2.x 的归属划分：`adaptation.yaml`、`knowledge/`、对接层归目标 | `extensions/adaptation.yaml`、`extensions/skills/story-adaptation/SKILL.md` |
 | Framework 在扩展根读 manifest，技能入口固定在扩展根 `skills/`，知识清单在 manifest | Maison `harness/extension-loader.ts`、`harness/scripts/utils/instance-skill-bridge.ts` |
+| 扩展引用路径经 `validateProjectRelativePath` 校验：不得含 `..`，必须落在扩展根内 | Maison `harness/extension-loader.ts`（`safeResolve`）、`harness/scripts/utils/project-relative-path.ts` |
+| adapt 按目录归属替换包的内容、合成 manifest、按演进记录适配目标 | `extensions/skills/story-adaptation/SKILL.md`「所有权由目录表达」 |
 
 首稿时核到、仍然沿用的事实：
 
