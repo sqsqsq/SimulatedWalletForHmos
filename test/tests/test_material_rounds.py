@@ -1511,6 +1511,53 @@ class ImageOnlyOriginalsAreOrigins(ManifestCase):
         self.refused("没有图.docx", "IMAGES")
 
 
+class ASourceKeepsItsClass(ManifestCase):
+    """来源的类由它的全部版本共用：已导入的来源换类在写盘前拒绝；纠类走退役＋新路径，旧版本的角色与原件不变。"""
+
+    def retire(self, key: str) -> None:
+        proc = subprocess.run(
+            [sys.executable, str(STORY_SCRIPTS / "import_sources.py"), "--feature", FEATURE,
+             "--project-root", str(self.root), "--retire", key],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, cwd=str(REPO_ROOT))
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def test_a_new_version_in_another_class_is_refused_before_any_write(self) -> None:
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"1"}, cls="IMAGES", text="早期正文")
+        self.imported()
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"1"}, cls="RR", text="改过的正文")
+        self.refused("产品原稿.docx", "IMAGES", "RR")
+        source = self.source("产品原稿.docx")
+        self.assertEqual("IMAGES", source["class"])
+        self.assertEqual(1, len(source["versions"]))
+
+    def test_the_same_bytes_in_another_class_are_refused_too(self) -> None:
+        self.put("补充.md", "# 补充\n\n规则。\n", cls="AR")
+        self.imported()
+        self.classify("补充.md", "SR")
+        self.refused("补充.md", "AR", "SR")
+
+    def test_retire_and_a_new_path_make_a_new_source_and_keep_the_old_role(self) -> None:
+        self.docx("产品原稿.docx", {"image1.png": self.PNG + b"1"}, cls="IMAGES", text="只在原稿里的规则")
+        blob = (self.inbox() / "产品原稿.docx").read_bytes()
+        self.imported()
+        old = self.source("产品原稿.docx")
+        kept = self.feature_root / old["versions"][0]["original"]["path"]
+        self.retire("产品原稿.docx")
+        moved = self.inbox() / "纠类" / "产品原稿.docx"
+        moved.parent.mkdir()
+        moved.write_bytes(blob)
+        self.classify("纠类/产品原稿.docx", "RR")
+        self.imported()
+        self.round_now()
+        self.assertEqual(old, self.source("产品原稿.docx"), "旧来源的类、版本或原件登记被改了")
+        self.assertEqual(blob, kept.read_bytes())
+        new = self.source("纠类/产品原稿.docx")
+        self.assertEqual("RR", new["class"])
+        prd = (self.feature_root / "RR" / "prd.md").read_text(encoding="utf-8")
+        self.assertIn("只在原稿里的规则", prd)
+        self.assertIn(".png", prd, "纠成正文类后内嵌图应随正文进阅读稿")
+
+
 class TheInboxIsReadRecursively(ManifestCase):
     """收件箱按目录原样收件：子目录里的原件按相对路径识别、归类、导入与登记。
 

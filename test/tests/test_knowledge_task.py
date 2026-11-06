@@ -770,6 +770,44 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
             self.assertNotIn(leaked, carrier, f"首读载体提前给了「{leaked}」")
         self.assertIn("`view:", out.split("## 3. 当前契约与义务", 1)[1], "质询范围不在任务里了")
 
+    def test_the_first_read_range_ends_where_the_native_reference_begins(self) -> None:
+        """首读载体给出的正文行范围取自原生投影本身：末行之后紧接的是原生参考区入口与标题。"""
+        import design_kit  # noqa: PLC0415
+        draft = self.root / "doc/features" / BLUEPRINT / "blueprint/component-blueprint.review.md"
+        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        self.addCleanup(draft.unlink, True)
+        out = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer").stdout
+        carrier = out.split("# 蓝图独立质询 · 派审", 1)[1].split("````", 1)[0]
+        hit = re.search(r"第 1–(\d+) 行", carrier)
+        self.assertIsNotNone(hit, "首读载体没给正文行范围")
+        lines = draft.read_text(encoding="utf-8").splitlines()
+        end = int(hit.group(1))
+        self.assertEqual('<a id="reference"></a>', lines[end].strip())
+        self.assertTrue(lines[end + 1].startswith("## 技术与追溯参考"))
+        self.assertTrue(any(line.strip() for line in lines[:end]), "正文范围是空的")
+        self.assertNotIn("首读边界未成立", carrier)
+
+    def test_a_draft_without_one_reference_entry_has_no_first_read_boundary(self) -> None:
+        """参考区入口缺失或不唯一时不猜边界：给出问题，载体照实写首读未成立。"""
+        module = (self.root / "doc/extensions/hooks/shared/questioning.mjs").resolve().as_uri()
+        probe = ("const m = await import(process.argv[1]);"
+                 "const b = m.firstReadBoundary(process.argv[2], process.argv[3]);"
+                 "const c = m.firstReadCarrier({ draft: process.argv[3], task: 't.md', reply: 'r.md', questions: ['q'], boundary: b });"
+                 "process.stdout.write(JSON.stringify({ b, c }));")
+        anchor = '<a id="reference"></a>\n## 技术与追溯参考\n'
+        for name, body in (("missing", "# 稿\n\n正文。\n"), ("twice", f"# 稿\n\n正文。\n{anchor}参考。\n{anchor}")):
+            with self.subTest(name):
+                rel = f"draft-{name}.md"
+                (self.root / rel).write_text(body, encoding="utf-8")
+                self.addCleanup((self.root / rel).unlink, True)
+                proc = subprocess.run(["node", "--input-type=module", "-e", probe, module, str(self.root), rel],
+                                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                self.assertEqual(0, proc.returncode, proc.stderr)
+                got = json.loads(proc.stdout)
+                self.assertIn("problem", got["b"])
+                self.assertIn("首读边界未成立", got["c"])
+                self.assertNotIn("第 1–", got["c"])
+
     def test_questioning_without_a_draft_fails_without_half_a_task(self) -> None:
         proc = self.task("--blueprint", "new-thing", "--action", "questioning", "--audience", "reviewer")
         self.assertEqual(1, proc.returncode)

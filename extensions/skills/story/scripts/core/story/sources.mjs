@@ -185,7 +185,7 @@ export function originRows(ctx) {
     const pictures = g.items.flatMap(o => o.image_paths ?? []);
     if (pictures.length) {
       // 只取图的原件：一份原件一行，材料列与来源列都指它自己；图不逐张成行，说明与取舍见图片登记
-      return `- 原件 ${g.items.map(o => `\`${mdLink(o.path)}\`（${version(o)}摘要 ${digest(o)}）`).join('、')}只取图，正文不作依据：`
+      return `- 原件 ${g.items.map(o => `\`${mdLink(o.path)}\`（${version(o)}摘要 ${digest(o)}）`).join('、')}只取图，正文不作依据（导入时判定它的正文已由别的有效材料承接，依据在初析的来源初筛）：`
         + `抽出 ${pictures.length} 张（${pictures.map(p => p.split('/').pop()).join('、')}），用了哪几张、不用的理由见图片登记；`
         + '贡献写采用了哪些视觉信息，全部不用也写理由';
     }

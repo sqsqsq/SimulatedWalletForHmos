@@ -207,7 +207,8 @@ export function appendixStructureProblems(ctx, sections, viewOf) {
       if (authored ? !written && !zoned : !zoned && !rows && !notApplicableLine(body)) {
         problems.push(`「${appendixDef.title}·${want}」：${authored ? '没有内容' : '没有机器区，也没有「不涉及」结论'}`
           + (authored ? '——这一节由作者按蓝图写，段落、表或列表都可以；本需求不涉及时写一行「不涉及：<依据>」'
-            : '——这一节由 `story-build project` 从真源投影；真源里没有这类对象时写一行以「不涉及」起头的结论'));
+            : '——这一节由 `story-build project` 从蓝图投影；投影为空时按业务材料与适用知识判断本需求涉不涉及：'
+              + '涉及而蓝图没设计的回蓝图补设计再投影，确实不涉及写一行以「不涉及」起头的结论与依据'));
       }
       // 有小节登记的节（技术契约）：小节按合同的节名认，机器区投在同名小节下
       const h4 = (def?.h4 ?? []).map(h => h.title);

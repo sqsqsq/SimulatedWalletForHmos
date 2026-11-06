@@ -125,7 +125,7 @@ def verify(feature_root: Path, stored: dict) -> None:
 
 
 def add_version(stored: dict, ident: dict, version: dict) -> None:
-    """登记一个新版本（导入与直接原文首登调它）；来源第一次出现时一并登记来源。"""
+    """登记一个新版本（导入与直接原文首登调它）；来源第一次出现时一并登记来源与它的类，类此后不随新版本改。"""
     source = next((s for s in stored["sources"] if s["source_id"] == ident["source_id"]), None)
     if source is None:
         source = {"source_id": ident["source_id"], "kind": ident["kind"], "class": ident.get("class"),
@@ -133,7 +133,6 @@ def add_version(stored: dict, ident: dict, version: dict) -> None:
         stored["sources"].append(source)
     else:
         source["origin"] = ident.get("origin") or source.get("origin") or {}
-        source["class"] = ident.get("class") or source.get("class")
     source["versions"].append(version)
     stored["sources"].sort(key=lambda s: s["source_id"])
 

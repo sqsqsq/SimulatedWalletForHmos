@@ -38,16 +38,38 @@ export function nativeEightQuestions(native) {
   return questions;
 }
 
-/** 首读载体：主执行者原样作为隔离子代理的任务；只给人读稿、八问、阅读规则与之后读的任务路径。 */
-export function firstReadCarrier({ draft, task, reply, questions }) {
+//: 原生评审投影里正文与参考区的分界：锚点行紧接参考区标题（blueprint-review-projection 的渲染形状）
+const REFERENCE_ANCHOR = '<a id="reference"></a>';
+const REFERENCE_HEADING = '## 技术与追溯参考';
+
+/**
+ * 人读稿的首读范围：正文是参考区锚点之前的行。锚点缺失、不唯一或后面不是参考区标题时给 `problem`，不猜边界。
+ * @returns {{end: number} | {problem: string}}
+ */
+export function firstReadBoundary(projectRoot, draft) {
+  const lines = fs.readFileSync(path.join(projectRoot, ...draft.split('/')), 'utf8').split(/\r?\n/);
+  const at = lines.flatMap((l, i) => (l.trim() === REFERENCE_ANCHOR ? [i] : []));
+  if (at.length !== 1 || !lines[at[0] + 1]?.startsWith(REFERENCE_HEADING)) {
+    return { problem: `人读稿 \`${draft}\` 里参考区入口（\`${REFERENCE_ANCHOR}\` 紧接「${REFERENCE_HEADING.slice(3)}」）`
+      + `${at.length ? `有 ${at.length} 处或后面不是参考区标题` : '不在'}，正文的末行定不下来` };
+  }
+  return { end: at[0] };
+}
+
+/** 首读载体：主执行者原样作为隔离子代理的任务；只给人读稿及其正文行范围、八问、阅读规则与之后读的任务路径。 */
+export function firstReadCarrier({ draft, task, reply, questions, boundary }) {
+  const scope = boundary.problem
+    ? '这份人读稿取不到正文与参考区的可靠分界，本轮首读不成立：照下面八问读正文作答，回复开头写明「首读边界未成立」，'
+      + '八问答完之前不读 YAML、需求原文与质询任务，'
+    : `再只看正文（第 1–${boundary.end} 行，止于「技术与追溯参考」入口）回答下面八问，逐项指出答案所在章节和仍看不懂的位置。`
+      + `八问答完之前只读这些行：同文档第 ${boundary.end + 1} 行起的参考区、YAML、需求原文与质询任务都在答完之后读，`;
   return ['# 蓝图独立质询 · 派审', '',
     `- 当前人读稿：\`${draft}\``,
     `- 答完八问之后读的质询任务：\`${task}\``, '',
     '你是与设计作者隔离的质询者，只读，不写任何文件；你的最终回复原样存到'
       + ` \`${reply}\`。不继承派你的会话里的 YAML、设计摘要或结论。`, '',
     '## 先首读', '',
-    `先以不了解项目代码的评审人视角只读 \`${draft}\` 的首屏，复述现状、变化、结果与范围；再只看正文回答下面八问，`
-      + '逐项指出答案所在章节和仍看不懂的位置。正文止于「技术与追溯参考」入口：八问答完之前不读同文档的参考区、YAML、需求原文或质询任务，'
+    `先以不了解项目代码的评审人视角只读 \`${draft}\` 的首屏，复述现状、变化、结果与范围；${scope}`
       + '不用框架经验或作者口头解释替正文补全含义。', '',
     ...questions.map((q, i) => `${i + 1}. ${q}`), '',
     '## 再核源', '',

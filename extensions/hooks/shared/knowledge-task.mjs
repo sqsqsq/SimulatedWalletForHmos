@@ -23,7 +23,7 @@ import { blueprintKnowledge, entryOf, featureKnowledge, knowledgeContext, rolesO
 import { loadNative, readBlueprint, readFeature, readSourceFiles } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
 import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
-import { firstReadCarrier, nativeEightQuestions, questioningRound } from './questioning.mjs';
+import { firstReadBoundary, firstReadCarrier, nativeEightQuestions, questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
 import { extensionRoot, featureRoot, relDisplay } from './paths.mjs';
 import { recordUsage } from './usage.mjs';
@@ -204,9 +204,13 @@ function blueprintTask(root, id, action) {
     dispatch.push(`把本任务全文原样存到 \`${round.task}\`，被评候选的原始字节存到 \`${round.candidate}\`；`
       + `子代理的最终回复原样存到 \`${round.reply}\`。三份都一字不改。`);
     if (bp.projection?.status === 'valid') {
+      const boundary = firstReadBoundary(root, bp.projection.path);
+      if (boundary.problem) {
+        gaps.push(`${boundary.problem}：首读不成立，技术质询照本任务继续，回复披露这一点；原生投影的形状变了，交设计者核原生变更。`);
+      }
       dispatch.push('下面的首读载体原样作为宿主隔离子代理的任务交出，不增删、不附本任务正文、来源或作者判断：', '',
         '````markdown', firstReadCarrier({ draft: bp.projection.path, task: round.task, reply: round.reply,
-          questions: nativeEightQuestions(loadNative(root)) }), '````');
+          questions: nativeEightQuestions(loadNative(root)), boundary }), '````');
     } else {
       gaps.push(`人读稿 \`${bp.projection?.path ?? 'component-blueprint.review.md'}\` ${bp.projection?.status === 'missing' ? '还没生成' : '与当前 revision 对不上'}：`
         + '质询先读人读稿——设计负责方先跑原生 `check:component-blueprint --write-review --json` 渲染，再重取本任务派审。');

@@ -55,7 +55,7 @@ CLASSIFY_FILE = ".classify.json"
 RECEIPT_FILE = ".receipt.json"
 
 #: 来源的类：RR 产品需求、SR 系统设计、AR 开发需求、UX 界面材料、IMAGES 只取图的参考稿、MEETING 会议材料。
-#: `IMAGES` 是「只抽图、正文不采用」：系统上已有同类正文、这份是原稿或参考稿时走它，正文不作阅读稿。
+#: `IMAGES` 是「只抽图、正文不采用」：整份正文已由别的有效材料承接、或用户只给视觉输入时走它，正文不作阅读稿。
 #: `MEETING` 按会议版本留存（`materials/meeting.py`），读会由模型理解。
 CLASSES = ("RR", "SR", "AR", "UX", "IMAGES", "MEETING")
 #: 回执里的角色就是类
@@ -831,6 +831,25 @@ def _reading(v: dict) -> str:
     return (v.get("readable") or v["original"])["path"]
 
 
+def reclassified(stored: dict, inbox: Path, sources: list[Path], classify: dict[str, str],
+                 receipts: dict[str, dict]) -> None:
+    """已登记的来源换了类就整批不动：类是来源所有版本共用的身份，旧版本的角色与引用都按它解释。"""
+    problems = []
+    for path in sources:
+        key = source_key(inbox, path)
+        cls = class_of(key, classify, receipts)
+        if cls == "MEETING":
+            continue
+        sid = identify(inbox, path, cls, receipts)["source_id"]
+        source = next((s for s in stored["sources"] if s["source_id"] == sid), None)
+        if source and source.get("class") != cls:
+            problems.append(f"「{key}」已作为 {source.get('class')} 导入过（来源 {sid}），这次归类为 {cls}："
+                            "来源的类由它的全部版本共用，换类会改掉旧版本的角色。纠类按来源导入规则「归错了怎么改」"
+                            "先退役旧件，再把原件放到新的相对路径导入成新来源")
+    if problems:
+        raise ImportError_("这批没有导入，盘上一个字节没动：\n" + "\n".join(problems))
+
+
 def cmd_import(feature_root: Path, project_root: Path) -> dict:
     """把收件箱里还没并入的件导成材料版本，再按各类来源的最新版本重出当前阅读稿。原件留在收件箱。
 
@@ -849,6 +868,7 @@ def cmd_import(feature_root: Path, project_root: Path) -> dict:
     sources = scan_sources(inbox)
     classify = {**known_classes(stored, inbox, sources), **read_classify(inbox)}
     validate(inbox, sources, classify, receipts)
+    reclassified(stored, inbox, sources, classify, receipts)
     reused: list[dict] = []
 
     # 已留存的会议版本：转换文本缺了或被改过就按同目录原件补回来；补不成原样的明说，不重编号——引用记的是行号
