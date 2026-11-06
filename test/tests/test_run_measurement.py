@@ -882,7 +882,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             (repo / "doc/spec").mkdir(parents=True)
-            case = repo / "doc/plan/2.1.0/主题/金样候选/demo-case"
+            case = repo / "doc/plan/2.0.1/主题/金样候选/demo-case"
             feature = case / "doc/features/ISSUE-1"
             (feature / "AR").mkdir(parents=True)
             (feature / "ux-reference").mkdir()
@@ -891,7 +891,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                                                  encoding="utf-8")
             self.assertEqual([], self.stray_evidence(repo), "Story 引用的候选配图不是运行证据")
 
-            base = "doc/plan/2.1.0/主题/金样候选/demo-case/"
+            base = "doc/plan/2.0.1/主题/金样候选/demo-case/"
             (feature / "ux-reference/没人引用.png").write_bytes(b"x")
             (feature / "ux-reference/只在说明里.png").write_bytes(b"y")
             (case / "README.md").write_text("![图](doc/features/ISSUE-1/ux-reference/只在说明里.png)\n", encoding="utf-8")
@@ -901,7 +901,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
             other = case / "doc/features/ISSUE-2/ux-reference/别的需求.png"
             other.parent.mkdir(parents=True)
             other.write_bytes(b"z")
-            outside = repo / "doc/plan/2.1.0/主题/截图.png"
+            outside = repo / "doc/plan/2.0.1/主题/截图.png"
             outside.write_bytes(b"shot")
             for name in ("run.log", "原稿.docx", "包.zip", "events.jsonl"):
                 (feature / "ux-reference" / name).write_text("x", encoding="utf-8")
@@ -913,7 +913,7 @@ class ProcessArtifactsEnterTheIndex(unittest.TestCase):
                 encoding="utf-8")
             prefix = base + "doc/features/ISSUE-1/ux-reference/"
             self.assertEqual({prefix + "没人引用.png", prefix + "只在说明里.png",
-                              base + "doc/features/ISSUE-2/ux-reference/别的需求.png", "doc/plan/2.1.0/主题/截图.png",
+                              base + "doc/features/ISSUE-2/ux-reference/别的需求.png", "doc/plan/2.0.1/主题/截图.png",
                               *(prefix + n for n in ("run.log", "原稿.docx", "包.zip", "events.jsonl"))},
                              set(self.stray_evidence(repo)))
 

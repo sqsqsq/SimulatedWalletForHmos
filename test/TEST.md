@@ -480,7 +480,7 @@ python test/scripts/run_multi_case.py finalize `
 | 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
 | 全量 | `python test/scripts/verify.py full` | 需要单独看全量结论时；批末交回由 `handback` 一并跑。与交回里的全量同一个 worker 数、同一种共享前态，两轮可逐条对照 |
 | 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4；各条形态按进程并行，结果按台账顺序输出 |
-| 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑；各通道的并发上限固定在脚本里（全量 8 个 worker、失效形态 1 个进程、CLI 测试 1 个 worker、compileall 单进程；全量的 8 由 2.1.1 F05 实测定） |
+| 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑；各通道的并发上限固定在脚本里（全量 8 个 worker、失效形态 1 个进程、CLI 测试 1 个 worker、compileall 单进程；全量的 8 由 2.0.2 F05 实测定） |
 | Case 计划 | `python test/scripts/verify.py cases` | 改了 Case 或多 Case 编排时：全部 Case 出计划，并行数取 Case 数 |
 | 装配专项 | `python test/scripts/verify.py assembly` | 第二次从空目录经同一入口重建工作区模板，身份核对与第一次相同。`test/config/framework-under-test.json`、`test/fixtures/framework-local/` 补丁或 `create_workspace_template` 装配代码相对上次专项证据有变时必跑，交回引用该次 `output/verify/<时刻>-assembly/`；没变时复用上次证据并写明被测 Framework 与补丁的身份。全量只保留一次当前装配与协议核对，不选这一类 |
 

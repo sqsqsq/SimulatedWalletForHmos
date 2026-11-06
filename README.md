@@ -37,7 +37,7 @@ Story Extension 是挂在 AgentMaison Framework 上的需求开发流程：从�
 
 维护者的概念入口是[GLOSSARY](GLOSSARY.md)，重要取舍与历史索引见[项目演进记录](doc/EVOLUTION.md)。
 
-维护者从[2.1.0 范围](doc/spec/2.1.0/00-版本范围.md)和[整版方案](doc/plan/2.1.0/2026-10-28-2.x适配收敛/00-实施方案.md)继续工作；1.9.0–1.9.9 各版的 spec、plan 与发布说明在 `doc/spec/`、`doc/plan/`、`doc/release/` 的版本位置，旧 2.x spec/plan 在[归档区](doc/archive/README.md)。main 的新版 Framework 已完成[身份与合同核对](doc/plan/2.0.0/参考/11-最新输入与调查依据.md)，产品源码已按新版 Framework 合同（蓝图 → 独立 Story → 施工单位）实施，未发布、未经真实验证；demo 尚未切换。
+维护者从[当前版本规划](doc/spec/版本规划.md)、[2.0.3范围](doc/spec/2.0.3/00-版本范围.md)与[集中收敛方案](doc/plan/2.0.3/2026-11-06-机制集中收敛/00-实施方案.md)继续：开发源为2.0.2，本轮CLI仍有内容与接续缺口；2.0.3仅完成设计，尚未实施或发布。原2.1.0/2.1.1资料已对应更名2.0.1/2.0.2，原始运行身份保持。1.x及本轮各版资料在doc/spec、doc/plan、doc/release；旧试验2.x见[归档区](doc/archive/README.md)，demo不随维护编号更正更新。
 
 ### 2.1 命令
 
