@@ -1217,6 +1217,7 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         return {**item, "conclusions": got["story_review_conclusions"]}
 
     def report(self, conclusion: str) -> str:
+        """已保全的 2.0.2 及以前运行记录里的报告形态（只读识别）。"""
         return (f"material_key: {self.KEY}\n\n## 判据核对\n\n| 判据 ID | 结果 | 依据 |\n|---|---|---|\n| story_reader_review | fail | 口径冲突 |\n\n"
                 "## 发现\n\n| 编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任 |\n|---|---|---|---|---|---|\n"
                 f"| F1 | MAJOR | story_reader_review | AR/story.md | 转化率分子分母冲突 | 设计 |\n\n## 总体结论\n\n{conclusion}\n")
@@ -1227,6 +1228,22 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         self.assertEqual(("finished", "fail"), (got["settled"], got["review_conclusion"]["value"]))
         self.assertEqual({"child_id": "k-review", "settled_time": 11 * 60000, "reply_line": 17}, got["review_conclusion"]["at"])
         self.assertEqual({"fail": 1}, got["conclusions"])
+
+    def current_report(self, kind: str, conclusion: str) -> str:
+        return (f"material_key: {self.KEY}\n\n## 审查范围与依据\n\n复核：按影响核了口径冲突。\n\n```yaml\nreview_scope:\n"
+                f"  kind: {kind}\n  basis_report: null\n  unreviewed: []\n  additional_inputs: []\n```\n\n"
+                "## 发现\n\n| 编号 | 严重程度 | 材料位置 | 问题与依据 | 修正责任 |\n|---|---|---|---|---|\n"
+                f"| F1 | MAJOR | AR/story.md | 转化率分子分母冲突 | 设计 |\n\n## 总体结论\n\n{conclusion}\n")
+
+    def test_the_current_report_gives_its_conclusion_and_scope(self) -> None:
+        """现行报告形态：结论照第一行读，范围声明的 full / focused 一并记下。"""
+        got = self.review(self.current_report("focused", "fail\n\n理由：存在 1 条 MAJOR。"))["review_conclusion"]
+        self.assertEqual(("fail", "focused", None), (got["value"], got["scope"], got["why"]))
+
+    def test_a_recorded_report_has_no_scope(self) -> None:
+        """历史记录里的旧标题照样读出结论，没有范围声明可读，范围记 None。"""
+        got = self.review(self.report("fail\n\n理由。"))["review_conclusion"]
+        self.assertEqual(("fail", None), (got["value"], got["scope"]))
 
     def test_a_reply_that_is_not_the_whole_report_is_unknown(self) -> None:
         """收尾回复只是摘要（正文里写着「总体结论：warn」）、材料键不是派出去的那一份：都判不了，不从字样推断。"""

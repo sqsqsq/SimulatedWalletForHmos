@@ -151,6 +151,19 @@ class TheStoryIsReviewedRegisteredAndDeliveredCase(unittest.TestCase):
     def prepared(self) -> dict:
         return json.loads((self.flow_path.parent / "review" / "prepared.json").read_text(encoding="utf-8"))
 
+    @staticmethod
+    def scoped(key, value):
+        """改审查者范围声明 review_scope 下的一项（JSON 写法）。"""
+        def mutate(text: str) -> str:
+            line = next(l for l in text.splitlines() if l.startswith(f"  {key}: "))
+            return text.replace(line, f"  {key}: " + json.dumps(value, ensure_ascii=False))
+        return mutate
+
+    def current_context(self):
+        """当前回复位置派审时记下的前轮上下文（准备记录按回复位置保留）。"""
+        record = self.prepared()
+        return record["review_contexts"][record["report_file"]]
+
     def tree(self) -> dict:
         return {p.relative_to(self.root).as_posix(): p.read_bytes()
                 for p in (self.root / "doc").rglob("*") if p.is_file()}
@@ -335,7 +348,7 @@ class TheReportIsCheckedReadOnly(TheStoryIsReviewedRegisteredAndDeliveredCase):
                 reply = self.reviewed(kind)
                 self.assertEqual(want, self.result()["result"])
                 kept = reply.read_bytes()
-                rewritten = kept.decode("utf-8").replace("逐章对着来源读过", "逐章读过").encode("utf-8")
+                rewritten = kept.decode("utf-8").replace("对着业务来源与人签通读了", "通读了").encode("utf-8")
                 self.assertNotEqual(kept, rewritten, "夹具变了，用例要跟着改")
                 reply.write_bytes(rewritten)
                 self.assertEqual("report_invalid", self.result()["result"], "接收后原位改写的回复仍被当作结论")
@@ -407,11 +420,10 @@ class TheReportIsCheckedReadOnlyPart3(TheStoryIsReviewedRegisteredAndDeliveredCa
             "引用 YAML 材料": ("advice", lambda t: t.replace(f"`{story}`", f"`{self.blueprint_path()}`"), "warn"),
             "带章节定位的真实路径": ("advice", lambda t: t.replace(f"`{story}`", f"`{story}#背景`"), "warn"),
             "引用不存在的副本": ("advice", lambda t: t.replace(f"`{story}`", f"`{story}.bak`"), "report_invalid"),
-            "发现表缺分隔行，MAJOR 不能被当成分隔行丢掉": ("major", lambda t: t.replace("|---|---|---|---|---|---|\n", "")
-                                                 .replace("| story_reader_review | fail |", "| story_reader_review | pass |")
+            "发现表缺分隔行，MAJOR 不能被当成分隔行丢掉": ("major", lambda t: t.replace("|---|---|---|---|---|\n", "")
                                                  .replace("fail：", "pass："), "report_invalid"),
             "发现行少一列": ("advice", lambda t: t.replace(" 作者把依据移到结论之前 |", ""), "report_invalid"),
-            "总体结论不在第一行": ("pass", lambda t: t.replace("pass：按判据与发现判定。", "说明见下。\npass：按判据与发现判定。"),
+            "总体结论不在第一行": ("pass", lambda t: t.replace("pass：按发现判定。", "说明见下。\npass：按发现判定。"),
                           "report_invalid"),
         }
         self.replies(cases)
@@ -464,7 +476,7 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertEqual("report_invalid", diagnosis["result"])
         out = self.prepare()
         self.assertNotEqual(first, self.root / out["report_file"], "坏回复的位置被拿来写新回复")
-        context = self.prepared()["review_context"]
+        context = self.current_context()
         self.assertEqual(("format_repair", first.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
         self.assertEqual(diagnosis["detail"], context["diagnostic"]["detail"])
         self.assertIn(diagnosis["detail"].splitlines()[0], self.context_text(), "诊断没原样进前轮上下文")
@@ -477,7 +489,7 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertEqual("report_invalid", self.result()["result"], "接收之后诊断不见了")
         again = self.prepare()
         self.assertEqual(out["report_file"], again["report_file"], "同一次返修再准备，回复位置递增了")
-        self.assertEqual(context, self.prepared()["review_context"], "再准备丢了返修上下文")
+        self.assertEqual(context, self.current_context(), "再准备丢了返修上下文")
         self.assertEqual(kept, first.read_bytes(), "原回复被改了")
         self.answer("pass")
         self.assertEqual("pass", self.result()["result"])
@@ -500,7 +512,7 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         again = self.prepare()
         self.assertEqual(out["report_file"], again["report_file"], "换了回复位置")
         self.assertFalse(again["reused"], "改过的原回复被当成通过复用了")
-        context = self.prepared()["review_context"]
+        context = self.current_context()
         self.assertEqual(("fresh_review", first.relative_to(self.root).as_posix()),
                          (context["kind"], context["damaged"]["report_file"]))
         self.assertIn("原件已被改动", self.context_text())
@@ -514,7 +526,7 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
     def test_a_failed_review_is_rechecked_with_its_report(self) -> None:
         failed = self.reviewed("block")
         out = self.prepare()
-        context = self.prepared()["review_context"]
+        context = self.current_context()
         self.assertEqual(("recheck", failed.relative_to(self.root).as_posix()), (context["kind"], context["report_file"]))
         self.assertIn("F-1", self.context_text(), "失败报告的阻断结论没进前轮上下文")
         self.assertNotIn("F-1", out["dispatch_text"], "阻断结论又进了首读载体")
@@ -534,6 +546,7 @@ const src = path.join(root, 'doc', 'features', feature, 'AR', 'story-src');
 const story = path.join(src, '..', 'story.md');
 const ctx = () => createContext({ feature, projectRoot: root });
 const prepared = () => JSON.parse(fs.readFileSync(path.join(src, 'review', 'prepared.json'), 'utf8'));
+const contextOf = () => { const p = prepared(); return p.review_contexts[p.report_file] ?? null; };
 const contextText = () => { try { return fs.readFileSync(path.join(src, 'review', 'context.md'), 'utf8'); } catch { return ''; } };
 const prepare = () => { const out = ir.prepareReview(ctx()); if (out.error) throw new Error(out.error); return out; };
 const check = () => ir.reviewResult(ctx());
@@ -576,9 +589,9 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         change('换成新材料的一句。');
         const out = prepare();
         seen.out = {{ report_file: out.report_file, reused: out.reused, material_key: out.material_key, dispatch_text: out.dispatch_text }};
-        seen.context = prepared().review_context; seen.originals = prepared().originals;
+        seen.context = contextOf(); seen.originals = prepared().originals;
         seen.afterChange = check().result; seen.contextText = contextText();
-        seen.again = prepare().report_file; seen.againContext = prepared().review_context;
+        seen.again = prepare().report_file; seen.againContext = contextOf();
         seen.keptAfter = bytes(seen.old);
         answer('pass'); prepare(); seen.final = check().result;
         """)
@@ -611,7 +624,7 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         const file = path.join(root, seen.old);
         fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('MINOR', 'INFO'));
         seen.altered = check().result;
-        seen.again = prepare().report_file; seen.context = prepared().review_context;
+        seen.again = prepare().report_file; seen.context = contextOf();
         seen.final = check().result;
         """)
         self.assertEqual("input_invalid", got["altered"], "派审带出的旧报告被改，没被认出来")
@@ -624,12 +637,12 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         got = self.sequence("""
         change('B 的一句。');
         const b = prepare();
-        seen.b = { context: prepared().review_context ?? null, text: contextText(), dispatch: b.dispatch_text };
+        seen.b = { context: contextOf(), text: contextText(), dispatch: b.dispatch_text };
         answer('pass'); prepare();
         change('C 的一句。'); prepare();
         change('D 的一句。');
         const d = prepare();
-        seen.d = { context: prepared().review_context ?? null, text: contextText(), dispatch: d.dispatch_text };
+        seen.d = { context: contextOf(), text: contextText(), dispatch: d.dispatch_text };
         """)
         for name, why in (("b", "前一份回复不在，却带了参考"), ("d", "C 还没回复，D 却追溯了 B 的报告")):
             self.assertIsNone(got[name]["context"], why)
@@ -642,9 +655,9 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         seen.failed = answer('block'); prepare();
         const a = fs.readFileSync(story);
         change('B 的一句。'); prepare();
-        seen.b = prepared().review_context.kind;
+        seen.b = contextOf().kind;
         fs.writeFileSync(story, a); prepare();
-        seen.context = prepared().review_context; seen.result = check().result;
+        seen.context = contextOf(); seen.result = check().result;
         """)
         self.assertEqual("prior_revision", got["b"])
         self.assertEqual(("recheck", got["failed"]), (got["context"]["kind"], got["context"]["report_file"]))
@@ -660,7 +673,7 @@ class ChangedMaterialCarriesThePriorReport(TheStoryIsReviewedRegisteredAndDelive
         answer('pass'); prepare(); seen.b = check().result;
         fs.writeFileSync(story, a);
         seen.out = prepare().report_file;
-        seen.context = prepared().review_context; seen.text = contextText(); seen.keptAfter = bytes(seen.bad);
+        seen.context = contextOf(); seen.text = contextText(); seen.keptAfter = bytes(seen.bad);
         """)
         self.assertEqual("report_invalid", got["diagnostic"]["result"])
         self.assertEqual("pass", got["b"])
@@ -804,15 +817,6 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, out.returncode, out.stdout + out.stderr)
 
-    @staticmethod
-    def examined(change):
-        """改审查者覆盖声明里 examined_inputs 那一行（JSON 列表）。"""
-        def mutate(text: str) -> str:
-            line = next(l for l in text.splitlines() if l.startswith("  examined_inputs: "))
-            listed = change(json.loads(line.split(": ", 1)[1]))
-            return text.replace(line, "  examined_inputs: " + json.dumps(listed, ensure_ascii=False))
-        return mutate
-
     def task_text(self) -> str:
         return (self.root / self.prepare()["task"]).read_text(encoding="utf-8")
 
@@ -836,7 +840,8 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         story = f"{self.FEATURE}/AR/story.md"
         extra = f"{self.FEATURE}/RR/上游补充说明.md"
         relocate = lambda t: t.replace(f"`{story}`", f"`{extra}`")  # noqa: E731
-        self.reviewed("advice", lambda t: self.examined(lambda xs: [*xs, extra])(relocate(t)))
+        declared = self.scoped("additional_inputs", [{"path": extra, "purpose": "核上游补充说明的原话"}])
+        self.reviewed("advice", lambda t: declared(relocate(t)))
         self.assertEqual("warn", self.result()["result"], "声明过的额外取证不能当作坏引用")
         self.fresh()
         self.reviewed("advice", relocate)
@@ -873,11 +878,12 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         edited = task.split(f"`{edited_rel}`", 1)[1].split("\n", 1)[0]
         self.assertIn("内容不同，单独核读", edited)
         self.assertNotIn("同一内容", edited)
-        self.fresh()
-        self.reviewed("pass", self.examined(lambda xs: [x for x in xs if x != edited_rel]))
-        got = self.result()
-        self.assertEqual("report_invalid", got["result"], "内容不同的落点被别名顶替了")
-        self.assertIn(edited_rel, got["detail"])
+        story = f"{self.FEATURE}/AR/story.md"
+        for where in (copy_rel, edited_rel):
+            with self.subTest(landing=where):
+                self.fresh()
+                self.reviewed("advice", lambda t, where=where: t.replace(f"`{story}`", f"`{where}`"))
+                self.assertEqual("warn", self.result()["result"], "落点不算这一次的审查材料")
 
     def test_a_binary_origin_is_checked_not_read(self) -> None:
         import hashlib
@@ -897,7 +903,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertIn(f"`{rel}` —— 原件 {docx_rel}（核在场与来源摘要，正文读它的阅读稿）　（核在场与来源摘要，不必通读）",
                       self.task_text())
         self.fresh()
-        self.reviewed("pass", self.examined(lambda xs: [x for x in xs if x != rel]))
+        self.reviewed("pass")
         self.assertEqual("pass", self.result()["result"], "只核在场的二进制原件被当成必读")
         docx.write_bytes(b"PK\x03\x04 another version")
         out = self.review("prepare")
@@ -923,6 +929,103 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         self.assertEqual("pass", self.result()["result"])
         self.put({"SR/design.md": ("# 系统设计\n\n续期改为按季。\n".encode("utf-8"), "SR")})
         self.assertEqual("subject_stale", self.result()["result"])
+
+
+class TheReportStatesWhatItReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """Standalone 报告的范围声明：必要未核不能通过；focused 只在有可信前轮依据的复核里成立，依据按这份回复自己派审时的上下文核；
+    复核上下文按回复位置保留，复用与历史报告不借当前材料重裁。"""
+
+    STORY = "doc/features/REQ-DEMO/AR/story.md"
+
+    def focused_on(self, basis: str):
+        return lambda t: self.scoped("basis_report", basis)(self.scoped("kind", "focused")(t))
+
+    def test_a_needed_input_left_unreviewed_cannot_pass(self) -> None:
+        unread = self.scoped("unreviewed", [{"check": "会议话题的去向", "reason": "会议原文读不到"}])
+        self.replies({
+            "未核却写 pass": ("pass", unread, "report_invalid"),
+            "未核路径不是这次的材料": ("pass", lambda t: self.scoped("unreviewed", [{"path": "doc/other/notes.md", "reason": "读不到"}])(t)
+                                  .replace("pass：按发现判定。", "fail：有材料没核到。"), "report_invalid"),
+        })
+        self.fresh()
+        self.reviewed("pass", lambda t: unread(t).replace("pass：按发现判定。", "fail：会议话题的去向没核到。"))
+        got = self.result()
+        self.assertEqual("fail", got["result"])
+        self.assertIn("未核 会议话题的去向", got["detail"])
+
+    def test_a_first_review_is_full(self) -> None:
+        """首审没有前轮依据：focused 不成立，basis 指哪份都不行。"""
+        self.replies({
+            "首审写 focused": ("pass", self.focused_on(self.STORY), "report_invalid"),
+            "full 却给了依据": ("pass", self.scoped("basis_report", self.STORY), "report_invalid"),
+            "四个键缺一个": ("pass", lambda t: t.replace('  additional_inputs: []\n', ''), "report_invalid"),
+            "没写自然段": ("pass", lambda t: t.split("## 审查范围与依据\n", 1)[0] + "## 审查范围与依据\n\n```yaml"
+                          + t.split("```yaml", 1)[1], "report_invalid"),
+        })
+        self.fresh()
+        reply = self.reviewed("pass", self.focused_on(self.STORY))
+        self.assertIn("focused 不成立", self.result()["detail"])
+        self.assertTrue(reply.is_file())
+
+    def test_a_recheck_may_focus_on_the_failed_report(self) -> None:
+        failed = self.reviewed("block").relative_to(self.root).as_posix()
+        self.assertEqual("recheck", self.current_context()["kind"])
+        self.assertIn(f"basis_report 写 `{failed}`", self.context_text())
+        self.reply_with(self.focused_on("doc/features/REQ-DEMO/AR/review.md"))
+        got = self.result()
+        self.assertEqual("report_invalid", got["result"], "依据指了别的文件也被接受")
+        self.assertIn(f"basis_report 要写这份回复派审时的依据报告 {failed}", got["detail"])
+        self.prepare()
+        self.answer_with(self.focused_on(failed))
+        self.assertEqual("pass", self.result()["result"])
+        self.prepare()
+        self.assertTrue(self.prepared()["reused"])
+        self.assertEqual("pass", self.result()["result"], "复用之后这份回复派审时的依据丢了")
+
+    def test_a_format_repair_keeps_the_scope_of_the_report_it_repairs(self) -> None:
+        """复审时写的 focused 报告格式不合 → 格式返修：新回复沿原依据写 focused 也成立；首审的格式返修不能借此写 focused。"""
+        failed = self.reviewed("block").relative_to(self.root).as_posix()
+        self.prepare()
+        self.reply_with(lambda t: self.focused_on(failed)(t).replace("## 发现", "## 发现与建议"))
+        self.assertEqual("report_invalid", self.result()["result"])
+        self.prepare()
+        self.assertEqual("format_repair", self.current_context()["kind"])
+        self.answer_with(self.focused_on(failed))
+        self.assertEqual("pass", self.result()["result"], "格式返修沿用被补报告的依据却被拒")
+        self.fresh()
+        self.replied("pass", lambda _t: "看过了。\n")
+        self.prepare()
+        self.reply_with(self.focused_on(self.STORY))
+        self.assertIn("focused 不成立", self.result()["detail"], "首审的格式返修借来了 focused")
+
+    def test_a_lost_context_record_is_an_input_fault(self) -> None:
+        self.reviewed("pass")
+        record = self.flow_path.parent / "review" / "prepared.json"
+        data = self.prepared()
+        del data["review_contexts"]
+        record.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual("input_invalid", self.result()["result"], "丢了复核上下文的记录被当成首审")
+
+    def test_an_earlier_material_failure_is_read_on_its_own_terms(self) -> None:
+        """A 的阻断落在一份只属于 A 的材料上，回复到了还没接收就转到 B：A 的 fail 按它自己的形状读出，成为 B 的已知必修。"""
+        note = self.flow_path.parent / "template-adjustments.md"
+        note.write_text("把流程章拆成两节。\n", encoding="utf-8")
+        where = note.relative_to(self.root).as_posix()
+        failed = self.replied("block", lambda t: t.replace(f"`{self.STORY}`", f"`{where}`")).relative_to(self.root).as_posix()
+        self.assertNotIn("unresolved_fail", self.prepared(), "夹具前提变了：A 的阻断还没经接收记成已知必修")
+        note.unlink()
+        self.prepare()
+        self.assertEqual(failed, self.prepared()["unresolved_fail"]["report_file"], "上一版的阻断被这一版的材料表重裁丢了")
+
+    def reply_with(self, mutate) -> None:
+        """审查者按当前派审载体回复（经 `mutate` 改），还没接收。"""
+        reply = design_kit.write_review(self.root, "REQ-DEMO", "pass")
+        reply.write_text(mutate(reply.read_text(encoding="utf-8")), encoding="utf-8")
+
+    def answer_with(self, mutate) -> None:
+        """审查者按当前派审载体回复（经 `mutate` 改），主执行者接收。"""
+        self.reply_with(mutate)
+        self.receive()
 
 
 class ABrokenPreparationRecordIsAnInputFault(TheStoryIsReviewedRegisteredAndDeliveredCase):
@@ -1017,7 +1120,7 @@ class TheDesignReferenceIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDel
         self.assertEqual(0, self.review("prepare").returncode)
         reading = self.reading().strip()
         head, order = reading.split("\n\n1. ", 1)
-        for words in ("格式返修", "照用", "完整读", "缺判据"):
+        for words in ("格式返修", "照用", "完整读", "缺依据"):
             self.assertIn(words, head)
         self.assertNotRegex(order, r"(?m)^5\. ", "格式返修又成了末尾的例外条")
         self.assertEqual(1, reading.count("格式返修"), "范围说明不止一处")
@@ -1262,17 +1365,16 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         return json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
 
     def review(self, kind: str) -> dict:
-        """准备审查、夹具审查者回复，再把图从读过的挪进没读到的（写能力缺口原因）；返回核对结果。
-        同一张图的冻结副本与当前文件同字节，是同一份必审，一起挪。"""
+        """准备审查、夹具审查者回复，并把任务材料表里的这张图写进未核项（写能力缺口原因）；返回核对结果。
+        同一张图的冻结副本与当前文件同字节，按规范路径算一份。"""
         prepared = self.run_node("review", "--action", "prepare")
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         report = design_kit.write_review(self.root, "REQ-DEMO", kind)
         text = report.read_text(encoding="utf-8")
-        line = next(l for l in text.splitlines() if l.startswith("  examined_inputs: "))
-        examined = json.loads(line.split(": ", 1)[1])
-        moved = [e for e in examined if re.search(r"/home\.[0-9a-f]{16}\.png$", e)]
-        self.assertTrue(moved, f"夹具没有要挪的图：{examined}")
-        text = text.replace(line, "  examined_inputs: " + json.dumps([e for e in examined if e not in moved], ensure_ascii=False))
+        task = (self.root / "doc/features/REQ-DEMO/AR/story-src/review/task.md").read_text(encoding="utf-8")
+        listed = re.findall(r"^- `([^`]+)` —— ", task.split("### 本次审查的材料", 1)[1].split("\n### ", 1)[0], re.M)
+        moved = [e for e in listed if re.search(r"/home\.[0-9a-f]{16}\.png$", e)]
+        self.assertTrue(moved, f"夹具没有要写进未核项的图：{listed}")
         text = text.replace("  unreviewed: []", "  unreviewed: " + json.dumps(
             [{"path": e, "reason": "宿主看不了图，图面未核"} for e in moved], ensure_ascii=False))
         report.write_text(text, encoding="utf-8")
@@ -1298,7 +1400,7 @@ class TheVisualRulingIsTheNativeRouting(unittest.TestCase):
         self.make(hard=True)
         got = self.review("advice")
         self.assertEqual("report_invalid", got["result"], got)
-        self.assertIn("必审输入却有没核完的", got["detail"])
+        self.assertIn("按发现与未核项应为 fail", got["detail"])
 
     def test_a_missing_picture_is_not_a_capability_gap(self) -> None:
         """登记的那张图盘上没了：审查对象不成立，不按「看不了图」放行。"""
@@ -1468,14 +1570,14 @@ class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
 
 class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
     def test_an_open_choice_is_judged_against_the_current_objects(self) -> None:
-        """仍开着的选择在逐章核查之前、按判据「核的先后」①对着本次 Story、Review 与蓝图判，结论写进报告的审查方法；不要求读 Spec。"""
+        """仍开着的选择在逐章核查之前、按判据「核的先后」①对着本次 Story、Review 与蓝图判，结论写进报告「审查范围与依据」；不要求读 Spec。"""
         src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
         (src / "decisions.json").write_text(json.dumps({"decisions": [{
             "id": "D1", "status": "open", "title": "超时由谁释放", "decider": "需求负责人",
             "clarification": "**要定的事**：超时由谁释放。"}]}, ensure_ascii=False), encoding="utf-8")
         task = self.inject()
         section = task.split("### 先核：仍开着的选择", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("「判据核对」表后的审查方法", section)
+        self.assertIn("写在「审查范围与依据」里", section)
         self.assertIn("在「发现」表记一条", section)
         self.assertIn("「核的先后」①", section)
         for gone in ("Spec", "acceptance.yaml", "证据格"):
@@ -1488,8 +1590,8 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
         self.assertIn("story_reader_review", text)
         self.assertIn("### 判据", text)
 
-    def test_every_registered_criterion_is_sent_and_required(self) -> None:
-        """判据文件登记几项，任务就发几项、报告就核几项：两边读的是同一份，不靠「现在只有一条」。"""
+    def test_every_registered_criterion_is_sent(self) -> None:
+        """判据文件登记几项，任务就发几项：读的是同一份，不靠「现在只有一条」。"""
         rules = self.root / "doc/extensions/rules/story-reader-rules.yaml"
         rules.write_text(rules.read_text(encoding="utf-8").rstrip("\n") + "\n  neutral_second_criterion:\n"
                          "    description: 第二条中性判据的说明。\n    severity: MAJOR\n"
@@ -1498,11 +1600,6 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
         for needle in ("### 判据 story_reader_review（BLOCKER）", "### 判据 neutral_second_criterion（MAJOR）",
                        "第二条中性判据的说明。", "第二条判据怎么审。"):
             self.assertIn(needle, text)
-        module = self.root / "doc/extensions/hooks/shared/reader-review-task.mjs"
-        ids = subprocess.run(["node", "--input-type=module", "-e",
-                              "const m = await import(process.argv[1]); process.stdout.write(JSON.stringify(m.readerCheckIds()));",
-                              module.resolve().as_uri()], capture_output=True, text=True, encoding="utf-8", timeout=60)
-        self.assertEqual(["story_reader_review", "neutral_second_criterion"], json.loads(ids.stdout))
 
     def test_the_spec_phase_no_longer_carries_the_story_review(self) -> None:
         """Story 的判据只在自己的位置：spec 阶段的审查任务里不再有它。"""
@@ -1560,7 +1657,7 @@ class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
     def test_the_task_really_carries_the_method(self) -> None:
         """正常路径的证据：审查者手上的任务里有这份方法——判据原文随任务送达。"""
         task = self.inject()
-        for needle in ("跨章对着读", "阻断发现", "**建议**", "不许空", "按实际关系判"):
+        for needle in ("跨章对着读", "阻断发现", "**建议**", "空着与没审同形", "按实际关系判"):
             self.assertIn(needle, task, f"审查任务里没有「{needle}」")
 
 
@@ -1602,7 +1699,7 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         """
         method = self.overlay_method()
         for needle in ("总览与局部加起来", "端到端过程", "分支去向", "理由成不成立",
-                       "跨章对着读", "阻断发现", "**建议**", "不许空"):
+                       "跨章对着读", "阻断发现", "**建议**", "空着与没审同形"):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
         source = (self.root / "doc/extensions/hooks/shared/reader-review-task.mjs").read_text(encoding="utf-8")
         for needle in ("总览与局部加起来", "端到端过程", "跨章对着读"):
@@ -1663,18 +1760,18 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
                           f"「{chapter['title']}」的读者问题没送到")
 
     def test_the_output_contract_lives_with_the_method(self) -> None:
-        """结论写成 Story 报告：阻断与建议各进「发现」的哪几级、证据写在哪、没有发现怎么写，与方法同处一份。
+        """结论按「报告怎么写」写：阻断与建议各进「发现」的哪几级、工作与依据写在哪、没有发现怎么写，与方法同处一份。
 
         输出要求与判据分在两个文件时，改一处就对不上；任务书的「报告怎么写」给章节与表头。
         """
         method = self.overlay_method()
-        for needle in ("Story 报告", "不许空", "阻断发现", "**建议**", "「发现」", "只留表头"):
+        for needle in ("报告怎么写", "空着与没审同形", "阻断发现", "**建议**", "「发现」", "只留表头"):
             self.assertIn(needle, method)
         for gone in ("汇总表", "YAML 明细", "为标记的一块"):
             self.assertNotIn(gone, method, f"旧的输出契约「{gone}」还在")
         task = self.inject()
-        for needle in ("### 报告怎么写", "`material_key:", "`判据 ID | 结果 | 依据`",
-                       "`编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任`"):
+        for needle in ("### 报告怎么写", "`material_key:", "`review_scope:`",
+                       "`编号 | 严重程度 | 材料位置 | 问题与依据 | 修正责任`"):
             self.assertIn(needle, task)
 
     def test_the_index_names_a_missing_required_source(self) -> None:

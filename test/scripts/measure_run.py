@@ -758,8 +758,11 @@ CLOSING_MESSAGE = "Its closing message:\n"
 CARRIER_KEY_RE = re.compile(r"^- 材料键：`([0-9a-f]{64})`", re.MULTILINE)
 REPLY_KEY_RE = re.compile(r"^material_key: *([0-9a-f]{64}) *$", re.MULTILINE)
 #: 产品报告合同的三个二级标题（review-report-contract.mjs 的 REPORT_HEADINGS）
-REPORT_HEADINGS = ("判据核对", "发现", "总体结论")
+REPORT_HEADINGS = ("审查范围与依据", "发现", "总体结论")
+#: 已保全的 2.0.2 及以前运行记录里的报告标题：只读识别历史记录，产品不再接收这种形态
+RECORDED_REPORT_HEADINGS = ("判据核对", "发现", "总体结论")
 STATED_RE = re.compile(r"^(pass|warn|fail)(?![A-Za-z])")
+SCOPE_KIND_RE = re.compile(r"^\s*kind:\s*(full|focused)\b", re.MULTILINE)
 
 
 def _review_conclusion(prompt: str, done: dict | None) -> dict:
@@ -768,6 +771,7 @@ def _review_conclusion(prompt: str, done: dict | None) -> dict:
     只做结构提取：回复恰好一行材料键且是派出去的那一份、三个二级标题各恰好一个、「总体结论」第一行是 pass / warn / fail。
     任何一条不成立都是 unknown 并写明原因——不从正文里的 fail 字样推断，也不把收尾 finished 当通过；
     报告是否合合同、结论与发现是否一致仍归产品的 `review --action check` 与独立评审。
+    `scope` 是新形态报告声明的 full / focused（声明读不清为 unknown）；按旧标题识别的历史记录没有这一项，为 None。
     """
     def unknown(why: str) -> dict:
         return {"value": "unknown", "why": why, "at": None}
@@ -783,8 +787,9 @@ def _review_conclusion(prompt: str, done: dict | None) -> dict:
         return unknown("回复的材料键对不上派出去的审查对象")
     lines = reply.splitlines()
     heads = [(i, line[3:].strip()) for i, line in enumerate(lines) if line.startswith("## ")]
-    if sorted(h for _, h in heads if h in REPORT_HEADINGS) != sorted(REPORT_HEADINGS) \
-            or len([h for _, h in heads if h in REPORT_HEADINGS]) != len(REPORT_HEADINGS):
+    shape = next((want for want in (REPORT_HEADINGS, RECORDED_REPORT_HEADINGS)
+                  if sorted(h for _, h in heads if h in want) == sorted(want)), None)
+    if shape is None:
         return unknown("回复的二级标题不是报告合同的三节各一个")
     start = next(i for i, h in heads if h == "总体结论")
     end = next((i for i, _ in heads if i > start), len(lines))
@@ -792,7 +797,13 @@ def _review_conclusion(prompt: str, done: dict | None) -> dict:
     stated = STATED_RE.match(first[1]) if first else None
     if not stated:
         return unknown("「总体结论」第一行不是 pass / warn / fail")
-    return {"value": stated.group(1), "why": None,
+    scope = None
+    if shape is REPORT_HEADINGS:
+        at = next(i for i, h in heads if h == REPORT_HEADINGS[0])
+        stop = next((i for i, _ in heads if i > at), len(lines))
+        kinds = SCOPE_KIND_RE.findall("\n".join(lines[at + 1:stop]))
+        scope = kinds[0] if len(kinds) == 1 else "unknown"
+    return {"value": stated.group(1), "why": None, "scope": scope,
             "at": {"child_id": done.get("childId"), "settled_time": done.get("time"), "reply_line": first[0] + 1}}
 
 

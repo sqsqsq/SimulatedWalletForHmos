@@ -187,14 +187,3 @@ def cover_report(text: str, root: Path, feature: str, purpose: str = "story") ->
         ind = m.group(1)
         return f"{ind}examined_inputs:\n" + "".join(f"{ind}  - {p}\n" for p in paths) if paths else m.group(0)
     return re.sub(r"(?m)^([ \t]*)examined_inputs: \[\]\n", listed, text)
-
-
-def reader_review_details(root: Path, feature: str, status: str = "PASS",
-                          blocking: tuple[str, ...] = ()) -> str:
-    """一条合规的 `story_reader_review` 明细：四个键齐全，必审集合逐份列进 examined_inputs。"""
-    findings = "".join(f"          - {b}\n" for b in blocking)
-    return cover_report("\n```yaml\nverification_result:\n  checks:\n    - id: story_reader_review\n"
-                        f"      status: {status}\n      details:\n"
-                        + (f"        blocking_findings:\n{findings}" if findings else "        blocking_findings: []\n")
-                        + "        advisories: []\n        examined_inputs: []\n        unreviewed: []\n```\n",
-                        root, feature)

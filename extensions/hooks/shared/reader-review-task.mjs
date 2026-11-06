@@ -98,7 +98,7 @@ function decisionRows(decisionsPath) {
   const open = all.filter(d => d?.status === 'open');
   const settled = all.filter(d => d?.status === 'settled');
   const out = ['', '### 先核：仍开着的选择与正文的冲突（逐章核查之前做）', '',
-    open.length ? '按判据「核的先后」①逐条给结论，写在「判据核对」表后的审查方法里；替人选了一边的同时在「发现」表记一条。'
+    open.length ? '按判据「核的先后」①逐条给结论，写在「审查范围与依据」里；替人选了一边的同时在「发现」表记一条。'
       : '本轮没有仍开着的条目。'];
   for (const d of open) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
@@ -217,11 +217,6 @@ function readerChecks() {
   return checks;
 }
 
-/** 报告「判据核对」要逐项写的判据 ID：与任务发送的是同一份判据。 */
-export function readerCheckIds() {
-  return readerChecks().map(([id]) => id);
-}
-
 /**
  * 这一次审查对象的全部材料：待审的与只读对照的分列；任务自己不列（它就是这份）。
  * 只核在场与来源摘要的行注明不必通读；同字节的别名注明与哪一份是同一内容，覆盖声明写哪个路径都算那一份。
@@ -237,8 +232,8 @@ function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
     + '标「核在场」的只核在场与来源摘要。', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
-    ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
-    ...blocking.map(m => `- **读不到${m.label}（${m.doc}）**——它是必备来源，材料索引里没有这一类；与它有关的判断按「报告怎么写」第 5 条记进「发现」`)];
+    ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条写进 unreviewed`),
+    ...blocking.map(m => `- **读不到${m.label}（${m.doc}）**——它是必备来源，材料索引里没有这一类；与它有关的判断按「报告怎么写」第 5 条写进 unreviewed`)];
 }
 
 /**
@@ -246,10 +241,11 @@ function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
  * 完整读时先来源与设计，再通读待审的 Story 与 Review。
  */
 const reading = () => ['', '### 怎么读', '',
-  '读到这份任务时，你已按派审载体只读 `AR/story.md` 做完首读，首读结论写在报告「判据核对」表后；下面是核源。',
+  '读到这份任务时，你已按派审载体只读 `AR/story.md` 做完首读，首读结论写在报告「审查范围与依据」里；下面是核源。',
   '先看派审载体有没有列前轮上下文（没有就是首审）；有就读它，看是哪种情形。首审、上一份结论是 fail 的复审、带上一版材料报告参考的审查，按下面的顺序完整读。'
-  + '格式返修只修上一份回复的报告形态：原回复的实质判断与判据覆盖充分就照用，只回材料核诊断点到的那部分；'
-  + '诊断是缺判据、引用找不到、依据不足或结论矛盾，或者看不出原审查是否完整时，同样按下面的顺序完整读。', '',
+  + '格式返修只修上一份回复的报告形态：原回复的实质判断与核验充分就照用，只回材料核诊断点到的那部分；'
+  + '诊断是缺依据、引用找不到或结论矛盾，或者看不出原审查是否完整时，同样按下面的顺序完整读。'
+  + '复审与上一版报告参考按前轮上下文说的影响范围核，影响界限说不清时完整读。', '',
   '1. 先读业务来源与人签：材料表里的业务原文与阅读稿（含设计未见引用的与冲突依据）、当前有效人答、会议原文与人的裁决、决策登记。',
   '2. 通读待审的 Story 与 Review，对着第 1 步核业务完整、准确与可读；写作设计是作者的安排，作参考。',
   '3. 蓝图与它的原生评审投影、接口转写与映射、知识原文与工程文件按问题回查：业务判断依赖精确接口、数据、状态或知识义务，'
@@ -380,7 +376,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   rows.push('', '### 材料里的图（这一次有哪几张）', '');
   if (images.gap) {
     rows.push(`**输入有缺口**：${images.gap}。`
-      + '「图用没用、取舍成不成立」这一项未核：在「发现」表按相关判据记一条 BLOCKER，写明这处缺口与未核的范围。');
+      + '「图用没用、取舍成不成立」这一项未核：写进 unreviewed（check 写这一项），说明这处缺口与未核的范围。');
   } else {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }

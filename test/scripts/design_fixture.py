@@ -560,7 +560,7 @@ def install_review_mechanism(root: Path, extension: Path) -> None:
             shutil.copy2(extension / rel, target)
 
 
-#: 夹具审查者的发现：每种结论一份（编号、严重程度、问题与依据、修正责任），判据 ID 与材料位置由 write_review 填
+#: 夹具审查者的发现：每种结论一份（编号、严重程度、问题与依据、修正责任），材料位置由 write_review 填
 REVIEW_ISSUES = {
     "pass": [],
     "advice": [("F-1", "MINOR", "背景一章的结论先于依据出现，读者要回读", "作者把依据移到结论之前")],
@@ -583,27 +583,19 @@ def write_review(root: Path, feature: str, kind: str = "pass") -> Path:
 
 
 def review_text(root: Path, feature: str, kind: str, material_key: str) -> str:
-    """夹具审查者的回复正文：回显 `material_key`，审过的材料取当前审查任务列的那几份。"""
-    review = root / features_dir(root) / feature / "AR" / "story-src" / "review"
+    """夹具审查者的回复正文：回显 `material_key`，按报告合同写一份完整业务核查（full）的回复。"""
     story = f"{features_dir(root)}/{feature}/AR/story.md"
     issues = REVIEW_ISSUES[kind]
     severe = any(i[1] in ("BLOCKER", "MAJOR") for i in issues)
     overall = "fail" if severe else "warn" if issues else "pass"
-    task = (review / "task.md").read_text(encoding="utf-8")
-    listed = task[task.index("### 本次审查的材料"):]
-    listed = listed[:listed.find("\n### ", 1)] if "\n### " in listed[1:] else listed
-    examined = re.findall(r"^- `([^`]+)` —— ", listed, re.M)
-    coverage = {"blocking_findings": [i[0] for i in issues if i[1] in ("BLOCKER", "MAJOR")],
-                "advisories": [i[0] for i in issues if i[1] not in ("BLOCKER", "MAJOR")],
-                "examined_inputs": examined, "unreviewed": []}
+    scope = {"kind": "full", "basis_report": None, "unreviewed": [], "additional_inputs": []}
     return "\n".join([
         f"material_key: {material_key}", "",
-        "## 判据核对", "", "| 判据 ID | 结果 | 依据 |", "|---|---|---|",
-        f"| story_reader_review | {overall} | 逐章对着来源读过：背景、范围、方案、流程、功能、异常、验收与交付 |", "",
+        "## 审查范围与依据", "",
         "首读结论：只读 Story 能读出要做什么、为什么做和怎么算对。", "",
-        "审查方法：按任务里的判据逐章对着来源读。", "",
-        "```yaml", "review_coverage:",
-        *[f"  {k}: {json.dumps(v, ensure_ascii=False)}" for k, v in coverage.items()], "```", "",
-        "## 发现", "", "| 编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任 |", "|---|---|---|---|---|---|",
-        *[f"| {a} | {b} | story_reader_review | `{story}` | {c} | {d} |" for a, b, c, d in issues], "",
-        "## 总体结论", "", f"{overall}：按判据与发现判定。", ""])
+        "这次做的是首次完整业务核查：对着业务来源与人签通读了 Story 与 Review。", "",
+        "```yaml", "review_scope:",
+        *[f"  {k}: {json.dumps(v, ensure_ascii=False)}" for k, v in scope.items()], "```", "",
+        "## 发现", "", "| 编号 | 严重程度 | 材料位置 | 问题与依据 | 修正责任 |", "|---|---|---|---|---|",
+        *[f"| {a} | {b} | `{story}` | {c} | {d} |" for a, b, c, d in issues], "",
+        "## 总体结论", "", f"{overall}：按发现判定。", ""])
