@@ -28,8 +28,9 @@ export const TASK = ['AR', 'story-src', 'review', 'task.md'];
  * `withTask` 为假时不含审查任务本身（生成任务时列材料用）。`source` 是同一命令已取得的设计来源（`designSource` 的
  * `read` 与 `answers`），给了就用它，不再另读蓝图与人答。
  *
- * 每行带 `kind`（`text` / `image` / `metadata`）与 `required_read`：为假的行只核在场与来源摘要（二进制原件、只取图的原件、
- * 材料清单本身），仍按字节绑定、进材料键。同一内容的几个路径（图片对象的几个落点）
+ * 每行带 `kind`（`text` / `image` / `metadata`）与 `required_read`：为真的是业务核查入口（待审件、业务原文与阅读稿、冲突依据、
+ * 人答、会议、上游图、写作设计与判据）；为假的 `metadata` 行只核在场与来源摘要（二进制原件、只取图的原件、材料清单本身），
+ * 为假的 `text` 行按问题回查（蓝图、原生评审投影、接口转写与映射、知识、设计引用的工程文件）。两类都按字节绑定、进材料键。同一内容的几个路径（图片对象的几个落点）
  * 记进 `alias`：路径 → 规范路径（第一个落点），覆盖、发现定位与图面延期按它归一；内容不同的不互相顶替。
  *
  * @returns {{rows: {path: string, role: 'object'|'source', label: string, kind: string, required_read: boolean}[],
@@ -106,7 +107,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     for (const f of own?.conflictFiles ?? []) conflicted.set(local(f), { sha256: f.sha256.replace(/^sha256:/, ''), role: f.role });
     for (const f of found.projectFiles) {
       add(path.join(projectRoot, ...f.path.split('/')), 'source',
-        `设计${f.use === 'conflict' ? '冲突依据' : '依据'}引用的工程文件 ${f.path}（${f.where}）`, true, { kind: 'text' });
+        `设计${f.use === 'conflict' ? '冲突依据' : '依据'}引用的工程文件 ${f.path}（${f.where}）`, true, { kind: 'text', read: false });
     }
   }
   // 当前有效人答：独立必读，导出落后于流程记录时报缺口，不拿旧导出顶替
@@ -200,16 +201,20 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
   }
   if (read.status === 'ok') {
     add(path.join(projectRoot, ...read.canonical_path.split('/')), 'source',
-      `蓝图 r${read.blueprint_ref.revision}（${read.admitted ? '已准入' : '草稿，未准入'}）`);
-    add(path.join(projectRoot, ...read.projection.path.split('/')), 'source', '蓝图的原生评审投影（设计参考：完整技术契约在这里）');
+      `蓝图 r${read.blueprint_ref.revision}（${read.admitted ? '已准入' : '草稿，未准入'}）`, true, { read: false });
+    add(path.join(projectRoot, ...read.projection.path.split('/')), 'source',
+      '蓝图的原生评审投影（设计参考：业务相关正文与关联对象对照，技术参考区按问题回查）', true, { read: false });
     for (const f of read.source_index.authorityFiles) {
-      add(path.join(projectRoot, ...f.path.split('/')), 'source', `蓝图契约段引用的接口转写或映射 ${f.path}（契约权威，原生逐段核对）`);
+      add(path.join(projectRoot, ...f.path.split('/')), 'source', `蓝图契约段引用的接口转写或映射 ${f.path}（原生逐段核对结构）`,
+        true, { read: false });
     }
   }
 
   const ext = extensionRoot(projectRoot);
-  add(path.join(ext, 'manifest.yaml'), 'source', '知识激活清单');
-  for (const r of knowledgeRegistrations(projectRoot)) add(path.join(ext, ...r.file.split('/')), 'source', `激活知识 ${r.file}`);
+  add(path.join(ext, 'manifest.yaml'), 'source', '知识激活清单', true, { kind: 'metadata', read: false });
+  for (const r of knowledgeRegistrations(projectRoot)) {
+    add(path.join(ext, ...r.file.split('/')), 'source', `激活知识 ${r.file}`, true, { read: false });
+  }
   add(path.join(ext, 'skills', 'story', 'contracts', 'story-chapters.json'), 'source', '章节合同');
   add(path.join(ext, 'rules', 'story-reader-rules.yaml'), 'source', '审查判据');
   const object = { rows, problems, alias, read,

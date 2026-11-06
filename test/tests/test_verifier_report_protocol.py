@@ -968,6 +968,38 @@ class TheDesignReferenceIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDel
         self.assertEqual(0, self.register().returncode)
         self.assertEqual(0, self.check("--deliver").returncode)
 
+    def test_business_sources_are_read_and_technical_references_are_looked_up(self) -> None:
+        """审查对象仍是完整库存：业务入口逐份读，蓝图、原生评审投影与知识按问题回查，激活清单只核在场；
+        后读任务给蓝图的知识判断作定位，适用与不适用都在。"""
+        self.assertEqual(0, self.review("prepare").returncode)
+        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
+        sources = task.split("只读对照（据以判断，不在这次改）：", 1)[1].split("\n### ", 1)[0]
+        lines = [line for line in sources.splitlines() if line.startswith("- `")]
+        blueprint = design_kit.blueprint_of(self.root, "REQ-DEMO")
+
+        def marked(needle: str) -> list[str]:
+            hits = [line for line in lines if needle in line]
+            self.assertTrue(hits, f"材料表里没有「{needle}」")
+            return hits
+
+        for needle in ("蓝图的原生评审投影", f"{blueprint}/blueprint/component-blueprint.yaml", "激活知识 knowledge/"):
+            self.assertTrue(all(line.endswith("（按问题回查）") for line in marked(needle)), f"「{needle}」没标按问题回查")
+        self.assertTrue(all(line.endswith("（核在场与来源摘要，不必通读）") for line in marked("知识激活清单")))
+        for needle in ("—— 设计采用的阅读稿", "—— 审查判据"):
+            self.assertFalse(any("按问题回查" in line or "不必通读" in line for line in marked(needle)), f"业务入口「{needle}」被降成了回查")
+        located = task.split("### 蓝图里的知识判断（定位用，待核）", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("→ applied：本需求新增提交入口", located)
+        self.assertIn("→ not_applicable：本需求没有任何上报动作", located)
+
+    def test_the_rule_text_keeps_its_paragraph_lines(self) -> None:
+        """判据按原段落分行交给审查者，不折成一条多页长行。"""
+        self.assertEqual(0, self.review("prepare").returncode)
+        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
+        rules = task.split("### 判据 story_reader_review", 1)[1].split("### 怎么读", 1)[0]
+        self.assertGreater(len(rules.splitlines()), 60)
+        self.assertLess(max(len(line) for line in rules.splitlines()), 300, "判据又被折成了长行")
+        self.assertIn("\n**核的先后**：", rules)
+
     def reading(self) -> str:
         """现在这份材料的审查任务里「怎么读」一节。"""
         module = DEV_EXT / "hooks/shared/reader-review-task.mjs"
@@ -1604,9 +1636,12 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         self.assertNotIn("作者补的一句。", again, "Story 正文又嵌进了任务")
 
     def test_the_task_reads_the_adopted_versions_first(self) -> None:
-        """核源先读设计采用的材料版本与人工答复：上游原话在原件里，不拿作者摘要自证。"""
+        """核源先读业务来源与人签：上游原话在原件里，不拿作者摘要自证；蓝图与技术参考按问题回查。"""
         task = self.inject()
-        self.assertIn("设计采用的材料版本与人工答复", task)
+        reading = task.split("### 怎么读", 1)[1].split("\n### ", 1)[0]
+        self.assertIn("1. 先读业务来源与人签", reading)
+        self.assertIn("当前有效人答", reading.split("\n2. ", 1)[0])
+        self.assertIn("按问题回查", reading.split("\n3. ", 1)[1])
         self.assertNotIn(".backups/local/AR-design", task, "上游 AR 不再被覆盖，没有覆盖备份可指")
 
     def test_the_task_carries_the_recheck_list(self) -> None:

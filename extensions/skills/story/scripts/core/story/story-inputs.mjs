@@ -134,22 +134,34 @@ function blueprintSection(ctx) {
 }
 
 /**
- * 设计参考与已定的知识判断：原生评审投影的位置（完整技术契约在那里，Story 不复制），
- * 蓝图里每条知识判断的出处、判定、理由与承担对象——附录「规约」节写本需求的理由与影响，不重判、不另造。
- * 判断本身有问题的照列，交设计负责方。
+ * 蓝图里每条知识判断的出处、判定、理由与承担对象（适用与不适用都列），判断本身有问题的照列为设计缺口。
+ * 作者写附录「规约」与审查者定位知识用同一份；它是待核的设计判断，不是知识原文。
+ * @returns {{rows: string[], problems: string[]}}
+ */
+export function knowledgeJudgmentLines(projectRoot, blueprint) {
+  const judged = blueprintKnowledge(projectRoot, blueprint);
+  const what = d => (d.kind === 'patterns' ? '模式' : d.domain ? '整域' : d.unit);
+  return {
+    rows: judged.rows.map(d => `- \`${d.source_ref}\`（${what(d)}）→ ${d.outcome}：${d.rationale ?? ''}`
+      + `${d.target_refs.length ? `；落在 ${d.target_refs.join('、')}` : ''}`),
+    problems: judged.problems,
+  };
+}
+
+/**
+ * 设计参考与已定的知识判断：原生评审投影的位置与它在交付里的地位，蓝图里的知识判断——附录「规约」节写本需求的理由与影响，
+ * 不重判、不另造。判断本身有问题的照列，交设计负责方。
  */
 function designReferenceSection(ctx) {
   const source = designSource(ctx);
   if (!source.blueprint || !source.projection) return [];
-  const judged = blueprintKnowledge(ctx.projectRoot, source.blueprint);
-  const what = d => (d.kind === 'patterns' ? '模式' : d.domain ? '整域' : d.unit);
+  const judged = knowledgeJudgmentLines(ctx.projectRoot, source.blueprint);
   return ['## 4d. 设计参考与知识判断', '',
-    `设计参考是 \`${source.projection}\`（蓝图 r${source.ref?.revision} 的原生评审投影）：附录接口、数据与规约的业务摘要对着它写，`
-    + '完整字段、类型与映射留在那里，Story 不复制它；设计要改回蓝图。', '',
+    `设计参考是 \`${source.projection}\`（蓝图 r${source.ref?.revision} 的原生评审投影），完整技术全文在那里，设计要改回蓝图。`
+    + '它是补充参考：系统要求或本单已请求时才随交付（见取材回执与交付请求），读者手上可能只有 Story 与 Review，'
+    + '所以本单读者核对与施工要用的精确接口、数据、配置、事件与来源写在附录，不只给一个指向设计参考的链接；全文不必搬运。', '',
     ...(judged.rows.length
-      ? ['蓝图里已定的知识判断（附录「规约」节写它们在本需求的理由、承担者与对设计的影响；不重判，待定的写成待定）：',
-        ...judged.rows.map(d => `- \`${d.source_ref}\`（${what(d)}）→ ${d.outcome}：${d.rationale ?? ''}`
-          + `${d.target_refs.length ? `；落在 ${d.target_refs.join('、')}` : ''}`)]
+      ? ['蓝图里已定的知识判断（附录「规约」节写它们在本需求的理由、承担者与对设计的影响；不重判，待定的写成待定）：', ...judged.rows]
       : ['蓝图里还没有知识判断。']),
     ...judged.problems.map(p => `- **设计缺口**：${p}——交设计负责方，Story 不替它补判断`)];
 }

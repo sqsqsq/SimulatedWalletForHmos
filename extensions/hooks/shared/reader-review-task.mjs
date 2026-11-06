@@ -26,6 +26,7 @@ import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { readingWork } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { reviewObject } from '../../skills/story/scripts/core/story/review-object.mjs';
 import { reportFormat } from '../../skills/story/scripts/core/story/review-report-contract.mjs';
+import { knowledgeJudgmentLines } from '../../skills/story/scripts/core/story/story-inputs.mjs';
 
 //: 本模块所在的扩展包根：判据与章节合同都属于机制，随包发布
 const PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -228,10 +229,12 @@ export function readerCheckIds() {
 function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
   const { blocking } = sourceStatus({ contract, featureRoot: featureRoot(projectRoot, feature) });
   const line = r => `- \`${r.path}\` —— ${r.label}`
-    + (r.required_read === false ? '　（核在场与来源摘要，不必通读）' : '')
+    + (r.required_read !== false ? '' : r.kind === 'metadata' ? '　（核在场与来源摘要，不必通读）' : '　（按问题回查）')
     + (alias.has(r.path) ? `　（与 \`${alias.get(r.path)}\` 同一内容）` : '');
   return ['', '### 本次审查的材料（材料键按它们的原始字节算）', '',
-    '这张表是完整核源的集合：设计未见引用的阅读稿、冲突依据、当前有效人答、登记不用的图与会议纠偏留痕也在里面，核设计为何引用或不用它们。', '',
+    '这张表是完整核源的集合：设计未见引用的阅读稿、冲突依据、当前有效人答、登记不用的图与会议纠偏留痕也在里面，核设计为何引用或不用它们。'
+    + '没有标注的是业务核查入口，逐份读；标「按问题回查」的在你的判断依赖它时读相关部分，判断用到却没取到的写成未核；'
+    + '标「核在场」的只核在场与来源摘要。', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
     ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条记进「发现」`),
@@ -247,11 +250,13 @@ const reading = () => ['', '### 怎么读', '',
   '先看派审载体有没有列前轮上下文（没有就是首审）；有就读它，看是哪种情形。首审、上一份结论是 fail 的复审、带上一版材料报告参考的审查，按下面的顺序完整读。'
   + '格式返修只修上一份回复的报告形态：原回复的实质判断与判据覆盖充分就照用，只回材料核诊断点到的那部分；'
   + '诊断是缺判据、引用找不到、依据不足或结论矛盾，或者看不出原审查是否完整时，同样按下面的顺序完整读。', '',
-  '1. 先读来源与人签（设计采用的材料版本与人工答复、会议原文与人的裁决、决策登记），'
-  + '再读整体设计（蓝图与它的原生评审投影——设计参考，完整技术契约在这里），然后通读待审的 Story 与 Review。'
-  + '写作设计是作者的安排，作参考。',
-  '2. 一份文件一次读不完时按范围接着读到末尾；读不到的按「报告怎么写」第 5 条处理。',
-  '3. 发现整体业务矛盾时追到它的权威对象（决定、蓝图、来源），按它对这次交付的影响定严重程度。'];
+  '1. 先读业务来源与人签：材料表里的业务原文与阅读稿（含设计未见引用的与冲突依据）、当前有效人答、会议原文与人的裁决、决策登记。',
+  '2. 通读待审的 Story 与 Review，对着第 1 步核业务完整、准确与可读；写作设计是作者的安排，作参考。',
+  '3. 蓝图与它的原生评审投影、接口转写与映射、知识原文与工程文件按问题回查：业务判断依赖精确接口、数据、状态或知识义务，'
+  + '或人读件与来源对不上时，读相关部分。共同设计的完整性与转写真实性由蓝图的独立质询负责，这里不重做整套技术质询；'
+  + 'Story 与蓝图一致、蓝图已过质询或已登记缺口，都不豁免来源里有而两稿都漏掉的内容——漏在设计层的照样记，修正责任写设计负责方。',
+  '4. 一份文件一次读不完时按范围接着读到末尾，读不到的按「报告怎么写」第 5 条处理；'
+  + '发现整体业务矛盾时追到它的权威对象（决定、蓝图、来源），按它对这次交付的影响定严重程度。'];
 
 /**
  * 任务书正文：判据原文，加这一次的输入与要回答的问题。
@@ -280,6 +285,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
     ]),
     ...reading(),
     ...objectRows(projectRoot, feature, contract, object),
+    ...knowledgeRows(projectRoot, object.read),
     ...(object.design ? ['', '### 设计状态（原生读取）', '',
       `蓝图${object.design.admitted ? '已准入' : '是草稿、未准入'}；原生问题 ${object.design.issues.length} 条`
         + `${object.design.issues.length ? '（下列）' : ''}。草稿可以送审，问题涉及的业务事实在人读件里是不是写成了待定或限制，按判据核。`,
@@ -384,6 +390,20 @@ export function readerReviewTask(projectRoot, feature, object = null) {
 
   rows.push(...reportFormat());
   return rows.join('\n');
+}
+
+/**
+ * 蓝图里的知识判断，给审查者定位用：适用与不适用的结论、理由与承担对象，与作者写附录「规约」用的是同一份。
+ * 它是待核的设计判断；结合当前业务结果核影响，要核条款时回知识原文。
+ */
+function knowledgeRows(projectRoot, read) {
+  if (read?.status !== 'ok' || !read.blueprint) return [];
+  const judged = knowledgeJudgmentLines(projectRoot, read.blueprint);
+  return ['', '### 蓝图里的知识判断（定位用，待核）', '',
+    '下面是设计对每份知识的判断与承担对象，适用与不适用都在。核读者应取得的义务与结果在 Story 里有没有落点、不适用的理由与本需求的事实合不合；'
+    + '有疑点回对应的知识原文，不逐份重审全部知识。', '',
+    ...(judged.rows.length ? judged.rows : ['蓝图里还没有知识判断。']),
+    ...judged.problems.map(p => `- **设计缺口**：${p}`)];
 }
 
 /** 看图能力裁定的任务行：允许图面延期、不允许延期、取不到三种照实写。 */

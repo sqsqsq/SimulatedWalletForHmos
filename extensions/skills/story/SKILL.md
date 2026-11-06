@@ -254,7 +254,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | `blueprint/` | 组件蓝图（framework `component-design`，与需求同根）：本部件怎么设计，需求条目引登记的材料版本（准入后是 Story 附录与后续施工的设计来源） |
 | `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
 | `AR/story.md` | 把材料、决定与当前设计组织成可评审的叙述（零新事实；archive 的上传正文） |
-| `blueprint/component-blueprint.review.md` | 设计参考：蓝图的原生评审投影，完整技术契约在这里（原生生成，设计要改回蓝图；archive 按原字节作设计参考附件上传） |
+| `blueprint/component-blueprint.review.md` | 设计参考：蓝图的原生评审投影，完整技术契约在这里（原生生成，设计要改回蓝图；系统要求或本单已请求时 archive 按原字节作设计参考附件上传） |
 
 ## 需求系统 Token
 
