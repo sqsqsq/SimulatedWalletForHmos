@@ -44,7 +44,7 @@ S2 导入+初析   →  列收件箱 → 导入 → 材料盘点 →（材料确
 S3 关卡        →  材料 →（会议）→ 范围怎么定 → 承载哪份
 S4 交给设计    →  范围定了直接进 component-design：蓝图与需求同根，需求条目引登记的材料版本（`import_sources.py --scope` 补齐来源）
    ↓
-[framework component-design]  蓝图走到准入，生成评审投影
+[framework component-design]  形成可评审设计并完成独立质询，生成评审投影（草稿可以成文与业务送审，准入控制施工）
    ↓
 S5 成文        →  写作设计 → 照骨架按章写 → 回看 → check → 独立审查（定稿、派审、核结果）→ `story_flow.py story` 登记 → 交付门
    ↓
@@ -81,7 +81,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 
 | 层 | 谁说了算 | 怎么推进 |
 |---|---|---|
-| **story 流程段内**：S1→S4、蓝图设计到准入、S5 成文与交付门 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，只在下表列的地方停 |
+| **story 流程段内**：S1→S4、蓝图设计与独立质询、S5 成文与交付门 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，只在下表列的地方停 |
 | **交付门之后**：完整设计交接、实现方案、完整实现 | 已有授权或人的交付选择，与 framework 的推进策略 | 已有明确授权覆盖的直接接续；业务审批与实施授权分开对待 |
 
 **交给设计之后直接进 component-design，不问**：本轮的终点在启动时就声明了，中途再问是把一个已经有主的问题重问一次。
@@ -251,7 +251,7 @@ python doc/extensions/skills/story/scripts/core/story_flow.py update --feature <
 | `AR/story-src/story-template.md` | 本需求的整篇写作设计：阅读主线与每章骨架（作者写，成文登记时随稿记指纹） |
 | `AR/story-src/materials.json` | 材料索引：版本关系的唯一登记——每个来源取得过哪些版本、各自的完整摘要与留存位置，当前阅读稿由哪几版合成，图片说明与取舍，还有什么没导入 |
 | `AR/story-src/story-flow.json` | init→归档的流程契约：每轮的材料版本、导入与决策（谁、何时、依据） |
-| `blueprint/` | 组件蓝图（framework `component-design`，与需求同根）：本部件怎么设计，需求条目引登记的材料版本（准入后是 Story 附录与后续施工的设计来源） |
+| `blueprint/` | 组件蓝图（framework `component-design`，与需求同根）：本部件怎么设计，需求条目引登记的材料版本（当前蓝图是 Story 附录的设计来源，准入后是施工的设计来源） |
 | `AR/review.md` | 上线要定什么、评审定了什么（**人的决策**，AI 不得覆盖）；由决策登记渲染，人工区只由人写 |
 | `AR/story.md` | 把材料、决定与当前设计组织成可评审的叙述（零新事实；archive 的上传正文） |
 | `blueprint/component-blueprint.review.md` | 设计参考：蓝图的原生评审投影，完整技术契约在这里（原生生成，设计要改回蓝图；系统要求或本单已请求时 archive 按原字节作设计参考附件上传） |

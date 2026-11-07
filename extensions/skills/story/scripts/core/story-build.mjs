@@ -295,7 +295,7 @@ function cmdReview(ctx) {
   const figures = switchView(ctx.featureRoot, 'prepare');
   if (figures.problems.length) fail(`正式图建源没有成立，审查对象还没成形：\n  ${figures.problems.join('\n  ')}`);
   // 定稿：先沿用记录里的审查状态定一次——已有结论正是当前对象时直接复用；否则按本次读者情况重写审查状态再定一次
-  const settle = () => {
+  const finalize = () => {
     cmdProject(ctx);
     cmdNumber(ctx);
     cmdBuild(ctx);
@@ -303,8 +303,8 @@ function cmdReview(ctx) {
     const { problems } = storyCheck(ctx, { registration: false });
     if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
   };
-  settle();
-  const out = prepareReview(ctx, { reportDir: ctx.args.reportDir, restage: () => { setReader(ctx, reader); settle(); } });
+  finalize();
+  const out = prepareReview(ctx, { reportDir: ctx.args.reportDir, restage: () => { setReader(ctx, reader); finalize(); } });
   if (out.error) fail(out.error);
   const again = `story-build review --action prepare --reader ${reader.kind}${reader.kind === 'unavailable' ? ' --reader-reason <同一原因>' : ''}`;
   process.stdout.write(`${JSON.stringify({ material_key: out.material_key, task: out.task, report_dir: out.report_dir,

@@ -85,7 +85,7 @@ class AuthorRequirementsAreReachable(unittest.TestCase):
 
     def test_the_task_carries_its_six_blocks(self):
         """对象、知识原文、事实与决定、契约与义务、完成条件、缺口：一份不缺。"""
-        for needle in ("当前动作与对象", "激活知识及原文", "有效事实与决定", "当前契约与义务", "本次完成条件", "缺口与责任"):
+        for needle in ("当前动作与对象", "激活知识：索引与本动作的原文", "有效事实与决定", "当前契约与义务", "本次完成条件", "缺口与责任"):
             with self.subTest(needle=needle):
                 self.assertIn(needle, self.task.stdout)
 

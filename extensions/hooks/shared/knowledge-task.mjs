@@ -18,11 +18,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { blueprintKnowledge, entryOf, featureKnowledge, knowledgeContext, rolesOf, unitContext, unitDuties }
-  from './knowledge-application.mjs';
+import { activation, blueprintKnowledge, entryOf, featureKnowledge, knowledgeContext, knowledgeSource, rolesOf, unitContext,
+  unitDuties } from './knowledge-application.mjs';
 import { loadNative, readBlueprint, readFeature, readSourceFiles } from './framework-access.mjs';
 import { activeKnowledge, HALVES, knowledgeRegistrations, selfCheck } from './knowledge.mjs';
-import { obligationsFromContracts, verifyChoices } from './obligations.mjs';
+import { obligationsFromContracts, patternRolesFromContracts, verifyChoices } from './obligations.mjs';
 import { firstReadBoundary, firstReadCarrier, nativeEightQuestions, questioningRound } from './questioning.mjs';
 import { statDelivery } from './stat-points.mjs';
 import { extensionRoot, featureRoot, relDisplay } from './paths.mjs';
@@ -35,8 +35,10 @@ import { basisSections, useEffectiveChapters } from '../../skills/story/scripts/
 const BLUEPRINT_ACTIONS = ['discovery', 'design', 'questioning'];
 const FEATURE_ACTIONS = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
 const AUDIENCES = ['author', 'reviewer'];
-/** 上下篇知识：上篇给设计侧（需求与设计动作），下篇给实现侧。 */
+/** 蓝图的设计动作：判断全局适用性，正文全部送。 */
 const DESIGN_SIDE = new Set(['discovery', 'design', 'questioning']);
+/** 上下篇知识送哪一篇：上篇给设计与行为验收（蓝图动作与 spec），下篇给实现侧。 */
+const UPPER_HALF = new Set([...DESIGN_SIDE, 'spec']);
 
 class TaskError extends Error {}
 const stop = (object, gap, owner) => { throw new TaskError(`对象：${object}\n缺口：${gap}\n责任：${owner}`); };
@@ -48,40 +50,93 @@ const stop = (object, gap, owner) => { throw new TaskError(`对象：${object}\n
 const reaches = (registration, action) => !FEATURE_ACTIONS.includes(action) || registration.audience === null
   || registration.audience === 'global' || (Array.isArray(registration.audience) && registration.audience.includes(action));
 
-/** 激活知识按清单顺序：路径、类别、形态、何时读，以及去掉 frontmatter 的完整原文。 */
-function knowledgeBlock(root, action) {
-  let knowledge;
+/** 激活知识：读不出按知识维护者的缺口报。 */
+function loadKnowledge(root) {
   try {
-    knowledge = activeKnowledge(root);
+    return activeKnowledge(root);
   } catch (e) {
-    stop('扩展 manifest 的知识激活清单', e.message, '目标工程的知识维护者（按 skills/story/reference/knowledge/protocol.md 修正登记或文件）');
+    return stop('扩展 manifest 的知识激活清单', e.message, '目标工程的知识维护者（按 skills/story/reference/knowledge/protocol.md 修正登记或文件）');
   }
+}
+
+/**
+ * 施工单位本动作直接送正文的知识文件（扩展根相对路径）：本单位承担或判过的规约与模式、本单位设计引用的事实、
+ * 需求级的评审动作与归属未定的判断，以及本阶段契约与验收实际引用的知识。蓝图动作返回 null（全部送）。
+ * 平铺维护 Feature 没有承接范围，送它判过的全部。
+ */
+function relatedFiles(root, action, judged, spec) {
+  if (DESIGN_SIDE.has(action)) return null;
+  const files = new Set();
+  if (!judged) return files;
+  const active = activation(root);
+  const add = ref => { const source = ref ? knowledgeSource(active, ref) : null; if (source) files.add(source.file); };
+  const context = unitContext(judged);
+  for (const d of context.mine) files.add(d.file);
+  for (const d of context.common) {
+    if (d.outcome === 'pending' || (d.kind === 'constraints' && d.outcome === 'applied' && d.reviewAction)) files.add(d.file);
+  }
+  for (const f of context.facts) add(f.provenance?.source_ref);
+  for (const m of obligationsFromContracts(spec?.contracts ?? null)) add(m.sourceRef);
+  for (const r of patternRolesFromContracts(spec?.contracts ?? null)) add(r.patternRef);
+  const acceptance = spec?.acceptance ?? null;
+  for (const c of [...(acceptance?.criteria ?? []), ...(acceptance?.boundaries ?? [])]) {
+    for (const ref of Array.isArray(c?.knowledge_refs) ? c.knowledge_refs : []) add(ref);
+  }
+  return files;
+}
+
+/** 一份知识送给本动作的正文：规约与分面事实整份；上下篇送文件前言与本动作的那一篇。 */
+function bodyFor(k, body, action) {
+  if (k.form !== 'halves' || !k.halves) return { text: body, note: '全文' };
+  const half = UPPER_HALF.has(action) ? HALVES[0] : HALVES[1];
+  const head = body.search(new RegExp(`^#\\s+${HALVES[0]}\\s*·`, 'm'));
+  const preface = head > 0 ? body.slice(0, head).trim() : '';
+  return { text: [preface, k.halves[half].trim()].filter(Boolean).join('\n\n'), note: `前言与${half}（另一篇按位置读原文）` };
+}
+
+/**
+ * 第 4 块：全局知识索引（本动作可达的每份一行）加本动作直接送的正文。`related` 为 null 时正文全部送，
+ * 否则只送其中的文件；相关文件被登记的受众挡在本动作之外时报登记与消费者冲突，不静默少送。
+ */
+function knowledgeBlock(root, action, knowledge, related) {
   const byFile = new Map([...knowledge.facts, ...knowledge.constraints, ...knowledge.patterns].map(k => [k.file, k]));
-  const registrations = knowledgeRegistrations(root).filter(r => reaches(r, action));
+  const all = knowledgeRegistrations(root);
+  const registrations = all.filter(r => reaches(r, action));
   const ordered = registrations.map(r => ({ ...byFile.get(r.file), registration: r })).filter(k => k.file);
-  const rows = ['## 4. 激活知识及原文', ''];
+  const rows = ['## 4. 激活知识：索引与本动作的原文', ''];
   const protocol = path.join(extensionRoot(root), 'skills', 'story', 'reference', 'knowledge', 'protocol.md');
+  const gaps = [...(related ?? [])].filter(f => !registrations.some(r => r.file === f))
+    .map(f => `知识 \`${f}\` 是本单位判断或契约实际引用的，登记的受众里却没有 ${action}：登记与消费者冲突，交知识维护者修正激活清单`);
   if (!ordered.length) {
-    const total = knowledgeRegistrations(root).length;
-    return { knowledge, rows: [...rows, total ? `登记了 ${total} 份知识，受众里都没有 ${action}（零项）。`
-      : `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`] };
+    return { rows: [...rows, all.length ? `登记了 ${all.length} 份知识，受众里都没有 ${action}（零项）。`
+      : `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`], gaps };
   }
-  const half = DESIGN_SIDE.has(action) ? HALVES[0] : HALVES[1];
-  rows.push(`共 ${ordered.length} 份，按激活顺序。先按「何时读」判断与本动作是否相关；`
-    + (DESIGN_SIDE.has(action) ? '相关的规约域逐条判断适用与否。' : '适用性已在设计里判过，原文用来理解方法与语义。')
-    + `各列与形态怎么读见 \`${relDisplay(root, protocol)}\`。`, '');
+  const sent = ordered.filter(k => related === null || related.has(k.file));
+  const where = k => relDisplay(root, path.join(extensionRoot(root), ...k.file.split('/')));
+  rows.push(`激活 ${ordered.length} 份，按激活顺序；各列与形态怎么读见 \`${relDisplay(root, protocol)}\`。`
+    + (related === null ? '本动作判断全局适用性，正文都在下面。'
+      : `与本动作直接相关的 ${sent.length} 份正文在下面；其余按「何时读」判断，需要时按位置读原文。`), '');
   for (const k of ordered) {
+    rows.push(`- \`${where(k)}\` · ${k.name}（${k.kind ?? k.file.split('/')[1] ?? ''}，${k.form}）· 单元：${k.units.join('、')}`
+      + ` · 何时读：${String(k.appliesWhen ?? '').trim().split(/\s*\n\s*/).join(' ')}`
+      + (k.registration.audience === null ? ''
+        : ` · 登记：受众 ${JSON.stringify(k.registration.audience)}${k.registration.summary ? `，摘要「${k.registration.summary}」` : ''}`)
+      + (sent.includes(k) ? '　（正文在下）' : ''));
+  }
+  rows.push('');
+  if (related !== null && !sent.length) {
+    rows.push('本施工单位没有承接或判过的知识，契约与验收也没有引用知识：正文不送；按索引核有没有设计漏判的，漏判交设计负责方。', '');
+  }
+  for (const k of sent) {
     const file = path.join(extensionRoot(root), ...k.file.split('/'));
     const body = fs.readFileSync(file, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+    const { text, note } = bodyFor(k, body, action);
     rows.push(`### ${k.name}（${k.file.split('/')[1] ?? ''}，${k.form}）`, '',
-      `- 位置：\`${relDisplay(root, file)}\`（适用性事实的 provenance.source_ref；规约条目引用写 \`<位置>#<编号>\`）`,
-      `- 单元：${k.units.join('、')}`, `- 何时读：${k.appliesWhen}`,
-      ...(k.registration.audience === null ? []
-        : [`- 登记：受众 ${JSON.stringify(k.registration.audience)}${k.registration.summary ? `，摘要「${k.registration.summary}」` : ''}`]),
-      ...(k.form === 'halves' ? [`- 本动作主要用${half}；两篇都在下面，另一篇供核对承接`] : []),
-      '', '````markdown', body, '````', '');
+      `- 位置：\`${where(k)}\`（适用性事实的 provenance.source_ref；规约条目引用写 \`<位置>#<编号>\`）`,
+      `- 单元：${k.units.join('、')}`, `- 何时读：${k.appliesWhen}`, `- 下面是：${note}`,
+      '', '````markdown', text, '````', '');
   }
-  return { knowledge, rows };
+  return { rows, gaps };
 }
 
 const factLine = f => `- 事实 \`${f.fact_id}\`（${f.provenance?.source_ref}）：${JSON.stringify(f.value)}`;
@@ -347,14 +402,18 @@ function featureTask(root, feature, action, supplied, knowledge) {
   if (f.identity.kind === 'cu') {
     // 本命令只读一次蓝图、算一次判断：设计对象、承接义务、埋点与关联 Story 都用这一份
     judged = featureKnowledge(root, feature, f.spec?.contracts ?? null);
-    // spec / plan 在第 3 块逐条拿到本单位承接的判断，这里给本单位作用域里其余的判断与事实；其余动作列蓝图里的全部判断
-    if (judged.blueprint && ['spec', 'plan'].includes(action)) {
+    // spec / plan 在第 3 块逐条拿到本单位承接的判断；这里给本单位作用域里其余的判断、需求级公共依据与本单位引用的事实，
+    // 其余阶段同样只列本单位的，别的施工单位的义务不作为本阶段任务
+    if (judged.blueprint) {
       const own = unitLines(judged);
       facts = own.lines;
       gaps.push(...own.gaps);
-    } else facts = judged.blueprint ? judgedOf(judged) : [];
-    if (!judged.blueprint) gaps.push('蓝图读不到：设计负责方处理。');
-    if (!facts.length && !['spec', 'plan'].includes(action)) facts = ['蓝图里还没有知识的适用性事实。'];
+      if (!['spec', 'plan'].includes(action)) {
+        const { applied, selected } = unitDuties(judged);
+        facts.unshift(...[...applied, ...selected].map(judgedLine));
+      }
+    } else gaps.push('蓝图读不到：设计负责方处理。');
+    if (!facts.length) facts = ['本施工单位作用域里没有知识判断。'];
     facts.push(`本施工单位承担的设计对象：${f.design_refs.map(r => `${r?.target?.kind}:${r?.target?.id}`).join('、') || '（无）'}`);
     if (['spec', 'plan'].includes(action)) {
       const expression = storyExpression(root, feature, judged);
@@ -407,7 +466,7 @@ function featureTask(root, feature, action, supplied, knowledge) {
   }
   return {
     object: `Feature \`${feature}\`，${kind}，位置 \`${f.feature_path}\``, facts, duties, gaps, page: `hooks/${action}/author.md`,
-    preview: f.scope === 'not_frozen',
+    preview: f.scope === 'not_frozen', related: relatedFiles(root, action, judged, f.spec),
   };
 }
 
@@ -417,18 +476,22 @@ export function knowledgeTask(root, args) {
 
 /** 任务正文与它是不是预览（执行范围未冻结）。 */
 function buildTask(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
-  // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处
-  const { knowledge, rows } = knowledgeBlock(root, action);
+  // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处；本动作送哪些正文按同一次取得的判断定
+  const knowledge = loadKnowledge(root);
   const task = blueprint ? blueprintTask(root, blueprint, action)
     : featureTask(root, feature, action, { requirement, requirementFile }, knowledge);
+  const { rows, gaps: routing } = knowledgeBlock(root, action, knowledge, blueprint ? null : task.related);
+  task.gaps.push(...routing);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));
   const done = audience !== 'author' ? null : blueprint
     ? [`按 \`${page}\` 做本动作；知识方面：按第 4 块原文判与本需求相关的每份知识：相关的规约域逐条写适用性，`
       + '适用的把要求落到承担它的设计对象上，不适用写明本需求里使它不适用的条件；出现候选信号的模式写选与不选；已成立的判断直接承接，不重判。']
-    : [`按 \`${page}\` 做本动作；知识方面：履行第 2、3 块已成立的判断与本单位承接的义务，第 4 块原文用来理解方法与语义，`
-      + '不重判适用性；本单位的设计对象碰到了设计里没判过的知识，交设计负责方补判，不在本阶段自定。']
-  const review = [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
+    : [`按 \`${page}\` 做本动作；知识方面：履行第 2、3 块已成立的判断与本单位承接的义务，先读第 4 块送来的原文再动笔，用它理解方法与语义，`
+      + '不重判适用性；要别的知识或另一篇时按第 4 块索引的位置读原文。本单位的设计对象碰到了设计里没判过的知识，交设计负责方补判，不在本阶段自定。']
+  const review = [`对照第 4 块原文核被审对象：相关知识有没有被判断、判断有没有依据、落点是不是真的承担这件事；`
+    + '索引里没送正文的知识也可能被漏判，有疑点按位置读原文，漏判交设计负责方。'
+    + `${blueprint ? `审查要求见 \`${page}\`。` : '判据按本阶段审查清单。'}`];
   const text = [`# 知识任务：${action}（${audience === 'author' ? '作者' : '审查者'}）${task.preview ? '——预览，执行范围未冻结' : ''}`, '',
     '## 1. 当前动作与对象', '', `- 动作：${action}`, `- 对象：${task.object}`, '',
     ...(task.sources ? ['### 候选采用的来源', '', ...task.sources, ''] : []),

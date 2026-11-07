@@ -315,7 +315,7 @@ class TheDerivedUnitWithItsRole(ChainCase):
     def test_the_plan_author_gets_the_carried_duties_before_the_knowledge_text(self) -> None:
         """plan 作者先拿到本单位承接的条目：理由、落点与这条允许的 verify（与门禁同一份规则），再是知识原文。"""
         author = self.probe()["author"]
-        duties = author.split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识及原文", 1)[0]
+        duties = author.split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识：索引与本动作的原文", 1)[0]
         self.assertIn(f"`{KNOWLEDGE_REF}`（事实 knowledge-observability）", duties)
         self.assertIn("承担它的实体写 must（source_ref 照抄这条），verify 取", duties)
         self.assertIn(f"模式 `{PATTERN_REF}`", duties)
@@ -485,10 +485,10 @@ class NoPatternIsACandidate(ChainCase):
         for gone in ("没有实体承担", "pattern_roles", "节点表", "模式"):
             self.assertNotIn(gone, out["gate"], out["gate"])
         self.assertNotIn("没有实体扛着", out["gate"], out["gate"])
-        duties = out["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识及原文", 1)[0]
+        duties = out["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识：索引与本动作的原文", 1)[0]
         self.assertIn(f"`{KNOWLEDGE_REF}`", duties)
         self.assertNotIn("模式 `", duties)
-        knowledge = out["author"].split("## 4. 激活知识及原文", 1)[1]
+        knowledge = out["author"].split("## 4. 激活知识：索引与本动作的原文", 1)[1]
         self.assertIn(PATTERN_REF, knowledge, "没有候选不等于不给模式知识原文")
 
 
@@ -593,6 +593,44 @@ class SiblingUnitsInOneBlueprint(ChainCase):
                          "运行视图单位漏了它独有的判断")
         self.assertEqual(["节点表"], out[CU]["roles"], "运行视图上的角色被强给了不承担它的单位")
         self.assertEqual(sorted([*ELSEWHERE_ROLES, "节点表"]), out[second]["roles"], "承担运行视图的单位漏了它的角色")
+
+    def test_each_unit_gets_the_whole_index_and_only_its_own_text(self) -> None:
+        """两个单位都拿到完整索引；正文只送本单位判过、承接或待核的知识（spec 送上下篇的上篇），需求级的整域不涉及只在索引里。"""
+        import re  # noqa: PLC0415
+        out, second = self.sibling()
+        registered = yaml.safe_load((self.root / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))["provides"]["knowledge"]
+        for f in (CU, second):
+            with self.subTest(unit=f):
+                author = out[f]["author"]
+                part = author.split("## 4. 激活知识：索引与本动作的原文", 1)[1].split("## 5. 本次完成条件", 1)[0]
+                index = [line for line in part.splitlines() if line.startswith("- `doc/extensions/knowledge/")]
+                self.assertEqual(len(registered), len(index), "索引没有列全激活知识")
+                sent = set(re.findall(r"^- 位置：`doc/extensions/(knowledge/[^`]+)`", part, re.M))
+                self.assertIn(OBS.removeprefix("doc/extensions/"), sent, "本单位承接与待核的规约没有正文")
+                self.assertIn(DECISION_TREE, sent, "本单位承担角色的模式没有正文")
+                self.assertLess(len(sent), len(registered), "施工单位拿到了全部知识的正文")
+                # 夹具里两个单位承接、判过或待核的都在 observability 规约与 decision-tree 模式里；其余规约是需求级整域不涉及
+                self.assertEqual({OBS.removeprefix("doc/extensions/"), DECISION_TREE}, sent)
+                facts = out[f]["facts"]
+                self.assertIn("需求级公共依据", facts, "夹具前提变了：没有需求级整域不涉及")
+                pattern = part.split(f"`doc/extensions/{DECISION_TREE}`（", 1)[1].split("\n### ", 1)[0]
+                self.assertIn("- 下面是：前言与上篇（另一篇按位置读原文）", pattern)
+
+    def test_a_unit_text_kept_out_by_its_audience_is_named(self) -> None:
+        """本单位承接的规约被登记的受众挡在本阶段之外：报登记与消费者冲突，不静默少送。"""
+        manifest = self.root / "doc/extensions/manifest.yaml"
+        original = manifest.read_bytes()
+        self.addCleanup(manifest.write_bytes, original)
+        rel = OBS.removeprefix("doc/extensions/")
+        text = original.decode("utf-8")
+        self.assertIn(f"    - {rel}\n", text)
+        manifest.write_bytes(text.replace(f"    - {rel}\n", f"    - {{path: {rel}, audience: [coding]}}\n", 1).encode("utf-8"))
+        proc = subprocess.run(["node", str(self.root / "doc/extensions/hooks/shared/knowledge-task.mjs"), "--project-root", str(self.root),
+                               "--feature", CU, "--action", "spec", "--audience", "author"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        gaps = proc.stdout.split("## 6. 缺口与责任", 1)[1]
+        self.assertIn(f"`{rel}`", gaps)
+        self.assertIn("登记与消费者冲突", gaps)
 
     def test_another_units_judgement_stays_with_it(self) -> None:
         """B 独有的判断不进 A 的作者任务与审查任务；B 自己的审查判断表里有它。"""

@@ -287,11 +287,11 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
     carried.push(...carryRows(ctx, plan, ctx.contract.chapters[at]?.id));
   } else {
     const work = readingWork(ctx.featureRoot);
-    rows.push('NEXT: 十章齐了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
+    rows.push('NEXT: 有效章节都写完了——回看：逐条处置下面的回看清单，问题回它的真源改（登记 open 或 settled、'
       + '蓝图、写作设计骨架，正文改草稿再跑 chapter 提交），没问题不改；想再看一次就再跑 skeleton；'
       + '图源写定后按 doc/extensions/skills/story/reference/svg.md「值不值得做」判断每张图，值得的先做完同图增强并过源码审查'
       + (work.complete ? '' : `（已开始的还没做完：${work.next}）`)
-      + '；处置完 story-build check 通过、准备独立审查（story-build review --action prepare），再跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
+      + '；处置完 story-build check 通过、准备独立审查（story-build review --action prepare --reader task|unavailable），再跑 python doc/extensions/skills/story/scripts/core/story_flow.py story'
       + ` --feature ${shellArg(ctx.args.feature)} --project-root ${shellArg(ctx.projectRoot)}`);
     rows.push(`INPUT: 回看清单（本输出下方）；当前 ${storyRel} 全文；写作设计 ${planRel}；${design}；材料 ${originals}；来源初筛 `
       + `${relFromFeature(ctx, path.join(ctx.srcDir, 'init-analysis.md'))}；草稿目录 `

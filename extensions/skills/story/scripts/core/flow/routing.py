@@ -182,7 +182,7 @@ def story_stage_step(feature_root: Path) -> tuple[str, str]:
                 "落盘之后它会给出下一章。" + STORY_STAGE_ORDER)
     reading = reading_todo(reading_work(feature_root))
     return ("register_story",
-            "十章齐了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
+            "本需求的有效章节都写完了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
             "（业务结论改决策登记或回设计，骨架改写作设计，正文改草稿再 chapter 提交）；"
             "图源写定后按 `reference/svg.md`「值不值得做」判断每张图，值得的先做完同图增强并过源码审查"
             + (f"（已开始的还没做完：{reading}）" if reading else "") +

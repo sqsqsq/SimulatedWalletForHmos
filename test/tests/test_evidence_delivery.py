@@ -81,11 +81,12 @@ class KnowledgeGuideReachesEveryReader(DeliveryCase):
 
 class NotesReachTheJudgement(DeliveryCase):
     def test_an_entry_note_reaches_the_task_verbatim(self) -> None:
-        """附注是要求的一部分：连同条目表一起按原文送到，作者判断时读得到。"""
+        """附注是要求的一部分：判过这份规约的 Feature 拿到的原文连同条目表与附注，作者判断时读得到。"""
         self.with_constraint(notes=NOTES)
-        proc = self.knowledge_task()
+        self.write_contracts()
+        proc = self.knowledge_task("plan")
         self.assertEqual(0, proc.returncode, proc.stderr)
-        block = proc.stdout.split("knowledge/constraints/neutral-domain.md", 1)[1]
+        block = proc.stdout.split("- 位置：`doc/extensions/knowledge/constraints/neutral-domain.md`", 1)[1]
         self.assertIn("- **NEU-02**：重试指同一次操作的再次提交。", block)
         self.assertIn("- 出口按用户视角切", block)
 

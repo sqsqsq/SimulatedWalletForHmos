@@ -138,13 +138,23 @@ class TheUnitFollowsTheForm(MethodCase):
 
 
 class ThePlanTaskPointsAtTheLowerHalf(MethodCase):
-    """AC26 / AC05：plan 的知识任务把上下篇都送到、说明本动作主要用下篇；节名怎么改、知识怎么增删，机制文件一个字节不动。"""
+    """AC26 / AC05：plan 的知识任务对本单位用到的上下篇只送前言与下篇，上篇按索引回查；节名怎么改、知识怎么增删，机制文件一个字节不动。"""
 
-    def test_the_plan_task_carries_both_halves_and_names_the_lower(self) -> None:
+    def use_method(self) -> None:
+        """契约里写一条引用这份方法的事实：这份知识与本 Feature 相关。"""
+        used = {"fact_id": "k-neutral-method", "subject": "knowledge:neutral-method", "value": {"knowledge_kind": "facts", "used": "出口核对"},
+                "provenance": {"source_kind": "knowledge", "source_ref": "doc/extensions/knowledge/facts/neutral-method.md",
+                               "observed_at": "2026-10-30T00:00:00Z", "evidence_strength": "inferred", "extraction_method": "read_and_apply"}}
+        self.write_contracts(facts=[*self.judged(), used])
+
+    def test_the_plan_task_carries_the_lower_half(self) -> None:
+        self.assertNotIn("### neutral-method（facts，halves）", self.plan_task(), "没用到的知识也送了正文")
+        self.assertIn("knowledge/facts/neutral-method.md` · neutral-method", self.plan_task(), "索引里没列这份知识")
+        self.use_method()
         block = self.plan_task().split("### neutral-method（facts，halves）", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("- 本动作主要用下篇", block)
+        self.assertIn("- 下面是：前言与下篇（另一篇按位置读原文）", block)
         self.assertIn("每个出口写一行：出口名、核对人、核对时机。", block)
-        self.assertIn("先把出口逐个列出来。", block, "另一篇供核对承接，也在")
+        self.assertNotIn("先把出口逐个列出来。", block, "上篇也整篇送了")
 
     def test_knowledge_changes_leave_the_mechanism_untouched(self) -> None:
         body = (self.ext / "knowledge/facts/neutral-method.md").read_text(encoding="utf-8")
@@ -157,7 +167,7 @@ class ThePlanTaskPointsAtTheLowerHalf(MethodCase):
             "    - knowledge/facts/event-tracking.md\n", ""), encoding="utf-8")
         _, err = load(self.root)
         self.assertEqual("", err)
-        self.write_contracts()
+        self.use_method()
         self.assertIn("## 另一个节名", self.plan_task())
         # 门禁与审查请求照常：不因知识的增删改而异常或报知识不合协议
         for hook, phase in (("spec/post_check.mjs", "spec"), ("shared/pre_verifier.mjs", "spec"),

@@ -757,7 +757,7 @@ class TheExpressionScaffolding(PlanCase):
 
 
 class TenChaptersHandOverToTheRecheck(PlanCase):
-    """十章齐了：下一步是回看清单，输入给全——全文、设计、决策登记、来源初筛与原材料。"""
+    """有效章节都写完：下一步是回看清单，输入给全——全文、设计、决策登记、来源初筛与原材料。"""
 
     def test_the_last_chapter_hands_over_to_the_recheck_list(self) -> None:
         self.write_plan(with_chapter("02-terms", "- 本章主线：解释等待态\n- 待核：等待态这个词评审人认不认得"))
@@ -767,13 +767,13 @@ class TenChaptersHandOverToTheRecheck(PlanCase):
             code, out = self.put(ch["title"], minimal_body(ch["title"], f"「{ch['title']}」的正文。"))
             self.assertEqual(0, code, out)
         head = out.split("\n")[:2]
-        self.assertTrue(head[0].startswith("NEXT: 十章齐了——回看"), head)
+        self.assertTrue(head[0].startswith("NEXT: 有效章节都写完了——回看"), head)
         for needle in ("story-template.md", "decisions.json", "init-analysis.md", ".backups/local/RR/prd-直接-v1.md", "「六、回看」"):
             self.assertIn(needle, head[1], f"回看的输入少了「{needle}」")
         self.assertIn("[骨架待核] 02-terms：等待态这个词评审人认不认得", out)
         code, again = self.cmd("skeleton")
         self.assertEqual(0, code, again)
-        self.assertTrue(again.startswith("NEXT: 十章齐了——回看"), again[:200])
+        self.assertTrue(again.startswith("NEXT: 有效章节都写完了——回看"), again[:200])
         self.assertIn("[骨架待核] 02-terms", again, "再跑 skeleton 没再给一次回看清单")
 
 

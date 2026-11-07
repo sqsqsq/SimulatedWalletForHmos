@@ -291,10 +291,16 @@ class TheRuleTextIsHandedOverByPath(NeutralKnowledgeCase):
             "    - knowledge/constraints/neutral-reporting.md"), encoding="utf-8")
 
     def test_the_task_package_lists_every_active_rule_file(self) -> None:
-        proc = self.knowledge_task()
+        """索引列出每份激活规约；判过它的 Feature 拿到整份原文（连附注），没判过的只在索引里。"""
+        proc = self.knowledge_task("plan")
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("doc/extensions/knowledge/constraints/neutral-reporting.md", proc.stdout)
         self.assertIn("NRP-01", proc.stdout)
+        self.assertNotIn("落法附注", proc.stdout, "没判过的规约也送了正文")
+        self.write_contracts(facts=[*self.judged(), self.fact("neutral-reporting", {
+            "knowledge_kind": "constraints", "outcome": "not_applicable", "rationale": "本需求没有上报动作"})])
+        proc = self.knowledge_task("plan")
+        self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("落法附注", proc.stdout, "规约原文连附注一起送到")
 
     def test_the_reviewer_gets_the_same_paths(self) -> None:

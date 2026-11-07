@@ -306,6 +306,12 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
                 own = text.index("## 其它独立只读审查任务")
                 self.assertIn("判据、严重度、结论与处置照任务自己的合同", text[own:])
                 self.assertNotIn("MAJOR 属于阻断发现", text[own:], "运输桥又替 Story 写了结论规则")
+                # 读取范围由任务标明：默认逐份读，任务标「按问题回查」「只核在场」的按标注读；首读顺序保持
+                branch = text[own:]
+                for needle in ("首读结论定下之前不读别的文件", "任务列出的输入逐份读", "标明按问题回查的在判断依赖它时读相关部分",
+                               "标明只核在场的核在场与来源摘要", "判断需要却没取到的写明未核"):
+                    self.assertIn(needle, branch)
+                self.assertNotIn("全部输入", branch, "运输桥又把任务里的可选回查提升成全文必读")
                 if "## 阶段审查：结论分级" in text:
                     stage = text.index("## 阶段审查：结论分级")
                     for phrase in ("MAJOR 也不自动成为必修", "只有 **BLOCKER 级 FAIL** 会让父 agent 回去修"):

@@ -677,7 +677,7 @@ class BeforeTheScopeIsFrozen(UsageStarts, StagePreparation, FreshProject):
 
 class TheKnowledgeTaskHasSixBlocks(NativeCase):
     BLOCKS = ("## 1. 当前动作与对象", "## 2. 有效事实与决定", "## 3. 当前契约与义务",
-              "## 4. 激活知识及原文", "## 5. 本次完成条件", "## 6. 缺口与责任")
+              "## 4. 激活知识：索引与本动作的原文", "## 5. 本次完成条件", "## 6. 缺口与责任")
 
     def registered(self) -> list[str]:
         return yaml.safe_load((self.ext / "manifest.yaml").read_text(encoding="utf-8"))["provides"]["knowledge"]
@@ -715,8 +715,8 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
     def test_halves_are_marked_for_the_side_that_uses_them(self) -> None:
         design = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout
         plan = self.task("--feature", CU, "--action", "plan", "--audience", "author").stdout
-        self.assertIn("本动作主要用上篇", design)
-        self.assertIn("本动作主要用下篇", plan)
+        self.assertIn("下面是：前言与上篇", design)
+        self.assertNotIn("下面是：前言与上篇", plan, "plan 拿到了上篇")
 
     def test_a_unit_task_names_the_unit_and_the_design_objects_it_carries(self) -> None:
         proc = self.task("--feature", CU, "--action", "plan", "--audience", "author")
@@ -910,7 +910,7 @@ class TheReviewerGetsTheSameLoader(NativeCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("# 知识任务：plan（审查者）", proc.stdout)
-        self.assertIn("## 4. 激活知识及原文", proc.stdout)
+        self.assertIn("## 4. 激活知识：索引与本动作的原文", proc.stdout)
 
 
 

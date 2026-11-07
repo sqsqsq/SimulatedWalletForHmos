@@ -321,7 +321,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
       : ['（作者对本需求的阅读主线与每章骨架，是待核的作者判断，不是审查标准）', '',
         ...readingRows('AR/story-src/story-template.md', planText)]));
 
-  // 回看清单：作者十章齐后逐条处置的同一张清单，这里核每一条的去向成不成立。
+  // 回看清单：作者各章写完后逐条处置的同一张清单，这里核每一条的去向成不成立。
   const planCtx = { contract, projectRoot, args: { feature }, featureRoot: root, srcDir: src, storyPath,
     decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
   // 本需求的有效章表（章序、展示标题、省略）：逐章问题按它列

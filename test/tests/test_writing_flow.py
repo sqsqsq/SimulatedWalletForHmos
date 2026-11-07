@@ -143,7 +143,7 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
             self.assertIn(needle, design, f"关系作业少了「{needle}」")
         for needle in ("说了「稍后问」就要真问", "操作开始不等于状态迁移完成"):
             self.assertEqual(1, guide.count(needle), f"「{needle}」又在别处抄了一份")
-        self.assertIn("第四节第 4 步", section(guide, "回看：十章齐后逐条处置回看清单"))
+        self.assertIn("第四节第 4 步", section(guide, "回看：各章写完后逐条处置回看清单"))
         # 图怎么选归「表达选择」一节，写章这里只说落盘；两处并存过一轮（可改画 / 一律原样搬入），
         # 作者读到哪句走哪条，car 那一轮的时序图就这么被改画成流程图、丢了失败责任。
         picks = section(guide, "表达选择：先选用途，再选载体")

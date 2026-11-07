@@ -260,15 +260,20 @@ class TheJudgementSeesTheEntry(ProtocolCase):
         return proc.stdout
 
     def test_the_task_carries_each_file_with_its_units(self) -> None:
-        text = self.task()
-        block = text.split("knowledge/constraints/neutral-domain.md", 1)[1]
+        """索引给每份知识的单元与何时读；判过它的 Feature 拿到原文，连强制力与命中条件。"""
+        index = self.task().split("knowledge/constraints/neutral-domain.md", 1)[1].split("\n", 1)[0]
+        self.assertIn("单元：NEU-01、NEU-02、NEU-03、NEU-04", index)
+        self.assertIn("何时读：需求有新增出口时：出口的标识与字段要求", index)
+        self.write_contracts()
+        proc = self.knowledge_task("plan")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        block = proc.stdout.split("- 位置：`doc/extensions/knowledge/constraints/neutral-domain.md`", 1)[1]
         self.assertIn("- 单元：NEU-01、NEU-02、NEU-03、NEU-04", block)
-        self.assertIn("- 何时读：需求有新增出口时：出口的标识与字段要求", block)
         self.assertIn("| NEU-02 | 重复触发时复用同一个标识 | 红线 | 有重试路径 |", block, "原文连强制力与命中条件一起送到")
 
     def test_each_fact_says_when_to_read_it(self) -> None:
         """每份项目事实带自己的「何时读」，作者据它判用不用；多行自述照样送到。"""
-        self.assertIn("- 何时读：设计出口与重试时：本工程已有的出口登记与重试入口", self.task())
+        self.assertIn("何时读：设计出口与重试时：本工程已有的出口登记与重试入口", self.task())
         self.edit_knowledge("facts/neutral-facts.md",
                             "applies_when: 设计出口与重试时：本工程已有的出口登记与重试入口\n",
                             "applies_when: |\n  设计出口时：\n  出口登记在哪\n")
