@@ -219,7 +219,7 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         self.assertIn("止于 Plan、不进入 Coding", text)
         self.assertIn("phases/design.md「六、交付门之后：施工单位设计准备与 Spec/Plan」", text, "交付选项没指向执行方法")
         method = (DEV_EXT / "skills/story/phases/design.md").read_text(encoding="utf-8").split("## 六、交付门之后", 1)[1]
-        self.assertIn("--requested-phases spec,plan", method, "实现方案没把 Plan 上限交给范围准备")
+        self.assertIn("| 实现方案（到 Plan） | 第 1—4 步 | `spec,plan` |", method, "实现方案没把 Plan 上限交给范围准备")
         self.assertNotIn("/story archive", text, "本地单没有送审")
         self.assertEqual(kept, original.read_bytes(), "核对、登记或交付门改了审查者的原回复")
         again = json.loads([l for l in self.register().stdout.splitlines() if l.startswith("{")][-1])

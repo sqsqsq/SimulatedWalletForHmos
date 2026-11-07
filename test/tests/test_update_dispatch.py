@@ -173,6 +173,10 @@ class TheMethodPageSaysHowToGetItRight(unittest.TestCase):
         for needle in ("verifier_request", "原样全文", "sync-closure",
                        "semantic_not_reverified", "report_missing", "不要自己拼 subject"):
             self.assertIn(needle, closure, f"闭环一节没说「{needle}」")
+        for action in ("run_verifier_then_receipt", "rerun_verifier_with_current_request", "fill_receipt_then_sync_closure",
+                       "fix_verifier_findings_then_rerun_harness", "phase_closed_wait_user"):
+            self.assertIn(f"`{action}`", closure, f"闭环动作表没有原生的 {action}")
+        self.assertNotIn("完整跑一次 harness 采纳", closure, "回复落盘后仍要求无条件重跑 harness")
         update = (phases / "update.md").read_text(encoding="utf-8")
         self.assertIn("「五、独立审查、登记与交付」", update, "update 方法页没有指向唯一的审查与登记规则")
         self.assertIn("没有可用的独立读者时，按 `phases/design.md`「五」第 1 步以 `--reader unavailable` 如实写未审", update,

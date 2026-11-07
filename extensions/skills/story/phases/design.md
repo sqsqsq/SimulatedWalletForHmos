@@ -132,7 +132,7 @@
 6. **交付选择**：交付门通过后，已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择，并按停等表记下人的选择：
    - 送审：仅系统需求，走 `/story archive <AR>`，Story 作正文、Review 作附件；系统要求设计参考（取材回执 `delivery_requirements.design_reference`）或本单已有交付请求时，再加设计参考（蓝图的原生评审投影原字节）附件；交付集合里的各件都读回一致才登记；
    - 完整设计交接：按第六节第 1 步完成施工单位设计准备，不启动施工，再做第 4 步最后交接；
-   - 实现方案：按第六节第 1—4 步，为每个施工单位完成适用的 Spec 与 Plan，止于 Plan；
+   - 实现方案：按第六节第 1—4 步，为每个施工单位完成适用的 Spec 与 Plan，止于 Plan（只授权 Spec 或只授权 Plan 的按第六节的表）；
    - 完整实现：在授权范围内接续设计准备，按 Framework 的推进策略与结果推进；
    - 暂不推进：停在这里，之后从 `story_flow.py status` 续上。
 
@@ -140,20 +140,33 @@
 
 ## 六、交付门之后：施工单位设计准备与 Spec/Plan
 
-只在授权覆盖完整设计交接、实现方案或完整实现时做；只要 Story 的不建施工单位。命令都在 `framework/harness` 下执行，`<根>` 是消费工程根。
+只在授权覆盖施工单位设计、Spec 或 Plan 时做；只要 Story 的不建施工单位。命令都在 `framework/harness` 下执行，`<根>` 是消费工程根。
+
+| 已有授权 | 做哪几步 | 第 2 步的 `--requested-phases` |
+|---|---|---|
+| 完整设计交接 | 第 1、4 步，不声明阶段请求 | — |
+| 只要 Spec | 第 1—4 步 | `spec` |
+| 只要 Plan | 第 1—4 步 | `plan` |
+| 实现方案（到 Plan） | 第 1—4 步 | `spec,plan` |
 
 1. **施工单位设计准备**（成文前已做完的跳过）：蓝图准入后按 change-unit-progression 设计准备段，把分解候选写进
    `<需求目录>/blueprint/change-unit-candidates.json`，跑 `npm run check:change-unit -- --project-root <根> --blueprint <蓝图> --accept-candidates <候选文件> --json`；
-   已有施工单位或接受后未就绪的跑同一命令的 `--readiness`。施工单位的 Feature 标识与目录取它返回的 accepted 结果，不按业务名拼。停在选择施工单位之前，不启动 Goal Mode。
-2. **一次声明本次请求**：施工单位接受之后，每个获准的施工单位跑一次
-   `npx ts-node scripts/goal-mode-entry.ts --project-root <根> --framework-root <根>/framework --feature <FID> --prepare-scope --completion-target request --requested-results '<本次获准的设计结果>' --requested-phases spec,plan --requirement-file <需求文件>`。
+   已有施工单位、或接受后未就绪修好之后，跑同一命令的 `--readiness`（替换 `--accept-candidates <候选文件>`）。返回里各字段分开用：
+   - `accepted`：这一次接受了哪些施工单位，接受已经生效；之后就绪不成立也不再重复接受；
+   - `inventory`：全部施工单位的身份（`feature_id`、`canonical_path`，含退役的），之后各步的 Feature 标识与目录从这里取，不按业务名拼；
+   - `status`、`readiness`、`ready_ids`：只有 `ready_ids` 里、且在本次授权内的施工单位往下做。未就绪按 `readiness` 点名的问题修好再跑 `--readiness`，
+     返回 busy 时等占用解除再跑；只是评审文档物化失败时按返回的 `rebuildCommand` 重建。
+   停在选择施工单位之前，不启动 Goal Mode。
+2. **一次声明本次请求**：对 `ready_ids` 里获准的每个施工单位跑一次
+   `npx ts-node scripts/goal-mode-entry.ts --project-root <根> --framework-root <根>/framework --feature <FID> --prepare-scope --completion-target request --requested-results '<本次获准的设计结果>' --requested-phases <按上表> --requirement-file <需求文件>`。
    `<需求文件>` 是蓝图需求条目里 `kind` 为 requirement 的来源文件（去掉 `#片段`），之后各阶段都用这一份。
    要执行哪些阶段、哪些由已有依据复用，照它返回的 `phase_chain` 与 `obligations`：不先单做 Spec 再换范围，不补跑复用的阶段，也不删链上的阶段。
+   原生要求的阶段超出本次授权时，停下照实说明，不自行扩大请求。
 3. **按 `phase_chain` 逐阶段做完**：每个阶段 P 依次
    - `npx ts-node scripts/prepare-blueprint-design.ts --feature <FID> --phase P --project-root <根> --framework-root <根>/framework`：Spec 只准备 `acceptance.yaml`，Plan 只准备 `contracts.yaml` 与 `use-cases.yaml`；
    - 按原生 Spec / Plan Skill 与 `hooks/<阶段>/author.md` 完成本阶段产物（动笔前取知识任务）。准备结果标为 absent 的由本阶段写；标为 invalid 或与共同设计冲突的交回设计负责方（第 5 步），本阶段不改共同设计；
    - `npx ts-node harness-runner.ts --project-root <根> --phase P --feature <FID>`：首次正式运行冻结执行范围，之后复用；
-     审查与收口照它末尾的 `NEXT:`，做法见 [`reference/phase-closure.md`](../reference/phase-closure.md)（签发了请求才派原生阶段 verifier，回复原样落盘，`check-receipt` 收口）。
+     审查与收口照它末尾的 `NEXT:`，按 [`reference/phase-closure.md`](../reference/phase-closure.md)「闭环」的动作表做。
    本阶段收口了才进下一阶段；NEXT 要求回到前一阶段时先回去做。
 4. **最后交接**：授权范围内的施工单位都做完后再跑一次 `story-build check --deliver`，通过才交回结果；报依据变了按第 5 步处理。
 5. **共同设计在这一段变了**：由设计负责方在 component-design 里修订、交原质询者复核、重新走到准入，施工单位按原生 `--readiness` 重新派生；

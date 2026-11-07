@@ -254,6 +254,17 @@ class TheRequestChainFromANewlyAcceptedUnit(unittest.TestCase):
         cls.feature = feature
         (root / IMPACT_BASIS).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / "demo" / IMPACT_BASIS, root / IMPACT_BASIS)
+        cls.readiness = native_cli(root, "scripts/check-change-unit.ts", "--project-root", str(root), "--blueprint", BLUEPRINT,
+                                   "--readiness", "--json")
+        # 只授权一个阶段时按那个阶段请求：只看原生派生，不冻结；每种之前删掉上一份候选
+        cls.single = {}
+        for phase in ("spec", "plan"):
+            (cls.unit / "feature.yaml").unlink(missing_ok=True)
+            cls.single[phase] = native_cli(root, "scripts/goal-mode-entry.ts", "--project-root", str(root), "--framework-root",
+                                           str(root / "framework"), "--feature", feature, "--prepare-scope", "--completion-target",
+                                           "request", "--requested-results", f"只要 {phase}", "--requested-phases", phase,
+                                           "--requirement-file", REQUIREMENT)
+        (cls.unit / "feature.yaml").unlink(missing_ok=True)
         cls.scope = native_cli(root, "scripts/goal-mode-entry.ts", "--project-root", str(root), "--framework-root",
                                str(root / "framework"), "--feature", feature, "--prepare-scope", "--completion-target", "request",
                                "--requested-results", "返回首页余额刷新的设计到 Plan", "--requested-phases", "spec,plan",
@@ -272,6 +283,26 @@ class TheRequestChainFromANewlyAcceptedUnit(unittest.TestCase):
         self.assertEqual(0, self.accepted.returncode, self.accepted.stdout[-1500:] + self.accepted.stderr[-800:])
         self.assertEqual(CU, self.feature, "Feature 标识不是原生接受返回的那一个")
         self.assertTrue((self.unit / "change-unit.yaml").is_file())
+
+    def test_readiness_gives_identity_in_the_inventory_and_work_in_ready_ids(self) -> None:
+        """已有施工单位跑 --readiness：accepted 为空（这次没接受），身份从 inventory 取，往下做的只看 ready_ids。"""
+        self.assertEqual(0, self.readiness.returncode, self.readiness.stdout[-1500:] + self.readiness.stderr[-800:])
+        got = last_json(self.readiness.stdout)
+        self.assertEqual([], got["accepted"])
+        self.assertEqual([(UNIT, CU)], [(u["change_unit_id"], u["feature_id"]) for u in got["inventory"]])
+        self.assertEqual([UNIT], got["ready_ids"])
+
+    def test_a_single_phase_request_goes_by_its_own_phase(self) -> None:
+        """授权到哪个阶段就请求哪个阶段，执行链由原生派生：蓝图验收齐时只请求 Spec，原生仍要执行 Plan——
+        超出只要 Spec 的授权，按第六节停下照实说明；只请求 Plan 时链与授权一致。"""
+        for phase, proc in self.single.items():
+            with self.subTest(phase=phase):
+                self.assertEqual(0, proc.returncode, proc.stdout[-1500:] + proc.stderr[-800:])
+                self.assertEqual(["plan"], last_json(proc.stdout)["phase_chain"])
+        method = (DEV_STORY_BUILD.parents[2] / "phases" / "design.md").read_text(encoding="utf-8").split("## 六、", 1)[1]
+        for row in ("| 只要 Spec | 第 1—4 步 | `spec` |", "| 只要 Plan | 第 1—4 步 | `plan` |",
+                    "| 实现方案（到 Plan） | 第 1—4 步 | `spec,plan` |", "原生要求的阶段超出本次授权时，停下照实说明"):
+            self.assertIn(row, method)
 
     def test_one_request_declares_the_chain_and_reuses_the_satisfied_spec(self) -> None:
         self.assertEqual(0, self.scope.returncode, self.scope.stdout[-1500:] + self.scope.stderr[-800:])

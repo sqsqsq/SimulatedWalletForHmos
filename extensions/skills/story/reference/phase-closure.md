@@ -4,13 +4,20 @@
 
 ## 闭环
 
-**派不派只看 harness 末尾的 `NEXT:` 行**，不按宿主名分叉：它说要派就派一次；说本宿主没有审查员就直接看回执。
-请求与报告的路径都由 summary 的 `verifier_request`、`verifier_report` 给：不要自己拼 subject、不复用上一轮的文件名——
+**下一步只看 harness 末尾的 `NEXT:` 行与 summary 的 `next_action`**，不按宿主名分叉：
+
+| `next_action` | 你做什么 |
+|---|---|
+| `run_verifier_then_receipt`、`rerun_verifier_with_current_request` | 把 summary 的 `verifier_request` 整段交给原生阶段 verifier；它的回复**原样全文**写到 `verifier_report` 指向的文件，再跑 `check-receipt --phase <阶段> --feature <Feature id>` |
+| `fill_receipt_then_sync_closure` | 当前审查证据已可复用，不重派：按 NEXT 跑 `check-receipt` 或 `harness-runner.ts --sync-closure` 收口 |
+| `fix_verifier_findings_then_rerun_harness` | 按下面的处置表修本职责必修项，再按 NEXT 重跑 harness，取新请求复验 |
+| `phase_closed_wait_user` | 本阶段已闭环；按「现在能不能完成」查当前处置，授权覆盖后续阶段时沿原生请求链继续 |
+
+请求与报告的路径都由 summary 给：不要自己拼 subject、不复用上一轮的文件名——
 拿错了 `check-receipt` 判 `report_missing`，退回沿用历史 PASS，表面闭环、实际没审。
-调用只带 request JSON；verifier 的回复由你**原样全文**写到 `summary.verifier_report` 指向的那份文件，
-再完整跑一次 harness 采纳它（不用 `--sync-closure`：它对已闭环的阶段不改写）。读 summary 确认
-`verifier_subject_id` 与报告终态块对得上、`readiness_signals` 里没有 `semantic_not_reverified`。
-门禁核这份报告：格式不合、判据缺行重复或取值不合的回复每次运行都报、不计结论，重投同一份 request 拿完整回复。
+`check-receipt` 采纳回复并收口，回执与物证由它和原生收口生成，你不写 summary、回执或物证清单；
+之后读 summary 核 `verifier_subject_id` 与报告终态块对得上、`readiness_signals` 里没有 `semantic_not_reverified`。
+门禁核这份报告：格式不合、判据缺行重复或取值不合的回复不计结论，按 NEXT 重投同一份 request 拿完整回复。
 回复只原样落盘，不改结论、不补行；同一审查对象只认第一份合规回复（登记在报告目录的 `verifier.conclusions.json`），之后换了内容的回复被拒，材料改过才有新的请求与对象。回执是 harness 的只读投影，`check-receipt` 自己先生成再校验；
 要写备注写 `<阶段>/notes.md`。
 
