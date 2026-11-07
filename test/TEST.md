@@ -610,7 +610,7 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 - 首次门禁、登记与返工只看有结果的调用，命令报错也算没过；读一份旧门禁报告不是一轮门禁。
 - 归并不了或被宿主输出截断的条目（只有开始、只有结果、同键冲突、跨检查点、`source_truncated`）列在 `incomplete_tool_events`，此时计数只是已观察到的次数；被截断的门禁结果不出结论。
 - 门禁结论另按种类给全程数：`gate_fail_by_kind`、`gate_unknown_by_kind`（harness / story_register / story_check / review_check / deliver 分计，没结果、冲突或截断记判不了）；审查结论值另计 `review_results`。公共事件里入参或结果被截断、结果缺失的调用，本 run 保全了 dsh 原生会话时，由同一原生调用（同 callId、只在一个会话里、工具名一致、原生结果只有一份）补齐那一侧再分类计数，补齐次数记 `tool_calls_completed_from_native`；认不出同一调用或原生结果冲突的照旧判不了。`gate_rounds_with_fail` 只数原生 harness，不能用它为 0 概括本轮没有 FAIL；交付门一次过也不说明之前的检查、审查与返修没发生。
-- 有保全的 dsh 原生会话时，`delegations` 按原生调用认委派角色：派出去的是产品生成的 Story 派审载体、蓝图质询载体或阅读图任务就是那一类审查，子会话写了需求 `blueprint/` 下的设计产物是蓝图作者，专用 `verifier` 是阶段审查，其余 `unresolved` 带 label 交人判；每个子会话给原生登记到收尾通知的观察跨度（含等待，不是纯推理时间）与收尾状态，没有收尾通知的是 unknown。Story 独审另给收尾回复写明的总体结论 `review_conclusion`（pass / warn / fail，带子会话、收尾时刻与回复行号），汇总在 `story_review_conclusions`：回复要恰好一行派出去的那份材料键、报告合同三节各一个、「总体结论」第一行是结论值，否则是 unknown 并写原因；它与收尾状态、父方 `review --action check` 的报告接收结论分开计，只是结构提取，不替代产品核对与独立评审。没有保全原件时整项为 null。
+- 有保全的 dsh 原生会话时，`delegations` 按原生调用认委派角色：派出去的是产品生成的 Story 派审载体、蓝图质询载体或阅读图任务就是那一类审查，子会话写了需求 `blueprint/` 下的设计产物是蓝图作者，专用 `verifier` 是阶段审查，其余 `unresolved` 带 label 交人判；每个子会话给原生登记到收尾通知的观察跨度（含等待，不是纯推理时间）与收尾状态，没有收尾通知的是 unknown。Story业务审查结论与收尾状态、父方接收结果分开记录。2.0.3本轮待实施的@26验法以派审对象key及最终回复显式conclusion取值，正文实际复核范围由原报告/事件判，不再要求三节/scope形态；旧@25及更早运行按当时报告协议只读识别。未实施消费者按旧实现报告，不冒称新口径已生效；未知/缺原件保unknown，结构提取不代产品与语义评审。没有保全原件时整项为 null。
 - `context_growth` 是首末两次请求的 context_total 读数之差，不是单阶段净上下文。
 - `*_gap_sec` 仍是事件间隔估计；并发调用相互重叠，不能相加成墙钟。
 
