@@ -214,14 +214,14 @@ function sourceIndex(root, id, bp) {
   const problems = [...declared.problems, ...read.problems, ...packs.flatMap(p => p.problems.map(x => `需求 ${p.requirement}：${x}`))];
   if (problems.length) {
     stop(`蓝图 ${id} 候选采用的来源`, problems.join('；'),
-      '材料版本坏了由需求负责方恢复原件；引用或摘要不对由设计负责方按原生修订同步');
+      '材料版本坏了由需求负责方恢复原件；设计记录、工程文件或引用变了由设计负责方按原生修订同步');
   }
   return [`候选声明 ${declared.sources.length} 条需求条目，原字节都与声明摘要一致：`,
     ...declared.sources.map(s => `- \`${s.item_id}\`（${s.kind}，${s.provenance?.evidence_strength ?? '未声明证据强度'}）：\`${s.path}\`，${s.sha256}`),
     ...(declared.support.length ? [`设计依据引用 ${declared.support.length} 处：`,
       ...declared.support.map(s => `- ${s.where}：\`${s.path}\``)] : []),
-    ...(declared.projectFiles.length ? ['设计依据与冲突依据引用的工程文件，逐份读：',
-      ...declared.projectFiles.map(f => `- \`${f.path}\`（${f.use === 'conflict' ? '冲突依据' : '支撑依据'}，${f.where}），${f.sha256}`)] : []),
+    ...(declared.projectFiles.length ? ['设计依据与冲突依据引用的工程文件与设计记录，逐份读：',
+      ...declared.projectFiles.map(f => `- \`${f.path}\`（${f.role === 'design_file' ? '设计记录，' : ''}${f.use === 'conflict' ? '冲突依据' : '支撑依据'}，${f.where}），${f.sha256}`)] : []),
     ...(declared.authorityFiles.length ? ['契约段引用的权威文件（接口转写或映射；指针与内容由原生逐段核对），逐份读：',
       ...declared.authorityFiles.map(f => `- \`${f.path}\`，${f.sha256}，被 ${f.refs.length} 处引用（${f.refs.slice(0, 3).map(r => r.where).join('、')}${f.refs.length > 3 ? ' 等' : ''}）`)] : []),
     ...packs.flatMap(p => [`需求 \`${p.requirement}\` 采用的材料版本 ${p.versions.join('、') || '（没有）'}，共 ${p.files.length} 份，逐份读：`,

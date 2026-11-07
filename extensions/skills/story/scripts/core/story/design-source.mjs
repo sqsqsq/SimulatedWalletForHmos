@@ -185,8 +185,11 @@ const markdownOf = files => files.filter(f => /\.md$/i.test(f.file_path))
 function adoptedSourceProblems(ctx) {
   const adopted = designSource(ctx).adopted;
   if (!adopted?.own || !ctx.projectRoot) return [];
-  return readSourceFiles(ctx.projectRoot, [...adopted.own.files, ...adopted.projectFiles, ...adopted.answers]).problems
+  const material = readSourceFiles(ctx.projectRoot, [...adopted.own.files, ...adopted.answers]).problems
     .map(p => `采用的材料版本 ${p}——材料版本导入后不改，恢复原件`);
+  const design = readSourceFiles(ctx.projectRoot, adopted.projectFiles).problems
+    .map(p => `设计依据引用的设计记录或工程文件 ${p}——由设计负责方按原生修订同步蓝图，再按新依据同步 Story 并重新登记`);
+  return [...material, ...design];
 }
 
 /**

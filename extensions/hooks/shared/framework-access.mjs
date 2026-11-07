@@ -149,7 +149,8 @@ export function readBlueprint(projectRoot, blueprintId, purpose = 'draft', consu
     return { status: 'stale', issues: [{ code: 'contract_authority_changed_while_reading', message: '读取期间契约权威文件被改写，重新读取' }] };
   }
   const requirement = consume ?? blueprintId;
-  const sourceIndex = sourcesOf(native, checked.blueprint, requirement, { issues: checked.issues ?? [], bytes });
+  const sourceIndex = sourcesOf(native, checked.blueprint, requirement,
+    { issues: checked.issues ?? [], bytes, canonicalPath: checked.canonicalPath });
   const out = {
     status: 'ok', canonical_path: rel(native.root, checked.canonicalPath), blueprint: checked.blueprint,
     blueprint_ref: blueprintRef(checked, blueprintId), admitted, issues: checked.issues ?? [],
@@ -479,26 +480,28 @@ function localTargets(text, fromDir) {
 }
 
 /** 来源引用连同它在蓝图里的位置：provenance 取 source_ref（原生 validateOwnedCollections 覆盖的各集合，含合同对象自身）。
+ * 设计实体（视图节点与运行数据流、关系、决定与缺口、合同对象）自身的 provenance 标 `design`：它说这个设计对象依据什么形成，
+ * 可以指登记的材料，也可以指本蓝图设计目录里的设计记录；蓝图根与 discovery 事实的来源是事实材料。
  * 合同各段的 source_ref 是契约权威，见 `authorityRefs`。 */
 function refsOf(blueprint) {
   const support = [];
   const conflicts = [];
-  const put = (list, ref, where, provenance = null) => {
-    if (typeof ref === 'string' && ref.trim()) list.push({ path: ref.trim(), where, provenance });
+  const put = (list, ref, where, provenance = null, design = false) => {
+    if (typeof ref === 'string' && ref.trim()) list.push({ path: ref.trim(), where, provenance, design });
   };
-  const prov = (list, obj, where) => put(list, obj?.provenance?.source_ref, where, obj?.provenance ?? null);
+  const prov = (list, obj, where, design = false) => put(list, obj?.provenance?.source_ref, where, obj?.provenance ?? null, design);
   prov(support, blueprint, 'provenance');
   (blueprint?.discovery?.facts ?? []).forEach((f, i) => prov(support, f, `discovery.facts[${f?.fact_id ?? i}]`));
   (blueprint?.design_views ?? []).forEach((v, i) => {
-    (v?.nodes ?? []).forEach((n, j) => prov(support, n, `design_views[${v?.view_id ?? i}].nodes[${n?.node_id ?? j}]`));
-    (v?.runtime_data_flows ?? []).forEach((n, j) => prov(support, n, `design_views[${v?.view_id ?? i}].runtime_data_flows[${j}]`));
+    (v?.nodes ?? []).forEach((n, j) => prov(support, n, `design_views[${v?.view_id ?? i}].nodes[${n?.node_id ?? j}]`, true));
+    (v?.runtime_data_flows ?? []).forEach((n, j) => prov(support, n, `design_views[${v?.view_id ?? i}].runtime_data_flows[${j}]`, true));
   });
-  (blueprint?.relations ?? []).forEach((r, i) => prov(support, r, `relations[${r?.relation_id ?? i}]`));
+  (blueprint?.relations ?? []).forEach((r, i) => prov(support, r, `relations[${r?.relation_id ?? i}]`, true));
   for (const key of ['decisions', 'gaps']) {
     (blueprint?.decisions_and_gaps?.[key] ?? []).forEach((d, i) =>
-      prov(support, d, `decisions_and_gaps.${key}[${d?.decision_id ?? d?.gap_id ?? i}]`));
+      prov(support, d, `decisions_and_gaps.${key}[${d?.decision_id ?? d?.gap_id ?? i}]`, true));
   }
-  (blueprint?.contracts ?? []).forEach((c, i) => prov(support, c, `contracts[${c?.contract_id ?? i}]`));
+  (blueprint?.contracts ?? []).forEach((c, i) => prov(support, c, `contracts[${c?.contract_id ?? i}]`, true));
   (blueprint?.discovery?.conflicts ?? []).forEach((c, i) => {
     prov(conflicts, c, `discovery.conflicts[${i}]`);
     (c?.sources ?? []).forEach((s, j) => (typeof s === 'string'
@@ -605,9 +608,12 @@ function authorityOf(native, blueprint, checked) {
  *   Markdown 阅读稿引的登记文件一并加入；图是资源叶子，只取被引的那一份。引用会换版的当前位置（带 `reference` 的别名行）
  *   不算依据，报出它此刻对应的稳定文件；几个版本共用的留存按 provenance 的 `source_revision` 认版本，认不出就报候选；
  *   最新一版人工答复作为独立必读（`answers`），不取决于有没有被引用。
- * - `projectFiles`：支撑与冲突依据引用的需求目录以外的工程文件，按原生来源解析（片段要在文件里）读出原始字节摘要，
- *   作为设计来源身份的一部分交给读者；引用不是工程内现存文件的（原生合法的非文件出处）按原生合同保留在 `support`，不当材料。
- * 支撑与冲突引用带片段时按原生来源解析核片段。引用落在需求目录里、却不是登记文件的（含冲突依据），逐条报出，不静默过滤。
+ * - `projectFiles`：支撑与冲突依据引用的需求目录以外的工程文件（`role: 'project_file'`），以及设计实体引用的、
+ *   本蓝图 canonical 所在设计目录里的设计记录（`role: 'design_file'`），按原生来源解析（片段要在文件里）读出原始字节摘要，
+ *   作为设计来源身份的一部分交给读者；它们不算采用了本需求的材料。需求目录以外、不是工程内现存文件的引用（原生合法的非文件出处）
+ *   按原生合同保留在 `support`，不当材料。设计目录里的设计记录读不到或片段不在，逐条报出。
+ * 支撑与冲突引用带片段时按原生来源解析核片段。引用落在需求目录里、却既不是登记文件也不是设计目录里设计实体引的设计记录的（含冲突依据），
+ * 逐条报出，不静默过滤。
  * 采用版本的 Markdown 阅读稿链到的登记文件，连同它所在的整个版本一起加入，沿着读下去它的图也在。
  *
  * 只在 `readBlueprint` 里随原生完整检查算一次，读者都用读取结果的 `source_index`，不另核一遍。
@@ -623,6 +629,9 @@ function sourcesOf(native, blueprint, requirement, checked) {
   const featuresDir = native.module('config.ts').loadFrameworkConfig(native.root).paths?.features_dir ?? 'doc/features';
   const root = `${path.posix.normalize(featuresDir)}/${requirement}`;
   const fileAt = ref => projectFile(native, ref);
+  // 本蓝图 canonical 所在的设计目录：取原生这次加载的路径，不按需求名拼
+  const designDir = checked.canonicalPath ? `${path.posix.dirname(rel(native.root, checked.canonicalPath))}/` : null;
+  const designRecord = (r, file) => Boolean(r.design && designDir && file?.startsWith(designDir));
   for (const item of native.module('scripts/utils/blueprint-requirement-traceability.ts').currentScopeItems(blueprint)) {
     if (!fileAt(item.source_ref)) {
       out.problems.push(`蓝图条目 ${item.item_id} 的来源 ${item.source_ref} 不是工程内路径——设计负责方处理`);
@@ -662,20 +671,29 @@ function sourcesOf(native, blueprint, requirement, checked) {
   // 支撑与冲突引用按原生来源解析：片段要在文件里；需求目录以外的现存工程文件读出摘要，进来源身份
   const resolve = native.module('scripts/utils/blueprint-requirement-traceability.ts').resolveCurrentScopeSource;
   const exists = (file) => { try { return fs.statSync(path.join(native.root, ...file.split('/'))).isFile(); } catch { return false; } };
+  const index = requirementIndex(native, root);
+  const registered = file => Boolean(index?.files?.some(x => `${root}/${x.path}` === file));
+  const design = new Set();
   for (const [use, list] of [['support', support], ['conflict', conflicts]]) {
     for (const r of list) {
       const file = fileAt(r.path);
+      const record = designRecord(r, file) && !registered(file);
+      if (record) design.add(r);
       if (!file || (!inRoot(file) && !exists(file))) continue;
+      if (record && !exists(file)) {
+        out.problems.push(`${r.where} 引用的设计记录 ${r.path} 不在——设计负责方补上这份设计记录或改正引用`);
+        continue;
+      }
       try {
         const got = resolve(native.root, r.path);
         if (!inRoot(file)) out.projectFiles.push({ path: file, sha256: got.source_sha256, role: 'project_file', use, where: r.where });
+        else if (record) out.projectFiles.push({ path: file, sha256: got.source_sha256, role: 'design_file', use, where: r.where });
       } catch (e) {
         if (exists(file)) out.problems.push(`${r.where} 引用的 ${r.path} 解析不了：${String(e?.message ?? e).split(/\r?\n/)[0]}——设计负责方按原文修正片段`);
       }
     }
   }
-  const index = requirementIndex(native, root);
-  const cited = [...out.sources, ...support].map(r => ({ ...r, file: fileAt(r.path) }));
+  const cited = [...out.sources, ...support.filter(r => !design.has(r))].map(r => ({ ...r, file: fileAt(r.path) }));
   if (!index) {
     if (cited.some(r => inRoot(r.file))) out.problems.push(`需求 ${requirement} 的材料索引读不出来（或不是本版带 files 视图的索引）——重跑 \`story_flow.py round\` 重建`);
     return out;
@@ -737,7 +755,7 @@ function sourcesOf(native, blueprint, requirement, checked) {
   }
   for (const r of conflicts) {
     const file = fileAt(r.path);
-    if (!inRoot(file)) continue;
+    if (!inRoot(file) || design.has(r)) continue;
     const key = pick(r, file, '冲突依据', conflictLeaves);
     if (key) conflicted.add(key);
   }

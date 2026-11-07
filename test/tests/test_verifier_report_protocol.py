@@ -303,6 +303,32 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegistered
         self.assertNotEqual(0, out.returncode)
         self.assertIn(f"登记之后蓝图换了版本（登记时 r{revision}，现在 r{revision + 1}）", out.stdout + out.stderr)
 
+    def test_a_design_record_the_story_rests_on_is_part_of_its_basis(self) -> None:
+        """设计节点引蓝图目录里的设计记录：它进成文依据，登记后改了就拦，说法是回设计负责方同步，不是恢复原件。"""
+        rel = f"{design_kit.features_dir(self.root)}/REQ-DEMO/blueprint/local-design.md"
+        record = self.root / rel
+        record.write_text("# 刷新职责\n\n返回首页时由本部件刷新余额。\n", encoding="utf-8")
+        canonical = (self.root / design_kit.features_dir(self.root) / "REQ-DEMO" / "blueprint" / "component-blueprint.yaml")
+        node = re.search(r"\n( *)- node_id: wallet-balance\n(?:\1  .*\n)*?(\1  provenance:.*\n(?:\1    .*\n)*)",
+                         canonical.read_text(encoding="utf-8"))
+        self.assertIsNotNone(node, "夹具变了：找不到 wallet-balance 节点的 provenance")
+        pad = node.group(1) + "  "
+        whole = node.group(0)[1:]
+        design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, whole,
+                                    whole[:-len(node.group(2))] + f"{pad}provenance:\n{pad}  source_kind: component_design\n{pad}  source_ref: {rel}#刷新职责\n"
+                                    f"{pad}  observed_at: 2026-10-30T10:00:00+08:00\n{pad}  evidence_strength: observed\n"
+                                    f"{pad}  extraction_method: local-design\n")
+        self.reviewed("pass")
+        registered = self.register()
+        self.assertEqual(0, registered.returncode, registered.stdout + registered.stderr)
+        self.assertEqual(0, self.check("--deliver").returncode)
+        record.write_text("# 刷新职责\n\n返回首页与下拉时由本部件刷新余额。\n", encoding="utf-8")
+        out = self.check("--deliver")
+        text = out.stdout + out.stderr
+        self.assertNotEqual(0, out.returncode)
+        self.assertIn("登记之后设计采用的来源或必读人答变了", text)
+        self.assertNotIn("恢复原件", text, "合法修订的设计记录被当成不可改的材料")
+
     def test_a_late_design_change_returns_to_the_delivery_gate_through_review_and_registration(self) -> None:
         """施工段改了共同设计：交付门说先按新蓝图同步稿、交原读者复核、重新登记；照做之后最后交接的交付门按新依据通过。"""
         self.reviewed("pass")

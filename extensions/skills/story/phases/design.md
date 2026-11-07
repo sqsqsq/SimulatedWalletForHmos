@@ -166,7 +166,7 @@
    - `npx ts-node scripts/prepare-blueprint-design.ts --feature <FID> --phase P --project-root <根> --framework-root <根>/framework`：Spec 只准备 `acceptance.yaml`，Plan 只准备 `contracts.yaml` 与 `use-cases.yaml`；
    - 按原生 Spec / Plan Skill 与 `hooks/<阶段>/author.md` 完成本阶段产物（动笔前取知识任务）。准备结果标为 absent 的由本阶段写；标为 invalid 或与共同设计冲突的交回设计负责方（第 5 步），本阶段不改共同设计；
    - `npx ts-node harness-runner.ts --project-root <根> --phase P --feature <FID>`：首次正式运行冻结执行范围，之后复用；
-     审查与收口照它末尾的 `NEXT:`，按 [`reference/phase-closure.md`](../reference/phase-closure.md)「闭环」的动作表做。
+     审查与收口照它末尾的 `NEXT:`，按 [`reference/phase-closure.md`](../reference/phase-closure.md)「闭环」那张 `next_action` 表做。
    本阶段收口了才进下一阶段；NEXT 要求回到前一阶段时先回去做。
 4. **最后交接**：授权范围内的施工单位都做完后再跑一次 `story-build check --deliver`，通过才交回结果；报依据变了按第 5 步处理。
 5. **共同设计在这一段变了**：由设计负责方在 component-design 里修订、交原质询者复核、重新走到准入，施工单位按原生 `--readiness` 重新派生；

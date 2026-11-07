@@ -107,7 +107,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     for (const f of own?.conflictFiles ?? []) conflicted.set(local(f), { sha256: f.sha256.replace(/^sha256:/, ''), role: f.role });
     for (const f of found.projectFiles) {
       add(path.join(projectRoot, ...f.path.split('/')), 'source',
-        `设计${f.use === 'conflict' ? '冲突依据' : '依据'}引用的工程文件 ${f.path}（${f.where}）`, true, { kind: 'text', read: false });
+        `设计${f.use === 'conflict' ? '冲突依据' : '依据'}引用的${f.role === 'design_file' ? '设计记录' : '工程文件'} ${f.path}（${f.where}）`, true, { kind: 'text', read: false });
     }
   }
   // 当前有效人答：独立必读，导出落后于流程记录时报缺口，不拿旧导出顶替

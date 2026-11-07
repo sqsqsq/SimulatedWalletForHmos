@@ -742,6 +742,70 @@ class TheSupportSourcesAreCollectedNatively(SourceIndexCase):
         self.assertEqual(([], []), (got["problems"], got["projectFiles"]))
 
 
+class ADesignRecordIsADesignSource(SourceIndexCase):
+    """设计实体的出处可以是本蓝图设计目录里的设计记录：读出原字节进来源身份（`design_file`），不算采用了本需求的材料；
+    事实来源、需求目录里别处没登记的文件、只有设计自引而没有材料采用，都照旧不放行，来源类别换名不改变结果。"""
+
+    RECORD = "blueprint/local-design.md"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.record = self.feature_root / self.RECORD
+        self.record.parent.mkdir(parents=True, exist_ok=True)
+        self.record.write_text("# 刷新职责\n\n返回首页时由本部件刷新余额，刷新结果只在本部件内使用。\n", encoding="utf-8")
+        self.addCleanup(self.record.unlink, missing_ok=True)
+
+    def with_node(self, ref: str, *, kind: str = "component_design", contract_ref: str | None = None) -> dict:
+        bp = self.blueprint(contract_ref=contract_ref or self.sr)
+        bp["design_views"] = [{"view_id": "logical", "nodes": [{"node_id": "wallet-balance", "provenance": {
+            "source_kind": kind, "source_ref": ref, "observed_at": "2026-10-30T10:00:00+08:00",
+            "evidence_strength": "observed", "extraction_method": "local-design"}}]}]
+        return bp
+
+    def test_a_node_citing_the_design_record_reads_it_as_design(self) -> None:
+        control = self.collect(self.blueprint(contract_ref=self.sr))
+        got = self.collect(self.with_node(f"{self.base}/{self.RECORD}#刷新职责"))
+        self.assertEqual([], got["problems"])
+        self.assertEqual([(f"{self.base}/{self.RECORD}", "design_file")], [(f["path"], f["role"]) for f in got["projectFiles"]])
+        self.assertEqual(control["versions"], got["versions"], "设计记录被算成了本需求的材料版本")
+        self.record.write_text("# 刷新职责\n\n返回首页与下拉时由本部件刷新余额。\n", encoding="utf-8")
+        self.assertNotEqual(got["identity"], self.collect(self.with_node(f"{self.base}/{self.RECORD}#刷新职责"))["identity"],
+                            "设计记录改了，来源身份没跟着变")
+
+    def test_the_source_kind_name_does_not_decide(self) -> None:
+        ref = f"{self.base}/{self.RECORD}"
+        self.assertEqual(self.collect(self.with_node(ref))["projectFiles"],
+                         self.collect(self.with_node(ref, kind="product_requirement"))["projectFiles"])
+        stray = f"{self.base}/inbox/草稿.md"
+        (self.feature_root / "inbox").mkdir(exist_ok=True)
+        (self.feature_root / "inbox" / "草稿.md").write_text("# 草稿\n", encoding="utf-8")
+        self.addCleanup((self.feature_root / "inbox" / "草稿.md").unlink, missing_ok=True)
+        for kind in ("component_design", "product_requirement"):
+            with self.subTest(kind=kind):
+                got = self.collect(self.with_node(stray, kind=kind))
+                self.assertTrue(any(stray in p and "不是需求" in p for p in got["problems"]), got["problems"])
+
+    def test_a_missing_record_and_a_bad_fragment_are_named(self) -> None:
+        missing = f"{self.base}/blueprint/没有这份.md"
+        got = self.collect(self.with_node(missing))
+        self.assertTrue(any("设计记录" in p and missing in p for p in got["problems"]), got["problems"])
+        got = self.collect(self.with_node(f"{self.base}/{self.RECORD}#没有这一节"))
+        self.assertTrue(any("design_views[logical].nodes[wallet-balance]" in p and "fragment" in p for p in got["problems"]),
+                        got["problems"])
+
+    def test_a_fact_citing_the_design_record_is_still_a_material_reference(self) -> None:
+        bp = self.blueprint(contract_ref=self.sr)
+        bp["discovery"]["facts"] = [{"fact_id": "f-local", "provenance": {"source_ref": f"{self.base}/{self.RECORD}"}}]
+        got = self.collect(bp)
+        self.assertTrue(any("discovery.facts[f-local]" in p and "不是需求" in p for p in got["problems"]), got["problems"])
+
+    def test_design_records_alone_do_not_adopt_the_requirement(self) -> None:
+        ref = f"{self.base}/{self.RECORD}"
+        got = self.collect(self.with_node(ref, contract_ref=ref))
+        self.assertEqual([], got["problems"])
+        self.assertEqual([], got["versions"], "只有设计记录，却算出了采用的材料版本")
+
+
 class ContractSectionsReadTheirAuthority(SourceIndexCase):
     """契约段的 source_ref 是设计转写出的接口契约（JSON Pointer 指到段），放在需求自己的 blueprint/ 下：
     指针与内容由原生契约校验核，不按材料登记、不按文字片段核；依据引用与某段完全相同就是这一段。坏指针、内容不符照原生报，
