@@ -148,8 +148,13 @@ class ThePlanTaskPointsAtTheLowerHalf(MethodCase):
         self.write_contracts(facts=[*self.judged(), used])
 
     def test_the_plan_task_carries_the_lower_half(self) -> None:
-        self.assertNotIn("### neutral-method（facts，halves）", self.plan_task(), "没用到的知识也送了正文")
-        self.assertIn("knowledge/facts/neutral-method.md` · neutral-method", self.plan_task(), "索引里没列这份知识")
+        start = self.plan_task()
+        self.assertIn("本 Feature 还没有知识判断", start)
+        self.assertIn("### neutral-method（facts，halves）", start, "还没判断时起步正文没送")
+        self.write_contracts()
+        judged = self.plan_task()
+        self.assertNotIn("### neutral-method（facts，halves）", judged, "已有判断但没用到的知识也送了正文")
+        self.assertIn("knowledge/facts/neutral-method.md` · neutral-method", judged, "索引里没列这份知识")
         self.use_method()
         block = self.plan_task().split("### neutral-method（facts，halves）", 1)[1].split("\n### ", 1)[0]
         self.assertIn("- 下面是：前言与下篇（另一篇按位置读原文）", block)

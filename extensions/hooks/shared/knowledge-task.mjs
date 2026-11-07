@@ -60,12 +60,13 @@ function loadKnowledge(root) {
 }
 
 /**
- * 施工单位本动作直接送正文的知识文件（扩展根相对路径）：本单位承担或判过的规约与模式、本单位设计引用的事实、
+ * Feature 本动作直接送正文的知识文件（扩展根相对路径）：本单位承担或判过的规约与模式、本单位设计引用的事实、
  * 需求级的评审动作与归属未定的判断，以及本阶段契约与验收实际引用的知识。蓝图动作返回 null（全部送）。
- * 平铺维护 Feature 没有承接范围，送它判过的全部。
+ * 平铺维护 Feature 没有承接范围，送它判过的全部；它还一条判断都没有时由作者起步判断，同样返回 null。
  */
-function relatedFiles(root, action, judged, spec) {
+function relatedFiles(root, action, judged, spec, kind) {
   if (DESIGN_SIDE.has(action)) return null;
+  if (kind !== 'cu' && judged && !judged.rows.length && !judged.facts.length) return null;
   const files = new Set();
   if (!judged) return files;
   const active = activation(root);
@@ -95,43 +96,43 @@ function bodyFor(k, body, action) {
 }
 
 /**
- * 第 4 块：全局知识索引（本动作可达的每份一行）加本动作直接送的正文。`related` 为 null 时正文全部送，
- * 否则只送其中的文件；相关文件被登记的受众挡在本动作之外时报登记与消费者冲突，不静默少送。
+ * 第 4 块：全局知识索引（激活清单的每份一行，不按受众筛）加本动作直接送的正文。正文先按登记的受众取本动作可达的，
+ * `related` 为 null 时这些都送，否则只送其中的文件；相关文件被受众挡在本动作之外时报登记与消费者冲突，不静默少送。
+ * `starter` 为真表示 Feature 还没有知识判断，正文供作者起步判断。
  */
-function knowledgeBlock(root, action, knowledge, related) {
+function knowledgeBlock(root, action, knowledge, related, starter = false) {
   const byFile = new Map([...knowledge.facts, ...knowledge.constraints, ...knowledge.patterns].map(k => [k.file, k]));
   const all = knowledgeRegistrations(root);
-  const registrations = all.filter(r => reaches(r, action));
-  const ordered = registrations.map(r => ({ ...byFile.get(r.file), registration: r })).filter(k => k.file);
+  const ordered = all.map(r => ({ ...byFile.get(r.file), registration: r })).filter(k => k.file);
   const rows = ['## 4. 激活知识：索引与本动作的原文', ''];
   const protocol = path.join(extensionRoot(root), 'skills', 'story', 'reference', 'knowledge', 'protocol.md');
-  const gaps = [...(related ?? [])].filter(f => !registrations.some(r => r.file === f))
+  const gaps = [...(related ?? [])].filter(f => !all.some(r => r.file === f && reaches(r, action)))
     .map(f => `知识 \`${f}\` 是本单位判断或契约实际引用的，登记的受众里却没有 ${action}：登记与消费者冲突，交知识维护者修正激活清单`);
   if (!ordered.length) {
-    return { rows: [...rows, all.length ? `登记了 ${all.length} 份知识，受众里都没有 ${action}（零项）。`
-      : `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`], gaps };
+    return { rows: [...rows, `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`], gaps };
   }
-  const sent = ordered.filter(k => related === null || related.has(k.file));
+  const sent = ordered.filter(k => reaches(k.registration, action) && (related === null || related.has(k.file)));
   const where = k => relDisplay(root, path.join(extensionRoot(root), ...k.file.split('/')));
   rows.push(`激活 ${ordered.length} 份，按激活顺序；各列与形态怎么读见 \`${relDisplay(root, protocol)}\`。`
-    + (related === null ? '本动作判断全局适用性，正文都在下面。'
-      : `与本动作直接相关的 ${sent.length} 份正文在下面；其余按「何时读」判断，需要时按位置读原文。`), '');
+    + (starter ? `本 Feature 还没有知识判断：受众里有 ${action} 的 ${sent.length} 份正文都在下面，相关与否、适用与否由你判断，写进契约的 knowledge_facts。`
+      : related === null ? `本动作判断全局适用性，受众里有 ${action} 的 ${sent.length} 份正文都在下面。`
+        : `与本动作直接相关的 ${sent.length} 份正文在下面；其余按「何时读」判断，需要时按位置读原文。`), '');
   for (const k of ordered) {
-    rows.push(`- \`${where(k)}\` · ${k.name}（${k.kind ?? k.file.split('/')[1] ?? ''}，${k.form}）· 单元：${k.units.join('、')}`
+    rows.push(`- \`${where(k)}\` · ${k.name ?? k.id}（${k.kind ?? k.file.split('/')[1] ?? ''}，${k.form}）· 单元：${k.units.join('、')}`
       + ` · 何时读：${String(k.appliesWhen ?? '').trim().split(/\s*\n\s*/).join(' ')}`
       + (k.registration.audience === null ? ''
         : ` · 登记：受众 ${JSON.stringify(k.registration.audience)}${k.registration.summary ? `，摘要「${k.registration.summary}」` : ''}`)
       + (sent.includes(k) ? '　（正文在下）' : ''));
   }
   rows.push('');
-  if (related !== null && !sent.length) {
+  if (related !== null && !sent.length && !gaps.length) {
     rows.push('本施工单位没有承接或判过的知识，契约与验收也没有引用知识：正文不送；按索引核有没有设计漏判的，漏判交设计负责方。', '');
   }
   for (const k of sent) {
     const file = path.join(extensionRoot(root), ...k.file.split('/'));
     const body = fs.readFileSync(file, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
     const { text, note } = bodyFor(k, body, action);
-    rows.push(`### ${k.name}（${k.file.split('/')[1] ?? ''}，${k.form}）`, '',
+    rows.push(`### ${k.name ?? k.id}（${k.file.split('/')[1] ?? ''}，${k.form}）`, '',
       `- 位置：\`${where(k)}\`（适用性事实的 provenance.source_ref；规约条目引用写 \`<位置>#<编号>\`）`,
       `- 单元：${k.units.join('、')}`, `- 何时读：${k.appliesWhen}`, `- 下面是：${note}`,
       '', '````markdown', text, '````', '');
@@ -158,11 +159,16 @@ function unitLines(judged) {
   const context = unitContext(judged);
   const { applied, selected } = unitDuties(judged);
   const own = context.mine.filter(d => !applied.includes(d) && !selected.includes(d));
-  const basis = context.common.filter(d => d.outcome !== 'pending');
+  const reviews = context.common.filter(d => d.kind === 'constraints' && d.outcome === 'applied' && d.reviewAction);
+  const basis = context.common.filter(d => ['not_applicable', 'rejected'].includes(d.outcome));
+  const other = context.common.filter(d => d.outcome !== 'pending' && !reviews.includes(d) && !basis.includes(d));
   const unowned = context.common.filter(d => d.outcome === 'pending');
   const lines = [
     ...(own.length ? ['本单位相关、不产生义务的判断（宿主扩展章引用其理由，不重判）：', ...own.map(judgedLine)] : []),
+    ...(reviews.length ? ['需求级评审动作（适用，指向原生决定或需求级对象，由评审承接执行；不产生代码 must 或验收条目，'
+      + '本阶段核它要的评审材料与执行是否齐备）：', ...reviews.map(judgedLine)] : []),
     ...(basis.length ? ['需求级公共依据（不适用或拒绝，没有落点，不产生本单位义务）：', ...basis.map(judgedLine)] : []),
+    ...(other.length ? ['需求级判断（没有落点，按各行的判定读）：', ...other.map(judgedLine)] : []),
     ...(unowned.length ? ['归属待核的公共知识缺口（待定，只登记了原生决定或缺口，还没定由哪个设计对象承担）：核它是否落在本单位；'
       + '落在本单位的按决定此刻的效力处理，未决的照原生决定或缺口的负责方等待或回报，不当作已生效的义务，也不当作豁免：',
     ...unowned.map(judgedLine)] : []),
@@ -466,7 +472,8 @@ function featureTask(root, feature, action, supplied, knowledge) {
   }
   return {
     object: `Feature \`${feature}\`，${kind}，位置 \`${f.feature_path}\``, facts, duties, gaps, page: `hooks/${action}/author.md`,
-    preview: f.scope === 'not_frozen', related: relatedFiles(root, action, judged, f.spec),
+    preview: f.scope === 'not_frozen', related: relatedFiles(root, action, judged, f.spec, f.identity.kind),
+    starter: f.identity.kind !== 'cu' && Boolean(judged) && !judged.rows.length && !judged.facts.length,
   };
 }
 
@@ -480,7 +487,7 @@ function buildTask(root, { action, audience, blueprint, feature, requirement, re
   const knowledge = loadKnowledge(root);
   const task = blueprint ? blueprintTask(root, blueprint, action)
     : featureTask(root, feature, action, { requirement, requirementFile }, knowledge);
-  const { rows, gaps: routing } = knowledgeBlock(root, action, knowledge, blueprint ? null : task.related);
+  const { rows, gaps: routing } = knowledgeBlock(root, action, knowledge, blueprint ? null : task.related, task.starter === true);
   task.gaps.push(...routing);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));

@@ -58,6 +58,9 @@ ELSEWHERE_QUIET = f"{OBS}#OBS-06"
 DECISION = "decision:balance-refresh-policy"
 UNOWNED = f"{OBS}#OBS-03"
 PENDING_ELSEWHERE = f"{OBS}#OBS-07"
+#: 交付物规约里标「（评审动作）」的条目：只要归档动作与留痕，不产生代码要求
+DELIVERABLES = "doc/extensions/knowledge/constraints/deliverables.md"
+REVIEW_REF = f"{DELIVERABLES}#DLV-02"
 
 
 def sha(path: Path) -> str:
@@ -65,14 +68,16 @@ def sha(path: Path) -> str:
 
 
 def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False, facts: bool = False,
-           pending: bool = False, nested: bool = True, acceptance: bool = True, use_cases: bool = False) -> str | None:
+           pending: bool = False, nested: bool = True, acceptance: bool = True, use_cases: bool = False,
+           review: bool = False) -> str | None:
     """改夹具蓝图（按原文插入）：知识输入身份、适用性事实、设计对象契约上的义务与角色；再按原生口径（蓝图原字节的摘要与
     来源指纹）更新施工单位的蓝图引用。`pattern` 是决策树：selected（有候选信号，选中并写角色）/ none（没有候选信号，不判）。
     `elsewhere` 再加两条只落在运行视图上的规约判断（另一个施工单位独有）；`pending` 再加两条待定（见 `UNOWNED`、`PENDING_ELSEWHERE`）；
     `facts` 加两条项目事实 fact-1、fact-10：模块节点的验证引用写 fact-10 与一个合法的裸验收编号，正文提到 fact-1。
     `nested` 为假时模块节点不带机器契约（原生 contracts 投影为 absent，plan 阶段自己写契约），返回拿掉的那段契约原文；
     `acceptance` 为假时模块节点也不带验收（spec 阶段的验收投影为 absent，spec 自己写验收）；
-    `use_cases` 给模块节点加一段用例权威（`USE_CASES`），契约不在时它仍是 plan 阶段要对齐的设计权威。"""
+    `use_cases` 给模块节点加一段用例权威（`USE_CASES`），契约不在时它仍是 plan 阶段要对齐的设计权威；
+    `review` 再加一条适用的评审动作（`REVIEW_REF`），落点只指原生决定，不产生代码义务。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     old_text = canonical.read_text(encoding="utf-8")
@@ -85,6 +90,8 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     if pending:
         judgements += [design_kit.rule_judgement("OBS-03", "pending", "刷新失败要不要计入运维指标等运维定", [DECISION]),
                        design_kit.rule_judgement("OBS-07", "pending", "后台同步要不要单独采集等运营定", [ELSEWHERE, DECISION])]
+    if review:
+        judgements.append(design_kit.rule_judgement("DLV-02", "applied", "本需求新增对外开放的签约页，说明文档要归档", [DECISION]))
     if pattern == "selected":
         judgements.append(design_kit.pattern_judgement(DECISION_TREE, "selected", "刷新有多个分支，拆成节点",
                                                        [{"role": "节点表", "target_ref": MODULE},
@@ -245,6 +252,7 @@ class ChainCase(unittest.TestCase):
     NESTED = True
     ACCEPTANCE = True
     USE_CASES = False
+    REVIEW = False
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
@@ -252,7 +260,7 @@ class ChainCase(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
         cls.removed = design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS, cls.PENDING, cls.NESTED,
-                             cls.ACCEPTANCE, cls.USE_CASES)
+                             cls.ACCEPTANCE, cls.USE_CASES, cls.REVIEW)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -678,6 +686,32 @@ class SiblingUnitsInOneBlueprint(ChainCase):
         duties = out[second]["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
         self.assertNotIn(PENDING_ELSEWHERE, duties, "待定成了已生效的义务")
         self.assertNotIn(UNOWNED, duties, "待定成了已生效的义务")
+
+
+class ARequirementLevelReviewActionIsNamedAsSuch(ChainCase):
+    """适用的评审动作落点只指原生决定：作者任务把它说成需求级评审动作（由评审承接，不产生代码 must），不归进「不适用、无义务」；
+    它的规约原文送到，审查表的落点列同样写评审动作。"""
+    REVIEW = True
+
+    def test_the_review_action_is_neither_a_code_duty_nor_not_applicable(self) -> None:
+        out = self.probe()
+        facts = out["author"].split("## 2. 有效事实与决定", 1)[1].split("## 3. 当前契约与义务", 1)[0]
+        reviews = facts.split("需求级评审动作（适用", 1)[1].split("\n\n", 1)[0]
+        self.assertIn(f"`{REVIEW_REF}`", reviews)
+        self.assertIn("→ applied", reviews)
+        if "需求级公共依据（不适用或拒绝" in facts:
+            basis = facts.split("需求级公共依据（不适用或拒绝", 1)[1].split("需求级判断（", 1)[0]
+            self.assertNotIn(REVIEW_REF, basis, "适用的评审动作被说成不适用、无义务")
+        duties = out["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
+        self.assertNotIn(REVIEW_REF, duties, "评审动作成了代码义务")
+        knowledge = out["author"].split("## 4. 激活知识：索引与本动作的原文", 1)[1]
+        self.assertIn(f"- 位置：`{DELIVERABLES}`", knowledge, "评审动作的规约原文没送到")
+        spec = subprocess.run(["node", "--input-type=module", "-e", SIBLING_PROBE, str(self.root.as_posix()), CU],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, spec.returncode, spec.stderr[-600:])
+        review = json.loads(spec.stdout)[CU]["review"]
+        row = next(line for line in review.splitlines() if line.startswith(f"| {REVIEW_REF} |"))
+        self.assertTrue(row.endswith(f"| 需求级评审动作（{DECISION}） |"), row)
 
 
 class AUnitCarryingNoJudgementStillGetsTheShared(ChainCase):

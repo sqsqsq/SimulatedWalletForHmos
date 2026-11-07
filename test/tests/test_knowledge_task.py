@@ -827,6 +827,23 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
                 self.assertEqual((1, ""), (proc.returncode, proc.stdout))
                 self.assertIn(reason, proc.stderr)
 
+    def test_a_flat_feature_without_judgements_gets_the_text_to_start_from(self) -> None:
+        """平铺维护 Feature 还一条知识判断都没有：受众可达的正文都送，说明由作者起步判断；
+        已判清、本单位确实不涉及知识的施工单位只给索引。"""
+        flat = self.root / "doc" / "features" / "flat-start"
+        flat.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, flat, True)
+        out = self.task("--feature", "flat-start", "--action", "plan", "--audience", "reviewer")
+        self.assertEqual(0, out.returncode, out.stderr)
+        part = out.stdout.split("## 4. 激活知识：索引与本动作的原文", 1)[1]
+        self.assertIn("本 Feature 还没有知识判断", part)
+        self.assertEqual(len(self.registered()), part.count("- 位置：`doc/extensions/knowledge/"), "起步判断拿不到正文")
+        self.assertNotIn("本施工单位没有承接或判过的知识", part)
+        unit = self.task("--feature", CU, "--action", "plan", "--audience", "reviewer").stdout
+        unit_part = unit.split("## 4. 激活知识：索引与本动作的原文", 1)[1]
+        self.assertEqual(0, unit_part.count("- 位置：`doc/extensions/knowledge/"), "夹具前提变了：本单位作用域里有知识判断")
+        self.assertIn("本施工单位没有承接或判过的知识", unit_part)
+
     def test_the_maintenance_plan_author_gets_the_knowledge_context_to_record(self) -> None:
         """平铺维护 Feature 的 plan 作者拿到这一轮的知识输入身份，写在契约顶层；spec 作者不拿（还没有承载判断的契约）。"""
         flat = self.root / "doc" / "features" / "flat-ok"
@@ -877,7 +894,7 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
 
 
     def test_object_registrations_keep_their_audience(self) -> None:
-        """manifest 1.1 的对象登记：摘要与受众照登记给出，Feature 阶段只送受众里有它的那几份。"""
+        """manifest 1.1 的对象登记：摘要与受众照登记给出；索引不按受众筛，Feature 阶段的正文只送受众里有它的那几份。"""
         manifest = self.ext / "manifest.yaml"
         original = manifest.read_bytes()
         self.addCleanup(manifest.write_bytes, original)
@@ -893,7 +910,11 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.assertEqual(0, plan.returncode, plan.stderr)
         self.assertIn(f"`doc/extensions/{first}`", plan.stdout)
         self.assertIn('登记：受众 "global"，摘要「部件是谁」', plan.stdout)
-        self.assertNotIn(f"`doc/extensions/{second}`", plan.stdout, "受众只有 spec 的知识送进了 plan")
+        index = plan.stdout.split("## 4. 激活知识：索引与本动作的原文", 1)[1].split("\n### ", 1)[0]
+        self.assertIn(f"`doc/extensions/{second}`", index, "受众只有 spec 的知识从 plan 的索引里消失了")
+        self.assertIn('登记：受众 ["spec"]，摘要「已有能力」', index)
+        self.assertEqual(len(self.registered()), sum(1 for l in index.splitlines() if l.startswith("- `doc/extensions/")))
+        self.assertNotIn(f"- 位置：`doc/extensions/{second}`", plan.stdout, "受众只有 spec 的知识正文送进了 plan")
         spec = self.task("--feature", CU, "--action", "spec", "--audience", "author").stdout
         self.assertIn(f"`doc/extensions/{second}`", spec)
         design = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout
