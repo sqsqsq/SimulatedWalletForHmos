@@ -98,7 +98,7 @@ function decisionRows(decisionsPath) {
   const open = all.filter(d => d?.status === 'open');
   const settled = all.filter(d => d?.status === 'settled');
   const out = ['', '### 先核：仍开着的选择与正文的冲突（逐章核查之前做）', '',
-    open.length ? '按判据「核的先后」①逐条给结论，写在「审查范围与依据」里；替人选了一边的同时在「发现」表记一条。'
+    open.length ? '按判据「核的先后」①逐条给结论，写进回复；替人选了一边的同时记一条发现。'
       : '本轮没有仍开着的条目。'];
   for (const d of open) {
     out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
@@ -232,26 +232,26 @@ function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
     + '标「核在场」的只核在场与来源摘要。', '',
     '待审（结论针对它们）：', ...rows.filter(r => r.role === 'object').map(line), '',
     '只读对照（据以判断，不在这次改）：', ...rows.filter(r => r.role === 'source').map(line),
-    ...problems.map(p => `- **读不到**：${p}——与它有关的判断按「报告怎么写」第 5 条写进 unreviewed`),
-    ...blocking.map(m => `- **读不到${m.label}（${m.doc}）**——它是必备来源，材料索引里没有这一类；与它有关的判断按「报告怎么写」第 5 条写进 unreviewed`)];
+    ...problems.map(p => `- **读不到**：${p}——与它有关的判断在回复里写明未核`),
+    ...blocking.map(m => `- **读不到${m.label}（${m.doc}）**——它是必备来源，材料索引里没有这一类；与它有关的判断在回复里写明未核`)];
 }
 
 /**
- * 读法：先按派审载体说的情形定范围——首审、实质复审与上一版报告参考完整读，格式返修照用原回复已充分的判断、只补诊断点到的核验；
- * 完整读时先来源与设计，再通读待审的 Story 与 Review。
+ * 读法：按派审载体写的情形——首次阅读按顺序完整核源；复核通读当前稿、按原报告与改动的实际影响回查；补正只补原回复缺的部分。
+ * 任务不随每一轮的原报告变化，情形与原报告路径由派审载体给出。
  */
 const reading = () => ['', '### 怎么读', '',
-  '读到这份任务时，你已按派审载体只读 `AR/story.md` 做完首读，首读结论写在报告「审查范围与依据」里；下面是核源。',
-  '先看派审载体有没有列前轮上下文（没有就是首审）；有就读它，看是哪种情形。首审、上一份结论是 fail 的复审、带上一版材料报告参考的审查，按下面的顺序完整读。'
-  + '格式返修只修上一份回复的报告形态：原回复的实质判断与核验充分就照用，只回材料核诊断点到的那部分；'
-  + '诊断是缺依据、引用找不到或结论矛盾，或者看不出原审查是否完整时，同样按下面的顺序完整读。'
-  + '复审与上一版报告参考按前轮上下文说的影响范围核，影响界限说不清时完整读。', '',
+  '派审载体写的是哪种情形，就按哪种读：',
+  '- **首次阅读**（载体写「先首读」）：你已只读 `AR/story.md` 做完首读，首读结论写进回复；下面按顺序完整核源。',
+  '- **复核**（载体写「复核」并给原报告）：通读当前 `AR/story.md` 与 `AR/review.md`，逐条核原报告的问题现在是否成立，'
+  + '再按这一版改动实际涉及的行为与引用，沿下面的顺序回查受影响的来源与设计；你没有经手原报告那一轮、或影响说不清时，按顺序完整核源。',
+  '- **补正**（载体写「补正上一份回复」）：原回复的判断与核验充分就照用，只补它缺的部分；看不出原审查是否完整时按顺序完整核源。', '',
   '1. 先读业务来源与人签：材料表里的业务原文与阅读稿（含设计未见引用的与冲突依据）、当前有效人答、会议原文与人的裁决、决策登记。',
   '2. 通读待审的 Story 与 Review，对着第 1 步核业务完整、准确与可读；写作设计是作者的安排，作参考。',
   '3. 蓝图与它的原生评审投影、接口转写与映射、知识原文与工程文件按问题回查：业务判断依赖精确接口、数据、状态或知识义务，'
   + '或人读件与来源对不上时，读相关部分。共同设计的完整性与转写真实性由蓝图的独立质询负责，这里不重做整套技术质询；'
   + 'Story 与蓝图一致、蓝图已过质询或已登记缺口，都不豁免来源里有而两稿都漏掉的内容——漏在设计层的照样记，修正责任写设计负责方。',
-  '4. 一份文件一次读不完时按范围接着读到末尾，读不到的按「报告怎么写」第 5 条处理；'
+  '4. 一份文件一次读不完时按范围接着读到末尾，读不到的在回复里写明未核与影响；'
   + '发现整体业务矛盾时追到它的权威对象（决定、蓝图、来源），按它对这次交付的影响定严重程度。'];
 
 /**
@@ -292,7 +292,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   if (rid) {
     rows.push('', `### 本轮 update ${rid}：新稿对照有效旧依据`, '',
       `\`AR/story-src/updates/${rid}/before/\` 是这一轮动手前的现场。逐处核：新稿改掉的旧约束、旧决定与旧验收，改动依据是谁给的、他有没有这个权限；`
-      + '与仍有效的旧约束冲突而没经有权人裁定的，在「发现」表记阻断。update-notes 是作者的判断，按原件与 before 核，不当依据。');
+      + '与仍有效的旧约束冲突而没经有权人裁定的，记一条阻断发现。update-notes 是作者的判断，按原件与 before 核，不当依据。');
   }
 
   // 人答先于逐章：关卡人签是来源之一，对话里答过的问题由登记条目的澄清正文引用原话，二者都拿原话核
@@ -305,7 +305,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   const storyPath = path.join(root, 'AR', 'story.md');
   const story = readOrNull(storyPath) ?? '';
   rows.push('', '### 审查对象：当前 `AR/story.md`（按下面的段落顺序读盘上原文）', '',
-    ...(story.trim() ? readingRows('AR/story.md', authorZone(story)) : ['`AR/story.md` 读不到或是空的：按「报告怎么写」第 5 条记。']));
+    ...(story.trim() ? readingRows('AR/story.md', authorZone(story)) : ['`AR/story.md` 读不到或是空的：在回复里写明没有可审的 Story，结论 fail。']));
   // 已有的同图增强只给机械事实（哪几张、文件在哪、核到哪一步）；值不值得做、做得好不好按判据看图与 SVG 源码
   const work = readingWork(root);
   rows.push('', '### 已有的同图增强（机械事实）', '', ...(work.items.length
@@ -317,7 +317,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   rows.push('', '### 作者的写作设计：`AR/story-src/story-template.md`', '',
     ...(planText === null || !planText.trim()
       ? ['**写作设计缺口**：`AR/story-src/story-template.md` 读不到或是空的。照原材料与范围审正文，'
-        + '在「发现」表记一条：没有可核的写作设计。']
+        + '记一条发现：没有可核的写作设计。']
       : ['（作者对本需求的阅读主线与每章骨架，是待核的作者判断，不是审查标准）', '',
         ...readingRows('AR/story-src/story-template.md', planText)]));
 
@@ -376,7 +376,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   rows.push('', '### 材料里的图（这一次有哪几张）', '');
   if (images.gap) {
     rows.push(`**输入有缺口**：${images.gap}。`
-      + '「图用没用、取舍成不成立」这一项未核：写进 unreviewed（check 写这一项），说明这处缺口与未核的范围。');
+      + '「图用没用、取舍成不成立」这一项未核：在回复里写明这处缺口与未核的范围。');
   } else {
     rows.push(...(images.rows.length ? images.rows : ['材料清单里没有图片。']));
   }
@@ -406,11 +406,11 @@ function knowledgeRows(projectRoot, read) {
 function visualRows(v) {
   if (v.status !== 'ok') {
     return [`**本次看图能力裁定取不到**（${(v.issues ?? []).map(i => i.message ?? i.code).join('；') || v.status}）：`
-      + '看不了图就是没读完，按「报告怎么写」第 5 条记。'];
+      + '看不了图就是没读完，在回复里写明未核。'];
   }
   return [`**本次看图能力**：${v.fact}。`, v.deferral
     ? '**图面核对可以按能力缺口延期**：按判据里「图面核对可以按能力缺口延期」那一款处理。'
-    : v.capability.has_vision ? '能看图：图面照常核。' : '图面核对不能延期：看不了图就是没读完，按「报告怎么写」第 5 条记。'];
+    : v.capability.has_vision ? '能看图：图面照常核。' : '图面核对不能延期：看不了图就是没读完，在回复里写明未核。'];
 }
 
 /** story 的作者区：机器区（投影）整段换成一行区名。 */

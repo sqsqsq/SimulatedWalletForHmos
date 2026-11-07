@@ -56,7 +56,7 @@ export async function deliveryProblems(ctx) {
   const review = reviewResult(ctx);
   if (review.result === 'pass') return { problems: [], notes: design };
   if (review.result === 'warn') {
-    return { problems: [], notes: [`独立审查带非阻断建议通过，建议照录：${review.advisories.join('；')}`, ...design] };
+    return { problems: [], notes: [`独立审查带非阻断建议通过：${review.detail}`, ...design] };
   }
   if (review.result === 'unreviewed') return { problems: [], notes: [`${review.detail}——已写进 Story 交付章与 Review 题头的审查状态`, ...design] };
   return { problems: [`独立审查结果 ${review.result}：${review.detail}`], notes: design };

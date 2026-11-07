@@ -1494,9 +1494,9 @@ def _registered(base: Path) -> None:
             raise RuntimeError(f"{args[:3]}：{proc.stdout}{proc.stderr}")
         return proc
 
-    run("node", str(build), "review", "--action", "prepare", "--feature", FEATURE, "--project-root", str(base))
+    run("node", str(build), "review", "--action", "prepare", "--reader", "task", "--feature", FEATURE, "--project-root", str(base))
     design_kit.write_review(base, FEATURE, "pass")
-    run("node", str(build), "review", "--action", "prepare", "--feature", FEATURE, "--project-root", str(base))
+    run("node", str(build), "review", "--action", "prepare", "--reader", "task", "--feature", FEATURE, "--project-root", str(base))
     proc = run(sys.executable, str(FLOW), "story", "--feature", FEATURE, "--project-root", str(base))
     out = json.loads([line for line in proc.stdout.splitlines() if line.strip().startswith("{")][-1])
     if not out.get("success"):
@@ -1545,11 +1545,11 @@ class StoryIsRegisteredAgainAfterChangesCase(UpdateCase):
             out, self._first = self._first, None
             self.outputs.append(json.dumps(out, ensure_ascii=False))
             return out
-        prepared = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--feature", FEATURE,
+        prepared = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--reader", "task", "--feature", FEATURE,
                                 "--project-root", str(self.root))
         self.assertEqual(0, prepared.returncode, prepared.stdout + prepared.stderr)
         design_kit.write_review(self.root, FEATURE, "pass")
-        received = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--feature", FEATURE,
+        received = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--reader", "task", "--feature", FEATURE,
                                 "--project-root", str(self.root))
         self.assertEqual(0, received.returncode, received.stdout + received.stderr)
         out = self.flow("story")

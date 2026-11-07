@@ -302,9 +302,10 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
                 for needle in ("maison_verifier_request", "## 其它独立只读审查任务", "Story 业务审查的派审载体", "调用方", read_only):
                     self.assertIn(needle, text)
             with self.subTest(scope=rel):
-                # 阶段的总判与处置口径只在阶段分支；自足任务按任务自己的判据与结论（Story 的 MAJOR 是阻断）
+                # 阶段的总判与处置口径只在阶段分支；自足任务的判据与结论照任务自己的合同，运输桥不另写一套
                 own = text.index("## 其它独立只读审查任务")
-                self.assertIn("MAJOR 属于阻断发现", text[own:])
+                self.assertIn("判据、严重度、结论与处置照任务自己的合同", text[own:])
+                self.assertNotIn("MAJOR 属于阻断发现", text[own:], "运输桥又替 Story 写了结论规则")
                 if "## 阶段审查：结论分级" in text:
                     stage = text.index("## 阶段审查：结论分级")
                     for phrase in ("MAJOR 也不自动成为必修", "只有 **BLOCKER 级 FAIL** 会让父 agent 回去修"):

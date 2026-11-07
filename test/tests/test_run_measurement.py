@@ -1229,26 +1229,26 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         self.assertEqual({"child_id": "k-review", "settled_time": 11 * 60000, "reply_line": 17}, got["review_conclusion"]["at"])
         self.assertEqual({"fail": 1}, got["conclusions"])
 
-    def current_report(self, kind: str, conclusion: str) -> str:
-        return (f"material_key: {self.KEY}\n\n## 审查范围与依据\n\n复核：按影响核了口径冲突。\n\n```yaml\nreview_scope:\n"
-                f"  kind: {kind}\n  basis_report: null\n  unreviewed: []\n  additional_inputs: []\n```\n\n"
-                "## 发现\n\n| 编号 | 严重程度 | 材料位置 | 问题与依据 | 修正责任 |\n|---|---|---|---|---|\n"
-                f"| F1 | MAJOR | AR/story.md | 转化率分子分母冲突 | 设计 |\n\n## 总体结论\n\n{conclusion}\n")
+    def current_report(self, conclusion: str) -> str:
+        return (f"material_key: {self.KEY}\nconclusion: {conclusion}\n\n复核：按影响核了口径冲突。\n\n"
+                "- F1（MAJOR）AR/story.md：转化率分子分母冲突。修正：设计。\n")
 
-    def test_the_current_report_gives_its_conclusion_and_scope(self) -> None:
-        """现行报告形态：结论照第一行读，范围声明的 full / focused 一并记下。"""
-        got = self.review(self.current_report("focused", "fail\n\n理由：存在 1 条 MAJOR。"))["review_conclusion"]
-        self.assertEqual(("fail", "focused", None), (got["value"], got["scope"], got["why"]))
+    def test_the_current_reply_gives_its_conclusion_line(self) -> None:
+        """现行回复：结论照开头第二行读，正文里的字样不参与。"""
+        got = self.review(self.current_report("fail") + "\n结论差点写 pass。\n")["review_conclusion"]
+        self.assertEqual(("fail", None, 2), (got["value"], got["why"], got["at"]["reply_line"]))
 
-    def test_a_recorded_report_has_no_scope(self) -> None:
-        """历史记录里的旧标题照样读出结论，没有范围声明可读，范围记 None。"""
+    def test_a_recorded_report_is_still_read(self) -> None:
+        """已保全的历史记录按当时的三个二级标题读出结论。"""
         got = self.review(self.report("fail\n\n理由。"))["review_conclusion"]
-        self.assertEqual(("fail", None), (got["value"], got["scope"]))
+        self.assertEqual(("fail", None), (got["value"], got["why"]))
 
     def test_a_reply_that_is_not_the_whole_report_is_unknown(self) -> None:
         """收尾回复只是摘要（正文里写着「总体结论：warn」）、材料键不是派出去的那一份：都判不了，不从字样推断。"""
         summary = f"material_key: {self.KEY}\n\n## 判据核对\n\n（全文已发给父代理）\n\n**总体结论：warn**\n"
         self.assertEqual("unknown", self.review(summary)["review_conclusion"]["value"])
+        loose = f"material_key: {self.KEY}\n\n结论：pass\n"
+        self.assertEqual("unknown", self.review(loose)["review_conclusion"]["value"], "结论不在第二行也被读出来了")
         other = self.review(self.report("fail\n\n理由。"), key="b" * 64)["review_conclusion"]
         self.assertEqual(("unknown", "回复的材料键对不上派出去的审查对象"), (other["value"], other["why"]))
 

@@ -48,7 +48,7 @@ import {
 import { designGaps, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
 import {
-  discloseInStory, pendingDisclosure, preparedRecord, prepareReview, reviewResult,
+  discloseInStory, preparedRecord, prepareReview, reviewResult, setReader,
 } from './story/independent-review.mjs';
 import {
   fetchBatchDir, latestOf, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
@@ -76,7 +76,8 @@ const COMMANDS = Object.assign(Object.create(null), {
   build: { what: '由 decisions.json 渲染 AR/review.md（人工区逐字节保留）' },
   basis: { what: '输出这一刻的成文依据（一行 JSON），登记与路由用它' },
   'registration-check': { what: '登记前的组合只读核对：全篇检查（登记口径）→ 独立审查结果 → 成文依据，一个进程按序跑，输出一行 JSON' },
-  review: { what: `独立人读审查（--action ${REVIEW_ACTIONS.join('|')}）`, need: ['--action'], opts: ['--report-dir'] },
+  review: { what: `独立人读审查（--action ${REVIEW_ACTIONS.join('|')}）`, need: ['--action'],
+    opts: ['--reader', '--reader-reason', '--report-dir'] },
   view: { what: `切换、准备、查看或验收图的形态（--mode ${VIEW_MODES.join('|')}）`, need: ['--mode'], opts: ['--id'] },
   archive: { what: '交付门 → 取外部当前内容 → 发布前核 → 对接层上传与读回 → 核回执 → 登记归档态（只用于需求系统单）',
     need: ['--mcp-token'], opts: ['--reply', '--with-design-reference'] },
@@ -92,13 +93,15 @@ const OPTIONS = Object.assign(Object.create(null), {
   '--registering': [null, '登记前核：story_flow.py story 登记时用'],
   '--action': ['<动作>', '审查动作'],
   '--report-dir': ['<项目相对路径>', '审查报告写到哪个目录（不给时按宿主约定）'],
+  '--reader': ['task|unavailable', 'prepare 必需：你按宿主实际工具说明核过的独立读者情况——有能接收自足只读任务的隔离读者写 task，没有写 unavailable'],
+  '--reader-reason': ['<原因>', '--reader unavailable 时必需：实际缺什么（缺工具、任务合同不接受、调用被明确拒绝）'],
   '--mode': ['<模式>', '图的形态或动作'],
   '--id': ['<图块 ID>', '只作用于这一块图'],
   '--mcp-token': ['<token>', '对接层访问需求系统用，不打印'],
   '--reply': ['<原话>', '人看过外部改动、确认仍要覆盖时的原话，逐字'],
   '--with-design-reference': [null, '本单已有交付请求要附设计参考时带上；系统要求附时不必带'],
 });
-const KEY = { '--project-root': 'projectRoot', '--mcp-token': 'token', '--report-dir': 'reportDir',
+const KEY = { '--project-root': 'projectRoot', '--mcp-token': 'token', '--report-dir': 'reportDir', '--reader-reason': 'readerReason',
   '--with-design-reference': 'withDesignReference' };
 const SCRIPT = 'node doc/extensions/skills/story/scripts/core/story-build.mjs';
 
@@ -265,9 +268,9 @@ function cmdBasis(ctx) {
  * 独立人读审查（`story/independent-review.mjs`）。
  *
  * - `prepare`：先把审查对象定成最终版——正式图建源、附录重投、编号、渲染 Review，全篇结构检查通过——再写审查任务，
- *   给出材料键与这一份回复的位置；同一份材料已有有效通过的报告时给出原位置（reused）。审查者的回复原样落盘后再跑一次，
- *   它接收这份回复（记下原样字节的摘要）并按结论给下一步。
- * - `check`：只读核这一次的审查报告，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
+ *   给出材料键与这一份回复的位置；最近一份可消费的 pass / warn 正是当前材料时给出原位置（reused）。`--reader` 是主执行者
+ *   核过的独立读者情况：unavailable 时写未审披露。读者的回复原样落盘后以同样参数再跑一次，它接收这份回复并给下一步。
+ * - `check`：只读核这一次的审查结果，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
  * - `manual`：评审记录里人写过的内容（写过字的议题、自由意见区），一行 JSON。
  */
@@ -284,37 +287,54 @@ function cmdReview(ctx) {
     process.exitCode = ['pass', 'warn', 'unreviewed'].includes(out.result) ? 0 : 1;
     return;
   }
+  const reader = readerOf(ctx.args);
   // 准备记录坏了是输入故障：在定稿写盘之前停下，现场不动
   const before = preparedRecord(ctx);
   if (before.error) fail(before.error);
-  pendingDisclosure(ctx);
   // 正式图都有图源（未管理的 Mermaid 图建 .mmd 源），审查与归档读到的是同一套图
   const figures = switchView(ctx.featureRoot, 'prepare');
   if (figures.problems.length) fail(`正式图建源没有成立，审查对象还没成形：\n  ${figures.problems.join('\n  ')}`);
-  cmdProject(ctx);
-  cmdNumber(ctx);
-  cmdBuild(ctx);
-  discloseInStory(ctx);
-  const { problems } = storyCheck(ctx, { registration: false });
-  if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
-  const out = prepareReview(ctx, ctx.args.reportDir);
+  // 定稿：先沿用记录里的审查状态定一次——已有结论正是当前对象时直接复用；否则按本次读者情况重写审查状态再定一次
+  const settle = () => {
+    cmdProject(ctx);
+    cmdNumber(ctx);
+    cmdBuild(ctx);
+    discloseInStory(ctx);
+    const { problems } = storyCheck(ctx, { registration: false });
+    if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
+  };
+  settle();
+  const out = prepareReview(ctx, { reportDir: ctx.args.reportDir, restage: () => { setReader(ctx, reader); settle(); } });
   if (out.error) fail(out.error);
+  const again = `story-build review --action prepare --reader ${reader.kind}${reader.kind === 'unavailable' ? ' --reader-reason <同一原因>' : ''}`;
   process.stdout.write(`${JSON.stringify({ material_key: out.material_key, task: out.task, report_dir: out.report_dir,
     report_file: out.report_file, reused: out.reused, materials: out.rows.length,
     dispatch_file: out.dispatch_file, dispatch_text: out.dispatch_text })}\n`);
   process.stdout.write(out.reused
-    ? `[story-build review] 这份材料已有通过的报告（${out.report_file}），不用重审，直接 check。\n`
+    ? `[story-build review] 这份材料已有可复用的结论（${out.report_file}），不用重审，直接 check。\n`
     : out.disclosure
-      ? (out.unresolved_fail
-        ? [`[story-build review] 本版不派审：${out.disclosure}。之前的独立审查判过阻断（${out.unresolved_fail.report_file}），`,
-          '  这一版改过之后还没人复核：check 的结果是 fail（已知必修未复核），不能登记交付；在能派独立审查的宿主上重新 prepare 复核。', '']
+      ? (out.known_fail
+        ? [`[story-build review] 本版不派审：${out.disclosure}。最近一份可消费的独立回复判了 fail（${out.known_fail}），`,
+          '  之后还没有新的可消费回复：check 的结果是 fail（已知必修未复核），不能登记交付；有可用的独立读者时以 --reader task 重新 prepare 复核。', '']
         : [`[story-build review] 本版不派审：${out.disclosure}。未审披露已写进 Story 交付章与 Review 题头；`,
           '  直接跑 story-build review --action check（结果是 unreviewed），再按已有授权登记与交付，交付说明照实写本版未审。', ''])
         .join('\n')
-      : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为宿主隔离子代理的任务交给审查者，`,
-      `  不增删、不改写；等它完成，把它的最终回复全文原样写到 ${out.report_file}（审查者只读，不自己写文件）。`,
-      '  之后重跑 story-build review --action prepare 接收这份回复（记下原样字节的摘要），再跑 story-build review --action check，',
+      : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为隔离读者的任务交出，`,
+      `  不增删、不改写；等它完成，把它的最终回复全文原样写到 ${out.report_file}（读者只读，不自己写文件）。`,
+      `  之后重跑 ${again} 接收这份回复，再跑 story-build review --action check，`,
       '  结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
+}
+
+/** `--reader` 与 `--reader-reason`：prepare 必需，缺了只报这次准备输入没给，不写任何文件。 */
+function readerOf(args) {
+  if (args.reader === 'task') return { kind: 'task' };
+  if (args.reader === 'unavailable') {
+    const reason = String(args.readerReason ?? '').trim();
+    if (!reason) fail('review --action prepare --reader unavailable 要带 --reader-reason：写实际缺什么（缺工具、任务合同不接受、调用被明确拒绝）');
+    return { kind: 'unavailable', reason };
+  }
+  fail('review --action prepare 要 --reader task|unavailable：按宿主实际工具说明核有没有能接收自足只读任务的隔离读者，'
+    + '有写 task，没有写 unavailable 并用 --reader-reason 写实际缺什么');
 }
 
 /**

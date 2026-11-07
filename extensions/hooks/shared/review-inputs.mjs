@@ -170,7 +170,7 @@ export function inputRows(basis) {
 }
 
 /** 明细里写的路径规范成表里的写法：去反引号、反斜杠换正斜杠、去开头的 `./`。 */
-export const inputPath = v => String(v ?? '').replace(/`/g, '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
+const inputPath = v => String(v ?? '').replace(/`/g, '').replace(/\\/g, '/').replace(/^\.\//, '').trim();
 
 /** unreviewed 一项：`{path|check, reason}` 或 `<路径或判据>：<原因>`。 */
 function skippedItem(u) {

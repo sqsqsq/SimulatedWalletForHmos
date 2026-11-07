@@ -55,8 +55,9 @@ class TheReviewTaskIsRegistered(unittest.TestCase):
     def test_the_check_exists_with_two_result_kinds(self) -> None:
         self.assertIn("story_reader_review:", self.overlay())
         contract = REPORT_CONTRACT.read_text(encoding="utf-8")
-        self.assertIn("有 BLOCKER / MAJOR", contract)
-        self.assertIn("只有 MINOR / INFO", contract)
+        self.assertIn("CONCLUSIONS = ['pass', 'warn', 'fail']", contract)
+        self.assertIn("有阻断发现", contract)
+        self.assertIn("只有不影响正确、完整与可执行的表达建议", contract)
 
     def test_it_does_not_ask_for_a_per_unit_verdict_table(self) -> None:
         """逐条抄回的对账表随材料条数涨，读者拿到的判断却不增加——任务不要那张表。"""

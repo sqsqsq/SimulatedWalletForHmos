@@ -560,7 +560,7 @@ def install_review_mechanism(root: Path, extension: Path) -> None:
             shutil.copy2(extension / rel, target)
 
 
-#: 夹具审查者的发现：每种结论一份（编号、严重程度、问题与依据、修正责任），材料位置由 write_review 填
+#: 夹具审查者的发现：每种结论一份（编号、严重程度、问题与依据、修正责任），结论按严重程度定
 REVIEW_ISSUES = {
     "pass": [],
     "advice": [("F-1", "MINOR", "背景一章的结论先于依据出现，读者要回读", "作者把依据移到结论之前")],
@@ -583,19 +583,13 @@ def write_review(root: Path, feature: str, kind: str = "pass") -> Path:
 
 
 def review_text(root: Path, feature: str, kind: str, material_key: str) -> str:
-    """夹具审查者的回复正文：回显 `material_key`，按报告合同写一份完整业务核查（full）的回复。"""
+    """夹具审查者的回复正文：开头两行回显 `material_key` 与结论，之后是读者自己组织的说明与发现。"""
     story = f"{features_dir(root)}/{feature}/AR/story.md"
     issues = REVIEW_ISSUES[kind]
     severe = any(i[1] in ("BLOCKER", "MAJOR") for i in issues)
     overall = "fail" if severe else "warn" if issues else "pass"
-    scope = {"kind": "full", "basis_report": None, "unreviewed": [], "additional_inputs": []}
     return "\n".join([
-        f"material_key: {material_key}", "",
-        "## 审查范围与依据", "",
+        f"material_key: {material_key}", f"conclusion: {overall}", "",
         "首读结论：只读 Story 能读出要做什么、为什么做和怎么算对。", "",
-        "这次做的是首次完整业务核查：对着业务来源与人签通读了 Story 与 Review。", "",
-        "```yaml", "review_scope:",
-        *[f"  {k}: {json.dumps(v, ensure_ascii=False)}" for k, v in scope.items()], "```", "",
-        "## 发现", "", "| 编号 | 严重程度 | 材料位置 | 问题与依据 | 修正责任 |", "|---|---|---|---|---|",
-        *[f"| {a} | {b} | `{story}` | {c} | {d} |" for a, b, c, d in issues], "",
-        "## 总体结论", "", f"{overall}：按发现判定。", ""])
+        "这次做的是首次阅读：对着业务来源与人签通读了 Story 与 Review。", "",
+        *([f"- {a}（{b}）`{story}`：{c}。修正：{d}。" for a, b, c, d in issues] or ["没有发现。"]), ""])

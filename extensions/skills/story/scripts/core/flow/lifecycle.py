@@ -128,7 +128,7 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
 
     1. 全篇结构检查（`story-build check`）通过；
     2. 这一份的独立审查结果（`story-build review --action check`）是 pass 或 warn——审的是现在这份；
-       宿主没有声明独立审查能力时如实记为未审（unreviewed），同样可登记，披露随结果；
+       准备时没有可用的独立读者则如实记为未审（unreviewed），同样可登记，披露随结果；
     3. 这一刻的成文依据（`story-build basis`）：蓝图引用、设计采用的来源、激活知识摘要与材料索引摘要，
        加上 Story、Review、决策登记与写作设计的原始字节指纹。
 
