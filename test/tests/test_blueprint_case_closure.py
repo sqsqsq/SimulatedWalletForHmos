@@ -23,6 +23,8 @@ from test_verifier_report_protocol import STORY_BUILD as DEV_STORY_BUILD, TheSto
 import end_target  # noqa: E402
 import shared_state  # noqa: E402
 from ext_workspace import link_framework  # noqa: E402
+from test_knowledge_task import IMPACT_BASIS, REPO_ROOT, REQUIREMENT  # noqa: E402
+import yaml  # noqa: E402
 
 STORY_BUILD = "doc/extensions/skills/story/scripts/core/story-build.mjs"
 UNIT = "balance-refresh"
@@ -211,6 +213,97 @@ class TheExecutedPhaseNeedsCurrentNativeEvidence(unittest.TestCase):
         reuse = observe(self.root, {"kind": "phase", "phase": "spec"})
         self.assertFalse(reuse["reached"])
         self.assertIn("input binding stale", reuse["missing"][0])
+
+
+def native_cli(root: Path, *args: str) -> subprocess.CompletedProcess:
+    """在消费工程的 `framework/harness` 下跑原生入口（与 `phases/design.md` 第六节同一组命令）。"""
+    return subprocess.run(["node", "node_modules/ts-node/dist/bin.js", "--transpile-only", *args],
+                          cwd=root / "framework" / "harness", capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=600)
+
+
+def last_json(text: str) -> dict:
+    """原生入口的 JSON 输出：取最后一个从行首 `{` 开始的完整对象。"""
+    return json.loads(text[text.rindex("\n{") + 1 if "\n{" in text else text.index("{"):])
+
+
+class TheRequestChainFromANewlyAcceptedUnit(unittest.TestCase):
+    """实现方案的原生接续（`phases/design.md` 第六节）：施工单位经原生接受新建 → 一次 prepare-scope 声明 request spec,plan →
+    按原生派生的阶段链准备与正式 harness → 终点观测消费同一份原生事实。
+
+    夹具蓝图已带完整验收，原生判 Spec 由蓝图依据复用、只执行 Plan。Plan 的作者产物与审查由真实作者与 verifier 完成，
+    这里不造：harness 只应报本阶段作者的缺口，终点观测说 Plan 还没收口。宿主用夹具已物化的 codex 跑原生检查，不代表 DSH 运行。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls.root = make_project(root=Path(cls._tmp.name) / "p")
+        blueprint = root / "doc" / "features" / BLUEPRINT
+        cls.unit = blueprint / UNIT
+        # 设计准备段：夹具的施工单位改为分解候选，删掉 canonical 后经原生 consumer 接受
+        artifact = yaml.safe_load((cls.unit / "change-unit.yaml").read_text(encoding="utf-8"))
+        shutil.rmtree(cls.unit)
+        candidates = blueprint / "blueprint" / "change-unit-candidates.json"
+        candidates.write_text(json.dumps([{"providerId": artifact["provenance"]["extraction_method"], "artifact": artifact}],
+                                         ensure_ascii=False, default=lambda value: value.isoformat()), encoding="utf-8")
+        cls.accepted = native_cli(root, "scripts/check-change-unit.ts", "--project-root", str(root), "--blueprint", BLUEPRINT,
+                                  "--accept-candidates", candidates.relative_to(root).as_posix(), "--json")
+        feature = (last_json(cls.accepted.stdout).get("accepted") or [{}])[0].get("feature_id", "") \
+            if cls.accepted.returncode == 0 else ""
+        cls.feature = feature
+        (root / IMPACT_BASIS).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / "demo" / IMPACT_BASIS, root / IMPACT_BASIS)
+        cls.scope = native_cli(root, "scripts/goal-mode-entry.ts", "--project-root", str(root), "--framework-root",
+                               str(root / "framework"), "--feature", feature, "--prepare-scope", "--completion-target", "request",
+                               "--requested-results", "返回首页余额刷新的设计到 Plan", "--requested-phases", "spec,plan",
+                               "--requirement-file", REQUIREMENT)
+        cls.prepared = native_cli(root, "scripts/prepare-blueprint-design.ts", "--feature", feature, "--phase", "plan",
+                                  "--project-root", str(root), "--framework-root", str(root / "framework"))
+        (root / "framework.local.json").write_text(json.dumps({"schema_version": "1.0", "agent_adapter": "codex"}),
+                                                    encoding="utf-8")
+        cls.harness = native_cli(root, "harness-runner.ts", "--project-root", str(root), "--phase", "plan", "--feature", feature)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def test_the_unit_identity_comes_from_native_acceptance(self) -> None:
+        self.assertEqual(0, self.accepted.returncode, self.accepted.stdout[-1500:] + self.accepted.stderr[-800:])
+        self.assertEqual(CU, self.feature, "Feature 标识不是原生接受返回的那一个")
+        self.assertTrue((self.unit / "change-unit.yaml").is_file())
+
+    def test_one_request_declares_the_chain_and_reuses_the_satisfied_spec(self) -> None:
+        self.assertEqual(0, self.scope.returncode, self.scope.stdout[-1500:] + self.scope.stderr[-800:])
+        scope = last_json(self.scope.stdout)
+        self.assertEqual("scope_candidate_prepared", scope["type"])
+        self.assertEqual(["plan"], scope["phase_chain"], "蓝图验收完整时 Spec 应由原生依据复用、不进执行链")
+        self.assertFalse((self.unit / "spec").exists(), "复用的 Spec 不应产生阶段报告")
+
+    def test_the_plan_stage_prepares_only_its_typed_input_and_freezes_on_the_formal_run(self) -> None:
+        self.assertEqual(0, self.prepared.returncode, self.prepared.stdout[-1500:] + self.prepared.stderr[-800:])
+        self.assertTrue((self.unit / "contracts.yaml").is_file())
+        self.assertFalse((self.unit / "acceptance.yaml").exists(), "Plan 的阶段准备写了 Spec 的验收")
+        frozen = json.loads((self.unit / "execution-scope.json").read_text(encoding="utf-8"))
+        self.assertEqual("feature", frozen["scope_source"], "无 run 的 Feature 载体冻结，不经 Goal run")
+        self.assertEqual(("request", ["plan"]),
+                         (frozen["execution_scope"]["completion_target"], frozen["execution_scope"]["phase_chain"]))
+
+    def test_the_formal_plan_check_names_only_the_authors_duties(self) -> None:
+        out = self.harness.stdout + self.harness.stderr
+        self.assertNotEqual(0, self.harness.returncode, "作者产物没写，Plan 不该通过")
+        for duty in ("change_unit_contracts_sidecar_missing", "context_exploration_facts_present"):
+            self.assertIn(duty, out)
+        for wrong in ("change_unit_missing", "acceptance_yaml_present", "Goal"):
+            self.assertNotIn(wrong, out.split("NEXT:", 1)[-1], f"阶段检查报了不属于 Plan 作者的缺口：{wrong}")
+
+    def test_the_end_observer_consumes_the_same_native_facts(self) -> None:
+        spec = observe(self.root, {"kind": "phase", "phase": "spec"}, feature=BLUEPRINT)
+        self.assertTrue(spec["reached"], spec["missing"])
+        self.assertEqual("reused", spec["units"][0]["phases"]["spec"]["state"])
+        plan = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+        self.assertFalse(plan["reached"])
+        self.assertIn("plan 还没正式收口", plan["missing"][0])
 
 
 class OneUnitShortIsNotTheWholeRequirement(unittest.TestCase):

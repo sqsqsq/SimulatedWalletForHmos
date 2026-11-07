@@ -144,7 +144,8 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
                 "本轮定位（本单承载、同一系统设计下的兄弟单、协作方与不做项）与范围答复写进原生范围与边界。"
                 "需求条目只写真实的需求、目标、约束与风险，用 `import_sources.py --scope` 按材料索引补齐来源路径与摘要；"
                 "只作支撑的材料在事实与设计对象的 provenance 里引用，不为它造条目。"
-                "请求写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止"
+                "请求按本次授权写终点（`phases/design.md`「三、设计」）：只到 Story 的写明「完成可评审设计与独立质询，本次不做施工单位准备」，做到生成评审投影为止；"
+                "已有授权到施工单位设计、Spec 或 Plan 的，准入后在首次定稿 Story 前完成施工单位设计准备"
                 "（准入与否、还开着的问题由原生如实给出，不为过准入删改未决）；"
                 "知识在设计决定前取（story-knowledge），独立质询交宿主的隔离子代理。"
                 "本轮授权：`/story <AR>` 的启动语义是「做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择」（batch 多阶段声明），直接进，不问")
@@ -358,7 +359,7 @@ def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | N
     drift = registration_drift(feature_root, contract) + basis_drift(feature_root, contract)
     if drift:
         return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")
-                + "改完先 `story-build review --action prepare` 定稿（重投附录、编号、渲染 review、全篇 check）并重新独立审查，"
+                + "按当前蓝图与来源同步 Story 与 Review 里受影响的章节，再 `story-build review --action prepare` 定稿（重投附录、编号、渲染 review、全篇 check）并交原读者按改动影响复核，"
                 f"审查通过后跑 `{register_command(feature_root)}` 重新登记")
     return None
 

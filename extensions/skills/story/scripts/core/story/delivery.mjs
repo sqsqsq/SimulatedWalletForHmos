@@ -32,7 +32,7 @@ export function deliveryNextSteps(ctx) {
   ];
   return ['', '[story-build check] 交付门通过。已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择（停等表）：', '',
     ...rows, ...(remote ? [] : ['  （本地单没有送审）']),
-    '  选定之后怎么执行见 phases/design.md「五、独立审查、登记与交付」第 6 步。', ''].join('\n');
+    '  选定之后怎么执行见 phases/design.md「六、交付门之后：施工单位设计准备与 Spec/Plan」。', ''].join('\n');
 }
 
 /**

@@ -217,8 +217,8 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
             self.assertIn(choice, text)
         self.assertIn("已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择", text, "交付门输出仍是无条件问人")
         self.assertIn("止于 Plan、不进入 Coding", text)
-        self.assertIn("phases/design.md「五、独立审查、登记与交付」第 6 步", text, "交付选项没指向执行方法")
-        method = (DEV_EXT / "skills/story/phases/design.md").read_text(encoding="utf-8").split("6. **交付选择**", 1)[1]
+        self.assertIn("phases/design.md「六、交付门之后：施工单位设计准备与 Spec/Plan」", text, "交付选项没指向执行方法")
+        method = (DEV_EXT / "skills/story/phases/design.md").read_text(encoding="utf-8").split("## 六、交付门之后", 1)[1]
         self.assertIn("--requested-phases spec,plan", method, "实现方案没把 Plan 上限交给范围准备")
         self.assertNotIn("/story archive", text, "本地单没有送审")
         self.assertEqual(kept, original.read_bytes(), "核对、登记或交付门改了审查者的原回复")
@@ -302,6 +302,23 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegistered
         out = self.check("--deliver")
         self.assertNotEqual(0, out.returncode)
         self.assertIn(f"登记之后蓝图换了版本（登记时 r{revision}，现在 r{revision + 1}）", out.stdout + out.stderr)
+
+    def test_a_late_design_change_returns_to_the_delivery_gate_through_review_and_registration(self) -> None:
+        """施工段改了共同设计：交付门说先按新蓝图同步稿、交原读者复核、重新登记；照做之后最后交接的交付门按新依据通过。"""
+        self.reviewed("pass")
+        self.assertEqual(0, self.register().returncode)
+        revision = self.blueprint_revision()
+        design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS,
+                                    f"\nrevision: {revision}\n", f"\nrevision: {revision + 1}\n")
+        out = self.check("--deliver")
+        self.assertNotEqual(0, out.returncode)
+        for step in ("同步 Story 与 Review 里受影响的章节", "交原读者按改动影响复核", "`story_flow.py story` 重新登记"):
+            self.assertIn(step, out.stdout + out.stderr)
+        self.reviewed("pass")
+        self.assertEqual(0, self.register().returncode)
+        self.assertEqual(revision + 1, self.flow()["story_basis"]["blueprint_ref"]["revision"])
+        again = self.check("--deliver")
+        self.assertEqual(0, again.returncode, again.stdout + again.stderr)
 
     def blueprint_revision(self) -> int:
         """需求关联的蓝图现在的 revision。"""

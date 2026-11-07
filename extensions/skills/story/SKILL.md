@@ -49,6 +49,7 @@ S4 交给设计    →  范围定了直接进 component-design：蓝图与需求
 S5 成文        →  写作设计 → 照骨架按章写 → 回看 → check → 独立审查（定稿、派审、核结果）→ `story_flow.py story` 登记 → 交付门
    ↓
 S6 交付选择    →  送审（/story archive）/ 完整设计交接 / 实现方案 / 完整实现 / 暂不推进
+S7 授权覆盖时  →  施工单位设计准备 → 各施工单位按原生阶段链完成 Spec/Plan → 最后交接再跑交付门（共同设计变了回原生设计负责方）
 ```
 
 **位置由契约回答，不靠回忆**：`story_flow.py status --feature <AR>` 读契约给出 `next` 与下一步动作。
@@ -63,7 +64,7 @@ S6 交付选择    →  送审（/story archive）/ 完整设计交接 / 实现�
 | S2 读会（导入了会议材料时） | [phases/meeting-read.md](phases/meeting-read.md) |
 | S2 初析与流程契约 | [rules/init_analysis.md](rules/init_analysis.md) |
 | S3 关卡怎么摆 | [rules/scope_gate.md](rules/scope_gate.md) |
-| S4–S6 交给设计、成文顺序、独立审查与交付 | [phases/design.md](phases/design.md) |
+| S4–S7 交给设计、成文顺序、独立审查、交付与施工单位 Spec/Plan | [phases/design.md](phases/design.md) |
 | 成文：写作设计、按章写与回看 | [phases/story-write.md](phases/story-write.md) |
 | 产物更新 | [phases/update.md](phases/update.md) |
 
@@ -82,7 +83,7 @@ batch 多阶段声明（`framework/skills/reference/user-confirmation-ux.md` §8
 | 层 | 谁说了算 | 怎么推进 |
 |---|---|---|
 | **story 流程段内**：S1→S4、蓝图设计与独立质询、S5 成文与交付门 | 本节 | 用户启动 `/story` 即构成明示授权，段内按契约 `next` 一路走完，只在下表列的地方停 |
-| **交付门之后**：完整设计交接、实现方案、完整实现 | 已有授权或人的交付选择，与 framework 的推进策略 | 已有明确授权覆盖的直接接续；业务审批与实施授权分开对待 |
+| **交付门之后**：完整设计交接、实现方案、完整实现 | 已有授权或人的交付选择，与 framework 的推进策略 | 已有明确授权覆盖的直接接续，做法见 phases/design.md 第六节；业务审批与实施授权分开对待 |
 
 **交给设计之后直接进 component-design，不问**：本轮的终点在启动时就声明了，中途再问是把一个已经有主的问题重问一次。
 

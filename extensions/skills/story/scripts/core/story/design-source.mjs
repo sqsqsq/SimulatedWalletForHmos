@@ -143,7 +143,8 @@ export function basisDriftProblems(ctx) {
   }
   const now = currentBasis(ctx);
   if (now.problems.length) return now.problems;
-  const again = '——改完先 `story-build review --action prepare` 定稿并重新审查，审查通过后跑 `story_flow.py story` 重新登记';
+  const again = '——按当前蓝图与来源同步 Story 与 Review 里受影响的章节，再 `story-build review --action prepare` 定稿并交原读者按改动影响复核，'
+    + '审查通过后跑 `story_flow.py story` 重新登记';
   const out = [];
   const was = basis.blueprint_ref ?? {};
   const short = sha => String(sha ?? '').replace(/^sha256:/, '').slice(0, 12);
