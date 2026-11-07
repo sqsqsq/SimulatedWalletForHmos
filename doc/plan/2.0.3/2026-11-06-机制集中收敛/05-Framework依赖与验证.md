@@ -8,11 +8,11 @@
 |---|---|---|
 | F1 gap闭包 | 已证原生deriveClosure收gap而complete refs/schema不支持，仍属上游契约不一致 | Framework正式修复发布；只阻含该合法关联的CU闭合及依赖它的本版终点，不阻A04/A05；保真实未决阻断，不能删gap求绿 |
 | F2人读渲染 | 上游改进建议，非Extension全部写作差距的解释 | 非前置，不造本地renderer；最终阅读效果不达仍列差距 |
-| Q1设计authority/来源 | 仍需针对真实误拒表达核定；不把所有ref要求authoritative，不预判必须改source_kind | 设计者取得精确合法对象与消费者反例后定是否本地修或上游反馈；只有受影响来源闭合受阻，未知改动无预算。既有来源与转写职责可独立实施 |
+| Q1设计authority/来源 | 原生scope、typed target和契约段authority已核分责；真实设计出处被本地材料消费者误拒已复现 | 按B批02分册修现source_index消费者，G70/X25；不再等待上游新增接口。原料/外部授权严格，F1依赖另列 |
 | Q2独立设计接续 | 本轮已找到并隔离执行原生无run请求范围/Feature冻结/阶段输入链，不再等待上游新增interactive入口 | 设计选型关闭；真实DSH组合、作者产物、独审/闭环与observer终点仍待实施验证，不称Q2效果已通过 |
 | Story只读运输 | 原生蓝图质询可通过公开知识扩展点使用；原生阶段verifier不收Story自由文本。本地DSH自足只读桥是实际适配 | 按06保现桥并收缩职责，不增加Framework Story资格/报告服务请求；实际宿主缺能力才诚实未审，不能伪称原生支持 |
 
-只向Framework反馈“在原生正常入口仍有可复现职责缺口”的事项。F1可转交；F2是建议；Q1按对象核实；Q2的“没有interactive入口”旧归因撤回。未发送外部消息。
+只向Framework反馈“在原生正常入口仍有可复现职责缺口”的事项。F1可转交；F2是建议；Q1已核为本地消费修正，按02分册，不请求上游添加设计自指豁免；Q2的“没有interactive入口”旧归因撤回。未发送外部消息。
 
 ## 2. 已定的本版原生接续
 
@@ -23,13 +23,13 @@
 在消费工程framework/harness目录执行下列原生入口。FID是原生返回的canonical Feature身份；HOST为该消费根；REQ是已登记且当前有效的真实需求原文文件（需要时去引用片段），不是CU摘要或维护文档。
 
 ~~~powershell
-npx ts-node scripts/goal-mode-entry.ts --project-root <HOST> --framework-root <HOST>/framework --feature <FID> --prepare-scope --completion-target request --requested-results '<本次获准设计结果>' --requested-phases spec,plan --requirement-file <REQ>
+npx ts-node scripts/goal-mode-entry.ts --project-root <HOST> --framework-root <HOST>/framework --feature <FID> --prepare-scope --completion-target request --requested-results '<本次获准设计结果>' --requested-phases <spec|plan|spec,plan，取真实授权> --requirement-file <REQ>
 
 # 对原生phase_chain里应执行的P，依次执行；只请求单阶段则上面传真实单阶段。
 npx ts-node scripts/prepare-blueprint-design.ts --feature <FID> --phase <P> --project-root <HOST> --framework-root <HOST>/framework
 # 按原生Spec/Plan Skill完成本阶段Research/facts、正文及typed缺口。
 npx ts-node harness-runner.ts --project-root <HOST> --phase <P> --feature <FID>
-# 仅当summary实际签发request时调用原生阶段verifier；最终回复原样保存。
+# 以下按原生NEXT分支择用，不是每次都依次执行：签发request才派审、最终回复原样保存后check-receipt；可复用证据按NEXT用receipt或sync。
 npx ts-node scripts/check-receipt.ts --project-root <HOST> --feature <FID> --phase <P>
 npx ts-node harness-runner.ts --project-root <HOST> --sync-closure --feature <FID> --phase <P>
 ~~~
@@ -63,11 +63,20 @@ Story最后仍核basis/currentness；仅Story可用合法草稿，准入控制CU
 
 授权实施后在一次性template安装开发源，按唯一framework-under-test.json固定release/source/patch。DSH实际物化、CLI/Preset接线和本地只读任务/原生阶段JSON两条真实消费者分开核；未改装配可复用证据，改pin/patch/模板必须assembly。demo仅正式接入/发布时更新。
 
-F1正式修复需从原生完整生产入口验证合法gap关联，窄反例只作定位。Q1有确定结论后先同步接口/消费者和预算再实施，不能让执行者猜authority表达。最终C02锁同一组合，不把不同版本局部绿相加；依赖不影响的A04/A05/C01可在授权后独立推进。
+F1正式修复需从原生完整生产入口验证合法gap关联，窄反例只作定位。Q1的确定合同、实际消费者与预算已在B批02分册和04§6给出，执行者不另猜authority表达。最终C02锁同一组合，不把不同版本局部绿相加；依赖不影响的A04/A05/C01可在授权后独立推进。
 
 
 ## 6. 当前连续实施与局部暂停
 
 本轮授权见总方案§7：A05三项返修验证后直接B01，合并复评，不要求中间人工签批。Q2已定原生路线不重新变成等待上游的门；B01正常实现/离线验证可交回，真实模型CLI效果按C02保留，当前不启动。
 
-B02仅暂停F1或Q1确实影响的改动、接入和组合验收；输入及设计已明确的不受影响工作可继续。若B01某个具体验证确实碰到F1/Q1，记录该对象/调用/失败和受影响结论，只暂停该部分；无关路由/依据同步/离线保持继续。禁止为绕依赖删除合法gap、猜来源权威或改vendored Framework。合并复评不等F1/Q1，但不签受阻B02或整版完成。
+本轮Q1的设计未知已由下节闭合，B02执行其明确本地修正；F1正式修复相关接入/组合验收继续暂停。输入及设计已明确的不受影响工作可继续。若B01某个具体验证确实碰到F1/Q1，记录该对象/调用/失败和受影响结论，只暂停该部分；无关路由/依据同步/离线保持继续。禁止为绕依赖删除合法gap、猜来源权威或改vendored Framework。合并复评不等F1/Q1，但不签受阻B02或整版完成。
+
+
+## 7. Q1本轮定案与历史纠正
+
+详见[B批02：合法来源与真实消费者](02-批次-原生接续与组合/02-Q1来源分责与消费修正.md)。原生正常方案无需批量自指：真实原料/工程provenance保持，只有被选且真承载typed的目标需要有据设计authority；内部设计关系用原生关系/决定/引用。typed局部连缺失source_ref文件都可能通过，因此局部PASS不签语义权威。scope原文/字节、契约段JSON Pointer等值及原件忠实分别由其责任检查。
+
+控制组真实材料采用可被Extension消费；同一设计实体只换同蓝图真实设计出处，被本地inRoot→materials.pick推断拒绝。本轮按字段责任、真实材料优先及原生所属设计目录作最小分流，沿已有projectFiles/authorityFiles/requirements进入作者、质询、Story对象与basis。这里不是自动接纳所有未登记文件或所有自指，更不赋予外部API授权。
+
+故撤回“Q1整体等待Framework确认”的暂停前提；本地修正实施/验收未完成的状态仍保留，F1不受此结论影响。历史运行作者的批量改源不倒签合法，原评审继续留存。对本版明确范围以外的真实来源需要，先取具体对象再定职责，不能借Q1修复扩大成通用来源框架。
