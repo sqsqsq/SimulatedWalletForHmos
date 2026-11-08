@@ -80,3 +80,12 @@ F1正式修复需从原生完整生产入口验证合法gap关联，窄反例只
 控制组真实材料采用可被Extension消费；同一设计实体只换同蓝图真实设计出处，被本地inRoot→materials.pick推断拒绝。本轮按字段责任、真实材料优先及原生所属设计目录作最小分流，沿已有projectFiles/authorityFiles/requirements进入作者、质询、Story对象与basis。这里不是自动接纳所有未登记文件或所有自指，更不赋予外部API授权。
 
 故撤回“Q1整体等待Framework确认”的暂停前提；本地修正实施/验收未完成的状态仍保留，F1不受此结论影响。历史运行作者的批量改源不倒签合法，原评审继续留存。对本版明确范围以外的真实来源需要，先取具体对象再定职责，不能借Q1修复扩大成通用来源框架。
+
+
+## 8. B01实际审查输入闭合（本地修正，不归F1）
+
+原生输入绑定/主prompt正文/required_outputs已具备：collectContextFiles把resolved input及实际产物送到真实verifier。当前阻断来自Extension reviewInputs仍固定本地Spec/验收/Plan/用例及全部知识必读，原生复用与A05相关知识范围未到最终覆盖核验。按B批03修readFeature完整事实及basis/pre_verifier/verifier-report消费者，不请求Framework再造输入API，不复制typed正文或补本地假文件。
+
+spec与inputs的职责分开；原生required输出缺失不能由输入fallback盖住。主文承诺在请求生产处映射到requested-results，既不一律强要Markdown，也不借未声明文件名省掉已承诺的人读结果。正常成功链用既有原生request/receipt/finalizer/observer，模型CLI效果仍未授权。
+
+Q1缺源已在100812复评关闭；F1正式gap修复仍仅暂停其对应接入/组合。B01与C01本地收口可以连续完成，最后一次组合复评；F1未到不签整个版本或最终起跑就绪。
