@@ -552,6 +552,25 @@ class APlanClosesThroughTheNativeRequest(unittest.TestCase):
             self.report.write_text(self.reply, encoding="utf-8")
         self.assertTrue(any("必审输入既没出现在 examined_inputs 也没列进 unreviewed" in p and "acceptance" in p for p in got), got)
 
+    def test_related_knowledge_the_audience_keeps_out_is_a_gap(self) -> None:
+        """契约 must 引的规约受众含 plan：没有登记冲突的缺口。把它的受众改成只有 spec：必审缺口点名这份知识，
+        四键齐全的 PASS 回复以「缺口没有清零」拒收。"""
+        conflict = "登记与消费者冲突"
+        self.assertFalse([g for g in review_inputs(self.root)["gaps"] if conflict in g])
+        manifest = self.root / "doc" / "extensions" / "manifest.yaml"
+        kept = manifest.read_bytes()
+        line = "    - knowledge/constraints/observability.md\n"
+        self.assertEqual(1, kept.decode("utf-8").count(line), "夹具变了：激活清单里找不到 observability 那一行")
+        try:
+            manifest.write_bytes(kept.decode("utf-8").replace(
+                line, "    - {path: knowledge/constraints/observability.md, audience: [spec]}\n").encode("utf-8"))
+            gaps = review_inputs(self.root)["gaps"]
+            got = self.check_report(self.root)
+        finally:
+            manifest.write_bytes(kept)
+        self.assertTrue(any(conflict in g and "knowledge/constraints/observability.md" in g for g in gaps), gaps)
+        self.assertTrue(any("必审输入还有缺口没有清零" in p and "observability.md" in p for p in got), got)
+
     def test_a_missing_stage_output_is_missing_not_backfilled(self) -> None:
         """本阶段要交的 contracts.yaml 不在：它照样必审、记缺，缺口点名；不拿原生选中的契约输入顶上。"""
         contracts = self.unit / "contracts.yaml"

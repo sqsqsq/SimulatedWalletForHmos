@@ -120,7 +120,9 @@ const sourceText = s => (s ? `${s.kind}${s.artifact ? ` ${s.artifact}` : s.provi
  *
  * 集合由同一次原生阶段解析（`readFeature(plan)`）与同一份审查者知识任务（`knowledgeTaskData`）给出：
  * 原生选中的输入按 `input_id` 必审；本阶段原生要求交出的产物（`required_outputs`）按实际路径必审，缺了就是缺；
- * 盘上已有的 plan.md 与 use-cases.yaml 是审查对象；知识只取任务第 4 块送了正文的那几份（文件与篇）。
+ * 盘上已有的 plan.md 与 use-cases.yaml 是审查对象；知识只取任务第 4 块送了正文的那几份（文件与篇），
+ * 本单位相关却被登记受众挡住的知识（任务的 `unreachable`）记成缺口；知识自检的问题归知识维护者，只留在任务正文里。
+ * 本阶段产物的位置一律取原生 `resolveFeatureArtifact`。
  * 原生没选中的本地 spec.md、acceptance.yaml 不进必审集合，需要时作回查。原生解析不成立时原问题进 `gaps`。
  * 文件路径一律相对工程根；`alias` 与 `visual` 保留同一明细合同的形状，这里不产生图面延期。
  * `native` 与 `knowledgeTask` 是这两份结果本身，审查请求用同一份知识任务正文。
@@ -161,13 +163,14 @@ export function reviewInputs(projectRoot, feature, purpose = 'plan') {
     { text: scopeProjection(flow), required: story });
   add(at('AR/story-src/decisions.json'), '登记的决定：哪些定了、哪些开着；澄清正文里引用的人答原话与作者解释分开核', own('AR/story-src/decisions.json'));
   add(at('AR/review.md'), '决策与评审记录：人的原话与表态', own('AR/review.md'));
-  const native = planInputs(projectRoot, feature, inputs, gaps, add, at);
+  const native = planInputs(projectRoot, feature, inputs, gaps, add);
   let knowledgeTask = null;
   try {
     knowledgeTask = knowledgeTaskData(projectRoot, { action: 'plan', audience: 'reviewer', feature });
     for (const d of knowledgeTask.documents) {
       add(path.join(projectRoot, ...d.path.split('/')), `本单位相关知识的正文（${d.part}，在知识任务第 4 块）`);
     }
+    gaps.push(...knowledgeTask.unreachable);
   } catch (e) {
     gaps.push(`审查者知识任务取不到（${String(e?.message ?? e).split(/\r?\n/)[0]}）——相关知识的正文未取得`);
   }
@@ -176,7 +179,7 @@ export function reviewInputs(projectRoot, feature, purpose = 'plan') {
 }
 
 /** Plan 阶段的原生部分：选中的输入、要交的产物与盘上已有的审查对象。原生解析不成立时原问题进缺口，不按本地文件降级。 */
-function planInputs(projectRoot, feature, inputs, gaps, add, at) {
+function planInputs(projectRoot, feature, inputs, gaps, add) {
   let native;
   try {
     native = readFeature(projectRoot, feature, 'plan');
@@ -217,10 +220,11 @@ function planInputs(projectRoot, feature, inputs, gaps, add, at) {
     add(abs, `审查对象：本阶段要交的产物（原生 required_outputs 的 ${name}）`, { output: true });
     if (!fs.existsSync(abs)) gaps.push(`本阶段要交的 ${name} 还没写出（${relDisplay(projectRoot, abs)}）`);
   }
-  // 盘上已有的本阶段产物都是审查对象；原生没要求、盘上也没有的不进表
-  for (const [rel, why] of [['plan/plan.md', '审查对象：设计章'], ['contracts.yaml', '审查对象：契约实体与挂着的义务'],
+  // 盘上已有的本阶段产物都是审查对象；原生没要求、盘上也没有的不进表。位置与上面同取原生解析
+  for (const [name, why] of [['plan/plan.md', '审查对象：设计章'], ['contracts.yaml', '审查对象：契约实体与挂着的义务'],
     ['use-cases.yaml', '审查对象：用例与调用绑定']]) {
-    add(at(rel), why, { required: fs.existsSync(at(rel)) });
+    const abs = resolveArtifact(name);
+    if (abs) add(abs, why, { required: fs.existsSync(abs) });
   }
   return native;
 }
@@ -273,7 +277,7 @@ export function detailProblems(details, status, basis, checkIds = []) {
   const table = new Map(basis.inputs.map(x => [keyOf(x), x]));
   const canon = p => basis.alias?.get(p) ?? p;
   if (status === 'SKIP' && basis.inputs.some(x => x.output)) {
-    out.push('判了 SKIP，本阶段却有原生要求交出的产物——产物没写出是缺件，判 FAIL 并写成阻断原因');
+    out.push('判了 SKIP，本阶段却有原生要求交出的产物——产物在就按它审，没写出是缺件，判 FAIL 并写成阻断原因');
   } else if (status === 'SKIP' && basis.inputs.some(x => x.purpose.startsWith('审查对象') && !x.missing)) {
     out.push('判了 SKIP，审查对象却在盘上——SKIP 只用于审查对象不存在');
   }

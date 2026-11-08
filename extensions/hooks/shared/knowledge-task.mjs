@@ -494,7 +494,8 @@ export function knowledgeTask(root, args) {
 
 /**
  * 任务正文、是不是预览（执行范围未冻结）、第 4 块送了正文的知识（`documents`：路径与全文 / 上篇 / 下篇）与缺口。
- * Plan 审查的必审集合按 `documents` 取知识，与送进同一份审查请求的任务正文同源。
+ * `unreachable` 是本单位相关的知识被登记受众挡在本动作之外（登记与消费者冲突）的那几条，单列出来；
+ * Plan 审查的必审集合按 `documents` 取知识、把 `unreachable` 记成缺口，与送进同一份审查请求的任务正文同源。
  */
 export function knowledgeTaskData(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
   // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处；本动作送哪些正文按同一次取得的判断定
@@ -524,7 +525,8 @@ export function knowledgeTaskData(root, { action, audience, blueprint, feature, 
     ...([...task.gaps, ...problems.map(p => `知识自检：${p}——目标工程的知识维护者处理。`)].map(g => `- ${g}`)),
     ...(!task.gaps.length && !problems.length ? ['- 无。'] : []), '',
     ...(task.dispatch?.length ? ['## 7. 派审与留存（主执行者）', '', ...task.dispatch, ''] : [])].join('\n');
-  return { text, preview: task.preview === true, documents, gaps: [...task.gaps, ...problems.map(p => `知识自检：${p}`)] };
+  return { text, preview: task.preview === true, documents, unreachable: routing,
+    gaps: [...task.gaps, ...problems.map(p => `知识自检：${p}`)] };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

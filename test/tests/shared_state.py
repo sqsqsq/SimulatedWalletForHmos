@@ -68,8 +68,19 @@ def _prune() -> None:
             pass
 
 
+def _drop_lock(lock: Path) -> None:
+    """删锁。Windows 上锁已被别的进程删掉、还在删除待定时，再删会报 PermissionError：它已经在消失，不当错误。"""
+    try:
+        lock.unlink(missing_ok=True)
+    except PermissionError:
+        pass
+
+
 def shared_tree(name: str, key: str, build: Callable[[Path], None]) -> Path:
-    """`name-key` 这份状态的目录：没有就由第一个到的进程在临时位置造好再改名，其余进程等它就绪。"""
+    """`name-key` 这份状态的目录：没有就由第一个到的进程在临时位置造好再改名，其余进程等它就绪。
+
+    Windows 上锁文件被持锁进程删除、又有别的进程正拿着它的句柄（例如等待者读它的修改时间）时，文件处于删除待定：
+    这时独占创建报 PermissionError、读修改时间可能 FileNotFoundError，都表示锁还在被占用或正在消失，与已存在同样处理，接着等。"""
     ROOT.mkdir(parents=True, exist_ok=True)
     final = ROOT / f"{name}-{key}"
     if (final / ".ready").is_file():
@@ -79,11 +90,15 @@ def shared_tree(name: str, key: str, build: Callable[[Path], None]) -> Path:
     while True:
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
+        except (FileExistsError, PermissionError):
             if (final / ".ready").is_file():
                 return final
-            if time.time() > deadline or time.time() - lock.stat().st_mtime > WAIT:
-                lock.unlink(missing_ok=True)
+            try:
+                held_for = time.time() - lock.stat().st_mtime
+            except (FileNotFoundError, PermissionError):
+                held_for = 0.0
+            if time.time() > deadline or held_for > WAIT:
+                _drop_lock(lock)
                 deadline = time.time() + WAIT
             time.sleep(0.2)
             continue
@@ -100,7 +115,7 @@ def shared_tree(name: str, key: str, build: Callable[[Path], None]) -> Path:
             os.replace(work, final)
         return final
     finally:
-        lock.unlink(missing_ok=True)
+        _drop_lock(lock)
 
 
 def copy_tree(base: Path, target: Path) -> None:
