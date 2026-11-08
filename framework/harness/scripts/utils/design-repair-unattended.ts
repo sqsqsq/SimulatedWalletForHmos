@@ -42,12 +42,14 @@ import { completeChangeUnitDesignRefs, validateChangeUnitDesign } from './change
 import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { validateChangeUnit } from './change-unit-validator';
 import { publishArchitectureRevision } from './init-task-executor';
-import { clearFrameworkConfigCache, validateArchitectureDsl, type ArchitectureDsl } from '../../config';
+import { clearFrameworkConfigCache, validateArchitectureDsl, catalogPath, glossaryPath, architectureMdPath, conventionsPath, componentCatalogPath, type ArchitectureDsl } from '../../config';
 import { fingerprintDiscoverySources, prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
 import { currentScopeItems } from './blueprint-requirement-traceability';
 import { headlessLedgerPath } from './headless-assumptions';
 import { assembleGoalBrief, renderGoalBrief } from './goal-brief';
-import { BlueprintRecord, asRecord, asRecords, blueprintAuthorContent, renderBlueprintFieldResponsibilities } from './component-blueprint-model';
+import { BlueprintRecord, asRecord, asRecords, asStrings, blueprintAuthorContent, renderBlueprintFieldResponsibilities } from './component-blueprint-model';
+import { validateProjectRelativePath } from './project-relative-path';
+import { validateComponentClosureKnowledge } from './component-closure-knowledge';
 import { blockerIssues, validateComponentBlueprint, validateComponentBlueprintUpstream } from './component-blueprint-validator';
 import { probeDesignAuthorityRecovered } from './condition-wait';
 import {
@@ -62,6 +64,7 @@ import { isInitialDesignManifest, loadGoalRunManifestFromRun } from './goal-mani
 import { readOriginalDeliveryActivity } from './delivery-origin';
 import { readSupersededAncestorRuns, type GoalRunEvent } from './goal-runner-phase';
 import { relFeaturesDir } from '../../config';
+import { retiredChangeUnitIds } from './component-closure-inputs';
 import { readCurrentDispositionInput } from './verify-feature-completion';
 import { resolveCurrentDisposition } from './check-disposition';
 import { independentVerificationContext } from './verifier-material';
@@ -182,9 +185,9 @@ export function designWorkHasNoProgress(input: Parameters<typeof evaluateComplet
   return evaluateCompletionProgress(input).halt;
 }
 
-/** Reuse only a real completed, clean Q over the same business input and unchanged raw dependencies. */
+/** A real clean denial reaches the author; only admission by a pass requires unchanged author candidates. */
 export function reusableDesignQuestioning(input: {
-  projectRoot: string; blueprintPath: string; blueprint: BlueprintRecord; beforeBlueprint: string; output: string;
+  projectRoot: string; blueprintPath: string; blueprint: BlueprintRecord; beforeBlueprint: string; beforeDocument?: BlueprintRecord; output: string;
   providerId: string; completed: boolean; preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; previous?: BlueprintRecord;
   /** Archived legacy write-in-place output, never a postimage sampled from current files. */
@@ -193,8 +196,8 @@ export function reusableDesignQuestioning(input: {
 }): BlueprintRecord | null {
   if (!input.completed || !input.preSnapshot || input.preSnapshot.failureReason) return null;
   try {
-    const before = asRecord(YAML.parse(input.beforeBlueprint));
-    if (!before || stableStringify(blueprintAuthorContent(before)) !== stableStringify(blueprintAuthorContent(input.blueprint))) return null;
+    const before = input.beforeDocument ?? asRecord(YAML.parse(input.beforeBlueprint));
+    if (!before) return null;
     if (input.postSnapshot) {
       if (diffPhaseInvocationSnapshots(input.preSnapshot, input.postSnapshot).kind !== 'clean') return null;
     } else {
@@ -207,28 +210,35 @@ export function reusableDesignQuestioning(input: {
         && (stableStringify(withoutQuestioning(before)) !== stableStringify(withoutQuestioning(after))
           || stableStringify(parseIndependentQuestioningOutput(input.output)) !== stableStringify(asRecord(after.review_summary)?.questioning))) return null;
     }
-    const files = [...new Set([...blueprintSourceRefFiles(input.projectRoot, blueprintAuthorContent(before), true),
-      ...blueprintSourceRefFiles(input.projectRoot, blueprintAuthorContent(input.blueprint), true)])];
-    for (const file of files) {
-      if (path.resolve(file) === path.resolve(input.blueprintPath)) continue;
+    const parsed = parseIndependentQuestioningOutput(input.output);
+    const review = asRecord(before.review_summary) ?? {};
+    const result = independentQuestioningEnvelope(parsed, input.providerId, review.authored_by, input.previous);
+    const errors = validateBlueprintQuestioning({ ...before, review_summary: { ...review, questioning: result } });
+    if (errors.some(issue => issue.id !== 'blueprint_admission_false_pass')) return null;
+    if (independentQuestioningBlockers({ review_summary: { questioning: result } }).length) return result;
+    if (stableStringify(blueprintAuthorContent(before)) !== stableStringify(blueprintAuthorContent(input.blueprint))) return null;
+    for (const file of businessKnowledgeFiles(input.projectRoot, input.blueprint)) {
       const relative = path.relative(input.projectRoot, file).replace(/\\/g, '/');
-      const entry = input.preSnapshot.entries.find(item => item.path === relative && item.kind === 'file');
-      if (!entry || sha256Hex(fs.readFileSync(file)) !== entry.sha256) return null;
+      const expected = input.preSnapshot.entries.find(entry => entry.path === relative && entry.kind === 'file');
+      if (!expected || !fs.existsSync(file) || sha256Hex(fs.readFileSync(file)) !== expected.sha256) return null;
     }
     for (const [file, beforeText] of Object.entries(input.additionalInputs ?? {})) {
       if (compareRelatedInputSnapshots(designWorkSnapshot([file], { [file]: beforeText }), designWorkSnapshot([file])) !== 'unchanged') return null;
     }
-    const parsed = parseIndependentQuestioningOutput(input.output);
-    const review = asRecord(input.blueprint.review_summary) ?? {};
-    const result = independentQuestioningEnvelope(parsed, input.providerId, review.authored_by, input.previous);
-    const errors = validateBlueprintQuestioning({ ...input.blueprint, review_summary: { ...review, questioning: result } });
-    return errors.some(issue => issue.id !== 'blueprint_admission_false_pass') ? null : result;
+    return result;
   } catch { return null; }
+}
+
+function questioningKnowledgeFiles(projectRoot: string, blueprint: BlueprintRecord): string[] {
+  return asStrings(asRecord(asRecord(blueprint.discovery)?.inputs)?.knowledge_assets).filter(file => !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(file)).flatMap(file => {
+    try { return [path.resolve(projectRoot, validateProjectRelativePath(projectRoot, file, 'design questioning knowledge input'))]; }
+    catch { return []; }
+  });
 }
 
 /** Existing Q input hashes identify affected files; missing originals are explicit, never guessed as unchanged. */
 export function questioningDependencyChanges(projectRoot: string, blueprint: BlueprintRecord, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, ownPath?: string): ResolutionDependency[] {
-  return blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(blueprint), true).flatMap(file => {
+  return [...new Set([...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(blueprint), true), ...questioningKnowledgeFiles(projectRoot, blueprint)])].flatMap(file => {
     if (ownPath && path.resolve(file) === path.resolve(ownPath)) return [];
     const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
     const expected = pre?.failureReason ? undefined : pre?.entries.find(entry => entry.path === relative && entry.kind === 'file');
@@ -241,6 +251,18 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
   });
 }
 
+function knowledgeWriterAssets(input: UnattendedDesignRepairInput, blueprint: BlueprintRecord): string[] {
+  if (!input.requirement || !input.brief.items.some(item => item.codes.some(code => code.startsWith('component_closure_knowledge_')))) return [];
+  return businessKnowledgeFiles(input.projectRoot, blueprint).filter(file => fs.existsSync(file) && fs.lstatSync(file).isFile());
+}
+
+function businessKnowledgeFiles(projectRoot: string, blueprint: BlueprintRecord): string[] {
+  const declared = questioningKnowledgeFiles(projectRoot, blueprint);
+  if (!declared.length) return [];
+  const writers = new Set([catalogPath(projectRoot), glossaryPath(projectRoot), architectureMdPath(projectRoot), conventionsPath(projectRoot), componentCatalogPath(projectRoot)].map(file => path.resolve(file)));
+  return declared.filter(file => writers.has(file));
+}
+
 /**
  * @deprecated Read-only historical event query; never grants or denies another execution.
  */
@@ -251,7 +273,7 @@ export function designRepairAttempted(events: ReadonlyArray<object>, signature: 
 
 /** Confirmed candidate IDs and actual author requests own the single rebuttal, independent of the transaction bundle. */
 export function deriveDesignDeclineFeedback(events: ReadonlyArray<object>, candidates: readonly string[],
-  author?: { invokeId?: string; instruction?: string }): { feedback: string; delivered: string[] } {
+  author?: { invokeId?: string; instruction?: string; workInput?: import('./goal-phase-executor').WorkUnitInput }): { feedback: string; delivered: string[] } {
   const current = new Set(candidates), declines = new Map<string, { first: number; reason: string }>();
   events.forEach((value, index) => {
     const event = value as Record<string, unknown>;
@@ -265,7 +287,8 @@ export function deriveDesignDeclineFeedback(events: ReadonlyArray<object>, candi
     return event.type === 'agent_invoke_start' && event.invoke_id === author.invokeId;
   }) : -1;
   const marker = (id: string) => `设计拒修反馈：${id}`;
-  const delivered = [...declines].filter(([id, record]) => actor > record.first && author?.instruction?.includes(marker(id))).map(([id]) => id);
+  const delivered = [...declines].filter(([id, record]) => actor > record.first
+    && (author?.workInput?.material ? author.workInput.material.designDeclines?.includes(id) : author?.instruction?.includes(marker(id)))).map(([id]) => id);
   const pending = [...declines].filter(([id]) => !delivered.includes(id));
   const feedback = pending.length ? pending.map(([id]) => marker(id)).join('\n') + '\n'
     + `设计 owner 经独立质询拒修，权威产物未发布：${[...new Set(pending.map(([, record]) => record.reason))].join('；')}。原工作单元作者须据理由修自身产物或补真实新事实；同一条只给一轮反驳，旧核实不得重派。` : '';
@@ -302,8 +325,8 @@ export function recordDesignRepairInvocation(runDir: string, purpose: DesignRepa
 }
 
 /** Project the existing invocation originals; no Q validity record is written. */
-function questioningOriginal(runDir: string, start: GoalRunEvent): {
-  beforeBlueprint: string; output: string; source: string; completed: boolean; providerId: string;
+function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents?: readonly GoalRunEvent[]): {
+  beforeBlueprint: string; beforeDocument?: BlueprintRecord; output: string; source: string; completed: boolean; providerId: string;
   preSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; postSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>;
   afterBlueprint?: string;
   previous?: BlueprintRecord; additionalInputs: Record<string, string>;
@@ -313,9 +336,10 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
     if (start.phase !== designRepairInvokeLabel('questioning') && start.phase !== 'initial-design-questioning') return null;
     const initial = start.phase === 'initial-design-questioning';
     const directory = path.join(runDir, 'phases', start.phase, start.invoke_id);
-    const session = sessionExecutionForInvoke(runDir, start.invoke_id);
-    const issued = session ?? readExecutionRequestOriginal(runDir, start.invoke_id);
-    const accepted = session && acceptedSessionReport(runDir, session);
+    const events = originalEvents ?? sessionEvents(runDir);
+    const session = sessionExecutionForInvoke(runDir, start.invoke_id, events);
+    const issued = session ?? readExecutionRequestOriginal(runDir, start.invoke_id, events);
+    const accepted = session && acceptedSessionReport(runDir, session, events);
     if (session && !accepted) return null;
     const resultFile = path.join(directory, 'design-result.json');
     let saved: { draft_outputs?: Record<string, string>; outcome?: DesignRepairInvokeOutcome; post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> } = {};
@@ -331,7 +355,6 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
       : outputs[payloadName] ? Buffer.from(outputs[payloadName], 'base64').toString('utf8') : '';
     const doc = asRecord(YAML.parse(beforeBlueprint));
     const outcome = saved.outcome;
-    const events = sessionEvents(runDir);
     const ended = accepted?.event ?? [...events].reverse().find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
     let output = accepted?.report.details ?? outcome?.output
       ?? (fs.existsSync(path.join(directory, 'questioning-output.json')) ? fs.readFileSync(path.join(directory, 'questioning-output.json'), 'utf8') : '');
@@ -374,7 +397,8 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
         }
       }
     }
-    return { beforeBlueprint, output, source: fs.existsSync(path.join(directory, 'questioning-output.json')) ? path.join(directory, 'questioning-output.json')
+    return { beforeBlueprint, ...(doc ? { beforeDocument: doc } : {}), output, source: fs.existsSync(path.join(directory, 'questioning-output.json')) ? path.join(directory, 'questioning-output.json')
+      : accepted?.event.handoff_report ? path.resolve(runDir, accepted.event.handoff_report.path)
       : outcome?.output ? resultFile : afterBlueprint ? legacyDraft : resultFile,
       completed: !!ended && invocationCompleted({ ...ended, exitCode: ended.exit_code }),
       providerId: initial ? 'initial-design-questioning' : DESIGN_REPAIR_QUESTIONING_PROVIDER,
@@ -388,6 +412,26 @@ function questioningOriginal(runDir: string, start: GoalRunEvent): {
 
 export { questioningOriginal as readDesignQuestioningOriginal };
 
+/** Latest completed usable original, with unavailable returns kept out of public business context. */
+export function latestUsableDesignQuestioning(runDir: string, phases: readonly string[], projectRoot: string, originalEvents?: readonly GoalRunEvent[]): {
+  original: NonNullable<ReturnType<typeof questioningOriginal>> | null; result: BlueprintRecord | null; unavailable: boolean;
+} {
+  let unavailable = false;
+  const events = originalEvents ?? sessionEvents(runDir);
+  for (const start of [...events].reverse()) {
+    if (start.type !== 'agent_invoke_start' || !phases.includes(String(start.phase))) continue;
+    const original = questioningOriginal(runDir, start, events);
+    if (!original?.completed) continue;
+    try {
+      const blueprint = asRecord(YAML.parse(original.beforeBlueprint));
+      const result = blueprint && reusableDesignQuestioning({ ...original, additionalInputs: {}, projectRoot, blueprintPath: '', blueprint });
+      if (result) return { original, result, unavailable };
+    } catch { /* An unusable return is not a new public Q baseline. */ }
+    unavailable = true;
+  }
+  return { original: null, result: null, unavailable };
+}
+
 export interface DesignRepairInvocationGuard {
   pre: ReturnType<typeof capturePhaseInvocationSnapshot>;
   resolution: Parameters<typeof capturePhaseInvocationSnapshot>[0];
@@ -396,15 +440,19 @@ export interface DesignRepairInvocationGuard {
   evaluation?: CompletionEvaluation;
   history?: readonly CompletionEvaluation[];
   feedbackDelivered?: boolean;
+  material?: readonly unknown[];
 }
 
 function priorRepairFeedback(projectRoot: string, runs: readonly { manifest: { report_dir: string }; events: GoalRunEvent[] }[], blueprintId: string): string[] {
   const failed = runs.flatMap(run => run.events.map((event, index) => ({ run, event, index })))
     .filter(item => item.event.type === 'design_authority_repair' && 'blueprint_id' in item.event && item.event.blueprint_id === blueprintId
-      && 'stage' in item.event && item.event.stage === 'failed' && 'failed_step' in item.event && item.event.failed_step === 'questioning')
+      && 'stage' in item.event && 'failed_step' in item.event
+      && (item.event.stage === 'failed' && item.event.failed_step === 'questioning'
+        || item.event.stage === 'published' && 'outcome' in item.event && item.event.outcome === 'unrecovered' && item.event.failed_step === 'probe'))
     .sort((a, b) => String(a.event.ts).localeCompare(String(b.event.ts))).at(-1);
   if (!failed) return [];
   const runDir = path.resolve(projectRoot, failed.run.manifest.report_dir);
+  if ('stage' in failed.event && failed.event.stage === 'published') return [`前次真实发布探针仍未恢复：${runDir}/events.jsonl\n${String('reason' in failed.event ? failed.event.reason : '')}`];
   const beforeFailure = failed.run.events.slice(0, failed.index);
   const start = repairRoleStart(beforeFailure, 'questioning');
   if (!start?.invoke_id) return [];
@@ -420,7 +468,7 @@ function priorRepairFeedback(projectRoot: string, runs: readonly { manifest: { r
     const returned = saved.outcome?.output ?? saved.report?.details;
     const denied = returned ? independentQuestioningBlockers({ review_summary: { questioning: parseIndependentQuestioningOutput(returned) } })
       : doc ? independentQuestioningBlockers(doc) : [];
-    return denied.length ? [`前次同请求事务的真实质询差额（仅待核线索，不恢复失败草稿、不沿用旧结论）：${source}\n${JSON.stringify(denied.map(item => ({ scope_ref: item.scope_ref, question: item.question, answer: item.answer })), null, 2)}`] : [];
+    return denied.length ? [`前次同请求事务的真实质询差额（交原作者返修，不沿用旧通过或发布结论）：${source}\n${denied.map(item => `${String(item.scope_ref)}：${String(item.question)}\n${String(item.answer ?? '')}\nverification_refs: ${JSON.stringify(item.verification_refs ?? [])}`).join('\n\n')}`] : [];
   } catch {
     return [`前次质询原件暂不可读：${source}；原失败说明仅作线索：${String('reason' in failed.event ? failed.event.reason : '')}`];
   }
@@ -477,6 +525,8 @@ class AttemptFailure extends Error {
 class AttemptWaiting extends Error {
   constructor(readonly step: DesignRepairPurpose, message: string) { super(message); }
 }
+
+class QuestioningFormatFailure extends AttemptFailure {}
 
 const canon = (value: unknown): string => stableStringify(value ?? null);
 
@@ -619,7 +669,7 @@ export function renderDesignAuthorityBoundary(purpose: 'author' | 'questioning')
   ];
 }
 
-function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, canonicalRel: string, draftFiles: readonly string[], transactionTiming: readonly string[], currentCu?: BlueprintRecord): string {
+function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, canonicalRel: string, draftFiles: readonly string[], transactionTiming: readonly string[], currentCu?: BlueprintRecord, knowledgeAssets: readonly string[] = []): string {
   const unit = currentCu ? asChangeUnitArtifact(currentCu) : undefined;
   const designBlockers = unit?.blockers.filter(blocker => blocker.gate === 'design' && blocker.owner === 'component-design') ?? [];
   const blockerObservations = unit ? deriveChangeUnitBlockers({ ...unit, blockers: designBlockers }, { projectRoot: input.projectRoot }) : [];
@@ -632,9 +682,13 @@ function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, can
     '',
     `草稿文件（蓝图候选；完整可写集合如下）：${draftFile}`,
     `本次唯一可写候选集合（列表穷尽；如列有architecture.json，其内容仅为目标architecture对象）：\n${draftFiles.map(file => `- ${file}`).join('\n')}`,
+    ...(knowledgeAssets.length ? [
+      `## 原资产 writer 归位 → P1 owner reconciliation\n当前原请求已批准结论的知识归位差额由原资产 writer 与 P1 owner 按顺序处理；本次额外可写的既有知识资产（列表穷尽）：\n${knowledgeAssets.map(file => `- ${file}`).join('\n')}`,
+      '先按各资产原职责和当前内容归位对应已批准稳定结论，再由P1 owner在蓝图候选中补真实、可解析的knowledge_refs。不能新建平行知识文件，不能只插无语义标记、伪造授权或改未涉及的原有结论；架构/职责变化仍须已有语义授权。不能把候选引用写成已完成或自行升CU指针；随后由原design preparation处理。',
+    ] : []),
     `canonical 蓝图（只读，禁止写入，发布由框架完成）：${canonicalRel}`,
     ...transactionTiming,
-    '只允许修改上述明确列出的候选；所有canonical蓝图、canonical Change Unit、需求、契约、产品源码、配置原件和manifest/events/receipt等机器运行记录均只读，不因同名或位于同一工作区取得写权。其它文件改了即判越界写入，本次修复作废。',
+    `只允许修改上述明确列出的候选${knowledgeAssets.length ? '及本次原资产writer明确列出的既有知识资产' : ''}；所有canonical蓝图、canonical Change Unit、需求、契约、产品源码、配置原件和manifest/events/receipt等机器运行记录均只读，不因同名或位于同一工作区取得写权。其它文件改了即判越界写入，本次修复作废。`,
     ...(currentCu ? [
       `当前CU候选身份：${String(currentCu.blueprint_id)}/${String(currentCu.change_unit_id)}。本次明确允许修订该候选的内容，canonical CU仍由原consumer发布。`,
       `当前CU由本设计owner负责的既有设计阻断声明（仅gate=design且owner=component-design）：\n${JSON.stringify(designBlockers, null, 2)}\n现有reader的实际只读观察（不是可回写的状态字段）：\n${JSON.stringify(blockerObservations, null, 2)}`,
@@ -656,10 +710,10 @@ function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, can
   ].join('\n');
 }
 
-function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string, draft: BlueprintRecord, auxiliaryDrafts: readonly string[], transactionTiming: readonly string[]): string {
+function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string, draft: BlueprintRecord, auxiliaryDrafts: readonly string[], transactionTiming: readonly string[], material?: unknown[], knowledgeOriginals: Readonly<Record<string, string>> = {}): string {
   const runDir = path.resolve(input.projectRoot, input.reportDir);
-  const start = [...sessionEvents(runDir)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('questioning'));
-  const previous = start ? questioningOriginal(runDir, start) : null;
+  const usable = latestUsableDesignQuestioning(runDir, [designRepairInvokeLabel('questioning'), 'initial-design-questioning'], input.projectRoot);
+  const previous = usable.original;
   let actualDiff: import('./types').ContextFileEntry[] | null = null;
   if (previous?.completed && previous.preSnapshot && previous.postSnapshot && diffPhaseInvocationSnapshots(previous.preSnapshot, previous.postSnapshot).kind === 'clean') {
     try {
@@ -672,7 +726,7 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
     ? { label: previous.source, kind: 'path', content: '上轮公开Q完整返回及全部未闭合项；不继承作者私有上下文。' } : null,
     actualDiff, affectedDependencies: questioningDependencyChanges(input.projectRoot, draft, previous?.completed ? previous.preSnapshot : undefined, draftFile),
     currentEvidence: auxiliaryDrafts.map(file => ({ label: file, kind: 'path', content: '当前真实候选；独立核对受影响的契约与依赖。' })) });
-  return [
+  const parts = [
     '# 蓝图独立质询',
     '你是独立质询方，与蓝图编写方隔离。输入只有：草稿蓝图、下面的结构化证据包，以及蓝图里已登记的外部输入（discovery 事实、需求与契约引用）。',
     '',
@@ -681,14 +735,28 @@ function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string
     ...transactionTiming,
     '本事务原消费者的完整发现（按当前候选核实；已实际消除的不继续当缺陷，未核实的不冒充已修）：',
     JSON.stringify(input.brief, null, 2),
+    ...(Object.keys(knowledgeOriginals).length ? [
+      '## 本事务知识资产的实际改动（原字节来自已归档事务基线）',
+      JSON.stringify(Object.entries(knowledgeOriginals).flatMap(([relative, encoded]) => {
+        const before = Buffer.from(encoded, 'base64').toString('utf8');
+        const file = path.resolve(input.projectRoot, relative);
+        const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+        return current === before ? [] : [{ path: relative, before, current }];
+      }), null, 2),
+      '逐条独立核对资产新增/改动仅归位既有 decided_with_authority 结论且含义一致，未涉及条目未被改写；新含义或未有原确认覆盖的决定必须保留真实blocker，回原确认点，不因本次写界而放行。',
+    ] : []),
     '本次实际只读，不写草稿或工程文件。最终只返回既有questioning形状的JSON对象；框架保留本次原件并在调用完成与只读核对后回填review_summary.questioning。',
     ...renderQuestioningResultInstructions(draft, DESIGN_REPAIR_QUESTIONING_PROVIDER),
     ...publicContext.map(entry => `${entry.label}\n${entry.content}`),
+    ...(usable.unavailable ? ['上次质询未交回可用对象，请按既有格式返回。'] : []),
     ...(input.requirement ? ['', '## 原始请求与候选一致性', input.requirement,
       renderGoalBrief(assembleGoalBrief(input.projectRoot, input.feature, { runId: input.runId }), { requirementInContext: true }),
       ...(auxiliaryDrafts.length ? [`同时只读本事务实际候选：${auxiliaryDrafts.join('；')}。`] : []),
       ...renderDesignAuthorityBoundary('questioning')] : []),
-  ].join('\n');
+  ];
+  const historical = publicContext.map(entry => `${entry.label}\n${entry.content}`);
+  material?.push(...parts.filter(part => !historical.includes(part)));
+  return parts.join('\n');
 }
 
 /**
@@ -746,6 +814,17 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       if (result.handoff) { release(); return { outcome: 'handoff', reason: '原设计请求仍待实际结果；候选与原快照未改写。' }; }
       if (!result.ok) throw new AttemptFailure(purpose, result.detail);
     }
+    const roleRepairEnded = latestRole && currentEvents.slice(currentEvents.indexOf(latestRole) + 1).some(event => event.type === 'design_authority_repair'
+      && (event as Record<string, unknown>).blueprint_id === blueprintId && (event as Record<string, unknown>).stage === 'failed'
+      && (event as Record<string, unknown>).failed_step === 'questioning');
+    if (latestRole?.phase === designRepairInvokeLabel('questioning') && roleEnded && !roleRepairEnded) {
+      const saved = questioningOriginal(runDir, latestRole, currentEvents);
+      if (saved?.preSnapshot && saved.postSnapshot) {
+        const diff = diffPhaseInvocationSnapshots(saved.preSnapshot, saved.postSnapshot);
+        if (diff.kind !== 'clean') throw new AttemptFailure('questioning', '独立质询原调用的只读输入写归因未通过，不能把后像交给作者或发布。',
+          { changes: diff.kind === 'changed' ? diff.changes : [], preSnapshot: saved.preSnapshot.sha256, postSnapshot: saved.postSnapshot.sha256 });
+      }
+    }
     const ancestors = family ? [] : readSupersededAncestorRuns({ projectRoot, featuresDir: relFeaturesDir(projectRoot), feature: input.feature, currentEvents });
     const historyRuns = family?.runs ?? [{ manifest, events: currentEvents }, ...ancestors.map(run => ({
       manifest: loadGoalRunManifestFromRun(projectRoot, run.run_id, { feature: input.feature }), events: run.events,
@@ -756,22 +835,46 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const priorAttempt = [...transactionEvents].reverse().find(event => event.type === 'design_authority_repair'
       && (event as Record<string, unknown>).blueprint_id === blueprintId && (event as Record<string, unknown>).stage === 'attempted'
       && !transactionEvents.slice(transactionEvents.indexOf(event) + 1).some(later => later.type === 'design_authority_repair'
-        && (later as Record<string, unknown>).blueprint_id === blueprintId && (later as Record<string, unknown>).stage === 'published'
-        && !((later as Record<string, unknown>).outcome === 'unrecovered'
-          && (later as Record<string, unknown>).failed_step === 'reconcile'))) as Record<string, unknown> | undefined;
+        && 'signature' in later && 'signature' in event && later.signature === event.signature && 'stage' in later
+        && (later.stage === 'failed' && (later as Record<string, unknown>).failed_step !== 'no_progress_guard'
+          || later.stage === 'published' && !((later as Record<string, unknown>).outcome === 'unrecovered'
+            && (later as Record<string, unknown>).failed_step === 'reconcile')))) as Record<string, unknown> | undefined;
     const draftDir = path.join(runDir, 'design-repair');
     const draftFile = path.join(draftDir, 'component-blueprint.yaml');
     const cuDraftFile = path.join(draftDir, 'change-unit.yaml');
     const batchDraftFile = isInitialDesignManifest(manifest) && input.requirement ? path.join(draftDir, 'change-unit-candidates.json') : undefined;
     const architectureDraftFile = path.join(draftDir, 'architecture.json');
     const configFile = path.join(projectRoot, 'framework.config.json');
-    type OriginalContext = { baseline: string; cu?: string; config?: string; startedAt: string; brief: DesignRepairBriefLike; eventOriginals?: Record<string, string> };
+    let keepRejectedWork = false;
+    const latestRepair = [...transactionEvents].reverse().find(event => event.type === 'design_authority_repair'
+      && (event as Record<string, unknown>).blueprint_id === blueprintId) as Record<string, unknown> | undefined;
+    if (!priorAttempt && latestRepair?.stage === 'failed'
+      && latestRepair.failed_step === 'questioning' && fs.existsSync(draftFile)) try {
+      const attempted = [...transactionEvents.slice(0, transactionEvents.indexOf(latestRepair as GoalRunEvent))].reverse().find(event => event.type === 'design_authority_repair'
+        && (event as Record<string, unknown>).blueprint_id === blueprintId && (event as Record<string, unknown>).stage === 'attempted') as Record<string, unknown> | undefined;
+      const priorBaseline = attempted?.handoff_context && readHandoffMaterial<{ baseline: string }>(runDir, attempted.handoff_context as HandoffReference).baseline;
+      const question = repairRoleStart(transactionEvents, 'questioning');
+      const saved = question && questioningOriginal(runDir, question, transactionEvents);
+      const current = asRecord(YAML.parse(fs.readFileSync(draftFile, 'utf8')));
+      const result = saved && current && reusableDesignQuestioning({ ...saved, projectRoot, blueprintPath: draftFile, blueprint: current });
+      const files = [draftFile, ...(input.requirement ? [architectureDraftFile, ...(changeUnitId ? [cuDraftFile] : []), ...(batchDraftFile ? [batchDraftFile] : [])] : [])];
+      const reviewed = saved && files.slice(1).every(file => {
+        const pre = saved.preSnapshot?.entries.find(entry => entry.kind === 'file' && entry.path === path.relative(projectRoot, file).replace(/\\/g, '/'));
+        return !!pre && fs.existsSync(file) && pre.sha256 === sha256Hex(fs.readFileSync(file));
+      }) && compareRelatedInputSnapshots(designWorkSnapshot(files,
+        { ...saved.additionalInputs, [draftFile]: saved.beforeBlueprint }), designWorkSnapshot(files)) === 'unchanged';
+      keepRejectedWork = priorBaseline === fs.readFileSync(canonicalPath).toString('base64') && !!result && !!reviewed
+        && (!!input.requirement || outOfScopePaths(YAML.parse(Buffer.from(priorBaseline, 'base64').toString('utf8')), current!, blueprintId, input.brief.items).length === 0);
+    } catch { /* Unavailable or unreviewed prior work is rebuilt from the new canonical baseline. */ }
+    type OriginalContext = { baseline: string; cu?: string; config?: string; knowledgeOriginals?: Record<string, string>; startedAt: string; brief: DesignRepairBriefLike; eventOriginals?: Record<string, string> };
     let original: OriginalContext;
     if (priorAttempt?.handoff_context) original = readHandoffMaterial<OriginalContext>(runDir, priorAttempt.handoff_context as HandoffReference);
     else {
       if (target.artifact === 'change-unit@1') resolveChangeUnitRefFromLoaded(loadCanonicalChangeUnit(projectRoot, blueprintId, target.change_unit_id), target);
       else resolveComponentBlueprintRefFromLoaded(loadCanonicalBlueprint(projectRoot, blueprintId), target);
       original = { baseline: fs.readFileSync(canonicalPath).toString('base64'), brief: input.brief,
+        knowledgeOriginals: Object.fromEntries(knowledgeWriterAssets(input, loadCanonicalBlueprint(projectRoot, blueprintId).blueprint)
+          .map(file => [path.relative(projectRoot, file).replace(/\\/g, '/'), fs.readFileSync(file).toString('base64')])),
         eventOriginals: Object.fromEntries(workspaceEventFiles(changeUnitDirectory(projectRoot, blueprintId))
           .map(file => [path.relative(projectRoot, file).replace(/\\/g, '/'), fs.readFileSync(file).toString('base64')])),
         ...(input.requirement ? { ...(changeUnitId ? { cu: loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId).bytes.toString('base64') } : {}), config: fs.readFileSync(configFile).toString('base64') } : {}),
@@ -783,13 +886,19 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       fs.writeFileSync(file, bytes, { flag: 'wx' });
       input.emit({ ...base, stage: 'attempted', preauthorization: input.requirement ? `${input.reportDir}/manifest.json#requirement` : DESIGN_REPAIR_PREAUTH_KEY,
         handoff_context: { path: path.relative(runDir, file).replace(/\\/g, '/'), sha256: sha256Hex(Buffer.from(bytes)) } });
-      fs.writeFileSync(draftFile, Buffer.from(original.baseline, 'base64'));
-      if (original.cu) fs.writeFileSync(cuDraftFile, Buffer.from(original.cu, 'base64'));
-      if (batchDraftFile) fs.writeFileSync(batchDraftFile, '[]\n');
-      if (original.config) fs.writeFileSync(architectureDraftFile, JSON.stringify(JSON.parse(Buffer.from(original.config, 'base64').toString('utf8')).architecture, null, 2) + '\n');
+      // A new baseline must not erase the current unpublished work awaiting its real denial feedback.
+      if (!keepRejectedWork) fs.writeFileSync(draftFile, Buffer.from(original.baseline, 'base64'));
+      if (original.cu && (!keepRejectedWork || !fs.existsSync(cuDraftFile))) fs.writeFileSync(cuDraftFile, Buffer.from(original.cu, 'base64'));
+      if (batchDraftFile && (!keepRejectedWork || !fs.existsSync(batchDraftFile))) fs.writeFileSync(batchDraftFile, '[]\n');
+      if (original.config && (!keepRejectedWork || !fs.existsSync(architectureDraftFile))) fs.writeFileSync(architectureDraftFile, JSON.stringify(JSON.parse(Buffer.from(original.config, 'base64').toString('utf8')).architecture, null, 2) + '\n');
     }
     const baseline = Buffer.from(original.baseline, 'base64');
     const baseDoc = YAML.parse(baseline.toString('utf8')) as BlueprintRecord;
+    const knowledgeRepair = Boolean(input.requirement) && input.brief.items.some(item => item.codes.some(code => code.startsWith('component_closure_knowledge_')));
+    const knowledgeAssets = knowledgeWriterAssets(input, baseDoc);
+    if (knowledgeAssets.some(file => !Object.prototype.hasOwnProperty.call(original.knowledgeOriginals ?? {}, path.relative(projectRoot, file).replace(/\\/g, '/')))) {
+      throw new AttemptFailure('author', '原知识资产的事务基线原件缺失，不能把当前作者写后的内容当作原确认依据。');
+    }
     if (fs.existsSync(draftFile) && fs.readFileSync(canonicalPath).equals(fs.readFileSync(draftFile))
       && Number((YAML.parse(fs.readFileSync(canonicalPath, 'utf8')) as BlueprintRecord).revision) === Number(baseDoc.revision) + 1) {
       published = { revision: Number(baseDoc.revision) + 1 };
@@ -802,6 +911,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     if (batchDraftFile && !fs.existsSync(batchDraftFile)) fs.writeFileSync(batchDraftFile, '[]\n');
     const auxiliaryDrafts = [...(originalCu ? [cuDraftFile] : []), ...(batchDraftFile ? [batchDraftFile] : []), ...(configBaseline ? [architectureDraftFile] : [])];
     const authorDrafts = [draftFile, ...auxiliaryDrafts];
+    const repairWorkFiles = [...authorDrafts, ...knowledgeAssets];
     if (input.requirement) context.architecture = JSON.parse(fs.readFileSync(architectureDraftFile, 'utf8')) as ArchitectureDsl;
     const readBatchCandidates = (): ChangeUnitCandidate[] => {
       if (!batchDraftFile) return [];
@@ -863,7 +973,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const runRel = input.reportDir.replace(/\\/g, '/').replace(/\/+$/, '');
     const immutableInputPaths = [...workUnitProtectedRecordPaths(projectRoot, input.feature, runDir), `${runRel}/manifest.json`];
     const workspace = changeUnitDirectory(projectRoot, blueprintId);
-    const owned = [path.relative(projectRoot, workspace)];
+    const workspaceOwned = [path.relative(projectRoot, workspace)];
+    const owned = [...workspaceOwned, ...knowledgeAssets.map(file => path.relative(projectRoot, file))];
     const eventFiles = workspaceEventFiles(workspace);
     const excluded = [
       `${runRel}/design-repair`, `${runRel}/phases/${designRepairInvokeLabel('author')}`, `${runRel}/phases/${designRepairInvokeLabel('questioning')}`,
@@ -876,7 +987,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const baselineRefs = blueprintSourceRefFiles(projectRoot, baseDoc).map(relOf);
     let usedQuestioningInvokeId: string | undefined;
     let usedInvocation: GoalRunEvent | undefined;
-    const guarded = async (purpose: DesignRepairPurpose, prompt: string, referenced: readonly string[], afterInvokeId: string | null): Promise<ReturnType<typeof capturePhaseInvocationSnapshot> | { handoff: true }> => {
+    const guarded = async (purpose: DesignRepairPurpose, prompt: string, referenced: readonly string[], afterInvokeId: string | null, material: readonly unknown[] = [prompt]): Promise<ReturnType<typeof capturePhaseInvocationSnapshot> | { handoff: true }> => {
       if (purpose === 'questioning') {
         const events = sessionEvents(runDir);
         const attempted = events.map(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted').lastIndexOf(true);
@@ -886,21 +997,25 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         const saved = prior ? questioningOriginal(runDir, prior) : null;
         const blueprint = asRecord(YAML.parse(fs.readFileSync(draftFile, 'utf8')));
         const reused = saved && blueprint && batchWasReviewed(saved, prior) ? reusableDesignQuestioning({ ...saved, projectRoot, blueprintPath: draftFile, blueprint }) : null;
-        if (saved && blueprint && reused && (!saved.afterBlueprint || stableStringify(asRecord(reviewOf(blueprint).questioning)) === stableStringify(reused))) {
+        const denialHandedBack = reused && independentQuestioningBlockers({ review_summary: { questioning: reused } }).length
+          && events.slice(events.indexOf(prior!) + 1).some(event => event.type === 'agent_invoke_end' && event.phase === designRepairInvokeLabel('author')
+            && invocationCompleted({ ...event, exitCode: event.exit_code }));
+        if (saved && blueprint && reused && !denialHandedBack && (!saved.afterBlueprint || stableStringify(asRecord(reviewOf(blueprint).questioning)) === stableStringify(reused))) {
           if (!saved.afterBlueprint) applyIndependentQuestioningOutput(draftFile, path.join(runDir, 'phases', String(prior!.phase), prior!.invoke_id!, 'questioning-output.json'), saved.output, saved.providerId);
           usedQuestioningInvokeId = prior!.invoke_id;
           usedInvocation = prior;
           return saved.preSnapshot!;
         }
       }
-      const readonlyInputs = purpose === 'questioning' ? new Map(authorDrafts.map(file => [file, fs.readFileSync(file)] as const)) : null;
+      const readonlyInputs = purpose === 'questioning' ? new Map(repairWorkFiles.map(file => [file, fs.readFileSync(file)] as const)) : null;
       const originalBlueprintBytes = fs.readFileSync(draftFile);
       const startsBefore = new Set(sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start').map(event => event.invoke_id));
       // 根在调用前后各列一次：调用里新建的顶层条目也要进差集。
       const resolution = { projectRoot, protectedRoots: snapshotRoots(projectRoot),
         executionRole: purpose === 'questioning' ? 'verifier' as const : 'author' as const,
         immutableInputPaths };
-      const snapshotOptions = { ownedPrefixes: owned, runtimeExcluded: excluded, includeFiles: referenced };
+      const snapshotOptions = { ownedPrefixes: purpose === 'author' ? owned : workspaceOwned, runtimeExcluded: excluded,
+        includeFiles: purpose === 'questioning' ? [...new Set([...referenced, ...repairWorkFiles.map(relOf)])] : referenced };
       const capture = (): ReturnType<typeof capturePhaseInvocationSnapshot> => capturePhaseInvocationSnapshot(resolution, snapshotOptions);
       let pre = capture();
       // 调用前就不可验证：还没有派出调用，尝试失败（不发布）；调用后不可验证：可能有越界写入而无从核对，按违规处置。
@@ -911,13 +1026,21 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       let result: DesignRepairInvokeOutcome;
       try {
         const current = readDraft(purpose);
-        const latestQuestion = repairRoleStart(sessionEvents(runDir), 'questioning');
-        const saved = latestQuestion ? questioningOriginal(runDir, latestQuestion) : null;
+        const roleEvents = sessionEvents(runDir);
+        const latestQuestion = repairRoleStart(roleEvents, 'questioning') ?? repairQuestions.at(-1);
+        const saved = latestQuestion ? questioningOriginal(runDir, latestQuestion, roleEvents) : null;
         const verified = saved && batchWasReviewed(saved, latestQuestion) && reusableDesignQuestioning({ ...saved, projectRoot, blueprintPath: draftFile, blueprint: current });
+        const authorAfterQuestion = latestQuestion && roleEvents.slice(roleEvents.findIndex(event => event.invoke_id === latestQuestion.invoke_id && event.type === 'agent_invoke_start') + 1)
+          .some(event => event.type === 'agent_invoke_end' && event.phase === designRepairInvokeLabel('author') && invocationCompleted({ ...event, exitCode: event.exit_code }));
+        const currentWork = designWorkSnapshot(repairWorkFiles);
+        const reviewedCurrentWork = saved && compareRelatedInputSnapshots(designWorkSnapshot(repairWorkFiles,
+          { ...saved.additionalInputs, [draftFile]: saved.beforeBlueprint }), currentWork) === 'unchanged';
         const cu = originalCu && fs.existsSync(cuDraftFile) ? asChangeUnitArtifact(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8'))) : undefined;
         result = await input.invoke(purpose, prompt, { pre, resolution, options: snapshotOptions,
-          evaluation: evaluationOf(current, designWorkSnapshot(authorDrafts), !!verified, pre, cu),
-          history: [...comparableHistory, ...(previousEvaluation ? [previousEvaluation] : [])], feedbackDelivered: feedbackDelivered || authorFeedback.length > 0 });
+          material,
+          evaluation: evaluationOf(current, currentWork, !!verified && !authorAfterQuestion && !!reviewedCurrentWork, pre, cu),
+          history: [...comparableHistory, ...(previousEvaluation ? [previousEvaluation] : [])],
+          feedbackDelivered: !!reviewedCurrentWork && (feedbackDelivered || authorFeedback.length > 0) });
       } finally {
         written = stopRecording();
       }
@@ -950,7 +1073,9 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       if (diff.kind === 'unverifiable') {
         throw new AttemptFailure(purpose, `调用后写归因快照不可核实（不得当作干净继续）：${diff.reason}`, { changes: eventChanges, preSnapshot: pre.sha256, postSnapshot: post.sha256 });
       }
-      const changes = [...(diff.kind === 'changed' ? diff.changes : []), ...eventChanges];
+      const writableAssets = new Set(knowledgeAssets.map(file => path.relative(projectRoot, file).replace(/\\/g, '/')));
+      const changes = [...(diff.kind === 'changed' ? diff.changes : []), ...eventChanges]
+        .filter(change => !(purpose === 'author' && change.how === 'modified' && writableAssets.has(change.path.replace(/\\/g, '/'))));
       if (changes.length) {
         throw new AttemptFailure(purpose, `${purpose === 'author' ? '编写' : '质询'}调用改了草稿之外的文件：${changes.map(change => change.path).slice(0, 20).join('、')}`,
           { changes, preSnapshot: pre.sha256, postSnapshot: post.sha256 });
@@ -967,7 +1092,11 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         try { applyIndependentQuestioningOutput(draftFile,
           path.join(runDir, 'phases', String(start.phase), start.invoke_id, 'questioning-output.json'),
           result.output ?? '', DESIGN_REPAIR_QUESTIONING_PROVIDER); }
-        catch (error) { throw new AttemptFailure(purpose, `独立质询原件不可接受：${(error as Error).message}`); }
+        catch (error) {
+          try { parseIndependentQuestioningOutput(result.output ?? ''); }
+          catch { throw new QuestioningFormatFailure(purpose, `独立质询原件不可接受：${(error as Error).message}`); }
+          throw new AttemptFailure(purpose, `独立质询原件不可接受：${(error as Error).message}`);
+        }
       }
       return pre;
     };
@@ -992,12 +1121,26 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const contentChecks = (doc: BlueprintRecord, candidateCu?: ChangeUnitArtifact): CheckResult[] => {
       const currentCu = candidateCu ?? (originalCu ? asChangeUnitArtifact(originalCu.changeUnit)
         : changeUnitId ? asChangeUnitArtifact(loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId).changeUnit) : undefined);
-      return [...(currentCu ? [currentCu] : []), ...readBatchCandidates().map(row => row.artifact)].flatMap(unit => {
+      // A root repair must inspect the same existing CU consumers as its final readiness probe.
+      const retired = retiredChangeUnitIds(projectRoot, blueprintId);
+      const units = new Map((currentCu ? [currentCu] : input.phase === 'initial-design'
+        ? enumerateCanonicalChangeUnits(projectRoot, blueprintId).filter(loaded => !retired.has(String(loaded.changeUnit.change_unit_id)))
+          .map(loaded => asChangeUnitArtifact(loaded.changeUnit)) : [])
+        .map(unit => [unit.change_unit_id, unit]));
+      for (const row of readBatchCandidates()) units.set(row.artifact.change_unit_id, row.artifact);
+      const checks = [...units.values()].flatMap(unit => {
         const ctx = { projectRoot, frameworkRoot, feature: deriveChangeUnitFeatureId(blueprintId, unit.change_unit_id), phase: input.phase,
           featureSpec: {}, phaseRule: {} } as CheckContext;
         return [...consumerKinds].flatMap(kind => checkAuthoritativeContentAligned(ctx, kind,
           deriveBlueprintCandidateSkillInput(projectRoot, ctx.feature, frameworkRoot, kind, { blueprint: doc, changeUnit: unit })));
       });
+      if (knowledgeRepair) {
+        const candidate = { ...loadCanonicalBlueprint(projectRoot, blueprintId), blueprint: doc };
+        checks.push(...validateComponentClosureKnowledge(projectRoot, { blueprint: candidate } as Parameters<typeof validateComponentClosureKnowledge>[1]).issues
+          .map(issue => ({ id: issue.id, category: 'traceability' as const, severity: issue.severity === 'WARN' ? 'MAJOR' as const : issue.severity, status: 'FAIL' as const,
+            description: '原稳定知识归位', details: `${issue.path}: ${issue.message}` })));
+      }
+      return checks;
     };
     const evaluationOf = (doc: BlueprintRecord, work: ArtifactSnapshot, completed: boolean, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, candidateCu?: ChangeUnitArtifact): CompletionEvaluation => {
       const blueprintIssues = validateComponentBlueprint(doc, context);
@@ -1010,8 +1153,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         if (path.resolve(file) === path.resolve(draftFile) || path.resolve(file) === path.resolve(canonicalPath)) continue;
         const relative = relOf(file);
         const entry = pre?.entries.find(item => item.path === relative && item.kind === 'file');
-        if (!entry) { known = false; continue; }
-        inputs[`dependency:${relative}`] = { exists: true, contentHash: entry.sha256 };
+        inputs[`dependency:${relative}`] = entry ? { exists: true, contentHash: entry.sha256 } : { exists: false, contentHash: '' };
       }
       return { acceptanceKey, inputs, disposition, completed: completed && known, checkFamilies: ['component-design'] };
     };
@@ -1020,10 +1162,27 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const starts = sessionEvents(runDir);
     const transactionAt = starts.map(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted').lastIndexOf(true);
     const initialQuestion = [...starts.slice(0, transactionAt)].reverse().find(event => event.type === 'agent_invoke_start' && event.phase === 'initial-design-questioning');
-    const priorQuestions = [...(initialQuestion ? [initialQuestion] : []), ...starts.slice(transactionAt + 1)
-      .filter(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('questioning'))];
+    const repairStarts: GoalRunEvent[] = [];
+    let matchingRepair = false;
+    for (const event of starts) {
+      const repair = event as Record<string, unknown>;
+      if (event.type === 'design_authority_repair' && repair.blueprint_id === blueprintId) {
+        if (repair.stage === 'published' && !(repair.outcome === 'unrecovered' && repair.failed_step === 'reconcile')) {
+          repairStarts.length = 0; matchingRepair = false;
+        } else if (repair.stage === 'attempted') {
+          try { matchingRepair = !!repair.handoff_context && readHandoffMaterial<OriginalContext>(runDir, repair.handoff_context as HandoffReference).baseline === original.baseline; }
+          catch { matchingRepair = false; }
+        }
+      }
+      if (matchingRepair && event.type === 'agent_invoke_start'
+        && (event.phase === designRepairInvokeLabel('author') || event.phase === designRepairInvokeLabel('questioning'))) repairStarts.push(event);
+    }
+    const repairQuestions = repairStarts.filter(event => event.phase === designRepairInvokeLabel('questioning'));
+    const priorQuestions = [...(initialQuestion ? [initialQuestion] : []), ...repairQuestions];
+    const lastAuthor = [...repairStarts].reverse().find(event => event.phase === designRepairInvokeLabel('author'));
+    const authorAt = lastAuthor ? starts.indexOf(lastAuthor) : starts.length;
     for (const start of priorQuestions) {
-      const saved = questioningOriginal(runDir, start);
+      const saved = questioningOriginal(runDir, start, starts);
       if (!saved || !batchWasReviewed(saved, start)) continue;
       const priorArchitecture = context.architecture;
       try {
@@ -1037,8 +1196,9 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         writeBackAdmission(doc, context);
         const contents = { ...saved.additionalInputs, [draftFile]: YAML.stringify(doc) };
         const historicalCu = contents[cuDraftFile] ? asChangeUnitArtifact(YAML.parse(contents[cuDraftFile])) : undefined;
-        const evaluation = evaluationOf(doc, designWorkSnapshot(authorDrafts, contents), true, saved.preSnapshot, historicalCu);
-        if (evaluation.completed) { if (previousEvaluation) comparableHistory.push(previousEvaluation); previousEvaluation = evaluation; }
+        const evaluation = evaluationOf(doc, designWorkSnapshot(repairWorkFiles, contents), true, saved.preSnapshot, historicalCu);
+        // The current post-author Q is the evaluation under comparison, not its own feedback baseline.
+        if (evaluation.completed && starts.indexOf(start) < authorAt) { if (previousEvaluation) comparableHistory.push(previousEvaluation); previousEvaluation = evaluation; }
       } catch { /* Missing old originals never become a fabricated comparable result. */ }
       finally { context.architecture = priorArchitecture; }
     }
@@ -1115,7 +1275,12 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       const savedQuestion = latestQuestion ? questioningOriginal(runDir, latestQuestion) : null;
       const verifiedQuestion = savedQuestion && batchWasReviewed(savedQuestion, latestQuestion)
         && reusableDesignQuestioning({ ...savedQuestion, projectRoot, blueprintPath: draftFile, blueprint: authorPreimage });
-      const preparedDisposition = evaluationOf(authorPreimage, designWorkSnapshot(authorDrafts), !!verifiedQuestion, undefined,
+      let supplementQuestioningFormat = false;
+      if (savedQuestion?.completed) {
+        try { parseIndependentQuestioningOutput(savedQuestion.output); }
+        catch { supplementQuestioningFormat = true; }
+      }
+      const preparedDisposition = evaluationOf(authorPreimage, designWorkSnapshot(repairWorkFiles), !!verifiedQuestion, undefined,
         currentCuInput ? asChangeUnitArtifact(currentCuInput) : undefined).disposition;
       const designDeclarations = currentCuInput ? asChangeUnitArtifact(currentCuInput).blockers.filter(blocker => blocker.gate === 'design'
         && blocker.owner === 'component-design' && blocker.observation === 'machine') : [];
@@ -1126,13 +1291,15 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         || activeDesignDeclaration && !verifiedQuestion);
       // A verified finding that triggered this transaction is invisible to the draft's own machine checks:
       // the design owner must receive it once before independent questioning.
-      const verifiedTriggerUndelivered = input.brief.items.some(item => /repair_candidate:[a-f0-9]{64}/.test(item.basis))
-        && !repairRoleStart(sessionEvents(runDir), 'author');
+      const verifiedTriggerUndelivered = (input.brief.items.some(item => /repair_candidate:[a-f0-9]{64}/.test(item.basis)) || authorFeedback.length > 0)
+        && !repairRoleStart(sessionEvents(runDir).slice(transactionAt + 1), 'author');
       let preAuthor: ReturnType<typeof capturePhaseInvocationSnapshot>;
       let authorStart: GoalRunEvent | undefined;
-      if (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered) {
-        const invoked = await guarded('author', [authorPrompt(input, draftFile, canonicalRel, authorDrafts, transactionTiming, currentCuInput ?? undefined),
-          ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback].join('\n\n'), currentRefs, afterQuestioning);
+      if (!supplementQuestioningFormat && (preparedDisposition.completionBlocking.some(problem => problem.action === 'repair') || cuNeedsAuthor || verifiedTriggerUndelivered)) {
+        const authorBase = authorPrompt(input, draftFile, canonicalRel, authorDrafts, transactionTiming, currentCuInput ?? undefined, knowledgeAssets);
+        const authorMaterial = [authorBase,
+          ...preparedDisposition.completionBlocking.map(problem => `${problem.id}: ${problem.detail}\n对象与证据：${(problem.evidence ?? []).join('、')}`), ...authorFeedback];
+        const invoked = await guarded('author', authorMaterial.join('\n\n'), currentRefs, afterQuestioning, authorMaterial);
         if ('handoff' in invoked) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
         preAuthor = invoked;
         authorStart = usedInvocation;
@@ -1186,9 +1353,12 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         declineGates.has(String(decision.decision_id)) && typeof decision.rationale === 'string' && decision.rationale.startsWith('declined:'));
       if (declined.length) {
         const before = structuredClone(authored); delete asRecord(before.review_summary)?.questioning;
-        const declinedQuestioning = await guarded('questioning', questioningPrompt(input, draftFile, authored, auxiliaryDrafts, transactionTiming) + '\n本次作者拒修理由：\n'
+        const declineMaterial: unknown[] = [];
+        const declinePrompt = questioningPrompt(input, draftFile, authored, auxiliaryDrafts, transactionTiming, declineMaterial, original.knowledgeOriginals);
+        const declineReason = '\n本次作者拒修理由：\n'
           + declined.map(decision => `${decision.decision_id}：${decision.rationale}`).join('\n')
-          + '\n逐条读取所引当前产物；依据成立才在既有 questioning.items 中用 answered_with_evidence、answer 原样包含完整 declined: 依据。不要为了发布而改设计。', blueprintSourceRefFiles(projectRoot, authored).map(relOf), questioningAfter);
+          + '\n逐条读取所引当前产物；依据成立才在既有 questioning.items 中用 answered_with_evidence、answer 原样包含完整 declined: 依据。不要为了发布而改设计。';
+        const declinedQuestioning = await guarded('questioning', declinePrompt + declineReason, blueprintSourceRefFiles(projectRoot, authored).map(relOf), questioningAfter, [...declineMaterial, declineReason]);
         if ('handoff' in declinedQuestioning) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
         const questioned = readDraft('questioning');
         const after = structuredClone(questioned); delete asRecord(after.review_summary)?.questioning;
@@ -1277,7 +1447,18 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       ];
 
       // ④ 独立质询：隔离的第二次调用，只许改质询结果。
-      const questioningStep = await guarded('questioning', questioningPrompt(input, draftFile, beforeQuestioning, auxiliaryDrafts, [...transactionTiming, ...questioningPreparation]), [...new Set([...baselineRefs, ...draftRefs])], questioningAfter);
+      let questioningStep: Awaited<ReturnType<typeof guarded>>;
+      for (;;) {
+        try {
+          const material: unknown[] = [];
+          const prompt = questioningPrompt(input, draftFile, beforeQuestioning, auxiliaryDrafts, [...transactionTiming, ...questioningPreparation], material, original.knowledgeOriginals);
+          questioningStep = await guarded('questioning', prompt, [...new Set([...baselineRefs, ...draftRefs])], questioningAfter, material);
+          break;
+        } catch (error) {
+          if (!(error instanceof QuestioningFormatFailure)) throw error;
+          // The fixed format feedback changes conditions once; the existing dispatcher pauses identical retries.
+        }
+      }
       if ('handoff' in questioningStep) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
       questioningPreimage = questioningStep;
       questioned = readDraft('questioning');
@@ -1297,7 +1478,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         ...denied.map(item => `${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? "")}`),
         ...contentChecks(questioned, cuCandidate).map(check => check.details ?? check.id)];
       if (derived.status !== 'pass' || issues.length) {
-        const currentEvaluation = evaluationOf(questioned, designWorkSnapshot(authorDrafts), true, questioningStep, cuCandidate);
+        const currentEvaluation = evaluationOf(questioned, designWorkSnapshot(repairWorkFiles), true, questioningStep, cuCandidate);
         if (currentEvaluation.disposition.completionBlocking.length && currentEvaluation.disposition.completionBlocking.every(problem => problem.action !== 'repair')) {
           throw new AttemptFailure('questioning', `独立质询/验证仍有未完项，保留本次原件和设计，不重派无关作者：\n${issues.join('\n')}`);
         }
