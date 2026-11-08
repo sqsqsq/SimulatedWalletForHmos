@@ -306,8 +306,9 @@ class ChainCase(unittest.TestCase):
 
 
 class TheDerivedUnitWithItsRole(ChainCase):
-    """同一份前态：模块单位选中决策树并写了角色，没有本地契约，原生从蓝图派生后冻结；改工程的用例用 `variant`，结束即恢复。
-    实体上的义务与角色原样到门禁与审查任务。"""
+    """同一份前态：模块单位选中决策树并写了角色，原生阶段准备把蓝图契约写成本阶段的 contracts.yaml（与
+    prepare-blueprint-design 同一函数）后冻结；改工程的用例用 `variant`，结束即恢复。实体上的义务与角色原样到门禁与审查任务。"""
+    STEPS = ("materialize", "freeze")
 
     def test_obligations_and_roles_survive_derivation_and_are_used(self) -> None:
         out = self.probe()
@@ -469,9 +470,23 @@ class TheDerivedUnitWithItsRole(ChainCase):
         self.assertNotIn(f"`{PATTERN_REF}`", facts)
 
 
+class ADerivedContractIsAnInputUntilThePlanWritesIt(ChainCase):
+    """只冻结、本阶段的 contracts.yaml 还没写出：原生选中的契约是蓝图派生的输入。作者任务按它列义务并写明还没写出；
+    本阶段的规格（门禁读的那一份）没有契约，不拿输入当成本阶段已交的产物。"""
+
+    def test_the_author_sees_the_input_and_the_stage_has_no_contract_yet(self) -> None:
+        out = self.probe()
+        self.assertIsNone(out["must"], "门禁读到了还没写出的契约")
+        self.assertEqual([], out["addresses"])
+        duties = out["author"].split("## 3. 当前契约与义务", 1)[1].split("## 4. 激活知识：索引与本动作的原文", 1)[0]
+        self.assertIn("契约来自 derive derive.blueprint-contracts（原生选中的输入）；本阶段要交的 contracts.yaml 还没写出", duties)
+        self.assertIn(KNOWLEDGE_REF, duties, "作者看不到选中输入上的义务")
+
+
 class AMissingOwnRoleIsNamed(ChainCase):
     """本单位承担的角色没有实体：点名那个角色，不点名别的施工单位的角色。"""
     WITH_ROLES = False
+    STEPS = ("materialize", "freeze")
 
     def test_only_the_units_own_role_is_asked_for(self) -> None:
         gate = self.probe()["gate"]
@@ -483,6 +498,7 @@ class AMissingOwnRoleIsNamed(ChainCase):
 class NoPatternIsACandidate(ChainCase):
     """没有模式出现候选信号：零模式判断合法，任务不编角色，规约义务与模式知识原文照样送达，门禁不因没有角色而拒绝。"""
     PATTERN = "none"
+    STEPS = ("materialize", "freeze")
 
     def test_no_role_is_invented_and_the_rule_still_arrives(self) -> None:
         out = self.probe()
@@ -777,7 +793,7 @@ const [root, feature, phase] = process.argv.slice(1);
 const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
 const access = await import(base + 'shared/framework-access.mjs');
 const gate = await (await import(base + phase + '/post_check.mjs')).default({ phase, feature, projectRoot: root });
-const view = f => ({ status: f.status, issues: f.issues, inputs: Object.fromEntries(Object.entries(f.inputs).map(([k, v]) => [k, [v.state, v.binding ?? null]])) });
+const view = f => ({ status: f.status, issues: f.issues, inputs: Object.fromEntries(Object.entries(f.inputs).map(([k, v]) => [k, [v.state, v.binding?.source ?? null]])) });
 const here = access.readFeature(root, feature, phase);
 const n = access.loadNative(root);
 const p = n.module('scripts/utils/blueprint-skill-projection.ts');

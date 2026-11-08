@@ -1326,6 +1326,24 @@ class KnowledgeDeliveriesAreReadFromTheTaskOutput(unittest.TestCase):
             text = (self.root / f).read_text(encoding="utf-8")
             self.assertEqual("下篇" if "form: halves" in text else "全文", halves[f], f)
 
+    def test_equivalent_command_spellings_give_the_same_record(self) -> None:
+        """同一次取知识任务的几种合法写法：不加引号、双引号、单引号、等号；对象、动作、读者一致，字节与正文不变。
+        值读不清（空值、引号没闭合）是 unknown，不猜。"""
+        base = "node doc/extensions/hooks/shared/knowledge-task.mjs --project-root p"
+        spellings = (f"{base} --feature flat-start --action plan --audience reviewer",
+                     f'{base} --feature "flat-start" --action "plan" --audience "reviewer"',
+                     f"{base} --feature 'flat-start' --action 'plan' --audience 'reviewer'",
+                     f"{base} --feature=flat-start --action=plan --audience=reviewer")
+        [reference] = self.measured(self.output)
+        for cmd in spellings:
+            with self.subTest(cmd=cmd):
+                self.cmd = cmd
+                self.assertEqual(reference, self.measured(self.output)[0])
+        for cmd in (f'{base} --feature "" --action plan', f'{base} --feature "flat-start --action plan'):
+            with self.subTest(cmd=cmd):
+                self.cmd = cmd
+                self.assertIsNone(self.measured(self.output)[0]["target"])
+
     def test_a_truncated_output_is_unknown(self) -> None:
         [got] = self.measured(self.output[:200], source_truncated=True)
         self.assertEqual((None, None), (got["bytes"], got["bodies"]))

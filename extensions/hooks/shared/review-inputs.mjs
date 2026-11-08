@@ -8,12 +8,16 @@
  *
  * 明细合同只覆盖登记在 `COVERED_CHECKS` 里的扩展判据：它们无论结论都在 YAML 明细里写四个键，
  * 脚本核声明与集合、结论与阻断项是否自洽；声明读全而实际没读懂，脚本识别不了。
+ *
+ * 必审集合里的每一项有一个核查标识 `key`：原生选中的输入用它的 `input_id`（值在原生审查主 prompt 的
+ * `(resolved input <id>)` 块里，这里不另写一份），文件用工程相对路径。明细按标识声明，两种标识各核各的对象。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { extensionRoot, featureRoot, readJsonOrNull, relDisplay } from './paths.mjs';
-import { knowledgeRegistrations } from './knowledge.mjs';
+import { featureRoot, readJsonOrNull, relDisplay } from './paths.mjs';
+import { loadNative, readFeature } from './framework-access.mjs';
+import { knowledgeTaskData } from './knowledge-task.mjs';
 
 /** 走局部明细合同的判据 → 它的必审集合用途。 */
 export const COVERED_CHECKS = { knowledge_obligation_substance: 'plan' };
@@ -108,12 +112,22 @@ function updateInputs(root, flow, add, gaps) {
   return rid;
 }
 
+/** 原生输入来源的一句话：artifact 写产物名，派生写 provider。 */
+const sourceText = s => (s ? `${s.kind}${s.artifact ? ` ${s.artifact}` : s.provider_id ? ` ${s.provider_id}` : ''}` : '来源未知');
+
 /**
  * 必审输入：`purpose` 是 `plan`（施工单位 Plan 阶段的义务审查）。Story 的独立审查按审查对象（review-object）核覆盖，不走这里。
- * 路径一律相对工程根；`alias` 与 `visual` 保留同一明细合同的形状，这里不产生图面延期。
  *
- * @returns {{inputs: {path:string, purpose:string, required:boolean, missing:boolean, digest:string|null}[],
- *   update: string|null, gaps: string[], alias: Map<string,string>, visual: {fact: string, deferred: Set<string>}|null}}
+ * 集合由同一次原生阶段解析（`readFeature(plan)`）与同一份审查者知识任务（`knowledgeTaskData`）给出：
+ * 原生选中的输入按 `input_id` 必审；本阶段原生要求交出的产物（`required_outputs`）按实际路径必审，缺了就是缺；
+ * 盘上已有的 plan.md 与 use-cases.yaml 是审查对象；知识只取任务第 4 块送了正文的那几份（文件与篇）。
+ * 原生没选中的本地 spec.md、acceptance.yaml 不进必审集合，需要时作回查。原生解析不成立时原问题进 `gaps`。
+ * 文件路径一律相对工程根；`alias` 与 `visual` 保留同一明细合同的形状，这里不产生图面延期。
+ * `native` 与 `knowledgeTask` 是这两份结果本身，审查请求用同一份知识任务正文。
+ *
+ * @returns {{inputs: {key:string, path:string|null, input_id?:string, purpose:string, required:boolean, missing:boolean,
+ *   digest:string|null, output?:boolean}[], update: string|null, gaps: string[], alias: Map<string,string>,
+ *   visual: {fact: string, deferred: Set<string>}|null, native: object|null, knowledgeTask: object|null}}
  */
 export function reviewInputs(projectRoot, feature, purpose = 'plan') {
   const root = featureRoot(projectRoot, feature);
@@ -122,15 +136,16 @@ export function reviewInputs(projectRoot, feature, purpose = 'plan') {
   const alias = new Map();
   const visual = null;
   const at = rel => path.join(root, ...rel.split('/'));
-  const add = (abs, why, { identity = true, text = null, required = true } = {}) => {
+  const add = (abs, why, { identity = true, text = null, required = true, output = false } = {}) => {
     const p = relDisplay(projectRoot, abs);
-    const seen = inputs.find(x => x.path === p);
-    if (seen) { seen.required ||= required; return; }
+    const seen = inputs.find(x => x.key === p);
+    if (seen) { seen.required ||= required; seen.output ||= output; return; }
     let bytes = null;
     try { bytes = fs.readFileSync(abs); } catch { bytes = null; }
     if (bytes && text !== null) bytes = Buffer.from(text);
     if (!bytes && !required) return;  // 可选且本单没有：不进表
-    inputs.push({ path: p, purpose: why, required, missing: bytes === null, digest: bytes && identity ? sha12(bytes) : null });
+    inputs.push({ key: p, path: p, purpose: why, required, missing: bytes === null, digest: bytes && identity ? sha12(bytes) : null,
+      ...(output ? { output: true } : {}) });
   };
   // 配置读不出时需求目录只能按默认推导：整份集合与视觉裁定都可能不是这个工程的，报缺口，也不延期图面核对
   const configBroken = fs.existsSync(path.join(projectRoot, 'framework.config.json')) && !readJsonOrNull(path.join(projectRoot, 'framework.config.json'));
@@ -146,27 +161,81 @@ export function reviewInputs(projectRoot, feature, purpose = 'plan') {
     { text: scopeProjection(flow), required: story });
   add(at('AR/story-src/decisions.json'), '登记的决定：哪些定了、哪些开着；澄清正文里引用的人答原话与作者解释分开核', own('AR/story-src/decisions.json'));
   add(at('AR/review.md'), '决策与评审记录：人的原话与表态', own('AR/review.md'));
-  add(at('spec/spec.md'), '有效 Spec：要履行的业务条件与验收');
-  add(at('acceptance.yaml'), '验收条目');
-  add(at('plan/plan.md'), '审查对象：设计章');
-  add(at('contracts.yaml'), '审查对象：契约实体与挂着的义务');
-  add(at('use-cases.yaml'), '审查对象：用例与调用绑定');
+  const native = planInputs(projectRoot, feature, inputs, gaps, add, at);
+  let knowledgeTask = null;
   try {
-    for (const { file: rel } of knowledgeRegistrations(projectRoot)) add(path.join(extensionRoot(projectRoot), ...rel.split('/')), '激活知识原文');
+    knowledgeTask = knowledgeTaskData(projectRoot, { action: 'plan', audience: 'reviewer', feature });
+    for (const d of knowledgeTask.documents) {
+      add(path.join(projectRoot, ...d.path.split('/')), `本单位相关知识的正文（${d.part}，在知识任务第 4 块）`);
+    }
   } catch (e) {
-    gaps.push(`激活知识清单读不出（${e.message}）——知识依据未取得`);
+    gaps.push(`审查者知识任务取不到（${String(e?.message ?? e).split(/\r?\n/)[0]}）——相关知识的正文未取得`);
   }
   const update = updateInputs(root, flow, add, gaps);
-  return { inputs, update, gaps, alias, visual };
+  return { inputs, update, gaps, alias, visual, native, knowledgeTask };
 }
 
-/** 任务书里的「读这些」表：路径、摘要、用途，读不到的点名；明细按它逐份声明。 */
+/** Plan 阶段的原生部分：选中的输入、要交的产物与盘上已有的审查对象。原生解析不成立时原问题进缺口，不按本地文件降级。 */
+function planInputs(projectRoot, feature, inputs, gaps, add, at) {
+  let native;
+  try {
+    native = readFeature(projectRoot, feature, 'plan');
+  } catch (e) {
+    gaps.push(`原生阶段解析起不来（${String(e?.message ?? e).split(/\r?\n/)[0]}）——本阶段的输入与产物未取得`);
+    return null;
+  }
+  if (native.status !== 'ok') {
+    gaps.push(`原生阶段解析不成立（${native.status}）：${(native.issues ?? []).map(i => i.message ?? i.code).join('；') || '原生没有给出问题'}`);
+  }
+  if (native.scope === 'not_frozen') gaps.push('执行范围还没冻结：本阶段的原生输入未确定，审查对象不是正式的阶段对象');
+  for (const [id, value] of Object.entries(native.inputs ?? {})) {
+    if (value.state === 'resolved') {
+      const b = value.binding ?? {};
+      inputs.push({ key: b.input_id ?? id, path: null, input_id: b.input_id ?? id, required: true, missing: false,
+        digest: b.content_fingerprint ? String(b.content_fingerprint).slice(0, 12) : null,
+        purpose: `原生选中的输入（${sourceText(b.source)}）：值在审查主 prompt 的 \`(resolved input ${b.input_id ?? id})\` 块，来源按 source_refs 回查` });
+    } else if (value.state === 'invalid') {
+      inputs.push({ key: id, path: null, input_id: id, required: true, missing: true, digest: null,
+        purpose: `原生判这份输入不成立：${value.detail ?? '原生没有给出原因'}` });
+      gaps.push(`原生输入 ${id} 不成立：${value.detail ?? '原生没有给出原因'}`);
+    }
+  }
+  if (!Array.isArray(native.required_outputs)) {
+    gaps.push('原生没有给出本阶段要交的产物（required_outputs）——审查对象未取得');
+  }
+  const resolveArtifact = name => {
+    try {
+      return loadNative(projectRoot).module('config.ts').resolveFeatureArtifact(projectRoot, feature, name).actualPath;
+    } catch (e) {
+      gaps.push(`本阶段产物 ${name} 的位置原生解析不了（${String(e?.message ?? e).split(/\r?\n/)[0]}）`);
+      return null;
+    }
+  };
+  for (const name of native.required_outputs ?? []) {
+    const abs = resolveArtifact(name);
+    if (!abs) continue;
+    add(abs, `审查对象：本阶段要交的产物（原生 required_outputs 的 ${name}）`, { output: true });
+    if (!fs.existsSync(abs)) gaps.push(`本阶段要交的 ${name} 还没写出（${relDisplay(projectRoot, abs)}）`);
+  }
+  // 盘上已有的本阶段产物都是审查对象；原生没要求、盘上也没有的不进表
+  for (const [rel, why] of [['plan/plan.md', '审查对象：设计章'], ['contracts.yaml', '审查对象：契约实体与挂着的义务'],
+    ['use-cases.yaml', '审查对象：用例与调用绑定']]) {
+    add(at(rel), why, { required: fs.existsSync(at(rel)) });
+  }
+  return native;
+}
+
+/** 任务书里的「核这些」表：核查标识（原生输入写 input_id，文件写路径）、摘要、用途，缺的点名；明细按标识逐项声明。 */
 export function inputRows(basis) {
-  return [...basis.inputs.map(x => `- \`${x.path}\`${x.digest ? `（摘要 ${x.digest}）` : ''} —— ${x.purpose}`
-    + (x.missing ? '　**读不到**：它是必审输入，缺了不能判 PASS，写进 unreviewed 并作为阻断原因' : '')),
+  return [...basis.inputs.map(x => (x.path === null
+    ? `- 原生输入 \`${x.key}\`${x.digest ? `（内容指纹 ${x.digest}）` : ''} —— ${x.purpose}`
+      + (x.missing ? '　**没有成立的值**：它是必审输入，写进 unreviewed 并作为阻断原因' : '')
+    : `- \`${x.path}\`${x.digest ? `（摘要 ${x.digest}）` : ''} —— ${x.purpose}`
+      + (x.missing ? '　**读不到**：它是必审输入，缺了不能判 PASS，写进 unreviewed 并作为阻断原因' : ''))),
   ...basis.gaps.map(g => `- **输入有缺口**：${g}`),
-  '', '上面每一份照抄路径写进 examined_inputs 或 unreviewed（unreviewed 也可以写判据 id），一项一份；不用 `*` 通配，也不把几份合成一项。'
-    + '为核实额外读过的相关文件也可以列进 examined_inputs，它不顶替任何一份必审。'];
+  '', '上面每一项照抄核查标识（原生输入写 input_id，文件写路径）写进 examined_inputs 或 unreviewed（unreviewed 也可以写判据 id），'
+    + '一项一份；不用 `*` 通配，也不把几项合成一项。原生输入核审查主 prompt 里它的当前值。'
+    + '为核实额外读过的相关文件也可以列进 examined_inputs，它不顶替任何一项必审。'];
 }
 
 /** 明细里写的路径规范成表里的写法：去反引号、反斜杠换正斜杠、去开头的 `./`。 */
@@ -178,7 +247,7 @@ function skippedItem(u) {
     const [head, ...rest] = u.split(/[：:]/);
     return { key: inputPath(head), reason: rest.join('：').trim() };
   }
-  return { key: inputPath(u?.path ?? u?.check ?? u?.item), reason: String(u?.reason ?? '').trim() };
+  return { key: inputPath(u?.path ?? u?.input_id ?? u?.check ?? u?.item), reason: String(u?.reason ?? '').trim() };
 }
 
 /**
@@ -200,20 +269,26 @@ export function detailProblems(details, status, basis, checkIds = []) {
   if ((status === 'PASS' || status === 'WARN') && blocking.length) out.push(`判了 ${status} 却列了 ${blocking.length} 条阻断项，结论与明细矛盾`);
   if (status === 'FAIL' && !blocking.length) out.push('判了 FAIL 却没有阻断项，说不出拦在哪');
   if (!basis) return out;
-  const table = new Map(basis.inputs.map(x => [x.path, x]));
+  const keyOf = x => x.key ?? x.path;
+  const table = new Map(basis.inputs.map(x => [keyOf(x), x]));
   const canon = p => basis.alias?.get(p) ?? p;
-  if (status === 'SKIP' && basis.inputs.some(x => x.purpose.startsWith('审查对象') && !x.missing)) {
+  if (status === 'SKIP' && basis.inputs.some(x => x.output)) {
+    out.push('判了 SKIP，本阶段却有原生要求交出的产物——产物没写出是缺件，判 FAIL 并写成阻断原因');
+  } else if (status === 'SKIP' && basis.inputs.some(x => x.purpose.startsWith('审查对象') && !x.missing)) {
     out.push('判了 SKIP，审查对象却在盘上——SKIP 只用于审查对象不存在');
   }
   const seen = new Set();
   const written = new Set();
   for (const raw of details.examined_inputs) {
-    const at = inputPath(typeof raw === 'string' ? raw : raw?.path);
+    const at = inputPath(typeof raw === 'string' ? raw : raw?.path ?? raw?.input_id);
     const p = canon(at);
     // 表是必审集合，不是阅读白名单：额外取证读过的相关文件可以声明，但顶替不了任何一份必审；同一内容的别名各写一次算同一份
-    if (!p) out.push(`examined_inputs 里有一项没有路径：${JSON.stringify(raw)}`);
+    if (!p) out.push(`examined_inputs 里有一项没有核查标识：${JSON.stringify(raw)}`);
     else if (written.has(at)) out.push(`examined_inputs 里「${at}」写了两次`);
-    else if (table.get(p)?.missing) out.push(`examined_inputs 声明读过「${p}」，它在盘上读不到`);
+    else if (table.get(p)?.missing) {
+      out.push(table.get(p).path === null ? `examined_inputs 声明核过原生输入「${p}」，这次原生没有给出成立的值`
+        : `examined_inputs 声明读过「${p}」，它在盘上读不到`);
+    }
     written.add(at);
     seen.add(p);
   }
@@ -233,11 +308,11 @@ export function detailProblems(details, status, basis, checkIds = []) {
   if ((status === 'PASS' || status === 'WARN') && basis.gaps.length) {
     out.push(`判了 ${status}，必审输入还有缺口没有清零：${basis.gaps.join('；')}——缺口在的时候判 FAIL 并写成阻断原因`);
   }
-  const silent = basis.inputs.filter(x => x.required && !seen.has(x.path) && !skipped.has(x.path)).map(x => x.path);
+  const silent = basis.inputs.filter(x => x.required && !seen.has(keyOf(x)) && !skipped.has(keyOf(x))).map(keyOf);
   if (silent.length) out.push(`必审输入既没出现在 examined_inputs 也没列进 unreviewed：${silent.join('、')}`);
   // Framework 裁定看不了图时，登记图片的图面未核是能力缺口：允许 WARN，不允许 PASS；其余没核完的照旧不能判 PASS 或 WARN
   const deferred = basis.visual?.deferred ?? new Set();
-  const open = basis.inputs.filter(x => x.required && skipped.has(x.path)).map(x => x.path);
+  const open = basis.inputs.filter(x => x.required && skipped.has(keyOf(x))).map(keyOf);
   const unread = open.filter(p => !deferred.has(p));
   const blind = open.filter(p => deferred.has(p));
   if ((status === 'PASS' || status === 'WARN') && unread.length) {

@@ -447,8 +447,11 @@ BODY_PART_RE = re.compile(r"^- 下面是：(全文|前言与(上篇|下篇))", r
 
 
 def _flag(request: str, name: str) -> str | None:
-    m = re.search(rf"--{name}[ =]+([^\s'\"]+)", request)
-    return m.group(1) if m else None
+    """命令里 `--name value` 或 `--name=value` 的值：不加引号、单引号、双引号三种写法都认，去掉外层引号、保留引号里的空格；
+    没出现、空值或引号没闭合时是 None（判不了），不猜默认值，也不执行或展开命令。"""
+    m = re.search(rf"--{name}(?:=|\s+)(?:'([^']*)'|\"([^\"]*)\"|([^\s'\"]+))", request)
+    value = next((g for g in m.groups() if g is not None), None) if m else None
+    return value or None
 
 
 def knowledge_deliveries(calls: list[dict]) -> list[dict]:

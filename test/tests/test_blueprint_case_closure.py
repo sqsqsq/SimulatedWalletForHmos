@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +25,7 @@ from test_verifier_report_protocol import STORY_BUILD as DEV_STORY_BUILD, TheSto
 import end_target  # noqa: E402
 import shared_state  # noqa: E402
 from ext_workspace import link_framework  # noqa: E402
+import design_fixture  # noqa: E402
 from test_knowledge_task import IMPACT_BASIS, REPO_ROOT, REQUIREMENT  # noqa: E402
 import yaml  # noqa: E402
 
@@ -216,10 +219,23 @@ class TheExecutedPhaseNeedsCurrentNativeEvidence(unittest.TestCase):
 
 
 def native_cli(root: Path, *args: str) -> subprocess.CompletedProcess:
-    """在消费工程的 `framework/harness` 下跑原生入口（与 `phases/design.md` 第六节同一组命令）。"""
+    """在消费工程的 `framework/harness` 下跑原生入口（与 `phases/design.md` 第六节同一组命令）。
+    测试进程的 NODE_OPTIONS（转译缓存钩子）不带进去：原生 harness 把它当注入拦下，真实宿主也没有它。"""
+    env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
     return subprocess.run(["node", "node_modules/ts-node/dist/bin.js", "--transpile-only", *args],
                           cwd=root / "framework" / "harness", capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=600)
+                          errors="replace", timeout=600, env=env)
+
+
+def private_harness_state(root: Path) -> None:
+    """跑真实 harness 的工程用自己的 `framework/harness/state` 与 `reports`：原生 harness 把运行状态写在那里，
+    整个 framework 接成共享被测副本的链接时会写进共享副本，让别的用例看到它在变。其余部分照旧链接或复制自被测副本。"""
+    framework = root / "framework"
+    if framework.is_symlink() or design_fixture._is_junction(framework):
+        os.rmdir(framework)  # 只去掉链接本身，共享副本不动
+    for name in ("state", "reports"):
+        (framework / "harness" / name).mkdir(parents=True, exist_ok=True)
+    design_fixture.overlay_framework(root)
 
 
 def last_json(text: str) -> dict:
@@ -239,6 +255,7 @@ class TheRequestChainFromANewlyAcceptedUnit(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._tmp = tempfile.TemporaryDirectory()
         root = cls.root = make_project(root=Path(cls._tmp.name) / "p")
+        private_harness_state(root)
         blueprint = root / "doc" / "features" / BLUEPRINT
         cls.unit = blueprint / UNIT
         # 设计准备段：夹具的施工单位改为分解候选，删掉 canonical 后经原生 consumer 接受
@@ -335,6 +352,252 @@ class TheRequestChainFromANewlyAcceptedUnit(unittest.TestCase):
         plan = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
         self.assertFalse(plan["reached"])
         self.assertIn("plan 还没正式收口", plan["missing"][0])
+
+
+#: 原生 SpecLoader 的冻结范围指纹与 Extension 报告核对：都走真实模块
+FINGERPRINT = """
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, file] = process.argv.slice(1);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+process.stdout.write(loadNative(root).module('scripts/utils/execution-scope.ts')
+  .executionScopeFingerprint(JSON.parse(fs.readFileSync(file, 'utf8')).execution_scope));
+"""
+REVIEW_INPUTS = """
+import { pathToFileURL } from 'node:url';
+const [root, feature] = process.argv.slice(1);
+const { reviewInputs } = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/review-inputs.mjs').href);
+const b = reviewInputs(root, feature, 'plan');
+process.stdout.write(JSON.stringify({ inputs: b.inputs.map(({ key, required, missing, output }) => ({ key, required, missing, output: !!output })),
+  gaps: b.gaps }));
+"""
+FREEZE = """
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, feature] = process.argv.slice(1);
+const { loadNative } = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const n = loadNative(root);
+const frozen = n.module('scripts/utils/feature-execution-scope.ts').ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: n.frameworkRoot, feature });
+if (!['frozen', 'reused'].includes(frozen.status)) { process.stderr.write(JSON.stringify(frozen)); process.exit(1); }
+"""
+
+
+def review_inputs(root: Path) -> dict:
+    proc = subprocess.run(["node", "--input-type=module", "-e", REVIEW_INPUTS, str(root), CU], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=300)
+    assert proc.returncode == 0, proc.stderr[-600:]
+    return json.loads(proc.stdout)
+
+
+REPORT_CHECK = """
+import { pathToFileURL } from 'node:url';
+const [root, feature] = process.argv.slice(1);
+const { reportProblems } = await import(pathToFileURL(root + '/doc/extensions/hooks/shared/verifier-report.mjs').href);
+process.stdout.write(JSON.stringify(reportProblems(root, feature, 'plan')));
+"""
+#: 夹具作者读过的工程来源：从 demo 复制，是消费工程里本来就有的文件
+EXPLORED = ("02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets",
+            "02-Feature/WalletMain/src/main/ets/data/repository/CardRepository.ets",
+            "02-Feature/WalletMain/src/main/ets/data/model/HomeCardState.ets",
+            "02-Feature/WalletMain/src/main/ets/data/model/FinanceEntry.ets",
+            "02-Feature/WalletMain/src/main/module.json5", "02-Feature/WalletMain/build-profile.json5", "build-profile.json5")
+
+
+class APlanClosesThroughTheNativeRequest(unittest.TestCase):
+    """B01 成功组合：新施工单位经原生接受 → request 只要 Plan → 阶段准备 → 夹具作者补本阶段产物 → 正式 harness 签发审查请求
+    → 审查边界用测试替身回复（回显这次的 subject、按任务的必审表写四键）→ 原生 check-receipt 收口 → 终点观测认 phase:plan。
+
+    Spec 由蓝图验收复用、本地没有 spec.md 与 acceptance.yaml：必审集合按原生选中的输入（input_id）与本阶段要交的产物取，
+    知识只取同一份审查者任务送了正文的那几份。替身只证明确定性消费，不证明业务审查。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import test_cu_knowledge_chain as chain  # noqa: PLC0415
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls.root = make_project(root=Path(cls._tmp.name) / "p")
+        private_harness_state(root)
+        chain.design(root, True)
+        blueprint = root / "doc" / "features" / BLUEPRINT
+        unit = cls.unit = blueprint / UNIT
+        artifact = yaml.safe_load((unit / "change-unit.yaml").read_text(encoding="utf-8"))
+        shutil.rmtree(unit)
+        candidates = blueprint / "blueprint" / "change-unit-candidates.json"
+        candidates.write_text(json.dumps([{"providerId": artifact["provenance"]["extraction_method"], "artifact": artifact}],
+                                         ensure_ascii=False, default=lambda value: value.isoformat()), encoding="utf-8")
+        accepted = native_cli(root, "scripts/check-change-unit.ts", "--project-root", str(root), "--blueprint", BLUEPRINT,
+                              "--accept-candidates", candidates.relative_to(root).as_posix(), "--json")
+        assert accepted.returncode == 0, accepted.stdout[-800:]
+        for rel in EXPLORED:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO_ROOT / "demo" / rel, root / rel)
+        scope = native_cli(root, "scripts/goal-mode-entry.ts", "--project-root", str(root), "--framework-root", str(root / "framework"),
+                           "--feature", CU, "--prepare-scope", "--completion-target", "request", "--requested-results",
+                           "返回首页余额刷新的 Plan", "--requested-phases", "plan", "--requirement-file", REQUIREMENT)
+        assert scope.returncode == 0, scope.stdout[-800:]
+        prepared = native_cli(root, "scripts/prepare-blueprint-design.ts", "--feature", CU, "--phase", "plan", "--project-root",
+                              str(root), "--framework-root", str(root / "framework"))
+        assert prepared.returncode == 0, prepared.stdout[-800:]
+        (root / "framework.local.json").write_text(json.dumps({"schema_version": "1.0", "agent_adapter": "codex"}), encoding="utf-8")
+        # 第一次正式运行冻结范围（作者产物还没写，原生报缺），之后夹具作者按原生 required_outputs 写本阶段产物
+        native_cli(root, "harness-runner.ts", "--project-root", str(root), "--phase", "plan", "--feature", CU)
+        cls.author(root, unit)
+        cls.harness = native_cli(root, "harness-runner.ts", "--project-root", str(root), "--phase", "plan", "--feature", CU)
+        summary = json.loads((unit / "plan" / "reports" / "summary.json").read_text(encoding="utf-8"))
+        cls.before = summary
+        assert summary.get("verifier_request"), cls.harness.stdout[-2500:]
+        request = json.loads((root / summary["verifier_request"]).read_text(encoding="utf-8"))
+        cls.prompt = (root / request["prompt_path"]).read_text(encoding="utf-8")
+        cls.reply = cls.stand_in(cls.prompt, request["subject_id"])
+        cls.report = root / summary["verifier_report"]
+        cls.report.write_text(cls.reply, encoding="utf-8")
+        cls.problems = cls.check_report(root)
+        cls.receipt = native_cli(root, "scripts/check-receipt.ts", "--project-root", str(root), "--feature", CU, "--phase", "plan")
+        cls.after = json.loads((unit / "plan" / "reports" / "summary.json").read_text(encoding="utf-8"))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    @staticmethod
+    def author(root: Path, unit: Path) -> None:
+        """夹具作者：本阶段的 change_unit 映射与 context/facts.md（原生 required_outputs 与 facts 合同要求的那几项）。"""
+        cu_bytes = (unit / "change-unit.yaml").read_bytes()
+        cu = yaml.safe_load(cu_bytes)
+        impl = f"planned:{EXPLORED[0]}#HomeRepository.refreshBalance"
+        test = "planned:02-Feature/WalletMain/src/test/HomeRepository.test.ets#refreshBalance"
+        contracts = yaml.safe_load((unit / "contracts.yaml").read_text(encoding="utf-8"))
+        contracts["change_unit"] = {
+            "change_unit_ref": {"artifact": "change-unit@1", "component_id": cu["component_id"], "blueprint_id": cu["blueprint_id"],
+                                "change_unit_id": cu["change_unit_id"], "revision": cu["revision"],
+                                "artifact_sha256": "sha256:" + hashlib.sha256(cu_bytes).hexdigest()},
+            "predicate_mappings": [{"predicate_id": x["predicate_id"], "implementation_refs": [impl], "test_refs": [test]}
+                                   for x in cu.get("target_predicates") or []],
+            "provide_mappings": [{"provide_id": x["provide_id"], "implementation_refs": [impl], "test_refs": [test]}
+                                 for x in cu.get("provides") or []],
+            "design_ref_mappings": [{"design_ref": ref, "implementation_refs": [impl], "verification_refs": [test]}
+                                    for ref in cu["design_refs"]]}
+        (unit / "contracts.yaml").write_text(yaml.safe_dump(contracts, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        fingerprint = subprocess.run(["node", "--input-type=module", "-e", FINGERPRINT, str(root), str(unit / "execution-scope.json")],
+                                     capture_output=True, text=True, encoding="utf-8", timeout=300)
+        assert fingerprint.returncode == 0, fingerprint.stderr
+        rows = "".join(f"| {r} | 读过 {r.rsplit('/', 1)[-1]} 的现有结构 | 刷新入口按它落 |\n" for r in EXPLORED)
+        (unit / "context").mkdir(exist_ok=True)
+        (unit / "context" / "facts.md").write_text(
+            f'---\nschema_version: "1.1"\nfeature: "{CU}"\nphase: "plan"\nestablished_by: "plan"\n'
+            f'frozen_scope_fingerprint: "{fingerprint.stdout.strip()}"\nready_to_produce: true\nhas_blocker_coverage_risk: false\n'
+            'key_inputs_read:\n  - "paths.module_catalog — 已读"\n  - "doc/extensions/hooks/plan/author.md — 已读"\n'
+            '  - "build-profile.json5 — 已读"\n  - "module.json5 — 已读"\nsource_code_paths:\n'
+            + "".join(f"  - {r}\n" for r in EXPLORED)
+            + 'exploration_mode: "sequential"\nchange_intent: "feature"\nestimated_loc_delta: 20\ntouches_layers: ["02-Feature"]\n'
+            'adds_new_exports: false\nsingle_function_scope: true\ndecisions_unlocked:\n  - "HomeRepository.refreshBalance 承接返回首页刷新"\n'
+            'subagents_used: ""\nsearches_performed_estimate: 12\nfiles_inspected_count: 12\n---\n\n## Code Facts\n\n'
+            '| 路径 | 发现的事实 | 对本阶段产出的影响 |\n|------|-----------|------------------|\n' + rows, encoding="utf-8")
+
+    @staticmethod
+    def required_keys(prompt: str) -> list[str]:
+        table = prompt.split("的必审输入（报告的 examined_inputs 按这张表逐项声明）", 1)[1].split("\n\n上面每一项", 1)[0]
+        return re.findall(r"^- (?:原生输入 )?`([^`]+)`", table, re.M)
+
+    @classmethod
+    def stand_in(cls, prompt: str, subject: str, keys: list[str] | None = None) -> str:
+        """审查边界的测试替身：判据与严重度照这次真实请求的 prompt 列，四键按任务的必审表写；不代表业务审查。"""
+        native = re.findall(r"^\| ([a-z_]+) \| (BLOCKER|MAJOR|MINOR) \|$",
+                            prompt.split("## 七、输出格式", 1)[1].split("### 7.1", 1)[0], re.M)
+        ext = re.findall(r"^- `([a-z_]+)`（(BLOCKER|MAJOR|MINOR)）", prompt.split("## 本阶段全部判据（逐条出结论）", 1)[1], re.M)
+        rows = ["| id | status | severity | 证据 |", "|---|---|---|---|",
+                *[f"| {i} | PASS | {sev} | 测试替身：只核确定性消费 |" for i, sev in native + ext]]
+        listed = cls.required_keys(prompt) if keys is None else keys
+        return ("测试替身回复：只用于验证原生请求、收口与观测的确定性消费，不是业务审查结论。\n\n" + "\n".join(rows) + "\n\n"
+                "```yaml\nverification_result:\n  phase: \"plan\"\n  checks:\n    - id: knowledge_obligation_substance\n"
+                "      status: PASS\n      severity: BLOCKER\n      details:\n        blocking_findings: []\n        advisories: []\n"
+                "        examined_inputs:\n" + "".join(f"          - {k}\n" for k in listed) + "        unreviewed: []\n```\n\n"
+                f"<!-- maison-verifier-result:v1 -->\nverifier_subject_id: {subject}\nverdict: PASS\nblocker_count: 0\n"
+                "<!-- /maison-verifier-result:v1 -->\n")
+
+    @staticmethod
+    def check_report(root: Path) -> list[str]:
+        proc = subprocess.run(["node", "--input-type=module", "-e", REPORT_CHECK, str(root), CU], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=300)
+        assert proc.returncode == 0, proc.stderr[-600:]
+        return json.loads(proc.stdout)
+
+    def test_the_formal_run_issues_a_request_carrying_the_native_values(self) -> None:
+        self.assertEqual(("PASS", "run_verifier_then_receipt"), (self.before["verdict"], self.before["next_action"]),
+                         self.harness.stdout[-1500:])
+        for id_ in ("acceptance", "contracts"):
+            self.assertIn(f"### (resolved input {id_})", self.prompt, f"原生主 prompt 没带选中的 {id_}")
+
+    def test_the_required_set_is_the_native_inputs_the_stage_output_and_this_units_knowledge(self) -> None:
+        keys = self.required_keys(self.prompt)
+        unit = f"doc/features/{BLUEPRINT}/{UNIT}"
+        self.assertEqual(["acceptance", "contracts"], [k for k in keys if "/" not in k], "原生选中的输入没按 input_id 列")
+        self.assertIn(f"{unit}/contracts.yaml", keys, "本阶段要交的产物没进必审")
+        for gone in (f"{unit}/spec/spec.md", f"{unit}/acceptance.yaml", f"{unit}/plan/plan.md", f"{unit}/use-cases.yaml"):
+            self.assertNotIn(gone, keys, f"复用的 Spec 或没有的产物被列成必审：{gone}")
+        sent = re.findall(r"^- 位置：`(doc/extensions/knowledge/[^`]+)`", self.prompt, re.M)
+        self.assertEqual(sorted(sent), sorted(k for k in keys if k.startswith("doc/extensions/knowledge/")),
+                         "必审的知识与同一份请求里送了正文的知识不是同一组")
+        self.assertLess(len(sent), len(yaml.safe_load((self.root / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
+                                       ["provides"]["knowledge"]), "必审又成了全部激活知识")
+
+    def test_the_extension_report_check_reads_the_same_set(self) -> None:
+        self.assertEqual([], self.problems)
+        keys = self.required_keys(self.prompt)
+        subject = self.before["verifier_subject_id"]
+        try:
+            self.report.write_text(self.stand_in(self.prompt, subject, [k for k in keys if k != "acceptance"]), encoding="utf-8")
+            got = self.check_report(self.root)
+        finally:
+            self.report.write_text(self.reply, encoding="utf-8")
+        self.assertTrue(any("必审输入既没出现在 examined_inputs 也没列进 unreviewed" in p and "acceptance" in p for p in got), got)
+
+    def test_a_missing_stage_output_is_missing_not_backfilled(self) -> None:
+        """本阶段要交的 contracts.yaml 不在：它照样必审、记缺，缺口点名；不拿原生选中的契约输入顶上。"""
+        contracts = self.unit / "contracts.yaml"
+        kept = contracts.read_bytes()
+        contracts.unlink()
+        try:
+            got = review_inputs(self.root)
+        finally:
+            contracts.write_bytes(kept)
+        rel = f"doc/features/{BLUEPRINT}/{UNIT}/contracts.yaml"
+        self.assertIn({"key": rel, "required": True, "missing": True, "output": True}, got["inputs"])
+        self.assertTrue(any("本阶段要交的 contracts.yaml 还没写出" in g for g in got["gaps"]), got["gaps"])
+
+    def test_the_receipt_closes_and_the_observer_reaches_the_plan(self) -> None:
+        self.assertEqual(0, self.receipt.returncode, self.receipt.stdout[-1500:])
+        self.assertEqual(("closed", "phase_closed_wait_user"), (self.after["closure_status"], self.after["next_action"]))
+        facts = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+        self.assertTrue(facts["reached"], facts["missing"])
+
+
+class ARequestedPlanBodyIsAStageOutput(unittest.TestCase):
+    """请求结果里单列一项 `plan.md`（phases/design.md 第六节第 2 步）：原生把 plan/plan.md 列进本阶段要交的产物，
+    必审集合照它要求、缺了点名；只要原生阶段结果的请求不列它（见上面的成功组合）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls.root = make_project(root=Path(cls._tmp.name) / "p")
+        scope = native_cli(root, "scripts/goal-mode-entry.ts", "--project-root", str(root), "--framework-root", str(root / "framework"),
+                           "--feature", CU, "--prepare-scope", "--completion-target", "request",
+                           "--requested-results", "返回首页余额刷新的 Plan", "--requested-results", "plan.md",
+                           "--requested-phases", "plan", "--requirement-file", REQUIREMENT)
+        assert scope.returncode == 0, scope.stdout[-800:]
+        frozen = subprocess.run(["node", "--input-type=module", "-e", FREEZE, str(root), CU], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=300)
+        assert frozen.returncode == 0, frozen.stderr[-600:]
+        cls.got = review_inputs(root)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def test_the_plan_body_is_required_and_named_when_missing(self) -> None:
+        rel = f"doc/features/{BLUEPRINT}/{UNIT}/plan/plan.md"
+        self.assertIn({"key": rel, "required": True, "missing": True, "output": True}, self.got["inputs"])
+        self.assertTrue(any("本阶段要交的 plan/plan.md 还没写出" in g for g in self.got["gaps"]), self.got["gaps"])
 
 
 class OneUnitShortIsNotTheWholeRequirement(unittest.TestCase):

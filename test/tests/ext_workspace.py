@@ -144,23 +144,15 @@ def change_versions(ext: Path, block: str) -> list[str]:
 _REQUIRED_INPUTS = """
 const [, , mod, root, feature, purpose] = process.argv;
 const m = await import(mod);
-process.stdout.write(JSON.stringify(m.reviewInputs(root, feature, purpose).inputs.filter(x => x.required).map(x => x.path)));
+process.stdout.write(JSON.stringify(m.reviewInputs(root, feature, purpose).inputs.filter(x => x.required).map(x => x.key)));
 """
 
-#: 夹具补齐必审输入时各类文件的占位内容：形状合法、不带业务内容
-_PLACEHOLDER = {".json": "{}\n", ".yaml": "{}\n", ".md": "# 占位\n"}
 
-
-def required_inputs(root: Path, feature: str, purpose: str = "story", fill: bool = True) -> list[str]:
-    """扩展派生的必审输入（相对工程根）。`fill` 时把盘上缺的补成占位文件——完整工作区里它们本来就在。"""
+def required_inputs(root: Path, feature: str, purpose: str = "story") -> list[str]:
+    """扩展派生的必审集合的核查标识（原生输入是 input_id，文件是相对工程根的路径）。只读：缺的就是缺，不补占位。"""
     import json
     import subprocess
     root = Path(root)
-    materials = root / "doc" / "features" / feature / "AR" / "story-src" / "materials.json"
-    if fill and not materials.exists():
-        # 完整工作区里 round 总会生成这份清单；缺了它必审集合本身就是缺口
-        materials.parent.mkdir(parents=True, exist_ok=True)
-        materials.write_text('{"materials": [], "origins": []}\n', encoding="utf-8")
     driver = root / "required-inputs.mjs"
     driver.write_text(_REQUIRED_INPUTS, encoding="utf-8")
     mod = DEV_EXT / "hooks" / "shared" / "review-inputs.mjs"
@@ -169,17 +161,11 @@ def required_inputs(root: Path, feature: str, purpose: str = "story", fill: bool
     driver.unlink()
     if proc.returncode:
         raise RuntimeError(proc.stderr[:600])
-    paths = json.loads(proc.stdout)
-    for rel in paths if fill else []:
-        target = root / rel
-        if not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(_PLACEHOLDER.get(target.suffix, "占位\n"), encoding="utf-8")
-    return paths
+    return json.loads(proc.stdout)
 
 
 def cover_report(text: str, root: Path, feature: str, purpose: str = "story") -> str:
-    """报告里每处 `examined_inputs: []` 换成当前必审集合逐份列出（同缩进），缺的必审件先补成占位。"""
+    """报告里每处 `examined_inputs: []` 换成当前必审集合的核查标识逐项列出（同缩进）。"""
     import re
     paths = required_inputs(root, feature, purpose)
 

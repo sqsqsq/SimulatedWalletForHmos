@@ -160,6 +160,8 @@
 2. **一次声明本次请求**：对 `ready_ids` 里获准的每个施工单位跑一次
    `npx ts-node scripts/goal-mode-entry.ts --project-root <根> --framework-root <根>/framework --feature <FID> --prepare-scope --completion-target request --requested-results '<本次获准的设计结果>' --requested-phases <按上表> --requirement-file <需求文件>`。
    `<需求文件>` 是蓝图需求条目里 `kind` 为 requirement 的来源文件（去掉 `#片段`），之后各阶段都用这一份。
+   请求里要了可读的 Plan 或 Spec 正文时，另加一项 `--requested-results plan.md`（Spec 是 `spec.md`）：原生只在某一项恰好是这个文件名时
+   把正文列为本阶段要交的产物；只要原生阶段结果时不加。
    要执行哪些阶段、哪些由已有依据复用，照它返回的 `phase_chain` 与 `obligations`：不先单做 Spec 再换范围，不补跑复用的阶段，也不删链上的阶段。
    原生要求的阶段超出本次授权时，停下照实说明，不自行扩大请求。
 3. **按 `phase_chain` 逐阶段做完**：每个阶段 P 依次

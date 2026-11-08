@@ -48,7 +48,7 @@ const SOURCE_OF_TRUTH = {
 const WALK = {
   spec: { what: '本施工单位的行为、边界与验收', handoff: 'plan 能据以设计：业务对象与动作、条件与结果、依据与具体的未决；'
     + '关键结论有源材料、已准入设计或已定决定支持；适用规约要求的行为与验证责任在验收里有条目承接' },
-  plan: { what: '设计、`contracts.yaml` 与 `use-cases.yaml`',
+  plan: { what: '本阶段要交的产物（`contracts.yaml`；有 plan.md、use-cases.yaml 时连同它们）与原生选中的输入',
     handoff: '编码能据以实现与验证：按每个业务结果走通接口的输入、返回、状态与调用，返回类型在本次契约或可定位的现有类型里存在，'
       + '选中模式要的角色由真实实体承担，用户动作与业务状态在 use-cases 里实际存在；'
       + '设计里的专项明细（如统计点、数据策略）落到了承担它的方法与实体上；'
@@ -210,14 +210,15 @@ export default async function preVerifier(ctx) {
         : obligationTable(ctx.projectRoot, ctx.feature, knowledge, inputs);
 
   fragments.push(allChecksFragment(checks));
-  fragments.push(reviewerKnowledge(ctx));
-  // 走局部明细合同的判据（Plan 的义务审查）：必审集合、当前回稿、说明与旧现场一起送达
-  for (const id of checkIds.filter(c => COVERED_CHECKS[c])) {
-    const basis = reviewInputs(ctx.projectRoot, ctx.feature, COVERED_CHECKS[id]);
-    fragments.push([`## \`${id}\` 的必审输入（报告的 examined_inputs 按这张表逐份声明）`, '', ...inputRows(basis), '',
+  // 走局部明细合同的判据（Plan 的义务审查）：必审集合只取一次，审查请求里的知识任务正文就是建表用的那一份
+  const covered = checkIds.filter(c => COVERED_CHECKS[c]).map(id => [id, reviewInputs(ctx.projectRoot, ctx.feature, COVERED_CHECKS[id])]);
+  const shared = covered.map(([, basis]) => basis.knowledgeTask).find(Boolean);
+  fragments.push(shared ? shared.text : reviewerKnowledge(ctx));
+  for (const [id, basis] of covered) {
+    fragments.push([`## \`${id}\` 的必审输入（报告的 examined_inputs 按这张表逐项声明）`, '', ...inputRows(basis), '',
       ...(basis.update ? ['update 开着：改掉的旧约束、旧决定与旧验收，依据是谁给的、有没有权限；'
         + '与仍有效的旧约束冲突而没经有权人裁定的，这一条 FAIL。', ''] : []),
-      `明细四个键（${DETAIL_KEYS.join('、')}）无论结论都写：读不到或没读完的列进 unreviewed 并写原因，必审没核完不能判 PASS 或 WARN。`].join('\n'));
+      `明细四个键（${DETAIL_KEYS.join('、')}）无论结论都写：没核到或没核完的列进 unreviewed 并写原因，必审没核完不能判 PASS 或 WARN。`].join('\n'));
   }
   if (!knowledgeIds.length) return { promptFragments: fragments };
 

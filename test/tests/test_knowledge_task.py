@@ -375,7 +375,10 @@ class PhaseInputsFromMaterializedContracts(FreshProject):
         self.use("materialize", "freeze")
         code, out = self.feature("plan")
         self.assertEqual((0, "ok"), (code, out["status"]), out)
-        self.assertEqual({"kind": "artifact", "artifact": "contracts@1"}, out["inputs"]["contracts"]["binding"])
+        binding = out["inputs"]["contracts"]["binding"]
+        self.assertEqual(("contracts", {"kind": "artifact", "artifact": "contracts@1"}), (binding["input_id"], binding["source"]))
+        self.assertRegex(binding["content_fingerprint"], r"^[0-9a-f]{64}$", "原生绑定的内容指纹没有原样交出")
+        self.assertTrue(binding["dependencies"] and binding["source_refs"], "原生绑定的依赖与 source_refs 被截掉了")
 
     def test_a_local_contract_changed_after_freezing_follows_the_native_owner(self) -> None:
         """冻结后改了本地契约：契约归 plan 产出，plan 读到的就是改后的本地契约；下游 review 原生判过期，
@@ -388,7 +391,7 @@ class PhaseInputsFromMaterializedContracts(FreshProject):
         before, state_before = files_under(features), listed()
         code, out = self.feature("plan")
         self.assertEqual((0, "ok"), (code, out["status"]), out)
-        self.assertEqual({"kind": "artifact", "artifact": "contracts@1"}, out["inputs"]["contracts"]["binding"])
+        self.assertEqual({"kind": "artifact", "artifact": "contracts@1"}, out["inputs"]["contracts"]["binding"]["source"])
         task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "plan", "--audience", "author")
         self.assertEqual(0, task.returncode, task.stderr)
         self.assertIn("LOCAL-1", task.stdout, "plan 没读到它自己改过的本地契约")
@@ -567,7 +570,7 @@ class OnAFrozenScope(UsageStarts, StagePreparation, SpecCase):
         self.use("freeze")
         code, out = self.feature("plan")
         self.assertEqual((0, "ok", "frozen"), (code, out["status"], out["scope"]), out)
-        self.assertEqual("derive", out["inputs"]["contracts"]["binding"]["kind"])
+        self.assertEqual("derive", out["inputs"]["contracts"]["binding"]["source"]["kind"])
         task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", "plan", "--audience", "author")
         self.assertEqual(0, task.returncode, task.stderr)
         self.assertIn("契约来自 derive", task.stdout)
@@ -588,7 +591,7 @@ class OnAFrozenScope(UsageStarts, StagePreparation, SpecCase):
     def test_after_freezing_the_native_inputs_are_consumed_as_they_are(self) -> None:
         self.use("freeze")
         code, out = self.feature("plan")
-        self.assertEqual((0, "derive"), (code, out["inputs"]["contracts"]["binding"]["kind"]), out)
+        self.assertEqual((0, "derive"), (code, out["inputs"]["contracts"]["binding"]["source"]["kind"]), out)
         for action in ("spec", "plan"):
             with self.subTest(action=action):
                 task = self.run_script("knowledge-task.mjs", "--feature", CU, "--action", action, "--audience", "author")

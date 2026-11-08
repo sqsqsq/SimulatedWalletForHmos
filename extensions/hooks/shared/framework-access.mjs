@@ -918,6 +918,9 @@ export function implementationInputs(projectRoot, feature, predicted, modules = 
  *
  * `spec` 是原生检查器看到的同一份规格（`SpecLoader.loadFeatureSpec`）：冻结时由解析器选定的输入加本阶段自己的产出组成
  * （本阶段的产出按产出核，不拿上游输入顶替），没冻结时是原生按本地文件读出的规格。阶段消费者只读它，不另读文件。
+ * `inputs` 是原生对 acceptance / contracts 的解析：resolved 时 `value` 是这次选中的值、`binding` 是原生 InputBinding 原样
+ * （`input_id`、`source`、`dependencies`、`source_refs`、`content_fingerprint`），其余状态带原生的 `detail`；
+ * `required_outputs` 是本阶段原生要求交出的产物名。输入与本阶段产物是两件事，输入的绑定不为产物背书。
  *
  * @param {{ requirement?: string, requirementFile?: string }} [supplied] 调用方手里的原始需求正文或文件，只在无 run 的 spec 用
  */
@@ -1007,17 +1010,18 @@ function resolveFeature(projectRoot, feature, phase, supplied) {
     }
     const spec = resolution.inputs
       ? new SpecLoader(native.root, undefined, undefined, native.frameworkRoot).loadFeatureSpec(feature, resolution.inputs) : null;
+    // 原生选中的输入：值是这次选中的那一份，绑定原样交出（来源、依赖、source_refs、内容指纹），不截短、不重算
     for (const [name, value] of Object.entries(resolution.inputs?.values ?? {})) {
       if (!['acceptance', 'contracts'].includes(name)) continue;
       out.inputs[name] = value.state === 'resolved'
-        ? { state: 'resolved', binding: value.binding?.source ?? null, value: spec?.[name] ?? value.value }
-        : { state: value.state, detail: value.detail };
+        ? { state: 'resolved', binding: value.binding ?? null, value: value.value }
+        : { state: value.state, ...(value.detail !== undefined ? { detail: value.detail } : {}),
+          ...(value.attempts !== undefined ? { attempts: value.attempts } : {}) };
       if (value.state === 'invalid') out.issues.push({ code: `${name}_invalid`, message: value.detail });
     }
     out.issues.push(...(spec?.shape_issues ?? []).map(message => ({ code: 'feature_spec_shape', message })));
-    // 本阶段选定的契约与验收以原生解析结果为准：规格加载没带出的那一份取解析器给的值
-    const chosen = name => (out.inputs[name]?.state === 'resolved' ? out.inputs[name].value ?? null : null);
-    out.spec = spec ? { ...specOf(spec), contracts: spec.contracts ?? chosen('contracts'), acceptance: spec.acceptance ?? chosen('acceptance') } : null;
+    // 本阶段的规格只取原生 SpecLoader 的结果：本阶段要交的产物缺了就是缺，不拿上游选中的输入回填
+    out.spec = spec ? specOf(spec) : null;
     out.required_outputs = resolution.inputs?.context?.required_outputs ?? [];
   } catch (e) {
     return { ...out, ...failure('invalid', e) };

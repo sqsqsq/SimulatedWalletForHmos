@@ -86,19 +86,20 @@ function relatedFiles(root, action, judged, spec, kind) {
   return files;
 }
 
-/** 一份知识送给本动作的正文：规约与分面事实整份；上下篇送文件前言与本动作的那一篇。 */
+/** 一份知识送给本动作的正文：规约与分面事实整份；上下篇送文件前言与本动作的那一篇。`part` 是全文或那一篇。 */
 function bodyFor(k, body, action) {
-  if (k.form !== 'halves' || !k.halves) return { text: body, note: '全文' };
+  if (k.form !== 'halves' || !k.halves) return { text: body, note: '全文', part: '全文' };
   const half = UPPER_HALF.has(action) ? HALVES[0] : HALVES[1];
   const head = body.search(new RegExp(`^#\\s+${HALVES[0]}\\s*·`, 'm'));
   const preface = head > 0 ? body.slice(0, head).trim() : '';
-  return { text: [preface, k.halves[half].trim()].filter(Boolean).join('\n\n'), note: `前言与${half}（另一篇按位置读原文）` };
+  return { text: [preface, k.halves[half].trim()].filter(Boolean).join('\n\n'), note: `前言与${half}（另一篇按位置读原文）`, part: half };
 }
 
 /**
  * 第 4 块：全局知识索引（激活清单的每份一行，不按受众筛）加本动作直接送的正文。正文先按登记的受众取本动作可达的，
  * `related` 为 null 时这些都送，否则只送其中的文件；相关文件被受众挡在本动作之外时报登记与消费者冲突，不静默少送。
  * `starter` 为真表示 Feature 还没有知识判断，正文供作者起步判断。
+ * `documents` 是送了正文的每份知识（工程相对路径与全文 / 上篇 / 下篇），与正文同一循环得出。
  */
 function knowledgeBlock(root, action, knowledge, related, starter = false) {
   const byFile = new Map([...knowledge.facts, ...knowledge.constraints, ...knowledge.patterns].map(k => [k.file, k]));
@@ -109,7 +110,7 @@ function knowledgeBlock(root, action, knowledge, related, starter = false) {
   const gaps = [...(related ?? [])].filter(f => !all.some(r => r.file === f && reaches(r, action)))
     .map(f => `知识 \`${f}\` 是本单位判断或契约实际引用的，登记的受众里却没有 ${action}：登记与消费者冲突，交知识维护者修正激活清单`);
   if (!ordered.length) {
-    return { rows: [...rows, `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`], gaps };
+    return { rows: [...rows, `激活清单为空：这个工程还没有登记知识（零项）。知识怎么写、怎么登记见 \`${relDisplay(root, protocol)}\`。`], gaps, documents: [] };
   }
   const sent = ordered.filter(k => reaches(k.registration, action) && (related === null || related.has(k.file)));
   const where = k => relDisplay(root, path.join(extensionRoot(root), ...k.file.split('/')));
@@ -128,16 +129,18 @@ function knowledgeBlock(root, action, knowledge, related, starter = false) {
   if (related !== null && !sent.length && !gaps.length) {
     rows.push('本施工单位没有承接或判过的知识，契约与验收也没有引用知识：正文不送；按索引核有没有设计漏判的，漏判交设计负责方。', '');
   }
+  const documents = [];
   for (const k of sent) {
     const file = path.join(extensionRoot(root), ...k.file.split('/'));
     const body = fs.readFileSync(file, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
-    const { text, note } = bodyFor(k, body, action);
+    const { text, note, part } = bodyFor(k, body, action);
+    documents.push({ path: where(k), part });
     rows.push(`### ${k.name ?? k.id}（${k.file.split('/')[1] ?? ''}，${k.form}）`, '',
       `- 位置：\`${where(k)}\`（适用性事实的 provenance.source_ref；规约条目引用写 \`<位置>#<编号>\`）`,
       `- 单元：${k.units.join('、')}`, `- 何时读：${k.appliesWhen}`, `- 下面是：${note}`,
       '', '````markdown', text, '````', '');
   }
-  return { rows, gaps };
+  return { rows, gaps, documents };
 }
 
 const factLine = f => `- 事实 \`${f.fact_id}\`（${f.provenance?.source_ref}）：${JSON.stringify(f.value)}`;
@@ -439,14 +442,18 @@ function featureTask(root, feature, action, supplied, knowledge) {
     duties.push('这一轮的知识输入身份，原样写进契约顶层 `knowledge_context`，与 `knowledge_facts` 并列（知识换了重取本任务、按新的一份替换）：', '',
       '```json', JSON.stringify(knowledgeContext(root), null, 2), '```');
   }
+  // 本单位相关知识按本阶段实际要落实的契约与验收取：产物写出了取产物，还没写出取原生选中的输入
+  let stageView = f.spec;
   if (f.scope === 'not_frozen') {
     duties.push('本阶段的原生输入还没有确定（执行范围未冻结），本任务只是预览，不作为动笔依据。');
     gaps.push(`执行范围未冻结：已获准开始本阶段的主模型按 story-knowledge Skill 的「范围未冻结时」${stagePreparation(f, feature, action) ?? ''}先准备范围`
       + '（没有候选先走原生 prepare-scope，再由原生 ensureFeatureExecutionScopeFrozen 冻结），返回 frozen 或 reused 后重取本任务再动笔；原生失败按它的报错交回责任方。');
   } else {
-    // 契约与验收取原生按阶段组装的那一份：解析器选定的输入加本阶段自己的产出
-    const contracts = f.spec?.contracts ?? null;
+    // 契约与验收：本阶段的产物以原生 SpecLoader 读出的为准；产物还没写出时，按原生选中的输入列义务，并写明它还是输入
     const source = f.inputs.contracts;
+    const written = f.spec?.contracts ?? null;
+    const chosen = source?.state === 'resolved' ? source.value ?? null : null;
+    const contracts = written ?? chosen;
     if (['spec', 'plan'].includes(action)) {
       const carried = carriedDuties(judged, action, knowledge);
       duties.push(...carried.duties);
@@ -454,7 +461,10 @@ function featureTask(root, feature, action, supplied, knowledge) {
     }
     if (contracts) {
       const must = obligationsFromContracts(contracts);
-      duties.push(`契约来自 ${source?.binding?.kind ?? '本阶段产出'}${source?.binding?.artifact ? ` ${source.binding.artifact}` : ''}。`,
+      const origin = source?.binding?.source;
+      const from = origin ? `${origin.kind}${origin.artifact ? ` ${origin.artifact}` : origin.provider_id ? ` ${origin.provider_id}` : ''}` : '本阶段产出';
+      duties.push(written ? `契约来自 ${from}。`
+        : `契约来自 ${from}（原生选中的输入）；本阶段要交的 contracts.yaml 还没写出，下面的义务按选中的输入列，写出后以产物为准。`,
         ...(must.length ? must.map(m => `- \`${m.entityPath}\`：${m.sourceRef} ${m.text}（验证 ${m.verify || '未写'}）`) : ['契约里没有知识义务。']));
     } else if (action === 'plan' && source?.state === 'absent') {
       duties.push('设计没有给本施工单位的机器契约投影：在本阶段的 contracts.yaml 里按承担的设计对象写出契约，'
@@ -462,7 +472,8 @@ function featureTask(root, feature, action, supplied, knowledge) {
     } else {
       duties.push(`本阶段没有可读的施工契约（${source?.state ?? '本阶段不读契约'}）${source?.detail ? `：${source.detail}` : ''}。`);
     }
-    const acceptance = f.spec?.acceptance ?? null;
+    const acceptance = f.spec?.acceptance ?? (f.inputs.acceptance?.state === 'resolved' ? f.inputs.acceptance.value ?? null : null);
+    stageView = { ...(f.spec ?? {}), contracts, acceptance };
     if (f.identity.kind === 'cu' && action !== 'spec') {
       duties.push(...statDelivery(judged, contracts, acceptance));
     }
@@ -472,22 +483,25 @@ function featureTask(root, feature, action, supplied, knowledge) {
   }
   return {
     object: `Feature \`${feature}\`，${kind}，位置 \`${f.feature_path}\``, facts, duties, gaps, page: `hooks/${action}/author.md`,
-    preview: f.scope === 'not_frozen', related: relatedFiles(root, action, judged, f.spec, f.identity.kind),
+    preview: f.scope === 'not_frozen', related: relatedFiles(root, action, judged, stageView, f.identity.kind),
     starter: f.identity.kind !== 'cu' && Boolean(judged) && !judged.rows.length && !judged.facts.length,
   };
 }
 
 export function knowledgeTask(root, args) {
-  return buildTask(root, args).text;
+  return knowledgeTaskData(root, args).text;
 }
 
-/** 任务正文与它是不是预览（执行范围未冻结）。 */
-function buildTask(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
+/**
+ * 任务正文、是不是预览（执行范围未冻结）、第 4 块送了正文的知识（`documents`：路径与全文 / 上篇 / 下篇）与缺口。
+ * Plan 审查的必审集合按 `documents` 取知识，与送进同一份审查请求的任务正文同源。
+ */
+export function knowledgeTaskData(root, { action, audience, blueprint, feature, requirement, requirementFile }) {
   // 激活知识先读：读不出按知识维护者的缺口报，后面核判断时不再撞同一处；本动作送哪些正文按同一次取得的判断定
   const knowledge = loadKnowledge(root);
   const task = blueprint ? blueprintTask(root, blueprint, action)
     : featureTask(root, feature, action, { requirement, requirementFile }, knowledge);
-  const { rows, gaps: routing } = knowledgeBlock(root, action, knowledge, blueprint ? null : task.related, task.starter === true);
+  const { rows, gaps: routing, documents } = knowledgeBlock(root, action, knowledge, blueprint ? null : task.related, task.starter === true);
   task.gaps.push(...routing);
   const problems = selfCheck(root, knowledge);
   const page = relDisplay(root, path.join(extensionRoot(root), ...task.page.split('/')));
@@ -510,7 +524,7 @@ function buildTask(root, { action, audience, blueprint, feature, requirement, re
     ...([...task.gaps, ...problems.map(p => `知识自检：${p}——目标工程的知识维护者处理。`)].map(g => `- ${g}`)),
     ...(!task.gaps.length && !problems.length ? ['- 无。'] : []), '',
     ...(task.dispatch?.length ? ['## 7. 派审与留存（主执行者）', '', ...task.dispatch, ''] : [])].join('\n');
-  return { text, preview: task.preview === true };
+  return { text, preview: task.preview === true, documents, gaps: [...task.gaps, ...problems.map(p => `知识自检：${p}`)] };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -528,7 +542,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exit(2);
   }
   try {
-    const task = buildTask(path.resolve(root), args);
+    const task = knowledgeTaskData(path.resolve(root), args);
     process.stdout.write(task.text);
     // 作者取正式的阶段任务就是开始这一阶段：先有任务、再记起点；预览与审查者不算开始
     if (args.audience === 'author' && args.feature && !task.preview) {
