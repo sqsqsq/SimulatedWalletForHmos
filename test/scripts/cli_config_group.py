@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,8 @@ from typing import Any
 DSH_VERIFIER_OVERLAY = ".dsh/framework-verifier.patch.yml"
 #: suite 生成的调用配置快照；只收需要改调用参数的宿主，其余宿主照用中央注册表。
 CLI_REGISTRY_ENV = "STORY_CLI_REGISTRY"
+#: 中央 CLI 注册表（tools.cli 的默认配置）
+CENTRAL_REGISTRY = Path(__file__).resolve().parents[2] / "tools" / "cli" / "config" / "clis.json"
 
 
 def load_cli_group(config: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any]]:
@@ -96,3 +100,28 @@ def registry_for(cli_name: str, environ: dict[str, str] | None = None) -> Path |
     path = Path(snapshot)
     clis = json.loads(path.read_text(encoding="utf-8")).get("clis") or {}
     return path if cli_name in clis else None
+
+
+def cli_version(cli_name: str, environ: dict[str, str] | None = None, timeout: int = 30) -> dict[str, Any]:
+    """起跑前记下这次用的 CLI 二进制版本：照注册表（suite 快照优先）找到可执行文件，跑它自己的 ``--version``。
+    只读版本，不起会话；取不到时 ``value`` 为 None 并写明原因，不拿会话记录格式的版本号顶替。"""
+    registry = registry_for(cli_name, environ) or CENTRAL_REGISTRY
+    try:
+        executable = str((json.loads(registry.read_text(encoding="utf-8")).get("clis") or {})[cli_name]["executable"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"cli": cli_name, "executable": None, "value": None, "source": None,
+                "why": f"注册表 {registry} 里取不到 {cli_name} 的可执行文件：{exc}"}
+    resolved = shutil.which(executable)
+    source = f"{executable} --version"
+    if not resolved:
+        return {"cli": cli_name, "executable": None, "value": None, "source": source, "why": f"PATH 里找不到 {executable}"}
+    try:
+        proc = subprocess.run([resolved, "--version"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"cli": cli_name, "executable": resolved, "value": None, "source": source, "why": f"{source} 没有返回：{exc}"}
+    line = next((l.strip() for l in (proc.stdout + "\n" + proc.stderr).splitlines() if l.strip()), None)
+    if proc.returncode != 0 or not line:
+        return {"cli": cli_name, "executable": resolved, "value": None, "source": source,
+                "why": f"{source} 退出 {proc.returncode}，没有版本输出" if not line else f"{source} 退出 {proc.returncode}：{line}"}
+    return {"cli": cli_name, "executable": resolved, "value": line, "source": source, "why": None}

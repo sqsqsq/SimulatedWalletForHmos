@@ -111,5 +111,32 @@ class TheSuiteWritesOneSnapshot(unittest.TestCase):
         self.assertEqual(str(path), environment[cli_config_group.CLI_REGISTRY_ENV])
 
 
+
+class TheCliVersionIsReadFromTheBinary(unittest.TestCase):
+    """起跑前记下 CLI 二进制版本：照注册表找可执行文件、跑它自己的 --version；取不到写明原因，不编一个版本。"""
+
+    def snapshot(self, clis: dict) -> dict:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "clis.json"
+        path.write_text(json.dumps({"schema_version": 1, "defaults": {}, "clis": clis}), encoding="utf-8")
+        return {cli_config_group.CLI_REGISTRY_ENV: str(path)}
+
+    def test_the_version_line_of_the_registered_binary(self) -> None:
+        env = self.snapshot({"fake": {"executable": sys.executable}})
+        got = cli_config_group.cli_version("fake", env)
+        self.assertEqual((None, f"{sys.executable} --version"), (got["why"], got["source"]))
+        self.assertTrue(got["value"].startswith("Python 3."), got)
+
+    def test_a_missing_binary_or_entry_says_why(self) -> None:
+        env = self.snapshot({"fake": {"executable": "story-no-such-cli-binary"}})
+        got = cli_config_group.cli_version("fake", env)
+        self.assertIsNone(got["value"])
+        self.assertIn("找不到 story-no-such-cli-binary", got["why"])
+        other = cli_config_group.cli_version("story-unregistered", self.snapshot({}))
+        self.assertIsNone(other["value"])
+        self.assertIn("取不到 story-unregistered 的可执行文件", other["why"])
+
+
 if __name__ == "__main__":
     unittest.main()

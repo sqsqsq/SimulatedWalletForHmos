@@ -52,7 +52,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HOST_ROOT))
 
 import run_layout
-from cli_config_group import load_cli_group, registry_for, select_cli
+from cli_config_group import cli_version, load_cli_group, registry_for, select_cli
 from phase_state import derive_phase_state
 import end_target
 
@@ -1891,7 +1891,10 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         feed.emit("upstream_fingerprint", digest=upstream_fingerprint["digest"][:16],
                   file_count=upstream_fingerprint["file_count"])
 
+    # 起跑准备记下这次用的 CLI 二进制版本（它自己的 --version），取不到写明原因
+    result["cli_version"] = cli_version(cli_config["name"])
     runlog.header({"case": case_id, "feature": feature, "cli": cli_config["name"],
+                   "cli_version": result["cli_version"]["value"] or f"未取得：{result['cli_version']['why']}",
                    "model": cli_config["model"], "target": TARGET,
                    "start": result["start"]})
     registry = registry_for(cli_config["name"])

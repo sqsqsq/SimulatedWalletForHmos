@@ -439,6 +439,38 @@ def _gate_failed(call: dict, output: str) -> bool:
     return fails or str(call["end"].get("tool_status") or "") not in SUCCESS_STATUSES
 
 
+#: 取知识任务的命令（story-knowledge 的入口）
+KNOWLEDGE_TASK_RE = re.compile(r"knowledge-task\.mjs")
+#: 第 4 块每份送到的正文：位置行与「下面是」行（knowledge-task.mjs::knowledgeBlock）
+BODY_AT_RE = re.compile(r"^- 位置：`([^`]+)`", re.MULTILINE)
+BODY_PART_RE = re.compile(r"^- 下面是：(全文|前言与(上篇|下篇))", re.MULTILINE)
+
+
+def _flag(request: str, name: str) -> str | None:
+    m = re.search(rf"--{name}[ =]+([^\s'\"]+)", request)
+    return m.group(1) if m else None
+
+
+def knowledge_deliveries(calls: list[dict]) -> list[dict]:
+    """每次取知识任务送到了什么：对象、动作、读者，输出的 UTF-8 字节，送到正文的文件与篇（全文 / 上篇 / 下篇）。
+    输出没取到、冲突或被截断时字节与正文都是 None（不是 0）；字节少不等于 token 或耗时少，也不说明用对了知识。"""
+    rows = []
+    for call in calls:
+        request = _request_text(call["start"])
+        if call["name"] not in SHELL_TOOLS or not KNOWLEDGE_TASK_RE.search(request):
+            continue
+        output = _result(call)
+        bodies = None
+        if output is not None:
+            at = BODY_AT_RE.findall(output)
+            parts = [m.group(2) or "全文" for m in BODY_PART_RE.finditer(output)]
+            bodies = [{"file": f, "part": part} for f, part in zip(at, parts)] if len(at) == len(parts) else None
+        rows.append({"target": _flag(request, "feature") or _flag(request, "blueprint"), "action": _flag(request, "action"),
+                     "audience": _flag(request, "audience"), "bytes": len(output.encode("utf-8")) if output is not None else None,
+                     "bodies": bodies})
+    return rows
+
+
 def _owners(calls: list[dict]) -> dict[int, dict]:
     """事件位置 → 它所属的调用；事件间隔按调用的用途归属。"""
     return {index: call for call in calls for index in call["indices"]}
@@ -649,6 +681,7 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "review_results": dict(review_results),
         "tool_calls_completed_from_native": sum("completed_from" in call for call in calls),
         **native_delegations(sessions),
+        "knowledge_deliveries": knowledge_deliveries(calls),
         "repeated_check_fails": check_fail_counts.most_common(5),
         "worst_repeated_check": (check_fail_counts.most_common(1)[0] if check_fail_counts else None),
         "gap_sec_by_kind": {k: round(v, 1) for k, v in gap_by_kind.items()},
@@ -665,6 +698,10 @@ DSH_SESSION_READER = Path(__file__).resolve().parent / "dsh_session.mjs"
 CARRIER_ROLES = ((re.compile(r"^# Story 独立人读审查 · 派审"), "story_review"),
                  (re.compile(r"^# 蓝图独立质询 · 派审"), "questioning"),
                  (re.compile(r"的增强阅读 SVG"), "figure_review"))
+#: Story 派审载体写明这一次是哪种派审（independent-review.mjs 的三种载体）：先首读、复核、补正上一份回复
+REVIEW_MODES = (("## 先首读", "first_read"), ("## 复核", "recheck"), ("## 补正上一份回复", "correction"))
+#: 原生阶段审查请求（harness 签发的 request JSON）
+STAGE_REQUEST_RE = re.compile(r'\\?"kind\\?"\s*:\s*\\?"maison_verifier_request\\?"')
 DELEGATING_TOOLS = {"subagent", "subagent_fork", "task"}
 STARTED_RE = re.compile(r"started subagent (\S+)")
 BLUEPRINT_FILE_RE = re.compile(r"[\\/]blueprint[\\/]")
@@ -711,9 +748,16 @@ def _native_sessions(run_dir: Path) -> dict:
     return {"present": bool(parents), "read": read, "problems": problems}
 
 
+def _review_mode(prompt: str) -> str:
+    """Story 派审载体写明的派审种类；载体里没有这几节（旧版本的运行记录）是 unknown，不按次序猜。"""
+    return next((mode for head, mode in REVIEW_MODES if re.search(rf"^{re.escape(head)}$", prompt, re.MULTILINE)), "unknown")
+
+
 def native_delegations(sessions: dict) -> dict:
-    """原生会话里的委派：按派出去的正文与子会话实际产出认角色，给每个子会话的观察跨度与收尾状态；
-    Story 独审另给收尾回复里的业务结论（`_review_conclusion`），与收尾状态、父方的报告接收结论分开。没有保全原件时为 null。"""
+    """原生会话里的委派：按派出去的正文与子会话实际产出认角色，不按工具名——专用 verifier 工具也可能被派了 Story 审查或蓝图质询，
+    派出去的是原生阶段审查请求才是阶段审查；给每个子会话的观察跨度与收尾状态。
+    Story 独审另给派审种类（载体写明的先首读 / 复核 / 补正）与收尾回复里的业务结论（`_review_conclusion`），
+    与收尾状态、父方的报告接收结论分开。没有保全原件时为 null。"""
     if not sessions["present"]:
         return {"delegations": None}
     rows, problems = [], list(sessions["problems"])
@@ -726,11 +770,10 @@ def native_delegations(sessions: dict) -> dict:
                 continue
             started = next((m.group(1) for r in call.get("results") or [] for m in [STARTED_RE.search(r.get("text") or "")] if m), None)
             prompt = str(_args(call).get("prompt") or "")
-            if name == "verifier":
-                role, basis = "stage_verifier", "专用 verifier 工具"
-            else:
-                role = next((r for pattern, r in CARRIER_ROLES if pattern.search(prompt)), None)
-                basis = "派出去的是产品生成的载体" if role else None
+            role = next((r for pattern, r in CARRIER_ROLES if pattern.search(prompt)), None)
+            basis = "派出去的是产品生成的载体" if role else None
+            if role is None and STAGE_REQUEST_RE.search(str(call.get("args") or "")):
+                role, basis = "stage_verifier", "派出去的是原生阶段审查请求"
             child_file = parent.parent / "children" / str(started) / "session.v4.jsonl.zstd" if started else None
             if role is None and child_file and child_file.is_file():
                 child = _native(child_file)
@@ -745,11 +788,13 @@ def native_delegations(sessions: dict) -> dict:
                    "child_id": started, "observed_span_min": span,
                    "settled": "failed" if "failed" in summary else "finished" if "finished" in summary else "unknown"}
             if row["role"] == "story_review":
+                row["review_mode"] = _review_mode(prompt)
                 row["review_conclusion"] = _review_conclusion(prompt, done)
             rows.append(row)
     conclusions = Counter(r["review_conclusion"]["value"] for r in rows if "review_conclusion" in r)
+    modes = Counter(r["review_mode"] for r in rows if "review_mode" in r)
     return {"delegations": {"by_role": dict(Counter(r["role"] for r in rows)), "story_review_conclusions": dict(conclusions),
-                            "items": rows, "problems": problems}}
+                            "story_review_modes": dict(modes), "items": rows, "problems": problems}}
 
 
 #: 宿主收尾通知里，子会话最后那条回复从这一行之后开始

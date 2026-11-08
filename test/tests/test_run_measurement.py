@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+import yaml
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
 from ext_workspace import DEV_EXT
@@ -1153,7 +1155,8 @@ def _session(path: Path, session_id: str, rows: list[dict]) -> None:
 
 class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
     """委派的角色按原生会话里实际派出去的正文与子会话实际产出认，不按工具名或 label：
-    产品载体 → 那一类审查；写了需求 blueprint/ 下的设计产物 → 蓝图作者；专用 verifier → 阶段审查；其余 unresolved。
+    产品载体 → 那一类审查（专用 verifier 工具派的也是）；写了需求 blueprint/ 下的设计产物 → 蓝图作者；
+    派出去的是原生阶段审查请求 → 阶段审查；其余 unresolved。
     观察跨度从原生登记到收尾通知，没有收尾通知是 unknown，不是 0；没有保全原件时整项为 null。"""
 
     def setUp(self) -> None:
@@ -1182,7 +1185,14 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         rows = [*self.spawn(1, "c1", "k-review", "# Story 独立人读审查 · 派审\n\n- 材料键：x", "随便起的名字", settled="finished and will do no further work"),
                 *self.spawn(2, "c2", "k-author", "你来写这份蓝图", "看起来像审查的 label", settled="failed before it finished"),
                 *self.spawn(3, "c3", "k-other", "帮我查一下代码", "研究", settled=None),
-                {"type": "tool/call", "time": 5, "data": {"callId": "c4", "name": "verifier", "arguments": "{}"}}]
+                {"type": "tool/call", "time": 5, "data": {"callId": "c4", "name": "verifier", "arguments": json.dumps(
+                    {"prompt": json.dumps({"schema_version": "1.1", "kind": "maison_verifier_request", "subject_id": "s" * 64})})}},
+                # 实跑里见过：Story 审查载体、蓝图质询载体被交给专用 verifier 工具
+                {"type": "tool/call", "time": 6, "data": {"callId": "c5", "name": "verifier", "arguments": json.dumps(
+                    {"prompt": "# Story 独立人读审查 · 派审\n\n- 材料键：y"})}},
+                {"type": "tool/call", "time": 7, "data": {"callId": "c6", "name": "verifier", "arguments": json.dumps(
+                    {"prompt": "# 蓝图独立质询 · 派审\n"})}},
+                {"type": "tool/call", "time": 8, "data": {"callId": "c7", "name": "verifier", "arguments": "{}"}}]
         _session(base / "session.v4.jsonl.zstd", parent, rows)
         _session(base / "children" / "k-author" / "session.v4.jsonl.zstd", "k-author", [
             {"type": "tool/call", "time": 1, "data": {"callId": "w", "name": "write",
@@ -1190,12 +1200,27 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         _session(base / "children" / "k-other" / "session.v4.jsonl.zstd", "k-other", [
             {"type": "tool/call", "time": 1, "data": {"callId": "r", "name": "read", "arguments": json.dumps({"file_path": "src/a.ets"})}}])
         got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
-        self.assertEqual({"story_review": 1, "blueprint_author": 1, "unresolved": 1, "stage_verifier": 1}, got["by_role"])
+        self.assertEqual({"story_review": 2, "blueprint_author": 1, "unresolved": 2, "stage_verifier": 1, "questioning": 1},
+                         got["by_role"], "专用 verifier 工具派的 Story 审查或质询被算成了阶段审查")
         by_child = {i["child_id"]: i for i in got["items"]}
         self.assertEqual((10.0, "finished"), (by_child["k-review"]["observed_span_min"], by_child["k-review"]["settled"]))
         self.assertEqual("failed", by_child["k-author"]["settled"])
         self.assertEqual((None, "unknown"), (by_child["k-other"]["observed_span_min"], by_child["k-other"]["settled"]),
                          "没有收尾通知的跨度被当成了一个数")
+
+    def test_the_review_mode_is_what_the_carrier_says(self) -> None:
+        """Story 派审的种类照载体写明的那一节：先首读、复核、补正；旧版本的载体没有这几节，判 unknown，不按先后次序猜。"""
+        parent = "session-p"
+        head = "# Story 独立人读审查 · 派审\n\n- 材料键：x\n\n"
+        rows = [*self.spawn(1, "c1", "k-1", head + "## 先首读\n\n先只读 Story。\n", "审查", settled=None),
+                *self.spawn(2, "c2", "k-2", head + "## 复核\n\n这是复核。\n", "审查", settled=None),
+                *self.spawn(3, "c3", "k-3", head + "## 补正上一份回复\n\n补正。\n", "审查", settled=None),
+                *self.spawn(4, "c4", "k-4", head + "请审查。\n", "审查", settled=None)]
+        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
+        self.assertEqual({"k-1": "first_read", "k-2": "recheck", "k-3": "correction", "k-4": "unknown"},
+                         {i["child_id"]: i["review_mode"] for i in got["items"]})
+        self.assertEqual({"first_read": 1, "recheck": 1, "correction": 1, "unknown": 1}, got["story_review_modes"])
 
     def test_without_kept_sessions_the_roles_are_unknown(self) -> None:
         self.assertIsNone(measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"])
@@ -1251,6 +1276,59 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         self.assertEqual("unknown", self.review(loose)["review_conclusion"]["value"], "结论不在第二行也被读出来了")
         other = self.review(self.report("fail\n\n理由。"), key="b" * 64)["review_conclusion"]
         self.assertEqual(("unknown", "回复的材料键对不上派出去的审查对象"), (other["value"], other["why"]))
+
+
+class KnowledgeDeliveriesAreReadFromTheTaskOutput(unittest.TestCase):
+    """每次取知识任务送到了什么：从这次调用的输出读字节与第 4 块送到的正文文件与篇；输出被截断时是 unknown（None），不是 0。
+    预期从这个工程的登记推：平铺维护 Feature 还没有知识判断时，受众可达的正文都送，上下篇知识在 plan 只送下篇。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if shutil.which("node") is None:
+            raise unittest.SkipTest("环境里没有 node")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import test_knowledge_task as kt  # noqa: PLC0415
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.root = kt.make_project(root=Path(cls._tmp.name) / "p")
+        (cls.root / "doc" / "features" / "flat-start").mkdir(parents=True)
+        cls.cmd = (f"node doc/extensions/hooks/shared/knowledge-task.mjs --project-root {cls.root.as_posix()} "
+                   "--feature flat-start --action plan --audience reviewer")
+        proc = subprocess.run(["node", str(cls.root / "doc/extensions/hooks/shared/knowledge-task.mjs"), "--project-root",
+                               str(cls.root), "--feature", "flat-start", "--action", "plan", "--audience", "reviewer"],
+                              capture_output=True, timeout=300)
+        assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")[-600:]
+        cls.output = proc.stdout.decode("utf-8")
+        manifest = yaml.safe_load((cls.root / "doc/extensions/manifest.yaml").read_text(encoding="utf-8"))
+        cls.registered = manifest["provides"]["knowledge"]
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def measured(self, output, **extra) -> list[dict]:
+        with tempfile.TemporaryDirectory() as d:
+            run = Path(d)
+            record = {"tool_name": "bash", "tool_input": {"command": self.cmd}, "tool_output": output, **extra}
+            (run / "events.jsonl").write_text(json.dumps(_events(record)[0], ensure_ascii=False), encoding="utf-8")
+            return measure_run.measure(run / "events.jsonl", run_dir=run)["knowledge_deliveries"]
+
+    def test_the_bodies_and_bytes_of_one_task(self) -> None:
+        [got] = self.measured(self.output)
+        self.assertEqual(("flat-start", "plan", "reviewer"), (got["target"], got["action"], got["audience"]))
+        self.assertEqual(len(self.output.encode("utf-8")), got["bytes"])
+        def entry(k):
+            path = k["path"] if isinstance(k, dict) else k
+            return path
+        files = [f"doc/extensions/{entry(k)}" for k in self.registered]
+        self.assertEqual(sorted(files), sorted(b["file"] for b in got["bodies"]))
+        halves = {b["file"]: b["part"] for b in got["bodies"]}
+        for f in files:
+            text = (self.root / f).read_text(encoding="utf-8")
+            self.assertEqual("下篇" if "form: halves" in text else "全文", halves[f], f)
+
+    def test_a_truncated_output_is_unknown(self) -> None:
+        [got] = self.measured(self.output[:200], source_truncated=True)
+        self.assertEqual((None, None), (got["bytes"], got["bodies"]))
 
 
 class TruncatedPublicCallsAreCompletedByTheSameNativeCall(unittest.TestCase):
