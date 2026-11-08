@@ -129,6 +129,8 @@ def ensure_framework(root: Path) -> None:
 
 
 BLUEPRINT_FIXTURE = REPO_ROOT / "test" / "fixtures" / "blueprint" / "wallet-balance-refresh"
+#: 夹具蓝图设计对象的 provenance 引的那份 demo 源码
+BLUEPRINT_CODE = "02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets"
 COMPONENT = "wallet-main"
 
 RENDER = """
@@ -437,6 +439,10 @@ def install_blueprint(root: Path, feature: str, access: Path, *, projection: boo
         if proc.returncode != 0:
             raise RuntimeError(f"来源指纹重算失败：{proc.stderr[-600:]}")
     shutil.copytree(BLUEPRINT_FIXTURE / "doc" / "requirements", root / "doc" / "requirements", dirs_exist_ok=True)
+    # 设计对象的 provenance 引的工程源码：消费工程里本来就有，从 demo 取同一份
+    code = root / BLUEPRINT_CODE
+    code.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "demo" / BLUEPRINT_CODE, code)
     catalog = root / "doc" / "module-catalog.yaml"
     if not catalog.exists():
         shutil.copy2(REPO_ROOT / "demo" / "doc" / "module-catalog.yaml", catalog)

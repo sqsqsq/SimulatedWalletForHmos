@@ -538,13 +538,16 @@ function projectFile(native, ref) {
   }
 }
 
+/** 带 scheme 前缀的出处（如 `interview:…`）：原生合法的非文件出处，不按工程文件读。 */
+const withScheme = ref => /^[A-Za-z][A-Za-z0-9+.-]*:/.test(String(ref ?? ''));
+
 /**
  * 契约权威文件的规范工程相对路径，按原生契约 loader 的同一读法：相对路径解析到工程根之下即可（含 `a/../b` 这类等价写法），
  * 绝对路径、带协议或越出工程根为 null（原生对它们报问题）。
  */
 function authorityFile(native, ref) {
   const rel = String(ref ?? '').split('#')[0];
-  if (!rel.trim() || path.isAbsolute(rel) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(rel)) return null;
+  if (!rel.trim() || path.isAbsolute(rel) || withScheme(rel)) return null;
   const inside = path.relative(native.root, path.resolve(native.root, rel));
   if (!inside || inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) return null;
   return inside.split(path.sep).join('/');
@@ -610,8 +613,8 @@ function authorityOf(native, blueprint, checked) {
  *   最新一版人工答复作为独立必读（`answers`），不取决于有没有被引用。
  * - `projectFiles`：支撑与冲突依据引用的需求目录以外的工程文件（`role: 'project_file'`），以及设计实体引用的、
  *   本蓝图 canonical 所在设计目录里的设计记录（`role: 'design_file'`），按原生来源解析（片段要在文件里）读出原始字节摘要，
- *   作为设计来源身份的一部分交给读者；它们不算采用了本需求的材料。需求目录以外、不是工程内现存文件的引用（原生合法的非文件出处）
- *   按原生合同保留在 `support`，不当材料。设计目录里的设计记录读不到或片段不在，逐条报出。
+ *   作为设计来源身份的一部分交给读者；它们不算采用了本需求的材料。带 scheme 前缀的引用（如 `interview:…`，原生合法的非文件出处）
+ *   按原生合同保留在 `support`，不当材料。工程文件与设计记录不在或片段不在，逐条报出。
  * 支撑与冲突引用带片段时按原生来源解析核片段。引用落在需求目录里、却既不是登记文件也不是设计目录里设计实体引的设计记录的（含冲突依据），
  * 逐条报出，不静默过滤。
  * 采用版本的 Markdown 阅读稿链到的登记文件，连同它所在的整个版本一起加入，沿着读下去它的图也在。
@@ -679,9 +682,12 @@ function sourcesOf(native, blueprint, requirement, checked) {
       const file = fileAt(r.path);
       const record = designRecord(r, file) && !registered(file);
       if (record) design.add(r);
-      if (!file || (!inRoot(file) && !exists(file))) continue;
-      if (record && !exists(file)) {
-        out.problems.push(`${r.where} 引用的设计记录 ${r.path} 不在——设计负责方补上这份设计记录或改正引用`);
+      if (!file || withScheme(r.path)) continue;
+      if (!exists(file)) {
+        // 需求目录里别的文件由下面按材料索引核；设计记录与需求目录以外的工程文件在这里报
+        if (record || !inRoot(file)) {
+          out.problems.push(`${r.where} 引用的${record ? '设计记录' : '工程文件'} ${r.path} 不在——设计负责方补上这份文件或改正引用`);
+        }
         continue;
       }
       try {
@@ -689,7 +695,7 @@ function sourcesOf(native, blueprint, requirement, checked) {
         if (!inRoot(file)) out.projectFiles.push({ path: file, sha256: got.source_sha256, role: 'project_file', use, where: r.where });
         else if (record) out.projectFiles.push({ path: file, sha256: got.source_sha256, role: 'design_file', use, where: r.where });
       } catch (e) {
-        if (exists(file)) out.problems.push(`${r.where} 引用的 ${r.path} 解析不了：${String(e?.message ?? e).split(/\r?\n/)[0]}——设计负责方按原文修正片段`);
+        out.problems.push(`${r.where} 引用的 ${r.path} 解析不了：${String(e?.message ?? e).split(/\r?\n/)[0]}——设计负责方按原文修正片段`);
       }
     }
   }

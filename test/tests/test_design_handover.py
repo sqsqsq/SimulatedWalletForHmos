@@ -735,6 +735,15 @@ class TheSupportSourcesAreCollectedNatively(SourceIndexCase):
         doc.write_text("# 签约边界\n\n钱包发起并确认签约。\n", encoding="utf-8")
         self.assertNotEqual(first["identity"], self.collect(bp)["identity"], "工程文件变了，来源身份没跟着变")
 
+    def test_a_missing_project_file_is_named(self) -> None:
+        """需求目录以外的工程相对路径不在：报出来源缺口，不当作非文件出处静默留下。"""
+        bp = self.blueprint(contract_ref=self.sr)
+        bp["discovery"]["facts"] = [{"fact_id": "f-gone", "provenance": {"source_ref": "doc/missing-project-design.md#边界"}}]
+        got = self.collect(bp)
+        self.assertTrue(any("discovery.facts[f-gone]" in p and "doc/missing-project-design.md" in p and "不在" in p
+                            for p in got["problems"]), got["problems"])
+        self.assertEqual([], got["projectFiles"])
+
     def test_a_non_file_provenance_is_left_to_the_native_contract(self) -> None:
         bp = self.blueprint(contract_ref=self.sr)
         bp["discovery"]["facts"] = [{"fact_id": "f-talk", "provenance": {"source_ref": "interview:2026-10-30-产品"}}]

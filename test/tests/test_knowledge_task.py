@@ -60,6 +60,9 @@ def make_project(features_dir: str = "doc/features", root: Path | None = None) -
     shutil.copytree(FIXTURE / "doc" / "requirements", root / "doc" / "requirements", dirs_exist_ok=True)
     # 蓝图的开发视图按工程的模块目录解析模块：用 demo 的那份，夹具蓝图写的是 demo 的模块
     shutil.copy2(REPO_ROOT / "demo" / "doc" / "module-catalog.yaml", root / "doc" / "module-catalog.yaml")
+    # 夹具蓝图设计对象的 provenance 引的工程源码：消费工程里本来就有
+    (root / IMPACT_BASIS).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(REPO_ROOT / "demo" / IMPACT_BASIS, root / IMPACT_BASIS)
     return root
 
 
