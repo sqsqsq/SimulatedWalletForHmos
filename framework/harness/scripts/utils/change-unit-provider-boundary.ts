@@ -1,12 +1,10 @@
 import * as fs from 'fs';
-import { completeChangeUnitDesignRefs } from './change-unit-design-gate';
-import { resolveComponentBlueprintRef } from './component-blueprint-path';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { ChangeUnitArtifact } from './change-unit-model';
 import { changeUnitPath, loadCanonicalChangeUnit, type LoadedChangeUnit } from './change-unit-path';
 import { assertValidChangeUnit } from './change-unit-validator';
-import { validateChangeUnitDesign } from './change-unit-design-gate';
+import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
 
 export type ChangeUnitProviderSeam = 'cu_decomposition' | 'relation_ready_analysis' | 'candidate_selection';
 
@@ -120,16 +118,6 @@ export function writeCanonicalChangeUnit(target: string, artifact: ChangeUnitArt
  *
  * 这是**唯一** canonical CU 写入真源；`acceptChangeUnitCandidate` 是它的单候选包装。
  */
-export function prepareChangeUnitCandidate(projectRoot: string, candidate: ChangeUnitCandidate): ChangeUnitCandidate {
-  try {
-    const { blueprint } = resolveComponentBlueprintRef(projectRoot, candidate.artifact.component_blueprint_ref);
-    return { ...candidate, artifact: completeChangeUnitDesignRefs(blueprint, candidate.artifact, projectRoot) };
-  } catch {
-    // Original validator owns schema/identity diagnostics; normalization cannot replace them.
-    return { ...candidate, artifact: structuredClone(candidate.artifact) };
-  }
-}
-
 export function acceptChangeUnitCandidates(
   projectRoot: string,
   candidates: readonly ChangeUnitCandidate[],
@@ -145,7 +133,6 @@ export function acceptChangeUnitCandidates(
       throw new ChangeUnitCandidateRejected('change_unit_candidate_already_exists', 'canonical CU 已存在；未完成活动单元经 reviseChangeUnitContent 修订，不得重复接受覆盖。');
     }
   }
-  candidates = candidates.map(candidate => prepareChangeUnitCandidate(projectRoot, candidate));
   const seen = new Set<string>();
   const targets: string[] = [];
   for (const candidate of candidates) {
@@ -158,6 +145,12 @@ export function acceptChangeUnitCandidates(
     }
     seen.add(id);
     targets.push(validateChangeUnitCandidate(projectRoot, candidate));
+  }
+  for (const blueprintId of new Set(candidates.map(candidate => candidate.artifact.blueprint_id))) {
+    const ownership = readChangeUnitDesignOwnership(projectRoot, blueprintId,
+      candidates.filter(candidate => candidate.artifact.blueprint_id === blueprintId).map(candidate => candidate.artifact));
+    if (ownership.length) throw new ChangeUnitCandidateRejected('change_unit_candidate_design_rejected',
+      ownership.map(issue => `${issue.id}: ${issue.message}`).join('\n'));
   }
 
   const written: string[] = [];

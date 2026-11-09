@@ -1,5 +1,9 @@
 # App Component Blueprint 内部工作流
 
+交给 CU 设计准备的 `design_refs` 是作者的交付选择，不是依赖目录。明确选入本 CU 负责的节点、流程、验收承载及要落实的业务决定；尤其检查共享目标是否混入兄弟 CU 的内容。已选目标的内容会整体继承，并作为组装负责人依据；仅供理解的依赖由机器按需派生闭包，不回写成选择。已有错误选择沿原设计/CU 内容修订处理，不靠重命名条目、手改 canonical 或裁剪验收洗掉差额。
+
+整批活动 CU 要覆盖 P3 的全部必需设计义务：变更节点、变更 runtime flow、每条 relation/contract、非 `not_applicable` 的决定，以及每条当前需求至少一个蓝图承载。通常由实际交付该内容的单元认领，跨 CU 关系由消费方承担本侧证明；不让每个 CU 重复认领整个传递闭包。未变的依赖节点和相邻场景可不列，但当前需求承载或已声明变更的目标不能漏掉。接受、修订及 readiness 的未认领诊断须在设计期交作者补选；不得用自动补引用或降低义务消除诊断。
+
 验收分层按行为风险选择：业务逻辑与可隔离异常用 UT，真实 UI/导航及平台集成用设备证据；both 分别说明两层覆盖，不能默认全部两层重复验证。复用 acceptance 的 ut_layer/device_focus 与既有 flow/接口说明，不增加第二份覆盖表。
 
 由 [`/component-design`](../project/component-design/SKILL.md) 或合法内部消费者引用，负责 App 部件发现、设计、质询、准入与调和；不登记独立 Skill、不提供公开 command。蓝图是一次演进的设计权威，本流程不创建 CU、P2 ready set 或 P3 closure。
@@ -202,7 +206,7 @@ scenario 必须追到 logical/runtime/development 以及适用 deployment；runt
 
 designOnly 不调用依赖未来 plan.design_ref_mappings 的 componentProjectionErrors，有组件索引/合法 typed UI 设计不要求提前写 change_unit；plan 及后续组件映射检查保持完整、组件选型设计原门不变，不新增设计期替代检查。
 
-组件索引文件在场时，CU 的 design_refs 须包含当前闭包目标对应的全部 component_asset_selection 决定；接受/readiness 返回缺失地址时，由设计 Agent 据原 message 修候选并重验，不让 plan 自行选型，也不由接受器自动补引用。
+组件索引文件在场时，CU 的 design_refs 须包含本 CU 显式选择的目标对应的全部 component_asset_selection 决定；普通依赖目标的选型不会变成本 CU 的交付认领。接受/readiness 返回缺失地址时，由设计 Agent 据原 message 修候选并重验，不让 plan 自行选型，也不由接受器自动补引用。
 
 供人评审的蓝图交付默认包含同目录 `component-blueprint.review.md`，仅定稿蓝图、尚无 CU 也适用；已有 canonical CU 同页展示需求、方案、职责、施工拆分、显式依赖、安全中间态、替代关系及风险验收。Maison 自动收集 CU，宿主无需自拼 CU 附件；不把 readiness、run 或完成状态写入设计正文。
 
