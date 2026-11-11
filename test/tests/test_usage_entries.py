@@ -298,12 +298,15 @@ class TheRealHarnessRecordsUse(unittest.TestCase):
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
 
     def test_a_harness_check_is_not_the_start_of_work(self) -> None:
-        """阶段检查不建身份、不登记起点；开始工作的 begin 才建，并在那时接收自报身份。"""
+        """阶段检查不建身份、不登记起点；开始工作的 begin 才建，并在那时接收自报身份。
+        这里的 Feature 没有冻结的执行范围，原生拒绝执行且不写报告；正常执行时报告与统计隔离由
+        `test_blueprint_case_closure.APlanClosesThroughTheNativeRequest` 在真实组合里核。"""
         proc = self.harness("coding")
+        self.assertEqual(1, proc.returncode, proc.stdout[-800:] + proc.stderr[-800:])
+        self.assertIn("execution_scope_frozen", proc.stderr)
+        self.assertFalse((self.fr / "coding" / "reports" / "script-report.json").exists(), "拒绝执行时写了报告")
         self.assertFalse((self.fr / ".usage-id").exists(), "检查建了使用记录身份：" + proc.stdout[-800:])
         self.assertFalse((self.root / "doc" / "features" / ".usage-state.json").exists(), "检查登记了起点")
-        text = (self.fr / "coding" / "reports" / "script-report.json").read_text(encoding="utf-8")
-        self.assertNotIn('"spent"', text, "统计内容进了阶段报告")
         (self.fr / ".usage-input.json").write_text(json.dumps({"agent": "opencode", "model": "m1"}), encoding="utf-8")
         begun = subprocess.run([sys.executable, str(USAGE), "--project-root", str(self.root), "--feature", self.FEATURE,
                                 "--begin", "--step", "review"], capture_output=True, text=True, encoding="utf-8",

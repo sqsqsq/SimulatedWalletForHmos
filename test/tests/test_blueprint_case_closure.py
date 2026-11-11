@@ -529,9 +529,11 @@ class APlanClosesThroughTheNativeRequest(unittest.TestCase):
         assert prepared.returncode == 0, prepared.stdout[-800:]
         (root / "framework.local.json").write_text(json.dumps({"schema_version": "1.0", "agent_adapter": "codex"}), encoding="utf-8")
         # 第一次正式运行冻结范围（作者产物还没写，原生报缺），之后夹具作者按原生 required_outputs 写本阶段产物
+        cls.usage_before = cls.usage_files(root, unit)
         native_cli(root, "harness-runner.ts", "--project-root", str(root), "--phase", "plan", "--feature", CU)
         cls.author(root, unit)
         cls.harness = native_cli(root, "harness-runner.ts", "--project-root", str(root), "--phase", "plan", "--feature", CU)
+        cls.usage_after = cls.usage_files(root, unit)
         summary = json.loads((unit / "plan" / "reports" / "summary.json").read_text(encoding="utf-8"))
         cls.before = summary
         assert summary.get("verifier_request"), cls.harness.stdout[-2500:]
@@ -547,6 +549,13 @@ class APlanClosesThroughTheNativeRequest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls._tmp.cleanup()
+
+    @staticmethod
+    def usage_files(root: Path, unit: Path) -> dict[str, bytes | None]:
+        """使用记录的三处：本单位的身份、项目的起点暂存与使用记录；不在的记 None。"""
+        files = {"usage-id": unit / ".usage-id", "usage-state": root / "doc" / "features" / ".usage-state.json",
+                 "usage": root / "doc" / "usage.json"}
+        return {name: path.read_bytes() if path.exists() else None for name, path in files.items()}
 
     @staticmethod
     def author(root: Path, unit: Path) -> None:
@@ -678,6 +687,13 @@ class APlanClosesThroughTheNativeRequest(unittest.TestCase):
         self.assertEqual(("closed", "phase_closed_wait_user"), (self.after["closure_status"], self.after["next_action"]))
         facts = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
         self.assertTrue(facts["reached"], facts["missing"])
+
+    def test_the_formal_harness_runs_leave_usage_alone(self) -> None:
+        """两次正式 harness（冻结范围、签发审查请求）都不开始统计：使用记录三处与运行前逐字节相同，阶段报告里没有统计内容。"""
+        self.assertTrue(self.before.get("verifier_request"), "第二次正式运行没签发审查请求，不能据此说没有副作用")
+        self.assertEqual(self.usage_before, self.usage_after, "正式 harness 改了使用记录")
+        text = (self.unit / "plan" / "reports" / "script-report.json").read_text(encoding="utf-8")
+        self.assertNotIn('"spent"', text, "统计内容进了阶段报告")
 
 
 class ARequestedPlanBodyIsAStageOutput(unittest.TestCase):
