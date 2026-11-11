@@ -263,7 +263,10 @@ function blueprintTask(root, id, action) {
     duties.push('被评候选是上面这一版。你只读材料、逐项回复；蓝图由设计负责方按回复修订。',
     `原生质询范围，逐项唯一覆盖：${round.scopes.map(([ref, kind]) => `\`${ref}\`（${kind}）`).join('、')}。`,
     '每项回：问题、回答、证据、处置（answered_with_evidence / decided_with_authority / open_decision / blocker / not_applicable）、'
-      + '责任方、验证去向，以及未决项与处置建议。');
+      + '责任方、验证去向，以及未决项与处置建议。',
+    '首次质询逐项对照有效需求、人答、最终设计与验收，以及工程里现有的页面与入口证据核源；设计拟删除或收窄材料明示的行为时，'
+      + '先引原句或裁决，写出影响与兼顾做法，依据不足的保持未决。',
+    '同一读者复核修订时，按复核消息给的当前正文、原问题与受影响的依据回查；未受影响项确认原结论与证据仍适用，结果照样逐项覆盖上面的范围。');
     // 首读之后才读本任务：派给子代理的是只含人读稿、八问与阅读规则的载体，不是本任务
     dispatch.push(`把本任务全文原样存到 \`${round.task}\`，被评候选的原始字节存到 \`${round.candidate}\`；`
       + `子代理的最终回复原样存到 \`${round.reply}\`。三份都一字不改。`);
@@ -272,7 +275,8 @@ function blueprintTask(root, id, action) {
       if (boundary.problem) {
         gaps.push(`${boundary.problem}：首读不成立，技术质询照本任务继续，回复披露这一点；原生投影的形状变了，交设计者核原生变更。`);
       }
-      dispatch.push('下面的首读载体原样作为宿主隔离子代理的任务交出，不增删、不附本任务正文、来源或作者判断：', '',
+      dispatch.push('下面的首读载体只用于首次独立阅读：原样作为宿主隔离子代理的任务交出，不增删、不附本任务正文、来源或作者判断。'
+        + '复核修订时沿用本块的原件位置，按 `doc/extensions/skills/story/phases/design.md`「独立质询」给原读者发复核消息，不转发首读载体：', '',
         '````markdown', firstReadCarrier({ draft: bp.projection.path, task: round.task, reply: round.reply,
           questions: nativeEightQuestions(loadNative(root)), boundary }), '````');
     } else {

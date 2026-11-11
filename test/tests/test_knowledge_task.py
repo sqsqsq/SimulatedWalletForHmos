@@ -749,6 +749,24 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.assertIn("你只读材料、逐项回复", proc.stdout)
         dispatch = proc.stdout.split("## 7. 派审与留存（主执行者）", 1)[1]
         self.assertIn(f"`{base}/reply.md`", dispatch, "派审与留存没单列给主执行者")
+        duties = proc.stdout.split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
+        self.assertIn("首次质询逐项对照有效需求、人答、最终设计与验收", duties, "核源动作只留了指针")
+        self.assertIn("同一读者复核修订时", duties)
+
+    def test_the_first_read_carrier_is_only_for_the_first_reading(self) -> None:
+        """首读载体只交给首次质询；复核修订沿用同一组原件位置，按阶段页「独立质询」给原读者发复核消息。"""
+        import design_kit  # noqa: PLC0415
+        draft = self.root / "doc/features" / BLUEPRINT / "blueprint/component-blueprint.review.md"
+        design_kit.render_projection(self.root, BLUEPRINT, self.root / "doc/extensions/hooks/shared/framework-access.mjs")
+        self.addCleanup(draft.unlink, True)
+        out = self.task("--blueprint", BLUEPRINT, "--action", "questioning", "--audience", "reviewer").stdout
+        dispatch = out.split("## 7. 派审与留存（主执行者）", 1)[1].split("# 蓝图独立质询 · 派审", 1)[0]
+        self.assertIn("只用于首次独立阅读", dispatch)
+        page = "doc/extensions/skills/story/phases/design.md"
+        self.assertIn(f"`{page}`「独立质询」", dispatch)
+        method = (self.root / page).read_text(encoding="utf-8")
+        self.assertIn("**独立质询**", method)
+        self.assertIn("**同一读者复核修订**", method)
 
     def test_the_questioner_reads_the_draft_first_and_the_task_after(self) -> None:
         """R1：派给质询者的首读载体只有人读稿、原生八问、阅读规则与之后读的任务路径；来源、作者判断与质询范围留在任务里。
