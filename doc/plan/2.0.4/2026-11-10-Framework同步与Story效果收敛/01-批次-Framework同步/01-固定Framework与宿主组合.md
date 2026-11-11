@@ -15,7 +15,7 @@
 | 文件/集合 | 确定动作 | 新承担及验证 |
 |---|---|---|
 | agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc | 从本地patch移除该文件整块diff，保持900c原字节 | 新§2用共同协调器运输独立审查；实际专用角色指引由仍在的harness输出/角色模板承担 |
-| skills/reference/business-ut-workflow-detail.md | 从patch移除该文件整块diff，保持900c原字节 | 新Step8.2按实际签发request由共同协调器派审；不恢复原先主会话自己构造Task的文字 |
+| skills/reference/business-ut-workflow-detail.md | 从patch移除该文件整块diff，保持900c原字节 | 新Step8.2定共同协调器派审；第291行仍有上游Task传输措辞，保其原件并记录限制，不为旧字串判据再补本地差异 |
 | 其余19块 | 保留现差异，除下一行dsh配置外不再扩写 | 范围和逐文件清单见下文设计证据patch-audit.json；它们只保既定三组定制，不改原生条件/数据协议 |
 | agents/dsh/templates/agents/framework-verifier.patch.yml | 在该模板顶层追加现插件禁用：`- id: tool-goal`、`disabled: true` | 与首启/续跑使用同一overlay，保maison-verifier/只读运输，不禁用原生命令名中的goal |
 
@@ -28,7 +28,7 @@
 3. 替换正式test/fixtures中的patch，再在第三份干净900c副本执行`git apply --check --directory=framework <新patch绝对路径>`。最终patch文件集合必须是固定19个；两份退出文件与900c原字节一致。只读19块的此前PASS不代替这份含DSH禁用项的新patch验证。
 4. pin只改release_commit和tree_oid为上面的固定值，保framework_path/local_patch/materialized_adapters。现loader用该pin和patch装配，无第二取树来源。
 5. 维护操作§2移除两份已退出差异，保三组实际功能及19文件清单；给定源码/原生说明依据，不留“执行者再看是否需要”的分支。
-6. 将测试`TheVerifierCallTextNamesTheDedicatedRole.CALLS`中的RULE移到非专用调用文字集合OTHERS：不再要求新协调器规则必须包含本地专用短语，仍核无旧Task派发话术；新增两份退出文件与固定原生blob相同的断言。保其余真实专用调用输出、模板物化一致与receipt断言，不能删全项求绿。
+6. 两类测试按实际所有权收口：`TheWorkspaceCarriesTheVerifierChain.CALL_TEXTS`去掉共享规则和business-ut方法页，删除此次工作区新加的`COORDINATOR_TEXTS`及其遍历分支，原测试只遍历本地仍定制的CALL_TEXTS，继续核专用角色和无旧话术。`TheVerifierCallTextNamesTheDedicatedRole`的RULE从CALLS和OTHERS都移出；两份退出文件只列UPSTREAM，沿现`test_the_coordinator_texts_keep_the_release_bytes`核与pin发布blob同字节。其余OTHERS、专用调用/回执/角色权限/原件协议断言保持，类注释收窄到对应检查对象。最终template未修改文件的发布manifest摘要校验已由`AssembledFromTheFixedInputs.test_the_template_carries_the_framework_under_test`覆盖，不新增另一套同义装配测试。原第6步“一律无旧话术”撤回：只对本地仍拥有的文字适用，不能要求未改上游页满足本地措辞政策。
 7. 用实际物化的.dsh/framework-verifier.patch.yml对headless/batch-build跑`dsh --profile <档位> --patch <配置绝对路径> --dump-config`；只保存tool-goal禁用/角色插件和配置来源摘要，不公开整份本机配置。registry_snapshot的args/resume_args都须装同一overlay；它已有此行为，正常不改cli_config_group.py。
 8. 获准的首次extensions提交把version升2.0.4；预算仍原包1806aa59/4250，新增估算和类型见总Plan，不能因版本/步骤重置。台账更新是机械记已批准值，不自行批准额度。
 
@@ -46,3 +46,5 @@ python test/scripts/verify.py affected test/tests/test_verifier_chain_in_workspa
 ## 5. 接续
 
 完成本步的必要验证、写本步交回并按获准范围提交；A02依赖此组合。批次A是否进入下一批由00-批次方案的集中评审安排决定，本步不单独新增审批点，也不触发模型CLI。
+
+2026-11-11 R01裁定：执行者的方案冲突成立，采用保持原字节方案；详见[受阻交回复评](评审意见/2026-11-11-155215-A01受阻交回评审.md)。本步尚未完成/提交，按修正后的第6步续作；affected通过、交回和提交后直接接A02→A03，批末合并复核。只改测试分类/说明时复用同身份assembly及DSH配置证据；pin/patch/装配代码改变才重做装配专项。预算仍G1/X1，无新增Framework补丁或产品机制。

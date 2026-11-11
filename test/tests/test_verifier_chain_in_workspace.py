@@ -346,15 +346,13 @@ class TheWorkspaceCarriesTheVerifierChain(AssembledFromTheFixedInputs, unittest.
         on_disk = {p.parent.name for p in (self.template / "framework/agents").glob("*/adapter.yaml")}
         self.assertEqual(on_disk, {o["value"] for o in entry["options"]})
 
-    #: 作者读到的 verifier 调用指引：本地补丁统一为「专用 verifier 角色」
+    #: 本地补丁改到的 verifier 调用指引：统一为「专用 verifier 角色」
     CALL_TEXTS = (
-        "framework/agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc",
         "framework/skills/reference/agents-entry-detail.md",
         "framework/skills/feature/spec/SKILL.md",
         "framework/skills/feature/plan/SKILL.md",
         "framework/skills/feature/coding/SKILL.md",
         "framework/skills/reference/code-review-workflow-detail.md",
-        "framework/skills/reference/business-ut-workflow-detail.md",
         "framework/skills/reference/device-testing-workflow-detail.md",
         "framework/harness/harness-runner.ts",
         "framework/harness/scripts/utils/verifier-evidence.ts",
@@ -455,15 +453,18 @@ class AFrameworkInputThatDoesNotMatchStopsTheAssembly(unittest.TestCase):
 
 
 class TheVerifierCallTextNamesTheDedicatedRole(unittest.TestCase):
-    """作者读到的调用指引都指向宿主登记的专用 verifier 角色，不让通用研究/开发子 agent 顶替（本地定制，维护操作§2）。
-    核的是被测 Framework（固定发布树 + 本地补丁）：写到 verifier 调用的指引都点名专用角色，任何一份都不留旧说法。"""
+    """本地定制涉及的调用指引都指向宿主登记的专用 verifier 角色，不让通用研究/开发子 agent 顶替（维护操作§2）。
+    核的是被测 Framework（固定发布树 + 本地补丁）：补丁改到的调用指引点名专用角色、不留旧说法；
+    改由上游共同协调器运输独立审查的两份保持发布树原字节。"""
 
     RULE = "agents/shared/agent-bundle/templates/rules/framework-agent-execution.mdc"
-    CALLS = ("skills/reference/agents-entry-detail.md", RULE, "harness/harness-runner.ts",
+    CALLS = ("skills/reference/agents-entry-detail.md", "harness/harness-runner.ts",
              "harness/scripts/utils/verifier-evidence.ts",
              *(f"skills/feature/{s}/SKILL.md" for s in ("coding", "plan", "spec")))
     OTHERS = ("templates/AGENTS.md.template",
               *(f"skills/feature/{s}/SKILL.md" for s in ("business-ut", "code-review", "device-testing")))
+    #: 上游共同协调器按实际签发的 request 运输独立审查，这两份保持发布树原字节（维护操作§2）
+    UPSTREAM = (RULE, "skills/reference/business-ut-workflow-detail.md")
 
     @staticmethod
     def framework() -> Path:
@@ -480,6 +481,17 @@ class TheVerifierCallTextNamesTheDedicatedRole(unittest.TestCase):
                     self.assertIn("专用 verifier 角色", text)
                 for stale in ("通过 Task 工具触发", "Task 触发 verifier", "作为 Task prompt 投给", "投给 subagent_type=verifier"):
                     self.assertNotIn(stale, text, "还把任意 Task 调用当成审查入口")
+
+    def test_the_coordinator_texts_keep_the_release_bytes(self) -> None:
+        sys.path.insert(0, str(SCRIPTS))
+        import run_multi_case as rmc  # noqa: PLC0415
+        cfg = rmc.load_framework_under_test()
+        root = self.framework()
+        for rel in self.UPSTREAM:
+            with self.subTest(rel):
+                blob = subprocess.run(["git", "cat-file", "blob", f"{cfg['release_commit']}:{cfg['framework_path']}/{rel}"],
+                                      cwd=REPO_ROOT, capture_output=True, check=True).stdout
+                self.assertEqual(blob, (root / rel).read_bytes())
 
     def test_the_installed_rule_copies_are_the_template(self) -> None:
         template = (DEMO / "framework" / self.RULE).read_bytes()
