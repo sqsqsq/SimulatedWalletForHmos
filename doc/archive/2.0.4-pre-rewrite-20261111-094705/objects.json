@@ -1,0 +1,116 @@
+{
+  "date": "2026-11-11",
+  "head": "87bdcd873a978ccf0e6024e037d69e45421241e4",
+  "objects": [
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/00-实施方案.md",
+      "sha256": "58f5bbc2698b3bcb52c043c6bad460caadc753ba1b87120794ae798187c8d69c",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/00-实施方案.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/01-批次-Framework同步/00-批次方案.md",
+      "sha256": "1e8f1ac043a4dc2b211485438b1ca412e1e82a440a38b4edd6fc61c91e3964a2",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/01-批次-Framework同步/00-批次方案.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/01-批次-Framework同步/评审意见/2026-11-10-164038-2.0.3效果与2.0.4整版方案独立评审.md",
+      "sha256": "296dc5a2d694c317f4feb3bf1bbb1ce0ff1c28c0bd5ac917666c29351f1f90aa",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/01-批次-Framework同步/评审意见/2026-11-10-164038-2.0.3效果与2.0.4整版方案独立评审.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/00-集中优化方案.md",
+      "sha256": "c397ca945da6a0b503e3f1b17e2dac5b8b44520a5a5c32a97257d61611494a87",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/00-集中优化方案.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-批次-原生接续/00-批次方案.md",
+      "sha256": "9f2f791a23b50ed0173ca34978cd5e8687b43ee0442e7216624111ffb5dcabe3",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-批次-原生接续/00-批次方案.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-批次-原生接续/评审意见/2026-11-10-203010-整版优化方案复核.md",
+      "sha256": "a9276b2eb8e712647afaf0dcc0ff25ac2f2bb9377ec9905c41f2cec4e5b56315",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-批次-原生接续/评审意见/2026-11-10-203010-整版优化方案复核.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-批次-原生接续/评审意见/2026-11-10-205501-R1-R3集中修订完整自查.md",
+      "sha256": "161cd81d3b6b91385f5d590b2bcc2bcf6172beb9be65c83360292de66140f473",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-批次-原生接续/评审意见/2026-11-10-205501-R1-R3集中修订完整自查.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-需求及标准修订对照.md",
+      "sha256": "558b80d4c918097babc9b8622b23b2806a821cbd21e8302585f4a943d40b90ae",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/01-需求及标准修订对照.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/02-Framework依赖与核查.md",
+      "sha256": "80b632d5b9cbae591aaf4bfb61babf8601f3a97dfea2d0a6c9624fd5af99c8ac",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/02-Framework依赖与核查.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/02-批次-完整设计与知识承接/00-批次方案.md",
+      "sha256": "64a6e9f6b64f994cdd7ebcec5b466be1d78de02dc94a3961bcdd4df812664c70",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/02-批次-完整设计与知识承接/00-批次方案.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/03-批次-成文审查与效率/00-批次方案.md",
+      "sha256": "bcd0ae04d3580ca4dc9dadf4b86416f0803dda38712c7e172d2c6c64fa7e6a1d",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/03-批次-成文审查与效率/00-批次方案.md"
+    },
+    {
+      "path": "doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/04-批次-组合与效果验收/00-批次方案.md",
+      "sha256": "3e1daad7db6dd8a6057f8c20428557d25f21e86d2096c950a3f5a80f9cdd2678",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/plan/2.0.4/2026-11-10-Framework同步与Story效果收敛/优化候选/04-批次-组合与效果验收/00-批次方案.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/00-版本范围.md",
+      "sha256": "befc4f2b1d3f9635c907f0a2cb22a3e752ff9b2da8eef3a420a8e55d6c3ec45b",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/00-版本范围.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/01-Framework新版影响分析.md",
+      "sha256": "a9b3ca55175eeb47fd5a7ce90b5f63ef5983e3640aadc67225bdc6b1098918ae",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/01-Framework新版影响分析.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/02-1.x效果可达性与存量退场审计.md",
+      "sha256": "5a8f760429158ba80ecfda4d3be54220d97e79db12ab1ea76d3779d789cc8997",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/02-1.x效果可达性与存量退场审计.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/00-需求.md",
+      "sha256": "ac81de3ab5365115a91acc466cb5d0d52df96ab67b952edcf2190ff0ef588fbc",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/00-需求.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/01-现状与收敛分析.md",
+      "sha256": "79824fc9b19d23fb9bc1bfd1678fe55da2a96f0cfbd8c884f95847abd2cea94f",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/01-现状与收敛分析.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/10-原2.2.0版本范围.md",
+      "sha256": "e9349d238acca3bd15fa128858d4dcde9c64098389ab23922540a347683e9c2d",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/10-原2.2.0版本范围.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/11-原2.2.0评价标准准备.md",
+      "sha256": "427216b157699e1e2bbe16328cfbca038eb164a5786f57bee74e65a7460bc54d",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/2026-11-02-2.x适配最终收敛/11-原2.2.0评价标准准备.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/2026-11-10-Framework同步与Story效果收敛.md",
+      "sha256": "09ff2f64e54757f9b0a6385381631a09eb8bbabb8d7315218f7c5a595b5634a5",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/2026-11-10-Framework同步与Story效果收敛.md"
+    },
+    {
+      "path": "doc/spec/2.0.4/评价标准变更.md",
+      "sha256": "d70f2e9dc553b400b2f66e541f74f1dce2d4bfbc6c25eb20aaffa7971fb312ef",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/doc/spec/2.0.4/评价标准变更.md"
+    },
+    {
+      "path": "test/regression/extension-acceptance.md",
+      "sha256": "43806a86d4170984150a8c7f85f0ae7ce7b504260af1552ff8438757de89e12b",
+      "archive": "doc/archive/2.0.4-pre-rewrite-20261111-094705/test/regression/extension-acceptance.md"
+    }
+  ]
+}
