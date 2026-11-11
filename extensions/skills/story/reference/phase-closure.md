@@ -51,4 +51,4 @@ node doc/extensions/hooks/shared/framework-access.mjs --project-root . --action 
 | `release_blocking` 非空、`completion_eligible: true` | 可以普通完成，不能说发布通过；交付说明照实披露 |
 | `disclosed` | 允许披露的残差，写进交付说明，不改签原质量结论 |
 
-完整 interactive 交付沿原生 attended run 的运行身份、范围与完成合同接续；独立 Spec / Plan 只完成本阶段，不为它新建 run、不默认启动 Coding。
+完整 interactive 交付由原生同一完成协调器沿 attended run 的运行身份、范围与完成合同接续；单独的 Spec / Plan 请求只完成本阶段，不为它新建 run、不默认启动 Coding。

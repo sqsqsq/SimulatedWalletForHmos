@@ -57,6 +57,15 @@ design_refs:
     target:
       kind: relation
       id: balance-implemented-by-module
+  - artifact: component-blueprint@1
+    component_id: wallet-main
+    blueprint_id: wallet-balance-refresh
+    revision: 3
+    source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    target:
+      kind: decision
+      id: balance-refresh-policy
 touches:
   - owner: wallet-team
     design_ref: *a1

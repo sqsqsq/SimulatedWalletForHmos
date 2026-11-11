@@ -383,6 +383,95 @@ if (!['frozen', 'reused'].includes(frozen.status)) { process.stderr.write(JSON.s
 """
 
 
+class TheCandidatesClaimTheRequiredObligations(unittest.TestCase):
+    """施工单位设计准备的认领（`phases/design.md` 第六节第 1 步）：整批候选认领原生派生的必需设计义务。
+    缺了必需决定的认领，原生点名要认领的承载、候选留着、不写施工单位；不适用的缺口是事实，不要求认领；
+    施工单位承担的决定还是待定时，原生拒绝施工。三种情形各用一份夹具工程，只经原生公开的接受命令。"""
+
+    NOT_APPLICABLE_GAP = ("  gaps:\n"
+                          "    - gap_id: refresh-telemetry-later\n"
+                          "      status: not_applicable\n"
+                          "      owner: product-owner\n"
+                          "      needed_by: component-closure\n"
+                          "      unlock_condition: 运营确认不需要单独的刷新埋点\n"
+                          "      provenance: *a2\n")
+    DECIDED = "    - decision_id: balance-refresh-policy\n      status: decided_with_authority\n"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.unclaimed = cls.accept("unclaimed", without_decision=True)
+        cls.not_applicable = cls.accept("not-applicable", revise=("  gaps: []\n", cls.NOT_APPLICABLE_GAP))
+        cls.open_decision = cls.accept("open-decision", revise=(cls.DECIDED, cls.DECIDED.replace("decided_with_authority",
+                                                                                                    "open_decision")))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    @classmethod
+    def accept(cls, name: str, *, without_decision: bool = False, revise: tuple[str, str] | None = None) -> dict:
+        root = make_project(root=Path(cls._tmp.name) / name)
+        private_harness_state(root)
+        blueprint = root / "doc" / "features" / BLUEPRINT
+        if revise:
+            cls.revise(root, *revise)
+        artifact = yaml.safe_load((blueprint / UNIT / "change-unit.yaml").read_text(encoding="utf-8"))
+        if without_decision:
+            artifact["design_refs"] = [ref for ref in artifact["design_refs"] if ref["target"]["kind"] != "decision"]
+        shutil.rmtree(blueprint / UNIT)
+        candidates = blueprint / "blueprint" / "change-unit-candidates.json"
+        candidates.write_text(json.dumps([{"providerId": artifact["provenance"]["extraction_method"], "artifact": artifact}],
+                                         ensure_ascii=False, default=lambda value: value.isoformat()), encoding="utf-8")
+        proc = native_cli(root, "scripts/check-change-unit.ts", "--project-root", str(root), "--blueprint", BLUEPRINT,
+                          "--accept-candidates", candidates.relative_to(root).as_posix(), "--json")
+        return {"proc": proc, "result": last_json(proc.stdout), "candidates_kept": candidates.exists(),
+                "unit_written": (blueprint / UNIT).exists()}
+
+    @staticmethod
+    def revise(root: Path, old: str, new: str) -> None:
+        """设计职责修订蓝图：换一段原文，按原生算法重算来源指纹，施工单位的蓝图引用跟着更新（与 `test_cu_knowledge_chain.design` 同一口径）。"""
+        import design_kit  # noqa: PLC0415
+        canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
+        digest = lambda: "sha256:" + hashlib.sha256(canonical.read_bytes()).hexdigest()  # noqa: E731
+        stamp = lambda text: text.split("source_fingerprint: ", 1)[1].split("\n", 1)[0]  # noqa: E731
+        before, before_text = digest(), canonical.read_text(encoding="utf-8")
+        assert before_text.count(old) == 1, old
+        canonical.write_bytes(before_text.replace(old, new).encode("utf-8"))
+        proc = subprocess.run(["node", "--input-type=module", "-e", design_kit.REFINGERPRINT, str(root), str(design_kit.ACCESS),
+                               BLUEPRINT, str(canonical)], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=120)
+        assert proc.returncode == 0, proc.stderr[-600:]
+        unit = root / "doc" / "features" / BLUEPRINT / UNIT / "change-unit.yaml"
+        unit.write_bytes(unit.read_bytes().replace(before.encode(), digest().encode())
+                         .replace(stamp(before_text).encode(), stamp(canonical.read_text(encoding="utf-8")).encode()))
+
+    def test_an_unclaimed_required_decision_is_named_and_nothing_is_written(self) -> None:
+        got = self.unclaimed
+        self.assertNotEqual(0, got["proc"].returncode)
+        message = " ".join(issue["message"] for issue in got["result"]["issues"])
+        self.assertIn("change_unit_design_closure_incomplete", message)
+        self.assertIn("decision:balance-refresh-policy", message, "没点名要认领的承载")
+        self.assertTrue(got["candidates_kept"], "被拒的候选要留着，改了再接受")
+        self.assertFalse(got["unit_written"], "被拒时写了施工单位")
+
+    def test_a_not_applicable_gap_needs_no_claim(self) -> None:
+        got = self.not_applicable
+        self.assertEqual(0, got["proc"].returncode, got["proc"].stdout[-1500:])
+        self.assertEqual([UNIT], [unit["change_unit_id"] for unit in got["result"]["accepted"]])
+        self.assertEqual([UNIT], got["result"]["ready_ids"])
+        self.assertFalse(got["candidates_kept"], "接受成功后原生删除候选")
+
+    def test_an_open_decision_the_unit_carries_refuses_construction(self) -> None:
+        got = self.open_decision
+        self.assertNotEqual(0, got["proc"].returncode)
+        message = " ".join(issue["message"] for issue in got["result"]["issues"])
+        self.assertIn("change_unit_current_design_unresolved", message)
+        self.assertIn("decision:balance-refresh-policy", message)
+        self.assertTrue(got["candidates_kept"])
+        self.assertFalse(got["unit_written"])
+
+
 def review_inputs(root: Path) -> dict:
     proc = subprocess.run(["node", "--input-type=module", "-e", REVIEW_INPUTS, str(root), CU], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=300)

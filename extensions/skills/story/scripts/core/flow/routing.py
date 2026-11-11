@@ -148,7 +148,7 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
                 "已有授权到施工单位设计、Spec 或 Plan 的，准入后在首次定稿 Story 前完成施工单位设计准备"
                 "（准入与否、还开着的问题由原生如实给出，不为过准入删改未决）；"
                 "知识在设计决定前取（story-knowledge），独立质询交宿主的隔离子代理。"
-                "本轮授权：`/story <AR>` 的启动语义是「做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择」（batch 多阶段声明），直接进，不问")
+                "本轮授权：`/story <AR>` 的启动语义是「做到交付门；已有明确授权就按其范围继续，还没指定后续目标时问一次交付选择」（framework 原请求授权，见 SKILL 推进契约），直接进，不问")
     read = native.call(native.project_root_of(feature_root), "blueprint", "--blueprint", blueprint, "--purpose", "draft",
                        "--consume", blueprint)
     if read["status"] != "ok":
