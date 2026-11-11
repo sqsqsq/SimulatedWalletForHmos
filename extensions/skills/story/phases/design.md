@@ -65,6 +65,7 @@
 - 来源是登记的材料与当前有效人答：业务的条件、行为与责任从原件与人答取，人签以 `AR/story-src/answers/人工答复-v<N>.*` 的导出为准。用到哪份就在相应的条目或 provenance 里引用它。
 - 设计动手前取作者的知识任务，入口见 story-knowledge Skill 与 `hooks/blueprint/author.md`。任务给的知识输入身份写进蓝图，知识的适用性写成蓝图事实，适用规约的义务与模式角色写在承担它的设计对象上。
 - 原生字段表达不了的精确内容写进 `story_details`，写法见 `hooks/blueprint/author.md`。
+- 工程缺项与外部依赖按 `hooks/blueprint/author.md`「工程现状与外部依赖」定责任；端云接口的外部协议转写只收原件或负责方逐项确认的内容，规则见证据规则「5. 端云接口转写成契约来源」。
 - **独立质询**由你（主执行者）派给宿主的隔离子代理。每次派发都先渲染当前人读稿（设计职责跑原生 `check:component-blueprint --write-review --json`，
   得到 `component-blueprint.review.md`），再取质询任务（`--action questioning --audience reviewer`），把任务全文与被评候选按它第 7 块给的位置原样存好；
   然后按本次的真实情形派发：

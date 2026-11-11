@@ -316,6 +316,17 @@ class TheStatusViewOnlyReads(StatusCase):
         self.assertNotIn("在途单", got["items"], "adapt 不处理旧需求，跟进里不该有在途单块")
 
 
+    def test_a_target_on_2_0_3_gets_the_two_2_0_4_knowledge_topics(self) -> None:
+        """游标在 2.0.3：知识跟进正好是 2.0.4 的两条主题（工程能力、性能与资源引入），机制升级不改目标知识。"""
+        (self.ext / "adaptation.yaml").write_text('adapters: stand-in\nadapted_for: "2.0.3"\n', encoding="utf-8")
+        code, got = self.status()
+        self.assertEqual(0, code, got)
+        topics = got["items"]["知识"]
+        self.assertEqual(2, len(topics), topics)
+        self.assertTrue(all(t.startswith("2.0.4：") for t in topics), topics)
+        self.assertIn("工程能力", topics[0])
+        self.assertIn("性能与资源引入", topics[1])
+
 class SameUseCandidatesAreOnlyHints(StatusCase):
     """同用途声明候选只按 `applies_when` 原文相同分组，给独立审查当线索：不改 PASS，不推断相似，
     为空也不说明没有重复。重复与否、互补与否由审查读正文判。"""
