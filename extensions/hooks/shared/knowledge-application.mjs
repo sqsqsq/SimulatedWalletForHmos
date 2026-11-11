@@ -22,6 +22,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { featureIdentity, loadNative, readBlueprint } from './framework-access.mjs';
+import { knowledgeCriteria } from './contracts.mjs';
 import { activeKnowledge } from './knowledge.mjs';
 import { verifyProblem } from './obligations.mjs';
 import { extensionRoot } from './paths.mjs';
@@ -342,6 +343,34 @@ export function unitDuties(judged) {
     applied: carried.filter(d => d.kind === 'constraints' && d.outcome === 'applied' && !d.reviewAction),
     selected: carried.filter(d => d.kind === 'patterns' && d.outcome === 'selected'),
   };
+}
+
+/**
+ * 验收里的知识归属，spec、plan 门禁共用：本单位承接的适用规约条目都有验收承接（`knowledge_refs` 列它的完整来源），
+ * `knowledge_refs` 列的都是激活规约里本单位承接的条目。四项输入由调用方取得——`active` 是调用方已有的 `activation` 结果，
+ * `acceptance` 是原生给出的本阶段验收；这里不读文件、不重判适用性，行为是否落实归独立审查。
+ */
+export function knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance }) {
+  const { byRef, problems } = knowledgeCriteria(acceptance);
+  const { applied } = unitDuties(judged);
+  // 施工单位的验收来自蓝图承担对象时回设计负责方，蓝图没有投影、由本阶段产出时在这里补；平铺维护 Feature 由它自己的 spec 产出
+  const owner = ref => (judged.scope
+    ? `验收由蓝图承担对象给出的，交设计负责方在那个设计对象上补一条；蓝图没有验收投影、由 spec 产出的，在 acceptance.yaml 补一条 criteria；`
+      + `两种都在 knowledge_refs 列 ${ref}，plan 不另造验收`
+    : `写一条 criteria，knowledge_refs 列 ${ref}；下游 ut / testing 按它找要覆盖的场景`);
+  for (const d of applied.filter(x => !byRef.has(x.source_ref))) {
+    problems.push(`acceptance：${judged.label} 判定适用的 ${d.unit}（${d.file}）由本施工单位承接，没有验收条目承接——${owner(d.source_ref)}`);
+  }
+  const carried = new Set(applied.map(d => d.source_ref));
+  for (const [ref, rows] of byRef) {
+    const ids = rows.map(r => String(r.id ?? '（没写 id）')).join('、');
+    if (!entryOf(knowledge, knowledgeSource(active, ref))) {
+      problems.push(`acceptance「${ids}」：knowledge_refs 的 ${ref} 不是激活规约的条目（<知识文件>#<编号>）`);
+    } else if (!carried.has(ref)) {
+      problems.push(`acceptance「${ids}」：knowledge_refs 的 ${ref} 不是本施工单位承接的适用规约条目`);
+    }
+  }
+  return problems;
 }
 
 /**

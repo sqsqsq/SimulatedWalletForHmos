@@ -19,7 +19,7 @@
 import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { activation, entryOf, featureKnowledge, knowledgeSource, rolesOf, unitDuties } from '../shared/knowledge-application.mjs';
+import { activation, entryOf, featureKnowledge, knowledgeAcceptanceProblems, knowledgeSource, rolesOf, unitDuties } from '../shared/knowledge-application.mjs';
 import { chapterNumberProblems, chapterRefProblems } from '../shared/chapters.mjs';
 import { hostChapterProblems } from '../shared/host-chapter.mjs';
 import { obligationsFromContracts, misplacedMust, patternRolesFromContracts, unidentifiedCarriers, verifyProblem }
@@ -103,7 +103,7 @@ export default guard('plan', async (ctx) => {
   const obligation = { name: '每条 must 自身', problems: [], skipped: [] };
   const consistency = { name: '判断与义务一致', problems: [], skipped: [] };
   const pattern = { name: '模式角色', problems: [], skipped: [] };
-  const reference = { name: '用例的验收引用', problems: [], skipped: [] };
+  const reference = { name: '验收的知识归属与用例引用', problems: [], skipped: [] };
   const stat = { name: '埋点逐统计点落实', problems: [], skipped: [] };
   const groups = [contract, design, obligation, consistency, pattern, reference, stat];
 
@@ -136,6 +136,12 @@ export default guard('plan', async (ctx) => {
   const active = knowledge ? activation(ctx.projectRoot, knowledge) : null;
   if (judged) design.problems.push(...judged.problems);
   const { applied, selected } = judged ? unitDuties(judged) : { applied: [], selected: [] };
+  // 验收的知识归属：spec 被原生复用、本地没有 acceptance.yaml 时，核的也是原生选中的这一份验收
+  if (judged && inputs.acceptance) {
+    reference.problems.push(...knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance: inputs.acceptance }));
+  } else if (judged && applied.length) {
+    reference.skipped.push({ what: '验收的知识归属', why: inputs.why });
+  }
   const why = noContract ?? (knowledge ? null : '激活知识派生失败');
   const obligations = contracts ? obligationsFromContracts(contracts) : [];
 

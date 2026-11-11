@@ -253,6 +253,10 @@ function blueprintTask(root, id, action) {
   if (checked) gaps.push(...checked.problems.map(p => `${p}——设计作者处理。`));
   const duties = ['设计阶段还没有施工契约；知识的适用性写成蓝图的原生事实，适用规约的义务与模式角色写在承担它的设计对象上，'
     + '施工义务在施工单位的契约中承接。'];
+  if (action === 'design') {
+    duties.push('适用条目要求的可观察行为、统计指标与资源义务，在质询之前写成承担它的设计对象上的验收（knowledge_refs 与 must 列同一条目）、'
+      + 'must 与真实的事件明细；只交业务送审、不进 spec 时也写在蓝图里。');
+  }
   if (action !== 'questioning') {
     duties.push('这一轮的知识输入身份，原样写进蓝图 `discovery.inputs.knowledge_context`（知识换了重取本任务、按新的一份替换）：', '',
       '```json', JSON.stringify(knowledgeContext(root), null, 2), '```');
@@ -306,7 +310,9 @@ function carriedDuties(judged, action, knowledge) {
     const { executor, allowed } = verifyChoices(entryOf(knowledge, d));
     out.push(`- \`${d.source_ref}\`（事实 ${d.fact_id}）：${d.rationale ?? ''}；落在 ${d.target_refs.join('、')}`
       + (action === 'plan' ? `；承担它的实体写 must（source_ref 照抄这条），verify 取 ${allowed.join(' / ')}${executor ? `（规约声明要「${executor}」证据）` : ''}` : '')
-      + (action === 'spec' ? '；验收写出它要求的可观察行为与验证责任，knowledge_refs 列这条' : ''));
+      + (action === 'spec' ? (judged.scope
+        ? '；蓝图承担对象带的验收复用它（knowledge_refs 列这条），只做有据的局部细化，蓝图没有验收投影时由你写；共同取舍要变交设计负责方'
+        : '；验收写出它要求的可观察行为与验证责任，knowledge_refs 列这条') : ''));
   }
   for (const d of selected) {
     out.push(`- 模式 \`${d.ref}\`（事实 ${d.fact_id}）：本单位承担的角色 ${rolesOf(d, judged.scope).map(r => `${r.role} → ${r.target_ref}`).join('、') || '（无）'}`

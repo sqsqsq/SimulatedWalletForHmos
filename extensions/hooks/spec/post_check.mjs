@@ -18,10 +18,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { guard, gate } from '../shared/gate.mjs';
 import { activeKnowledge } from '../shared/knowledge.mjs';
-import { activation, entryOf, featureKnowledge, knowledgeSource, unitDuties } from '../shared/knowledge-application.mjs';
+import { activation, featureKnowledge, knowledgeAcceptanceProblems, unitDuties } from '../shared/knowledge-application.mjs';
 import { chapterNumberProblems } from '../shared/chapters.mjs';
 import { hostChapterProblems } from '../shared/host-chapter.mjs';
-import { acceptanceIdRe, functionIdRe, knowledgeCriteria, phaseArtifacts } from '../shared/contracts.mjs';
+import { acceptanceIdRe, functionIdRe, phaseArtifacts } from '../shared/contracts.mjs';
 import { reportProblems } from '../shared/verifier-report.mjs';
 
 /** 「验收标准」一节的正文行：标题下到下一个同级或更高级标题。 */
@@ -99,22 +99,8 @@ export default guard('spec', async (ctx) => {
     if (!acceptance) {
       if (applied.length) bridge.skipped.push({ what: '验收承接适用规约', why: inputs.why });
     } else {
-      const { byRef, problems } = knowledgeCriteria(acceptance);
-      bridge.problems.push(...problems);
-      for (const d of applied.filter(x => !byRef.has(x.source_ref))) {
-        bridge.problems.push(`acceptance.yaml：${judged.label} 判定适用的 ${d.unit}（${d.file}）由本施工单位承接，没有验收条目承接——`
-          + `写一条 criteria，knowledge_refs 列 ${d.source_ref}；下游 ut / testing 按它找要覆盖的场景`);
-      }
       const active = activation(ctx.projectRoot, knowledge);
-      const carried = new Set(applied.map(d => d.source_ref));
-      for (const [ref, rows] of byRef) {
-        const ids = rows.map(r => String(r.id ?? '（没写 id）')).join('、');
-        if (!entryOf(knowledge, knowledgeSource(active, ref))) {
-          bridge.problems.push(`acceptance.yaml「${ids}」：knowledge_refs 的 ${ref} 不是激活规约的条目（<知识文件>#<编号>）`);
-        } else if (!carried.has(ref)) {
-          bridge.problems.push(`acceptance.yaml「${ids}」：knowledge_refs 的 ${ref} 不是本施工单位承接的适用规约条目`);
-        }
-      }
+      bridge.problems.push(...knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance }));
     }
   }
 

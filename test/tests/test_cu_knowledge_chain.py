@@ -69,7 +69,7 @@ def sha(path: Path) -> str:
 
 def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: bool = False, facts: bool = False,
            pending: bool = False, nested: bool = True, acceptance: bool = True, use_cases: bool = False,
-           review: bool = False) -> str | None:
+           review: bool = False, bridged: bool = True) -> str | None:
     """改夹具蓝图（按原文插入）：知识输入身份、适用性事实、设计对象契约上的义务与角色；再按原生口径（蓝图原字节的摘要与
     来源指纹）更新施工单位的蓝图引用。`pattern` 是决策树：selected（有候选信号，选中并写角色）/ none（没有候选信号，不判）。
     `elsewhere` 再加两条只落在运行视图上的规约判断（另一个施工单位独有）；`pending` 再加两条待定（见 `UNOWNED`、`PENDING_ELSEWHERE`）；
@@ -77,7 +77,8 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     `nested` 为假时模块节点不带机器契约（原生 contracts 投影为 absent，plan 阶段自己写契约），返回拿掉的那段契约原文；
     `acceptance` 为假时模块节点也不带验收（spec 阶段的验收投影为 absent，spec 自己写验收）；
     `use_cases` 给模块节点加一段用例权威（`USE_CASES`），契约不在时它仍是 plan 阶段要对齐的设计权威；
-    `review` 再加一条适用的评审动作（`REVIEW_REF`），落点只指原生决定，不产生代码义务。"""
+    `review` 再加一条适用的评审动作（`REVIEW_REF`），落点只指原生决定，不产生代码义务；
+    `bridged` 为假时模块节点的验收里不写承接 OBS-02 的那一条（`BRIDGED_CRITERION`）。"""
     canonical = root / "doc" / "features" / BLUEPRINT / "blueprint" / "component-blueprint.yaml"
     old = sha(canonical)
     old_text = canonical.read_text(encoding="utf-8")
@@ -111,6 +112,11 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
         anchor = "        contracts:\n          modules:"
         assert text.count(anchor) == 1
         text = text.replace(anchor, USE_CASES + anchor, 1)
+    if acceptance and bridged:
+        # 适用的 OBS-02 在承担对象上的共同验收：knowledge_refs 与 must 列同一条目
+        last = "              device_focus: 返回首页后账户卡片余额文本更新\n          boundaries: []\n"
+        assert text.count(last) == 1
+        text = text.replace(last, last.split("          boundaries")[0] + BRIDGED_CRITERION + "          boundaries: []\n", 1)
     if not acceptance:
         start = text.index("        acceptance:\n          criteria:\n")
         end = text.index("          boundaries: []\n", start) + len("          boundaries: []\n")
@@ -140,6 +146,22 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
     unit.write_bytes(unit.read_bytes().replace(old.encode(), sha(canonical).encode())
                      .replace(stamp(old_text).encode(), stamp(canonical.read_text(encoding="utf-8")).encode()))
     return removed
+
+
+#: 模块节点上承接适用规约的验收：可观察行为与 must 同一件事，knowledge_refs 列同一条目
+BRIDGED_CRITERION = f"""            - id: AC-002
+              prd_function: null
+              priority: P1
+              description: 刷新失败时记一条可定位的日志
+              testable: true
+              verification_steps:
+                - 断开网络后返回首页
+              expected_result: 日志里有一条带页面与失败原因的刷新失败记录
+              ut_layer: device
+              device_focus: 刷新失败时日志带页面与原因
+              knowledge_refs:
+                - {KNOWLEDGE_REF}
+"""
 
 
 #: 模块节点上的一段用例权威：一个用例、一个分支，分支引验收 AC-001（原生 use-cases 结构校验的必填项齐全）
@@ -253,6 +275,7 @@ class ChainCase(unittest.TestCase):
     ACCEPTANCE = True
     USE_CASES = False
     REVIEW = False
+    BRIDGED = True
     STEPS: tuple[str, ...] = ("freeze",)
 
     @classmethod
@@ -260,7 +283,7 @@ class ChainCase(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = make_project(root=Path(cls._tmp.name) / "p")
         cls.removed = design(cls.root, cls.WITH_ROLES, cls.PATTERN, cls.ELSEWHERE, cls.FACTS, cls.PENDING, cls.NESTED,
-                             cls.ACCEPTANCE, cls.USE_CASES, cls.REVIEW)
+                             cls.ACCEPTANCE, cls.USE_CASES, cls.REVIEW, cls.BRIDGED)
         for step in cls.STEPS:
             prepare(cls.root, step)
 
@@ -817,6 +840,73 @@ class StageCase(ChainCase):
         return json.loads(proc.stdout)
 
 
+class ThePlanChecksTheSelectedAcceptanceWhenTheSpecIsReused(StageCase):
+    """蓝图承担对象带验收、spec 由它复用（本地没有 acceptance.yaml）：plan 门禁核的是原生选中的这份验收，
+    适用条目没被承接时点名，恢复去向是蓝图承担对象。"""
+    BRIDGED = False
+
+    def test_the_plan_names_the_unbridged_rule_on_the_selected_acceptance(self) -> None:
+        got = self.stage("plan")
+        self.assertFalse((self.unit / "spec" / "acceptance.yaml").exists(), "夹具不该有本地验收")
+        self.assertEqual("resolved", got["inputs"]["acceptance"][0], got["inputs"])
+        group = got["gate"].split("【验收的知识归属与用例引用】", 1)
+        self.assertEqual(2, len(group), got["gate"])
+        self.assertIn(f"由本施工单位承接，没有验收条目承接——验收由蓝图承担对象给出的，交设计负责方", group[1])
+        self.assertIn(KNOWLEDGE_REF, group[1])
+
+
+ACCEPTANCE_CHECK = """
+import { pathToFileURL } from 'node:url';
+const [root, feature, acceptanceJson] = process.argv.slice(1);
+const base = pathToFileURL(root + '/doc/extensions/hooks/').href;
+const ka = await import(base + 'shared/knowledge-application.mjs');
+const knowledge = (await import(base + 'shared/knowledge.mjs')).activeKnowledge(root);
+const active = ka.activation(root, knowledge);
+const judged = ka.featureKnowledge(root, feature);
+const acceptance = JSON.parse(acceptanceJson);
+process.stdout.write(JSON.stringify(ka.knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance })));
+"""
+
+
+class TheAcceptanceOwnershipIsCheckedPerReference(ChainCase):
+    """spec、plan 共用的验收知识归属检查：真实工程取出的激活知识与本单位判断，喂不同的验收，逐类点名；它不读文件。"""
+    ELSEWHERE = True
+    STEPS = ()
+
+    def check(self, criteria: list[dict]) -> list[str]:
+        acceptance = json.dumps({"criteria": criteria, "boundaries": []}, ensure_ascii=False)
+        proc = subprocess.run(["node", "--input-type=module", "-e", ACCEPTANCE_CHECK, str(self.root.as_posix()), CU, acceptance],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def test_each_kind_of_wrong_reference_is_named(self) -> None:
+        stray = "doc/extensions/knowledge/constraints/not-active.md#X-01"
+        problems = self.check([{"id": "AC-1", "knowledge_refs": [KNOWLEDGE_REF]}, {"id": "AC-2", "knowledge_refs": [KNOWLEDGE_REF]},
+                               {"id": "AC-3", "knowledge_refs": [stray]},
+                               {"id": "AC-4", "knowledge_refs": [ELSEWHERE_REF]}, {"id": "AC-5", "knowledge_refs": [ELSEWHERE_REF]}])
+        text = "\n".join(problems)
+        self.assertIn(f"「AC-3」：knowledge_refs 的 {stray} 不是激活规约的条目", text)
+        self.assertIn(f"「AC-4、AC-5」：knowledge_refs 的 {ELSEWHERE_REF} 不是本施工单位承接的适用规约条目", text, "同一条目的几条验收要全保留")
+        self.assertNotIn("没有验收条目承接", text, "两条验收都承接了 OBS-02")
+        self.assertEqual(2, len(problems), problems)
+
+    def test_an_applied_rule_without_acceptance_names_where_it_goes(self) -> None:
+        problems = self.check([{"id": "AC-1", "description": "返回首页时余额刷新"}])
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn(f"由本施工单位承接，没有验收条目承接——验收由蓝图承担对象给出的，交设计负责方", problems[0])
+        self.assertIn(f"两种都在 knowledge_refs 列 {KNOWLEDGE_REF}", problems[0])
+
+    def test_the_check_reads_no_files_and_has_the_two_gates_as_callers(self) -> None:
+        source = (design_kit.DEV_EXT / "hooks" / "shared" / "knowledge-application.mjs").read_text(encoding="utf-8")
+        body = source.split("export function knowledgeAcceptanceProblems", 1)[1].split("\n}\n", 1)[0]
+        for call in ("fs.", "readFileSync", "activation(", "activeKnowledge(", "readFeature(", "phaseArtifacts("):
+            self.assertNotIn(call, body)
+        hooks = design_kit.DEV_EXT / "hooks"
+        callers = sorted(p.relative_to(hooks).as_posix() for p in hooks.rglob("*.mjs")
+                         if "knowledgeAcceptanceProblems(" in p.read_text(encoding="utf-8") and p.name != "knowledge-application.mjs")
+        self.assertEqual(["plan/post_check.mjs", "spec/post_check.mjs"], callers)
+
 class ASpecWithoutAnAcceptanceProjectionWritesItsOwn(StageCase):
     """设计对象既不带验收也不带契约：spec 阶段的验收投影是 absent，spec 自己写 acceptance.yaml。写出之前 plan 被原生挡在缺验收；
     写出的验收由 spec 门禁核承接，plan 阶段改按这份阶段产物解析验收。"""
@@ -829,7 +919,8 @@ class ASpecWithoutAnAcceptanceProjectionWritesItsOwn(StageCase):
         self.assertIn("acceptance=absent", json.dumps(before["plan"]["issues"], ensure_ascii=False))
         self.variant("acceptance.yaml", yaml.safe_dump(ACCEPTANCE_TEXT, allow_unicode=True, sort_keys=False))
         unbridged = self.stage("spec")
-        self.assertIn(f"由本施工单位承接，没有验收条目承接——写一条 criteria，knowledge_refs 列 {KNOWLEDGE_REF}", unbridged["gate"])
+        self.assertIn("由本施工单位承接，没有验收条目承接——验收由蓝图承担对象给出的，交设计负责方", unbridged["gate"])
+        self.assertIn(f"在 acceptance.yaml 补一条 criteria；两种都在 knowledge_refs 列 {KNOWLEDGE_REF}", unbridged["gate"])
         bridged = json.loads(json.dumps(ACCEPTANCE_TEXT))
         bridged["criteria"][0]["knowledge_refs"] = [KNOWLEDGE_REF]
         self.variant("acceptance.yaml", yaml.safe_dump(bridged, allow_unicode=True, sort_keys=False))
