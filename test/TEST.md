@@ -28,6 +28,7 @@
 - 正式 Case 是组合业务场景；叙述变形只做离线检查。
 - 每个 Case 只能看到自身 workspace、初始任务和已发送交互；它接触不到 `test/`、`doc/` 维护材料、其他 Case 和历史 suite。
 - 被测模型自己跑 gate、改产物、管阶段状态；宿主只观测和回话，也不在 demo 里跑 harness。
+- Case 的终点（`end_at`）、交互立场、预备问答和金样额外前提都是测试条件：它们决定观察到哪里、怎样回话，用来检验产品能力。维护者写需求时，产品要求取自用户决定与有效 Spec；写方案时，测试条件进入验证计划，只写观察与留证的动作；归因由效果评审依原件作出。效果评审的覆盖以实际投放的输入和人答为准。
 
 ### 0.2 非沙箱授权
 
@@ -477,7 +478,7 @@ python test/scripts/run_multi_case.py finalize `
 
 | 场景 | 命令 | 什么时候跑 |
 |---|---|---|
-| 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；子步骤收尾时把它所在功能块的几个测试文件一起给 |
+| 改一处 | `python test/scripts/verify.py affected <测试文件…> [-k <关键词>]` | 改动后跑直接覆盖它的用例；步骤收尾时把它所在功能块的几个测试文件一起给 |
 | 全量 | `python test/scripts/verify.py full` | 需要单独看全量结论时；批末交回由 `handback` 一并跑。与交回里的全量同一个 worker 数、同一种共享前态，两轮可逐条对照 |
 | 失效形态 | `python test/scripts/verify.py failure-modes` | 现建装好开发源的模板（与 §1.2 同一装配函数）再跑 §5.4；各条形态按进程并行，结果按台账顺序输出 |
 | 交回 | `python test/scripts/verify.py handback` | 批末最后一步交回前一次（没有批次的任务在交回前一次）：全量、失效形态、其余离线检查（CLI 测试、compileall、validate_clis、每个 `.mjs` 的 `node --check`）三条通道同时跑；各通道的并发上限固定在脚本里（全量 8 个 worker、失效形态 1 个进程、CLI 测试 1 个 worker、compileall 单进程；全量的 8 由 2.0.2 F05 实测定） |
@@ -676,6 +677,8 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 产物版本、建议分、扣分证据、用户确认分与确认时间，确认后同步到当前轮次的评审报告。
 
 #### 长期基线与跨轮比较
+
+效果评审的参照集在本仓的位置：金样见下文「金样」；基线是本节的 `test/baselines/story-init-quality.md`，建立之前由评审写明所选历史运行及其身份（例如 1.9.9 发布轮的 suite 与 run）；上一轮是同一 Case 最近一次正式运行在 `output/story/` 的原件。三者逐项并排，差距标为新转正、新退步、持续缺失或不可比。
 
 用户确认的评分量表、代表性结果及其适用 Case/宿主配置写入 `test/baselines/story-init-quality.md`（目前尚未建立，首次晋升时建立），作为后续演进
 基线；修改量表、阈值或基线样本先向用户说明并取得确认。
