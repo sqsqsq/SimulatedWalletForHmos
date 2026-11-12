@@ -2451,7 +2451,8 @@ class DraftsCarryTheDeterministicWork(RealRunCase):
                                / "story-chapters.json").read_text(encoding="utf-8"))
         ch = next(c for c in contract["chapters"] if c["title"] == "业务方案")
         self.assertIn(ch["questions"][0], draft, "章头没从合同渲染读者问题")
-        self.assertIn(f"别的章负责：{ch['boundary']}；这里不重复", draft, "章头没从合同渲染别章分工")
+        self.assertIn(f"完整细则主责：{ch['boundary']}。本章仍须保留回答本章读者问题所需的事实、条件与结果", draft, "章头没从合同渲染细则主责")
+        self.assertNotIn("这里不重复", draft, "章头还在发笼统的禁写")
 
     def test_a_written_chapter_gets_its_draft_back_from_the_current_story(self) -> None:
         """返修要有落点：成文登记删掉草稿目录，之后 verifier 报了阻断问题，

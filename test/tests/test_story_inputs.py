@@ -143,6 +143,23 @@ class TheAuthorDoesNotHaveToLookThingsUp(WorkspaceCase):
         self.assertEqual("", proc.stdout.strip(), f"还有地方写着旧路径：{proc.stdout}")
 
 
+class TheDesignReferenceIsTheAuthorsCurrentInput(WorkspaceCase):
+    """设计参考对作者是当前共同设计输入：给原生人读稿与 canonical 的真实路径，读法是业务设计沿锚点到技术参考，Story 要自足。"""
+
+    def test_the_section_names_both_paths_and_the_reading(self) -> None:
+        self.put_prd()
+        ensure_framework(self.root)
+        design_kit.install_blueprint(self.root, FEATURE, design_kit.ACCESS)
+        section = self.inputs().split("## 4d. 设计参考与知识判断", 1)
+        self.assertEqual(2, len(section), "成文输入没有设计参考段")
+        body = section[1]
+        blueprint = f"doc/features/{FEATURE}/blueprint/"
+        self.assertIn(f"`{blueprint}component-blueprint.review.md`", body)
+        self.assertIn(f"`{blueprint}component-blueprint.yaml`", body, "人读稿不展示的字段要在 canonical 核")
+        self.assertIn("沿其中的 AC / BD 锚点到技术参考核条件、步骤与预期", body)
+        self.assertIn("对你它是当前的共同设计输入", body)
+        self.assertIn("Story 本身要自足", body)
+
 class UpstreamDiagramsReachTheAuthor(WorkspaceCase):
     """本次采用的系统设计里的图逐张给身份、主题、原件位置与原图，登记写法照抄；不指定放哪一节。
 

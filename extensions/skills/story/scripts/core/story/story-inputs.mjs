@@ -157,9 +157,11 @@ function designReferenceSection(ctx) {
   if (!source.blueprint || !source.projection) return [];
   const judged = knowledgeJudgmentLines(ctx.projectRoot, source.blueprint);
   return ['## 4d. 设计参考与知识判断', '',
-    `设计参考是 \`${source.projection}\`（蓝图 r${source.ref?.revision} 的原生评审投影），完整技术全文在那里，设计要改回蓝图。`
-    + '它是补充参考：系统要求或本单已请求时才随交付（见取材回执与交付请求），读者手上可能只有 Story 与 Review，'
-    + '所以本单读者核对与施工要用的精确接口、数据、配置、事件与来源写在附录，不只给一个指向设计参考的链接；全文不必搬运。', '',
+    `设计参考是 \`${source.projection}\`（蓝图 r${source.ref?.revision} 的原生评审投影），完整技术全文在那里，设计要改回蓝图。`, '',
+    `- 成文前读它的业务设计，沿其中的 AC / BD 锚点到技术参考核条件、步骤与预期；人读稿不展示的字段（如 knowledge_refs）在 \`${source.canonical}\` 的同一目标上核。`,
+    '- 对业务读者它是可选附件，系统要求或本单已请求时才随交付（见取材回执与交付请求）；对你它是当前的共同设计输入，按它写 Story，Story 本身要自足。'
+    + '原件、人答与设计说法冲突时交真正的负责方，不从候选里补造共同决定。', '',
+    '读者手上可能只有 Story 与 Review，本单读者核对与施工要用的精确接口、数据、配置、事件与来源写在附录，不只给一个指向设计参考的链接；全文不必搬运。', '',
     ...(judged.rows.length
       ? ['蓝图里已定的知识判断（附录「规约」节写它们在本需求的理由、承担者与对设计的影响；不重判，待定的写成待定）：', ...judged.rows]
       : ['蓝图里还没有知识判断。']),

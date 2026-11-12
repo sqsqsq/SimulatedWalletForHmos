@@ -378,7 +378,7 @@ class TestFormHasOneSourceOfTruth(unittest.TestCase):
                               .read_text(encoding="utf-8"))
         for ch in contract["chapters"]:
             self.assertTrue(str(ch.get("boundary", "")).strip(),
-                            f"{ch['id']} 没有别章分工——章头的「别的章负责」从它渲染")
+                            f"{ch['id']} 没有细则主责——章头的「完整细则主责」从它渲染")
             self.assertFalse(str(ch["boundary"]).startswith("讲"),
                              f"{ch['id']} 的分工写成了本章职责，会被改写成开场白")
             self.assertTrue(ch.get("questions"), f"{ch['id']} 没有读者问题")

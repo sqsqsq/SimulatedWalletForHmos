@@ -100,7 +100,7 @@ function chapterDraft(ctx, ch, facts) {
   const plan = relFromFeature(ctx, ctx.templatePath);
   return [
     guideLine(`读完这一章，读者要能回答：${(ch.questions ?? []).join('；')}（直接回答，不写本章讲什么）`),
-    guideLine(`别的章负责：${ch.boundary}；这里不重复`),
+    guideLine(`完整细则主责：${ch.boundary}。本章仍须保留回答本章读者问题所需的事实、条件与结果；必要重述不是重复，完整细则可引用主责章，不整段照抄`),
     guideLine('这一步是完成表达：照骨架逐节写——先读这一节要解释什么、依据在哪，再决定列、节点与项目，'
       + '写成正文。写本章前先读已写章与本章共用的关系，再对照本章要用的原文；'
       + `设计要改回写作设计 ${plan}，并在 story-src/template-adjustments.md 记下实质调整的原因`),
