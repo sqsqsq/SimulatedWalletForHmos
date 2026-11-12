@@ -296,9 +296,9 @@ export function storyCheck(ctx, { registration = true } = {}) {
   return { problems, marks, notes, chapters: sections.length };
 }
 
-export async function cmdCheck(ctx) {
-  // 登记自己跑的那一次（`--registering`）不核「登记之后改过没有」：它要换掉的正是旧登记
-  const { problems, marks, notes, chapters } = storyCheck(ctx, { registration: !ctx.args.registering });
+export async function cmdCheck(ctx, { registering = Boolean(ctx.args.registering) } = {}) {
+  // 登记自己跑的那一次不核「登记之后改过没有」：它要换掉的正是旧登记
+  const { problems, marks, notes, chapters } = storyCheck(ctx, { registration: !registering });
   // ⑭ 交付门：只有 `check --deliver` 判。按**动作**分而不按文件在不在推断阶段：
   // 登记前与返修中跑的是普通 check，那时审查还没发生；交付跑 `--deliver`，那时登记与审查该已成立。
   if (ctx.args.deliver) {

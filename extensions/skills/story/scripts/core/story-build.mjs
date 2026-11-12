@@ -48,7 +48,7 @@ import {
 import { designGaps, projectAppendix } from './story/appendix.mjs';
 import { currentBasis, designSource, termFacts } from './story/design-source.mjs';
 import {
-  discloseInStory, preparedRecord, prepareReview, reviewResult, setReader,
+  discloseInStory, preparedRecord, prepareReview, reviewResult, reviewStatusBlock, setReader,
 } from './story/independent-review.mjs';
 import {
   fetchBatchDir, latestOf, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
@@ -238,8 +238,8 @@ async function captured(run) {
  */
 async function cmdRegistrationCheck(ctx) {
   const plan = [
-    ['check', () => cmdCheck({ ...ctx, args: { ...ctx.args, registering: true } })],
-    ['review', () => cmdReview({ ...ctx, args: { ...ctx.args, action: 'check' } })],
+    ['check', () => cmdCheck(ctx, { registering: true })],
+    ['review', () => cmdReviewCheck(ctx)],
     ['basis', () => cmdBasis(ctx)],
   ];
   const steps = [];
@@ -282,9 +282,7 @@ function cmdReview(ctx) {
     return;
   }
   if (ctx.args.action === 'check') {
-    const out = reviewResult(ctx);
-    process.stdout.write(`${JSON.stringify(out)}\n`);
-    process.exitCode = ['pass', 'warn', 'unreviewed'].includes(out.result) ? 0 : 1;
+    cmdReviewCheck(ctx);
     return;
   }
   const reader = readerOf(ctx.args);
@@ -304,7 +302,15 @@ function cmdReview(ctx) {
     if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
   };
   finalize();
-  const out = prepareReview(ctx, { reportDir: ctx.args.reportDir, restage: () => { setReader(ctx, reader); finalize(); } });
+  // 本次读者情况改变了审查状态（未审披露出现、消失或原因变了）才再定稿一次；没变时对象已是定稿
+  const restage = () => {
+    const prior = reviewStatusBlock(ctx).join('\n');
+    setReader(ctx, reader);
+    const changed = prior !== reviewStatusBlock(ctx).join('\n');
+    if (changed) finalize();
+    return changed;
+  };
+  const out = prepareReview(ctx, { reportDir: ctx.args.reportDir, restage });
   if (out.error) fail(out.error);
   const again = `story-build review --action prepare --reader ${reader.kind}${reader.kind === 'unavailable' ? ' --reader-reason <同一原因>' : ''}`;
   process.stdout.write(`${JSON.stringify({ material_key: out.material_key, task: out.task, report_dir: out.report_dir,
@@ -321,8 +327,15 @@ function cmdReview(ctx) {
         .join('\n')
       : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为隔离读者的任务交出，`,
       `  不增删、不改写；等它完成，把它的最终回复全文原样写到 ${out.report_file}（读者只读，不自己写文件）。`,
-      `  之后重跑 ${again} 接收这份回复，再跑 story-build review --action check，`,
+      `  修改被审材料之前先重跑 ${again} 接收这份回复，再跑 story-build review --action check，`,
       '  结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
+}
+
+/** 这一次的审查结果：一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1；`review --action check` 与登记前核共用。 */
+function cmdReviewCheck(ctx) {
+  const out = reviewResult(ctx);
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+  process.exitCode = ['pass', 'warn', 'unreviewed'].includes(out.result) ? 0 : 1;
 }
 
 /** `--reader` 与 `--reader-reason`：prepare 必需，缺了只报这次准备输入没给，不写任何文件。 */

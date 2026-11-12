@@ -129,10 +129,11 @@ function replyNumbers(ctx, reportDir) {
 
 /**
  * 准备这一次的审查。调用方已重投附录、编号、渲染 Review 并过了结构检查。
- * 最近可消费的 pass / warn 正是当前对象时直接复用，不改动审查状态；否则调 `restage` 按本次读者情况重写审查状态并重新定稿，
+ * 最近可消费的 pass / warn 正是当前对象时直接复用，不改动审查状态；否则调 `restage` 按本次读者情况重写审查状态，
+ * 它返回审查状态有没有变（变了它已重新定稿），变了才重取审查对象；
  * 再给回复位置：同一份材料的回复还没来就沿用原位置，其余另起下一个编号。
  *
- * @param {{reportDir?: string|null, restage: () => void}} opts
+ * @param {{reportDir?: string|null, restage: () => boolean}} opts
  */
 export function prepareReview(ctx, { reportDir: asked = null, restage }) {
   const { dir, prepared, dispatch } = places(ctx);
@@ -143,10 +144,7 @@ export function prepareReview(ctx, { reportDir: asked = null, restage }) {
   const { last, invalid } = receive(ctx, was);
   let { object, key } = stageObject(ctx);
   const reusable = Boolean(key) && last?.material_key === key && ['pass', 'warn'].includes(lastConclusion(ctx, last));
-  if (!reusable) {
-    restage();
-    ({ object, key } = stageObject(ctx));
-  }
+  if (!reusable && restage()) ({ object, key } = stageObject(ctx));
   if (object.problems.length) return { error: `审查对象不全：${object.problems.join('；')}` };
   const same = was?.material_key === key;
   const want = asked && String(asked).replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
