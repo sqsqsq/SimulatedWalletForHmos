@@ -2,7 +2,7 @@
 
 全量并行时每个 worker 是独立进程，进程内缓存让同一份准入蓝图、登记好的 Story 被造了 worker 数那么多遍。
 这里把造好的目录放在系统临时目录下，键是输入内容的摘要（夹具、开发版扩展、造状态的脚本与 Framework 版本）：
-输入变了键就变，旧目录不再被用到，过两天自行清掉。一个进程在造时别的进程等它造完再复制，不各造一份。
+输入变了键就变，旧目录不再被用到，完成两天后自行清掉。一个进程在造时别的进程等它造完再复制，不各造一份。
 
 造出来的目录只能含工程内相对路径：复制到别处照样成立；`framework` 是链接，复制时跳过、复制后重接。
 """
@@ -57,13 +57,16 @@ COMMON = (REPO_ROOT / "extensions", REPO_ROOT / "test" / "scripts" / "design_fix
 
 
 def _prune() -> None:
+    """收掉两天前完成的缓存，按目录里 `.ready` 的完成时间判断。
+
+    构建中的目录、锁和没有 `.ready` 的目录归各自的构建者：构建目录常整份复制自旧文件、根目录修改时间很旧，按它判断会删掉别人正在用的输入。"""
     if not ROOT.is_dir():
         return
     stale = time.time() - 2 * 86400
     for d in ROOT.iterdir():
         try:
-            if d.stat().st_mtime < stale:
-                shutil.rmtree(d, ignore_errors=True) if d.is_dir() else d.unlink()
+            if (d / ".ready").stat().st_mtime < stale:
+                shutil.rmtree(d, ignore_errors=True)
         except OSError:
             pass
 
