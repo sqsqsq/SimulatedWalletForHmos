@@ -1,3 +1,18 @@
 {
-  "hooks": {}
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"D:/1.code/SimulatedWalletForHmos/framework/agents/codex/hooks/guard-framework-write.mjs\"",
+            "commandWindows": "node \"D:/1.code/SimulatedWalletForHmos/framework/agents/codex/hooks/guard-framework-write.mjs\"",
+            "async": false,
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
 }

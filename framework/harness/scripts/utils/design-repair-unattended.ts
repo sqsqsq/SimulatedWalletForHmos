@@ -29,6 +29,7 @@ import {
   acquireBlueprintWriteLocks,
   reconcileHeldBlueprintRefs,
   reviseChangeUnitContent,
+  validateProvideConsumerRevisions,
   type ChangeUnitContentRevision,
 } from './change-unit-design-preparation';
 import { changeUnitDirectory, enumerateCanonicalChangeUnits, parseChangeUnitFeatureId, loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact, resolveChangeUnitRefFromLoaded } from './change-unit-path';
@@ -448,11 +449,11 @@ function priorRepairFeedback(projectRoot: string, runs: readonly { manifest: { r
     .filter(item => item.event.type === 'design_authority_repair' && 'blueprint_id' in item.event && item.event.blueprint_id === blueprintId
       && 'stage' in item.event && 'failed_step' in item.event
       && (item.event.stage === 'failed' && item.event.failed_step === 'questioning'
-        || item.event.stage === 'published' && 'outcome' in item.event && item.event.outcome === 'unrecovered' && item.event.failed_step === 'probe'))
+        || item.event.stage === 'published' && 'outcome' in item.event && item.event.outcome === 'unrecovered' && ['probe', 'reconcile'].includes(String(item.event.failed_step))))
     .sort((a, b) => String(a.event.ts).localeCompare(String(b.event.ts))).at(-1);
   if (!failed) return [];
   const runDir = path.resolve(projectRoot, failed.run.manifest.report_dir);
-  if ('stage' in failed.event && failed.event.stage === 'published') return [`前次真实发布探针仍未恢复：${runDir}/events.jsonl\n${String('reason' in failed.event ? failed.event.reason : '')}`];
+  if ('stage' in failed.event && failed.event.stage === 'published') return [`前次真实发布后的调和/探针仍未恢复：${runDir}/events.jsonl\n${String('reason' in failed.event ? failed.event.reason : '')}`];
   const beforeFailure = failed.run.events.slice(0, failed.index);
   const start = repairRoleStart(beforeFailure, 'questioning');
   if (!start?.invoke_id) return [];
@@ -832,7 +833,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     let authorFeedback = priorRepairFeedback(projectRoot, historyRuns, blueprintId);
     let feedbackDelivered = authorFeedback.length > 0;
     const transactionEvents = sessionEvents(runDir);
-    const priorAttempt = [...transactionEvents].reverse().find(event => event.type === 'design_authority_repair'
+    let priorAttempt = [...transactionEvents].reverse().find(event => event.type === 'design_authority_repair'
       && (event as Record<string, unknown>).blueprint_id === blueprintId && (event as Record<string, unknown>).stage === 'attempted'
       && !transactionEvents.slice(transactionEvents.indexOf(event) + 1).some(later => later.type === 'design_authority_repair'
         && 'signature' in later && 'signature' in event && later.signature === event.signature && 'stage' in later
@@ -842,12 +843,19 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
     const draftDir = path.join(runDir, 'design-repair');
     const draftFile = path.join(draftDir, 'component-blueprint.yaml');
     const cuDraftFile = path.join(draftDir, 'change-unit.yaml');
-    const batchDraftFile = isInitialDesignManifest(manifest) && input.requirement ? path.join(draftDir, 'change-unit-candidates.json') : undefined;
+    const batchDraftFile = (isInitialDesignManifest(manifest) && input.requirement) || changeUnitId ? path.join(draftDir, 'change-unit-candidates.json') : undefined;
     const architectureDraftFile = path.join(draftDir, 'architecture.json');
     const configFile = path.join(projectRoot, 'framework.config.json');
     let keepRejectedWork = false;
     const latestRepair = [...transactionEvents].reverse().find(event => event.type === 'design_authority_repair'
       && (event as Record<string, unknown>).blueprint_id === blueprintId) as Record<string, unknown> | undefined;
+    if (latestRepair?.stage === 'published' && latestRepair.outcome === 'unrecovered'
+      && ['reconcile', 'probe'].includes(String(latestRepair.failed_step)) && fs.existsSync(draftFile)
+      && fs.readFileSync(draftFile).equals(fs.readFileSync(canonicalPath))) {
+      // The published generation stays intact; its rejected CU drafts continue against that real baseline.
+      priorAttempt = undefined;
+      keepRejectedWork = true;
+    }
     if (!priorAttempt && latestRepair?.stage === 'failed'
       && latestRepair.failed_step === 'questioning' && fs.existsSync(draftFile)) try {
       const attempted = [...transactionEvents.slice(0, transactionEvents.indexOf(latestRepair as GoalRunEvent))].reverse().find(event => event.type === 'design_authority_repair'
@@ -917,7 +925,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       if (!batchDraftFile) return [];
       const value: unknown = JSON.parse(fs.readFileSync(batchDraftFile, 'utf8'));
       if (!Array.isArray(value)) throw new AttemptFailure('author', 'change-unit-candidates.json 必须是既有 ChangeUnitCandidate[]');
-      const seen = new Set(changeUnitId ? [changeUnitId] : []);
+      const seen = new Set<string>();
       return value.map(item => {
         const row = asRecord(item), artifact = asRecord(row?.artifact);
         if (!row || typeof row.providerId !== 'string' || !row.providerId.trim() || !artifact
@@ -928,10 +936,14 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         seen.add(artifact.change_unit_id);
         const loaded = loadCanonicalChangeUnit(projectRoot, blueprintId, artifact.change_unit_id);
         const candidate = asChangeUnitArtifact(artifact);
+        if (artifact.change_unit_id === changeUnitId && (!row.construction_mapping
+          || changeUnitPublicationContent(candidate) !== changeUnitPublicationContent(asChangeUnitArtifact(YAML.parse(fs.readFileSync(cuDraftFile, 'utf8')))))) {
+          throw new AttemptFailure('author_scope', '主CU在批次中只可携带同一cuDraft的construction_mapping，不得重复给出另一套CU内容');
+        }
         if (changeUnitPublicationContent(asChangeUnitArtifact(loaded.changeUnit)) !== changeUnitPublicationContent(candidate)) {
           resolveChangeUnitRefFromLoaded(loaded, { ...createChangeUnitRef(loaded), revision: candidate.revision });
         }
-        return { providerId: row.providerId, artifact: candidate };
+        return { providerId: row.providerId, artifact: candidate, ...(row.construction_mapping ? { construction_mapping: row.construction_mapping as ChangeUnitCandidate['construction_mapping'] } : {}) };
       });
     };
     const prepareCu = (value: ChangeUnitArtifact): ChangeUnitArtifact => {
@@ -964,7 +976,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       `本事务真实基线：blueprint_id=${String(baseDoc.blueprint_id)}；revision=${String(baseDoc.revision)}；source_fingerprint=${String(baseDoc.source_fingerprint)}；artifact_sha256=sha256:${sha256Hex(baseline)}。`,
       `本次可写的是本事务当前未发布候选，首轮从基线准备，后续承接已生成候选；相对基线只预留同一个revision=${Number(baseDoc.revision) + 1}，身份由框架维护，作者不自行升版。`,
       ...(originalCu ? ['CU候选的component_blueprint_ref、design_refs和touches.design_ref中的revision/source_fingerprint/artifact_sha256在发布前可仍绑定已核基线；作者须显式选择本单元要交付的目标及其选型决定，依赖闭包只作机器校验、不回写design_refs。待质询通过并发布最终蓝图字节后，才用最终身份统一重绑，再经原CU consumer、调和与readiness严格复验。不得要求作者在发布前伪填未来hash或把候选冒充已可施工。'] : []),
-      ...(batchDraftFile ? [`原设计单元如需同步修订当前已报缺口或provide确受影响的消费者，使用 ${batchDraftFile} 的既有 ChangeUnitCandidate[]（每项 {providerId, artifact}）；主CU仍在change-unit.yaml。只提交同蓝图已存在的真实CU候选，不造新ID、不删除消费者、不虚构依赖或审批；保原承诺与requires，独立Q核对整批真实变化后交原原子consumer事务。没有相关变化时保持空数组。`] : []),
+      ...(batchDraftFile ? [`原设计单元如需同步修订当前已报缺口或provide确受影响的消费者，使用 ${batchDraftFile} 的既有 ChangeUnitCandidate[]（每项 {providerId, artifact, construction_mapping?}）。主CU内容仍在change-unit.yaml；若本次缺实际施工/测试映射，可在同数组交回主CU同内容及同形construction_mapping（不含change_unit_ref）。consumer填真实身份后交原writer，不另叫plan转录，不把映射写进蓝图或canonical CU。只提交同蓝图已存在的真实CU候选，不造新ID、不删除消费者、不虚构依赖或审批；保原承诺与requires，独立Q核对整批真实变化后交原原子consumer事务。没有相关变化时保持空数组。`] : []),
       '质询必须核对正确blueprint_id、稳定target的存在与语义、契约、原需求和真实内容；上述事务时点不豁免错蓝图、错目标、无依据身份或实际内容缺陷，仍可依据具体证据否定。',
     ];
     // 核对范围：本任务的工作区（蓝图工作区：canonical 蓝图、全部 CU、各 run 的 manifest / run-control）不套用通用的运行时目录排除；
@@ -1015,7 +1027,8 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         executionRole: purpose === 'questioning' ? 'verifier' as const : 'author' as const,
         immutableInputPaths };
       const snapshotOptions = { ownedPrefixes: purpose === 'author' ? owned : workspaceOwned, runtimeExcluded: excluded,
-        includeFiles: purpose === 'questioning' ? [...new Set([...referenced, ...repairWorkFiles.map(relOf)])] : referenced };
+        includeFiles: purpose === 'questioning' ? [...new Set([...referenced, ...repairWorkFiles.map(relOf)])]
+          : referenced.filter(file => !authorDrafts.some(draft => path.resolve(projectRoot, file) === path.resolve(draft))) };
       const capture = (): ReturnType<typeof capturePhaseInvocationSnapshot> => capturePhaseInvocationSnapshot(resolution, snapshotOptions);
       let pre = capture();
       // 调用前就不可验证：还没有派出调用，尝试失败（不发布）；调用后不可验证：可能有越界写入而无从核对，按违规处置。
@@ -1074,9 +1087,14 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         throw new AttemptFailure(purpose, `调用后写归因快照不可核实（不得当作干净继续）：${diff.reason}`, { changes: eventChanges, preSnapshot: pre.sha256, postSnapshot: post.sha256 });
       }
       const writableAssets = new Set(knowledgeAssets.map(file => path.relative(projectRoot, file).replace(/\\/g, '/')));
-      const changes = [...(diff.kind === 'changed' ? diff.changes : []), ...eventChanges]
+      const snapshotChanges = (diff.kind === 'changed' ? diff.changes : [])
         .filter(change => !(purpose === 'author' && change.how === 'modified' && writableAssets.has(change.path.replace(/\\/g, '/'))));
+      const changes = [...snapshotChanges, ...eventChanges];
       if (changes.length) {
+        if (started?.invoke_id) input.emit({ type: 'phase_write_violation', run_id: input.runId, phase: started.phase,
+          invoke_id: started.invoke_id, pre_snapshot: pre.sha256, post_snapshot: post.sha256,
+          violations: snapshotChanges.map(change => ({ path: change.path, violation: 'outside_authority',
+            pre_sha256: change.preSha256, post_sha256: change.postSha256 })) });
         throw new AttemptFailure(purpose, `${purpose === 'author' ? '编写' : '质询'}调用改了草稿之外的文件：${changes.map(change => change.path).slice(0, 20).join('、')}`,
           { changes, preSnapshot: pre.sha256, postSnapshot: post.sha256 });
       }
@@ -1134,6 +1152,19 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         return [...consumerKinds].flatMap(kind => checkAuthoritativeContentAligned(ctx, kind,
           deriveBlueprintCandidateSkillInput(projectRoot, ctx.feature, frameworkRoot, kind, { blueprint: doc, changeUnit: unit, architecture: context.architecture })));
       });
+      const previousUnits = enumerateCanonicalChangeUnits(projectRoot, blueprintId)
+        .filter(unit => !retired.has(String(unit.changeUnit.change_unit_id))).map(unit => asChangeUnitArtifact(unit.changeUnit));
+      const submitted = [...(currentCu ? [currentCu] : []), ...readBatchCandidates().map(row => row.artifact)]
+        .filter(unit => {
+          const previous = previousUnits.find(row => row.change_unit_id === unit.change_unit_id);
+          return !previous || changeUnitPublicationContent(previous) !== changeUnitPublicationContent(unit);
+        });
+      try { validateProvideConsumerRevisions(previousUnits, submitted); }
+      catch (error) {
+        const ctx = { projectRoot, frameworkRoot, feature: input.feature, phase: input.phase, featureSpec: {}, phaseRule: {} } as CheckContext;
+        checks.push(...checkAuthoritativeContentAligned(ctx, 'contracts', { state: 'invalid', dependencies: [],
+          reason: 'other', codes: ['change_unit_blueprint_reconciliation_required'], detail: String((error as Error).message) }));
+      }
       // Before the first decomposition there are no CU candidates to repair; acceptance owns that next boundary.
       const hasUnits = units.size > 0 || enumerateCanonicalChangeUnits(projectRoot, blueprintId)
         .some(unit => !retired.has(String(unit.changeUnit.change_unit_id)));
@@ -1529,10 +1560,21 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       const revisions: ChangeUnitContentRevision[] = [];
       const unchanged: string[] = [];
       const publishedBlueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
-      const bindPublishedCu = (candidate: ChangeUnitArtifact): void => {
+      const bindMapping = (mapping: ChangeUnitCandidate['construction_mapping']): void => {
+        for (const row of mapping?.design_ref_mappings ?? []) {
+          const ref = row.design_ref;
+          if (ref.artifact === 'component-blueprint@1' && ref.blueprint_id === blueprintId && ref.component_id === baseDoc.component_id
+            && ref.revision === baseDoc.revision && ref.source_fingerprint === baseDoc.source_fingerprint
+            && ref.artifact_sha256 === `sha256:${sha256Hex(baseline)}`) Object.assign(ref, currentBlueprintIdentity(publishedBlueprint));
+        }
+      };
+      const bindPublishedPointers = (candidate: ChangeUnitArtifact): void => {
         for (const ref of blueprintIdentityPointers(candidate as unknown as Record<string, unknown>)) {
           if (ref) Object.assign(ref, currentBlueprintIdentity(publishedBlueprint));
         }
+      };
+      const bindPublishedCu = (candidate: ChangeUnitArtifact): void => {
+        bindPublishedPointers(candidate);
         candidate.provenance.extraction_method += ';design-repair';
         candidate.provenance.source_revision = `revision-${revision}`;
         candidate.provenance.observed_at = original.startedAt;
@@ -1542,14 +1584,27 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
         const currentCu = loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId);
         const pointerOnly = changeUnitPublicationContent(asChangeUnitArtifact(currentCu.changeUnit)) === changeUnitPublicationContent(cuCandidate);
         const cuAlreadyPublished = alreadyPublished && canon(asChangeUnitArtifact(currentCu.changeUnit)) === canon({ ...cuCandidate, revision: currentCu.changeUnit.revision });
-        if (cuAlreadyPublished || pointerOnly) unchanged.push(changeUnitId);
-        else revisions.push({ expectedRef: createChangeUnitRef(originalCu), candidate: { providerId: 'design-repair', artifact: cuCandidate } });
+        const mapping = batchCandidates.find(row => row.artifact.change_unit_id === changeUnitId)?.construction_mapping;
+        bindMapping(mapping);
+        if ((cuAlreadyPublished || pointerOnly) && !mapping) unchanged.push(changeUnitId);
+        else {
+          const unchangedContent = cuAlreadyPublished || pointerOnly;
+          const actual = unchangedContent ? structuredClone(asChangeUnitArtifact(currentCu.changeUnit)) : cuCandidate;
+          if (unchangedContent) bindPublishedPointers(actual);
+          revisions.push({ expectedRef: createChangeUnitRef(unchangedContent ? currentCu : originalCu), candidate: {
+            providerId: unchangedContent ? actual.provenance.extraction_method : 'design-repair', artifact: actual, ...(mapping ? { construction_mapping: mapping } : {}) } });
+        }
       }
       for (const candidate of batchCandidates) {
+        if (candidate.artifact.change_unit_id === changeUnitId) continue;
         bindPublishedCu(candidate.artifact);
+        bindMapping(candidate.construction_mapping);
         const current = loadCanonicalChangeUnit(projectRoot, blueprintId, candidate.artifact.change_unit_id);
         if (changeUnitPublicationContent(asChangeUnitArtifact(current.changeUnit)) === changeUnitPublicationContent(candidate.artifact)) {
-          unchanged.push(candidate.artifact.change_unit_id); continue;
+          if (!candidate.construction_mapping) { unchanged.push(candidate.artifact.change_unit_id); continue; }
+          candidate.artifact = structuredClone(asChangeUnitArtifact(current.changeUnit));
+          bindPublishedPointers(candidate.artifact);
+          candidate.providerId = candidate.artifact.provenance.extraction_method;
         }
         const relative = path.relative(projectRoot, current.canonicalPath).replace(/\\/g, '/');
         const observed = questioningPreimage?.entries.find(entry => entry.path === relative && entry.kind === 'file');
@@ -1573,6 +1628,7 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       reconcileNote = result.busy ?? (own ? `本 CU 被调和器跳过：${own.reasons.join('；')}` : reconciled ? '设计发布已交原调和器；各CU的真实差异由P1/P2重评' : '本 CU 未被升版');
       Object.assign(evidence, { bumped: result.bumped, skipped: result.skipped });
     } catch (error) {
+      reconciled = false;
       reconcileNote = `调和失败：${(error as Error).message}`;
     }
     reviewDocument = summarizeBlueprintReviewResults(reviewDocument, materializeBlueprintReview(projectRoot, blueprintId));
