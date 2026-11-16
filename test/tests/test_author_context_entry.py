@@ -128,15 +128,14 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
             done = subprocess.run([sys.executable, str(FLOW), mode, "--feature", "demo", "--project-root", str(ws)],
                                   cwd=str(ws), capture_output=True, text=True, encoding="utf-8", stdin=subprocess.DEVNULL)
             self.assertEqual(0, done.returncode, done.stderr[-600:])
-        # 范围已定：本轮的材料与范围两级都由人确认了
+        # 材料已确认：定位写成后直接进设计
         path = feature_root / "AR" / "story-src" / "story-flow.json"
         contract = json.loads(path.read_text(encoding="utf-8"))
         contract["rounds"][-1].update(
-            positioning={"scope_text": "本 AR 承载演示", "sr_related_ars": []},
-            scope_options=[{"key": "carry_all", "label": "按当前范围整体承载"}])
+            positioning={"scope_text": "本 AR 承载演示", "sr_related_ars": []})
         contract["rounds"][-1]["gates"] = [
-            {"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human"},
-            {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human"}]
+            {"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted",
+             "by": "human", "ask_id": "m1", "reply": "2", "options": [{"key": "confirm_scope"}]}]
         path.write_text(json.dumps(contract, ensure_ascii=False), encoding="utf-8")
 
         proc = subprocess.run(

@@ -47,7 +47,7 @@ class AHandEditIsReportedNotBlocking(unittest.TestCase):
         self.flow("init")
         self.assertNotIn("warning", self.flow("round"))
         data = json.loads(self.contract.read_text(encoding="utf-8"))
-        data["split"]["scope_text"] = "手改的一句范围"
+        data["rounds"][0]["materials"]["digest"] = "手改的一句范围"
         self.contract.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
         out = self.flow("status")

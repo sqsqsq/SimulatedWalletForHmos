@@ -71,7 +71,8 @@ function blueprintRef(loaded, blueprintId) {
   };
 }
 
-/** 证据强度的高低：蓝图声明的不能高于来源本身能证明的（人工答复是人的原话，其余材料只证明读到了这些字节）。 */
+/** 证据强度的高低：蓝图声明的不能高于来源本身能证明的。材料与人的原话都只证明读到了这些字节，
+ *  不因整份是人工答复就升为 authoritative——原话支持什么、批准什么由实际内容与权限核。 */
 const STRENGTH = { unknown: 0, inferred: 1, observed: 2, authoritative: 3 };
 
 /**
@@ -99,7 +100,9 @@ function scopeConsumption(projectRoot, adopted, requirement) {
         continue;
       }
       if (!roles.has(file)) continue;
-      const most = roles.get(file) === 'answer' ? 'authoritative' : 'observed';
+      // 人答文件在这里只作原话证据：条目或设计依据声明的强度高于 observed 时，
+      // 不能由「整份是 answer」拿到授权，回真实原话与权限核。
+      const most = 'observed';
       if ((STRENGTH[s.provenance?.evidence_strength] ?? 0) > STRENGTH[most]) {
         issues.push({ code: 'scope_item_not_consumed', item_id: s.item_id,
           message: `条目 ${s.item_id} 声明为 ${s.provenance?.evidence_strength}，来源 ${file} 只能证明 ${most}` });

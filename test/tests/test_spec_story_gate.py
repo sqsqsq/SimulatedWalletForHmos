@@ -1,4 +1,5 @@
-"""流程契约的关卡取值读自章节合同：读不到要出声，合法记录照判，每条关卡记录是完整的人签。"""
+"""流程契约的材料关卡取值读自章节合同：读不到要出声，合法记录照判，每条记录是完整的人签；
+设计问答的原话记录只存证据，旧 schema 与旧范围/会议裁决记录明确不接续。"""
 from __future__ import annotations
 
 import json
@@ -13,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FEATURE = "AR90001"
 
 MINIMAL_FLOW = {
-    "schema": 6,
+    "schema": 7,
     "feature": FEATURE,
     "status": "gathering",
     "rounds": [{"round": 1, "gates": []}],
@@ -45,12 +46,8 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
         flow["rounds"] = [{
             "round": 1, "materials": {"digest": "d1"},
             "positioning": {"scope_text": "本 AR 承载提交与回执", "sr_related_ars": []},
-            "scope_options": [{"key": "carry_all", "label": "按当前范围整体承载"}],
             "gates": [{"gate": "material_scope", "chosen": "confirm_scope",
                        "options": [{"key": "confirm_scope"}], "outcome": "accepted",
-                       "at": "2026-09-12T00:00:00", "by": "human", "ask_id": "a1", "reply": "1"},
-                      {"gate": "scope_decision", "chosen": "carry_all",
-                       "options": [{"key": "carry_all"}], "outcome": "accepted",
                        "at": "2026-09-12T00:00:00", "by": "human", "ask_id": "a1", "reply": "1"}],
         }]
         (self.feature_root / "AR" / "story-src" / "story-flow.json").write_text(
@@ -120,10 +117,53 @@ class TestTheGateChoicesComeFromTheContract(unittest.TestCase):
     def test_a_choice_outside_the_options_is_still_caught(self) -> None:
         """改了 chosen 而没改 options——这一条决定后续流程，手改也要抓。"""
         def mutate(data):
-            data["rounds"][0]["gates"][1]["chosen"] = "by_screen"
+            data["rounds"][0]["gates"][0]["chosen"] = "by_screen"
         self.edit_flow(mutate)
         problems = self.problems()
         self.assertTrue(any("不在 options 里" in p for p in problems), problems)
+
+    def test_an_old_schema_contract_is_not_continued(self) -> None:
+        """schema6 旧现场：明确报不接续，不自动迁移，也不拿新规则继续判。"""
+        def mutate(data):
+            data["schema"] = 6
+        self.edit_flow(mutate)
+        problems = self.problems()
+        self.assertTrue(any("不接续" in p and "init" in p for p in problems), problems)
+
+    def test_old_scope_and_meeting_gate_records_are_not_continued(self) -> None:
+        """旧范围/会议裁决关卡与份表字段：新契约没有它们，旧现场不接续。"""
+        def mutate(data):
+            data["split"] = {"decided": "carry_all"}
+            data["rounds"][0]["gates"].append(
+                {"gate": "meeting", "chosen": "a", "options": [{"key": "a"}],
+                 "outcome": "accepted", "by": "human", "ask_id": "m1", "reply": "1"})
+            data["rounds"][0]["scope_options"] = [{"key": "carry_all"}]
+        self.edit_flow(mutate)
+        problems = self.problems()
+        self.assertTrue(any("split" in p for p in problems), problems)
+        self.assertTrue(any("scope_options" in p for p in problems), problems)
+        self.assertTrue(any("gate 非法" in p for p in problems), problems)
+
+    def test_an_answer_record_is_evidence_only(self) -> None:
+        """设计问答原话记录：必要的问法、题号、问题、原话、时刻与出处缺一不可，带目标/版本字段要报。"""
+        answer = {"ask_id": "b1", "item_id": "Q1", "question": "要不要重试？",
+                  "options": ["允许", "保持待定"], "reply": "允许", "at": "2026-09-12T00:00:00",
+                  "source_ref": "RR/prd.md#3"}
+
+        def mutate(data):
+            data["rounds"][0]["answers"] = [dict(answer)]
+        self.edit_flow(mutate)
+        self.assertEqual([], self.problems())
+
+        def drop_source(data):
+            data["rounds"][0]["answers"][0].pop("source_ref")
+        self.edit_flow(drop_source)
+        self.assertTrue(any("source_ref" in p for p in self.problems()))
+
+        def add_target(data):
+            data["rounds"][0]["answers"][0]["target_ref"] = "view:logical/node:x"
+        self.edit_flow(add_target)
+        self.assertTrue(any("target_ref" in p for p in self.problems()))
 
 
 if __name__ == "__main__":

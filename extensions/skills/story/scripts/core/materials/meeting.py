@@ -20,8 +20,8 @@
 划语义单元。
 
 会议判断 `AR/story-src/meeting-notes.json` 按 `<主名>@<sha8>` 分节，一个话题一条：
-归属、原话引用、`finding`（定了什么、与文档差在哪、还有什么没定）、要问人时的 `question`
-与选项。形状见 `phases/meeting-read.md`。
+归属、原话引用、`finding`（定了什么、与文档差在哪、还有什么没定）、仍未定时标出 `question`。
+`question` 进蓝图 gap 或质询后的集中问答，读会阶段不再逐个摆选项。形状见 `phases/meeting-read.md`。
 
 自检只核结构、引用与留痕：**不读 finding 判业务**——纠偏改没改意思、话题漏没漏、结论有没有
 写出会上没说的、未决是不是被替人定了，都要拿原话与材料对着读，归读会的模型自己与独立审查。
@@ -303,22 +303,11 @@ def _notes_problems(key: str, section: dict, total: int, problems: list[str]) ->
             say(problem)
         if not str(topic.get("finding", "")).strip():
             say("没写 finding：这个话题定了什么、与文档差在哪、还有什么没定，一段话说清")
+        # `question` 只标「还没定、要人定什么」：它进蓝图 gap 或质询后的集中问答，
+        # 读会阶段不再逐个摆选项，因此这里不要求 options/recommend。
         question = str(topic.get("question") or "").strip()
-        options = [o for o in topic.get("options") or [] if isinstance(o, dict)]
         if topic.get("ownership") == "unclear" and not question:
-            say("归属判不准，要写 question 摆给人")
-        if not question:
-            if options:
-                say("没有 question 却写了 options：不问人就不摆选项")
-            continue
-        keys = [str(o.get("key", "")).strip() for o in options]
-        if not options or not all(keys):
-            say("要问人：至少一个真实选项，每个带 key 与 label")
-        if len(set(keys)) != len(keys):
-            say("的选项 key 有重复：人选的 key 要唯一指到一个做法")
-        recommend = str(topic.get("recommend", "")).strip()
-        if recommend and recommend not in keys:
-            say(f"的 recommend「{recommend}」不在选项里")
+            say("归属判不准，要写 question 记下还没定、要人定什么")
 
 
 def inspect(feature_root: Path) -> dict:

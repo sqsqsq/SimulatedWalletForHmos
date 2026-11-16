@@ -527,20 +527,29 @@ function issueRewritten(zones, fresh) {
 }
 
 /**
- * 这一轮里人明确说了「沿用上一版表态」的那几条议题 —— **解锁变义判据的唯一路径**。
+ * 这一轮里人明确说过话的那几条议题 —— **解锁变义判据的唯一路径**。
  *
  * 变义时停手是对的，但停手必须有出路：模型判定「只是改了措辞」时，人用
- * `story_flow.py decide --update <定了哪件事> --issue <议题 id> --reply <原话>` 记一笔，这里据它带回。
+ * `story_flow.py decide --ask <ask_id> --item <议题 id> --reply <原话>` 记下他的原话，这里据它带回。
  * 没有这一段的话，报错让人去记一笔、记完重跑却还是同样的报错——那是个死胡同。
  *
- * **只认这条命令记下的原话**：`update-notes` 里写「已确认」不算，那是模型的转述。
+ * **只认流程契约里记下的原话**：`update-notes` 里写「已确认」不算，那是模型的转述。
  * 契约读不出来就当没有：宁可多停一次，也不能因为读不到就默认放行。
  */
 function carriedOver(flowPath) {
   const flow = flowPath ? readJson(flowPath, null) : null;
-  const rows = flow?.update?.decisions;
-  if (!Array.isArray(rows)) return new Set();
-  return new Set(rows.map(r => String(r?.issue ?? '').trim()).filter(Boolean));
+  const ids = new Set();
+  for (const row of Array.isArray(flow?.update?.decisions) ? flow.update.decisions : []) {
+    const issue = String(row?.issue ?? '').trim();
+    if (issue) ids.add(issue);
+  }
+  for (const round of Array.isArray(flow?.rounds) ? flow.rounds : []) {
+    for (const answer of Array.isArray(round?.answers) ? round.answers : []) {
+      const item = String(answer?.item_id ?? '').trim();
+      if (item) ids.add(item);
+    }
+  }
+  return ids;
 }
 
 /**
@@ -689,16 +698,17 @@ function renderReview(list, previous = '', categories = [], notes = [], carried 
         if (rewritten === 'yes' && carried.has(String(dec.id))) {
           // 人说了沿用：把上一版的表态带过来，标记里的摘要换成这一版——
           // 不换的话下一次 build 还会判成「问题换了」，同一件事要人记第二遍。
-          notes.push(`议题 ${dec.id} 的正文改了，按 decide --update 记下的原话沿用上一版的表态`);
+          notes.push(`议题 ${dec.id} 的正文改了，按流程契约里记下的原话沿用上一版的表态`);
         } else if (rewritten === 'yes') {
           // 人是在**上一版问题**下写的字。问题换了还把勾选带过去，等于替他回答了一个
           // 他没看过的问题。这里只判摘要变没变；「只是改了措辞」还是「换了个问题」是语义判断，
-          // 归模型——它判定意义未变时，用 `story_flow.py decide --update` 把人的原话记一笔，
+          // 归模型——它判定意义未变时，用 `story_flow.py decide --ask --item` 把人的原话记一笔，
           // 再把这条的人工区照原样留着重跑。
           throw new ProjectionConflict(
             `AR/review.md 议题 ${dec.id}：「**${DECISION_SEGMENT}**」这次改了，而评审人已经在它下面写过意见——这次没有写盘，`
             + '盘上那一份还是人看过的那一版。'
-            + 'build 按决策点的摘要判问题换没换，换了就不把旧表态带到新问题下；评审人确认沿用上一版表态时，由 `story_flow.py decide --update 沿用上一版表态 --issue <议题 id> --reply <原话>` 记下原话，build 据这条记录沿用。');
+            + 'build 按决策点的摘要判问题换没换，换了就不把旧表态带到新问题下；评审人确认沿用上一版表态时，'
+            + '用 `story_flow.py status --questions-file` 生成问法、`decide --ask <id> --item <议题 id> --reply <原话>` 记下原话，build 据这条记录沿用。');
         }
         const human = keptHumanZone(zones, dec) ?? renderHumanZone(dec);
         parts.push(`${issueMark(dec.id, projectionDigest(machine))}\n\n${machine}\n${human}\n`);

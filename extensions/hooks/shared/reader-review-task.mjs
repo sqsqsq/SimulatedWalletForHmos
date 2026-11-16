@@ -2,7 +2,7 @@
  * Story 独立人读审查的任务书 —— **判据与这一次要看的东西**，从真源渲染。
  *
  * 判据本身（审什么、什么算阻断、核的先后）只在 `rules/story-reader-rules.yaml` 的 `story_reader_review`
- * 里写一份，这里原样带上；其余是它判不出来的部分：这一次审查材料的唯一一份文件索引、读法、关卡人签与决定的对照、
+ * 里写一份，这里原样带上；其余是它判不出来的部分：这一次审查材料的唯一一份文件索引、读法、人的原话记录与决定的对照、
  * 按作者区标题排好的阅读段、会议逐话题、上游图与承接它的小节、这一版合同的十章问题与章级维度、材料里的图逐张、
  * 附录材料表要对照的来源集合。同一件事在两处各写一遍，改一处另一处就静默过期。
  * 唯一消费者是 `story-build review --action prepare`。
@@ -20,7 +20,7 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
-import { signedGateRows } from './review-inputs.mjs';
+import { originalAnswerRows } from './review-inputs.mjs';
 import { carryTargets, useEffectiveChapters } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { readingWork } from '../../skills/story/scripts/core/story/figure-view.mjs';
@@ -32,18 +32,15 @@ import { knowledgeJudgmentLines } from '../../skills/story/scripts/core/story/st
 const PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * 会议逐话题四栏并列：会议判断、原话（按引用的行范围从 raw.md 取，同一范围只取一次）、
- * 人的裁决（关卡记录里生效的人签选了哪一项、没选哪几项；原话只在「关卡人签」给一份）、
+ * 会议逐话题三栏并列：会议判断、原话（按引用的行范围从 raw.md 取，同一范围只取一次）、
  * 当前结果（doc-refresh.md 里这一话题的段落）。
+ * 会议结论进蓝图，未定的进 gap；`question` 只作「还没定」的标记，不另设会议裁决关卡。
  * 取不到的一栏写「未取得，未验证」，不给空对象。
  */
 function meetingTopicRows(src) {
   const notes = readJsonOrNull(path.join(src, 'meeting-notes.json'));
   const meetings = Array.isArray(notes?.meetings) ? notes.meetings : null;
   if (!meetings) return ['`AR/story-src/meeting-notes.json` 读不出 `meetings` 列表——逐话题核对未取得，未验证。'];
-  const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
-  const gates = (flow?.rounds ?? []).flatMap(r => r?.gates ?? [])
-    .filter(g => g?.gate === 'meeting' && g?.by === 'human' && g?.outcome === 'accepted');
   const refresh = readOrNull(path.join(src, 'doc-refresh.md'));
   const doc = refresh === null ? null : parseDocument(refresh);
   const quoted = new Map();
@@ -63,14 +60,9 @@ function meetingTopicRows(src) {
         out.push(rawLines ? `- **原话** ${at}：` : `- **原话** ${at}：未取得，未验证`,
           ...(rawLines ? rawLines.slice(ev.start - 1, ev.end).map(l => `  > ${l}`) : []));
       }
-      const g = gates.filter(x => x.meeting === key && x.item === t.id).pop();
-      if (g) {
-        const opts = Array.isArray(g.options) ? g.options : [];
-        const chosen = opts.find(o => o.key === g.chosen);
-        out.push(`- **人的裁决**：选了「${g.chosen}」${chosen?.label ?? ''}；没选：`
-          + `${opts.filter(o => o.key !== g.chosen).map(o => `「${o.key}」${o.label}`).join('；') || '无'}；原话见「关卡人签」`);
-      } else {
-        out.push(`- **人的裁决**：${t.question ? '未裁决——这个话题要问人，关卡记录里没有它' : '没有单独摆给人，随材料关卡一并确认'}`);
+      if (String(t.question ?? '').trim()) {
+        out.push('- **仍要定的事**：' + String(t.question).trim()
+          + '——落在蓝图 gap 或质询后的集中问答，本任务核它的 owner/影响有没有被 Story 如实带出');
       }
       const h = doc?.headings.find(x => x.raw === `${key}/${t.id}` || x.raw.startsWith(`${key}/${t.id} `));
       out.push(...(!doc ? ['- **当前结果**：`AR/story-src/doc-refresh.md` 读不到，未验证']
@@ -295,8 +287,8 @@ export function readerReviewTask(projectRoot, feature, object = null) {
       + '与仍有效的旧约束冲突而没经有权人裁定的，记一条阻断发现。update-notes 是作者的判断，按原件与 before 核，不当依据。');
   }
 
-  // 人答先于逐章：关卡人签是来源之一，对话里答过的问题由登记条目的澄清正文引用原话，二者都拿原话核
-  rows.push('', '### 关卡人签：流程关卡上人看到的选项与回答（人答的来源之一）', '', ...signedGateRows(root));
+  // 人答先于逐章：原话记录是来源之一，对话里答过的问题由登记条目的澄清正文引用原话，二者都拿原话核
+  rows.push('', '### 人的原话记录：材料确认与设计问答（人答的来源之一，只陈列证据）', '', ...originalAnswerRows(root));
   rows.push(...decisionRows(path.join(src, 'decisions.json')));
 
   // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
@@ -338,10 +330,10 @@ export function readerReviewTask(projectRoot, feature, object = null) {
   // 位置逐版列实际存在的那些，纠偏留痕仍回原件看。
   if (fs.existsSync(path.join(src, 'meeting-notes.json'))) {
     rows.push('', '### 会议材料：逐话题并列', '',
-      '每个话题按「原话 → 人选的那一项 → 当前结果」核：回 `raw.md` 与 `corrections.json` 看原文，纠偏有没有改了意思、'
+      '每个话题按「原话 → 判断 → 当前结果」核：回 `raw.md` 与 `corrections.json` 看原文，纠偏有没有改了意思、'
       + '引用的行范围指的是不是那句话；话题有没有漏，会议判断与当前结果有没有写出会上没说的；'
-      + '原话里哪些是确定的，没收敛的有没有被替人定成结论；人选了什么、没选什么'
-      + '（没选的那一项的做法出现在结果里，算问题）；当前结果里每个确定的行为有没有依据，仍未决的有没有传到产物里。');
+      + '原话里哪些是确定的，没收敛的有没有被替人定成结论；当前结果里每个确定的行为有没有依据，'
+      + '仍未决的有没有作为 gap / 未决传到产物里。');
     for (const dir of meetingVersions(src)) {
       rows.push(`- \`${dir}/raw.md\` —— 原文，行号指它；`
         + `\`${dir}/corrections.json\` 是纠偏留痕，\`${dir}/evidence.md\` 是纠偏后的阅读件`);

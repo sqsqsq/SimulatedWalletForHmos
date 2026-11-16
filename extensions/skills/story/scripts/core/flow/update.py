@@ -723,7 +723,7 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
     """把本轮评审人对设计议题的意见交给蓝图负责方：核本轮的 `design-feedback.json`，记进本轮记录。
 
     每条反馈挂在一条设计议题上（`feedback_id` 是议题编号，同一议题多条写 `D3.1`、`D3.2`），`target_ref` 与议题登记的
-    `design_target.target_ref` 相同，这条议题在本轮有人的原话（`decide --update --issue`）。被评的版本是成文登记记下的蓝图
+    `design_target.target_ref` 相同，这条议题在本轮有人的原话（设计问答里的同一题号）。被评的版本是成文登记记下的蓝图
     版本。两件事分开记：提交时的候选资格（原生只判够不够格进入调和，文件没改就不重判，蓝图出了新版本也不改投），
     与当前蓝图里来源精确指向这份反馈的决定。接受与否由蓝图负责方在 component-design 里定，这里只报「待确认」。
     没有设计目标的业务意见不进这份文件，留在需求侧照议题处理。
@@ -756,7 +756,9 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
                 (feature_root / "AR" / "story-src" / "decisions.json").read_text(encoding="utf-8-sig")).get("decisions", [])}
         except (OSError, ValueError, AttributeError) as exc:
             raise FlowError(f"AR/story-src/decisions.json 读不出议题（{exc}）：反馈按议题认") from exc
-        said = {d.get("issue") for d in (contract.get("update") or {}).get("decisions", [])}
+        # 人的原话来自本组设计问答的记录：同一题号就是本轮的输入身份，不再另立 D 号。
+        rounds = contract.get("rounds") or [{}]
+        said = {str(a.get("item_id")) for a in rounds[-1].get("answers") or []}
         problems, items = [], []
         if doc.get("blueprint_id") != blueprint:
             problems.append(f"blueprint_id 应是本单的蓝图 {blueprint}")
@@ -771,7 +773,9 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
             elif item.get("target_ref") != target:
                 problems.append(f"{fid}：target_ref 应是议题 {issue} 登记的 {target}")
             if issue not in said:
-                problems.append(f"{fid}：议题 {issue} 在本轮没有记下人的原话——先 `decide --update ... --issue {issue} --reply \"<原话>\"`")
+                problems.append(f"{fid}：本轮没有记下与 {issue} 对应的人的原话——按必要问人条件写问法文件，"
+                                "跑 `status --questions-file` 后用 "
+                                f"`decide --ask <id> --item {issue} --reply \"<原话>\"` 记下")
             items.append({"feedback_id": fid, "issue": issue, "kind": item.get("kind"), "target_ref": item.get("target_ref")})
         from flow import native  # noqa: PLC0415 —— 只有这一步要读原生蓝图
         out = native.call(project_root, "feedback", "--blueprint", blueprint, stdin=doc)
@@ -892,7 +896,7 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
                sources=_sources(feature_root),
                notes=f"AR/story-src/updates/{rid}/update-notes.md",
                after={"path": f"AR/story-src/updates/{rid}/after", "files": kept},
-               units=units, stale_units=stale, decisions=(contract.get("update") or {}).get("decisions", []))
+               units=units, stale_units=stale)
     contract["update"] = {"open": None, "last_closed": rid}
     save(feature_root, contract)
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n",
@@ -1059,7 +1063,6 @@ def cmd_update_restore(feature_root: Path) -> dict:
                                   else "本轮完成点之后又改过")})
 
     contract = load(feature_root) or {}
-    rec["decisions"] = (contract.get("update") or {}).get("decisions", [])
     rec.update(status="restore_conflicted" if conflicts else "restored", restored_at=now(),
                restore_conflicts=conflicts, restore_copy=copy)
     if not conflicts:

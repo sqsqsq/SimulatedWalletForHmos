@@ -787,7 +787,7 @@ modes:
   - id: R04-flow-status-after-s5
     dimension: content
     found_round: "2026-08-28"
-    form: 需求级流程状态不幂等——走到成文登记之后，重复查询或重复登记改变了状态、换了身份或写了文件，reopen 之后却没有进入待同步
+    form: 需求级流程状态不幂等——走到成文登记之后，重复查询或重复登记改变了状态、换了身份或写了文件
     clause: KR-4b / 实跑 story-suite-20260828-191953；2.0.0 步骤 4 阶段评审 §5 改锁现行流程
     checker: r04_flow_status_after_s5
     target: mechanism
@@ -796,9 +796,9 @@ modes:
     severity: BLOCKER
     status: fixed
     scope_note: >
-      「到没到某个点」是一段区间不是一个值：complete（交给设计）→ 设计准入 → story_written（成文登记）。
-      检查器在 R01 好样本的副本上用真实流程命令走一遍：每一步连查两次 status 结果相同、第二次不再写入（停在关卡时第一次写问法侧车），
-      同一份对象重复登记不换身份，reopen 之后进行中、交付门拦住。
+      「到没到某个点」是一段区间不是一个值：gathering（材料确认后交给设计）→ 设计准入 → story_written（成文登记）。
+      检查器在 R01 好样本的副本上用真实流程命令走一遍：每一步连查两次 status 结果相同、第二次不再写入（停在材料关卡时第一次写问法侧车），
+      同一份对象重复登记不换身份。范围由蓝图承载，旧的范围重开关卡随职责退出，不在检查器里重演。
 
   - id: C01-story-conservation
     dimension: content

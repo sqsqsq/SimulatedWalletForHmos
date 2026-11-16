@@ -1,4 +1,4 @@
-"""一次性侧车的读取、本 AR 的定位与选项，以及工作区骨架（`init`）。
+"""一次性侧车的读取、本 AR 的定位与工作区骨架（`init`）。
 
 侧车是 AI 写、脚本读、读完即销毁的文件：命令行参数只放标量，结构化数据一律走文件，
 免得同一份 JSON 在不同 shell 下被二次解析成不同的东西。
@@ -10,16 +10,11 @@ from pathlib import Path
 
 from flow.state import (
     system_requirement,
-    CARRY_ALL, FlowError, GATES, SKILL_ROOT, STORY_CONTRACT, log)
+    FlowError, SKILL_ROOT, STORY_CONTRACT, log)
 
-# 拆分份表侧车：AI 写、脚本读，登记进契约后销毁（一次性）
-SPLIT_PARTS = ("AR", "story-src", ".split-parts.json")
 # 本 AR 定位侧车：三源核对后收敛出的当前范围结论。round 消费
 POSITIONING = ("AR", "story-src", ".positioning.json")
-# 范围定法选项集侧车：需求分析（S2b）产出的**全部**可选项。round 消费进契约，
-# 第二级关卡此后只能从契约里取——见 read_scope_options 的注释
-SCOPE_OPTIONS = ("AR", "story-src", ".scope-options.json")
-# 材料关卡的缺口：盘点后写，`status` 据它算第一级的推荐，`decide` 记完即销毁
+# 材料关卡的缺口：盘点后写，`status` 据它算推荐，`decide` 记完即销毁
 GAPS = ("AR", "story-src", ".material-gaps.json")
 
 
@@ -105,92 +100,6 @@ def read_positioning(feature_root: Path) -> dict | None:
     return {"scope_text": scope_text, "sr_related_ars": normalized}
 
 
-def read_scope_options(feature_root: Path) -> list[dict] | None:
-    """读范围定法选项集侧车（需求分析 S2b 的产出）。
-
-    **选项集必须先落契约、关卡再从契约取**：否则分析已写「未找到具名可切维度，
-    故不提供拆分选项」时，关卡仍可能照规则示意硬凑满三项——多出来的选项是**现编的空壳**：
-    没有份表、没有内容，人看不懂也无从评估，选中后下一级的份表同样现编。
-    纯文字约束拦不住现编。
-
-    分析定几项，关卡就只能摆几项：让「摆不出第二项」成为**结构性事实**，而不是纪律。
-    想要分析里没有的切法，正当路径是口述修正 → 回去重做分析（补该维度、重落侧车），
-    这正是「先做完再问」的原意：分析先行，关卡只负责照出。
-    """
-    payload = read_sidecar(feature_root, SCOPE_OPTIONS)
-    if payload is None:
-        return None
-    if not isinstance(payload, list) or not payload:
-        raise FlowError(f"{SCOPE_OPTIONS[-1]} 须是非空数组：至少含「按当前范围整体承载」一项")
-
-    keys: list[str] = []
-    for i, opt in enumerate(payload):
-        if not isinstance(opt, dict):
-            raise FlowError(f"{SCOPE_OPTIONS[-1]} 第 {i + 1} 项不是对象")
-        key = str(opt.get("key") or "").strip()
-        if not key:
-            raise FlowError(f"{SCOPE_OPTIONS[-1]} 第 {i + 1} 项缺 key")
-        if key in keys:
-            raise FlowError(f"选项 key 重复：「{key}」")
-        if not str(opt.get("label") or "").strip():
-            raise FlowError(
-                f"选项「{key}」缺 label：标签要让人看得懂选完是什么范围"
-                "（整体承载列出功能点；切法写清按什么切、切成几份）")
-        keys.append(key)
-
-    recommended = [str(o.get("key")) for o in payload if str(o.get("recommend") or "").strip()]
-    if len(recommended) > 1:
-        raise FlowError(f"{SCOPE_OPTIONS[-1]} 里有 {len(recommended)} 项写了 recommend："
-                        "推荐至多一项，写在那一项的 recommend 里（一句理由）")
-
-    if CARRY_ALL not in keys:
-        raise FlowError(
-            f"选项集缺固定首项 `{CARRY_ALL}`（按当前范围整体承载）"
-            "——不切分永远是一个可选项，不摆出来人就无从选择")
-
-    normalized = []
-    for opt in payload:
-        item = dict(opt)
-        item["key"] = str(opt["key"]).strip()
-        if item["key"] != CARRY_ALL:
-            parts = item.get("parts")
-            if not isinstance(parts, list) or len(parts) < 2:
-                raise FlowError(
-                    f"切法「{item['key']}」缺 parts（至少两份）："
-                    "没有份表的切法是空壳，人无法评估切完是什么样")
-        normalized.append(item)
-    # 顺序由契约定：整体承载固定在最前，其余照分析给出的顺序；推荐另起一行，不靠排位
-    normalized.sort(key=lambda o: 0 if o["key"] == CARRY_ALL else 1)
-    return normalized
-
-
-def chosen_dimension(current: dict) -> dict | None:
-    """本轮第二级选中的那个切分维度（选了整体承载或还没选则为 None）。"""
-    for g in reversed(current.get("gates") or []):
-        if g.get("gate") == "scope_decision" and g.get("outcome") == "accepted":
-            if g.get("chosen") == CARRY_ALL:
-                return None
-            for opt in current.get("scope_options") or []:
-                if opt.get("key") == g.get("chosen"):
-                    return opt
-            return None
-    return None
-
-
-def split_carrier_options(current: dict) -> list[dict]:
-    """第三级的选项 = 选定维度的份表，由脚本生成。
-
-    人在第二级选了「按 X 切」，第三级要选的就是 X 那张份表里的哪一份归本 AR——
-    选项内容早已在分析里定好，这一级没有任何可现编的余地，所以不读侧车。
-    """
-    dim = chosen_dimension(current)
-    if not dim:
-        return []
-    return [{"key": str(p.get("seq")), "scope": p.get("scope", ""),
-             "depends_on": p.get("depends_on") or []}
-            for p in dim.get("parts") or []]
-
-
 def read_gaps(feature_root: Path) -> dict | None:
     """材料盘点的缺口：`{"missing": [还缺的材料…], "why": "一句缺口判断"}`。没写返回 None。"""
     payload = read_sidecar(feature_root, GAPS)
@@ -206,80 +115,6 @@ def read_gaps(feature_root: Path) -> dict | None:
     if not why:
         raise FlowError(f"{where} 缺 why：一句缺口判断——缺什么、为什么现有材料不够，或者为什么够了")
     return {"missing": [str(m).strip() for m in missing], "why": why}
-
-
-def read_split_parts(feature_root: Path, feature: str) -> list[dict]:
-    """读拆分份表侧车并校验。
-
-    走文件不走参数：JSON 全是引号，任何 shell 都要对参数再解析一遍——同一条命令在
-    bash 下原样送达、在 PowerShell 下双引号被吞。这条纪律本 skill 的所有脚本一致。
-
-    份表回答的是「拆成几份、各归谁、什么顺序、谁依赖谁」；`scope_text` 不单独登记，
-    由本 AR 那份的 scope 推导——同一事实两处登记，迟早各说各话。
-    """
-    path = feature_root / Path(*SPLIT_PARTS)
-    if not path.is_file():
-        return []
-    try:
-        parts = json.loads(path.read_text(encoding="utf-8-sig"))
-    except json.JSONDecodeError as exc:
-        raise FlowError(f"{path.name} 不是合法 JSON：{exc}") from exc
-    if not isinstance(parts, list) or not parts:
-        raise FlowError(f"{path.name} 须是非空数组：每项一份拆分")
-
-    seqs: list[int] = []
-    for i, p in enumerate(parts):
-        if not isinstance(p, dict):
-            raise FlowError(f"{path.name} 第 {i + 1} 项不是对象")
-        missing = [k for k in ("seq", "carrier", "scope") if not str(p.get(k) or "").strip()]
-        if missing:
-            raise FlowError(f"{path.name} 第 {i + 1} 项缺字段：{'、'.join(missing)}")
-        if not isinstance(p["seq"], int):
-            raise FlowError(f"{path.name} 第 {i + 1} 项的 seq 须是整数（建议执行顺序）")
-        seqs.append(p["seq"])
-
-    dup = {s for s in seqs if seqs.count(s) > 1}
-    if dup:
-        raise FlowError(f"份表 seq 重复：{sorted(dup)}——seq 是执行顺序，每份一个")
-
-    mine = [p for p in parts if str(p["carrier"]).strip() == feature]
-    if len(mine) != 1:
-        raise FlowError(
-            f"份表里 carrier 为「{feature}」的必须恰好一份，实为 {len(mine)} 份"
-            "——本 AR 承载哪一份是拆分的核心结论，不能缺也不能多")
-
-    known = set(seqs)
-    for p in parts:
-        deps = p.get("depends_on") or []
-        if not isinstance(deps, list):
-            raise FlowError(f"seq {p['seq']} 的 depends_on 须是数组")
-        for d in deps:
-            if d not in known:
-                raise FlowError(f"seq {p['seq']} 依赖了不存在的 seq {d}")
-            if d == p["seq"]:
-                raise FlowError(f"seq {p['seq']} 依赖了自己")
-
-    # 环检测：依赖是「须先交付」，成环就没有可执行的起点
-    graph = {p["seq"]: list(p.get("depends_on") or []) for p in parts}
-    state: dict[int, int] = {}
-
-    def walk(node: int) -> None:
-        if state.get(node) == 2:
-            return
-        if state.get(node) == 1:
-            raise FlowError(f"份表依赖成环（seq {node} 回到了自己）：没有可执行的起点")
-        state[node] = 1
-        for nxt in graph[node]:
-            walk(nxt)
-        state[node] = 2
-
-    for s in seqs:
-        walk(s)
-
-    return [{"seq": p["seq"], "carrier": str(p["carrier"]).strip(),
-             "scope": str(p["scope"]).strip(),
-             "depends_on": list(p.get("depends_on") or [])}
-            for p in sorted(parts, key=lambda x: x["seq"])]
 
 
 def cmd_init(feature_root: Path, feature: str) -> dict:

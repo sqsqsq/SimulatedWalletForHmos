@@ -216,9 +216,8 @@
     }
   },
   "flow": {
-    "schema": 6,
-    "gates": ["material_scope", "scope_decision", "split_carrier", "meeting"],
-    "carry_all": "carry_all"
+    "schema": 7,
+    "gates": ["material_scope"]
   },
   "update_files": {
     "editable": ["AR/story.md", "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",

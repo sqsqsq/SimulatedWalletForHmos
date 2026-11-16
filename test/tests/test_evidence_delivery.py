@@ -3,7 +3,7 @@
 锁的是送达，不是判断：
   ① 规约连附注一起按原文送到知识任务，不在册的编号报出来；
   ② 处置是评审动作的条目适用时不产生代码要求：不要验收桥，也不要实体上的义务；
-  ③ verifier 任务书里原条目与当前判断并列（spec 判断、plan 契约），会议逐话题四栏并列，
+  ③ verifier 任务书里原条目与当前判断并列（spec 判断、plan 契约），会议逐话题判断/原话/当前结果并列，
      上游图与承接它的 story 图并排——取不到的写未验证，不给空；
   ④ 选方案的议题要有「建议」段；⑤ 章级合同表跟着模板选定的位置只铺一次；⑥ 归档后下一步是 done。
 全部用中性题材；判断对不对归审查，这里不判。
@@ -143,87 +143,103 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertIn("interfaces.中性出口接口.reuseTrace：重试时复用入口生成的标识 · ut", row)
         self.assertIn("interfaces.中性出口接口.emitWithTrace：重试时复用入口生成的标识 · both", row)
 
-    def test_meeting_topics_come_in_four_columns(self) -> None:
+    def test_meeting_topics_come_with_judgement_original_and_result(self) -> None:
         src = self.src()
         (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
         version = src / "meetings" / "澄清会" / "abcdef12"
         version.mkdir(parents=True)
         (version / "raw.md").write_text("甲 10:00：出口先按旧方式。\n乙 10:01：重试要不要换标识，先别写死。\n", encoding="utf-8")
         topic = {"id": "T1", "title": "重试标识", "finding": "重试是否换标识未定",
-                 "evidence": [{"start": 2, "end": 2}], "question": "怎么处理？",
-                 "options": [{"key": "a", "label": "换标识"}, {"key": "defer", "label": "保持待定"}]}
+                 "evidence": [{"start": 2, "end": 2}], "question": "怎么处理？"}
         other = {"id": "T2", "title": "出口方式", "finding": "要问而没问", "evidence": [{"start": 2, "end": 2}],
-                 "question": "要不要换？", "options": [{"key": "a", "label": "换"}]}
+                 "question": "要不要换？"}
         (src / "meeting-notes.json").write_text(json.dumps({"meetings": [{
             "source": "澄清会.docx", "source_sha": "abcdef1234", "topics": [topic, other]}]}, ensure_ascii=False),
             encoding="utf-8")
-        (src / "story-flow.json").write_text(json.dumps({"rounds": [{"gates": [{
-            "gate": "meeting", "meeting": "澄清会@abcdef12", "item": "T1", "chosen": "defer",
-            "options": topic["options"], "reply": "T1 保持待定", "by": "human", "outcome": "accepted"}]}]},
-            ensure_ascii=False), encoding="utf-8")
         (src / "doc-refresh.md").write_text("### 澄清会@abcdef12/T1 重试标识\n\n本期换标识。\n", encoding="utf-8")
         text = self.reader_task()
         section = text.split("#### 澄清会@abcdef12/T1", 1)[1].split("####", 1)[0]
         self.assertIn("**会议判断**：重试是否换标识未定", section)
         self.assertIn("> 乙 10:01：重试要不要换标识，先别写死。", section)
-        self.assertIn("选了「defer」保持待定；没选：「a」换标识；原话见「关卡人签」", section)
-        self.assertEqual(1, text.count("> T1 保持待定"), "同一笔人签的原话在一份任务里贴了两遍")
+        self.assertIn("**仍要定的事**：怎么处理？", section)
+        self.assertNotIn("- **人的裁决**", text, "会议裁决关卡已退出，任务书还在按它投影")
         self.assertIn("> 本期换标识。", section)
         t2 = text.split("#### 澄清会@abcdef12/T2", 1)[1]
         self.assertIn("同 T1", t2, "同一范围的原话取了两次")
-        self.assertIn("未裁决", t2)
+        self.assertIn("**仍要定的事**：要不要换？", t2)
         self.assertIn("doc-refresh.md 里没有这个话题的段落", t2)
 
-    def signed(self, label: str = "后续由负责人定", **gate) -> dict:
-        record = {"gate": "scope_decision", "ask_id": "a1", "no": 2, "at": "2026-01-01T00:00:00Z",
-                  "options": [{"no": 1, "key": "retry", "label": "失败后允许再试"},
-                              {"no": 2, "key": "later", "label": label}],
-                  "chosen": "later", "label": label, "reply": "失败怎么处理先不定，后面负责人定",
-                  "mapped_by": "reply", "by": "human", "outcome": "accepted"}
-        record.update(gate)
+    def answer(self, item_id: str = "Q1", question: str = "失败怎么处理？",
+               options: list[str] | None = None, reply: str = "失败怎么处理先不定，后面负责人定",
+               source_ref: str = "RR/prd.md#3", **extra) -> dict:
+        record = {"ask_id": "a1", "item_id": item_id, "question": question,
+                  "options": options if options is not None else ["失败后允许再试", "后续由负责人定"],
+                  "reply": reply, "at": "2026-01-01T00:00:00Z", "source_ref": source_ref}
+        record.update(extra)
         return record
 
-    def write_flow(self, *gates: dict) -> None:
-        (self.src() / "story-flow.json").write_text(json.dumps({"rounds": [{"round": 1, "gates": list(gates)}]},
-                                                               ensure_ascii=False), encoding="utf-8")
+    def write_flow(self, *answers: dict, material: dict | None = None) -> None:
+        gates = [material] if material else []
+        (self.src() / "story-flow.json").write_text(json.dumps(
+            {"rounds": [{"round": 1, "gates": gates, "answers": list(answers)}]},
+            ensure_ascii=False), encoding="utf-8")
 
     def test_the_signed_original_comes_before_the_authors_reading(self) -> None:
-        """人选了「后续定」，作者登记却写成可再试：任务同时交两份不同内容，人签在前，原话取 reply。"""
+        """人的原话里说「先不定」，作者登记却写成可再试：任务同时交两份不同内容，原话在前。"""
         src = self.src()
-        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
-        self.write_flow(self.signed())
+        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n背景。\n", encoding="utf-8")
+        self.write_flow(self.answer())
         (src / "decisions.json").write_text(json.dumps({"decisions": [
             {"id": "D-4", "status": "settled", "title": "失败处理", "decider": "需求方",
              "clarification": "失败后可默认再试一次"}]}, ensure_ascii=False), encoding="utf-8")
         task = self.reader_task()
-        signed = task.split("### 关卡人签", 1)[1].split("\n### ", 1)[0]
-        self.assertLess(task.index("### 关卡人签"), task.index("### 登记成已定"), "作者解释排在人签前面")
-        self.assertIn("选了「later」后续由负责人定", signed)
-        self.assertIn("「retry」失败后允许再试；「later」后续由负责人定", signed, "当时摆出的选项没带全")
+        signed = task.split("### 人的原话记录", 1)[1].split("\n### ", 1)[0]
+        self.assertLess(task.index("### 人的原话记录"), task.index("### 登记成已定"), "作者解释排在人答前面")
+        self.assertIn("第 1 轮设计问答 a1/Q1：失败怎么处理？", signed)
+        self.assertIn("「失败后允许再试」", signed, "当时摆出的候选没带全")
+        self.assertIn("「后续由负责人定」", signed, "当时摆出的候选没带全")
         self.assertIn("> 失败怎么处理先不定，后面负责人定", signed, "人答不是 reply 原文")
-        self.assertNotIn("可默认再试", signed, "作者解释混进了关卡人签")
+        self.assertIn("出处：RR/prd.md#3", signed)
+        self.assertNotIn("可默认再试", signed, "作者解释混进了人的原话记录")
         self.assertIn("失败后可默认再试一次", task.split("### 登记成已定", 1)[1], "作者解释没作为待核对象送到")
         self.assertIn("引用的问答原话是依据，其余是作者的解释", task, "澄清正文里引用的人答没被当作可用依据送到")
         self.assertIn("没有已开始的同图增强", task.split("### 已有的同图增强（机械事实）", 1)[1], "已有增强的机械事实没送到")
-        for phrase in ("—", "basis"):
-            self.assertNotIn(phrase, signed)
 
-    def test_only_effective_human_answers_are_signatures(self) -> None:
-        """模型提议、被退回的回话不呈为人签；没有流程契约是没有这类人签，契约坏了是缺口。"""
-        self.write_flow(self.signed(by="model"), self.signed(outcome="rejected", reply="放好了"))
-        rows = self.signed_rows()
-        self.assertIn("还没有生效的人签", rows)
-        self.assertNotIn("后面负责人定", rows)
+    def test_only_effective_material_confirmations_are_shown(self) -> None:
+        """模型提议、被拒的材料答复不呈为人的原话；没有流程契约是没有这类原话，契约坏了是缺口。"""
+        rejected = {"gate": "material_scope", "ask_id": "m1", "question": "料齐了吗？",
+                    "options": [{"no": 1, "key": "supplied", "label": "已放进收件箱"}],
+                    "chosen": "supplied", "reply": "放好了", "by": "human", "outcome": "rejected"}
+        model = dict(rejected, by="model", outcome="accepted")
+        self.write_flow(material=model)
+        rows = self.original_rows()
+        self.assertIn("还没有人的原话", rows)
         self.assertNotIn("放好了", rows)
+        self.write_flow(material=rejected)
+        self.assertNotIn("放好了", self.original_rows())
         (self.src() / "story-flow.json").write_text("{ 坏", encoding="utf-8")
-        self.assertIn("读不出关卡记录", self.signed_rows())
+        self.assertIn("读不出问答记录", self.original_rows())
         (self.src() / "story-flow.json").unlink()
-        self.assertIn("没有这类人签", self.signed_rows())
+        self.assertIn("没有这类原话", self.original_rows())
 
-    def signed_rows(self) -> str:
+    def test_a_material_confirmation_is_not_a_ruling(self) -> None:
+        """材料确认只陈列登记项与原话：不写「所选 = 人的裁决」。"""
+        material = {"gate": "material_scope", "ask_id": "m1", "question": "料齐了吗？",
+                    "options": [{"no": 1, "key": "supplied", "label": "已放进收件箱"},
+                                {"no": 2, "key": "confirm_scope", "label": "现有材料就是全部"}],
+                    "chosen": "confirm_scope", "label": "现有材料就是全部", "reply": "2",
+                    "by": "human", "outcome": "accepted"}
+        self.write_flow(material=material)
+        rows = self.original_rows()
+        self.assertIn("第 1 轮材料确认：登记项「confirm_scope」现有材料就是全部", rows)
+        self.assertIn("> 2", rows)
+        self.assertNotIn("人的裁决", rows)
+        self.assertNotIn("所选", rows)
+
+    def original_rows(self) -> str:
         proc = nk.node("--input-type=module", "-e",
                        f"const m = await import({nk.as_url(self.ext / 'hooks/shared/review-inputs.mjs')});"
-                       f"process.stdout.write(m.signedGateRows({json.dumps(self.feature_root.as_posix())}).join('\\n'));")
+                       f"process.stdout.write(m.originalAnswerRows({json.dumps(self.feature_root.as_posix())}).join('\\n'));")
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 

@@ -1,8 +1,8 @@
 /**
  * story 前置流程契约的门禁（`AR/story-src/story-flow.json`）。
  *
- * 这套判据校验的是 /story 链自己的产物——三级关卡问了没、决策留痕齐不齐、
- * 范围收口没有；成文骨架起稿前（`story-build skeleton`）按它预检。
+ * 这套判据校验的是 /story 链自己的产物——材料确认了没、人的原话记录是否成证据、
+ * 当前问法与材料都定了没有；成文骨架起稿前（`story-build skeleton`）按它预检。
  *
  * 契约的写入侧在同目录的 Python 流程模块；本文件是 JS 侧的只读消费者。
  * 导出都是纯函数：给 featureRoot，回问题串数组（空 = 通过）。
@@ -14,16 +14,19 @@ import { fileURLToPath } from 'node:url';
 /**
  * story 前置流程契约（`AR/story-src/story-flow.json`，规则见 rules/init_analysis.md）。
  *
- * 契约存在即表示该需求走了 /story：材料导入、拆分裁决、交给设计的授权都记在里面。
- * 未收口就起稿成文，说明这些决策没走完：诊断出 PRD 缺料却径直往下写，人工补录的整份 PRD
+ * 契约存在即表示该需求走了 /story：材料导入与确认、设计后必要问答的原话都记在里面。
+ * 未确认材料就起稿成文，说明材料还没走到位：诊断出 PRD 缺料却径直往下写，人工补录的整份 PRD
  * 就全程没被读过。这里是该跳步的机械拦截点。
  *
  * 没走 /story 的 feature 没有这个文件，**不受本检查影响**。
  */
 const FLOW_FILE = ['AR', 'story-src', 'story-flow.json'];
+const ASK_FILE = ['AR', 'story-src', '.ask.json'];
+const MATERIAL_GATE = 'material_scope';
+const DESIGN_KIND = 'design_questions';
 
 /**
- * 章节合同：流程契约的常量（`flow`：schema、关卡名、整体承载键）与第一级关卡的合法值域
+ * 章节合同：流程契约的常量（`flow`：schema、关卡名）与材料关卡的合法值域
  * （`gates.material_scope.options`）都登记在它里面。`story_flow.py` 写、这里读——两边各存一份
  * 字面的话，只改一处，写进契约的选择就会在这里被判非法。
  *
@@ -31,7 +34,7 @@ const FLOW_FILE = ['AR', 'story-src', 'story-flow.json'];
  * 去改它，而坏掉的是合同的读取路径。在真正要判的那一刻才读——加载期读、加载期吞掉异常，
  * 两样都做不到把原因带出来。
  *
- * @returns {{flow: {schema: number, gates: Set<string>, carryAll: string}|null,
+ * @returns {{flow: {schema: number, gates: Set<string>}|null,
  *            keys: Set<string>|null, problem: string|null}}
  */
 function readChapterContract() {
@@ -42,34 +45,36 @@ function readChapterContract() {
     contract = JSON.parse(stripBom(fs.readFileSync(file, 'utf-8')));
   } catch (err) {
     return { flow: null, keys: null,
-      problem: `章节合同 contracts/story-chapters.json：读不到或不是合法 JSON（${err.message}）——流程常量与第一级关卡的值域登记在它的`
+      problem: `章节合同 contracts/story-chapters.json：读不到或不是合法 JSON（${err.message}）——流程常量与材料关卡的值域登记在它的`
         + ' flow 与 gates.material_scope 里，读不到就判不了契约' };
   }
   const f = contract?.flow;
   const gates = Array.isArray(f?.gates) ? f.gates.map(g => String(g ?? '').trim()).filter(Boolean) : [];
-  if (!Number.isInteger(f?.schema) || !gates.length || !String(f?.carry_all ?? '').trim()) {
+  if (!Number.isInteger(f?.schema) || !gates.length) {
     return { flow: null, keys: null,
-      problem: '章节合同 contracts/story-chapters.json 的 flow：缺 schema / gates / carry_all——流程契约的常量登记在这里，'
+      problem: '章节合同 contracts/story-chapters.json 的 flow：缺 schema / gates——流程契约的常量登记在这里，'
         + '缺了判不了契约' };
   }
   const keys = (contract?.gates?.material_scope?.options ?? [])
     .map(o => String(o?.key ?? '').trim()).filter(Boolean);
   if (!keys.length) {
     return { flow: null, keys: null,
-      problem: '章节合同 contracts/story-chapters.json 的 gates.material_scope.options：是空的——第一级关卡的值域登记在这里，'
+      problem: '章节合同 contracts/story-chapters.json 的 gates.material_scope.options：是空的——材料关卡的值域登记在这里，'
         + '空了判不了 chosen' };
   }
-  return { flow: { schema: f.schema, gates: new Set(gates), carryAll: String(f.carry_all).trim() },
-    keys: new Set(keys), problem: null };
+  return { flow: { schema: f.schema, gates: new Set(gates) }, keys: new Set(keys), problem: null };
 }
 
 function stripBom(text) {
   return String(text ?? '').replace(/^\uFEFF/, '');
 }
 
-const FLOW_FIX = "前置流程由 /story 的三级关卡（材料 → 范围怎么定 → 承载哪份）逐级写进契约，范围定了、按它设计之后才起稿成文。";
+const FLOW_FIX = "前置流程由 /story 的材料确认与原生设计写进契约：材料经人确认、按它进设计之后才起稿成文。";
 /** 契约的状态只有两个：`gathering`（成文登记之前）与 `story_written`（成文登记）；归档是独立的记录字段。 */
 const FLOW_STATES = ['gathering', 'story_written'];
+/** 设计问答原话记录的必需字段与不得携带的字段：原话只作证据，目标/版本只在原生 feedback 条目上。 */
+const ANSWER_REQUIRED = ['ask_id', 'item_id', 'question', 'options', 'reply', 'at', 'source_ref'];
+const ANSWER_FORBIDDEN = ['target_ref', 'source_revision', 'mapped_by'];
 
 export function flowProblems(featureRoot) {
   const { exists, flow, error } = readFlow(featureRoot);
@@ -81,15 +86,14 @@ export function flowProblems(featureRoot) {
 
   const contract = readChapterContract();
   if (contract.problem) return [contract.problem];
-  const { schema, gates: GATES, carryAll } = contract.flow;
+  const { schema, gates: GATES } = contract.flow;
 
   // 契约由 story_flow.py 写；下面保留的判据是「模型手改契约时仍有保护作用」的那些：
-  // 坏文件、错状态、chosen 不在摆出的选项里、第二级现编选项、份表与定位——它们直接决定后续流程。
-  // 写入侧已保证的形状（outcome 值域、时间戳、签名人）手改成错形状也不改变流程走向，不在这里重判。
+  // 坏文件、错状态、chosen 不在摆出的选项里、原话记录缺字段与旧字段残留。
   if (flow?.schema !== schema) {
     return [
       `AR/story-src/story-flow.json：schema 是 ${flow?.schema ?? '缺失'}，当前流程契约是 ${schema}——` +
-        '契约由 story_flow.py 按当前 schema 写入，旧版本的契约不做迁移',
+        '本版不接续旧版现场，也不自动迁移；要按旧版收口就留在原版，要用本版就为新需求另跑 init',
     ];
   }
 
@@ -100,9 +104,15 @@ export function flowProblems(featureRoot) {
     problems.push(`AR/story-src/story-flow.json：没有任何轮次记录，契约在而流程没走过——${FLOW_FIX}`);
   }
 
+  // 契约级旧字段：范围切分与份表随退出一起离场；留着说明这是旧机制的残留，不按新契约判。
+  if (flow?.split !== undefined) {
+    problems.push('AR/story-src/story-flow.json：还带着 split（范围切分与份表）——本版不再维护范围裁决与份表，'
+      + '范围由蓝图承载；旧现场不接续');
+  }
+
   rounds.forEach((r, i) => {
     const where = `AR/story-src/story-flow.json 第 ${i + 1} 轮`;
-    // 一轮 = 一次材料状态：轮次由材料清单的 digest 划界，`reopen` 重拍范围时另开一轮。
+    // 一轮 = 一次材料状态：轮次由材料清单的 digest 划界。设计开始之后材料变化只登记进本轮。
     //
     // 这里**不查初析件哈希**。初析在同一轮内会从盘点版改到完整版，拿它划轮次，
     // 等于「材料没动、重写一遍分析」也能造出一轮，而真正补了料却在分析之前跑 round 的
@@ -116,13 +126,12 @@ export function flowProblems(featureRoot) {
     // 本 AR 定位是整条范围链的起点：没有它，「本 AR 承载什么」就没有依据，
     // 下游只能默默按上游全量走，SR 全量就会被写成本 AR 范围。
     //
-    // 只查**收口那一轮**：材料盘点阶段（补料被拒的那些轮次）本来就还没做需求分析，
+    // 只查**最后一轮**：材料盘点阶段（补料被拒的那些轮次）本来就还没做需求分析，
     // 要求每一轮都有定位，等于逼着人在材料没确认时先写完整分析。
-    const isLastRound = i === rounds.length - 1;
-    const pos = r?.positioning;
-    if (isLastRound) {
+    if (i === rounds.length - 1) {
+      const pos = r?.positioning;
       if (!pos || !String(pos?.scope_text ?? '').trim()) {
-        problems.push(`${where}缺 positioning.scope_text——收口那一轮的范围链从本 AR 定位起，本 AR 当前范围没定下来就收了口`);
+        problems.push(`${where}缺 positioning.scope_text——本轮范围链从本 AR 定位起，本 AR 当前范围没定下来就进了设计`);
       } else if (!Array.isArray(pos?.sr_related_ars)) {
         problems.push(`${where}的 positioning.sr_related_ars 不是数组（同 SR 其它 AR；没有给空数组）`);
       } else if (pos.sr_related_ars.some(x => String(x?.ar ?? '').trim() === path.basename(featureRoot))) {
@@ -130,18 +139,21 @@ export function flowProblems(featureRoot) {
       }
     }
 
+    if (r?.scope_options !== undefined) {
+      problems.push(`${where}还带着 scope_options（范围定法选项集）——本版不再有范围裁决关卡，旧现场不接续`);
+    }
     const gates = Array.isArray(r?.gates) ? r.gates : null;
     if (!gates) {
-      problems.push(`${where}缺 gates 数组（一轮可含多条关卡记录，含未生效的那次）`);
+      problems.push(`${where}缺 gates 数组（一轮可含多条记录，含未生效的那次）`);
       return;
     }
     gates.forEach((d, j) => {
-      const at = `${where}第 ${j + 1} 条关卡记录`;
+      const at = `${where}第 ${j + 1} 条记录`;
       const gate = d?.gate;
       if (!GATES.has(gate)) {
         problems.push(`${at}的 gate 非法（须为 ${[...GATES].join(' / ')}）——关卡名按章节合同 flow.gates 认`);
       }
-      // 只记选中项的话，「看过选项后选了不拆」与「压根没摆过拆分选项」事后完全同形
+      // 只记选中项的话，「看过选项后选了不补料」与「压根没摆过材料选项」事后完全同形
       const options = Array.isArray(d?.options) ? d.options : null;
       if (!options || options.length === 0) {
         problems.push(`${at}缺 options——摆了哪些选项没留痕，事后分不清人是否看见过其它选择`);
@@ -151,91 +163,74 @@ export function flowProblems(featureRoot) {
       // 人签只能记在问过之后：问法编号与人的原话缺一，这一笔就说不清是谁在什么问题下选的
       if (d?.by !== 'human' || !String(d?.ask_id ?? '').trim() || !String(d?.reply ?? '').trim()) {
         problems.push(`${at}不是一笔完整的人签（缺 by: human、ask_id 或原话 reply）`
-          + '——关卡记录只由 `story_flow.py decide --ask <问法编号> --reply <人的原话>` 写');
+          + '——记录只由 `story_flow.py decide` 在问过之后写');
       }
-      if (gate === 'material_scope' && !contract.keys.has(d?.chosen)) {
+      if (gate === MATERIAL_GATE && !contract.keys.has(d?.chosen)) {
         problems.push(`${at}的 chosen 非法（material_scope 须为 `
           + `${[...contract.keys].join(' / ')} 之一）——值域按章节合同 gates.material_scope.options 认`);
       }
-      // 第二级摆出的选项必须就是分析定下的那些——多一项就是现编的
-      if (gate === 'scope_decision' && Array.isArray(r?.scope_options) && Array.isArray(d?.options)) {
-        const analysed = new Set(r.scope_options.map(o => String(o?.key ?? '').trim()));
-        const invented = d.options
-          .map(o => String(o?.key ?? '').trim())
-          .filter(k => k && !analysed.has(k));
-        if (invented.length) {
-          problems.push(
-            `${at}摆出了需求分析里没有的选项：${invented.join('、')}` +
-              '——选项集只能照出分析定下的那几项，现编的选项没有份表也没有内容，人无从评估'
-          );
-        }
+    });
+
+    // 设计问答原话：只存问法、原话与出处；旧字段（目标/版本/映射来源）不得混进记录。
+    const answers = Array.isArray(r?.answers) ? r.answers : [];
+    answers.forEach((a, j) => {
+      const at = `${where}第 ${j + 1} 条设计问答记录`;
+      const missing = ANSWER_REQUIRED.filter(k => (k === 'options'
+        ? !Array.isArray(a?.options)
+        : !String(a?.[k] ?? '').trim()));
+      if (missing.length) {
+        problems.push(`${at}缺 ${missing.join('、')}——原话记录要有问法、题号、问题、当时候选、原话、时刻与出处`);
+      }
+      const carried = ANSWER_FORBIDDEN.filter(k => a?.[k] !== undefined);
+      if (carried.length) {
+        problems.push(`${at}带着 ${carried.join('、')}——原话记录只存证据，目标/版本只由原生 feedback 条目承担`);
       }
     });
+    const seen = new Set();
+    answers.forEach((a, j) => {
+      const key = `${a?.ask_id ?? ''}/${a?.item_id ?? ''}`;
+      if (seen.has(key)) problems.push(`${where}第 ${j + 1} 条设计问答记录与前面重复：${key}——同一题只记一次原话`);
+      seen.add(key);
+    });
   });
-
-  // 收口与拆分一律按**当前轮**判：一轮 = 一次「初析 → 关卡」循环，补料会开新一轮。
-  // 展平所有轮次去判，上一轮的表态就会替补料后的新一轮授权收口。
-  const lastRound = rounds[rounds.length - 1];
-  const lastGates = Array.isArray(lastRound?.gates) ? lastRound.gates : [];
-  // split 是契约级字段，但决策属于某一轮——靠 settled_round 挂钩，重新初析后不再算数
-  const splitSettledThisRound =
-    flow?.split?.decided === 'split' && flow?.split?.settled_round === lastRound?.round;
-
-  // 第二级选了某个切分维度，却没走到第三级定案：「打算切」被当成了「切好了」，
-  // 而此时范围其实还是定位出来的那个全量
-  const choseDimension = lastGates.some(
-    d => d?.gate === 'scope_decision' && d?.chosen !== carryAll && d?.outcome === 'accepted'
-  );
-  if (choseDimension && !splitSettledThisRound) {
-    problems.push(
-      'AR/story-src/story-flow.json 本轮第二级选了切分维度，但份表未在本轮定案——' +
-        '第三级「本 AR 承载哪份」没走完，范围实际未切'
-    );
-  }
-  // 反过来：定了案却没有第二级的维度选择，说明份表来路不明
-  if (splitSettledThisRound && !choseDimension) {
-    problems.push(
-      'AR/story-src/story-flow.json 本轮定案了切分，但第二级没有选过任何切分维度——' +
-        '份表按哪个维度切的没有留痕'
-    );
-  }
-
-  if (flow?.split?.decided === 'split') {
-    // 两级子菜单的留痕查定案那一轮：split 记的是哪一轮定的，就去哪一轮找记录
-    const settledRound = rounds.find(r => r?.round === flow.split.settled_round);
-    const settledGates = Array.isArray(settledRound?.gates) ? settledRound.gates : lastGates;
-    for (const gate of ['scope_decision', 'split_carrier']) {
-      if (!settledGates.some(d => d?.gate === gate)) {
-        problems.push(`AR/story-src/story-flow.json 已定案切分但缺 ${gate} 关卡记录——那一级的选择没留痕`);
-      }
-    }
-    // 份表回答「拆成几份、各归谁、什么顺序、谁依赖谁」；只有一段范围文字，
-    // story 讲范围的那一章要答的兄弟各承载什么、先后依赖，就只能靠现编。
-    const parts = Array.isArray(flow.split.parts) ? flow.split.parts : [];
-    if (parts.length) {
-      // feature 名从产物路径推导：本函数只拿得到 featureRoot。
-      const feature = path.basename(featureRoot);
-      const mine = parts.filter(p => String(p?.carrier ?? '').trim() === feature);
-      if (mine.length !== 1) {
-        problems.push(
-          `AR/story-src/story-flow.json 的 split.parts 里 carrier 为「${feature}」的有 ${mine.length} 份，` +
-            '应恰好一份——本 AR 承载哪一份是拆分的核心结论'
-        );
-      }
-    }
-  }
 
   if (!FLOW_STATES.includes(String(flow?.status ?? ''))) {
     problems.push(`AR/story-src/story-flow.json：status 是 ${flow?.status ?? '缺失'}，不是 ${FLOW_STATES.join(' / ')} 之一——契约只由 story_flow.py 写入`);
   }
-  // 成文的前置是**本轮范围已定**：第二级选了整体承载，或第三级完成定案。成文登记之后同样成立——reopen 会开新一轮回到关卡。
-  const carriedAll = lastGates.some(
-    d => d?.gate === 'scope_decision' && d?.chosen === carryAll && d?.outcome === 'accepted'
-  );
-  if (!carriedAll && !splitSettledThisRound) {
+  // 成文的前置是**本轮材料已确认**：范围与设计由原生蓝图承载，本地只核材料这一道关。
+  const lastRound = rounds[rounds.length - 1];
+  const lastGates = Array.isArray(lastRound?.gates) ? lastRound.gates : [];
+  const confirmed = lastGates.some(d => d?.gate === MATERIAL_GATE && d?.outcome === 'accepted');
+  if (!confirmed) {
     problems.push(
-      `AR/story-src/story-flow.json：本轮范围还没定（第二级没选整体承载、也没定案切分），材料与拆分决策没走完就开始成文——${FLOW_FIX}`
+      `AR/story-src/story-flow.json：本轮材料还没确认（没有生效的 material_scope 记录），材料没走完就开始成文——${FLOW_FIX}`
     );
+  }
+
+  // 当前问法：材料问法沿用原协议；设计问法要有题号与问题，且不写进 gates。
+  const askPath = path.join(featureRoot, ...ASK_FILE);
+  const ask = readJsonOrNull(askPath);
+  if (!ask && fs.existsSync(askPath)) {
+    problems.push('AR/story-src/.ask.json：读不出或不是合法 JSON——当前问法无法核对，重新跑 `status` 生成');
+  }
+  if (ask) {
+    const kind = ask?.kind ?? ask?.gate;
+    if (kind !== MATERIAL_GATE && kind !== DESIGN_KIND) {
+      problems.push(`AR/story-src/.ask.json：问法种类是 ${kind ?? '缺失'}，不是 ${MATERIAL_GATE} 与 ${DESIGN_KIND} 之一`);
+    } else if (kind === DESIGN_KIND) {
+      const items = Array.isArray(ask?.items) ? ask.items : [];
+      if (!items.length) {
+        problems.push('AR/story-src/.ask.json：设计问答缺 items——没有题就没有问法');
+      }
+      const seen = new Set();
+      items.forEach((it, i) => {
+        const id = String(it?.item_id ?? '').trim();
+        if (!id) problems.push(`AR/story-src/.ask.json 第 ${i + 1} 题缺 item_id`);
+        else if (seen.has(id)) problems.push(`AR/story-src/.ask.json 里题号 ${id} 重复`);
+        seen.add(id);
+        if (!String(it?.question ?? '').trim()) problems.push(`AR/story-src/.ask.json 第 ${i + 1} 题缺 question`);
+      });
+    }
   }
   return problems;
 }
@@ -249,4 +244,9 @@ function readFlow(featureRoot) {
   } catch (err) {
     return { exists: true, flow: null, error: err.message };
   }
+}
+
+/** 读一份 JSON；读不到或坏了都返回 null——这里的用途只判「有没有当前问法」。 */
+function readJsonOrNull(file) {
+  try { return JSON.parse(stripBom(fs.readFileSync(file, 'utf-8'))); } catch { return null; }
 }

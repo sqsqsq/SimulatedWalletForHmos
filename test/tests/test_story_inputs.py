@@ -552,8 +552,8 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return json.loads(proc.stdout)
 
-    def write_contract(self, status: str, *, settled: bool = True) -> None:
-        """一份走到某个状态的契约：`settled` 时本轮范围已定。
+    def write_contract(self, status: str, *, confirmed: bool = True) -> None:
+        """一份走到某个状态的契约：`confirmed` 时本轮材料已确认。
 
         **材料指纹要带上当下的那个**：不带的话「材料变了」先于关卡成立，
         `status` 会先让人去重跑 `round`——那是对的行为，但不是这几条要问的事。
@@ -570,27 +570,22 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
             {"gate": "material_scope", "ask_id": "m1", "question": "材料齐了吗？",
              "options": [{"no": 1, "key": "confirm_scope", "label": "现有材料就是全部"}],
              "chosen": "confirm_scope", "no": 1, "label": "现有材料就是全部", "reply": "1",
-             "outcome": "accepted", "by": "human", "at": at},
-            {"gate": "scope_decision", "ask_id": "s1", "question": "这个需求承载哪些？",
-             "options": [{"no": 1, "key": "carry_all", "label": "按当前范围整体承载"}],
-             "chosen": "carry_all", "no": 1, "label": "按当前范围整体承载", "reply": "1",
-             "outcome": "accepted", "by": "human", "at": at, "context": {"scope_text": "本 AR 承载签约"}}] if settled else []
-        if settled:
-            data["rounds"][-1].update(positioning={"scope_text": "本 AR 承载签约", "sr_related_ars": []},
-                                      scope_options=[{"key": "carry_all", "label": "按当前范围整体承载"}])
-        # 范围定了之后的位置要读原生蓝图：接 Framework，成文登记了的放好同根蓝图
+             "outcome": "accepted", "by": "human", "at": at}] if confirmed else []
+        if confirmed:
+            data["rounds"][-1].update(positioning={"scope_text": "本 AR 承载签约", "sr_related_ars": []})
+        # 材料确认之后的位置要读原生蓝图：接 Framework，成文登记了的放好同根蓝图
         ensure_framework(self.root)
         data = design_kit.hand_over_state(self.root, FEATURE, data, with_blueprint=status == "story_written")
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        if settled:
+        if confirmed:
             design_kit._core_modules()[0].refresh(self.feature_root)    # 答复生效时 decide 做的那一步：导出人答
         if status == "story_written":
             # 已登记的契约带此刻的成文依据（缺了是契约不完整，status 报错）
             data["story_basis"] = design_kit.registered_basis(self.root, FEATURE)
             path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-    def test_a_settled_scope_waits_for_the_blueprint(self) -> None:
-        """范围定了、蓝图还没建：派生状态是等设计，下一步指向原生 component-design 与补齐需求条目来源的命令。"""
+    def test_confirmed_materials_wait_for_the_blueprint(self) -> None:
+        """材料确认、蓝图还没建：派生状态是等设计，下一步指向原生 component-design 与补齐需求条目来源的命令。"""
         self.write_contract("gathering")
         out = self.status()
         self.assertEqual(("waiting_for_design", "design_blueprint"), (out["state"], out["next"]))
@@ -608,7 +603,7 @@ class StatusAnswersWhereYouAre(WorkspaceCase):
 
     def test_a_gate_step_shows_the_shape_of_the_file_to_write(self) -> None:
         """S1–S4 的侧车形状：二跑为弄清它切片读了本脚本六次。"""
-        self.write_contract("gathering", settled=False)
+        self.write_contract("gathering", confirmed=False)
         payload = self.status()
         self.assertIn("sidecar", payload, "关卡这一步没给出要写的文件形状")
         shape = json.dumps(payload["sidecar"], ensure_ascii=False)

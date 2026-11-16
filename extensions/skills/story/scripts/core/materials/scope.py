@@ -56,8 +56,8 @@ def read_items(path: Path) -> list[dict]:
     return items
 
 
-#: 各类登记文件作为需求条目来源时能证明什么：人答是人的原话，其余只证明读到了这些字节
-SOURCE_KIND = {"answer": "human_decision", "meeting": "meeting_record"}
+#: 各类登记文件作为需求条目来源时是什么：人答的原话与会议记录都是证据，不是对整项内容的批准。
+SOURCE_KIND = {"answer": "human_statement", "meeting": "meeting_record"}
 
 
 def fill(feature_root: Path, project_root: Path, items: list[dict],
@@ -114,7 +114,8 @@ def fill(feature_root: Path, project_root: Path, items: list[dict],
                                                             else "requirement_material"),
             "source_ref": ref, "source_revision": f"{row['source_id']}@v{row['version']}",
             "observed_at": str(version.get("acquired_at") or ""),
-            "evidence_strength": "authoritative" if answer else "observed",
+            # 读到的是当时的问题与原话；它证明人说过这句话，不证明人批准了整项内容。
+            "evidence_strength": "observed",
             "extraction_method": "recorded_user_reply" if answer else "imported_file_observation",
         }
         entry = {"item_id": item["item_id"], "kind": item["kind"], "source_ref": ref, "source_sha256": f"sha256:{sha}",

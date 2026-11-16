@@ -1,6 +1,6 @@
-"""需求交给设计：范围定了直接进原生 component-design，蓝图与需求同根，需求条目引 `sources/` 的材料版本。
+"""需求交给设计：材料确认后直接进原生 component-design，蓝图与需求同根，需求条目引 `sources/` 的材料版本。
 
-这一份锁：范围定了之后路由按原生蓝图派生位置，没有交接命令、不写契约；`import_sources.py --scope` 按材料索引
+这一份锁：材料确认之后路由按原生蓝图派生位置，没有交接命令、不写契约；`import_sources.py --scope` 按材料索引
 补齐需求条目的来源——系统来源另写原生物化信封并过原生检查，本地来源不落 provider 文件，引了没登记的文件拒绝且不写盘；
 蓝图的需求条目采用了本需求的材料版本才进成文；设计开始之后材料再变只登记进本轮，设计开始之前照常开新轮；
 旧 schema 的契约明确拒绝；同一时点只取一份材料事实；成文登记跑真的检查器。
@@ -32,7 +32,6 @@ sys.path.insert(0, str(STORY_SCRIPTS))
 from flow.decisions import cmd_decide  # noqa: E402
 from flow.inputs import MATERIAL_REQUEST_KEYS  # noqa: E402
 from flow.lifecycle import cmd_status  # noqa: E402
-from flow.state import CARRY_ALL  # noqa: E402
 from materials import importer, registry  # noqa: E402
 
 FEATURE = "AR90001"
@@ -42,7 +41,7 @@ AUTHORITY = {"owner": "需求负责人", "formality": "formal_requirement"}
 
 
 class HandoverCase(unittest.TestCase):
-    """一份接入 demo Framework 的新工程，跑真脚本走到「范围已定」，再各自测交给设计。"""
+    """一份接入 demo Framework 的新工程，跑真脚本走到「材料已确认」，再各自测交给设计。"""
 
     feature = FEATURE
 
@@ -108,11 +107,9 @@ class HandoverCase(unittest.TestCase):
         (self.src / ".positioning.json").write_text(json.dumps(
             {"scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理", "sr_related_ars": []},
             ensure_ascii=False), encoding="utf-8")
-        (self.src / ".scope-options.json").write_text(json.dumps(
-            [{"key": CARRY_ALL, "label": "按当前范围整体承载"}], ensure_ascii=False), encoding="utf-8")
 
     def ready(self) -> None:
-        """S1–S3 走完、范围已定：停在「交给设计」。
+        """S1–S3 走完、材料确认：停在「交给设计」。
 
         默认材料上、没有别的改动时，这一段同一组输入只真实跑一次（共享），本例换成那份结果；改过材料或已走过的照常真跑。"""
         if self._pristine:
@@ -139,10 +136,9 @@ class HandoverCase(unittest.TestCase):
         self.ok("init")
         self.ok("round")
         write_gaps(self.src)
-        answer(self.ok, "material_scope", "现有材料就是全部")
+        answer(self.ok, "material_scope", "2")
         self.write_analysis()
         self.ok("round")
-        answer(self.ok, "scope_decision", "1")
 
     def answers_rel(self) -> str:
         """人工答复的最新版本里给人读的那份。"""
@@ -170,8 +166,8 @@ def item(source: str, item_id: str = "request-main", kind: str = "requirement") 
     return {"item_id": item_id, "kind": kind, "source": source, "authority": AUTHORITY}
 
 
-class ScopeSettledGoesStraightToDesign(HandoverCase):
-    """范围定了，下一步就是原生 component-design：没有交接命令，契约里不记设计关联与输入。"""
+class MaterialConfirmedGoesStraightToDesign(HandoverCase):
+    """材料确认，下一步就是原生 component-design：没有交接命令，契约里不记设计关联与输入。"""
 
     def test_status_points_at_component_design_and_writes_nothing(self) -> None:
         self.ready()
@@ -188,7 +184,7 @@ class ScopeSettledGoesStraightToDesign(HandoverCase):
 
     def test_the_retired_commands_are_gone(self) -> None:
         self.ready()
-        for mode in ("bind-design", "complete"):
+        for mode in ("bind-design", "complete", "reopen"):
             with self.subTest(mode=mode):
                 proc = self.flow(mode)
                 self.assertEqual(2, proc.returncode, proc.stdout + proc.stderr)
@@ -199,11 +195,154 @@ class ScopeSettledGoesStraightToDesign(HandoverCase):
         self.ready()
         old = {**self.contract(), "schema": 5, "status": "complete"}
         (self.src / "story-flow.json").write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+        before = (self.src / "story-flow.json").read_bytes()
         proc = self.flow("status")
         self.assertEqual(1, proc.returncode)
         error = json.loads(proc.stdout[proc.stdout.index("{"):])["error"]
         self.assertIn("schema 5", error)
-        self.assertIn("当前 6", error)
+        self.assertIn("当前 7", error)
+        self.assertIn("不接续", error)
+        self.assertEqual(before, (self.src / "story-flow.json").read_bytes(),
+                         "旧现场被自动迁移或改写了字节")
+
+
+class DesignQuestionsAreBoundToWhatWasAsked(HandoverCase):
+    """设计后必要问答：一次集中 ask、内容身份绑定、错绑拒绝；原话只作证据，部分答复只续问未答部分。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ready()
+        # 只证明设计已开始（同根蓝图在盘上）；本组不核蓝图内容
+        (self.feature_root / "blueprint").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "blueprint" / "component-blueprint.yaml").write_text(
+            "component_id: wallet-main\n", encoding="utf-8")
+
+    def item(self, item_id: str, question: str, options: list[str] | None = None,
+             recommend: str = "", **extra) -> dict:
+        return {"item_id": item_id, "question": question,
+                "options": options if options is not None else [],
+                "recommend": recommend, "reason": "阻断当前切片，当前用户有权决定",
+                "source_ref": f"doc/features/{self.feature}/AR/story.md", **extra}
+
+    def questions(self, *items: dict, name: str = "questions.json") -> Path:
+        path = self.root / name
+        path.write_text(json.dumps({"items": list(items)}, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def ask(self, *items: dict) -> dict:
+        path = self.questions(*items)
+        out = self.ok("status", "--questions-file", str(path))
+        self.assertEqual("await_questions", out["next"], out)
+        return out["ask"]
+
+    def test_two_questions_share_one_ask_and_one_display_block(self) -> None:
+        """两个符合条件的问题用同一个 ask、同一个展示块；第三方待定的那项仍留在待答集合。"""
+        gates_before = [g["gate"] for g in self.contract()["rounds"][-1]["gates"]]
+        ask = self.ask(
+            self.item("Q1", "失败后是否允许自动重试？", ["允许再试一次", "保持待定"], "允许再试一次"),
+            self.item("Q2", "宽限期多长？", ["24 小时", "48 小时"]))
+        self.assertEqual(["Q1", "Q2"], ask["pending"])
+        self.assertEqual([], ask["answered"])
+        self.assertEqual("Q1", ask["items"][0]["item_id"])
+        block = ask["block"]
+        self.assertIn("【Q1】失败后是否允许自动重试？", block)
+        self.assertIn("【Q2】宽限期多长？", block)
+        self.assertIn("建议：允许再试一次", block)
+        self.assertIn(f"出处：doc/features/{self.feature}/AR/story.md", block)
+        self.assertEqual(gates_before, [g["gate"] for g in self.contract()["rounds"][-1]["gates"]],
+                         "设计问答写进了 material 关卡记录")
+        self.assertNotIn("gates", json.dumps(ask, ensure_ascii=False), "问法把 gate 状态带进了展示")
+        self.assertEqual([], self.contract()["rounds"][-1].get("answers") or [],
+                         "只生成问法就写了答复")
+
+    def test_the_same_question_file_is_idempotent(self) -> None:
+        first = self.ask(self.item("Q1", "要不要重试？", ["要", "不要"]))
+        second = self.ask(self.item("Q1", "要不要重试？", ["要", "不要"]))
+        self.assertEqual(first["ask_id"], second["ask_id"], "同一问法重跑换了身份")
+        self.assertEqual([], second.get("replaced_unanswered") or [])
+
+    def test_an_invalid_question_file_writes_nothing(self) -> None:
+        """缺必需字段 / 建议不在候选里：一次报全，不生成问法。"""
+        bad = self.questions({"item_id": "Q1", "question": "要不要重试？", "options": ["要"], "recommend": "不要"})
+        (self.src / ".ask.json").unlink(missing_ok=True)
+        proc = self.flow("status", "--questions-file", str(bad))
+        self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+        error = json.loads(proc.stdout[proc.stdout.index("{"):])["error"]
+        for needle in ("reason", "source_ref", "recommend 不在 options 里"):
+            self.assertIn(needle, error, error)
+        self.assertFalse((self.src / ".ask.json").exists(), "形状不立住却写了问法")
+
+    def test_a_question_file_before_the_design_is_refused(self) -> None:
+        (self.feature_root / "blueprint" / "component-blueprint.yaml").unlink()
+        proc = self.flow("status", "--questions-file", str(self.questions(self.item("Q1", "要不要重试？"))))
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("设计还没开始", json.loads(proc.stdout[proc.stdout.index("{"):])["error"])
+
+    def test_a_partial_answer_keeps_only_the_unanswered_questions(self) -> None:
+        ask = self.ask(self.item("Q1", "失败后是否允许自动重试？", ["允许再试一次", "保持待定"]),
+                       self.item("Q2", "宽限期多长？", ["24 小时", "48 小时"]))
+        out = self.ok("decide", "--ask", ask["ask_id"], "--item", "Q1", "--reply", "保持待定")
+        self.assertEqual(["Q2"], out["pending"])
+        self.assertEqual("await_questions", out["next"])
+        self.assertIn("【Q2】宽限期多长？", out["ask_block"])
+        self.assertNotIn("【Q1】", out["ask_block"], "已答的题又被重问一遍")
+        state = self.ok("status")
+        self.assertEqual((ask["ask_id"], ["Q2"], "await_questions"),
+                         (state["ask"]["ask_id"], state["ask"]["pending"], state["next"]),
+                         "普通 status 没返回同一组未答完的问法")
+        row = self.contract()["rounds"][-1]["answers"][0]
+        self.assertEqual("保持待定", row["reply"], "「保持待定」不是真实答复")
+        self.assertNotIn("chosen", row)
+        self.assertFalse({"target_ref", "source_revision", "mapped_by"} & set(row))
+        export = next(s for s in registry.read(self.feature_root)["sources"] if s["kind"] == "answer")
+        text = (self.feature_root / export["versions"][-1]["readable"]["path"]).read_text(encoding="utf-8")
+        self.assertIn("保持待定", text)
+        self.assertNotIn("人的裁决", text)
+
+    def test_one_reply_can_answer_two_questions_via_the_file(self) -> None:
+        ask = self.ask(self.item("Q1", "失败后是否允许自动重试？"),
+                       self.item("Q2", "宽限期多长？"))
+        replies = self.root / "replies.json"
+        replies.write_text(json.dumps({"items": [
+            {"item_id": "Q1", "reply": "按这个方案做"}, {"item_id": "Q2", "reply": "按这个方案做"}]},
+            ensure_ascii=False), encoding="utf-8")
+        out = self.ok("decide", "--ask", ask["ask_id"], "--replies-file", str(replies))
+        self.assertEqual([], out["pending"])
+        rows = self.contract()["rounds"][-1]["answers"]
+        self.assertEqual([("Q1", "按这个方案做"), ("Q2", "按这个方案做")],
+                         [(r["item_id"], r["reply"]) for r in rows], "同一原话没有逐题引用")
+        self.assertFalse((self.src / ".ask.json").exists(), "全部答完却还留着临时问法")
+
+    def test_a_replacement_names_the_questions_it_left_unanswered(self) -> None:
+        ask = self.ask(self.item("Q1", "失败后是否允许自动重试？"),
+                       self.item("Q2", "宽限期多长？"))
+        self.ok("decide", "--ask", ask["ask_id"], "--item", "Q1", "--reply", "允许再试一次")
+        replacement = self.questions(self.item("Q3", "新发现的边界怎么定？"), name="questions-2.json")
+        out = self.ok("status", "--questions-file", str(replacement))
+        self.assertEqual(["Q2"], out["ask"]["replaced_unanswered"],
+                         "替换掉未答问题时没说被替换的是哪题")
+        answers = self.contract()["rounds"][-1]["answers"]
+        self.assertEqual(["Q1"], [a["item_id"] for a in answers], "替换问法丢了已答的原话")
+
+    def test_a_question_changed_behind_its_ask_id_is_refused(self) -> None:
+        ask = self.ask(self.item("Q1", "失败后是否允许自动重试？"))
+        sidecar = self.src / ".ask.json"
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        data["items"][0]["question"] = "换了一个问法"
+        sidecar.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        proc = self.flow("decide", "--ask", ask["ask_id"], "--item", "Q1", "--reply", "允许再试一次")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("ask_id 对不上", json.loads(proc.stdout[proc.stdout.index("{"):])["error"])
+
+    def test_a_wrong_ask_or_item_is_refused(self) -> None:
+        ask = self.ask(self.item("Q1", "失败后是否允许自动重试？"))
+        for extra, needle in ((("--ask", "deadbeef", "--item", "Q1", "--reply", "允许再试一次"), "不是当前问法"),
+                              (("--ask", ask["ask_id"], "--item", "Q9", "--reply", "允许再试一次"), "没有题「Q9」")):
+            with self.subTest(needle=needle):
+                proc = self.flow("decide", *extra)
+                self.assertEqual(1, proc.returncode, proc.stdout + proc.stderr)
+                self.assertIn(needle, json.loads(proc.stdout[proc.stdout.index("{"):])["error"])
+        self.assertEqual([], self.contract()["rounds"][-1].get("answers") or [], "拒绝的答复写进了记录")
 
 
 class ScopeItemsAreFilledFromTheIndex(HandoverCase):
@@ -221,9 +360,9 @@ class ScopeItemsAreFilledFromTheIndex(HandoverCase):
                          (main["provenance"]["source_kind"], main["provenance"]["evidence_strength"],
                           main["provenance"]["extraction_method"]))
         self.assertEqual(main["source_ref"], main["provenance"]["source_ref"])
-        self.assertEqual(("human_decision", "authoritative"),
+        self.assertEqual(("human_statement", "observed"),
                          (ruling["provenance"]["source_kind"], ruling["provenance"]["evidence_strength"]),
-                         "人工答复是人的原话")
+                         "人工答复只作原话证据，整份 answer 不是 authoritative 授权")
         self.assertEqual(AUTHORITY, main["authority"])
         self.assertNotIn("materialization", out)
         self.assertFalse((self.feature_root / "blueprint").exists(), "本地来源不该落 provider 文件")
@@ -359,8 +498,8 @@ class TheDesignAdoptsThisRequirement(HandoverCase):
         self.assertEqual([], self.source_problems())
 
 
-class MaterialChangesBeforeTheDesignReopenTheRound(HandoverCase):
-    """范围定了、设计还没开始：材料再变照常开新一轮重新确认，不当作已经交给设计。"""
+class MaterialChangesBeforeTheDesignOpenANewRound(HandoverCase):
+    """材料已确认、设计还没开始：材料再变照常开新一轮重新确认，不当作已经交给设计。"""
 
     def test_a_new_round_opens(self) -> None:
         self.ready()
@@ -369,14 +508,6 @@ class MaterialChangesBeforeTheDesignReopenTheRound(HandoverCase):
         self.assertEqual("run_round", self.ok("status")["next"])
         self.assertTrue(self.ok("round")["created"])
         self.assertEqual(rounds + 1, len(self.contract()["rounds"]))
-
-    def test_reopen_needs_a_started_design(self) -> None:
-        self.ready()
-        self.assertEqual(1, self.flow("reopen").returncode, "设计还没开始，范围关卡本来就能重走")
-        design_kit.install_blueprint(self.root, self.feature, ACCESS)
-        out = self.ok("reopen")
-        self.assertEqual("gathering", out["status"])
-        self.assertTrue(self.contract()["rounds"][-1]["reopened"])
 
 
 class TheMaterialFactIsTakenOncePerTimepoint(HandoverCase):
@@ -413,10 +544,13 @@ class TheMaterialFactIsTakenOncePerTimepoint(HandoverCase):
         self.assertEqual(1, len(builds), f"status 取了 {len(builds)} 次材料事实——路由、提示与输出该共用一份")
         self.assertEqual([], refreshes, "status 只读，不该刷新清单")
 
-    def decide_now(self, gate: str, chosen: str) -> tuple[dict, int]:
-        ask = json.loads((self.src / ".ask.json").read_text(encoding="utf-8"))
-        args = argparse.Namespace(gate=gate, chosen=chosen, ask=ask["ask_id"],
-                                  reply=f"用户回复：{chosen}", meeting=None, item=None)
+    def decide_now(self, gate: str, chosen: str | None = None, reply: str | None = None,
+                   item: str | None = None, ask: str | None = None) -> tuple[dict, int]:
+        current = json.loads((self.src / ".ask.json").read_text(encoding="utf-8"))
+        if reply is None:
+            reply = "2" if chosen in (None, "confirm_scope") else "1"
+        args = argparse.Namespace(gate=gate, ask=ask or current["ask_id"],
+                                  reply=reply, item=item, replies_file=None)
         return cmd_decide(self.feature_root, args)
 
     def first_gate_ready(self) -> None:
@@ -438,36 +572,19 @@ class TheMaterialFactIsTakenOncePerTimepoint(HandoverCase):
         result, code = self.decide_now("material_scope", MATERIAL_REQUEST_KEYS[0])
         self.assertEqual((2, "rejected", 1, []), (code, result["outcome"], len(builds), refreshes))
 
-    def second_gate_ready(self, options: list[dict] | None = None) -> None:
-        self.first_gate_ready()
-        answer(self.ok, "material_scope", "现有材料就是全部")
-        self.write_analysis()
-        if options is not None:
-            (self.src / ".scope-options.json").write_text(json.dumps(options, ensure_ascii=False), encoding="utf-8")
-        self.ok("round")
-        self.ok("status")
-
-    def test_the_second_gate_asks_the_disk_once(self) -> None:
-        self.second_gate_ready()
+    def test_the_design_question_asks_the_disk_once(self) -> None:
+        """设计问答记一次原话：材料事实只取一份，答复生效时只刷新一次导出。"""
+        self.ready()
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
+        questions = self.root / "questions.json"
+        questions.write_text(json.dumps({"items": [{
+            "item_id": "Q1", "question": "撤销宽限改多少小时？", "options": ["保持 24 小时", "改 36 小时"],
+            "recommend": "改 36 小时", "reason": "阻断当前切片，当前用户有权决定",
+            "source_ref": f"doc/features/{self.feature}/AR/story.md"}]}, ensure_ascii=False), encoding="utf-8")
+        built = self.ok("status", "--questions-file", str(questions))
+        self.assertEqual("await_questions", built["next"])
         builds, refreshes = self.count_material_reads()
-        _, code = self.decide_now("scope_decision", CARRY_ALL)
-        self.assertEqual((0, 1, 1), (code, len(builds), len(refreshes)))
-
-    def test_the_third_gate_asks_the_disk_once(self) -> None:
-        parts = [{"seq": 1, "scope": "本单承载签约入口", "depends_on": []},
-                 {"seq": 2, "scope": "兄弟单承载补卡", "depends_on": [1]}]
-        self.second_gate_ready(options=[
-            {"key": CARRY_ALL, "label": "按当前范围整体承载"},
-            {"key": "by_capability", "label": "按能力切两份", "parts": parts},
-        ])
-        answer(self.ok, "scope_decision", "按能力切两份")
-        (self.src / ".split-parts.json").write_text(json.dumps(
-            [{"seq": 1, "carrier": FEATURE, "scope": "本单承载签约入口", "depends_on": []},
-             {"seq": 2, "carrier": "AR90002", "scope": "兄弟单承载补卡", "depends_on": [1]}],
-            ensure_ascii=False), encoding="utf-8")
-        self.ok("status")
-        builds, refreshes = self.count_material_reads()
-        _, code = self.decide_now("split_carrier", "1")
+        _, code = self.decide_now(None, reply="改 36 小时", item="Q1", ask=built["ask"]["ask_id"])
         self.assertEqual((0, 1, 1), (code, len(builds), len(refreshes)))
 
 
@@ -500,14 +617,14 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         answers = next(s for s in registry.read(self.feature_root)["sources"] if s["kind"] == "answer")
         return json.loads((self.feature_root / answers["versions"][-1]["original"]["path"]).read_text(encoding="utf-8"))
 
-    def test_a_scope_answer_reaches_the_design_without_another_refresh(self) -> None:
+    def test_a_material_confirmation_reaches_the_design_without_another_refresh(self) -> None:
         """真实 decide 之后不再刷新：导出里有问法与原话；需求条目只写真实需求，人答照样进设计来源。"""
         self.ready()
         status = json.loads(self.flow("status", "--materials").stdout)
         self.assertTrue(status["required_answers"]["in_sync"], status)
         current = self.exported()["current"]
-        self.assertEqual(["material_scope", "scope_decision"], [d["gate"] for d in current])
-        self.assertEqual("现有材料就是全部", current[0]["reply"])
+        self.assertEqual(["material_scope"], [d["gate"] for d in current])
+        self.assertEqual("2", current[0]["reply"])
         self.assertTrue(all(d["question"] for d in current), "导出的人答没带问法")
         design_kit.install_blueprint(self.root, self.feature, ACCESS)
         scope = [i["item_id"] for i in yaml_scope(self.root, self.feature)]
@@ -516,21 +633,28 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         self.assertEqual([], view["problems"])
         self.assertIn(self.answers_rel(), [p.split(f"{self.feature}/", 1)[1] for p in view["adopted"]])
 
-    def test_the_scope_answer_carries_who_carries_what(self) -> None:
-        """范围答复连同当时的定位导出：本单承载什么、同一系统设计下的兄弟单承载什么，设计与审查按它写范围与边界。"""
-        self.ok("init")
-        self.ok("round")
-        write_gaps(self.src)
-        answer(self.ok, "material_scope", "现有材料就是全部")
-        self.write_analysis()
-        (self.src / ".positioning.json").write_text(json.dumps(
-            {"scope_source": "user_stated", "scope_text": "本 AR 承载自动充值签约与管理",
-             "sr_related_ars": [{"ar": "AR90002", "scope": "补卡与换卡"}]}, ensure_ascii=False), encoding="utf-8")
-        self.ok("round")
-        answer(self.ok, "scope_decision", "1")
+    def test_a_design_answer_is_exported_as_evidence_only(self) -> None:
+        """设计问答的原话导出成证据：问题、原话、出处都在；没有「所选 = 人的裁决」，也不带目标/版本。"""
+        self.ready()
+        design_kit.install_blueprint(self.root, self.feature, ACCESS)
+        questions = self.root / "questions.json"
+        questions.write_text(json.dumps({"items": [{
+            "item_id": "Q1", "question": "撤销宽限改多少小时？", "options": ["保持 24 小时", "改 36 小时"],
+            "recommend": "改 36 小时", "reason": "阻断当前切片，当前用户有权决定",
+            "source_ref": f"doc/features/{self.feature}/AR/story.md"}]}, ensure_ascii=False), encoding="utf-8")
+        built = self.ok("status", "--questions-file", str(questions))
+        decided = self.ok("decide", "--ask", built["ask"]["ask_id"], "--item", "Q1", "--reply", "改 36 小时")
+        self.assertTrue(decided.get("success", True), decided)
+        [row] = [d for d in self.exported()["current"] if d.get("item_id") == "Q1"]
+        self.assertEqual(("撤销宽限改多少小时？", "改 36 小时", "Q1",
+                          f"doc/features/{self.feature}/AR/story.md"),
+                         (row["question"], row["reply"], row["item_id"], row["source_ref"]))
+        self.assertNotIn("chosen", row)
+        self.assertFalse({"target_ref", "source_revision", "mapped_by"} & set(row))
         text = (self.feature_root / self.answers_rel()).read_text(encoding="utf-8")
-        self.assertIn("本单承载：本 AR 承载自动充值签约与管理", text)
-        self.assertIn("兄弟单 AR90002：补卡与换卡", text)
+        self.assertIn("只陈列问题、原话与出处", text)
+        self.assertNotIn("人的裁决", text)
+        self.assertNotIn("所选", text)
 
     def test_a_support_source_is_adopted_through_its_fact(self) -> None:
         """系统设计只在事实的 provenance 里引用：它的版本进采用集合，不需要伪造约束条目。"""
@@ -556,8 +680,8 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         write_gaps(self.src)
         self.ok("status")
         ask = json.loads((self.src / ".ask.json").read_text(encoding="utf-8"))
-        args = argparse.Namespace(gate="material_scope", chosen="confirm_scope", ask=ask["ask_id"],
-                                  reply="现有材料就是全部", meeting=None, item=None)
+        args = argparse.Namespace(gate="material_scope", ask=ask["ask_id"], reply="2",
+                                  item=None, replies_file=None)
         real = answers.export
 
         def broken(*_a, **_k):
@@ -578,72 +702,19 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         self.assertTrue(json.loads(self.flow("status", "--materials").stdout)["required_answers"]["in_sync"])
         self.assertNotEqual("await_gate:material_scope", self.ok("status")["next"], "导出补上之后又问了一遍")
 
-    def test_a_supplement_after_reopen_keeps_the_old_scope_out_until_answered_again(self) -> None:
-        """设计开始后重开范围、还没重答就补料开了新轮：旧范围答复不回到当前；重新答了之后新答复生效，其余人答不丢。"""
-        self.ready()
-        design_kit.install_blueprint(self.root, self.feature, ACCESS)
-        self.ok("reopen")
-        self.seed({"UX/补充说明.md": ("# 补充\n\n入口挪到卡包首页。\n", "UX")})
-        self.assertTrue(self.ok("round")["created"])
-        self.assertEqual(["material_scope"], [d["gate"] for d in self.exported()["current"]],
-                         "重开之后补料开轮，旧范围答复又算当前了")
-        while (step := self.ok("status")["next"]).startswith("await_gate:") or step in ("run_round", "run_analysis"):
-            if step == "run_analysis":
-                self.write_analysis()
-                self.ok("round")
-            elif step == "run_round":
-                self.ok("round")
-            else:
-                answer(self.ok, step.split(":", 1)[1], "1")
-        current = self.exported()["current"]
-        scope = next(d for d in current if d["gate"] == "scope_decision")
-        self.assertEqual(self.contract()["rounds"][-1]["round"], scope["round"], "生效的不是重开之后重答的那一次")
-        self.assertIn("material_scope", [d["gate"] for d in current])
-
-    def test_a_later_carry_all_retires_the_split_carrier(self) -> None:
-        """切两份、定了承载，设计开始后重开范围改成整体承载：旧的承载答复只是历史，不再当前有效。"""
-        self.ok("init")
-        self.ok("round")
-        write_gaps(self.src)
-        answer(self.ok, "material_scope", "现有材料就是全部")
-        self.write_analysis()
-        parts = [{"seq": 1, "scope": "本单承载签约入口", "depends_on": []},
-                 {"seq": 2, "scope": "兄弟单承载补卡", "depends_on": [1]}]
-        (self.src / ".scope-options.json").write_text(json.dumps(
-            [{"key": CARRY_ALL, "label": "按当前范围整体承载"}, {"key": "by_capability", "label": "按能力切两份", "parts": parts}],
-            ensure_ascii=False), encoding="utf-8")
-        self.ok("round")
-        answer(self.ok, "scope_decision", "按能力切两份")
-        (self.src / ".split-parts.json").write_text(json.dumps(
-            [{"seq": 1, "carrier": FEATURE, "scope": "本单承载签约入口", "depends_on": []},
-             {"seq": 2, "carrier": "AR90002", "scope": "兄弟单承载补卡", "depends_on": [1]}], ensure_ascii=False), encoding="utf-8")
-        answer(self.ok, "split_carrier", "1")
-        self.assertIn("split_carrier", [d["gate"] for d in self.exported()["current"]])
-        split = next(d for d in self.exported()["current"] if d["gate"] == "split_carrier")
-        self.assertEqual(2, len(split["context"]["parts"]), "承载答复没带当时的份表")
-        design_kit.install_blueprint(self.root, self.feature, ACCESS)
-        self.ok("reopen")
-        self.assertNotIn("split_carrier", [d["gate"] for d in self.exported()["current"]], "重开范围后旧承载答复仍算当前")
-        while (step := self.ok("status")["next"]).startswith("await_gate:") or step == "run_round":
-            if step == "run_round":
-                self.ok("round")
-            else:
-                answer(self.ok, step.split(":", 1)[1], "1")    # 整体承载是第 1 项
-        current = self.exported()["current"]
-        self.assertNotIn("split_carrier", [d["gate"] for d in current])
-        self.assertEqual(CARRY_ALL, next(d for d in current if d["gate"] == "scope_decision")["chosen"])
-
     def test_a_new_answer_moves_the_basis_but_not_the_materials(self) -> None:
-        """重开范围后人又答了一次：材料摘要不动（不开补料轮），成文依据的来源身份（currentBasis 的算法）跟着变。"""
+        """设计问答里人又答了一次：材料摘要不动（不开补料轮），成文依据的来源身份（currentBasis 的算法）跟着变。"""
         self.ready()
         design_kit.install_blueprint(self.root, self.feature, ACCESS)
         before = (registry.read(self.feature_root)["digest"], self.design_view()["identity"])
-        self.ok("reopen")
-        while (step := self.ok("status")["next"]).startswith("await_gate:") or step == "run_round":
-            if step == "run_round":
-                self.ok("round")
-            else:
-                answer(self.ok, step.split(":", 1)[1], "1")
+        questions = self.root / "questions.json"
+        questions.write_text(json.dumps({"items": [{
+            "item_id": "Q1", "question": "撤销宽限改多少小时？", "options": ["保持 24 小时", "改 36 小时"],
+            "recommend": "", "reason": "阻断当前切片，当前用户有权决定",
+            "source_ref": f"doc/features/{self.feature}/AR/story.md"}]}, ensure_ascii=False), encoding="utf-8")
+        built = self.ok("status", "--questions-file", str(questions))
+        self.assertTrue(self.ok("decide", "--ask", built["ask"]["ask_id"], "--item", "Q1",
+                                "--reply", "改 36 小时").get("success", True))
         after = (registry.read(self.feature_root)["digest"], self.design_view()["identity"])
         self.assertEqual(before[0], after[0], "答一句话把材料摘要顶动了")
         self.assertNotEqual(before[1], after[1], "新的人答没进成文依据的来源身份")

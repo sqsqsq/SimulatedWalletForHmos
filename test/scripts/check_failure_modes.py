@@ -2349,11 +2349,12 @@ def _self_check_dimensions(text: str) -> list[str]:
 
 @checker
 def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
-    """需求级流程状态幂等：走到哪一步，重复查询与重复登记都不改变它，reopen 之后待同步。
+    """需求级流程状态幂等：走到哪一步，重复查询与重复登记都不改变它。
 
-    契约状态机是 `complete`（交给设计）→ 设计准入 → `story_written`（成文登记）。每道判据问的都是「到没到某个点」，
+    契约状态机是 `gathering`（材料确认后交给设计）→ 设计准入 → `story_written`（成文登记）。每道判据问的都是「到没到某个点」，
     写成「等于某个值」会在流程往前走之后反过来拦住自己的产物。这里在 R01 好样本的副本上用真实流程命令走一遍：
-    交给设计、登记成文、重复查询与重复登记、reopen，逐步核状态与重复查询不再写入。正反预期都在这条链里（`self_check: internal`）。
+    交给设计、登记成文、重复查询与重复登记，逐步核状态与重复查询不再写入。正反预期都在这条链里（`self_check: internal`）。
+    范围由蓝图承载，旧的范围重开关卡随职责退出，不在本步重演。
     """
     # 流程命令要在接入了 Framework 的工程里跑：一律取装在被测工程里的扩展，不取开发源目录
     flow = executor_ext() / "skills/story/scripts/core/story_flow.py"
@@ -2416,15 +2417,7 @@ def r04_flow_status_after_s5(root: Path, ctx: Ctx) -> Outcome:
         rows = [line for line in again.stdout.splitlines() if line.startswith("{")]
         if again.returncode != 0 or not rows or json.loads(rows[-1]).get("registered") is not False or contract.read_bytes() != kept:
             return Outcome(False, "同一份对象重复登记换了身份或改了契约")
-        if run(sys.executable, str(flow), "reopen").returncode != 0:
-            return Outcome(False, "reopen 报错")
-        reopened, why = status_twice("reopen 之后")
-        if reopened is None:
-            return Outcome(False, why)
-        delivered = run("node", str(build), "check", "--deliver")
-        if reopened.get("status") != "gathering" or delivered.returncode == 0:
-            return Outcome(False, f"reopen 之后状态是 {reopened.get('status')}，交付门{'放行了' if delivered.returncode == 0 else '拦住了'}：应待同步、交付门拦住")
-    return Outcome(True, "范围定了进设计、登记成文、重复查询与重复登记、reopen 待同步都成立")
+    return Outcome(True, "材料确认进设计、登记成文、重复查询与重复登记都成立")
 
 
 def _norm(text: str) -> str:

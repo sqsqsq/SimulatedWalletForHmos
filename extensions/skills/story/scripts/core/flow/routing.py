@@ -1,8 +1,8 @@
-"""「现在走到哪、下一步干什么」：材料事实、关卡状态与阶段定位。
+"""「现在走到哪、下一步干什么」：材料事实、人的原话记录与阶段定位。
 
 只读不写。材料按磁盘现状取，路由据此回答位置——同一次命令里读到的是同一份事实。
 
-只依赖 state、inputs 与 materials.registry，不导入 decisions/rounds/lifecycle：
+只依赖 state、inputs、meetings、asks 与 materials.registry，不导入 decisions/rounds/lifecycle：
 命令问路由，路由不问命令。
 """
 from __future__ import annotations
@@ -18,12 +18,12 @@ from pathlib import Path
 from materials import importer, meeting, registry
 
 from flow.state import (
-    CARRY_ALL, CORE_DIR, FlowError, STORY_CONTRACT, blueprint_exists, closed, last_gate, registration_drift,
-    round_gates, scope_settled, settled_this_round, stage_of, system_requirement)
+    CORE_DIR, FlowError, STORY_CONTRACT, blueprint_exists, closed, last_gate,
+    registration_drift, round_gates, stage_of, system_requirement)
 from flow.inputs import (
-    GAPS, POSITIONING, POSITIONING_FIELDS, SCOPE_OPTIONS, read_gaps)
-from flow.meetings import meeting_basis, pending_asks, refresh_problems
-from flow import native
+    GAPS, POSITIONING, POSITIONING_FIELDS, read_gaps)
+from flow.meetings import meeting_basis, refresh_problems
+from flow import asks, native
 
 def closed_inbox_note(feature_root: Path, contract: dict, manifest: dict | None = None) -> str:
     """收口及之后，收件箱里还躺着没导入的原件——**把它说出来**，没有就返回空串。
@@ -191,11 +191,29 @@ def story_stage_step(feature_root: Path) -> tuple[str, str]:
             f"审查结果可消费之后跑 `{register_command(feature_root)}` 登记成文。" + STORY_STAGE_ORDER)
 
 
-#: 停等点的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
+#: 材料关卡的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
 DECIDE_USAGE = ("把 `status` 输出里 `ask.block` 原样摆给人（前面一句结论与缺口），停等。"
-                "人回话后跑 `story_flow.py decide --feature <名> --gate <本级> --ask <ask_id> "
-                "--reply \"<人的原话>\"`；原话没用编号的说法（第 n、n.、n）、选 n、整句为 n）或标签指到某一项时加 `--chosen <编号>`。"
-                "自己的判断用 `decide --propose --chosen <编号> --why \"<理由>\"` 记成提议，下次停等请人确认")
+                "人回话后跑 `story_flow.py decide --feature <名> --gate material_scope --ask <ask_id> "
+                "--reply \"<人的原话>\"`。原话只认编号的说法（第 n、n.、n）、选 n、整句为 n）"
+                "或整句照抄一项的标签；片段命中或模型替人挑一项都不算人的选择")
+#: 设计后必要问答的回话方式：问题与选项从已落盘的问法取，记录不重填问法。
+QUESTIONS_USAGE = (
+    "把 `ask.block` 原样摆给人，一次把这组题问完；人回话后跑 "
+    "`story_flow.py decide --feature <名> --ask <ask_id> --item <题号> --reply \"<人的原话>\"`，"
+    "多题同一答复用 `--replies-file <{\"items\":[{\"item_id\",\"reply\"}]}>`。"
+    "记录时只按盘上问法取问题与选项，不重填；部分答复只留未答的题，全部答完即回原生设计续行")
+#: 设计问答文件的形状：这一次动作的输入，不是第二份机器真源。
+QUESTIONS_SHAPE = {
+    "path": "<工程内 JSON，只作本次动作输入>",
+    "shape": {"items": [{"item_id": "本组题号，不是新议题编号",
+                         "question": "要人定什么；写完整问法",
+                         "options": ["候选做法与其后果，可为空数组"],
+                         "recommend": "建议的一项候选（可为空）",
+                         "reason": "为何符合必要问人的三条件、当前用户有权回答",
+                         "source_ref": "已取得原件或本轮原生质询报告的相对路径"}]},
+    "note": "只有 Spec 三条件内、当前用户有权回答的才放进来；选项与建议来自原件与质询后分析，"
+            "已有答案直接复用、第三方才能定的保 gap，不强问当前用户",
+}
 
 
 def sidecar_shape(step: str) -> dict | None:
@@ -204,27 +222,21 @@ def sidecar_shape(step: str) -> dict | None:
     形状是确定的，该在需要它的那一步就摆出来，而不是等作者去读源码或撞报错。
     """
     if step == "run_analysis":
-        return {
-            "写这两份": [
-                {"path": "/".join(POSITIONING), "shape": dict(POSITIONING_FIELDS)},
-                {"path": "/".join(SCOPE_OPTIONS),
-                 "shape": [{"key": CARRY_ALL, "label": "按当前范围整体承载：列出功能点"},
-                           {"key": "<切法标识>", "label": "按什么切、切成几份",
-                            "recommend": "推荐这一项的一句理由（至多一项写）",
-                            "parts": [{"seq": 1, "scope": "这一份承载什么", "depends_on": []},
-                                      {"seq": 2, "scope": "另一份承载什么", "depends_on": [1]}]}],
-                 "note": f"固定首项 {CARRY_ALL} 必须在——不切永远是一个可选项；"
-                         "切法至少两份，没有份表的切法是空壳"},
-            ],
-        }
+        return {"写这份": [{"path": "/".join(POSITIONING), "shape": dict(POSITIONING_FIELDS)}]}
     if step in ("inventory_materials", "fix_material_gaps"):
         return {"path": "/".join(GAPS),
                 "shape": {"missing": ["还缺的材料：名称与在哪句话里提到"], "why": "一句缺口判断"},
-                "note": "missing 没有就给空数组；第一级的推荐由脚本按它算"}
-    if step.startswith("await_gate:"):
-        return {"回话": DECIDE_USAGE
-                + ("；会议逐个话题记，另加 `--meeting <主名>@<sha8> --item <话题 id>`"
-                   if step == "await_gate:meeting" else "")}
+                "note": "missing 没有就给空数组；材料关卡的推荐由脚本按它算"}
+    if step == "await_gate:material_scope":
+        return {"回话": DECIDE_USAGE}
+    if step == "await_questions":
+        return {"回话": QUESTIONS_USAGE}
+    if step == "design_blueprint":
+        return {"首次原生质询回复到达后确有必须人定的问题": {
+            "命令": "`status --questions-file <文件>`",
+            **QUESTIONS_SHAPE,
+            "note": QUESTIONS_SHAPE["note"],
+        }}
     return None
 
 
@@ -294,7 +306,7 @@ def update_inputs_step(feature_root: Path, contract: dict,
 
 def update_open_step(feature_root: Path, contract: dict,
                      manifest: dict | None = None) -> tuple[str, str]:
-    """更新正在进行：去向是「按修订清单改」，**不重走材料与范围关卡**。
+    """更新正在进行：去向是「按修订清单改」，**不重走材料关卡**。
 
     新材料 `round` 登记进当前轮，范围沿用本单已定的；设计按新来源同步，story 改了就重跑 `story` 重新登记。
     """
@@ -306,13 +318,10 @@ def update_open_step(feature_root: Path, contract: dict,
     if state["changed"]:
         return ("refresh_round", "这一轮新到的料已导入：跑 `story_flow.py round` 登记到本轮"
                 "（update 期间它不开新轮）")
-    # 新会议照常走会议关卡：会上有要人定的话题，那是真的要人拍板
+    # 新会议照常读会、写当前会议结果；会上有要人定的话题进蓝图 gap，不再生成会议裁决关卡
     meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
     if meeting_now:
         return meeting_now
-    # 这一轮 update 里重开了范围：先回范围关卡重新确认，update 照旧开着
-    if contract["rounds"][-1].get("reopened") and not scope_settled(contract):
-        return scope_step(feature_root, contract)
     reregister = registration_step(feature_root, contract)
     if reregister:
         return reregister
@@ -359,7 +368,7 @@ def registration_step(feature_root: Path, contract: dict) -> tuple[str, str] | N
     drift = registration_drift(feature_root, contract) + basis_drift(feature_root, contract)
     if drift:
         return ("register_story", (f"成文登记之后改过 {'、'.join(drift)}：" if drift else "story 还没按当前内容登记：")
-                + "按当前蓝图与来源同步 Story 与 Review 里受影响的章节，再 `story-build review --action prepare` 定稿（重投附录、编号、渲染 review、全篇 check）并交原读者按改动影响复核，"
+                + "按当前蓝图与来源同步 Story 里受影响的章节，再 `story-build review --action prepare` 定稿（重投附录、编号、全篇 check）并交原读者按改动影响复核，"
                 f"审查通过后跑 `{register_command(feature_root)}` 重新登记")
     return None
 
@@ -379,13 +388,13 @@ def next_step(feature_root: Path, contract: dict | None,
     stage = stage_of(contract)
     if stage == "update_inputs":
         return update_inputs_step(feature_root, contract, manifest)
-    # 收口之后才导进来的会议：还没有会议判断的版本。收口前读过的会都已写进判断（范围关卡之前必经）
+    # 收口之后才导进来的会议：还没有会议判断的版本。收口前读过的会都已写进判断（材料确认之后必经）
     late = (sorted(set(meeting.versions(feature_root)) - set(meeting.read_notes(feature_root, [])))
             if closed(feature_root, contract) and stage != "update_open" else [])
     if late:
-        return ("late_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：按 `phases/meeting-read.md` 读会。"
-                "会上有要人定的话题就先 `story_flow.py reopen` 重拍，在范围关卡摆给人；"
-                "只是补充事实就读会后照常改、重跑 `story` 重新登记"
+        return ("late_meeting", f"收口之后到了会议转写（{'、'.join(late)}）：按 `phases/meeting-read.md` 读会、"
+                "把当前会议结果补进 `doc-refresh.md`；会上的结论进蓝图，没定的进 gap，"
+                "不再另设会议裁决关卡。只是补充事实就读会后照常改、重跑 `story` 重新登记"
                 + closed_tail(feature_root, contract, manifest))
     if stage == "update_open":
         return update_open_step(feature_root, contract, manifest)
@@ -410,7 +419,7 @@ def next_step(feature_root: Path, contract: dict | None,
                          else "需求系统上的正文已恢复到旧版，两个附件仍是最近一次发布的版本，三件分属不同版本；"
                               "要再送审走 `/story archive`，按逐件基线重新核。" if restored
                          else "本轮已归档送审。")
-                + "评审意见、上游新材料与改稿走 `/story update`；要重拍范围才 `story_flow.py reopen`"
+                + "评审意见、上游新材料与改稿走 `/story update`；真实范围变化也由 update 承接、回蓝图修订"
                 + closed_tail(feature_root, contract, manifest))
     if stage == "story_written":
         # 交付选择按这张单的真实来源给：挂在需求系统上的单能送审，本地需求没有系统可送
@@ -425,7 +434,7 @@ def next_step(feature_root: Path, contract: dict | None,
         # 设计开始之后材料又变了，也要先说出来。收口那一刻登记的材料指纹是这一轮的依据，
         # 而设计与叙事件都按那批料写：两份落盘记录（清单与轮次）在文件被改之后
         # 仍然彼此相等，只有按磁盘现状重算才看得见。处置是 `round`——它把这次变化
-        # 记到本轮（不开新轮），要重新决策才跑 `reopen`。**没有登记过基准不算「变了」**：
+        # 记到本轮（不开新轮）。**没有登记过基准不算「变了」**：
         # 那是轮次自己缺了材料指纹，由流程契约的判据报，处置也不是同一个。
         current = contract["rounds"][-1] if contract.get("rounds") else {}
         state = material_state(feature_root, current, manifest)
@@ -438,9 +447,12 @@ def next_step(feature_root: Path, contract: dict | None,
         if base and state["changed"]:
             return ("refresh_round",
                     "材料在收口之后又变了：先跑 `story_flow.py round` 把这次变化登记到本轮"
-                    "（它不开新轮；要重新走关卡重新决策，跑 `story_flow.py reopen`），"
-                    "再继续——设计与叙事件都按本轮登记的那批料写"
+                    "（它不开新轮），再继续——设计与叙事件都按本轮登记的那批料写；"
+                    "材料带来的真实范围变化由 update 承接、回蓝图负责方修订"
                     + closed_tail(feature_root, contract, manifest))
+        questions = questions_step(feature_root, contract)
+        if questions:
+            return questions
         step, action = design_stage_step(feature_root, contract)
         return step, action + closed_tail(feature_root, contract, manifest)
 
@@ -460,21 +472,19 @@ def next_step(feature_root: Path, contract: dict | None,
     if state["changed"]:
         return ("run_round",
                 "材料已经变了：重跑 `story_flow.py round` 登记新一轮，再拿新材料重新盘点")
-    return scope_step(feature_root, contract)
+    return after_material_step(feature_root, contract)
 
 
 def meeting_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """材料确认之后、需求分析之前：读会、出阅读件、自检、有要问人的话题时停一次。
+    """材料确认之后、需求分析之前：读会、出阅读件、自检。
 
     会议是需求材料的一种，没有自己的材料步骤：它随其它材料一起交进来、一起导入。
     没有要做的返回 None——没有会议的需求走原来的路，这一段整段不出现。
-    停不停由会议判断里有没有带 `question` 的话题决定（脚本枚举），不由模型临场判。
-    当前会议结果在人裁决之后写（`meeting_result_step`），不在这里：人还没表态时
-    写出来的「当前结论」，下一刻就可能被那次裁决改掉。
+    会上有 `question` 的话题不再生成裁决关卡：结论进蓝图，没定的进 gap，当前会议结果照原话写。
     """
     seen = meeting.inspect(feature_root)
     if seen["problems"]:
-        return ("fix_meeting", "会议产物自检没过，先修再摆关卡：" + "；".join(seen["problems"][:6]))
+        return ("fix_meeting", "会议产物自检没过，先修再读：" + "；".join(seen["problems"][:6]))
     if seen["stale"]:
         return ("refresh_meeting",
                 f"纠偏差异还没出成阅读件（{'、'.join(seen['stale'])}）：逐版跑 `story_flow.py "
@@ -483,48 +493,56 @@ def meeting_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
     if seen["missing"]:
         return ("read_meeting", f"会议材料已按版本留下、还没读完（{'、'.join(seen['missing'])}）："
                 "按 `phases/meeting-read.md` 读 raw.md，写逐行纠偏差异 → `meeting-refresh` 出阅读件 → "
-                "一份 `meeting-notes.json` 逐话题写判断（归属、原话、finding，要问人的写 question 与选项），"
-                "写完跑 `status`")
-    asks = pending_asks(seen["notes"], contract)
-    if asks:
-        return ("await_gate:meeting", "会议里有要人定的话题，停这一次："
-                "`status` 的 meetings 已逐条列出全部版本与话题（归属、finding、原话位置、"
-                "待裁决的问题与选项）——要问的带选项并补上推荐理由，不问的一句摘要说明按会议采纳；"
-                f"人一轮答完再逐条 `decide --gate meeting`：{'、'.join(asks)}")
+                "一份 `meeting-notes.json` 逐话题写判断（归属、原话、finding；要人定的事写成 question，"
+                "由作者在质询后按必要问人条件并入集中问答或蓝图 gap），写完跑 `status`")
     return None
 
 
 def meeting_result_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """会议话题该裁决的都裁决了：把当前的会议结果写出来。没有会议或已经写好返回 None。
+    """会议判断写完、议题还没形成 doc-refresh.md：把当前的会议结果写出来。没有会议或已经写好返回 None。
 
-    **由模型写，不由脚本合成**：哪条采纳了、影响到哪、还有什么没定，要读原话与人的裁决才说得清。
-    脚本只核它声明的输入是不是当前这版、每个话题有没有去向、引的原文行在不在。
+    **由模型写，不由脚本合成**：哪条采纳了、影响到哪、还有什么没定，要读原话才说得清。
+    脚本只核它声明的输入是不是这版 notes、每个话题有没有去向、引的原文行在不在。
     """
     notes = meeting.read_notes(feature_root, [])
-    problems = refresh_problems(feature_root, notes, contract)
+    problems = refresh_problems(feature_root, notes)
     if not problems:
         return None
     return ("read_meeting",
-            "会议判断已定、要人定的话题都已裁决，现在形成当前的会议结果：读 `AR/story-src/meeting-notes.json` 与"
-            "契约里人选的那几笔，按原话写 `AR/story-src/doc-refresh.md`——每个话题一个 "
-            "`### <版本>/<话题 id> <标题>`，说清本需求实际采纳什么、影响到哪、还有什么没定；"
-            "不属于本单或已被后续决定替代的也写一句去向。"
-            f"开头抄一行 `<!-- meeting-basis:{meeting_basis(notes, contract)} -->`。"
+            "会议判断已写、现在形成当前的会议结果：读 `AR/story-src/meeting-notes.json`，"
+            "按原话写 `AR/story-src/doc-refresh.md`——每个话题一个 "
+            "`### <版本>/<话题 id> <标题>`，说清本需求实际采纳什么、影响到哪、还有什么没定、归谁定；"
+            "不属于本单或已被后续决定替代的也写一句去向。已由有效依据定下的不进 gap，未定的落蓝图 gap。"
+            f"开头抄一行 `<!-- meeting-basis:{meeting_basis(notes)} -->`。"
             "要给原话就写 `<版本目录>/raw.md:L起-L止`。当前缺口："
             + "；".join(problems[:4]))
 
 
+def questions_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
+    """有还没答完的设计问答时停在这一步：同一组问法原样续问，不重新生成更宽的问法。"""
+    ask = asks.current_design(feature_root)
+    if ask is None:
+        return None
+    pending = asks.pending_items(ask, contract)
+    if not pending:
+        return None
+    shown = asks.with_answered(ask, contract)
+    left = {**shown, "items": [it for it in shown["items"] if str(it["item_id"]) in pending]}
+    return ("await_questions",
+            f"设计后必要问答还有 {len(pending)} 题没答（{ask['ask_id']}）。把同一展示块里剩下的部分原样摆给人：\n"
+            + asks.block(left) + "\n" + QUESTIONS_USAGE)
 
-def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
-    """本轮范围定到哪一级了——材料关卡、会议、需求分析、后两级关卡；范围定了就交给设计这一段。
+
+def after_material_step(feature_root: Path, contract: dict) -> tuple[str, str]:
+    """材料已确认之后：会议 → 需求分析 →（设计后问答）→ 交给原生设计这一段。
 
     **不看材料新鲜度**：那是 `next_step` 在这之前判的。
     """
     current = contract["rounds"][-1]
     gates = round_gates(contract)
 
-    # 第一级：材料。**先于任何需求分析**——材料不全时做的范围判断注定作废，
-    # 每次补料都要重做一遍。所以这一级只需要材料盘点（清单 + 一句缺口判断）。
+    # 材料。**先于任何需求分析**——材料不全时做的分析注定作废，
+    # 每次补料都要重做一遍。这一级只需要材料盘点（清单 + 一句缺口判断）。
     material = last_gate(gates, "material_scope")
     if material is None or material["outcome"] == "rejected":
         step = material_step(feature_root,
@@ -532,37 +550,25 @@ def scope_step(feature_root: Path, contract: dict) -> tuple[str, str]:
         if step:
             return step
 
-    # 材料已确认 → 有会议就先读会（有要人定的话题停一次），形成当前的会议结果，
-    # 再做需求粒度分析：分析与提取读的都是它
+    # 材料已确认 → 有会议就先读会、形成当前会议结果；不做会议裁决关卡。
     meeting_now = meeting_step(feature_root, contract) or meeting_result_step(feature_root, contract)
     if meeting_now:
         return meeting_now
 
-    # 材料已确认 → 才做需求粒度分析（全景 / 本部件 / 本 AR 定位 / 功能清单 / 范围定法选项）
-    if not current.get("positioning") or not current.get("scope_options"):
-        missing = []
-        if not current.get("positioning"):
-            missing.append(f"本 AR 定位 → {'/'.join(POSITIONING)}")
-        if not current.get("scope_options"):
-            missing.append(f"范围定法选项集 → {'/'.join(SCOPE_OPTIONS)}")
+    # 材料已确认 → 做需求粒度分析；定位是整条范围链的起点，不再要求选项集/份表。
+    if not current.get("positioning"):
         return ("run_analysis",
                 "S2b 需求粒度分析（材料已确认）：需求概览 → 本部件视角 → 本 AR 定位 → "
-                "待实现功能清单 → 范围定法选项 → 来源初筛；落盘后重跑 `round`。"
-                "本部件的职责范围与交互方在激活知识里自述回答它的那一份，"
-                "按各知识的 applies_when 找。"
-                "待补：" + "；".join(missing))
+                "待实现功能清单 → 来源初筛；定位落 `AR/story-src/.positioning.json` 后重跑 `round`。"
+                "本部件的职责范围与交互方在激活知识里自述回答它的那一份，按各知识的 applies_when 找。"
+                "待补：" + f"本 AR 定位 → {'/'.join(POSITIONING)}")
 
-    # 第二级：这个范围怎么定
-    decision = last_gate(gates, "scope_decision")
-    if decision is None:
-        return ("await_gate:scope_decision",
-                "S3 第二级：照出契约里的范围定法选项集（分析定几项就摆几项），取得选择")
+    # 设计后必要问答：有未答的就停在这一组问法上，全部答完即回原生设计续行。
+    questions = questions_step(feature_root, contract)
+    if questions:
+        return questions
 
-    # 第三级：本 AR 承载哪一份（仅在选了某个切分维度时）
-    if decision["chosen"] != CARRY_ALL and not settled_this_round(contract):
-        return "await_gate:split_carrier", "S3 第三级：呈现该维度的份表，取得本 AR 承载哪份"
-
-    # 范围已定——整体承载，或份表已定案：交给设计这一段按原生蓝图的真实状态往下走
+    # 交给设计这一段按原生蓝图的真实状态往下走；不能凭本地定位存在伪造原生准入。
     return design_stage_step(feature_root, contract)
 
 

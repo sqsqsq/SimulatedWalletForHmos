@@ -33,7 +33,7 @@ ALLOWED = {
     "phase_facts": {"state"},
     "inputs": {"state"},
     "meetings": {"state"},
-    "routing": {"state", "inputs", "meetings", "phase_facts"},
+    "routing": {"state", "inputs", "meetings", "phase_facts", "asks"},
     "asks": {"state", "inputs", "meetings"},
     "update": {"state", "routing", "phase_facts"},
     "decisions": {"state", "inputs", "routing", "meetings", "asks"},
@@ -183,7 +183,7 @@ class OneRuleFindsEveryResource(unittest.TestCase):
         ask = self.payload(self.flow("status"))["ask"]
         self.assertEqual(keys, [o["key"] for o in ask["options"]])
         out = self.payload(self.flow("decide", "--gate", "material_scope", "--ask", ask["ask_id"],
-                                     "--reply", "我自己编的一项", "--chosen", "压根不存在的键"))
+                                     "--reply", "我自己编的一项"))
         self.assertFalse(out["success"], out)
         for key in keys:
             self.assertIn(key, out["error"], f"报错没列出合同里的 {key}")

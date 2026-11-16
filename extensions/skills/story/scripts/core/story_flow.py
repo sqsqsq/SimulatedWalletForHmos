@@ -16,13 +16,12 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
 
     python story_flow.py init     --feature <AR>
     python story_flow.py round    --feature <AR>
-    python story_flow.py decide   --feature <AR> --gate <g> --ask <ask_id> --reply <人的原话> [--chosen <编号>]
-    python story_flow.py decide   --feature <AR> --gate <g> --propose --chosen <编号> --why <理由>
-    python story_flow.py decide   --feature <AR> --update <定了哪件事> --issue <议题编号> --reply <人的原话>
+    python story_flow.py decide   --feature <AR> --gate material_scope --ask <ask_id> --reply <人的原话>
+    python story_flow.py decide   --feature <AR> --ask <ask_id> --item <题号> --reply <人的原话>
+    python story_flow.py decide   --feature <AR> --ask <ask_id> --replies-file <逐题答复 JSON>
     python story_flow.py meeting-refresh --feature <AR> --meeting <主名>@<sha8>
-    python story_flow.py status   --feature <AR>
+    python story_flow.py status   --feature <AR> [--questions-file <设计问答 JSON>]
     python story_flow.py story    --feature <AR>
-    python story_flow.py reopen   --feature <AR>
     python story_flow.py publish  --feature <AR> [--reply <人确认覆盖外部改动的原话>]
     python story_flow.py archived --feature <AR>
     python story_flow.py restored --feature <AR>
@@ -34,9 +33,9 @@ AI 只传它真正知道而脚本无从得知的东西——人的原话、材�
 公共参数：`--project-root <abs>`。stdout 单行 JSON；人类可读日志走 stderr。
 **参数只放标量**：JSON 全是引号，而任何 shell 都要对参数再解析一遍——同一条命令
 bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据一律走文件：
-材料缺口走 `AR/story-src/.material-gaps.json`、本 AR 定位走 `AR/story-src/.positioning.json`、
-拆分份表走 `AR/story-src/.split-parts.json`，脚本读后即销毁（一次性）；问法 `AR/story-src/.ask.json`
-由 `status` 写、`decide` 读。
+材料缺口走 `AR/story-src/.material-gaps.json`、本 AR 定位走 `AR/story-src/.positioning.json`，
+脚本读后即销毁（一次性）；设计问答文件只作 `status --questions-file` 的本次输入；
+问法 `AR/story-src/.ask.json` 由 `status` 写、`decide` 读。
 
 退出码（`decide` 的退出码回答「能不能按这个选择往下走」）：
 
@@ -47,20 +46,19 @@ bash 下原样送达、Windows PowerShell 下双引号被吞。结构化数据�
 
 核心不变量：
 
-- **一轮 = 一次材料状态**。轮次边界由材料清单的 `digest` 判定（`AR/story-src/materials.json`），`reopen` 重拍范围时另开一轮：
-  材料一个字节没变就不是新一轮（幂等），补料导入则必然换版本。初析件在同一轮内可以从
-  盘点版改到完整版，它的哈希照实登记，但不划轮次——否则「材料没动、重写一遍分析」
-  就能造出一个新轮次；
-- **一次关卡交互 = 一条 gate 记录**，含未生效的那次。校验与记录是同一次调用，
+- **一轮 = 一次材料状态**。轮次边界由材料清单的 `digest` 判定（`AR/story-src/materials.json`）：
+  材料一个字节没变就不是新一轮（幂等），补料导入则必然换版本。设计开始之后材料再变只登记进本轮；
+  真实范围变化走 update，由蓝图负责方修订；
+- **一次材料确认 = 一条 gate 记录**，含未生效的那次。校验与记录是同一次调用，
   所以不存在"忘了记"；
-- **摆过的选项与选中的那项一起记**，连同问法编号与人的原话：选的只能是摆出来的，
-  签的只能是问过的；
+- **摆过的选项与人的选择一起记**，连同问法编号与人的原话：选的只能是摆出来的，
+  签的只能是问过的；设计问答只记当时问法、原话与出处，不写 gate、不产生已批准状态；
 - **契约带自身摘要**：读到对不上时报「契约被手改」并给恢复路径，命令照常执行；
 - 时间戳一律由本脚本取当下，调用方碰不到该字段。
 
 本文件只做参数解析、分派与顶层输出；每条命令的实现在 `flow/` 下按职责分开：
 契约读写、常量与阶段判定在 `state`，一次性侧车与骨架在 `inputs`，「现在走到哪」在 `routing`，
-问法在 `asks`，`decide`/`round`/`status` 各在 `decisions`/`rounds`/`lifecycle`。范围定了之后的设计由原生 component-design 做，
+问法在 `asks`，`decide`/`round`/`status` 各在 `decisions`/`rounds`/`lifecycle`。材料确认之后的设计由原生 component-design 做，
 流程只按原生蓝图派生位置，不另设交接命令。
 """
 from __future__ import annotations
@@ -76,9 +74,9 @@ from materials import importer
 
 from flow.state import FlowError, GATES, TAMPER_NOTES, log
 from flow.inputs import cmd_init
-from flow.decisions import cmd_decide, cmd_decide_update, cmd_propose
+from flow.decisions import cmd_decide
 from flow.publish import cmd_archived, cmd_publish, cmd_restored
-from flow.rounds import cmd_reopen, cmd_round
+from flow.rounds import cmd_round
 from flow.lifecycle import cmd_material_status, cmd_status, cmd_story, reading_view
 from flow.meetings import cmd_meeting_refresh
 from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_inputs, cmd_update_prepare,
@@ -87,33 +85,30 @@ from flow.update import (cmd_update_close, cmd_update_feedback, cmd_update_input
 
 # ---------------------------------------------------------------------------
 #: 会读、比较或登记 story 的动作：最外层持有视图——动手前回到正式形态，结束或失败后恢复可用的增强 SVG
-VIEW_READERS = {"status", "story", "publish", "archived", "restored", "update", "round", "reopen"}
+VIEW_READERS = {"status", "story", "publish", "archived", "restored", "update", "round"}
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="story 需求流程契约的唯一写入者")
     ap.add_argument("mode",
-                    choices=["init", "round", "decide", "status", "reopen",
+                    choices=["init", "round", "decide", "status",
                              "story", "publish", "archived", "restored", "meeting-refresh", "update"])
     ap.add_argument("--feature", required=True)
     ap.add_argument("--project-root", default=None)
     ap.add_argument("--gate", default=None, choices=list(GATES),
-                    help="关卡编号，缺省 material_scope")
+                    help="decide：材料确认写 material_scope；设计问答不写 --gate")
     ap.add_argument("--ask", default=None, help="decide：`status` 给出的问法编号 ask_id")
     ap.add_argument("--reply", default=None, help="decide、publish、restored --prepare：人的原话，逐字")
     ap.add_argument("--with-design-reference", action="store_true",
                     help="publish：本单已有交付请求要附设计参考时带上（系统要求附时不必带，也不能省）")
     ap.add_argument("--prepare", action="store_true", help="restored：只准备远端恢复（三方比较），不写远端")
-    ap.add_argument("--chosen", default=None,
-                    help="decide：人选的选项编号或键——原话没写编号或标签时用；--propose 时是提议项")
-    ap.add_argument("--propose", action="store_true", help="decide：记成模型的提议，不推进流程")
-    ap.add_argument("--why", default=None, help="decide --propose：一句理由")
     ap.add_argument("--meeting", default=None,
-                    help="会议版本 <主名>@<sha8>：decide --gate meeting 与 meeting-refresh 都用它")
-    ap.add_argument("--item", default=None, help="meeting：会议判断里的话题 id")
-    ap.add_argument("--issue", default=None,
-                    help="decide --update：人定的事挂在评审记录的哪一条议题上（D 编号）")
-    ap.add_argument("--update", dest="update_item", default=None,
-                    help="decide：更新期间人定的一件事（与三级关卡无关，要有开着的 update）")
+                    help="会议版本 <主名>@<sha8>：meeting-refresh 用它")
+    ap.add_argument("--item", default=None,
+                    help="decide 设计问答：本组问法里的题号 item_id")
+    ap.add_argument("--replies-file", default=None,
+                    help='decide 设计问答：逐题答复 JSON {"items":[{"item_id","reply"}]}')
+    ap.add_argument("--questions-file", default=None,
+                    help="status：设计后必要问答的输入 JSON，生成一次集中 ask（不传不触发）")
     ap.add_argument("--action", default="inputs",
                     choices=["inputs", "prepare", "status", "close", "restore", "feedback"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
@@ -137,16 +132,15 @@ def main() -> int:
         elif args.mode == "round":
             result.update(cmd_round(feature_root))
         elif args.mode == "decide":
-            if args.update_item:
-                result.update(cmd_decide_update(feature_root, args.update_item,
-                                                str(args.reply or ""), args.issue or ""))
-            elif args.propose:
-                result.update(cmd_propose(feature_root, args))
-            else:
-                payload, code = cmd_decide(feature_root, args)
-                result.update(payload)
+            payload, code = cmd_decide(feature_root, args)
+            result.update(payload)
         elif args.mode == "status":
-            result.update(cmd_material_status(feature_root) if args.materials else cmd_status(feature_root))
+            if args.materials:
+                if args.questions_file:
+                    raise FlowError("--materials 只答材料事实，不与 --questions-file 同用")
+                result.update(cmd_material_status(feature_root))
+            else:
+                result.update(cmd_status(feature_root, args.questions_file))
         elif args.mode == "story":
             result.update(cmd_story(feature_root, project_root))
         elif args.mode == "publish":
@@ -155,8 +149,6 @@ def main() -> int:
             result.update(cmd_restored(feature_root, args.prepare, args.reply))
         elif args.mode == "archived":
             result.update(cmd_archived(feature_root, project_root))
-        elif args.mode == "reopen":
-            result.update(cmd_reopen(feature_root))
         elif args.mode == "meeting-refresh":
             result.update(cmd_meeting_refresh(feature_root, str(args.meeting or "").strip()))
         elif args.mode == "update":

@@ -12,39 +12,41 @@ import subprocess
 from pathlib import Path
 
 from flow.state import (
-    CORE_DIR, FlowError, STORY, STORY_REGISTERED, blueprint_exists, file_sha256, last_gate, load, log,
-    now, require, round_gates, save, scope_settled, stage_of)
-from flow.routing import (live_materials, material_state, next_step, reading_work, register_command,
-                          sidecar_shape)
+    CORE_DIR, FlowError, STORY, STORY_REGISTERED, blueprint_exists, file_sha256, load, log,
+    material_confirmed, now, require, round_gates, save, stage_of)
+from flow.routing import (QUESTIONS_USAGE, live_materials, material_state, next_step, reading_work,
+                          register_command, sidecar_shape)
 from flow import asks
 from flow.update import record_baseline, record_owned_after
 from flow.meetings import topic_digest
 from materials import meeting
 
 
-#: 范围定了之后等设计的几步与成文的几步（路由给出），派生状态按它们归类
-DESIGN_STEPS = ("design_blueprint", "fix_blueprint", "design_projection")
+#: 等设计的几步、分析阶段的几步与成文的几步（路由给出），派生状态按它们归类
+DESIGN_STEPS = ("design_blueprint", "fix_blueprint", "design_projection", "await_questions")
+ANALYSIS_STEPS = ("inventory_materials", "fix_material_gaps", "read_meeting", "refresh_meeting",
+                  "fix_meeting", "run_analysis", "await_gate:material_scope")
 WRITING_STEPS = ("story_skeleton", "story_chapters", "register_story")
 
 
 def derived_state(contract: dict | None, step: str) -> str:
     """需求现在处在哪一态：由契约与路由的同一次判断派生，不另存副本。
 
-    gathering 材料未确认；scope_pending 范围未定；waiting_for_design 范围已定、蓝图没有、读不过、没采用本需求来源
-    或投影无效；ready_to_write 可以成文；needs_sync 成文与现状不符；registered 成文已登记且与现状一致。
+    gathering 材料未确认；analysis 材料已确认、设计尚未开始；waiting_for_design 设计这一侧还没成立
+    （蓝图没有、读不过、没采用本需求来源或投影无效）；ready_to_write 可以成文；
+    needs_sync 成文与现状不符；registered 成文已登记且与现状一致。
     update 的两段另由 `update` 字段给出。
     """
     if not contract or not contract.get("rounds"):
         return "gathering"
     if contract.get("status") == "story_written":
         return "needs_sync" if step == "register_story" else "registered"
-    if scope_settled(contract):
-        return ("waiting_for_design" if step in DESIGN_STEPS
-                else "ready_to_write" if step in WRITING_STEPS else "needs_sync")
-    confirmed = last_gate(round_gates(contract), "material_scope")
-    if not confirmed or confirmed.get("outcome") != "accepted":
+    if not material_confirmed(contract):
         return "gathering"
-    return "scope_pending"
+    if step in ANALYSIS_STEPS:
+        return "analysis"
+    return ("waiting_for_design" if step in DESIGN_STEPS
+            else "ready_to_write" if step in WRITING_STEPS else "needs_sync")
 
 
 def cmd_material_status(feature_root: Path) -> dict:
@@ -63,7 +65,7 @@ def cmd_material_status(feature_root: Path) -> dict:
             "required_answers": required, "source_problems": required["problems"]}
 
 
-def cmd_status(feature_root: Path) -> dict:
+def cmd_status(feature_root: Path, questions_file: str | None = None) -> dict:
     contract = load(feature_root)
     # 材料事实**一份**：路由、收件箱提示与下面的 JSON 输出读的是同一个时点的清单。
     # 各自再 build 一次的话，同一条命令里会出现两份「现在的材料」，而消费者不知道
@@ -71,10 +73,45 @@ def cmd_status(feature_root: Path) -> dict:
     manifest = live_materials(feature_root) if (contract or {}).get("rounds") else None
     # 本地阅读同理：成文之后派生一次，路由与输出共用
     reading = reading_work(feature_root) if (contract or {}).get("status") == "story_written" else None
-    step, action = next_step(feature_root, contract, manifest, reading)
+
+    # 设计后必要问答：作者把这一轮的问题写成文件交进来，脚本校形状后生成一次集中 ask。
+    # 它只在首次原生质询的真实回复到达之后才有意义，所以先要求设计已开始。
+    built = None
+    if questions_file:
+        if not contract or not contract.get("rounds"):
+            raise FlowError("还没有轮次：先 `init` 起单、`round` 登记材料，再谈设计问答")
+        if not blueprint_exists(feature_root):
+            raise FlowError("设计还没开始（没有同根蓝图）：设计后必要问答在首次原生质询的真实回复到达之后才问，"
+                            "先按 `phases/design.md` 进 component-design")
+        built = asks.build_questions(feature_root, contract, questions_file)
+
+    if built is not None:
+        # 这一条只回答本次生成的那组问法，不再顺带算设计下一步：问法先落盘，人答完再由 decide 续行。
+        shown = asks.with_answered(built, contract)
+        step = "await_questions"
+        action = ("设计后必要问答已生成一次集中问法：把下面这一块原样摆给人，一次问完、停等。\n"
+                  + shown["block"] + "\n" + QUESTIONS_USAGE)
+        if shown.get("replaced_unanswered"):
+            action += ("；上一组还没答的题（" + "、".join(shown["replaced_unanswered"])
+                       + "）已被这次问法替换——原问题与依据留在契约和当前分析里；"
+                       "若并非新事实导致，按原问法继续，不伪造人的答复")
+        ask = shown
+    else:
+        step, action = next_step(feature_root, contract, manifest, reading)
+        # 到了停等点就生成问法并写侧车：人看到的选项块与 `decide` 核对的是同一份
+        ask = (asks.build_material(feature_root, contract)
+               if contract and contract.get("rounds") and step == "await_gate:material_scope" else None)
+        if ask is None and contract and contract.get("rounds"):
+            # 已有设计问答时原样续问：普通 status 不重新生成更宽的问法，也不悄悄覆盖。
+            current_ask = asks.current_design(feature_root)
+            if current_ask is not None:
+                if asks.pending_items(current_ask, contract):
+                    ask = asks.with_answered(current_ask, contract)
+                    step = "await_questions"
+                    action = step_action_questions(ask)
+                else:
+                    asks.clear(feature_root)
     shape = sidecar_shape(step)
-    # 到了停等点就生成问法并写侧车：人看到的选项块与 `decide` 核对的是同一份
-    ask = asks.build(feature_root, contract, step) if contract and contract.get("rounds") else None
     if contract is None:
         out = {"exists": False, "next": step, "action": action}
         if shape:
@@ -89,7 +126,7 @@ def cmd_status(feature_root: Path) -> dict:
     # 不从 `next` 的字面值反推——字面值只认得出其中一种情况。没有轮次时没有基准可比，
     # 给 null，不用 false 冒充「材料没问题」。
     state = material_state(feature_root, current, manifest) if manifest is not None else None
-    topics = topic_digest(feature_root, meeting.read_notes(feature_root, []), contract)
+    topics = topic_digest(feature_root, meeting.read_notes(feature_root, []))
     return {
         "exists": True,
         "schema": contract.get("schema"),
@@ -102,7 +139,6 @@ def cmd_status(feature_root: Path) -> dict:
         "positioning": current.get("positioning"),
         "gates": [{"gate": g.get("gate"), "chosen": g.get("chosen"),
                    "outcome": g.get("outcome"), "by": g.get("by")} for g in gates],
-        "split": contract.get("split", {}).get("decided"),
         "archived": bool(contract.get("archived")),
         "state": derived_state(contract, step),
         **({"update": stage_of(contract)} if stage_of(contract).startswith("update_") else {}),
@@ -111,13 +147,22 @@ def cmd_status(feature_root: Path) -> dict:
         "material_state": ({"pending": state["pending"], "changed": state["changed"]}
                            if state else None),
         # 会议话题在这里机械枚举一次：全部版本、全部话题，含不属于本需求与归属判不准的。
-        # 模型据它向人呈现，不必自己把 notes 再列一遍；只在读会与摆关卡那几步给，别的步骤用不上它。
+        # 模型据它向人呈现，不必自己把 notes 再列一遍；只在读会那几步给，别的步骤用不上它。
         **({"meetings": topics} if topics and "meeting" in step else {}),
         "next": step,
         "action": action,
         **({"ask": ask} if ask else {}),
         **({"sidecar": shape} if shape else {}),
     }
+
+
+def step_action_questions(ask: dict) -> str:
+    """设计问答没答完时给人的下一步：同一展示块剩下的部分原样摆出，不重答已答的题。"""
+    left = {**ask, "items": [it for it in ask["items"] if str(it["item_id"]) in ask["pending"]]}
+    return (f"设计后必要问答还有 {len(ask['pending'])} 题没答（{ask['ask_id']}）。"
+            "把同一展示块里剩下的部分原样摆给人：\n" + asks.block(left)
+            + "\n`decide --ask <id> --item <题号> --reply \"<人的原话>\"`；多题同一答复用 --replies-file；"
+            "全部答完即回原生设计续行")
 
 
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
@@ -137,14 +182,14 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
     """
     contract = require(load(feature_root))
     status = contract.get("status")
-    if status != "story_written" and not scope_settled(contract):
-        # 重拍范围之后直接来登记的常见一步：说出现在该做什么，不只说「不行」。
-        # 下一步要按磁盘现状读材料；读不出来时「范围还没定」照样先说，原因附在后面。
+    if status != "story_written" and not material_confirmed(contract):
+        # 材料还没人确认就直接来登记：说出现在该做什么，不只说「不行」。
+        # 下一步要按磁盘现状读材料；读不出来时「材料还没确认」照样先说，原因附在后面。
         try:
             _, action = next_step(feature_root, contract, live_materials(feature_root))
         except FlowError as exc:
             action = f"暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取下一步"
-        raise FlowError(f"本轮范围还没定，成文态无从登记。下一步：{action}")
+        raise FlowError(f"本轮材料还没确认，成文态无从登记。下一步：{action}")
     story = feature_root / Path(*STORY)
     if not story.is_file():
         raise FlowError("AR/story.md 不存在：没有成文，无可登记的成文态")

@@ -1,11 +1,14 @@
-"""停等的问法：选项、顺序、推荐与缺口由脚本从契约生成，模型原样转述给人。
+"""停等的问法：脚本排版、脚本绑定，模型原样转述给人。
 
-`status` 到了停等点就生成问法并写侧车 `AR/story-src/.ask.json`；`decide` 只收带同一个
-`ask_id` 的人签，把人的原话映射到选项。问法在问人之前就在盘上，所以「先签后问」写不进契约；
-选项块由脚本排好，所以人看到的与契约记下的是同一套选项、同一个顺序。
+两类问法共用同一个侧车 `AR/story-src/.ask.json`：
 
-模型自己的判断用 `decide --propose` 记为提议（`by: model`），不推进流程；下一次停等时，
-脚本把还没被人确认的提议列进问法，请人确认。
+- **材料确认**：`status` 到了材料关卡就生成，选项来自章节合同，推荐按缺口文件算；
+- **设计后必要问答**：首次原生质询的真实回复到达后，作者把本轮已知、符合必要问人三条件的问题
+  写成一份文件交给 `status --questions-file`，脚本校形状后生成**一次集中 ask**。问法内容与
+  `ask_id` 一起落盘，`decide` 只按 `--ask/--item` 读取这份问法，不让人在记录时重填问题。
+
+`ask_id` 由完整规范化问法内容派生（不含派生出来的 id、展示块与待答状态）；读回时按同一算法
+重算身份，字段被改却沿用旧 id 的拒绝。问法在问人之前就在盘上，所以「先签后问」写不进契约。
 """
 from __future__ import annotations
 
@@ -14,17 +17,19 @@ import re
 from hashlib import sha256
 from pathlib import Path
 
-from materials import meeting
-
 from flow.state import FlowError
-from flow.inputs import (
-    GAPS, MATERIAL_REQUEST_KEYS, material_options, read_gaps, read_sidecar,
-    split_carrier_options)
-from flow.meetings import pending_asks, topic_options
+from flow.inputs import GAPS, MATERIAL_REQUEST_KEYS, material_options, read_gaps
 
 ASK = ("AR", "story-src", ".ask.json")
 #: 选项标签里的占位，生成问法时换成本单编号。
 FEATURE_MARK = "<单>"
+#: 设计后必要问答的 ask 种类：与材料问法区分，不写进 flow.gates，也不产生 accepted 业务状态。
+DESIGN_KIND = "design_questions"
+MATERIAL_KIND = "material_scope"
+#: 设计问答文件里每项的字段：问题、候选、建议、为何现在问、出处。
+QUESTION_FIELDS = ("item_id", "question", "options", "recommend", "reason", "source_ref")
+#: 派生的展示与状态字段：不参与 ask_id 的内容身份。
+DERIVED = ("ask_id", "block", "pending", "answered", "replaced_unanswered")
 
 
 def _numbered(options: list[dict]) -> list[dict]:
@@ -51,87 +56,16 @@ def _material(feature_root: Path) -> dict:
             "missing": gaps["missing"], "why": gaps["why"]}
 
 
-def _scope(contract: dict) -> dict:
-    current = contract["rounds"][-1]
-    raw = current.get("scope_options") or []
-    options = _numbered(raw)
-    pick = next((o for o in raw if str(o.get("recommend") or "").strip()), None)
-    return {"options": options,
-            "recommend": _recommend(options, pick and str(pick["key"]),
-                                    pick and str(pick["recommend"]))}
+def _identity(ask: dict) -> str:
+    """问法的内容身份：完整规范化内容去掉派生字段后的摘要。"""
+    body = {k: v for k, v in ask.items() if k not in DERIVED}
+    text = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256(text.encode("utf-8")).hexdigest()[:8]
 
 
-def _split(contract: dict) -> dict:
-    parts = split_carrier_options(contract["rounds"][-1])
-    options = _numbered([{"key": p["key"], "label": p["scope"]} for p in parts])
-    return {"options": options, "recommend": None}
-
-
-def _meeting(feature_root: Path, contract: dict) -> dict:
-    items = []
-    for ref in pending_asks(meeting.read_notes(feature_root, []), contract):
-        version, item = ref.rsplit("/", 1)
-        section = meeting.read_notes(feature_root, []).get(version) or {}
-        topic = next(t for t in meeting.topics_of(section) if str(t.get("id")) == item)
-        options = _numbered(topic_options(feature_root, version, item))
-        items.append({"meeting": version, "item": item, "question": str(topic.get("question")),
-                      "options": options,
-                      "recommend": _recommend(options, topic.get("recommend"),
-                                              topic.get("recommend_why"))})
-    return {"items": items}
-
-
-def _proposals(contract: dict, gate: str, options: list[dict]) -> list[dict]:
-    """还没被人确认的提议，带上它指的那一项的标签。"""
-    out = []
-    for p in contract.get("proposals") or []:
-        if p.get("gate") != gate or p.get("resolved"):
-            continue
-        hit = next((o for o in options if p.get("chosen") in (o["key"], str(o["no"]))), None)
-        out.append({"chosen": p.get("chosen"), "label": hit["label"] if hit else "",
-                    "why": p.get("why", ""), **({"item": p["item"]} if p.get("item") else {})})
-    return out
-
-
-def block(ask: dict) -> str:
-    """停等消息里原样照抄的选项块：每项一行，推荐单独一行。"""
-    def lines(options: list[dict], recommend: dict | None) -> list[str]:
-        out = [f"{o['no']}. {o['label']}" for o in options]
-        if recommend:
-            out.append(f"推荐：{recommend['no']}" + (f"（{recommend['why']}）" if recommend["why"] else ""))
-        return out
-
-    if ask["gate"] == "meeting":
-        rows: list[str] = []
-        for it in ask["items"]:
-            rows.append(f"【{it['item']}】{it['question']}")
-            rows.extend(lines(it["options"], it["recommend"]))
-        body = rows
-    else:
-        body = lines(ask["options"], ask["recommend"])
-    for p in ask.get("proposals") or []:
-        body.append(f"待你确认的提议：{p['label'] or p['chosen']}（{p['why']}）")
-    return "\n".join(body)
-
-
-def build(feature_root: Path, contract: dict, step: str) -> dict | None:
-    """`step` 是停等点时生成问法并写侧车；不是停等点返回 None。"""
-    if not step.startswith("await_gate:"):
-        return None
-    gate = step.split(":", 1)[1]
-    if gate == "material_scope":
-        body = _material(feature_root)
-    elif gate == "scope_decision":
-        body = _scope(contract)
-    elif gate == "split_carrier":
-        body = _split(contract)
-    else:
-        body = _meeting(feature_root, contract)
-    options = body.get("options") or [o for it in body.get("items", []) for o in it["options"]]
-    ask = {"gate": gate, "round": contract["rounds"][-1].get("round"), **body,
-           "proposals": _proposals(contract, gate, options)}
-    ask["ask_id"] = sha256(json.dumps(ask, ensure_ascii=False, sort_keys=True)
-                           .encode("utf-8")).hexdigest()[:8]
+def _write(feature_root: Path, ask: dict) -> dict:
+    ask = {k: v for k, v in ask.items() if k not in DERIVED}
+    ask["ask_id"] = _identity(ask)
     ask["block"] = block(ask)
     path = feature_root / Path(*ASK)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,22 +73,161 @@ def build(feature_root: Path, contract: dict, step: str) -> dict | None:
     return ask
 
 
-def current(feature_root: Path, ask_id: str, gate: str) -> dict:
-    """`decide` 取本次的问法：侧车在、`ask_id` 对得上、问的就是这一级。"""
-    ask = read_sidecar(feature_root, ASK)
+def block(ask: dict) -> str:
+    """停等消息里原样照抄的展示块：每项一行，推荐与出处单独成行。"""
+    if ask.get("kind") == DESIGN_KIND:
+        rows: list[str] = []
+        for item in ask["items"]:
+            rows.append(f"【{item['item_id']}】{item['question']}")
+            rows.extend(f"{i}. {label}" for i, label in enumerate(item["options"], 1))
+            if item.get("recommend"):
+                rows.append(f"建议：{item['recommend']}")
+            rows.append(f"为什么现在问：{item['reason']}")
+            rows.append(f"出处：{item['source_ref']}")
+        return "\n".join(rows)
+
+    def lines(options: list[dict], recommend: dict | None) -> list[str]:
+        out = [f"{o['no']}. {o['label']}" for o in options]
+        if recommend:
+            out.append(f"推荐：{recommend['no']}" + (f"（{recommend['why']}）" if recommend["why"] else ""))
+        return out
+
+    return "\n".join(lines(ask["options"], ask["recommend"]))
+
+
+def build_material(feature_root: Path, contract: dict) -> dict:
+    """材料关卡：选项来自章节合同，推荐按缺口算，写侧车交给 `decide` 核对。"""
+    return _write(feature_root, {"kind": MATERIAL_KIND, "gate": MATERIAL_KIND,
+                                 "round": contract["rounds"][-1].get("round"), **_material(feature_root)})
+
+
+def read_questions_file(path: Path) -> list[dict]:
+    """读并校设计问答文件：只校形状与本次定位，问题内容是否该问由作者判断。
+
+    形状是 `{items:[{item_id, question, options, recommend, reason, source_ref}]}`；
+    选项与建议可为空，`source_ref` 指已取得的原件或本轮原生质询报告。
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        raise FlowError(f"设计问答文件 {path} 读不出来（{exc}）") from exc
+    except ValueError as exc:
+        raise FlowError(f"设计问答文件 {path} 不是合法 JSON（{exc}）") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list) or not payload["items"]:
+        raise FlowError(f"设计问答文件 {path.name} 须是对象且 items 是非空数组："
+                        f"{{items:[{{{', '.join(QUESTION_FIELDS)}}}]}}")
+    out, problems, seen = [], [], set()
+    for i, raw in enumerate(payload["items"], 1):
+        where = f"第 {i} 项"
+        if not isinstance(raw, dict):
+            problems.append(f"{where}不是对象")
+            continue
+        item_id = str(raw.get("item_id") or "").strip()
+        question = str(raw.get("question") or "").strip()
+        reason = str(raw.get("reason") or "").strip()
+        source_ref = str(raw.get("source_ref") or "").strip()
+        options = raw.get("options")
+        recommend = str(raw.get("recommend") or "").strip()
+        if not item_id:
+            problems.append(f"{where}缺 item_id（本次问答内的定位号）")
+        elif item_id in seen:
+            problems.append(f"item_id「{item_id}」重复：本次问答内每题一个定位号")
+        seen.add(item_id)
+        if not question:
+            problems.append(f"{where}缺 question：写清要人定什么")
+        if not reason:
+            problems.append(f"{where}缺 reason：写明为何符合必要问人的三条件、当前用户有权回答")
+        if not source_ref:
+            problems.append(f"{where}缺 source_ref：指已取得原件或本轮原生质询报告，不写第二份目标/版本")
+        if not isinstance(options, list) or not all(isinstance(o, str) and o.strip() for o in options):
+            problems.append(f"{where}的 options 须是字符串数组（候选做法，可为空数组）")
+            options = []
+        else:
+            options = [o.strip() for o in options]
+            if len(set(options)) != len(options):
+                problems.append(f"{where}的 options 有重复项")
+        if recommend and options and recommend not in options:
+            problems.append(f"{where}的 recommend 不在 options 里：建议只能是摆出的候选之一")
+        out.append({"item_id": item_id, "question": question, "options": options,
+                    "recommend": recommend, "reason": reason, "source_ref": source_ref})
+    if problems:
+        raise FlowError("设计问答文件立不住：" + "；".join(problems))
+    return out
+
+
+def build_questions(feature_root: Path, contract: dict, questions_file: str) -> dict:
+    """生成一次集中问法并写侧车；同一内容重复调用幂等。
+
+    上一组还有没答完的题时照新输入替换，并把被替换的题号带在返回里——替换是作者看过新事实后的
+    主动动作，脚本不悄悄覆盖；原问题与依据仍在契约与当前分析里。
+    """
+    items = read_questions_file(Path(questions_file))
+    previous = _read(feature_root)
+    pending = pending_items(previous, contract) if previous and previous.get("kind") == DESIGN_KIND else []
+    ask = _write(feature_root, {"kind": DESIGN_KIND,
+                                "round": contract["rounds"][-1].get("round"), "items": items})
+    if pending and previous.get("ask_id") != ask["ask_id"]:
+        ask["replaced_unanswered"] = pending
+    return ask
+
+
+def _read(feature_root: Path) -> dict | None:
+    path = feature_root / Path(*ASK)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ValueError as exc:
+        raise FlowError(f"{path.name} 不是合法 JSON（{exc}）：重跑 `status` 重新生成问法") from exc
+    if not isinstance(payload, dict):
+        raise FlowError(f"{path.name} 不是对象：重跑 `status` 重新生成问法")
+    return payload
+
+
+def current_design(feature_root: Path) -> dict | None:
+    """当前设计问答的问法；没有或不是设计问答返回 None。
+
+    读取时按生成时的同一算法重算内容身份：字段被改却沿用旧 ask_id 的拒绝，
+    不能只比调用参数与文件里自报的 id。
+    """
+    payload = _read(feature_root)
+    if payload is None or payload.get("kind") != DESIGN_KIND:
+        return None
+    stored = str(payload.get("ask_id") or "")
+    if not stored or _identity(payload) != stored:
+        raise FlowError("当前问法的内容与 ask_id 对不上（文件被改过）："
+                        "重跑 `status --questions-file` 按当前输入重新绑定，不沿用旧问法记人答")
+    if not isinstance(payload.get("items"), list) or not payload["items"]:
+        raise FlowError("当前问法缺 items：重跑 `status --questions-file` 重新生成")
+    return payload
+
+
+def current_material(feature_root: Path, ask_id: str) -> dict:
+    """`decide --gate material_scope` 取本次问法：侧车在、ask_id 对得上、问的就是材料。"""
+    ask = _read(feature_root)
     if not isinstance(ask, dict):
-        raise FlowError("没有待回答的问法：先跑 `story_flow.py status`，把它给出的选项块原样摆给人，"
+        raise FlowError("没有待回答的问法：先跑 `story_flow.py status`，把它给出的问法原样摆给人，"
                         "人回话之后再记。人签只能记在问过之后")
     if str(ask.get("ask_id")) != str(ask_id or "").strip():
         raise FlowError(f"--ask「{ask_id}」不是当前问法（{ask.get('ask_id')}）：问法换过了，"
-                        "按 `status` 给出的当前选项重新问人")
-    if ask.get("gate") != gate:
-        raise FlowError(f"当前问法是 {ask.get('gate')} 级，这一笔记的是 {gate}")
+                        "按 `status` 给出的当前问法重新问人")
+    if ask.get("kind") != MATERIAL_KIND or ask.get("gate") != MATERIAL_KIND:
+        raise FlowError(f"当前问法是 {ask.get('kind') or ask.get('gate')}，这一笔记的是材料确认")
+    if _identity(ask) != str(ask.get("ask_id") or ""):
+        raise FlowError("当前问法的内容与 ask_id 对不上（文件被改过）：重跑 `status` 重新生成")
     return ask
 
 
 #: 比对原话与标签时去掉的标点与空白
 PUNCT = re.compile(r"[\s，。、；：！？,.;:!?「」“”\"'（）()]+")
+#: 否定说法：紧随其后的编号不构成选择（「不选 1」「不要第 2 项」）。否定句仍逐字留存，不替人改。
+NEGATION = (r"(?:不选|不要选|不要|别选|别|不采用|不按|不是|排除|暂不|未选|不建议)"
+            r"\s*(?:选|用|按|采用|要)?\s*(?:第\s*)?")
+
+
+def _negated(option: dict, reply: str) -> bool:
+    """这一项被原话明确否掉了没有。"""
+    return re.search(NEGATION + rf"{option['no']}(?!\d)", reply) is not None
 
 
 def _number_forms(no: int) -> list[str]:
@@ -164,46 +237,46 @@ def _number_forms(no: int) -> list[str]:
             rf"{n}\s*[)）]", rf"选\s*{no}(?!\d)"]
 
 
-def _marks(option: dict, reply: str) -> bool:
-    """原话里有没有指到这一项：编号的说法、整句标签，或者原话就是标签里的一句话。键是机器名，不参与。"""
-    if any(re.search(form, reply) for form in _number_forms(option["no"])):
-        return True
-    if option["label"] and option["label"] in reply:
-        return True
-    core = PUNCT.sub("", reply)
-    return len(core) >= 4 and core in PUNCT.sub("", option["label"])
+def pick_explicit(options: list[dict], reply: str) -> dict:
+    """人明确指到一项才返回值：编号的说法，或整句照抄该项标签。
 
-
-def map_reply(options: list[dict], reply: str, chosen: str | None,
-              recommend: dict | None) -> tuple[dict, str]:
-    """把人的原话映射到一项，返回 (选项, 映射来源)。
-
-    原话里恰好指到一项（编号的说法、标签，或说「按推荐」）就按原话定，来源记 `reply`；
-    原话是自己的话、没指到任何一项时，由 `--chosen` 指明，来源记 `model`；
-    `--chosen` 与原话指到的那一项对不上时拒绝——记的必须是人说的那一项。
+    片段命中、模型替人挑一项，都不能当成人对整项内容的批准；被原话否掉的项（「不选 1」）
+    也不参与选择。没有明确选择就重问，原话仍逐字留存。
     """
-    hits = [o for o in options if _marks(o, reply)]
-    if recommend and "推荐" in reply and not hits:
-        hits = [o for o in options if o["key"] == recommend["key"]]
-    pick = None
-    if chosen:
-        pick = next((o for o in options if chosen in (o["key"], str(o["no"]))), None)
-        if pick is None:
-            raise FlowError(f"--chosen「{chosen}」不在本次选项里（现有："
-                            + "、".join(f"{o['no']}={o['key']}" for o in options) + "）")
+    hits = [o for o in options
+            if not _negated(o, reply)
+            and (any(re.search(form, reply) for form in _number_forms(o["no"]))
+                 or (o["label"] and PUNCT.sub("", reply) == PUNCT.sub("", o["label"])))]
     if len(hits) == 1:
-        if pick and pick is not hits[0]:
-            raise FlowError(f"人的原话指的是第 {hits[0]['no']} 项（{hits[0]['label']}），"
-                            f"--chosen 却是第 {pick['no']} 项：记人说的那一项")
-        return hits[0], "reply"
-    if pick is None:
-        raise FlowError("原话" + ("同时指到了几项" if hits else "没指到任何一项")
-                        + "：用 --chosen 写明人选的是哪一项；拿不准就再问人一次")
-    if hits and pick not in hits:
-        raise FlowError(f"原话指到的是 {'、'.join(str(o['no']) for o in hits)}，--chosen 不在其中")
-    return pick, "model"
+        return hits[0]
+    listed = "、".join(f"{o['no']}={o['key']}" for o in options)
+    if not hits:
+        raise FlowError("原话没有明确选到任何一项：用编号（第 n / n. / 选 n）或整句照抄一项的标签；"
+                        f"拿不准就再问人一次。现有：{listed}")
+    raise FlowError("原话同时指到了几项：" + "、".join(str(o["no"]) for o in hits) + "——原话只认一项")
+
+
+def answered_item_ids(contract: dict, ask_id: str) -> set[str]:
+    """这一组问法已经录过原话的题号。已答的题不再处于待答集合。"""
+    return {str(a.get("item_id")) for r in contract.get("rounds") or []
+            for a in r.get("answers") or [] if str(a.get("ask_id")) == str(ask_id)}
+
+
+def pending_items(ask: dict | None, contract: dict) -> list[str]:
+    if not ask or ask.get("kind") != DESIGN_KIND:
+        return []
+    answered = answered_item_ids(contract, ask["ask_id"])
+    return [str(it["item_id"]) for it in ask.get("items") or [] if str(it["item_id"]) not in answered]
+
+
+def with_answered(ask: dict, contract: dict) -> dict:
+    """给展示用的一份问法：带上待答与已答题号，不改盘上的问法。"""
+    answered = answered_item_ids(contract, ask["ask_id"])
+    return {**ask,
+            "pending": pending_items(ask, contract),
+            "answered": [str(it["item_id"]) for it in ask.get("items") or []
+                         if str(it["item_id"]) in answered]}
 
 
 def clear(feature_root: Path) -> None:
     (feature_root / Path(*ASK)).unlink(missing_ok=True)
-

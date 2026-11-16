@@ -1,19 +1,24 @@
-"""关卡决策（`decide`）：人签记在问过之后，模型的判断记成提议。
+"""人答记录（`decide`）：人签记在问过之后。
 
-人签只来自人的回话：`--ask` 必须是 `status` 当前生成的那份问法，`--reply` 记人的原话，
-脚本把原话映射到选项，连同摆出的全部选项一起记进契约。校验不过也照记，只是退出码 2、不得前进。
-模型的判断用 `--propose` 记为 `by: model`，不推进流程，下一次停等时列给人确认。
+两类入口：
+
+- `--gate material_scope`：材料关卡。人明确用编号或整句标签选一项才认；脚本把摆出的全部选项
+  连同人的原话记进契约当前轮。
+- `--ask --item --reply` / `--replies-file`：设计后必要问答。问题与选项从**已落盘的问法**取，
+  调用方不再重填；记录只存当时问法、原话与出处，不持有目标/版本，也不产生已批准状态。
+
+校验不过也照记的只限材料关卡的业务拒绝（退出码 2、不得前进）；问答记录先落盘再导出来源版本，
+导出失败时报告派生未完成，不让人重答。
 """
 from __future__ import annotations
 
 import argparse
-import re
+import json
 from pathlib import Path
 
 from flow.state import (
-    FlowError, GATES, in_update, issue_zone, last_gate, load, log, now, require, round_gates, save)
-from flow.inputs import (
-    GAPS, MATERIAL_REQUEST_KEYS, SPLIT_PARTS, consume_sidecar, read_split_parts)
+    FlowError, GATES, in_update, last_gate, load, log, now, require, round_gates, save)
+from flow.inputs import GAPS, MATERIAL_REQUEST_KEYS, consume_sidecar
 from flow.routing import inputs_answer, live_materials, material_state, next_step
 from flow import asks
 
@@ -31,114 +36,23 @@ def export_answers(feature_root: Path, what: str) -> dict:
                         "不要重答：排除问题后跑 `story_flow.py round` 重试派生（材料没变不开新轮）") from exc
 
 
-def cmd_decide_update(feature_root: Path, item: str, reply: str, issue: str) -> dict:
-    """更新期间人定的一件事 —— **记原话，不造人签**。
-
-    与三级关卡分开：那三级是起手才有的事；这里记的是一次更新里冒出来、只有人能定的事
-    （来源冲突、要改已经承诺过的口径、沿用谁在哪一版的表态）。它不扩大关卡集合。
-    每一件都挂在评审记录的一条议题上（`--issue`），记下那条议题当时的机器区摘要——人看到的就是它。
-    没有开着的更新就不记：记下来也无从定位它属于哪一轮。
-    """
-    if not item.strip():
-        raise FlowError("--update 要写清定的是哪件事")
-    if not reply.strip():
-        raise FlowError("--reply 不能为空：人签只认人的原话")
-    if not str(issue or "").strip():
-        raise FlowError("--update 要带 --issue <议题编号>：人定的事挂在评审记录的哪一条议题上")
-    contract = load(feature_root)
-    if contract is None:
-        raise FlowError("这个单没走过 /story，没有可以记录的流程契约")
-    state = contract.get("update") or {}
-    if not state.get("open"):
-        raise FlowError("现在没有开着的更新：先跑 `story_flow.py update` 起一轮，"
-                        "这条记录要挂在某一轮上")
-    asked, question = issue_zone(feature_root, issue.strip())
-    entry = {"item": item.strip(), "issue": issue.strip(), "asked": asked, "question": question,
-             "reply": reply.strip(), "by": "human", "at": now()}
-    state.setdefault("decisions", []).append(entry)
-    contract["update"] = state
-    save(feature_root, contract)
-    log(f"更新 {state['open']} 记下一条人的决定：{entry['item']}")
-    export_answers(feature_root, f"更新 {state['open']} 里人定的「{entry['item']}」")
-    return {"update": state["open"], "recorded": entry,
-            "action": f"已记：{entry['item']}。update-notes 里引用这一条"}
-
-
-def cmd_propose(feature_root: Path, args: argparse.Namespace) -> dict:
-    """模型的判断记成提议：`by: model`，不推进流程，下一次停等请人确认。"""
-    gate = args.gate or GATES[0]
-    chosen = str(args.chosen or "").strip()
-    why = str(args.why or "").strip()
-    if not chosen or not why:
-        raise FlowError("--propose 要写 --chosen（提议选哪一项）与 --why（一句理由）")
-    contract = require(load(feature_root))
-    entry = {"gate": gate, "chosen": chosen, "why": why, "by": "model", "at": now()}
-    if args.item:
-        entry["item"] = str(args.item)
-    contract.setdefault("proposals", []).append(entry)
-    save(feature_root, contract)
-    step, action = next_step(feature_root, contract, live_materials(feature_root))
-    return {"proposed": entry, "next": step, "nextAction": action,
-            "action": "提议已记，流程不因它前进：下一次停等时它会列进问法，请人确认"}
-
-
-def _options_for(ask: dict, args: argparse.Namespace) -> tuple[list[dict], dict | None]:
-    if ask["gate"] != "meeting":
-        return ask["options"], ask.get("recommend")
-    item = next((it for it in ask["items"]
-                 if it["item"] == str(args.item or "") and it["meeting"] == str(args.meeting or "")),
-                None)
-    if item is None:
-        raise FlowError(f"当前问法里没有会议话题「{args.meeting}/{args.item}」——"
-                        "--meeting 写 <主名>@<sha8>，--item 写话题 id，照 `ask.items` 取")
-    return item["options"], item.get("recommend")
-
-
-def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]:
-    gate = args.gate or GATES[0]     # 值域由 argparse 的 choices 拦
+def _material_record(feature_root: Path, contract: dict, args: argparse.Namespace) -> tuple[dict, int]:
     reply = str(args.reply or "").strip()
     if not reply:
-        raise FlowError("--reply 不能为空：记人的原话。自己的判断用 --propose")
-    contract = require(load(feature_root))
+        raise FlowError("--reply 不能为空：记人的原话")
+    gate = "material_scope"
     manifest = live_materials(feature_root)
-    # 第一级问的是事实，人答与导入互不挡路：他可以放好料再答，也可以先答再放，
-    # 所以前置是「本轮这一级还没定」，不比对 next 的字面。其余几级只能做流程当前那一步。
-    if gate == "material_scope":
-        settled = inputs_answer(contract) if in_update(contract) else             last_gate(round_gates(contract), gate)
-        if settled and settled["outcome"] == "accepted":
-            raise FlowError(f"本轮第一级已经定了（{settled['chosen']}）——材料再变会开出新一轮，"
-                            "那时才轮到重新表态；现在按 `status` 的 next 往下走")
-    else:
-        expected, action = next_step(feature_root, contract, manifest)
-        if expected != f"await_gate:{gate}":
-            raise FlowError(f"当前这一步不是 {gate}：{action}（`status` 的 next 是 {expected}）")
-    ask = asks.current(feature_root, args.ask, gate)
-    options, recommend = _options_for(ask, args)
-    if gate == "meeting" and any(
-            g.get("gate") == "meeting" and g.get("outcome") == "accepted"
-            and g.get("meeting") == args.meeting and g.get("item") == args.item
-            for g in contract["rounds"][-1].get("gates") or []):
-        raise FlowError(f"话题 {args.meeting}/{args.item} 已经记过人的裁决")
-    picked, mapped = asks.map_reply(options, reply, str(args.chosen or "").strip() or None, recommend)
+    settled = inputs_answer(contract) if in_update(contract) else last_gate(round_gates(contract), gate)
+    if settled and settled["outcome"] == "accepted":
+        raise FlowError(f"本轮材料已经确认过了（{settled['chosen']}）——材料再变会开新一轮，"
+                        "那时才轮到重新表态；现在按 `status` 的 next 往下走")
+    ask = asks.current_material(feature_root, args.ask)
+    options = ask["options"]
+    picked = asks.pick_explicit(options, reply)
     current = contract["rounds"][-1]
 
-    parts: list[dict] = []
-    if gate == "split_carrier":
-        # 承载定案：份表此时才成形（哪一份归本 AR 由这一步的选择决定）
-        parts = read_split_parts(feature_root, feature_root.name)
-        if not parts:
-            raise FlowError(
-                "split_carrier 缺定案内容：把拆分份表写进 "
-                f"{'/'.join(SPLIT_PARTS)}（每份含 seq / carrier / scope / depends_on，"
-                "carrier 为本 AR 的恰好一份 = 人选中的那份，其余份写兄弟 AR 单号或「待立项」）")
-        mine = next(p for p in parts if p["carrier"] == feature_root.name)
-        if str(mine["seq"]) != picked["key"]:
-            raise FlowError(
-                f"人选的是第 {picked['key']} 份，份表里归本 AR 的却是第 {mine['seq']} 份"
-                f"（{mine['scope']}）——改份表的 carrier")
-
     outcome, reason, code = "accepted", None, 0
-    if gate == "material_scope" and picked["key"] in MATERIAL_REQUEST_KEYS:
+    if picked["key"] in MATERIAL_REQUEST_KEYS:
         # 人陈述的是事实：料放进去了。磁盘上却既没有待导入的原件、材料也没变，
         # 那这一笔记下去下一步无处可去——原地重提，让人再放一次。
         state = material_state(feature_root, current, manifest)
@@ -147,57 +61,143 @@ def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]
             reason = ("来源收件箱（含子目录）里没有待导入的件、材料也没变：把文档或界面设计图放进 "
                       f"{feature_root.name}/inbox/（可以整个文件夹放）后再答一次")
 
-    # 当时的问法照存：之后问法、选项或份表再变，这一条仍说得清人回答的是什么
-    question = (next(it["question"] for it in ask["items"] if it["item"] == str(args.item or "")
-                     and it["meeting"] == str(args.meeting or "")) if gate == "meeting" else ask.get("block"))
     record = {
-        "gate": gate, "ask_id": ask["ask_id"], "question": question,
+        "gate": gate, "ask_id": ask["ask_id"], "question": ask["block"],
         "options": [{"no": o["no"], "key": o["key"], "label": o["label"]} for o in options],
         "chosen": picked["key"], "no": picked["no"], "label": picked["label"],
-        "reply": reply, "mapped_by": mapped, "outcome": outcome, "by": "human", "at": now(),
+        "reply": reply, "outcome": outcome, "by": "human", "at": now(),
     }
-    if gate == "scope_decision":
-        # 人答时看到的定位：本单承载什么、同一系统设计下的兄弟单各承载什么——设计与审查按它写范围与边界
-        positioning = current.get("positioning") or {}
-        record["context"] = {"scope_text": positioning.get("scope_text"),
-                             "sr_related_ars": positioning.get("sr_related_ars") or []}
     if reason:
         record["reason"] = reason
-    if gate == "meeting":
-        # 裁决绑定会议的这一版：新版本到了，旧版本的裁决照旧指向旧原话
-        record.update(meeting=args.meeting, item=args.item)
     current.setdefault("gates", []).append(record)
-    for p in contract.get("proposals") or []:
-        if p.get("gate") == gate and not p.get("resolved") and \
-                (gate != "meeting" or p.get("item") == args.item):
-            p["resolved"] = record["at"]
-
-    if gate == "split_carrier" and outcome == "accepted":
-        # scope_text 由本 AR 那一份推导，不单独登记——同一事实两处写，迟早各说各话
-        scope_text = next(p["scope"] for p in parts if p["carrier"] == feature_root.name)
-        contract["split"] = {"decided": "split", "settled_round": current["round"],
-                             "scope_text": scope_text, "parts": parts}
-        record["context"] = {"parts": parts}
-
     save(feature_root, contract)
-    # 人答生效即导出：下一步（例如进设计）读到的就是含这一条的人答；材料摘要不含人答，不因此开新轮
     if outcome == "accepted":
-        manifest = export_answers(feature_root, f"第 {current['round']} 轮 {gate} 的答复")
+        manifest = export_answers(feature_root, f"第 {current['round']} 轮材料确认")
     step, action = next_step(feature_root, contract, manifest)
     if step != f"await_gate:{gate}":
         asks.clear(feature_root)
     if outcome == "accepted":
-        if gate == "material_scope":
-            consume_sidecar(feature_root, GAPS)
-        if gate == "split_carrier":
-            consume_sidecar(feature_root, SPLIT_PARTS)
-    log(f"第 {current['round']} 轮记录 {gate}：第 {picked['no']} 项 {picked['key']} → {outcome}"
+        consume_sidecar(feature_root, GAPS)
+    log(f"第 {current['round']} 轮记录材料确认：第 {picked['no']} 项 {picked['key']} → {outcome}"
         + (f"（{reason}）" if reason else ""))
     result = {"round": current["round"], "gate": gate, "chosen": picked["key"],
-              "no": picked["no"], "mapped_by": mapped, "outcome": outcome}
+              "no": picked["no"], "outcome": outcome}
     if reason:
         result["reason"] = reason
     log(f"下一步：{action}")
     result["next"], result["nextAction"] = step, action
     return result, code
 
+
+def _replies(args: argparse.Namespace) -> list[dict]:
+    """这一次要记的题：单题用 `--item/--reply`，多题同一答复或逐题答复用 `--replies-file`。
+
+    脚本只按定位读取，不猜自由段落属于哪一题。
+    """
+    if args.replies_file:
+        if args.item or args.reply:
+            raise FlowError("--replies-file 与 --item/--reply 只用一种：多题写文件，单题直接给")
+        path = Path(args.replies_file)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except OSError as exc:
+            raise FlowError(f"答复文件 {path} 读不出来（{exc}）") from exc
+        except ValueError as exc:
+            raise FlowError(f"答复文件 {path} 不是合法 JSON（{exc}）") from exc
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list) or not items:
+            raise FlowError(f"答复文件 {path.name} 须是对象且 items 是非空数组："
+                            '{"items":[{"item_id":"本组题号","reply":"完整原话"}]}')
+        out, seen = [], set()
+        for i, raw in enumerate(items, 1):
+            if not isinstance(raw, dict):
+                raise FlowError(f"答复文件第 {i} 项不是对象")
+            item = str(raw.get("item_id") or "").strip()
+            reply = str(raw.get("reply") or "").strip()
+            if not item or not reply:
+                raise FlowError(f"答复文件第 {i} 项缺 item_id 或 reply")
+            if item in seen:
+                raise FlowError(f"答复文件里 {item} 出现了不止一次")
+            seen.add(item)
+            out.append({"item_id": item, "reply": reply})
+        return out
+    item = str(args.item or "").strip()
+    reply = str(args.reply or "").strip()
+    if not item:
+        raise FlowError("记设计问答要带 --item <本组题号>：问题与选项从已落盘的问法取")
+    if not reply:
+        raise FlowError("--reply 不能为空：记人的原话；保持待定也照实写")
+    return [{"item_id": item, "reply": reply}]
+
+
+def _design_questions(feature_root: Path, contract: dict, args: argparse.Namespace) -> dict:
+    ask = asks.current_design(feature_root)
+    if ask is None:
+        raise FlowError("没有待回答的设计问答：先按必要问人的三条件写出问法文件，"
+                        "先按三条件写好问法文件，跑 `status` 的 `--questions-file` 生成一次问法，再记人答")
+    if str(args.ask or "").strip() != str(ask["ask_id"]):
+        raise FlowError(f"--ask「{args.ask or '缺失'}」不是当前问法（{ask['ask_id']}）："
+                        "问法换过了，按 `status` 给出的当前问法记")
+    by_id = {str(it["item_id"]): it for it in ask["items"]}
+    answered = asks.answered_item_ids(contract, ask["ask_id"])
+    wanted = _replies(args)
+    for reply in wanted:
+        if reply["item_id"] not in by_id:
+            listed = "、".join(str(it["item_id"]) for it in ask["items"])
+            raise FlowError(f"当前问法里没有题「{reply['item_id']}」（现有：{listed}）：照 `ask.items` 取题号")
+        if reply["item_id"] in answered:
+            raise FlowError(f"题「{reply['item_id']}」已经记过原话：同一题不重记，"
+                            "有真正新事实再准备下一组问法")
+    current = contract["rounds"][-1]
+    recorded = []
+    for reply in wanted:
+        item = by_id[reply["item_id"]]
+        entry = {"ask_id": ask["ask_id"], "item_id": str(item["item_id"]),
+                 "question": item["question"], "options": list(item["options"]),
+                 "reply": reply["reply"], "at": now(), "source_ref": item["source_ref"]}
+        current.setdefault("answers", []).append(entry)
+        recorded.append(entry)
+    save(feature_root, contract)
+    export_answers(feature_root, f"设计问答 {ask['ask_id']} 的 {len(recorded)} 条原话")
+    pending = asks.pending_items(ask, contract)
+    if not pending:
+        asks.clear(feature_root)
+    # 原话已经落盘：算下一步失败不能反过来把这一步报成没发生；让人跑 `status` 取当前位置。
+    try:
+        step, action = next_step(feature_root, contract, live_materials(feature_root))
+    except FlowError as exc:
+        step, action = "status", f"原话已记下；下一步暂时算不出来（{exc}），修好后跑 `story_flow.py status` 取"
+    result = {"ask": ask["ask_id"], "recorded": [
+                  {"item_id": e["item_id"], "reply": e["reply"], "at": e["at"]} for e in recorded],
+              "pending": pending, "next": step}
+    if pending:
+        left = {**ask, "items": [it for it in ask["items"] if str(it["item_id"]) in pending]}
+        action = (f"原话已记下。这组还有 {len(pending)} 题没答，把同一展示块里剩下的部分原样摆给人：\n"
+                  + asks.block(left))
+        step = "await_questions"
+        result["next"] = step
+        result["ask_block"] = asks.block(left)
+    else:
+        action = (f"这组设计问答已全部答完（{ask['ask_id']}）：回到原生设计按原话继续，"
+                  "原问题与原话留在 answers 原件里。" + action)
+    log(f"设计问答 {ask['ask_id']} 记下 {len(recorded)} 条原话，待答 {len(pending)} 题")
+    result["nextAction"] = action
+    return result
+
+
+def cmd_decide(feature_root: Path, args: argparse.Namespace) -> tuple[dict, int]:
+    contract = require(load(feature_root))
+    gate = str(args.gate or "")
+    if gate and gate not in GATES:
+        # argparse 已经按合同值域拦；手写调用也按同一处判
+        raise FlowError(f"--gate「{gate}」不是本版流程的关卡（现有：{'、'.join(GATES)}）")
+    design = bool(args.item or args.replies_file)
+    if gate == "material_scope":
+        if design:
+            raise FlowError("材料确认不带 --item/--replies-file：那两个参数只用于设计问答")
+        return _material_record(feature_root, contract, args)
+    if design:
+        return _design_questions(feature_root, contract, args), 0
+    if args.ask:
+        raise FlowError("记设计问答要带 --item <题号> 与 --reply；材料确认请带 `--gate material_scope`")
+    return _material_record(feature_root, contract, args)

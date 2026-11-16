@@ -484,21 +484,19 @@ def hand_to_design(src: Path, access: Path) -> None:
 
 def walk_to_design(flow: Callable[..., dict], src: Path, access: Path,
                    scope_text: str = "本 AR 承载自动充值签约与管理", hand: bool = True) -> None:
-    """用真实流程命令走完 S1–S3 并交给设计：材料关卡、需求分析、范围关卡，再放好同根的准入蓝图。
+    """用真实流程命令走完 S1–S3 并交给设计：材料确认、需求分析、定位写定，再放好同根的准入蓝图。
 
-    走完即「可以成文」。材料是夹具里已导入的 `sources/` 材料版本。`hand` 为假时只推进关卡、不放蓝图：
-    调用方随后自己装唯一一份目标蓝图（`prepare_designed`），不先装一份默认蓝图再覆盖。"""
+    走完即「可以成文」。材料是夹具里已导入的 `sources/` 材料版本；材料确认之后直接进原生设计，
+    不再有范围关卡。`hand` 为假时只推进流程、不放蓝图：调用方随后自己装唯一一份目标蓝图
+    （`prepare_designed`），不先装一份默认蓝图再覆盖。"""
     src.mkdir(parents=True, exist_ok=True)
     flow("init")
     flow("round")
     write_gaps(src)
-    answer(flow, "material_scope", "夹具：现有材料就是全部", "--chosen", "confirm_scope")
+    answer(flow, "material_scope", "2")
     (src / ".positioning.json").write_text(json.dumps(
         {"scope_text": scope_text, "sr_related_ars": []}, ensure_ascii=False), encoding="utf-8")
-    (src / ".scope-options.json").write_text(json.dumps(
-        [{"key": "carry_all", "label": "按当前范围整体承载"}], ensure_ascii=False), encoding="utf-8")
     flow("round")
-    answer(flow, "scope_decision", "夹具：整体承载", "--chosen", "carry_all")
     if hand:
         hand_to_design(src, access)
 

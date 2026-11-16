@@ -369,7 +369,7 @@ function skeletonPreflight(ctx) {
   if (flowGaps.length) problems.push(...flowGaps);
   else if (!flow) {
     problems.push('AR/story-src/story-flow.json：不存在，本需求还没走过 /story 的 S1–S3'
-      + '——流程契约由 `story_flow.py init` 起单、按关卡收口时写成，story 骨架在范围定了、设计成立之后起');
+      + '——流程契约由 `story_flow.py init` 起单、材料确认与阶段登记时写成，story 骨架在材料确认、设计成立之后起');
   }
   // ② 材料：清单在、与本轮基准一致、且磁盘现状仍是这批料（基准在流程契约里）
   const manifest = readJson(path.join(ctx.srcDir, 'materials.json'), null);

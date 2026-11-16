@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -56,33 +55,24 @@ class FlowError(Exception):
 def contract_flow() -> dict:
     """流程契约的常量，真源是章节合同的 `flow`；门禁 `flow/check.mjs` 读同一处。
 
-    读不出来要出声：schema、关卡名、整体承载键任何一个退化成默认值，写进契约的记录
+    读不出来要出声：schema 与关卡名任何一个退化成默认值，写进契约的记录
     都会在阶段门禁上被判非法，而坏掉的是合同的读取路径。
     """
     try:
         data = json.loads(STORY_CONTRACT.read_text(encoding="utf-8").lstrip("\ufeff"))
         flow = data["flow"]
-        return {"schema": int(flow["schema"]), "gates": tuple(str(g) for g in flow["gates"]),
-                "carry_all": str(flow["carry_all"])}
+        return {"schema": int(flow["schema"]), "gates": tuple(str(g) for g in flow["gates"])}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise FlowError(
-            f"{STORY_CONTRACT.name} 的 flow 读不出来（{exc}）：契约 schema、关卡名与整体承载键登记在那里"
+            f"{STORY_CONTRACT.name} 的 flow 读不出来（{exc}）：契约 schema 与关卡名登记在那里"
         ) from exc
 
 
 _FLOW = contract_flow()
 SCHEMA = _FLOW["schema"]
-# 三级关卡，**每级只问一件事**：材料 → 范围怎么定 → 承载哪一份。
-#
-# 分三级而不是并成一问：材料与范围是两个维度，挤在一级人得同时权衡两件不相干的事。
-# 而它们本有先后——材料不全时范围判断本身就不可靠，在一个还会变的范围上讨论怎么切，
-# 讨论了也白讨论。
-#
-# `meeting` 是有条件的一处停等，不是第四级：材料确认之后、需求分析之前，会议判断里有要问人的话题
-# 才停一次，逐条裁决；没有会议或没有要问的话题就不停。会议本身是需求材料的一种，随材料一起交、一起导入。
+# 流程里需要人表态的**确定性关卡只有一级：材料**。范围由蓝图承载，会议是材料的一种，
+# 不再另设范围/会议裁决关卡；设计后确有必须人定的问题走集中问答（不写进 gates）。
 GATES = _FLOW["gates"]
-# 第二级里唯一固定的一项：按当前范围整体承载。其余项是具名维度的切法。
-CARRY_ALL = _FLOW["carry_all"]
 
 
 def log(msg: str) -> None:
@@ -138,11 +128,12 @@ def load(feature_root: Path) -> dict | None:
     if contract.get("schema") != SCHEMA:
         raise FlowError(
             f"不是当前版本的流程契约（schema {contract.get('schema', '缺失')}，当前 {SCHEMA}）："
-            "本版只接续本版新初始化的需求，不迁移、不改写这个目录；要在本版做就另建一个新需求")
+            "本版不接续旧版现场，也不自动迁移、不改写这个目录；"
+            "要按旧版收口就留在原版，要用本版就为新需求另跑 `init`")
     if contract.get(DIGEST_KEY) != contract_digest(contract):
         note = ("流程契约被手改过（内容摘要对不上），本次命令照常执行："
                 "跑 `story_flow.py status` 核对当前位置；手改里要保留的决定，"
-                "用对应命令重新记录（decide / round / reopen），下一次写入会重算摘要")
+                "用对应命令重新记录（decide / round），下一次写入会重算摘要")
         if note not in TAMPER_NOTES:
             TAMPER_NOTES.append(note)
             log(note)
@@ -186,26 +177,15 @@ def require(contract: dict | None) -> dict:
     return contract
 
 
-def settled_this_round(contract: dict) -> bool:
-    """拆分是不是**在当前轮**定的案。
+def material_confirmed(contract: dict) -> bool:
+    """材料人确认了没有：最近一次 `material_scope` 记录是生效的。
 
-    `split` 是契约级字段（只认最终那一份），而拆分决策属于某一轮——
-    两者用 `settled_round` 挂钩，重新初析后同一份 split 就不再算数。
+    补料会开出没有关卡记录的新一轮——那一轮只在重新盘出缺口时才再停一次；此前的人确认
+    仍然有效，否则补一份说明就会把已确认的材料退回未定。
     """
-    split = contract.get("split") or {}
-    return (split.get("decided") == "split"
-            and split.get("settled_round") == contract["rounds"][-1].get("round"))
-
-
-def scope_settled(contract: dict) -> bool:
-    """本轮范围定下来没有：范围关卡选了整体承载，或本轮切分已定案。只看当前轮的人签——范围关卡只在它之前的
-    材料与会议都走完时才问得出来（重开范围的那一轮沿用上一轮的材料确认）。"""
-    if not contract.get("rounds"):
-        return False
-    decision = last_gate(round_gates(contract), "scope_decision")
-    if not decision or decision.get("outcome") != "accepted":
-        return False
-    return decision.get("chosen") == CARRY_ALL or settled_this_round(contract)
+    gates = [g for r in contract.get("rounds") or [] for g in r.get("gates") or []
+             if g.get("gate") == "material_scope"]
+    return bool(gates and gates[-1].get("outcome") == "accepted")
 
 
 def blueprint_exists(feature_root: Path) -> bool:
@@ -214,12 +194,11 @@ def blueprint_exists(feature_root: Path) -> bool:
 
 
 def closed(feature_root: Path, contract: dict) -> bool:
-    """范围收口、设计已经开始没有：成文已登记，或本轮范围已定且原生蓝图已经建立。
+    """设计已经开始没有：成文已登记，或本轮材料已确认且原生蓝图已经建立。
 
-    收口之后材料再变只登记进本轮、不开新轮；要重拍范围显式 `reopen`。设计还没开始时范围仍可随材料重新盘点。
-    归档过的单 `reopen` 之后回到范围关卡，与没归档过的一样。
+    收口之后材料再变只登记进本轮、不开新轮；真实范围变化走 update，由蓝图负责方修订。
     """
-    return contract.get("status") == "story_written" or (scope_settled(contract) and blueprint_exists(feature_root))
+    return contract.get("status") == "story_written" or (material_confirmed(contract) and blueprint_exists(feature_root))
 
 
 def registration_drift(feature_root: Path, contract: dict) -> list[str]:
@@ -242,10 +221,9 @@ def registration_drift(feature_root: Path, contract: dict) -> list[str]:
 def round_gates(contract: dict) -> list[dict]:
     """**当前轮**的关卡记录。
 
-    位置一律按当前轮判，不看历史轮次展平后的末条：一轮 = 一次「初析 → 关卡」循环，
-    补料后进入新一轮，上一轮选过什么就不再代表现在在哪。展平了判会出两种错——
-    上一轮的表态替补料后的新一轮收口；拆分定案后补料重析，想重新拆
-    却被告知「已定案」。
+    位置一律按当前轮判，不看历史轮次展平后的末条：一轮 = 一次「材料盘点 → 确认」循环，
+    补料后进入新一轮，上一轮表态的只作历史。展平了判，上一轮的材料确认会替补料后的
+    新一轮表态，而新一轮还在等缺口盘点。
     """
     return contract["rounds"][-1].get("gates", []) if contract.get("rounds") else []
 
@@ -263,21 +241,8 @@ REVIEW = ("AR", "review.md")
 DESIGN_REFERENCE = ("blueprint", "component-blueprint.review.md")
 
 
-def issue_zone(feature_root: Path, issue: str) -> tuple[str, str]:
-    """评审记录里这条议题机器区的摘要与正文：人回话时看到的就是它，记下来作问法的等价物。"""
-    review = feature_root / "AR" / "review.md"
-    text = review.read_text(encoding="utf-8") if review.is_file() else ""
-    # 机器区：标记行之后到人工区填写位（行首「评审结论：」）或本议题的决定锚点
-    hit = re.search(rf"<!-- story-build:begin 议题 {re.escape(issue)} · .*?sha256:([0-9a-f]+) -->\n?(.*?)"
-                    rf"(?=^评审结论：|<!-- decision: {re.escape(issue)} -->|\Z)", text, re.S | re.M)
-    if not hit:
-        raise FlowError(f"评审记录里没有议题 {issue}：人定的事先登记成议题、build 进评审记录，"
-                        "人看过那一条再回话")
-    return hit.group(1), hit.group(2).strip()
-
-
 def sync_answers(feature_root: Path, what: str) -> str | None:
-    """收口、撤回或重开改变了哪些人答当前有效：同步导出。
+    """收口或撤回改变了哪些人答当前有效：同步导出。
     已经写盘的那一步照样成立；导出没完成时返回要说的话，交调用方带出，不当作这一步没发生。"""
     from materials import registry  # noqa: PLC0415 —— 人答导出由材料索引刷新承担
     try:

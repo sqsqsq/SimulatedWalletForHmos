@@ -65,13 +65,17 @@ class ModesCase(RendererCase):
         self.review.write_text(text.replace(old, new, 1), encoding="utf-8")
 
     def write_flow_carry(self, *items: str) -> None:
-        """在流程契约里记下「这一轮人说了沿用哪几条」——正常由 `decide --update` 写。"""
+        """在流程契约里记下「这一轮人说了沿用哪几条」——正常由 `decide --ask --item` 写原话记录。"""
         flow = self.src / "story-flow.json"
         data = json.loads(flow.read_text(encoding="utf-8")) if flow.is_file() else {}
-        data["update"] = {"open": "20260920-000000",
-                          "decisions": [{"item": "沿用上一版表态", "issue": i, "reply": "意思没变，沿用",
-                                         "by": "human", "at": "2026-09-20T00:00:00+00:00"}
-                                        for i in items]}
+        rounds = data.setdefault("rounds", [])
+        if not rounds:
+            rounds.append({"round": 1, "gates": []})
+        rounds[-1].setdefault("answers", []).extend(
+            {"ask_id": "carry", "item_id": i, "question": "上一版的问题换了吗？",
+             "options": [], "reply": "意思没变，沿用", "at": "2026-09-20T00:00:00+00:00",
+             "source_ref": "AR/review.md"}
+            for i in items)
         flow.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def anchor(self, dec_id: str) -> str:
@@ -281,7 +285,8 @@ class AnOpinionNeverDisappearsInARerender(ModesCase):
         proc = self.build(a)
         self.assertEqual(1, proc.returncode, proc.stdout)
         self.assertIn("已经在它下面写过意见", proc.stderr)
-        self.assertIn("decide --update", proc.stderr, "没给出沿用旧表态的那条出路")
+        self.assertIn("原话", proc.stderr, "没给出沿用旧表态的那条出路")
+        self.assertIn("decide --ask", proc.stderr, "给的出路命令不是当前的记录入口")
         self.assertEqual(before, self.text(), "停手了却还是把文件覆盖了")
 
     def test_recording_the_carry_over_unlocks_it(self) -> None:

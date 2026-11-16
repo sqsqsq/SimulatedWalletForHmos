@@ -42,5 +42,5 @@ def open_decision(did: str, title: str, point: str, options: list[tuple[str, str
 
 def walk_to_complete(flow: Callable[..., dict], src: Path,
                      scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
-    """用真实流程命令走完 S1–S3 并放好同根的准入蓝图（开发版扩展）：走完即「可以成文」。"""
+    """用真实流程命令走完材料确认与定位、放好同根的准入蓝图（开发版扩展）：走完即「可以成文」。"""
     walk_to_design(flow, src, design_kit.ACCESS, scope_text)

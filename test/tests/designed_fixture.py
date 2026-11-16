@@ -21,9 +21,9 @@ ACCESS = design_kit.ACCESS
 BUILD = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs"
 FLOW = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story_flow.py"
 def ensure_flow_state(root: Path, feature: str, src: Path) -> None:
-    """skeleton 起手预检需要的流程状态：S1–S3 走完、范围已定、同根蓝图已准入（真实脚本生成契约）。
+    """skeleton 起手预检需要的流程状态：S1–S3 走完、材料已确认、同根蓝图已准入（真实脚本生成契约）。
 
-    skeleton 的起手预检要读流程契约与材料基准；夹具没有时，用真实流程命令把 S1–S3 走完。
+    skeleton 的起手预检要读流程契约与材料基准；夹具没有时，用真实流程命令把起手段走完。
     """
     def flow(*args: str) -> dict:
         proc = subprocess.run(

@@ -1,7 +1,7 @@
 """会议材料：公共转换、版本留存、逐行纠偏、单话题判断与当前结果的输入绑定。
 
 锁 1.9.2 步骤 7 工作包 1 的离线验收。构造件只证明脚本按合同工作——转换搬得对、原件留得住、
-差异应用得准、话题清单立得住、人的裁决落得下、当前结果声明的输入与引用查得到；
+差异应用得准、话题清单立得住、会议不另设裁决关卡、当前结果声明的输入与引用查得到；
 **不证明模型读会的判断力**，那归独立审查与真实会议材料的实跑。
 用例刻意换几种排版，因为脚本不认语义单元，任何排版都该能转换并定位。
 """
@@ -107,10 +107,7 @@ TOPICS = [
     {"id": "T2", "title": "通知方式", "ownership": "ours",
      "evidence": [{"start": 9, "end": 9}],
      "finding": "通知方式会上只说下次再定，本需求的通知行为因此还没有依据。",
-     "question": "通知方式现在定下来，还是继续挂着？",
-     "recommend": "a",
-     "options": [{"key": "a", "label": "按短信通知，通知那一段据此写"},
-                 {"key": "b", "label": "维持待定，正文只写边界"}]},
+     "question": "通知方式现在定下来，还是继续挂着？"},
 ]
 
 
@@ -205,7 +202,7 @@ class MeetingCase(unittest.TestCase):
                      body: str = "本需求按会上的结论写。") -> Path:
         """模型写的当前会议结果：输入绑定 + 每个话题一个标题。"""
         notes = meeting.read_notes(self.fr, [])
-        mark = basis if basis is not None else meetings.meeting_basis(notes, self.contract())
+        mark = basis if basis is not None else meetings.meeting_basis(notes)
         key = next(iter(notes), "澄清会@00000000")
         rows = [f"<!-- meeting-basis:{mark} -->", "", "# 当前会议结果", ""]
         for tid in topics:
@@ -217,24 +214,18 @@ class MeetingCase(unittest.TestCase):
     def ask_id(self) -> str:
         return self.status()["ask"]["ask_id"]
 
-    def confirm_materials(self, chosen: str = "confirm_scope") -> None:
+    def confirm_materials(self) -> None:
         """人在第一级材料关卡上表态（第一轮无条件停这一次）。"""
         write_gaps(self.fr / "AR" / "story-src")
         code, _, log = self.cli("story_flow.py", "decide", "--gate", "material_scope",
-                                "--ask", self.ask_id(), "--reply", "材料够了", "--chosen", chosen)
-        self.assertEqual(0, code, log)
-
-    def decide_meeting(self, key: str, item: str = "T2", chosen: str = "a") -> None:
-        code, _, log = self.cli("story_flow.py", "decide", "--gate", "meeting", "--meeting", key,
-                                "--item", item, "--ask", self.ask_id(), "--reply", "就用短信",
-                                "--chosen", chosen)
+                                "--ask", self.ask_id(), "--reply", "2")
         self.assertEqual(0, code, log)
 
     def problems(self) -> list[str]:
         return meeting.inspect(self.fr)["problems"]
 
     def result_problems(self) -> list[str]:
-        return meetings.refresh_problems(self.fr, meeting.read_notes(self.fr, []), self.contract())
+        return meetings.refresh_problems(self.fr, meeting.read_notes(self.fr, []))
 
 
 class AMeetingIsCitedThroughItsCorrections(MeetingCase):
@@ -570,12 +561,6 @@ class TheTopicListStandsOnItsOwn(MeetingCase):
                        "不在 raw.md 里"),
             "没写引用": ([{**loose[0], "evidence": []}], "没有指回 raw.md 的行范围"),
             "归属不明却不问": ([{**loose[0], "ownership": "unclear"}], "要写 question"),
-            "不问却摆了选项": ([{**loose[0], "options": [{"key": "a", "label": "x"}]}],
-                          "没有 question 却写了 options"),
-            "选项 key 重复": ([{**loose[1], "options": [
-                {"key": "a", "label": "x"}, {"key": "a", "label": "y"}]}], "选项 key 有重复"),
-            "推荐不在选项里": ([{**loose[1], "recommend": "z"}], "不在选项里"),
-            "问人却没有选项": ([{**loose[1], "options": []}], "至少一个真实选项"),
         }
         for name, (topics, needle) in cases.items():
             with self.subTest(name):
@@ -599,70 +584,6 @@ class TheTopicListStandsOnItsOwn(MeetingCase):
                 self.assertEqual([], self.problems())
 
 
-class TheHumanChoiceIsTheOnlyDecision(MeetingCase):
-    """问不问由 question 说了算；人选的 key 与原话落进契约，脚本不替他选。"""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.docx = self.imported()
-        self.assertEqual(0, self.cli("story_flow.py", "round")[0])
-        self.confirm_materials()
-        self.key = self.read_meeting(self.docx)
-
-    def decide(self, *args: str, item: str = "T2") -> tuple[int, dict, str]:
-        return self.cli("story_flow.py", "decide", "--gate", "meeting", "--ask", self.ask_id(),
-                        "--meeting", self.key, "--item", item, *args)
-
-    def test_only_a_listed_key_is_recorded(self) -> None:
-        code, out, _ = self.decide("--chosen", "不存在", "--reply", "就用短信")
-        self.assertEqual(1, code)
-        self.assertIn("不在本次选项里", out["error"])
-        code, _, log = self.decide("--chosen", "a", "--reply", "就用短信")
-        self.assertEqual(0, code, log)
-        gate = next(g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "meeting")
-        self.assertEqual(("a", "就用短信", "human"), (gate["chosen"], gate["reply"], gate["by"]))
-        self.assertEqual({"no", "key", "label"}, set(gate["options"][0]), "关卡记录里多抄了别的东西")
-
-    def test_a_topic_without_a_question_is_never_asked(self) -> None:
-        self.assertEqual(["T2"], [a.split("/")[-1] for a in meetings.pending_asks(
-            meeting.read_notes(self.fr, []), self.contract())])
-        code, out, _ = self.decide("--chosen", "a", "--reply", "随便", item="T1")
-        self.assertEqual(1, code)
-        self.assertIn("没有会议话题", out["error"])
-
-    def test_the_answer_the_human_actually_gave_is_what_lands(self) -> None:
-        """人给了自选答案：把它补成真实选项再记，不替他选推荐项。"""
-        topics = json.loads(json.dumps(TOPICS))
-        topics[1]["options"].append({"key": "c", "label": "先按站内信通知，短信下一轮再说"})
-        self.read_meeting(self.docx, topics=topics)
-        code, _, log = self.decide("--chosen", "c", "--reply", "先站内信")
-        self.assertEqual(0, code, log)
-        gate = next(g for g in self.contract()["rounds"][-1]["gates"] if g["gate"] == "meeting")
-        self.assertEqual("c", gate["chosen"], "记成了推荐项")
-
-    def test_a_clarification_topic_asks_again_and_keeps_the_first_answer(self) -> None:
-        """已记的回答事后发现选项带着没说明的后果：补一条澄清话题再问，原记录保留。"""
-        code, _, log = self.decide("--chosen", "b", "--reply", "先挂着")
-        self.assertEqual(0, code, log)
-        topics = json.loads(json.dumps(TOPICS)) + [{
-            "id": "T2-1", "title": "通知方式（澄清）", "ownership": "ours",
-            "evidence": [{"start": 9, "end": 9}],
-            "finding": "上次所选的维持待定没有说明：待定期间不发任何通知。",
-            "question": "原问法是「通知方式现在定下来，还是继续挂着」，你选了维持待定；待定期间不发通知，这样可以吗？",
-            "options": [{"key": "a", "label": "可以，待定期间不发通知"},
-                        {"key": "b", "label": "待定期间先发站内信——多一个临时入口，结论出来后要撤"}]}]
-        self.read_meeting(self.docx, topics=topics)
-        state = self.status()
-        self.assertEqual("await_gate:meeting", state["next"])
-        self.assertEqual(["T2-1"], [a.split("/")[-1] for a in meetings.pending_asks(
-            meeting.read_notes(self.fr, []), self.contract())], "澄清话题没被问，或原话题被重问")
-        code, _, log = self.decide("--chosen", "b", "--reply", "先发站内信", item="T2-1")
-        self.assertEqual(0, code, log)
-        signed = {g["item"]: g["chosen"] for g in self.contract()["rounds"][-1]["gates"]
-                  if g["gate"] == "meeting"}
-        self.assertEqual({"T2": "b", "T2-1": "b"}, signed, "原回答被覆盖或新回答没记下")
-
-
 class TheCurrentResultIsWrittenByTheModel(MeetingCase):
     """当前会议结果由模型写：脚本只核输入绑定、话题去向与引用，不判业务。"""
 
@@ -673,29 +594,23 @@ class TheCurrentResultIsWrittenByTheModel(MeetingCase):
         self.confirm_materials()
         self.key = self.read_meeting(self.docx)
 
-    def settle(self) -> None:
-        """人答完会议里要他定的那一条。"""
-        self.decide_meeting(self.key)
-
-    def test_the_result_is_asked_for_only_after_the_human_has_spoken(self) -> None:
-        self.assertEqual("await_gate:meeting", self.status()["next"])
-        self.assertFalse((self.fr / "AR" / "story-src" / "doc-refresh.md").exists(),
-                         "人还没表态就写了当前结果")
-        self.settle()
+    def test_the_result_is_asked_for_after_reading_without_a_meeting_gate(self) -> None:
+        """读完会直接要当前结果：有 question 不再生成会议裁决关卡，也没有人要等的那一次停等。"""
         state = self.status()
         self.assertEqual("read_meeting", state["next"])
         self.assertIn("meeting-basis:", state["action"])
+        self.assertNotIn("ask", state)
+        self.assertFalse((self.fr / "AR" / "story-src" / "doc-refresh.md").exists(),
+                         "结果还没写就有了")
         self.write_result()
         self.assertEqual("run_analysis", self.status()["next"], "结果写好了却还卡在会议这一段")
 
     def test_a_stale_basis_names_the_gap(self) -> None:
-        self.settle()
         self.write_result(basis="0" * 16)
         self.assertTrue(any("声明的输入是" in p for p in self.result_problems()),
                         self.result_problems())
 
     def test_a_changed_judgement_makes_the_old_result_stale(self) -> None:
-        self.settle()
         self.write_result()
         self.assertEqual([], self.result_problems())
         topics = json.loads(json.dumps(TOPICS))
@@ -709,14 +624,13 @@ class TheCurrentResultIsWrittenByTheModel(MeetingCase):
         topics.append({"id": "T3", "title": "余额提醒", "ownership": "not_ours",
                        "evidence": [{"start": 3, "end": 3}], "finding": "另一张单子的事。"})
         self.read_meeting(self.docx, topics=topics)
-        self.settle()
         self.write_result(topics=("T1", "T2"))
         problems = self.result_problems()
         self.assertTrue(any("缺这几个话题的去向" in p and "T3" in p for p in problems), problems)
 
     def test_a_citation_must_point_at_a_real_line(self) -> None:
-        self.settle()
-        path = self.write_result()
+        self.write_result()
+        path = self.fr / "AR" / "story-src" / "doc-refresh.md"
         _, folder = self.folder(self.docx)
         rel = (folder / meeting.RAW).relative_to(self.fr).as_posix()
         path.write_text(path.read_text(encoding="utf-8") + f"\n引用 {rel}:L900\n", encoding="utf-8")
@@ -728,12 +642,10 @@ class TheCurrentResultIsWrittenByTheModel(MeetingCase):
 
     def test_the_wording_of_the_result_is_not_judged(self) -> None:
         """正文里写没写「未决」两个字，脚本不管——那是审查要读的。"""
-        self.settle()
         self.write_result(body="这一段还没有结论。")
         self.assertEqual([], self.result_problems())
 
     def test_a_second_heading_for_one_topic_is_refused(self) -> None:
-        self.settle()
         self.write_result(topics=("T1", "T2", "T2"))
         self.assertTrue(any("有两个标题" in p for p in self.result_problems()),
                         self.result_problems())
@@ -780,7 +692,7 @@ class AMeetingNameWithSpacesStillResolves(MeetingCase):
     def fenced_result(self, kind: str, *, real: bool = False) -> None:
         """把标题样例放进围栏；`real` 再在围栏之后补一个真的标题。"""
         path = self.fr / "AR" / "story-src" / "doc-refresh.md"
-        mark = meetings.meeting_basis(meeting.read_notes(self.fr, []), self.contract())
+        mark = meetings.meeting_basis(meeting.read_notes(self.fr, []))
         title = f"### {self.key}/T1 受理上限"
         rows = [f"<!-- meeting-basis:{mark} -->", "", "# 当前会议结果", "", "写法示例：", ""]
         rows += [line.replace("{title}", title) for line in self.FENCES[kind]] + [""]
@@ -804,10 +716,10 @@ class AMeetingNameWithSpacesStillResolves(MeetingCase):
                 self.assertEqual([], self.result_problems())
 
 
-class TheFlowStopsOnceForTheMeeting(MeetingCase):
-    """会议是材料的一种：问料 → 交料 → 读会 → 有要人定的话题才停一次 → 当前结果 → 需求分析。"""
+class TheFlowReadsTheMeetingWithoutAGate(MeetingCase):
+    """会议是材料的一种：问料 → 交料 → 读会 → 当前会议结果 → 需求分析；有 question 不另设裁决关卡。"""
 
-    def test_read_refresh_ask_decide(self) -> None:
+    def test_read_refresh_result(self) -> None:
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
         self.assertEqual("inventory_materials", self.status()["next"],
@@ -820,12 +732,10 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         self.assertEqual(0, self.cli("story_flow.py", "meeting-refresh", "--meeting", key)[0])
         self.read_meeting(docx)
         state = self.status()
-        self.assertEqual("await_gate:meeting", state["next"])
+        self.assertEqual("read_meeting", state["next"], "有 question 又长出了会议裁决关卡")
         self.assertEqual(["T1", "T2"], [t["topic"] for t in state["meetings"]],
-                         "关卡那一轮没把全部话题摆出来")
-        self.assertEqual([None, "a"], [t.get("recommend") for t in state["meetings"]])
-        self.decide_meeting(key)
-        self.assertEqual("read_meeting", self.status()["next"], "裁决之后该写当前结果")
+                         "读会那一步没把全部话题摆出来")
+        self.assertEqual("通知方式现在定下来，还是继续挂着？", state["meetings"][1]["question"])
         self.write_result()
         self.assertEqual("run_analysis", self.status()["next"], "会议之后又回头问了一次材料")
 
@@ -837,15 +747,14 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         ask_id = self.ask_id()
         docx = self.place()
         code, _, log = self.cli("story_flow.py", "decide", "--gate", "material_scope",
-                                "--ask", ask_id, "--reply", "会议记录放进去了", "--chosen", "supplied")
+                                "--ask", ask_id, "--reply", "1")
         self.assertEqual(0, code, log)
         self.assertEqual("import_materials", self.status()["next"])
         self.assertEqual(0, self.cli("import_sources.py")[0])
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
         self.assertEqual("read_meeting", self.status()["next"])
-        key = self.read_meeting(docx)
-        self.assertEqual("await_gate:meeting", self.status()["next"])
-        self.decide_meeting(key)
+        self.read_meeting(docx)
+        self.assertEqual("read_meeting", self.status()["next"])
         self.write_result()
         self.assertEqual("run_analysis", self.status()["next"])
         asked = [g for r in self.contract()["rounds"] for g in r.get("gates") or []
@@ -871,16 +780,16 @@ class TheFlowStopsOnceForTheMeeting(MeetingCase):
         code, out, _ = self.cli("story_flow.py", "decide", "--gate", "material_scope",
                                 "--ask", "x", "--reply", "再确认一次")
         self.assertEqual(1, code)
-        self.assertIn("本轮第一级已经定了", out["error"])
+        self.assertIn("本轮材料已经确认过了", out["error"])
 
     def test_a_meeting_arriving_after_closure_is_read_first(self) -> None:
-        """设计开始之后才导进来的会议没有会议判断：先读会（有要人定的话题才 reopen）；读过的会不算迟到。"""
+        """设计开始之后才导进来的会议没有会议判断：先读会；读过的会不算迟到。"""
         from flow import routing
         docx = self.imported()
         self.assertEqual(0, self.cli("story_flow.py", "round")[0])
         contract = self.contract()
-        contract["rounds"][-1]["gates"] = [{"gate": "material_scope", "chosen": "confirm_scope", "outcome": "accepted", "by": "human"},
-                          {"gate": "scope_decision", "chosen": "carry_all", "outcome": "accepted", "by": "human"}]
+        contract["rounds"][-1]["gates"] = [{"gate": "material_scope", "chosen": "confirm_scope",
+                                            "outcome": "accepted", "by": "human"}]
         # 设计已经开始：同根蓝图在盘上
         (self.fr / "blueprint").mkdir(exist_ok=True)
         (self.fr / "blueprint" / "component-blueprint.yaml").write_text("component_id: wallet-home\n", encoding="utf-8")
@@ -932,7 +841,7 @@ class TwoMeetingsKeepBothSources(MeetingCase):
         self.assertEqual([], self.problems())
         notes = meeting.read_notes(self.fr, [])
         self.assertEqual(2, len(notes), "两场会只剩一场")
-        rows = meetings.topic_digest(self.fr, notes, self.contract())
+        rows = meetings.topic_digest(self.fr, notes)
         self.assertEqual(2, len(rows), "摆给人的话题被合并了")
         self.assertEqual({"早会定的是五个。", "晚会改成八个，与早会不一致。"},
                          {r["finding"] for r in rows}, "脚本改写了模型的判断")

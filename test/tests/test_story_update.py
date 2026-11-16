@@ -133,6 +133,24 @@ class UpdateCase(unittest.TestCase):
         self.assertTrue(rows, f"stdout 里没有结果 JSON：{proc.stdout}\n{proc.stderr}")
         return json.loads(rows[-1])
 
+    def ask_questions(self, *items: dict) -> dict:
+        """按本轮必要问题写问法文件，经真实 `status --questions-file` 生成一次集中 ask。"""
+        path = self.root / ".questions.json"
+        path.write_text(json.dumps({"items": list(items)}, ensure_ascii=False), encoding="utf-8")
+        out = self.flow("status", "--questions-file", str(path))
+        self.assertTrue(out.get("success", True), out)
+        return out["ask"]
+
+    def business_question(self, item_id: str, question: str | None = None,
+                          options: list[str] | None = None) -> dict:
+        return {"item_id": item_id, "question": question or f"{item_id}：要定的是哪一件？",
+                "options": options if options is not None else [],
+                "recommend": "", "reason": "阻断当前切片，当前用户有权决定",
+                "source_ref": "AR/story.md"}
+
+    def answer_question(self, ask: dict, item_id: str, reply: str) -> dict:
+        return self.flow("decide", "--ask", ask["ask_id"], "--item", item_id, "--reply", reply)
+
     def rounds(self) -> list[str]:
         """盘上有几轮 —— 只数轮次目录。"""
         return sorted(d.name for d in self.updates.iterdir()
@@ -676,57 +694,47 @@ class RestoreRefusesWithoutAScene(UpdateCase):
 
 
 class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
-    def decide(self, *extra: str) -> dict:
-        proc = subprocess.run(
-            [sys.executable, str(FLOW), "decide", "--feature", FEATURE,
-             "--project-root", str(self.root), *extra],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
-        rows = [l for l in proc.stdout.splitlines() if l.strip().startswith("{")]
-        return json.loads(rows[-1])
+    """update 里人定的设计问题沿同一组集中问答记录原话：只存问法、原话与出处，不另立决定账。"""
 
-    MARK = "<!-- story-build:begin 议题 D1 · 由决策登记表生成，改它请改真源 · sha256:0123456789abcdef -->"
-
-    def put_issue(self) -> None:
-        (self.feature_root / "AR" / "review.md").write_text(
-            f"# 评审记录\n\n{self.MARK}\n#### 1.1.1 撤销宽限的时长\n", encoding="utf-8")
-
-    def test_it_needs_an_open_round(self) -> None:
-        """不挂在某一轮上的话，事后无从定位这条人签属于哪一次更新。"""
-        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "需求方在评审会上说的")
-        self.assertIn("没有开着的更新", out.get("error", ""))
-
-    def test_it_records_the_actual_words_and_the_issue_shown(self) -> None:
+    def setUp(self) -> None:
+        super().setUp()
         self.update()
-        self.put_issue()
-        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
-        self.assertEqual("human", out["recorded"]["by"])
+
+    def test_it_records_the_asked_question_and_the_actual_words(self) -> None:
+        ask = self.ask_questions(self.business_question("D1", "撤销宽限改多少小时？", ["保持 24 小时", "改 36 小时"]))
+        out = self.answer_question(ask, "D1", "按 36 小时做")
+        self.assertTrue(out.get("success"), out)
         flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
-        row = flow["update"]["decisions"][0]
-        self.assertEqual(("按 36 小时做", "D1", "0123456789abcdef"), (row["reply"], row["issue"], row["asked"]))
+        row = flow["rounds"][-1]["answers"][0]
+        self.assertEqual((ask["ask_id"], "D1", "按 36 小时做"),
+                         (row["ask_id"], row["item_id"], row["reply"]))
+        self.assertEqual("撤销宽限改多少小时？", row["question"])
+        self.assertEqual(["保持 24 小时", "改 36 小时"], row["options"])
+        self.assertEqual("AR/story.md", row["source_ref"])
+        self.assertFalse({"target_ref", "source_revision", "mapped_by"} & set(row),
+                         "原话记录带着目标/版本/映射来源")
+        self.assertNotIn("答案已批准", json.dumps(out, ensure_ascii=False))
 
     def test_the_words_stay_on_record_after_the_close(self) -> None:
-        """收口只清开着的那一轮：这一轮人的每句原话与问法摘要随 record.json 留档。"""
-        self.put_issue()
-        rid = self.update()["update"]
-        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
-        self.decide("--update", "开关默认关闭", "--issue", "D1", "--reply", "默认关，灰度开关由运营开")
-        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        """收口只关这一轮：人的原话留在流程契约与导出的答案原件里，不随轮次关闭消失。"""
+        ask = self.ask_questions(self.business_question("D1"))
+        self.answer_question(ask, "D1", "按 36 小时做")
+        (self.updates / self.rounds()[-1] / "update-notes.md").write_text(NOTES, encoding="utf-8")
         self.assertEqual("closed", self.update("--action", "close").get("status"))
-        rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
-        self.assertEqual([("按 36 小时做", "0123456789abcdef"), ("默认关，灰度开关由运营开", "0123456789abcdef")],
-                         [(d["reply"], d["asked"]) for d in rec["decisions"]])
         flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
-        self.assertNotIn("decisions", flow["update"])
+        self.assertEqual(["按 36 小时做"], [a["reply"] for a in flow["rounds"][-1]["answers"]])
+        self.assertNotIn("decisions", flow.get("update") or {}, "update 又存了一份决定账")
+        self.assertIn("按 36 小时做", json.dumps(self.exported(), ensure_ascii=False))
 
     def test_the_words_stay_on_record_after_a_restore(self) -> None:
-        """还原的那一轮同样留档：人说过的话不随现场一起撤回。"""
-        self.put_issue()
-        rid = self.update()["update"]
-        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
+        """还原那一轮不撤销人的原话：原话记录在受保护的流程契约里，导出里仍当前有效。"""
+        ask = self.ask_questions(self.business_question("D1"))
+        self.answer_question(ask, "D1", "按 36 小时做")
         self.assertEqual("restored", self.update("--action", "restore").get("status"))
-        rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
-        self.assertEqual([("按 36 小时做", "0123456789abcdef")],
-                         [(d["reply"], d["asked"]) for d in rec["decisions"]])
+        flow = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))
+        self.assertEqual(["按 36 小时做"], [a["reply"] for a in flow["rounds"][-1]["answers"]])
+        self.assertEqual(["按 36 小时做"],
+                         [d["reply"] for d in self.exported()["current"] if d.get("item_id") == "D1"])
 
     def exported(self) -> dict:
         """最新导出的人答记录（answers.json）。"""
@@ -734,54 +742,46 @@ class AHumanDecisionInThisRoundIsRecordedVerbatim(UpdateCase):
         answers = next(s for s in index["sources"] if s["kind"] == "answer")
         return json.loads((self.feature_root / answers["versions"][-1]["original"]["path"]).read_text(encoding="utf-8"))
 
-    def test_the_answer_is_exported_with_the_issue_shown(self) -> None:
-        """人在 update 里定的事一记下就导出：当前有效组里有原话与当时看到的议题正文。"""
-        self.update()
-        self.put_issue()
-        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
-        [row] = [d for d in self.exported()["current"] if d.get("issue") == "D1"]
-        self.assertEqual(("撤销宽限改 36 小时", "按 36 小时做"), (row["item"], row["reply"]))
-        self.assertIn("撤销宽限的时长", row["question"])
+    def test_the_answer_is_exported_with_the_question_shown(self) -> None:
+        """原话一记下就导出：当前有效组里有当时的问题、候选、原话与出处，不写「所选 = 人的裁决」。"""
+        ask = self.ask_questions(self.business_question("D1", "撤销宽限改多少小时？", ["保持 24 小时", "改 36 小时"]))
+        self.answer_question(ask, "D1", "按 36 小时做")
+        [row] = [d for d in self.exported()["current"] if d.get("item_id") == "D1"]
+        self.assertEqual(("撤销宽限改多少小时？", "按 36 小时做"), (row["question"], row["reply"]))
+        self.assertEqual(["保持 24 小时", "改 36 小时"], row["options"])
+        self.assertNotIn("chosen", row)
+        self.assertFalse({"target_ref", "source_revision", "mapped_by"} & set(row))
 
-    def test_a_restored_round_keeps_the_answer_for_context(self) -> None:
-        """本地撤回不撤销人的业务决定：原话留在「需结合上下文」组并说明出处，不再算当前有效。"""
-        self.put_issue()
-        self.update()
-        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
-        self.assertEqual("restored", self.update("--action", "restore").get("status"))
-        answers = self.exported()
-        self.assertEqual([], [d for d in answers["current"] if d.get("issue") == "D1"])
-        [row] = [d for d in answers["context"] if d.get("issue") == "D1"]
-        self.assertEqual("按 36 小时做", row["reply"])
-        self.assertIn("撤回", row["why"])
-
-    def test_a_changed_issue_moves_the_answer_to_context(self) -> None:
-        """议题在评审记录里换了问法：旧原话不冒充对新问法的回答，移到「需结合上下文」组。"""
-        self.update()
-        self.put_issue()
-        self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "按 36 小时做")
-        (self.feature_root / "AR" / "review.md").write_text(
-            "# 评审记录\n\n" + self.MARK.replace("0123456789abcdef", "fedcba9876543210")
-            + "\n#### 1.1.1 撤销宽限的时长与通知\n", encoding="utf-8")
-        proc = subprocess.run([sys.executable, str(FLOW), "round", "--feature", FEATURE, "--project-root", str(self.root)],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        [row] = [d for d in self.exported()["context"] if d.get("issue") == "D1"]
-        self.assertIn("问法", row["why"])
-
-    def test_it_needs_the_issue(self) -> None:
-        self.update()
-        self.put_issue()
-        out = self.decide("--update", "撤销宽限改 36 小时", "--reply", "按 36 小时做")
-        self.assertIn("--issue", out.get("error", ""))
-        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D9", "--reply", "按 36 小时做")
-        self.assertIn("评审记录里没有议题 D9", out.get("error", ""))
+    def test_it_needs_a_current_ask_and_a_known_item(self) -> None:
+        out = self.flow("decide", "--ask", "deadbeef", "--item", "D1", "--reply", "按 36 小时做")
+        self.assertIn("没有待回答的设计问答", out.get("error", ""))
+        ask = self.ask_questions(self.business_question("D1"))
+        out = self.flow("decide", "--ask", ask["ask_id"], "--item", "D9", "--reply", "按 36 小时做")
+        self.assertIn("没有题「D9」", out.get("error", ""))
+        out = self.flow("decide", "--ask", ask["ask_id"], "--reply", "按 36 小时做")
+        self.assertIn("--item", out.get("error", ""))
 
     def test_an_empty_reply_is_refused(self) -> None:
         """人签只认真实原话——模型的转述不算。"""
-        self.update()
-        out = self.decide("--update", "撤销宽限改 36 小时", "--issue", "D1", "--reply", "   ")
+        ask = self.ask_questions(self.business_question("D1"))
+        out = self.flow("decide", "--ask", ask["ask_id"], "--item", "D1", "--reply", "   ")
         self.assertIn("--reply", out.get("error", ""))
+
+    def test_the_same_question_cannot_be_answered_twice(self) -> None:
+        ask = self.ask_questions(self.business_question("D1"), self.business_question("D2"))
+        self.assertTrue(self.answer_question(ask, "D1", "按 36 小时做").get("success"))
+        out = self.answer_question(ask, "D1", "改成 48 小时")
+        self.assertIn("已经记过原话", out.get("error", ""))
+
+    def test_a_changed_question_with_the_old_ask_id_is_refused(self) -> None:
+        """问法内容被改却沿用旧 ask_id：读取时重算身份，拒绝记人答。"""
+        ask = self.ask_questions(self.business_question("D1"))
+        sidecar = self.src / ".ask.json"
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        data["items"][0]["question"] = "换了一个问法"
+        sidecar.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        out = self.answer_question(ask, "D1", "按 36 小时做")
+        self.assertIn("ask_id 对不上", out.get("error", ""))
 
 
 class TheInputsStageAsksFirst(UpdateCase):
@@ -801,9 +801,11 @@ class TheInputsStageAsksFirst(UpdateCase):
     def next_of(self) -> str:
         return self.flow("status")["next"]
 
-    def answer(self, chosen: str = "confirm_scope", reply: str = "不补。") -> dict:
+    def answer(self, chosen: str = "confirm_scope", reply: str = "") -> dict:
+        """答材料关卡：明确说编号（1=请人放料、2=材料就是全部），与真实人答同一协议。"""
         write_gaps(self.src)
-        return answer(self.flow, "material_scope", reply, "--chosen", chosen)
+        text = reply if reply.strip() in ("1", "2") else ("1" if chosen == "supplied" else "2")
+        return answer(self.flow, "material_scope", text)
 
     def test_it_reports_and_stops_at_the_material_gate(self) -> None:
         was = self.rounds()
@@ -866,9 +868,8 @@ class TheInputsStageAsksFirst(UpdateCase):
     def test_inside_an_open_round_every_command_agrees(self) -> None:
         """AC13：update 这一轮开着时，status、round、decide 判定一致。
 
-        新材料登记进当前轮，范围沿用已定的；关卡不再问人。
-        09-25、09-26 两次实跑都卡在这条序列上。要重拍范围时 reopen 在 update 里同样合法，
-        update 照旧开着（锁在 test_material_rounds 的 reopen 用例里）。
+        新材料登记进当前轮，材料没有第二次关卡的授权；范围沿用已定的、由蓝图承载。
+        09-25、09-26 两次实跑都卡在这条序列上。
         """
         self.update("--action", "inputs")
         self.answer()
@@ -878,8 +879,8 @@ class TheInputsStageAsksFirst(UpdateCase):
         self.assertEqual("refresh_round", self.next_of())
         self.flow("round")
         self.assertEqual(rounds, len(self.contract()["rounds"]), "update 期间开了新轮")
-        out = self.flow("decide", "--gate", "scope_decision", "--ask", "x", "--reply", "1")
-        self.assertIn("当前这一步不是 scope_decision", out.get("error", ""))
+        out = self.flow("decide", "--gate", "material_scope", "--ask", "x", "--reply", "1")
+        self.assertIn("本轮材料已经确认过了", out.get("error", ""))
         self.assertEqual(rounds, len(self.contract()["rounds"]))
 
 
@@ -915,7 +916,7 @@ class ConstructionFactsComeFromTheUnits(unittest.TestCase):
         sys.path.insert(0, str(core))
         try:
             from flow.state import save  # noqa: PLC0415
-            save(feature_root, {"schema": 6, "status": "gathering", "rounds": []})
+            save(feature_root, {"schema": 7, "status": "gathering", "rounds": []})
         finally:
             sys.path.remove(str(core))
 
@@ -1195,7 +1196,7 @@ class SameNamedOriginalSteps:
         (self.inbox / self.NAME).write_bytes(data)
         self.assertIn(f"inbox/{self.NAME}", self.update("--action", "inputs")["pending"])
         write_gaps(self.src)
-        self.assertEqual("accepted", answer(self.flow, "material_scope", "放了甲需求", "--chosen", "supplied")["outcome"])
+        self.assertEqual("accepted", answer(self.flow, "material_scope", "1")["outcome"])
         (self.inbox / ".classify.json").write_text(json.dumps({self.NAME: "RR"}, ensure_ascii=False), encoding="utf-8")
         proc = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
                                "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
@@ -1251,7 +1252,7 @@ process.stdout.write(JSON.stringify({ rows: o.rows.map(r => [r.path, r.label]), 
         (self.inbox / self.NAME).write_bytes((self.DOCX / "update-inputs" / "交通卡自动充值-v2.docx").read_bytes())
         self.update("--action", "inputs")
         write_gaps(self.src)
-        answer(self.flow, "material_scope", "放了甲需求新版", "--chosen", "supplied")
+        answer(self.flow, "material_scope", "1")
         (self.inbox / ".classify.json").write_text(json.dumps({self.NAME: "RR"}, ensure_ascii=False), encoding="utf-8")
         done = subprocess.run([sys.executable, str(FLOW.parent / "import_sources.py"), "--feature", FEATURE,
                                "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
@@ -1912,7 +1913,7 @@ class StoryIsRegisteredAgainAfterChangesPart2(StoryIsRegisteredAgainAfterChanges
 
 
 class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChangesCase):
-    """不采用的新材料与归档后改范围：设计采用关系与范围关卡各按自己的规则走。"""
+    """不采用的新材料与归档后改范围：设计采用关系与蓝图修订各按自己的规则走。"""
 
     START_REGISTERED = True
 
@@ -1938,13 +1939,14 @@ class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChanges
         self.assertEqual(canonical, (self.feature_root / "blueprint" / "component-blueprint.yaml").read_bytes(),
                          "不采用的新材料改了设计")
 
-    def test_rescoping_after_archive_goes_through_the_scope_gate(self) -> None:
+    def test_rescoping_after_archive_goes_through_the_blueprint(self) -> None:
+        """归档后改范围：走 update，由蓝图负责方修订设计；没有 reopen，也没有范围关卡。"""
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.mark_archived()
-        reopened = self.flow("reopen")
-        self.assertEqual("await_gate:scope_decision", reopened.get("next"), reopened)
-        answer(self.flow, "scope_decision", "还是整体承载", "--chosen", "carry_all")
-        self.design_syncs()
+        rid = self.update("--result", "documents")["update"]
+        self.assertEqual(rid, self.contract()["update"]["open"])
+        design_kit.change_blueprint(self.root, FEATURE, design_kit.ACCESS,
+                                    "返回首页时余额刷新", "返回首页或切换账号时余额刷新")
         self.assertEqual("register_story", self.flow("status")["next"])
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.assertEqual("story_written", self.contract()["status"])
@@ -1995,8 +1997,8 @@ class RegisteredCase(UpdateCase):
 
 
 class TheUpdateRoundRunsEndToEnd(RegisteredCase):
-    """update 的正常第二段串成一条：新材料 → 报输入、问一次补料 → 开轮 → 新料登记进本轮 → reopen 由人确认范围
-    → 设计采用新版本 → 重新独立审查并登记 → 收口。只测协议与状态，不假装模型的语义；
+    """update 的正常第二段串成一条：新材料 → 报输入、问一次补料 → 开轮 → 新料登记进本轮
+    → 设计采用新版本（范围由蓝图承载）→ 重新独立审查并登记 → 收口。只测协议与状态，不假装模型的语义；
     每一步都是新起的进程，中途断开后从盘上的状态接着走（跨会话就是重载已有状态）。"""
 
     def test_the_whole_round(self) -> None:
@@ -2007,7 +2009,7 @@ class TheUpdateRoundRunsEndToEnd(RegisteredCase):
         # 先报输入，在材料关卡问一次要不要补料；人说就这些
         self.assertEqual("inputs", self.update("--action", "inputs")["stage"])
         write_gaps(self.src)
-        self.assertEqual("accepted", answer(self.flow, "material_scope", "不补，材料就这些", "--chosen", "confirm_scope")["outcome"])
+        self.assertEqual("accepted", answer(self.flow, "material_scope", "2")["outcome"])
         rid = self.update("--result", "documents")["update"]
         self.assertEqual(rid, contract()["update"]["open"])
         # 改版的材料登记进本轮，不开新轮
@@ -2015,11 +2017,8 @@ class TheUpdateRoundRunsEndToEnd(RegisteredCase):
         self.assertEqual("refresh_round", status()["next"])
         self.flow("round")
         self.assertEqual(rounds, len(contract()["rounds"]))
-        # 要重拍范围：reopen 由人在范围关卡确认；这一轮 update 照旧开着
-        self.assertEqual("await_gate:scope_decision", self.flow("reopen").get("next"))
         self.assertEqual(rid, self.flow("update", "--action", "status")["open"], "重载状态：开着的这一轮还在")
-        answer(self.flow, "scope_decision", "还是整体承载", "--chosen", "carry_all")
-        # 设计按新料同步：需求条目采用产品需求的新版本，蓝图重新准入
+        # 范围由蓝图承载：设计按新料同步，需求条目采用产品需求的新版本，蓝图重新准入
         StoryIsRegisteredAgainAfterChanges.design_syncs(self)
         cite_latest_prd(self.feature_root)
         self.assertEqual("register_story", status()["next"])
@@ -2043,10 +2042,10 @@ class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
         self.revision = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["story_basis"]["blueprint_ref"]["revision"]
 
     def said(self) -> None:
-        proc = subprocess.run([sys.executable, str(FLOW), "decide", "--feature", FEATURE, "--project-root", str(self.root),
-                               "--update", "余额刷新时机", "--issue", "D1", "--reply", "切账号时也要刷新"],
-                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        """本轮设计问答里记下与议题 D1 对应的原话：反馈据这组记录认它的输入身份。"""
+        ask = self.ask_questions(self.business_question("D1", "切账号时余额刷新时机怎么定？"))
+        out = self.answer_question(ask, "D1", "切账号时也要刷新")
+        self.assertTrue(out.get("success"), out)
 
     def feedback(self, **item) -> dict:
         body = {"feedback_id": "D1", "kind": "opinion", "source_revision": self.revision,
@@ -2098,7 +2097,7 @@ class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
         self.assertEqual([[]], [x["related_decisions"] for x in out["feedback"]], out)
 
     def test_without_the_human_words_it_is_named(self) -> None:
-        self.assertIn("没有记下人的原话", "；".join(self.feedback()["problems"]))
+        self.assertIn("没有记下", "；".join(self.feedback()["problems"]))
 
     def test_a_ruling_without_authority_is_not_a_ruling(self) -> None:
         self.said()

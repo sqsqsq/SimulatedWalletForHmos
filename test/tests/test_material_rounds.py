@@ -77,60 +77,8 @@ class MaterialRoundCase(unittest.TestCase):
         self.seed({f"ux/{name}": (body, "UX")})
 
 
-class ReopenReportsWhatActuallyHappened(MaterialRoundCase):
-    """重开写进盘之后，算下一步失败不能把重开报成失败；写入本身失败也不能报成成功。
-
-    报错的后果是具体的：模型以为没重开、再跑一次 reopen，而那一次会被「不在收口态」挡回——
-    它收到的两句话都与盘上的事实相反。用真实临时文件，在进程内注入失败。
-    """
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.round_now()
-        self.contract_path = self.feature_root / "AR" / "story-src" / "story-flow.json"
-        data = json.loads(self.contract_path.read_text(encoding="utf-8"))
-        data.update(status="story_written", story_written_at="2026-09-14T00:00:00+08:00",
-                    story_basis={"files": {"AR/story-src/decisions.json": "sha"}})
-        self.written = json.dumps(data, ensure_ascii=False, indent=2)
-        self.contract_path.write_text(self.written, encoding="utf-8")
-
-    def disk(self) -> dict:
-        return json.loads(self.contract_path.read_text(encoding="utf-8"))
-
-    def test_a_failing_next_step_still_reports_the_reopen(self) -> None:
-        from unittest import mock  # noqa: PLC0415
-        from flow import rounds  # noqa: PLC0415
-        from flow.state import FlowError  # noqa: PLC0415
-
-        def boom(*_args, **_kwargs):
-            raise FlowError("材料清单读不出（注入）")
-
-        for name in ("live_materials", "next_step"):
-            with self.subTest(fails=name):
-                self.contract_path.write_text(self.written, encoding="utf-8")
-                with mock.patch.object(rounds, name, boom):
-                    result = rounds.cmd_reopen(self.feature_root)
-                disk = self.disk()
-                self.assertEqual("gathering", disk["status"], "盘上没重开")
-                self.assertTrue(disk["rounds"][-1].get("reopened"), "重开的一轮没留标记")
-                self.assertEqual("gathering", result["status"])
-                self.assertIsNone(result["next"], "算不出来的下一步被编了一个")
-                self.assertIn("材料清单读不出（注入）", result["action"], "没说清为什么算不出来")
-                self.assertIn("不要再跑 reopen", result["action"], "诱导重跑 reopen")
-                self.assertIn("story_flow.py status", result["action"], "没给出恢复命令")
-
-    def test_a_failing_save_is_not_reported_as_success(self) -> None:
-        from unittest import mock  # noqa: PLC0415
-        from flow import rounds  # noqa: PLC0415
-
-        with mock.patch.object(rounds, "save", side_effect=OSError("磁盘写不进（注入）")):
-            with self.assertRaises(OSError):
-                rounds.cmd_reopen(self.feature_root)
-        self.assertEqual("story_written", self.disk()["status"], "写入失败却动了盘上的状态")
-
-
 class RegisteringBeforeTheCloseSaysSoFirst(MaterialRoundCase):
-    """范围还没定就来登记成文态：先说「范围还没定」，算下一步失败也不顶掉这一句。"""
+    """材料还没确认就来登记成文态：先说「材料还没确认」，算下一步失败也不顶掉这一句。"""
 
     def test_a_failing_next_step_does_not_hide_the_open_flow(self) -> None:
         from unittest import mock  # noqa: PLC0415
@@ -147,7 +95,7 @@ class RegisteringBeforeTheCloseSaysSoFirst(MaterialRoundCase):
                 with self.assertRaises(FlowError) as caught:
                     lifecycle.cmd_story(self.feature_root, self.root)
                 message = str(caught.exception)
-                self.assertIn("范围还没定", message, "材料那边的错顶掉了「范围还没定」")
+                self.assertIn("材料还没确认", message, "材料那边的错顶掉了「材料还没确认」")
                 self.assertIn("story_flow.py status", message, "没给出取下一步的命令")
 
 
@@ -266,7 +214,7 @@ class TheCaptionStoreHoldsTwoIndependentFacts(MaterialRoundCase):
 
 
 class CompleteThenMaterialChangedCase(MaterialRoundCase):
-    """收口之后材料又变了：不开新轮，只记一笔；要重新决策显式 `reopen`。
+    """设计开始之后材料又变了：不开新轮，只记一笔；真实范围变化走 update、回蓝图修订。
 
     死锁的形状（首跑实测，耗掉 18 分钟）：
       收口 → 补一份说明文件 → 材料指纹变 → `round` 开出新轮 →
@@ -282,7 +230,7 @@ class CompleteThenMaterialChangedCase(MaterialRoundCase):
             (self.feature_root / "AR" / "story-src" / "story-flow.json").read_text(encoding="utf-8"))
 
     def complete_it(self, status: str = "gathering") -> None:
-        """把契约摆成收口态（本轮范围已定、同根蓝图已在）——这里只测 round/reopen，不重演整条关卡链。
+        """把契约摆成收口态（本轮材料已确认、同根蓝图已在）——这里只测 round，不重演整条关卡链。
         已登记的带上此刻的登记指纹。"""
         self.round_now()
         path = self.feature_root / "AR" / "story-src" / "story-flow.json"
@@ -293,12 +241,8 @@ class CompleteThenMaterialChangedCase(MaterialRoundCase):
             {"gate": "material_scope", "ask_id": "m1", "question": "材料齐了吗？",
              "options": [{"no": 1, "key": "confirm_scope", "label": "现有材料就是全部"}],
              "chosen": "confirm_scope", "no": 1, "label": "现有材料就是全部", "reply": "1",
-             "outcome": "accepted", "by": "human", "at": at},
-            {"gate": "scope_decision", "ask_id": "s1", "question": "这个需求承载哪些？",
-             "options": [{"no": 1, "key": "carry_all", "label": "按当前范围整体承载"}],
-             "chosen": "carry_all", "no": 1, "label": "按当前范围整体承载", "reply": "1",
-             "outcome": "accepted", "by": "human", "at": at, "context": {"scope_text": "本 AR 承载全部"}}]
-        # 收口意味着设计已经开始：放好同根蓝图，收口之后的路由要读原生蓝图
+             "outcome": "accepted", "by": "human", "at": at}]
+        # closes 意味着设计已经开始：放好同根蓝图，收口之后的路由要读原生蓝图
         root = project_root_of(self.feature_root)
         ensure_framework(root)
         data = design_kit.hand_over_state(root, self.feature_root.name, data)
@@ -359,7 +303,7 @@ class CompleteThenMaterialChanged(CompleteThenMaterialChangedCase):
         current = self.contract()["rounds"][-1]
         self.assertNotEqual(digest_before, current["materials"]["digest"],
                             "材料变了而指纹没跟上——那份快照就不是当下的事实了")
-        self.assertIn("reopen", proc.stderr, "记一笔要说清出口在哪")
+        self.assertIn("update", proc.stderr, "记一笔要说清真实范围变化的出口在哪")
 
     def test_the_scope_stays_settled(self) -> None:
         """补料不改变流程位置——本轮范围仍是定了的，设计照常进行。"""
@@ -368,29 +312,6 @@ class CompleteThenMaterialChanged(CompleteThenMaterialChangedCase):
         self.round_now()
         self.assertEqual("gathering", self.contract()["status"])
         self.assertIn(self.status_payload()["state"], ("waiting_for_design", "ready_to_write"))
-
-    def test_reopen_puts_it_back_and_leaves_a_trace(self) -> None:
-        """`reopen` 是唯一出口：回到范围关卡，日志说清从哪个状态重开。"""
-        self.complete_it()
-        proc = self.run_flow("reopen")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("gathering", self.contract()["status"])
-        self.assertIn("范围已重开（原状态 gathering）", proc.stderr)
-
-    def test_after_reopen_a_material_change_opens_a_round_again(self) -> None:
-        """打开之后一切照旧：补料照常开新轮。"""
-        self.complete_it()
-        self.assertEqual(0, self.run_flow("reopen").returncode)
-        before = len(self.contract()["rounds"])
-        self.add_ux("after-reopen.png")
-        result = self.round_now()
-        self.assertTrue(result.get("created"))
-        self.assertEqual(before + 1, len(self.contract()["rounds"]))
-        # 补料开的新轮没有重开标记，重开之前的范围答复照样不当前；材料关卡的答复不受影响
-        index = json.loads((self.feature_root / "AR" / "story-src" / "materials.json").read_text(encoding="utf-8"))
-        answers = next(s for s in index["sources"] if s["kind"] == "answer")["versions"][-1]
-        current = json.loads((self.feature_root / answers["original"]["path"]).read_text(encoding="utf-8"))["current"]
-        self.assertEqual(["material_scope"], [d["gate"] for d in current], "补料开轮让重开前的范围答复又算当前了")
 
     def test_story_written_also_opens_no_round(self) -> None:
         """`story_written` 比设计开始更靠后，同样不开轮。
@@ -409,10 +330,10 @@ class CompleteThenMaterialChanged(CompleteThenMaterialChangedCase):
 
 class CompleteThenMaterialChangedPart2(CompleteThenMaterialChangedCase):
     def test_status_after_the_story_is_written_gives_no_import(self) -> None:
-        """成文登记之后放料，`status` 不引导导入——那条路归 `round` 与 `reopen`。
+        """成文登记之后放料，`status` 不引导导入——那条路归 `round` 与 update。
 
         引导导入的话，材料会并进正文，而已经定稿的 story 声称的依据是当轮的快照，
-        两边当场对不上。此后材料再变只有一个出口：显式 `reopen`。
+        两边当场对不上。此后材料再变只有一个出口：`round` 记到本轮，真实范围变化走 update。
         """
         self.complete_it("story_written")
         (self.feature_root / "inbox").mkdir(parents=True, exist_ok=True)
@@ -477,105 +398,10 @@ class CompleteThenMaterialChangedPart2(CompleteThenMaterialChangedCase):
         payload = json.loads(proc.stdout[proc.stdout.index("{"):])
         self.assertEqual("done", payload["next"])
         self.assertEqual("story_written", payload["status"], "归档不是新的状态值")
-        self.assertIn("reopen", payload["action"])
-
-    def test_reopen_works_from_story_written_too(self) -> None:
-        self.complete_it("story_written")
-        self.assertEqual(0, self.run_flow("reopen").returncode)
-        self.assertEqual("gathering", self.contract()["status"])
-
-
-class CompleteThenMaterialChangedPart3(CompleteThenMaterialChangedCase):
-    def test_reopen_keeps_the_registration_on_hold(self) -> None:
-        """重拍范围不抹掉上一次成文登记：它留作依据，但在范围重新定了、重新登记之前不可交付。"""
-        self.complete_it("story_written")
-        before = self.contract()
-        canonical = (self.feature_root / "blueprint" / "component-blueprint.yaml").read_bytes()
-        proc = self.run_flow("reopen")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        contract = self.contract()
-        self.assertEqual(before["story_basis"], contract["story_basis"])
-        self.assertEqual(canonical, (self.feature_root / "blueprint" / "component-blueprint.yaml").read_bytes(), "重开动了蓝图")
-        self.assertEqual("gathering", contract["status"], "重开之后仍是可交付的成文态")
-        out = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertTrue(out["basisOnHold"], "保留了什么、为什么暂不可交付要说出来")
-
-    def test_reopen_opens_a_round_for_the_scope_gate(self) -> None:
-        """材料没变也另开一轮：当前轮已记的范围关卡不替重拍授权，下一步回到范围关卡。"""
-        self.complete_it("story_written")
-        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        before = data["rounds"][-1]
-        before["positioning"] = {"scope_text": "整单", "sr_related_ars": []}
-        before["scope_options"] = [{"key": "all", "label": "整体承载"}]
-        before["gates"] = [{"gate": "scope_decision", "chosen": "all", "outcome": "accepted", "by": "human"}]
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        self.assertEqual(0, self.run_flow("reopen").returncode)
-        rounds = self.contract()["rounds"]
-        self.assertEqual(len(data["rounds"]) + 1, len(rounds))
-        self.assertEqual(before["materials"], rounds[-1]["materials"], "重拍沿用本轮的材料基准")
-        self.assertEqual([], rounds[-1]["gates"])
-        status = self.run_flow("status")
-        payload = json.loads(status.stdout[status.stdout.index("{"):])
-        self.assertEqual("await_gate:scope_decision", payload["next"],
-                         "重开之后没回到范围关卡：当前轮已记的范围替重拍授权了")
-
-    def test_reopen_inside_an_open_update_keeps_it_open(self) -> None:
-        """update 里重开范围：update 照旧开着，下一步回到范围关卡，不要求先伪造一次收口。"""
-        self.complete_it("story_written")
-        path = self.feature_root / "AR" / "story-src" / "story-flow.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["update"] = {"open": "20260926-000000"}
-        data["rounds"][-1]["positioning"] = {"scope_text": "整单", "sr_related_ars": []}
-        data["rounds"][-1]["scope_options"] = [{"key": "all", "label": "整体承载"}]
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        proc = self.run_flow("reopen")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual("20260926-000000", self.contract()["update"]["open"], "重开把 update 关掉了")
-        status = self.run_flow("status")
-        payload = json.loads(status.stdout[status.stdout.index("{"):])
-        self.assertEqual("await_gate:scope_decision", payload["next"])
-
-    def test_reopen_from_complete_has_nothing_on_hold(self) -> None:
-        """还没成文时没有成文登记可保留——留痕里如实说没有，不编造。"""
-        self.complete_it()
-        proc = self.run_flow("reopen")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        out = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertFalse(out["basisOnHold"])
-
-    def test_reopen_refuses_when_not_complete(self) -> None:
-        """没收口就没有要打开的东西——这条防的是把 reopen 当成万能重置键。"""
-        self.round_now()
-        proc = self.run_flow("reopen")
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("还没收口", (proc.stdout or "") + (proc.stderr or ""))
-
-    def test_reopen_says_what_to_do_next(self) -> None:
-        """重开之后先做什么由现状回答——不说的话作者会直接去登记，而那一步会被拒。"""
-        self.complete_it("story_written")
-        proc = self.run_flow("reopen")
-        out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertEqual(0, proc.returncode, out)
-        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
-        self.assertTrue(payload.get("next") and payload.get("action"), f"reopen 没给出下一步：{payload}")
-        self.assertIn("下一步", out)
+        self.assertIn("update", payload["action"])
 
 
 class CompleteThenMaterialChangedPart4(CompleteThenMaterialChangedCase):
-    def test_registering_right_after_reopen_names_the_next_step(self) -> None:
-        """reopen 之后直接 `story`：拒绝，但说出与 `status` 同一句的下一步，不只说「没收口」。"""
-        self.complete_it("story_written")
-        self.assertEqual(0, self.run_flow("reopen").returncode)
-        status = self.run_flow("status")
-        action = json.loads(status.stdout[status.stdout.index("{"):])["action"]
-        proc = self.run_flow("story")
-        out = (proc.stdout or "") + (proc.stderr or "")
-        self.assertEqual(1, proc.returncode, out)
-        self.assertIn("下一步", out)
-        self.assertIn(action[:16], out, "登记被拒时给的下一步与 status 不是同一句")
-
     def test_registering_again_keeps_the_old_registration_when_it_fails(self) -> None:
         """已经登记过再跑 `story`：通过才换成新登记；这里盘上没有 story.md，登记失败——
         说的是缺 story，不是「只登记一次」也不是「没收口」，已有的登记原样留着。
@@ -642,15 +468,12 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         write_gaps(self.src(), missing, why)
 
     def write_analysis_sidecars(self) -> None:
-        """需求分析（S2b）的两份产出，round 消费进契约。"""
+        """需求分析（S2b）的产出，round 消费进契约。"""
         src = self.src()
         src.mkdir(parents=True, exist_ok=True)
         (src / ".positioning.json").write_text(json.dumps({
             "scope_text": "本 AR 承载自动充值签约与管理", "sr_related_ars": [],
         }, ensure_ascii=False), encoding="utf-8")
-        (src / ".scope-options.json").write_text(json.dumps([
-            {"key": "carry_all", "label": "按当前范围整体承载：签约、管理、扣款回执"},
-        ], ensure_ascii=False), encoding="utf-8")
 
     def status(self) -> dict:
         proc = self.run_flow("status")
@@ -668,7 +491,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
                              "--reply", reply, *extra)
 
     def sign_supplied(self) -> subprocess.CompletedProcess:
-        return self.sign("材料放好了", "--chosen", "1")
+        return self.sign("第 1 项")
 
     def asked(self) -> None:
         """盘点写下缺口，`status` 生成问法——人被问到的那一刻。"""
@@ -733,15 +556,16 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertNotIn(ask["recommend"]["key"], MATERIAL_REQUEST_KEYS)
 
     def test_the_recorded_choice_is_the_asked_one_with_the_words(self) -> None:
-        """AC11：人签记下问法编号、全部选项、原话与映射到的那一项。"""
+        """AC11：记录留下问法编号、全部选项、原话与明确选中的那一项；不记模型映射来源。"""
         self.round_now()
         self.asked()
         ask_id = self.ask()["ask_id"]
         self.assertEqual(0, self.sign("2").returncode)
         gate = json.loads((self.src() / "story-flow.json").read_text(encoding="utf-8"))["rounds"][-1]["gates"][-1]
-        self.assertEqual((ask_id, "2", "human", "reply"),
-                         (gate["ask_id"], gate["reply"], gate["by"], gate["mapped_by"]))
+        self.assertEqual((ask_id, "2", "human", "confirm_scope", "accepted"),
+                         (gate["ask_id"], gate["reply"], gate["by"], gate["chosen"], gate["outcome"]))
         self.assertEqual([o["key"] for o in material_options()], [o["key"] for o in gate["options"]])
+        self.assertNotIn("mapped_by", gate, "记录里不该再有模型映射来源")
 
     def test_a_sign_without_the_current_ask_is_refused(self) -> None:
         """AC11：没问过、或问法换过了，人签写不进契约。"""
@@ -757,26 +581,43 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual(1, proc.returncode)
         self.assertIn("不是当前问法", self.out_of(proc))
 
-    def test_a_reply_pointing_elsewhere_than_chosen_is_refused(self) -> None:
+    def test_a_fragment_of_a_label_is_not_an_explicit_choice(self) -> None:
+        """片段命中不算人的选择：只认编号或整句照抄标签，不替人把半句话映射成整项批准。"""
+        self.round_now()
+        self.asked()
+        proc = self.sign("现有材料就是全部")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("没有明确选到任何一项", self.out_of(proc))
+        self.assertEqual([], json.loads((self.src() / "story-flow.json").read_text(
+            encoding="utf-8"))["rounds"][-1]["gates"], "没明确选择却写进了记录")
+
+    def test_a_negated_number_is_not_a_choice(self) -> None:
+        """「不选 1」不是选 1：被否掉的项不参与选择，拿不准就再问一次，原话不改成别的。"""
+        self.round_now()
+        self.asked()
+        proc = self.sign("不选 1")
+        self.assertEqual(1, proc.returncode)
+        self.assertIn("没有明确选到任何一项", self.out_of(proc))
+        self.assertEqual([], json.loads((self.src() / "story-flow.json").read_text(
+            encoding="utf-8"))["rounds"][-1]["gates"], "否定句被记成了选择")
+
+    def test_a_negation_leaves_the_other_choice(self) -> None:
+        """「不选 1，选 2」只认 2：否定项退出，原话逐字留存。"""
+        self.round_now()
+        self.asked()
+        proc = self.sign("不选 1，选 2")
+        self.assertEqual(0, proc.returncode, self.out_of(proc))
+        gate = json.loads((self.src() / "story-flow.json").read_text(
+            encoding="utf-8"))["rounds"][-1]["gates"][-1]
+        self.assertEqual(("confirm_scope", 2, "不选 1，选 2"), (gate["chosen"], gate["no"], gate["reply"]))
+
+    def test_model_mapping_parameters_are_gone(self) -> None:
+        """`--chosen`/`--propose` 一类模型映射入口退场：代选写不进记录。"""
         self.round_now()
         self.asked()
         proc = self.sign("选 2", "--chosen", "1")
-        self.assertEqual(1, proc.returncode)
-        self.assertIn("记人说的那一项", self.out_of(proc))
-
-    def test_a_model_proposal_waits_for_the_human(self) -> None:
-        """AC11：提议记为 by: model、不推进流程，下一次问法里请人确认。"""
-        self.round_now()
-        self.gaps()
-        proc = self.run_flow("decide", "--gate", "material_scope", "--propose",
-                             "--chosen", "confirm_scope", "--why", "材料都在")
-        self.assertEqual(0, proc.returncode, self.out_of(proc))
-        contract = json.loads((self.src() / "story-flow.json").read_text(encoding="utf-8"))
-        self.assertEqual("model", contract["proposals"][0]["by"])
-        self.assertEqual([], contract["rounds"][-1]["gates"], "提议记成了人签")
-        ask = self.status()["ask"]
-        self.assertEqual("confirm_scope", ask["proposals"][0]["chosen"])
-        self.assertIn("待你确认的提议", ask["block"])
+        self.assertNotEqual(0, proc.returncode)
+        self.assertIn("--chosen", self.out_of(proc))
 
     # -- 人回哪一项，料都进来 -------------------------------------------------
 
@@ -803,7 +644,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual(0, self.sign_supplied().returncode)
         proc = self.run_flow("decide", "--gate", "material_scope", "--ask", "x", "--reply", "2")
         self.assertEqual(1, proc.returncode, "同一轮里签了两次")
-        self.assertIn("本轮第一级已经定了", self.out_of(proc))
+        self.assertIn("本轮材料已经确认过了", self.out_of(proc))
 
     def test_after_a_rejection_new_material_points_at_the_import(self) -> None:
         self.round_now()
@@ -817,7 +658,7 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.round_now()
         self.asked()
         self.put_inbox()
-        self.assertEqual(0, self.sign("现有材料就是全部").returncode)
+        self.assertEqual(0, self.sign("2").returncode)
         self.assertEqual("import_materials", self.next_of())
 
     def test_the_import_step_names_the_files_and_gives_the_command(self) -> None:
@@ -876,15 +717,17 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual("fix_material_gaps", payload["next"])
         self.assertNotIn("ask", payload, "缺口立不住却先把人拦下来问了")
 
-    def test_the_second_level_ask_comes_from_the_contract(self) -> None:
+    def test_material_confirmed_goes_straight_to_design(self) -> None:
+        """材料确认、定位写成之后直接进原生设计：不出现范围/承载关卡，也不假 done。"""
         self.one_supply_round()
         self.write_analysis_sidecars()
         self.round_now()
-        self.assertEqual("await_gate:scope_decision", self.next_of())
-        self.assertEqual(["carry_all"], [o["key"] for o in self.status()["ask"]["options"]])
-        proc = self.run_flow("decide", "--gate", "scope_decision",
-                             "--ask", self.ask()["ask_id"], "--reply", "1")
-        self.assertEqual(0, proc.returncode, self.out_of(proc))
+        payload = self.status()
+        self.assertEqual("design_blueprint", payload["next"])
+        self.assertNotIn("ask", payload, "没有范围关卡，不该再生成问法")
+        self.assertEqual("waiting_for_design", payload["state"])
+        self.assertNotIn("await_gate:scope_decision", payload["next"])
+        self.assertNotIn("await_gate:split_carrier", payload["next"])
 
     # -- 选项集只有一处登记 ---------------------------------------------------
 
@@ -901,8 +744,8 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
                 self.assertNotIn(f'"{key}"', text, f"{path.name} 里还留着 {key} 的字面")
 
 
-class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
-    """本扩展新增的停等点只有两处，且都无条件。
+class StopsAreNotDelegated(unittest.TestCase):
+    """停等的开关不交给被停的那一方：没有代签/代选参数，也没有交给模型判的条件句。
 
     ## 为什么要锁
 
@@ -939,12 +782,12 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
             self.assertIn("--by", proc.stderr)
 
     def test_the_whitelist_has_no_conditional_wording(self) -> None:
-        """两处停等不许再写成条件句——条件由谁判，开关就在谁手里。"""
+        """材料停等不许写成条件句——条件由谁判，开关就在谁手里。"""
         text = self.skill()
         for conditional in ("需要人补料才能继续", "scope_gate 触发的"):
             self.assertNotIn(conditional, text,
                              "「%s」把停等的开关交回给了模型" % conditional)
-        self.assertIn("必停", text, "两处停等要明写无条件")
+        self.assertIn("必停", text, "材料停等要明写无条件")
 
     def test_the_spec_boundary_question_is_gone(self) -> None:
         """S4 收口处那一问退场——它固定长出第三个停等点。"""
@@ -963,8 +806,7 @@ class OnlyTwoStopsAndBothUnconditional(unittest.TestCase):
 
     def test_no_delegated_choice_path_remains(self) -> None:
         """代选路径整个退场——它就是材料环节被跳过的那条路。"""
-        for rel in ("doc/extensions/skills/story/rules/scope_gate.md",
-                    "doc/extensions/skills/story/rules/init_analysis.md",
+        for rel in ("doc/extensions/skills/story/rules/init_analysis.md",
                     "doc/extensions/skills/story/SKILL.md"):
             text = (DEV_ROOT / rel).read_text(encoding="utf-8")
             for gone in ('by:"ai"', "AI 代选", "代选永远不选"):
@@ -1365,13 +1207,13 @@ class TheManifestIsTheOnlyMaterialTruth(ManifestCase):
         status = self.run_flow("status").stdout
         ask = json.loads(status[status.index("{"):])["ask"]
         proc = self.run_flow("decide", "--gate", "material_scope", "--ask", ask["ask_id"],
-                             "--reply", "现有材料就是全部", "--chosen", "confirm_scope")
+                             "--reply", "2")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         after = self.round_now()
         self.assertEqual(before["materials"], after["materials"], "记一句人答把材料版本顶出了新一轮")
         answers = next(s for s in self.manifest()["sources"] if s["kind"] == "answer")
         record = json.loads((self.feature_root / answers["versions"][-1]["original"]["path"]).read_text(encoding="utf-8"))
-        self.assertEqual(["现有材料就是全部"], [d["reply"] for d in record["current"]])
+        self.assertEqual(["2"], [d["reply"] for d in record["current"]])
         self.assertEqual(["material_scope"], [d["gate"] for d in record["current"]])
         self.assertTrue(record["current"][0]["question"], "导出的人答没带问法")
         self.assertNotIn("answers", [o["source_id"] for o in self.manifest()["origins"]])
@@ -2016,7 +1858,7 @@ class RegistrationReprojectsFirst(unittest.TestCase):
         """登记不删 `story-src/` 里的任何过程件——它们是「这份 story 怎么写出来的」现场。
 
         过程件走不漏：归档只上传 story.md 与 review.md，这一层整个留在本地。
-        删掉的代价倒是实的——`reopen` 之后作者要改某一章，手上却没有可改的东西。
+        删掉的代价倒是实的——update 里作者要改某一章，手上却没有可改的东西。
         """
         source = (DEV_EXT / "skills" / "story" / "scripts"
                   / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")

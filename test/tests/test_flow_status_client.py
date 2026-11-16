@@ -26,14 +26,13 @@ CLIENT = CORE / "flow" / "client.mjs"
 FEATURE = "AR90001"
 
 FLOW_JSON = {
-    "schema": 6,
+    "schema": 7,
     "feature": FEATURE,
     "status": "gathering",
     "rounds": [{
         "round": 1,
         "materials": {"path": "AR/story-src/materials.json", "digest": "seeded"},
         "positioning": {"scope_text": "本 AR 承载提交与回执", "sr_related_ars": []},
-        "scope_options": [{"key": "carry_all", "label": "按当前范围整体承载"}],
         "gates": [],
     }],
 }

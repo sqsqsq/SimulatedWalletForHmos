@@ -1,16 +1,15 @@
 """有效人答导出为来源版本：设计、质询与审查按来源读人的原话，不另开一份要人重勾的清单。
 
-人答的真源是流程契约（`AR/story-src/story-flow.json`）与 update 轮次记录里人给出的真实答复；这里把它们按适用性
-分两组原样导出成 `AR/story-src/answers/人工答复-v<N>.json`（问法、选项、所选、原话、时刻与出处）与给人读的同名 `.md`。
+人答的真源是流程契约里人给出的真实答复：当前轮的材料确认（`gates` 里的 `material_scope`）与
+设计后必要问答的原话记录（`rounds[].answers`）。这里把它们原样导出成
+`AR/story-src/answers/人工答复-v<N>.json` 与给人读的同名 `.md`。
 
-- **当前有效**：起手与会议关卡里人答且已生效的记录，同一关卡（会议按话题）只认最后一次；范围重开后还没重答的
-  范围/承载答复不再当前；最后定的是整体承载时，之前的承载答复只是历史，切分时只认本轮定案那一次。update 期间人定的事按
-  同一议题同一问法后答替代前答。
-- **需结合上下文**：撤回那一轮的文件不撤销人的业务决定，问题版本已经变了的答复也不自动失效——这两类照录出处，
-  由作者与审查按语义判它现在是否适用。
-
-两组都是必读。已被替代或失效的原话只留在契约与轮次记录里追溯，不进导出。有效集合或原话变了才出新版本。
-每条记录的必需字段（问法、选项或议题、原话、时刻）缺一项就是本版生产缺陷，报出来，不补默认值继续。
+- **只陈列证据**：问法、原话、出处与时刻。阅读稿不写「所选 = 人的裁决」，也不把整份答复
+  升为业务批准；所选那一项在材料确认里只作材料事实登记。
+- **原话记录只存证据**：`ask_id, item_id, question, options, reply, at, source_ref`；
+  目标与版本只由原生反馈条目承担，不在这里复制。
+- 已被替代的原话只留在契约里追溯，不进导出；有效集合或原话变了才出新版本。
+- 每条记录的必需字段缺一项就是本版生产缺陷，报出来，不补默认值继续。
 
 只用标准库，stdout 无输出。
 """
@@ -25,12 +24,13 @@ CONTRACT = ("AR", "story-src", "story-flow.json")
 ANSWERS = ("AR", "story-src", "answers")
 SOURCE_ID = "answers"
 LABEL = "人工答复"
-GATE_FIELDS = ("ask_id", "gate", "round", "question", "options", "chosen", "no", "label", "reply", "at",
-               "meeting", "item", "context")
+GATE_FIELDS = ("ask_id", "gate", "round", "question", "options", "chosen", "no", "label", "reply", "at")
 GATE_REQUIRED = ("ask_id", "gate", "question", "options", "chosen", "reply", "at")
-UPDATE_FIELDS = ("update", "item", "issue", "asked", "question", "reply", "at")
-UPDATE_REQUIRED = ("item", "issue", "asked", "question", "reply", "at")
-SCOPE_GATES = ("scope_decision", "split_carrier")
+ANSWER_FIELDS = ("ask_id", "item_id", "question", "options", "reply", "at", "source_ref")
+ANSWER_REQUIRED = ("ask_id", "item_id", "question", "options", "reply", "at", "source_ref")
+#: 原话记录不持有的字段：目标与版本只在原生 feedback 条目上。
+ANSWER_FORBIDDEN = ("target_ref", "source_revision", "mapped_by")
+MATERIAL_GATE = "material_scope"
 
 
 class AnswerError(Exception):
@@ -41,85 +41,54 @@ def _missing(record: dict, required: tuple[str, ...]) -> list[str]:
     return [k for k in required if record.get(k) in (None, "", [])]
 
 
+def _answer_gaps(a: dict) -> list[str]:
+    """原话记录的缺口：候选可为空数组，其余每项要有真实内容。"""
+    gaps = [k for k in ANSWER_REQUIRED if k != "options" and not str(a.get(k) or "").strip()]
+    if not isinstance(a.get("options"), list):
+        gaps.append("options")
+    return gaps
+
+
 def gate_answers(contract: dict) -> tuple[list[dict], list[str]]:
-    """关卡里当前有效的人答与记录缺口。"""
-    from flow.state import CARRY_ALL  # noqa: PLC0415 —— 契约常量的唯一真源
+    """当前轮材料确认的人答与记录缺口：只认当前轮最后一次生效的材料关卡。"""
     rounds = contract.get("rounds") or []
-    # 最近一次范围重开那一轮起才算数：重开之前的范围与承载答复不替重拍授权，之后补料开的新轮也一样
-    reopened_at = max((i for i, r in enumerate(rounds) if r.get("reopened")), default=0)
-    latest: dict[tuple, dict] = {}
-    for i, r in enumerate(rounds):
-        for g in r.get("gates") or []:
-            if g.get("by") != "human" or g.get("outcome") != "accepted":
-                continue
-            if g.get("gate") in SCOPE_GATES and i < reopened_at:
-                continue
-            latest[(g.get("gate"), g.get("meeting"), g.get("item"))] = dict(g, round=r.get("round"))
-    scope = latest.get(("scope_decision", None, None))
-    split = contract.get("split") or {}
+    if not rounds:
+        return [], []
+    current = rounds[-1]
+    gate = next((g for g in reversed(current.get("gates") or [])
+                 if g.get("gate") == MATERIAL_GATE and g.get("outcome") == "accepted"
+                 and g.get("by") == "human"), None)
+    if gate is None:
+        return [], []
+    gaps = _missing(gate, GATE_REQUIRED)
+    if gaps:
+        return [], [f"第 {current.get('round')} 轮材料确认（{gate.get('ask_id') or '无问法编号'}）"
+                    f"缺 {'、'.join(gaps)}"]
+    record = {"round": current.get("round"), **{k: gate[k] for k in GATE_FIELDS if k in gate}}
+    return [record], []
+
+
+def answer_records(contract: dict) -> tuple[list[dict], list[str]]:
+    """设计后必要问答的原话记录与缺口：记录只作证据，不产生已批准状态。"""
     out, problems = [], []
-    for (gate, _, _), g in latest.items():
-        if gate == "split_carrier" and not (scope and scope.get("chosen") != CARRY_ALL
-                                            and split.get("decided") == "split" and split.get("settled_round") == g["round"]):
-            continue        # 整体承载了，或不是这一次定案的份表：承载答复只是历史
-        gaps = _missing(g, GATE_REQUIRED)
-        if gaps:
-            problems.append(f"第 {g.get('round')} 轮 {gate} 的人答（{g.get('ask_id') or '无问法编号'}）缺 {'、'.join(gaps)}")
-            continue
-        out.append({k: g[k] for k in GATE_FIELDS if k in g})
+    for r in contract.get("rounds") or []:
+        for a in r.get("answers") or []:
+            gaps = _answer_gaps(a)
+            if gaps:
+                problems.append(f"第 {r.get('round')} 轮设计问答（{a.get('ask_id') or '无问法编号'}）"
+                                f"缺 {'、'.join(gaps)}")
+                continue
+            carried = [k for k in ANSWER_FORBIDDEN if k in a]
+            if carried:
+                problems.append(f"第 {r.get('round')} 轮设计问答 {a.get('ask_id')}/{a.get('item_id')} "
+                                f"带着 {'、'.join(carried)}：原话记录只存问法、原话与出处")
+                continue
+            out.append(dict(a, round=r.get("round")))
     return out, problems
 
 
-def update_answers(feature_root: Path, contract: dict) -> tuple[list[dict], list[dict], list[str]]:
-    """update 期间人定的事：(当前有效, 需结合上下文, 记录缺口)。开着的一轮在契约里，收口或撤回的在轮次记录里。"""
-    from flow.phase_facts import update_records  # noqa: PLC0415 —— 轮次记录的唯一枚举
-    from flow.state import FlowError  # noqa: PLC0415
-    try:
-        records = update_records(feature_root)
-    except FlowError as exc:
-        raise AnswerError(str(exc)) from exc
-    events: list[tuple[str, str, dict]] = []
-    for rid, rec in records:
-        for d in rec.get("decisions") or []:
-            events.append((rid, str(rec.get("status") or ""), d))
-    state = contract.get("update") or {}
-    if state.get("open"):
-        events += [(str(state["open"]), "open", d) for d in state.get("decisions") or []]
-    seen, problems = {}, []
-    for rid, status, d in events:
-        gaps = _missing(d, UPDATE_REQUIRED)
-        if gaps:
-            problems.append(f"update {rid} 的人答（议题 {d.get('issue') or '?'}，{d.get('at') or '无时刻'}）缺 {'、'.join(gaps)}")
-            continue
-        key = (d["at"], d["issue"], d["reply"])
-        if key not in seen or status == "open":
-            seen[key] = (rid, status, d)
-    latest: dict[tuple, tuple[str, str, dict]] = {}
-    for rid, status, d in sorted(seen.values(), key=lambda x: x[2]["at"]):
-        latest[(d["issue"], d["asked"])] = (rid, status, d)
-    current, context = [], []
-    for rid, status, d in latest.values():
-        entry = {"update": rid, **{k: d[k] for k in UPDATE_FIELDS if k in d and k != "update"}}
-        if status == "restored":
-            context.append({**entry, "why": f"update {rid} 本地撤回了那一轮的文件；人的业务决定没有撤销，按语义核它现在是否仍适用"})
-        elif _asked_now(feature_root, d["issue"]) != d["asked"]:
-            context.append({**entry, "why": f"议题 {d['issue']} 的问法在评审记录里已经变了（答复时 {d['asked'][:12]}）：按语义核它是否仍适用"})
-        else:
-            current.append(entry)
-    return current, context, problems
-
-
-def _asked_now(feature_root: Path, issue: str) -> str | None:
-    """评审记录里这条议题此刻的机器区摘要；议题不在了为 None。"""
-    from flow.state import FlowError, issue_zone  # noqa: PLC0415 —— 议题摘要只在那里算
-    try:
-        return issue_zone(feature_root, issue)[0]
-    except FlowError:
-        return None
-
-
 def collect(feature_root: Path) -> dict | None:
-    """按当前契约与轮次记录算出要导出的两组人答；还没有流程契约为 None。记录不完整或读不出来报 AnswerError。"""
+    """按当前契约算出要导出的人答；还没有流程契约为 None。记录不完整或读不出来报 AnswerError。"""
     path = feature_root.joinpath(*CONTRACT)
     if not path.is_file():
         return None
@@ -130,11 +99,11 @@ def collect(feature_root: Path) -> dict | None:
     if not isinstance(contract, dict):
         raise AnswerError(f"{'/'.join(CONTRACT)} 不是对象：说不出当前有效的人答")
     gates, problems = gate_answers(contract)
-    current, context, more = update_answers(feature_root, contract)
+    answers, more = answer_records(contract)
     problems += more
     if problems:
-        raise AnswerError("人答记录不完整（本版生产的记录必须带问法、选项或议题、原话与时刻）：" + "；".join(problems))
-    return {"current": gates + current, "context": context}
+        raise AnswerError("人答记录不完整（本版生产的记录必须带问法、选项或原话与时刻）：" + "；".join(problems))
+    return {"current": gates + answers, "context": []}
 
 
 def _body(answers: dict) -> bytes:
@@ -142,37 +111,33 @@ def _body(answers: dict) -> bytes:
 
 
 def _render(answers: dict) -> str:
-    lines = ["# 人工答复", "", "流程里人给出的真实答复，问法与原话照录。两组都是必读：", ""]
-    lines += ["## 当前有效", ""]
+    lines = ["# 人工答复", "",
+             "流程里人给出的真实答复，问法与原话照录。这里只陈列问题、原话与出处；"
+             "选项与解释的效力由实际证据与原生反馈承担，阅读稿不替人下裁决。", "",
+             "## 当前有效", ""]
     for d in answers["current"]:
         if d.get("gate"):
-            where = d["gate"] + (f"（会议 {d['meeting']} · {d['item']}）" if d.get("meeting") else "")
-            lines += [f"### {where} · 第 {d.get('round')} 轮 · {d['at']}", "", "问法：", "", *[f"> {x}" for x in str(d["question"]).splitlines()],
-                      "", f"- 所选：{d.get('no')}. {d.get('label')}（{d['chosen']}）", f"- 原话：{d['reply']}",
-                      *_context_rows(d.get("context") or {}), ""]
+            lines += [f"### 材料确认 · 第 {d.get('round')} 轮 · {d['at']}", "", "问法：",
+                      *[f"> {x}" for x in str(d["question"]).splitlines()], "",
+                      f"- 原话：{d['reply']}",
+                      f"- 登记的材料事实：{d.get('no')}. {d.get('label')}（{d['chosen']}）", ""]
         else:
-            lines += [_update_block(d)]
-    if answers["context"]:
+            lines += _answer_block(d)
+    if answers.get("context"):
         lines += ["## 需结合上下文", ""]
-        lines += [_update_block(d) for d in answers["context"]]
+        lines += [_answer_block(d) for d in answers["context"]]
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _context_rows(context: dict) -> list[str]:
-    """范围答复当时的定位与份表：本单承载什么、兄弟单各承载什么。"""
-    rows = [f"- 本单承载：{context['scope_text']}"] if context.get("scope_text") else []
-    rows += [f"- 同一系统设计下的兄弟单 {r.get('ar')}：{r.get('scope') or '（定位没写它承载什么）'}"
-             for r in context.get("sr_related_ars") or []]
-    rows += [f"- 份 {p.get('seq')}（{p.get('carrier')}）：{p.get('scope')}" for p in context.get("parts") or []]
-    return rows
-
-
-def _update_block(d: dict) -> str:
-    rows = [f"### update {d['update']} · 议题 {d['issue']} · {d['at']}", "", f"- 定的事：{d['item']}", "", "当时的议题：", "",
-            *[f"> {x}" for x in str(d["question"]).splitlines()], "", f"- 原话：{d['reply']}"]
-    if d.get("why"):
-        rows.append(f"- 出处：{d['why']}")
-    return "\n".join(rows) + "\n"
+def _answer_block(d: dict) -> list[str]:
+    rows = [f"### 设计问答 {d.get('ask_id')} · {d.get('item_id')} · 第 {d.get('round')} 轮 · {d['at']}", "",
+            f"**问题**：{d['question']}", ""]
+    options = d.get("options") or []
+    if options:
+        rows += ["**当时摆出的候选**：", *[f"- {o}" for o in options], ""]
+    rows.append(f"- 原话：{d['reply']}")
+    rows.append(f"- 出处：{d.get('source_ref') or '（未记）'}")
+    return rows + [""]
 
 
 def _mine(records: list[dict]) -> list[dict]:
