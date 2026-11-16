@@ -2,13 +2,18 @@
  * fetch.js — 取单据：起单与 update 都只读取材，`fetch` 一个业务文件都不写。
  *
  * fetchUpstream(reqNo, mcpToken, { outDir }) → 回执
- *   把这张单现在关联的上游正文（本单 AR、它挂的 SR、SR 挂的 RR）、评审回稿与两个附件取回。
+ *   把这张单现在关联的上游正文（本单 AR、它挂的 SR、SR 挂的 RR）、评审回稿与附件取回。
  *   三份正文写进 outDir（本单来源收件箱下的一个取材批次），批次里写 `.receipt.json`：
  *   reqNo / parentNo / rrNo 与逐件的 role、ticket、title、origin、status、saved——导入按它认来源。
- *   与来源索引里同一来源已存的某一版逐字相同的不落盘（AR 正文与本地已归档的 Story 相同也不落盘，
- *   那是我们自己发布上去的）；评审回稿写 `AR/story-src/review-feedback.md`；评审记录附件与设计参考附件和本地不同时
- *   写 `AR/story-src/fetched-review.md`、`fetched-design-review.md`（不覆盖本地 AR/review.md 的人工区）；
- *   外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt 与这张单的交付要求
+ *
+ *   **先认交付件的来源，再比字节**：本单已有真实发布记录与发布的 Story 备份时，系统上的本单正文是交付回流表面，
+ *   不再当 AR 需求原件送材料导入。这样取回的原件与回执写进现收件箱的评审用途区
+ *   `inbox/review/<同一取材批次>/`：`AR-design.md`、评审回稿与评审记录附件都在那里，
+ *   该批次另有自己的 `.receipt.json`；它们不带 role，不进材料批次的回执。即使某一份恰好等于
+ *   旧 AR 原件或当前本地 Story，这次回流身份也照记——系统同一正文接口没有额外身份时，不凭内容变化宣布它是新的权威 AR。
+ *   首次未发布的本单正文仍是 AR 原件，RR/SR 仍按原材料导入。
+ *
+ *   其余落点照旧：设计参考附件和本地不同时写 `AR/story-src/fetched-design-review.md`；外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt 与这张单的交付要求
  *   `delivery_requirements: {design_reference}`（系统要不要设计参考附件；本替身读单据详情的 `design_reference_required`，缺省不要求）。
  *   每份的 status 四态分开：
  *   fetched / same / absent / failed——混成一个的话，一次读取错误会被当成「评审没提意见」。
@@ -53,6 +58,14 @@ function latestStored(root, role, ticket) {
   return v ? { dir: v.dir, body: readOr(path.join(root, ...String(v.original?.path ?? '').split('/'))) } : null;
 }
 
+/** 这张单发布过没有：流程契约里有真实发布记录，且留有一次发布出去的 Story 备份。两者都在才算交付回流表面。 */
+function publishedBefore(root) {
+  let contract = null;
+  try { contract = JSON.parse(readOr(path.join(root, 'AR', 'story-src', 'story-flow.json')) ?? 'null'); } catch { contract = null; }
+  const backup = path.join(root, ...'.backups/published/story.md'.split('/'));
+  return Boolean(contract?.archived && fs.existsSync(backup));
+}
+
 async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   const root = featureDir(reqNo);
   const detail = await getDetail(reqNo, mcpToken);
@@ -61,6 +74,9 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   const rrNo = text(detail.rrNo) ?? text(srDetail?.parentNo) ?? text(srDetail?.rrNo);
   const rrDetail = rrNo ? await getDetail(rrNo, mcpToken) : null;
   const src = path.join(root, 'AR', 'story-src');
+  // 评审用途区按同一次取材的批次名落：系统取材写在哪一批，这批的回流件与回执就在同名的 review 子树里
+  const reviewDir = path.join(root, 'inbox', 'review', path.basename(outDir));
+  const published = publishedBefore(root);
   const wanted = [
     { name: 'AR-design.md', role: 'AR', label: '开发需求正文（本单）', no: reqNo, title: text(detail.title), body: 'design.md',
       local: ['AR/story.md'] },
@@ -68,16 +84,19 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
       missing: '本单详情没有给出上一级系统设计单号' },
     { name: 'RR-prd.md', role: 'RR', label: '产品需求正文', no: rrNo, title: text(rrDetail?.title), body: 'prd.md', local: [],
       missing: '本单与系统设计单都没有给出产品需求单号' },
-    { name: 'review-feedback.md', label: '评审人留下的回稿', no: reqNo, body: 'review-feedback.md',
-      local: [], dir: src },
-    { name: 'review.md', label: '评审记录附件', no: reqNo, attachment: 'review.md',
-      local: ['AR/review.md'], dir: src, saveAs: 'fetched-review.md' },
+    { name: 'review-feedback.md', label: '评审人留下的回稿', no: reqNo, body: 'review-feedback.md', local: [] },
+    { name: 'review.md', label: '评审记录附件', no: reqNo, attachment: 'review.md', local: [], saveAs: 'review.md' },
     { name: 'design-review.md', label: '设计参考附件', no: reqNo, attachment: 'design-review.md',
       local: ['blueprint/component-blueprint.review.md'], dir: src, saveAs: 'fetched-design-review.md' },
   ];
+  // 交付回流的评审输入：系统改过的本单正文（发布过才是交付回流）、评审回稿与历史评审附件都进评审用途区，
+  // 不带 role 进材料导入；显式回稿与历史附件无论发布过没有都是这一轮的评审输入原件。
+  const reviewNames = new Set(['AR-design.md', 'review-feedback.md', 'review.md']);
   const items = [];
+  const reviewItems = [];
   for (const w of wanted) {
     const id = { name: w.name, label: w.label, ticket: w.no || null, ...(w.role ? { role: w.role, title: w.title } : {}) };
+    const reviewInput = reviewNames.has(w.name) && (w.name !== 'AR-design.md' || published);
     if (!w.no) { items.push({ ...id, status: 'absent', note: w.missing ?? '这张单上没有挂它' }); continue; }
     let body;
     try {
@@ -96,6 +115,17 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
       origin: `${w.no}/${w.attachment ? `attachments/${w.attachment}` : w.body}`,
       bytes: Buffer.byteLength(body, 'utf-8'),
     };
+    if (reviewInput) {
+      // 回流身份先于字节比较：与旧原件或本地 Story 相同也照记，后续按批次保留不覆盖
+      fs.mkdirSync(reviewDir, { recursive: true });
+      const saved = path.relative(root, path.join(reviewDir, w.name)).split(path.sep).join('/');
+      fs.writeFileSync(path.join(reviewDir, w.name), body, 'utf-8');
+      const row = { name: id.name, label: w.name === 'AR-design.md' ? '交付回流的 Story（被改交付件）' : w.label,
+        ticket: id.ticket, ...(id.title ? { title: id.title } : {}), status: 'fetched', saved, ...facts };
+      items.push(row);
+      reviewItems.push(row);
+      continue;
+    }
     const last = w.role ? latestStored(root, w.role, w.no) : null;
     const stored = last && last.body === body ? last : null;
     if (stored) { items.push({ ...id, status: 'same', note: `与来源 ${stored.dir} 逐字相同`, ...facts }); continue; }
@@ -110,8 +140,10 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   // 最近一次真实的正文覆盖（归档写下）不是取材的结果：刷新外部现状时原样带着，远端恢复与之后的登记还要它
   let kept = null;
   try { kept = JSON.parse(readOr(path.join(src, 'fetched.json')) ?? 'null')?.body_write ?? null; } catch { kept = null; }
-  const receipt = { mode: 'fetch', reqNo, parentNo: srNo, rrNo, fetchedAt: new Date().toISOString(),
+  const fetchedAt = new Date().toISOString();
+  const receipt = { mode: 'fetch', reqNo, parentNo: srNo, rrNo, fetchedAt,
     delivery_requirements: { design_reference: detail.design_reference_required === true }, items,
+    ...(published ? { delivery_return: true } : {}),
     ...(kept ? { body_write: kept } : {}) };
   fs.mkdirSync(src, { recursive: true });
   fs.writeFileSync(path.join(src, 'fetched.json'), `${JSON.stringify(receipt, null, 2)}\n`, 'utf-8');
@@ -121,9 +153,15 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     fs.writeFileSync(path.join(outDir, '.receipt.json'),
       `${JSON.stringify({ ...receipt, items: items.filter(i => i.role) }, null, 2)}\n`, 'utf-8');
   }
+  if (reviewItems.length) {
+    // 评审用途区的批次回执：update 按它认每一件的系统身份、来源与摘要；材料导入不读它
+    fs.writeFileSync(path.join(reviewDir, '.receipt.json'),
+      `${JSON.stringify({ ...receipt, items: reviewItems }, null, 2)}\n`, 'utf-8');
+  }
   const failed = items.filter(i => i.status === 'failed').length;
-  log(`取回 ${upstream.length} 份上游正文到 ${outDir}${failed ? `，${failed} 份读取失败` : ''}；一个业务文件都没动`);
-  return { out: outDir, fetched: items.filter(i => i.status === 'fetched').length, failed, parentNo: srNo, rrNo, items };
+  log(`取回 ${upstream.length} 份上游正文到 ${outDir}${reviewItems.length ? `、${reviewItems.length} 份交付回流件到 ${reviewDir}` : ''}${failed ? `，${failed} 份读取失败` : ''}；一个业务文件都没动`);
+  return { out: outDir, fetched: items.filter(i => i.status === 'fetched').length, failed, parentNo: srNo, rrNo, items,
+    ...(reviewItems.length ? { review_out: reviewDir } : {}) };
 }
 
 module.exports = { fetchUpstream };

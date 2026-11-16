@@ -305,13 +305,13 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   return `${rows.join('\n')}\n`;
 }
 
-/** 当前设计的位置（同一次读到的投影、蓝图 id 与 revision、canonical）与它采用的材料版本、决策登记；设计读不出就写缺口。 */
+/** 当前设计的位置（同一次读到的投影、蓝图 id 与 revision、canonical）与它采用的材料版本；设计读不出就写缺口。 */
 function designInput(ctx) {
   const src = designSource(ctx);
   const design = src.ref ? `当前设计投影 ${src.projection}（蓝图 ${src.ref.blueprint_id} r${src.ref.revision}，本体 ${src.canonical}）`
     : `当前设计读不出（${src.problems.join('；')}）`;
   const versions = src.adopted?.own?.versions ?? [];
-  return `${design}；设计采用的材料版本 ${versions.join('、') || '（没有）'}；决策登记 ${relFromFeature(ctx, ctx.decisionsPath)}`;
+  return `${design}；设计采用的材料版本 ${versions.join('、') || '（没有）'}`;
 }
 
 /** 写作设计里本章各处的依据原文：写了地址的按当前蓝图核，没写地址的标未登记机器关联；一处都没写就如实说。 */

@@ -270,7 +270,7 @@ export function markPairs(lines, mark, noun) {
   return { spans, problems };
 }
 
-//: 生成块的成对标记：story 与 review 的机器区（名字在标记里，配对只看前缀）。
+//: 生成块的成对标记：story 的机器区（名字在标记里，配对只看前缀）。
 const ZONE_MARK = /^<!-- story-build:(begin|end)\b/;
 
 /**
@@ -761,15 +761,14 @@ export const EMPTY_SECTION_TEXT = '本需求不涉及。';
 const DIGEST_IN_MARK = /sha256:([0-9a-f]{16})\s*-->\s*$/;
 
 /**
- * 投影区的内容摘要 —— **story 的附录与 review 的议题共用这一份口径**。
+ * 投影区的内容摘要 —— 生成块起始标记里记的那份，重投前据此判断这一段有没有被人改过。
  *
- * 两处各写一份的话，口径迟早分叉：一处忽略行尾空白、另一处不忽略，
- * 同一份产物在两条路上会判出不同的「有没有被人改过」。
+ * 摘要与盘上内容必须用同一份口径算，否则「有没有被人改过」会判出两种答案。
  *
  * 忽略每行尾部空白、末尾空行与标题序号（`zoneLine`）：保存时顺手删掉的行尾空格、
  * 重编号铺上的序号，都不是改动。
  */
-export const projectionDigest = (text) => crypto.createHash('sha256')
+const projectionDigest = (text) => crypto.createHash('sha256')
   .update((Array.isArray(text) ? text.join('\n') : String(text))
     .replace(/\s+$/, '').split(/\r?\n/).map(zoneLine).join('\n'))
   .digest('hex').slice(0, 16);
@@ -777,8 +776,8 @@ export const projectionDigest = (text) => crypto.createHash('sha256')
 /**
  * 投影区里一行的比较形态：去行尾空白，标题行按 `normalizeHeading` 剥掉序号。
  *
- * 标题序号是表达形式，不是内容：story 的序号由审查准备定稿时的重编号铺（投影不带），
- * review 的序号由渲染器铺。两处「有没有被人改过」都不看序号——与全链标题比较同一个通道。
+ * 标题序号是表达形式，不是内容：序号由定稿时的重编号统一铺，投影不带序号。
+ * 「有没有被人改过」不看序号——与全链标题比较同一个通道。
  */
 export function zoneLine(line) {
   const l = String(line ?? '').replace(/\s+$/, '');
@@ -787,11 +786,8 @@ export function zoneLine(line) {
 }
 
 /** 起始标记里记着的摘要；没有返回 null。 */
-export const recordedDigest = (markLine) =>
+const recordedDigest = (markLine) =>
   DIGEST_IN_MARK.exec(String(markLine ?? ''))?.[1] ?? null;
-
-/** 盘上有人动过投影区 —— 调用方停下问人，不替他决定。 */
-export class ProjectionConflict extends Error {}
 
 //: 每次都能从真源重算出同样的东西，让作者重打一遍只会打得更少。
 export const ZONE_BEGIN = '<!-- story-build:begin ';
@@ -799,8 +795,7 @@ export const ZONE_END = '<!-- story-build:end -->';
 
 //: 投影区落盘时是什么样，记在起始标记里。重投前拿它与盘上的内容比：相等说明这一段
 //: 还是上次投出来的原样，覆盖它不丢任何人写的东西；不等说明有人在这里写过字。
-//: 摘要口径与 review 的议题共用一份（`projectionDigest`）——两处各写一份的话，
-//: 同一份产物在两条路上会判出不同的「有没有被人改过」。
+//: 摘要口径只在 `projectionDigest` 一处：标记与盘上内容用同一个函数算，才有可比性。
 export const zoneBlock = (name, source, rows) =>
   [`${ZONE_BEGIN}${name} · 由${source}生成，改它请改真源 · sha256:${projectionDigest(rows)} -->`,
     ...rows, ZONE_END];

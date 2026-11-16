@@ -2,7 +2,7 @@
  * 独立审查的对象 —— 这一次交给审查者的全部材料，只在这里定义一份。
  *
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算、覆盖声明与发现定位对着它核：几处用同一份，审的就是要交付的那一份。
- * 待审的是 Story 与 Review；其余是只读对照：写作设计、决策登记、会议记录（每版原文、纠偏留痕与阅读件）、
+ * 待审的是 Story；其余是只读对照：写作设计、本轮评审输入原件与 update-notes、会议记录（每版原文、纠偏留痕与阅读件）、
  * 设计采用的材料版本（蓝图需求条目与设计依据引用的本需求版本：原件、阅读正文、图、会议纠偏与阅读件）、冲突依据、
  * 当前有效人答（独立必读，不取决于设计有没有引用）、材料清单登记的全部原件与阅读稿（含设计未见引用的）和每个图片对象、
  * 当前蓝图与它的原生评审投影（设计参考）、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
@@ -55,12 +55,21 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
   };
   const src = path.join(root, 'AR', 'story-src');
   add(path.join(root, 'AR', 'story.md'), 'object', '待审的 Story');
-  add(path.join(root, 'AR', 'review.md'), 'object', '待审的决策与评审记录（机器区与人工区）');
   add(path.join(src, 'story-template.md'), 'source', '作者的写作设计（待核的作者判断）');
-  add(path.join(src, 'decisions.json'), 'source', '决策登记');
   for (const name of ['doc-refresh.md', 'template-adjustments.md', 'meeting-notes.json']) {
     add(path.join(src, name), 'source', name === 'doc-refresh.md' ? '会议之后的当前结果'
       : name === 'meeting-notes.json' ? '会议判断' : '写作设计的调整记录', false);
+  }
+  // 本轮评审输入的原件（系统回流的交付件与本地意见/改稿）：审查要对着人的这一版核 Story 有没有按它改
+  const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
+  const rid = flow?.update?.open;
+  if (rid) {
+    const record = readJsonOrNull(path.join(src, 'updates', String(rid), 'record.json'));
+    for (const entry of record?.review_inputs ?? []) {
+      if (!entry?.path) continue;
+      add(path.join(root, ...String(entry.path).split('/')), 'source',
+        `本轮评审输入原件${entry.system_item ? `（系统 ${entry.system_item}）` : '（本地）'}`, true);
+    }
   }
   // 每版会议：原文、纠偏留痕与纠偏后的阅读件，核纠偏有没有改了意思
   const meetings = path.join(src, 'meetings');
@@ -77,9 +86,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     }
   }
 
-  const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
   // update 开着：这一轮动手前的现场与本轮说明也是对照材料，新稿改掉的旧约束对着它核
-  const rid = flow?.update?.open;
   if (rid) {
     const base = path.join(src, 'updates', String(rid));
     add(path.join(base, 'update-notes.md'), 'source', '本轮 update 的变化、依据与不变项（作者的判断）', false);

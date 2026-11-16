@@ -1,5 +1,5 @@
 /**
- * archive.js — 归档：Story 写成系统正文，Review 与设计参考（蓝图原生评审投影）传为附件，逐件写入并读回。
+ * archive.js — 归档：Story 写成系统正文，按系统要求选入的设计参考（蓝图原生评审投影）传为附件，逐件写入并读回。
  *
  * archiveOne(reqNo, mcpToken, skipBackup?, contentOverride?)
  *   → { archived: true, backupPath, verified, items }
@@ -8,7 +8,7 @@
  *      本地来源此刻的摘要与它记的不同（核对之后又改过）就停下，一件都不写。没有 `delivery` 先做发布前核对。
  *   ① 写入前逐件核需求系统上的当前内容仍是 发布前核对时取回的那一版（取材回执 `AR/story-src/fetched.json`
  *      里同名项的摘要）；有一件变了就停下，一件都不写。
- *   ② 回执里交付的各项先标成 failed（「本次发布读回尚未完成」），再按交付集合的顺序（正文 → review.md → design-review.md）上传：
+ *   ② 回执里交付的各项先标成 failed（「本次发布读回尚未完成」），再按交付集合的顺序（正文 → design-review.md）上传：
  *      外部已经是本地这一份的跳过写入；每件写完读回，读回等于本地才把这一项写成 fetched / same 与 checkedAt。
  *      回执里其余项与 fetchedAt 不动。读回不一致或写入失败时这一项记 failed 与原始错误，停下，后面的不写。
  *   ③ 覆盖正文前把系统当前正文备份到 `<需求目录>/.backups/cloud/design-<时刻>.md`（restore 靠它）；系统上还没有正文时不留空备份。
@@ -30,7 +30,6 @@ const RECEIPT = path.join('AR', 'story-src', 'fetched.json');
 //: 交付项在需求系统上的位置（回执里的名字 → 读写方式）；交付哪几件、本地来源是什么，照回执里的 delivery
 const REMOTE = {
   'AR-design.md': { get: 'getBody', put: 'putBody', url: REQUIREMENT_URL, remote: 'design.md' },
-  'review.md': { get: 'getAttachment', put: 'putAttachment', url: ATTACHMENT_URL, remote: 'review.md' },
   'design-review.md': { get: 'getAttachment', put: 'putAttachment', url: ATTACHMENT_URL, remote: 'design-review.md' },
 };
 
@@ -131,7 +130,7 @@ async function archiveOne(reqNo, mcpToken) {
       throw new Error(`${item.name} 上传未完成（${e.message}）：已完成的几件保留，重试前重新 fetch 并做发布前核对`);
     }
   }
-  log(`归档完成：${reqNo}（正文 + 评审记录附件 + 设计参考附件，均已读回）`);
+  log(`归档完成：${reqNo}（${ITEMS.map(i => i.name).join('、')}，均已读回）`);
   return { archived: true, backupPath, verified: true, items: items.filter(i => ITEMS.some(x => x.name === i.name)) };
 }
 

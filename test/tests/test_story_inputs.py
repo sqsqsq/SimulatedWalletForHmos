@@ -626,8 +626,6 @@ class ChapterFileCarriesOnlyBody(WorkspaceCase):
         self.put_prd()
         ensure_flow_state(self.root, FEATURE,
                           self.feature_root / "AR" / "story-src")
-        (self.feature_root / "AR" / "story-src" / "decisions.json").write_text(
-            '{"decisions": [], "no_pending": "夹具：本单无待决"}', encoding="utf-8")
         # 章是照写作设计写的：这一组测章文件的标题处理，设计放一份协议齐全的最小件
         shutil.copy2(PLAN_FIXTURE, self.feature_root / "AR" / "story-src" / "story-template.md")
         self.assertEqual(0, self.build("skeleton").returncode)

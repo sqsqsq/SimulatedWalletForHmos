@@ -112,16 +112,22 @@ function updateInputs(root, flow, add, gaps) {
   if (!entries.length) gaps.push(`${mirror}/ 不在或是空的——这一轮缺比较基准，不是没有变化`);
   const files = record.files && typeof record.files === 'object' ? record.files : {};
   const expected = new Set(Object.keys(files));
-  if (Object.keys(record.phases_before ?? {}).length) ['acceptance.yaml', 'AR/story-src/decisions.json'].forEach(x => expected.add(x));
+  // 本轮评审输入的原件（系统回流的交付件与本地意见/改稿）也在 before/ 里：审查要对着人的这一版核
+  const inputSha = new Map();
+  for (const entry of Array.isArray(record.review_inputs) ? record.review_inputs : []) {
+    if (!entry?.path) continue;
+    expected.add(String(entry.path));
+    if (entry.sha256) inputSha.set(String(entry.path), String(entry.sha256));
+  }
   for (const rel of [...expected].sort()) {
     if (!ownRel(rel)) { gaps.push(`${base}/record.json 记的文件「${rel}」不是需求目录内的相对路径`); continue; }
     const abs = path.join(beforeAbs, ...rel.split('/'));
     add(abs, `update 前的 ${rel}`);
     let bytes = null;
     try { bytes = fs.readFileSync(abs); } catch { bytes = null; }
-    const want = String(files[rel] ?? '').replace(/^sha256:/, '');
+    const want = String(files[rel] ?? inputSha.get(rel) ?? '').replace(/^sha256:/, '');
     if (bytes && want && !crypto.createHash('sha256').update(bytes).digest('hex').startsWith(want)) {
-      gaps.push(`${mirror}/${rel} 与 record.json 记的摘要 ${files[rel]} 对不上——旧现场被改过`);
+      gaps.push(`${mirror}/${rel} 与 record.json 记的摘要 ${files[rel] ?? want} 对不上——旧现场被改过`);
     }
   }
   add(path.join(root, base, 'update-notes.md'), '本轮变化的依据、影响、决定与不变项（作者在送审前写好）');
@@ -168,17 +174,14 @@ export function reviewInputs(projectRoot, feature, purpose = 'plan') {
   // 配置读不出时需求目录只能按默认推导：整份集合与视觉裁定都可能不是这个工程的，报缺口，也不延期图面核对
   const configBroken = fs.existsSync(path.join(projectRoot, 'framework.config.json')) && !readJsonOrNull(path.join(projectRoot, 'framework.config.json'));
   if (configBroken) gaps.push('framework.config.json 读不出——需求目录判不了，必审集合按默认目录推导，不能当作这个工程的');
-  // Story 三件只在走 /story 的需求里必有（流程契约在即是，读坏了也是）；直接 spec→plan 没有义务生产它们，
-  // 但本单实际有的决定与评审记录仍是依据，在就必审
+  // Story 与写作设计只在走 /story 的需求里必有（流程契约在即是，读坏了也是）；直接 spec→plan 没有义务生产它们
   const walked = fs.existsSync(at('AR/story-src/story-flow.json'));
   const story = walked;
-  const own = rel => ({ required: story || fs.existsSync(at(rel)) });
   const flow = readJsonOrNull(at('AR/story-src/story-flow.json'));
   if (walked && !flow) gaps.push('AR/story-src/story-flow.json 在却读不出——材料确认与设计问答的原话未取得');
   add(at('AR/story-src/story-flow.json'), '材料确认与设计问答的原话（摘要按问法、原话与出处的稳定投影算）',
     { text: flowProjection(flow), required: story });
-  add(at('AR/story-src/decisions.json'), '登记的决定：哪些定了、哪些开着；澄清正文里引用的人答原话与作者解释分开核', own('AR/story-src/decisions.json'));
-  add(at('AR/review.md'), '决策与评审记录：人的原话与表态', own('AR/review.md'));
+  add(at('AR/story.md'), '交付的 Story：业务叙事与当前设计占位', { required: story || fs.existsSync(at('AR/story.md')) });
   const native = planInputs(projectRoot, feature, inputs, gaps, add);
   let knowledgeTask = null;
   try {

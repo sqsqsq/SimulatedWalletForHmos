@@ -5,7 +5,7 @@
 因为台账只覆盖曾经真实发生过的错，而边界是它没走到的地方。
 
 夹具借用 `R01-verdict-echo/good`——它是一份最小但完整的工作区（材料 + story + 激活清单 +
-决策件）。每个用例在**副本**上跑：这几条命令会写 `decisions.json` 与 `story.md`，
+）。每个用例在**副本**上跑：这几条命令会写 `story.md` 与写作设计，
 在夹具原地跑会把它写脏，且上一个用例的产物会影响下一个。
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ import design_kit  # noqa: E402
 import shared_state  # noqa: E402
 from designed_fixture import FIXTURE_JUDGEMENTS, REAL_RUN_DESIGN, designed_copy, ensure_flow_state, skeleton_copy  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from flow_steps import HUMAN_ZONE, open_decision, settled_decision, walk_to_complete
+from flow_steps import walk_to_complete
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 IMAGES = (DEV_EXT / "skills/story/scripts/core/story/images.mjs")
@@ -171,14 +171,10 @@ class StoryBuildCase(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
     def init_audit(self) -> None:
-        """起手状态：决策登记就位。
+        """起手状态：Story 成文要用的依据就位。
 
-        init 命令已由 skeleton 接管（08 §2.1）；这里的夹具本就带决策件，
-        缺了就补一份空骨架——等价于旧 init 为这些用例做的事。
+        业务评审载体已退出，起手不再需要决策件；这里保留调用点，夹具不再预填业务决定。
         """
-        decisions = self.src / "decisions.json"
-        if not decisions.exists():
-            decisions.write_text('{"decisions": [], "no_pending": "夹具：本单无待决"}', encoding="utf-8")
 
     def check_output(self) -> tuple[int, str]:
         proc = self.run_build("check")
@@ -252,60 +248,6 @@ class TestErrorWordingPointsAtForm(StoryBuildCase):
         self.assertNotIn("但那一章里找不到", source)
 
 
-REVIEW_HUMAN_ZONE = HUMAN_ZONE
-
-
-class TestReviewForm(StoryBuildCase):
-    """评审人要填的只有议题末尾那处填写位——需要说明书就是设计错了。
-
-    曾经这里还有暂缓责任人、完成期限、是否阻塞执行、后续动作、确认人、确认日期、
-    确认依据七个字段。评审人打开它先要读一遍字段表，而其中六格他答不上来
-    （责任人和期限是排期的事，确认依据是审计的事）。答不上来的格子只会被跳过或胡填。
-    每条议题的人工区只有三态与修改意见。
-    """
-
-    review_path = property(
-        lambda self: self.root / "doc" / "features" / FEATURE / "AR" / "review.md")
-
-    def write_decision(self) -> None:
-        (self.src / "decisions.json").write_text(json.dumps({
-            "decisions": [settled_decision(
-                "submit-boundary", "提交入口与补卡由两张开发单分别承接",
-                "提交与补卡要不要放在同一张单里做。", "本单只做提交与回执展示，验收不含补卡。",
-                said="补卡另起一张单")],
-        }, ensure_ascii=False), encoding="utf-8")
-
-    def test_the_human_zone_is_three_states_and_an_opinion(self) -> None:
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        text = self.review_path.read_text(encoding="utf-8")
-        self.assertIn(REVIEW_HUMAN_ZONE, text)
-        for gone in ("暂缓责任人", "完成期限", "是否阻塞执行", "后续动作",
-                     "确认人", "确认日期", "确认依据", "**状态**",
-                     "方案选择：", "审核结果：", "不同意原因", "调整结论"):
-            self.assertNotIn(gone, text, f"「{gone}」不该再出现在评审记录里")
-
-    def test_filled_human_zone_survives_a_rerender(self) -> None:
-        """人填过的内容一个字节都不能动——重算它等于把做完的决定推回去一次。
-
-        连**旧形态**留下的字也要保住：字段是被裁掉了，人当时写在里面的话不是。
-        """
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        text = self.review_path.read_text(encoding="utf-8")
-        anchor = "<!-- decision: submit-boundary -->"
-        filled = text.replace(
-            "修改意见：\n\n" + anchor,
-            "修改意见：范围要含补卡入口。\n\n**确认人**：某评审人\n\n" + anchor)
-        self.assertNotEqual(text, filled, "夹具变了，用例要跟着改")
-        self.review_path.write_text(filled, encoding="utf-8")
-
-        self.assertEqual(0, self.run_build("build").returncode)
-        again = self.review_path.read_text(encoding="utf-8")
-        self.assertIn("修改意见：范围要含补卡入口。", again)
-        self.assertIn("**确认人**：某评审人", again, "旧形态里人写过的字也要保住")
-
-
 class TestProcessFilesStayOutOfTheArRoot(StoryBuildCase):
     """AR 根下只有交付文档：过程件（如评审处置台账）进 story-src。"""
 
@@ -367,55 +309,6 @@ class TestRedlineScope(StoryBuildCase):
         self.init_audit()
         self._put_in_appendix("| 接口 | 用途 |\n|---|---|\n| queryLossState | 查挂失结果 |")
         self.assertEqual(0, self.check_output()[0])
-
-
-class TestDecisionUnits(StoryBuildCase):
-    """决策登记走独立派生通道：取舍理由在材料里没有，它是起草时判出来的。"""
-
-    DECISIONS = {
-        "decisions": [
-            settled_decision("D1", "挂失结果以卡片服务的回执为准",
-                             "挂失办没办成，以哪一侧的说法为准。",
-                             "以卡片服务的回执为准，页面照回执显示。",
-                             said="以卡片服务回执为准", category="质量指标"),
-            settled_decision("D2", "同卡同状态的重复提交按一次算",
-                             "同一张卡短时间内重复提交怎么处理。",
-                             "按一次算，第二次直接回到等待态。",
-                             said="重复提交按一次算", category="业务规则"),
-            open_decision("D3", "线下渠道的入口这轮收不收",
-                          "线下渠道的入口要不要一起收进本单。",
-                          [("本单先不收，等渠道方给时间表", "范围不变"),
-                           ("一起收", "范围扩到渠道侧")],
-                          "按第 1 种做。"),
-        ],
-    }
-
-    def write_decisions(self, decisions=None) -> None:
-        path = self.src / "decisions.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["decisions"] = decisions if decisions is not None else self.DECISIONS["decisions"]
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def test_an_empty_register_is_legal_and_untouched(self) -> None:
-        """空数组合法（08 §2.1）：skeleton 收下它，也绝不覆盖这份登记。"""
-        self.write_decisions([])
-        before = (self.src / "decisions.json").read_text(encoding="utf-8")
-        self.assertEqual(0, self.run_build("skeleton").returncode)
-        self.assertEqual(before, (self.src / "decisions.json").read_text(encoding="utf-8"),
-                         "空登记被改写了——合法状态不该被机制动过")
-
-    def test_editing_a_decision_never_trips_the_material_drift_gate(self) -> None:
-        """决策件是流程里的活件：评审回填、遗漏补写都是既定动作，不该撞指纹门禁。"""
-        self.write_decisions()
-        self.init_audit()
-        self.assertEqual(0, self.check_output()[0])
-        self.write_decisions(self.DECISIONS["decisions"] + [
-            open_decision("D4", "回执超时的等待时长", "回执迟迟不到时等多久。",
-                          [("先按现网默认值", "现在就能定"), ("等渠道方给数", "要等渠道方")],
-                          "按第 1 种做。", category="业务规则")])
-        code, out = self.check_output()
-        self.assertEqual(0, code, out)
-        self.assertNotIn("材料在枚举之后变了", out)
 
 
 class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
@@ -965,46 +858,6 @@ class TestNumberingIsAFixedPoint(unittest.TestCase):
         self.assertEqual(text, self.renumber(stripped))
 
 
-class TestSmallLedgerItems(StoryBuildCase):
-    """六件小账里能机器判的那一条：澄清正文禁标题行。"""
-
-    def decisions(self) -> dict:
-        return json.loads((self.src / "decisions.json").read_text(encoding="utf-8"))
-
-    def write_decisions(self, data: dict) -> None:
-        (self.src / "decisions.json").write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def a_decision(self, clarification: str) -> dict:
-        """一条字段齐备的决策——本用例只想让澄清正文那一条判据翻面。"""
-        contract = json.loads(
-            (DEV_EXT / "skills/story/contracts/story-chapters.json")
-            .read_text(encoding="utf-8"))
-        category = (contract.get("decision_categories") or [{}])[0].get("key", "")
-        return {
-            "id": "D-1", "title": "入口的摆放位置按上游稿走", "status": "settled",
-            "category": category, "decider": "产品负责人",
-            "clarification": clarification,
-        }
-
-    def test_a_heading_line_in_the_clarification_is_named(self) -> None:
-        """澄清正文里的小标题写成加粗段首，不用 `#` 标题行。"""
-        self.init_audit()
-        self.write_decisions({"decisions": [
-            self.a_decision("### 背景\n\n本条说明这件事的来龙去脉。")]})
-        out = self.assert_check_names("的澄清正文里有标题行")
-        self.assertIn("加粗段首", out)
-
-    def test_a_bold_lead_in_the_clarification_passes(self) -> None:
-        """反面：加粗段首是定稿形态，不该被拦。"""
-        self.init_audit()
-        self.write_decisions({"decisions": [
-            self.a_decision("**背景**：本条说明这件事的来龙去脉。")]})
-        _, out = self.check_output()
-        self.assertNotIn("的澄清正文里有标题行", out)
-
-
-
 class TestRetiredThings(unittest.TestCase):
     """本轮退场的东西，机制层不该再有它们的痕迹——退场靠 grep 守，不靠记性。"""
 
@@ -1111,22 +964,6 @@ class TestChangesAfterRegistration(StoryBuildCase):
         out = self.assert_check_names("AR/story.md 在成文登记之后改过")
         self.assertIn("story_flow.py story", out)
 
-    def test_a_changed_ledger_is_named_by_check(self) -> None:
-        """直接改台账同样看得出来：指纹核对不靠拒绝命令。"""
-        self.init_audit()
-        self.register()
-        path = self.src / "decisions.json"
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data.setdefault("decisions", []).append({
-            "id": "sneaked-in", "status": "settled", "title": "登记之后偷加的一条",
-            "category": "范围与拆分",
-            "clarification": "**要定的事**：无。\n\n**根据**：无。\n\n**结论与影响**：无。",
-            "decider": "需求负责人",
-        })
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        out = self.assert_check_names("AR/story-src/decisions.json 在成文登记之后改过")
-        self.assertIn("story_flow.py story", out)
-
     def test_nothing_changes_before_registration(self) -> None:
         """登记之前一切照旧——登记核对只在登记之后生效。"""
         self.init_audit()
@@ -1139,9 +976,6 @@ def _without_story(base: Path) -> None:
 
 class Step8Case(StoryBuildCase):
     """本组用例都要一份真的材料清单——它由 `story_flow.py round` 按磁盘现状生成。"""
-
-    review_path = property(
-        lambda self: self.root / "doc" / "features" / FEATURE / "AR" / "review.md")
 
     def feature_root(self) -> Path:
         return self.root / "doc" / "features" / FEATURE
@@ -1172,14 +1006,6 @@ class Step8Case(StoryBuildCase):
         index = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
         return {s["origin"].get("inbox_path"): s["versions"][-1] for s in index["sources"]}
 
-    def write_decision(self, extra: list[dict] | None = None) -> None:
-        rows = [settled_decision(
-            "submit-boundary", "提交入口与补卡由两张开发单分别承接",
-            "提交与补卡要不要放在同一张单里做。", "本单只做提交与回执展示，验收不含补卡。",
-            said="补卡另起一张单")] + (extra or [])
-        (self.src / "decisions.json").write_text(
-            json.dumps({"decisions": rows}, ensure_ascii=False), encoding="utf-8")
-
 
 class TestArRootStaysClean(StoryBuildCase):
     """`AR/` 根下只放交付文档与单据身份，辅助件一律进 `story-src/`。
@@ -1205,13 +1031,15 @@ class TestArRootStaysClean(StoryBuildCase):
         self.assertNotIn("不该在这一层", out)
 
     def test_the_delivery_documents_pass(self) -> None:
-        """白名单上的照过：交付文档在这一层是正当住户。"""
-        for name in ("review.md",):
+        """白名单上的照过：交付文档在这一层是正当住户；业务评审载体已退出，旧 `AR/review.md` 要报出来。"""
+        for name in ("design.md", "story.md"):
             path = self.ar_root() / name
             if not path.exists():
                 path.write_text("# x\n", encoding="utf-8")
         _, out = self.check_output()
         self.assertNotIn("不该在这一层", out)
+        (self.ar_root() / "review.md").write_text("# 旧评审记录\n", encoding="utf-8")
+        self.assert_check_names("AR/review.md 不该在这一层")
 
     def test_a_design_copy_is_no_longer_a_resident(self) -> None:
         """设计参考是同根蓝图的原生评审投影：交付层不再放一份 `AR/design-review.md` 副本。"""
@@ -1222,208 +1050,6 @@ class TestArRootStaysClean(StoryBuildCase):
         """需求系统的单号与关系记在来源版本里：`AR/detail.json` 不再是这一层的住户。"""
         (self.ar_root() / "detail.json").write_text('{"id": "REQ-DEMO"}', encoding="utf-8")
         self.assert_check_names("AR/detail.json 不该在这一层")
-
-
-class TheFieldCheckIsOneImplementation(Step8Case):
-    """`build` 与只读 check 用同一份字段校验：**合法才渲染**。
-
-    各写一份的话，build 渲得出来而 check 说不合法，作者在两条路上收到两种答案；
-    先渲染再由 check 报错，等于让他拿着一份半成品去猜哪一条是根因。
-    """
-
-    BAD = [{k: v for k, v in settled_decision(
-        "x-1", "少了请谁评审这一项", "甲。", "丙。").items() if k != "decider"}]
-
-    def write_decisions(self, rows) -> None:
-        (self.src / "decisions.json").write_text(
-            json.dumps({"decisions": rows}, ensure_ascii=False), encoding="utf-8")
-
-    def test_build_refuses_and_writes_nothing(self) -> None:
-        self.write_decisions(self.BAD)
-        review = self.root / "doc" / "features" / FEATURE / "AR" / "review.md"
-        before = review.read_bytes() if review.is_file() else None
-        proc = self.run_build("build")
-        out = (proc.stderr or "") + (proc.stdout or "")
-        self.assertEqual(1, proc.returncode, out)
-        self.assertIn("没有渲染 review", out)
-        after = review.read_bytes() if review.is_file() else None
-        self.assertEqual(before, after, "判不过却已经渲染了")
-
-    def test_the_read_only_check_names_the_same_thing(self) -> None:
-        self.write_decisions(self.BAD)
-        code, out = self.check_output()
-        self.assertEqual(1, code, out)
-        self.assertIn("请谁评审", out, "两条路要给同一个答案")
-
-    def test_a_legal_register_renders(self) -> None:
-        rows = [dict(self.BAD[0], decider="需求负责人")]
-        self.write_decisions(rows)
-        proc = self.run_build("build")
-        self.assertEqual(0, proc.returncode, (proc.stderr or "") + (proc.stdout or ""))
-        review = self.root / "doc" / "features" / FEATURE / "AR" / "review.md"
-        self.assertIn("少了请谁评审这一项", review.read_text(encoding="utf-8"))
-
-    def test_the_old_renderer_file_is_gone(self) -> None:
-        """同包删旧文件，不留转发壳——留着它，下一个人还会从那里 import。"""
-        core = DEV_EXT / "skills/story/scripts/core"
-        self.assertFalse((core / "review-render.mjs").exists())
-        for f in sorted(core.rglob("*.mjs")):
-            imports = [l for l in f.read_text(encoding="utf-8").split("\n")
-                       if "review-render" in l and "from" in l]
-            self.assertEqual([], imports, f"{f.name} 还在 import 已经删掉的渲染器")
-
-
-class TestReviewComesAfterTheStory(Step8Case):
-    """review 是判断的台账，而判断在成文过程中还会长出来。
-
-    实测形态是「story 还没写完，review 先出来了」——那不是模型跑偏，
-    是作业顺序把渲染排在了成文前面。顺序本身因此要成为一条判据。
-    """
-
-    def write_raw_decisions(self, payload) -> None:
-        """按给定的顶层形状写登记表——形状本身就是这几条要问的事。"""
-        (self.src / "decisions.json").write_text(
-            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-
-    ROWS = [settled_decision(
-        "submit-boundary", "提交入口与补卡由两张开发单分别承接",
-        "提交与补卡要不要放在同一张单里做。", "本单只做提交与回执展示。", said="补卡另起一张单")]
-
-    def test_a_bare_array_is_refused_with_the_shape(self) -> None:
-        """登记表只有一种顶层形状：顶层直接写 `[ … ]` 当场报错并给出该写的形状。"""
-        self.write_raw_decisions(self.ROWS)
-        proc = self.run_build("build")
-        out = proc.stdout + proc.stderr
-        self.assertEqual(1, proc.returncode, out)
-        self.assertIn('{"decisions"', out)
-
-    def test_a_shape_that_cannot_be_read_speaks_up(self) -> None:
-        """读不出来与「一条都没有」是两回事——后者合法，前者要当场喊。
-
-        混成一件的代价是整类失效没有声音：作者看到的是成功，产物是空的。
-        """
-        for name, payload in (("单数键", {"decision": self.ROWS}),
-                              ("空壳", {}),
-                              ("字符串", "决策还没登记")):
-            with self.subTest(形状=name):
-                self.write_raw_decisions(payload)
-                proc = self.run_build("build")
-                out = proc.stdout + proc.stderr
-                self.assertEqual(1, proc.returncode, f"{name}被默默当成了零条：{out[:300]}")
-                self.assertIn("读不出条目", out)
-                self.assertIn('{"decisions"', out, "没说清该长什么样")
-
-    def test_an_empty_register_is_still_legal(self) -> None:
-        """零条决策是合法状态（骨架刚建完就是），不能与读不出来同判。"""
-        self.write_raw_decisions({"decisions": []})
-        proc = self.run_build("build")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertNotIn("读不出条目", proc.stdout + proc.stderr)
-
-    def test_check_names_the_shape_too(self) -> None:
-        """`check` 那一侧同样点名，不静默放行。"""
-        self.write_raw_decisions({"decision": self.ROWS})
-        proc = self.run_build("check")
-        out = proc.stdout + proc.stderr
-        self.assertEqual(1, proc.returncode, f"check 放行了读不出的登记表：{out[:300]}")
-        self.assertIn("读不出条目", out)
-
-    def test_build_refuses_before_the_story_is_written(self) -> None:
-        self.write_decision()
-        self.story_path.write_text("# 交通卡紧急挂失（REQ-DEMO）\n", encoding="utf-8")
-        proc = self.run_build("build")
-        self.assertEqual(1, proc.returncode, "story 还没成文，review 却渲染出来了")
-        out = (proc.stderr or "") + (proc.stdout or "")
-        self.assertIn("story 还没成文", out)
-        self.assertFalse(self.review_path.exists(), "拒绝渲染却还是落了一份 review")
-
-    def test_build_runs_once_the_story_has_chapters(self) -> None:
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.assertIn("提交入口与补卡由两张开发单分别承接",
-                      self.review_path.read_text(encoding="utf-8"))
-
-    def test_rebuilding_is_byte_stable(self) -> None:
-        """同一份登记表渲染两次，字节完全相同——机器区没有随机量。"""
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        first = self.review_path.read_bytes()
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.assertEqual(first, self.review_path.read_bytes())
-
-    def test_a_decision_found_while_writing_reaches_the_review(self) -> None:
-        """成文时才发现的判断，登记之后能进 review，人已经填的表态不动。"""
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        text = self.review_path.read_text(encoding="utf-8")
-        filled = text.replace(
-            "修改意见：\n\n<!-- decision: submit-boundary -->",
-            "修改意见：范围要含补卡入口。\n\n<!-- decision: submit-boundary -->")
-        self.assertNotEqual(text, filled, "夹具变了，用例要跟着改")
-        self.review_path.write_text(filled, encoding="utf-8")
-
-        self.write_decision(extra=[open_decision(
-            "receipt-timeout", "回执超时后由谁重试", "材料没说超时之后谁重试。",
-            [("由本端重试一次", "用户少等一步"), ("交给用户手动重试", "本端不做重试")],
-            "按第 1 种做。", decider="需求负责人")])
-        self.assertEqual(0, self.run_build("build").returncode)
-        again = self.review_path.read_text(encoding="utf-8")
-        self.assertIn("回执超时后由谁重试", again, "成文中新登记的判断没进 review")
-        self.assertIn("修改意见：范围要含补卡入口。", again, "人填的表态被重渲染冲掉了")
-
-    def hand_edit_the_machine_zone(self) -> None:
-        text = self.review_path.read_text(encoding="utf-8")
-        self.review_path.write_text(
-            text.replace("提交入口与补卡由两张开发单分别承接", "手改过的标题"),
-            encoding="utf-8")
-
-    def test_the_machine_zone_is_not_a_second_source(self) -> None:
-        """议题正文由登记表生成——改它不生效，所以别让人以为改了就算数。
-
-        它**不是**「改了会被重算回来」：那样他写的东西没了而他不知道，
-        下一次还会再写一遍。停下来告诉他真源在哪，才是这一段的正确出口。
-        """
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.hand_edit_the_machine_zone()
-        proc = self.run_build("build")
-        self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
-        out = proc.stdout + proc.stderr
-        self.assertIn("由决策登记表生成", out, "没说清这一段的真源是什么")
-        self.assertIn("手改过的标题",
-                      self.review_path.read_text(encoding="utf-8"),
-                      "拒绝了却还是把文件改了")
-
-    def test_deleting_the_zone_lets_the_projection_write_it_again(self) -> None:
-        """撤销手改的出口：把这一段连同标记删掉，重跑就重新写出来。
-
-        没有出口的拒绝等于把人锁在原地——他只能去改判据。
-        """
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.hand_edit_the_machine_zone()
-        self.assertEqual(1, self.run_build("build").returncode)
-
-        text = self.review_path.read_text(encoding="utf-8")
-        head = text.index("<!-- story-build:begin 议题 ")
-        tail = text.index("评审结论：", head)
-        self.review_path.write_text(text[:head] + text[tail:], encoding="utf-8")
-
-        self.assertEqual(0, self.run_build("build").returncode, "删干净了还是不让过")
-        again = self.review_path.read_text(encoding="utf-8")
-        self.assertIn("提交入口与补卡由两张开发单分别承接", again, "投影没有重新写出来")
-        self.assertNotIn("手改过的标题", again)
-
-    def test_a_source_change_still_reprojects(self) -> None:
-        """真源变了照常重投——这条纪律拦的是手改，不是拦更新。"""
-        self.write_decision()
-        self.assertEqual(0, self.run_build("build").returncode)
-        rows = json.loads((self.src / "decisions.json").read_text(encoding="utf-8"))
-        rows["decisions"][0]["title"] += "（复议）"
-        (self.src / "decisions.json").write_text(
-            json.dumps(rows, ensure_ascii=False), encoding="utf-8")
-        self.assertEqual(0, self.run_build("build").returncode)
-        self.assertIn("（复议）", self.review_path.read_text(encoding="utf-8"))
 
 
 class TestUxReferenceNeedsNoReadme(Step8Case):
@@ -2018,7 +1644,6 @@ class TheChapterTaskCarriesItsBasis(TheChapterIsCheckedBeforeItLandsCase):
         self.assertIn("当前设计投影 doc/features/REQ-DEMO/blueprint/component-blueprint.review.md（蓝图 REQ-DEMO r", lines[1])
         self.assertIn("本体 doc/features/REQ-DEMO/blueprint/component-blueprint.yaml", lines[1])
         self.assertIn("设计采用的材料版本 design-直接-v1、prd-直接-v1", lines[1])
-        self.assertIn("决策登记 AR/story-src/decisions.json", lines[1])
         basis = [l for l in lines if l.startswith("  本章依据")]
         self.assertEqual([
             "  本章依据 （整章）：依据：蓝图 `view:runtime` 与评审会上对等待态的说法",
@@ -2978,16 +2603,7 @@ class TestSourceNecessityIsJudgedOnce(SkeletonPreflightCase):
 
 
 class TestNothingIsWrittenBeforeThePreflightPasses(SkeletonPreflightCase):
-    """坏掉的决策登记：当场报错，**一个字节不写**，更不覆盖已登记的判断。"""
-
-    def test_a_broken_decision_file_writes_nothing(self) -> None:
-        (self.src / "decisions.json").write_text("{ 坏了", encoding="utf-8")
-        before = self.files_now()
-        code, out = self.skeleton()
-        self.assertEqual(1, code, out)
-        self.assertIn("decisions.json", out)
-        self.assert_wrote_nothing(before)
-        self.assertEqual("{ 坏了", (self.src / "decisions.json").read_text(encoding="utf-8"))
+    """起手预检不过：当场报错，**一个字节不写**，更不覆盖已登记的判断。"""
 
     def test_a_design_source_that_does_not_hold_blocks_and_writes_nothing(self) -> None:
         """蓝图的评审投影不在：设计来源不成立，起手停下并指回设计职责——不是记一笔往下走。
@@ -3230,7 +2846,7 @@ class TestMaterialListMatchesTheManifest(Step8Case):
     def test_a_missing_material_is_named(self) -> None:
         """漏一份等于那份材料没人知道——读者据这一节把材料找出来。"""
         self.rewrite_story(self.LISTED, f"| 甲需求 PRD [prd.md]({self.PRD}) "
-                                        "| [别的](story-src/decisions.json) | 状态取值 |")
+                                        "| [别的](story-src/story-template.md) | 状态取值 |")
         out = self.assert_check_names("少了来源 RR/prd.md")
         self.assertIn("是本轮生成件", out)
 
@@ -3249,10 +2865,10 @@ class TestMaterialListMatchesTheManifest(Step8Case):
     def test_one_wrong_row_is_reported_once(self) -> None:
         """同一行只报一次——同一件事报两遍，读的人以为是两个问题。"""
         self.rewrite_story(self.LISTED, self.LISTED
-                           + "\n| 本轮的判断 [decisions](story-src/decisions.json) "
-                           "| [decisions](story-src/decisions.json) | 判断 |")
+                           + "\n| 本轮的判断 [依据](story-src/story-template.md) "
+                           "| [依据](story-src/story-template.md) | 判断 |")
         _, out = self.check_output()
-        hits = [line for line in out.splitlines() if "story-src/decisions.json" in line]
+        hits = [line for line in out.splitlines() if "story-src/story-template.md" in line and "是本轮生成件" in line]
         self.assertEqual(1, len(hits), "同一行被报了不止一次：%s" % hits)
         self.assertIn("是本轮生成件", hits[0])
 
@@ -3372,7 +2988,7 @@ class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
             "--from 后面缺值": ["chapter", *self.common(), "--chapter", "背景", "--from"],
             "--from 后面缺值（": ["chapter", *self.common(), "--from", "--chapter", "背景"],
             "--feature 给了两次": ["check", *self.common(), "--feature", FEATURE],
-            "--deliver 不用于 build": ["build", *self.common(), "--deliver"],
+            "--deliver 不用于 review": ["review", *self.common(), "--deliver"],
             "缺 --from": ["chapter", *self.common(), "--chapter", "背景"],
             "不认识的命令": ["chek", *self.common()],
         }
@@ -3433,53 +3049,6 @@ class TheCommandLineIsCheckedFirst(SkeletonPreflightCase):
         self.assertNotIn("后面缺值", out)
         self.assertNotIn("不认识的选项", out)
         self.assertIn("--背景.md", out, "显式写法的值没有原样交给命令")
-
-
-class TheIssueMarkStandsApart(Step8Case):
-    """评审议题的标记与 `####` 标题之间隔一个空行；紧贴的旧形态照样认作原样，人写的字一个字节都不动。"""
-
-    MARK = "<!-- story-build:begin 议题 submit-boundary "
-    ANCHOR = "<!-- decision: submit-boundary -->"
-
-    def build_ok(self) -> str:
-        proc = self.run_build("build")
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        return self.review_path.read_text(encoding="utf-8")
-
-    def test_the_mark_and_the_heading_are_apart_and_rebuilds_are_stable(self) -> None:
-        self.write_decision()
-        text = self.build_ok()
-        line = text[text.index(self.MARK):]
-        self.assertRegex(line, r"^[^\n]*-->\n\n#### ", "议题标记紧贴标题")
-        self.assertNotIn("\n\n\n", text)
-        first = self.review_path.read_bytes()
-        for _ in range(2):
-            self.build_ok()
-            self.assertEqual(first, self.review_path.read_bytes())
-
-    def test_an_old_tight_mark_with_human_words_rebuilds_without_a_conflict(self) -> None:
-        self.write_decision()
-        canon = self.build_ok()
-        opinion = "修改意见：范围要含补卡入口。\n这一行也是人写的。  "
-        filled = canon.replace("修改意见：\n\n" + self.ANCHOR, opinion + "\n\n" + self.ANCHOR)
-        at = filled.index(self.MARK)
-        head_end = filled.index("\n", at)
-        tight = filled[:head_end + 1] + filled[head_end + 2:]
-        self.assertIn("-->\n#### ", tight, "没造出紧贴的旧形态")
-        self.review_path.write_text(tight, encoding="utf-8")
-        again = self.build_ok()
-        self.assertIn(opinion + "\n\n" + self.ANCHOR, again, "人写的字被改了")
-        self.assertEqual(filled, again, "旧形态重建后不是分隔形态，或动了别处")
-
-    def test_a_hand_edit_after_the_blank_line_is_still_caught(self) -> None:
-        self.write_decision()
-        text = self.build_ok()
-        self.review_path.write_text(text.replace("提交入口与补卡由两张开发单分别承接", "手改过的标题"),
-                                    encoding="utf-8")
-        before = self.review_path.read_bytes()
-        proc = self.run_build("build")
-        self.assertEqual(1, proc.returncode, "手改被静默盖掉了")
-        self.assertEqual(before, self.review_path.read_bytes())
 
 
 class TheMachineZoneStandsApart(StoryBuildCase):
@@ -3584,36 +3153,34 @@ class TheSkeletonListsEveryIndependentGap(SkeletonPreflightCase):
         self.story_path.unlink(missing_ok=True)
 
     def test_two_independent_gaps_come_in_one_run(self) -> None:
-        """收件箱里有没导入的件、决策登记又坏了：两件互不依赖，一次报全，补好之后照常起手。"""
-        decisions = self.src / "decisions.json"
-        good_decisions = decisions.read_text(encoding="utf-8")
+        """收件箱里有没导入的件、设计来源又不成立：两件互不依赖，一次报全，补好之后照常起手。"""
         self.put_inbox({"后到的稿.md": "# 后到的稿\n".encode("utf-8")}, {"后到的稿.md": "AR"})
         self.round_now()
-        decisions.write_text("{ 坏了", encoding="utf-8")
+        projection = (self.root / "doc" / "features" / design_kit.blueprint_of(self.root, FEATURE)
+                      / "blueprint" / "component-blueprint.review.md")
+        projection.unlink()
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, out)
         self.assertIn("后到的稿.md", out)
         self.assertIn("导入", out, "待导入的件没给恢复入口")
-        self.assertIn("decisions.json", out, "第二个独立缺口要等补完第一个才报")
+        self.assertIn("评审投影", out, "第二个独立缺口要等补完第一个才报")
         self.assertNotIn("本地阅读图没有恢复", out, "还没有 story 却报阅读图恢复失败")
         self.assert_wrote_nothing(before)
         (self.feature_root() / "inbox" / "后到的稿.md").unlink()
         (self.feature_root() / "inbox" / ".classify.json").write_text("{}", encoding="utf-8")
         self.round_now()
-        decisions.write_text(good_decisions, encoding="utf-8")
+        design_kit.install_blueprint(self.root, FEATURE, ACCESS, judgements=FIXTURE_JUDGEMENTS)
         code, out = self.skeleton()
         self.assertEqual(0, code, out)
         self.assertTrue(self.story_path.is_file(), out)
 
     def test_without_a_flow_contract_the_material_baseline_is_not_judged(self) -> None:
         (self.src / "story-flow.json").unlink()
-        (self.src / "decisions.json").write_text("{ 坏了", encoding="utf-8")
         before = self.files_now()
         code, out = self.skeleton()
         self.assertEqual(1, code, out)
         self.assertIn("story-flow.json：不存在", out)
-        self.assertIn("decisions.json", out)
         self.assertIn("材料清单与本轮基准是否一致", out)
         self.assertNotIn("digest 与 story-flow.json", out, "没有流程契约却拿基准比了清单")
         self.assert_wrote_nothing(before)

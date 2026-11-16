@@ -24,7 +24,7 @@
 
 **Story**：面向业务评审、可独立理解的需求叙事；依据材料、有效决定和共同设计组织，不承担第二份共同设计真源。
 
-**Review**：与 Story 配套的真实评审与裁决记录，区分已定、待决和评审人表态；它不同于验证工具的报告。
+**Review（业务评审载体，已退出）**：旧版 Extension 生成的人类业务表态件（`AR/review.md` 与决策登记）；本版已退出，业务待定落蓝图 gap、已定落蓝图 decision，Story 是唯一业务交付件，评审人的批注/改稿/追加经 `/story update` 进入本轮。它不同于原生代码检视产物（`hooks/review/` 阶段）、蓝图评审投影（`blueprint/component-blueprint.review.md`）与 Story 独立审查报告——那些能力保持，不随业务评审载体退出。
 
 **CU（Change Unit，施工单位）**：从共同设计形成的实际交付单位，具有 Framework 原生身份和自身阶段责任；需求并不必然产生 CU。
 

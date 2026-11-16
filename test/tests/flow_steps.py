@@ -15,31 +15,6 @@ from design_fixture import answer, walk_to_design, write_gaps  # noqa: F401
 import design_kit
 
 
-#: 评审记录人工区的首版：三态与修改意见
-HUMAN_ZONE = "评审结论：\n- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n"
-
-
-def settled_decision(did: str, title: str, point: str, conclusion: str, *,
-                     said: str = "按这个做", who: str = "产品负责人在需求澄清会上",
-                     category: str = "范围与交付", decider: str = "需求负责人") -> dict:
-    """一条已定的议题：依据引人的原话，评审人复核结论。"""
-    return {"id": did, "status": "settled", "review_mode": "confirm", "title": title,
-            "clarification": f"**决策点**：{point}\n\n**依据**：{who}说「{said}」。\n\n"
-                             f"**结论与影响**：{conclusion}",
-            "decider": decider, "category": category}
-
-
-def open_decision(did: str, title: str, point: str, options: list[tuple[str, str]],
-                  suggestion: str, *, category: str = "范围与交付",
-                  decider: str = "产品负责人") -> dict:
-    """一条待评审的议题：列可选的做法与后果，给建议。"""
-    listed = "\n".join(f"{i}. {how}——{effect}" for i, (how, effect) in enumerate(options, 1))
-    return {"id": did, "status": "open", "review_mode": "choice", "title": title,
-            "clarification": f"**决策点**：{point}\n\n**可选的做法**：\n{listed}\n\n"
-                             f"**建议**：{suggestion}",
-            "decider": decider, "category": category}
-
-
 def walk_to_complete(flow: Callable[..., dict], src: Path,
                      scope_text: str = "本 AR 承载自动充值签约与管理") -> None:
     """用真实流程命令走完材料确认与定位、放好同根的准入蓝图（开发版扩展）：走完即「可以成文」。"""

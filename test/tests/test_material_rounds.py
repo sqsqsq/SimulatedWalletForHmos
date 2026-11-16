@@ -1847,7 +1847,7 @@ class RegistrationReprojectsFirst(unittest.TestCase):
     def test_the_order_is_project_then_number_then_check(self) -> None:
         source = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "story-build.mjs").read_text(encoding="utf-8")
         body = source.split("function cmdReview(", 1)[1].split("\n}\n", 1)[0]
-        order = [body.index(step) for step in ("cmdProject(ctx)", "cmdNumber(ctx)", "cmdBuild(ctx)", "storyCheck(ctx", "prepareReview(")]
+        order = [body.index(step) for step in ("cmdProject(ctx)", "cmdNumber(ctx)", "storyCheck(ctx", "prepareReview(")]
         self.assertEqual(sorted(order), order, "准备审查时没有先定稿再检查、再准备请求")
         lifecycle = (DEV_EXT / "skills" / "story" / "scripts" / "core" / "flow" / "lifecycle.py").read_text(encoding="utf-8")
         registration = lifecycle.split("def cmd_story(", 1)[1].split("\ndef ", 1)[0]
@@ -1857,7 +1857,7 @@ class RegistrationReprojectsFirst(unittest.TestCase):
     def test_registration_deletes_nothing_under_story_src(self) -> None:
         """登记不删 `story-src/` 里的任何过程件——它们是「这份 story 怎么写出来的」现场。
 
-        过程件走不漏：归档只上传 story.md 与 review.md，这一层整个留在本地。
+        过程件走不漏：归档只上传 story.md 与按需的设计参考，这一层整个留在本地。
         删掉的代价倒是实的——update 里作者要改某一章，手上却没有可改的东西。
         """
         source = (DEV_EXT / "skills" / "story" / "scripts"

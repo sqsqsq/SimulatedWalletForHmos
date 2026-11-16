@@ -19,7 +19,7 @@ import { featureRoot } from '../../../../../hooks/shared/paths.mjs';
  * 白名单而不是黑名单：黑名单挡不住下一个往根下写的新文件，而这里要成立的是一个
  * 持续的性质——机制不往交付层散辅助件。
  */
-const AR_ROOT_FILES = ['design.md', 'story.md', 'review.md'];
+const AR_ROOT_FILES = ['design.md', 'story.md'];
 
 /** 命令判定没过：原因已写到 stderr，入口在恢复阅读视图之后按退出码 1 结束，不在半路退出进程。 */
 export class CommandFailure extends Error {}
@@ -120,10 +120,8 @@ export function requirementContext(projectRoot, featureDir, contract = commonInp
   const srcDir = path.join(featureDir, 'AR', 'story-src');
   return {
     projectRoot: path.resolve(projectRoot), contract, featureRoot: featureDir, srcDir, args: { feature: path.basename(featureDir) },
-    decisionsPath: path.join(srcDir, 'decisions.json'),
     templatePath: path.join(srcDir, 'story-template.md'),
     storyPath: path.join(featureDir, 'AR', 'story.md'),
-    reviewPath: path.join(featureDir, 'AR', 'review.md'),
     flowPath: path.join(featureDir, 'AR', 'story-src', 'story-flow.json'),
   };
 }
@@ -131,12 +129,10 @@ export function requirementContext(projectRoot, featureDir, contract = commonInp
 /**
  * 随稿登记的台账 —— 这里存的是 ctx 上的路径字段名，**不另列一份文件名**。
  *
- * 文件名的真源在 `core/flow/state.py` 的 `STORY_REGISTERED`：那几件是登记时要算指纹、
- * 归档时随稿走的同一批（另加 story 本身）。登记核对与存在性两处说的必须是同一批文件，
- * 各写一份就会改一处忘一处。第二列是它由哪里产出。
+ * 文件名的真源在 `core/flow/state.py` 的 `STORY_REGISTERED`：那几件是登记时要算指纹、随稿走的同一批（另加 Story 本身）。
+ * 登记核对与存在性两处说的必须是同一批文件，各写一份就会改一处忘一处。第二列是它由哪里产出。
  */
 const STORY_SRC_LEDGERS = [
-  ['decisionsPath', '由 skeleton 产出'],
   ['templatePath', '由 skeleton 建空壳，作者按本需求写成整篇设计'],
 ];
 
@@ -189,7 +185,7 @@ export function activeKnowledgeEntries(ctx) {
   }
 }
 
-/** 登记之后改过没有 —— story 与它的决策登记、写作设计对得上最近一次成文登记的指纹。 */
+/** 登记之后改过没有 —— Story 与写作设计对得上最近一次成文登记的指纹。 */
 export function ledgerDigestProblems(ctx) {
   const problems = [];
   // ⓪b 登记之后没再改过

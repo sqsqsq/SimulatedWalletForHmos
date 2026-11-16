@@ -34,7 +34,7 @@ from test_story_build import (  # noqa: E402
     FEATURE, FIXTURE, REPO_ROOT, StoryBuildCase, ensure_flow_state,
 )
 from test_requirement_system import AR, RR, SR, STORY_JS, _env  # noqa: E402
-from flow_steps import answer, open_decision, write_gaps  # noqa: E402
+from flow_steps import answer, write_gaps  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import end_target  # noqa: E402
 import design_kit  # noqa: E402
@@ -255,12 +255,11 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
     #: 人会直接动的交付件。**少盯一份，它的手改就永远检不出来**，
     #: 而且会被报成「无变化」退出——比漏报更糟的是它看起来像结论。
     WATCHED = {
-        "AR/review.md": "# 评审记录\n\n首版。\n",
         "AR/story.md": "# 需求故事\n\n首版。\n",
     }
     #: 模型据交付件写出来的中间真源：随交付件的修订而变，是结果不是原因，不进判定。
     DERIVED = {
-        "AR/story-src/decisions.json": '{"decisions": []}\n',
+        "AR/story-src/story-template.md": "# 写作设计\n",
         "contracts.yaml": "contracts: []\n",
     }
 
@@ -302,9 +301,9 @@ class EditsMadeBeforeTheRunAreCaught(UpdateCase):
         self.assertEqual("unchanged", self.update()["comparison"])
 
     def test_a_removed_product_is_reported_as_removed(self) -> None:
-        (self.feature_root / "AR" / "review.md").unlink()
+        (self.feature_root / "AR" / "story.md").unlink()
         out = self.update()
-        self.assertIn("AR/review.md", out["changed"], out)
+        self.assertIn("AR/story.md", out["changed"], out)
 
 
 class UnreadableIsAGapNotADeletion(UpdateCase):
@@ -373,7 +372,8 @@ class StatusReportsFactsNotJudgement(StatusReportsFactsNotJudgementCase):
                 out = self.update("--action", action)
                 inbox = (self.feature_root / "inbox").resolve().as_posix()
                 self.assertEqual({"project_root": self.root.resolve().as_posix(),
-                                  "feature_root": self.feature_root.resolve().as_posix(), "inbox": inbox},
+                                  "feature_root": self.feature_root.resolve().as_posix(), "inbox": inbox,
+                                  "review_inbox": (self.feature_root / "inbox" / "review").resolve().as_posix()},
                                  {k: v for k, v in out["paths"].items() if k != "fetch_batch"})
                 self.assertTrue(out["paths"]["fetch_batch"].startswith(inbox + "/fetch-"), out["paths"])
                 self.assertNotIn("fetch", out)
@@ -615,62 +615,6 @@ class RestoreFollowsTheTruthTable(UpdateCase):
         flow = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual({"at": "2026-09-30T00:00:00+00:00"}, flow.get("archived"), "契约的其他字段被还原了")
         self.assertEqual({"open": None, "last_restored": self.rid}, flow["update"])
-
-
-class RestoreKeepsTheReviewersWords(UpdateCase):
-    """评审记录的人工区归人：撤回时有人写过意见的 Review 保留现状、列成冲突，不整文件退回或删掉；只有机器内容的照真值表处理。"""
-
-    ISSUE = ("<!-- story-build:begin 议题 D1 · 由决策登记表生成，改它请改真源 · sha256:0123456789abcdef -->\n"
-             "#### 1.1.1 余额刷新的触发时机\n\n请产品负责人评审。\n\n")
-    EMPTY = "评审结论：\n- [ ] 同意\n- [ ] 需修改\n- [ ] 暂缓\n修改意见：\n\n<!-- decision: D1 -->\n"
-    FILLED = "评审结论：\n- [ ] 同意\n- [x] 需修改\n- [ ] 暂缓\n修改意见：切账号时也要刷新。\n\n<!-- decision: D1 -->\n"
-
-    def review(self) -> Path:
-        return self.feature_root / "AR" / "review.md"
-
-    def write(self, human: str) -> bytes:
-        body = f"# 评审记录\n\n{self.ISSUE}{human}".encode("utf-8")
-        self.review().write_bytes(body)
-        return body
-
-    def complete_point(self) -> None:
-        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
-        sys.path.insert(0, str(core))
-        try:
-            from flow.update import record_owned_after  # noqa: PLC0415
-            record_owned_after(self.feature_root)
-        finally:
-            sys.path.remove(str(core))
-
-    def test_a_new_review_with_the_reviewers_words_is_kept(self) -> None:
-        self.review().unlink(missing_ok=True)
-        self.update()
-        filled = self.write(self.FILLED)
-        self.complete_point()
-        out = self.update("--action", "restore")
-        self.assertEqual("restore_conflicted", out["status"], out)
-        self.assertEqual(filled, self.review().read_bytes(), "本轮收到的人工意见随撤回丢了")
-        row = next(c for c in out["conflicts"] if c["file"] == "AR/review.md")
-        self.assertIn("D1", row["why"])
-
-    def test_an_existing_review_with_the_reviewers_words_is_not_rolled_back(self) -> None:
-        self.write(self.EMPTY)
-        self.update()
-        filled = self.write(self.FILLED)
-        self.complete_point()
-        out = self.update("--action", "restore")
-        self.assertEqual("restore_conflicted", out["status"], out)
-        self.assertEqual(filled, self.review().read_bytes(), "人工意见被退回开轮时的空区")
-
-    def test_a_review_with_only_machine_content_follows_the_table(self) -> None:
-        was = self.write(self.EMPTY)
-        self.update()
-        self.review().write_bytes(was.replace("请产品负责人评审。".encode("utf-8"), "请端侧负责人评审。".encode("utf-8")))
-        self.complete_point()
-        out = self.update("--action", "restore")
-        self.assertEqual("restored", out["status"], out)
-        self.assertEqual(was, self.review().read_bytes())
-
 
 class RestoreRefusesWithoutAScene(UpdateCase):
     """还原不了时说清原因，**当前内容一个字节不动**——不能为了「还原」先把现在的丢了。"""
@@ -1368,8 +1312,9 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
         self.assertEqual(was, self.review.read_text(encoding="utf-8"),
                          "取回评审回稿时覆盖了 AR/review.md")
         self.assertFalse((self.out / "review-feedback.md").exists(),
-                         "评审回稿不是需求正文，进了 inbox 就没有类别可归")
-        self.assertTrue((self.src / "review-feedback.md").is_file())
+                         "评审回稿不是需求正文，进了材料批次就没有类别可归")
+        self.assertTrue((self.feature / "inbox" / "review" / "fetch-1" / "review-feedback.md").is_file(),
+                        "显式评审回稿该落在这次取材批次的评审用途区")
 
     def test_the_receipt_says_where_each_one_came_from(self) -> None:
         self.fetch(AR, "--out", str(self.out))
@@ -1407,6 +1352,27 @@ class FetchOnlyWritesToTheInbox(unittest.TestCase):
         states = {i["name"]: i["status"] for i in receipt["items"]}
         self.assertEqual("same", states["AR-design.md"])
         self.assertFalse((self.out / "AR-design.md").exists())
+
+    def test_a_published_story_comes_back_as_a_review_input(self) -> None:
+        """发布过 Story 之后，系统上的本单正文是交付回流表面：进评审用途区，不带 role 进材料批次。"""
+        self.src.mkdir(parents=True, exist_ok=True)
+        (self.src / "story-flow.json").write_text(json.dumps({"archived": {"at": "2099-01-01T00:00:00+00:00"}}),
+                                                  encoding="utf-8")
+        backup = self.feature / ".backups" / "published" / "story.md"
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_text("# 已发布\n", encoding="utf-8")
+        code, receipt = self.fetch(AR, "--out", str(self.out))
+        self.assertEqual(0, code, receipt)
+        self.assertTrue((self.feature / "inbox" / "review" / "fetch-1" / "AR-design.md").is_file(),
+                        "交付回流件没进评审用途区")
+        self.assertTrue((self.feature / "inbox" / "review" / "fetch-1" / ".receipt.json").is_file(),
+                        "评审批次没有自己的回执")
+        self.assertFalse((self.out / "AR-design.md").exists(), "回流件进了材料批次")
+        batch = json.loads((self.out / ".receipt.json").read_text(encoding="utf-8"))
+        self.assertNotIn("AR-design.md", [i["name"] for i in batch["items"]],
+                         "回流件带着 role 进了材料批次回执")
+        fetched = json.loads((self.src / "fetched.json").read_text(encoding="utf-8"))
+        self.assertEqual("fetched", {i["name"]: i["status"] for i in fetched["items"]}["AR-design.md"])
 
     def test_the_adapter_reports_facts_not_core_steps(self) -> None:
         """对接层只报取回、落盘的事实，不提示 core 的下一步命令。"""
@@ -1745,40 +1711,6 @@ class TheRegistrationSaysWhatRan(StoryIsRegisteredAgainAfterChangesCase):
                 self.assertNotIn("不合格", error)
                 self.assertNotIn("archived", self.contract(), "没登记成却记了归档态")
 
-
-class TheReviewersWordsSurviveAFailedRegistration(StoryIsRegisteredAgainAfterChangesCase):
-    """评审人填过的意见在登记中途失败后逐字保留：要先写决策再登记，不从登记好的工作区起手。"""
-
-    CORE = TheRegistrationSaysWhatRan.CORE
-    modules = TheRegistrationSaysWhatRan.modules
-    registration_returning = TheRegistrationSaysWhatRan.registration_returning
-
-    def test_the_review_human_zone_survives_a_failed_registration(self) -> None:
-        """评审人填过的意见：登记中途失败、修好重新准备审查再登记，都一个字节不丢。"""
-        decisions = self.src / "decisions.json"
-        data = json.loads(decisions.read_text(encoding="utf-8"))
-        data.pop("no_pending", None)
-        data["decisions"] = [open_decision("D1", "回执超时后是否自动重查待定", "回执超时后要不要自动再查一次。",
-                                           [("自动重查一次", "少一次手动操作；多一次请求"),
-                                            ("提示用户手动刷新", "请求少；用户多点一下")],
-                                           "选择方案 1。", category="业务规则")]
-        decisions.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        self.assertTrue(self.register().get("registered"), self.outputs[-1])
-        review = self.feature_root / "AR" / "review.md"
-        filled = review.read_text(encoding="utf-8").replace("- [ ] 同意", "- [x] 同意").replace(
-            "修改意见：\n", "修改意见：\n重查间隔写进规格。\n")
-        self.assertNotEqual(filled, review.read_text(encoding="utf-8"), "夹具的评审区形状变了，用例要跟着改")
-        review.write_text(filled, encoding="utf-8")
-        error, _ = self.registration_returning((137, ""))
-        self.assertIn("没有正常结束", error)
-        self.assertEqual(filled, review.read_text(encoding="utf-8"))
-        self.register()
-        human = filled[filled.index("评审结论："):filled.index("<!-- decision: D1 -->")]
-        self.assertIn("重查间隔写进规格。", human)
-        self.assertIn(human, review.read_text(encoding="utf-8"))
-
-
-
 class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsRegisteredAgainAfterChangesCase):
     """V01（已登记起点）：v1 走真实审查与 `story` 登记并收口后，新一轮同名换版或只改表达，再撤回。
     撤回只退可改件；登记、材料版本、蓝图、人签与轮次记录不回写，当前资格照实报，交付门不放行。"""
@@ -1954,16 +1886,7 @@ class StoryIsRegisteredAgainAfterChangesPart3(StoryIsRegisteredAgainAfterChanges
 
 
 class RegisteredCase(UpdateCase):
-    """已按蓝图成文登记的工程，带一条设计议题。"""
-
-    TARGET = "view:logical/node:wallet-balance"
-    TOPIC = {"id": "D1", "status": "open", "review_mode": "choice", "category": "依赖与承载",
-             "title": "余额刷新的触发时机待定", "decider": "产品负责人",
-             "clarification": "**决策点**：首页余额在什么时候刷新。\n\n**依据**：蓝图写回到首页时刷新，材料没说切账号时怎样。\n\n"
-                              "**可选的做法**：\n\n1. 回到首页就刷新——余额总是新的；每次回首页多一次请求。\n"
-                              "2. 只在下拉时刷新——请求少；用户可能看到旧余额。\n\n**建议**：选择方案 1（回到首页就刷新）。\n\n"
-                              "**理由**：余额是用户最先看的数。",
-             "design_target": {"target_ref": TARGET}}
+    """已按蓝图成文登记的工程。"""
 
     #: 登记好 story 的工程只做一次（登记要定稿、审查、登记，一次约 4 秒），每条用例复制一份再开 update
     _registered: Path | None = None
@@ -1974,7 +1897,6 @@ class RegisteredCase(UpdateCase):
         if cls._registered is None:
             super().setUp()
             design_kit.install_review_mechanism(self.root, DEV_EXT)
-            (self.src / "decisions.json").write_text(json.dumps({"decisions": [self.TOPIC]}, ensure_ascii=False), encoding="utf-8")
             self.assertTrue(StoryIsRegisteredAgainAfterChanges.register(self).get("success"), self.outputs[-1])
             cls._registered = Path(tempfile.mkdtemp(prefix="story-update-registered-")) / "work"
             atexit.register(shutil.rmtree, cls._registered.parent, True)
@@ -2031,105 +1953,13 @@ class TheUpdateRoundRunsEndToEnd(RegisteredCase):
         self.assertEqual({"open": None, "last_closed": rid}, contract()["update"])
         self.assertEqual("story_written", contract()["status"])
 
-
-class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
-    """评审人对设计议题的意见在 update 里交给蓝图负责方：挂在有设计目标的议题上、带本轮记下的原话、
-    指向成文登记时评审的蓝图版本；原生只判够不够格，处理之前一律「待处理」。"""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.rid = self.update("--result", "documents")["update"]
-        self.revision = json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["story_basis"]["blueprint_ref"]["revision"]
-
-    def said(self) -> None:
-        """本轮设计问答里记下与议题 D1 对应的原话：反馈据这组记录认它的输入身份。"""
-        ask = self.ask_questions(self.business_question("D1", "切账号时余额刷新时机怎么定？"))
-        out = self.answer_question(ask, "D1", "切账号时也要刷新")
-        self.assertTrue(out.get("success"), out)
-
-    def feedback(self, **item) -> dict:
-        body = {"feedback_id": "D1", "kind": "opinion", "source_revision": self.revision,
-                "target_ref": self.TARGET, "body": "切账号时也要刷新余额", **item}
-        doc = {"artifact": "blueprint-review-feedback@1", "blueprint_id": design_kit.blueprint_of(self.root, FEATURE),
-               "component_id": "wallet-main", "source_revision": self.revision, "items": [body]}
-        (self.updates / self.rid / "design-feedback.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
-        return self.update("--action", "feedback")
-
-    def test_a_qualified_opinion_is_not_an_acceptance(self) -> None:
-        """候选资格够格不等于接受：状态一律待确认，资格按提交时评审的版本记下。"""
-        self.said()
-        out = self.feedback()
-        self.assertEqual([], out["problems"], out)
-        self.assertTrue(out["eligible"], out)
-        self.assertEqual([("D1", "待确认", [])], [(x["feedback_id"], x["state"], x["related_decisions"]) for x in out["feedback"]])
-        self.assertIn("候选资格不等于接受", out["action"])
-        rec = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
-        self.assertEqual(self.revision, rec["design_feedback"]["source_revision"])
-
-    def add_decision(self, source_ref: str, status: str) -> None:
-        """蓝图负责方调和时记的一条决定：来源写到它依据的那份反馈。"""
-        blueprint = design_kit.blueprint_of(self.root, FEATURE)
-        canonical = self.root / design_kit.features_dir(self.root) / blueprint / "blueprint" / "component-blueprint.yaml"
-        doc = yaml.safe_load(canonical.read_text(encoding="utf-8"))
-        doc["decisions_and_gaps"]["decisions"].append({
-            "decision_id": "feedback-d1", "kind": "review_feedback", "status": status, "owner": "design-author",
-            "rationale": "切账号时同样刷新余额", "verification_refs": [self.TARGET],
-            "provenance": {"source_kind": "review_feedback", "observed_at": "2026-09-30T00:00:00Z", "evidence_strength": "observed",
-                           "extraction_method": "reconcile", "source_ref": source_ref}})
-        canonical.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
-        design_kit.render_projection(self.root, blueprint, design_kit.ACCESS)
-
-    def test_an_exact_reference_is_shown_but_stays_to_be_confirmed(self) -> None:
-        """来源精确指向这份反馈的决定列成相关决定、带原生状态；接受与否仍看负责方的回复，状态不变。"""
-        self.said()
-        self.feedback()
-        self.add_decision(f"doc/features/{FEATURE}/AR/story-src/updates/{self.rid}/design-feedback.json#D1", "open_decision")
-        out = self.update("--action", "feedback")
-        self.assertEqual([("D1", "待确认", [{"decision_id": "feedback-d1", "status": "open_decision"}])],
-                         [(x["feedback_id"], x["state"], x["related_decisions"]) for x in out["feedback"]], out)
-
-    def test_the_same_anchor_in_another_file_is_not_related(self) -> None:
-        """别的轮次、别的文件里同样写 #D1 的决定，不算这份反馈的相关决定。"""
-        self.said()
-        self.feedback()
-        self.add_decision(f"doc/features/{FEATURE}/AR/story-src/updates/20000101-000000/design-feedback.json#D1", "answered_with_evidence")
-        out = self.update("--action", "feedback")
-        self.assertEqual([[]], [x["related_decisions"] for x in out["feedback"]], out)
-
-    def test_without_the_human_words_it_is_named(self) -> None:
-        self.assertIn("没有记下", "；".join(self.feedback()["problems"]))
-
-    def test_a_ruling_without_authority_is_not_a_ruling(self) -> None:
-        self.said()
-        out = self.feedback(kind="authoritative_ruling")
-        self.assertIn("review_feedback_authority_insufficient", [i.get("id") for i in out["native_issues"]], out)
-
-    def test_an_old_revision_is_named(self) -> None:
-        self.said()
-        out = self.feedback(source_revision=self.revision + 1)
-        self.assertTrue(any("review_feedback_item_revision_mismatch" == i.get("id") for i in out["native_issues"]), out)
-
-    def test_a_topic_without_a_design_target_stays_on_the_requirement_side(self) -> None:
-        self.said()
-        topic = {**self.TOPIC}
-        topic.pop("design_target")
-        (self.src / "decisions.json").write_text(json.dumps({"decisions": [topic]}, ensure_ascii=False), encoding="utf-8")
-        self.assertIn("留在需求侧", "；".join(self.feedback()["problems"]))
-
-    def test_a_target_outside_the_blueprint_is_refused_at_registration(self) -> None:
-        topic = {**self.TOPIC, "design_target": {"target_ref": "view:logical/node:no-such-node"}}
-        (self.src / "decisions.json").write_text(json.dumps({"decisions": [topic]}, ensure_ascii=False), encoding="utf-8")
-        proc = self.run_cmd("node", str(self.BUILD), "check", "--feature", FEATURE, "--project-root", str(self.root))
-        self.assertIn("不是当前蓝图", proc.stdout + proc.stderr)
-
-
 class PublishChecksTheExternalVersion(RegisteredCase):
     """发布前按交付门核资格，用取材回执逐件核 Story 正文、Review 附件与设计参考附件（蓝图的原生评审投影原字节）：
     E=L 跳过，E=B 可写，其余交人；三件都有这一版登记之后的读回才登记归档。本地单没有远端动作。
     需求系统单由编号决定，这里在进程内把本单当作系统单。"""
 
     #: 回执里的名字 → 本地来源（相对需求目录）
-    NAMES = {"AR-design.md": "AR/story.md", "review.md": "AR/review.md", "design-review.md": "blueprint/component-blueprint.review.md"}
+    NAMES = {"AR-design.md": "AR/story.md", "design-review.md": "blueprint/component-blueprint.review.md"}
     #: 发布前核对的交付门结果。这一组核的是外部版本、基线与授权的政策，交付门本身另有用例：默认把门的结论
     #: 换成「通过」，不为每个政策例重跑一次完整 deliver 检查；`None` 时跑真实的交付门（门的接线用例用它）
     GATE: tuple[bool, str] | None = (True, "（这一组的政策用例：交付门由专门的用例核）")
@@ -2162,10 +1992,10 @@ class PublishChecksTheExternalVersion(RegisteredCase):
 
     def receipt(self, body: bytes | None, when: str = "2099-01-01T00:00:00+00:00", status: str = "fetched",
                 attachments: dict | None = None, checked: str | None = None, design_required: bool | None = None) -> None:
-        """取材回执：正文给 body（None 是系统上没有），两个附件默认系统上没有；`checked` 给出时三件都记成上传读回；
+        """取材回执：正文给 body（None 是系统上没有），设计参考附件默认系统上没有；`checked` 给出时两件都记成上传读回；
         交付要求照对接层写（`design_required`，缺省取本组的系统要求）。"""
         items = []
-        for name, value in (("AR-design.md", body), *((n, (attachments or {}).get(n)) for n in ("review.md", "design-review.md"))):
+        for name, value in (("AR-design.md", body), ("design-review.md", (attachments or {}).get("design-review.md"))):
             item = {"name": name, "status": (status if name == "AR-design.md" else "fetched") if value is not None else "absent"}
             if value is not None:
                 item["digest"] = self.digest(value)
@@ -2187,10 +2017,10 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         path.write_text(json.dumps(receipt), encoding="utf-8")
 
     def uploaded(self, checked: str = "2099-01-01T00:00:00+00:00") -> None:
-        """三件都已上传并读回：发布前核对（真实生产者）记下交付集合，回执里每件是本地当前这一份。"""
-        self.receipt(self.local("AR-design.md"), attachments={n: self.local(n) for n in ("review.md", "design-review.md")})
+        """两件都已上传并读回：发布前核对（真实生产者）记下交付集合，回执里每件是本地当前这一份。"""
+        self.receipt(self.local("AR-design.md"), attachments={"design-review.md": self.local("design-review.md")})
         self.publish()
-        self.readback(checked, AR_design_md=self.local("AR-design.md"), review_md=self.local("review.md"),
+        self.readback(checked, AR_design_md=self.local("AR-design.md"),
                       design_review_md=self.local("design-review.md"))
 
     def publish(self, reply=None, with_design: bool = False) -> dict:
@@ -2233,7 +2063,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
                                "--project-root", str(self.root)], capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=120)
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        self.assertEqual(self.digest(body), self.call("_baselines", self.contract())["AR-design.md"])
+        self.assertEqual(self.digest(body), self.call("_baselines", self.contract())["AR-design.md"]["digest"])
 
     def test_publishing_goes_through_the_real_delivery_gate(self) -> None:
         """发布前核对真跑交付门：已登记的这一份过门才可发布；门没过就不发布，报出门的原话。"""
@@ -2243,13 +2073,13 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.GATE = (False, "[story-build check] 交付门的原话")
         self.assertIn("交付门没过", self.error(self.publish))
 
-    def test_the_first_publish_with_nothing_external_writes_all_three(self) -> None:
+    def test_the_first_publish_with_nothing_external_writes_the_delivery(self) -> None:
         self.receipt(None)
         out = self.publish()
         self.assertTrue(out["publishable"], out)
-        self.assertEqual({"AR-design.md": "write", "review.md": "write", "design-review.md": "write"}, self.actions(out))
+        self.assertEqual({"AR-design.md": "write", "design-review.md": "write"}, self.actions(out))
         self.assertIn("首次发布", out["diff"])
-        self.assertEqual(["D1 余额刷新的触发时机待定"], out["open_topics"])
+        self.assertIsInstance(out["pending_gaps"], list)
 
     def test_an_external_edit_goes_to_a_person_and_the_grant_covers_only_that_change(self) -> None:
         external = "别人在需求系统上改过的正文\n".encode("utf-8")
@@ -2268,20 +2098,19 @@ class PublishChecksTheExternalVersion(RegisteredCase):
 
     def test_a_same_named_attachment_nobody_published_is_a_conflict(self) -> None:
         """首次发布附件：系统上已有同名却不是我们的内容，所有权未确认，交人。"""
-        self.receipt(self.system_body(), attachments={"review.md": "别人的附件\n".encode("utf-8")})
+        self.receipt(self.system_body(), attachments={"design-review.md": "别人的附件\n".encode("utf-8")})
         out = self.publish()
         self.assertFalse(out["publishable"], out)
-        self.assertEqual("conflict", self.actions(out)["review.md"])
-        self.assertEqual("write", self.actions(out)["design-review.md"])
+        self.assertEqual("conflict", self.actions(out)["design-review.md"])
 
-    def test_archived_needs_three_readbacks_of_this_version(self) -> None:
+    def test_archived_needs_the_readbacks_of_this_version(self) -> None:
         self.receipt(self.system_body())
         self.assertIn("上传读回不全", self.error(lambda: self.call("cmd_archived", self.root)))
         self.uploaded(checked="2000-01-01T00:00:00+00:00")
         self.assertIn("早于这一版的登记", self.error(lambda: self.call("cmd_archived", self.root)), "旧读回放行了这一版")
         self.uploaded()
         receipt = json.loads((self.src / "fetched.json").read_text(encoding="utf-8"))
-        receipt["items"][2] = {**receipt["items"][2], "status": "failed", "note": "本次发布读回尚未完成"}
+        receipt["items"][1] = {**receipt["items"][1], "status": "failed", "note": "本次发布读回尚未完成"}
         (self.src / "fetched.json").write_text(json.dumps(receipt), encoding="utf-8")
         self.assertIn("design-review.md", self.error(lambda: self.call("cmd_archived", self.root)))
         self.assertNotIn("archived", self.contract())
@@ -2291,7 +2120,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         archived = self.contract()["archived"]
         self.assertEqual(self.digest(self.local("design-review.md")), archived["design_review_digest"])
         self.assertEqual(self.contract()["story_basis"]["blueprint_ref"], archived["design_blueprint_ref"])
-        for name, published in (("AR-design.md", "story.md"), ("review.md", "review.md"), ("design-review.md", "design-review.md")):
+        for name, published in (("AR-design.md", "story.md"), ("design-review.md", "design-review.md")):
             self.assertEqual(self.local(name), (self.feature_root / ".backups" / "published" / published).read_bytes())
 
     def test_after_a_publish_each_item_is_its_own_baseline(self) -> None:
@@ -2303,9 +2132,9 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.assertEqual({"skip"}, set(self.actions(out).values()))
         self.assertEqual("与上次发布逐字相同", out["diff"])
         self.receipt(self.system_body(),
-                     attachments={n: self.local(n) for n in ("review.md", "design-review.md")})
+                     attachments={"design-review.md": self.local("design-review.md")})
         self.assertFalse(self.publish()["publishable"], "发布之后外部回到了旧版却没当成外部改动")
-        self.receipt(self.local("AR-design.md"), attachments={"review.md": self.local("review.md")})
+        self.receipt(self.local("AR-design.md"), attachments={})
         self.assertEqual("conflict", self.actions(self.publish())["design-review.md"], "发布过的附件被删也是外部改动")
 
     def overwrite_the_system_body(self) -> bytes:
@@ -2323,7 +2152,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
                                  "backup": ".backups/cloud/design-20990101000000.md",
                                  "written_at": "2099-01-01T00:00:00+00:00", "verified_at": "2099-01-01T00:00:00+00:00"}
         path.write_text(json.dumps(receipt), encoding="utf-8")
-        self.readback("2099-01-01T00:00:00+00:00", AR_design_md=self.local("AR-design.md"), review_md=self.local("review.md"),
+        self.readback("2099-01-01T00:00:00+00:00", AR_design_md=self.local("AR-design.md"),
                       design_review_md=self.local("design-review.md"))
         self.assertTrue(self.call("cmd_archived", self.root)["archived"])
         self.assertEqual(".backups/cloud/design-20990101000000.md", self.contract()["archived"]["body_backup"])
@@ -2336,7 +2165,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.assertIn("没有可核的正文覆盖", self.error(lambda: self.restored(True)))
         older = self.overwrite_the_system_body()
         story = self.local("AR-design.md")
-        attachments = {n: self.local(n) for n in ("review.md", "design-review.md")}
+        attachments = {"design-review.md": self.local("design-review.md")}
         self.receipt(story, status="same", attachments=attachments, when="2099-01-02T00:00:00+00:00")
         prepared = self.restored(True)
         self.assertEqual(("write", self.digest(older)), (prepared["restore"]["action"], prepared["restore"]["digest"]), prepared)
@@ -2349,7 +2178,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.receipt(older, status="same", attachments=attachments, when="2100-01-02T00:00:00+00:00")
         out = self.publish()
         self.assertTrue(out["publishable"], "恢复之后外部就是恢复的那一版，不该再当成别人改过")
-        self.assertEqual({"AR-design.md": "write", "review.md": "skip", "design-review.md": "skip"}, self.actions(out))
+        self.assertEqual({"AR-design.md": "write", "design-review.md": "skip"}, self.actions(out))
 
     def test_a_body_written_before_an_attachment_failed_keeps_its_backup_for_restore_and_registration(self) -> None:
         """正文已真实覆盖、附件没写成、还没登记归档：重新取材之后，恢复准备取这次覆盖前的原件；
@@ -2381,7 +2210,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.assertTrue(out["publishable"], out)
         self.assertEqual("skip", self.actions(out)["AR-design.md"], "正文已是本地这一份还要再写")
         self.assertEqual(written, json.loads(path.read_text(encoding="utf-8"))["body_write"], "发布前核对把覆盖关联丢了")
-        self.readback("2099-01-03T00:00:00+00:00", AR_design_md=story, review_md=self.local("review.md"),
+        self.readback("2099-01-03T00:00:00+00:00", AR_design_md=story,
                       design_review_md=self.local("design-review.md"))
         self.assertTrue(self.call("cmd_archived", self.root)["archived"])
         self.assertEqual(rel, self.contract()["archived"]["body_backup"], "登记没记这次覆盖的备份")
@@ -2411,30 +2240,30 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.assertEqual("skip", self.restored(True)["restore"]["action"], "系统上已是恢复目标还要写")
 
     def test_the_design_reference_follows_the_system_requirement(self) -> None:
-        """系统不要求设计参考附件时交两件；本单已有交付请求带上它时交三件；对接层没给交付要求是对接层缺口。"""
+        """系统不要求设计参考附件时只交正文；本单已有交付请求带上它时交两件；对接层没给交付要求是对接层缺口。"""
         self.receipt(None, design_required=False)
-        self.assertEqual({"AR-design.md", "review.md"}, set(self.actions(self.publish())))
+        self.assertEqual({"AR-design.md"}, set(self.actions(self.publish())))
         delivery = json.loads((self.src / "fetched.json").read_text(encoding="utf-8"))["delivery"]
-        self.assertEqual(["AR-design.md", "review.md"], [i["name"] for i in delivery["items"]])
-        self.assertEqual({"AR-design.md", "review.md", "design-review.md"}, set(self.actions(self.publish(with_design=True))))
+        self.assertEqual(["AR-design.md"], [i["name"] for i in delivery["items"]])
+        self.assertEqual({"AR-design.md", "design-review.md"}, set(self.actions(self.publish(with_design=True))))
         path = self.src / "fetched.json"
         receipt = json.loads(path.read_text(encoding="utf-8"))
         del receipt["delivery_requirements"]
         path.write_text(json.dumps(receipt), encoding="utf-8")
         self.assertIn("对接层", self.error(self.publish))
 
-    def test_a_two_item_delivery_keeps_the_earlier_design_attachment(self) -> None:
-        """上次交过设计参考附件，这次系统不要求、也没请求：只交两件，发布记录保留上次的附件基线并标明不是这一次的新版。"""
+    def test_a_one_item_delivery_keeps_the_earlier_design_attachment(self) -> None:
+        """上次交过设计参考附件，这次系统不要求、也没请求：只交正文，发布记录保留上次的附件基线并标明不是这一次的新版。"""
         self.uploaded()
         self.call("cmd_archived", self.root)
         first = self.contract()["archived"]
-        self.receipt(self.local("AR-design.md"), attachments={n: self.local(n) for n in ("review.md", "design-review.md")},
+        self.receipt(self.local("AR-design.md"), attachments={"design-review.md": self.local("design-review.md")},
                      design_required=False)
         self.assertTrue(self.publish()["publishable"])
-        self.readback("2099-01-01T00:00:00+00:00", AR_design_md=self.local("AR-design.md"), review_md=self.local("review.md"))
+        self.readback("2099-01-01T00:00:00+00:00", AR_design_md=self.local("AR-design.md"))
         self.call("cmd_archived", self.root)
         archived = self.contract()["archived"]
-        self.assertEqual(["AR-design.md", "review.md"], archived["items"])
+        self.assertEqual(["AR-design.md"], archived["items"])
         self.assertEqual(first["design_review_digest"], archived["design_review_digest"])
         self.assertIn("这一次没有更新", archived["design_reference"])
 
@@ -2492,13 +2321,13 @@ mod[fn](reqNo, 'token', ...(out ? [{ outDir: out }] : []))
 
     def test_publish_archive_register_redeliver_and_restore(self) -> None:
         self.fetch()
-        self.assertEqual({"AR-design.md", "review.md"}, set(self.actions(self.publish("系统上那份正文看过了，按本地这一版覆盖"))))
+        self.assertEqual({"AR-design.md"}, set(self.actions(self.publish("系统上那份正文看过了，按本地这一版覆盖"))))
         self.assertNotIn("error", self.adapter("archiveOne"))
         self.assertTrue(self.call("cmd_archived", self.root)["archived"])
-        self.assertEqual((self.local("AR-design.md"), self.local("review.md"), None),
-                         (self.remote("design.md"), self.remote("attachments/review.md"), self.remote("attachments/design-review.md")))
+        self.assertEqual((self.local("AR-design.md"), None),
+                         (self.remote("design.md"), self.remote("attachments/design-review.md")))
         archived = self.contract()["archived"]
-        self.assertEqual(["AR-design.md", "review.md"], archived["items"])
+        self.assertEqual(["AR-design.md"], archived["items"])
         self.assertEqual(self.system_body(), (self.feature_root / archived["body_backup"]).read_bytes(), "覆盖前的正文没留住")
         self.assertEqual([], self.submitted())
 
@@ -2508,11 +2337,11 @@ mod[fn](reqNo, 'token', ...(out ? [{ outDir: out }] : []))
         self.fetch()
         self.assertTrue(any("要求设计参考附件" in m for m in self.submitted()), self.submitted())
         out = self.publish()
-        self.assertEqual({"AR-design.md": "skip", "review.md": "skip", "design-review.md": "write"}, self.actions(out))
+        self.assertEqual({"AR-design.md": "skip", "design-review.md": "write"}, self.actions(out))
         self.assertNotIn("error", self.adapter("archiveOne"))
         self.assertTrue(self.call("cmd_archived", self.root)["archived"])
         self.assertEqual(self.local("design-review.md"), self.remote("attachments/design-review.md"))
-        self.assertEqual(["AR-design.md", "review.md", "design-review.md"], self.contract()["archived"]["items"])
+        self.assertEqual(["AR-design.md", "design-review.md"], self.contract()["archived"]["items"])
         self.assertEqual([], self.submitted())
 
         # 评审人之后在系统上改了正文：再发布被拦，对接层不被调用
@@ -2528,6 +2357,208 @@ mod[fn](reqNo, 'token', ...(out ? [{ outDir: out }] : []))
         self.assertEqual("write", self.call("cmd_restored", True, None)["restore"]["action"])
         self.assertNotIn("error", self.adapter("restoreOne"))
         self.assertEqual(self.system_body(), self.remote("design.md"))
-        self.assertEqual(self.local("review.md"), self.remote("attachments/review.md"), "恢复动了附件")
+        self.assertIsNone(self.remote("attachments/review.md"), "恢复动了不存在的历史附件")
         restored = self.call("cmd_restored", False, None)
         self.assertEqual(self.digest(self.system_body()), restored["external"])
+
+
+class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
+    """设计反馈只作为原生 blueprint-review-feedback@1 传输件：候选资格由原生判，这里不记第二套决定状态。"""
+
+    TARGET = "view:logical/node:wallet-balance"
+    contract = PublishChecksTheExternalVersion.contract
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.update()
+        self.rid = self.contract()["update"]["open"]
+        blueprint = yaml.safe_load((self.feature_root / "blueprint" / "component-blueprint.yaml").read_text(encoding="utf-8"))
+        self.blueprint_id = blueprint["blueprint_id"]
+        self.component_id = blueprint["component_id"]
+        self.reviewed = self.contract()["story_basis"]["blueprint_ref"]["revision"]
+
+    def item(self, fid: str = "f1", **kw) -> dict:
+        base = {"feedback_id": fid, "kind": "opinion", "source_revision": self.reviewed,
+                "target_ref": self.TARGET, "body": "余额刷新要在回到首页时发生，材料没写切账号之后怎样。"}
+        return {**base, **kw}
+
+    def write(self, items: list[dict], *, batch: dict | None = None) -> None:
+        doc = {"artifact": "blueprint-review-feedback@1", "blueprint_id": self.blueprint_id,
+               "component_id": self.component_id, "source_revision": self.reviewed, "items": items, **(batch or {})}
+        path = self.updates / self.rid / "design-feedback.json"
+        path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    def feedback(self) -> dict:
+        return self.update("--action", "feedback")
+
+    def test_a_qualified_opinion_is_not_an_acceptance(self) -> None:
+        self.write([self.item()])
+        out = self.feedback()
+        self.assertTrue(out["eligible"], out)
+        self.assertEqual([("f1", "待确认", [])],
+                         [(x["feedback_id"], x["state"], x["related_decisions"]) for x in out["feedback"]])
+        record = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.reviewed, record["design_feedback"]["source_revision"])
+
+    def test_a_new_problem_may_point_at_the_blueprint_itself(self) -> None:
+        """新问题还没有 gap：指现有蓝图并说明受影响范围，由 owner 形成真正的新 gap，不先让人再签一张表。"""
+        self.write([self.item("new-problem", target_ref=f"blueprint:{self.blueprint_id}",
+                              body="余额刷新的范围还没有结论，按当前蓝图看受影响节点。")])
+        out = self.feedback()
+        self.assertTrue(out["eligible"], out)
+
+    def test_a_fact_without_evidence_is_not_a_candidate(self) -> None:
+        self.write([self.item("fact-1", kind="fact_supplement", body="材料里写了回到首页刷新。")])
+        out = self.feedback()
+        self.assertFalse(out["eligible"], out)
+        self.assertIn("review_feedback_fact_without_evidence", [i.get("id") for i in out["native_issues"]], out)
+
+    def test_a_ruling_without_authority_is_not_a_ruling(self) -> None:
+        self.write([self.item("ruling-1", kind="authoritative_ruling")])
+        out = self.feedback()
+        self.assertFalse(out["eligible"], out)
+        self.assertIn("review_feedback_authority_insufficient", [i.get("id") for i in out["native_issues"]], out)
+
+    def test_an_old_revision_is_named_not_relabelled(self) -> None:
+        self.write([self.item(source_revision=self.reviewed + 1)], batch={"source_revision": self.reviewed + 1})
+        out = self.feedback()
+        self.assertFalse(out["eligible"], out)
+        self.assertIn("被评的蓝图版本", "；".join(out["problems"]), out)
+        self.assertIn("review_feedback_stale_source_revision", [i.get("id") for i in out["native_issues"]], out)
+
+    def test_a_target_outside_the_blueprint_is_refused(self) -> None:
+        self.write([self.item(target_ref="view:logical/node:no-such-node")])
+        out = self.feedback()
+        self.assertFalse(out["eligible"], out)
+        self.assertIn("review_feedback_target_unresolvable", [i.get("id") for i in out["native_issues"]], out)
+
+    def test_evidence_refs_must_point_at_a_real_original(self) -> None:
+        self.write([self.item("fact-2", kind="fact_supplement", body="材料里写了回到首页刷新。",
+                              evidence_refs=["inbox/review/no-such-batch/AR-design.md"])])
+        out = self.feedback()
+        self.assertFalse(out["eligible"], out)
+        self.assertIn("读不到", "；".join(out["problems"]), out)
+
+    def test_an_opinion_carrying_a_decision_is_refused(self) -> None:
+        self.write([self.item(kind="opinion", decision={"verdict": "accept", "rationale": "我同意"})])
+        out = self.feedback()
+        self.assertFalse(out["eligible"], out)
+        self.assertIn("review_feedback_non_ruling_carries_decision", [i.get("id") for i in out["native_issues"]], out)
+
+    def test_the_initial_round_reads_its_feedback_from_the_answers_directory(self) -> None:
+        """首次问答不要求先伪造一次 update：反馈文件从本轮 init 的问法答复目录定位。"""
+        rid = self.contract()["update"]["open"]
+        rec = json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))
+        rec["status"] = "closed"
+        (self.updates / rid / "record.json").write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+        contract = self.contract()
+        contract["update"] = {"open": None, "last_closed": rid}
+        (self.src / "story-flow.json").write_text(json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8")
+        answers = self.src / "answers"
+        answers.mkdir(parents=True, exist_ok=True)
+        doc = {"artifact": "blueprint-review-feedback@1", "blueprint_id": self.blueprint_id,
+               "component_id": self.component_id, "source_revision": self.reviewed, "items": [self.item("first-1")]}
+        (answers / "design-feedback.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        out = self.flow("update", "--action", "feedback")
+        self.assertTrue(out.get("success", True), out)
+        self.assertTrue(out["eligible"], out)
+        self.assertEqual("AR/story-src/answers/design-feedback.json", out["where"])
+        self.assertIn("design_feedback", self.contract())
+
+
+class AClaimedExternalVersionBecomesTheReleaseBaseline(RegisteredCase):
+    """最近一次非撤回的 documents 轮已按当前 Story 承接的外部版本成为逐件发布基线：
+    同一外部变化不再需要 `--reply`，承接之后又被改仍冲突；未完成、materials-only、更晚恢复都不放进基线。"""
+
+    NAMES = PublishChecksTheExternalVersion.NAMES
+    GATE = (True, "（这一组只核逐件基线：交付门由专门的用例核）")
+    digest = staticmethod(PublishChecksTheExternalVersion.digest)
+    call = PublishChecksTheExternalVersion.call
+    local = PublishChecksTheExternalVersion.local
+    publish = PublishChecksTheExternalVersion.publish
+    actions = PublishChecksTheExternalVersion.actions
+    contract = PublishChecksTheExternalVersion.contract
+
+    def setUp(self) -> None:
+        super().setUp()
+        contract = self.contract()
+        contract["archived"] = {"at": "2099-01-01T00:00:00+00:00", "external_digest": self.digest(self.local("AR-design.md"))}
+        (self.src / "story-flow.json").write_text(json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def receipt(self, body: bytes, when: str = "2099-02-02T00:00:00+00:00") -> None:
+        (self.src / "fetched.json").write_text(json.dumps({
+            "fetchedAt": when, "delivery_requirements": {"design_reference": False},
+            "items": [{"name": "AR-design.md", "status": "fetched", "digest": self.digest(body)}],
+        }), encoding="utf-8")
+
+    def carry(self, external: bytes, *, rid: str = "2099-02-01-000000", status: str = "closed",
+              result: str = "documents", closed_at: str = "2099-02-01T00:00:00+00:00",
+              with_design: bool = False) -> str:
+        batch = self.feature_root / "inbox" / "review" / "fetch-carry"
+        batch.mkdir(parents=True, exist_ok=True)
+        (batch / "AR-design.md").write_bytes(external)
+        sha = hashlib.sha256(external).hexdigest()
+        items = [{"name": "AR-design.md", "status": "fetched",
+                  "saved": "inbox/review/fetch-carry/AR-design.md", "digest": self.digest(external), "sha256": sha}]
+        (batch / ".receipt.json").write_text(json.dumps({"fetchedAt": closed_at, "items": items}), encoding="utf-8")
+        inputs = [{"path": "inbox/review/fetch-carry/AR-design.md", "sha256": sha,
+                   "origin": f"{FEATURE}/design.md", "system_item": "AR-design.md", "status": "fetched",
+                   "digest": self.digest(external)}]
+        owned = {"AR/story.md": hashlib.sha256(self.local("AR-design.md")).hexdigest()}
+        if with_design:
+            design = self.local("design-review.md")
+            owned["blueprint/component-blueprint.review.md"] = hashlib.sha256(design).hexdigest()
+            inputs.append({"path": "inbox/review/fetch-carry/design-review.md",
+                           "sha256": hashlib.sha256(design).hexdigest(), "origin": f"{FEATURE}/attachments/design-review.md",
+                           "system_item": "design-review.md", "status": "fetched", "digest": self.digest(design)})
+        record = {"id": rid, "opened_at": "2099-01-30T00:00:00+00:00", "status": status,
+                  "requested_result": result, "closed_at": closed_at, "owned_after": owned, "review_inputs": inputs}
+        (self.updates / rid).mkdir(parents=True, exist_ok=True)
+        (self.updates / rid / "record.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        return rid
+
+    def test_a_processed_external_change_needs_no_reply(self) -> None:
+        external = "评审人在系统上改过、本轮 update 已按 Story 承接的正文\n".encode("utf-8")
+        rid = self.carry(external)
+        self.receipt(external)
+        out = self.publish()
+        self.assertTrue(out["publishable"], out)
+        self.assertEqual("write", self.actions(out)["AR-design.md"])
+        self.assertIn(rid, [r.get("baseline_source") for r in out["items"] if r["item"] == "AR-design.md"][0])
+
+    def test_an_external_change_after_the_claim_still_conflicts(self) -> None:
+        rid = self.carry("承接的那一版\n".encode("utf-8"))
+        self.receipt("承接之后又被改了一版\n".encode("utf-8"))
+        out = self.publish()
+        self.assertFalse(out["publishable"], out)
+        self.assertEqual("conflict", self.actions(out)["AR-design.md"])
+
+    def test_an_unfinished_material_only_or_restored_round_is_not_a_baseline(self) -> None:
+        external = "外部改过、但这一轮没有完成处理\n".encode("utf-8")
+        for kw in ({"status": "open"}, {"result": "materials"}):
+            with self.subTest(kw=kw):
+                rid = self.carry(external, rid=f"2099-02-01-{abs(hash(str(kw))) % 100000:05d}", **kw)
+                self.receipt(external)
+                self.assertFalse(self.publish()["publishable"], kw)
+                shutil.rmtree(self.updates / rid)
+        rid = self.carry(external, rid="2099-02-01-999999")
+        contract = self.contract()
+        contract["archived"]["restored_at"] = "2099-03-01T00:00:00+00:00"
+        (self.src / "story-flow.json").write_text(json.dumps(contract, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.receipt(external)
+        self.assertFalse(self.publish()["publishable"], "更晚的远端恢复之后，旧承接轮不能当基线")
+
+    def test_the_body_and_the_design_attachment_are_claimed_per_item(self) -> None:
+        external = "外部的正文这一轮已承接\n".encode("utf-8")
+        self.carry(external)                       # 只承接了正文，设计参考没有
+        other = "系统上另一份设计参考\n".encode("utf-8")
+        (self.src / "fetched.json").write_text(json.dumps({
+            "fetchedAt": "2099-02-02T00:00:00+00:00", "delivery_requirements": {"design_reference": True},
+            "items": [{"name": "AR-design.md", "status": "fetched", "digest": self.digest(external)},
+                      {"name": "design-review.md", "status": "fetched", "digest": self.digest(other)}],
+        }), encoding="utf-8")
+        out = self.publish()
+        self.assertFalse(out["publishable"], out)
+        actions = self.actions(out)
+        self.assertEqual("write", actions["AR-design.md"])
+        self.assertEqual("conflict", actions["design-review.md"], "正文处理了不能顺带放行未处理的设计附件")

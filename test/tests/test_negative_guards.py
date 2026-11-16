@@ -88,11 +88,8 @@ class RetiredJudgementsDoNotBlock(NegativeCase):
         at = text.index(head) + len(head)
         self.story_path.write_text(text[:at] + line + "\n\n" + text[at:], encoding="utf-8")
 
-    def test_a_release_word_in_story_and_review_is_not_reported(self) -> None:
+    def test_a_release_word_in_story_is_not_reported(self) -> None:
         self.put_chapter_line("本方案采用灰度发布，先放开一部分用户。")
-        review = self.feature_root() / "AR" / "review.md"
-        existing = review.read_text(encoding="utf-8") if review.exists() else "# 评审记录\n"
-        review.write_text(existing + "\n本方案采用灰度发布，先放开一部分用户。\n", encoding="utf-8")
         self.init_audit()
         _, out = self.check_output()
         self.assertNotIn("灰度", out)
@@ -102,14 +99,6 @@ class RetiredJudgementsDoNotBlock(NegativeCase):
         self.init_audit()
         _, out = self.check_output()
         self.assertNotIn("材料清单」：开头", out)
-
-    def test_the_reviewer_may_write_next_step_in_the_human_zone(self) -> None:
-        review = self.feature_root() / "AR" / "review.md"
-        existing = review.read_text(encoding="utf-8") if review.exists() else "# 评审记录\n"
-        review.write_text(existing + "\n修改意见：\n下一步：\n", encoding="utf-8")
-        self.init_audit()
-        _, out = self.check_output()
-        self.assertNotIn("评审记录里出现", out)
 
 
 class DeclaredSourcesMustExist(NegativeCase):
@@ -156,10 +145,10 @@ class LedgersMustAllExist(NegativeCase):
     登记核对只管「登记之后改台账」，管不到登记之前把台账删掉。而删掉是有动力的：
     实跑里台账错到 1000+ 之后被整份删除，删完 check 的报错数确实下去了。
 
-    逐单元系统退场后台账收到两件：决策登记与统稿留痕。判据一个字没动，基线跟着走。
+    逐单元系统退场后台账收到一件：写作设计。判据一个字没动，基线跟着走。
     """
 
-    LEDGERS = ("decisions.json", "story-template.md")
+    LEDGERS = ("story-template.md",)
 
     def test_each_missing_ledger_is_named(self) -> None:
         for name in self.LEDGERS:

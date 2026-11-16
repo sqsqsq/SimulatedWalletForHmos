@@ -4,7 +4,7 @@
  * 分层：
  *   story.js（入口：参数解析 → 校验 → 分发）
  *     ├─ fetch.js    fetch（fetchUpstream 只读取回本单关联的 AR / SR / RR 正文、评审回稿与附件）
- *     ├─ archive.js  archive（archiveOne，三件逐件写入并读回）
+ *     ├─ archive.js  archive（archiveOne，交付集合逐件写入并读回）
  *     └─ restore.js  restore（restoreOne，照取材回执里的恢复准备写回那次覆盖前的正文）
  *   mcp.js（需求系统访问层）  dirs.js（路径）  token.js（取 token，独立入口）
  *
@@ -14,15 +14,15 @@
  *   人类可读日志走 stderr；命令执行完 stdout 最后一行是单行 JSON：
  *   archive → {"mode":"archive","reqNo":"...","archived":true,"backupPath":"...","verified":true,
  *              "items":[...],"success":true}
- *             AR/story.md 写成系统正文、AR/review.md 与 blueprint/component-blueprint.review.md（设计参考）传为附件，逐件读回，读回记进
- *             AR/story-src/fetched.json；交付哪几件照回执里发布前核对记下的 delivery；覆盖前系统正文备份到需求目录 `.backups/cloud/`。
+ *             AR/story.md 写成系统正文、系统要求时的 blueprint/component-blueprint.review.md（设计参考）传为附件，逐件读回，
+ *             读回记进 AR/story-src/fetched.json；交付哪几件照回执里发布前核对记下的 delivery；覆盖前系统正文备份到需求目录 `.backups/cloud/`。
  *   restore → {"mode":"restore","reqNo":"...","restored":true,"verified":true,"success":true}
  *             照取材回执里的恢复准备（`restore`）把那次覆盖前的备份写回系统正文并读回；没有准备、远端在准备之后变了或读回不一致即失败。
  *   fetch   → {"mode":"fetch","reqNo":"...","out":"...","parentNo":"SR...","rrNo":"RR...","fetched":3,"failed":0,
  *              "items":[...],"success":true}
- *             只读取材，起单与 update 都用它：上游三份正文写进 --out（必填，本单来源收件箱下的取材批次），
- *             批次回执 .receipt.json 逐件给角色、单号与标题；评审回稿写 AR/story-src/review-feedback.md，
- *             两个附件与本地不同时写 AR/story-src/fetched-review.md、fetched-design-review.md，
+ *             只读取材，起单与 update 都用它：上游正文写进 --out（必填，本单来源收件箱下的取材批次），
+ *             批次回执 .receipt.json 逐件给角色、单号与标题；发布过的本单正文按交付回流件、评审回稿与评审记录附件按评审输入
+ *             写进 inbox/review/<同一批次>/（该批次另有回执）；设计参考附件与本地不同时写 AR/story-src/fetched-design-review.md，
  *             外部当前状态写 AR/story-src/fetched.json；items[].status 为 fetched / same / absent / failed。
  *             系统上查无此单即失败；有 failed 时 success 为 false、退出码非 0。一个业务文件都不写。
  *

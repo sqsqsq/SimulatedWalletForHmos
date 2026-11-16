@@ -34,12 +34,10 @@ def system_requirement(feature: str) -> bool:
 
 #: 需求的蓝图与需求同根：蓝图标识就是需求标识，原生 canonical 蓝图在需求目录的 `blueprint/` 下
 BLUEPRINT = ("blueprint", "component-blueprint.yaml")
-# 成文登记时记指纹的文件（相对需求目录）：story、review 与它据以成文的决策登记、写作设计；设计依据（蓝图原生引用与摘要）另记在 story_basis。
+# 成文登记时记指纹的文件（相对需求目录）：Story 本身与它据以成文的写作设计；设计依据（蓝图原生引用与摘要）另记在 story_basis。
 # 登记之后任一份再改，`story-build check` 报「登记之后改过」，重跑 `story` 重新登记。
 STORY_REGISTERED = (
     "AR/story.md",
-    "AR/review.md",
-    "AR/story-src/decisions.json",
     "AR/story-src/story-template.md",
 )
 #: 章节合同。第一级的选项集登记在它的 `gates.material_scope.options` 里，流程侧与
@@ -87,14 +85,14 @@ def file_sha256(path: Path) -> str | None:
     """登记指纹：原始字节的完整 SHA-256，读不到为 None。
 
     与 `story/context.mjs` 的 `digestOf` 同口径——登记由本脚本写，核对两边都做。
-    Review 的人工区改了一个字也算改了：人读件变了，审查与登记说的就不是这一份。
+    Story 改了一个字也算改了：人读件变了，审查与登记说的就不是这一份。
     """
     if not path.is_file():
         return None
     return sha256(path.read_bytes()).hexdigest()
 
 
-#: 上次发布出去的 Story、Review 与设计参考附件原样留在这里（相对需求目录）：下一次发布前据它给出差异
+#: 上次发布出去的 Story 与设计参考附件原样留在这里（相对需求目录）：下一次发布前据它给出差异
 PUBLISHED = (".backups", "published")
 
 
@@ -202,7 +200,7 @@ def closed(feature_root: Path, contract: dict) -> bool:
 
 
 def registration_drift(feature_root: Path, contract: dict) -> list[str]:
-    """已登记的成文之后又变了什么：story 与它的决策登记、写作设计的指纹。没登记过返回空。
+    """已登记的成文之后又变了什么：Story 与写作设计的指纹。没登记过返回空。
 
     与 `story/context.mjs` 的 `ledgerDigestProblems` 是同一件事的两处读者：
     流程路由与 update 收口在这里问，成文检查在那边问，指纹都由 `file_sha256` 口径算。
@@ -236,7 +234,6 @@ def last_gate(gates: list[dict], name: str) -> dict | None:
 
 
 STORY = ("AR", "story.md")
-REVIEW = ("AR", "review.md")
 #: 设计参考：与需求同根的蓝图原生评审投影。系统送审时按原字节作设计参考附件上传，本地不另存副本
 DESIGN_REFERENCE = ("blueprint", "component-blueprint.review.md")
 

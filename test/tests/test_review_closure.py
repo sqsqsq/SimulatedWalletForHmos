@@ -387,14 +387,14 @@ class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
         got = self.plan_report(self.covered(drop=knowledge))
         self.assertTrue(any("必审输入既没出现在 examined_inputs 也没列进 unreviewed" in p and knowledge in p for p in got), got)
 
-    STORY_ONLY = ("AR/story-src/story-flow.json", "AR/story-src/decisions.json", "AR/review.md")
+    STORY_ONLY = ("AR/story-src/story-flow.json", "AR/story.md")
 
     def required(self) -> list[str]:
         from ext_workspace import required_inputs  # noqa: PLC0415
         return required_inputs(self.root, FEATURE, "plan")
 
     def test_a_direct_plan_owes_no_story_artifacts(self) -> None:
-        """直接 spec→plan：没有 /story 契约就不要求从未生产的 Story 三件，报告核对也不为它们报问题（G3@6）。"""
+        """直接 spec→plan：没有 /story 契约就不要求从未生产的 Story 件，报告核对也不为它们报问题（G3@6）。"""
         for rel in self.STORY_ONLY:
             (self.fr / rel).unlink(missing_ok=True)
         required = self.required()
@@ -405,15 +405,10 @@ class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
             self.assertFalse(any(rel in p for p in got), got)
             self.assertFalse((self.fr / rel).exists(), "核对补出了本单不该有的 Story 件")
 
-    def test_a_direct_plan_must_still_read_the_decisions_it_has(self) -> None:
-        """直接 spec→plan 没有 /story 契约，但本单实际有决定登记：它仍是必审，没核不能放过。"""
-        for rel in ("AR/story-src/story-flow.json", "AR/review.md"):
-            (self.fr / rel).unlink(missing_ok=True)
+    def test_a_direct_plan_does_not_require_the_retired_decision_ledger(self) -> None:
+        """业务评审载体已退出：直接 spec→plan 不再把旧的决策登记列为必审输入。"""
         decisions = f"doc/features/{FEATURE}/AR/story-src/decisions.json"
-        self.assertTrue((self.root / decisions).is_file(), "夹具没有决定登记，用例前提不成立")
-        self.assertIn(decisions, self.required())
-        got = self.plan_report(self.covered(drop=decisions))
-        self.assertTrue(any("必审输入既没出现在 examined_inputs 也没列进 unreviewed" in p and decisions in p for p in got), got)
+        self.assertNotIn(decisions, self.required())
 
 
 

@@ -1696,15 +1696,9 @@ def _story_build_in(root: Path, extra_verdict: str | None, feature: str = "REQ-D
             ["node", str(build), cmd, "--feature", feature, "--project-root", str(root)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
 
-    # init 退场（08 §2.1）：决策骨架由 skeleton 接管；S 夹具的 check 只需要
-    # 决策件在，缺了就补一份空骨架——与旧 init 等价的最小动作。
-    decisions = root / "doc" / "features" / feature / "AR" / "story-src" / "decisions.json"
-    if not decisions.exists():
-        decisions.parent.mkdir(parents=True, exist_ok=True)
-        decisions.write_text('{"decisions": []}', encoding="utf-8")
-    # 写作设计同理：S 夹具判的是正文形态，不是设计——缺了就放底样那份最小设计，
+    # 写作设计：S 夹具判的是正文形态，不是设计——缺了就放底样那份最小设计，
     # 让 check 走到被测的那一条，而不是先停在「写作设计不在」。
-    plan = decisions.parent / "story-template.md"
+    plan = story_src / "story-template.md"
     if not plan.exists():
         shutil.copy2(FORM_BASE / "doc" / "features" / "REQ-DEMO" / "AR" / "story-src"
                      / "story-template.md", plan)

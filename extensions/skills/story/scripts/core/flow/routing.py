@@ -99,7 +99,7 @@ def pending_import_step(state: dict) -> tuple[str, str] | None:
 STORY_STAGE_ORDER = (
     "顺序：story-build skeleton → 写整篇写作设计（阅读主线与每章骨架）→ 再跑 skeleton → 逐章 chapter → "
     "回看清单逐条处置 → 图源写定后按 `reference/svg.md` 判断哪些图值得做同图增强 → "
-    "`story-build review --action prepare --reader task|unavailable` 定稿（重投附录、编号、渲染 review、全篇检查）"
+    "`story-build review --action prepare --reader task|unavailable` 定稿（重投附录、编号、全篇检查）"
     "并准备独立审查 → 派审 → 回复落盘后重跑 prepare 接收 → `story-build review --action check` → `story_flow.py story` 登记 → 交付门 → 交付选择")
 
 
@@ -184,7 +184,7 @@ def story_stage_step(feature_root: Path) -> tuple[str, str]:
     reading = reading_todo(reading_work(feature_root))
     return ("register_story",
             "本需求的有效章节都写完了。先跑 `story-build skeleton` 取回看清单，逐条撞两问、处置回真源"
-            "（业务结论改决策登记或回设计，骨架改写作设计，正文改草稿再 chapter 提交）；"
+            "（业务结论回设计，骨架改写作设计，正文改草稿再 chapter 提交）；"
             "图源写定后按 `reference/svg.md`「值不值得做」判断每张图，值得的先做完同图增强并过源码审查"
             + (f"（已开始的还没做完：{reading}）" if reading else "") +
             "；之后按实际可用的独立读者准备审查（`story-build review --action prepare --reader task|unavailable` 定稿时跑全篇检查，见 phases/design.md「五」）并派审，"

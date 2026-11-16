@@ -29,7 +29,7 @@ BUILD = (DEV_EXT / "skills" / "story"
 FLOW = (DEV_EXT / "skills" / "story"
         / "scripts" / "core" / "story_flow.py")
 FEATURE = "B01FEAT"
-LEDGERS = ("decisions.json", "story-template.md")
+LEDGERS = ("story-template.md",)
 
 
 class FeaturesDirConfigTest(unittest.TestCase):

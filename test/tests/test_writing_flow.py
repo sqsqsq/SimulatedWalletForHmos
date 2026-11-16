@@ -102,7 +102,8 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
         design = section(guide, "动笔前：先设计表达")
         for needle in ("`## 阅读主线`", "`## 骨架`", "`#### 标题`", "`- 待核：…`", "`形式：<类型>`",
                        "`- 描述：…`", "`- 不涉及：<理由>`", "story-template.md", "来源初筛",
-                       "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "重新登记"):
+                       "不是新的业务事实源", "骨架没列的有效内容照样写进正文", "最小集合", "重新登记",
+                       "骨架写的是要回答的问题，不是答案"):
             self.assertIn(needle, design, f"写作设计那一节少了「{needle}」")
         for gone in ("## 章节安排", "## 结构选择", '"kind": "table"', "表头：列"):
             self.assertNotIn(gone, guide, f"旧的写作设计协议「{gone}」还在作业书里")
@@ -125,15 +126,15 @@ class TheWholeDesignComesBeforeTheChapters(unittest.TestCase):
 class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
     """写一章先想清它增加什么；认识变了回到对的真源；图从要解释的关系出发。
 
-    取舍只在有真实备选时写被否方案：「写不出被否决的备选，那一行就不是决策」会逼作者编备选，
-    与第五节「不为显得有取舍编备选」相反，两句并存时作者只能各取一条。
+    取舍只在有真实备选时写被否方案：已定取舍写清选择与依据，材料直接给定、没有判断参与
+    的事实复述不另立取舍——不逼作者为了显得有判断而编备选。
     """
 
     def test_the_chapter_method_consumes_the_design(self) -> None:
         guide = read("phases/story-write.md")
         body = section(guide, "照骨架写一章")
         for needle in ("先答骨架里的问题，再补骨架没列的", "骨架已铺在里面", "写着写着认识变了",
-                       "回蓝图或 `decisions.json` 改", "依赖它的行为不能同时写成已定",
+                       "改变了业务规则回蓝图改", "依赖它的行为不能同时写成已定",
                        "不写成默认可重试、已开放或本期不做", "「先认出关系」那份作业"):
             self.assertIn(needle, body, f"写一章那一节少了「{needle}」")
         # 关系作业只在第四节写一份，写章与回看引用它，不各抄一遍
@@ -166,7 +167,10 @@ class WritingAChapterUsesTheDesignAndTheSources(unittest.TestCase):
     def test_a_trade_off_needs_a_real_alternative_only_when_there_is_one(self) -> None:
         guide = read("phases/story-write.md")
         self.assertNotIn("写不出被否决的备选", guide, "旧的备选配额还在")
-        self.assertIn("只有一条合理路径", guide.split("### 决策登记", 1)[1].split("\n## ", 1)[0])
+        trade = guide.split("### 写待定、已定与取舍", 1)[1].split("\n### ", 1)[0]
+        for needle in ("已定的取舍", "材料直接给定、没有判断参与的事实复述不另立取舍",
+                       "不编造「人已确认」"):
+            self.assertIn(needle, trade, f"取舍那一节少了「{needle}」")
         dims = CONTRACT["verdicts"]["chapter_dimensions"]
         self.assertTrue(any("有真实备选时" in d for d in dims), "章级维度还要求每个取舍都有被否方案")
 
@@ -229,71 +233,40 @@ class TheFinalPassLandsThroughChapterSubmit(unittest.TestCase):
             self.assertNotIn("copyedit", read(rel), f"{rel} 还在要七行自证")
 
 
-class TestIssueDefinitionIsOneText(unittest.TestCase):
-    """议题的正面定义只维护一份：阶段页指过去，不再抄一遍。
+class DecisionsAndGapsStayInTheBlueprint(unittest.TestCase):
+    """决策与待定只以原生形态留在蓝图里：写法在一处维护，阶段页指过去，不另立登记表。
 
     两份逐字一致靠的是有人记得同步；改一处忘一处，作者就会在两个地方读到两种说法。
     """
 
-    ANCHOR = "**登记什么**"
+    ANCHOR = "**Story 是唯一的业务交付件**"
 
-    def definition(self) -> str:
-        text = read("phases/story-write.md")
-        self.assertIn(self.ANCHOR, text, "作业书里没有议题的正面定义")
-        return text.split(self.ANCHOR, 1)[1].split("**登记时机**", 1)[0]
+    def test_the_guide_states_where_decisions_and_gaps_live(self) -> None:
+        guide = read("phases/story-write.md")
+        self.assertIn(self.ANCHOR, guide, "作业书里没有决策与待定的写法")
+        for needle in ("不另建决策登记表、D 编号表或「待确认」汇总附录",
+                       "`decisions_and_gaps.decisions` 与 `.gaps`",
+                       "Story 只在相关场景内讲清它们的业务含义"):
+            self.assertIn(needle, guide, f"决策与待定的写法少了「{needle}」")
 
     def test_the_phase_page_points_at_it_instead_of_repeating(self) -> None:
         phase = read("phases/design.md")
-        self.assertNotIn(self.ANCHOR, phase, "阶段页又抄了一份议题定义")
-        self.assertIn("story-write.md", phase, "阶段页没给出成文方法在哪")
-
-    def test_it_names_the_admission_rule_and_what_is_not_registered(self) -> None:
-        """准入判据只有一条：表态「需修改」会有产物要改；实现选型不登记。"""
-        body = self.definition()
-        for needle in ("表态", "需修改", "实现选型", "漏登记"):
-            self.assertIn(needle, body)
+        self.assertIn("phases/story-write.md", phase, "阶段页没给出成文方法在哪")
+        self.assertNotIn(self.ANCHOR, phase, "阶段页又抄了一份决策与待定的写法")
+        self.assertNotIn("不另建决策登记表", phase, "阶段页又抄了一份决策与待定的写法")
 
 
-class TestSixCategorySkeletonIsGone(unittest.TestCase):
-    """六类骨架是无效机制：好的时候议题来自真实决策不靠它，坏的时候它拦不住。
+class TheFigureChoicesAndTheirRegistration(unittest.TestCase):
+    """表达按内容判断，不按数量定合格；总览图讲给评审者什么、不用的图理由登记在哪。
 
-    判据只拦「零条目又没写 none_reason」，一句「本轮扫过，无开放议题」就能过；
-    而同一个域的工程决策在另一轮实打实登记了十条，本轮一条未登记。
+    总览与局部一起承担全部分支；材料清单只列阅读稿，不用的图在登记命令里写理由。
     """
 
-    def test_the_skeleton_and_the_old_fields_left_the_extension(self) -> None:
-        """判的是**可执行与要模型照做的那部分**：注释里交代「这几样为什么被裁掉」
-        正是该写的话，把它一起判掉，下一轮就只能靠删掉退场理由过关。
-        """
-        gone = ("SCANNED_CATEGORIES", "scanned_categories", "none_reason",
-                "同意当前建议", "暂缓原因", "（暂无）", "审核结果（由评审人填写）",
-                # 所有议题只有一行自由文字、不许有选项的旧定义，随选方案 / 复核结论两种填写位退场
-                "没有勾选项", "编号列出每个选项",
-                # 编号归机器铺之后，判自己输出的那条判据与它的合同键一并退场
-                "heading_shapes",
-                # 窄准入定义（「依据不在材料里才是决策」）与六方向提示同轮退场
-                "依据不在材料里", "想一圈")
-        for path in sorted(SKILL.rglob("*")):
-            if not path.is_file() or path.suffix not in (".mjs", ".json", ".md", ".py", ".js"):
-                continue
-            lines = [ln for ln in path.read_text(encoding="utf-8").split("\n")
-                     if not ln.lstrip().startswith(("//", "*", "/*"))]
-            text = "\n".join(lines)
-            for word in gone:
-                self.assertNotIn(word, text, f"{path.name} 还留着「{word}」")
-
-    def test_the_scan_map_survives_as_a_hint_for_people(self) -> None:
-        """删的是骨架义务，不是扫描地图——地图是给人的，空槽是给机器数的。
-
-        六个方向换成十一类：粗粒度的「技术方案与依赖」一个筐装下准入、入口、规则、
-        数据、依赖五个热点，模型对不上号。新表拆到「内容特征可识别」的粒度。
-        """
+    def test_the_guide_judges_by_content_not_count(self) -> None:
+        """表格数、图数、字数不是合格条件，也不设填量目标——数量是结果，不是判据。"""
         guide = read("phases/story-write.md")
-        self.assertIn("要回答的问题", guide)
-        self.assertIn("不是配额", guide)
-        self.assertNotIn("对着这十一类过一遍", guide, "分类又被当成了遍历顺序")
-        self.assertIn("**登记时选 `category`**", section(guide, "照骨架写一章"),
-                      "类型表要放在登记时选类别那里")
+        for needle in ("不以数量代替判断", "不设填量目标", "标题数、字数、图数、固定深度都不是合格条件"):
+            self.assertIn(needle, guide, f"作业书少了「{needle}」")
 
     def test_the_guide_says_what_the_overview_figure_should_show(self) -> None:
         """总览图讲给评审者什么——不说清的话，作者会把上游契约图复制一遍；
@@ -321,19 +294,6 @@ class TestSixCategorySkeletonIsGone(unittest.TestCase):
         self.assertIn("附录的材料清单不列图", guide)
         inputs = read_ext("skills/story/scripts/core/story/story-inputs.mjs")
         self.assertIn("--unused", inputs, "成文输入里没有那条登记命令")
-
-    def test_the_scan_map_and_the_contract_word_list_agree(self) -> None:
-        """作业书里的类型名与合同 `decision_categories` 的 key 一一对上——
-        对不上时，模型按作业书写的类别会被 check 判「不在词表里」。
-        """
-        import json
-        contract = json.loads((SKILL / "contracts" / "story-chapters.json")
-                              .read_text(encoding="utf-8"))
-        keys = [c["key"] for c in contract["decision_categories"]]
-        guide = read("phases/story-write.md")
-        table = guide.split("从下面七个维度里挑一个", 1)[1].split("\n## ", 1)[0]
-        for key in keys:
-            self.assertIn(f"| {key} |", table, f"作业书的扫描表里没有「{key}」")
 
 
 class TestFormHasOneSourceOfTruth(unittest.TestCase):

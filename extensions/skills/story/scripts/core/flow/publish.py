@@ -1,9 +1,11 @@
-"""对外发布（归档）前后的核对与记录：交付资格、三件的外部当前内容与各自的发布基线、发布记录。
+"""对外发布（归档）前后的核对与记录：交付资格、交付件的外部当前内容与各自的发布基线、发布记录。
 
 上传与恢复由数据对接层执行（它的 archive 与 restore 命令），本层只做它们之前与之后确定的事：
-发布前按当前人读交付门核资格，把差异、未决与未验证项摆给人；用最近一次取材的回执逐件核需求系统上的
-Story 正文、Review 附件与设计参考附件还是不是我们上次知道的那一版——被别人改过就交人定，不直接覆盖；
+发布前按当前人读交付门核资格，把差异、蓝图里仍待定的事项与未验证项摆给人；用最近一次取材的回执逐件核需求系统上的
+Story 正文与（系统要求时）设计参考附件还是不是我们上次知道的那一版——被别人改过就交人定，不直接覆盖；
 发布与远端恢复之后记下外部现在是哪一版。本地单没有远端，这里的动作都不适用。
+
+交付集合只有 Story 正文与按真实要求选入的设计参考附件；历史评审附件若被真实取回只作为输入原件，不作交付项。
 """
 from __future__ import annotations
 
@@ -16,24 +18,24 @@ from pathlib import Path
 
 from flow.lifecycle import _not_the_product, _said
 from flow.routing import live_materials, next_step, register_command
-from flow.state import (CORE_DIR, DESIGN_REFERENCE, FlowError, PUBLISHED, REVIEW, STORY, load, log, now, require, save,
+from flow.state import (CORE_DIR, DESIGN_REFERENCE, FlowError, PUBLISHED, STORY, load, log, now, require, save,
                         short_digest, system_requirement)
+from flow.update import carried_external
 
 #: 最近一次取材的回执，与 update 读的是同一份
 RECEIPT = ("AR", "story-src", "fetched.json")
 #: 交付项：回执里的名字、本地来源、发布记录里的摘要键，按上传顺序；设计参考附件取蓝图原生评审投影的原字节。
-#: Story 正文与 Review 附件是必需业务项；设计参考附件在对接层给出的系统要求（回执 `delivery_requirements.design_reference`）
+#: Story 正文是必需业务项；设计参考附件在对接层给出的系统要求（回执 `delivery_requirements.design_reference`）
 #: 为真、或本单已有交付请求带上它（`--with-design-reference`）时选入。发布前核对通过时把这一次选定的集合记进取材回执的
 #: `delivery`，对接层照它上传，归档登记与读回核对都读它，不另列一份
 ITEMS = (("AR-design.md", STORY, "story_digest"),
-         ("review.md", REVIEW, "review_digest"),
          ("design-review.md", DESIGN_REFERENCE, "design_review_digest"))
 DESIGN = "design-review.md"
 
 
 def _remote_only(feature_root: Path) -> None:
     if not system_requirement(feature_root.name):
-        raise FlowError("本地单没有远端动作：交付终点就是仓内的 AR/story.md 与 AR/review.md，设计参考是同根蓝图的原生评审投影")
+        raise FlowError("本地单没有远端动作：交付终点就是仓内的 AR/story.md 与同根蓝图的原生评审投影")
 
 
 def _gate(feature_root: Path, project_root: Path) -> tuple[bool, str]:
@@ -70,16 +72,29 @@ def _external(feature_root: Path, since: str | None, names: tuple[str, ...]) -> 
     return out
 
 
-def _baselines(feature_root: Path, contract: dict) -> dict[str, str | None]:
-    """每件上次允许覆盖的那一版：发布过的取发布记录；正文首次发布取需求系统开发需求来源最新取得的那一版原件，附件首次发布为不存在。"""
+def _baselines(feature_root: Path, contract: dict) -> dict[str, dict]:
+    """每件上次允许覆盖的那一版与它从哪来。
+
+    正文发布过的取发布记录，首次发布取需求系统开发需求来源最新取得的那一版原件；附件首次发布为不存在。
+    在此之上逐件看最近一次非撤回的 documents 轮是否已经承接了这件外部版本：满足条件时 B 换成那一轮实际处理的 E，
+    来源记为该轮与原件；不满足的沿原发布/恢复基线，不自动确认。
+    """
     archived = contract.get("archived") or {}
     mine = [s for s in live_materials(feature_root).get("sources", [])
             if s.get("kind") == "system" and s.get("class") == "AR" and (s.get("origin") or {}).get("ticket") == feature_root.name]
     design = feature_root / mine[0]["versions"][-1]["original"]["path"] if mine else None
     first_body = short_digest(design.read_bytes()) if design is not None and design.is_file() else None
-    return {"AR-design.md": archived.get("external_digest") or first_body,
-            "review.md": archived.get("review_digest"),
-            "design-review.md": archived.get("design_review_digest")}
+    out = {
+        "AR-design.md": {"digest": archived.get("external_digest") or first_body,
+                         "source": "发布记录" if archived.get("external_digest") else "首次发布的开发需求原件"},
+        "design-review.md": {"digest": archived.get("design_review_digest"),
+                             "source": "上一次发布的设计参考" if archived.get("design_review_digest") else None},
+    }
+    for name in ("AR-design.md", DESIGN):
+        carried = carried_external(feature_root, name)
+        if carried:
+            out[name] = {"digest": carried[0], "source": carried[1]}
+    return out
 
 
 def _selected(feature_root: Path, with_design: bool) -> tuple[tuple, bool]:
@@ -89,15 +104,15 @@ def _selected(feature_root: Path, with_design: bool) -> tuple[tuple, bool]:
     if not isinstance(req, dict) or not isinstance(req.get("design_reference"), bool):
         raise FlowError("取材回执里没有对接层给出的交付要求（delivery_requirements.design_reference）：这是对接层的缺口，"
                         "按目标系统的合同补上后重新取材再发布；不按本地有没有设计参考来猜")
-    names = {"AR-design.md", "review.md"} | ({DESIGN} if req["design_reference"] or with_design else set())
+    names = {"AR-design.md"} | ({DESIGN} if req["design_reference"] or with_design else set())
     return tuple(i for i in ITEMS if i[0] in names), req["design_reference"]
 
 
 def cmd_publish(feature_root: Path, project_root: Path, reply: str | None, with_design: bool = False) -> dict:
-    """发布前核一遍，**不上传**：资格、这一次交付的几件外部是不是我们知道的那一版、这次要交出去的差异、未决与未验证项。
+    """发布前核一遍，**不上传**：资格、这一次交付的几件外部是不是我们知道的那一版、这次要交出去的差异、蓝图待定与未验证项。
 
-    逐件比 B（上次允许覆盖的基线）、L（当前登记的本地件）与 E（刚取回的外部内容）：E=L 已完成，跳过；E=B 可写；
-    其余是别人改过或所有权未确认，列成冲突交人。人看过、确认仍要覆盖时带 `--reply "<原话>"` 再跑，
+    逐件比 B（上次允许覆盖的基线，含已承接的 documents 轮）、L（当前登记的本地件）与 E（刚取回的外部内容）：
+    E=L 已完成，跳过；E=B 可写；其余是别人改过或所有权未确认，列成冲突交人。人看过、确认仍要覆盖时带 `--reply "<原话>"` 再跑，
     原话连同这一件的 E 与 L 记进契约，只授权这一件的这一次覆盖。
     """
     _remote_only(feature_root)
@@ -115,10 +130,11 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None, with_
     for name, rel, _ in items:
         e = external[name].get("digest") if external[name].get("status") != "absent" else None
         local = short_digest((feature_root / Path(*rel)).read_bytes())
-        action = ("skip" if e == local else "write" if e == base[name]
+        action = ("skip" if e == local else "write" if e == base[name]["digest"]
                   else "authorized" if any(g.get("item") == name and g.get("external") == e and g.get("local") == local
                                            for g in granted) else "conflict")
-        rows.append({"item": name, "external": e, "baseline": base[name], "local": local, "action": action})
+        rows.append({"item": name, "external": e, "baseline": base[name]["digest"],
+                     "baseline_source": base[name]["source"], "local": local, "action": action})
     conflicts = [r for r in rows if r["action"] == "conflict"]
     if conflicts and reply:
         for r in conflicts:
@@ -136,20 +152,28 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None, with_
         last.read_text(encoding="utf-8").splitlines(keepends=True),
         (feature_root / Path(*STORY)).read_text(encoding="utf-8").splitlines(keepends=True),
         fromfile="上次发布", tofile="这一次"))[:12000] or "与上次发布逐字相同")
-    try:
-        topics = json.loads((feature_root / "AR" / "story-src" / "decisions.json").read_text(encoding="utf-8-sig"))["decisions"]
-    except (OSError, ValueError, KeyError) as exc:
-        raise FlowError(f"AR/story-src/decisions.json 读不出议题（{exc}）：未决项从它列") from exc
-    pending = [f"{t.get('id')} {t.get('title')}" for t in topics if t.get("status") == "open"]
+    pending, pending_gap = _blueprint_pending(feature_root)
     unverified = [line.strip() for line in gate_out.splitlines() if "建议照录" in line]
     named = "、".join(f"{r['item']}（外部 {r['external'] or '不存在'}，基线 {r['baseline'] or '不存在'}）" for r in conflicts)
     return {"publishable": not conflicts, "items": rows, "conflict": bool(conflicts),
-            "diff": diff, "open_topics": pending, "unverified": unverified,
+            "diff": diff, "pending_gaps": pending, **({"pending_unknown": pending_gap} if pending_gap else {}),
+            "unverified": unverified,
             "action": ("需求系统上这几件与上次允许覆盖的版本不同：" + named + "，不直接覆盖。"
                        "把外部改动与这次的差异摆给人——要并进来的走 `/story update`；人确认仍覆盖时带 `--reply \"<原话>\"` 再跑"
                        if conflicts else
-                       "把差异、未决议题与未验证项向人展示；这一单已有送审授权（交付选择选了送审，或明确要求 archive）就接着上传，"
-                       "还没有授权先请人授权；三件都读回一致再 `story_flow.py archived` 登记")}
+                       "把差异、蓝图里仍待定的事项与未验证项向人展示；这一单已有送审授权（交付选择选了送审，或明确要求 archive）就接着上传，"
+                       "还没有授权先请人授权；读回一致再 `story_flow.py archived` 登记")}
+
+
+def _blueprint_pending(feature_root: Path) -> tuple[list[str], str | None]:
+    """当前蓝图里仍待定的事项：gap 的 id、决定方与解锁条件。读不出照实说，不冒充「没有待定」。"""
+    from flow import native  # noqa: PLC0415 —— 只读原生蓝图
+    read = native.call(native.project_root_of(feature_root), "blueprint", "--blueprint", feature_root.name, "--purpose", "draft")
+    if read.get("status") != "ok":
+        return [], f"当前蓝图读不出（{read.get('status')}）：{native.issues_text(read)}——待定事项未知"
+    gaps = ((read.get("blueprint") or {}).get("decisions_and_gaps") or {}).get("gaps") or []
+    return ([f"{g.get('gap_id')}（决定方 {g.get('owner')}，解锁条件 {g.get('unlock_condition')}）"
+             for g in gaps if str(g.get("status") or "") in ("open_decision", "blocker")], None)
 
 
 def _record_delivery(feature_root: Path, rows: list[dict], basis: dict) -> None:
@@ -167,10 +191,10 @@ def _record_delivery(feature_root: Path, rows: list[dict], basis: dict) -> None:
 
 
 def _delivered(receipt: dict) -> list[tuple]:
-    """回执里这一次的交付集合（发布前核对记下的那一份），按 ITEMS 的顺序；没有、缺必需业务项，
+    """回执里这一次的交付集合（发布前核对记下的那一份），按 ITEMS 的顺序；没有、缺 Story 正文，
     或系统要求设计参考附件（对接层给的交付要求）而集合里没有它时为空——必交项不只信集合自己。"""
     names = {i.get("name") for i in (receipt.get("delivery") or {}).get("items") or []}
-    if not {"AR-design.md", "review.md"} <= names or (_required_design(receipt) and DESIGN not in names):
+    if "AR-design.md" not in names or (_required_design(receipt) and DESIGN not in names):
         return []
     return [i for i in ITEMS if i[0] in names]
 
@@ -187,7 +211,7 @@ def readbacks(feature_root: Path, since: str | None) -> list[str]:
         return [str(exc)]
     delivered = _delivered(receipt)
     if not delivered:
-        return ["取材回执里没有这一次的交付集合（或缺 Story 正文、Review 附件，或缺系统要求的设计参考附件）："
+        return ["取材回执里没有这一次的交付集合（或缺 Story 正文，或缺系统要求的设计参考附件）："
                 "先做发布前核对，它记下交付哪几件"]
     items = {i.get("name"): i for i in receipt.get("items") or []}
     since_at = datetime.fromisoformat(since) if since else None
@@ -287,13 +311,12 @@ def publication_record(feature_root: Path, blueprint_ref: dict | None, previous:
     names = [name for name, _, _ in delivered]
     out = feature_root / Path(*PUBLISHED)
     out.mkdir(parents=True, exist_ok=True)
-    copies = {"AR-design.md": "story.md", "review.md": "review.md", DESIGN: "design-review.md"}
+    copies = {"AR-design.md": "story.md", DESIGN: "design-review.md"}
     for name, rel, _ in delivered:
         shutil.copyfile(feature_root / Path(*rel), out / copies[name])
     digest = short_digest((feature_root / Path(*STORY)).read_bytes())
     design = DESIGN in names
     return {"at": now(), "items": names, "story_digest": digest,
-            "review_digest": short_digest((feature_root / Path(*REVIEW)).read_bytes()),
             "design_review_digest": short_digest((feature_root / Path(*DESIGN_REFERENCE)).read_bytes()) if design
             else previous.get("design_review_digest"),
             "design_blueprint_ref": blueprint_ref if design else previous.get("design_blueprint_ref"),
@@ -303,12 +326,11 @@ def publication_record(feature_root: Path, blueprint_ref: dict | None, previous:
 
 
 def cmd_archived(feature_root: Path, project_root: Path) -> dict:
-    """登记「叙事件已送审」：这一次交付集合（Story、Review，及系统要求或已请求的设计参考附件）都已上传并读回一致。
+    """登记「叙事件已送审」：这一次交付集合（Story 正文，及系统要求或已请求的设计参考附件）都已上传并读回一致。
     归档动作由数据对接层执行，本命令只记状态。
 
-    归档态是**流程状态**，落在流程契约里：装配脚本据它判定 `AR/review.md` 已归人所有，
-    此后重新渲染时人工区逐字保留、机器区按当前决策件重算，评审人的批注与回稿都留在那份文件里。判据在契约里，
-    与谁执行的归档无关——数据对接层由各部署环境自备实现，不随交付走。
+    归档态是**流程状态**，落在流程契约里：此后重新发布按逐件基线核外部有没有被别人改过。
+    判据在契约里，与谁执行的归档无关——数据对接层由各部署环境自备实现，不随交付走。
 
     **登记自带门禁**：先重跑一次 `story-build check`，通过才记——归档时 story 可能又改过，
     成文态那次的校验不算数。登记不可逆，凭据只认校验过的产物。
@@ -318,9 +340,8 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
         raise FlowError(
             "还没登记成文态：归档的是 story，story 没过 check 就归档等于把未校验的产物送审。"
             "先跑 `story_flow.py story --feature <名>`")
-    for rel in (STORY, REVIEW):     # 必需业务项；这一次实际交了哪几件由读回核对按交付集合核
-        if not (feature_root / Path(*rel)).is_file():
-            raise FlowError(f"{'/'.join(rel)} 不存在：归档件不全，无可登记的归档态")
+    if not (feature_root / Path(*STORY)).is_file():     # 必需业务项；这一次实际交了哪几件由读回核对按交付集合核
+        raise FlowError(f"{'/'.join(STORY)} 不存在：归档件不全，无可登记的归档态")
 
     checker = CORE_DIR / "story-build.mjs"
     # 走到这里需求系统那边已经写入并读回：失败只说本地登记没完成，下一步只补登记，不重新上传
@@ -339,7 +360,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
         raise FlowError(f"交付门没能启动（{exc}），归档态没有登记。这是运行环境问题：环境恢复后{again}") from exc
     if proc.returncode == 1:
         raise FlowError(
-            "交付门这次没通过，归档态没有登记。它核的是本地工作区当前的 Story、Review、设计参考与审查结果，"
+            "交付门这次没通过，归档态没有登记。它核的是本地工作区当前的 Story、设计参考与审查结果，"
             f"不是需求系统里那一份；按下面的输出处理它点名的问题后{again}。本地业务稿确实要改的，走 `/story update`。"
             "交付门原始输出：\n" + _said(proc))
     if proc.returncode != 0:
@@ -356,7 +377,7 @@ def cmd_archived(feature_root: Path, project_root: Path) -> dict:
     contract["archived"] = publication_record(feature_root, (contract.get("story_basis") or {}).get("blueprint_ref"),
                                               contract.get("archived"))
     save(feature_root, contract)
-    log(f"已登记归档态：{feature_root.name}——此后 AR/review.md 归人所有，重新渲染时人工区逐字保留")
+    log(f"已登记归档态：{feature_root.name}——外部现在就是这一次交付的这一版")
     # 归档成立不回滚；本轮还有没做完的工作同源说出来，算不出来不遮住已成功的登记
     try:
         step, action = next_step(feature_root, contract, live_materials(feature_root))

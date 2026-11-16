@@ -20,7 +20,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_knowledge_protocol as kp  # noqa: E402
 import test_neutral_knowledge as nk  # noqa: E402
-from test_review_modes import CHOICE_BODY, ModesCase, entry  # noqa: E402
 from test_writing_plan import ACCEPTANCE_LINE, PlanCase, with_chapter  # noqa: E402
 
 NOTES = """
@@ -189,20 +188,14 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         src = self.src()
         (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n背景。\n", encoding="utf-8")
         self.write_flow(self.answer())
-        (src / "decisions.json").write_text(json.dumps({"decisions": [
-            {"id": "D-4", "status": "settled", "title": "失败处理", "decider": "需求方",
-             "clarification": "失败后可默认再试一次"}]}, ensure_ascii=False), encoding="utf-8")
         task = self.reader_task()
         signed = task.split("### 人的原话记录", 1)[1].split("\n### ", 1)[0]
-        self.assertLess(task.index("### 人的原话记录"), task.index("### 登记成已定"), "作者解释排在人答前面")
         self.assertIn("第 1 轮设计问答 a1/Q1：失败怎么处理？", signed)
         self.assertIn("「失败后允许再试」", signed, "当时摆出的候选没带全")
         self.assertIn("「后续由负责人定」", signed, "当时摆出的候选没带全")
         self.assertIn("> 失败怎么处理先不定，后面负责人定", signed, "人答不是 reply 原文")
         self.assertIn("出处：RR/prd.md#3", signed)
         self.assertNotIn("可默认再试", signed, "作者解释混进了人的原话记录")
-        self.assertIn("失败后可默认再试一次", task.split("### 登记成已定", 1)[1], "作者解释没作为待核对象送到")
-        self.assertIn("引用的问答原话是依据，其余是作者的解释", task, "澄清正文里引用的人答没被当作可用依据送到")
         self.assertIn("没有已开始的同图增强", task.split("### 已有的同图增强（机械事实）", 1)[1], "已有增强的机械事实没送到")
 
     def test_only_effective_material_confirmations_are_shown(self) -> None:
@@ -243,34 +236,6 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         return proc.stdout
 
-    def test_each_open_decision_comes_with_its_options_for_a_verdict(self) -> None:
-        """U41：每条 open 议题带澄清原文，审查逐条给结论——只给标题时两个用例都放过了替人选边的正文。"""
-        src = self.src()
-        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
-        (src / "decisions.json").write_text(json.dumps({"decisions": [
-            {"id": "D-2", "status": "open", "title": "超时后是否自动重试", "decider": "需求方",
-             "clarification": "**要定的事**：超时之后怎么办。\n\n1. 自动重试一次\n2. 提示用户手动重试"},
-            {"id": "D-3", "status": "open", "title": "宽限期多长", "decider": "产品负责人",
-             "clarification": "**要定的事**：宽限期。\n\n1. 24 小时\n2. 48 小时"},
-            {"id": "D-1", "status": "settled", "title": "只做签约", "decider": "需求方", "clarification": "依据"}]},
-            ensure_ascii=False), encoding="utf-8")
-        task = self.reader_task()
-        self.assertLess(task.index("### 先核：仍开着的选择与正文的冲突"), task.index("### 审查对象"),
-                        "决定冲突要在逐章阅读之前核")
-        section = task.split("### 先核：仍开着的选择与正文的冲突", 1)[1].split("### 登记成已定", 1)[0]
-        self.assertIn("「核的先后」①逐条给结论", section, "没指到判法所在")
-        overlay = (self.ext / "rules" / "story-reader-rules.yaml").read_text(encoding="utf-8")
-        for needle in ("每条 open 写一句结论", "不按作者声称已覆盖的位置缩小范围", "稍后问人",
-                       "各选项（含保持待定）都会有的行为才是共同要求", "不授权其中任何一个备选"):
-            self.assertIn(needle, overlay, f"判法里少了「{needle}」")
-            self.assertEqual(1, task.count(needle), f"判法要随判据原文恰好送到一次：{needle}")
-            self.assertNotIn(needle, section, f"开着的选择那一节又抄了一份判法：{needle}")
-        for head, option in (("#### D-2 超时后是否自动重试", "  > 1. 自动重试一次"),
-                             ("#### D-3 宽限期多长", "  > 2. 48 小时")):
-            self.assertIn(head, section)
-            self.assertIn(option, section, "选项原文没带到审查者手上")
-        self.assertNotIn("D-1", section, "已定的归下一节")
-
     def test_upstream_diagrams_sit_next_to_every_section_that_carries_them(self) -> None:
         """原图与写作设计登记承接它的小节并排：那一节的正文、表、图都给；没登记的明说。"""
         inbox = self.feature_root / "inbox"
@@ -299,20 +264,6 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         unmapped = text.split("#### SR §4 #1", 1)[1]
         self.assertIn("作者没有指定承接位置", unmapped)
         self.assertIn("有没有漏讲", unmapped, "没指定位置的图要交审查者核相关关系")
-
-
-class AChoiceNeedsASuggestion(ModesCase):
-    def test_a_choice_without_a_suggestion_is_named(self) -> None:
-        body = CHOICE_BODY.split("**建议**", 1)[0].rstrip()
-        proc = self.build(entry("retry-owner", "choice", body))
-        self.assertNotEqual(0, proc.returncode)
-        self.assertIn("缺「**建议**」段", proc.stderr + proc.stdout)
-        self.assertEqual(0, self.build(entry("retry-owner", "choice", CHOICE_BODY)).returncode)
-
-    def test_a_confirm_needs_no_suggestion(self) -> None:
-        body = "**决策点**：甲。\n\n**依据**：产品负责人说「就这么做」。\n\n**结论与影响**：丙。"
-        self.assertEqual(0, self.build(entry("retry-owner", "confirm", body, status="settled")).returncode)
-
 
 class TheChapterTableIsSeededOnce(PlanCase):
     def test_a_table_picked_in_a_section_takes_the_chapter_seed(self) -> None:

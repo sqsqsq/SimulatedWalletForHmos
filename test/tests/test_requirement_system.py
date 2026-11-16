@@ -73,24 +73,22 @@ class SystemCase(unittest.TestCase):
 
     def write_spec_products(self) -> tuple[str, str]:
         story = "# 叙事件\n\n评审看的是这一份。\n"
-        notes = "# 评审记录\n\n草稿（待开发确认）\n"
         (self.feature / "AR").mkdir(parents=True, exist_ok=True)
         (self.feature / "AR" / "story.md").write_text(story, encoding="utf-8")
-        (self.feature / "AR" / "review.md").write_text(notes, encoding="utf-8")
         (self.feature / "blueprint").mkdir(parents=True, exist_ok=True)
         (self.feature / "blueprint" / "component-blueprint.review.md").write_text(DESIGN_REVIEW_TEXT, encoding="utf-8")
-        return story, notes
+        return story, ""
 
     def batch(self) -> Path:
         return self.feature / "inbox" / "fetch-test"
 
     def deliver(self) -> None:
-        """发布前核对记下的交付集合（`story_flow.py publish` 写进取材回执的 delivery）：本地三件的来源与此刻的摘要。"""
+        """发布前核对记下的交付集合（`story_flow.py publish` 写进取材回执的 delivery）：本地交付件的来源与此刻的摘要。"""
         path = self.feature / "AR" / "story-src" / "fetched.json"
         receipt = json.loads(path.read_text(encoding="utf-8"))
         receipt["delivery"] = {"prepared_at": "2099-01-01T00:00:00+00:00", "items": [
             {"name": name, "local": rel, "digest": short(self.feature / rel)}
-            for name, rel in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"),
+            for name, rel in (("AR-design.md", "AR/story.md"),
                               ("design-review.md", "blueprint/component-blueprint.review.md"))]}
         path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -188,7 +186,7 @@ class TestFetch(SystemCase):
 
 
 class TestArchive(SystemCase):
-    """归档是往系统上写三件：正文、评审记录附件、设计参考附件（蓝图原生评审投影的原字节），逐件写入并读回；
+    """归档是往系统上写 Story 正文与（系统要求时的）设计参考附件（蓝图原生评审投影的原字节），逐件写入并读回；
     本地只多一份系统正文的备份，回执记读回。"""
 
     def setUp(self) -> None:
@@ -197,21 +195,20 @@ class TestArchive(SystemCase):
         self.before = self.fetch()
         self.deliver()
 
-    def test_three_items_are_written_and_read_back(self) -> None:
+    def test_the_delivery_is_written_and_read_back(self) -> None:
         proc = self.story("archive", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
         receipt = self.receipt(proc)
         self.assertTrue(receipt["archived"])
         self.assertTrue(receipt["verified"])
         self.assertEqual(self.story_text, (self.system / AR / "design.md").read_text("utf-8"))
-        self.assertEqual(self.notes_text, (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
         self.assertEqual(DESIGN_REVIEW_TEXT, (self.system / AR / "attachments" / "design-review.md").read_text("utf-8"))
         backups = sorted((self.feature / ".backups" / "cloud").glob("design-*.md"))
         self.assertEqual(1, len(backups))
         self.assertEqual(AR_TEXT, backups[0].read_text("utf-8"))
         self.assertEqual(f".backups/cloud/{backups[0].name}", receipt["backupPath"])
         items = self.items()
-        for name, local in (("AR-design.md", "AR/story.md"), ("review.md", "AR/review.md"), ("design-review.md", "blueprint/component-blueprint.review.md")):
+        for name, local in (("AR-design.md", "AR/story.md"), ("design-review.md", "blueprint/component-blueprint.review.md")):
             item = items[name]
             self.assertEqual("fetched", item["status"], item)
             self.assertEqual(short(self.feature / local), item["digest"])
@@ -259,15 +256,15 @@ class TestArchive(SystemCase):
     def test_a_change_after_the_preflight_stops_before_any_write(self) -> None:
         """预检之后有人在系统上写了附件：一件都不写。"""
         (self.system / AR / "attachments").mkdir(parents=True, exist_ok=True)
-        (self.system / AR / "attachments" / "review.md").write_text("评审人在线上改的\n", encoding="utf-8")
+        (self.system / AR / "attachments" / "design-review.md").write_text("评审人在线上改的\n", encoding="utf-8")
         proc = self.story("archive", AR)
         self.assertEqual(1, proc.returncode)
         self.assertIn("预检之后又变了", self.receipt(proc)["error"])
         self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
-        self.assertEqual("评审人在线上改的\n", (self.system / AR / "attachments" / "review.md").read_text("utf-8"))
+        self.assertEqual("评审人在线上改的\n", (self.system / AR / "attachments" / "design-review.md").read_text("utf-8"))
 
     def test_a_failed_item_keeps_the_written_ones_and_a_retry_skips_them(self) -> None:
-        """第三件写不进去：前两件已写并读回，第三件记失败；重新取材后重试，已写的两件判相同、不再写。"""
+        """设计参考附件写不进去：正文已写并读回，附件记失败；重新取材后重试，已写的正文判相同、不再写。"""
         target = self.system / AR / "attachments" / "design-review.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("旧附件\n", encoding="utf-8")
@@ -278,8 +275,8 @@ class TestArchive(SystemCase):
         proc = self.story("archive", AR)
         self.assertEqual(1, proc.returncode)
         items = self.items()
-        self.assertEqual(("fetched", "fetched", "failed"),
-                         tuple(items[n]["status"] for n in ("AR-design.md", "review.md", "design-review.md")))
+        self.assertEqual(("fetched", "failed"),
+                         tuple(items[n]["status"] for n in ("AR-design.md", "design-review.md")))
         self.assertNotIn("checkedAt", items["design-review.md"])
         # 正文已真实覆盖：覆盖关联记在回执顶层，附件失败不撤销它，重新取材也保留
         wrote = self.receipt_file()["body_write"]
@@ -294,19 +291,19 @@ class TestArchive(SystemCase):
         proc = self.story("archive", AR)
         self.assertEqual(0, proc.returncode, proc.stderr)
         items = self.items()
-        self.assertEqual(("same", "same", "fetched"),
-                         tuple(items[n]["status"] for n in ("AR-design.md", "review.md", "design-review.md")))
+        self.assertEqual(("same", "fetched"),
+                         tuple(items[n]["status"] for n in ("AR-design.md", "design-review.md")))
         self.assertEqual(DESIGN_REVIEW_TEXT, target.read_text("utf-8"))
         self.assertEqual(wrote, self.receipt_file()["body_write"], "续传时正文没再写，覆盖关联却变了")
 
     def test_a_local_change_after_the_publish_check_stops_before_any_write(self) -> None:
         """发布前核对记下交付集合之后本地又改了一件：一件都不写，报出哪件变了。"""
-        (self.feature / "AR" / "review.md").write_text(self.notes_text + "核对之后补的一句\n", encoding="utf-8")
+        (self.feature / "AR" / "story.md").write_text(self.story_text + "核对之后补的一句\n", encoding="utf-8")
         proc = self.story("archive", AR)
         self.assertEqual(1, proc.returncode)
-        self.assertIn("AR/review.md 在发布前核对之后又变了", self.receipt(proc)["error"])
+        self.assertIn("AR/story.md 在发布前核对之后又变了", self.receipt(proc)["error"])
         self.assertEqual(AR_TEXT, (self.system / AR / "design.md").read_text("utf-8"))
-        self.assertFalse((self.system / AR / "attachments" / "review.md").exists())
+        self.assertFalse((self.system / AR / "attachments" / "design-review.md").exists())
 
     def test_without_a_delivery_set_nothing_is_written(self) -> None:
         """取材之后没做发布前核对（回执里没有交付集合）：一件都不写，要求先核对。"""
@@ -321,7 +318,6 @@ class TestArchive(SystemCase):
         local = self.project / "doc" / "features" / "ISSUE-70002" / "AR"
         local.mkdir(parents=True)
         (local / "story.md").write_text("# 叙事件\n", encoding="utf-8")
-        (local / "review.md").write_text("# 评审记录\n", encoding="utf-8")
         proc = self.story("archive", "ISSUE-70002")
         self.assertEqual(1, proc.returncode)
         self.assertFalse((self.system / "ISSUE-70002").exists())

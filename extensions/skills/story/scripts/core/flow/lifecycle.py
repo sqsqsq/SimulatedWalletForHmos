@@ -166,16 +166,16 @@ def step_action_questions(ask: dict) -> str:
 
 
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
-    """登记「Story 已成文」：按当前蓝图写成、经独立审查的 story 与 review 就是要交付的这一份。
+    """登记「Story 已成文」：按当前蓝图写成、经独立审查的 Story 就是要交付的这一份。
 
-    **登记只读核对，不改被审对象**：附录重投、编号与 Review 渲染在准备审查时已经做完
+    **登记只读核对，不改被审对象**：附录重投与编号在准备审查时已经做完
     （`story-build review --action prepare`），登记这一步再动它们，审的就不是登记的那一份。依次核：
 
     1. 全篇结构检查（`story-build check`）通过；
     2. 这一份的独立审查结果（`story-build review --action check`）是 pass 或 warn——审的是现在这份；
        准备时没有可用的独立读者则如实记为未审（unreviewed），同样可登记，披露随结果；
     3. 这一刻的成文依据（`story-build basis`）：蓝图引用、设计采用的来源、激活知识摘要与材料索引摘要，
-       加上 Story、Review、决策登记与写作设计的原始字节指纹。
+       加上 Story 与写作设计的原始字节指纹。
 
     都成立才一次写入新依据；任一步不成立照实报出，已有的登记与依据原样保留（派生为待同步）。
     依据与已登记的相同时什么都不改，登记时刻也不换：成文时刻是这份稿的业务事实。
@@ -240,11 +240,11 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
         raise FlowError(f"story-build {name} 没有正常结束，成文没有登记。已完成：{'；'.join(done) or '无'}。"
                         f"这不是业务稿的问题，不要为它改真源或草稿：{_not_the_product(2)}，修好后{rerun}。原始输出：\n" + detail)
 
-    # 登记记下 story、review 与它们据以成文的决策登记、写作设计此刻的指纹：之后 `story-build check`
+    # 登记记下 Story 与它据以成文的写作设计此刻的指纹：之后 `story-build check`
     # 与流程路由拿它核「登记之后改过没有」，改过就重新审查、重新登记。
     #
     # 登记不动 `story-src/` 里的任何东西：章草稿、候选池、映射表都留在原地。
-    # 它们走不漏到读者手上——归档只上传 story.md、review.md 与蓝图的原生评审投影，`story-src/` 整层
+    # 它们走不漏到读者手上——归档只上传 story.md 与按需的设计参考投影，`story-src/` 整层
     # 留在本地。留着的用处是实的：出了问题，它们是唯一能看出「这份 story 是怎么
     # 写出来的」的现场；登记之后要改某一章，手上也才有可改的东西。
     # 材料索引摘要随登记记下：update 以 documents 收口时据它认「登记之后来的新材料有没有经过这次成文」

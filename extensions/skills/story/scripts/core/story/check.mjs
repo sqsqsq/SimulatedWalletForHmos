@@ -6,8 +6,6 @@
  * 附录的归附录、图片的归图片、来源的归来源、章内的归 chapter——同一个错由两处判，
  * 作者会收到两条说法不同的报错。
  */
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { chapterProblems } from './chapter.mjs';
 import { carryTargets, readWritingPlan, selectedStructure } from './writing-plan.mjs';
 import {
@@ -24,10 +22,9 @@ import {
 } from './document.mjs';
 import { strayReadingLinks } from './figure-view.mjs';
 import { imageProblems } from './images.mjs';
-import { decisionProblems } from './review.mjs';
 import { materialListProblems, redactMaterialLinks, sourceProblems } from './sources.mjs';
 import {
-  formatHits, scanBrokenImages, scanLanguageRedline, scanLocalPaths,
+  formatHits, scanLanguageRedline, scanLocalPaths,
 } from './language.mjs';
 
 function groupedProblems(problems, marks) {
@@ -153,9 +150,6 @@ export function storyCheck(ctx, { registration = true } = {}) {
     }
   }
 
-  mark('⑤ 决策登记字段齐备');
-  problems.push(...decisionProblems(ctx));
-
   mark('④ 图片身份');
   {
     const out = imageProblems(ctx, storyText);
@@ -169,7 +163,6 @@ export function storyCheck(ctx, { registration = true } = {}) {
   // 归档件随需求上传，评审者手上没有这个仓：点不开的引用他不知道是坏的。
   // 判定形态在 language.mjs，这里只调。附录里由真源投影的机器区不在这里报：
   // 它没有作者，报在这里作者删掉、下一次投影又写回来——那些问题收到 ⑩b 报到真源。
-  const reviewText = readText(ctx.reviewPath) ?? '';
   // 材料清单里的**原文链接是唯一允许仓内路径出现的位置**：读者据它把那份材料找出来。
   // 豁免只到这一节的链接语法为止——正文里的仓内路径照拦，这一节里链接之外的文字也照拦。
   const storyForPaths = redactMaterialLinks(storyText, ctx);
@@ -179,23 +172,13 @@ export function storyCheck(ctx, { registration = true } = {}) {
   // story 的命中按行分三处：投影区的留给 ⑩b 报到真源；章正文里的由 ⑪ 按章报（与章提交同一实现）；
   // 这里只报章之外那一段（大标题与前言）
   const firstChapter = sections.length ? sections[0].at + 1 : storyLines.length + 1;
-  const authored = (label, hits, what, hitOf) => (label !== 'story' ? hits : hits.filter((h) => {
+  const authored = (hits, what, hitOf) => hits.filter((h) => {
     const zone = zones.get(h.line - 1);
     if (zone) zoneHits.push({ zone, line: h.line, what, hit: hitOf(h) });
     return !zone && h.line < firstChapter;
-  }));
-  for (const [label, text] of [['story', storyForPaths], ['review', reviewText]]) {
-    if (!text) continue;
-    for (const [what, kind, hits, hitOf] of [
-      ['仓内路径', 'local', scanLocalPaths(text, ctx.projectRoot), h => h.path],
-      // story 的图片断链逐章判（见 ⑪，与章提交同一处）；这里只剩 review 那一份
-      ['图片断链', 'image', label === 'story' ? []
-        : scanBrokenImages(text, path.dirname(ctx.storyPath), fs, path), h => h.path],
-    ]) {
-      const own = authored(label, hits, what, hitOf);
-      if (own.length) problems.push(`${label}.md 出现${what} ${own.length} 处：${formatHits(own, kind)}`);
-    }
-  }
+  });
+  const pathHits = authored(scanLocalPaths(storyForPaths, ctx.projectRoot), '仓内路径', h => h.path);
+  if (pathHits.length) problems.push(`story.md 出现仓内路径 ${pathHits.length} 处：${formatHits(pathHits, 'local')}`);
 
   // 规约编号取激活清单：判据全部是数据，不猜。
   const kEntries = activeKnowledgeEntries(ctx);
@@ -209,26 +192,18 @@ export function storyCheck(ctx, { registration = true } = {}) {
   const redline = ctx.contract.language_redline ?? {};
   if (Array.isArray(redline.kinds) && redline.kinds.length) {
     const appendix = appendixChapter(ctx.contract);
-    const kindOf = k => (typeof k === 'string' ? k : k?.kind);
-    for (const [label, text, opts] of [
-      ['story', storyForPaths, { kinds: redline.kinds, appendixTitle: appendix?.title,
-        ruleIds: kEntries.map(e => e.id), sourceTags: redline.source_tags, projectRoot: ctx.projectRoot }],
-      ['review', reviewText, { kinds: redline.kinds.filter(k => kindOf(k) === 'doc_coordinate'),
-        projectRoot: ctx.projectRoot }],
-    ]) {
-      if (!text) continue;
-      const own = authored(label, scanLanguageRedline(text, opts), '', h => h);
-      const groups = new Map();
-      for (const h of own) {
-        const key = `${h.kind}|${h.hint}`;
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(h);
-      }
-      for (const list of groups.values()) {
-        const all = list.map(h => `${h.line} 行「${h.hits.join('」「')}」`).join('，');
-        const why = [...new Set(list.map(h => h.why).filter(Boolean))].join('、');
-        problems.push(`${label}.md 出现${list[0].label} ${list.length} 处（${all}）${why ? `，${why}` : ''}——${list[0].hint}`);
-      }
+    const own = authored(scanLanguageRedline(storyForPaths, { kinds: redline.kinds, appendixTitle: appendix?.title,
+      ruleIds: kEntries.map(e => e.id), sourceTags: redline.source_tags, projectRoot: ctx.projectRoot }), '', h => h);
+    const groups = new Map();
+    for (const h of own) {
+      const key = `${h.kind}|${h.hint}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(h);
+    }
+    for (const list of groups.values()) {
+      const all = list.map(h => `${h.line} 行「${h.hits.join('」「')}」`).join('，');
+      const why = [...new Set(list.map(h => h.why).filter(Boolean))].join('、');
+      problems.push(`story.md 出现${list[0].label} ${list.length} 处（${all}）${why ? `，${why}` : ''}——${list[0].hint}`);
     }
   }
 

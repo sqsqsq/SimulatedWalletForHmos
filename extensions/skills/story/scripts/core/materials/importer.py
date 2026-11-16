@@ -62,6 +62,8 @@ CLASSES = ("RR", "SR", "AR", "UX", "IMAGES", "MEETING")
 SYSTEM_ROLES = ("RR", "SR", "AR")
 
 INBOX = ("inbox",)
+#: 现收件箱的评审用途区：update 从这里取评审输入；材料导入只跳过这一精确子树，不按文件名含 review 排除材料
+REVIEW_SUBDIR = "review"
 #: 版本留存与覆盖前备份都在需求目录的 `.backups/local/`
 BACKUP = (".backups", "local")
 ASSETS, UX_DIR = "assets", "assets/ux"
@@ -138,7 +140,9 @@ def scan_sources(inbox: Path) -> list[Path]:
     """递归收件：任意深度的普通文件，按相对路径排序。
 
     每一层的点目录与点文件是控制件、README 是说明书，都不收；空目录没有条目。
-    链接（含目录联接）不跟随：跟过去就可能读到收件箱之外的东西，而登记的路径还写在收件箱里。
+    **只跳过精确的评审用途区 `inbox/review/` 子树**：它由 update 取得，不是需求材料；名字里带 review 的其它普通
+    文件与目录照常递归——按文件名关键词排除会把正常材料一起丢掉。链接（含目录联接）不跟随：
+    跟过去就可能读到收件箱之外的东西，而登记的路径还写在收件箱里。
     """
     if not inbox.is_dir():
         return []
@@ -149,6 +153,8 @@ def scan_sources(inbox: Path) -> list[Path]:
     def walk(directory: Path) -> None:
         for path in sorted(directory.iterdir()):
             if path.name.startswith("."):
+                continue
+            if path.is_dir() and path.parent == inbox and path.name == REVIEW_SUBDIR:
                 continue
             if path.is_symlink() or path.is_junction() or not path.resolve().is_relative_to(root):
                 raise ImportError_(f"「{source_key(inbox, path)}」是链接或指到收件箱之外："

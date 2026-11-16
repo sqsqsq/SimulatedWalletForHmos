@@ -1,8 +1,8 @@
 """回看清单：十章齐后作者逐条处置的对象，由脚本枚举与定位，不判去向。
 
-清单五类各有确定的来源——初筛表里「还要核实」那一格非空的行、决策登记的未决与已定、
-骨架里的 `待核：` 行、正文里每张图所在的节。这一组锁的是「枚举对不对得上来源」：
-表外的行、占位的「—」不算疑点；图按它所在的节定位。
+清单三类各有确定的来源——初筛表里「还要核实」那一格非空的行、骨架里的 `待核：` 行、
+正文里每张图所在的节。这一组锁的是「枚举对不对得上来源」：表外的行、占位的「—」不算疑点；
+图按它所在的节定位。
 
 测不了的是作者处置得对不对——那归独立审查拿同一张清单复核。
 """
@@ -38,10 +38,6 @@ ANALYSIS = """# 需求分析
 |---|---|
 | 不该算 | 这一行不在初筛表里 |
 """
-DECISIONS = {"decisions": [
-    {"id": "D1", "status": "open", "title": "超时后由谁发起重试"},
-    {"id": "D2", "status": "settled", "title": "本机只保存到提交成功"},
-]}
 STORY = ("# AR1 甲需求\n\n## 业务流程\n\n### 总览\n\n先说一句这张图讲什么。\n\n"
          "```mermaid\ngraph TD\nA-->B\n```\n\n## 功能说明\n\n正文，没有图。\n\n"
          "```text\n不是图\n```\n")
@@ -64,7 +60,6 @@ class TheListComesFromItsSources(unittest.TestCase):
         src = self.root / "AR" / "story-src"
         src.mkdir(parents=True)
         (src / "init-analysis.md").write_text(ANALYSIS, encoding="utf-8")
-        (src / "decisions.json").write_text(json.dumps(DECISIONS, ensure_ascii=False), encoding="utf-8")
         plan = PLAN_FIXTURE.read_text(encoding="utf-8")
         plan = with_chapter(plan, "02-terms", "- 本章主线：解释等待态\n- 待核：等待态这个词评审人认不认得")
         plan = with_chapter(plan, "06-features", "- 本章主线：x\n#### 本地数据\n- 待核：保存多久由谁定")
@@ -80,7 +75,7 @@ class TheListComesFromItsSources(unittest.TestCase):
             "const wp = await import(pathToFileURL(path.join(core, 'writing-plan.mjs')).href);"
             "const src = path.join(root, 'AR', 'story-src');"
             "const ctx = {contract: JSON.parse(fs.readFileSync(contractPath, 'utf-8')), featureRoot: root,"
-            " srcDir: src, decisionsPath: path.join(src, 'decisions.json'),"
+            " srcDir: src,"
             " templatePath: path.join(src, 'story-template.md'), storyPath: path.join(root, 'AR', 'story.md')};"
             "const story = fs.readFileSync(ctx.storyPath, 'utf-8');"
             "const items = recheck.recheckItems(ctx, wp.readWritingPlan(ctx), story);"
@@ -100,9 +95,6 @@ class TheListComesFromItsSources(unittest.TestCase):
         doubts = self.of(got, "初筛疑点")
         self.assertEqual(["SR §3 接口", "SR §4 失败"], [d["where"] for d in doubts])
         self.assertEqual("修改设置走哪个接口没写", doubts[0]["text"])
-        self.assertEqual([("D1", "超时后由谁发起重试")],
-                         [(d["where"], d["text"]) for d in self.of(got, "未决")])
-        self.assertEqual(["D2"], [d["where"] for d in self.of(got, "已定取舍")])
         self.assertEqual({("02-terms", "等待态这个词评审人认不认得"), ("06-features·本地数据", "保存多久由谁定")},
                          {(d["where"], d["text"]) for d in self.of(got, "骨架待核")})
         self.assertEqual(["业务流程·总览"], [d["where"] for d in self.of(got, "图")])
@@ -112,10 +104,10 @@ class TheListComesFromItsSources(unittest.TestCase):
         self.assertIn("这句话材料里有吗", rows)
         self.assertIn("材料给的靠得住吗", rows)
         self.assertNotIn("不该算", rows, "初筛表之外的行被当成了疑点")
-        self.assertIn("[未决] D1：超时后由谁发起重试", rows)
+        self.assertIn("[骨架待核]", rows)
 
     def test_nothing_to_list_is_said_plainly(self) -> None:
-        for name in ("init-analysis.md", "decisions.json", "story-template.md"):
+        for name in ("init-analysis.md", "story-template.md"):
             (self.root / "AR" / "story-src" / name).unlink()
         (self.root / "AR" / "story.md").write_text("# AR1\n\n## 背景\n\n正文。\n", encoding="utf-8")
         got = self.items()

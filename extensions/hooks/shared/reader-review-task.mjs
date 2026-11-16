@@ -22,7 +22,6 @@ import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scrip
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
 import { originalAnswerRows } from './review-inputs.mjs';
 import { carryTargets, useEffectiveChapters } from '../../skills/story/scripts/core/story/writing-plan.mjs';
-import { decisionList } from '../../skills/story/scripts/core/story/review.mjs';
 import { readingWork } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { reviewObject } from '../../skills/story/scripts/core/story/review-object.mjs';
 import { reportFormat } from '../../skills/story/scripts/core/story/review-report-contract.mjs';
@@ -70,50 +69,6 @@ function meetingTopicRows(src) {
           : ['- **当前结果**（doc-refresh.md）：',
             ...doc.lines.slice(h.at + 1, headingEnd(doc, h)).filter(l => l.trim()).map(l => `  > ${l}`)]));
     }
-  }
-  return out;
-}
-
-/**
- * 登记表的两问，两类条目都连同作者写的澄清正文原样摆出来：
- * 仍开着的选择有没有被正文替人选了一边——**逐条给结论**，对照的是各选项的实际后果；
- * 登记成已定的那几条 —— **判的是「这个结论谁给的」**。
- *
- * 只给 id 与标题判不了这两件事：替人选边要拿选项原文去对正文，已定的结论要拿依据原文
- * 回关卡人签、问答原话、材料、会议原话与评审记录去对。
- *
- * 一条都没有时也说出来：`settled` 一条不登记同样可能是漏登记。
- */
-function decisionRows(decisionsPath) {
-  const all = decisionList(readJsonOrNull(decisionsPath));
-  if (!all) return ['', '### 登记成已定的那几条', '', '`AR/story-src/decisions.json` 读不出登记列表——这一节未取得，未验证。'];
-  const open = all.filter(d => d?.status === 'open');
-  const settled = all.filter(d => d?.status === 'settled');
-  const out = ['', '### 先核：仍开着的选择与正文的冲突（逐章核查之前做）', '',
-    open.length ? '按判据「核的先后」①逐条给结论，写进回复；替人选了一边的同时记一条发现。'
-      : '本轮没有仍开着的条目。'];
-  for (const d of open) {
-    out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
-      `- **该谁定**：${String(d.decider ?? '').trim() || '（没写）'}`,
-      '- **作者写的澄清正文**（选项与各自的后果在这里）：',
-      ...String(d.clarification ?? '（没写）').split(/\r?\n/).map(l => `  > ${l}`));
-  }
-  return [...out, ...settledDetail(settled)];
-}
-
-function settledDetail(settled) {
-  const out = ['', '### 登记成已定的那几条：结论是谁给的', '',
-    '按判据「核的先后」①回关卡人签、澄清正文里引用的问答原话、材料与评审记录核；引用的原话与作者的解释分开看。'];
-  if (!settled.length) {
-    out.push('', '本轮没有登记成已定的条目。');
-    return out;
-  }
-  for (const d of settled) {
-    out.push('', `#### ${d.id ?? '（无编号）'} ${String(d.title ?? '').trim()}`, '',
-      `- **该谁定**：${String(d.decider ?? '').trim() || '（没写）'}`,
-      `- **评审时要人做什么**：${String(d.review_mode ?? '').trim() || '（没写）'}`,
-      '- **澄清正文**（引用的问答原话是依据，其余是作者的解释）：',
-      ...String(d.clarification ?? '（没写）').split(/\r?\n/).map(l => `  > ${l}`));
   }
   return out;
 }
@@ -235,11 +190,11 @@ function objectRows(projectRoot, feature, contract, { rows, problems, alias }) {
 const reading = () => ['', '### 怎么读', '',
   '派审载体写的是哪种情形，就按哪种读：',
   '- **首次阅读**（载体写「先首读」）：你已只读 `AR/story.md` 做完首读，首读结论写进回复；下面按顺序完整核源。',
-  '- **复核**（载体写「复核」并给原报告）：通读当前 `AR/story.md` 与 `AR/review.md`，逐条核原报告的问题现在是否成立，'
+  '- **复核**（载体写「复核」并给原报告）：通读当前 `AR/story.md`，逐条核原报告的问题现在是否成立，'
   + '再按这一版改动实际涉及的行为与引用，沿下面的顺序回查受影响的来源与设计；你没有经手原报告那一轮、或影响说不清时，按顺序完整核源。',
   '- **补正**（载体写「补正上一份回复」）：原回复的判断与核验充分就照用，只补它缺的部分；看不出原审查是否完整时按顺序完整核源。', '',
-  '1. 先读业务来源与人签：材料表里的业务原文与阅读稿（含设计未见引用的与冲突依据）、当前有效人答、会议原文与人的裁决、决策登记。',
-  '2. 通读待审的 Story 与 Review，对着第 1 步核业务完整、准确与可读；写作设计是作者的安排，作参考。',
+  '1. 先读业务来源与人签：材料表里的业务原文与阅读稿（含设计未见引用的与冲突依据）、当前有效人答、会议原文与人的裁决、本轮评审输入的原件。',
+  '2. 通读待审的 Story，对着第 1 步核业务完整、准确与可读；写作设计是作者的安排，作参考。',
   '3. 蓝图与它的原生评审投影、接口转写与映射、知识原文与工程文件按问题回查：业务判断依赖精确接口、数据、状态或知识义务，'
   + '或人读件与来源对不上时，读相关部分。共同设计的完整性与转写真实性由蓝图的独立质询负责，这里不重做整套技术质询；'
   + 'Story 与蓝图一致、蓝图已过质询或已登记缺口，都不豁免来源里有而两稿都漏掉的内容——漏在设计层的照样记，修正责任写设计负责方。',
@@ -287,9 +242,8 @@ export function readerReviewTask(projectRoot, feature, object = null) {
       + '与仍有效的旧约束冲突而没经有权人裁定的，记一条阻断发现。update-notes 是作者的判断，按原件与 before 核，不当依据。');
   }
 
-  // 人答先于逐章：原话记录是来源之一，对话里答过的问题由登记条目的澄清正文引用原话，二者都拿原话核
+  // 人答先于逐章：原话记录是来源之一，对话里答过的问题由本轮评审输入的原件引用原话，二者都拿原话核
   rows.push('', '### 人的原话记录：材料确认与设计问答（人答的来源之一，只陈列证据）', '', ...originalAnswerRows(root));
-  rows.push(...decisionRows(path.join(src, 'decisions.json')));
 
   // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
   // 摘要只算作者区（机器区整段换成区名）：投影刷新不换审查对象，作者改一个字就换。准备审查时 story 已回到
@@ -315,7 +269,7 @@ export function readerReviewTask(projectRoot, feature, object = null) {
 
   // 回看清单：作者各章写完后逐条处置的同一张清单，这里核每一条的去向成不成立。
   const planCtx = { contract, projectRoot, args: { feature }, featureRoot: root, srcDir: src, storyPath,
-    decisionsPath: path.join(src, 'decisions.json'), templatePath: path.join(src, 'story-template.md') };
+    templatePath: path.join(src, 'story-template.md') };
   // 本需求的有效章表（章序、展示标题、省略）：逐章问题按它列
   const plan = contract ? useEffectiveChapters(planCtx) : null;
   rows.push('', '### 回看清单：作者逐条处置的对象，去向由你核', '',

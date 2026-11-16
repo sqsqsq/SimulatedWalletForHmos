@@ -12,7 +12,7 @@
  * |---|---|
  * | pass / warn | 可以登记交付；warn 的建议在原样报告里 |
  * | fail | 读者结论 fail；或最近一份可消费回复判了 fail，之后还没有新的可消费回复（已知必修未复核） |
- * | unreviewed | 本次准备时没有可用的独立读者：如实记为未审，准备时把审查状态写进 Story 与 Review；不是业务完成、设计准入或发布质量结论 |
+ * | unreviewed | 本次准备时没有可用的独立读者：如实记为未审，准备时把审查状态写进 Story 交付章；不是业务完成、设计准入或发布质量结论 |
  * | report_missing | 还没准备，或回复不在 |
  * | report_unreceived | 回复在，开头两行合格，还没经准备接收 |
  * | report_invalid | 回复开头两行不合格，或接收之后原件被改、不在了 |
@@ -128,7 +128,7 @@ function replyNumbers(ctx, reportDir) {
 }
 
 /**
- * 准备这一次的审查。调用方已重投附录、编号、渲染 Review 并过了结构检查。
+ * 准备这一次的审查。调用方已重投附录、编号并过了结构检查。
  * 最近可消费的 pass / warn 正是当前对象时直接复用，不改动审查状态；否则调 `restage` 按本次读者情况重写审查状态，
  * 它返回审查状态有没有变（变了它已重新定稿），变了才重取审查对象；
  * 再给回复位置：同一份材料的回复还没来就沿用原位置，其余另起下一个编号。
@@ -194,7 +194,7 @@ function dispatchFor(ctx, record, task) {
       ? [`最近一份可消费的独立回复判了 fail（\`${last.report_file}\`），之后还没有新的可消费回复：`
         + '`story-build review --action check` 的结果是 fail（已知必修未复核），不能登记交付；'
         + '有可用的独立读者时以 `--reader task` 重新 `story-build review --action prepare`，按那时生成的载体复核。']
-      : ['未审披露已写进 Story 交付章与 Review 题头。直接跑 `story-build review --action check`（结果是 unreviewed），'
+      : ['未审披露已写进 Story 交付章。直接跑 `story-build review --action check`（结果是 unreviewed），'
         + '再按已有授权登记与交付；交付说明照实写本版未审。'])].join('\n')}\n`;
   }
   const out = [...head, `- 被审的 Story：\`${story}\``, `- 审查任务：\`${task}\``,
@@ -230,7 +230,7 @@ function dispatchProblem(ctx, was) {
 
 /**
  * 本次准备时有没有可用的独立读者，由主执行者按实际工具说明核过后给出（`--reader task|unavailable`）：
- * 没有就如实披露未审，原因写实际缺什么。结论存进 `ctx.disclosure`，Review 题头与 Story 交付章按同一个结论写披露。
+ * 没有就如实披露未审，原因写实际缺什么。结论存进 `ctx.disclosure`，Story 交付章按同一个结论写披露。
  *
  * @param {{kind: 'task'|'unavailable', reason?: string}} reader
  */
@@ -246,7 +246,7 @@ function disclosure(ctx) {
   return reason ? { reason } : null;
 }
 
-/** 审查状态的机器区：Story 交付章与 Review 题头共用这一份，区名取章节合同；没有未审披露返回空。 */
+/** 审查状态的机器区：只写在 Story 交付章，区名取章节合同；没有未审披露返回空。 */
 export function reviewStatusBlock(ctx) {
   const name = (ctx.contract.chapters ?? []).find(c => c.review_status)?.review_status;
   const rows = reviewStatusLines(disclosure(ctx));

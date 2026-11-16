@@ -195,11 +195,11 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         self.assertIn("还没登记成文", out.stdout + out.stderr)
 
     def test_the_normal_chain_reviews_registers_and_delivers(self) -> None:
-        """任务列出 Story、Review 与对照材料；审查通过之后登记，交付门放行并按授权问交付选择。"""
+        """任务列出 Story 与对照材料；审查通过之后登记，交付门放行并按授权问交付选择。"""
         original = self.reviewed("pass")
         kept = original.read_bytes()
         task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
-        for need in ("doc/features/REQ-DEMO/AR/story.md", "doc/features/REQ-DEMO/AR/review.md",
+        for need in ("doc/features/REQ-DEMO/AR/story.md",
                      "doc/extensions/rules/story-reader-rules.yaml"):
             self.assertIn(f"`{need}`", task)
         self.assertIn("`doc/features/REQ-DEMO/.backups/local/RR/prd-直接-v1.md` —— 设计采用的阅读稿", task, "设计采用的材料版本没进审查对象")
@@ -209,7 +209,7 @@ class TheStoryIsReviewedRegisteredAndDelivered(TheStoryIsReviewedRegisteredAndDe
         registered = self.register()
         self.assertEqual(0, registered.returncode, registered.stdout + registered.stderr)
         self.assertEqual("story_written", self.flow()["status"])
-        self.assertIn("AR/review.md", self.flow()["story_basis"]["files"])
+        self.assertIn("AR/story.md", self.flow()["story_basis"]["files"])
         out = self.check("--deliver")
         text = out.stdout + out.stderr
         self.assertEqual(0, out.returncode, text)
@@ -551,8 +551,6 @@ class AWrittenStoryFollowsItsPlanThroughRegistration(TheStoryIsReviewedRegistere
         self.reviewed("pass")
         first = self.register()
         self.assertEqual(0, first.returncode, first.stdout + first.stderr)
-        review = self.story.parent / "review.md"
-        human = review.read_text(encoding="utf-8").split("<!-- human", 1)[-1]
         plan = self.flow_path.parent / "story-template.md"
         text = plan.read_text(encoding="utf-8").replace(
             "### 08-acceptance\n", "### 08-acceptance\n- 展示标题：完成条件与验证\n", 1)
@@ -582,7 +580,6 @@ class AWrittenStoryFollowsItsPlanThroughRegistration(TheStoryIsReviewedRegistere
         self.reviewed("pass")
         again = self.register()
         self.assertEqual(0, again.returncode, again.stdout + again.stderr)
-        self.assertEqual(human, review.read_text(encoding="utf-8").split("<!-- human", 1)[-1], "评审记录的人工区被动了")
 
 
 class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
@@ -852,7 +849,7 @@ class ABrokenPreparationRecordIsAnInputFault(TheStoryIsReviewedRegisteredAndDeli
 
 
 class TheDesignReferenceIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDeliveredCase):
-    """设计参考是同根蓝图的原生评审投影：审查任务把它列作只读对照，待审的只有 Story 与 Review；本地不另存副本，
+    """设计参考是同根蓝图的原生评审投影：审查任务把它列作只读对照，待审的只有 Story；本地不另存副本，
     蓝图换版后旧登记不再交付。"""
 
     def projection(self) -> Path:
@@ -865,7 +862,7 @@ class TheDesignReferenceIsTheNativeProjection(TheStoryIsReviewedRegisteredAndDel
         objects, sources = task.split("待审（结论针对它们）：", 1)[1].split("只读对照（据以判断，不在这次改）：", 1)
         projection = self.projection().relative_to(self.root).as_posix()
         self.assertIn(f"`{projection}` —— 蓝图的原生评审投影（设计参考", sources)
-        self.assertEqual(["AR/review.md", "AR/story.md"],
+        self.assertEqual(["AR/story.md"],
                          sorted(line.split("`")[1].split("REQ-DEMO/", 1)[1] for line in objects.splitlines() if line.startswith("- `")))
         self.assertEqual(0, self.register().returncode)
         self.assertEqual(0, self.check("--deliver").returncode)
@@ -955,8 +952,6 @@ class AHostWithoutAReviewerDisclosesUnreviewed(TheStoryIsReviewedRegisteredAndDe
         chapter = story.split("## 9.", 1)[1].split("\n## ", 1)[0]
         self.assertIn("本版未经独立审查", chapter, "Story 交付章没有审查状态")
         self.assertIn("夹具宿主没有能接收自足只读任务的隔离读者", chapter, "未审披露没写实际原因")
-        review = (self.story.parent / "review.md").read_text(encoding="utf-8")
-        self.assertIn("本版未经独立审查", review.split("\n## ", 1)[0], "Review 题头之后、议题之前没有审查状态")
         before = self.tree()
         self.assertEqual(0, self.review("prepare").returncode)
         self.assertEqual(before, self.tree(), "同样的输入重跑准备改了字节")
@@ -1363,21 +1358,6 @@ class ReviewTaskReachesTheVerifierCase(unittest.TestCase):
 
 
 class ReviewTaskReachesTheVerifier(ReviewTaskReachesTheVerifierCase):
-    def test_an_open_choice_is_judged_against_the_current_objects(self) -> None:
-        """仍开着的选择在逐章核查之前、按判据「核的先后」①对着本次 Story、Review 与蓝图判，结论写进回复；不要求读 Spec。"""
-        src = self.root / "doc" / "features" / FEATURE / "AR" / "story-src"
-        (src / "decisions.json").write_text(json.dumps({"decisions": [{
-            "id": "D1", "status": "open", "title": "超时由谁释放", "decider": "需求负责人",
-            "clarification": "**要定的事**：超时由谁释放。"}]}, ensure_ascii=False), encoding="utf-8")
-        task = self.inject()
-        section = task.split("### 先核：仍开着的选择", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("写进回复", section)
-        self.assertIn("记一条发现", section)
-        self.assertIn("「核的先后」①", section)
-        for gone in ("Spec", "acceptance.yaml", "证据格"):
-            self.assertNotIn(gone, section, f"开着的选择还要对着「{gone}」判")
-        self.assertIn("本次采用的上游原件里没有图。", task)
-        self.assertNotIn("spec）里没有图", task)
 
     def test_the_task_carries_its_criteria(self) -> None:
         text = self.inject()
@@ -1462,9 +1442,6 @@ class ALargeTaskKeepsEveryItem(ReviewTaskReachesTheVerifierCase):
         images = [{"kind": "image", "paths": [f"assets/doc-{i}/p{i}.png"], "caption": f"页面{i}" + "说明" * (i % 5)}
                   for i in range(1, 13)]
         (src / "materials.json").write_text(json.dumps({"materials": images}, ensure_ascii=False), encoding="utf-8")
-        choices = [{"id": f"D{i}", "status": "open", "title": f"中性议题{i}" + "很长的标题" * (i % 4),
-                    "decider": "需求负责人", "clarification": f"**决策点**：第{i}件事。"} for i in range(1, 16)]
-        (src / "decisions.json").write_text(json.dumps({"decisions": choices}, ensure_ascii=False), encoding="utf-8")
         raw = "\n".join(f"第{i}行原话。" for i in range(1, 61))
         (src / "meetings" / "评审会" / "abcdef12").mkdir(parents=True)
         (src / "meetings" / "评审会" / "abcdef12" / "raw.md").write_text(raw, encoding="utf-8")
@@ -1473,8 +1450,6 @@ class ALargeTaskKeepsEveryItem(ReviewTaskReachesTheVerifierCase):
         (src / "meeting-notes.json").write_text(json.dumps({"meetings": [
             {"source": "评审会.md", "source_sha": "abcdef1234", "topics": topics}]}, ensure_ascii=False), encoding="utf-8")
         task = self.inject()
-        for c in choices:
-            self.assertEqual(1, task.count(f"#### {c['id']} {c['title']}\n"), c["id"])
         for tp in topics:
             self.assertEqual(1, task.count(f"#### 评审会@abcdef12/{tp['id']} {tp['title']}\n"), tp["id"])
         self.assertIn("第60行原话。", task, "最后一个话题的原话没带上")
@@ -1580,7 +1555,7 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
         """先按原材料独立判断，再用设计定位作者的安排——设计不是审查标准；方法只在判据文件。"""
         method = self.overlay_method()
         for needle in ("先独立想清楚", "写作设计", "设计漏掉的不因此算不在范围", "写了理由不等于理由成立",
-                       "还开着的决定被写成已定", "蓝图与已登记的判断", "正文提到过", "真实待决写清了边界",
+                       "仍开着的决定被写成已定的方案", "蓝图与已登记的判断", "正文提到过", "真实待决写清了边界",
                        "写明未验证与影响"):
             self.assertIn(needle, method, f"判据里没有「{needle}」")
         self.assertNotIn("acceptance.yaml", method, "Story 判据还指着 Spec 的验收文件")
@@ -1588,8 +1563,8 @@ class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
     def test_consistency_is_judged_on_two_layers(self) -> None:
         """原始决定对设计、设计对人读件各核一层：人读件忠实复述了与原始决定相反的蓝图主张，仍是阻断。"""
         method = self.overlay_method()
-        for needle in ("一致性分两层核", "原始决定（材料原文、会议原话、人的裁决、评审回稿）与蓝图的设计是否一致",
-                       "蓝图的设计与人读件", "仍是阻断发现，修正责任写回蓝图负责方",
+        for needle in ("一致性分两层核", "原始决定（材料原文、会议原话、人的原话与评审回流）与蓝图的设计是否一致",
+                       "蓝图的设计与 Story", "仍是阻断发现，修正责任写回蓝图负责方",
                        "结果未知", "脱敏值", "云侧的业务状态", "实际接入者"):
             self.assertIn(needle, method)
         task = self.inject()
@@ -1632,11 +1607,9 @@ class TheTaskMovesOnlyWithTheAuthorsInput(unittest.TestCase):
 
     def test_the_authors_input_still_moves_the_object(self) -> None:
         first = self.prepared()
-        decisions = self.flow_path.parent / "decisions.json"
-        data = json.loads(decisions.read_text(encoding="utf-8"))
-        decisions.write_text(json.dumps({**data, "no_pending": "作者改了理由"}, ensure_ascii=False), encoding="utf-8")
+        self.story.write_bytes(self.story.read_bytes() + "作者补的一句。\n".encode("utf-8"))
         again = self.prepared()
-        self.assertNotEqual(first["material_key"], again["material_key"], "决策登记改了，审查对象没变")
+        self.assertNotEqual(first["material_key"], again["material_key"], "Story 改了，审查对象没变")
 
 
 if __name__ == "__main__":

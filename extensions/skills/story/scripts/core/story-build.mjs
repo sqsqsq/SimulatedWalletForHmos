@@ -1,5 +1,5 @@
 /**
- * story 的登记、核对与校验 —— 十个命令，围绕**一份文档写成**这件事。
+ * story 的登记、核对与校验 —— 围绕**一份文档写成**这件事的命令。
  *
  * ## 成文怎么走
  *
@@ -11,21 +11,21 @@
  * ## 判据的边界
  *
  * 这里只判**确定性不变量**：章标题与顺序、编号、附录结构、图片身份与落点、
- * 语言红线、决策登记字段、材料清单形态、登记之后改过没有。凡是要读懂内容才判得了的
+ * 语言红线、写作设计与材料清单形态、登记之后改过没有。凡是要读懂内容才判得了的
  * ——讲清没讲清、贴不贴合、图题说的是不是这张图——都不在这里，归 verifier 的
  * 语义判据与真实结果观察。用字符串近似语义，模型只会照着字符串改。
  *
- * ## 十个命令
+ * ## 命令
  *
  * | 命令 | 做什么 |
  * |------|--------|
- * | `skeleton` | 预检流程与材料；建决策登记骨架、写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
+ * | `skeleton` | 预检流程与材料；建写作设计空壳、十章骨架（每章一个稳定章锚 + 一个待写 marker）与章草稿，给出当前输入 |
  * | `chapter` | 把一章的内容原子替换进 story.md，其余字节不动 |
  * | `project` | 附录机器区按当前真源（当前蓝图与它采用的来源）重投 |
  * | `check` | 上面那几条确定性不变量 |
- * | `build` | 由 `decisions.json` 渲染 `review.md`（机器区重算、人工区逐字节保留） |
  * | `number`| 给 `story.md` 重编号：章序按合同、小节序按出现顺序、图题按全篇顺序 |
  * | `basis` | 输出这一刻的成文依据（设计引用、设计采用的来源、知识摘要），登记与路由用它 |
+ * | `registration-check` | 登记前的组合只读核对：全篇检查（登记口径）→ 独立审查结果 → 成文依据，一个进程按序跑，输出一行 JSON |
  * | `review`| 独立人读审查：`--action prepare` 定稿并准备原生审查请求，`--action check` 核这一次的审查结果 |
  * | `view` | 正式图的两种形态：`--mode prepare` 给未管理的 Mermaid 图建源（`--id` 从源重建一块），`mermaid` 按源重铺，`svg` 把验收成立的图换成同 ID 的增强 SVG，`toggle` 一键切换；`status` 列每张图的增强进度，`review-request` / `review-check` 生成与核对 SVG 验收 |
  * | `archive` | 唯一的归档入口：交付门 → 取外部当前内容 → 发布前核 → 对接层上传与读回 → 核回执 → 登记归档态 |
@@ -53,7 +53,6 @@ import {
 import {
   fetchBatchDir, latestOf, materialsNotReady, missingSourceLine, relFromFeature, sourceStatus,
 } from './story/sources.mjs';
-import { cmdBuild, manualContent, registrationGap } from './story/review.mjs';
 import { cmdChapter, nextSteps } from './story/chapter.mjs';
 import { cmdCheck, storyCheck } from './story/check.mjs';
 import { readWritingPlan, useEffectiveChapters, writingPlanShell } from './story/writing-plan.mjs';
@@ -64,16 +63,15 @@ import {
 import { runPython, VIEW_OWNER, viewOwnerKey } from './flow/client.mjs';
 import { extensionRoot } from '../../../../hooks/shared/paths.mjs';
 
-const REVIEW_ACTIONS = ['prepare', 'check', 'manual'];
+const REVIEW_ACTIONS = ['prepare', 'check'];
 /** 命令与它做什么、要哪些命令参数（必需的写在 need）；解析与帮助读同一张表。无原型：只认表里自己的键。 */
 const COMMANDS = Object.assign(Object.create(null), {
-  skeleton: { what: '预检流程、材料、设计来源与决策登记，全过才建写作设计空壳、十章骨架与章草稿，并给出当前输入与下一步' },
+  skeleton: { what: '预检流程、材料与设计来源，全过才建写作设计空壳、十章骨架与章草稿，并给出当前输入与下一步' },
   chapter: { what: '把草稿里的一章原子替换进 AR/story.md，其余章一个字节不动；--omit 删掉写作设计定为不涉及的那一章',
     need: ['--chapter'], opts: ['--from', '--omit'] },
   project: { what: '附录机器区按当前真源（蓝图与它采用的来源）重投' },
   number: { what: '给 AR/story.md 重编号：章序按本需求的有效章表（写作设计骨架的章序），小节与图题按出现顺序' },
   check: { what: '只读核对确定性不变量；加 --deliver 判能不能交付，加 --registering 按登记前口径核', opts: ['--deliver', '--registering'] },
-  build: { what: '由 decisions.json 渲染 AR/review.md（人工区逐字节保留）' },
   basis: { what: '输出这一刻的成文依据（一行 JSON），登记与路由用它' },
   'registration-check': { what: '登记前的组合只读核对：全篇检查（登记口径）→ 独立审查结果 → 成文依据，一个进程按序跑，输出一行 JSON' },
   review: { what: `独立人读审查（--action ${REVIEW_ACTIONS.join('|')}）`, need: ['--action'],
@@ -267,20 +265,14 @@ function cmdBasis(ctx) {
 /**
  * 独立人读审查（`story/independent-review.mjs`）。
  *
- * - `prepare`：先把审查对象定成最终版——正式图建源、附录重投、编号、渲染 Review，全篇结构检查通过——再写审查任务，
+ * - `prepare`：先把审查对象定成最终版——正式图建源、附录重投、编号，全篇结构检查通过——再写审查任务，
  *   给出材料键与这一份回复的位置；最近一份可消费的 pass / warn 正是当前材料时给出原位置（reused）。`--reader` 是主执行者
  *   核过的独立读者情况：unavailable 时写未审披露。读者的回复原样落盘后以同样参数再跑一次，它接收这份回复并给下一步。
  * - `check`：只读核这一次的审查结果，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
- * - `manual`：评审记录里人写过的内容（写过字的议题、自由意见区），一行 JSON。
  */
 function cmdReview(ctx) {
   if (!REVIEW_ACTIONS.includes(ctx.args.action)) fail(`review 要 --action ${REVIEW_ACTIONS.join('|')}`);
-  if (ctx.args.action === 'manual') {
-    // 评审记录里人写过的内容（update 撤回判 Review 能不能动）：一行 JSON
-    process.stdout.write(`${JSON.stringify(manualContent(readText(ctx.reviewPath) ?? ''))}\n`);
-    return;
-  }
   if (ctx.args.action === 'check') {
     cmdReviewCheck(ctx);
     return;
@@ -296,7 +288,6 @@ function cmdReview(ctx) {
   const finalize = () => {
     cmdProject(ctx);
     cmdNumber(ctx);
-    cmdBuild(ctx);
     discloseInStory(ctx);
     const { problems } = storyCheck(ctx, { registration: false });
     if (problems.length) fail(`结构检查没过，审查对象还没成形——先按 \`story-build check\` 的报错改：\n  · ${problems.join('\n  · ')}`);
@@ -322,7 +313,7 @@ function cmdReview(ctx) {
       ? (out.known_fail
         ? [`[story-build review] 本版不派审：${out.disclosure}。最近一份可消费的独立回复判了 fail（${out.known_fail}），`,
           '  之后还没有新的可消费回复：check 的结果是 fail（已知必修未复核），不能登记交付；有可用的独立读者时以 --reader task 重新 prepare 复核。', '']
-        : [`[story-build review] 本版不派审：${out.disclosure}。未审披露已写进 Story 交付章与 Review 题头；`,
+        : [`[story-build review] 本版不派审：${out.disclosure}。未审披露已写进 Story 交付章；`,
           '  直接跑 story-build review --action check（结果是 unreviewed），再按已有授权登记与交付，交付说明照实写本版未审。', ''])
         .join('\n')
       : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为隔离读者的任务交出，`,
@@ -394,9 +385,6 @@ function skeletonPreflight(ctx) {
   // ④ 设计来源成立：蓝图、有效的评审投影、需求条目采用了本需求的材料版本
   const gaps = designGaps(ctx);
   if (gaps.length) problems.push(`设计来源或附录投影还不成立：\n  · ${gaps.join('\n  · ')}`);
-  // ⑤ 决策登记起手前就有议题，或写明本单无待决（只读）
-  const gap = registrationGap(ctx);
-  if (gap) problems.push(gap);
   if (problems.length) {
     fail(`起手预检没过，骨架没起，Story、草稿与写作设计都没写：\n${problems.map((p, i) => `${i + 1}. ${p}`).join('\n')}`
       + (skipped.length ? `\n没判（依赖上面的缺口，补齐后重跑 skeleton 再核）：\n${skipped.map(s => `  · ${s}`).join('\n')}` : ''));
@@ -552,7 +540,8 @@ function cmdArchive(ctx) {
   }
   process.stdout.write(`[story-build archive] 已归档并登记：${feature}（${plan.items.map(r => r.item).join('、')} 上传并读回核验成立；`
     + `覆盖前的系统正文备份在 ${receipt.backupPath ?? '对接层记录处'}）\n`);
-  if (plan.open_topics?.length) process.stdout.write(`[story-build archive] 带着未决议题送审：${plan.open_topics.join('；')}\n`);
+  if (plan.pending_unknown) process.stdout.write(`[story-build archive] ${plan.pending_unknown}\n`);
+  if (plan.pending_gaps?.length) process.stdout.write(`[story-build archive] 本次送审仍带蓝图待定事项：${plan.pending_gaps.join('；')}\n`);
   if (plan.unverified?.length) process.stdout.write(`[story-build archive] 未验证项：${plan.unverified.join('；')}\n`);
   // 登记返回的下一步原样带出：本轮还有没做完的工作（如已开始的同图增强）不被归档成功吞掉
   const after = jsonIn(reg.stdout);
@@ -619,11 +608,6 @@ async function main() {
     else if (args.command === 'check') await cmdCheck(ctx);
     else if (args.command === 'number') cmdNumber(ctx);
     else if (args.command === 'archive') cmdArchive(ctx);
-    else if (args.command === 'build') {
-      cmdBuild(ctx);
-      const launcher = writeLauncher(ctx.featureRoot, ctx.contract.local_reading_entry);
-      if (launcher) process.stderr.write(`[story-build] ${launcher}\n`);
-    }
   });
 }
 

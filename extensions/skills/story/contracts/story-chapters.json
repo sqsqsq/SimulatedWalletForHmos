@@ -198,15 +198,6 @@
       "同一件事只在一处完整表述——本章与其它章没有成段重复；图讲关系、表讲属性、文字讲理由算互补，验收独立判所必需的条件与数值重现也算必要，都不算重复"
     ]
   },
-  "decision_categories": [
-    {"key": "范围与交付"},
-    {"key": "业务规则"},
-    {"key": "交互与界面"},
-    {"key": "数据与隐私"},
-    {"key": "依赖与承载"},
-    {"key": "上线与开关"},
-    {"key": "质量指标"}
-  ],
   "gates": {
     "material_scope": {
       "options": [
@@ -220,9 +211,9 @@
     "gates": ["material_scope"]
   },
   "update_files": {
-    "editable": ["AR/story.md", "AR/story-src/decisions.json", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
+    "editable": ["AR/story.md", "AR/story-src/story-template.md", "AR/story-src/doc-refresh.md",
       "AR/story-src/drafts/**", "AR/story-src/figures/**"],
-    "regenerate": ["AR/review.md", "AR/story-src/materials.json"],
+    "regenerate": ["AR/story-src/materials.json"],
     "protected": ["inbox/**", "RR/**", "SR/**", "AR/design.md", "AR/story-src/upstream.md", "AR/story-src/answers/**",
       "assets/**", "blueprint/**",
       "AR/story-src/meetings/**", "AR/story-src/review/**", "AR/story-src/updates/**",
