@@ -649,6 +649,8 @@ python test/scripts/measure_run.py <同上> --json      # 需要机器读时
 
 ### 6.4 Story init 三轴评分
 
+**2.0.5载体适用说明**：依已定整版Spec及extension-acceptance@31，本版业务评审载体改为Story与实际需要的设计参考；下文历史Story/Review表述对2.0.4及以前保持。原Review有效议题/依据须在Story及蓝图承担，不能因退出文件删能力。三轴、90门槛、用户确认和证据规则不变；历史运行不换判据重算。
+
 每次获准运行真实 Story init 后评分。评分对象是该次运行的完整结果与过程；评价范围来自本轮已确认目标及需要保持的原有能力（AGENTS §4）。
 
 #### 评分项
