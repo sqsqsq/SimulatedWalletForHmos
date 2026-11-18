@@ -13,7 +13,7 @@
  *   node framework-access.mjs --project-root <根> --action feature --feature <原生 id> --phase <阶段>
  *        [--requirement-file <文件> | --requirement <原文>]（无 run 的 spec 恢复不出需求来源时给）
  *   node framework-access.mjs --project-root <根> --action sources  < 来源物化 JSON（stdin）
- *   node framework-access.mjs --project-root <根> --action feedback --blueprint <id>  < blueprint-review-feedback@1（stdin）
+ *   node framework-access.mjs --project-root <根> --action feedback --blueprint <id> [--questioning-candidate <第7块给的工程相对 candidate.yaml>]  < blueprint-review-feedback@1（stdin）
  *   node framework-access.mjs --project-root <根> --action feedback-related --blueprint <id> --ref <反馈文件工程相对路径>  < feedback_id 列表（stdin）
  *   node framework-access.mjs --project-root <根> --action feature-identity --feature <逻辑 id> [--report-phases <阶段,阶段>]
  *   node framework-access.mjs --project-root <根> --action phase-evidence --feature <逻辑 id> --phases <有序阶段,阶段>
@@ -29,6 +29,7 @@ import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { markdownLinks } from '../../skills/story/scripts/core/story/markdown-links.mjs';
+import { parseYaml } from './yaml.mjs';
 
 const loaded = new Map();
 
@@ -202,18 +203,116 @@ function checkSources(projectRoot, doc) {
 }
 
 /**
+ * 首次反馈的质询候选：**读候选只有这一处**。验证它属于本需求、本轮目录与候选字节 SHA 对应，
+ * 同目录 `task.md` 与独立 `reply.md` 都可读且有内容；用 harness 的同一 YAML 解析器取蓝图、组件与 revision。
+ * 候选只定位被评原件，不承担同意；目标/版本是否仍是当前由原生校验判。
+ */
+function readQuestioningCandidate(projectRoot, blueprintId, declared) {
+  const root = path.resolve(projectRoot);
+  const problems = [];
+  const rel = String(declared ?? '').trim().split('\\').join('/');
+  if (!rel) {
+    return { problems: ['首次反馈要带质询任务第 7 块给的工程相对 candidate.yaml 路径'], info: null };
+  }
+  if (path.isAbsolute(rel) || rel.split('/').includes('..')) {
+    return { problems: [`质询候选「${rel}」不是工程内的相对路径：按第 7 块给的位置写，不写盘上别的目录`], info: null };
+  }
+  let featuresDir = 'doc/features';
+  try {
+    featuresDir = JSON.parse(fs.readFileSync(path.join(root, 'framework.config.json'), 'utf-8'))?.paths?.features_dir ?? featuresDir;
+  } catch { /* 配置读不出时按约定目录；路径对不上会在下面报 */ }
+  const base = [featuresDir, blueprintId, 'blueprint', 'questioning'].join('/');
+  const folder = rel.slice(0, rel.lastIndexOf('/'));
+  const name = rel.slice(rel.lastIndexOf('/') + 1);
+  if (!rel.startsWith(`${base}/`) || name !== 'candidate.yaml' || folder.split('/').length !== base.split('/').length + 1) {
+    return { problems: [`质询候选「${rel}」不是本需求 ${blueprintId} 的 \`${base}/<候选字节 sha16>/candidate.yaml\`：`
+      + '按质询任务第 7 块给的位置补取'], info: null };
+  }
+  const round = folder.slice(folder.lastIndexOf('/') + 1);
+  const abs = path.join(root, ...rel.split('/'));
+  let bytes;
+  try { bytes = fs.readFileSync(abs); } catch (e) {
+    return { problems: [`质询候选 ${rel} 读不到（${e?.code ?? e?.message ?? e}）：从第 7 块所指的那次质询补取 candidate.yaml`], info: null };
+  }
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  if (round !== sha.slice(0, 16)) {
+    problems.push(`质询候选目录 ${round} 与候选字节摘要 ${sha.slice(0, 16)} 对不上：不是原生留下的那一份，按第 7 块补取`);
+  }
+  let candidate;
+  try {
+    candidate = parseYaml(bytes.toString('utf-8'));
+  } catch (e) {
+    problems.push(`质询候选 ${rel} 不是可解析的 YAML（${String(e?.message ?? e).split(/\r?\n/)[0]}）：按第 7 块的候选原件补取`);
+    candidate = null;
+  }
+  const task = path.join(path.dirname(abs), 'task.md');
+  const reply = path.join(path.dirname(abs), 'reply.md');
+  for (const [label, file] of [['任务 task.md', task], ['独立回复 reply.md', reply]]) {
+    let text = null;
+    try { text = fs.readFileSync(file, 'utf-8'); } catch { text = null; }
+    if (text === null || !text.trim()) {
+      problems.push(`质询候选同目录缺可读的${label}（${path.relative(root, file).split(path.sep).join('/')}）：`
+        + '这一轮还没有可核的质询原件，按第 7 块补齐后再交反馈');
+    }
+  }
+  if (candidate && typeof candidate !== 'object') {
+    problems.push(`质询候选 ${rel} 的内容不是对象：按原生质询候选原件补取`);
+    candidate = null;
+  }
+  if (candidate) {
+    if (String(candidate.blueprint_id ?? '') !== String(blueprintId)) {
+      problems.push(`质询候选的蓝图「${String(candidate.blueprint_id)}」不是本需求 ${blueprintId}：换成本需求的同轮候选`);
+    }
+    if (!String(candidate.component_id ?? '').trim() || Number.isNaN(Number(candidate.revision))) {
+      problems.push(`质询候选 ${rel} 缺 component_id 或 revision：按原生质询候选原件补取`);
+    }
+  }
+  const info = {
+    round, candidate: rel,
+    task: path.relative(root, task).split(path.sep).join('/'),
+    reply: path.relative(root, reply).split(path.sep).join('/'),
+    revision: candidate && !Number.isNaN(Number(candidate.revision)) ? Number(candidate.revision) : null,
+    blueprint_id: candidate ? String(candidate.blueprint_id ?? '') : null,
+    component_id: candidate ? String(candidate.component_id ?? '') : null,
+  };
+  return { problems, info };
+}
+
+/**
  * 核一份设计评审反馈（blueprint-review-feedback@1）的候选资格：原生只判每条够不够格进入调和（授权、证据、版本、目标地址），
  * 不判接受与否，也不说处理了没有。
+ * `questioningCandidate` 给了时按这一份质询候选绑定首次反馈：读候选只此一处，候选与任务/回复不齐或身份不符即不具备资格。
  */
-function checkFeedback(projectRoot, blueprintId, doc) {
+function checkFeedback(projectRoot, blueprintId, doc, questioningCandidate = null) {
   const native = loadNative(projectRoot);
+  const candidate = questioningCandidate ? readQuestioningCandidate(projectRoot, blueprintId, questioningCandidate) : { problems: [], info: null };
+  if (candidate.problems.length) {
+    return { status: 'invalid', issues: candidate.problems.map(message => ({ code: 'questioning_candidate_invalid', message })),
+      candidates: null, ...(candidate.info ? { questioning: candidate.info } : {}) };
+  }
   const read = readBlueprint(projectRoot, blueprintId, 'draft');
-  if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [], candidates: null };
+  if (read.status !== 'ok') return { status: read.status, issues: read.issues ?? [], candidates: null, ...(candidate.info ? { questioning: candidate.info } : {}) };
+  const issues = [];
+  if (candidate.info) {
+    if (candidate.info.revision !== Number(doc?.source_revision)) {
+      issues.push({ code: 'review_feedback_source_revision_not_questioned',
+        message: `反馈的 source_revision=${String(doc?.source_revision)} 不是本次质询候选的 revision=${String(candidate.info.revision)}：`
+          + '首次反馈评的是质询当时那一版，不能把旧稿意见改成当前版本号' });
+    }
+    if (candidate.info.component_id && candidate.info.component_id !== String(read.blueprint.component_id)) {
+      issues.push({ code: 'questioning_candidate_component_mismatch',
+        message: `质询候选的组件「${candidate.info.component_id}」与当前蓝图组件「${String(read.blueprint.component_id)}」不一致` });
+    }
+  }
   const intake = native.module('scripts/utils/blueprint-host-seams.ts').validateBlueprintReviewFeedback(doc, read.blueprint);
+  issues.push(...intake.issues);
   return {
-    status: intake.issues.some(i => i.severity === 'BLOCKER') ? 'invalid' : 'ok', issues: intake.issues,
+    status: issues.some(i => i.severity === 'BLOCKER') || issues.some(i => ['questioning_candidate_invalid',
+      'review_feedback_source_revision_not_questioned', 'questioning_candidate_component_mismatch'].includes(i.code)) ? 'invalid' : 'ok',
+    issues,
     candidates: { rulings: intake.authoritativeRulingCandidateIds, facts: intake.factSupplementCandidateIds },
     revision: read.blueprint.revision,
+    ...(candidate.info ? { questioning: candidate.info } : {}),
   };
 }
 
@@ -1043,7 +1142,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       + ' [--report-phases <阶段,阶段>]'
       + ' | --action feature --feature <id> --phase <阶段> [--requirement-file <文件> | --requirement <原文>]'
       + ' | --action sources（stdin 给来源物化 JSON）'
-      + ' | --action feedback --blueprint <id>（stdin 给设计评审反馈 JSON）'
+      + ' | --action feedback --blueprint <id> [--questioning-candidate <第7块给的工程相对 candidate.yaml>]（stdin 给设计评审反馈 JSON）'
       + ' | --action feedback-related --blueprint <id> --ref <反馈文件>（stdin 给 feedback_id 列表）'
       + ' | --action feature-identity --feature <逻辑 id> [--report-phases <阶段,阶段>]'
       + ' | --action phase-evidence --feature <逻辑 id> --phases <有序阶段,阶段>'
@@ -1074,7 +1173,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     }
     const out = action === 'blueprint' ? readBlueprint(root, opt('--blueprint'), opt('--purpose') ?? 'draft', opt('--consume'), phases)
         : action === 'sources' ? checkSources(root, doc)
-          : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc)
+          : action === 'feedback' ? checkFeedback(root, opt('--blueprint'), doc, opt('--questioning-candidate'))
             : action === 'feedback-related' ? feedbackRelated(root, opt('--blueprint'), opt('--ref'), doc)
               : action === 'feature-identity' ? featureIdentityReport(root, opt('--feature'), phases)
                 : action === 'story-review-visual' ? storyReviewVisual(root, opt('--feature'))

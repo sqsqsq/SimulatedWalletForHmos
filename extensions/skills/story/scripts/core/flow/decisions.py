@@ -168,7 +168,9 @@ def _design_questions(feature_root: Path, contract: dict, args: argparse.Namespa
         current.setdefault("answers", []).extend(recorded)
         save(feature_root, contract)
     export_answers(feature_root, f"设计问答 {ask['ask_id']} 的 {len(recorded)} 条原话")
-    pending = asks.pending_items(feature_root, ask, contract)
+    # 部分答复返回与普通 status 共用同一次读取：展示块只含余下问题，action 与 ask_block 引用同一字符串。
+    shown = asks.pending_view(feature_root, ask, contract)
+    pending = shown["pending"]
     if not pending:
         asks.clear(feature_root)
     # 原话已经落盘：算下一步失败不能反过来把这一步报成没发生；让人跑 `status` 取当前位置。
@@ -180,11 +182,11 @@ def _design_questions(feature_root: Path, contract: dict, args: argparse.Namespa
                   {"item_id": e["item_id"], "reply": e["reply"], "at": e["at"]} for e in recorded],
               "pending": pending, "next": step}
     if pending:
-        action = (f"原话已记下。这组还有 {len(pending)} 题没答，把同一展示块里剩下的部分原样摆给人：\n"
-                  + asks.pending_block(feature_root, ask, contract))
+        action = ("原话已记下。把返回的 ask.block 作为本次消息；只摆还没答的问题，全部答完即回原生设计续行：\n"
+                  + shown["block"])
         step = "await_questions"
         result["next"] = step
-        result["ask_block"] = asks.pending_block(feature_root, ask, contract)
+        result["ask_block"] = shown["block"]
     else:
         action = (f"这组设计问答已全部答完（{ask['ask_id']}）：回到原生设计按原话继续，"
                   "原问题与原话留在 answers 原件里。" + action)

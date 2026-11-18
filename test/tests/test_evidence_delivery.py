@@ -161,7 +161,7 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertIn("**会议判断**：重试是否换标识未定", section)
         self.assertIn("> 乙 10:01：重试要不要换标识，先别写死。", section)
         self.assertIn("**会上提出的问题**：怎么处理？", section)
-        self.assertIn("对照前面「人的原话记录」", section, "会上问题没有要求对照后续人答判是否解决")
+        self.assertIn("对照前面「人的原话原件」", section, "会上问题没有要求对照后续人答判是否解决")
         self.assertNotIn("- **人的裁决**", text, "会议裁决关卡已退出，任务书还在按它投影")
         self.assertIn("> 本期换标识。", section)
         t2 = text.split("#### 澄清会@abcdef12/T2", 1)[1]
@@ -184,59 +184,17 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
             {"rounds": [{"round": 1, "gates": gates, "answers": list(answers)}]},
             ensure_ascii=False), encoding="utf-8")
 
-    def test_the_signed_original_comes_before_the_authors_reading(self) -> None:
-        """人的原话里说「先不定」，作者登记却写成可再试：任务同时交两份不同内容，原话在前。"""
+    def test_the_human_words_entry_points_at_the_exported_originals(self) -> None:
+        """任务不再另拼一份同义投影：人答原件（导出里的完整原话）是必读入口，没导出就明说缺口。"""
         src = self.src()
         (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n背景。\n", encoding="utf-8")
         self.write_flow(self.answer())
         task = self.reader_task()
-        signed = task.split("### 人的原话记录", 1)[1].split("\n### ", 1)[0]
-        self.assertIn("第 1 轮设计问答 a1/Q1：失败怎么处理？", signed)
-        self.assertIn("「失败后允许再试」", signed, "当时摆出的候选没带全")
-        self.assertIn("「后续由负责人定」", signed, "当时摆出的候选没带全")
-        self.assertIn("> 失败怎么处理先不定，后面负责人定", signed, "人答不是 reply 原文")
-        self.assertIn("出处：RR/prd.md#3", signed)
-        self.assertNotIn("可默认再试", signed, "作者解释混进了人的原话记录")
+        self.assertIn("### 人的原话原件（必读）", task, "任务没有指向必读的人答原件")
+        self.assertIn("人答原件没有导出", task, "没有导出人答时没有明说缺口")
+        self.assertNotIn("### 人的原话记录", task, "任务还在拼一份 flow.rounds 的同义投影")
         self.assertIn("本轮仅允许人工受理", task, "判据不承认有原话、对象与期限的临时授权")
         self.assertIn("没有已开始的同图增强", task.split("### 已有的同图增强（机械事实）", 1)[1], "已有增强的机械事实没送到")
-
-    def test_only_effective_material_confirmations_are_shown(self) -> None:
-        """模型提议、被拒的材料答复不呈为人的原话；没有流程契约是没有这类原话，契约坏了是缺口。"""
-        rejected = {"gate": "material_scope", "ask_id": "m1", "question": "料齐了吗？",
-                    "options": [{"no": 1, "key": "supplied", "label": "已放进收件箱"}],
-                    "chosen": "supplied", "reply": "放好了", "by": "human", "outcome": "rejected"}
-        model = dict(rejected, by="model", outcome="accepted")
-        self.write_flow(material=model)
-        rows = self.original_rows()
-        self.assertIn("还没有人的原话", rows)
-        self.assertNotIn("放好了", rows)
-        self.write_flow(material=rejected)
-        self.assertNotIn("放好了", self.original_rows())
-        (self.src() / "story-flow.json").write_text("{ 坏", encoding="utf-8")
-        self.assertIn("读不出问答记录", self.original_rows())
-        (self.src() / "story-flow.json").unlink()
-        self.assertIn("没有这类原话", self.original_rows())
-
-    def test_a_material_confirmation_is_not_a_ruling(self) -> None:
-        """材料确认只陈列登记项与原话：不写「所选 = 人的裁决」。"""
-        material = {"gate": "material_scope", "ask_id": "m1", "question": "料齐了吗？",
-                    "options": [{"no": 1, "key": "supplied", "label": "已放进收件箱"},
-                                {"no": 2, "key": "confirm_scope", "label": "现有材料就是全部"}],
-                    "chosen": "confirm_scope", "label": "现有材料就是全部", "reply": "2",
-                    "by": "human", "outcome": "accepted"}
-        self.write_flow(material=material)
-        rows = self.original_rows()
-        self.assertIn("第 1 轮材料确认：登记项「confirm_scope」现有材料就是全部", rows)
-        self.assertIn("> 2", rows)
-        self.assertNotIn("人的裁决", rows)
-        self.assertNotIn("所选", rows)
-
-    def original_rows(self) -> str:
-        proc = nk.node("--input-type=module", "-e",
-                       f"const m = await import({nk.as_url(self.ext / 'hooks/shared/review-inputs.mjs')});"
-                       f"process.stdout.write(m.originalAnswerRows({json.dumps(self.feature_root.as_posix())}).join('\\n'));")
-        self.assertEqual(0, proc.returncode, proc.stderr)
-        return proc.stdout
 
     def test_upstream_diagrams_sit_next_to_every_section_that_carries_them(self) -> None:
         """原图与写作设计登记承接它的小节并排：那一节的正文、表、图都给；没登记的明说。"""

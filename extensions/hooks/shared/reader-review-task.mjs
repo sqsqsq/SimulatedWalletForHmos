@@ -20,7 +20,6 @@ import { diagramsOf, diagramTopic, imagesIn, readablePaths }
   from '../../skills/story/scripts/core/story/images.mjs';
 import { originRows, sourceStatus, upstreamDocs } from '../../skills/story/scripts/core/story/sources.mjs';
 import { recheckItems, recheckRows } from '../../skills/story/scripts/core/story/recheck.mjs';
-import { originalAnswerRows } from './review-inputs.mjs';
 import { carryTargets, useEffectiveChapters } from '../../skills/story/scripts/core/story/writing-plan.mjs';
 import { readingWork } from '../../skills/story/scripts/core/story/figure-view.mjs';
 import { reviewObject } from '../../skills/story/scripts/core/story/review-object.mjs';
@@ -61,7 +60,7 @@ function meetingTopicRows(src) {
       }
       if (String(t.question ?? '').trim()) {
         out.push('- **会上提出的问题**：' + String(t.question).trim()
-          + '——这是会议当时的未定；对照前面「人的原话记录」里的后续答复、当前蓝图与 Story，判它现在解决了没有：'
+          + '——这是会议当时的未定；对照前面「人的原话原件」里的后续答复、当前蓝图与 Story，判它现在解决了没有：'
           + '已有有权答复解决的，核 Story 有没有按答复写；仍未解决的，核 Story 有没有保留为待定边界。');
       }
       const h = doc?.headings.find(x => x.raw === `${key}/${t.id}` || x.raw.startsWith(`${key}/${t.id} `));
@@ -194,7 +193,7 @@ const reading = () => ['', '### 怎么读', '',
   '- **复核**（载体写「复核」并给原报告）：通读当前 `AR/story.md`，逐条核原报告的问题现在是否成立，'
   + '再按这一版改动实际涉及的行为与引用，沿下面的顺序回查受影响的来源与设计；你没有经手原报告那一轮、或影响说不清时，按顺序完整核源。',
   '- **补正**（载体写「补正上一份回复」）：原回复的判断与核验充分就照用，只补它缺的部分；看不出原审查是否完整时按顺序完整核源。', '',
-  '1. 先读业务来源与人签：材料表里的业务原文与阅读稿（含设计未见引用的与冲突依据）、人答原件（按时间陈列当时的问法与原话，现在按哪一句由你据来源、权限与当前蓝图判）、会议原文、本轮评审输入的原件。',
+  '1. 先读业务来源与人签：材料表里的业务原文与阅读稿（含设计未见引用的与冲突依据）、人答原件（导出里按时间记着当时的问法与原话，现在按哪一句由你据来源、权限与当前蓝图判）、会议原文、本轮评审输入的原件。',
   '2. 通读待审的 Story，对着第 1 步核业务完整、准确与可读；写作设计是作者的安排，作参考。',
   '3. 蓝图与它的原生评审投影、接口转写与映射、知识原文与工程文件按问题回查：业务判断依赖精确接口、数据、状态或知识义务，'
   + '或人读件与来源对不上时，读相关部分。共同设计的完整性与转写真实性由蓝图的独立质询负责，这里不重做整套技术质询；'
@@ -243,8 +242,14 @@ export function readerReviewTask(projectRoot, feature, object = null) {
       + '与仍有效的旧约束冲突而没经有权人裁定的，记一条阻断发现。update-notes 是作者的判断，按原件与 before 核，不当依据。');
   }
 
-  // 人答先于逐章：原话记录是来源之一，对话里答过的问题由本轮评审输入的原件引用原话，二者都拿原话核
-  rows.push('', '### 人的原话记录：材料确认与设计问答（人答的来源之一，只陈列证据）', '', ...originalAnswerRows(root));
+  // 人答原件是必读来源：任务只指向材料表里的原件入口（init 与 update 的完整原话都在导出里），不另拼同义投影
+  const answerFiles = Array.isArray(object.answers?.files) ? object.answers.files : [];
+  rows.push('', '### 人的原话原件（必读）', '',
+    '材料表里标「人答原件（必读：当时的问法与原话）」的几份就是人的原话入口：材料确认与设计问答按时间记在导出原件里，'
+    + 'update 同一轮的答复随同一份导出出现。逐份读完整原话，当时的问法、候选与出处都在文件内；'
+    + '对话里另行答过的由本轮评审输入的原件引用原话。效力由你据来源、权限与当前蓝图判。',
+    ...(answerFiles.length ? answerFiles.map(f => `- \`${f.path}\`${f.role === 'answer' ? '（可读原件）' : '（记录）'}`)
+      : ['**人答原件没有导出**：读流程里记录的原话，并在回复里写明这一处未取得。']));
 
   // **有序阅读入口，不搬全文**：审查者分段读盘上原文，任务里给文件、内容摘要与按作者区标题排好的阅读段。
   // 摘要只算作者区（机器区整段换成区名）：投影刷新不换审查对象，作者改一个字就换。准备审查时 story 已回到

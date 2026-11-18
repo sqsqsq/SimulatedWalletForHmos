@@ -224,7 +224,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
   }
   add(path.join(ext, 'skills', 'story', 'contracts', 'story-chapters.json'), 'source', '章节合同');
   add(path.join(ext, 'rules', 'story-reader-rules.yaml'), 'source', '审查判据');
-  const object = { rows, problems, alias, read,
+  const object = { rows, problems, alias, read, answers,
     design: read.status === 'ok' ? { admitted: read.admitted === true, issues: read.issues ?? [] } : null };
   return withTask ? withTaskRow(projectRoot, feature, object) : object;
 }

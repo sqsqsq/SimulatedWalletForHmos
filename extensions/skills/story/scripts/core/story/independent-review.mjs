@@ -309,7 +309,7 @@ export function reviewResult(ctx) {
     return { result: 'report_invalid', report_file: was.prior_report,
       detail: `${was.prior_problem}（新的派审载体已带原回复与原因，回复位置 ${was.report_file}：按它派审）` };
   }
-  if (was.disclosure) return { result: 'unreviewed', ...at, detail: `本版未经独立审查：${was.disclosure}` };
+  if (was.disclosure) return { result: 'unreviewed', ...at, material_key: was.material_key, detail: `本版未经独立审查：${was.disclosure}` };
   return { result: 'report_missing', ...at, detail: `独立读者的回复不在 ${was.report_file}——把读者的最终回复原样写到那里` };
 }
 

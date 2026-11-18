@@ -38,34 +38,29 @@ def _remote_only(feature_root: Path) -> None:
         raise FlowError("本地单没有远端动作：交付终点就是仓内的 AR/story.md 与同根蓝图的原生评审投影")
 
 
-def _gate(feature_root: Path, project_root: Path) -> tuple[bool, str]:
+def _gate(feature_root: Path, project_root: Path) -> tuple[bool, dict]:
+    """交付门：同一次 `story-build check --deliver --json` 读出成功状态、完整 notes 与 problems。
+
+    不解析人读控制台版式；结构结果缺失是工具错误，不拿空说明或成功冒充门禁结论。
+    """
     node = shutil.which("node")
     if node is None:
         raise FlowError("找不到 node：发布资格按交付门判，无法跳过")
-    proc = subprocess.run([node, str(CORE_DIR / "story-build.mjs"), "check", "--deliver", "--feature", feature_root.name,
-                           "--project-root", str(project_root)],
+    proc = subprocess.run([node, str(CORE_DIR / "story-build.mjs"), "check", "--deliver", "--json",
+                           "--feature", feature_root.name, "--project-root", str(project_root)],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
-
-
-def _gate_notes(text: str) -> list[str]:
-    """交付门里「记一笔（不拦）」那一段的原文：审查状态（pass / warn / unreviewed）、保留建议与设计状态。
-
-    不按某个短语筛未验证项——交付门的实际结论原样带给归档主作者，由他据受影响正文讲清未验范围。
-    """
-    lines = text.splitlines()
-    at = next((i for i, line in enumerate(lines) if "记一笔（不拦）" in line), None)
-    if at is None:
-        return []
-    out = []
-    for line in lines[at + 1:]:
-        item = line.strip()
-        if not item:
-            continue
-        if not item.startswith("·"):
-            break
-        out.append(item.lstrip("·").strip())
-    return out
+    rows = [line for line in (proc.stdout or "").splitlines() if line.startswith("{")]
+    try:
+        result = json.loads(rows[-1]) if rows else None
+    except ValueError:
+        result = None
+    if proc.returncode not in (0, 1) or not isinstance(result, dict) or "problems" not in result or "notes" not in result:
+        raise FlowError("交付门的结构化结果没有正常返回（退出码 "
+                        f"{proc.returncode}）：这是工具错误，不是业务稿的问题；修好后重新发布。原始输出：\n"
+                        + "\n".join(x.strip() for x in (proc.stdout, proc.stderr) if x and x.strip())[-1500:])
+    if proc.returncode != 0 and result.get("ok") is not False:
+        raise FlowError("交付门退出码与结构结果矛盾（失败却没有 problems）：这是工具错误，不是业务稿的问题")
+    return bool(result.get("ok")), result
 
 
 def read_receipt(feature_root: Path) -> dict:
@@ -139,9 +134,9 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None, with_
     contract = require(load(feature_root))
     if contract.get("status") != "story_written":
         raise FlowError("还没登记成文：发布的是登记过的那一份，先跑 `story_flow.py story`")
-    passed, gate_out = _gate(feature_root, project_root)
+    passed, gate = _gate(feature_root, project_root)
     if not passed:
-        raise FlowError("交付门没过，不发布：\n" + gate_out[-1500:])
+        raise FlowError("交付门没过，不发布：\n" + "\n".join(gate.get("problems") or [])[-1500:])
     items, required = _selected(feature_root, with_design)
     external = _external(feature_root, contract.get("story_written_at"), tuple(name for name, _, _ in items))
     base = _baselines(feature_root, contract)
@@ -173,7 +168,7 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None, with_
         (feature_root / Path(*STORY)).read_text(encoding="utf-8").splitlines(keepends=True),
         fromfile="上次发布", tofile="这一次"))[:12000] or "与上次发布逐字相同")
     pending, pending_gap = _blueprint_pending(feature_root)
-    delivery_notes = _gate_notes(gate_out)
+    delivery_notes = list(gate.get("notes") or [])
     named = "、".join(f"{r['item']}（外部 {r['external'] or '不存在'}，基线 {r['baseline'] or '不存在'}）" for r in conflicts)
     return {"publishable": not conflicts, "items": rows, "conflict": bool(conflicts),
             "diff": diff, "pending_gaps": pending, **({"pending_unknown": pending_gap} if pending_gap else {}),

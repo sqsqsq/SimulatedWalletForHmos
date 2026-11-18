@@ -1799,6 +1799,26 @@ class ARegisteredStoryGoesThroughTheRealEntries(SameNamedOriginalSteps, StoryIsR
 class StoryIsRegisteredAgainAfterChanges(StoryIsRegisteredAgainAfterChangesCase):
     START_REGISTERED = True
 
+    def test_the_json_check_keeps_the_same_conclusion_and_full_notes(self) -> None:
+        """机器调用 check --json 与普通人读输出是同一次检查：成功状态、完整 notes 与 problems 同退出码。"""
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        base = ["node", str(self.BUILD), "check", "--deliver", "--feature", FEATURE, "--project-root", str(self.root)]
+        human = self.run_cmd(*base)
+        machine = self.run_cmd(*base, "--json")
+        self.assertEqual(human.returncode, machine.returncode)
+        rows = [line for line in machine.stdout.splitlines() if line.startswith("{")]
+        self.assertEqual(1, len(rows), machine.stdout)
+        data = json.loads(rows[0])
+        self.assertEqual({"ok", "deliver", "chapters", "notes", "problems"}, set(data))
+        self.assertTrue(data["ok"], data)
+        story = self.feature_root / "AR" / "story.md"
+        story.write_text(story.read_text(encoding="utf-8").replace("## ", "## 待写：", 1), encoding="utf-8")
+        bad = self.run_cmd(*base, "--json")
+        self.assertEqual(1, bad.returncode, bad.stdout + bad.stderr)
+        broken = json.loads([line for line in bad.stdout.splitlines() if line.startswith("{")][-1])
+        self.assertFalse(broken["ok"], broken)
+        self.assertTrue(broken["problems"], "失败却没有 problems")
+
     def test_spec_stage_change_is_registered_again(self) -> None:
         self.assertTrue(self.register().get("success"), self.outputs[-1])
         self.rewrite_background("支付提交后用户要能看到回执状态。登记之后补的一句。")
@@ -1981,7 +2001,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
     NAMES = {"AR-design.md": "AR/story.md", "design-review.md": "blueprint/component-blueprint.review.md"}
     #: 发布前核对的交付门结果。这一组核的是外部版本、基线与授权的政策，交付门本身另有用例：默认把门的结论
     #: 换成「通过」，不为每个政策例重跑一次完整 deliver 检查；`None` 时跑真实的交付门（门的接线用例用它）
-    GATE: tuple[bool, str] | None = (True, "（这一组的政策用例：交付门由专门的用例核）")
+    GATE: tuple[bool, dict] | None = (True, {"ok": True, "notes": [], "problems": []})
 
     def call(self, name: str, *args, system: bool = True):
         core = DEV_EXT / "skills" / "story" / "scripts" / "core"
@@ -2089,7 +2109,7 @@ class PublishChecksTheExternalVersion(RegisteredCase):
         self.GATE = None
         self.receipt(None)
         self.assertTrue(self.publish()["publishable"], "登记过的稿没过真实的交付门")
-        self.GATE = (False, "[story-build check] 交付门的原话")
+        self.GATE = (False, {"ok": False, "notes": [], "problems": ["[story-build check] 交付门的原话"]})
         self.assertIn("交付门没过", self.error(self.publish))
 
     def test_the_first_publish_with_nothing_external_writes_the_delivery(self) -> None:
@@ -2143,19 +2163,19 @@ class PublishChecksTheExternalVersion(RegisteredCase):
             self.assertEqual(self.local(name), (self.feature_root / ".backups" / "published" / published).read_bytes())
 
     def test_the_delivery_gate_notes_keep_their_original_meaning(self) -> None:
-        """交付门的实际状态按原义带给归档主作者：pass、warn 保留建议、unreviewed 披露各是各的意思，
-        不再从交付门文本里按某个短语筛选。"""
+        """交付门的完整 notes 按结构原样带给归档主作者：多行说明、warn 建议、unreviewed 披露都不丢行。"""
         cases = (
-            ("[story-build check] 通过：10 章", []),
-            ("[story-build check] 记一笔（不拦）：\n  · 独立审查带非阻断建议通过：把刷新失败提示写清\n"
-             "  · 设计状态：蓝图 r3：草稿，未准入；原生问题 1 条", ["独立审查带非阻断建议通过：把刷新失败提示写清",
-                                                               "设计状态：蓝图 r3：草稿，未准入；原生问题 1 条"]),
-            ("[story-build check] 记一笔（不拦）：\n  · 本次没有可用的独立读者（只有阶段 JSON 入口）"
-             "——已写进 Story 交付章的审查状态", ["本次没有可用的独立读者（只有阶段 JSON 入口）——已写进 Story 交付章的审查状态"]),
+            ({"ok": True, "notes": [], "problems": []}, []),
+            ({"ok": True, "notes": ["独立审查带非阻断建议通过：把刷新失败提示写清",
+                                    "原生问题 1 条：\n  第一行\n  第二行"], "problems": []},
+             ["独立审查带非阻断建议通过：把刷新失败提示写清", "原生问题 1 条：\n  第一行\n  第二行"]),
+            ({"ok": True, "notes": ["本次没有可用的独立读者（只有阶段 JSON 入口）——已写进 Story 交付章的审查状态"],
+              "problems": []},
+             ["本次没有可用的独立读者（只有阶段 JSON 入口）——已写进 Story 交付章的审查状态"]),
         )
-        for text, expected in cases:
-            with self.subTest(text=text):
-                self.GATE = (True, text)
+        for gate, expected in cases:
+            with self.subTest(gate=gate):
+                self.GATE = (True, gate)
                 self.receipt(None)
                 out = self.publish()
                 self.assertEqual(expected, out["delivery_notes"], out)
@@ -2433,6 +2453,7 @@ class DesignFeedbackGoesToTheBlueprintOwner(RegisteredCase):
         self.write([self.item()])
         out = self.feedback()
         self.assertTrue(out.get("eligible"), out)
+        self.assertIn("update-notes", out["action"], "update 的下一步没指本轮 notes")
         self.assertEqual([("f1", "待确认", [])],
                          [(x["feedback_id"], x["state"], x["related_decisions"]) for x in out["feedback"]])
         record = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
@@ -2557,9 +2578,91 @@ class ReviewInputFailuresAndMissingOriginalsAreReported(RegisteredCase):
         self.assertEqual("已取得", states["AR-design.md"]["state"])
         self.assertEqual("失败", states["review-feedback.md"]["state"])
         self.assertEqual("缺原件", states["review.md"]["state"])
-        self.assertEqual("摘要不符", states["design-review.md"]["state"])
+        self.assertEqual("摘要或身份不符", states["design-review.md"]["state"])
         self.assertIn("缺原件", out["action"])
-        self.assertIn("摘要不符", out["action"])
+        self.assertIn("不符", out["action"])
+
+    def review_inputs(self) -> list[dict]:
+        core = DEV_EXT / "skills" / "story" / "scripts" / "core"
+        sys.path.insert(0, str(core))
+        try:
+            from flow import update as update_mod  # noqa: PLC0415
+            return update_mod._review_inputs(self.feature_root)
+        finally:
+            sys.path.remove(str(core))
+
+    def local_opinion(self, text: str = "本地评审意见\n") -> Path:
+        path = self.feature_root / "inbox" / "review" / "本地意见.md"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_missing_whole_batch_still_names_every_expected_item(self) -> None:
+        """整批目录被移走时，总回执里本应取得的件仍逐件列名、状态、来源与恢复提示；本地意见不顶替它。"""
+        body = "评审人改过的正文\n".encode("utf-8")
+        folder = self.deliver("fetch-gone", [
+            self.row("AR-design.md", body, saved="inbox/review/fetch-gone/AR-design.md"),
+            self.row("review-feedback.md", None, status="failed")])
+        (folder / "AR-design.md").write_bytes(body)
+        self.local_opinion()
+        shutil.rmtree(folder)
+        out = self.inputs()
+        states = {e["system_item"]: e for e in out["review_inputs"] if e.get("system_item")}
+        self.assertEqual("缺原件", states["AR-design.md"]["state"], states)
+        self.assertEqual("失败", states["review-feedback.md"]["state"], states)
+        self.assertEqual("inbox/review/fetch-gone", states["AR-design.md"]["batch"])
+        self.assertIn("从 inbox/review/fetch-gone 重新取回或核实", out["action"])
+        self.assertTrue(any(str(e["path"]).endswith("本地意见.md") for e in out["review_inputs"]),
+                        "只剩本地意见时系统件消失了")
+
+    def test_a_broken_current_batch_receipt_names_the_file(self) -> None:
+        """当前批次的回执损坏要报具体文件，不把这一批说成没有、也不拿本地件顶替。"""
+        body = "这一批的正文\n".encode("utf-8")
+        folder = self.deliver("fetch-broken", [self.row("AR-design.md", body,
+                                                        saved="inbox/review/fetch-broken/AR-design.md")])
+        (folder / "AR-design.md").write_bytes(body)
+        (folder / ".receipt.json").write_text("{ 坏", encoding="utf-8")
+        out = self.flow("update", "--action", "inputs")
+        self.assertFalse(out.get("success", True), out)
+        self.assertIn("inbox/review/fetch-broken/.receipt.json", out.get("error", ""))
+
+    def test_a_broken_historical_receipt_is_listed_without_blocking_the_current_batch(self) -> None:
+        old = self.feature_root / "inbox" / "review" / "fetch-old"
+        old.mkdir(parents=True, exist_ok=True)
+        (old / ".receipt.json").write_text("{ 坏", encoding="utf-8")
+        (old / "旧意见.md").write_text("上一批的本地文件\n", encoding="utf-8")
+        body = "这一批的正文\n".encode("utf-8")
+        folder = self.deliver("fetch-now", [self.row("AR-design.md", body,
+                                                     saved="inbox/review/fetch-now/AR-design.md")])
+        (folder / "AR-design.md").write_bytes(body)
+        rows = self.review_inputs()
+        self.assertEqual("fetched", next(r for r in rows if r.get("system_item") == "AR-design.md")["status"])
+        self.assertEqual("unclear", next(r for r in rows if r.get("path") == "inbox/review/fetch-old/旧意见.md")["status"])
+        self.assertEqual("batch_unreadable", next(r for r in rows if r["status"] == "batch_unreadable")["status"])
+
+    def test_each_historical_receipt_is_read_at_most_once(self) -> None:
+        """8 批历史回执加 1 份本地件：一次枚举每份回执至多读一次。"""
+        for i in range(8):
+            folder = self.feature_root / "inbox" / "review" / f"fetch-{i}"
+            folder.mkdir(parents=True, exist_ok=True)
+            body = f"第 {i} 批\n".encode("utf-8")
+            (folder / f"file-{i}.md").write_bytes(body)
+            (folder / ".receipt.json").write_text(json.dumps({"items": [
+                {"name": f"file-{i}.md", "saved": f"inbox/review/fetch-{i}/file-{i}.md",
+                 "sha256": hashlib.sha256(body).hexdigest(), "status": "fetched"}]}), encoding="utf-8")
+        self.local_opinion()
+        self.deliver("fetch-current", [])
+        real = Path.read_text
+        reads: list[str] = []
+
+        def counting(path, *args, **kwargs):
+            if path.name == ".receipt.json":
+                reads.append(path.as_posix())
+            return real(path, *args, **kwargs)
+
+        with unittest.mock.patch.object(Path, "read_text", counting):
+            self.review_inputs()
+        self.assertEqual(sorted(reads), sorted(set(reads)), "同一份历史回执被读了不止一次")
+        self.assertLessEqual(len(reads), 9, f"一次枚举读了 {len(reads)} 次回执")
 
     def test_a_historical_batch_is_not_reported_as_this_round_input(self) -> None:
         old = "上一批的正文\n".encode("utf-8")
@@ -2584,8 +2687,9 @@ class ReviewInputFailuresAndMissingOriginalsAreReported(RegisteredCase):
 
 
 class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
-    """首次反馈（还没有成文登记）评的是质询当时那一版候选：候选与版本从原生质询原件核，
-    不能只凭盘上一份 draft 或当前 revision 确认被评对象；授权裁决没有原话出处不进入候选。"""
+    """首次反馈（还没有成文登记）评的是质询当时那一版候选：由调用方带第 7 块的候选路径，
+    读候选只在一处（同轮目录身份、task/reply、YAML 蓝图与版本），不能靠目录排序或只凭盘上一份 draft；
+    授权裁决要先有可追到人的可读原话，独立读者的建议不能代替人的答复。"""
 
     TARGET = "view:logical/node:wallet-balance"
     contract = PublishChecksTheExternalVersion.contract
@@ -2600,26 +2704,39 @@ class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
             (self.feature_root / "blueprint" / "component-blueprint.yaml").read_text(encoding="utf-8"))
         self.round = self.candidate(self.reviewed)
 
-    def candidate(self, revision: int) -> Path:
-        body = (f"artifact: component-blueprint@1\nblueprint_id: {self.blueprint['blueprint_id']}\n"
-                f"component_id: {self.blueprint['component_id']}\nrevision: {revision}\n")
+    def candidate(self, revision: int, *, quoted: bool = False, reply: bool = True, task: bool = True) -> Path:
+        quote = '"' if quoted else ''
+        body = (f"artifact: component-blueprint@1\nblueprint_id: {quote}{self.blueprint['blueprint_id']}{quote}\n"
+                f"component_id: {quote}{self.blueprint['component_id']}{quote}\nrevision: {revision}\n")
         sha = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
         folder = self.feature_root / "blueprint" / "questioning" / sha
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "candidate.yaml").write_bytes(body.encode("utf-8"))
-        (folder / "task.md").write_text("质询任务原件\n", encoding="utf-8")
-        (folder / "reply.md").write_text("本轮仅允许人工受理，最终规则待定。\n", encoding="utf-8")
+        if task:
+            (folder / "task.md").write_text("质询任务原件\n", encoding="utf-8")
+        if reply:
+            (folder / "reply.md").write_text("本轮仅允许人工受理，最终规则待定。\n", encoding="utf-8")
         return folder
 
+    def path_of(self, folder: Path) -> str:
+        return (folder / "candidate.yaml").relative_to(self.root).as_posix()
+
+    def human_words(self, text: str = "本轮仅允许人工受理，最终规则待定。") -> str:
+        """已导出的人答原件：授权裁决的可读、可追溯到人的出处。"""
+        answers = self.src / "answers"
+        answers.mkdir(parents=True, exist_ok=True)
+        path = answers / "人工答复-v1.md"
+        path.write_text(text, encoding="utf-8")
+        return "AR/story-src/answers/人工答复-v1.md"
+
     def write(self, *, revision: int | None = None, kind: str = "authoritative_ruling",
-              evidence: bool = True) -> None:
-        item = {"feedback_id": "f1", "kind": kind, "source_revision": self.reviewed,
+              refs: list[str] | None = None) -> None:
+        item = {"feedback_id": "f1", "kind": kind, "source_revision": revision or self.reviewed,
                 "target_ref": self.TARGET, "body": "本轮仅允许人工受理，最终规则待定。"}
         if kind == "authoritative_ruling":
             item["authority"] = {"owner": "需求负责人", "role": "需求负责人"}
             item["decision"] = {"verdict": "amend", "rationale": "按原话限定本轮范围"}
-        if evidence:
-            item["evidence_refs"] = [f"blueprint/questioning/{self.round.name}/reply.md"]
+        item["evidence_refs"] = refs if refs is not None else [self.human_words()]
         doc = {"artifact": "blueprint-review-feedback@1", "blueprint_id": self.blueprint["blueprint_id"],
                "component_id": self.blueprint["component_id"], "source_revision": revision or self.reviewed,
                "items": [item]}
@@ -2627,8 +2744,9 @@ class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
         answers.mkdir(parents=True, exist_ok=True)
         (answers / "design-feedback.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
 
-    def feedback(self) -> dict:
-        return self.flow("update", "--action", "feedback")
+    def feedback(self, candidate: Path | None = None) -> dict:
+        extra = ["--questioning-candidate", self.path_of(candidate or self.round)] if candidate or self.round else []
+        return self.flow("update", "--action", "feedback", *extra)
 
     def test_a_ruling_with_its_words_is_checked_against_the_questioned_candidate(self) -> None:
         self.write()
@@ -2636,14 +2754,45 @@ class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
         self.assertTrue(out.get("eligible"), out)
         self.assertEqual((self.round.name, self.reviewed),
                          (out["questioning"]["round"], out["questioning"]["revision"]))
-        self.assertEqual(f"blueprint/questioning/{self.round.name}/candidate.yaml",
-                         out["questioning"]["candidate"])
+        self.assertEqual(self.path_of(self.round), out["questioning"]["candidate"])
+        self.assertTrue(out["candidates"], "够格却没有给出原生候选")
+        self.assertIn("质询原件", out["action"], "init 成功提示没有指本轮质询原件")
+        self.assertNotIn("本轮 update-notes", out["action"], "init 成功提示指错了落点")
+
+    def test_the_explicit_candidate_wins_over_directory_order(self) -> None:
+        """多份候选并存（含合法引号与后建目录）：被评对象是显式给的那一份，不按目录排序取最后。"""
+        later = self.candidate(self.reviewed, quoted=True)
+        self.assertNotEqual(self.round, later)
+        self.write()
+        out = self.feedback(self.round)
+        self.assertTrue(out.get("eligible"), out)
+        self.assertEqual(self.round.name, out["questioning"]["round"], "按目录排序选了别的候选")
 
     def test_a_ruling_without_any_original_is_not_eligible(self) -> None:
-        self.write(evidence=False)
+        self.write(refs=[])
         out = self.feedback()
         self.assertFalse(out.get("eligible"), out)
         self.assertIn("有权裁决却没有引用", "；".join(out["problems"]), out)
+        self.assertIsNone(out["candidates"], "阻断反馈同时给出了可提交候选")
+
+    def test_an_unreadable_or_blank_original_is_not_eligible(self) -> None:
+        cases = {
+            "空白": ([""], "是空白"),
+            "原生地址": (["evidence:somewhere"], "不是可读原件"),
+            "缺失": (["AR/story-src/answers/不存在.md"], "读不到"),
+        }
+        for name, (refs, why) in cases.items():
+            with self.subTest(name):
+                self.write(refs=refs)
+                out = self.feedback()
+                self.assertFalse(out.get("eligible"), out)
+                self.assertIn(why, "；".join(out["problems"]), out)
+
+    def test_a_readers_reply_cannot_stand_in_for_the_persons_words(self) -> None:
+        self.write(refs=[f"blueprint/questioning/{self.round.name}/reply.md"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("不能代替人的答复", "；".join(out["problems"]), out)
 
     def test_an_old_revision_cannot_be_relabelled(self) -> None:
         self.write(revision=self.reviewed + 1)
@@ -2651,11 +2800,32 @@ class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
         self.assertFalse(out.get("eligible"), out)
         self.assertIn("被评的蓝图版本", "；".join(out["problems"]), out)
 
-    def test_without_a_questioning_candidate_only_a_draft_is_not_enough(self) -> None:
+    def test_a_candidate_without_task_or_reply_is_not_a_questioning_round(self) -> None:
+        for missing in ("task", "reply"):
+            with self.subTest(missing):
+                folder = self.candidate(self.reviewed + (1 if missing == "task" else 2),
+                                        reply=missing != "reply", task=missing != "task")
+                self.write()
+                out = self.feedback(folder)
+                self.assertFalse(out.get("eligible"), out)
+                self.assertIn("质询原件", "；".join(i.get("message", "") for i in out["native_issues"]), out)
+
+    def test_without_a_questioning_candidate_the_first_feedback_stops_with_the_entry(self) -> None:
         self.write()
-        shutil.rmtree(self.feature_root / "blueprint" / "questioning")
         out = self.flow("update", "--action", "feedback")
-        self.assertIn("可核的原生质询候选", out.get("error", ""), out)
+        self.assertFalse(out.get("success", True), out)
+        self.assertIn("第 7 块", out.get("error", ""), out)
+        self.assertIn("--questioning-candidate", out.get("error", ""), out)
+
+    def test_a_fixed_candidate_is_rechecked_after_an_ineligible_attempt(self) -> None:
+        """因缺原件没获资格的那次只留诊断：补上 reply 后重跑要重新核这份原件。"""
+        folder = self.candidate(self.reviewed, quoted=True, reply=False)
+        self.write()
+        first = self.feedback(folder)
+        self.assertFalse(first.get("eligible"), first)
+        (folder / "reply.md").write_text("本轮仅允许人工受理，最终规则待定。\n", encoding="utf-8")
+        again = self.feedback(folder)
+        self.assertTrue(again.get("eligible"), again)
 
 
 class AClaimedExternalVersionBecomesTheReleaseBaseline(RegisteredCase):
@@ -2665,7 +2835,7 @@ class AClaimedExternalVersionBecomesTheReleaseBaseline(RegisteredCase):
 
     NAMES = PublishChecksTheExternalVersion.NAMES
     DESIGN_REQUIRED = True
-    GATE = (True, "（这一组只核逐件基线：交付门由专门的用例核）")
+    GATE = (True, {"ok": True, "notes": [], "problems": []})
     digest = staticmethod(PublishChecksTheExternalVersion.digest)
     call = PublishChecksTheExternalVersion.call
     local = PublishChecksTheExternalVersion.local
@@ -2734,6 +2904,49 @@ class AClaimedExternalVersionBecomesTheReleaseBaseline(RegisteredCase):
         closed = self.flow("update", "--action", "close")
         self.assertEqual("closed", closed.get("status"), closed)
         return closed
+
+    def test_a_close_without_this_round_registration_stays_open(self) -> None:
+        """本轮没有成文登记记下的承接键：close 不补发承接资格，保持 open 且仍按原发布基线比较。"""
+        external = "开轮已取回、但本轮没有登记的正文\n".encode("utf-8")
+        self.deliver(external)
+        self.assertEqual("inputs", self.flow("update", "--action", "inputs")["stage"])
+        write_gaps(self.src)
+        answer(self.flow, "material_scope", "2")
+        rid = self.flow("update", "--action", "prepare", "--result", "documents")["update"]
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        # 本轮登记其实发生过；抹掉它记下的承接键，等价于收口前没有任何本轮登记
+        path = self.updates / rid / "record.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record.pop("registered_material_key", None)
+        record.pop("registered_review", None)
+        path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+        out = self.flow("update", "--action", "close")
+        self.assertFalse(out.get("success", True), out)
+        self.assertIn("这份评审输入还没随当前 Story 登记", out.get("error", ""))
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual("open", record["status"], "缺登记却收口了")
+        self.assertNotIn("registered_material_key", record, "close 补发了承接资格")
+        self.receipt(external)
+        self.assertFalse(self.publish()["publishable"], "缺登记的轮次被当成已承接基线")
+
+    def test_notes_changed_after_registration_needs_registering_again(self) -> None:
+        """登记之后改 notes 会换掉当前报告键：即使已有新报告，也必须重新运行 story 登记才能收口。"""
+        external = "本轮已承接的正文\n".encode("utf-8")
+        self.deliver(external)
+        self.assertEqual("inputs", self.flow("update", "--action", "inputs")["stage"])
+        write_gaps(self.src)
+        answer(self.flow, "material_scope", "2")
+        rid = self.flow("update", "--action", "prepare", "--result", "documents")["update"]
+        notes = self.updates / rid / "update-notes.md"
+        notes.write_text(NOTES, encoding="utf-8")
+        self.assertTrue(self.register().get("success"), self.outputs[-1])
+        notes.write_text(NOTES + "\n## 补记\n\n登记之后又补的一句判断。\n", encoding="utf-8")
+        out = self.flow("update", "--action", "close")
+        self.assertFalse(out.get("success", True), out)
+        self.assertIn("这份评审输入还没随当前 Story 登记", out.get("error", ""))
+        self.assertIn("story 登记", out.get("error", ""), "没有指出要重新登记")
+        self.assertEqual("open", json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))["status"])
 
     def test_a_processed_external_change_needs_no_reply(self) -> None:
         external = "评审人在系统上改过、本轮 update 已按 Story 承接的正文\n".encode("utf-8")

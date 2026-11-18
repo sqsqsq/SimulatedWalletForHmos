@@ -282,6 +282,14 @@ export async function cmdCheck(ctx, { registering = Boolean(ctx.args.registering
     problems.push(...delivery.problems);
     notes.push(...delivery.notes);
   }
+  if (ctx.args.json) {
+    // 机器调用只读这一次检查的结果：成功状态、完整 notes 与 problems；退出码与人读调用相同。
+    // 只有 `publish` 的程序路径读它，普通 check、登记前核与人工 CLI 仍走下面的人读输出，不重跑门禁。
+    process.stdout.write(`${JSON.stringify({ ok: problems.length === 0, deliver: Boolean(ctx.args.deliver), chapters,
+      notes, problems })}\n`);
+    if (problems.length) process.exitCode = 1;
+    return;
+  }
   if (notes.length) {
     process.stdout.write('[story-build check] 记一笔（不拦）：\n');
     notes.forEach(n => process.stdout.write(`  · ${n}\n`));

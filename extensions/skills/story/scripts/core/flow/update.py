@@ -27,6 +27,7 @@ import difflib
 import json
 import re
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -35,7 +36,7 @@ from materials import importer, registry
 import usage
 from flow.phase_facts import UPDATES, moment, update_records as _records
 from flow.routing import basis_drift, inputs_answer, material_state, next_step
-from flow.state import (CONTRACT, DESIGN_REFERENCE, FlowError, STORY, STORY_CONTRACT, blueprint_exists, file_sha256,
+from flow.state import (CONTRACT, CORE_DIR, DESIGN_REFERENCE, FlowError, STORY, STORY_CONTRACT, blueprint_exists, file_sha256,
                         system_requirement, load, log, now, registration_drift, round_gates, save, sync_answers)
 
 #: 本层全部落点的根（`UPDATES`）放在 story-src 下面：它是过程目录，AR 根只留交付件。
@@ -137,79 +138,162 @@ def _current_review_batch(feature_root: Path, receipt: dict | None = None) -> Pa
     return None
 
 
-def _saved_elsewhere(feature_root: Path, batches: list[Path], rel: str) -> bool:
-    """这份文件是不是别的系统批次回执里登记的原件：历史批次可回查，不当成本地新输入。"""
-    for batch in batches:
-        receipt_path = batch / ".receipt.json"
-        try:
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError) as exc:
-            raise FlowError(f"{receipt_path.relative_to(feature_root).as_posix()} 读不出来（{exc}）："
-                            "历史批次回执读不出，就说不出评审用途区里的文件是不是系统原件") from exc
-        if any(str(i.get("saved") or "") == rel for i in receipt.get("items") or []):
-            return True
-    return False
+#: 只在评审用途区出现的系统件名：回执里有它们就是这一轮的评审输入。
+REVIEW_ONLY = {"review-feedback.md", "review.md", "design-review.md"}
 
 
-def _review_inputs(feature_root: Path) -> list[dict]:
-    """评审用途区这一轮的输入原件：以当次取材回执的逐件结果为身份，核 saved 原件与完整摘要。
+def _review_batch_receipts(feature_root: Path) -> tuple[dict[Path, dict], dict[Path, str]]:
+    """评审用途区的批次回执：**每个文件只读一次**，供本次 inputs/prepare/close 共用。
 
-    - 系统件只取**当次**取材批次（`fetched.json` 的 `review_out` / 逐件 `saved` 定位），不按历史目录排序；
-    - 回执记了失败照实单列；回执有 saved 而盘上原件不在或摘要对不上，分别记缺原件与摘要不符；
-    - 本地放进评审用途区的意见/改稿按原件列，已登记在任一系统批次回执里的不重复当成新输入；
-    - 返回的是给人看的机械事实，意见意味着什么由模型读原件判。
+    读不出来的历史回执不阻断当前操作：返回它的原因，由调用方把该批次里归属不明的文件单列。
     """
-    base = review_inbox(feature_root)
-    if not base.is_dir():
-        return []
-    receipt = _receipt(feature_root) or {}
-    current = _current_review_batch(feature_root, receipt)
-    batches = _review_batches(feature_root)
-    out: list[dict] = []
-    claimed: set[str] = set()
-    if current is not None:
-        try:
-            batch_receipt = json.loads((current / ".receipt.json").read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError) as exc:
-            raise FlowError(f"{(current / '.receipt.json').relative_to(feature_root).as_posix()} 读不出来（{exc}）："
-                            "系统批次回执是这批原件的身份与来源，读不出就说不出它们是什么") from exc
-        batch_rel = current.relative_to(feature_root).as_posix()
-        for item in (batch_receipt or {}).get("items") or []:
-            name = str(item.get("name") or "")
-            saved = str(item.get("saved") or "").strip()
-            status = str(item.get("status") or "fetched")
-            if not saved:
-                if status == "failed":
-                    out.append({"path": None, "sha256": None, "origin": item.get("origin"),
-                                "system_item": name, "status": "failed", "digest": None,
-                                "batch": batch_rel, "note": item.get("note")})
-                continue                         # absent/same 不是这一轮取得的新输入
-            claimed.add(saved)
-            abs_path = feature_root / Path(*saved.split("/"))
-            sha = file_sha256(abs_path)
-            want = str(item.get("sha256") or "").replace("sha256:", "")
-            entry = {"path": saved, "sha256": sha, "origin": item.get("origin"), "system_item": name,
-                     "status": "fetched", "digest": item.get("digest"), "batch": batch_rel}
-            if sha is None:
-                entry.update(status="missing", note="批次回执记了原件，但盘上这份原件不在")
-            elif want and sha != want:
-                entry.update(status="unreadable", note="盘上原件的摘要与批次回执记的对不上")
-            out.append(entry)
-    current_rel = current.relative_to(feature_root).as_posix() if current is not None else None
-    for path in sorted(p for p in base.rglob("*") if p.is_file() and p.name != ".receipt.json"):
+    ok: dict[Path, dict] = {}
+    broken: dict[Path, str] = {}
+    for batch in _review_batches(feature_root):
+        path = batch / ".receipt.json"
         rel = path.relative_to(feature_root).as_posix()
-        if rel in claimed or _saved_elsewhere(feature_root, batches, rel):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError) as exc:
+            broken[batch] = f"{rel} 读不出来（{exc}）"
             continue
-        entry = {"path": rel, "sha256": file_sha256(path), "origin": None, "system_item": None,
-                 "status": "local", "digest": None}
-        if current_rel is not None and rel.startswith(f"{current_rel}/"):
-            entry["note"] = "当次批次回执里没有这一件，按本地件列"
-        out.append(entry)
+        if not isinstance(payload, dict):
+            broken[batch] = f"{rel} 不是对象"
+            continue
+        ok[batch] = payload
+    return ok, broken
+
+
+def _review_expected(receipt: dict) -> list[dict]:
+    """总回执里属于评审用途区的逐件结果：总回执逐件身份是枚举起点。
+
+    系统交付回流正文只在发布过 Story 后才是评审输入；初始 AR 仍作材料，不进评审用途区。
+    """
+    out = []
+    for item in receipt.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        saved = str(item.get("saved") or "").strip()
+        if saved.startswith(f"{'/'.join(REVIEW_INBOX)}/"):
+            out.append(item)
+        elif name in REVIEW_ONLY:
+            out.append(item)
+        elif name == "AR-design.md" and receipt.get("delivery_return"):
+            out.append(item)
     return out
 
 
+def _review_inputs(feature_root: Path) -> list[dict]:
+    """评审用途区这一轮的输入原件：以**总回执逐件的身份**为枚举起点，逐件核批次内同件、来源与字节。
+
+    - 系统件按 `review_out`/`saved` 定位当次批次；整批目录或回执缺失时，每个本应取得的件仍列名、状态、来源与恢复提示；
+    - 总回执明确 absent / failed 的分开说明；缺失或身份不符的件不因只剩本地意见就消失，也不变成可承接；
+    - 历史回执一次读一遍：已登记路径不重复当成本地新输入，损坏的历史回执把归属不明的文件单列，不阻断当前批次；
+    - 纯本地单没有系统回执时照常枚举本地件。
+    """
+    base = review_inbox(feature_root)
+    receipt = _receipt(feature_root)
+    if receipt is None:
+        if not base.is_dir():
+            return []
+        return [_local_review_entry(feature_root, path) for path in
+                sorted(p for p in base.rglob("*") if p.is_file() and p.name != ".receipt.json")]
+    current = _current_review_batch(feature_root, receipt)
+    batches, broken = _review_batch_receipts(feature_root)
+    current_rel = current.relative_to(feature_root).as_posix() if current is not None else None
+    current_receipt = batches.get(current) if current is not None else None
+    if current is not None and current in broken:
+        raise FlowError(f"{broken[current]}：当前批次的回执是这一批原件的身份与来源，读不出就核不了；"
+                        "从这次取材重新取回该批或恢复回执后再报输入")
+
+    out: list[dict] = []
+    claimed: set[str] = set()
+    for item in _review_expected(receipt):
+        name = str(item.get("name") or "")
+        saved = str(item.get("saved") or "").strip()
+        status = str(item.get("status") or "fetched")
+        batch = current_rel or ("/".join(saved.split("/")[:3]) if saved.startswith(f"{'/'.join(REVIEW_INBOX)}/") else None)
+        entry = {"path": saved or None, "sha256": None, "origin": item.get("origin"), "system_item": name,
+                 "status": status if status in ("failed", "absent") else "fetched",
+                 "digest": item.get("digest"), "batch": batch}
+        if status == "failed":
+            entry["note"] = item.get("note")
+        elif status == "absent":
+            entry["note"] = item.get("note") or "系统上现在没有这一份"
+        elif not saved:
+            entry.update(status="missing", note="总回执说已取得，却没记原件落点：从这次取材批次重新取回或核实")
+        elif current is None:
+            entry.update(status="missing",
+                         note=f"总回执指向的批次不在盘上：从 {batch or '该次取材批次'} 重新取回或核实")
+        elif current_receipt is None:
+            entry.update(status="missing", note=f"批次目录在但回执不在：从 {batch} 重新取回或核实")
+        else:
+            mate = next((i for i in current_receipt.get("items") or []
+                         if isinstance(i, dict) and str(i.get("name") or "") == name), None)
+            if mate is None:
+                entry.update(status="missing", note=f"批次回执里没有这一件：从 {batch} 重新取回或核实")
+            else:
+                sha = file_sha256(feature_root / Path(*saved.split("/")))
+                want = str(item.get("sha256") or "").replace("sha256:", "")
+                mate_sha = str(mate.get("sha256") or "").replace("sha256:", "")
+                entry["sha256"] = sha
+                if (str(mate.get("saved") or "") != saved or str(mate.get("origin") or "") != str(item.get("origin") or "")):
+                    entry.update(status="unreadable", note="批次回执同件的落点或来源与总回执不一致：核实这次取材")
+                elif str(mate.get("status") or "") != status:
+                    entry.update(status="unreadable",
+                                 note=f"总回执记 {status}，批次回执记 {mate.get('status') or '缺失'}：核实这次取材")
+                elif sha is None:
+                    entry.update(status="missing", note="批次回执记了原件，但盘上这份原件不在：从该批次恢复原件")
+                elif (want and sha != want) or (mate_sha and sha != mate_sha):
+                    entry.update(status="unreadable", note="盘上原件的摘要与回执记的对不上：重新取回或核实")
+                claimed.add(saved)
+        if saved:
+            claimed.add(saved)
+        out.append(entry)
+
+    # 历史批次登记的路径不当成本地新输入；损坏的历史回执只单列它的文件，不把归属推给本地
+    registered: set[str] = set()
+    for batch, payload in batches.items():
+        if current is not None and batch == current:
+            continue
+        for item in payload.get("items") or []:
+            if isinstance(item, dict) and str(item.get("saved") or ""):
+                registered.add(str(item["saved"]))
+    if base.is_dir():
+        for path in sorted(p for p in base.rglob("*") if p.is_file() and p.name != ".receipt.json"):
+            rel = path.relative_to(feature_root).as_posix()
+            if rel in claimed or rel in registered:
+                continue
+            owner = next((b for b in broken if path.is_relative_to(b)), None)
+            if owner is not None:
+                out.append({"path": rel, "sha256": file_sha256(path), "origin": None, "system_item": None,
+                            "status": "unclear", "digest": None,
+                            "batch": owner.relative_to(feature_root).as_posix(),
+                            "note": f"{broken[owner]}：这一件的归属核不了，不当作本地新增"})
+                continue
+            entry = _local_review_entry(feature_root, path)
+            if current_rel and rel.startswith(f"{current_rel}/"):
+                entry["note"] = "当次批次回执里没有这一件，按本地件列"
+            out.append(entry)
+    for batch in sorted(broken):
+        if current is not None and batch == current:
+            continue
+        out.append({"path": None, "sha256": None, "origin": None, "system_item": None,
+                    "status": "batch_unreadable", "digest": None,
+                    "batch": batch.relative_to(feature_root).as_posix(),
+                    "note": broken[batch] + "：该批次文件归属不明（已单列），不阻断已核明的当前批次"})
+    return out
+
+
+def _local_review_entry(feature_root: Path, path: Path) -> dict:
+    """本地放进评审用途区的意见/改稿：按原件列，未读。"""
+    return {"path": path.relative_to(feature_root).as_posix(), "sha256": file_sha256(path),
+            "origin": None, "system_item": None, "status": "local", "digest": None}
+
+
 def _review_identity(entry: dict) -> tuple:
-    """一条评审输入的身份：系统件按系统项与完整摘要；本地件按原路径与摘要。
+    """一条评审输入的身份：系统件按系统项与完整摘要或状态；本地件按原路径与摘要；回执级问题按批次。
 
     失败/缺原件没有摘要可比，按系统项与状态算身份——同一件下一次仍失败不算新输入，改变了才算。
     """
@@ -217,7 +301,9 @@ def _review_identity(entry: dict) -> tuple:
         if entry.get("sha256"):
             return ("system", entry.get("system_item"), entry.get("sha256"))
         return ("system-state", entry.get("system_item"), entry.get("status"), entry.get("note"))
-    return ("local", entry.get("path"), entry.get("sha256"))
+    if entry.get("path"):
+        return ("local", entry.get("path"), entry.get("sha256"))
+    return ("batch", entry.get("batch"), entry.get("status"), entry.get("note"))
 
 
 def _review_new_since(records: list[tuple[str, dict]], review_inputs: list[dict]) -> list[dict]:
@@ -493,6 +579,7 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path) -> d
     save(feature_root, contract)
     review_inputs = _review_states(facts["review_inputs"])
     review_new = _review_states(facts["review_new"])
+    hints = _review_gap_hint(facts["review_inputs"])
     listed = "、".join(f"{e.get('system_item') or e.get('path')}（{e['state']}）" for e in review_inputs)
     return {"stage": "inputs", "paths": _paths(project_root, feature_root), "changed": facts["changed"], "unreadable": facts["unreadable"],
             "baseline": facts["diff"]["complete"], "pending": facts["pending"],
@@ -502,8 +589,9 @@ def cmd_update_inputs(feature_root: Path, feature: str, project_root: Path) -> d
             "upstream": _receipt(feature_root) if system else None,
             "action": ("`upstream` 是最近一次取材的回执，展示它的时刻；本次取材成功与否以那次取材自己的结果为准。"
                        if system else "本地需求没有上游；")
-                      + (f"评审用途区的原件：{listed}——逐件读原件、在 notes 记去向；缺失或摘要不符的先补回原件或重新取材。" if review_inputs else "")
-                      + "`review_inputs` 是评审用途区已取得/失败/缺原件/摘要不符/未读的件，逐件读原件、在 notes 记去向。"
+                      + (f"评审用途区的原件：{listed}——逐件读原件、在 notes 记去向；缺失或摘要不符的先补回原件或重新取材。"
+                         + (f"缺件去向：{hints}。" if hints else "") if review_inputs else "")
+                      + "`review_inputs` 是评审用途区已取得/失败/系统上没有/缺原件/摘要不符/未读的件，逐件读原件、在 notes 记去向。"
                       "按 `rules/init_analysis.md` S2a 盘点手上的料，缺口写进 `.material-gaps.json`，"
                       "跑 `status` 取问法，问人这一次要不要补料，**停等**。人答了 → `decide` 记原话 → "
                       "收件箱有新原件先导入 → `round` 登记到本轮 → `update --action prepare --result <materials|documents>`"}
@@ -629,9 +717,12 @@ def cmd_update_prepare(feature_root: Path, feature: str, result: str | None) -> 
     if facts["materials_changed"]:
         lines.append("材料指纹与本轮登记的对不上：先 `round` 登记到本轮")
     if review_inputs:
-        lines.append("评审用途区的原件（已取得/失败/未读）：" + "、".join(
+        lines.append("评审用途区的原件（已取得/失败/系统上没有/缺原件/摘要或身份不符/未读）：" + "、".join(
             f"{e.get('path') or e.get('system_item')}（{_review_states([e])[0]['state']}）" for e in review_inputs)
             + "——逐件读原件，在 update-notes 记「输入原件位置→处理/理由→Story 位置或原生目标」")
+    hint = _review_gap_hint(review_inputs)
+    if hint:
+        lines.append("缺件去向：" + hint)
     if review_new:
         lines.append("本次新到或变过的评审输入 " + str(len(review_new)) + " 件：先按人的这一版为编辑底稿逐处合入，"
                      "不采纳的原话留在 before/")
@@ -843,10 +934,23 @@ def _paths(project_root: Path, feature_root: Path) -> dict:
 
 
 def _review_states(entries: list[dict]) -> list[dict]:
-    """评审输入给人看的逐件事实：已取得 / 失败 / 缺原件 / 摘要不符 / 未读，各带来源与去向。"""
-    label = {"fetched": "已取得", "same": "已取得", "failed": "失败", "missing": "缺原件",
-             "unreadable": "摘要不符", "local": "未读"}
+    """评审输入给人看的逐件事实：已取得 / 失败 / 系统上没有 / 缺原件 / 摘要不符 / 归属不明 / 未读，各带来源与去向。"""
+    label = {"fetched": "已取得", "same": "已取得", "failed": "失败", "absent": "系统上没有",
+             "missing": "缺原件", "unreadable": "摘要或身份不符", "local": "未读",
+             "unclear": "归属不明", "batch_unreadable": "回执损坏"}
     return [{**e, "state": label.get(str(e.get("status")), "未读")} for e in entries]
+
+
+def _review_gap_hint(entries: list[dict]) -> str:
+    """缺件与身份不符的逐件去向：缺哪一件、从哪个批次重新取回或核实。都核明时返回空串。"""
+    rows = []
+    for e in entries:
+        if str(e.get("status")) not in ("missing", "unreadable", "unclear", "batch_unreadable"):
+            continue
+        what = e.get("system_item") or e.get("path") or "该批次文件"
+        where = e.get("batch") or "本次取材批次"
+        rows.append(f"缺 {what}：从 {where} 重新取回或核实")
+    return "；".join(rows)
 
 
 def _latest(records: list[tuple[str, dict]], status: str | None = None,
@@ -915,7 +1019,7 @@ def _feedback_file(feature_root: Path, records: list[tuple[str, dict]]) -> tuple
 
 
 def _evidence_ref_problem(project_root: Path, feature_root: Path, ref: object, fid: str) -> str | None:
-    """事实补充的 evidence_refs 指回真实原件：需求目录或工程根内的相对路径要读得到，稳定地址由原生解析。"""
+    """事实补充等条目的 evidence_refs 指回真实原件：需求目录或工程根内的相对路径要读得到，稳定地址由原生解析。"""
     text = str(ref or "").strip()
     if not text:
         return None
@@ -931,46 +1035,57 @@ def _evidence_ref_problem(project_root: Path, feature_root: Path, ref: object, f
             "本轮评审用途区的原件，或设计问答记下的原话原件")
 
 
-def _questioning_candidate(feature_root: Path) -> dict | None:
-    """最近一份可核的原生质询候选：`blueprint/questioning/<候选字节 sha16>/candidate.yaml`。
-
-    只认目录身份与候选原始字节一致的那一份——文件在场只证明设计已开始；当前 draft 或盘上一份
-    draft 都不能单独证明首次质询针对哪一版。`revision` 与 `blueprint_id` 取自候选原件本身。
-    """
-    base = feature_root / "blueprint" / "questioning"
-    if not base.is_dir():
-        return None
-    best = None
-    for folder in sorted((p for p in base.iterdir() if p.is_dir())):
-        candidate = folder / "candidate.yaml"
-        if not candidate.is_file():
-            continue
-        sha = file_sha256(candidate) or ""
-        if folder.name != sha[:16]:
-            continue                       # 目录身份与候选字节对不上：不是原生留下的那一份
-        text = candidate.read_text(encoding="utf-8", errors="replace")
-        revision = re.search(r"^revision:\s*(\d+)\s*$", text, re.M)
-        blueprint = re.search(r"^blueprint_id:\s*(\S+)\s*$", text, re.M)
-        if not revision or not blueprint or blueprint.group(1) != feature_root.name:
-            continue
-        reply = folder / "reply.md"
-        best = {"round": folder.name, "candidate": candidate.relative_to(feature_root).as_posix(),
-                "reply": reply.relative_to(feature_root).as_posix() if reply.is_file() else None,
-                "revision": int(revision.group(1))}
-    return best
+#: 质询轮的原件：同轮候选、任务与独立回复。它们只证明技术判断，不承担人的授权。
+QUESTIONING_FILES = {"candidate.yaml", "task.md", "reply.md"}
 
 
-def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
+def _original_kind(project_root: Path, feature_root: Path, ref: object) -> tuple[str | None, str | None]:
+    """一条裁决出处是哪一类原件：`human`（人答导出、批注、改稿、转述等可读原件）、
+    `technical`（质询同轮的候选/任务/回复，只能随附为技术依据），或读不到的原因。"""
+    text = str(ref or "").strip()
+    if not text:
+        return None, "是空白"
+    raw = text.split("#", 1)[0]
+    if raw.startswith(("blueprint:", "view:", "node:", "relation:", "flow:", "decision:", "contract:", "gap:", "evidence:")):
+        return None, "不是可读原件（是原生地址）"
+    path = Path(raw)
+    if path.is_absolute() or ".." in path.parts:
+        return None, "不是工程内的相对路径"
+    if not ((feature_root / path).is_file() or (project_root / path).is_file()):
+        return None, "读不到"
+    if "questioning" in path.parts and path.name in QUESTIONING_FILES:
+        return "technical", None
+    return "human", None
+
+
+def _ruling_evidence_problems(project_root: Path, feature_root: Path, refs: list, fid: str) -> list[str]:
+    """有权裁决必须有可读取、可追溯到人的原话原件；空白、不可解析地址、缺失原件或缺人答都不具备资格。"""
+    if not refs:
+        return [f"{fid} 是有权裁决却没有引用任何原话或原件：把可追到人的原话（已导出人答或实际取得的批注、改稿、转述）"
+                "写进 evidence_refs；没有出处的裁决不进入调和候选，语义由蓝图负责方据原话判定"]
+    problems, human = [], False
+    for ref in refs:
+        kind, why = _original_kind(project_root, feature_root, ref)
+        if kind is None:
+            problems.append(f"{fid} 的 evidence_refs「{ref}」{why}：权威裁决必须有可读取、可追溯到人的原话原件，"
+                            "这一条不具备该裁决资格")
+        elif kind == "human":
+            human = True
+    if not problems and not human:
+        problems.append(f"{fid} 的裁决只引了独立读者的建议或质询回复：它们只能随附为技术依据，不能代替人的答复——"
+                        "把可追到人的原话原件写进 evidence_refs")
+    return problems
+
+
+def cmd_update_feedback(feature_root: Path, project_root: Path, questioning_candidate: str | None = None) -> dict:
     """把评审人对设计的反馈交给蓝图负责方：核本轮反馈文件的候选资格，记下结果。
 
     输入是本轮 Story 批注/改稿/追加/转述或已记下的原话；文件按原生 `blueprint-review-feedback@1` 写，字段即原生字段：
     批次 `artifact/blueprint_id/component_id/source_revision/items`，条目 `feedback_id/kind/source_revision/target_ref/body`，
     事实带 `evidence_refs`，授权裁决带真实的 `authority` 与明确的 `decision`。target_ref 与版本只在这份原生传输件里维护：
     目标已有的用它的稳定地址，新问题还没有 gap 时指向现有 `blueprint:<id>` 并说明受影响范围，由 owner 形成真正的新 gap。
-    被评的版本是成文登记记下的蓝图版本；还没有成文时取本次质询的实际版本。不能靠改版本号把旧稿意见套到新稿上。
-
-    两件事分开记：提交时的候选资格（原生只判够不够格进入调和，文件没改就不重判）与当前蓝图里来源精确指向这份反馈的决定。
-    接受与否由蓝图负责方在 component-design 里定；原生返回的候选不是 accepted，这里只报「待确认」。
+    被评的版本是成文登记记下的蓝图版本；首次反馈带第 7 块给的质询候选路径，由原生按同轮候选核当前目标与版本，
+    不能按目录排序猜，也不能把旧稿意见改成当前版本号。
     """
     records = _records(feature_root)
     rid, rec, path, shown = _feedback_file(feature_root, records)
@@ -986,63 +1101,100 @@ def cmd_update_feedback(feature_root: Path, project_root: Path) -> dict:
     blueprint = feature_root.name if blueprint_exists(feature_root) else None
     if not blueprint:
         raise FlowError("这张单还没有同根蓝图：设计反馈评的是原生蓝图，设计没开始就没有可评的对象")
+    candidate = str(questioning_candidate or "").strip()
     reviewed = ((contract.get("story_basis") or {}).get("blueprint_ref") or {}).get("revision")
-    questioning = None
-    if reviewed is None:
-        # 首次问答：被评版本取本次原生质询实际评的那一版候选，不用当前 draft 顶替。
-        questioning = _questioning_candidate(feature_root)
-        if questioning is None:
-            raise FlowError("这张单还没有可核的原生质询候选：首次反馈评的是质询当时的蓝图版本，"
-                            "按原生质询第 7 块把同轮 candidate.yaml、task.md、reply.md 存到 "
-                            "`blueprint/questioning/<候选字节 sha16>/`，再写 design-feedback.json；"
-                            "不能只凭盘上一份 draft 确认被评对象")
-        reviewed = questioning["revision"]
     digest = file_sha256(path)
     state = (rec.get("design_feedback") if rec is not None else contract.get("design_feedback")) or {}
-    if state.get("digest") != digest:
-        problems = []
+    # 文件没改就不重判；不具备资格的那一次只留下诊断——修好候选/证据后重跑要重新核原件
+    recheck = (state.get("digest") != digest or not state.get("eligible")
+               or str(state.get("questioning_candidate") or "") != candidate)
+    if recheck:
+        if reviewed is None and not candidate:
+            raise FlowError("这张单还没有成文登记：首次反馈要带质询任务第 7 块给的工程相对候选路径——"
+                            "跑 `update --action feedback --questioning-candidate <候选路径>`。"
+                            "按第 7 块把同轮 candidate.yaml、task.md、reply.md 补取后重试；"
+                            "不能只凭盘上一份 draft 或按目录排序确认被评对象")
+        args = ["--questioning-candidate", candidate] if candidate else []
+        from flow import native  # noqa: PLC0415 —— 资格只由原生判
+        out = native.call(project_root, "feedback", "--blueprint", blueprint, *args, stdin=doc)
+        questioning = out.get("questioning") or None
+        problems: list[str] = []
+        items: list[dict] = []
+        if reviewed is None:
+            if not questioning or not questioning.get("revision"):
+                # 候选不成立：本次不设被评版本、不进入候选；修复原件后重跑会重新核
+                fb = {"path": shown, "ref": path.relative_to(project_root).as_posix(), "digest": digest,
+                      "blueprint_id": blueprint, "source_revision": doc.get("source_revision"),
+                      "reviewed_revision": None, "questioning_candidate": candidate, "items": [],
+                      "problems": [], "native_issues": out.get("issues", []), "candidates": None,
+                      "eligible": False}
+                state = fb
+                _store_feedback(feature_root, rec, rid, contract, fb)
+                out_observed = _feedback_observed(feature_root, state)
+                return _feedback_result(rid, shown, state, out_observed)
+            reviewed = int(questioning["revision"])
         if doc.get("source_revision") != reviewed:
             problems.append(f"source_revision 应是被评的蓝图版本 {reviewed}（写的是 {doc.get('source_revision')}）。"
                             "反馈不能把旧输入改成当前版本号来通过：仍适用的旧意见由负责方按当前目标形成一个新版本的新反馈，"
                             "并引用旧原件")
-        items = []
         for item in doc.get("items") or []:
             fid = str(item.get("feedback_id") or "")
             refs = item.get("evidence_refs") or []
+            if isinstance(refs, str):
+                refs = [refs]
             items.append({"feedback_id": fid, "kind": item.get("kind"), "source_revision": item.get("source_revision"),
                           "target_ref": item.get("target_ref"), "evidence_refs": refs})
-            problems.extend(p for p in (_evidence_ref_problem(project_root, feature_root, r, fid)
-                                        for r in refs) if p)
-            if item.get("kind") == "authoritative_ruling" and not refs:
-                problems.append(f"{fid} 是有权裁决却没有引用任何原话或原件：把原话（answers 原件或质询回复）写进 "
-                                "evidence_refs；没有出处的裁决不进入调和候选，语义由蓝图负责方据原话判定")
-        from flow import native  # noqa: PLC0415 —— 资格只由原生判
-        out = native.call(project_root, "feedback", "--blueprint", blueprint, stdin=doc)
+            if item.get("kind") == "authoritative_ruling":
+                problems.extend(_ruling_evidence_problems(project_root, feature_root, refs, fid))
+            else:
+                problems.extend(p for p in (_evidence_ref_problem(project_root, feature_root, r, fid)
+                                            for r in refs) if p)
+        eligible = not problems and out.get("status") == "ok"
         fb = {"path": shown, "ref": path.relative_to(project_root).as_posix(), "digest": digest,
               "blueprint_id": blueprint, "source_revision": doc.get("source_revision"), "reviewed_revision": reviewed,
-              "items": items, "problems": problems, "native_issues": out.get("issues", []),
-              "candidates": out.get("candidates"), "eligible": not problems and out.get("status") == "ok"}
+              "questioning_candidate": candidate, "items": items, "problems": problems,
+              "native_issues": out.get("issues", []),
+              # 可提交的候选只在这一次真的够格时给出；阻断反馈同时提示可提交会把两件事混成一个
+              "candidates": out.get("candidates") if eligible else None,
+              "eligible": eligible}
         if questioning:
             fb["questioning"] = questioning
-        if rec is not None:
-            rec["design_feedback"] = fb
-            (_updates_dir(feature_root) / rid / "record.json").write_text(
-                json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        else:
-            contract["design_feedback"] = fb
-            save(feature_root, contract)
         state = fb
+        _store_feedback(feature_root, rec, rid, contract, fb)
     observed = _feedback_observed(feature_root, state)
-    issues = [f"{i.get('code') or i.get('id')} {i.get('message', '')}" for i in state["native_issues"]]
+    return _feedback_result(rid, shown, state, observed)
+
+
+def _store_feedback(feature_root: Path, rec: dict | None, rid: str | None, contract: dict, fb: dict) -> None:
+    """候选资格按提交时记下：开着 update 时在本轮记录，首次问答时在流程契约。"""
+    if rec is not None:
+        rec["design_feedback"] = fb
+        (_updates_dir(feature_root) / rid / "record.json").write_text(
+            json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    else:
+        contract["design_feedback"] = fb
+        save(feature_root, contract)
+
+
+def _feedback_result(rid: str | None, shown: str, state: dict, observed: list[dict]) -> dict:
+    """反馈动作的返回：资格、原生问题与逐条观察；下一步按 init / update 各自的落点给。"""
+    issues = [f"{i.get('code') or i.get('id')} {i.get('message', '')}" for i in state.get("native_issues") or []]
+    init = rid is None
     return {"update": rid, "where": shown, "feedback": observed, "eligible": state["eligible"],
             "problems": state["problems"], "native_issues": state["native_issues"],
             "candidates": state["candidates"], "source_revision": state["source_revision"],
             "reviewed_revision": state["reviewed_revision"],
             **({"questioning": state["questioning"]} if state.get("questioning") else {}),
-            "action": ("反馈够格进入调和，交蓝图负责方在 component-design 里处理。候选资格不等于接受：负责方的回复原文记进本轮 "
-                       "update-notes，结合当前蓝图判结果，没有明确结论就保持待确认。"
-                       if state["eligible"] else "反馈有问题，改好这一份 design-feedback.json 再跑：" + "；".join(
-                           state["problems"] + issues[:8]))}
+            "action": (
+                ("反馈够格进入调和，交蓝图负责方在 component-design 里处理。候选资格不等于接受："
+                 "把本次质询原件（candidate/task/reply）、这份反馈与负责方据此形成的蓝图 revision 作为本轮设计依据保留，"
+                 "负责方的回复原话与是否采纳由当前设计与分析按原件说明，不写成已接受。"
+                 if init else
+                 "反馈够格进入调和，交蓝图负责方在 component-design 里处理。候选资格不等于接受：负责方的回复原文记进本轮 "
+                 "update-notes，结合当前蓝图判结果，没有明确结论就保持待确认。")
+                if state["eligible"] else
+                "反馈有问题，改好这一份 design-feedback.json 再跑：" + "；".join(
+                    state["problems"] + issues[:8]))}
 
 
 def _register_design_projection(feature_root: Path, rec: dict) -> None:
@@ -1079,17 +1231,17 @@ def _register_design_projection(feature_root: Path, rec: dict) -> None:
 
 
 def record_owned_after(feature_root: Path) -> str | None:
-    """这一轮的完成点（story 登记、收口）：记下本扩展拥有的文件此刻的指纹，恢复据它认「本轮留下的就是这一版」。
+    """这一轮的完成点：记下本扩展拥有的文件此刻的指纹，恢复据它认「本轮留下的就是这一版」。
 
     没有开着的一轮返回 None。前后两边都列全：开轮时有、现在没有的记 null。
-    实际承接的设计附件同时记下它这次只读投影的字节摘要，供发布比较用——投影不放进可撤回文件。
+    **只答哪些文件可撤回**：承接身份（本轮登记键与设计参考投影）只由成文登记成功时写入，
+    收口更新恢复镜像不产生或重写它们。
     """
     records = _records(feature_root)
     active = _latest(records, None, ACTIVE)
     if not active:
         return None
     rid, rec = active
-    _register_design_projection(feature_root, rec)
     now_owned = _owned(feature_root)
     rec["owned_after"] = {rel: now_owned.get(rel) for rel in sorted({*(rec.get("owned_before") or {}), *now_owned})}
     (_updates_dir(feature_root) / rid / "record.json").write_text(
@@ -1097,8 +1249,58 @@ def record_owned_after(feature_root: Path) -> str | None:
     return rid
 
 
+def record_story_registration(feature_root: Path, review: dict | None) -> str | None:
+    """成文登记成功时把这一轮的承接身份写进既有 open 记录：只关联这次已核的登记键与设计参考投影。
+
+    登记键取 `story-build registration-check` 的 `review.material_key`（复用统计对象身份，覆盖本轮
+    before、notes、输入与 Story）；实际纳入本轮的设计参考在此时记只读投影 SHA。重复登记等义，
+    登记失败不会被调用；没有开着的一轮就只记完成点。不另建第二份登记表。
+    """
+    rid = record_owned_after(feature_root)
+    if rid is None:
+        return None
+    active = _latest(_records(feature_root), None, ACTIVE)
+    if not active:
+        return rid
+    _, rec = active
+    key = str((review or {}).get("material_key") or "") or None
+    rec["registered_material_key"] = key
+    rec["registered_review"] = {"result": (review or {}).get("result"), "material_key": key}
+    _register_design_projection(feature_root, rec)
+    (_updates_dir(feature_root) / rid / "record.json").write_text(
+        json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return rid
+
+
 #: 逐件发布基线取自主体的本地件：系统交付项 → 需求目录相对路径
 PUBLISHED_LOCAL = {"AR-design.md": "/".join(STORY), "design-review.md": "blueprint/component-blueprint.review.md"}
+
+
+def _pending_carries(rec: dict) -> list[dict]:
+    """这一轮 prepare 快照里待承接的系统交付件（正文与设计参考）：收口前要对它们核本轮登记。"""
+    return [e for e in rec.get("review_inputs") or []
+            if e.get("system_item") in PUBLISHED_LOCAL and e.get("path")
+            and e.get("status") in ("fetched", "same") and e.get("sha256")]
+
+
+def _current_review(feature_root: Path, project_root: Path) -> dict:
+    """当前 Story 的审查结果（只读）：按 `review --action check` 这一次的结果核登记时的材料键。"""
+    node = shutil.which("node")
+    if node is None:
+        raise FlowError("找不到 node：收口前核「这份评审输入有没有随当前 Story 登记」要跑 story-build review --action check")
+    proc = subprocess.run([node, str(CORE_DIR / "story-build.mjs"), "review", "--action", "check",
+                           "--feature", feature_root.name, "--project-root", str(project_root)],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    rows = [line for line in (proc.stdout or "").splitlines() if line.startswith("{")]
+    try:
+        out = json.loads(rows[-1]) if rows else None
+    except ValueError:
+        out = None
+    if proc.returncode not in (0, 1) or not isinstance(out, dict):
+        raise FlowError(f"核当前 Story 的审查结果没有正常返回（退出码 {proc.returncode}），无法确认本轮登记："
+                        "这是运行环境或工具问题，不是业务稿的问题；修好后重跑收口。原始输出：\n"
+                        + "\n".join(x.strip() for x in (proc.stdout, proc.stderr) if x and x.strip()))
+    return out
 
 
 def _before_evidence(feature_root: Path, rec: dict, entry: dict) -> bool:
@@ -1157,6 +1359,10 @@ def carried_external(feature_root: Path, name: str) -> tuple[str, str] | None:
     if not closed_rounds:
         return None
     rid, rec = closed_rounds[-1]          # 最近有效 documents 轮；不往更早的轮次找
+    # 收口时核过的本轮登记是承接资格的唯一出处：没有登记键、或那一版未经可消费的独立审查，都不自动承接外部改稿
+    reviewed = rec.get("registered_review") or {}
+    if not str(rec.get("registered_material_key") or "") or str(reviewed.get("result") or "") not in ("pass", "warn"):
+        return None
     closed = moment(rec.get("closed_at"))
     if closed is None or (events and closed <= max(events)):
         return None
@@ -1251,6 +1457,27 @@ def cmd_update_close(feature_root: Path, feature: str, project_root: Path) -> di
                 raise FlowError(f"story 与当前依据不同步（needs_sync：{'、'.join(drift)}），不收口："
                                 "新设计已接受而稿未同步的，按当前蓝图改稿，`story-build review --action prepare` 定稿并重新独立审查，"
                                 "审查通过后跑 `story_flow.py story` 重新登记")
+
+    # 收口前核本轮登记：有 Story、documents 且含待承接系统交付件时，本轮登记键要与当前可消费的报告键一致，
+    # 且已登记的本地 Story 仍是现在这一份；缺登记或键已变都不由 close 补发承接资格。
+    pending_carries = _pending_carries(rec) if result == "documents" and (feature_root / Path(*STORY)).is_file() else []
+    if pending_carries:
+        key = str(rec.get("registered_material_key") or "")
+        registered = (rec.get("owned_after") or {}).get("/".join(STORY))
+        current_story = file_sha256(feature_root / Path(*STORY))
+        review = _current_review(feature_root, project_root)
+        consumable = str(review.get("result") or "") in ("pass", "warn", "unreviewed") and str(review.get("material_key") or "")
+        why = ""
+        if not key:
+            why = "（本轮没有成文登记记下的登记键）"
+        elif not consumable:
+            why = f"（当前审查结果 {review.get('result')} 不可消费：按本轮原件和说明复核后再登记）"
+        elif str(review.get("material_key")) != key:
+            why = "（当前可消费的报告键与登记时的不一致：改过 notes 或输入后要重新运行 story 登记）"
+        elif not registered or registered != current_story:
+            why = "（当前 Story 不是本轮登记的那一版：重新定稿、复核并登记）"
+        if why:
+            raise FlowError("这份评审输入还没随当前 Story 登记。按本轮原件和说明定稿、复核，再运行 story 登记后收口" + why)
 
     record_owned_after(feature_root)
     rec = dict(_records(feature_root))[rid]

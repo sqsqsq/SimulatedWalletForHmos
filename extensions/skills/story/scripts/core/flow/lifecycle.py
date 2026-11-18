@@ -17,7 +17,7 @@ from flow.state import (
 from flow.routing import (QUESTIONS_USAGE, live_materials, material_state, next_step, reading_work,
                           register_command, sidecar_shape)
 from flow import asks
-from flow.update import record_baseline, record_owned_after
+from flow.update import record_baseline, record_story_registration
 from flow.meetings import topic_digest
 from materials import meeting
 
@@ -156,25 +156,24 @@ def _questions_state(feature_root: Path, contract: dict, ask: dict | None = None
     """设计问答此刻的状态：有待答给只含未答的展示块；零待答撤下临时问法并返回 None，按原生下一步续行。
 
     普通 `status` 与带同一问法文件的重试都走这里——两条路各写一份的话，一处会重问已答的题。
+    待答与展示块由 `asks.pending_view` 的同一次读取给出，不再为拼状态重读记录。
     """
     ask = ask or asks.current_design(feature_root)
     if ask is None:
         return None
-    pending = asks.pending_items(feature_root, ask, contract)
-    if not pending:
+    shown = asks.pending_view(feature_root, ask, contract)
+    if not shown["pending"]:
         asks.clear(feature_root)
         return None
-    shown = asks.with_answered(feature_root, ask, contract)
-    return shown, "await_questions", step_action_questions(feature_root, shown, contract)
+    return shown, "await_questions", step_action_questions(shown)
 
 
-def step_action_questions(feature_root: Path, ask: dict, contract: dict) -> str:
-    """设计问答没答完时给人的下一步：同一展示块剩下的部分原样摆出，不重答已答的题。"""
-    pending = asks.pending_items(feature_root, ask, contract)
-    return (f"设计后必要问答还有 {len(pending)} 题没答（{ask['ask_id']}）。"
-            "把同一展示块里剩下的部分原样摆给人：\n" + asks.pending_block(feature_root, ask, contract)
-            + "\n`decide --ask <id> --item <题号> --reply \"<人的原话>\"`；多题同一答复用 --replies-file；"
-            "全部答完即回原生设计续行")
+def step_action_questions(shown: dict) -> str:
+    """设计问答没答完时给人的下一步：把同一个展示块（只含余下问题）原样摆出，不重答已答的题。"""
+    return (f"设计后必要问答还有 {len(shown['pending'])} 题没答（{shown['ask_id']}）。"
+            "把返回的 ask.block 作为本次消息；只摆还没答的问题，全部答完即回原生设计续行：\n"
+            + shown["block"]
+            + "\n`decide --ask <id> --item <题号> --reply \"<人的原话>\"`；多题同一答复用 --replies-file")
 
 
 def cmd_story(feature_root: Path, project_root: Path) -> dict:
@@ -265,14 +264,15 @@ def cmd_story(feature_root: Path, project_root: Path) -> dict:
               "files": {rel: file_sha256(feature_root / Path(*rel.split("/"))) for rel in STORY_REGISTERED}}
     if status == "story_written" and contract.get("story_basis") == wanted:
         log("这一份已经按同样的依据登记过，不改")
-        record_owned_after(feature_root)
+        record_story_registration(feature_root, result.get("review"))
         return {"status": "story_written", "story": str(story), "registered": False, **_next(feature_root, contract)}
     contract["status"] = "story_written"
     contract["story_written_at"] = now()
     contract["story_basis"] = wanted
     save(feature_root, contract)
-    # 登记是 update 一轮的完成点：本扩展拥有的文件此刻的指纹记进这一轮，撤回时据它认「本轮留下的就是这一版」
-    record_owned_after(feature_root)
+    # 登记是 update 一轮的完成点：可撤回文件的指纹与**本轮承接身份**（登记键、设计参考只读投影）此刻一起记下；
+    # 撤回时据前者认「本轮留下的就是这一版」，收口与发布据后者认「这份评审输入随这一版 Story 登记过」。
+    record_story_registration(feature_root, result.get("review"))
     baseline = record_baseline(feature_root)
     return {"status": "story_written", "story": str(story), "registered": True,
             "review": (result.get("review") or {}).get("result"),

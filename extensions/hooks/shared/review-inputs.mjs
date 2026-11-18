@@ -56,40 +56,13 @@ function flowProjection(flow) {
 
 /**
  * 人的原话记录：当前轮的材料确认，与设计后必要问答里逐题记下的问法与回答。
+ *
+ * **这里只在 Plan 的必审输入摘要里用**（`flowProjection`）：Story 读者审查不再从这里拼一份同义投影，
+ * 它直接读审查对象里的必读人答原件（init 与 update 的完整原话都在导出里）。
  * 按时间陈列当时的问法与原话，不预判现在哪一句有效；效力由读者据来源、权限与当前蓝图判。
- * 它是人答的来源之一，不是全集：对话里明确答过的问题由作者在登记条目的澄清正文里引用原话；
- * 模型解释、建议与被退回的回话不在这里。没有流程契约就没有这类原话，契约读不出是缺口。
  *
  * 这里只陈列证据：记录里的 `chosen` 是材料事实的登记项，不是业务裁决；不写「所选 = 人的裁决」。
- *
- * @param {string} root 需求目录
  */
-export function originalAnswerRows(root) {
-  const file = path.join(root, 'AR', 'story-src', 'story-flow.json');
-  if (!fs.existsSync(file)) return ['本需求没有走 `/story` 的流程记录，没有这类原话。'];
-  const flow = readJsonOrNull(file);
-  if (!Array.isArray(flow?.rounds)) {
-    return ['**`AR/story-src/story-flow.json` 读不出问答记录**：原话未取得，涉及授权的判断写未验证。'];
-  }
-  const rows = [];
-  for (const r of flow.rounds) {
-    for (const g of Array.isArray(r?.gates) ? r.gates : []) {
-      if (g?.gate !== 'material_scope' || g?.by !== 'human' || g?.outcome !== 'accepted') continue;
-      const options = Array.isArray(g.options) ? g.options : [];
-      rows.push(`- 第 ${r.round ?? '?'} 轮材料确认：登记项「${g.chosen}」${g.label ?? ''}`,
-        `  - 当时摆出的选项：${options.map(o => `「${o.key}」${o.label}`).join('；') || '（记录里没有选项）'}`,
-        '  - 人的原话：', ...String(g.reply ?? '').split(/\r?\n/).map(l => `    > ${l}`));
-    }
-    for (const a of Array.isArray(r?.answers) ? r.answers : []) {
-      const c = answerFacts(a);
-      rows.push(`- 第 ${r.round ?? '?'} 轮设计问答 ${c.ask_id ?? '?'}/${c.item_id ?? '?'}：${c.question ?? ''}`,
-        `  - 当时摆出的候选：${c.options.length ? c.options.map(o => `「${o}」`).join('；') : '（本题没有候选）'}`,
-        '  - 人的原话：', ...String(c.reply ?? '').split(/\r?\n/).map(l => `    > ${l}`),
-        `  - 出处：${c.source_ref ?? '（未记）'}`);
-    }
-  }
-  return rows.length ? rows : ['流程记录里还没有人的原话。'];
-}
 
 /** update 开着时这一轮的依据：record、before 与本轮 update-notes。记录坏了明确报，不扫别的轮次。 */
 function updateInputs(root, flow, add, gaps) {

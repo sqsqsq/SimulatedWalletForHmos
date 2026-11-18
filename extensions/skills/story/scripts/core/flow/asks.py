@@ -185,7 +185,11 @@ def build_questions(feature_root: Path, contract: dict, questions_file: str) -> 
     """
     items = read_questions_file(Path(questions_file))
     previous = _read(feature_root)
-    pending = pending_items(feature_root, previous, contract) if previous and previous.get("kind") == DESIGN_KIND else []
+    pending: list[str] = []
+    if previous and previous.get("kind") == DESIGN_KIND and previous.get("ask_id"):
+        answered = answered_item_ids(feature_root, contract, previous["ask_id"])
+        pending = [str(it.get("item_id")) for it in previous.get("items") or []
+                   if str(it.get("item_id")) not in answered]
     ask = _write(feature_root, {"kind": DESIGN_KIND,
                                 "round": contract["rounds"][-1].get("round"), "items": items})
     if pending and previous.get("ask_id") != ask["ask_id"]:
@@ -245,52 +249,67 @@ def current_material(feature_root: Path, ask_id: str) -> dict:
 
 #: 比对原话与标签时去掉的标点与空白
 PUNCT = re.compile(r"[\s，。、；：！？,.;:!?「」“”\"'（）()]+")
-#: 否定说法：紧随其后的编号不构成选择（「不选 1」「不要第 2 项」）。否定句仍逐字留存，不替人改。
-NEGATION = (r"(?:不选|不要选|不要|别选|别|不采用|不按|不是|排除|暂不|未选|不建议)"
-            r"\s*(?:选|用|按|采用|要)?\s*(?:第\s*)?")
+#: 分句边界：识别单位是整句选择或边界明确的选项回应，不从句中任意位置抓编号。
+#: ASCII 句点不作边界：「2.5 个月」不能被拆成「2」；句首枚举仍按带句点的整句核。
+CLAUSE = re.compile(r"[，。；！？,;!?\n]+")
+#: 分句里否定某一项的说法：否定词直接管辖编号。否定句仍逐字留存，不替人改。
+NEGATION = re.compile(
+    r"(?:不选|不要选|不要|别选|别|不采用|不按|不是|排除|暂不|未选|不建议)"
+    r"\s*(?:选|用|按|采用|要)?\s*(?:第\s*)?(\d+)\s*(?:项|个|条)?")
 
 
-def _negated(option: dict, reply: str) -> bool:
-    """这一项被原话明确否掉了没有。"""
-    return re.search(NEGATION + rf"{option['no']}(?!\d)", reply) is not None
+def _negated(clause: str, options: list[dict]) -> set[int]:
+    """这一分句明确否掉了哪几项：只认否定词直接管辖的选项编号。"""
+    nos = {o["no"] for o in options}
+    return {int(m.group(1)) for m in NEGATION.finditer(clause)} & nos
 
 
-def _number_forms(no: int) -> list[str]:
-    """明确指向某一项的编号说法：整句是编号、「第 n 项/个/条」、“选 n”，或句首的枚举编号。
+def _affirmed(clause: str, options: list[dict]) -> set[int]:
+    """这一分句明确点名了哪几项：整句编号、完整「第 n 项/选 n」、句首枚举（可带附言）。
 
-    只认指向选项的表达，不从自由句子里抓数字：「第 2 份材料还没到」「等第 2 次会议开完」
-    「1 份 PRD 够了」都不是对某一项的选择。`n` 前一位是数字时不匹配（第 12 项不会被当成第 2 项）。
+    只认整句或句子开头的选项回应：「第 2 份材料还没到」「等第 2 次会议开完」「1 份 PRD 够了」
+    都不是对某一项的选择；编号出现在分句中间时不从里面截出一个选择。
     """
-    n = rf"(?<![\d.]){no}"
-    return [
-        # 整句就是编号：「2」「第2」「第2项」「2.」「2）」
-        rf"^\s*(?:第\s*)?{no}\s*(?:项|个|条)?\s*[。．.!！]?\s*$",
-        # 句首的枚举编号：「2.」「2）」「第2、」；后面接说明也算这一项的答复
-        rf"^\s*(?:第\s*)?{no}\s*(?:项|个|条)?\s*[.．、)）](?!\d)",
-        # 明确说「第 n 项 / 第 n 个 / 第 n 条」
-        rf"第\s*{no}\s*(?:项|个|条)",
-        # 明确说「选 n」「选第 n」「选 n 项」（后面接标点或句末）
-        rf"选\s*(?:择\s*)?(?:第\s*)?{n}\s*(?:项|个|条|$|[.．、,，;；:：)）])",
-    ]
+    text = clause.strip()
+    out: set[int] = set()
+    for o in options:
+        n = o["no"]
+        if (re.fullmatch(rf"(?:第\s*)?{n}\s*(?:项|个|条)?[。．.!！]?", text)
+                or re.fullmatch(rf"第\s*{n}\s*(?:项|个|条)[。．.!！]?", text)
+                or re.fullmatch(rf"(?:选|选择)\s*(?:第\s*)?{n}\s*(?:项|个|条)?[。．.!！]?", text)
+                or re.match(rf"^(?:第\s*)?{n}\s*(?:项|个|条)?\s*[.．、)）](?!\d)", text)):
+            out.add(n)
+    return out
 
 
 def pick_explicit(options: list[dict], reply: str) -> dict:
-    """人明确指到一项才返回值：编号的说法，或整句照抄该项标签。
+    """人明确指到一项才返回值：整句选择、边界明确的选项回应，或整句照抄该项标签。
 
-    片段命中、模型替人挑一项，都不能当成人对整项内容的批准；被原话否掉的项（「不选 1」）
-    也不参与选择。没有明确选择就重问，原话仍逐字留存。
+    完整标签先核（含内置标点时也按整句比）；复合选择按分句核出唯一肯定项（「不选 1，选 2」）。
+    片段命中、叙述里的序号、只否定或同时指到几项都不签认——作者保留原话请人澄清，
+    原话仍逐字留存。
     """
-    hits = [o for o in options
-            if not _negated(o, reply)
-            and (any(re.search(form, reply) for form in _number_forms(o["no"]))
-                 or (o["label"] and PUNCT.sub("", reply) == PUNCT.sub("", o["label"])))]
-    if len(hits) == 1:
-        return hits[0]
+    text = str(reply or "")
+    for o in options:
+        if o["label"] and PUNCT.sub("", text) == PUNCT.sub("", o["label"]):
+            return o
+    affirmed: dict[int, dict] = {}
+    negated: set[int] = set()
+    for clause in CLAUSE.split(text):
+        if not clause.strip():
+            continue
+        negated |= _negated(clause, options)
+        for no in _affirmed(clause, options):
+            affirmed[no] = next(o for o in options if o["no"] == no)
+    hits = [affirmed[no] for no in sorted(affirmed) if no not in negated]
     listed = "、".join(f"{o['no']}={o['key']}" for o in options)
     if not hits:
-        raise FlowError("原话没有明确选到任何一项：用编号（第 n / n. / 选 n）或整句照抄一项的标签；"
-                        f"拿不准就再问人一次。现有：{listed}")
-    raise FlowError("原话同时指到了几项：" + "、".join(str(o["no"]) for o in hits) + "——原话只认一项")
+        raise FlowError("原话没有明确选到任何一项：按材料门的问法请人直接选一项（选项编号或完整标签）；"
+                        "只是说明材料缺口的话保留缺口，不在其中签认选择；拿不准就再问人一次。"
+                        f"现有：{listed}")
+    if len(hits) > 1:
+        raise FlowError("原话同时指到了几项：" + "、".join(str(o["no"]) for o in hits) + "——原话只认一项")
+    return hits[0]
 
 
 def answered_item_ids(feature_root: Path, contract: dict, ask_id: str) -> set[str]:
@@ -322,27 +341,18 @@ def _update_record(feature_root: Path, rid: str) -> dict:
     return payload
 
 
-def pending_items(feature_root: Path, ask: dict | None, contract: dict) -> list[str]:
-    if not ask or ask.get("kind") != DESIGN_KIND:
-        return []
+def pending_view(feature_root: Path, ask: dict, contract: dict) -> dict:
+    """这一次待答状态：**同一次读取**回答已答/未答，并从**未答子集**渲染唯一展示块。
+
+    返回的 `ask.block` 就是本次要交人的那条消息，`pending` 与它同一来源；盘上的完整问法
+    不动，`decide` 仍按完整问法核对 ask_id 与题号。同一个状态不再为拼展示而重读记录。
+    """
     answered = answered_item_ids(feature_root, contract, ask["ask_id"])
-    return [str(it["item_id"]) for it in ask.get("items") or [] if str(it["item_id"]) not in answered]
-
-
-def with_answered(feature_root: Path, ask: dict, contract: dict) -> dict:
-    """给展示用的一份问法：带上待答与已答题号，不改盘上的问法。"""
-    answered = answered_item_ids(feature_root, contract, ask["ask_id"])
-    return {**ask,
-            "pending": pending_items(feature_root, ask, contract),
-            "answered": [str(it["item_id"]) for it in ask.get("items") or []
-                         if str(it["item_id"]) in answered]}
-
-
-def pending_block(feature_root: Path, ask: dict, contract: dict) -> str:
-    """返回给人的展示块只含未答的题；完整问法仍留在盘上，`decide` 按它核对题号与内容身份。"""
-    pending = pending_items(feature_root, ask, contract)
+    pending = [str(it["item_id"]) for it in ask.get("items") or [] if str(it["item_id"]) not in answered]
     left = {**ask, "items": [it for it in ask.get("items") or [] if str(it["item_id"]) in pending]}
-    return block(left)
+    return {**left, "pending": pending,
+            "answered": [str(it["item_id"]) for it in ask.get("items") or [] if str(it["item_id"]) in answered],
+            "block": block(left)}
 
 
 def clear(feature_root: Path) -> None:

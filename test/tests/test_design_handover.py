@@ -286,10 +286,15 @@ class DesignQuestionsAreBoundToWhatWasAsked(HandoverCase):
         self.assertEqual("await_questions", out["next"])
         self.assertIn("【Q2】宽限期多长？", out["ask_block"])
         self.assertNotIn("【Q1】", out["ask_block"], "已答的题又被重问一遍")
+        self.assertTrue(out["nextAction"].endswith(out["ask_block"]), "action 与 ask_block 不是同一个展示块")
         state = self.ok("status")
         self.assertEqual((ask["ask_id"], ["Q2"], "await_questions"),
                          (state["ask"]["ask_id"], state["ask"]["pending"], state["next"]),
                          "普通 status 没返回同一组未答完的问法")
+        self.assertEqual(out["ask_block"], state["ask"]["block"], "部分答复后两个入口给出的展示块不一致")
+        self.assertNotIn("【Q1】", state["ask"]["block"], "status 的展示块里仍有已答的题")
+        self.assertEqual([], [it for it in state["ask"]["items"] if it["item_id"] == "Q1"],
+                         "status 的展示问法里仍有已答的题")
         row = self.contract()["rounds"][-1]["answers"][0]
         self.assertEqual("保持待定", row["reply"], "「保持待定」不是真实答复")
         self.assertNotIn("chosen", row)

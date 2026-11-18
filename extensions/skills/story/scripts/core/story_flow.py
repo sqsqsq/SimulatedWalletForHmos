@@ -109,6 +109,8 @@ def main() -> int:
                     help='decide 设计问答：逐题答复 JSON {"items":[{"item_id","reply"}]}')
     ap.add_argument("--questions-file", default=None,
                     help="status：设计后必要问答的输入 JSON，生成一次集中 ask（不传不触发）")
+    ap.add_argument("--questioning-candidate", default=None,
+                    help="update feedback：首次反馈要带质询任务第 7 块给的工程相对 candidate.yaml 路径，按同轮候选核被评版本")
     ap.add_argument("--action", default="inputs",
                     choices=["inputs", "prepare", "status", "close", "restore", "feedback"],
                     help="update：本轮做哪一步（起手是 inputs：先报输入、问补料，再 prepare）")
@@ -159,7 +161,7 @@ def main() -> int:
             elif args.action == "restore":
                 result.update(cmd_update_restore(feature_root))
             elif args.action == "feedback":
-                result.update(cmd_update_feedback(feature_root, project_root))
+                result.update(cmd_update_feedback(feature_root, project_root, args.questioning_candidate))
             elif args.action == "inputs":
                 result.update(cmd_update_inputs(feature_root, args.feature, project_root))
             else:

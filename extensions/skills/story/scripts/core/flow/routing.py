@@ -194,14 +194,16 @@ def story_stage_step(feature_root: Path) -> tuple[str, str]:
 #: 材料关卡的回话方式：问法由 `status` 的 `ask` 给出，人回话后按它记。
 DECIDE_USAGE = ("把 `status` 输出里 `ask.block` 原样摆给人（前面一句结论与缺口），停等。"
                 "人回话后跑 `story_flow.py decide --feature <名> --gate material_scope --ask <ask_id> "
-                "--reply \"<人的原话>\"`。原话只认编号的说法（第 n、n.、n）、选 n、整句为 n）"
-                "或整句照抄一项的标签；片段命中或模型替人挑一项都不算人的选择")
+                "--reply \"<人的原话>\"`。原话只认整句选择或边界明确的选项回应：裸编号、"
+                "完整「第 n 项/选 n」、句首枚举及附言、整句照抄一项的完整标签；复合选择按分句核唯一肯定项。"
+                "叙述里的序号、只否定或同时指到几项都不算人的选择——保留原话请人澄清；"
+                "说明材料尚缺时保留那个缺口，不在缺口的话里签认选择（问法见 SKILL「停等真值表」）")
 #: 设计后必要问答的回话方式：问题与选项从已落盘的问法取，记录不重填问法。
 QUESTIONS_USAGE = (
-    "把 `ask.block` 原样摆给人，一次把这组题问完；人回话后跑 "
+    "把返回的 `ask.block` 作为本次消息；还没答的题才摆出来，全部答完就回原生设计续行。人回话后跑 "
     "`story_flow.py decide --feature <名> --ask <ask_id> --item <题号> --reply \"<人的原话>\"`，"
     "多题同一答复用 `--replies-file <{\"items\":[{\"item_id\",\"reply\"}]}>`。"
-    "记录时只按盘上问法取问题与选项，不重填；部分答复只留未答的题，全部答完即回原生设计续行")
+    "记录时只按盘上问法取问题与选项，不重填")
 #: 设计问答文件的形状：这一次动作的输入，不是第二份机器真源。
 QUESTIONS_SHAPE = {
     "path": "<工程内 JSON，只作本次动作输入>",
@@ -519,16 +521,20 @@ def meeting_result_step(feature_root: Path, contract: dict) -> tuple[str, str] |
 
 
 def questions_step(feature_root: Path, contract: dict) -> tuple[str, str] | None:
-    """有还没答完的设计问答时停在这一步：同一组问法原样续问，不重新生成更宽的问法。"""
+    """有还没答完的设计问答时停在这一步：同一组问法原样续问，不重新生成更宽的问法。
+
+    待答与展示块由 `asks.pending_view` 的同一次读取给出：续行消息里的块就是本次要交人的那条。
+    """
     ask = asks.current_design(feature_root)
     if ask is None:
         return None
-    pending = asks.pending_items(feature_root, ask, contract)
-    if not pending:
+    shown = asks.pending_view(feature_root, ask, contract)
+    if not shown["pending"]:
         return None
     return ("await_questions",
-            f"设计后必要问答还有 {len(pending)} 题没答（{ask['ask_id']}）。把同一展示块里剩下的部分原样摆给人：\n"
-            + asks.pending_block(feature_root, ask, contract) + "\n" + QUESTIONS_USAGE)
+            f"设计后必要问答还有 {len(shown['pending'])} 题没答（{shown['ask_id']}）。"
+            "把返回的 ask.block 作为本次消息；只摆还没答的问题，全部答完即回原生设计续行：\n"
+            + shown["block"] + "\n" + QUESTIONS_USAGE)
 
 
 def after_material_step(feature_root: Path, contract: dict) -> tuple[str, str]:
