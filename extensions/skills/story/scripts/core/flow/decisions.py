@@ -48,7 +48,7 @@ def _material_record(feature_root: Path, contract: dict, args: argparse.Namespac
                         "那时才轮到重新表态；现在按 `status` 的 next 往下走")
     ask = asks.current_material(feature_root, args.ask)
     options = ask["options"]
-    picked = asks.pick_explicit(options, reply)
+    picked = asks.pick_explicit(options, reply, ask["ask_id"])
     current = contract["rounds"][-1]
 
     outcome, reason, code = "accepted", None, 0
@@ -182,8 +182,8 @@ def _design_questions(feature_root: Path, contract: dict, args: argparse.Namespa
                   {"item_id": e["item_id"], "reply": e["reply"], "at": e["at"]} for e in recorded],
               "pending": pending, "next": step}
     if pending:
-        action = ("原话已记下。把返回的 ask.block 作为本次消息；只摆还没答的问题，全部答完即回原生设计续行：\n"
-                  + shown["block"])
+        action = ("原话已记下。把返回的 ask_block 作为本次消息（`ask` 只是问法编号，展示内容在 ask_block）；"
+                  "只摆还没答的问题，全部答完即回原生设计续行：\n" + shown["block"])
         step = "await_questions"
         result["next"] = step
         result["ask_block"] = shown["block"]

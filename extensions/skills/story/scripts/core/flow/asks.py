@@ -73,17 +73,44 @@ def _write(feature_root: Path, ask: dict) -> dict:
     return ask
 
 
-def block(ask: dict) -> str:
-    """停等消息里原样照抄的展示块：每项一行，推荐与出处单独成行。"""
+def _path_like_item_id(item_id: str) -> bool:
+    """题号本身是不是原生地址或机器路径：这类 id 不交给人读，展示层改用本组序号。"""
+    return any(mark in item_id for mark in (":", "/", "\\"))
+
+
+def _display_ids(items: list[dict], order: list[str] | None = None) -> dict[str, str]:
+    """展示题号：item_id 本身可读就用它；含原生地址或路径的按**本组原顺序**给人读序号。
+
+    `order` 是全组题号顺序（部分答复后展示只含余题时仍用它），记录仍取结构化 items 的原 item_id。
+    """
+    order = [str(x) for x in (order or [str(it["item_id"]) for it in items])]
+    out: dict[str, str] = {}
+    for item in items:
+        item_id = str(item["item_id"])
+        if not _path_like_item_id(item_id):
+            out[item_id] = item_id
+            continue
+        at = order.index(item_id) + 1 if item_id in order else len(out) + 1
+        out[item_id] = f"第 {at} 题"
+    return out
+
+
+def block(ask: dict, order: list[str] | None = None) -> str:
+    """停等消息里原样照抄的展示块：设计问答只含题号、业务问题、候选与必要建议/业务理由。
+
+    出处与机器路径留在结构字段（items 的 source_ref）与导出；`order` 是全组题号顺序，部分答复
+    后展示只含余题时用它保住原序。材料问法仍按合同选项与推荐各占一行。
+    """
     if ask.get("kind") == DESIGN_KIND:
+        ids = _display_ids(ask["items"], order)
         rows: list[str] = []
         for item in ask["items"]:
-            rows.append(f"【{item['item_id']}】{item['question']}")
+            rows.append(f"【{ids[str(item['item_id'])]}】{item['question']}")
             rows.extend(f"{i}. {label}" for i, label in enumerate(item["options"], 1))
             if item.get("recommend"):
                 rows.append(f"建议：{item['recommend']}")
-            rows.append(f"为什么现在问：{item['reason']}")
-            rows.append(f"出处：{item['source_ref']}")
+            if item.get("reason"):
+                rows.append(f"为什么现在问：{item['reason']}")
         return "\n".join(rows)
 
     def lines(options: list[dict], recommend: dict | None) -> list[str]:
@@ -247,68 +274,119 @@ def current_material(feature_root: Path, ask_id: str) -> dict:
     return ask
 
 
-#: 比对原话与标签时去掉的标点与空白
-PUNCT = re.compile(r"[\s，。、；：！？,.;:!?「」“”\"'（）()]+")
-#: 分句边界：识别单位是整句选择或边界明确的选项回应，不从句中任意位置抓编号。
-#: ASCII 句点不作边界：「2.5 个月」不能被拆成「2」；句首枚举仍按带句点的整句核。
-CLAUSE = re.compile(r"[，。；！？,;!?\n]+")
-#: 分句里否定某一项的说法：否定词直接管辖编号。否定句仍逐字留存，不替人改。
-NEGATION = re.compile(
-    r"(?:不选|不要选|不要|别选|别|不采用|不按|不是|排除|暂不|未选|不建议)"
-    r"\s*(?:选|用|按|采用|要)?\s*(?:第\s*)?(\d+)\s*(?:项|个|条)?")
+#: 合同标签比较时去掉的标点：只去陈述性分隔符与空白。问号与引号**不去**——它们本身说明人还在问、或在引用。
+LABEL_PUNCT = re.compile(r"[\s，。、；：,.;:（）()]+")
+#: 复合选择的分句边界：每一个分句都必须自己能完整成立；不认识的分句不忽略。
+CLAUSE_SPLIT = re.compile(r"[，,；;。\n]+")
+#: 编号后可以承接的既有简短确认格式（发布接口已测的「1）就这样」）；不据此扩出自由附言或同义词猜测。
+CONFIRM = re.compile(r"^(?:就)?这样(?:吧)?$")
+#: 疑问与引用语境：材料门不前进，保留原话请人只澄清这一个选择。
+DOUBT = re.compile(r"[？?]")
+QUOTED = re.compile(r"[「」『』“”\"']")
+#: 整句的编号表达：裸编号、完整的「第 n 项／选 n」；句末只多一个陈述/枚举符。
+_NUMBER_FORMS = (
+    re.compile(r"^(?:选|选择)\s*(?:第\s*)?(\d+)\s*(?:项|个|条)?[。．.!！、)）]?$"),
+    re.compile(r"^第\s*(\d+)\s*(?:项|个|条)[。．.!！]?$"),
+    re.compile(r"^(\d+)\s*(?:项|个|条)?[。．.!！、)）]?$"),
+)
+#: 完整否定表达：否定词直接管辖一个编号；否定句仍逐字留存，不替人改。
+_NEGATED = re.compile(r"^(?:不要|不|别|排除)\s*(?:选|选择|用|按|采用)?\s*(?:第\s*)?(\d+)\s*(?:项|个|条)?[。．.!！]?$")
+#: 编号 + 同一选项完整标签的重述，或编号 + 既有确认格式。
+_RESTATED = re.compile(r"^(?:选|选择)?\s*(?:第\s*)?(\d+)\s*(?:项|个|条)?\s*[.．、)）:：,，]\s*(.+?)"
+                       r"[。．.!！]?$")
 
 
-def _negated(clause: str, options: list[dict]) -> set[int]:
-    """这一分句明确否掉了哪几项：只认否定词直接管辖的选项编号。"""
-    nos = {o["no"] for o in options}
-    return {int(m.group(1)) for m in NEGATION.finditer(clause)} & nos
+def _label_equal(text: str, label: str) -> bool:
+    """整句照抄一项的完整标签：按合同标点比较，不把半句映射成整项。"""
+    return bool(label) and LABEL_PUNCT.sub("", text) == LABEL_PUNCT.sub("", label)
 
 
-def _affirmed(clause: str, options: list[dict]) -> set[int]:
-    """这一分句明确点名了哪几项：整句编号、完整「第 n 项/选 n」、句首枚举（可带附言）。
-
-    只认整句或句子开头的选项回应：「第 2 份材料还没到」「等第 2 次会议开完」「1 份 PRD 够了」
-    都不是对某一项的选择；编号出现在分句中间时不从里面截出一个选择。
-    """
+def _clause_choice(clause: str, options: list[dict]) -> tuple[int, bool] | None:
+    """这一分句完整是一个选择表达才返回（编号, 是肯定）；不是就返回 None，不忽略也不截取。"""
     text = clause.strip()
-    out: set[int] = set()
+    if not text:
+        return None
     for o in options:
-        n = o["no"]
-        if (re.fullmatch(rf"(?:第\s*)?{n}\s*(?:项|个|条)?[。．.!！]?", text)
-                or re.fullmatch(rf"第\s*{n}\s*(?:项|个|条)[。．.!！]?", text)
-                or re.fullmatch(rf"(?:选|选择)\s*(?:第\s*)?{n}\s*(?:项|个|条)?[。．.!！]?", text)
-                or re.match(rf"^(?:第\s*)?{n}\s*(?:项|个|条)?\s*[.．、)）](?!\d)", text)):
-            out.add(n)
-    return out
+        if _label_equal(text, o["label"]):
+            return o["no"], True
+    for pattern in _NUMBER_FORMS:
+        m = pattern.fullmatch(text)
+        if m:
+            return int(m.group(1)), True
+    m = _NEGATED.fullmatch(text)
+    if m:
+        return int(m.group(1)), False
+    m = _RESTATED.fullmatch(text)
+    if m:
+        no, rest = int(m.group(1)), m.group(2).strip()
+        if CONFIRM.fullmatch(rest):
+            return no, True
+        for o in options:
+            if o["no"] == no and _label_equal(rest, o["label"]):
+                return o["no"], True
+    return None
 
 
-def pick_explicit(options: list[dict], reply: str) -> dict:
-    """人明确指到一项才返回值：整句选择、边界明确的选项回应，或整句照抄该项标签。
+def pick_explicit(options: list[dict], reply: str, ask_id: str | None = None) -> dict:
+    """人的整句话明确指到一项才返回值：完整标签、完整编号表达，或受支持的复合选择。
 
-    完整标签先核（含内置标点时也按整句比）；复合选择按分句核出唯一肯定项（「不选 1，选 2」）。
-    片段命中、叙述里的序号、只否定或同时指到几项都不签认——作者保留原话请人澄清，
-    原话仍逐字留存。
+    全输入协议：先认整句照抄的完整合同标签；其余必须**每一分句都是完整的选择表达**、且只有一个
+    肯定项。有问号、引用了别人的话、带条件/保留/附言或还有未消费的文字，一律不签认——保留原话、
+    请人只澄清这一个选择。标点清洗不把「选2？」当成「选2」。
     """
-    text = str(reply or "")
+    text = str(reply or "").strip()
+    where = f"（ask {ask_id}）" if ask_id else ""
+    listed = "、".join(f"{o['no']}={o['key']}" for o in options)
+
+    def refuse(reason: str) -> FlowError:
+        return FlowError(
+            f"原话没有明确选到任何一项{where}：{reason}。按本次问法请人直接回编号或完整选项——"
+            "有疑问、条件、保留、引用别人的选择，或编号后还有别的说明时，材料门不前进："
+            "先处理能处理的补料或问题，再只澄清这一个选择，不从句中截一个编号当选择；"
+            f"拿不准就再问人一次。现有：{listed}")
+
+    if not text:
+        raise refuse("是空白")
+    if DOUBT.search(text):
+        raise refuse("原话带问号，人还在问、没有表态")
+    if QUOTED.search(text):
+        raise refuse("原话在引用别人的说法，不是人自己的选择")
+    stripped = text.rstrip("。．.!！")
     for o in options:
-        if o["label"] and PUNCT.sub("", text) == PUNCT.sub("", o["label"]):
+        if _label_equal(stripped, o["label"]):
             return o
+    # 机构完整的选择：编号 + 同一选项的完整标签重述，或编号 + 既有确认格式
+    whole = _RESTATED.fullmatch(stripped)
+    if whole:
+        no, rest = int(whole.group(1)), whole.group(2).strip()
+        for o in options:
+            if o["no"] == no and (CONFIRM.fullmatch(rest) or _label_equal(rest, o["label"])):
+                return o
+    clauses = [c for c in CLAUSE_SPLIT.split(stripped) if c.strip()]
+    if not clauses:
+        raise refuse("没有认出任何一项")
     affirmed: dict[int, dict] = {}
     negated: set[int] = set()
-    for clause in CLAUSE.split(text):
-        if not clause.strip():
-            continue
-        negated |= _negated(clause, options)
-        for no in _affirmed(clause, options):
-            affirmed[no] = next(o for o in options if o["no"] == no)
-    hits = [affirmed[no] for no in sorted(affirmed) if no not in negated]
-    listed = "、".join(f"{o['no']}={o['key']}" for o in options)
-    if not hits:
-        raise FlowError("原话没有明确选到任何一项：按材料门的问法请人直接选一项（选项编号或完整标签）；"
-                        "只是说明材料缺口的话保留缺口，不在其中签认选择；拿不准就再问人一次。"
-                        f"现有：{listed}")
+    for clause in clauses:
+        choice = _clause_choice(clause, options)
+        if choice is None:
+            raise refuse(f"「{clause.strip()}」不是完整的选择表达（有附言、条件或未消费的文字）")
+        no, positive = choice
+        hit = next((o for o in options if o["no"] == no), None)
+        if hit is None:
+            raise refuse(f"第 {no} 项不在这次摆出的选项里")
+        if positive:
+            affirmed[no] = hit
+        else:
+            negated.add(no)
+    hits = [o for no, o in sorted(affirmed.items()) if no not in negated]
     if len(hits) > 1:
-        raise FlowError("原话同时指到了几项：" + "、".join(str(o["no"]) for o in hits) + "——原话只认一项")
+        raise FlowError("原话同时指到了几项：" + "、".join(str(o["no"]) for o in hits)
+                        + "——原话只认一项，请人明确只选一项" + where)
+    if not hits:
+        if negated:
+            raise refuse("只否定了第 " + "、".join(str(n) for n in sorted(negated)) + " 项，没有肯定任何一项")
+        raise refuse("没有肯定任何一项")
     return hits[0]
 
 
@@ -352,7 +430,7 @@ def pending_view(feature_root: Path, ask: dict, contract: dict) -> dict:
     left = {**ask, "items": [it for it in ask.get("items") or [] if str(it["item_id"]) in pending]}
     return {**left, "pending": pending,
             "answered": [str(it["item_id"]) for it in ask.get("items") or [] if str(it["item_id"]) in answered],
-            "block": block(left)}
+            "block": block(left, [str(it["item_id"]) for it in ask.get("items") or []])}
 
 
 def clear(feature_root: Path) -> None:

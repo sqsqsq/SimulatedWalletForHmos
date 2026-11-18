@@ -1037,43 +1037,187 @@ def _evidence_ref_problem(project_root: Path, feature_root: Path, ref: object, f
 
 #: 质询轮的原件：同轮候选、任务与独立回复。它们只证明技术判断，不承担人的授权。
 QUESTIONING_FILES = {"candidate.yaml", "task.md", "reply.md"}
+#: 原生地址前缀：不是可读原件，由原生解析。
+NATIVE_REFS = ("blueprint:", "view:", "node:", "relation:", "flow:", "decision:", "contract:", "gap:", "evidence:")
 
 
-def _original_kind(project_root: Path, feature_root: Path, ref: object) -> tuple[str | None, str | None]:
-    """一条裁决出处是哪一类原件：`human`（人答导出、批注、改稿、转述等可读原件）、
-    `technical`（质询同轮的候选/任务/回复，只能随附为技术依据），或读不到的原因。"""
+def _ref_path(feature_root: Path, project_root: Path, ref: object) -> tuple[str | None, str | None]:
+    """一条引用归一成需求目录相对路径：需求相对与工程相对指到同一实际路径；`#片段`只留给读者定位。"""
     text = str(ref or "").strip()
     if not text:
         return None, "是空白"
-    raw = text.split("#", 1)[0]
-    if raw.startswith(("blueprint:", "view:", "node:", "relation:", "flow:", "decision:", "contract:", "gap:", "evidence:")):
-        return None, "不是可读原件（是原生地址）"
+    raw = text.split("#", 1)[0].strip()
+    if not raw:
+        return None, "只有片段、没有原件路径"
+    if raw.startswith(NATIVE_REFS):
+        return None, "是原生地址，不是可读原件"
     path = Path(raw)
     if path.is_absolute() or ".." in path.parts:
-        return None, "不是工程内的相对路径"
-    if not ((feature_root / path).is_file() or (project_root / path).is_file()):
+        return None, "不是本需求内的相对路径"
+    if (feature_root / path).is_file():
+        return path.as_posix(), None
+    full = project_root / path
+    if full.is_file():
+        try:
+            return full.resolve().relative_to(feature_root.resolve()).as_posix(), None
+        except ValueError:
+            return None, "越出本需求的来源集合（引用的不是本需求目录内的原件）"
+    parts = path.parts
+    if len(parts) > 3 and parts[0] == "doc" and parts[1] == "features" and parts[2] == feature_root.name:
+        return Path(*parts[3:]).as_posix(), None
+    return path.as_posix(), None
+
+
+def _evidence_sources(feature_root: Path, rec: dict | None) -> dict:
+    """本次反馈核出处要用的来源集合，**一次取齐**：材料索引登记行 + 本轮 prepare 固定的评审输入。
+
+    init 还没有开过 update，用这次实际取得的评审输入（`_review_inputs` 按当次批次回执核）。
+    材料索引读不出不影响读评审输入，但设计问答原话与正式来源的身份核不了，把原因记下来照实报。
+    """
+    rows: dict[str, dict] = {}
+    index_error = None
+    try:
+        manifest = registry.read(feature_root)
+    except registry.MaterialError as exc:
+        index_error = str(exc)
+    else:
+        rows = {str(r["path"]): r for r in manifest.get("files") or [] if r.get("path")}
+    if rec is not None:
+        before = str((rec.get("mirror") or {}).get("path") or "") or None
+        entries = rec.get("review_inputs") or []
+    else:
+        before = None
+        entries = _review_inputs(feature_root)
+    return {"rows": rows, "index_error": index_error, "before": before,
+            "review": {str(e["path"]): e for e in entries if e.get("path")}}
+
+
+def _review_ref(feature_root: Path, rel: str, entry: dict) -> tuple[str | None, str | None]:
+    """本轮 prepare 固定的评审输入：路径与完整摘要都要对得上，才定位到同一版本。"""
+    status = str(entry.get("status") or "")
+    if status not in ("fetched", "same", "local"):
+        return None, f"在本轮评审输入里的状态是「{status or '缺失'}」，不是已取得、可核的原件"
+    sha = str(entry.get("sha256") or "")
+    if not sha:
+        return None, "在本轮评审输入里没有可核摘要"
+    if file_sha256(feature_root / Path(*rel.split("/"))) != sha:
+        return None, ("的字节与本轮 prepare 固定时的不一致（摘要漂移）：引用本轮 before/ 里的快照，"
+                      "或按当前这一份重新 prepare 再引用")
+    return "review", None
+
+
+def _component_ok(feature_root: Path, component: str, rows: dict[str, dict]) -> bool:
+    """聚合稿的一个 component（`<来源>@<版本>`）能追到登记过的实际文件，且盘上字节与登记一致。"""
+    source_id, _, version = str(component).rpartition("@")
+    try:
+        number = int(version)
+    except ValueError:
+        return False
+    for row in rows.values():
+        if str(row.get("source_id")) != source_id or row.get("version") != number:
+            continue
+        have = file_sha256(feature_root / Path(*str(row.get("path")).split("/")))
+        if have is not None and have == str(row.get("sha256") or ""):
+            return True
+    return False
+
+
+def _registered_ref(feature_root: Path, rel: str, row: dict,
+                    sources: dict) -> tuple[str | None, str | None]:
+    """材料索引登记行：来源身份、稳定版本行与原件摘要；可变别名落到稳定行，聚合稿追 components。"""
+    have = file_sha256(feature_root / Path(*rel.split("/")))
+    if have is None:
         return None, "读不到"
-    if "questioning" in path.parts and path.name in QUESTIONING_FILES:
-        return "technical", None
-    return "human", None
+    reference = row.get("reference")
+    if isinstance(reference, dict) and reference.get("path"):
+        stable = sources["rows"].get(str(reference["path"]))
+        if stable is None:
+            return None, "是会换版的当前位置，但对应的稳定版本行不在材料索引里：先用 `round` 修好来源登记"
+        want = str(stable.get("sha256") or "")
+        if have != want or str(reference.get("sha256") or "") != want:
+            return None, f"的字节与其稳定版本不一致（摘要漂移）：引用稳定版本 {stable.get('path')}"
+        row = stable
+    elif have != str(row.get("sha256") or ""):
+        return None, "的字节与材料索引登记的不一致（摘要漂移）：找回原件，或按实际内容重新导入"
+    if str(row.get("kind")) == "answer" and str(row.get("role") or "") in ("answer_record", "answer"):
+        return "answer", None
+    if str(row.get("kind")) == "meeting":
+        # 会议阅读稿沿已有同源关系回到原件：同源的会议原件在、字节对得上，身份才成立
+        original = next((r for r in sources["rows"].values()
+                         if r.get("source_id") == row.get("source_id")
+                         and r.get("version") == row.get("version") and r.get("role") == "original"), None)
+        if original is None:
+            return None, "是会议阅读件，但同源的会议原件不在材料索引里"
+        path = Path(*str(original.get("path")).split("/"))
+        if file_sha256(feature_root / path) != str(original.get("sha256") or ""):
+            return None, f"同源的会议原件 {original.get('path')} 字节与登记不一致（摘要漂移）"
+        return "formal", None
+    if row.get("components"):
+        broken = [c for c in row["components"] if not _component_ok(feature_root, str(c), sources["rows"])]
+        if broken:
+            return None, f"是聚合稿，但合成的版本 {'、'.join(broken)} 追不到登记的原件"
+    return "formal", None
 
 
-def _ruling_evidence_problems(project_root: Path, feature_root: Path, refs: list, fid: str) -> list[str]:
-    """有权裁决必须有可读取、可追溯到人的原话原件；空白、不可解析地址、缺失原件或缺人答都不具备资格。"""
+def _ref_role(feature_root: Path, project_root: Path, ref: object,
+              sources: dict) -> tuple[str | None, str | None]:
+    """一条引用的原件身份：answer/review/formal 是可能载有人签的原件；technical 只能作技术佐证。"""
+    rel, why = _ref_path(feature_root, project_root, ref)
+    if rel is None:
+        return None, why
+    entry = sources["review"].get(rel)
+    if entry is not None:
+        role, why = _review_ref(feature_root, rel, entry)
+        return role, why
+    before = sources["before"]
+    if before and rel.startswith(f"{before}/"):
+        inner = rel[len(before) + 1:]
+        entry = sources["review"].get(inner)
+        if entry is None:
+            return None, "是本轮快照路径，但指不回本轮评审输入里的原件"
+        role, why = _review_ref(feature_root, rel, entry)
+        return role, why
+    row = sources["rows"].get(rel)
+    if row is not None:
+        role, why = _registered_ref(feature_root, rel, row, sources)
+        return role, why
+    if not (feature_root / Path(*rel.split("/"))).is_file():
+        return None, "读不到"
+    # 可读但没有来源身份：作者稿、质询回复、蓝图、机器报告与普通工程文件只能作技术佐证
+    if "questioning" in Path(rel).parts and Path(rel).name in QUESTIONING_FILES:
+        return "technical", "是同轮质询原件，只能随附为技术依据"
+    return "technical", "是可读文件，但不是材料索引登记的原件或本轮评审输入，承担不了人的答复"
+
+
+def _ruling_evidence_problems(project_root: Path, feature_root: Path, refs: list, fid: str,
+                              sources: dict) -> list[str]:
+    """有权裁决的出处必须落到可能载有人签的原件：人答导出、本轮评审输入，或材料索引登记的原件。
+
+    作者稿与质询回复只能随附为技术依据，不能单独承担人的授权；多条引用允许人的原件与技术佐证并存。
+    具体那句话是否支持 owner、target、revision、期限与承诺由蓝图负责方对原件核定，脚本不猜说话人。
+    """
     if not refs:
-        return [f"{fid} 是有权裁决却没有引用任何原话或原件：把可追到人的原话（已导出人答或实际取得的批注、改稿、转述）"
-                "写进 evidence_refs；没有出处的裁决不进入调和候选，语义由蓝图负责方据原话判定"]
-    problems, human = [], False
+        return [f"{fid} 是有权裁决却没有引用任何原话或原件：把可追到人的原话（已导出人答、实际取得的批注/改稿/转述，"
+                "或材料索引登记的原件、会议原件）写进 evidence_refs；没有出处的裁决不进入调和候选"]
+    problems, human, technical = [], 0, []
     for ref in refs:
-        kind, why = _original_kind(project_root, feature_root, ref)
-        if kind is None:
+        role, why = _ref_role(feature_root, project_root, ref, sources)
+        if role is None:
             problems.append(f"{fid} 的 evidence_refs「{ref}」{why}：权威裁决必须有可读取、可追溯到人的原话原件，"
                             "这一条不具备该裁决资格")
-        elif kind == "human":
-            human = True
+        elif role == "technical":
+            technical.append(f"「{ref}」{why}")
+        else:
+            human += 1
     if not problems and not human:
-        problems.append(f"{fid} 的裁决只引了独立读者的建议或质询回复：它们只能随附为技术依据，不能代替人的答复——"
-                        "把可追到人的原话原件写进 evidence_refs")
+        if sources.get("index_error"):
+            problems.append(f"{fid} 的裁决出处核不了：材料索引读不出（{sources['index_error']}）——"
+                            "先跑 `round` 修好来源登记，再引用已取得的人答或含决定的来源原件")
+        else:
+            problems.append(f"{fid} 的裁决只引了技术或上下文佐证：" + "；".join(technical)
+                            + "。作者稿、质询回复、蓝图、机器报告与普通工程文件只能随附为技术依据，不能代替人的答复——"
+                            "请引用已取得的人答（`AR/story-src/answers/` 导出的原话）或含决定的来源原件"
+                            "（材料索引登记的原件、会议原件、本轮评审输入），或按实际性质提交 opinion/suggestion/fact_supplement")
     return problems
 
 
@@ -1137,6 +1281,11 @@ def cmd_update_feedback(feature_root: Path, project_root: Path, questioning_cand
             problems.append(f"source_revision 应是被评的蓝图版本 {reviewed}（写的是 {doc.get('source_revision')}）。"
                             "反馈不能把旧输入改成当前版本号来通过：仍适用的旧意见由负责方按当前目标形成一个新版本的新反馈，"
                             "并引用旧原件")
+        declared = doc.get("items") if isinstance(doc.get("items"), list) else []
+        # 出处来源一次取齐：材料索引的登记行 + 本轮 prepare 固定的评审输入（init 用本次实际取得的）
+        sources = (_evidence_sources(feature_root, rec)
+                   if any(isinstance(i, dict) and str(i.get("kind")) == "authoritative_ruling" for i in declared)
+                   else None)
         for item in doc.get("items") or []:
             fid = str(item.get("feedback_id") or "")
             refs = item.get("evidence_refs") or []
@@ -1145,7 +1294,7 @@ def cmd_update_feedback(feature_root: Path, project_root: Path, questioning_cand
             items.append({"feedback_id": fid, "kind": item.get("kind"), "source_revision": item.get("source_revision"),
                           "target_ref": item.get("target_ref"), "evidence_refs": refs})
             if item.get("kind") == "authoritative_ruling":
-                problems.extend(_ruling_evidence_problems(project_root, feature_root, refs, fid))
+                problems.extend(_ruling_evidence_problems(project_root, feature_root, refs, fid, sources or {}))
             else:
                 problems.extend(p for p in (_evidence_ref_problem(project_root, feature_root, r, fid)
                                             for r in refs) if p)

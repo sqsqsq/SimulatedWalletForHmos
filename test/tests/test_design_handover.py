@@ -248,7 +248,11 @@ class DesignQuestionsAreBoundToWhatWasAsked(HandoverCase):
         self.assertIn("【Q1】失败后是否允许自动重试？", block)
         self.assertIn("【Q2】宽限期多长？", block)
         self.assertIn("建议：允许再试一次", block)
-        self.assertIn(f"出处：doc/features/{self.feature}/AR/story.md", block)
+        # 出处留在结构字段与导出，不贴进给人的展示块
+        self.assertNotIn("出处", block, "展示块又贴了内部出处")
+        self.assertNotIn(f"doc/features/{self.feature}", block, "展示块里出现了机器路径")
+        self.assertEqual(f"doc/features/{self.feature}/AR/story.md", ask["items"][1]["source_ref"],
+                         "出处没有留在结构字段里")
         self.assertEqual(gates_before, [g["gate"] for g in self.contract()["rounds"][-1]["gates"]],
                          "设计问答写进了 material 关卡记录")
         self.assertNotIn("gates", json.dumps(ask, ensure_ascii=False), "问法把 gate 状态带进了展示")
@@ -302,7 +306,30 @@ class DesignQuestionsAreBoundToWhatWasAsked(HandoverCase):
         export = next(s for s in registry.read(self.feature_root)["sources"] if s["kind"] == "answer")
         text = (self.feature_root / export["versions"][-1]["readable"]["path"]).read_text(encoding="utf-8")
         self.assertIn("保持待定", text)
+        self.assertIn("出处：", text, "导出里没留出处")
         self.assertNotIn("人的裁决", text)
+
+    def test_a_path_like_item_id_gets_a_human_number_and_the_record_keeps_the_id(self) -> None:
+        """item_id 是原生地址时展示层按本组原顺序给人读序号；记录仍取原 item_id，部分答复后保原序。"""
+        first = "view:logical/node:wallet-balance"
+        ask = self.ask(self.item(first, "余额刷新在哪触发？", ["回到首页", "切账号"]),
+                       self.item("view:logical/node:grace", "宽限期多长？", ["24 小时", "48 小时"]))
+        self.assertIn("【第 1 题】余额刷新在哪触发？", ask["block"])
+        self.assertIn("【第 2 题】宽限期多长？", ask["block"])
+        self.assertNotIn("view:logical", ask["block"], "展示块里出现了原生地址")
+        out = self.ok("decide", "--ask", ask["ask_id"], "--item", first, "--reply", "回到首页")
+        self.assertIn("【第 2 题】宽限期多长？", out["ask_block"], "部分答复后余题的序号没有按本组原顺序")
+        self.assertNotIn("【第 1 题】", out["ask_block"])
+        self.assertNotIn("view:logical", out["ask_block"])
+        self.assertIn("ask_block", out["nextAction"])
+        self.assertNotIn("ask.block", out["nextAction"], "decide 的下一步又指了它没有的字段")
+        state = self.ok("status")
+        self.assertEqual(out["ask_block"], state["ask"]["block"], "两个入口的展示块不一致")
+        self.assertNotIn("view:logical", state["action"], "普通 status 的展示里出现了原生地址")
+        row = self.contract()["rounds"][-1]["answers"][0]
+        self.assertEqual(first, row["item_id"], "记录把展示序号当成了新的绑定身份")
+        self.assertEqual(f"doc/features/{self.feature}/AR/story.md", row["source_ref"],
+                         "系统侧查不回原问法的出处")
 
     def test_one_reply_can_answer_two_questions_via_the_file(self) -> None:
         ask = self.ask(self.item("Q1", "失败后是否允许自动重试？"),
@@ -355,6 +382,8 @@ class DesignQuestionsAreBoundToWhatWasAsked(HandoverCase):
         out = self.ok("status", "--questions-file", str(path))
         self.assertNotEqual("await_questions", out["next"], out)
         self.assertNotIn("ask", out, "零待答还返回了一组问法")
+        self.assertNotIn("ask_block", out, "零待答还返回了展示块")
+        self.assertNotIn("【", out["action"], "零待答还展示了一份空问卷")
         self.assertFalse((self.src / ".ask.json").exists(), "零待答还留着临时问法")
 
     def test_a_question_changed_behind_its_ask_id_is_refused(self) -> None:

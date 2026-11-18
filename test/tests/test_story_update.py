@@ -2722,12 +2722,16 @@ class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
         return (folder / "candidate.yaml").relative_to(self.root).as_posix()
 
     def human_words(self, text: str = "本轮仅允许人工受理，最终规则待定。") -> str:
-        """已导出的人答原件：授权裁决的可读、可追溯到人的出处。"""
-        answers = self.src / "answers"
-        answers.mkdir(parents=True, exist_ok=True)
-        path = answers / "人工答复-v1.md"
-        path.write_text(text, encoding="utf-8")
-        return "AR/story-src/answers/人工答复-v1.md"
+        """已导出的人答原件：走真实 `status` 生成问法、`decide` 记原话，由产品导出，不手写。"""
+        if getattr(self, "_human_ref", None):
+            return self._human_ref
+        ask = self.ask_questions(self.business_question(
+            "owner-answer", "本轮允许的处理方式？", [text, "按原规则"]))
+        out = self.answer_question(ask, "owner-answer", text)
+        self.assertTrue(out.get("success", True), out)
+        path = sorted((self.src / "answers").glob("人工答复-v*.md"))[-1]
+        self._human_ref = path.relative_to(self.feature_root).as_posix()
+        return self._human_ref
 
     def write(self, *, revision: int | None = None, kind: str = "authoritative_ruling",
               refs: list[str] | None = None) -> None:
@@ -2752,12 +2756,91 @@ class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
         self.write()
         out = self.feedback()
         self.assertTrue(out.get("eligible"), out)
+        self.assertRegex(self._human_ref, r"^AR/story-src/answers/人工答复-v\d+\.md$",
+                         "出处不是产品导出的人答原件")
         self.assertEqual((self.round.name, self.reviewed),
                          (out["questioning"]["round"], out["questioning"]["revision"]))
         self.assertEqual(self.path_of(self.round), out["questioning"]["candidate"])
         self.assertTrue(out["candidates"], "够格却没有给出原生候选")
         self.assertIn("质询原件", out["action"], "init 成功提示没有指本轮质询原件")
         self.assertNotIn("本轮 update-notes", out["action"], "init 成功提示指错了落点")
+
+    def test_a_sole_author_draft_is_not_a_person_original(self) -> None:
+        """作者自己的计划/报告只是可读文件：没有来源身份，不能承担人的授权。"""
+        draft = self.src / "作者计划.md"
+        draft.write_text("# 作者计划\n\n本轮只允许人工受理。\n", encoding="utf-8")
+        self.write(refs=["AR/story-src/作者计划.md"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("不能代替人的答复", "；".join(out["problems"]), out)
+        self.assertIsNone(out["candidates"], "阻断反馈同时给出了可提交候选")
+
+    def test_a_file_that_only_looks_like_an_answer_export_is_not_one(self) -> None:
+        """目录名像 answers、文件名像导出的手写件，没有材料索引登记就不是人答。"""
+        fake = self.src / "answers" / "人工答复-伪造.md"
+        fake.parent.mkdir(parents=True, exist_ok=True)
+        fake.write_text("# 人工答复\n\n本轮只允许人工受理。\n", encoding="utf-8")
+        self.write(refs=["AR/story-src/answers/人工答复-伪造.md"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("不能代替人的答复", "；".join(out["problems"]), out)
+
+    def test_changed_bytes_of_the_exported_answer_are_a_digest_drift(self) -> None:
+        ref = self.human_words()
+        path = self.feature_root / ref
+        path.write_bytes(path.read_bytes() + "后补的一句。\n".encode("utf-8"))
+        self.write(refs=[ref])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("摘要漂移", "；".join(out["problems"]), out)
+
+    def test_a_person_original_may_be_accompanied_by_technical_evidence(self) -> None:
+        """多条引用允许人的原件与技术佐证并存；只有技术佐证时才不能单独承担授权。"""
+        draft = self.src / "作者计划.md"
+        draft.write_text("# 作者计划\n\n转述。\n", encoding="utf-8")
+        self.write(refs=[self.human_words(), "AR/story-src/作者计划.md"])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+        self.assertTrue(out["candidates"], out)
+
+    def test_a_reference_outside_this_requirement_is_refused(self) -> None:
+        self.write(refs=["framework.config.json"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("越出本需求的来源集合", "；".join(out["problems"]), out)
+
+    def test_an_annotation_actually_obtained_before_the_update_is_a_source(self) -> None:
+        """init 还没有 prepare：本次实际取得、来源可核的评审输入（本地批注）也可作裁决出处。"""
+        review = self.feature_root / "inbox" / "review"
+        review.mkdir(parents=True, exist_ok=True)
+        (review / "本轮批注.md").write_text("本轮同意：只允许人工受理，仅本轮。\n", encoding="utf-8")
+        self.write(refs=["inbox/review/本轮批注.md"])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+
+    def test_a_registered_original_is_a_formal_source(self) -> None:
+        """材料索引登记的原件有来源身份；它是“可能载有人签的来源”，具体效力仍由 owner 核定。"""
+        self.write(refs=["AR/design.md"])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+        self.assertTrue(out["candidates"], out)
+
+    def test_an_opinion_is_not_upgraded_to_a_ruling(self) -> None:
+        """「本轮同意」与「建议以后做」都是人在说话，但不由脚本当成授权裁决：意见不产生裁决候选。"""
+        doc = {"artifact": "blueprint-review-feedback@1", "blueprint_id": self.blueprint["blueprint_id"],
+               "component_id": self.blueprint["component_id"], "source_revision": self.reviewed,
+               "items": [{"feedback_id": "agree", "kind": "opinion", "source_revision": self.reviewed,
+                          "target_ref": self.TARGET, "body": "本轮同意，按这个做。"},
+                         {"feedback_id": "later", "kind": "suggestion", "source_revision": self.reviewed,
+                          "target_ref": self.TARGET, "body": "建议以后再做。"}]}
+        (self.src / "answers").mkdir(parents=True, exist_ok=True)
+        (self.src / "answers" / "design-feedback.json").write_text(
+            json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+        self.assertEqual([], (out["candidates"] or {}).get("rulings") or [],
+                         "意见被当成了授权裁决候选")
+        self.assertEqual(["待确认", "待确认"], [x["state"] for x in out["feedback"]])
 
     def test_the_explicit_candidate_wins_over_directory_order(self) -> None:
         """多份候选并存（含合法引号与后建目录）：被评对象是显式给的那一份，不按目录排序取最后。"""
@@ -2826,6 +2909,150 @@ class FirstFeedbackNeedsTheQuestioningCandidate(RegisteredCase):
         (folder / "reply.md").write_text("本轮仅允许人工受理，最终规则待定。\n", encoding="utf-8")
         again = self.feedback(folder)
         self.assertTrue(again.get("eligible"), again)
+
+
+class ARulingSourceIsCheckedAgainstTheRegisterAndThisRound(RegisteredCase):
+    """R2：有权裁决的出处按材料索引与本轮 prepare 固定的评审输入核，不按「文件存在」给身份。
+
+    同一条反馈只换出处：真实导出的人答、本轮实际取得的人工批注、材料索引登记的原件与可换版位置的稳定行
+    够格；作者稿、质询回复与 prepare 之后才到的文件只能随附，不能单独承担人的授权。
+    """
+
+    TARGET = DesignFeedbackGoesToTheBlueprintOwner.TARGET
+    contract = DesignFeedbackGoesToTheBlueprintOwner.contract
+    ANNOTATION = "inbox/review/本轮批注.md"
+
+    def before_prepare(self) -> None:
+        """prepare 之前的输入替身（子类往这里放系统回流的评审输入）。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        blueprint = yaml.safe_load((self.feature_root / "blueprint" / "component-blueprint.yaml")
+                                   .read_text(encoding="utf-8"))
+        self.blueprint_id = blueprint["blueprint_id"]
+        self.component_id = blueprint["component_id"]
+        self.annotation = self.feature_root / self.ANNOTATION
+        self.annotation.parent.mkdir(parents=True, exist_ok=True)
+        self.annotation.write_text("本轮同意：只允许人工受理，仅本轮。\n", encoding="utf-8")
+        self.before_prepare()
+        # 评审输入由本轮 prepare 固定：批注/系统件在这之前就位才算这一轮的原件
+        self.update()
+        self.rid = self.contract()["update"]["open"]
+        self.reviewed = self.contract()["story_basis"]["blueprint_ref"]["revision"]
+
+    def human_answer(self, text: str = "本轮同意：只允许人工受理，仅本轮。") -> str:
+        """真实 `status`→`decide` 导出的人答原件；不手写产品应导出的证据。"""
+        if getattr(self, "_human_ref_update", None):
+            return self._human_ref_update
+        ask = self.ask_questions(self.business_question(
+            "owner-answer", "本轮允许的处理方式？", [text, "按原规则"]))
+        out = self.answer_question(ask, "owner-answer", text)
+        self.assertTrue(out.get("success", True), out)
+        path = sorted((self.src / "answers").glob("人工答复-v*.md"))[-1]
+        self._human_ref_update = path.relative_to(self.feature_root).as_posix()
+        return self._human_ref_update
+
+    def write(self, refs: list[str], *, kind: str = "authoritative_ruling", body: str | None = None) -> None:
+        item = {"feedback_id": "f1", "kind": kind, "source_revision": self.reviewed,
+                "target_ref": self.TARGET, "body": body or "本轮仅允许人工受理，最终规则待定。",
+                "evidence_refs": refs}
+        if kind == "authoritative_ruling":
+            item["authority"] = {"owner": "需求负责人", "role": "需求负责人"}
+            item["decision"] = {"verdict": "amend", "rationale": "按原话限定本轮范围"}
+        doc = {"artifact": "blueprint-review-feedback@1", "blueprint_id": self.blueprint_id,
+               "component_id": self.component_id, "source_revision": self.reviewed, "items": [item]}
+        (self.updates / self.rid / "design-feedback.json").write_text(
+            json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    def feedback(self) -> dict:
+        return self.flow("update", "--action", "feedback")
+
+    def test_the_exported_human_answer_is_a_source(self) -> None:
+        ref = self.human_answer()
+        self.write([ref])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+        self.assertEqual(["f1"], (out["candidates"] or {}).get("rulings"))
+        self.assertIn("update-notes", out["action"], "成功提示没指本轮 notes")
+
+    def test_the_local_annotation_fixed_by_this_round_is_a_source(self) -> None:
+        self.write([self.ANNOTATION])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+
+    def test_an_annotation_that_arrived_after_prepare_is_not_this_round_input(self) -> None:
+        late = self.feature_root / "inbox" / "review" / "会后意见.md"
+        late.write_text("评审人后来才提的意见。\n", encoding="utf-8")
+        self.write(["inbox/review/会后意见.md"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("不能代替人的答复", "；".join(out["problems"]), out)
+
+    def test_a_registered_original_is_a_source(self) -> None:
+        """材料索引登记的原件有来源身份：正式来源的话可作裁决依据，具体效力由蓝图负责方对原件核定。"""
+        self.write(["AR/design.md"])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+
+    def test_a_mutable_position_resolves_to_its_stable_version(self) -> None:
+        """会换版的当前位置（当前阅读稿）落到稳定版本行：引用同一份、摘要核得上才够格。"""
+        self.write(["RR/prd.md"])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+
+    def test_a_person_original_may_be_accompanied_by_technical_evidence(self) -> None:
+        draft = self.src / "作者计划.md"
+        draft.write_text("# 作者计划\n\n转述。\n", encoding="utf-8")
+        self.write([self.human_answer(), "AR/story-src/作者计划.md"])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+
+    def test_an_opinion_citing_the_persons_words_stays_an_opinion(self) -> None:
+        """同一句人的原话可以支撑意见，但意见不被脚本升成授权裁决。"""
+        self.write([self.human_answer()], kind="opinion", body="本轮同意，按原话做。")
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+        self.assertEqual([], (out["candidates"] or {}).get("rulings") or [])
+
+
+class ASystemReviewInputIsCheckedAgainstItsBatchReceipt(
+        ARulingSourceIsCheckedAgainstTheRegisterAndThisRound):
+    """R2：系统回流的评审输入同时核实际批次回执；prepare 固定的原件与完整 SHA 才是本轮证据。"""
+
+    BATCH = "fetch-s15"
+    SYSTEM_INPUT = f"inbox/review/{BATCH}/AR-design.md"
+
+    def before_prepare(self) -> None:
+        folder = self.feature_root / "inbox" / "review" / self.BATCH
+        folder.mkdir(parents=True, exist_ok=True)
+        body = "评审人回流的开发需求正文（系统件）\n".encode("utf-8")
+        (folder / "AR-design.md").write_bytes(body)
+        sha = hashlib.sha256(body).hexdigest()
+        items = [{"name": "AR-design.md", "status": "fetched", "origin": f"{FEATURE}/design.md",
+                  "saved": self.SYSTEM_INPUT, "sha256": sha, "digest": f"sha256:{sha[:16]}"}]
+        when = "2099-02-02T00:00:00+00:00"
+        (folder / ".receipt.json").write_text(json.dumps({"fetchedAt": when, "items": items},
+                                                         ensure_ascii=False), encoding="utf-8")
+        (self.src / "fetched.json").write_text(json.dumps({
+            "fetchedAt": when, "delivery_requirements": {"design_reference": False},
+            "review_out": f"inbox/review/{self.BATCH}", "items": items}, ensure_ascii=False),
+            encoding="utf-8")
+
+    def test_the_batch_receipt_backs_the_system_input(self) -> None:
+        record = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
+        row = next(e for e in record["review_inputs"] if e["path"] == self.SYSTEM_INPUT)
+        self.assertEqual(("fetched", "AR-design.md"), (row["status"], row["system_item"]),
+                         "系统评审输入没有按批次回执登记")
+        self.write([self.SYSTEM_INPUT])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+
+    def test_a_changed_system_input_breaks_the_fixed_sha(self) -> None:
+        (self.feature_root / self.SYSTEM_INPUT).write_bytes("prepare 之后被换掉的内容\n".encode("utf-8"))
+        self.write([self.SYSTEM_INPUT])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("摘要漂移", "；".join(out["problems"]), out)
 
 
 class AClaimedExternalVersionBecomesTheReleaseBaseline(RegisteredCase):

@@ -764,6 +764,126 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
                 self.assertNotIn(f'"{key}"', text, f"{path.name} 里还留着 {key} 的字面")
 
 
+class OnlyAWholeSentenceChoosesTheMaterialGate(MaterialRoundCase):
+    """R3：材料门只认整句选择。
+
+    每个输入用独立前态：同一份问法、同一个真实入口，只有整句的选择才落盘；问号、条件、保留、
+    引用与编号后的自由附言都不前进，原话也不被截成选择。
+    """
+
+    def reset(self) -> None:
+        """一份独立前态：不复用上一输入留下的问法、门禁与收件箱。"""
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.feature_root = self.root / "doc" / "features" / FEATURE
+        (self.feature_root / "AR").mkdir(parents=True)
+        self.seed({"RR/prd.md": ("# 产品需求\n\n背景。\n", "RR"),
+                   "SR/design.md": ("# 系统设计\n\n分工。\n", "SR"),
+                   "AR/design.md": ("# 开发需求\n\n范围。\n", "AR")})
+
+    def asked(self) -> dict:
+        """独立前态走到人已经被问到的那一刻：材料盘点、缺口文件、status 生成问法。"""
+        self.round_now()
+        write_gaps(self.feature_root / "AR" / "story-src", ["管理页的界面图"],
+                   "来的原稿只有签约页")
+        proc = self.run_flow("status")
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        return json.loads(proc.stdout[proc.stdout.index("{"):])["ask"]
+
+    def contract(self) -> dict:
+        return json.loads((self.feature_root / "AR" / "story-src" / "story-flow.json")
+                          .read_text(encoding="utf-8"))
+
+    def gates(self) -> list[dict]:
+        return self.contract()["rounds"][-1].get("gates") or []
+
+    def next_of(self) -> str:
+        proc = self.run_flow("status")
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        return json.loads(proc.stdout[proc.stdout.index("{"):])["next"]
+
+    def sign(self, ask: dict, reply: str) -> subprocess.CompletedProcess:
+        return self.run_flow("decide", "--gate", "material_scope", "--ask", ask["ask_id"],
+                             "--reply", reply)
+
+    def put_inbox(self, name: str = "管理页.md") -> None:
+        inbox = self.feature_root / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        (inbox / name).write_text(f"# {name}\n\n人补的料。\n", encoding="utf-8")
+        cf = inbox / ".classify.json"
+        classify = json.loads(cf.read_text(encoding="utf-8")) if cf.is_file() else {}
+        classify[name] = "AR"
+        cf.write_text(json.dumps(classify, ensure_ascii=False), encoding="utf-8")
+
+    def refused(self, reply: str) -> str:
+        """独立前态里回这句话：材料门不前进、问法还在、原话不落盘。"""
+        ask = self.asked()
+        before, next_before = len(self.gates()), self.next_of()
+        proc = self.sign(ask, reply)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertEqual(1, proc.returncode, out)
+        self.assertEqual(before, len(self.gates()), f"「{reply}」没有明确选择却落了盘")
+        self.assertEqual(next_before, self.next_of(), f"「{reply}」被拒绝后下一步却动了")
+        return out
+
+    def test_a_question_condition_or_extra_clause_does_not_choose(self) -> None:
+        for reply, needle in (("选2？", "没有明确选到任何一项"),
+                              ("选2？我还没有决定，材料还没齐。", "没有明确选到任何一项"),
+                              ("1）要等材料到了才这样", "没有明确选到任何一项"),
+                              ("第 2 份材料还没到，请先等等。", "没有明确选到任何一项"),
+                              ("2.5 个月后交付，先按第 2 次评审意见改。", "没有明确选到任何一项"),
+                              ("选 1，选 2", "同时指到了几项")):
+            with self.subTest(reply=reply):
+                self.reset()
+                self.assertIn(needle, self.refused(reply))
+
+    def test_a_whole_number_and_full_label_are_recorded(self) -> None:
+        for reply, chosen, reply_stored in (("选2", "confirm_scope", "选2"),
+                                            ("现有材料就是全部，开始需求分析", "confirm_scope",
+                                             "现有材料就是全部，开始需求分析"),
+                                            ("不选 1，选 2", "confirm_scope", "不选 1，选 2")):
+            with self.subTest(reply=reply):
+                self.reset()
+                ask = self.asked()
+                proc = self.sign(ask, reply)
+                self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+                gate = self.gates()[-1]
+                self.assertEqual((chosen, "accepted", reply_stored),
+                                 (gate["chosen"], gate["outcome"], gate["reply"]))
+
+    def test_supplied_with_the_short_confirmation_is_recorded_when_the_material_is_there(self) -> None:
+        """「1）就这样」是发布接口已测的显式例形；这一项要求料真的在盘上才按它走。"""
+        for reply in ("1）就这样", "选 1"):
+            with self.subTest(reply=reply):
+                self.reset()
+                ask = self.asked()
+                self.put_inbox()
+                proc = self.sign(ask, reply)
+                self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+                gate = self.gates()[-1]
+                self.assertEqual(("supplied", "accepted", reply), (gate["chosen"], gate["outcome"], gate["reply"]))
+                self.assertEqual("import_materials", self.next_of())
+
+    def test_the_question_and_the_same_words_without_it_differ(self) -> None:
+        """同一问法、同一候选：「选2」签认，「选2？」保留缺口；退出码与下一步都不同。"""
+        self.reset()
+        ask = self.asked()
+        accepted = self.sign(ask, "选2")
+        self.assertEqual(0, accepted.returncode, (accepted.stdout or "") + (accepted.stderr or ""))
+        self.assertNotEqual("await_gate:material_scope", self.next_of())
+        self.reset()
+        ask = self.asked()
+        rejected = self.sign(ask, "选2？")
+        self.assertEqual(1, rejected.returncode, (rejected.stdout or "") + (rejected.stderr or ""))
+        self.assertEqual("await_gate:material_scope", self.next_of())
+
+    def test_a_number_used_as_a_business_quantity_is_not_a_choice(self) -> None:
+        """「2.5 个月」里的 2 不是选项：不从数字里截一个选择。"""
+        self.reset()
+        self.assertIn("没有明确选到任何一项", self.refused("2.5 个月后交付，先按第 2 次评审意见改。"))
+
+
 class StopsAreNotDelegated(unittest.TestCase):
     """停等的开关不交给被停的那一方：没有代签/代选参数，也没有交给模型判的条件句。
 
