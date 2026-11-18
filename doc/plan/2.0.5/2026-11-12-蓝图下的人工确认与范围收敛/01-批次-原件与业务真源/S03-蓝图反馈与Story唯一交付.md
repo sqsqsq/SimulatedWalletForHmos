@@ -68,9 +68,9 @@ flow/update.py::_scan/_collect枚举评审用途区，与需求sources分列为r
 
 保publish.py的三方比较与真实发布记录，**不能在fetch时就把E写进允许覆盖基线，也不改archived.external_digest伪造一次已发布**。复用update.record的review_inputs、status、requested_result、closed_at、owned_after及本轮notes/原件；不新增已批准状态或平行基线账本。
 
-数据生产：prepare固定当轮取得的每个系统交付件原件/回执，review_inputs里的system_item对应唯一fetched item，其digest/sha来自该回执并核原字节；close必须已按当前Story/蓝图/完整输入重新独审、登记，并在notes逐处说明采纳/有据不采纳/未决。documents完成后现record置closed、owned_after给实际成稿摘要。这证明流程已处理该输入，不表示每条意见都获采纳；语义处理是否充分由原独审核，不能只靠一个handled=true放行。
+修订3。prepare 从当次 fetched.json 的逐件结果定位实际批次、saved 原件及回执，核 SHA；明确取得的本地评审输入同样留 before。系统的历史批次可回查，当前与历史不能按目录排序选第一条。已取得且需处理的设计参考与正文一样留本批外部原件（外部 absent/failed 仍有准确去向）。按本次输入和成稿重新审查、登记并在 notes 逐处交代采纳、有据不采纳或未决。close 保留已送审的输入快照；之后取到的新稿不能补列为本轮已承接，可沿正常 update 另行承接。此前已经失败/缺失的项也不能变为成功。
 
-消费者：`publish._baselines`按**最近一次非撤回documents轮**取已承接基线，须同时满足：record closed且没有进行中的update；该轮晚于该件最近一次真实发布/远端恢复事件；系统item的取回原件/摘要可核；当前本地件等于该轮owned_after登记版本。满足时该件B取该轮实际处理的E，返回baseline来源为该轮/原件；否则沿原发布/恢复基线，不自动确认。正文与按需设计参考逐件取，不能处理正文便放行一个未读/未处理附件。materials-only、未close、已撤回、读失败、已发生更晚远端恢复均不能借此放行。
+消费者：publish 只读最近有效 documents 轮与该件真实外部事件。该轮已 closed、无在途 update、晚于该件最近实际发布/远端恢复；以 before 的原件与回执核同一系统件、同一完整摘要。正文的本地版本比该轮 owned_after。对实际承接的设计附件，在现 record 对应的 review_inputs 行随成文登记记录本次只读投影字节摘要，条件为已纳入本轮审查对象且原生 readProjection 返回 valid；发布时须仍为该登记投影，投影继续归蓝图保护，不进可撤回文件。未送审的件没有该依据。最近一轮不能证明承接该件时回到该件真实发布/恢复基线，不向更早的轮次搜一个能放行的摘要。只有条件同时具备时 B 取该轮处理的 E；随后仍走 E=L / E=B / 明确覆盖或冲突的原接口。
 
 发布前仍重新取外部E：E=L跳过，E=B直接写，E既不等于L也不等于有效B才冲突。于是“人改外部→update实际承接并close→外部没再变”不需--reply；承接后再被改则仍冲突。原有已明确授权的准确E/L覆盖保持，不能授权未来别的版本。close后本地又改到不等于owned_after须先正常update/独审登记，不能用旧承接事实给新稿盖章。
 
