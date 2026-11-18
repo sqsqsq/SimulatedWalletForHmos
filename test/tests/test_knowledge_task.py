@@ -1327,9 +1327,9 @@ process.stdout.write(JSON.stringify({
                 self.assertIn("采用的材料版本 design-直接-v1、prd-直接-v1", index)
                 for v in (versions["prd-直接-v1"], versions["design-直接-v1"]):
                     self.assertIn(f"`doc/features/{self.FEATURE}/{v['original']['path']}`（text），sha256:{v['original']['sha256']}", index)
-                # 当前有效人答独立必读：不取决于需求条目或设计引用写没写它
+                # 人答原件独立必读：不取决于需求条目或设计引用写没写它
                 answers = next(s for s in self.index()["sources"] if s["kind"] == "answer")["versions"][-1]
-                self.assertIn("当前有效人答（必读", index)
+                self.assertIn("人答原件（必读", index)
                 self.assertIn(f"`doc/features/{self.FEATURE}/{answers['readable']['path']}`（answer）", index)
 
     def test_the_same_good_file_reaches_all_three_readers(self) -> None:

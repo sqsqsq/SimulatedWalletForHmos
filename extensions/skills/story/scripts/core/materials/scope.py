@@ -147,7 +147,7 @@ def blueprint_component(feature_root: Path) -> str | None:
 
 def materialize(feature_root: Path, project_root: Path, items: list[dict], component: str | None) -> dict:
     """补齐条目；有需求系统来源时写原生来源物化信封并过原生检查，检查不过不写。
-    先按现状刷新材料索引（含当前有效人答的导出），条目引的人答就是此刻有效的那一版。"""
+    先按现状刷新材料索引（含人答原件的导出），条目引的人答就是此刻导出的那一版。"""
     try:
         manifest = registry.refresh(feature_root)
     except registry.MaterialError as exc:

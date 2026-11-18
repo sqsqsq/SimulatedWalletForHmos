@@ -535,6 +535,26 @@ class TheMaterialGateAsksForFacts(MaterialRoundCase):
         self.assertEqual("inventory_materials", self.next_of())
         self.asked()
 
+    def contract(self) -> dict:
+        return json.loads((self.src() / "story-flow.json").read_text(encoding="utf-8"))
+
+    def test_a_measure_word_number_does_not_confirm_materials(self) -> None:
+        """自由句子里的「第 2 份/第 2 次」不是选择；明确编号或整句标签才是。"""
+        self.round_now()
+        self.asked()
+        gates = lambda: len(self.contract()["rounds"][-1].get("gates") or [])  # noqa: E731
+        before = gates()
+        for reply in ("第 2 份材料还没到，请先等等。", "等第 2 次会议开完再说。",
+                      "2.5 个月后交付，先按第 2 次评审意见改。"):
+            with self.subTest(reply=reply):
+                proc = self.sign(reply)
+                self.assertEqual(1, proc.returncode, self.out_of(proc))
+                self.assertIn("没有明确选到任何一项", self.out_of(proc))
+                self.assertEqual(before, gates(), "没有明确选项却写了人签")
+        self.assertEqual(0, self.sign("选 2").returncode)
+        gate = self.contract()["rounds"][-1]["gates"][-1]
+        self.assertEqual((2, "accepted"), (gate["no"], gate["outcome"]))
+
     def test_the_ask_has_fixed_order_labels_and_a_recommendation(self) -> None:
         """AC12：两项顺序与标签来自合同，占位已换成本单编号；缺口非空时推荐补料。"""
         self.round_now()
@@ -1213,9 +1233,9 @@ class TheManifestIsTheOnlyMaterialTruth(ManifestCase):
         self.assertEqual(before["materials"], after["materials"], "记一句人答把材料版本顶出了新一轮")
         answers = next(s for s in self.manifest()["sources"] if s["kind"] == "answer")
         record = json.loads((self.feature_root / answers["versions"][-1]["original"]["path"]).read_text(encoding="utf-8"))
-        self.assertEqual(["2"], [d["reply"] for d in record["current"]])
-        self.assertEqual(["material_scope"], [d["gate"] for d in record["current"]])
-        self.assertTrue(record["current"][0]["question"], "导出的人答没带问法")
+        self.assertEqual(["2"], [d["reply"] for d in record["records"]])
+        self.assertEqual(["material_scope"], [d["gate"] for d in record["records"]])
+        self.assertTrue(record["records"][0]["question"], "导出的人答没带问法")
         self.assertNotIn("answers", [o["source_id"] for o in self.manifest()["origins"]])
         self.round_now()
         self.assertEqual(1, next(s for s in self.manifest()["sources"] if s["kind"] == "answer")["latest_version"],

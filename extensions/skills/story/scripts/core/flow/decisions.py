@@ -24,7 +24,7 @@ from flow import asks
 
 
 def export_answers(feature_root: Path, what: str) -> dict:
-    """答复已经保存：把当前有效人答导出成来源版本、刷新材料索引，返回新索引。
+    """答复已经保存：把此刻的人答原件导出成来源版本、刷新材料索引，返回新索引。
 
     导出与答复是两件事：导出失败时答复照样生效，报清楚派生没完成、怎么重试，不让人再答一次。
     """
@@ -32,7 +32,7 @@ def export_answers(feature_root: Path, what: str) -> dict:
     try:
         return registry.refresh(feature_root)
     except registry.MaterialError as exc:
-        raise FlowError(f"{what}已经记下并生效；导出当前有效人答、刷新材料索引没完成（{exc}）。"
+        raise FlowError(f"{what}已经记下并生效；导出人答原件、刷新材料索引没完成（{exc}）。"
                         "不要重答：排除问题后跑 `story_flow.py round` 重试派生（材料没变不开新轮）") from exc
 
 
@@ -133,13 +133,13 @@ def _replies(args: argparse.Namespace) -> list[dict]:
 def _design_questions(feature_root: Path, contract: dict, args: argparse.Namespace) -> dict:
     ask = asks.current_design(feature_root)
     if ask is None:
-        raise FlowError("没有待回答的设计问答：先按必要问人的三条件写出问法文件，"
-                        "先按三条件写好问法文件，跑 `status` 的 `--questions-file` 生成一次问法，再记人答")
+        raise FlowError("没有待回答的设计问答：先按必要问人的条件写好问法文件，"
+                        "跑 `status` 的 `--questions-file` 生成一次问法，再记人答")
     if str(args.ask or "").strip() != str(ask["ask_id"]):
         raise FlowError(f"--ask「{args.ask or '缺失'}」不是当前问法（{ask['ask_id']}）："
                         "问法换过了，按 `status` 给出的当前问法记")
     by_id = {str(it["item_id"]): it for it in ask["items"]}
-    answered = asks.answered_item_ids(contract, ask["ask_id"])
+    answered = asks.answered_item_ids(feature_root, contract, ask["ask_id"])
     wanted = _replies(args)
     for reply in wanted:
         if reply["item_id"] not in by_id:
@@ -155,11 +155,20 @@ def _design_questions(feature_root: Path, contract: dict, args: argparse.Namespa
         entry = {"ask_id": ask["ask_id"], "item_id": str(item["item_id"]),
                  "question": item["question"], "options": list(item["options"]),
                  "reply": reply["reply"], "at": now(), "source_ref": item["source_ref"]}
-        current.setdefault("answers", []).append(entry)
         recorded.append(entry)
-    save(feature_root, contract)
+    # 原话按操作身份落：init 在材料 round；开着 update 在同一操作的 record.answers。
+    # 收口只改操作状态，不搬动、不改写这些原话。
+    rid = str((contract.get("update") or {}).get("open") or "")
+    if rid:
+        rec = asks._update_record(feature_root, rid)
+        rec.setdefault("answers", []).extend(recorded)
+        (feature_root.joinpath("AR", "story-src", "updates", rid) / "record.json").write_text(
+            json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    else:
+        current.setdefault("answers", []).extend(recorded)
+        save(feature_root, contract)
     export_answers(feature_root, f"设计问答 {ask['ask_id']} 的 {len(recorded)} 条原话")
-    pending = asks.pending_items(ask, contract)
+    pending = asks.pending_items(feature_root, ask, contract)
     if not pending:
         asks.clear(feature_root)
     # 原话已经落盘：算下一步失败不能反过来把这一步报成没发生；让人跑 `status` 取当前位置。
@@ -171,12 +180,11 @@ def _design_questions(feature_root: Path, contract: dict, args: argparse.Namespa
                   {"item_id": e["item_id"], "reply": e["reply"], "at": e["at"]} for e in recorded],
               "pending": pending, "next": step}
     if pending:
-        left = {**ask, "items": [it for it in ask["items"] if str(it["item_id"]) in pending]}
         action = (f"原话已记下。这组还有 {len(pending)} 题没答，把同一展示块里剩下的部分原样摆给人：\n"
-                  + asks.block(left))
+                  + asks.pending_block(feature_root, ask, contract))
         step = "await_questions"
         result["next"] = step
-        result["ask_block"] = asks.block(left)
+        result["ask_block"] = asks.pending_block(feature_root, ask, contract)
     else:
         action = (f"这组设计问答已全部答完（{ask['ask_id']}）：回到原生设计按原话继续，"
                   "原问题与原话留在 answers 原件里。" + action)

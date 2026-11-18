@@ -239,12 +239,12 @@ DESIGN_REFERENCE = ("blueprint", "component-blueprint.review.md")
 
 
 def sync_answers(feature_root: Path, what: str) -> str | None:
-    """收口或撤回改变了哪些人答当前有效：同步导出。
+    """收口或撤回改变了人答记录的位置：同步导出。
     已经写盘的那一步照样成立；导出没完成时返回要说的话，交调用方带出，不当作这一步没发生。"""
     from materials import registry  # noqa: PLC0415 —— 人答导出由材料索引刷新承担
     try:
         registry.refresh(feature_root)
     except registry.MaterialError as exc:
-        return (f"当前有效人答没能同步导出（{exc}）：排除问题后跑 `story_flow.py round` 重试派生，"
+        return (f"人答原件没能同步导出（{exc}）：排除问题后跑 `story_flow.py round` 重试派生，"
                 f"{what}已经生效，不要重做")
     return None

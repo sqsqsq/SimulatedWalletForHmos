@@ -264,7 +264,7 @@ export function nextSteps(ctx, storyText, result, { warnings = [], plan = null, 
   const basis = [];
   const carried = [];
   if (plan?.problems.length) {
-    rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、当前蓝图与决策登记，`
+    rows.push(`NEXT: 先写整篇写作设计 ${planRel}——对照原材料、需求分析里的来源初筛、当前蓝图与记下的原话，`
       + '写阅读主线与每章骨架；写完重跑'
       + ` node ${shellArg(ctx.scriptPath)} skeleton --feature ${shellArg(ctx.args.feature)}`
       + ` --project-root ${shellArg(ctx.projectRoot)}`);

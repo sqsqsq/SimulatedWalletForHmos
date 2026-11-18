@@ -1,15 +1,15 @@
-"""有效人答导出为来源版本：设计、质询与审查按来源读人的原话，不另开一份要人重勾的清单。
+"""人答导出为来源版本：设计、质询与审查按来源读人的原话，不另开一份要人重勾的清单。
 
 人答的真源是流程契约里人给出的真实答复：当前轮的材料确认（`gates` 里的 `material_scope`）与
-设计后必要问答的原话记录（`rounds[].answers`）。这里把它们原样导出成
+每次设计问答的原话记录（init 在材料 round，update 在该轮 `record.answers`）。这里把它们原样导出成
 `AR/story-src/answers/人工答复-v<N>.json` 与给人读的同名 `.md`。
 
-- **只陈列证据**：问法、原话、出处与时刻。阅读稿不写「所选 = 人的裁决」，也不把整份答复
+- **只陈列证据**：当时的问法、原话、出处与时刻。阅读稿不写「所选 = 人的裁决」，也不把整份答复
   升为业务批准；所选那一项在材料确认里只作材料事实登记。
 - **原话记录只存证据**：`ask_id, item_id, question, options, reply, at, source_ref`；
   目标与版本只由原生反馈条目承担，不在这里复制。
-- 已被替代的原话只留在契约里追溯，不进导出；有效集合或原话变了才出新版本。
-- 每条记录的必需字段缺一项就是本版生产缺陷，报出来，不补默认值继续。
+- **不同时间的说法各自完整保留**：按操作身份取，不拿后一轮盖前一轮，也不替人贴「当前有效」标签。
+- 每条记录缺一项必需字段就是本版生产缺陷，报出来，不补默认值继续。
 
 只用标准库，stdout 无输出。
 """
@@ -34,7 +34,7 @@ MATERIAL_GATE = "material_scope"
 
 
 class AnswerError(Exception):
-    """人答读不出来或记录不完整：说不出当前有效的人答。"""
+    """人答读不出来或记录不完整：说不出人答原件。"""
 
 
 def _missing(record: dict, required: tuple[str, ...]) -> list[str]:
@@ -68,42 +68,61 @@ def gate_answers(contract: dict) -> tuple[list[dict], list[str]]:
     return [record], []
 
 
-def answer_records(contract: dict) -> tuple[list[dict], list[str]]:
-    """设计后必要问答的原话记录与缺口：记录只作证据，不产生已批准状态。"""
+def answer_records(feature_root: Path, contract: dict) -> tuple[list[dict], list[str]]:
+    """设计后必要问答的原话记录与缺口：记录只作证据，不产生已批准状态。
+
+    按操作身份取：init 在材料 round 的 `answers`，每一次 update 在该轮 `record.answers`。
+    不同时间的说法各自完整保留，不拿后一轮盖前一轮，也不替人贴「现在仍然有效」的标签。
+    """
     out, problems = [], []
-    for r in contract.get("rounds") or []:
-        for a in r.get("answers") or []:
+
+    def add(answers: list, where: str, extra: dict) -> None:
+        for a in answers or []:
             gaps = _answer_gaps(a)
             if gaps:
-                problems.append(f"第 {r.get('round')} 轮设计问答（{a.get('ask_id') or '无问法编号'}）"
-                                f"缺 {'、'.join(gaps)}")
+                problems.append(f"{where}设计问答（{a.get('ask_id') or '无问法编号'}）缺 {'、'.join(gaps)}")
                 continue
             carried = [k for k in ANSWER_FORBIDDEN if k in a]
             if carried:
-                problems.append(f"第 {r.get('round')} 轮设计问答 {a.get('ask_id')}/{a.get('item_id')} "
+                problems.append(f"{where}设计问答 {a.get('ask_id')}/{a.get('item_id')} "
                                 f"带着 {'、'.join(carried)}：原话记录只存问法、原话与出处")
                 continue
-            out.append(dict(a, round=r.get("round")))
+            out.append(dict(a, **extra))
+
+    for r in contract.get("rounds") or []:
+        add(r.get("answers"), f"第 {r.get('round')} 轮", {"round": r.get("round")})
+    updates = feature_root.joinpath("AR", "story-src", "updates")
+    if updates.is_dir():
+        for folder in sorted(p for p in updates.iterdir() if p.is_dir()):
+            path = folder / "record.json"
+            try:
+                rec = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError) as exc:
+                problems.append(f"update {folder.name} 的记录读不出来（{exc}）：说不出这一轮的原话")
+                continue
+            if isinstance(rec, dict):
+                add(rec.get("answers"), f"update {folder.name} ", {"update": folder.name})
     return out, problems
 
 
 def collect(feature_root: Path) -> dict | None:
-    """按当前契约算出要导出的人答；还没有流程契约为 None。记录不完整或读不出来报 AnswerError。"""
+    """按当前契约与各轮记录算出要导出的人答；还没有流程契约为 None。记录不完整或读不出来报 AnswerError。"""
     path = feature_root.joinpath(*CONTRACT)
     if not path.is_file():
         return None
     try:
         contract = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
-        raise AnswerError(f"{'/'.join(CONTRACT)} 读不出来（{exc}）：说不出当前有效的人答，修好流程契约后重跑") from exc
+        raise AnswerError(f"{'/'.join(CONTRACT)} 读不出来（{exc}）：说不出人答，修好流程契约后重跑") from exc
     if not isinstance(contract, dict):
-        raise AnswerError(f"{'/'.join(CONTRACT)} 不是对象：说不出当前有效的人答")
+        raise AnswerError(f"{'/'.join(CONTRACT)} 不是对象：说不出人答")
     gates, problems = gate_answers(contract)
-    answers, more = answer_records(contract)
+    answers, more = answer_records(feature_root, contract)
     problems += more
     if problems:
         raise AnswerError("人答记录不完整（本版生产的记录必须带问法、选项或原话与时刻）：" + "；".join(problems))
-    return {"current": gates + answers, "context": []}
+    records = sorted(gates + answers, key=lambda d: str(d.get("at") or ""))
+    return {"records": records}
 
 
 def _body(answers: dict) -> bytes:
@@ -112,10 +131,11 @@ def _body(answers: dict) -> bytes:
 
 def _render(answers: dict) -> str:
     lines = ["# 人工答复", "",
-             "流程里人给出的真实答复，问法与原话照录。这里只陈列问题、原话与出处；"
-             "选项与解释的效力由实际证据与原生反馈承担，阅读稿不替人下裁决。", "",
-             "## 当前有效", ""]
-    for d in answers["current"]:
+             "流程里人给出的真实答复，问法与原话照录。这里只陈列当时的问法、原话与出处；"
+             "不同时间的说法各自完整保留，现在按哪一句、按到什么范围，由读者据来源对象、权限、"
+             "当前蓝图与原生反馈关系判断，阅读稿不替人下裁决。", "",
+             "## 原话记录（按时间）", ""]
+    for d in answers["records"]:
         if d.get("gate"):
             lines += [f"### 材料确认 · 第 {d.get('round')} 轮 · {d['at']}", "", "问法：",
                       *[f"> {x}" for x in str(d["question"]).splitlines()], "",
@@ -123,14 +143,12 @@ def _render(answers: dict) -> str:
                       f"- 登记的材料事实：{d.get('no')}. {d.get('label')}（{d['chosen']}）", ""]
         else:
             lines += _answer_block(d)
-    if answers.get("context"):
-        lines += ["## 需结合上下文", ""]
-        lines += [_answer_block(d) for d in answers["context"]]
     return "\n".join(lines).rstrip() + "\n"
 
 
 def _answer_block(d: dict) -> list[str]:
-    rows = [f"### 设计问答 {d.get('ask_id')} · {d.get('item_id')} · 第 {d.get('round')} 轮 · {d['at']}", "",
+    where = f"第 {d.get('round')} 轮" if d.get("update") is None else f"update {d.get('update')}"
+    rows = [f"### 设计问答 {d.get('ask_id')} · {d.get('item_id')} · {where} · {d['at']}", "",
             f"**问题**：{d['question']}", ""]
     options = d.get("options") or []
     if options:
@@ -151,7 +169,7 @@ def required(feature_root: Path, records: list[dict]) -> dict:
         answers = collect(feature_root)
     except AnswerError as exc:
         return {**out, "in_sync": False, "problems": [str(exc)]}
-    if answers and (answers["current"] or answers["context"]):
+    if answers and answers["records"]:
         out["expected_sha256"] = importer.digest(_body(answers))
     mine = _mine(records)
     if mine:
@@ -162,7 +180,7 @@ def required(feature_root: Path, records: list[dict]) -> dict:
     exported = mine[-1]["original"]["sha256"] if mine else None
     if out["expected_sha256"] and exported != out["expected_sha256"]:
         out["in_sync"] = False
-        out["problems"].append("当前有效人答还没导出成来源版本（导出落后于流程记录）："
+        out["problems"].append("人答原件还没导出成来源版本（导出落后于流程记录）："
                                "跑 `story_flow.py round` 重试派生；答复本身已经记下，不要重答")
     return out
 
@@ -172,7 +190,7 @@ def export(feature_root: Path, stored: dict) -> str | None:
     相同或没有人答返回 None。版本存在 `AR/story-src/answers/人工答复-v<N>.json|.md`，按内容只增不改。"""
     from materials import registry  # noqa: PLC0415 —— registry 引用本模块
     answers = collect(feature_root)
-    if not answers or not (answers["current"] or answers["context"]):
+    if not answers or not answers["records"]:
         return None
     body = _body(answers)
     sha = importer.digest(body)

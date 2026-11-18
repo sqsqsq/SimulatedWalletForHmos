@@ -21,9 +21,9 @@
  *   fetch   → {"mode":"fetch","reqNo":"...","out":"...","parentNo":"SR...","rrNo":"RR...","fetched":3,"failed":0,
  *              "items":[...],"success":true}
  *             只读取材，起单与 update 都用它：上游正文写进 --out（必填，本单来源收件箱下的取材批次），
- *             批次回执 .receipt.json 逐件给角色、单号与标题；发布过的本单正文按交付回流件、评审回稿与评审记录附件按评审输入
- *             写进 inbox/review/<同一批次>/（该批次另有回执）；设计参考附件与本地不同时写 AR/story-src/fetched-design-review.md，
- *             外部当前状态写 AR/story-src/fetched.json；items[].status 为 fetched / same / absent / failed。
+ *             批次回执 .receipt.json 逐件给角色、单号与标题；发布过的本单正文按交付回流件、评审回稿、评审记录附件
+ *             与设计参考附件按评审输入写进 inbox/review/<同一批次>/（该批次另有回执，失败与系统上没有的件也逐件记）；
+ *             外部当前状态写 AR/story-src/fetched.json（含当次评审批次 review_out）；items[].status 为 fetched / same / absent / failed。
  *             系统上查无此单即失败；有 failed 时 success 为 false、退出码非 0。一个业务文件都不写。
  *
  *   两层错误：

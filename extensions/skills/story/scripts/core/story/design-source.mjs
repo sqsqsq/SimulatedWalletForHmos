@@ -32,8 +32,9 @@ export function flowMaterials(ctx) {
 }
 
 /**
- * 当前有效人答——**独立必读**，不取决于作者有没有把它写进需求条目或设计引用。
+ * 人答原件——**独立必读**，不取决于作者有没有把它写进需求条目或设计引用。
  * 文件取最新导出的人工答复版本（工程相对路径、`sha256:` 摘要、角色）；导出落后于流程记录或读不出时，`problems` 说缺口，不拿旧导出顶替。
+ * 导出按时间陈列当时的问法与原话，不预判现在哪一句有效。
  *
  * @returns {{files: {path: string, sha256: string, role: string}[], problems: string[]}}
  */
@@ -143,7 +144,7 @@ export function basisDriftProblems(ctx) {
   }
   const now = currentBasis(ctx);
   if (now.problems.length) return now.problems;
-  const again = '——按当前蓝图与来源同步 Story 与 Review 里受影响的章节，再 `story-build review --action prepare` 定稿并交原读者按改动影响复核，'
+  const again = '——按当前蓝图与来源同步 Story 里受影响的章节，再 `story-build review --action prepare` 定稿并交原读者按改动影响复核，'
     + '审查通过后跑 `story_flow.py story` 重新登记';
   const out = [];
   const was = basis.blueprint_ref ?? {};

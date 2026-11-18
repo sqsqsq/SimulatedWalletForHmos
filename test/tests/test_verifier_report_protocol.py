@@ -338,7 +338,7 @@ class TheStoryIsReviewedRegisteredAndDeliveredPart4(TheStoryIsReviewedRegistered
                                     f"\nrevision: {revision}\n", f"\nrevision: {revision + 1}\n")
         out = self.check("--deliver")
         self.assertNotEqual(0, out.returncode)
-        for step in ("同步 Story 与 Review 里受影响的章节", "交原读者按改动影响复核", "`story_flow.py story` 重新登记"):
+        for step in ("同步 Story 里受影响的章节", "交原读者按改动影响复核", "`story_flow.py story` 重新登记"):
             self.assertIn(step, out.stdout + out.stderr)
         self.reviewed("pass")
         self.assertEqual(0, self.register().returncode)
@@ -665,7 +665,7 @@ class TheWholeSourceSetIsReviewed(TheStoryIsReviewedRegisteredAndDeliveredCase):
         for rel in (self.SR, self.IMAGE, self.CORRECTIONS):
             self.assertIn(f"`{rel}`", task)
         self.assertIn(f"`{self.SR}` —— 设计未见引用的阅读稿 {self.sr_rel}（核是有据不用，还是漏了依据）", task)
-        self.assertIn("当前有效人答（必读：问法与原话）", task, "必读人答没进独立审查的核源集合")
+        self.assertIn("人答原件（必读：当时的问法与原话）", task, "必读人答没进独立审查的核源集合")
         self.assertIn("作者登记不用：旧版签约页，本需求不改签约页", task)
 
     def test_a_missing_meeting_correction_is_named_not_dropped(self) -> None:
@@ -1506,7 +1506,7 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
         task = self.inject()
         reading = task.split("### 怎么读", 1)[1].split("\n### ", 1)[0]
         self.assertIn("1. 先读业务来源与人签", reading)
-        self.assertIn("当前有效人答", reading.split("\n2. ", 1)[0])
+        self.assertIn("人答原件", reading.split("\n2. ", 1)[0])
         self.assertIn("按问题回查", reading.split("\n3. ", 1)[1])
         self.assertNotIn(".backups/local/AR-design", task, "上游 AR 不再被覆盖，没有覆盖备份可指")
 

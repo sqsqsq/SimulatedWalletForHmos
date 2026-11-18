@@ -85,17 +85,18 @@ def cmd_status(feature_root: Path, questions_file: str | None = None) -> dict:
                             "先按 `phases/design.md` 进 component-design")
         built = asks.build_questions(feature_root, contract, questions_file)
 
+    ask = None
     if built is not None:
-        # 这一条只回答本次生成的那组问法，不再顺带算设计下一步：问法先落盘，人答完再由 decide 续行。
-        shown = asks.with_answered(built, contract)
-        step = "await_questions"
-        action = ("设计后必要问答已生成一次集中问法：把下面这一块原样摆给人，一次问完、停等。\n"
-                  + shown["block"] + "\n" + QUESTIONS_USAGE)
-        if shown.get("replaced_unanswered"):
-            action += ("；上一组还没答的题（" + "、".join(shown["replaced_unanswered"])
-                       + "）已被这次问法替换——原问题与依据留在契约和当前分析里；"
-                       "若并非新事实导致，按原问法继续，不伪造人的答复")
-        ask = shown
+        # 生成与重试走同一份状态：有待答就只摆未答的；零待答直接按原生下一步续行。
+        state = _questions_state(feature_root, contract, built)
+        if state:
+            ask, step, action = state
+            if built.get("replaced_unanswered"):
+                old = "、".join(str(it.get("item_id")) for it in built["replaced_unanswered"])
+                action += (f"；上一组还没答的题（{old}）已被这次问法替换：原问题与依据已留在 "
+                           f"`{built.get('replaced_kept')}`，把为何失效写进当前分析或本轮 notes 再往下走")
+        else:
+            step, action = next_step(feature_root, contract, manifest, reading)
     else:
         step, action = next_step(feature_root, contract, manifest, reading)
         # 到了停等点就生成问法并写侧车：人看到的选项块与 `decide` 核对的是同一份
@@ -103,14 +104,9 @@ def cmd_status(feature_root: Path, questions_file: str | None = None) -> dict:
                if contract and contract.get("rounds") and step == "await_gate:material_scope" else None)
         if ask is None and contract and contract.get("rounds"):
             # 已有设计问答时原样续问：普通 status 不重新生成更宽的问法，也不悄悄覆盖。
-            current_ask = asks.current_design(feature_root)
-            if current_ask is not None:
-                if asks.pending_items(current_ask, contract):
-                    ask = asks.with_answered(current_ask, contract)
-                    step = "await_questions"
-                    action = step_action_questions(ask)
-                else:
-                    asks.clear(feature_root)
+            state = _questions_state(feature_root, contract)
+            if state:
+                ask, step, action = state
     shape = sidecar_shape(step)
     if contract is None:
         out = {"exists": False, "next": step, "action": action}
@@ -156,11 +152,27 @@ def cmd_status(feature_root: Path, questions_file: str | None = None) -> dict:
     }
 
 
-def step_action_questions(ask: dict) -> str:
+def _questions_state(feature_root: Path, contract: dict, ask: dict | None = None):
+    """设计问答此刻的状态：有待答给只含未答的展示块；零待答撤下临时问法并返回 None，按原生下一步续行。
+
+    普通 `status` 与带同一问法文件的重试都走这里——两条路各写一份的话，一处会重问已答的题。
+    """
+    ask = ask or asks.current_design(feature_root)
+    if ask is None:
+        return None
+    pending = asks.pending_items(feature_root, ask, contract)
+    if not pending:
+        asks.clear(feature_root)
+        return None
+    shown = asks.with_answered(feature_root, ask, contract)
+    return shown, "await_questions", step_action_questions(feature_root, shown, contract)
+
+
+def step_action_questions(feature_root: Path, ask: dict, contract: dict) -> str:
     """设计问答没答完时给人的下一步：同一展示块剩下的部分原样摆出，不重答已答的题。"""
-    left = {**ask, "items": [it for it in ask["items"] if str(it["item_id"]) in ask["pending"]]}
-    return (f"设计后必要问答还有 {len(ask['pending'])} 题没答（{ask['ask_id']}）。"
-            "把同一展示块里剩下的部分原样摆给人：\n" + asks.block(left)
+    pending = asks.pending_items(feature_root, ask, contract)
+    return (f"设计后必要问答还有 {len(pending)} 题没答（{ask['ask_id']}）。"
+            "把同一展示块里剩下的部分原样摆给人：\n" + asks.pending_block(feature_root, ask, contract)
             + "\n`decide --ask <id> --item <题号> --reply \"<人的原话>\"`；多题同一答复用 --replies-file；"
             "全部答完即回原生设计续行")
 

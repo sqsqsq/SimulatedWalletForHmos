@@ -48,6 +48,26 @@ def _gate(feature_root: Path, project_root: Path) -> tuple[bool, str]:
     return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
+def _gate_notes(text: str) -> list[str]:
+    """交付门里「记一笔（不拦）」那一段的原文：审查状态（pass / warn / unreviewed）、保留建议与设计状态。
+
+    不按某个短语筛未验证项——交付门的实际结论原样带给归档主作者，由他据受影响正文讲清未验范围。
+    """
+    lines = text.splitlines()
+    at = next((i for i, line in enumerate(lines) if "记一笔（不拦）" in line), None)
+    if at is None:
+        return []
+    out = []
+    for line in lines[at + 1:]:
+        item = line.strip()
+        if not item:
+            continue
+        if not item.startswith("·"):
+            break
+        out.append(item.lstrip("·").strip())
+    return out
+
+
 def read_receipt(feature_root: Path) -> dict:
     path = feature_root / Path(*RECEIPT)
     try:
@@ -153,11 +173,11 @@ def cmd_publish(feature_root: Path, project_root: Path, reply: str | None, with_
         (feature_root / Path(*STORY)).read_text(encoding="utf-8").splitlines(keepends=True),
         fromfile="上次发布", tofile="这一次"))[:12000] or "与上次发布逐字相同")
     pending, pending_gap = _blueprint_pending(feature_root)
-    unverified = [line.strip() for line in gate_out.splitlines() if "建议照录" in line]
+    delivery_notes = _gate_notes(gate_out)
     named = "、".join(f"{r['item']}（外部 {r['external'] or '不存在'}，基线 {r['baseline'] or '不存在'}）" for r in conflicts)
     return {"publishable": not conflicts, "items": rows, "conflict": bool(conflicts),
             "diff": diff, "pending_gaps": pending, **({"pending_unknown": pending_gap} if pending_gap else {}),
-            "unverified": unverified,
+            "delivery_notes": delivery_notes,
             "action": ("需求系统上这几件与上次允许覆盖的版本不同：" + named + "，不直接覆盖。"
                        "把外部改动与这次的差异摆给人——要并进来的走 `/story update`；人确认仍覆盖时带 `--reply \"<原话>\"` 再跑"
                        if conflicts else

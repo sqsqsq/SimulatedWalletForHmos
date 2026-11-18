@@ -4,7 +4,7 @@
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算、覆盖声明与发现定位对着它核：几处用同一份，审的就是要交付的那一份。
  * 待审的是 Story；其余是只读对照：写作设计、本轮评审输入原件与 update-notes、会议记录（每版原文、纠偏留痕与阅读件）、
  * 设计采用的材料版本（蓝图需求条目与设计依据引用的本需求版本：原件、阅读正文、图、会议纠偏与阅读件）、冲突依据、
- * 当前有效人答（独立必读，不取决于设计有没有引用）、材料清单登记的全部原件与阅读稿（含设计未见引用的）和每个图片对象、
+ * 当前人答原件（独立必读，不取决于设计有没有引用）、材料清单登记的全部原件与阅读稿（含设计未见引用的）和每个图片对象、
  * 当前蓝图与它的原生评审投影（设计参考）、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
  * 完整核源让审查能核作者为何采用或排除一份材料：作者的采用选择不缩小这个集合。
  * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
@@ -117,7 +117,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
         `设计${f.use === 'conflict' ? '冲突依据' : '依据'}引用的${f.role === 'design_file' ? '设计记录' : '工程文件'} ${f.path}（${f.where}）`, true, { kind: 'text', read: false });
     }
   }
-  // 当前有效人答：独立必读，导出落后于流程记录时报缺口，不拿旧导出顶替
+  // 人答原件：独立必读，导出落后于流程记录时报缺口，不拿旧导出顶替
   const answers = source?.answers ?? requiredAnswers(requirementContext(projectRoot, root));
   problems.push(...answers.problems);
   // 材料清单登记的全部原件、阅读稿与图片：没采用的也在，审查要核作者为何排除它
@@ -180,7 +180,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
   }
   for (const f of answers.files) {
     add(path.join(projectRoot, ...f.path.split('/')), 'source',
-      f.role === 'answer' ? '当前有效人答（必读：问法与原话）' : '当前有效人答的记录', true,
+      f.role === 'answer' ? '人答原件（必读：当时的问法与原话）' : '人答原件的记录', true,
       f.role === 'answer' ? { kind: 'text' } : { kind: 'metadata', read: false });
   }
   // 图片按对象列，逐路径按字节认同一内容：同字节的落点是别名（第一个落点作规范路径），内容不同的落点各自核读

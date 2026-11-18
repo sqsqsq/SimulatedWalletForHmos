@@ -1,0 +1,96 @@
+# -*- coding: utf-8 -*-
+"""两种范围命令与提示词的当前承接者（S13：R6、补审 R2/R3）。
+
+这些判据判的是**实际加载的页面/规则里写了什么**：同一需求用「本次只要 A」与
+「要求完整设计 A、B 而先做 A」两条命令时，作者读到的预期必须不同；update 的主动意见
+与「先问后记」次序不能互相打架；错误恢复与委派只指向当前 Story、蓝图与原话承担者。
+"""
+from __future__ import annotations
+
+import unittest
+from ext_workspace import DEV_EXT
+
+SKILL = DEV_EXT / "skills" / "story"
+
+
+def read(rel: str) -> str:
+    return (SKILL / rel).read_text(encoding="utf-8")
+
+
+def read_ext(rel: str) -> str:
+    return (DEV_EXT / rel).read_text(encoding="utf-8")
+
+
+class TheTwoScopeCommandsRouteDifferently(unittest.TestCase):
+    """R6：缩小本期范围与保留完整设计只把施工交给本次，是两条路。"""
+
+    def test_the_design_page_routes_them_to_different_results(self) -> None:
+        design = read("phases/design.md")
+        body = design.split("## 二、交给设计", 1)[1].split("\n## ", 1)[0]
+        for needle in ("本次只要 A", "要求完整设计 A、B 而先做 A", "缩小本期业务范围",
+                       "保留 A、B 的全部需求义务", "只把 A 对应的施工单位交给本次执行",
+                       "纯送审允许零 CU"):
+            self.assertIn(needle, body, f"范围分流少了「{needle}」")
+
+    def test_init_analysis_only_positions_and_points_at_the_design_page(self) -> None:
+        rules = read("rules/init_analysis.md")
+        self.assertIn("两种范围命令在 `phases/design.md`", rules)
+        self.assertNotIn("「本需求只做 X」或「完整设计先实施 X」写进蓝图的需求条目与边界", rules,
+                         "init_analysis 又把两条命令并成同一个落点")
+
+    def test_the_condition_definition_stays_in_one_place(self) -> None:
+        """M19：必要问人条件的完整定义只在 design 页写一份，别处按节名指过去。"""
+        self.assertIn("必要问人条件", read("phases/design.md"))
+        self.assertIn("上位依据冲突且现授权不能裁决", read("phases/design.md"))
+        for page in ("SKILL.md", "rules/init_analysis.md", "phases/update.md", "phases/story-write.md",
+                     "phases/meeting-read.md"):
+            self.assertNotIn("上位依据冲突且现授权不能裁决", read(page), f"{page} 又抄了一份条件定义")
+
+
+class UpdateKeepsProactiveInputAndAskInOrder(unittest.TestCase):
+    """补审 R2、R4：主动意见直接保留为原件；确需提问才先写问法再记原话；三方合并步骤送达。"""
+
+    def test_proactive_comment_is_not_backfilled_into_an_ask(self) -> None:
+        update = read("phases/update.md")
+        self.assertIn("先问后记；主动意见另有入口", update)
+        self.assertNotIn("人答了之后先记下，再照决定改", update)
+        self.assertIn("已在 Story 改稿、会话或附件中**主动给过的意见**直接保留为回流原件", update)
+        self.assertIn("先判权限与来源", update)
+        self.assertNotIn("**交蓝图负责方形成 `gap`（owner、等什么、本期影响），两边来源并列，停下问人**", update)
+
+    def test_the_three_way_merge_steps_are_in_the_edit_instructions(self) -> None:
+        update = read("phases/update.md")
+        for needle in ("同时取齐", "相对共同底稿分别查变化", "异段", "同段", "只有意见文档",
+                       "缺共同基准", "原话与理由留在 `update-notes.md`"):
+            self.assertIn(needle, update, f"三方合并少了「{needle}」")
+        self.assertIn("不靠文字相似度判采纳", update)
+
+    def test_story_write_points_at_the_design_page_not_a_spec_rule(self) -> None:
+        guide = read("phases/story-write.md")
+        self.assertNotIn("按 R01", guide)
+        self.assertNotIn("Spec 三条件", guide)
+        self.assertIn("phases/design.md`「首次质询后的集中问答与初始反馈」", guide)
+
+
+class ErrorsAndDelegationPointAtCurrentBearers(unittest.TestCase):
+    """补审 R3：错误恢复与委派不再指向已退出的 Story Review / 决策登记，保留的投影与独审仍在。"""
+
+    def test_sources_and_next_steps_name_current_bearers(self) -> None:
+        self.assertNotIn("与 Review 里受影响的章节", read("scripts/core/story/design-source.mjs"))
+        self.assertIn("同步 Story 里受影响的章节", read("scripts/core/story/design-source.mjs"))
+        self.assertNotIn("决策登记", read("scripts/core/story/chapter.mjs"))
+        self.assertNotIn("决策登记", read("scripts/core/story/writing-plan.mjs"))
+        author = read_ext("hooks/blueprint/author.md")
+        self.assertIn("Story、施工单位与设计参考投影", author)
+        self.assertNotIn("Story、Review 与施工单位", author)
+        rules = read_ext("rules/plan-rules.overlay.yaml")
+        self.assertNotIn("回关卡人签", rules)
+        self.assertIn("按当前 Story、蓝图里的决定与缺口、记下的原话", rules)
+        # 保留项仍在：蓝图评审投影、独立审查、历史意见附件
+        self.assertIn("蓝图的原生评审投影", read("scripts/core/story/review-object.mjs"))
+        self.assertTrue((SKILL / "scripts/core/story/review-report-contract.mjs").is_file())
+        self.assertTrue((SKILL / "scripts/core/story/independent-review.mjs").is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()

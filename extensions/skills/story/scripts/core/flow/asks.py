@@ -155,19 +155,44 @@ def read_questions_file(path: Path) -> list[dict]:
     return out
 
 
+def _keep_replaced(feature_root: Path, previous: dict, pending: list[str], new_id: str) -> str:
+    """把被替换问法里还没答的题、依据与出处原样留一份：原问题不能因为临时问法被覆写就消失。
+
+    落在现有人答目录（`AR/story-src/answers/`），按旧 ask_id 一份；只增不改。
+    『为何失效』由作者按本次真实新事实写进当前分析或本轮 notes——脚本不知道原因，不代写。
+    """
+    path = feature_root.joinpath("AR", "story-src", "answers", f"被替换问法-{previous['ask_id']}.json")
+    if path.is_file():
+        return path.relative_to(feature_root).as_posix()
+    body = {"ask_id": previous["ask_id"], "replaced_by": new_id, "replaced_at": _now(),
+            "items": [it for it in previous.get("items") or [] if str(it.get("item_id")) in pending]}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path.relative_to(feature_root).as_posix()
+
+
+def _now() -> str:
+    from datetime import datetime  # noqa: PLC0415 —— 只在留档被替换问法时取时刻
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 def build_questions(feature_root: Path, contract: dict, questions_file: str) -> dict:
     """生成一次集中问法并写侧车；同一内容重复调用幂等。
 
-    上一组还有没答完的题时照新输入替换，并把被替换的题号带在返回里——替换是作者看过新事实后的
-    主动动作，脚本不悄悄覆盖；原问题与依据仍在契约与当前分析里。
+    上一组还有没答完的题时照新输入替换：被替换的**整题**（问题、候选、依据、出处）带在返回里，
+    并在现有人答目录留一份原件——原问题与依据不因临时问法被覆写而消失。替换是作者看过真实新事实
+    后的主动动作，脚本不悄悄覆盖；『为何失效』由作者写进当前分析或本轮 notes。
     """
     items = read_questions_file(Path(questions_file))
     previous = _read(feature_root)
-    pending = pending_items(previous, contract) if previous and previous.get("kind") == DESIGN_KIND else []
+    pending = pending_items(feature_root, previous, contract) if previous and previous.get("kind") == DESIGN_KIND else []
     ask = _write(feature_root, {"kind": DESIGN_KIND,
                                 "round": contract["rounds"][-1].get("round"), "items": items})
     if pending and previous.get("ask_id") != ask["ask_id"]:
-        ask["replaced_unanswered"] = pending
+        kept = _keep_replaced(feature_root, previous, pending, ask["ask_id"])
+        ask["replaced_unanswered"] = [it for it in previous.get("items") or []
+                                      if str(it.get("item_id")) in pending]
+        ask["replaced_kept"] = kept
     return ask
 
 
@@ -231,10 +256,22 @@ def _negated(option: dict, reply: str) -> bool:
 
 
 def _number_forms(no: int) -> list[str]:
-    """编号的说法：第 n、n.、n）、选 n，或整句就是 n。日常话里的数（「1 份」「等 1 天」）不算。"""
+    """明确指向某一项的编号说法：整句是编号、「第 n 项/个/条」、“选 n”，或句首的枚举编号。
+
+    只认指向选项的表达，不从自由句子里抓数字：「第 2 份材料还没到」「等第 2 次会议开完」
+    「1 份 PRD 够了」都不是对某一项的选择。`n` 前一位是数字时不匹配（第 12 项不会被当成第 2 项）。
+    """
     n = rf"(?<![\d.]){no}"
-    return [rf"^\s*{no}\s*[.。．、)）]?\s*$", rf"第\s*{no}(?!\d)", rf"{n}[.．](?!\d)",
-            rf"{n}\s*[)）]", rf"选\s*{no}(?!\d)"]
+    return [
+        # 整句就是编号：「2」「第2」「第2项」「2.」「2）」
+        rf"^\s*(?:第\s*)?{no}\s*(?:项|个|条)?\s*[。．.!！]?\s*$",
+        # 句首的枚举编号：「2.」「2）」「第2、」；后面接说明也算这一项的答复
+        rf"^\s*(?:第\s*)?{no}\s*(?:项|个|条)?\s*[.．、)）](?!\d)",
+        # 明确说「第 n 项 / 第 n 个 / 第 n 条」
+        rf"第\s*{no}\s*(?:项|个|条)",
+        # 明确说「选 n」「选第 n」「选 n 项」（后面接标点或句末）
+        rf"选\s*(?:择\s*)?(?:第\s*)?{n}\s*(?:项|个|条|$|[.．、,，;；:：)）])",
+    ]
 
 
 def pick_explicit(options: list[dict], reply: str) -> dict:
@@ -256,26 +293,56 @@ def pick_explicit(options: list[dict], reply: str) -> dict:
     raise FlowError("原话同时指到了几项：" + "、".join(str(o["no"]) for o in hits) + "——原话只认一项")
 
 
-def answered_item_ids(contract: dict, ask_id: str) -> set[str]:
-    """这一组问法已经录过原话的题号。已答的题不再处于待答集合。"""
-    return {str(a.get("item_id")) for r in contract.get("rounds") or []
-            for a in r.get("answers") or [] if str(a.get("ask_id")) == str(ask_id)}
+def answered_item_ids(feature_root: Path, contract: dict, ask_id: str) -> set[str]:
+    """本操作已经录过原话的题号。已答的题不再处于待答集合。
+
+    按操作身份读：init 在材料 round 的 `answers`，开着 update 在该操作的 `record.answers`；
+    不拿另一轮或另一次操作的同名题抵扣。
+    """
+    rid = str((contract.get("update") or {}).get("open") or "")
+    if rid:
+        rec = _update_record(feature_root, rid)
+        answers = rec.get("answers") or []
+    else:
+        rounds = contract.get("rounds") or []
+        answers = (rounds[-1].get("answers") if rounds else None) or []
+    return {str(a.get("item_id")) for a in answers if str(a.get("ask_id")) == str(ask_id)}
 
 
-def pending_items(ask: dict | None, contract: dict) -> list[str]:
+def _update_record(feature_root: Path, rid: str) -> dict:
+    """开着的那一轮 update 的记录；读不出按流程缺口报，不拿空记录冒充没答过。"""
+    path = feature_root.joinpath("AR", "story-src", "updates", rid, "record.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise FlowError(f"{path.relative_to(feature_root).as_posix()} 读不出来（{exc}）："
+                        "说不出这一轮已经答过哪些题，先按 `status` 修好这一轮的记录") from exc
+    if not isinstance(payload, dict):
+        raise FlowError(f"{path.relative_to(feature_root).as_posix()} 不是对象：说不出这一轮的问答记录")
+    return payload
+
+
+def pending_items(feature_root: Path, ask: dict | None, contract: dict) -> list[str]:
     if not ask or ask.get("kind") != DESIGN_KIND:
         return []
-    answered = answered_item_ids(contract, ask["ask_id"])
+    answered = answered_item_ids(feature_root, contract, ask["ask_id"])
     return [str(it["item_id"]) for it in ask.get("items") or [] if str(it["item_id"]) not in answered]
 
 
-def with_answered(ask: dict, contract: dict) -> dict:
+def with_answered(feature_root: Path, ask: dict, contract: dict) -> dict:
     """给展示用的一份问法：带上待答与已答题号，不改盘上的问法。"""
-    answered = answered_item_ids(contract, ask["ask_id"])
+    answered = answered_item_ids(feature_root, contract, ask["ask_id"])
     return {**ask,
-            "pending": pending_items(ask, contract),
+            "pending": pending_items(feature_root, ask, contract),
             "answered": [str(it["item_id"]) for it in ask.get("items") or []
                          if str(it["item_id"]) in answered]}
+
+
+def pending_block(feature_root: Path, ask: dict, contract: dict) -> str:
+    """返回给人的展示块只含未答的题；完整问法仍留在盘上，`decide` 按它核对题号与内容身份。"""
+    pending = pending_items(feature_root, ask, contract)
+    left = {**ask, "items": [it for it in ask.get("items") or [] if str(it["item_id"]) in pending]}
+    return block(left)
 
 
 def clear(feature_root: Path) -> None:

@@ -319,10 +319,38 @@ class DesignQuestionsAreBoundToWhatWasAsked(HandoverCase):
         self.ok("decide", "--ask", ask["ask_id"], "--item", "Q1", "--reply", "允许再试一次")
         replacement = self.questions(self.item("Q3", "新发现的边界怎么定？"), name="questions-2.json")
         out = self.ok("status", "--questions-file", str(replacement))
-        self.assertEqual(["Q2"], out["ask"]["replaced_unanswered"],
+        self.assertEqual(["Q2"], [it["item_id"] for it in out["ask"]["replaced_unanswered"]],
                          "替换掉未答问题时没说被替换的是哪题")
+        self.assertEqual("宽限期多长？", out["ask"]["replaced_unanswered"][0]["question"],
+                         "被替换的问法只留了题号、没留当时的原问题")
+        kept = self.feature_root / out["ask"]["replaced_kept"]
+        self.assertTrue(kept.is_file(), "被替换的未答问题没有留下原件")
+        self.assertIn("宽限期多长？", kept.read_text(encoding="utf-8"))
         answers = self.contract()["rounds"][-1]["answers"]
         self.assertEqual(["Q1"], [a["item_id"] for a in answers], "替换问法丢了已答的原话")
+        self.assertIn("为何失效", out["action"])
+
+    def test_a_retry_with_the_same_file_shows_only_the_unanswered(self) -> None:
+        """部分答过之后重试同一文件：停等状态与展示都只含未答的题，不重问已答的 A。"""
+        path = self.questions(self.item("A", "第一问？"), self.item("B", "第二问？"))
+        ask = self.ok("status", "--questions-file", str(path))["ask"]
+        self.ok("decide", "--ask", ask["ask_id"], "--item", "A", "--reply", "答过了")
+        again = self.ok("status", "--questions-file", str(path))
+        self.assertEqual("await_questions", again["next"])
+        self.assertEqual(["B"], again["ask"]["pending"])
+        self.assertIn("【B】", again["action"])
+        self.assertNotIn("【A】", again["action"], "同一文件重试又把已答的题摆了一遍")
+        self.assertEqual(ask["ask_id"], again["ask"]["ask_id"], "同一问法重试换了身份")
+
+    def test_after_every_question_is_answered_the_native_next_step_runs(self) -> None:
+        """全部答完后重试同一文件：不再停在 await_questions，按原生下一步续行。"""
+        path = self.questions(self.item("A", "第一问？"))
+        ask = self.ok("status", "--questions-file", str(path))["ask"]
+        self.ok("decide", "--ask", ask["ask_id"], "--item", "A", "--reply", "答完了")
+        out = self.ok("status", "--questions-file", str(path))
+        self.assertNotEqual("await_questions", out["next"], out)
+        self.assertNotIn("ask", out, "零待答还返回了一组问法")
+        self.assertFalse((self.src / ".ask.json").exists(), "零待答还留着临时问法")
 
     def test_a_question_changed_behind_its_ask_id_is_refused(self) -> None:
         ask = self.ask(self.item("Q1", "失败后是否允许自动重试？"))
@@ -589,7 +617,7 @@ class TheMaterialFactIsTakenOncePerTimepoint(HandoverCase):
 
 
 class TheEffectiveAnswersReachTheDesign(HandoverCase):
-    """人答一生效就导出，设计作者、核源与 Story 审查读到的是同一份当前有效人答；它独立必读，不取决于需求条目写没写它。"""
+    """人答一生效就导出，设计作者、核源与 Story 审查读到的是同一份人答原件；它独立必读，不取决于需求条目写没写它。"""
 
     SOURCE = """
     const [module, access, root, feature] = process.argv.slice(1);
@@ -622,7 +650,7 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         self.ready()
         status = json.loads(self.flow("status", "--materials").stdout)
         self.assertTrue(status["required_answers"]["in_sync"], status)
-        current = self.exported()["current"]
+        current = self.exported()["records"]
         self.assertEqual(["material_scope"], [d["gate"] for d in current])
         self.assertEqual("2", current[0]["reply"])
         self.assertTrue(all(d["question"] for d in current), "导出的人答没带问法")
@@ -645,14 +673,15 @@ class TheEffectiveAnswersReachTheDesign(HandoverCase):
         built = self.ok("status", "--questions-file", str(questions))
         decided = self.ok("decide", "--ask", built["ask"]["ask_id"], "--item", "Q1", "--reply", "改 36 小时")
         self.assertTrue(decided.get("success", True), decided)
-        [row] = [d for d in self.exported()["current"] if d.get("item_id") == "Q1"]
+        [row] = [d for d in self.exported()["records"] if d.get("item_id") == "Q1"]
         self.assertEqual(("撤销宽限改多少小时？", "改 36 小时", "Q1",
                           f"doc/features/{self.feature}/AR/story.md"),
                          (row["question"], row["reply"], row["item_id"], row["source_ref"]))
         self.assertNotIn("chosen", row)
         self.assertFalse({"target_ref", "source_revision", "mapped_by"} & set(row))
         text = (self.feature_root / self.answers_rel()).read_text(encoding="utf-8")
-        self.assertIn("只陈列问题、原话与出处", text)
+        self.assertIn("只陈列当时的问法、原话与出处", text)
+        self.assertNotIn("当前有效", text, "导出给历史答复贴了当前有效的业务标签")
         self.assertNotIn("人的裁决", text)
         self.assertNotIn("所选", text)
 

@@ -541,8 +541,13 @@ function cmdArchive(ctx) {
   process.stdout.write(`[story-build archive] 已归档并登记：${feature}（${plan.items.map(r => r.item).join('、')} 上传并读回核验成立；`
     + `覆盖前的系统正文备份在 ${receipt.backupPath ?? '对接层记录处'}）\n`);
   if (plan.pending_unknown) process.stdout.write(`[story-build archive] ${plan.pending_unknown}\n`);
+  if (plan.delivery_notes?.length) {
+    // 交付门的实际结论原样带给归档主作者：审查状态、保留建议与设计状态各按原义，
+    // 由他据受影响正文讲清本版确实未验的业务边界；这是说明，不是新的审批点。
+    process.stdout.write('[story-build archive] 交付门的实际状态（原义，不影响这次成功退出）：\n'
+      + plan.delivery_notes.map(n => `  · ${n}`).join('\n') + '\n');
+  }
   if (plan.pending_gaps?.length) process.stdout.write(`[story-build archive] 本次送审仍带蓝图待定事项：${plan.pending_gaps.join('；')}\n`);
-  if (plan.unverified?.length) process.stdout.write(`[story-build archive] 未验证项：${plan.unverified.join('；')}\n`);
   // 登记返回的下一步原样带出：本轮还有没做完的工作（如已开始的同图增强）不被归档成功吞掉
   const after = jsonIn(reg.stdout);
   if (after?.next && after.next !== 'done') process.stdout.write(`[story-build archive] 下一步（${after.next}）：${after.action}\n`);

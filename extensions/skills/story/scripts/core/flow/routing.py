@@ -140,7 +140,7 @@ def design_gate(feature_root: Path, contract: dict) -> tuple[str, str] | None:
     if not blueprint_exists(feature_root):
         return ("design_blueprint",
                 f"本轮范围已定。按 `phases/design.md`「二、交给设计」「三、设计」进原生 component-design：为本需求建立蓝图 `{blueprint}`"
-                f"（与需求同根，在 `{blueprint}/blueprint/`）。来源是材料索引 `AR/story-src/materials.json` 登记的版本（当前阅读稿 `RR/prd.md`、`SR/design.md` 等及它们的组成原件，每版留存在 `.backups/local/`）；当前有效人工答复是必读；"
+                f"（与需求同根，在 `{blueprint}/blueprint/`）。来源是材料索引 `AR/story-src/materials.json` 登记的版本（当前阅读稿 `RR/prd.md`、`SR/design.md` 等及它们的组成原件，每版留存在 `.backups/local/`）；当前人工答复原件是必读；"
                 "本轮定位（本单承载、同一系统设计下的兄弟单、协作方与不做项）与范围答复写进原生范围与边界。"
                 "需求条目只写真实的需求、目标、约束与风险，用 `import_sources.py --scope` 按材料索引补齐来源路径与摘要；"
                 "只作支撑的材料在事实与设计对象的 provenance 里引用，不为它造条目。"
@@ -211,7 +211,7 @@ QUESTIONS_SHAPE = {
                          "recommend": "建议的一项候选（可为空）",
                          "reason": "为何符合必要问人的三条件、当前用户有权回答",
                          "source_ref": "已取得原件或本轮原生质询报告的相对路径"}]},
-    "note": "只有 Spec 三条件内、当前用户有权回答的才放进来；选项与建议来自原件与质询后分析，"
+    "note": "只有必要问人条件内（完整定义见 `phases/design.md`「首次质询后的集中问答与初始反馈」）、当前用户有权回答的才放进来；选项与建议来自原件与质询后分析，"
             "已有答案直接复用、第三方才能定的保 gap，不强问当前用户",
 }
 
@@ -523,14 +523,12 @@ def questions_step(feature_root: Path, contract: dict) -> tuple[str, str] | None
     ask = asks.current_design(feature_root)
     if ask is None:
         return None
-    pending = asks.pending_items(ask, contract)
+    pending = asks.pending_items(feature_root, ask, contract)
     if not pending:
         return None
-    shown = asks.with_answered(ask, contract)
-    left = {**shown, "items": [it for it in shown["items"] if str(it["item_id"]) in pending]}
     return ("await_questions",
             f"设计后必要问答还有 {len(pending)} 题没答（{ask['ask_id']}）。把同一展示块里剩下的部分原样摆给人：\n"
-            + asks.block(left) + "\n" + QUESTIONS_USAGE)
+            + asks.pending_block(feature_root, ask, contract) + "\n" + QUESTIONS_USAGE)
 
 
 def after_material_step(feature_root: Path, contract: dict) -> tuple[str, str]:

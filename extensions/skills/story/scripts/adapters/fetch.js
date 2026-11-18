@@ -13,8 +13,9 @@
  *   旧 AR 原件或当前本地 Story，这次回流身份也照记——系统同一正文接口没有额外身份时，不凭内容变化宣布它是新的权威 AR。
  *   首次未发布的本单正文仍是 AR 原件，RR/SR 仍按原材料导入。
  *
- *   其余落点照旧：设计参考附件和本地不同时写 `AR/story-src/fetched-design-review.md`；外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt 与这张单的交付要求
- *   `delivery_requirements: {design_reference}`（系统要不要设计参考附件；本替身读单据详情的 `design_reference_required`，缺省不要求）。
+ *   其余落点照旧：外部当前状态另写 `AR/story-src/fetched.json`，带取材时刻 fetchedAt、这张单的交付要求
+ *   `delivery_requirements: {design_reference}` 与当次评审批次 `review_out`；评审回稿、历史评审附件与设计参考附件
+ *   都进该评审批次（含失败与系统上没有的逐件结果），材料导入不读它。
  *   每份的 status 四态分开：
  *   fetched / same / absent / failed——混成一个的话，一次读取错误会被当成「评审没提意见」。
  *   关联关系逐级从实际返回解析，取不到就记 absent 与原因，不默认 AR 详情一定带 RR 编号。
@@ -86,18 +87,22 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
       missing: '本单与系统设计单都没有给出产品需求单号' },
     { name: 'review-feedback.md', label: '评审人留下的回稿', no: reqNo, body: 'review-feedback.md', local: [] },
     { name: 'review.md', label: '评审记录附件', no: reqNo, attachment: 'review.md', local: [], saveAs: 'review.md' },
-    { name: 'design-review.md', label: '设计参考附件', no: reqNo, attachment: 'design-review.md',
-      local: ['blueprint/component-blueprint.review.md'], dir: src, saveAs: 'fetched-design-review.md' },
+    { name: 'design-review.md', label: '设计参考附件', no: reqNo, attachment: 'design-review.md', local: [] },
   ];
-  // 交付回流的评审输入：系统改过的本单正文（发布过才是交付回流）、评审回稿与历史评审附件都进评审用途区，
-  // 不带 role 进材料导入；显式回稿与历史附件无论发布过没有都是这一轮的评审输入原件。
-  const reviewNames = new Set(['AR-design.md', 'review-feedback.md', 'review.md']);
+  // 交付回流的评审输入：系统改过的本单正文（发布过才是交付回流）、评审回稿、历史评审附件
+  // 与设计参考附件都进评审用途区，不带 role 进材料导入；显式回稿与历史附件无论发布过没有都是
+  // 这一轮的评审输入原件。设计参考附件同时是交付项与评审输入：系统上的那份也可能被别人改过。
+  const reviewNames = new Set(['AR-design.md', 'review-feedback.md', 'review.md', 'design-review.md']);
   const items = [];
   const reviewItems = [];
   for (const w of wanted) {
     const id = { name: w.name, label: w.label, ticket: w.no || null, ...(w.role ? { role: w.role, title: w.title } : {}) };
     const reviewInput = reviewNames.has(w.name) && (w.name !== 'AR-design.md' || published);
-    if (!w.no) { items.push({ ...id, status: 'absent', note: w.missing ?? '这张单上没有挂它' }); continue; }
+    if (!w.no) {
+      items.push({ ...id, status: 'absent', note: w.missing ?? '这张单上没有挂它' });
+      if (reviewInput) reviewItems.push({ ...id, status: 'absent', note: w.missing ?? '这张单上没有挂它' });
+      continue;
+    }
     let body;
     try {
       body = w.attachment
@@ -105,9 +110,14 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
         : await getBody(w.no, w.body, mcpToken);
     } catch (e) {
       items.push({ ...id, status: 'failed', note: e.message });
+      if (reviewInput) reviewItems.push({ ...id, status: 'failed', note: e.message });
       continue;
     }
-    if (body === null) { items.push({ ...id, status: 'absent', note: '系统上现在没有这一份' }); continue; }
+    if (body === null) {
+      items.push({ ...id, status: 'absent', note: '系统上现在没有这一份' });
+      if (reviewInput) reviewItems.push({ ...id, status: 'absent', note: '系统上现在没有这一份' });
+      continue;
+    }
     const hash = crypto.createHash('sha256').update(body).digest('hex');
     const facts = {
       digest: `sha256:${hash.slice(0, 16)}`,
@@ -120,7 +130,8 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
       fs.mkdirSync(reviewDir, { recursive: true });
       const saved = path.relative(root, path.join(reviewDir, w.name)).split(path.sep).join('/');
       fs.writeFileSync(path.join(reviewDir, w.name), body, 'utf-8');
-      const row = { name: id.name, label: w.name === 'AR-design.md' ? '交付回流的 Story（被改交付件）' : w.label,
+      const row = { name: id.name, label: w.name === 'AR-design.md' ? '交付回流的 Story（被改交付件）'
+        : w.name === 'design-review.md' ? '系统上的设计参考附件' : w.label,
         ticket: id.ticket, ...(id.title ? { title: id.title } : {}), status: 'fetched', saved, ...facts };
       items.push(row);
       reviewItems.push(row);
@@ -141,8 +152,12 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   let kept = null;
   try { kept = JSON.parse(readOr(path.join(src, 'fetched.json')) ?? 'null')?.body_write ?? null; } catch { kept = null; }
   const fetchedAt = new Date().toISOString();
+  // 只有真的取得或读取失败才建评审批次；系统上本来就没有的件不因此建一个空批次
+  const reviewOut = reviewItems.some(i => i.status !== 'absent')
+    ? path.relative(root, reviewDir).split(path.sep).join('/') : null;
   const receipt = { mode: 'fetch', reqNo, parentNo: srNo, rrNo, fetchedAt,
     delivery_requirements: { design_reference: detail.design_reference_required === true }, items,
+    ...(reviewOut ? { review_out: reviewOut } : {}),
     ...(published ? { delivery_return: true } : {}),
     ...(kept ? { body_write: kept } : {}) };
   fs.mkdirSync(src, { recursive: true });
@@ -153,15 +168,19 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     fs.writeFileSync(path.join(outDir, '.receipt.json'),
       `${JSON.stringify({ ...receipt, items: items.filter(i => i.role) }, null, 2)}\n`, 'utf-8');
   }
-  if (reviewItems.length) {
-    // 评审用途区的批次回执：update 按它认每一件的系统身份、来源与摘要；材料导入不读它
+  if (reviewOut) {
+    // 评审用途区的批次回执：update 按它认每一件的系统身份、来源与摘要；材料导入不读它。
+    // 失败与系统上没有的件也写进来——它们是这一批的实际结果，不能只记成功的。
+    fs.mkdirSync(reviewDir, { recursive: true });
     fs.writeFileSync(path.join(reviewDir, '.receipt.json'),
       `${JSON.stringify({ ...receipt, items: reviewItems }, null, 2)}\n`, 'utf-8');
   }
   const failed = items.filter(i => i.status === 'failed').length;
-  log(`取回 ${upstream.length} 份上游正文到 ${outDir}${reviewItems.length ? `、${reviewItems.length} 份交付回流件到 ${reviewDir}` : ''}${failed ? `，${failed} 份读取失败` : ''}；一个业务文件都没动`);
+  log(`取回 ${upstream.length} 份上游正文到 ${outDir}`
+    + `${reviewItems.length ? `、${reviewItems.length} 份交付回流件到 ${reviewDir}` : ''}`
+    + `${failed ? `，${failed} 份读取失败` : ''}；一个业务文件都没动`);
   return { out: outDir, fetched: items.filter(i => i.status === 'fetched').length, failed, parentNo: srNo, rrNo, items,
-    ...(reviewItems.length ? { review_out: reviewDir } : {}) };
+    ...(reviewOut ? { review_out: reviewDir } : {}) };
 }
 
 module.exports = { fetchUpstream };

@@ -188,7 +188,7 @@ function unitLines(judged) {
  * 不交半份任务。
  */
 /**
- * 当前有效人答：独立必读，蓝图还没建立时设计作者也取得；导出落后于流程记录时不交任务，不拿旧导出顶替。
+ * 人答原件：独立必读，蓝图还没建立时设计作者也取得；导出落后于流程记录时不交任务，不拿旧导出顶替。
  * 需求目录里还没有流程契约（不是 Story 需求）时为空。
  */
 function answerRows(root, id) {
@@ -196,18 +196,19 @@ function answerRows(root, id) {
   if (!fs.existsSync(path.join(dir, 'AR', 'story-src', 'story-flow.json'))) return [];
   const answers = requiredAnswers(requirementContext(root, dir));
   if (answers.problems.length) {
-    stop(`需求 ${id} 的当前有效人答`, answers.problems.join('；'), '需求负责方按提示重试派生，答复本身不用重答');
+    stop(`需求 ${id} 的人答原件`, answers.problems.join('；'), '需求负责方按提示重试派生，答复本身不用重答');
   }
   const read = readSourceFiles(root, answers.files);
-  if (read.problems.length) stop(`需求 ${id} 的当前有效人答`, read.problems.join('；'), '需求负责方恢复人答导出');
+  if (read.problems.length) stop(`需求 ${id} 的人答原件`, read.problems.join('；'), '需求负责方恢复人答导出');
   return answers.files.length
-    ? ['当前有效人答（必读，不取决于需求条目或设计引用有没有写它）：', ...answers.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)]
+    ? ['人答原件（必读，不取决于需求条目或设计引用有没有写它；按时间陈列当时的问法与原话，现在按哪一句由你据来源、权限与当前蓝图判）：',
+      ...answers.files.map(f => `- \`${f.path}\`（${f.role}），${f.sha256}`)]
     : [];
 }
 
 /**
  * 候选这一版实际依据的来源（读取结果的 `source_index`）：需求条目的声明按原生规则核原字节，设计依据（事实、设计对象、合同的 provenance）
- * 命中本需求登记文件的按版本展开成完整的采用文件；契约段引的权威文件由原生逐段核过，整份交读；冲突一方单列供核；当前有效人答独立必读。
+ * 命中本需求登记文件的按版本展开成完整的采用文件；契约段引的权威文件由原生逐段核过，整份交读；冲突一方单列供核；人答原件独立必读。
  * 任一份读不到、摘要不符、引用不是登记文件或契约权威不完整，不交半份任务。
  */
 function sourceIndex(root, id, bp) {

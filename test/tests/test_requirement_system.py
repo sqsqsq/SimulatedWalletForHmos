@@ -159,6 +159,47 @@ class TestFetch(SystemCase):
         self.assertEqual(set(), {w for w in written - {"AR/story.md"}
                                  if not w.startswith(("inbox/fetch-test/", "AR/story-src/"))})
 
+    def test_review_attachments_are_inputs_in_their_own_batch(self) -> None:
+        """评审回稿、历史评审附件与设计参考附件都进当次评审批次，带来源与摘要；回执指明批次。"""
+        (self.system / AR / "attachments").mkdir(parents=True)
+        (self.system / AR / "attachments" / "review.md").write_text("评审记录\n", encoding="utf-8")
+        (self.system / AR / "attachments" / "design-review.md").write_text(DESIGN_REVIEW_TEXT, encoding="utf-8")
+        (self.system / AR / "review-feedback.md").write_text("评审回稿\n", encoding="utf-8")
+        proc = self.fetch_into()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        receipt = json.loads((self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))
+        self.assertEqual("inbox/review/fetch-test", receipt["review_out"])
+        batch = json.loads((self.feature / "inbox" / "review" / "fetch-test" / ".receipt.json").read_text(encoding="utf-8"))
+        rows = {i["name"]: i for i in batch["items"]}
+        self.assertEqual({"review.md", "design-review.md", "review-feedback.md"}, set(rows),
+                         "未发布的本单正文仍是材料原件，不进评审批次")
+        for name in ("review.md", "design-review.md", "review-feedback.md"):
+            self.assertEqual(("fetched", f"inbox/review/fetch-test/{name}"), (rows[name]["status"], rows[name]["saved"]))
+            self.assertIn("sha256", rows[name])
+        self.assertFalse((self.feature / "AR" / "story-src" / "fetched-design-review.md").exists(),
+                         "设计参考又写了一份不在评审批次里的副本")
+
+    def test_a_failed_review_attachment_is_in_the_batch_receipt(self) -> None:
+        """附件读取失败不只在总回执里：评审批次回执也要有这一件，update 才说得出缺哪件。"""
+        bad = self.system / AR / "attachments" / "design-review.md"
+        bad.mkdir(parents=True)                    # 同名目录：读取附件失败
+        proc = self.fetch_into()
+        self.assertEqual(1, proc.returncode, proc.stderr)
+        receipt = self.receipt(proc)
+        self.assertFalse(receipt["success"])
+        self.assertEqual("inbox/review/fetch-test", json.loads(
+            (self.feature / "AR" / "story-src" / "fetched.json").read_text(encoding="utf-8"))["review_out"])
+        rows = {i["name"]: i for i in json.loads(
+            (self.feature / "inbox" / "review" / "fetch-test" / ".receipt.json").read_text(encoding="utf-8"))["items"]}
+        self.assertEqual("failed", rows["design-review.md"]["status"])
+        self.assertNotIn("saved", rows["design-review.md"])
+
+    def test_absent_attachments_do_not_create_an_empty_review_batch(self) -> None:
+        proc = self.fetch_into()
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertNotIn("review_out", self.receipt(proc))
+        self.assertFalse((self.feature / "inbox" / "review").exists())
+
     def test_missing_body_is_reported_absent_not_written_empty(self) -> None:
         """系统上没有正文就不写：空文件会让下游分不清「没有」和「拉到了空的」。"""
         (self.system / RR / "prd.md").unlink()

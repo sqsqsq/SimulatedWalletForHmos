@@ -160,12 +160,13 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         section = text.split("#### 澄清会@abcdef12/T1", 1)[1].split("####", 1)[0]
         self.assertIn("**会议判断**：重试是否换标识未定", section)
         self.assertIn("> 乙 10:01：重试要不要换标识，先别写死。", section)
-        self.assertIn("**仍要定的事**：怎么处理？", section)
+        self.assertIn("**会上提出的问题**：怎么处理？", section)
+        self.assertIn("对照前面「人的原话记录」", section, "会上问题没有要求对照后续人答判是否解决")
         self.assertNotIn("- **人的裁决**", text, "会议裁决关卡已退出，任务书还在按它投影")
         self.assertIn("> 本期换标识。", section)
         t2 = text.split("#### 澄清会@abcdef12/T2", 1)[1]
         self.assertIn("同 T1", t2, "同一范围的原话取了两次")
-        self.assertIn("**仍要定的事**：要不要换？", t2)
+        self.assertIn("**会上提出的问题**：要不要换？", t2)
         self.assertIn("doc-refresh.md 里没有这个话题的段落", t2)
 
     def answer(self, item_id: str = "Q1", question: str = "失败怎么处理？",
@@ -196,6 +197,7 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertIn("> 失败怎么处理先不定，后面负责人定", signed, "人答不是 reply 原文")
         self.assertIn("出处：RR/prd.md#3", signed)
         self.assertNotIn("可默认再试", signed, "作者解释混进了人的原话记录")
+        self.assertIn("本轮仅允许人工受理", task, "判据不承认有原话、对象与期限的临时授权")
         self.assertIn("没有已开始的同图增强", task.split("### 已有的同图增强（机械事实）", 1)[1], "已有增强的机械事实没送到")
 
     def test_only_effective_material_confirmations_are_shown(self) -> None:
