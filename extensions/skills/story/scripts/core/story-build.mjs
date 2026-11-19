@@ -92,7 +92,7 @@ const OPTIONS = Object.assign(Object.create(null), {
   '--json': [null, '机器调用：只输出一行 JSON（成功状态、notes、problems），保留原退出码；普通人读输出仍走不带它的调用'],
   '--action': ['<动作>', '审查动作'],
   '--report-dir': ['<项目相对路径>', '审查报告写到哪个目录（不给时按宿主约定）'],
-  '--reader': ['task|unavailable', 'prepare 必需：你按宿主实际工具说明核过的独立读者情况——有能接收自足只读任务的隔离读者写 task，没有写 unavailable'],
+  '--reader': ['task|unavailable', 'prepare 必需：你按宿主实际工具说明核过的独立读者情况——能读业务材料、能写本次报告、并能取得完整完成回复的隔离读者写 task；缺任一条件写 unavailable'],
   '--reader-reason': ['<原因>', '--reader unavailable 时必需：实际缺什么（缺工具、任务合同不接受、调用被明确拒绝）'],
   '--mode': ['<模式>', '图的形态或动作'],
   '--id': ['<图块 ID>', '只作用于这一块图'],
