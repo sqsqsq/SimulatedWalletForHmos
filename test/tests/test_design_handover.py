@@ -331,6 +331,56 @@ class DesignQuestionsAreBoundToWhatWasAsked(HandoverCase):
         self.assertEqual(f"doc/features/{self.feature}/AR/story.md", row["source_ref"],
                          "系统侧查不回原问法的出处")
 
+    def test_a_readable_id_colliding_with_a_generated_number_stays_unique(self) -> None:
+        """一组里只要有一题要改人读序号，整组就按原位置编号：`decision:one` 与可读的「第 1 题」不再同名。
+
+        展示唯一、稳定；记录仍取结构化 items 的原 item_id；部分答复只筛余题、序号不重排；零待答照原协议退出。
+        """
+        first, second = "decision:one", "第 1 题"
+        ask = self.ask(self.item(first, "谁负责验收？"), self.item(second, "何时生效？"))
+        self.assertIn("【第 1 题】谁负责验收？", ask["block"])
+        self.assertIn("【第 2 题】何时生效？", ask["block"])
+        self.assertNotIn("decision:one", ask["block"], "展示块里出现了原生地址")
+        self.assertEqual(2, len(re.findall(r"【第 \d+ 题】", ask["block"])), "同一题号被两题共用")
+        self.assertEqual(2, len(set(re.findall(r"【第 (\d+) 题】", ask["block"]))), "展示题号重名")
+        out = self.ok("decide", "--ask", ask["ask_id"], "--item", first, "--reply", "由业务方验收。")
+        self.assertEqual([second], out["pending"])
+        self.assertIn("【第 2 题】何时生效？", out["ask_block"])
+        self.assertNotIn("【第 1 题】", out["ask_block"], "部分答复后余题被重新编号")
+        state = self.ok("status")
+        self.assertEqual(out["ask_block"], state["ask"]["block"], "两个入口的展示块不一致")
+        self.assertEqual([second], state["ask"]["pending"])
+        rows = self.contract()["rounds"][-1]["answers"]
+        self.assertEqual(first, rows[0]["item_id"], "记录把展示序号当成了新的绑定身份")
+        # 第二题的显示号是「第 2 题」，记录仍取原 item_id「第 1 题」
+        last = self.ok("decide", "--ask", ask["ask_id"], "--item", second, "--reply", "上线当轮生效。")
+        self.assertEqual([], last["pending"])
+        self.assertEqual(second, self.contract()["rounds"][-1]["answers"][-1]["item_id"])
+        done = self.ok("status")
+        self.assertNotIn("ask", done, "零待答还返回了一组问法")
+        self.assertNotIn("【", done["action"], "零待答还展示了一份空问卷")
+
+    def test_a_readable_group_keeps_its_original_ids(self) -> None:
+        """整组都适合直接展示时保留原号，不为它们另造一套位置号。"""
+        ask = self.ask(self.item("Q1", "第一问？"), self.item("Q2", "第二问？"))
+        self.assertIn("【Q1】第一问？", ask["block"])
+        self.assertIn("【Q2】第二问？", ask["block"])
+        self.assertNotIn("【第 1 题】", ask["block"], "全部可读时也改成了位置号")
+
+    def test_a_mixed_group_numbers_every_item_by_original_position(self) -> None:
+        """可读 ID 在前、原生地址在后：整组统一按原位置编号，不做「逐题混搭」。"""
+        ask = self.ask(self.item("第 1 题", "第一问？"), self.item("view:logical/node:grace", "第二问？"),
+                       self.item("Q3", "第三问？"))
+        self.assertIn("【第 1 题】第一问？", ask["block"])
+        self.assertIn("【第 2 题】第二问？", ask["block"])
+        self.assertIn("【第 3 题】第三问？", ask["block"])
+        self.assertNotIn("view:logical", ask["block"])
+        self.assertNotIn("【Q3】", ask["block"], "整组改编号时还有题目保留原号")
+        out = self.ok("decide", "--ask", ask["ask_id"], "--item", "Q3", "--reply", "第三问已定。")
+        self.assertIn("【第 1 题】", out["ask_block"], "部分答复后余题序号没有按整组原位置")
+        self.assertIn("【第 2 题】", out["ask_block"])
+        self.assertNotIn("【第 3 题】", out["ask_block"])
+
     def test_one_reply_can_answer_two_questions_via_the_file(self) -> None:
         ask = self.ask(self.item("Q1", "失败后是否允许自动重试？"),
                        self.item("Q2", "宽限期多长？"))

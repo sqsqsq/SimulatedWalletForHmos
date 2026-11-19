@@ -1073,8 +1073,12 @@ def _evidence_sources(feature_root: Path, rec: dict | None) -> dict:
 
     init 还没有开过 update，用这次实际取得的评审输入（`_review_inputs` 按当次批次回执核）。
     材料索引读不出不影响读评审输入，但设计问答原话与正式来源的身份核不了，把原因记下来照实报。
+    登记行一次算好两种视图：文件行（角色、摘要、聚合 components 与会换版的 reference）与每版登记的
+    实际原件（`<来源>@<版本>` → original）；后者是聚合 component 唯一的取证对象。`resolved` 收这一轮
+    实际核到的稳定落点，供反馈记录给 owner 复查。
     """
     rows: dict[str, dict] = {}
+    originals: dict[tuple[str, int], dict] = {}
     index_error = None
     try:
         manifest = registry.read(feature_root)
@@ -1082,18 +1086,26 @@ def _evidence_sources(feature_root: Path, rec: dict | None) -> dict:
         index_error = str(exc)
     else:
         rows = {str(r["path"]): r for r in manifest.get("files") or [] if r.get("path")}
+        originals = {(str(s.get("source_id")), v["version"]): dict(v["original"])
+                     for s in manifest.get("sources") or [] for v in s.get("versions") or []
+                     if isinstance(v, dict) and isinstance(v.get("version"), int) and isinstance(v.get("original"), dict)}
     if rec is not None:
         before = str((rec.get("mirror") or {}).get("path") or "") or None
         entries = rec.get("review_inputs") or []
     else:
         before = None
         entries = _review_inputs(feature_root)
-    return {"rows": rows, "index_error": index_error, "before": before,
-            "review": {str(e["path"]): e for e in entries if e.get("path")}}
+    return {"rows": rows, "originals": originals, "index_error": index_error, "before": before,
+            "rec": rec, "resolved": {}, "review": {str(e["path"]): e for e in entries if e.get("path")}}
 
 
-def _review_ref(feature_root: Path, rel: str, entry: dict) -> tuple[str | None, str | None]:
-    """本轮 prepare 固定的评审输入：路径与完整摘要都要对得上，才定位到同一版本。"""
+def _review_ref(feature_root: Path, rel: str, entry: dict,
+                sources: dict) -> tuple[str | None, str | None]:
+    """本轮 prepare 固定的评审输入：所引路径与完整摘要对得上，且能由本轮 before 原件（系统件另加批次回执）证出同一身份。
+
+    核过记下稳定落点：本轮 before/ 里那一份是 owner 可复查的位置，不依赖随后还会变的收件箱位置；
+    prepare 时就没有原件/回执，与随后把它移走，都会在那里分别报出来。
+    """
     status = str(entry.get("status") or "")
     if status not in ("fetched", "same", "local"):
         return None, f"在本轮评审输入里的状态是「{status or '缺失'}」，不是已取得、可核的原件"
@@ -1103,28 +1115,35 @@ def _review_ref(feature_root: Path, rel: str, entry: dict) -> tuple[str | None, 
     if file_sha256(feature_root / Path(*rel.split("/"))) != sha:
         return None, ("的字节与本轮 prepare 固定时的不一致（摘要漂移）：引用本轮 before/ 里的快照，"
                       "或按当前这一份重新 prepare 再引用")
+    rec, place = sources.get("rec"), rel
+    if rec is not None:
+        why = _before_evidence_problem(feature_root, rec, entry)
+        if why:
+            return None, why
+        mirror = str((rec.get("mirror") or {}).get("path") or "")
+        place = rel if rel.startswith(f"{mirror}/") else f"{mirror}/{entry['path']}"
+    sources["resolved"][rel] = {"path": place, "sha256": sha}
     return "review", None
 
 
-def _component_ok(feature_root: Path, component: str, rows: dict[str, dict]) -> bool:
-    """聚合稿的一个 component（`<来源>@<版本>`）能追到登记过的实际文件，且盘上字节与登记一致。"""
+def _component_ok(feature_root: Path, component: str, sources: dict) -> bool:
+    """聚合稿的一个 component（`<来源>@<版本>`）追到**那一版登记的实际原件**并按完整摘要核过。
+
+    同版其它文件（阅读件、会换版的当前位置）不能代签这一版的原件。
+    """
     source_id, _, version = str(component).rpartition("@")
-    try:
-        number = int(version)
-    except ValueError:
-        return False
-    for row in rows.values():
-        if str(row.get("source_id")) != source_id or row.get("version") != number:
-            continue
-        have = file_sha256(feature_root / Path(*str(row.get("path")).split("/")))
-        if have is not None and have == str(row.get("sha256") or ""):
-            return True
-    return False
+    original = sources.get("originals", {}).get((source_id, int(version))) if version.isdigit() else None
+    return bool(original and original.get("path") and original.get("sha256")
+                and file_sha256(feature_root / Path(*str(original["path"]).split("/"))) == str(original["sha256"]))
 
 
 def _registered_ref(feature_root: Path, rel: str, row: dict,
                     sources: dict) -> tuple[str | None, str | None]:
-    """材料索引登记行：来源身份、稳定版本行与原件摘要；可变别名落到稳定行，聚合稿追 components。"""
+    """材料索引登记行：来源身份、稳定版本行与原件摘要；可变别名落到稳定行，聚合稿追 components。
+
+    可变别名要同时核三件事：别名当前位置的字节与它在索引里的登记一致、索引里的 reference 指向稳定行、
+    **稳定文件自身**的字节与稳定行登记一致——只比登记值的话，稳定原件被移走也看不出来。
+    """
     have = file_sha256(feature_root / Path(*rel.split("/")))
     if have is None:
         return None, "读不到"
@@ -1134,9 +1153,15 @@ def _registered_ref(feature_root: Path, rel: str, row: dict,
         if stable is None:
             return None, "是会换版的当前位置，但对应的稳定版本行不在材料索引里：先用 `round` 修好来源登记"
         want = str(stable.get("sha256") or "")
-        if have != want or str(reference.get("sha256") or "") != want:
-            return None, f"的字节与其稳定版本不一致（摘要漂移）：引用稳定版本 {stable.get('path')}"
-        row = stable
+        if have != str(row.get("sha256") or "") or str(reference.get("sha256") or "") != want:
+            return None, ("的字节与材料索引登记的当前位置不一致（摘要漂移），或所指稳定版本摘要与稳定行登记值不符："
+                          "找回原件，或按实际内容重新导入；后者先用 `round` 修好来源登记")
+        located = file_sha256(feature_root / Path(*str(stable.get("path")).split("/")))
+        if located is None or located != want:
+            return None, (f"所指的稳定版本 {stable.get('path')} "
+                          f"{'不在盘上' if located is None else '字节与登记不一致（摘要漂移）'}：找回稳定原件，"
+                          "或按实际内容重新导入——只有当前位置的字节核不了这一版的原件")
+        row, rel, have = stable, str(stable.get("path")), located
     elif have != str(row.get("sha256") or ""):
         return None, "的字节与材料索引登记的不一致（摘要漂移）：找回原件，或按实际内容重新导入"
     if str(row.get("kind")) == "answer" and str(row.get("role") or "") in ("answer_record", "answer"):
@@ -1153,33 +1178,37 @@ def _registered_ref(feature_root: Path, rel: str, row: dict,
             return None, f"同源的会议原件 {original.get('path')} 字节与登记不一致（摘要漂移）"
         return "formal", None
     if row.get("components"):
-        broken = [c for c in row["components"] if not _component_ok(feature_root, str(c), sources["rows"])]
+        broken = [c for c in row["components"] if not _component_ok(feature_root, str(c), sources)]
         if broken:
-            return None, f"是聚合稿，但合成的版本 {'、'.join(broken)} 追不到登记的原件"
+            return None, f"是聚合稿，但合成的版本 {'、'.join(broken)} 追不到该版本登记的原件"
     return "formal", None
 
 
 def _ref_role(feature_root: Path, project_root: Path, ref: object,
               sources: dict) -> tuple[str | None, str | None]:
-    """一条引用的原件身份：answer/review/formal 是可能载有人签的原件；technical 只能作技术佐证。"""
+    """一条引用的原件身份：answer/review/formal 是可能载有人签的原件；technical 只能作技术佐证。
+
+    核到身份时把这一次的稳定落点记进 `sources["resolved"]`，供反馈记录给 owner 复查；身份不成立时不记。
+    """
     rel, why = _ref_path(feature_root, project_root, ref)
     if rel is None:
         return None, why
     entry = sources["review"].get(rel)
     if entry is not None:
-        role, why = _review_ref(feature_root, rel, entry)
-        return role, why
+        return _review_ref(feature_root, rel, entry, sources)
     before = sources["before"]
     if before and rel.startswith(f"{before}/"):
         inner = rel[len(before) + 1:]
         entry = sources["review"].get(inner)
         if entry is None:
             return None, "是本轮快照路径，但指不回本轮评审输入里的原件"
-        role, why = _review_ref(feature_root, rel, entry)
-        return role, why
+        return _review_ref(feature_root, rel, entry, sources)
     row = sources["rows"].get(rel)
     if row is not None:
         role, why = _registered_ref(feature_root, rel, row, sources)
+        if role:
+            land = row.get("reference") if isinstance(row.get("reference"), dict) else row
+            sources["resolved"][rel] = {"path": str(land.get("path") or ""), "sha256": str(land.get("sha256") or "")}
         return role, why
     if not (feature_root / Path(*rel.split("/"))).is_file():
         return None, "读不到"
@@ -1219,7 +1248,6 @@ def _ruling_evidence_problems(project_root: Path, feature_root: Path, refs: list
                             "请引用已取得的人答（`AR/story-src/answers/` 导出的原话）或含决定的来源原件"
                             "（材料索引登记的原件、会议原件、本轮评审输入），或按实际性质提交 opinion/suggestion/fact_supplement")
     return problems
-
 
 def cmd_update_feedback(feature_root: Path, project_root: Path, questioning_candidate: str | None = None) -> dict:
     """把评审人对设计的反馈交给蓝图负责方：核本轮反馈文件的候选资格，记下结果。
@@ -1295,6 +1323,10 @@ def cmd_update_feedback(feature_root: Path, project_root: Path, questioning_cand
                           "target_ref": item.get("target_ref"), "evidence_refs": refs})
             if item.get("kind") == "authoritative_ruling":
                 problems.extend(_ruling_evidence_problems(project_root, feature_root, refs, fid, sources or {}))
+                resolved = [{"ref": str(ref), **sources["resolved"][rel]} for ref in refs
+                            if (rel := _ref_path(feature_root, project_root, ref)[0]) in (sources or {}).get("resolved", {})]
+                if resolved:            # 这一次核到的稳定落点随记录留下，别名换版后仍指得回当时那一份原件
+                    items[-1]["evidence_resolved"] = resolved
             else:
                 problems.extend(p for p in (_evidence_ref_problem(project_root, feature_root, r, fid)
                                             for r in refs) if p)
@@ -1480,6 +1512,22 @@ def _before_evidence(feature_root: Path, rec: dict, entry: dict) -> bool:
                if str(i.get("saved") or "") == path and str(i.get("sha256") or "") == sha
                and str(i.get("name") or "") == str(entry.get("system_item") or "")]
     return bool(matches)
+
+
+def _before_evidence_problem(feature_root: Path, rec: dict, entry: dict) -> str | None:
+    """本轮 before/ 的原件（系统件另加批次回执）能否证出这一件：核过 None。
+
+    核不过时按「原件是否还在」与「回执对不对得上」分别报原因：prepare 时就缺原件、随后把快照移走，
+    和原件在但批次回执缺失或摘要不合，是两种缺口。本地件没有系统回执，before 原件就是它这一轮的身份。
+    """
+    mirror = str((rec.get("mirror") or {}).get("path") or "")
+    path = str(entry.get("path") or "")
+    original = feature_root / Path(*mirror.split("/")) / Path(*path.split("/"))
+    if not mirror or file_sha256(original) != str(entry.get("sha256") or ""):
+        return f"本轮 before/ 里找不到与 prepare 固定摘要一致的这一件原件（{mirror or '没有快照'}/{path}）：prepare 时就缺了原件，或随后把快照移走/改动了，评审输入的身份核不了"
+    if entry.get("system_item") and not _before_evidence(feature_root, rec, entry):
+        return f"本轮 before/ 里这一件的原件在，但批次回执缺失或核不上同一件、同一完整摘要（{mirror}/{path}）：系统件的身份核不了"
+    return None
 
 
 def carried_external(feature_root: Path, name: str) -> tuple[str, str] | None:

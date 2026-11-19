@@ -79,20 +79,16 @@ def _path_like_item_id(item_id: str) -> bool:
 
 
 def _display_ids(items: list[dict], order: list[str] | None = None) -> dict[str, str]:
-    """展示题号：item_id 本身可读就用它；含原生地址或路径的按**本组原顺序**给人读序号。
+    """展示题号：**整组只做一次稳定映射**，同一个组里不会出现两种命名方式。
 
-    `order` 是全组题号顺序（部分答复后展示只含余题时仍用它），记录仍取结构化 items 的原 item_id。
+    全部 item_id 都适合直接展示时保留原号；只要有一个含原生地址或路径、需要改成人读序号，
+    整组统一按**整组原位置**编号。`order` 是全组题号顺序（部分答复后展示只含余题时仍用它），
+    只筛余题、序号不重排；记录仍取结构化 items 的原 item_id。
     """
     order = [str(x) for x in (order or [str(it["item_id"]) for it in items])]
-    out: dict[str, str] = {}
-    for item in items:
-        item_id = str(item["item_id"])
-        if not _path_like_item_id(item_id):
-            out[item_id] = item_id
-            continue
-        at = order.index(item_id) + 1 if item_id in order else len(out) + 1
-        out[item_id] = f"第 {at} 题"
-    return out
+    numbered = any(_path_like_item_id(item_id) for item_id in order)
+    at = {item_id: i + 1 for i, item_id in enumerate(order)}
+    return {str(it["item_id"]): f"第 {at[str(it['item_id'])]} 题" if numbered else str(it["item_id"]) for it in items}
 
 
 def block(ask: dict, order: list[str] | None = None) -> str:
@@ -302,7 +298,11 @@ def _label_equal(text: str, label: str) -> bool:
 
 
 def _clause_choice(clause: str, options: list[dict]) -> tuple[int, bool] | None:
-    """这一分句完整是一个选择表达才返回（编号, 是肯定）；不是就返回 None，不忽略也不截取。"""
+    """**一段**完整的选择表达：编号、完整标签、完整否定，或编号 + 同一标签/既有确认格式的重述。
+
+    整句与分句都只经这一个入口解析：不是就返回 None，不忽略也不截取。复合选择的重述因此只有一份实现，
+    标点清洗不能把「选2？」当成「选2」。
+    """
     text = clause.strip()
     if not text:
         return None
@@ -330,9 +330,10 @@ def _clause_choice(clause: str, options: list[dict]) -> tuple[int, bool] | None:
 def pick_explicit(options: list[dict], reply: str, ask_id: str | None = None) -> dict:
     """人的整句话明确指到一项才返回值：完整标签、完整编号表达，或受支持的复合选择。
 
-    全输入协议：先认整句照抄的完整合同标签；其余必须**每一分句都是完整的选择表达**、且只有一个
-    肯定项。有问号、引用了别人的话、带条件/保留/附言或还有未消费的文字，一律不签认——保留原话、
-    请人只澄清这一个选择。标点清洗不把「选2？」当成「选2」。
+    全输入协议：先认整句照抄的完整合同标签；其余必须**每一分句都是完整的选择表达**，且
+    **恰有一个不同的肯定项**、肯定与否定没有交集。有问号、引用了别人的话、带条件/保留/附言或还有
+    未消费的文字，一律不签认；只否定、多项肯定、同一项既肯定又否定同样不签认——保留原话、请人只
+    澄清这一个选择，**不做集合相减**去签另一项。标点清洗不把「选2？」当成「选2」。
     """
     text = str(reply or "").strip()
     where = f"（ask {ask_id}）" if ask_id else ""
@@ -352,17 +353,9 @@ def pick_explicit(options: list[dict], reply: str, ask_id: str | None = None) ->
     if QUOTED.search(text):
         raise refuse("原话在引用别人的说法，不是人自己的选择")
     stripped = text.rstrip("。．.!！")
-    for o in options:
-        if _label_equal(stripped, o["label"]):
-            return o
-    # 机构完整的选择：编号 + 同一选项的完整标签重述，或编号 + 既有确认格式
-    whole = _RESTATED.fullmatch(stripped)
-    if whole:
-        no, rest = int(whole.group(1)), whole.group(2).strip()
-        for o in options:
-            if o["no"] == no and (CONFIRM.fullmatch(rest) or _label_equal(rest, o["label"])):
-                return o
-    clauses = [c for c in CLAUSE_SPLIT.split(stripped) if c.strip()]
+    # 整句本身可能就是一个完整选择（含编号 + 同一标签/确认的重述）：是就整句算一段，不另写主函数分支。
+    # 其余按分句；两处都只经 `_clause_choice` 解析，同一套「编号+附言」规则只有一份。
+    clauses = [stripped] if _clause_choice(stripped, options) is not None else [c for c in CLAUSE_SPLIT.split(stripped) if c.strip()]
     if not clauses:
         raise refuse("没有认出任何一项")
     affirmed: dict[int, dict] = {}
@@ -379,15 +372,16 @@ def pick_explicit(options: list[dict], reply: str, ask_id: str | None = None) ->
             affirmed[no] = hit
         else:
             negated.add(no)
-    hits = [o for no, o in sorted(affirmed.items()) if no not in negated]
-    if len(hits) > 1:
-        raise FlowError("原话同时指到了几项：" + "、".join(str(o["no"]) for o in hits)
+    if both := sorted(no for no in affirmed if no in negated):
+        raise refuse("第 " + "、".join(str(no) for no in both) + " 项同时被肯定又否定，原话自相矛盾")
+    if len(affirmed) > 1:
+        raise FlowError("原话同时指到了几项：" + "、".join(str(no) for no in sorted(affirmed))
                         + "——原话只认一项，请人明确只选一项" + where)
-    if not hits:
+    if not affirmed:
         if negated:
             raise refuse("只否定了第 " + "、".join(str(n) for n in sorted(negated)) + " 项，没有肯定任何一项")
         raise refuse("没有肯定任何一项")
-    return hits[0]
+    return affirmed[next(iter(affirmed))]
 
 
 def answered_item_ids(feature_root: Path, contract: dict, ask_id: str) -> set[str]:

@@ -54,7 +54,22 @@ class AReplyPointsOnlyByNumberFormOrLabel(unittest.TestCase):
         message = self.refused("选 1，选 2")
         self.assertIn("同时指到了几项", message)
         self.refused("不选 1")
-        self.refused("选 2，不选 2")
+        message = self.refused("选 2，不选 2")
+        self.assertIn("同时被肯定又否定", message)
+
+    def test_contradictory_clauses_are_not_subtracted_into_another_item(self) -> None:
+        """「不选1，选1，选2」不能把否定与肯定相减后签下 2：同一项又否又肯定就是原话自相矛盾。
+
+        换序也一样；只把肯定项数出来再减否定项，会把人的冲突答复变成一个确定选择。
+        """
+        for reply in ("不选 1，选 1，选 2", "选 1，不选 1，选 2", "选 2，不选 1，选 1",
+                      "不选1，选1，选2"):
+            with self.subTest(reply=reply):
+                message = self.refused(reply)
+                self.assertIn("同时被肯定又否定", message)
+        message = self.refused("不选 3，选 1，选 2")
+        self.assertIn("同时指到了几项", message)
+        self.assertEqual(2, self.picked("不选 1，选 2"))
 
     def test_an_unpointed_reply_is_refused_instead_of_picked_for_the_person(self) -> None:
         message = self.refused("不用补，1 份 PRD 够了")

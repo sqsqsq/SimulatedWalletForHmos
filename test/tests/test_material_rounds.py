@@ -883,6 +883,36 @@ class OnlyAWholeSentenceChoosesTheMaterialGate(MaterialRoundCase):
         self.reset()
         self.assertIn("没有明确选到任何一项", self.refused("2.5 个月后交付，先按第 2 次评审意见改。"))
 
+    def test_contradictory_choices_leave_the_gate_open_and_the_words_unconsumed(self) -> None:
+        """同一项又被肯定又被否定：真实 decide 不落 accepted、下一步不动；换序结果一致。
+
+        合法的「不选1，选2」仍按原话签认并给下一步；这里只核自动相减不会把冲突答复变成另一个确定选择。
+        """
+        for reply in ("不选1，选1，选2", "选1，不选1，选2", "选2，不选1，选1"):
+            with self.subTest(reply=reply):
+                self.reset()
+                ask = self.asked()
+                before = (len(self.gates()), self.next_of())
+                proc = self.sign(ask, reply)
+                out = (proc.stdout or "") + (proc.stderr or "")
+                self.assertEqual(1, proc.returncode, out)
+                self.assertIn("没有明确选到任何一项", out)
+                self.assertIn("同时被肯定又否定", out)
+                self.assertEqual(before, (len(self.gates()), self.next_of()),
+                                 f"「{reply}」没有被当成冲突答复留下待答")
+                kept = json.loads((self.feature_root / "AR" / "story-src" / ".ask.json")
+                                  .read_text(encoding="utf-8"))
+                self.assertEqual(ask["ask_id"], kept["ask_id"], "冲突答复把问法破坏了")
+        self.reset()
+        ask = self.asked()
+        before = self.next_of()
+        proc = self.sign(ask, "不选1，选2")
+        self.assertEqual(0, proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+        gate = self.gates()[-1]
+        self.assertEqual(("confirm_scope", "accepted", "不选1，选2"),
+                         (gate["chosen"], gate["outcome"], gate["reply"]))
+        self.assertNotEqual(before, self.next_of(), "合法复合选择签认后下一步没有前进")
+
 
 class StopsAreNotDelegated(unittest.TestCase):
     """停等的开关不交给被停的那一方：没有代签/代选参数，也没有交给模型判的条件句。

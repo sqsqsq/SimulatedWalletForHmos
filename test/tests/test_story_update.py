@@ -3014,6 +3014,56 @@ class ARulingSourceIsCheckedAgainstTheRegisterAndThisRound(RegisteredCase):
         self.assertTrue(out.get("eligible"), out)
         self.assertEqual([], (out["candidates"] or {}).get("rulings") or [])
 
+    def alias_row(self, rel: str = "RR/prd.md") -> dict:
+        """材料索引里会换版的当前位置那一行（带 reference 指稳定版本）。"""
+        manifest = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        return next(r for r in manifest["files"] if r["path"] == rel and r.get("reference"))
+
+    def test_a_moved_stable_original_of_an_alias_is_not_eligible(self) -> None:
+        """别名当前字节还在，但它所指的稳定原件被移走：读不到当时那一版，就不给可提交裁决候选。"""
+        stable = self.feature_root / self.alias_row()["reference"]["path"]
+        self.assertTrue(stable.is_file())
+        stable.rename(stable.with_suffix(".unavailable"))
+        self.write(["RR/prd.md"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("稳定版本", "；".join(out["problems"]), out)
+        self.assertIsNone(out["candidates"], "稳定原件缺失仍给出了可提交候选")
+
+    def test_a_changed_stable_original_of_an_alias_is_a_digest_drift(self) -> None:
+        stable = self.feature_root / self.alias_row()["reference"]["path"]
+        stable.write_bytes(stable.read_bytes() + "稳定原件被改了。\n".encode("utf-8"))
+        self.write(["RR/prd.md"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("摘要漂移", "；".join(out["problems"]), out)
+        self.assertIsNone(out["candidates"], "稳定原件漂移仍给出了可提交候选")
+
+    def test_a_changed_alias_position_is_a_digest_drift(self) -> None:
+        alias = self.feature_root / "RR/prd.md"
+        alias.write_bytes(alias.read_bytes() + "工作区里被改了一句。\n".encode("utf-8"))
+        self.write(["RR/prd.md"])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("当前位置不一致", "；".join(out["problems"]), out)
+
+    def test_the_alias_record_keeps_the_checked_stable_landing(self) -> None:
+        """记录写下这一次核到的稳定落点：别名以后换版，记录仍指得回当时那一份原件。"""
+        self.write(["RR/prd.md"])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+        row = self.alias_row()
+        place = (json.loads((self.updates / self.rid / "record.json")
+                            .read_text(encoding="utf-8"))["design_feedback"]["items"][0]
+                 .get("evidence_resolved") or [{}])[0]
+        self.assertEqual((row["reference"]["path"], row["reference"]["sha256"]),
+                         (place.get("path"), place.get("sha256")), "记录没写稳定落点")
+        # 别名随后换成别的版本（这里直接改当前位置字节）：记录里的落点与字节仍是提交时核到的那一份
+        alias = self.feature_root / "RR/prd.md"
+        alias.write_bytes(alias.read_bytes() + "别名换版。\n".encode("utf-8"))
+        self.assertEqual(place["sha256"], hashlib.sha256(
+            (self.feature_root / place["path"]).read_bytes()).hexdigest())
+
 
 class ASystemReviewInputIsCheckedAgainstItsBatchReceipt(
         ARulingSourceIsCheckedAgainstTheRegisterAndThisRound):
@@ -3038,8 +3088,15 @@ class ASystemReviewInputIsCheckedAgainstItsBatchReceipt(
             "review_out": f"inbox/review/{self.BATCH}", "items": items}, ensure_ascii=False),
             encoding="utf-8")
 
-    def test_the_batch_receipt_backs_the_system_input(self) -> None:
+    def before_dir(self) -> Path:
         record = json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
+        return self.feature_root / record["mirror"]["path"]
+
+    def feedback_record(self) -> dict:
+        return json.loads((self.updates / self.rid / "record.json").read_text(encoding="utf-8"))
+
+    def test_the_batch_receipt_backs_the_system_input(self) -> None:
+        record = self.feedback_record()
         row = next(e for e in record["review_inputs"] if e["path"] == self.SYSTEM_INPUT)
         self.assertEqual(("fetched", "AR-design.md"), (row["status"], row["system_item"]),
                          "系统评审输入没有按批次回执登记")
@@ -3053,6 +3110,100 @@ class ASystemReviewInputIsCheckedAgainstItsBatchReceipt(
         out = self.feedback()
         self.assertFalse(out.get("eligible"), out)
         self.assertIn("摘要漂移", "；".join(out["problems"]), out)
+
+    def test_a_missing_before_batch_receipt_blocks_the_system_input(self) -> None:
+        """prepare 时固定的批次回执随后被移走：原件字节还在也不能再给可提交候选。"""
+        receipt = self.before_dir() / Path(self.SYSTEM_INPUT).parent / ".receipt.json"
+        self.assertTrue(receipt.is_file())
+        receipt.unlink()
+        self.write([self.SYSTEM_INPUT])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("批次回执", "；".join(out["problems"]), out)
+        self.assertIsNone(out["candidates"], "批次回执缺失仍给出了可提交候选")
+
+    def test_a_moved_before_original_blocks_the_system_input(self) -> None:
+        """prepare 时固定的原件随后被移走：只见收件箱里的同一字节分不出系统身份。"""
+        original = self.before_dir() / Path(self.SYSTEM_INPUT)
+        self.assertTrue(original.is_file())
+        original.rename(original.with_suffix(".unavailable"))
+        self.write([self.SYSTEM_INPUT])
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("找不到与 prepare 固定摘要一致的这一件原件", "；".join(out["problems"]), out)
+        self.assertIsNone(out["candidates"], "before 原件缺失仍给出了可提交候选")
+
+    def test_the_checked_before_landing_is_written_into_the_record(self) -> None:
+        """反馈记录写下这一次实际核到的稳定落点：本轮 before/ 里的这一份，owner 可按它复查。"""
+        self.write([self.SYSTEM_INPUT])
+        out = self.feedback()
+        self.assertTrue(out.get("eligible"), out)
+        record = self.feedback_record()
+        item = record["design_feedback"]["items"][0]
+        place = (item.get("evidence_resolved") or [{}])[0]
+        mirror = record["mirror"]["path"]
+        self.assertEqual((self.SYSTEM_INPUT, f"{mirror}/{self.SYSTEM_INPUT}"),
+                         (place.get("ref"), place.get("path")), "反馈记录没有给可复查的稳定落点")
+        self.assertTrue((self.feature_root / place["path"]).is_file())
+        self.assertEqual(place["sha256"], hashlib.sha256(
+            (self.feature_root / place["path"]).read_bytes()).hexdigest())
+
+
+class AnAggregateDraftIsCheckedAgainstItsRegisteredOriginals(
+        ARulingSourceIsCheckedAgainstTheRegisterAndThisRound):
+    """R2：聚合成当前阅读稿的 component 按**该版本登记的实际原件**核。
+
+    同版登记里还有阅读件这类其它文件；拿其中任一在盘文件通过，会让阅读件代替原件，
+    原件被移走或漂移也看不出来。这里用真实导入生成聚合当前阅读稿，再只动 component 的原件。
+    """
+
+    DRAFT = "SR/design.md"
+    SOURCE = "SR/系统设计.md"
+
+    def setUp(self) -> None:
+        super().setUp()
+        # 一份本地系统设计经真实导入生成聚合成当前阅读稿的稳定版本与 component
+        import_into(self.root, self.feature_root, {self.SOURCE: ("# 系统设计\n\n分工。\n".encode("utf-8"), "SR")})
+
+    def component_and_original(self) -> tuple[str, dict]:
+        manifest = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        draft = manifest["drafts"][self.DRAFT]["versions"][-1]
+        component = draft["components"][0]
+        source_id, _, version = component.rpartition("@")
+        source = next(s for s in manifest["sources"] if s["source_id"] == source_id)
+        original = next(v for v in source["versions"] if str(v["version"]) == version)["original"]
+        return component, original
+
+    def test_a_component_whose_registered_original_is_gone_does_not_qualify(self) -> None:
+        self.write([self.DRAFT])
+        first = self.feedback()
+        self.assertTrue(first.get("eligible"), first)
+        component, original = self.component_and_original()
+        self.assertEqual("local:SR/系统设计.md@1", component)
+        path = self.feature_root / original["path"]
+        self.assertTrue(path.is_file())
+        path.rename(path.with_suffix(".unavailable"))
+        # 同版阅读件还在盘上：旧实现会拿它代签这一版的原件
+        manifest = json.loads((self.src / "materials.json").read_text(encoding="utf-8"))
+        still = [r for r in manifest["files"]
+                 if r.get("source_id") == "local:SR/系统设计.md" and r["path"] != original["path"]]
+        self.assertTrue(still, "夹具里没有同版其它文件，测不出代签")
+        self.write([self.DRAFT], body="聚合稿出处补一句新说明")
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("追不到该版本登记的原件", "；".join(out["problems"]), out)
+        self.assertIsNone(out["candidates"], "component 原件缺失仍给出了可提交候选")
+
+    def test_a_component_original_drift_is_not_hidden_by_another_same_version_file(self) -> None:
+        self.write([self.DRAFT])
+        self.assertTrue(self.feedback().get("eligible"))
+        _, original = self.component_and_original()
+        path = self.feature_root / original["path"]
+        path.write_bytes(path.read_bytes() + "原件被改。\n".encode("utf-8"))
+        self.write([self.DRAFT], body="聚合稿出处再补一句")
+        out = self.feedback()
+        self.assertFalse(out.get("eligible"), out)
+        self.assertIn("追不到该版本登记的原件", "；".join(out["problems"]), out)
 
 
 class AClaimedExternalVersionBecomesTheReleaseBaseline(RegisteredCase):
