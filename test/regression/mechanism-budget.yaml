@@ -368,6 +368,24 @@ packages:
         invested_limit_g: 8050
         reason: "仅用于正向实现功能的必需增量，废弃或冗余功能须退场。S15 限 R2、R3、R4 展示与 R7 组合补证；交回后复评 01 批，S04—S07 预算暂缓。"
         source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+      - band: ">150%"
+        by: "维护设计者 Codex（用户 2026-11-18 明确授权）"
+        date: "2026-11-18"
+        at_ref: "1975bd00"
+        scope: "S15 超额裁定及 S16、02 批执行范围"
+        previous_invested_limit_g: 8050
+        actual_invested_g: 8175
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 125
+        next_steps:
+          S16: {g: 50, x: 62}
+          S04: {g: 100, x: 35}
+          S05: {g: 70, x: 60}
+          S06: {g: 60, x: 45}
+          S07: {g: 50, x: 90}
+        invested_limit_g: 8380
+        reason: "S15 按原额度保留必要功能，超额 G125 不追加：稳定来源和系统回执核验仍缺，选择解析重复且冲突可误签。另批 S16 局部替换 G50/X62、02 批原估 G280/X230。S16 与 S04—S06 可同期实施，S07 在共同候选上组合交回。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#S15 设计者裁定与并行范围"
 
 requirement:
   id: 2.0.1-完整适配
