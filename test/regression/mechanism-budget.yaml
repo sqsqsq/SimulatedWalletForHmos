@@ -403,6 +403,23 @@ packages:
         reason: "五步实投 G307/X171。批准 S16 多用 G11、S04 多用 G1，由原范围调剂。S06 实投 G86，固定比较依据不完整，当前超步额 G26 不追加。S15 原 G125 维持不追认。S18 使用原 G330 实际余量 G23，整版 endpoint G6119/X4927 对 control_g 多 813，不上调。"
         source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#联合复评裁定"
 
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-19"
+        at_ref: "6c3abc73"
+        scope: "S17/S18 汇合复评与 S09 测试准备，及 S19/S20/S21 局部返修"
+        previous_invested_limit_g: 8380
+        actual_invested_g: 8536
+        confirmed_overrun_g: 26
+        unapproved_overrun_g: 130
+        next_steps:
+          S19: {g: 0, x: 0}
+          S20: {g: 16, x: 16}
+          S21: {g: 0, x: 0}
+        invested_limit_g: 8422
+        reason: "实际 G54/X27。R3 固定原件核验及共用诊断认可 G42；R2 认可 G7（含 R4 未用 G2），即时接收提示仍误导，G5 不追加。已发生额度 G8406，S15 历史 G125 仍未追认；另批 S20 G16/X16。整版 G6146/X4927，控制值维持 G5306。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#s17s18-汇合复评裁定"
+
 requirement:
   id: 2.0.1-完整适配
   status: in_progress
