@@ -2,12 +2,16 @@
  * 独立审查的对象 —— 这一次交给审查者的全部材料，只在这里定义一份。
  *
  * 审查任务列它、原生请求把它作为目标逐字节绑定、材料键由它算、覆盖声明与发现定位对着它核：几处用同一份，审的就是要交付的那一份。
- * 待审的是 Story；其余是只读对照：写作设计、本轮评审输入原件与 update-notes、会议记录（每版原文、纠偏留痕与阅读件）、
+ * 待审的是 Story；其余是只读对照：写作设计、最近一次有效变更轮的评审输入原件、before/ 与 update-notes、
+ * 会议记录（每版原文、纠偏留痕与阅读件）、
  * 设计采用的材料版本（蓝图需求条目与设计依据引用的本需求版本：原件、阅读正文、图、会议纠偏与阅读件）、冲突依据、
  * 当前人答原件（独立必读，不取决于设计有没有引用）、材料清单登记的全部原件与阅读稿（含设计未见引用的）和每个图片对象、
  * 当前蓝图与它的原生评审投影（设计参考）、蓝图契约引用的接口转写与映射、激活清单与知识原文、章节合同与判据。
  * 完整核源让审查能核作者为何采用或排除一份材料：作者的采用选择不缩小这个集合。
  * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
+ *
+ * 比较依据只产生一次（`comparisonContext`）：审查对象的行与读法任务都取这一份，不再各自看 `flow.update.open`。
+ * 开着的这一轮与已收口的最近有效变更轮是同一份依据——收口只让这一轮从 open 变成 closed，不把已审过的比较依据移出对象。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -25,6 +29,60 @@ const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 export const TASK = ['AR', 'story-src', 'review', 'task.md'];
 
 /**
+ * 同一审查版本的比较依据：最近一次有效变更轮——开着的这一轮，没有时取 `update.last_closed` 指向的已收口轮。
+ *
+ * 轮次由 `story-flow.json` 的 `update` 给出；首次 init 没有这类记录时不给比较依据，也不报缺口。
+ * 候选记录必须真实存在且状态是 `open` / `closed`：撤回与成文基准不是有效变更轮——撤回时由 `restore`
+ * 用现有轮次记录选回仍有效的上一轮并写进 `last_closed`，这里不另扫一轮目录、不复制第二个状态源。
+ * 记着轮次而记录读不出、id/状态对不上、before/ 不在时照实报位置，不吞成「没有 update」。
+ *
+ * 路径相对**需求目录**（与轮次记录的 `mirror.path` 同坐标）。审查对象的行与读法任务共用这一份：
+ * 收口只改记录状态与完成点，这里取到的 rid、before 文件集合与 notes 路径不变，审过的那一版对象就不换。
+ *
+ * @returns {{rid: string|null, before: string|null, notes: string|null,
+ *   files: string[], inputs: {path: string, sha256: string|null, system_item: string|null}[], problems: string[]}}
+ */
+export function comparisonContext(projectRoot, feature, flow = null) {
+  const root = featureRoot(projectRoot, feature);
+  const src = path.join(root, 'AR', 'story-src');
+  const state = flow ?? readJsonOrNull(path.join(src, 'story-flow.json'));
+  const update = (state && typeof state.update === 'object' && state.update) || {};
+  const out = { rid: null, before: null, notes: null, files: [], inputs: [], problems: [] };
+  const rid = update.open ? String(update.open) : update.last_closed ? String(update.last_closed) : null;
+  if (!rid) return out;
+  if (!/^[\w.-]+$/.test(rid)) {
+    out.problems.push(`story-flow.json 的 update 轮次 id「${rid}」不是合法的轮次 id`);
+    return out;
+  }
+  // 撤回留下冲突时这一轮仍开着（restore_conflicted），动手前的现场仍是有效依据
+  const statuses = update.open ? ['open', 'restore_conflicted'] : ['closed'];
+  const rec = readJsonOrNull(path.join(src, 'updates', rid, 'record.json'));
+  if (!rec || rec.id !== rid || !statuses.includes(rec.status) || rec.kind === 'story_baseline') {
+    out.problems.push(`story-flow.json 记着 update「${rid}」（要 ${statuses.join(' / ')}），但 updates/${rid}/record.json 读不出，`
+      + '或它记的 id/状态与它不一致——这一轮缺比较基准，不是没有 update');
+    return out;
+  }
+  const round = path.posix.join('AR', 'story-src', 'updates', rid);
+  const mirror = String((rec.mirror && rec.mirror.path) || '');
+  if (!mirror.startsWith(`${round}/`) || mirror.split('/').includes('..')) {
+    out.problems.push(`${round}/record.json 的 mirror.path「${mirror || '缺失'}」不在这一轮自己的目录下——这一轮缺比较基准`);
+    return out;
+  }
+  const walk = dir => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
+    .flatMap(e => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)])) : []);
+  const relative = abs => path.relative(root, abs).split(path.sep).join('/');
+  out.rid = rid;
+  out.before = mirror;
+  out.notes = `${round}/update-notes.md`;
+  out.files = walk(path.join(root, ...mirror.split('/'))).map(relative);
+  if (!out.files.length) out.problems.push(`${mirror} 不在或是空的——这一轮缺比较基准，不是没有 update`);
+  out.inputs = (Array.isArray(rec.review_inputs) ? rec.review_inputs : []).filter(entry => entry && entry.path)
+    .map(entry => ({ path: String(entry.path), sha256: entry.sha256 ? String(entry.sha256) : null,
+      system_item: entry.system_item ? String(entry.system_item) : null }));
+  return out;
+}
+
+/**
  * `withTask` 为假时不含审查任务本身（生成任务时列材料用）。`source` 是同一命令已取得的设计来源（`designSource` 的
  * `read` 与 `answers`），给了就用它，不再另读蓝图与人答。
  *
@@ -34,9 +92,11 @@ export const TASK = ['AR', 'story-src', 'review', 'task.md'];
  * 记进 `alias`：路径 → 规范路径（第一个落点），覆盖、发现定位与图面延期按它归一；内容不同的不互相顶替。
  *
  * @returns {{rows: {path: string, role: 'object'|'source', label: string, kind: string, required_read: boolean}[],
- *   problems: string[], design: {admitted: boolean, issues: object[]}|null, alias: Map<string, string>, read: object}}
+ *   problems: string[], design: {admitted: boolean, issues: object[]}|null, alias: Map<string, string>, read: object,
+ *   comparison: object}}
  *   路径相对工程根；缺了该有的材料写进 problems，不当作没有。`design` 是蓝图的原生准入结论与问题（草稿也审），
- *   `read` 是这一次的原生读取结果，任务里的视觉裁定用同一份。
+ *   `read` 是这一次的原生读取结果，任务里的视觉裁定用同一份。`comparison` 是这一次唯一的比较依据
+ *   （`comparisonContext` 的结果），读法任务直接用它，不再自己看流程契约的 update 状态。
  */
 export function reviewObject(projectRoot, feature, { withTask = true, source = null } = {}) {
   const root = featureRoot(projectRoot, feature);
@@ -60,15 +120,15 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     add(path.join(src, name), 'source', name === 'doc-refresh.md' ? '会议之后的当前结果'
       : name === 'meeting-notes.json' ? '会议判断' : '写作设计的调整记录', false);
   }
-  // 本轮评审输入的原件（系统回流的交付件与本地意见/改稿）：审查要对着人的这一版核 Story 有没有按它改
+  // 比较依据只产生一次：审查对象的行与读法任务都取这一份，不再各自看 `flow.update.open`
   const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
-  const rid = flow?.update?.open;
-  if (rid) {
-    const record = readJsonOrNull(path.join(src, 'updates', String(rid), 'record.json'));
-    for (const entry of record?.review_inputs ?? []) {
-      if (!entry?.path) continue;
-      add(path.join(root, ...String(entry.path).split('/')), 'source',
-        `本轮评审输入原件${entry.system_item ? `（系统 ${entry.system_item}）` : '（本地）'}`, true);
+  const comparison = comparisonContext(projectRoot, feature, flow);
+  problems.push(...comparison.problems);
+  // 最近有效变更轮的评审输入原件（系统回流的交付件与本地意见/改稿）：审查要对着人的这一版核 Story 有没有按它改
+  if (comparison.rid) {
+    for (const entry of comparison.inputs) {
+      add(path.join(root, ...entry.path.split('/')), 'source',
+        `update ${comparison.rid} 的评审输入原件${entry.system_item ? `（系统 ${entry.system_item}）` : '（本地）'}`, true);
     }
   }
   // 每版会议：原文、纠偏留痕与纠偏后的阅读件，核纠偏有没有改了意思
@@ -86,16 +146,14 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     }
   }
 
-  // update 开着：这一轮动手前的现场与本轮说明也是对照材料，新稿改掉的旧约束对着它核
-  if (rid) {
-    const base = path.join(src, 'updates', String(rid));
-    add(path.join(base, 'update-notes.md'), 'source', '本轮 update 的变化、依据与不变项（作者的判断）', false);
-    const before = path.join(base, 'before');
-    const walk = dir => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
-      .flatMap(e => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)])) : []);
-    const files = walk(before);
-    if (!files.length) problems.push(`update ${rid} 的 before/ 不在或是空的——这一轮缺比较基准`);
-    for (const f of files) add(f, 'source', `本轮 update 前的现场 ${path.relative(before, f).split(path.sep).join('/')}`);
+  // 最近有效变更轮动手前的现场与本轮说明也是对照材料，新稿改掉的旧约束对着它核
+  if (comparison.rid) {
+    add(path.join(root, ...comparison.notes.split('/')), 'source',
+      `update ${comparison.rid} 的变化、依据与不变项（作者的判断）`, false);
+    for (const f of comparison.files) {
+      add(path.join(root, ...f.split('/')), 'source',
+        `update ${comparison.rid} 前的现场 ${f.slice(comparison.before.length + 1)}`);
+    }
   }
   // 设计采用的来源：与需求同根的蓝图，它的需求条目与设计依据引用的本需求材料版本逐份展开，字节按材料索引登记的摘要核
   const adopted = new Map();            // 采用文件（相对需求目录）→ {sha256, role}
@@ -224,7 +282,7 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
   }
   add(path.join(ext, 'skills', 'story', 'contracts', 'story-chapters.json'), 'source', '章节合同');
   add(path.join(ext, 'rules', 'story-reader-rules.yaml'), 'source', '审查判据');
-  const object = { rows, problems, alias, read, answers,
+  const object = { rows, problems, alias, read, answers, comparison,
     design: read.status === 'ok' ? { admitted: read.admitted === true, issues: read.issues ?? [] } : null };
   return withTask ? withTaskRow(projectRoot, feature, object) : object;
 }

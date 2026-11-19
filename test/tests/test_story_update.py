@@ -3438,3 +3438,246 @@ class AClaimedExternalVersionBecomesTheReleaseBaseline(RegisteredCase):
         actions = self.actions(out)
         self.assertEqual("write", actions["AR-design.md"])
         self.assertEqual("conflict", actions["design-review.md"], "正文处理了不能顺带放行未处理的设计附件")
+
+
+#: 审查对象与材料键的机器事实：与 prepare/check 内部同一组函数（reviewObject/withTaskRow/materialKey）。
+#: 逐文件 SHA 一并取出，收口前后比的是完整对象，不只看材料键。
+REVIEW_OBJECT_FACTS = """
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const [mod, root, feature] = process.argv.slice(1);
+const m = await import(pathToFileURL(mod).href);
+const base = m.reviewObject(root, feature, { withTask: false });
+const full = m.withTaskRow(root, feature, base);
+const sha = rel => crypto.createHash('sha256').update(fs.readFileSync(`${root}/${rel}`)).digest('hex');
+process.stdout.write(JSON.stringify({ rows: full.rows.map(row => ({ ...row, sha256: sha(row.path) })),
+  problems: full.problems, comparison: full.comparison,
+  key: full.problems.length ? null : m.materialKey(root, full.rows) }));
+"""
+
+
+def file_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class ReviewLifecycleCase(RegisteredCase):
+    """已登记工程上的一次真实 update 审查：开轮、改稿、准备审查、读者报告、接收、登记、收口都走实际入口。"""
+
+    def rewrite(self, text: str) -> None:
+        """经 `chapter` 提交改一章正文：被审的是盘上实际这一份，不是手写 Story 的替换。"""
+        body = self.root / "chapter.md"
+        body.write_text(text + "\n", encoding="utf-8")
+        proc = self.run_cmd("node", str(self.BUILD), "chapter", "--feature", FEATURE,
+                            "--project-root", str(self.root), "--chapter", "背景", "--from", str(body))
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+
+    def review_prepare(self) -> dict:
+        proc = self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--reader", "task",
+                            "--feature", FEATURE, "--project-root", str(self.root))
+        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
+        return json.loads([line for line in proc.stdout.splitlines() if line.startswith("{")][-1])
+
+    def review_check(self) -> dict:
+        proc = self.run_cmd("node", str(self.BUILD), "review", "--action", "check",
+                            "--feature", FEATURE, "--project-root", str(self.root))
+        return json.loads([line for line in proc.stdout.splitlines() if line.startswith("{")][-1])
+
+    def object_facts(self) -> dict:
+        mod = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
+        proc = subprocess.run(["node", "--input-type=module", "-e", REVIEW_OBJECT_FACTS,
+                               str(mod), str(self.root), FEATURE],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
+
+    def local_review_input(self, text: str) -> str:
+        """本机放进评审用途区的一份意见：prepare 把它固定进本轮 before/ 与 review_inputs。"""
+        path = self.feature_root / "inbox" / "review" / "本地意见.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path.relative_to(self.feature_root).as_posix()
+
+    def open_round(self, change: str | None = None) -> tuple[str, dict]:
+        """开这一轮、写说明、准备审查、读者交报告、再准备接收；返回轮次与第一次准备的结果。"""
+        rid = self.update()["update"]
+        if change:
+            self.rewrite(change)
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        first = self.review_prepare()
+        self.assertFalse(first["reused"], first)
+        design_kit.write_review(self.root, FEATURE, "pass")
+        received = self.review_prepare()
+        self.assertEqual((first["material_key"], first["report_file"]),
+                         (received["material_key"], received["report_file"]), received)
+        self.assertIn("last_received", json.loads((self.src / "review" / "prepared.json").read_text(encoding="utf-8")))
+        return rid, first
+
+    def register_round(self) -> dict:
+        """本轮改动按当前内容重新独立审查后登记；登记本身核过可消费的审查结果。"""
+        out = StoryIsRegisteredAgainAfterChanges.register(self)
+        self.assertTrue(out.get("success"), self.outputs[-1])
+        return out
+
+    def review_snapshot(self) -> dict:
+        """收口前后要比的全部审查事实：逐文件 SHA 的对象行、任务与载体字节、报告位置与复用、人答版本。"""
+        prepared = json.loads((self.src / "review" / "prepared.json").read_text(encoding="utf-8"))
+        report_dir = self.root / prepared["report_dir"]
+        return {
+            "object": self.object_facts(),
+            "task": file_digest(self.src / "review" / "task.md"),
+            "dispatch": file_digest(self.src / "review" / "dispatch.md"),
+            "prepared": {key: prepared.get(key)
+                         for key in ("material_key", "report_dir", "report_file", "reused", "last_received")},
+            "reports": sorted(path.name for path in report_dir.glob("*")),
+            "answers": [[path.name, file_digest(path)] for path in sorted((self.src / "answers").glob("*"))],
+        }
+
+
+class AReviewSurvivesTheClose(ReviewLifecycleCase):
+    """收口只改轮次状态与完成点：审过的那一版对象、任务、材料键与已接收的报告原样留下，不再派审一次。"""
+
+    def test_a_reviewed_round_keeps_the_same_object_task_key_and_report(self) -> None:
+        rel = self.local_review_input("评审人本地意见：回执状态要以服务端为准。\n")
+        rid, first = self.open_round("支付提交后用户要能看到回执状态，以服务端为准。")
+        # 本轮固定的评审输入原件在打开时就进了对象与记录
+        entered = [row["path"] for row in self.object_facts()["rows"]]
+        self.assertIn(f"doc/features/{FEATURE}/{rel}", entered, "评审输入原件没进审查对象")
+        self.assertIn(rel, [entry["path"] for entry in json.loads(
+            (self.updates / rid / "record.json").read_text(encoding="utf-8"))["review_inputs"]])
+        self.register_round()
+        before = self.review_snapshot()
+        closed = self.update("--action", "close")
+        self.assertEqual("closed", closed.get("status"), closed)
+        self.assertEqual(rid, closed["update"])
+        after = self.review_snapshot()
+        self.assertEqual(before, after, "收口改了审查对象、任务、材料键或已接收的报告")
+        self.assertIn(f"doc/features/{FEATURE}/{rel}", [row["path"] for row in after["object"]["rows"]],
+                      "收口把本轮固定的评审输入原件移出了同一审查上下文")
+        self.assertIn(rel, [entry["path"] for entry in json.loads(
+            (self.updates / rid / "record.json").read_text(encoding="utf-8"))["review_inputs"]],
+            "收口改写了本轮固定的评审输入原件")
+        # 同报告可复用：check 仍是对这一份的通过结论，prepare 直接复用、不增加独审轮
+        checked = self.review_check()
+        self.assertEqual(("pass", first["material_key"]),
+                         (checked.get("result"), checked.get("material_key")), checked)
+        again = self.review_prepare()
+        self.assertTrue(again["reused"], again)
+        self.assertEqual((first["material_key"], first["report_file"]),
+                         (again["material_key"], again["report_file"]), again)
+        self.assertEqual(before["reports"], self.review_snapshot()["reports"], "收口后的 prepare 另派了一轮")
+
+    def test_a_round_that_changed_no_material_only_closed_is_not_stale(self) -> None:
+        """材料与 Story 都没动，只开一轮并收口：比较依据仍在对象里，已审的报告不因 close 失效。"""
+        rid, first = self.open_round()
+        self.register_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        self.assertEqual(first["material_key"], self.object_facts()["key"])
+        self.assertEqual("pass", self.review_check().get("result"))
+
+
+class ARealChangeRefreshesTheReviewBasis(ReviewLifecycleCase):
+    """真实依据变了（Story、人答、蓝图）或新开一轮：旧审查按 subject_stale 失效，不拿旧报告顶新对象。"""
+
+    def test_changing_the_story_after_the_close_is_stale(self) -> None:
+        _, first = self.open_round("支付提交后用户要能看到回执状态。")
+        self.register_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        self.rewrite("退款到账后用户能看到余额已更新。")
+        self.assertNotEqual(first["material_key"], self.object_facts()["key"])
+        self.assertEqual("subject_stale", self.review_check().get("result"))
+
+    def test_a_new_human_answer_changes_the_review_subject(self) -> None:
+        rid = self.update()["update"]
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        first = self.review_prepare()
+        ask = self.ask_questions(self.business_question("D1", "回执状态以谁为准？", ["以服务端为准", "以本地缓存为准"]))
+        self.assertTrue(self.answer_question(ask, "D1", "以服务端回执为准").get("success"))
+        self.assertNotEqual(first["material_key"], self.object_facts()["key"])
+        self.assertEqual("subject_stale", self.review_check().get("result"))
+
+    def test_a_changed_blueprint_is_a_new_review_subject(self) -> None:
+        rid = self.update()["update"]
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        first = self.review_prepare()
+        canonical = self.feature_root / "blueprint" / "component-blueprint.yaml"
+        canonical.write_bytes(canonical.read_bytes() + "\n# 设计依据这一版改了。\n".encode("utf-8"))
+        self.assertNotEqual(first["material_key"], self.object_facts()["key"])
+        self.assertEqual("subject_stale", self.review_check().get("result"))
+
+    def test_a_new_round_gets_a_new_comparison_basis(self) -> None:
+        rid1, first = self.open_round("支付提交后用户要能看到回执状态。")
+        self.register_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        rid2 = self.update()["update"]
+        facts = self.object_facts()
+        self.assertNotEqual(rid1, rid2)
+        self.assertEqual(rid2, facts["comparison"]["rid"])
+        self.assertNotEqual(first["material_key"], facts["key"], "新开一轮还是旧审查对象")
+        self.assertEqual("subject_stale", self.review_check().get("result"))
+
+
+class WithdrawingARoundKeepsTheOriginalsAndThePreviousBasis(ReviewLifecycleCase):
+    """撤回只退可改件：人的原件与这一轮的 before/ 不动，比较依据回到仍有效的上一轮。"""
+
+    def test_restore_returns_to_the_previous_review_basis_and_keeps_the_originals(self) -> None:
+        rid1, first = self.open_round("支付提交后用户要能看到回执状态。")
+        self.register_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        registered_story = file_digest(self.feature_root / "AR" / "story.md")
+        rid2 = self.update()["update"]
+        self.rewrite("退回前又改的一版。")
+        (self.updates / rid2 / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        second = self.review_prepare()
+        self.assertNotEqual(first["material_key"], second["material_key"])
+        before = self.updates / rid2 / "before"
+        kept = {path.relative_to(before).as_posix(): file_digest(path)
+                for path in before.rglob("*") if path.is_file()}
+        out = self.update("--action", "restore")
+        self.assertEqual("restore_conflicted", out["status"], out)
+        for conflict in out["conflicts"]:
+            if conflict.get("before"):
+                (self.feature_root / conflict["file"]).write_bytes(
+                    (self.feature_root / conflict["before"]).read_bytes())
+            else:
+                (self.feature_root / conflict["file"]).unlink()
+        out = self.update("--action", "restore")
+        self.assertEqual(("restored", []), (out["status"], out["conflicts"]), out)
+        self.assertEqual({"open": None, "last_restored": rid2, "last_closed": rid1},
+                         json.loads((self.src / "story-flow.json").read_text(encoding="utf-8"))["update"],
+                         "撤回后没把仍有效的上一轮留作比较依据")
+        # 重新准备：任务按撤回后的比较依据（上一轮）重生成，材料键回到那一轮审过的那一版
+        again = self.review_prepare()
+        self.assertEqual(first["material_key"], again["material_key"], "恢复后的审查对象不是上一轮审过的那一版")
+        facts = self.object_facts()
+        self.assertEqual(rid1, facts["comparison"]["rid"], "撤回后比较依据不是仍有效的上一轮")
+        self.assertEqual(first["material_key"], facts["key"], "恢复后的 Story 与当前比较依据不是同一版")
+        self.assertEqual(registered_story, file_digest(self.feature_root / "AR" / "story.md"))
+        now = {path.relative_to(before).as_posix(): file_digest(path)
+               for path in before.rglob("*") if path.is_file()}
+        self.assertEqual(kept, now, "撤回动了这一轮 before/ 里的原件")
+
+
+class ABrokenComparisonBasisIsReported(ReviewLifecycleCase):
+    """缺 before/ 或轮次记录坏了：沿既有 input_invalid 报位置，不吞成「没有 update」或「报告没到」。"""
+
+    def test_a_missing_before_directory_is_input_invalid(self) -> None:
+        rid, _ = self.open_round()
+        self.register_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        before = self.updates / rid / "before"
+        before.rename(self.updates / rid / "before.saved")
+        out = self.review_check()
+        self.assertEqual("input_invalid", out.get("result"), out)
+        self.assertIn(f"updates/{rid}/before", out.get("detail", ""))
+        self.assertIn("比较基准", out.get("detail", ""))
+
+    def test_a_broken_round_record_is_input_invalid_not_no_update(self) -> None:
+        rid, _ = self.open_round()
+        self.register_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        (self.updates / rid / "record.json").write_text("{ 坏了", encoding="utf-8")
+        out = self.review_check()
+        self.assertEqual("input_invalid", out.get("result"), out)
+        self.assertIn("record.json", out.get("detail", ""))
+        self.assertIn(rid, out.get("detail", ""))

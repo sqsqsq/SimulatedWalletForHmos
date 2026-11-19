@@ -18,6 +18,7 @@ import * as path from 'node:path';
 import { featureRoot, readJsonOrNull, relDisplay } from './paths.mjs';
 import { loadNative, readFeature } from './framework-access.mjs';
 import { knowledgeTaskData } from './knowledge-task.mjs';
+import { comparisonContext } from '../../skills/story/scripts/core/story/review-object.mjs';
 
 /** 走局部明细合同的判据 → 它的必审集合用途。 */
 export const COVERED_CHECKS = { knowledge_obligation_substance: 'plan' };
@@ -29,10 +30,6 @@ export const DETAIL_KEYS = ['blocking_findings', 'advisories', 'examined_inputs'
 const REVIEW_STATUSES = ['PASS', 'WARN', 'FAIL', 'UNKNOWN', 'SKIP'];
 
 const sha12 = bytes => crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 12);
-
-/** 登记里的相对路径是否落在需求目录内：字符串、相对、规范化后不出界。 */
-const ownRel = rel => typeof rel === 'string' && rel.trim() && !path.isAbsolute(rel) && !/^[\\/]/.test(rel)
-  && !rel.split(/[\\/]/).includes('..');
 
 /** 一笔原话记录里作证据的部分：问题、候选、原话、时刻与出处；不含目标/版本（那是原生反馈的事）。 */
 const answerFacts = a => ({ ask_id: a?.ask_id, item_id: a?.item_id, question: a?.question,
@@ -64,48 +61,34 @@ function flowProjection(flow) {
  * 这里只陈列证据：记录里的 `chosen` 是材料事实的登记项，不是业务裁决；不写「所选 = 人的裁决」。
  */
 
-/** update 开着时这一轮的依据：record、before 与本轮 update-notes。记录坏了明确报，不扫别的轮次。 */
-function updateInputs(root, flow, add, gaps) {
-  const rid = flow?.update?.open;
-  if (!rid) return null;
-  const base = `AR/story-src/updates/${rid}`;
-  if (!/^[\w.-]+$/.test(String(rid))) { gaps.push(`story-flow.json 的 update.open「${rid}」不是合法的轮次 id`); return rid; }
-  const record = readJsonOrNull(path.join(root, base, 'record.json'));
-  if (!record || record.id !== rid || record.status !== 'open') {
-    gaps.push(`${base}/record.json 读不出，或它记的 id/状态与 update.open 对不上——这一轮缺比较基准，不是没有变化`);
-    return rid;
-  }
-  const mirror = String(record.mirror?.path ?? '');
-  const beforeAbs = path.join(root, ...mirror.split('/'));
-  if (!mirror.startsWith(`${base}/`) || mirror.split('/').includes('..')) {
-    gaps.push(`${base}/record.json 的 mirror.path「${mirror}」不在这一轮自己的目录下`);
-    return rid;
-  }
-  let entries = [];
-  try { entries = fs.readdirSync(beforeAbs); } catch { entries = []; }
-  if (!entries.length) gaps.push(`${mirror}/ 不在或是空的——这一轮缺比较基准，不是没有变化`);
-  const files = record.files && typeof record.files === 'object' ? record.files : {};
-  const expected = new Set(Object.keys(files));
-  // 本轮评审输入的原件（系统回流的交付件与本地意见/改稿）也在 before/ 里：审查要对着人的这一版核
-  const inputSha = new Map();
-  for (const entry of Array.isArray(record.review_inputs) ? record.review_inputs : []) {
-    if (!entry?.path) continue;
-    expected.add(String(entry.path));
-    if (entry.sha256) inputSha.set(String(entry.path), String(entry.sha256));
-  }
-  for (const rel of [...expected].sort()) {
-    if (!ownRel(rel)) { gaps.push(`${base}/record.json 记的文件「${rel}」不是需求目录内的相对路径`); continue; }
-    const abs = path.join(beforeAbs, ...rel.split('/'));
-    add(abs, `update 前的 ${rel}`);
+/**
+ * 最近有效变更轮的评审输入：record 固定下来的 before 原件、update-notes 与本轮 review_inputs。
+ *
+ * 轮次由 `review-object` 的 `comparisonContext` 一次选出（开着的这一轮，否则最近未撤回的 closed），
+ * 与 Story 独审同源；收口只改记录状态，不把这些已承接的原件移出同一审查上下文。
+ * 只认本层已有的事实，不另扫一轮 update 目录、不复制第二个状态源。
+ */
+function updateInputs(projectRoot, feature, root, flow, add, gaps) {
+  const basis = comparisonContext(projectRoot, feature, flow);
+  gaps.push(...basis.problems);
+  if (!basis.rid) return null;
+  for (const entry of basis.inputs) {
+    const fixed = path.join(root, ...basis.before.split('/'), ...entry.path.split('/'));
+    add(fixed, `update ${basis.rid} 的评审输入原件 ${entry.path}`);
     let bytes = null;
-    try { bytes = fs.readFileSync(abs); } catch { bytes = null; }
-    const want = String(files[rel] ?? inputSha.get(rel) ?? '').replace(/^sha256:/, '');
-    if (bytes && want && !crypto.createHash('sha256').update(bytes).digest('hex').startsWith(want)) {
-      gaps.push(`${mirror}/${rel} 与 record.json 记的摘要 ${files[rel] ?? want} 对不上——旧现场被改过`);
+    try { bytes = fs.readFileSync(fixed); } catch { bytes = null; }
+    if (bytes === null) {
+      gaps.push(`${basis.before}/${entry.path} 读不到——update ${basis.rid} 记录的评审输入原件不在 before/ 里`);
+      continue;
+    }
+    const want = String(entry.sha256 ?? '').replace(/^sha256:/, '');
+    if (want && !crypto.createHash('sha256').update(bytes).digest('hex').startsWith(want)) {
+      gaps.push(`${basis.before}/${entry.path} 与 update ${basis.rid} 记的摘要对不上——本轮固定的原件被改过`);
     }
   }
-  add(path.join(root, base, 'update-notes.md'), '本轮变化的依据、影响、决定与不变项（作者在送审前写好）');
-  return rid;
+  add(path.join(root, ...basis.notes.split('/')),
+    `update ${basis.rid} 变化的依据、影响、决定与不变项（作者在送审前写好）`);
+  return basis.rid;
 }
 
 /** 原生输入来源的一句话：artifact 写产物名，派生写 provider。 */
@@ -167,7 +150,7 @@ export function reviewInputs(projectRoot, feature, purpose = 'plan') {
   } catch (e) {
     gaps.push(`审查者知识任务取不到（${String(e?.message ?? e).split(/\r?\n/)[0]}）——相关知识的正文未取得`);
   }
-  const update = updateInputs(root, flow, add, gaps);
+  const update = updateInputs(projectRoot, feature, root, flow, add, gaps);
   return { inputs, update, gaps, alias, visual, native, knowledgeTask };
 }
 

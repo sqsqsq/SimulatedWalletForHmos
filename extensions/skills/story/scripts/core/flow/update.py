@@ -1782,6 +1782,17 @@ def record_baseline(feature_root: Path) -> str | None:
     return rid
 
 
+def _last_valid_closed(records: list[tuple[str, dict]]) -> str | None:
+    """最近一次仍有效的已收口变更轮：撤回的那一轮不进比较依据，成文基准不算变更轮。
+
+    审查对象与 Plan 审查按它取同一份最近有效依据；还没有这类记录时返回 None（首次 init 不加比较依据）。
+    """
+    for rid, rec in reversed(records):
+        if rec.get("status") == "closed" and rec.get("kind") != "story_baseline":
+            return rid
+    return None
+
+
 def cmd_update_restore(feature_root: Path) -> dict:
     """把本扩展在这一轮改过的文件退回开轮之前。**先保住现在，再按指纹一份份判。**
 
@@ -1847,7 +1858,12 @@ def cmd_update_restore(feature_root: Path) -> dict:
     rec.update(status="restore_conflicted" if conflicts else "restored", restored_at=now(),
                restore_conflicts=conflicts, restore_copy=copy)
     if not conflicts:
-        contract["update"] = {"open": None, "last_restored": rid}
+        # 撤回的这一轮不成为比较依据：审查对象接着用最近一次仍有效的 closed 轮（与开轮前同一份依据）
+        update = {"open": None, "last_restored": rid}
+        previous = _last_valid_closed(records)
+        if previous:
+            update["last_closed"] = previous
+        contract["update"] = update
         save(feature_root, contract)
     (root / "record.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     answers_gap = sync_answers(feature_root, "本轮的撤回") if not conflicts else None

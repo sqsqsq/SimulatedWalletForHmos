@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -410,6 +411,62 @@ class ThePlanReviewUsesTheSameCoverageContract(ClosureCase):
         decisions = f"doc/features/{FEATURE}/AR/story-src/decisions.json"
         self.assertNotIn(decisions, self.required())
 
+
+class ThePlanReviewUsesTheSameUpdateBasis(ClosureCase):
+    """update 的评审输入按最近有效变更轮进入 Plan 审查：收口前后同一份；撤回的那一轮不进入必审集合。"""
+
+    RID = "20260101-000000"
+    LATER = "20260102-000000"
+    INPUT = "inbox/review/fetch-1/评审意见.md"
+
+    def make_round(self, rid: str, status: str, *, inputs: dict[str, bytes] | None = None) -> None:
+        """按盘上已有的轮次记录放一轮：before/ 里的评审输入原件、record 与本轮说明。"""
+        base = self.fr / "AR" / "story-src" / "updates" / rid
+        (base / "before").mkdir(parents=True, exist_ok=True)
+        body = (inputs or {}).get(self.INPUT, b"")
+        if body:
+            target = base / "before" / Path(self.INPUT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(body)
+        (base / "record.json").write_text(json.dumps({
+            "id": rid, "status": status, "requested_result": "documents",
+            "mirror": {"path": f"AR/story-src/updates/{rid}/before"},
+            "review_inputs": [{"path": self.INPUT, "sha256": hashlib.sha256(body).hexdigest()}],
+        }, ensure_ascii=False), encoding="utf-8")
+        (base / "update-notes.md").write_text(
+            "## 不变项与理由\n\n| 不变项 | 为什么不用改 |\n|---|---|\n| 验收口径 | 没动 |\n", encoding="utf-8")
+
+    def update_contract(self, update: dict) -> None:
+        path = self.fr / "AR" / "story-src" / "story-flow.json"
+        flow = json.loads(path.read_text(encoding="utf-8"))
+        flow["update"] = update
+        path.write_text(json.dumps(flow, ensure_ascii=False), encoding="utf-8")
+
+    def keys(self) -> list[str]:
+        from ext_workspace import required_inputs  # noqa: PLC0415
+        return [key for key in required_inputs(self.root, FEATURE, "plan") if "updates/" in key]
+
+    def test_the_closed_round_keeps_the_same_required_inputs(self) -> None:
+        """收口只改状态：同一轮待 Plan 审查的 before 原件与 update-notes 不因此移出必审集合。"""
+        body = "# 人的改稿\n\n按这一版改。\n".encode("utf-8")
+        self.make_round(self.RID, "open", inputs={self.INPUT: body})
+        self.update_contract({"open": self.RID})
+        opened = self.keys()
+        self.update_contract({"open": None, "last_closed": self.RID})
+        self.make_round(self.RID, "closed", inputs={self.INPUT: body})
+        closed = self.keys()
+        self.assertEqual(opened, closed)
+        self.assertIn(f"doc/features/{FEATURE}/AR/story-src/updates/{self.RID}/before/{self.INPUT}", closed)
+        self.assertIn(f"doc/features/{FEATURE}/AR/story-src/updates/{self.RID}/update-notes.md", closed)
+
+    def test_a_withdrawn_round_is_not_the_comparison_basis(self) -> None:
+        """撤回的那一轮不进同一审查上下文：比较依据取仍有效的上一轮（撤回时由 update 侧写回 last_closed）。"""
+        self.make_round(self.RID, "closed", inputs={self.INPUT: "# 上一轮\n".encode("utf-8")})
+        self.make_round(self.LATER, "restored", inputs={self.INPUT: "# 撤回的一轮\n".encode("utf-8")})
+        self.update_contract({"open": None, "last_restored": self.LATER, "last_closed": self.RID})
+        keys = self.keys()
+        self.assertIn(f"doc/features/{FEATURE}/AR/story-src/updates/{self.RID}/before/{self.INPUT}", keys)
+        self.assertFalse([key for key in keys if self.LATER in key], keys)
 
 
 if __name__ == "__main__":

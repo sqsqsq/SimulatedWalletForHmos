@@ -236,10 +236,11 @@ export function readerReviewTask(projectRoot, feature, object = null) {
       ...object.design.issues.map(i => `- ${i.code ?? i.id ?? 'issue'}${i.path ? ` @${i.path}` : ''}：${i.message ?? ''}`)] : []),
   ];
   const src = path.join(root, 'AR', 'story-src');
-  const rid = readJsonOrNull(path.join(src, 'story-flow.json'))?.update?.open;
-  if (rid) {
-    rows.push('', `### 本轮 update ${rid}：新稿对照有效旧依据`, '',
-      `\`AR/story-src/updates/${rid}/before/\` 是这一轮动手前的现场。逐处核：新稿改掉的旧约束、旧决定与旧验收，改动依据是谁给的、他有没有这个权限；`
+  // 比较依据由审查对象给一次：这里不另看流程契约的 update 状态，同一轮在收口前后取到同一份
+  const comparison = object.comparison;
+  if (comparison?.rid) {
+    rows.push('', `### 有效变更 update ${comparison.rid}：这一版对照有效旧依据`, '',
+      `\`${comparison.before}/\` 是 update ${comparison.rid} 动手前的现场。逐处核：当前稿改掉的旧约束、旧决定与旧验收，改动依据是谁给的、他有没有这个权限；`
       + '与仍有效的旧约束冲突而没经有权人裁定的，记一条阻断发现。update-notes 是作者的判断，按原件与 before 核，不当依据。');
   }
 
