@@ -268,7 +268,8 @@ function cmdBasis(ctx) {
  *
  * - `prepare`：先把审查对象定成最终版——正式图建源、附录重投、编号，全篇结构检查通过——再写审查任务，
  *   给出材料键与这一份回复的位置；最近一份可消费的 pass / warn 正是当前材料时给出原位置（reused）。`--reader` 是主执行者
- *   核过的独立读者情况：unavailable 时写未审披露。读者的回复原样落盘后以同样参数再跑一次，它接收这份回复并给下一步。
+ *   核过的独立读者情况：unavailable 时写未审披露。读者这次调用已结束、拿到的最终回复与所配文件是一份完整正文时，
+ *   以同样参数再跑一次，它接收这份回复并给下一步。
  * - `check`：只读核这一次的审查结果，输出一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1。
  *   登记与交付门消费同一个结果。
  */
@@ -319,8 +320,12 @@ function cmdReview(ctx) {
         .join('\n')
       : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为隔离读者的任务交出，`,
       `  不增删、不改写；读者在完成调用前把同一正文写入 ${out.report_file}（它只写这一份，父不再转写）。`,
-      `  等这次独立调用结束（读者未结束即使文件已存在也不接收）；修改被审材料之前先重跑 ${again} 接收这份报告，`,
-      '  再跑 story-build review --action check，结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
+      `  接收前先核这次交接：只有读者这次调用已结束，且你拿到的最终回复是与 ${out.report_file} 一致的完整 final，才按 ${again} 重跑 prepare 接收`,
+      '  （接收记下原样字节的摘要）；调用没结束时报告文件即使已经存在也不接收——先等这次调用结束，等不到就接回原读者，',
+      '  让它核齐同一份正文与该文件对应的完整 final。两种情况都拿不到同一份完整正文时，如实披露交接未闭合',
+      '  （已写的文件、缺的完成回复与影响），停在未接收，不接收、也不登记。',
+      '  报告位置与材料键以本次输出为准：同一份材料还没收到报告时重跑 prepare 沿用这个位置，变了按它这次给出的编号，不自行编号。',
+      '  接收后再跑 story-build review --action check，结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
 }
 
 /** 这一次的审查结果：一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1；`review --action check` 与登记前核共用。 */
@@ -338,8 +343,9 @@ function readerOf(args) {
     if (!reason) fail('review --action prepare --reader unavailable 要带 --reader-reason：写实际缺什么（缺工具、任务合同不接受、调用被明确拒绝）');
     return { kind: 'unavailable', reason };
   }
-  fail('review --action prepare 要 --reader task|unavailable：按宿主实际工具说明核有没有能接收自足只读任务的隔离读者，'
-    + '有写 task，没有写 unavailable 并用 --reader-reason 写实际缺什么');
+  fail('review --action prepare 要 --reader task|unavailable：按宿主实际工具说明核这次派审交接受得了什么——'
+    + '能读业务材料、能写本次报告、并能取得完整完成回复的隔离读者写 task；缺任一条件写 unavailable，'
+    + '并用 --reader-reason 写实际缺哪条（缺工具、任务合同不接受、调用被明确拒绝）');
 }
 
 /**

@@ -38,7 +38,9 @@ export const TASK = ['AR', 'story-src', 'review', 'task.md'];
  * 记着轮次而记录读不出、id/状态对不上、before/ 不在时照实报位置，不吞成「没有 update」。
  *
  * 依据取这一轮 record **已经固定的清单与摘要**，不按目录现状重新拼：`owned_before` 是开轮时本扩展文件的
- * 路径 → 摘要，`mirror.path` 下的这一件必须逐字仍是那一份；`review_inputs` 里记了摘要的原件同样核字节。
+ * 路径 → 摘要，`mirror.path` 下的这一件必须逐字仍是那一份；`review_inputs` 记了摘要的原件同样核 `before/` 里的字节。
+ * 审查对象的行与阶段审查的必审输入都取 `${before}/${review_inputs[].path}` 这一份固定件，不取当前收件箱里的同名件：
+ * 后来的新版本属于下一次 update，不在本轮核对。
  * 快照生成时被合法改写的只有流程契约（`story-flow.json`：开轮时在镜像里写上 `update.open`），它是流程元数据、
  * 不是动手前的原件，所以不进这份清单；批次回执是评审输入的身份凭据，也不进比较内容。
  * `update-notes` 是这一轮作者的判断：**已收口**的一轮必须有它（close 以它为前提），**还开着**的一轮可以还没写。
@@ -172,11 +174,15 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
   const flow = readJsonOrNull(path.join(src, 'story-flow.json'));
   const comparison = comparisonContext(projectRoot, feature, flow);
   problems.push(...comparison.problems);
-  // 最近有效变更轮的评审输入原件（系统回流的交付件与本地意见/改稿）：审查要对着人的这一版核 Story 有没有按它改
+  // 最近有效变更轮的评审输入原件（系统回流的交付件与本地意见/改稿）：审查要对着人的这一版核 Story 有没有按它改。
+  // 本轮固定的那一份是 update 开轮时 before/ 里的快照（有摘要的已由 comparisonContext 逐件核字节）；收件箱里同名件
+  // 后来的新版本属于下一次 update，不在本轮核对——Story 任务与阶段审查的必审输入取同一件。
+  // 记了摘要的件缺件/字节不符已由 comparison.problems 报出，这里不重复报；没记摘要的件没有可核的原件，缺失要报。
   if (comparison.rid) {
     for (const entry of comparison.inputs) {
-      add(path.join(root, ...entry.path.split('/')), 'source',
-        `update ${comparison.rid} 的评审输入原件${entry.system_item ? `（系统 ${entry.system_item}）` : '（本地）'}`, true);
+      add(path.join(root, ...comparison.before.split('/'), ...entry.path.split('/')), 'source',
+        `update ${comparison.rid} 的评审输入原件${entry.system_item ? `（系统 ${entry.system_item}）` : '（本地）'}（本轮固定的 before 版）`,
+        !entry.sha256);
     }
   }
   // 每版会议：原文、纠偏留痕与纠偏后的阅读件，核纠偏有没有改了意思

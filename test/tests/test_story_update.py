@@ -3456,13 +3456,14 @@ process.stdout.write(JSON.stringify({ rows: full.rows.map(row => ({ ...row, sha2
   key: full.problems.length ? null : m.materialKey(root, full.rows) }));
 """
 
-#: 阶段审查（Plan 的必审输入）与 Story 读者取同一份比较依据结论：缺口按同一组函数 `reviewInputs` 取。
+#: 阶段审查（Plan 的必审输入）与 Story 读者取同一份比较依据结论：缺口按同一组函数 `reviewInputs` 取，
+#: 评审输入的实际路径也取出，核 Story 对象与阶段必审取的是同一件。
 REVIEW_INPUT_FACTS = """
 import { pathToFileURL } from 'node:url';
 const [mod, root, feature, purpose] = process.argv.slice(1);
 const m = await import(pathToFileURL(mod).href);
 const r = m.reviewInputs(root, feature, purpose);
-process.stdout.write(JSON.stringify({ update: r.update, gaps: r.gaps }));
+process.stdout.write(JSON.stringify({ update: r.update, gaps: r.gaps, inputs: r.inputs.map(x => x.path) }));
 """
 
 
@@ -3563,9 +3564,11 @@ class AReviewSurvivesTheClose(ReviewLifecycleCase):
     def test_a_reviewed_round_keeps_the_same_object_task_key_and_report(self) -> None:
         rel = self.local_review_input("评审人本地意见：回执状态要以服务端为准。\n")
         rid, first = self.open_round("支付提交后用户要能看到回执状态，以服务端为准。")
-        # 本轮固定的评审输入原件在打开时就进了对象与记录
+        # 本轮固定的评审输入原件在打开时就进了对象与记录：对象读的是 before/ 快照，不是当前收件箱
         entered = [row["path"] for row in self.object_facts()["rows"]]
-        self.assertIn(f"doc/features/{FEATURE}/{rel}", entered, "评审输入原件没进审查对象")
+        fixed = f"AR/story-src/updates/{rid}/before/{rel}"
+        self.assertIn(f"doc/features/{FEATURE}/{fixed}", entered, "评审输入原件没进审查对象")
+        self.assertNotIn(f"doc/features/{FEATURE}/{rel}", entered, "对象还在读当前收件箱里的同名件")
         self.assertIn(rel, [entry["path"] for entry in json.loads(
             (self.updates / rid / "record.json").read_text(encoding="utf-8"))["review_inputs"]])
         self.register_round()
@@ -3575,7 +3578,7 @@ class AReviewSurvivesTheClose(ReviewLifecycleCase):
         self.assertEqual(rid, closed["update"])
         after = self.review_snapshot()
         self.assertEqual(before, after, "收口改了审查对象、任务、材料键或已接收的报告")
-        self.assertIn(f"doc/features/{FEATURE}/{rel}", [row["path"] for row in after["object"]["rows"]],
+        self.assertIn(f"doc/features/{FEATURE}/{fixed}", [row["path"] for row in after["object"]["rows"]],
                       "收口把本轮固定的评审输入原件移出了同一审查上下文")
         self.assertIn(rel, [entry["path"] for entry in json.loads(
             (self.updates / rid / "record.json").read_text(encoding="utf-8"))["review_inputs"]],
@@ -3805,6 +3808,71 @@ class AFixedBeforeOriginalIsCheckedNotInferred(ReviewLifecycleCase):
         self.assertNotEqual(first["material_key"], facts["key"])
         self.assertEqual("subject_stale", self.review_check().get("result"))
         self.assertFalse(self.review_prepare()["reused"], "改过稿仍复用了旧报告")
+
+    def test_an_external_review_input_is_pinned_to_the_rounds_before_copy(self) -> None:
+        """R3（S20）：同轮外部评审输入按 before/ 固定件送审，Story 任务与阶段读者用同一件。
+
+        第一版固定 → 第二版到达当前收件箱 → 固定件移走 → 恢复：核实际任务列的路径与字节、check、prepare、
+        阶段必审输入，以及失败时旧载体（task／dispatch／prepared）的字节。
+        """
+        rel = self.local_review_input("第一版意见：回执以服务端为准。\n")
+        rid, first = self.open_round("支付提交后用户要能看到回执状态，以服务端为准。")
+        fixed = self.updates / rid / "before" / rel
+        fixed_rel = f"doc/features/{FEATURE}/AR/story-src/updates/{rid}/before/{rel}"
+        first_bytes = fixed.read_bytes()
+        row = next(r for r in self.object_facts()["rows"] if r["path"].endswith(rel))
+        self.assertEqual(fixed_rel, row["path"], "对象没有指向本轮固定的 before 件")
+        self.assertEqual(file_digest(fixed), row["sha256"], "对象读到的不是第一版字节")
+        stage = self.input_gaps()
+        self.assertIn(fixed_rel, stage["inputs"], "阶段必审输入没有取同一件固定件")
+        self.assertEqual([], [gap for gap in stage["gaps"] if rel in gap], stage["gaps"])
+        # 第二版到达当前收件箱：本轮的固定件与对象不动，prepare 复用；新版本归下一次 update
+        (self.feature_root / rel).write_text("第二版，与本轮授权相反。\n", encoding="utf-8")
+        again = self.review_prepare()
+        self.assertTrue(again["reused"], again)
+        self.assertEqual((first["material_key"], first["report_file"]),
+                         (again["material_key"], again["report_file"]), "收件箱第二版换了这一轮的审查对象")
+        self.assertEqual(first_bytes, fixed.read_bytes(), "当前收件箱的第二版改写了本轮固定件")
+        # 固定件移走：prepare 失败、check 按轮次报恢复，旧载体一字不改
+        task = self.src / "review" / "task.md"
+        dispatch = self.src / "review" / "dispatch.md"
+        prepared = self.src / "review" / "prepared.json"
+        carriers = {path: path.read_bytes() for path in (task, dispatch, prepared)}
+        fixed.unlink()
+        out = self.review_check()
+        self.assertEqual("input_invalid", out.get("result"), out)
+        for needle in (f"updates/{rid}/before/{rel}", rid, "恢复"):
+            self.assertIn(needle, out.get("detail", ""), out)
+        proc = self.review_prepare_proc()
+        self.assertNotEqual(0, proc.returncode, "固定件移走仍派出了新审")
+        self.assertIn(f"updates/{rid}/before/{rel}", proc.stdout + proc.stderr)
+        for path, kept in carriers.items():
+            self.assertEqual(kept, path.read_bytes(), f"prepare 失败时改写了旧载体 {path.name}")
+        # 恢复同一份字节：对象回到原样，已接收的报告仍可消费
+        fixed.write_bytes(first_bytes)
+        again = self.review_prepare()
+        self.assertTrue(again["reused"], again)
+        self.assertEqual(first["material_key"], self.object_facts()["key"])
+        self.assertEqual("pass", self.review_check()["result"])
+
+    def test_a_failed_object_check_leaves_the_review_carriers_untouched(self) -> None:
+        """R3（S20）：对象核验先于替换 task／派审载体；固定 before 缺件时失败，盘上旧载体一字不改。"""
+        rid = self.closed_round()
+        self.assertTrue(self.review_prepare()["reused"])
+        task = self.src / "review" / "task.md"
+        dispatch = self.src / "review" / "dispatch.md"
+        prepared = self.src / "review" / "prepared.json"
+        kept = {path: path.read_bytes() for path in (task, dispatch, prepared)}
+        original = self.before_original(rid)
+        saved = original.read_bytes()
+        original.unlink()
+        proc = self.review_prepare_proc()
+        self.assertNotEqual(0, proc.returncode, "缺固定 before 仍派出了新审")
+        self.assertIn("审查对象不全", proc.stdout + proc.stderr)
+        for path, data in kept.items():
+            self.assertEqual(data, path.read_bytes(), f"失败时改写了 {path.name}")
+        original.write_bytes(saved)
+        self.assertTrue(self.review_prepare()["reused"], "恢复固定件后没有回到原对象")
 
     def test_the_stage_review_reaches_the_same_conclusion(self) -> None:
         rid = self.closed_round()

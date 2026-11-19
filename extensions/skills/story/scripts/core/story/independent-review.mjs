@@ -4,9 +4,10 @@
  * - **准备**：写审查任务，按审查对象算材料键，定这一次唯一的报告文件，生成派审载体 `dispatch.md`（Story 路径、材料键、
  *   后读任务、最近一份原报告与报告位置）。没有原报告时请读者先读成品；有原报告时载体写明这是复核或补正。
  *   载体把报告文件分配为读者这一次唯一可写的位置，其余材料、旧报告、prepared 与 dispatch 只读；读者在完成调用前以同一正文
- *   保存完整报告，最终回复仍给同一份。父作者只在读者这次独立调用结束后重跑准备：开头两行合格、材料键是派审时那一份，
- *   就记成最近一次可消费的报告（`last_received`：材料键、报告位置与原样字节摘要）；不合格的报告留在原处，不覆盖它，
- *   下一份报告另起位置。最近可消费的报告就是当前材料键且结论是 pass / warn 时直接复用，不再派审。
+ *   保存完整报告，最终回复仍给同一份。父作者只在读者这次独立调用已结束、且拿到的最终回复与报告文件是一份完整正文时重跑准备：
+ *   开头两行合格、材料键是派审时那一份，就记成最近一次可消费的报告（`last_received`：材料键、报告位置与原样字节摘要）；
+ *   不合格的报告留在原处，不覆盖它，下一份报告另起位置。接收器不读宿主会话，调用结束与 final 是否完整由父作者按工具说明判断。
+ *   最近可消费的报告就是当前材料键且结论是 pass / warn 时直接复用，不再派审。
  * - **核结果**：显式 check、登记、交付门与状态共用这一份判定，只读：审的是不是现在这份、报告是不是原样、读者写的结论。
  *
  * | 结果 | 含义 |
@@ -98,7 +99,8 @@ function lastConclusion(ctx, last) {
 
 /**
  * 接收上一次准备给出的报告：开头两行合格、材料键是派审时那一份，就成为最近一次可消费的报告；不合格的留在原处、
- * 不更新最近报告，原因随下一次派审交回读者。调用方只在读者这次独立调用结束后重跑准备，不以中途存在的文件为准。
+ * 不更新最近报告，原因随下一次派审交回读者。调用方只在读者这次独立调用已结束、且最终回复与报告文件是一份完整正文时
+ * 重跑准备，不以中途存在的文件为准；接收器不读宿主会话，结束与完整性由调用方按工具说明判断。
  */
 function receive(ctx, was) {
   const last = was?.last_received ?? null;
@@ -112,9 +114,13 @@ function receive(ctx, was) {
   return { last: { material_key: was.material_key, report_file: was.report_file, report_sha256: sha256(bytes) }, invalid: null };
 }
 
-/** 审查对象与它的材料键：任务先按对象生成并落盘（任务也是对象的一部分），再补上任务那一行算键。 */
+/**
+ * 审查对象与它的材料键：任务先按对象生成（任务也是对象的一部分），对象核验通过才落盘任务，再补上任务那一行算键。
+ * 对象不全（含比较依据缺件、摘要不符）时返回它的 problems，不写任务、不换掉盘上原来那一份有效载体。
+ */
 function stageObject(ctx) {
   const base = reviewObject(ctx.projectRoot, ctx.args.feature, { withTask: false, source: designSource(ctx) });
+  if (base.problems.length) return { object: base, key: null };
   const task = path.join(ctx.featureRoot, ...TASK);
   const taskText = `${readerReviewTask(ctx.projectRoot, ctx.args.feature, base)}\n`;
   if (readText(task) !== taskText) fs.writeFileSync(task, taskText, 'utf-8');
@@ -143,7 +149,10 @@ export function prepareReview(ctx, { reportDir: asked = null, restage }) {
   const was = before.record;
   fs.mkdirSync(dir, { recursive: true });
   const { last, invalid } = receive(ctx, was);
-  let { object, key } = stageObject(ctx);
+  // 对象核验在写任务之前：比较依据缺件或对象不全时停下，盘上原来的任务与派审载体不动
+  const staged = stageObject(ctx);
+  if (staged.object.problems.length) return { error: `审查对象不全：${staged.object.problems.join('；')}` };
+  let { object, key } = staged;
   const reusable = Boolean(key) && last?.material_key === key && ['pass', 'warn'].includes(lastConclusion(ctx, last));
   if (!reusable && restage()) ({ object, key } = stageObject(ctx));
   if (object.problems.length) return { error: `审查对象不全：${object.problems.join('；')}` };
@@ -299,12 +308,15 @@ export function reviewResult(ctx) {
     if (last?.report_file === was.report_file) return conclusionOf(last, lastConclusion(ctx, last));
     const head = headOf(bytes.toString('utf-8'));
     if (head.problem) {
-      return { result: 'report_invalid', ...at, detail: `${head.problem}。这份报告留在原处；重跑 prepare 取新的报告位置，`
-        + '按新载体交原读者在新编号位置补一份完整报告' };
+      return { result: 'report_invalid', ...at, detail: `${head.problem}。这份报告留在原处；重跑 prepare，按它这次给出的报告位置`
+        + '与新载体交原读者补一份完整报告' };
     }
     if (head.key !== was.material_key) return { result: 'subject_stale', ...at, detail: '报告写的材料键不是这一次准备的：按这一次的派审载体重新派审' };
     return { result: 'report_unreceived', ...at,
-      detail: `${was.report_file} 里的报告还没接收：重跑 \`story-build review --action prepare\` 接收（记下原样字节的摘要），再 check` };
+      detail: `${was.report_file} 里的报告还没接收：只有读者那次调用已结束、且你拿到的最终回复是与这个文件一致的完整正文，`
+        + '才重跑 `story-build review --action prepare` 接收（它给出这次的材料键与报告位置），再 check；'
+        + '调用没结束或回复不完整时先等这次调用结束，等不到就接回原读者，让它核齐同一份正文与该文件对应的完整 final；'
+        + '拿不到同一份完整正文就如实披露交接未闭合，停在未接收，不接收、也不登记' };
   }
   if (lastConclusion(ctx, last) === 'fail') {
     return { result: 'fail', ...at, detail: `已知必修未复核：最近一份可消费的独立报告（${last.report_file}）判了 fail，`

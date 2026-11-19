@@ -548,12 +548,18 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertFalse((self.flow_path.parent / "review" / "context.md").exists(), "又另存了报告摘要副本")
 
     def test_the_preparation_output_asks_the_reader_to_write_and_the_parent_to_receive(self) -> None:
-        """prepare 之后的提示与写者一致：读者在完成调用前写入报告文件，父只接收、不再转写。"""
+        """prepare 之后的提示与写者、接收条件一致：读者在完成调用前写入报告文件，父只接收、不再转写；
+        只有调用已结束且最终回复是与该文件一致的完整 final 才接收，否则先等或接回原读者，拿不到就停在未接收。"""
         out = self.review("prepare")
+        parsed = json.loads([line for line in out.stdout.splitlines() if line.startswith("{")][-1])
         text = out.stdout + out.stderr
         self.assertIn("读者在完成调用前把同一正文写入", text)
         self.assertIn("父不再转写", text)
-        self.assertIn("读者未结束即使文件已存在也不接收", text)
+        for needle in ("调用没结束时报告文件即使已经存在也不接收", "读者这次调用已结束",
+                       f"最终回复是与 {parsed['report_file']} 一致的完整 final", "接回原读者",
+                       "停在未接收，不接收、也不登记", "沿用这个位置"):
+            self.assertIn(needle, text, f"prepare 的接收条件少了「{needle}」")
+        self.assertNotIn("读者未结束即使文件已存在也不接收", text, "prepare 仍在用旧的接收说法")
         self.assertNotIn("把它的最终回复全文原样写到", text)
 
     def test_a_failed_review_is_rechecked_with_its_report(self) -> None:
@@ -844,6 +850,8 @@ class TheReaderAnswersAndTheLatestReplyIsKept(TheStoryIsReviewedRegisteredAndDel
         self.assertIn("旧版审查格式", got["detail"])
 
     def test_preparing_needs_the_reader_fact(self) -> None:
+        """缺 --reader 的错误按这次派审交接受什么选读者：能读业务材料、能写本次报告、能取得完整完成回复，
+        不再按「能接收自足只读任务」挑。"""
         before = self.tree()
         for args in (("review", "--action", "prepare", "--reader", "maybe"),
                      ("review", "--action", "prepare", "--reader", "unavailable")):
@@ -852,6 +860,10 @@ class TheReaderAnswersAndTheLatestReplyIsKept(TheStoryIsReviewedRegisteredAndDel
                                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
                 self.assertNotEqual(0, out.returncode)
                 self.assertIn("--reader", out.stderr)
+                if "maybe" in args:      # 取值不合法：报清三条能力，不退回旧的「能收只读任务」
+                    for needle in ("能读业务材料", "能写本次报告", "能取得完整完成回复", "--reader-reason"):
+                        self.assertIn(needle, out.stderr, f"缺参错误少了「{needle}」")
+                    self.assertNotIn("自足只读任务", out.stderr, "又按「能收只读任务」挑读者")
                 self.assertEqual(before, self.tree(), "读者情况没给全就写了盘")
 
     def test_a_current_conclusion_survives_a_later_reader_change(self) -> None:
@@ -1685,20 +1697,39 @@ class TheAuthorJudgesTheReaderAndAnUnfinishedHandoverIsNotReceived(TheStoryIsRev
                       "report_unreceived 的接收没有完成条件")
 
     def test_a_written_report_is_not_a_conclusion_until_it_is_received(self) -> None:
-        """同一文件：调用未结束时只是报告在盘上（不接收、不能登记）；接收之后才是结论、才能登记。"""
+        """同一文件：调用未结束时只是报告在盘上（不接收、不能登记）；接收之后才是结论、才能登记。
+
+        两条下一动作都从实际返回走到位：停在未接收时 check 与登记共用同一段 detail（先核这次调用已结束、
+        最终回复是与文件一致的完整正文；拿不到就停在未接收）；按它重跑 prepare 接收后，登记成功。"""
         out = self.prepare()
         report = design_kit.write_review(self.root, "REQ-DEMO", "pass")   # 读者已写完文件、调用还没结束
         written = report.read_bytes()
         self.assertEqual(self.root / out["report_file"], report)
-        self.assertEqual("report_unreceived", self.result()["result"], "文件在就被当成了交接完成")
+        got = self.result()
+        self.assertEqual("report_unreceived", got["result"], "文件在就被当成了交接完成")
+        for needle in ("读者那次调用已结束", "最终回复是与这个文件一致的完整正文", "接回原读者",
+                       "停在未接收，不接收、也不登记"):
+            self.assertIn(needle, got["detail"], f"check 的下一动作少了「{needle}」")
         self.assertNotIn("last_received", self.prepared(), "未结束的交接被接收了")
         refused = self.register()
         self.assertNotEqual(0, refused.returncode, "未接收的报告被登记了")
+        self.assertIn("读者那次调用已结束", refused.stderr, "登记共用 detail 没有接收条件")
         self.assertEqual(written, report.read_bytes(), "拒绝登记时动了读者写的原件")
         self.receive()
-        self.assertIn("last_received", self.prepared())
+        received = self.prepared()
+        self.assertIn("last_received", received)
+        self.assertEqual(out["report_file"], received["report_file"], "接收改了同一份报告的位置")
         self.assertEqual("pass", self.result()["result"])
         self.assertEqual(0, self.register().returncode, "接收通过的报告不能登记")
+
+    def test_a_missing_report_keeps_its_position_until_written(self) -> None:
+        """缺文件不是新编号：同一份材料还没收到报告时重跑 prepare 沿用它给出的那个位置。"""
+        first = self.prepare()
+        again = self.prepare()
+        self.assertFalse(again["reused"], again)
+        self.assertEqual(first["report_file"], again["report_file"], "同一份材料还没写报告时另起了编号")
+        self.assertEqual(first["material_key"], again["material_key"])
+        self.assertEqual("report_missing", self.result()["result"])
 
 
 if __name__ == "__main__":
