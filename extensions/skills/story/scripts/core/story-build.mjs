@@ -325,7 +325,7 @@ function cmdReview(ctx) {
       '  让它核齐同一份正文与该文件对应的完整 final。两种情况都拿不到同一份完整正文时，如实披露交接未闭合',
       '  （已写的文件、缺的完成回复与影响），停在未接收，不接收、也不登记。',
       '  报告位置与材料键以本次输出为准：同一份材料还没收到报告时重跑 prepare 沿用这个位置，变了按它这次给出的编号，不自行编号。',
-      '  接收后再跑 story-build review --action check，结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
+      '  接收成功后以 story-build review --action check 核结果，处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
 }
 
 /** 这一次的审查结果：一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1；`review --action check` 与登记前核共用。 */
