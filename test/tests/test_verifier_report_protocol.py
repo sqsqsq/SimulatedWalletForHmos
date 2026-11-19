@@ -492,7 +492,8 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertIn(f"`{rel}`", out["dispatch_text"])
         self.assertIn("开头两行要是", out["dispatch_text"], "不能接收的原因没进载体")
         self.assertNotIn("## 先首读", out["dispatch_text"], "补正又被要求重做首读")
-        self.assertIn("只读，不写任何文件", out["dispatch_text"])
+        self.assertIn(f"- 本次报告文件：`{out['report_file']}`", out["dispatch_text"], "补正没有分配新的报告文件")
+        self.assertIn("只允许写上面分配的本次报告文件", out["dispatch_text"])
         self.assertEqual("report_invalid", self.result()["result"], "接收之后不能接收的原因不见了")
         again = self.prepare()
         self.assertEqual(out["report_file"], again["report_file"], "同一次补正再准备，回复位置递增了")
@@ -514,6 +515,45 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
         self.assertNotEqual(0, self.register().returncode, "改过的原回复被登记了")
         passing.write_bytes(kept)
         self.assertEqual("pass", self.result()["result"], "原件恢复之后正常审查结果反而不可消费")
+
+    def test_the_reader_writes_the_report_file_itself(self) -> None:
+        """S05：读者是报告写者。载体分配唯一可写的报告文件，要求完成调用前写入同一正文、最终回复仍给完整报告；
+        任务书的「报告怎么写」与载体同一份写法；父保存与转写的旧指令不再出现。"""
+        out = self.prepare()
+        text = out["dispatch_text"]
+        self.assertIn(f"- 本次报告文件：`{out['report_file']}`（工程相对路径；你这一次唯一可写的文件）", text)
+        for needle in ("业务产物、依据、旧报告、prepared 与 dispatch 都只读", "在完成调用之前",
+                       "最终回复里给出同一份完整报告", "主执行者不代你转写正文", "读取文件"):
+            self.assertIn(needle, text)
+        task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
+        report = task.split("### 报告怎么写", 1)[1]
+        for needle in ("报告位置", "完成调用之前", "只写这一次", "同一份完整报告"):
+            self.assertIn(needle, report)
+        for gone in ("主执行者把它原样写到", "你只读材料，不写任何文件"):
+            self.assertNotIn(gone, text + report, f"父转写指令「{gone}」还在交付面")
+
+    def test_the_reader_writes_before_returning_and_the_parent_only_receives(self) -> None:
+        """读者在完成调用前写入完整报告：返回后接收并检查，报告逐字节未变；父不再生成第二份，也不另存摘要副本。"""
+        out = self.prepare()
+        reply = design_kit.write_review(self.root, "REQ-DEMO", "pass")     # 替身读者：返回前写入同一正文
+        written = reply.read_bytes()
+        self.assertEqual(self.root / out["report_file"], reply, "报告没写到 prepare 分配的位置")
+        self.assertEqual("report_unreceived", self.result()["result"], "读者未结束时的文件被提前消费")
+        self.receive()
+        self.assertEqual("pass", self.result()["result"])
+        self.assertEqual(written, reply.read_bytes(), "接收或检查改了读者写入的报告")
+        reports = [p for p in (self.root / "doc" / "reports").rglob("review-original.*.md")]
+        self.assertEqual(1, len(reports), "父又生成/保留了第二份报告")
+        self.assertFalse((self.flow_path.parent / "review" / "context.md").exists(), "又另存了报告摘要副本")
+
+    def test_the_preparation_output_asks_the_reader_to_write_and_the_parent_to_receive(self) -> None:
+        """prepare 之后的提示与写者一致：读者在完成调用前写入报告文件，父只接收、不再转写。"""
+        out = self.review("prepare")
+        text = out.stdout + out.stderr
+        self.assertIn("读者在完成调用前把同一正文写入", text)
+        self.assertIn("父不再转写", text)
+        self.assertIn("读者未结束即使文件已存在也不接收", text)
+        self.assertNotIn("把它的最终回复全文原样写到", text)
 
     def test_a_failed_review_is_rechecked_with_its_report(self) -> None:
         """判了 fail 再准备：载体写明是复核并给原报告，不再要求像第一次那样首读；原 fail 在新回复前保持。"""

@@ -318,9 +318,9 @@ function cmdReview(ctx) {
           '  直接跑 story-build review --action check（结果是 unreviewed），再按已有授权登记与交付，交付说明照实写本版未审。', ''])
         .join('\n')
       : [`[story-build review] 审查已准备：把 ${out.dispatch_file}（即输出里的 dispatch_text）原样作为隔离读者的任务交出，`,
-      `  不增删、不改写；等它完成，把它的最终回复全文原样写到 ${out.report_file}（读者只读，不自己写文件）。`,
-      `  修改被审材料之前先重跑 ${again} 接收这份回复，再跑 story-build review --action check，`,
-      '  结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
+      `  不增删、不改写；读者在完成调用前把同一正文写入 ${out.report_file}（它只写这一份，父不再转写）。`,
+      `  等这次独立调用结束（读者未结束即使文件已存在也不接收）；修改被审材料之前先重跑 ${again} 接收这份报告，`,
+      '  再跑 story-build review --action check，结果的处置见 phases/design.md「五、独立审查、登记与交付」。', ''].join('\n'));
 }
 
 /** 这一次的审查结果：一行 JSON（`result`、`detail`），pass / warn / unreviewed 退出 0，其余退出 1；`review --action check` 与登记前核共用。 */

@@ -225,6 +225,19 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         self.assertIn("作者没有指定承接位置", unmapped)
         self.assertIn("有没有漏讲", unmapped, "没指定位置的图要交审查者核相关关系")
 
+    def test_the_reader_is_told_to_write_the_report_file_itself(self) -> None:
+        """报告写者是读者：任务书给写入约定（写到载体分配的报告位置、完成调用前落盘、最终回复同一份），
+        不再让父执行者把回复转写进文件。"""
+        (self.feature_root / "AR").mkdir(parents=True, exist_ok=True)
+        (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
+        text = self.reader_task()
+        report = text.split("### 报告怎么写", 1)[1]
+        for needle in ("报告位置", "完成调用之前", "最终回复", "只写这一次", "同一份"):
+            self.assertIn(needle, report)
+        for gone in ("主执行者把它原样写到", "你只读材料，不写任何文件"):
+            self.assertNotIn(gone, text)
+
+
 class TheChapterTableIsSeededOnce(PlanCase):
     def test_a_table_picked_in_a_section_takes_the_chapter_seed(self) -> None:
         block = "- 本章主线：做到什么算完成\n#### 验收点\n- 答：每条怎么算通过\n" + ACCEPTANCE_LINE
