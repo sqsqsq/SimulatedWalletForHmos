@@ -387,6 +387,22 @@ packages:
         reason: "S15 按原额度保留必要功能，超额 G125 不追加：稳定来源和系统回执核验仍缺，选择解析重复且冲突可误签。另批 S16 局部替换 G50/X62、02 批原估 G280/X230。S16 与 S04—S06 可同期实施，S07 在共同候选上组合交回。"
         source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#S15 设计者裁定与并行范围"
 
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-18"
+        at_ref: "3f989741"
+        scope: "S16 与 02 批联合复评，裁定 S17/S18 返修及同段余量调剂"
+        previous_invested_limit_g: 8380
+        actual_invested_g: 8482
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 102
+        invested_limit_g: 8380
+        next_steps:
+          S17: {g: 0, x: 0}
+          S18: {g: 23, x: 23}
+        reason: "五步实投 G307/X171。批准 S16 多用 G11、S04 多用 G1，由原范围调剂。S06 实投 G86，固定比较依据不完整，当前超步额 G26 不追加。S15 原 G125 维持不追认。S18 使用原 G330 实际余量 G23，整版 endpoint G6119/X4927 对 control_g 多 813，不上调。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#联合复评裁定"
+
 requirement:
   id: 2.0.1-完整适配
   status: in_progress
