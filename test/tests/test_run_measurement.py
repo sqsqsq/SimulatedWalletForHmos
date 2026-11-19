@@ -1327,16 +1327,20 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                 "## 发现\n\n| 编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任 |\n|---|---|---|---|---|---|\n"
                 f"| F1 | MAJOR | story_reader_review | AR/story.md | 转化率分子分母冲突 | 设计 |\n\n## 总体结论\n\n{conclusion}\n")
 
-    def test_review_tasks_are_counted_by_task_id_full_reply_and_object(self) -> None:
-        """审查按实际任务 ID / 完整回复 / 对象数分开计；没有完整收尾回复的算未取得，不按 finished 冒充。"""
+    def test_review_tasks_are_counted_by_task_id_reply_and_verified_report(self) -> None:
+        """审查按实际任务 ID / 取得回复文本 / 可核完整报告 / 对象数分开计；完整回复只计可核完整的那几份。"""
         got = self.review(self.report("fail\n\n理由。"))
-        self.assertEqual(("k-review", True, ["a" * 64]),
-                         (got["task_id"], got["full_reply"], got["objects"]))
+        self.assertEqual(("k-review", True, {"value": "complete", "why": None}, ["a" * 64]),
+                         (got["task_id"], got["reply_received"], got["report_completeness"], got["objects"]))
         aggregate = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
-        self.assertEqual((1, 1, 1), (aggregate["story_review_tasks"], aggregate["story_review_full_replies"],
-                                     aggregate["story_review_objects"]))
+        self.assertEqual((1, 1, 1, 1, 0),
+                         (aggregate["story_review_tasks"], aggregate["story_review_settled"],
+                          aggregate["story_review_replies"], aggregate["story_review_full_replies"],
+                          aggregate["story_review_reports_unknown"]),
+                         "完整回复、取得回复文本与已收尾混成了同一个数")
 
-    def test_review_tasks_without_a_full_reply_are_not_counted_as_having_one(self) -> None:
+    def test_a_finished_task_without_a_reply_is_not_a_full_report(self) -> None:
+        """任务收尾了、收尾通知里却没有收尾回复：`settled` 仍是 finished，但没取得回复文本，报告不可核。"""
         parent = "session-p"
         rows = self.spawn(1, "c1", "k-review", f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n", "审查", settled=None)
         rows.append({"type": "agent/inbox/spliced", "time": 11 * 60000, "data": {"inserted": [{
@@ -1345,15 +1349,50 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                        "summary": "Background subagent k-review finished and will do no further work."}}]}})
         _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
         got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
-        self.assertEqual((1, 0, 1), (got["story_review_tasks"], got["story_review_full_replies"],
-                                     got["story_review_objects"]))
         [item] = got["items"]
-        self.assertFalse(item["full_reply"], "只有收尾状态、没有完整回复，被算成了完整回复")
+        self.assertEqual(("finished", False, {"value": "unknown", "why": "收尾通知里没有收尾回复"}),
+                         (item["settled"], item["reply_received"], item["report_completeness"]))
+        self.assertEqual((1, 1, 0, 0, 1),
+                         (got["story_review_tasks"], got["story_review_settled"], got["story_review_replies"],
+                          got["story_review_full_replies"], got["story_review_reports_unknown"]))
+        self.assertFalse(item["reply_received"], "只有收尾状态、没有完整回复，被算成了取得回复文本")
+
+    def test_empty_pointer_and_complete_replies_are_three_different_facts(self) -> None:
+        """同一原生任务三种收尾回复：空正文、「报告已写入」、完整报告都已收尾；
+        空正文没取得回复文本，指针取得了文本但不是完整报告，只有带材料键与结论行的完整报告计可核完整；
+        未核证的单独计数，不把判断结果未知当任务失败。"""
+        head = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n"
+        parent = "session-p"
+        rows: list[dict] = []
+        for seq, child, reply in ((1, "k-empty", ""), (2, "k-pointer", "报告已写入\n"),
+                                  (3, "k-full", self.report("pass\n\n理由。"))):
+            rows += self.spawn(seq, f"c{child}", child, head, "审查", settled=None)
+            rows.append({"type": "agent/inbox/spliced", "time": (seq + 10) * 60000, "data": {"inserted": [{
+                "content": [{"type": "text", "text": f"Background subagent {child} finished and will do no further work.\n"
+                                                     "Its closing message:\n" + reply}],
+                "source": {"kind": "subagent-settled", "senderSessionId": child,
+                           "summary": f"Background subagent {child} finished and will do no further work."}}]}})
+        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
+        by_child = {i["child_id"]: i for i in got["items"]}
+        self.assertEqual(
+            {"k-empty": ("finished", False, "unknown"),
+             "k-pointer": ("finished", True, "unknown"),
+             "k-full": ("finished", True, "complete")},
+            {child: (i["settled"], i["reply_received"], i["report_completeness"]["value"])
+             for child, i in by_child.items()})
+        self.assertEqual({"unknown": 2, "pass": 1}, got["story_review_conclusions"])
+        self.assertEqual((3, 3, 2, 1, 2),
+                         (got["story_review_tasks"], got["story_review_settled"], got["story_review_replies"],
+                          got["story_review_full_replies"], got["story_review_reports_unknown"]),
+                         "三种回复被数成了同一个完整回复数")
 
     def test_a_review_that_finished_normally_can_still_fail(self) -> None:
-        """子会话正常收尾，回复写明总体结论 fail：业务结论是 fail，收尾仍是 finished，两件事分开记，并给出回复里的行号。"""
+        """子会话正常收尾，回复写明总体结论 fail：业务结论是 fail，收尾仍是 finished，报告可核完整；
+        三件事分开记，并给出回复里的行号——真实 fail 没有被算成任务失败或报告不可核。"""
         got = self.review(self.report("fail\n\n理由：存在 1 条 MAJOR。"))
-        self.assertEqual(("finished", "fail"), (got["settled"], got["review_conclusion"]["value"]))
+        self.assertEqual(("finished", "fail", "complete"),
+                         (got["settled"], got["review_conclusion"]["value"], got["report_completeness"]["value"]))
         self.assertEqual({"child_id": "k-review", "settled_time": 11 * 60000, "reply_line": 17}, got["review_conclusion"]["at"])
         self.assertEqual({"fail": 1}, got["conclusions"])
 
@@ -1363,22 +1402,53 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
 
     def test_the_current_reply_gives_its_conclusion_line(self) -> None:
         """现行回复：结论照开头第二行读，正文里的字样不参与。"""
-        got = self.review(self.current_report("fail") + "\n结论差点写 pass。\n")["review_conclusion"]
-        self.assertEqual(("fail", None, 2), (got["value"], got["why"], got["at"]["reply_line"]))
+        got = self.review(self.current_report("fail") + "\n结论差点写 pass。\n")
+        self.assertEqual(("fail", None, 2), (got["review_conclusion"]["value"], got["review_conclusion"]["why"],
+                                             got["review_conclusion"]["at"]["reply_line"]))
+        self.assertEqual("complete", got["report_completeness"]["value"])
 
     def test_a_recorded_report_is_still_read(self) -> None:
-        """已保全的历史记录按当时的三个二级标题读出结论。"""
-        got = self.review(self.report("fail\n\n理由。"))["review_conclusion"]
-        self.assertEqual(("fail", None), (got["value"], got["why"]))
+        """已保全的历史记录按当时的三个二级标题读出结论，旧报告格式仍算可核完整。"""
+        got = self.review(self.report("fail\n\n理由。"))
+        self.assertEqual(("fail", None), (got["review_conclusion"]["value"], got["review_conclusion"]["why"]))
+        self.assertEqual({"value": "complete", "why": None}, got["report_completeness"], "旧报告格式不再被认作可核完整")
 
     def test_a_reply_that_is_not_the_whole_report_is_unknown(self) -> None:
-        """收尾回复只是摘要（正文里写着「总体结论：warn」）、材料键不是派出去的那一份：都判不了，不从字样推断。"""
+        """收尾回复只是摘要（正文里写着「总体结论：warn」）、材料键不是派出去的那一份：都判不了，不从字样推断；
+        取得过回复文本这一件事实照记，完整报告单列未知。"""
         summary = f"material_key: {self.KEY}\n\n## 判据核对\n\n（全文已发给父代理）\n\n**总体结论：warn**\n"
-        self.assertEqual("unknown", self.review(summary)["review_conclusion"]["value"])
+        got = self.review(summary)
+        self.assertEqual(("unknown", True, "unknown"),
+                         (got["review_conclusion"]["value"], got["reply_received"], got["report_completeness"]["value"]))
         loose = f"material_key: {self.KEY}\n\n结论：pass\n"
         self.assertEqual("unknown", self.review(loose)["review_conclusion"]["value"], "结论不在第二行也被读出来了")
-        other = self.review(self.report("fail\n\n理由。"), key="b" * 64)["review_conclusion"]
-        self.assertEqual(("unknown", "回复的材料键对不上派出去的审查对象"), (other["value"], other["why"]))
+        other = self.review(self.report("fail\n\n理由。"), key="b" * 64)
+        self.assertEqual(("unknown", "回复的材料键对不上派出去的审查对象"),
+                         (other["review_conclusion"]["value"], other["review_conclusion"]["why"]))
+        self.assertEqual("unknown", other["report_completeness"]["value"], "材料键对不上被算成了完整报告")
+
+    def test_the_report_counts_only_verified_reports_and_names_the_unverified(self) -> None:
+        """报表消费者：旧的「Story 独审任务 …（完整回复 …，审查对象 …）」行保留，完整回复只计可核完整的那几份；
+        未核证的回复单列并说明不是任务失败。"""
+        parent = "session-p"
+        head = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n"
+        rows: list[dict] = []
+        for seq, child, reply in ((1, "k-pointer", "报告已写入\n"), (2, "k-full", self.report("pass\n\n理由。"))):
+            rows += self.spawn(seq, f"c{child}", child, head, "审查", settled=None)
+            rows.append({"type": "agent/inbox/spliced", "time": (seq + 10) * 60000, "data": {"inserted": [{
+                "content": [{"type": "text", "text": f"Background subagent {child} finished and will do no further work.\n"
+                                                     "Its closing message:\n" + reply}],
+                "source": {"kind": "subagent-settled", "senderSessionId": child,
+                           "summary": f"Background subagent {child} finished and will do no further work."}}]}})
+        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        (self.run_dir / "events.jsonl").write_text(
+            json.dumps({"type": "usage", "timestamp": "2026-09-02T10:00:00", "usage": {"context_total": 1}}),
+            encoding="utf-8")
+        text = measure_run.render(measure_run.measure(self.run_dir / "events.jsonl", run_dir=self.run_dir))
+        self.assertIn("Story 独审任务 2 个（完整回复 1 个，审查对象 1 个）", text)
+        self.assertIn("取得回复文本 2 个", text)
+        self.assertIn("未核证完整报告 1 个", text)
+        self.assertIn("不是任务失败", text)
 
 
 class KnowledgeDeliveriesAreReadFromTheTaskOutput(unittest.TestCase):

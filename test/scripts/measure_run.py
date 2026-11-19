@@ -47,8 +47,11 @@
 - **父/子分列**：父会话的 assistant 响应（`type: text` 事件数）与工具调用（公共事件按调用归并）只算父；
   子会话的 assistant 响应与工具调用从保全的原生会话数，两者口径不同，**不能相加成一次模型 API 次数**，
   也不能用 `native-sessions/children/` 的目录数冒充调用数。没有保全原件时子会话数记 null，不是 0。
-- **审查按实际任务分开计**：每个委派给 `task_id`（原生 childId）、`full_reply`（有没有完整收尾回复）、
-  `objects`（派出去的审查对象键个数）；汇总 `story_review_tasks / full_replies / objects`。目录数不是任务数。
+- **审查按实际任务分开计**：每个委派给 `task_id`（原生 childId）、`reply_received`（取没取得回复文本）、
+  `report_completeness`（报告是否可核完整）、`objects`（派出去的审查对象键个数）；汇总
+  `story_review_tasks / replies / full_replies / reports_unknown / objects`。任务是否收尾（`settled`）、
+  有没有回复文本、报告是否可核完整是三件事：收尾通知里带着收尾标志不等于拿到了完整报告，
+  完整回复只计可核完整的那几份，其余单列未知。目录数不是任务数。
 - **耗时只报能核实的那几类**：墙钟（首末事件）、驱动器累计的人工等待、可核工具调用区间、可核子任务观察区间、
   返修窗口与未知。区间用**并集**计算，交叠部分不重复累加也不重复扣除；`not_attributed_sec` 是墙钟减去可核区间后的
   未归属部分，含模型推理、宿主准备、等待与事件空档，**不是纯推理时间**。`nontool_gap_sec` 与 `tool_gap_sec`
@@ -869,11 +872,15 @@ def _review_mode(prompt: str) -> str:
 def native_delegations(sessions: dict, children: dict[Path, dict] | None = None) -> dict:
     """原生会话里的委派：按派出去的正文与子会话实际产出认角色，不按工具名——专用 verifier 工具也可能被派了 Story 审查或蓝图质询，
     派出去的是原生阶段审查请求才是阶段审查；给每个子会话的观察跨度与收尾状态。
-    Story 独审另给派审种类（载体写明的先首读 / 复核 / 补正）与收尾回复里的业务结论（`_review_conclusion`），
-    与收尾状态、父方的报告接收结论分开。没有保全原件时为 null。
+    Story 独审另给派审种类（载体写明的先首读 / 复核 / 补正）、收尾回复里的业务结论（`_reply_conclusion` 的
+    `review_conclusion`）与报告完整性的可核结论（`report_completeness`）。**任务收尾、取得回复文本、
+    报告可核完整是三件事实**：收尾通知里带着收尾标志不等于拿到了完整报告；「报告已写入」这类指针与
+    空回复的完整性都记 unknown，不按任务失败算。与父方的报告接收结论分开。没有保全原件时为 null。
 
-    **审查按实际任务计**：`task_id` 取原生 childId，`full_reply` 看有没有完整收尾回复，`objects` 是派出去的
-    审查对象键个数；汇总 `story_review_tasks / full_replies / objects`。`children/` 目录数不参与计数。
+    **审查按实际任务计**：`task_id` 取原生 childId，`reply_received` 看收尾通知里有没有回复文本，
+    `report_completeness` 按实际对象与能取得的那一份原件核（见 `_closing_reply` 与 `_reply_conclusion`），
+    `objects` 是派出去的审查对象键个数；汇总 `story_review_tasks / replies / full_replies / reports_unknown /
+    objects`。`children/` 目录数不参与计数。
     `children` 是本 run 已经读过的子会话读数（measure 传同一份，避免重复解析）。"""
     children = children or {}
     if not sessions["present"]:
@@ -907,18 +914,20 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
                         if done and done.get("time") and entry.get("createdAt") else None)
             span = round(span_sec / 60, 1) if span_sec is not None else None
             summary = str((done or {}).get("summary") or "")
-            reply = str((done or {}).get("text") or "")
-            # 完整回复 = 有收尾通知且通知里带着子会话的完整收尾回复；只有收尾状态不算。
-            full_reply = bool(done) and CLOSING_MESSAGE in reply
+            reply = _closing_reply(done)
             objects = sorted({key for key in CARRIER_KEY_RE.findall(prompt)}) if prompt else []
             row = {"role": role or "unresolved", "basis": basis, "label": entry.get("label") or str(_args(call).get("description") or ""),
                    "child_id": started, "task_id": started, "observed_span_min": span,
                    "observed_span_sec": round(span_sec, 1) if span_sec is not None else None,
-                   "full_reply": full_reply, "objects": objects if objects else None,
+                   "reply_received": reply["reply_received"], "objects": objects if objects else None,
                    "settled": "failed" if "failed" in summary else "finished" if "finished" in summary else "unknown"}
             if row["role"] == "story_review":
                 row["review_mode"] = _review_mode(prompt)
-                row["review_conclusion"] = _review_conclusion(prompt, done)
+                row["review_conclusion"] = _reply_conclusion(prompt, reply, done)
+                complete = row["review_conclusion"]["value"] != "unknown"
+                row["report_completeness"] = {
+                    "value": "complete" if complete else "unknown",
+                    "why": None if complete else row["review_conclusion"]["why"]}
             rows.append(row)
     conclusions = Counter(r["review_conclusion"]["value"] for r in rows if "review_conclusion" in r)
     modes = Counter(r["review_mode"] for r in rows if "review_mode" in r)
@@ -930,7 +939,10 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
         "observed_intervals": observed,
         "by_role": dict(Counter(r["role"] for r in rows)),
         "story_review_tasks": len(reviews),
-        "story_review_full_replies": sum(1 for r in reviews if r["full_reply"]),
+        "story_review_settled": sum(1 for r in reviews if r["settled"] != "unknown"),
+        "story_review_replies": sum(1 for r in reviews if r["reply_received"]),
+        "story_review_full_replies": sum(1 for r in reviews if r["report_completeness"]["value"] == "complete"),
+        "story_review_reports_unknown": sum(1 for r in reviews if r["report_completeness"]["value"] == "unknown"),
         "story_review_objects": len(review_objects),
         "story_review_conclusions": dict(conclusions),
         "story_review_modes": dict(modes),
@@ -949,27 +961,43 @@ RECORDED_REPORT_HEADINGS = ("判据核对", "发现", "总体结论")
 STATED_RE = re.compile(r"^(pass|warn|fail)(?![A-Za-z])")
 
 
-def _review_conclusion(prompt: str, done: dict | None) -> dict:
-    """Story 独审子会话收尾回复里写明的结论：{value: pass/warn/fail/unknown, why, at}。
+def _closing_reply(done: dict | None) -> dict:
+    """收尾通知里「取得回复文本」这一件事实：{reply_received, reply, why}。
 
-    只做结构提取：回复的材料键恰好一行且是派出去的那一份；现行回复第二行是 `conclusion: pass|warn|fail`，
-    已保全的历史记录按当时的三个二级标题、「总体结论」第一行读。任何一条不成立都是 unknown 并写明原因——
-    不从正文里的 fail 字样推断，也不把收尾 finished 当通过；审查是否充分归独立评审。
+    任务收尾与否由 `settled` 记；这里只看通知里有没有子会话的回复正文。收尾标志之后是空的
+    （或整条通知没有收尾回复）都算没取得回复文本，不拿收尾状态冒充。
+    """
+    if not done:
+        return {"reply_received": False, "reply": None, "why": "没有收尾通知"}
+    text = str(done.get("text") or "")
+    if CLOSING_MESSAGE not in text:
+        return {"reply_received": False, "reply": None, "why": "收尾通知里没有收尾回复"}
+    reply = text.split(CLOSING_MESSAGE, 1)[1]
+    if not reply.strip():
+        return {"reply_received": False, "reply": None, "why": "收尾回复是空的"}
+    return {"reply_received": True, "reply": reply, "why": None}
+
+
+def _reply_conclusion(prompt: str, reply: dict, done: dict | None) -> dict:
+    """Story 独审收尾回复写明的结论：{value: pass/warn/fail/unknown, why, at}。
+
+    只做结构提取：取得的那一份回复开头是材料键、恰好一行且是派出去的那一份；现行回复第二行是
+    `conclusion: pass|warn|fail`，已保全的历史记录按当时的三个二级标题、「总体结论」第一行读。
+    任何一条不成立都是 unknown 并写明原因——不从正文里的 fail 字样推断，也不把收尾 finished 当通过；
+    审查是否充分归独立评审。没取得回复文本时用 `_closing_reply` 给的原因，不另造结论。
     """
     def unknown(why: str) -> dict:
         return {"value": "unknown", "why": why, "at": None}
-    if not done:
-        return unknown("没有收尾通知")
-    text = str(done.get("text") or "")
-    if CLOSING_MESSAGE not in text:
-        return unknown("收尾通知里没有收尾回复")
-    reply = text.split(CLOSING_MESSAGE, 1)[1]
+    if not reply["reply_received"]:
+        return unknown(reply["why"])
+    text = reply["reply"]
     carrier = CARRIER_KEY_RE.findall(prompt)
-    keys = REPLY_KEY_RE.findall(reply)
+    keys = REPLY_KEY_RE.findall(text)
     if len(carrier) != 1 or keys != carrier:
         return unknown("回复的材料键对不上派出去的审查对象")
-    lines = reply.splitlines()
-    at = lambda i: {"child_id": done.get("childId"), "settled_time": done.get("time"), "reply_line": i + 1}  # noqa: E731
+    lines = text.splitlines()
+    at = lambda i: {"child_id": (done or {}).get("childId"), "settled_time": (done or {}).get("time"),  # noqa: E731
+                    "reply_line": i + 1}
     current = CONCLUSION_LINE_RE.match(lines[1].strip()) if len(lines) > 1 and REPLY_KEY_RE.match(lines[0]) else None
     if current:
         return {"value": current.group(1), "why": None, "at": at(1)}
@@ -1086,10 +1114,17 @@ def render(result: dict) -> str:
             f"    Story 独审任务 {result['delegations']['story_review_tasks']} 个"
             f"（完整回复 {result['delegations']['story_review_full_replies']} 个，"
             f"审查对象 {result['delegations']['story_review_objects']} 个）",
+            f"    回复事实：已收尾 {result['delegations']['story_review_settled']} 个"
+            f"｜取得回复文本 {result['delegations']['story_review_replies']} 个"
+            f"｜未核证完整报告 {result['delegations']['story_review_reports_unknown']} 个"
+            "（单列，不是任务失败；完整回复只计可核完整的那几份）",
             f"    Story 独审回复写明的总体结论：{result['delegations']['story_review_conclusions'] or '（没有 Story 独审）'}"
             "（与收尾状态、父方报告接收结论分开计）",
             *(f"    - {i['role']}｜{i['label']}｜观察跨度 {i['observed_span_min'] if i['observed_span_min'] is not None else '未知'} 分钟"
-              f"（含等待，不是纯推理）｜收尾 {i['settled']}"
+              f"（含等待，不是纯推理）｜收尾 {i['settled']}｜回复文本 {'有' if i['reply_received'] else '无'}"
+              + (f"｜完整报告 {'可核' if i['report_completeness']['value'] == 'complete' else '未核证'}"
+                 + (f"（{i['report_completeness']['why']}）" if i['report_completeness']['why'] else "")
+                 if "report_completeness" in i else "")
               + (f"｜回复结论 {i['review_conclusion']['value']}"
                  + (f"（{i['review_conclusion']['why']}）" if i['review_conclusion']['why'] else "")
                  if "review_conclusion" in i else "") for i in result["delegations"]["items"]),

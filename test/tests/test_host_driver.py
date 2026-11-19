@@ -425,7 +425,7 @@ class TheModelTempIsInsideTheCaseWorkspace(unittest.TestCase):
 
 class TheUpdateDeliveryRecordsTimeAndOriginalBytes(unittest.TestCase):
     """更新输入投放要能回答「什么时候真的投了、投的是哪一版」：逐件记投放时刻与原件 SHA-256；
-    收到时刻由模型取材回执（fetched.json 的 fetchedAt）另行核对，不拿投放时刻冒充。"""
+    收到另按两种现有来源核（本地件 importer 导入记录、系统件本次取材回执），不拿投放时刻冒充。"""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -434,7 +434,6 @@ class TheUpdateDeliveryRecordsTimeAndOriginalBytes(unittest.TestCase):
         (self.root / "doc" / "features" / "AR90006").mkdir(parents=True)
 
     def test_each_delivered_input_carries_its_time_hash_and_size(self) -> None:
-        system = self.root / "system"
         system = self.root / "system"
         with mock.patch.object(rc, "REPO_ROOT", self.root), \
                 mock.patch.dict("os.environ", {"STORY_REQUIREMENT_SYSTEM_DIR": str(system)}, clear=False):
@@ -450,6 +449,169 @@ class TheUpdateDeliveryRecordsTimeAndOriginalBytes(unittest.TestCase):
             import hashlib
             self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), record["sha256"],
                              f"{record['file']}：记的摘要不是实际投出的原件")
+
+
+class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
+    """B（S21）：投放记录逐件保投放时刻与原件字节；**收到**按两种现有来源分别核——
+    本地件（投进 inbox）看 importer 导入记录的时间与原件字节，系统件（投进需求系统、由模型 fetch 取回）
+    看本次取材回执的状态/时间/原件字节与批次回执。投放本身不得写成实际收到；只有先后关系时注明粒度，
+    没有事件记 unknown；旧格式的统一 received_at_source 不是逐件依据。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.feature = self.root / "doc" / "features" / "AR90006"
+        self.feature.mkdir(parents=True)
+        self.run = self.root / "run"
+
+    def deliver(self) -> dict:
+        with mock.patch.object(rc, "REPO_ROOT", self.root), \
+                mock.patch.dict("os.environ", {"STORY_REQUIREMENT_SYSTEM_DIR": str(self.root / "system")}, clear=False):
+            rc.deliver_update_inputs("auto-topup", "AR90006", self.run, None, [])
+        return self.record()
+
+    def record(self) -> dict:
+        return json.loads((self.run / rc.UPDATE_DELIVERY_RECORD).read_text(encoding="utf-8"))
+
+    def rewrite(self, payload: dict) -> None:
+        (self.run / rc.UPDATE_DELIVERY_RECORD).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def delivered(self, payload: dict) -> dict:
+        return {item["kind"]: item for item in payload["delivered"]}
+
+    def write_import(self, delivered: dict, *, acquired_at: str, sha: str | None = None) -> None:
+        """本地件的 importer 导入记录：`AR/story-src/materials.json` 的来源版本（inbox_path 与原件字节）。"""
+        src = self.feature / "AR" / "story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        name = Path(delivered["destination"]).name
+        (src / "materials.json").write_text(json.dumps({"schema": 5, "sources": [{
+            "source_id": "local:AR:交通卡自动充值", "kind": "local", "class": "AR",
+            "label": "交通卡自动充值", "versions": [{
+                "version": 1, "dir": "交通卡自动充值-v1", "acquired_at": acquired_at,
+                "inbox_path": name,
+                "original": {"path": f".backups/local/AR/{name}", "sha256": sha or delivered["sha256"]},
+                "readable": None, "images": []}]}]}, ensure_ascii=False), encoding="utf-8")
+
+    def write_fetch(self, delivered: dict, *, fetched_at: str, status: str = "fetched",
+                    sha: str | None = None, batch: bool = True) -> dict:
+        """系统件的本次取材回执：`AR/story-src/fetched.json` 与它的批次 `.receipt.json`。"""
+        src = self.feature / "AR" / "story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        name = Path(delivered["destination"]).name
+        saved = f"inbox/review/fetch-20261119-180000/{name}"
+        item = {"name": name, "label": "评审人留下的回稿", "ticket": "AR90006", "status": status,
+                "saved": saved, "sha256": sha or delivered["sha256"], "bytes": delivered["bytes"]}
+        receipt = {"mode": "fetch", "reqNo": "AR90006", "fetchedAt": fetched_at, "items": [item],
+                   "review_out": str(Path(saved).parent.as_posix())}
+        (src / "fetched.json").write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+        batch_file = self.feature / saved
+        batch_file.parent.mkdir(parents=True, exist_ok=True)
+        batch_file.write_bytes((self.root / "system" / "AR90006" / name).read_bytes())
+        if batch:
+            (batch_file.parent / ".receipt.json").write_text(
+                json.dumps({**receipt, "items": [item]}, ensure_ascii=False), encoding="utf-8")
+        return item
+
+    def test_delivery_alone_is_not_written_as_receipt(self) -> None:
+        """投放记录只证明写了什么字节：没有收到事件时逐件记 unknown 并写明去哪类记录核，
+        不再整文件写一个 `received_at_source` 把两种来源混成一种。"""
+        payload = self.deliver()
+        self.assertEqual(2, payload["schema_version"])
+        self.assertNotIn("received_at_source", payload)
+        self.assertEqual("not_checked", payload["receipt_check"]["status"])
+        for item in payload["delivered"]:
+            self.assertRegex(item["delivered_at"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+            self.assertEqual("unknown", item["receipt"]["status"], "投放本身被写成了实际收到")
+            self.assertTrue(item["receipt"]["source"], "没写明这一件的收到去哪类记录核")
+
+    def test_only_fetched_without_import_links_each_source_separately(self) -> None:
+        """对照①：系统件取回了、本地件没导入——系统件按本次取材回执记 received（时间/字节/批次可核），
+        本地件没有导入记录记 unknown；两者不共用一个取材时刻。"""
+        payload = self.deliver()
+        items = self.delivered(payload)
+        fetched_at = "2099-01-01T00:00:00+08:00"
+        self.write_fetch(items["system"], fetched_at=fetched_at)
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        payload = self.record()
+        items = self.delivered(payload)
+        system = items["system"]["receipt"]
+        self.assertEqual(("received", fetched_at, items["system"]["sha256"]),
+                         (system["status"], system["at"], system["sha256"]))
+        self.assertEqual(("verified", "inbox/review/fetch-20261119-180000/.receipt.json"),
+                         (system["batch"], system["batch_receipt"]), "批次回执没被核")
+        local = items["local_material"]["receipt"]
+        self.assertEqual("unknown", local["status"])
+        self.assertIn("没有导入记录", local["why"])
+        self.assertIsNone(local["at"], "没有导入事件却记了一个收到时刻")
+        self.assertEqual((1, 1), (summary["received"], summary["unknown"]))
+        self.assertEqual("checked", payload["receipt_check"]["status"])
+
+    def test_imported_local_material_without_the_system_fetch_links_the_import_record(self) -> None:
+        """对照②：本地件导入了、系统件没取回——本地件按导入记录记 received（导入时刻/原件字节/版本），
+        系统件按取材回执的 absent 记 not_received；没有拿投放时刻当导入时刻。"""
+        payload = self.deliver()
+        items = self.delivered(payload)
+        self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:00+08:00")
+        self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00", status="absent")
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        payload = self.record()
+        items = self.delivered(payload)
+        local = items["local_material"]["receipt"]
+        self.assertEqual(("received", "2099-01-01T00:00:00+08:00", items["local_material"]["sha256"],
+                          "交通卡自动充值-v1"),
+                         (local["status"], local["at"], local["sha256"], local["version"]))
+        self.assertNotEqual(items["local_material"]["delivered_at"], local["at"], "导入时刻被换成了投放时刻")
+        system = items["system"]["receipt"]
+        self.assertEqual(("not_received", "本次取材回执记 review-feedback.md 为 absent"),
+                         (system["status"], system["why"]))
+        self.assertEqual((1, 1), (summary["received"], summary["not_received"]))
+
+    def test_an_earlier_receipt_only_gives_the_order_not_this_delivery(self) -> None:
+        """同字节的导入记录早于本次投放：只能证明先后与字节相同，记 ordered_only 并注明粒度，
+        不把它说成本次投放已被接收。"""
+        payload = self.deliver()
+        items = self.delivered(payload)
+        self.write_import(items["local_material"], acquired_at="2020-01-01T00:00:00+08:00")
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        local = self.delivered(self.record())["local_material"]["receipt"]
+        self.assertEqual(("ordered_only", "sequence_only"), (local["status"], local["granularity"]))
+        self.assertIn("早于本次投放", local["why"])
+        self.assertEqual(1, summary["ordered_only"])
+
+    def test_a_fetch_with_other_bytes_is_unknown_not_received(self) -> None:
+        """本次取回的字节与投放的不是同一版：记 unknown 并给出回执摘要，不按 received 计。"""
+        payload = self.deliver()
+        items = self.delivered(payload)
+        self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00", sha="0" * 64)
+        rc.reconcile_update_receipts(self.run, self.feature)
+        system = self.delivered(self.record())["system"]["receipt"]
+        self.assertEqual(("unknown", "本次取回的字节与投放的不是同一版（回执 sha256 不同）"),
+                         (system["status"], system["why"]))
+
+    def test_the_old_global_received_at_source_is_kept_apart_and_never_used(self) -> None:
+        """旧格式（schema 1）的统一 received_at_source 不是逐件依据：另存原值并标 legacy；
+        旧记录没有逐件原件摘要时按 unknown 记，不据旧字段推本地件被接收。"""
+        payload = self.deliver()
+        payload["schema_version"] = 1
+        payload["received_at_source"] = "model fetch receipt (fetched.json fetchedAt)"
+        for item in payload["delivered"]:
+            item.pop("receipt", None)
+            item.pop("sha256", None)
+        self.rewrite(payload)
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        payload = self.record()
+        self.assertNotIn("received_at_source", payload)
+        self.assertEqual("model fetch receipt (fetched.json fetchedAt)", payload["legacy_received_at_source"])
+        self.assertTrue(summary["legacy"])
+        for item in payload["delivered"]:
+            self.assertEqual("unknown", item["receipt"]["status"])
+            self.assertIn("旧格式", item["receipt"]["why"])
+        self.assertEqual("checked", payload["receipt_check"]["status"])
+
+    def test_no_record_means_nothing_to_reconcile(self) -> None:
+        self.assertIsNone(rc.reconcile_update_receipts(self.run, self.feature))
 
 
 if __name__ == "__main__":

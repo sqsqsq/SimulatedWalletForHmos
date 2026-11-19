@@ -2304,6 +2304,14 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
         feed.emit("execution_checks_done", status=result["execution_status"],
                   target_reached=result["target_reached"], gates=result["gates"])
 
+        # 第二段投放的「收到」此刻按两种现有来源核一次：本地件看 importer 导入记录、
+        # 系统件看本次取材回执；投放记录只证明写入，不冒充收到。核不到记 unknown，不阻断终态。
+        try:
+            result["update_receipts"] = reconcile_update_receipts(out_dir, REPO_ROOT / FEATURES_DIR / feature)
+        except Exception as exc:  # noqa: BLE001  取证失败不改变本轮结论，但要在结果里看得见
+            result["update_receipts"] = {"status": "error", "error": f"{exc.__class__.__name__}: {exc}"}
+        if result["update_receipts"]:
+            feed.emit("update_receipts_checked", **result["update_receipts"])
         # 归档产物副本：下一条新链会把当前 feature 移到仓外；run 目录仍保留本轮不可变审计副本（蓝图与需求同根，一起带上）。
         copies = [(REPO_ROOT / FEATURES_DIR / feature, out_dir / "artifact")]
         for src, artifact in copies:
@@ -2356,6 +2364,7 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                      target_reached=result.get("target_reached"),
                      pipeline=result.get("pipeline"),
                      source_transaction=result.get("source_transaction"),
+                     update_receipts=result.get("update_receipts"),
                      phase_results=result.get("phase_results"),
                      phase_result_files=result.get("phase_result_files"),
                      last_event={"name": "run_end", "at": result["end"]})
@@ -2973,6 +2982,8 @@ def deliver_update_inputs(case_id: str, feature: str, out_dir: Path, review_feed
             _write_update_delivery(out_dir, feature, done, failed, [r for r, *_ in actions[index + 1:]])
             raise UpdateDeliveryError(done, failed, [r for r, *_ in actions[index + 1:]], f"{record['file']}：{exc}") from exc
         record["delivered_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        # 收到不是投放能证明的：逐件写明这一件的收到该去哪一类现有记录里核（见 reconcile_update_receipts）。
+        record["receipt"] = _receipt_plan(record)
         if record.get("kind") == "review_human_zone":
             # 人工区意见写进的是评审记录本体：摘要取写完之后的那份，记录的是实际投出的内容。
             try:
@@ -2985,33 +2996,281 @@ def deliver_update_inputs(case_id: str, feature: str, out_dir: Path, review_feed
     return done
 
 
-#: 更新投放记录：每件投了什么、什么时候、原件摘要；收到时刻另看模型取材回执。
+#: 更新投放记录：每件投了什么、什么时候、原件摘要；收到另按各自的导入/取材记录核。
 UPDATE_DELIVERY_RECORD = "update-delivery.json"
+#: 投放记录格式：2 起逐件带 `receipt` 来源；1 是整个文件共用一个 `received_at_source`，
+#: 它不能证明本地件已由 importer 接收，也不能证明系统件取回的是本次投放的字节。
+UPDATE_DELIVERY_SCHEMA = 2
 
 
 def _write_update_delivery(out_dir: Path, feature: str, done: list[dict], failed: dict | None,
                            pending: list[dict]) -> None:
     """把本次第二段投放写成 `out_dir/update-delivery.json`（原样记录，不改写工作区）。
 
-    `delivered_at` 是装置实际写入的时刻；**收到时刻不从它推**——模型这次取材回执
-    （`AR/story-src/fetched.json` 的 `fetchedAt`）才是它实际收到的时刻，两者分开核。
+    `delivered_at` 是装置实际写入的时刻，**不是收到的时刻**；逐件 `receipt` 写的是这一件的收到去哪一类
+    现有记录里核：本地件看 importer 导入记录，系统件看本次取材回执。投放本身不被写作实际收到。
     写不进只影响证据，不影响投放结果；记录本身已经在返回值里。
     """
     payload = {
-        "schema_version": 1,
+        "schema_version": UPDATE_DELIVERY_SCHEMA,
         "feature": feature,
         "recorded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "delivered": done,
         "failed": failed,
         "not_delivered": pending,
-        "received_at_source": "model fetch receipt (AR/story-src/fetched.json fetchedAt)",
-        "note": "delivered_at 是装置写入时刻；模型收到时刻取其取材回执，不拿投放时刻冒充",
+        "receipt_check": {
+            "status": "not_checked",
+            "sources": {
+                "local_material/supplement": "importer 导入记录 AR/story-src/materials.json"
+                                            "（会议材料：AR/story-src/meetings/<键>/source.json）",
+                "system": "本次取材回执 AR/story-src/fetched.json 与它的批次 .receipt.json",
+            },
+            "note": "delivered_at 是装置写入的时刻，不是收到的时刻。投放本身不被写作实际收到；"
+                    "逐件收到按各自来源的导入/取材记录核，核不到记 unknown，只有先后关系时注明粒度。",
+        },
     }
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         _atomic_write(out_dir / UPDATE_DELIVERY_RECORD, json.dumps(payload, ensure_ascii=False, indent=2))
     except OSError:
         return
+
+
+def _receipt_plan(record: dict) -> dict:
+    """这一件的「收到」该去哪一类现有记录里核：投放时还没有接收事件，这里只写明来源与查法。"""
+    kind = record.get("kind")
+    if kind in ("local_material", "supplement"):
+        return {"status": "unknown", "source": "importer 导入记录",
+                "look": "AR/story-src/materials.json 里 inbox_path 与原件 sha256 都对得上的版本；"
+                        "会议材料看 AR/story-src/meetings/<键>/source.json 的原文件名与 sha256",
+                "why": "投放本身不是收到：本次投放时还没有导入事件，收到另按导入记录核"}
+    if kind == "system":
+        return {"status": "unknown", "source": "本次取材回执",
+                "look": "AR/story-src/fetched.json 里同名条目的 status/sha256/bytes 与它的批次 .receipt.json",
+                "why": "投放本身不是收到：本次投放时还没有取材回执，收到另按本次取材记录核"}
+    return {"status": "unknown", "source": None,
+            "why": "这类投放没有可核的接收事件（评审记录写进产品目录，由读者直接读）"}
+
+
+def _read_json_doc(path: Path) -> tuple[dict | None, str | None]:
+    """读一份 JSON 记录：读不到或不是合法对象时给原因，不当成空记录。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except OSError as exc:
+        return None, f"读不到 {path.name}（{exc.__class__.__name__}）"
+    except ValueError as exc:
+        return None, f"{path.name} 不是合法 JSON（{exc}）"
+    if not isinstance(data, dict):
+        return None, f"{path.name} 不是 JSON 对象"
+    return data, None
+
+
+def _local_time(value: object) -> datetime | None:
+    """记录里的时刻：投放记的是本地无时区文本，导入/取材记的是带时区 ISO；都还原成本地 naive 比较。"""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            return datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+    return parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
+def _ordered_before(record: dict, at: object) -> bool:
+    """已有证据只够定位先后：接收记录的时刻早于本次投放，就不能证明这次投放被接收。"""
+    received, delivered = _local_time(at), _local_time(record.get("delivered_at"))
+    return bool(received and delivered and received < delivered)
+
+
+def _local_receipt(record: dict, feature_root: Path) -> dict:
+    """本地件的收到：importer 导入记录（时间与原件字节），会议材料另看会议版本登记。"""
+    inbox_key = str(record.get("destination") or "")
+    inbox_key = inbox_key[len("inbox/"):] if inbox_key.startswith("inbox/") else inbox_key
+    sha = str(record.get("sha256") or "")
+    index_path = feature_root / "AR" / "story-src" / "materials.json"
+    index, error = _read_json_doc(index_path)
+    rows = []
+    for source in (index or {}).get("sources") or []:
+        for version in source.get("versions") or []:
+            if not isinstance(version, dict) or version.get("inbox_path") != inbox_key:
+                continue
+            original = version.get("original") or {}
+            rows.append({"source_id": source.get("source_id"), "version": version.get("version"),
+                         "dir": version.get("dir"), "sha256": original.get("sha256"),
+                         "path": original.get("path"), "at": version.get("acquired_at")})
+    same = [row for row in rows if sha and row.get("sha256") == sha]
+    if same:
+        row = same[-1]
+        receipt = {"source": "importer 导入记录 AR/story-src/materials.json", "at": row["at"],
+                   "sha256": row["sha256"], "path": row["path"], "version": row["dir"],
+                   "source_id": row["source_id"]}
+        if _ordered_before(record, row["at"]):
+            return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
+                    "why": "同字节的导入记录早于本次投放：只能说明先后与字节相同，"
+                           "不能证明这次投放被 importer 接收"}
+        return {**receipt, "status": "received", "granularity": "exact"}
+    if rows:
+        row = rows[-1]
+        return {"status": "unknown", "source": "importer 导入记录 AR/story-src/materials.json",
+                "at": row.get("at"), "sha256": row.get("sha256"), "version": row.get("dir"),
+                "why": f"该收件箱位置导入的是别的字节（{row.get('dir')}），"
+                       "本次投放的 sha256 没有出现在导入记录里"}
+    meeting = _meeting_receipt(record, feature_root, inbox_key, sha)
+    if meeting:
+        return meeting
+    why = f"没有导入记录：AR/story-src/materials.json 里没有 inbox/{inbox_key}"
+    return {"status": "unknown", "source": "importer 导入记录 AR/story-src/materials.json",
+            "at": None, "why": why + (f"（{error}）" if error else "")}
+
+
+def _meeting_receipt(record: dict, feature_root: Path, inbox_key: str, sha: str) -> dict | None:
+    """会议材料的导入记录：`AR/story-src/meetings/<键>/source.json` 的原文件名、原件摘要与导入时刻。"""
+    meta_paths = sorted((feature_root / "AR" / "story-src" / "meetings").glob("*/*/source.json"))
+    for meta_path in meta_paths:
+        meta, _error = _read_json_doc(meta_path)
+        if not sha or not meta or str(meta.get("sha256") or "") != sha:
+            continue
+        if Path(str(meta.get("file") or "")).name != Path(inbox_key).name:
+            continue
+        receipt = {"source": f"importer 会议版本登记 {meta_path.parent.relative_to(feature_root).as_posix()}/source.json",
+                   "at": meta.get("acquired_at"), "sha256": meta.get("sha256")}
+        if _ordered_before(record, meta.get("acquired_at")):
+            return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
+                    "why": "同字节的会议版本早于本次投放：只能说明先后与字节相同，不能证明这次投放被导入"}
+        return {**receipt, "status": "received", "granularity": "exact"}
+    return None
+
+
+def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: str, sha: str) -> dict:
+    """系统件的本次取材批次回执：有就核批次时刻与原件字节，没有或对不上如实标。"""
+    saved_rel = str(saved or "")
+    if not saved_rel:
+        return {"status": "missing", "path": None, "why": "回执没写这一件落盘位置"}
+    batch_path = feature_root / saved_rel
+    batch_receipt = batch_path.parent / ".receipt.json"
+    try:
+        batch_rel = batch_receipt.relative_to(feature_root).as_posix()
+    except ValueError:
+        batch_rel = str(batch_receipt)
+    doc, error = _read_json_doc(batch_receipt)
+    if doc is None:
+        return {"status": "missing", "path": batch_rel, "why": error or "批次回执不存在"}
+    item = next((i for i in doc.get("items") or [] if isinstance(i, dict) and i.get("name") == name), None)
+    if doc.get("fetchedAt") != fetched_at or not item or item.get("status") != "fetched" or item.get("sha256") != sha:
+        return {"status": "mismatch", "path": batch_rel,
+                "why": "批次回执的时刻或原件字节与本次取材不一致"}
+    return {"status": "verified", "path": batch_rel, "why": None}
+
+
+def _system_receipt(record: dict, feature_root: Path) -> dict:
+    """系统件的收到：本次取材回执的状态、时间、原件字节，外加该件的批次回执。"""
+    name = Path(str(record.get("destination") or "")).name
+    sha = str(record.get("sha256") or "")
+    receipt_path = feature_root / "AR" / "story-src" / "fetched.json"
+    receipt, error = _read_json_doc(receipt_path)
+    fetched_at = (receipt or {}).get("fetchedAt")
+    source = "本次取材回执 AR/story-src/fetched.json"
+    candidates = [i for i in (receipt or {}).get("items") or [] if isinstance(i, dict) and i.get("name") == name]
+    if not candidates:
+        why = f"没有本次取材回执里 {name} 这一件"
+        return {"status": "unknown", "source": source, "at": fetched_at,
+                "why": why + (f"（{error}）" if error else "")}
+    fetched = [i for i in candidates if i.get("status") == "fetched"]
+    item = (fetched or candidates)[-1]
+    status = item.get("status")
+    if status == "fetched" and item.get("sha256"):
+        if item["sha256"] != sha:
+            return {"status": "unknown", "source": source, "at": fetched_at, "sha256": item.get("sha256"),
+                    "why": "本次取回的字节与投放的不是同一版（回执 sha256 不同）"}
+        batch = _batch_receipt(feature_root, item.get("saved"), fetched_at, name, sha)
+        receipt = {"source": source, "at": fetched_at, "sha256": item["sha256"],
+                   "bytes": item.get("bytes"), "saved": item.get("saved"),
+                   "batch_receipt": batch["path"], "batch": batch["status"]}
+        if batch["status"] != "verified":
+            receipt["batch_why"] = batch["why"]
+        if _ordered_before(record, fetched_at):
+            return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
+                    "why": "本次取材回执的时刻早于本次投放：只能说明先后与字节相同，"
+                           "不能证明取回的就是这次投放的字节"}
+        return {**receipt, "status": "received", "granularity": "exact"}
+    if status in ("absent", "failed"):
+        return {"status": "not_received", "source": source, "at": fetched_at,
+                "why": f"本次取材回执记 {name} 为 {status}"
+                       + (f"：{item.get('note')}" if item.get("note") else "")}
+    if status == "same":
+        return {"status": "ordered_only", "source": source, "at": fetched_at, "sha256": item.get("sha256"),
+                "granularity": "sequence_only",
+                "why": "本次取材判为 same、没有落盘：只能说明字节与本地已有件相同，不能证明取回的是本次投放"}
+    return {"status": "unknown", "source": source, "at": fetched_at,
+            "why": f"本次取材回执里 {name} 的状态是 {status or '缺失'}，核不了收到"}
+
+
+def _resolve_receipt(record: dict, feature_root: Path) -> dict:
+    """一件投放的收到：按它的来源（本地导入 / 系统取材）核，投放时刻不参与证明收到。"""
+    if not record.get("sha256"):
+        return {"status": "unknown", "source": None,
+                "why": "旧格式投放记录没有逐件原件摘要，无法与导入/取材记录对上"}
+    kind = record.get("kind")
+    if kind in ("local_material", "supplement"):
+        return _local_receipt(record, feature_root)
+    if kind == "system":
+        return _system_receipt(record, feature_root)
+    return {"status": "unknown", "source": None,
+            "why": "这类投放没有可核的接收事件（投放记录只证明写入）"}
+
+
+def reconcile_update_receipts(out_dir: Path, feature_root: Path) -> dict | None:
+    """把 `update-delivery.json` 的逐件「收到」按两种现有来源核对后写回，返回核对摘要。
+
+    **投放 ≠ 收到**：`delivered_at` 只证明装置写了哪一份字节。本地件（`local_material`/`supplement`，
+    投进收件箱）按 importer 的导入记录核时间与原件字节；系统件（投进需求系统、由模型 fetch 取回）按本次
+    取材回执的状态、时间、原件字节与批次回执核。同字节的接收记录早于本次投放时只有先后关系，记
+    `ordered_only` 并注明粒度；查过但没有对应事件记 `unknown`，不说成没收到。旧格式（schema 1）的统一
+    `received_at_source` 不作为逐件依据，原值另存 `legacy_received_at_source`。没有投放记录时返回 None。
+    """
+    path = out_dir / UPDATE_DELIVERY_RECORD
+    if not path.is_file():
+        return None
+    payload, error = _read_json_doc(path)
+    if payload is None:
+        return {"status": "unreadable", "path": str(path), "error": error}
+    legacy_from = payload.get("schema_version")
+    legacy = legacy_from != UPDATE_DELIVERY_SCHEMA or "received_at_source" in payload
+    if payload.get("received_at_source"):
+        payload["legacy_received_at_source"] = payload.pop("received_at_source")
+    items = payload.get("delivered") or []
+    counts = {"received": 0, "unknown": 0, "not_received": 0, "ordered_only": 0}
+    for record in items:
+        if not isinstance(record, dict):
+            continue
+        record["receipt"] = _resolve_receipt(record, feature_root)
+        counts[record["receipt"]["status"]] = counts.get(record["receipt"]["status"], 0) + 1
+    payload["schema_version"] = UPDATE_DELIVERY_SCHEMA
+    if legacy:
+        payload.setdefault("legacy", {}).update({
+            "schema_version": legacy_from,
+            "note": "旧格式的统一 received_at_source 不能证明本地件被导入、也不能证明系统件取回的是本次字节，"
+                    "不作为逐件收到依据；原值另存 legacy_received_at_source",
+        })
+    payload["receipt_check"] = {
+        **(payload.get("receipt_check") or {}),
+        "status": "checked",
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "counts": counts,
+        "note": "delivered_at 是装置写入的时刻，不是收到的时刻。received 逐件按导入/取材记录核；"
+                "unknown 是查过但没有对应事件，不是没收到；ordered_only 只有先后关系可用。",
+    }
+    summary = {"status": "checked", "feature": payload.get("feature"), "items": len(items), **counts,
+               **({"legacy": True} if legacy else {})}
+    try:
+        _atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2))
+    except OSError as exc:
+        summary["write_error"] = f"{exc.__class__.__name__}: {exc}"
+    return summary
 
 
 def _target_now(target: Path) -> dict | str:
@@ -3209,7 +3468,7 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
     (out_dir / RESUME_FILE).write_text(
         json.dumps({"text": text, "at": queued_at}, ensure_ascii=False),
         encoding="utf-8")
-    # 投放记录同一处补上第二段请求与排队时刻：收到时刻仍以模型取材回执为准。
+    # 投放记录同一处补上第二段请求与排队时刻；收到按各件来源核（见 reconcile_update_receipts），不在这里补。
     record_path = out_dir / UPDATE_DELIVERY_RECORD
     try:
         payload = json.loads(record_path.read_text(encoding="utf-8")) if record_path.is_file() else {}
@@ -3258,13 +3517,25 @@ def cmd_conclude(case_id: str, reason: str) -> int:
 
 def cmd_stop(case_id: str, force: bool) -> int:
     """停止后**必须验证进程树死亡**；无法确认时发布 stop_failed，不伪装成 stopped。"""
-    _, out_dir, _ = _load_case(case_id)
+    _, out_dir, feature = _load_case(case_id)
     state = reconcile_worker_state(out_dir, read_state(out_dir))
     if not state:
         print(json.dumps({"ok": False, "error": "没有可停止的运行"}, ensure_ascii=False))
         return 1
+
+    def settle_receipts(state_: dict) -> None:
+        """停止也是终态：投放记录此刻能按导入/取材记录核到多少就核多少；核不到记 unknown。"""
+        if not (out_dir / UPDATE_DELIVERY_RECORD).is_file():
+            return
+        try:
+            state_["update_receipts"] = reconcile_update_receipts(out_dir, REPO_ROOT / FEATURES_DIR / feature)
+        except Exception as exc:  # noqa: BLE001  取证失败不改变停止结论，但要在状态里看得见
+            state_["update_receipts"] = {"status": "error", "error": f"{exc.__class__.__name__}: {exc}"}
+
     if state.get("status") in TERMINAL_STATUS:
         state = settle_terminal_source(out_dir, state)
+        settle_receipts(state)
+        write_state(out_dir, state)
         if state.get("case") and state.get("run_id"):
             run_layout.publish_latest(
                 OUT_ROOT, str(state["case"]), str(state["run_id"]), str(state["status"]))
@@ -3333,6 +3604,8 @@ def cmd_stop(case_id: str, force: bool) -> int:
                   residual_pid=pid if _pid_alive(pid) else None)
     write_state(out_dir, state)
     state = settle_terminal_source(out_dir, state)
+    settle_receipts(state)
+    write_state(out_dir, state)
     final = str(state.get("status") or final)
     if final == "source_restore_failed":
         errors.append("源码事务恢复失败，详见 source-transaction/restore.json")
