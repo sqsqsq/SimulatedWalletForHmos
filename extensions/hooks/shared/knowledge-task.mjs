@@ -256,7 +256,8 @@ function blueprintTask(root, id, action) {
     + '施工义务在施工单位的契约中承接。'];
   if (action === 'design') {
     duties.push('适用条目要求的可观察行为、统计指标与资源义务，在质询之前写成承担它的设计对象上的验收（knowledge_refs 与 must 列同一条目）、'
-      + 'must 与真实的事件明细；只交业务送审、不进 spec 时也写在蓝图里。');
+      + 'must 与真实的事件明细；共享义务可以在共同承担的契约或节点上写一次验收，由实际引用它的施工单位取得，依赖闭包不等于施工责任；'
+      + '验收要覆盖这项义务的全部实际承担者、能观察和判断；零 CU 的业务送审同样以这份共同验收为准，Story 不临时补技术设计。');
   }
   if (action !== 'questioning') {
     duties.push('这一轮的知识输入身份，原样写进蓝图 `discovery.inputs.knowledge_context`（知识换了重取本任务、按新的一份替换）：', '',
@@ -271,6 +272,8 @@ function blueprintTask(root, id, action) {
       + '责任方、验证去向，以及未决项与处置建议。',
     '首次质询逐项对照有效需求、人答、最终设计与验收，以及工程里现有的页面与入口证据核源；设计拟删除或收窄材料明示的行为时，'
       + '先引原句或裁决，写出影响与兼顾做法，依据不足的保持未决。',
+    '共同验收逐条核：验收是不是可观察、是否能判断，覆盖这项义务的全部实际承担者没有；共享验收写明它覆盖谁，'
+      + '不能只凭全蓝图任意处出现同一 knowledge_ref 就判对象已落实；缺验收、不可观察或来源对不上的，写进对应的原生质询项与责任方，不改写蓝图。',
     '同一读者复核修订时，按复核消息给的当前正文、原问题与受影响的依据回查；未受影响项确认原结论与证据仍适用，结果照样逐项覆盖上面的范围。');
     // 首读之后才读本任务：派给子代理的是只含人读稿、八问与阅读规则的载体，不是本任务
     dispatch.push(`把本任务全文原样存到 \`${round.task}\`，被评候选的原始字节存到 \`${round.candidate}\`；`
@@ -310,9 +313,10 @@ function carriedDuties(judged, action, knowledge) {
   for (const d of applied) {
     const { executor, allowed } = verifyChoices(entryOf(knowledge, d));
     out.push(`- \`${d.source_ref}\`（事实 ${d.fact_id}）：${d.rationale ?? ''}；落在 ${d.target_refs.join('、')}`
-      + (action === 'plan' ? `；承担它的实体写 must（source_ref 照抄这条），verify 取 ${allowed.join(' / ')}${executor ? `（规约声明要「${executor}」证据）` : ''}` : '')
+      + (action === 'plan' ? `；承担它的实体写 must（source_ref 照抄这条），verify 取 ${allowed.join(' / ')}${executor ? `（规约声明要「${executor}」证据）` : ''}`
+        + '；验收指标按原生选中的共同验收核本单位承接的条目，不另造、不反向覆盖蓝图共同真源' : '')
       + (action === 'spec' ? (judged.scope
-        ? '；蓝图承担对象带的验收复用它（knowledge_refs 列这条），只做有据的局部细化，蓝图没有验收投影时由你写；共同取舍要变交设计负责方'
+        ? '；蓝图承担对象带的验收复用它（knowledge_refs 列这条），只做有据的局部细化；共同取舍要变交设计负责方；全蓝图别处出现同 ref 的验收不能代替本单位这条的承接，蓝图没有验收投影时由你写'
         : '；验收写出它要求的可观察行为与验证责任，knowledge_refs 列这条') : ''));
   }
   for (const d of selected) {

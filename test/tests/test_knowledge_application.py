@@ -62,7 +62,8 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
 
     def test_a_whole_domain_out_of_scope_is_one_reasoned_fact(self) -> None:
         self.assertEqual([], self.problems("rules.value = {knowledge_kind: 'constraints', outcome: 'not_applicable',"
-                                           " rationale: '本需求没有新增入口，也没有上报动作'}; node.must = [];"))
+                                           " rationale: '本需求没有新增入口，也没有上报动作'}; node.must = [];"
+                                           " other.acceptance.criteria = other.acceptance.criteria.filter(c => !c.knowledge_refs);"))
 
     def test_a_related_domain_judges_every_entry_once(self) -> None:
         missing = self.problems("rules.value.items = rules.value.items.filter(i => i.unit === 'SMP-01');")
@@ -155,6 +156,40 @@ class KnowledgeApplicationsAreCheckedAgainstTheRealObjects(unittest.TestCase):
         rules.write_bytes(rules.read_bytes() + "\n补一条附注。\n".encode("utf-8"))
         changed = self.problems()
         self.assertTrue(any("原文变了" in p and RULES in p for p in changed), changed)
+
+    def test_an_applied_entry_needs_common_acceptance_on_a_real_object(self) -> None:
+        """适用条目在蓝图里要有同 source_ref 的共同验收：删掉唯一一条，报真实承担对象与设计职责。"""
+        self.assertEqual([], self.problems())
+        dropped = self.problems("other.acceptance.criteria = other.acceptance.criteria.filter(c => !c.knowledge_refs);")
+        self.assertEqual(1, len(dropped), dropped)
+        self.assertIn("适用条目 SMP-01", dropped[0])
+        self.assertIn(f"落在 {NODE}", dropped[0])
+        self.assertIn("蓝图里没有共同验收承接它", dropped[0])
+        self.assertIn(f"knowledge_refs 列 {RULES}#SMP-01", dropped[0])
+        self.assertIn("由设计作者处理", dropped[0])
+
+    def test_a_shared_acceptance_may_cover_several_entries(self) -> None:
+        """一条共同验收可以承接同一份规约的多条适用条目，不要求每个设计对象各复制一条。"""
+        shared = (f"rules.value.items[1] = {{unit: 'SMP-02', outcome: 'applied', rationale: '上报失败降级为本地日志',"
+                  f" target_refs: ['{OTHER}']}};"
+                  f"other.must = [{{text: '上报失败只记本地日志', source_ref: '{RULES}#SMP-02', verify: 'review'}}];"
+                  f"other.acceptance.criteria[1].knowledge_refs = ['{RULES}#SMP-01', '{RULES}#SMP-02'];")
+        self.assertEqual([], self.problems(shared))
+
+    def test_acceptance_refs_name_active_applied_entries_and_typed_errors_stay_native(self) -> None:
+        """未知/未激活引用、非适用引用分别报对象与条目；原生 typed 内容/来源错误原样保留，不当成空集合成功。"""
+        stray = "doc/extensions/knowledge/constraints/retired.md#SMP-99"
+        unknown = self.problems(f"other.acceptance.criteria[1].knowledge_refs = ['{stray}'];")
+        self.assertTrue(any("view:development/node:wallet-main-module" in p and stray in p and "不是这一轮激活规约的条目" in p
+                            for p in unknown), unknown)
+        idle = self.problems(f"other.acceptance.criteria[1].knowledge_refs = ['{RULES}#SMP-02'];")
+        self.assertTrue(any(f"{RULES}#SMP-02" in p and "不是适用的施工规约条目" in p for p in idle), idle)
+        prose = self.problems("other.acceptance = '刷新失败时要能看见';")
+        self.assertTrue(any("authority_content_not_machine_structure" in p and "view:development/node:wallet-main-module" in p
+                            for p in prose), prose)
+        unapproved = self.problems("other.provenance = {...other.provenance, evidence_strength: 'observed'};")
+        self.assertTrue(any("authority_target_provenance_missing" in p and "view:development/node:wallet-main-module" in p
+                            for p in unapproved), unapproved)
 
 
 if __name__ == "__main__":

@@ -751,6 +751,8 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.assertIn(f"`{base}/reply.md`", dispatch, "派审与留存没单列给主执行者")
         duties = proc.stdout.split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
         self.assertIn("首次质询逐项对照有效需求、人答、最终设计与验收", duties, "核源动作只留了指针")
+        self.assertIn("共同验收逐条核", duties)
+        self.assertIn("不能只凭全蓝图任意处出现同一 knowledge_ref", duties)
         self.assertIn("同一读者复核修订时", duties)
 
     def test_the_first_read_carrier_is_only_for_the_first_reading(self) -> None:
@@ -943,6 +945,67 @@ class TheKnowledgeTaskHasSixBlocks(NativeCase):
         self.assertIn(f"`doc/extensions/{second}`", spec)
         design = self.task("--blueprint", BLUEPRINT, "--action", "design", "--audience", "author").stdout
         self.assertIn(f"`doc/extensions/{second}`", design, "蓝图设计要看全部登记的知识")
+
+
+class TheBlueprintAuthorGetsTheCommonAcceptanceGap(unittest.TestCase):
+    """零 CU 的蓝图任务：适用条目在蓝图里没有共同验收就等于缺项；删掉唯一一条，任务缺口点名对象、条目与设计职责，
+    补回承担对象上的真实验收后恢复。零 CU 不经过 Spec/Plan，共同验收只能在蓝图里成立。"""
+
+    FEATURE = "REQ-DEMO"
+    FIXTURE = REPO_ROOT / "test" / "fixtures" / "failure-modes" / "R01-verdict-echo" / "good"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "work"
+        from designed_fixture import designed_copy  # noqa: PLC0415
+        designed_copy(self.FIXTURE, self.FEATURE, self.root)
+        self.canonical = (self.root / "doc" / "features" / self.FEATURE / "blueprint" / "component-blueprint.yaml")
+        self.original = self.canonical.read_bytes()
+
+    def task(self) -> str:
+        proc = self.task_proc()
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return proc.stdout
+
+    def task_proc(self) -> subprocess.CompletedProcess:
+        from ext_workspace import DEV_EXT  # noqa: PLC0415
+        return subprocess.run(["node", str(DEV_EXT / "hooks/shared/knowledge-task.mjs"), "--project-root", str(self.root),
+                               "--blueprint", self.FEATURE, "--action", "design", "--audience", "author"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+
+    def gaps(self, text: str) -> str:
+        return text.split("## 6. 缺口与责任", 1)[1]
+
+    def drop_criterion(self) -> None:
+        import design_kit  # noqa: PLC0415
+        lines = self.canonical.read_text(encoding="utf-8").splitlines(keepends=True)
+        start = next(i for i, line in enumerate(lines) if line.strip() == "- id: AC-G01")
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = start + 1
+        while end < len(lines) and len(lines[end]) - len(lines[end].lstrip()) > indent:
+            end += 1
+        removed = "".join(lines[start:end])
+        design_kit.change_blueprint(self.root, self.FEATURE, design_kit.ACCESS, removed, "")
+
+    def test_the_design_author_is_told_where_the_common_acceptance_goes(self) -> None:
+        duties = self.task().split("## 3. 当前契约与义务", 1)[1].split("## 4.", 1)[0]
+        self.assertIn("共享义务可以在共同承担的契约或节点上写一次验收", duties)
+        self.assertIn("验收要覆盖这项义务的全部实际承担者", duties)
+
+    def test_a_missing_common_acceptance_is_a_gap_naming_the_object_and_restores(self) -> None:
+        self.assertNotIn("没有共同验收承接它", self.gaps(self.task()))
+        self.drop_criterion()
+        gaps = self.gaps(self.task())
+        self.assertIn("适用条目 SMP-01", gaps)
+        self.assertIn("view:logical/node:wallet-balance", gaps)
+        self.assertIn("蓝图里没有共同验收承接它", gaps)
+        self.assertIn("knowledge_refs 列 doc/extensions/knowledge/constraints/sample-domain.md#SMP-01", gaps)
+        self.assertIn("设计作者处理", gaps)
+        self.canonical.write_bytes(self.original)
+        import design_kit  # noqa: PLC0415
+        design_kit.render_projection(self.root, self.FEATURE, design_kit.ACCESS)
+        self.assertNotIn("没有共同验收承接它", self.gaps(self.task()))
 
 
 class TheReviewerGetsTheSameLoader(NativeCase):

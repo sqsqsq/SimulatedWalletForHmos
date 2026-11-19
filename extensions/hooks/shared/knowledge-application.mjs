@@ -8,6 +8,10 @@
  *   模式只在出现候选信号时写 `{knowledge_kind: patterns, outcome: selected|rejected, rationale}`；项目事实引用事实文件（可带 `#单元`）。
  * - 义务与角色：承担它的实体上的 `must: [{text, source_ref, verify}]`（source_ref 指规约条目 `<文件>#<编号>`）与
  *   `pattern_roles: [{pattern_ref, role}]`（pattern_ref 指模式文件）。蓝图里在稳定地址对象上，施工契约里在实体上。
+ * - 共同验收：同样挂在承担它的实体上，原生 typed 的 `acceptance.criteria / boundaries`，`knowledge_refs` 列适用的规约条目
+ *   （与 `must.source_ref` 同一条目）。蓝图设计动作与零 CU 的 Story 要求判定适用的条目都有共同验收；实际施工单位的阶段产物
+ *   由 spec 写或复用原生选中的那份，Plan/Spec 门共用 `knowledgeAcceptanceProblems` 核它选中的验收与本责义务。蓝图里的验收
+ *   按实体逐个走原生 `mergeBlueprintTargetContent`（单目标）核来源与内容，再按 `knowledgeCriteria` 取引用；不跨对象合并条目。
  * - 没有蓝图的平铺维护 Feature：同一形态的适用性事实写在它原生契约的 `knowledge_facts` 里（原生按文件路径读契约里的
  *   `files`，输入身份不放进契约）。
  *
@@ -177,15 +181,117 @@ function checkFacts(projectRoot, native, active, { facts: list, context, real, l
   return { rows, facts, problems };
 }
 
+/** 原生稳定地址 → 原生投影目标的形状（kind / id，视图下的对象带 view_id）：共同验收仍归到它真实所在的对象上。 */
+function targetOf(address) {
+  const at = String(address ?? '').indexOf(':');
+  if (at < 0) return null;
+  const kind = address.slice(0, at);
+  const rest = address.slice(at + 1);
+  if (kind !== 'view') return { kind, id: rest };
+  const slash = rest.indexOf('/');
+  if (slash < 0) return { kind, id: rest };
+  const tail = rest.slice(slash + 1);
+  const colon = tail.indexOf(':');
+  return colon < 0 ? null : { kind: tail.slice(0, colon), id: tail.slice(colon + 1), view_id: rest.slice(0, slash) };
+}
+
+/** 报出原生定位的人读地址：保原生 kind/id（视图下的对象带 view_id）。 */
+const locationText = location => `${location?.target?.kind ?? '?'}:${location?.target?.id ?? '?'}`
+  + (location?.target?.view_id ? `（view ${location.target.view_id}）` : '')
+  + (location?.field ? `.${location.field}` : '');
+
 /**
- * 蓝图里的知识应用：输入身份、适用性事实、实体上的义务与模式角色，按激活知识与原生稳定地址核。
+ * 蓝图里真实存在的共同验收：对每个带 `acceptance` 的设计对象**单独**走原生 `mergeBlueprintTargetContent`
+ * （单目标数组）核来源与内容，保原生地址与原生的错误代码/定位；不跨对象合并本地条目。
+ * `native` 已由调用方读好；没有这一版原生投影能力时按缺口报，不当成「没有验收」。
+ */
+function commonAcceptance(native, blueprint, index, problems, label) {
+  const projection = native.module('scripts/utils/blueprint-skill-projection.ts');
+  if (typeof projection.mergeBlueprintTargetContent !== 'function') {
+    problems.push(`${label}：原生 blueprint-skill-projection 没有 mergeBlueprintTargetContent——`
+      + '被测 Framework 版本不支持共同验收核对，交维护者按原生合同处理');
+    return [];
+  }
+  const rows = [];
+  for (const [address, node] of index) {
+    if (node?.acceptance === undefined) continue;
+    const target = targetOf(address);
+    if (!target) {
+      problems.push(`${label} 的 ${address}：稳定地址认不成原生投影目标——交设计作者按原生地址修正`);
+      continue;
+    }
+    const errors = [];
+    const acceptance = projection.mergeBlueprintTargetContent(
+      [{ ref: { artifact: 'component-blueprint@1', blueprint_id: blueprint?.blueprint_id, target }, target: node }],
+      'acceptance', error => errors.push(error));
+    for (const error of errors) {
+      const locations = [...new Set((error?.locations ?? []).map(locationText))];
+      problems.push(`${label} 的 ${address} 的验收：原生${error?.code ? ` ${error.code}` : ''} ${error?.message ?? error}`
+        + `${locations.length ? `（${locations.join('、')}）` : ''}——`
+        + '验收要是原生 typed 内容、所在对象要有获准设计来源；由设计作者在这个对象上修正，不以空集合当通过');
+    }
+    if (acceptance) rows.push({ address, acceptance });
+  }
+  return rows;
+}
+
+/**
+ * 共同验收与适用性事实的对应：`knowledge_refs` 列的都是激活规约里判定适用的条目，判断适用的条目在蓝图里都有共同验收承接。
+ * `required` 为真时（零 CU 的 Story 与蓝图设计动作）缺一条就报；实际施工单位由本阶段产物承接时按 `knowledgeAcceptanceProblems`
+ * 核它选中验收里的本责条目，不因全蓝图别处出现过同一条目而豁免。
+ */
+function acceptanceProblems(knowledge, active, rows, found, problems, label, required) {
+  const byRef = new Map();
+  for (const { address, acceptance } of found) {
+    const { byRef: refs, problems: shape } = knowledgeCriteria(acceptance);
+    for (const p of shape) problems.push(`${label} 的 ${address} 的验收：${p}——由设计作者在这个对象上修正`);
+    for (const [ref, criteria] of refs) {
+      const ids = criteria.map(r => String(r.id ?? '（没写 id）')).join('、');
+      const at = `${label} 的 ${address} 的验收「${ids}」`;
+      const source = knowledgeSource(active, ref);
+      const entry = source ? entryOf(knowledge, source) : null;
+      if (!entry) {
+        problems.push(`${at}：knowledge_refs 的 ${ref} 不是这一轮激活规约的条目——验收只承接激活规约条目（<知识文件>#<编号>），`
+          + '由设计作者改这个对象上的验收');
+        continue;
+      }
+      const row = rows.find(r => r.source_ref === `${source.ref}#${source.unit}`);
+      if (!row) {
+        problems.push(`${at}：knowledge_refs 的 ${ref} 在适用性事实里没有判断——先判断这条规约，再由设计作者在承担它的设计对象上写验收`);
+        continue;
+      }
+      if (row.outcome !== 'applied' || row.reviewAction) {
+        problems.push(`${at}：knowledge_refs 的 ${ref} 在适用性事实里是 ${row.outcome}${row.reviewAction ? '（评审动作）' : ''}，`
+          + '不是适用的施工规约条目——验收只承接判定适用的条目，由设计作者改这个对象上的验收');
+        continue;
+      }
+      byRef.set(row.source_ref, [...(byRef.get(row.source_ref) ?? []), { address, ids }]);
+    }
+  }
+  if (!required) return;
+  for (const row of rows.filter(r => r.kind === 'constraints' && r.outcome === 'applied' && !r.reviewAction)) {
+    if (byRef.has(row.source_ref)) continue;
+    const on = owners(row);
+    problems.push(`${label}：适用条目 ${row.unit}（${row.file}）落在 ${on.join('、') || '（没有承担对象）'}，`
+      + '蓝图里没有共同验收承接它——在承担它的设计对象上写 acceptance.criteria，'
+      + `knowledge_refs 列 ${row.source_ref}（与 must 同一条目）；共享义务可在共同承担的契约或节点上写一次，不按节点复制；`
+      + '由设计作者处理');
+  }
+}
+
+/**
+ * 蓝图里的知识应用：输入身份、适用性事实、实体上的义务与模式角色、实体上的共同验收，按激活知识与原生稳定地址核。
+ *
+ * `requireAcceptance` 为假时只核已有的共同验收（来源、typed 内容、引用与适用性事实对得上），不要求每条适用条目都已在蓝图里有验收：
+ * 实际施工单位由本阶段 spec 产出验收（`knowledgeAcceptanceProblems` 核它选中的那份）；零 CU 的 Story 与蓝图设计动作要求它在
+ * 蓝图里成立。
  *
  * @returns {{rows: object[], facts: object[], problems: string[]}}
  *   `rows` 是规约与模式的判断，一条一行：规约条目 `{kind: 'constraints', file, ref, unit, source_ref, outcome, rationale,
  *   target_refs, fact_id, reviewAction}`（整域无关 `domain: true`、`unit` 为 null）；模式 `{kind: 'patterns', file, ref,
  *   source_ref, outcome, rationale, roles: [{role, target_ref}], target_refs, fact_id}`。`facts` 是引用了激活项目事实的原生事实。
  */
-export function blueprintKnowledge(projectRoot, blueprint) {
+export function blueprintKnowledge(projectRoot, blueprint, { requireAcceptance = true } = {}) {
   const native = loadNative(projectRoot);
   const knowledge = activeKnowledge(projectRoot);
   const active = activation(projectRoot, knowledge);
@@ -237,6 +343,9 @@ export function blueprintKnowledge(projectRoot, blueprint) {
       }
     }
   }
+  // 共同验收：实体上真实存在的 typed acceptance，来源与内容按原生合并核；判适用的条目要有同 source_ref 的 knowledge_refs
+  const found = commonAcceptance(native, blueprint, index, problems, label);
+  acceptanceProblems(knowledge, active, rows, found, problems, label, requireAcceptance);
   return { rows, facts, problems };
 }
 
@@ -289,7 +398,7 @@ export function featureKnowledge(projectRoot, feature, contracts = null) {
   const problems = [];
   const scope = unitScope(loadNative(projectRoot).module('scripts/utils/blueprint-addressing.ts'), read.blueprint, who.design_refs,
     ref => problems.push(`${label}：施工单位的设计引用 ${JSON.stringify(ref.target)} 在蓝图里解析不了——交设计负责方`));
-  const checked = blueprintKnowledge(projectRoot, read.blueprint);
+  const checked = blueprintKnowledge(projectRoot, read.blueprint, { requireAcceptance: false });
   return { ...checked, problems: [...problems, ...checked.problems], scope, label, blueprint: read.blueprint, source_index: read.source_index };
 }
 
@@ -349,14 +458,15 @@ export function unitDuties(judged) {
  * 验收里的知识归属，spec、plan 门禁共用：本单位承接的适用规约条目都有验收承接（`knowledge_refs` 列它的完整来源），
  * `knowledge_refs` 列的都是激活规约里本单位承接的条目。四项输入由调用方取得——`active` 是调用方已有的 `activation` 结果，
  * `acceptance` 是原生给出的本阶段验收；这里不读文件、不重判适用性，行为是否落实归独立审查。
+ * `phase` 只影响报错里给谁补：spec 可写/复用验收，plan 不另造、不改共同真源。
  */
-export function knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance }) {
+export function knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance, phase = null }) {
   const { byRef, problems } = knowledgeCriteria(acceptance);
   const { applied } = unitDuties(judged);
   // 施工单位的验收来自蓝图承担对象时回设计负责方，蓝图没有投影、由本阶段产出时在这里补；平铺维护 Feature 由它自己的 spec 产出
   const owner = ref => (judged.scope
     ? `验收由蓝图承担对象给出的，交设计负责方在那个设计对象上补一条；蓝图没有验收投影、由 spec 产出的，在 acceptance.yaml 补一条 criteria；`
-      + `两种都在 knowledge_refs 列 ${ref}，plan 不另造验收`
+      + `两种都在 knowledge_refs 列 ${ref}${phase === 'plan' ? '；plan 只按这份验收与本单位承接核，不另造或反向覆盖共同真源' : '，plan 不另造验收'}`
     : `写一条 criteria，knowledge_refs 列 ${ref}；下游 ut / testing 按它找要覆盖的场景`);
   for (const d of applied.filter(x => !byRef.has(x.source_ref))) {
     problems.push(`acceptance：${judged.label} 判定适用的 ${d.unit}（${d.file}）由本施工单位承接，没有验收条目承接——${owner(d.source_ref)}`);

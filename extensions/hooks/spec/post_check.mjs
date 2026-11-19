@@ -100,7 +100,7 @@ export default guard('spec', async (ctx) => {
       if (applied.length) bridge.skipped.push({ what: '验收承接适用规约', why: inputs.why });
     } else {
       const active = activation(ctx.projectRoot, knowledge);
-      bridge.problems.push(...knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance }));
+      bridge.problems.push(...knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance, phase: 'spec' }));
     }
   }
 

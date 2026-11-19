@@ -138,6 +138,46 @@ class DesignEndpointsOnTheRealBlueprint(unittest.TestCase):
         self.assertTrue(any("还没有活动施工单位" in m for m in facts["missing"]), facts["missing"])
 
 
+class TheStoryDeliveryNeedsTheBlueprintCommonAcceptance(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """零 CU 的 Story 交付门取的是同一份蓝图共同验收：删掉适用条目唯一承接的共同验收，
+    `check --deliver` 不放行并点名对象、条目与设计职责；补回后回到正常交付门状态。"""
+
+    def blueprint_path(self) -> Path:
+        return self.root / "doc" / "features" / "REQ-DEMO" / "blueprint" / "component-blueprint.yaml"
+
+    def drop_criterion(self) -> bytes:
+        import design_kit  # noqa: PLC0415
+        canonical = self.blueprint_path()
+        original = canonical.read_bytes()
+        lines = canonical.read_text(encoding="utf-8").splitlines(keepends=True)
+        start = next(i for i, line in enumerate(lines) if line.strip() == "- id: AC-G01")
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = start + 1
+        while end < len(lines) and len(lines[end]) - len(lines[end].lstrip()) > indent:
+            end += 1
+        design_kit.change_blueprint(self.root, "REQ-DEMO", design_kit.ACCESS, "".join(lines[start:end]), "")
+        return original
+
+    def test_the_delivery_gate_names_the_missing_common_acceptance(self) -> None:
+        base = self.check()
+        self.assertEqual(0, base.returncode, base.stdout + base.stderr)
+        original = self.drop_criterion()
+        out = self.check("--deliver")
+        text = out.stdout + out.stderr
+        self.assertNotEqual(0, out.returncode, f"缺共同验收却到了交付门：{text}")
+        self.assertIn("没有共同验收承接它", text)
+        self.assertIn("SMP-01", text)
+        self.assertIn("view:logical/node:wallet-balance", text)
+        self.assertIn("由设计职责在 component-design 里修订", text)
+        self.blueprint_path().write_bytes(original)
+        import design_kit  # noqa: PLC0415
+        design_kit.render_projection(self.root, "REQ-DEMO", design_kit.ACCESS)
+        back = self.check("--deliver")
+        text = back.stdout + back.stderr
+        self.assertIn("还没登记成文", text, "补回共同验收后交付门没回到正常状态")
+        self.assertNotIn("没有共同验收承接它", text)
+
+
 class ThePhaseEndAfterFreezing(unittest.TestCase):
     """范围冻结之后，阶段结论全取原生事实（真实冻结工程、真实原生判定）。
 

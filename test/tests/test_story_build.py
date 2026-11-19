@@ -440,6 +440,46 @@ class TheMachineZoneIsCheckedAgainstItsSource(StoryBuildCase):
         self.assertIn(note, self.story(), "project 把作者的解释冲掉了")
 
 
+class TheStoryNeedsTheBlueprintCommonAcceptance(StoryBuildCase):
+    """零 CU 的 Story 不经过 Spec/Plan：适用条目在蓝图里没有共同验收时，附录不能投、交付门不放行；
+    删掉唯一一条是设计缺口，补回承担对象上的真实验收后恢复。"""
+
+    def blueprint_path(self) -> Path:
+        return (self.root / design_kit.features_dir(self.root) / design_kit.blueprint_of(self.root, FEATURE)
+                / "blueprint" / "component-blueprint.yaml")
+
+    def drop_criterion(self) -> bytes:
+        canonical = self.blueprint_path()
+        original = canonical.read_bytes()
+        lines = canonical.read_text(encoding="utf-8").splitlines(keepends=True)
+        start = next(i for i, line in enumerate(lines) if line.strip() == "- id: AC-G01")
+        indent = len(lines[start]) - len(lines[start].lstrip())
+        end = start + 1
+        while end < len(lines) and len(lines[end]) - len(lines[end].lstrip()) > indent:
+            end += 1
+        design_kit.change_blueprint(self.root, FEATURE, ACCESS, "".join(lines[start:end]), "")
+        return original
+
+    def test_the_unique_acceptance_is_required_before_projection_and_delivery(self) -> None:
+        skeleton = self.run_build("skeleton")
+        self.assertEqual(0, skeleton.returncode, skeleton.stdout + skeleton.stderr)
+        original = self.drop_criterion()
+        before = self.story_path.read_bytes()
+        for command in ("project", "check"):
+            with self.subTest(command=command):
+                proc = self.run_build(command)
+                out = (proc.stdout or "") + (proc.stderr or "")
+                self.assertEqual(1, proc.returncode, f"{command} 在没有共同验收时放行了：{out}")
+                self.assertIn("没有共同验收承接它", out)
+                self.assertIn("SMP-01", out)
+                self.assertIn("由设计职责在 component-design 里修订", out)
+                self.assertEqual(before, self.story_path.read_bytes(), "投影/检查在输入不成立时写了盘")
+        self.blueprint_path().write_bytes(original)
+        design_kit.render_projection(self.root, FEATURE, ACCESS)
+        self.assertEqual(0, self.run_build("project").returncode)
+        self.assertEqual(0, self.run_build("check").returncode)
+
+
 class TheAuthorSectionsTakeAnyForm(StoryBuildCase):
     """附录里作者写的节（接口、数据、规约、取舍说明）收段落、表或列表；空着才报。只有机器区的节仍按投影或「不涉及」判。"""
 

@@ -97,7 +97,7 @@ def design(root: Path, with_roles: bool, pattern: str = "selected", elsewhere: b
         judgements.append(design_kit.pattern_judgement(DECISION_TREE, "selected", "刷新有多个分支，拆成节点",
                                                        [{"role": "节点表", "target_ref": MODULE},
                                                         *({"role": r, "target_ref": ELSEWHERE} for r in ELSEWHERE_ROLES)]))
-    knowledge, attach = design_kit.knowledge_facts(judgements, active, False)
+    knowledge, attach = design_kit.knowledge_facts(judgements, active, False, acceptance=False)
     runtime = "      - verify:runtime\n    nodes: []\n"
     assert text.count(runtime) == 1
     text = text.replace(runtime, "      - verify:runtime\n" + RUNTIME_NODE, 1)
@@ -853,6 +853,7 @@ class ThePlanChecksTheSelectedAcceptanceWhenTheSpecIsReused(StageCase):
         self.assertEqual(2, len(group), got["gate"])
         self.assertIn(f"由本施工单位承接，没有验收条目承接——验收由蓝图承担对象给出的，交设计负责方", group[1])
         self.assertIn(KNOWLEDGE_REF, group[1])
+        self.assertIn("plan 只按这份验收与本单位承接核，不另造或反向覆盖共同真源", group[1])
 
 
 ACCEPTANCE_CHECK = """
@@ -929,6 +930,19 @@ class ASpecWithoutAnAcceptanceProjectionWritesItsOwn(StageCase):
         artifact = ["resolved", {"kind": "artifact", "artifact": "acceptance@1"}]
         self.assertEqual((artifact, "ok"), (after["inputs"]["acceptance"], after["plan"]["status"]), after["plan"])
         self.assertEqual(artifact, after["plan"]["inputs"]["acceptance"])
+
+    def test_a_valid_acceptance_may_be_deepened_locally(self) -> None:
+        """蓝图没有验收投影、spec 按原生合同自写时，可在承接条目之外加本地业务验收与更细的承接条目，不被禁止。"""
+        bridged = json.loads(json.dumps(ACCEPTANCE_TEXT))
+        bridged["criteria"][0]["knowledge_refs"] = [KNOWLEDGE_REF]
+        local = {**bridged["criteria"][0], "id": "AC-003", "description": "刷新失败时页面仍在等待态"}
+        local.pop("knowledge_refs", None)
+        deeper = {**bridged["criteria"][0], "id": "AC-004", "description": "刷新失败日志带页面与原因",
+                  "knowledge_refs": [KNOWLEDGE_REF]}
+        bridged["criteria"] += [local, deeper]
+        self.variant("acceptance.yaml", yaml.safe_dump(bridged, allow_unicode=True, sort_keys=False))
+        got = self.stage("spec")
+        self.assertTrue(got["ok"], got["gate"])
 
 
 class APlanUnderAUseCaseAuthority(StageCase):

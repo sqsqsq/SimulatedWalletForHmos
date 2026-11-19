@@ -138,7 +138,7 @@ export default guard('plan', async (ctx) => {
   const { applied, selected } = judged ? unitDuties(judged) : { applied: [], selected: [] };
   // 验收的知识归属：spec 被原生复用、本地没有 acceptance.yaml 时，核的也是原生选中的这一份验收
   if (judged && inputs.acceptance) {
-    reference.problems.push(...knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance: inputs.acceptance }));
+    reference.problems.push(...knowledgeAcceptanceProblems({ knowledge, active, judged, acceptance: inputs.acceptance, phase: 'plan' }));
   } else if (judged && applied.length) {
     reference.skipped.push({ what: '验收的知识归属', why: inputs.why });
   }

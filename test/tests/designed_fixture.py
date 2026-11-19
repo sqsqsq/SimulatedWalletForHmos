@@ -45,9 +45,11 @@ def ensure_flow_state(root: Path, feature: str, src: Path) -> None:
 
 
 
-#: 夹具激活的两条规约在蓝图里的适用性判断：成文按当前蓝图写，附录·规约按它写
+#: 夹具激活的两条规约在蓝图里的适用性判断：成文按当前蓝图写，附录·规约按它写。
+#: 设计对象上的共同验收写在模块节点（已有获准来源的那个设计对象）上，避免改夹具节点出处的用例把它带成非权威来源。
 FIXTURE_JUDGEMENTS = [
-    design_kit.rule_judgement("SMP-01", "applied", "本需求新增提交入口，受理单编号在入口生成"),
+    design_kit.rule_judgement("SMP-01", "applied", "本需求新增提交入口，受理单编号在入口生成",
+                              acceptance_targets=["view:development/node:wallet-main-module"]),
     design_kit.rule_judgement("SMP-02", "not_applicable", "本需求没有任何上报动作"),
 ]
 

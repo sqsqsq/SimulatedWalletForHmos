@@ -159,11 +159,16 @@ def render_projection(root: Path, blueprint: str, access: Path) -> None:
 TARGET = "view:logical/node:wallet-balance"
 
 
-def rule_judgement(unit: str, outcome: str, rationale: str, target_refs: list[str] | None = None) -> dict:
+def rule_judgement(unit: str, outcome: str, rationale: str, target_refs: list[str] | None = None,
+                   acceptance_targets: list[str] | None = None) -> dict:
     """一条规约条目的适用性判断：`outcome` 取 applied / not_applicable / pending；适用的落点默认是夹具的设计对象，
-    待定的 `target_refs` 指原生决定或缺口。放进蓝图时按条目所在的激活规约文件归成那一域的事实（`knowledge_facts`）。"""
-    return {"unit": unit, "outcome": outcome, "rationale": rationale,
-            "target_refs": list(target_refs) if target_refs is not None else ([TARGET] if outcome == "applied" else [])}
+    待定的 `target_refs` 指原生决定或缺口。放进蓝图时按条目所在的激活规约文件归成那一域的事实（`knowledge_facts`）。
+    `acceptance_targets` 给了就把那份共同验收写在这些设计对象上（不给则与 must 落点相同）。"""
+    judgement = {"unit": unit, "outcome": outcome, "rationale": rationale,
+                 "target_refs": list(target_refs) if target_refs is not None else ([TARGET] if outcome == "applied" else [])}
+    if acceptance_targets is not None:
+        judgement["acceptance_targets"] = list(acceptance_targets)
+    return judgement
 
 
 ACTIVE_CONSTRAINTS = """
@@ -217,21 +222,25 @@ def knowledge_context(root: Path, access: Path) -> dict:
     return json.loads(proc.stdout)
 
 
-def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bool) -> tuple[str, dict[str, dict]]:
-    """设计对激活知识的适用性事实（缩进对齐 discovery.facts）与要写到设计对象上的东西：`{地址: {"must": [...], "pattern_roles": [...]}}`。
+def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bool,
+                    acceptance: bool = True) -> tuple[str, dict[str, dict]]:
+    """设计对激活知识的适用性事实（缩进对齐 discovery.facts）与要写到设计对象上的东西：`{地址: {"must": [...], "acceptance": [...], "pattern_roles": [...]}}`。
 
     规约一域一条事实：给了条目判断的域逐条写（`exact` 为假时其余条目补「不涉及」），没给的域写一条域级不涉及
     （`exact` 时不写，反例用：可以漏判）；适用的条目（评审动作除外）在每个落点写出自它的 must，verify 取这条允许的第一种；
-    模式只写给了判断的那些——没有候选信号的模式不判。
+    `acceptance` 为真时在同一落点写一条原生 typed 验收（`knowledge_refs` 与 must 同一条目），让共享夹具也有设计时形成的
+    共同验收；模式只写给了判断的那些——没有候选信号的模式不判。
     """
     given = list(judgements or [])
     facts, attach = [], {}
     put = lambda address, key, value: attach.setdefault(address, {}).setdefault(key, []).append(value)  # noqa: E731
+    criteria = 0
     for c in (x for x in active if x["kind"] == "constraints"):
         mine = [j for j in given if "unit" in j and j["unit"] in c["units"]]
         if mine:
-            items = mine + ([] if exact else [rule_judgement(u, "not_applicable", "夹具：本需求不涉及这条规约")
-                                              for u in c["units"] if u not in {j["unit"] for j in mine}])
+            items = [{k: v for k, v in j.items() if k != "acceptance_targets"} for j in mine] + (
+                [] if exact else [rule_judgement(u, "not_applicable", "夹具：本需求不涉及这条规约")
+                                  for u in c["units"] if u not in {j["unit"] for j in mine}])
             value = {"knowledge_kind": "constraints", "items": items}
         elif exact:
             continue
@@ -242,8 +251,17 @@ def knowledge_facts(judgements: list[dict] | None, active: list[dict], exact: bo
             if j["outcome"] != "applied" or j["unit"] in c.get("review", []):
                 continue
             for t in (x for x in j["target_refs"] if not x.startswith(("decision:", "gap:"))):
-                put(t, "must", {"text": f"夹具：{j['rationale']}", "source_ref": f"doc/extensions/{c['file']}#{j['unit']}",
-                                "verify": c["verify"][j["unit"]]})
+                ref = f"doc/extensions/{c['file']}#{j['unit']}"
+                put(t, "must", {"text": f"夹具：{j['rationale']}", "source_ref": ref, "verify": c["verify"][j["unit"]]})
+                if not acceptance:
+                    continue
+                for at in (j.get("acceptance_targets") or [t]):
+                    criteria += 1
+                    put(at, "acceptance", {"id": f"AC-G{criteria:02d}", "prd_function": None, "priority": "P1",
+                                           "description": f"夹具：{j['rationale']}", "testable": True,
+                                           "verification_steps": ["按夹具的正常路径观察这条规约要求的行为"],
+                                           "expected_result": f"夹具：{j['rationale']}", "ut_layer": "device",
+                                           "device_focus": f"夹具：{j['rationale']}", "knowledge_refs": [ref]})
     known = {c["file"] for c in active if c["kind"] == "patterns"}
     for j in (x for x in given if "file" in x):
         if j["file"] not in known:
@@ -284,8 +302,15 @@ def with_entities(text: str, attach: dict[str, dict]) -> str:
         return next(x for x in doc[table[0]] if x[table[1]] == rest)
 
     for address, fields in attach.items():
+        node = find(address)
         for key, list_ in fields.items():
-            find(address).setdefault(key, []).extend(list_)
+            if key == "acceptance":
+                record = node.get("acceptance") or {}
+                record.setdefault("criteria", []).extend(list_)
+                record.setdefault("boundaries", [])
+                node["acceptance"] = record
+                continue
+            node.setdefault(key, []).extend(list_)
     return yaml.safe_dump(doc, allow_unicode=True, sort_keys=False, width=1000)
 
 
