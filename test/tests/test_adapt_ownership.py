@@ -469,6 +469,18 @@ class TheUpgradeRecordKeepsTheOldSiteBoundary(unittest.TestCase):
                 self.assertIn("目标知识", line)
                 self.assertIn("核：", line)
 
+    def test_the_topics_keep_real_business_requirements_and_only_remove_the_runtime_text(self) -> None:
+        """R4（S18）：作者先核目标仓真实的业务审批、权限与验收并保留；只有混进目标知识的 Extension
+        阶段、路径或已撤载体那段运行说明才删，当前做法由已安装机制给出——不把阶段与路径换成另一种写法写回知识。"""
+        topics = [l for l in self.section().splitlines() if l.startswith("- [知识]")]
+        self.assertEqual(3, len(topics), "2.0.5 的知识主题条数变了：先核这些断言是否还对着同一批主题")
+        for line in topics:
+            with self.subTest(topic=line[:24]):
+                for needle in ("真实", "保留", "只删掉混进目标知识的", "已安装机制"):
+                    self.assertIn(needle, line, f"升级主题少了「{needle}」")
+                for gone in ("改为指向蓝图 gap/decision", "改为上面这条链", "改为蓝图设计形成"):
+                    self.assertNotIn(gone, line, f"升级主题又把 Extension 的阶段与路径写回目标知识：{gone}")
+
 
 class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
     """`--mark-adapted` 把 adapted_for 写成包的版本；值不由模型定，前置不满足就停。"""

@@ -64,8 +64,9 @@ function flowProjection(flow) {
 /**
  * 最近有效变更轮的评审输入：record 固定下来的 before 原件、update-notes 与本轮 review_inputs。
  *
- * 轮次由 `review-object` 的 `comparisonContext` 一次选出（开着的这一轮，否则最近未撤回的 closed），
- * 与 Story 独审同源；收口只改记录状态，不把这些已承接的原件移出同一审查上下文。
+ * 轮次、before 原件与摘要、notes 的轮态义务都由 `review-object` 的 `comparisonContext` 一次给出、一次核完——
+ * **与 Story 独审同一份结论**：收口只改记录状态，不把这些已承接的原件移出同一审查上下文；缺件或字节不符
+ * 的问题已经在那份结果里（进 `gaps`），这里只把还在的件与 notes 列进必审集合，不再按目录现状另拼一遍。
  * 只认本层已有的事实，不另扫一轮 update 目录、不复制第二个状态源。
  */
 function updateInputs(projectRoot, feature, root, flow, add, gaps) {
@@ -73,18 +74,8 @@ function updateInputs(projectRoot, feature, root, flow, add, gaps) {
   gaps.push(...basis.problems);
   if (!basis.rid) return null;
   for (const entry of basis.inputs) {
-    const fixed = path.join(root, ...basis.before.split('/'), ...entry.path.split('/'));
-    add(fixed, `update ${basis.rid} 的评审输入原件 ${entry.path}`);
-    let bytes = null;
-    try { bytes = fs.readFileSync(fixed); } catch { bytes = null; }
-    if (bytes === null) {
-      gaps.push(`${basis.before}/${entry.path} 读不到——update ${basis.rid} 记录的评审输入原件不在 before/ 里`);
-      continue;
-    }
-    const want = String(entry.sha256 ?? '').replace(/^sha256:/, '');
-    if (want && !crypto.createHash('sha256').update(bytes).digest('hex').startsWith(want)) {
-      gaps.push(`${basis.before}/${entry.path} 与 update ${basis.rid} 记的摘要对不上——本轮固定的原件被改过`);
-    }
+    add(path.join(root, ...basis.before.split('/'), ...entry.path.split('/')),
+      `update ${basis.rid} 的评审输入原件 ${entry.path}`);
   }
   add(path.join(root, ...basis.notes.split('/')),
     `update ${basis.rid} 变化的依据、影响、决定与不变项（作者在送审前写好）`);

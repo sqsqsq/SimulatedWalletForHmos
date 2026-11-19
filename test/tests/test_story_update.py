@@ -3456,6 +3456,15 @@ process.stdout.write(JSON.stringify({ rows: full.rows.map(row => ({ ...row, sha2
   key: full.problems.length ? null : m.materialKey(root, full.rows) }));
 """
 
+#: 阶段审查（Plan 的必审输入）与 Story 读者取同一份比较依据结论：缺口按同一组函数 `reviewInputs` 取。
+REVIEW_INPUT_FACTS = """
+import { pathToFileURL } from 'node:url';
+const [mod, root, feature, purpose] = process.argv.slice(1);
+const m = await import(pathToFileURL(mod).href);
+const r = m.reviewInputs(root, feature, purpose);
+process.stdout.write(JSON.stringify({ update: r.update, gaps: r.gaps }));
+"""
+
 
 def file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -3482,6 +3491,20 @@ class ReviewLifecycleCase(RegisteredCase):
         proc = self.run_cmd("node", str(self.BUILD), "review", "--action", "check",
                             "--feature", FEATURE, "--project-root", str(self.root))
         return json.loads([line for line in proc.stdout.splitlines() if line.startswith("{")][-1])
+
+    def review_prepare_proc(self) -> subprocess.CompletedProcess:
+        """不替作者断言成功的 prepare：比较依据残缺时它必须停下，不派出新材料键。"""
+        return self.run_cmd("node", str(self.BUILD), "review", "--action", "prepare", "--reader", "task",
+                            "--feature", FEATURE, "--project-root", str(self.root))
+
+    def input_gaps(self) -> dict:
+        """阶段审查这一侧对同一份比较依据的结论（`reviewInputs` 的 gaps 与本轮 update）。"""
+        mod = DEV_EXT / "hooks" / "shared" / "review-inputs.mjs"
+        proc = subprocess.run(["node", "--input-type=module", "-e", REVIEW_INPUT_FACTS,
+                               str(mod), str(self.root), FEATURE, "plan"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        return json.loads(proc.stdout)
 
     def object_facts(self) -> dict:
         mod = DEV_EXT / "skills" / "story" / "scripts" / "core" / "story" / "review-object.mjs"
@@ -3681,3 +3704,113 @@ class ABrokenComparisonBasisIsReported(ReviewLifecycleCase):
         self.assertEqual("input_invalid", out.get("result"), out)
         self.assertIn("record.json", out.get("detail", ""))
         self.assertIn(rid, out.get("detail", ""))
+
+
+class AFixedBeforeOriginalIsCheckedNotInferred(ReviewLifecycleCase):
+    """R3（S18）：比较依据取这一轮 record 固定下来的清单与摘要，逐件核 before/ 里的实际文件；不按目录非空判存在。
+
+    「当前 Story 合法修改」照常派新审；固定 before 的一件丢失或字节改变、已收口轮的 update-notes 丢失时，
+    prepare 停在残缺集上、check 沿 input_invalid 报位置与恢复来源；恢复同一份字节后对象回到原样、已接收的报告仍可消费。
+    还开着的一轮可以还没写 update-notes，那不是缺件。
+    """
+
+    def fixed(self, rid: str) -> dict:
+        return dict(json.loads((self.updates / rid / "record.json").read_text(encoding="utf-8"))["owned_before"])
+
+    def closed_round(self, change: str = "支付提交后用户要能看到回执状态，以服务端为准。") -> str:
+        rid, _ = self.open_round(change)
+        self.register_round()
+        self.assertEqual("closed", self.update("--action", "close").get("status"))
+        return rid
+
+    def before_original(self, rid: str, rel: str = "AR/story.md") -> Path:
+        return self.updates / rid / "before" / Path(rel)
+
+    def test_a_lost_fixed_original_holds_the_new_review_until_restored(self) -> None:
+        rid = self.closed_round()
+        self.assertIn("AR/story.md", self.fixed(rid), "这一轮 record 没固定动手前的 Story")
+        before = self.review_prepare()
+        self.assertTrue(before["reused"], before)
+        path = self.before_original(rid)
+        kept = path.read_bytes()
+        rel = path.relative_to(self.feature_root).as_posix()
+        path.unlink()
+        out = self.review_check()
+        self.assertEqual("input_invalid", out.get("result"), out)
+        for needle in (rel, rid, "恢复"):
+            self.assertIn(needle, out.get("detail", ""), out)
+        proc = self.review_prepare_proc()
+        self.assertNotEqual(0, proc.returncode, "固定 before 缺了一件仍派出了新审")
+        self.assertIn(rel, proc.stdout + proc.stderr)
+        # 恢复同一份字节：对象与任务回到原样，已接收的报告仍可消费，不另派一轮
+        path.write_bytes(kept)
+        again = self.review_prepare()
+        self.assertTrue(again["reused"], again)
+        self.assertEqual(before["material_key"], self.object_facts()["key"])
+        self.assertEqual("pass", self.review_check().get("result"))
+
+    def test_a_changed_before_original_is_not_a_usable_basis(self) -> None:
+        rid = self.closed_round()
+        before = self.review_prepare()
+        path = self.before_original(rid)
+        kept = path.read_bytes()
+        rel = path.relative_to(self.feature_root).as_posix()
+        path.write_bytes(kept + "\n审查之后又改的一句话。\n".encode("utf-8"))
+        out = self.review_check()
+        self.assertEqual("input_invalid", out.get("result"), out)
+        self.assertIn(rel, out.get("detail", ""))
+        self.assertIn("字节", out.get("detail", ""))
+        self.assertNotEqual(0, self.review_prepare_proc().returncode, "动手前那一版被改过仍派了新审")
+        path.write_bytes(kept)
+        self.assertTrue(self.review_prepare()["reused"])
+        self.assertEqual("pass", self.review_check().get("result"))
+
+    def test_lost_closed_notes_are_reported_not_silently_dropped(self) -> None:
+        rid = self.closed_round()
+        before = self.review_prepare()
+        notes = self.updates / rid / "update-notes.md"
+        kept = notes.read_text(encoding="utf-8")
+        notes.unlink()
+        out = self.review_check()
+        self.assertEqual("input_invalid", out.get("result"), out)
+        self.assertIn(f"updates/{rid}/update-notes.md", out.get("detail", ""))
+        self.assertIn("已收口", out.get("detail", ""))
+        self.assertNotEqual(0, self.review_prepare_proc().returncode, "已收口轮的 notes 丢了仍派了新审")
+        notes.write_text(kept, encoding="utf-8")
+        again = self.review_prepare()
+        self.assertTrue(again["reused"], again)
+        self.assertEqual(before["material_key"], self.object_facts()["key"])
+        self.assertEqual("pass", self.review_check().get("result"))
+
+    def test_an_open_round_may_not_have_the_notes_yet(self) -> None:
+        """还开着的一轮可以还没写 update-notes：它不是缺件；写完就是作者的判断，审查对象跟着换。"""
+        rid = self.update()["update"]
+        facts = self.object_facts()
+        self.assertEqual([], facts["problems"], facts["problems"])
+        self.assertNotIn(f"doc/features/{FEATURE}/AR/story-src/updates/{rid}/update-notes.md",
+                         [row["path"] for row in facts["rows"]], "还没写的 notes 被列进了对象")
+        first = self.review_prepare()
+        self.assertTrue(first["material_key"], first)
+        (self.updates / rid / "update-notes.md").write_text(NOTES, encoding="utf-8")
+        self.assertNotEqual(first["material_key"], self.object_facts()["key"], "作者的判断没进审查对象")
+        self.assertEqual("subject_stale", self.review_check().get("result"))
+
+    def test_a_legit_story_edit_is_a_new_review_not_a_broken_basis(self) -> None:
+        self.closed_round()
+        first = self.review_prepare()
+        self.assertTrue(first["reused"], first)
+        self.rewrite("回执状态以服务端为准，本地只做展示。")
+        facts = self.object_facts()
+        self.assertEqual([], facts["problems"], "合法改稿被当成了固定依据损坏")
+        self.assertNotEqual(first["material_key"], facts["key"])
+        self.assertEqual("subject_stale", self.review_check().get("result"))
+        self.assertFalse(self.review_prepare()["reused"], "改过稿仍复用了旧报告")
+
+    def test_the_stage_review_reaches_the_same_conclusion(self) -> None:
+        rid = self.closed_round()
+        path = self.before_original(rid)
+        rel = path.relative_to(self.feature_root).as_posix()
+        path.unlink()
+        got = self.input_gaps()
+        self.assertEqual(rid, got["update"])
+        self.assertTrue([gap for gap in got["gaps"] if rel in gap and "恢复" in gap], got["gaps"])

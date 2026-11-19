@@ -30,7 +30,8 @@ ACCESS = DEV_EXT / "hooks/shared/framework-access.mjs"
 FEATURE = "RT90001"
 #: 主执行者核过、本次准备给出的独立读者情况：有可用读者，或没有可用读者及其原因
 READER_TASK = ("--reader", "task")
-READER_NONE = ("--reader", "unavailable", "--reader-reason", "夹具宿主没有能接收自足只读任务的隔离读者")
+READER_NONE = ("--reader", "unavailable", "--reader-reason",
+               "夹具宿主没有能只读材料、写本次报告并返回完成回复的隔离读者")
 
 
 def with_reader(args: tuple, reader: tuple = READER_TASK) -> tuple:
@@ -991,7 +992,7 @@ class AHostWithoutAReviewerDisclosesUnreviewed(TheStoryIsReviewedRegisteredAndDe
         story = self.story.read_text(encoding="utf-8")
         chapter = story.split("## 9.", 1)[1].split("\n## ", 1)[0]
         self.assertIn("本版未经独立审查", chapter, "Story 交付章没有审查状态")
-        self.assertIn("夹具宿主没有能接收自足只读任务的隔离读者", chapter, "未审披露没写实际原因")
+        self.assertIn("夹具宿主没有能只读材料、写本次报告并返回完成回复的隔离读者", chapter, "未审披露没写实际原因")
         before = self.tree()
         self.assertEqual(0, self.review("prepare").returncode)
         self.assertEqual(before, self.tree(), "同样的输入重跑准备改了字节")
@@ -1650,6 +1651,54 @@ class TheTaskMovesOnlyWithTheAuthorsInput(unittest.TestCase):
         self.story.write_bytes(self.story.read_bytes() + "作者补的一句。\n".encode("utf-8"))
         again = self.prepared()
         self.assertNotEqual(first["material_key"], again["material_key"], "Story 改了，审查对象没变")
+
+
+class TheAuthorJudgesTheReaderAndAnUnfinishedHandoverIsNotReceived(TheStoryIsReviewedRegisteredAndDeliveredCase):
+    """R2（S18）：作者在 prepare/接收之前按宿主工具说明判这次交接能不能成；文件已写而调用未结束、
+    或最终回复不是同一份完整报告时，先等或接回原读者核齐，拿不到就披露未闭合，不进入接收与登记。
+
+    载体与 check 仍把「文件在」与「交接完」分开：未接收的报告不是结论，也不能登记；接收之后照常。
+    """
+
+    PAGE = DEV_EXT / "skills" / "story/phases/design.md"
+
+    def section(self) -> str:
+        text = self.PAGE.read_text(encoding="utf-8")
+        return text.split("## 五、独立审查、登记与交付", 1)[1].split("\n## ", 1)[0]
+
+    def test_the_author_judges_the_reader_before_preparing(self) -> None:
+        head = self.section().split("2. **派审**", 1)[0]
+        for needle in ("业务材料只读", "能写这一次分配给它的报告文件", "完整的完成回复",
+                       "只收阶段 JSON 请求的阶段 verifier 不是"):
+            self.assertIn(needle, head, f"作者可用性判定少了「{needle}」")
+        self.assertNotIn("能接收自足只读任务", head, "又按「能收只读任务」挑读者")
+
+    def test_the_recovery_keeps_an_incomplete_final_apart_from_a_missing_file(self) -> None:
+        body = self.section().split("2. **派审**", 1)[1]
+        for needle in ("完成信号", "调用没结束时报告文件即使已经存在也不接收", "文件已写而调用未结束",
+                       "先等这次调用结束", "接回原读者", "不进入接收、也不登记"):
+            self.assertIn(needle, body, f"恢复指令少了「{needle}」")
+        self.assertNotIn("最终回复不完整时，按缺报告", body, "又把「final 不完整」归回了「缺文件」")
+        rows = body.split("| report_missing |", 1)[1].split("| report_invalid |", 1)[0]
+        self.assertIn("这次调用已结束、确实没写", rows, "report_missing 没区分「调用没结束」")
+        self.assertIn("只在读者这次调用已结束且最终回复是同一份完整报告时", rows,
+                      "report_unreceived 的接收没有完成条件")
+
+    def test_a_written_report_is_not_a_conclusion_until_it_is_received(self) -> None:
+        """同一文件：调用未结束时只是报告在盘上（不接收、不能登记）；接收之后才是结论、才能登记。"""
+        out = self.prepare()
+        report = design_kit.write_review(self.root, "REQ-DEMO", "pass")   # 读者已写完文件、调用还没结束
+        written = report.read_bytes()
+        self.assertEqual(self.root / out["report_file"], report)
+        self.assertEqual("report_unreceived", self.result()["result"], "文件在就被当成了交接完成")
+        self.assertNotIn("last_received", self.prepared(), "未结束的交接被接收了")
+        refused = self.register()
+        self.assertNotEqual(0, refused.returncode, "未接收的报告被登记了")
+        self.assertEqual(written, report.read_bytes(), "拒绝登记时动了读者写的原件")
+        self.receive()
+        self.assertIn("last_received", self.prepared())
+        self.assertEqual("pass", self.result()["result"])
+        self.assertEqual(0, self.register().returncode, "接收通过的报告不能登记")
 
 
 if __name__ == "__main__":

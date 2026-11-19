@@ -10,8 +10,9 @@
  * 完整核源让审查能核作者为何采用或排除一份材料：作者的采用选择不缩小这个集合。
  * 流程契约、登记时刻、审查目录与历史报告不在其中：它们变了不改变被审内容。
  *
- * 比较依据只产生一次（`comparisonContext`）：审查对象的行与读法任务都取这一份，不再各自看 `flow.update.open`。
- * 开着的这一轮与已收口的最近有效变更轮是同一份依据——收口只让这一轮从 open 变成 closed，不把已审过的比较依据移出对象。
+ * 比较依据只产生一次（`comparisonContext`）：审查对象的行、读法任务与阶段审查的必审输入都取这一份，不再各自看 `flow.update.open`，
+ * 也不各自按目录现状拼一遍。开着的这一轮与已收口的最近有效变更轮是同一份依据——收口只让这一轮从 open 变成 closed，
+ * 不把已审过的比较依据移出对象。
  */
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -36,8 +37,15 @@ export const TASK = ['AR', 'story-src', 'review', 'task.md'];
  * 用现有轮次记录选回仍有效的上一轮并写进 `last_closed`，这里不另扫一轮目录、不复制第二个状态源。
  * 记着轮次而记录读不出、id/状态对不上、before/ 不在时照实报位置，不吞成「没有 update」。
  *
- * 路径相对**需求目录**（与轮次记录的 `mirror.path` 同坐标）。审查对象的行与读法任务共用这一份：
- * 收口只改记录状态与完成点，这里取到的 rid、before 文件集合与 notes 路径不变，审过的那一版对象就不换。
+ * 依据取这一轮 record **已经固定的清单与摘要**，不按目录现状重新拼：`owned_before` 是开轮时本扩展文件的
+ * 路径 → 摘要，`mirror.path` 下的这一件必须逐字仍是那一份；`review_inputs` 里记了摘要的原件同样核字节。
+ * 快照生成时被合法改写的只有流程契约（`story-flow.json`：开轮时在镜像里写上 `update.open`），它是流程元数据、
+ * 不是动手前的原件，所以不进这份清单；批次回执是评审输入的身份凭据，也不进比较内容。
+ * `update-notes` 是这一轮作者的判断：**已收口**的一轮必须有它（close 以它为前提），**还开着**的一轮可以还没写。
+ * 缺件或字节不符时给出位置、轮次与恢复来源，并让调用方停下——不以残缺集派新审。
+ *
+ * 路径相对**需求目录**（与轮次记录的 `mirror.path` 同坐标）。审查对象的行、读法任务与阶段审查的必审输入共用这一份：
+ * 收口只改记录状态与完成点，这里取到的 rid、before 原件清单与 notes 路径不变，审过的那一版对象就不换。
  *
  * @returns {{rid: string|null, before: string|null, notes: string|null,
  *   files: string[], inputs: {path: string, sha256: string|null, system_item: string|null}[], problems: string[]}}
@@ -68,17 +76,57 @@ export function comparisonContext(projectRoot, feature, flow = null) {
     out.problems.push(`${round}/record.json 的 mirror.path「${mirror || '缺失'}」不在这一轮自己的目录下——这一轮缺比较基准`);
     return out;
   }
-  const walk = dir => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
-    .flatMap(e => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)])) : []);
-  const relative = abs => path.relative(root, abs).split(path.sep).join('/');
+  const at = rel => path.join(root, ...String(rel).split('/'));
+  const digestOf = abs => { try { return sha256(fs.readFileSync(abs)); } catch { return null; } };
+  // 恢复来源对两类缺件是同一处：目标仓版本库里这一轮 before/ 的原件
+  const recover = `从目标仓版本库里这一轮 ${mirror}/ 的原件恢复同一摘要；恢复不了就停下，不在残缺集上派新审`;
   out.rid = rid;
   out.before = mirror;
   out.notes = `${round}/update-notes.md`;
-  out.files = walk(path.join(root, ...mirror.split('/'))).map(relative);
-  if (!out.files.length) out.problems.push(`${mirror} 不在或是空的——这一轮缺比较基准，不是没有 update`);
+  // 收口过的这一轮的 notes 是必备义务；还开着的一轮可以还没写（见文末）
+  const closedRound = rec.status === 'closed';
+  if (!fs.existsSync(at(mirror))) {
+    out.problems.push(`${mirror} 不在——这一轮缺比较基准，不是没有 update；${recover}`);
+    return out;
+  }
+  // 一件固定原件：before/ 里的字节必须仍是 record 记的那一份；不在或不同都给出位置、轮次与恢复来源
+  const keepsFixed = (path0, want, what) => {
+    const got = digestOf(at(path0));
+    if (got !== null && want && got.startsWith(want)) return true;
+    out.problems.push(got === null
+      ? `${path0} 不在：update ${rid} 固定的${what}缺失（记录摘要 ${want.slice(0, 12)}）；${recover}`
+      : `${path0} 的字节与 update ${rid} 记录的${what}不同（记录 ${want.slice(0, 12)}，现在 ${got.slice(0, 12)}）：本轮动手前的这一版被改过，新稿改掉了什么核不了；${recover}`);
+    return false;
+  };
+  // 开轮时固定的清单来自 record，不按目录里还剩什么算；快照生成时合法改写的流程契约不在其中
+  const fixed = rec.owned_before && typeof rec.owned_before === 'object' && !Array.isArray(rec.owned_before)
+    ? rec.owned_before : null;
+  if (!fixed) {
+    out.problems.push(`${round}/record.json 没有记开轮时的固定清单（owned_before）——这一轮缺比较依据，拿不到「动手前是哪一版」`);
+  } else {
+    for (const rel of Object.keys(fixed).sort()) {
+      const path0 = `${mirror}/${rel}`;
+      if (keepsFixed(path0, String(fixed[rel] ?? '').replace(/^sha256:/, ''), '开轮时的这一件原件')) out.files.push(path0);
+    }
+  }
+  // 评审输入原件：record 里记了摘要的逐件核字节；失败/缺失/系统上没有的件没有固定原件，状态由本轮记录说明
   out.inputs = (Array.isArray(rec.review_inputs) ? rec.review_inputs : []).filter(entry => entry && entry.path)
     .map(entry => ({ path: String(entry.path), sha256: entry.sha256 ? String(entry.sha256) : null,
       system_item: entry.system_item ? String(entry.system_item) : null }));
+  for (const entry of out.inputs) {
+    const want = String(entry.sha256 ?? '').replace(/^sha256:/, '');
+    if (want) keepsFixed(`${mirror}/${entry.path}`, want, '评审输入原件');
+  }
+  if (!out.files.length && !out.problems.length) out.problems.push(`${mirror} 里没有这一轮固定的原件——这一轮缺比较基准`);
+  // 已收口的一轮必须有 update-notes（close 的前提）；还开着的一轮可以还没写，不在这里报缺口
+  if (closedRound) {
+    let bytes = null;
+    try { bytes = fs.readFileSync(at(out.notes)); } catch { bytes = null; }
+    if (!bytes || !bytes.toString('utf-8').trim()) {
+      out.problems.push(`${out.notes} ${bytes ? '是空的' : '不在'}：update ${rid} 已收口，这一轮的变化、依据、决定与不变项应当写在里面；`
+        + `从目标仓版本库里这一轮 ${round}/update-notes.md 恢复后再准备审查；恢复不了就停下，不在残缺集上派新审`);
+    }
+  }
   return out;
 }
 
@@ -146,13 +194,15 @@ export function reviewObject(projectRoot, feature, { withTask = true, source = n
     }
   }
 
-  // 最近有效变更轮动手前的现场与本轮说明也是对照材料，新稿改掉的旧约束对着它核
+  // 最近有效变更轮动手前的现场与本轮说明也是对照材料，新稿改掉的旧约束对着它核。
+  // 清单来自这一轮 record 固定的 owned_before，不按 before/ 目录里还剩什么算；缺件已由 comparison.problems 报出，
+  // 这里不重复报，只把还在的那几件列进对象。还开着的这一轮可以还没写 update-notes，不写成缺件。
   if (comparison.rid) {
     add(path.join(root, ...comparison.notes.split('/')), 'source',
       `update ${comparison.rid} 的变化、依据与不变项（作者的判断）`, false);
     for (const f of comparison.files) {
       add(path.join(root, ...f.split('/')), 'source',
-        `update ${comparison.rid} 前的现场 ${f.slice(comparison.before.length + 1)}`);
+        `update ${comparison.rid} 前的现场 ${f.slice(comparison.before.length + 1)}`, false);
     }
   }
   // 设计采用的来源：与需求同根的蓝图，它的需求条目与设计依据引用的本需求材料版本逐份展开，字节按材料索引登记的摘要核
