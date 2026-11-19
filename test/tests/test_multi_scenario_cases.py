@@ -366,6 +366,85 @@ class CompositeCoverageTest(unittest.TestCase):
                         self.assertTrue(resolved.is_file(), f"{markdown}: {target}")
 
 
+class S09CaseAndUpdatePlanTest(unittest.TestCase):
+    """2.0.5 S09 固定安排：只恢复 auto 的 after_initial: update；car 保原备料但不跑第二段；
+    interaction-script 只留材料确认、真实业务冲突/阻断答复与交付授权；end_at 只是观察终点。"""
+
+    def test_only_auto_runs_the_update_segment(self) -> None:
+        auto = definition("auto-topup")
+        car = definition("car-key-sharing")
+        self.assertEqual("update", auto.get("after_initial"))
+        self.assertEqual("/story update AR90006", auto.get("update_request"))
+        self.assertNotIn("after_initial", car, "car 本版不追加第二次 update")
+        # car 的备料与请求保留，供离线语义核对与后续使用；不投就不发生。
+        self.assertEqual("/story update ISSUE-206", car.get("update_request"))
+        self.assertTrue((CASES / "car-key-sharing" / "update-inputs").is_dir())
+
+    def test_update_material_is_not_pre_delivered_with_the_initial_round(self) -> None:
+        """初始那一轮看不到第二段材料：系统快照与工作区里都没有 update-inputs 的文件。"""
+        case = definition("auto-topup")
+        inputs = {item["file"] for item in case.get("update_inputs") or []}
+        start_texts = case_text("auto-topup")
+        for name in inputs:
+            self.assertFalse((CASES / "auto-topup" / "system" / "AR90006" / name).exists(),
+                             f"{name} 提前躺在需求系统上：初始轮就能看见")
+            if name.endswith(".md"):
+                self.assertNotIn(name, start_texts)
+
+    def test_the_review_return_is_a_story_annotation_not_a_d_numbered_record(self) -> None:
+        """旧 review-feedback 转为被评 Story 上的批注：保原问题/原话/未定项，不再对 D 号打勾。"""
+        text = (CASES / "auto-topup" / "update-inputs" / "review-feedback.md").read_text(encoding="utf-8")
+        self.assertIn("Story", text)
+        self.assertIn("批注", text)
+        for original in ("判定与扣款全在服务端、端侧只做签约与展示", "单日达到上限不计入连续失败",
+                         "停用横幅应提供重新签约入口并有相应验收", "税务侧的口径还没回来"):
+            self.assertIn(original, text, "旧意见的原话没有保住")
+        self.assertIn("运营接口人", text)
+        self.assertIn("不阻塞本单", text)
+        self.assertNotIn("decision:", text)
+        self.assertNotIn("D1", text)
+        self.assertNotIn("D2", text)
+        self.assertNotIn("D3", text)
+        self.assertNotIn("D4", text)
+
+    def test_interaction_scripts_keep_material_blockers_and_delivery_only(self) -> None:
+        """去范围与会议逐题预备关卡：不再有 scope-*/meeting-* 预排条目；
+        材料交接、真实冲突/阻断回答与交付授权仍在，备选问题不要求问完。"""
+        for case_id, keep in (("auto-topup", {"hand-over-the-ui-doc", "no-real-interface",
+                                              "deliver-for-review"}),
+                              ("car-key-sharing", {"hand-over-the-product-doc", "grace-window-initial",
+                                                   "no-real-interface", "implementation-plan"})):
+            script = yaml.safe_load((CASES / case_id / "interaction-script.yaml").read_text(encoding="utf-8"))
+            ids = [item["id"] for item in script["replies"]]
+            self.assertFalse([i for i in ids if i.startswith(("scope-", "meeting-"))],
+                             f"{case_id} 还留着范围/会议逐题预备关卡: {ids}")
+            self.assertTrue(keep <= set(ids), f"{case_id} 丢了必须被听见的立场: {keep}")
+
+    def test_end_at_stays_an_observation_target_not_a_model_request(self) -> None:
+        """end_at 只决定观察终点与驱动推进，不写进消费 prompt / update_request，也不造 requested_phases。"""
+        for case_id in sorted(CASE_IDS):
+            case = definition(case_id)
+            for field in ("prompt", "update_request"):
+                text = str(case.get(field) or "")
+                self.assertNotIn("end_at", text, f"{case_id}.{field} 写了终点")
+                self.assertNotIn("requested_phases", text, f"{case_id}.{field} 造了 requested_phases")
+                self.assertNotRegex(text, r"story:submitted|phase:plan", f"{case_id}.{field} 带着终点标签")
+
+    def test_the_fixed_standard_and_the_case_plan_are_pinned_together(self) -> None:
+        """@31 与两例计划共同固定：标准正文 SHA 是评价域唯一真源，Case 计划只引用它，不另写一套判分。"""
+        import hashlib  # noqa: PLC0415
+        standard = ROOT / "test" / "regression" / "extension-acceptance.md"
+        change = ROOT / "doc" / "spec" / "2.0.5" / "评价标准变更.md"
+        declared = re.search(r"extension-acceptance@(\d+)[^。\n]*?SHA256 `([0-9a-f]{64})`",
+                             change.read_text(encoding="utf-8"))
+        self.assertIsNotNone(declared, "评价标准变更里没有标准版本与 SHA")
+        self.assertEqual("31", declared.group(1))
+        self.assertEqual(declared.group(2), hashlib.sha256(standard.read_bytes()).hexdigest(),
+                         "评价标准正文与它登记的 @31 身份不一致")
+        for case_id in sorted(CASE_IDS):
+            self.assertNotIn("extension-acceptance", case_text(case_id), f"{case_id} 把标准正文抄进了 Case 输入")
+
+
 class NarrativeFixtureTest(unittest.TestCase):
 
     def test_three_styles_share_the_same_semantic_fact_tokens(self) -> None:

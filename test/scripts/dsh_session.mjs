@@ -52,7 +52,13 @@ try {
     .flatMap(r => (r.data?.inserted ?? []).filter(m => m?.source?.kind === 'subagent-settled')
       .map(m => ({ childId: m.source.senderSessionId ?? null, time: r.time ?? null, summary: m.source.summary ?? null,
         text: textOf(m.content) })));
-  process.stdout.write(JSON.stringify({ header, children, calls: [...calls.values()], settled, lines: rows.length }));
+  // 父/子各自可数的两件事：assistant 响应（一条 assistant/message 是一次模型回复）与工具调用（按 callId 归并）。
+  // 子会话另由 measure_run 汇总；这里每次只报这一份会话自己的数。
+  const assistantResponses = rows.filter(r => r.type === 'assistant/message').length;
+  process.stdout.write(JSON.stringify({
+    header, children, calls: [...calls.values()], settled, lines: rows.length,
+    assistant_responses: assistantResponses, tool_calls: calls.size,
+  }));
 } catch (e) {
   process.stdout.write(JSON.stringify({ error: String(e?.message ?? e) }));
 }

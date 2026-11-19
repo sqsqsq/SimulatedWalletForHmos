@@ -122,6 +122,42 @@ def test_truncated_event_log_reads_short_and_refills(workspace_tmp):
     assert [e.seq for e in refilled.events] == [4, 5, 6, 7, 8, 9]
 
 
+def test_a_page_cut_by_max_chars_is_marked_as_more_and_paging_rebuilds_everything(workspace_tmp):
+    # 一次 poll 只返回它承载得下的那一页；被 max_chars 截短的一页不能当完整结构，
+    # 但沿 next_cursor 续读必须能拿回全部事件（与 DSH 溢出文件的分块读同一形态）。
+    store = _new_store(workspace_tmp)
+    total = 120
+    content = "y" * 3000
+    with store.events_path.open("w", encoding="utf-8", newline="\n") as handle:
+        for seq in range(1, total + 1):
+            handle.write(json.dumps({"seq": seq, "timestamp": "now", "run_id": store.run_id,
+                                     "type": "text", "content": content}, ensure_ascii=False,
+                                    separators=(",", ":")) + "\n")
+    cursor, pages, seen = 0, 0, []
+    while True:
+        page = store.page(cursor=cursor, max_events=1000, max_chars=20_000)
+        assert page.events, "空页会把续读卡死"
+        seen.extend(e.seq for e in page.events)
+        cursor = page.next_cursor
+        pages += 1
+        if not page.has_more:
+            break
+        assert pages < total + 5, "续读没有前进"
+    assert pages > 1, "max_chars 没有真正截短任何一页，这条测试没测到截断"
+    assert seen == list(range(1, total + 1)), "分页续读没有拼回完整事件序列"
+
+
+def test_a_truncated_host_stream_is_marked_for_the_reader(workspace_tmp):
+    # DSH 的 --json 流会截断长字符串并打 truncated 标记；适配层必须原样留下 source_truncated，
+    # 不能把尾片段伪装成完整结果（度量与评价据此判 unknown）。
+    from tools.cli.adapters import get_adapter  # noqa: PLC0415
+    adapter = get_adapter("dsh")
+    shortened = adapter.parse({"type": "text", "text": "starts…", "truncated": True})
+    assert shortened and shortened[0].source_truncated is True
+    complete = adapter.parse({"type": "text", "text": "complete"})
+    assert complete and complete[0].source_truncated is False
+
+
 def test_last_seq_streams_the_log_too(workspace_tmp):
     # append_event seeds its counter from the log once per store; that read is
     # on the same unbounded file and had the same whole-file cost.

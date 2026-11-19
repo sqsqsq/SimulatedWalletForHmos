@@ -349,20 +349,71 @@ class AllUpdateInputsAreCheckedBeforeWriting(unittest.TestCase):
         self.assertEqual([], err.pending)
 
 
-class ThePrivateTmpCarriesAnInheritableGrant(unittest.TestCase):
-    """DSH 的 windows-acl 沙箱要在私有 tmp 下为每次 mkdtemp 的新目录改属主（需 WRITE_OWNER）；
-    output/story 所在盘链只授当前用户 Modify，所以私有 tmp 创建时必须补一条当前用户可继承的
-    完全控制项，否则每次命令的 temp grant 都失败。"""
+class TheModelTempIsInsideTheCaseWorkspace(unittest.TestCase):
+    """TV02：模型子进程的 TMP/TEMP 与溢出输出根在**本 Case 工作区内**的独立工具输出目录，
+    宿主结果目录与跨 Case 原件仍在外；Windows 上该目录要能继承完全控制项（DSH 沙箱 mkdtemp 改属主）。"""
+
+    def make_workspace(self, root: Path) -> Path:
+        workspace = root / "case-workspace"
+        (workspace / "doc" / "features").mkdir(parents=True)
+        return workspace
+
+    def test_the_private_tmp_is_the_case_workspace_tool_output_not_the_host_run_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "run"
+            out_dir.mkdir(parents=True)
+            workspace = self.make_workspace(root)
+            env = rc.build_cli_env(out_dir, "dsh", workspace=workspace)
+            expected = (workspace / rc.TOOL_OUTPUT_DIR).resolve()
+            self.assertEqual(str(expected), env["TMP"])
+            self.assertEqual(env["TMP"], env["TEMP"])
+            self.assertTrue(expected.is_dir(), "工具输出目录没建")
+            self.assertFalse(expected.is_relative_to(out_dir.resolve()), "模型临时目录落回了宿主结果目录")
+            self.assertTrue(expected.is_relative_to(workspace.resolve()))
+            # 宿主结果目录里没有模型临时目录的残留（旧 cli-tmp 不会再被创建）。
+            self.assertFalse((out_dir / "cli-tmp").exists())
+
+    def test_a_direct_debug_run_keeps_temp_in_the_run_dir_not_in_demo(self) -> None:
+        """直接跑 run_case（调试用）没有隔离工作区：临时目录退到本轮结果目录，不往 demo 发布基线写运行态。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "run"
+            out_dir.mkdir(parents=True)
+            env = rc.build_cli_env(out_dir, "dsh")
+            self.assertEqual(str((out_dir / "tool-output").resolve()), env["TMP"])
+            self.assertEqual(env["TMP"], env["TEMP"])
+            self.assertFalse((REPO_ROOT / "demo" / rc.TOOL_OUTPUT_DIR).exists(),
+                             "调试跑把运行态写进了 demo")
+
+    def test_the_tool_output_parent_is_the_workspace_root_only(self) -> None:
+        """TMP 只能落在工作区根下的固定一层；传相对/嵌套路径不改变归属，越界直接拒绝。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self.make_workspace(Path(tmp))
+            self.assertEqual((workspace / rc.TOOL_OUTPUT_DIR).resolve(), rc.tool_output_root(workspace))
+            outside = Path(tmp) / "not-the-workspace"
+            outside.mkdir()
+            self.assertNotEqual(outside.resolve(), rc.tool_output_root(workspace).parent)
+
+    def test_the_case_git_status_does_not_show_tool_output(self) -> None:
+        """工具输出目录是运行态：写进 Case 自己的 .git/info/exclude，模型 `git status` 不被污染。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = self.make_workspace(Path(tmp))
+            info = workspace / ".git" / "info"
+            info.mkdir(parents=True)
+            (info / "exclude").write_text("*.log\n", encoding="utf-8")
+            rc.build_cli_env(Path(tmp) / "run", "dsh", workspace=workspace)
+            rc.build_cli_env(Path(tmp) / "run", "dsh", workspace=workspace)
+            lines = (info / "exclude").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(1, lines.count(f"{rc.TOOL_OUTPUT_DIR}/"), "重复追加或没写排除项")
+            self.assertIn("*.log", lines, "原有排除项被覆盖")
 
     def test_build_cli_env_grants_the_private_tmp_an_inheritable_full_control(self) -> None:
         if sys.platform != "win32":
             self.skipTest("Windows ACL 专属")
         with tempfile.TemporaryDirectory() as tmp:
-            out_dir = Path(tmp) / "run"
-            out_dir.mkdir(parents=True)
-            env = rc.build_cli_env(out_dir, "dsh")
-            self.assertEqual(str(out_dir / "cli-tmp"), env["TMP"])
-            self.assertEqual(env["TMP"], env["TEMP"])
+            root = Path(tmp)
+            workspace = self.make_workspace(root)
+            env = rc.build_cli_env(root / "run", "dsh", workspace=workspace)
             probe = Path(env["TMP"]) / "grant-probe"
             probe.mkdir()
             listing = subprocess.run(["icacls", str(probe)], capture_output=True, text=True,
@@ -370,6 +421,35 @@ class ThePrivateTmpCarriesAnInheritableGrant(unittest.TestCase):
             granted = [line.strip() for line in listing.splitlines()
                        if "(I)(OI)(CI)(F)" in line and "Administrators" not in line and "SYSTEM" not in line]
             self.assertTrue(granted, f"mkdtemp 子目录没有继承到当前用户的完全控制项：\n{listing}")
+
+
+class TheUpdateDeliveryRecordsTimeAndOriginalBytes(unittest.TestCase):
+    """更新输入投放要能回答「什么时候真的投了、投的是哪一版」：逐件记投放时刻与原件 SHA-256；
+    收到时刻由模型取材回执（fetched.json 的 fetchedAt）另行核对，不拿投放时刻冒充。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        (self.root / "doc" / "features" / "AR90006").mkdir(parents=True)
+
+    def test_each_delivered_input_carries_its_time_hash_and_size(self) -> None:
+        system = self.root / "system"
+        system = self.root / "system"
+        with mock.patch.object(rc, "REPO_ROOT", self.root), \
+                mock.patch.dict("os.environ", {"STORY_REQUIREMENT_SYSTEM_DIR": str(system)}, clear=False):
+            done = rc.deliver_update_inputs("auto-topup", "AR90006", self.root / "run", None, [])
+        self.assertTrue(done, "没有投任何更新输入")
+        for record in done:
+            self.assertRegex(str(record.get("delivered_at") or ""), r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+            self.assertRegex(str(record.get("sha256") or ""), r"^[0-9a-f]{64}$")
+            self.assertIsInstance(record.get("bytes"), int)
+            destination = record["destination"]
+            target = (system / destination) if record["kind"] == "system" else (
+                self.root / "doc" / "features" / "AR90006" / destination)
+            import hashlib
+            self.assertEqual(hashlib.sha256(target.read_bytes()).hexdigest(), record["sha256"],
+                             f"{record['file']}：记的摘要不是实际投出的原件")
 
 
 if __name__ == "__main__":

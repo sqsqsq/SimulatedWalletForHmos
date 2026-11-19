@@ -431,8 +431,10 @@ class EachSegmentIsMeasured(unittest.TestCase):
         self.assertEqual(2.0, first["rework_min"], "门禁 10:01 没过、10:03 通过")
         self.assertEqual({"fail_count": 1, "status": "completed"}, second["first_story_register"])
         self.assertEqual(1.0, second["rework_min"])
-        for key in ("duration_min", "model_gap_sec", "tool_gap_sec", "verifier_gap_sec"):
+        for key in ("duration_min", "nontool_gap_sec", "tool_gap_sec", "tool_interval_sec",
+                    "verifier_gap_sec"):
             self.assertIn(key, second)
+        self.assertNotIn("model_gap_sec", second, "非工具事件间隔不能叫模型耗时：它含等待与空档")
 
 
 def _public_events(provider: str, runs: list[tuple[str, list[dict]]], *, minute: int = 0) -> list[dict]:
@@ -593,6 +595,84 @@ class ToolCallsArePairedFromPublicEvents(unittest.TestCase):
         self.assertEqual({"fail_count": 2, "status": "completed"}, first["first_harness"])
         self.assertIsNone(second["first_harness"], "同一结果不在两段各算一轮")
         self.assertEqual(["crosses_checkpoint"], [i["reason"] for i in r["incomplete_tool_events"]])
+
+
+class ParentAndChildCountsAndDurationsAreVerifiable(unittest.TestCase):
+    """TV03：父/子 assistant 响应与工具调用分列；耗时只报墙钟、可核区间（并集）、返修与未知；
+    事件间隔不是纯推理，未归属部分不叫推理时间。"""
+
+    def setUp(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("环境里没有 node")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.run_dir = Path(self._tmp.name)
+
+    def measure(self, events: list[dict]) -> dict:
+        path = self.run_dir / "events.jsonl"
+        path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
+        return measure_run.measure(path, run_dir=self.run_dir)
+
+    def test_parent_and_child_counts_are_reported_separately(self) -> None:
+        events = _public_events("dsh", [("run-a", [
+            {"type": "text", "text": "第一段回复"},
+            _dsh_call("c1", "pwsh", command="echo one"),
+            _dsh_result("c1", "one"),
+            {"type": "text", "text": "第二段回复"},
+            _dsh_call("c2", "read", file_path="a.md"),
+            _dsh_result("c2", "body"),
+        ])])
+        parent = "session-p"
+        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, [])
+        _session(self.run_dir / "native-sessions" / parent / "children" / "k-1" / "session.v4.jsonl.zstd", "k-1", [
+            {"type": "assistant/message", "time": 1, "data": {}},
+            {"type": "assistant/message", "time": 2, "data": {}},
+            {"type": "assistant/message", "time": 3, "data": {}},
+            {"type": "tool/call", "time": 4, "data": {"callId": "x", "name": "read", "arguments": "{}"}},
+            {"type": "tool/call", "time": 5, "data": {"callId": "y", "name": "read", "arguments": "{}"}},
+        ])
+        got = self.measure(events)
+        self.assertEqual({"assistant_responses": 2, "tool_calls": 2}, got["parent_counts"])
+        self.assertEqual({"sessions": 1, "assistant_responses": 3, "tool_calls": 2, "problems": None},
+                         got["child_counts"])
+        self.assertNotEqual(got["parent_counts"]["assistant_responses"], got["child_counts"]["assistant_responses"],
+                            "父/子数被合成了一列")
+
+    def test_without_kept_child_sessions_the_child_counts_are_unknown_not_zero(self) -> None:
+        got = self.measure(_public_events("dsh", [("run-a", [
+            {"type": "text", "text": "回复"}, _dsh_call("c1", "pwsh", command="echo x"), _dsh_result("c1", "x")])]))
+        self.assertEqual({"sessions": None, "assistant_responses": None, "tool_calls": None, "problems": None},
+                         got["child_counts"])
+
+    def test_overlapping_call_intervals_are_a_union_not_a_sum(self) -> None:
+        events = [
+            {"seq": 0, "timestamp": "2026-10-20T10:00:00+00:00", "type": "tool", "content": "",
+             "tool_name": "pwsh", "tool_status": "started", "tool_call_id": "a", "run_id": "r",
+             "tool_input": {"command": "echo a"}},
+            {"seq": 1, "timestamp": "2026-10-20T10:01:00+00:00", "type": "tool", "content": "",
+             "tool_name": "pwsh", "tool_status": "started", "tool_call_id": "b", "run_id": "r",
+             "tool_input": {"command": "echo b"}},
+            {"seq": 2, "timestamp": "2026-10-20T10:02:00+00:00", "type": "tool", "content": "",
+             "tool_name": "pwsh", "tool_status": "completed", "tool_call_id": "a", "run_id": "r",
+             "tool_output": "a"},
+            {"seq": 3, "timestamp": "2026-10-20T10:03:00+00:00", "type": "tool", "content": "",
+             "tool_name": "pwsh", "tool_status": "completed", "tool_call_id": "b", "run_id": "r",
+             "tool_output": "b"},
+        ]
+        got = self.measure(events)
+        self.assertEqual(180.0, got["tool_interval_sec"], "交叠区间被相加成 240 秒")
+        self.assertEqual(180.0, got["wall_clock_sec"])
+        self.assertEqual(0.0, got["not_attributed_sec"], "未归属部分被扣成负数")
+        self.assertIn("不是纯推理", measure_run.render(got))
+
+    def test_an_unpaired_call_contributes_no_verifiable_interval(self) -> None:
+        events = _public_events("dsh", [("run-a", [
+            _dsh_call("h", "pwsh", command="echo hanging")])])
+        got = self.measure(events)
+        self.assertIsNone(got["tool_interval_sec"], "只有开始、没有结果的调用不是可核区间")
+        # 只有一条事件时墙钟本身是 0；未归属是墙钟减可核区间的差，不是凭空补的数。
+        self.assertEqual(0.0, got["wall_clock_sec"])
+        self.assertEqual(0.0, got["not_attributed_sec"])
 
 
 class PhaseAdvancesOnlyOnEvidence(unittest.TestCase):
@@ -1246,6 +1326,29 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         return (f"material_key: {self.KEY}\n\n## 判据核对\n\n| 判据 ID | 结果 | 依据 |\n|---|---|---|\n| story_reader_review | fail | 口径冲突 |\n\n"
                 "## 发现\n\n| 编号 | 严重程度 | 判据 ID | 材料位置 | 问题与依据 | 修正责任 |\n|---|---|---|---|---|---|\n"
                 f"| F1 | MAJOR | story_reader_review | AR/story.md | 转化率分子分母冲突 | 设计 |\n\n## 总体结论\n\n{conclusion}\n")
+
+    def test_review_tasks_are_counted_by_task_id_full_reply_and_object(self) -> None:
+        """审查按实际任务 ID / 完整回复 / 对象数分开计；没有完整收尾回复的算未取得，不按 finished 冒充。"""
+        got = self.review(self.report("fail\n\n理由。"))
+        self.assertEqual(("k-review", True, ["a" * 64]),
+                         (got["task_id"], got["full_reply"], got["objects"]))
+        aggregate = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
+        self.assertEqual((1, 1, 1), (aggregate["story_review_tasks"], aggregate["story_review_full_replies"],
+                                     aggregate["story_review_objects"]))
+
+    def test_review_tasks_without_a_full_reply_are_not_counted_as_having_one(self) -> None:
+        parent = "session-p"
+        rows = self.spawn(1, "c1", "k-review", f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n", "审查", settled=None)
+        rows.append({"type": "agent/inbox/spliced", "time": 11 * 60000, "data": {"inserted": [{
+            "content": [{"type": "text", "text": "Background subagent k-review finished and will do no further work."}],
+            "source": {"kind": "subagent-settled", "senderSessionId": "k-review",
+                       "summary": "Background subagent k-review finished and will do no further work."}}]}})
+        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
+        self.assertEqual((1, 0, 1), (got["story_review_tasks"], got["story_review_full_replies"],
+                                     got["story_review_objects"]))
+        [item] = got["items"]
+        self.assertFalse(item["full_reply"], "只有收尾状态、没有完整回复，被算成了完整回复")
 
     def test_a_review_that_finished_normally_can_still_fail(self) -> None:
         """子会话正常收尾，回复写明总体结论 fail：业务结论是 fail，收尾仍是 finished，两件事分开记，并给出回复里的行号。"""

@@ -40,9 +40,19 @@
 归并不了的条目进 ``incomplete_tool_events``（只有结果、只有开始、同键冲突、跨检查点），有这类条目时计数只是已观察到的次数。
 只开始没结果的调用计用了什么、读了什么，不计门禁结论。
 - 第 5 项按本次实际执行体和阶段取值，说明 input/output/cache/context 字段的含义与累计方式。run_id 变化不证明上下文重置，
-  上下文大小不证明是否派过独立作者；无法取得的轨迹标未知。
+  上下文大小不证明是否派过独立作者；无法取得的轨迹标未知。**usage 事件是父会话这一次的上下文读数，不是全部模型 API 调用数**：
+  子会话的用量不在父公共事件流里，不能拿父 usage 相加当全模型成本。
 - 第 6 项分开记录装配内容和消费模型实际收到的内容，字节不直接当 token。耗时拆分要标工具时间、事件间隔估计或人工等待，
   扣除故障后的估算不是修复后的实测。
+- **父/子分列**：父会话的 assistant 响应（`type: text` 事件数）与工具调用（公共事件按调用归并）只算父；
+  子会话的 assistant 响应与工具调用从保全的原生会话数，两者口径不同，**不能相加成一次模型 API 次数**，
+  也不能用 `native-sessions/children/` 的目录数冒充调用数。没有保全原件时子会话数记 null，不是 0。
+- **审查按实际任务分开计**：每个委派给 `task_id`（原生 childId）、`full_reply`（有没有完整收尾回复）、
+  `objects`（派出去的审查对象键个数）；汇总 `story_review_tasks / full_replies / objects`。目录数不是任务数。
+- **耗时只报能核实的那几类**：墙钟（首末事件）、驱动器累计的人工等待、可核工具调用区间、可核子任务观察区间、
+  返修窗口与未知。区间用**并集**计算，交叠部分不重复累加也不重复扣除；`not_attributed_sec` 是墙钟减去可核区间后的
+  未归属部分，含模型推理、宿主准备、等待与事件空档，**不是纯推理时间**。`nontool_gap_sec` 与 `tool_gap_sec`
+  是相邻事件间隔的近似估计，不是实测 span。
 
 用法：
     python measure_run.py <events.jsonl 或含它的目录> [--json]
@@ -54,7 +64,7 @@ import json
 import re
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -479,17 +489,39 @@ def _owners(calls: list[dict]) -> dict[int, dict]:
     return {index: call for call in calls for index in call["indices"]}
 
 
+def _union_seconds(intervals: list[tuple[datetime, datetime]]) -> float | None:
+    """若干时间区间的**并集**秒数；一个可核区间都没有时是 None（未知，不是 0）。
+
+    并发调用的区间相互交叠：相加会把一段时间算两次，逐个相减也会把交叠部分重复扣两次。
+    这里先并集再量长度，跨来源（工具、子任务、返修）同样适用。
+    """
+    spans = sorted((start, end) for start, end in intervals if start is not None and end is not None and end >= start)
+    if not spans:
+        return None
+    total = 0.0
+    cur_start, cur_end = spans[0]
+    for start, end in spans[1:]:
+        if start > cur_end:
+            total += (cur_end - cur_start).total_seconds()
+            cur_start, cur_end = start, end
+        elif end > cur_end:
+            cur_end = end
+    total += (cur_end - cur_start).total_seconds()
+    return round(total, 1)
+
+
 def segment_metrics(events: list[dict], calls: list[dict], lo: int, hi: int) -> dict:
     """一段（``events[lo:hi]``）的效率观测：时长、模型与工具时间、verifier 次数与耗时、首次门禁与首次登记、返工时长。
 
     调用先在整份输入里归并，再按**开始**所在的段归属，跨段的调用不拆成两次。
-    模型与工具时间都是**事件间隔归属的近似值**（间隔归给本条事件：工具事件记工具，其余记模型）；
+    非工具事件间隔与工具事件间隔都是**相邻事件间隔的近似值**（间隔归给本条事件），不是实测 span，
+    也不称纯推理：非工具间隔里混着模型推理、宿主准备、等待与事件空档。
     首次门禁、登记与返工只看有结果的调用，按结果到达的先后算；返工时长是一次门禁或登记没过到下一次同类通过之间的分钟数，
-    各次相加。等人时间由驱动器累计，只有全程数。
+    多类同时未过时按**并集**算，交叠窗口不重复计。等人时间由驱动器累计，只有全程数。
     """
     owners = _owners(calls)
     stamps = [t for t in (_ts(e.get("timestamp")) for e in events[lo:hi]) if t]
-    model_gap = tool_gap = verifier_gap = 0.0
+    nontool_gap = tool_gap = verifier_gap = 0.0
     prev = None
     for index in range(lo, hi):
         e = events[index]
@@ -497,19 +529,23 @@ def segment_metrics(events: list[dict], calls: list[dict], lo: int, hi: int) -> 
         gap = (ts - prev).total_seconds() if (ts and prev) else 0.0
         prev = ts or prev
         if e.get("type") != "tool":
-            model_gap += gap
+            nontool_gap += gap
             continue
         tool_gap += gap
         if index in owners and owners[index]["kind"] == "verifier":
             verifier_gap += gap
     mine = [call for call in calls if lo <= call["start_index"] < hi]
+    intervals = [(_ts(call["start"].get("timestamp")), _ts((call["end"] or {}).get("timestamp")))
+                 for call in mine if call["end"] is not None]
     first = {"harness": None, "story_register": None}
     failing_since: dict[str, datetime] = {}
-    rework_sec = 0.0
+    rework_intervals: list[tuple[datetime, datetime]] = []
+    comparable = False  # 有没有可判的门禁/登记结果：没有时返修是未知，不是「没返修」
     for call in sorted(mine, key=lambda c: c["end_index"] if c["end_index"] is not None else c["start_index"]):
         kind, output = call["kind"], _result(call)
         if kind not in first or output is None:
             continue
+        comparable = True
         ts = _ts(call["end"].get("timestamp"))
         status = str(call["end"].get("tool_status") or "")
         fails = (len({m.group(3) for m in CHECK_LINE_RE.finditer(output) if m.group(1) == "FAIL"})
@@ -521,17 +557,21 @@ def segment_metrics(events: list[dict], calls: list[dict], lo: int, hi: int) -> 
         if not passed and kind not in failing_since and ts:
             failing_since[kind] = ts
         elif passed and kind in failing_since and ts:
-            rework_sec += (ts - failing_since.pop(kind)).total_seconds()
+            rework_intervals.append((failing_since.pop(kind), ts))
+    rework = _union_seconds(rework_intervals)
+    if rework is None and comparable:
+        rework = 0.0  # 有可判结果、没有未过→通过的窗口：这才是「没返修」
     return {
         "duration_min": round((stamps[-1] - stamps[0]).total_seconds() / 60, 1) if len(stamps) > 1 else None,
-        "model_gap_sec": round(model_gap, 1),
+        "nontool_gap_sec": round(nontool_gap, 1),
         "tool_gap_sec": round(tool_gap, 1),
+        "tool_interval_sec": _union_seconds(intervals),
         "verifier_runs": sum(call["kind"] == "verifier" for call in mine),
         "verifier_gap_sec": round(verifier_gap, 1),
         "delegations_unresolved": sum(call["kind"] == "delegation" for call in mine),
         "first_harness": first["harness"],
         "first_story_register": first["story_register"],
-        "rework_min": round(rework_sec / 60, 1),
+        "rework_min": round(rework / 60, 1) if rework is not None else None,
     }
 
 
@@ -641,8 +681,37 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
             conservation = (int(hit.group(1)), int(hit.group(2)))
 
     duration_min = None
+    wall_sec = None
     if first_ts and last_ts:
+        wall_sec = round((last_ts - first_ts).total_seconds(), 1)
         duration_min = round((last_ts - first_ts).total_seconds() / 60, 1)
+
+    # 父/子的 assistant 响应与工具调用分列：两套口径不同（父来自公共事件流，子来自保全的原生会话），
+    # 不能相加成一次模型 API 次数，也不能用 children/ 的目录数冒充任务数。
+    parent_counts = {"assistant_responses": sum(1 for e in events if e.get("type") == "text"),
+                     "tool_calls": len(calls)}
+    child_reads = _child_sessions(sessions)
+    child_counts = _child_totals(child_reads)
+    delegations = native_delegations(sessions, child_reads)
+
+    # 耗时只报能核实的那几类；区间取并集，交叠部分不重复累加，也不重复扣除。
+    tool_intervals = [(_ts(call["start"].get("timestamp")), _ts((call["end"] or {}).get("timestamp")))
+                      for call in calls if call["end"] is not None]
+    delegation_intervals = []
+    for start_ms, end_ms in (delegations.get("delegations") or {}).get("observed_intervals") or []:
+        try:
+            delegation_intervals.append((datetime.fromtimestamp(float(start_ms) / 1000, tz=timezone.utc),
+                                         datetime.fromtimestamp(float(end_ms) / 1000, tz=timezone.utc)))
+        except (TypeError, ValueError, OSError):
+            continue
+    tool_interval_sec = _union_seconds(tool_intervals)
+    delegation_interval_sec = _union_seconds(delegation_intervals)
+    verifiable = tool_interval_sec or 0.0
+    if delegation_interval_sec is not None:
+        # 工具与子任务可能并行：加到同一并集里再量，避免「两者都扣一次」。
+        verifiable = _union_seconds([*tool_intervals, *delegation_intervals]) or 0.0
+    # 子任务收尾可能晚于父会话最后一条事件：可核区间超出墙钟时按 0 计，不扣成负数。
+    not_attributed = (max(0.0, round(wall_sec - verifiable, 1)) if wall_sec is not None else None)
 
     # 双检查点单：两段各自多少事件、各自多长。混在一起算的话，第二段那几分钟的增量
     # 会被摊进第一段的总量，「这次更新花了多少」就再也分不出来。
@@ -683,7 +752,16 @@ def measure(events_path: Path, *, run_dir: Path | None = None) -> dict:
         "gate_unknown_by_kind": gate_unknown_by_kind,
         "review_results": dict(review_results),
         "tool_calls_completed_from_native": sum("completed_from" in call for call in calls),
-        **native_delegations(sessions),
+        "parent_counts": parent_counts,
+        "child_counts": child_counts,
+        "wall_clock_sec": wall_sec,
+        "tool_interval_sec": tool_interval_sec,
+        "delegation_interval_sec": delegation_interval_sec,
+        "not_attributed_sec": not_attributed,
+        "duration_source": "first_to_last_event",
+        "usage_source": "parent_session_context_readings_only",
+        "gap_semantics": "adjacent_event_interval_estimate_not_pure_reasoning",
+        **delegations,
         "knowledge_deliveries": knowledge_deliveries(calls),
         "repeated_check_fails": check_fail_counts.most_common(5),
         "worst_repeated_check": (check_fail_counts.most_common(1)[0] if check_fail_counts else None),
@@ -751,22 +829,63 @@ def _native_sessions(run_dir: Path) -> dict:
     return {"present": bool(parents), "read": read, "problems": problems}
 
 
+def _child_sessions(sessions: dict) -> dict[Path, dict]:
+    """保全的**子会话**逐份读数（按文件缓存一份）：父会话登记在它自己的 `children/<childId>/` 下。
+
+    只数实际保全且能解出的子会话；解不开的留给 delegations.problems，不按目录在不在推任务数。
+    """
+    children: dict[Path, dict] = {}
+    for parent, _info in sessions["read"]:
+        base = parent.parent / "children"
+        if not base.is_dir():
+            continue
+        for child in sorted(base.glob("*/session.v4.jsonl.zstd")):
+            children[child] = _native(child)
+    return children
+
+
+def _child_totals(children: dict[Path, dict]) -> dict:
+    """子会话侧可数的两件事：assistant 响应与工具调用；与父会话口径不同，不能相加成 API 次数。"""
+    if not children:
+        return {"sessions": None, "assistant_responses": None, "tool_calls": None, "problems": None}
+    responses = calls = 0
+    problems, readable = [], 0
+    for path, info in children.items():
+        if info.get("error"):
+            problems.append(f"{path.parent.name}：{info['error']}")
+            continue
+        readable += 1
+        responses += int(info.get("assistant_responses") or 0)
+        calls += int(info.get("tool_calls") or 0)
+    return {"sessions": readable, "assistant_responses": responses, "tool_calls": calls,
+            "problems": problems or None}
+
+
 def _review_mode(prompt: str) -> str:
     """Story 派审载体写明的派审种类；载体里没有这几节（旧版本的运行记录）是 unknown，不按次序猜。"""
     return next((mode for head, mode in REVIEW_MODES if re.search(rf"^{re.escape(head)}$", prompt, re.MULTILINE)), "unknown")
 
 
-def native_delegations(sessions: dict) -> dict:
+def native_delegations(sessions: dict, children: dict[Path, dict] | None = None) -> dict:
     """原生会话里的委派：按派出去的正文与子会话实际产出认角色，不按工具名——专用 verifier 工具也可能被派了 Story 审查或蓝图质询，
     派出去的是原生阶段审查请求才是阶段审查；给每个子会话的观察跨度与收尾状态。
     Story 独审另给派审种类（载体写明的先首读 / 复核 / 补正）与收尾回复里的业务结论（`_review_conclusion`），
-    与收尾状态、父方的报告接收结论分开。没有保全原件时为 null。"""
+    与收尾状态、父方的报告接收结论分开。没有保全原件时为 null。
+
+    **审查按实际任务计**：`task_id` 取原生 childId，`full_reply` 看有没有完整收尾回复，`objects` 是派出去的
+    审查对象键个数；汇总 `story_review_tasks / full_replies / objects`。`children/` 目录数不参与计数。
+    `children` 是本 run 已经读过的子会话读数（measure 传同一份，避免重复解析）。"""
+    children = children or {}
     if not sessions["present"]:
         return {"delegations": None}
     rows, problems = [], list(sessions["problems"])
+    observed: list[list] = []  # 可核子任务区间（原生登记到收尾的 ms 时刻），跨父会话汇总
     for parent, info in sessions["read"]:
         catalog = {c["childId"]: c for c in info.get("children") or []}
         settled = {s["childId"]: s for s in info.get("settled") or [] if s.get("childId")}
+        observed.extend([[entry.get("createdAt"), settled[child]["time"]]
+                         for child, entry in catalog.items()
+                         if child in settled and settled[child].get("time") and entry.get("createdAt")])
         for call in info.get("calls") or []:
             name = call.get("name")
             if name not in DELEGATING_TOOLS and name != "verifier":
@@ -779,16 +898,23 @@ def native_delegations(sessions: dict) -> dict:
                 role, basis = "stage_verifier", "派出去的是原生阶段审查请求"
             child_file = parent.parent / "children" / str(started) / "session.v4.jsonl.zstd" if started else None
             if role is None and child_file and child_file.is_file():
-                child = _native(child_file)
+                child = children.get(child_file) or _native(child_file)
                 role = _child_role(child) if not child.get("error") else None
                 basis = "子会话写了蓝图设计产物" if role else None
             entry = catalog.get(started or "") or {}
             done = settled.get(started or "")
-            span = (round((done["time"] - entry["createdAt"]) / 60000, 1)
-                    if done and done.get("time") and entry.get("createdAt") else None)
+            span_sec = ((done["time"] - entry["createdAt"]) / 1000
+                        if done and done.get("time") and entry.get("createdAt") else None)
+            span = round(span_sec / 60, 1) if span_sec is not None else None
             summary = str((done or {}).get("summary") or "")
+            reply = str((done or {}).get("text") or "")
+            # 完整回复 = 有收尾通知且通知里带着子会话的完整收尾回复；只有收尾状态不算。
+            full_reply = bool(done) and CLOSING_MESSAGE in reply
+            objects = sorted({key for key in CARRIER_KEY_RE.findall(prompt)}) if prompt else []
             row = {"role": role or "unresolved", "basis": basis, "label": entry.get("label") or str(_args(call).get("description") or ""),
-                   "child_id": started, "observed_span_min": span,
+                   "child_id": started, "task_id": started, "observed_span_min": span,
+                   "observed_span_sec": round(span_sec, 1) if span_sec is not None else None,
+                   "full_reply": full_reply, "objects": objects if objects else None,
                    "settled": "failed" if "failed" in summary else "finished" if "finished" in summary else "unknown"}
             if row["role"] == "story_review":
                 row["review_mode"] = _review_mode(prompt)
@@ -796,8 +922,19 @@ def native_delegations(sessions: dict) -> dict:
             rows.append(row)
     conclusions = Counter(r["review_conclusion"]["value"] for r in rows if "review_conclusion" in r)
     modes = Counter(r["review_mode"] for r in rows if "review_mode" in r)
-    return {"delegations": {"by_role": dict(Counter(r["role"] for r in rows)), "story_review_conclusions": dict(conclusions),
-                            "story_review_modes": dict(modes), "items": rows, "problems": problems}}
+    reviews = [r for r in rows if r["role"] == "story_review"]
+    review_objects = {key for r in reviews for key in (r["objects"] or [])}
+    # 可核子任务区间见上面的 observed：原生登记到收尾通知的 ms 时刻，供耗时并集；
+    # 没有收尾通知的不算区间。
+    return {"delegations": {
+        "observed_intervals": observed,
+        "by_role": dict(Counter(r["role"] for r in rows)),
+        "story_review_tasks": len(reviews),
+        "story_review_full_replies": sum(1 for r in reviews if r["full_reply"]),
+        "story_review_objects": len(review_objects),
+        "story_review_conclusions": dict(conclusions),
+        "story_review_modes": dict(modes),
+        "items": rows, "problems": problems}}
 
 
 #: 宿主收尾通知里，子会话最后那条回复从这一行之后开始
@@ -916,6 +1053,11 @@ def render(result: dict) -> str:
         "[measure_run] 实跑效率度量（只报数，达标与否由人判断；范围是整份 events.jsonl，分段按实际 checkpoint）",
         f"  事件 {result['events']}｜工具调用 {result['tool_calls']}（其中 {result['tool_calls_completed_from_native']} 次由同一原生调用补齐截断或缺端）"
         f"｜时长 {result['duration_min']} 分钟",
+        f"  父会话：assistant 响应（text 事件）{result['parent_counts']['assistant_responses']} 条｜工具调用 {result['parent_counts']['tool_calls']} 次",
+        (f"  子会话：{result['child_counts']['sessions']} 份保全原件｜assistant 响应 {result['child_counts']['assistant_responses']} 条"
+         f"｜工具调用 {result['child_counts']['tool_calls']} 次（与父会话口径不同，不是 API 次数）"
+         if result["child_counts"]["sessions"] is not None
+         else "  子会话：没有保全原件，响应与工具调用数未知（不是 0）"),
         *([f"  统计不完整，仅为已观察到的次数：归并不了的工具事件 "
            + "、".join(f"{reason} {count}" for reason, count in
                       Counter(item["reason"] for item in result["incomplete_tool_events"]).most_common())]
@@ -938,9 +1080,12 @@ def render(result: dict) -> str:
         f"    反复 FAIL 的 check：{result['repeated_check_fails'] or '（本轮没有 FAIL）'}   目标 同一 id ≤2 轮",
         f"    审查结论（review --action check，每次调用的结论值）：{result['review_results'] or '（没有观察到）'}",
         "",
-        "  ── 委派（按原生会话认角色）──",
+        "  ── 委派（按原生会话认角色；按实际任务算，不按目录数）──",
         *(["    没有保全的原生会话：委派角色未取得（不是没有委派）"] if result.get("delegations") is None else [
             f"    按角色：{result['delegations']['by_role'] or '（没有委派）'}",
+            f"    Story 独审任务 {result['delegations']['story_review_tasks']} 个"
+            f"（完整回复 {result['delegations']['story_review_full_replies']} 个，"
+            f"审查对象 {result['delegations']['story_review_objects']} 个）",
             f"    Story 独审回复写明的总体结论：{result['delegations']['story_review_conclusions'] or '（没有 Story 独审）'}"
             "（与收尾状态、父方报告接收结论分开计）",
             *(f"    - {i['role']}｜{i['label']}｜观察跨度 {i['observed_span_min'] if i['observed_span_min'] is not None else '未知'} 分钟"
@@ -950,7 +1095,12 @@ def render(result: dict) -> str:
                  if "review_conclusion" in i else "") for i in result["delegations"]["items"]),
             *(f"    读不了：{p}" for p in result["delegations"]["problems"])]),
         "",
-        "  ── 时间去哪了（间隔归属的近似值，不是实测 span）──",
+        "  ── 时间去哪了（可核区间取并集；间隔估计不是实测 span）──",
+        f"    墙钟 {result['duration_min']} 分钟（首末事件）"
+        f"｜可核工具区间 {result['tool_interval_sec'] if result['tool_interval_sec'] is not None else '未知'}s"
+        f"｜可核子任务区间 {result['delegation_interval_sec'] if result['delegation_interval_sec'] is not None else '未知'}s"
+        f"｜未归属 {result['not_attributed_sec'] if result['not_attributed_sec'] is not None else '未知'}s"
+        "（含模型推理、宿主准备、等待与事件空档，不是纯推理）",
         f"    门禁 {result['gap_sec_by_kind']['gate']}s｜verifier {result['gap_sec_by_kind']['verifier']}s"
         f"｜成文 {result['gap_sec_by_kind']['authoring']}s｜其它 {result['gap_sec_by_kind']['other']}s",
         (f"    人工等待：{result['human_wait_sec']}s（{result['human_wait_events']} 次）  —— 独立计时，不进上面四项"
@@ -970,7 +1120,8 @@ def render(result: dict) -> str:
     ]
     for name, seg in (result.get("segments") or {}).items():
         lines.append(
-            f"    {name}：{seg['duration_min']} 分钟｜模型 {seg['model_gap_sec']}s｜工具 {seg['tool_gap_sec']}s"
+            f"    {name}：{seg['duration_min']} 分钟｜非工具事件间隔 {seg['nontool_gap_sec']}s"
+            f"（含推理/等待/空档，不是纯推理）｜工具相邻间隔 {seg['tool_gap_sec']}s"
             f"｜verifier {seg['verifier_runs']} 次 {seg['verifier_gap_sec']}s｜其它委派 {seg['delegations_unresolved']} 次"
             f"｜首次门禁 {seg['first_harness']}｜首次登记 {seg['first_story_register']}｜返工 {seg['rework_min']} 分钟")
     return "\n".join(lines)

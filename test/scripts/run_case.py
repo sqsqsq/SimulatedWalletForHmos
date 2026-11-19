@@ -171,6 +171,10 @@ PHASE_ORDER = end_target.PHASES
 # 而多算一个目录会把被测件（doc/extensions）或 harness 自己（test）删掉。
 SOURCE_DIRS = ("01-Product", "02-Feature", "04-BusinessBase", "05-SystemBase")
 
+#: 模型子进程的临时目录（TMP/TEMP）：Case 工作区内的独立工具输出目录，只对本次 Case 可见。
+#: 不取工作区顶层 `output/`——工作区边界把 `output` 当维护目录拒绝；点目录不撞消费工程结构。
+TOOL_OUTPUT_DIR = ".tool-output"
+
 
 def is_interactive(case: dict) -> bool:
     """用例是否要真人在回路。缺省 False——既有用例行为逐字节不变。"""
@@ -1066,15 +1070,50 @@ def _load_case(case_id: str, run_id: str | None = None) -> tuple[dict, Path, str
     return case, out_dir, feature
 
 
+def tool_output_root(workspace: Path | None = None) -> Path:
+    """模型子进程的临时目录 / 工具输出溢出根：**当次 Case 工作区内**的独立目录。
+
+    不放在宿主 `output/story/<suite>/.../cli-tmp`：那是 Case 边界之外，被测模型读自己的
+    溢出输出就会越出 Case（TV02）。也不放在工作区顶层的 `output/`（工作区边界把它当维护
+    目录拒绝），用点目录 `.tool-output/`，随工作区一起创建、随工作区丢弃，不新增通用日志仓。
+    `workspace` 缺省是被测工程根（多 Case 编排传进来的隔离工作区）。
+    """
+    root = Path(workspace or REPO_ROOT).resolve()
+    target = (root / TOOL_OUTPUT_DIR).resolve()
+    if target.parent != root:
+        raise SystemExit(f"[runner] 工具输出目录越出 Case 工作区: {target}（工作区 {root}）")
+    return target
+
+
+def _exclude_tool_output_from_case_git(workspace: Path) -> None:
+    """把工具输出目录写进 Case 自己的 `.git/info/exclude`，模型的 `git status` 不被溢出文件污染。
+
+    只动本次 Case 隔离仓库的本地排除文件，不碰消费工程的 `.gitignore`；没有 `.git`（单测/
+    非 Git 工作区）时跳过。重复调用幂等。
+    """
+    exclude = workspace / ".git" / "info" / "exclude"
+    if not exclude.parent.is_dir():
+        return
+    entry = f"{TOOL_OUTPUT_DIR}/"
+    try:
+        text = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        lines = text.splitlines()
+        if entry in lines:
+            return
+        exclude.write_text("\n".join([*lines, entry]) + "\n", encoding="utf-8")
+    except OSError:
+        # 排除项写不进只影响模型看到的未跟踪文件，不影响运输边界；照常起跑。
+        return
+
+
 def _grant_private_tmp_ownership_rights(private_tmp: Path) -> None:
     """给私有 tmp 加当前用户可继承的完全控制项，让沙箱能为其中的临时目录改属主。
 
     DSH 的 windows-acl 沙箱在 TMP 下 mkdtemp 后要把新目录的属主改为随机 SID，这需要目录
-    ACL 带 WRITE_OWNER。output/story 所在盘链给当前用户的项是 Modify（不含 WRITE_OWNER），
-    继承进来的 ACL 使每次 temp grant 都失败、失败后的清理也失败（2026-10-27 首个 dsh suite
-    实测）；对只授 Modify 的链，逐目录补对象级 ACE 也救不了动态 mkdtemp 子目录。
-    这里只新增当前用户的一条可继承 Allow 项，不改其它项、不改属主；icacls 失败仅告警，
-    沙箱仍按 fail-closed 在 CLI 层报错，不静默降级。
+    ACL 带 WRITE_OWNER。只授 Modify 的目录链上继承进来的 ACL 会使每次 temp grant 都失败、
+    失败后的清理也失败（2026-10-27 首个 dsh suite 实测）；对只授 Modify 的链，逐目录补对象级
+    ACE 也救不了动态 mkdtemp 子目录。这里只新增当前用户的一条可继承 Allow 项，不改其它项、
+    不改属主；icacls 失败仅告警，沙箱仍按 fail-closed 在 CLI 层报错，不静默降级。
     """
     if sys.platform != "win32":
         return
@@ -1087,23 +1126,32 @@ def _grant_private_tmp_ownership_rights(private_tmp: Path) -> None:
 
 
 def build_cli_env(out_dir: Path, cli_name: str | None = None, model: str | None = None,
-                  limit: dict | None = None) -> dict[str, str]:
+                  limit: dict | None = None, *, workspace: Path | None = None) -> dict[str, str]:
     """为被测 CLI 建立每轮独立的可写运行目录。
 
     OpenCode 1.18 在 Windows 会把已存在的 XDG 子目录当作 mkdir 失败；将 config/data
     放入本轮刚创建的审计目录，可避免触碰用户目录并保留其只读 provider 配置作为 custom config。
     配置组给了 `limit` 时，经 OPENCODE_CONFIG_CONTENT 把这个模型的上限交给 OpenCode，按层合并后压过用户配置里的同一项。
     其他 CLI 不受影响。
+
+    **模型子进程的 TMP/TEMP 是 Case 工作区内的 `.tool-output/`（`tool_output_root`）**：
+    历史数据物理隔离，且模型读自己被打断/溢出的工具输出仍在自己的 Case 边界内（TV02）。
+    宿主侧结果、答案卷与跨 Case 原件仍在本轮 `out_dir` 与各 Case 的系统快照里，不跟着进来。
     """
     env = {str(k): str(v) for k, v in (CFG.get("cli", {}).get("env", {}) or {}).items()}
     # Explicit in production; the fallback keeps this small helper directly
     # testable without constructing a full request.
     cli_name = cli_name or str(CFG.get("cli", {}).get("name")
                                or CLI_CONFIGURATIONS[0]["name"])
-    # 宿主的临时目录按轮隔离：实测被测模型在共享的 %TEMP%/opencode 里翻到了
-    # 历史轮次的会话数据（story-ar90006-docx、handoff-story），还据此推断流程走法。
-    # TMP/TEMP 指向本轮审计目录下的私有 tmp，历史数据物理隔离；对所有 CLI 生效。
-    private_tmp = out_dir / "cli-tmp"
+    # 模型自己的临时目录按 Case 隔离：实测被测模型在共享的 %TEMP%/opencode 里翻到了
+    # 历史轮次的会话数据（story-ar90006-docx、handoff-story），还据此推断流程走法；
+    # 指向工作区外时，它读自己的溢出输出也会越出 Case。这里落在当次工作区内。
+    if workspace is not None:
+        private_tmp = tool_output_root(workspace)
+        _exclude_tool_output_from_case_git(Path(workspace).resolve())
+    else:
+        # 直接跑 run_case（调试用）没有隔离工作区：退到本轮结果目录，不写 demo 发布基线。
+        private_tmp = (out_dir / "tool-output").resolve()
     private_tmp.mkdir(parents=True, exist_ok=True)
     _grant_private_tmp_ownership_rights(private_tmp)
     env["TMP"] = env["TEMP"] = str(private_tmp)
@@ -1859,6 +1907,16 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                               "start": state["started_at"], "status": "running",
                               "execution_status": "running",
                               "cli_config": cli_config}
+    # 正式多 Case 的模型临时目录在本 Case 工作区内；直接跑 run_case（调试用，不用于正式测试）
+    # 没有隔离工作区，退到本轮结果目录，避免往 demo（发布基线）里写运行态。
+    isolated_workspace = os.environ.get("STORY_ISOLATED_WORKSPACE", "").strip() == "1"
+    model_tool_output = (tool_output_root(REPO_ROOT) if isolated_workspace
+                         else (out_dir / "tool-output").resolve())
+    result["tool_output"] = {"root": str(model_tool_output),
+                             "workspace_relative": TOOL_OUTPUT_DIR if isolated_workspace else None,
+                             "scope": "case_workspace" if isolated_workspace else "host_run_dir_debug"}
+    state["tool_output"] = result["tool_output"]
+    feed.emit("tool_output_dir", **result["tool_output"])
     # 全局阶段槽是观测者与被测模型共用的单槽：运行前快照，终态还原。
     # 不还原的话，被测模型（或本驱动器的门禁调用）留下的阶段会拦住观测者会话的 Stop hook。
     phase_slot_snapshot = snapshot_phase_slot()
@@ -1903,7 +1961,6 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
     t0 = time.time()
     # 正式多 Case 使用隔离 workspace（根下的 .git 只是本 Case 的起跑基线）；其源码基线与差异由宿主
     # run_multi_case.py 的白名单快照负责，不能再调用 demo 的 Git 源码事务。
-    isolated_workspace = os.environ.get("STORY_ISOLATED_WORKSPACE", "").strip() == "1"
     source_transaction_required = (
         interval_contains_coding(start_phase, end_at) and not isolated_workspace
     )
@@ -1939,8 +1996,9 @@ def foreground(case_id: str, *, prepared: bool, run_id: str | None = None,
                                        [u["change_unit_id"] for u in observe_target(feature, end_at, case, start_phase)["units"]]),
                     interactive),
                 cwd=TARGET, soft_timeout_sec=NO_TIME_LIMIT, hard_timeout_sec=NO_TIME_LIMIT,
-                stop_grace_sec=STOP_GRACE, env=build_cli_env(out_dir, cli_config["name"], cli_config["model"],
-                                                               cli_config.get("limit")),
+                stop_grace_sec=STOP_GRACE, env=build_cli_env(
+                    out_dir, cli_config["name"], cli_config["model"], cli_config.get("limit"),
+                    workspace=REPO_ROOT if isolated_workspace else None),
                 metadata={"tool": "story-skill-test",
                           "cli_config_id": cli_config["id"]})
             run: dict = {}
@@ -2888,6 +2946,8 @@ def deliver_update_inputs(case_id: str, feature: str, out_dir: Path, review_feed
     by_target: dict[Path, tuple[dict, bytes]] = {}
     for record, source, target in copies:
         data = source.read_bytes()
+        # 投放记录要能回答「什么时候真的投了、投的是哪一版」：逐件留原件摘要与字节数。
+        record.update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
         if target in by_target:
             first, same = by_target[target]
             if same != data:
@@ -2910,9 +2970,48 @@ def deliver_update_inputs(case_id: str, feature: str, out_dir: Path, review_feed
             write()
         except OSError as exc:
             failed = {**record, "error": str(exc), "target_now": _target_now(target)}
+            _write_update_delivery(out_dir, feature, done, failed, [r for r, *_ in actions[index + 1:]])
             raise UpdateDeliveryError(done, failed, [r for r, *_ in actions[index + 1:]], f"{record['file']}：{exc}") from exc
+        record["delivered_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        if record.get("kind") == "review_human_zone":
+            # 人工区意见写进的是评审记录本体：摘要取写完之后的那份，记录的是实际投出的内容。
+            try:
+                data = target.read_bytes()
+            except OSError:
+                data = b""
+            record.update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
         done.append(record)
+    _write_update_delivery(out_dir, feature, done, None, [])
     return done
+
+
+#: 更新投放记录：每件投了什么、什么时候、原件摘要；收到时刻另看模型取材回执。
+UPDATE_DELIVERY_RECORD = "update-delivery.json"
+
+
+def _write_update_delivery(out_dir: Path, feature: str, done: list[dict], failed: dict | None,
+                           pending: list[dict]) -> None:
+    """把本次第二段投放写成 `out_dir/update-delivery.json`（原样记录，不改写工作区）。
+
+    `delivered_at` 是装置实际写入的时刻；**收到时刻不从它推**——模型这次取材回执
+    （`AR/story-src/fetched.json` 的 `fetchedAt`）才是它实际收到的时刻，两者分开核。
+    写不进只影响证据，不影响投放结果；记录本身已经在返回值里。
+    """
+    payload = {
+        "schema_version": 1,
+        "feature": feature,
+        "recorded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "delivered": done,
+        "failed": failed,
+        "not_delivered": pending,
+        "received_at_source": "model fetch receipt (AR/story-src/fetched.json fetchedAt)",
+        "note": "delivered_at 是装置写入时刻；模型收到时刻取其取材回执，不拿投放时刻冒充",
+    }
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        _atomic_write(out_dir / UPDATE_DELIVERY_RECORD, json.dumps(payload, ensure_ascii=False, indent=2))
+    except OSError:
+        return
 
 
 def _target_now(target: Path) -> dict | str:
@@ -3106,11 +3205,20 @@ def cmd_resume_update(case_id: str, text: str, deliver: list[str] | None = None,
                           "not_delivered": exc.pending}, ensure_ascii=False))
         return 1
     out_dir.mkdir(parents=True, exist_ok=True)
+    queued_at = time.strftime("%Y-%m-%d %H:%M:%S")
     (out_dir / RESUME_FILE).write_text(
-        json.dumps({"text": text, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
+        json.dumps({"text": text, "at": queued_at}, ensure_ascii=False),
         encoding="utf-8")
-    print(json.dumps({"ok": True, "case": case_id, "queued": text[:200], "delivered": delivered},
-                     ensure_ascii=False))
+    # 投放记录同一处补上第二段请求与排队时刻：收到时刻仍以模型取材回执为准。
+    record_path = out_dir / UPDATE_DELIVERY_RECORD
+    try:
+        payload = json.loads(record_path.read_text(encoding="utf-8")) if record_path.is_file() else {}
+        payload.update(request=text, queued_at=queued_at)
+        _atomic_write(record_path, json.dumps(payload, ensure_ascii=False, indent=2))
+    except (OSError, ValueError):
+        pass
+    print(json.dumps({"ok": True, "case": case_id, "queued": text[:200], "delivered": delivered,
+                      "delivery_record": str(record_path)}, ensure_ascii=False))
     return 0
 
 
