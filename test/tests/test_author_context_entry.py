@@ -166,6 +166,19 @@ class ThePointersAreWhereTheAuthorLooks(unittest.TestCase):
                 self.assertIn({"kind": "skill", "ref": "story-knowledge"}, slot)
 
 
+class TheEntryTextMatchesTheCurrentFlow(unittest.TestCase):
+    """入口/help 写当前行为：蓝图唯一决定、读者直接交报告；已退场的评审载体不再出现在文案里。"""
+
+    TEXT = (EXT / "skills" / "story" / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_the_retired_review_carrier_is_not_advertised(self):
+        self.assertNotIn("评审载体", self.TEXT, "入口/help 还在把已退场的评审载体写成交付物")
+
+    def test_the_chain_names_the_blueprint_decisions_and_the_reader_writer(self):
+        self.assertIn("蓝图 gap/decision", self.TEXT, "入口没写业务决定的唯一登记处")
+        self.assertIn("读者直接写报告", self.TEXT, "入口没写独立读者是本次报告的唯一写者")
+
+
 class TheHostChannelIsNotUsed(unittest.TestCase):
     """作者要求不占宿主的作者事件，也不再引用已退场的框架入口。"""
 

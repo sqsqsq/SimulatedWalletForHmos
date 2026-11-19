@@ -659,7 +659,8 @@ async function printFollowUp() {
   console.log(`[adapt-scan] 按版本跟进：${JSON.stringify(f)}`);
   if (Object.values(f.items).some(list => list.length) || f.check.status !== 'PASS') {
     console.log('[adapt-scan] 有演进条目或知识不合当前协议：按块摆出来，停一次问人「现在做这些适配吗」；'
-      + '选稍后就不写任何东西；选中的知识与对接适配都交回后跑 --mark-adapted');
+      + '选稍后就不写任何东西；选中的知识与对接适配都交回后跑 --mark-adapted；'
+      + '条目是待判断的适配主题，不是目标仓已采用——受影响才改，交回分开写');
     return;
   }
   writeAdaptedFor();

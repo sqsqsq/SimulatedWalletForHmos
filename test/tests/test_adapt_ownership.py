@@ -316,16 +316,21 @@ class TheStatusViewOnlyReads(StatusCase):
         self.assertNotIn("在途单", got["items"], "adapt 不处理旧需求，跟进里不该有在途单块")
 
 
-    def test_a_target_on_2_0_3_gets_the_two_2_0_4_knowledge_topics(self) -> None:
-        """游标在 2.0.3：知识跟进正好是 2.0.4 的两条主题（工程能力、性能与资源引入），机制升级不改目标知识。"""
+    def test_a_target_on_2_0_3_gets_the_newer_knowledge_and_adapter_topics(self) -> None:
+        """游标在 2.0.3：跟进里是 2.0.4 的两条知识主题、2.0.5 的三条主题与一条对接层条目；机制升级不改目标知识。"""
         (self.ext / "adaptation.yaml").write_text('adapters: stand-in\nadapted_for: "2.0.3"\n', encoding="utf-8")
         code, got = self.status()
         self.assertEqual(0, code, got)
         topics = got["items"]["知识"]
-        self.assertEqual(2, len(topics), topics)
-        self.assertTrue(all(t.startswith("2.0.4：") for t in topics), topics)
+        self.assertEqual(["2.0.4", "2.0.4", "2.0.5", "2.0.5", "2.0.5"],
+                         [t.split("：", 1)[0] for t in topics], topics)
         self.assertIn("工程能力", topics[0])
         self.assertIn("性能与资源引入", topics[1])
+        for theme in ("蓝图唯一决定", "Story 评审回流", "原话与知识验收责任"):
+            self.assertTrue(any(theme in t for t in topics[2:]), (theme, topics))
+        self.assertEqual(["2.0.5"], [i.split("：", 1)[0] for i in got["items"]["对接层"]], got["items"])
+        self.assertIn("review_out", got["items"]["对接层"][0])
+        self.assertNotIn("目标仓已采用", json.dumps(topics, ensure_ascii=False), "把待判断的主题写成了目标已采用")
 
 class SameUseCandidatesAreOnlyHints(StatusCase):
     """同用途声明候选只按 `applies_when` 原文相同分组，给独立审查当线索：不改 PASS，不推断相似，
@@ -434,7 +439,35 @@ class TheUpgradeFollowsTheVersionRecord(AdaptCase):
         self.assertEqual(set(change_versions(PKG_EXT, "知识")), {i.split("：", 1)[0] for i in knowledge},
                          "没从知识基线起列全各版知识条目")
         self.assertIn("停一次问人", proc.stdout)
+        self.assertIn("条目是待判断的适配主题", proc.stdout, "跟进没把「待判断」与「目标已采用」分开")
         self.assertNotIn("adapted_for", adaptation.read_text(encoding="utf-8"), "没等人做完就写了适配版本")
+
+
+class TheUpgradeRecordKeepsTheOldSiteBoundary(unittest.TestCase):
+    """2.0.5 起旧流程契约不迁移：记录写明原版收口/新 init 与保原件，主题只写待判断，不写成目标已采用。"""
+
+    RECORD = PKG_EXT / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md"
+
+    def section(self) -> str:
+        text = self.RECORD.read_text(encoding="utf-8")
+        self.assertIn("## 2.0.5", text, "演进记录没有 2.0.5 一节")
+        return text.split("## 2.0.5", 1)[1]
+
+    def test_it_names_the_old_site_boundary_and_keeps_originals(self) -> None:
+        section = self.section()
+        for needle in ("schema 6", "原版", "init", "原件", "不盘点", "在途"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, section)
+
+    def test_the_topics_are_checks_on_target_knowledge_not_adoption_claims(self) -> None:
+        section = self.section()
+        self.assertIn("不表示目标仓已经采用", section)
+        topics = [l for l in section.splitlines() if l.startswith("- [知识]")]
+        self.assertTrue(topics, "2.0.5 没有知识主题")
+        for line in topics:
+            with self.subTest(topic=line[:24]):
+                self.assertIn("目标知识", line)
+                self.assertIn("核：", line)
 
 
 class TheAdaptedVersionIsWrittenByTheScript(AdaptCase):
