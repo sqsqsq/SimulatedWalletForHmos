@@ -51,10 +51,11 @@
   `report_completeness`（报告是否可核完整）、`objects`（派出去的审查对象键个数）；汇总
   `story_review_tasks / replies / full_replies / reports_unknown / objects`。任务是否收尾（`settled`）、
   有没有回复文本、报告是否可核完整是三件事：收尾通知里带着收尾标志不等于拿到了完整报告，
-  完整回复只计可核完整的那几份，其余单列未知。目录数不是任务数。报告完整性优先用**同一次派审、同一对象、
-  读者自己写进本次报告文件的读者原件**（取自保全的读者子会话）与整份 final 对同一份正文；只有开头两行、
-  只有正文的一部分、没有原件可核的现行形态都记 unknown（历史记录按当时的完整报告形态读取），
-  不据回复长短或正文里的字样推断。
+  完整回复只计可核完整的那几份，其余单列未知。目录数不是任务数。有现行报告合同的派审，报告完整性用
+  **同一次派审、同一对象、所配位置上成功结果对应的完整写入（读者原件）**（取自保全的读者子会话）与整份
+  final 对同一份正文；只有失败或没有结果的调用、写进别的相对目录或同名后缀、只有开头两行、只有正文的
+  一部分都记 unknown。载体没有现行报告合同的历史派审才按当时的完整报告形态读取，现行作者自己选的
+  Markdown 标题不改变证据标准；不据回复长短或正文里的字样推断。
 - **耗时只报能核实的那几类**：墙钟（首末事件）、驱动器累计的人工等待、可核工具调用区间、可核子任务观察区间、
   返修窗口与未知。区间用**并集**计算，交叠部分不重复累加也不重复扣除；`not_attributed_sec` 是墙钟减去可核区间后的
   未归属部分，含模型推理、宿主准备、等待与事件空档，**不是纯推理时间**。`nontool_gap_sec` 与 `tool_gap_sec`
@@ -881,8 +882,9 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
     空回复的完整性都记 unknown，不按任务失败算。与父方的报告接收结论分开。没有保全原件时为 null。
 
     **审查按实际任务计**：`task_id` 取原生 childId，`reply_received` 看收尾通知里有没有回复文本，
-    `report_completeness` 按同一次派审、同一对象、读者自己写进本次报告文件的读者原件与整份 final 核
-    （见 `_closing_reply`、`_reply_conclusion` 与 `_report_completeness`），
+    `report_completeness` 按同一次派审、同一对象、所配位置上成功写出的读者原件与整份 final 核
+    （见 `_closing_reply`、`_reply_conclusion` 与 `_report_completeness`），现行作者自选的报告标题不参与；
+    历史格式只对载体没有现行报告合同的历史派审按原身份读取。
     `objects` 是派出去的审查对象键个数；汇总 `story_review_tasks / replies / full_replies / reports_unknown /
     objects`。`children/` 目录数不参与计数。
     `children` 是本 run 已经读过的子会话读数（measure 传同一份，避免重复解析）。"""
@@ -1035,18 +1037,42 @@ def _writer_path(path: object) -> str:
     return text
 
 
-def _is_report_path(path: object, want: str) -> bool:
-    """是不是派审载体分配的那一个报告文件：相对路径按相等认，绝对路径按结尾认。"""
+def _is_absolute_path(text: str) -> bool:
+    """归一后的路径是不是绝对路径（Windows 盘符或 POSIX 根）。"""
+    return text.startswith("/") or bool(re.match(r"^[A-Za-z]:/", text))
+
+
+def _same_path(left: str, right: str) -> bool:
+    """两个归一后的路径是不是同一个位置；Windows 上盘符与大小写不区分。"""
+    return left.casefold() == right.casefold() if sys.platform.startswith("win") else left == right
+
+
+def _is_report_path(path: object, want: str, cwd: object = None) -> bool:
+    """是不是派审载体分配给这一次的报告文件：工程相对路径逐字相等；绝对路径必须是同一子会话工作区里的
+    同一个相对位置。写进别的相对目录或别的工作区，即使同名后缀也不算这一次的原件。"""
     got = _writer_path(path)
-    return bool(want) and (got == want or got.endswith("/" + want))
+    if not want:
+        return False
+    if _same_path(got, want):
+        return True
+    root = _writer_path(cwd).rstrip("/")
+    return _is_absolute_path(got) and bool(root) and _same_path(got, f"{root}/{want}")
+
+
+def _write_outcome(call: dict) -> str:
+    """一次写类调用的结果事实：`success` / `error` / `no_result`（只有调用、没有结果不算写出）。"""
+    results = [r for r in call.get("results") or [] if isinstance(r, dict)]
+    if not results:
+        return "no_result"
+    return "error" if results[-1].get("isError") else "success"
 
 
 def _reader_original(prompt: str, child: dict | None) -> dict:
-    """读者原件：派审载体分配给这一次的报告文件，在同一个子会话里由读者自己写入的正文。
+    """读者原件：派审载体分配的报告文件，在同一个读者子会话里由读者自己成功写出的正文。
 
-    `{report_file, text, why}`。只认载体写明的那个文件：同一路径最后一次改动不是「写出全文」时
-    重建不出原样正文（写了又改的只有改动片段，不能拿旧字节冒充），给原因而不是拿别的报告顶上；
-    没有保全的子会话或读不出时同样取不到；原件的材料键不是这一次派审的对象也不采用。
+    `{report_file, text, why}`。只认载体写明的那个位置（同一工作区、同一相对路径；同名后缀不代证）：
+    调用失败或没有结果不算写出；同一位置最后一次成功改动不是「写出全文」时重建不出原样正文；
+    没有保全的子会话或读不出时取不到；原件的材料键不是这一次派审的对象也不采用。
     """
     files = DISPATCH_REPORT_RE.findall(prompt)
     if len(files) != 1:
@@ -1060,15 +1086,31 @@ def _reader_original(prompt: str, child: dict | None) -> dict:
         return {"report_file": report_file, "text": None, "why": "没有保全的读者子会话，取不到读者原件"}
     if child.get("error"):
         return {"report_file": report_file, "text": None, "why": f"读者子会话读不出（{child['error']}）"}
-    touched = [call for call in child.get("calls") or []
-               if call.get("name") in AUTHORING_TOOLS and _is_report_path(_args(call).get("file_path"), want)]
+    cwd = (child.get("header") or {}).get("cwd")
+    calls = [call for call in child.get("calls") or [] if call.get("name") in AUTHORING_TOOLS]
+    touched = [call for call in calls if _is_report_path(_args(call).get("file_path"), want, cwd)]
     if not touched:
+        elsewhere = next((call for call in calls
+                          if _writer_path(_args(call).get("file_path")).endswith("/" + want)), None)
+        if elsewhere:
+            return {"report_file": report_file, "text": None,
+                    "why": f"读者写的是 {_writer_path(_args(elsewhere).get('file_path'))}，"
+                           f"不是本次报告文件位置 {want}：同名后缀不能跨目录或工作区代证"}
         return {"report_file": report_file, "text": None, "why": f"读者子会话里没有写本次报告文件 {want}"}
-    last = touched[-1]
-    text = _args(last).get("content")
-    if last.get("name") != "write" or not isinstance(text, str):
+    done = [(call, _write_outcome(call)) for call in touched]
+    if not any(outcome == "success" for _, outcome in done):
+        outcome = done[-1][1]
+        why = ("读者写本次报告文件的调用返回错误，参数里的正文不能证明文件已经写出"
+               if outcome == "error" else
+               "读者写本次报告文件的调用没有结果，不能证明文件已经写出")
+        return {"report_file": report_file, "text": None, "why": why}
+    last = next(call for call, outcome in reversed(done) if outcome == "success")
+    if last.get("name") != "write":
         return {"report_file": report_file, "text": None,
-                "why": f"本次报告文件最后一次改动不是写出全文（{last.get('name')}），重建不出原样正文"}
+                "why": f"本次报告文件最后一次成功改动不是写出全文（{last.get('name')}），重建不出原样正文"}
+    text = _args(last).get("content")
+    if not isinstance(text, str):
+        return {"report_file": report_file, "text": None, "why": "本次报告文件的写出调用没有可恢复的正文"}
     carrier = CARRIER_KEY_RE.findall(prompt)
     if len(carrier) != 1 or REPLY_KEY_RE.findall(text)[:1] != carrier:
         return {"report_file": report_file, "text": None,
@@ -1097,18 +1139,28 @@ def _original_completeness(original: str, final: str) -> str | None:
 def _report_completeness(prompt: str, reply: dict, conclusion: dict, child: dict | None) -> dict:
     """报告完整性的可核结论：{value: complete/unknown, why, basis, report_file}。
 
-    **任务收尾、取得回复文本、声明结论、报告可核完整是四件事。** 报告完整性优先用同一次派审、同一对象、
-    读者自己写进本次报告文件的「读者原件」与整份 final 对同一份正文：一致且原件有正文才算 complete。
-    没有原件可核时，只有已保全的历史记录按当时的完整报告形态（三个二级标题）读取；现行形态只有表头、
-    只是原件的一部分、或取不到原件一律 unknown，并保留已收尾、已取得回复文本、已声明结论这些事实——
-    不据回复长短、正文里的字样或收尾状态推断完整。`basis` 写明凭什么判的，便于反查。
+    **任务收尾、取得回复文本、声明结论、报告可核完整是四件事。** 有现行报告合同的派审（载体写明了
+    `本次报告文件`），先核同一次派审、同一对象、所配位置上有成功结果的那次完整写入（读者原件），
+    再与整份 final 对同一份正文：一致且原件有正文才算 complete。只有失败或没有结果的调用、写进别的
+    相对目录或别的同名后缀，都不足以证明文件存在。载体没有现行报告合同的是按当时身份保全下来的历史
+    派审，只能按当时的完整报告形态（三个二级标题）读取；现行作者自己选的 Markdown 标题不改变证据标准。
+    其余一律 unknown，并保留已收尾、已取得回复文本、已声明结论这些事实——不据回复长短、正文里的字样
+    或收尾状态推断完整。`basis` 写明凭什么判的，便于反查。
     """
     if not reply["reply_received"]:
         return {"value": "unknown", "why": reply["why"], "basis": None, "report_file": None}
     if conclusion.get("why"):
         return {"value": "unknown", "why": conclusion["why"], "basis": None, "report_file": None}
-    if _recorded_report(str(reply["reply"]).splitlines()):
-        return {"value": "complete", "why": None, "basis": "recorded_report", "report_file": None}
+    files = DISPATCH_REPORT_RE.findall(prompt)
+    if not files:
+        # 旧载体没有「本次报告文件」这一行：这是历史派审，按当时的完整报告形态只读识别。
+        if _recorded_report(str(reply["reply"]).splitlines()):
+            return {"value": "complete", "why": None, "basis": "recorded_report", "report_file": None}
+        return {"value": "unknown", "basis": None, "report_file": None,
+                "why": "历史派审没有现行报告文件，回复也不是当时的完整报告形态（三个二级标题），核不了完整"}
+    if len(files) > 1:
+        return {"value": "unknown", "basis": None, "report_file": None,
+                "why": "派审载体写明了不止一个本次报告文件，无法确定哪一份是这一次的原件"}
     original = _reader_original(prompt, child)
     if original["text"] is None:
         return {"value": "unknown", "why": original["why"], "basis": None, "report_file": original["report_file"]}

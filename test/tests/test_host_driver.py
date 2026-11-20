@@ -453,12 +453,14 @@ class TheUpdateDeliveryRecordsTimeAndOriginalBytes(unittest.TestCase):
 
 
 class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
-    """B（S21/R3 返修）：投放记录逐件保投放时刻与原件字节；**收到**按两种现有来源分别核——
+    """B（S21/R3 返修）+ S26/R2：投放记录逐件保投放时刻与原件字节；**收到**按两种现有来源分别核——
     本地件（投进 inbox）看 importer 导入记录的时间与原件字节，系统件（投进需求系统、由模型 fetch 取回）
-    看本次取材回执的状态/时间/原件字节与批次回执。逐件先核身份、字节、证据一致性和事件相对投放的时间，
-    再给精度与结论：投放本身不得写成实际收到；批次回执缺失或对不上、时刻不可比都记 unknown；
-    同字节记录早于投放只有先后关系并注明粒度；只有可归入本次投放的否定回执才记 not_received；
-    没有事件记 unknown；旧格式的统一 received_at_source 不是逐件依据。"""
+    看本次取材回执的状态/时间/原件字节与批次回执。逐件复用三份记录的原生身份（投放目标所在需求单、总回执
+    `reqNo`、同名条目 `ticket`、已有字节数），同次同件相互矛盾时保留两边原值并记 unknown——不优先 fetched、
+    不取第一个同名条目，也不为本来没有落盘文件的合法否定回执虚设文件义务。身份不矛盾后再给精度与结论：
+    投放本身不得写成实际收到；批次回执缺失或对不上、时刻不可比都记 unknown；同字节记录早于投放只有先后
+    关系并注明粒度；只有可归入本次投放且未被同次批次推翻的否定回执才记 not_received；没有事件记 unknown；
+    旧格式的统一 received_at_source 不是逐件依据。"""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -625,6 +627,123 @@ class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
                 self.assertEqual(0, summary["received"])
                 self.assert_summary_matches_items(after)
                 self.assert_delivery_kept(before, after)
+
+    def test_batch_identity_or_bytes_conflicts_are_unknown_not_received(self) -> None:
+        """同一投放、总回执时间/SHA/字节不变，只改批次回执的需求单号、条目主人或字节数：
+        两边的原值都保留并记 unknown，不再按「批次可核」判 received；原始投放字段逐件不变。"""
+        for name, change in (
+            ("批次 reqNo 指向另一需求", lambda doc, item: doc.__setitem__("reqNo", "AR-other")),
+            ("批次条目 ticket 指向另一需求", lambda doc, item: doc["items"][0].__setitem__("ticket", "AR-other")),
+            ("批次字节数与总回执冲突", lambda doc, item: doc["items"][0].__setitem__("bytes", item["bytes"] + 9)),
+        ):
+            with self.subTest(name):
+                self.reset()
+                before = self.deliver()
+                items = self.delivered(before)
+                self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00")
+                path = self.feature / "inbox" / "review" / "fetch-20261119-180000" / ".receipt.json"
+                doc = json.loads(path.read_text(encoding="utf-8"))
+                change(doc, items["system"])
+                path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+                summary = rc.reconcile_update_receipts(self.run, self.feature)
+                after = self.record()
+                system = self.delivered(after)["system"]["receipt"]
+                self.assertEqual("unknown", system["status"], f"{name}：冲突身份或字节仍被判 received")
+                self.assertEqual("mismatch", system["batch"])
+                self.assertTrue(system.get("conflicts"), "冲突两边的原值没有留下")
+                self.assertIn("field", system["conflicts"][0])
+                self.assertEqual(0, summary["received"])
+                self.assert_summary_matches_items(after)
+                self.assert_delivery_kept(before, after)
+
+    def test_an_item_for_another_requirement_is_unknown(self) -> None:
+        """总回执的 reqNo 或同名条目的 ticket 指向另一需求：这一件不属于本次投放，
+        保留回执原值记 unknown，不按文件同名、时间与 SHA 相同就算收到。"""
+        for name, change in (
+            ("总回执 reqNo 指向另一需求", lambda doc: doc.__setitem__("reqNo", "AR-other")),
+            ("条目 ticket 指向另一需求", lambda doc: doc["items"][0].__setitem__("ticket", "AR-other")),
+        ):
+            with self.subTest(name):
+                self.reset()
+                before = self.deliver()
+                items = self.delivered(before)
+                self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00")
+                path = self.feature / "AR" / "story-src" / "fetched.json"
+                doc = json.loads(path.read_text(encoding="utf-8"))
+                change(doc)
+                path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+                summary = rc.reconcile_update_receipts(self.run, self.feature)
+                after = self.record()
+                system = self.delivered(after)["system"]["receipt"]
+                self.assertEqual("unknown", system["status"], f"{name}：身份不符却判 received")
+                self.assertTrue(system.get("identity"), "身份冲突的原值没有留下")
+                self.assertEqual(0, summary["received"])
+                self.assert_summary_matches_items(after)
+                self.assert_delivery_kept(before, after)
+
+    def test_same_name_entries_with_opposite_status_are_unknown(self) -> None:
+        """同一件在总回执同时有 fetched 与 absent：不优先 fetched、也不取第一个同名条目，
+        各条原值都留着，归 unknown 并写明冲突。"""
+        before = self.deliver()
+        items = self.delivered(before)
+        self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+        self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00")
+        path = self.feature / "AR" / "story-src" / "fetched.json"
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["items"].append({**doc["items"][0], "status": "absent"})
+        path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        after = self.record()
+        system = self.delivered(after)["system"]["receipt"]
+        self.assertEqual("unknown", system["status"], "按有利的那一条给出了确定结论")
+        self.assertEqual(["fetched", "absent"], [i["status"] for i in system["items"]])
+        self.assertIn("互相矛盾", system["why"])
+        self.assertEqual((1, 1), (summary["received"], summary["unknown"]))
+        self.assert_summary_matches_items(after)
+        self.assert_delivery_kept(before, after)
+
+    def test_a_negative_receipt_contradicted_by_its_batch_is_unknown(self) -> None:
+        """总回执记 absent、同次关联批次明细却记 fetched：不按任意一侧给确定结论，
+        保留两边的状态与摘要归 unknown，不记 not_received。"""
+        before = self.deliver()
+        items = self.delivered(before)
+        self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00")
+        path = self.feature / "AR" / "story-src" / "fetched.json"
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["items"][0]["status"] = "absent"
+        path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        after = self.record()
+        system = self.delivered(after)["system"]["receipt"]
+        self.assertEqual(("unknown", "absent"), (system["status"], system["total_status"]))
+        self.assertEqual(("fetched", items["system"]["sha256"]),
+                         (system["conflict_batch"]["status"], system["conflict_batch"]["sha256"]))
+        self.assertIn("同次同件相互矛盾", system["why"])
+        self.assertEqual(0, summary["not_received"])
+        self.assert_summary_matches_items(after)
+        self.assert_delivery_kept(before, after)
+
+    def test_a_legitimate_negative_receipt_needs_no_file_obligation(self) -> None:
+        """absent 本来就没有落盘文件：总回执该件没有 saved、也没有批次可核，
+        不妨碍按可归入本次的否定回执记 not_received，不因此记成未知。"""
+        before = self.deliver()
+        items = self.delivered(before)
+        name = Path(items["system"]["destination"]).name
+        src = self.feature / "AR" / "story-src"
+        src.mkdir(parents=True, exist_ok=True)
+        receipt = {"mode": "fetch", "reqNo": "AR90006", "fetchedAt": "2099-01-01T00:00:00+08:00",
+                   "items": [{"name": name, "label": "评审人留下的回稿", "ticket": "AR90006",
+                              "status": "absent", "note": "系统上现在没有这一份"}]}
+        (src / "fetched.json").write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        after = self.record()
+        system = self.delivered(after)["system"]["receipt"]
+        self.assertEqual(("not_received", "本次取材回执记 review-feedback.md 为 absent：系统上现在没有这一份"),
+                         (system["status"], system["why"]))
+        self.assertNotIn("batch", system)
+        self.assertEqual(1, summary["not_received"])
+        self.assert_summary_matches_items(after)
+        self.assert_delivery_kept(before, after)
 
     def test_an_earlier_absent_receipt_is_not_this_deliverys(self) -> None:
         """早于投放的 absent 不可归入本次投放：不记本次 not_received，记 unknown 并写明回执早于投放；

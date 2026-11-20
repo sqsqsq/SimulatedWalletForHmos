@@ -1224,11 +1224,11 @@ ZSTD = "const fs = require('fs'); const zlib = require('zlib');" \
        "fs.writeFileSync(process.argv[2], zlib.zstdCompressSync(fs.readFileSync(process.argv[1])));"
 
 
-def _session(path: Path, session_id: str, rows: list[dict]) -> None:
+def _session(path: Path, session_id: str, rows: list[dict], cwd: str = "w") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     plain = path.with_suffix(".plain")
     plain.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in
-                                [{"type": "session", "version": 4, "id": session_id, "cwd": "w"}, *rows]) + "\n", encoding="utf-8")
+                                [{"type": "session", "version": 4, "id": session_id, "cwd": cwd}, *rows]) + "\n", encoding="utf-8")
     subprocess.run(["node", "-e", ZSTD, str(plain), str(path)], check=True)
     plain.unlink()
 
@@ -1307,32 +1307,49 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
 
     KEY = "a" * 64
 
-    def review(self, reply: str, *, key: str | None = None, original: str | None = None) -> dict:
+    def write_rows(self, path: str, content: str | None = None, *, outcome: str = "ok",
+                   name: str = "write", call_id: str = "w1") -> list[dict]:
+        """读者子会话里的一次写文件调用：`outcome` 取 ok / error / no_result（只有调用、没有结果）。"""
+        args = {"file_path": path}
+        if content is not None:
+            args["content"] = content
+        rows = [{"type": "tool/call", "time": 2 * 60000,
+                 "data": {"callId": call_id, "name": name,
+                          "arguments": json.dumps(args, ensure_ascii=False)}}]
+        if outcome != "no_result":
+            rows.append({"type": "tool/result", "time": 2 * 60000,
+                         "data": {"message": {"toolCallId": call_id, "isError": outcome == "error",
+                                              "content": [{"type": "text",
+                                                           "text": "writing failed" if outcome == "error" else "ok"}]}}})
+        return rows
+
+    def review(self, reply: str, *, key: str | None = None, original: str | None = None,
+               dispatch: str = "current", child_rows: list[dict] | None = None,
+               cwd: str = "w") -> dict:
         """派一次 Story 独审，子会话正常收尾，收尾通知带着 `reply`；回给这一项的委派条目。
 
-        `original` 给定时同时保全读者子会话里「读者把 `original` 写进本次报告文件」这一动作，
-        用来核报告完整性；不给时只有收尾回复本身，没有可核的读者原件。
+        `dispatch="current"` 是现行载体（写明本次报告文件）；`dispatch="historical"` 是按 2.0.2 及以前
+        身份保全的旧载体（没有这一行，最终回复就是报告）。`original` 给定时保全读者子会话里「读者把
+        `original` 写进本次报告文件、工具返回成功」这一动作；`child_rows` 给定时按它保全子会话，用来造
+        工具返回错误、只有调用没有结果、写进别的相对目录或别的工作区这些反例。
         """
         shutil.rmtree(self.run_dir, ignore_errors=True)  # 每次派审只留这一次的子会话
         parent = "session-p"
-        report = f"doc/reports/story/AR/{(key or self.KEY)[:16]}/review-original.1.md"
+        report = self.report_file(key)
         head = (f"# Story 独立人读审查 · 派审\n\n- 材料键：`{key or self.KEY}`\n"
-                f"- 本次报告文件：`{report}`\n")
+                + (f"- 本次报告文件：`{report}`\n" if dispatch == "current" else ""))
         rows = self.spawn(1, "c1", "k-review", head, "审查", settled=None)
         rows.append({"type": "agent/inbox/spliced", "time": 11 * 60000, "data": {"inserted": [{
             "content": [{"type": "text", "text": "Background subagent k-review finished and will do no further work.\n"
                                                  "Its closing message:\n" + reply}],
             "source": {"kind": "subagent-settled", "senderSessionId": "k-review",
                        "summary": "Background subagent k-review finished and will do no further work."}}]}})
-        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
-        if original is not None:
+        _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows, cwd=cwd)
+        child = child_rows if child_rows is not None else (
+            self.write_rows(report, original) if original is not None else None)
+        if child is not None:
             _session(self.run_dir / "native-sessions" / parent / "children" / "k-review" / "session.v4.jsonl.zstd",
-                     "k-review", [{"type": "tool/call", "time": 2 * 60000,
-                                   "data": {"callId": "w1", "name": "write",
-                                            "arguments": json.dumps({"file_path": report, "content": original})}},
-                                  {"type": "tool/result", "time": 2 * 60000,
-                                   "data": {"message": {"toolCallId": "w1", "isError": False,
-                                                        "content": [{"type": "text", "text": "ok"}]}}}])
+                     "k-review", child, cwd=cwd)
         got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
         [item] = got["items"]
         return {**item, "conclusions": got["story_review_conclusions"]}
@@ -1344,8 +1361,9 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                 f"| F1 | MAJOR | story_reader_review | AR/story.md | 转化率分子分母冲突 | 设计 |\n\n## 总体结论\n\n{conclusion}\n")
 
     def test_review_tasks_are_counted_by_task_id_reply_and_verified_report(self) -> None:
-        """审查按实际任务 ID / 取得回复文本 / 可核完整报告 / 对象数分开计；完整回复只计可核完整的那几份。"""
-        got = self.review(self.report("fail\n\n理由。"))
+        """审查按实际任务 ID / 取得回复文本 / 可核完整报告 / 对象数分开计；完整回复只计可核完整的那几份。
+        这里的报告是 2.0.2 及以前载体保全下来的历史派审（没有现行报告文件），按当时的完整报告形态读取。"""
+        got = self.review(self.report("fail\n\n理由。"), dispatch="historical")
         self.assertEqual(("k-review", True, {"value": "complete", "why": None, "basis": "recorded_report",
                                              "report_file": None}, ["a" * 64]),
                          (got["task_id"], got["reply_received"], got["report_completeness"], got["objects"]))
@@ -1377,13 +1395,14 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
 
     def test_empty_pointer_and_complete_replies_are_three_different_facts(self) -> None:
         """同一原生任务三种收尾回复：空正文、「报告已写入」、完整报告都已收尾；
-        空正文没取得回复文本，指针取得了文本但不是完整报告，只有带材料键与结论行的完整报告计可核完整；
-        未核证的单独计数，不把判断结果未知当任务失败。"""
-        head = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n"
+        空正文没取得回复文本，指针取得了文本但不是完整报告，只有带材料键与结论行、且读者把同一份正文
+        成功写进本次报告文件的完整回复计可核完整；未核证的单独计数，不把判断结果未知当任务失败。"""
+        head = (f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n"
+                f"- 本次报告文件：`{self.report_file()}`\n")
         parent = "session-p"
         rows: list[dict] = []
         for seq, child, reply in ((1, "k-empty", ""), (2, "k-pointer", "报告已写入\n"),
-                                  (3, "k-full", self.report("pass\n\n理由。"))):
+                                  (3, "k-full", self.current_report("pass"))):
             rows += self.spawn(seq, f"c{child}", child, head, "审查", settled=None)
             rows.append({"type": "agent/inbox/spliced", "time": (seq + 10) * 60000, "data": {"inserted": [{
                 "content": [{"type": "text", "text": f"Background subagent {child} finished and will do no further work.\n"
@@ -1391,6 +1410,8 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                 "source": {"kind": "subagent-settled", "senderSessionId": child,
                            "summary": f"Background subagent {child} finished and will do no further work."}}]}})
         _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        _session(self.run_dir / "native-sessions" / parent / "children" / "k-full" / "session.v4.jsonl.zstd",
+                 "k-full", self.write_rows(self.report_file(), self.current_report("pass")))
         got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
         by_child = {i["child_id"]: i for i in got["items"]}
         self.assertEqual(
@@ -1406,9 +1427,9 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                          "三种回复被数成了同一个完整回复数")
 
     def test_a_review_that_finished_normally_can_still_fail(self) -> None:
-        """子会话正常收尾，回复写明总体结论 fail：业务结论是 fail，收尾仍是 finished，报告可核完整；
+        """子会话正常收尾，回复写明总体结论 fail：业务结论是 fail，收尾仍是 finished，历史报告按原身份可核完整；
         三件事分开记，并给出回复里的行号——真实 fail 没有被算成任务失败或报告不可核。"""
-        got = self.review(self.report("fail\n\n理由：存在 1 条 MAJOR。"))
+        got = self.review(self.report("fail\n\n理由：存在 1 条 MAJOR。"), dispatch="historical")
         self.assertEqual(("finished", "fail", "complete"),
                          (got["settled"], got["review_conclusion"]["value"], got["report_completeness"]["value"]))
         self.assertEqual({"child_id": "k-review", "settled_time": 11 * 60000, "reply_line": 17}, got["review_conclusion"]["at"])
@@ -1428,8 +1449,8 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                           "report_file": self.report_file()},
                          got["report_completeness"])
 
-    def report_file(self) -> str:
-        return f"doc/reports/story/AR/{self.KEY[:16]}/review-original.1.md"
+    def report_file(self, key: str | None = None) -> str:
+        return f"doc/reports/story/AR/{(key or self.KEY)[:16]}/review-original.1.md"
 
     def test_report_completeness_needs_the_whole_report_not_the_header(self) -> None:
         """五组对照：原文件、去掉全部正文、两行加部分正文、真实 fail、无对应原件。
@@ -1466,9 +1487,85 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                           got["review_conclusion"]["value"]))
         self.assertIn("没有保全的读者子会话", got["report_completeness"]["why"])
 
+    def test_markdown_headings_do_not_change_the_evidence_standard(self) -> None:
+        """现行作者自己选「判据核对／发现／总体结论」三个标题，不能让报告完整性走历史分支：
+        同次派审有较长的读者原件、final 删掉末段时按原件对照记 unknown。
+        历史载体（没有本次报告文件）才按当时身份读三个标题——出处见
+        `output/story/story-suite-20261102-210800/cases/auto-topup/20261102-211017-28956-f6207c49/` 的父会话。"""
+        historical_like = self.report("pass\n\n理由：存在 0 条阻断。")
+        final = historical_like[:historical_like.index("理由：")]
+        got = self.review(final, original=historical_like)
+        self.assertEqual(("unknown", None),
+                         (got["report_completeness"]["value"], got["report_completeness"]["basis"]),
+                         "现行派审只凭作者标题被当成了历史报告")
+        self.assertIn("最终回复只是读者原件的一部分", got["report_completeness"]["why"])
+        self.assertEqual(("finished", True, "pass"),
+                         (got["settled"], got["reply_received"], got["review_conclusion"]["value"]),
+                         "报告完整性结论改写了收尾/回复/结论这些独立事实")
+        aggregate = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
+        self.assertEqual((0, 1), (aggregate["story_review_full_replies"], aggregate["story_review_reports_unknown"]))
+        # 同一个回复在历史载体下按当时的完整报告形态读取
+        got = self.review(historical_like, dispatch="historical")
+        self.assertEqual(("complete", "recorded_report"),
+                         (got["report_completeness"]["value"], got["report_completeness"]["basis"]),
+                         "有来源的历史派审样本不再按原身份读取")
+
+    def test_only_a_successful_write_at_the_assigned_location_is_the_original(self) -> None:
+        """写入参数与 final 相同也不够：工具返回错误、只有调用没有结果、写进别的相对目录、
+        或写进另一个工作区的同名后缀，都不能证明本次报告文件存在；四种都记 unknown 并写明原因。"""
+        body = self.current_report("pass")
+        cases = {
+            "工具返回错误": (self.write_rows(self.report_file(), body, outcome="error"), "返回错误"),
+            "只有调用没有结果": (self.write_rows(self.report_file(), body, outcome="no_result"), "没有结果"),
+            "别的相对目录": (self.write_rows("archive-copy/" + self.report_file(), body), "同名后缀不能跨目录"),
+            "另一个工作区": (self.write_rows("/other-workspace/" + self.report_file(), body), "同名后缀不能跨目录"),
+        }
+        for name, (rows, why) in cases.items():
+            with self.subTest(name):
+                got = self.review(body, child_rows=rows)
+                self.assertEqual(("unknown", None),
+                                 (got["report_completeness"]["value"], got["report_completeness"]["basis"]),
+                                 f"{name}：写入参数被当成了成功写入事实")
+                self.assertIn(why, got["report_completeness"]["why"])
+                self.assertEqual(("finished", True, "pass"),
+                                 (got["settled"], got["reply_received"], got["review_conclusion"]["value"]),
+                                 f"{name}：完整性结论改写了收尾/回复/结论这些独立事实")
+
+    def test_an_absolute_write_inside_the_same_workspace_is_the_assigned_location(self) -> None:
+        """读者按工作区绝对路径写本次报告文件，仍是所配位置：与整份 final 一致时计可核完整。"""
+        body = self.current_report("pass")
+        cwd = "/workspace"
+        got = self.review(body, cwd=cwd,
+                          child_rows=self.write_rows(f"{cwd}/{self.report_file()}", body))
+        self.assertEqual(("complete", "reader_original"),
+                         (got["report_completeness"]["value"], got["report_completeness"]["basis"]))
+
+    def test_the_original_is_the_latest_successful_write(self) -> None:
+        """同一位置写了两次：取最近一次成功写出的字节，不拿旧字节冒充；最后一次成功改动不是
+        写出全文（edit）时重建不出原样正文；后面的失败写入不推翻已有的成功原件。"""
+        first = self.current_report("pass")
+        second = first + "\n补充：复核范围已核。\n"
+        rows = (self.write_rows(self.report_file(), first, call_id="w1")
+                + self.write_rows(self.report_file(), second, call_id="w2"))
+        got = self.review(second, child_rows=rows)
+        self.assertEqual(("complete", "reader_original"),
+                         (got["report_completeness"]["value"], got["report_completeness"]["basis"]))
+        got = self.review(first, child_rows=rows)
+        self.assertEqual("unknown", got["report_completeness"]["value"], "拿旧一次写出的字节冒充原样")
+        rows = (self.write_rows(self.report_file(), first, call_id="w1")
+                + self.write_rows(self.report_file(), None, call_id="e1", name="edit"))
+        got = self.review(second, child_rows=rows)
+        self.assertEqual("unknown", got["report_completeness"]["value"])
+        self.assertIn("不是写出全文", got["report_completeness"]["why"])
+        rows = (self.write_rows(self.report_file(), second, call_id="w1")
+                + self.write_rows(self.report_file(), second, call_id="w2", outcome="error"))
+        got = self.review(second, child_rows=rows)
+        self.assertEqual("complete", got["report_completeness"]["value"],
+                         "后面的失败写入被当成了原件的否定证据")
+
     def test_a_recorded_report_is_still_read(self) -> None:
         """已保全的历史记录按当时的三个二级标题读出结论，旧报告格式按原身份读取仍算可核完整。"""
-        got = self.review(self.report("fail\n\n理由。"))
+        got = self.review(self.report("fail\n\n理由。"), dispatch="historical")
         self.assertEqual(("fail", None), (got["review_conclusion"]["value"], got["review_conclusion"]["why"]))
         self.assertEqual({"value": "complete", "why": None, "basis": "recorded_report", "report_file": None},
                          got["report_completeness"], "旧报告格式不再被认作可核完整")
@@ -1489,11 +1586,13 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
 
     def test_the_report_counts_only_verified_reports_and_names_the_unverified(self) -> None:
         """报表消费者：旧的「Story 独审任务 …（完整回复 …，审查对象 …）」行保留，完整回复只计可核完整的那几份；
-        未核证的回复单列并说明不是任务失败。"""
+        未核证的回复单列并说明不是任务失败。完整的那一份有同次读者原件可对照。"""
         parent = "session-p"
-        head = f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n"
+        full = self.current_report("pass")
+        head = (f"# Story 独立人读审查 · 派审\n\n- 材料键：`{self.KEY}`\n"
+                f"- 本次报告文件：`{self.report_file()}`\n")
         rows: list[dict] = []
-        for seq, child, reply in ((1, "k-pointer", "报告已写入\n"), (2, "k-full", self.report("pass\n\n理由。"))):
+        for seq, child, reply in ((1, "k-pointer", "报告已写入\n"), (2, "k-full", full)):
             rows += self.spawn(seq, f"c{child}", child, head, "审查", settled=None)
             rows.append({"type": "agent/inbox/spliced", "time": (seq + 10) * 60000, "data": {"inserted": [{
                 "content": [{"type": "text", "text": f"Background subagent {child} finished and will do no further work.\n"
@@ -1501,6 +1600,8 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                 "source": {"kind": "subagent-settled", "senderSessionId": child,
                            "summary": f"Background subagent {child} finished and will do no further work."}}]}})
         _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        _session(self.run_dir / "native-sessions" / parent / "children" / "k-full" / "session.v4.jsonl.zstd",
+                 "k-full", self.write_rows(self.report_file(), full))
         (self.run_dir / "events.jsonl").write_text(
             json.dumps({"type": "usage", "timestamp": "2026-09-02T10:00:00", "usage": {"context_total": 1}}),
             encoding="utf-8")

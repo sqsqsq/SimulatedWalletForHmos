@@ -3176,71 +3176,196 @@ def _meeting_receipt(record: dict, feature_root: Path, inbox_key: str, sha: str)
             "why": "同字节的会议版本没有可比的导入时刻，无法判断它是不是本次投放被导入"}
 
 
-def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: str, sha: str) -> dict:
-    """系统件的本次取材批次回执：有就核批次时刻与原件字节，没有或对不上如实标。"""
+def _item_facts(item: dict) -> dict:
+    """取材回执/批次明细里一件的原生身份、条目、摘要与已有字节数（原值保留，用于解释冲突）。"""
+    return {key: item.get(key) for key in ("name", "ticket", "status", "saved", "sha256", "bytes")}
+
+
+def _under_feature(feature_root: Path, rel: object) -> Path | None:
+    """记录里写的落点必须在本需求目录内；指向别处的同名文件不是这一次的批次。"""
+    text = str(rel or "")
+    if not text:
+        return None
+    path = (feature_root / text).resolve()
+    try:
+        path.relative_to(feature_root.resolve())
+    except ValueError:
+        return None
+    return path
+
+
+def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: str, sha: str, *,
+                   bytes_: object = None, ticket: object = None, req_no: str) -> dict:
+    """系统件的本次取材批次回执：核批次时刻、批次与条目的原生身份、状态、摘要与已有字节数。
+
+    返回 `{status: verified/missing/mismatch, path, why, conflicts}`。批次回执读不出、落点不在本需求目录、
+    同次的时间/需求单号/条目主人/状态/摘要/字节数任一对不上都记不闭合，`conflicts` 留两边的原值；
+    不在本次需求目录、或读不到对应批次，都只说明这一份证据不闭合，不据此否定收件本身。
+    """
     saved_rel = str(saved or "")
     if not saved_rel:
-        return {"status": "missing", "path": None, "why": "回执没写这一件落盘位置"}
-    batch_path = feature_root / saved_rel
+        return {"status": "missing", "path": None, "why": "回执没写这一件落盘位置", "conflicts": None}
+    batch_path = _under_feature(feature_root, saved_rel)
+    if batch_path is None:
+        return {"status": "mismatch", "path": saved_rel,
+                "why": "回执写的落盘位置不在本次需求目录下，不能证明是这一次的批次",
+                "conflicts": [{"field": "saved", "want": saved_rel, "got": str(feature_root)}]}
     batch_receipt = batch_path.parent / ".receipt.json"
-    try:
-        batch_rel = batch_receipt.relative_to(feature_root).as_posix()
-    except ValueError:
-        batch_rel = str(batch_receipt)
+    batch_rel = batch_receipt.relative_to(feature_root.resolve()).as_posix()
     doc, error = _read_json_doc(batch_receipt)
     if doc is None:
-        return {"status": "missing", "path": batch_rel, "why": error or "批次回执不存在"}
-    item = next((i for i in doc.get("items") or [] if isinstance(i, dict) and i.get("name") == name), None)
-    if doc.get("fetchedAt") != fetched_at or not item or item.get("status") != "fetched" or item.get("sha256") != sha:
-        return {"status": "mismatch", "path": batch_rel,
-                "why": "批次回执的时刻或原件字节与本次取材不一致"}
-    return {"status": "verified", "path": batch_rel, "why": None}
+        return {"status": "missing", "path": batch_rel, "why": error or "批次回执不存在", "conflicts": None}
+    conflicts: list[dict] = []
+
+    def conflict(field: str, want: object, got: object) -> None:
+        conflicts.append({"field": field, "want": want, "got": got})
+
+    if doc.get("fetchedAt") != fetched_at:
+        conflict("fetchedAt", fetched_at, doc.get("fetchedAt"))
+    if doc.get("reqNo") not in (None, "") and str(doc["reqNo"]) != req_no:
+        conflict("reqNo", req_no, doc.get("reqNo"))
+    items = [i for i in doc.get("items") or [] if isinstance(i, dict) and i.get("name") == name]
+    want = _item_facts({"name": name, "ticket": ticket, "status": "fetched", "sha256": sha, "bytes": bytes_})
+    if not items:
+        conflict("item", want, None)
+    else:
+        if len({json.dumps(_item_facts(i), ensure_ascii=False, sort_keys=True) for i in items}) > 1:
+            conflict("item", want, [_item_facts(i) for i in items])
+        item = items[0]
+        if item.get("status") != "fetched":
+            conflict("status", "fetched", item.get("status"))
+        if item.get("sha256") != sha:
+            conflict("sha256", sha, item.get("sha256"))
+        if bytes_ is not None and item.get("bytes") is not None and item["bytes"] != bytes_:
+            conflict("bytes", bytes_, item.get("bytes"))
+        expected_ticket = ticket if ticket not in (None, "") else req_no
+        if item.get("ticket") not in (None, "") and item["ticket"] != expected_ticket:
+            conflict("ticket", expected_ticket, item.get("ticket"))
+    if conflicts:
+        return {"status": "mismatch", "path": batch_rel, "conflicts": conflicts,
+                "why": "批次回执与本次取材对不上：" + "；".join(
+                    f"{c['field']} 本次 {c['want']!r}、批次 {c['got']!r}" for c in conflicts)}
+    return {"status": "verified", "path": batch_rel, "why": None, "conflicts": None}
+
+
+def _negative_batch_conflict(feature_root: Path, receipt: dict, expected_req: str, name: str,
+                             fetched_at: object) -> dict | None:
+    """否定回执（absent/failed）的关联批次是否说同一件被取回。
+
+    只认同一次（批次时刻相同）、同一需求单、同一件的批次明细；批次不存在或说的不是这一件时返回 None，
+    不为本来没有落盘文件的合法否定回执虚设文件义务。
+    """
+    review_out = str(receipt.get("review_out") or "")
+    if not review_out:
+        return None
+    batch_dir = _under_feature(feature_root, review_out)
+    if batch_dir is None:
+        return None
+    doc, _error = _read_json_doc(batch_dir / ".receipt.json")
+    if doc is None or doc.get("fetchedAt") != fetched_at:
+        return None
+    if doc.get("reqNo") not in (None, "") and str(doc["reqNo"]) != expected_req:
+        return None
+    item = next((i for i in doc.get("items") or []
+                 if isinstance(i, dict) and i.get("name") == name
+                 and i.get("status") == "fetched" and i.get("sha256")), None)
+    if item is None:
+        return None
+    return {"path": f"{review_out.rstrip('/')}/.receipt.json", "status": item.get("status"),
+            "sha256": item.get("sha256"), "bytes": item.get("bytes")}
 
 
 def _system_receipt(record: dict, feature_root: Path) -> dict:
     """系统件的收到：本次取材回执的状态、时间、原件字节，外加该件的批次回执。
 
-    先核本件身份（同名条目）、字节（sha256）、证据一致性（批次回执的时刻与原件字节）和事件相对投放的时间，
-    再给精度与结论：批次回执缺失或对不上时证据不闭合，记 unknown；回执早于投放只有先后，记 `ordered_only`；
-    回执没有可比时刻不可判，记 unknown。只有可归入本次投放（回执时刻不早于投放）的 `absent` / `failed`
-    才记本次 `not_received`——更早的否定回执不是这一次的证据。
+    先核三份记录的原生身份与已有字节数：投放目标在哪个需求单下、总回执的 reqNo、同名条目的 ticket 与
+    字节数。同一件有多条互相矛盾的条目、或条目归属别的需求时，保留两边的原值记 unknown——不优先 fetched，
+    也不取第一个同名条目。身份与摘要不矛盾时再看批次回执（时刻/单号/条目/状态/摘要/字节数）和事件相对
+    投放的时间：批次回执缺失或对不上时证据不闭合，记 unknown；回执早于投放只有先后，记 `ordered_only`；
+    回执没有可比时刻不可判，记 unknown。只有可归入本次投放（回执时刻不早于投放）且没有被同次关联批次
+    推翻的 `absent` / `failed` 才记本次 `not_received`——更早的否定回执不是这一次的证据。
     """
-    name = Path(str(record.get("destination") or "")).name
+    dest = str(record.get("destination") or "").replace("\\", "/")
+    name = Path(dest).name
+    expected_req = feature_root.name
     sha = str(record.get("sha256") or "")
     receipt_path = feature_root / "AR" / "story-src" / "fetched.json"
     receipt, error = _read_json_doc(receipt_path)
-    fetched_at = (receipt or {}).get("fetchedAt")
     source = "本次取材回执 AR/story-src/fetched.json"
-    candidates = [i for i in (receipt or {}).get("items") or [] if isinstance(i, dict) and i.get("name") == name]
+    if receipt is None:
+        return {"status": "unknown", "source": source, "at": None,
+                "why": f"读不到本次取材回执（{error}）" if error else "没有本次取材回执"}
+    fetched_at = receipt.get("fetchedAt")
+    identity: list[dict] = []
+    if dest and dest.split("/")[0] != expected_req:
+        identity.append({"field": "destination", "want": expected_req, "got": dest})
+    total_req = receipt.get("reqNo")
+    if total_req not in (None, "") and str(total_req) != expected_req:
+        identity.append({"field": "reqNo", "want": expected_req, "got": total_req})
+    candidates = [i for i in receipt.get("items") or [] if isinstance(i, dict) and i.get("name") == name]
+    if identity and not candidates:
+        return {"status": "unknown", "source": source, "at": fetched_at, "identity": identity,
+                "why": "本次取材回执与投放目标不是同一个需求：" + "；".join(
+                    f"{c['field']} 本次 {c['want']!r}、回执 {c['got']!r}" for c in identity)}
     if not candidates:
-        why = f"没有本次取材回执里 {name} 这一件"
         return {"status": "unknown", "source": source, "at": fetched_at,
-                "why": why + (f"（{error}）" if error else "")}
-    fetched = [i for i in candidates if i.get("status") == "fetched"]
-    item = (fetched or candidates)[-1]
+                "why": f"没有本次取材回执里 {name} 这一件"}
+    unique: list[dict] = []
+    for item in candidates:
+        if item not in unique:
+            unique.append(item)
+    if len({json.dumps(_item_facts(i), ensure_ascii=False, sort_keys=True) for i in unique}) > 1:
+        return {"status": "unknown", "source": source, "at": fetched_at,
+                "items": [_item_facts(i) for i in unique],
+                "why": f"本次取材回执里 {name} 有多条互相矛盾的条目（"
+                       + "、".join(f"{i.get('status') or '缺失'}" for i in unique)
+                       + "），无法确定哪一条是这一次的收件"}
+    item = unique[0]
+    ticket = item.get("ticket")
+    if ticket not in (None, "") and str(ticket) != expected_req:
+        identity.append({"field": "ticket", "want": expected_req, "got": ticket})
+    if record.get("bytes") is not None and item.get("bytes") is not None and item["bytes"] != record["bytes"]:
+        identity.append({"field": "bytes", "want": record["bytes"], "got": item["bytes"]})
+    if identity:
+        return {"status": "unknown", "source": source, "at": fetched_at,
+                "identity": identity, "item": _item_facts(item),
+                "why": "本次取材回执与投放目标对不上：" + "；".join(
+                    f"{c['field']} 本次 {c['want']!r}、回执 {c['got']!r}" for c in identity)}
     status = item.get("status")
-    if status == "fetched" and item.get("sha256"):
+    base = {"source": source, "at": fetched_at, "sha256": item.get("sha256"),
+            "bytes": item.get("bytes"), "saved": item.get("saved"), "ticket": ticket}
+    if status == "fetched":
+        if not item.get("sha256"):
+            return {**base, "status": "unknown",
+                    "why": f"本次取材回执记 {name} 已取回，但没有摘要，核不了是不是投放的字节"}
         if item["sha256"] != sha:
-            return {"status": "unknown", "source": source, "at": fetched_at, "sha256": item.get("sha256"),
+            return {**base, "status": "unknown",
                     "why": "本次取回的字节与投放的不是同一版（回执 sha256 不同）"}
-        batch = _batch_receipt(feature_root, item.get("saved"), fetched_at, name, sha)
-        receipt = {"source": source, "at": fetched_at, "sha256": item["sha256"],
-                   "bytes": item.get("bytes"), "saved": item.get("saved"),
-                   "batch_receipt": batch["path"], "batch": batch["status"]}
+        batch = _batch_receipt(feature_root, item.get("saved"), fetched_at, name, sha,
+                               bytes_=item.get("bytes"), ticket=ticket, req_no=expected_req)
+        facts = {**base, "batch_receipt": batch["path"], "batch": batch["status"]}
         if batch["status"] != "verified":
-            return {**receipt, "status": "unknown", "batch_why": batch["why"],
+            return {**facts, "status": "unknown", "batch_why": batch["why"],
+                    **({"conflicts": batch["conflicts"]} if batch.get("conflicts") else {}),
                     "why": f"本次取材的批次回执核不了（{batch['status']}）：{batch['why']}；"
                            "没有它不能确证取回的是本次投放的字节"}
         order = _order_against(fetched_at, record)
         if order == "after":
-            return {**receipt, "status": "received", "granularity": "exact"}
+            return {**facts, "status": "received", "granularity": "exact"}
         if order == "before":
-            return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
+            return {**facts, "status": "ordered_only", "granularity": "sequence_only",
                     "why": "本次取材回执的时刻早于本次投放：只能说明先后与字节相同，"
                            "不能证明取回的就是这次投放的字节"}
-        return {**receipt, "status": "unknown",
+        return {**facts, "status": "unknown",
                 "why": "本次取材回执没有可比的时刻，无法判断取回是否在本次投放之后"}
     if status in ("absent", "failed"):
+        conflict = _negative_batch_conflict(feature_root, receipt, expected_req, name, fetched_at)
+        if conflict:
+            return {**base, "status": "unknown", "total_status": status,
+                    **({"note": item.get("note")} if item.get("note") else {}),
+                    "conflict_batch": conflict,
+                    "why": f"本次取材回执记 {name} 为 {status}，但同次关联批次明细记它已取回"
+                           f"（sha256 {conflict['sha256']}）：同次同件相互矛盾，不能确定这一次的收件"}
         note = f"本次取材回执记 {name} 为 {status}" + (f"：{item.get('note')}" if item.get("note") else "")
         order = _order_against(fetched_at, record)
         if order == "after":
@@ -3277,10 +3402,12 @@ def reconcile_update_receipts(out_dir: Path, feature_root: Path) -> dict | None:
 
     **投放 ≠ 收到**：`delivered_at` 只证明装置写了哪一份字节。本地件（`local_material`/`supplement`，
     投进收件箱）按 importer 的导入记录核时间与原件字节；系统件（投进需求系统、由模型 fetch 取回）按本次
-    取材回执的状态、时间、原件字节与批次回执核。逐件先核本件身份、字节、证据一致性和事件相对投放的时间，
-    再给精度与结论：批次回执缺失或对不上、或没有可靠时序都记 `unknown`；同字节的接收记录早于本次投放只有
-    先后关系，记 `ordered_only` 并注明粒度。只有**可归入本次投放**（回执不早于投放）的否定回执才记
-    `not_received`；查过但没有对应事件记 `unknown`，不说成没收到。旧格式（schema 1）的统一
+    取材回执的状态、时间、原件字节与批次回执核，并复用三份记录的原生身份：投放目标在哪个需求单下、总回执
+    的 `reqNo`、同名条目的 `ticket` 与已有字节数。逐件先核身份、条目、摘要、证据一致性和事件相对投放的
+    时间，再给精度与结论：**同次同件相互矛盾时保留两边的原值并记 `unknown`**（不优先 fetched、也不取第一个
+    同名条目）；批次回执缺失或对不上、或没有可靠时序都记 `unknown`；同字节的接收记录早于本次投放只有
+    先后关系，记 `ordered_only` 并注明粒度。只有**可归入本次投放**（回执不早于投放）且没有被同次关联批次
+    推翻的否定回执才记 `not_received`；查过但没有对应事件记 `unknown`，不说成没收到。旧格式（schema 1）的统一
     `received_at_source` 不作为逐件依据，原值另存 `legacy_received_at_source`。没有投放记录时返回 None。
     """
     path = out_dir / UPDATE_DELIVERY_RECORD
