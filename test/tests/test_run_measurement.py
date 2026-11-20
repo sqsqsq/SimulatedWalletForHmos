@@ -1307,16 +1307,32 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
 
     KEY = "a" * 64
 
-    def review(self, reply: str, *, key: str | None = None) -> dict:
-        """派一次 Story 独审，子会话正常收尾，收尾通知带着 `reply`；回给这一项的委派条目。"""
+    def review(self, reply: str, *, key: str | None = None, original: str | None = None) -> dict:
+        """派一次 Story 独审，子会话正常收尾，收尾通知带着 `reply`；回给这一项的委派条目。
+
+        `original` 给定时同时保全读者子会话里「读者把 `original` 写进本次报告文件」这一动作，
+        用来核报告完整性；不给时只有收尾回复本身，没有可核的读者原件。
+        """
+        shutil.rmtree(self.run_dir, ignore_errors=True)  # 每次派审只留这一次的子会话
         parent = "session-p"
-        rows = self.spawn(1, "c1", "k-review", f"# Story 独立人读审查 · 派审\n\n- 材料键：`{key or self.KEY}`\n", "审查", settled=None)
+        report = f"doc/reports/story/AR/{(key or self.KEY)[:16]}/review-original.1.md"
+        head = (f"# Story 独立人读审查 · 派审\n\n- 材料键：`{key or self.KEY}`\n"
+                f"- 本次报告文件：`{report}`\n")
+        rows = self.spawn(1, "c1", "k-review", head, "审查", settled=None)
         rows.append({"type": "agent/inbox/spliced", "time": 11 * 60000, "data": {"inserted": [{
             "content": [{"type": "text", "text": "Background subagent k-review finished and will do no further work.\n"
                                                  "Its closing message:\n" + reply}],
             "source": {"kind": "subagent-settled", "senderSessionId": "k-review",
                        "summary": "Background subagent k-review finished and will do no further work."}}]}})
         _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
+        if original is not None:
+            _session(self.run_dir / "native-sessions" / parent / "children" / "k-review" / "session.v4.jsonl.zstd",
+                     "k-review", [{"type": "tool/call", "time": 2 * 60000,
+                                   "data": {"callId": "w1", "name": "write",
+                                            "arguments": json.dumps({"file_path": report, "content": original})}},
+                                  {"type": "tool/result", "time": 2 * 60000,
+                                   "data": {"message": {"toolCallId": "w1", "isError": False,
+                                                        "content": [{"type": "text", "text": "ok"}]}}}])
         got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
         [item] = got["items"]
         return {**item, "conclusions": got["story_review_conclusions"]}
@@ -1330,7 +1346,8 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
     def test_review_tasks_are_counted_by_task_id_reply_and_verified_report(self) -> None:
         """审查按实际任务 ID / 取得回复文本 / 可核完整报告 / 对象数分开计；完整回复只计可核完整的那几份。"""
         got = self.review(self.report("fail\n\n理由。"))
-        self.assertEqual(("k-review", True, {"value": "complete", "why": None}, ["a" * 64]),
+        self.assertEqual(("k-review", True, {"value": "complete", "why": None, "basis": "recorded_report",
+                                             "report_file": None}, ["a" * 64]),
                          (got["task_id"], got["reply_received"], got["report_completeness"], got["objects"]))
         aggregate = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
         self.assertEqual((1, 1, 1, 1, 0),
@@ -1350,7 +1367,8 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
         _session(self.run_dir / "native-sessions" / parent / "session.v4.jsonl.zstd", parent, rows)
         got = measure_run.native_delegations(measure_run._native_sessions(self.run_dir))["delegations"]
         [item] = got["items"]
-        self.assertEqual(("finished", False, {"value": "unknown", "why": "收尾通知里没有收尾回复"}),
+        self.assertEqual(("finished", False, {"value": "unknown", "why": "收尾通知里没有收尾回复",
+                                              "basis": None, "report_file": None}),
                          (item["settled"], item["reply_received"], item["report_completeness"]))
         self.assertEqual((1, 1, 0, 0, 1),
                          (got["story_review_tasks"], got["story_review_settled"], got["story_review_replies"],
@@ -1401,17 +1419,59 @@ class NativeDelegationsAreReadByWhatWasSent(unittest.TestCase):
                 "- F1（MAJOR）AR/story.md：转化率分子分母冲突。修正：设计。\n")
 
     def test_the_current_reply_gives_its_conclusion_line(self) -> None:
-        """现行回复：结论照开头第二行读，正文里的字样不参与。"""
-        got = self.review(self.current_report("fail") + "\n结论差点写 pass。\n")
+        """现行回复：结论照开头第二行读，正文里的字样不参与；报告完整性按读者原件对照整份 final 核。"""
+        original = self.current_report("fail") + "\n结论差点写 pass。\n"
+        got = self.review(original, original=original)
         self.assertEqual(("fail", None, 2), (got["review_conclusion"]["value"], got["review_conclusion"]["why"],
                                              got["review_conclusion"]["at"]["reply_line"]))
-        self.assertEqual("complete", got["report_completeness"]["value"])
+        self.assertEqual({"value": "complete", "why": None, "basis": "reader_original",
+                          "report_file": self.report_file()},
+                         got["report_completeness"])
+
+    def report_file(self) -> str:
+        return f"doc/reports/story/AR/{self.KEY[:16]}/review-original.1.md"
+
+    def test_report_completeness_needs_the_whole_report_not_the_header(self) -> None:
+        """五组对照：原文件、去掉全部正文、两行加部分正文、真实 fail、无对应原件。
+
+        完整性只认「读者写进本次报告文件的原件」与整份 final 是同一份正文：只有开头两行、
+        只有部分正文、或没有原件可核时都记 unknown，并保留已收尾、已取得回复文本、已声明结论
+        这些各自的事实；真实 fail 的完整报告仍可核；没有原件时也不据回复长短推断完整。
+        """
+        original = self.current_report("pass") + "\n## 复核范围\n\n- 核了口径冲突与三处引用位置。\n"
+        lines = original.splitlines()
+        header_only = "\n".join(lines[:2])
+        with_part = "\n".join(lines[:4])
+        cases = {
+            "原文件": (self.review(original, original=original), "complete", None),
+            "只有开头两行": (self.review(header_only, original=original), "unknown", "最终回复只有报告开头"),
+            "两行加部分正文": (self.review(with_part, original=original), "unknown",
+                        "最终回复只是读者原件的一部分，缺正文"),
+        }
+        for name, (got, value, why) in cases.items():
+            with self.subTest(name):
+                self.assertEqual((value, why), (got["report_completeness"]["value"], got["report_completeness"]["why"]))
+                self.assertEqual(("finished", True), (got["settled"], got["reply_received"]),
+                                 f"{name}：收尾与取得回复文本是另一件事，被完整性结论改写了")
+        # 真实 fail：完整报告 + 读者原件，结论照第二行读，报告仍可核
+        failed = self.current_report("fail") + "\n- F1（MAJOR）AR/story.md：转化率冲突。\n"
+        got = self.review(failed, original=failed)
+        self.assertEqual(("complete", "fail"),
+                         (got["report_completeness"]["value"], got["review_conclusion"]["value"]))
+        self.assertEqual("reader_original", got["report_completeness"]["basis"])
+        # 无对应原件：现行形态只有回复本身，没有可直接核的读者原件，完整与否 unknown，事实照记
+        got = self.review(original)
+        self.assertEqual(("unknown", "finished", True, "pass"),
+                         (got["report_completeness"]["value"], got["settled"], got["reply_received"],
+                          got["review_conclusion"]["value"]))
+        self.assertIn("没有保全的读者子会话", got["report_completeness"]["why"])
 
     def test_a_recorded_report_is_still_read(self) -> None:
-        """已保全的历史记录按当时的三个二级标题读出结论，旧报告格式仍算可核完整。"""
+        """已保全的历史记录按当时的三个二级标题读出结论，旧报告格式按原身份读取仍算可核完整。"""
         got = self.review(self.report("fail\n\n理由。"))
         self.assertEqual(("fail", None), (got["review_conclusion"]["value"], got["review_conclusion"]["why"]))
-        self.assertEqual({"value": "complete", "why": None}, got["report_completeness"], "旧报告格式不再被认作可核完整")
+        self.assertEqual({"value": "complete", "why": None, "basis": "recorded_report", "report_file": None},
+                         got["report_completeness"], "旧报告格式不再被认作可核完整")
 
     def test_a_reply_that_is_not_the_whole_report_is_unknown(self) -> None:
         """收尾回复只是摘要（正文里写着「总体结论：warn」）、材料键不是派出去的那一份：都判不了，不从字样推断；

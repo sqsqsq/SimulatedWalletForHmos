@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -452,9 +453,11 @@ class TheUpdateDeliveryRecordsTimeAndOriginalBytes(unittest.TestCase):
 
 
 class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
-    """B（S21）：投放记录逐件保投放时刻与原件字节；**收到**按两种现有来源分别核——
+    """B（S21/R3 返修）：投放记录逐件保投放时刻与原件字节；**收到**按两种现有来源分别核——
     本地件（投进 inbox）看 importer 导入记录的时间与原件字节，系统件（投进需求系统、由模型 fetch 取回）
-    看本次取材回执的状态/时间/原件字节与批次回执。投放本身不得写成实际收到；只有先后关系时注明粒度，
+    看本次取材回执的状态/时间/原件字节与批次回执。逐件先核身份、字节、证据一致性和事件相对投放的时间，
+    再给精度与结论：投放本身不得写成实际收到；批次回执缺失或对不上、时刻不可比都记 unknown；
+    同字节记录早于投放只有先后关系并注明粒度；只有可归入本次投放的否定回执才记 not_received；
     没有事件记 unknown；旧格式的统一 received_at_source 不是逐件依据。"""
 
     def setUp(self) -> None:
@@ -464,6 +467,13 @@ class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
         self.feature = self.root / "doc" / "features" / "AR90006"
         self.feature.mkdir(parents=True)
         self.run = self.root / "run"
+
+    def reset(self) -> None:
+        """同一用例里的下一组对照：清掉上一组写下的需求目录与投放记录。"""
+        shutil.rmtree(self.root / "doc", ignore_errors=True)
+        shutil.rmtree(self.root / "system", ignore_errors=True)
+        shutil.rmtree(self.run, ignore_errors=True)
+        self.feature.mkdir(parents=True)
 
     def deliver(self) -> dict:
         with mock.patch.object(rc, "REPO_ROOT", self.root), \
@@ -480,6 +490,18 @@ class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
 
     def delivered(self, payload: dict) -> dict:
         return {item["kind"]: item for item in payload["delivered"]}
+
+    def assert_summary_matches_items(self, payload: dict) -> None:
+        """最终记录能反查：汇总里每个状态的数量等于逐件明细里该状态的件数。"""
+        for status in ("received", "unknown", "not_received", "ordered_only"):
+            self.assertEqual(sum(1 for item in payload["delivered"] if item["receipt"]["status"] == status),
+                             payload["receipt_check"]["counts"][status], f"汇总里的 {status} 与逐件明细对不上")
+
+    def assert_delivery_kept(self, before: dict, after: dict) -> None:
+        """原始投放记录逐件保留：逐件归账只加 `receipt`，不改写投出的字节与时刻。"""
+        for old, new in zip(before["delivered"], after["delivered"], strict=True):
+            for key in ("file", "kind", "destination", "sha256", "bytes", "delivered_at"):
+                self.assertEqual(old.get(key), new.get(key), f"{key} 被逐件归账改写了")
 
     def write_import(self, delivered: dict, *, acquired_at: str, sha: str | None = None) -> None:
         """本地件的 importer 导入记录：`AR/story-src/materials.json` 的来源版本（inbox_path 与原件字节）。"""
@@ -579,6 +601,80 @@ class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
         self.assertEqual(("ordered_only", "sequence_only"), (local["status"], local["granularity"]))
         self.assertIn("早于本次投放", local["why"])
         self.assertEqual(1, summary["ordered_only"])
+
+    def test_a_missing_or_conflicting_batch_receipt_is_unknown_not_received(self) -> None:
+        """同一投放、总回执 SHA 与时间不变，只移走批次回执或把其中 SHA 改成另一版：
+        证据不闭合，系统件记 unknown 并写明批次，不再判 received；原始投放记录不动，汇总可反查。"""
+        for name, batch, conflict in (("移走批次回执", False, False), ("批次回执 SHA 是另一版", True, True)):
+            with self.subTest(name):
+                self.reset()
+                before = self.deliver()
+                items = self.delivered(before)
+                self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00", batch=batch)
+                if conflict:
+                    path = self.feature / "inbox" / "review" / "fetch-20261119-180000" / ".receipt.json"
+                    doc = json.loads(path.read_text(encoding="utf-8"))
+                    doc["items"][0]["sha256"] = "0" * 64
+                    path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+                summary = rc.reconcile_update_receipts(self.run, self.feature)
+                after = self.record()
+                system = self.delivered(after)["system"]["receipt"]
+                self.assertEqual("unknown", system["status"], f"{name}：批次证据不闭合却被判成收到")
+                self.assertIn("批次回执", system["why"])
+                self.assertEqual("missing" if not conflict else "mismatch", system["batch"])
+                self.assertEqual(0, summary["received"])
+                self.assert_summary_matches_items(after)
+                self.assert_delivery_kept(before, after)
+
+    def test_an_earlier_absent_receipt_is_not_this_deliverys(self) -> None:
+        """早于投放的 absent 不可归入本次投放：不记本次 not_received，记 unknown 并写明回执早于投放；
+        回执没有时刻时同样不可判，不把「读不到时刻」当成「投放之后」。"""
+        for name, fetched_at in (("回执早于投放", "2020-01-01T00:00:00+08:00"), ("回执没有时刻", "")):
+            with self.subTest(name):
+                self.reset()
+                before = self.deliver()
+                items = self.delivered(before)
+                self.write_fetch(items["system"], fetched_at=fetched_at, status="absent")
+                summary = rc.reconcile_update_receipts(self.run, self.feature)
+                after = self.record()
+                system = self.delivered(after)["system"]["receipt"]
+                self.assertEqual("unknown", system["status"], f"{name}：否定回执被判成本次没收到")
+                self.assertEqual(0, summary["not_received"])
+                self.assert_summary_matches_items(after)
+                self.assert_delivery_kept(before, after)
+                if fetched_at:
+                    self.assertIn("早于本次投放", system["why"])
+                else:
+                    self.assertIn("没有可比的时刻", system["why"])
+
+    def test_a_local_import_without_a_time_is_not_an_exact_receipt(self) -> None:
+        """本地件同 SHA 但没有导入时刻：不可比就不是「不更早」，记 unknown，不判 received/exact。"""
+        before = self.deliver()
+        items = self.delivered(before)
+        self.write_import(items["local_material"], acquired_at="")
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        after = self.record()
+        local = self.delivered(after)["local_material"]["receipt"]
+        self.assertEqual("unknown", local["status"])
+        self.assertIn("没有可比的导入时刻", local["why"])
+        self.assertNotEqual("exact", local.get("granularity"))
+        self.assertEqual(0, summary["received"])
+        self.assert_summary_matches_items(after)
+        self.assert_delivery_kept(before, after)
+
+    def test_a_fetch_receipt_without_a_time_is_not_an_exact_receipt(self) -> None:
+        """系统件同 SHA、批次可核，但取材回执没有时刻：无法判断是否在投放之后，记 unknown。"""
+        before = self.deliver()
+        items = self.delivered(before)
+        self.write_fetch(items["system"], fetched_at="")
+        summary = rc.reconcile_update_receipts(self.run, self.feature)
+        after = self.record()
+        system = self.delivered(after)["system"]["receipt"]
+        self.assertEqual(("unknown", "verified"), (system["status"], system["batch"]))
+        self.assertIn("没有可比的时刻", system["why"])
+        self.assertEqual(0, summary["received"])
+        self.assert_summary_matches_items(after)
+        self.assert_delivery_kept(before, after)
 
     def test_a_fetch_with_other_bytes_is_unknown_not_received(self) -> None:
         """本次取回的字节与投放的不是同一版：记 unknown 并给出回执摘要，不按 received 计。"""

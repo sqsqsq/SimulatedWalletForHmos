@@ -51,7 +51,10 @@
   `report_completeness`（报告是否可核完整）、`objects`（派出去的审查对象键个数）；汇总
   `story_review_tasks / replies / full_replies / reports_unknown / objects`。任务是否收尾（`settled`）、
   有没有回复文本、报告是否可核完整是三件事：收尾通知里带着收尾标志不等于拿到了完整报告，
-  完整回复只计可核完整的那几份，其余单列未知。目录数不是任务数。
+  完整回复只计可核完整的那几份，其余单列未知。目录数不是任务数。报告完整性优先用**同一次派审、同一对象、
+  读者自己写进本次报告文件的读者原件**（取自保全的读者子会话）与整份 final 对同一份正文；只有开头两行、
+  只有正文的一部分、没有原件可核的现行形态都记 unknown（历史记录按当时的完整报告形态读取），
+  不据回复长短或正文里的字样推断。
 - **耗时只报能核实的那几类**：墙钟（首末事件）、驱动器累计的人工等待、可核工具调用区间、可核子任务观察区间、
   返修窗口与未知。区间用**并集**计算，交叠部分不重复累加也不重复扣除；`not_attributed_sec` 是墙钟减去可核区间后的
   未归属部分，含模型推理、宿主准备、等待与事件空档，**不是纯推理时间**。`nontool_gap_sec` 与 `tool_gap_sec`
@@ -878,7 +881,8 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
     空回复的完整性都记 unknown，不按任务失败算。与父方的报告接收结论分开。没有保全原件时为 null。
 
     **审查按实际任务计**：`task_id` 取原生 childId，`reply_received` 看收尾通知里有没有回复文本，
-    `report_completeness` 按实际对象与能取得的那一份原件核（见 `_closing_reply` 与 `_reply_conclusion`），
+    `report_completeness` 按同一次派审、同一对象、读者自己写进本次报告文件的读者原件与整份 final 核
+    （见 `_closing_reply`、`_reply_conclusion` 与 `_report_completeness`），
     `objects` 是派出去的审查对象键个数；汇总 `story_review_tasks / replies / full_replies / reports_unknown /
     objects`。`children/` 目录数不参与计数。
     `children` 是本 run 已经读过的子会话读数（measure 传同一份，避免重复解析）。"""
@@ -904,9 +908,12 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
             if role is None and STAGE_REQUEST_RE.search(str(call.get("args") or "")):
                 role, basis = "stage_verifier", "派出去的是原生阶段审查请求"
             child_file = parent.parent / "children" / str(started) / "session.v4.jsonl.zstd" if started else None
-            if role is None and child_file and child_file.is_file():
-                child = children.get(child_file) or _native(child_file)
-                role = _child_role(child) if not child.get("error") else None
+            # 子会话只解析一次：measure 传进来的就是这份读数；独立调用时按派出去时登记的子会话读。
+            child = children.get(child_file) if child_file is not None else None
+            if child is None and child_file is not None and child_file.is_file():
+                child = _native(child_file)
+            if role is None and child and not child.get("error"):
+                role = _child_role(child)
                 basis = "子会话写了蓝图设计产物" if role else None
             entry = catalog.get(started or "") or {}
             done = settled.get(started or "")
@@ -924,10 +931,7 @@ def native_delegations(sessions: dict, children: dict[Path, dict] | None = None)
             if row["role"] == "story_review":
                 row["review_mode"] = _review_mode(prompt)
                 row["review_conclusion"] = _reply_conclusion(prompt, reply, done)
-                complete = row["review_conclusion"]["value"] != "unknown"
-                row["report_completeness"] = {
-                    "value": "complete" if complete else "unknown",
-                    "why": None if complete else row["review_conclusion"]["why"]}
+                row["report_completeness"] = _report_completeness(prompt, reply, row["review_conclusion"], child)
             rows.append(row)
     conclusions = Counter(r["review_conclusion"]["value"] for r in rows if "review_conclusion" in r)
     modes = Counter(r["review_mode"] for r in rows if "review_mode" in r)
@@ -959,6 +963,10 @@ CONCLUSION_LINE_RE = re.compile(r"^conclusion: *(pass|warn|fail) *$")
 #: 已保全的 2.0.2 及以前运行记录里的报告标题：只读识别历史记录，产品不再接收这种形态
 RECORDED_REPORT_HEADINGS = ("判据核对", "发现", "总体结论")
 STATED_RE = re.compile(r"^(pass|warn|fail)(?![A-Za-z])")
+#: 派审载体分配给读者的本次报告文件（这一次唯一可写的位置）
+DISPATCH_REPORT_RE = re.compile(r"^- 本次报告文件：`([^`]+)`", re.MULTILINE)
+#: 读者报告原件的文件名形态（目录可由 `--report-dir` 指定，不写死默认位置）
+REPORT_ORIGINAL_RE = re.compile(r"review-original\.\d+\.md$")
 
 
 def _closing_reply(done: dict | None) -> dict:
@@ -1001,9 +1009,9 @@ def _reply_conclusion(prompt: str, reply: dict, done: dict | None) -> dict:
     current = CONCLUSION_LINE_RE.match(lines[1].strip()) if len(lines) > 1 and REPLY_KEY_RE.match(lines[0]) else None
     if current:
         return {"value": current.group(1), "why": None, "at": at(1)}
-    heads = [(i, line[3:].strip()) for i, line in enumerate(lines) if line.startswith("## ")]
-    if sorted(h for _, h in heads if h in RECORDED_REPORT_HEADINGS) != sorted(RECORDED_REPORT_HEADINGS):
+    if not _recorded_report(lines):
         return unknown("回复开头两行不是材料键与结论，也不是历史记录的报告形态")
+    heads = [(i, line[3:].strip()) for i, line in enumerate(lines) if line.startswith("## ")]
     start = next(i for i, h in heads if h == "总体结论")
     end = next((i for i, _ in heads if i > start), len(lines))
     first = next(((i, line.strip()) for i, line in enumerate(lines[start + 1:end], start + 1) if line.strip()), None)
@@ -1011,6 +1019,103 @@ def _reply_conclusion(prompt: str, reply: dict, done: dict | None) -> dict:
     if not stated:
         return unknown("「总体结论」第一行不是 pass / warn / fail")
     return {"value": stated.group(1), "why": None, "at": at(first[0])}
+
+
+def _recorded_report(lines: list[str]) -> bool:
+    """已保全的历史记录（2.0.2 及以前）的报告形态：那三个二级标题齐全。"""
+    heads = {line[3:].strip() for line in lines if line.startswith("## ")}
+    return all(heading in heads for heading in RECORDED_REPORT_HEADINGS)
+
+
+def _writer_path(path: object) -> str:
+    """工具入参里的文件路径归一成工程相对形态：统一斜杠、去掉开头的 `./`。"""
+    text = str(path or "").replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text
+
+
+def _is_report_path(path: object, want: str) -> bool:
+    """是不是派审载体分配的那一个报告文件：相对路径按相等认，绝对路径按结尾认。"""
+    got = _writer_path(path)
+    return bool(want) and (got == want or got.endswith("/" + want))
+
+
+def _reader_original(prompt: str, child: dict | None) -> dict:
+    """读者原件：派审载体分配给这一次的报告文件，在同一个子会话里由读者自己写入的正文。
+
+    `{report_file, text, why}`。只认载体写明的那个文件：同一路径最后一次改动不是「写出全文」时
+    重建不出原样正文（写了又改的只有改动片段，不能拿旧字节冒充），给原因而不是拿别的报告顶上；
+    没有保全的子会话或读不出时同样取不到；原件的材料键不是这一次派审的对象也不采用。
+    """
+    files = DISPATCH_REPORT_RE.findall(prompt)
+    if len(files) != 1:
+        return {"report_file": None, "text": None, "why": "派审载体没有写明这一次的本次报告文件"}
+    report_file = files[0]
+    want = _writer_path(report_file)
+    if not REPORT_ORIGINAL_RE.search(want):
+        return {"report_file": report_file, "text": None,
+                "why": f"派审载体写的报告位置不是读者报告原件（review-original.<n>.md）：{report_file}"}
+    if not child:
+        return {"report_file": report_file, "text": None, "why": "没有保全的读者子会话，取不到读者原件"}
+    if child.get("error"):
+        return {"report_file": report_file, "text": None, "why": f"读者子会话读不出（{child['error']}）"}
+    touched = [call for call in child.get("calls") or []
+               if call.get("name") in AUTHORING_TOOLS and _is_report_path(_args(call).get("file_path"), want)]
+    if not touched:
+        return {"report_file": report_file, "text": None, "why": f"读者子会话里没有写本次报告文件 {want}"}
+    last = touched[-1]
+    text = _args(last).get("content")
+    if last.get("name") != "write" or not isinstance(text, str):
+        return {"report_file": report_file, "text": None,
+                "why": f"本次报告文件最后一次改动不是写出全文（{last.get('name')}），重建不出原样正文"}
+    carrier = CARRIER_KEY_RE.findall(prompt)
+    if len(carrier) != 1 or REPLY_KEY_RE.findall(text)[:1] != carrier:
+        return {"report_file": report_file, "text": None,
+                "why": "读者原件的材料键不是这一次派审的对象，不能拿它核完整"}
+    return {"report_file": report_file, "text": text, "why": None}
+
+
+def _whole_text(text: str) -> str:
+    """正文对照用的归一：换行统一成 LF、去掉首尾空白；行内不改，合同要求与报告文件同一份正文。"""
+    return str(text).replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _original_completeness(original: str, final: str) -> str | None:
+    """读者原件与整份 final 对照：是同一份且有正文返回 None，否则返回为什么算不上可核完整。"""
+    want, got = _whole_text(original), _whole_text(final)
+    body = [line for line in want.splitlines()[2:] if line.strip()]
+    if not want or not got:
+        return "读者原件或最终回复是空的"
+    if want == got:
+        return None if body else "读者原件只有报告开头、没有正文"
+    if want.startswith(got):
+        return "最终回复只有报告开头" if len(got.splitlines()) <= 2 else "最终回复只是读者原件的一部分，缺正文"
+    return "最终回复与读者原件不是同一份（报告文件是原件，最终回复要给同一份正文）"
+
+
+def _report_completeness(prompt: str, reply: dict, conclusion: dict, child: dict | None) -> dict:
+    """报告完整性的可核结论：{value: complete/unknown, why, basis, report_file}。
+
+    **任务收尾、取得回复文本、声明结论、报告可核完整是四件事。** 报告完整性优先用同一次派审、同一对象、
+    读者自己写进本次报告文件的「读者原件」与整份 final 对同一份正文：一致且原件有正文才算 complete。
+    没有原件可核时，只有已保全的历史记录按当时的完整报告形态（三个二级标题）读取；现行形态只有表头、
+    只是原件的一部分、或取不到原件一律 unknown，并保留已收尾、已取得回复文本、已声明结论这些事实——
+    不据回复长短、正文里的字样或收尾状态推断完整。`basis` 写明凭什么判的，便于反查。
+    """
+    if not reply["reply_received"]:
+        return {"value": "unknown", "why": reply["why"], "basis": None, "report_file": None}
+    if conclusion.get("why"):
+        return {"value": "unknown", "why": conclusion["why"], "basis": None, "report_file": None}
+    if _recorded_report(str(reply["reply"]).splitlines()):
+        return {"value": "complete", "why": None, "basis": "recorded_report", "report_file": None}
+    original = _reader_original(prompt, child)
+    if original["text"] is None:
+        return {"value": "unknown", "why": original["why"], "basis": None, "report_file": original["report_file"]}
+    why = _original_completeness(original["text"], reply["reply"])
+    if why:
+        return {"value": "unknown", "why": why, "basis": None, "report_file": original["report_file"]}
+    return {"value": "complete", "why": None, "basis": "reader_original", "report_file": original["report_file"]}
 
 
 def _diagrams(run_dir: Path) -> dict:
@@ -1076,6 +1181,15 @@ def _human_wait(run_dir: Path) -> dict:
             "human_wait_source": "run_state"}
 
 
+def _completeness_note(item: dict) -> str:
+    """报表里报告完整性的括注：可核时写凭什么核的（读者原件 / 历史报告形态），未核证时写原因。"""
+    report = item["report_completeness"]
+    if report["value"] == "complete":
+        return {"reader_original": "读者原件与整份 final 一致",
+                "recorded_report": "历史报告形态"}.get(report.get("basis"), "可核")
+    return report.get("why") or "未核证"
+
+
 def render(result: dict) -> str:
     lines = [
         "[measure_run] 实跑效率度量（只报数，达标与否由人判断；范围是整份 events.jsonl，分段按实际 checkpoint）",
@@ -1123,8 +1237,7 @@ def render(result: dict) -> str:
             *(f"    - {i['role']}｜{i['label']}｜观察跨度 {i['observed_span_min'] if i['observed_span_min'] is not None else '未知'} 分钟"
               f"（含等待，不是纯推理）｜收尾 {i['settled']}｜回复文本 {'有' if i['reply_received'] else '无'}"
               + (f"｜完整报告 {'可核' if i['report_completeness']['value'] == 'complete' else '未核证'}"
-                 + (f"（{i['report_completeness']['why']}）" if i['report_completeness']['why'] else "")
-                 if "report_completeness" in i else "")
+                 f"（{_completeness_note(i)}）" if "report_completeness" in i else "")
               + (f"｜回复结论 {i['review_conclusion']['value']}"
                  + (f"（{i['review_conclusion']['why']}）" if i['review_conclusion']['why'] else "")
                  if "review_conclusion" in i else "") for i in result["delegations"]["items"]),

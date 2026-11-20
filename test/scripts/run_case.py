@@ -3080,10 +3080,29 @@ def _local_time(value: object) -> datetime | None:
     return parsed.astimezone().replace(tzinfo=None) if parsed.tzinfo else parsed
 
 
-def _ordered_before(record: dict, at: object) -> bool:
-    """已有证据只够定位先后：接收记录的时刻早于本次投放，就不能证明这次投放被接收。"""
-    received, delivered = _local_time(at), _local_time(record.get("delivered_at"))
-    return bool(received and delivered and received < delivered)
+def _order_against(receipt_at: object, record: dict) -> str:
+    """接收事件相对本次投放的先后：``after`` / ``before`` / ``unknown``。
+
+    缺时刻或读不出时不当作「不更早」：无法比较就给 unknown，既不据此证明收到，也不据此证明没收到。
+    """
+    received, delivered = _local_time(receipt_at), _local_time(record.get("delivered_at"))
+    if received is None or delivered is None:
+        return "unknown"
+    return "before" if received < delivered else "after"
+
+
+def _attributable(rows: list[dict], at_key: str, record: dict) -> tuple[str, dict]:
+    """同字节的多条接收记录里挑能说明本次收到的那一条，并给出它相对投放的先后。
+
+    投放之后的接收记录才可归入本次；都更早时只能定先后；都没有时刻时不可比。
+    不能把「没有时刻」当成「不更早」——那会把一次旧导入说成本次投放被接收。
+    """
+    orders = [(row, _order_against(row.get(at_key), record)) for row in rows]
+    for order in ("after", "before", "unknown"):
+        hit = [row for row, one in orders if one == order]
+        if hit:
+            return order, hit[-1]
+    return "unknown", rows[-1]
 
 
 def _local_receipt(record: dict, feature_root: Path) -> dict:
@@ -3104,15 +3123,18 @@ def _local_receipt(record: dict, feature_root: Path) -> dict:
                          "path": original.get("path"), "at": version.get("acquired_at")})
     same = [row for row in rows if sha and row.get("sha256") == sha]
     if same:
-        row = same[-1]
+        order, row = _attributable(same, "at", record)
         receipt = {"source": "importer 导入记录 AR/story-src/materials.json", "at": row["at"],
                    "sha256": row["sha256"], "path": row["path"], "version": row["dir"],
                    "source_id": row["source_id"]}
-        if _ordered_before(record, row["at"]):
+        if order == "after":
+            return {**receipt, "status": "received", "granularity": "exact"}
+        if order == "before":
             return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
                     "why": "同字节的导入记录早于本次投放：只能说明先后与字节相同，"
                            "不能证明这次投放被 importer 接收"}
-        return {**receipt, "status": "received", "granularity": "exact"}
+        return {**receipt, "status": "unknown",
+                "why": "同字节的导入记录没有可比的导入时刻，无法判断它是不是本次投放被 importer 接收"}
     if rows:
         row = rows[-1]
         return {"status": "unknown", "source": "importer 导入记录 AR/story-src/materials.json",
@@ -3129,20 +3151,29 @@ def _local_receipt(record: dict, feature_root: Path) -> dict:
 
 def _meeting_receipt(record: dict, feature_root: Path, inbox_key: str, sha: str) -> dict | None:
     """会议材料的导入记录：`AR/story-src/meetings/<键>/source.json` 的原文件名、原件摘要与导入时刻。"""
+    if not sha:
+        return None
     meta_paths = sorted((feature_root / "AR" / "story-src" / "meetings").glob("*/*/source.json"))
+    rows = []
     for meta_path in meta_paths:
         meta, _error = _read_json_doc(meta_path)
-        if not sha or not meta or str(meta.get("sha256") or "") != sha:
+        if not meta or str(meta.get("sha256") or "") != sha:
             continue
         if Path(str(meta.get("file") or "")).name != Path(inbox_key).name:
             continue
-        receipt = {"source": f"importer 会议版本登记 {meta_path.parent.relative_to(feature_root).as_posix()}/source.json",
-                   "at": meta.get("acquired_at"), "sha256": meta.get("sha256")}
-        if _ordered_before(record, meta.get("acquired_at")):
-            return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
-                    "why": "同字节的会议版本早于本次投放：只能说明先后与字节相同，不能证明这次投放被导入"}
+        rows.append({"meta_path": meta_path, "sha256": meta.get("sha256"), "at": meta.get("acquired_at")})
+    if not rows:
+        return None
+    order, row = _attributable(rows, "at", record)
+    source = f"importer 会议版本登记 {row['meta_path'].parent.relative_to(feature_root).as_posix()}/source.json"
+    receipt = {"source": source, "at": row["at"], "sha256": row["sha256"]}
+    if order == "after":
         return {**receipt, "status": "received", "granularity": "exact"}
-    return None
+    if order == "before":
+        return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
+                "why": "同字节的会议版本早于本次投放：只能说明先后与字节相同，不能证明这次投放被导入"}
+    return {**receipt, "status": "unknown",
+            "why": "同字节的会议版本没有可比的导入时刻，无法判断它是不是本次投放被导入"}
 
 
 def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: str, sha: str) -> dict:
@@ -3167,7 +3198,13 @@ def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: 
 
 
 def _system_receipt(record: dict, feature_root: Path) -> dict:
-    """系统件的收到：本次取材回执的状态、时间、原件字节，外加该件的批次回执。"""
+    """系统件的收到：本次取材回执的状态、时间、原件字节，外加该件的批次回执。
+
+    先核本件身份（同名条目）、字节（sha256）、证据一致性（批次回执的时刻与原件字节）和事件相对投放的时间，
+    再给精度与结论：批次回执缺失或对不上时证据不闭合，记 unknown；回执早于投放只有先后，记 `ordered_only`；
+    回执没有可比时刻不可判，记 unknown。只有可归入本次投放（回执时刻不早于投放）的 `absent` / `failed`
+    才记本次 `not_received`——更早的否定回执不是这一次的证据。
+    """
     name = Path(str(record.get("destination") or "")).name
     sha = str(record.get("sha256") or "")
     receipt_path = feature_root / "AR" / "story-src" / "fetched.json"
@@ -3191,16 +3228,28 @@ def _system_receipt(record: dict, feature_root: Path) -> dict:
                    "bytes": item.get("bytes"), "saved": item.get("saved"),
                    "batch_receipt": batch["path"], "batch": batch["status"]}
         if batch["status"] != "verified":
-            receipt["batch_why"] = batch["why"]
-        if _ordered_before(record, fetched_at):
+            return {**receipt, "status": "unknown", "batch_why": batch["why"],
+                    "why": f"本次取材的批次回执核不了（{batch['status']}）：{batch['why']}；"
+                           "没有它不能确证取回的是本次投放的字节"}
+        order = _order_against(fetched_at, record)
+        if order == "after":
+            return {**receipt, "status": "received", "granularity": "exact"}
+        if order == "before":
             return {**receipt, "status": "ordered_only", "granularity": "sequence_only",
                     "why": "本次取材回执的时刻早于本次投放：只能说明先后与字节相同，"
                            "不能证明取回的就是这次投放的字节"}
-        return {**receipt, "status": "received", "granularity": "exact"}
+        return {**receipt, "status": "unknown",
+                "why": "本次取材回执没有可比的时刻，无法判断取回是否在本次投放之后"}
     if status in ("absent", "failed"):
-        return {"status": "not_received", "source": source, "at": fetched_at,
-                "why": f"本次取材回执记 {name} 为 {status}"
-                       + (f"：{item.get('note')}" if item.get("note") else "")}
+        note = f"本次取材回执记 {name} 为 {status}" + (f"：{item.get('note')}" if item.get("note") else "")
+        order = _order_against(fetched_at, record)
+        if order == "after":
+            return {"status": "not_received", "source": source, "at": fetched_at, "why": note}
+        if order == "before":
+            return {"status": "unknown", "source": source, "at": fetched_at,
+                    "why": f"本次取材回执早于本次投放：它记的 {status} 不能归入本次投放，不记本次没收到"}
+        return {"status": "unknown", "source": source, "at": fetched_at,
+                "why": f"本次取材回执没有可比的时刻，不能确认它记的 {status} 是不是本次投放的收件"}
     if status == "same":
         return {"status": "ordered_only", "source": source, "at": fetched_at, "sha256": item.get("sha256"),
                 "granularity": "sequence_only",
@@ -3228,8 +3277,10 @@ def reconcile_update_receipts(out_dir: Path, feature_root: Path) -> dict | None:
 
     **投放 ≠ 收到**：`delivered_at` 只证明装置写了哪一份字节。本地件（`local_material`/`supplement`，
     投进收件箱）按 importer 的导入记录核时间与原件字节；系统件（投进需求系统、由模型 fetch 取回）按本次
-    取材回执的状态、时间、原件字节与批次回执核。同字节的接收记录早于本次投放时只有先后关系，记
-    `ordered_only` 并注明粒度；查过但没有对应事件记 `unknown`，不说成没收到。旧格式（schema 1）的统一
+    取材回执的状态、时间、原件字节与批次回执核。逐件先核本件身份、字节、证据一致性和事件相对投放的时间，
+    再给精度与结论：批次回执缺失或对不上、或没有可靠时序都记 `unknown`；同字节的接收记录早于本次投放只有
+    先后关系，记 `ordered_only` 并注明粒度。只有**可归入本次投放**（回执不早于投放）的否定回执才记
+    `not_received`；查过但没有对应事件记 `unknown`，不说成没收到。旧格式（schema 1）的统一
     `received_at_source` 不作为逐件依据，原值另存 `legacy_received_at_source`。没有投放记录时返回 None。
     """
     path = out_dir / UPDATE_DELIVERY_RECORD
@@ -3262,7 +3313,8 @@ def reconcile_update_receipts(out_dir: Path, feature_root: Path) -> dict | None:
         "at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "counts": counts,
         "note": "delivered_at 是装置写入的时刻，不是收到的时刻。received 逐件按导入/取材记录核；"
-                "unknown 是查过但没有对应事件，不是没收到；ordered_only 只有先后关系可用。",
+                "unknown 是查过但没有对应事件或证据不闭合（批次回执缺失/对不上、时刻不可比），不是没收到；"
+                "ordered_only 只有先后关系可用；not_received 只取可归入本次投放的否定回执。",
     }
     summary = {"status": "checked", "feature": payload.get("feature"), "items": len(items), **counts,
                **({"legacy": True} if legacy else {})}
