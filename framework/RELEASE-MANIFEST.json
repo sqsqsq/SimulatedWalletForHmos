@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
   "version": "3.1.0",
-  "source_commit": "badbfd66a3f4cb99ee302c9e76f344c1ee49d342",
-  "built_at": "2026-11-19T03:23:13.717Z",
+  "source_commit": "9c08d1e3614a84c248ddd4518a55f14113d7f481",
+  "built_at": "2026-11-20T08:41:26.928Z",
   "files": [
     {
       "path": "MIGRATION.md",
@@ -14,7 +14,7 @@
     },
     {
       "path": "agents/README.md",
-      "sha256": "7bfdc70e8c8f57a3a6b83b6741535ffb8f6b4be1c8baa8462eb42a066e8140d3"
+      "sha256": "a004c824743610fc2ddf18d8957fc32de5e3e6895be44cfb35ee26600e7a587a"
     },
     {
       "path": "agents/adapter-schema.yaml",
@@ -438,7 +438,7 @@
     },
     {
       "path": "agents/shared/native-request.cjs",
-      "sha256": "faa216a441ebf09f1b665848548a282233d48390ef31ac01504c00b9aa2ed73a"
+      "sha256": "f7703bea6ed027f2cb0b0531928ecbf8b8d03e11ef56f9cff41132d0b0aa7473"
     },
     {
       "path": "agents/shared/opencode-native-session.cjs",
@@ -566,7 +566,7 @@
     },
     {
       "path": "docs/operations/project-entry.md",
-      "sha256": "3384486720f9abdb23fbb706862b8e05fa7174edc183dbb9af511db390387c0e"
+      "sha256": "bb8ec1f3d79cb64c71cc379413bf8cdac8b869318397e5019a0656d406a28e24"
     },
     {
       "path": "docs/operations/release-checklist.md",
@@ -678,7 +678,7 @@
     },
     {
       "path": "harness/config.ts",
-      "sha256": "896e1df564de574b82f8c9f04fc1f92b809313eec4964f61811fefdaf88b7f53"
+      "sha256": "44ca46e570c654d66986e37e4ae2a063bfb7ecc9340b3eb732a96aa88db2e80e"
     },
     {
       "path": "harness/extension-loader.ts",
@@ -910,7 +910,7 @@
     },
     {
       "path": "harness/scripts/check-testing.ts",
-      "sha256": "3cc5774ec7ea108ff92b89af86fd3ded0615020911d840a2b768c7a7bd1a3d79"
+      "sha256": "a88f5646ac16c62bc458850ac095155fa702871daee7ec07a4b3b9328c46dc50"
     },
     {
       "path": "harness/scripts/check-ut.ts",
@@ -934,7 +934,7 @@
     },
     {
       "path": "harness/scripts/derive-hylyre-plan-hint.ts",
-      "sha256": "c9cd2115f7ec28f585070d8058623468aebad677d22986425d591bb7afbb38f6"
+      "sha256": "1801e65416e380eb6c4b2c9dcebfb422f1a366870bd204194011e9c73ab8ba63"
     },
     {
       "path": "harness/scripts/detect-deveco.ts",
@@ -954,7 +954,7 @@
     },
     {
       "path": "harness/scripts/goal-mode-entry.ts",
-      "sha256": "d2ba7a8c98b9111eed874fc4ee0e2e190d31c7814fc114dc762fcee245424ab3"
+      "sha256": "87ce0b1a28a55ecc7ff1c53861e943f193835c6fd5c5c529a1cdea7da4965253"
     },
     {
       "path": "harness/scripts/goal-monitor.ts",
@@ -962,7 +962,7 @@
     },
     {
       "path": "harness/scripts/goal-phase-runtime.ts",
-      "sha256": "9d4c6688dcf8d7ab5ddc154499695235a23de68b406a1adac8ec30bbb2c91499"
+      "sha256": "db40e0d98b91486b9bcbd6a35249e1b6c21faee1df083c70722cad5961209513"
     },
     {
       "path": "harness/scripts/goal-runner.ts",
@@ -1050,7 +1050,7 @@
     },
     {
       "path": "harness/scripts/utils/acceptance-review-strength.ts",
-      "sha256": "1885edc9a1c0c2fd6f13e0c4812bcff080270c56935ca660cacfffd342273af9"
+      "sha256": "957b709cde51decefc80479037121eb2446475b93e6c4800d6579cb1a57bef47"
     },
     {
       "path": "harness/scripts/utils/actionable-evidence.ts",
@@ -1126,7 +1126,7 @@
     },
     {
       "path": "harness/scripts/utils/agent-invoke.ts",
-      "sha256": "790cd14ce9dc5cc226b426fa9a273c42e6e94a844d169eb63b3d11664821fc5a"
+      "sha256": "ab8b1a962031028b90c1654f4da113abe00526dc4ad25be99ec7eda7ec3c46a4"
     },
     {
       "path": "harness/scripts/utils/app-snapshot-cache-hint.ts",
@@ -1210,7 +1210,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-questioning.ts",
-      "sha256": "9b6bd768ba75c3dcb448fff96cc5b5779a2f15e394026c42667d1e595c21a5c0"
+      "sha256": "3bd4604624aaad21cbf01a324a04ff8522860f9dcc2090e8b6ec9737e84dc663"
     },
     {
       "path": "harness/scripts/utils/blueprint-reader-guide.ts",
@@ -1242,7 +1242,7 @@
     },
     {
       "path": "harness/scripts/utils/blueprint-skill-projection.ts",
-      "sha256": "91414f8173b7496fbb6a23fd33453adb062c969fbcccb0f2f3e42401573c47b1"
+      "sha256": "d2f7cef9b90aca2a69f1f9f770dd3a4f1ed0f3dafa2be9c08c7d2f986a676bb3"
     },
     {
       "path": "harness/scripts/utils/blueprint-views.ts",
@@ -1262,7 +1262,7 @@
     },
     {
       "path": "harness/scripts/utils/capability-resolution-entry-input.ts",
-      "sha256": "d2b40643ffaa7ad7a29d0985f4178a34855da8b009888fe4b0bc201cf392cbd8"
+      "sha256": "e97fbae29ce975d17e61c1a63233cfb31d5d9b2cccf278ce54a539b60bb80905"
     },
     {
       "path": "harness/scripts/utils/capability-resolution.ts",
@@ -1298,7 +1298,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-design-preparation.ts",
-      "sha256": "1e51cdbdf2f78de73c5858d166a7525471d73695381a42720ebdb30e35874251"
+      "sha256": "e3c74f05d4db29057d3ef8da973dd3a54042d8eb589e87b579acfefa22c05aa9"
     },
     {
       "path": "harness/scripts/utils/change-unit-evolution-seam.ts",
@@ -1306,7 +1306,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-feature-projection.ts",
-      "sha256": "1a7a3b29a1f14a70cdaf31f5149655f778968f322bfff1f8ae1a92d593621564"
+      "sha256": "9974ff0daa128526bb14c71e5cffdc7e584bbc5f22b4d1ba60931a21e8bc1e66"
     },
     {
       "path": "harness/scripts/utils/change-unit-model.ts",
@@ -1314,7 +1314,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-path.ts",
-      "sha256": "f35c5039c0d799067aee1faaced5db8aa576a9cfc104590d9195da2bda402482"
+      "sha256": "127e248ebdc7d814cd44c07782c6eb54eb2f1f0b60acbd7b424be197079f5a13"
     },
     {
       "path": "harness/scripts/utils/change-unit-progress-loop.ts",
@@ -1322,7 +1322,7 @@
     },
     {
       "path": "harness/scripts/utils/change-unit-provider-boundary.ts",
-      "sha256": "340275b18ae710a948971463e94af7b7a61e12f52fe8a09c44725a97573a72d2"
+      "sha256": "969dd3349dbd5bef5971a739c9f733bd3f48c800fca14876b7f8f42a3a6b4278"
     },
     {
       "path": "harness/scripts/utils/change-unit-ready-set.ts",
@@ -1342,7 +1342,7 @@
     },
     {
       "path": "harness/scripts/utils/check-acceptance.ts",
-      "sha256": "47718a3640ab6404181cb05955d5bc338d27be03d00c5084fe378efd9bfc233f"
+      "sha256": "966de400a213922b0c6605140eed58d7ddacadc3b4215841829be3fe42107123"
     },
     {
       "path": "harness/scripts/utils/check-disposition.ts",
@@ -1526,7 +1526,7 @@
     },
     {
       "path": "harness/scripts/utils/derived-hylyre-plan.ts",
-      "sha256": "719edbbe969fcd7496d7422934d0b80a7c3510b934f66df85b6d1732501fff39"
+      "sha256": "47c05c8ff1764be93724b1afe6c653ae64e021ece3e32308cb38ec65e8daae50"
     },
     {
       "path": "harness/scripts/utils/design-content-checks.ts",
@@ -1534,11 +1534,11 @@
     },
     {
       "path": "harness/scripts/utils/design-delivery-entry.ts",
-      "sha256": "fdc2d8754134ae19b79ca61c9b214c16211e0331a870e93718aa8100b021b4ff"
+      "sha256": "a111d5c1a367f4c1420cce65a0779797b1571686952856ce5b71ceab8ba43916"
     },
     {
       "path": "harness/scripts/utils/design-repair-unattended.ts",
-      "sha256": "75d07d9deef34fe5778268c84e197c2877bd7e082f7898a1795cd49b7ef6bc10"
+      "sha256": "06047480d675fa75eb6a2a6b53f1fd3ca04b85ccae9bf44b6c1e7c1eaf8d33c3"
     },
     {
       "path": "harness/scripts/utils/device-credential-store.ts",
@@ -1742,7 +1742,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-phase-runtime.ts",
-      "sha256": "7041ac59732df894178b5a9cd60513adcd95f6d29bcb5f9918a737d7fac96dee"
+      "sha256": "767933f83a68cd9c33d008abc7975feb70e9bb665f3b138e682e34bbb3e7e204"
     },
     {
       "path": "harness/scripts/utils/goal-phase-snapshot.ts",
@@ -1754,7 +1754,7 @@
     },
     {
       "path": "harness/scripts/utils/goal-progress.ts",
-      "sha256": "673e4520500be6e4be365ada91241019d0186a98d5d9f7eca484c3247a13b470"
+      "sha256": "4e3db880e27fd81440182f36c488f000e8f149ce7bc79a417a124302c06eb4dc"
     },
     {
       "path": "harness/scripts/utils/goal-reconcile-boundary.ts",
@@ -1842,7 +1842,7 @@
     },
     {
       "path": "harness/scripts/utils/hylyre-planned-step-lint.ts",
-      "sha256": "99ca921480f8460af5235f23a68effe5b0602f7d86aaef38631c526e45508de7"
+      "sha256": "8de4de3a0bd26e67dd1dcf462a92463e256405e8bb81fb7123d9ed825ea83590"
     },
     {
       "path": "harness/scripts/utils/hylyre-result-protocol.ts",
@@ -1890,7 +1890,7 @@
     },
     {
       "path": "harness/scripts/utils/initial-design-delivery.ts",
-      "sha256": "7d588e281a3c6274eb9deda0958c74e698935e4b68beb0bea3a2634e5da00072"
+      "sha256": "fdfd6dba27df81e2ef7a0f0107bb5bd5031fcc488dbe363de3ffedc5dfe7810b"
     },
     {
       "path": "harness/scripts/utils/instance-skill-bridge.ts",
@@ -1970,11 +1970,11 @@
     },
     {
       "path": "harness/scripts/utils/p0-identity-injection.ts",
-      "sha256": "128d810e84e771ca9b41886d2be810d7c31a653fe5b64f736b08b29f7381d2dd"
+      "sha256": "f0f6d8da40c7f752d8fd7b0046fef61a512b23fd64cafbaf6d557c6112b3d63c"
     },
     {
       "path": "harness/scripts/utils/p0-semantic-gates.ts",
-      "sha256": "3383aea64a3151405d962df97b61ddc8f88147cb21fbbed6f91bde71ad26fdbb"
+      "sha256": "7ea4f3bea7f0ca6399b29c8782b2ff0f36aac89106bc3b866320699ca541e596"
     },
     {
       "path": "harness/scripts/utils/pass-snapshot.ts",
@@ -2022,11 +2022,11 @@
     },
     {
       "path": "harness/scripts/utils/phase-write-boundary.ts",
-      "sha256": "441e766f9daa6e53e66c2983fe863ab8087b0b892eb22a53499397d12121b542"
+      "sha256": "ccf236dbfe987018dbc8eced7cad1a67f7572e9aadab95760f3e8d5232493b14"
     },
     {
       "path": "harness/scripts/utils/planned-step-normalizer.ts",
-      "sha256": "af9526894e6651512dfb3ed7c89c421545c1c12ab9777d1d99bf864668486ce2"
+      "sha256": "89e2b14f4966be66e6baf70b4a680727c8b857fc1a4a76c3d90921608aac9d81"
     },
     {
       "path": "harness/scripts/utils/process-integrity.ts",
@@ -2066,7 +2066,7 @@
     },
     {
       "path": "harness/scripts/utils/repair-candidates.ts",
-      "sha256": "56e0d819a598b28a082f0771ea8f4a4a77e8a39d7766bd8da868b004659c7662"
+      "sha256": "b8cad612e47f88014b2b66e34a68c72edcd91d06656e659a778d5cb1faeab51f"
     },
     {
       "path": "harness/scripts/utils/repair-responsibility.ts",
@@ -2078,7 +2078,7 @@
     },
     {
       "path": "harness/scripts/utils/request-intake.ts",
-      "sha256": "6a64038dc6a4728e4c8b721330138a5d57bc0a8e2a20714d0b443198e2cdfcf2"
+      "sha256": "ccbec00d5e53a1c0d8c5dff48072c3157effb2279b385c948c3f3cd11e4d972f"
     },
     {
       "path": "harness/scripts/utils/request-phase.ts",
@@ -2110,7 +2110,7 @@
     },
     {
       "path": "harness/scripts/utils/runtime-step-evidence.ts",
-      "sha256": "48d80ffec29bd007b78c704134789806c8c8d58f0ea49e561492c0d52a94fa6e"
+      "sha256": "9edb13cb2018ebae34b3b26c7b81a5633dbfc2fc0e3ceb822c5d12969a97f1b1"
     },
     {
       "path": "harness/scripts/utils/scope-parser.ts",
@@ -2122,7 +2122,7 @@
     },
     {
       "path": "harness/scripts/utils/session-execution-handoff.ts",
-      "sha256": "b669e1e97012f12dcccbbcf09a65e41c01034512927de4fe77b0e21c43538169"
+      "sha256": "9d9d11f90c97ef0f968f4d73be9aa39e6c04dec7424fc1b2ddb8f0efc1a46388"
     },
     {
       "path": "harness/scripts/utils/shape-guards.ts",
@@ -2166,7 +2166,7 @@
     },
     {
       "path": "harness/scripts/utils/test-plan-derive-hint.ts",
-      "sha256": "2b2c37e427e3dc0315bb96806d2eab4f9390750fc22006e485925a60fa3f6cd1"
+      "sha256": "3cedc0cf4dc45c387de76fdc1e1fe37a13a61f0fb4346fbcf4a95d5781257ce4"
     },
     {
       "path": "harness/scripts/utils/testing-report-reconcile.ts",
@@ -2174,7 +2174,7 @@
     },
     {
       "path": "harness/scripts/utils/testing-trace-gates.ts",
-      "sha256": "e14e21ecab131521998620445292acafd1ed0126cfda160af015ee35d6e812d4"
+      "sha256": "7fdd487e7239c99e4366c6c3a5703ccf6ad8a8737f20704d704d023e2690503e"
     },
     {
       "path": "harness/scripts/utils/testing-write-boundary.ts",
@@ -2262,7 +2262,7 @@
     },
     {
       "path": "harness/scripts/utils/verify-feature-completion.ts",
-      "sha256": "97d90bcef59848732ed99059b89ed70bdb9b4a3e9c6812b6166592474348dfa4"
+      "sha256": "ecc9b04694da60d48954bded3162485c2ad9b2abcca69fae8f57bc388f5359c1"
     },
     {
       "path": "harness/scripts/utils/vision-canary-interactive.ts",
@@ -3242,7 +3242,7 @@
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/reference/hylyre-planned-step-fields.md",
-      "sha256": "81984ada5d88b1f044105e52e81bb6469aee885a4412634727a3110e8aebcc99"
+      "sha256": "570d89c791ed7efb76ddecfdfde064f98fc22b5d1b42807da20f80dc88f7dd12"
     },
     {
       "path": "profiles/hmos-app/skills/device-testing/templates/test-plan-hylyre-template.md",
@@ -4814,7 +4814,7 @@
     },
     {
       "path": "skills/project/goal-mode/SKILL.md",
-      "sha256": "365aeb051975ce9a6d3511d67e3afbbe379258f97843636f1f0f0ac19e2bdf36"
+      "sha256": "64c5a339d5c3eeca8b90874bf088e594739e284fdc0413c10447456a18eeef0a"
     },
     {
       "path": "skills/reference/agent-behavioral-principles.md",
@@ -4874,7 +4874,7 @@
     },
     {
       "path": "skills/reference/goal-mode-operations.md",
-      "sha256": "ac40f4f81a4d20c492c48f1585a1f7c11ada9fd87f213ba78264e407e002a32e"
+      "sha256": "357e8992999b22802e135889959dedd6f99a5414c7b707233a15394feb5db92f"
     },
     {
       "path": "skills/reference/harness-cli-cwd.md",
