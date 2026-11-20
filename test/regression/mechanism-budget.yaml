@@ -436,6 +436,23 @@ packages:
         reason: "S20 及整合实投 G30/X17，批准原 G16 外必要 G14；已发生额度 G8436。S15 原 G125 与 S18 原 G5 沿原裁定。另批 S22 单点读者判据改写 G2/X2；S23 测试域 G0/X0。整版 endpoint G6160/X4928，control_g G5306 不变。"
         source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#s19s21-汇合复评裁定"
 
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-19"
+        at_ref: "662c2bd4"
+        scope: "S22/S23 汇合复评；02 批收口，S09 局部返修与 05 批独立范围"
+        previous_invested_limit_g: 8438
+        actual_invested_g: 8568
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8438
+        next_steps:
+          S24: {g: 0, x: 0}
+          S25: {g: 0, x: 0}
+          S26: {g: 0, x: 0}
+        reason: "S22 判据在真源替换且旧指路退出，认可原批 G2/X2，追加 G0。交回漏计 S20 已追认 G14，生效额度仍 G8438。S24/S25 限已定调查与验证，S26 只修测试统计。整版 endpoint G6160/X4928。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#s22s23-复评裁定"
+
 requirement:
   id: 2.0.1-完整适配
   status: in_progress
