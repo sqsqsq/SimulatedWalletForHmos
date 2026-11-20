@@ -1574,6 +1574,17 @@ class ReviewTaskReachesTheVerifierPart2(ReviewTaskReachesTheVerifierCase):
 
 
 class ReviewTaskReachesTheVerifierPart3(ReviewTaskReachesTheVerifierCase):
+    def test_the_round_originals_are_located_by_the_material_index(self) -> None:
+        """R1：本轮评审输入与这一轮的 before 按「本次审查的材料」里列出的 `updates/<轮>/before/` 固定件定位；
+        当前 inbox/review/ 里的新版不是本轮依据，也不再写成只有 update 开着时才有 before——收口后同一份仍是依据。"""
+        method = self.overlay_method()
+        self.assertIn("本次审查的材料里列出的这一轮固定件", method)
+        self.assertIn("updates/<轮>/before/", method)
+        self.assertIn("当前 `inbox/review/` 里的新版不属于本轮依据", method)
+        self.assertIn("轮次开着或已收口都一样", method)
+        self.assertNotIn("本轮评审输入的原件（`inbox/review/`", method)
+        self.assertNotIn("update 开着时还有这一轮的 before", method)
+
     def test_the_task_carries_the_contract_questions(self) -> None:
         contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
         text = self.inject()

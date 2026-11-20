@@ -8,8 +8,8 @@ semantic_checks:
       归档叙事件的独立审查：读者拿这一份能不能读懂这个需求。审查对象是最终的
       `doc/features/{module}/AR/story.md`，输入是它据以成文的东西——材料清单
       `AR/story-src/materials.json` 指向的每一份材料、蓝图需求条目采用的材料版本（当前阅读稿或 `.backups/local/` 里登记的那一版）、
-      `AR/story-src/answers/` 导出的材料确认与设计问答原话（update 的原话随同一份导出）、本轮评审输入的原件（`inbox/review/` 下的系统回流件与本地意见/改稿）、
-      作者的写作设计 `AR/story-src/story-template.md`（待核的作者判断，不是标准），update 开着时还有这一轮的 before；
+      `AR/story-src/answers/` 导出的材料确认与设计问答原话（update 的原话随同一份导出）、本轮评审输入的原件（本次审查的材料里列出的这一轮固定件，在 `updates/<轮>/before/` 下；当前 `inbox/review/` 里的新版不属于本轮依据，新版本按 update 归属另行取得）、
+      作者的写作设计 `AR/story-src/story-template.md`（待核的作者判断，不是标准），这一轮动手前的现场（`updates/<轮>/before/`）同在本轮材料里逐件列出，轮次开着或已收口都一样；
       蓝图与它的原生评审投影（设计事实的权威）、接口转写与激活知识原文按问题回查。
       **分工**：共同设计是否完整、接口转写是否忠实原文、知识义务是否落到设计实体，由蓝图的独立质询负责；
       你负责 Story 作为独立业务送审件是否完整、准确、读得懂，读者要核对的精确事实是否查得到。
