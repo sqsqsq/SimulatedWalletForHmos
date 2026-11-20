@@ -453,6 +453,39 @@ packages:
         reason: "S22 判据在真源替换且旧指路退出，认可原批 G2/X2，追加 G0。交回漏计 S20 已追认 G14，生效额度仍 G8438。S24/S25 限已定调查与验证，S26 只修测试统计。整版 endpoint G6160/X4928。"
         source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md#s22s23-复评裁定"
 
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-19"
+        at_ref: "ced043ea"
+        scope: "S24/S25 隔离候选、S26 测试归账与 05 批及 S09 复评"
+        previous_invested_limit_g: 8438
+        actual_invested_g: 8568
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8438
+        next_steps:
+          S27: {g: 0, x: 0}
+          S28: {g: 0, x: 0}
+        reason: "本段交付机制 G0/X0；S27 只放行方案归属及隔离补证，S28 仅测试域收件位置冲突。四档可继续比较，正式 pin 不变。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
+      - band: ">150%"
+        by: "维护设计者 Codex（用户授权）"
+        date: "2026-11-19"
+        at_ref: "cd666bad"
+        scope: "S27 入口设计裁定、S28 返修与 S10 已就绪离线工作"
+        previous_invested_limit_g: 8438
+        actual_invested_g: 8568
+        confirmed_overrun_g: 0
+        unapproved_overrun_g: 130
+        invested_limit_g: 8439
+        next_steps:
+          S27: {g: 1, x: 1}
+          S28: {g: 0, x: 0}
+          S10: {g: 0, x: 0}
+        reason: "一行 Story description 替换只在公开入口确实消费时实施，条件额度 G1/X1；当前无产品实投。夹具、统计和离线合并交回 G0/X0，保持历史差额与控制值。"
+        source: "doc/plan/2.0.5/2026-11-12-蓝图下的人工确认与范围收敛/02-预算拆分.md"
+
 requirement:
   id: 2.0.1-完整适配
   status: in_progress
