@@ -3194,13 +3194,83 @@ def _under_feature(feature_root: Path, rel: object) -> Path | None:
     return path
 
 
+def _review_batch_of(feature_root: Path, path: Path) -> tuple[Path, str] | None:
+    """一个落点的评审批次：原生评审件在 `inbox/review/<批次>/` 下，普通上游材料不在这个子树里。
+
+    位置归一只对系统评审件做：上游正文与材料批次的 `saved` 照原合同核，不因同一次取材的
+    `review_out` 指评审子树而改判。
+    """
+    root = feature_root.resolve()
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        return None
+    parts = rel.split("/")
+    if len(parts) < 4 or parts[:2] != ["inbox", "review"]:
+        return None
+    batch = (root / Path(*parts[:3])).resolve()
+    return batch, batch.relative_to(root).as_posix()
+
+
+def _review_location_conflicts(feature_root: Path, saved_rel: str, batch_path: Path, batch_rel: str,
+                               doc: dict, items: list[dict], review_out: object,
+                               conflicts: list[dict]) -> None:
+    """同一评审件的三处落点归一：总回执 saved、批次条目 saved、存在的评审批次 review_out。
+
+    前两者要指同一原件（相对/绝对等等价写法归一后比较），`review_out` 要是该原件所属的评审批次；
+    逃出需求根的落点按现有规则不认。对不上时两边原值、字段和来源都留在 `conflicts` 里，结论归 unknown。
+    普通非评审件与没有 `review_out` 的旧回执不进入这里，继续保持原合同。
+    """
+    review = _review_batch_of(feature_root, batch_path)
+    if review is None:
+        return
+    review_dir, review_rel = review
+    total_source = "AR/story-src/fetched.json 的条目 saved"
+    for raw in dict.fromkeys(str(item.get("saved") or "") for item in items):
+        got_path = _under_feature(feature_root, raw) if raw else None
+        if got_path is None or got_path != batch_path:
+            conflicts.append({
+                "field": "saved", "want": saved_rel, "got": raw or None,
+                "total": {"source": total_source, "value": saved_rel},
+                "batch": {"source": f"{batch_rel} 的条目 saved", "value": raw or None},
+            })
+    total_out = str(review_out or "").strip()
+    got = _under_feature(feature_root, total_out) if total_out else None
+    if total_out and (got is None or got != review_dir):
+        conflicts.append({
+            "field": "review_out", "want": review_rel, "got": total_out,
+            "total": {"source": "AR/story-src/fetched.json 的 review_out", "value": total_out},
+            "batch": {"source": f"{batch_rel} 的 review_out", "value": doc.get("review_out")},
+        })
+    batch_out = str(doc.get("review_out") or "").strip()
+    got = _under_feature(feature_root, batch_out) if batch_out else None
+    if batch_out and batch_out != total_out and (got is None or got != review_dir):
+        conflicts.append({
+            "field": "review_out", "want": review_rel, "got": batch_out,
+            "total": {"source": "AR/story-src/fetched.json 的 review_out", "value": total_out or None},
+            "batch": {"source": f"{batch_rel} 的 review_out", "value": batch_out},
+        })
+
+
+def _conflict_text(conflict: dict) -> str:
+    """冲突的两边原值：位置冲突写明两份记录各写了什么，身份冲突照旧写本次与批次。"""
+    if "total" in conflict and "batch" in conflict:
+        return (f"{conflict['field']} 总回执 {conflict['total']['value']!r}"
+                f"（{conflict['total']['source']}）、批次 {conflict['batch']['value']!r}"
+                f"（{conflict['batch']['source']}）")
+    return f"{conflict['field']} 本次 {conflict['want']!r}、批次 {conflict['got']!r}"
+
+
 def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: str, sha: str, *,
-                   bytes_: object = None, ticket: object = None, req_no: str) -> dict:
+                   bytes_: object = None, ticket: object = None, req_no: str,
+                   review_out: object = None) -> dict:
     """系统件的本次取材批次回执：核批次时刻、批次与条目的原生身份、状态、摘要与已有字节数。
 
     返回 `{status: verified/missing/mismatch, path, why, conflicts}`。批次回执读不出、落点不在本需求目录、
     同次的时间/需求单号/条目主人/状态/摘要/字节数任一对不上都记不闭合，`conflicts` 留两边的原值；
     不在本次需求目录、或读不到对应批次，都只说明这一份证据不闭合，不据此否定收件本身。
+    系统评审件另归一三处落点（总回执 saved、批次条目 saved、存在的 review_out）：前两者要指同一原件，
+    review_out 要是原件所属的评审批次；对不上时两边原值与来源一并留在 `conflicts`。
     """
     saved_rel = str(saved or "")
     if not saved_rel:
@@ -3241,10 +3311,10 @@ def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: 
         expected_ticket = ticket if ticket not in (None, "") else req_no
         if item.get("ticket") not in (None, "") and item["ticket"] != expected_ticket:
             conflict("ticket", expected_ticket, item.get("ticket"))
+    _review_location_conflicts(feature_root, saved_rel, batch_path, batch_rel, doc, items, review_out, conflicts)
     if conflicts:
         return {"status": "mismatch", "path": batch_rel, "conflicts": conflicts,
-                "why": "批次回执与本次取材对不上：" + "；".join(
-                    f"{c['field']} 本次 {c['want']!r}、批次 {c['got']!r}" for c in conflicts)}
+                "why": "同次记录对不上：" + "；".join(_conflict_text(c) for c in conflicts)}
     return {"status": "verified", "path": batch_rel, "why": None, "conflicts": None}
 
 
@@ -3281,9 +3351,10 @@ def _system_receipt(record: dict, feature_root: Path) -> dict:
     先核三份记录的原生身份与已有字节数：投放目标在哪个需求单下、总回执的 reqNo、同名条目的 ticket 与
     字节数。同一件有多条互相矛盾的条目、或条目归属别的需求时，保留两边的原值记 unknown——不优先 fetched，
     也不取第一个同名条目。身份与摘要不矛盾时再看批次回执（时刻/单号/条目/状态/摘要/字节数）和事件相对
-    投放的时间：批次回执缺失或对不上时证据不闭合，记 unknown；回执早于投放只有先后，记 `ordered_only`；
-    回执没有可比时刻不可判，记 unknown。只有可归入本次投放（回执时刻不早于投放）且没有被同次关联批次
-    推翻的 `absent` / `failed` 才记本次 `not_received`——更早的否定回执不是这一次的证据。
+    投放的时间：批次回执缺失或对不上时证据不闭合，记 unknown；系统评审件另归一三处落点（总回执 saved、
+    批次条目 saved、存在的 review_out），对不上同样记 unknown 并留两边原值；回执早于投放只有先后，记
+    `ordered_only`；回执没有可比时刻不可判，记 unknown。只有可归入本次投放（回执时刻不早于投放）且没有被
+    同次关联批次推翻的 `absent` / `failed` 才记本次 `not_received`——更早的否定回执不是这一次的证据。
     """
     dest = str(record.get("destination") or "").replace("\\", "/")
     name = Path(dest).name
@@ -3333,7 +3404,8 @@ def _system_receipt(record: dict, feature_root: Path) -> dict:
                     f"{c['field']} 本次 {c['want']!r}、回执 {c['got']!r}" for c in identity)}
     status = item.get("status")
     base = {"source": source, "at": fetched_at, "sha256": item.get("sha256"),
-            "bytes": item.get("bytes"), "saved": item.get("saved"), "ticket": ticket}
+            "bytes": item.get("bytes"), "saved": item.get("saved"), "ticket": ticket,
+            **({"review_out": receipt.get("review_out")} if receipt.get("review_out") else {})}
     if status == "fetched":
         if not item.get("sha256"):
             return {**base, "status": "unknown",
@@ -3342,7 +3414,8 @@ def _system_receipt(record: dict, feature_root: Path) -> dict:
             return {**base, "status": "unknown",
                     "why": "本次取回的字节与投放的不是同一版（回执 sha256 不同）"}
         batch = _batch_receipt(feature_root, item.get("saved"), fetched_at, name, sha,
-                               bytes_=item.get("bytes"), ticket=ticket, req_no=expected_req)
+                               bytes_=item.get("bytes"), ticket=ticket, req_no=expected_req,
+                               review_out=receipt.get("review_out"))
         facts = {**base, "batch_receipt": batch["path"], "batch": batch["status"]}
         if batch["status"] != "verified":
             return {**facts, "status": "unknown", "batch_why": batch["why"],
@@ -3405,7 +3478,8 @@ def reconcile_update_receipts(out_dir: Path, feature_root: Path) -> dict | None:
     取材回执的状态、时间、原件字节与批次回执核，并复用三份记录的原生身份：投放目标在哪个需求单下、总回执
     的 `reqNo`、同名条目的 `ticket` 与已有字节数。逐件先核身份、条目、摘要、证据一致性和事件相对投放的
     时间，再给精度与结论：**同次同件相互矛盾时保留两边的原值并记 `unknown`**（不优先 fetched、也不取第一个
-    同名条目）；批次回执缺失或对不上、或没有可靠时序都记 `unknown`；同字节的接收记录早于本次投放只有
+    同名条目）；系统评审件的三处落点（总回执 `saved`、批次条目 `saved`、存在的 `review_out`）归一后对不上
+    同样记 `unknown`；批次回执缺失或对不上、或没有可靠时序都记 `unknown`；同字节的接收记录早于本次投放只有
     先后关系，记 `ordered_only` 并注明粒度。只有**可归入本次投放**（回执不早于投放）且没有被同次关联批次
     推翻的否定回执才记 `not_received`；查过但没有对应事件记 `unknown`，不说成没收到。旧格式（schema 1）的统一
     `received_at_source` 不作为逐件依据，原值另存 `legacy_received_at_source`。没有投放记录时返回 None。
