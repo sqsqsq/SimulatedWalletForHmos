@@ -1039,11 +1039,15 @@ class ANativeEntryNeedsNoStory(unittest.TestCase):
 
 
 def place_unit(root: Path, blueprint: str, ref: dict) -> tuple[Path, str]:
-    """在 `blueprint` 下放夹具施工单位 balance-refresh，引用改指这一版蓝图（`ref` 是原生读到的 blueprint_ref）。"""
+    """在 `blueprint` 下放夹具施工单位 balance-refresh，引用改指这一版蓝图（`ref` 是原生读到的 blueprint_ref）。
+
+    夹具自身的 revision 与蓝图摘要随 CU 合同迁移而变，按夹具当前那一版取，不写死历史值。"""
     unit = (FIXTURE / "doc" / "features" / BLUEPRINT / "balance-refresh" / "change-unit.yaml").read_text(encoding="utf-8")
-    for old, new in (("revision: 3", f"revision: {ref['revision']}"),
+    current_revision = re.search(r"^revision: (\d+)$", unit, re.M).group(1)
+    current_artifact = re.search(r"^  artifact_sha256: (sha256:[0-9a-f]{64})$", unit, re.M).group(1)
+    for old, new in ((f"revision: {current_revision}", f"revision: {ref['revision']}"),
                      ("sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72", ref["source_fingerprint"]),
-                     ("sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5", ref["artifact_sha256"]),
+                     (current_artifact, ref["artifact_sha256"]),
                      (BLUEPRINT, blueprint)):
         unit = unit.replace(old, new)
     unit_dir = root / "doc" / "features" / blueprint / "balance-refresh"

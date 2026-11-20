@@ -2,15 +2,15 @@ artifact: change-unit@1
 component_id: wallet-main
 blueprint_id: wallet-balance-refresh
 change_unit_id: balance-refresh
-revision: 3
+revision: 4
 priority: 1
 component_blueprint_ref:
   artifact: component-blueprint@1
   component_id: wallet-main
   blueprint_id: wallet-balance-refresh
-  revision: 3
+  revision: 4
   source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-  artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+  artifact_sha256: sha256:164be5a32bbe214de2223c81d45ba6256e4cf9eae90e81b6b1ffbd8ba34d4395
   target:
     kind: blueprint
     id: wallet-balance-refresh
@@ -27,13 +27,12 @@ provides:
   - provide_id: balance-refresh-behavior
     description: Balance refresh on home visible.
 design_refs:
-  - &a1
-    artifact: component-blueprint@1
+  - artifact: component-blueprint@1
     component_id: wallet-main
     blueprint_id: wallet-balance-refresh
-    revision: 3
+    revision: 4
     source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    artifact_sha256: sha256:164be5a32bbe214de2223c81d45ba6256e4cf9eae90e81b6b1ffbd8ba34d4395
     target:
       kind: node
       id: wallet-main-module
@@ -41,9 +40,9 @@ design_refs:
   - artifact: component-blueprint@1
     component_id: wallet-main
     blueprint_id: wallet-balance-refresh
-    revision: 3
+    revision: 4
     source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    artifact_sha256: sha256:164be5a32bbe214de2223c81d45ba6256e4cf9eae90e81b6b1ffbd8ba34d4395
     target:
       kind: node
       id: wallet-balance
@@ -51,24 +50,34 @@ design_refs:
   - artifact: component-blueprint@1
     component_id: wallet-main
     blueprint_id: wallet-balance-refresh
-    revision: 3
+    revision: 4
     source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    artifact_sha256: sha256:164be5a32bbe214de2223c81d45ba6256e4cf9eae90e81b6b1ffbd8ba34d4395
     target:
       kind: relation
       id: balance-implemented-by-module
   - artifact: component-blueprint@1
     component_id: wallet-main
     blueprint_id: wallet-balance-refresh
-    revision: 3
+    revision: 4
     source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
-    artifact_sha256: sha256:9ebbfd035f89aacdb9f001b9e73df0ee5cc3f6c14cf496366778296eb3b7cbf5
+    artifact_sha256: sha256:164be5a32bbe214de2223c81d45ba6256e4cf9eae90e81b6b1ffbd8ba34d4395
     target:
       kind: decision
       id: balance-refresh-policy
 touches:
   - owner: wallet-team
-    design_ref: *a1
+    design_ref:
+      artifact: component-blueprint@1
+      component_id: wallet-main
+      blueprint_id: wallet-balance-refresh
+      revision: 4
+      source_fingerprint: sha256:80b296f54d8978722ba6390fa5aadcb4c0deb1b93a1f0760ae6bb57d86259b72
+      artifact_sha256: sha256:164be5a32bbe214de2223c81d45ba6256e4cf9eae90e81b6b1ffbd8ba34d4395
+      target:
+        kind: node
+        id: wallet-main-module
+        view_id: development
     write_refs:
       - 02-Feature/WalletMain/src/main/ets/data/repository/HomeRepository.ets
 preserved_invariants:
