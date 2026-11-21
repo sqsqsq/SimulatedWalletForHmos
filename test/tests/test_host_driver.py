@@ -846,6 +846,133 @@ class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
         self.assert_summary_matches_items(after_bad)
         self.assert_delivery_kept(before, after_bad)
 
+    def test_role_contradictions_never_exempt_review_batch_or_pass_as_ordinary(self) -> None:
+        """S31（R4）：先比较同一件的原生 role 与两份实际落点，再决定是否适用评审批次。
+        ① 底稿双边移出至普通目录、review_out 仍指原评审批次时，只给总回执或只给批次条目加 role="SR"，
+           不得豁免评审批次核对：保留两边 role 原值与来源，系统件归 unknown/mismatch；
+        ② 两边明确角色相异（SR vs AR）同样记 role 冲突归 unknown/mismatch；
+        ③ 普通 role 落在 inbox/review/<批次>/ 评审子树与位置抵触，同样归 unknown/mismatch；
+        ④ 旧格式双方缺可选字段（无 role 且无 review_out，落普通目录）不凭空增加义务，仍 received。"""
+        # ① 单边 role（分别试总回执加 SR、批次条目加 SR）
+        for label, side in (("仅总回执加 role=SR", "total"), ("仅批次条目加 role=SR", "batch")):
+            with self.subTest(label):
+                self.reset()
+                before = self.deliver()
+                items = self.delivered(before)
+                self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+                self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00")
+                alt_dir = self.feature / "inbox" / "fetch-alt"
+                alt_dir.mkdir(parents=True, exist_ok=True)
+                alt_saved = "inbox/fetch-alt/review-feedback.md"
+                orig_batch = self.feature / "inbox" / "review" / "fetch-20261119-180000" / ".receipt.json"
+                batch_doc = json.loads(orig_batch.read_text(encoding="utf-8"))
+                batch_doc["items"][0]["saved"] = alt_saved
+                total_path = self.feature / "AR" / "story-src" / "fetched.json"
+                total_doc = json.loads(total_path.read_text(encoding="utf-8"))
+                total_doc["items"][0]["saved"] = alt_saved
+                if side == "total":
+                    total_doc["items"][0]["role"] = "SR"
+                else:
+                    batch_doc["items"][0]["role"] = "SR"
+                (alt_dir / ".receipt.json").write_text(json.dumps(batch_doc, ensure_ascii=False), encoding="utf-8")
+                total_path.write_text(json.dumps(total_doc, ensure_ascii=False), encoding="utf-8")
+                summary = rc.reconcile_update_receipts(self.run, self.feature)
+                after = self.record()
+                system = self.delivered(after)["system"]["receipt"]
+                self.assertEqual(("unknown", "mismatch"), (system["status"], system["batch"]),
+                                 f"{label}：单边 role 豁免了评审批次核对")
+                role_c = next(c for c in system["conflicts"] if c["field"] == "role")
+                expected_pair = ("SR", None) if side == "total" else (None, "SR")
+                self.assertEqual(expected_pair, (role_c["total"]["value"], role_c["batch"]["value"]))
+                self.assertTrue(any(c["field"] == "review_out" for c in system["conflicts"]))
+                self.assertEqual((1, 1), (summary["received"], summary["unknown"]))
+                self.assert_summary_matches_items(after)
+                self.assert_delivery_kept(before, after)
+
+        # ② 两边明确角色相异（总 SR vs 批 AR）
+        with self.subTest("两边明确角色相异 SR vs AR"):
+            self.reset()
+            self.deliver()
+            sys_file = self.root / "system" / "AR90006" / "SR-design.md"
+            sys_file.write_text("# SR90006 修订\n", encoding="utf-8")
+            before = self.record()
+            data = sys_file.read_bytes()
+            for item in before["delivered"]:
+                if item["kind"] == "system":
+                    item.update(file="SR-design.md", destination="AR90006/SR-design.md",
+                                bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+            self.rewrite(before)
+            items = self.delivered(before)
+            self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+            src = self.feature / "AR" / "story-src"
+            src.mkdir(parents=True, exist_ok=True)
+            saved = "inbox/fetch-20261119-180000/SR-design.md"
+            total_row = {"name": "SR-design.md", "role": "SR", "label": "系统设计正文", "ticket": "AR90006",
+                         "status": "fetched", "saved": saved, "sha256": items["system"]["sha256"],
+                         "bytes": items["system"]["bytes"]}
+            batch_row = {**total_row, "role": "AR"}
+            base_doc = {"mode": "fetch", "reqNo": "AR90006", "fetchedAt": "2099-01-01T00:00:00+08:00",
+                        "review_out": "inbox/review/fetch-20261119-180000"}
+            (src / "fetched.json").write_text(json.dumps({**base_doc, "items": [total_row]}, ensure_ascii=False), encoding="utf-8")
+            bfile = self.feature / saved
+            bfile.parent.mkdir(parents=True, exist_ok=True)
+            bfile.write_bytes(data)
+            (bfile.parent / ".receipt.json").write_text(json.dumps({**base_doc, "items": [batch_row]}, ensure_ascii=False), encoding="utf-8")
+            summary = rc.reconcile_update_receipts(self.run, self.feature)
+            after = self.record()
+            system = self.delivered(after)["system"]["receipt"]
+            self.assertEqual(("unknown", "mismatch"), (system["status"], system["batch"]))
+            role_c = next(c for c in system["conflicts"] if c["field"] == "role")
+            self.assertEqual(("SR", "AR"), (role_c["total"]["value"], role_c["batch"]["value"]))
+            self.assertEqual((1, 1), (summary["received"], summary["unknown"]))
+            self.assert_summary_matches_items(after)
+            self.assert_delivery_kept(before, after)
+
+        # ③ 普通 role 落在评审子树（身份与位置抵触）
+        with self.subTest("带 role 的条目落评审子树"):
+            self.reset()
+            before = self.deliver()
+            items = self.delivered(before)
+            self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+            self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00")
+            for p in (self.feature / "AR" / "story-src" / "fetched.json",
+                      self.feature / "inbox" / "review" / "fetch-20261119-180000" / ".receipt.json"):
+                doc = json.loads(p.read_text(encoding="utf-8"))
+                doc["items"][0]["role"] = "SR"
+                p.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+            summary = rc.reconcile_update_receipts(self.run, self.feature)
+            after = self.record()
+            system = self.delivered(after)["system"]["receipt"]
+            self.assertEqual(("unknown", "mismatch"), (system["status"], system["batch"]))
+            self.assertTrue(any(c["field"] == "role" for c in system["conflicts"]))
+            self.assertEqual((1, 1), (summary["received"], summary["unknown"]))
+
+        # ④ 旧格式双方缺可选字段（无 role 且无 review_out，落普通批次）→ 不凭空增义务，仍 received
+        with self.subTest("旧格式双方无 role 无 review_out 落普通批次"):
+            self.reset()
+            before = self.deliver()
+            items = self.delivered(before)
+            self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+            src = self.feature / "AR" / "story-src"
+            src.mkdir(parents=True, exist_ok=True)
+            name = Path(items["system"]["destination"]).name
+            saved = f"inbox/fetch-legacy/{name}"
+            row = {"name": name, "ticket": "AR90006", "status": "fetched", "saved": saved,
+                   "sha256": items["system"]["sha256"], "bytes": items["system"]["bytes"]}
+            doc = {"mode": "fetch", "reqNo": "AR90006", "fetchedAt": "2099-01-01T00:00:00+08:00", "items": [row]}
+            (src / "fetched.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+            bfile = self.feature / saved
+            bfile.parent.mkdir(parents=True, exist_ok=True)
+            bfile.write_bytes((self.root / "system" / "AR90006" / name).read_bytes())
+            (bfile.parent / ".receipt.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+            summary = rc.reconcile_update_receipts(self.run, self.feature)
+            after = self.record()
+            system = self.delivered(after)["system"]["receipt"]
+            self.assertEqual(("received", "verified"), (system["status"], system["batch"]))
+            self.assertEqual(2, summary["received"])
+            self.assert_summary_matches_items(after)
+            self.assert_delivery_kept(before, after)
+
     def test_a_fetched_review_item_without_review_out_is_still_received(self) -> None:
         """`review_out` 不是收到的前提：总回执与批次回执都没写 review_out 时，落点与批次一致的
         评审件仍按批次回执与时间记 received，不新增「所有回执都须有 review_out」的义务。"""
