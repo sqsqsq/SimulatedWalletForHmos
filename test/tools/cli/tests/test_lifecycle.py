@@ -159,16 +159,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(session_id)
 
         second = self.client.start(
-            self.request(
-                profile="burst",
-                session_id=session_id,
-                prompt="continue",
-                soft_timeout_sec=10,
-                hard_timeout_sec=20,
-            ),
+            self.request(profile="burst", session_id=session_id, prompt="continue"),
             parent_run_id=first.run_id,
         )
-        second_state = self.wait_terminal(second.run_id, timeout=25)
+        second_state = self.wait_terminal(second.run_id, timeout=20)
         self.assertEqual("succeeded", second_state["status"])
         self.assertEqual(session_id, second_state["session_id"])
         self.assertEqual(first.run_id, second_state["parent_run_id"])
@@ -184,12 +178,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(len(seqs), len(set(seqs)))
 
     def test_poll_during_event_burst_preserves_complete_stream(self) -> None:
-        handle = self.client.start(
-            self.request(profile="burst", soft_timeout_sec=10, hard_timeout_sec=20)
-        )
+        handle = self.client.start(self.request(profile="burst"))
         cursor = 0
         events = []
-        deadline = time.monotonic() + 25
+        deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             page = self.client.poll(
                 handle.run_id,
