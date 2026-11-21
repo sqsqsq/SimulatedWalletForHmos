@@ -973,6 +973,98 @@ class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
             self.assert_summary_matches_items(after)
             self.assert_delivery_kept(before, after)
 
+    def test_ordinary_item_requires_bilateral_saved_across_keep_delete_empty_restore(self) -> None:
+        """S33（发现 B）：当前生产者写出双边 saved 的普通 SR 回执，仅保留/删除/置空/还原批条目 saved，
+        票号、字节、SHA、时间、role、独立本地件均不变：依次得到 received、unknown/mismatch、unknown/mismatch、received；
+        冲突保留字段、双方原值与来源，counts 与逐件一致；同时核无 review_out 与有 review_out 两种场景，
+        以及无 role/无 review_out 的旧格式不新增协议外必填字段。"""
+        for mode, review_out in (("含并发 review_out", "inbox/review/fetch-20261119-180000"),
+                                 ("无 review_out", None)):
+            with self.subTest(mode):
+                self.reset()
+                self.deliver()
+                sys_file = self.root / "system" / "AR90006" / "SR-design.md"
+                sys_file.write_text("# SR90006 原生普通上游\n", encoding="utf-8")
+                before = self.record()
+                data = sys_file.read_bytes()
+                for item in before["delivered"]:
+                    if item["kind"] == "system":
+                        item.update(file="SR-design.md", destination="AR90006/SR-design.md",
+                                    bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                self.rewrite(before)
+                items = self.delivered(before)
+                self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+
+                src = self.feature / "AR" / "story-src"
+                src.mkdir(parents=True, exist_ok=True)
+                saved = "inbox/fetch-20261119-180000/SR-design.md"
+                row = {"name": "SR-design.md", "role": "SR", "label": "系统设计正文", "ticket": "AR90006",
+                       "status": "fetched", "saved": saved, "sha256": items["system"]["sha256"],
+                       "bytes": items["system"]["bytes"]}
+                base_doc = {"mode": "fetch", "reqNo": "AR90006", "fetchedAt": "2099-01-01T00:00:00+08:00"}
+                if review_out:
+                    base_doc["review_out"] = review_out
+                (src / "fetched.json").write_text(json.dumps({**base_doc, "items": [row]}, ensure_ascii=False), encoding="utf-8")
+                bfile = self.feature / saved
+                bfile.parent.mkdir(parents=True, exist_ok=True)
+                bfile.write_bytes(data)
+                batch_receipt = bfile.parent / ".receipt.json"
+
+                steps = (
+                    ("保留", dict(row), "received", "verified", (2, 0), None),
+                    ("删除", {k: v for k, v in row.items() if k != "saved"}, "unknown", "mismatch", (1, 1), None),
+                    ("置空", {**row, "saved": ""}, "unknown", "mismatch", (1, 1), ""),
+                    ("还原", dict(row), "received", "verified", (2, 0), None),
+                )
+                for step_label, batch_row, want_status, want_batch, want_counts, want_batch_val in steps:
+                    batch_receipt.write_text(
+                        json.dumps({**base_doc, "items": [batch_row]}, ensure_ascii=False), encoding="utf-8")
+                    summary = rc.reconcile_update_receipts(self.run, self.feature)
+                    after = self.record()
+                    system = self.delivered(after)["system"]["receipt"]
+                    self.assertEqual((want_status, want_batch), (system["status"], system["batch"]),
+                                     f"{mode}/{step_label} 判定不符：{system}")
+                    self.assertEqual(want_counts, (summary["received"], summary["unknown"]),
+                                     f"{mode}/{step_label} 汇总计数不符：{summary}")
+                    self.assert_summary_matches_items(after)
+                    self.assert_delivery_kept(before, after)
+                    if want_status == "unknown":
+                        saved_c = next(c for c in system["conflicts"] if c["field"] == "saved")
+                        self.assertEqual(saved, saved_c["total"]["value"])
+                        self.assertEqual("AR/story-src/fetched.json 的条目 saved", saved_c["total"]["source"])
+                        self.assertEqual(want_batch_val, saved_c["batch"]["value"])
+                        self.assertIn(".receipt.json 的条目 saved", saved_c["batch"]["source"])
+                        if review_out:
+                            self.assertTrue(any(c["field"] == "review_out" for c in system["conflicts"]))
+
+        # 旧格式保护：双方均无 role、无 review_out、不在评审子树且批条目缺可选 saved → 不新增协议外必填字段
+        with self.subTest("旧格式无 role 无 review_out 且批条目无 saved 保持兼容"):
+            self.reset()
+            before = self.deliver()
+            items = self.delivered(before)
+            self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+            src = self.feature / "AR" / "story-src"
+            src.mkdir(parents=True, exist_ok=True)
+            name = Path(items["system"]["destination"]).name
+            saved = f"inbox/fetch-legacy/{name}"
+            total_row = {"name": name, "ticket": "AR90006", "status": "fetched", "saved": saved,
+                         "sha256": items["system"]["sha256"], "bytes": items["system"]["bytes"]}
+            batch_row = {k: v for k, v in total_row.items() if k != "saved"}
+            base_doc = {"mode": "fetch", "reqNo": "AR90006", "fetchedAt": "2099-01-01T00:00:00+08:00"}
+            (src / "fetched.json").write_text(json.dumps({**base_doc, "items": [total_row]}, ensure_ascii=False), encoding="utf-8")
+            bfile = self.feature / saved
+            bfile.parent.mkdir(parents=True, exist_ok=True)
+            bfile.write_bytes((self.root / "system" / "AR90006" / name).read_bytes())
+            (bfile.parent / ".receipt.json").write_text(
+                json.dumps({**base_doc, "items": [batch_row]}, ensure_ascii=False), encoding="utf-8")
+            summary = rc.reconcile_update_receipts(self.run, self.feature)
+            after = self.record()
+            system = self.delivered(after)["system"]["receipt"]
+            self.assertEqual(("received", "verified"), (system["status"], system["batch"]))
+            self.assertEqual(2, summary["received"])
+            self.assert_summary_matches_items(after)
+            self.assert_delivery_kept(before, after)
+
     def test_a_fetched_review_item_without_review_out_is_still_received(self) -> None:
         """`review_out` 不是收到的前提：总回执与批次回执都没写 review_out 时，落点与批次一致的
         评审件仍按批次回执与时间记 received，不新增「所有回执都须有 review_out」的义务。"""

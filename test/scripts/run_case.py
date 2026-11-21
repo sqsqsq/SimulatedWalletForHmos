@@ -3215,16 +3215,17 @@ def _review_batch_of(feature_root: Path, path: Path) -> tuple[Path, str] | None:
 def _review_location_conflicts(feature_root: Path, saved_rel: str, batch_path: Path, batch_rel: str,
                                doc: dict, items: list[dict], review_out: object,
                                conflicts: list[dict], *, role: object = None) -> None:
-    """原生身份与落点/评审批次归一：先比较同一件的原生 role 与两份 saved 落点，再判是否适用评审批次。
+    """原生身份与落点/评审批次归一：先核双边 saved 与原生 role，再判是否适用评审批次。
 
     1. 总/批两边都给出 saved 时先归一并比较（相对/绝对等价写法视为同一原件；逃出需求根不认）；
        不管总回执 saved 指向普通目录还是评审子树，与批次条目 saved 对不上都留两边原值记冲突。
-    2. 先比较总/批原生 role：仅在两边给出一致的非空 role 且两份落点均指同一合法普通批次（不在
-       `inbox/review/<批次>/`）时，生产者才证明普通上游身份并豁免评审批次核对；单边声称普通 role、
-       两边 role 相异或普通 role 落在评审子树，均留两边原值与来源记 role 冲突且不豁免评审批次。
+    2. 先比较总/批原生 role：仅在两边给出一致的非空 role，且当前 fetched 总条目与匹配批条目各自
+       给出可归一的同一合法普通落点（不在 `inbox/review/<批次>/`）时，才证明普通上游身份并豁免
+       评审批次核对；单边声称普通 role、两边 role 相异、普通 role 落在评审子树，或带 role 的当前
+       普通件在匹配批条目缺少/置空 saved，均留字段、两边原值与来源记冲突且不豁免评审批次。
     3. 评审件（未证明普通身份且任一边落 `inbox/review/<批次>/` 或存在 review_out）的批次条目缺 saved
-       记冲突；存在 review_out 时须归一等于该原件所属评审批次。旧格式双方缺可选字段（无 role、不在
-       评审子树且无 review_out）不凭空增加义务。
+       同样记冲突；存在 review_out 时须归一等于该原件所属评审批次。旧格式双方缺可选字段（无 role、
+       不在评审子树且无 review_out）不凭空增加义务。
     """
     total_source = "AR/story-src/fetched.json 的条目 saved"
     total_review = _review_batch_of(feature_root, batch_path)
@@ -3232,11 +3233,19 @@ def _review_location_conflicts(feature_root: Path, saved_rel: str, batch_path: P
     batch_out = str(doc.get("review_out") or "").strip()
 
     saved_mismatch = False
-    batch_saved_values = list(dict.fromkeys(str(item.get("saved") or "").strip() for item in items))
+    missing_saved_raws: list[object] = []
+    nonempty_saved_values: list[str] = []
+    for item in items:
+        raw_val = item.get("saved")
+        norm = str(raw_val or "").strip()
+        if not norm:
+            if raw_val not in missing_saved_raws:
+                missing_saved_raws.append(raw_val)
+        elif norm not in nonempty_saved_values:
+            nonempty_saved_values.append(norm)
+
     batch_reviews: list[tuple[Path, str]] = []
-    for raw in batch_saved_values:
-        if not raw:
-            continue
+    for raw in nonempty_saved_values:
         got_path = _under_feature(feature_root, raw)
         if got_path is not None:
             got_review = _review_batch_of(feature_root, got_path)
@@ -3250,8 +3259,12 @@ def _review_location_conflicts(feature_root: Path, saved_rel: str, batch_path: P
                 "batch": {"source": f"{batch_rel} 的条目 saved", "value": raw},
             })
 
+    # 总条目 saved 经 _batch_receipt 已归一到 batch_path；再确认所有匹配批条目均有可归一的同一落点
+    bilateral_saved_proven = bool(items) and not missing_saved_raws and not saved_mismatch
+
     total_role = str(role or "").strip() or None
     batch_roles = list(dict.fromkeys((str(item.get("role") or "").strip() or None) for item in items))
+    has_any_role = (total_role is not None) or any(r is not None for r in batch_roles)
     role_conflict = False
     for b_role in batch_roles:
         if b_role != total_role:
@@ -3262,7 +3275,7 @@ def _review_location_conflicts(feature_root: Path, saved_rel: str, batch_path: P
                 "batch": {"source": f"{batch_rel} 的条目 role", "value": b_role},
             })
     in_review_tree = (total_review is not None) or bool(batch_reviews)
-    if (total_role is not None or any(r is not None for r in batch_roles)) and in_review_tree:
+    if has_any_role and in_review_tree:
         role_conflict = True
         conflicts.append({
             "field": "role", "want": None, "got": total_role or next(r for r in batch_roles if r is not None),
@@ -3271,18 +3284,20 @@ def _review_location_conflicts(feature_root: Path, saved_rel: str, batch_path: P
                       "value": batch_roles[0] if len(batch_roles) == 1 else batch_roles},
         })
 
-    ordinary_proven = (not role_conflict and not saved_mismatch and not in_review_tree
+    ordinary_proven = (not role_conflict and bilateral_saved_proven and not in_review_tree
                        and total_role is not None and batch_roles == [total_role])
     is_review = in_review_tree or (not ordinary_proven and bool(total_out or batch_out))
+
+    if missing_saved_raws and (is_review or has_any_role):
+        for raw_missing in missing_saved_raws:
+            conflicts.append({
+                "field": "saved", "want": saved_rel, "got": raw_missing,
+                "total": {"source": total_source, "value": saved_rel},
+                "batch": {"source": f"{batch_rel} 的条目 saved", "value": raw_missing},
+            })
+
     if not is_review:
         return
-
-    if "" in batch_saved_values:
-        conflicts.append({
-            "field": "saved", "want": saved_rel, "got": None,
-            "total": {"source": total_source, "value": saved_rel},
-            "batch": {"source": f"{batch_rel} 的条目 saved", "value": None},
-        })
 
     expected_dir = total_review[0] if total_review is not None else batch_path.parent
     expected_rel = (total_review[1] if total_review is not None
