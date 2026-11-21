@@ -925,43 +925,60 @@ def physical_framework(root: Path) -> None:
 
 
 class TheAuthorPromptDistinguishesThreeFrozenStates(unittest.TestCase):
-    """S08 作者提示的最早落点（`phases/design.md` 第六节第 5 步、`phases/update.md` 已有施工结果行）：
-    对三种合法但走不同路径的输入——未冻结普通接续、已冻结且旧来源仍可验证、已失效且无可用转交——
-    分别给出不同动作、边界与恢复，不要求另写状态机或改变真实授权。"""
+    """S30/R1 作者提示的最早落点与无歧义终点（`phases/design.md` 第六节第 5 步、`phases/update.md`）：
+    对三种合法但走不同路径的输入（未冻结普通接续 / 已冻结且来源有效仍欠 Plan / 已失效无可用转交或宿主不可用或空链）
+    加只准改业务文档的 update 输入，核实动作前上下文顺序与三个独立终点——相反指令与失败后仍回第 4 步必须被拒。"""
 
     def test_design_and_update_prompts_cover_all_three_frozen_branches(self) -> None:
         design_md = (DEV_STORY_BUILD.parents[2] / "phases" / "design.md").read_text(encoding="utf-8")
         step5 = design_md.split("5. **共同设计在这一段变了**", 1)[1].split("原生报候选 `differs`", 1)[0]
-        # 分支 1：未冻结普通接续
-        for token in ("未冻结", "change-unit-revise", "--readiness", "第 2—4 步"):
-            self.assertIn(token, step5)
-        # 分支 2：已冻结且旧来源仍可验证 → 先转交再改权威 → 后继出生与 --next 恢复
+        # 1) 分支 1（未冻结）→ 分支 2（已冻结先转交再改、后继至原终点）→ 仅成功修订后同步 Story 回第 4 步 → 独立失败出口
+        unfrozen_pos = step5.index("**未冻结**")
+        frozen_pos = step5.index("**已冻结且旧来源仍可验证**")
+        transfer_pos = step5.index("先在改权威来源前")
+        revise_pos = step5.index("再由设计负责方修订")
+        sync_pos = step5.index("**仅上述成功修订后**")
+        fail_pos = step5.index("**已失效且无可用转交**")
+        self.assertLess(unfrozen_pos, frozen_pos)
+        self.assertLess(frozen_pos, transfer_pos)
+        self.assertLess(transfer_pos, revise_pos, "必须先取转交身份再修订权威来源")
+        self.assertLess(revise_pos, sync_pos)
+        self.assertLess(sync_pos, fail_pos, "成功修订后的 Story 同步与回第 4 步必须先于失败分支")
+        # 关键判别：失败分支之后不得再出现公共尾句「同步 Story」或「回到第 4 步」，且明确结束接续
+        fail_tail = step5[fail_pos:]
+        self.assertIn("结束此次接续", fail_tail)
+        self.assertIn("不进入上述同步或第 4 步", fail_tail)
+        self.assertNotIn("同步 Story", fail_tail, "失败分支后仍挂了同步 Story 的公共尾句")
+        self.assertNotIn("回到第 4 步", fail_tail, "失败分支后仍挂了回到第 4 步的公共尾句")
         for token in (
-            "已冻结且旧来源仍可验证",
-            "先在改权威来源前",
             "goal-mode-entry --feature <FID> --prepare-run --adapter <已核可用宿主> --run-mode attended --requirement-file <需求文件>",
-            "source run ID",
-            "--supersede <source run ID>",
-            "continuation=successor",
-            "requested_results",
-            "--next",
-            "scope_revised",
-            "不重发请求、不写 Feature 完成",
+            "--supersede <source run ID>", "continuation=successor", "requested_results", "--next", "scope_revised",
+            "不重发请求、不写 Feature 完成", "未获施工扩权的文档更新只报告施工影响",
+            "宿主不支持 attended", "原生返回空链", "不造缺口开 run", "不改授权", "不代换宿主或转 headless",
+            "story-build review --action prepare", "story_flow.py story", "无业务变化时不另派审查",
         ):
-            self.assertIn(token, step5, f"已冻结有效来源分支缺少关键指引：{token}")
-        self.assertLess(step5.index("先在改权威来源前"), step5.index("再由设计负责方修订"),
-                        "必须先取转交身份再修订权威来源")
-        # 分支 3：已失效且无可用转交／宿主不支持／空链
-        for token in ("已失效且无可用转交", "旧 binding 拒绝", "宿主不支持 attended", "原生返回空链",
-                      "不造缺口开 run", "不改授权", "不代换宿主或转 headless"):
-            self.assertIn(token, step5, f"失效与边界分支缺少关键指引：{token}")
-        # 保留 Story 同步与无业务变化免审查
-        for token in ("story-build review --action prepare", "story_flow.py story", "回到第 4 步", "没有业务变化时不另派审查"):
-            self.assertIn(token, step5)
-        # update.md 从受影响的已冻结 CU 指回 design.md 第六节第 5 步
+            self.assertIn(token, step5, f"design.md 第六节第 5 步缺少关键指引：{token}")
+
+        # 2) update.md：在正文流程（第二节）首次可能请蓝图负责方改共同设计的动作之前即给出事前保原请求提示；已换版不补造；表只留结果与责任
         update_md = (DEV_STORY_BUILD.parents[2] / "phases" / "update.md").read_text(encoding="utf-8")
+        sec2 = update_md.split("## 二、一条线：从还原依据到收口", 1)[1]
+        first_owner_edit = sec2.index("由蓝图负责方")
+        first_design_feedback = sec2.index("交蓝图负责方（第 5 步）")
+        first_new_rev = sec2.index("接受之后蓝图出新版本")
+        first_pre_transfer = sec2.index("先按 `phases/design.md` 第六节第 5 步保住原请求")
+        self.assertLess(first_pre_transfer, first_owner_edit,
+                        "update.md 保住原请求的提示出现在第二节首次请蓝图负责方改设计之后")
+        self.assertLess(first_pre_transfer, first_design_feedback,
+                        "update.md 保住原请求的提示出现在交蓝图负责方之前之后")
+        self.assertLess(first_pre_transfer, first_new_rev,
+                        "update.md 保住原请求的提示出现在接受之后蓝图出新版本之后")
+        self.assertIn("读到蓝图已换版时不补造事前转交", sec2[:first_owner_edit])
+        sec5 = update_md.split("### 5 对设计的意见交给蓝图负责方", 1)[1].split("### 6 ", 1)[0]
+        self.assertLess(sec5.index("先按 `phases/design.md` 第六节第 5 步保住原请求"),
+                        sec5.index("接受之后蓝图出新版本"))
         cu_row = next(line for line in update_md.splitlines() if line.startswith("| 已有施工结果 |"))
-        self.assertIn("phases/design.md` 第六节第 5 步", cu_row)
+        self.assertEqual(1, cu_row.count("phases/design.md"), "已有施工结果行仍有重复指路")
+        self.assertIn("只授权更新业务文档的，列出受影响 CU、过期阶段与接手动作", cu_row)
 
 
 #: 原生 900c 修订链与绑定直接反例探针（只读，不修改原现场）
@@ -1209,6 +1226,8 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
         if child.stdout:
             child.stdout.close()
         cls.killed_after_revision = killed
+        cls.interrupt_exit_code = child.returncode
+        cls.interrupt_outcome = "interrupted" if killed else "completed_without_window"
         cls.events_at_interrupt = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
         cls.resume_next = native_cli(root, entry, *next_args)
         assert cls.resume_next.returncode == 0, cls.resume_next.stdout[-800:] + cls.resume_next.stderr[-400:]
@@ -1229,8 +1248,22 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
         birth_req = {o["id"] for o in birth_scope["obligations"] if o["applicability"] == "required"}
         succ_req = {o["id"] for o in succ_scope["obligations"] if o["applicability"] == "required"}
         self.assertTrue(birth_req.issubset(succ_req), "后继丢失原必需义务")
-        # 修订消费恰一次、一次作者调用、plan PASS、仅原请求终结、无 Feature completion
+        # S30/R3：中断取证无条件核验，普通退出不得签中断恢复
+        self.assertEqual("interrupted", self.interrupt_outcome,
+                         "原桥接进程正常退出未截到 scope_revised 后、run_end 前窗口，按普通完成计，不得签中断恢复")
+        self.assertNotEqual(0, self.interrupt_exit_code, "原桥接进程未被终止")
+        self.assertEqual(1, sum(1 for e in self.events_at_interrupt if e.get("type") == "scope_revised"),
+                         "中断前 journal 须已有 1 笔 scope_revised")
+        self.assertFalse(any(e.get("type") == "run_end" for e in self.events_at_interrupt),
+                         "中断前 journal 已出现 run_end，不是中断恢复")
+        # 恢复后保留原 journal 前缀、经新进程 resume 收口唯一终局、无重复作者调用或 Feature completion
+        self.assertEqual(self.events_at_interrupt, self.final_events[:len(self.events_at_interrupt)],
+                         "恢复后 journal 改写了中断前原事件")
+        tail_types = [e.get("type") for e in self.final_events[len(self.events_at_interrupt):]]
+        self.assertIn("resume", tail_types, "恢复后 journal 缺少 resume 事件")
         self.assertEqual(1, sum(1 for e in self.final_events if e.get("type") == "scope_revised"))
+        self.assertEqual(1, sum(1 for e in self.final_events if e.get("type") == "agent_invoke_start"),
+                         "中断恢复后重复调用了作者")
         self.assertEqual([("plan", "PASS")], [(e["phase"], e["verdict"]) for e in self.final_events if e.get("type") == "phase_verdict"])
         self.assertEqual([("run_end", "CHAIN_SLICE_COMPLETED")],
                          [(e["type"], e.get("status")) for e in self.final_events if e.get("type") == "run_end"])
@@ -1238,8 +1271,6 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
                          (self.final_summary["verdict"], self.final_summary["closure_status"],
                           self.final_summary["run_id"], self.final_summary.get("receipt_status")))
         self.assertEqual([], list(self.unit.glob("*feature-completion*")))
-        if self.killed_after_revision:
-            self.assertFalse(any(e.get("type") == "run_end" for e in self.events_at_interrupt))
 
     def test_observer_tracks_transferred_cu_without_env_and_rejects_identity_mismatch(self) -> None:
         # 1) 不带 MAISON_GOAL_RUN_ID：逐 CU 读当前转交权威，Spec reused、Plan closed/fresh
@@ -1253,12 +1284,30 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
         self.assertEqual("executed", phases["plan"]["native"]["kind"])
         self.assertEqual("fresh", phases["plan"]["native"]["freshness"]["verdict"])
 
+        # 1b) S30/R2：phase-completion-receipt.md 是提交后的尽力人读投影——保留 / 清空 / 移走均判同一已执行 Plan 到达
+        receipt_md = self.unit / "plan" / "phase-completion-receipt.md"
+        kept_receipt_md = receipt_md.read_bytes()
+        try:
+            for tag, action in (("清空人读投影", lambda p: p.write_bytes(b"")),
+                                ("移走人读投影", lambda p: p.unlink())):
+                with self.subTest(tag):
+                    action(receipt_md)
+                    got = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+                    self.assertTrue(got["reached"], f"{tag} 不应使已正式收口的 Plan 变未到达：{got['missing']}")
+                    self.assertEqual(("reused", "closed", "fresh"),
+                                     (got["units"][0]["phases"]["spec"]["state"],
+                                      got["units"][0]["phases"]["plan"]["state"],
+                                      got["units"][0]["phases"]["plan"]["native"]["freshness"]["verdict"]))
+                    receipt_md.write_bytes(kept_receipt_md)
+        finally:
+            receipt_md.write_bytes(kept_receipt_md)
+
         # 2) 全局 MAISON_GOAL_RUN_ID 指向其他 CU 的 run 时，不覆盖本 CU 自身转交权威
         with mock.patch.dict(os.environ, {"MAISON_GOAL_RUN_ID": "other-cu-run-999"}):
             isolated = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
         self.assertTrue(isolated["reached"], isolated["missing"])
 
-        # 3) 反例：旧 summary / 错 run_id 串用 → 观察器拒绝冒充 closed
+        # 3) 反例：旧 summary / 错 run_id 串用 / 正式收口失败 → 生产 end_target.observe 拒绝到达
         summ_path = self.unit / "plan" / "reports" / "summary.json"
         kept_summ = summ_path.read_bytes()
         try:
@@ -1266,6 +1315,7 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
                 ("上一代 run_id 串用", lambda d: d.__setitem__("run_id", self.source_run_id)),
                 ("无 run_id 旧 summary 串用", lambda d: d.pop("run_id", None)),
                 ("receipt_status 非 passed", lambda d: d.__setitem__("receipt_status", "failed")),
+                ("closure_status 非 closed", lambda d: d.__setitem__("closure_status", "open")),
             ):
                 with self.subTest(tag):
                     doc = json.loads(kept_summ.decode("utf-8"))
@@ -1275,6 +1325,25 @@ class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCas
                     self.assertFalse(bad["reached"], f"{tag} 被误判到达")
         finally:
             summ_path.write_bytes(kept_summ)
+
+        # 3b) S30/R2：正式物证过期（context/facts.md 被改或 phase-evidence-manifest.json 缺失）→ 不可到达
+        facts_md_path = self.unit / "context" / "facts.md"
+        kept_facts_md = facts_md_path.read_bytes()
+        manifest_path = self.unit / "plan" / "reports" / "phase-evidence-manifest.json"
+        kept_manifest = manifest_path.read_bytes()
+        try:
+            facts_md_path.write_bytes(kept_facts_md + b"\n- mutated after closure\n")
+            stale = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+            self.assertFalse(stale["reached"], "阶段产物变化后物证应过期")
+            self.assertTrue(any("不再新鲜" in m for m in stale["missing"]), stale["missing"])
+            facts_md_path.write_bytes(kept_facts_md)
+            manifest_path.unlink()
+            missing_m = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+            self.assertFalse(missing_m["reached"], "正式物证清单缺失后不应判到达")
+            self.assertTrue(any("不再新鲜" in m for m in missing_m["missing"]), missing_m["missing"])
+        finally:
+            facts_md_path.write_bytes(kept_facts_md)
+            manifest_path.write_bytes(kept_manifest)
 
         # 4) 反例：失效转交身份（指向不存在的 run）→ scope 报 invalid，不从目录名猜最新
         scope_path = self.unit / "execution-scope.json"

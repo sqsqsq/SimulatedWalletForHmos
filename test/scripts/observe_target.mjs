@@ -31,8 +31,9 @@ out.blueprint = { status: read.status, admitted: Boolean(read.admitted), project
   canonical_path: read.canonical_path ?? null, issues: issueText(read.issues) };
 
 /**
- * 一个阶段的收口证据（只读，fail-safe）：原生报告目录里的 summary 身份显式吻合（feature、phase、run_id）
- * 且 closure_status=closed（若记录了 receipt_status/closure_commit，则回执状态须 passed 且回执文件在盘）；
+ * 一个阶段的收口证据（只读，fail-safe）：沿 900c `check-receipt.ts` 与 `phase-closure-finalizer.ts` 核当前机器提交——
+ * 原生报告目录里的 summary 身份显式吻合（feature、phase、run_id）、closure_status=closed 且机器回执状态未失败
+ * （receipt_status 缺省或为 passed）；phase-completion-receipt.md 是提交后的尽力人读投影，不作为 closure 开关。
  * verdict 只记录，完成不等于通过。半写入、旧 run 串用或读不出按未完成。
  */
 function completionEvidence(featureId, phase, runId) {
@@ -45,8 +46,7 @@ function completionEvidence(featureId, phase, runId) {
       const runMatches = runId ? doc.run_id === runId : !doc.run_id;
       res.summary = doc.phase === phase && doc.feature === featureId && runMatches;
       if (typeof doc.verdict === 'string') res.verdict = doc.verdict;
-      const receiptOk = (doc.receipt_status === undefined || doc.receipt_status === 'passed')
-        && (!doc.closure_commit?.receipt_path || fs.existsSync(path.join(root, doc.closure_commit.receipt_path)));
+      const receiptOk = doc.receipt_status === undefined || doc.receipt_status === 'passed';
       res.closure = doc.closure_status === 'closed' && receiptOk;
     }
   } catch {
