@@ -980,6 +980,25 @@ class TheAuthorPromptDistinguishesThreeFrozenStates(unittest.TestCase):
         self.assertEqual(1, cu_row.count("phases/design.md"), "已有施工结果行仍有重复指路")
         self.assertIn("只授权更新业务文档的，列出受影响 CU、过期阶段与接手动作", cu_row)
 
+        # 3) S32：update.md §二第 2 步「蓝图已经改了」行区分三态，旧无条件同步指路退出，命令仍归 design.md
+        bp_changed_row = next(line for line in update_md.splitlines() if line.startswith("| 蓝图已经改了 |"))
+        self.assertNotEqual(
+            "| 蓝图已经改了 | 读当前蓝图与评审投影，同步受影响的 Story 章节与附录，重新定稿、审查、登记 |",
+            bp_changed_row.strip(), "旧的无条件同步指路未退出")
+        for token in (
+            "已换版不补造事前转交",
+            "本次有文档授权、换版有效且无需接回施工请求",
+            "纯文档任务不新增施工或等审义务",
+            "同步受影响的 Story 章节与附录，重新定稿、审查、登记",
+            "仍须接回欠 Plan 原请求且已有合法接续身份",
+            "沿 `phases/design.md` 第六节第 5 步办理并仅在其成功出口同步",
+            "旧权威已失效且无可用转交",
+            "保留 Story、登记与原现场，报告缺口并结束此次接续",
+        ):
+            self.assertIn(token, bp_changed_row, f"蓝图已经改了行缺少关键边界：{token}")
+        for cmd_tok in ("goal-mode-entry", "--prepare-run", "--supersede", "story_flow.py"):
+            self.assertNotIn(cmd_tok, bp_changed_row, f"蓝图已经改了行不应重复承担命令：{cmd_tok}")
+
 
 #: 原生 900c 修订链与绑定直接反例探针（只读，不修改原现场）
 S08_NATIVE_CONTROLS = """
