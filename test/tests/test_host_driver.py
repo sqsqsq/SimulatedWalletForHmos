@@ -3,6 +3,7 @@ watch 只敲门，评审表态按宿主指定的 D 议题写进人工区、写�
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -747,34 +748,103 @@ class TheUpdateDeliveryRecordTellsReceiptFromDelivery(unittest.TestCase):
                 self.assert_summary_matches_items(after)
                 self.assert_delivery_kept(before, after)
 
+    def test_total_saved_moved_out_of_review_batch_conflicts_with_batch_and_review_out(self) -> None:
+        """反向位置错位（R2）：同一评审回稿的摘要、票号与时间不变，只把总回执 saved 改到普通目录
+        `inbox/fetch-alt/review-feedback.md`（其批次明细仍写原评审批次与 review_out），或两边 saved
+        同改普通目录而无 role 且 review_out 仍指评审批次：均归 unknown/mismatch，两边原值保留。"""
+        for name, mirror_batch_saved in (
+            ("总回执 saved 移出评审批次，批次条目仍指评审批次", False),
+            ("无 role 的评审件两边 saved 同移普通目录而 review_out 指评审批次", True),
+        ):
+            with self.subTest(name):
+                self.reset()
+                before = self.deliver()
+                items = self.delivered(before)
+                self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
+                self.write_fetch(items["system"], fetched_at="2099-01-01T00:00:00+08:00")
+                alt_dir = self.feature / "inbox" / "fetch-alt"
+                alt_dir.mkdir(parents=True, exist_ok=True)
+                alt_saved = "inbox/fetch-alt/review-feedback.md"
+                orig_batch = self.feature / "inbox" / "review" / "fetch-20261119-180000" / ".receipt.json"
+                batch_doc = json.loads(orig_batch.read_text(encoding="utf-8"))
+                if mirror_batch_saved:
+                    batch_doc["items"][0]["saved"] = alt_saved
+                (alt_dir / ".receipt.json").write_text(json.dumps(batch_doc, ensure_ascii=False), encoding="utf-8")
+                total_path = self.feature / "AR" / "story-src" / "fetched.json"
+                total_doc = json.loads(total_path.read_text(encoding="utf-8"))
+                total_doc["items"][0]["saved"] = alt_saved
+                total_path.write_text(json.dumps(total_doc, ensure_ascii=False), encoding="utf-8")
+                summary = rc.reconcile_update_receipts(self.run, self.feature)
+                after = self.record()
+                system = self.delivered(after)["system"]["receipt"]
+                self.assertEqual(("unknown", "mismatch"), (system["status"], system["batch"]),
+                                 f"{name}：反向位置错位仍被判 received")
+                if not mirror_batch_saved:
+                    saved_conflict = next(c for c in system["conflicts"] if c["field"] == "saved")
+                    self.assertEqual((alt_saved, "inbox/review/fetch-20261119-180000/review-feedback.md"),
+                                     (saved_conflict["total"]["value"], saved_conflict["batch"]["value"]))
+                review_conflict = next(c for c in system["conflicts"] if c["field"] == "review_out")
+                self.assertEqual("inbox/review/fetch-20261119-180000", review_conflict["total"]["value"])
+                self.assertEqual((1, 1), (summary["received"], summary["unknown"]))
+                self.assert_summary_matches_items(after)
+                self.assert_delivery_kept(before, after)
+
     def test_an_ordinary_upstream_item_is_not_held_to_the_review_batch(self) -> None:
-        """普通非评审件按原合同核取材批次：同一次取材另有 review_out 指评审子树时，
-        上游材料（落在 inbox/fetch-<批次>/）仍按自己的批次回执记 received，不因 review_out 改判。"""
-        before = self.deliver()
+        """真实带 role 的普通上游材料按原合同核取材批次：同一次取材另有 review_out 指评审子树时，
+        带 role 的上游正文（落在 inbox/fetch-<批次>/）仍按自己的批次回执记 received；若该普通件的
+        总/批 saved 互相指向不同批次，照旧记 unknown 并保留两边原值。"""
+        # 用真实上游系统正文（SR-design.md，带 role="SR"）走同一投放与回执核对入口
+        self.deliver()
+        sys_file = self.root / "system" / "AR90006" / "SR-design.md"
+        sys_file.parent.mkdir(parents=True, exist_ok=True)
+        sys_file.write_text("# SR90006 系统设计修订\n", encoding="utf-8")
+        before = self.record()
+        for item in before["delivered"]:
+            if item["kind"] == "system":
+                data = sys_file.read_bytes()
+                item["file"] = "SR-design.md"
+                item["destination"] = "AR90006/SR-design.md"
+                item["bytes"] = len(data)
+                item["sha256"] = hashlib.sha256(data).hexdigest()
+        self.rewrite(before)
         items = self.delivered(before)
         self.write_import(items["local_material"], acquired_at="2099-01-01T00:00:01+08:00")
-        name = Path(items["system"]["destination"]).name
         src = self.feature / "AR" / "story-src"
         src.mkdir(parents=True, exist_ok=True)
-        saved = f"inbox/fetch-20261119-180000/{name}"
-        row = {"name": name, "label": "开发需求正文（本单）", "ticket": "AR90006", "status": "fetched",
+        saved = "inbox/fetch-20261119-180000/SR-design.md"
+        row = {"name": "SR-design.md", "role": "SR", "label": "系统设计正文", "ticket": "AR90006", "status": "fetched",
                "saved": saved, "sha256": items["system"]["sha256"], "bytes": items["system"]["bytes"]}
         receipt = {"mode": "fetch", "reqNo": "AR90006", "fetchedAt": "2099-01-01T00:00:00+08:00",
                    "items": [row], "review_out": "inbox/review/fetch-20261119-180000"}
         (src / "fetched.json").write_text(json.dumps(receipt, ensure_ascii=False), encoding="utf-8")
         batch_file = self.feature / saved
         batch_file.parent.mkdir(parents=True, exist_ok=True)
-        batch_file.write_bytes((self.root / "system" / "AR90006" / name).read_bytes())
-        (batch_file.parent / ".receipt.json").write_text(
-            json.dumps({**receipt, "items": [row]}, ensure_ascii=False), encoding="utf-8")
+        batch_file.write_bytes(sys_file.read_bytes())
+        batch_receipt = batch_file.parent / ".receipt.json"
+        batch_receipt.write_text(json.dumps({**receipt, "items": [row]}, ensure_ascii=False), encoding="utf-8")
         summary = rc.reconcile_update_receipts(self.run, self.feature)
         after = self.record()
         system = self.delivered(after)["system"]["receipt"]
         self.assertEqual(("received", "verified"), (system["status"], system["batch"]),
-                         "普通上游材料被当成了评审件位置冲突")
+                         "真实带 role 的普通上游材料被误判成评审件位置冲突")
         self.assertEqual(2, summary["received"])
         self.assert_summary_matches_items(after)
         self.assert_delivery_kept(before, after)
+
+        # 同一带 role 普通材料，批次条目 saved 改指向另一普通批次 → 仍按 saved 归一冲突判 unknown
+        bad_doc = json.loads(batch_receipt.read_text(encoding="utf-8"))
+        bad_doc["items"][0]["saved"] = "inbox/fetch-other/SR-design.md"
+        batch_receipt.write_text(json.dumps(bad_doc, ensure_ascii=False), encoding="utf-8")
+        summary_bad = rc.reconcile_update_receipts(self.run, self.feature)
+        after_bad = self.record()
+        system_bad = self.delivered(after_bad)["system"]["receipt"]
+        self.assertEqual(("unknown", "mismatch"), (system_bad["status"], system_bad["batch"]))
+        conflict = next(c for c in system_bad["conflicts"] if c["field"] == "saved")
+        self.assertEqual((saved, "inbox/fetch-other/SR-design.md"),
+                         (conflict["total"]["value"], conflict["batch"]["value"]))
+        self.assertEqual((1, 1), (summary_bad["received"], summary_bad["unknown"]))
+        self.assert_summary_matches_items(after_bad)
+        self.assert_delivery_kept(before, after_bad)
 
     def test_a_fetched_review_item_without_review_out_is_still_received(self) -> None:
         """`review_out` 不是收到的前提：总回执与批次回执都没写 review_out 时，落点与批次一致的

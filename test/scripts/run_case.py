@@ -3214,39 +3214,65 @@ def _review_batch_of(feature_root: Path, path: Path) -> tuple[Path, str] | None:
 
 def _review_location_conflicts(feature_root: Path, saved_rel: str, batch_path: Path, batch_rel: str,
                                doc: dict, items: list[dict], review_out: object,
-                               conflicts: list[dict]) -> None:
-    """同一评审件的三处落点归一：总回执 saved、批次条目 saved、存在的评审批次 review_out。
+                               conflicts: list[dict], *, role: object = None) -> None:
+    """落点与评审批次归一：先比较总回执 saved 与批次条目 saved，再按原生身份与关联位置核 review_out。
 
-    前两者要指同一原件（相对/绝对等等价写法归一后比较），`review_out` 要是该原件所属的评审批次；
-    逃出需求根的落点按现有规则不认。对不上时两边原值、字段和来源都留在 `conflicts` 里，结论归 unknown。
-    普通非评审件与没有 `review_out` 的旧回执不进入这里，继续保持原合同。
+    1. 总/批两边都给出 saved 时先归一并比较（相对/绝对等价写法视为同一原件；逃出需求根不认）；
+       不管总回执 saved 指向普通目录还是评审子树，与批次条目 saved 对不上都留两边原值记冲突。
+    2. 按原生身份（普通上游材料带 role，评审件不带 role）与关联位置（任一边落 inbox/review/<批次>/，
+       或无 role 且回执给出了 review_out）判定是否评审件：
+       - 带 role 的普通上游材料落在普通批次时不拿 saved 对齐 review_out；
+       - 评审件的批次条目缺 saved 记冲突；存在 review_out 时须归一等于该原件所属评审批次。
+    没有 review_out 且不在评审子树的旧回执不新增 review_out 义务。
     """
-    review = _review_batch_of(feature_root, batch_path)
-    if review is None:
-        return
-    review_dir, review_rel = review
     total_source = "AR/story-src/fetched.json 的条目 saved"
-    for raw in dict.fromkeys(str(item.get("saved") or "") for item in items):
-        got_path = _under_feature(feature_root, raw) if raw else None
+    total_review = _review_batch_of(feature_root, batch_path)
+    total_out = str(review_out or "").strip()
+    batch_out = str(doc.get("review_out") or "").strip()
+    has_role = bool(str(role or "").strip()) or any(bool(str(i.get("role") or "").strip()) for i in items)
+
+    batch_saved_values = list(dict.fromkeys(str(item.get("saved") or "").strip() for item in items))
+    batch_reviews: list[tuple[Path, str]] = []
+    for raw in batch_saved_values:
+        if not raw:
+            continue
+        got_path = _under_feature(feature_root, raw)
+        if got_path is not None:
+            got_review = _review_batch_of(feature_root, got_path)
+            if got_review is not None:
+                batch_reviews.append(got_review)
         if got_path is None or got_path != batch_path:
             conflicts.append({
-                "field": "saved", "want": saved_rel, "got": raw or None,
+                "field": "saved", "want": saved_rel, "got": raw,
                 "total": {"source": total_source, "value": saved_rel},
-                "batch": {"source": f"{batch_rel} 的条目 saved", "value": raw or None},
+                "batch": {"source": f"{batch_rel} 的条目 saved", "value": raw},
             })
-    total_out = str(review_out or "").strip()
-    got = _under_feature(feature_root, total_out) if total_out else None
-    if total_out and (got is None or got != review_dir):
+
+    is_review = (total_review is not None) or bool(batch_reviews) or (not has_role and bool(total_out or batch_out))
+    if not is_review:
+        return
+
+    if "" in batch_saved_values:
         conflicts.append({
-            "field": "review_out", "want": review_rel, "got": total_out,
+            "field": "saved", "want": saved_rel, "got": None,
+            "total": {"source": total_source, "value": saved_rel},
+            "batch": {"source": f"{batch_rel} 的条目 saved", "value": None},
+        })
+
+    expected_dir = total_review[0] if total_review is not None else batch_path.parent
+    expected_rel = (total_review[1] if total_review is not None
+                    else batch_path.parent.relative_to(feature_root.resolve()).as_posix())
+    got = _under_feature(feature_root, total_out) if total_out else None
+    if total_out and (total_review is None or got is None or got != expected_dir):
+        conflicts.append({
+            "field": "review_out", "want": expected_rel, "got": total_out,
             "total": {"source": "AR/story-src/fetched.json 的 review_out", "value": total_out},
             "batch": {"source": f"{batch_rel} 的 review_out", "value": doc.get("review_out")},
         })
-    batch_out = str(doc.get("review_out") or "").strip()
     got = _under_feature(feature_root, batch_out) if batch_out else None
-    if batch_out and batch_out != total_out and (got is None or got != review_dir):
+    if batch_out and batch_out != total_out and (total_review is None or got is None or got != expected_dir):
         conflicts.append({
-            "field": "review_out", "want": review_rel, "got": batch_out,
+            "field": "review_out", "want": expected_rel, "got": batch_out,
             "total": {"source": "AR/story-src/fetched.json 的 review_out", "value": total_out or None},
             "batch": {"source": f"{batch_rel} 的 review_out", "value": batch_out},
         })
@@ -3263,7 +3289,7 @@ def _conflict_text(conflict: dict) -> str:
 
 def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: str, sha: str, *,
                    bytes_: object = None, ticket: object = None, req_no: str,
-                   review_out: object = None) -> dict:
+                   review_out: object = None, role: object = None) -> dict:
     """系统件的本次取材批次回执：核批次时刻、批次与条目的原生身份、状态、摘要与已有字节数。
 
     返回 `{status: verified/missing/mismatch, path, why, conflicts}`。批次回执读不出、落点不在本需求目录、
@@ -3311,7 +3337,7 @@ def _batch_receipt(feature_root: Path, saved: object, fetched_at: object, name: 
         expected_ticket = ticket if ticket not in (None, "") else req_no
         if item.get("ticket") not in (None, "") and item["ticket"] != expected_ticket:
             conflict("ticket", expected_ticket, item.get("ticket"))
-    _review_location_conflicts(feature_root, saved_rel, batch_path, batch_rel, doc, items, review_out, conflicts)
+    _review_location_conflicts(feature_root, saved_rel, batch_path, batch_rel, doc, items, review_out, conflicts, role=role)
     if conflicts:
         return {"status": "mismatch", "path": batch_rel, "conflicts": conflicts,
                 "why": "同次记录对不上：" + "；".join(_conflict_text(c) for c in conflicts)}
@@ -3415,7 +3441,7 @@ def _system_receipt(record: dict, feature_root: Path) -> dict:
                     "why": "本次取回的字节与投放的不是同一版（回执 sha256 不同）"}
         batch = _batch_receipt(feature_root, item.get("saved"), fetched_at, name, sha,
                                bytes_=item.get("bytes"), ticket=ticket, req_no=expected_req,
-                               review_out=receipt.get("review_out"))
+                               review_out=receipt.get("review_out"), role=item.get("role"))
         facts = {**base, "batch_receipt": batch["path"], "batch": batch["status"]}
         if batch["status"] != "verified":
             return {**facts, "status": "unknown", "batch_why": batch["why"],
