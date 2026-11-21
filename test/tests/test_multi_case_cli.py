@@ -2054,7 +2054,17 @@ class CaseWorkspaceOwnsItsGitRoot(unittest.TestCase):
         for own_git in (False, True):
             with self.assertRaises(RuntimeError, msg=f"own_git={own_git}"):
                 run_multi_case._verify_workspace_boundary(self.ws, "AR1", own_git=own_git)
-        (self.ws / ".git").unlink()
+        # 宿主 Git 外壳缓存（如 TGitCache/AV）会在父仓 git init 后对新建 .git 指针做 ~10-70ms 只读扫描，
+        # A/B 诊断证实不调 ensure_case_git/_verify_workspace_boundary 同样触发 WinError 32；仅重试清理假指针。
+        dotgit = self.ws / ".git"
+        for attempt in range(40):
+            try:
+                dotgit.unlink()
+                break
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                time.sleep(0.025)
         self.assertEqual("ready", run_multi_case.ensure_case_git(self.suite, self.case)["status"])
         run_multi_case._verify_workspace_boundary(self.ws, "AR1", own_git=True)
         with self.assertRaises(RuntimeError):
