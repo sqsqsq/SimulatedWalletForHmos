@@ -221,8 +221,11 @@
      审查与收口照它末尾的 `NEXT:`，按 [`reference/phase-closure.md`](../reference/phase-closure.md)「闭环」那张 `next_action` 表做。
    本阶段收口了才进下一阶段；NEXT 要求回到前一阶段时先回去做。
 4. **最后交接**：授权范围内的施工单位都做完后再跑一次 `story-build check --deliver`，通过才交回结果；报依据变了按第 5 步处理。
-5. **共同设计在这一段变了**：由设计负责方在 component-design 里修订、交原质询者复核、重新走到准入，施工单位按原生 `--readiness` 重新派生；
-   再按新蓝图集中同步 Story 里受影响的章节，`story-build review --action prepare` 交原读者按改动影响复核，`story_flow.py story` 重新登记，回到第 4 步。
+5. **共同设计在这一段变了**：先分清受影响施工单位的冻结状态——**未冻结**时直接由设计负责方修订并走原生准入、`change-unit-revise` 与 `--readiness`，再按第 2—4 步普通接续；
+   **已冻结且旧来源仍可验证**且原请求仍有 Plan 义务时，**先在改权威来源前**用 `goal-mode-entry --feature <FID> --prepare-run --adapter <已核可用宿主> --run-mode attended --requirement-file <需求文件>` 转交并记下 `source run ID`（已在合法 attended 请求中则沿用原身份），再由设计负责方修订、交原质询者复核、重新准入并更新同一施工单位；
+   随后保全旧阶段输入、按新权威重新准备，原授权仍有真实未完项时以同命令加 `--supersede <source run ID>` 取得 `continuation=successor`（核原文、`requested_results`、必需义务与终点相同），沿其 `--next` 完成契约/回执并消费一次 `scope_revised`，仅止原请求（中断后按原后继 ID 用 `--next` 接回，不重发请求、不写 Feature 完成）；
+   **已失效且无可用转交**（改权威后才事后转交被旧 binding 拒绝）、宿主不支持 attended 或原生返回空链时，保留失败与原产物并如实报缺口，不造缺口开 run、不改授权、不代换宿主或转 headless。
+   同步 Story 里受影响的章节，`story-build review --action prepare` 交原读者按改动影响复核，`story_flow.py story` 重新登记，回到第 4 步；
    只是确定性的准备、没有业务变化时不另派审查。
 
 原生报候选 `differs`、要求修订权威或 Goal 权威时，保留原失败与已有产物，把具体请求与报错交设计负责方定合法路径：不加 `--overwrite`、不手改冻结记录，不为绕过报错换运行方式。

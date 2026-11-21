@@ -201,6 +201,9 @@ class ThePhaseEndAfterFreezing(unittest.TestCase):
         self.assertTrue(facts["reached"], facts["missing"])
         self.assertEqual({"spec": "reused"}, {p: r["state"] for p, r in facts["units"][0]["phases"].items()})
         self.assertEqual("satisfied", facts["units"][0]["phases"]["spec"]["native"]["kind"])
+        with mock.patch.dict(os.environ, {"MAISON_GOAL_RUN_ID": "foreign-cu-run-id"}):
+            isolated = observe(self.root, {"kind": "phase", "phase": "spec"})
+        self.assertTrue(isolated["reached"], "普通无 run 冻结工程不应被全局 MAISON_GOAL_RUN_ID 污染")
         plan = observe(self.root, {"kind": "phase", "phase": "plan"})
         self.assertFalse(plan["reached"])
         self.assertEqual("executed", plan["units"][0]["phases"]["plan"]["native"]["kind"])
@@ -898,6 +901,410 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         facts = observe(self.root, LOCAL, feature="REQ-DEMO", blueprint=None, story_build=str(DEV_STORY_BUILD))
         self.assertFalse(facts["reached"])
         self.assertTrue(any("report_invalid" in m for m in facts["missing"]), facts["missing"])
+
+
+def physical_framework(root: Path) -> None:
+    """物理隔离的 Framework 副本（仅 `harness/node_modules` 接联接，`state`/`reports` 独立）：
+    `goal-mode-entry` 内部运行 harness 时会沿脚本真实路径反推工程根，联接 `scripts/` 会跳到共享缓存。"""
+    fw = design_fixture.framework_under_test()
+    dest = root / "framework"
+    if dest.is_symlink() or design_fixture._is_junction(dest):
+        os.rmdir(dest)
+    elif dest.exists():
+        shutil.rmtree(dest)
+
+    def skip(directory: str, names: list[str]) -> set[str]:
+        if Path(directory) == fw / "harness":
+            return {"node_modules", "state", "reports"}.intersection(names)
+        return {".git", "__pycache__"}.intersection(names)
+
+    shutil.copytree(fw, dest, ignore=skip)
+    design_fixture._link_dir(fw / "harness" / "node_modules", dest / "harness" / "node_modules")
+    for name in ("state", "reports"):
+        (dest / "harness" / name).mkdir(parents=True, exist_ok=True)
+
+
+class TheAuthorPromptDistinguishesThreeFrozenStates(unittest.TestCase):
+    """S08 作者提示的最早落点（`phases/design.md` 第六节第 5 步、`phases/update.md` 已有施工结果行）：
+    对三种合法但走不同路径的输入——未冻结普通接续、已冻结且旧来源仍可验证、已失效且无可用转交——
+    分别给出不同动作、边界与恢复，不要求另写状态机或改变真实授权。"""
+
+    def test_design_and_update_prompts_cover_all_three_frozen_branches(self) -> None:
+        design_md = (DEV_STORY_BUILD.parents[2] / "phases" / "design.md").read_text(encoding="utf-8")
+        step5 = design_md.split("5. **共同设计在这一段变了**", 1)[1].split("原生报候选 `differs`", 1)[0]
+        # 分支 1：未冻结普通接续
+        for token in ("未冻结", "change-unit-revise", "--readiness", "第 2—4 步"):
+            self.assertIn(token, step5)
+        # 分支 2：已冻结且旧来源仍可验证 → 先转交再改权威 → 后继出生与 --next 恢复
+        for token in (
+            "已冻结且旧来源仍可验证",
+            "先在改权威来源前",
+            "goal-mode-entry --feature <FID> --prepare-run --adapter <已核可用宿主> --run-mode attended --requirement-file <需求文件>",
+            "source run ID",
+            "--supersede <source run ID>",
+            "continuation=successor",
+            "requested_results",
+            "--next",
+            "scope_revised",
+            "不重发请求、不写 Feature 完成",
+        ):
+            self.assertIn(token, step5, f"已冻结有效来源分支缺少关键指引：{token}")
+        self.assertLess(step5.index("先在改权威来源前"), step5.index("再由设计负责方修订"),
+                        "必须先取转交身份再修订权威来源")
+        # 分支 3：已失效且无可用转交／宿主不支持／空链
+        for token in ("已失效且无可用转交", "旧 binding 拒绝", "宿主不支持 attended", "原生返回空链",
+                      "不造缺口开 run", "不改授权", "不代换宿主或转 headless"):
+            self.assertIn(token, step5, f"失效与边界分支缺少关键指引：{token}")
+        # 保留 Story 同步与无业务变化免审查
+        for token in ("story-build review --action prepare", "story_flow.py story", "回到第 4 步", "没有业务变化时不另派审查"):
+            self.assertIn(token, step5)
+        # update.md 从受影响的已冻结 CU 指回 design.md 第六节第 5 步
+        update_md = (DEV_STORY_BUILD.parents[2] / "phases" / "update.md").read_text(encoding="utf-8")
+        cu_row = next(line for line in update_md.splitlines() if line.startswith("| 已有施工结果 |"))
+        self.assertIn("phases/design.md` 第六节第 5 步", cu_row)
+
+
+#: 原生 900c 修订链与绑定直接反例探针（只读，不修改原现场）
+S08_NATIVE_CONTROLS = """
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [root, feature, runDir] = process.argv.slice(1);
+const access = await import(pathToFileURL(path.join(root, 'doc/extensions/hooks/shared/framework-access.mjs')).href);
+const native = access.loadNative(root);
+const { loadScopeRevisions } = native.module('scripts/utils/goal-run-creation.ts');
+const { assertRevisionKeepsRequiredObligations } = native.module('scripts/utils/execution-scope.ts');
+const cap = native.module('scripts/utils/capability-resolution.ts');
+const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split(/\\r?\\n/).map(JSON.parse);
+const birth = manifest.execution_scope;
+const ctx = { projectRoot: root, feature, runId: manifest.run_id, frameworkRoot: native.frameworkRoot };
+const revOut = {};
+function check(tag, fn) {
+  try { revOut[tag] = { ok: true, value: fn() ?? null }; } catch (e) { revOut[tag] = { ok: false, error: String(e?.message ?? e) }; }
+}
+function variant(mut) {
+  const es = structuredClone(events);
+  mut(es.find(e => e.type === 'scope_revised'));
+  return loadScopeRevisions(es, birth, ctx).length;
+}
+check('control', () => loadScopeRevisions(events, birth, ctx).length);
+check('wrong_previous_fingerprint', () => variant(e => { e.previous_scope_fingerprint = '0'.repeat(64); }));
+check('changed_requested_results', () => variant(e => { e.execution_scope.requested_results = ['改成完整实现并发布']; }));
+check('lost_required_obligation', () => {
+  const next = structuredClone(events.find(e => e.type === 'scope_revised').execution_scope);
+  next.obligations = next.obligations.filter(o => o.id !== 'acceptance-context:candidate');
+  return assertRevisionKeepsRequiredObligations(birth, next);
+});
+const scope = events.find(e => e.type === 'scope_revised').execution_scope;
+const acc = scope.obligations.find(o => o.kind === 'acceptance-context');
+const binding = acc.satisfied_by.find(s => s.input_id);
+const opt = { projectRoot: root, frameworkRoot: native.frameworkRoot, feature, phase: acc.owner_phase, track: 'full', goalRunId: manifest.run_id };
+const bindOut = {};
+function checkBind(tag, b) {
+  try { bindOut[tag] = { ok: true, hasValue: cap.readBoundInput(opt, b) != null }; }
+  catch (e) { bindOut[tag] = { ok: false, error: String(e?.message ?? e) }; }
+}
+checkBind('valid', binding);
+const prevManifest = JSON.parse(fs.readFileSync(path.join(path.dirname(runDir), manifest.successor_of, 'manifest.json'), 'utf8'));
+const oldBinding = prevManifest.execution_scope.obligations.find(o => o.kind === 'acceptance-context').satisfied_by.find(s => s.input_id);
+checkBind('obsolete_pre_revision_acceptance', oldBinding);
+const foreign = structuredClone(binding); foreign.source = { kind: 'derive', provider_id: 'not-installed-provider' };
+checkBind('foreign_provider', foreign);
+const unrelated = structuredClone(binding); unrelated.dependencies[0].path = path.join(root, 'doc', 'requirements', 'unrelated-requirement.txt');
+checkBind('unrelated_file', unrelated);
+process.stdout.write(JSON.stringify({ revisions: revOut, bindings: bindOut }));
+"""
+
+
+class TheFrozenRequestRecoversAndObserverTracksPerUnitAuthority(unittest.TestCase):
+    """S08 正式 900c 完整原生恢复组合、受控中断恢复、观察器逐 CU 权威与正反例：
+    1. 独立冻结后先转 attended、设计 owner 修订共同验收并过质询/准入/CU 就绪、原授权有 Plan 义务时用 `--supersede`
+       取得 `continuation=successor`，执行 Plan 与真实 harness/receipt，消费 1 笔 `scope_revised`；
+    2. 在 `scope_revised` 落盘且 `run_end` 未写时受控终止本地桥接进程，新进程沿同一后继 `--next` 恢复到
+       `CHAIN_SLICE_COMPLETED`，无重复作者调用、无 Feature completion；
+    3. `observe_target.mjs` 不传 `MAISON_GOAL_RUN_ID` 逐 CU 读出 `Spec: reused`、`Plan: closed/fresh`，
+       拒绝旧 summary/错 run_id 串用、回执破坏、失效转交身份，也不被全局 `MAISON_GOAL_RUN_ID` 覆盖别的 CU；
+    4. 修订后才事后转交、错误前序指纹、改写请求结果、删除必需义务、过期 acceptance 绑定均被原生拒绝。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import textwrap  # noqa: PLC0415
+        import time  # noqa: PLC0415
+        import test_cu_knowledge_chain as chain  # noqa: PLC0415
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls.root = make_project(root=Path(cls._tmp.name) / "p")
+        physical_framework(root)
+        unit = cls.unit = root / "doc" / "features" / BLUEPRINT / UNIT
+        bp = unit.parent / "blueprint" / "component-blueprint.yaml"
+        cu_path = unit / "change-unit.yaml"
+        (root / "framework.local.json").write_text(json.dumps({"schema_version": "1.0", "agent_adapter": "codex"}),
+                                                   encoding="utf-8")
+        # 原始需求文件在初次冻结前就声明异常恢复要求；首版蓝图漏掉它
+        src = root / REQUIREMENT
+        old_src = src.read_bytes()
+        old_bp = bp.read_bytes()
+        src.write_bytes(old_src + "\n本次交付止于可读实现方案。服务暂不可用时保留最近一次成功的余额，同时显示该次更新时间；不得将它标为新鲜数据。\n".encode("utf-8"))
+        sha = lambda b: "sha256:" + hashlib.sha256(b).hexdigest()  # noqa: E731
+        old_ref = yaml.safe_load(old_bp.decode("utf-8"))["discovery"]["inputs"]["current_scope_items"][0]["source_sha256"]
+        bp.write_bytes(old_bp.decode("utf-8").replace(old_ref, sha(src.read_bytes())).encode("utf-8"))
+        cu_path.write_bytes(cu_path.read_bytes().replace(sha(old_bp).encode(), sha(bp.read_bytes()).encode()))
+        draft = textwrap.dedent(chain.design(root, True, pattern="none", nested=False))
+        design_fixture.render_projection(root, BLUEPRINT, root / "doc/extensions/hooks/shared/framework-access.mjs")
+        for rel in EXPLORED:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO_ROOT / "demo" / rel, root / rel)
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(root), "add", "doc/features", "doc/requirements",
+                        "framework.config.json", "framework.local.json"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.name=fixture", "-c", "user.email=fixture@local",
+                        "commit", "-qm", "design baseline"], check=True, capture_output=True)
+
+        entry = "scripts/goal-mode-entry.ts"
+        ad = ["--adapter", "codex", "--run-mode", "attended"]
+        req = ["--requirement-file", REQUIREMENT]
+        # 1) 独立冻结
+        scope = native_cli(root, entry, "--project-root", str(root), "--feature", CU, "--prepare-scope",
+                           "--completion-target", "request", "--requested-phases", "spec,plan",
+                           "--requested-results", "返回刷新设计的可读实现方案", *req)
+        assert scope.returncode == 0, scope.stdout[-800:] + scope.stderr[-400:]
+        native_cli(root, "harness-runner.ts", "--project-root", str(root), "--feature", CU, "--phase", "plan")
+        assert (unit / "execution-scope.json").is_file()
+
+        # 另复制一份未转交快照用于“修订后才事后转交”负例
+        post_root = cls.post_root = Path(cls._tmp.name) / "post_transfer"
+        shutil.copytree(root, post_root, ignore=lambda d, names: {"node_modules"} if Path(d) == root / "framework" / "harness" else set())
+        design_fixture._link_dir(design_fixture.framework_under_test() / "harness" / "node_modules",
+                                 post_root / "framework" / "harness" / "node_modules")
+
+        # 2) 改前转交 attended，保留 source run ID
+        birth = native_cli(root, entry, "--project-root", str(root), "--feature", CU, "--prepare-run", *ad, *req)
+        assert birth.returncode == 0, birth.stdout[-800:] + birth.stderr[-400:]
+        cls.source_run_id = json.loads(birth.stdout)["run_id"]
+        cls.birth_manifest = json.loads((unit / "goal-runs" / cls.source_run_id / "manifest.json").read_text(encoding="utf-8"))
+
+        # 3) 设计 owner 修订蓝图、登记质询、校验准入与 CU 修订/就绪
+        def revise_design(proj: Path) -> tuple[subprocess.CompletedProcess, subprocess.CompletedProcess]:
+            p_unit = proj / "doc" / "features" / BLUEPRINT / UNIT
+            p_bp = p_unit.parent / "blueprint" / "component-blueprint.yaml"
+            p_cu = p_unit / "change-unit.yaml"
+            before_txt = p_bp.read_text(encoding="utf-8")
+            bcu = p_cu.read_bytes()
+            u_doc = yaml.safe_load(bcu)
+            base_rev = u_doc["component_blueprint_ref"]["revision"]
+            new_rev = base_rev + 1
+            needle = "expected_result: 账户卡片展示最新余额"
+            assert before_txt.count(needle) == 1
+            p_bp.write_bytes(before_txt.replace(f"revision: {base_rev}", f"revision: {new_rev}", 1)
+                             .replace(needle, needle + "；服务暂不可用时保留上次余额并显示其更新时间。").encode("utf-8"))
+            changed = yaml.safe_load(p_bp.read_bytes())
+            q = next(i for i in changed["review_summary"]["questioning"]["items"] if i["scope_ref"] == "view:logical")
+            q.update(question="返回首页但余额服务暂不可用时，本期界面的余额和更新时间有什么依据？",
+                     answer="原始需求要求保留最后成功的余额并标示该次时间。已补验收；不得把旧值显示为刚刚刷新。",
+                     evidence_refs=[REQUIREMENT])
+            p_bp.write_text(yaml.safe_dump(changed, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            bp_check = native_cli(proj, "scripts/check-component-blueprint.ts", "--project-root", str(proj),
+                                  "--blueprint", BLUEPRINT, "--json")
+            assert bp_check.returncode == 0, bp_check.stdout[-800:]
+            design_fixture.render_projection(proj, BLUEPRINT, proj / "doc/extensions/hooks/shared/framework-access.mjs")
+            expected = {k: u_doc[k] for k in ("artifact", "component_id", "blueprint_id", "change_unit_id", "revision")}
+            expected["artifact_sha256"] = sha(bcu)
+            for ref in [u_doc["component_blueprint_ref"], *u_doc["design_refs"],
+                        *[m["design_ref"] for m in u_doc.get("touches", []) if "design_ref" in m]]:
+                ref.update(revision=new_rev, artifact_sha256=sha(p_bp.read_bytes()))
+            rev_proc = subprocess.run(
+                ["node", str(proj / "doc/extensions/hooks/shared/framework-access.mjs"),
+                 "--action", "change-unit-revise", "--project-root", str(proj), "--blueprint", BLUEPRINT],
+                input=json.dumps([{"expectedRef": expected,
+                                   "candidate": {"providerId": u_doc["provenance"]["extraction_method"], "artifact": u_doc}}],
+                                 default=lambda x: x.isoformat()),
+                capture_output=True, text=True, encoding="utf-8", timeout=120)
+            ready_proc = native_cli(proj, "scripts/check-change-unit.ts", "--project-root", str(proj),
+                                    "--blueprint", BLUEPRINT, "--readiness", "--json")
+            return rev_proc, ready_proc
+
+        cls.rev_proc, cls.ready_proc = revise_design(root)
+        assert cls.rev_proc.returncode == 0 and cls.ready_proc.returncode == 0, cls.rev_proc.stderr + cls.ready_proc.stdout
+
+        # 负例：未提前转交、修订后才事后尝试转交 → 原生拒绝
+        post_rev, post_ready = revise_design(post_root)
+        assert post_rev.returncode == 0 and post_ready.returncode == 0
+        cls.post_transfer = native_cli(post_root, entry, "--project-root", str(post_root), "--feature", CU,
+                                       "--prepare-run", *ad, *req)
+
+        # 4) 保全旧阶段输入并按新权威重新准备
+        for fname in ("acceptance.yaml", "contracts.yaml"):
+            asset = unit / fname
+            if asset.exists():
+                asset.rename(unit / f"before-{fname}")
+        for phase in ("spec", "plan"):
+            prep = native_cli(root, "scripts/prepare-blueprint-design.ts", "--project-root", str(root),
+                              "--framework-root", str(root / "framework"), "--feature", CU, "--phase", phase)
+            assert prep.returncode == 0, prep.stdout[-600:]
+
+        # 5) 后继出生（--supersede）
+        sup = native_cli(root, entry, "--project-root", str(root), "--feature", CU,
+                         "--prepare-run", "--supersede", cls.source_run_id, *ad, *req)
+        assert sup.returncode == 0, sup.stdout[-800:] + sup.stderr[-400:]
+        cls.supersede_out = json.loads(sup.stdout)
+        cls.successor_id = cls.supersede_out["run_id"]
+        cls.successor_manifest = json.loads((unit / "goal-runs" / cls.successor_id / "manifest.json").read_text(encoding="utf-8"))
+
+        # 6) 写 Plan 作者产物 + 拿 --next 签发的身份跑 harness / stand-in verifier / check-receipt
+        contracts_file = unit / "contracts.yaml"
+        if not contracts_file.exists():
+            contracts_file.write_text(
+                yaml.safe_dump(yaml.safe_load(draft)["contracts"], allow_unicode=True, sort_keys=False),
+                encoding="utf-8")
+        APlanClosesThroughTheNativeRequest.author(root, unit)
+        facts_md = unit / "context" / "facts.md"
+        facts_md.write_text(re.sub(r"(?m)^frozen_scope_fingerprint: [^\n]+$", f"run_id: {cls.successor_id}",
+                                   facts_md.read_text(encoding="utf-8")), encoding="utf-8")
+        next_args = ["--project-root", str(root), "--feature", CU, *ad, "--run-id", cls.successor_id, "--next"]
+        first_next = native_cli(root, entry, *next_args)
+        assert first_next.returncode == 0, first_next.stdout[-800:]
+        next_doc = json.loads(first_next.stdout)
+        req_path = next_doc["request"]["path"]
+        ctx = json.loads(Path(req_path).read_text(encoding="utf-8"))["context"]
+        owner = ctx["owner"]
+        extra = ["--goal-run-id", cls.successor_id, "--goal-attempt-id", ctx["attemptId"],
+                 "--goal-owner-id", owner["owner_id"], "--goal-owner-epoch", str(owner["epoch"])]
+        h_proc = native_cli(root, "harness-runner.ts", "--project-root", str(root), "--feature", CU, "--phase", "plan", *extra)
+        summ = json.loads((unit / "plan" / "reports" / "summary.json").read_text(encoding="utf-8"))
+        assert summ.get("verifier_request"), h_proc.stdout[-1500:] + h_proc.stderr[-600:]
+        vreq = json.loads((root / summ["verifier_request"]).read_text(encoding="utf-8"))
+        vrep = APlanClosesThroughTheNativeRequest.stand_in((root / vreq["prompt_path"]).read_text(encoding="utf-8"),
+                                                           vreq["subject_id"])
+        (root / summ["verifier_report"]).write_text(vrep, encoding="utf-8")
+        rec_proc = native_cli(root, "scripts/check-receipt.ts", "--project-root", str(root), "--feature", CU, "--phase", "plan", *extra)
+        assert rec_proc.returncode == 0, rec_proc.stdout[-1500:]
+
+        # 7) 回报作者结果并在观测到 scope_revised 且 run_end 未写时受控中断桥接进程，随后新进程 --next 恢复
+        reply = {"phase": ctx["phase"], "status": "passed",
+                 "details": "隔离作者已写入修订后的方案契约；阶段与整项结果由原生 harness、receipt 与 runtime 决定。"}
+        journal = unit / "goal-runs" / cls.successor_id / "events.jsonl"
+        env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
+        report_cmd = ["node", "node_modules/ts-node/dist/bin.js", "--transpile-only", entry,
+                      "--project-root", str(root), "--feature", CU, *ad, "--run-id", cls.successor_id,
+                      "--request", req_path, "--report-result", json.dumps(reply, ensure_ascii=False)]
+        child = subprocess.Popen(report_cmd, cwd=root / "framework" / "harness", env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        killed = False
+        start = time.monotonic()
+        while child.poll() is None:
+            lines = journal.read_bytes().splitlines() if journal.exists() else []
+            if any(b'"type":"scope_revised"' in line.replace(b" ", b"") for line in lines):
+                if any(b'"type":"run_end"' in line.replace(b" ", b"") for line in lines):
+                    break
+                child.kill()
+                child.wait(timeout=15)
+                killed = True
+                break
+            if time.monotonic() - start > 120:
+                child.kill()
+                child.wait(timeout=15)
+                break
+            time.sleep(0.005)
+        child.wait(timeout=120)
+        if child.stdout:
+            child.stdout.close()
+        cls.killed_after_revision = killed
+        cls.events_at_interrupt = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+        cls.resume_next = native_cli(root, entry, *next_args)
+        assert cls.resume_next.returncode == 0, cls.resume_next.stdout[-800:] + cls.resume_next.stderr[-400:]
+        cls.final_events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines() if line.strip()]
+        cls.final_summary = json.loads((unit / "plan" / "reports" / "summary.json").read_text(encoding="utf-8"))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._tmp.cleanup()
+
+    def test_successor_rebinds_and_recovers_after_interruption_without_feature_completion(self) -> None:
+        self.assertEqual("successor", self.supersede_out.get("continuation"))
+        self.assertEqual(self.source_run_id, self.successor_manifest.get("successor_of"))
+        birth_scope = self.birth_manifest["execution_scope"]
+        succ_scope = self.successor_manifest["execution_scope"]
+        self.assertEqual(birth_scope["completion_target"], succ_scope["completion_target"])
+        self.assertEqual(birth_scope["requested_results"], succ_scope["requested_results"])
+        birth_req = {o["id"] for o in birth_scope["obligations"] if o["applicability"] == "required"}
+        succ_req = {o["id"] for o in succ_scope["obligations"] if o["applicability"] == "required"}
+        self.assertTrue(birth_req.issubset(succ_req), "后继丢失原必需义务")
+        # 修订消费恰一次、一次作者调用、plan PASS、仅原请求终结、无 Feature completion
+        self.assertEqual(1, sum(1 for e in self.final_events if e.get("type") == "scope_revised"))
+        self.assertEqual([("plan", "PASS")], [(e["phase"], e["verdict"]) for e in self.final_events if e.get("type") == "phase_verdict"])
+        self.assertEqual([("run_end", "CHAIN_SLICE_COMPLETED")],
+                         [(e["type"], e.get("status")) for e in self.final_events if e.get("type") == "run_end"])
+        self.assertEqual(("PASS", "closed", self.successor_id, "passed"),
+                         (self.final_summary["verdict"], self.final_summary["closure_status"],
+                          self.final_summary["run_id"], self.final_summary.get("receipt_status")))
+        self.assertEqual([], list(self.unit.glob("*feature-completion*")))
+        if self.killed_after_revision:
+            self.assertFalse(any(e.get("type") == "run_end" for e in self.events_at_interrupt))
+
+    def test_observer_tracks_transferred_cu_without_env_and_rejects_identity_mismatch(self) -> None:
+        # 1) 不带 MAISON_GOAL_RUN_ID：逐 CU 读当前转交权威，Spec reused、Plan closed/fresh
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("MAISON_GOAL_RUN_ID", None)
+            facts = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+        self.assertTrue(facts["reached"], facts["missing"])
+        phases = facts["units"][0]["phases"]
+        self.assertEqual("reused", phases["spec"]["state"])
+        self.assertEqual("closed", phases["plan"]["state"])
+        self.assertEqual("executed", phases["plan"]["native"]["kind"])
+        self.assertEqual("fresh", phases["plan"]["native"]["freshness"]["verdict"])
+
+        # 2) 全局 MAISON_GOAL_RUN_ID 指向其他 CU 的 run 时，不覆盖本 CU 自身转交权威
+        with mock.patch.dict(os.environ, {"MAISON_GOAL_RUN_ID": "other-cu-run-999"}):
+            isolated = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+        self.assertTrue(isolated["reached"], isolated["missing"])
+
+        # 3) 反例：旧 summary / 错 run_id 串用 → 观察器拒绝冒充 closed
+        summ_path = self.unit / "plan" / "reports" / "summary.json"
+        kept_summ = summ_path.read_bytes()
+        try:
+            for tag, mutate in (
+                ("上一代 run_id 串用", lambda d: d.__setitem__("run_id", self.source_run_id)),
+                ("无 run_id 旧 summary 串用", lambda d: d.pop("run_id", None)),
+                ("receipt_status 非 passed", lambda d: d.__setitem__("receipt_status", "failed")),
+            ):
+                with self.subTest(tag):
+                    doc = json.loads(kept_summ.decode("utf-8"))
+                    mutate(doc)
+                    summ_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+                    bad = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+                    self.assertFalse(bad["reached"], f"{tag} 被误判到达")
+        finally:
+            summ_path.write_bytes(kept_summ)
+
+        # 4) 反例：失效转交身份（指向不存在的 run）→ scope 报 invalid，不从目录名猜最新
+        scope_path = self.unit / "execution-scope.json"
+        kept_scope = scope_path.read_bytes()
+        try:
+            doc = json.loads(kept_scope.decode("utf-8"))
+            doc["transfers"][-1]["run_id"] = "20990101T000000Z-missing"
+            scope_path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+            bad = observe(self.root, {"kind": "phase", "phase": "plan"}, feature=BLUEPRINT)
+            self.assertFalse(bad["reached"])
+            self.assertTrue(any("执行范围读不出" in m for m in bad["missing"]), bad["missing"])
+        finally:
+            scope_path.write_bytes(kept_scope)
+
+    def test_post_revision_transfer_and_tampered_revisions_or_bindings_are_rejected(self) -> None:
+        # 1) 未提前转交、修订后才事后尝试转交被原生旧 binding 拒绝
+        self.assertNotEqual(0, self.post_transfer.returncode, "修订后事后转交不应绕过旧 binding 检查")
+        # 2) 原生修订链与绑定直接反例
+        run_dir = self.unit / "goal-runs" / self.successor_id
+        proc = subprocess.run(["node", "--input-type=module", "-e", S08_NATIVE_CONTROLS,
+                               str(self.root), CU, str(run_dir)],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+        self.assertEqual(0, proc.returncode, proc.stderr[-800:])
+        got = json.loads(proc.stdout)
+        self.assertEqual({"ok": True, "value": 1}, got["revisions"]["control"])
+        for neg in ("wrong_previous_fingerprint", "changed_requested_results", "lost_required_obligation"):
+            self.assertFalse(got["revisions"][neg]["ok"], f"原生未拒绝修订反例 {neg}: {got['revisions'][neg]}")
+        self.assertTrue(got["bindings"]["valid"]["ok"])
+        for neg in ("obsolete_pre_revision_acceptance", "foreign_provider", "unrelated_file"):
+            self.assertFalse(got["bindings"][neg]["ok"], f"原生未拒绝绑定反例 {neg}: {got['bindings'][neg]}")
 
 
 if __name__ == "__main__":
