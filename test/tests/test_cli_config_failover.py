@@ -49,32 +49,14 @@ def failed_record(kind: str) -> dict:
 
 class ConfigContractTests(unittest.TestCase):
     def test_declared_priority_and_models(self) -> None:
-        """配置组的顺序就是熔断切换的顺序，所以它是契约、要锁住。
-
-        首位是 dsh 跑 bailian 的 deepseek（用户 2026-10-24 裁定默认 dsh）；其后是此前的 deepseek > glm > luna（用户 2026-09-04 裁定）。
-        deepseek 先于 GLM 的依据是步骤 7 资格实跑的实测：
-        同一份任务上 deepseek 每份 100–265 秒，GLM 275–600 秒且出过一份 600 秒超时零输出。
-        换配置的代价是与 GLM 跑的旧成品不再同模型可比——步骤 11 的产物验收对照的是金样
-        （固定仲裁锚，与模型无关），结论按 `cli_config_id` 记、不外推。
-
-        换顺序时这条会红，那是它该做的：**顺序变了就得有人确认**。
-        """
         self.assertEqual(
-            [
-                ("dsh", "bailian/deepseek-v4-flash-0731"),
-                ("opencode", "bailian/deepseek-v4-flash-0731"),
-                ("opencode", "volcengine/GLM5.3-Flash"),
-                ("codex", "gpt-5.6-luna"),
-            ],
-            [(item["name"], item["model"]) for item in multi.CLI_CONFIGURATIONS],
+            [("dsh-deepseek-4.1-flash-1017", "dsh", "bailian/deepseek-v4.1-flash-1017", "build")],
+            [(item["id"], item["name"], item["model"], item["profile"]) for item in multi.CLI_CONFIGURATIONS],
         )
 
     def test_the_capacity_limit_is_part_of_the_configuration(self) -> None:
-        """E01：上限写在配置组里随启动交给 opencode，只声明观察过服务限额的那一组；形状不全或给别的 CLI 都拒。"""
         from cli_config_group import load_cli_group  # noqa: PLC0415
-        limits = {item["id"]: item.get("limit") for item in multi.CLI_CONFIGURATIONS}
-        self.assertEqual({"dsh-deepseek": None, "bailian-deepseek": {"context": 1048576, "input": 960000, "output": 131072},
-                          "volcengine-glm-flash": None, "codex-luna": None}, limits)
+        self.assertIsNone(multi.CLI_CONFIGURATIONS[0].get("limit"))
         base = {"id": "x", "name": "opencode", "model": "p/m", "profile": "build"}
         for label, item in (("缺 output", {**base, "limit": {"context": 10, "input": 5}}),
                             ("input 大于 context", {**base, "limit": {"context": 10, "input": 11, "output": 2}}),
@@ -87,20 +69,23 @@ class ConfigContractTests(unittest.TestCase):
         suite = suite_with(record)
         self.addCleanup(shutil.rmtree, suite["bundle_root"], True)
 
+        configs = suite["cli_configuration_group"]["configurations"]
+        configs.append({**configs[0], "id": "fixture-backup"})
+
         def schedule(_suite, current, *, config_index, reason, failure_kind):
             current.update(status="pending", cli_config_index=config_index,
-                           cli_config_id=multi.CLI_CONFIGURATIONS[config_index]["id"])
+                           cli_config_id=configs[config_index]["id"])
 
         with mock.patch.object(multi, "refresh_record", side_effect=lambda value: value), \
                 mock.patch.object(multi, "request_case_retry", side_effect=schedule) as retry:
             multi.process_retryable_failures(suite)
 
-        first = multi.CLI_CONFIGURATIONS[0]["id"]
+        first = configs[0]["id"]
         self.assertEqual("unavailable_auth",
                          suite["cli_configuration_group"]["health"][first]["status"])
-        self.assertEqual(multi.CLI_CONFIGURATIONS[1]["id"], record["cli_config_id"])
+        self.assertEqual(configs[1]["id"], record["cli_config_id"])
         self.assertEqual("switch_after_auth_failure", retry.call_args.kwargs["reason"])
-        self.assertEqual((1, multi.CLI_CONFIGURATIONS[1]["id"]),
+        self.assertEqual((1, configs[1]["id"]),
                          multi.select_healthy_cli(suite, 0))
 
     def test_content_rejection_retries_once_then_finishes_only_the_case(self) -> None:
