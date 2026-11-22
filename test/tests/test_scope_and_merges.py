@@ -64,6 +64,22 @@ class UpdateKeepsProactiveInputAndAskInOrder(unittest.TestCase):
                        "缺共同基准", "原话与理由留在 `update-notes.md`"):
             self.assertIn(needle, update, f"三方合并少了「{needle}」")
         self.assertIn("不靠文字相似度判采纳", update)
+        # S36-A：主入口、update 输入阶段与 prepare 提示统一为三方核底稿，退场旧「编辑底稿/以人的为准」
+        skill = read("SKILL.md")
+        update_py = read("scripts/core/flow/update.py")
+        self.assertIn("原样保存人的改稿，首次改写 Story 前按 `phases/update.md` 输入阶段的三方方法核共同底稿与两边变化", skill)
+        for surface_name, text in (("SKILL.md", skill), ("phases/update.md", update), ("flow/update.py", update_py)):
+            for retired in ("编辑底稿", "以人的为准", "以人的这一版为准"):
+                self.assertNotIn(retired, text, f"{surface_name} 仍残余已退出的覆盖式指路「{retired}」")
+
+    def test_human_reply_effect_separates_sourced_verbatim_ruling_and_gap(self) -> None:
+        """S36-B：主入口「人签」与 design.md 首次质询后答复统一保留原话、仅将有权且范围明确的决定交 owner、未决保持 gap。"""
+        skill = read("SKILL.md")
+        design = read("phases/design.md")
+        self.assertIn("先保留有出处的原话。仅将其中有权、对象与适用范围明确的决定交 owner 核定；仍未决定的部分保持 gap。", skill)
+        self.assertNotIn("人确认前不记录、不往下走", skill)
+        self.assertIn("材料门用现有 `ask`/`decide` 及澄清返回，不把自由附言写成已接受签认", skill)
+        self.assertIn("按第 4 步现有 owner 合同分派——仅将其中有权、对象与适用范围明确的决定（含本轮临时授权）交 owner 核定，仍未决定的部分保持 gap。", design)
 
     def test_story_write_points_at_the_design_page_not_a_spec_rule(self) -> None:
         guide = read("phases/story-write.md")

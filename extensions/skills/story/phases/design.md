@@ -105,7 +105,7 @@
      `story_flow.py status --questions-file <文件>`。脚本校形状后生成**一次集中 `ask`**（不写 flow.gates、不产生已批准状态）；
      status 把本次要问的内容放在 `ask.block`；刚记下部分答复时，直接展示 decide 返回的 `ask_block`。有几题待答就展示几题。
      人回话后 `decide --ask <ask_id> --item <题号> --reply "<原话>"`，问题与选项从已落盘的问法取，记录时不重填；
-     部分答复先保存原话，只续问未答的部分；「保持待定」照实记下并进蓝图 gap。
+     先保留有出处的原话，只续问未答的部分；按第 4 步现有 owner 合同分派——仅将其中有权、对象与适用范围明确的决定（含本轮临时授权）交 owner 核定，仍未决定的部分保持 gap。
      确因新事实换题时，先把原问题、依据与为何失效写进当前分析，再换；没有真实新情况就继续原组，不把旧回话套上新题。
   4. **记下原话后，再把有依据的设计反馈连同本次候选交给蓝图负责方**：从本次质询候选与 `reply.md` 取被评对象，把意见按 `phases/update.md`「5 对设计的意见交给蓝图负责方」写成原生 `blueprint-review-feedback@1`，首次落在 `AR/story-src/answers/design-feedback.json`，跑
      `story_flow.py update --action feedback --questioning-candidate <第 7 块给的工程相对候选路径>`。

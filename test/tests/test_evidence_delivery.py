@@ -232,9 +232,10 @@ class TheTaskBookCarriesTheOriginal(DeliveryCase):
         (self.feature_root / "AR" / "story.md").write_text("# NK90001 中性需求\n\n## 背景\n\n正文。\n", encoding="utf-8")
         text = self.reader_task()
         report = text.split("### 报告怎么写", 1)[1]
-        for needle in ("报告位置", "完成调用之前", "最终回复", "只写这一次", "同一份"):
+        for needle in ("完成调用前", "UTF-8 写到派审载体指定的报告文件", "最终回复原样返回同一正文",
+                       "其他材料只读", "写入失败时回复写入失败及位置", "不额外包代码围栏"):
             self.assertIn(needle, report)
-        for gone in ("主执行者把它原样写到", "你只读材料，不写任何文件"):
+        for gone in ("主执行者把它原样写到", "你只读材料，不写任何文件", "它只此一份"):
             self.assertNotIn(gone, text)
 
 

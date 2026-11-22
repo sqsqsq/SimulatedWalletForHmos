@@ -528,10 +528,11 @@ class TheDispatchCarriesTheReviewIdentity(TheStoryIsReviewedRegisteredAndDeliver
             self.assertIn(needle, text)
         task = (self.flow_path.parent / "review" / "task.md").read_text(encoding="utf-8")
         report = task.split("### 报告怎么写", 1)[1]
-        for needle in ("报告位置", "完成调用之前", "只写这一次", "同一份完整报告"):
+        for needle in ("完成调用前", "UTF-8 写到派审载体指定的报告文件", "最终回复原样返回同一正文",
+                       "其他材料只读", "写入失败时回复写入失败及位置", "不额外包代码围栏"):
             self.assertIn(needle, report)
-        for gone in ("主执行者把它原样写到", "你只读材料，不写任何文件"):
-            self.assertNotIn(gone, text + report, f"父转写指令「{gone}」还在交付面")
+        for gone in ("主执行者把它原样写到", "你只读材料，不写任何文件", "它只此一份"):
+            self.assertNotIn(gone, text + report, f"旧指令「{gone}」还在交付面")
 
     def test_the_reader_writes_before_returning_and_the_parent_only_receives(self) -> None:
         """读者在完成调用前写入完整报告：返回后接收并检查，报告逐字节未变；父不再生成第二份，也不另存摘要副本。"""

@@ -724,8 +724,7 @@ def cmd_update_prepare(feature_root: Path, feature: str, result: str | None) -> 
     if hint:
         lines.append("缺件去向：" + hint)
     if review_new:
-        lines.append("本次新到或变过的评审输入 " + str(len(review_new)) + " 件：先按人的这一版为编辑底稿逐处合入，"
-                     "不采纳的原话留在 before/")
+        lines.append(f"本次新到或变过的评审输入 {len(review_new)} 件：原样保在只读 before/，首次改写 Story 前按 update 输入阶段三方方法核共同底稿与两边变化")
     if not diff["complete"]:
         lines.append("没有上次已处理的版本可比：这一轮说不出「原来怎么写」，"
                      "按当前材料与产物核一致性，别补造历史")
