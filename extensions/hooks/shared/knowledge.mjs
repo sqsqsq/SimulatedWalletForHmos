@@ -118,24 +118,20 @@ function splitCells(row) {
  */
 function markdownTable(text, headerKeywords) {
   const rows = lines(text);
-  let headers = null;
+  let headers = null, cur = null;
   const data = [];
   for (const line of rows) {
     const s = line.trim();
-    if (!s.startsWith('|')) { if (headers) { if (data.length) break; headers = null; } continue; }
+    if (!s.startsWith('|')) { cur = null; continue; }
     const cells = splitCells(s.replace(/^\|/, '').replace(/([^\\])\|$/, '$1'));
-    if (!headers) {
-      if (headerKeywords.every(k => cells.some(c => c.includes(k)))) headers = cells;
-      continue;
-    }
-    if (cells.every(c => /^[-: ]*$/.test(c))) continue;   // 分隔行
-    data.push(cells);
+    if (!cur) { cur = headerKeywords.every(k => cells.some(c => c.includes(k))) ? (headers = cells) : []; continue; }
+    if (cur.length && !cells.every(c => /^[-: ]*$/.test(c))) data.push(Object.assign(cells, { headers: cur }));
   }
   return headers ? { headers, data } : null;
 }
 
 function pick(cells, headers, keyword) {
-  const i = headers.findIndex(h => h.includes(keyword));
+  const i = (cells.headers ?? headers).findIndex(h => h.includes(keyword));
   return i >= 0 && i < cells.length ? cells[i] : '';
 }
 

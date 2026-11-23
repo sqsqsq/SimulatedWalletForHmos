@@ -673,6 +673,22 @@ class MalformedConstraintRowsNeverExitSilently(ProtocolCase):
         for multi_id in ("UX-01", "DFX-01", "ENV-01"):
             self.assertIn(multi_id, entries)
 
+    def test_second_entry_table_with_different_column_order_loads_and_reports_bad_rows(self) -> None:
+        """S40 R3：同文件第二张条目表（即便换列序）仍须解析；表间说明表跳过；第二表坏行进同一 bad，修正后送达。"""
+        note_table = "\n## 中间说明表\n\n| 术语 | 含义 |\n|---|---|\n| 出口 | 统一出口 |\n\n"
+        second_head = "## 第二组条目\n\n| 约束 | 编号 | 强制力 | 命中条件 | 处置 | 验证（执行体） | 探针 |\n|---|---|---|---|---|---|---|\n"
+        second_bad = "| 第二表错号义务 | NEU-TYPO | 基线 | 有新增出口 | 处置二 | 模型：核对 | 无 |\n"
+        self.put("constraints/neutral-domain.md", CONSTRAINT + note_table + second_head + second_bad)
+        err = self.load_error()
+        self.assertIn("NEU-TYPO", err)
+        self.assertIn("第 5 行", err)
+
+        second_good = "| 第二表合法义务 | NEU-89 | 基线 | 有新增出口 | 处置二 | 模型：核对 | 无 |\n"
+        self.put("constraints/neutral-domain.md", CONSTRAINT + note_table + second_head + second_good)
+        self.assertEqual("", self.load_error())
+        neu_ids = [i for i in self.load_entries() if i.startswith("NEU-")]
+        self.assertEqual(["NEU-01", "NEU-02", "NEU-03", "NEU-04", "NEU-89"], neu_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
