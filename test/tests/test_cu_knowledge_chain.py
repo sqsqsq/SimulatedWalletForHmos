@@ -387,7 +387,7 @@ class TheDerivedUnitWithItsRole(ChainCase):
     # plan.md 逐点表的责任方法写「接口 class.方法 name」：契约声明的方法认得出，写错的方法照样被拒绝。
 
     def test_the_declared_method_passes_and_a_wrong_one_is_named(self) -> None:
-        self.variant("plan/plan.md", "# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+        self.variant("plan/plan.md", "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
                      "| 余额刷新 / 保存结果 | 成功 | HomeRepository.refreshBalance |\n"
                      "| 余额刷新 / 保存结果 | 拒绝 | HomeRepository.saveNothing |\n")
         gate = self.probe(fresh=True)["gate"]
@@ -397,7 +397,7 @@ class TheDerivedUnitWithItsRole(ChainCase):
 
     def test_a_point_of_the_design_missing_from_the_table_is_named(self) -> None:
         """蓝图埋点明细的统计点在逐点表里没有行：点名那个统计点。"""
-        self.variant("plan/plan.md", "# 计划\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
+        self.variant("plan/plan.md", "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n| 统计点 | 结果 | 责任方法 |\n|---|---|---|\n"
                      "| 别的点 | 成功 | HomeRepository.refreshBalance |\n")
         gate = self.probe(fresh=True)["gate"]
         self.assertIn("逐点表里没有行：余额刷新 / 保存结果", gate)

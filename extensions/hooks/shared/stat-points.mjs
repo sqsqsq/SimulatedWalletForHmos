@@ -15,9 +15,9 @@ const METHOD_REF = /[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*/g;
 /** 统计点名比较用的形态：去空白与标记。 */
 export const pointKey = (name) => clean(name).replace(/\s+/g, '');
 
-/** 表头各职责列的独立下标：每词须命中独立列且列名本身就是该职责（可带括号注释），拒收单列双命中与历史/示例列名。 */
+/** 表头各职责列的独立下标：每词须命中独立列且列名本身就是该职责（可带合法附注，不含示例与其他职责词）。 */
 export function statTableCols(header, words) {
-  const at = words.map(w => (header ?? []).findIndex(h => new RegExp(`^${w}(?:\\s*[（(][^）)]*[）)])?$`).test(clean(h))));
+  const at = words.map(w => (header ?? []).findIndex(h => { const t = clean(h); return new RegExp(`^${w}(?:$|\\s*[（(：:\\-/—])`).test(t) && !/示例/.test(t) && words.every(o => o === w || !t.includes(o)); }));
   return at.some(i => i < 0) || new Set(at).size !== words.length ? null : at;
 }
 
@@ -100,12 +100,19 @@ export function statDelivery(design, contracts, acceptance) {
     '', '验收条目（完整字段）：', ...(cases.length ? cases : ['- （没有验收条目）'])];
 }
 
-/** plan.md 里逐点落实的结果行：`[{ point, methods, cells }]`；有「宿主扩展（可选）」或「埋点」节时只在对应埋点段内查，不取它处历史/示例表。 */
+/** plan.md「宿主扩展（可选）」下的当前「埋点」小节及其直接所属行区间（止于下一任意标题，不吞入历史示例子节）。 */
+export const planEventSection = (doc) => {
+  const host = doc.headings.find(h => h.level === 2 && h.name === '宿主扩展（可选）');
+  const sub = host && doc.headings.find(h => h.level === 3 && h.at > host.at && h.at < headingEnd(doc, host) && /^埋点(?:$|\s*[（(：:\-/—])/.test(h.name) && !/示例/.test(h.name));
+  return sub ? { from: sub.at, to: doc.headings.find(h => h.at > sub.at)?.at ?? doc.lines.length } : null;
+};
+
+/** 裸表片段里的逐点落实行（供无完整 Plan 章节结构的片段入口直接调用）。 */
+export const statTableRows = (text) => tableRows(text, ['统计点', '责任方法']).map(({ cells, at }) => ({ point: clean(cells[at[0]]), methods: clean(cells[at[1]]).match(METHOD_REF) ?? [], cells }));
+
+/** 完整 plan.md 里「宿主扩展（可选）·埋点」直接所属的逐点落实行；缺该职责段时不回捞全文或历史段。 */
 export function planStatRows(planText) {
   const doc = parseDocument(String(planText ?? ''));
-  const host = doc.headings.find(h => h.level === 2 && h.name === '宿主扩展（可选）');
-  const subs = doc.headings.filter(h => h.name.includes('埋点') && (!host || (h.level === 3 && h.at > host.at && h.at < headingEnd(doc, host))));
-  const scope = (host || subs.length) ? subs.map(h => doc.lines.slice(h.at, headingEnd(doc, h)).join('\n')).join('\n') : planText;
-  return tableRows(scope, ['统计点', '责任方法']).map(({ cells, at }) => ({
-    point: clean(cells[at[0]]), methods: clean(cells[at[1]]).match(METHOD_REF) ?? [], cells }));
+  const sec = planEventSection(doc);
+  return sec ? statTableRows(doc.lines.slice(sec.from, sec.to).join('\n')) : [];
 }

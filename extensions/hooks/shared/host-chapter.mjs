@@ -7,7 +7,7 @@
 import { parseDocument } from '../../skills/story/scripts/core/story/document.mjs';
 import { acceptanceIdRe, acceptanceIds } from './contracts.mjs';
 import { unitDuties } from './knowledge-application.mjs';
-import { statTableCols } from './stat-points.mjs';
+import { planEventSection, statTableCols } from './stat-points.mjs';
 
 //: 规约单元编号的形态（域前缀-序号），只在规约小节表格的第一列认
 const RULE_ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;
@@ -34,7 +34,8 @@ export function hostChapterProblems(text, { file, anchor, judged, acceptance = n
   const subs = doc.headings.filter(h => h.level === 3 && h.at > head.at && h.at < end)
     .map((h, i, all) => ({ name: h.name, from: h.at, to: all[i + 1]?.at ?? end }));
   const within = (line, s) => Boolean(s) && line > s.from && line < s.to;
-  const problems = need.filter(n => !subs.some(s => s.name.includes(n)))
+  const home = planEventSection(doc);
+  const problems = need.filter(n => n === '埋点' ? !home : !subs.some(s => s.name.includes(n)))
     .map(n => `${file}「${anchor}」：本单位承接${n}，这一章下没有讲它的小节——小节名含「${n}」，逐项写本单位怎样落实`);
   for (const s of subs.filter(x => x.name.includes('规约'))) {
     const ids = doc.tables.filter(t => within(t.line, s)).flatMap(t => t.rows.flatMap(r => String(r[0] ?? '').match(RULE_ID) ?? []));
@@ -50,7 +51,6 @@ export function hostChapterProblems(text, { file, anchor, judged, acceptance = n
     }
   }
   if (events !== null) {
-    const home = subs.find(s => s.name.includes('埋点'));
     for (const t of doc.tables.filter(x => statTableCols(x.header, POINT_TABLE) && !within(x.line, home))) {
       problems.push(`${file}：第 ${t.line + 1} 行的逐点表不在「${anchor}」的「埋点」小节里——埋点按指标在宿主扩展章落实`);
     }

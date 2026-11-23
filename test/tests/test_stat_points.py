@@ -28,6 +28,18 @@ EVENT = """总述：开票结果进成功率统计。
 
 PLAN = """# 计划
 
+## 宿主扩展（可选）
+
+### 埋点
+
+| 统计点 | 结果 | 责任方法 |
+|---|---|---|
+| 开票流程 / 提交 | 成功 | InvoiceService.submit |
+| 开票流程/提交 | 失败 | `InvoiceService.submit` |
+"""
+
+BARE_PLAN = """# 计划
+
 ## 3. 开票
 
 | 统计点 | 结果 | 责任方法 |
@@ -123,6 +135,37 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         )
         rows = run("m.planStatRows(plan)", plan=coexist)
         self.assertEqual([["当前提交", ["Gateway.save"]]], [[r["point"], r["methods"]] for r in rows])
+
+    def test_s41_r4_rejects_history_subsections_no_full_doc_fallback_and_accepts_colon_annotation(self) -> None:
+        """S41 R4：拒收「历史埋点示例」节与「埋点」下「历史示例」子节，完整 Plan 缺职责段不回捞全文，支持「责任方法：接口.方法」附注与裸表显式入口。"""
+        hist_sub = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 历史埋点示例\n\n"
+            "| 统计点 | 责任方法 |\n|---|---|\n| 当前提交 | Gateway.save |\n"
+        )
+        self.assertEqual([], run("m.planStatRows(plan)", plan=hist_sub))
+
+        nested_hist = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n#### 历史示例\n\n"
+            "| 统计点 | 责任方法 |\n|---|---|\n| 当前提交 | Gateway.save |\n"
+        )
+        self.assertEqual([], run("m.planStatRows(plan)", plan=nested_hist))
+
+        # 完整 Plan 缺少宿主扩展章/埋点段时，planStatRows 不回捞全文；裸表片段走显式 statTableRows 入口
+        self.assertEqual([], run("m.planStatRows(plan)", plan=BARE_PLAN))
+        self.assertEqual(
+            [["开票流程 / 提交", ["InvoiceService.submit"]], ["开票流程/提交", ["InvoiceService.submit"]]],
+            [[r["point"], r["methods"]] for r in run("m.statTableRows(plan)", plan=BARE_PLAN)],
+        )
+
+        # 冒号附注列名（责任方法：接口.方法）合法识别，单列双职责（统计点/责任方法）仍拒收
+        colon_plan = (
+            "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n"
+            "| 统计点：主点位 | 结果 | 责任方法：接口.方法 |\n|---|---|---|\n"
+            "| 当前提交 | 成功 | Gateway.save |\n"
+        )
+        self.assertEqual([["当前提交", ["Gateway.save"]]], [[r["point"], r["methods"]] for r in run("m.planStatRows(plan)", plan=colon_plan)])
+        dual_col = "# 计划\n\n## 宿主扩展（可选）\n\n### 埋点\n\n| 统计点/责任方法 | 结果 |\n|---|---|\n| Gateway.save | 成功 |\n"
+        self.assertEqual([], run("m.planStatRows(plan)", plan=dual_col))
 
 
 
