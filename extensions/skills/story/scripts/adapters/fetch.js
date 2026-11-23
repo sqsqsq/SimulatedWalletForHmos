@@ -59,16 +59,66 @@ function latestStored(root, role, ticket) {
   return v ? { dir: v.dir, body: readOr(path.join(root, ...String(v.original?.path ?? '').split('/'))) } : null;
 }
 
-/** 这张单发布过没有：流程契约里有真实发布记录，且留有一次发布出去的 Story 备份。两者都在才算交付回流表面。 */
+/** 读取必需为合法对象的本地状态 JSON；不存在返回 null，不可读或损坏时在写前报错、保留原件。 */
+function readJsonStrict(root, rel, reason) {
+  const file = path.join(root, ...rel.split('/'));
+  if (!fs.existsSync(file)) return null;
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf-8'); } catch (e) {
+    throw new Error(`${rel} 读不出来（${e.message}）：${reason}；已保留原件且未写本次回执，请先按既有归档/恢复责任核清`);
+  }
+  let doc;
+  try { doc = JSON.parse(raw); } catch (e) {
+    throw new Error(`${rel} 不是合法 JSON（${e.message}）：${reason}；已保留原件且未写本次回执，请先按既有归档/恢复责任核清`);
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+    throw new Error(`${rel} 顶层不是 JSON 对象：${reason}；已保留原件且未写本次回执，请先按既有归档/恢复责任核清`);
+  }
+  return doc;
+}
+
+/**
+ * 写前核清本单的发布与覆盖身份：
+ * - 未发布且无未恢复正文覆盖 → 首次取材（AR 原件）；
+ * - 契约 `archived` 与 `.backups/published/story.md` 双证成立，或旧回执 `body_write` 表明已真实覆盖且未记恢复 → 交付回流表面；
+ * - 任一状态文件损坏、发布双证冲突或覆盖前备份缺失 → 在写入任何批次/回执前报错，保留原件并指回既有归档/恢复责任。
+ */
 function publishedBefore(root) {
-  let contract = null;
-  try { contract = JSON.parse(readOr(path.join(root, 'AR', 'story-src', 'story-flow.json')) ?? 'null'); } catch { contract = null; }
-  const backup = path.join(root, ...'.backups/published/story.md'.split('/'));
-  return Boolean(contract?.archived && fs.existsSync(backup));
+  const contractRel = 'AR/story-src/story-flow.json';
+  const receiptRel = 'AR/story-src/fetched.json';
+  const backupRel = '.backups/published/story.md';
+  const contract = readJsonStrict(root, contractRel, '无法核清发布身份，不能按首次 AR 取材');
+  const prev = readJsonStrict(root, receiptRel, '旧取材回执可能带有正文覆盖与恢复凭据（body_write），不能直接覆盖');
+  const hasBackup = fs.existsSync(path.join(root, ...backupRel.split('/')));
+  const archived = Boolean(contract?.archived);
+  if (archived && !hasBackup) {
+    throw new Error(`${contractRel} 已记发布（archived）但 ${backupRel} 缺失：发布身份不完整，不能按首次 AR 取材；`
+      + '已保留原件且未写本次回执，请先按既有归档/恢复责任补齐或核清');
+  }
+  if (!archived && hasBackup) {
+    throw new Error(`${backupRel} 已存在但 ${contractRel} 缺失或未记发布（archived）：发布身份冲突，不能按首次 AR 取材；`
+      + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
+  }
+  const kept = prev?.body_write ?? null;
+  if (kept !== null && (typeof kept !== 'object' || Array.isArray(kept))) {
+    throw new Error(`${receiptRel} 的 body_write 形态损坏：无法核实正文覆盖恢复凭据；`
+      + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
+  }
+  if (kept?.backup && !fs.existsSync(path.join(root, ...String(kept.backup).split('/')))) {
+    throw new Error(`${receiptRel} 的 body_write 指向备份 ${kept.backup}，但该文件缺失：无法核实远端恢复凭据；`
+      + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
+  }
+  const restored = contract?.restored;
+  const restoredPartial = Boolean(
+    kept && restored && restored.backup && kept.backup && restored.backup === kept.backup
+    && (!kept.written_at || Date.parse(restored.at) >= Date.parse(kept.written_at)),
+  );
+  return { published: (archived && hasBackup) || Boolean(kept && !archived && !restoredPartial), kept };
 }
 
 async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   const root = featureDir(reqNo);
+  const { published, kept } = publishedBefore(root);
   const detail = await getDetail(reqNo, mcpToken);
   const srNo = text(detail.parentNo);
   const srDetail = srNo ? await getDetail(srNo, mcpToken) : null;
@@ -77,7 +127,6 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   const src = path.join(root, 'AR', 'story-src');
   // 评审用途区按同一次取材的批次名落：系统取材写在哪一批，这批的回流件与回执就在同名的 review 子树里
   const reviewDir = path.join(root, 'inbox', 'review', path.basename(outDir));
-  const published = publishedBefore(root);
   const wanted = [
     { name: 'AR-design.md', role: 'AR', label: '开发需求正文（本单）', no: reqNo, title: text(detail.title), body: 'design.md',
       local: ['AR/story.md'] },
@@ -148,9 +197,7 @@ async function fetchUpstream(reqNo, mcpToken, { outDir }) {
     items.push({ ...id, status: 'fetched',
       saved: path.relative(root, path.join(dir, w.saveAs ?? w.name)).split(path.sep).join('/'), ...facts });
   }
-  // 最近一次真实的正文覆盖（归档写下）不是取材的结果：刷新外部现状时原样带着，远端恢复与之后的登记还要它
-  let kept = null;
-  try { kept = JSON.parse(readOr(path.join(src, 'fetched.json')) ?? 'null')?.body_write ?? null; } catch { kept = null; }
+  // 最近一次真实的正文覆盖（归档写下）已在写前通过 publishedBefore 严格读出并校验：刷新外部现状时原样带着
   const fetchedAt = new Date().toISOString();
   // 只有真的取得或读取失败才建评审批次；系统上本来就没有的件不因此建一个空批次
   const reviewOut = reviewItems.some(i => i.status !== 'absent')

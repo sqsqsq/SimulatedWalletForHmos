@@ -504,5 +504,145 @@ class TheDefaultEntryFindsTheProjectRoot(SystemCase):
                          "默认根少算一级：材料落进了 doc/ 底下的第二层 doc/features/")
 
 
+class TestPublishIdentityAndReceiptRecovery(SystemCase):
+    """S39：发布身份与取材回执写前保护——未发布、已发布、契约损坏、备份缺失/冲突、坏回执、部分发布与恢复后再取。"""
+
+    def fetch_into(self, batch_name: str = "fetch-s39") -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["node", str(STORY_JS), "fetch", AR, "token", "--out", str(self.feature / "inbox" / batch_name),
+             "--project-root", str(self.project)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            env={**_env(), "STORY_REQUIREMENT_SYSTEM_DIR": str(self.system)})
+
+    def _snapshot_tree(self) -> dict[str, bytes]:
+        if not self.feature.exists():
+            return {}
+        return {p.relative_to(self.feature).as_posix(): p.read_bytes()
+                for p in sorted(self.feature.rglob("*")) if p.is_file()}
+
+    def test_seven_states_identity_protection_and_recovery(self) -> None:
+        src = self.feature / "AR" / "story-src"
+        pub_backup = self.feature / ".backups" / "published" / "story.md"
+
+        # 1. 未发布（首次无回执）：正常走 AR 材料批次
+        p_init = self.fetch_into("fetch-01-init")
+        self.assertEqual(0, p_init.returncode, p_init.stderr)
+        ar_init = next(i for i in self.receipt(p_init)["items"] if i["name"] == "AR-design.md")
+        self.assertEqual(("AR", "inbox/fetch-01-init/AR-design.md"), (ar_init.get("role"), ar_init.get("saved")))
+        self.assertNotIn("delivery_return", self.receipt_file())
+
+        # 2. 已发布（双证成立）：走 inbox/review/<batch>/ 且无 role，记 delivery_return
+        src.mkdir(parents=True, exist_ok=True)
+        valid_contract = json.dumps({"schema": 7, "archived": {"at": "2026-11-22T00:00:00+00:00"}}, ensure_ascii=False)
+        (src / "story-flow.json").write_text(valid_contract, encoding="utf-8")
+        pub_backup.parent.mkdir(parents=True, exist_ok=True)
+        pub_backup.write_text("# 已发布 Story\n", encoding="utf-8")
+        p_pub = self.fetch_into("fetch-02-pub")
+        self.assertEqual(0, p_pub.returncode, p_pub.stderr)
+        ar_pub = next(i for i in self.receipt(p_pub)["items"] if i["name"] == "AR-design.md")
+        self.assertNotIn("role", ar_pub)
+        self.assertEqual("inbox/review/fetch-02-pub/AR-design.md", ar_pub.get("saved"))
+        self.assertTrue(self.receipt_file().get("delivery_return"))
+
+        # 3. 契约损坏（JSON 不可读但备份仍在）：写前报错、不改任何文件、不建新批次
+        (src / "story-flow.json").write_text('{"archived": ', encoding="utf-8")
+        before = self._snapshot_tree()
+        p_bad_c = self.fetch_into("fetch-03-bad-contract")
+        self.assertEqual(1, p_bad_c.returncode)
+        self.assertIn("story-flow.json", self.receipt(p_bad_c)["error"])
+        self.assertEqual(before, self._snapshot_tree(), "契约损坏时改写了工作区或新建了批次")
+
+        # 4a. 备份缺失（契约有 archived 但发布备份没了）：写前报错、不退回 role=AR、不改现场
+        (src / "story-flow.json").write_text(valid_contract, encoding="utf-8")
+        pub_backup.unlink()
+        before = self._snapshot_tree()
+        p_no_bk = self.fetch_into("fetch-04a-lost-backup")
+        self.assertEqual(1, p_no_bk.returncode)
+        self.assertIn(".backups/published/story.md", self.receipt(p_no_bk)["error"])
+        self.assertEqual(before, self._snapshot_tree())
+
+        # 4b. 反向冲突（有发布备份但契约未记 archived）：写前报错、不按首次 AR 取材
+        pub_backup.write_text("# 已发布 Story\n", encoding="utf-8")
+        (src / "story-flow.json").write_text(json.dumps({"schema": 7}), encoding="utf-8")
+        before = self._snapshot_tree()
+        p_no_arch = self.fetch_into("fetch-04b-no-archived")
+        self.assertEqual(1, p_no_arch.returncode)
+        self.assertIn("story-flow.json", self.receipt(p_no_arch)["error"])
+        self.assertEqual(before, self._snapshot_tree())
+
+        # 5. 坏回执（旧 fetched.json 截断在 body_write）：写前报错、原回执字节不覆写
+        (src / "story-flow.json").write_text(valid_contract, encoding="utf-8")
+        truncated = '{"body_write":'
+        (src / "fetched.json").write_text(truncated, encoding="utf-8")
+        before = self._snapshot_tree()
+        p_bad_r = self.fetch_into("fetch-05-bad-receipt")
+        self.assertEqual(1, p_bad_r.returncode)
+        self.assertIn("fetched.json", self.receipt(p_bad_r)["error"])
+        self.assertEqual(truncated, (src / "fetched.json").read_text(encoding="utf-8"))
+        self.assertEqual(before, self._snapshot_tree())
+
+        # 恢复损坏回执后再取 → 恢复成功，回流落 review/
+        (src / "fetched.json").write_text(json.dumps({"mode": "fetch", "items": []}), encoding="utf-8")
+        p_rec = self.fetch_into("fetch-05b-recovered")
+        self.assertEqual(0, p_rec.returncode, p_rec.stderr)
+        ar_rec = next(i for i in self.receipt(p_rec)["items"] if i["name"] == "AR-design.md")
+        self.assertEqual("inbox/review/fetch-05b-recovered/AR-design.md", ar_rec.get("saved"))
+
+    def test_partial_publish_body_write_and_after_restore_fetch(self) -> None:
+        """部分发布（正文已覆盖写下 body_write，附件失败无 archived）不按首次 AR 取材；缺失 cloud 备份拒写；远端恢复登记后再取恢复 AR 角色。"""
+        story_text, _ = self.write_spec_products()
+        self.fetch()
+        target = self.system / AR / "attachments" / "design-review.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("旧附件\n", encoding="utf-8")
+        target.chmod(stat.S_IREAD)
+        self.addCleanup(target.chmod, stat.S_IREAD | stat.S_IWRITE)
+        self.fetch()
+        self.deliver()
+        proc_arch = self.story("archive", AR)
+        self.assertEqual(1, proc_arch.returncode)
+        wrote = self.receipt_file()["body_write"]
+        self.assertTrue((self.feature / wrote["backup"]).is_file())
+
+        # 部分发布态（无 archived、无发布备份，但有 body_write）：fetch 仍视为已覆盖回流表面、不标 role=AR、保 body_write
+        p_part = self.fetch_into("fetch-06-partial")
+        self.assertEqual(0, p_part.returncode, p_part.stderr)
+        ar_part = next(i for i in self.receipt(p_part)["items"] if i["name"] == "AR-design.md")
+        self.assertNotIn("role", ar_part, "部分发布已覆盖正文，不能再当首次 AR 原件")
+        self.assertEqual("inbox/review/fetch-06-partial/AR-design.md", ar_part.get("saved"))
+        self.assertEqual(wrote, self.receipt_file()["body_write"])
+
+        # 若 body_write 指向的 cloud 备份丢失：写前拒改现场
+        backup_abs = self.feature / wrote["backup"]
+        saved_bytes = backup_abs.read_bytes()
+        backup_abs.unlink()
+        before = self._snapshot_tree()
+        p_lost_cloud = self.fetch_into("fetch-06b-lost-cloud")
+        self.assertEqual(1, p_lost_cloud.returncode)
+        self.assertIn(wrote["backup"], self.receipt(p_lost_cloud)["error"])
+        self.assertEqual(before, self._snapshot_tree())
+        backup_abs.write_bytes(saved_bytes)
+
+        # 模拟远端正文恢复并登记 contract.restored 后再取：正文回到 AR 原件，不再当作未归档覆盖回流
+        (self.system / AR / "design.md").write_text(AR_TEXT, encoding="utf-8")
+        (self.feature / "AR" / "story-src" / "story-flow.json").write_text(
+            json.dumps({"schema": 7, "restored": {
+                "at": "2099-01-01T00:00:00+00:00", "backup": wrote["backup"], "external_digest": short(backup_abs),
+            }}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        p_after_restore = self.fetch_into("fetch-07-after-restore")
+        self.assertEqual(0, p_after_restore.returncode, p_after_restore.stderr)
+        ar_restored = next(i for i in self.receipt(p_after_restore)["items"] if i["name"] == "AR-design.md")
+        self.assertEqual(("AR", "inbox/fetch-07-after-restore/AR-design.md"), (ar_restored.get("role"), ar_restored.get("saved")))
+        self.assertEqual(wrote, self.receipt_file()["body_write"])
+        self.assertNotIn("delivery_return", self.receipt_file())
+
+    def test_upgrade_changes_carries_fetch_write_before_contract(self) -> None:
+        text = (DEV_EXT / "skills" / "story-adaptation" / "reference" / "upgrade-changes.md").read_text(encoding="utf-8")
+        for token in ("body_write", ".backups/published/story.md", "story-flow.json", "fetched.json"):
+            self.assertIn(token, text)
+
+
 if __name__ == "__main__":
     unittest.main()
