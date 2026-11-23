@@ -137,7 +137,7 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         self.assertEqual([["当前提交", ["Gateway.save"]]], [[r["point"], r["methods"]] for r in rows])
 
     def test_s41_r4_rejects_history_subsections_no_full_doc_fallback_and_accepts_colon_annotation(self) -> None:
-        """S41 R4：拒收「历史埋点示例」节与「埋点」下「历史示例」子节，完整 Plan 缺职责段不回捞全文，支持「责任方法：接口.方法」附注与裸表显式入口。"""
+        """S41 R4：拒收「历史埋点示例」节与「埋点」下「历史示例」子节，完整 Plan 缺职责段不回捞全文，支持「责任方法：接口.方法」附注。"""
         hist_sub = (
             "# 计划\n\n## 宿主扩展（可选）\n\n### 历史埋点示例\n\n"
             "| 统计点 | 责任方法 |\n|---|---|\n| 当前提交 | Gateway.save |\n"
@@ -150,12 +150,10 @@ class PlanRowsAreFoundByTheirColumns(unittest.TestCase):
         )
         self.assertEqual([], run("m.planStatRows(plan)", plan=nested_hist))
 
-        # 完整 Plan 缺少宿主扩展章/埋点段时，planStatRows 不回捞全文；裸表片段走显式 statTableRows 入口
+        # 完整 Plan 缺少宿主扩展章/埋点段时，planStatRows 不回捞全文
         self.assertEqual([], run("m.planStatRows(plan)", plan=BARE_PLAN))
-        self.assertEqual(
-            [["开票流程 / 提交", ["InvoiceService.submit"]], ["开票流程/提交", ["InvoiceService.submit"]]],
-            [[r["point"], r["methods"]] for r in run("m.statTableRows(plan)", plan=BARE_PLAN)],
-        )
+        self.assertEqual([0, 2], run("m.statTableCols(['统计点：主点位', '结果', '责任方法：接口.方法'], ['统计点', '责任方法'])"))
+        self.assertIsNone(run("m.statTableCols(['统计点/责任方法', '结果'], ['统计点', '责任方法'])"))
 
         # 冒号附注列名（责任方法：接口.方法）合法识别，单列双职责（统计点/责任方法）仍拒收
         colon_plan = (

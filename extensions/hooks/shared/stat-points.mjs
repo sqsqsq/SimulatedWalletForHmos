@@ -107,12 +107,9 @@ export const planEventSection = (doc) => {
   return sub ? { from: sub.at, to: doc.headings.find(h => h.at > sub.at)?.at ?? doc.lines.length } : null;
 };
 
-/** 裸表片段里的逐点落实行（供无完整 Plan 章节结构的片段入口直接调用）。 */
-export const statTableRows = (text) => tableRows(text, ['统计点', '责任方法']).map(({ cells, at }) => ({ point: clean(cells[at[0]]), methods: clean(cells[at[1]]).match(METHOD_REF) ?? [], cells }));
-
 /** 完整 plan.md 里「宿主扩展（可选）·埋点」直接所属的逐点落实行；缺该职责段时不回捞全文或历史段。 */
 export function planStatRows(planText) {
   const doc = parseDocument(String(planText ?? ''));
   const sec = planEventSection(doc);
-  return sec ? statTableRows(doc.lines.slice(sec.from, sec.to).join('\n')) : [];
+  return sec ? tableRows(doc.lines.slice(sec.from, sec.to).join('\n'), ['统计点', '责任方法']).map(({ cells, at }) => ({ point: clean(cells[at[0]]), methods: clean(cells[at[1]]).match(METHOD_REF) ?? [], cells })) : [];
 }
