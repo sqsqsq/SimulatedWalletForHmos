@@ -99,14 +99,34 @@ function publishedBefore(root) {
     throw new Error(`${backupRel} 已存在但 ${contractRel} 缺失或未记发布（archived）：发布身份冲突，不能按首次 AR 取材；`
       + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
   }
-  const kept = prev?.body_write ?? null;
-  if (kept !== null && (typeof kept !== 'object' || Array.isArray(kept))) {
-    throw new Error(`${receiptRel} 的 body_write 形态损坏：无法核实正文覆盖恢复凭据；`
-      + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
-  }
-  if (kept?.backup && !fs.existsSync(path.join(root, ...String(kept.backup).split('/')))) {
-    throw new Error(`${receiptRel} 的 body_write 指向备份 ${kept.backup}，但该文件缺失：无法核实远端恢复凭据；`
-      + '已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
+  const hasBodyWrite = Boolean(prev && Object.prototype.hasOwnProperty.call(prev, 'body_write'));
+  const kept = hasBodyWrite ? prev.body_write : null;
+  if (hasBodyWrite) {
+    const problems = [];
+    if (!kept || typeof kept !== 'object' || Array.isArray(kept)) {
+      problems.push('body_write 不是对象');
+    } else {
+      if (typeof kept.target_digest !== 'string' || !/^sha256:[0-9a-f]{16}$/.test(kept.target_digest)) {
+        problems.push('缺合法 target_digest（须为 sha256:<16位十六进制>）');
+      }
+      if (typeof kept.written_at !== 'string' || !Number.isFinite(Date.parse(kept.written_at))) {
+        problems.push('缺合法 written_at 时间戳');
+      }
+      if (!Object.prototype.hasOwnProperty.call(kept, 'backup')
+        || (kept.backup !== null && (typeof kept.backup !== 'string' || !kept.backup.trim()))) {
+        problems.push('缺合法 backup（须为覆盖前备份相对路径或显式 null）');
+      } else if (typeof kept.backup === 'string' && !fs.existsSync(path.join(root, ...kept.backup.split('/')))) {
+        problems.push(`指向的备份 ${kept.backup} 不存在`);
+      }
+      if (kept.verified_at !== undefined
+        && (typeof kept.verified_at !== 'string' || !Number.isFinite(Date.parse(kept.verified_at)))) {
+        problems.push('verified_at 时间戳格式非法');
+      }
+    }
+    if (problems.length) {
+      throw new Error(`${receiptRel} 的 body_write 凭据不完整或损坏（${problems.join('；')}）：`
+        + '无法核实正文覆盖与远端恢复凭据，已保留原件且未写本次回执，请先按既有归档/恢复责任核清');
+    }
   }
   const restored = contract?.restored;
   const restoredPartial = Boolean(
