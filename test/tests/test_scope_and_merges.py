@@ -98,6 +98,18 @@ class ErrorsAndDelegationPointAtCurrentBearers(unittest.TestCase):
         self.assertNotIn("决策登记", read("scripts/core/story/writing-plan.mjs"))
         author = read_ext("hooks/blueprint/author.md")
         self.assertIn("Story、施工单位与设计参考投影", author)
+
+    def test_s42_blueprint_example_is_neutral_and_retired_scope_gate_phrases_are_gone(self) -> None:
+        """S42：蓝图作者 story_details 示例中性化且保留缓存设计能力；初析/设计/更新/主入口退出旧 reopen 与范围关卡维护口令。"""
+        author = read_ext("hooks/blueprint/author.md")
+        for prefilled in ("detail-balance-cache", "余额缓存有效期", "余额缓存 5 分钟", "切换账号时清空", "flow:balance-cache"):
+            self.assertNotIn(prefilled, author, f"hooks/blueprint/author.md 仍残留预填项目结论「{prefilled}」")
+        for kept in ("数据的有效期与清理", "story_details:", "data_policy", "evidence_refs"):
+            self.assertIn(kept, author)
+        for rel in ("SKILL.md", "rules/init_analysis.md", "phases/design.md", "phases/update.md"):
+            text = read(rel)
+            for retired in ("reopen", "范围关卡", "范围定法/承载哪份的关卡"):
+                self.assertNotIn(retired, text, f"{rel} 仍残留已退役口令「{retired}」")
         self.assertNotIn("Story、Review 与施工单位", author)
         rules = read_ext("rules/plan-rules.overlay.yaml")
         self.assertNotIn("回关卡人签", rules)
