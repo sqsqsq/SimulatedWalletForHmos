@@ -146,7 +146,12 @@ def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Pat
     feature_root = root / features_dir / feature
     ar = feature_root / "AR"
     try:
-        archived = json.loads((ar / "story-src" / "story-flow.json").read_text(encoding="utf-8")).get("archived") or {}
+        flow_doc = json.loads((ar / "story-src" / "story-flow.json").read_text(encoding="utf-8").lstrip("\ufeff"))
+        if not isinstance(flow_doc, dict):
+            return [f"流程契约 AR/story-src/story-flow.json 顶层不是 JSON 对象（读到 {type(flow_doc).__name__}）"]
+        archived = flow_doc.get("archived") or {}
+        if not isinstance(archived, dict):
+            return ["流程契约里的发布记录 archived 不是对象：不算送到"]
         story_bytes = (ar / "story.md").read_bytes()
     except (OSError, ValueError) as exc:
         return [f"读不出流程契约或 AR/story.md（{exc}）"]
@@ -163,18 +168,20 @@ def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Pat
         except OSError as exc:
             return [f"发布记录包含设计参考附件，但读不出 blueprint/component-blueprint.review.md（{exc}）"]
     missing: list[str] = []
-    # 复用发布合同（flow/publish.py::_selected）：取材回执必须可读且显式给布尔 delivery_requirements.design_reference
+    # 复用发布合同（flow/publish.py::_selected）：读取失败与解析后形状校验分开，JSON null / 非对象 / 缺布尔声明均拒判
     try:
         receipt = json.loads((ar / "story-src" / "fetched.json").read_text(encoding="utf-8").lstrip("\ufeff"))
     except (OSError, ValueError) as exc:
         missing.append(f"取材回执 AR/story-src/fetched.json 读不出或损坏（{exc}）：无法核实需求系统交付要求，不算送到")
-        receipt = None
-    if receipt is not None:
-        req = receipt.get("delivery_requirements") if isinstance(receipt, dict) else None
-        if not isinstance(req, dict) or not isinstance(req.get("design_reference"), bool):
-            missing.append("取材回执缺少合法布尔交付要求声明（delivery_requirements.design_reference）：无法核实是否必交设计参考附件，不算送到")
-        elif req["design_reference"] is True and not design:
-            missing.append("需求系统要求设计参考附件，发布记录的交付项里没有它：不算送到")
+    else:
+        if not isinstance(receipt, dict):
+            missing.append(f"取材回执 AR/story-src/fetched.json 顶层不是 JSON 对象（读到 {type(receipt).__name__}）：无法核实需求系统交付要求，不算送到")
+        else:
+            req = receipt.get("delivery_requirements")
+            if not isinstance(req, dict) or not isinstance(req.get("design_reference"), bool):
+                missing.append("取材回执缺少合法布尔交付要求声明（delivery_requirements.design_reference）：无法核实是否必交设计参考附件，不算送到")
+            elif req["design_reference"] is True and not design:
+                missing.append("需求系统要求设计参考附件，发布记录的交付项里没有它：不算送到")
     published = feature_root / ".backups" / "published"
     for name, key, copy in (("Story", "story_digest", "story.md"),
                             *((("设计参考", "design_review_digest", "design-review.md"),) if design else ())):

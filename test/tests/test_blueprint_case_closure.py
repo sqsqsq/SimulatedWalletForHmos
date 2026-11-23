@@ -920,6 +920,12 @@ class TheStoryEndIsTheDeliveryGate(TheStoryIsReviewedRegisteredAndDeliveredCase)
         self.assertFalse(bad_rec["reached"])
         self.assertTrue(any("fetched.json" in m for m in bad_rec["missing"]), bad_rec["missing"])
 
+        for raw_non_obj in ("null", "[]", '"str"', "123"):
+            (ar_src / "fetched.json").write_text(raw_non_obj, encoding="utf-8")
+            non_obj = submitted()
+            self.assertFalse(non_obj["reached"], f"合法非对象 JSON {raw_non_obj} 不应放行")
+            self.assertTrue(any("顶层不是 JSON 对象" in m for m in non_obj["missing"]), non_obj["missing"])
+
         for bad_flag in ("true", "false", 1, None):
             write_receipt(bad_flag, include_design=False)
             bad_decl = submitted()
