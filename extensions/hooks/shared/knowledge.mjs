@@ -122,7 +122,7 @@ function markdownTable(text, headerKeywords) {
   const data = [];
   for (const line of rows) {
     const s = line.trim();
-    if (!s.startsWith('|')) { if (headers && !data.length) headers = null; continue; }
+    if (!s.startsWith('|')) { if (headers) { if (data.length) break; headers = null; } continue; }
     const cells = splitCells(s.replace(/^\|/, '').replace(/([^\\])\|$/, '$1'));
     if (!headers) {
       if (headerKeywords.every(k => cells.some(c => c.includes(k)))) headers = cells;
@@ -202,10 +202,10 @@ function parseConstraintFile(body, fm, rel, bad) {
     fail(`${rel}：找不到条目表，派生不出规约条目——条目表按表头同时含「编号」「约束」两列的 Markdown 表认`);
   }
   const entries = [];
-  for (const cells of table.data) {
+  for (const [idx, cells] of table.data.entries()) {
     const id = pick(cells, table.headers, '编号').replace(/[`*]/g, '').trim();
     const m = id.match(ENTRY_ID_RE);
-    if (!m) continue;
+    if (!m) { bad.push(`${rel} 条目表第 ${idx + 1} 行编号「${id || '(空)'}」不合协议——编号列按「<域前缀>-<两位数>」认数据行（域前缀是大写字母开头的 2–8 位大写字母或数字）`); continue; }
     const handling = pick(cells, table.headers, '处置');
     const reviewAction = handling.trim().startsWith(REVIEW_ACTION_MARK);
     // 强制力定未满足时的后果，执行体定证据从哪来，两者独立；各道门按它们执行，所以值域在载入时核。

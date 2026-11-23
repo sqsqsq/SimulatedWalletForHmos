@@ -610,5 +610,69 @@ class AnInterfaceIsKnownByItsClass(ProtocolCase):
         self.assertNotIn("interfaces..", message)
 
 
+class MalformedConstraintRowsNeverExitSilently(ProtocolCase):
+    """S40：规约条目表有实质内容但编号缺失或不合协议的行必须进 bad 一次列全，不得静默 continue 漏载。"""
+
+    def load_entries(self) -> list[str]:
+        proc = nk.node("--input-type=module", "-e",
+                       f"const k = await import({nk.as_url(self.module('knowledge.mjs'))});"
+                       f"const out = k.activeKnowledge({json.dumps(self.root.as_posix())});"
+                       "process.stdout.write(JSON.stringify(out.entries.map(e => e.id)));")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_valid_plus_typo_row_blocks_loading_and_fix_delivers_all(self) -> None:
+        bad_row = "| NEU-TYPO | 本需求须独立保留的另一项 | 基线 | 有新增出口 | 出口处生成标识 | 模型：核对生成点 | 无 |\n"
+        self.put("constraints/neutral-domain.md", CONSTRAINT + bad_row)
+        err = self.load_error()
+        self.assertIn("neutral-domain.md", err)
+        self.assertIn("第 5 行", err)
+        self.assertIn("NEU-TYPO", err)
+        self.assertIn("<域前缀>-<两位数>", err)
+        # 下游 plan post_check 亦因加载失败阻断，不把残缺集合当完整
+        plan_res = self.hook_result("plan")
+        self.assertFalse(plan_res.get("ok"), plan_res)
+        self.assertIn("NEU-TYPO", plan_res.get("message") or "")
+
+        # 修正错号后两条及原有条目全部送达
+        self.put("constraints/neutral-domain.md", CONSTRAINT + bad_row.replace("NEU-TYPO", "NEU-89"))
+        self.assertEqual("", self.load_error())
+        self.assertIn("NEU-89", self.load_entries())
+        self.assertIn("NEU-01", self.load_entries())
+
+    def test_only_bad_rows_and_two_bad_rows_report_all_in_one_pass(self) -> None:
+        only_bad = CONSTRAINT.split("| NEU-01 |")[0] + (
+            "| NEU-TYPO | 第一条错号约束 | 基线 | 有新增出口 | 处置一 | 模型：核对 | 无 |\n"
+        )
+        self.put("constraints/neutral-domain.md", only_bad)
+        err_only = self.load_error()
+        self.assertIn("NEU-TYPO", err_only)
+        self.assertIn("条目表解析出零行", err_only)
+
+        two_bad = CONSTRAINT + (
+            "| NEU-TYPO | 错号约束 | 基线 | 有新增出口 | 处置一 | 模型：核对 | 无 |\n"
+            "|  | 缺号但有实质约束 | 基线 | 有新增出口 | 处置二 | 模型：核对 | 无 |\n"
+        )
+        self.put("constraints/neutral-domain.md", two_bad)
+        err_two = self.load_error()
+        self.assertIn("第 5 行", err_two)
+        self.assertIn("NEU-TYPO", err_two)
+        self.assertIn("第 6 行", err_two)
+        self.assertIn("(空)", err_two)
+
+    def test_blank_separator_rows_and_trailing_note_table_remain_valid(self) -> None:
+        with_blank_and_note = (
+            CONSTRAINT
+            + "|  |  |  |  |  |  |  |\n"
+            + "\n## 补充说明表\n\n| 术语 | 含义 |\n|---|---|\n| 出口 | 统一出口 |\n"
+        )
+        self.put("constraints/neutral-domain.md", with_blank_and_note)
+        self.assertEqual("", self.load_error())
+        entries = self.load_entries()
+        self.assertEqual(["NEU-01", "NEU-02", "NEU-03", "NEU-04"], [i for i in entries if i.startswith("NEU-")])
+        for multi_id in ("UX-01", "DFX-01", "ENV-01"):
+            self.assertIn(multi_id, entries)
+
+
 if __name__ == "__main__":
     unittest.main()
