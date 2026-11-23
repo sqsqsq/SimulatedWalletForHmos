@@ -2374,8 +2374,9 @@ mod[fn](reqNo, 'token', ...(out ? [{ outDir: out }] : []))
         return f.read_bytes() if f.is_file() else None
 
     def submitted(self) -> list[str]:
-        """送审终点没到的原因（空表是到了）。"""
-        return end_target.story_submitted(self.root, "doc/features", FEATURE, self.system)
+        """送审终点没到的原因（空表是到了）；与核心侧同口径在进程内把本夹具单当系统单。"""
+        with unittest.mock.patch.object(end_target, "system_requirement", lambda _: True):
+            return end_target.story_submitted(self.root, "doc/features", FEATURE, self.system)
 
     def test_publish_archive_register_redeliver_and_restore(self) -> None:
         self.fetch()

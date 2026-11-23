@@ -128,6 +128,11 @@ def short_digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()[:16]
 
 
+def system_requirement(feature: str) -> bool:
+    """与发布合同（`flow/state.py::system_requirement`）一致：只有 AR 开头的需求挂在需求系统上。"""
+    return str(feature).startswith("AR")
+
+
 def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Path | None) -> list[str]:
     """当前这一版真实送审了没有：发布记录里这一次交付的每一件都要对上（Story 正文必有，
     设计参考附件在系统要求时必有，否则这一次交了才核）。只读，不替模型上传、不写任何文件。
@@ -136,7 +141,7 @@ def story_submitted(root: Path, features_dir: str, feature: str, system_dir: Pat
     （`delivery_requirements.design_reference`）：本地非 AR 单、缺/坏取材回执、非布尔声明、
     必交缺附件、可选已交付但附件缺失/陈旧，或系统正文/副本/摘要对不上，都不算送到。
     """
-    if not str(feature).startswith("AR"):
+    if not system_requirement(feature):
         return [f"{feature} 是本地需求（只有 AR 开头的需求挂在需求系统上）：送审终点只对系统单成立"]
     feature_root = root / features_dir / feature
     ar = feature_root / "AR"
