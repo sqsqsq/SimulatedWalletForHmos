@@ -25,7 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { callMcp, REQUIREMENT_URL, ATTACHMENT_URL } = require('./mcp');
-const { featureDir } = require('./dirs');
+const { featureDir, cloudBackupDir } = require('./dirs');
 
 function log(msg) {
   console.error(`[fetch.js] ${msg}`);
@@ -77,19 +77,37 @@ function readJsonStrict(root, rel, reason) {
   return doc;
 }
 
+function isRegularFile(file) {
+  try { return fs.statSync(file).isFile(); } catch { return false; }
+}
+
+/** 核对 body_write.backup 归属：须是本需求 `.backups/cloud/` 备份区内的现存普通文件（不接受目录或无关路径）。 */
+function backupProblem(root, reqNo, rel) {
+  if (path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) {
+    return `指向的备份 ${rel} 不是本需求 .backups/cloud/ 内的相对路径`;
+  }
+  const cloudDir = path.resolve(cloudBackupDir(reqNo));
+  const target = path.resolve(root, ...rel.split(/[\\/]/));
+  const inside = path.relative(cloudDir, target);
+  if (!inside || inside === '.' || inside.startsWith('..') || path.isAbsolute(inside)) {
+    return `指向的备份 ${rel} 不在本需求 .backups/cloud/ 备份区内`;
+  }
+  return isRegularFile(target) ? null : `指向的备份 ${rel} 不存在或不是普通备份文件`;
+}
+
 /**
  * 写前核清本单的发布与覆盖身份：
  * - 未发布且无未恢复正文覆盖 → 首次取材（AR 原件）；
  * - 契约 `archived` 与 `.backups/published/story.md` 双证成立，或旧回执 `body_write` 表明已真实覆盖且未记恢复 → 交付回流表面；
- * - 任一状态文件损坏、发布双证冲突或覆盖前备份缺失 → 在写入任何批次/回执前报错，保留原件并指回既有归档/恢复责任。
+ * - 任一状态文件损坏、发布双证冲突或覆盖前备份缺失/身份非法 → 在写入任何批次/回执前报错，保留原件并指回既有归档/恢复责任。
  */
-function publishedBefore(root) {
+function publishedBefore(root, reqNo) {
   const contractRel = 'AR/story-src/story-flow.json';
   const receiptRel = 'AR/story-src/fetched.json';
   const backupRel = '.backups/published/story.md';
   const contract = readJsonStrict(root, contractRel, '无法核清发布身份，不能按首次 AR 取材');
   const prev = readJsonStrict(root, receiptRel, '旧取材回执可能带有正文覆盖与恢复凭据（body_write），不能直接覆盖');
-  const hasBackup = fs.existsSync(path.join(root, ...backupRel.split('/')));
+  const hasBackup = isRegularFile(path.join(root, ...backupRel.split('/')));
   const archived = Boolean(contract?.archived);
   if (archived && !hasBackup) {
     throw new Error(`${contractRel} 已记发布（archived）但 ${backupRel} 缺失：发布身份不完整，不能按首次 AR 取材；`
@@ -114,9 +132,10 @@ function publishedBefore(root) {
       }
       if (!Object.prototype.hasOwnProperty.call(kept, 'backup')
         || (kept.backup !== null && (typeof kept.backup !== 'string' || !kept.backup.trim()))) {
-        problems.push('缺合法 backup（须为覆盖前备份相对路径或显式 null）');
-      } else if (typeof kept.backup === 'string' && !fs.existsSync(path.join(root, ...kept.backup.split('/')))) {
-        problems.push(`指向的备份 ${kept.backup} 不存在`);
+        problems.push('缺合法 backup（须为本需求 .backups/cloud/ 备份文件相对路径或显式 null）');
+      } else if (typeof kept.backup === 'string') {
+        const bp = backupProblem(root, reqNo, kept.backup.trim());
+        if (bp) problems.push(bp);
       }
       if (kept.verified_at !== undefined
         && (typeof kept.verified_at !== 'string' || !Number.isFinite(Date.parse(kept.verified_at)))) {
@@ -138,7 +157,7 @@ function publishedBefore(root) {
 
 async function fetchUpstream(reqNo, mcpToken, { outDir }) {
   const root = featureDir(reqNo);
-  const { published, kept } = publishedBefore(root);
+  const { published, kept } = publishedBefore(root, reqNo);
   const detail = await getDetail(reqNo, mcpToken);
   const srNo = text(detail.parentNo);
   const srDetail = srNo ? await getDetail(srNo, mcpToken) : null;

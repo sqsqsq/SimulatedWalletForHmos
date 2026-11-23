@@ -639,15 +639,25 @@ class TestPublishIdentityAndReceiptRecovery(SystemCase):
         self.assertNotIn("delivery_return", self.receipt_file())
 
     def test_incomplete_body_write_is_rejected_and_first_write_null_backup_allowed(self) -> None:
-        """S39 R2：空对象/缺 target_digest/缺 backup 键/坏 written_at 的 body_write 均在写前拒收且不覆写回执；首次写正文 backup=null 合法。"""
+        """S39 R1/R2：坏字段、目录路径、自指/越界无关文件作 body_write.backup 均在写前拒收且不覆写回执；真实备份文件与首次写 backup=null 合法。"""
         src = self.feature / "AR" / "story-src"
         src.mkdir(parents=True, exist_ok=True)
+        cloud_dir = self.feature / ".backups" / "cloud"
+        cloud_dir.mkdir(parents=True, exist_ok=True)
+        (cloud_dir / "nested-dir").mkdir(exist_ok=True)
+        real_backup = cloud_dir / "design-20261122000000.md"
+        real_backup.write_text("# 覆盖前系统旧正文\n", encoding="utf-8")
         for label, bad_bw in (
             ("empty_object", {}),
             ("missing_digest", {"written_at": "2026-11-22T00:00:00Z", "backup": None}),
             ("missing_written_at", {"target_digest": "sha256:0123456789abcdef", "backup": None}),
             ("missing_backup_key", {"target_digest": "sha256:0123456789abcdef", "written_at": "2026-11-22T00:00:00Z"}),
             ("null_body_write", None),
+            ("backup_is_cloud_dir", {"target_digest": "sha256:0123456789abcdef", "backup": ".backups/cloud", "written_at": "2026-11-22T00:00:00Z"}),
+            ("backup_is_nested_dir", {"target_digest": "sha256:0123456789abcdef", "backup": ".backups/cloud/nested-dir", "written_at": "2026-11-22T00:00:00Z"}),
+            ("backup_is_self_receipt", {"target_digest": "sha256:0123456789abcdef", "backup": "AR/story-src/fetched.json", "written_at": "2026-11-22T00:00:00Z"}),
+            ("backup_escapes_cloud", {"target_digest": "sha256:0123456789abcdef", "backup": ".backups/cloud/../../AR/story-src/fetched.json", "written_at": "2026-11-22T00:00:00Z"}),
+            ("backup_missing_file", {"target_digest": "sha256:0123456789abcdef", "backup": ".backups/cloud/design-missing.md", "written_at": "2026-11-22T00:00:00Z"}),
         ):
             with self.subTest(case=label):
                 raw = json.dumps({"mode": "fetch", "items": [], "body_write": bad_bw}, ensure_ascii=False)
@@ -658,6 +668,16 @@ class TestPublishIdentityAndReceiptRecovery(SystemCase):
                 self.assertIn("body_write", self.receipt(proc)["error"])
                 self.assertEqual(before, self._snapshot_tree(), f"{label} 损坏凭据时改动了现场")
                 self.assertEqual(raw, (src / "fetched.json").read_text(encoding="utf-8"))
+
+        # 合法真实备份文件（与 target_digest 不同，表示覆盖前系统旧正文）：放行并按交付回流分流、原样保留 body_write
+        valid_backup = {"target_digest": "sha256:0123456789abcdef", "backup": ".backups/cloud/design-20261122000000.md", "written_at": "2026-11-22T00:00:00Z"}
+        (src / "fetched.json").write_text(json.dumps({"mode": "fetch", "items": [], "body_write": valid_backup}), encoding="utf-8")
+        proc_real = self.fetch_into("fetch-valid-real-backup")
+        self.assertEqual(0, proc_real.returncode, proc_real.stderr)
+        ar_real = next(i for i in self.receipt(proc_real)["items"] if i["name"] == "AR-design.md")
+        self.assertNotIn("role", ar_real)
+        self.assertEqual("inbox/review/fetch-valid-real-backup/AR-design.md", ar_real.get("saved"))
+        self.assertEqual(valid_backup, self.receipt_file()["body_write"])
 
         # 合法首次覆盖（系统原无正文，archive 记 backup: null）：允许通过并视为已覆盖回流表面、原样保留 body_write
         valid_first = {"target_digest": "sha256:0123456789abcdef", "backup": None, "written_at": "2026-11-22T00:00:00Z"}
